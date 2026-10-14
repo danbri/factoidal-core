@@ -1,0 +1,16 @@
+# Dataset D3 as N-Quads: blank nodes: labelled, anonymous, a property list, a collection.
+_:alice <http://example.org/name> "Alice" .
+_:alice <http://example.org/knows> _:bob .
+_:bob <http://example.org/name> "Bob" .
+_:bob <http://example.org/knows> _:alice .
+<http://example.org/doc> <http://example.org/detail> _:d .
+_:d <http://example.org/k> "v" .
+_:d <http://example.org/n> "7"^^<http://www.w3.org/2001/XMLSchema#integer> .
+_:x <http://example.org/p> <http://example.org/o> .
+<http://example.org/doc> <http://example.org/items> _:l1 .
+_:l1 <http://www.w3.org/1999/02/22-rdf-syntax-ns#first> <http://example.org/a> .
+_:l1 <http://www.w3.org/1999/02/22-rdf-syntax-ns#rest> _:l2 .
+_:l2 <http://www.w3.org/1999/02/22-rdf-syntax-ns#first> <http://example.org/b> .
+_:l2 <http://www.w3.org/1999/02/22-rdf-syntax-ns#rest> _:l3 .
+_:l3 <http://www.w3.org/1999/02/22-rdf-syntax-ns#first> <http://example.org/c> .
+_:l3 <http://www.w3.org/1999/02/22-rdf-syntax-ns#rest> <http://www.w3.org/1999/02/22-rdf-syntax-ns#nil> .

@@ -112,6 +112,12 @@ packer's own `ingestStep` — and `quadStreamDataset` closes either one. A
 Turtle source has no named graph, so its triples are the default graph in
 source order. `quadStreams` is true for `turtle`, `ntriples` and `nquads`.
 
+Since 2026-10-14 (https://github.com/danbri/factoidal/issues/837) the names in
+this paragraph are history. `QuadStream`, `quadStreams` and `ingestStep` are
+gone. The packer reads its source through `L4Factoidal/RDF/Source.lean`
+(`Source.ByteReader`), and the equation of the next section is
+`Source.turtleStep_collect`.
+
 ### What is proved and what is measured
 
 The N-Quads route is byte-identical BY THEOREM, as above. The Turtle route
@@ -120,7 +126,8 @@ is HALF proved:
 - PROVED. `Syntax.parseStatements_eq_fold` and `Syntax.parseTurtle_eq_fold`
   state that folding statements with `Syntax.prependReverse` and reversing
   once gives exactly the `Graph` `parseTurtle` returns.
-  `PackStream.ingestStep_eq_prependReverse` ties the packer's step to that
+  `PackStream.ingestStep_eq_prependReverse` (since 2026-10-14:
+  `Source.turtleStep_collect`) ties the packer's step to that
   accumulator. This is the counterpart of instantiating
   `streamConsume11_eq_batch` at the accumulator the batch parser uses.
 - NOT PROVED. That the chunk fold reaches the same accumulator whatever the

@@ -1,6 +1,6 @@
 ---
 name: shardborough-storage
-description: Operate and extend the Lean 4 persisted RDF store (Shardborough) — pack Turtle into IBK3 generations, activate through CURRENT, query the activated collection, apply SPARQL Update through the delta log, compact, and read the format registry, the corpus ladder, the executability census and the round-trip theorem status. Use for any l4block-* CLI question or on-disk Lean storage work; not for the F* COTTAS store (see disk-storage-format).
+description: Operate and extend the Lean 4 persisted RDF store (Shardborough) — pack RDF from any of six syntaxes into IBK3, IBK4, IBK5 and SBM11 generations, activate through CURRENT, query the activated collection, apply SPARQL Update through the delta log, compact, and read the format registry, the corpus ladder, the executability census and the round-trip theorem status. Use for any l4block-* CLI question or on-disk Lean storage work; not for the F* COTTAS store (see disk-storage-format).
 ---
 
 # Shardborough storage: the Lean persisted path
@@ -72,12 +72,11 @@ Rules the commands enforce:
   `l4block-shard-activate` made it current with `verified-logical-bytes=0`.
   Read the `triples=` count in the pack output before activating; an empty
   RDF dataset is valid, so the tools do not refuse it.
-- **TriG input.** The packer reads Turtle. A TriG file whose only block is
-  an unlabelled `{ … }` (the default graph, as in the UK Parliament dump) is
-  Turtle after dropping that line and the closing `}`:
-  `awk 'NR==<line> && $0 ~ /^\{[[:space:]]*$/ {next} {print}' FILE.trig | sed '$d' > FILE.ttl`.
-  A TriG file with named graphs waits on the quad-aware layout
-  (`docs/designissues/2026-09-02-quad-aware-block-layout.md`).
+- **TriG input.** The `ibk3` packer reads Turtle only. Pack a TriG file with
+  `ibk4` or `ibk5`, or with `l4sbm11-pack` (section "The source layer"). Before
+  2026-09-03 the way to pack a TriG file whose only block was an unlabelled
+  `{ … }` was to drop that line and the closing `}` and pack the result as
+  Turtle; that is no longer needed.
 - **Updates route through CURRENT.** `l4block-delta-log COLLECTION --update`
   appends to the active generation's `deltas.dlog`; passing the generation
   directory does the same. Replay is exactly the valid suffix after the
@@ -154,12 +153,13 @@ not written yet.
 | Bounded Merkle scan or row range | `l4block-id-v3-merkle-scan SHARD-DIR PREDICATE-IRI LIMIT` / `--range START COUNT` |
 | Convert an IBK2 block to IBK3 | `l4block-id-v3-convert INPUT.ibk2 OUTPUT-DIR PREDICATE-IRI` |
 | Session of many SELECTs over one shard | `l4block-shard-merkle-session SHARD-DIR < queries.rq` |
-| Pack a quad generation (IBK4, wire version 9) | `l4block-shard-pack INPUT OUTPUT-DIR ibk4 [--batch-bytes N]` (`.trig`, `.nq`, `.ttl`) |
+| Pack a quad generation (IBK4, wire version 9) | `l4block-shard-pack INPUT OUTPUT-DIR ibk4 [--batch-bytes N]` (the syntax comes from the extension: `.nt`, `.nq`, `.ttl`, `.trig`, `.rdf`, `.jsonld`; any other extension is read as Turtle) |
 | Pack a quad generation (IBK5, wire version 10) | `l4block-shard-pack INPUT OUTPUT-DIR ibk5 [--batch-bytes N]` — same syntaxes, read as RDF 1.2 |
 | SBM11 packer phases 1 and 2: the global dictionary `dict.gdv1` + `dict.gdx1` (stage 2, no query path yet) | `l4sbm11-dict-pack SOURCE.nt\|.nq OUTDIR [--run-terms N] [--workers K]`; check every key and every source term: `--check SOURCE OUTDIR [--exact]`; string-to-id by `pread`: `--lookup-bench OUTDIR [N] [ABSENT]` |
-| SBM11 packer phases 1 to 3: dictionary, PSO/POS/SPO/OSP blocks, manifest (stage 3) | `l4sbm11-pack SOURCE.nt\|.nq OUTDIR [--workers K] [--run-terms N] [--block-rows B] [--sort-rows M]`; `--phase2-only` stops after the term-run merge and keeps `dict.gdv1`, `dict.gdx1` and the remap files (`run-W-J.tmp.remap`), to time phase 2 and compare its output byte for byte (`tests/sbm11/phase2_scaling.sh`, https://github.com/danbri/factoidal/issues/804) |
+| SBM11 packer phases 1 to 3: dictionary, PSO/POS/SPO/OSP blocks, manifest (stage 3) | `l4sbm11-pack SOURCE OUTDIR [--format F] [--base IRI] [--workers K] [--run-terms N] [--block-rows B] [--sort-rows M]` (SOURCE in any of the six syntaxes; section "The source layer"); `--phase2-only` stops after the term-run merge and keeps `dict.gdv1`, `dict.gdx1` and the remap files (`run-W-J.tmp.remap`), to time phase 2 and compare its output byte for byte (`tests/sbm11/phase2_scaling.sh`, https://github.com/danbri/factoidal/issues/804) |
 | SBM11 query (stage 4) | `l4sbm11 query GEN ('SPARQL' \| --file Q.rq) [--base IRI] [--explain] [--repeat N] [--reference-render] [--reference] [--verify merkle\|none] [--threads N] [--sip auto\|always\|off]`; `l4sbm11 serve GEN [--verify merkle\|none]` (default `none` on a generation `CURRENT` names, else `merkle`); decoder checks `l4sbm11 prm-check GEN` (PRM1 decoders, and the issue 805 range search against decoding the whole file on 385 keys per PRM1 file, over bytes, `pread` and Merkle chunks), `l4sbm11 frame-check GEN`; environment: `SBM11_PAGES` (dictionary page cache, default 2,048 pages), `SBM11_TASK_PAGES` (a scan task's own page cache, default 1,024), `SBM11_MIN_RANGE_ROWS` (fewest estimated rows per block range, default 8,192; 0 divides every scan, for tests) |
-| SBM11 reader | `l4sbm11 stats GEN`; `scan GEN PERM [KEY...] [--limit N] [--ids]` (KEY an IRI `<...>` or an id); `count GEN PERM [KEY...]`; `dump GEN [PERM]`; `dump-ids GEN PERM`; `canon SOURCE`; `verify GEN`; `activate ROOT NAME`; `reseal GEN` (test support) |
+| SBM11 reader | `l4sbm11 stats GEN`; `scan GEN PERM [KEY...] [--limit N] [--ids]` (KEY an IRI `<...>` or an id); `count GEN PERM [KEY...]`; `dump GEN [PERM]`; `dump-ids GEN PERM`; `canon SOURCE [--format F] [--base IRI]`; `verify GEN`; `activate ROOT NAME`; `reseal GEN` (test support) |
+| Convert a dataset between syntaxes with the Lean serialisers (test data, comparisons) | `l4source-convert SOURCE OUT [--from F] [--to G] [--base IRI]` |
 | Query an activated quad generation | `l4block-quad-query COLLECTION-ROOT --query SELECT...` |
 | Superseded formats (BLK0, IBK1, IBK2) | `l4block-pack`, `l4block-id-pack`, `l4block-id-v2-pack` and their `*-file-query` / `*-diff` partners |
 
@@ -170,9 +170,10 @@ read trace; it targets the Merkle session layout, not an SBM6 collection.
 
 `l4block-shard-pack INPUT OUTPUT ibk4` writes a quad generation, with a graph
 column in every row and a graph-set summary in the block header and in the
-SBM7 manifest entry. The input syntax comes from the file extension —
-`.trig`, `.nq`/`.nquads`, and anything else as Turtle with every triple in
-the default graph.
+SBM7 manifest entry. The input syntax comes from the file extension
+(`RdfFormat.formatOfPath`): `.nt`, `.nq`/`.nquads`, `.ttl`/`.turtle`, `.trig`,
+`.rdf`/`.xml`/`.owl`, `.jsonld`/`.json-ld`. Any other extension is read as
+Turtle, with every triple in the default graph.
 
 **The block set.** Quads are bucketed by the PAIR (predicate, graph), and a
 bucket is cut into blocks by two size targets only: 16,384 rows and 2,097,152
@@ -203,8 +204,9 @@ differs (https://github.com/danbri/factoidal/issues/836). Test knobs of
 `l4block-shard-pack`: `L4_PACK_BUFFERED=1` (whole-source route),
 `L4_PACK_CHUNK_BYTES=N` (read N bytes at a time). Checks:
 `tests/trig-pack/compare_w3c.sh`, `tests/trig-pack/order_xfail.sh`, scaling row
-`pack-trig-memory`. The SBM11 packers (`l4sbm11-pack`, `l4sbm11-dict-pack`)
-read N-Triples and N-Quads only, not TriG.
+`pack-trig-memory`. The SBM11 packer `l4sbm11-pack` reads all six syntaxes
+(section "The source layer"). `l4sbm11-dict-pack` reads N-Triples and N-Quads
+only.
 
 ```bash
 l4block-shard-pack tests/local/data/quad_sample.trig /tmp/store/gen-1 ibk4
@@ -238,8 +240,11 @@ Memory. The N-Quads, Turtle and N-Triples routes stream the source in
 also PUBLISH during the ingest pass, so peak memory is bounded by the
 operator's `--batch-bytes` (default 268,435,456 source bytes) rather than by
 the source
-(`docs/designissues/2026-09-05-pack-publication-every-batch.md`). TriG still
-reads the whole file: it has no chunk fold. Measured on skosdex N-Quads
+(`docs/designissues/2026-09-05-pack-publication-every-batch.md`). TriG joined
+them on 2026-10-14 (https://github.com/danbri/factoidal/issues/769). RDF/XML and
+JSON-LD read the whole document
+(https://github.com/danbri/factoidal/issues/838,
+https://github.com/danbri/factoidal/issues/839). Measured on skosdex N-Quads
 prefixes, 2026-09-05: peak footprint 222,955,392 bytes for 52,428,626 of
 source, 328,272,128 for 104,857,577, 331,581,824 for 209,715,187 and
 472,746,624 for 1,543,478,120 — a 2.12x rise over a 29.4x source, against
@@ -257,8 +262,8 @@ every manifest since SBM2 admits.
 
 What works:
 
-- Pack from TriG, N-Quads and Turtle. The same quads in the same order from
-  either syntax give byte-identical blocks.
+- Pack from TriG, N-Quads, N-Triples, Turtle, RDF/XML and JSON-LD. The same
+  quads in the same order from either syntax give byte-identical blocks.
 - One `.merkle` leaf sidecar per block, and an SBM7 manifest committing the
   source file's SHA-256 as each entry's blank-node scope under the
   `content-digest-shared` publication profile.
@@ -287,7 +292,8 @@ What does NOT work yet:
   the 472,746,624-byte peak. A manifest written incrementally is the next
   step. (The BLOCKS themselves are no longer held: the IBK4 path publishes
   them during the ingest pass, and the streamed grammars — N-Quads, Turtle,
-  N-Triples — no longer buffer the source either. Only TriG does.)
+  N-Triples, TriG — no longer buffer the source either. Only RDF/XML and
+  JSON-LD do.)
 - **No compaction and no delta log.** There is no compacted SBM7 layout label.
 
 ### Querying an IBK4 generation
@@ -552,9 +558,9 @@ constant; one with a variable or a blank node inside goes to the reference
 fallback; the triple functions run as the reference evaluator's own
 functions on decoded terms. An update with a triple term is refused (SPARQL
 1.1 Update grammar, no triple-term form in DLOG): the open part of the issue,
-pinned in part (m). `l4sbm11 canon` reads N-Quads with the RDF 1.1 grammar
-until https://github.com/danbri/factoidal/issues/837 gives it the source
-layer; part (m) pins that refusal too. Records: stage 2 record section 8
+pinned in part (m). `l4sbm11 canon` reads RDF 1.2 through the source layer
+since 2026-10-14 (https://github.com/danbri/factoidal/issues/837); part (m)
+asserts that `dump` and `canon` of the triple-term fixture are equal. Records: stage 2 record section 8
 (key, tag, format names, theorems), stage 4 record section 14 (each query
 path). Gates for a change there: `tests/sbm11/run.sh` part (m) (44 queries
 against `l4factoidal query --sparql12`, compaction, the pinned refusals),
@@ -813,6 +819,156 @@ Format registry rows (wire version 11):
 | PRM1 | `<perm>.prm1` | landed (stage 3) | `Storage/Sbm11/Block.lean` |
 | SBM11 manifest | `manifest.sbm11` (`"SBM0"` version 11) | landed (stage 3) | `Storage/Sbm11/Manifest.lean` |
 
+## The source layer: the store takes a dataset, not a syntax (2026-10-14)
+
+Owner rule, 2026-10-14 (CLAUDE.md, section "Shardborough is a persistent store
+for very large data"): the store takes the RDF abstract syntax from one source
+layer and gives it to one serialiser layer. A concrete syntax is named only at
+those two edges. No file under `formal/lean4/L4Factoidal/Storage/` imports a
+module of `L4Factoidal.Syntax`. Tracking:
+https://github.com/danbri/factoidal/issues/837. Design record:
+[`docs/designissues/2026-09-03-rdf-parsing-strategy.md`](../../docs/designissues/2026-09-03-rdf-parsing-strategy.md)
+section 3f.
+
+**Modules.**
+
+- `L4Factoidal/RDF/Format.lean`: `RdfFormat` (N-Triples, Turtle, N-Quads, TriG,
+  RDF/XML, JSON-LD) is the only format table. `formatOfExtension` and
+  `formatOfPath` map a file name to a format. `formatOfLabel` and `formatLabel`
+  map the `--format` label.
+- `L4Factoidal/RDF/Source.lean`: `Source.parseDocument` reads a whole text.
+  `Source.Reader` and `Source.ByteReader` read chunks and give each quad to a
+  consumer `Step`. `Source.Prepass` computes the blank node prefix for Turtle
+  and TriG.
+- `L4Factoidal/RDF/SourceJsonLd.lean`: the JSON-LD parser (`Source.withJsonLd`).
+  The core wasm does not link it.
+- `L4Factoidal/RDF/SourceTheorems.lean`: the theorems, below.
+- Users of the layer: `Storage/PackStream.lean` (the IBK2 to IBK5 packers),
+  `Wasm/Ops/Pack.lean` and `Wasm/Ops/Parse.lean` (wasm),
+  `Harness/Sbm11PackLib.lean` (`l4sbm11-pack`, `l4sbm11 canon`),
+  `Harness/PredicateShardPack.lean` (`l4block-shard-pack`).
+
+**What each syntax does.**
+
+| Syntax | Extensions | Reader | Phase 1 of `l4sbm11-pack` |
+| --- | --- | --- | --- |
+| N-Triples | `.nt` `.ntriples` | line stream; strict: a graph name is an error | K byte ranges cut at line starts, K workers |
+| N-Quads | `.nq` `.nquads` | line stream | K byte ranges, K workers |
+| Turtle | `.ttl` `.turtle` | chunk fold, after a pre-pass over the source | one worker |
+| TriG | `.trig` | chunk fold, after a pre-pass over the source | one worker |
+| RDF/XML | `.rdf` `.xml` `.owl` `.rdfxml` | whole document | one worker |
+| JSON-LD | `.jsonld` `.json-ld` | whole document | one worker |
+
+`l4sbm11-pack` and `l4sbm11 canon` read RDF 1.2 syntax, which includes RDF 1.1
+syntax for these grammars. The format comes from `--format` or from the
+extension. An unknown extension is an error that asks for `--format`: these two
+commands have no default syntax. `l4block-shard-pack` keeps its older rule (an
+unknown extension is Turtle) and reads RDF 1.1 for `ibk4` and RDF 1.2 for `ibk5`.
+The `ibk2` and `ibk3` layouts read Turtle only.
+
+**Blank nodes.** A blank node label is local to one document (RDF 1.1 Concepts,
+section 3.4). The reader keeps the blank nodes of one document apart: a label
+that the document writes cannot equal a label that the reader mints. Turtle and
+TriG mint `anon` + (the longest run of underscores in the document + 1
+underscores) + a counter, so they need the pre-pass. RDF/XML mints `b<N>` and
+writes each `rdf:nodeID` as `n<value>`. JSON-LD mints `_jld_anon<N>` and passes
+an explicit `_:` label through (collision defect:
+https://github.com/danbri/factoidal/issues/840).
+
+**Gates.**
+
+- `tests/sbm11/storage_layering.py`, run by `tests/sbm11/run.sh` part (n): fails
+  when a file under `L4Factoidal/Storage/` imports or opens
+  `L4Factoidal.Syntax`. It exits 2 when it reads no file.
+- `tests/sbm11/syntax_independence.sh`, run by `tests/sbm11/run.sh` part (o):
+  hand-written fixtures in `tests/sbm11/syntax/` write one dataset in several
+  syntaxes. D1 (no blank nodes, six syntaxes) and D2 (D1 and two named graphs,
+  three syntaxes) must give byte-identical generations, apart from the source
+  length and digest in the manifest. D3 (blank nodes, six syntaxes) must give
+  equal RDFC-1.0 canonical N-Quads. A generated dataset of 1 MB in four
+  syntaxes crosses many 64 KiB chunks. Other cases: blank nodes of one document
+  stay distinct, `--format` selection, strict N-Triples, `l4sbm11 verify` of
+  every generation.
+- `tools/pack-differential.sh OLD NEW`: packs every `.ttl`, `.nt`, `.nq` and
+  `.trig` file of the W3C RDF 1.1 and 1.2 suites with an old and a new
+  `l4block-shard-pack`, in `ibk3`, `ibk4` and `ibk5`, with the chunk route and
+  the whole-source route (`L4_PACK_BUFFERED=1`), and compares the exit status
+  and the generation hash.
+- `tests/trig-pack/compare_w3c.sh` and `order_xfail.sh`: IBK4 and IBK5 agree
+  across routes.
+- `tests/stack/lean_scaling.sh` rows `sbm11-pack-ttl-memory`,
+  `sbm11-pack-trig-memory`, `sbm11-pack-nt-vs-nq` (assertions) and
+  `sbm11-pack-rdfxml-memory`, `sbm11-pack-jsonld-memory`,
+  `sbm11-pack-ttl-workers`, `sbm11-pack-trig-workers` (expected failures).
+- `tests/sbm11/syntax_bench.sh`: packs one generated dataset in each syntax and
+  prints the table below.
+
+**Theorems** (`RDF/SourceTheorems.lean`; the axioms are `propext`,
+`Classical.choice` and `Quot.sound`; `tools/lean-unbuilt-modules.py --gate`
+passes):
+
+- `whole_readAll`, `rdfxml_readAll`, `jsonld_readAll`: a whole reader gives
+  `parseDocument` of the joined chunks, for every list of chunks.
+- `nquads_readAll_eq_run`, `nquads11_readAll_eq_batch`,
+  `nquads11_readAll_eq_parseNQuadsFast`: the N-Quads reader in RDF 1.1 mode gives
+  the line walk of the joined text. They use
+  `NQuadsFold.streamConsume11_eq_batch`.
+- `turtleStep_collect`: the Turtle consumer with the consumer that collects
+  triples is the accumulator step of `parseTurtle`.
+- `prepass_chunks`, `underscores_chunks`: the pre-pass over any cut of the text
+  gives `freshBnodePrefix` of the whole text.
+
+**Gaps.** Each has an open issue and a test that fails or is marked as an
+expected failure.
+
+| Gap | Issue | Test |
+| --- | --- | --- |
+| Turtle chunk walk, N-Triples chunk boundary, N-Quads in RDF 1.2 mode, UTF-8 decoding in chunks: equality with the batch result is not proved | https://github.com/danbri/factoidal/issues/826 | `tests/known-defects/run.sh` rows SF-1 to SF-4 |
+| TriG chunk walk against `parseTriG`; block order differs on a source whose graphs interleave | https://github.com/danbri/factoidal/issues/836 | `tests/trig-pack/order_xfail.sh` |
+| RDF/XML is read whole | https://github.com/danbri/factoidal/issues/838 | row `sbm11-pack-rdfxml-memory` |
+| JSON-LD is read whole | https://github.com/danbri/factoidal/issues/839 | row `sbm11-pack-jsonld-memory` |
+| The JSON-LD reader uses stack in proportion to the number of elements: 25,000 to 100,000 elements overflow a 512 KB stack | https://github.com/danbri/factoidal/issues/844 | `tests/known-defects/run.sh`, row `JLD-STACK` |
+| The Lean RDF/XML writer takes time quadratic in the number of triples | https://github.com/danbri/factoidal/issues/845 | row `rdfxml-write` |
+| The Lean JSON-LD writer (`fromRdf` node list) takes time quadratic in the number of triples | https://github.com/danbri/factoidal/issues/712 | row `jsonld-write` |
+| JSON-LD: an explicit `_:` label can equal a generated label | https://github.com/danbri/factoidal/issues/840 | `syntax_independence.sh`, case `bnode_collide.jsonld` |
+| RDF/XML: the `xml:lang` of a property element reaches the next sibling | https://github.com/danbri/factoidal/issues/841 | `syntax_independence.sh`, case `lang_scope.rdf` |
+| Turtle and TriG phase 1 runs in one worker | https://github.com/danbri/factoidal/issues/842 | rows `sbm11-pack-ttl-workers`, `sbm11-pack-trig-workers` |
+
+**Measured** (2026-10-14, `tests/sbm11/syntax_bench.sh`): one generated dataset
+(110,000 subjects, 880,000 quads; `gen_multi.py`) packed from each syntax with
+`l4sbm11-pack --workers 4` on 4 CPUs. The data files of
+every generation equal those of the N-Triples pack (default graph) or the
+N-Quads pack (named graphs). The full table, with the small set that holds
+RDF/XML and JSON-LD, is in section 11.1 of
+[`docs/designissues/2026-10-11-shardborough-vs-qlever.md`](../../docs/designissues/2026-10-11-shardborough-vs-qlever.md).
+
+| Source (writer) | Source MB | Phase 1 workers | Wall s | Kquads/s | Peak RSS MB |
+| --- | ---: | ---: | ---: | ---: | ---: |
+| N-Triples (generator) | 84.4 | 4 | 8.8 | 100 | 204 |
+| Turtle (generator) | 39.0 | 1 | 15.6 | 56 | 227 |
+| Turtle (Lean writer) | 31.0 | 1 | 14.7 | 60 | 225 |
+| N-Quads (generator) | 102.0 | 4 | 8.9 | 99 | 200 |
+| TriG (generator) | 40.8 | 1 | 17.2 | 51 | 228 |
+| TriG (Lean writer) | 84.4 | 1 | 27.7 | 32 | 225 |
+| RDF/XML (Lean writer), 88,000 quads | 6.9 | 1 | 2.1 | 42 | 137 |
+| JSON-LD (Lean writer), 88,000 quads | 7.4 | 1 | 2.0 | 44 | 135 |
+
+The Lean writers for RDF/XML and JSON-LD are quadratic in the dataset (22 s and
+44 s for 8.3 MB; issues 845 and 712 in the table above), so those two rows use
+the small set. Three runs differ in wall
+time by up to 20 % for the big set.
+
+**To add a syntax.** (1) Add the constructor and its table entries in
+`RDF/Format.lean`. (2) Add its reader to `RDF/Source.lean` (`Reader`,
+`Reader.init`, `feed`, `finish`, `parseDocument`) and a `#guard` that cuts a
+document at every position. (3) Add a theorem to `RDF/SourceTheorems.lean`, or
+an issue and an expected-failure test for the half that is not proved. (4) Add
+fixtures to `tests/sbm11/syntax/` and cases to `syntax_independence.sh`. (5) Add
+a memory row to `tests/stack/lean_scaling.py`. (6) Time the reader against the
+route it replaces on the same bytes (`tests/sbm11/syntax_bench.sh`); see rule 8
+of "Rules when changing a format". Do not name the syntax in a file under
+`Storage/`.
+
 ## Where the code is
 
 - Codecs and pure validators: `formal/lean4/L4Factoidal/Storage/`
@@ -826,6 +982,12 @@ Format registry rows (wire version 11):
   replace).
 - WASM operations: `formal/lean4/Wasm/Ops/Block.lean`, dispatch table in
   `Wasm/Dispatch.lean`, native checks in `Wasm/native-smoke.sh`.
+- The source layer (any syntax to quads): `formal/lean4/L4Factoidal/RDF/Source.lean`,
+  `SourceJsonLd.lean`, `SourceTheorems.lean`, the format table
+  `RDF/Format.lean`; tools `Harness/SourceConvert.lean` (`l4source-convert`),
+  `Harness/Sbm11PackLib.lean`; tests `tests/sbm11/storage_layering.py`,
+  `tests/sbm11/syntax_independence.sh`, `tests/sbm11/syntax_bench.sh`,
+  `tools/pack-differential.sh`.
 - Design records, with status: [`docs/worknotes-index.md`](../../docs/worknotes-index.md).
 
 ## Rules when changing a format
@@ -884,6 +1046,16 @@ Format registry rows (wire version 11):
    keys only. Had the new terms kept tag 3, the older activation would have
    admitted the generation and failed only at the first query that decoded a
    triple term. Read what the older reader checks before relying on it.
+8. A change that moves a syntax to another reader needs a timing against the
+   old route on the same bytes, not only a byte comparison. On 2026-10-14 the
+   source layer gave `.nt` files to the strict N-Triples reader. Every
+   generation was byte-identical to the one of the reader it replaced, and
+   `tools/pack-differential.sh` agreed on 8,586 of 8,662 cases. Phase 1 took
+   2,996 ms for 8.3 MB against 477 ms for the same quads as N-Quads text,
+   because `readTriple12` computed `r5.length + 1` (the characters left in the
+   chunk) for each statement. A timing of one dataset in every syntax
+   (`tests/sbm11/syntax_bench.sh`) found it; the scaling row
+   `sbm11-pack-nt-vs-nq` now gates it.
 
 ## Cross-backend differential gate and Jena TDB2 reader (2026-10-13)
 

@@ -11,9 +11,10 @@ def main (args : List String) : IO UInt32 := do
   try
     match args with
     | src :: dir :: opts =>
-      let p2 := opts.contains "--phase2-only"
-      match parseOpts (opts.filter (· != "--phase2-only")) (4, 262144, 4096, 524288) with
-      | some (k, n, b, m) => if p2 then runPhase2Only src dir k n else runPack src dir k n b m
+      match parseOpts opts {} with
+      | some o =>
+        if o.phase2Only then runPhase2Only src dir o.workers o.runTerms o.source
+        else runPack src dir o.workers o.runTerms o.blockRows o.sortRows o.source
       | none => IO.eprintln usage; pure 2
     | _ => IO.eprintln usage; pure 2
   catch e =>

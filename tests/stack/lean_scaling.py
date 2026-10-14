@@ -57,6 +57,50 @@ repaired (docs/designissues/2026-10-10-lean-vs-fstar-performance.md):
                    from 4 MB to 16 MB: at most 20 bytes
                    (https://github.com/danbri/factoidal/issues/769; 70.7 on the
                    whole-source route, 11.9 on the chunk route)
+  rdfxml-write, jsonld-write
+                   `l4source-convert` (the library serialisers) writes a dataset of
+                   2,000, then 8,000 subjects (`tests/sbm11/syntax/gen_multi.py`, 8
+                   triples for each subject) as RDF/XML or as JSON-LD. Expected
+                   failures: https://github.com/danbri/factoidal/issues/845 (the
+                   RDF/XML writer scans the graph for each subject) and
+                   https://github.com/danbri/factoidal/issues/712 (the JSON-LD
+                   `fromRdf` node list). Measured 2026-10-14, total wall time of the
+                   command: RDF/XML 1.1 s and 12.8 s, JSON-LD 0.75 s and 17.1 s (the
+                   Turtle writer: 0.45 s and 1.5 s)
+  sbm11-pack-ttl-memory, sbm11-pack-trig-memory
+                   peak resident memory of `l4sbm11-pack` per source byte over Turtle
+                   and TriG, measured at x, 2x and 4x (25,000, 50,000 and 100,000
+                   statements of about 400 source bytes each, 10 MB to 40 MB): the
+                   slope from x to 4x is at most 0.75 byte per source byte
+                   (https://github.com/danbri/factoidal/issues/837; measured
+                   2026-10-14: -0.13 to 0.28 for Turtle and -0.14 to 0.21 for TriG, because
+                   the packer spills its runs to disk at 20,000 terms and the readers
+                   keep no source text). A reader that keeps the source (1 byte per
+                   byte for the text alone, 24 for a character list) fails the row.
+  sbm11-pack-rdfxml-memory, sbm11-pack-jsonld-memory
+                   the same slope over RDF/XML and JSON-LD at 5,000, 10,000 and
+                   20,000 statements (2 MB to 8 MB). Expected failures:
+                   https://github.com/danbri/factoidal/issues/838 and
+                   https://github.com/danbri/factoidal/issues/839. Both readers
+                   take the whole document before they parse it
+                   (`Source.Reader.whole`): measured 2026-10-14 in three runs, 11.3 to
+                   14.5 bytes of peak RSS per source byte for both syntaxes.
+  sbm11-pack-nt-vs-nq  `l4sbm11-pack` over 100,000 N-Triples statements takes at most
+                   2.0 times the CPU time of the same pack over the same triples as
+                   N-Quads text (one graph name on every line). N-Triples was read
+                   as RDF 1.2 with a fuel of `r5.length + 1` per statement, the
+                   length of the rest of the chunk (`readTriple12`): phase 1 took
+                   2,996 ms for 8.3 MB against 477 ms for the same quads as
+                   N-Quads (4 workers, 2026-10-14), 272 ms after `lineFuel`
+  sbm11-pack-ttl-workers, sbm11-pack-trig-workers
+                   `l4sbm11-pack --workers 4` reads a Turtle or a TriG source with more
+                   than one worker (the pack prints `workers=K`). Expected failures:
+                   https://github.com/danbri/factoidal/issues/842. N-Triples and N-Quads are cut into byte
+                   ranges at line starts; Turtle and TriG are read by one worker, so
+                   phase 1 of the pack takes 2.8 to 3.2 times as long per quad (Turtle)
+                   and 3.6 to 6.6 times (TriG) as the same quads as N-Quads text, and
+                   8.0 to 9.2 times as long per source byte (880,000 quads, 4 workers
+                   requested, 4 CPUs, 2026-10-14)
   query-memory     peak resident memory of `query` COUNT(*) per input byte, from
                    x to 4x paragraphs of gene.ttl: at most 32 bytes
                    (https://github.com/danbri/factoidal/issues/729; 36.6 before
@@ -191,6 +235,11 @@ fails the bound it prints "XFAIL" with its issue URL and counts as
 expected-fail, not as a pass; when it PASSES it prints "UNEXPECTED PASS" and
 counts as a failure, so the run is red until the row is removed from XFAIL
 (the repair turns the row into a real assertion) and the issue is closed.
+A row of the table ROWS or of the SBM11 packer (sbm11-pack-*) that cannot
+measure (the command exits with an error or times out, the binary is missing,
+the pack's summary line is missing) prints "FAIL ... cannot measure" and counts
+as a failure, also when the row is in XFAIL: an expected failure must fail the
+bound, not the measurement.
 
 The script measures; it does not compare with the F* engine. Exit status 0
 when every pair passes or fails as expected, 1 when a pair fails or an
@@ -203,6 +252,8 @@ Env:    L4_BIN     path of l4factoidal (default formal/lean4/.lake/build/bin/l4f
         L4_TERMWIRE_BIN  path of l4termwire-page-decode (default: beside L4_BIN)
         L4_SPECIES_BIN   path of l4owl-species (default: beside L4_BIN)
         L4_WASMCLI_BIN   path of l4wasm-cli (default: beside L4_BIN)
+        L4_SBM11_PACK_BIN  path of l4sbm11-pack (default: beside L4_BIN)
+        L4_SOURCE_CONVERT_BIN  path of l4source-convert (default: beside L4_BIN)
         L4_SCALING_FIXTURES  fixture directory (default: $STACK_FIXTURES/lean-scaling
                    when STACK_FIXTURES is set, else /tmp/factoidal-lean-scaling)
         L4_SCALING_CAP   seconds per run before it counts as a failure (default 120)
@@ -230,6 +281,7 @@ SHACL_BIN = Path(os.environ.get("L4_SHACL_BIN", BIN.parent / "l4shacl"))
 TERMWIRE_BIN = Path(os.environ.get("L4_TERMWIRE_BIN", BIN.parent / "l4termwire-page-decode"))
 SPECIES_BIN = Path(os.environ.get("L4_SPECIES_BIN", BIN.parent / "l4owl-species"))
 WASMCLI_BIN = Path(os.environ.get("L4_WASMCLI_BIN", BIN.parent / "l4wasm-cli"))
+SOURCE_CONVERT_BIN = Path(os.environ.get("L4_SOURCE_CONVERT_BIN", BIN.parent / "l4source-convert"))
 CAP = float(os.environ.get("L4_SCALING_CAP", "120"))
 # A fixture directory of one's own (hazard #43 of
 # skills/workflow-gotchas-debugging: runs that share a directory delete each
@@ -244,6 +296,12 @@ ROW_BOUND = {"owlrl-closure-chain": 20.0, "termwire-page-decode": 6.0}
 # leaves this table in the commit that repairs it.
 XFAIL: dict[str, str] = {
     "query-memory-fstar": "https://github.com/danbri/factoidal/issues/729",
+    "sbm11-pack-rdfxml-memory": "https://github.com/danbri/factoidal/issues/838",
+    "sbm11-pack-jsonld-memory": "https://github.com/danbri/factoidal/issues/839",
+    "rdfxml-write": "https://github.com/danbri/factoidal/issues/845",
+    "jsonld-write": "https://github.com/danbri/factoidal/issues/712",
+    "sbm11-pack-ttl-workers": "https://github.com/danbri/factoidal/issues/842",
+    "sbm11-pack-trig-workers": "https://github.com/danbri/factoidal/issues/842",
 }
 # A run longer than this is not repeated: the minimum of several runs only
 # removes timer and load noise, which is small against a run this long.
@@ -255,6 +313,18 @@ def fixture(name: str, text_fn) -> Path:
     p = FIX / name
     if not p.exists():
         p.write_text(text_fn(), encoding="utf-8")
+    return p
+
+
+def multi_nt(n: int) -> Path:
+    """multi.nt of tests/sbm11/syntax/gen_multi.py for n subjects: 8 triples for
+    each subject, default graph, no blank nodes."""
+    d = FIX / f"multi-{n}"
+    p = d / "multi.nt"
+    if not p.exists():
+        d.mkdir(parents=True, exist_ok=True)
+        subprocess.run([sys.executable, str(ROOT / "tests/sbm11/syntax/gen_multi.py"), str(d), str(n)],
+                       check=True, timeout=CAP)
     return p
 
 
@@ -508,6 +578,19 @@ ROWS = {
         500,
         lambda n: bl.shacl_manifest(*bl.gen_shacl(n)),
         lambda p: [str(SHACL_BIN), "--conforms-only", str(p)]),
+    # The library serialisers, through the tool that writes test data
+    # (formal/lean4/Harness/SourceConvert.lean). The N-Triples text is read as
+    # N-Quads (the quad reader is linear), so the time is the writer's.
+    "rdfxml-write": (
+        2000,
+        lambda n: multi_nt(n),
+        lambda p: [str(SOURCE_CONVERT_BIN), str(p), str(FIX / "write-out.rdf"),
+                   "--from", "nquads", "--to", "rdfxml"]),
+    "jsonld-write": (
+        2000,
+        lambda n: multi_nt(n),
+        lambda p: [str(SOURCE_CONVERT_BIN), str(p), str(FIX / "write-out.jsonld"),
+                   "--from", "nquads", "--to", "jsonld"]),
 }
 
 
@@ -520,6 +603,8 @@ def best_of(cmd, runs):
                                timeout=CAP)
         except subprocess.TimeoutExpired:
             return None, f"timeout after {CAP:.0f} s"
+        except FileNotFoundError as e:
+            return None, f"cannot run {cmd[0]}: {e.strerror}"
         dt = time.perf_counter() - t0
         if r.returncode != 0:
             return None, f"exit {r.returncode}: {r.stderr.decode('utf-8', 'replace')[:200]}"
@@ -560,6 +645,10 @@ def best_cpu_rss(cmd, runs):
 
 
 def parse_ratio_row(rid, runs):
+    if rid in SBM11_PACK_RATIO_ROWS:
+        return sbm11_pack_ratio_row(rid, runs)
+    if rid in SBM11_WORKERS_ROWS:
+        return sbm11_workers_row(rid)
     x, sparql = PARSE_RATIO_ROWS[rid]
     p = bl.gene_slice(4 * x)
     q, e1 = best_cpu_rss([str(BIN), "query", str(p), "--format", "turtle",
@@ -701,7 +790,190 @@ def pack_memory_row(rid):
                             f"{slope:.1f} bytes of peak RSS per source byte (bound {bound})")
 
 
+# The SBM11 packer, one row per source syntax it reads
+# (https://github.com/danbri/factoidal/issues/837). `l4sbm11-pack` reads a source
+# in 65,536-byte chunks through `RDF/Source.lean`, spills the runs of a batch to
+# disk when 20,000 terms (--run-terms) or 1,048,576 quads are in memory, and
+# sorts the rows of its permutations in runs of 50,000 (--sort-rows). The rows
+# below pack n statements of the form `ex:s<i> ex:p "<payload>"`, a payload of
+# about 370 characters that differs in every statement, at n, 2n and 4n, and
+# bound the slope of peak RSS
+#
+#     (peak RSS at 4n - peak RSS at n) / (source bytes at 4n - source bytes at n)
+#
+# The payload makes the source large against the packer's own state per
+# statement (about 40 bytes of row), so a source of 5 MB to 21 MB shows whether
+# the reader keeps the text. A dataset of short statements would not: its rows
+# grow with the number of quads up to the batch cap, at 1 to 4 bytes per source
+# byte (measured with `ex:s<i> ex:p ex:o<i>`: 4.1 bytes per source byte from 2.7 MB to
+# 11.4 MB of Turtle). The packer runs one worker, because Turtle, TriG, RDF/XML and
+# JSON-LD are read by one worker. The peak of the 4n pack varies between runs by up to
+# 10 MB (a sort task of the packer overlaps the read, or it does not). The bound of 0.75
+# allows 22 MB of growth over the 30 MB between the n and 4n sources. The largest growth
+# seen is 8 MB, and a reader that keeps the source adds 30 MB or more and fails.
+# Measured 2026-10-14 (peak RSS through the wrapper, MB): Turtle 75 to 78 at n and 71 to
+# 85 at 4n (slope -0.13 to 0.28); TriG 75 to 79 at n and 71 to 83 at 4n (-0.14 to 0.21);
+# RDF/XML 51 to 58, 78 to 90 and 147 at 5,000, 10,000 and 20,000 statements (13.4 to
+# 14.5); JSON-LD 56 to 58, 78 to 88 and 129 to 140 (11.3 to 13.5). Each value is
+# (statements at x, fixture maker, file extension, bound).
+SBM11_PACK_BIN = Path(os.environ.get("L4_SBM11_PACK_BIN", BIN.parent / "l4sbm11-pack"))
+SBM11_PACK_ARGS = ["--workers", "1", "--run-terms", "20000", "--sort-rows", "50000"]
+
+
+def sbm11_payload(i: int) -> str:
+    return f"record {i}: " + "the quick brown fox jumps over the lazy dog; " * 8
+
+
+def sbm11_ttl(n: int) -> str:
+    return f"@prefix ex: <{EX}> .\n" + "".join(
+        f'ex:s{i} ex:p "{sbm11_payload(i)}" .\n' for i in range(n))
+
+
+def sbm11_trig(n: int) -> str:
+    """Graph blocks of 1,000 statements, 100 different graph names."""
+    per = 1000
+    out = [f"@prefix ex: <{EX}> ."]
+    for j in range((n + per - 1) // per):
+        out.append(f"ex:g{j % 100} {{")
+        out.extend(f'  ex:s{i} ex:p "{sbm11_payload(i)}" .'
+                   for i in range(j * per, min(n, (j + 1) * per)))
+        out.append("}")
+    return "\n".join(out) + "\n"
+
+
+def sbm11_rdfxml(n: int) -> str:
+    return ('<?xml version="1.0"?>\n<rdf:RDF xmlns:rdf="http://www.w3.org/1999/02/22-rdf-syntax-ns#" '
+            f'xmlns:ex="{EX}">\n' + "".join(
+                f'  <rdf:Description rdf:about="{EX}s{i}"><ex:p>{sbm11_payload(i)}</ex:p>'
+                f'</rdf:Description>\n' for i in range(n)) + "</rdf:RDF>\n")
+
+
+def sbm11_jsonld(n: int) -> str:
+    return "[" + ",\n".join(
+        f'{{"@id":"{EX}s{i}","{EX}p":"{sbm11_payload(i)}"}}' for i in range(n)) + "]\n"
+
+
+SBM11_PACK_MEMORY_ROWS = {
+    "sbm11-pack-ttl-memory": (25000, sbm11_ttl, "ttl", 0.75),
+    "sbm11-pack-trig-memory": (25000, sbm11_trig, "trig", 0.75),
+    "sbm11-pack-rdfxml-memory": (5000, sbm11_rdfxml, "rdf", 0.75),
+    "sbm11-pack-jsonld-memory": (5000, sbm11_jsonld, "jsonld", 0.75),
+}
+
+
+class MeasurementError(RuntimeError):
+    """A row could not measure: the run is red whatever XFAIL says. An
+    expected failure must fail because of the bound, not because the command
+    crashed or printed nothing (skills/measuring-inference)."""
+
+
+def sbm11_need_pack_bin():
+    if not SBM11_PACK_BIN.exists():
+        raise MeasurementError(
+            f"{SBM11_PACK_BIN} not built (cd formal/lean4 && lake build l4sbm11-pack)")
+
+
+def sbm11_pack_memory_row(rid):
+    import shutil
+    x, make, ext, bound = SBM11_PACK_MEMORY_ROWS[rid]
+    sbm11_need_pack_bin()
+    pts = []
+    for n in (x, 2 * x, 4 * x):
+        p = fixture(f"{rid}-{n}.{ext}", lambda n=n: make(n))
+        out = FIX / f"{rid}-out-{n}"
+        shutil.rmtree(out, ignore_errors=True)
+        t = peak_rss_run([str(SBM11_PACK_BIN), str(p), str(out)] + SBM11_PACK_ARGS)
+        shutil.rmtree(out, ignore_errors=True)
+        if t["status"] != "ok":
+            raise MeasurementError(f"{rid}: n={n}: exit status {t['status']}")
+        pts.append((n, p.stat().st_size, t["rss_kb"]))
+    (n1, b1, r1), (n2, b2, r2), (n4, b4, r4) = pts
+    slope = (r4 - r1) * 1024 / max(b4 - b1, 1)
+    return slope <= bound, (f"n={n1} {r1 / 1024:.0f} MB ({b1} bytes) -> n={n2} {r2 / 1024:.0f} MB -> "
+                            f"n={n4} {r4 / 1024:.0f} MB ({b4} bytes): {slope:.2f} bytes of peak RSS "
+                            f"per source byte (bound {bound})")
+
+
+# `l4sbm11-pack` over N-Triples text takes at most SBM11_PACK_RATIO times the CPU
+# time of the same pack over the same triples as N-Quads text. N-Triples is read
+# by the strict triple reader, N-Quads by the quad reader; both are line streams
+# of the same lexical rules, so their costs agree. Before `lineFuel` replaced
+# `r5.length + 1` in `readTriple12` the triple reader walked the rest of the chunk
+# for every statement: phase 1 took 2,996 ms for 8.3 MB of N-Triples and 477 ms
+# for the same quads as N-Quads (4 workers; 11,000 subjects of
+# tests/sbm11/syntax/gen_multi.py; 2026-10-14). After: 272 ms and 328 ms.
+SBM11_PACK_RATIO = 2.0
+SBM11_PACK_RATIO_ROWS = {"sbm11-pack-nt-vs-nq": 100000}
+
+
+def sbm11_pack_ratio_row(rid, runs):
+    import shutil
+    n = SBM11_PACK_RATIO_ROWS[rid]
+    sbm11_need_pack_bin()
+    nt = fixture(f"{rid}-{n}.nt", lambda: "".join(
+        f"<{EX}s{i}> <{EX}p> <{EX}o{i}> .\n" for i in range(n)))
+    nq = fixture(f"{rid}-{n}.nq", lambda: "".join(
+        f"<{EX}s{i}> <{EX}p> <{EX}o{i}> <{EX}g> .\n" for i in range(n)))
+    cpu = []
+    for p in (nt, nq):
+        out = FIX / f"{rid}-out"
+        best = None
+        for _ in range(runs):
+            shutil.rmtree(out, ignore_errors=True)
+            t = bl.run_once([str(SBM11_PACK_BIN), str(p), str(out)] + SBM11_PACK_ARGS, CAP)
+            if t["status"] != "ok":
+                shutil.rmtree(out, ignore_errors=True)
+                raise MeasurementError(f"{rid}: {p.name}: exit status {t['status']}")
+            best = t["cpu"] if best is None else min(best, t["cpu"])
+        shutil.rmtree(out, ignore_errors=True)
+        cpu.append(best)
+    ok = cpu[0] <= SBM11_PACK_RATIO * max(cpu[1], FLOOR)
+    return ok, (f"n={n}: N-Triples {cpu[0]:.3f} s CPU ({nt.stat().st_size} bytes), N-Quads "
+                f"{cpu[1]:.3f} s CPU ({nq.stat().st_size} bytes): ratio "
+                f"{cpu[0] / max(cpu[1], 1e-9):.2f} (bound {SBM11_PACK_RATIO})")
+
+
+# Phase 1 of `l4sbm11-pack` cuts an N-Triples or N-Quads source into K byte
+# ranges at line starts and reads them in K workers. A Turtle or TriG statement
+# can start anywhere and depends on the prefixes, the base and the blank node
+# scope of the text before it, so `Source.planRanges` gives one range and the
+# pack prints `workers=1` whatever --workers says. The rows below pack a
+# generated dataset of 1,500 subjects (tests/sbm11/syntax/gen_multi.py) with
+# --workers 4 and require more than one worker.
+SBM11_WORKERS_ROWS = {"sbm11-pack-ttl-workers": "multi.ttl",
+                      "sbm11-pack-trig-workers": "multi.trig"}
+GEN_MULTI = ROOT / "tests/sbm11/syntax/gen_multi.py"
+
+
+def sbm11_workers_row(rid):
+    import re
+    import shutil
+    name = SBM11_WORKERS_ROWS[rid]
+    sbm11_need_pack_bin()
+    n = 1500
+    d = FIX / f"sbm11-multi-{n}"
+    p = d / name
+    if not p.exists():
+        d.mkdir(parents=True, exist_ok=True)
+        subprocess.run([sys.executable, str(GEN_MULTI), str(d), str(n)], check=True, timeout=CAP)
+    out = FIX / f"{rid}-out"
+    shutil.rmtree(out, ignore_errors=True)
+    r = subprocess.run([str(SBM11_PACK_BIN), str(p), str(out), "--workers", "4"],
+                       stdout=subprocess.PIPE, stderr=subprocess.STDOUT, timeout=CAP)
+    shutil.rmtree(out, ignore_errors=True)
+    text = r.stdout.decode("utf-8", "replace")
+    if r.returncode != 0:
+        raise MeasurementError(f"{rid}: {name}: exit {r.returncode}: {text[-200:]}")
+    m = re.search(r"\bsource=\S+ format=\S+ source-bytes=\d+ workers=(\d+)", text)
+    if not m:
+        raise MeasurementError(f"{rid}: {name}: the pack printed no summary line with workers=")
+    workers = int(m.group(1))
+    return workers > 1, f"{name}: 4 workers requested, the pack read the source with {workers}"
+
+
 def memory_row(rid):
+    if rid in SBM11_PACK_MEMORY_ROWS:
+        return sbm11_pack_memory_row(rid)
     if rid in PACK_MEMORY_ROWS:
         return pack_memory_row(rid)
     if rid in PARSE_MEMORY_ROWS:
@@ -871,11 +1143,14 @@ def main() -> int:
         return 2
     names = [r for r in args.only.split(",") if r]
     rows = [r for r in names if r in ROWS] or ([] if names else list(ROWS))
-    ratio_rows = [r for r in names if r in PARSE_RATIO_ROWS] or (
-        [] if names else list(PARSE_RATIO_ROWS))
+    ratio_rows = [r for r in names if r in PARSE_RATIO_ROWS or r in SBM11_PACK_RATIO_ROWS
+                  or r in SBM11_WORKERS_ROWS] or (
+        [] if names else list(PARSE_RATIO_ROWS) + list(SBM11_PACK_RATIO_ROWS)
+        + list(SBM11_WORKERS_ROWS))
     memory_rows = [r for r in names if r in MEMORY_ROWS or r in PARSE_MEMORY_ROWS
-                   or r in PACK_MEMORY_ROWS] or (
-        [] if names else list(MEMORY_ROWS) + list(PARSE_MEMORY_ROWS) + list(PACK_MEMORY_ROWS))
+                   or r in PACK_MEMORY_ROWS or r in SBM11_PACK_MEMORY_ROWS] or (
+        [] if names else list(MEMORY_ROWS) + list(PARSE_MEMORY_ROWS) + list(PACK_MEMORY_ROWS)
+        + list(SBM11_PACK_MEMORY_ROWS))
     series_rows = [r for r in names if r in SERIES_ROWS] or (
         [] if names else list(SERIES_ROWS))
     run_startup = (not names) or ("startup" in names)
@@ -889,13 +1164,13 @@ def main() -> int:
         t1, e1 = best_of(cmd(make(x)), args.runs)
         t4, e4 = best_of(cmd(make(4 * x)), args.runs)
         if e1 or e4:
-            ok = False
-            detail = f"n={x} -> n={4 * x}: {e1 or e4}"
-        else:
-            bound = ROW_BOUND.get(rid, BOUND)
-            ok = t4 <= bound * max(t1, FLOOR)
-            detail = (f"n={x} {t1:.3f} s -> n={4 * x} {t4:.3f} s "
-                      f"(ratio {t4 / max(t1, 1e-9):.1f} for 4x input)")
+            failed += 1
+            print(f"  FAIL {rid}: cannot measure: n={x} -> n={4 * x}: {e1 or e4}")
+            continue
+        bound = ROW_BOUND.get(rid, BOUND)
+        ok = t4 <= bound * max(t1, FLOOR)
+        detail = (f"n={x} {t1:.3f} s -> n={4 * x} {t4:.3f} s "
+                  f"(ratio {t4 / max(t1, 1e-9):.1f} for 4x input)")
         if issue and not ok:
             xfailed += 1
             print(f"  XFAIL {rid} ({issue}): {detail}")
@@ -909,7 +1184,12 @@ def main() -> int:
             print(f"  {'PASS' if ok else 'FAIL'} {rid}: {detail}")
     for rid in ratio_rows:
         issue = XFAIL.get(rid)
-        ok, detail = parse_ratio_row(rid, args.runs)
+        try:
+            ok, detail = parse_ratio_row(rid, args.runs)
+        except MeasurementError as e:
+            failed += 1
+            print(f"  FAIL {rid}: cannot measure: {e}")
+            continue
         if issue and not ok:
             xfailed += 1
             print(f"  XFAIL {rid} ({issue}): {detail}")
@@ -923,7 +1203,12 @@ def main() -> int:
             print(f"  {'PASS' if ok else 'FAIL'} {rid}: {detail}")
     for rid in memory_rows:
         issue = XFAIL.get(rid)
-        ok, detail = memory_row(rid)
+        try:
+            ok, detail = memory_row(rid)
+        except MeasurementError as e:
+            failed += 1
+            print(f"  FAIL {rid}: cannot measure: {e}")
+            continue
         if issue and not ok:
             xfailed += 1
             print(f"  XFAIL {rid} ({issue}): {detail}")

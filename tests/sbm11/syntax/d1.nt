@@ -1,0 +1,13 @@
+# Dataset D1: IRIs and literals, no blank nodes, default graph only.
+<http://example.org/s1> <http://example.org/name> "Alice" .
+<http://example.org/s1> <http://example.org/knows> <http://example.org/s2> .
+<http://example.org/s1> <http://example.org/label> "hello"@en .
+<http://example.org/s1> <http://example.org/label> "bonjour"@fr .
+<http://example.org/s1> <http://example.org/label> "Hallo"@de-DE .
+<http://example.org/s1> <http://example.org/age> "42"^^<http://www.w3.org/2001/XMLSchema#integer> .
+<http://example.org/s2> <http://example.org/age> "007"^^<http://www.w3.org/2001/XMLSchema#integer> .
+<http://example.org/s2> <http://example.org/born> "1990-05-17"^^<http://www.w3.org/2001/XMLSchema#date> .
+<http://example.org/s2> <http://example.org/custom> "abc"^^<http://example.org/datatype/Code> .
+<http://example.org/s2> <http://example.org/typedString> "typed text"^^<http://www.w3.org/2001/XMLSchema#string> .
+<http://example.org/s3> <http://example.org/name> "Carol \"C\" O'Neil\n2nd line" .
+<http://example.org/s3> <http://example.org/note> "unicode: caf\u00E9 \u4E2D\u6587" .

@@ -331,8 +331,9 @@ theorem maxUnderscoreRun_ge_best (cs : List Char) :
 `parseTurtle` builds its `Graph` by prepending each statement's triples in
 reverse onto a reversed accumulator and reversing once at the end
 (`parseStatements`). The shard packer folds statements with exactly that
-step (`Storage.PackStream.ingestStep`) so that it never materialises a
-second whole-document graph. The two theorems below state that this is the
+step (`RDF.Source.turtleStep` with `RDF.Source.collect`; the equation is
+`RDF.Source.turtleStep_collect`) so that it never materialises a second
+whole-document graph. The two theorems below state that this is the
 SAME graph, so a packer run through the fold commits the bytes a
 `parseTurtle` run would commit. This is the Turtle counterpart of
 `NQuadsFold.streamConsume11_eq_batch` instantiated at the accumulator the

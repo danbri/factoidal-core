@@ -8,23 +8,23 @@
    same fold runs unchanged inside the WebAssembly module, which has no file
    I/O.
 
-   The IBK4 path below streams the N-Quads grammar through
-   `PackStream.quadIngestFeed` and reads the whole input with `IO.FS.readFile`
-   only for TriG, Turtle and N-Triples, which have no chunk fold yet. Its
-   blocks, sidecars and manifest are decided by `PackStream.quadArtifacts`,
+   The IBK4 and IBK5 path below streams the source through
+   `PackStream.quadIngestFeed`, which reads it with the source layer
+   (`L4Factoidal/RDF/Source.lean`): N-Triples, N-Quads, Turtle and TriG in
+   chunks, RDF/XML and JSON-LD whole. It reads the whole input with
+   `IO.FS.readFile` only in the test mode `L4_PACK_BUFFERED=1`. Its blocks,
+   sidecars and manifest are decided by `PackStream.quadArtifacts`,
    `PackStream.quadIngestFinish` and `PackStream.quadManifestArtifacts` like
    everything else here. -/
 import L4Factoidal.Storage.PackStream
 import L4Factoidal.Storage.PredicateQuadBlocks
 import L4Factoidal.Storage.IndexedBlockWireV4
-import L4Factoidal.Syntax.Turtle
-import L4Factoidal.Syntax.TriG
-import L4Factoidal.Syntax.NQuadsFast
+import L4Factoidal.RDF.SourceJsonLd
 import Harness.NativeHasher
 
 namespace Harness.PredicateShardPack
 
-open L4Factoidal.Syntax
+open L4Factoidal.RDF
 open L4Factoidal.Storage.ShardManifest
 open L4Factoidal.Storage.PackStream
 open L4Factoidal.Crypto
@@ -95,13 +95,14 @@ private def ingestFile (format : PackFormat) (input output : System.FilePath)
     (prepass : SourcePrepass) : IO PackState := do
   let fuel := (← input.metadata).byteSize.toNat + 1
   IO.FS.withFile input .read fun handle => do
+    let start ← ofExcept (ingestInit hasher format prepass (some ("file://" ++ input.toString)) blockFold)
     let state ← foldHandle handle
       (fun state bytes => do
         let (next, artifacts) ← ofExcept (ingestFeed state bytes)
         writeArtifacts output.toString artifacts
         pure next)
       fuel
-      (ingestInit hasher format prepass (some ("file://" ++ input.toString)) blockFold)
+      start
     let (packed, artifacts) ← ofExcept (ingestFinish state)
     writeArtifacts output.toString artifacts
     pure packed
@@ -139,34 +140,35 @@ writes them before it reads the next chunk, so the generation is never live
 all at once. Several blocks per predicate is what SBM2 has always admitted: a
 reader takes the union of the entries for a predicate.
 
-What the input no longer decides is the CHARACTER LIST. For the N-Quads
-grammar `quadIngestFile` below feeds 65,536-byte chunks to
+What the input no longer decides is the CHARACTER LIST. For every syntax that
+streams, `quadIngestFile` below feeds 65,536-byte chunks to
 `PackStream.quadIngestFeed`, so neither the source `String` nor its
 `String.toList` — about twenty-four bytes per source byte — is ever built.
 Measured on 104,017,780 bytes of N-Quads over 50 named graphs: peak memory
 footprint 2,531,999,744 bytes before, 1,127,907,328 bytes after, with a
 byte-identical generation
-(<https://github.com/danbri/factoidal/issues/650>). Turtle and N-Triples
-take the same route through the Turtle chunk fold; only TriG still buffers,
-because it has no chunk fold. Publication every batch then took the same
-104,857,577-byte prefix of skosdex from 599,870,336 bytes of peak footprint
-to 328,272,128. What is proved and what is only measured for each route is
-stated at `PackStream`'s streaming section.
+(<https://github.com/danbri/factoidal/issues/650>). Turtle, N-Triples and TriG
+take the same route through the Turtle and TriG chunk folds. Publication every
+batch then took the same 104,857,577-byte prefix of skosdex from 599,870,336
+bytes of peak footprint to 328,272,128. RDF/XML and JSON-LD are the exceptions:
+the source layer keeps their chunks and parses the joined text
+(https://github.com/danbri/factoidal/issues/838,
+https://github.com/danbri/factoidal/issues/839). What is proved and what is
+only measured for each syntax is stated in `RDF/Source.lean`.
 
 Every block, sidecar and manifest byte is decided by
 `PackStream.quadArtifacts` and `PackStream.quadManifestArtifacts`, which are
 pure and are what the WebAssembly pack operations run. This file only reads
 the input and writes what it is given.
 
-The input grammar is chosen by file extension: `.trig` is TriG, `.nq` and
-`.nquads` are N-Quads, `.nt` is N-Triples, and anything else is Turtle, whose
-triples all land in the default graph. -/
+The input syntax is chosen by file extension, through the one format table
+(`RDF.formatOfPath`): `.trig` is TriG, `.nq` and `.nquads` are N-Quads, `.nt`
+and `.ntriples` are N-Triples, `.rdf`, `.xml`, `.owl` and `.rdfxml` are
+RDF/XML, `.jsonld` and `.json-ld` are JSON-LD, and anything else is Turtle
+(`RDF.rdfFormatDefault`), whose triples all land in the default graph. -/
 
-private def syntaxOf (input : String) : PackSyntax :=
-  if input.endsWith ".trig" then .trig
-  else if input.endsWith ".nq" || input.endsWith ".nquads" then .nquads
-  else if input.endsWith ".nt" then .ntriples
-  else .turtle
+private def syntaxOf (input : String) : RdfFormat :=
+  (formatOfPath input).getD rdfFormatDefault
 
 /-- The streaming IBK4 second pass. The source `String` and its `List Char`
     never exist; only one 65,536-byte chunk is decoded at a time, and each
@@ -174,9 +176,11 @@ private def syntaxOf (input : String) : PackSyntax :=
     generation is never live all at once. -/
 private def quadIngestFile (format : PackFormat) (input : System.FilePath)
     (output : System.FilePath)
-    (grammar : PackSyntax) (prepass : SourcePrepass) (baseIri : Option String)
+    (source : RdfFormat) (prepass : SourcePrepass) (baseIri : Option String)
     (batchBytes : Nat) : IO QuadPack := do
   let fuel := (← input.metadata).byteSize.toNat + 1
+  let start ← ofExcept (quadIngestInit hasher format source Source.withJsonLd prepass baseIri
+    batchBytes blockFold)
   IO.FS.withFile input .read fun handle => do
     let state ← foldHandle handle
       (fun state bytes => do
@@ -184,7 +188,7 @@ private def quadIngestFile (format : PackFormat) (input : System.FilePath)
         writeArtifacts output.toString artifacts
         pure next)
       fuel
-      (quadIngestInit hasher format grammar prepass baseIri batchBytes blockFold)
+      start
     let result ← ofExcept (quadIngestFinish state)
     writeArtifacts output.toString result.artifacts
     pure { result with artifacts := [] }
@@ -200,16 +204,17 @@ private def packQuads (format : PackFormat) (input output : String) (batchBytes 
     let grammar := syntaxOf input
     let baseIri := some ("file://" ++ input)
     let result ←
-      if quadStreams grammar && !(← forceBuffered) then
+      if !(← forceBuffered) then
         quadIngestFile format input outputPath grammar prepass baseIri batchBytes
       else do
         let text ← IO.FS.readFile input
-        let buffered ← ofExcept (quadArtifacts hasher format grammar prepass text baseIri)
+        let buffered ← ofExcept (quadArtifacts hasher format grammar Source.withJsonLd prepass
+          text baseIri)
         writeArtifacts output buffered.artifacts
         pure { buffered with artifacts := [] }
     let manifest ← ofExcept (quadManifestArtifacts format prepass result.packed)
     writeArtifacts output manifest
-    IO.println s!"l4block-shard-pack format={layoutName format} syntax={syntaxName grammar} input={input} quads={result.packed.tripleCount} blocks={result.packed.entriesRev.length} graphs={result.graphs} batches={result.batches} batch-bytes={batchBytes} output={output} manifest=manifest.sbm2 wire-version={manifestVersion format} blank-node-scope={bytesToHex prepass.sourceIdentity} chunk-bytes={chunkBytes}"
+    IO.println s!"l4block-shard-pack format={layoutName format} syntax={formatLabel grammar} input={input} quads={result.packed.tripleCount} blocks={result.packed.entriesRev.length} graphs={result.graphs} batches={result.batches} batch-bytes={batchBytes} output={output} manifest=manifest.sbm2 wire-version={manifestVersion format} blank-node-scope={bytesToHex prepass.sourceIdentity} chunk-bytes={chunkBytes}"
     return 0
   catch error =>
     IO.eprintln s!"l4block-shard-pack failure: {error}"
@@ -231,7 +236,7 @@ def main (args : List String) : IO UInt32 := do
       match (if tag == "ibk4" then some PackFormat.ibk4
              else if tag == "ibk5" then some PackFormat.ibk5 else none) with
       | none =>
-          IO.eprintln "usage: l4block-shard-pack INPUT OUTPUT-DIR [ibk3|ibk4|ibk5] [--batch-bytes N]  (ibk4 and ibk5 accept .ttl, .trig, .nq, .nt)"
+          IO.eprintln "usage: l4block-shard-pack INPUT OUTPUT-DIR [ibk3|ibk4|ibk5] [--batch-bytes N]  (ibk4 and ibk5 accept .ttl, .trig, .nq, .nt, .rdf, .jsonld)"
           return 2
       | some format =>
       match batchBytesOf rest with
@@ -241,7 +246,7 @@ def main (args : List String) : IO UInt32 := do
       | some batchBytes =>
           try packQuads format input output batchBytes
           catch e => IO.eprintln s!"l4block-shard-pack failure: {e}"; return 1
-  | _ => IO.eprintln "usage: l4block-shard-pack INPUT OUTPUT-DIR [ibk3|ibk4|ibk5] [--batch-bytes N]  (ibk4 and ibk5 accept .ttl, .trig, .nq, .nt)"; return 2
+  | _ => IO.eprintln "usage: l4block-shard-pack INPUT OUTPUT-DIR [ibk3|ibk4|ibk5] [--batch-bytes N]  (ibk4 and ibk5 accept .ttl, .trig, .nq, .nt, .rdf, .jsonld)"; return 2
 
 end Harness.PredicateShardPack
 def main (args : List String) : IO UInt32 := Harness.PredicateShardPack.main args

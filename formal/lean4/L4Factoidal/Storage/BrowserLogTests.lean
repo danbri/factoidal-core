@@ -16,7 +16,7 @@ import L4Factoidal.Storage.BrowserLogTheorems
 import L4Factoidal.SPARQL.StoreEndpoint
 import L4Factoidal.SPARQL.UpdateDelta
 import L4Factoidal.SPARQL.UpdateParser
-import L4Factoidal.Syntax.NQuadsFast
+import L4Factoidal.RDF.Source
 
 namespace L4Factoidal.Storage.BrowserLog
 
@@ -31,7 +31,7 @@ theorem applyBatch_eq_store (ds : Dataset) (b : DeltaBatch) :
 /-- The merge of the log of one update request over `base`, against the
 reference update semantics over the same base. -/
 private def agreesWithUpdate (baseNQ update : String) : Bool :=
-  match L4Factoidal.Syntax.parseNQuadsFast baseNQ .rdf12,
+  match L4Factoidal.RDF.Source.parseDocument {} .nquads .rdf12 none baseNQ,
         L4Factoidal.SPARQL.parseSparqlUpdate update none with
   | .ok base, .ok u =>
     match L4Factoidal.SPARQL.deltaBatchForUpdate? 0 0 id u,
@@ -62,7 +62,7 @@ private def baseNQ : String :=
 -- A form whose effect needs its WHERE clause evaluated has no batch.
 #guard !agreesWithUpdate baseNQ "DELETE WHERE { ?s ?p ?o }"
 -- The check can fail: a merge of a different log is not the update's result.
-#guard match L4Factoidal.Syntax.parseNQuadsFast baseNQ .rdf12,
+#guard match L4Factoidal.RDF.Source.parseDocument {} .nquads .rdf12 none baseNQ,
         L4Factoidal.SPARQL.parseSparqlUpdate "CLEAR DEFAULT" none with
   | .ok base, .ok u =>
     match L4Factoidal.SPARQL.applyUpdate base u with

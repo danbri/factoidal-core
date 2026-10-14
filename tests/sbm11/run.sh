@@ -123,12 +123,24 @@
 #                ids-* queries again on blocks of 2 rows with --sip always and
 #                --threads 4; `dump` equal to `l4factoidal parse --format
 #                nquads12 --out nquads` of the source, as sets, and `canon`
-#                of the source refused (an expected failure, pinned: canon
-#                reads RDF 1.1 until https://github.com/danbri/factoidal/issues/837);
+#                of the source (it reads RDF 1.2 through the source layer,
+#                https://github.com/danbri/factoidal/issues/837);
 #                `l4sbm11-dict-pack --check` with failures=0; after one update,
 #                `compact` byte-identical to a fresh pack of the updated
 #                quads; an update with a triple term refused (a limit, pinned:
 #                issue 792 item 1, the update part).
+#   (n) layering  no module under formal/lean4/L4Factoidal/Storage/ imports an
+#                L4Factoidal.Syntax module or names one in its code
+#                (tests/sbm11/storage_layering.py). The store takes RDF quads from
+#                the source layer (L4Factoidal/RDF/Source.lean) and does not know a
+#                concrete syntax (owner, 2026-10-14,
+#                https://github.com/danbri/factoidal/issues/837).
+#   (o) syntax   tests/sbm11/syntax_independence.sh: one dataset written in
+#                several syntaxes gives byte-identical SBM11 data files (the
+#                manifests differ only in the source length and digest); blank
+#                nodes compared by their RDFC-1.0 canonical N-Quads; labels of one
+#                document stay distinct; no default syntax. Its counts are added
+#                to this run's.
 #   (g) tamper   a copy of the generation with one byte changed in a block
 #                frame of spo.prb1 (manifest and sidecars kept): `scan` and
 #                `query` must be refused under merkle (and by default, the
@@ -152,7 +164,7 @@ for need in "$BIN/l4sbm11" "$BIN/l4sbm11-pack" "$BIN/l4factoidal" "$GEN" "$ORACL
 done
 TMP="$(mktemp -d "${TMPDIR:-/tmp}/sbm11-run.XXXXXX")"
 trap 'rm -rf "$TMP"' EXIT
-PASS=0; FAIL=0
+PASS=0; FAIL=0; XFAILS=0
 record() { # record <part> <name> <ok:0|1> <detail>
   if [ "$3" = 0 ]; then PASS=$((PASS + 1)); printf 'ok   %-8s %-34s %s\n' "$1" "$2" "$4"
   else FAIL=$((FAIL + 1)); printf 'FAIL %-8s %-34s %s\n' "$1" "$2" "$4"; fi
@@ -654,21 +666,17 @@ else
         *) record rdf12 "$n--small-blocks" 1 "exit $rc; $p; $v" ;; esac ;;
     esac
   done
-  # dump equals canon of the source, as sets. An expected failure, pinned:
-  # `l4sbm11 canon` parses N-Quads with the RDF 1.1 grammar and refuses the
-  # first triple term (https://github.com/danbri/factoidal/issues/837 gives
-  # canon the source layer, which reads RDF 1.2). When canon accepts the file
-  # and equals the dump, this turns RED: make it the assertion
-  # dump-equals-canon then.
+  # dump equals canon of the source, as sets. `l4sbm11 canon` reads the source
+  # through the source layer (RDF 1.2, https://github.com/danbri/factoidal/issues/837).
+  # Until 2026-10-14 this case was an expected failure, because canon parsed
+  # RDF 1.1 and refused the first triple term.
   rc=0
   "$BIN/l4sbm11" dump "$G12" 2>/dev/null | sort -u >"$TMP/g12dump.nq" || rc=$?
   crc=0
   "$BIN/l4sbm11" canon "$G12SRC" >"$TMP/g12canon.raw" 2>"$TMP/g12canon.err" || crc=$?
   sort -u "$TMP/g12canon.raw" >"$TMP/g12canon.nq"
-  if [ "$rc" -eq 0 ] && [ "$crc" -ne 0 ] && grep -q 'parse error' "$TMP/g12canon.err"; then
-    record rdf12 xfail-dump-equals-canon 0 "canon refuses RDF 1.2, expected (https://github.com/danbri/factoidal/issues/837): $(head -c 100 "$TMP/g12canon.err")"
-  elif [ "$rc" -eq 0 ] && [ "$crc" -eq 0 ] && [ -s "$TMP/g12dump.nq" ] && cmp -s "$TMP/g12dump.nq" "$TMP/g12canon.nq"; then
-    record rdf12 xfail-dump-equals-canon 1 "UNEXPECTED: canon reads RDF 1.2 and equals the dump; make this the assertion dump-equals-canon (https://github.com/danbri/factoidal/issues/837)"
+  if [ "$rc" -eq 0 ] && [ "$crc" -eq 0 ] && [ -s "$TMP/g12dump.nq" ] && cmp -s "$TMP/g12dump.nq" "$TMP/g12canon.nq"; then
+    record rdf12 dump-equals-canon 0 "$(wc -l <"$TMP/g12dump.nq") quads"
   else
     record rdf12 dump-equals-canon 1 "exit $rc/$crc; dump $(wc -l <"$TMP/g12dump.nq"), canon $(wc -l <"$TMP/g12canon.nq") lines; $(head -c 160 "$TMP/g12canon.err")"
   fi
@@ -721,6 +729,25 @@ else
   fi
 fi
 
+echo "=== (n) layering: the store names no syntax module (issue 837)"
+rc=0
+out="$(python3 -I "$HERE/storage_layering.py" "$ROOT/formal/lean4/L4Factoidal/Storage" 2>&1)" || rc=$?
+if [ "$rc" -eq 0 ]; then record layering storage-no-syntax 0 "$(printf '%s' "$out" | tail -1)"
+else record layering storage-no-syntax 1 "exit $rc: $(printf '%s' "$out" | head -3 | tr '\n' ' ')"; fi
+
+echo "=== (o) syntax independence (issue 837)"
+rc=0
+L4_BIN_DIR="$BIN" bash "$HERE/syntax_independence.sh" >"$TMP/syntax.log" 2>&1 || rc=$?
+grep -vE '^(syntax independence:|$)' "$TMP/syntax.log" | sed 's/^/     /'
+sum="$(grep '^syntax independence:' "$TMP/syntax.log")"
+if [ -n "$sum" ]; then
+  sp="$(printf '%s' "$sum" | sed -n 's/.*: \([0-9]*\) pass, \([0-9]*\) fail, \([0-9]*\) expected-fail.*/\1/p')"
+  sf="$(printf '%s' "$sum" | sed -n 's/.*: \([0-9]*\) pass, \([0-9]*\) fail, \([0-9]*\) expected-fail.*/\2/p')"
+  sx="$(printf '%s' "$sum" | sed -n 's/.*: \([0-9]*\) pass, \([0-9]*\) fail, \([0-9]*\) expected-fail.*/\3/p')"
+  PASS=$((PASS + sp)); FAIL=$((FAIL + sf)); XFAILS=$((XFAILS + sx))
+  echo "     $sum"
+else record syntax independence 1 "exit $rc: no summary line"; fi
+
 echo
-echo "sbm11 stages 4 and 5: $PASS pass, $FAIL fail (out of $((PASS + FAIL)))"
+echo "sbm11 stages 4 and 5: $PASS pass, $FAIL fail, $XFAILS expected-fail (out of $((PASS + FAIL + XFAILS)))"
 [ "$FAIL" -eq 0 ]

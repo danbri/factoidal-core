@@ -121,28 +121,9 @@ def readNQuad11 (pos : Nat) (cs : List Char) :
 
 /-! ### The RDF 1.2 object fuel
 
-`readObject12` takes a fuel that bounds `<<( ... )>>` NESTING, and each level
-consumes three characters, so any count of the characters the object can
-occupy is a sufficient bound. Until 2026-09-05 the bound was `cs.length`,
-which walks the WHOLE remaining input for every statement and is therefore
-quadratic in what the caller hands over: in the streaming packer that is a
-65,536-character chunk, and `/usr/bin/sample` put 10,159 of 15,405 samples of
-a wire-version-10 pack of a 52,428,626-byte skosdex prefix inside that one
-`List.length`. Version 10 reads its source as RDF 1.2, so it was the first
-route to pay it.
-
-An N-Quads statement never spans a raw line break — a literal carries `\n`
-escaped, RDF 1.1 N-Quads section 4 — so the characters up to the next line
-break bound the object, and counting them is linear in the line rather than
-in the document. The bound is only ever LARGER than the nesting depth it must
-cover, so no document that parsed before is refused now and no committed byte
-changes. -/
-def lineFuelGo : List Char → Nat → Nat
-  | [], acc => acc
-  | c :: rest, acc => if c == '\n' then acc else lineFuelGo rest (acc + 1)
-
-/-- One more than the number of characters before the next line break. -/
-def lineFuel (cs : List Char) : Nat := lineFuelGo cs 1
+`readObject12` takes a fuel that bounds `<<( ... )>>` nesting. The bound is
+`lineFuel` (defined in `Syntax.NTriples`, where `readTriple12` uses it too): one
+more than the number of characters up to the next line break. -/
 
 /-- One N-Quad line (RDF 1.2 object grammar: the object slot may be a
 triple term). Port of `parse_nquad_12`. -/

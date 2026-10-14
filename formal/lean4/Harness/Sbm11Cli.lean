@@ -28,10 +28,13 @@ https://github.com/danbri/factoidal/issues/789).
       names GEN (activation checked every file), `merkle` otherwise.
       `stats`, `verify`, `activate`, `prm-check` and `frame-check` always use
       `merkle` (or hash every file).
-  l4sbm11 canon SOURCE
-      The quads of an N-Triples or N-Quads source as N-Quads, with the term
-      normalisation of the packer (language tags in lower case), so that
-      `sort -u` of this and of `dump` compare the quad sets.
+  l4sbm11 canon SOURCE [--format F] [--base IRI]
+      The quads of a source in any of the six RDF syntaxes (N-Triples,
+      N-Quads, Turtle, TriG, RDF/XML, JSON-LD; the format from `--format`,
+      else from the file extension, as for `l4sbm11-pack`) as N-Quads, with the
+      term normalisation of the packer (language tags in lower case), so that
+      `sort -u` of this and of `dump` compare the quad sets. Blank node labels
+      are those of the document and of the readers' generated labels.
   l4sbm11 verify GEN
       The activation checks, without activating.
   l4sbm11 activate ROOT NAME
@@ -69,8 +72,6 @@ import Harness.Sbm11Gen
 import Harness.Sbm11Query
 import Harness.Sbm11Compact
 import Harness.Sbm11PermCheck
-import L4Factoidal.Syntax.NQuadsFold
-import L4Factoidal.Syntax.Utf8Stream
 
 open L4Factoidal.RDF
 open L4Factoidal.Storage.Sbm11
@@ -236,36 +237,18 @@ def runDump (dir permS : String) (idsOnly : Bool) (verify? : Option Verify) : IO
 
 /-! ## canon -/
 
-structure CAcc where
-  pending : List (Triple × Option Subject) := []
-
-def runCanon (source : String) : IO UInt32 := do
-  let consume (acc : CAcc) (tr : Triple) (g : Option Subject) : CAcc := { pending := (tr, g) :: acc.pending }
+def runCanon (source : String) (opts : Sbm11Pack.SourceOpts) : IO UInt32 := do
+  let size ← fileSize source
+  let cfg ← Sbm11Pack.readCfg source size opts
   let out ← IO.getStdout
-  let flushAcc (acc : CAcc) : IO CAcc := do
+  let flushAcc (acc : Sbm11Pack.P1) : IO Sbm11Pack.P1 := do
     let mut text := ""
     for (tr, g) in acc.pending.reverse do
       let gt := g.map fun s => normalizeTerm s.toTerm
       text := text ++ (← ok "N-Quads" (nquadLine (normalizeTerm tr.s.toTerm) (.iri tr.p) (normalizeTerm tr.o) gt)) ++ "\n"
     out.putStr text
     pure {}
-  let mut utf8 := L4Factoidal.Syntax.Utf8Stream.init
-  let mut st := L4Factoidal.Syntax.NQuadsStreaming.initialStateC ({} : CAcc)
-  let h ← IO.FS.Handle.mk source .read
-  repeat
-    let bytes ← h.read 65536
-    if bytes.isEmpty then break
-    match utf8.feed bytes with
-    | .error e => throw (IO.userError s!"UTF-8: {e}")
-    | .ok (text, u) =>
-      utf8 := u
-      st := L4Factoidal.Syntax.NQuadsStreaming.feedChunkC .rdf11 consume st text.toList
-      if let some e := st.err then throw (IO.userError s!"parse error at {e.pos}: {e.msg}")
-      let acc ← flushAcc st.acc
-      st := { st with acc := acc }
-  match L4Factoidal.Syntax.NQuadsStreaming.finishC .rdf11 consume st with
-  | .error e => throw (IO.userError s!"parse error at {e.pos}: {e.msg}")
-  | .ok acc => let _ ← flushAcc acc
+  let _ ← Sbm11Pack.streamRange cfg source 0 size flushAcc
   out.flush
   pure 0
 
@@ -452,7 +435,7 @@ def runReseal (dir : String) : IO UInt32 := do
 
 def usage : String :=
   "usage: l4sbm11 stats GEN | scan GEN PERM [KEY...] [--limit N] [--ids] | count GEN PERM [KEY...]\n" ++
-  "       | dump GEN [PERM] | dump-ids GEN PERM | canon SOURCE | verify GEN | activate ROOT NAME\n" ++
+  "       | dump GEN [PERM] | dump-ids GEN PERM | canon SOURCE [--format F] [--base IRI] | verify GEN | activate ROOT NAME\n" ++
   "       | query GEN (SPARQL | --file Q.rq) [--base IRI] [--explain] [--repeat N] [--reference-render] [--reference]\n" ++
   "         [--sparql12]\n" ++
   "       | serve GEN [--sparql12] | prm-check GEN | frame-check GEN\n" ++
@@ -483,7 +466,10 @@ def main (args0 : List String) : IO UInt32 := do
     | ["dump", dir] => runDump dir "spo" false verify?
     | ["dump", dir, perm] => runDump dir perm false verify?
     | ["dump-ids", dir, perm] => runDump dir perm true verify?
-    | ["canon", src] => runCanon src
+    | "canon" :: src :: rest =>
+      match Sbm11Pack.parseOpts rest {} with
+      | some o => runCanon src o.source
+      | none => IO.eprintln usage; pure 2
     | ["verify", dir] => runVerify dir
     | ["activate", root, name] => runActivate root name
     | ["reseal", dir] => runReseal dir

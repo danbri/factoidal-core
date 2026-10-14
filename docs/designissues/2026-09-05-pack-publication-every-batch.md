@@ -286,7 +286,7 @@ same machine, both runs measured here rather than quoted from section 6.
 | Piece | File |
 |---|---|
 | the policy as pure functions | `L4Factoidal/Storage/PredicateQuadBlocks.lean` (`Run`, `Pub`, `freshRun`, `flushStep`, `pubFlush`, `pubAddRun`, `pubAdd`, the four constants, `runsOfBuckets`) |
-| the fold accumulator and the pass | `L4Factoidal/Storage/PackStream.lean` (`QuadPub`, `addQuadPub`, `quadPubStep`, `QuadStream`, `quadStreamDrain`, `quadStreamFinish`, `QuadIngestState`, `quadIngestFeed`, `quadIngestFinish`) |
+| the fold accumulator and the pass | `L4Factoidal/Storage/PackStream.lean` (`QuadPub`, `addQuadPub`, `quadStreamDrain`, `QuadIngestState`, `quadIngestFeed`, `quadIngestFinish`); since 2026-10-14 the reader of the source is `L4Factoidal/RDF/Source.lean` (`Source.ByteReader QuadPub`), and `quadPubStep`, `QuadStream` and `quadStreamFinish` are gone (https://github.com/danbri/factoidal/issues/837) |
 | the theorems | `L4Factoidal/Storage/PackStreamTheorems.lean` |
 | the native host | `Harness/PredicateShardPack.lean` (`--batch-bytes`, `batches=` in the summary, artifacts written per feed) |
 | the WebAssembly ops | `Wasm/Ops/Pack.lean` (`packBegin`'s fourth argument, `defaultPackBatchBytes`), `Wasm/Dispatch.lean` |

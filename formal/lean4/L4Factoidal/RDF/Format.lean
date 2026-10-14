@@ -76,14 +76,38 @@ def formatOfLabel (s : String) : Option RdfFormat :=
   else if lo == "application/ld+json" then some .jsonld
   else none
 
-/-- Verbose display name, for startup logs and `--format help`. -/
+/-- Verbose display name, for startup logs and `--format help`.
+
+    The JSON-LD name was "JSON-LD (expanded form)" until 2026-10-14. That text
+    described the F* reader, which accepts the expanded form only. The Lean
+    reader (`JSONLD.parseJsonLd`) first expands the document, with its inline
+    `@context`, and then converts it to RDF (JSON-LD 1.1 API section 8.2), so
+    the name is "JSON-LD 1.1". It has no document loader: a remote `@context`
+    is an error. -/
 def formatName : RdfFormat → String
   | .nt     => "N-Triples"
   | .turtle => "Turtle"
   | .nquads => "N-Quads"
   | .trig   => "TriG"
   | .rdfxml => "RDF/XML"
-  | .jsonld => "JSON-LD (expanded form)"
+  | .jsonld => "JSON-LD 1.1"
+
+/-- The short label of a format, the one `formatOfLabel` reads back: what a
+    command prints after `syntax=` and what `--format` takes. -/
+def formatLabel : RdfFormat → String
+  | .nt     => "ntriples"
+  | .turtle => "turtle"
+  | .nquads => "nquads"
+  | .trig   => "trig"
+  | .rdfxml => "rdfxml"
+  | .jsonld => "jsonld"
+
+/-- The format of a file path, by its last extension (`formatOfExtension`);
+    `none` when the path has no extension or the extension is unknown. -/
+def formatOfPath (path : String) : Option RdfFormat :=
+  match (System.FilePath.mk path).extension with
+  | some ext => formatOfExtension ("." ++ ext)
+  | none => none
 
 /-- The extension's format, falling back to `rdfFormatDefault` when the
     extension is unknown or absent. -/
@@ -118,6 +142,16 @@ def detectFormatOrDefault (ext : String) : RdfFormat :=
 #guard detectFormatOrDefault ".unknown" == .turtle
 #guard detectFormatOrDefault "" == .turtle
 #guard detectFormatOrDefault ".nq" == .nquads
+
+/-! The label of every format is read back to the same format, and the path
+    reader takes the last extension. -/
+
+#guard [RdfFormat.nt, .turtle, .nquads, .trig, .rdfxml, .jsonld].all fun f => formatOfLabel (formatLabel f) == some f
+#guard formatOfPath "a/b/data.TTL" == some .turtle
+#guard formatOfPath "data.tar.nq" == some .nquads
+#guard formatOfPath "data" == none
+#guard formatOfPath "a.b/data" == none
+#guard formatOfPath "data.unknown" == none
 
 /-! Every constructor has a display name, and they are distinct — a
     copy-paste that gave two formats the same name would pass a

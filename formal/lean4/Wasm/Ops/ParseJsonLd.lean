@@ -17,7 +17,7 @@ line (`Wasm/Cli.lean`) call them.
 -/
 import Wasm.Ops.Parse
 import Wasm.Ops.Lenient
-import L4Factoidal.JSONLD.ToRdf
+import L4Factoidal.RDF.SourceJsonLd
 
 namespace L4Wasm.Ops
 
@@ -28,10 +28,7 @@ open L4Factoidal.JSON
 tag. -/
 def jsonLdReader : ExtraReader := fun tag text base =>
   if jsonLdFormatTags.contains tag then
-    some (match L4Factoidal.JSONLD.parseJsonLd L4Factoidal.JSONLD.Loader.none text base
-                  none none none with
-          | .ok ds   => .ok ds
-          | .error e => .error s!"invalid or unsupported JSON-LD ({e.code})")
+    some ((L4Factoidal.RDF.Source.jsonLdParser .rdf11 base text).mapError (·.msg))
   else none
 
 /-- `parseTextToDatasetBy` with JSON-LD. -/

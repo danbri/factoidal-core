@@ -1,7 +1,8 @@
 # RDF parsing strategy in the Lean tree: layers, entry points, proofs, costs
 
 Status: record of the design as it stands on 2026-09-03 (section 3a, the
-lenient mode, added 2026-10-10; section 3c, RDF/XML, added 2026-10-13), written because the
+lenient mode, added 2026-10-10; section 3c, RDF/XML, added 2026-10-13; section
+3f, the source layer, added 2026-10-14), written because the
 owner asked for it to live somewhere findable (2026-09-03: "this and similar
 ought to be recorded properly somewhere I can find it. Ephemeral coding logs
 aren't that place"). Update this file when a layer, an entry point or a
@@ -219,7 +220,8 @@ Modules, in data order:
 - `TurtleTheorems.lean` (2026-09-05): `parseStatements_eq_fold` and
   `parseTurtle_eq_fold` — folding statements with `Syntax.prependReverse`
   and reversing once gives exactly the `Graph` `parseTurtle` returns.
-  `PackStream.ingestStep_eq_prependReverse` ties the shard packer's step to
+  `Source.turtleStep_collect` (until 2026-10-14
+  `PackStream.ingestStep_eq_prependReverse`) ties the shard packer's step to
   that accumulator. This is the ACCUMULATOR half of the streaming
   agreement, the counterpart of instantiating
   `NQuadsFold.streamConsume11_eq_batch` at the accumulator the batch parser
@@ -300,7 +302,7 @@ Modules, in data order:
 | --- | --- | --- | --- |
 | N-Triples | `NTriples.lean` `parseNTriples` | `StrictFeed.lean` `LineFeed` with `tripleReader` (the command line's `parse FILE`, section 3b) | W3C suite; `NTriplesRoundTrip.lean`; `parseLinesAcc_eq_foldLines`; the chunk boundary by `tools/strict-parse-differential.sh` (3b.4) |
 | N-Quads | `NQuads.lean` `parseNQuads` | `NQuadsFast.lean` `parseNQuadsFast` (bucketed accumulator; the WASM `datasetOpen` path); `NQuadsStreaming.lean` (chunk-boundary fold), `NQuadsFold.lean` (the generic consumer the IBK4 shard packer streams through); `StrictFeed.lean` `LineFeed` with `quadReader` (the command line's `parse FILE`, section 3b; `LineFeed.run_quad11_eq_batch`) | `parseNQuadsFast_eq_parseNQuads` proved 2026-09-02 (`NQuadsFastTheorems.lean`); the streaming module carries its own chunk-boundary theorem |
-| TriG | `TriG.lean` `parseTriG` (shares the Turtle productions; the default graph is the unlabelled block) | `TriGChunkFold.lean` (the IBK4 and IBK5 shard packer's chunk walk, section 3e; the SBM11 packers take N-Triples and N-Quads only) | W3C suites; chunk cuts, brace balance and block labels PROVED in `TriGChunkFoldTheorems.lean`; agreement with `parseTriG` MEASURED (section 3e), open: https://github.com/danbri/factoidal/issues/836 |
+| TriG | `TriG.lean` `parseTriG` (shares the Turtle productions; the default graph is the unlabelled block) | `TriGChunkFold.lean` (the shard packers' chunk walk, section 3e; read by `l4sbm11-pack` since 2026-10-14, section 3f) | W3C suites; chunk cuts, brace balance and block labels PROVED in `TriGChunkFoldTheorems.lean`; agreement with `parseTriG` MEASURED (section 3e), open: https://github.com/danbri/factoidal/issues/836 |
 | RDF/XML | `RdfXml.lean` `parseRdfXml` (the element tree, then the walk) | `parseRdfXmlStream` (the children of `rdf:RDF` walked as they are read; every caller runs it, section 3c) | W3C suite; `RdfXmlTheorems.lean` (blank-node label spaces disjoint by construction); `parseRdfXml_eq_stream` (`@[csimp]`) |
 
 ### 3e. TriG chunk walk (https://github.com/danbri/factoidal/issues/769)
@@ -357,6 +359,131 @@ Shared lexical pieces: `Lexing.lean` (the N-Triples string body and escape
 table the Turtle `decodeEscape` mirrors), `IriResolve.lean` (RFC 3986),
 `IriScan.lean`, the `Locality*.lean` family (chunk-locality lemmas used by
 the N-Quads streaming proofs).
+
+### 3f. The source layer: one reader interface for every syntax (2026-10-14)
+
+Tracking: https://github.com/danbri/factoidal/issues/837. Owner, 2026-10-14,
+verbatim: "SMB11 should store rdf graphs regardless of source formats - this is
+why we have reflected w3c rdf core concepts into Lean. I don't see any reason
+for the format to be made so explicit for internal data manipulation- file
+formats are for exchange and publishing".
+
+**Before.** Each consumer of a document chose its own syntax modules.
+`Storage/PackStream.lean` had a second enumeration of formats (`PackSyntax`,
+four of the six syntaxes), three step functions (`ingestStep`, `quadPubStep`,
+`trigPubStep`) and a stream type with one case for each of N-Quads, Turtle and
+TriG (`QuadStream`). The SBM11 packer read N-Triples and N-Quads only. The
+packers for IBK4 and IBK5 read an `.nt` file with the Turtle grammar. The wasm
+parse op called each parser by name. `tests/sbm11/storage_layering.py` reported
+31 uses of `L4Factoidal.Syntax` (import lines and names in code) under
+`L4Factoidal/Storage/`, in `PackStream.lean` and `BrowserLogTests.lean`. It
+reports 0 now.
+
+**After.** `L4Factoidal/RDF/Source.lean` has two functions for a document:
+
+| Function | Meaning | Used by |
+| --- | --- | --- |
+| `Source.parseDocument extra format mode base text` | the whole text becomes a `Dataset` | the wasm parse op (`Wasm/Ops/Parse.lean`), `l4source-convert`, the buffered pack route |
+| `Source.Reader` / `Source.ByteReader` (`init`, `feed`, `finish`) | the text arrives in chunks; each quad goes to a consumer `Step α` when its statement is complete | the shard packers (IBK2 to IBK5), `l4sbm11-pack`, `l4sbm11 canon` |
+
+`RdfFormat` (`RDF/Format.lean`) is the only table of formats. Each format has
+one reader:
+
+| Format | Reader | Memory |
+| --- | --- | --- |
+| N-Triples | `StrictFeed.LineFeed` with `tripleReader`; a graph name is an error (`expected '.' terminator`) | one chunk and one partial line |
+| N-Quads | `StrictFeed.LineFeed` with `quadReader` | one chunk and one partial line |
+| Turtle | `TurtleChunkFold` (section 2.2) | one chunk and one unfinished statement |
+| TriG | `TriGChunkFold` (section 3e) | one chunk and one unfinished unit |
+| RDF/XML | `Reader.whole`: keeps the chunks, parses their join at the end | the document (https://github.com/danbri/factoidal/issues/838) |
+| JSON-LD | `Reader.whole` with the parser that `SourceJsonLd.lean` supplies | the document (https://github.com/danbri/factoidal/issues/839) |
+
+JSON-LD stays out of the core wasm: `Source.Extra.jsonld` holds the parser, and
+a tool that reads JSON-LD passes `Source.withJsonLd`.
+
+**Blank node labels.** A blank node label is local to one document (RDF 1.1
+Concepts, section 3.4). Turtle and TriG mint a label for each `[]`, collection
+cell and property list: `anon`, then one more underscore than the longest run of
+underscores in the document, then a counter. A reader that sees one chunk does
+not know that run, so `Source.Prepass` reads the source once before the first
+chunk and `Reader.init` takes the prefix. RDF/XML and JSON-LD mint their own
+labels (`b<N>`, `_jld_anon<N>`). A test with explicit labels that equal the
+minted ones (`tests/sbm11/syntax/bnode_collide.*`) expects five distinct blank
+nodes: Turtle, TriG and RDF/XML read five. JSON-LD reads three
+(https://github.com/danbri/factoidal/issues/840).
+
+**Theorems** (`RDF/SourceTheorems.lean`; axioms `propext`, `Classical.choice`,
+`Quot.sound` only):
+
+- `whole_readAll`, `rdfxml_readAll`, `jsonld_readAll`: a whole reader gives
+  `parseDocument` of the joined chunks, for every list of chunks.
+- `nquads11_readAll_eq_batch`, `nquads11_readAll_eq_parseNQuadsFast`: in RDF 1.1
+  mode a chunked N-Quads read that succeeds gives the line walk of the joined
+  text (`NQuadsFold.streamConsume11_eq_batch`, through
+  `StrictFeed.LineFeed.run_quad11_eq_batch`) and the dataset of
+  `parseNQuadsFast`.
+- `turtleStep_collect`: the Turtle consumer with the consumer that collects
+  triples is `prependReverse`, the accumulator step of `parseTurtle`
+  (`parseTurtle_eq_fold`). This replaces `PackStream.ingestStep_eq_prependReverse`.
+- `prepass_chunks`: the pre-pass over any cut of the text gives
+  `freshBnodePrefix` of the whole text.
+
+Not proved, each with an open issue and an expected-failure test: the Turtle
+chunk walk, the N-Triples chunk boundary, N-Quads in RDF 1.2 mode and the UTF-8
+chunk decoding (https://github.com/danbri/factoidal/issues/826, rows SF-1 to
+SF-4 of `tests/known-defects/run.sh`); the TriG chunk walk
+(https://github.com/danbri/factoidal/issues/836, `tests/trig-pack/order_xfail.sh`).
+`Source.lean` has `#guard`s that cut a document at every position for N-Triples,
+N-Quads (RDF 1.1 and 1.2), Turtle, TriG and RDF/XML.
+
+**Measured against the old packers.** `tools/pack-differential.sh` packed every
+`.ttl`, `.nt`, `.nq` and `.trig` file of the W3C RDF 1.1 and 1.2 suites with the
+`l4block-shard-pack` of commit 1986fdf4 and with the new one, in `ibk3` (Turtle
+and N-Triples files), `ibk4` and `ibk5`, on the chunk route and the
+whole-source route (`L4_PACK_BUFFERED=1`): 8,662 cases. 8,586 agree: 6,367 are packed by both with the same generation hash, and 2,219 are refused by both. 76 differ, all by design.
+
+- In 72 cases (21 files) the old packer accepted the file and the new packer refuses it. Each file is a W3C `rdft:TestNTriplesNegativeSyntax` test (14 files of RDF 1.1 and 7 of RDF 1.2). The old packer read an `.nt` file with the Turtle grammar. The new packer reads it as N-Triples.
+- In 4 cases (2 files, `ibk5` only) the old packer refused the file and the new packer accepts it. The files are the RDF 1.2 `rdft:TestNTriplesPositiveC14N` tests `extra_whitespace-03` and `extra_whitespace-04`, which have white space between a literal and its language tag or datatype. The Turtle reader of the old packer answered `expected '.' after triple`.
+- No case has a different hash.
+
+The run was repeated after the repair below. It gave the same 76 lines. The old and the new `l4sbm11-pack` give the same generation, file for file, for the generated datasets `multi.nt` and `multi.nq` of 88,000 quads (`tests/sbm11/syntax/gen_multi.py`).
+
+**A cost found on the way: `readTriple12`.** `readTriple12`, the RDF 1.2
+statement reader of N-Triples, gave `readObject12` a fuel of `r5.length + 1`
+(the number of characters left in the input) for each statement. The N-Quads
+reader replaced that count with `lineFuel` on 2026-09-05 (the "RDF 1.2 object
+fuel" note in `Syntax/NQuads.lean`, now in `Syntax/NTriples.lean`). The
+N-Triples reader kept the old count. A pack of N-Triples text through the
+source layer took 2,996 ms of phase 1 for 8.3 MB. The same quads as N-Quads text
+took 477 ms (`l4sbm11-pack`, 4 workers, 88,000 quads, 2026-10-14). After the
+repair the N-Triples text takes 272 ms. The batch parser `parseNTriples` in RDF
+1.2 mode walked the rest of the whole document for each statement, so its time
+was quadratic in the document. After the repair `l4source-convert --from
+ntriples` reads 8.3 MB of N-Triples text in 1.7 s. A statement
+never spans a raw line break (`skipWs` skips space and tab only, and a literal
+escapes its line breaks), so the characters up to the next line break bound the
+nesting depth of a triple term. No document that parsed before is refused now.
+The scaling row `sbm11-pack-nt-vs-nq` (N-Triples text takes at most 2.0 times the
+CPU time of N-Quads text) is the gate.
+
+**Costs open.** RDF/XML and JSON-LD hold the document (issues 838 and 839, rows
+`sbm11-pack-rdfxml-memory` and `sbm11-pack-jsonld-memory`). The JSON-LD reader
+uses native stack in proportion to the number of elements: documents of 25,000
+to 100,000 elements overflow a stack of 512 KB, and parse under the 1 GB stack
+of a native process (https://github.com/danbri/factoidal/issues/844, row
+`JLD-STACK` of `tests/known-defects/run.sh`). The other syntaxes pack under a
+512 KB stack: the canary of `tests/stack/run.sh` packs 600,001 N-Triples
+statements (57.8 MB; `sbm11-perm`: 103 pass, 0 fail out of 103 on 2026-10-14),
+and generated sources of Turtle (40 MB), TriG (40 MB) and RDF/XML (11 MB) pack
+in an ad hoc run with `LEAN_STACK_SIZE_KB=512`. Turtle and TriG
+phase 1 runs in one worker, whatever `--workers` says (https://github.com/danbri/factoidal/issues/842, rows
+`sbm11-pack-ttl-workers` and `sbm11-pack-trig-workers`). The Lean RDF/XML and
+JSON-LD writers take time quadratic in the dataset: `l4source-convert` writes
+8.3 MB of N-Triples text in 22 s (RDF/XML) and 44 s (JSON-LD), and 4 times the data takes 15 and
+24 times as long (https://github.com/danbri/factoidal/issues/845 and
+https://github.com/danbri/factoidal/issues/712, rows `rdfxml-write` and
+`jsonld-write` of `tests/stack/lean_scaling.sh`). The cost of each syntax in a pack is in
+`skills/shardborough-storage/SKILL.md`, section "The source layer".
 
 ## 3a. Recovery (lenient) mode
 
@@ -1023,3 +1150,12 @@ after is this branch merged with it.
 4. Before reading code for a superlinear ingest, run a size ladder without
    the suspect inputs and isolate the region that misbehaves
    (`docs/20260902-persisted-query-ladder.md`, "Where the 6,134 s went").
+5. A module under `L4Factoidal/Storage/` names no syntax. It reads a source
+   through `RDF/Source.lean` (section 3f). `tests/sbm11/storage_layering.py`
+   checks it.
+6. When a change moves a syntax to another reader, time the new reader against
+   the old route on the same bytes. A pack differential checks bytes only.
+   (2026-10-14: the strict N-Triples reader gave the same bytes as the reader
+   it replaced and took 2,996 ms of phase 1 against 477 ms for N-Quads text,
+   because `readTriple12` computed `r5.length + 1` for each statement. A timing
+   of one dataset in every syntax (`tests/sbm11/syntax_bench.sh`) found it.)

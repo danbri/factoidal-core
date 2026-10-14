@@ -581,6 +581,9 @@ import L4Factoidal.SPARQL.PlanStreamable
 import L4Factoidal.RDF.CanonicalManifest
 import L4Factoidal.RDF.DatasetMerge
 import L4Factoidal.RDF.Format
+import L4Factoidal.RDF.Source
+import L4Factoidal.RDF.SourceJsonLd
+import L4Factoidal.RDF.SourceTheorems
 import L4Factoidal.SPARQL.JsonEscape
 import L4Factoidal.SPARQL.EvalLimits
 import L4Factoidal.SPARQL.TimeBudget

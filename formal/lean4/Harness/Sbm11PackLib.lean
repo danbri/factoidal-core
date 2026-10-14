@@ -4,12 +4,28 @@ shared with compaction (`Harness/Sbm11Compact.lean`, stage 5)
 (https://github.com/danbri/factoidal/issues/789; design record
 `docs/designissues/2026-10-11-shardborough-vs-qlever.md` section 6.8).
 
-  l4sbm11-pack SOURCE.nt|.nq OUTDIR [--workers K] [--run-terms N]
-               [--block-rows B] [--sort-rows M] [--phase2-only]
+  l4sbm11-pack SOURCE OUTDIR [--format F] [--base IRI] [--workers K]
+               [--run-terms N] [--block-rows B] [--sort-rows M] [--phase2-only]
 
-Phase 1. SOURCE is cut into K byte ranges at line starts (default 4); each
-  range is parsed by its own task with the streaming N-Quads parser (64 KiB
-  chunks, RDF 1.1 mode). A task gives each distinct non-inline term of its
+SOURCE is a document in any of the six RDF syntaxes (N-Triples, N-Quads,
+Turtle, TriG, RDF/XML, JSON-LD). The format is `--format F` (a label of
+`RDF.formatOfLabel`), else the file extension (`RDF.formatOfExtension`). A
+source whose format neither gives is refused, with a message that asks for
+`--format`. The pack takes RDF quads from the source layer
+(`L4Factoidal/RDF/Source.lean`) and does not know the syntax they came from
+(owner, 2026-10-14, https://github.com/danbri/factoidal/issues/837); the
+generation of the same dataset written in two syntaxes is byte-identical
+except for the source length and digest in the manifest
+(`tests/sbm11/syntax_independence.sh`). The source is read as RDF 1.2.
+
+Phase 1. For N-Triples and N-Quads, SOURCE is cut into K byte ranges at line
+  starts (default 4; a line start is a statement boundary), and each range is
+  read by its own task. For every other syntax one task reads the whole
+  source: Turtle and TriG after one read for the generated blank-node prefix
+  (`Source.Prepass`), RDF/XML and JSON-LD by parsing the joined chunks at the
+  end (https://github.com/danbri/factoidal/issues/838,
+  https://github.com/danbri/factoidal/issues/839). A task reads 64 KiB chunks
+  through the source layer. A task gives each distinct non-inline term of its
   batch a batch-local number (a hash map of at most N / K terms, N default
   262,144) and keeps the batch's quads as four slots each: 0 for the default
   graph, `1 + local number`, or an inline id (`TermId.inlineCode?`). When the
@@ -32,15 +48,16 @@ Then every file is hashed (SHA-256 and 65,536-byte Merkle leaves, written to
   `<file>.merkle`) and `manifest.sbm11` is written.
 
 Memory is bounded by the K phase-1 maps and quad buffers, the merge buffers
-and the four row buffers; it does not grow with the source. Every frame the
-packer writes is decoded again and compared with its column.
+and the four row buffers; for N-Triples, N-Quads, Turtle and TriG it does not
+grow with the source. For RDF/XML and JSON-LD the reader holds the document
+(see Phase 1). Every frame the packer writes is decoded again and compared
+with its column.
 
 Prints phase times and VmHWM. Exit 1 on any error.
 -/
 import Harness.Sbm11Gen
 import Harness.RunHeap
-import L4Factoidal.Syntax.NQuadsFold
-import L4Factoidal.Syntax.Utf8Stream
+import L4Factoidal.RDF.SourceJsonLd
 import L4Factoidal.Qlvr.Sort
 import L4Factoidal.Qlvr.CmpBytesFast
 import Std.Data.HashMap
@@ -80,32 +97,93 @@ structure P1 where
 def consume (acc : P1) (tr : Triple) (g : Option Subject) : P1 :=
   { acc with pending := (tr, g) :: acc.pending }
 
-/-- Stream bytes `[start, stop)` of the source through the parser in 64 KiB
-    positioned reads; `onFeed` sees the accumulator after every chunk. -/
-def streamRange (source : String) (start stop : Nat) (onFeed : P1 → IO P1) : IO P1 := do
-  let mut utf8 := L4Factoidal.Syntax.Utf8Stream.init
-  let mut st := L4Factoidal.Syntax.NQuadsStreaming.initialStateC ({} : P1)
+/-- How phase 1 reads the source: the syntax, the RDF version, the base IRI
+    that relative IRIs resolve against, and the prefix of the generated
+    blank-node labels (Turtle and TriG; `Source.Prepass`). -/
+structure ReadCfg where
+  fmt : RdfFormat
+  version : Source.RdfVersion := .rdf12
+  base : Option String := none
+  bnodePrefix : String := ""
+
+/-- What the command line gives about the source: `--format F` and
+    `--base IRI`. -/
+structure SourceOpts where
+  format : Option String := none
+  base : Option String := none
+
+/-- The syntax of a source: `--format F` when given, else the extension of
+    its name. There is no default: a source that neither names gets an error
+    that asks for `--format`. -/
+def chooseFormat (source : String) (flag : Option String) : Except String RdfFormat :=
+  match flag with
+  | some label =>
+      match formatOfLabel label with
+      | some fmt => .ok fmt
+      | none => .error s!"unknown format '{label}'; give --format with one of ntriples, nquads, turtle, trig, rdfxml, jsonld"
+  | none =>
+      match formatOfPath source with
+      | some fmt => .ok fmt
+      | none =>
+          .error s!"cannot tell the RDF syntax of {source} from its name; give --format with one of ntriples, nquads, turtle, trig, rdfxml, jsonld"
+
+/-- How a read failure is told to the user. `start` is the byte where the
+    range began, so a parse position names a place in the document. -/
+def failureText (source : String) (start pos : Nat) : Source.Failure → String
+  | .utf8 m => s!"{source}: UTF-8 error near byte {pos}: {m}"
+  | .parse e => s!"{source}: parse error at {start + e.pos}: {e.msg}"
+
+/-- The generated blank-node prefix of the whole source, by one sequential
+    read (Turtle and TriG; `Source.Prepass`, `Source.prepass_chunks`). Other
+    syntaxes need none. -/
+def bnodePrefixOf (source : String) (fmt : RdfFormat) (size : Nat) : IO String := do
+  if !Source.needsPrepass fmt then return ""
+  let mut scan : Source.Prepass := {}
+  let mut pos := 0
+  for _ in [0:size / 1048576 + 2] do
+    if pos ≥ size then break
+    let len := min 1048576 (size - pos)
+    match scan.feed (← pread source pos len) with
+    | .error m => throw (IO.userError s!"{source}: UTF-8 error near byte {pos}: {m}")
+    | .ok next => scan := next
+    pos := pos + len
+  match scan.finish with
+  | .error m => throw (IO.userError s!"{source}: UTF-8 error: {m}")
+  | .ok pfx => pure pfx
+
+/-- The read configuration of a source: its syntax, and the pre-pass for
+    syntaxes that need one. -/
+def readCfg (source : String) (size : Nat) (opts : SourceOpts) : IO ReadCfg := do
+  let fmt ← match chooseFormat source opts.format with
+    | .ok f => pure f
+    | .error m => throw (IO.userError m)
+  pure { fmt, base := opts.base, bnodePrefix := ← bnodePrefixOf source fmt size }
+
+/-- Stream bytes `[start, stop)` of the source through the source layer in
+    64 KiB positioned reads; `onFeed` sees the accumulator after every chunk
+    and gives back the accumulator to continue with. -/
+def streamRange (cfg : ReadCfg) (source : String) (start stop : Nat) (onFeed : P1 → IO P1) : IO P1 := do
+  let mut rd ← match Source.ByteReader.init Source.withJsonLd cfg.fmt cfg.version cfg.base
+      cfg.bnodePrefix ({} : P1) with
+    | .ok r => pure r
+    | .error m => throw (IO.userError s!"{source}: {m}")
   let mut pos := start
   for _ in [0:(stop - start) / 65536 + 2] do
     if pos ≥ stop then break
     let len := min 65536 (stop - pos)
     let bytes ← pread source pos len
     pos := pos + len
-    match utf8.feed bytes with
-    | .error e => throw (IO.userError s!"{source}: UTF-8 error near byte {pos}: {e}")
-    | .ok (text, u) =>
-      utf8 := u
-      st := L4Factoidal.Syntax.NQuadsStreaming.feedChunkC .rdf12 consume st text.toList
-      if let some e := st.err then
-        throw (IO.userError s!"{source}: parse error at {start + e.pos}: {e.msg}")
-      let acc ← onFeed st.acc
-      st := { st with acc := acc }
-  match utf8.finish with
-  | .error e => throw (IO.userError s!"{source}: UTF-8 error: {e}")
-  | .ok _ => pure ()
-  match L4Factoidal.Syntax.NQuadsStreaming.finishC .rdf12 consume st with
-  | .error e => throw (IO.userError s!"{source}: parse error at {start + e.pos}: {e.msg}")
-  | .ok acc => onFeed acc
+    match rd.feed consume bytes with
+    | .error f => throw (IO.userError (failureText source start pos f))
+    | .ok next =>
+      let acc ← onFeed next.acc
+      rd := next.setAcc acc
+  match rd.endBytes with
+  | .error f => throw (IO.userError (failureText source start pos f))
+  | .ok reader =>
+    match reader.finish consume with
+    | .error e => throw (IO.userError (failureText source start pos (.parse e)))
+    | .ok acc => onFeed acc
 
 def lineStartFrom (source : String) (size b : Nat) : IO Nat := do
   if b == 0 then return 0
@@ -118,6 +196,21 @@ def lineStartFrom (source : String) (size b : Nat) : IO Nat := do
       if w.get! i == 10 then return p + i + 1
     p := p + len
   return size
+
+/-- The byte ranges phase 1 reads. N-Triples and N-Quads are cut at line
+    starts into `workers` ranges, a line start being a statement boundary
+    (`Source.splitsAtLines`). Every other syntax is one range, the whole
+    source: a statement of Turtle, TriG, RDF/XML or JSON-LD has no boundary
+    that is found without reading from the start. -/
+def planRanges (fmt : RdfFormat) (source : String) (size workers : Nat) : IO (Array (Nat × Nat)) := do
+  if !Source.splitsAtLines fmt then return #[(0, size)]
+  let mut bounds : Array Nat := #[]
+  for i in [0:workers + 1] do
+    bounds := bounds.push (← lineStartFrom source size (size * i / workers))
+  let mut out : Array (Nat × Nat) := #[]
+  for i in [0:workers] do
+    out := out.push (bounds[i]!, bounds[i + 1]!)
+  pure out
 
 structure Batch where
   termRun : String
@@ -135,7 +228,7 @@ def maxBatchQuads : Nat := 1048576
 
 def localLimit : Nat := two60
 
-def phase1Worker (source outDir : String) (w start stop runTerms : Nat) : IO WorkerOut := do
+def phase1Worker (cfg : ReadCfg) (source outDir : String) (w start stop runTerms : Nat) : IO WorkerOut := do
   let idsRef ← IO.mkRef (({} : Std.HashMap Term Nat))
   let quadsRef ← IO.mkRef ((Array.mkEmpty 65536 : Array Nat))
   let outRef ← IO.mkRef ({} : WorkerOut)
@@ -183,7 +276,15 @@ def phase1Worker (source outDir : String) (w start stop runTerms : Nat) : IO Wor
     IO.FS.writeBinFile quadRun qb
     outRef.set { o with batches := o.batches.push { termRun, quadRun, terms := sorted.size, quads := quads.size / 4 },
                         quads := o.quads + quads.size / 4 }
+  let full : IO Bool := do
+    let nIds := (← idsRef.get).size
+    let nQ := (← quadsRef.get).size / 4
+    pure (nIds ≥ runTerms || nQ ≥ maxBatchQuads)
+  /- A chunk of a streaming syntax holds a few hundred quads. The whole
+     document syntaxes (RDF/XML, JSON-LD) give all their quads to one call at
+     the end, so the batch limits are also tested inside the loop. -/
   let onFeed (acc : P1) : IO P1 := do
+    let mut k := 0
     for (tr, g) in acc.pending.reverse do
       let s ← slotOf tr.s.toTerm
       let p ← slotOf (.iri tr.p)
@@ -192,11 +293,12 @@ def phase1Worker (source outDir : String) (w start stop runTerms : Nat) : IO Wor
         | some gn => slotOf gn.toTerm
         | none => pure 0
       quadsRef.modify fun q => q.push s |>.push p |>.push o |>.push gs
-    let nIds := (← idsRef.get).size
-    let nQ := (← quadsRef.get).size / 4
-    if nIds ≥ runTerms || nQ ≥ maxBatchQuads then spill
+      k := k + 1
+      if k % 4096 == 0 then
+        if (← full) then spill
+    if (← full) then spill
     pure { acc with pending := [] }
-  let _ ← streamRange source start stop onFeed
+  let _ ← streamRange cfg source start stop onFeed
   spill
   outRef.get
 
@@ -633,17 +735,18 @@ def threadCpuNs : IO (Option Nat) := do
     phase 2 can be timed and its output compared byte for byte
     (`tests/sbm11/phase2_scaling.sh`,
     https://github.com/danbri/factoidal/issues/804). -/
-def runPhase2Only (source outDir : String) (workers runTerms : Nat) : IO UInt32 := do
+def runPhase2Only (source outDir : String) (workers runTerms : Nat) (opts : SourceOpts := {}) :
+    IO UInt32 := do
   let t0 ← IO.monoNanosNow
   IO.FS.createDirAll outDir
   let size ← fileSize source
-  let mut bounds : Array Nat := #[]
-  for i in [0:workers + 1] do
-    bounds := bounds.push (← lineStartFrom source size (size * i / workers))
-  let perWorker := max 1 (runTerms / workers)
+  let cfg ← readCfg source size opts
+  let ranges ← planRanges cfg.fmt source size workers
+  let perWorker := max 1 (runTerms / ranges.size)
   let mut tasks := #[]
-  for i in [0:workers] do
-    let t ← IO.asTask (phase1Worker source outDir i bounds[i]! bounds[i + 1]! perWorker) .dedicated
+  for i in [0:ranges.size] do
+    let (lo, hi) := ranges[i]!
+    let t ← IO.asTask (phase1Worker cfg source outDir i lo hi perWorker) .dedicated
     tasks := tasks.push t
   let mut batches : Array Batch := #[]
   for t in tasks do
@@ -659,21 +762,22 @@ def runPhase2Only (source outDir : String) (workers runTerms : Nat) : IO UInt32 
   let cpu := match c1, c2 with
     | some a, some b => s!" phase2-cpu-ms={ms a b}"
     | _, _ => ""
-  IO.println s!"sbm11-pack: phase2-only source={source} source-bytes={size} workers={workers} terms={terms} pages={pages} batches={batches.size} run-records={records} phase1-ms={ms t0 t1} phase2-ms={ms t1 t2}{cpu} peak-rss={← vmHWM}"
+  IO.println s!"sbm11-pack: phase2-only source={source} format={formatLabel cfg.fmt} source-bytes={size} workers={ranges.size} terms={terms} pages={pages} batches={batches.size} run-records={records} phase1-ms={ms t0 t1} phase2-ms={ms t1 t2}{cpu} peak-rss={← vmHWM}"
   pure 0
 
-def runPack (source outDir : String) (workers runTerms blockRows sortRowsMax : Nat) : IO UInt32 := do
+def runPack (source outDir : String) (workers runTerms blockRows sortRowsMax : Nat)
+    (opts : SourceOpts := {}) : IO UInt32 := do
   let t0 ← IO.monoNanosNow
   IO.FS.createDirAll outDir
   let size ← fileSize source
+  let cfg ← readCfg source size opts
   let shaTask ← IO.asTask (sourceSha source size) .dedicated
-  let mut bounds : Array Nat := #[]
-  for i in [0:workers + 1] do
-    bounds := bounds.push (← lineStartFrom source size (size * i / workers))
-  let perWorker := max 1 (runTerms / workers)
+  let ranges ← planRanges cfg.fmt source size workers
+  let perWorker := max 1 (runTerms / ranges.size)
   let mut tasks := #[]
-  for i in [0:workers] do
-    let t ← IO.asTask (phase1Worker source outDir i bounds[i]! bounds[i + 1]! perWorker) .dedicated
+  for i in [0:ranges.size] do
+    let (lo, hi) := ranges[i]!
+    let t ← IO.asTask (phase1Worker cfg source outDir i lo hi perWorker) .dedicated
     tasks := tasks.push t
   let mut batches : Array Batch := #[]
   let mut quads := 0
@@ -692,21 +796,34 @@ def runPack (source outDir : String) (workers runTerms blockRows sortRowsMax : N
     | .error e => throw e)
   let t5 ← IO.monoNanosNow
   let outs := r.outs
-  IO.println s!"sbm11-pack: source={source} source-bytes={size} workers={workers} quads-parsed={quads} quads={outs[0]!.rows} duplicate-rows={outs[0]!.dups} terms={r.terms} pages={r.pages} batches={batches.size} run-records={r.records} inline-occurrences={inlineOcc} block-rows={blockRows}"
+  IO.println s!"sbm11-pack: source={source} format={formatLabel cfg.fmt} source-bytes={size} workers={ranges.size} quads-parsed={quads} quads={outs[0]!.rows} duplicate-rows={outs[0]!.dups} terms={r.terms} pages={r.pages} batches={batches.size} run-records={r.records} inline-occurrences={inlineOcc} block-rows={blockRows}"
   printPermLines "sbm11-pack" outs
   IO.println s!"sbm11-pack: generation-bytes={r.genBytes} manifest-bytes={r.manifestBytes} merkle-bytes={r.merkleBytes} total-on-disk={r.genBytes + r.manifestBytes + r.merkleBytes}"
   IO.println s!"sbm11-pack: phase1-ms={ms t0 t1} phase2-ms={ms 0 r.phase2Ns} phase3a-ms={ms 0 r.phase3aNs} phase3b-ms={ms 0 r.phase3bNs} hash-manifest-ms={ms 0 r.hashNs} total-ms={ms t0 t5} peak-rss={← vmHWM}"
   pure 0
 
 def usage : String :=
-  "usage: l4sbm11-pack SOURCE.nt|.nq OUTDIR [--workers K] [--run-terms N] [--block-rows B] [--sort-rows M] [--phase2-only]"
+  "usage: l4sbm11-pack SOURCE OUTDIR [--format F] [--base IRI] [--workers K] [--run-terms N] [--block-rows B] [--sort-rows M] [--phase2-only]\n" ++
+  "  F is ntriples, nquads, turtle, trig, rdfxml or jsonld; without --format the file extension decides (.nt .nq .ttl .trig .rdf .jsonld)."
 
-def parseOpts : List String → Nat × Nat × Nat × Nat → Option (Nat × Nat × Nat × Nat)
+/-- The numbers and the source options of the command line. -/
+structure Opts where
+  workers : Nat := 4
+  runTerms : Nat := 262144
+  blockRows : Nat := 4096
+  sortRows : Nat := 524288
+  phase2Only : Bool := false
+  source : SourceOpts := {}
+
+def parseOpts : List String → Opts → Option Opts
   | [], o => some o
-  | "--workers" :: v :: rest, (_, n, b, m) => parseOpts rest (max 1 v.toNat!, n, b, m)
-  | "--run-terms" :: v :: rest, (k, _, b, m) => parseOpts rest (k, max 1 v.toNat!, b, m)
-  | "--block-rows" :: v :: rest, (k, n, _, m) => parseOpts rest (k, n, max 1 v.toNat!, m)
-  | "--sort-rows" :: v :: rest, (k, n, b, _) => parseOpts rest (k, n, b, max 1 v.toNat!)
+  | "--workers" :: v :: rest, o => parseOpts rest { o with workers := max 1 v.toNat! }
+  | "--run-terms" :: v :: rest, o => parseOpts rest { o with runTerms := max 1 v.toNat! }
+  | "--block-rows" :: v :: rest, o => parseOpts rest { o with blockRows := max 1 v.toNat! }
+  | "--sort-rows" :: v :: rest, o => parseOpts rest { o with sortRows := max 1 v.toNat! }
+  | "--format" :: v :: rest, o => parseOpts rest { o with source := { o.source with format := some v } }
+  | "--base" :: v :: rest, o => parseOpts rest { o with source := { o.source with base := some v } }
+  | "--phase2-only" :: rest, o => parseOpts rest { o with phase2Only := true }
   | _, _ => none
 
 end Sbm11Pack

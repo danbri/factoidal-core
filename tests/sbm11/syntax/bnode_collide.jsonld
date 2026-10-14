@@ -1,0 +1,10 @@
+{
+  "@context": { "ex": "http://example.org/" },
+  "@graph": [
+    { "@id": "_:_jld_anon0", "ex:p": "explicit _jld_anon0" },
+    { "ex:p": "generated first" },
+    { "@id": "_:_jld_anon1", "ex:p": "explicit _jld_anon1" },
+    { "ex:q": "generated second" },
+    { "@id": "_:genid1", "ex:p": "explicit genid1" }
+  ]
+}

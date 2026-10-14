@@ -39,6 +39,12 @@ for the formats the Lean engine parses; a `*12` tag routes to the RDF
 1.2 (`Mode.rdf12`) entry points, mirroring `entry_jsoo.ml`'s
 consumer-side dispatch.
 
+One table of formats. The document readers below name a format by its tag and
+read it through `L4Factoidal/RDF/Source.lean` (`Source.parseDocument`,
+`Source.parseDocumentWithPrefixes`), the same layer the shard packers read
+through (https://github.com/danbri/factoidal/issues/837). The tag is turned into
+an `RdfFormat` by `RDF.formatOfLabel`; the empty tag is Turtle.
+
 JSON-LD is not in this module's table. The functions that read a document take
 an `ExtraReader` for the syntaxes outside the table (`parseTextToDatasetBy`
 and the other `…By` forms): the full dispatch passes `jsonLdReader`
@@ -63,6 +69,7 @@ import L4Factoidal.Syntax.TriG
 import L4Factoidal.Syntax.RdfXml
 import L4Factoidal.Syntax.TurtleSerialize
 import L4Factoidal.Syntax.NQuadsFast
+import L4Factoidal.RDF.Source
 import L4Factoidal.RDF.DatasetMerge
 import Wasm.Ops.FromDataset
 
@@ -100,30 +107,27 @@ def noExtraReader : ExtraReader := fun _ _ _ => none
 /-- The format tags of JSON-LD 1.1 (`RDF.Format.fst`'s `format_of_string`). -/
 def jsonLdFormatTags : List String := [ "jsonld", "json-ld", "application/ld+json" ]
 
+/-- The format a lower-cased tag names: the labels of `RDF.formatOfLabel`, and
+the empty tag, which is Turtle (`RDF.rdfFormatDefault`, the F* entry's default). -/
+def formatOfTag (tag : String) : Option RdfFormat :=
+  if tag == "" then some rdfFormatDefault else formatOfLabel tag
+
 /-- Parse `text` under `formatTag` into a `Dataset`. Graph-shaped
-formats (Turtle, N-Triples, RDF/XML) wrap as the default graph; a tag outside
-the table goes to `extra`.
+formats (Turtle, N-Triples, RDF/XML) wrap as the default graph; JSON-LD and a
+tag outside the table go to `extra`.
 Not private: `Wasm/Ops/Handles.lean`'s `datasetOpenBy` is the same parse. -/
 def parseTextToDatasetBy (extra : ExtraReader) (text formatTag baseIRI : String) :
     Except String Dataset :=
   let base : Option String := if baseIRI == "" then none else some baseIRI
   let (mode, tag) := resolveModeAndTag formatTag
-  let wrapGraph (r : Except ParseError Graph) : Except String Dataset :=
-    match r with
-    | .error e => .error (fmtParseError e)
-    | .ok g    => .ok { default := g, named := [] }
-  match tag with
-  | "" | "turtle" | "ttl" => wrapGraph (parseTurtleText text base mode)
-  | "ntriples" | "nt" | "n-triples" => wrapGraph (parseNTriples text mode)
-  | "nquads" | "nq" | "n-quads" =>
-      (parseNQuadsFast text mode).mapError fmtParseError
-  | "trig" => (parseTriG text base mode).mapError fmtParseError
-  | "rdfxml" | "rdf/xml" | "rdf" | "xml" =>
-      wrapGraph (RdfXml.parseRdfXml text base)
-  | _ =>
-      match extra tag text base with
-      | some r => r
-      | none => .error s!"unknown format tag '{formatTag}'"
+  let viaExtra : Except String Dataset :=
+    match extra tag text base with
+    | some r => r
+    | none => .error s!"unknown format tag '{formatTag}'"
+  match formatOfTag tag with
+  | none | some .jsonld => viaExtra
+  | some fmt =>
+      (L4Factoidal.RDF.Source.parseDocument {} fmt mode base text).mapError fmtParseError
 
 /-- `parseToDatasetJson(text, formatTag, baseIRI)`, the pure entry's envelope
 (no prefixes, labels as written). -/
@@ -226,29 +230,18 @@ def parseDocumentOutcomeBy (extra : ExtraReader) (text formatTag baseIRI : Strin
   let base : Option String := if baseIRI == "" then none else some baseIRI
   let (mode, tag) := resolveModeAndTag formatTag
   let noPosition (m : String) : ParseFailure := { message := m }
-  match tag with
-  | "" | "turtle" | "ttl" =>
-      match parseTurtleWithPrefixes text base mode with
-      | .error e => .error (failureAt text e)
-      | .ok (g, ps) =>
-          .ok { ds := { default := g, named := [] }, prefixes := declarationOrderPrefixes ps }
-  | "ntriples" | "nt" | "n-triples" =>
-      match parseNTriples text mode with
-      | .error e => .error (failureAt text e)
-      | .ok g => .ok { ds := { default := g, named := [] }, prefixes := [] }
-  | "nquads" | "nq" | "n-quads" =>
-      match parseNQuadsFast text mode with
-      | .error e => .error (failureAt text e)
-      | .ok ds => .ok { ds := ds, prefixes := [] }
-  | "trig" =>
-      match parseTriGWithPrefixes text base mode with
-      | .error e => .error (failureAt text e)
-      | .ok (ds, ps) => .ok { ds := ds, prefixes := declarationOrderPrefixes ps }
-  | "rdfxml" | "rdf/xml" | "rdf" | "xml" =>
-      match RdfXml.parseRdfXml text base with
-      | .error e => .error (noPosition e.msg)
-      | .ok g => .ok { ds := { default := g, named := [] }, prefixes := [] }
-  | _ =>
+  match formatOfTag tag with
+  | some fmt =>
+      if fmt == .jsonld then
+        match extra tag text base with
+        | some (.ok ds) => .ok { ds := ds, prefixes := [] }
+        | some (.error m) => .error (noPosition m)
+        | none => .error (noPosition s!"unknown format tag '{formatTag}'")
+      else
+        match L4Factoidal.RDF.Source.parseDocumentWithPrefixes {} fmt mode base text with
+        | .error e => .error (if fmt == .rdfxml then noPosition e.msg else failureAt text e)
+        | .ok (ds, ps) => .ok { ds := ds, prefixes := declarationOrderPrefixes ps }
+  | none =>
       match extra tag text base with
       | some (.ok ds) => .ok { ds := ds, prefixes := [] }
       | some (.error m) => .error (noPosition m)

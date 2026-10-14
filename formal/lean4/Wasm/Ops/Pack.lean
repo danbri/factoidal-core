@@ -92,7 +92,6 @@ it; nothing is ever truncated silently (anti-pattern 25).
 |---|---|---|
 | `maxPackFeedBytes` | 4194304 (4 MiB) | one `packFeed` region |
 | `maxPackQueuedBytes` | 134217728 (128 MiB) | artifacts waiting for `packNext` |
-| `maxPackSourceBytes` | 134217728 (128 MiB) | the IBK4 buffered source, TriG/Turtle/N-Triples only |
 | `maxPackHandles` | 8 | open pack handles |
 | `maxActivateBytes` | 134217728 (128 MiB) | one `activateVerify` region |
 
@@ -101,14 +100,20 @@ The two 128 MiB figures are chosen for a few hundred thousand triples on a
 skosdex corpus: an IBK3 generation runs about 100 bytes per triple, so
 128 MiB of queued artifacts is above a million triples, and the IBK3 path
 never queues more than one publication batch anyway because the host drains
-after every feed. The IBK4 path used to be the binding one: it held the whole
-source text as well as the whole generation, so 128 MiB of source was the
-real limit there — roughly 1.3 million N-Quads lines. The N-Quads grammar no
-longer buffers a source at all (`PackStream.quadIngestFeed`), so
-`maxPackSourceBytes` now bounds only the TriG, Turtle and N-Triples IBK4
-routes, which still buffer. The ceiling for an IBK4 N-Quads pack is the
-128 MiB of queued generation plus the module's 32-bit address space, not the
-size of the input.
+after every feed. No pack buffers its source: all four grammars the pack
+operations read (Turtle, TriG, N-Quads, N-Triples) run through the source
+layer's chunk readers (`L4Factoidal/RDF/Source.lean`), on IBK3 and on IBK4
+and IBK5 alike. Until 2026-10-14 this module held a 128 MiB cap
+(`maxPackSourceBytes`) and a buffer for the TriG source; both went when TriG
+got its chunk fold (https://github.com/danbri/factoidal/issues/769), and the
+code that used them was already unreachable. The ceiling for an IBK4 pack is
+the 128 MiB of queued generation plus the module's 32-bit address space, not
+the size of the input.
+
+The source layer also reads RDF/XML and JSON-LD, whole. These operations do not
+accept them: a whole document plus its parse is several times its size, and
+this module has a 32-bit address space. A host that packs RDF/XML or JSON-LD
+uses the native packer (`l4sbm11-pack`, `l4block-shard-pack`).
 
 `maxPackFeedBytes` is 64 times the 65,536-byte chunk the native packer reads
 and the JavaScript host feeds, so an ordinary host never approaches it; it is
@@ -136,13 +141,6 @@ def maxPackFeedBytes : Nat := 4 * 1024 * 1024
 /-- The largest total of artifact bytes which may wait for `packNext`:
     134,217,728 bytes. -/
 def maxPackQueuedBytes : Nat := 128 * 1024 * 1024
-
-/-- The largest source an IBK4 pack may buffer: 134,217,728 bytes. The IBK3
-    path buffers no source at all, and neither do the IBK4 streamed grammars
-    — N-Quads, Turtle and N-Triples all run through
-    `PackStream.quadIngestFeed`. This cap therefore binds only IBK4 over
-    TriG, which has no chunk fold. -/
-def maxPackSourceBytes : Nat := 128 * 1024 * 1024
 
 /-- The publication batch of an IBK4 streamed pack when the host names none:
     67,108,864 source bytes. It is half the native default because the
@@ -173,18 +171,18 @@ def passName : PackPass → String
   | .done => "done"
 
 /-- One open pack. `ingest` is the streaming fold of the IBK2 and IBK3
-    layouts; `quads` is the streaming fold of the IBK4 layout over the
-    N-Quads grammar; `source` is the buffered text of the IBK4 layout over
-    the TriG, Turtle and N-Triples grammars, which have no chunk fold yet.
-    Exactly one of the three is used, decided by `format` and `grammar`. -/
+    layouts; `quads` is the streaming fold of the IBK4 and IBK5 layouts. Both
+    read the source through the source layer. Exactly one of the two is used,
+    decided by `format`. -/
 structure OpenPack where
   format : PackFormat
-  grammar : PackSyntax
+  /-- The syntax of the source: one of the four in `packSyntaxes`. -/
+  grammar : L4Factoidal.RDF.RdfFormat
   /-- The base IRI the grammar resolves relative IRIs against, as the host
       gave it. `none` is no base. The native packer uses `file://<input>`;
       a host that wants byte-identical output must pass the same string. -/
   base : Option String
-  /-- Source bytes per publication batch, for the IBK4 streamed grammars.
+  /-- Source bytes per publication batch, for the IBK4 and IBK5 layouts.
       The wasm default is 67,108,864 (64 MiB), half the native default,
       because the module has a 32-bit address space and the queued
       generation shares it with the packer's own state. -/
@@ -194,7 +192,6 @@ structure OpenPack where
   prepass : Option SourcePrepass
   ingest : Option IngestState
   quads : Option QuadIngestState
-  source : ByteArray
   packed : PackState
   queue : List Artifact
   queueBytes : Nat
@@ -245,6 +242,29 @@ private def enqueue (op : String) (pack : OpenPack) (artifacts : List Artifact) 
 private def passEnvelope (pass : PackPass) (pending : Nat) : String :=
   okWith [("pass", .string (passName pass)), ("pending", .number (toString pending))]
 
+/-! ## The grammars -/
+
+/-- The syntaxes the pack operations read: the four whose reader streams.
+    RDF/XML and JSON-LD are read whole by the source layer, and are not
+    accepted here (see the cap table above). The tags are those of
+    `RDF.formatOfLabel`, so the tag of a syntax is the same here as in every
+    other tool. -/
+def packSyntaxes : List L4Factoidal.RDF.RdfFormat := [.turtle, .trig, .nquads, .nt]
+
+/-- The syntax a `packBegin` tag names, if the pack operations read it. -/
+def packSyntaxOfTag? (tag : String) : Option L4Factoidal.RDF.RdfFormat :=
+  match L4Factoidal.RDF.formatOfLabel tag with
+  | some fmt => if packSyntaxes.contains fmt then some fmt else none
+  | none => none
+
+#guard packSyntaxOfTag? "ttl" == some .turtle
+#guard packSyntaxOfTag? "N-Quads" == some .nquads
+#guard packSyntaxOfTag? "nt" == some .nt
+#guard packSyntaxOfTag? "trig" == some .trig
+#guard packSyntaxOfTag? "rdfxml" == none
+#guard packSyntaxOfTag? "jsonld" == none
+#guard packSyntaxOfTag? "nonsense" == none
+
 /-! ## The operations -/
 
 /-- `packBegin(syntaxTag, layoutTag, baseIri, batchBytes)` — open a pack and
@@ -261,19 +281,17 @@ private def passEnvelope (pass : PackPass) (pending : Nat) : String :=
     `--batch-bytes` value.
     A tag which names no grammar or no layout issues no handle. -/
 def packBegin (syntaxTag layoutTag baseIri batchBytes : String) : IO String := do
-  match syntaxOfTag? syntaxTag, formatOfTag? layoutTag with
+  match packSyntaxOfTag? syntaxTag, formatOfTag? layoutTag with
   | none, _ =>
       pure (errJson s!"packBegin: unknown grammar tag '{syntaxTag}' (turtle | trig | nquads | ntriples)")
   | _, none =>
       pure (errJson s!"packBegin: unknown layout tag '{layoutTag}' (ibk2 | ibk3 | ibk4 | ibk5)")
   | some grammar, some format =>
-      -- The streaming fold of IBK2 and IBK3 reads with the Turtle grammar,
-      -- which is what the native packer does for those layouts. N-Triples is
-      -- a subset of Turtle, so it needs no separate fold; TriG and N-Quads
-      -- carry named graphs, which an IBK3 block cannot hold.
-      if (format == .ibk2 || format == .ibk3) &&
-          !(grammar == .turtle || grammar == .ntriples) then
-        pure (errJson s!"packBegin: layout {formatName format} reads turtle or ntriples, not {syntaxName grammar}; use layout ibk4 or ibk5 for named graphs")
+      -- The streaming fold of IBK2 and IBK3 holds the triples of one graph,
+      -- so it reads a syntax without named graphs. TriG and N-Quads carry
+      -- named graphs, which an IBK3 block cannot hold.
+      if (format == .ibk2 || format == .ibk3) && L4Factoidal.RDF.Source.hasNamedGraphs grammar then
+        pure (errJson s!"packBegin: layout {formatName format} reads turtle or ntriples, not {L4Factoidal.RDF.formatLabel grammar}; use layout ibk4 or ibk5 for named graphs")
       else match (if batchBytes.isEmpty then some defaultPackBatchBytes
                   else batchBytes.toNat?.filter (· > 0)) with
       | none =>
@@ -289,7 +307,7 @@ def packBegin (syntaxTag layoutTag baseIri batchBytes : String) : IO String := d
             { format, grammar, base := if baseIri.isEmpty then none else some baseIri,
               batchBytes := batch,
               pass := .prepass, pre := prepassInit, prepass := none,
-              ingest := none, quads := none, source := ByteArray.empty, packed := {},
+              ingest := none, quads := none, packed := {},
               queue := [], queueBytes := 0, manifestPublished := false })
           pure (okWith [("handle", .string h), ("pass", .string (passName PackPass.prepass))])
 
@@ -329,27 +347,7 @@ def packFeed (h : String) (blob : ByteArray) : IO String :=
                   | .ok pack' => do
                       packTable.modify (·.insert h pack')
                       pure (passEnvelope .ingest pack'.queue.length)
-          | none =>
-            if pack.source.size + blob.size > maxPackSourceBytes then
-              pure (errJson s!"packFeed: this pack has buffered {pack.source.size + blob.size} source bytes, the cap is {maxPackSourceBytes}")
-            else do
-              packTable.modify (·.insert h { pack with source := pack.source ++ blob })
-              pure (passEnvelope .ingest pack.queue.length)
-
-/-- The end of the ingest pass for the IBK4 layout: decode the buffered
-    source, parse it, and publish every block. The source digest the prepass
-    committed is checked here, as `ingestFinish` checks it on the streaming
-    path — a source which changed between the two passes must not commit. -/
-private def finishQuadPass (pack : OpenPack) (prepass : SourcePrepass) :
-    Except String (PackState × List Artifact) := do
-  let observed := (L4Factoidal.Crypto.Sha256Stream.init.update pack.source).finish
-  if observed != prepass.sourceIdentity then
-    .error "l4block-shard-pack input changed between pre-pass and parse pass"
-  let text ← match String.fromUTF8? pack.source with
-    | none => .error "l4block-shard-pack UTF-8 error: the source is not valid UTF-8"
-    | some text => pure text
-  let result ← quadArtifacts packHasher pack.format pack.grammar prepass text pack.base
-  .ok (result.packed, result.artifacts)
+          | none => pure (errJson s!"packFeed: handle {h} has no reader in the ingest pass")
 
 /-- `packEndPass(handle)` — end the pass the handle is in.
 
@@ -364,35 +362,35 @@ def packEndPass (h : String) : IO String :=
     | .prepass =>
         match prepassFinish pack.pre with
         | .error e => pure (errJson e)
-        | .ok prepass => do
-            let streamsQuads := isQuadFormat pack.format && quadStreams pack.grammar
-            let ingest :=
-              if isQuadFormat pack.format then none
-              else some (ingestInit packHasher pack.format prepass pack.base)
-            let quads :=
-              if streamsQuads then
-                some (quadIngestInit packHasher pack.format pack.grammar prepass pack.base
-                  pack.batchBytes)
-              else none
-            packTable.modify (·.insert h
-              { pack with pass := .ingest, prepass := some prepass, ingest, quads })
-            pure (passEnvelope .ingest 0)
+        | .ok prepass =>
+            let started : Except String (Option IngestState × Option QuadIngestState) :=
+              if isQuadFormat pack.format then
+                (quadIngestInit packHasher pack.format pack.grammar {} prepass pack.base
+                  pack.batchBytes).map fun quads => (none, some quads)
+              else
+                (ingestInit packHasher pack.format prepass pack.base
+                  (source := pack.grammar)).map fun ingest => (some ingest, none)
+            match started with
+            | .error e => pure (errJson e)
+            | .ok (ingest, quads) => do
+                packTable.modify (·.insert h
+                  { pack with pass := .ingest, prepass := some prepass, ingest, quads })
+                pure (passEnvelope .ingest 0)
     | .ingest =>
         match pack.prepass with
         | none => pure (errJson "packEndPass: this pack has no first-pass result")
-        | some prepass =>
-            let outcome :=
+        | some _ =>
+            let outcome : Except String (PackState × List Artifact) :=
               match pack.ingest, pack.quads with
               | some state, _ => ingestFinish state
               | none, some state => (quadIngestFinish state).map
                   fun (result : QuadPack) => (result.packed, result.artifacts)
-              | none, none => finishQuadPass pack prepass
+              | none, none => .error "packEndPass: this pack has no reader in the ingest pass"
             match outcome with
             | .error e => pure (errJson e)
             | .ok (packed, made) =>
                 let finished : OpenPack :=
-                  { pack with pass := .done, packed := packed, ingest := none,
-                              quads := none, source := ByteArray.empty }
+                  { pack with pass := .done, packed := packed, ingest := none, quads := none }
                 match enqueue "packEndPass" finished made with
                 | .error e => pure (errJson e)
                 | .ok pack' => do

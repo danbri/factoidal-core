@@ -795,3 +795,110 @@ records as reported by dblp and the authors' pages
 (https://users.dcc.uchile.cl/~gnavarro/abstracts/sigmod21.html,
 https://users.dcc.uchile.cl/~gnavarro/abstracts/di23.html,
 https://repositorio.uchile.cl/handle/2250/126366).
+
+## 11. The source syntax of the store (2026-10-14)
+
+Tracking: https://github.com/danbri/factoidal/issues/837. Owner, 2026-10-14,
+verbatim: "SMB11 should store rdf graphs regardless of source formats - this is
+why we have reflected w3c rdf core concepts into Lean. I don't see any reason
+for the format to be made so explicit for internal data manipulation- file
+formats are for exchange and publishing".
+
+Sections 3 and 6 describe a store of RDF terms and quads. They do not depend on
+the syntax of the source. Until 2026-10-14 the SBM11 packer read N-Triples and
+N-Quads only, and each IBK packer chose its syntax module itself. Since
+2026-10-14 every packer reads its source through
+`L4Factoidal/RDF/Source.lean`. No file under `L4Factoidal/Storage/` imports a
+module of `L4Factoidal.Syntax`. The gate is `tests/sbm11/storage_layering.py`.
+The layer and its theorems are in
+[`2026-09-03-rdf-parsing-strategy.md`](2026-09-03-rdf-parsing-strategy.md)
+section 3f. The operating manual is `skills/shardborough-storage/SKILL.md`,
+section "The source layer".
+
+Results:
+
+1. `l4sbm11-pack SOURCE OUTDIR [--format F]` reads N-Triples, N-Quads, Turtle,
+   TriG, RDF/XML and JSON-LD. One dataset gives the same generation in every
+   syntax. The data files are byte-identical. The manifests differ in the
+   source length and the source digest (`tests/sbm11/syntax_independence.sh`).
+2. A valid N-Triples or N-Quads source gives the same generation as before the
+   change: the old and the new `l4sbm11-pack` give the same hash for the
+   generated dataset of 88,000 quads (`multi.nt` and `multi.nq` of section 11.1).
+3. The measurements of sections 3 and 6.8 used N-Triples and N-Quads sources.
+   They do not change.
+
+### 11.1 What each syntax costs in a pack
+
+Command: `tests/sbm11/syntax_bench.sh`, 2026-10-14, 4 CPUs, `l4sbm11-pack --workers 4`. The
+dataset comes from `tests/sbm11/syntax/gen_multi.py`: the set "big" has 110,000
+subjects (880,000 quads) and the set "small" has 11,000 subjects (88,000
+quads). "generator" means that `gen_multi.py` wrote the text. "Lean writer"
+means that `l4source-convert` wrote it with the library serialiser
+(`turtleOfGraphAuto`, `StoreEndpoint.datasetToTrig`, `RdfXmlWrite.graphToRdfXml`,
+`FromRdf.fromRdf`). The N-Triples, Turtle, RDF/XML and JSON-LD texts hold the
+default graph. The N-Quads and TriG texts hold four named graphs and the default
+graph. "Wall" is the wall time of the whole pack. The peak RSS comes from
+`tests/trig-pack/peak_rss.py`, a small wrapper process. The column "Generation"
+says whether the data files of the generation equal the files of the first
+(reference) pack of the same kind.
+
+| Set | Syntax (writer) | Source MB | Kquads | Workers | Wall s | MB/s | Kquads/s | Peak RSS MB | Phase 1 s | Generation |
+| --- | --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | --- |
+| big | N-Triples (generator) | 84.4 | 880 | 4 | 8.8 | 9.6 | 100 | 204 | 3.09 | reference |
+| big | Turtle (generator) | 39.0 | 880 | 1 | 15.6 | 2.5 | 56 | 227 | 10.88 | same |
+| big | Turtle (Lean writer) | 31.0 | 880 | 1 | 14.7 | 2.1 | 60 | 225 | 9.53 | same |
+| big | N-Quads (generator) | 102.0 | 880 | 4 | 8.9 | 11.5 | 99 | 200 | 3.39 | reference |
+| big | TriG (generator) | 40.8 | 880 | 1 | 17.2 | 2.4 | 51 | 228 | 12.21 | same |
+| big | TriG (Lean writer) | 84.4 | 880 | 1 | 27.7 | 3.0 | 32 | 225 | 22.32 | same |
+| small | N-Triples (generator) | 8.3 | 88 | 4 | 0.7 | 11.8 | 126 | 77 | 0.28 | reference |
+| small | Turtle (generator) | 3.8 | 88 | 1 | 1.7 | 2.2 | 52 | 79 | 1.28 | same |
+| small | Turtle (Lean writer) | 3.0 | 88 | 1 | 1.2 | 2.5 | 73 | 77 | 0.77 | same |
+| small | RDF/XML (Lean writer) | 6.9 | 88 | 1 | 2.1 | 3.3 | 42 | 137 | 1.51 | same |
+| small | JSON-LD (Lean writer) | 7.4 | 88 | 1 | 2.0 | 3.7 | 44 | 135 | 1.56 | same |
+| small | N-Quads (generator) | 10.0 | 88 | 4 | 0.8 | 12.5 | 110 | 73 | 0.35 | reference |
+| small | TriG (generator) | 4.0 | 88 | 1 | 1.8 | 2.2 | 49 | 77 | 1.23 | same |
+| small | TriG (Lean writer) | 8.3 | 88 | 1 | 2.5 | 3.3 | 35 | 77 | 2.06 | same |
+
+Reading of the table:
+
+- The 10 generations that are not a reference have the same data files as their
+  reference. The syntax of the source does not change the store. The manifests
+  differ in the source length and digest.
+- N-Triples and N-Quads text is read in 4 byte ranges at the same time: 9.6 and
+  11.5 MB/s for the whole pack on the big set. Turtle, TriG, RDF/XML and JSON-LD text is read by one
+  worker: 2.1 to 3.7 MB/s. Phase 1 of Turtle takes 2.8 to 3.2 times as long per
+  quad as phase 1 of N-Quads, and phase 1 of TriG takes 3.6 to 6.6 times as long
+  (https://github.com/danbri/factoidal/issues/842).
+- The peak RSS of the six big packs is 200 to 228 MB for every syntax. One
+  batch holds all 880,000 quads and their terms. The two whole-document readers
+  peak at 137 MB (RDF/XML) and 135 MB (JSON-LD) on the small set, where the other
+  syntaxes peak at 73 to 79 MB
+  (https://github.com/danbri/factoidal/issues/838,
+  https://github.com/danbri/factoidal/issues/839). The slope of peak RSS against
+  source size is in the rows `sbm11-pack-*-memory` of
+  `tests/stack/lean_scaling.sh`: 0.23 (Turtle) and 0.21 (TriG) bytes per source
+  byte, against 13.4 (RDF/XML) and 11.3 (JSON-LD).
+- The Lean writers for RDF/XML and JSON-LD take time quadratic in the dataset
+  (https://github.com/danbri/factoidal/issues/845 and
+  https://github.com/danbri/factoidal/issues/712; rows `rdfxml-write` and
+  `jsonld-write` of `tests/stack/lean_scaling.sh`: 4 times the data takes 15
+  and 24 times as long). `l4source-convert` wrote the 8.3 MB of N-Triples text
+  of the small set as RDF/XML in 21.8 s and as JSON-LD in 43.5 s. So those two
+  syntaxes are in the small set only. For the big set, `l4source-convert` read the 82 MB of
+  N-Triples text and wrote Turtle in 39.8 s, and read 100 MB of N-Quads text and
+  wrote TriG in 21.9 s.
+- Three runs of the script differ in wall time by up to 20 % for the big set.
+  The first run started with a load average of 4.9 and took 1.6 s for the
+  small N-Triples pack. The other two took 0.9 s and 0.7 s. The machine has 4
+  CPUs, and another build ran during the first two runs. The table is the
+  third run: it started with a load average of 1.7, on the tree that holds the
+  triple term work of https://github.com/danbri/factoidal/issues/792.
+- `oxigraph` was not on PATH on this machine, so the script printed no
+  comparison row. It times `oxigraph load` of the N-Quads file when the command
+  exists.
+
+A cost that the script found: before 2026-10-14 the strict N-Triples reader
+took 2,996 ms of phase 1 for the 8.3 MB of N-Triples text of the small set (4
+workers). N-Quads text with the same quads took 477 ms.
+`readTriple12` computed `r5.length + 1` for each statement. Section 3f of the
+parsing record has the repair and the gate (`sbm11-pack-nt-vs-nq`).

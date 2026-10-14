@@ -887,6 +887,46 @@ sf_probe SF-4 "Utf8Stream chunk decoding = whole-file decoding unproved" \
   feedChunks_eq_fromUTF8 '^def Utf8Stream\.feed ' 'Utf8Stream.feed'
 
 # ---------------------------------------------------------------------
+# JLD-STACK (https://github.com/danbri/factoidal/issues/844) -- the Lean
+# JSON-LD reader (JSONLD.parseJsonLd) uses native stack in proportion to the
+# number of elements of the document. One node with 100,000 references
+# (3.8 MB) parses under the default stack of a native process (1 GB) and
+# aborts under LEAN_STACK_SIZE_KB=512, the knob of tests/stack/run.sh. The
+# probe runs both. XFAIL needs the first to parse and the second to abort with
+# "Stack overflow"; an abort of the first, or any other failure of the second,
+# is ERROR (the probe measured nothing). When the second parses, the row reads
+# XPASS: delete it, add a tests/stack/run.sh case and close issue 844 in the
+# same commit.
+# ---------------------------------------------------------------------
+JLD_TITLE="JSON-LD parse of 100,000 references overflows a 512 KB stack"
+if [ ! -x "$L4_BIN" ]; then
+  record JLD-STACK 844 "$JLD_TITLE" ERROR "no l4factoidal at ${L4_BIN#"$ROOT"/}"
+else
+  python3 - "${WORKDIR}/jld-fanout.jsonld" <<'PY'
+import sys
+n = 100000
+with open(sys.argv[1], "w", encoding="utf-8") as f:
+    f.write('{"@id": "http://example.org/s", "http://example.org/link": ['
+            + ", ".join('{"@id": "http://example.org/o%d"}' % i for i in range(n)) + ']}')
+PY
+  jld_c=0
+  "$L4_BIN" parse "${WORKDIR}/jld-fanout.jsonld" --format jsonld >/dev/null 2>&1 || jld_c=$?
+  jld_s=0
+  jld_err="$(env -u LEAN_MAIN_USE_THREAD LEAN_STACK_SIZE_KB=512 "$L4_BIN" parse "${WORKDIR}/jld-fanout.jsonld" --format jsonld 2>&1 >/dev/null)" || jld_s=$?
+  if [ ! -s "${WORKDIR}/jld-fanout.jsonld" ]; then
+    record JLD-STACK 844 "$JLD_TITLE" ERROR "the probe wrote no document"
+  elif [ "$jld_c" -ne 0 ]; then
+    record JLD-STACK 844 "$JLD_TITLE" ERROR "control: the parse under the default stack exited $jld_c"
+  elif [ "$jld_s" -eq 0 ]; then
+    record JLD-STACK 844 "$JLD_TITLE" XPASS "the document parses under a 512 KB stack"
+  elif printf '%s' "$jld_err" | grep -q 'Stack overflow'; then
+    record JLD-STACK 844 "$JLD_TITLE" XFAIL "default stack parses; 512 KB stack: exit $jld_s, Stack overflow"
+  else
+    record JLD-STACK 844 "$JLD_TITLE" ERROR "512 KB stack: exit $jld_s without a stack overflow message: $(printf '%s' "$jld_err" | head -c 100)"
+  fi
+fi
+
+# ---------------------------------------------------------------------
 # Summary + JSON
 # ---------------------------------------------------------------------
 TOTAL=$((XFAIL + XPASS + ERRORS))

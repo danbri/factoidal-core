@@ -1,0 +1,9 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!-- xml:lang on a property element applies to that element only. -->
+<rdf:RDF xmlns:rdf="http://www.w3.org/1999/02/22-rdf-syntax-ns#"
+         xmlns:ex="http://example.org/">
+  <rdf:Description rdf:about="http://example.org/s">
+    <ex:p xml:lang="fr">a</ex:p>
+    <ex:q>b</ex:q>
+  </rdf:Description>
+</rdf:RDF>

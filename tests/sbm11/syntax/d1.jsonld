@@ -1,0 +1,31 @@
+{
+  "@context": {
+    "ex": "http://example.org/",
+    "xsd": "http://www.w3.org/2001/XMLSchema#"
+  },
+  "@graph": [
+    {
+      "@id": "ex:s1",
+      "ex:name": "Alice",
+      "ex:knows": { "@id": "ex:s2" },
+      "ex:label": [
+        { "@value": "hello", "@language": "en" },
+        { "@value": "bonjour", "@language": "fr" },
+        { "@value": "Hallo", "@language": "de-DE" }
+      ],
+      "ex:age": { "@value": "42", "@type": "xsd:integer" }
+    },
+    {
+      "@id": "ex:s2",
+      "ex:age": { "@value": "007", "@type": "xsd:integer" },
+      "ex:born": { "@value": "1990-05-17", "@type": "xsd:date" },
+      "ex:custom": { "@value": "abc", "@type": "http://example.org/datatype/Code" },
+      "ex:typedString": { "@value": "typed text", "@type": "xsd:string" }
+    },
+    {
+      "@id": "ex:s3",
+      "ex:name": "Carol \"C\" O'Neil\n2nd line",
+      "ex:note": "unicode: café 中文"
+    }
+  ]
+}

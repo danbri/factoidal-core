@@ -316,6 +316,9 @@ extern_lib libl4exthost pkg := do
 -- verify and activate.
 @[default_target] lean_exe «l4sbm11-pack» where root := `Harness.Sbm11Pack
 @[default_target] lean_exe «l4sbm11» where root := `Harness.Sbm11Cli
+-- Read a document in any of the six RDF syntaxes through the source layer and
+-- write it in any of the six with the library serialisers (issue 837).
+@[default_target] lean_exe «l4source-convert» where root := `Harness.SourceConvert
 -- The OWL 2 species verdict (DL or Full) of one ontology document and its
 -- imports, read as N-Triples (Harness/OwlSpeciesFile.lean). The verdict is
 -- `OWL.SyntaxDL.speciesViolations`, the function `l4owl-probe --species`

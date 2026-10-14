@@ -1,0 +1,9 @@
+# Dataset D3: blank nodes: labelled, anonymous, a property list, a collection.
+@prefix ex: <http://example.org/> .
+@prefix xsd: <http://www.w3.org/2001/XMLSchema#> .
+
+_:alice ex:name "Alice" ; ex:knows _:bob .
+_:bob ex:name "Bob" ; ex:knows _:alice .
+ex:doc ex:detail [ ex:k "v" ; ex:n "7"^^xsd:integer ] ;
+    ex:items ( ex:a ex:b ex:c ) .
+[] ex:p ex:o .

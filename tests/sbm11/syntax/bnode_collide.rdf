@@ -1,0 +1,11 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!-- One document with explicit node ids that a generated label could equal
+     (b0, b1) and anonymous nodes: five distinct blank nodes. -->
+<rdf:RDF xmlns:rdf="http://www.w3.org/1999/02/22-rdf-syntax-ns#"
+         xmlns:ex="http://example.org/">
+  <rdf:Description rdf:nodeID="b0"><ex:p>explicit b0</ex:p></rdf:Description>
+  <rdf:Description><ex:p>generated first</ex:p></rdf:Description>
+  <rdf:Description rdf:nodeID="b1"><ex:p>explicit b1</ex:p></rdf:Description>
+  <rdf:Description><ex:q>generated second</ex:q></rdf:Description>
+  <rdf:Description rdf:nodeID="genid1"><ex:p>explicit genid1</ex:p></rdf:Description>
+</rdf:RDF>

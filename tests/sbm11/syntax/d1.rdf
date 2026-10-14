@@ -1,0 +1,23 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!-- Dataset D1: IRIs and literals, no blank nodes, default graph only. -->
+<rdf:RDF xmlns:rdf="http://www.w3.org/1999/02/22-rdf-syntax-ns#"
+         xmlns:ex="http://example.org/">
+  <rdf:Description rdf:about="http://example.org/s1">
+    <ex:name>Alice</ex:name>
+    <ex:knows rdf:resource="http://example.org/s2"/>
+    <ex:label xml:lang="en">hello</ex:label>
+    <ex:label xml:lang="fr">bonjour</ex:label>
+    <ex:label xml:lang="de-DE">Hallo</ex:label>
+    <ex:age rdf:datatype="http://www.w3.org/2001/XMLSchema#integer">42</ex:age>
+  </rdf:Description>
+  <rdf:Description rdf:about="http://example.org/s2">
+    <ex:age rdf:datatype="http://www.w3.org/2001/XMLSchema#integer">007</ex:age>
+    <ex:born rdf:datatype="http://www.w3.org/2001/XMLSchema#date">1990-05-17</ex:born>
+    <ex:custom rdf:datatype="http://example.org/datatype/Code">abc</ex:custom>
+    <ex:typedString rdf:datatype="http://www.w3.org/2001/XMLSchema#string">typed text</ex:typedString>
+  </rdf:Description>
+  <rdf:Description rdf:about="http://example.org/s3">
+    <ex:name>Carol "C" O'Neil&#10;2nd line</ex:name>
+    <ex:note>unicode: café 中文</ex:note>
+  </rdf:Description>
+</rdf:RDF>

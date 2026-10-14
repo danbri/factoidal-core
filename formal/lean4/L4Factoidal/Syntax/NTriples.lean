@@ -298,6 +298,39 @@ def readObject12 : Nat → Nat → List Char → Except ParseError (Term × Nat 
       | _ =>
           .error ⟨"expected object (IRIREF, BLANK_NODE_LABEL, literal, or triple term)", pos⟩
 
+/-! ### The RDF 1.2 object fuel
+
+`readObject12` takes a fuel that bounds `<<( ... )>>` NESTING, and each level
+consumes three characters, so any count of the characters the object can
+occupy is a sufficient bound. Until 2026-09-05 the bound was `cs.length`,
+which walks the WHOLE remaining input for every statement and is therefore
+quadratic in what the caller hands over: in the streaming packer that is a
+65,536-character chunk, and `/usr/bin/sample` put 10,159 of 15,405 samples of
+a wire-version-10 pack of a 52,428,626-byte skosdex prefix inside that one
+`List.length`. Version 10 reads its source as RDF 1.2, so it was the first
+route to pay it.
+
+`readTriple12` kept `r5.length + 1` until 2026-10-14: N-Triples in RDF 1.2 mode
+was the same quadratic walk. A pack of `.nt` text through the source layer
+(`l4sbm11-pack`, which reads RDF 1.2) took 3.0 s of phase 1 for 8.3 MB against
+0.48 s for the same quads as N-Quads text (4 workers, 11,000 subjects of
+`tests/sbm11/syntax/gen_multi.py`, 2026-10-14). The batch parser
+(`parseNTriples`) walked the rest of the whole document for each statement.
+
+An N-Triples or N-Quads statement never spans a raw line break — a literal
+carries `\n` escaped, RDF 1.1 N-Triples and N-Quads section 4, and `skipWs` skips
+space and tab only — so the characters up to the next line
+break bound the object, and counting them is linear in the line rather than
+in the document. The bound is only ever LARGER than the nesting depth it must
+cover, so no document that parsed before is refused now and no committed byte
+changes. -/
+def lineFuelGo : List Char → Nat → Nat
+  | [], acc => acc
+  | c :: rest, acc => if c == '\n' then acc else lineFuelGo rest (acc + 1)
+
+/-- One more than the number of characters before the next line break. -/
+def lineFuel (cs : List Char) : Nat := lineFuelGo cs 1
+
 /-! ## Triple — [2] triple: `triple ::= subject predicate object '.'` -/
 
 /-- RDF 1.1 triple. Port of `parse_triple`. -/
@@ -332,7 +365,7 @@ def readTriple12 (pos : Nat) (cs : List Char) : Except ParseError (Triple × Nat
       | .error e => .error e
       | .ok (pred, p4, r4) =>
           let (p5, r5) := skipWs p4 r4
-          match readObject12 (r5.length + 1) p5 r5 with
+          match readObject12 (lineFuel r5) p5 r5 with
           | .error e => .error e
           | .ok (obj, p6, r6) =>
               let (p7, r7) := skipWs p6 r6
