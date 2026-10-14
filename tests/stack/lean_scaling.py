@@ -53,6 +53,10 @@ repaired (docs/designissues/2026-10-10-lean-vs-fstar-performance.md):
                    (https://github.com/danbri/factoidal/issues/724; 5.7 and 3.7
                    times before the command line stopped re-parsing N-Quads
                    text, 1.6 and 1.0 after)
+  pack-trig-memory peak resident memory of `l4block-shard-pack` over TriG per source byte,
+                   from 4 MB to 16 MB: at most 20 bytes
+                   (https://github.com/danbri/factoidal/issues/769; 70.7 on the
+                   whole-source route, 11.9 on the chunk route)
   query-memory     peak resident memory of `query` COUNT(*) per input byte, from
                    x to 4x paragraphs of gene.ttl: at most 32 bytes
                    (https://github.com/danbri/factoidal/issues/729; 36.6 before
@@ -636,7 +640,11 @@ def peak_rss_run(cmd):
     `tools/sota-bench.py` does."""
     tfile = FIX / "peak-rss.time"
     FIX.mkdir(parents=True, exist_ok=True)
-    t = bl.run_once(["/usr/bin/time", "-f", "%M", "-o", str(tfile)] + cmd, CAP)
+    if os.path.exists("/usr/bin/time"):
+        wrap = ["/usr/bin/time", "-f", "%M", "-o", str(tfile)]
+    else:  # the CCR image has no /usr/bin/time; the wrapper is a small process too
+        wrap = [sys.executable, str(ROOT / "tests/trig-pack/peak_rss.py"), "--kb-file", str(tfile)]
+    t = bl.run_once(wrap + cmd, CAP)
     if t["status"] == "ok":
         try:
             t["rss_kb"] = int(tfile.read_text().strip().splitlines()[-1])
@@ -645,7 +653,57 @@ def peak_rss_run(cmd):
     return t
 
 
+# The TriG shard pack reads its source in 65,536-byte chunks
+# (https://github.com/danbri/factoidal/issues/769). Before that, `l4block-shard-pack`
+# read the whole file and `parseTriG` built its `List Char` (24 bytes per
+# source byte) beside the dataset. The row packs a generated TriG file
+# (tests/trig-pack/gen_trig.py, 60 graphs, one contiguous block each) at x and
+# 4x and bounds the slope of peak RSS. Measured 2026-10-14: 3.9 bytes of peak
+# RSS per source byte over the whole of a 100 MB pack (the key-result target
+# is 12), but 11.9 between 4 MB and 16 MB, because the open runs fill up to
+# `maxCarriedRows` before the first flush. Bound 20 therefore leaves room for
+# that start-up growth and still fails a pack that reads the whole source:
+# `L4_PACK_BUFFERED=1` (the whole-source route) measured 70.7.
+PACK_MEMORY_ROWS = {
+    "pack-trig-memory": (4_000_000, 20.0),
+}
+PACK_BIN = Path(os.environ.get("L4_PACK_BIN",
+                               ROOT / "formal/lean4/.lake/build/bin/l4block-shard-pack"))
+
+
+def gen_trig_fixture(nbytes):
+    FIX.mkdir(parents=True, exist_ok=True)
+    p = FIX / f"pack-{nbytes}.trig"
+    if not p.exists():
+        subprocess.run([sys.executable, str(ROOT / "tests/trig-pack/gen_trig.py"), str(p),
+                        str(nbytes)], check=True, timeout=CAP)
+    return p
+
+
+def pack_memory_row(rid):
+    import shutil
+    x, bound = PACK_MEMORY_ROWS[rid]
+    if not PACK_BIN.exists():
+        return False, f"{PACK_BIN} not built (cd formal/lean4 && lake build l4block-shard-pack)"
+    pts = []
+    for n in (x, 4 * x):
+        p = gen_trig_fixture(n)
+        out = FIX / f"pack-out-{n}"
+        shutil.rmtree(out, ignore_errors=True)
+        t = peak_rss_run([str(PACK_BIN), str(p), str(out), "ibk4"])
+        shutil.rmtree(out, ignore_errors=True)
+        if t["status"] != "ok":
+            return False, f"n={n}: exit status {t['status']}"
+        pts.append((n, p.stat().st_size, t["rss_kb"]))
+    (n1, b1, r1), (n4, b4, r4) = pts
+    slope = (r4 - r1) * 1024 / max(b4 - b1, 1)
+    return slope <= bound, (f"{b1} bytes {r1 / 1024:.0f} MB -> {b4} bytes {r4 / 1024:.0f} MB: "
+                            f"{slope:.1f} bytes of peak RSS per source byte (bound {bound})")
+
+
 def memory_row(rid):
+    if rid in PACK_MEMORY_ROWS:
+        return pack_memory_row(rid)
     if rid in PARSE_MEMORY_ROWS:
         x, make, extra, bound = PARSE_MEMORY_ROWS[rid]
         cmd_of = lambda p: [str(BIN), "parse", str(p)] + extra
@@ -815,8 +873,9 @@ def main() -> int:
     rows = [r for r in names if r in ROWS] or ([] if names else list(ROWS))
     ratio_rows = [r for r in names if r in PARSE_RATIO_ROWS] or (
         [] if names else list(PARSE_RATIO_ROWS))
-    memory_rows = [r for r in names if r in MEMORY_ROWS or r in PARSE_MEMORY_ROWS] or (
-        [] if names else list(MEMORY_ROWS) + list(PARSE_MEMORY_ROWS))
+    memory_rows = [r for r in names if r in MEMORY_ROWS or r in PARSE_MEMORY_ROWS
+                   or r in PACK_MEMORY_ROWS] or (
+        [] if names else list(MEMORY_ROWS) + list(PARSE_MEMORY_ROWS) + list(PACK_MEMORY_ROWS))
     series_rows = [r for r in names if r in SERIES_ROWS] or (
         [] if names else list(SERIES_ROWS))
     run_startup = (not names) or ("startup" in names)

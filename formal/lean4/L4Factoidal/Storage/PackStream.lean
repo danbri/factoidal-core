@@ -40,6 +40,7 @@ import L4Factoidal.Storage.LiteralGramIndexWire
 import L4Factoidal.Storage.GeoBBoxIndexWire
 import L4Factoidal.Syntax.Turtle
 import L4Factoidal.Syntax.TriG
+import L4Factoidal.Syntax.TriGChunkFold
 import L4Factoidal.Syntax.NQuadsFast
 import L4Factoidal.Syntax.NQuadsFold
 import L4Factoidal.Syntax.Utf8Stream
@@ -809,7 +810,8 @@ lexical property of the scanner that no theorem here states. Byte identity
 against the buffered route is therefore MEASURED for Turtle and PROVED for
 N-Quads.
 
-TriG keeps the buffered route: it has no chunk fold at all. -/
+TriG takes the same route through `Syntax/TriGChunkFold.lean`: its agreement
+with `parseTriG` is MEASURED (docs/designissues/2026-09-03-rdf-parsing-strategy.md). -/
 
 /-! ### The publication accumulator
 
@@ -857,6 +859,13 @@ def quadPubStep (state : QuadPub) (triples : List L4Factoidal.RDF.Triple) : Quad
 inductive QuadStream where
   | nquads (stream : L4Factoidal.Syntax.NQuadsStreaming.StreamStateC QuadPub)
   | turtle (fold : TurtleChunkFoldState QuadPub)
+  | trig (fold : L4Factoidal.Syntax.TriGChunkFoldState QuadPub)
+
+/-- The TriG consumer: the statements one unit completed, all in the graph
+    that unit belongs to (`none` is the default graph). -/
+def trigPubStep (state : QuadPub) (graph : Option L4Factoidal.RDF.Subject)
+    (triples : List L4Factoidal.RDF.Triple) : QuadPub :=
+  triples.foldl (fun acc triple => addQuadPub acc triple graph) state
 
 /-- Take the runs the fold has closed, and reset the ready list. `flushMin`
     is the batch rule: `none` publishes only what the per-block cut rule
@@ -878,6 +887,9 @@ def quadStreamDrain (stream : QuadStream) (flushMin : Option Nat) :
   | .turtle fold =>
       let (acc, out) := take fold.acc
       (.turtle { fold with acc := acc }, out)
+  | .trig fold =>
+      let (acc, out) := take fold.acc
+      (.trig { fold with acc := acc }, out)
 
 /-- The accumulator a finished stream ends with. An N-Quads parse error is
     sticky in `StreamStateC` and surfaces here; the Turtle fold has already
@@ -887,6 +899,7 @@ def quadStreamFinish (mode : L4Factoidal.Syntax.Mode) (stream : QuadStream) :
   match stream with
   | .nquads s => L4Factoidal.Syntax.NQuadsStreaming.finishC mode addQuadPub s
   | .turtle fold => fold.finish quadPubStep
+  | .trig fold => fold.finish trigPubStep
 
 /-- The state of a streaming IBK4 pass. Every field is bounded: the open runs
     by the per-block cut rule and `maxCarriedRows`, the manifest rows by the
@@ -929,7 +942,10 @@ def quadIngestInit (h : Hasher) (format : PackFormat) (grammar : PackSyntax)
     stream :=
       match grammar with
       | .nquads => .nquads (L4Factoidal.Syntax.NQuadsStreaming.initialStateC {})
-      | .turtle | .ntriples | .trig =>
+      | .trig =>
+          .trig (L4Factoidal.Syntax.TriGChunkFoldState.init prepass.bnodePrefix {} baseIri
+            (sourceMode format))
+      | .turtle | .ntriples =>
           .turtle (TurtleChunkFoldState.init prepass.bnodePrefix quadPubStep {} baseIri
             (sourceMode format))
     digest := Sha256Stream.init
@@ -956,6 +972,11 @@ def quadIngestFeed (state : QuadIngestState) (bytes : ByteArray) :
             | .error error =>
                 .error s!"l4block-shard-pack Turtle parse error at {error.pos}: {error.msg}"
             | .ok next => .ok (QuadStream.turtle next)
+        | .trig fold =>
+            match fold.feed trigPubStep text with
+            | .error error =>
+                .error s!"l4block-shard-pack TriG parse error at {error.pos}: {error.msg}"
+            | .ok next => .ok (QuadStream.trig next)
       let since := state.bytesSinceBatch + bytes.size
       let batchEnds := since >= state.batchBytes
       let (stream, runs) := quadStreamDrain fed
@@ -995,11 +1016,11 @@ def quadIngestFinish (state : QuadIngestState) : Except String QuadPack :=
                       artifacts := artifacts }
 
 
-/-- Which grammars the streaming IBK4 route reads. TriG stays buffered: it
-    has no chunk fold at all, so there is nothing to stream it with. -/
+/-- Which grammars the streaming IBK4 route reads: all four, since TriG got
+    its chunk fold (`Syntax/TriGChunkFold.lean`,
+    https://github.com/danbri/factoidal/issues/769). -/
 def quadStreams : PackSyntax → Bool
-  | .nquads | .turtle | .ntriples => true
-  | .trig => false
+  | .nquads | .turtle | .ntriples | .trig => true
 
 /-- The TSV header. SBM10 adds three columns: the first eight bytes of each
     zone-map bound, and how many out-of-line literals the block names. An SBM9

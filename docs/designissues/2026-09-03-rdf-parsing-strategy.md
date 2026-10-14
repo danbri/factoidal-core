@@ -300,8 +300,58 @@ Modules, in data order:
 | --- | --- | --- | --- |
 | N-Triples | `NTriples.lean` `parseNTriples` | `StrictFeed.lean` `LineFeed` with `tripleReader` (the command line's `parse FILE`, section 3b) | W3C suite; `NTriplesRoundTrip.lean`; `parseLinesAcc_eq_foldLines`; the chunk boundary by `tools/strict-parse-differential.sh` (3b.4) |
 | N-Quads | `NQuads.lean` `parseNQuads` | `NQuadsFast.lean` `parseNQuadsFast` (bucketed accumulator; the WASM `datasetOpen` path); `NQuadsStreaming.lean` (chunk-boundary fold), `NQuadsFold.lean` (the generic consumer the IBK4 shard packer streams through); `StrictFeed.lean` `LineFeed` with `quadReader` (the command line's `parse FILE`, section 3b; `LineFeed.run_quad11_eq_batch`) | `parseNQuadsFast_eq_parseNQuads` proved 2026-09-02 (`NQuadsFastTheorems.lean`); the streaming module carries its own chunk-boundary theorem |
-| TriG | `TriG.lean` `parseTriG` (shares the Turtle productions; the default graph is the unlabelled block) | none; an IBK4 pack over TriG still buffers the whole source, unlike the Turtle and N-Quads routes (quad-aware layout: `2026-09-02-quad-aware-block-layout.md`) | W3C suites |
+| TriG | `TriG.lean` `parseTriG` (shares the Turtle productions; the default graph is the unlabelled block) | `TriGChunkFold.lean` (the IBK4 and IBK5 shard packer's chunk walk, section 3e; the SBM11 packers take N-Triples and N-Quads only) | W3C suites; chunk cuts, brace balance and block labels PROVED in `TriGChunkFoldTheorems.lean`; agreement with `parseTriG` MEASURED (section 3e), open: https://github.com/danbri/factoidal/issues/836 |
 | RDF/XML | `RdfXml.lean` `parseRdfXml` (the element tree, then the walk) | `parseRdfXmlStream` (the children of `rdf:RDF` walked as they are read; every caller runs it, section 3c) | W3C suite; `RdfXmlTheorems.lean` (blank-node label spaces disjoint by construction); `parseRdfXml_eq_stream` (`@[csimp]`) |
+
+### 3e. TriG chunk walk (https://github.com/danbri/factoidal/issues/769)
+
+`parseTriG` starts with `text.toList`, and `l4block-shard-pack` read the whole
+TriG file, so an IBK4 or IBK5 pack held about 24 bytes of character list per
+source byte beside the dataset. `Syntax/TriGChunkFold.lean` gives TriG the
+walk Turtle has. The scanner is `TurtleStatementScan`'s with the block depth
+added: in normal lexical mode a `{` at depth 0 ends the block header and a `}`
+at depth 1 ends the block's last statement. A local-name escape (`ex:a\'b`)
+is skipped, because the Turtle scanner reads `\'` as the start of a string.
+Each unit is read by the landed grammar functions: a top-level statement by
+`readTriGStatement`, a header by `readLabelOrSubject` after the directives,
+a statement in a block by `readStatement` with the two refusals of
+`readGraphBody`. One `TurtleState` runs through all units in source order.
+
+PROVED (`TriGChunkFoldTheorems.lean`; axioms `propext`, `Classical.choice`,
+`Quot.sound` only): `feed_split` (two chunks in sequence give the result of
+their concatenation, every state, every cut); `feed_inv` (the block flag is the
+scanner's brace depth at every chunk boundary, nothing pending);
+`finish_unterminated` (input ending in a block is refused);
+`consumeBlock_graphs`, `applyEvent_stmt_graphs`, `applyEvent_close_graphs`
+(inside a block every step call carries the block's label);
+`applyEvent_stmt_label`.
+
+NOT PROVED: that the walk returns `parseTriG`'s quads. Open obligation and
+two known differences of the pack bytes: https://github.com/danbri/factoidal/issues/836.
+
+MEASURED 2026-10-14 (`tests/trig-pack/compare_w3c.sh`): 717 pack cases (every
+`.trig` file of the W3C RDF 1.1 and 1.2 suites, ibk4 on the 1.1 files and ibk5
+on both): 484 have the same generation hash on the whole-source route,
+65,536-byte chunks and 7-byte chunks; 231 are refused by all three; 1 file
+(2 cases) differs because the whole-source route publishes the default graph
+first (expected failure, issue 836). Generated corpus
+(`tests/trig-pack/gen_trig.py`, 60 graphs, one block each): 20,000,000 bytes
+(786,419 quads): the same hash on the three routes for ibk4 and ibk5
+(ibk4 `a1ff6602bf7a7801ac40de40512f190a54dfd25b0eb65bf4a4456ae6ae112926`,
+ibk5 `423aff97de8041b5335d1812a50de171d9b3428ea040806d6d3fc7b81ad55027`,
+sha256 of the sorted per-file sha256 list). 100,003,254 bytes (3,831,393
+quads): the whole-source route has 4,688 files and the chunk route 4,922,
+because publication rule 4 (`maxCarriedRows` = 1,048,576) runs only while
+streaming; the chunk route's block files equal those of the N-Quads
+streaming route on the same quads (`l4factoidal parse --out nquads`, packed
+with `--batch-bytes 2000000000`): `45f061ccb16877fbca83302ef71a1b50e10f840ae5f7791f0c5ffa3739305d02`
+(sha256 of the sorted file hashes, manifest excluded).
+
+Peak RSS, 100,003,254 bytes, ibk4, `tests/trig-pack/peak_rss.py`: chunk route
+391,692,288 bytes (3.92 bytes per source byte, 209 s); whole-source route
+7,169,929,216 bytes (71.7 bytes per source byte, 422 s). Scaling row
+`pack-trig-memory` in `tests/stack/lean_scaling.sh` (4 MB to 16 MB: 11.9 bytes
+per byte on the chunk route, 70.7 whole-source; bound 20).
 
 Shared lexical pieces: `Lexing.lean` (the N-Triples string body and escape
 table the Turtle `decodeEscape` mirrors), `IriResolve.lean` (RFC 3986),
@@ -505,7 +555,7 @@ are within the run-to-run spread on a host shared with other builds. The
 `c8dbe2ab` binary was built in another worktree at `cd56fe9a`, which
 differs from `c8dbe2ab` only in `CLAUDE.md`.
 
-TriG has no streaming execution; `l4factoidal parse --lenient` reads a TriG
+TriG has a chunk walk for the shard packer only (section 3e); `l4factoidal parse --lenient` reads a TriG
 file whole and runs the reference walk, whose memory grows with the input.
 After the 2026-10-10 repair of the strict TriG reader (linear; it was
 quadratic, `docs/designissues/2026-10-10-lean-vs-fstar-performance.md`) the

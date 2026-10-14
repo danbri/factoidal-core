@@ -31,6 +31,19 @@ open L4Factoidal.Crypto
 
 private def inputChunkBytes : USize := 65536
 
+/-- Test knob: `L4_PACK_CHUNK_BYTES=N` reads the input in chunks of N bytes,
+    so a test can put chunk boundaries inside tokens. Unset: 65,536. -/
+private def chunkSize : IO USize := do
+  match (← IO.getEnv "L4_PACK_CHUNK_BYTES").bind String.toNat? with
+  | some n => pure (if n == 0 then inputChunkBytes else n.toUSize)
+  | none => pure inputChunkBytes
+
+/-- Test knob: `L4_PACK_BUFFERED=1` packs IBK4/IBK5 through the whole-source
+    route (`quadArtifacts`) for every grammar, as the oracle for the
+    streaming route. -/
+private def forceBuffered : IO Bool := do
+  pure ((← IO.getEnv "L4_PACK_BUFFERED") == some "1")
+
 /-- The published leaves and artifact digests are hashed with
     `Harness.nativeHasher` (HACL* C). The committed bytes are identical to
     the pure Lean specification hasher's output. The source-file identity
@@ -65,7 +78,7 @@ private def foldHandle {α : Type} (handle : IO.FS.Handle)
     (feed : α → ByteArray → IO α) : Nat → α → IO α
   | 0, _ => throw <| IO.userError "input changed or exceeded its declared file extent"
   | fuel + 1, state => do
-      let bytes ← handle.read inputChunkBytes
+      let bytes ← handle.read (← chunkSize)
       if bytes.isEmpty then pure state
       else foldHandle handle feed fuel (← feed state bytes)
 
@@ -187,7 +200,7 @@ private def packQuads (format : PackFormat) (input output : String) (batchBytes 
     let grammar := syntaxOf input
     let baseIri := some ("file://" ++ input)
     let result ←
-      if quadStreams grammar then
+      if quadStreams grammar && !(← forceBuffered) then
         quadIngestFile format input outputPath grammar prepass baseIri batchBytes
       else do
         let text ← IO.FS.readFile input

@@ -191,11 +191,20 @@ run
 subsection "The repair, measured 2026-09-05").
 
 **Block order.** Blocks are published in the FIRST-OCCURRENCE ORDER OF THE
-KEY. The buffered route (TriG) sees that order in the graph-major
-`quadsOfDataset` flattening; the streamed route publishes a run when a size
-target closes it and, at a flush, in the same first-occurrence key order. The
-two routes write the same rows in the same blocks for a source below one
-batch; the ordinals and the artifact names can differ.
+KEY. The whole-source route (`quadArtifacts`, now reached only with
+`L4_PACK_BUFFERED=1`) sees that order in the graph-major `quadsOfDataset`
+flattening; the streamed route (all of TriG, N-Quads, Turtle, N-Triples since
+2026-10-14, https://github.com/danbri/factoidal/issues/769) publishes a run
+when a size target closes it and, at a flush, in the same first-occurrence key
+order of the SOURCE. They agree byte for byte when each named graph is one
+contiguous block, the default graph comes first, and the source has fewer than
+1,048,576 quads (`maxCarriedRows`); otherwise block order or the block set
+differs (https://github.com/danbri/factoidal/issues/836). Test knobs of
+`l4block-shard-pack`: `L4_PACK_BUFFERED=1` (whole-source route),
+`L4_PACK_CHUNK_BYTES=N` (read N bytes at a time). Checks:
+`tests/trig-pack/compare_w3c.sh`, `tests/trig-pack/order_xfail.sh`, scaling row
+`pack-trig-memory`. The SBM11 packers (`l4sbm11-pack`, `l4sbm11-dict-pack`)
+read N-Triples and N-Quads only, not TriG.
 
 ```bash
 l4block-shard-pack tests/local/data/quad_sample.trig /tmp/store/gen-1 ibk4

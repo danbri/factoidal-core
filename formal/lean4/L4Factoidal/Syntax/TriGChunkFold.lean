@@ -1,0 +1,303 @@
+/-
+L4Factoidal.Syntax.TriGChunkFold — TriG read over decoded input chunks,
+one lexical unit at a time (https://github.com/danbri/factoidal/issues/769).
+
+`parseTriG` takes the whole document as a `String` and starts with
+`text.toList`. The shard packer therefore read the whole TriG source and held
+about twenty-four bytes of character list per source byte. This module gives
+TriG the walk that `Syntax.TurtleChunkFold` gives Turtle.
+
+The scanner is `TurtleStatementScan`'s, with two additions that TriG needs.
+In the normal lexical mode (outside IRIREFs, comments and strings) a `{` at
+block depth 0 ends the block HEADER (`label`, `GRAPH label`, or nothing) and
+opens a block; a `}` at depth 1 ends the last statement of the block, which
+may have no dot, and closes it. `{` and `}` occur nowhere else in the TriG
+grammar outside IRIREFs and strings, so depth is 0 or 1. Inside a block the
+scanner offers dot candidates exactly as for Turtle.
+
+Every candidate is read by the landed grammar functions, not by new ones:
+a top-level candidate by `readTriGStatement`; a header by `readLabelOrSubject`
+after the directives `readTriGStatement` also accepts; a statement inside a
+block by `readStatement`, with the same two refusals as `readGraphBody`
+(directive, nested `GRAPH`). Blank-node state, prefixes and base are one
+`TurtleState` threaded through all of them in source order, so the triples
+and their graph labels are those of `parseTriG`.
+
+Not proved: that the walk returns `parseTriG`'s dataset whenever it succeeds
+(the same open half as `parseTurtleText`). Stand-ins are `#guard`s at the end
+of this file and the byte comparisons recorded in
+`docs/designissues/2026-09-03-rdf-parsing-strategy.md`.
+
+Differences from `parseTriG` on REJECTED input only: an error carries the
+position within its candidate, and a stray `}` or a no-progress statement is
+an error here where `parseTriG` stops reading and accepts the prefix.
+-/
+import L4Factoidal.Syntax.TriG
+import L4Factoidal.Syntax.TurtleStatementScan
+
+namespace L4Factoidal.Syntax
+
+open L4Factoidal.RDF
+
+/-- One lexical unit of a TriG document. -/
+inductive TriGEvent where
+  /-- A candidate ended by a dot (or a no-dot directive line), outside a
+      block or inside one. -/
+  | stmt (text : String)
+  /-- The text before a `{` that opened a block. -/
+  | blockOpen (header : String)
+  /-- The text before the `}` that closed a block (a final statement with no
+      dot, or only whitespace). -/
+  | blockClose (rest : String)
+
+/-- The Turtle statement scanner plus the block depth. -/
+structure TriGScan where
+  inner : StatementScan := {}
+  inBlock : Bool := false
+  /-- The last character was a `\\` in the normal mode: a local-name escape
+      (`ex:a\\'b`), whose next character is part of the name and opens no
+      string, comment, IRIREF or block. -/
+  escaped : Bool := false
+  /-- Completed units, newest first. -/
+  eventsRev : List TriGEvent := []
+
+/-- Move the inner scanner's completed candidates into the event list. -/
+def TriGScan.flushInner (s : TriGScan) : TriGScan :=
+  { s with
+    inner := { s.inner with completedRev := [] }
+    eventsRev := s.inner.completedRev.map TriGEvent.stmt ++ s.eventsRev }
+
+def TriGScan.feedChar (s : TriGScan) (c : Char) : TriGScan :=
+  if s.escaped then
+    let next := s.inner.feedChar c
+    { s with inner := { next with mode := ScanMode.normal, pendingDot := false }, escaped := false }
+  else if s.inner.mode == ScanMode.normal &&
+      ((c == '{' && !s.inBlock) || (c == '}' && s.inBlock)) then
+    let flushed := s.flushInner
+    let text := String.ofList flushed.inner.currentRev.reverse
+    { inner := {}
+      inBlock := !s.inBlock
+      escaped := false
+      eventsRev := (if c == '{' then TriGEvent.blockOpen text else TriGEvent.blockClose text)
+        :: flushed.eventsRev }
+  else
+    { s with
+      inner := s.inner.feedChar c
+      escaped := s.inner.mode == ScanMode.normal && c == '\\' }
+
+def TriGScan.feedChars (s : TriGScan) : List Char → TriGScan
+  | [] => s
+  | c :: cs => TriGScan.feedChars (s.feedChar c) cs
+
+/-- Feed a decoded string chunk. -/
+def TriGScan.feed (s : TriGScan) (chunk : String) : TriGScan := s.feedChars chunk.toList
+
+/-- The completed units in source order, and the scanner with them cleared. -/
+def TriGScan.drain (s : TriGScan) : List TriGEvent × TriGScan :=
+  let flushed := s.flushInner
+  (flushed.eventsRev.reverse, { flushed with eventsRev := [] })
+
+/-- The uncommitted text after the last unit. -/
+def TriGScan.remainder (s : TriGScan) : String := s.inner.remainder
+
+/-- State of a TriG chunk fold. `block` is `none` outside a graph block and
+    `some g` inside the block of graph `g` (`g = none` is the default graph). -/
+structure TriGChunkFoldState (α : Type) where
+  turtle : TurtleState
+  acc : α
+  pos : Nat := 0
+  block : Option (Option Subject) := none
+  scanner : TriGScan := {}
+
+/-- Top-level statements of `chars`, each read by `readTriGStatement`. -/
+def consumeTop (step : α → Option Subject → List Triple → α) :
+    Nat → TurtleState → α → Nat → List Char → Except ParseError (TurtleState × α × Nat)
+  | 0, _st, _acc, pos, _ => .error ⟨"TriG statement fuel exhausted", pos⟩
+  | fuel + 1, st, acc, pos, chars =>
+      let (p1, r1) := tws pos chars
+      match r1 with
+      | [] => .ok (st, acc, p1)
+      | _ =>
+          match readTriGStatement (r1.length + 2) st p1 r1 with
+          | .error e => .error e
+          | .ok ((g, ts), st', p2, r2) =>
+              if p2 ≤ p1 then .error ⟨"TriG statement made no progress", p1⟩
+              else consumeTop step fuel st' (step acc g ts) p2 r2
+
+/-- Statements inside the block of graph `g`: the loop of `readGraphBody`. -/
+def consumeBlock (step : α → Option Subject → List Triple → α) (g : Option Subject) :
+    Nat → TurtleState → α → Nat → List Char → Except ParseError (TurtleState × α × Nat)
+  | 0, _st, _acc, pos, _ => .error ⟨"TriG statement fuel exhausted", pos⟩
+  | fuel + 1, st, acc, pos, chars =>
+      let (p1, r1) := tws pos chars
+      match r1 with
+      | [] => .ok (st, acc, p1)
+      | '}' :: _ => .ok (st, acc, p1)
+      | _ =>
+          if isDirectiveAt r1 then
+            .error ⟨"directives are not allowed inside a graph block", p1⟩
+          else if isGraphKeyword r1 then
+            .error ⟨"nested GRAPH is not allowed inside a graph block", p1⟩
+          else
+            match readStatement (r1.length + 2) st p1 r1 with
+            | .error e => .error e
+            | .ok (ts, st', p2, r2) =>
+                if p2 ≤ p1 then .error ⟨"TriG statement made no progress", p1⟩
+                else consumeBlock step g fuel st' (step acc g ts) p2 r2
+
+/-- The text before a `{`: any directives, then the graph label (with or
+    without `GRAPH`), or nothing for a block of the default graph. The
+    directives are those `readTriGStatement` reads one by one. -/
+def readBlockHeader : Nat → TurtleState → Nat → List Char →
+    Except ParseError (Option Subject × TurtleState)
+  | 0, _st, pos, _ => .error ⟨"TriG header fuel exhausted", pos⟩
+  | fuel + 1, st, pos, cs =>
+      let (p1, r1) := tws pos cs
+      match r1 with
+      | [] => .ok (none, st)
+      | _ =>
+        match readPrefixDirective st p1 r1 with
+        | .ok ((pfx, iri), p2, r2) =>
+            readBlockHeader fuel { st with prefixes := (pfx, iri) :: st.prefixes } p2 r2
+        | .error _ =>
+          match readBaseDirective st p1 r1 with
+          | .ok (b, p2, r2) => readBlockHeader fuel { st with baseIri := b } p2 r2
+          | .error _ =>
+            match (if st.mode == .rdf12 then readVersionDirective p1 r1
+                   else .error ⟨"not RDF 1.2", p1⟩) with
+            | .ok (p2, r2) => readBlockHeader fuel st p2 r2
+            | .error _ =>
+              let keyword := isGraphKeyword r1
+              let (p2, r2) := if keyword then tws (p1 + 5) (r1.drop 5) else (p1, r1)
+              match readLabelOrSubject st p2 r2 with
+              | .error e =>
+                  .error (if keyword then ⟨"expected a graph name after GRAPH", p2⟩ else e)
+              | .ok (g, st2, p3, r3) =>
+                  let (p4, r4) := tws p3 r3
+                  match r4 with
+                  | [] => .ok (some g, st2)
+                  | _ => .error ⟨"expected '{' after graph name", p4⟩
+
+def applyEvent (step : α → Option Subject → List Triple → α)
+    (state : TriGChunkFoldState α) : TriGEvent → Except ParseError (TriGChunkFoldState α)
+  | .stmt text =>
+      let cs := text.toList
+      match state.block with
+      | none =>
+          match consumeTop step (cs.length + 2) state.turtle state.acc state.pos cs with
+          | .error e => .error e
+          | .ok (turtle, acc, pos) => .ok { state with turtle, acc, pos }
+      | some g =>
+          match consumeBlock step g (cs.length + 2) state.turtle state.acc state.pos cs with
+          | .error e => .error e
+          | .ok (turtle, acc, pos) => .ok { state with turtle, acc, pos }
+  | .blockOpen header =>
+      let cs := header.toList
+      match readBlockHeader (cs.length + 2) state.turtle state.pos cs with
+      | .error e => .error e
+      | .ok (g, turtle) => .ok { state with turtle, block := some g }
+  | .blockClose rest =>
+      match state.block with
+      | none => .error ⟨"unexpected '}' outside a graph block", state.pos⟩
+      | some g =>
+          let cs := (rest ++ "}").toList
+          match consumeBlock step g (cs.length + 2) state.turtle state.acc state.pos cs with
+          | .error e => .error e
+          | .ok (turtle, acc, pos) => .ok { state with turtle, acc, pos, block := none }
+
+def applyEvents (step : α → Option Subject → List Triple → α) :
+    TriGChunkFoldState α → List TriGEvent → Except ParseError (TriGChunkFoldState α)
+  | state, [] => .ok state
+  | state, ev :: evs =>
+      match applyEvent step state ev with
+      | .error e => .error e
+      | .ok next => applyEvents step next evs
+
+/-- Begin a chunk fold after a pre-pass has supplied the generated blank-node
+    prefix. -/
+def TriGChunkFoldState.init (bnodePrefix : String) (acc : α)
+    (base : Option String := none) (mode : Mode := .rdf11) : TriGChunkFoldState α :=
+  { turtle := TurtleState.initWithBnodePrefix bnodePrefix base mode, acc }
+
+/-- Feed one decoded UTF-8 chunk; every unit it completes is read at once. -/
+def TriGChunkFoldState.feed (step : α → Option Subject → List Triple → α)
+    (state : TriGChunkFoldState α) (chunk : String) :
+    Except ParseError (TriGChunkFoldState α) :=
+  let (events, scanner) := (state.scanner.feed chunk).drain
+  applyEvents step { state with scanner } events
+
+/-- End of input: the units still pending, then the unfinished suffix as a
+    top-level statement (a final dot with no whitespace after it, or a
+    SPARQL-style directive). An open block is an error. -/
+def TriGChunkFoldState.finish (step : α → Option Subject → List Triple → α)
+    (state : TriGChunkFoldState α) : Except ParseError α :=
+  let (events, scanner) := state.scanner.drain
+  match applyEvents step { state with scanner } events with
+  | .error e => .error e
+  | .ok s =>
+      match s.block with
+      | some _ => .error ⟨"unterminated graph block (expected '}')", s.pos⟩
+      | none =>
+          let cs := s.scanner.remainder.toList
+          match consumeTop step (cs.length + 2) s.turtle s.acc s.pos cs with
+          | .error e => .error e
+          | .ok (_, acc, _) => .ok acc
+
+/-- Fold complete decoded chunks into a dataset in source order, as the
+    packer does: the accumulator is the dataset's quads, newest first. -/
+def parseTriGChunksQuads (bnodePrefix : String) (chunks : List String)
+    (base : Option String := none) (mode : Mode := .rdf11) :
+    Except ParseError (List (Triple × Option Subject)) :=
+  let step := fun (acc : List (Triple × Option Subject)) (g : Option Subject)
+      (ts : List Triple) => ts.foldl (fun a t => (t, g) :: a) acc
+  let initial : Except ParseError (TriGChunkFoldState (List (Triple × Option Subject))) :=
+    .ok (TriGChunkFoldState.init bnodePrefix [] base mode)
+  match chunks.foldl (fun r chunk => match r with
+      | .error e => .error e
+      | .ok st => st.feed step chunk) initial with
+  | .error e => .error e
+  | .ok st => (st.finish step).map List.reverse
+
+/-! ## Build-time checks against `parseTriG`
+
+Each document is cut at every character position; the walk must accept it and
+count as many quads as `parseTriG`, and refuse what `parseTriG` refuses. This
+is a check, not a proof (https://github.com/danbri/factoidal/issues/836). -/
+
+private def walkDocs : List String :=
+  [ "<http://e/a> <http://e/p> <http://e/b> .",
+    "{ <http://e/a> <http://e/p> <http://e/b> . <http://e/a> <http://e/p> <http://e/c> }",
+    "<http://e/g> { <http://e/a> <http://e/p> <http://e/b> . <http://e/c> <http://e/p> <http://e/d> . }",
+    "GRAPH <http://e/g> { <http://e/a> <http://e/p> <http://e/b> }",
+    "@prefix e: <http://e/> . e:g { e:a e:p e:b ; e:q \"x\"@en , \"y\" . } e:h { e:c e:p e:d }",
+    "@prefix e: <http://e/> . _:g { e:a e:p e:b } [] { e:a e:p e:c } e:a e:p e:b .",
+    "@prefix e: <http://e/> . e:a e:p [ e:q e:r ] . e:g { e:b e:p ( 1 2 3 ) }",
+    "BASE <http://e/> PREFIX e: <http://e/> GRAPH e:g { <a> e:p <b> }",
+    "@prefix e: <http://e/> . e:g { e:a e:p \"a}b{c.\" . # { } .\n e:b e:p e:c }",
+    "@prefix e: <http://e/> . e:g { e:a e:p e:a\\'b . }",
+    "{ }", "<http://e/g> { }",
+    "@prefix e: <http://e/> . e:g { @prefix f: <http://f/> . }",
+    "@prefix e: <http://e/> . e:g { GRAPH e:h { e:a e:p e:b } }",
+    "@prefix e: <http://e/> . e:g { e:a e:p e:b",
+    "@prefix e: <http://e/> . GRAPH { e:a e:p e:b }" ]
+
+private def quadCount (ds : Dataset) : Nat :=
+  ds.default.length + (ds.named.map (fun ng => ng.graph.length)).foldl (· + ·) 0
+
+private def walkCount (d : String) (cut : Nat) : Option Nat :=
+  let cs := d.toList
+  let a := String.ofList (cs.take cut)
+  let b := String.ofList (cs.drop cut)
+  match parseTriGChunksQuads "anon__" [a, b] none .rdf11 with
+  | .ok qs => some qs.length
+  | .error _ => none
+
+private def walkAgrees (d : String) : Bool :=
+  let want := (parseTriG d none .rdf11).toOption.map quadCount
+  (List.range (d.length + 1)).all (fun cut => walkCount d cut == want)
+
+#guard walkDocs.all walkAgrees
+#guard (walkDocs.filter (fun d => (parseTriG d none .rdf11).toOption.isSome)).length ≥ 8
+#guard (walkDocs.filter (fun d => (parseTriG d none .rdf11).toOption.isNone)).length ≥ 4
+
+end L4Factoidal.Syntax
