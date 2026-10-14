@@ -95,7 +95,7 @@ def streamRange (source : String) (start stop : Nat) (onFeed : P1 → IO P1) : I
     | .error e => throw (IO.userError s!"{source}: UTF-8 error near byte {pos}: {e}")
     | .ok (text, u) =>
       utf8 := u
-      st := L4Factoidal.Syntax.NQuadsStreaming.feedChunkC .rdf11 consume st text.toList
+      st := L4Factoidal.Syntax.NQuadsStreaming.feedChunkC .rdf12 consume st text.toList
       if let some e := st.err then
         throw (IO.userError s!"{source}: parse error at {start + e.pos}: {e.msg}")
       let acc ← onFeed st.acc
@@ -103,7 +103,7 @@ def streamRange (source : String) (start stop : Nat) (onFeed : P1 → IO P1) : I
   match utf8.finish with
   | .error e => throw (IO.userError s!"{source}: UTF-8 error: {e}")
   | .ok _ => pure ()
-  match L4Factoidal.Syntax.NQuadsStreaming.finishC .rdf11 consume st with
+  match L4Factoidal.Syntax.NQuadsStreaming.finishC .rdf12 consume st with
   | .error e => throw (IO.userError s!"{source}: parse error at {start + e.pos}: {e.msg}")
   | .ok acc => onFeed acc
 
@@ -288,9 +288,7 @@ def copyInto (dst : IO.FS.Handle) (src : String) : IO Unit := do
       if b.isEmpty then break
       dst.write b
 
-def tagOfKey (k : ByteArray) : Nat :=
-  let c := k.get! 0
-  if c == classBnode then tagBnode else if c == classIri then tagIri else tagLit
+def tagOfKey (k : ByteArray) : Nat := classTagOfByte (k.get! 0)
 
 
 /-- Merge the term runs into GDV1/GDX1; per run, the remap file. The next

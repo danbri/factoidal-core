@@ -194,6 +194,28 @@ def reqOfSparql (text : String) : Option Requirement :=
   | .ok q    => Requirement.ofQuery? q
   | .error _ => none
 
+/-- An RDF 1.2 triple-term pattern in the object position
+(https://github.com/danbri/factoidal/issues/792 item 1). -/
+def sparqlTripleTerm : String :=
+  "SELECT ?x ?y WHERE { ?x <http://example.org/says> <<( <http://example.org/a> <http://example.org/knows> ?y )>> }"
+
+/-- `reqOfSparql` with the SPARQL 1.2 grammar. -/
+def reqOfSparql12 (text : String) : Option Requirement :=
+  match parseSparql text none .v12 with
+  | .ok q    => Requirement.ofQuery? q
+  | .error _ => none
+
+/-- The query parses (SPARQL 1.2 grammar) and its WHERE clause is one triple
+    pattern whose object is a triple term, so `ofQuery?` refusing it is the
+    refusal of the triple term and not of a parse error. -/
+def tripleTermQueryParses : Bool :=
+  match parseSparql sparqlTripleTerm none .v12 with
+  | .ok q =>
+    match q.pattern with
+    | .bgp [tp] => match tp.o with | .tripleTerm _ _ _ => true | _ => false
+    | _ => false
+  | .error _ => false
+
 def cases : List Case := [
   { id := "subject-lookup", cat := [people], k := 2, answerable := true,
     req := some { bgp := [tp (si alice) pName (v "n")], projection := ["n"] },
@@ -271,7 +293,10 @@ def controlCases : List (String × List String) := [
   ("from-sparql-filter-rejected-today",
     -- `ofQuery?` returns none for FILTER and GRAPH (see the xfail cases).
     (if (reqOfSparql sparqlFilter).isNone && (reqOfSparql sparqlGraph).isNone then []
-     else ["ofQuery? accepted FILTER or GRAPH; flip the xfail cases"]))
+     else ["ofQuery? accepted FILTER or GRAPH; flip the xfail cases"])),
+  ("triple-term-query-parses",
+    -- the control of xfail case `triple-term-requirement`
+    (if tripleTermQueryParses then [] else ["the triple-term query does not parse to one triple-term pattern"]))
 ]
 
 /-! ## Expected failures (issue 801)
@@ -292,6 +317,9 @@ def xcases : List XCase := [
   { id := "rowfilter-from-expr", issue := issue801,
     what := "RowFilter from a SPARQL FILTER expression",
     test := fun _ => (reqOfSparql sparqlFilter).isSome },
+  { id := "triple-term-requirement", issue := issue801,
+    what := "an RDF 1.2 triple-term pattern in a requirement (no access shape returns one; ofQuery? refuses it)",
+    test := fun _ => (reqOfSparql12 sparqlTripleTerm).isSome },
   { id := "indirect-binder-inclusion-dependency", issue := issue801,
     what := "an indirect plan through a binder access justified by an inclusion dependency (members lists every person)",
     test := fun _ =>

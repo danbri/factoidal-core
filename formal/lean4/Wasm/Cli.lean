@@ -789,7 +789,7 @@ def parseCmd (args : List String) : IO UInt32 := do
               pure 2
 
 def queryCmd (args : List String) : IO UInt32 := do
-  match scanArgs ["--format", "--base", "--query", "--query-string"] ["--table"] args with
+  match scanArgs ["--format", "--base", "--query", "--query-string"] ["--table", "--sparql12"] args with
   | .error e => IO.eprintln s!"l4factoidal query: {e}"; pure 2
   | .ok s =>
     match ← resolveTextArg "query" "--query" "--query-string" "SPARQL" s with
@@ -807,7 +807,18 @@ def queryCmd (args : List String) : IO UInt32 := do
         -- execution. The clock is read here, at the edge, once, and passed to
         -- the pure op (https://github.com/danbri/factoidal/issues/743).
         let now ← Ops.nowDateTime
-        match ← parseEnvelope (Ops.queryDatasetOf ds sparql queryBase (some now)) with
+        -- `--sparql12`: the query is read by the SPARQL 1.2 grammar
+        -- (triple-term patterns, TRIPLE, SUBJECT, PREDICATE, OBJECT,
+        -- isTRIPLE), as `queryDataset12` reads it; the reference of the SBM11
+        -- RDF 1.2 gate (tests/sbm11/run.sh part (m),
+        -- https://github.com/danbri/factoidal/issues/792 item 1)
+        let answer :=
+          if s.hasBool "--sparql12" then
+            withOpsDataset .rdf12 ds (fun d =>
+              queryParsedDatasetWith d (some (L4Factoidal.SPARQL.StoreDataset.indexedDatasetBackend d)) sparql
+                (version := .v12) (base := queryBase) (now := some now))
+          else Ops.queryDatasetOf ds sparql queryBase (some now)
+        match ← parseEnvelope answer with
         | none => pure 1
         | some j => printQueryResult j (s.hasBool "--table")
 
@@ -1048,13 +1059,15 @@ def usageLines : List String :=
   , "  tdb2-dump DIR      the quads of an Apache Jena TDB2 database, as N-Quads"
   , "                    (also: --format tdb2 DIR for query, parse, update)"
   , "  query [FILE] (--query FILE.rq | --query-string SPARQL)"
-  , "        [--format FMT] [--base IRI] [--table]"
+  , "        [--format FMT] [--base IRI] [--table] [--sparql12]"
   , "      Run a SPARQL query. SELECT prints SPARQL Results JSON (or a"
   , "      tab-separated table with --table); ASK prints true/false,"
   , "      exit 0 for true and 1 for false; CONSTRUCT prints N-Triples."
   , "      --base IRI is the base of the data FILE and of a --query-string"
   , "      text; a --query FILE.rq resolves its relative IRIs against the"
   , "      file's own IRI (file:///...), and a BASE in the query comes first."
+  , "      --sparql12 reads the query with the SPARQL 1.2 grammar (triple-term"
+  , "      patterns, TRIPLE, SUBJECT, PREDICATE, OBJECT, isTRIPLE)."
   , "  update [FILE] (--update FILE.ru | --update-string SPARQL-UPDATE)"
   , "        [--format FMT] [--base IRI]"
   , "      Apply a SPARQL Update and print the resulting N-Quads. The base"

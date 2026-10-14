@@ -1,0 +1,5 @@
+PREFIX : <http://ex.org/>
+PREFIX rdf: <http://www.w3.org/1999/02/22-rdf-syntax-ns#>
+PREFIX xsd: <http://www.w3.org/2001/XMLSchema#>
+# A triple-term template with variables: the reference instantiates the template.
+CONSTRUCT { ?s :claims <<( ?s :name ?n )>> } WHERE { ?s :name ?n }

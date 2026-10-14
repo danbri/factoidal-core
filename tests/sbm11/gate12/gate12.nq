@@ -1,0 +1,21 @@
+<http://ex.org/a> <http://ex.org/name> "Alice" .
+<http://ex.org/b> <http://ex.org/name> "Bob" .
+<http://ex.org/c> <http://ex.org/name> "Carol" .
+<http://ex.org/s> <http://ex.org/p> "x"@en .
+<http://ex.org/a> <http://ex.org/knows> <http://ex.org/b> .
+<http://ex.org/a> <http://ex.org/says> <<( <http://ex.org/s> <http://ex.org/p> "x"@en )>> .
+<http://ex.org/b> <http://ex.org/says> <<( <http://ex.org/s> <http://ex.org/p> "x"@en )>> .
+<http://ex.org/b> <http://ex.org/says> <<( <http://ex.org/s> <http://ex.org/p> <http://ex.org/o> )>> .
+<http://ex.org/c> <http://ex.org/says> <<( _:b1 <http://ex.org/q> "1"^^<http://www.w3.org/2001/XMLSchema#integer> )>> .
+<http://ex.org/c> <http://ex.org/says> <<( <http://ex.org/s> <http://ex.org/p> <<( <http://ex.org/t> <http://ex.org/q> "deep"@fr )>> )>> .
+<http://ex.org/d> <http://ex.org/says> <<( <http://ex.org/u> <http://ex.org/p> <<( <http://ex.org/v> <http://ex.org/q> <<( <http://ex.org/w> <http://ex.org/r> "3"^^<http://www.w3.org/2001/XMLSchema#int> )>> )>> )>> .
+<http://ex.org/d> <http://ex.org/says> <<( <http://ex.org/s> <http://ex.org/p> "Hi"@EN-GB )>> .
+<http://ex.org/e> <http://ex.org/says> <<( <http://ex.org/s> <http://ex.org/p> "salaam"@ar--rtl )>> .
+<http://ex.org/e> <http://ex.org/says> <<( <http://ex.org/s> <http://ex.org/p> "072"^^<http://www.w3.org/2001/XMLSchema#integer> )>> .
+_:r1 <http://www.w3.org/1999/02/22-rdf-syntax-ns#reifies> <<( <http://ex.org/a> <http://ex.org/knows> <http://ex.org/b> )>> .
+_:r1 <http://ex.org/source> <http://ex.org/wiki> .
+<http://ex.org/a> <http://ex.org/says> <<( <http://ex.org/s> <http://ex.org/p> "x"@en )>> <http://ex.org/g1> .
+<http://ex.org/f> <http://ex.org/says> <<( <http://ex.org/u> <http://ex.org/p> <<( <http://ex.org/v> <http://ex.org/q> <http://ex.org/w> )>> )>> <http://ex.org/g2> .
+<http://ex.org/f> <http://ex.org/name> "Frank" <http://ex.org/g2> .
+_:r2 <http://www.w3.org/1999/02/22-rdf-syntax-ns#reifies> <<( <http://ex.org/f> <http://ex.org/name> "Frank" )>> <http://ex.org/g2> .
+_:r2 <http://ex.org/source> <http://ex.org/registry> <http://ex.org/g2> .

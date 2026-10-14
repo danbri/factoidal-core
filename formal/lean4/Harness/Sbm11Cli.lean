@@ -273,7 +273,7 @@ def runCanon (source : String) : IO UInt32 := do
 
 def idOk (termCount : Nat) (id : Nat) : Bool :=
   let tag := id / two60
-  if tag == tagBnode || tag == tagIri || tag == tagLit then id % two60 < termCount
+  if isDictTag tag then id % two60 < termCount
   else tag == tagInt || tag == tagBool
 
 def checkPosition (termCount : Nat) (s p o g : Nat) : Option String :=
@@ -454,7 +454,8 @@ def usage : String :=
   "usage: l4sbm11 stats GEN | scan GEN PERM [KEY...] [--limit N] [--ids] | count GEN PERM [KEY...]\n" ++
   "       | dump GEN [PERM] | dump-ids GEN PERM | canon SOURCE | verify GEN | activate ROOT NAME\n" ++
   "       | query GEN (SPARQL | --file Q.rq) [--base IRI] [--explain] [--repeat N] [--reference-render] [--reference]\n" ++
-  "       | serve GEN | prm-check GEN | frame-check GEN\n" ++
+  "         [--sparql12]\n" ++
+  "       | serve GEN [--sparql12] | prm-check GEN | frame-check GEN\n" ++
   "       | update GEN ('SPARQL UPDATE' | --file U.ru) | compact GEN OUTDIR [--block-rows B] [--sort-rows M]\n" ++
   "  --verify merkle|none (query, serve, scan, count, dump, dump-ids): merkle checks every 65,536-byte chunk\n" ++
   "    read by its Merkle proof; none reads exact byte ranges and hashes nothing (a changed byte is not\n" ++
@@ -487,6 +488,7 @@ def main (args0 : List String) : IO UInt32 := do
     | ["activate", root, name] => runActivate root name
     | ["reseal", dir] => runReseal dir
     | ["serve", dir] => Harness.Sbm11Query.runServe dir verify?
+    | ["serve", dir, "--sparql12"] => Harness.Sbm11Query.runServe dir verify? .v12
     | "query" :: _ | ["prm-check", _] | ["frame-check", _] => Harness.Sbm11Query.main args0
     | "update" :: _ | "compact" :: _ => Harness.Sbm11Compact.main args0
     | _ => IO.eprintln usage; pure 2

@@ -7,6 +7,13 @@ join of basic graph patterns), with no dataset clause, no GROUP BY, no
 HAVING, no solution modifier and no trailing VALUES. It returns `none`
 for every other shape.
 
+A triple pattern with an RDF 1.2 triple term in any position is refused
+(`tpFlat`): the rewriting relation (`Planner.Plan`) has no access shape that
+returns a triple-term pattern (`patternTermOfTerm` maps no triple term) and
+`tpVars` reads only the three top positions, so the refusal is stated here,
+where a query enters the planner (CLAUDE.md anti-pattern 34;
+https://github.com/danbri/factoidal/issues/792 item 1).
+
 Two `none` cases are open shortfalls, each with an expected-failure case
 in `Harness/PlannerTest.lean` naming
 https://github.com/danbri/factoidal/issues/801:
@@ -23,10 +30,17 @@ namespace L4Factoidal.Planner
 
 open L4Factoidal.RDF L4Factoidal.SPARQL
 
+/-- No position of the triple pattern is a triple term. -/
+def tpFlat (tp : TriplePattern) : Bool :=
+  (match tp.s with | .tripleTerm _ _ _ => false | _ => true) &&
+  (match tp.p with | .tripleTerm _ _ _ => false | _ => true) &&
+  (match tp.o with | .tripleTerm _ _ _ => false | _ => true)
+
 /-- The triple patterns of a WHERE clause that is a basic graph pattern
-or a join of them. Recursion is on the nesting of the pattern. -/
+or a join of them, none with a triple term (`tpFlat`). Recursion is on
+the nesting of the pattern. -/
 def queryPatternBgp? : QueryPattern → Option Bgp
-  | .bgp ps   => some ps
+  | .bgp ps   => if ps.all tpFlat then some ps else none
   | .empty    => some []
   | .join l r =>
     match queryPatternBgp? l, queryPatternBgp? r with

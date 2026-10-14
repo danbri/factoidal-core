@@ -541,6 +541,26 @@ Gates for a change there: `tests/sbm11/dict_scaling.sh [--doubled]`,
 `python3 tests/sbm11/dict_reference.py SOURCE` (same counts) and the
 `sbm11-dict` case of `tests/stack/run.sh --canary`.
 
+RDF 1.2 triple terms (2026-10-14, https://github.com/danbri/factoidal/issues/792
+item 1): a triple term is a dictionary term, key class 7 (`7 len(sk) sk
+len(pk) pk ok`: the keys of its parts, `len` a u32 little-endian, the object
+key last and without a length, so a nested triple term is the suffix of its
+parent's key) and id tag 9. The packers read N-Quads in RDF 1.2 mode;
+`l4sbm11 query --sparql12` (and `serve ... --sparql12`) reads SPARQL 1.2. On
+the id path a triple term with no variable and no blank node inside is a
+constant; one with a variable or a blank node inside goes to the reference
+fallback; the triple functions run as the reference evaluator's own
+functions on decoded terms. An update with a triple term is refused (SPARQL
+1.1 Update grammar, no triple-term form in DLOG): the open part of the issue,
+pinned in part (m). `l4sbm11 canon` reads N-Quads with the RDF 1.1 grammar
+until https://github.com/danbri/factoidal/issues/837 gives it the source
+layer; part (m) pins that refusal too. Records: stage 2 record section 8
+(key, tag, format names, theorems), stage 4 record section 14 (each query
+path). Gates for a change there: `tests/sbm11/run.sh` part (m) (44 queries
+against `l4factoidal query --sparql12`, compaction, the pinned refusals),
+`l4sbm11-dict-pack --nest-check N`, and the `sbm11-triple-term` case of
+`tests/stack/run.sh --canary` (depth 300,000).
+
 SBM11 stage 3 (2026-10-12, https://github.com/danbri/factoidal/issues/789):
 the sorted permutations PSO, POS, SPO, OSP as PRB1 column-frame blocks with
 PRM1 block metadata, the manifest `manifest.sbm11` (wire version 11), packer
@@ -788,7 +808,7 @@ Format registry rows (wire version 11):
 
 | Name | File | Status | Definition |
 | --- | --- | --- | --- |
-| GDV1, GDX1 | `dict.gdv1`, `dict.gdx1` | landed (stage 2) | `Storage/Sbm11/Dict.lean` |
+| GDV1, GDX1 | `dict.gdv1`, `dict.gdx1` | landed (stage 2); key class 7, triple terms, 2026-10-14 | `Storage/Sbm11/Dict.lean`, `TermKey.lean` |
 | PRB1 | `<perm>.prb1` | landed (stage 3); column codecs 0 constant, 1 raw, 2 delta; 3 zstd reserved and refused | `Storage/Sbm11/Column.lean`, `Block.lean` |
 | PRM1 | `<perm>.prm1` | landed (stage 3) | `Storage/Sbm11/Block.lean` |
 | SBM11 manifest | `manifest.sbm11` (`"SBM0"` version 11) | landed (stage 3) | `Storage/Sbm11/Manifest.lean` |
@@ -844,6 +864,26 @@ Format registry rows (wire version 11):
    index path silently fell back to the scan. `l4block-literal-gate` reads
    `literalIndexes` from the `storeOpen` envelope and fails when the handle
    opened with sidecars retained fewer literal indexes than blocks.
+7. A new byte value that the code before it refuses is an extension: the
+   format keeps its name. All three must hold, each checked: (a) no byte
+   value the older code admitted changes meaning; (b) the older code refuses
+   the new value loudly, shown by running the binary built before the change
+   on a generation that holds it; (c) a generation without the new value is
+   byte-identical to one packed before the change. Otherwise rule 2 applies.
+   Coordinator decision, 2026-10-14
+   (https://github.com/danbri/factoidal/issues/792 item 1): SBM11 key class 7
+   and id tag 9 (triple terms) kept the names GDV1 and SBM11. Measured: the
+   `l4sbm11` of `origin/main` 1986fdf4 refuses a generation with a triple
+   term at activation (`id with an unknown tag or a rank past the
+   dictionary`, `refused failures=8`) and its `dump` stops (`unknown tag 9`);
+   the olympics generation packed after the change has the same 10 artifacts
+   and manifest as the stage 3 one (`cmp`). Trap, found on the way: the
+   decision assumed that the older activation decodes every dictionary key,
+   so that its decoder (which returns `none` for class 7) would refuse the
+   generation. It does not: activation checks the order and the count of the
+   keys only. Had the new terms kept tag 3, the older activation would have
+   admitted the generation and failed only at the first query that decoded a
+   triple term. Read what the older reader checks before relying on it.
 
 ## Cross-backend differential gate and Jena TDB2 reader (2026-10-13)
 

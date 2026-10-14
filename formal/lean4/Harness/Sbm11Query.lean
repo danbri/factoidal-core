@@ -5,7 +5,8 @@ generation (stage 4, https://github.com/danbri/factoidal/issues/790).
   l4sbm11 query GEN ('SPARQL' | --file Q.rq) [--base IRI] [--explain]
                 [--repeat N] [--reference-render] [--reference]
                 [--verify merkle|none] [--threads N] [--sip auto|always|off]
-  l4sbm11 serve GEN [--verify merkle|none]
+                [--sparql12]
+  l4sbm11 serve GEN [--verify merkle|none] [--sparql12]
   l4sbm11 prm-check GEN
   l4sbm11 frame-check GEN
 
@@ -24,6 +25,15 @@ guard selects nothing. A line on stderr names the path that ran
   --reference-render  print every term through `jsonOfTerm` (the key
                       printer is compared with it in tests/sbm11/run.sh)
   --reference         run the reference fallback even for the id fragment
+  --sparql12          read the query with the SPARQL 1.2 grammar: triple-term
+                      patterns `<<( s p o )>>`, reified triples, annotations,
+                      TRIPLE, SUBJECT, PREDICATE, OBJECT, isTRIPLE (the
+                      default is the SPARQL 1.1 grammar). The id path takes a
+                      triple-term pattern without variables or blank nodes as
+                      a constant; one with a variable or a blank node inside
+                      goes to the reference fallback; the triple functions are
+                      evaluated by the reference evaluator's own functions on
+                      decoded terms (issue 792 item 1)
   --threads N         scan tasks per BGP scan (issue 799): the selected blocks
                       of each scan are cut into N consecutive chunks, each
                       scanned in its own task; N = 1 is the single-thread path.
@@ -402,7 +412,7 @@ def Session.prefetch (ss : Session) (t : L4Factoidal.Qlvr.Table) (n : Nat) : IO 
     for i in [0:min n t.rows] do
       let x := t.at c i
       let tag := (x >>> 60).toNat
-      if tag == 1 || tag == 2 || tag == 3 then
+      if isDictTag tag then
         let rank := (x &&& 0x0FFFFFFFFFFFFFFF).toNat
         if rank < ss.termCount then
           let pg := rank / Dict.pageTerms
@@ -475,7 +485,7 @@ def Session.pageKeys (ss : Session) (pg : Nat) : IO (ByteArray × Array Nat) := 
 def Session.keySlice (ss : Session) (x : UInt64) : IO (ByteArray × Nat × Nat) := do
   let id := x.toNat
   let tag := id / two60
-  unless tag == tagBnode || tag == tagIri || tag == tagLit do
+  unless isDictTag tag do
     throw (IO.userError s!"id {id}: not a dictionary id")
   let rank := id % two60
   if rank ≥ ss.termCount then throw (IO.userError s!"id {id}: rank not below the term count")
@@ -967,8 +977,8 @@ structure Outcome where
   path : String
   plan : Array String := #[]
 
-def parse (text : String) (base : Option String) : IO Query :=
-  match parseSparql text base with
+def parse (text : String) (base : Option String) (version : SparqlVersion := .v11) : IO Query :=
+  match parseSparql text base version with
   | .error e => throw (IO.userError s!"SPARQL parse error at {e.pos}: {e.msg}")
   | .ok q => pure q
 
@@ -1025,6 +1035,9 @@ structure Opts where
   /-- `--sip auto|always|off` (issue 809): the factor of `IdQuery.sipRule`
       (16, 0) or none -/
   sip : Option Nat := some 16
+  /-- `--sparql12`: read the query with the SPARQL 1.2 grammar (triple-term
+      patterns and the triple functions; issue 792 item 1) -/
+  sparql12 : Bool := false
 
 def parseOpts (xs : List String) : Except String Opts := Id.run do
   let arr := xs.toArray
@@ -1050,6 +1063,9 @@ def parseOpts (xs : List String) : Except String Opts := Id.run do
       i := i + 1
     else if x == "--reference" then
       o := { o with reference := true }
+      i := i + 1
+    else if x == "--sparql12" then
+      o := { o with sparql12 := true }
       i := i + 1
     else if x == "--threads" then
       match (arr[i + 1]?).bind String.toNat? with
@@ -1088,7 +1104,7 @@ def runQuery (dir : String) (o : Opts) : IO UInt32 := do
     | some f, _ => IO.FS.readFile f
     | none, some t => pure t
     | none, none => throw (IO.userError "no query")
-  let q ← parse text o.base
+  let q ← parse text o.base (if o.sparql12 then .v12 else .v11)
   let (v, why) ← chooseVerify dir o.verify
   let ss ← openOverlaid v dir
   let t1 ← IO.monoNanosNow
@@ -1127,8 +1143,9 @@ def runQuery (dir : String) (o : Opts) : IO UInt32 := do
   IO.eprintln s!"sbm11-query: {r.path}; rows {r.rows}; verify={v.name}; {ss.deltaText}; constants looked up {← ss.lookups.get}; block bytes read {fb}; PRM1 bytes read {← ss.prmBytes.get}; range bytes fetched {fetched}; file bytes read {← ss.g.fileBytes.get}; open file bytes {openBytes}; open {msText (t1 - t0)} ms; execution {msText (t2 - t1)} ms; total {msText (t2 - t0)} ms; peak RSS (VmHWM): {← vmHWM}"
   return 0
 
-/-- One query per line of stdin; one line of SPARQL JSON per query. -/
-def runServe (dir : String) (verify? : Option Verify) : IO UInt32 := do
+/-- One query per line of stdin; one line of SPARQL JSON per query; each read
+    with the SPARQL grammar `version`. -/
+def runServe (dir : String) (verify? : Option Verify) (version : SparqlVersion := .v11) : IO UInt32 := do
   let t0 ← IO.monoNanosNow
   let (v, why) ← chooseVerify dir verify?
   let ss ← openOverlaid v dir
@@ -1144,7 +1161,7 @@ def runServe (dir : String) (verify? : Option Verify) : IO UInt32 := do
     if line.isEmpty then continue
     try
       let text ← if line.startsWith "--file " then IO.FS.readFile (line.drop 7).trimAscii.toString else pure line
-      let q ← parse text none
+      let q ← parse text none version
       let a ← IO.monoNanosNow
       let r ← runOne ss q (fun s => stdout.write s) false false
       let b ← IO.monoNanosNow
@@ -1268,7 +1285,7 @@ def main (args : List String) : IO UInt32 := do
     try runFrameCheck dir
     catch e => IO.eprintln s!"l4sbm11 frame-check: {e}"; return 1
   | _ =>
-    IO.eprintln "usage: l4sbm11 query GEN ('SPARQL' | --file Q.rq) [--base IRI] [--explain] [--repeat N] [--reference-render] [--reference] [--verify merkle|none] [--threads N] [--sip auto|always|off] | serve GEN [--verify merkle|none] | prm-check GEN | frame-check GEN"
+    IO.eprintln "usage: l4sbm11 query GEN ('SPARQL' | --file Q.rq) [--base IRI] [--explain] [--repeat N] [--reference-render] [--reference] [--verify merkle|none] [--threads N] [--sip auto|always|off] [--sparql12] | serve GEN [--verify merkle|none] [--sparql12] | prm-check GEN | frame-check GEN"
     return 2
 
 end Harness.Sbm11Query

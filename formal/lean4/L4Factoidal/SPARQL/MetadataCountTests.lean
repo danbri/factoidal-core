@@ -48,4 +48,22 @@ private def rejected (text : String) : Bool :=
 #guard rejected "SELECT (COUNT(*) AS ?n) WHERE {}"
 #guard rejected "SELECT ?p (COUNT(*) AS ?n) WHERE { ?s ?p ?o } GROUP BY ?p"
 
+/-- `rejected` with the SPARQL 1.2 grammar: the query parses and the count
+    is refused. A triple term in a pattern is matched structurally, and the
+    bound of `patternBoundFor` does not express it, so `countRows?` must not
+    count it from the indexes (`StoreFastPath.triplePatternFlat`;
+    https://github.com/danbri/factoidal/issues/792 item 1). -/
+private def rejected12 (text : String) : Bool :=
+  match parseSparql text none .v12 with
+  | .error _ => false
+  | .ok query => (countRows? ordered query).isNone
+
+#guard rejected12 "SELECT (COUNT(*) AS ?n) WHERE { ?s <urn:p> <<( ?a <urn:q> ?b )>> }"
+#guard rejected12 "SELECT (COUNT(*) AS ?n) WHERE { ?s ?p <<( <urn:a> <urn:q> <urn:b> )>> }"
+#guard rejected12 "SELECT (COUNT(*) AS ?n) WHERE { << <urn:a> <urn:q> <urn:b> >> <urn:p> ?o }"
+-- the SPARQL 1.2 grammar parses a plain count the same, and it is counted
+#guard (match parseSparql "SELECT (COUNT(*) AS ?n) WHERE { ?s <urn:p> ?o }" none .v12 with
+  | .ok query => (countRows? ordered query).isSome
+  | .error _ => false)
+
 end L4Factoidal.SPARQL.MetadataCountTests

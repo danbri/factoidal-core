@@ -105,6 +105,30 @@
 #                always, equal as multisets; each sip-*.rq takes a scan with
 #                candidates under auto, sip-every-block one that skips no
 #                block.
+#   (m) rdf12    RDF 1.2 triple terms (https://github.com/danbri/factoidal/issues/792
+#                item 1): tests/sbm11/gate12/gate12.nq (triple terms in the
+#                object position, nested to depth 3, in the default graph and
+#                in named graphs, with blank-node subjects, a directional
+#                literal, an upper-case language tag, a non-canonical integer,
+#                rdf:reifies) packed and activated; each tests/sbm11/gate12/*.rq
+#                read with the SPARQL 1.2 grammar (--sparql12) and answered by
+#                `l4sbm11 query`, by its reference fallback (--reference) and
+#                by `l4factoidal query --format nquads12 --sparql12`, equal as
+#                multisets; ids-* on path=ids (a triple term without variables
+#                or blank nodes inside as a constant, the triple functions,
+#                joins, GROUP BY, ORDER BY over triple terms), ref-* on
+#                path=reference (a variable or a blank node inside a
+#                triple-term pattern, a triple term as subject, BIND, EXISTS);
+#                --reference-render byte-identical to the key printer; the
+#                ids-* queries again on blocks of 2 rows with --sip always and
+#                --threads 4; `dump` equal to `l4factoidal parse --format
+#                nquads12 --out nquads` of the source, as sets, and `canon`
+#                of the source refused (an expected failure, pinned: canon
+#                reads RDF 1.1 until https://github.com/danbri/factoidal/issues/837);
+#                `l4sbm11-dict-pack --check` with failures=0; after one update,
+#                `compact` byte-identical to a fresh pack of the updated
+#                quads; an update with a triple term refused (a limit, pinned:
+#                issue 792 item 1, the update part).
 #   (g) tamper   a copy of the generation with one byte changed in a block
 #                frame of spo.prb1 (manifest and sidecars kept): `scan` and
 #                `query` must be refused under merkle (and by default, the
@@ -578,6 +602,123 @@ else
   grep -E '^(ok|FAIL) ' "$TMP/p2scale.log" | sed 's/^/     /'
   if [ "$rc" -eq 0 ]; then record scaling phase2-n-2n-4n 0 "$(grep -c '^ok' "$TMP/p2scale.log") assertions hold"
   else record scaling phase2-n-2n-4n 1 "exit $rc: $(grep -E '^FAIL' "$TMP/p2scale.log" | head -1)"; fi
+fi
+
+echo "=== (m) RDF 1.2 triple terms (issue 792 item 1)"
+G12SRC="$HERE/gate12/gate12.nq"
+G12="$TMP/gate12"
+rc=0
+"$BIN/l4sbm11-pack" "$G12SRC" "$G12/gen" --workers 1 >"$TMP/g12pack.log" 2>&1 || rc=$?
+[ "$rc" -eq 0 ] && { "$BIN/l4sbm11" activate "$G12" gen >"$TMP/g12act.log" 2>&1 || rc=$?; }
+if [ "$rc" -ne 0 ]; then
+  record rdf12 pack-activate 1 "exit $rc: $(tail -1 "$TMP/g12pack.log" "$TMP/g12act.log" 2>/dev/null | tr '\n' ' ')"
+else
+  record rdf12 pack-activate 0 "$(grep -o 'quads=[0-9]*' "$TMP/g12pack.log" | head -1); $(grep -o 'terms=[0-9]*' "$TMP/g12pack.log" | head -1)"
+  # the same fixture with blocks of 2 rows, for --sip always and --threads 4
+  "$BIN/l4sbm11-pack" "$G12SRC" "$G12/small" --workers 1 --block-rows 2 >"$TMP/g12small.log" 2>&1 || rc=$?
+  for rq in "$HERE"/gate12/*.rq; do
+    n="$(basename "$rq" .rq)"
+    qb="file://$(realpath "$rq")"
+    rrc=0
+    timeout 120 "$BIN/l4factoidal" query "$G12SRC" --format nquads12 --sparql12 --query "$rq" \
+      >"$TMP/m-$n.want" 2>/dev/null || rrc=$?
+    rc=0
+    timeout 120 "$BIN/l4sbm11" query "$G12" --sparql12 --file "$rq" --base "$qb" >"$TMP/m-$n.got" 2>"$TMP/m-$n.err" || rc=$?
+    if [ "$rc" -ne 0 ]; then record rdf12 "$n" 1 "exit $rc: $(tail -1 "$TMP/m-$n.err")"; continue; fi
+    v="$(python3 -I "$HERE/compare_answers.py" "$TMP/m-$n.got" "$TMP/m-$n.want" "$rrc")"
+    p="$(grep -o 'path=[a-z]*' "$TMP/m-$n.err")"
+    want_path=path=ids; case $n in ref-*) want_path=path=reference ;; esac
+    if [ "$p" != "$want_path" ]; then record rdf12 "$n" 1 "$p, expected $want_path"
+    else case "$v" in equal*) record rdf12 "$n" 0 "$p; $v" ;; *) record rdf12 "$n" 1 "$p; $v" ;; esac
+    fi
+    # the reference fallback over the decoded quads
+    rc=0
+    timeout 120 "$BIN/l4sbm11" query "$G12" --sparql12 --file "$rq" --base "$qb" --reference \
+      >"$TMP/m-$n.fb" 2>/dev/null || rc=$?
+    v="$(python3 -I "$HERE/compare_answers.py" "$TMP/m-$n.fb" "$TMP/m-$n.want" "$rrc")"
+    case "$rc:$v" in 0:equal*) record rdf12 "$n--reference" 0 "$v" ;; *) record rdf12 "$n--reference" 1 "exit $rc; $v" ;; esac
+    # the key printer against jsonOfTerm
+    rc=0
+    timeout 120 "$BIN/l4sbm11" query "$G12" --sparql12 --file "$rq" --base "$qb" --reference-render \
+      >"$TMP/m-$n.rr" 2>/dev/null || rc=$?
+    if [ "$rc" -eq 0 ] && cmp -s "$TMP/m-$n.got" "$TMP/m-$n.rr"; then record rdf12 "$n--render" 0 "byte-identical"
+    else record rdf12 "$n--render" 1 "exit $rc or outputs differ"; fi
+    # blocks of 2 rows, candidates into every join scan, 4 scan tasks
+    case $n in ids-*)
+      rc=0
+      SBM11_MIN_RANGE_ROWS=0 timeout 120 "$BIN/l4sbm11" query "$G12/small" --sparql12 --file "$rq" --base "$qb" \
+        --sip always --threads 4 >"$TMP/m-$n.small" 2>"$TMP/m-$n.smallerr" || rc=$?
+      v="$(python3 -I "$HERE/compare_answers.py" "$TMP/m-$n.small" "$TMP/m-$n.want" "$rrc")"
+      p="$(grep -o 'path=[a-z]*' "$TMP/m-$n.smallerr")"
+      case "$rc:$p:$v" in 0:path=ids:equal*) record rdf12 "$n--small-blocks" 0 "$v" ;;
+        *) record rdf12 "$n--small-blocks" 1 "exit $rc; $p; $v" ;; esac ;;
+    esac
+  done
+  # dump equals canon of the source, as sets. An expected failure, pinned:
+  # `l4sbm11 canon` parses N-Quads with the RDF 1.1 grammar and refuses the
+  # first triple term (https://github.com/danbri/factoidal/issues/837 gives
+  # canon the source layer, which reads RDF 1.2). When canon accepts the file
+  # and equals the dump, this turns RED: make it the assertion
+  # dump-equals-canon then.
+  rc=0
+  "$BIN/l4sbm11" dump "$G12" 2>/dev/null | sort -u >"$TMP/g12dump.nq" || rc=$?
+  crc=0
+  "$BIN/l4sbm11" canon "$G12SRC" >"$TMP/g12canon.raw" 2>"$TMP/g12canon.err" || crc=$?
+  sort -u "$TMP/g12canon.raw" >"$TMP/g12canon.nq"
+  if [ "$rc" -eq 0 ] && [ "$crc" -ne 0 ] && grep -q 'parse error' "$TMP/g12canon.err"; then
+    record rdf12 xfail-dump-equals-canon 0 "canon refuses RDF 1.2, expected (https://github.com/danbri/factoidal/issues/837): $(head -c 100 "$TMP/g12canon.err")"
+  elif [ "$rc" -eq 0 ] && [ "$crc" -eq 0 ] && [ -s "$TMP/g12dump.nq" ] && cmp -s "$TMP/g12dump.nq" "$TMP/g12canon.nq"; then
+    record rdf12 xfail-dump-equals-canon 1 "UNEXPECTED: canon reads RDF 1.2 and equals the dump; make this the assertion dump-equals-canon (https://github.com/danbri/factoidal/issues/837)"
+  else
+    record rdf12 dump-equals-canon 1 "exit $rc/$crc; dump $(wc -l <"$TMP/g12dump.nq"), canon $(wc -l <"$TMP/g12canon.nq") lines; $(head -c 160 "$TMP/g12canon.err")"
+  fi
+  # dump equals the reference parser's canonical N-Quads of the source, as
+  # sets (an implementation that shares no code with the packer's reader)
+  rc=0
+  "$BIN/l4factoidal" parse "$G12SRC" --format nquads12 --out nquads 2>/dev/null | grep -v '^$' | sort -u >"$TMP/g12ref.nq" || rc=$?
+  if [ "$rc" -eq 0 ] && [ -s "$TMP/g12ref.nq" ] && cmp -s "$TMP/g12dump.nq" "$TMP/g12ref.nq"; then
+    record rdf12 dump-equals-reference-parse 0 "$(wc -l <"$TMP/g12ref.nq") quads"
+  else
+    record rdf12 dump-equals-reference-parse 1 "exit $rc; dump $(wc -l <"$TMP/g12dump.nq"), reference $(wc -l <"$TMP/g12ref.nq") lines"
+  fi
+  # the dictionary alone: every key decodes to a term whose key is the same
+  # bytes, every term of the source is found
+  rc=0
+  "$BIN/l4sbm11-dict-pack" "$G12SRC" "$TMP/g12dict" >/dev/null 2>&1 || rc=$?
+  [ "$rc" -eq 0 ] && { "$BIN/l4sbm11-dict-pack" --check "$G12SRC" "$TMP/g12dict" >"$TMP/g12check.log" 2>&1 || rc=$?; }
+  if [ "$rc" -eq 0 ] && grep -q 'failures=0' "$TMP/g12check.log"; then
+    record rdf12 dict-check 0 "$(grep -o 'keys=[0-9]*' "$TMP/g12check.log" | head -1); failures=0"
+  else record rdf12 dict-check 1 "exit $rc: $(grep 'FAIL' "$TMP/g12check.log" | head -1)"; fi
+  # compaction over a base with triple terms re-keys their tag-9 ids
+  # (Sbm11Compact.kindOf): after one update, the compacted generation is
+  # byte-identical to a fresh pack of the updated quads
+  M="$TMP/g12delta"
+  mkdir -p "$M"
+  cp "$G12SRC" "$M/final.nq"
+  echo '<http://ex.org/z> <http://ex.org/name> "Zed" .' >>"$M/final.nq"
+  rc=0
+  "$BIN/l4sbm11-pack" "$G12SRC" "$M/col/gen" --workers 1 >/dev/null 2>&1 || rc=$?
+  [ "$rc" -eq 0 ] && { "$BIN/l4sbm11" activate "$M/col" gen >/dev/null 2>&1 || rc=$?; }
+  [ "$rc" -eq 0 ] && { "$BIN/l4sbm11" update "$M/col" 'INSERT DATA { <http://ex.org/z> <http://ex.org/name> "Zed" }' >"$M/upd.log" 2>&1 || rc=$?; }
+  [ "$rc" -eq 0 ] && { "$BIN/l4sbm11" compact "$M/col" "$M/col/gen2" >"$M/compact.log" 2>&1 || rc=$?; }
+  [ "$rc" -eq 0 ] && { "$BIN/l4sbm11-pack" "$M/final.nq" "$M/fresh" --workers 1 >/dev/null 2>&1 || rc=$?; }
+  if [ "$rc" -ne 0 ]; then record rdf12 compact-equals-fresh-pack 1 "exit $rc: $(tail -1 "$M/upd.log" "$M/compact.log" 2>/dev/null | tr '\n' ' ')"
+  else
+    v="$(same_artifacts "$M/col/gen2" "$M/fresh")"; c=$?
+    record rdf12 compact-equals-fresh-pack "$c" "$v"
+  fi
+  # A limit, pinned (issue 792 item 1, the update part): an update with a
+  # triple term is refused (the update grammar is SPARQL 1.1, and the DLOG
+  # term codec has no triple-term form). When it is accepted this turns RED:
+  # make it an assertion then and update the issue.
+  r=0
+  "$BIN/l4sbm11" update "$M/col" 'INSERT DATA { <http://ex.org/z> <http://ex.org/says> <<( <http://ex.org/s> <http://ex.org/p> "new" )>> }' \
+    >"$M/upd-tt.log" 2>&1 || r=$?
+  if [ "$r" -ne 0 ]; then
+    record rdf12 xfail-update-triple-term 0 "refused, expected (https://github.com/danbri/factoidal/issues/792 item 1): $(tail -1 "$M/upd-tt.log" | head -c 100)"
+  else
+    record rdf12 xfail-update-triple-term 1 "UNEXPECTED: accepted; make this an assertion and update https://github.com/danbri/factoidal/issues/792"
+  fi
 fi
 
 echo

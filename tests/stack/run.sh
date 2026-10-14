@@ -644,6 +644,45 @@ if [ "$CANARY" = 1 ]; then
   fi
 fi
 
+# ------------------------- SBM11 triple terms (issue 792 item 1)
+# `l4sbm11-dict-pack --nest-check 300000`: an RDF 1.2 triple term nested
+# 300,000 deep in the object position (a 5,100,011-byte class-7 key) through
+# `normalizeTerm` (the innermost language tag folded), the class-7 key encoder
+# `termKeyBytes?`, the decoder `decodeKey?` and the encoder again; the second
+# key must be the bytes of the first. The nesting is above the wasm module's
+# 8 MB stack at 32 bytes a frame (262,144), and far above this canary's.
+# https://github.com/danbri/factoidal/issues/792
+sbm11_tt_case() { # sbm11_tt_case <route> <prefix...>
+  local route="$1"; shift
+  local rc log
+  if [ ! -x "$SBM11_BIN" ]; then
+    record "$route" sbm11-triple-term 1 "$SBM11_BIN does not exist (lake build l4sbm11-dict-pack)"
+    return
+  fi
+  log="$(run_capped "$TIMEOUT" "$@" "$SBM11_BIN" --nest-check 300000 2>&1)"; rc=$?
+  if printf '%s' "$log" | grep -q 'Stack overflow'; then
+    score_case "$route" sbm11-triple-term overflow "STACK OVERFLOW (exit $rc)"
+  elif [ "$rc" -ne 0 ] || ! printf '%s' "$log" | grep -q 'depth=300000 .*failures=0'; then
+    score_case "$route" sbm11-triple-term error "exit $rc: $(printf '%s' "$log" | tail -1 | head -c 160)"
+  else
+    score_case "$route" sbm11-triple-term ran "$(printf '%s' "$log" | grep -o 'depth=[0-9]* key-bytes=[0-9]*' | head -1); round trip failures=0"
+  fi
+}
+if [ "$ROUTE" = native ] || [ "$ROUTE" = both ]; then
+  echo
+  echo "=== SBM11 triple term nested 300,000 deep, key encode and decode, native default stack"
+  sbm11_tt_case native env
+fi
+if [ "$CANARY" = 1 ]; then
+  echo
+  echo "=== SBM11 triple term nested 300,000 deep, key encode and decode, native under ${CANARY_VAR}=${CANARY_KB}"
+  if [ "$CONTROL_OK" = 1 ]; then
+    sbm11_tt_case canary "${CANARY_PREFIX[@]}"
+  else
+    record canary sbm11-triple-term 1 "NOT SCORED: the canary control did not pass"
+  fi
+fi
+
 # ------------------------- SBM11 permutations (issue 789)
 # `l4sbm11-pack` packs the same sbm11-dict.nt (600,001 triples) with runs of
 # 20,000 terms, row runs of 20,000 rows (the external sort of phase 3 writes

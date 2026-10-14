@@ -149,7 +149,12 @@ def queryParsedDatasetWith (ds : Dataset) (dsb : Option DatasetBackend)
           ",\"srj\":" ++ srj ++ "}"
     | .construct _ =>
         let g := evalConstruct env ds q
-        match Graph.toNTriples g with
+        -- RDF 1.2 N-Triples: a graph with no triple term and no directional
+        -- literal prints the same text in both modes (`Graph.toNTriples`); in
+        -- RDF 1.1 mode an answer with a triple term was an error, and the
+        -- dataset is read in RDF 1.2 mode (an SBM11 generation holds triple
+        -- terms since https://github.com/danbri/factoidal/issues/792 item 1)
+        match Graph.toNTriples g .rdf12 with
         | .error e  => errJson s!"construct serialisation: {e}"
         | .ok lines => okWith (extra ++ [("kind", .string "construct"),
                                          ("nquads", .string lines)])
@@ -159,7 +164,7 @@ def queryParsedDatasetWith (ds : Dataset) (dsb : Option DatasetBackend)
         -- from the dataset itself, never from a backend: the description
         -- takes statements no pattern selects.
         let g := evalDescribe env ds q
-        match Graph.toNTriples g with
+        match Graph.toNTriples g .rdf12 with
         | .error e  => errJson s!"describe serialisation: {e}"
         | .ok lines => okWith (extra ++ [("kind", .string "describe"),
                                          ("nquads", .string lines)])

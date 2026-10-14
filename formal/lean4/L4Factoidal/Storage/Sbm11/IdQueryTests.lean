@@ -16,6 +16,12 @@ One theorem and sample tests:
     the key-byte string tests equal `STRSTARTS` / `STRENDS` / `CONTAINS`;
     the id order of blank nodes and IRIs and the value order of inline
     integers equal `sparqlOrderValue`; the key printer prints `jsonOfTerm`.
+    The samples include RDF 1.2 triple terms (dictionary class 7,
+    https://github.com/danbri/factoidal/issues/792 item 1): for them `=` with
+    such a constant is false, the string tests and the key printer give no
+    answer (the reference evaluator and `jsonOfTerm` decide), and a
+    triple-term pattern is a constant of the id path only without a variable
+    or a blank node inside (`argOfObject`).
 
 A shortcut that disagrees with the reference evaluator on one of these
 terms fails the build.
@@ -50,6 +56,12 @@ def lit? (lex dt : String) (lang : Option String) : Option Term :=
 def iri? (s : String) : Option Term :=
   if h : isIri s = true then some (.iri ⟨s, h⟩) else none
 
+/-- `<<( s p o )>>` with an IRI subject and predicate. -/
+def tt? (s p : String) (o : Option Term) : Option Term :=
+  match iri? s, iri? p, o with
+  | some (.iri si), some (.iri pi), some ot => some (.tripleTerm (.iri si) pi ot)
+  | _, _, _ => none
+
 /-- Terms as the packer stores them (language tags in lower case). -/
 def samples : List Term :=
   ([iri? "http://ex.org/a", iri? "http://ex.org/b", iri? "http://ex.org/aa", iri? "http://ex.org/é",
@@ -60,7 +72,13 @@ def samples : List Term :=
     lit? "72" (xsdT "int") none, lit? "72" (xsdT "integer") none, lit? "072" (xsdT "integer") none,
     lit? "-3" (xsdT "integer") none, lit? "71" (xsdT "short") none, lit? "72.0" (xsdT "decimal") none,
     lit? "7.2E1" (xsdT "double") none, lit? "true" (xsdT "boolean") none, lit? "1" (xsdT "boolean") none,
-    lit? "Alice" "http://ex.org/dt" none, lit? "abc" (xsdT "int") none]).filterMap id
+    lit? "Alice" "http://ex.org/dt" none, lit? "abc" (xsdT "int") none,
+    tt? "http://ex.org/a" "http://ex.org/p" (iri? "http://ex.org/b"),
+    tt? "http://ex.org/a" "http://ex.org/p" (lit? "Alice" rdfLangString.val (some "en")),
+    tt? "http://ex.org/a" "http://ex.org/p" (lit? "72" (xsdT "integer") none),
+    tt? "http://ex.org/a" "http://ex.org/p"
+      (tt? "http://ex.org/b" "http://ex.org/q" (lit? "Alice" (xsdT "string") none)),
+    some (.tripleTerm (.bnode "b1") ⟨"http://ex.org/p", rfl⟩ (.bnode "b2"))]).filterMap id
 
 /-- Constants of `=` whose answer is term identity (`eqByTermConst?`). -/
 def eqConsts : List Expr :=
@@ -97,7 +115,7 @@ def promoted (t : Term) : Bool :=
 
 #guard (samples.filter (!promoted ·)).all fun ct =>
   match sameTermConst? (match ct with | .iri i => .iri i | .literal l => .lit l | _ => .var "none") with
-  | none => (match ct with | .bnode _ => true | _ => false)
+  | none => (match ct with | .bnode _ | .tripleTerm _ _ _ => true | _ => false)
   | some c => samples.all fun t =>
       refFilter (.sameTerm (.var "v") (match c with | .iri i => .iri i | .literal l => .lit l | _ => .var "x"))
         (mu t) == (t == c)
@@ -172,6 +190,62 @@ def strExpr (k : Nat) (n : String) : Expr :=
     match keyJson key ByteArray.empty with
     | some out => out.data == (L4Factoidal.SPARQL.jsonOfTerm t).toString.toUTF8.data
     | none => true
+
+/- A class-7 key has no shape in the key printer: `appendIdJsonM` prints a
+    triple term (tag 9) by `jsonOfTerm` of the decoded term, whose SPARQL 1.2
+    JSON form is `"type":"triple"`. -/
+#guard samples.all fun t =>
+  match t, L4Factoidal.Storage.Sbm11.termKeyBytes? t with
+  | .tripleTerm _ _ _, some key =>
+    (keyJson key ByteArray.empty).isNone &&
+      ((L4Factoidal.SPARQL.jsonOfTerm t).toString.splitOn "\"type\":\"triple\"").length ≥ 2
+  | .tripleTerm _ _ _, none => false
+  | _, _ => true
+
+/-! ## Triple-term patterns in the object position (`argOfObject`) -/
+
+open L4Factoidal.SPARQL (PatternTerm)
+
+def pIri (s : String) : PatternTerm :=
+  if h : isIri s = true then .iri ⟨s, h⟩ else .var "bad"
+
+def argTerm? : Except String Arg → Option Term
+  | .ok (.term t) => some t
+  | _ => none
+
+def argRefused : Except String Arg → Bool
+  | .error _ => true
+  | _ => false
+
+-- a ground triple term is the constant it denotes, nested ones too
+#guard argTerm? (argOfObject (.tripleTerm (pIri "http://ex.org/a") (pIri "http://ex.org/p")
+    (pIri "http://ex.org/b"))) == tt? "http://ex.org/a" "http://ex.org/p" (iri? "http://ex.org/b")
+#guard (match lit? "Alice" (xsdT "string") none with
+  | some (.literal l) =>
+    argTerm? (argOfObject (.tripleTerm (pIri "http://ex.org/a") (pIri "http://ex.org/p")
+      (.tripleTerm (pIri "http://ex.org/b") (pIri "http://ex.org/q") (.literal l)))) ==
+    tt? "http://ex.org/a" "http://ex.org/p"
+      (tt? "http://ex.org/b" "http://ex.org/q" (lit? "Alice" (xsdT "string") none))
+  | _ => false)
+-- a variable or a blank node anywhere inside, a literal subject, a blank-node
+-- subject: refused (the reference evaluator answers)
+#guard argRefused (argOfObject (.tripleTerm (pIri "http://ex.org/a") (pIri "http://ex.org/p") (.var "o")))
+#guard argRefused (argOfObject (.tripleTerm (.var "s") (pIri "http://ex.org/p") (pIri "http://ex.org/b")))
+#guard argRefused (argOfObject (.tripleTerm (pIri "http://ex.org/a") (.var "p") (pIri "http://ex.org/b")))
+#guard argRefused (argOfObject (.tripleTerm (.bnode "x") (pIri "http://ex.org/p") (pIri "http://ex.org/b")))
+#guard argRefused (argOfObject (.tripleTerm (pIri "http://ex.org/a") (pIri "http://ex.org/p")
+    (.tripleTerm (pIri "http://ex.org/b") (pIri "http://ex.org/q") (.var "deep"))))
+#guard (match lit? "x" (xsdT "string") none with
+  | some (.literal l) =>
+    argRefused (argOfObject (.tripleTerm (.literal l) (pIri "http://ex.org/p") (pIri "http://ex.org/b")))
+  | _ => false)
+-- the subject and predicate positions take no triple term
+#guard argRefused (argOfTerm (.tripleTerm (pIri "http://ex.org/a") (pIri "http://ex.org/p")
+    (pIri "http://ex.org/b")))
+#guard (match argOfSubject (.tripleTerm (pIri "http://ex.org/a") (pIri "http://ex.org/p")
+    (pIri "http://ex.org/b")) with | .error _ => true | _ => false)
+-- every other object is `argOfTerm`
+#guard argTerm? (argOfObject (pIri "http://ex.org/b")) == iri? "http://ex.org/b"
 
 #print axioms ebvOrFalse_evalIn_and
 

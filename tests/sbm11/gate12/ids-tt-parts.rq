@@ -1,0 +1,5 @@
+PREFIX : <http://ex.org/>
+PREFIX rdf: <http://www.w3.org/1999/02/22-rdf-syntax-ns#>
+PREFIX xsd: <http://www.w3.org/2001/XMLSchema#>
+# SUBJECT, PREDICATE, OBJECT in the SELECT clause: the reference post-processing on the decoded solutions.
+SELECT ?t (SUBJECT(?t) AS ?ts) (PREDICATE(?t) AS ?tp) (OBJECT(?t) AS ?to) WHERE { ?s :says ?t }

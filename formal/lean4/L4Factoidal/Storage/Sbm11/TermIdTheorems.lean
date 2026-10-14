@@ -183,15 +183,21 @@ theorem inlineCode?_tag (t : Term) (n : Nat) (h : inlineCode? t = some n) :
   | tripleTerm _ _ _ => simp [inlineCode?] at h
 
 theorem classTag_cases (k : Key) :
-    classTag k = tagBnode ∨ classTag k = tagIri ∨ classTag k = tagLit := by
+    classTag k = tagBnode ∨ classTag k = tagIri ∨ classTag k = tagLit ∨ classTag k = tagTriple := by
   unfold classTag
   split
-  · split
+  · unfold classTagOfByte
+    split
     · left; rfl
     · split
       · right; left; rfl
-      · right; right; rfl
-  · right; right; rfl
+      · split
+        · right; right; right; rfl
+        · right; right; left; rfl
+  · right; right; left; rfl
+
+theorem isDictTag_classTag (k : Key) : isDictTag (classTag k) = true := by
+  rcases classTag_cases k with h | h | h | h <;> rw [h] <;> rfl
 
 /-- The id round trip over a dictionary. -/
 theorem ofCode?_toCode? (d : List Key) (t : Term) (n : Nat) (h : toCode? d t = some n) :
@@ -228,8 +234,9 @@ theorem ofCode?_toCode? (d : List Key) (t : Term) (n : Nat) (h : toCode? d t = s
           unfold dictCode; rw [two60_eq] at hlt ⊢; omega
         have hdec := decodeKey?_termKey? t k hk
         unfold ofCode?
-        rcases classTag_cases k with hct | hct | hct <;>
-          simp [hdiv, hmod, hget, hct, hdec, tagBnode, tagIri, tagLit, tagInt, tagBool]
+        rcases classTag_cases k with hct | hct | hct | hct <;>
+          simp [hdiv, hmod, hget, hct, hdec, isDictTag, tagBnode, tagIri, tagLit, tagTriple, tagInt,
+            tagBool]
       · rw [if_neg hc] at h; cases h
 
 /-- Two terms with ids in one dictionary have the same id only if they are
@@ -241,9 +248,10 @@ theorem toCode?_injective (d : List Key) (t₁ t₂ : Term) (n : Nat)
   rw [e₁] at e₂
   exact Option.some.inj e₂
 
-/-- Every id is at least `2 ^ 60` (tag at least 1) and below `6 * 2 ^ 60`. -/
+/-- Every id is at least `2 ^ 60` (tag at least 1) and below `10 * 2 ^ 60`
+    (tag at most 9). -/
 theorem toCode?_range (d : List Key) (t : Term) (n : Nat) (h : toCode? d t = some n) :
-    two60 ≤ n ∧ n < 6 * two60 := by
+    two60 ≤ n ∧ n < 10 * two60 := by
   unfold toCode? at h
   cases hin : inlineCode? t with
   | some c =>
@@ -268,9 +276,9 @@ theorem toCode?_range (d : List Key) (t : Term) (n : Nat) (h : toCode? d t = som
         simp only [Bool.and_eq_true, decide_eq_true_eq] at hc
         unfold dictCode
         have := classTag_cases k
-        simp only [tagBnode, tagIri, tagLit] at this
+        simp only [tagBnode, tagIri, tagLit, tagTriple] at this
         rw [two60_eq] at hc ⊢
-        rcases this with h' | h' | h' <;> rw [h'] <;> omega
+        rcases this with h' | h' | h' | h' <;> rw [h'] <;> omega
       · rw [if_neg hc] at h; cases h
 
 theorem toCode?_pos (d : List Key) (t : Term) (n : Nat) (h : toCode? d t = some n) : 0 < n := by
@@ -335,5 +343,13 @@ theorem graphId_ofName_ne_default (d : List Key) (t : Term) (i : TermId) (h : to
     have := toCode?_pos d t n hc
     simp at h1
     omega
+
+#print axioms classTag_cases
+#print axioms isDictTag_classTag
+#print axioms ofCode?_toCode?
+#print axioms toCode?_range
+#print axioms ofId?_toId?
+#print axioms toId?_eq_iff
+#print axioms graphId_ofName_ne_default
 
 end L4Factoidal.Storage.Sbm11

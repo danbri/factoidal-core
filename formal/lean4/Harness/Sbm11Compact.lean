@@ -63,7 +63,7 @@ inductive IdKind where
 @[inline] def kindOf (x : UInt64) : IdKind :=
   let tag := (x >>> 60).toNat
   let pay := (x &&& 0x0FFFFFFFFFFFFFFF).toNat
-  if tag == tagBnode || tag == tagIri || tag == tagLit then .dict pay
+  if isDictTag tag then .dict pay
   else if tag == Overlay.tagDelta then .delta pay
   else .other
 

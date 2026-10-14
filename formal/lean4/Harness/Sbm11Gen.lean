@@ -466,7 +466,7 @@ def termOfId (g : Gen) (cache : PageCache) (id : Nat) : IO Term := do
     match ofInlineCode? id with
     | some t => pure t
     | none => throw (IO.userError s!"inline id {id} does not decode")
-  else if tag == tagBnode || tag == tagIri || tag == tagLit then
+  else if isDictTag tag then
     let rank := id % two60
     if rank ≥ g.dictHdr.termCount then throw (IO.userError s!"id {id}: rank not below the term count")
     let pg := rank / Dict.pageTerms

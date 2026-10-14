@@ -12,10 +12,18 @@ A term id is a `UInt64`: bits 63..60 are a tag, bits 59..0 the payload.
 | 3 | literal stored in the dictionary (classes 3 to 6) | rank in the dictionary |
 | 4 | inline integer: one of the 13 datatypes of `intTypes`, canonical lexical form, value in `[-2^55, 2^55)` and in the datatype's value space | bits 59..56 the index into `intTypes`, bits 55..0 the value plus `2^55` |
 | 5 | inline `xsd:boolean`, lexical form `true` or `false` | 1 or 0 |
-| 0, 6..15 | not written by stage 2 (6, 7, 8: decimal, double, date, a later stage; 14: delta terms, stage 5) | |
+| 9 | triple term (RDF 1.2; dictionary class 7, https://github.com/danbri/factoidal/issues/792 item 1) | rank in the dictionary |
+| 0, 6..8, 10..15 | not written (6, 7, 8: decimal, double, date, a later stage; 14: delta terms, stage 5) | |
 
 The rank is the position of the term's key (`TermKey.termKey?`) in the
-byte-ordered dictionary, so it is dense and global.
+byte-ordered dictionary, so it is dense and global. The dictionary tags are
+1, 2, 3 and 9 (`isDictTag`); `classTag` gives the tag of a key's class, and
+`ofCode?` refuses an id whose tag is not its key's class tag.
+
+Tag 9 is a new tag, not tag 3 with a wider meaning: a reader built before
+class 7 (`idOk` in `Harness/Sbm11Cli.lean` admitted tags 1 to 5) refuses a
+generation that holds a triple term at activation, and code that reads
+"tag 3" as "a literal" stays right.
 
 ## Canonical forms only
 
@@ -61,6 +69,7 @@ def tagIri : Nat := 2
 def tagLit : Nat := 3
 def tagInt : Nat := 4
 def tagBool : Nat := 5
+def tagTriple : Nat := 9
 
 /-! ## The integer datatypes that inline -/
 
@@ -145,11 +154,23 @@ def ofInlineCode? (n : Nat) : Option Term :=
 
 /-! ## Dictionary codes -/
 
+/-- The tag of a dictionary key's class byte: 1 (class 1), 2 (class 2), 9
+    (class 7), else 3. -/
+def classTagOfByte (c : UInt8) : Nat :=
+  if c == classBnode then tagBnode
+  else if c == classIri then tagIri
+  else if c == classTriple then tagTriple
+  else tagLit
+
 /-- The tag of a dictionary key's class. -/
 def classTag (k : Key) : Nat :=
   match k with
-  | c :: _ => if c == classBnode then tagBnode else if c == classIri then tagIri else tagLit
+  | c :: _ => classTagOfByte c
   | [] => tagLit
+
+/-- A tag whose payload is a dictionary rank. -/
+def isDictTag (tag : Nat) : Bool :=
+  tag == tagBnode || tag == tagIri || tag == tagLit || tag == tagTriple
 
 def dictCode (k : Key) (r : Nat) : Nat := classTag k * two60 + r
 
@@ -169,7 +190,7 @@ def toCode? (d : List Key) (t : Term) : Option Nat :=
 def ofCode? (d : List Key) (n : Nat) : Option Term :=
   let tag := n / two60
   if tag == tagBool || tag == tagInt then ofInlineCode? n
-  else if tag == tagBnode || tag == tagIri || tag == tagLit then
+  else if isDictTag tag then
     match d[n % two60]? with
     | none => none
     | some k => if classTag k == tag then decodeKey? k else none
@@ -232,7 +253,11 @@ private def xsd (s : String) : String := "http://www.w3.org/2001/XMLSchema#" ++ 
 #guard inlineCode? (lit "72" (xsd "integer")) != inlineCode? (lit "72" (xsd "int"))
 
 private def dict : List Key :=
-  [[1, 98], [2, 104, 58, 97], [2, 104, 58, 98], [3, 120]]
+  [[1, 98], [2, 104, 58, 97], [2, 104, 58, 98], [3, 120],
+   [7, 2, 0, 0, 0, 1, 98, 4, 0, 0, 0, 2, 104, 58, 97, 3, 120]]
+
+/-- `<<( _:b <h:a> "x" )>>`, rank 4 of `dict`. -/
+private def ttB : Term := .tripleTerm (.bnode "b") ⟨"h:a", rfl⟩ (.literal (Literal.string "x"))
 
 #guard (toCode? dict (.bnode "b")).map (· / two60) == some 1
 #guard (toCode? dict (.iri ⟨"h:b", rfl⟩)) == some (2 * two60 + 2)
@@ -242,6 +267,13 @@ private def dict : List Key :=
 #guard toCode? dict (.iri ⟨"h:c", rfl⟩) == none
 #guard (toId? dict (.literal (Literal.string "x"))).map TermId.tag == some 3
 #guard (toId? dict (.literal (Literal.string "x"))).map TermId.payload == some 3
+#guard termKey? ttB == dict[4]?
+#guard toCode? dict ttB == some (9 * two60 + 4)
+#guard ofCode? dict (9 * two60 + 4) == some ttB
+#guard ofCode? dict (3 * two60 + 4) == none  -- a class-7 key under the literal tag
+#guard ofCode? dict (9 * two60 + 3) == none  -- a literal key under the triple-term tag
+#guard (toId? dict ttB).map TermId.tag == some 9
+#guard [1, 2, 3, 9].all isDictTag && ![0, 4, 5, 6, 7, 8, 10, 14, 15].any isDictTag
 #guard GraphId.default.name? == none
 
 end L4Factoidal.Storage.Sbm11

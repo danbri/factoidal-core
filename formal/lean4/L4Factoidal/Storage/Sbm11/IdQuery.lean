@@ -43,6 +43,22 @@ ids and the reference evaluator's post-WHERE function on the decoded
 solutions (`PostSpec`, `runPostM`; theorems in `IdPostTheorems`). EXISTS and
 NOT EXISTS, anywhere, and DESCRIBE stay refused.
 
+RDF 1.2 triple terms (https://github.com/danbri/factoidal/issues/792 item
+1). A stored triple term has an id of tag 9 (dictionary class 7), and joins,
+DISTINCT, GROUP BY and COUNT compare it by id, which is RDF term identity
+(`TermIdTheorems.toId?_eq_iff`). In a triple pattern, a triple term with no
+variable and no blank node inside, in the object position, is a constant
+(`argOfObject`: a dictionary lookup of its class-7 key, language tags folded as
+the packer folds them); a triple term with a variable or a blank node inside,
+or in the subject or predicate position, is refused, and the reference
+evaluator matches it. The SPARQL 1.2 functions TRIPLE, SUBJECT, PREDICATE,
+OBJECT and isTRIPLE are outside `backendLocal`: in a FILTER they are residual
+conjuncts, in a SELECT expression the reference post-processing evaluates
+them, in both cases with the reference evaluator's own functions on the
+decoded terms (`IdPostTheorems`). The key printer has no class-7 shape, so a
+tag-9 id is printed by `jsonOfTerm`; ORDER BY decodes it (`orderKeysByIds?`
+reads tags 1, 2 and 4 only).
+
 Everything else is refused with a reason; the caller then runs the reference
 evaluator.
 
@@ -213,6 +229,33 @@ def argOfTerm : PatternTerm → Except String Arg
   | .literal l => .ok (.term (.literal l))
   | .tripleTerm _ _ _ => .error "a triple term pattern (RDF 1.2)"
 
+/-- The term a triple-term pattern denotes when it has no variable and no
+    blank node in it (a blank node of a query pattern is a variable, SPARQL
+    1.1 section 18.1.6): the subject of every level an IRI, the predicate an
+    IRI, the innermost object an IRI or a literal. `levels` holds the
+    enclosing levels, innermost first; nesting is walked as a loop. `none`
+    for every other pattern: the id path refuses it and the reference
+    evaluator answers (https://github.com/danbri/factoidal/issues/792
+    item 1). -/
+def groundTermGo (levels : List (Subject × WfIri)) : PatternTerm → Option Term
+  | .tripleTerm (.iri s) (.iri p) o => groundTermGo ((.iri s, p) :: levels) o
+  | .iri i => some (L4Factoidal.Storage.Sbm11.wrapLevels levels (.iri i))
+  | .literal l => some (L4Factoidal.Storage.Sbm11.wrapLevels levels (.literal l))
+  | _ => none
+
+/-- The object position of a triple pattern: `argOfTerm`, and a triple-term
+    pattern with no variable and no blank node inside as a constant, matched
+    by its id (a dictionary lookup of its class-7 key; RDF term identity, as
+    every other constant, with language tags folded by `normalizeTerm` in
+    the lookup). A triple-term pattern with a variable or a blank node inside
+    is refused: the id path has no structural match. -/
+def argOfObject : PatternTerm → Except String Arg
+  | .tripleTerm s p o =>
+    match groundTermGo [] (.tripleTerm s p o) with
+    | some t => .ok (.term t)
+    | none => .error "a triple term pattern with a variable or a blank node inside (RDF 1.2)"
+  | t => argOfTerm t
+
 def Arg.var? : Arg → Option String
   | .var v => some v
   | _ => none
@@ -327,7 +370,7 @@ def subtreeVars (p : QueryPattern) : Option (Array String) := Id.run do
       match x with
       | .bgp tps =>
         for tp in tps do
-          for a in [argOfSubject tp.s, argOfTerm tp.p, argOfTerm tp.o] do
+          for a in [argOfSubject tp.s, argOfTerm tp.p, argOfObject tp.o] do
             match a with
             | .ok (.var v) => if !out.contains v then out := out.push v
             | .ok _ => pure ()
@@ -383,7 +426,7 @@ def whereVars (p : QueryPattern) : Array String := Id.run do
       match x with
       | .bgp tps =>
         for tp in tps do
-          for a in [argOfSubject tp.s, argOfTerm tp.p, argOfTerm tp.o] do
+          for a in [argOfSubject tp.s, argOfTerm tp.p, argOfObject tp.o] do
             match a with
             | .ok (.var v) => if !out.contains v then out := out.push v
             | _ => pure ()
@@ -439,7 +482,7 @@ def flattenWhere (p : QueryPattern) (allVars : Array String) :
       match x with
       | .bgp tps =>
         for tp in tps do
-          pats := pats.push { s := ← argOfSubject tp.s, p := ← argOfTerm tp.p, o := ← argOfTerm tp.o, g }
+          pats := pats.push { s := ← argOfSubject tp.s, p := ← argOfTerm tp.p, o := ← argOfObject tp.o, g }
       | .join l r => stack := (stack.push ⟨r, g⟩).push ⟨l, g⟩
       | .filter c q =>
         let some inScope := scopeVars q | throw "a FILTER over a group outside the fragment"

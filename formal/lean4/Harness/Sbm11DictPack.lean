@@ -10,7 +10,9 @@ and prints. The formats and the decoders are
   l4sbm11-dict-pack SOURCE.nt|.nq OUTDIR [--run-terms N] [--workers K]
       Phase 1: cut SOURCE into K byte ranges at line starts (default 4) and
       stream each, in its own task, through the streaming N-Quads parser
-      (`NQuadsFold.feedChunkC`, 64 KiB chunks, RDF 1.1 mode). Lines are
+      (`NQuadsFold.feedChunkC`, 64 KiB chunks, RDF 1.2 mode: a triple term
+      is a class-7 key, https://github.com/danbri/factoidal/issues/792
+      item 1). Lines are
       independent in N-Triples and N-Quads, and a blank node keeps its
       label, so the cut changes no term. Each task collects the
       distinct non-inline terms (language tags folded to lower case) in a
@@ -41,6 +43,16 @@ and prints. The formats and the decoders are
       String to id by positioned reads (`pread`) of GDX1 and GDV1: N keys
       sampled evenly by rank (default 1,000) and ABSENT keys that are not
       in the dictionary (default 100). Prints per-lookup time and probes.
+
+  l4sbm11-dict-pack --nest-check N
+      A triple term nested N deep in the object position, with an
+      upper-case language tag in the innermost literal, through
+      `normalizeTerm`, `termKeyBytes?` (class 7), `decodeKey?` and
+      `termKeyBytes?` again: the second key must be the bytes of the first,
+      the decoded term N deep, its innermost tag in lower case
+      (https://github.com/danbri/factoidal/issues/792 item 1). The
+      `tests/stack/run.sh` case `sbm11-triple-term` runs it at N = 300,000
+      under the default stack and under `LEAN_STACK_SIZE_KB=512`.
 
 Exit 1 on any error or failed check. Timings and VmHWM go to stderr.
 -/
@@ -128,7 +140,7 @@ def runKeys (terms : Std.HashMap Term Unit) : Except String (Array ByteArray) :=
   for (t, _) in terms do
     match termKeyBytes? t with
     | some k => ks := ks.push k
-    | none => throw s!"term not admitted by the SBM11 dictionary (stage 2): {repr t}"
+    | none => throw s!"term not admitted by the SBM11 dictionary: {repr t}"
   return mergeSortBy ks (fun a b => cmpBytes a b != .gt)
 
 /-- Stream bytes `[start, stop)` of the source (whole lines) through the
@@ -147,7 +159,7 @@ def streamRange (source : String) (start stop : Nat) (onFeed : P1 → IO P1) : I
     | .error e => throw (IO.userError s!"{source}: UTF-8 error near byte {pos}: {e}")
     | .ok (text, u) =>
       utf8 := u
-      st := L4Factoidal.Syntax.NQuadsStreaming.feedChunkC .rdf11 consume st text.toList
+      st := L4Factoidal.Syntax.NQuadsStreaming.feedChunkC .rdf12 consume st text.toList
       if let some e := st.err then
         throw (IO.userError s!"{source}: parse error at {start + e.pos}: {e.msg}")
       let acc ← onFeed st.acc
@@ -155,7 +167,7 @@ def streamRange (source : String) (start stop : Nat) (onFeed : P1 → IO P1) : I
   match utf8.finish with
   | .error e => throw (IO.userError s!"{source}: UTF-8 error: {e}")
   | .ok _ => pure ()
-  match L4Factoidal.Syntax.NQuadsStreaming.finishC .rdf11 consume st with
+  match L4Factoidal.Syntax.NQuadsStreaming.finishC .rdf12 consume st with
   | .error e => throw (IO.userError s!"{source}: parse error at {start + e.pos}: {e.msg}")
   | .ok acc => onFeed acc
 
@@ -486,11 +498,11 @@ def runCheck (source dir : String) (exact : Bool) : IO UInt32 := do
     | .error e => throw (IO.userError s!"UTF-8: {e}")
     | .ok (text, u) =>
       utf8 := u
-      st := L4Factoidal.Syntax.NQuadsStreaming.feedChunkC .rdf11 consumeAll st text.toList
+      st := L4Factoidal.Syntax.NQuadsStreaming.feedChunkC .rdf12 consumeAll st text.toList
       if let some e := st.err then throw (IO.userError s!"parse error at {e.pos}: {e.msg}")
       let acc ← checkAcc st.acc
       st := { st with acc := acc }
-  match L4Factoidal.Syntax.NQuadsStreaming.finishC .rdf11 consumeAll st with
+  match L4Factoidal.Syntax.NQuadsStreaming.finishC .rdf12 consumeAll st with
   | .error e => throw (IO.userError s!"parse error at {e.pos}: {e.msg}")
   | .ok acc => let _ ← checkAcc acc
   let (nd, ni, nf) ← statsRef.get
@@ -555,10 +567,54 @@ def runLookupBench (dir : String) (n absent : Nat) : IO UInt32 := do
   IO.println s!"sbm11-lookup: absent={absTimes.size} mean-us={us meanA} median-us={us (sortedA[sortedA.size / 2]?.getD 0)} max-us={us (sortedA[sortedA.size - 1]?.getD 0)} failures={fails} peak-rss={← vmHWM}"
   pure (if fails == 0 then 0 else 1)
 
+/-! ## Nested triple terms through the key codec -/
+
+/-- `t` inside `n` triple terms `<<( s p ... )>>` (the object position is the
+    one RDF 1.2 nests), by a loop. -/
+def nestGo (s : Subject) (p : WfIri) : Nat → Term → Term
+  | 0, t => t
+  | n + 1, t => nestGo s p n (.tripleTerm s p t)
+
+/-- The nesting depth of a term and its innermost object, by a loop. -/
+def innermostGo : Nat → Term → Nat × Term
+  | d, .tripleTerm _ _ o => innermostGo (d + 1) o
+  | d, t => (d, t)
+
+def runNestCheck (n : Nat) : IO UInt32 := do
+  let t0 ← IO.monoNanosNow
+  let s : Subject := .iri ⟨"a:s", rfl⟩
+  let p : WfIri := ⟨"a:p", rfl⟩
+  let t := nestGo s p n (.literal (Literal.langString "deep" "EN-GB"))
+  let tn := normalizeTerm t
+  let t1 ← IO.monoNanosNow
+  let some k := termKeyBytes? tn
+    | IO.eprintln "FAIL: the normalised term has no key"; return 1
+  let t2 ← IO.monoNanosNow
+  let some back := decodeKey? k.data.toList
+    | IO.eprintln "FAIL: the key does not decode"; return 1
+  let t3 ← IO.monoNanosNow
+  let some k2 := termKeyBytes? back
+    | IO.eprintln "FAIL: the decoded term has no key"; return 1
+  let (depth, leaf) := innermostGo 0 back
+  let leafOk := leaf == .literal (Literal.langString "deep" "en-gb")
+  let mut fails := 0
+  if k2 != k then
+    fails := fails + 1; IO.eprintln "FAIL: the key of the decoded term differs"
+  if depth != n then
+    fails := fails + 1; IO.eprintln s!"FAIL: decoded depth {depth}, built {n}"
+  if !leafOk then
+    fails := fails + 1; IO.eprintln "FAIL: the innermost literal is not \"deep\"@en-gb"
+  if (termKeyBytes? t).isSome then
+    fails := fails + 1; IO.eprintln "FAIL: the term with an upper-case tag has a key before normalisation"
+  let t4 ← IO.monoNanosNow
+  IO.println s!"sbm11-nest-check: depth={n} key-bytes={k.size} normalise-ms={ms t0 t1} encode-ms={ms t1 t2} decode-ms={ms t2 t3} check-ms={ms t3 t4} failures={fails} peak-rss={← vmHWM}"
+  pure (if fails == 0 then 0 else 1)
+
 def usage : String :=
   "usage: l4sbm11-dict-pack SOURCE OUTDIR [--run-terms N] [--workers K]\n" ++
   "       l4sbm11-dict-pack --check SOURCE OUTDIR [--exact]\n" ++
-  "       l4sbm11-dict-pack --lookup-bench OUTDIR [N] [ABSENT]"
+  "       l4sbm11-dict-pack --lookup-bench OUTDIR [N] [ABSENT]\n" ++
+  "       l4sbm11-dict-pack --nest-check N"
 
 end Sbm11DictPack
 
@@ -571,6 +627,7 @@ def main (args : List String) : IO UInt32 := do
     | ["--lookup-bench", dir] => runLookupBench dir 1000 100
     | ["--lookup-bench", dir, n] => runLookupBench dir n.toNat! 100
     | ["--lookup-bench", dir, n, a] => runLookupBench dir n.toNat! a.toNat!
+    | ["--nest-check", n] => runNestCheck n.toNat!
     | [src, dir] => runPack src dir 262144 4
     | [src, dir, "--run-terms", n] => runPack src dir (max 1 n.toNat!) 4
     | [src, dir, "--workers", k] => runPack src dir 262144 (max 1 k.toNat!)
