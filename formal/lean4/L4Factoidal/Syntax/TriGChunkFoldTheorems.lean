@@ -9,8 +9,10 @@ PROVED here:
    chunk-boundary half that `Syntax.TurtleChunkFold` states only in prose.
 2. Graph-block state: the block flag of the fold equals the brace depth of the
    scanner at every chunk boundary (`feed_inv`), and braces open and close in
-   strict alternation (`scan_events_sim`); an input that ends inside a block is
-   refused by `finish` (`finish_unterminated`).
+   strict alternation (`feedChars_sim`); an input that ends inside a block, or
+   right after a `{` that has not yet been read as a block opening or as the
+   start of an RDF 1.2 annotation `{|`, is refused by `finish`
+   (`finish_unterminated`, `finish_held`).
 3. Graph label: inside a block, every step call of a statement carries the
    label fixed when the block opened (`consumeBlock_graphs`,
    `applyEvent_stmt_graphs`, `applyEvent_close_graphs`), and a statement unit
@@ -45,6 +47,13 @@ theorem StatementScan.feedChar_cleared (i : StatementScan) (c : Char) :
     · exact ⟨rfl, rfl, rfl, rfl, rfl⟩
     · exact ⟨rfl, rfl, rfl, rfl, rfl⟩
 
+/-- Two inner scanners that agree outside `completedRev` are equal once that
+field is cleared. -/
+theorem StatementScan.clear_ext (a b : StatementScan) (h1 : a.mode = b.mode)
+    (h2 : a.pendingDot = b.pendingDot) (h3 : a.currentRev = b.currentRev) (h4 : a.head = b.head) :
+    ({ a with completedRev := [] } : StatementScan) = { b with completedRev := [] } := by
+  cases a; cases b; simp_all
+
 /-! ## The TriG scanner: pending units and the cleared scanner -/
 
 /-- All units the scanner holds and has not handed over, newest first. -/
@@ -65,18 +74,95 @@ theorem TriGScan.inBlock_clear (s : TriGScan) : s.clear.inBlock = s.inBlock := r
 theorem TriGScan.drain_eq (s : TriGScan) : s.drain = (s.pend.reverse, s.clear) := by
   simp [TriGScan.drain, TriGScan.flushInner, TriGScan.pend, TriGScan.clear]
 
+@[simp] theorem TriGScan.clear_heldOpen (s : TriGScan) : s.clear.heldOpen = s.heldOpen := rfl
+@[simp] theorem TriGScan.clear_escaped (s : TriGScan) : s.clear.escaped = s.escaped := rfl
+@[simp] theorem TriGScan.clear_afterBar (s : TriGScan) : s.clear.afterBar = s.afterBar := rfl
+@[simp] theorem TriGScan.clear_inBlock (s : TriGScan) : s.clear.inBlock = s.inBlock := rfl
+@[simp] theorem TriGScan.clear_mode (s : TriGScan) : s.clear.inner.mode = s.inner.mode := rfl
+@[simp] theorem TriGScan.clear_currentRev (s : TriGScan) :
+    s.clear.inner.currentRev = s.inner.currentRev := rfl
+
+/-- A scanner step splits when its pending units are those of the same step
+from the cleared scanner followed by the units already pending, and the
+cleared scanner after the step is the same. -/
+def TriGScan.Splits (f : TriGScan → TriGScan) : Prop :=
+  ∀ s : TriGScan, (f s).pend = (f s.clear).pend ++ s.pend ∧ (f s).clear = (f s.clear).clear
+
+theorem TriGScan.Splits.comp {f g : TriGScan → TriGScan} (hf : TriGScan.Splits f)
+    (hg : TriGScan.Splits g) : TriGScan.Splits (fun s => g (f s)) := by
+  intro s
+  obtain ⟨hp, hc⟩ := hf s
+  obtain ⟨gp, gc⟩ := hg (f s)
+  obtain ⟨gp', gc'⟩ := hg (f s.clear)
+  refine ⟨?_, ?_⟩
+  · show (g (f s)).pend = (g (f s.clear)).pend ++ s.pend
+    rw [gp, hc, hp, gp', List.append_assoc]
+  · show (g (f s)).clear = (g (f s.clear)).clear
+    rw [gc, hc, gc']
+
+theorem TriGScan.splits_openHeld : TriGScan.Splits TriGScan.openHeld := by
+  intro s
+  simp [TriGScan.openHeld, TriGScan.pend, TriGScan.clear, TriGScan.flushInner]
+
+theorem TriGScan.splits_setHeld (b : Bool) :
+    TriGScan.Splits (fun s => { s with heldOpen := b }) := by
+  intro s
+  simp [TriGScan.pend, TriGScan.clear]
+
+theorem TriGScan.splits_closeInput : TriGScan.Splits TriGScan.closeInput := by
+  intro s
+  unfold TriGScan.closeInput
+  by_cases h : s.heldOpen = true
+  · simp only [h, if_true, TriGScan.clear_heldOpen]
+    exact TriGScan.splits_openHeld s
+  · have h' : s.heldOpen = false := by simpa using h
+    simp only [h', TriGScan.clear_heldOpen, Bool.false_eq_true, ↓reduceIte]
+    exact ⟨by rw [TriGScan.pend_clear]; rfl, rfl⟩
+
+theorem TriGScan.splits_plainChar (c : Char) : TriGScan.Splits (fun s => s.plainChar c) := by
+  intro s
+  obtain ⟨h1, hm, hp, hc, hh⟩ := StatementScan.feedChar_cleared s.inner c
+  refine ⟨?_, ?_⟩
+  · simp [TriGScan.plainChar, TriGScan.pend, TriGScan.clear, h1, List.map_append, List.append_assoc]
+  · simp only [TriGScan.plainChar, TriGScan.clear]
+    simp [StatementScan.clear_ext _ _ hm hp hc hh]
+
+theorem TriGScan.splits_stepChar (c : Char) : TriGScan.Splits (fun s => s.stepChar c) := by
+  intro s
+  unfold TriGScan.stepChar
+  by_cases he : s.escaped = true
+  · simp only [he, TriGScan.clear_escaped, if_true]
+    obtain ⟨h1, hm, hp, hc, hh⟩ := StatementScan.feedChar_cleared s.inner c
+    refine ⟨?_, ?_⟩
+    · simp [TriGScan.pend, TriGScan.clear, h1, List.map_append, List.append_assoc]
+    · simp only [TriGScan.clear]
+      simp [hc, hh]
+  · simp only [he, TriGScan.clear_escaped, Bool.false_eq_true, ↓reduceIte]
+    by_cases hh : (s.inner.mode == ScanMode.normal && c == '{' && !s.inBlock) = true
+    · simp only [hh, TriGScan.clear_mode, TriGScan.clear_inBlock, ↓reduceIte]
+      simp [TriGScan.pend, TriGScan.clear]
+    · by_cases hb : (s.inner.mode == ScanMode.normal && c == '}' && s.inBlock && !s.afterBar) = true
+      · simp only [hh, hb, TriGScan.clear_mode, TriGScan.clear_inBlock, TriGScan.clear_afterBar,
+          ↓reduceIte]
+        simp [TriGScan.pend, TriGScan.clear, TriGScan.flushInner]
+      · simp only [hh, hb, TriGScan.clear_mode, TriGScan.clear_inBlock, TriGScan.clear_afterBar]
+        exact TriGScan.splits_plainChar c s
+
+theorem TriGScan.stepChar_split (s : TriGScan) (c : Char) :
+    (s.stepChar c).pend = (s.clear.stepChar c).pend ++ s.pend
+    ∧ (s.stepChar c).clear = (s.clear.stepChar c).clear :=
+  TriGScan.splits_stepChar c s
+
 theorem TriGScan.feedChar_split (s : TriGScan) (c : Char) :
     (s.feedChar c).pend = (s.clear.feedChar c).pend ++ s.pend
     ∧ (s.feedChar c).clear = (s.clear.feedChar c).clear := by
-  obtain ⟨h1, hm, hp, hc, hh⟩ := StatementScan.feedChar_cleared s.inner c
   unfold TriGScan.feedChar
-  by_cases he : s.escaped = true
-  · simp only [he, if_true, TriGScan.pend, TriGScan.clear]
-    simp [h1, hc, hh]
-  · by_cases hb : (s.inner.mode == ScanMode.normal) = true ∧
-        ((c = '{' ∧ s.inBlock = false) ∨ (c = '}' ∧ s.inBlock = true))
-    · simp [he, hb, TriGScan.pend, TriGScan.clear, TriGScan.flushInner]
-    · simp [he, hb, TriGScan.pend, TriGScan.clear, h1, hm, hp, hc, hh]
+  by_cases hq : (s.heldOpen && c == '|') = true
+  · simp only [hq, TriGScan.clear_heldOpen, ↓reduceIte]
+    exact ((TriGScan.splits_plainChar '{').comp (TriGScan.splits_plainChar '|')
+      |>.comp (TriGScan.splits_setHeld false)) s
+  · simp only [hq, TriGScan.clear_heldOpen, Bool.false_eq_true, ↓reduceIte]
+    exact (TriGScan.splits_closeInput.comp (TriGScan.splits_stepChar c)) s
 
 theorem TriGScan.feedChars_split (cs : List Char) :
     ∀ s : TriGScan, (s.feedChars cs).pend = (s.clear.feedChars cs).pend ++ s.pend
@@ -247,37 +333,126 @@ theorem simBlock_stmts_rev (l : List String) (b : Bool) :
   have : (l.map TriGEvent.stmt).reverse = l.reverse.map TriGEvent.stmt := by simp
   rw [this]; exact simBlock_stmts _ _
 
-/-- One character from a scanner with nothing pending: the units it makes
-are well nested from the scanner's own flag, and end at its new flag. -/
-theorem TriGScan.feedChar_sim (s : TriGScan) (hp : s.pend = []) (c : Char) :
-    simBlock s.inBlock (s.feedChar c).pend.reverse = some (s.feedChar c).inBlock := by
+/-- A held `{` is read outside a block only. -/
+def TriGScan.WellHeld (s : TriGScan) : Prop := s.heldOpen = true → s.inBlock = false
+
+@[simp] theorem TriGScan.openHeld_inBlock (s : TriGScan) : s.openHeld.inBlock = true := rfl
+@[simp] theorem TriGScan.openHeld_heldOpen (s : TriGScan) : s.openHeld.heldOpen = false := rfl
+
+theorem TriGScan.openHeld_pend (s : TriGScan) :
+    s.openHeld.pend = TriGEvent.blockOpen (String.ofList s.inner.currentRev.reverse) :: s.pend := by
+  simp [TriGScan.openHeld, TriGScan.pend, TriGScan.flushInner]
+
+theorem TriGScan.closeInput_heldOpen (s : TriGScan) : s.closeInput.heldOpen = false := by
+  unfold TriGScan.closeInput
+  by_cases h : s.heldOpen = true
+  · simp [h]
+  · have h' : s.heldOpen = false := by simpa using h
+    simp [h']
+
+theorem TriGScan.closeInput_of_not_held (s : TriGScan) (h : s.heldOpen = false) :
+    s.closeInput = s := by
+  simp [TriGScan.closeInput, h]
+
+theorem TriGScan.stepChar_wellHeld (s : TriGScan) (c : Char) (h : s.heldOpen = false) :
+    (s.stepChar c).WellHeld := by
+  unfold TriGScan.stepChar
+  by_cases he : s.escaped = true
+  · simp [he, TriGScan.WellHeld, h]
+  · by_cases hh : (s.inner.mode == ScanMode.normal && c == '{' && !s.inBlock) = true
+    · simp only [he, hh, TriGScan.WellHeld]
+      simp at hh
+      simp [hh]
+    · by_cases hb : (s.inner.mode == ScanMode.normal && c == '}' && s.inBlock && !s.afterBar) = true
+      · simp [he, hh, hb, TriGScan.WellHeld]
+      · simp [he, hh, hb, TriGScan.WellHeld, TriGScan.plainChar, h]
+
+/-- After any character, a held `{` is outside a block. -/
+theorem TriGScan.feedChar_wellHeld (s : TriGScan) (c : Char) : (s.feedChar c).WellHeld := by
+  unfold TriGScan.feedChar
+  by_cases hq : (s.heldOpen && c == '|') = true
+  · simp [hq, TriGScan.WellHeld]
+  · simp only [hq, Bool.false_eq_true, ↓reduceIte]
+    exact TriGScan.stepChar_wellHeld _ _ (TriGScan.closeInput_heldOpen s)
+
+theorem TriGScan.feedChars_wellHeld (cs : List Char) :
+    ∀ s : TriGScan, s.WellHeld → (s.feedChars cs).WellHeld := by
+  induction cs with
+  | nil => intro s h; exact h
+  | cons c cs ih => intro s _; exact ih _ (TriGScan.feedChar_wellHeld s c)
+
+theorem TriGScan.plainChar_sim (s : TriGScan) (hp : s.pend = []) (c : Char) :
+    simBlock s.inBlock (s.plainChar c).pend.reverse = some (s.plainChar c).inBlock := by
+  have h2 : s.eventsRev = [] := by
+    simp [TriGScan.pend] at hp; exact hp.2
+  simp only [TriGScan.plainChar, TriGScan.pend, h2, List.append_nil]
+  exact simBlock_stmts_rev _ _
+
+/-- One character, no `{` held: the units it makes are well nested from the
+scanner's own flag, and end at its new flag. -/
+theorem TriGScan.stepChar_sim (s : TriGScan) (hp : s.pend = []) (c : Char) :
+    simBlock s.inBlock (s.stepChar c).pend.reverse = some (s.stepChar c).inBlock := by
   have h1 : s.inner.completedRev = [] := by
     simp [TriGScan.pend] at hp; exact hp.1
   have h2 : s.eventsRev = [] := by
     simp [TriGScan.pend] at hp; exact hp.2
-  unfold TriGScan.feedChar
+  unfold TriGScan.stepChar
   by_cases he : s.escaped = true
   · simp only [he, if_true, TriGScan.pend, h2, List.append_nil]
     exact simBlock_stmts_rev _ _
-  · by_cases hb : (s.inner.mode == ScanMode.normal) = true ∧ c = '{' ∧ s.inBlock = false
-    · simp [he, hb, TriGScan.pend, TriGScan.flushInner, h1, h2, simBlock]
-    · by_cases hb2 : (s.inner.mode == ScanMode.normal) = true ∧ c = '}' ∧ s.inBlock = true
-      · simp [he, hb2, TriGScan.pend, TriGScan.flushInner, h1, h2, simBlock]
-      · have hn : ¬ ((s.inner.mode == ScanMode.normal) = true ∧
-            ((c = '{' ∧ s.inBlock = false) ∨ (c = '}' ∧ s.inBlock = true))) := by
-          intro h
-          obtain ⟨a, b⟩ := h
-          rcases b with b | b
-          · exact hb ⟨a, b.1, b.2⟩
-          · exact hb2 ⟨a, b.1, b.2⟩
-        simp [he, hn, TriGScan.pend, h2]
-        exact simBlock_stmts_rev _ _
+  · by_cases hh : (s.inner.mode == ScanMode.normal && c == '{' && !s.inBlock) = true
+    · simp [he, hh, TriGScan.pend, h1, h2, simBlock]
+    · by_cases hb : (s.inner.mode == ScanMode.normal && c == '}' && s.inBlock && !s.afterBar) = true
+      · have hib : s.inBlock = true := by
+          simp only [Bool.and_eq_true] at hb
+          exact hb.1.2
+        simp only [he, hh, hb, Bool.false_eq_true, ↓reduceIte]
+        simp [TriGScan.pend, TriGScan.flushInner, h1, h2, hib, simBlock]
+      · simp only [he, hh, hb, Bool.false_eq_true, ↓reduceIte]
+        exact TriGScan.plainChar_sim s hp c
 
 /-- The same from any scanner: the units made by one more character are well
 nested from the scanner's flag. -/
-theorem TriGScan.feedChar_new_sim (s : TriGScan) (c : Char) :
+theorem TriGScan.stepChar_new_sim (s : TriGScan) (c : Char) :
+    simBlock s.inBlock (s.clear.stepChar c).pend.reverse = some (s.stepChar c).inBlock := by
+  have h := TriGScan.stepChar_sim s.clear (TriGScan.pend_clear s) c
+  have hb : (s.stepChar c).inBlock = (s.clear.stepChar c).inBlock := by
+    have := congrArg TriGScan.inBlock (TriGScan.stepChar_split s c).2
+    simpa using this
+  rw [hb]; exact h
+
+/-- A held `{` read as a graph block opening: one `blockOpen` unit, from a
+flag that is false because a held `{` is outside a block. -/
+theorem TriGScan.closeInput_sim (s : TriGScan) (hp : s.pend = []) (hw : s.WellHeld) :
+    simBlock s.inBlock s.closeInput.pend.reverse = some s.closeInput.inBlock := by
+  by_cases h : s.heldOpen = true
+  · have hb : s.inBlock = false := hw h
+    simp only [TriGScan.closeInput, h, ↓reduceIte, TriGScan.openHeld_pend, hp, hb]
+    rfl
+  · have h' : s.heldOpen = false := by simpa using h
+    rw [TriGScan.closeInput_of_not_held s h', hp]
+    rfl
+
+/-- One character from a scanner with nothing pending: the units it makes
+are well nested from the scanner's own flag, and end at its new flag. -/
+theorem TriGScan.feedChar_sim (s : TriGScan) (hp : s.pend = []) (hw : s.WellHeld) (c : Char) :
+    simBlock s.inBlock (s.feedChar c).pend.reverse = some (s.feedChar c).inBlock := by
+  have h2 : s.eventsRev = [] := by
+    simp [TriGScan.pend] at hp; exact hp.2
+  unfold TriGScan.feedChar
+  by_cases hq : (s.heldOpen && c == '|') = true
+  · simp only [hq, ↓reduceIte, TriGScan.pend, TriGScan.plainChar, h2, List.append_nil]
+    exact simBlock_stmts_rev _ _
+  · simp only [hq, Bool.false_eq_true, ↓reduceIte]
+    rw [(TriGScan.stepChar_split _ c).1, List.reverse_append, simBlock_append,
+      TriGScan.closeInput_sim s hp hw]
+    exact TriGScan.stepChar_new_sim _ c
+
+/-- The same from any scanner: the units made by one more character are well
+nested from the scanner's flag. -/
+theorem TriGScan.feedChar_new_sim (s : TriGScan) (hw : s.WellHeld) (c : Char) :
     simBlock s.inBlock (s.clear.feedChar c).pend.reverse = some (s.feedChar c).inBlock := by
-  have := TriGScan.feedChar_sim s.clear (TriGScan.pend_clear s) c
+  have := TriGScan.feedChar_sim s.clear (TriGScan.pend_clear s) hw c
   have hb : (s.feedChar c).inBlock = (s.clear.feedChar c).inBlock := by
     have := congrArg TriGScan.inBlock (TriGScan.feedChar_split s c).2
     simpa [TriGScan.inBlock_clear] using this
@@ -287,21 +462,21 @@ theorem TriGScan.feedChar_new_sim (s : TriGScan) (c : Char) :
 a start flag, the pending units after the chunk are well nested from the same
 start flag and end at the scanner's new flag. -/
 theorem TriGScan.feedChars_sim (cs : List Char) :
-    ∀ (s : TriGScan) (b0 : Bool), simBlock b0 s.pend.reverse = some s.inBlock →
+    ∀ (s : TriGScan) (b0 : Bool), s.WellHeld → simBlock b0 s.pend.reverse = some s.inBlock →
       simBlock b0 (s.feedChars cs).pend.reverse = some (s.feedChars cs).inBlock := by
   induction cs with
-  | nil => intro s b0 h; exact h
+  | nil => intro s b0 _ h; exact h
   | cons c cs ih =>
-      intro s b0 h
-      apply ih
+      intro s b0 hw h
+      apply ih _ _ (TriGScan.feedChar_wellHeld s c)
       rw [(TriGScan.feedChar_split s c).1, List.reverse_append, simBlock_append, h]
-      exact TriGScan.feedChar_new_sim s c
+      exact TriGScan.feedChar_new_sim s hw c
 
 /-- The scanner of a state with nothing pending: after any chunk, the units it
 hands over are well nested from the state's flag. -/
-theorem TriGScan.feed_sim (s : TriGScan) (hp : s.pend = []) (chunk : String) :
+theorem TriGScan.feed_sim (s : TriGScan) (hp : s.pend = []) (hw : s.WellHeld) (chunk : String) :
     simBlock s.inBlock (s.feed chunk).pend.reverse = some (s.feed chunk).inBlock := by
-  apply TriGScan.feedChars_sim
+  apply TriGScan.feedChars_sim _ _ _ hw
   rw [hp]; rfl
 
 /-! ## The fold keeps the block flag equal to the brace depth -/
@@ -359,13 +534,13 @@ theorem applyEvents_block (step : α → Option Subject → List Triple → α) 
                   exact ih s0 s b h (by rw [hb]; simpa [simBlock] using hs)
 
 /-- The invariant of a fold state at a chunk boundary: the block flag is the
-scanner's brace depth, and nothing is pending. -/
+scanner's brace depth, nothing is pending, and a held `{` is outside a block. -/
 def TriGChunkFoldState.Inv (st : TriGChunkFoldState α) : Prop :=
-  st.block.isSome = st.scanner.inBlock ∧ st.scanner.pend = []
+  st.block.isSome = st.scanner.inBlock ∧ st.scanner.pend = [] ∧ st.scanner.WellHeld
 
 theorem TriGChunkFoldState.init_inv (bnodePrefix : String) (acc : α) (base : Option String)
     (mode : Mode) : (TriGChunkFoldState.init bnodePrefix acc base mode).Inv := by
-  simp [TriGChunkFoldState.Inv, TriGChunkFoldState.init, TriGScan.pend]
+  simp [TriGChunkFoldState.Inv, TriGChunkFoldState.init, TriGScan.pend, TriGScan.WellHeld]
 
 /-- BRACES ARE BALANCED AT EVERY CHUNK BOUNDARY: a successful feed keeps the
 block flag equal to the scanner's brace depth, and leaves nothing pending. -/
@@ -378,27 +553,62 @@ theorem TriGChunkFoldState.feed_inv (step : α → Option Subject → List Tripl
   simp only [] at h
   rw [TriGScan.drain_eq] at hd
   injection hd with he hsc
-  have hsim := TriGScan.feed_sim st.scanner hi.2 chunk
+  have hsim := TriGScan.feed_sim st.scanner hi.2.1 hi.2.2 chunk
   rw [he] at hsim
   have hblk := applyEvents_block step e1 { st with scanner := sc1 } s _ h
     (by simpa [hi.1] using hsim)
   have hs := applyEvents_scanner step e1 { st with scanner := sc1 } s h
-  refine ⟨?_, ?_⟩
+  have hwh : (st.scanner.feed chunk).WellHeld :=
+    TriGScan.feedChars_wellHeld _ _ hi.2.2
+  refine ⟨?_, ?_, ?_⟩
   · rw [hblk, hs, ← hsc]; rfl
   · rw [hs, ← hsc]; exact TriGScan.pend_clear _
+  · rw [hs, ← hsc]
+    intro hh
+    exact hwh hh
 
 /-- An input that ends inside a graph block is refused. -/
 theorem TriGChunkFoldState.finish_unterminated (step : α → Option Subject → List Triple → α)
     (st : TriGChunkFoldState α) (hi : st.Inv) (hin : st.scanner.inBlock = true) :
     ∃ e, st.finish step = .error e := by
+  have hheld : st.scanner.heldOpen = false := by
+    cases hh : st.scanner.heldOpen
+    · rfl
+    · have := hi.2.2 hh
+      rw [hin] at this
+      cases this
   unfold TriGChunkFoldState.finish
-  rw [TriGScan.drain_eq, hi.2]
+  rw [TriGScan.closeInput_of_not_held _ hheld, TriGScan.drain_eq, hi.2.1]
   simp only [List.reverse_nil, applyEvents]
   have hb : st.block.isSome = true := by rw [hi.1, hin]
   rcases st with ⟨t, a, p, b, sc0⟩
   cases b with
   | none => simp at hb
   | some g => exact ⟨_, rfl⟩
+
+/-- An input that ends right after a `{` that the scanner holds back is refused:
+at the end of the input that `{` opens a graph block, and the block is not
+closed. -/
+theorem TriGChunkFoldState.finish_held (step : α → Option Subject → List Triple → α)
+    (st : TriGChunkFoldState α) (hi : st.Inv) (hh : st.scanner.heldOpen = true) :
+    ∃ e, st.finish step = .error e := by
+  unfold TriGChunkFoldState.finish
+  have hc : st.scanner.closeInput = st.scanner.openHeld := by simp [TriGScan.closeInput, hh]
+  rw [hc, TriGScan.drain_eq, TriGScan.openHeld_pend, hi.2.1]
+  simp only [List.reverse_cons, List.reverse_nil, List.nil_append, applyEvents]
+  cases hr : applyEvent step
+      { turtle := st.turtle, acc := st.acc, pos := st.pos, block := st.block,
+        scanner := st.scanner.openHeld.clear }
+      (TriGEvent.blockOpen (String.ofList st.scanner.inner.currentRev.reverse)) with
+  | error e => exact ⟨e, by simp⟩
+  | ok s0 =>
+      have hb : ∃ g, s0.block = some g := by
+        simp only [applyEvent] at hr
+        split at hr
+        · cases hr
+        · injection hr with hr; subst hr; exact ⟨_, rfl⟩
+      obtain ⟨g, hg⟩ := hb
+      exact ⟨{ msg := "unterminated graph block (expected '}')", pos := s0.pos }, by simp [hg]⟩
 
 /-! ## The graph label in force -/
 
@@ -488,6 +698,9 @@ end L4Factoidal.Syntax
 #print axioms L4Factoidal.Syntax.TriGScan.feedChars_sim
 #print axioms L4Factoidal.Syntax.TriGChunkFoldState.feed_inv
 #print axioms L4Factoidal.Syntax.TriGChunkFoldState.finish_unterminated
+#print axioms L4Factoidal.Syntax.TriGChunkFoldState.finish_held
+#print axioms L4Factoidal.Syntax.TriGScan.feedChar_split
+#print axioms L4Factoidal.Syntax.TriGScan.feedChar_wellHeld
 #print axioms L4Factoidal.Syntax.TriGChunkFoldState.init_inv
 #print axioms L4Factoidal.Syntax.applyEvent_stmt_block
 #print axioms L4Factoidal.Syntax.applyEvents_block

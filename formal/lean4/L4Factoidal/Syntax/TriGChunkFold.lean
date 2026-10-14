@@ -11,9 +11,20 @@ The scanner is `TurtleStatementScan`'s, with two additions that TriG needs.
 In the normal lexical mode (outside IRIREFs, comments and strings) a `{` at
 block depth 0 ends the block HEADER (`label`, `GRAPH label`, or nothing) and
 opens a block; a `}` at depth 1 ends the last statement of the block, which
-may have no dot, and closes it. `{` and `}` occur nowhere else in the TriG
-grammar outside IRIREFs and strings, so depth is 0 or 1. Inside a block the
-scanner offers dot candidates exactly as for Turtle.
+may have no dot, and closes it. Inside a block the scanner offers dot
+candidates exactly as for Turtle.
+
+RDF 1.2 TriG has a second use of the two braces: an annotation block
+`{| ... |}` after an object (RDF 1.2 TriG, section 3). It belongs to its
+statement, so it must not open or close a graph block. The scanner holds back a
+`{` read at depth 0 until the next character: `{|` is part of the statement, and
+any other `{` opens a graph block. Inside a graph block a `{` is part of the
+statement. A `}` read right after a `|` closes an annotation, and not the graph
+block (`|` occurs nowhere else in the TriG grammar outside IRIREFs, strings and
+comments, where the scanner is not in the normal mode). At the end of the input a
+held `{` opens a graph block (`closeInput`). Without these rules every TriG 1.2
+document with an annotation block was cut at the wrong brace
+(https://github.com/danbri/factoidal/issues/837, item 5).
 
 Every candidate is read by the landed grammar functions, not by new ones:
 a top-level candidate by `readTriGStatement`; a header by `readLabelOrSubject`
@@ -58,6 +69,16 @@ structure TriGScan where
       (`ex:a\\'b`), whose next character is part of the name and opens no
       string, comment, IRIREF or block. -/
   escaped : Bool := false
+  /-- A `{` read outside a block, in the normal mode, is held back until the next
+      character: `{|` opens an annotation block of RDF 1.2 (`:s :p :o {| :q :r |}`,
+      RDF 1.2 TriG section 3), which belongs to the statement; any other `{` opens
+      a graph block. Only a `{` outside a block is held, so a held `{` and
+      `inBlock` are never both set. -/
+  heldOpen : Bool := false
+  /-- The last character was a `|` in the normal mode: a `}` right after it closes an
+      annotation block (`|}`) and not the graph block. `|` occurs nowhere else in the
+      TriG grammar outside IRIREFs, strings and comments. -/
+  afterBar : Bool := false
   /-- Completed units, newest first. -/
   eventsRev : List TriGEvent := []
 
@@ -67,23 +88,52 @@ def TriGScan.flushInner (s : TriGScan) : TriGScan :=
     inner := { s.inner with completedRev := [] }
     eventsRev := s.inner.completedRev.map TriGEvent.stmt ++ s.eventsRev }
 
-def TriGScan.feedChar (s : TriGScan) (c : Char) : TriGScan :=
+/-- The held `{` opens a graph block: the text before it is the header. -/
+def TriGScan.openHeld (s : TriGScan) : TriGScan :=
+  let flushed := s.flushInner
+  let text := String.ofList flushed.inner.currentRev.reverse
+  { inner := {}
+    inBlock := true
+    escaped := false
+    heldOpen := false
+    afterBar := false
+    eventsRev := TriGEvent.blockOpen text :: flushed.eventsRev }
+
+/-- The character belongs to the statement text and ends no unit. -/
+def TriGScan.plainChar (s : TriGScan) (c : Char) : TriGScan :=
+  { s with
+    inner := s.inner.feedChar c
+    escaped := s.inner.mode == ScanMode.normal && c == '\\'
+    afterBar := s.inner.mode == ScanMode.normal && c == '|' }
+
+/-- One character when no `{` is held back. -/
+def TriGScan.stepChar (s : TriGScan) (c : Char) : TriGScan :=
   if s.escaped then
     let next := s.inner.feedChar c
-    { s with inner := { next with mode := ScanMode.normal, pendingDot := false }, escaped := false }
-  else if s.inner.mode == ScanMode.normal &&
-      ((c == '{' && !s.inBlock) || (c == '}' && s.inBlock)) then
+    { s with inner := { next with mode := ScanMode.normal, pendingDot := false }, escaped := false,
+             afterBar := false }
+  else if s.inner.mode == ScanMode.normal && c == '{' && !s.inBlock then
+    { s with heldOpen := true, afterBar := false }
+  else if s.inner.mode == ScanMode.normal && c == '}' && s.inBlock && !s.afterBar then
     let flushed := s.flushInner
     let text := String.ofList flushed.inner.currentRev.reverse
     { inner := {}
-      inBlock := !s.inBlock
+      inBlock := false
       escaped := false
-      eventsRev := (if c == '{' then TriGEvent.blockOpen text else TriGEvent.blockClose text)
-        :: flushed.eventsRev }
-  else
-    { s with
-      inner := s.inner.feedChar c
-      escaped := s.inner.mode == ScanMode.normal && c == '\\' }
+      heldOpen := false
+      afterBar := false
+      eventsRev := TriGEvent.blockClose text :: flushed.eventsRev }
+  else s.plainChar c
+
+/-- The scanner when nothing follows the held `{`: it opens a graph block. -/
+def TriGScan.closeInput (s : TriGScan) : TriGScan :=
+  if s.heldOpen then s.openHeld else s
+
+/-- One character. A held `{` is an annotation opening when `|` follows (both
+    characters belong to the statement) and a graph block opening otherwise. -/
+def TriGScan.feedChar (s : TriGScan) (c : Char) : TriGScan :=
+  if s.heldOpen && c == '|' then { (s.plainChar '{').plainChar '|' with heldOpen := false }
+  else s.closeInput.stepChar c
 
 def TriGScan.feedChars (s : TriGScan) : List Char → TriGScan
   | [] => s
@@ -231,7 +281,7 @@ def TriGChunkFoldState.feed (step : α → Option Subject → List Triple → α
     SPARQL-style directive). An open block is an error. -/
 def TriGChunkFoldState.finish (step : α → Option Subject → List Triple → α)
     (state : TriGChunkFoldState α) : Except ParseError α :=
-  let (events, scanner) := state.scanner.drain
+  let (events, scanner) := state.scanner.closeInput.drain
   match applyEvents step { state with scanner } events with
   | .error e => .error e
   | .ok s =>
@@ -299,5 +349,33 @@ private def walkAgrees (d : String) : Bool :=
 #guard walkDocs.all walkAgrees
 #guard (walkDocs.filter (fun d => (parseTriG d none .rdf11).toOption.isSome)).length ≥ 8
 #guard (walkDocs.filter (fun d => (parseTriG d none .rdf11).toOption.isNone)).length ≥ 4
+
+/-! RDF 1.2: annotation blocks, in and out of a graph block, with a reifier, with a
+`|}` inside a string, nested, and with no space after `{|`. -/
+
+private def walkDocs12 : List String :=
+  [ "<http://e/a> <http://e/p> <http://e/b> {| <http://e/q> <http://e/r> |} .",
+    "<http://e/g> { <http://e/a> <http://e/p> <http://e/b> {| <http://e/q> <http://e/r> |} . }",
+    "<http://e/g> { <http://e/a> <http://e/p> <http://e/b> {| <http://e/q> <http://e/r> |} }",
+    "GRAPH <http://e/g> { <http://e/a> <http://e/p> <http://e/b> ~ <http://e/t> {| <http://e/q> <http://e/r> |} . }",
+    "<http://e/a> <http://e/p> <http://e/b> {|<http://e/q> <http://e/r>|} .",
+    "<http://e/a> <http://e/p> <http://e/b> {| <http://e/q> <http://e/r> ; <http://e/s> \"|}\" |} .",
+    "{ <http://e/a> <http://e/p> <http://e/b> {| <http://e/q> <http://e/r> |} }",
+    "<http://e/a> <http://e/p> <http://e/b> {| <http://e/q> <http://e/r> {| <http://e/s> <http://e/t> |} |} .",
+    "<http://e/a> <http://e/p> <http://e/b> {| <http://e/q> <http://e/r> |} . <http://e/g> { <http://e/c> <http://e/p> <http://e/d> }" ]
+
+private def walkCount12 (d : String) (cut : Nat) : Option Nat :=
+  let cs := d.toList
+  let a := String.ofList (cs.take cut)
+  let b := String.ofList (cs.drop cut)
+  match parseTriGChunksQuads "anon__" [a, b] none .rdf12 with
+  | .ok qs => some qs.length
+  | .error _ => none
+
+private def walkAgrees12 (d : String) : Bool :=
+  let want := (parseTriG d none .rdf12).toOption.map quadCount
+  want.isSome && (List.range (d.length + 1)).all (fun cut => walkCount12 d cut == want)
+
+#guard walkDocs12.all walkAgrees12
 
 end L4Factoidal.Syntax
