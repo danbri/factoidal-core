@@ -182,10 +182,12 @@
 #                management operations, errors, the fresh blank node rule and SPARQL 1.2,
 #                each request applied by `l4sbm11 update` and by the reference engine
 #                (`l4factoidal update`), the states compared by isomorphism and the
-#                queries on the overlay by value; three expected failures that name open
-#                issues (https://github.com/danbri/factoidal/issues/855,
+#                queries on the overlay by value; the replay of the log in dictionary order
+#                against one lookup for each term (issue 858); the size limit of the log (issue
+#                851); the scaling of the update path (issues 857 and 858); three expected
+#                failures that name open issues (https://github.com/danbri/factoidal/issues/855,
 #                https://github.com/danbri/factoidal/issues/856 and
-#                https://github.com/danbri/factoidal/issues/857). Its counts are added
+#                https://github.com/danbri/factoidal/issues/803). Its counts are added
 #                to this run's.
 #   (s) w3c-update  tests/sbm11/w3c_update.sh: the 94 W3C SPARQL 1.1 Update evaluation
 #                tests, read from the manifests on disk, run through the store (pack the

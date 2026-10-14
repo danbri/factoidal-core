@@ -3,13 +3,26 @@ Harness/Sbm11Compact — `l4sbm11 update` and `l4sbm11 compact` (SBM11 stage 5,
 https://github.com/danbri/factoidal/issues/791; design record
 `docs/designissues/2026-10-11-shardborough-vs-qlever.md` section 6.7).
 
-  l4sbm11 update GEN ('SPARQL UPDATE' | --file U.ru)
+  l4sbm11 update GEN ('SPARQL UPDATE' | --file U.ru) [--base IRI] [--sparql12]
+                  [--max-overlay-entries N] [--max-overlay-bytes N]
   l4sbm11 compact GEN OUTDIR [--block-rows B] [--sort-rows M] [--verify merkle|none]
 
 `update` appends one DLOG batch to the generation's `deltas.dlog`
 (`Sbm11Update.appendUpdate`). Every later open replays the log into the
 overlay (`Sbm11Query.openOverlaid`), and every scan merges it
 (`IdQuery.scanFoldM`, `Overlay.mergeRows`).
+
+The log has no size limit unless one is set (https://github.com/danbri/factoidal/issues/851).
+`--max-overlay-entries N` and `--max-overlay-bytes N` (or the environment variables
+`SBM11_MAX_OVERLAY_ENTRIES` and `SBM11_MAX_OVERLAY_BYTES`, which the flags override) make
+`update` refuse a request that would take the log past N entries or N bytes of file
+(`OverlayLimit.exceeded`: a log that holds exactly N is within the limit). The refusal exits 1,
+writes nothing, and names `l4sbm11 compact` and `l4sbm11 activate`: the caller folds the log
+into a new generation and repeats the request. A log that is already over the limit refuses
+every request. `l4sbm11 serve` reports the size of the overlay it opened and whether it is
+within the limit that the environment sets. Nothing compacts the log by itself
+(https://github.com/danbri/factoidal/issues/803 item 4; the expected failure
+`xfail-auto-compaction` in tests/sbm11/update_where.sh asks for `--auto-compact`).
 
 `compact` writes a new generation that holds the base with the overlay
 applied, through the packer's phases 2 and 3 (`Sbm11PackLib.packBatches`), in
@@ -201,27 +214,60 @@ def parseCompactOpts : List String → Nat × Nat × Option Verify → Option (N
   | "--verify" :: x :: rest, (b, m, _) => (Verify.ofString? x).bind fun v => parseCompactOpts rest (b, m, some v)
   | _, _ => none
 
+/-- Take the flag `name N` out of `parts`: the remaining arguments and the number
+    (`ok none`: the flag is absent; `error`: the flag has no decimal number). -/
+def takeNatFlag (name : String) (parts : List String) : Except String (List String × Option Nat) :=
+  match parts.idxOf name with
+  | i =>
+    if i < parts.length then
+      match parts[i + 1]? with
+      | some v =>
+        match v.toNat? with
+        | some n => .ok (parts.take i ++ parts.drop (i + 2), some n)
+        | none => .error s!"{name} takes a decimal number, not {v}"
+      | none => .error s!"{name} takes a decimal number"
+    else .ok (parts, none)
+
+def updateUsage : String :=
+  "usage: l4sbm11 update GEN ('SPARQL UPDATE' | --file U.ru) [--base IRI] [--sparql12] [--max-overlay-entries N] [--max-overlay-bytes N]"
+
 def main (args : List String) : IO UInt32 := do
   match args with
   | "update" :: dir :: parts0 =>
     -- `--sparql12`: the SPARQL 1.2 grammar (triple terms, directional literals);
-    -- `--base IRI`: the BASE of the request (relative IRIs in the text)
+    -- `--base IRI`: the BASE of the request (relative IRIs in the text);
+    -- `--max-overlay-entries N`, `--max-overlay-bytes N`: refuse a request that would take the log
+    -- past N entries or N bytes (the environment variables SBM11_MAX_OVERLAY_ENTRIES and
+    -- SBM11_MAX_OVERLAY_BYTES set the same limits when the flags are absent; no limit by default)
     let v12 := parts0.contains "--sparql12"
     let parts1 := parts0.filter (· != "--sparql12")
-    let (parts, base) := match parts1.idxOf "--base" with
-      | i => if i + 1 < parts1.length then
-          (parts1.take i ++ parts1.drop (i + 2), some parts1[i + 1]!)
-        else (parts1, none)
+    match takeNatFlag "--max-overlay-entries" parts1 with
+    | .error e => IO.eprintln s!"l4sbm11 update: {e}"; return 2
+    | .ok (parts2, maxEntries) =>
+    match takeNatFlag "--max-overlay-bytes" parts2 with
+    | .error e => IO.eprintln s!"l4sbm11 update: {e}"; return 2
+    | .ok (parts3, maxBytes) =>
+    let (parts, base) := match parts3.idxOf "--base" with
+      | i => if i + 1 < parts3.length then
+          (parts3.take i ++ parts3.drop (i + 2), some parts3[i + 1]!)
+        else (parts3, none)
     let version : L4Factoidal.SPARQL.SparqlVersion := if v12 then .v12 else .v11
+    let limit ← try
+        let envLimit ← overlayLimitFromEnv
+        pure (some { maxEntries := maxEntries.orElse fun _ => envLimit.maxEntries,
+                     maxBytes := maxBytes.orElse fun _ => envLimit.maxBytes
+                   : L4Factoidal.Storage.Sbm11.OverlayLimit.Limit })
+      catch e => IO.eprintln s!"l4sbm11 update: {e}"; pure none
+    let some limit := limit | return 2
     match parts with
     | ["--file", path] =>
-      try Harness.Sbm11Update.appendUpdate dir (← IO.FS.readFile path) version base
+      try Harness.Sbm11Update.appendUpdate dir (← IO.FS.readFile path) version base limit
       catch e => IO.eprintln s!"l4sbm11 update: {e}"; return 1
     | [] =>
-      IO.eprintln "usage: l4sbm11 update GEN ('SPARQL UPDATE' | --file U.ru) [--base IRI] [--sparql12]"
+      IO.eprintln updateUsage
       return 2
     | _ =>
-      try Harness.Sbm11Update.appendUpdate dir (String.intercalate " " parts) version base
+      try Harness.Sbm11Update.appendUpdate dir (String.intercalate " " parts) version base limit
       catch e => IO.eprintln s!"l4sbm11 update: {e}"; return 1
   | "compact" :: src :: out :: opts =>
     match parseCompactOpts opts (4096, 524288, none) with
@@ -236,7 +282,7 @@ def main (args : List String) : IO UInt32 := do
         runCompact src out b m v
       catch e => IO.eprintln s!"l4sbm11 compact: {e}"; return 1
   | _ =>
-    IO.eprintln "usage: l4sbm11 update GEN ('SPARQL UPDATE' | --file U.ru) [--base IRI] [--sparql12] | compact GEN OUTDIR [--block-rows B] [--sort-rows M] [--verify merkle|none]"
+    IO.eprintln s!"{updateUsage} | compact GEN OUTDIR [--block-rows B] [--sort-rows M] [--verify merkle|none]"
     return 2
 
 end Harness.Sbm11Compact

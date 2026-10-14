@@ -1052,9 +1052,12 @@ fi
 # 2026-10-14 the decoder of a version 1 batch did, and every open of the log overflowed
 # a 512 KB stack). The first query replays the log: COUNT(DISTINCT ?r) is N_WHERE only
 # when the supply drew N_WHERE labels. Then `l4sbm11 compact` folds the log, and
-# three queries count on the new generation. Each replay costs one dictionary
-# lookup for each term of each entry (https://github.com/danbri/factoidal/issues/858),
-# so the case replays the log twice only.
+# three queries count on the new generation. Until 2026-10-14 each replay cost one
+# dictionary lookup for each term of each entry (https://github.com/danbri/factoidal/issues/858)
+# and the case replayed the log twice only; the replay now looks the distinct terms up in
+# dictionary order. The reader and the writer of the log hold it as a `ByteArray`
+# (`Storage/DeltaLogBytes.lean`, https://github.com/danbri/factoidal/issues/851 and
+# https://github.com/danbri/factoidal/issues/857), and each loop over its bytes is a tail call.
 sbm11_update_where_case() { # sbm11_update_where_case <route> <prefix...>
   local route="$1"; shift
   local src="$FIXTURES/sbm11-dict.nt" col="$FIXTURES/sbm11-where-col" rc log r q

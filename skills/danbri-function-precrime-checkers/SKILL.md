@@ -1104,3 +1104,47 @@ Rules from these repairs:
   checks of §19.6 read their lists only through membership, so a set gives the
   same Bool; where a list is returned, keep the list and put the set beside
   it (`strUnionSet`).
+
+## The update path of SBM11 (https://github.com/danbri/factoidal/issues/857, https://github.com/danbri/factoidal/issues/851, https://github.com/danbri/factoidal/issues/858, 2026-10-14)
+
+Three rows of `tests/stack/lean_scaling.py` (`sbm11-update-memory`,
+`sbm11-open-log-memory`, `sbm11-replay-time`) were written first as expected
+failures and each failed on the unrepaired code. Rules that the work paid for:
+
+- **A memory bound is on the increase that the stage under test causes.** The
+  first bound of the batch encoder test was a ceiling on the peak of the whole
+  process: 16 bytes for each byte of log plus 64 MiB. The process peak
+  (139.8 MB for a 2.5 MB request) is reached while the SPARQL request is parsed,
+  before the encoder runs; the repaired encoder added 0 kB to it, and the bound
+  had 3 % of room. The assertion now reads the peak after the compile and after
+  the encode (the `sbm11-update:` line) and bounds the difference (at most 8
+  bytes for each byte of log), plus a ceiling of 16 bytes plus 96 MiB for the
+  whole process.
+- **A time bound keeps at least 20 % of room over the slowest run of the repaired
+  code.** The replay of 40,000 entries passed at 840 to 960 ms against a bound of
+  1,000 ms: 4 % of room, a test that fails when the machine is busy. Sizing the
+  hash sets of the replay (a set that grows hashes every term again) took it to
+  695 to 790 ms. Measure the repaired code at least three times before the bound
+  is written down. The user CPU time of one binary on one fixture varies by 15 % to
+  20 % on this VM (three runs of the replay of 100,000 entries: 1.36, 1.46 and
+  1.63 s).
+- **A shortcut that depends on an order checks the order itself.** The replay
+  looks its keys up in dictionary order with a finger (a page kept from the key
+  before). `Dict.lookupWalkM` compares each key with the key before it and uses
+  the finger only when the key is not below it, so the theorem
+  (`walkM_encodeDict`) has no hypothesis on the order, and a wrong sort cannot
+  give a wrong id.
+- **The cost of a read is the number of system calls, not the bytes.** A
+  positioned read of the store is `open`, `fstat`, `pread` and `close`
+  (`strace -c`). The old replay made about 28 reads for each lookup (a binary
+  search reads a whole page at each probe), so half of its 58 s was system time
+  and 5.4 GB were read for a 24 MB log. Count reads and calls first
+  (`strace -c -f`), then look at user time.
+- **A specification that is never run is `noncomputable`.** `walkM`, the
+  recursion that specifies the `for` loop of the replay, is a recursion over the
+  keys. The tail-recursion audit counts a compiled recursion, so the definition
+  is `noncomputable`; the run time loop is the `for` loop.
+- **Check the names in a header after the proofs are written.** The header of
+  `DeltaLogBytesTheorems.lean` listed four theorems that were renamed while the
+  proofs were written; `grep -n '^theorem' FILE` against the header found them.
+

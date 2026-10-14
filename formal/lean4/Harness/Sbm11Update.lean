@@ -160,7 +160,11 @@ def Run.sync (r : Run) : IO Session := do
   let pend ← r.pending.swap #[]
   if pend.isEmpty then return ss
   let mut st := ss.ovState
+  -- the dictionary ids of every term of the entries, in dictionary order (issue 858)
+  let _ ← ss.prefillBaseIds pend.size fun f => do
+    for e in pend do f e
   for e in pend do st ← ss.stepEntry st e
+  ss.baseIds.set {}
   let ss' ← ss.withOverlay st
   r.overlaid.set (some ss')
   return ss'
@@ -458,8 +462,8 @@ def Run.compile (r : Run) (u : Update) : IO (Except UpdateError (Array DeltaEntr
     positioned at the size read (`appendSyncAtSizeRaw`, file synced); a
     concurrent writer makes it start again, with the WHERE clauses evaluated
     again, three times at most. -/
-def appendUpdate (dir0 text : String) (sparql : SparqlVersion := .v11) (base : Option String := none) :
-    IO UInt32 := do
+def appendUpdate (dir0 text : String) (sparql : SparqlVersion := .v11) (base : Option String := none)
+    (limit : L4Factoidal.Storage.Sbm11.OverlayLimit.Limit := {}) : IO UInt32 := do
   let dir := (← Harness.GenerationPointer.resolveStoreDirectory dir0).toString
   let baseEpoch ← Harness.CompactedEpoch.read? (System.FilePath.mk dir)
   let epoch := Harness.CompactedEpoch.nextWriteEpoch baseEpoch
@@ -480,6 +484,13 @@ def appendUpdate (dir0 text : String) (sparql : SparqlVersion := .v11) (base : O
         | .ok (_, true), _ => throw (IO.userError s!"{path}: DLOG has an uncommitted suffix; recover it before appending")
         | .error e, _ => throw (IO.userError s!"{path}: {e}")
         | .ok _, none => throw (IO.userError s!"{path}: DLOG header is malformed or unsupported")
+      -- the size limit of the log (https://github.com/danbri/factoidal/issues/851): the entries and bytes
+      -- the log holds now, and the refusal text that names the repair
+      let logEntries := batches.foldl (fun n b => n + b.ops.length) 0
+      let fold := s!"Run 'l4sbm11 compact {dir0} OUTDIR' and 'l4sbm11 activate ROOT NAME' to fold the log into a new generation, then repeat the request."
+      if limit.exceeded logEntries bytes.size then
+        IO.eprintln s!"l4sbm11 update: refused: the log of {dir0} already holds {logEntries} entries in {bytes.size} bytes, over the limit of {limitText limit}. {fold}"
+        return 1
       let verify ← cliDefaultVerify dir
       let clockEnv ← L4Wasm.Ops.emptyEnvNow
       let run : Run := {
@@ -500,12 +511,18 @@ def appendUpdate (dir0 text : String) (sparql : SparqlVersion := .v11) (base : O
         if !entries.all entryAdmitted then
           IO.eprintln "l4sbm11 update: refused: a term of an added quad is not admitted by the SBM11 dictionary"
           return 1
+        if limit.exceeded (logEntries + entries.size) bytes.size then
+          IO.eprintln s!"l4sbm11 update: refused: this request adds {entries.size} entries, so the log of {dir0} would hold {logEntries + entries.size} entries, over the limit of {limitText limit}. {fold}"
+          return 1
         let batch : DeltaBatch := { seq := Harness.Sbm11Delta.nextSeq batches, epoch, ops := entries.toList }
         match DeltaLogBytes.appendPlanBA? logVersion batch with
         | none =>
           IO.eprintln "l4sbm11 update: refused: the batch exceeds the DLOG wire-format limits"
           return 1
         | some plan =>
+          if limit.exceeded (logEntries + entries.size) (bytes.size + plan.bytes.size) then
+            IO.eprintln s!"l4sbm11 update: refused: this request adds {plan.bytes.size} bytes, so the log of {dir0} would hold {bytes.size + plan.bytes.size} bytes, over the limit of {limitText limit}. {fold}"
+            return 1
           let t2 ← IO.monoNanosNow
           let rssEncode ← vmHWM
           let size := UInt64.ofNat bytes.size

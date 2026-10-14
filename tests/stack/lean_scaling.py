@@ -190,9 +190,11 @@ repaired (docs/designissues/2026-10-10-lean-vs-fstar-performance.md):
                    SBM11_REPLAY_US_BOUND microseconds, and time(4x) at most
                    SBM11_READ_TIME_BOUND times time(x). Issue
                    https://github.com/danbri/factoidal/issues/858: the replay looked every term of
-                   every entry up in the dictionary (about 28 page reads for each lookup): 303
-                   microseconds for each entry on this fixture, 283 on the olympics generation
-                   (203,264 entries: 57.9 s).
+                   every entry up in the dictionary (about 28 positioned reads for each lookup,
+                   each read an open, fstat, pread and close of the file): 258 to 295 microseconds
+                   for each entry on this fixture, 283 on the olympics generation (203,264
+                   entries: 57.9 s). Since 2026-10-14 the replay looks the distinct terms of the
+                   log up in dictionary order with a finger (`Dict.lookupWalkM`).
   sbm11-pack-nt-vs-nq  `l4sbm11-pack` over 100,000 N-Triples statements takes at most
                    2.0 times the CPU time of the same pack over the same triples as
                    N-Quads text (one graph name on every line). N-Triples was read
@@ -414,7 +416,6 @@ XFAIL: dict[str, str] = {
     "sbm11-pack-trig-workers": "https://github.com/danbri/factoidal/issues/842",
     "sbm11-export-rdfxml-memory": "https://github.com/danbri/factoidal/issues/846",
     "sbm11-export-jsonld-memory": "https://github.com/danbri/factoidal/issues/847",
-    "sbm11-replay-time": "https://github.com/danbri/factoidal/issues/858",
 }
 # A run longer than this is not repeated: the minimum of several runs only
 # removes timer and load noise, which is small against a run this long.
@@ -1348,8 +1349,10 @@ _OPEN_RUNS: dict = {}
 
 
 def sbm11_open_run(n: int) -> dict:
-    """The open (replay) of a generation with a log of n entries, run once for the process:
-    CPU time, peak RSS, log bytes, entries replayed, the replay time the command reports."""
+    """The open (replay) of a generation with a log of n entries, run three times (the result
+    is kept for the rest of the process): the least CPU time, the least peak RSS, the log
+    bytes, and the replay time that the command reports in the run of least CPU time. The
+    user CPU time of one binary on one fixture varies by 15 % to 20 % on this VM."""
     import re
     import shutil
     if n in _OPEN_RUNS:
@@ -1367,15 +1370,22 @@ def sbm11_open_run(n: int) -> dict:
     if r.returncode != 0:
         raise MeasurementError(f"gen_dlog.py {n}: exit {r.returncode}: {r.stderr.decode()[-160:]}")
     log = (work / "gen" / "deltas.dlog").stat().st_size
-    t = peak_rss_run([str(SBM11_BIN), "query", str(work), "ASK { ?s ?p ?o }"])
+    runs = []
+    for _ in range(3):
+        t = peak_rss_run([str(SBM11_BIN), "query", str(work), "ASK { ?s ?p ?o }"])
+        if t["status"] != "ok":
+            shutil.rmtree(work, ignore_errors=True)
+            raise MeasurementError(f"open of a log of {n} entries: exit status {t['status']}: {t['stderr'][-160:]}")
+        err = t.get("stderr_full", "")
+        m = re.search(r"delta batches (\d+), entries (\d+),.*?replay ms ([0-9.]+)", err)
+        if not m or int(m.group(1)) != 1 or int(m.group(2)) != n:
+            shutil.rmtree(work, ignore_errors=True)
+            raise MeasurementError(f"open of a log of {n} entries: the summary line says {err[:260]!r}")
+        runs.append({"cpu": t["cpu"], "rss_kb": t["rss_kb"], "replay_ms": float(m.group(3))})
     shutil.rmtree(work, ignore_errors=True)
-    if t["status"] != "ok":
-        raise MeasurementError(f"open of a log of {n} entries: exit status {t['status']}: {t['stderr'][-160:]}")
-    err = t.get("stderr_full", "")
-    m = re.search(r"delta batches (\d+), entries (\d+),.*?replay ms ([0-9.]+)", err)
-    if not m or int(m.group(1)) != 1 or int(m.group(2)) != n:
-        raise MeasurementError(f"open of a log of {n} entries: the summary line says {err[:260]!r}")
-    _OPEN_RUNS[n] = {"n": n, "log": log, "rss_kb": t["rss_kb"], "cpu": t["cpu"], "replay_ms": float(m.group(3))}
+    best = min(runs, key=lambda r: r["cpu"])
+    _OPEN_RUNS[n] = {"n": n, "log": log, "rss_kb": min(r["rss_kb"] for r in runs), "cpu": best["cpu"],
+                     "replay_ms": best["replay_ms"]}
     return _OPEN_RUNS[n]
 
 
@@ -1417,8 +1427,14 @@ SBM11_UPDATE_MEMORY_BOUND = 8.0
 # and the entries of the log as Lean objects.
 SBM11_OPEN_MEMORY_BOUND = 12.0
 # sbm11-replay-time (issue 858). 258 to 295 microseconds for each entry before the repair of the
-# replay (25,000 entries 6.4 to 7.3 s CPU, 100,000 entries 25.7 to 29.4 s). The bound is the 1,000 ms
-# for 40,000 entries of the issue.
+# replay (25,000 entries 6.4 to 7.3 s CPU, 100,000 entries 25.7 to 29.4 s). After the replay in
+# dictionary order (`Dict.lookupWalkM`, `Harness/Sbm11Query.lean` `prefillBaseIds`) and sized hash sets:
+# 0.45, 0.79 and 1.46 s CPU (the least of three runs) for 25,000, 50,000 and 100,000 entries, 13.5
+# microseconds for each entry, 3.3 for 4x the entries; single runs of the same code read 0.53, 0.89 and
+# 1.72 s (15.9 microseconds). What is left is the decode of the log (the payload of each entry is
+# parsed from a list of its bytes, about 7 microseconds), the sort of the keys, the step of the overlay
+# and the cut of the overlay into four permutations. The bound is the 1,000 ms for 40,000 entries of the
+# issue (25 microseconds for each entry).
 SBM11_REPLAY_US_BOUND = 25.0
 
 # `l4sbm11-pack` over N-Triples text takes at most SBM11_PACK_RATIO times the CPU

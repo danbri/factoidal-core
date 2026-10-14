@@ -467,7 +467,8 @@ def usage : String :=
   "       | query GEN (SPARQL | --file Q.rq) [--base IRI] [--explain] [--repeat N] [--reference-render] [--reference]\n" ++
   "         [--sparql12]\n" ++
   "       | serve GEN [--sparql12] | prm-check GEN | frame-check GEN\n" ++
-  "       | update GEN ('SPARQL UPDATE' | --file U.ru) | compact GEN OUTDIR [--block-rows B] [--sort-rows M]\n" ++
+  "       | update GEN ('SPARQL UPDATE' | --file U.ru) [--max-overlay-entries N] [--max-overlay-bytes N]\n" ++
+  "       | compact GEN OUTDIR [--block-rows B] [--sort-rows M]\n" ++
   "  --verify merkle|none (query, serve, scan, count, dump, dump-ids): merkle checks every 65,536-byte chunk\n" ++
   "    read by its Merkle proof; none reads exact byte ranges and hashes nothing (a changed byte is not\n" ++
   "    detected). Default: none when a CURRENT pointer names GEN (activated: every file was checked at\n" ++

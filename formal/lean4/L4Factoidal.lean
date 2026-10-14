@@ -377,6 +377,7 @@ import L4Factoidal.Storage.Sbm11.ManifestTheorems
 import L4Factoidal.Storage.Sbm11.PrmAt
 import L4Factoidal.Storage.Sbm11.PrmRange
 import L4Factoidal.Storage.Sbm11.DictRange
+import L4Factoidal.Storage.Sbm11.DictFinger
 import L4Factoidal.Storage.Sbm11.FrameWords
 import L4Factoidal.Storage.Sbm11.OptJoin
 import L4Factoidal.Storage.Sbm11.OptJoinTheorems
@@ -396,8 +397,10 @@ import L4Factoidal.Storage.Sbm11.ScanWordsTheorems
 import L4Factoidal.Storage.Sbm11.BlockAtTheorems
 import L4Factoidal.Storage.Sbm11.DictLookupTheorems
 import L4Factoidal.Storage.Sbm11.DictRangeTheorems
+import L4Factoidal.Storage.Sbm11.DictFingerTheorems
 import L4Factoidal.Storage.Sbm11.Overlay
 import L4Factoidal.Storage.Sbm11.OverlayTheorems
+import L4Factoidal.Storage.Sbm11.OverlayLimit
 import L4Factoidal.Storage.Sbm11.UpdateOverlayTheorems
 import L4Factoidal.Storage.Sbm11.ScanFoldTests
 import L4Factoidal.Storage.Sbm11.ScanFoldTheorems

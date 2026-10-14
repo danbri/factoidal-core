@@ -59,7 +59,19 @@ guard selects nothing. A line on stderr names the path that ran
 
 Output: SPARQL JSON for SELECT and ASK; N-Triples for CONSTRUCT and DESCRIBE.
 `serve` reads one query per line of stdin (or `--file PATH`) and writes one
-line of SPARQL JSON per query.
+line of SPARQL JSON per query. At start it reports on stderr the size of the
+overlay that the log of the generation made (`serve: overlay size: N log
+entries in B batches, M bytes of log, ...`) and where it stands against the
+log size limit that `SBM11_MAX_OVERLAY_ENTRIES` and `SBM11_MAX_OVERLAY_BYTES`
+set (`Sbm11Compact`: `l4sbm11 update` refuses a request that would pass it;
+https://github.com/danbri/factoidal/issues/851).
+
+Opening a generation that has a log replays it (`Session.loadOverlay`): the
+distinct terms of the log are looked up in the dictionary in key order, each
+page read once (`Session.prefillBaseIds`, `Dict.lookupWalkM`, issue 858), then
+the entries are applied in log order. `SBM11_REPLAY_LOOKUP=each` looks every
+occurrence of every term up on its own, as the replay did before issue 858
+(the oracle of the differential test in tests/sbm11/update_where.sh).
 
 This is a HARNESS: it does file I/O. The query engine is
 `L4Factoidal.Storage.Sbm11.IdQuery`.
@@ -69,9 +81,11 @@ import Harness.Sbm11Delta
 import L4Factoidal.Storage.Sbm11.IdQuery
 import L4Factoidal.Storage.Sbm11.ParallelScan
 import L4Factoidal.Storage.Sbm11.Overlay
+import L4Factoidal.Storage.Sbm11.OverlayLimit
 import L4Factoidal.Storage.Sbm11.PrmAt
 import L4Factoidal.Storage.Sbm11.PrmRange
 import L4Factoidal.Storage.Sbm11.DictRange
+import L4Factoidal.Storage.Sbm11.DictFinger
 import L4Factoidal.Storage.Sbm11.FrameWords
 import L4Factoidal.Storage.ShardManifest
 import L4Factoidal.Storage.QuadDataset
@@ -147,6 +161,11 @@ structure Session where
       `tagDelta · 2^60 + k`. -/
   ovVocab : IO.Ref (Array Term)
   ovIds : IO.Ref (Std.HashMap Term Nat)
+  /-- The dictionary ids of the terms of the log being replayed
+      (`prefillBaseIds`, issue 858): a normalised term to its dictionary id, or
+      `none` when the dictionary does not hold it. Empty except during a
+      replay; `idOf` reads it before it reads the dictionary. -/
+  baseIds : IO.Ref (Std.HashMap Term (Option UInt64))
   /-- Serialises the verified chunk cache (`merkle` reads) between scan
       tasks (issue 799). Shared by every task view of the session. -/
   lock : Std.Mutex Unit
@@ -181,6 +200,9 @@ structure Session where
   ovDeletes : Nat := 0
   ovCleared : Nat := 0
   ovNewTerms : Nat := 0
+  /-- the distinct terms of the log looked up in the dictionary by the replay
+      (issue 858) -/
+  replayTerms : Nat := 0
   replayNs : Nat := 0
   /-- the log ended with a torn final frame (an append that did not
       complete), left out of the replay (issue 843) -/
@@ -221,7 +243,7 @@ def openSession (v : Verify) (dir0 : String) : IO Session := do
            perms := ← IO.mkRef #[none, none, none, none],
            pages := ← IO.mkRef {}, frameBytes := ← IO.mkRef 0, prmBytes := ← IO.mkRef 0,
            lookups := ← IO.mkRef 0,
-           gdx := ← IO.mkRef none, ovVocab := ← IO.mkRef #[], ovIds := ← IO.mkRef {},
+           gdx := ← IO.mkRef none, ovVocab := ← IO.mkRef #[], ovIds := ← IO.mkRef {}, baseIds := ← IO.mkRef {},
            lock := ← Std.Mutex.new (), dictLock := ← Std.Mutex.new (), taskPages := ← IO.mkRef {} }
 
 /-- A positioned read of a PRM1 file (`PrmRange`'s `read`): under `none` one
@@ -526,22 +548,37 @@ def Session.termOf (ss : Session) (x : UInt64) : IO Term := do
   | some t => return t
   | none => throw (IO.userError s!"id {id}: key does not decode")
 
+/-- The id of the dictionary key `k` of rank `r`. -/
+def dictIdOfRank (k : ByteArray) (r : Nat) : UInt64 := (dictCode k.data.toList r).toUInt64
+
+/-- The id of a term that the delta log added (stage 5), when it has one. -/
+def Session.overlayIdOf (ss : Session) (t : Term) : IO (Option UInt64) := do
+  return ((← ss.ovIds.get).get? t).map fun n =>
+    (L4Factoidal.Storage.Sbm11.Overlay.tagDelta * two60 + n).toUInt64
+
+/-- The id of a term: its inline code, its dictionary id (from `baseIds` when
+    a replay has put it there, else one `Dict.lookupM`), else the id the delta
+    log gave it. -/
 def Session.idOf (ss : Session) (t : Term) : IO (Option UInt64) := do
   ss.lookups.modify (· + 1)
   let t := normalizeTerm t
   match inlineCode? t with
   | some c => return some c.toUInt64
   | none =>
-    match termKeyBytes? t with
-    | none => return none
-    | some k =>
-      let (r, _) ← ok "lookup" (← (Dict.lookupM ss.gdxFetch ss.gdvFetch ss.g.dictHdr k).run)
-      match r with
-      | some r => return some (dictCode k.data.toList r).toUInt64
-      | none =>
-        -- a term the delta log added (stage 5)
-        return ((← ss.ovIds.get).get? t).map fun n =>
-          (L4Factoidal.Storage.Sbm11.Overlay.tagDelta * two60 + n).toUInt64
+    let memo ← ss.baseIds.get
+    match (if memo.isEmpty then none else memo.get? t) with
+    | some (some x) => return some x
+    | some none => ss.overlayIdOf t
+    | none =>
+      match termKeyBytes? t with
+      | none => return none
+      | some k =>
+        let (r, _) ← ok "lookup" (← (Dict.lookupM ss.gdxFetch ss.gdvFetch ss.g.dictHdr k).run)
+        match r with
+        | some r => return some (dictIdOfRank k r)
+        | none =>
+          -- a term the delta log added (stage 5)
+          ss.overlayIdOf t
 
 def Session.lowerBound (ss : Session) (k : ByteArray) : IO Nat := do
   ok "lower bound" (← (DictRange.lowerBoundM ss.gdxFetch ss.gdvFetch ss.g.dictHdr k).run)
@@ -756,7 +793,9 @@ def Session.idOrNew (ss : Session) (t0 : Term) : IO Nat := do
   | some x => pure x.toNat
   | none =>
     let t := normalizeTerm t0
-    if (termKeyBytes? t).isNone then
+    -- a term in `baseIds` was resolved because it has a dictionary key; any other is checked now
+    let admitted := (← ss.baseIds.get).contains t || (termKeyBytes? t).isSome
+    if !admitted then
       throw (IO.userError s!"delta log: a term the SBM11 dictionary does not admit: {repr t}")
     -- one step that reads the size and pushes: a `get` before the `modify` leaves a second
     -- reference to the array, and every push then copies it (quadratic replay)
@@ -784,6 +823,76 @@ def Session.quadIds? (ss : Session) (t : Triple) (g : Option Iri) : IO (Option R
     | some gi => do pure ((← ss.idOf (← graphTerm gi)).map (·.toNat))
   let some gid := gid | return none
   return some ⟨s.toNat, p.toNat, o.toNat, gid⟩
+
+/-- `SBM11_REPLAY_LOOKUP=each`: the replay looks every occurrence of every term
+    up in the dictionary on its own, as it did before issue 858. The oracle of
+    the differential test (group `replay` of tests/sbm11/update_where.sh); not
+    for use otherwise. -/
+def replayEach : IO Bool := do
+  return (← IO.getEnv "SBM11_REPLAY_LOOKUP") == some "each"
+
+/-- A graph name as a term when it is an IRI (`graphTerm` without the error). -/
+def graphTerm? (g : Iri) : Option Term :=
+  if h : isIri g = true then some (.iri ⟨g, h⟩) else none
+
+/-- The terms that `stepEntry` maps to ids for the entry `e`. A graph name that
+    is not an IRI is left out: `stepEntry` refuses it. -/
+def entryTerms : L4Factoidal.Storage.DeltaEntry → List Term
+  | .add t g | .remove t g =>
+    t.s.toTerm :: .iri t.p :: t.o :: (match g with | some gi => (graphTerm? gi).toList | none => [])
+  | .clear (some g) | .drop g => (graphTerm? g).toList
+  | .clear none | .create _ => []
+
+/-- Look the distinct terms of the entries that `forEach` gives up in the
+    dictionary, in dictionary order, and keep their ids in `baseIds` (stage 5,
+    https://github.com/danbri/factoidal/issues/858). `idOf` then answers
+    those terms from `baseIds`, so the replay of a log reads each page of the
+    dictionary that it needs once, in file order, in place of the page reads of
+    one binary search for each occurrence of each term. The terms are
+    normalised, those with an inline code are left out (they are never in the
+    dictionary), the keys are sorted by `Dict.cmpBytesAt` (the order of the
+    dictionary), and `Dict.lookupWalkM` walks them with a finger.
+    `DictFingerTheorems.walkM_encodeDict`: the answer for each term is the
+    answer of `Dict.lookupM`, in whatever order the keys come (the sort makes
+    the finger useful; it does not make the answers right). The ids the delta
+    log gave to terms that the dictionary does not hold (`ovIds`) are not in
+    `baseIds`: `idOf` reads them from `ovIds` as before, so `idOrNew` gives the
+    same ids in the same order. The caller empties `baseIds` after the replay.
+    `entries` is the number of entries the caller will apply (it sizes the hash
+    sets). Gives the number of terms looked up. -/
+def Session.prefillBaseIds (ss : Session) (entries : Nat)
+    (forEach : (L4Factoidal.Storage.DeltaEntry → IO Unit) → IO Unit) : IO Nat := do
+  if ← replayEach then return 0
+  -- the hash sets and maps are sized for one new term in each entry, so that they do not grow
+  -- (each growth hashes every term again)
+  let seen ← IO.mkRef (Std.HashSet.emptyWithCapacity entries : Std.HashSet Term)
+  let terms ← IO.mkRef (#[] : Array Term)
+  forEach fun e => do
+    for t0 in entryTerms e do
+      let t := normalizeTerm t0
+      if (inlineCode? t).isNone then
+        let isNew ← seen.modifyGet fun st => if st.contains t then (false, st) else (true, st.insert t)
+        if isNew then terms.modify (·.push t)
+  seen.set ∅
+  let ts ← terms.get
+  terms.set #[]
+  -- (key, position in `ts`): a term has no `Inhabited` instance for the sort
+  let mut items : Array (ByteArray × Nat) := Array.mkEmpty ts.size
+  for h : i in [0:ts.size] do
+    if let some k := termKeyBytes? ts[i] then items := items.push (k, i)
+  let sorted := L4Factoidal.Qlvr.mergeSortBy items fun a b => Dict.cmpBytesAt a.1 b.1 != .gt
+  let mut memo : Std.HashMap Term (Option UInt64) := Std.HashMap.emptyWithCapacity sorted.size
+  let mut w : Dict.Walk := none
+  for (k, i) in sorted do
+    let (r, w') ← ok "lookup" (← (Dict.lookupWalkM ss.gdxFetch ss.gdvFetch ss.g.dictHdr w k).run)
+    w := w'
+    if h : i < ts.size then
+      memo := memo.insert ts[i] (r.map (dictIdOfRank k))
+  ss.baseIds.set memo
+  -- the terms the dictionary does not hold get overlay ids (`idOrNew`): size `ovIds` for them
+  let absent := memo.fold (fun n _ r => if r.isNone then n + 1 else n) 0
+  ss.ovIds.modify fun m => if m.isEmpty then Std.HashMap.emptyWithCapacity absent else m
+  return sorted.size
 
 /-- One log entry applied to an overlay state: the terms of the entry mapped to
     ids (a term that has no id gets an overlay id, `idOrNew`), then
@@ -824,23 +933,69 @@ def Session.loadOverlay (ss : Session) : IO Session := do
   let (batches, logBytes, clean) ← Harness.Sbm11Delta.readBatches ss.g.dir
   let ss := { ss with deltaTorn := !clean, ovLogBytes := logBytes.size }
   if batches.isEmpty then return ss
-  let mut st : L4Factoidal.Storage.Sbm11.Overlay.State := {}
+  -- the dictionary ids of every term of the log, in dictionary order (issue 858)
+  let entries := batches.foldl (fun n b => n + b.ops.length) 0
+  let resolved ← ss.prefillBaseIds entries fun f => do
+    for b in batches do
+      for e in b.ops do f e
+  -- the sets of the state are sized for the entries, so that they do not grow
+  let mut st : L4Factoidal.Storage.Sbm11.Overlay.State :=
+    { ins := Std.HashSet.emptyWithCapacity entries, del := Std.HashSet.emptyWithCapacity entries }
   let mut ops := 0
   for b in batches do
     for e in b.ops do
       ops := ops + 1
       st ← ss.stepEntry st e
+  ss.baseIds.set {}
   let ss ← ss.withOverlay st
   let t1 ← IO.monoNanosNow
-  return { ss with deltaBatches := batches.length, deltaOps := ops, replayNs := t1 - t0 }
+  return { ss with deltaBatches := batches.length, deltaOps := ops, replayTerms := resolved, replayNs := t1 - t0 }
 
 /-- Open a generation with its delta log replayed (the session every query,
     serve and compaction uses). -/
 def openOverlaid (v : Verify) (dir0 : String) : IO Session := do
   (← openSession v dir0).loadOverlay
 
+/-- The limit as text: `5 entries`, `100 bytes`, `5 entries and 100 bytes`. -/
+def limitText (l : L4Factoidal.Storage.Sbm11.OverlayLimit.Limit) : String :=
+  match l.maxEntries, l.maxBytes with
+  | some e, some b => s!"{e} entries and {b} bytes"
+  | some e, Option.none => s!"{e} entries"
+  | Option.none, some b => s!"{b} bytes"
+  | Option.none, Option.none => "none"
+
+/-- A size limit from the environment variable `name`: unset or empty is no
+    limit; a decimal number is that limit; anything else is an error. -/
+def limitFromEnv (name : String) : IO (Option Nat) := do
+  match ← IO.getEnv name with
+  | Option.none => return Option.none
+  | some "" => return Option.none
+  | some v =>
+    match v.toNat? with
+    | some n => return some n
+    | Option.none => throw (IO.userError s!"{name}={v}: not a decimal number")
+
+/-- The log size limit set by `SBM11_MAX_OVERLAY_ENTRIES` and
+    `SBM11_MAX_OVERLAY_BYTES` (both off when unset). `l4sbm11 update` takes the
+    flags `--max-overlay-entries` and `--max-overlay-bytes` in their place;
+    `l4sbm11 serve` reports whether the log it opened is within it. -/
+def overlayLimitFromEnv : IO L4Factoidal.Storage.Sbm11.OverlayLimit.Limit := do
+  return { maxEntries := ← limitFromEnv "SBM11_MAX_OVERLAY_ENTRIES",
+           maxBytes := ← limitFromEnv "SBM11_MAX_OVERLAY_BYTES" }
+
+/-- The size of the overlay of an opened generation, for `serve`: the entries
+    and bytes of its log, what the replay made of them, and where that stands
+    against the limit. -/
+def Session.overlayText (ss : Session) (lim : L4Factoidal.Storage.Sbm11.OverlayLimit.Limit) : String :=
+  let state :=
+    if !lim.isSet then "no limit set"
+    else if lim.exceeded ss.deltaOps ss.ovLogBytes then
+      s!"over the limit of {limitText lim}: run l4sbm11 compact and l4sbm11 activate to fold the log"
+    else s!"within the limit of {limitText lim}"
+  s!"overlay size: {ss.deltaOps} log entries in {ss.deltaBatches} batches, {ss.ovLogBytes} bytes of log, {ss.ovInserts} inserted quads, {ss.ovDeletes} deleted quads, {ss.ovNewTerms} new terms; {state}"
+
 def Session.deltaText (ss : Session) : String :=
-  s!"delta batches {ss.deltaBatches}, entries {ss.deltaOps}, overlay inserts {ss.ovInserts}, deletes {ss.ovDeletes}, cleared graphs {ss.ovCleared}, new terms {ss.ovNewTerms}, replay ms {ms 0 ss.replayNs}" ++
+  s!"delta batches {ss.deltaBatches}, entries {ss.deltaOps}, overlay inserts {ss.ovInserts}, deletes {ss.ovDeletes}, cleared graphs {ss.ovCleared}, new terms {ss.ovNewTerms}, log bytes {ss.ovLogBytes}, dictionary terms looked up {ss.replayTerms}, replay ms {ms 0 ss.replayNs}" ++
     (if ss.deltaTorn then ", torn final frame left out (an append that did not complete)" else "")
 
 /-! ## The reference fallback -/
@@ -1183,6 +1338,7 @@ def runServe (dir : String) (verify? : Option Verify) (version : SparqlVersion :
   let ss ← openOverlaid v dir
   let t1 ← IO.monoNanosNow
   IO.eprintln s!"serve: verify={v.name} ({why}); {ss.deltaText}; open {msText (t1 - t0)} ms; peak RSS (VmHWM): {← vmHWM}"
+  IO.eprintln s!"serve: {ss.overlayText (← overlayLimitFromEnv)}"
   let stdin ← IO.getStdin
   let stdout ← IO.getStdout
   let mut failures := 0

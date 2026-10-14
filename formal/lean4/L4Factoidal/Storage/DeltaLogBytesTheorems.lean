@@ -8,17 +8,18 @@ Each decoder is proved equal to the list decoder on the window it reads
 * `readU32LE_win`, `readU64LE_win`: a read on a window is a read by position.
 * `listOfRange_eq`, `sumRange_eq`: the range list and the range checksum.
 * `parseEntry_win`, `entryAt_eq`: a DLE1 frame, with and without its payload.
-* `entriesAt_eq`, `bodyAt_eq`, `batchAt_eq`: the entries, the body and the DLB1
-  frame of any term codec.
-* `replayBatchesAt_eq`, `parseLogAt_eq`, `classifyAt_eq`: the replay, `parseLog` and
+* `entriesAt_eq`, `bodyAt_eq`, `parseDeltaBatchWith_win`: the entries, the body and
+  the DLB1 frame of any term codec.
+* `replayBatchesAt_eq`, `parseLog_eq`, `classifyAt_eq`: the replay, `parseLog` and
   `classifyTail`.
-* `parseLogCheckedBA_eq`, `parseLogCheckedV1BA_eq`: the readers of the SBM11 tools
+* `parseLogChecked_eq`, `parseLogCheckedV1_eq`: the readers of the SBM11 tools
   and of the IBK3 tools.
 * `pushEntry?_eq`, `pushEntries?_eq`, `bodyBA?_eq`, `batchBA?_eq`,
   `appendPlanBA?_eq`: the encoder.
 
 `parseLogChecked`, `parseLogCheckedV1` and `appendPlan?` are then replaced by
-`@[csimp]` lemmas, so that code which still passes a `List UInt8` runs the byte
+`@[csimp]` lemmas (`parseLogChecked_csimp`, `parseLogCheckedV1_csimp`,
+`appendPlan?_csimp`), so that code which still passes a `List UInt8` runs the byte
 array functions, and every theorem about the specification (the round trips of
 `DeltaLogCodecTheorems`, the tail rules of `BrowserLogTheorems`) describes the
 code that runs. The byte array functions also run directly in the SBM11 tools

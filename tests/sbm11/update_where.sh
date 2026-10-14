@@ -48,16 +48,32 @@
 #   sparql12     SPARQL 1.2 on tests/sbm11/gate12/gate12.nq: a blank node inside a nested
 #                triple term in INSERT DATA and in an INSERT template, a triple-term
 #                pattern with a variable in DELETE WHERE, the triple functions.
+#   replay       the replay of a log in dictionary order (issue 858, Dict.lookupNextM)
+#                against the replay as it was before (SBM11_REPLAY_LOOKUP=each: one
+#                dictionary lookup for each occurrence of each term), on a base of 20,000
+#                quads and five requests of 7,141 entries (tests/sbm11/gen_replay.py): the
+#                same counters, a compaction that dumps the same bytes, a state isomorphic
+#                to the reference engine's, and at least 10 times fewer bytes read.
+#   limit        the size limit of the log (https://github.com/danbri/factoidal/issues/851): `l4sbm11
+#                update --max-overlay-entries N --max-overlay-bytes N` (or SBM11_MAX_OVERLAY_ENTRIES and
+#                SBM11_MAX_OVERLAY_BYTES) refuses a request that would take the log past N entries or N
+#                bytes: exit 1, the log file unchanged, a message that names `l4sbm11 compact`; a log that
+#                holds exactly N is within the limit; a log already over the limit refuses every request;
+#                the flag overrides the environment; a number that is not decimal is a usage error; `l4sbm11
+#                serve` reports the size of the overlay; compaction repairs it; no limit by default.
 #   scaling      n and 4n: the compile time of an update with a WHERE clause and a template
 #                blank node (10,000 and 40,000 solutions) and the replay time of a log (20,000
-#                and 80,000 entries) each grow by less than 8 times for 4 times the input; and
-#                the memory of the batch encoder (https://github.com/danbri/factoidal/issues/857,
-#                repaired 2026-10-14: it was 64 bytes of memory for each byte of log).
+#                and 80,000 entries) each grow by less than 8 times for 4 times the input; the
+#                memory of the batch encoder (https://github.com/danbri/factoidal/issues/857,
+#                repaired 2026-10-14: it was 64 bytes of memory for each byte of log); and the
+#                replay of 40,000 entries in at most 1,000 ms at open
+#                (https://github.com/danbri/factoidal/issues/858, repaired 2026-10-14: it was
+#                93 microseconds for each entry).
 #   shortfalls   expected failures that name an open issue: an empty named graph is not
 #                stored (https://github.com/danbri/factoidal/issues/855), CLEAR NAMED
 #                with a graph named by a blank node (https://github.com/danbri/factoidal/issues/856),
-#                and the replay of a log at every open: 93 microseconds for each entry
-#                (https://github.com/danbri/factoidal/issues/858).
+#                and no automatic compaction when the log passes its limit
+#                (https://github.com/danbri/factoidal/issues/803 item 4).
 #
 # Prints "N pass, M fail, K expected-fail (out of T)". Exit 0 when no case failed and no
 # expected failure passed; 2 when a binary is missing.
@@ -275,6 +291,134 @@ for req in "$FX"/sparql12/*.ru; do
   check_state "$T" "$TMP/s12/state.nq" sparql12 "$n" rdf12 none
 done
 
+echo "=== replay: the replay in dictionary order gives the overlay of one lookup for each term (issue 858)"
+# tests/sbm11/gen_replay.py: a base of 20,000 quads (more than 600 dictionary pages) and five requests, 7,141 entries in five
+# batches, whose terms meet every case of `Dict.lookupNextM`: terms of the dictionary near each other and far from each other,
+# terms it does not hold (in a gap between two pages, between two keys of a page, before the first key, after the last),
+# integers and booleans with an inline code, a language tag in upper case, blank nodes, graphs that exist and graphs that do
+# not. The last request has a second operation that reads the store, so `Run.sync` applies the entries of the first to the
+# overlay. The oracle for the replay is the replay as it was before issue 858 (SBM11_REPLAY_LOOKUP=each: one `Dict.lookupM`
+# for each occurrence of each term); the oracle for the state is the reference engine.
+RP="$TMP/replay"; mkdir -p "$RP"
+R="$RP/col"
+if ! python3 -I "$HERE/gen_replay.py" "$RP"; then record replay generator 1 "gen_replay.py failed"
+elif ! new_store "$R" "$RP/base.nq"; then record replay setup 1 "pack or activate failed: $(tail -1 "$R.pack.log" "$R.act.log" 2>/dev/null | tr '\n' ' ')"
+else
+  cp "$RP/base.nq" "$RP/state.nq"
+  bad=""; ops=0
+  for n in 1 2 3 4 5; do
+    store_update "$R" "$RP/r$n.ru"
+    ref_update "$RP/state.nq" "$RP/r$n.ru" "$RP/new.nq" --format nquads
+    if [ "$URC" -ne 0 ] || [ "$RRC" -ne 0 ]; then bad="$bad r$n(store $URC, reference $RRC: $(grep -v ' op ' "$R.upd" | tail -1 | cut -c1-100))"
+    else cp "$RP/new.nq" "$RP/state.nq"; ops=$((ops + $(grep -o 'ops=[0-9]*' "$R.upd" | head -1 | cut -d= -f2))); fi
+  done
+  if [ -z "$bad" ]; then record replay requests 0 "5 requests, $ops entries in 5 batches, accepted by the store and by the reference engine"
+  else record replay requests 1 "refused:$bad"; fi
+  replay_line() { # replay_line <sorted|each>: the stderr line of an open that replays the log
+    if [ "$1" = each ]; then SBM11_REPLAY_LOOKUP=each timeout 300 "$BIN/l4sbm11" query "$R" 'ASK { ?s ?p ?o }' 2>&1 >/dev/null
+    else timeout 300 "$BIN/l4sbm11" query "$R" 'ASK { ?s ?p ?o }' 2>&1 >/dev/null; fi
+  }
+  field() { printf '%s' "$1" | grep -o "$2 [0-9]*" | head -1 | grep -o '[0-9]*$'; }
+  counters() { printf '%s' "$1" | grep -o 'delta batches [0-9]*, entries [0-9]*, overlay inserts [0-9]*, deletes [0-9]*, cleared graphs [0-9]*, new terms [0-9]*'; }
+  LA="$(replay_line sorted)"; LB="$(replay_line each)"
+  CA="$(counters "$LA")"; CB="$(counters "$LB")"
+  if [ -n "$CA" ] && [ "$CA" = "$CB" ]; then record replay counters-equal 0 "$CA"
+  else record replay counters-equal 1 "sorted: '$CA' each: '$CB'"; fi
+  TA="$(field "$LA" 'dictionary terms looked up')"; TB="$(field "$LB" 'dictionary terms looked up')"
+  if [ -n "$TA" ] && [ "$TA" -gt 0 ] && [ "$TB" = 0 ]; then record replay modes-differ 0 "the replay in dictionary order looked up $TA distinct terms; the oracle looked every occurrence up on its own"
+  else record replay modes-differ 1 "dictionary terms looked up: sorted '$TA', each '$TB'"; fi
+  BA="$(field "$LA" 'open file bytes')"; BB="$(field "$LB" 'open file bytes')"
+  if [ -n "$BA" ] && [ -n "$BB" ] && [ $((BA * 10)) -le "$BB" ]; then record replay fewer-reads 0 "the open read $BA bytes of the generation, the oracle $BB (at least 10 times more)"
+  else record replay fewer-reads 1 "open file bytes: sorted '$BA', each '$BB' (want at least 10 times fewer)"; fi
+  rm -rf "$R/cmpA" "$R/cmpB"
+  if "$BIN/l4sbm11" compact "$R" "$R/cmpA" >"$R.cmpA.log" 2>&1 && SBM11_REPLAY_LOOKUP=each "$BIN/l4sbm11" compact "$R" "$R/cmpB" >"$R.cmpB.log" 2>&1 \
+     && "$BIN/l4sbm11" dump "$R/cmpA" >"$RP/A.nq" 2>/dev/null && "$BIN/l4sbm11" dump "$R/cmpB" >"$RP/B.nq" 2>/dev/null; then
+    if cmp -s "$RP/A.nq" "$RP/B.nq"; then record replay compaction-equal 0 "the compacted generations of the two replays dump to the same $(wc -l <"$RP/A.nq") quads, byte for byte"
+    else record replay compaction-equal 1 "the dumps differ: $(diff "$RP/A.nq" "$RP/B.nq" | head -3 | tr '\n' ' ' | cut -c1-200)"; fi
+    out="$("$BIN/l4sbm11-w3c" compare "$RP/state.nq" "$RP/A.nq" --expected nq --mode rdf11 2>&1)" || true
+    case "$out" in
+      pass*) record replay state-equals-reference 0 "the compacted state is isomorphic to the reference state ($(wc -l <"$RP/state.nq") quads)" ;;
+      *) record replay state-equals-reference 1 "$(printf '%s' "$out" | head -1 | cut -c1-200)" ;;
+    esac
+  else record replay compaction-equal 1 "compact or dump failed: $(tail -1 "$R.cmpA.log" "$R.cmpB.log" | tr '\n' ' ' | cut -c1-200)"; fi
+fi
+
+echo "=== limit: the size limit of the log (issue 851)"
+# `l4sbm11 update --max-overlay-entries N --max-overlay-bytes N` (or SBM11_MAX_OVERLAY_ENTRIES and SBM11_MAX_OVERLAY_BYTES, which
+# the flags override) refuses a request that would take the log past N entries or N bytes: exit 1, nothing written (the log file
+# is byte for byte what it was), a message that names `l4sbm11 compact`. A log that holds exactly N is within the limit. There
+# is no limit by default. `l4sbm11 serve` reports the size of the overlay and where it stands against the limit.
+unset SBM11_MAX_OVERLAY_ENTRIES SBM11_MAX_OVERLAY_BYTES
+LM="$TMP/limit/col"; mkdir -p "$TMP/limit"
+new_store "$LM" "$GATE"
+for spec in "r3:a:3" "r2:b:2" "r1:c:1" "r4:d:1"; do
+  IFS=: read -r rn pre cnt <<<"$spec"
+  { printf 'INSERT DATA {\n'; for i in $(seq 1 "$cnt"); do printf '<http://ex.org/%s%s> <http://ex.org/p> "%s" .\n' "$pre" "$i" "$i"; done; printf '}\n'; } >"$TMP/limit/$rn.ru"
+done
+LOG="$LM/gen/deltas.dlog"
+store_update "$LM" "$TMP/limit/r3.ru" --max-overlay-entries 5
+if [ "$URC" -eq 0 ]; then store_update "$LM" "$TMP/limit/r2.ru" --max-overlay-entries 5; fi
+if [ "$URC" -eq 0 ] && [ "$(grep -c 'committed' "$LM.upd")" -eq 1 ]; then
+  record limit entries-at-limit-accepted 0 "limit 5 entries: a request of 3 entries, then one of 2 (the log holds exactly 5 entries): both accepted"
+else record limit entries-at-limit-accepted 1 "exit $URC: $(tail -1 "$LM.upd" | cut -c1-160)"; fi
+cp "$LOG" "$TMP/limit/before.dlog"
+store_update "$LM" "$TMP/limit/r1.ru" --max-overlay-entries 5
+if [ "$URC" -eq 1 ] && grep -q "refused" "$LM.upd" && grep -q "l4sbm11 compact" "$LM.upd" && grep -q "limit of 5 entries" "$LM.upd" && cmp -s "$LOG" "$TMP/limit/before.dlog"; then
+  record limit entries-over-limit-refused 0 "a sixth entry: exit 1, the log file unchanged, the message names the limit and 'l4sbm11 compact': $(grep -o 'would hold [0-9]* entries' "$LM.upd")"
+else record limit entries-over-limit-refused 1 "exit $URC, log $(cmp -s "$LOG" "$TMP/limit/before.dlog" && echo unchanged || echo CHANGED): $(tail -1 "$LM.upd" | cut -c1-200)"; fi
+SIZE="$(stat -c %s "$LOG")"
+store_update "$LM" "$TMP/limit/r1.ru" --max-overlay-bytes $((SIZE + 10))
+if [ "$URC" -eq 1 ] && grep -q "l4sbm11 compact" "$LM.upd" && grep -q "would hold [0-9]* bytes" "$LM.upd" && cmp -s "$LOG" "$TMP/limit/before.dlog"; then
+  record limit bytes-over-limit-refused 0 "a log of $SIZE bytes, limit $((SIZE + 10)) bytes: a request of one entry is refused ($(grep -o 'would hold [0-9]* bytes' "$LM.upd")), the log file unchanged"
+else record limit bytes-over-limit-refused 1 "exit $URC, log $(cmp -s "$LOG" "$TMP/limit/before.dlog" && echo unchanged || echo CHANGED): $(tail -1 "$LM.upd" | cut -c1-200)"; fi
+store_update "$LM" "$TMP/limit/r1.ru" --max-overlay-bytes $((SIZE + 100000)) --max-overlay-entries 6
+if [ "$URC" -eq 0 ] && grep -q "committed" "$LM.upd"; then record limit within-limits-accepted 0 "limits of $((SIZE + 100000)) bytes and 6 entries: the sixth entry is accepted"
+else record limit within-limits-accepted 1 "exit $URC: $(tail -1 "$LM.upd" | cut -c1-200)"; fi
+store_update "$LM" "$TMP/limit/r4.ru" --max-overlay-entries 4
+if [ "$URC" -eq 1 ] && grep -q "already holds 6 entries" "$LM.upd" && grep -q "l4sbm11 compact" "$LM.upd"; then
+  record limit log-already-over-refuses 0 "a log of 6 entries, limit 4: refused before the request is evaluated ($(grep -o 'already holds [0-9]* entries in [0-9]* bytes' "$LM.upd"))"
+else record limit log-already-over-refuses 1 "exit $URC: $(tail -1 "$LM.upd" | cut -c1-200)"; fi
+# the environment sets the limit; the flag overrides it
+cp "$LOG" "$TMP/limit/before.dlog"
+URC=0; SBM11_MAX_OVERLAY_ENTRIES=2 timeout 300 "$BIN/l4sbm11" update "$LM" --file "$TMP/limit/r4.ru" >"$LM.upd" 2>&1 || URC=$?
+E1=$URC
+URC=0; SBM11_MAX_OVERLAY_ENTRIES=2 timeout 300 "$BIN/l4sbm11" update "$LM" --file "$TMP/limit/r4.ru" --max-overlay-entries 100 >"$LM.upd2" 2>&1 || URC=$?
+if [ "$E1" -eq 1 ] && [ "$URC" -eq 0 ] && grep -q "committed" "$LM.upd2"; then
+  record limit environment-and-flag 0 "SBM11_MAX_OVERLAY_ENTRIES=2 refuses (exit 1); --max-overlay-entries 100 overrides it (accepted)"
+else record limit environment-and-flag 1 "environment exit $E1, flag exit $URC: $(tail -1 "$LM.upd2" | cut -c1-160)"; fi
+URC=0; "$BIN/l4sbm11" update "$LM" --file "$TMP/limit/r4.ru" --max-overlay-entries x >"$LM.upd3" 2>&1 || URC=$?
+U1=$URC
+URC=0; SBM11_MAX_OVERLAY_BYTES=abc "$BIN/l4sbm11" update "$LM" --file "$TMP/limit/r4.ru" >"$LM.upd4" 2>&1 || URC=$?
+if [ "$U1" -eq 2 ] && [ "$URC" -eq 2 ]; then record limit not-a-number 0 "a flag or an environment variable that is not a decimal number: usage error (exit 2), nothing written"
+else record limit not-a-number 1 "flag exit $U1, environment exit $URC"; fi
+# serve reports the size of the overlay
+SV="$(printf '' | SBM11_MAX_OVERLAY_ENTRIES=4 "$BIN/l4sbm11" serve "$LM" 2>&1 >/dev/null | grep 'overlay size')"
+SW="$(printf '' | SBM11_MAX_OVERLAY_ENTRIES=100 "$BIN/l4sbm11" serve "$LM" 2>&1 >/dev/null | grep 'overlay size')"
+SN="$(printf '' | "$BIN/l4sbm11" serve "$LM" 2>&1 >/dev/null | grep 'overlay size')"
+LB="$(stat -c %s "$LOG")"
+case "$SV|$SW|$SN" in
+  *"overlay size: 7 log entries in 4 batches, $LB bytes of log"*"over the limit of 4 entries"*"|"*"within the limit of 100 entries"*"|"*"no limit set"*)
+    record limit serve-reports-size 0 "7 log entries in 4 batches, $LB bytes of log: over a limit of 4 entries, within 100, no limit set" ;;
+  *) record limit serve-reports-size 1 "over: '$SV' within: '$SW' none: '$SN'" ;;
+esac
+# compaction repairs it: the same limit accepts a request after `compact` and `activate`
+rm -rf "$LM/cmp"
+if "$BIN/l4sbm11" compact "$LM" "$LM/cmp" >"$LM.compact.log" 2>&1 && "$BIN/l4sbm11" activate "$LM" cmp >/dev/null 2>&1; then
+  store_update "$LM" "$TMP/limit/r2.ru" --max-overlay-entries 5
+  if [ "$URC" -eq 0 ] && grep -q "committed" "$LM.upd"; then record limit compaction-repairs 0 "after compact and activate the log is empty: a request of 2 entries is accepted under the limit of 5 entries"
+  else record limit compaction-repairs 1 "exit $URC: $(tail -1 "$LM.upd" | cut -c1-200)"; fi
+else record limit compaction-repairs 1 "compact or activate failed: $(tail -1 "$LM.compact.log" | cut -c1-160)"; fi
+# no limit by default: 40 entries in 4 requests
+N0="$TMP/limit/none"
+new_store "$N0" "$GATE"
+okn=0
+for n in 1 2 3 4; do
+  { printf 'INSERT DATA {\n'; for i in $(seq 1 10); do printf '<http://ex.org/n%s_%s> <http://ex.org/p> "%s" .\n' "$n" "$i" "$i"; done; printf '}\n'; } >"$TMP/limit/n$n.ru"
+  store_update "$N0" "$TMP/limit/n$n.ru"; [ "$URC" -eq 0 ] && okn=$((okn + 1))
+done
+if [ "$okn" -eq 4 ]; then record limit off-by-default 0 "no flag and no environment variable: 4 requests, 40 entries, all accepted"
+else record limit off-by-default 1 "$okn of 4 requests accepted"; fi
+
 echo "=== shortfalls: expected failures, each with an open issue"
 # https://github.com/danbri/factoidal/issues/855: the store has no slot for an empty named graph
 X="$TMP/short/empty"
@@ -295,6 +439,17 @@ if [ "$RRC" -ne 0 ]; then record shortfalls bnode-graph-reference 1 "the referen
 elif [ "$URC" -ne 0 ]; then xfail shortfalls xfail-bnode-named-graph https://github.com/danbri/factoidal/issues/856 0 "the reference clears the graph named by a blank node, the store refuses: $(grep refused "$Y.upd" | head -1 | cut -c1-100)"
 else xfail shortfalls xfail-bnode-named-graph https://github.com/danbri/factoidal/issues/856 1 "the store accepts CLEAR NAMED with a graph named by a blank node"; fi
 
+# https://github.com/danbri/factoidal/issues/803 item 4: nothing folds the log into a new generation when it passes its limit; the
+# writer refuses the request (group `limit`). The wanted flag is `--auto-compact`: with it, a request that would pass the limit
+# runs `compact` and `activate` first and is then appended to the new generation's log. Today the flag is not understood.
+AC="$TMP/short/auto"
+new_store "$AC" "$GATE"
+store_update "$AC" "$TMP/limit/r3.ru"
+store_update "$AC" "$TMP/limit/r2.ru" --max-overlay-entries 4 --auto-compact
+if [ "$URC" -ne 0 ]; then xfail shortfalls xfail-auto-compaction https://github.com/danbri/factoidal/issues/803 0 "a request that would pass the limit of 4 entries is refused, not preceded by a compaction (exit $URC): $(tail -1 "$AC.upd" | cut -c1-90)"
+else xfail shortfalls xfail-auto-compaction https://github.com/danbri/factoidal/issues/803 1 "the request was accepted with --auto-compact (exit 0)"; fi
+
+echo "=== scaling: the cost of an update and of a replay grows in proportion to the request (n and 4n)"
 # https://github.com/danbri/factoidal/issues/857: the batch of a large request was encoded as a List UInt8 (about 64
 # bytes of memory for each byte of log). The encoder works on a ByteArray since 2026-10-14
 # (Storage/DeltaLogBytes.lean). Two assertions on an INSERT DATA of 40,000 quads: the encoder raises the peak RSS by
@@ -328,16 +483,16 @@ else
   fi
 fi
 
-# https://github.com/danbri/factoidal/issues/858: every open replays the log with one dictionary lookup for each term of each
-# entry; the bound is 1,000 ms for the 40,000 entries of the store above (a slower or a busier machine only makes the
-# expected failure hold longer, so the case cannot pass by noise)
+# https://github.com/danbri/factoidal/issues/858: every open replayed the log with one dictionary lookup for each term of each
+# entry (93 microseconds for each entry here, 3.7 s for the 40,000 entries of the store above). The replay in dictionary order
+# (Dict.lookupWalkM) took it down; the bound is the 1,000 ms of the issue for these 40,000 entries (measured 2026-10-14, this
+# VM: 660 to 762 ms in three runs; 840 to 960 ms before the hash sets of the replay were sized for the entries, a bound with
+# 4 % of room).
 RMS40="$(replay_ms "$Z")"
-if [ -z "$RMS40" ]; then record shortfalls replay-time-setup 1 "no replay time: $(tail -1 "$Z.replay.err" | cut -c1-120)"
-elif [ "$RMS40" -gt 1000 ]; then
-  xfail shortfalls xfail-replay-time https://github.com/danbri/factoidal/issues/858 0 "40,000 entries: replay $RMS40 ms at open ($((RMS40 * 1000 / 40000)) microseconds for each entry; the bound is 1,000 ms)"
-else xfail shortfalls xfail-replay-time https://github.com/danbri/factoidal/issues/858 1 "40,000 entries: replay $RMS40 ms"; fi
+if [ -z "$RMS40" ]; then record scaling replay-time-setup 1 "no replay time: $(tail -1 "$Z.replay.err" | cut -c1-120)"
+elif [ "$RMS40" -le 1000 ]; then record scaling replay-time 0 "40,000 entries: replay $RMS40 ms at open ($((RMS40 * 1000 / 40000)) microseconds for each entry; the bound is 1,000 ms)"
+else record scaling replay-time 1 "40,000 entries: replay $RMS40 ms at open ($((RMS40 * 1000 / 40000)) microseconds for each entry; the bound is 1,000 ms)"; fi
 
-echo "=== scaling: the cost of an update and of a replay grows in proportion to the request (n and 4n)"
 # The third checker of the skill danbri-function-precrime-checkers. The times are the tools' own lines. Compile and
 # replay: a bound of 8 for 4 times the input (linear work gives 4, quadratic work gives 16; measured 3.9 to 5.1 for
 # the compile time in 4 runs and 3.7 to 4.5 for the replay time in 3 runs). Before 2026-10-14 the replay of 10,000 and of 40,000

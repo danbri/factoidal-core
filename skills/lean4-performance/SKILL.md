@@ -735,6 +735,16 @@ Measure every one of these with `perf record` at 1 and N threads and the
 CPU time (`perf stat -e task-clock`): CPU time that grows with the thread
 count at a fixed amount of work is the sign.
 
+A fourth case, 2026-10-14, tried and not kept: `Session.withOverlay` of the
+SBM11 replay cut the four permutations of the overlay state in four tasks
+(`Task.spawn fun _ => Overlay.forPerm st p`). The tasks capture `st`, so `st` and
+the sets inside it become MT. The gate fixture gained 170 ms (850 to 960 ms down
+to 640 to 790 ms), olympics gained nothing (4.1 s both ways) and its peak RSS
+rose by 46 MB. `Run.sync` then applies the entries of the next operation to the
+same `st` with `Std.HashSet.insert`: with an MT set each insert copies the bucket
+array. The cut runs on one thread. If a state is cut in tasks, give the tasks a
+copy (`toArray`) and keep `st` out of their closures.
+
 ## A loop rewritten for a proof keeps its speed only if measured
 
 On 2026-10-12 `Qlvr.mergeJoin` (nested `for` loops that read the join
@@ -748,6 +758,46 @@ the closures at the call site: 47 to 52 ms. Rule: when a hot loop becomes
 higher-order for a proof, mark it `@[specialize]` and measure the query that
 runs it before and after
 (`docs/designissues/2026-10-12-sbm11-end-to-end-theorem.md` section 5).
+
+## A whole file as a `List UInt8` costs 60 to 85 bytes for each byte (paid for 2026-10-14)
+
+The delta log of an SBM11 generation was encoded and decoded as a `List UInt8`
+(`Storage/DeltaLog.lean`). A list cell is 24 bytes, and the batch encoder
+appended lists at three levels, so a request that wrote 36 MB of log needed 2.3
+GB and 12.6 s (https://github.com/danbri/factoidal/issues/857), and every open
+of a generation with a log held the whole log as a list (84 bytes for each byte
+of log, https://github.com/danbri/factoidal/issues/851). Measured by
+`tests/stack/lean_scaling.py` (peak RSS from `/usr/bin/time`, slope from x to
+4x): 62.5 and 84.3 bytes for each byte of log before; 4.0 and 6.4 to 7.1 after.
+Olympics update: 2,310,880 kB and 15.9 s before; 157,904 kB and 3.0 s after.
+
+The repair keeps the list functions as the specification and adds functions that
+work by position in a `ByteArray`
+(`Storage/DeltaLogBytes.lean`, `DeltaLogBytesTheorems.lean`):
+
+1. Write `f b pos stop` for each list function `f`: it reads bytes `pos .. stop`
+   of `b`, returns the position after what it read, and is a tail call with a
+   fuel `Nat` first for every loop over the bytes. Check the generated C
+   (`formal/lean4/.lake/build/ir/L4Factoidal/Storage/DeltaLogBytes.c`): `goto
+   _start` and no self call in each loop. A payload that has a bounded size (one entry of
+   about 100 bytes) may go through the list parser: `listOfRange b s e` makes the
+   list of those bytes only.
+2. Define the window `win b pos stop := (b.data.toList.drop pos).take (stop -
+   pos)` and prove `f b pos stop` equal to `f (win b pos stop)` for each function
+   in the order of the calls (`win_nil`, `win_cons`, `win_drop`, `win_take`, then
+   `readU32LE_win`, `listOfRange_eq`, the entry, the body, the batch, the log).
+   Unfold both sides, rewrite with the lemma of each callee, split the guards
+   with `by_cases`, and finish with `omega` on the positions.
+3. Install the equality with `@[csimp]` for the list-typed API (`appendPlan?`,
+   `parseLogChecked`). A `csimp` lemma applies only in a module that imports the
+   module that states it, so a tool that must run the fast code imports it
+   (every `Harness` tool does) or calls the byte array function directly.
+4. `#guard` the two implementations against each other at every cut and at every
+   changed byte of a real log (the 8-byte header, a frame, a version 2 log).
+5. Run the scaling rows on the unrepaired code first. They must fail there.
+
+The old reader's `List UInt8` of the whole file is the part to remove. A `List`
+of the entries is small (one cell per entry) and stays.
 
 ## Verification and measurement
 

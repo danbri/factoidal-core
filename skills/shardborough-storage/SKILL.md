@@ -756,12 +756,12 @@ BASE of a generation, so `compact` first; the store holds no empty named graph,
 so CREATE, and CLEAR of a graph, leave no trace
 (https://github.com/danbri/factoidal/issues/855); a graph named by a blank node
 cannot be named in a log entry
-(https://github.com/danbri/factoidal/issues/856); the batch encoder uses 64
-bytes of memory for each byte of log
-(https://github.com/danbri/factoidal/issues/857); every open replays the log
-with one dictionary lookup for each term, so a bulk update costs minutes at
-each open until `l4sbm11 compact` (40,000 entries: 3 s; 203,264 entries: 58 s;
-https://github.com/danbri/factoidal/issues/858). A `get` of an `IO.Ref` array
+(https://github.com/danbri/factoidal/issues/856); until 2026-10-14 the batch
+encoder used 64 bytes of memory for each byte of log
+(https://github.com/danbri/factoidal/issues/857) and every open replayed the log
+with one dictionary lookup for each term (40,000 entries: 3 s; 203,264 entries:
+58 s; https://github.com/danbri/factoidal/issues/858): both are repaired, see
+the next paragraph. A `get` of an `IO.Ref` array
 before its `modify` copies the array at every push (the replay was quadratic
 for that reason until 2026-10-14): read and push in one `modifyGet`. The
 decoder of the entries of a version 1 batch took one stack frame for each entry
@@ -775,6 +775,43 @@ through the store and through the reference), parts (r) and (s) of
 `tests/sbm11/run.sh`; the stack case `sbm11-update-where` of
 `tests/stack/run.sh`; proofs in `SPARQL/UpdateStoreTheorems.lean` and
 `Storage/Sbm11/UpdateOverlayTheorems.lean`.
+
+The update path at scale (2026-10-14, https://github.com/danbri/factoidal/issues/857,
+https://github.com/danbri/factoidal/issues/851 and
+https://github.com/danbri/factoidal/issues/858; record: section 11 of the stage 5
+record). The reader and the writer of the log work on a `ByteArray` by position
+(`Storage/DeltaLogBytes.lean`), proved equal to the list functions of
+`Storage/DeltaLog.lean` (`DeltaLogBytesTheorems.lean`; `parseLogChecked`,
+`parseLogCheckedV1` and `appendPlan?` are replaced by `@[csimp]`). A new reader of a
+log uses `parseLogChecked` or `DeltaLogBytes.parseLogCheckedBA` and never holds a
+whole log as a `List UInt8`. The replay at open looks the distinct terms of the log
+up in dictionary order (`Session.prefillBaseIds`, `Dict.lookupWalkM`, proved equal to
+`lookupM` for any order of keys in `DictFingerTheorems.lean`), keeps their ids in
+`Session.baseIds` for `idOf`, and applies the entries in log order, so the ids of
+terms the dictionary does not hold are the same as before. `SBM11_REPLAY_LOOKUP=each`
+runs the old replay (one lookup for each occurrence of each term): the oracle of the
+`replay` group of `tests/sbm11/update_where.sh`; use it to compare two replays, never
+in production. Numbers (olympics, the 101,632-solution update, 203,264 entries, 36
+MB): update 3.0 s and 158 MB (was 15.9 s and 2.3 GB); replay at open 3.5 to 4.0 s
+reading 1.8 MB (the old replay on the same log: 43 s reading 4.5 GB); an open after
+`compact` and `activate`: 0.3 ms and 17 MB. The size limit of the log:
+`l4sbm11 update GEN REQUEST --max-overlay-entries N --max-overlay-bytes N`, or the
+environment variables `SBM11_MAX_OVERLAY_ENTRIES` and `SBM11_MAX_OVERLAY_BYTES`
+(the flags override them; off by default; a log that holds exactly N is within the
+limit). A request that would take the log past a limit, and every request when the
+log is already over it, exits 1, writes nothing and says to run `l4sbm11 compact` and
+`l4sbm11 activate` and repeat the request. `l4sbm11 serve` prints `serve: overlay
+size: ...` and whether the log is within the limit the environment sets. Nothing
+compacts by itself (https://github.com/danbri/factoidal/issues/803 item 4; the
+expected failure `xfail-auto-compaction`). Traps: a positioned read of the store is
+`open`, `fstat`, `pread` and `close` of the file (four system calls), so count reads
+before time (`strace -c -f`); a hash set or map that grows hashes every term again, so
+size it for the entries; the cut of the overlay state into its four permutations does
+not run in tasks (a state that two threads reach is never updated in place, and
+`Run.sync` updates it: `skills/lean4-performance`, "Values that two threads can
+reach"). Gates: `tests/stack/lean_scaling.sh --only
+sbm11-update-memory,sbm11-open-log-memory,sbm11-replay-time` (these three rows), and
+the groups `replay`, `limit` and `scaling` of `tests/sbm11/update_where.sh`.
 
 Delta log tails (2026-10-14, https://github.com/danbri/factoidal/issues/843;
 record: section 8 of the stage 5 record). Only a crash artifact at the end of
