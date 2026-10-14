@@ -13,11 +13,13 @@ The graph-only syntaxes (N-Triples, Turtle, RDF/XML) have no place for a graph
 name: a dataset with named graphs is written with every triple in one graph
 (the triples of all graphs together), and the tool says so on stderr.
 
-Writers: N-Quads `Dataset.toNQuads`; N-Triples `Graph.toNTriples`; Turtle
-`turtleOfGraphAuto`; TriG `StoreEndpoint.datasetToTrig` (N-Triples lines for
-the default graph, then a block per named graph); RDF/XML
-`RdfXml.graphToRdfXml`; JSON-LD `FromRdf.fromRdf` in the RFC 8785 canonical
-form (expanded form).
+Writers: the batch meaning of the serialiser layer (`Sink.serializeDataset`,
+`L4Factoidal/RDF/Sink.lean`), which is the library's whole-graph serialisers:
+N-Quads `Dataset.toNQuads`; N-Triples `Graph.toNTriples`; Turtle
+`turtleOfGraphAuto`; TriG `Sink.datasetToTrig` (N-Triples lines for the default
+graph, then a block per named graph); RDF/XML `RdfXmlWrite.graphToRdfXml`; JSON-LD
+`FromRdf.fromRdf` in the RFC 8785 canonical form (expanded form). `l4sbm11 export`
+writes a store with the stream meaning (`Sink.Writer`).
 
 This is a harness: it reads and writes files. `tests/sbm11/` and the
 per-syntax measurement of the shard packers use it to write one dataset in
@@ -25,32 +27,16 @@ every syntax (docs/designissues/2026-10-11-shardborough-vs-qlever.md, the
 source layer).
 -/
 import L4Factoidal.RDF.SourceJsonLd
-import L4Factoidal.Syntax.NQuads
-import L4Factoidal.Syntax.NTriples
-import L4Factoidal.Syntax.TurtleSerialize
-import L4Factoidal.Syntax.RdfXmlWrite
-import L4Factoidal.SPARQL.StoreEndpoint
-import L4Factoidal.JSONLD.FromRdf
+import L4Factoidal.RDF.SinkJsonLd
 
 open L4Factoidal.RDF
 
 namespace Harness.SourceConvert
 
-/-- Every triple of the dataset in one graph. -/
-def flatten (ds : Dataset) : Graph := ds.default ++ ds.named.flatMap (·.graph)
-
-/-- The dataset as text in syntax `fmt`. -/
+/-- The dataset as text in syntax `fmt`: the batch writers of the serialiser
+    layer (`Sink.serializeDataset`), the library's whole-graph serialisers. -/
 def serialize (fmt : RdfFormat) (ds : Dataset) : Except String String :=
-  match fmt with
-  | .nquads => L4Factoidal.Syntax.Dataset.toNQuads ds .rdf12
-  | .nt => L4Factoidal.Syntax.Graph.toNTriples (flatten ds) .rdf12
-  | .turtle => .ok (L4Factoidal.Syntax.turtleOfGraphAuto (flatten ds))
-  | .trig => L4Factoidal.SPARQL.StoreEndpoint.datasetToTrig ds
-  | .rdfxml => L4Factoidal.Syntax.RdfXmlWrite.graphToRdfXml (flatten ds)
-  | .jsonld =>
-      match L4Factoidal.JSONLD.FromRdf.fromRdf ds {} with
-      | some doc => .ok (L4Factoidal.JSONLD.jcsDocument doc)
-      | none => .error "from_rdf returned none (an rdf:JSON literal that is not valid JSON)"
+  Sink.serializeDataset Sink.withJsonLd fmt .rdf12 ds
 
 def usage : String :=
   "usage: l4source-convert SOURCE OUT [--from F] [--to G] [--base IRI]  (F, G: ntriples, nquads, turtle, trig, rdfxml, jsonld; else the extension)"

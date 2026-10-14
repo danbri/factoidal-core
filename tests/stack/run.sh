@@ -742,6 +742,67 @@ if [ "$CANARY" = 1 ]; then
   fi
 fi
 
+# ------------------------- SBM11 export (issue 837 item 6)
+# `l4sbm11 export` writes the sbm11-dict.nt generation (600,001 quads, 150,000
+# subjects, a 300,000-byte literal) as N-Quads, Turtle and TriG. The writers of
+# the serialiser layer (L4Factoidal/RDF/Sink.lean) are loops over the quads of
+# the SPO permutation: no frame for each quad, subject, predicate or object, and
+# the 300,000-byte literal goes through the string escape of each writer. The
+# N-Quads export has 600,001 lines. The Turtle and the TriG export pack again to
+# the data files of the first generation (every file but the manifest).
+# https://github.com/danbri/factoidal/issues/837
+sbm11_export_case() { # sbm11_export_case <route> <prefix...>
+  local route="$1"; shift
+  local src="$FIXTURES/sbm11-dict.nt" out="$FIXTURES/sbm11-export-out" rc=0 log fmt lines f same=1
+  if [ ! -x "$SBM11P_BIN" ] || [ ! -x "$SBM11C_BIN" ]; then
+    record "$route" sbm11-export 1 "l4sbm11-pack or l4sbm11 does not exist (lake build l4sbm11-pack l4sbm11)"
+    return
+  fi
+  rm -rf "$out" "$out-nquads" "$out-turtle" "$out-trig" "$out-turtle.gen" "$out-trig.gen"
+  log="$(run_capped "$TIMEOUT" "$@" "$SBM11P_BIN" "$src" "$out" --run-terms 20000 --sort-rows 20000 --block-rows 65536 2>&1)"; rc=$?
+  for fmt in nquads turtle trig; do
+    [ "$rc" -eq 0 ] || break
+    log="$log
+$(run_capped "$TIMEOUT" "$@" "$SBM11C_BIN" export "$out" --format "$fmt" --out "$out-$fmt" 2>&1)"; rc=$?
+  done
+  lines=0
+  if [ "$rc" -eq 0 ]; then
+    lines="$(wc -l <"$out-nquads")"
+    for fmt in turtle trig; do
+      [ "$rc" -eq 0 ] || break
+      log="$log
+$(run_capped "$TIMEOUT" "$@" "$SBM11P_BIN" "$out-$fmt" "$out-$fmt.gen" --format "$fmt" --run-terms 20000 --sort-rows 20000 --block-rows 65536 2>&1)"; rc=$?
+      if [ "$rc" -eq 0 ]; then
+        for f in $(ls "$out" | grep -v '^manifest.sbm11$'); do
+          cmp -s "$out/$f" "$out-$fmt.gen/$f" || same=0
+        done
+      fi
+    done
+  fi
+  rm -rf "$out" "$out-nquads" "$out-turtle" "$out-trig" "$out-turtle.gen" "$out-trig.gen"
+  if printf '%s' "$log" | grep -q 'Stack overflow'; then
+    score_case "$route" sbm11-export overflow "STACK OVERFLOW (exit $rc)"
+  elif [ "$rc" -ne 0 ] || [ "$lines" != 600001 ] || [ "$same" != 1 ]; then
+    score_case "$route" sbm11-export error "exit $rc; N-Quads lines $lines (expected 600001); packed again equal: $same; $(printf '%s' "$log" | grep -m1 'l4sbm11' | head -c 120)"
+  else
+    score_case "$route" sbm11-export ran "N-Quads, Turtle and TriG export of 600,001 quads; N-Quads lines=600001; Turtle and TriG pack again to the same data files"
+  fi
+}
+if [ "$ROUTE" = native ] || [ "$ROUTE" = both ]; then
+  echo
+  echo "=== SBM11 export in N-Quads, Turtle and TriG, native default stack"
+  sbm11_export_case native env
+fi
+if [ "$CANARY" = 1 ]; then
+  echo
+  echo "=== SBM11 export in N-Quads, Turtle and TriG, native under ${CANARY_VAR}=${CANARY_KB}"
+  if [ "$CONTROL_OK" = 1 ]; then
+    sbm11_export_case canary "${CANARY_PREFIX[@]}"
+  else
+    record canary sbm11-export 1 "NOT SCORED: the canary control did not pass"
+  fi
+fi
+
 # ------------------------------- SBM11 id query path (issue 790)
 # `l4sbm11 query` on the sbm11-dict.nt generation (600,001 quads, blocks of
 # 65,536 rows): a merge join of 150,000 rows with each side and a COUNT over

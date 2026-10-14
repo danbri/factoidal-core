@@ -826,6 +826,16 @@ Results:
    generated dataset of 88,000 quads (`multi.nt` and `multi.nq` of section 11.1).
 3. The measurements of sections 3 and 6.8 used N-Triples and N-Quads sources.
    They do not change.
+4. `l4sbm11 export GEN --format F` writes the dataset of a generation in the same
+   six syntaxes, through the serialiser layer `L4Factoidal/RDF/Sink.lean`
+   (section 11.2). Packing the export again gives the same data files (blank
+   nodes: the same RDFC-1.0 canonical N-Quads).
+5. The W3C RDF tests, read from the manifests on disk, run through the store:
+   `tests/sbm11/w3c_roundtrip.sh` (section 11.3). 1,281 pass, 0 fail, 18
+   expected-fail (out of 1,299).
+6. `l4sbm11-dict-pack` and `l4factoidal parse FILE` read through the source layer.
+   They have no format table of their own, and their output for a valid input did
+   not change (`2026-09-03-rdf-parsing-strategy.md` section 3f).
 
 ### 11.1 What each syntax costs in a pack
 
@@ -902,3 +912,184 @@ took 2,996 ms of phase 1 for the 8.3 MB of N-Triples text of the small set (4
 workers). N-Quads text with the same quads took 477 ms.
 `readTriple12` computed `r5.length + 1` for each statement. Section 3f of the
 parsing record has the repair and the gate (`sbm11-pack-nt-vs-nq`).
+### 11.2 Export: the dataset of a generation in any syntax (2026-10-14)
+
+Tracking: https://github.com/danbri/factoidal/issues/837 item 6.
+
+`l4sbm11 export GEN --format F [--out FILE] [--graph default|all|IRI]
+[--prefix LABEL=IRI]... [--verify merkle|none]` reads the SPO permutation block
+by block, in key order, and gives each quad to `Sink.Writer`
+(`L4Factoidal/RDF/Sink.lean`). `Harness/Sbm11Export.lean` names no syntax. F is
+`ntriples`, `nquads`, `turtle`, `trig`, `rdfxml` or `jsonld`. The writers and the
+rules for a syntax with no graph name are in
+[`2026-09-03-rdf-parsing-strategy.md`](2026-09-03-rdf-parsing-strategy.md)
+section 3g.
+
+How each syntax streams, in SPO order:
+
+- N-Triples and N-Quads write one line for each quad.
+- Turtle writes the triples of one subject as one statement. SPO order gives
+  them in one run.
+- TriG writes the Turtle statements inside a block. It opens a new block
+  `GRAPH <name> { ... }` (`{ ... }` for the default graph) each time the graph of the
+  next quad is not the open graph. SPO order visits the subjects in dictionary
+  order, so a graph whose subjects interleave with those of other graphs gets
+  several blocks. The TriG grammar allows several blocks of one name, and a reader
+  merges them into one graph (the W3C tests `alternating_iri_graphs` and
+  `alternating_bnode_graphs`). The generated dataset of 1 MB in
+  `tests/sbm11/export_roundtrip.sh` (12,000 quads, the default graph and four named
+  graphs) gives a TriG export of 641 blocks, and packs again to the same data files.
+- RDF/XML and JSON-LD keep the quads and write at the end, because the library
+  writers (`graphToRdfXml`, `fromRdf`) take a whole graph or dataset
+  (https://github.com/danbri/factoidal/issues/846 and
+  https://github.com/danbri/factoidal/issues/847).
+
+Round trip through the store (`tests/sbm11/export_roundtrip.sh`, 51 pass, 0
+fail, 1 expected-fail, out of 52). The fixtures are those of
+`tests/sbm11/syntax_independence.sh`. For each one the generation is exported,
+the export is packed, and the data files of the two generations are compared
+byte for byte; the manifests differ in the source length and digest.
+
+| Fixture | Content | Syntaxes exported and compared | Result |
+| --- | --- | --- | --- |
+| D1 | no blank nodes, default graph | N-Quads, N-Triples, Turtle, TriG, JSON-LD | byte-identical |
+| D1 | the same | RDF/XML | expected failure, below |
+| D2 | D1 and four quads in two named graphs | N-Quads, TriG, JSON-LD | byte-identical |
+| D2 | the same | N-Triples, Turtle, RDF/XML | refused before any output, naming the first graph; `--graph default` gives D1, `--graph all` the union, `--graph IRI` that graph |
+| D3 | blank nodes | all six | equal RDFC-1.0 canonical N-Quads |
+| D4 | RDF 1.2: nested triple terms, a directional language string | N-Triples, N-Quads, Turtle, TriG | byte-identical |
+| D4 | the same | RDF/XML, JSON-LD | refused: no form for a triple term |
+| multi | 1 MB generated (2 sets) | N-Quads, TriG (named graphs); N-Triples, Turtle (default graph) | byte-identical |
+| empty | no quad | all six | each export packs to the empty generation |
+
+The expected failure (https://github.com/danbri/factoidal/issues/841): the
+RDF/XML of D1 is correct, but both RDF/XML readers apply the `xml:lang` of a
+property element to the property elements after it, so `"Alice"` reads back as
+`"Alice"@en`. The test checks that this is the only difference between the two
+dumps, and turns the run red when the generations are equal. Also tested: an
+N-Quads export is `dump` byte for byte (D1 to D4); `--out` and standard output
+give the same text and a failed export leaves no file; `--prefix` shortens the
+IRIs of Turtle and TriG and the export reads back the same; the usage errors
+exit 2.
+
+Memory (`tests/stack/lean_scaling.py`, 4 CPUs, 2026-10-14). The export holds one
+block of the permutation, a window of 256 dictionary pages, the verified chunks of
+the block and pages it reads (dropped as it goes) and a 64 KiB output buffer.
+Each row measures peak RSS at x, 2x and 4x statements and bounds the slope
+(RSS at 4x minus RSS at x) divided by (output bytes at 4x minus output bytes at x).
+
+| Row | Syntax | Statements | Output at x and 4x | Peak RSS at x and 4x | Slope, bytes per output byte (bound 0.75) |
+| --- | --- | ---: | ---: | ---: | --- |
+| `sbm11-export-nq-memory` | N-Quads | 25,000 / 50,000 / 100,000 | 10.7 and 43.0 MB | 33 and 34 MB | 0.01 pass |
+| `sbm11-export-ttl-memory` | Turtle | the same | 10.8 and 43.1 MB | 46 and 45 MB | -0.01 pass |
+| `sbm11-export-trig-memory` | TriG, 100 graphs | the same | 10.9 and 43.7 MB | 34 and 46 MB | 0.39 pass |
+| `sbm11-export-rdfxml-memory` | RDF/XML | 2,000 / 4,000 / 8,000 | 0.94 and 3.77 MB | 24 and 39 MB | 5.90 expected failure, https://github.com/danbri/factoidal/issues/846 |
+| `sbm11-export-jsonld-memory` | JSON-LD | the same | 0.89 and 3.57 MB | 23 and 38 MB | 5.53 expected failure, https://github.com/danbri/factoidal/issues/847 |
+
+A run by hand at 400,000 statements (172 MB of output) gave a peak RSS of 36 MB
+for N-Quads (two runs) and 38 and 46 MB for Turtle, so the peak does not grow
+beyond 100,000 statements. Three runs of the same Turtle export at 100,000
+statements gave 46.6, 36.3 and 46.8 MB: the peak of one run varies by up to
+10 MB. The 5.9 and 5.5 bytes per output byte of the two expected failures come
+from the writers, which keep the quads until the end.
+
+An early version of the export kept every dictionary chunk it had verified and
+grew by about 4 bytes of RSS for each output byte (63 MB to 189 MB between 25,000
+and 100,000 statements). Two changes made the peak flat: a window of 256
+dictionary pages (`termOfIdLimit`), and `dropChunkRange` after each block and
+each page window. A merkle-verified generation keeps a verified-chunk table per
+file (`--verify merkle`); the export clears the entries it has finished with.
+
+Stack. The N-Triples, N-Quads, Turtle and TriG exports of a node with 200,000
+references and 200,000 literals run under `LEAN_STACK_SIZE_KB=512`, as does the
+RDF/XML export of 100,000 references, and the case `sbm11-export` of
+`tests/stack/run.sh` exports 600,001 quads with a 300,000-byte literal as N-Quads,
+Turtle and TriG under that stack (and packs the Turtle and TriG exports again to
+the same data files). The JSON-LD export of 20,000 references overflows a 512 KB
+stack (https://github.com/danbri/factoidal/issues/853, row `JLD-WSTACK` of
+`tests/known-defects/run.sh`); under the default stack the export of 30,000
+references takes 67 s (https://github.com/danbri/factoidal/issues/712).
+
+Time (N-Quads, one run each): 1.1 s for 25,000 statements, 5.5 s for 100,000 and
+35 s for 400,000. The ratio for 4x the data is 5 and 6.4, under the bound of 9 that
+the scaling suite uses for time. `l4sbm11 dump` with a cache of 4,096 pages takes
+5.1 s at 100,000 statements, against 5.6 s for the export with a window of 256
+pages, so the size of the window does not explain the time. The cause of the
+growth from 100,000 to 400,000 statements was not isolated.
+
+### 11.3 The W3C RDF tests through the store (2026-10-14)
+
+Tracking: https://github.com/danbri/factoidal/issues/837 item 5. Command:
+`bash tests/sbm11/w3c_roundtrip.sh`, part (p) of `tests/sbm11/run.sh`.
+
+For every positive evaluation test of the W3C suites for N-Triples, N-Quads,
+Turtle, TriG and RDF/XML (RDF 1.1 and RDF 1.2, 19 manifests) and of the JSON-LD
+toRdf manifest, and for every positive syntax test of the same suites:
+
+1. The manifest is read from disk (`l4sbm11-w3c list-rdf`, `list-jsonld`, which use
+   `Harness.loadManifest` of the Lean W3C runners). The row gives the action file,
+   the result file and the base IRI that the manifest states for the test
+   (`mf:assumedTestBase` and the path; for JSON-LD `option.base`, else `baseIri` and
+   the input).
+2. Store route: `l4sbm11-pack ACTION GEN --format F --base BASE`, `l4sbm11 verify
+   GEN`, `l4sbm11 dump GEN`. The dump is compared with the result file by dataset
+   isomorphism (`l4sbm11-w3c compare`: `Dataset.isomorphicOutcome`, and RDFC-1.0
+   canonical N-Quads where the bounded search cannot decide). Language tags compare
+   in lower case, lexical forms exactly, blank nodes up to a bijection. A syntax test
+   has no result file: the expected dataset is the one the parser gives.
+3. Parser route: the same document with `Source.parseDocument`, the same base, the
+   RDF version of the manifest, compared with the result file in memory.
+
+Nine empty documents (not from a W3C suite) must pack to a valid generation that
+holds no quad.
+
+A test that the parser passes and the store fails is a failure of the run. A test
+that fails in both routes is a failure unless the table
+`tests/sbm11/w3c_roundtrip_xfail.tsv` has a row for it with the URL of an open issue;
+a listed test that passes in the store fails the run. Result, 2026-10-14, 4 jobs,
+36 s:
+
+| Suite | Store | Parser |
+| --- | --- | --- |
+| N-Quads RDF 1.1 syntax | 53 pass, 0 fail (out of 53) | 53 pass, 0 fail (out of 53) |
+| N-Triples RDF 1.1 syntax | 41 pass, 0 fail (out of 41) | 41 pass, 0 fail (out of 41) |
+| TriG RDF 1.1 | 143 pass, 0 fail (out of 143) | 143 pass, 0 fail (out of 143) |
+| TriG RDF 1.1 syntax | 99 pass, 0 fail (out of 99) | 99 pass, 0 fail (out of 99) |
+| Turtle RDF 1.1 | 145 pass, 0 fail (out of 145) | 145 pass, 0 fail (out of 145) |
+| Turtle RDF 1.1 syntax | 74 pass, 0 fail (out of 74) | 74 pass, 0 fail (out of 74) |
+| RDF/XML RDF 1.1 | 126 pass, 0 fail (out of 126) | 126 pass, 0 fail (out of 126) |
+| N-Quads RDF 1.2 | 41 pass, 0 fail (out of 41) | 41 pass, 0 fail (out of 41) |
+| N-Quads RDF 1.2 syntax | 7 pass, 0 fail (out of 7) | 7 pass, 0 fail (out of 7) |
+| N-Triples RDF 1.2 | 41 pass, 0 fail (out of 41) | 41 pass, 0 fail (out of 41) |
+| N-Triples RDF 1.2 syntax | 7 pass, 0 fail (out of 7) | 7 pass, 0 fail (out of 7) |
+| TriG RDF 1.2 | 26 pass, 0 fail (out of 26) | 26 pass, 0 fail (out of 26) |
+| TriG RDF 1.2 syntax | 24 pass, 0 fail (out of 24) | 24 pass, 0 fail (out of 24) |
+| Turtle RDF 1.2 | 32 pass, 0 fail (out of 32) | 32 pass, 0 fail (out of 32) |
+| Turtle RDF 1.2 syntax | 41 pass, 0 fail (out of 41) | 41 pass, 0 fail (out of 41) |
+| RDF/XML RDF 1.2 | 29 pass, 0 fail (out of 29) | 29 pass, 0 fail (out of 29) |
+| JSON-LD toRdf | 327 pass, 0 fail, 18 expected-fail (out of 345) | 327 pass, 0 fail, 18 expected-fail (out of 345) |
+| JSON-LD toRdf syntax | 16 pass, 0 fail (out of 16) | 16 pass, 0 fail (out of 16) |
+| Empty documents | 9 pass, 0 fail (out of 9) | 9 pass, 0 fail (out of 9) |
+| Total | 1,281 pass, 0 fail, 18 expected-fail (out of 1,299) | |
+
+Findings of the first run:
+
+- 21 store-only failures, all RDF 1.2 TriG documents with an annotation block
+  `{| ... |}` (15 of the 26 evaluation tests and 6 of the 24 syntax tests of the
+  TriG 1.2 suites; the first run was 1,260 pass, 21 fail, 18 expected-fail, out of
+  1,299). The cause was the TriG chunk scanner, which read
+  the braces of an annotation as graph block braces. The repair is in
+  `TriGChunkFold.lean` and its theorems
+  (`2026-09-03-rdf-parsing-strategy.md` section 3e). The IBK4 and IBK5 packers use
+  the same scanner, so they read these documents now (`l4block-shard-pack` with
+`ibk5` refused `trig12-eval-annotation-01.trig` with "expected '.' after triple"
+before, and packs it now).
+- 18 JSON-LD toRdf tests fail in both routes. The in-memory Lean runner passes them
+  (`l4jsonld-probe`: 467 pass, 0 fail, 0 skip, out of 467) because it passes a
+  document loader and the options of the test entry. The source layer passes none:
+  10 tests need a loader (remote, scoped or sourced contexts), 4 need
+  `rdfDirection`, 3 need the processing mode `json-ld-1.0` and 1 needs
+  `expandContext`. They are rows of the expected-failure table with
+  https://github.com/danbri/factoidal/issues/848.
+- The parser and the store agree on the other 1,281 tests.
+

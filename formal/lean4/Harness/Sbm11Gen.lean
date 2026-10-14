@@ -15,7 +15,7 @@ import L4Factoidal.Storage.Sbm11.Dict
 import L4Factoidal.Storage.Sbm11.TermId
 import L4Factoidal.Storage.BlockMerkle
 import L4Factoidal.Storage.ChunkedArtifact
-import L4Factoidal.Syntax.NTriples
+import L4Factoidal.RDF.Sink
 import L4Factoidal.Crypto.SHA2
 import Harness.PosixRangeIO
 import Harness.NativeHasher
@@ -460,7 +460,34 @@ def gdxFetch (g : Gen) (off len : Nat) : IO ByteArray :=
 /-- A page cache for id-to-term: page index to its keys. -/
 abbrev PageCache := IO.Ref (Std.HashMap Nat (Array ByteArray))
 
-def termOfId (g : Gen) (cache : PageCache) (id : Nat) : IO Term := do
+/-- Forget the verified chunks of GDV1 and GDX1 that this open holds (under
+    `merkle`; under `none` there are none). The next read of a chunk fetches and
+    checks it again. -/
+def dropDictChunks (g : Gen) : IO Unit := do
+  if g.verify == .merkle then
+    g.gdvCache.set (← (← newChunkCache g.verify g.gdvRef).get)
+    g.gdxCache.set (← (← newChunkCache g.verify g.gdxRef).get)
+
+/-- Forget the verified chunks that cover bytes `[off, off + len)` of a file
+    (under `merkle`). A reader that passes over a permutation once drops the
+    chunks of each block it has finished, so that the cache does not grow with
+    the file. -/
+def dropChunkRange (g : Gen) (cache : IO.Ref Harness.PosixRangeIO.VerifiedChunkCache) (ref : Ref)
+    (off len : Nat) : IO Unit := do
+  if g.verify == .merkle && len > 0 then
+    let first := off / ref.chunkBytes
+    let last := (off + len - 1) / ref.chunkBytes
+    cache.modify fun a => Id.run do
+      let mut a := a
+      for i in [first:last + 1] do
+        if i < a.size then a := a.set! i none
+      return a
+
+/-- The term of an id. The page cache holds at most `limit` dictionary pages and
+    is emptied when it is full; with `dropChunks`, the verified chunks of the
+    dictionary are dropped with it, so that the memory of a reader that visits
+    the dictionary in any order does not grow with the dictionary. -/
+def termOfIdLimit (g : Gen) (cache : PageCache) (limit : Nat) (dropChunks : Bool) (id : Nat) : IO Term := do
   let tag := id / two60
   if tag == tagInt || tag == tagBool then
     match ofInlineCode? id with
@@ -475,7 +502,10 @@ def termOfId (g : Gen) (cache : PageCache) (id : Nat) : IO Term := do
       | some ks => pure ks
       | none => do
         let ks ← ok s!"GDV1 page {pg}" (← (Dict.pageM (gdxFetch g) (gdvFetch g) pg).run)
-        let c := if c.size ≥ 4096 then {} else c
+        let c ← if c.size ≥ limit then
+            (do if dropChunks then dropDictChunks g
+                pure ({} : Std.HashMap Nat (Array ByteArray)))
+          else pure c
         cache.set (c.insert pg ks)
         pure ks
     match keys[rank % Dict.pageTerms]? with
@@ -487,6 +517,9 @@ def termOfId (g : Gen) (cache : PageCache) (id : Nat) : IO Term := do
       | some t => pure t
       | none => throw (IO.userError s!"id {id}: key does not decode")
   else throw (IO.userError s!"id {id}: unknown tag {tag}")
+
+def termOfId (g : Gen) (cache : PageCache) (id : Nat) : IO Term :=
+  termOfIdLimit g cache 4096 false id
 
 /-- An id for a term: inline, or a dictionary lookup; `none` when the term is
     not in the dictionary. -/
@@ -501,12 +534,9 @@ def idOfTerm (g : Gen) (t : Term) : IO (Option Nat) := do
       let (r, _) ← ok "lookup" (← (Dict.lookupM (gdxFetch g) (gdvFetch g) g.dictHdr k).run)
       pure (r.map fun r => dictCode k.data.toList r)
 
-def nquadLine (s p o : Term) (gname : Option Term) : Except String String := do
-  let ss ← L4Factoidal.Syntax.Term.toNTriples .rdf12 s
-  let ps ← L4Factoidal.Syntax.Term.toNTriples .rdf12 p
-  let os ← L4Factoidal.Syntax.Term.toNTriples .rdf12 o
-  match gname with
-  | none => pure s!"{ss} {ps} {os} ."
-  | some gt => pure s!"{ss} {ps} {os} {← L4Factoidal.Syntax.Term.toNTriples .rdf12 gt} ."
+/-- The N-Quads line of a quad of terms, without its line break: the line of the
+    serialiser layer (`Sink.nquadsLineOfTerms`), RDF 1.2 syntax. -/
+def nquadLine (s p o : Term) (gname : Option Term) : Except String String :=
+  Sink.nquadsLineOfTerms .rdf12 s p o gname
 
 end Harness.Sbm11Gen

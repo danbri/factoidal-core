@@ -141,6 +141,24 @@
 #                nodes compared by their RDFC-1.0 canonical N-Quads; labels of one
 #                document stay distinct; no default syntax. Its counts are added
 #                to this run's.
+#   (p) w3c      tests/sbm11/w3c_roundtrip.sh: every positive evaluation test of
+#                the W3C RDF suites (N-Triples, N-Quads, Turtle, TriG, RDF/XML;
+#                RDF 1.1 and RDF 1.2) and of the JSON-LD toRdf manifest, and the
+#                positive syntax tests, read from the manifests on disk, packed
+#                with `l4sbm11-pack`, dumped with `l4sbm11 dump` and compared with
+#                the result file by dataset isomorphism; the same parse without
+#                the store is compared too. A test that the parser passes and the
+#                store fails is a failure; the expected failures are rows of
+#                tests/sbm11/w3c_roundtrip_xfail.tsv with an open issue (the run
+#                fails when one passes). Nine empty documents pack to valid empty
+#                generations. About 40 s with 4 jobs. Its counts are added to this
+#                run's.
+#   (q) export   tests/sbm11/export_roundtrip.sh: `l4sbm11 export` in each syntax
+#                that can write the dataset, packed again, byte-identical data
+#                files (blank nodes: equal RDFC-1.0 canonical N-Quads); the
+#                refusals of a syntax with no graph name or no triple term; `--graph`,
+#                `--out`, `--prefix`; empty generations; a 1 MB generated dataset.
+#                Its counts are added to this run's.
 #   (g) tamper   a copy of the generation with one byte changed in a block
 #                frame of spo.prb1 (manifest and sidecars kept): `scan` and
 #                `query` must be refused under merkle (and by default, the
@@ -747,6 +765,30 @@ if [ -n "$sum" ]; then
   PASS=$((PASS + sp)); FAIL=$((FAIL + sf)); XFAILS=$((XFAILS + sx))
   echo "     $sum"
 else record syntax independence 1 "exit $rc: no summary line"; fi
+
+# add_script_counts PART SCRIPT SUMMARY-PREFIX: run SCRIPT, show its log, and add the
+# counts of its summary line ("PREFIX: N pass, M fail, K expected-fail (out of T)").
+add_script_counts() {
+  local part="$1" script="$2" prefix="$3" rc=0 sum sp sf sx log="$TMP/$1.log"
+  L4_BIN_DIR="$BIN" bash "$HERE/$script" >"$log" 2>&1 || rc=$?
+  grep -vE "^($prefix:|\$)" "$log" | sed 's/^/     /'
+  sum="$(grep "^$prefix:" "$log")"
+  if [ -n "$sum" ]; then
+    sp="$(printf '%s' "$sum" | sed -n 's/.*: \([0-9]*\) pass, \([0-9]*\) fail, \([0-9]*\) expected-fail.*/\1/p')"
+    sf="$(printf '%s' "$sum" | sed -n 's/.*: \([0-9]*\) pass, \([0-9]*\) fail, \([0-9]*\) expected-fail.*/\2/p')"
+    sx="$(printf '%s' "$sum" | sed -n 's/.*: \([0-9]*\) pass, \([0-9]*\) fail, \([0-9]*\) expected-fail.*/\3/p')"
+    PASS=$((PASS + sp)); FAIL=$((FAIL + sf)); XFAILS=$((XFAILS + sx))
+    echo "     $sum"
+    # a script that exits non-zero with no failed case is a failure of its own
+    if [ "$rc" -ne 0 ] && [ "$sf" -eq 0 ]; then record "$part" "$script-exit" 1 "exit $rc with no failed case"; fi
+  else record "$part" "$script" 1 "exit $rc: no summary line"; fi
+}
+
+echo "=== (p) the W3C RDF tests through the store (issue 837 item 5)"
+add_script_counts w3c w3c_roundtrip.sh "w3c round trip"
+
+echo "=== (q) export: the store written in each syntax, packed again (issue 837 item 6)"
+add_script_counts export export_roundtrip.sh "export round trip"
 
 echo
 echo "sbm11 stages 4 and 5: $PASS pass, $FAIL fail, $XFAILS expected-fail (out of $((PASS + FAIL + XFAILS)))"

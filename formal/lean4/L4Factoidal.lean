@@ -584,6 +584,8 @@ import L4Factoidal.RDF.Format
 import L4Factoidal.RDF.Source
 import L4Factoidal.RDF.SourceJsonLd
 import L4Factoidal.RDF.SourceTheorems
+import L4Factoidal.RDF.Sink
+import L4Factoidal.RDF.SinkJsonLd
 import L4Factoidal.SPARQL.JsonEscape
 import L4Factoidal.SPARQL.EvalLimits
 import L4Factoidal.SPARQL.TimeBudget

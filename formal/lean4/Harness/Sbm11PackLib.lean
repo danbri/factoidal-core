@@ -160,11 +160,14 @@ def readCfg (source : String) (size : Nat) (opts : SourceOpts) : IO ReadCfg := d
   pure { fmt, base := opts.base, bnodePrefix := ← bnodePrefixOf source fmt size }
 
 /-- Stream bytes `[start, stop)` of the source through the source layer in
-    64 KiB positioned reads; `onFeed` sees the accumulator after every chunk
-    and gives back the accumulator to continue with. -/
-def streamRange (cfg : ReadCfg) (source : String) (start stop : Nat) (onFeed : P1 → IO P1) : IO P1 := do
+    64 KiB positioned reads. The consumer is `step` from the accumulator `init`;
+    `onFeed` sees the accumulator after every chunk and gives back the
+    accumulator to continue with. Phase 1 of the pack (`consume`, `P1`), `canon`
+    and the dictionary packer (`Sbm11DictPack`) each pass their own. -/
+def streamRange {α : Type} (cfg : ReadCfg) (source : String) (start stop : Nat)
+    (step : Source.Step α) (init : α) (onFeed : α → IO α) : IO α := do
   let mut rd ← match Source.ByteReader.init Source.withJsonLd cfg.fmt cfg.version cfg.base
-      cfg.bnodePrefix ({} : P1) with
+      cfg.bnodePrefix init with
     | .ok r => pure r
     | .error m => throw (IO.userError s!"{source}: {m}")
   let mut pos := start
@@ -173,7 +176,7 @@ def streamRange (cfg : ReadCfg) (source : String) (start stop : Nat) (onFeed : P
     let len := min 65536 (stop - pos)
     let bytes ← pread source pos len
     pos := pos + len
-    match rd.feed consume bytes with
+    match rd.feed step bytes with
     | .error f => throw (IO.userError (failureText source start pos f))
     | .ok next =>
       let acc ← onFeed next.acc
@@ -181,7 +184,7 @@ def streamRange (cfg : ReadCfg) (source : String) (start stop : Nat) (onFeed : P
   match rd.endBytes with
   | .error f => throw (IO.userError (failureText source start pos f))
   | .ok reader =>
-    match reader.finish consume with
+    match reader.finish step with
     | .error e => throw (IO.userError (failureText source start pos (.parse e)))
     | .ok acc => onFeed acc
 
@@ -298,7 +301,7 @@ def phase1Worker (cfg : ReadCfg) (source outDir : String) (w start stop runTerms
         if (← full) then spill
     if (← full) then spill
     pure { acc with pending := [] }
-  let _ ← streamRange cfg source start stop onFeed
+  let _ ← streamRange cfg source start stop consume ({} : P1) onFeed
   spill
   outRef.get
 

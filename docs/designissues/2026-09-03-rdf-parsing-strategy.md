@@ -319,14 +319,35 @@ Each unit is read by the landed grammar functions: a top-level statement by
 a statement in a block by `readStatement` with the two refusals of
 `readGraphBody`. One `TurtleState` runs through all units in source order.
 
+**RDF 1.2 annotation blocks (2026-10-14,
+https://github.com/danbri/factoidal/issues/837 item 5).** An annotation block
+`{| ... |}` after an object belongs to its statement (RDF 1.2 TriG, section 3).
+The first scanner read its braces as graph block braces. The W3C test run
+through the store (`tests/sbm11/w3c_roundtrip.sh`) found the fault: with the
+old scanner `l4sbm11-pack` refused 21 RDF 1.2 TriG documents (15 of 26
+evaluation tests and 6 of 24 syntax tests) that `parseTriG` reads. The
+scanner now holds a `{` read at depth 0 back for one character (`heldOpen`).
+`{|` is part of the statement. Any other `{` opens a graph block. Inside a graph
+block a `{` is part of the statement. A `}` read right after a `|` closes an
+annotation and not the graph block (`afterBar`; `|` occurs nowhere else in the
+TriG grammar outside IRIREFs, strings and comments, where the scanner is not in
+the normal mode). At the end of the input a held `{` opens a graph block
+(`closeInput`). After the change all 50 documents pass, in the store and in
+memory. `#guard`s cut nine annotation documents at every position and compare
+the quad count with `parseTriG` in RDF 1.2 mode.
+
 PROVED (`TriGChunkFoldTheorems.lean`; axioms `propext`, `Classical.choice`,
 `Quot.sound` only): `feed_split` (two chunks in sequence give the result of
 their concatenation, every state, every cut); `feed_inv` (the block flag is the
-scanner's brace depth at every chunk boundary, nothing pending);
-`finish_unterminated` (input ending in a block is refused);
+scanner's brace depth at every chunk boundary, nothing pending, and a held `{`
+is outside a block: `WellHeld`); `finish_unterminated` (input ending in a block
+is refused); `finish_held` (input ending right after a held `{` is refused);
 `consumeBlock_graphs`, `applyEvent_stmt_graphs`, `applyEvent_close_graphs`
 (inside a block every step call carries the block's label);
-`applyEvent_stmt_label`.
+`applyEvent_stmt_label`. The change needed a new invariant (`WellHeld`) and the
+proofs of the split and the block flag over a scanner step that can hold a
+character: they go through `TriGScan.Splits`, a property of a scanner step that
+composes (`Splits.comp`).
 
 NOT PROVED: that the walk returns `parseTriG`'s quads. Open obligation and
 two known differences of the pack bytes: https://github.com/danbri/factoidal/issues/836.
@@ -384,7 +405,7 @@ reports 0 now.
 | Function | Meaning | Used by |
 | --- | --- | --- |
 | `Source.parseDocument extra format mode base text` | the whole text becomes a `Dataset` | the wasm parse op (`Wasm/Ops/Parse.lean`), `l4source-convert`, the buffered pack route |
-| `Source.Reader` / `Source.ByteReader` (`init`, `feed`, `finish`) | the text arrives in chunks; each quad goes to a consumer `Step α` when its statement is complete | the shard packers (IBK2 to IBK5), `l4sbm11-pack`, `l4sbm11 canon` |
+| `Source.Reader` / `Source.ByteReader` (`init`, `feed`, `finish`) | the text arrives in chunks; each quad goes to a consumer `Step α` when its statement is complete | the shard packers (IBK2 to IBK5), `l4sbm11-pack`, `l4sbm11 canon`, `l4sbm11-dict-pack`, the strict route of `l4factoidal parse FILE` |
 
 `RdfFormat` (`RDF/Format.lean`) is the only table of formats. Each format has
 one reader:
@@ -400,6 +421,34 @@ one reader:
 
 JSON-LD stays out of the core wasm: `Source.Extra.jsonld` holds the parser, and
 a tool that reads JSON-LD passes `Source.withJsonLd`.
+
+**Two readers moved onto the layer (2026-10-14, item 7 of
+https://github.com/danbri/factoidal/issues/837).** `l4sbm11-dict-pack` (packer
+phases 1 and 2) read N-Triples and N-Quads with `NQuadsFold`; `l4factoidal parse
+FILE` (the strict route, section 3b) chose the syntax modules itself, with a
+`match` on the format label in `Wasm/Cli.lean`. Both now take an `RdfFormat` and
+read through `Source.Reader` or `Source.ByteReader`. `l4sbm11-dict-pack` shares
+`Sbm11Pack.readCfg`, `planRanges` and `streamRange` with `l4sbm11-pack`, takes
+`--format` and `--base`, and has no default syntax. The strict `parse` keeps its
+labels (`turtle` is still the default of that command) and reads RDF 1.1 for
+N-Triples, N-Quads and Turtle as before. Output for a valid input did not change:
+
+- the dictionary files `dict.gdv1` and `dict.gdx1` of the old and the new
+  `l4sbm11-dict-pack` are byte-identical on the olympics source and on the
+  generated sets, and the new `l4sbm11-dict-pack` writes the dictionary files of
+  `l4sbm11-pack` for the 19 fixtures D1 to D4 in every syntax that writes them
+  (`tests/sbm11/syntax_independence.sh`);
+- `l4factoidal parse FILE --format F --out nquads` of the old and the new build
+  give the same bytes and the same exit status for the fixtures D1, D2, D3 and D4
+  in every syntax (D4 has triple terms and exits 1 in both, because the command
+  reads RDF 1.1), and `tools/strict-parse-differential.sh` agrees on its 21,012
+  cases with 0 differences;
+- the new `parse` gives the same N-Quads for one dataset in every syntax
+  (`syntax_independence.sh`, D1 and D2; D3 by RDFC-1.0 canonical N-Quads).
+
+`tests/sbm11/storage_layering.py` counts only `L4Factoidal/Storage/`. The two
+tools are in `Harness/` and `Wasm/`, where a format table is allowed but not
+wanted: neither has one.
 
 **Blank node labels.** A blank node label is local to one document (RDF 1.1
 Concepts, section 3.4). Turtle and TriG mint a label for each `[]`, collection
@@ -484,6 +533,81 @@ JSON-LD writers take time quadratic in the dataset: `l4source-convert` writes
 https://github.com/danbri/factoidal/issues/712, rows `rdfxml-write` and
 `jsonld-write` of `tests/stack/lean_scaling.sh`). The cost of each syntax in a pack is in
 `skills/shardborough-storage/SKILL.md`, section "The source layer".
+
+### 3g. The serialiser layer: one writer interface for every syntax (2026-10-14)
+
+Tracking: https://github.com/danbri/factoidal/issues/837 item 6. The source layer
+(section 3f) turns a document into quads. `L4Factoidal/RDF/Sink.lean` is the
+other half: it turns quads into a document. A store gives its quads to a writer
+and does not know the syntax in which they are written. A tool at the edge names
+the format (`RdfFormat`) once. The rule of the source layer holds here: no file
+under `L4Factoidal/Storage/` imports an `L4Factoidal.Syntax` module.
+
+`Sink` has two functions for a document, as `Source` has:
+
+| Function | Meaning | Used by |
+| --- | --- | --- |
+| `Sink.serializeDataset extra format version dataset` | the whole `Dataset` becomes the text, by the library serialisers (`Dataset.toNQuads`, `Graph.toNTriples`, `turtleOfGraphAuto`, `StoreEndpoint.datasetToTrig`, `graphToRdfXml`, `fromRdf`) | `l4source-convert` (its output is byte-identical to the output before the change, for 24 conversions) |
+| `Sink.Writer` (`init`, `push`, `finish`) | the quads arrive one at a time in the order the caller chooses; each call returns the text that quad completes | `l4sbm11 export` |
+
+The JSON-LD writer is in `SinkJsonLd.lean` (`Sink.withJsonLd`), as the JSON-LD
+reader is in `SourceJsonLd.lean`.
+
+**What the stream writer holds.**
+
+| Format | Writer | Holds |
+| --- | --- | --- |
+| N-Triples, N-Quads | one line for each quad | one quad |
+| Turtle | `bodyPush`: one statement for each subject, `;` between predicates, `,` between objects | the triples of one subject |
+| TriG | the same statements inside a block; a new block opens each time the graph of the next quad is not the open graph | the triples of one subject and the open graph name |
+| RDF/XML, JSON-LD | the library writers take a whole graph or dataset | the dataset |
+
+**TriG blocks in SPO order.** The export reads the SPO permutation. A graph
+whose subjects interleave with the subjects of other graphs is written in several
+blocks, one for each run of that graph. The TriG grammar allows it, and a reader
+merges the blocks of one name into one graph. The W3C tests
+`alternating_iri_graphs` and `alternating_bnode_graphs` alternate the blocks of two
+graphs, and the Lean TriG readers pass them. The writer does not sort the quads
+into graphs: that needs the dataset in memory.
+
+**Syntaxes with no graph name.** N-Triples, Turtle and RDF/XML cannot name a
+graph. `Sink.GraphChoice` says what the writer does with a quad in a named graph:
+`refuse` (an error, the default), `defaultOnly`, `union` (a triple that repeats
+the one before it is written once; the SPO order puts every repeat next to its
+original) or `named g`. `l4sbm11 export` checks the generation before it writes a
+byte, so a refused export leaves no partial file.
+
+**Prefixes.** The stream writers for Turtle and TriG write every IRI in full,
+`a` for `rdf:type`, and numbers and booleans in short form, unless the caller
+gives a prefix table (`Options.prefixes`). The batch writer `turtleOfGraphAuto`
+derives its prefixes from the whole graph, which a stream cannot.
+
+**Checks.** `tests/sbm11/export_roundtrip.sh` (51 pass, 0 fail, 1 expected-fail,
+out of 52): for each of the fixtures D1 to D4 of `tests/sbm11/syntax/`, pack,
+export in each syntax that can write it, pack the export, and compare the data
+files byte for byte (D3, which has blank nodes: RDFC-1.0 canonical N-Quads of the
+dump). The expected failure is the RDF/XML export of D1: the export is correct,
+and both RDF/XML readers apply the `xml:lang` of a property element to the
+property elements that follow it, so `"Alice"` reads back as `"Alice"@en`
+(https://github.com/danbri/factoidal/issues/841). Memory: rows
+`sbm11-export-*-memory` of `tests/stack/lean_scaling.py`; the numbers are in
+`2026-10-11-shardborough-vs-qlever.md` section 11.2.
+
+**Costs open.** The RDF/XML and JSON-LD writers keep the dataset
+(https://github.com/danbri/factoidal/issues/846 and
+https://github.com/danbri/factoidal/issues/847) and take time quadratic in the
+dataset (https://github.com/danbri/factoidal/issues/845 and
+https://github.com/danbri/factoidal/issues/712). The JSON-LD writer uses native
+stack in proportion to the number of elements: one node with 20,000 references
+overflows a 512 KB stack (https://github.com/danbri/factoidal/issues/853, row
+`JLD-WSTACK` of `tests/known-defects/run.sh`). The stream writers (N-Triples,
+N-Quads, Turtle, TriG) and the RDF/XML export of 100,000 references run under a
+512 KB stack; the case `sbm11-export` of `tests/stack/run.sh` exports 600,001
+quads with a 300,000-byte literal in three syntaxes under that stack. No theorem relates the stream
+writers to the batch writers: the round trip through the store is their check
+(https://github.com/danbri/factoidal/issues/852, probes SK-1 and SK-2 of
+`tests/known-defects/run.sh`, which turn the run red when a theorem of the
+expected name is added).
 
 ## 3a. Recovery (lenient) mode
 

@@ -155,10 +155,10 @@ not written yet.
 | Session of many SELECTs over one shard | `l4block-shard-merkle-session SHARD-DIR < queries.rq` |
 | Pack a quad generation (IBK4, wire version 9) | `l4block-shard-pack INPUT OUTPUT-DIR ibk4 [--batch-bytes N]` (the syntax comes from the extension: `.nt`, `.nq`, `.ttl`, `.trig`, `.rdf`, `.jsonld`; any other extension is read as Turtle) |
 | Pack a quad generation (IBK5, wire version 10) | `l4block-shard-pack INPUT OUTPUT-DIR ibk5 [--batch-bytes N]` — same syntaxes, read as RDF 1.2 |
-| SBM11 packer phases 1 and 2: the global dictionary `dict.gdv1` + `dict.gdx1` (stage 2, no query path yet) | `l4sbm11-dict-pack SOURCE.nt\|.nq OUTDIR [--run-terms N] [--workers K]`; check every key and every source term: `--check SOURCE OUTDIR [--exact]`; string-to-id by `pread`: `--lookup-bench OUTDIR [N] [ABSENT]` |
+| SBM11 packer phases 1 and 2: the global dictionary `dict.gdv1` + `dict.gdx1` (stage 2, no query path yet) | `l4sbm11-dict-pack SOURCE OUTDIR [--format F] [--base IRI] [--run-terms N] [--workers K]` (SOURCE in any of the six syntaxes, read through the source layer as `l4sbm11-pack` reads it); check every key and every source term: `--check SOURCE OUTDIR [--exact]`; string-to-id by `pread`: `--lookup-bench OUTDIR [N] [ABSENT]` |
 | SBM11 packer phases 1 to 3: dictionary, PSO/POS/SPO/OSP blocks, manifest (stage 3) | `l4sbm11-pack SOURCE OUTDIR [--format F] [--base IRI] [--workers K] [--run-terms N] [--block-rows B] [--sort-rows M]` (SOURCE in any of the six syntaxes; section "The source layer"); `--phase2-only` stops after the term-run merge and keeps `dict.gdv1`, `dict.gdx1` and the remap files (`run-W-J.tmp.remap`), to time phase 2 and compare its output byte for byte (`tests/sbm11/phase2_scaling.sh`, https://github.com/danbri/factoidal/issues/804) |
 | SBM11 query (stage 4) | `l4sbm11 query GEN ('SPARQL' \| --file Q.rq) [--base IRI] [--explain] [--repeat N] [--reference-render] [--reference] [--verify merkle\|none] [--threads N] [--sip auto\|always\|off]`; `l4sbm11 serve GEN [--verify merkle\|none]` (default `none` on a generation `CURRENT` names, else `merkle`); decoder checks `l4sbm11 prm-check GEN` (PRM1 decoders, and the issue 805 range search against decoding the whole file on 385 keys per PRM1 file, over bytes, `pread` and Merkle chunks), `l4sbm11 frame-check GEN`; environment: `SBM11_PAGES` (dictionary page cache, default 2,048 pages), `SBM11_TASK_PAGES` (a scan task's own page cache, default 1,024), `SBM11_MIN_RANGE_ROWS` (fewest estimated rows per block range, default 8,192; 0 divides every scan, for tests) |
-| SBM11 reader | `l4sbm11 stats GEN`; `scan GEN PERM [KEY...] [--limit N] [--ids]` (KEY an IRI `<...>` or an id); `count GEN PERM [KEY...]`; `dump GEN [PERM]`; `dump-ids GEN PERM`; `canon SOURCE [--format F] [--base IRI]`; `verify GEN`; `activate ROOT NAME`; `reseal GEN` (test support) |
+| SBM11 reader | `l4sbm11 stats GEN`; `scan GEN PERM [KEY...] [--limit N] [--ids]` (KEY an IRI `<...>` or an id); `count GEN PERM [KEY...]`; `dump GEN [PERM]`; `dump-ids GEN PERM`; `export GEN --format F [--out FILE] [--graph default\|all\|IRI] [--prefix LABEL=IRI]...` (the dataset in any of the six syntaxes; section "The source layer", subsection "Export"); `canon SOURCE [--format F] [--base IRI]`; `verify GEN`; `activate ROOT NAME`; `reseal GEN` (test support) |
 | Convert a dataset between syntaxes with the Lean serialisers (test data, comparisons) | `l4source-convert SOURCE OUT [--from F] [--to G] [--base IRI]` |
 | Query an activated quad generation | `l4block-quad-query COLLECTION-ROOT --query SELECT...` |
 | Superseded formats (BLK0, IBK1, IBK2) | `l4block-pack`, `l4block-id-pack`, `l4block-id-v2-pack` and their `*-file-query` / `*-diff` partners |
@@ -204,9 +204,9 @@ differs (https://github.com/danbri/factoidal/issues/836). Test knobs of
 `l4block-shard-pack`: `L4_PACK_BUFFERED=1` (whole-source route),
 `L4_PACK_CHUNK_BYTES=N` (read N bytes at a time). Checks:
 `tests/trig-pack/compare_w3c.sh`, `tests/trig-pack/order_xfail.sh`, scaling row
-`pack-trig-memory`. The SBM11 packer `l4sbm11-pack` reads all six syntaxes
-(section "The source layer"). `l4sbm11-dict-pack` reads N-Triples and N-Quads
-only.
+`pack-trig-memory`. The SBM11 packer `l4sbm11-pack` and its
+phases 1 and 2 alone, `l4sbm11-dict-pack`, read all six syntaxes
+(section "The source layer").
 
 ```bash
 l4block-shard-pack tests/local/data/quad_sample.trig /tmp/store/gen-1 ibk4
@@ -864,7 +864,20 @@ section 3f.
 - Users of the layer: `Storage/PackStream.lean` (the IBK2 to IBK5 packers),
   `Wasm/Ops/Pack.lean` and `Wasm/Ops/Parse.lean` (wasm),
   `Harness/Sbm11PackLib.lean` (`l4sbm11-pack`, `l4sbm11 canon`),
-  `Harness/PredicateShardPack.lean` (`l4block-shard-pack`).
+  `Harness/Sbm11DictPack.lean` (`l4sbm11-dict-pack`, through
+  `Sbm11Pack.streamRange`), `Wasm/Cli.lean` (`l4factoidal parse FILE`: the strict
+  route `streamStrictFile`, with `Source.Prepass` for Turtle and TriG),
+  `Harness/PredicateShardPack.lean` (`l4block-shard-pack`). None of them has a
+  format table: each one gets an `RdfFormat` from `formatOfLabel` or
+  `formatOfPath`.
+- `L4Factoidal/RDF/Sink.lean`: the serialiser layer, the other half of the source
+  layer. `Sink.serializeDataset` writes a whole `Dataset`. `Sink.Writer` (`init`,
+  `push`, `finish`) writes quads one at a time. `Sink.GraphChoice` says what a
+  syntax with no graph name does with a quad in a named graph.
+- `L4Factoidal/RDF/SinkJsonLd.lean`: the JSON-LD writer (`Sink.withJsonLd`). The
+  core wasm does not link it.
+- Users of the serialiser layer: `Harness/Sbm11Export.lean` (`l4sbm11 export`),
+  `Harness/SourceConvert.lean` (`l4source-convert`).
 
 **What each syntax does.**
 
@@ -893,6 +906,81 @@ writes each `rdf:nodeID` as `n<value>`. JSON-LD mints `_jld_anon<N>` and passes
 an explicit `_:` label through (collision defect:
 https://github.com/danbri/factoidal/issues/840).
 
+**Export (2026-10-14).** `l4sbm11 export GEN --format F [--out FILE]
+[--graph default|all|IRI] [--prefix LABEL=IRI]... [--verify merkle|none]` writes
+the dataset of a generation. F is `ntriples`, `nquads`, `turtle`, `trig`, `rdfxml`
+or `jsonld`. The command reads the SPO permutation block by block, in key order,
+and gives each quad to `Sink.Writer`. `Harness/Sbm11Export.lean` names no syntax.
+The text goes to standard output, or to `FILE.tmp-PID` that the command renames
+when the document is complete: a failed export leaves no FILE. Exit status: 0,
+1 (error), 2 (usage). A summary line with the quad count, the byte count and the
+peak RSS goes to standard error.
+
+| Syntax | What the writer writes | What it holds |
+| --- | --- | --- |
+| N-Triples, N-Quads | one line for each quad | one quad |
+| Turtle | one statement for each subject; SPO order gives the triples of a subject in one run | the triples of one subject |
+| TriG | the Turtle statements inside a block `GRAPH <name> { ... }` (`{ ... }` for the default graph). The writer closes the block and opens a new block each time the graph of the next quad is not the open graph | the triples of one subject and the name of the open graph |
+| RDF/XML, JSON-LD | the library writers (`graphToRdfXml`, `fromRdf`) take a whole graph or dataset, so the writer keeps the quads and writes at the end | the dataset: https://github.com/danbri/factoidal/issues/846 and https://github.com/danbri/factoidal/issues/847 |
+
+The SPO order visits the subjects in dictionary order. A graph whose subjects
+interleave with those of other graphs gets several TriG blocks. A TriG reader
+reads the blocks of one name as one graph (the W3C tests `alternating_iri_graphs`
+and `alternating_bnode_graphs`), and `tests/sbm11/export_roundtrip.sh` packs the
+export again to check it.
+
+N-Triples, Turtle and RDF/XML have no place for a graph name. When the generation
+has a quad in a named graph, the command stops before it writes a byte and names
+the first graph, unless `--graph` chooses: `default` writes the default graph,
+`all` writes the union of the graphs (a triple that is in several graphs is
+written once), an IRI writes the triples of that graph. N-Quads, TriG and JSON-LD
+write every graph and refuse `--graph` (exit 2). RDF/XML and JSON-LD have no form
+for an RDF 1.2 triple term: the export says so and exits 1. Turtle and TriG write
+every IRI in full unless `--prefix LABEL=IRI` gives a namespace (the label
+without its colon).
+
+Memory. The export holds one block of the permutation, a window of 256
+dictionary pages (`pageLimit`), the verified chunks of the block and the pages it
+is reading (it drops them as it goes), and a 64 KiB output buffer. Measured
+2026-10-14 (`tests/stack/lean_scaling.py`, rows `sbm11-export-*-memory`, peak RSS
+at n, 2n and 4n statements): N-Quads 33 MB at 25,000 statements (10.7 MB out) and
+34 MB at 100,000 (43.0 MB out); Turtle 46 and 45 MB; TriG 34 and 46 MB. The slope is
+at most 0.39 byte of peak RSS per output byte (bound 0.75). At 400,000 statements
+(172 MB of output) N-Quads peaks at 36 MB and Turtle at 38 to 46 MB. Repeated runs of
+the same Turtle export differ by up to 10 MB. RDF/XML and JSON-LD (2,000, 4,000 and
+8,000 statements) hold the dataset: 5.9 and 5.5 bytes per output byte, expected
+failures. Time is not linear: N-Quads takes 1.1 s for 25,000 statements, 5.5 s for
+100,000 and 35 s for 400,000 (a ratio of 5 and 6.4 for 4x the data). `l4sbm11 dump`,
+with a cache of 4,096 pages, takes the same time at 100,000 statements (5.1 s), so
+the window does not explain it; the cause was not isolated. The stack case
+`sbm11-export` of `tests/stack/run.sh` exports 600,001 quads with a 300,000-byte
+literal as N-Quads, Turtle and TriG under a 512 KB stack.
+
+**The W3C tests through the store (2026-10-14).**
+`tests/sbm11/w3c_roundtrip.sh`, run by `tests/sbm11/run.sh` part (p), packs every
+positive evaluation and syntax test of the W3C RDF suites (N-Triples, N-Quads,
+Turtle, TriG, RDF/XML; RDF 1.1 and RDF 1.2) and of the JSON-LD toRdf manifest
+with `l4sbm11-pack`, dumps the generation, and compares the dump with the result
+file by dataset isomorphism (`l4sbm11-w3c compare`, which uses
+`Dataset.isomorphicOutcome` and RDFC-1.0 canonical N-Quads where the bounded search
+cannot decide; language tags compare in lower case, lexical forms exactly). It
+reads the manifests, the base IRIs and the result files from `third_party/testing`.
+It also parses each test in memory (`Source.parseDocument`) and compares the
+result. For each suite it prints "store: N pass, M fail (out of T); parser: N pass,
+M fail (out of T)". A test that the parser passes and the store fails is a
+failure. A test that fails in both routes needs a row in
+`tests/sbm11/w3c_roundtrip_xfail.tsv` with an open issue; the run fails when a
+listed test passes. Nine empty documents (one or more of each syntax) pack to a
+valid generation with no quad. Result, 2026-10-14: 1,281 pass, 0 fail, 18
+expected-fail (out of 1,299), in about 40 s with 4 jobs. The 18 expected failures
+are JSON-LD toRdf tests that need a document loader or a processing option that
+the JSON-LD reader of the source layer does not take:
+https://github.com/danbri/factoidal/issues/848. The first run found 21 store-only
+failures: RDF 1.2 TriG documents with an annotation block `{| ... |}` (15 of 26
+evaluation tests and 6 of 24 syntax tests of the TriG 1.2 suites). The TriG chunk
+scanner read the braces of the annotation as graph block braces. The scanner now holds a `{` back for one character, and the theorems of
+`TriGChunkFoldTheorems.lean` cover the change (`WellHeld`, `finish_held`).
+
 **Gates.**
 
 - `tests/sbm11/storage_layering.py`, run by `tests/sbm11/run.sh` part (n): fails
@@ -906,7 +994,22 @@ https://github.com/danbri/factoidal/issues/840).
   equal RDFC-1.0 canonical N-Quads. A generated dataset of 1 MB in four
   syntaxes crosses many 64 KiB chunks. Other cases: blank nodes of one document
   stay distinct, `--format` selection, strict N-Triples, `l4sbm11 verify` of
-  every generation.
+  every generation. It also checks that `l4sbm11-dict-pack` writes the
+  dictionary files of the pack for every fixture in every syntax, and that
+  `l4factoidal parse --format F --out nquads` gives the same N-Quads for one
+  dataset in every syntax that writes it.
+- `tests/sbm11/w3c_roundtrip.sh`, run by `tests/sbm11/run.sh` part (p): the W3C
+  RDF tests through the store, described under "The W3C tests through the store".
+- `tests/sbm11/export_roundtrip.sh`, run by `tests/sbm11/run.sh` part (q): packs
+  D1, D2, D3 and D4, exports each in every syntax that can write it, packs the
+  export, and compares the data files (D3: RDFC-1.0 canonical N-Quads). Also: an
+  N-Quads export is `dump` byte for byte; `--out`, `--graph`, `--prefix`, the usage
+  errors, the refusals (a named graph for a syntax with no graph name, a triple
+  term for RDF/XML and JSON-LD), an empty generation in six syntaxes, and a
+  generated dataset of 1 MB. 51 pass, 0 fail, 1 expected-fail (out of 52): the
+  RDF/XML export of D1 reads back with `"Alice"@en` for `"Alice"`
+  (https://github.com/danbri/factoidal/issues/841). The case checks that this
+  is the only difference.
 - `tools/pack-differential.sh OLD NEW`: packs every `.ttl`, `.nt`, `.nq` and
   `.trig` file of the W3C RDF 1.1 and 1.2 suites with an old and a new
   `l4block-shard-pack`, in `ibk3`, `ibk4` and `ibk5`, with the chunk route and
@@ -915,9 +1018,11 @@ https://github.com/danbri/factoidal/issues/840).
 - `tests/trig-pack/compare_w3c.sh` and `order_xfail.sh`: IBK4 and IBK5 agree
   across routes.
 - `tests/stack/lean_scaling.sh` rows `sbm11-pack-ttl-memory`,
-  `sbm11-pack-trig-memory`, `sbm11-pack-nt-vs-nq` (assertions) and
+  `sbm11-pack-trig-memory`, `sbm11-pack-nt-vs-nq`, `sbm11-export-nq-memory`,
+  `sbm11-export-ttl-memory`, `sbm11-export-trig-memory` (assertions) and
   `sbm11-pack-rdfxml-memory`, `sbm11-pack-jsonld-memory`,
-  `sbm11-pack-ttl-workers`, `sbm11-pack-trig-workers` (expected failures).
+  `sbm11-pack-ttl-workers`, `sbm11-pack-trig-workers`,
+  `sbm11-export-rdfxml-memory`, `sbm11-export-jsonld-memory` (expected failures).
 - `tests/sbm11/syntax_bench.sh`: packs one generated dataset in each syntax and
   prints the table below.
 
@@ -951,6 +1056,11 @@ expected failure.
 | JSON-LD: an explicit `_:` label can equal a generated label | https://github.com/danbri/factoidal/issues/840 | `syntax_independence.sh`, case `bnode_collide.jsonld` |
 | RDF/XML: the `xml:lang` of a property element reaches the next sibling | https://github.com/danbri/factoidal/issues/841 | `syntax_independence.sh`, case `lang_scope.rdf` |
 | Turtle and TriG phase 1 runs in one worker | https://github.com/danbri/factoidal/issues/842 | rows `sbm11-pack-ttl-workers`, `sbm11-pack-trig-workers` |
+| The JSON-LD reader of the source layer takes no document loader and no processing option (18 toRdf tests) | https://github.com/danbri/factoidal/issues/848 | `w3c_roundtrip_xfail.tsv`, 18 rows |
+| No theorem relates the stream writers (`Sink.Writer`) to the batch writers | https://github.com/danbri/factoidal/issues/852 | `tests/known-defects/run.sh`, rows `SK-1`, `SK-2` |
+| The JSON-LD writer uses native stack in proportion to the number of elements: 20,000 references overflow a 512 KB stack | https://github.com/danbri/factoidal/issues/853 | `tests/known-defects/run.sh`, row `JLD-WSTACK` |
+| The RDF/XML export holds the whole graph | https://github.com/danbri/factoidal/issues/846 | row `sbm11-export-rdfxml-memory` |
+| The JSON-LD export holds the whole dataset | https://github.com/danbri/factoidal/issues/847 | row `sbm11-export-jsonld-memory` |
 
 **Measured** (2026-10-14, `tests/sbm11/syntax_bench.sh`): one generated dataset
 (110,000 subjects, 880,000 quads; `gen_multi.py`) packed from each syntax with
@@ -984,8 +1094,11 @@ an issue and an expected-failure test for the half that is not proved. (4) Add
 fixtures to `tests/sbm11/syntax/` and cases to `syntax_independence.sh`. (5) Add
 a memory row to `tests/stack/lean_scaling.py`. (6) Time the reader against the
 route it replaces on the same bytes (`tests/sbm11/syntax_bench.sh`); see rule 8
-of "Rules when changing a format". Do not name the syntax in a file under
-`Storage/`.
+of "Rules when changing a format". (7) Add its writer to `RDF/Sink.lean`
+(`Writer.init`, `push`, `finish` and `serializeDataset`), the fixtures it can
+write to `tests/sbm11/export_roundtrip.sh`, and an export memory row. (8) Run
+`tests/sbm11/w3c_roundtrip.sh` with the suites of the syntax. Do not name the
+syntax in a file under `Storage/`.
 
 ## Where the code is
 
@@ -1003,9 +1116,13 @@ of "Rules when changing a format". Do not name the syntax in a file under
 - The source layer (any syntax to quads): `formal/lean4/L4Factoidal/RDF/Source.lean`,
   `SourceJsonLd.lean`, `SourceTheorems.lean`, the format table
   `RDF/Format.lean`; tools `Harness/SourceConvert.lean` (`l4source-convert`),
-  `Harness/Sbm11PackLib.lean`; tests `tests/sbm11/storage_layering.py`,
-  `tests/sbm11/syntax_independence.sh`, `tests/sbm11/syntax_bench.sh`,
-  `tools/pack-differential.sh`.
+  `Harness/Sbm11PackLib.lean`, `Harness/Sbm11DictPack.lean`; tests
+  `tests/sbm11/storage_layering.py`, `tests/sbm11/syntax_independence.sh`,
+  `tests/sbm11/syntax_bench.sh`, `tests/sbm11/w3c_roundtrip.sh` (with
+  `Harness/Sbm11W3c.lean`, the tool `l4sbm11-w3c`), `tools/pack-differential.sh`.
+- The serialiser layer (quads to any syntax): `formal/lean4/L4Factoidal/RDF/Sink.lean`,
+  `SinkJsonLd.lean`; the export `Harness/Sbm11Export.lean` (`l4sbm11 export`);
+  test `tests/sbm11/export_roundtrip.sh`.
 - Design records, with status: [`docs/worknotes-index.md`](../../docs/worknotes-index.md).
 
 ## Rules when changing a format

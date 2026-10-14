@@ -15,6 +15,13 @@ remote `@context` is the error `loading remote context failed`. The F*
 entry installs no loader either. JSON-LD has no RDF 1.1 or RDF 1.2 mode, so
 the mode argument is ignored.
 
+The parser also takes no processing mode, no `rdfDirection` and no
+`expandContext`. 18 of the 345 positive evaluation tests of the W3C toRdf
+manifest need a loader or one of these options, and fail through this reader
+while `l4jsonld-probe` passes them. They are the rows of
+`tests/sbm11/w3c_roundtrip_xfail.tsv`; the work is tracked in
+https://github.com/danbri/factoidal/issues/848.
+
 JSON-LD is read whole (`Source.readsWhole`):
 https://github.com/danbri/factoidal/issues/839.
 -/

@@ -38,11 +38,16 @@
 #       for --format (no default syntax); --format decides; N-Triples refuses a
 #       graph name and N-Quads reads it.
 #   every generation passes `l4sbm11 verify` (the activation checks).
+#   the other readers of the source layer: `l4sbm11-dict-pack` (packer phases 1
+#       and 2) writes the two dictionary files of the pack for every fixture in
+#       every syntax; `l4factoidal parse --format F --out nquads` gives the same
+#       N-Quads for D1 and D2 in every syntax that writes them (D3: equal RDFC-1.0
+#       canonical N-Quads). Neither command has a format table of its own.
 #
 # Prints "N pass, M fail, K expected-fail (out of T)". Exit 0 when no case
 # failed and no expected failure passed; 2 when a binary is missing.
 #
-# Env: L4_BIN_DIR   directory of l4sbm11, l4sbm11-pack and l4factoidal
+# Env: L4_BIN_DIR   directory of l4sbm11, l4sbm11-pack, l4sbm11-dict-pack and l4factoidal
 #                   (default formal/lean4/.lake/build/bin)
 set -uo pipefail
 export LC_ALL=C
@@ -50,7 +55,7 @@ HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 ROOT="$(cd "$HERE/../.." && pwd)"
 BIN="${L4_BIN_DIR:-$ROOT/formal/lean4/.lake/build/bin}"
 FX="$HERE/syntax"
-for need in "$BIN/l4sbm11" "$BIN/l4sbm11-pack" "$BIN/l4factoidal" "$FX/d1.nt"; do
+for need in "$BIN/l4sbm11" "$BIN/l4sbm11-pack" "$BIN/l4sbm11-dict-pack" "$BIN/l4factoidal" "$FX/d1.nt"; do
   if [ ! -e "$need" ]; then echo "missing: $need" >&2; exit 2; fi
 done
 TMP="$(mktemp -d "${TMPDIR:-/tmp}/sbm11-syntax.XXXXXX")"
@@ -253,6 +258,52 @@ else record "N-Quads reads a graph name" 1 "exit $rc: $(tail -1 "$TMP/fs-nq-grap
 rc=0; "$BIN/l4sbm11" canon "$TMP/noext" >"$TMP/canon.out" 2>"$TMP/canon.err" || rc=$?
 if [ "$rc" != 0 ] && grep -q -- '--format' "$TMP/canon.err"; then record "canon: no default syntax" 0 "refused, asks for --format"
 else record "canon: no default syntax" 1 "exit $rc: $(tail -1 "$TMP/canon.err")"; fi
+
+echo "=== l4sbm11-dict-pack reads every syntax: its dictionary files are the pack's"
+for spec in d1:nt d1:nq d1:ttl d1:trig d1:rdf d1:jsonld d2:nq d2:trig d2:jsonld \
+            d4:nt d4:nq d4:ttl d4:trig d3:nt d3:nq d3:ttl d3:trig d3:rdf d3:jsonld; do
+  name="${spec%%:*}"; ext="${spec##*:}"; dp="dp-$name-$ext"
+  rm -rf "$TMP/$dp"; rc=0
+  timeout 300 "$BIN/l4sbm11-dict-pack" "$FX/$name.$ext" "$TMP/$dp" >"$TMP/$dp.log" 2>&1 || rc=$?
+  if [ "$rc" != 0 ]; then record "dict-pack $name .$ext" 1 "exit $rc: $(tail -1 "$TMP/$dp.log" | cut -c1-120)"; continue; fi
+  if [ -d "$TMP/$name-$ext" ] && cmp -s "$TMP/$dp/dict.gdv1" "$TMP/$name-$ext/dict.gdv1" \
+      && cmp -s "$TMP/$dp/dict.gdx1" "$TMP/$name-$ext/dict.gdx1"; then
+    record "dict-pack $name .$ext" 0 "dict.gdv1 and dict.gdx1 equal those of l4sbm11-pack"
+  else record "dict-pack $name .$ext" 1 "the dictionary files differ from those of l4sbm11-pack"; fi
+done
+
+echo "=== l4factoidal parse reads every syntax: the same N-Quads for one dataset"
+parse_tag() { case "$1" in nt) echo ntriples;; nq) echo nquads;; ttl) echo turtle;; trig) echo trig;; rdf) echo rdfxml;; jsonld) echo jsonld;; esac; }
+parse_sorted() { # parse_sorted FIXTURE EXT OUT: N-Quads of the fixture, sorted
+  "$BIN/l4factoidal" parse "$FX/$1.$2" --format "$(parse_tag "$2")" --out nquads 2>"$TMP/parse.err" | sort >"$3"
+  [ "${PIPESTATUS[0]}" = 0 ] && [ -s "$3" ]
+}
+for ext in nt nq ttl trig rdf jsonld; do
+  parse_sorted d1 "$ext" "$TMP/parse-d1-$ext.nq" || record "parse d1 .$ext" 1 "$(head -1 "$TMP/parse.err" | cut -c1-120)"
+done
+for ext in nq ttl trig rdf jsonld; do
+  if [ -s "$TMP/parse-d1-nt.nq" ] && cmp -s "$TMP/parse-d1-nt.nq" "$TMP/parse-d1-$ext.nq"; then
+    record "parse d1 .nt = .$ext" 0 "$(wc -l <"$TMP/parse-d1-$ext.nq") quads, equal"
+  else record "parse d1 .nt = .$ext" 1 "the N-Quads differ or are missing"; fi
+done
+for ext in nq trig jsonld; do
+  parse_sorted d2 "$ext" "$TMP/parse-d2-$ext.nq" || record "parse d2 .$ext" 1 "$(head -1 "$TMP/parse.err" | cut -c1-120)"
+done
+for ext in trig jsonld; do
+  if [ -s "$TMP/parse-d2-nq.nq" ] && cmp -s "$TMP/parse-d2-nq.nq" "$TMP/parse-d2-$ext.nq"; then
+    record "parse d2 .nq = .$ext" 0 "$(wc -l <"$TMP/parse-d2-$ext.nq") quads, equal"
+  else record "parse d2 .nq = .$ext" 1 "the N-Quads differ or are missing"; fi
+done
+for ext in nt nq ttl trig rdf jsonld; do
+  if parse_sorted d3 "$ext" "$TMP/parse-d3-$ext.nq" \
+      && "$BIN/l4factoidal" canonicalize "$TMP/parse-d3-$ext.nq" --format nquads >"$TMP/parse-d3-$ext.c14n" 2>/dev/null; then :
+  else record "parse d3 .$ext" 1 "parse or canonicalize failed: $(head -1 "$TMP/parse.err" | cut -c1-120)"; fi
+done
+for ext in nq ttl trig rdf jsonld; do
+  if [ -s "$TMP/parse-d3-nt.c14n" ] && cmp -s "$TMP/parse-d3-nt.c14n" "$TMP/parse-d3-$ext.c14n"; then
+    record "parse d3 .nt = .$ext" 0 "$(wc -l <"$TMP/parse-d3-$ext.c14n") canonical quads, equal"
+  else record "parse d3 .nt = .$ext" 1 "canonical N-Quads differ or are missing"; fi
+done
 
 echo
 echo "syntax independence: $PASS pass, $FAIL fail, $XFAIL expected-fail (out of $((PASS + FAIL + XFAIL)))"

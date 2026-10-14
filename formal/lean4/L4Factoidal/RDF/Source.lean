@@ -356,16 +356,26 @@ def ByteReader.setAcc {α : Type} (r : ByteReader α) (a : α) : ByteReader α :
     reader: the longest run of underscores in the text, by the same character
     walk that `Syntax.freshBnodePrefix` uses on a whole text. The pre-pass
     reads bytes (a partial code point is carried), decodes them, and counts
-    underscores. -/
+    underscores. It also tells whether the text has `<<`, for a caller that
+    must send such a document to the reference parser (`Prepass.hasDoubleLt`). -/
 structure Prepass where
   utf8 : Utf8Stream := Utf8Stream.init
   underscores : UnderscoreRun := {}
+  /-- `StrictFeed.doubleLtStep` over the text so far: 2 when the text has `<<`
+      (`TurtleChunkFold.hasDoubleLt`). -/
+  lt : Nat := 0
 
 def Prepass.feed : Prepass → ByteArray → Except String Prepass
-  | ⟨utf8, us⟩, bytes =>
+  | ⟨utf8, us, lt⟩, bytes =>
       match utf8.feed bytes with
       | .error m => .error m
-      | .ok (text, utf8) => .ok ⟨utf8, us.feedChars text.toList⟩
+      | .ok (text, utf8) => .ok ⟨utf8, us.feedChars text.toList, text.foldl StrictFeed.doubleLtStep lt⟩
+
+/-- Whether the whole text has `<<`, the opening of an RDF 1.2 triple term or
+    reified triple (`TurtleChunkFold.hasDoubleLt`). `parseTurtleText` reads such a
+    document with the reference parser. The command line (`l4factoidal parse`)
+    reads it whole for the same reason. -/
+def Prepass.hasDoubleLt (p : Prepass) : Bool := p.lt == 2
 
 /-- The generated-label prefix of the whole text, once its bytes are all fed. -/
 def Prepass.finish (p : Prepass) : Except String String :=

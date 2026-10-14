@@ -85,6 +85,24 @@ repaired (docs/designissues/2026-10-10-lean-vs-fstar-performance.md):
                    take the whole document before they parse it
                    (`Source.Reader.whole`): measured 2026-10-14 in three runs, 11.3 to
                    14.5 bytes of peak RSS per source byte for both syntaxes.
+  sbm11-export-nq-memory, sbm11-export-ttl-memory, sbm11-export-trig-memory
+                   peak resident memory of `l4sbm11 export` per byte of output, measured
+                   at x, 2x and 4x (25,000, 50,000 and 100,000 statements of about 400
+                   source bytes each, 11 MB to 44 MB of N-Quads, Turtle or TriG output;
+                   the TriG source has 100 graph names, which the SPO order interleaves):
+                   the slope from x to 4x is at most 0.75 byte per output byte. The
+                   serialiser layer (`L4Factoidal/RDF/Sink.lean`) writes N-Quads one line
+                   for each quad, Turtle and TriG one statement for each subject, so the
+                   export holds one block of the generation, the dictionary page cache
+                   and a 64 KiB output buffer (https://github.com/danbri/factoidal/issues/837
+                   item 6). A writer that keeps the quads (1 to 3 bytes per output byte) fails.
+  sbm11-export-rdfxml-memory, sbm11-export-jsonld-memory
+                   the same slope for RDF/XML and JSON-LD at 2,000, 4,000 and 8,000 statements
+                   (0.9 MB to 3.6 MB). Expected failures:
+                   https://github.com/danbri/factoidal/issues/846 and
+                   https://github.com/danbri/factoidal/issues/847. Both library writers take
+                   the whole graph or dataset (`graphToRdfXml`, `fromRdf`), so
+                   `Sink.Writer.whole` keeps the quads until the end.
   sbm11-pack-nt-vs-nq  `l4sbm11-pack` over 100,000 N-Triples statements takes at most
                    2.0 times the CPU time of the same pack over the same triples as
                    N-Quads text (one graph name on every line). N-Triples was read
@@ -254,6 +272,7 @@ Env:    L4_BIN     path of l4factoidal (default formal/lean4/.lake/build/bin/l4f
         L4_WASMCLI_BIN   path of l4wasm-cli (default: beside L4_BIN)
         L4_SBM11_PACK_BIN  path of l4sbm11-pack (default: beside L4_BIN)
         L4_SOURCE_CONVERT_BIN  path of l4source-convert (default: beside L4_BIN)
+        L4_SBM11_BIN  path of l4sbm11, for the export rows (default: beside L4_BIN)
         L4_SCALING_FIXTURES  fixture directory (default: $STACK_FIXTURES/lean-scaling
                    when STACK_FIXTURES is set, else /tmp/factoidal-lean-scaling)
         L4_SCALING_CAP   seconds per run before it counts as a failure (default 120)
@@ -282,6 +301,7 @@ TERMWIRE_BIN = Path(os.environ.get("L4_TERMWIRE_BIN", BIN.parent / "l4termwire-p
 SPECIES_BIN = Path(os.environ.get("L4_SPECIES_BIN", BIN.parent / "l4owl-species"))
 WASMCLI_BIN = Path(os.environ.get("L4_WASMCLI_BIN", BIN.parent / "l4wasm-cli"))
 SOURCE_CONVERT_BIN = Path(os.environ.get("L4_SOURCE_CONVERT_BIN", BIN.parent / "l4source-convert"))
+SBM11_BIN = Path(os.environ.get("L4_SBM11_BIN", BIN.parent / "l4sbm11"))
 CAP = float(os.environ.get("L4_SCALING_CAP", "120"))
 # A fixture directory of one's own (hazard #43 of
 # skills/workflow-gotchas-debugging: runs that share a directory delete each
@@ -302,6 +322,8 @@ XFAIL: dict[str, str] = {
     "jsonld-write": "https://github.com/danbri/factoidal/issues/712",
     "sbm11-pack-ttl-workers": "https://github.com/danbri/factoidal/issues/842",
     "sbm11-pack-trig-workers": "https://github.com/danbri/factoidal/issues/842",
+    "sbm11-export-rdfxml-memory": "https://github.com/danbri/factoidal/issues/846",
+    "sbm11-export-jsonld-memory": "https://github.com/danbri/factoidal/issues/847",
 }
 # A run longer than this is not repeated: the minimum of several runs only
 # removes timer and load noise, which is small against a run this long.
@@ -894,6 +916,74 @@ def sbm11_pack_memory_row(rid):
                             f"per source byte (bound {bound})")
 
 
+# `l4sbm11 export` over a generation (https://github.com/danbri/factoidal/issues/837
+# item 6). The export reads the SPO permutation block by block and gives each quad
+# to the serialiser layer, which writes N-Quads one line for each quad and Turtle and
+# TriG one statement for each subject; the output goes to a file in 64 KiB writes. The
+# rows pack n statements of the form `ex:s<i> ex:p "<payload>"` (a payload of about 370
+# characters; for TriG the source of `sbm11_trig`, 100 graph names in blocks of 1,000
+# statements), export the generation, and bound the slope of peak RSS
+#
+#     (peak RSS at 4n - peak RSS at n) / (output bytes at 4n - output bytes at n)
+#
+# as the pack rows do. The packing is not measured. A writer that keeps the quads
+# adds the payload strings (about 1 byte per output byte) and the quads themselves, and
+# fails the bound of 0.75. RDF/XML and JSON-LD are written whole by the library
+# (issues 846 and 847): expected failures at 2,000, 4,000 and 8,000 statements, sizes at
+# which the quadratic RDF/XML writer (issue 845) still finishes in seconds.
+# Each value is (statements at x, fixture maker, source extension, export format,
+# bound).
+SBM11_EXPORT_MEMORY_ROWS = {
+    "sbm11-export-nq-memory": (25000, sbm11_ttl, "ttl", "nquads", 0.75),
+    "sbm11-export-ttl-memory": (25000, sbm11_ttl, "ttl", "turtle", 0.75),
+    "sbm11-export-trig-memory": (25000, sbm11_trig, "trig", "trig", 0.75),
+    "sbm11-export-rdfxml-memory": (2000, sbm11_ttl, "ttl", "rdfxml", 0.75),
+    "sbm11-export-jsonld-memory": (2000, sbm11_ttl, "ttl", "jsonld", 0.75),
+}
+_EXPORT_GENS: dict = {}
+
+
+def sbm11_export_generation(kind, make, ext, n):
+    """The generation of n statements of fixture `kind`, packed once for the run."""
+    import shutil
+    key = (kind, n)
+    if key not in _EXPORT_GENS:
+        p = fixture(f"sbm11-export-{kind}-{n}.{ext}", lambda: make(n))
+        gen = FIX / f"sbm11-export-{kind}-gen-{n}"
+        shutil.rmtree(gen, ignore_errors=True)
+        t = bl.run_once([str(SBM11_PACK_BIN), str(p), str(gen)] + SBM11_PACK_ARGS, CAP)
+        if t["status"] != "ok":
+            raise MeasurementError(f"pack of {p.name}: exit status {t['status']}")
+        _EXPORT_GENS[key] = gen
+    return _EXPORT_GENS[key]
+
+
+def sbm11_export_memory_row(rid):
+    x, make, ext, fmt, bound = SBM11_EXPORT_MEMORY_ROWS[rid]
+    sbm11_need_pack_bin()
+    if not SBM11_BIN.exists():
+        raise MeasurementError(f"{SBM11_BIN} not built (cd formal/lean4 && lake build l4sbm11)")
+    kind = make.__name__
+    pts = []
+    for n in (x, 2 * x, 4 * x):
+        gen = sbm11_export_generation(kind, make, ext, n)
+        out = FIX / f"{rid}-out-{n}"
+        out.unlink(missing_ok=True)
+        t = peak_rss_run([str(SBM11_BIN), "export", str(gen), "--format", fmt, "--out", str(out)])
+        if t["status"] != "ok":
+            raise MeasurementError(f"{rid}: n={n}: exit status {t['status']}")
+        size = out.stat().st_size
+        out.unlink(missing_ok=True)
+        if size == 0:
+            raise MeasurementError(f"{rid}: n={n}: the export wrote no byte")
+        pts.append((n, size, t["rss_kb"]))
+    (n1, b1, r1), (n2, b2, r2), (n4, b4, r4) = pts
+    slope = (r4 - r1) * 1024 / max(b4 - b1, 1)
+    return slope <= bound, (f"n={n1} {r1 / 1024:.0f} MB ({b1} bytes out) -> n={n2} {r2 / 1024:.0f} MB -> "
+                            f"n={n4} {r4 / 1024:.0f} MB ({b4} bytes out): {slope:.2f} bytes of peak RSS "
+                            f"per output byte (bound {bound})")
+
+
 # `l4sbm11-pack` over N-Triples text takes at most SBM11_PACK_RATIO times the CPU
 # time of the same pack over the same triples as N-Quads text. N-Triples is read
 # by the strict triple reader, N-Quads by the quad reader; both are line streams
@@ -974,6 +1064,8 @@ def sbm11_workers_row(rid):
 def memory_row(rid):
     if rid in SBM11_PACK_MEMORY_ROWS:
         return sbm11_pack_memory_row(rid)
+    if rid in SBM11_EXPORT_MEMORY_ROWS:
+        return sbm11_export_memory_row(rid)
     if rid in PACK_MEMORY_ROWS:
         return pack_memory_row(rid)
     if rid in PARSE_MEMORY_ROWS:
@@ -1148,9 +1240,10 @@ def main() -> int:
         [] if names else list(PARSE_RATIO_ROWS) + list(SBM11_PACK_RATIO_ROWS)
         + list(SBM11_WORKERS_ROWS))
     memory_rows = [r for r in names if r in MEMORY_ROWS or r in PARSE_MEMORY_ROWS
-                   or r in PACK_MEMORY_ROWS or r in SBM11_PACK_MEMORY_ROWS] or (
+                   or r in PACK_MEMORY_ROWS or r in SBM11_PACK_MEMORY_ROWS
+                   or r in SBM11_EXPORT_MEMORY_ROWS] or (
         [] if names else list(MEMORY_ROWS) + list(PARSE_MEMORY_ROWS) + list(PACK_MEMORY_ROWS)
-        + list(SBM11_PACK_MEMORY_ROWS))
+        + list(SBM11_PACK_MEMORY_ROWS) + list(SBM11_EXPORT_MEMORY_ROWS))
     series_rows = [r for r in names if r in SERIES_ROWS] or (
         [] if names else list(SERIES_ROWS))
     run_startup = (not names) or ("startup" in names)

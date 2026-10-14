@@ -211,6 +211,7 @@ extern_lib libl4exthost pkg := do
     `Harness.PosixRangeIO, `Harness.CompactedEpoch, `Harness.GenerationPointer, `Harness.ShardMerkleMaterialize, `Harness.ShardMerkleProfile, `Harness.ShardPublish,
     `Harness.IndexedBlockV3Materialize, `Harness.JsonLdScale, `Harness.LenientRun, `Harness.QlvrKernel,
     `Harness.Sbm11Gen, `Harness.RunHeap, `Harness.Sbm11Query, `Harness.Sbm11Delta, `Harness.Sbm11PackLib, `Harness.Sbm11Compact, `Harness.Sbm11PermCheck,
+    `Harness.Sbm11Export,
     `Harness.PlannerCheck, `Harness.PlannerKinds,
     `Harness.ProofObligations]
 
@@ -319,6 +320,10 @@ extern_lib libl4exthost pkg := do
 -- Read a document in any of the six RDF syntaxes through the source layer and
 -- write it in any of the six with the library serialisers (issue 837).
 @[default_target] lean_exe «l4source-convert» where root := `Harness.SourceConvert
+-- The lists and the comparisons of the W3C round trip through the SBM11 store
+-- (tests/sbm11/w3c_roundtrip.sh, issue 837 item 5): the manifests' positive
+-- evaluation tests as rows, and the isomorphism of a dump with a result file.
+@[default_target] lean_exe «l4sbm11-w3c» where root := `Harness.Sbm11W3c
 -- The OWL 2 species verdict (DL or Full) of one ontology document and its
 -- imports, read as N-Triples (Harness/OwlSpeciesFile.lean). The verdict is
 -- `OWL.SyntaxDL.speciesViolations`, the function `l4owl-probe --species`

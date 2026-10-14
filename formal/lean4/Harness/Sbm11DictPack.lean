@@ -7,17 +7,20 @@ This is a HARNESS: it does file I/O, measures time and peak RSS (VmHWM),
 and prints. The formats and the decoders are
 `L4Factoidal.Storage.Sbm11.{TermKey, TermId, Dict}`.
 
-  l4sbm11-dict-pack SOURCE.nt|.nq OUTDIR [--run-terms N] [--workers K]
-      Phase 1: cut SOURCE into K byte ranges at line starts (default 4) and
-      stream each, in its own task, through the streaming N-Quads parser
-      (`NQuadsFold.feedChunkC`, 64 KiB chunks, RDF 1.2 mode: a triple term
-      is a class-7 key, https://github.com/danbri/factoidal/issues/792
-      item 1). Lines are
-      independent in N-Triples and N-Quads, and a blank node keeps its
-      label, so the cut changes no term. Each task collects the
+  l4sbm11-dict-pack SOURCE OUTDIR [--run-terms N] [--workers K] [--format F] [--base IRI]
+      Phase 1: SOURCE is a document in any of the six RDF syntaxes (the format
+      from `--format F`, else the file extension, as for `l4sbm11-pack`; there is
+      no default syntax). It is read through the source layer
+      (`L4Factoidal/RDF/Source.lean`, `Sbm11Pack.streamRange`) in 64 KiB chunks
+      as RDF 1.2: a triple term is a class-7 key
+      (https://github.com/danbri/factoidal/issues/792 item 1). For N-Triples and
+      N-Quads, SOURCE is cut into K byte ranges at line starts (default 4), each
+      read in its own task; lines are independent in those two syntaxes, and a
+      blank node keeps its label, so the cut changes no term. Any other syntax is
+      one range (`Sbm11Pack.planRanges`). Each task collects the
       distinct non-inline terms (language tags folded to lower case) in a
       hash set; when it holds N / K terms (N default 262,144) it sorts their
-      keys in byte order and writes a run file `OUTDIR/run-W-J.tmp`. The parser's fold
+      keys in byte order and writes a run file `OUTDIR/run-W-J.tmp`. The reader's
       accumulator only conses the terms of one chunk onto a list; the hash
       set lives outside the fold, so no insert finds it shared (a shared
       set is copied whole on its first insert of every chunk: measured
@@ -29,7 +32,7 @@ and prints. The formats and the decoders are
       Memory is bounded by N terms plus 16 MiB of run buffers (64 KiB per
       run once there are more than 256 runs).
 
-  l4sbm11-dict-pack --check SOURCE OUTDIR [--exact]
+  l4sbm11-dict-pack --check SOURCE OUTDIR [--exact] [--format F] [--base IRI]
       Read the dictionary into memory and check (1) every key in rank order:
       strictly increasing, `decodeKey?` gives a term whose key is the same
       bytes, lookup of the key gives its rank, the key of the rank is the
@@ -58,8 +61,7 @@ Exit 1 on any error or failed check. Timings and VmHWM go to stderr.
 -/
 import L4Factoidal.Storage.Sbm11.TermId
 import L4Factoidal.Storage.Sbm11.Dict
-import L4Factoidal.Syntax.NQuadsFold
-import L4Factoidal.Syntax.Utf8Stream
+import Harness.Sbm11PackLib
 import L4Factoidal.Qlvr.Sort
 import L4Factoidal.Qlvr.CmpBytesFast
 import Harness.PosixRangeIO
@@ -143,47 +145,6 @@ def runKeys (terms : Std.HashMap Term Unit) : Except String (Array ByteArray) :=
     | none => throw s!"term not admitted by the SBM11 dictionary: {repr t}"
   return mergeSortBy ks (fun a b => cmpBytes a b != .gt)
 
-/-- Stream bytes `[start, stop)` of the source (whole lines) through the
-    parser in 64 KiB positioned reads; `onFeed` sees the accumulator after
-    every chunk. -/
-def streamRange (source : String) (start stop : Nat) (onFeed : P1 → IO P1) : IO P1 := do
-  let mut utf8 := L4Factoidal.Syntax.Utf8Stream.init
-  let mut st := L4Factoidal.Syntax.NQuadsStreaming.initialStateC ({} : P1)
-  let mut pos := start
-  for _ in [0:(stop - start) / 65536 + 2] do
-    if pos ≥ stop then break
-    let len := min 65536 (stop - pos)
-    let bytes ← pread source pos len
-    pos := pos + len
-    match utf8.feed bytes with
-    | .error e => throw (IO.userError s!"{source}: UTF-8 error near byte {pos}: {e}")
-    | .ok (text, u) =>
-      utf8 := u
-      st := L4Factoidal.Syntax.NQuadsStreaming.feedChunkC .rdf12 consume st text.toList
-      if let some e := st.err then
-        throw (IO.userError s!"{source}: parse error at {start + e.pos}: {e.msg}")
-      let acc ← onFeed st.acc
-      st := { st with acc := acc }
-  match utf8.finish with
-  | .error e => throw (IO.userError s!"{source}: UTF-8 error: {e}")
-  | .ok _ => pure ()
-  match L4Factoidal.Syntax.NQuadsStreaming.finishC .rdf12 consume st with
-  | .error e => throw (IO.userError s!"{source}: parse error at {start + e.pos}: {e.msg}")
-  | .ok acc => onFeed acc
-
-/-- The first line start at or after `b` (`size` when there is none). -/
-def lineStartFrom (source : String) (size b : Nat) : IO Nat := do
-  if b == 0 then return 0
-  let mut p := b - 1
-  for _ in [0:size + 1] do
-    if p ≥ size then return size
-    let len := min 65536 (size - p)
-    let w ← pread source p len
-    for i in [0:w.size] do
-      if w.get! i == 10 then return p + i + 1
-    p := p + len
-  return size
-
 /-- What one phase-1 worker leaves: its run files and its counts. -/
 structure WorkerOut where
   runs : Array String := #[]
@@ -191,8 +152,10 @@ structure WorkerOut where
   inlineOcc : Nat := 0
 
 /-- Phase 1 over one byte range: collect terms in a hash set, spill a
-    sorted run whenever it holds `runTerms` terms. -/
-def phase1Worker (source outDir : String) (w start stop runTerms : Nat) : IO WorkerOut := do
+    sorted run whenever it holds `runTerms` terms. The source is read by the
+    source layer (`Sbm11Pack.streamRange`) in the syntax `cfg` names. -/
+def phase1Worker (cfg : Sbm11Pack.ReadCfg) (source outDir : String) (w start stop runTerms : Nat) :
+    IO WorkerOut := do
   let runsRef ← IO.mkRef (#[] : Array String)
   let setRef ← IO.mkRef (({} : Std.HashMap Term Unit))
   let spill (acc : P1) (force : Bool) : IO P1 := do
@@ -211,7 +174,7 @@ def phase1Worker (source outDir : String) (w start stop runTerms : Nat) : IO Wor
     IO.FS.writeBinFile path (encodeRun ks)
     runsRef.set (rs.push path)
     return acc
-  let final ← streamRange source start stop fun acc => spill acc false
+  let final ← Sbm11Pack.streamRange cfg source start stop consume ({} : P1) fun acc => spill acc false
   let final ← spill final true
   return { runs := ← runsRef.get, quads := final.quads, inlineOcc := final.inlineOcc }
 
@@ -290,19 +253,21 @@ def copyInto (dst : IO.FS.Handle) (src : String) : IO Unit := do
       if b.isEmpty then break
       dst.write b
 
-def runPack (source outDir : String) (runTerms workers : Nat) : IO UInt32 := do
+def runPack (source outDir : String) (runTerms workers : Nat) (opts : Sbm11Pack.SourceOpts := {}) :
+    IO UInt32 := do
   let t0 ← IO.monoNanosNow
   IO.FS.createDirAll outDir
-  -- phase 1: `workers` tasks over byte ranges cut at line starts; each keeps
-  -- a set of at most runTerms / workers terms
+  -- phase 1: one task for each byte range (`workers` ranges cut at line starts
+  -- for N-Triples and N-Quads, else one); each keeps a set of at most
+  -- runTerms / ranges terms
   let size ← fileSize source
-  let mut bounds : Array Nat := #[]
-  for i in [0:workers + 1] do
-    bounds := bounds.push (← lineStartFrom source size (size * i / workers))
-  let perWorker := max 1 (runTerms / workers)
+  let cfg ← Sbm11Pack.readCfg source size opts
+  let ranges ← Sbm11Pack.planRanges cfg.fmt source size workers
+  let perWorker := max 1 (runTerms / ranges.size)
   let mut tasks := #[]
-  for i in [0:workers] do
-    let t ← IO.asTask (phase1Worker source outDir i bounds[i]! bounds[i + 1]! perWorker) .dedicated
+  for i in [0:ranges.size] do
+    let (lo, hi) := ranges[i]!
+    let t ← IO.asTask (phase1Worker cfg source outDir i lo hi perWorker) .dedicated
     tasks := tasks.push t
   let mut runs : Array String := #[]
   let mut final : P1 := {}
@@ -367,7 +332,7 @@ def runPack (source outDir : String) (runTerms workers : Nat) : IO UInt32 := do
   let t2 ← IO.monoNanosNow
   let gdvSize ← fileSize gdvPath
   let gdxSize ← fileSize gdxPath
-  IO.println s!"sbm11-dict: source={source} workers={workers} quads={final.quads} terms={w.terms} pages={w.pages} inline-occurrences={final.inlineOcc} runs={runs.size} run-records={records} run-bytes={runBytes} gdv1-bytes={gdvSize} gdx1-bytes={gdxSize} dictionary-bytes={gdvSize + gdxSize}"
+  IO.println s!"sbm11-dict: source={source} workers={ranges.size} quads={final.quads} terms={w.terms} pages={w.pages} inline-occurrences={final.inlineOcc} runs={runs.size} run-records={records} run-bytes={runBytes} gdv1-bytes={gdvSize} gdx1-bytes={gdxSize} dictionary-bytes={gdvSize + gdxSize}"
   IO.println s!"sbm11-dict: phase1-ms={ms t0 t1} phase2-ms={ms t1 t2} total-ms={ms t0 t2} peak-rss={← vmHWM}"
   pure 0
 
@@ -397,7 +362,7 @@ def MemDict.keyOf (d : MemDict) (r : Nat) : Except String ByteArray :=
 def MemDict.page (d : MemDict) (i : Nat) : Except String (Array ByteArray) :=
   (pageM (m := Id) d.fetchX d.fetchV i).run
 
-def runCheck (source dir : String) (exact : Bool) : IO UInt32 := do
+def runCheck (source dir : String) (exact : Bool) (opts : Sbm11Pack.SourceOpts := {}) : IO UInt32 := do
   let t0 ← IO.monoNanosNow
   let d ← MemDict.load dir
   let mut fails := 0
@@ -488,23 +453,9 @@ def runCheck (source dir : String) (exact : Bool) : IO UInt32 := do
     match g with
     | some s => add acc s.toTerm
     | none => acc
-  let mut utf8 := L4Factoidal.Syntax.Utf8Stream.init
-  let mut st := L4Factoidal.Syntax.NQuadsStreaming.initialStateC ({} : P1)
-  let h ← IO.FS.Handle.mk source .read
-  repeat
-    let bytes ← h.read 65536
-    if bytes.isEmpty then break
-    match utf8.feed bytes with
-    | .error e => throw (IO.userError s!"UTF-8: {e}")
-    | .ok (text, u) =>
-      utf8 := u
-      st := L4Factoidal.Syntax.NQuadsStreaming.feedChunkC .rdf12 consumeAll st text.toList
-      if let some e := st.err then throw (IO.userError s!"parse error at {e.pos}: {e.msg}")
-      let acc ← checkAcc st.acc
-      st := { st with acc := acc }
-  match L4Factoidal.Syntax.NQuadsStreaming.finishC .rdf12 consumeAll st with
-  | .error e => throw (IO.userError s!"parse error at {e.pos}: {e.msg}")
-  | .ok acc => let _ ← checkAcc acc
+  let size ← fileSize source
+  let cfg ← Sbm11Pack.readCfg source size opts
+  let _ ← Sbm11Pack.streamRange cfg source 0 size consumeAll ({} : P1) checkAcc
   let (nd, ni, nf) ← statsRef.get
   fails := fails + nf
   if nd != rank then
@@ -611,10 +562,28 @@ def runNestCheck (n : Nat) : IO UInt32 := do
   pure (if fails == 0 then 0 else 1)
 
 def usage : String :=
-  "usage: l4sbm11-dict-pack SOURCE OUTDIR [--run-terms N] [--workers K]\n" ++
-  "       l4sbm11-dict-pack --check SOURCE OUTDIR [--exact]\n" ++
+  "usage: l4sbm11-dict-pack SOURCE OUTDIR [--run-terms N] [--workers K] [--format F] [--base IRI]\n" ++
+  "       l4sbm11-dict-pack --check SOURCE OUTDIR [--exact] [--format F] [--base IRI]\n" ++
   "       l4sbm11-dict-pack --lookup-bench OUTDIR [N] [ABSENT]\n" ++
-  "       l4sbm11-dict-pack --nest-check N"
+  "       l4sbm11-dict-pack --nest-check N\n" ++
+  "  F is ntriples, nquads, turtle, trig, rdfxml or jsonld; without --format the file extension decides\n" ++
+  "  (.nt .nq .ttl .trig .rdf .jsonld). There is no default syntax."
+
+/-- The options of a pack or a check. -/
+structure Opts where
+  runTerms : Nat := 262144
+  workers : Nat := 4
+  exact : Bool := false
+  source : Sbm11Pack.SourceOpts := {}
+
+def parseOpts : List String → Opts → Option Opts
+  | [], o => some o
+  | "--run-terms" :: v :: rest, o => v.toNat?.bind fun n => parseOpts rest { o with runTerms := max 1 n }
+  | "--workers" :: v :: rest, o => v.toNat?.bind fun n => parseOpts rest { o with workers := max 1 n }
+  | "--exact" :: rest, o => parseOpts rest { o with exact := true }
+  | "--format" :: v :: rest, o => parseOpts rest { o with source := { o.source with format := some v } }
+  | "--base" :: v :: rest, o => parseOpts rest { o with source := { o.source with base := some v } }
+  | _, _ => none
 
 end Sbm11DictPack
 
@@ -622,16 +591,18 @@ open Sbm11DictPack in
 def main (args : List String) : IO UInt32 := do
   try
     match args with
-    | ["--check", src, dir] => runCheck src dir false
-    | ["--check", src, dir, "--exact"] => runCheck src dir true
+    | "--check" :: src :: dir :: rest =>
+        match parseOpts rest {} with
+        | some o => runCheck src dir o.exact o.source
+        | none => IO.eprintln usage; pure 2
     | ["--lookup-bench", dir] => runLookupBench dir 1000 100
     | ["--lookup-bench", dir, n] => runLookupBench dir n.toNat! 100
     | ["--lookup-bench", dir, n, a] => runLookupBench dir n.toNat! a.toNat!
     | ["--nest-check", n] => runNestCheck n.toNat!
-    | [src, dir] => runPack src dir 262144 4
-    | [src, dir, "--run-terms", n] => runPack src dir (max 1 n.toNat!) 4
-    | [src, dir, "--workers", k] => runPack src dir 262144 (max 1 k.toNat!)
-    | [src, dir, "--run-terms", n, "--workers", k] => runPack src dir (max 1 n.toNat!) (max 1 k.toNat!)
+    | src :: dir :: rest =>
+        match parseOpts rest {} with
+        | some o => runPack src dir o.runTerms o.workers o.source
+        | none => IO.eprintln usage; pure 2
     | _ => IO.eprintln usage; pure 2
   catch e =>
     IO.eprintln s!"l4sbm11-dict-pack: {e}"

@@ -887,6 +887,38 @@ sf_probe SF-4 "Utf8Stream chunk decoding = whole-file decoding unproved" \
   feedChunks_eq_fromUTF8 '^def Utf8Stream\.feed ' 'Utf8Stream.feed'
 
 # ---------------------------------------------------------------------
+# SK-1 and SK-2 (https://github.com/danbri/factoidal/issues/852) -- the stream
+# writers of the serialiser layer (formal/lean4/L4Factoidal/RDF/Sink.lean,
+# `Writer.push`) have no theorem that relates them to the batch writers; the
+# check is tests/sbm11/export_roundtrip.sh (51 pass, 0 fail, 1 expected-fail,
+# out of 52 on 2026-10-14). Like SF-1 to SF-4, these probes read the SOURCE:
+# XFAIL while no theorem of the name exists under formal/lean4. When one lands,
+# the row reads XPASS: retire it, update issue 852 and docs/designissues/
+# 2026-09-03-rdf-parsing-strategy.md section 3g in the same commit.
+#   SK-1  writer_nquads_eq_toNQuads  (N-Triples and N-Quads: the text of the
+#         stream writer is the text of the batch writer; leaf name)
+#   SK-2  writer_turtle_readback     (Turtle and TriG: the text of the stream
+#         writer reads back as the dataset it was given; leaf name)
+# ---------------------------------------------------------------------
+SK_SRC="${LEAN_SRC}/L4Factoidal/RDF/Sink.lean"
+sk_probe () { # ID TITLE THEOREM
+  local id="$1" title="$2" thm="$3"
+  if [ ! -f "$SK_SRC" ]; then
+    record "$id" 852 "$title" ERROR "${SK_SRC#"$ROOT"/} not found"
+  elif ! grep -qE '^def Writer\.push ' "$SK_SRC"; then
+    record "$id" 852 "$title" ERROR "probe drifted: Writer.push is no longer defined in ${SK_SRC#"$ROOT"/}"
+  elif grep -rqE "^[[:space:]]*(@\[[^]]*\][[:space:]]*)?(private[[:space:]]+)?(theorem|lemma)[[:space:]]+([A-Za-z0-9_.]*\.)?${thm//./\\.}\b" \
+        "${LEAN_SRC}" --include='*.lean'; then
+    record "$id" 852 "$title" XPASS "a theorem named ${thm} now exists"
+  else
+    record "$id" 852 "$title" XFAIL \
+      "no ${thm} theorem in formal/lean4 (agreement is measured by tests/sbm11/export_roundtrip.sh only)"
+  fi
+}
+sk_probe SK-1 "stream writer = batch writer for N-Triples and N-Quads unproved" writer_nquads_eq_toNQuads
+sk_probe SK-2 "stream writer text reads back for Turtle and TriG unproved" writer_turtle_readback
+
+# ---------------------------------------------------------------------
 # JLD-STACK (https://github.com/danbri/factoidal/issues/844) -- the Lean
 # JSON-LD reader (JSONLD.parseJsonLd) uses native stack in proportion to the
 # number of elements of the document. One node with 100,000 references
@@ -923,6 +955,55 @@ PY
     record JLD-STACK 844 "$JLD_TITLE" XFAIL "default stack parses; 512 KB stack: exit $jld_s, Stack overflow"
   else
     record JLD-STACK 844 "$JLD_TITLE" ERROR "512 KB stack: exit $jld_s without a stack overflow message: $(printf '%s' "$jld_err" | head -c 100)"
+  fi
+fi
+
+# ---------------------------------------------------------------------
+# JLD-WSTACK (https://github.com/danbri/factoidal/issues/853) -- the Lean
+# JSON-LD writer (FromRdf.fromRdf) uses native stack in proportion to the number
+# of elements of the dataset, as the reader does (JLD-STACK). One node with 5,000
+# references, packed with l4sbm11-pack and exported with `l4sbm11 export --format
+# jsonld`, runs under LEAN_STACK_SIZE_KB=512 (the control: the probe measures the
+# stack and not another failure); the same node with 20,000 references aborts
+# with "Stack overflow". The default stack is not run: the export of 20,000
+# references takes tens of seconds there (the quadratic fromRdf, issue 712).
+# XFAIL needs the first to exit 0 and the second to abort with "Stack overflow";
+# any other outcome of either is ERROR; when the second exports, the row reads
+# XPASS: delete it, add a tests/stack/run.sh case and close issue 853 in the same
+# commit.
+# ---------------------------------------------------------------------
+JLDW_TITLE="JSON-LD export of 20,000 references overflows a 512 KB stack"
+L4_SBM11="$(dirname "$L4_BIN")/l4sbm11"
+L4_SBM11_PACK="$(dirname "$L4_BIN")/l4sbm11-pack"
+if [ ! -x "$L4_SBM11" ] || [ ! -x "$L4_SBM11_PACK" ]; then
+  record JLD-WSTACK 853 "$JLDW_TITLE" ERROR "no l4sbm11 or l4sbm11-pack beside ${L4_BIN#"$ROOT"/}"
+else
+  jldw_ok=1
+  for jldw_n in 5000 20000; do
+    python3 - "${WORKDIR}/jldw-${jldw_n}.nt" "$jldw_n" <<'PY'
+import sys
+with open(sys.argv[1], "w", encoding="utf-8") as f:
+    for i in range(int(sys.argv[2])):
+        f.write("<http://example.org/s> <http://example.org/p> <http://example.org/o%d> .\n" % i)
+PY
+    "$L4_SBM11_PACK" "${WORKDIR}/jldw-${jldw_n}.nt" "${WORKDIR}/jldw-${jldw_n}.gen" >/dev/null 2>&1 || jldw_ok=0
+  done
+  jldw_c=0
+  env -u LEAN_MAIN_USE_THREAD LEAN_STACK_SIZE_KB=512 "$L4_SBM11" export "${WORKDIR}/jldw-5000.gen" --format jsonld \
+    --out "${WORKDIR}/jldw-5000.jsonld" >/dev/null 2>&1 || jldw_c=$?
+  jldw_s=0
+  jldw_err="$(env -u LEAN_MAIN_USE_THREAD LEAN_STACK_SIZE_KB=512 "$L4_SBM11" export "${WORKDIR}/jldw-20000.gen" --format jsonld \
+    --out "${WORKDIR}/jldw-20000.jsonld" 2>&1 >/dev/null)" || jldw_s=$?
+  if [ "$jldw_ok" -ne 1 ]; then
+    record JLD-WSTACK 853 "$JLDW_TITLE" ERROR "l4sbm11-pack failed on the probe documents"
+  elif [ "$jldw_c" -ne 0 ]; then
+    record JLD-WSTACK 853 "$JLDW_TITLE" ERROR "control: the export of 5,000 references under a 512 KB stack exited $jldw_c"
+  elif [ "$jldw_s" -eq 0 ]; then
+    record JLD-WSTACK 853 "$JLDW_TITLE" XPASS "the export of 20,000 references runs under a 512 KB stack"
+  elif printf '%s' "$jldw_err" | grep -q 'Stack overflow'; then
+    record JLD-WSTACK 853 "$JLDW_TITLE" XFAIL "5,000 references export under 512 KB; 20,000: exit $jldw_s, Stack overflow"
+  else
+    record JLD-WSTACK 853 "$JLDW_TITLE" ERROR "20,000 references, 512 KB stack: exit $jldw_s without a stack overflow message: $(printf '%s' "$jldw_err" | head -c 100)"
   fi
 fi
 

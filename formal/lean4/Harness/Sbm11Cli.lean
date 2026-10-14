@@ -17,7 +17,7 @@ https://github.com/danbri/factoidal/issues/789).
       Every quad as N-Quads, in the order of PERM (default spo).
   l4sbm11 dump-ids GEN PERM
       Every row as `s p o g` ids (the quad order, whatever the permutation).
-  --verify merkle|none   (query, serve, scan, count, dump, dump-ids)
+  --verify merkle|none   (query, serve, scan, count, dump, dump-ids, export)
       How reads are checked (https://github.com/danbri/factoidal/issues/796,
       `Sbm11Gen.Verify`). `merkle`: each read is widened to the 65,536-byte
       chunks it touches and each chunk is checked by its Merkle proof; PRM1
@@ -35,6 +35,10 @@ https://github.com/danbri/factoidal/issues/789).
       term normalisation of the packer (language tags in lower case), so that
       `sort -u` of this and of `dump` compare the quad sets. Blank node labels
       are those of the document and of the readers' generated labels.
+  l4sbm11 export GEN --format F [--out FILE] [--graph default|all|IRI] [--prefix LABEL=IRI]...
+      The dataset of the generation in any of the six RDF syntaxes (ntriples,
+      nquads, turtle, trig, rdfxml, jsonld), by the serialiser layer
+      (`L4Factoidal/RDF/Sink.lean`): `Harness/Sbm11Export.lean` has the details.
   l4sbm11 verify GEN
       The activation checks, without activating.
   l4sbm11 activate ROOT NAME
@@ -72,6 +76,7 @@ import Harness.Sbm11Gen
 import Harness.Sbm11Query
 import Harness.Sbm11Compact
 import Harness.Sbm11PermCheck
+import Harness.Sbm11Export
 
 open L4Factoidal.RDF
 open L4Factoidal.Storage.Sbm11
@@ -248,7 +253,7 @@ def runCanon (source : String) (opts : Sbm11Pack.SourceOpts) : IO UInt32 := do
       text := text ++ (← ok "N-Quads" (nquadLine (normalizeTerm tr.s.toTerm) (.iri tr.p) (normalizeTerm tr.o) gt)) ++ "\n"
     out.putStr text
     pure {}
-  let _ ← Sbm11Pack.streamRange cfg source 0 size flushAcc
+  let _ ← Sbm11Pack.streamRange cfg source 0 size Sbm11Pack.consume ({} : Sbm11Pack.P1) flushAcc
   out.flush
   pure 0
 
@@ -436,6 +441,7 @@ def runReseal (dir : String) : IO UInt32 := do
 def usage : String :=
   "usage: l4sbm11 stats GEN | scan GEN PERM [KEY...] [--limit N] [--ids] | count GEN PERM [KEY...]\n" ++
   "       | dump GEN [PERM] | dump-ids GEN PERM | canon SOURCE [--format F] [--base IRI] | verify GEN | activate ROOT NAME\n" ++
+  "       | export GEN --format F [--out FILE] [--graph default|all|IRI] [--prefix LABEL=IRI]...\n" ++
   "       | query GEN (SPARQL | --file Q.rq) [--base IRI] [--explain] [--repeat N] [--reference-render] [--reference]\n" ++
   "         [--sparql12]\n" ++
   "       | serve GEN [--sparql12] | prm-check GEN | frame-check GEN\n" ++
@@ -454,10 +460,10 @@ def main (args0 : List String) : IO UInt32 := do
       | .ok r => pure r
       | .error e => IO.eprintln s!"l4sbm11: {e}"; return 2
     let verifyUsed := match args with
-      | c :: _ => ["query", "serve", "scan", "count", "dump", "dump-ids", "compact"].contains c
+      | c :: _ => ["query", "serve", "scan", "count", "dump", "dump-ids", "compact", "export"].contains c
       | [] => false
     if verify?.isSome && !verifyUsed then
-      IO.eprintln "l4sbm11: --verify applies to query, serve, scan, count, dump and dump-ids"
+      IO.eprintln "l4sbm11: --verify applies to query, serve, scan, count, dump, dump-ids, compact and export"
       return 2
     match args with
     | ["stats", dir] => runStats dir
@@ -470,6 +476,10 @@ def main (args0 : List String) : IO UInt32 := do
       match Sbm11Pack.parseOpts rest {} with
       | some o => runCanon src o.source
       | none => IO.eprintln usage; pure 2
+    | "export" :: dir :: rest =>
+      match Sbm11Export.parseOpts rest {} with
+      | some o => Sbm11Export.runExport dir (← verifyFor dir verify?) o
+      | none => IO.eprintln Sbm11Export.usage; pure 2
     | ["verify", dir] => runVerify dir
     | ["activate", root, name] => runActivate root name
     | ["reseal", dir] => runReseal dir
