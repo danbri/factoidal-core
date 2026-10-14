@@ -205,6 +205,17 @@ these shapes first in any module that is slow on a large input.
   65,536-byte chunk to hash it (`a ++ b` is one byte copy; `concat_eq_spec`),
   2.0 s of the 16.4 s that remained after the proof table. 400,000 statements:
   37.0 s to 13.7 s (row `sbm11-dump-time`).
+  The reader without a cache kept the same defect until 2026-10-14
+  (https://github.com/danbri/factoidal/issues/859): `readVerifiedRange?` called
+  `proofWith?` for each chunk of the range, 4.0 s of user time for a file of 2,048
+  chunks and 0.63 s with the table built once (`readVerifiedRangeTree?`; the loop over
+  the chunks is a tail call; `readVerifiedChunkTree?_eq` proves the proof is the old
+  one). A second cost in the same pass: `dump --verify merkle` held every chunk it had
+  verified, 405 MB at 400,000 statements against 65 MB after it forgets them (row
+  `sbm11-dump-memory`). A reader of a file in order forgets the chunks that lie wholly
+  before the next block (`dropChunksBefore`); forgetting the block just read also
+  forgets the chunk that the next block starts in, and the next block reads and hashes
+  it again (452 MB of fetches on the olympics generation).
 
 Two more costs are not in an algorithm, and one hazard follows from the repairs:
 

@@ -14,7 +14,10 @@ https://github.com/danbri/factoidal/issues/789).
       The number of such rows: from the PRM1 row counts for every block whose
       first and last row carry the prefix; other blocks are read.
   l4sbm11 dump GEN [PERM]
-      Every quad as N-Quads, in the order of PERM (default spo).
+      Every quad as N-Quads, in the order of PERM (default spo). Under
+      `--verify merkle` it forgets the verified chunks that it is done with, so
+      that its memory does not grow with the generation
+      (https://github.com/danbri/factoidal/issues/859).
   l4sbm11 dump-ids GEN PERM
       Every row as `s p o g` ids (the quad order, whatever the permutation).
   --verify merkle|none   (query, serve, scan, count, dump, dump-ids, export)
@@ -102,12 +105,18 @@ def keyArg (g : Gen) (s : String) : IO (Option Nat) := do
     | some n => pure (some n)
     | none => throw (IO.userError s!"a key is an IRI <...> or a decimal id: {s}")
 
-def quadText (g : Gen) (cache : PageCache) (s p o gid : Nat) : IO String := do
-  let st ← termOfId g cache s
-  let pt ← termOfId g cache p
-  let ot ← termOfId g cache o
-  let gt ← if gid == 0 then pure none else some <$> termOfId g cache gid
+/-- The N-Quads line of a quad of ids, with the page window `limit`, the choice
+    `dropChunks` and the bytes `keepBytes` of `termOfIdLimit`. -/
+def quadTextWith (g : Gen) (cache : PageCache) (limit : Nat) (dropChunks : Bool) (keepBytes : Nat)
+    (s p o gid : Nat) : IO String := do
+  let st ← termOfIdLimit g cache limit dropChunks s keepBytes
+  let pt ← termOfIdLimit g cache limit dropChunks p keepBytes
+  let ot ← termOfIdLimit g cache limit dropChunks o keepBytes
+  let gt ← if gid == 0 then pure none else some <$> termOfIdLimit g cache limit dropChunks gid keepBytes
   ok "N-Quads" (nquadLine st pt ot gt)
+
+def quadText (g : Gen) (cache : PageCache) (s p o gid : Nat) : IO String :=
+  quadTextWith g cache 4096 false 0 s p o gid
 
 def report (g : Gen) (t0 : Nat) (extra : String) : IO Unit := do
   let t1 ← IO.monoNanosNow
@@ -225,6 +234,16 @@ def runDump (dir permS : String) (idsOnly : Bool) (verify? : Option Verify) : IO
   let ps := src.metas
   let cache ← IO.mkRef ({} : Std.HashMap Nat (Array ByteArray))
   let out ← IO.getStdout
+  -- The reader passes over the permutation once, in order, and over the dictionary
+  -- through a window of pages. Under `merkle` it forgets the verified chunks that it is
+  -- done with, as `export` does (Sbm11Export.lean), so that the memory does not grow with
+  -- the store (https://github.com/danbri/factoidal/issues/859): the window is the
+  -- `export` window (256 pages), which bounds the chunks read since the last drop, and
+  -- the chunks of the dictionary stay while a file holds at most `chunkKeepBytes` of
+  -- them. Under `none` no chunk is held, so the window stays 4,096 pages, as before:
+  -- the smaller window costs 16 percent of the time on the olympics generation.
+  let (pages, keep) := if g.verify == .merkle then (Sbm11Export.pageLimit, chunkKeepBytes) else (4096, 0)
+  let mut dropped := 0
   let mut n := 0
   for i in [0:ps.size] do
     let c ← readBlock g src i
@@ -233,9 +252,12 @@ def runDump (dir permS : String) (idsOnly : Bool) (verify? : Option Verify) : IO
       let r := c.row j
       let (s, p, o, gg) := ofPerm perm r.c0 r.c1 r.c2 r.g
       if idsOnly then text := text ++ s!"{s} {p} {o} {gg}\n"
-      else text := text ++ (← quadText g cache s p o gg) ++ "\n"
+      else text := text ++ (← quadTextWith g cache pages true keep s p o gg) ++ "\n"
       n := n + 1
     out.putStr text
+    -- the chunks that end before the next block starts are not read again
+    dropped ← dropChunksBefore g src.cache src.prbRef dropped
+      (if i + 1 < ps.size then ps[i + 1]!.offset else src.prbRef.totalBytes)
   out.flush
   report g t0 s!"dump perm={permS} rows={n}"
   pure 0

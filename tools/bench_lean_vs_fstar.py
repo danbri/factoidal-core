@@ -74,8 +74,9 @@ GENE = ROOT / "examples/wikidata/subsets/lifesci-kgx/data/gene.ttl"
 # measurement
 # --------------------------------------------------------------------------
 def run_once(cmd, cap, cwd=None):
-    """Run cmd; return dict(status, wall, cpu, rss_kb, out_lines, out_bytes,
-    first_line, stderr). stdout is drained by a thread and not stored."""
+    """Run cmd; return dict(status, wall, cpu, user, rss_kb, out_lines, out_bytes,
+    first_line, stderr). `cpu` is user plus system time, `user` is user time only.
+    stdout is drained by a thread and not stored."""
     cnt = {"lines": 0, "bytes": 0, "first": b""}
     err_chunks = []
     proc = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
@@ -127,7 +128,7 @@ def run_once(cmd, cap, cwd=None):
     st = "cap" if hit["v"] else ("ok" if rc == 0 else f"rc{rc}")
     return {
         "status": st, "wall": wall, "cpu": ru.ru_utime + ru.ru_stime,
-        "rss_kb": ru.ru_maxrss, "out_lines": cnt["lines"],
+        "user": ru.ru_utime, "rss_kb": ru.ru_maxrss, "out_lines": cnt["lines"],
         "out_bytes": cnt["bytes"],
         "first_line": cnt["first"].decode("utf-8", "replace"),
         "stderr": b"".join(err_chunks).decode("utf-8", "replace")[-300:],

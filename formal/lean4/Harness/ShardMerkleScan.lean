@@ -39,19 +39,23 @@ private def run (directory iri : String) : IO UInt32 := do
                   match leaves? chunked.chunkCount leafBytes with
                   | none => IO.eprintln "l4block-shard-merkle-scan rejected: malformed leaf-hash sidecar"; return 1
                   | some leaves =>
-                      match ← readVerifiedRange? path chunked leaves { offset := 0, length := prefixBytes } with
+                      -- The proof table of the file, once: the four reads below use it
+                      -- (each of them used to compute the proof of each chunk from the
+                      -- leaves, https://github.com/danbri/factoidal/issues/859).
+                      let tree := treeOfLeaves leaves
+                      match ← readVerifiedRangeTree? path chunked tree { offset := 0, length := prefixBytes } with
                       | none => IO.eprintln "l4block-shard-merkle-scan rejected: invalid verified IBK2 prefix"; return 1
                       | some prefixRead =>
                           match decodePrefix prefixRead with
                           | none => IO.eprintln "l4block-shard-merkle-scan rejected: invalid IBK2 prefix"; return 1
                           | some header =>
-                              match ← readVerifiedRange? path chunked leaves (dictionaryRange header),
-                                  ← readVerifiedRange? path chunked leaves (directoryRange header) with
+                              match ← readVerifiedRangeTree? path chunked tree (dictionaryRange header),
+                                  ← readVerifiedRangeTree? path chunked tree (directoryRange header) with
                               | some dictionary, some directory =>
                                   match predicateRange? header dictionary directory predicate with
                                   | none => IO.println s!"l4block-shard-merkle-scan rows=0 predicate={iri} logical-read-bytes={prefixRead.size + dictionary.size + directory.size}"; return 0
                                   | some segmentRange =>
-                                      match ← readVerifiedRange? path chunked leaves segmentRange with
+                                      match ← readVerifiedRangeTree? path chunked tree segmentRange with
                                       | none => IO.eprintln "l4block-shard-merkle-scan rejected: selected segment verification failed"; return 1
                                       | some segment =>
                                           let triples := scanPredicateRanges { p := some predicate } prefixRead dictionary directory segment

@@ -398,6 +398,7 @@ extern_lib libl4exthost pkg := do
 @[default_target] lean_exe «l4block-id-v3-query» where root := `Harness.IndexedBlockV3Query
 @[default_target] lean_exe «l4block-paged-dictionary-probe» where root := `Harness.PagedDictionaryProbe
 @[default_target] lean_exe «l4termwire-page-decode» where root := `Harness.TermWirePageDecode
+@[default_target] lean_exe «l4merkle-range-read» where root := `Harness.MerkleRangeRead
 @[default_target] lean_exe «l4block-shard-merkle-pread» where root := `Harness.ShardMerklePread
 @[default_target] lean_exe «l4block-shard-merkle-scan» where root := `Harness.ShardMerkleScan
 @[default_target] lean_exe «l4block-shard-merkle-query» where root := `Harness.ShardMerkleQuery

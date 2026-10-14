@@ -150,6 +150,7 @@ not written yet.
 | Query a Turtle file directly (no persistence; reference path) | `l4block-corpus PATH.ttl --query SELECT...` |
 | Predicate histogram of a file | `l4block-corpus PATH.ttl [PREDICATE-IRI]` |
 | Verified range read of one block | `l4block-shard-merkle-pread SHARD-DIR PREDICATE-IRI [OFFSET LENGTH]` |
+| Verified range read of a synthetic chunked file (test data for the readers of `PosixRangeIO`; the shard packer writes no artifact above about 64 chunks) | `l4merkle-range-read make DIR CHUNKS [TAIL]`; `l4merkle-range-read read DIR [--reader leaves\|tree\|cached] [--offset O] [--length L] [--check]` |
 | Bounded Merkle scan or row range | `l4block-id-v3-merkle-scan SHARD-DIR PREDICATE-IRI LIMIT` / `--range START COUNT` |
 | Convert an IBK2 block to IBK3 | `l4block-id-v3-convert INPUT.ibk2 OUTPUT-DIR PREDICATE-IRI` |
 | Session of many SELECTs over one shard | `l4block-shard-merkle-session SHARD-DIR < queries.rq` |
@@ -632,17 +633,41 @@ a file; `PosixRangeIO.VerifiedChunkCache` holds it with the admitted chunks. A p
 for a new reader of a file under `merkle`:
 
 - Read through `readVerifiedRangeCached?` or `readVerifiedChunkCached?` with a cache
-  from `newChunkCache` (`newVerifiedChunkCache`). `readVerifiedRange?` has no cache and
-  computes the proof of the whole tree for each chunk.
+  from `newChunkCache` (`newVerifiedChunkCache`). `readVerifiedRange?` has no cache: it
+  builds the proof table of the file once for the call (`treeOfLeaves`). A tool that
+  reads several ranges of one file builds the table once and calls
+  `readVerifiedRangeTree?` (`l4block-shard-merkle-scan` does). Until 2026-10-14
+  (https://github.com/danbri/factoidal/issues/859) `readVerifiedRange?` computed the
+  proof of the whole tree for each chunk: 4.0 s of user time for 2,048 chunks, 0.63 s
+  after.
 - To free memory, clear the chunks and keep the cache (`dropChunkRange`,
-  `dropDictChunks`): they keep the tree.
+  `dropChunksBefore`, `dropDictChunks`): they keep the tree. A reader that passes over a
+  permutation file in order calls `dropChunksBefore` with the offset of the next block.
+  `dropChunkRange` for the block just read also forgets the chunk that the next block
+  starts in.
 - A reader that drops chunks and needs them again hashes them again. The olympics
   export under `merkle` fetched 2,020 MB to read 182 MB, 8.7 s more CPU time than under
-  `none`.
+  `none`. `dump` keeps up to `chunkKeepBytes` (16 MiB) of dictionary chunks for each file
+  and drops them all when its window of 256 pages is full and a file holds more: on the
+  olympics generation (GDV1 is 9.2 MB) it fetches each chunk once.
+- Peak RSS of `dump --verify merkle` (issue 859): 184, 238 and 390 MB at 100,000, 200,000
+  and 400,000 statements before the repair (1.66 bytes per output byte, 719 per
+  statement); after: 60 to 62 MB at 100,000 and 200,000 statements and 64 or 78 MB at
+  400,000 (0.02 to 0.13 bytes per output byte, 9 to 54 per statement). On the olympics
+  generation: 45.7 MB
+  against 116 MB, and 9 to 11 percent more user time, which comes from the window of 256
+  pages (the objects are read in any order). Under `--verify none` the window stays 4,096
+  pages: 256 pages cost 16 to 20 percent there.
 
 Gate: the rows `sbm11-dump-time` and `sbm11-export-nq-time` of
 `tests/stack/lean_scaling.sh` (100,000, 200,000 and 400,000 statements; 4x the data takes
-at most 5.25 times as long; before the repair 6.0 and 6.7). Other effects, before and after:
+at most 5.25 times as long; before the repair 6.0 and 6.7), `sbm11-dump-memory` (the
+same sizes; at most 0.75 byte of peak RSS per output byte; before the repair 1.66) and
+`merkle-range-read-time` (the user time of `l4merkle-range-read read --reader leaves` over
+a file of 512, 1,024 and 2,048 chunks; at most 5.25 times; before the repair 12.1), and
+`tests/merkle-range/run.sh` (the three readers of `PosixRangeIO` against a digest that
+Python computes, with a changed byte in each chunk in turn: 1,223 pass, 0 fail, out of
+1,223). Other effects, before and after:
 `verify` (the activation checks) of 400,000 statements 27.1 s and 4.7 s of CPU time;
 `scan GEN spo` over 100,000 statements 6.3 s and 3.4 s of CPU time; the slowest of three
 runs of DBpedia d19 under `merkle` 9.9 s and 3.5 s. The warm time of d19 (3.4 s) did not

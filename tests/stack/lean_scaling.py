@@ -128,6 +128,42 @@ repaired (docs/designissues/2026-10-10-lean-vs-fstar-performance.md):
                    export 3.5 s, 6.8 s and 11.9 s (3.4). With `--verify none` (no proof; unchanged by
                    the repair) dump takes 3.2 s and 11.5 s to 13.1 s at 100,000 and
                    400,000 statements.
+  sbm11-dump-memory
+                   peak resident memory of `l4sbm11 dump --verify merkle` over the same
+                   generations (100,000, 200,000 and 400,000 statements): the slope from x to
+                   4x is at most 0.75 byte per output byte, as for the export rows. The peak is
+                   the VmHWM that the command prints. Issue
+                   https://github.com/danbri/factoidal/issues/859: `dump` kept every
+                   dictionary chunk and every chunk of the permutation that it had verified.
+                   Measured 2026-10-14 (peak RSS at 100,000, 200,000 and 400,000 statements),
+                   before the repair (expected failure): 184, 238 and 390 MB (1.66 bytes per
+                   output byte, 719 per statement); after: 60 to 62 MB at 100,000 and 200,000
+                   statements and 64 MB or 78 MB at 400,000 (0.02 to 0.13 bytes per output
+                   byte, 9 to 54 per statement).
+  merkle-range-read-time
+                   user CPU time (minimum of 5 runs) of one call of
+                   `PosixRangeIO.readVerifiedRange?`, through `l4merkle-range-read read
+                   --reader leaves`, over a whole file of 512, 1,024 and 2,048 chunks of
+                   65,536 bytes (32 MB to 128 MB; `l4merkle-range-read make` writes the
+                   file, its sidecar and its root): time(4x) at most SBM11_READ_TIME_BOUND
+                   (5.25) times time(x). Issue https://github.com/danbri/factoidal/issues/859:
+                   the reader computed the Merkle proof of each chunk from all the leaves, so
+                   it took `c * (n - 1)` node hashes to read `c` chunks of a file of `n`.
+                   Measured 2026-10-14, before the repair (expected failure): 0.332 s, 1.229 s
+                   and 4.011 s (12.1 for 4x chunks); after (`BlockMerkle.Tree`, built once for
+                   the file): 0.153 s, 0.320 s and 0.630 s (4.1; seven runs gave 3.5 to 4.7).
+                   The row bounds the user time and prints the system time (page faults of the
+                   reader's buffers: 0.02 s to 0.4 s here, 0.2 s to 1.9 s for 64 MB in other
+                   runs). Before it measures, the row reads the smallest file with `--check`
+                   and with one changed byte, which the reader must refuse. A first version of
+                   the row packed a shard with `l4block-shard-pack` and read it with
+                   `l4block-shard-merkle-pread`: the packer cuts blocks at 2 MiB, so a shard
+                   has at most about 64 chunks for each artifact, and a statement with a
+                   literal of 8 MB to 32 MB (128 to 512 chunks) gave 0.070 s, 0.149 s and
+                   0.342 s, 4.9 for 4x chunks, under the bound on the unrepaired reader. In
+                   user time the quadratic term was 0.8 microsecond for each pair of chunks
+                   and the linear work about 0.35 ms for each chunk (fit to 512 and 2,048
+                   chunks), so the term is the larger one from about 450 chunks.
   sbm11-pack-nt-vs-nq  `l4sbm11-pack` over 100,000 N-Triples statements takes at most
                    2.0 times the CPU time of the same pack over the same triples as
                    N-Quads text (one graph name on every line). N-Triples was read
@@ -1060,6 +1096,140 @@ def sbm11_read_time_row(rid):
                 f"{t4 / max(t1, 1e-9):.1f} for 4x input, bound {SBM11_READ_TIME_BOUND})")
 
 
+# Peak resident memory of `l4sbm11 dump --verify merkle`
+# (https://github.com/danbri/factoidal/issues/859). `dump` reads the SPO permutation
+# block by block and turns each id into a term, as `export` does. Under `merkle` it
+# kept every chunk of the dictionary (GDV1, GDX1) and of the permutation file that it
+# had verified, so its peak grew with the store, as the dictionary text does: about 1 byte
+# for each output byte (the `export` rows above fail at 0.75 for a writer that keeps the
+# quads). The row measures the slope
+#
+#     (peak RSS at 4n - peak RSS at n) / (output bytes at 4n - output bytes at n)
+#
+# at 100,000, 200,000 and 400,000 statements (the source of `sbm11_ttl`: generations of 38
+# MB, 76 MB and 152 MB, N-Quads of 43 MB, 86 MB and 173 MB). The peak is the VmHWM that
+# the command prints on stderr (`peak-rss=... kB`): the same number as `/usr/bin/time -f
+# %M`, and the command writes its output to a pipe that this script counts, so the
+# measurement needs no wrapper. The sizes start at 100,000 statements. The repaired
+# `dump` keeps at most 16 MiB of dictionary chunks for each file (`chunkKeepBytes`), and its
+# peak RSS is 43, 62 and 61 MB at 25,000, 50,000 and 100,000 statements: it stops rising at
+# about 50,000 statements, where the dictionary (19 MB) is above that budget. The row
+# measures the slope on that plateau. The bound is the one of the export rows: 0.75 byte per
+# output byte allows 97 MB of growth over the 130 MB between the outputs at n and 4n, and a
+# reader that keeps the dictionary (150 MB at 400,000 statements) fails it.
+SBM11_DUMP_MEMORY_ROWS = {"sbm11-dump-memory": (100000, 0.75)}
+
+
+def sbm11_dump_memory_row(rid):
+    import re
+    x, bound = SBM11_DUMP_MEMORY_ROWS[rid]
+    sbm11_need_pack_bin()
+    if not SBM11_BIN.exists():
+        raise MeasurementError(f"{SBM11_BIN} not built (cd formal/lean4 && lake build l4sbm11)")
+    pts = []
+    for n in (x, 2 * x, 4 * x):
+        gen = sbm11_export_generation(sbm11_ttl.__name__, sbm11_ttl, "ttl", n)
+        t = bl.run_once([str(SBM11_BIN), "dump", str(gen), "--verify", "merkle"], CAP)
+        if t["status"] != "ok":
+            raise MeasurementError(f"{rid}: n={n}: exit status {t['status']}")
+        m = re.search(r"\bpeak-rss=(\d+) kB", t["stderr"])
+        if not m:
+            raise MeasurementError(f"{rid}: n={n}: the summary line on stderr has no peak-rss")
+        if t["out_lines"] != n:
+            raise MeasurementError(f"{rid}: n={n}: the command wrote {t['out_lines']} lines")
+        pts.append((n, t["out_bytes"], int(m.group(1))))
+    (n1, b1, r1), (n2, b2, r2), (n4, b4, r4) = pts
+    slope = (r4 - r1) * 1024 / max(b4 - b1, 1)
+    return slope <= bound, (f"n={n1} {r1 / 1024:.0f} MB ({b1} bytes out) -> n={n2} {r2 / 1024:.0f} MB -> "
+                            f"n={n4} {r4 / 1024:.0f} MB ({b4} bytes out): {slope:.2f} bytes of peak RSS "
+                            f"per output byte, {(r4 - r1) * 1024 / (n4 - n1):.0f} per statement "
+                            f"(bound {bound} per output byte)")
+
+
+# CPU time of a verified range read that has no chunk cache
+# (https://github.com/danbri/factoidal/issues/859). `PosixRangeIO.readVerifiedRange?` reads
+# a range of a file: every 65,536-byte chunk that the range touches is admitted by a Merkle
+# proof against the root of the manifest. The reader computed the proof of a chunk from all
+# the leaves of the file (`BlockMerkle.proofWith?`, `n - 1` node hashes for `n` chunks), so a
+# read of `c` chunks of a file of `n` cost `c * (n - 1)` hashes: the square of the file when
+# the range is most of the file. `l4block-shard-merkle-pread` and `l4block-shard-merkle-scan`
+# call it, and the shard packer cuts its blocks at 2 MiB, so a shard directory that it writes
+# has no artifact above about 64 chunks. One statement with a literal of 16 MB makes one
+# artifact of 257 chunks (the packer needs 11 s and 1.1 GB), and one of 64 MB makes 1,024
+# chunks (43 s and 3.0 GB). With 128, 256 and 512 chunks of a packed shard the time at 4x
+# chunks was 4.9 times the time at x (0.070 s, 0.149 s and 0.342 s of CPU time on
+# 2026-10-14), under the bound: the linear work and the process start are most of the time
+# below about 500 chunks. The row therefore reads files that
+# `l4merkle-range-read make` writes (a file of n chunks of pseudo-random bytes, its
+# `.merkle` sidecar and its root, in about 1 s for 128 MB), with
+# `l4merkle-range-read read --reader leaves`, the call of `readVerifiedRange?`, over the whole
+# file: 512, 1,024 and 2,048 chunks (32 MB, 64 MB and 128 MB). The user CPU time of the read
+# (the minimum of 5 runs) at 4x chunks is bounded by SBM11_READ_TIME_BOUND times the time at x
+# (with the floor FLOOR of the other rows). The bound lies between 4.7 (the highest ratio in
+# seven runs of the row after the repair; the lowest was 3.5) and 10.5 (the lowest ratio
+# before it, by hand; the row gave 12.1). The row bounds the USER time and prints the system
+# time: the reader holds the chunks, their concatenation and the copy of the range (6 bytes of
+# memory for each byte of the range, 770 MB for 128 MB), and the page faults for that memory
+# cost 0.2 s to 1.9 s of system time for the same read of 64 MB on this VM, which is more
+# than the repaired reader's user time. The hashing is user time. Linear work is one pread, one
+# SHA-256 and one copy for each chunk, 4.0 for 4x chunks; measured on the reader of 2026-10-13
+# (user time, minimum of 5 runs): 0.148 s, 0.389 s, 1.097 s and 4.088 s at 256, 512, 1,024 and
+# 2,048 chunks, 10.5 for 512 to 2,048 chunks.
+# Before running a measured row the harness reads the smallest file with `--check` (the bytes
+# are those of the file, read without any check) and reads it again with one byte changed,
+# which the reader must refuse: a reader that admits a changed byte cannot be timed.
+MERKLE_RANGE_TIME_ROWS = {"merkle-range-read-time": 512}
+RANGE_BIN = Path(os.environ.get("L4_MERKLE_RANGE_BIN", BIN.parent / "l4merkle-range-read"))
+MERKLE_RANGE_RUNS = 5
+
+
+def merkle_range_time_row(rid):
+    import shutil
+    x = MERKLE_RANGE_TIME_ROWS[rid]
+    if not RANGE_BIN.exists():
+        raise MeasurementError(f"{RANGE_BIN} not built (cd formal/lean4 && lake build l4merkle-range-read)")
+    pts = []
+    for chunks in (x, 2 * x, 4 * x):
+        d = FIX / f"{rid}-{chunks}"
+        shutil.rmtree(d, ignore_errors=True)
+        try:
+            t = bl.run_once([str(RANGE_BIN), "make", str(d), str(chunks)], CAP)
+            if t["status"] != "ok":
+                raise MeasurementError(f"{rid}: make {chunks} chunks: exit status {t['status']}")
+            if chunks == x:
+                t = bl.run_once([str(RANGE_BIN), "read", str(d), "--check"], CAP)
+                if t["status"] != "ok" or "match=true" not in t["first_line"]:
+                    raise MeasurementError(f"{rid}: the check of {chunks} chunks: {t['status']} {t['first_line'][:200]!r}")
+            best = sysbest = None
+            for _ in range(MERKLE_RANGE_RUNS):
+                t = bl.run_once([str(RANGE_BIN), "read", str(d), "--reader", "leaves"], CAP)
+                if t["status"] != "ok":
+                    raise MeasurementError(f"{rid}: chunks={chunks}: exit status {t['status']}: {t['stderr'][-160:]}")
+                want = f"verified-bytes={chunks * 65536} chunks=0-{chunks - 1}"
+                if want not in t["first_line"]:
+                    raise MeasurementError(f"{rid}: chunks={chunks}: printed {t['first_line'][:160]!r}, not {want!r}")
+                best = t["user"] if best is None else min(best, t["user"])
+                sysbest = t["cpu"] - t["user"] if sysbest is None else min(sysbest, t["cpu"] - t["user"])
+            if chunks == x:
+                with open(d / "file.bin", "r+b") as f:
+                    f.seek((chunks // 2) * 65536 + 100)
+                    byte = f.read(1)
+                    f.seek(-1, 1)
+                    f.write(bytes([byte[0] ^ 1]))
+                t = bl.run_once([str(RANGE_BIN), "read", str(d), "--reader", "leaves"], CAP)
+                if t["status"] != "rc1":
+                    raise MeasurementError(f"{rid}: a changed byte was not refused (status {t['status']})")
+        finally:
+            shutil.rmtree(d, ignore_errors=True)
+        pts.append((chunks, best, sysbest))
+    (n1, t1, s1), (n2, t2, s2), (n4, t4, s4) = pts
+    ok = t4 <= SBM11_READ_TIME_BOUND * max(t1, FLOOR)
+    return ok, (f"{n1} chunks {t1:.3f} s -> {n2} chunks {t2:.3f} s -> {n4} chunks {t4:.3f} s user CPU "
+                f"(ratios {t2 / max(t1, 1e-9):.1f} and {t4 / max(t2, 1e-9):.1f} per doubling; "
+                f"{t4 / max(t1, 1e-9):.1f} for 4x chunks, bound {SBM11_READ_TIME_BOUND}, "
+                f"floor {FLOOR} s; system time {s1:.2f}, {s2:.2f} and {s4:.2f} s, not bounded)")
+
+
 # `l4sbm11-pack` over N-Triples text takes at most SBM11_PACK_RATIO times the CPU
 # time of the same pack over the same triples as N-Quads text. N-Triples is read
 # by the strict triple reader, N-Quads by the quad reader; both are line streams
@@ -1142,6 +1312,8 @@ def memory_row(rid):
         return sbm11_pack_memory_row(rid)
     if rid in SBM11_EXPORT_MEMORY_ROWS:
         return sbm11_export_memory_row(rid)
+    if rid in SBM11_DUMP_MEMORY_ROWS:
+        return sbm11_dump_memory_row(rid)
     if rid in PACK_MEMORY_ROWS:
         return pack_memory_row(rid)
     if rid in PARSE_MEMORY_ROWS:
@@ -1317,13 +1489,14 @@ def main() -> int:
         + list(SBM11_WORKERS_ROWS))
     memory_rows = [r for r in names if r in MEMORY_ROWS or r in PARSE_MEMORY_ROWS
                    or r in PACK_MEMORY_ROWS or r in SBM11_PACK_MEMORY_ROWS
-                   or r in SBM11_EXPORT_MEMORY_ROWS] or (
+                   or r in SBM11_EXPORT_MEMORY_ROWS or r in SBM11_DUMP_MEMORY_ROWS] or (
         [] if names else list(MEMORY_ROWS) + list(PARSE_MEMORY_ROWS) + list(PACK_MEMORY_ROWS)
-        + list(SBM11_PACK_MEMORY_ROWS) + list(SBM11_EXPORT_MEMORY_ROWS))
+        + list(SBM11_PACK_MEMORY_ROWS) + list(SBM11_EXPORT_MEMORY_ROWS)
+        + list(SBM11_DUMP_MEMORY_ROWS))
     series_rows = [r for r in names if r in SERIES_ROWS] or (
         [] if names else list(SERIES_ROWS))
-    time_rows = [r for r in names if r in SBM11_READ_TIME_ROWS] or (
-        [] if names else list(SBM11_READ_TIME_ROWS))
+    time_rows = [r for r in names if r in SBM11_READ_TIME_ROWS or r in MERKLE_RANGE_TIME_ROWS] or (
+        [] if names else list(SBM11_READ_TIME_ROWS) + list(MERKLE_RANGE_TIME_ROWS))
     run_startup = (not names) or ("startup" in names)
     passed = failed = xfailed = 0
     print(f"Lean scaling assertion: time(4x) <= {BOUND} * max(time(x), {FLOOR} s) "
@@ -1394,7 +1567,8 @@ def main() -> int:
     for rid in time_rows:
         issue = XFAIL.get(rid)
         try:
-            ok, detail = sbm11_read_time_row(rid)
+            ok, detail = (merkle_range_time_row if rid in MERKLE_RANGE_TIME_ROWS
+                          else sbm11_read_time_row)(rid)
         except MeasurementError as e:
             failed += 1
             print(f"  FAIL {rid}: cannot measure: {e}")

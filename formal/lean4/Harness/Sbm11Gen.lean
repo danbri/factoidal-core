@@ -460,18 +460,33 @@ def gdxFetch (g : Gen) (off len : Nat) : IO ByteArray :=
 /-- A page cache for id-to-term: page index to its keys. -/
 abbrev PageCache := IO.Ref (Std.HashMap Nat (Array ByteArray))
 
+/-- The bytes of the verified chunks that a cache holds. -/
+def cachedChunkBytes (c : Harness.PosixRangeIO.VerifiedChunkCache) : Nat :=
+  c.chunks.foldl (fun n x => match x with | some b => n + b.size | none => n) 0
+
+/-- The bytes of verified dictionary chunks that `dump` keeps in each of the caches
+    of GDV1 and GDX1 when its page window is full: 16 MiB. The dictionary of the
+    olympics generation (GDV1 is 9.2 MB) stays in the cache and is read and checked
+    once. A reader of a dictionary larger than that holds at most this many bytes
+    and the chunks of one page window (256 pages, at most 16 MiB more) for each file
+    (https://github.com/danbri/factoidal/issues/859). -/
+def chunkKeepBytes : Nat := 16 * 1024 * 1024
+
 /-- Forget the verified chunks of GDV1 and GDX1 that this open holds (under
-    `merkle`; under `none` there are none). The next read of a chunk fetches and
-    checks it again. The proof tables of the two files stay
-    (`PosixRangeIO.VerifiedChunkCache.tree`): they are not chunks, and a new
+    `merkle`; under `none` there are none), unless a cache holds at most
+    `keepBytes` bytes of them (`keepBytes` is 0: forget them all). The next read of
+    a forgotten chunk fetches and checks it again. The proof tables of the two files
+    stay (`PosixRangeIO.VerifiedChunkCache.tree`): they are not chunks, and a new
     table costs one hash for each chunk of the file
     (https://github.com/danbri/factoidal/issues/854). -/
-def dropDictChunks (g : Gen) : IO Unit := do
+def dropDictChunks (g : Gen) (keepBytes : Nat := 0) : IO Unit := do
   if g.verify == .merkle then
     for cache in [g.gdvCache, g.gdxCache] do
       cache.modify fun c =>
-        match c with
-        | { chunks, tree } => { chunks := Array.replicate chunks.size none, tree }
+        if cachedChunkBytes c ≤ keepBytes then c
+        else
+          match c with
+          | { chunks, tree } => { chunks := Array.replicate chunks.size none, tree }
 
 /-- Forget the verified chunks that cover bytes `[off, off + len)` of a file
     (under `merkle`). A reader that passes over a permutation once drops the
@@ -492,11 +507,28 @@ def dropChunkRange (g : Gen) (cache : IO.Ref Harness.PosixRangeIO.VerifiedChunkC
           return a
         { chunks := cleared, tree }
 
+/-- Forget the verified chunks of a file that lie wholly before byte `off`, from
+    chunk `fromChunk` on (under `merkle`); the result is the first chunk not forgotten
+    yet. A reader that passes over a file in order calls it with the offset of the
+    block that it reads next, so that the chunk that holds the end of one block and
+    the start of the next stays: `dropChunkRange` after each block forgot it, and the
+    next block read and checked it again (6,902 blocks and 212 chunks in the SPO
+    permutation of the olympics generation). -/
+def dropChunksBefore (g : Gen) (cache : IO.Ref Harness.PosixRangeIO.VerifiedChunkCache) (ref : Ref)
+    (fromChunk off : Nat) : IO Nat := do
+  let upto := off / ref.chunkBytes
+  if upto > fromChunk then
+    dropChunkRange g cache ref (fromChunk * ref.chunkBytes) ((upto - fromChunk) * ref.chunkBytes)
+    pure upto
+  else pure fromChunk
+
 /-- The term of an id. The page cache holds at most `limit` dictionary pages and
     is emptied when it is full; with `dropChunks`, the verified chunks of the
-    dictionary are dropped with it, so that the memory of a reader that visits
-    the dictionary in any order does not grow with the dictionary. -/
-def termOfIdLimit (g : Gen) (cache : PageCache) (limit : Nat) (dropChunks : Bool) (id : Nat) : IO Term := do
+    dictionary are dropped with it: all of them, unless each of the two caches holds
+    at most `keepBytes` bytes of them (`dropDictChunks`). The memory of a reader that
+    visits the dictionary in any order then does not grow with the dictionary. -/
+def termOfIdLimit (g : Gen) (cache : PageCache) (limit : Nat) (dropChunks : Bool) (id : Nat)
+    (keepBytes : Nat := 0) : IO Term := do
   let tag := id / two60
   if tag == tagInt || tag == tagBool then
     match ofInlineCode? id with
@@ -512,7 +544,7 @@ def termOfIdLimit (g : Gen) (cache : PageCache) (limit : Nat) (dropChunks : Bool
       | none => do
         let ks ← ok s!"GDV1 page {pg}" (← (Dict.pageM (gdxFetch g) (gdvFetch g) pg).run)
         let c ← if c.size ≥ limit then
-            (do if dropChunks then dropDictChunks g
+            (do if dropChunks then dropDictChunks g keepBytes
                 pure ({} : Std.HashMap Nat (Array ByteArray)))
           else pure c
         cache.set (c.insert pg ks)

@@ -146,25 +146,61 @@ private def readVerifiedChunkProof? (path : String) (ref : Ref) (proof? : Option
       | none => pure none
   | _, _, _ => pure none
 
-/-- One chunk by a proof that `proofWith?` computes from the leaves: the cost of
-    a whole tree.  The readers without a cache use it. -/
-private def readVerifiedChunk? (path : String) (ref : Ref) (leaves : List Digest)
+/-- The proof table of a file, from the leaves of its `.merkle` sidecar, hashed
+    with the native hasher.  The cost is `n - 1` node hashes for `n` leaves, once
+    for the file; a proof read from it is `log2 n` reads. -/
+def treeOfLeaves (leaves : List Digest) : Tree := Tree.ofLeavesWith nativeHasher leaves
+
+/-- The proof table of the file `ref`, or `none` when `leaves` are not
+    `ref.chunkCount` many: no proof of a tree of another size can admit a chunk of
+    this file. -/
+def treeOf? (ref : Ref) (leaves : List Digest) : Option Tree :=
+  let t := treeOfLeaves leaves
+  if t.leafCount != ref.chunkCount then none else some t
+
+/-- The table exists exactly when the count of leaves is the file's count of chunks,
+    which is the test that the readers made on the list of leaves before the table
+    (`Tree.leafCount_ofLeavesWith`). -/
+theorem treeOf?_eq_some (ref : Ref) (leaves : List Digest) (h : leaves.length = ref.chunkCount) :
+    treeOf? ref leaves = some (treeOfLeaves leaves) := by
+  simp [treeOf?, treeOfLeaves, Tree.leafCount_ofLeavesWith, h]
+
+theorem treeOf?_eq_none (ref : Ref) (leaves : List Digest) (h : leaves.length ≠ ref.chunkCount) :
+    treeOf? ref leaves = none := by
+  simp [treeOf?, treeOfLeaves, Tree.leafCount_ofLeavesWith, h]
+
+/-- One chunk by the proof that the file's table `tree` gives.  Until
+    https://github.com/danbri/factoidal/issues/859 was repaired (2026-10-14) a
+    reader without a cache computed the proof from the leaves for each chunk
+    (`proofWith?`: `n - 1` hashes for a file of `n` chunks), so a read of most of
+    a file cost the square of its chunk count.  The chunk is still checked against
+    the root of the manifest (`verifyChunkWith`), so a wrong table can only refuse a
+    chunk. -/
+def readVerifiedChunkTree? (path : String) (ref : Ref) (tree : Tree)
     (index : Nat) : IO (Option ByteArray) :=
-  readVerifiedChunkProof? path ref (proofWith? nativeHasher leaves index) index
+  readVerifiedChunkProof? path ref (tree.proof? index) index
+
+/-- The proof that admits a chunk is the proof `proofWith?` computes from the
+    leaves, for every file, list of leaves and index: the right side is the reader
+    that called `proofWith?` for each chunk. -/
+theorem readVerifiedChunkTree?_eq (path : String) (ref : Ref) (leaves : List Digest)
+    (index : Nat) :
+    readVerifiedChunkTree? path ref (treeOfLeaves leaves) index =
+      readVerifiedChunkProof? path ref (proofWith? nativeHasher leaves index) index := by
+  simp only [readVerifiedChunkTree?, treeOfLeaves, Tree.proof?_ofLeavesWith]
 
 /-- The proof table of the file, built from `leaves` when the cache has none.
-    `none` when `leaves` are not `ref.chunkCount` many: no proof of a tree of
-    another size can admit a chunk of this file. -/
+    `none` when `leaves` are not `ref.chunkCount` many (`treeOf?`). -/
 private def cachedTree? (ref : Ref) (leaves : List Digest)
     (cache : IO.Ref VerifiedChunkCache) : IO (Option Tree) := do
   match (← cache.get).tree with
   | some t => pure (some t)
   | none =>
-      let t := Tree.ofLeavesWith nativeHasher leaves
-      if t.leafCount != ref.chunkCount then pure none
-      else
-        cache.modify fun c => { c with tree := some t }
-        pure (some t)
+      match treeOf? ref leaves with
+      | none => pure none
+      | some t =>
+          cache.modify fun c => { c with tree := some t }
+          pure (some t)
 
 /-- Admit one fixed chunk through the same positioned-read and Merkle-proof
     path as `readVerifiedRangeCached?`.  A cache hit reports zero newly
@@ -189,13 +225,17 @@ def readVerifiedChunkCached? (path : String) (ref : Ref) (leaves : List Digest)
                 | { chunks, tree } => { chunks := chunks.set! index (some chunk), tree }
               pure (some (chunk, { requestedBytes := chunk.size, fetchedBytes := chunk.size, chunks := 1 }))
 
-private def readVerifiedChunks (path : String) (ref : Ref) (leaves : List Digest) :
-    List Nat → IO (Option (List ByteArray))
-  | [] => pure (some [])
-  | index :: rest => do
-      match ← readVerifiedChunk? path ref leaves index, ← readVerifiedChunks path ref leaves rest with
-      | some chunk, some chunks => pure (some (chunk :: chunks))
-      | _, _ => pure none
+/-- The chunks `indices`, in order, each admitted by the proof of `tree`; `none`
+    when one is refused.  A loop: `acc` holds the chunks read, newest first.  The
+    list of chunks of a range is as long as the range is in chunks, so a call for
+    each chunk would take one stack frame for each. -/
+private def readVerifiedChunksTree (path : String) (ref : Ref) (tree : Tree) :
+    List Nat → List ByteArray → IO (Option (List ByteArray))
+  | [], acc => pure (some acc.reverse)
+  | index :: rest, acc => do
+      match ← readVerifiedChunkTree? path ref tree index with
+      | some chunk => readVerifiedChunksTree path ref tree rest (chunk :: acc)
+      | none => pure none
 
 private def concatChunks (chunks : List ByteArray) : ByteArray :=
   /- `fastAppend` is Lean's growing-capacity append intended for repeated
@@ -212,7 +252,7 @@ def readVerifiedSingleChunkRange? (path : String) (ref : Ref) (leaves : List Dig
   match singleChunkIndex? ref range with
   | none => pure none
   | some index =>
-      match offset? ref index, expectedBytes? ref index, proofWith? nativeHasher leaves index with
+      match offset? ref index, expectedBytes? ref index, (treeOfLeaves leaves).proof? index with
       | some offset, some length, some proof =>
           match ← readRange? path { offset, length } with
           | some chunk =>
@@ -224,14 +264,18 @@ def readVerifiedSingleChunkRange? (path : String) (ref : Ref) (leaves : List Dig
       | _, _, _ => pure none
 
 /-- Read an exact contiguous range by verifying every fixed chunk it touches
-    to the same SBM1 root, then returning only the requested interior bytes. -/
-def readVerifiedRange? (path : String) (ref : Ref) (leaves : List Digest)
+    to the same SBM1 root, then returning only the requested interior bytes.
+    `tree` is the proof table of the file (`treeOf?`, `treeOfLeaves`): a caller
+    that reads several ranges of one file builds it once and gives it to each
+    call (`Harness.ShardMerkleScan`).  The leaf count of the table is checked
+    against `ref` (one read). -/
+def readVerifiedRangeTree? (path : String) (ref : Ref) (tree : Tree)
     (range : ByteRange) : IO (Option ByteArray) := do
-  if leaves.length != ref.chunkCount then return none
+  if tree.leafCount != ref.chunkCount then return none
   match chunkIndices? ref range with
   | none => pure none
   | some (first, indices) =>
-      match ← readVerifiedChunks path ref leaves indices with
+      match ← readVerifiedChunksTree path ref tree indices [] with
       | none => pure none
       | some chunks =>
           /- Most row reads touch one chunk.  Do not copy a full fixed chunk
@@ -244,6 +288,15 @@ def readVerifiedRange? (path : String) (ref : Ref) (leaves : List Digest)
           if localOffset + range.length <= all.size then
             pure (some (all.extract localOffset (localOffset + range.length)))
           else pure none
+
+/-- `readVerifiedRangeTree?` with the proof table built from `leaves` for this
+    call: `n - 1` node hashes for a file of `n` chunks, once, where the reader
+    before https://github.com/danbri/factoidal/issues/859 computed `n - 1` for each
+    chunk of the range. -/
+def readVerifiedRange? (path : String) (ref : Ref) (leaves : List Digest)
+    (range : ByteRange) : IO (Option ByteArray) := do
+  if leaves.length != ref.chunkCount then return none
+  readVerifiedRangeTree? path ref (treeOfLeaves leaves) range
 
 private def readCachedChunks (path : String) (ref : Ref) (leaves : List Digest)
     (cache : IO.Ref VerifiedChunkCache) : List Nat → IO (Option (List ByteArray × Nat × Nat))

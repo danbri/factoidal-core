@@ -196,6 +196,33 @@ small constant is below the noise until the input is large enough; the failing
 run shows the size at which the row can see it. Write that ratio next to the
 bound, as the SBM11 packer row does.
 
+**The fixture that the product writes can be too small to show the defect**
+(https://github.com/danbri/factoidal/issues/859, 2026-10-14). The first version of the
+row `merkle-range-read-time` read an artifact that `l4block-shard-pack` wrote. The packer
+cuts a block at 2 MiB, so a shard has at most about 64 chunks for each artifact. A
+statement with a literal of 8 MB, 16 MB or 32 MB (128 to 512 chunks, 5 s to 22 s to pack)
+gave 0.070 s, 0.149 s and 0.342 s on the unrepaired reader: 4.9 for 4x chunks, under the
+bound of 5.25. The harness printed "UNEXPECTED PASS", which is the signal that the row
+cannot see the defect. In user time the unrepaired reader cost 0.35 ms for each chunk plus
+0.8 microsecond for each pair of chunks, so the quadratic term is the larger one from
+about 450 chunks; at 64 MB the pack needs 43 s and 3 GB. The row now reads a file that
+`l4merkle-range-read make` writes in 1 s for 128 MB, at 512, 1,024 and 2,048 chunks:
+12.1 for 4x chunks before the repair, 4.1 after. Rules:
+
+- Fit the cost to two sizes of the failing run (`a * n + b * n^2`) and compute the size
+  at which the defect passes the bound, before you choose the sizes of the row. If the
+  product's own writer cannot make a file of that size, write a driver that can.
+- Bound the user time of a command that holds large buffers, and print the system time.
+  The same read of 64 MB took 0.2 s to 1.9 s of system time on this VM (the page faults
+  of 385 MB), against 1.1 s of user time. The repaired reader has less user time than that
+  system time.
+- A memory row also needs a start that is past the plateau. The repaired `dump` has a peak
+  RSS of 43, 62 and 61 MB at 25,000, 50,000 and 100,000 statements (the dictionary passes
+  the 16 MiB budget at 50,000), so the row `sbm11-dump-memory` starts at 100,000.
+- Take a mutation of the fix and run the test: with the chunk check taken out of
+  `readVerifiedChunkProof?`, `tests/merkle-range/run.sh` gave 746 pass, 477 fail (out of
+  1,223).
+
 ## The rule
 
 1. **A function over input-proportional data is not done until its scaling is

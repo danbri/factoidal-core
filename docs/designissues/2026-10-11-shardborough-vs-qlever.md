@@ -1086,9 +1086,12 @@ Repair (`L4Factoidal/Storage/BlockMerkle.lean`, `Harness/PosixRangeIO.lean`,
    root of the manifest: a wrong table can refuse a chunk and cannot admit one.
    `dropDictChunks` and `dropChunkRange` clear the chunks and keep the tree. The
    count of the leaves is checked once, when the tree is built, and no longer by a
-   walk down the list of leaves on every read. The readers without a cache
-   (`readVerifiedRange?`: the Merkle session tools of the IBK3 layouts) still
-   compute `proofWith?` for each chunk.
+   walk down the list of leaves on every read. The reader without a cache,
+   `readVerifiedRange?`, still computed `proofWith?` for each chunk; it is repaired in
+   the next subsection. (This item said "the Merkle session tools of the IBK3
+   layouts" until 2026-10-14. Those tools read through the cached reader. The callers
+   of `readVerifiedRange?` are `l4block-shard-merkle-pread` and
+   `l4block-shard-merkle-scan`.)
 3. `BlockMerkle.concat` (the bytes of `a` and then of `b`, in the leaf hash and the
    node hash) made a list cell for each byte: 65,536 for a chunk. It is now
    `a ++ b`, one byte copy, and `concat_eq_spec` proves it the same bytes. It took
@@ -1126,9 +1129,10 @@ path, so this is the noise of a shared machine. With
 `merkle` the export is 8.7 s slower than with `none`: it drops the dictionary chunks
 whenever its window of 256 pages is full, and each chunk that it needs again is read
 and hashed again (SHA-256 of 65,536 bytes). Its summary line shows it: 2,020 MB
-fetched to read 182 MB (11 times), against 182 MB with `none`. `dump` keeps its chunks,
-so it has no such cost, and its peak RSS is 117 MB against 80 MB. The output of
-N-Quads is the source file byte for byte (337,695,911 bytes).
+fetched to read 182 MB (11 times), against 182 MB with `none`. At this point `dump` kept
+its chunks, so it had no such cost, and its peak RSS was 117 MB against 80 MB (it
+forgets them since issue 859, next subsection). The output of N-Quads is the source
+file byte for byte (337,695,911 bytes).
 
 Oxigraph. The `oxigraph` command is not on PATH. pyoxigraph 0.5.11 (the same Rust
 store, installed in a virtual environment) loaded `olympics.nt` in 9.7 s (a store of
@@ -1147,6 +1151,179 @@ integer literals: the source and our export have `xsd:int`, the dump of Oxigraph
 export is rewritten to `xsd:integer`, the two sorted dumps have the same md5. Our
 export takes 1.6 to 1.9 times the CPU time of the dump of Oxigraph and 40 MB against
 114 MB of peak RSS.
+
+#### Memory of dump, and the reader without a cache (issue 859, 2026-10-14)
+
+Tracking: https://github.com/danbri/factoidal/issues/859. The measurements are of a
+VM with 4 vCPUs that another job shared (load average 1.6 to 3.9); a time varies by up
+to 10 percent between runs, and a peak RSS by up to 10 MB.
+
+##### `dump --verify merkle` kept every chunk
+
+Symptom. `l4sbm11 dump GEN --verify merkle` is the default for a generation that no
+CURRENT pointer names. Its peak RSS grew with the store, and `export` under the same
+check stayed flat. The row `sbm11-dump-memory` of `tests/stack/lean_scaling.py`
+measures the peak RSS (the `peak-rss` that the command prints, which is VmHWM) at
+100,000, 200,000 and 400,000 statements (output of 43 MB, 86 MB and 173 MB), and
+bounds the slope (RSS at 4x minus RSS at x) divided by (output bytes at 4x minus
+output bytes at x) at 0.75, as for the export rows. The repaired `dump` has a peak RSS
+of 43, 62 and 61 MB at 25,000, 50,000 and 100,000 statements: it stops rising at about
+50,000 statements, where GDV1 (19 MB) is above the budget of 16 MiB that the repair
+keeps. The row starts at 100,000 statements so that it measures the slope on that
+plateau. The row was committed first, as an expected failure that names the issue.
+
+| `dump --verify merkle` | 100,000 | 200,000 | 400,000 | Slope, bytes per output byte | Slope, bytes per statement |
+| --- | ---: | ---: | ---: | ---: | ---: |
+| before the repair (the row; the peak RSS is the `peak-rss` that the command prints) | 184 MB | 238 MB | 390 MB | 1.66, expected failure | 719 |
+| after the repair (the row, first run) | 60 MB | 62 MB | 64 MB | 0.03, pass | 14 |
+| after the repair (the row, second run) | 61 MB | 61 MB | 64 MB | 0.02, pass | 9 |
+| after the repair (the row, on the tree merged with origin/main) | 62 MB | 63 MB | 78 MB | 0.13, pass | 54 |
+| after, by hand (three generations, one run each) | 62.9 MB | 63.6 MB | 65.4 MB | 0.02 | 8 |
+
+By hand, before the repair: 192 MB, 238 MB and 405 MB (the issue said 387 to 437 MB at
+400,000 statements). After the repair the peak at 400,000 statements has one of two
+values: 64 MB (three of six runs) or 78 MB (three of six). At 100,000 statements it is
+62 MB in every run.
+
+Cause. `runDump` called `termOfId`, which is `termOfIdLimit` with a window of 4,096
+dictionary pages and no `dropChunks`, and it never cleared the chunk cache of the
+permutation file. Three things held memory: the verified chunks of GDV1 (the dictionary
+values: 150 MB at 400,000 statements), the window of decoded pages (up to 4,096 pages
+of 64 keys; about 110 MB when each key is a literal of 370 characters, by computation),
+and the chunks of the SPO file. Only the first grows with the store; the window stops at
+4,096 pages. With a window of 4,096 pages, no budget and `dropChunksBefore`, the peak
+RSS at 400,000 statements is 267 MB.
+
+Repair (`Harness/Sbm11Cli.lean` `runDump`; `Harness/Sbm11Gen.lean`
+`dropChunksBefore`, `dropDictChunks`, `chunkKeepBytes`). Under `merkle`:
+
+1. After each block, `dump` forgets the chunks of the permutation file that lie wholly
+   before the next block (`dropChunksBefore`). `export` calls `dropChunkRange` for the
+   block it has finished, which also forgets the chunk that holds the end of this block
+   and the start of the next one; the next block then reads and checks that chunk
+   again. The SPO file of the olympics generation has 6,902 blocks in 212 chunks, so
+   that costs 452 MB of fetches (the two runs in the table below took 32.0 s and
+   25.9 s).
+2. The window of dictionary pages is the one of `export` (256 pages,
+   `Sbm11Export.pageLimit`), and `dump` forgets the dictionary chunks when the window
+   is full, unless a file holds at most `chunkKeepBytes` (16 MiB) of them. The window
+   bounds the chunks read since the last drop: at most 256 pages, 16 MiB for each file.
+   The budget keeps the dictionary of a small store: GDV1 of the olympics generation
+   is 9.2 MB, so it is read and checked once.
+3. Under `none` nothing changes (4,096 pages, no chunk is held).
+
+The output of `dump` is the same byte for byte. md5 of the output of the binary before
+the repair and of the repaired binary are equal for `dump` at 100,000, 200,000 and 400,000
+statements (`--verify merkle`; also `none` at 100,000), for `dump` of the olympics
+generation under both read checks (d0e42d33...; 337,695,911 bytes), for `dump GEN
+pso`, `pos` and `osp` of the olympics generation, and for `dump-ids GEN spo`.
+
+The choice of window and budget on the olympics generation (`--verify merkle`, one run
+each; GDV1 is 9.2 MB, 8,500 pages, and the objects are read in any order):
+
+| `dump` | Wall time | Peak RSS | Bytes fetched | Note |
+| --- | ---: | ---: | ---: | --- |
+| before the repair | 15.5 to 18.5 s | 116 to 118 MB | 23 MB | every chunk stays |
+| the code of `export` (`dropChunkRange` for each block, all chunks forgotten at each window of 256 pages) | 32.0 s | 44.6 MB | 2,020 MB | the first version |
+| the same with `dropChunksBefore` | 25.9 s | 45.6 MB | 1,568 MB | |
+| window 256, budget 16 MiB, `dropChunksBefore` (this repair) | 17.0 to 17.7 s | 45.7 MB | 23 MB | three runs against three of the original |
+| window 1,024, budget 16 MiB | 17.2 s | 50.8 MB | 23 MB | |
+| window 4,096, budget 16 MiB | 16.0 s | 93.8 MB | 23 MB | |
+
+Against the original in three runs taken one after the other, the repair takes 9 to 11
+percent more user CPU time on the olympics generation under `merkle` (16.6 s against
+14.9 s at the minimum) and 39 percent of the memory (45.7 MB against 116 MB). The
+window causes the difference: the objects of the olympics generation are read in any order, and a window of 256 pages
+holds a small part of the 8,500 pages, so pages are fetched and decoded again (182 MB
+of ranges read, against 29 MB with a window of 4,096). Under `none` a window of 256
+pages takes 16 to 20 percent more time than 4,096 (18.7 to 20.6 s against 15.6 to
+17.0 s), so `none` keeps its window. With sequential data (the generations of 100,000
+to 400,000 statements) the window does not matter: 12.5 to 14.3 s before the repair at
+400,000 statements and 11.8 to 12.9 s after. The peak RSS at 400,000 statements for a
+budget of 0, 8, 16, 32 and 64 MiB is 36, 48, 63, 108 and 160 MB: the memory rises by about
+2.2 bytes for each byte of budget.
+
+##### The reader without a cache computed the whole tree for each chunk
+
+`PosixRangeIO.readVerifiedRange?` reads a range of a file by admitting each chunk it
+touches under a Merkle proof. It called `BlockMerkle.proofWith?` for each chunk, which
+computes every level of the tree from the leaves: `n - 1` node hashes for a file of `n`
+chunks. A read of `c` chunks cost `c * (n - 1)` hashes. The callers are
+`l4block-shard-merkle-pread` (any range of one artifact) and `l4block-shard-merkle-scan`
+(four ranges of one artifact). The 854 repair covered the readers with a cache
+(`readVerifiedRangeCached?`, `readVerifiedChunkCached?`), which the IBK3 tools and
+`l4sbm11` use.
+
+The shard packer cuts its blocks at 2 MiB (`maxBlockWireBytes`), so a shard directory
+has at most about 64 chunks for each artifact, and the defect cannot show in a store
+that the packer wrote. A first version of the row packed one statement with a literal of
+8 MB, 16 MB and 32 MB (128, 256 and 512 chunks) and read the artifact with
+`l4block-shard-merkle-pread`: 0.070 s, 0.149 s and 0.342 s of CPU time, 4.9 for 4x
+chunks, which is under the bound of 5.25 on the unrepaired reader. The row was an
+unexpected pass. In user time the cost of the unrepaired reader is 0.35 ms for each
+chunk plus 0.8 microsecond for each pair of chunks (a fit to 512 and 2,048 chunks), so
+the quadratic term is the larger one from about 450 chunks. The packer needs 11 s and
+1.1 GB for a literal of 16 MB and 43 s and 3.0 GB for one of 64 MB (1,024 chunks), so a
+row of 4x chunks above that size cannot use it.
+
+`l4merkle-range-read` (`Harness/MerkleRangeRead.lean`) writes a file of `n` chunks of
+pseudo-random bytes, its `.merkle` sidecar and its root in 1 s for 128 MB, and reads a
+range with one of three readers (`leaves`: `readVerifiedRange?`; `tree`:
+`readVerifiedRangeTree?`; `cached`: `readVerifiedRangeCached?`). The row
+`merkle-range-read-time` reads the whole file at 512, 1,024 and 2,048 chunks (32 MB,
+64 MB, 128 MB), and bounds the user CPU time (minimum of three runs) at 4x chunks to
+5.25 times the time at x. The row bounds the user time because the reader holds the
+chunks, their concatenation and the copy of the range (770 MB of RSS for 128 MB), and
+the page faults of that memory cost 0.2 s to 1.9 s of system time in the same read of
+64 MB on this VM, more than the user time of the repaired reader. The row prints the
+system time. The row was committed first, as an expected failure that names the issue.
+
+| `merkle-range-read-time`, user CPU time of one read of the whole file | 512 chunks | 1,024 | 2,048 | 4x chunks |
+| --- | ---: | ---: | ---: | ---: |
+| before the repair (the row) | 0.332 s | 1.229 s | 4.011 s | 12.1, expected failure |
+| before, minimum of 5 runs by hand | 0.389 s | 1.097 s | 4.088 s | 10.5 |
+| after the repair (the row) | 0.153 s | 0.320 s | 0.630 s | 4.1, pass |
+| after, minimum of 5 runs by hand | 0.166 s | 0.305 s | 0.635 s | 3.8 |
+
+By hand, at 4,096 chunks (268 MB): 18.6 s of CPU time (user plus system, minimum of 3
+runs) before the repair and 1.39 s of user time after. The repaired reader at 512,
+1,024, 2,048 and 4,096 chunks takes 0.166 s, 0.305 s, 0.635 s and 1.388 s of user time:
+1.8 to 2.2 for each doubling. Seven runs of the row after the repair gave 3.5 to 4.7 for
+4x chunks (the row takes the minimum of five reads at each size). The bound of 5.25 lies
+between 4.7 and 10.5, the lowest ratio before the repair.
+
+Repair (`Harness/PosixRangeIO.lean`, `Harness/ShardMerkleScan.lean`):
+
+1. `treeOfLeaves` builds the proof table (`BlockMerkle.Tree`) of a file from its leaves;
+   `treeOf? ref leaves` gives it when the leaves are `ref.chunkCount` many
+   (`treeOf?_eq_some`, `treeOf?_eq_none`, by `Tree.leafCount_ofLeavesWith`).
+2. `readVerifiedChunkTree?` admits a chunk under the proof of the table.
+   `readVerifiedChunkTree?_eq` proves that this is the proof `proofWith?` computes from
+   the leaves, for every list of leaves and index (it follows `Tree.proof?_ofLeavesWith`
+   of the 854 work). The chunk is still checked against the root of the manifest, so a
+   wrong table can refuse a chunk and cannot admit one. `treeOf?_eq_some` and
+   `treeOf?_eq_none` depend on `propext` and `Quot.sound`; `readVerifiedChunkTree?_eq`
+   depends on `propext`, `Classical.choice` and `Quot.sound`.
+3. `readVerifiedRangeTree?` reads a range with a table that the caller built.
+   `readVerifiedRange?` builds the table once for the call and keeps its signature.
+   The loop over the chunks of the range (`readVerifiedChunksTree`) is a tail call with
+   the chunks read so far in an accumulator; the old function recursed once for each
+   chunk, read the rest of the range after a refused chunk, and had a line on the
+   allow list of `tools/lean-tail-recursion-allow.txt` that is removed.
+4. `l4block-shard-merkle-scan` builds the table once for its four reads.
+5. `readVerifiedSingleChunkRange?` (no caller) takes its proof from the table too.
+
+A refused chunk still gives `none`, and the bytes of an accepted range are the same.
+`tests/merkle-range/run.sh` reads files of 1 to 17 chunks (whole, short and one-byte last
+chunks) at random ranges with the three readers and compares the SHA-256 of the result
+with the one that Python computes from the file, checks that a range outside the file or
+of length 0 is refused, and changes one byte in each chunk in turn: every reader refuses
+a range that touches the chunk and reads a range that does not. 1,223 pass, 0 fail
+(out of 1,223), in 16 s. With the check in `readVerifiedChunkProof?` taken out
+(`if true || ...`) the same test gives 746 pass, 477 fail (out of 1,223). The outputs of
+`l4block-shard-merkle-pread` and `l4block-shard-merkle-scan` on a packed shard
+(`docs/fstar-extracted/samples/music.ttl`) are equal to those of the binaries before the
+repair.
 
 ### 11.3 The W3C RDF tests through the store (2026-10-14)
 
