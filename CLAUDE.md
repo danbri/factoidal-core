@@ -173,6 +173,19 @@ Rules that follow:
 - Owner, 2026-10-12, verbatim: "Consider smb11 our baseline for
   shardcore." SBM11 is the Shardborough baseline: every new Shardborough
   performance or design result is compared with SBM11, not with IBK3/IBK5.
+- Owner, 2026-10-14, verbatim: "SMB11 should store rdf graphs regardless of
+  source formats - this is why we have reflected w3c rdf core concepts into
+  Lean. I don't see any reason for the format to be made so explicit for
+  internal data manipulation- file formats are for exchange and publishing".
+  Rule: the store takes the RDF abstract syntax (the `L4Factoidal.RDF` terms,
+  triples and quads of RDF 1.1 and RDF 1.2 Concepts) from one source layer
+  and gives it to one serialiser layer. A concrete syntax is named only at
+  those two edges. No module under `L4Factoidal/Storage/` imports an
+  `L4Factoidal.Syntax` module. Cost of not having this rule: until
+  2026-10-14 the SBM11 packer read only N-Triples and N-Quads, and the
+  coordinator asked the owner whether SBM11 should "accept TriG", a question
+  that the RDF abstract syntax already answers. Tracking:
+  <https://github.com/danbri/factoidal/issues/837>.
 
 ## COTTAS suspended; Shardborough is primary; QLever reader (owner, 2026-10-11)
 
