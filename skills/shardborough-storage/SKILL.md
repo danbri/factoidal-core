@@ -617,6 +617,38 @@ checked at open; a byte changed after activation is NOT detected
 the packer writes the roots and `.merkle` sidecars either way. Bench one
 mode with `VERIFY=none tests/sbm11/bench.sh GEN`.
 
+Merkle reads are linear (2026-10-14, https://github.com/danbri/factoidal/issues/854;
+record: section 11.2 of `docs/designissues/2026-10-11-shardborough-vs-qlever.md`,
+"Time: the Merkle proof of each chunk"). Under `--verify merkle` a reader admits each
+65,536-byte chunk of a file once, by a Merkle proof against the root in the manifest.
+Until 2026-10-14 the proof of a chunk was computed from all the leaves of the file
+(`BlockMerkle.proofWith?`: `n - 1` node hashes for `n` chunks), so a pass over a file of
+`n` chunks hashed `n * (n - 1)` nodes. `dump` and `export` of a generation of 400,000
+statements (a dictionary of 2,274 chunks) took 37.0 s of CPU time before the repair and
+12.0 to 13.7 s after. `BlockMerkle.Tree` keeps the levels of the tree, computed once for
+a file; `PosixRangeIO.VerifiedChunkCache` holds it with the admitted chunks. A proof is
+`log2 n` reads (`Tree.proof?_ofLeavesWith`: the same proof as `proofWith?`), and
+`ChunkedArtifact.verifyChunkWith` still checks the chunk against the manifest root. Rules
+for a new reader of a file under `merkle`:
+
+- Read through `readVerifiedRangeCached?` or `readVerifiedChunkCached?` with a cache
+  from `newChunkCache` (`newVerifiedChunkCache`). `readVerifiedRange?` has no cache and
+  computes the proof of the whole tree for each chunk.
+- To free memory, clear the chunks and keep the cache (`dropChunkRange`,
+  `dropDictChunks`): they keep the tree.
+- A reader that drops chunks and needs them again hashes them again. The olympics
+  export under `merkle` fetched 2,020 MB to read 182 MB, 8.7 s more CPU time than under
+  `none`.
+
+Gate: the rows `sbm11-dump-time` and `sbm11-export-nq-time` of
+`tests/stack/lean_scaling.sh` (100,000, 200,000 and 400,000 statements; 4x the data takes
+at most 5.25 times as long; before the repair 6.0 and 6.7). Other effects, before and after:
+`verify` (the activation checks) of 400,000 statements 27.1 s and 4.7 s of CPU time;
+`scan GEN spo` over 100,000 statements 6.3 s and 3.4 s of CPU time; the slowest of three
+runs of DBpedia d19 under `merkle` 9.9 s and 3.5 s. The warm time of d19 (3.4 s) did not
+change, and it is the same under `none`: the 1.9 s of term decoding in
+https://github.com/danbri/factoidal/issues/825 is another cost.
+
 PRM1 by key range (2026-10-13, https://github.com/danbri/factoidal/issues/805;
 record: section 13 of the stage 4 record). A query process never reads a
 PRM1 file whole: the first use of a permutation reads its 22-byte header
@@ -966,10 +998,12 @@ at most 0.39 byte of peak RSS per output byte (bound 0.75). At 400,000 statement
 (172 MB of output) N-Quads peaks at 36 MB and Turtle at 38 to 46 MB. Repeated runs of
 the same Turtle export differ by up to 10 MB. RDF/XML and JSON-LD (2,000, 4,000 and
 8,000 statements) hold the dataset: 5.9 and 5.5 bytes per output byte, expected
-failures. Time is not linear: N-Quads takes 1.1 s for 25,000 statements, 5.5 s for
-100,000 and 35 s for 400,000 (a ratio of 5 and 6.4 for 4x the data). `l4sbm11 dump`,
-with a cache of 4,096 pages, takes the same time at 100,000 statements (5.1 s), so
-the window does not explain it; the cause was not isolated. The stack case
+failures. Time is linear since 2026-10-14 (https://github.com/danbri/factoidal/issues/854).
+Before, N-Quads took 1.1 s for 25,000 statements, 5.5 s for 100,000 and 35 s for 400,000
+(a ratio of 5 and 6.4 for 4x the data), and `l4sbm11 dump` took the same time. The cause
+was the Merkle proof of each dictionary chunk (the paragraph "Merkle reads are linear",
+after "Read verification is an option"), not the window of 256 pages. Rows `sbm11-dump-time`
+and `sbm11-export-nq-time`: 3.9 for 4x the data after the repair. The stack case
 `sbm11-export` of `tests/stack/run.sh` exports 600,001 quads with a 300,000-byte
 literal as N-Quads, Turtle and TriG under a 512 KB stack.
 
@@ -1036,7 +1070,8 @@ scanner read the braces of the annotation as graph block braces. The scanner now
   across routes.
 - `tests/stack/lean_scaling.sh` rows `sbm11-pack-ttl-memory`,
   `sbm11-pack-trig-memory`, `sbm11-pack-nt-vs-nq`, `sbm11-export-nq-memory`,
-  `sbm11-export-ttl-memory`, `sbm11-export-trig-memory` (assertions) and
+  `sbm11-export-ttl-memory`, `sbm11-export-trig-memory`, `sbm11-dump-time`,
+  `sbm11-export-nq-time` (assertions) and
   `sbm11-pack-rdfxml-memory`, `sbm11-pack-jsonld-memory`,
   `sbm11-pack-ttl-workers`, `sbm11-pack-trig-workers`,
   `sbm11-export-rdfxml-memory`, `sbm11-export-jsonld-memory` (expected failures).

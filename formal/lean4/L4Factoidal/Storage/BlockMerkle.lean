@@ -38,8 +38,22 @@ structure Hasher where
     below is this instance, and every theorem is about it. -/
 def pureHasher : Hasher := ⟨sha256⟩
 
-private def concat (a b : ByteArray) : ByteArray :=
+/-- The bytes of `a` and then the bytes of `b`, as the two lists of bytes put
+    together. This is what `concat` means; it is not what runs. -/
+private def concatSpec (a b : ByteArray) : ByteArray :=
   ByteArray.mk ((a.data.toList ++ b.data.toList).toArray)
+
+/-- `a` and then `b`: one byte copy. `concatSpec` made a list cell for each byte
+    of both. For the leaf hash of a chunk of a file (65,536 bytes) that cost about
+    0.9 ms for each chunk: 2.0 s of the 16.4 s of `l4sbm11 dump` of a generation
+    with a dictionary of 2,274 chunks and `--verify merkle`, after the proof table
+    below (https://github.com/danbri/factoidal/issues/854). `concat_eq_spec` proves
+    that the bytes are the same. -/
+private def concat (a b : ByteArray) : ByteArray := a ++ b
+
+private theorem concat_eq_spec (a b : ByteArray) : concat a b = concatSpec a b := by
+  apply ByteArray.ext
+  simp [concat, concatSpec]
 
 /-- Domain separation prevents a payload hash being confused with a tree node
     hash. The chunk position is carried by the manifest/chunk policy; the tree
@@ -105,6 +119,139 @@ def applyStepWith (h : Hasher) (current : Digest) (step : Step) : Digest :=
 def verifyWith (h : Hasher) (expected : Digest) (chunk : ByteArray) (proof : List Step) : Bool :=
   proof.foldl (applyStepWith h) (leafWith h chunk) == expected
 
+/-! ## A proof table: the levels of the tree, built once
+
+`proofWith?` gives one proof by computing every level of the tree again from the
+leaves: one `nodeWith` for each pair of each level, so a tree of `n` leaves costs
+`n - 1` hashes for ONE proof. A reader that admits every chunk of a file by its own
+proof hashes about `n * (n - 1)` nodes in all. Measured 2026-10-14
+(https://github.com/danbri/factoidal/issues/854): taking the proofs out of
+`l4sbm11 dump` of a generation with a dictionary of 2,274 chunks took its CPU time
+from 36.7 s to 16.4 s.
+
+The levels do not depend on the index. `Tree` keeps them, built once, in arrays. A
+proof is then one sibling for each level, `log2 n` reads. `Tree.proof?_ofLeavesWith`
+proves that it gives the same proof as `proofWith?`, step for step, for every
+hasher, every list of leaves and every index; the verification of a chunk against
+the root (`ChunkedArtifact.verifyChunkWith`) is unchanged. -/
+
+/-- The levels that `proofFuelWith` meets, from the leaves to the level with one
+    digest, each as a list. -/
+def levelsFuel (h : Hasher) : Nat → List Digest → List (List Digest)
+  | 0, _ => []
+  | fuel + 1, level =>
+      level :: (match level with
+        | [] => []
+        | [_] => []
+        | x :: y :: rest => levelsFuel h fuel (nextLevelWith h (x :: y :: rest)))
+
+/-- A proof read off the lists of levels: the walk of `proofFuelWith`, with the
+    next level given and not computed. -/
+def proofLevels? : List (List Digest) → Nat → List Step → Option (List Step)
+  | [], _, _ => none
+  | level :: rest, index, acc =>
+      if level.length ≤ 1 then (if level.length == 1 && index == 0 then some acc else none)
+      else
+        match sibling? level index with
+        | none => none
+        | some step => proofLevels? rest (index / 2) (acc ++ [step])
+
+theorem proofFuelWith_eq_levels (h : Hasher) : ∀ (fuel : Nat) (level : List Digest)
+    (index : Nat) (acc : List Step),
+    proofFuelWith h fuel level index acc = proofLevels? (levelsFuel h fuel level) index acc := by
+  intro fuel
+  induction fuel with
+  | zero => intro level index acc; simp [proofFuelWith, levelsFuel, proofLevels?]
+  | succ fuel ih =>
+    intro level index acc
+    match level with
+    | [] => simp [proofFuelWith, levelsFuel, proofLevels?]
+    | [x] =>
+      cases index <;> simp [proofFuelWith, levelsFuel, proofLevels?]
+    | x :: y :: rest =>
+      simp only [proofFuelWith, levelsFuel, proofLevels?]
+      cases hs : sibling? (x :: y :: rest) index with
+      | none => simp
+      | some step => simp [ih]
+
+/-- The levels of a tree in arrays: a sibling is one read, not a walk down a list. -/
+structure Tree where
+  levels : Array (Array Digest)
+
+private def siblingA? (level : Array Digest) (index : Nat) : Option Step := do
+  let current ← level[index]?
+  if index % 2 == 0 then
+    some { sibling := (level[index + 1]?).getD current, siblingOnLeft := false }
+  else
+    some { sibling := (level[index - 1]?).getD current, siblingOnLeft := true }
+
+/-- The proof from level `k` upward: one sibling for each level, the first
+    (lowest) step first. -/
+def proofArr (levels : Array (Array Digest)) (k index : Nat) (acc : List Step) :
+    Option (List Step) :=
+  if hk : k < levels.size then
+    if levels[k].size ≤ 1 then (if levels[k].size == 1 && index == 0 then some acc else none)
+    else
+      match siblingA? levels[k] index with
+      | none => none
+      | some step => proofArr levels (k + 1) (index / 2) (acc ++ [step])
+  else none
+termination_by levels.size - k
+
+def Tree.ofLevels (ls : List (List Digest)) : Tree := ⟨(ls.map List.toArray).toArray⟩
+
+/-- The tree over `leaves`: every level, computed once. -/
+def Tree.ofLeavesWith (h : Hasher) (leaves : List Digest) : Tree :=
+  Tree.ofLevels (levelsFuel h leaves.length leaves)
+
+/-- The number of leaves of the tree. -/
+def Tree.leafCount (t : Tree) : Nat := (t.levels[0]?.map Array.size).getD 0
+
+/-- The inclusion proof for the leaf `index`. -/
+def Tree.proof? (t : Tree) (index : Nat) : Option (List Step) := proofArr t.levels 0 index []
+
+theorem siblingA?_toArray (level : List Digest) (index : Nat) :
+    siblingA? level.toArray index = sibling? level index := by
+  simp [siblingA?, sibling?]
+
+theorem proofArr_ofLevels (ls : List (List Digest)) :
+    ∀ (k index : Nat) (acc : List Step),
+      proofArr (Tree.ofLevels ls).levels k index acc = proofLevels? (ls.drop k) index acc := by
+  intro k
+  generalize hn : ls.length - k = n
+  induction n generalizing k with
+  | zero =>
+    intro index acc
+    have hk : ¬ k < (Tree.ofLevels ls).levels.size := by
+      simp [Tree.ofLevels]; omega
+    rw [proofArr, dif_neg hk]
+    have : ls.drop k = [] := by apply List.drop_of_length_le; omega
+    rw [this]; simp [proofLevels?]
+  | succ n ih =>
+    intro index acc
+    have hk : k < (Tree.ofLevels ls).levels.size := by
+      simp [Tree.ofLevels]; omega
+    have hkl : k < ls.length := by simpa [Tree.ofLevels] using hk
+    rw [proofArr, dif_pos hk]
+    have hdrop : ls.drop k = ls[k] :: ls.drop (k + 1) := List.drop_eq_getElem_cons hkl
+    have hlev : (Tree.ofLevels ls).levels[k] = ls[k].toArray := by simp [Tree.ofLevels]
+    rw [hdrop, proofLevels?, hlev, List.size_toArray, siblingA?_toArray]
+    have ih' := ih (k + 1) (by omega)
+    simp only [ih']
+
+/-- The proof read from the tree is the proof `proofWith?` computes. -/
+theorem Tree.proof?_ofLeavesWith (h : Hasher) (leaves : List Digest) (index : Nat) :
+    (Tree.ofLeavesWith h leaves).proof? index = proofWith? h leaves index := by
+  unfold Tree.proof? Tree.ofLeavesWith proofWith?
+  rw [proofArr_ofLevels (levelsFuel h leaves.length leaves) 0 index [], List.drop_zero,
+    proofFuelWith_eq_levels]
+
+theorem Tree.leafCount_ofLeavesWith (h : Hasher) (leaves : List Digest) :
+    (Tree.ofLeavesWith h leaves).leafCount = leaves.length := by
+  cases leaves with
+  | nil => simp [Tree.leafCount, Tree.ofLeavesWith, Tree.ofLevels, levelsFuel]
+  | cons x xs => simp [Tree.leafCount, Tree.ofLeavesWith, Tree.ofLevels, levelsFuel]
+
 /-! ## The pure instance
 
 The names every existing caller, `#guard` and theorem uses. They are the
@@ -133,6 +280,19 @@ private def sampleRoot : Digest := root sampleLeaves
 #guard ((proof? sampleLeaves 2).map (verify sampleRoot c)) == some true
 #guard ((proof? sampleLeaves 2).map (verify sampleRoot b)) == some false
 #guard (proof? sampleLeaves 3).isNone
+
+/- The proof table gives the proof of `proof?` at every index, for trees of 0 to 9
+   leaves (an odd level repeats its last digest; the indexes run past the end). -/
+private def guardLeaves (n : Nat) : List Digest :=
+  (List.range n).map fun i => leaf (ByteArray.mk #[i.toUInt8])
+
+#guard (List.range 10).all fun n =>
+  (List.range (n + 2)).all fun i =>
+    (Tree.ofLeavesWith pureHasher (guardLeaves n)).proof? i == proof? (guardLeaves n) i
+#guard (List.range 10).all fun n =>
+  (Tree.ofLeavesWith pureHasher (guardLeaves n)).leafCount == n
+#guard (List.range 1 |>.all fun n =>
+  ((Tree.ofLeavesWith pureHasher (guardLeaves n)).proof? 0).isNone)
 
 /- The suffixed and unsuffixed forms are the same function at `pureHasher`;
    this pins that they stay so if either is edited. -/

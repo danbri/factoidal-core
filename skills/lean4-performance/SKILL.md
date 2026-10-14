@@ -185,6 +185,27 @@ these shapes first in any module that is slow on a large input.
   every ordering on the query path (ORDER BY, GROUP BY and DISTINCT-aggregate
   keys, MIN, MAX, `<` on IRIs and literals).
 
+- **A table that a call computes from the whole input to answer one question.**
+  `BlockMerkle.proofWith?` computed every level of a Merkle tree again for each
+  chunk it admitted, so one proof of a file of `n` chunks cost `n - 1` node
+  hashes and a pass over the file cost `n * (n - 1)`. `l4sbm11 dump` of a
+  generation with a 149 MB dictionary (2,274 chunks) took 37.0 s of CPU time
+  with `--verify merkle` against 13.1 s with `--verify none`; the gdb stacks
+  showed `nextLevelWith` up to 1,107 frames deep under `readVerifiedChunk?`
+  (https://github.com/danbri/factoidal/issues/854). Removing the proofs took 28
+  percent of the CPU time at 100,000 statements (5.8 s to 4.2 s) and 55 percent
+  at 400,000 (36.7 s to 16.4 s), so a pass at 25,000 and 100,000 statements gave
+  3.8 for 4x data (by hand) and a scaling row at those sizes would have passed
+  with the defect. Repair: keep the table with the object that is read many
+  times (`BlockMerkle.Tree`, built at the first chunk that the file's
+  `VerifiedChunkCache` does not hold) and prove that the fast lookup returns what
+  the old function returns (`Tree.proof?_ofLeavesWith`, for every hasher, leaf
+  list and index); the chunk is still checked against the root of the manifest.
+  The same pass found a linear cost: `concat` made a list cell for each byte of a
+  65,536-byte chunk to hash it (`a ++ b` is one byte copy; `concat_eq_spec`),
+  2.0 s of the 16.4 s that remained after the proof table. 400,000 statements:
+  37.0 s to 13.7 s (row `sbm11-dump-time`).
+
 Two more costs are not in an algorithm, and one hazard follows from the repairs:
 
 - **Top-level constants are evaluated when the module is initialised**, in every

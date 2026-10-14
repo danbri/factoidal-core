@@ -1448,3 +1448,5 @@ L4Factoidal_Syntax_RdfXml_serializeNodesTLoop  # (b) element nesting, as seriali
 L4Factoidal_Syntax_RdfXml_litNeed  # (s) the fuel the fuelled serializeNode needs to write a node completely; read by the theorems serialize_fuel_eq and serializeLiteralContent_eq_fuel only, no function of the emitted C outside RdfXml.c calls it (checked 2026-10-13)
 L4Factoidal_Syntax_RdfXml_litNeeds  # (s) as litNeed, for a child list
 L4Factoidal_Tdb2_readStruct  # (c) one call per Thrift struct nesting level, bounded by its depth argument (4); the per-field loop is a for loop (issue 834)
+# --- Added 2026-10-14 by the proof table of https://github.com/danbri/factoidal/issues/854 (BlockMerkle.Tree) ---
+L4Factoidal_Storage_BlockMerkle_levelsFuel  # (c) one call for each level of a Merkle tree: a level of n digests is followed by one of ceil(n/2), and the recursion stops at one digest, so the depth is ceil(log2 n) + 1 for n leaves (the fuel is only a bound). nextLevelWith, which it calls for each level, stays on the first baseline above

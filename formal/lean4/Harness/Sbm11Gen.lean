@@ -252,7 +252,7 @@ def loadLeaves (v : Verify) (io : IO.Ref Nat) (path : String) (ref : Ref) :
 /-- An empty chunk cache under `Verify.none` (never filled), one slot per
     chunk under `merkle`. -/
 def newChunkCache (v : Verify) (ref : Ref) : IO (IO.Ref Harness.PosixRangeIO.VerifiedChunkCache) :=
-  if v == .merkle then Harness.PosixRangeIO.newVerifiedChunkCache ref else IO.mkRef #[]
+  if v == .merkle then Harness.PosixRangeIO.newVerifiedChunkCache ref else IO.mkRef { chunks := #[] }
 
 /-- Bytes `[off, off + len)` of a file of the generation. `merkle`: through
     the verified chunk cache (`readVerifiedRangeCached?`); `none`: one `pread`
@@ -462,11 +462,16 @@ abbrev PageCache := IO.Ref (Std.HashMap Nat (Array ByteArray))
 
 /-- Forget the verified chunks of GDV1 and GDX1 that this open holds (under
     `merkle`; under `none` there are none). The next read of a chunk fetches and
-    checks it again. -/
+    checks it again. The proof tables of the two files stay
+    (`PosixRangeIO.VerifiedChunkCache.tree`): they are not chunks, and a new
+    table costs one hash for each chunk of the file
+    (https://github.com/danbri/factoidal/issues/854). -/
 def dropDictChunks (g : Gen) : IO Unit := do
   if g.verify == .merkle then
-    g.gdvCache.set (← (← newChunkCache g.verify g.gdvRef).get)
-    g.gdxCache.set (← (← newChunkCache g.verify g.gdxRef).get)
+    for cache in [g.gdvCache, g.gdxCache] do
+      cache.modify fun c =>
+        match c with
+        | { chunks, tree } => { chunks := Array.replicate chunks.size none, tree }
 
 /-- Forget the verified chunks that cover bytes `[off, off + len)` of a file
     (under `merkle`). A reader that passes over a permutation once drops the
@@ -477,11 +482,15 @@ def dropChunkRange (g : Gen) (cache : IO.Ref Harness.PosixRangeIO.VerifiedChunkC
   if g.verify == .merkle && len > 0 then
     let first := off / ref.chunkBytes
     let last := (off + len - 1) / ref.chunkBytes
-    cache.modify fun a => Id.run do
-      let mut a := a
-      for i in [first:last + 1] do
-        if i < a.size then a := a.set! i none
-      return a
+    cache.modify fun c =>
+      match c with
+      | { chunks, tree } =>
+        let cleared := Id.run do
+          let mut a := chunks
+          for i in [first:last + 1] do
+            if i < a.size then a := a.set! i none
+          return a
+        { chunks := cleared, tree }
 
 /-- The term of an id. The page cache holds at most `limit` dictionary pages and
     is emptied when it is full; with `dropChunks`, the verified chunks of the

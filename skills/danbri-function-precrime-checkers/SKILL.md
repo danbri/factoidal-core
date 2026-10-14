@@ -181,6 +181,21 @@ scheduling share of the noise. Before the fix: 7,842, 28,769 and 100,264 ms;
 after: section 4.1 of
 `docs/designissues/2026-10-12-sbm11-stage3.md`.
 
+**Run a new row on the unrepaired code first, and pick x from that run.** The
+rows `sbm11-dump-time` and `sbm11-export-nq-time`
+(https://github.com/danbri/factoidal/issues/854, 2026-10-14) bound the CPU time of
+a pass over a generation. The defect was a Merkle proof computed from all the
+leaves of the file for each chunk, so it grows with the square of the dictionary
+(chunks of 65,536 bytes). At 25,000 to 100,000 statements (a 9 MB to 38 MB
+dictionary) 4x data took 3.8 times as long and the row would have passed with the
+defect present; at 100,000 to 400,000 statements (38 MB to 152 MB) it took 6.0 and
+6.7 times as long, against the bound 5.25. After the repair: 3.3 to 4.5 (three runs
+of each row, the second and third with a load average of 3); linear gives 4.0, and the
+bound lies between 4.5 and the 6.0 before. A quadratic term with a
+small constant is below the noise until the input is large enough; the failing
+run shows the size at which the row can see it. Write that ratio next to the
+bound, as the SBM11 packer row does.
+
 ## The rule
 
 1. **A function over input-proportional data is not done until its scaling is

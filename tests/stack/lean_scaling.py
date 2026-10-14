@@ -103,6 +103,31 @@ repaired (docs/designissues/2026-10-10-lean-vs-fstar-performance.md):
                    https://github.com/danbri/factoidal/issues/847. Both library writers take
                    the whole graph or dataset (`graphToRdfXml`, `fromRdf`), so
                    `Sink.Writer.whole` keeps the quads until the end.
+  sbm11-dump-time, sbm11-export-nq-time
+                   CPU time of `l4sbm11 dump` and of `l4sbm11 export --format nquads`
+                   (both with `--verify merkle`, the default for a generation that no
+                   CURRENT pointer names) over generations of 100,000, 200,000 and
+                   400,000 statements (the source of `sbm11_ttl`: 370 characters of
+                   literal for each statement, so the generation is 38 MB, 76 MB and
+                   152 MB): time(4x) at most SBM11_READ_TIME_BOUND (5.25) times time(x).
+                   A pass over one permutation is linear in the statements, which gives
+                   4.0. The bound lies between 4.5 (the highest ratio in three runs of each
+                   row after the repair, the second and third with a load average of 3)
+                   and 6.0 (the lowest ratio before it).
+                   Issue https://github.com/danbri/factoidal/issues/854: the Merkle proof
+                   of each chunk of the dictionary was computed from all the leaves of the
+                   file (`proofWith?`), so a pass over the dictionary hashed n * (n - 1)
+                   tree nodes for n chunks. Measured 2026-10-14 (CPU time at 100,000,
+                   200,000 and 400,000 statements), before the repair (expected failures):
+                   dump 6.2 s, 13.3 s and 37.0 s (6.0 for 4x input); export 5.5 s,
+                   13.0 s and 37.0 s (6.7); after the proof table (`BlockMerkle.Tree`)
+                   and the byte copy in `concat`: dump 3.5 s, 6.9 s and 13.7 s (3.9);
+                   export 3.1 s, 5.8 s and 12.0 s (3.9); a second run with a load
+                   average of 3: dump 4.1 s, 6.9 s and 13.5 s (3.3); export 2.8 s,
+                   6.3 s and 12.3 s (4.5); a third: dump 4.1 s, 7.3 s and 15.2 s (3.7);
+                   export 3.5 s, 6.8 s and 11.9 s (3.4). With `--verify none` (no proof; unchanged by
+                   the repair) dump takes 3.2 s and 11.5 s to 13.1 s at 100,000 and
+                   400,000 statements.
   sbm11-pack-nt-vs-nq  `l4sbm11-pack` over 100,000 N-Triples statements takes at most
                    2.0 times the CPU time of the same pack over the same triples as
                    N-Quads text (one graph name on every line). N-Triples was read
@@ -984,6 +1009,57 @@ def sbm11_export_memory_row(rid):
                             f"per output byte (bound {bound})")
 
 
+# CPU time of one pass over a generation (https://github.com/danbri/factoidal/issues/854).
+# `l4sbm11 dump` and `l4sbm11 export --format nquads` read the SPO permutation block by
+# block and turn each id into a term; the work for one quad does not depend on the size
+# of the store, so the time is linear in the statements and time(4x) is 4.0 times time(x).
+# The bound is 5.25: it lies between the highest ratio after the repair (4.5; three runs
+# of each row, the second and third with a load average of 3: CPU time of the child, not
+# wall time, but the caches of the 4 vCPUs are shared) and the lowest before it (6.0 for
+# dump, 6.7 for export). The sizes are the ones of the issue (100,000 to 400,000
+# statements): the quadratic term is a cost for each chunk of the dictionary that grows
+# with the number of chunks, so it is small beside the linear cost below 100 MB of
+# dictionary (the ratio at 25,000 to 100,000 statements was 3.8 before the repair, so
+# a smaller x does not show the defect). Both rows read the same three generations,
+# packed once for the run.
+SBM11_READ_TIME_BOUND = 5.25
+SBM11_READ_TIME_ROWS = {
+    "sbm11-dump-time": (
+        100000, lambda gen, out: [str(SBM11_BIN), "dump", str(gen), "--verify", "merkle"]),
+    "sbm11-export-nq-time": (
+        100000, lambda gen, out: [str(SBM11_BIN), "export", str(gen), "--format", "nquads",
+                                  "--out", str(out), "--verify", "merkle"]),
+}
+
+
+def sbm11_read_time_row(rid):
+    x, cmd_of = SBM11_READ_TIME_ROWS[rid]
+    sbm11_need_pack_bin()
+    if not SBM11_BIN.exists():
+        raise MeasurementError(f"{SBM11_BIN} not built (cd formal/lean4 && lake build l4sbm11)")
+    pts = []
+    for n in (x, 2 * x, 4 * x):
+        gen = sbm11_export_generation(sbm11_ttl.__name__, sbm11_ttl, "ttl", n)
+        out = FIX / f"{rid}-out-{n}"
+        out.unlink(missing_ok=True)
+        t = bl.run_once(cmd_of(gen, out), CAP)
+        if t["status"] != "ok":
+            raise MeasurementError(f"{rid}: n={n}: exit status {t['status']}")
+        if rid == "sbm11-dump-time":
+            lines = t["out_lines"]
+        else:
+            lines = sum(1 for _ in out.open("rb")) if out.exists() else 0
+            out.unlink(missing_ok=True)
+        if lines != n:
+            raise MeasurementError(f"{rid}: n={n}: the command wrote {lines} lines")
+        pts.append((n, t["cpu"]))
+    (n1, t1), (n2, t2), (n4, t4) = pts
+    ok = t4 <= SBM11_READ_TIME_BOUND * max(t1, FLOOR)
+    return ok, (f"n={n1} {t1:.3f} s -> n={n2} {t2:.3f} s -> n={n4} {t4:.3f} s CPU "
+                f"(ratios {t2 / max(t1, 1e-9):.1f} and {t4 / max(t2, 1e-9):.1f} per doubling; "
+                f"{t4 / max(t1, 1e-9):.1f} for 4x input, bound {SBM11_READ_TIME_BOUND})")
+
+
 # `l4sbm11-pack` over N-Triples text takes at most SBM11_PACK_RATIO times the CPU
 # time of the same pack over the same triples as N-Quads text. N-Triples is read
 # by the strict triple reader, N-Quads by the quad reader; both are line streams
@@ -1246,6 +1322,8 @@ def main() -> int:
         + list(SBM11_PACK_MEMORY_ROWS) + list(SBM11_EXPORT_MEMORY_ROWS))
     series_rows = [r for r in names if r in SERIES_ROWS] or (
         [] if names else list(SERIES_ROWS))
+    time_rows = [r for r in names if r in SBM11_READ_TIME_ROWS] or (
+        [] if names else list(SBM11_READ_TIME_ROWS))
     run_startup = (not names) or ("startup" in names)
     passed = failed = xfailed = 0
     print(f"Lean scaling assertion: time(4x) <= {BOUND} * max(time(x), {FLOOR} s) "
@@ -1298,6 +1376,25 @@ def main() -> int:
         issue = XFAIL.get(rid)
         try:
             ok, detail = memory_row(rid)
+        except MeasurementError as e:
+            failed += 1
+            print(f"  FAIL {rid}: cannot measure: {e}")
+            continue
+        if issue and not ok:
+            xfailed += 1
+            print(f"  XFAIL {rid} ({issue}): {detail}")
+        elif issue and ok:
+            failed += 1
+            print(f"  UNEXPECTED PASS {rid}: {detail}: flip it to an assertion "
+                  f"(remove it from XFAIL) and close {issue}")
+        else:
+            passed += ok
+            failed += (not ok)
+            print(f"  {'PASS' if ok else 'FAIL'} {rid}: {detail}")
+    for rid in time_rows:
+        issue = XFAIL.get(rid)
+        try:
+            ok, detail = sbm11_read_time_row(rid)
         except MeasurementError as e:
             failed += 1
             print(f"  FAIL {rid}: cannot measure: {e}")

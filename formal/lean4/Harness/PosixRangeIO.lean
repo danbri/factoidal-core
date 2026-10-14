@@ -107,25 +107,64 @@ def verifiedReadFootprint? (ref : Ref) (range : ByteRange) : Option VerifiedRead
          fetchedBytes := lengths.foldl (fun total length => total + length) 0
          chunks := lengths.length }
 
-/-- A cache is indexed by the already validated fixed-chunk ordinal.  The
+/-- The chunks of one file that a reader has admitted, and the proof table of the
+    file's Merkle tree.
+
+    `chunks` is indexed by the already validated fixed-chunk ordinal.  The
     earlier association-list representation was deliberately simple, but a
     full scan of a large artifact performs one lookup per row and made cache
     hits grow linearly with the number of admitted chunks.  This bounded
-    sparse array keeps the same trust boundary -- only `readVerifiedChunk?`
-    inserts bytes -- while making an admitted-chunk lookup constant time. -/
-abbrev VerifiedChunkCache := Array (Option ByteArray)
+    sparse array keeps the same trust boundary -- only the chunk readers
+    insert bytes -- while making an admitted-chunk lookup constant time.
+
+    `tree` is the file's levels (`BlockMerkle.Tree`), computed from the leaves
+    of the first call that needs a proof and kept with the chunks.  Before
+    2026-10-14 every admitted chunk computed the whole tree again
+    (`proofWith?`: `n - 1` hashes for one proof of a file of `n` chunks), so a
+    pass over a file cost `n * (n - 1)` hashes
+    (https://github.com/danbri/factoidal/issues/854).  The proof read from the
+    table is the proof `proofWith?` computes (`Tree.proof?_ofLeavesWith`), and
+    the chunk is still verified against the root of the manifest, so a wrong
+    table can only refuse a chunk.  The leaves are read when the table is
+    built, once for the cache; a call that finds its chunk, or the table,
+    does not look at them. -/
+structure VerifiedChunkCache where
+  chunks : Array (Option ByteArray)
+  tree : Option Tree := none
 
 def newVerifiedChunkCache (ref : Ref) : IO (IO.Ref VerifiedChunkCache) :=
-  IO.mkRef (Array.replicate ref.chunkCount none)
+  IO.mkRef { chunks := Array.replicate ref.chunkCount none }
 
-private def readVerifiedChunk? (path : String) (ref : Ref) (leaves : List Digest)
+/-- Read the chunk `index` and admit it under `proof?`, a proof for that index,
+    or refuse it. -/
+private def readVerifiedChunkProof? (path : String) (ref : Ref) (proof? : Option (List Step))
     (index : Nat) : IO (Option ByteArray) := do
-  match offset? ref index, expectedBytes? ref index, proofWith? nativeHasher leaves index with
+  match offset? ref index, expectedBytes? ref index, proof? with
   | some offset, some length, some proof =>
       match ← readRange? path { offset, length } with
       | some chunk => if verifyChunkWith nativeHasher ref index chunk proof then pure (some chunk) else pure none
       | none => pure none
   | _, _, _ => pure none
+
+/-- One chunk by a proof that `proofWith?` computes from the leaves: the cost of
+    a whole tree.  The readers without a cache use it. -/
+private def readVerifiedChunk? (path : String) (ref : Ref) (leaves : List Digest)
+    (index : Nat) : IO (Option ByteArray) :=
+  readVerifiedChunkProof? path ref (proofWith? nativeHasher leaves index) index
+
+/-- The proof table of the file, built from `leaves` when the cache has none.
+    `none` when `leaves` are not `ref.chunkCount` many: no proof of a tree of
+    another size can admit a chunk of this file. -/
+private def cachedTree? (ref : Ref) (leaves : List Digest)
+    (cache : IO.Ref VerifiedChunkCache) : IO (Option Tree) := do
+  match (← cache.get).tree with
+  | some t => pure (some t)
+  | none =>
+      let t := Tree.ofLeavesWith nativeHasher leaves
+      if t.leafCount != ref.chunkCount then pure none
+      else
+        cache.modify fun c => { c with tree := some t }
+        pure (some t)
 
 /-- Admit one fixed chunk through the same positioned-read and Merkle-proof
     path as `readVerifiedRangeCached?`.  A cache hit reports zero newly
@@ -135,15 +174,20 @@ private def readVerifiedChunk? (path : String) (ref : Ref) (leaves : List Digest
 def readVerifiedChunkCached? (path : String) (ref : Ref) (leaves : List Digest)
     (cache : IO.Ref VerifiedChunkCache) (index : Nat) :
     IO (Option (ByteArray × VerifiedReadFootprint)) := do
-  match (← cache.get)[index]? with
+  match (← cache.get).chunks[index]? with
   | some (some chunk) =>
       pure (some (chunk, { requestedBytes := 0, fetchedBytes := 0, chunks := 0 }))
   | _ =>
-      match ← readVerifiedChunk? path ref leaves index with
+      match ← cachedTree? ref leaves cache with
       | none => pure none
-      | some chunk =>
-          cache.modify fun chunks => chunks.set! index (some chunk)
-          pure (some (chunk, { requestedBytes := chunk.size, fetchedBytes := chunk.size, chunks := 1 }))
+      | some tree =>
+          match ← readVerifiedChunkProof? path ref (tree.proof? index) index with
+          | none => pure none
+          | some chunk =>
+              cache.modify fun c =>
+                match c with
+                | { chunks, tree } => { chunks := chunks.set! index (some chunk), tree }
+              pure (some (chunk, { requestedBytes := chunk.size, fetchedBytes := chunk.size, chunks := 1 }))
 
 private def readVerifiedChunks (path : String) (ref : Ref) (leaves : List Digest) :
     List Nat → IO (Option (List ByteArray))
@@ -219,7 +263,9 @@ private def readCachedChunks (path : String) (ref : Ref) (leaves : List Digest)
 def readVerifiedRangeCached? (path : String) (ref : Ref) (leaves : List Digest)
     (cache : IO.Ref VerifiedChunkCache) (range : ByteRange) :
     IO (Option (ByteArray × VerifiedReadFootprint)) := do
-  if leaves.length != ref.chunkCount then return none
+  -- The leaves are not counted here: `readVerifiedChunkCached?` counts them once,
+  -- when it builds the proof table (a count on every read was a walk down the
+  -- list of leaves for each read).
   match chunkIndices? ref range with
   | none => pure none
   | some (first, indices) =>

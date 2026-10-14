@@ -1010,12 +1010,143 @@ stack (https://github.com/danbri/factoidal/issues/853, row `JLD-WSTACK` of
 `tests/known-defects/run.sh`); under the default stack the export of 30,000
 references takes 67 s (https://github.com/danbri/factoidal/issues/712).
 
-Time (N-Quads, one run each): 1.1 s for 25,000 statements, 5.5 s for 100,000 and
-35 s for 400,000. The ratio for 4x the data is 5 and 6.4, under the bound of 9 that
-the scaling suite uses for time. `l4sbm11 dump` with a cache of 4,096 pages takes
-5.1 s at 100,000 statements, against 5.6 s for the export with a window of 256
-pages, so the size of the window does not explain the time. The cause of the
-growth from 100,000 to 400,000 statements was not isolated.
+#### Time: the Merkle proof of each chunk (issue 854, 2026-10-14)
+
+Tracking: https://github.com/danbri/factoidal/issues/854.
+
+Symptom. Before the repair, the N-Quads export took 1.1 s for 25,000 statements,
+5.5 s for 100,000 and 35 s for 400,000 (one run each, on a shared machine).
+`l4sbm11 dump` took the same time. Four times more data took 5 to 6.4 times more
+time. A pass over one permutation does work for each quad that does not depend on
+the size of the store, so 4x data must take 4.0 times as long. The rows
+`sbm11-dump-time` and `sbm11-export-nq-time` of `tests/stack/lean_scaling.py`
+measure the CPU time of the child process at 100,000, 200,000 and 400,000
+statements (the source of `sbm11_ttl`: 370 characters of literal for each
+statement; generations of 38 MB, 76 MB and 152 MB) and bound the time at 4x data
+to 5.25 times the time at x. Linear time gives 4.0. The bound lies between 4.5 (the
+highest ratio after the repair, in three runs of each row) and 6.0 (the lowest before
+it). The rows were committed first, as expected failures that name the issue.
+
+| Row (CPU time, `--verify merkle`) | 100,000 | 200,000 | 400,000 | 4x data |
+| --- | ---: | ---: | ---: | ---: |
+| `sbm11-dump-time`, before the repair | 6.2 s | 13.3 s | 37.0 s | 6.0, expected failure |
+| `sbm11-export-nq-time`, before the repair | 5.5 s | 13.0 s | 37.0 s | 6.7, expected failure |
+| `sbm11-dump-time`, after | 3.5 s | 6.9 s | 13.7 s | 3.9, pass |
+| `sbm11-export-nq-time`, after | 3.1 s | 5.8 s | 12.0 s | 3.9, pass |
+
+A second run after the repair, with a load average of 3, gave 4.1 s, 6.9 s and 13.5 s
+for `dump` (3.3) and 2.8 s, 6.3 s and 12.3 s for the export (4.5); a third gave 4.1 s,
+7.3 s and 15.2 s (3.7) and 3.5 s, 6.8 s and 11.9 s (3.4). A row at 25,000 and
+100,000 statements would have passed with the defect: `dump` took 1.5 s and 5.8 s
+there (3.8 for 4x data, by hand).
+
+Where the time went. A generation that no CURRENT pointer names is read with
+`--verify merkle` by default: each 65,536-byte chunk of a file is admitted once,
+by a Merkle proof against the root of the manifest. With `--verify none` (no
+proof) `dump` took 3.2 s at 100,000 statements and 13.1 s at 400,000 (4.0 for 4x
+data), so the growth was in the proofs. `perf` does not work on this VM (its
+wrapper does not match the kernel), so the profile is gdb: 30 stack samples
+(`thread apply all bt`, about one a second) of `l4sbm11 dump GEN --verify merkle`
+at 400,000 statements. 12 samples are inside `BlockMerkle.proofWith?`, 7 are in the
+check of the chunk (`verifyWith`, the leaf hash), 11 are elsewhere (id to term, the
+N-Quads line). In those 12, `nextLevelWith` is up to 1,107 frames deep (one frame
+for each pair of leaves). The stack of those samples, outermost first:
+`_lean_main`, `Sbm11Cli.runDump`, `Sbm11Cli.quadText`, `Sbm11Gen.termOfIdLimit`,
+`Dict.pageM`, `Dict.pageBytesM`, `Sbm11Gen.gdvFetch`, `Sbm11Gen.verifiedRead`,
+`PosixRangeIO.readVerifiedRangeCached?`, `readCachedChunks`,
+`readVerifiedChunkCached?`, `readVerifiedChunk?`, `BlockMerkle.proofFuelWith`,
+`nextLevelWith` (repeated), `nodeWith`, then `sha256` or `List.toArray`.
+
+Cause. `proofWith?` gives the proof of one leaf by computing every level of the
+tree again from the leaves: `n - 1` node hashes for a file of `n` chunks. The reader
+called it for each chunk that it admitted. A pass over the dictionary file (GDV1,
+149 MB, 2,274 chunks) hashed about `n * (n - 1)` = 5.2 million nodes at about 3 µs
+each (`concat` made lists of bytes for each node). Taking the proofs out
+removed 28 percent of the CPU time of `dump` at 100,000 statements (5.8 s to 4.2 s)
+and 55 percent at 400,000 (36.7 s to 16.4 s). The export drops the verified
+dictionary chunks each time its window of 256 pages is full, so that its memory
+stays flat, and then admits them again: more proofs than `dump`, the same cause.
+The window of 256 pages is not the cause (`dump` with 4,096 pages took 5.1 s at
+100,000 statements, the export with 256 took 5.6 s: the earlier measurement).
+
+Repair (`L4Factoidal/Storage/BlockMerkle.lean`, `Harness/PosixRangeIO.lean`,
+`Harness/Sbm11Gen.lean`).
+
+1. `BlockMerkle.Tree` holds the levels of the tree in arrays, computed once
+   (`Tree.ofLeavesWith`). A proof is one sibling for each level (`Tree.proof?`,
+   `log2 n` reads). `Tree.proof?_ofLeavesWith` proves that it returns the proof of
+   `proofWith?` for every hasher, every list of leaves and every index, by
+   `proofFuelWith_eq_levels` and `proofArr_ofLevels`. The axioms are `propext`,
+   `Classical.choice` and `Quot.sound`. `#guard`s compare the two for trees of 0 to
+   9 leaves.
+2. `PosixRangeIO.VerifiedChunkCache` is a structure: the chunks, and the tree,
+   built from the leaves at the first chunk that the cache does not hold. Every
+   cached read uses it, so the IBK3 readers (`readVerifiedRangeCached?`) have the
+   same repair. `ChunkedArtifact.verifyChunkWith` still checks each chunk against the
+   root of the manifest: a wrong table can refuse a chunk and cannot admit one.
+   `dropDictChunks` and `dropChunkRange` clear the chunks and keep the tree. The
+   count of the leaves is checked once, when the tree is built, and no longer by a
+   walk down the list of leaves on every read. The readers without a cache
+   (`readVerifiedRange?`: the Merkle session tools of the IBK3 layouts) still
+   compute `proofWith?` for each chunk.
+3. `BlockMerkle.concat` (the bytes of `a` and then of `b`, in the leaf hash and the
+   node hash) made a list cell for each byte: 65,536 for a chunk. It is now
+   `a ++ b`, one byte copy, and `concat_eq_spec` proves it the same bytes. It took
+   2.0 s of the 16.4 s of `dump` at 400,000 statements (14.4 s after).
+4. `tools/lean-tail-recursion-allow.txt` has a line for `levelsFuel` (one call for
+   each level of the tree: `ceil(log2 n) + 1` deep).
+
+After the repair the two rows pass (table above). The output is byte-identical:
+`dump` of the generations of 25,000, 100,000 and 400,000 statements (md5 of the
+output of the binary before the repair and of the repaired binary), and `dump` and
+`export` in N-Quads, Turtle and TriG of the olympics generation under both read
+checks. Other commands that read through the Merkle check, CPU time before and
+after: `scan GEN spo` over all rows at 100,000 statements 6.3 s and 3.4 s; `verify`
+(the activation checks) 3.5 s and 1.6 s at 100,000 statements and 27.1 s and 4.7 s
+at 400,000 (the phase that checks the dictionary keys: 22.0 s and 1.7 s of wall time).
+
+The olympics generation (`sbm11/s3/wfull`: 1,781,625 quads, 543,967 terms; GDV1 is
+9.2 MB, 140 chunks, so the quadratic term is small here). One run each on the 4
+vCPUs shared with another process (load average 1 to 3, 2026-10-14); peak RSS is
+`ru_maxrss` of the child, the measure of `tests/trig-pack/peak_rss.py`. The
+CLI default for this generation is `--verify none`, because a CURRENT pointer names
+it; the repair does not change that path.
+
+| Command | `--verify none`, before: wall / CPU / peak RSS | after | `--verify merkle`, before | after | Output |
+| --- | --- | --- | --- | --- | ---: |
+| `dump` | 15.9 s / 15.6 s / 77 MB | 17.2 s / 16.9 s / 80 MB | 18.2 s / 18.1 s / 120 MB | 17.9 s / 17.6 s / 117 MB | 337,695,911 bytes |
+| `export` N-Quads | 19.7 s / 19.4 s / 40 MB | 19.2 s / 18.9 s / 40 MB | 79.9 s / 79.0 s / 46 MB | 28.1 s / 27.6 s / 46 MB | 337,695,911 bytes |
+| `export` Turtle | 20.2 s / 19.9 s / 40 MB | 21.8 s / 21.5 s / 40 MB | 81.4 s / 80.0 s / 54 MB | 29.2 s / 28.9 s / 54 MB | 216,804,341 bytes |
+| `export` TriG | 19.4 s / 19.2 s / 40 MB | 20.7 s / 20.5 s / 40 MB | 83.0 s / 81.7 s / 46 MB | 28.6 s / 28.2 s / 42 MB | 216,804,345 bytes |
+
+Per statement, CPU time of the N-Quads export: 10.6 µs with `--verify none`; with
+`--verify merkle` 44 µs before and 15.5 µs after. The CPU times of the `none`
+columns before and after differ by -3 to +9 percent: the repair does not change that
+path, so this is the noise of a shared machine. With
+`merkle` the export is 8.7 s slower than with `none`: it drops the dictionary chunks
+whenever its window of 256 pages is full, and each chunk that it needs again is read
+and hashed again (SHA-256 of 65,536 bytes). Its summary line shows it: 2,020 MB
+fetched to read 182 MB (11 times), against 182 MB with `none`. `dump` keeps its chunks,
+so it has no such cost, and its peak RSS is 117 MB against 80 MB. The output of
+N-Quads is the source file byte for byte (337,695,911 bytes).
+
+Oxigraph. The `oxigraph` command is not on PATH. pyoxigraph 0.5.11 (the same Rust
+store, installed in a virtual environment) loaded `olympics.nt` in 9.7 s (a store of
+172 MB, load peak 1.3 GB) and dumped it with `Store.dump` (one run each, same VM, same
+load):
+
+| Dump | wall / CPU / peak RSS | Output | Our `export` after, default read check (CPU time) |
+| --- | --- | ---: | ---: |
+| N-Quads | 11.7 s / 11.5 s / 114 MB | 338,825,059 bytes | 18.9 s (1.6 times) |
+| Turtle | 12.0 s / 11.8 s / 115 MB | 200,593,437 bytes | 21.5 s (1.8 times) |
+| TriG | 10.8 s / 10.7 s / 114 MB | 200,593,437 bytes | 20.5 s (1.9 times) |
+
+The two N-Quads dumps hold the same 1,781,625 quads except the datatype of 282,287
+integer literals: the source and our export have `xsd:int`, the dump of Oxigraph has
+`xsd:integer`. The count of `xsd:int` in the source is 282,287. When `xsd:int` in our
+export is rewritten to `xsd:integer`, the two sorted dumps have the same md5. Our
+export takes 1.6 to 1.9 times the CPU time of the dump of Oxigraph and 40 MB against
+114 MB of peak RSS.
 
 ### 11.3 The W3C RDF tests through the store (2026-10-14)
 
