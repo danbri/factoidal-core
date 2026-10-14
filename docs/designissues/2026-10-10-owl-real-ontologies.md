@@ -38,7 +38,8 @@ F\* steps, `prlimit --as=6000000000` for both.
   parser holds 40 to 50 bytes of resident memory per document byte (GO basic,
   118 MB: 4.9 GB, F\* 0.83 GB; https://github.com/danbri/factoidal/issues/771);
   the Lean and F\* RDF/XML parsers give an `xml:lang` to the next sibling
-  element (https://github.com/danbri/factoidal/issues/329).
+  element (https://github.com/danbri/factoidal/issues/329; the Lean parser is
+  repaired, 2026-10-14, https://github.com/danbri/factoidal/issues/841).
 - ✅ 2026-10-13 (§ 10, OKR batch 1 KR 3.4): the QUDT closure peaks at 1,352 MB
   and writes its lines as it goes (issue 758); the species check of QUDT takes
   2.27 s of CPU time, with indexes proved equal to the readable definition
@@ -266,7 +267,11 @@ answer `true`.
   11,705; 78,833 against 78,835), where a plain literal becomes equal to an
   existing tagged one. The F\* parser has the same defect. Recorded on
   https://github.com/danbri/factoidal/issues/329 (comment of 2026-10-10); gate
-  row `ro-parse` (expected failure).
+  row `ro-parse` (expected failure). Repaired in the Lean parser on 2026-10-14
+  (https://github.com/danbri/factoidal/issues/841, section 3c.7 of
+  `2026-09-03-rdf-parsing-strategy.md`): RO reads 11,705 triples and the Cell
+  Ontology 78,835, as rdflib does, and `ro-parse` is a pass. The F\* parser
+  still has the defect (row `RDFXML-LANG-SCOPE` of `tests/known-defects/run.sh`).
 - **`factoidal count` (F\*) counts statements as read**, so a repeated triple
   counts again: wine 2,012 and food 900 against 1,839 and 870 distinct triples.
   The Lean `parse` count is the graph size. `l4factoidal parse --out nquads`

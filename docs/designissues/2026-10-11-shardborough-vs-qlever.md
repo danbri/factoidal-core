@@ -952,21 +952,22 @@ byte for byte; the manifests differ in the source length and digest.
 
 | Fixture | Content | Syntaxes exported and compared | Result |
 | --- | --- | --- | --- |
-| D1 | no blank nodes, default graph | N-Quads, N-Triples, Turtle, TriG, JSON-LD | byte-identical |
-| D1 | the same | RDF/XML | expected failure, below |
+| D1 | no blank nodes, default graph | N-Quads, N-Triples, Turtle, TriG, RDF/XML, JSON-LD | byte-identical (RDF/XML: an expected failure until 2026-10-14, below) |
 | D2 | D1 and four quads in two named graphs | N-Quads, TriG, JSON-LD | byte-identical |
 | D2 | the same | N-Triples, Turtle, RDF/XML | refused before any output, naming the first graph; `--graph default` gives D1, `--graph all` the union, `--graph IRI` that graph |
 | D3 | blank nodes | all six | equal RDFC-1.0 canonical N-Quads |
 | D4 | RDF 1.2: nested triple terms, a directional language string | N-Triples, N-Quads, Turtle, TriG | byte-identical |
 | D4 | the same | RDF/XML, JSON-LD | refused: no form for a triple term |
-| multi | 1 MB generated (2 sets) | N-Quads, TriG (named graphs); N-Triples, Turtle (default graph) | byte-identical |
+| multi | 1 MB generated (2 sets) | N-Quads, TriG (named graphs); N-Triples, Turtle, RDF/XML (default graph) | byte-identical |
 | empty | no quad | all six | each export packs to the empty generation |
 
-The expected failure (https://github.com/danbri/factoidal/issues/841): the
-RDF/XML of D1 is correct, but both RDF/XML readers apply the `xml:lang` of a
-property element to the property elements after it, so `"Alice"` reads back as
-`"Alice"@en`. The test checks that this is the only difference between the two
-dumps, and turns the run red when the generations are equal. Also tested: an
+The expected failure until 2026-10-14 (https://github.com/danbri/factoidal/issues/841):
+the RDF/XML of D1 was correct, but the Lean RDF/XML reader applied the `xml:lang`
+of a property element to the property elements after it, so `"Alice"` read back
+as `"Alice"@en`. The reader is repaired (`docs/designissues/2026-09-03-rdf-parsing-strategy.md`
+section 3c.7) and the case is an assertion; the generated set of 12,000 triples
+also goes through RDF/XML now (before the repair, 3,000 of its quads read back
+different). Also tested: an
 N-Quads export is `dump` byte for byte (D1 to D4); `--out` and standard output
 give the same text and a failed export leaves no file; `--prefix` shortens the
 IRIs of Turtle and TriG and the export reads back the same; the usage errors

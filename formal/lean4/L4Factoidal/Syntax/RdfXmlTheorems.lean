@@ -19,6 +19,13 @@ to give: a generated label and an `rdf:nodeID`-derived label can never
 collide, so the F* source's `rdfxml_b<N>`-vs-`nodeID` hazard cannot
 arise here.
 
+And the scope claim of XML 1.0 §2.12 (XML Base §3, Namespaces in XML §6.1):
+the scope that a property element opens closes with it, so the language, base,
+direction, version switch and namespace declarations in force after a property
+element are the ones in force before it (`propertyElt_scope`,
+`propertyEltList_scope`;
+https://github.com/danbri/factoidal/issues/841).
+
 No `sorry`, no user `axiom`, no `native_decide`. The `#print axioms`
 audit lines at the bottom show the base every theorem here rests on.
 -/
@@ -39,6 +46,13 @@ projections are what lets the scoped-update lemmas below be one-liners. -/
   simp only [St.fail]; split <;> rfl
 
 @[simp] theorem fail_lang (st : St) (m : String) : (st.fail m).lang = st.lang := by
+  simp only [St.fail]; split <;> rfl
+
+@[simp] theorem fail_dir (st : St) (m : String) : (st.fail m).dir = st.dir := by
+  simp only [St.fail]; split <;> rfl
+
+@[simp] theorem fail_sawVersion12 (st : St) (m : String) :
+    (st.fail m).sawVersion12 = st.sawVersion12 := by
   simp only [St.fail]; split <;> rfl
 
 @[simp] theorem fail_liCounter (st : St) (m : String) :
@@ -159,6 +173,103 @@ revert to the parent's on the way out. -/
 
 @[simp] theorem restoreScope_lang (parent child : St) :
     (restoreScope parent child).lang = parent.lang := rfl
+
+@[simp] theorem restoreScope_dir (parent child : St) :
+    (restoreScope parent child).dir = parent.dir := rfl
+
+@[simp] theorem restoreScope_sawVersion12 (parent child : St) :
+    (restoreScope parent child).sawVersion12 = parent.sawVersion12 := rfl
+
+/-! ## XML §2.12 — a property element's scope closes with it
+
+The `xml:lang`, `xml:base`, `its:dir`, `rdf:version` and `xmlns` declarations of
+a property element apply to that element and its content, never to the property
+elements after it (XML 1.0 §2.12; XML Base §3; Namespaces in XML §6.1).
+`closePropertyScope` reverts the five fields to those of the node element that
+holds the property element. It keeps what flows out of a property element: the
+`rdf:li` counter of the node element, the blank node counter, the `rdf:ID`
+keys and the first error. Until 2026-10-14 `propertyElt` returned the state of
+the property element itself and the language of one property element was read
+into the next (https://github.com/danbri/factoidal/issues/841). -/
+
+@[simp] theorem closePropertyScope_base (parent child : St) :
+    (closePropertyScope parent child).base = parent.base := rfl
+
+@[simp] theorem closePropertyScope_scope (parent child : St) :
+    (closePropertyScope parent child).scope = parent.scope := rfl
+
+@[simp] theorem closePropertyScope_lang (parent child : St) :
+    (closePropertyScope parent child).lang = parent.lang := rfl
+
+@[simp] theorem closePropertyScope_dir (parent child : St) :
+    (closePropertyScope parent child).dir = parent.dir := rfl
+
+@[simp] theorem closePropertyScope_sawVersion12 (parent child : St) :
+    (closePropertyScope parent child).sawVersion12 = parent.sawVersion12 := rfl
+
+/-- The `rdf:li` counter flows out (contrast `restoreScope_liCounter`): an
+`rdf:li` property element advances the counter of its node element. -/
+@[simp] theorem closePropertyScope_liCounter (parent child : St) :
+    (closePropertyScope parent child).liCounter = child.liCounter := rfl
+
+@[simp] theorem closePropertyScope_bnodeCounter (parent child : St) :
+    (closePropertyScope parent child).bnodeCounter = child.bnodeCounter := rfl
+
+@[simp] theorem closePropertyScope_seenIds (parent child : St) :
+    (closePropertyScope parent child).seenIds = child.seenIds := rfl
+
+/-- Two states have the same XML scope: the same base IRI, namespace bindings,
+language, base direction and version switch. -/
+def SameXmlScope (a b : St) : Prop :=
+  a.base = b.base ∧ a.scope = b.scope ∧ a.lang = b.lang ∧ a.dir = b.dir ∧
+    a.sawVersion12 = b.sawVersion12
+
+theorem SameXmlScope.refl (a : St) : SameXmlScope a a := ⟨rfl, rfl, rfl, rfl, rfl⟩
+
+theorem SameXmlScope.trans {a b c : St} (h₁ : SameXmlScope a b) (h₂ : SameXmlScope b c) :
+    SameXmlScope a c :=
+  ⟨h₁.1.trans h₂.1, h₁.2.1.trans h₂.2.1, h₁.2.2.1.trans h₂.2.2.1,
+   h₁.2.2.2.1.trans h₂.2.2.2.1, h₁.2.2.2.2.trans h₂.2.2.2.2⟩
+
+theorem SameXmlScope.symm {a b : St} (h : SameXmlScope a b) : SameXmlScope b a :=
+  ⟨h.1.symm, h.2.1.symm, h.2.2.1.symm, h.2.2.2.1.symm, h.2.2.2.2.symm⟩
+
+/-- Closing a scope gives the scope of the parent. -/
+theorem closePropertyScope_sameXmlScope (parent child : St) :
+    SameXmlScope parent (closePropertyScope parent child) :=
+  ⟨rfl, rfl, rfl, rfl, rfl⟩
+
+/-- **The scope after a property element is the scope before it.** For every
+fuel, state, subject and node, the state that `propertyElt` returns has the base,
+namespace bindings, language, direction and version switch of the state it was
+given, whichever of the productions of §7.2.14 read the element and whether or
+not it found an error. -/
+theorem propertyElt_scope (fuel : Nat) (st : St) (subj : RDF.Subject) (node : XML.Node) :
+    SameXmlScope st (propertyElt fuel st subj node).st := by
+  cases fuel with
+  | zero => simp [propertyElt, SameXmlScope]
+  | succ f =>
+    simp only [propertyElt, closePropertyElt]
+    exact closePropertyScope_sameXmlScope _ _
+
+/-- **A list of property elements reads every element in the scope of its node
+element.** The state after the list has the XML scope of the state before it, so
+the `xml:lang` of one property element cannot reach a later one. -/
+theorem propertyEltList_scope : ∀ (fuel : Nat) (st : St) (subj : RDF.Subject)
+    (cs : List XML.Node) (acc : List RDF.Triple),
+    SameXmlScope st (propertyEltList fuel st subj cs acc).st
+  | 0, st, subj, cs, acc => by simp [propertyEltList, SameXmlScope]
+  | fuel + 1, st, subj, [], acc => by simp [propertyEltList, SameXmlScope]
+  | fuel + 1, st, subj, c :: rest, acc => by
+    cases c with
+    | element tag attrs children =>
+      simp only [propertyEltList]
+      exact (propertyElt_scope fuel st subj _).trans
+        (propertyEltList_scope fuel _ subj rest _)
+    | text _ => simp only [propertyEltList]; exact propertyEltList_scope fuel st subj rest acc
+    | cdata _ => simp only [propertyEltList]; exact propertyEltList_scope fuel st subj rest acc
+    | comment _ => simp only [propertyEltList]; exact propertyEltList_scope fuel st subj rest acc
+    | pi _ _ => simp only [propertyEltList]; exact propertyEltList_scope fuel st subj rest acc
 
 /-! ## Blank-node label spaces are disjoint
 
@@ -314,5 +425,7 @@ set is exactly Lean's own foundations — `propext`, `Classical.choice`,
 #print axioms updateBase_base_of_some
 #print axioms registerId_err_of_dup
 #print axioms fail_err_ne_none
+#print axioms propertyElt_scope
+#print axioms propertyEltList_scope
 
 end L4Factoidal.Syntax.RdfXml

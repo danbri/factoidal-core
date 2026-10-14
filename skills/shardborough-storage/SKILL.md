@@ -1121,7 +1121,10 @@ scanner read the braces of the annotation as graph block braces. The scanner now
   every generation. It also checks that `l4sbm11-dict-pack` writes the
   dictionary files of the pack for every fixture in every syntax, and that
   `l4factoidal parse --format F --out nquads` gives the same N-Quads for one
-  dataset in every syntax that writes it.
+  dataset in every syntax that writes it. Two RDF/XML cases check the scope of
+  property elements: `lang-scope rdfxml` and `scope-paths rdfxml` (until
+  2026-10-14 the first was an expected failure,
+  https://github.com/danbri/factoidal/issues/841).
 - `tests/sbm11/w3c_roundtrip.sh`, run by `tests/sbm11/run.sh` part (p): the W3C
   RDF tests through the store, described under "The W3C tests through the store".
 - `tests/sbm11/export_roundtrip.sh`, run by `tests/sbm11/run.sh` part (q): packs
@@ -1130,10 +1133,10 @@ scanner read the braces of the annotation as graph block braces. The scanner now
   N-Quads export is `dump` byte for byte; `--out`, `--graph`, `--prefix`, the usage
   errors, the refusals (a named graph for a syntax with no graph name, a triple
   term for RDF/XML and JSON-LD), an empty generation in six syntaxes, and a
-  generated dataset of 1 MB. 51 pass, 0 fail, 1 expected-fail (out of 52): the
-  RDF/XML export of D1 reads back with `"Alice"@en` for `"Alice"`
-  (https://github.com/danbri/factoidal/issues/841). The case checks that this
-  is the only difference.
+  generated dataset of 1 MB. 53 pass, 0 fail, 0 expected-fail (out of 53,
+  2026-10-14). The RDF/XML export of D1 read back with `"Alice"@en` for
+  `"Alice"` until 2026-10-14 (https://github.com/danbri/factoidal/issues/841);
+  the RDF/XML export of the 1 MB set is a case now.
 - `tools/pack-differential.sh OLD NEW`: packs every `.ttl`, `.nt`, `.nq` and
   `.trig` file of the W3C RDF 1.1 and 1.2 suites with an old and a new
   `l4block-shard-pack`, in `ibk3`, `ibk4` and `ibk5`, with the chunk route and
@@ -1179,7 +1182,6 @@ expected failure.
 | The Lean RDF/XML writer takes time quadratic in the number of triples | https://github.com/danbri/factoidal/issues/845 | row `rdfxml-write` |
 | The Lean JSON-LD writer (`fromRdf` node list) takes time quadratic in the number of triples | https://github.com/danbri/factoidal/issues/712 | row `jsonld-write` |
 | JSON-LD: an explicit `_:` label can equal a generated label | https://github.com/danbri/factoidal/issues/840 | `syntax_independence.sh`, case `bnode_collide.jsonld` |
-| RDF/XML: the `xml:lang` of a property element reaches the next sibling | https://github.com/danbri/factoidal/issues/841 | `syntax_independence.sh`, case `lang_scope.rdf` |
 | Turtle and TriG phase 1 runs in one worker | https://github.com/danbri/factoidal/issues/842 | rows `sbm11-pack-ttl-workers`, `sbm11-pack-trig-workers` |
 | The JSON-LD reader of the source layer takes no document loader and no processing option (18 toRdf tests) | https://github.com/danbri/factoidal/issues/848 | `w3c_roundtrip_xfail.tsv`, 18 rows |
 | No theorem relates the stream writers (`Sink.Writer`) to the batch writers | https://github.com/danbri/factoidal/issues/852 | `tests/known-defects/run.sh`, rows `SK-1`, `SK-2` |

@@ -22,9 +22,13 @@ GRAPHS = 4
 def triples(i):
     s = f"{EX}s/{i}"
     k = (i * 7 + 3) % n
-    # The language-tagged literals come last. An RDF/XML parser that lets the
-    # language of one property element reach the next (issue 841) would read
-    # the note of a subject as French if it followed the labels.
+    # The language-tagged literals come last. Until 2026-10-14 an RDF/XML parser
+    # let the language of one property element reach the next (issue 841) and
+    # would have read the note of a subject as French if it followed the labels.
+    # The order is kept so that the generated datasets, and the numbers measured
+    # on them, do not change. The RDF/XML export of this dataset
+    # (tests/sbm11/export_roundtrip.sh) writes the properties in key order, so the
+    # note does follow the labels there.
     return [
         (f"<{s}>", f"<{EX}name>", f'"Name {i} café 中文 \\"quoted\\""'),
         (f"<{s}>", f"<{EX}age>", f'"{18 + i % 60}"^^<{XSD}integer>'),

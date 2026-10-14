@@ -32,8 +32,11 @@
 #       (https://github.com/danbri/factoidal/issues/840). The case reads
 #       three nodes today; it turns the run red when it reads five.
 #   xml:lang of one property element does not reach the next
-#       (lang_scope.rdf against lang_scope.nt): an expected failure
-#       (https://github.com/danbri/factoidal/issues/841).
+#       (lang_scope.rdf against lang_scope.nt): the RDF/XML reader gives the
+#       quads of the N-Triples twin (XML 1.0 section 2.12; until 2026-10-14 it
+#       gave "b"@fr for the plain "b", https://github.com/danbri/factoidal/issues/841).
+#       scope_paths.rdf against scope_paths.nt: the same rule for every kind of
+#       property element, for xml:base and for nested node elements.
 #   format selection: an unknown extension is refused with a message that asks
 #       for --format (no default syntax); --format decides; N-Triples refuses a
 #       graph name and N-Quads reads it.
@@ -218,18 +221,23 @@ fi
 
 echo "=== xml:lang of one property element does not reach the next"
 # RDF/XML and its N-Triples twin (tests/sbm11/syntax/lang_scope.*) give the same
-# quads. The RDF/XML parsers apply the language of the first property element to
-# the second (https://github.com/danbri/factoidal/issues/841): an expected
-# failure that turns the run red when the two agree.
-"$BIN/l4sbm11" canon "$FX/lang_scope.nt" 2>/dev/null | sort >"$TMP/lang.nt.canon"
-"$BIN/l4sbm11" canon "$FX/lang_scope.rdf" 2>/dev/null | sort >"$TMP/lang.rdf.canon"
-if [ ! -s "$TMP/lang.nt.canon" ]; then record "lang-scope rdfxml" 1 "the N-Triples twin did not read"
-elif cmp -s "$TMP/lang.nt.canon" "$TMP/lang.rdf.canon"; then
-  xfail "lang-scope rdfxml" https://github.com/danbri/factoidal/issues/841 1 "the two files give the same quads"
-else
-  xfail "lang-scope rdfxml" https://github.com/danbri/factoidal/issues/841 0 \
-    "RDF/XML reads $(grep -c '@fr' "$TMP/lang.rdf.canon") French literals where the twin has $(grep -c '@fr' "$TMP/lang.nt.canon")"
-fi
+# quads (XML 1.0 section 2.12: the language applies to the element that specifies
+# it and its content; https://github.com/danbri/factoidal/issues/841).
+# scope_paths.* has no blank node and one property element of each kind
+# (literal content, datatype, empty, rdf:resource, a nested node element) that
+# sets xml:lang or xml:base, each followed by a property element that must not see it.
+for pair in lang_scope scope_paths; do
+  "$BIN/l4sbm11" canon "$FX/$pair.nt" 2>/dev/null | sort >"$TMP/$pair.nt.canon"
+  "$BIN/l4sbm11" canon "$FX/$pair.rdf" 2>/dev/null | sort >"$TMP/$pair.rdf.canon"
+  name="${pair//_/-}"
+  if [ ! -s "$TMP/$pair.nt.canon" ]; then record "$name rdfxml" 1 "the N-Triples twin did not read"
+  elif [ ! -s "$TMP/$pair.rdf.canon" ]; then record "$name rdfxml" 1 "the RDF/XML file did not read"
+  elif cmp -s "$TMP/$pair.nt.canon" "$TMP/$pair.rdf.canon"; then
+    record "$name rdfxml" 0 "$(wc -l <"$TMP/$pair.rdf.canon") quads, equal to the N-Triples twin ($(grep -c '@' "$TMP/$pair.rdf.canon") with a language tag)"
+  else
+    record "$name rdfxml" 1 "RDF/XML reads $(grep -c '@fr' "$TMP/$pair.rdf.canon") French literals where the twin has $(grep -c '@fr' "$TMP/$pair.nt.canon"): $(diff "$TMP/$pair.nt.canon" "$TMP/$pair.rdf.canon" | grep '^[<>]' | head -1 | cut -c1-100)"
+  fi
+done
 
 echo "=== format selection"
 cp "$FX/d1.ttl" "$TMP/noext"

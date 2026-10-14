@@ -131,9 +131,15 @@ ROW_CAP: dict[str, int] = {
 # Rows that fail today, each with the open issue that tracks it. A row leaves
 # this table in the commit that repairs it.
 XFAIL: dict[str, str] = {
-    # The Lean RDF/XML parser gives an xml:lang to the next sibling property
-    # element, so two literals collapse into existing ones (11,703 triples).
-    "ro-parse": "https://github.com/danbri/factoidal/issues/329",
+    # ro-parse left this table on 2026-10-14. The Lean RDF/XML parser gave the
+    # xml:lang of a property element to the next sibling property element, so
+    # two literals collapsed into existing ones (11,703 triples). The scope of a
+    # property element now closes with it (RdfXml.lean closePropertyScope,
+    # theorem propertyElt_scope), and the parser reads 11,705 triples, as rdflib
+    # 7.6.0 does (https://github.com/danbri/factoidal/issues/841). The F* parser
+    # still reads 11,703 distinct triples (factoidal dump | sort -u):
+    # https://github.com/danbri/factoidal/issues/329 and the row
+    # RDFXML-LANG-SCOPE of tests/known-defects/run.sh.
     # qudt-closure-address-space and qudt-consistent left this table on
     # 2026-10-13: with the semi-naive OWL 2 RL closure
     # (https://github.com/danbri/factoidal/issues/756 item 2) the QUDT

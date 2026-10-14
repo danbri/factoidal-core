@@ -815,6 +815,66 @@ else
 fi
 
 # ---------------------------------------------------------------------
+# RDFXML-LANG-SCOPE (https://github.com/danbri/factoidal/issues/841) -- the F*
+# RDF/XML parser applies the xml:lang of a property element to the property
+# elements that follow it in the same node element. XML 1.0 section 2.12 limits
+# the language to the element that specifies it and its content, so
+#   <ex:p xml:lang="fr">a</ex:p><ex:q>b</ex:q>
+# makes "a"@fr and a plain "b". Parser.RDFXML.fst returns the state of the
+# property element (restore_scope st2 ...), where the node element's scope is
+# the one to return. Fixture: fixtures/rdfxml-841-lang-scope.rdf (the same file
+# as tests/sbm11/syntax/lang_scope.rdf). The Lean parser is FIXED (2026-10-14:
+# Syntax/RdfXml.lean closePropertyScope; theorems propertyElt_scope and
+# propertyEltList_scope). Its answer is a plain assertion: the Lean CLI must
+# print exactly the two expected N-Quads lines, or the case is an ERROR (run
+# with L4FACTOIDAL_BIN set to formal/lean4/.lake/build/bin/l4factoidal until a
+# release built from the fix is fetched). F* is NOT repaired (no F* toolchain
+# in the session that fixed Lean); this case records its behaviour:
+#   XFAIL  F* reads <q> "b" as "b"@fr (the defect)
+#   XPASS  F* prints the two expected lines: fixed in F*; retire this case and
+#          close the issue
+#   ERROR  the Lean CLI is wrong, F* does not read <p> "a"@fr (the probe
+#          measured nothing), or F* prints anything else
+# ---------------------------------------------------------------------
+R841_TITLE="F* RDF/XML applies the xml:lang of a property element to the next ones"
+R841_FIXTURE="${FIXTURES}/rdfxml-841-lang-scope.rdf"
+R841_P='<http://example.org/s> <http://example.org/p> "a"@fr .'
+R841_Q_PLAIN='<http://example.org/s> <http://example.org/q> "b" .'
+R841_Q_FR='<http://example.org/s> <http://example.org/q> "b"@fr .'
+if [ ! -x "$L4_BIN" ]; then
+  record RDFXML-LANG-SCOPE 841 "$R841_TITLE" ERROR "no l4factoidal at ${L4_BIN} (tools/fetch-builds.sh --set native)"
+else
+  d="${WORKDIR}/rdfxml841"; mkdir -p "$d"
+  printf '%s\n%s\n' "$R841_P" "$R841_Q_PLAIN" | LC_ALL=C sort > "$d/expected.nq"
+  lrc=0; frc=0
+  timeout 60 "$L4_BIN" parse "$R841_FIXTURE" --format rdfxml --out nquads \
+      < /dev/null > "$d/lean.raw" 2> "$d/lean.err" || lrc=$?
+  timeout 60 "$BIN" dump-nq "$R841_FIXTURE" \
+      < /dev/null > "$d/fstar.raw" 2> "$d/fstar.err" || frc=$?
+  sed '/^$/d' "$d/lean.raw" | LC_ALL=C sort > "$d/lean.nq"
+  sed '/^$/d' "$d/fstar.raw" | LC_ALL=C sort > "$d/fstar.nq"
+  if [ "$lrc" -ne 0 ] || ! cmp -s "$d/lean.nq" "$d/expected.nq"; then
+    record RDFXML-LANG-SCOPE 841 "$R841_TITLE" ERROR \
+      "the Lean CLI (exit ${lrc}) does not print the two expected N-Quads lines (Lean regression, or a build from before the fix): $(head -n 2 "$d/lean.nq" | tr "\n" " " | cut -c1-120)"
+  elif [ "$frc" -ne 0 ]; then
+    record RDFXML-LANG-SCOPE 841 "$R841_TITLE" ERROR \
+      "F* run failed (exit ${frc}): $(tr "\n" " " < "$d/fstar.err" | cut -c1-100)"
+  elif ! grep -Fxq -- "$R841_P" "$d/fstar.nq"; then
+    record RDFXML-LANG-SCOPE 841 "$R841_TITLE" ERROR \
+      "F* does not read <p> \"a\"@fr (the probe measured nothing): $(head -n 2 "$d/fstar.nq" | tr "\n" " " | cut -c1-120)"
+  elif cmp -s "$d/fstar.nq" "$d/expected.nq"; then
+    record RDFXML-LANG-SCOPE 841 "$R841_TITLE" XPASS \
+      "F* now prints the two expected lines -- defect appears FIXED in F*"
+  elif grep -Fxq -- "$R841_Q_FR" "$d/fstar.nq" && [ "$(grep -c . "$d/fstar.nq")" -eq 2 ]; then
+    record RDFXML-LANG-SCOPE 841 "$R841_TITLE" XFAIL \
+      "F* reads <q> \"b\" as \"b\"@fr (XML 1.0 section 2.12: plain); the Lean CLI prints the plain literal"
+  else
+    record RDFXML-LANG-SCOPE 841 "$R841_TITLE" ERROR \
+      "F* prints neither the expected lines nor the recorded wrong line: $(head -n 3 "$d/fstar.nq" | tr "\n" " " | cut -c1-120)"
+  fi
+fi
+
+# ---------------------------------------------------------------------
 # NX-1 (https://github.com/danbri/factoidal/issues/777) -- the Lean native
 # crypto externs (HACL*, `@[extern]` + `opaque`) have no stated equivalence
 # to the pure Lean functions. `sha256Hacl` is opaque, so no Lean theorem can

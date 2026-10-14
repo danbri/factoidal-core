@@ -238,14 +238,31 @@ element and every `rdf:parseType="Resource"` group. -/
 def St.resetLi (st : St) : St := { st with liCounter := 1 }
 
 /-- Close a child's scope: `base` / `scope` / `lang` / `dir` /
-`sawVersion12` / `liCounter` are XML-scoped and revert to the parent's;
-`bnodeCounter` / `seenIds` / `err` are document-scoped and flow out.
-Port of F* `restore_scope`. -/
+`sawVersion12` are XML-scoped and `liCounter` is node-element-scoped; all
+five revert to the parent's. `bnodeCounter` / `seenIds` / `err` are
+document-scoped and flow out. Port of F* `restore_scope`. -/
 def restoreScope (parent child : St) : St :=
   { parent with
     bnodeCounter := child.bnodeCounter,
     seenIds := child.seenIds,
     err := match parent.err with | some e => some e | none => child.err }
+
+/-- Close a property element's scope (RDF 1.1 XML Syntax §7.2.14; XML 1.0
+§2.12; XML Base §3; Namespaces in XML §6.1). The `xml:lang`, `xml:base`,
+`its:dir`, `rdf:version` and `xmlns` declarations of a property element apply
+to that element and its content and to nothing after it, so `base` / `scope` /
+`lang` / `dir` / `sawVersion12` revert to the node element's (`parent`).
+The `rdf:li` counter belongs to the node element that holds the property
+element, and an `rdf:li` property element advances it, so `liCounter` flows out
+of the property element with the document-scoped `bnodeCounter` / `seenIds` /
+`err`. That is `restoreScope` with the child's `liCounter`.
+
+Until 2026-10-14 `propertyElt` returned the state of the property element
+itself, and the `xml:lang` of one property element was applied to the property
+elements after it in the same node element
+(https://github.com/danbri/factoidal/issues/841). -/
+def closePropertyScope (parent child : St) : St :=
+  { restoreScope parent child with liCounter := child.liCounter }
 
 /-! ## Reading the context off an element
 
@@ -915,6 +932,12 @@ structure Res where
   triples : List Triple
   st : St
 
+/-- What a property element (read in the state `st` of the node element that
+holds it) contributes to the node element: the triples it made, and the state
+after `closePropertyScope`. -/
+def closePropertyElt (st : St) (r : Res) : Res :=
+  ⟨r.triples, closePropertyScope st r.st⟩
+
 /-- `[7.2.17] parseTypeLiteralPropertyElt` (also the target of
 `[7.2.20]`). -/
 def parseTypeLiteral (st : St) (subj : Subject) (pred : WfIri)
@@ -1036,10 +1059,18 @@ def propertyEltList : Nat → St → Subject → List XML.Node → List Triple �
     | _ => propertyEltList fuel st subj rest acc
 
 /-- `[7.2.14] propertyElt` — the dispatch over the six property-element
-productions, in the order §7.2.14 lists them. -/
+productions, in the order §7.2.14 lists them.
+
+The scope that a property element opens closes with it, on every path
+(`closePropertyElt`): the state after the element has the `xml:lang`,
+`xml:base`, `its:dir`, `rdf:version` and `xmlns` declarations of the node
+element that holds it, so the `xml:lang` of one property element does not reach
+the next (XML 1.0 §2.12; `propertyElt_scope` in `RdfXmlTheorems.lean`;
+https://github.com/danbri/factoidal/issues/841). -/
 def propertyElt : Nat → St → Subject → XML.Node → Res
   | 0, st, _, _ => ⟨[], st.fail "recursion budget exhausted"⟩
   | fuel + 1, st, subj, node =>
+    closePropertyElt st <|
     match node with
     | .element tag attrs children =>
       let st1 := updateState st attrs

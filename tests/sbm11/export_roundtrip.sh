@@ -9,12 +9,12 @@
 # the data files of the two generations are byte-identical (the manifests differ
 # in the source length and digest). The fixtures:
 #
-#   D1  no blank nodes, default graph only: all six syntaxes. The RDF/XML case is
-#       an expected failure: the exported RDF/XML has a plain literal after a
-#       language-tagged one in the same node element, and both RDF/XML readers
-#       apply the `xml:lang` of a property element to the properties that follow
-#       it (https://github.com/danbri/factoidal/issues/841). It turns the run red
-#       when the two generations are equal.
+#   D1  no blank nodes, default graph only: all six syntaxes. The exported RDF/XML
+#       has a plain literal after a language-tagged one in the same node element;
+#       the Lean RDF/XML reader reads it plain (XML 1.0 section 2.12). Until
+#       2026-10-14 it read "Alice" as "Alice"@en, because it applied the `xml:lang`
+#       of a property element to the property elements after it
+#       (https://github.com/danbri/factoidal/issues/841).
 #   D2  D1 and four quads in two named graphs: N-Quads, TriG and JSON-LD. N-Triples,
 #       Turtle and RDF/XML have no graph name, and the export is refused before it
 #       writes a byte; `--graph default`, `--graph all` and `--graph IRI` choose.
@@ -26,7 +26,10 @@
 #   multi  a generated dataset of about 1 MB (tests/sbm11/syntax/gen_multi.py,
 #       N-Triples and N-Quads), so that the output crosses many 64 KiB writes and
 #       the SPO order interleaves the graphs (TriG starts a new block each time the
-#       graph changes): N-Quads, TriG, N-Triples and Turtle.
+#       graph changes): N-Quads, TriG, N-Triples, Turtle and RDF/XML (the default
+#       graph only). In the RDF/XML of the 12,000 triples the `note` of every
+#       subject follows its language-tagged labels (the order of the keys), which
+#       is the shape of https://github.com/danbri/factoidal/issues/841.
 #
 # And: `export --format nquads` is `dump` byte for byte; `--out` writes the file
 # and a refused export leaves none; `--prefix` shortens the IRIs and the export
@@ -96,30 +99,9 @@ echo "=== D1, D2, D4: export in each syntax that can write the dataset, pack, by
 pack d1 "$FX/d1.nt" || record "pack d1" 1 "$(tail -1 "$TMP/d1.log")"
 pack d2 "$FX/d2.nq" || record "pack d2" 1 "$(tail -1 "$TMP/d2.log")"
 pack d4 "$FX/d4.nt" || record "pack d4" 1 "$(tail -1 "$TMP/d4.log")"
-for fmt in nquads ntriples turtle trig jsonld; do
+for fmt in nquads ntriples turtle trig rdfxml jsonld; do
   out="$(roundtrip d1 "d1-$fmt" "$fmt")"; record "d1 export $fmt" $? "$out"
 done
-# The expected failure has one signature: the export and the pack succeed and the two
-# dumps differ in exactly one quad, "Alice" read back as "Alice"@en. Any other failure
-# is a FAIL.
-rc=0
-timeout 600 "$BIN/l4sbm11" export "$TMP/d1" --format rdfxml --out "$TMP/d1-rdfxml.rdf" >/dev/null 2>"$TMP/d1-rdfxml.export.err" || rc=$?
-if [ "$rc" -ne 0 ]; then
-  record "d1 export rdfxml" 1 "export exit $rc: $(head -1 "$TMP/d1-rdfxml.export.err" | cut -c1-160)"
-elif ! pack d1-rdfxml "$TMP/d1-rdfxml.rdf"; then
-  record "d1 export rdfxml" 1 "pack of the export failed: $(tail -1 "$TMP/d1-rdfxml.log" | cut -c1-160)"
-elif out="$(same_data d1 d1-rdfxml)"; then
-  xfail "d1 export rdfxml" https://github.com/danbri/factoidal/issues/841 1 "$out"
-else
-  "$BIN/l4sbm11" dump "$TMP/d1" 2>/dev/null | sort >"$TMP/d1.sorted"
-  "$BIN/l4sbm11" dump "$TMP/d1-rdfxml" 2>/dev/null | sort >"$TMP/d1-rdfxml.sorted"
-  delta="$(diff "$TMP/d1.sorted" "$TMP/d1-rdfxml.sorted" | grep '^[<>]')"
-  signature='< <http://example.org/s1> <http://example.org/name> "Alice" .
-> <http://example.org/s1> <http://example.org/name> "Alice"@en .'
-  if [ "$delta" = "$signature" ]; then
-    xfail "d1 export rdfxml" https://github.com/danbri/factoidal/issues/841 0 'the dumps differ in one quad: "Alice" is read back as "Alice"@en'
-  else record "d1 export rdfxml" 1 "the dumps differ in another way than the known defect: $(printf '%s' "$delta" | head -2 | tr '\n' ' ' | cut -c1-200)"; fi
-fi
 for fmt in nquads trig jsonld; do
   out="$(roundtrip d2 "d2-$fmt" "$fmt")"; record "d2 export $fmt" $? "$out"
 done
@@ -254,7 +236,7 @@ if python3 -I "$FX/gen_multi.py" "$TMP/multi" 1500; then
   for fmt in nquads trig; do
     out="$(roundtrip multi-nq "multi-nq-$fmt" "$fmt")"; record "multi (named graphs) export $fmt" $? "$out"
   done
-  for fmt in ntriples turtle; do
+  for fmt in ntriples turtle rdfxml; do
     out="$(roundtrip multi-nt "multi-nt-$fmt" "$fmt")"; record "multi (default graph) export $fmt" $? "$out"
   done
   blocks="$(grep -c '^GRAPH \|^{$' "$TMP/multi-nq-trig.trig")"

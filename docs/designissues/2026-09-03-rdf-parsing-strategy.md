@@ -1,7 +1,8 @@
 # RDF parsing strategy in the Lean tree: layers, entry points, proofs, costs
 
 Status: record of the design as it stands on 2026-09-03 (section 3a, the
-lenient mode, added 2026-10-10; section 3c, RDF/XML, added 2026-10-13; section
+lenient mode, added 2026-10-10; section 3c, RDF/XML, added 2026-10-13, with
+section 3c.7, the scope of a property element, added 2026-10-14; section
 3f, the source layer, added 2026-10-14), written because the
 owner asked for it to live somewhere findable (2026-09-03: "this and similar
 ought to be recorded properly somewhere I can find it. Ephemeral coding logs
@@ -303,7 +304,7 @@ Modules, in data order:
 | N-Triples | `NTriples.lean` `parseNTriples` | `StrictFeed.lean` `LineFeed` with `tripleReader` (the command line's `parse FILE`, section 3b) | W3C suite; `NTriplesRoundTrip.lean`; `parseLinesAcc_eq_foldLines`; the chunk boundary by `tools/strict-parse-differential.sh` (3b.4) |
 | N-Quads | `NQuads.lean` `parseNQuads` | `NQuadsFast.lean` `parseNQuadsFast` (bucketed accumulator; the WASM `datasetOpen` path); `NQuadsStreaming.lean` (chunk-boundary fold), `NQuadsFold.lean` (the generic consumer the IBK4 shard packer streams through); `StrictFeed.lean` `LineFeed` with `quadReader` (the command line's `parse FILE`, section 3b; `LineFeed.run_quad11_eq_batch`) | `parseNQuadsFast_eq_parseNQuads` proved 2026-09-02 (`NQuadsFastTheorems.lean`); the streaming module carries its own chunk-boundary theorem |
 | TriG | `TriG.lean` `parseTriG` (shares the Turtle productions; the default graph is the unlabelled block) | `TriGChunkFold.lean` (the shard packers' chunk walk, section 3e; read by `l4sbm11-pack` since 2026-10-14, section 3f) | W3C suites; chunk cuts, brace balance and block labels PROVED in `TriGChunkFoldTheorems.lean`; agreement with `parseTriG` MEASURED (section 3e), open: https://github.com/danbri/factoidal/issues/836 |
-| RDF/XML | `RdfXml.lean` `parseRdfXml` (the element tree, then the walk) | `parseRdfXmlStream` (the children of `rdf:RDF` walked as they are read; every caller runs it, section 3c) | W3C suite; `RdfXmlTheorems.lean` (blank-node label spaces disjoint by construction); `parseRdfXml_eq_stream` (`@[csimp]`) |
+| RDF/XML | `RdfXml.lean` `parseRdfXml` (the element tree, then the walk) | `parseRdfXmlStream` (the children of `rdf:RDF` walked as they are read; every caller runs it, section 3c) | W3C suite; `RdfXmlTheorems.lean` (blank-node label spaces disjoint by construction; the scope after a property element equals the scope before it, `propertyElt_scope`, section 3c.7); `parseRdfXml_eq_stream` (`@[csimp]`) |
 
 ### 3e. TriG chunk walk (https://github.com/danbri/factoidal/issues/769)
 
@@ -582,14 +583,16 @@ byte, so a refused export leaves no partial file.
 gives a prefix table (`Options.prefixes`). The batch writer `turtleOfGraphAuto`
 derives its prefixes from the whole graph, which a stream cannot.
 
-**Checks.** `tests/sbm11/export_roundtrip.sh` (51 pass, 0 fail, 1 expected-fail,
-out of 52): for each of the fixtures D1 to D4 of `tests/sbm11/syntax/`, pack,
+**Checks.** `tests/sbm11/export_roundtrip.sh` (53 pass, 0 fail, 0 expected-fail,
+out of 53, 2026-10-14): for each of the fixtures D1 to D4 of `tests/sbm11/syntax/`, pack,
 export in each syntax that can write it, pack the export, and compare the data
 files byte for byte (D3, which has blank nodes: RDFC-1.0 canonical N-Quads of the
-dump). The expected failure is the RDF/XML export of D1: the export is correct,
-and both RDF/XML readers apply the `xml:lang` of a property element to the
-property elements that follow it, so `"Alice"` reads back as `"Alice"@en`
-(https://github.com/danbri/factoidal/issues/841). Memory: rows
+dump). The RDF/XML export of D1 was an expected failure until 2026-10-14: the
+export was correct, and the RDF/XML reader applied the `xml:lang` of a property
+element to the property elements that follow it, so `"Alice"` read back as
+`"Alice"@en` (https://github.com/danbri/factoidal/issues/841, repaired in
+section 3c.7). The round trip of the generated set of 12,000 triples through
+RDF/XML is a case now. Memory: rows
 `sbm11-export-*-memory` of `tests/stack/lean_scaling.py`; the numbers are in
 `2026-10-11-shardborough-vs-qlever.md` section 11.2.
 
@@ -1215,7 +1218,6 @@ the recorded Oxigraph row).
 | `resolveIri` parses the base and the reference again for each `rdf:about` and `rdf:resource`: 21.9 percent | `RdfXml.resolveRef` calls `resolveIri st.base r` | profile only (the row is within 10 times Oxigraph) |
 | `splitQNameFast` 14.9 percent | one structure per character in the fold; called for each element name, each declaration and each attribute that passes the suffix test | profile only |
 | one `ElemNote` (about 56 bytes) per element is kept until the end of the stream | `parseChildrenFold` threads the parser's notes as `parseChildren` does, which the equality theorem needs | part of https://github.com/danbri/factoidal/issues/771 |
-| `ro-parse` of `tests/stack/owl_real_gate.sh`: 11,703 triples where rdflib reads 11,705 | an `xml:lang` reaches the next sibling property element; output unchanged by this work | https://github.com/danbri/factoidal/issues/329 |
 
 ### 3c.6 Gates (2026-10-13, this change)
 
@@ -1262,6 +1264,70 @@ after is this branch merged with it.
   `propext`, `Classical.choice`, `Quot.sound` at most). Full `lake build`: exit
   0 (1665 jobs). WebAssembly module rebuilt; `npm test`: 418 pass, 0 fail, 1
   skipped (out of 419).
+
+### 3c.7 The scope of a property element (2026-10-14)
+
+An `xml:lang` attribute applies to the element that carries it and to the
+content of that element. It does not apply to the elements after it (XML 1.0
+section 2.12). `xml:base`, `xmlns` declarations, `its:dir` and `rdf:version`
+follow the same rule (XML Base section 3, Namespaces in XML section 6.1,
+RDF 1.2 XML Syntax).
+
+**The defect** (https://github.com/danbri/factoidal/issues/841).
+`<ex:p xml:lang="fr">a</ex:p><ex:q>b</ex:q>` gave `"b"@fr`. `propertyElt`
+returned the state of the property element, and `propertyEltList` gave that
+state to the next property element. The state held the base IRI, the
+namespace bindings, the language, the base direction and the version switch
+that the first element had set. `nodeElement` restored the scope of its caller.
+The property element paths did not: the branches for literal content, empty
+elements, `rdf:resource`, `rdf:nodeID`, `rdf:parseType="Literal"` and
+`"Collection"` returned the state as it was, and the branches for `"Resource"`
+and `"Triple"` called `restoreScope` with the state of the property element as
+the parent, which kept the scope of the property element. The header of the
+module described the intent (`restoreScope`). The F\* parser has the same defect.
+
+**The effect.** The Lean RDF/XML writer writes the properties of a subject in
+key order. A literal that follows a language-tagged literal of the same subject
+read back with that language. The RDF/XML export of the generated set of 12,000
+triples (`gen_multi.py`, 1,500 subjects) read back with 3,000 quads that differ
+from the pack of the N-Triples text (the `name` and the `note` of each subject).
+The RDF/XML files of the repository show it too. Of 318 files (the XML
+conformance suite excluded), 13 read differently after the repair: 12
+third-party documents with 404 statements (Pizza, SKOS, BFO, RO, the Cell
+Ontology and the RML ontologies), and `lang_scope.rdf`. In each of the 404
+statements the only change is a language tag. RO has 11,705 triples where it
+had 11,703 (rdflib 7.6.0 reads 11,705), and the Cell Ontology has 78,835 where
+it had 78,833 (rdflib 78,835): a plain literal had become equal to a tagged
+one. `xml:base` had the same effect on IRIs (`scope_paths.rdf`).
+
+**The repair.** `closePropertyScope parent child` is `restoreScope` with the
+`rdf:li` counter of the child. `propertyElt` applies it to the result of every
+path (`closePropertyElt`). The state after a property element has the base,
+namespace bindings, language, direction and version switch of the node element
+that holds it. The `rdf:li` counter, the blank node counter, the `rdf:ID` keys
+and the first error flow out. No other function changed.
+
+**Theorems** (`RdfXmlTheorems.lean`; axioms `propext`, `Classical.choice`,
+`Quot.sound`). `propertyElt_scope`: for every fuel, state, subject and node, the
+XML scope of the state after `propertyElt` equals the XML scope before it,
+whichever production reads the element and whether it finds an error.
+`propertyEltList_scope`: the same for a list of property elements. The scope is
+five fields (`SameXmlScope`).
+
+**Tests.** 23 build-time guards in `RdfXmlTests.lean` (section "A property
+element's scope closes with it"): one or two for each path of `propertyEltBody`,
+and for `xml:base`, `xmlns`, `its:dir`, `rdf:version` and the `rdf:li` counter.
+22 of them fail on the parser of 2026-10-13; the 23rd is the control of the
+`xmlns` guard. File level: `tests/sbm11/syntax_independence.sh` cases
+`lang-scope rdfxml` (an expected failure until 2026-10-14) and `scope-paths
+rdfxml`; `tests/sbm11/export_roundtrip.sh` (the RDF/XML export of D1 and of the
+generated set); `tests/stack/owl_real_gate.py` row `ro-parse` (an expected
+failure until 2026-10-14, now a pass).
+
+**What stays open.** The F\* parser (`Parser.RDFXML.fst`, `restore_scope st2 ...`
+with the state of the property element) is not repaired:
+https://github.com/danbri/factoidal/issues/329 and the row `RDFXML-LANG-SCOPE` of
+`tests/known-defects/run.sh` (XFAIL). The Lean parser is the oracle of that row.
 
 ## 4. Rules that follow
 
