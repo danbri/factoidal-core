@@ -75,7 +75,8 @@ GENE = ROOT / "examples/wikidata/subsets/lifesci-kgx/data/gene.ttl"
 # --------------------------------------------------------------------------
 def run_once(cmd, cap, cwd=None):
     """Run cmd; return dict(status, wall, cpu, user, rss_kb, out_lines, out_bytes,
-    first_line, stderr). `cpu` is user plus system time, `user` is user time only.
+    first_line, stderr, stderr_full). `cpu` is user plus system time, `user` is user
+    time only; `stderr` is the last 300 characters, `stderr_full` the first 512 KiB.
     stdout is drained by a thread and not stored."""
     cnt = {"lines": 0, "bytes": 0, "first": b""}
     err_chunks = []
@@ -132,6 +133,8 @@ def run_once(cmd, cap, cwd=None):
         "out_bytes": cnt["bytes"],
         "first_line": cnt["first"].decode("utf-8", "replace"),
         "stderr": b"".join(err_chunks).decode("utf-8", "replace")[-300:],
+        # the first 512 KiB of stderr, for a caller that reads a long summary line
+        "stderr_full": b"".join(err_chunks).decode("utf-8", "replace"),
     }
 
 

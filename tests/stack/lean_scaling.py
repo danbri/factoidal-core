@@ -164,6 +164,35 @@ repaired (docs/designissues/2026-10-10-lean-vs-fstar-performance.md):
                    user time the quadratic term was 0.8 microsecond for each pair of chunks
                    and the linear work about 0.35 ms for each chunk (fit to 512 and 2,048
                    chunks), so the term is the larger one from about 450 chunks.
+  sbm11-update-memory
+                   peak resident memory of one `l4sbm11 update` per byte of the log it writes,
+                   measured at x, 2x and 4x solutions (12,500, 25,000 and 50,000 statements of
+                   the form `ex:s<i> ex:p "v<i>"`, each request
+                   `DELETE { ?s ex:p ?o } INSERT { ?s ex:q ?o } WHERE { ?s ex:p ?o }`, so 2n
+                   entries and 3 MB, 6 MB and 12 MB of log): the slope from x to 4x is at most
+                   SBM11_UPDATE_MEMORY_BOUND bytes of peak RSS per log byte. Issue
+                   https://github.com/danbri/factoidal/issues/857: `appendPlan?` encoded the batch
+                   as a `List UInt8` (a list cell for each byte, three or more copies of it), so
+                   the peak grew 64 bytes for each byte of log: 2,310,880 kB for the 35,919,852
+                   bytes of the 101,632-solution update of the olympics generation.
+  sbm11-open-log-memory
+                   peak resident memory of opening a generation that has a delta log
+                   (`l4sbm11 query GEN 'ASK { ?s ?p ?o }'` replays the whole log), per byte of the
+                   log: logs of 25,000, 50,000 and 100,000 entries (3 MB, 6 MB and 12 MB; a
+                   remove and an add for each of the first n/2 statements of a generation of
+                   200,000 statements, `tests/sbm11/gen_dlog.py`), the slope from x to 4x is at
+                   most SBM11_OPEN_MEMORY_BOUND bytes per log byte. Issue
+                   https://github.com/danbri/factoidal/issues/851: the reader parsed the log as a
+                   `List UInt8`, and the replay holds every entry as a Lean object.
+  sbm11-replay-time
+                   CPU time of the same open: the replay maps the terms of the log to ids, and
+                   the cost for each entry (the slope from x to 4x) is at most
+                   SBM11_REPLAY_US_BOUND microseconds, and time(4x) at most
+                   SBM11_READ_TIME_BOUND times time(x). Issue
+                   https://github.com/danbri/factoidal/issues/858: the replay looked every term of
+                   every entry up in the dictionary (about 28 page reads for each lookup): 303
+                   microseconds for each entry on this fixture, 283 on the olympics generation
+                   (203,264 entries: 57.9 s).
   sbm11-pack-nt-vs-nq  `l4sbm11-pack` over 100,000 N-Triples statements takes at most
                    2.0 times the CPU time of the same pack over the same triples as
                    N-Quads text (one graph name on every line). N-Triples was read
@@ -385,6 +414,9 @@ XFAIL: dict[str, str] = {
     "sbm11-pack-trig-workers": "https://github.com/danbri/factoidal/issues/842",
     "sbm11-export-rdfxml-memory": "https://github.com/danbri/factoidal/issues/846",
     "sbm11-export-jsonld-memory": "https://github.com/danbri/factoidal/issues/847",
+    "sbm11-update-memory": "https://github.com/danbri/factoidal/issues/857",
+    "sbm11-open-log-memory": "https://github.com/danbri/factoidal/issues/851",
+    "sbm11-replay-time": "https://github.com/danbri/factoidal/issues/858",
 }
 # A run longer than this is not repeated: the minimum of several runs only
 # removes timer and load noise, which is small against a run this long.
@@ -1230,6 +1262,153 @@ def merkle_range_time_row(rid):
                 f"floor {FLOOR} s; system time {s1:.2f}, {s2:.2f} and {s4:.2f} s, not bounded)")
 
 
+# The delta log of an SBM11 generation: the update that writes it, and the open that replays it
+# (https://github.com/danbri/factoidal/issues/857, https://github.com/danbri/factoidal/issues/851
+# and https://github.com/danbri/factoidal/issues/858; record:
+# docs/designissues/2026-10-12-sbm11-stage5.md sections 4 and 10).
+#
+# sbm11-update-memory. A generation of n statements `<ex:s{i}> <ex:p> "v{i}"` is packed and
+# activated, and the request `DELETE { ?s ex:p ?o } INSERT { ?s ex:q ?o } WHERE { ?s ex:p ?o }`
+# is applied with `l4sbm11 update`: n solutions on the id path, 2n entries in ONE batch. The
+# request text is a few bytes, so the memory is the batch's. The log is 123 bytes for each entry.
+# The row measures the slope
+#
+#     (peak RSS at 4n - peak RSS at n) / (log bytes at 4n - log bytes at n)
+#
+# at n = 12,500, 25,000 and 50,000 (3 MB, 6 MB and 12 MB of log). The peak RSS is the one of
+# /usr/bin/time, and the log bytes are the size of `deltas.dlog`. Measured 2026-10-14 on the
+# unrepaired encoder: see SBM11_UPDATE_MEMORY_BOUND below.
+#
+# sbm11-open-log-memory, sbm11-replay-time. A generation of 200,000 statements (the same
+# `<ex:s{i}> <ex:p> "v{i}"`, 6,251 dictionary pages) is packed and activated once. For each size
+# the generation is copied and given a log of n entries by `tests/sbm11/gen_dlog.py` (a remove of
+# (s{i}, p, "v{i}") and an add of (s{i}, q, "v{i}") for each of n/2 statements: the shape of the
+# update above, every term but q in the dictionary), n = 25,000, 50,000 and 100,000 entries. The
+# log is written by Python, so these rows test the reader at any size, whatever the writer does.
+# `l4sbm11 query GEN 'ASK { ?s ?p ?o }'` opens the generation, which replays the log, and the
+# row requires the summary line to say that it replayed `entries n`. Both rows read the same
+# three runs.
+SBM11_LOG_STATEMENTS = 200000
+SBM11_UPDATE_SIZES = (12500, 25000, 50000)
+SBM11_OPEN_SIZES = (25000, 50000, 100000)
+SBM11_UPDATE_REQUEST = ("DELETE { ?s <" + EX + "p> ?o } INSERT { ?s <" + EX + "q> ?o } "
+                        "WHERE { ?s <" + EX + "p> ?o }")
+GEN_DLOG = ROOT / "tests/sbm11/gen_dlog.py"
+
+
+def sbm11_log_nt(n: int) -> str:
+    return "".join(f'<{EX}s{i}> <{EX}p> "v{i}" .\n' for i in range(n))
+
+
+def sbm11_need_sbm11():
+    sbm11_need_pack_bin()
+    if not SBM11_BIN.exists():
+        raise MeasurementError(f"{SBM11_BIN} not built (cd formal/lean4 && lake build l4sbm11)")
+
+
+def sbm11_packed_root(name: str, n: int) -> Path:
+    """A new collection root `FIX/name` with the activated generation `gen` of n statements."""
+    import shutil
+    root = FIX / name
+    shutil.rmtree(root, ignore_errors=True)
+    src = fixture(f"sbm11-log-{n}.nt", lambda: sbm11_log_nt(n))
+    t = bl.run_once([str(SBM11_PACK_BIN), str(src), str(root / "gen")] + SBM11_PACK_ARGS, CAP)
+    if t["status"] != "ok":
+        raise MeasurementError(f"{name}: pack of {n} statements: exit status {t['status']}")
+    t = bl.run_once([str(SBM11_BIN), "activate", str(root), "gen"], CAP)
+    if t["status"] != "ok":
+        raise MeasurementError(f"{name}: activation: exit status {t['status']}")
+    return root
+
+
+def sbm11_update_memory_row(rid):
+    import re
+    import shutil
+    bound = SBM11_UPDATE_MEMORY_BOUND
+    sbm11_need_sbm11()
+    pts = []
+    for n in SBM11_UPDATE_SIZES:
+        root = sbm11_packed_root(f"{rid}-{n}", n)
+        t = peak_rss_run([str(SBM11_BIN), "update", str(root), SBM11_UPDATE_REQUEST])
+        if t["status"] != "ok":
+            raise MeasurementError(f"{rid}: n={n}: exit status {t['status']}: {t['stderr'][-160:]}")
+        m = re.search(r"\bops=(\d+)\b", t["first_line"])
+        if not m or int(m.group(1)) != 2 * n:
+            raise MeasurementError(f"{rid}: n={n}: the update printed {t['first_line'][:200]!r}, not ops={2 * n}")
+        log = (root / "gen" / "deltas.dlog").stat().st_size
+        shutil.rmtree(root, ignore_errors=True)
+        pts.append((n, log, t["rss_kb"]))
+    (n1, b1, r1), (n2, b2, r2), (n4, b4, r4) = pts
+    slope = (r4 - r1) * 1024 / max(b4 - b1, 1)
+    return slope <= bound, (f"n={n1} solutions: {b1} bytes of log, peak RSS {r1 / 1024:.0f} MB -> n={n2}: {b2} bytes, "
+                            f"{r2 / 1024:.0f} MB -> n={n4}: {b4} bytes, {r4 / 1024:.0f} MB: {slope:.1f} bytes of peak "
+                            f"RSS per log byte (bound {bound})")
+
+
+_OPEN_BASE: list = []
+_OPEN_RUNS: dict = {}
+
+
+def sbm11_open_run(n: int) -> dict:
+    """The open (replay) of a generation with a log of n entries, run once for the process:
+    CPU time, peak RSS, log bytes, entries replayed, the replay time the command reports."""
+    import re
+    import shutil
+    if n in _OPEN_RUNS:
+        return _OPEN_RUNS[n]
+    sbm11_need_sbm11()
+    if not GEN_DLOG.exists():
+        raise MeasurementError(f"{GEN_DLOG} missing")
+    if not _OPEN_BASE:
+        _OPEN_BASE.append(sbm11_packed_root("sbm11-open-base", SBM11_LOG_STATEMENTS))
+    work = FIX / f"sbm11-open-{n}"
+    shutil.rmtree(work, ignore_errors=True)
+    shutil.copytree(_OPEN_BASE[0], work)
+    r = subprocess.run([sys.executable, "-I", str(GEN_DLOG), str(work / "gen" / "deltas.dlog"), str(n)],
+                       stdout=subprocess.PIPE, stderr=subprocess.PIPE, timeout=CAP)
+    if r.returncode != 0:
+        raise MeasurementError(f"gen_dlog.py {n}: exit {r.returncode}: {r.stderr.decode()[-160:]}")
+    log = (work / "gen" / "deltas.dlog").stat().st_size
+    t = peak_rss_run([str(SBM11_BIN), "query", str(work), "ASK { ?s ?p ?o }"])
+    shutil.rmtree(work, ignore_errors=True)
+    if t["status"] != "ok":
+        raise MeasurementError(f"open of a log of {n} entries: exit status {t['status']}: {t['stderr'][-160:]}")
+    err = t.get("stderr_full", "")
+    m = re.search(r"delta batches (\d+), entries (\d+),.*?replay ms ([0-9.]+)", err)
+    if not m or int(m.group(1)) != 1 or int(m.group(2)) != n:
+        raise MeasurementError(f"open of a log of {n} entries: the summary line says {err[:260]!r}")
+    _OPEN_RUNS[n] = {"n": n, "log": log, "rss_kb": t["rss_kb"], "cpu": t["cpu"], "replay_ms": float(m.group(3))}
+    return _OPEN_RUNS[n]
+
+
+def sbm11_open_memory_row(rid):
+    bound = SBM11_OPEN_MEMORY_BOUND
+    runs = [sbm11_open_run(n) for n in SBM11_OPEN_SIZES]
+    a, b, c = runs
+    slope = (c["rss_kb"] - a["rss_kb"]) * 1024 / max(c["log"] - a["log"], 1)
+    return slope <= bound, (f"{a['n']} entries ({a['log']} bytes of log): peak RSS {a['rss_kb'] / 1024:.0f} MB -> "
+                            f"{b['n']}: {b['rss_kb'] / 1024:.0f} MB -> {c['n']} ({c['log']} bytes): "
+                            f"{c['rss_kb'] / 1024:.0f} MB: {slope:.1f} bytes of peak RSS per log byte (bound {bound})")
+
+
+def sbm11_replay_time_row(rid):
+    runs = [sbm11_open_run(n) for n in SBM11_OPEN_SIZES]
+    a, b, c = runs
+    us = (c["cpu"] - a["cpu"]) * 1e6 / (c["n"] - a["n"])
+    ratio = c["cpu"] / max(a["cpu"], FLOOR)
+    ok = us <= SBM11_REPLAY_US_BOUND and ratio <= SBM11_READ_TIME_BOUND
+    return ok, (f"{a['n']} entries {a['cpu']:.2f} s CPU -> {b['n']} {b['cpu']:.2f} s -> {c['n']} {c['cpu']:.2f} s "
+                f"(replay ms {a['replay_ms']:.0f}, {b['replay_ms']:.0f}, {c['replay_ms']:.0f}): {us:.1f} microseconds for each "
+                f"entry (bound {SBM11_REPLAY_US_BOUND}), {c['cpu'] / max(a['cpu'], 1e-9):.1f} for 4x entries "
+                f"(bound {SBM11_READ_TIME_BOUND})")
+
+
+# Bounds. The unrepaired code (2026-10-14, commit e0679410) gave, on these fixtures, the numbers the
+# row prints in its XFAIL line; the bounds lie between those and what the repaired code needs.
+SBM11_UPDATE_MEMORY_BOUND = 16.0
+SBM11_OPEN_MEMORY_BOUND = 16.0
+SBM11_REPLAY_US_BOUND = 25.0
+
 # `l4sbm11-pack` over N-Triples text takes at most SBM11_PACK_RATIO times the CPU
 # time of the same pack over the same triples as N-Quads text. N-Triples is read
 # by the strict triple reader, N-Quads by the quad reader; both are line streams
@@ -1307,7 +1486,14 @@ def sbm11_workers_row(rid):
     return workers > 1, f"{name}: 4 workers requested, the pack read the source with {workers}"
 
 
+SBM11_LOG_MEMORY_ROWS = {"sbm11-update-memory": sbm11_update_memory_row,
+                         "sbm11-open-log-memory": sbm11_open_memory_row}
+SBM11_LOG_TIME_ROWS = {"sbm11-replay-time": sbm11_replay_time_row}
+
+
 def memory_row(rid):
+    if rid in SBM11_LOG_MEMORY_ROWS:
+        return SBM11_LOG_MEMORY_ROWS[rid](rid)
     if rid in SBM11_PACK_MEMORY_ROWS:
         return sbm11_pack_memory_row(rid)
     if rid in SBM11_EXPORT_MEMORY_ROWS:
@@ -1489,14 +1675,17 @@ def main() -> int:
         + list(SBM11_WORKERS_ROWS))
     memory_rows = [r for r in names if r in MEMORY_ROWS or r in PARSE_MEMORY_ROWS
                    or r in PACK_MEMORY_ROWS or r in SBM11_PACK_MEMORY_ROWS
-                   or r in SBM11_EXPORT_MEMORY_ROWS or r in SBM11_DUMP_MEMORY_ROWS] or (
+                   or r in SBM11_EXPORT_MEMORY_ROWS or r in SBM11_DUMP_MEMORY_ROWS
+                   or r in SBM11_LOG_MEMORY_ROWS] or (
         [] if names else list(MEMORY_ROWS) + list(PARSE_MEMORY_ROWS) + list(PACK_MEMORY_ROWS)
         + list(SBM11_PACK_MEMORY_ROWS) + list(SBM11_EXPORT_MEMORY_ROWS)
-        + list(SBM11_DUMP_MEMORY_ROWS))
+        + list(SBM11_DUMP_MEMORY_ROWS) + list(SBM11_LOG_MEMORY_ROWS))
     series_rows = [r for r in names if r in SERIES_ROWS] or (
         [] if names else list(SERIES_ROWS))
-    time_rows = [r for r in names if r in SBM11_READ_TIME_ROWS or r in MERKLE_RANGE_TIME_ROWS] or (
-        [] if names else list(SBM11_READ_TIME_ROWS) + list(MERKLE_RANGE_TIME_ROWS))
+    time_rows = [r for r in names if r in SBM11_READ_TIME_ROWS or r in MERKLE_RANGE_TIME_ROWS
+                 or r in SBM11_LOG_TIME_ROWS] or (
+        [] if names else list(SBM11_READ_TIME_ROWS) + list(MERKLE_RANGE_TIME_ROWS)
+        + list(SBM11_LOG_TIME_ROWS))
     run_startup = (not names) or ("startup" in names)
     passed = failed = xfailed = 0
     print(f"Lean scaling assertion: time(4x) <= {BOUND} * max(time(x), {FLOOR} s) "
@@ -1568,6 +1757,7 @@ def main() -> int:
         issue = XFAIL.get(rid)
         try:
             ok, detail = (merkle_range_time_row if rid in MERKLE_RANGE_TIME_ROWS
+                          else SBM11_LOG_TIME_ROWS[rid] if rid in SBM11_LOG_TIME_ROWS
                           else sbm11_read_time_row)(rid)
         except MeasurementError as e:
             failed += 1
