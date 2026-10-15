@@ -208,7 +208,7 @@ def readBlockHeader : Nat → TurtleState → Nat → List Char →
       | _ =>
         match readPrefixDirective st p1 r1 with
         | .ok ((pfx, iri), p2, r2) =>
-            readBlockHeader fuel { st with prefixes := (pfx, iri) :: st.prefixes } p2 r2
+            readBlockHeader fuel (st.bindPrefix pfx iri) p2 r2
         | .error _ =>
           match readBaseDirective st p1 r1 with
           | .ok (b, p2, r2) => readBlockHeader fuel { st with baseIri := b } p2 r2

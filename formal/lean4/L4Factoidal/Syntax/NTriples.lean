@@ -690,6 +690,102 @@ def Term.toCanonicalNTriples : Term → String
       "<<( " ++ Subject.toNTriples s ++ " <" ++ p.val ++ "> " ++
       Term.toCanonicalNTriples o ++ " )>>"
 
+/-! ### The canonical text of a triple term nested deep
+
+`Term.toCanonicalNTriples` above is the SPECIFICATION. It takes one native frame for
+each level of triple-term nesting, and at each level it copies the text of the levels
+below (`"<<( " ++ ... ++ below ++ " )>>"`), so its time is quadratic in the depth. A
+triple term nested 300,000 deep, read from Turtle, did not finish in 120 s
+(https://github.com/danbri/factoidal/issues/865). `Term.toCanonicalNTriplesLoop` appends
+to one string and takes no frame for a nesting level; `Term.toCanonicalNTriples_eq_fast`
+proves it equal, and `@[csimp]` makes every caller compiled after it run the loop. -/
+
+/-- `" )>>"` written `k` times: the end of `k` open triple terms. -/
+def closersStr (k : Nat) : String := String.join (List.replicate k " )>>")
+
+theorem closersStr_zero : closersStr 0 = "" := rfl
+
+theorem closersStr_succ (k : Nat) : closersStr (k + 1) = " )>>" ++ closersStr k := by
+  simp [closersStr, List.replicate_succ, String.join_cons]
+
+/-- `acc` followed by the `k` closers, one tail call for each. -/
+def appendClosers (acc : String) : Nat → String
+  | 0 => acc
+  | k + 1 => appendClosers (acc ++ " )>>") k
+
+theorem appendClosers_eq : ∀ (k : Nat) (acc : String), appendClosers acc k = acc ++ closersStr k
+  | 0, acc => by simp [appendClosers, closersStr_zero]
+  | k + 1, acc => by
+      rw [appendClosers, appendClosers_eq k, closersStr_succ, String.append_assoc]
+
+/-- The text of a triple term up to its object. -/
+def canonTripleOpen (s : Subject) (p : WfIri) : String :=
+  "<<( " ++ Subject.toNTriples s ++ " <" ++ p.val ++ "> "
+
+/-- The loop of `Term.toCanonicalNTriplesFast`. `acc` is the text so far and `k` the
+number of triple terms open in it: a triple term appends its opening and continues with
+its object, a term that is not a triple term appends its text and the `k` closers. Every
+call of the loop on itself is a tail call, and `acc` is appended to in place. -/
+def Term.toCanonicalNTriplesLoop : Term → String → Nat → String
+  | .tripleTerm s p o, acc, k => Term.toCanonicalNTriplesLoop o (acc ++ canonTripleOpen s p) (k + 1)
+  | .iri i, acc, k => appendClosers (acc ++ ("<" ++ i.val ++ ">")) k
+  | .bnode b, acc, k => appendClosers (acc ++ ("_:" ++ b)) k
+  | .literal wl, acc, k =>
+      let l := wl.val
+      let esc := canonEscapeLiteral l.lexicalForm
+      appendClosers
+        (acc ++ (match l.langTag with
+          | some tag =>
+              let dirSuffix := match l.direction with
+                | some .ltr => "--ltr"
+                | some .rtl => "--rtl"
+                | none      => ""
+              "\"" ++ esc ++ "\"@" ++ tag.map Char.toLower ++ dirSuffix
+          | none =>
+              if l.datatype = xsdString then "\"" ++ esc ++ "\""
+              else "\"" ++ esc ++ "\"^^<" ++ l.datatype.val ++ ">")) k
+
+/-- The loop, for every state it can be in: the text so far, the specification on the
+term, and the closers of the open triple terms. -/
+theorem Term.toCanonicalNTriplesLoop_eq :
+    ∀ (t : Term) (acc : String) (k : Nat),
+      Term.toCanonicalNTriplesLoop t acc k = acc ++ Term.toCanonicalNTriples t ++ closersStr k
+  | .tripleTerm s p o, acc, k => by
+      rw [Term.toCanonicalNTriplesLoop, Term.toCanonicalNTriplesLoop_eq o, closersStr_succ]
+      have : Term.toCanonicalNTriples (.tripleTerm s p o) =
+          canonTripleOpen s p ++ Term.toCanonicalNTriples o ++ " )>>" := by
+        simp only [Term.toCanonicalNTriples, canonTripleOpen, String.append_assoc]
+      rw [this]
+      simp only [String.append_assoc]
+  | .iri i, acc, k => by
+      rw [Term.toCanonicalNTriplesLoop, appendClosers_eq]
+      rfl
+  | .bnode b, acc, k => by
+      rw [Term.toCanonicalNTriplesLoop, appendClosers_eq]
+      rfl
+  | .literal wl, acc, k => by
+      rw [Term.toCanonicalNTriplesLoop, appendClosers_eq]
+      rfl
+
+/-- `Term.toCanonicalNTriples` as a loop. -/
+def Term.toCanonicalNTriplesFast (t : Term) : String :=
+  Term.toCanonicalNTriplesLoop t "" 0
+
+theorem Term.toCanonicalNTriplesFast_eq (t : Term) :
+    Term.toCanonicalNTriplesFast t = Term.toCanonicalNTriples t := by
+  unfold Term.toCanonicalNTriplesFast
+  rw [Term.toCanonicalNTriplesLoop_eq, closersStr_zero]
+  simp
+
+/-- Any call of the specification compiled after this line runs the loop: the canonical
+line of a triple, and so the N-Quads text that the parse ops answer. -/
+@[csimp] theorem Term.toCanonicalNTriples_eq_fast :
+    @Term.toCanonicalNTriples = @Term.toCanonicalNTriplesFast := by
+  funext t; exact (Term.toCanonicalNTriplesFast_eq t).symm
+
+#print axioms Term.toCanonicalNTriplesLoop_eq
+#print axioms Term.toCanonicalNTriples_eq_fast
+
 /-- One canonical line, `" .\n"`-terminated. Port of
 `nq_canon_line_default`. -/
 def Triple.toCanonicalNTriples (t : Triple) : String :=

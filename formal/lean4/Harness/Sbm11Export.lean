@@ -56,7 +56,14 @@ structure Opts where
   format : Option String := none
   out : Option String := none
   graph : Option String := none
-  prefixes : List (String × String) := []
+  /-- The `--prefix` arguments, the last one first: each argument is put in front of the others, and
+      `Opts.prefixes` reverses the list once. Appending each one to the end of the list took time in
+      proportion to the square of the number of arguments
+      (https://github.com/danbri/factoidal/issues/865). -/
+  prefixesRev : List (String × String) := []
+
+/-- The `--prefix` arguments in the order they were given. -/
+def Opts.prefixes (o : Opts) : List (String × String) := o.prefixesRev.reverse
 
 def parseOpts : List String → Opts → Option Opts
   | [], o => some o
@@ -67,7 +74,7 @@ def parseOpts : List String → Opts → Option Opts
       match v.splitOn "=" with
       | label :: iriParts =>
           if label.isEmpty || iriParts.isEmpty then none
-          else parseOpts rest { o with prefixes := o.prefixes ++ [(label, "=".intercalate iriParts)] }
+          else parseOpts rest { o with prefixesRev := (label, "=".intercalate iriParts) :: o.prefixesRev }
       | [] => none
   | _, _ => none
 

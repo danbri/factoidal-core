@@ -1266,3 +1266,60 @@ Rules from this repair:
 | `datasetOpen` of the triples, then `datasetSerializeWith`, 100,000 prefixes | overflow | 4.3 s to 5.1 s, 525 MB |
 | triple term nested 300,000 deep, both writers | overflow; about 121 s at the default stack | 0.8 s; runs at 64 KB |
 | user CPU time of `serializeTurtleWith`, 8,000, 16,000, 32,000 prefixes | 2.36 s, 12.1 s, 56.7 s | 0.24 s, 0.49 s, 1.0 s |
+
+## A deep term built in memory is a note that the reader is next (https://github.com/danbri/factoidal/issues/865, 2026-10-15)
+
+The stack row of issue 864, `turtle-triple-term`, built a triple term nested 300,000 deep with
+a loop (`l4source-convert --nest-check`) because "the parser takes a frame for each level, so
+no text of this nesting can be read". That sentence was true, was written in the test, the
+commit message and this skill, and had no issue and no failing row. The reader was the next
+recursion of the same input. The coordinator filed issue 865 from the report of 864, one day
+later. The reader was repaired in a commit of about 280 lines of Lean (`readTripleTermDown`,
+`closeTripleTerms`, two `csimp` theorems), after the row existed.
+
+Rules from this repair:
+
+- **A row that avoids a recursion by construction names that recursion, with an issue and a
+  failing row, in the same commit.** "No wasm route" and "the parser would overflow" are the
+  words of a shortfall (CLAUDE.md, "A stated shortfall is a failing test plus an open
+  issue"). The 864 row had the words and not the record.
+- **The first function on the path is not the last.** The reader was linear with 20,000
+  levels (0.04 s for the count). The answer of `parseToDatasetJson` holds the term as N-Quads
+  text, which `Term.toCanonicalNTriples` built with a frame and a copy of the text so far for
+  each level: 0.41 s for 20,000 levels, a factor 3.3 for each doubling, more than 120 s at
+  300,000 (the default stack never overflowed; it timed out). The same shape was the first
+  cause of 864 (`tsTermToTurtle`). Run the row at the size of the issue after each repair,
+  and list the functions that handle the same data after the reader: the writer of the
+  answer, the dataset, the canonical form.
+- **A row with a time limit and a stack limit fails for the first cause.** On the old build
+  the row ran out of stack under 512 KB and in Node, and ran out of time at the default
+  stack. The CASES field `small` keeps the native default route out of the expected-failure
+  run, as in 864, and is removed in the repair.
+- **A fixture generator and the checks of the row stay together.** `gen_cases.py` writes the
+  4.2 MB text; `run.sh` (`row_wrong`) and `wasm_case.mjs` (`CHECK`) require `"count":1` and
+  300,000 occurrences of `<<(` in the answer, so that an answer of `ok:true` with another term
+  does not pass.
+- **The prefix table of a document is the second input of the reader.** Three prefixed names
+  for each of n triples, with n `@prefix` lines before them, took 2.59 s, 16.4 s and 78.8 s for
+  16,000, 32,000 and 64,000 (`turtle-read-prefixes`): the lookup scanned the list of bindings.
+  The stream writer had the same scan (`Sink.bodyPush`) and the option parser of `l4sbm11
+  export` appended each `--prefix` to the end of a list (`sbm11-export-prefixes-time`: 0.25 s,
+  0.83 s, 3.4 s for 4,000, 8,000, 16,000). The arguments of a command line limit the table (16,000
+  prefixes are 740 KB of the 2 MB of ARG_MAX), so that row stops at 16,000 and scales the
+  statements with the prefixes.
+- **A random differential beside the W3C files.** The W3C files have at most a few dozen prefixes
+  and rebind a label rarely. `tools/turtle-reader-differential.py` writes 4,000 documents for a
+  seed (directives with labels bound again, 100 to 600 labels in 15 percent of them,
+  triple terms up to 10 deep, damage in 40 percent) and compares an old and a new `l4factoidal`
+  in four ways to read (count, N-Quads, Turtle, lenient): 12,000 documents, 48,000 comparisons,
+  0 differences between 3e832dfe and the change. For the export,
+  a table has to pass the threshold of the index (`prefixIndexRatio`, 64 rows for each distinct
+  length of a namespace): the first random table of 307 rows had 8 lengths and stayed a scan;
+  1,200 rows under one namespace do not.
+
+| 512 KB, native; Node `--stack-size=512` | before | after |
+|---|---|---|
+| `l4factoidal parse` of a triple term nested n deep (format `turtle12`) | 2,536 levels ran, 2,537 overflowed | 300,000 levels run |
+| `parseToDatasetJson`, 300,000 levels, 16.2 MB of N-Quads in the answer | overflow; more than 120 s at the default stack | 1.3 s native, 1.6 s Node |
+| `turtle-read-prefixes`, 16,000, 32,000, 64,000 prefixes (CPU) | 2.59 s, 16.4 s, 78.8 s | 0.29 s, 0.58 s, 1.11 s |
+| `sbm11-export-prefixes-time`, 4,000, 8,000, 16,000 (CPU) | 0.25 s, 0.83 s, 3.41 s | 0.057 s, 0.071 s, 0.154 s |

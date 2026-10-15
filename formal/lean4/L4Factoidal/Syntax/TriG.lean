@@ -186,7 +186,7 @@ def readTriGStatement (fuel : Nat) (st : TurtleState) (pos : Nat) (cs : List Cha
   | _ =>
     match readPrefixDirective st p1 r1 with
     | .ok ((pfx, iri), p2, r2) =>
-        .ok ((none, []), { st with prefixes := (pfx, iri) :: st.prefixes }, p2, r2)
+        .ok ((none, []), st.bindPrefix pfx iri, p2, r2)
     | .error _ =>
       match readBaseDirective st p1 r1 with
       | .ok (b, p2, r2) => .ok ((none, []), { st with baseIri := b }, p2, r2)
@@ -342,7 +342,7 @@ def readTriGStatementSpec (st : TurtleState) (pos : Nat) (cs : List Char) :
   | _ =>
     match readPrefixDirective st p1 r1 with
     | .ok ((pfx, iri), p2, r2) =>
-        .ok ((none, []), { st with prefixes := (pfx, iri) :: st.prefixes }, p2, r2)
+        .ok ((none, []), st.bindPrefix pfx iri, p2, r2)
     | .error _ =>
       match readBaseDirective st p1 r1 with
       | .ok (b, p2, r2) => .ok ((none, []), { st with baseIri := b }, p2, r2)

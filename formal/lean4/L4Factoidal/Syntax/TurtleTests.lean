@@ -702,6 +702,114 @@ def ttlObjectsDoc (n : Nat) : String :=
 #guard (ttlToNT (ttlObjectsDoc 2000)).endsWith
   "<http://a/s> <http://a/p> \"1999\"^^<http://www.w3.org/2001/XMLSchema#integer> .\n"
 
+/-! ## Triple terms nested deep, and the prefix index (issue 865)
+
+`readTripleTerm` and `readTtObject` run as a loop that keeps the open triple terms in a
+list (`readTripleTermDown`), `Term.toCanonicalNTriples` appends to one string
+(`Term.toCanonicalNTriplesLoop`), and `lookupPrefix` reads the latest binding of a label
+from a tree (`TurtleState.prefixIndex`). The equalities with the specifications are
+theorems (`readTripleTerm_eq_loop`, `readTtObject_eq_loop`,
+`Term.toCanonicalNTriples_eq_fast`, `TurtleState.lookupPrefix_eq_indexed`). A guard that
+compares a specification with its loop compares the loop with itself, because the
+compiler runs the loop for both (skills/lean4-proof-patterns, section 9b), so the guards
+below pin texts, messages and offsets. The messages and offsets are the ones that the
+reader gave before the change (commit 3e832dfe, measured with `l4factoidal parse`).
+https://github.com/danbri/factoidal/issues/865 -/
+
+/-- The message and offset of the error of an RDF 1.2 parse, or the triple count. -/
+def ttl12Outcome (s : String) : String :=
+  match parseTurtle s none .rdf12 with
+  | .error e => s!"{e.msg} (offset {e.pos})"
+  | .ok g => s!"{g.length} triples"
+
+/-- A triple term nested `n` deep, with the literal `"x"` at the bottom. -/
+def deepTripleTerm (n : Nat) : String :=
+  String.join (List.replicate n "<<( <http://a/s> <http://a/p> ") ++ "\"x\"" ++
+    String.join (List.replicate n " )>>")
+
+def deepDoc (n : Nat) : String := "<http://a/s> <http://a/p> " ++ deepTripleTerm n ++ " ."
+
+-- 1,000 levels: one triple, and its text is the document.
+#guard ttl12Outcome (deepDoc 1000) == "1 triples"
+#guard ttl12ToNT (deepDoc 1000) == deepDoc 1000 ++ "\n"
+#guard (match parseTurtle (deepDoc 1000) none .rdf12 with
+        | .ok g => Graph.toCanonicalNTriples g == deepDoc 1000 ++ "\n"
+        | .error _ => false)
+
+-- Every kind of term at the bottom or in a nesting; the canonical text lowers the language
+-- tag, writes the datatype, escapes the literal and names the anonymous node.
+#guard (match parseTurtle ("<http://a/s> <http://a/p> <<( <http://a/s> a <<( _:b <http://a/p> 5 )>> )>> , " ++
+          "<<( <http://a/s> <http://a/p> true )>> , <<( <http://a/s> <http://a/p> \"x\"@EN--rtl )>> , " ++
+          "<<( <http://a/s> <http://a/p> <<( <http://a/s> <http://a/p> 1.5e3 )>> )>> , " ++
+          "<<( [] <http://a/p> \"q\\\"r\\n\"^^<http://a/dt> )>> .") none .rdf12 with
+        | .ok g => Graph.toCanonicalNTriples g ==
+            "<http://a/s> <http://a/p> <<( <http://a/s> <http://www.w3.org/1999/02/22-rdf-syntax-ns#type> <<( _:b <http://a/p> \"5\"^^<http://www.w3.org/2001/XMLSchema#integer> )>> )>> .\n" ++
+            "<http://a/s> <http://a/p> <<( <http://a/s> <http://a/p> \"true\"^^<http://www.w3.org/2001/XMLSchema#boolean> )>> .\n" ++
+            "<http://a/s> <http://a/p> <<( <http://a/s> <http://a/p> \"x\"@en--rtl )>> .\n" ++
+            "<http://a/s> <http://a/p> <<( <http://a/s> <http://a/p> <<( <http://a/s> <http://a/p> \"1.5e3\"^^<http://www.w3.org/2001/XMLSchema#double> )>> )>> .\n" ++
+            "<http://a/s> <http://a/p> <<( _:anon__0 <http://a/p> \"q\\\"r\\n\"^^<http://a/dt> )>> .\n"
+        | .error _ => false)
+
+-- The errors of a nesting, with the offset where the reader stops.
+#guard ttl12Outcome ("<http://a/s> <http://a/p> <<( <http://a/s> <http://a/p> <<( <http://a/s> <http://a/p> \"x\" )>> .") ==
+  "expected ')>>' closing triple term (offset 94)"
+#guard ttl12Outcome ("<http://a/s> <http://a/p> <<( <http://a/s> <http://a/p> <<( <http://a/s> <http://a/p> \"x\" )>> )>> )>> .") ==
+  "expected '.' after triple (offset 98)"
+#guard ttl12Outcome ("<http://a/s> <http://a/p> <<( <http://a/s> <http://a/p> << <http://a/s> <http://a/p> <http://a/o> >> )>> .") ==
+  "a reified triple is not allowed inside a triple term (offset 56)"
+#guard ttl12Outcome ("<http://a/s> <http://a/p> <<( <http://a/s> <http://a/p> <<( <http://a/s> <http://a/p> << <http://a/s> <http://a/p> <http://a/o> >> )>> )>> .") ==
+  "a reified triple is not allowed inside a triple term (offset 86)"
+#guard ttl12Outcome ("<http://a/s> <http://a/p> <<( <http://a/s> <http://a/p> <<( <http://a/s> <http://a/p> ( 1 2 ) )>> )>> .") ==
+  "collection not allowed in a triple term (offset 86)"
+#guard ttl12Outcome ("<http://a/s> <http://a/p> <<( <http://a/s> <http://a/p> <<( <http://a/s> <http://a/p> [ <http://a/q> 1 ] )>> )>> .") ==
+  "blank node property list not allowed in a triple term (offset 86)"
+#guard ttl12Outcome ("<http://a/s> <http://a/p> <<( <http://a/s> <http://a/p> <<( <<( <http://a/s> <http://a/p> <http://a/o> )>> <http://a/p> <http://a/o> )>> )>> .") ==
+  "a triple term's subject may not be a triple term or a reified triple (offset 60)"
+#guard ttl12Outcome ("<http://a/s> <http://a/p> <<( <http://a/s> <http://a/p> <<( <http://a/s> <http://a/p> ; )>> )>> .") ==
+  "expected prefixed name (offset 86)"
+#guard ttl12Outcome "<http://a/s> <http://a/p> <<( <http://a/s> <http://a/p> <<( <http://a/s> <http://a/p> " ==
+  "expected prefixed name (offset 86)"
+
+/-- `n` prefix directives, then `n` triples that use three prefixed names each. -/
+def ttlPrefixesDoc (n : Nat) : String :=
+  String.join ((List.range n).map fun i => s!"@prefix p{i}: <http://m/{i}/> .\n") ++
+  String.join ((List.range n).map fun i => s!"p{i}:s p{i}:p p{(i + 1) % n}:o .\n")
+
+-- 300 prefixes: every name is expanded under the prefix of its label.
+#guard ttlCount (ttlPrefixesDoc 300) == 300
+#guard ttlToNT (ttlPrefixesDoc 300) ==
+  String.join ((List.range 300).map fun i =>
+    s!"<http://m/{i}/s> <http://m/{i}/p> <http://m/{(i + 1) % 300}/o> .\n")
+
+-- The latest binding of a label wins at the time of the use, and the history keeps all of them,
+-- the most recent first.
+#guard ttlToNT ("@prefix a: <http://x/> . a:s a:p a:o . @prefix a: <http://y/> . a:s a:p a:o .") ==
+  "<http://x/s> <http://x/p> <http://x/o> .\n<http://y/s> <http://y/p> <http://y/o> .\n"
+#guard (match parseTurtleWithPrefixes
+          "@prefix a: <http://x/> . @prefix b: <http://z/> . @prefix a: <http://y/> ." none .rdf11 with
+        | .ok (_, ps) => ps == [("a", "http://y/"), ("b", "http://z/"), ("a", "http://x/")]
+        | .error _ => false)
+#guard ttl12Outcome "@prefix a: <http://x/> . a:s a:p <<( a:s a:p <<( b:s a:p a:o )>> )>> ." ==
+  "undefined prefix: b (offset 49)"
+#guard ttl12ToNT ("@prefix a: <http://x/> . a:s a:p a:o . @prefix a: <http://y/> . a:s a:p a:o . " ++
+    "@prefix b: <http://z/> . a:s b:p <<( a:s b:p b:o )>> .") ==
+  "<http://x/s> <http://x/p> <http://x/o> .\n<http://y/s> <http://y/p> <http://y/o> .\n" ++
+  "<http://y/s> <http://z/p> <<( <http://y/s> <http://z/p> <http://z/o> )>> .\n"
+
+-- The state after the directives: a label answers with its latest binding, an unbound label with none.
+private def bindingState : TurtleState :=
+  ((((TurtleState.init "" none .rdf11).bindPrefix "a" "http://x/").bindPrefix "b" "http://z/").bindPrefix "a" "http://y/")
+#guard bindingState.lookupPrefix "a" == some "http://y/"
+#guard bindingState.lookupPrefix "b" == some "http://z/"
+#guard bindingState.lookupPrefix "c" == none
+#guard bindingState.lookupPrefix "" == none
+#guard bindingState.prefixes == [("a", "http://y/"), ("b", "http://z/"), ("a", "http://x/")]
+
+-- TriG: the same state, and a graph name is a prefixed name.
+#guard (match parseTriG ("@prefix a: <http://x/> . a:g { a:s a:p a:o } @prefix a: <http://y/> . a:g { a:s a:p a:o }") none .rdf11 with
+        | .ok ds => ds.named.map (fun ng => Subject.toNTriples ng.name) == ["<http://x/g>", "<http://y/g>"]
+        | .error _ => false)
+
 /-! ## Axiom audit
 
 Every `#guard` above is a kernel computation, so nothing here can

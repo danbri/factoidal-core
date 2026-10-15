@@ -327,14 +327,13 @@ xfail_issue() { # xfail_issue <case>; prints the issue URL or nothing
     regex-replace-groups)
       case "${2:-}" in canary|wcanary) echo "https://github.com/danbri/factoidal/issues/816" ;; esac ;;
     rdfc-bnode-chain) echo "https://github.com/danbri/factoidal/issues/817" ;;
-    # The Turtle reader with a triple term nested 300,000 deep (one triple, op
-    # parseToDatasetJson, format turtle12): readTtObject and readTripleTerm take a
-    # native frame for each nesting level (2,536 levels ran under 512 KB, 2,537
-    # overflowed; measured 2026-10-15 on 3e832dfe), and Term.toCanonicalNTriples, which
-    # writes the term into the answer, takes a frame for each level and copies the
-    # text built so far at each level (20,000 levels: 0.41 s; 300,000 levels: more than
-    # 120 s at the default stack).
-    turtle-read-triple-term) echo "https://github.com/danbri/factoidal/issues/865" ;;
+    # (`turtle-read-triple-term` was listed for
+    # https://github.com/danbri/factoidal/issues/865 until 2026-10-15, when
+    # readTtObject and readTripleTerm became a loop with the open triple terms in a
+    # list, and Term.toCanonicalNTriples (which writes the term into the answer) a loop
+    # with a counter. Before them 2,536 levels ran under 512 KB and 2,537 overflowed, and
+    # 300,000 levels did not finish in 120 s at the default stack. 300,000 levels run in
+    # every route now.)
     # (`turtle-write-prefixes`, `turtle-write-prefixes-handle`,
     # `turtle-write-prefixes-with` and `turtle-triple-term` were listed for
     # https://github.com/danbri/factoidal/issues/864 until 2026-10-15, when
@@ -439,11 +438,6 @@ wasm_missing() { # wasm_missing <route>
 
 # `callseq` as the op of a row: the file holds op/args pairs, run in order in one
 # process (a dataset handle lives in the process).
-#
-# A fourth field `small` marks a row for the routes with a small stack (the native
-# canary, the wasm canary, the wasm route): the unrepaired code takes quadratic time on
-# it, more than TIMEOUT on the 1 GB native stack, which would make the native route fail
-# for a reason other than the stack (issue 865; lean_scaling.py measures the time).
 CASES=(
   "xml-entities        parseToDatasetJson   args-xml.json"
   "xml-entities-attr   parseToDatasetJson   args-xml-attr.json"
@@ -471,7 +465,7 @@ CASES=(
   "turtle-write-prefixes serializeTurtleWith args-turtle-write-prefixes.json"
   "turtle-write-prefixes-handle callseq seq-turtle-write-prefixes-handle.json"
   "turtle-write-prefixes-with callseq seq-turtle-write-prefixes-with.json"
-  "turtle-read-triple-term parseToDatasetJson args-turtle-read-triple-term.json small"
+  "turtle-read-triple-term parseToDatasetJson args-turtle-read-triple-term.json"
 )
 
 if [ "$ROUTE" = native ] || [ "$ROUTE" = both ]; then
@@ -484,7 +478,6 @@ if [ "$ROUTE" = native ] || [ "$ROUTE" = both ]; then
   for row in "${CASES[@]}"; do
     # shellcheck disable=SC2086
     set -- $row
-    [ "${4:-}" = small ] && continue
     native_case "$1" "$2" "$3"
   done
 fi
@@ -611,15 +604,17 @@ fi
 
 # ------------------------- Turtle writer, triple term nested 300,000 deep (issue 864)
 # `l4source-convert --nest-check 300000`: an RDF 1.2 triple term nested 300,000
-# deep in the object position, built in memory by a loop (the parser takes a
-# frame for each level, so no text of this nesting can be read), written as
+# deep in the object position, built in memory by a loop, written as
 # Turtle by the batch writer (`turtleOfGraphOpts`) and by the stream writer
 # (`Sink.streamQuads`); both texts must equal the text that a loop builds
 # (5,400,063 bytes). `tsTermToTurtle` took a frame for each nesting level and
 # copied the text built so far at each level: about 120 s CPU for both writers
 # at the default stack, and a stack overflow under the canary budget. The row
 # runs in the native route and the native canary; the module has no op that
-# builds such a term, so the wasm routes have no row.
+# builds such a term, so the wasm routes have no row of the writers. The READER
+# of such a term has its own row, `turtle-read-triple-term` (issue 865), which
+# runs in every route: the term is built in memory here so that the writers are
+# tested apart from the reader.
 # https://github.com/danbri/factoidal/issues/864
 NEST_BIN="$LEAN_DIR/.lake/build/bin/l4source-convert"
 turtle_nest_case() { # turtle_nest_case <route> <prefix...>

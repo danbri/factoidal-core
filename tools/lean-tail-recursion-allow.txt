@@ -555,7 +555,6 @@ L4Factoidal_Storage_TermWireV2_parseInlineGo
 L4Factoidal_Storage_TermWireV2_serializeInline?
 L4Factoidal_Storage_TermWireV2_tdepth
 L4Factoidal_Storage_splitBatchesSinceEpoch?
-L4Factoidal_Syntax_Term_toCanonicalNTriples
 L4Factoidal_Syntax_Term_toNTriples
 L4Factoidal_Syntax_assignLabels
 L4Factoidal_Syntax_insertByCountDesc
@@ -1242,8 +1241,6 @@ L4Factoidal_Syntax_readObject  # (b) one frame per NESTING level of [ ] and ( ) 
 L4Factoidal_Syntax_readReifiedTriple  # UNTRIAGED https://github.com/danbri/factoidal/issues/753 length, cycle of 3, L4Factoidal/Syntax/Turtle.lean:1162
 L4Factoidal_Syntax_readRtObject  # UNTRIAGED https://github.com/danbri/factoidal/issues/753 length, cycle of 3, L4Factoidal/Syntax/Turtle.lean:1118
 L4Factoidal_Syntax_readRtSubject  # UNTRIAGED https://github.com/danbri/factoidal/issues/753 length, cycle of 3, L4Factoidal/Syntax/Turtle.lean:1085
-L4Factoidal_Syntax_readTripleTerm  # UNTRIAGED https://github.com/danbri/factoidal/issues/753 length, cycle of 2, L4Factoidal/Syntax/Turtle.lean:1004
-L4Factoidal_Syntax_readTtObject  # UNTRIAGED https://github.com/danbri/factoidal/issues/753 length, cycle of 2, L4Factoidal/Syntax/Turtle.lean:963
 L4Factoidal_Testing_noAdjacentCharData  # UNTRIAGED https://github.com/danbri/factoidal/issues/753 length, cycle of 2, L4Factoidal/Testing/Enumerate.lean:177
 L4Factoidal_Testing_nodes  # UNTRIAGED https://github.com/danbri/factoidal/issues/753 length, cycle of 5, L4Factoidal/Testing/Enumerate.lean:116
 L4Factoidal_Testing_genPattern  # UNTRIAGED https://github.com/danbri/factoidal/issues/753 depth, cycle of 5, L4Factoidal/Testing/Gen.lean:253

@@ -126,6 +126,37 @@ theorems gate the other executions.
     the loops: `parseTurtle`, `parseTurtleText` and its walk, the chunk fold,
     TriG, and the lenient readers.
 
+- Triple terms ([30] `tripleTerm`, [32] `ttObject`) and the table of prefixes, since 2026-10-15
+  (https://github.com/danbri/factoidal/issues/865). Before, `readTripleTerm` and `readTtObject`
+  called each other, two native frames for each nesting level (a triple term nested 2,536 deep
+  ran under `LEAN_STACK_SIZE_KB=512` and 2,537 overflowed; Node overflowed too), and
+  `TurtleState.lookupPrefix` scanned the list of the bindings in force for each prefixed name (a
+  document with 64,000 `@prefix` lines and 64,000 triples of three prefixed names took 78.8 s).
+  Now:
+  - `readTripleTermDown` reads the subject and the verb of a level, puts them on a list
+    (`OpenTripleTerms`) and goes on to the object by a tail call. It takes two units of fuel for a
+    level, as the two functions did, so the errors and the offsets for a given fuel are the
+    same. At the first object that is not a triple term, `closeTripleTerms` takes the entries of the
+    list one by one: each reads its `)>>` and is the object of the next one out. The object that is not
+    a triple term is read by the specification (`readTtObject`), which does not recurse on it. Both
+    functions compile to a `goto _start` loop in the emitted C. The two mutual functions stay as the
+    readable forms; 2.3 has the theorems.
+  - `TurtleState` has two more fields, `prefixIndex` (a `Std.TreeMap` from a label to its latest IRI)
+    and `prefixIndex_ok` (the proof that the index answers as the list `prefixes` does). The list
+    stays: `parseTurtleWithPrefixes` returns it, newest first, shadowed bindings included.
+    `TurtleState.bindPrefix` is the only function that adds a binding, in Turtle, TriG and the TriG
+    chunk walk. `lookupPrefix` stays as the specification; the compiler runs `lookupPrefixIndexed`.
+    A tree and not a hash table: the lenient readers keep the state from before a statement, a
+    shared hash table is copied whole by `insert`, and a shared tree is copied along one path
+    (`skills/lean4-performance/SKILL.md`, "A table in a state that a caller may keep").
+  - `Term.toCanonicalNTriples` (the text of a term in the N-Quads of the parse operations) is a loop
+    with a counter of the open triple terms (`Syntax/NTriples.lean`); the wasm row needs it, because
+    the answer of `parseToDatasetJson` holds the term as text (16.2 MB for 300,000 levels).
+  - Measured, native, `LEAN_STACK_SIZE_KB=512`: a triple term nested 300,000 deep is read, counted
+    and written as canonical N-Quads by `l4wasm-cli call parseToDatasetJson` in 1.3 s (0.74 s at the
+    default stack), and by the wasm module in Node in 1.6 s under `--stack-size=512` and 1.9 s at the
+    default stack. 64,000 prefixes and 64,000 triples: 1.11 s of CPU time.
+
 ### 2.2 Streaming execution for the shard packer
 
 Modules, in data order:
@@ -261,6 +292,26 @@ Modules, in data order:
   audit block of `TurtleTheorems.lean` prints the axioms of these theorems
   and of the collection theorems above: `propext`, `Classical.choice` and
   `Quot.sound` only (2026-10-12).
+- `Turtle.lean` (2026-10-15, triple terms and prefixes, 2.1; issue 865):
+  `readTripleTermDown_eq`, the loop started with any list of open triple terms reads what
+  `readTripleTerm` reads and then closes the list (`closeTripleTerms`), for every fuel, errors and
+  positions included, by induction on the fuel of the specification; with `closeTripleTerms_error`,
+  `closeTripleTerms_nil`, `closeTripleTerms_cons` (the innermost open term closes first) and
+  `readTripleTerm_succ` (one level of the specification with its closing step as
+  `closeTripleTerms`). The `@[csimp]` theorems `readTripleTerm_eq_loop` and
+  `readTtObject_eq_loop` make every caller compiled after them run the loop. For the prefixes:
+  `TurtleState.lookupPrefixIndexed_eq`, `TurtleState.lookupPrefix_eq_indexed` (`@[csimp]`; the proof
+  `prefixIndex_ok` is a field of every state) and `TurtleState.lookupPrefix_bindPrefix` (a binding
+  answers for its label and leaves the others as they were). `NTriples.lean`:
+  `Term.toCanonicalNTriplesLoop_eq`, `Term.toCanonicalNTriplesFast_eq` and the `@[csimp]` theorem
+  `Term.toCanonicalNTriples_eq_fast`. `Sink.lean`: `bodyPushBy_ofTable` and
+  `trigSwitchBy_ofTable` (the writer's text and state, from an `Abbreviator` built once, are the
+  specification's, from the table). All depend on `propext`, `Classical.choice` and `Quot.sound`
+  only (`#print axioms` in the modules). The guards in `TurtleTests.lean` pin a triple term nested
+  1,000 deep, every kind of term in a nesting, ten error messages with their offsets (taken from
+  the binary built before the change), 300 prefixes, the rebinding of a label and the history list.
+  A guard that compares a specification with its `csimp` replacement compares the replacement with
+  itself, so none does (`skills/lean4-proof-patterns/SKILL.md`, 9b).
 - Still not proved: the CHUNK-BOUNDARY half — that the streaming execution
   (2.2) reaches the same accumulator whatever the chunking, and so equals
   `parseTurtle` on the same text. It rests on `TurtleStatementScan` never
@@ -288,6 +339,7 @@ Modules, in data order:
 | 2026-09-02 | quadratic `parseTurtle` | per-token `cs.length + 1` fuel in two literal readers | constant `literalFuel` + proofs |
 | 2026-10-10 | a Turtle collection of 100,000 elements overflowed a 512 KB native stack and a browser tab's stack; the largest that ran at 512 KB had about 4,500 elements (4,531 overflowed) | `readCollectionRest` (F* `parse_collection_rest`) made one recursive call per element | `readCollectionCells`, a tail call per element, and `linkCollectionCells` at the `)`, proved equal (2.1, 2.3). 100,000 elements run at 512 KB. Outputs of `l4factoidal parse --out nquads`, strict and `--lenient`, on the 1,022 `.ttl` and `.trig` files of the W3C RDF 1.1 and 1.2 suites: 2,044 of 2,044 byte-identical to the binary before (https://github.com/danbri/factoidal/issues/678) |
 | 2026-10-10 | one Turtle object list of 25,000 objects took 10.33 s, and 100,000 gave no result in 120 s; one statement of 10,000 predicates overflowed a 512 KB native stack, a Node `--stack-size=512` stack and Node's default stack | `readObjectList` (F* `parse_object_list_rev`) built its result with `acc ++ ...`; `readPredicateObjectList` (F* `parse_predicate_object_list_rev`) made one recursive call per `;` group | `readObjectListRev`, a reversed list and a tail call per object, and `readPredicateObjectList` as one loop over the groups, proved equal to the readable forms (2.1, 2.3). 25,000 objects 0.058 s, 100,000 objects 0.403 s; 10,000 groups run at 512 KB natively and in Node under `--stack-size=512`. `tests/stack/run.sh --canary`: 41 pass, 0 fail (out of 41) before, with three expected failures, and after, with none. Outputs of `l4factoidal parse --out nquads`, strict and `--lenient`, on the 1,022 `.ttl` and `.trig` files of the W3C RDF 1.1 and 1.2 suites: 2,044 of 2,044 byte-identical to the binary before; and the 239 RDF 1.2 files again in the 1.2 mode (`--format turtle12`, `trig12`), 478 of 478 byte-identical. With `turtle` and `trig` the CLI reads the RDF 1.2 files in the 1.1 mode, where 51 of the 239 parse and annotations are refused; in the 1.2 mode 193 parse (https://github.com/danbri/factoidal/issues/754) |
+| 2026-10-15 | a triple term nested 300,000 deep could not be read (2,536 levels ran under a 512 KB native stack and 2,537 overflowed; Node overflowed too); the text of the term in the answer of a parse took 0.41 s for 20,000 levels and more than 120 s for 300,000; 64,000 `@prefix` lines and 64,000 triples of three prefixed names took 78.8 s of CPU time; `l4sbm11 export` with 16,000 `--prefix` arguments took 3.4 s | `readTripleTerm` and `readTtObject` called each other (two frames for each level); `Term.toCanonicalNTriples` copied the text of the levels below at each level; `lookupPrefix` scanned the list of the bindings; `Sink.bodyPush` scanned the table for each IRI; `parseOpts` appended each prefix to the end of a list | `readTripleTermDown` and `closeTripleTerms`, `Term.toCanonicalNTriplesLoop`, `TurtleState.prefixIndex` with the proof `prefixIndex_ok`, `Abbreviator` in the stream writer, `prefixesRev`; all proved equal to the specifications (2.1, 2.3, 3g). 300,000 levels: 1.3 s natively at 512 KB, 1.6 s in Node at `--stack-size=512`; 64,000 prefixes 1.11 s; 16,000 `--prefix` arguments 0.15 s. Byte identity with the binary before: `l4factoidal parse` in three modes on 2,637 runs of the W3C and `tests/sbm11/syntax` files, 12,000 random documents in four modes (`tools/turtle-reader-differential.py`), `l4sbm11 export` 14,463 runs on W3C files and 6,400 on random datasets with tables of up to 1,200 prefixes (https://github.com/danbri/factoidal/issues/865) |
 | 2026-10-13 | the strict `l4factoidal parse FILE --out nquads` peaked at 33 to 35 bytes per input byte (400,000 N-Triples: 1,186 MB; Serd 2 MB, Oxigraph 23 MB) | the whole file as one `String`, the N-Triples `List Char` of the document, the whole dataset and the whole N-Quads `String` before the first line was written | `StrictFeed.lean` (section 3b): 64 KiB chunks, each chunk's lines written and dropped; 24 to 26 MB at every size; the count keeps the set of distinct triples only. Byte identity: `tools/strict-parse-differential.sh` (3b.4); Turtle chunk equality proved (`drainRun_eq`) |
 | 2026-09-02/03 | UK Parliament pack 6,134 s | scanner reversed the whole candidate at every line end; a 134 MB, 4,211-line statement group | seven-character `head` + proof; pack 254 s |
 | open | 22.9 s user + 21.7 s system and 5.39 GB resident to parse 134 MB (measured 2026-09-03) | `List Char` representation: about 16 bytes and one allocation per character, built twice (scanner `currentRev`, then `text.toList` for the grammar) | a `String`/`ByteArray`-position lexer with its own equality proof against 2.1 |
@@ -852,8 +904,9 @@ then `datasetSerialize`) and `turtle-write-prefixes-with` (`datasetOpen` of the 
 N-Quads, then `datasetSerializeWith` with 100,000 prefixes in the options), each in the native,
 native canary, wasm canary and wasm routes; `turtle-triple-term` (`l4source-convert --nest-check
 300000`) in the native route and the native canary. A row also counts the `@prefix` lines of the
-output. The term of `turtle-triple-term` is built in memory by a loop: the Turtle reader takes a
-frame for each nesting level (class (b) in the allow list), so no text can carry the term, and the
+output. The term of `turtle-triple-term` is built in memory by a loop: the Turtle reader took a
+frame for each nesting level (class (b) in the allow list), so no text could carry the term (the reader
+reads such a text since issue 865: the row `turtle-read-triple-term`, in the paragraph below), and the
 wasm module has no operation that builds one. The harness writes the term with the batch writer
 and with the stream writer, and compares both with the text that a loop builds (5,400,063 bytes).
 `tests/stack/lean_scaling.py`: `turtle-prefixes`, `turtle-prefixes-open` and `turtle-nest-time`,
@@ -904,6 +957,125 @@ of `gene.ttl`. Earlier revisions of the generator ran 7,200 more cases with 0 di
 - `tests/stack/lean_scaling.py --only turtle-prefixes,turtle-prefixes-open,turtle-nest-time,
   turtle-serialize`: 4 pass, 0 fail, 0 expected-fail (out of 4). Two runs of the three new rows
   gave ratios of 1.9 to 2.2 for each doubling (bound 3.0).
+- `formal/lean4/Wasm/cli-smoke.sh`: 106 pass, 0 fail, 0 xfail (out of 106).
+  `formal/lean4/Wasm/native-smoke.sh`: 366 pass, 0 fail, 0 xfail (out of 366).
+- `npm test` in `npm/factoidal`: 442 pass, 0 fail, 1 skipped (out of 443). `node --test
+  tests/hub/*_test.mjs`: 447 pass, 0 fail (out of 447).
+- `tests/known-defects/run.sh` in the CI layout (one directory with `factoidal`,
+  `owl_runner`, `l4factoidal` and `l4w3c`): 24 XFAIL, 0 XPASS, 0 ERROR (out of 24).
+
+**The Turtle reader with a deeply nested triple term and a large prefix table, and the stream writer's table (2026-10-15).**
+Tracking: https://github.com/danbri/factoidal/issues/865. Found by the repair of issue 864, whose
+row `turtle-triple-term` built the term in memory because the reader could not read a text of that
+nesting. Three inputs that a caller sizes reach code that took a stack frame, or a scan of a list, for
+each step: the nesting of a triple term (2 frames for each level), the number of `@prefix` directives of a
+document (a scan of the bindings for each prefixed name), and the number of `--prefix` arguments of
+`l4sbm11 export` (a scan of the table for each IRI, and a quadratic append in the option parser).
+
+*Before this change* (commit 3e832dfe, native): `l4factoidal parse` with the format `turtle12` read a
+triple term nested 2,536 deep under `LEAN_STACK_SIZE_KB=512` and overflowed at 2,537; Node overflowed on
+300,000 levels with the default stack and with `--stack-size=512`. At the default native stack the reader
+was linear (20,000 levels: 0.04 s for the count) and the answer of `parseToDatasetJson` was not: 0.04 s,
+0.12 s and 0.41 s of CPU time for 5,000, 10,000 and 20,000 levels written as canonical N-Quads
+(`Term.toCanonicalNTriples` copied the text of the levels below at each level), and no result in 120 s
+for 300,000. CPU time of `l4factoidal parse` of a document with n `@prefix` lines and n triples of three
+prefixed names: 2.59 s, 16.4 s and 78.8 s for n = 16,000, 32,000 and 64,000 (ratios 6.3 and 4.8).
+`l4sbm11 export --format turtle --verify none` with n `--prefix` arguments, every one used, over n
+statements: 0.252 s, 0.828 s and 3.41 s for n = 4,000, 8,000 and 16,000 (ratios 3.3 and 4.1).
+
+*Causes.*
+
+1. `readTtObject` and `readTripleTerm` (the mutual pair of [32] and [30]) called each other, one frame each
+   for a nesting level.
+2. `Term.toCanonicalNTriples` built `"<<( " ++ s ++ " <p> " ++ text of the object ++ " )>>"`: a frame and a
+   copy of the text so far for each level. It is the text of the term in the N-Quads that every parse
+   operation answers (`Dataset.toCanonicalNQuads`).
+3. `TurtleState.lookupPrefix` was `List.find?` over the bindings in force, newest first: a name under the
+   first prefix declared of n took n comparisons.
+4. `Sink.bodyPush` and `Sink.trigSwitch` shortened each IRI by a scan of the prefix table
+   (`tsAbbreviateIri`); the writer held the table as a list.
+5. `Sbm11Export.parseOpts` appended each `--prefix` to the end of the list of the others
+   (`o.prefixes ++ [x]`): n squared / 2 list cells for n arguments: 0.73 s of the 3.4 s at 16,000 arguments (one statement in the generation: 0.23 s, 0.73 s, 3.1 s for 8,000, 16,000, 32,000 arguments; after: 0.022 s, 0.078 s, 0.19 s).
+
+*Repair.* Each specification stays in the source as it was; the fast form is proved equal for every input
+and the compiler runs it wherever the source says the specification. The theorems depend on `propext`,
+`Classical.choice` and `Quot.sound` only.
+
+| Specification | Fast form | Theorems |
+|---|---|---|
+| `readTripleTerm`, `readTtObject` (Turtle.lean) | `readTripleTermLoop`, `readTtObjectLoop`: `readTripleTermDown` keeps the open triple terms in a list and goes to the object by a tail call; `closeTripleTerms` closes them | `readTripleTermDown_eq`, `readTripleTerm_eq_loop`, `readTtObject_eq_loop` |
+| `Term.toCanonicalNTriples` (NTriples.lean) | `Term.toCanonicalNTriplesFast`: a loop with a counter of the open triple terms (as `tsTermToTurtleLoop`) | `Term.toCanonicalNTriplesLoop_eq`, `Term.toCanonicalNTriplesFast_eq`, `Term.toCanonicalNTriples_eq_fast` |
+| `TurtleState.lookupPrefix` | `lookupPrefixIndexed`: a lookup in `prefixIndex`, a `Std.TreeMap` that every state carries with the proof `prefixIndex_ok`; `bindPrefix` adds a binding | `lookupPrefixIndexed_eq`, `lookupPrefix_eq_indexed`, `lookupPrefix_bindPrefix` |
+| `Sink.bodyPush`, `Sink.trigSwitch` (table) | `bodyPushBy`, `trigSwitchBy` (an `Abbreviator` the writer holds, built once by `Writer.init`) | `bodyPushBy_ofTable`, `trigSwitchBy_ofTable` |
+| `Opts.prefixes` (append) | `prefixesRev` and one `reverse` | none: the order of the arguments is the order of the output (the row and 14,463 comparisons) |
+
+`Sink` has no `csimp` theorem for the pair `bodyPush`/`bodyPushBy`: the fast form takes the
+`Abbreviator`, which is data that the writer holds, and a theorem `bodyPush = fun table => bodyPushBy
+(Abbreviator.ofTable table)` would make every call build the index again (the cost paid in 864). The
+stream writer calls the fast form directly.
+
+| Time and stack | before (3e832dfe) | after |
+|---|---|---|
+| `parseToDatasetJson` of a triple term nested 300,000 deep (a 4.2 MB Turtle text; the answer holds 16.2 MB of N-Quads), native, 512 KB | overflow (2,536 levels ran, 2,537 overflowed in `l4factoidal parse`) | runs: 1.3 s; 0.74 s at the default stack (before: no result in 120 s) |
+| the same in Node, default stack and `--stack-size=512` | overflow | runs: 1.9 s and 1.6 s |
+| CPU of `l4factoidal parse --out nquads`, 5,000, 10,000, 20,000 levels | 0.04 s, 0.12 s, 0.41 s | not measured at these sizes; 300,000 levels in 1.3 s |
+| CPU of `l4factoidal parse`, 16,000, 32,000, 64,000 prefixes | 2.59 s, 16.4 s, 78.8 s | 0.29 s, 0.58 s, 1.11 s |
+| CPU of `l4sbm11 export`, 4,000, 8,000, 16,000 prefixes | 0.252 s, 0.828 s, 3.41 s | 0.057 s, 0.071 s, 0.154 s |
+| CPU of `l4sbm11 export`, one statement, 8,000, 16,000, 32,000 arguments | 0.23 s, 0.73 s, 3.1 s | 0.022 s, 0.078 s, 0.19 s |
+| `tests/stack/run.sh --canary` | 138 pass, 0 fail (out of 138); 8 expected failures, 3 for issue 865 | 139 pass, 0 fail (out of 139); 5 expected failures, none for issue 865 |
+
+The other modes of reading a document with 64,000 prefixes (`--lenient`, `--out turtle`, and TriG with
+one graph block for each triple) cost 1.0 s, 2.0 s and 1.1 s of user CPU time, four times the time at
+16,000 for four times the size. The lenient reader keeps the state from before a statement, which is
+why the index is a tree and not a hash table (`skills/lean4-performance/SKILL.md`).
+
+*Rows.* `tests/stack/run.sh`: `turtle-read-triple-term` (the operation `parseToDatasetJson`, format
+`turtle12`, one triple whose object is a triple term nested 300,000 deep) in the native, native canary,
+wasm canary and wasm routes. The row checks the answer: `"count":1` and 300,000 openings of a triple
+term in the N-Quads. `tests/stack/lean_scaling.py`: `turtle-read-prefixes` and
+`sbm11-export-prefixes-time`, measured at n, 2n and 4n. The commit before the repair (236220ad) added the
+rows as expected failures that name issue 865 (3 of the 138 rows of `tests/stack/run.sh --canary`, and the 2
+scaling rows); the repair flips them to assertions.
+
+*Same bytes.* The old binaries (commit 3e832dfe, the repair of issue 864) were copied aside before the
+change. Standard output, standard error and exit code of the commands, and the output files of the
+exports, were compared with the new ones.
+
+| Input | Runs | Identical | Different |
+|---|---:|---:|---:|
+| `l4factoidal parse` with no `--out` (the count), `--out nquads` and `--out turtle`: the W3C RDF 1.1 and RDF 1.2 Turtle, TriG and N-Triples files (1,215 files; the RDF 1.2 files again with `turtle12`, `trig12`, `nt12`) | 4,605 | 4,605 (2,622 with exit 0; 1,983 the same error) | 0 |
+| the same three: the W3C N-Quads, RDF/XML, rdf-mt and rdf-semantics files (861 files) | 3,225 | 3,225 (2,404 with exit 0; 821 the same error) | 0 |
+| the same three: `tests/sbm11/syntax` (27 files) | 81 | 81 (69 with exit 0; 12 the same error) | 0 |
+| `tools/turtle-reader-differential.py`, seeds 11, 12, 13, 4,000 documents each, Turtle and TriG in the RDF 1.2 mode, 40 percent damaged: the count, `--out nquads`, `--out turtle`, `--lenient` | 48,000 | 48,000 (20,209 with exit 0; 27,791 the same error) | 0 |
+| `parseToDatasetJson` and `datasetOpen` + `datasetSerialize` with `turtle`, on the W3C files and `tests/sbm11/syntax` (2,637 files) | 5,274 | 5,274 (890 with a non-empty prefix table; 5,046,719 bytes) | 0 |
+| `l4sbm11 export --format turtle` and `--format trig`, with no prefix and with tables of 7, 208 and 307 rows (a label bound twice in one of them; all three below the threshold of the index, so the writer scans), the W3C files packed by the old packer | 14,463 | 14,463 (14,065 with exit 0; 398 the same error; 93,857,258 bytes) | 0 |
+| the same command on 800 random N-Quads datasets whose IRIs lie under 3 to 1,200 namespaces, with tables of 0, 5, 80 and 1,200 prefixes (the tables above 64 rows for each distinct length are indexed) | 6,400 | 6,400 (126,725,909 bytes) | 0 |
+| 3,000 random cases of `tools/turtle-writer-differential.py` (seeds 101 and 102; the writer of the batch operations) | 3,568 | 3,568 (913,592,880 bytes) | 0 |
+| `tests/sbm11/w3c_roundtrip.sh`: store and parser outcome and detail of each test | 1,299 | 1,299 (1,281 pass, 18 expected-fail) | 0 |
+| `tests/trig-pack/compare_w3c.sh` | 717 | 717 (484 equal hashes, 2 expected, 231 refused) | 0 |
+
+*Checks (2026-10-15).*
+
+- `lake build` (default targets): 1,716 jobs, exit 0. A second build after the last edit of a
+  docstring: the 960 C files and the six binaries that the checks use have the same hashes as before.
+- `python3 tools/lean-tail-recursion-audit.py --gate`: exit 0 (allow list of 1,376 lines, 4 marked
+  `(a) PENDING`, 502 marked `UNTRIAGED`; the audit lists `readTripleTerm`, `readTtObject` and
+  `Term.toCanonicalNTriples` as `replaced`, and their three lines are out of the allow list). The C of
+  `readTripleTermDown` and of `closeTripleTerms` has one `goto _start` each and no call of itself.
+  `python3 tools/lean-unbuilt-modules.py --gate`: exit 0, 790 modules, 0 not reached.
+  `tools/lean-hygiene-audit.py --build-log`: clean (1,527 `#print axioms` outputs).
+  `tools/test_lean_tail_recursion_audit.py`: 12 pass, 0 fail (out of 12).
+- `tests/sbm11/run.sh`: 2,265 pass, 0 fail, 30 expected-fail (out of 2,295). `tests/sbm11/census.sh`,
+  `tests/delta-log/run.sh` (46 pass, 0 fail) and `tests/sbm11/threads.sh` (all answers identical): exit 0.
+- `tests/stack/run.sh --canary` (private `STACK_FIXTURES`, with a wasm module built from this tree):
+  139 pass, 0 fail (out of 139); 5 expected failures (issues 816 and 817), none for issue 865. The
+  canary control passed. `turtle-read-triple-term`: 1.05 s native, 1.7 s wasm canary, 1.6 s wasm.
+- `tests/stack/lean_scaling.py --only` the two new rows and the rows `turtle-prefixes`,
+  `turtle-prefixes-open`, `turtle-nest-time`, `turtle-object-list`, `trig-parse`, `trig-big-graph`,
+  `turtle-serialize`, `sbm11-export-ttl-memory`, `sbm11-export-trig-memory`, `sbm11-pack-ttl-memory`,
+  `sbm11-pack-trig-memory` and `query-vs-parse`: 14 pass, 0 fail, 0 expected-fail (out of 14). The first run had
+  `query-vs-parse` at 2.3 times the CPU time of `parse` (bound 2.0) at a load average of 10.6; at a load
+  average of 3.3 it gave 1.4, and the binary before the change 1.6.
 - `formal/lean4/Wasm/cli-smoke.sh`: 106 pass, 0 fail, 0 xfail (out of 106).
   `formal/lean4/Wasm/native-smoke.sh`: 366 pass, 0 fail, 0 xfail (out of 366).
 - `npm test` in `npm/factoidal`: 442 pass, 0 fail, 1 skipped (out of 443). `node --test

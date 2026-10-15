@@ -368,9 +368,12 @@ repaired (docs/designissues/2026-10-10-lean-vs-fstar-performance.md):
                    command must print n, the number of triples. Issue
                    https://github.com/danbri/factoidal/issues/865: the reader kept the
                    prefixes in a list and looked each name up with `List.find?`, a scan of
-                   the prefixes declared after it. Before the repair (expected failure): 2.59 s,
+                   the prefixes declared after it. The state now holds a tree of the latest
+                   binding of each label (`TurtleState.prefixIndex`, with the proof that it
+                   answers as the list does) and `lookupPrefix` runs `lookupPrefixIndexed`
+                   (`lookupPrefix_eq_indexed`, a `csimp` theorem). Before the repair: 2.59 s,
                    16.4 s and 78.8 s CPU (ratios 6.3 and 4.8 for the two doublings; 30.4 for 4x
-                   input).
+                   input); after: 0.294 s, 0.579 s and 1.11 s (2.0 and 1.9; 3.8 for 4x).
   sbm11-export-prefixes-time
                    `l4sbm11 export --format turtle --verify none` of a generation of n statements
                    (the subject of statement i under namespace i, the object under namespace
@@ -379,8 +382,11 @@ repaired (docs/designissues/2026-10-10-lean-vs-fstar-performance.md):
                    arguments, and ARG_MAX is 2 MB), the rule of turtle-read-prefixes. The
                    Turtle must declare n prefixes. Issue 865: `Sink.bodyPush` scanned the
                    table for the prefix of each IRI, and `parseOpts` appended each prefix to
-                   the end of the list of the others. Before the repair (expected failure):
-                   0.252 s, 0.828 s and 3.41 s CPU (ratios 3.3 and 4.1; 13.5 for 4x input).
+                   the end of the list of the others. The writer now holds the table as an
+                   `Abbreviator` built once (`bodyPushBy_ofTable`), and `parseOpts` puts each
+                   prefix in front of the others. Before the repair: 0.252 s, 0.828 s and
+                   3.41 s CPU (ratios 3.3 and 4.1; 13.5 for 4x input); after: 0.057 s,
+                   0.071 s and 0.154 s (1.3 and 2.2; 2.7 for 4x).
   startup          process start: `l4factoidal version` must take at most
                    STARTUP_BUDGET (20 ms) of CPU time, minimum of 15 runs
                    (305 million instructions and 43 ms before the fixtures were
@@ -465,8 +471,6 @@ XFAIL: dict[str, str] = {
     "sbm11-pack-trig-workers": "https://github.com/danbri/factoidal/issues/842",
     "sbm11-export-rdfxml-memory": "https://github.com/danbri/factoidal/issues/846",
     "sbm11-export-jsonld-memory": "https://github.com/danbri/factoidal/issues/847",
-    "turtle-read-prefixes": "https://github.com/danbri/factoidal/issues/865",
-    "sbm11-export-prefixes-time": "https://github.com/danbri/factoidal/issues/865",
 }
 # A run longer than this is not repeated: the minimum of several runs only
 # removes timer and load noise, which is small against a run this long.

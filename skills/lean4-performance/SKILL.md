@@ -870,6 +870,55 @@ scratch.lean`, `IO.monoMsNow` around the call), at 1,000 and 2,000 rows. Four ti
 time for twice the rows, in a function with one pass over its input, means work done for
 each call.
 
+## A table in a state that a caller may keep: a hash map is copied whole, a tree along one path (paid for 2026-10-15)
+
+`Std.HashMap.insert` updates the table in place when nothing else refers to it, and copies
+the whole bucket array when something does. A reader's state is threaded from statement to
+statement, so the table in it is usually unique. It is shared whenever a caller keeps the
+state from before an update: the lenient reader keeps the state before a statement to
+recover from an error in it. One shared update then costs the size of the table, and a
+document of n directives costs n squared. `Std.TreeMap.insert` copies one path
+(a logarithm of the size) when the tree is shared, and updates in place when it is not.
+
+Measured (`leanc -O2`; `Share.lean` of 40 lines, one `structure` with the map and a counter,
+`{ s with m := s.m.insert k v }` in a loop; unique = nothing else holds the map; shared = the
+map from before the update is stored in a variable that is read after the update), n distinct
+keys `p0` to `p{n-1}`, milliseconds:
+
+| n | unique HashMap | unique TreeMap | shared HashMap | shared TreeMap |
+|---:|---:|---:|---:|---:|
+| 10,000 | 2 | 14 | 772 | 11 |
+| 20,000 | 3 | 16 | 3,443 | 25 |
+| 40,000 | 11 | 41 | 14,870 | 54 |
+
+A shared hash map is 4.5 and 4.3 times slower for twice the keys. A unique tree is about 4
+times slower than a unique hash map: 1 microsecond against 0.3 for the insert of a prefix
+label, small against the 18 microseconds that one statement of Turtle costs (0.29 s for 16,000
+prefix lines and 16,000 triples). The lenient reader keeps the state across the call that
+reads a statement (`readGraphBodyRecover`, `TurtleLenient.lean`: the `.error` arm continues
+with the old state), so a hash map in `TurtleState` would be shared at each `@prefix`. The state of the
+Turtle reader (`TurtleState.prefixIndex`,
+https://github.com/danbri/factoidal/issues/865) is a `Std.TreeMap` for this reason. The
+hash-map version of the reader state was not built; the choice rests on this measurement and
+on the code of the lenient reader. A table that is built once and then only read
+(`PrefixIndex`, `Abbreviator`) is a hash map.
+
+Four ways the measurement reported nothing, each a version that was run:
+
+- `time "f" f 20000` with the size in the source: the call is a closed term, the compiler
+  evaluates it at initialisation, and the timer reads 0 ms. The size must come from `argv`.
+- `let r := f n; IO.println s!"{r} {(← IO.monoMsNow) - t0}"`: the `←` is lifted before the
+  statement, so the clock is read before `r` is forced. Read the clock in a term that depends
+  on `r`: `let t1 ← (if r == 12345678901 then pure 0 else IO.monoMsNow)`.
+- `acc := acc + old.m.size` after the update: a pure read can be moved before the update,
+  so the map was not alive at the insert and the shared map was as fast as the unique one.
+  Store the old map (`prev := some old`) and read `prev` after the loop.
+- A structure named `ST` is the core monad `ST`: "type expected".
+
+Also in `Harness/Sbm11Export.lean`: `prefixes := o.prefixes ++ [x]` for each `--prefix`
+argument was quadratic in the number of arguments (16,000 arguments: 1 s of the 3.4 s).
+`prefixesRev := x :: o.prefixesRev` and one `reverse`.
+
 ## Verification and measurement
 
 After a semantic hot-path change, run the closest Lean guards and targeted

@@ -25,9 +25,10 @@ writes a store with the stream meaning (`Sink.Writer`).
 `--nest-check N` writes a triple term nested N levels deep in the object position
 as Turtle, with the batch writer (`turtleOfGraphOpts`) and with the stream writer
 (`Sink.streamQuads`), and compares both with the text that a loop builds for the same
-term. No parser reads the term: `readObject12` takes a stack frame for each level of
-nesting, so the term is built in memory. `tests/stack/run.sh` runs it with N = 300,000
-under a 512 KB stack (https://github.com/danbri/factoidal/issues/864).
+term. The term is built in memory by a loop, so that the writers are tested apart from the
+Turtle reader (which reads such a text since issue 865; the row `turtle-read-triple-term`
+of `tests/stack/run.sh`). `tests/stack/run.sh` runs it with N = 300,000 under a 512 KB
+stack (https://github.com/danbri/factoidal/issues/864).
 
 This is a harness: it reads and writes files. `tests/sbm11/` and the
 per-syntax measurement of the shard packers use it to write one dataset in

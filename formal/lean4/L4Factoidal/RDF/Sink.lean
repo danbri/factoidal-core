@@ -48,6 +48,11 @@ The streaming Turtle and TriG writers write every IRI in full (`<...>`), `a` for
 `rdf:type`, and numbers and booleans in their short form, unless the caller gives
 a prefix table (`Options.prefixes`, a namespace and a label with its colon, as
 `PrefixTable` has them): deriving the prefixes needs the IRIs of the whole graph.
+The writer holds the table as an `Abbreviator` (`L4Factoidal/Syntax/TurtleSerialize.lean`),
+built once when the writer starts: a scan for a small table and an index for a large one,
+so a table of n prefixes costs a hash lookup for each distinct length of a namespace and
+not n comparisons for each IRI (`bodyPushBy_ofTable` proves the writer's text equal to the
+scan's; https://github.com/danbri/factoidal/issues/865).
 
 ## The order of the quads
 
@@ -203,7 +208,12 @@ def BodyState.closeStatement (st : BodyState) : String :=
 /-- Write a triple. The triples of one subject follow one another: a new subject
     ends the open statement and starts another; the same subject with a new
     predicate continues it with `;`; the same predicate continues the object
-    list with `,`. The statement is the one `walkTriples` writes. -/
+    list with `,`. The statement is the one `walkTriples` writes.
+
+    This is the SPECIFICATION, in terms of the prefix table: each IRI is shortened by a
+    scan of the table. The writer runs `bodyPushBy`, which holds the table as an
+    `Abbreviator` built once (`bodyPushBy_ofTable`), so a table of n prefixes does not cost n
+    comparisons for each IRI (https://github.com/danbri/factoidal/issues/865). -/
 def bodyPush (table : PrefixTable) (st : BodyState) (t : Triple) : BodyState × String :=
   let o := tsTermToTurtle table true t.o
   let p := tsPredicateToTurtle table t.p
@@ -222,7 +232,8 @@ def bodyPush (table : PrefixTable) (st : BodyState) (t : Triple) : BodyState × 
           " .\n\n" ++ tsSubjectToTurtle table t.s ++ " " ++ p ++ " " ++ o)
 
 /-- TriG: before a quad of graph `g`, end the open block if its graph is another
-    one and open the block of `g`. -/
+    one and open the block of `g`. The specification, in terms of the prefix table
+    (`trigSwitchBy` is the form the writer runs). -/
 def trigSwitch (table : PrefixTable) (st : BodyState) (g : Option Subject) : BodyState × String :=
   if st.graph == some g then (st, "")
   else
@@ -231,6 +242,57 @@ def trigSwitch (table : PrefixTable) (st : BodyState) (g : Option Subject) : Bod
       | none => "{\n"
       | some name => "GRAPH " ++ tsSubjectToTurtle table name ++ " {\n"
     ({ graph := some g }, close ++ opening)
+
+/-- `bodyPush` with the IRIs shortened by an `Abbreviator`: the scan for a small
+    table, an index for a large one. The abbreviator is data that the writer holds, so
+    the index is built once, when the writer starts. -/
+def bodyPushBy (ab : Abbreviator) (st : BodyState) (t : Triple) : BodyState × String :=
+  let o := tsTermToTurtleBy ab.run true t.o
+  let p := tsPredicateToTurtleBy ab.run t.p
+  match st.subj with
+  | none =>
+      ({ st with subj := some t.s, pred := some t.p, last := some t },
+        tsSubjectToTurtleBy ab.run t.s ++ " " ++ p ++ " " ++ o)
+  | some s =>
+      if s == t.s then
+        if st.pred == some t.p then
+          ({ st with last := some t }, " , " ++ o)
+        else
+          ({ st with pred := some t.p, last := some t }, " ;\n    " ++ p ++ " " ++ o)
+      else
+        ({ st with subj := some t.s, pred := some t.p, last := some t },
+          " .\n\n" ++ tsSubjectToTurtleBy ab.run t.s ++ " " ++ p ++ " " ++ o)
+
+/-- `trigSwitch` with the graph name shortened by an `Abbreviator`. -/
+def trigSwitchBy (ab : Abbreviator) (st : BodyState) (g : Option Subject) : BodyState × String :=
+  if st.graph == some g then (st, "")
+  else
+    let close := st.closeStatement ++ (if st.graph.isSome then "}\n\n" else "")
+    let opening := match g with
+      | none => "{\n"
+      | some name => "GRAPH " ++ tsSubjectToTurtleBy ab.run name ++ " {\n"
+    ({ graph := some g }, close ++ opening)
+
+/-- The writer's form is the specification's: for the abbreviator of a table, `bodyPushBy`
+    writes the text and the state that `bodyPush` writes. -/
+theorem bodyPushBy_ofTable (table : PrefixTable) (st : BodyState) (t : Triple) :
+    bodyPushBy (Abbreviator.ofTable table) st t = bodyPush table st t := by
+  unfold bodyPushBy bodyPush tsTermToTurtleBy tsPredicateToTurtleBy tsSubjectToTurtleBy
+  rw [Abbreviator.run_ofTable]
+  have ho : tsTermToTurtleLoop (tsAbbreviateIri table) true t.o "" 0 = tsTermToTurtle table true t.o := by
+    have := tsTermToTurtleFast_eq table true t.o
+    exact this
+  rw [ho]
+  rfl
+
+theorem trigSwitchBy_ofTable (table : PrefixTable) (st : BodyState) (g : Option Subject) :
+    trigSwitchBy (Abbreviator.ofTable table) st g = trigSwitch table st g := by
+  unfold trigSwitchBy trigSwitch tsSubjectToTurtleBy
+  rw [Abbreviator.run_ofTable]
+  rfl
+
+#print axioms bodyPushBy_ofTable
+#print axioms trigSwitchBy_ofTable
 
 /-- The text that ends a Turtle or TriG document. -/
 def BodyState.finish (st : BodyState) : String :=
@@ -265,8 +327,8 @@ inductive WholeKind where
 inductive Writer where
   | nquads (v : RdfVersion)
   | ntriples (v : RdfVersion) (graphs : GraphChoice) (last : Option Triple)
-  | turtle (table : PrefixTable) (graphs : GraphChoice) (st : BodyState)
-  | trig (table : PrefixTable) (st : BodyState)
+  | turtle (ab : Abbreviator) (graphs : GraphChoice) (st : BodyState)
+  | trig (ab : Abbreviator) (st : BodyState)
   /-- RDF/XML, JSON-LD: the kept quads, newest first, and how to write them. -/
   | whole (kind : WholeKind) (v : RdfVersion) (graphs : GraphChoice) (quadsRev : List (Triple × Option Subject))
       (last : Option Triple)
@@ -278,8 +340,8 @@ def Writer.init (extra : Extra) (fmt : RdfFormat) (opts : Options) : Except Stri
   match fmt with
   | .nquads => .ok (.nquads opts.version, "")
   | .nt => .ok (.ntriples opts.version opts.graphs none, "")
-  | .turtle => .ok (.turtle opts.prefixes opts.graphs {}, prefixHeader opts.prefixes)
-  | .trig => .ok (.trig opts.prefixes {}, prefixHeader opts.prefixes)
+  | .turtle => .ok (.turtle (Abbreviator.ofTable opts.prefixes) opts.graphs {}, prefixHeader opts.prefixes)
+  | .trig => .ok (.trig (Abbreviator.ofTable opts.prefixes) {}, prefixHeader opts.prefixes)
   | .rdfxml => .ok (.whole .rdfxml opts.version opts.graphs [] none, "")
   | .jsonld =>
       match extra.jsonld with
@@ -298,18 +360,18 @@ def Writer.push : Writer → Triple → Option Subject → Except String (Writer
       else
         let line ← ntriplesLine v t
         pure (.ntriples v graphs (some t), line)
-  | .turtle table graphs st, t, g => do
-      if !(← graphs.keeps g) then pure (.turtle table graphs st, "")
-      else if st.last == some t then pure (.turtle table graphs st, "")
+  | .turtle ab graphs st, t, g => do
+      if !(← graphs.keeps g) then pure (.turtle ab graphs st, "")
+      else if st.last == some t then pure (.turtle ab graphs st, "")
       else
-        let (st', text) := bodyPush table st t
-        pure (.turtle table graphs st', text)
-  | .trig table st, t, g =>
-      let (st1, opening) := trigSwitch table st g
-      if st1.last == some t then .ok (.trig table st1, opening)
+        let (st', text) := bodyPushBy ab st t
+        pure (.turtle ab graphs st', text)
+  | .trig ab st, t, g =>
+      let (st1, opening) := trigSwitchBy ab st g
+      if st1.last == some t then .ok (.trig ab st1, opening)
       else
-        let (st2, text) := bodyPush table st1 t
-        .ok (.trig table st2, opening ++ text)
+        let (st2, text) := bodyPushBy ab st1 t
+        .ok (.trig ab st2, opening ++ text)
   | .whole kind v graphs quadsRev last, t, g => do
       if !(← graphs.keeps g) then pure (.whole kind v graphs quadsRev last, "")
       else if last == some t && g.isNone then pure (.whole kind v graphs quadsRev last, "")

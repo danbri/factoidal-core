@@ -1,6 +1,6 @@
 ---
 name: lean4-proof-patterns
-description: Prove properties of this repository's fuel-bounded, match-heavy Lean 4 definitions (parsers, codecs, evaluators) without Mathlib — which tactics exist here, how to split nested matches without a case explosion, why `split`/`generalize` on large Nat literals never returns, the `rename_i` order after `split`, `omega` after `List.length_cons`, timed per-theorem compiles to bisect a hang, and the `#print axioms` gate. Use when a proof stalls, when `lake build` sits on one theorem for minutes, when retiring a `partial def`, or before dispatching a proof subagent against `L4Factoidal`. Layers on the vendored `lean-proof` method; does not repeat it.
+description: Prove properties of this repository's fuel-bounded, match-heavy Lean 4 definitions (parsers, codecs, evaluators) without Mathlib — which tactics exist here, how to split nested matches without a case explosion, why `split`/`generalize` on large Nat literals never returns, the `rename_i` order after `split`, `omega` after `List.length_cons`, timed per-theorem compiles to bisect a hang, the loop with a counter, the loop with a list of open frames and the index that carries its proof for `csimp` (sections 9a to 9c), and the `#print axioms` gate. Use when a proof stalls, when `lake build` sits on one theorem for minutes, when retiring a `partial def`, or before dispatching a proof subagent against `L4Factoidal`. Layers on the vendored `lean-proof` method; does not repeat it.
 ---
 
 # Lean 4 proof patterns for L4Factoidal (no Mathlib)
@@ -419,6 +419,94 @@ The statement for every state is `loop t acc k = acc ++ spec t ++ closersStr k`,
 instead of counting them copies the suffix at each level and is quadratic: the
 specification is the quadratic one (it copies the text of the levels below at each
 level), and the loop must not repeat that.
+
+## 9c. A recursion whose call is the last step before a fixed closing: the list of open frames; and an index that carries its proof
+
+From https://github.com/danbri/factoidal/issues/865 (`readTripleTerm` and `readTtObject`,
+`TurtleState.prefixIndex`, 2026-10-15). Both proofs are in `L4Factoidal/Syntax/Turtle.lean`.
+
+**The shape.** `tripleTerm ::= '<<(' subject verb object ')>>'`, and the object may be a
+triple term. The specification is two functions that call each other, so a triple term
+nested n deep takes 2n native frames (2,536 levels ran under 512 KB and 2,537 overflowed).
+The loop keeps what each open level has read and not yet used, its subject and its verb,
+in a list (`OpenTripleTerms`), and goes on to the object by a tail call. At the first
+object that is not a triple term it closes the open levels, innermost first, each by
+reading its `)>>` (`closeTripleTerms`). That is two loops: `readTripleTermDown` calls
+`closeTripleTerms` at the leaf, and `closeTripleTerms` never calls the first, because a
+level has one recursive call and it is the last one before the closing.
+
+**One function, not a mutual block.** Lean turns a call of a function on itself in tail
+position into `goto _start`. A tail call from one function of a mutual block to another is
+a C call, and a chain of them is a stack. The specification has two functions for a level
+(`readTtObject`, `readTripleTerm`), so the loop does the object step inline: it spends two
+units of fuel for a level, as the specification does. Matching `f + 1` and then `f' + 1`
+and calling on `f'` is structural recursion, and Lean accepts it. Check the emitted C:
+`goto _start` once in each of `readTripleTermDown` and `closeTripleTerms`, and no call of
+either on itself.
+
+**The theorem** is stated for every list of open levels:
+
+    readTripleTermDown fuel opens st pos cs = closeTripleTerms opens (readTripleTerm fuel st pos cs)
+
+By induction on the fuel of the SPECIFICATION (`readTripleTermDown_eq`, structural; the
+step goes from `f + 1` to `f'`, two below it). Four lemmas carry it:
+
+- `closeTripleTerms_error` (an error ends every open level) and `closeTripleTerms_nil`
+  (`closeTripleTerms [] r = r`), each by `cases` and `rfl`.
+- `closeTripleTerms_cons : closeTripleTerms (fr :: opens) r = closeTripleTerms opens
+  (closeTripleTerms [fr] r)`: the innermost level closes first. `cases r`, then `simp only
+  [closeTripleTerms]`, then `generalize tws p6 r6 = w; rcases w; dsimp only; split <;> simp`.
+- `readTripleTerm_succ`: the specification of one level written with its closing step as
+  `closeTripleTerms [(s, p)] (readTtObject f st1 p5 r5)`. Prove it by unfolding the
+  specification once and going through each `match` with `cases` on the scrutinee
+  (`readTtSubject`, `readVerb`, `readTtObject`) and `generalize tws ... = w; rcases w`.
+  Do not `rw` with a restated `match`: the lemma's `match` is compiled to a matcher of its
+  own, and the rewrite does not see the specification's.
+- The step of the induction: `rw [readTripleTermDown, readTripleTerm_succ]`, the same
+  `cases`, then `split` on the match of the rest of the text against `<<(`. In the nested
+  case: the induction hypothesis, `closeTripleTerms_cons`, `congr 1; rw [readTtObject]`. In
+  the other case: `closeTripleTerms_cons`.
+
+`simp only [closeTripleTerms]` closed the goal of `readTripleTerm_succ` in one file and left
+it open in another (the same text, a scratch file against the built library and the module
+itself). Put the rest of the proof under `all_goals` so that it does not fail with "No goals".
+
+The `@[csimp]` theorems are for BOTH functions of the block (`readTripleTerm_eq_loop`,
+`readTtObject_eq_loop`), placed right after the block and before the next definition: the
+compiler replaces a constant only in code compiled after the theorem, and the callers
+(`readObject`, `readRtObject`) are in the blocks below it. `readTtObjectLoop` calls the
+specification `readTtObject` for an object that is not a triple term; on that input the
+specification does not recurse.
+
+**An index in a state, equal to a list lookup, by a field that carries the proof.** The
+list `TurtleState.prefixes` (newest binding first, shadowed bindings kept) is an output
+(`parseTurtleWithPrefixes`) and stays. `lookupPrefix` scanned it for each prefixed name. The
+state has two more fields:
+
+    prefixIndex : Std.TreeMap String String compare
+    prefixIndex_ok : ∀ l, prefixIndex[l]? = (prefixes.find? (fun p => p.1 == l)).map (·.2)
+
+`@[csimp]` needs an equation of functions with no hypothesis. Because every state carries
+the proof, `lookupPrefixIndexed st l = lookupPrefix st l` holds for every `st`
+(`lookupPrefixIndexed_eq`: `rw [st.prefixIndex_ok pfx]` and a case split on `find?`), and
+`lookupPrefix_eq_indexed` follows by `funext`. The one function that adds a binding,
+`bindPrefix`, gives the new proof in its `prefixIndex_ok` field: `rw
+[Std.TreeMap.getElem?_insert, List.find?_cons]`, `by_cases h : pfx = l`; with `h`, `subst h;
+simp`; without it, `have hb : (pfx == l) = false := by simpa using h`, `have hc : ¬ compare
+pfx l = Ordering.eq := by simpa using h` and `simp [hb, hc, st.prefixIndex_ok l]`. A literal
+`{ st with prefixes := ... }` does not compile any more, so no update site can forget the
+index (four sites changed, in `Turtle.lean`, `TriG.lean` twice and `TriGChunkFold.lean`).
+`simp` proves the empty index (`by intro l; simp`). `compare_eq_iff_eq` is in namespace
+`Std` and is a `simp` lemma for `String`. Why a tree and not a hash map:
+`skills/lean4-performance/SKILL.md`, "A table in a state that a caller may keep".
+
+Traps met, each a compile:
+
+* `Std.TreeMap.getElem?_empty` is not a name; `simp` closes the empty case.
+* `rw [readTtObjectLoop]` on a function with an overlapping catch-all case picks the
+  equation of the catch-all and leaves its condition `∀ rest, cs = ... → False` as a new
+  goal. `unfold readTtObjectLoop; dsimp only; split` gives the cases.
+* `ST` is a core monad: a structure named `ST` in a scratch file fails with "type expected".
 
 ## 10. Gate before commit
 

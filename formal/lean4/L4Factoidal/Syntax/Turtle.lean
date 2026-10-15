@@ -121,6 +121,7 @@ import L4Factoidal.Syntax.Lexing
 import L4Factoidal.Syntax.NTriples
 import L4Factoidal.Syntax.IriResolve
 import L4Factoidal.NatBounds
+import Std.Data.TreeMap
 
 namespace L4Factoidal.Syntax
 
@@ -137,6 +138,16 @@ structure TurtleState where
   /-- `@prefix` / `PREFIX` bindings, most recent first (a re-binding
   shadows the older one, per Turtle §6.3). -/
   prefixes : List (String × String)
+  /-- The latest binding of each label: what `lookupPrefix` answers, found in
+  time in proportion to the logarithm of the number of labels. A tree and not a
+  hash table: a tree that is shared is copied along one path, a hash table that
+  is shared is copied whole, and a state is shared while a lenient run holds the
+  state before a statement, to recover from an error in it
+  (https://github.com/danbri/factoidal/issues/865). -/
+  prefixIndex : Std.TreeMap String String compare
+  /-- The index answers as the list does, for every label. Every state carries
+  this proof, so `lookupPrefixIndexed` equals `lookupPrefix` for every state. -/
+  prefixIndex_ok : ∀ l, prefixIndex[l]? = (prefixes.find? (fun p => p.1 == l)).map (·.2)
   /-- The base IRI currently in force; `""` means "no base", in which
   case a relative reference resolves to itself and then fails
   `RDF.isIri`. -/
@@ -205,8 +216,8 @@ already established a collision-free generated blank-node prefix. This is the
 state boundary a future byte-streaming reader uses after its bounded pre-pass.
 -/
 def TurtleState.initWithBnodePrefix (bnodePrefix : String) (base : Option String) (mode : Mode) : TurtleState :=
-  { prefixes := [], baseIri := base.getD "", bnodeCounter := 0,
-    bnodePrefix, mode := mode }
+  { prefixes := [], prefixIndex := {}, prefixIndex_ok := by intro l; simp,
+    baseIri := base.getD "", bnodeCounter := 0, bnodePrefix, mode := mode }
 
 /-- Whole-document compatibility initializer. `text` is needed only to pick
 the collision-free generated-label prefix. -/
@@ -230,11 +241,62 @@ generated labels out of the way. -/
 def userBnodeLabel (l : BNodeId) : BNodeId := l
 
 /-- Look up a prefix. Port of `lookup_prefix` (list order = shadowing
-order, most recent binding first). -/
+order, most recent binding first). This is the SPECIFICATION: it scans the
+list, so a document with n `@prefix` lines takes time in proportion to n for
+each prefixed name. The parser runs `lookupPrefixIndexed` in its place
+(`lookupPrefix_eq_indexed`, a `csimp` theorem). -/
 def TurtleState.lookupPrefix (st : TurtleState) (pfx : String) : Option String :=
   match st.prefixes.find? (fun p => p.1 == pfx) with
   | some p => some p.2
   | none   => none
+
+/-- A `@prefix` or `PREFIX` directive: the binding goes in front of the history
+and into the index, which then answers it for the label. -/
+def TurtleState.bindPrefix (st : TurtleState) (pfx iri : String) : TurtleState :=
+  { st with
+    prefixes := (pfx, iri) :: st.prefixes
+    prefixIndex := st.prefixIndex.insert pfx iri
+    prefixIndex_ok := by
+      intro l
+      rw [Std.TreeMap.getElem?_insert, List.find?_cons]
+      by_cases h : pfx = l
+      · subst h; simp
+      · have hb : (pfx == l) = false := by simpa using h
+        have hc : ¬ compare pfx l = Ordering.eq := by simpa using h
+        simp [hb, hc, st.prefixIndex_ok l] }
+
+/-- The binding of a label, from the index. -/
+def TurtleState.lookupPrefixIndexed (st : TurtleState) (pfx : String) : Option String :=
+  st.prefixIndex[pfx]?
+
+theorem TurtleState.lookupPrefixIndexed_eq (st : TurtleState) (pfx : String) :
+    st.lookupPrefixIndexed pfx = st.lookupPrefix pfx := by
+  unfold lookupPrefixIndexed lookupPrefix
+  rw [st.prefixIndex_ok pfx]
+  cases st.prefixes.find? (fun p => p.1 == pfx) <;> rfl
+
+/-- Any call of `lookupPrefix` compiled after this line, `expandPrefixed` among
+them, looks the label up in the index. -/
+@[csimp] theorem TurtleState.lookupPrefix_eq_indexed :
+    @TurtleState.lookupPrefix = @TurtleState.lookupPrefixIndexed := by
+  funext st pfx
+  exact (st.lookupPrefixIndexed_eq pfx).symm
+
+/-- The binding that `bindPrefix` makes is the one `lookupPrefix` finds, and every
+other label keeps its binding. -/
+theorem TurtleState.lookupPrefix_bindPrefix (st : TurtleState) (pfx iri l : String) :
+    (st.bindPrefix pfx iri).lookupPrefix l = if pfx = l then some iri else st.lookupPrefix l := by
+  unfold lookupPrefix bindPrefix
+  dsimp only
+  rw [List.find?_cons]
+  by_cases h : pfx = l
+  · subst h; simp
+  · have hb : (pfx == l) = false := by simpa using h
+    simp [hb, h]
+
+#print axioms TurtleState.lookupPrefixIndexed_eq
+#print axioms TurtleState.lookupPrefix_eq_indexed
+#print axioms TurtleState.lookupPrefix_bindPrefix
 
 /-! ## Whitespace and comments — Turtle §2.1, production [161s] WS
 
@@ -978,7 +1040,15 @@ def readAnyLiteral (st : TurtleState) (pos : Nat) (cs : List Char) :
 emits NO triples of its own — it is a term. The only recursion is the
 object slot nesting another triple term, so this is a self-contained
 fuel recursion outside the main mutual block, exactly as the F* source
-keeps `parse_tt_object` / `parse_turtle_triple_term` apart. -/
+keeps `parse_tt_object` / `parse_turtle_triple_term` apart.
+
+The block below is the SPECIFICATION: it takes one native frame for each
+nesting level (two calls, `readTtObject` and `readTripleTerm`). The parser runs
+the loop that follows the block (`readTripleTermDown`), which keeps the open
+triple terms in a list. `readTripleTerm_eq_loop` and `readTtObject_eq_loop`
+prove it equal to the specification for every fuel, and `@[csimp]` makes every
+caller defined after them run the loop
+(https://github.com/danbri/factoidal/issues/865). -/
 
 mutual
 
@@ -1049,6 +1119,204 @@ def readTripleTerm (fuel : Nat) (st : TurtleState) (pos : Nat) (cs : List Char) 
 termination_by fuel
 
 end
+
+/-! ### Triple terms: the loop
+
+The result of reading a triple term or the object of one. -/
+abbrev TripleTermResult := Except ParseError (Term × TurtleState × Nat × List Char)
+
+/-- The triple terms that are open while the loop reads the object of the innermost
+one: the subject and the verb of each, innermost first. A triple term nested n
+deep has n entries here and no native frame. -/
+abbrev OpenTripleTerms := List (Subject × WfIri)
+
+/-- What the specification does with the result of an object: the innermost open
+triple term takes it as its object, reads its closing `)>>` and is itself the result
+of the object of the next one out, and so on. An error ends them all, and the
+result of the last one is the result. Every call of this function on itself is a tail
+call. -/
+def closeTripleTerms : OpenTripleTerms → TripleTermResult → TripleTermResult
+  | _, .error e => .error e
+  | [], .ok r => .ok r
+  | (s, p) :: opens, .ok (o, st2, p6, r6) =>
+      let (p7, r7) := tws p6 r6
+      match r7 with
+      | ')' :: '>' :: '>' :: r8 => closeTripleTerms opens (.ok (.tripleTerm s p o, st2, p7 + 3, r8))
+      | _ => .error ⟨"expected ')>>' closing triple term", p7⟩
+
+/-- `readTripleTerm` with the open triple terms in a list. Each nesting level reads
+the subject and the verb, takes two units of fuel (the specification takes one for
+`readTripleTerm` and one for `readTtObject`) and goes on to the object by a tail
+call; an object that is not a triple term is read by the specification, which does
+not recurse on it, and `closeTripleTerms` closes the open triple terms. -/
+def readTripleTermDown : Nat → OpenTripleTerms → TurtleState → Nat → List Char →
+    TripleTermResult
+  | 0, _, _, pos, _ => .error ⟨"triple-term nesting too deep", pos⟩
+  | f + 1, opens, st, pos, cs =>
+    let (p1, r1) := tws pos cs
+    match readTtSubject st p1 r1 with
+    | .error e => .error e
+    | .ok (s, st1, p2, r2) =>
+        let (p3, r3) := tws p2 r2
+        match readVerb f st1 p3 r3 with
+        | .error e => .error e
+        | .ok (p, p4, r4) =>
+            let (p5, r5) := tws p4 r4
+            match f with
+            | 0 => .error ⟨"triple-term nesting too deep", p5⟩
+            | f' + 1 =>
+              match r5 with
+              | '<' :: '<' :: '(' :: rest =>
+                  readTripleTermDown f' ((s, p) :: opens) st1 (p5 + 3) rest
+              | _ => closeTripleTerms ((s, p) :: opens) (readTtObject (f' + 1) st1 p5 r5)
+
+theorem closeTripleTerms_error (opens : OpenTripleTerms) (e : ParseError) :
+    closeTripleTerms opens (.error e) = .error e := by
+  cases opens <;> rfl
+
+theorem closeTripleTerms_nil (r : TripleTermResult) : closeTripleTerms [] r = r := by
+  cases r <;> rfl
+
+/-- The innermost open triple term closes first, and the others close what it
+returns. -/
+theorem closeTripleTerms_cons (fr : Subject × WfIri) (opens : OpenTripleTerms)
+    (r : TripleTermResult) :
+    closeTripleTerms (fr :: opens) r = closeTripleTerms opens (closeTripleTerms [fr] r) := by
+  rcases fr with ⟨s, p⟩
+  cases r with
+  | error e => simp [closeTripleTerms_error]
+  | ok x =>
+    rcases x with ⟨o, st2, p6, r6⟩
+    simp only [closeTripleTerms]
+    generalize tws p6 r6 = w
+    rcases w with ⟨p7, r7⟩
+    dsimp only
+    split <;> simp [closeTripleTerms]
+
+/-- The specification of one nesting level with fuel, its closing step written with
+`closeTripleTerms`. -/
+theorem readTripleTerm_succ (f : Nat) (st : TurtleState) (pos : Nat) (cs : List Char) :
+    readTripleTerm (f + 1) st pos cs =
+      (let (p1, r1) := tws pos cs
+       match readTtSubject st p1 r1 with
+       | .error e => .error e
+       | .ok (s, st1, p2, r2) =>
+           let (p3, r3) := tws p2 r2
+           match readVerb f st1 p3 r3 with
+           | .error e => .error e
+           | .ok (p, p4, r4) =>
+               let (p5, r5) := tws p4 r4
+               closeTripleTerms [(s, p)] (readTtObject f st1 p5 r5)) := by
+  rw [readTripleTerm]
+  generalize tws pos cs = w1
+  rcases w1 with ⟨p1, r1⟩
+  dsimp only
+  cases readTtSubject st p1 r1 with
+  | error e => rfl
+  | ok x =>
+    rcases x with ⟨s, st1, p2, r2⟩
+    dsimp only
+    generalize tws p2 r2 = w3
+    rcases w3 with ⟨p3, r3⟩
+    dsimp only
+    cases readVerb f st1 p3 r3 with
+    | error e => rfl
+    | ok y =>
+      rcases y with ⟨p, p4, r4⟩
+      dsimp only
+      generalize tws p4 r4 = w5
+      rcases w5 with ⟨p5, r5⟩
+      dsimp only
+      cases readTtObject f st1 p5 r5 with
+      | error e => rfl
+      | ok x =>
+        rcases x with ⟨o, st2, p6, r6⟩
+        simp only [closeTripleTerms]
+        all_goals
+          generalize tws p6 r6 = w
+          rcases w with ⟨p7, r7⟩
+          dsimp only
+          split <;> simp
+
+/-- The loop, from any list of open triple terms: the specification, and then the
+open triple terms closed. By induction on the fuel; each step of the loop takes two
+units of it. -/
+theorem readTripleTermDown_eq :
+    ∀ (fuel : Nat) (opens : OpenTripleTerms) (st : TurtleState) (pos : Nat) (cs : List Char),
+      readTripleTermDown fuel opens st pos cs = closeTripleTerms opens (readTripleTerm fuel st pos cs)
+  | 0, opens, st, pos, cs => by
+      rw [readTripleTermDown, readTripleTerm, closeTripleTerms_error]
+  | f + 1, opens, st, pos, cs => by
+      rw [readTripleTermDown, readTripleTerm_succ]
+      generalize tws pos cs = w1
+      rcases w1 with ⟨p1, r1⟩
+      dsimp only
+      cases readTtSubject st p1 r1 with
+      | error e => rw [closeTripleTerms_error]
+      | ok x =>
+        rcases x with ⟨s, st1, p2, r2⟩
+        dsimp only
+        generalize tws p2 r2 = w3
+        rcases w3 with ⟨p3, r3⟩
+        dsimp only
+        cases readVerb f st1 p3 r3 with
+        | error e => rw [closeTripleTerms_error]
+        | ok y =>
+          rcases y with ⟨p, p4, r4⟩
+          dsimp only
+          generalize tws p4 r4 = w5
+          rcases w5 with ⟨p5, r5⟩
+          dsimp only
+          cases f with
+          | zero =>
+            rw [readTtObject]
+            simp [closeTripleTerms_error]
+          | succ f' =>
+            dsimp only
+            split
+            · rename_i rest
+              rw [readTripleTermDown_eq f', closeTripleTerms_cons]
+              congr 1
+              rw [readTtObject]
+            · rw [closeTripleTerms_cons]
+
+/-- `readTripleTerm` as the loop. -/
+def readTripleTermLoop (fuel : Nat) (st : TurtleState) (pos : Nat) (cs : List Char) :
+    TripleTermResult :=
+  readTripleTermDown fuel [] st pos cs
+
+/-- `readTtObject` with the loop for a nested triple term; any other object is read
+by the specification, which does not recurse on it. -/
+def readTtObjectLoop (fuel : Nat) (st : TurtleState) (pos : Nat) (cs : List Char) :
+    TripleTermResult :=
+  match fuel with
+  | 0 => .error ⟨"triple-term nesting too deep", pos⟩
+  | f + 1 =>
+    match cs with
+    | '<' :: '<' :: '(' :: rest => readTripleTermDown f [] st (pos + 3) rest
+    | _ => readTtObject (f + 1) st pos cs
+
+/-- Any call of `readTripleTerm` compiled after this line runs the loop: the readers
+of reified triples and of objects below, and so every caller of the reader. -/
+@[csimp] theorem readTripleTerm_eq_loop : @readTripleTerm = @readTripleTermLoop := by
+  funext fuel st pos cs
+  rw [readTripleTermLoop, readTripleTermDown_eq, closeTripleTerms_nil]
+
+@[csimp] theorem readTtObject_eq_loop : @readTtObject = @readTtObjectLoop := by
+  funext fuel st pos cs
+  cases fuel with
+  | zero => rw [readTtObject, readTtObjectLoop]
+  | succ f =>
+    unfold readTtObjectLoop
+    dsimp only
+    split
+    · rename_i rest
+      rw [readTripleTermDown_eq, closeTripleTerms_nil, readTtObject]
+    · rfl
+
+#print axioms readTripleTermDown_eq
+#print axioms readTripleTerm_eq_loop
+#print axioms readTtObject_eq_loop
 
 /-! ## RDF 1.2 reifiers and reified triples — [27]–[29], [33]
 
@@ -2100,7 +2368,7 @@ def readStatement (fuel : Nat) (st : TurtleState) (pos : Nat) (cs : List Char) :
   | _ =>
     match readPrefixDirective st p1 r1 with
     | .ok ((pfx, iri), p2, r2) =>
-        .ok ([], { st with prefixes := (pfx, iri) :: st.prefixes }, p2, r2)
+        .ok ([], st.bindPrefix pfx iri, p2, r2)
     | .error _ =>
         match readBaseDirective st p1 r1 with
         | .ok (b, p2, r2) => .ok ([], { st with baseIri := b }, p2, r2)

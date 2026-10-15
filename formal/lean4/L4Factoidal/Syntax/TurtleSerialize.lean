@@ -672,23 +672,9 @@ def tsLiteralToTurtleBy (abbr : String → String) (shorthand : Bool) (l : WfLit
         | some bare => bare
         | none => "\"" ++ esc ++ "\"^^" ++ abbr l.val.datatype.val
 
-/-- `" )>>"` written `k` times: the end of `k` open triple terms. -/
-def closersStr (k : Nat) : String := String.join (List.replicate k " )>>")
-
-theorem closersStr_zero : closersStr 0 = "" := rfl
-
-theorem closersStr_succ (k : Nat) : closersStr (k + 1) = " )>>" ++ closersStr k := by
-  simp [closersStr, List.replicate_succ, String.join_cons]
-
-/-- `acc` followed by the `k` closers, one tail call for each. -/
-def appendClosers (acc : String) : Nat → String
-  | 0 => acc
-  | k + 1 => appendClosers (acc ++ " )>>") k
-
-theorem appendClosers_eq : ∀ (k : Nat) (acc : String), appendClosers acc k = acc ++ closersStr k
-  | 0, acc => by simp [appendClosers, closersStr_zero]
-  | k + 1, acc => by
-      rw [appendClosers, appendClosers_eq k, closersStr_succ, String.append_assoc]
+-- `closersStr` and `appendClosers` (the closers of `k` open triple terms) are in
+-- `L4Factoidal/Syntax/NTriples.lean`, where the canonical N-Triples text of a term uses them
+-- too (https://github.com/danbri/factoidal/issues/865).
 
 /-- The loop of `tsTermToTurtleFast`. `acc` is the text so far and `k` the number of
 triple terms open in it: a triple term appends its opening and continues with its
