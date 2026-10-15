@@ -485,13 +485,15 @@ fi
 
 # https://github.com/danbri/factoidal/issues/858: every open replayed the log with one dictionary lookup for each term of each
 # entry (93 microseconds for each entry here, 3.7 s for the 40,000 entries of the store above). The replay in dictionary order
-# (Dict.lookupWalkM) took it down; the bound is the 1,000 ms of the issue for these 40,000 entries (measured 2026-10-14, this
-# VM: 660 to 762 ms in three runs; 840 to 960 ms before the hash sets of the replay were sized for the entries, a bound with
-# 4 % of room).
+# (Dict.lookupWalkM) took it down to 660 to 762 ms for these 40,000 entries (measured 2026-10-14, this VM, three runs).
+# The bound is 2,000 ms of wall time. It was 1,000 ms, the target of the issue, and on 2026-10-15 a run under a load
+# average of 10 read 1,122 ms while the same tree read 746 ms on a quiet machine. A wall-time bound with 30 % of room
+# fails on a shared VM. 2,000 ms still fails the replay before 858 (3.7 s here). The load-independent gate is the CPU-time
+# row sbm11-replay-time in tests/stack/lean_scaling.py (13.5 microseconds of CPU for each entry, bound 25).
 RMS40="$(replay_ms "$Z")"
 if [ -z "$RMS40" ]; then record scaling replay-time-setup 1 "no replay time: $(tail -1 "$Z.replay.err" | cut -c1-120)"
-elif [ "$RMS40" -le 1000 ]; then record scaling replay-time 0 "40,000 entries: replay $RMS40 ms at open ($((RMS40 * 1000 / 40000)) microseconds for each entry; the bound is 1,000 ms)"
-else record scaling replay-time 1 "40,000 entries: replay $RMS40 ms at open ($((RMS40 * 1000 / 40000)) microseconds for each entry; the bound is 1,000 ms)"; fi
+elif [ "$RMS40" -le 2000 ]; then record scaling replay-time 0 "40,000 entries: replay $RMS40 ms at open ($((RMS40 * 1000 / 40000)) microseconds for each entry; the bound is 2,000 ms of wall time)"
+else record scaling replay-time 1 "40,000 entries: replay $RMS40 ms at open ($((RMS40 * 1000 / 40000)) microseconds for each entry; the bound is 2,000 ms of wall time)"; fi
 
 # The third checker of the skill danbri-function-precrime-checkers. The times are the tools' own lines. Compile and
 # replay: a bound of 8 for 4 times the input (linear work gives 4, quadratic work gives 16; measured 3.9 to 5.1 for
