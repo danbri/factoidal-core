@@ -966,7 +966,11 @@ failure in `tests/sbm11/agg_ids.sh` that names
 https://github.com/danbri/factoidal/issues/861: HAVING, DISTINCT aggregates,
 GROUP_CONCAT, SAMPLE, expressions, literal or unbound group keys, the
 variables of a representative row, and MIN and MAX over IRIs (every distinct IRI
-is decoded). Gates: `tests/sbm11/run.sh` parts (d), (h),
+is decoded). Against the other engines (same machine and day, 2026-10-15, record
+`2026-10-12-three-engine-benchmark.md` section 11.10): d19 warm 511 ms, Virtuoso
+(1 thread) 293 ms, QLever (1 CPU) 103 ms; the remaining cost is
+https://github.com/danbri/factoidal/issues/862 (expected failure
+`xfail-d19-warm-300ms`). Gates: `tests/sbm11/run.sh` parts (d), (h),
 (l) with the `ids-agg-*` queries, part (m) with `ids-tt-agg-*`, and part (t)
 (`agg_ids.sh`, with six DBpedia queries in `tests/sbm11/agg-dbpedia`);
 `IdAggTests` (build-time `#guard`s);

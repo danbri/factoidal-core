@@ -694,3 +694,77 @@ QLever and Virtuoso columns include HTTP and JSON (about 2 to 3 ms for a
 small answer). The queries with no join (d01 to d04, d10, d13, d16, d17)
 run the same plan as before; their differences are inside the spread
 between rounds.
+
+### 11.10 d18 and d19 on Virtuoso and QLever; SBM11 after issue 825 (2026-10-15)
+
+Queries d18 and d19 were added to the DBpedia directory on 2026-10-13, after the
+indexes of 11.8 were built, and the indexes were deleted. So neither engine had
+a time for them. On 2026-10-15 both indexes were rebuilt from the same
+`/home/user/bench-data/stage/dbpedia.nt` (23,269,559 triples), the two queries
+were run on every engine on the same machine and day, and the indexes were
+deleted again. The SBM11 column is the build with the grouped aggregates on ids
+(https://github.com/danbri/factoidal/issues/825, stage 4 record sections 15 and
+16).
+
+Builds. Virtuoso 7.2.5.3229: load 112.2 s, 3.01 GB peak RSS, 1.77 GB on disk
+(`virtuoso-load-dbpedia-d18-d19.json`). QLever (the image binaries of 11.7):
+index 64 s, 2.07 GB peak RSS, 833 MB on disk.
+
+Commands (from the repository root; `$BD` is `/home/user/bench-data`, `$T` is
+`$BD/tmp-d1819`, which holds `queries/` with d18 and d19 only; the results are
+copied to `$BD/results/*-d18-d19*.json` and the answers to
+`$BD/answers/dbpedia/`):
+
+```
+python3 -I tools/bench/three-engines/bench.py virtuoso-load --nt $BD/stage/dbpedia.nt \
+  --graph http://factoidal.org/bench/dbpedia --dbdir $BD/virtuoso/dbpedia --out $T/virtuoso-load-dbpedia.json
+python3 -I tools/bench/three-engines/bench.py answers --dataset dbpedia --queries $T/queries \
+  --gen $BD/sbm11/dbpedia --dbdir $BD/virtuoso/dbpedia --graph http://factoidal.org/bench/dbpedia \
+  --outdir $T/answers --out $T/answers-dbpedia.json
+python3 -I tools/bench/three-engines/bench.py timing --dataset dbpedia --queries $T/queries \
+  --gen $BD/sbm11/dbpedia --dbdir $BD/virtuoso/dbpedia --graph http://factoidal.org/bench/dbpedia \
+  --answers $T/answers-dbpedia.json --rounds 7 --cold-rounds 3 --repeat 5 --out $T/timing-dbpedia.json
+# QLever: the qlever-index command of run.sh step qindex, then
+QLEVER_NATIVE_BUILD=/home/user/qlever-image/rootfs/qlever python3 -I tools/bench/three-engines/bench.py \
+  qlever-answers --dataset dbpedia --queries $T/queries --index $BD/qlever/dbpedia/dbpedia \
+  --answers-dir $T/answers --outdir $T/answers --out $T/qlever-answers-dbpedia.json
+QLEVER_NATIVE_BUILD=/home/user/qlever-image/rootfs/qlever python3 -I tools/bench/three-engines/bench.py \
+  qlever-timing ... --rounds 7 --cold-rounds 3 --out $T/qlever-timing-dbpedia-default.json
+QLEVER_NATIVE_BUILD=$BD/qlever-1cpu python3 -I tools/bench/three-engines/bench.py qlever-timing ... \
+  --out $T/qlever-timing-dbpedia-1cpu.json                     # taskset -c 0, as in 11.7
+```
+
+Answers. d18 (143 rows) and d19 (10 rows) are equal on SBM11 (`none` and
+`merkle`, byte-identical to each other), Virtuoso and QLever
+(`answers-dbpedia-d18-d19.json`, `qlever-answers-dbpedia-d18-d19.json`).
+
+Times in ms (7 rounds, medians; cold = first run in a new process after the
+engine's files were evicted, 3 rounds; the SBM11 column is the process-level
+`none` run of phase `1t`; Virtuoso and QLever times include HTTP and JSON,
+about 2 to 3 ms for a small answer). Peak RSS in MB.
+
+| Query | | SBM11 `none` | SBM11 `merkle` | Virtuoso 1 thread | Virtuoso default | QLever 1 CPU | QLever default |
+| --- | --- | ---: | ---: | ---: | ---: | ---: | ---: |
+| d18-filter-regex | warm | 59.0 | 58.3 | 11.7 | 11.6 | 84.9 | 32.6 |
+| | cold | 179 | 665 | 875 | 870 | 155 | 96.7 |
+| | peak RSS | 23.8 | 91.8 | 627 | 611 | 65.6 | 151 |
+| d19-group-aggregates | warm | 511 | 511 | 293 | 95.6 | 103 | 62.6 |
+| | cold | 779 | 1,367 | 609 | 398 | 121 | 84.3 |
+| | peak RSS | 52.3 | 128 | 628 | 612 | 85.2 | 161 |
+
+SBM11 `none` divided by the engine (below 1: SBM11 faster):
+
+| | Virtuoso 1 thread | Virtuoso default | QLever 1 CPU | QLever default |
+| --- | ---: | ---: | ---: | ---: |
+| d18 warm | 5.0 | 5.1 | 0.69 | 1.8 |
+| d18 cold | 0.20 | 0.21 | 1.15 | 1.85 |
+| d19 warm | 1.7 | 5.3 | 4.9 | 8.2 |
+| d19 cold | 1.3 | 2.0 | 6.4 | 9.2 |
+
+The cold figure of d19 here (779 ms) is the wall time of the first process of
+the harness; `l4sbm11 query` alone, measured with the same eviction by a
+separate script, gave an execution time of 546 ms and a wall time of 567 ms
+(stage 4 record section 16.5). The remaining cost of d19 on SBM11 is split in
+https://github.com/danbri/factoidal/issues/862 (the grouped pass 69 percent,
+the scans 17 percent, the merge join 12 percent). The warm RSS of the engines
+is the server's after the warm rounds, not the load.
