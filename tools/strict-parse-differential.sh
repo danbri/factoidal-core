@@ -27,7 +27,12 @@
 # malformed statement in the middle, with a `PREFIX` directive whose IRI is
 # on the next line in the middle (the scanner walk refuses it after lines are
 # written; `parseTurtle` accepts it) and at the start; 100,000 N-Triples
-# lines with an unterminated string in the middle.
+# lines with an unterminated string in the middle; and lines longer than a chunk
+# (https://github.com/danbri/factoidal/issues/869): a literal of 150,000 characters
+# between short lines, one of 100,000 two-byte characters (200,000 bytes, so a chunk
+# boundary falls between bytes of a line), an error on the line after a long line
+# (its offset counts the long line), an unterminated string inside a long line, a long
+# last line with no line break, in N-Triples and in N-Quads.
 #
 # Prints one DIFF line per disagreement and a summary; exit 0 when every case
 # agrees, 1 otherwise, 2 on a setup error.
@@ -130,6 +135,18 @@ d = "PREFIX zz:\n  <http://zz.example/>\nzz:a zz:b zz:c .\n"
 n = Path(bl.gen_nt(100000)).read_text()
 m = n.index("\n", len(n) // 2) + 1
 (gen / "bad.nt").write_text(n[:m] + '<http://e/a> <http://e/p> "unterminated .\n' + n[m:])
+# Lines longer than a chunk (issue 869).
+big = '"' + "a" * 150000 + '"'
+wide = '"' + "\u00e9" * 100000 + '"'
+short = '<http://e/s> <http://e/p> <http://e/o> .\n'
+bad = '<http://e/s> <http://e/p> .\n'
+(gen / "long.nt").write_text(short + f"<http://e/a> <http://e/p> {big} .\n" + short + f"<http://e/a> <http://e/p> {wide} .\n" + short)
+(gen / "long-bad.nt").write_text(short + f"<http://e/a> <http://e/p> {big} .\n" + bad + short)
+(gen / "long-open.nt").write_text(short + '<http://e/a> <http://e/p> "' + "a" * 150000 + " .\n" + short)
+(gen / "long-last.nt").write_text(short + f"<http://e/a> <http://e/p> {wide} .")
+(gen / "long-crlf.nt").write_text(short.replace("\n", "\r\n") + f"<http://e/a> <http://e/p> {big} .\r\n" + short.replace("\n", "\r\n"))
+(gen / "long.nq").write_text(short + f"<http://e/a> <http://e/p> {big} <http://e/g> .\n" + short + f"<http://e/a> <http://e/p> {wide} _:g .\n")
+(gen / "long-bad.nq").write_text(f"<http://e/a> <http://e/p> {wide} <http://e/g> .\n" + bad + short)
 PY
   for f in "$GEN"/*.nq; do for out in nquads count; do run_case "$f" nquads "$out" ""; done; done
   for f in "$GEN"/*.ttl; do for out in nquads count; do run_case "$f" turtle "$out" ""; done; done

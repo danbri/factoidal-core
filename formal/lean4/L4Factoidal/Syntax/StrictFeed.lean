@@ -162,15 +162,34 @@ theorem parseNTriples_eq_foldLines (s : String) (mode : Mode) :
 /-! ## Chunked line walk -/
 
 /-- What the chunked line walk keeps between chunks: the consumer's state,
-the partial last line, and the absolute offset (in characters) of the
-first character of `carry`. -/
+the partial last line with its LAST character first (`carryRev`), and the
+absolute offset (in characters) of the first character of the partial line.
+
+The partial line holds no line break (`splitCompleteLines` cuts a buffer after
+its last one), and `LineFeed.feed` keeps it so (`LineFeed.CarryOk`). A chunk
+without a line break goes in front of `carryRev` (`List.reverseAux`), so the
+work for a chunk is the length of the chunk. The state held the partial line in
+order until 2026-10-15, `carry ++ chunk` copied it at every chunk, and
+`splitCompleteLines` walked it again: a line of n bytes cost n squared over
+65,536 steps (https://github.com/danbri/factoidal/issues/869). -/
 structure LineFeed (α : Type) where
   acc : α
-  carry : List Char := []
+  carryRev : List Char := []
   pos : Nat := 0
+
+/-- The partial last line, in order. -/
+def LineFeed.carry {α : Type} (st : LineFeed α) : List Char := st.carryRev.reverse
+
+/-- The partial last line holds no line break. -/
+def LineFeed.CarryOk {α : Type} (st : LineFeed α) : Prop :=
+  st.carryRev.all (fun c => !isNl c) = true
 
 /-- Feed one decoded chunk: walk the complete lines of `carry ++ chunk`,
 keep the rest.
+
+A chunk without a line break completes no line: its characters join the
+partial line. Else the lines are the partial line followed by the chunk up to
+its last line break, and the rest of the chunk is the new partial line.
 
 The state is taken apart before the walk, so the consumer's state is the only
 reference to itself when the walk updates it. Reading `st.pos` after the walk
@@ -181,16 +200,106 @@ the count of 400,000 N-Triples took 9.16 s of CPU where 100,000 took 0.97 s
 def LineFeed.feed (reader : LineReader) {α : Type} (consume : α → Triple → Option Subject → α)
     (st : LineFeed α) (chunk : List Char) : Except ParseError (LineFeed α) :=
   match st with
-  | { acc, carry, pos } =>
-    let (complete, carry') := splitCompleteLines (carry ++ chunk)
-    match foldLines reader consume (complete.length + 1) pos complete acc with
-    | .ok acc' => .ok { acc := acc', carry := carry', pos := pos + complete.length }
-    | .error e => .error e
+  | { acc, carryRev, pos } =>
+    match splitCompleteLines chunk with
+    | ([], _) => .ok { acc := acc, carryRev := chunk.reverseAux carryRev, pos := pos }
+    | (cut, rest) =>
+      let complete := carryRev.reverseAux cut
+      match foldLines reader consume (complete.length + 1) pos complete acc with
+      | .ok acc' => .ok { acc := acc', carryRev := rest.reverse, pos := pos + complete.length }
+      | .error e => .error e
+
+/-- What `LineFeed.feed` computes, as the specification states it: the complete
+lines of `carry ++ chunk` (`NQuadsFold.feedChunkC` splits the same buffer). It is
+not run. `LineFeed.feed_eq_feedSpec` proves `feed` equal to it. -/
+def LineFeed.feedSpec (reader : LineReader) {α : Type} (consume : α → Triple → Option Subject → α)
+    (st : LineFeed α) (chunk : List Char) : Except ParseError (LineFeed α) :=
+  let (complete, carry') := splitCompleteLines (st.carry ++ chunk)
+  match foldLines reader consume (complete.length + 1) st.pos complete st.acc with
+  | .ok acc' => .ok { acc := acc', carryRev := carry'.reverse, pos := st.pos + complete.length }
+  | .error e => .error e
+
+/-- A partial line with no line break in front of a chunk: the last line break of
+the buffer is the last one of the chunk, when the chunk has one. -/
+theorem splitCompleteLines_append_of_noNl :
+    ∀ (carry chunk : List Char), carry.all (fun c => !isNl c) = true →
+      splitCompleteLines (carry ++ chunk) =
+        if (splitCompleteLines chunk).1.isEmpty then ([], carry ++ chunk)
+        else (carry ++ (splitCompleteLines chunk).1, (splitCompleteLines chunk).2)
+  | [], chunk, _ => by
+      by_cases h : (splitCompleteLines chunk).1.isEmpty = true
+      · have h0 : (splitCompleteLines chunk).1 = [] := List.isEmpty_iff.mp h
+        have hr := splitCompleteLines_reconstruct chunk
+        rw [h0, List.nil_append] at hr
+        have hs : splitCompleteLines chunk = ([], chunk) := Prod.ext h0 hr
+        simp only [List.nil_append, h, if_true]
+        exact hs
+      · simp [h]
+  | c :: rest, chunk, hall => by
+      simp only [List.all_cons, Bool.and_eq_true] at hall
+      obtain ⟨hc, hrest⟩ := hall
+      have ih := splitCompleteLines_append_of_noNl rest chunk hrest
+      have hnc : isNl c = false := by simpa using hc
+      rw [List.cons_append]
+      by_cases h : (splitCompleteLines chunk).1.isEmpty = true
+      · simp only [h, if_true] at ih
+        simp [splitCompleteLines, ih, h, hnc]
+      · simp only [h, Bool.false_eq_true, if_false] at ih
+        have hne : (splitCompleteLines chunk).1 ≠ [] := fun h0 => h (by simp [h0])
+        simp [splitCompleteLines, ih, h, hne]
+
+/-- `LineFeed.feed` is `feedSpec` on a state whose partial line holds no line break. -/
+theorem LineFeed.feed_eq_feedSpec (reader : LineReader) {α : Type}
+    (consume : α → Triple → Option Subject → α) (st : LineFeed α) (chunk : List Char)
+    (h : st.CarryOk) :
+    LineFeed.feed reader consume st chunk = LineFeed.feedSpec reader consume st chunk := by
+  cases st with
+  | mk acc carryRev pos =>
+    have hnl : carryRev.reverse.all (fun c => !isNl c) = true := by
+      simpa [LineFeed.CarryOk, List.all_reverse] using h
+    have hsplit := splitCompleteLines_append_of_noNl carryRev.reverse chunk hnl
+    have hrec := splitCompleteLines_reconstruct chunk
+    simp only [LineFeed.feed, LineFeed.feedSpec, LineFeed.carry, hsplit]
+    cases hs : splitCompleteLines chunk with
+    | mk cut rest =>
+      rw [hs] at hrec
+      simp only at hrec ⊢
+      cases cut with
+      | nil =>
+        simp only [List.isEmpty_nil, if_true, List.nil_append] at hrec ⊢
+        subst hrec
+        simp [foldLines, skipWs, List.span, List.span.loop, List.reverseAux_eq, List.reverse_append]
+      | cons x xs =>
+        simp [List.reverseAux_eq]
+
+/-- The partial line of the state `feedSpec` gives holds no line break. -/
+theorem LineFeed.feedSpec_carryOk (reader : LineReader) {α : Type}
+    (consume : α → Triple → Option Subject → α) (st st' : LineFeed α) (chunk : List Char)
+    (h : LineFeed.feedSpec reader consume st chunk = .ok st') : st'.CarryOk := by
+  simp only [LineFeed.feedSpec] at h
+  cases hf : foldLines reader consume
+      ((splitCompleteLines (st.carry ++ chunk)).1.length + 1) st.pos
+      (splitCompleteLines (st.carry ++ chunk)).1 st.acc with
+  | error e => rw [hf] at h; cases h
+  | ok acc' =>
+    rw [hf] at h
+    simp only [Except.ok.injEq] at h
+    subst h
+    simpa [LineFeed.CarryOk, List.all_reverse] using
+      splitCompleteLines_carry_no_newline (st.carry ++ chunk)
+
+/-- `LineFeed.feed` keeps the partial line free of line breaks. -/
+theorem LineFeed.feed_carryOk (reader : LineReader) {α : Type}
+    (consume : α → Triple → Option Subject → α) (st st' : LineFeed α) (chunk : List Char)
+    (h : st.CarryOk) (hf : LineFeed.feed reader consume st chunk = .ok st') : st'.CarryOk := by
+  rw [LineFeed.feed_eq_feedSpec reader consume st chunk h] at hf
+  exact LineFeed.feedSpec_carryOk reader consume st st' chunk hf
 
 /-- End of input: walk the partial last line. -/
 def LineFeed.finish (reader : LineReader) {α : Type} (consume : α → Triple → Option Subject → α)
     (st : LineFeed α) : Except ParseError α :=
-  foldLines reader consume (st.carry.length + 1) st.pos st.carry st.acc
+  let carry := st.carry
+  foldLines reader consume (carry.length + 1) st.pos carry st.acc
 
 /-- A whole chunked run, for the theorems and the guards. -/
 def LineFeed.run (reader : LineReader) {α : Type} (consume : α → Triple → Option Subject → α)
@@ -202,7 +311,7 @@ def LineFeed.run (reader : LineReader) {α : Type} (consume : α → Triple → 
 /-- One chunk of `LineFeed` with the N-Quads RDF 1.1 reader is one chunk of
 `feedChunkC`, on a state with no error. -/
 theorem LineFeed.feed_quad11 {α : Type} (consume : α → Triple → Option Subject → α)
-    (st : LineFeed α) (chunk : List Char) :
+    (st : LineFeed α) (chunk : List Char) (h : st.CarryOk) :
     feedChunkC .rdf11 consume { acc := st.acc, carry := st.carry, pos := st.pos, err := none }
         chunk =
       match LineFeed.feed (quadReader .rdf11) consume st chunk with
@@ -210,30 +319,32 @@ theorem LineFeed.feed_quad11 {α : Type} (consume : α → Triple → Option Sub
       | .error e => { acc := st.acc, carry := (splitCompleteLines (st.carry ++ chunk)).2,
                       pos := st.pos + (splitCompleteLines (st.carry ++ chunk)).1.length,
                       err := some e } := by
+  rw [LineFeed.feed_eq_feedSpec _ _ st chunk h]
   cases st with
-  | mk acc carry pos =>
-    simp only [feedChunkC, LineFeed.feed, foldFrom, foldLines_quadReader]
-    cases foldQuadLinesAcc .rdf11 consume _ pos _ acc <;> rfl
+  | mk acc carryRev pos =>
+    simp only [feedChunkC, LineFeed.feedSpec, LineFeed.carry, foldFrom, foldLines_quadReader]
+    cases foldQuadLinesAcc .rdf11 consume _ pos _ acc <;> simp
 
 private theorem foldlM_quad11 {α : Type} (consume : α → Triple → Option Subject → α) :
-    ∀ (chunks : List (List Char)) (st st' : LineFeed α),
+    ∀ (chunks : List (List Char)) (st st' : LineFeed α), st.CarryOk →
       chunks.foldlM (LineFeed.feed (quadReader .rdf11) consume) st = .ok st' →
       chunks.foldl (feedChunkC .rdf11 consume)
           { acc := st.acc, carry := st.carry, pos := st.pos, err := none } =
         { acc := st'.acc, carry := st'.carry, pos := st'.pos, err := none }
-  | [], st, st', h => by
+  | [], st, st', _, h => by
       simp only [List.foldlM_nil, pure, Except.pure] at h
       cases h
       rfl
-  | c :: rest, st, st', h => by
+  | c :: rest, st, st', hok, h => by
       simp only [List.foldlM_cons, bind, Except.bind] at h
       simp only [List.foldl_cons]
-      rw [LineFeed.feed_quad11]
+      rw [LineFeed.feed_quad11 consume st c hok]
       cases hf : LineFeed.feed (quadReader .rdf11) consume st c with
       | error e => rw [hf] at h; cases h
       | ok s1 =>
           rw [hf] at h
-          exact foldlM_quad11 consume rest s1 st' h
+          exact foldlM_quad11 consume rest s1 st'
+            (LineFeed.feed_carryOk _ consume st s1 c hok hf) h
 
 /-- A chunked N-Quads (RDF 1.1) run that succeeds gives what the fold of the
 whole document gives: `NQuadsFold.streamConsume11_eq_batch` through
@@ -248,7 +359,7 @@ theorem LineFeed.run_quad11_eq_batch {α : Type} (consume : α → Triple → Op
   | error e => rw [hf] at h; cases h
   | ok st =>
       rw [hf] at h
-      have hc := foldlM_quad11 consume chunks { acc := init } st hf
+      have hc := foldlM_quad11 consume chunks { acc := init } st (by simp [LineFeed.CarryOk]) hf
       simp only [streamConsume, initialStateC]
       rw [show ({ acc := init, carry := [], pos := 0, err := none } : StreamStateC α) =
             { acc := ({ acc := init } : LineFeed α).acc, carry := ({ acc := init } : LineFeed α).carry,
@@ -504,6 +615,36 @@ private def ntBad : String :=
   | _, _ => false
 #guard (parseNTriples ntBad).toOption.isNone
 
+-- N-Quads (RDF 1.1) too: every chunk size gives the fold of the whole document. At size 1 each
+-- line spans 20 to 70 chunks.
+private def nqDoc : String := ntDoc ++ "\n<http://e/a> <http://e/p> <http://e/b> <http://e/g> .\r\n"
+#guard (List.range 16).all fun i =>
+  (LineFeed.run (quadReader .rdf11) (fun a t g => (t, g) :: a) [] (chunksOf (i + 1) nqDoc.toList)).toOption ==
+    (foldFrom .rdf11 (fun a t g => (t, g) :: a) 0 nqDoc.toList []).toOption
+#guard (foldFrom .rdf11 (fun a t g => (t, g) :: a) 0 nqDoc.toList []).toOption.map List.length == some 5
+
+-- One line of 600 characters in pieces of 1 to 97 characters, and a second line after it.
+private def longNt : String :=
+  "<http://e/a> <http://e/p> \"" ++ String.ofList (List.replicate 600 'a') ++ "\" .\n<http://e/a> <http://e/p> \"b\" .\n"
+#guard (List.range 12).all fun i =>
+  ((LineFeed.run (tripleReader .rdf11) (fun a t _ => t :: a) [] (chunksOf (8 * i + 1) longNt.toList)).map
+      List.reverse).toOption == (parseNTriples longNt).toOption
+#guard (parseNTriples longNt).toOption.map List.length == some 2
+
+-- The partial line is kept last character first, holds no line break, and the offset
+-- counts the characters of the complete lines only.
+private def feedTwo : Except ParseError (LineFeed Nat) :=
+  (LineFeed.feed (quadReader .rdf11) (fun n _ _ => n + 1) ({ acc := 0 } : LineFeed Nat)
+      "<a:1> <a:p> ".toList).bind fun st =>
+    LineFeed.feed (quadReader .rdf11) (fun n _ _ => n + 1) st " <a:2> .\n<a:3> <a".toList
+#guard (match LineFeed.feed (quadReader .rdf11) (fun n _ _ => n + 1) ({ acc := 0 } : LineFeed Nat)
+              "<a:1> <a:p> ".toList with
+        | .ok st => st.acc == 0 && st.pos == 0 && st.carryRev == "<a:1> <a:p> ".toList.reverse
+        | .error _ => false)
+#guard (match feedTwo with
+        | .ok st => st.acc == 1 && st.pos == 21 && st.carry == "<a:3> <a".toList && st.carryRev.all (fun c => !isNl c)
+        | .error _ => false)
+
 -- The count consumer counts the normalised set: 3 distinct triples of 4.
 #guard ((LineFeed.run (tripleReader .rdf11) (fun ds t g => countQuad ds t g) {}
     (chunksOf 7 ntDoc.toList)).toOption.map FastDataset.quadCount) == some 3
@@ -561,6 +702,9 @@ private def ttlBad : String :=
 #print axioms foldLines_quadReader
 #print axioms parseLinesAcc_eq_foldLines
 #print axioms parseNTriples_eq_foldLines
+#print axioms splitCompleteLines_append_of_noNl
+#print axioms LineFeed.feed_eq_feedSpec
+#print axioms LineFeed.feed_carryOk
 #print axioms LineFeed.feed_quad11
 #print axioms LineFeed.run_quad11_eq_batch
 #print axioms walkChars_eq_foldl

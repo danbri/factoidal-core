@@ -272,12 +272,12 @@ def Reader.acc {α : Type} : Reader α → α
     by a match, so `f` holds the only reference and can update it in place. A
     streaming caller drains finished work this way after every chunk. -/
 def Reader.withAcc {α β : Type} (f : α → α × β) : Reader α → Reader α × β
-  | .nquads mode ⟨acc, carry, pos⟩ =>
+  | .nquads mode ⟨acc, carryRev, pos⟩ =>
       let (acc, b) := f acc
-      (.nquads mode ⟨acc, carry, pos⟩, b)
-  | .ntriples mode ⟨acc, carry, pos⟩ =>
+      (.nquads mode ⟨acc, carryRev, pos⟩, b)
+  | .ntriples mode ⟨acc, carryRev, pos⟩ =>
       let (acc, b) := f acc
-      (.ntriples mode ⟨acc, carry, pos⟩, b)
+      (.ntriples mode ⟨acc, carryRev, pos⟩, b)
   | .turtle ⟨state, acc, pos, scanner⟩ =>
       let (acc, b) := f acc
       (.turtle ⟨state, acc, pos, scanner⟩, b)

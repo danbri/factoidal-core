@@ -1806,6 +1806,85 @@ it now names both.
   (1635 jobs). WebAssembly module rebuilt (`NTriples.lean` changed); `npm
   test`: 413 pass, 0 fail, 1 skipped (out of 414).
 
+### 3b.8 One line longer than a chunk (2026-10-15)
+
+Tracking: https://github.com/danbri/factoidal/issues/869. `l4factoidal parse FILE` of a file of
+N-Triples or N-Quads took time quadratic in the length of its longest line. The rows
+`ntriples-long-line` and `nquads-long-line` of `tests/stack/lean_scaling.py` were expected failures that name
+the issue, in the commit before the repair.
+
+**Before.** One line of n bytes (a string literal), `parse FILE --format ntriples`, user CPU time of one run
+(the rows of the harness take the minimum of 3 runs: 0.380 s, 2.40 s and 10.3 s at 2, 4 and 8 MB; N-Quads
+0.375 s, 2.09 s and 10.6 s):
+
+| n | 1 MB | 2 MB | 4 MB | 8 MB | 16 MB | 32 MB |
+| --- | ---: | ---: | ---: | ---: | ---: | ---: |
+| before, user CPU | 0.12 s | 0.41 s | 2.46 s | 11.28 s | 45.74 s (load average 11) | not run |
+| after, user CPU | 0.05 s | 0.18 s | 0.32 s | 0.58 s | 1.00 s | 2.04 s |
+| peak resident set, before and after | 55 MB | 86 MB | 149 MB | 276 MB | 531 MB | 1,030 MB (after) |
+
+**Profile.** `perf record -F 1000` of `parse` of the 4 MB line (3,584 samples): `List.reverseAux` 55.6 percent, the
+kernel's `clear_page_erms` (the pages of the copies) 21.0 percent, `splitCompleteLinesTRGo` 17.6 percent; every other
+symbol is under 1 percent. A profile with call graphs (`--call-graph dwarf`, 2 MB line) puts all three under
+`StrictFeed.LineFeed.feed`: `List.appendTR` and its `List.reverseAux` (the `carry ++ chunk`), and
+`splitCompleteLinesTR`, which reverses the whole buffer and scans it from the end for a line break
+(`perf` of this container: `/usr/bin/perf` asks for a package of the running kernel;
+`/usr/lib/linux-tools/6.8.0-146-generic/perf` runs.)
+
+**Cause.** `LineFeed` kept the partial last line as a list in order. `LineFeed.feed` built `carry ++ chunk` for every
+chunk and cut it with `splitCompleteLines`. For a line of n bytes in chunks of 65,536 bytes there are k = n / 65,536
+chunks, and at chunk j the partial line holds (j - 1) chunks. `carry ++ chunk` copies it (`List.appendTR` reverses it
+twice), and `splitCompleteLines` (the `@[csimp]` replacement `splitCompleteLinesTR`) reverses the buffer and scans
+it. That is 3 walks of the partial line per chunk, 1.5 n squared over 65,536 list-cell steps in all: 1.46 billion
+for n = 8,000,000, which at 7.7 ns a step is the 11.28 s measured. The guards at chunk sizes 1 to 14 and the
+differential at chunk sizes 1 and 7 compare answers over short lines; no row had a line longer than a chunk.
+
+**Repair.** `LineFeed.carryRev` holds the partial line last character first. `LineFeed.feed` cuts the new chunk alone
+with `splitCompleteLines chunk`. When the chunk has no line break, its characters go in front of `carryRev` with
+`List.reverseAux`: the work is the length of the chunk. Otherwise the complete lines are `carryRev.reverseAux cut`
+(the partial line, once, in order, followed by the chunk up to its last line break), and the rest of the chunk
+is the new partial line. The partial line is read once, when its line is complete, so each character is copied a
+constant number of times.
+
+**Theorems** (axioms: `propext`, `Classical.choice`, `Quot.sound`; `splitCompleteLines_append_of_noNl` uses `propext`
+only), in `StrictFeed.lean`:
+
+- `splitCompleteLines_append_of_noNl`: a partial line with no line break in front of a chunk is cut at the last line
+  break of the chunk, when the chunk has one.
+- `LineFeed.feed_eq_feedSpec`: `feed` is equal to `feedSpec`, the old definition (`splitCompleteLines (carry ++
+  chunk)`), on every state whose partial line holds no line break (`LineFeed.CarryOk`); `LineFeed.feed_carryOk`: `feed`
+  keeps it so. Every state that `feed` can produce from `{ acc := init }` has the property.
+- `LineFeed.feed_quad11`, `foldlM_quad11` and `LineFeed.run_quad11_eq_batch` carry the hypothesis `CarryOk` through the
+  chunks. The statement of `run_quad11_eq_batch` is the one it had: a chunked N-Quads (RDF 1.1) run that succeeds gives
+  the fold of the whole document. `NQuadsFold.lean` and `SourceTheorems.lean` did not change.
+
+**Same quads as before.**
+
+The old build (the commit before the repair) and the new build ran on the same inputs; the standard output, the
+standard error and the exit status were compared.
+
+| Input | Runs | Agree | Differ |
+| --- | ---: | ---: | ---: |
+| `tools/strict-parse-differential.sh`: the W3C RDF 1.1 and 1.2 files and the 36 generated files of 3b.4 (count and `--out nquads`, with and without `--base`; the new build at chunk sizes 65,536, 7 and 1) | 21,012 | 21,012 | 0 |
+| the same script, the seven new generated files with a line longer than a chunk (3b.8) | 42 | 42 | 0 |
+| `parse FILE` (the count) and `parse FILE --out nquads` over the 5,997 N-Triples, N-Quads, Turtle and TriG files under `third_party/testing` and `tests`, each in the RDF 1.1 and the RDF 1.2 mode | 23,988 | 23,988 | 0 |
+| the same files, the new build at chunk size 7 (`--out nquads`) and at chunk size 1 (the count) | 23,988 | 23,312 | 0 (676 more: the old build exits non-zero, the exit status and the standard error are the same, and the standard output of the new build holds the lines written before the error, which the script does not compare) |
+
+The seven new files: a literal of 150,000 characters between short lines; one of 100,000 two-byte characters (a
+chunk boundary then falls between the two bytes of a character); an error on the line after a long line (the
+offset counts the long line); an unterminated string inside a long line; a long last line with no line break; the
+same with CR LF; and N-Quads with a graph name and a blank-node graph name.
+
+*Checks (2026-10-15).*
+
+- `tests/stack/lean_scaling.py --only ntriples-long-line,nquads-long-line`: 2 pass, 0 fail, 0 expected-fail (out of 2);
+  N-Triples 0.140 s, 0.269 s and 0.504 s user CPU at 2, 4 and 8 MB (ratios 1.9 and 1.9 per doubling; 3.6 for 4x input),
+  N-Quads 0.122 s, 0.259 s and 0.523 s (2.1 and 2.0; 4.3). Before the repair both rows were expected failures
+  (ratios 6.3 and 4.3, and 5.6 and 5.1).
+- Build-time `#guard`s in `StrictFeed.lean`: N-Quads (RDF 1.1) at chunk sizes 1 to 16 against the fold of the whole
+  document, one line of 600 characters in pieces of 1 to 89 characters, and the state after a chunk with no line break
+  and after a chunk with one (`carryRev`, `pos`, `CarryOk`).
+
 ## 3c. RDF/XML: where the time and the memory went, and the repair (2026-10-13)
 
 Issues: https://github.com/danbri/factoidal/issues/814 (time: 13 to 15 times

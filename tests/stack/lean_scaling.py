@@ -406,9 +406,14 @@ repaired (docs/designissues/2026-10-10-lean-vs-fstar-performance.md):
                    https://github.com/danbri/factoidal/issues/869: the strict reader kept the partial
                    last line of a chunk as a list in order, copied it (`carry ++ chunk`) and walked it
                    again (`splitCompleteLines`) at every 64 KiB chunk, so a line of n bytes cost about
-                   n squared over 65,536 steps. Before the repair (expected failure): 0.380 s, 2.40 s
-                   and 10.3 s user CPU for N-Triples (ratios 6.3 and 4.3 for the two doublings; 27.0
-                   for 4x input), 0.375 s, 2.09 s and 10.6 s for N-Quads (5.6 and 5.1; 28.2).
+                   n squared over 65,536 steps. The state now holds the partial line last character
+                   first (`LineFeed.carryRev`), and a chunk without a line break goes in front of it
+                   (`List.reverseAux`); `LineFeed.feed_eq_feedSpec` proves the new feed equal to the
+                   old definition. Before the repair (expected failure): 0.380 s, 2.40 s and 10.3 s
+                   user CPU for N-Triples (ratios 6.3 and 4.3 for the two doublings; 27.0 for 4x
+                   input), 0.375 s, 2.09 s and 10.6 s for N-Quads (5.6 and 5.1; 28.2); after: 0.140 s,
+                   0.269 s and 0.504 s (1.9 and 1.9; 3.6), 0.122 s, 0.259 s and 0.523 s (2.1 and 2.0;
+                   4.3).
   startup          process start: `l4factoidal version` must take at most
                    STARTUP_BUDGET (20 ms) of CPU time, minimum of 15 runs
                    (305 million instructions and 43 ms before the fixtures were
@@ -493,8 +498,6 @@ XFAIL: dict[str, str] = {
     "sbm11-pack-trig-workers": "https://github.com/danbri/factoidal/issues/842",
     "sbm11-export-rdfxml-memory": "https://github.com/danbri/factoidal/issues/846",
     "sbm11-export-jsonld-memory": "https://github.com/danbri/factoidal/issues/847",
-    "ntriples-long-line": "https://github.com/danbri/factoidal/issues/869",
-    "nquads-long-line": "https://github.com/danbri/factoidal/issues/869",
 }
 # A run longer than this is not repeated: the minimum of several runs only
 # removes timer and load noise, which is small against a run this long.

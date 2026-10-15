@@ -1399,3 +1399,38 @@ Rules from this repair:
 | `queryDataset` CONSTRUCT over the term | overflow; 90.7 s at the default stack | 1.4 s at the default stack, runs under 512 KB; Node 2.0 s and 2.3 s |
 | `l4factoidal parse --out nt` | 10,151 ran, 10,152 overflowed; 86.6 s at the default stack | 0.57 s at the default stack, 0.80 s under 512 KB |
 | `l4factoidal parse FILE --format nt12\|nq12` | overflow in `readObject12`; after its repair, overflow in `Term.lowerTags` | runs under 512 KB; 8.5 s and 9.2 s at the default stack |
+
+## A partial line carried between chunks was copied at every chunk (https://github.com/danbri/factoidal/issues/869, 2026-10-15)
+
+`l4factoidal parse FILE` read N-Triples and N-Quads in 64 KiB chunks and kept the partial last line between chunks as
+a list in order. A line longer than a chunk cost a copy of the partial line, and two more walks of it, at every chunk:
+0.12 s, 0.41 s, 2.46 s, 11.28 s and 45.7 s of user CPU time for one line of 1, 2, 4, 8 and 16 MB. The tests of the
+chunk walk all passed: the guards at chunk sizes 1 to 14, the differential at chunk sizes 1 and 7 and the theorem
+`LineFeed.run_quad11_eq_batch` compare ANSWERS over short lines, and no row had a line longer than a chunk.
+
+Rules from this repair:
+
+- **A reader that keeps state between chunks needs a row whose record is longer than a chunk.** List what grows with one
+  record (a partial line, a partial statement, a buffered string, the open elements of one document) and give each a
+  series row with one record of n, 2n and 4n bytes (`ntriples-long-line` and `nquads-long-line` of
+  `tests/stack/lean_scaling.py`). A row made of many short records never grows the state. When it was checked, one
+  Turtle statement of 8 MB read in 0.30 s, 0.60 s and 1.21 s at 2, 4 and 8 MB, and one TriG graph block in 0.13 s,
+  0.25 s and 0.53 s: both linear.
+- **Count the walks of the model, then profile.** Chunk j holds (j - 1) chunks of partial line; 3 walks per chunk give
+  1.5 n squared over 65,536 steps, 1.46 billion for 8 MB, 7.7 ns each: the 11.28 s measured. The flat profile named three
+  symbols (`List.reverseAux` 55.6 percent, kernel page clearing for the copies 21.0 percent, `splitCompleteLinesTRGo`
+  17.6 percent) and a call-graph profile (`perf record --call-graph dwarf`) put all three under `LineFeed.feed`. On this
+  container `/usr/bin/perf` asks for a package of the running kernel; `/usr/lib/linux-tools/6.8.0-146-generic/perf` runs.
+- **Cut the new chunk alone and keep the part that grows reversed.** `carry ++ chunk` copies `carry` whatever follows.
+  The state holds `carryRev`; a chunk without a line break goes in front of it with `List.reverseAux`, and a chunk with
+  one is cut once (`splitCompleteLines chunk`), so the partial line is read once, when its line is complete.
+- **The invariant that makes the new form equal to the old one is a theorem about the state, not a check at run time.**
+  `feed` equals the old definition (`feedSpec`, `splitCompleteLines (carry ++ chunk)`) only when the partial line holds
+  no line break. A run-time check of that would walk the partial line again. `LineFeed.CarryOk` states it,
+  `feed_carryOk` proves `feed` keeps it, and `feed_quad11` and `run_quad11_eq_batch` take it as a hypothesis along the
+  chunks; every state built from `{ acc := init }` has it. The statement of `run_quad11_eq_batch` did not change.
+- **Add the long line to the differential, with the error after it.** `tools/strict-parse-differential.sh` writes seven
+  files with a line of 150,000 characters or of 100,000 two-byte characters (a chunk boundary then falls between the
+  two bytes of a character), an error on the next line (its offset counts the long line), an unterminated string
+  inside the long line, a last line with no line break, and CR LF. The offset after a long carry is where a
+  reversed carry would go wrong.
