@@ -678,7 +678,7 @@ their older writers.
 | --- | --- | --- |
 | `ntriples`, `trig`, `rdfxml`, `jsonld` | `Sink.serializeDataset` with `Sink.withJsonLd`, version `rdf12`: the call that `l4source-convert` makes | New. The verb holds the whole dataset in memory. |
 | `nquads` | `Dataset.toCanonicalNQuads` | The bytes are the same as before. This is the canonical form of RDF 1.2 N-Quads: language tags in lower case, and the canonical escapes. `Dataset.toNQuads`, which `Sink` calls, keeps the case of a tag and escapes fewer characters. D1 has `"Hallo"@de-DE`, so the two forms differ on D1. |
-| `turtle` | `Ops.serializeTurtleTextOf` | The bytes are the same as before. It writes the RDF 1.1 normal form of the dataset (a repeated triple once, tags in lower case) with prefixes from the whole graph. It refuses an RDF 1.2 dataset. |
+| `turtle` | `Ops.serializeTurtleTextOf` | The bytes are the same as before. It writes the normal form of the dataset (a repeated triple once, tags in lower case) with prefixes from the whole graph. A triple term is written as `<<( s p o )>>`; until 2026-10-15 it refused a dataset with a triple term (https://github.com/danbri/factoidal/issues/870). |
 
 **Named graphs.** N-Triples, Turtle and RDF/XML have no graph name. The batch
 writer of `Sink` writes the triples of the default graph and of all the named
@@ -1233,6 +1233,95 @@ noise.
   tests/hub/*_test.mjs`: 447 pass, 0 fail (out of 447).
 - `tests/known-defects/run.sh` in the CI layout (one directory with `factoidal`, `owl_runner`, `l4factoidal` and
   `l4w3c`): 24 XFAIL, 0 XPASS, 0 ERROR (out of 24).
+
+**The serialising operations read triple terms (2026-10-15).** Tracking:
+https://github.com/danbri/factoidal/issues/870. `serializeNQuads`, `serializeTurtle` and
+`serializeTurtleWith` read their N-Quads argument with `parseNQuadsFast nq`. The default
+mode of that function is RDF 1.1, and the RDF 1.1 reader refuses `<<(`. So the three
+operations answered "invalid character in IRIREF (offset N)" for any triple term.
+`l4factoidal parse FILE --out turtle` did the same: it reads the canonical N-Quads of its
+dataset the same way, through `Ops.serializeTurtleTextOf`, which `serializeTurtleTextOf_eq`
+ties to `serializeTurtle`. The operations that read RDF 1.2 (`parseToDatasetJson` with a
+`*12` tag, `queryDataset`, `updateDataset`) and the other `--out` writers were not
+affected. Of the 16 pairs of reader and writer that can hold a triple term (N-Triples 1.2,
+N-Quads 1.2, Turtle 1.2 and TriG 1.2, each written as N-Quads, N-Triples, Turtle and TriG),
+12 passed and the 4 with `--out turtle` failed. The cases of `Wasm/cli-smoke.sh` and
+`Wasm/native-smoke.sh` were expected failures that name the issue, in the commit before the
+repair.
+
+The RDF 1.2 reader is not a superset of the RDF 1.1 reader. Each row was measured with
+`parseToDatasetJson`, tags `nquads` and `nq12`:
+
+| Text | RDF 1.1 reader | RDF 1.2 reader |
+| --- | --- | --- |
+| `<<( s p o )>>` as an object | refuses | reads |
+| `"x" @en`, `"1" ^^ <dt>` (white space before `@` or `^^`) | refuses | reads |
+| `"x"@en--ltr` | reads the language tag `en--ltr`, no direction | reads the language tag `en` and the direction `ltr` |
+| `"x"@abcdefghijk` (a subtag of 11 characters), `"x"@en-` | reads | refuses |
+| `"x"@en--xyz`, `"x"@en--LTR` | reads | refuses |
+
+So the three operations read the text as RDF 1.2 and, when the RDF 1.2 reader refuses it,
+as RDF 1.1: `parseNQuadsFast12Or11` in `L4Factoidal/RDF/DatasetNormalize.lean`. A text that
+either reader accepts is accepted (`parseNQuadsFast12Or11_accepts_rdf11`). A text that both
+refuse gets the error of the RDF 1.1 reader, the error these operations gave before
+(`parseNQuadsFast12Or11_error`). The RDF 1.2 reader goes first. It reads a text of RDF 1.1
+syntax in one pass, and a dataset that passes `roundTripSafe .rdf12` takes the
+normalisation with no text round trip. `datasetForOps12Or11` is `datasetForOps` for these two
+readers. `datasetForOps12Or11_eq` proves it equal to the text round trip of
+`parseNQuadsFast12Or11` for every dataset, so `serializeTurtleTextOf_eq` still holds. A dataset
+that passes the RDF 1.1 check gets the dataset that `datasetForOps .rdf11` gave
+(`roundTripSafe_rdf11_rdf12`, `datasetForOps12Or11_of_safe11`). The theorems depend on
+`propext`, `Classical.choice` and `Quot.sound` only (`#print axioms` in
+`DatasetNormalizeTests.lean`).
+
+*Same output as before, and what changed (2026-10-15).* The old build (commit e98ec076) and
+the new build ran on the same inputs; the standard output, the standard error and the exit
+status were compared.
+
+| Input | Runs | Identical | Changed |
+| --- | ---: | ---: | ---: |
+| `l4factoidal parse FILE --out turtle`: the 5,997 N-Triples, N-Quads, Turtle and TriG files under `third_party/testing` and `tests`, each in the RDF 1.1 and the RDF 1.2 mode | 11,994 | 11,712 (8,749 with exit 0; 2,963 the same error) | 282 |
+| `l4wasm-cli callseq`: `serializeNQuads`, `serializeTurtle` and `serializeTurtleWith` on the 2,017 N-Triples and N-Quads files as they are (one file that is not UTF-8 is skipped) | 6,048 | 5,706 (5,292 ok; 414 the same error) | 342 |
+| the same three operations on the canonical N-Quads of each of the 4,658 files that the RDF 1.2 reader reads | 13,974 | 13,128 | 846 |
+
+Each changed run was an error before and exit 0 (ok) now. The 282 changed runs of the command
+line are 282 RDF 1.2 files; the old error was "invalid character in IRIREF" in all 282, and the
+Turtle text now reads back with the RDF 1.2 Turtle reader as the same set of quads as the
+N-Triples text of the dataset, 282 of 282. The 342 changed runs of the operations are 114
+files: 110 with a triple term (the old error "invalid character in IRIREF") and 4 with white
+space before `@` or `^^` (the old error "expected '.' terminator"). The 846 are 282 files, the
+same 282 as the command line's; `serializeTurtle` on the canonical text is the output of
+`parse FILE --out turtle` for 282 of 282, byte for byte. The 2,963 runs of the command line that
+still exit 1 fail at the read of the file: `--out nquads` fails on the same 2,963. Time of
+the operations, 120,000 quads (11.2 MB) of RDF 1.1 syntax, minimum user CPU time of 5 runs: 1.87 s
+before and 1.79 s after for `serializeNQuads`, 3.50 s and 3.52 s for `serializeTurtle`; the peak
+resident set is 624 MB in both.
+
+*Checks (2026-10-15).*
+
+- `formal/lean4/Wasm/cli-smoke.sh`: 130 pass, 0 fail, 0 xfail (out of 130); before the repair 126 pass,
+  0 fail, 4 xfail (out of 130). The new cases: D4 read in four syntaxes (N-Triples 1.2, N-Quads 1.2,
+  Turtle 1.2, TriG 1.2) and written in four (N-Quads, N-Triples, Turtle, TriG), 16 pairs, each read back to
+  the same 5 quads (3 with a triple term, one nested two deep, one with a base direction); a triple term
+  in a named graph through N-Quads 1.2 to N-Quads and TriG. `formal/lean4/Wasm/native-smoke.sh`: 369
+  pass, 0 fail, 0 xfail (out of 369); before the repair 366 pass, 0 fail, 3 xfail (out of 369): the
+  three operations on a triple term one level deep, one nested two deep, and a base direction.
+- Build-time `#guard`s: `Wasm/Ops/Parse.lean` (the three operations on a triple term, on white space
+  before `@`, on a tag that only the RDF 1.1 reader reads, on a text that both refuse) and
+  `RDF/DatasetNormalizeTests.lean` (`datasetForOps12Or11` and `parseNQuadsFast12Or11` on the same
+  cases, with `dsLongTag` for the second reader and `dsIriSpace` for the error).
+- `npm test` in `npm/factoidal`: 443 pass, 0 fail, 1 skipped (out of 444); the new test of
+  `serialize(..., {format: 'turtle', inputFormat: 'nt12'})` fails against the wasm module of the old
+  build with "invalid character in IRIREF (offset 29)". `node --test tests/hub/*_test.mjs`: 447 pass,
+  0 fail (out of 447).
+- `lake build` (default targets): 1,725 jobs, exit 0. `python3 tools/lean-unbuilt-modules.py --gate`: exit
+  0, 794 modules, 0 not reached. `python3 tools/lean-tail-recursion-audit.py --gate`: exit 0 (allow list of
+  1,372 lines, 4 marked `(a) PENDING`, 502 marked `UNTRIAGED`). `tools/lean-hygiene-audit.py --build-log`:
+  clean (1,661 `#print axioms` outputs in the logs of the builds of this change).
+- `tests/sbm11/run.sh`: 2,823 pass, 0 fail, 30 expected-fail (out of 2,853). `tests/sbm11/census.sh`,
+  `tests/delta-log/run.sh` (46 pass, 0 fail) and `tests/sbm11/threads.sh` (all answers identical): exit 0.
+  `tests/stack/run.sh --canary` with a wasm module built from this tree: 161 pass, 0 fail (out of 161).
+  `tests/known-defects/run.sh`: 24 XFAIL, 0 XPASS, 0 ERROR (out of 24).
 
 **Costs open.** The RDF/XML and JSON-LD writers keep the dataset
 (https://github.com/danbri/factoidal/issues/846 and

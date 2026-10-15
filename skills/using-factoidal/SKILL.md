@@ -158,7 +158,8 @@ dataset in the syntax F: `nquads`, `ntriples`, `turtle`, `trig`, `rdfxml` or
 `jsonld`. `nquads` is the canonical N-Quads form. N-Triples, Turtle and RDF/XML
 have no graph name, so they write the triples of all graphs as one graph, and
 `parse` prints a notice on stderr. RDF/XML and JSON-LD refuse an RDF 1.2 triple
-term (exit 1).
+term (exit 1); the other four write it as `<<( s p o )>>`
+(https://github.com/danbri/factoidal/issues/870).
 
 `l4wasm-cli` (`Wasm/Main.lean`, `call`/`callseq`) is unchanged and
 stays the ABI smoke driver `Wasm/native-smoke.sh` pins — build it
@@ -523,6 +524,11 @@ one process, so batch with `callseq` (a JSON array of
 
 `datasetOpen` answers `{"ok":true,"handle":"h1","count":1}`; handles
 number "h1", "h2", … per process.
+
+The N-Quads text that `serializeNQuads`, `serializeTurtle` and
+`serializeTurtleWith` take is read as RDF 1.2 N-Quads and, when that reader
+refuses it, as RDF 1.1 N-Quads. A triple term is accepted and written as
+`<<( s p o )>>` (https://github.com/danbri/factoidal/issues/870).
 
 ### Common Logic / IKL (Lean flavour only)
 

@@ -233,6 +233,58 @@ else
   verdict "parse --out rdfxml refuses a triple term and prints nothing (D4)" "" \
     "$( [ "$RC" -eq 1 ] && [ -z "$OUT" ] && grep -qF 'triple term' <<< "$ERR" && echo 1 || echo 0 )" \
     "exit=$RC stdout=$OUT stderr=$ERR"
+
+  # Triple terms through every pair of reader and writer
+  # (https://github.com/danbri/factoidal/issues/870; the four pairs with --out turtle
+  # were expected failures until 2026-10-15). D4 is written as N-Triples 1.2,
+  # N-Quads 1.2, Turtle 1.2 and TriG 1.2 (d4.nt, d4.nq, d4.ttl, d4.trig): five
+  # quads, three of them with a triple term (one level, and nested two deep), one
+  # with a base direction. Each of the four files is read by its reader and written
+  # in each of the four --out syntaxes that can hold a triple term; the output, read
+  # back by the reader of its syntax, is the same five quads.
+  if [ ! -r "$SYNTAX/d4.nt" ] || [ ! -r "$SYNTAX/d4.nq" ] || [ ! -r "$SYNTAX/d4.ttl" ]; then
+    fail "parse --out triple terms: fixtures" "missing d4.nt, d4.nq or d4.ttl under $SYNTAX"
+  else
+    nq_set_of "$SYNTAX/d4.trig" trig12; WANT_D4="$NQSET"
+    N_D4="$(printf '%s\n' "$WANT_D4" | wc -l | tr -d ' ')"
+    N_D4_TT="$(printf '%s\n' "$WANT_D4" | grep -cF '<<(' || true)"
+    verdict "parse D4: $N_D4 quads, $N_D4_TT with a triple term" "" \
+      "$( [ "$N_D4" = 5 ] && [ "$N_D4_TT" = 3 ] && echo 1 || echo 0 )" "quads=$N_D4 with a triple term=$N_D4_TT"
+    for EXT in nt nq ttl trig; do
+      case "$EXT" in nt) IN=nt12 ;; nq) IN=nq12 ;; ttl) IN=turtle12 ;; *) IN=trig12 ;; esac
+      nq_set_of "$SYNTAX/d4.$EXT" "$IN"
+      verdict "parse --format $IN: d4.$EXT is the $N_D4 quads of D4" "" \
+        "$( [ "$NQRC" -eq 0 ] && [ "$NQSET" = "$WANT_D4" ] && echo 1 || echo 0 )" "read exit=$NQRC"
+      for F in nquads ntriples turtle trig; do
+        case "$F" in nquads) BACK=nq12 ;; ntriples) BACK=nt12 ;; turtle) BACK=turtle12 ;; *) BACK=trig12 ;; esac
+        run_cmd "$CLI" parse "$SYNTAX/d4.$EXT" --format "$IN" --out "$F"
+        W_RC="$RC"; W_ERR="$ERR"; printf '%s\n' "$OUT" > "$TMP/d4.$EXT.$F"
+        nq_set_of "$TMP/d4.$EXT.$F" "$BACK"
+        verdict "parse --format $IN --out $F: the triple terms of D4 read back as its $N_D4 quads" "" \
+          "$( [ "$W_RC" -eq 0 ] && [ -z "$W_ERR" ] && [ "$NQRC" -eq 0 ] && [ "$NQSET" = "$WANT_D4" ] && echo 1 || echo 0 )" \
+          "write exit=$W_RC stderr=$W_ERR read exit=$NQRC"
+      done
+    done
+    # A triple term in a named graph, in the two syntaxes that have a place for the
+    # graph name: one level, and nested two deep, with a base direction.
+    printf '%s\n' \
+      '<http://example.org/s> <http://example.org/p> <<( <http://example.org/a> <http://example.org/q> "x"@en--rtl )>> <http://example.org/g> .' \
+      '<http://example.org/s> <http://example.org/r> <<( <http://example.org/a> <http://example.org/q> <<( <http://example.org/b> <http://example.org/q> "y" )>> )>> <http://example.org/g> .' \
+      '<http://example.org/s> <http://example.org/r> <<( <http://example.org/a> <http://example.org/q> <http://example.org/c> )>> .' \
+      > "$TMP/d4g.nq"
+    nq_set_of "$TMP/d4g.nq" nq12; WANT_D4G="$NQSET"
+    N_D4G="$(printf '%s\n' "$WANT_D4G" | wc -l | tr -d ' ')"
+    verdict "parse D4 with a named graph: $N_D4G quads" "" "$( [ "$N_D4G" = 3 ] && [ "$NQRC" -eq 0 ] && echo 1 || echo 0 )" "quads=$N_D4G"
+    for F in nquads trig; do
+      case "$F" in nquads) BACK=nq12 ;; *) BACK=trig12 ;; esac
+      run_cmd "$CLI" parse "$TMP/d4g.nq" --format nq12 --out "$F"
+      W_RC="$RC"; W_ERR="$ERR"; printf '%s\n' "$OUT" > "$TMP/d4g.$F"
+      nq_set_of "$TMP/d4g.$F" "$BACK"
+      verdict "parse --format nq12 --out $F: a triple term in a named graph reads back as its $N_D4G quads" "" \
+        "$( [ "$W_RC" -eq 0 ] && [ -z "$W_ERR" ] && [ "$NQRC" -eq 0 ] && [ "$NQSET" = "$WANT_D4G" ] && echo 1 || echo 0 )" \
+        "write exit=$W_RC stderr=$W_ERR read exit=$NQRC"
+    done
+  fi
 fi
 
 # stdin: no positional file argument at all.

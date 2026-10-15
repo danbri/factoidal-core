@@ -706,6 +706,36 @@ necessary" report. Rules:
   650), the same as the default mode, and `l4diff --verbose` prints
   `AGREE NOW()`.
 
+## ⚠️ A new syntax feature needs a row for every reader and writer that can carry it
+
+2026-10-15, https://github.com/danbri/factoidal/issues/870. `l4factoidal parse
+FILE --out turtle` and the operations `serializeNQuads`, `serializeTurtle` and
+`serializeTurtleWith` answered "invalid character in IRIREF" for every RDF 1.2
+triple term. They read their N-Quads text with `parseNQuadsFast nq`, and the
+default mode of that function is RDF 1.1. The tests of the readers wrote
+`--out nquads`, and the tests of the writers used RDF 1.1 data, so no row crossed
+RDF 1.2 data with the Turtle writer. Of the 16 pairs of reader and writer that can
+hold a triple term, 4 failed, and every suite was green. The case was found on
+2026-10-15, while rows for triple terms nested 300,000 deep were written
+(https://github.com/danbri/factoidal/issues/867).
+
+Rules:
+
+- When a reader gains a syntax feature, write the matrix: one row for each reader
+  that accepts the feature, against each writer and each operation that takes the
+  data. `formal/lean4/Wasm/cli-smoke.sh` has the matrix of the triple term: the
+  fixture D4 (`tests/sbm11/syntax`) in four syntaxes, each written in four
+  syntaxes, and the output read back to the same five quads.
+- A call of `parseNQuadsFast` with no mode argument reads RDF 1.1. When RDF 1.2 data
+  enters an operation that takes N-Quads text, read the mode of the call.
+- The RDF 1.2 reader is not a superset of the RDF 1.1 reader: it refuses language
+  tags that the RDF 1.1 reader reads (a subtag of more than 8 characters, `@en-`,
+  `@en--xyz`) and reads white space before `@` and `^^`, which the RDF 1.1 reader
+  refuses. Measure both readers on the case before you pick a mode.
+  `RDF.parseNQuadsFast12Or11` reads RDF 1.2 first and RDF 1.1 second: every text
+  that either reader accepts is accepted, and a text that both refuse gets the RDF
+  1.1 error (`L4Factoidal/RDF/DatasetNormalize.lean`).
+
 ## Expected failures (owner rule, 2026-09-07)
 
 A stated shortfall is a failing test plus an open issue; prose alone is not a
