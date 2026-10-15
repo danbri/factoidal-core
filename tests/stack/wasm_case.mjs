@@ -8,6 +8,11 @@
 //   node tests/stack/wasm_case.mjs <case-name> <fixture-dir>
 //
 // Prints one JSON line: {case, route:"wasm", ok, ms, detail}.
+//
+// A case in SEQ is a file of op/args pairs, called in order in this one process
+// (a dataset handle lives in the module instance); the last answer is the case's.
+// A case in CHECK also tests the answer: `ok` is true only when the engine answered
+// ok:true and the check passes (the other cases only need the call to return).
 import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 
@@ -40,18 +45,45 @@ const CASES = {
   'rdfc-bnode-chain': () => ['canonicalizeToNQuads', readArgs('args-rdfc-bnode-chain.json')],
   'delta-log-decode': () => ['deltaLogDecode', readArgs('args-delta-log-decode.json')],
   'delta-log-merge': () => ['deltaLogMerge', readArgs('args-delta-log-merge.json')],
+  'turtle-write-prefixes': () => ['serializeTurtleWith', readArgs('args-turtle-write-prefixes.json')],
+};
+
+// The handle rows of the Turtle writer with many prefixes (issue 864): a document
+// handle opened, then written as Turtle.
+const SEQ = {
+  'turtle-write-prefixes-handle': () => readArgs('seq-turtle-write-prefixes-handle.json'),
+  'turtle-write-prefixes-with': () => readArgs('seq-turtle-write-prefixes-with.json'),
+};
+
+// Every prefix of the table is used, so the Turtle has one `@prefix` line for each.
+const N_PREFIXES = Number(process.env.STACK_TURTLE_PREFIXES || '100000');
+const prefixLines = (res) => {
+  if (!res || res.ok !== true || typeof res.turtle !== 'string') {
+    throw new Error(`the engine did not answer ok:true with Turtle: ${JSON.stringify(res).slice(0, 160)}`);
+  }
+  const n = res.turtle.split('@prefix ').length - 1;
+  if (n !== N_PREFIXES) throw new Error(`the Turtle has ${n} @prefix lines, expected ${N_PREFIXES}`);
+};
+const CHECK = {
+  'turtle-write-prefixes': prefixLines,
+  'turtle-write-prefixes-handle': prefixLines,
+  'turtle-write-prefixes-with': prefixLines,
 };
 
 const out = { case: caseName, route: 'wasm' };
 try {
-  const build = CASES[caseName];
-  if (!build) throw new Error(`no wasm route for case '${caseName}'`);
-  const [op, args] = build();
+  const calls = SEQ[caseName] ? SEQ[caseName]() : (() => {
+    const build = CASES[caseName];
+    if (!build) throw new Error(`no wasm route for case '${caseName}'`);
+    return [build()];
+  })();
   const { loadL4 } = await import(new URL('docs/web/hub/assets/l4/l4factoidal.js', ROOT).href);
   const l4 = await loadL4();
   const t0 = performance.now();
-  const res = l4.call(op, args);
+  let res;
+  for (const [op, args] of calls) res = l4.call(op, args);
   out.ms = Math.round(performance.now() - t0);
+  if (CHECK[caseName]) CHECK[caseName](res);
   out.ok = true;
   out.detail = JSON.stringify(res).slice(0, 120);
 } catch (e) {

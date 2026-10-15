@@ -111,6 +111,10 @@ export STACK_SBM11_WHERE="$N_WHERE"
 # same variable; https://github.com/danbri/factoidal/issues/863).
 N_TTLW="${STACK_TURTLE_WRITE:-100000}"
 export STACK_TURTLE_WRITE="$N_TTLW"
+# Turtle writer: prefixes in the table, every one used (gen_cases.py and
+# wasm_case.mjs read the same variable; https://github.com/danbri/factoidal/issues/864).
+N_TTLP="${STACK_TURTLE_PREFIXES:-100000}"
+export STACK_TURTLE_PREFIXES="$N_TTLP"
 while [ $# -gt 0 ]; do
   case "$1" in
     --route) ROUTE="$2"; shift 2 ;;
@@ -161,17 +165,40 @@ record() { # record <route> <case> <ok:0|1> <detail>
 }
 
 # ---------------------------------------------------------------- native
+# cli_cmd <op> <argsfile> sets CLI_CMD to the l4wasm-cli command of a row. The op
+# `callseq` is the subcommand that runs a file of op/args pairs in ONE process,
+# which a dataset handle needs (the rows of the Turtle writer with many prefixes).
+cli_cmd() {
+  if [ "$1" = callseq ]; then CLI_CMD=("$CLI" callseq "$FIXTURES/$2")
+  else CLI_CMD=("$CLI" call "$1" "$FIXTURES/$2"); fi
+}
+
+# prefix_row_wrong <case> <output> prints why the output of a row of the Turtle writer
+# with many prefixes is wrong, or nothing: every prefix of the table is used, so the
+# Turtle has N_TTLP `@prefix` declarations. Other rows print nothing.
+prefix_row_wrong() {
+  case "$1" in
+    turtle-write-prefixes*)
+      local n
+      n="$(printf '%s' "$2" | grep -o '@prefix ' | wc -l | tr -d ' ')"
+      [ "$n" = "$N_TTLP" ] || echo "the output has $n @prefix declarations, expected $N_TTLP" ;;
+  esac
+}
+
 native_case() { # native_case <case> <op> <argsfile>
   local name="$1" op="$2" argsfile="$3"
   local out rc t0 t1
   t0=$(python3 -c 'import time;print(int(time.time()*1000))')
-  out="$(run_capped "$TIMEOUT" "$CLI" call "$op" "$FIXTURES/$argsfile" 2>&1)"; rc=$?
+  cli_cmd "$op" "$argsfile"
+  out="$(run_capped "$TIMEOUT" "${CLI_CMD[@]}" 2>&1)"; rc=$?
   t1=$(python3 -c 'import time;print(int(time.time()*1000))')
   local ms=$((t1 - t0))
   if [ "$rc" -ne 0 ]; then
     record native "$name" 1 "exit $rc after ${ms}ms: $(printf '%s' "$out" | head -c 160)"
   elif printf '%s' "$out" | grep -q '"ok":false'; then
     record native "$name" 1 "engine error after ${ms}ms: $(printf '%s' "$out" | head -c 160)"
+  elif [ -n "$(prefix_row_wrong "$name" "$out")" ]; then
+    record native "$name" 1 "$(prefix_row_wrong "$name" "$out")"
   else
     record native "$name" 0 "${ms}ms"
   fi
@@ -289,6 +316,12 @@ xfail_issue() { # xfail_issue <case>; prints the issue URL or nothing
     regex-replace-groups)
       case "${2:-}" in canary|wcanary) echo "https://github.com/danbri/factoidal/issues/816" ;; esac ;;
     rdfc-bnode-chain) echo "https://github.com/danbri/factoidal/issues/817" ;;
+    # The Turtle writer with 100,000 prefixes, every one used (the three ops of the
+    # issue), and with a triple term nested 300,000 deep: TurtleSerialize.tsUserUsed
+    # takes a frame for each used prefix (8,127 prefixes ran under 512 KB and 8,128
+    # overflowed) and tsTermToTurtle a frame for each nesting level.
+    turtle-write-prefixes|turtle-write-prefixes-handle|turtle-write-prefixes-with|turtle-triple-term)
+      echo "https://github.com/danbri/factoidal/issues/864" ;;
     # (`turtle-write-one-node`, `turtle-write-subjects` and the two
     # `turtle-write-cli-*` rows were listed for
     # https://github.com/danbri/factoidal/issues/863 until 2026-10-15, when
@@ -321,7 +354,8 @@ score_case() {
 
 canary_case() { # canary_case <case> <op> <argsfile>
   local name="$1" op="$2" argsfile="$3" out rc
-  out="$( run_capped "$TIMEOUT" "${CANARY_PREFIX[@]}" "$CLI" call "$op" "$FIXTURES/$argsfile" 2>&1 )"
+  cli_cmd "$op" "$argsfile"
+  out="$( run_capped "$TIMEOUT" "${CANARY_PREFIX[@]}" "${CLI_CMD[@]}" 2>&1 )"
   rc=$?
   if printf '%s' "$out" | grep -q 'Stack overflow'; then
     score_case canary "$name" overflow "STACK OVERFLOW under ${CANARY_KB}KB (exit $rc)"
@@ -329,6 +363,8 @@ canary_case() { # canary_case <case> <op> <argsfile>
     score_case canary "$name" error "exit $rc under ${CANARY_KB}KB: $(printf '%s' "$out" | head -c 140)"
   elif printf '%s' "$out" | grep -q '"ok":false'; then
     score_case canary "$name" error "engine error under ${CANARY_KB}KB: $(printf '%s' "$out" | head -c 140)"
+  elif [ -n "$(prefix_row_wrong "$name" "$out")" ]; then
+    score_case canary "$name" error "$(prefix_row_wrong "$name" "$out")"
   else
     score_case canary "$name" ran "ok under ${CANARY_KB}KB"
   fi
@@ -381,6 +417,11 @@ wasm_missing() { # wasm_missing <route>
   record "$1" "wasm module" 1 "NOT SCORED: $WASM_DIR lacks l4factoidal.{js,mjs,wasm}; install it with tools/fetch-builds.sh --set web or build it with formal/lean4/Wasm/build-wasm.sh"
 }
 
+# A fourth field `small` marks a row for the routes with a small stack (the native
+# canary, the wasm canary, the wasm route): the unrepaired code takes quadratic time
+# on it, more than TIMEOUT on the 1 GB native stack, which would make the native
+# route fail for a reason other than the stack (issue 864; lean_scaling.py measures
+# the time).
 CASES=(
   "xml-entities        parseToDatasetJson   args-xml.json"
   "xml-entities-attr   parseToDatasetJson   args-xml-attr.json"
@@ -405,6 +446,9 @@ CASES=(
   "rdfc-bnode-chain    canonicalizeToNQuads args-rdfc-bnode-chain.json"
   "delta-log-decode    deltaLogDecode       args-delta-log-decode.json"
   "delta-log-merge     deltaLogMerge        args-delta-log-merge.json"
+  "turtle-write-prefixes serializeTurtleWith args-turtle-write-prefixes.json small"
+  "turtle-write-prefixes-handle callseq seq-turtle-write-prefixes-handle.json small"
+  "turtle-write-prefixes-with callseq seq-turtle-write-prefixes-with.json small"
 )
 
 if [ "$ROUTE" = native ] || [ "$ROUTE" = both ]; then
@@ -417,6 +461,7 @@ if [ "$ROUTE" = native ] || [ "$ROUTE" = both ]; then
   for row in "${CASES[@]}"; do
     # shellcheck disable=SC2086
     set -- $row
+    [ "${4:-}" = small ] && continue
     native_case "$1" "$2" "$3"
   done
 fi
@@ -538,6 +583,45 @@ if [ "$CANARY" = 1 ]; then
     for shape in one-node subjects; do turtle_write_cli_case canary "$shape" "${CANARY_PREFIX[@]}"; done
   else
     record canary turtle-write-cli 1 "NOT SCORED: the canary control did not pass"
+  fi
+fi
+
+# ------------------------- Turtle writer, triple term nested 300,000 deep (issue 864)
+# `l4source-convert --nest-check 300000`: an RDF 1.2 triple term nested 300,000
+# deep in the object position, built in memory by a loop (the parser takes a
+# frame for each level, so no text of this nesting can be read), written as
+# Turtle by the batch writer (`turtleOfGraphOpts`) and by the stream writer
+# (`Sink.streamQuads`); both texts must equal the text that a loop builds
+# (5,400,063 bytes). `tsTermToTurtle` took a frame for each nesting level and
+# copied the text built so far at each level: about 120 s CPU for both writers
+# at the default stack. The row runs under the canary budget only: at the default
+# stack the unrepaired code takes more than TIMEOUT, and the module has no op
+# that builds such a term, so the wasm routes have no row.
+# https://github.com/danbri/factoidal/issues/864
+NEST_BIN="$LEAN_DIR/.lake/build/bin/l4source-convert"
+turtle_nest_case() { # turtle_nest_case <route> <prefix...>
+  local route="$1"; shift
+  local rc log
+  if [ ! -x "$NEST_BIN" ]; then
+    record "$route" turtle-triple-term 1 "$NEST_BIN does not exist (lake build l4source-convert)"
+    return
+  fi
+  log="$(run_capped "$TIMEOUT" "$@" "$NEST_BIN" --nest-check 300000 2>&1)"; rc=$?
+  if printf '%s' "$log" | grep -q 'Stack overflow'; then
+    score_case "$route" turtle-triple-term overflow "STACK OVERFLOW (exit $rc)"
+  elif [ "$rc" -ne 0 ] || ! printf '%s' "$log" | grep -q 'depth=300000 .*failures=0'; then
+    score_case "$route" turtle-triple-term error "exit $rc: $(printf '%s' "$log" | tail -1 | head -c 160)"
+  else
+    score_case "$route" turtle-triple-term ran "$(printf '%s' "$log" | grep -o 'depth=[0-9]* turtle-bytes=[0-9]*' | head -1); batch and stream writers equal the loop"
+  fi
+}
+if [ "$CANARY" = 1 ]; then
+  echo
+  echo "=== Turtle writer, triple term nested 300,000 deep, native under ${CANARY_VAR}=${CANARY_KB}"
+  if [ "$CONTROL_OK" = 1 ]; then
+    turtle_nest_case canary "${CANARY_PREFIX[@]}"
+  else
+    record canary turtle-triple-term 1 "NOT SCORED: the canary control did not pass"
   fi
 fi
 

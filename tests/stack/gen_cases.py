@@ -309,6 +309,40 @@ args("args-turtle-write-one-node.json",
 args("args-turtle-write-subjects.json",
      open(os.path.join(OUT, "turtle-write-subjects-%d.nq" % N_TTLW)).read())
 
+# ------------------------------- Turtle writer, many prefixes (issue 864)
+# The prefix table of the Turtle writer has N_TTLP rows, and every row is used.
+# `TurtleSerialize.tsUserUsed` took one native frame for each used prefix of the
+# caller's table, so the writer overflowed a 512 KB stack from 8,128 prefixes
+# (measured 2026-10-15: 8,127 ran, 8,128 overflowed), and it took quadratic time:
+# 8,000 prefixes 2.4 s, 16,000 10.9 s, 32,000 50.7 s
+# (https://github.com/danbri/factoidal/issues/864). The graph has one triple for
+# each prefix: the subject lies under namespace i, the object under namespace i + 1
+# (modulo N_TTLP), and the predicate under none. Three ways to hand the table to the
+# writer, one for each op of the issue:
+#   serializeTurtleWith   the table is the `prefixes` member of the options (N-Quads in)
+#   datasetSerialize      the table is the prefixes the document declared: a Turtle
+#                         document with N_TTLP `@prefix` lines and full IRIs in the
+#                         triples, so the parser does not look a prefix up
+#   datasetSerializeWith  the table is the `prefixes` member of the options, over a
+#                         handle opened on the N-Quads text
+# The handle ops need `datasetOpen` first, in the same process: the two ops of each
+# handle row are a sequence (`l4wasm-cli callseq`, wasm_case.mjs).
+N_TTLP = int(os.environ.get("STACK_TURTLE_PREFIXES", "100000"))
+EXP = "http://example.org/"
+nq_pfx = "".join("<%sn%d/s> <%sp> <%sn%d/o> .\n" % (EXP, i, EXP, EXP, (i + 1) % N_TTLP)
+                 for i in range(N_TTLP))
+options_pfx = json.dumps({"prefixes": {"n%d" % i: "%sn%d/" % (EXP, i) for i in range(N_TTLP)}},
+                         separators=(",", ":"))
+ttl_pfx = "".join("@prefix n%d: <%sn%d/> .\n" % (i, EXP, i) for i in range(N_TTLP)) + nq_pfx
+args("args-turtle-write-prefixes.json", nq_pfx, options_pfx)
+args("seq-turtle-write-prefixes-handle.json",
+     ["datasetOpen", [ttl_pfx, "turtle", ""]],
+     ["datasetSerialize", ["h1", "turtle"]])
+args("seq-turtle-write-prefixes-with.json",
+     ["datasetOpen", [nq_pfx, "nquads", ""]],
+     ["datasetSerializeWith", ["h1", "turtle", options_pfx]])
+del nq_pfx, options_pfx, ttl_pfx
+
 # ------------------------------------- issue 752 (OKR batch 1 KR 2.6) cases
 # Each is above the depth at which the readable recursion overflowed under
 # LEAN_STACK_SIZE_KB=512 (measured 2026-10-13 on base 7d314f43, native):
@@ -502,6 +536,6 @@ args("args-delta-log-merge.json", "", dl_hex)
 
 print(json.dumps({
     "dir": OUT, "zstdIds": N_ZSTD_IDS, "entities": N_ENT, "literalBytes": LIT, "collection": N_COLL, "predicates": N_PRED,
-    "quads": N_Q, "turtleWriteTriples": N_TTLW, "unionArms": N_UNION, "nestDepth": N_NEST, "orderRows": N_ORDER,
+    "quads": N_Q, "turtleWriteTriples": N_TTLW, "turtleWritePrefixes": N_TTLP, "unionArms": N_UNION, "nestDepth": N_NEST, "orderRows": N_ORDER,
     "jsonldDepth": N_JSONLD, "sbm11Delta": N_DELTA, "shapes": N_SHAPES, "manifestEntries": N_MAN,
     "manifestBytes": len(man), "deltaLogRecords": N_DLOG}))

@@ -332,6 +332,29 @@ repaired (docs/designissues/2026-10-10-lean-vs-fstar-performance.md):
                    at 32,000 CPU); after `applyBatches_eq_fast` (a hash set of
                    each graph carried through the batches) 0.36 s, 0.81 s and
                    1.80 s
+  turtle-prefixes  `l4wasm-cli call serializeTurtleWith` with a table of n prefixes, every one
+                   used (one triple for each: the subject lies under namespace i, the
+                   object under namespace i + 1), n = 8,000, 16,000 and 32,000, measured at
+                   x, 2x and 4x like owl-consistent-cl. Issue
+                   https://github.com/danbri/factoidal/issues/864: `tsUserUsed` kept a list
+                   of the namespaces it had seen and scanned the IRIs of the graph for each
+                   prefix, and `tsFindPrefix` scanned the table for each IRI. CPU time
+                   2.38 s, 12.3 s and 56.0 s before the repair (ratios 5.2 and 4.5 for the
+                   two doublings); expected failure until the repair of 864.
+  turtle-prefixes-open
+                   `l4wasm-cli callseq` of one `datasetOpen` of a Turtle document with n
+                   `@prefix` lines (and n triples with full IRIs), n = 16,000, 32,000 and
+                   64,000. Issue 864: `declarationOrderPrefixes` kept a list of the labels it
+                   had seen (the parser alone, `l4factoidal parse`, takes 0.36 s and 0.80 s at
+                   16,000 and 32,000). CPU time 1.29 s, 7.35 s and 33.7 s before the repair
+                   (ratios 5.7 and 4.6); expected failure until the repair of 864.
+  turtle-nest-time `l4source-convert --nest-check n`: one triple whose object is a triple term
+                   nested n levels deep, written as Turtle by the batch writer and by the
+                   stream writer, n = 25,000, 50,000 and 100,000. Issue 864: `tsTermToTurtle`
+                   built the text of each level from the text of the level below it, so it
+                   copied the text built so far at each level. CPU time 0.50 s, 1.76 s and
+                   10.2 s before the repair (ratios 3.5 and 5.8; about 121 s at 300,000);
+                   expected failure until the repair of 864.
   startup          process start: `l4factoidal version` must take at most
                    STARTUP_BUDGET (20 ms) of CPU time, minimum of 15 runs
                    (305 million instructions and 43 ms before the fixtures were
@@ -416,6 +439,9 @@ XFAIL: dict[str, str] = {
     "sbm11-pack-trig-workers": "https://github.com/danbri/factoidal/issues/842",
     "sbm11-export-rdfxml-memory": "https://github.com/danbri/factoidal/issues/846",
     "sbm11-export-jsonld-memory": "https://github.com/danbri/factoidal/issues/847",
+    "turtle-prefixes": "https://github.com/danbri/factoidal/issues/864",
+    "turtle-prefixes-open": "https://github.com/danbri/factoidal/issues/864",
+    "turtle-nest-time": "https://github.com/danbri/factoidal/issues/864",
 }
 # A run longer than this is not repeated: the minimum of several runs only
 # removes timer and load noise, which is small against a run this long.
@@ -1615,6 +1641,35 @@ def delta_log_merge_args(n: int) -> Path:
     return p
 
 
+def pfx_triples(n: int) -> str:
+    """n triples for n prefixes: the subject under namespace i, the object under namespace
+    i + 1 (modulo n), the predicate under none (tests/stack/gen_cases.py writes the same)."""
+    return "".join(f"<{EX}n{i}/s> <{EX}p> <{EX}n{(i + 1) % n}/o> .\n" for i in range(n))
+
+
+def turtle_prefixes_args(n: int) -> Path:
+    """The arguments of `serializeTurtleWith` for a table of n prefixes, every one used: the
+    N-Quads text and the options `{"prefixes": {"n<i>": "http://example.org/n<i>/"}}`."""
+    import json
+
+    def text():
+        opts = json.dumps({"prefixes": {f"n{i}": f"{EX}n{i}/" for i in range(n)}},
+                          separators=(",", ":"))
+        return json.dumps([pfx_triples(n), opts])
+    return fixture(f"turtle-prefixes-{n}.json", text)
+
+
+def turtle_prefixes_open_seq(n: int) -> Path:
+    """A `callseq` file of one `datasetOpen` of a Turtle document with n `@prefix` lines and
+    the triples of `pfx_triples`, in full IRIs (no prefixed name for the parser to look up)."""
+    import json
+
+    def text():
+        ttl = "".join(f"@prefix n{i}: <{EX}n{i}/> .\n" for i in range(n)) + pfx_triples(n)
+        return json.dumps([["datasetOpen", [ttl, "turtle", ""]]])
+    return fixture(f"turtle-prefixes-open-{n}.seq.json", text)
+
+
 # row id -> (x, make input, command, expected first line (a string, or a
 # predicate on the line), a file the row needs or None)
 SERIES_ROWS = {
@@ -1633,6 +1688,27 @@ SERIES_ROWS = {
         lambda p: [str(WASMCLI_BIN), "call", "deltaLogMerge", str(p)],
         lambda line: line.startswith('{"ok":true,"nquads":"<' + EX + 's0> '),
         WASMCLI_BIN),
+    # The Turtle writer with a table of n prefixes (issue 864). The first line is the
+    # start of the JSON envelope: the first two `@prefix` lines of the table, in the
+    # caller's order.
+    "turtle-prefixes": (
+        8000, turtle_prefixes_args,
+        lambda p: [str(WASMCLI_BIN), "call", "serializeTurtleWith", str(p)],
+        lambda line: line.startswith('{"ok":true,"turtle":"@prefix n0: <' + EX
+                                     + 'n0/> .\\n@prefix n1: <' + EX + 'n1/> .\\n'),
+        WASMCLI_BIN),
+    "turtle-prefixes-open": (
+        16000, turtle_prefixes_open_seq,
+        lambda p: [str(WASMCLI_BIN), "callseq", str(p)],
+        lambda line: line.startswith('{"ok":true,"handle":"h1","count":'),
+        WASMCLI_BIN),
+    # A triple term nested n deep, written as Turtle (issue 864). The harness compares
+    # both writers with the text a loop builds and prints failures=0 when they agree.
+    "turtle-nest-time": (
+        25000, lambda n: n,
+        lambda n: [str(SOURCE_CONVERT_BIN), "--nest-check", str(n)],
+        lambda line: line.startswith("turtle-nest-check: depth=") and line.endswith("failures=0"),
+        SOURCE_CONVERT_BIN),
     # The OWL 2 RL closure of the same prefixes (semi-naive rounds since
     # 2026-10-13, https://github.com/danbri/factoidal/issues/756 item 2).
     # No first-line check: the output is the closure, one triple per line.
