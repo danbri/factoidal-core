@@ -1416,6 +1416,12 @@ Rules from this repair:
   `tests/stack/lean_scaling.py`). A row made of many short records never grows the state. When it was checked, one
   Turtle statement of 8 MB read in 0.30 s, 0.60 s and 1.21 s at 2, 4 and 8 MB, and one TriG graph block in 0.13 s,
   0.25 s and 0.53 s: both linear.
+- **Run the row on every reader of the same syntax.** `parse --lenient` (`LenientStream`) had its own copy of the walk
+  of `carry ++ chunk` and read 0.44 s, 2.47 s and 10.94 s for one line of 2, 4 and 8 MB; the issue named the strict
+  reader only. The lenient reader (`LenientStream`) and the strict one and the shard packers (`Source.Reader`, which is
+  `LineFeed`) read the same syntax through different state types. The rows `ntriples-lenient-long-line` and
+  `nquads-lenient-long-line` were written first and failed, then the lenient state was repaired the same way
+  (`LenientStream.carryRev`, `LenientStream.feed_eq_feedSpec`).
 - **Count the walks of the model, then profile.** Chunk j holds (j - 1) chunks of partial line; 3 walks per chunk give
   1.5 n squared over 65,536 steps, 1.46 billion for 8 MB, 7.7 ns each: the 11.28 s measured. The flat profile named three
   symbols (`List.reverseAux` 55.6 percent, kernel page clearing for the copies 21.0 percent, `splitCompleteLinesTRGo`

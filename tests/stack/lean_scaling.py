@@ -419,10 +419,13 @@ repaired (docs/designissues/2026-10-10-lean-vs-fstar-performance.md):
                    recovers after an error and has its own chunk walk (`LenientStream`), n =
                    2,000,000, 4,000,000 and 8,000,000, on the user CPU time. The command must
                    print 1. Issue https://github.com/danbri/factoidal/issues/869: the same carry
-                   of the partial last line. Before the repair (expected failure; load average
-                   7.8): 0.524 s, 2.40 s and 11.6 s user CPU for N-Triples (ratios 4.6 and 4.8 for
-                   the two doublings; 22.2 for 4x input), 0.467 s, 2.69 s and 11.4 s for N-Quads
-                   (5.8 and 4.2; 24.4).
+                   of the partial last line. `LenientStream` now holds it last character first
+                   (`carryRev`), as `LineFeed` does, and `LenientStream.feed_eq_feedSpec` proves
+                   the new feed equal to the old definition. Before the repair (expected failure;
+                   load average 7.8): 0.524 s, 2.40 s and 11.6 s user CPU for N-Triples (ratios
+                   4.6 and 4.8 for the two doublings; 22.2 for 4x input), 0.467 s, 2.69 s and 11.4 s
+                   for N-Quads (5.8 and 4.2; 24.4); after (load average 8.5): 0.139 s, 0.292 s and
+                   0.566 s (2.1 and 1.9; 4.1), 0.148 s, 0.271 s and 0.562 s (1.8 and 2.1; 3.8).
   startup          process start: `l4factoidal version` must take at most
                    STARTUP_BUDGET (20 ms) of CPU time, minimum of 15 runs
                    (305 million instructions and 43 ms before the fixtures were
@@ -507,8 +510,6 @@ XFAIL: dict[str, str] = {
     "sbm11-pack-trig-workers": "https://github.com/danbri/factoidal/issues/842",
     "sbm11-export-rdfxml-memory": "https://github.com/danbri/factoidal/issues/846",
     "sbm11-export-jsonld-memory": "https://github.com/danbri/factoidal/issues/847",
-    "ntriples-lenient-long-line": "https://github.com/danbri/factoidal/issues/869",
-    "nquads-lenient-long-line": "https://github.com/danbri/factoidal/issues/869",
 }
 # A run longer than this is not repeated: the minimum of several runs only
 # removes timer and load noise, which is small against a run this long.

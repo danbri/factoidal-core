@@ -49,8 +49,13 @@ last line feed (`NQuadsStreaming.splitCompleteLines`, whose three theorems
 say nothing is lost and only whole lines are parsed) and runs the same walk
 on the whole lines, carrying the absolute offset, the line state, the error
 count and the consumer states. It retains the consumer states and at most one
-partial line. Agreement with the reference lenient walk is checked by
-`#guard`s at every two-way split and with one-character chunks, below.
+partial line, held last character first, so that a line longer than a chunk
+costs time linear in its length (https://github.com/danbri/factoidal/issues/869).
+`LenientStream.feed_eq_feedSpec` proves the feed equal to the walk of the whole
+lines of `carry ++ chunk`, on a state whose partial line holds no line break
+(`LenientStream.CarryOk`, which every state built by `init` and `feed` has).
+Agreement with the reference lenient walk is checked by `#guard`s at every
+two-way split and with one-character chunks, below.
 
 No `sorry`, no user `axiom`, no `native_decide`, no `partial`.
 -/
@@ -192,19 +197,56 @@ def parseNQuadsFastLenient (s : String) (mode : Mode := .rdf11) (opts : LenientO
 
 /-! ## Streaming -/
 
-/-- A chunked lenient walk: the run state, the partial line not yet parsed,
-and the absolute offset at which that partial line starts. -/
+/-- A chunked lenient walk: the run state, the partial line not yet parsed
+with its LAST character first (`carryRev`), and the absolute offset at which
+that partial line starts.
+
+The partial line holds no line break (`splitCompleteLines` cuts a buffer after
+its last one), and `LenientStream.feed` keeps it so (`LenientStream.CarryOk`).
+A chunk without a line break goes in front of `carryRev` (`List.reverseAux`),
+so the work for a chunk is the length of the chunk. The state held the partial
+line in order until 2026-10-15, `carry ++ chunk` copied it at every chunk, and
+`splitCompleteLines` walked it again: a line of n bytes cost n squared over
+65,536 steps (https://github.com/danbri/factoidal/issues/869). -/
 structure LenientStream (α β : Type) where
   run : LenientRun α β
-  carry : List Char := []
+  carryRev : List Char := []
   pos : Nat := 0
+
+/-- The partial line, in order. -/
+def LenientStream.carry {α β : Type} (st : LenientStream α β) : List Char := st.carryRev.reverse
+
+/-- The partial line holds no line break. -/
+def LenientStream.CarryOk {α β : Type} (st : LenientStream α β) : Prop :=
+  st.carryRev.all (fun c => !isNl c) = true
 
 def LenientStream.init {α β : Type} (acc : α) (diags : β) : LenientStream α β :=
   { run := { acc, diags } }
 
 /-- Take one chunk: every whole line of `carry ++ chunk` is walked now, the
-rest waits. After `maxErrors` stopped the walk, chunks are ignored. -/
+rest waits. A chunk without a line break completes no line: its characters
+join the partial line. Else the lines are the partial line followed by the
+chunk up to its last line break, and the rest of the chunk is the new partial
+line. After `maxErrors` stopped the walk, chunks are ignored. -/
 def LenientStream.feed (reader : LineReader) {α β : Type}
+    (consume : α → Triple → Option Subject → α) (report : β → Diagnostic → β)
+    (opts : LenientOptions) (st : LenientStream α β) (chunk : List Char) :
+    LenientStream α β :=
+  if st.run.stopped then st
+  else
+    match splitCompleteLines chunk with
+    | ([], _) => { st with carryRev := chunk.reverseAux st.carryRev }
+    | (cut, rest) =>
+      let complete := st.carryRev.reverseAux cut
+      { run := foldLinesLenient reader consume report opts (complete.length + 1) st.pos complete
+                 st.run,
+        carryRev := rest.reverse,
+        pos := st.pos + complete.length }
+
+/-- What `LenientStream.feed` computes, as the specification states it: the
+whole lines of `carry ++ chunk`. It is not run. `LenientStream.feed_eq_feedSpec`
+proves `feed` equal to it. -/
+def LenientStream.feedSpec (reader : LineReader) {α β : Type}
     (consume : α → Triple → Option Subject → α) (report : β → Diagnostic → β)
     (opts : LenientOptions) (st : LenientStream α β) (chunk : List Char) :
     LenientStream α β :=
@@ -213,15 +255,73 @@ def LenientStream.feed (reader : LineReader) {α β : Type}
     let (complete, carry) := splitCompleteLines (st.carry ++ chunk)
     { run := foldLinesLenient reader consume report opts (complete.length + 1) st.pos complete
                st.run,
-      carry := carry,
+      carryRev := carry.reverse,
       pos := st.pos + complete.length }
+
+/-- A partial line with no line break in front of a chunk: the last line break of
+the buffer is the last one of the chunk, when the chunk has one. -/
+theorem splitCompleteLines_append_of_noNl :
+    ∀ (carry chunk : List Char), carry.all (fun c => !isNl c) = true →
+      splitCompleteLines (carry ++ chunk) =
+        if (splitCompleteLines chunk).1.isEmpty then ([], carry ++ chunk)
+        else (carry ++ (splitCompleteLines chunk).1, (splitCompleteLines chunk).2)
+  | [], chunk, _ => by
+      by_cases h : (splitCompleteLines chunk).1.isEmpty = true
+      · have h0 : (splitCompleteLines chunk).1 = [] := List.isEmpty_iff.mp h
+        have hr := splitCompleteLines_reconstruct chunk
+        rw [h0, List.nil_append] at hr
+        have hs : splitCompleteLines chunk = ([], chunk) := Prod.ext h0 hr
+        simp only [List.nil_append, h, if_true]
+        exact hs
+      · simp [h]
+  | c :: rest, chunk, hall => by
+      simp only [List.all_cons, Bool.and_eq_true] at hall
+      obtain ⟨hc, hrest⟩ := hall
+      have ih := splitCompleteLines_append_of_noNl rest chunk hrest
+      have hnc : isNl c = false := by simpa using hc
+      rw [List.cons_append]
+      by_cases h : (splitCompleteLines chunk).1.isEmpty = true
+      · simp only [h, if_true] at ih
+        simp [splitCompleteLines, ih, h, hnc]
+      · simp only [h, Bool.false_eq_true, if_false] at ih
+        have hne : (splitCompleteLines chunk).1 ≠ [] := fun h0 => h (by simp [h0])
+        simp [splitCompleteLines, ih, h, hne]
+
+/-- `LenientStream.feed` is `feedSpec` on a state whose partial line holds no line break. -/
+theorem LenientStream.feed_eq_feedSpec (reader : LineReader) {α β : Type}
+    (consume : α → Triple → Option Subject → α) (report : β → Diagnostic → β)
+    (opts : LenientOptions) (st : LenientStream α β) (chunk : List Char) (h : st.CarryOk) :
+    LenientStream.feed reader consume report opts st chunk =
+      LenientStream.feedSpec reader consume report opts st chunk := by
+  have hnl : st.carryRev.reverse.all (fun c => !isNl c) = true := by
+    simpa [LenientStream.CarryOk, List.all_reverse] using h
+  have hsplit := splitCompleteLines_append_of_noNl st.carryRev.reverse chunk hnl
+  have hrec := splitCompleteLines_reconstruct chunk
+  by_cases hs : st.run.stopped = true
+  · simp [LenientStream.feed, LenientStream.feedSpec, hs]
+  · simp only [LenientStream.feed, LenientStream.feedSpec, LenientStream.carry, hs, hsplit,
+      Bool.false_eq_true, if_false]
+    cases hc : splitCompleteLines chunk with
+    | mk cut rest =>
+      rw [hc] at hrec
+      simp only at hrec ⊢
+      cases cut with
+      | nil =>
+        simp only [List.isEmpty_nil, if_true, List.nil_append] at hrec ⊢
+        subst hrec
+        simp [foldLinesLenient, skipWs, List.span, List.span.loop, List.reverseAux_eq,
+          List.reverse_append]
+      | cons x xs =>
+        simp [List.reverseAux_eq]
 
 /-- End of input: walk the last partial line. -/
 def LenientStream.finish (reader : LineReader) {α β : Type}
     (consume : α → Triple → Option Subject → α) (report : β → Diagnostic → β)
     (opts : LenientOptions) (st : LenientStream α β) : LenientRun α β :=
   if st.run.stopped then st.run
-  else foldLinesLenient reader consume report opts (st.carry.length + 1) st.pos st.carry st.run
+  else
+    let carry := st.carry
+    foldLinesLenient reader consume report opts (carry.length + 1) st.pos carry st.run
 
 /-- Hand the diagnostics collected so far to the caller and clear them, so a
 streaming caller retains at most one chunk's diagnostics. -/
@@ -349,10 +449,31 @@ private def splitsAgree (reader : LineReader) (opts : LenientOptions) (doc : Str
 #guard splitsAgree (quadReader .rdf11) {} "<a> ."
 -- The reference walk itself, through the stream entry with one chunk.
 #guard streamRun (quadReader .rdf11) {} [docMixed.toList] == refRun (quadReader .rdf11) {} docMixed
+-- A line longer than a chunk, an error after it, and a last line with no line break: the
+-- diagnostics (offset, line, column) agree with the reference walk for chunks of 1 to 89
+-- characters.
+private def longDoc : String :=
+  ex 1 ++ " " ++ ex 2 ++ " \"" ++ String.ofList (List.replicate 400 'a') ++ "\" .\n" ++
+  ex 1 ++ " " ++ ex 2 ++ " .\n" ++ ex 1 ++ " " ++ ex 2 ++ " \"" ++ String.ofList (List.replicate 300 'b')
+#guard (List.range 12).all fun i =>
+  streamRun (quadReader .rdf11) {} ((List.range ((longDoc.toList.length + 8 * i) / (8 * i + 1))).map fun j =>
+      (longDoc.toList.drop (j * (8 * i + 1))).take (8 * i + 1)) == refRun (quadReader .rdf11) {} longDoc
+#guard (refRun (quadReader .rdf11) {} longDoc).2.reverse.map (·.line) == [2, 3]
+-- The partial line is kept last character first, and the offset counts the whole lines only.
+#guard (let st := LenientStream.feed (quadReader .rdf11) countC pushDiag {}
+          (LenientStream.init 0 []) "<a:1> <a:p> ".toList
+        let st := LenientStream.feed (quadReader .rdf11) countC pushDiag {} st " <a:2> .\n<a:3> <a".toList
+        st.run.acc == 1 && st.pos == 21 && st.carry == "<a:3> <a".toList &&
+          st.carryRev.all (fun c => !isNl c))
 -- takeDiags hands out the diagnostics in source order and clears them.
 #guard (let st := LenientStream.feed (quadReader .rdf11) countC pushDiag {}
           (LenientStream.init 0 []) docMixed.toList
         let (ds, st') := st.takeDiags
         ds.map (·.line) == [3, 5, 6, 7] && st'.run.diags.isEmpty)
+
+/-! ## Axiom audit -/
+
+#print axioms splitCompleteLines_append_of_noNl
+#print axioms LenientStream.feed_eq_feedSpec
 
 end L4Factoidal.Syntax

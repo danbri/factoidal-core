@@ -219,35 +219,6 @@ def LineFeed.feedSpec (reader : LineReader) {α : Type} (consume : α → Triple
   | .ok acc' => .ok { acc := acc', carryRev := carry'.reverse, pos := st.pos + complete.length }
   | .error e => .error e
 
-/-- A partial line with no line break in front of a chunk: the last line break of
-the buffer is the last one of the chunk, when the chunk has one. -/
-theorem splitCompleteLines_append_of_noNl :
-    ∀ (carry chunk : List Char), carry.all (fun c => !isNl c) = true →
-      splitCompleteLines (carry ++ chunk) =
-        if (splitCompleteLines chunk).1.isEmpty then ([], carry ++ chunk)
-        else (carry ++ (splitCompleteLines chunk).1, (splitCompleteLines chunk).2)
-  | [], chunk, _ => by
-      by_cases h : (splitCompleteLines chunk).1.isEmpty = true
-      · have h0 : (splitCompleteLines chunk).1 = [] := List.isEmpty_iff.mp h
-        have hr := splitCompleteLines_reconstruct chunk
-        rw [h0, List.nil_append] at hr
-        have hs : splitCompleteLines chunk = ([], chunk) := Prod.ext h0 hr
-        simp only [List.nil_append, h, if_true]
-        exact hs
-      · simp [h]
-  | c :: rest, chunk, hall => by
-      simp only [List.all_cons, Bool.and_eq_true] at hall
-      obtain ⟨hc, hrest⟩ := hall
-      have ih := splitCompleteLines_append_of_noNl rest chunk hrest
-      have hnc : isNl c = false := by simpa using hc
-      rw [List.cons_append]
-      by_cases h : (splitCompleteLines chunk).1.isEmpty = true
-      · simp only [h, if_true] at ih
-        simp [splitCompleteLines, ih, h, hnc]
-      · simp only [h, Bool.false_eq_true, if_false] at ih
-        have hne : (splitCompleteLines chunk).1 ≠ [] := fun h0 => h (by simp [h0])
-        simp [splitCompleteLines, ih, h, hne]
-
 /-- `LineFeed.feed` is `feedSpec` on a state whose partial line holds no line break. -/
 theorem LineFeed.feed_eq_feedSpec (reader : LineReader) {α : Type}
     (consume : α → Triple → Option Subject → α) (st : LineFeed α) (chunk : List Char)
@@ -702,7 +673,6 @@ private def ttlBad : String :=
 #print axioms foldLines_quadReader
 #print axioms parseLinesAcc_eq_foldLines
 #print axioms parseNTriples_eq_foldLines
-#print axioms splitCompleteLines_append_of_noNl
 #print axioms LineFeed.feed_eq_feedSpec
 #print axioms LineFeed.feed_carryOk
 #print axioms LineFeed.feed_quad11

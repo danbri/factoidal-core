@@ -1385,7 +1385,7 @@ and the parse stops.
 
 | Syntax | Reference lenient | Streaming lenient | Synchronisation |
 | --- | --- | --- | --- |
-| N-Triples, N-Quads | `NQuadsLenient.lean`: `foldLinesLenient` (one walk, statement reader as a parameter), `parseNTriplesLenient`, `parseNQuadsLenient`, `parseNQuadsFastLenient` | `LenientStream` (cuts after the last line feed with `splitCompleteLines`, as `feedChunkC`) | the end of the line on which the failing statement started (`skipToEol`, `skipEol`) |
+| N-Triples, N-Quads | `NQuadsLenient.lean`: `foldLinesLenient` (one walk, statement reader as a parameter), `parseNTriplesLenient`, `parseNQuadsLenient`, `parseNQuadsFastLenient` | `LenientStream` (cuts after the last line feed with `splitCompleteLines`, as `feedChunkC`; keeps the partial line last character first, section 3b.8) | the end of the line on which the failing statement started (`skipToEol`, `skipEol`) |
 | Turtle | `TurtleLenient.lean`: `parseStatementsLenient`, `parseTurtleLenient(WithPrefixes)` | `TurtleChunkLenientState` (the `TurtleChunkFold` walk; each scanner candidate is walked by `parseStatementsLenient`) | the first `TurtleStatementScan` cut at or after the error offset, found by a fresh scanner run from the start of the failing statement (`turtleResync`) |
 | TriG | `parseTriGStatementsLenient` (the `FastDataset` accumulator of the strict walk), `parseTriGLenient(WithPrefixes)` | none (as for strict TriG, section 3) | strict `readTriGStatement` first; a failing graph block is read again by `readTriGBlockRecover`, which resumes inside the body at a scanner cut or a normal-mode `}` at or after the error; any other failure resumes as Turtle |
 
@@ -1835,7 +1835,7 @@ symbol is under 1 percent. A profile with call graphs (`--call-graph dwarf`, 2 M
 chunk and cut it with `splitCompleteLines`. For a line of n bytes in chunks of 65,536 bytes there are k = n / 65,536
 chunks, and at chunk j the partial line holds (j - 1) chunks. `carry ++ chunk` copies it (`List.appendTR` reverses it
 twice), and `splitCompleteLines` (the `@[csimp]` replacement `splitCompleteLinesTR`) reverses the buffer and scans
-it. That is 3 walks of the partial line per chunk, 1.5 n squared over 65,536 list-cell steps in all: 1.46 billion
+it. That is about 3 walks of the partial line per chunk, 1.5 n squared over 65,536 list-cell steps in all: 1.46 billion
 for n = 8,000,000, which at 7.7 ns a step is the 11.28 s measured. The guards at chunk sizes 1 to 14 and the
 differential at chunk sizes 1 and 7 compare answers over short lines; no row had a line longer than a chunk.
 
@@ -1847,21 +1847,34 @@ is the new partial line. The partial line is read once, when its line is complet
 constant number of times.
 
 **Theorems** (axioms: `propext`, `Classical.choice`, `Quot.sound`; `splitCompleteLines_append_of_noNl` uses `propext`
-only), in `StrictFeed.lean`:
+only):
 
-- `splitCompleteLines_append_of_noNl`: a partial line with no line break in front of a chunk is cut at the last line
-  break of the chunk, when the chunk has one.
-- `LineFeed.feed_eq_feedSpec`: `feed` is equal to `feedSpec`, the old definition (`splitCompleteLines (carry ++
+- `splitCompleteLines_append_of_noNl` (`NQuadsLenient.lean`, which the two readers import): a partial line with no
+  line break in front of a chunk is cut at the last line break of the chunk, when the chunk has one.
+- In `StrictFeed.lean`, `LineFeed.feed_eq_feedSpec`: `feed` is equal to `feedSpec`, the old definition (`splitCompleteLines (carry ++
   chunk)`), on every state whose partial line holds no line break (`LineFeed.CarryOk`); `LineFeed.feed_carryOk`: `feed`
   keeps it so. Every state that `feed` can produce from `{ acc := init }` has the property.
 - `LineFeed.feed_quad11`, `foldlM_quad11` and `LineFeed.run_quad11_eq_batch` carry the hypothesis `CarryOk` through the
   chunks. The statement of `run_quad11_eq_batch` is the one it had: a chunked N-Quads (RDF 1.1) run that succeeds gives
   the fold of the whole document. `NQuadsFold.lean` and `SourceTheorems.lean` did not change.
+- In `NQuadsLenient.lean`, `LenientStream.feed_eq_feedSpec`: the lenient feed is the walk of the whole lines of `carry ++
+  chunk` (`feedSpec`, the old definition) on a state whose partial line holds no line break (`LenientStream.CarryOk`).
+
+**The lenient reader.** `l4factoidal parse FILE --lenient` (`LenientStream`, `NQuadsLenient.lean`) had the same walk of
+`carry ++ chunk`, and the same cost: the harness rows `ntriples-lenient-long-line` and `nquads-lenient-long-line`
+(the files of the strict rows) read 0.524 s, 2.40 s and 11.6 s of user CPU at 2, 4 and 8 MB for N-Triples (ratios 4.6
+and 4.8) and 0.467 s, 2.69 s and 11.4 s for N-Quads (5.8 and 4.2), load average 7.8; they were expected failures that
+name the issue, in their own commit before the repair. `LenientStream.carryRev` holds the partial line last character
+first, `feed` cuts the new chunk alone, as `LineFeed.feed` does. After the repair: 0.139 s, 0.292 s and 0.566 s
+(ratios 2.1 and 1.9) and 0.148 s, 0.271 s and 0.562 s (1.8 and 2.1), load average 8.5; one run of `--lenient` on one
+line of 2, 4, 8 and 16 MB reads 0.15 s, 0.32 s, 0.54 s and 1.11 s (before: 0.44 s, 2.47 s, 10.94 s at 2, 4 and 8 MB).
+The Turtle and TriG readers were linear in the length of one statement when measured (one Turtle statement of 8 MB:
+0.30 s, 0.60 s, 1.21 s at 2, 4 and 8 MB; one TriG graph block: 0.13 s, 0.25 s, 0.53 s).
 
 **Same quads as before.**
 
-The old build (the commit before the repair) and the new build ran on the same inputs; the standard output, the
-standard error and the exit status were compared.
+The old build (the build before the repairs of this section) and the new build ran on the same inputs; the standard
+output, the standard error and the exit status were compared.
 
 | Input | Runs | Agree | Differ |
 | --- | ---: | ---: | ---: |
@@ -1869,6 +1882,9 @@ standard error and the exit status were compared.
 | the same script, the seven new generated files with a line longer than a chunk (3b.8) | 42 | 42 | 0 |
 | `parse FILE` (the count) and `parse FILE --out nquads` over the 5,997 N-Triples, N-Quads, Turtle and TriG files under `third_party/testing` and `tests`, each in the RDF 1.1 and the RDF 1.2 mode | 23,988 | 23,988 | 0 |
 | the same files, the new build at chunk size 7 (`--out nquads`) and at chunk size 1 (the count) | 23,988 | 23,312 | 0 (676 more: the old build exits non-zero, the exit status and the standard error are the same, and the standard output of the new build holds the lines written before the error, which the script does not compare) |
+| `parse FILE --lenient` and `--lenient --max-errors 3`, with and without `--out nquads`, over ten generated files (150,000 N-Quads lines with errors spread through them, 100,000 N-Triples lines, the seven files with a line longer than a chunk): stdout, the diagnostics on stderr (message, offset, line, column, class), exit status | 40 | 40 | 0 |
+| `tools/ntriples-reader-differential.py`, seeds 21, 22 and 23 (N-Triples and N-Quads of RDF 1.2, 40 percent damaged, seven ways to read and write a document): 2,500 documents each at 65,536-byte chunks, and 800 each with `L4_STRICT_CHUNK_BYTES=1` and with `=7`; the build of the strict repair | 86,100 | 86,100 | 0 |
+| the same script, seed 31, 2,500 documents, the final build (the lenient reader too) | 17,500 | 17,500 | 0 |
 
 The seven new files: a literal of 150,000 characters between short lines; one of 100,000 two-byte characters (a
 chunk boundary then falls between the two bytes of a character); an error on the line after a long line (the
@@ -1877,13 +1893,36 @@ same with CR LF; and N-Quads with a graph name and a blank-node graph name.
 
 *Checks (2026-10-15).*
 
-- `tests/stack/lean_scaling.py --only ntriples-long-line,nquads-long-line`: 2 pass, 0 fail, 0 expected-fail (out of 2);
-  N-Triples 0.140 s, 0.269 s and 0.504 s user CPU at 2, 4 and 8 MB (ratios 1.9 and 1.9 per doubling; 3.6 for 4x input),
-  N-Quads 0.122 s, 0.259 s and 0.523 s (2.1 and 2.0; 4.3). Before the repair both rows were expected failures
-  (ratios 6.3 and 4.3, and 5.6 and 5.1).
+- `tests/stack/lean_scaling.py --only` the four long-line rows, `parse-nt-memory`, `count-nt-memory`,
+  `parse-ttl-memory`, `sbm11-pack-nt-vs-nq`, `query-vs-parse`, `ntriples-nest-time` and `turtle-read-prefixes`: 11 pass,
+  0 fail, 0 expected-fail (out of 11). The long-line rows, user CPU at 2, 4 and 8 MB: N-Triples 0.135 s, 0.247 s,
+  0.519 s (ratios 1.8 and 2.1 per doubling; 3.8 for 4x input), N-Quads 0.134 s, 0.256 s, 0.548 s (1.9 and 2.1; 4.1),
+  lenient N-Triples 0.129 s, 0.263 s, 0.518 s (2.0 and 2.0; 4.0), lenient N-Quads 0.141 s, 0.330 s, 0.578 s (2.3 and
+  1.8; 4.1). Before the repairs the four rows were expected failures (ratios 6.3 and 4.3, 5.6 and 5.1, 4.6 and 4.8,
+  5.8 and 4.2). The memory rows read 0.0, 6.3 and 0.0 bytes of peak resident set per input byte (bounds 1, 12, 1), as
+  before. `tests/stack/lenient_scaling.sh`: 16 pass, 0 fail (out of 16).
 - Build-time `#guard`s in `StrictFeed.lean`: N-Quads (RDF 1.1) at chunk sizes 1 to 16 against the fold of the whole
   document, one line of 600 characters in pieces of 1 to 89 characters, and the state after a chunk with no line break
-  and after a chunk with one (`carryRev`, `pos`, `CarryOk`).
+  and after a chunk with one (`carryRev`, `pos`, `CarryOk`). In `NQuadsLenient.lean`: the existing guards at every
+  two-way split and at one-character chunks, and new ones for a literal of 400 characters, a line with an error, and
+  an unterminated literal of 300 characters with no line break after it, in pieces of 1 to 89 characters (the
+  diagnostics with offset, line and column are compared), and for the state after two chunks.
+- On the tree merged with origin/main at 91926d7a (the work of https://github.com/danbri/factoidal/issues/871, which
+  changes `XML/Parser.lean`, in the WebAssembly compile set): `lake build` (default targets) 1,726 jobs, exit 0; the WebAssembly module rebuilt;
+  `python3 tools/lean-csimp-reach.py --gate --cross-check`: exit 0 (163 `@[csimp]` theorems, all found in the table of
+  Lean; 56 findings: 0 new, 28 allowed, 28 suppressed; 558 calls of a replacement in the emitted C);
+  `tools/lean-tail-recursion-audit.py --gate`: exit 0 (allow list of 1,371 lines);
+  `tools/lean-unbuilt-modules.py --gate`: exit 0, 795 modules, 0 not reached; `tools/lean-hygiene-audit.py
+  --build-log`: clean (1,566 `#print axioms` outputs); `tools/test_lean_tail_recursion_audit.py`: 12 pass, 0 fail
+  (out of 12); `tools/test_lean_csimp_reach.py`: 33 pass, 0 fail (out of 33).
+- `Wasm/cli-smoke.sh`: 130 pass, 0 fail, 0 xfail (out of 130). `Wasm/native-smoke.sh`: 369 pass, 0 fail, 0 xfail
+  (out of 369). `npm test` in `npm/factoidal`: 443 pass, 0 fail, 1 skipped (out of 444). `node --test
+  tests/hub/*_test.mjs`: 447 pass, 0 fail (out of 447).
+- `tests/stack/run.sh --canary` with the WebAssembly module built from this tree: 165 pass, 0 fail (out of 165); the
+  new row `xml-markup-chain-top` passes in the four routes (native 2,635 ms; native under 512 KB; wasm canary 2,906 ms;
+  wasm 2,824 ms). `tests/sbm11/run.sh`: 2,823 pass, 0 fail, 30 expected-fail (out of 2,853). `tests/sbm11/census.sh`,
+  `tests/sbm11/threads.sh` (all answers identical) and `tests/delta-log/run.sh` (46 pass, 0 fail): exit 0.
+  `tests/known-defects/run.sh`: 24 XFAIL, 0 XPASS, 0 ERROR (out of 24).
 
 ## 3c. RDF/XML: where the time and the memory went, and the repair (2026-10-13)
 
