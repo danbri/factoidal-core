@@ -70,6 +70,7 @@ import L4Factoidal.Syntax.RdfXml
 import L4Factoidal.Syntax.TurtleSerialize
 import L4Factoidal.Syntax.NQuadsFast
 import L4Factoidal.RDF.Source
+import Std.Data.HashSet
 import L4Factoidal.RDF.DatasetMerge
 import Wasm.Ops.FromDataset
 
@@ -208,7 +209,13 @@ def failureAt (text : String) (e : ParseError) : ParseFailure :=
 /-- Keep each label once with its LATEST binding, in the order those latest
 bindings were declared. The parsers hold prefixes most recent first and a
 re-binding does not remove the older one. Port of
-`declaration_order_prefixes`. -/
+`declaration_order_prefixes`.
+
+This is the SPECIFICATION. It scans the list of the labels seen for each prefix, so a
+document of `P` prefixes takes `P * P / 2` string comparisons: 6.3 s for 32,000
+prefixes (https://github.com/danbri/factoidal/issues/864). The compiler runs
+`declarationOrderPrefixesFast` in its place (`declarationOrderPrefixes_eq_fast`, a
+`csimp` theorem), so `parseDocumentOutcomeBy` and `datasetOpen` take linear time. -/
 def declarationOrderPrefixes (mostRecentFirst : List (String × String)) :
     List (String × String) :=
   go [] [] mostRecentFirst
@@ -219,6 +226,56 @@ where
     | (label, iri) :: rest =>
         if seen.contains label then go seen acc rest
         else go (label :: seen) ((label, iri) :: acc) rest
+
+/-- The loop of `declarationOrderPrefixesFast`: `go` with the labels seen held in a hash
+set. -/
+def declarationOrderPrefixesLoop (seen : Std.HashSet String) (acc : List (String × String)) :
+    List (String × String) → List (String × String)
+  | [] => acc
+  | (label, iri) :: rest =>
+      if seen.contains label then declarationOrderPrefixesLoop seen acc rest
+      else declarationOrderPrefixesLoop (seen.insert label) ((label, iri) :: acc) rest
+
+/-- The loop, for every state it can be in: the hash set holds the strings of the
+list. -/
+theorem declarationOrderPrefixesLoop_eq :
+    ∀ (l : List (String × String)) (seenS : Std.HashSet String) (seenL : List String)
+      (acc : List (String × String)), (∀ x, seenS.contains x = seenL.contains x) →
+      declarationOrderPrefixesLoop seenS acc l = declarationOrderPrefixes.go seenL acc l
+  | [], seenS, seenL, acc, _ => by simp [declarationOrderPrefixesLoop, declarationOrderPrefixes.go]
+  | (label, iri) :: rest, seenS, seenL, acc, hseen => by
+      unfold declarationOrderPrefixesLoop declarationOrderPrefixes.go
+      by_cases h : seenL.contains label = true
+      · have h' : seenS.contains label = true := by rw [hseen]; exact h
+        rw [if_pos h', if_pos h]
+        exact declarationOrderPrefixesLoop_eq rest seenS seenL acc hseen
+      · have h' : ¬ seenS.contains label = true := by rw [hseen]; exact h
+        rw [if_neg h', if_neg h]
+        refine declarationOrderPrefixesLoop_eq rest _ _ _ ?_
+        intro x
+        have hc : (label == x) = (x == label) := by
+          rw [Bool.eq_iff_iff, beq_iff_eq, beq_iff_eq]
+          exact ⟨Eq.symm, Eq.symm⟩
+        rw [Std.HashSet.contains_insert, hseen x, List.contains_cons, hc]
+
+/-- `declarationOrderPrefixes` as a loop with a hash set: linear time. -/
+def declarationOrderPrefixesFast (mostRecentFirst : List (String × String)) :
+    List (String × String) :=
+  declarationOrderPrefixesLoop ∅ [] mostRecentFirst
+
+theorem declarationOrderPrefixesFast_eq (mostRecentFirst : List (String × String)) :
+    declarationOrderPrefixesFast mostRecentFirst = declarationOrderPrefixes mostRecentFirst := by
+  unfold declarationOrderPrefixesFast declarationOrderPrefixes
+  exact declarationOrderPrefixesLoop_eq mostRecentFirst ∅ [] [] (fun x => by simp)
+
+/-- Any call of the specification runs the loop. `parseDocumentOutcomeBy` is compiled
+after this line. -/
+@[csimp] theorem declarationOrderPrefixes_eq_fast :
+    @declarationOrderPrefixes = @declarationOrderPrefixesFast := by
+  funext l; exact (declarationOrderPrefixesFast_eq l).symm
+
+#print axioms declarationOrderPrefixesLoop_eq
+#print axioms declarationOrderPrefixes_eq_fast
 
 /-- `parseTextToDatasetBy`, with the position of a failure and the prefixes of
 the document. The two share one dispatch table of formats; only the failure

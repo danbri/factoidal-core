@@ -829,6 +829,47 @@ After the repair `isIri` was on the stack of 0.85 percent of the packer's
 samples. `l4factoidal parse` of an 83 MB N-Triples file did not change within
 the spread (5.3 s of user time before and after); that path was not profiled.
 
+## A function that returns a function runs its `let` again for each call (paid for 2026-10-15)
+
+```lean
+def f (n : Nat) : Nat → Nat :=
+  let y := expensive n        -- reads as: once, when `f n` is applied
+  fun x => x + y
+```
+
+The compiler gives a definition the arity of all its arrows. `f` takes `n` and `x`, `f n`
+is a partial application, and each call of it runs the body, the `let` included. The
+emitted C is `l_f(lean_object* n, lean_object* x)` and its body calls `l_expensive(n)`.
+The first version of the prefix index of the Turtle writer
+(https://github.com/danbri/factoidal/issues/864) had this shape:
+`def tsAbbreviator (table) : String → String := ... let ix := PrefixIndex.ofTable table;
+fun iri => ...`. It built the index for each IRI of the document: 16 s for a table of
+1,000 rows and 1,000 triples, 63 s for 2,000 (quadratic), where the scan that the index
+replaces took 40 ms. Three build-time `#guard`s of the module took 125 s for the same
+reason.
+
+Rule: state that a function shares is DATA, and the function that uses it has its own
+name.
+
+```lean
+inductive Abbreviator where
+  | scan (table : PrefixTable)
+  | indexed (ix : PrefixIndex)
+
+def Abbreviator.ofTable (table : PrefixTable) : Abbreviator := ...   -- builds the index once
+def Abbreviator.run : Abbreviator → String → String
+```
+
+A caller writes `let ab := Abbreviator.ofTable table` and passes `ab.run`. `ab` is a
+value, so `ab.run` is a partial application that has the index already. A `structure` with
+the state in a field does the same. A closure returned from a definition is not
+memoisation.
+
+How it was found: a timed `#eval` of the pieces in a scratch file (`lake env lean
+scratch.lean`, `IO.monoMsNow` around the call), at 1,000 and 2,000 rows. Four times the
+time for twice the rows, in a function with one pass over its input, means work done for
+each call.
+
 ## Verification and measurement
 
 After a semantic hot-path change, run the closest Lean guards and targeted

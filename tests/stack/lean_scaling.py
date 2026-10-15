@@ -335,26 +335,31 @@ repaired (docs/designissues/2026-10-10-lean-vs-fstar-performance.md):
   turtle-prefixes  `l4wasm-cli call serializeTurtleWith` with a table of n prefixes, every one
                    used (one triple for each: the subject lies under namespace i, the
                    object under namespace i + 1), n = 8,000, 16,000 and 32,000, measured at
-                   x, 2x and 4x like owl-consistent-cl. Issue
+                   x, 2x and 4x like owl-consistent-cl, on the user CPU time (the run holds
+                   up to 550 MB; see SERIES_ROWS). Issue
                    https://github.com/danbri/factoidal/issues/864: `tsUserUsed` kept a list
                    of the namespaces it had seen and scanned the IRIs of the graph for each
-                   prefix, and `tsFindPrefix` scanned the table for each IRI. CPU time
-                   2.38 s, 12.3 s and 56.0 s before the repair (ratios 5.2 and 4.5 for the
-                   two doublings); expected failure until the repair of 864.
+                   prefix, `tsFindPrefix` scanned the table for each IRI, and a filter of
+                   `turtleOfGraphOpts` compared each namespace of the graph with each row
+                   covered. Before the repair (expected failure): 2.36 s, 12.1 s and 56.7 s
+                   (ratios 5.1 and 4.7 for the two doublings); after: 0.24 s, 0.49 s and
+                   1.0 s (2.1 and 2.0).
   turtle-prefixes-open
                    `l4wasm-cli callseq` of one `datasetOpen` of a Turtle document with n
                    `@prefix` lines (and n triples with full IRIs), n = 16,000, 32,000 and
-                   64,000. Issue 864: `declarationOrderPrefixes` kept a list of the labels it
-                   had seen (the parser alone, `l4factoidal parse`, takes 0.36 s and 0.80 s at
-                   16,000 and 32,000). CPU time 1.29 s, 7.35 s and 33.7 s before the repair
-                   (ratios 5.7 and 4.6); expected failure until the repair of 864.
+                   64,000, on the user CPU time. Issue 864: `declarationOrderPrefixes` kept a
+                   list of the labels it had seen (the parser alone, `l4factoidal parse`,
+                   takes 0.36 s and 0.80 s at 16,000 and 32,000). Before the repair
+                   (expected failure): 1.24 s, 7.15 s and 33.0 s (ratios 5.8 and 4.6);
+                   after: 0.43 s, 0.87 s and 1.76 s (2.0 and 2.0).
   turtle-nest-time `l4source-convert --nest-check n`: one triple whose object is a triple term
                    nested n levels deep, written as Turtle by the batch writer and by the
                    stream writer, n = 25,000, 50,000 and 100,000. Issue 864: `tsTermToTurtle`
                    built the text of each level from the text of the level below it, so it
-                   copied the text built so far at each level. CPU time 0.50 s, 1.76 s and
-                   10.2 s before the repair (ratios 3.5 and 5.8; about 121 s at 300,000);
-                   expected failure until the repair of 864.
+                   copied the text built so far at each level. Before the repair (expected
+                   failure): 0.50 s, 1.76 s and 10.2 s CPU (ratios 3.5 and 5.8; about 121 s
+                   at 300,000); after: 0.061 s, 0.116 s and 0.241 s (1.9 and 2.1; 0.8 s at
+                   300,000).
   startup          process start: `l4factoidal version` must take at most
                    STARTUP_BUDGET (20 ms) of CPU time, minimum of 15 runs
                    (305 million instructions and 43 ms before the fixtures were
@@ -439,9 +444,6 @@ XFAIL: dict[str, str] = {
     "sbm11-pack-trig-workers": "https://github.com/danbri/factoidal/issues/842",
     "sbm11-export-rdfxml-memory": "https://github.com/danbri/factoidal/issues/846",
     "sbm11-export-jsonld-memory": "https://github.com/danbri/factoidal/issues/847",
-    "turtle-prefixes": "https://github.com/danbri/factoidal/issues/864",
-    "turtle-prefixes-open": "https://github.com/danbri/factoidal/issues/864",
-    "turtle-nest-time": "https://github.com/danbri/factoidal/issues/864",
 }
 # A run longer than this is not repeated: the minimum of several runs only
 # removes timer and load noise, which is small against a run this long.
@@ -1671,7 +1673,11 @@ def turtle_prefixes_open_seq(n: int) -> Path:
 
 
 # row id -> (x, make input, command, expected first line (a string, or a
-# predicate on the line), a file the row needs or None)
+# predicate on the line), a file the row needs or None[, the time to bound: "cpu"
+# (user plus system, the default) or "user"]). A row that holds 100 MB to 500 MB
+# bounds the user time: the system time of such a run, the page faults of the
+# virtual machine, took from 0.03 s to 1.4 s for the same command (2026-10-15,
+# turtle-prefixes-open at 64,000 prefixes), while the user time varied by 6 percent.
 SERIES_ROWS = {
     "owl-consistent-cl": (
         10000, cl_prefix,
@@ -1696,12 +1702,12 @@ SERIES_ROWS = {
         lambda p: [str(WASMCLI_BIN), "call", "serializeTurtleWith", str(p)],
         lambda line: line.startswith('{"ok":true,"turtle":"@prefix n0: <' + EX
                                      + 'n0/> .\\n@prefix n1: <' + EX + 'n1/> .\\n'),
-        WASMCLI_BIN),
+        WASMCLI_BIN, "user"),
     "turtle-prefixes-open": (
         16000, turtle_prefixes_open_seq,
         lambda p: [str(WASMCLI_BIN), "callseq", str(p)],
         lambda line: line.startswith('{"ok":true,"handle":"h1","count":'),
-        WASMCLI_BIN),
+        WASMCLI_BIN, "user"),
     # A triple term nested n deep, written as Turtle (issue 864). The harness compares
     # both writers with the text a loop builds and prints failures=0 when they agree.
     "turtle-nest-time": (
@@ -1720,7 +1726,9 @@ SERIES_ROWS = {
 
 
 def series_row(rid, runs):
-    x, make, cmd, first, needs = SERIES_ROWS[rid]
+    x, make, cmd, first, needs = SERIES_ROWS[rid][:5]
+    metric = SERIES_ROWS[rid][5] if len(SERIES_ROWS[rid]) > 5 else "cpu"
+    label = "CPU" if metric == "cpu" else "user CPU"
     if needs is not None and not needs.exists():
         return False, f"{needs} missing"
     pts = []
@@ -1738,7 +1746,7 @@ def series_row(rid, runs):
                 t["first_line"], bytes) else str(t["first_line"])
             if first is not None and ((not first(got.strip())) if callable(first) else (got.strip() != first)):
                 return False, f"n={n}: printed {got.strip()[:120]!r}, not the expected answer"
-            best = t["cpu"] if best is None else min(best, t["cpu"])
+            best = t[metric] if best is None else min(best, t[metric])
             if t["wall"] > REPEAT_LIMIT:
                 break
         pts.append((n, best))
@@ -1746,7 +1754,7 @@ def series_row(rid, runs):
     r2, r4 = t2 / max(t1, 1e-9), t4 / max(t2, 1e-9)
     ok = (t2 <= DOUBLING * max(t1, FLOOR) and t4 <= DOUBLING * max(t2, FLOOR)
           and t4 <= BOUND * max(t1, FLOOR))
-    return ok, (f"n={n1} {t1:.3f} s -> n={n2} {t2:.3f} s -> n={n4} {t4:.3f} s CPU "
+    return ok, (f"n={n1} {t1:.3f} s -> n={n2} {t2:.3f} s -> n={n4} {t4:.3f} s {label} "
                 f"(ratios {r2:.1f} and {r4:.1f} per doubling, bound {DOUBLING}; "
                 f"{t4 / max(t1, 1e-9):.1f} for 4x input, bound {BOUND})")
 

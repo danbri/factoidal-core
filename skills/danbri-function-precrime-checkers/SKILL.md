@@ -1208,3 +1208,61 @@ Rules from this repair:
   turtle` was compared on the Turtle, TriG, N-Triples and `tests/sbm11/syntax` files
   packed by the old packer (1,738 runs, 0 differences) and on the large files (26
   runs, 0 differences).
+
+## A `(c)` line with no bound, a prefix table of any size, and five scans behind one frame count (https://github.com/danbri/factoidal/issues/864, 2026-10-15)
+
+The repair of issue 863 left two recursions of the Turtle writer on the allow list.
+`tsTermToTurtle` was a line of the first baseline, with no reason. `tsUserUsed` read `(c)
+prefixes of the serializer's prefix table`. `(c)` means a constant or logarithmic bound,
+and the table is the caller's: it comes from the options of `serializeTurtleWith` and
+`datasetSerializeWith`, and from the `@prefix` lines of the document for
+`datasetSerialize`. Under `LEAN_STACK_SIZE_KB=512`, 8,127 prefixes ran and 8,128
+overflowed (gdb: `tsUserUsed`). The line was written in the sweep of issue 752
+(2026-10-13) and checked nothing.
+
+Rules from this repair:
+
+- **A `(c)` line names the number and the code that enforces it.** The model is the
+  line of `assignLabelsAvoiding`: `idx` starts at 1, the function returns at 9, and its
+  one caller passes fuel 10. A table, a list or a document that a caller sizes is not
+  `(c)`. It is `(b)` when the depth is the nesting of a document, and `(a) PENDING` with an
+  issue when it is a length.
+- **A stack row of a size-driven path needs a time row at n, 2n and 4n beside it.** The
+  stack row was the visible symptom. The same function took 2.36 s, 12.1 s and 56.7 s for
+  8,000, 16,000 and 32,000 prefixes. Repairing the stack alone left a row that did not
+  finish: `tsFindPrefix` (the table scanned for each IRI), the filter of
+  `turtleOfGraphOpts` (each namespace compared with each covered row), and
+  `declarationOrderPrefixes` (a list of the labels seen, on `datasetOpen`) were three more
+  quadratic scans, found one after another by running the 100,000-prefix row after each
+  repair. Run the row at the size of the issue after each repair, not only after the
+  last.
+- **One row for each operation that takes the size.** The table reaches the writer by
+  three operations, with three different code paths around it. The rows are
+  `turtle-write-prefixes` (`serializeTurtleWith`), `turtle-write-prefixes-handle`
+  (`datasetOpen`, then `datasetSerialize`) and `turtle-write-prefixes-with`
+  (`datasetOpen`, then `datasetSerializeWith`). The two handle rows run as a sequence in
+  one process (`l4wasm-cli callseq`; a `SEQ` table in `tests/stack/wasm_case.mjs`), and
+  each row counts the `@prefix` lines of its output, so that a row that writes nothing
+  does not pass.
+- **An expected failure must finish under the cap in the old code.** The first design
+  ran the 100,000-prefix rows in the native route at the default stack. The old code takes
+  more than 380 s there (quadratic), the cap is 120 s, and the row would have failed by a
+  timeout, not as an expected failure of the issue. The rows ran in the small-stack
+  routes only while the code was old, and the scaling rows start at 8,000 prefixes, where
+  the old code needs 56 s at the largest size. After the repair the restriction was
+  removed.
+- **Build the deep input in memory when the parser is the next recursion.** A triple term
+  nested 300,000 deep cannot be read from text: `readObject12` takes a frame for each
+  level. `l4source-convert --nest-check N` builds the term with a loop, writes it with the
+  batch writer and the stream writer, and compares both with the text that a loop builds.
+  The wasm module has no operation that builds a term, so this row has no wasm route.
+- **Find which function overflowed by gdb, not by reading.** `gdb -batch -ex run -ex 'bt 6'
+  --args bin ...` on the unrepaired binary named `tsUserUsed` in six identical frames.
+
+| 512 KB, native | before | after |
+|---|---|---|
+| `serializeTurtleWith`, 100,000 prefixes, 100,000 triples | overflow (8,128 prefixes) | 4.7 s to 6.5 s, 546 MB |
+| `datasetOpen`, 100,000 `@prefix` lines, then `datasetSerialize` | overflow | 7.3 s to 7.5 s, 735 MB |
+| `datasetOpen` of the triples, then `datasetSerializeWith`, 100,000 prefixes | overflow | 4.3 s to 5.1 s, 525 MB |
+| triple term nested 300,000 deep, both writers | overflow; about 121 s at the default stack | 0.8 s; runs at 64 KB |
+| user CPU time of `serializeTurtleWith`, 8,000, 16,000, 32,000 prefixes | 2.36 s, 12.1 s, 56.7 s | 0.24 s, 0.49 s, 1.0 s |

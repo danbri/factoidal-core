@@ -316,12 +316,13 @@ xfail_issue() { # xfail_issue <case>; prints the issue URL or nothing
     regex-replace-groups)
       case "${2:-}" in canary|wcanary) echo "https://github.com/danbri/factoidal/issues/816" ;; esac ;;
     rdfc-bnode-chain) echo "https://github.com/danbri/factoidal/issues/817" ;;
-    # The Turtle writer with 100,000 prefixes, every one used (the three ops of the
-    # issue), and with a triple term nested 300,000 deep: TurtleSerialize.tsUserUsed
-    # takes a frame for each used prefix (8,127 prefixes ran under 512 KB and 8,128
-    # overflowed) and tsTermToTurtle a frame for each nesting level.
-    turtle-write-prefixes|turtle-write-prefixes-handle|turtle-write-prefixes-with|turtle-triple-term)
-      echo "https://github.com/danbri/factoidal/issues/864" ;;
+    # (`turtle-write-prefixes`, `turtle-write-prefixes-handle`,
+    # `turtle-write-prefixes-with` and `turtle-triple-term` were listed for
+    # https://github.com/danbri/factoidal/issues/864 until 2026-10-15, when
+    # TurtleSerialize.tsUserUsed and tsTermToTurtle became loops (8,127 prefixes
+    # ran under 512 KB and 8,128 overflowed; a triple term nested 300,000 deep
+    # overflowed). 100,000 prefixes and 300,000 levels run in every route that
+    # has a row.)
     # (`turtle-write-one-node`, `turtle-write-subjects` and the two
     # `turtle-write-cli-*` rows were listed for
     # https://github.com/danbri/factoidal/issues/863 until 2026-10-15, when
@@ -417,11 +418,8 @@ wasm_missing() { # wasm_missing <route>
   record "$1" "wasm module" 1 "NOT SCORED: $WASM_DIR lacks l4factoidal.{js,mjs,wasm}; install it with tools/fetch-builds.sh --set web or build it with formal/lean4/Wasm/build-wasm.sh"
 }
 
-# A fourth field `small` marks a row for the routes with a small stack (the native
-# canary, the wasm canary, the wasm route): the unrepaired code takes quadratic time
-# on it, more than TIMEOUT on the 1 GB native stack, which would make the native
-# route fail for a reason other than the stack (issue 864; lean_scaling.py measures
-# the time).
+# `callseq` as the op of a row: the file holds op/args pairs, run in order in one
+# process (a dataset handle lives in the process).
 CASES=(
   "xml-entities        parseToDatasetJson   args-xml.json"
   "xml-entities-attr   parseToDatasetJson   args-xml-attr.json"
@@ -446,9 +444,9 @@ CASES=(
   "rdfc-bnode-chain    canonicalizeToNQuads args-rdfc-bnode-chain.json"
   "delta-log-decode    deltaLogDecode       args-delta-log-decode.json"
   "delta-log-merge     deltaLogMerge        args-delta-log-merge.json"
-  "turtle-write-prefixes serializeTurtleWith args-turtle-write-prefixes.json small"
-  "turtle-write-prefixes-handle callseq seq-turtle-write-prefixes-handle.json small"
-  "turtle-write-prefixes-with callseq seq-turtle-write-prefixes-with.json small"
+  "turtle-write-prefixes serializeTurtleWith args-turtle-write-prefixes.json"
+  "turtle-write-prefixes-handle callseq seq-turtle-write-prefixes-handle.json"
+  "turtle-write-prefixes-with callseq seq-turtle-write-prefixes-with.json"
 )
 
 if [ "$ROUTE" = native ] || [ "$ROUTE" = both ]; then
@@ -461,7 +459,6 @@ if [ "$ROUTE" = native ] || [ "$ROUTE" = both ]; then
   for row in "${CASES[@]}"; do
     # shellcheck disable=SC2086
     set -- $row
-    [ "${4:-}" = small ] && continue
     native_case "$1" "$2" "$3"
   done
 fi
@@ -594,9 +591,9 @@ fi
 # (`Sink.streamQuads`); both texts must equal the text that a loop builds
 # (5,400,063 bytes). `tsTermToTurtle` took a frame for each nesting level and
 # copied the text built so far at each level: about 120 s CPU for both writers
-# at the default stack. The row runs under the canary budget only: at the default
-# stack the unrepaired code takes more than TIMEOUT, and the module has no op
-# that builds such a term, so the wasm routes have no row.
+# at the default stack, and a stack overflow under the canary budget. The row
+# runs in the native route and the native canary; the module has no op that
+# builds such a term, so the wasm routes have no row.
 # https://github.com/danbri/factoidal/issues/864
 NEST_BIN="$LEAN_DIR/.lake/build/bin/l4source-convert"
 turtle_nest_case() { # turtle_nest_case <route> <prefix...>
@@ -615,6 +612,11 @@ turtle_nest_case() { # turtle_nest_case <route> <prefix...>
     score_case "$route" turtle-triple-term ran "$(printf '%s' "$log" | grep -o 'depth=[0-9]* turtle-bytes=[0-9]*' | head -1); batch and stream writers equal the loop"
   fi
 }
+if [ "$ROUTE" = native ] || [ "$ROUTE" = both ]; then
+  echo
+  echo "=== Turtle writer, triple term nested 300,000 deep, native default stack"
+  turtle_nest_case native env
+fi
 if [ "$CANARY" = 1 ]; then
   echo
   echo "=== Turtle writer, triple term nested 300,000 deep, native under ${CANARY_VAR}=${CANARY_KB}"

@@ -354,6 +354,72 @@ applies it. From https://github.com/danbri/factoidal/issues/863
   specification's result for a non-empty list is not empty
   (`countRuns_ne_nil`) closes it; write that lemma first.
 
+## 9b. A hash index equal to `List.find?`, and a nesting loop with a counter
+
+From https://github.com/danbri/factoidal/issues/864 (`TurtleSerialize.PrefixIndex`,
+`tsTermToTurtle`, 2026-10-15). The specification of a lookup is "the FIRST row of the
+table whose namespace is a proper prefix of the IRI" (`tsFindPrefix = table.find? ...`).
+A hash lookup cannot ask that directly; it asks for the rows whose namespace is
+`take l iri` for each length `l` that a namespace of the table has. The theorem
+`PrefixIndex.find_eq : (ofTable T).find iri = tsFindPrefix T iri` has five parts, each
+short:
+
+1. **The index is built by a tail loop and its entries are stated by a recursive
+   function.** `prefixRowsLoop l k m` inserts row `l[i]` with rank `k + i` by
+   `insertIfNew`. `firstRow s l k` is the first row of namespace `s`, by structural
+   recursion. `prefixRowsLoop_get : (prefixRowsLoop l k m)[s]? = match m[s]? with | some v
+   => some v | none => firstRow s l k`, by induction on `l` with `m` and `k` free, using
+   `Std.HashMap.getElem?_insertIfNew`.
+2. **A first row is a position.** `firstRow_some` gives `l[i]? = some e`, `e.1 = s`, the
+   rank `k + i` and `∀ j < i, l[j].1 ≠ s`. State positions as `l[i]?`, not as list
+   splits (`as ++ e :: bs`): the comparison "the first row has rank at most `j`" is then
+   `Nat.le_of_not_lt` and one use of the last clause.
+3. **The candidates are rows that qualify, and they cover every row that qualifies.**
+   `mem_candidates` (soundness: the candidate is `T[c.1]`, its namespace is a proper
+   prefix of the IRI, no earlier row has the namespace) and `candidate_of_row`
+   (completeness: a row `T[j]` that qualifies has a candidate of its namespace at rank at
+   most `j`). The string facts are `String.toList_copy_take`, `String.startsWith_string_iff`,
+   `List.prefix_iff_eq_take` and `String.toList_inj`; `startsWithStrict_iff` states the
+   writer's predicate once as `pfx.length < s.length ∧ pfx.toList <+: s.toList`.
+4. **The minimum of the candidates by a fold with a lemma of its own.** `lowerRank best c`
+   keeps the lower rank; `foldl_lowerRank_min : foldl lowerRank (some b) cs = some r →
+   (r = b ∨ r ∈ cs) ∧ r.1 ≤ b.1 ∧ ∀ c ∈ cs, r.1 ≤ c.1`, by induction on `cs` with `b`
+   free.
+5. **The theorem is a case split on `T.find? p`.** `none`: no row qualifies, so no
+   candidate exists (`mem_candidates`). `some e0` at position `j0` (from
+   `List.find?_eq_some_iff_getElem`): a candidate of rank at most `j0` exists, the
+   minimum candidate has rank at most `j0` and qualifies, so its rank is `j0`
+   (`hmin`), so it is `T[j0] = e0`.
+
+The users of the same candidates: `usedNsLoop` (the namespaces that some IRI lies strictly
+under, for `tsUserUsed`) states its set by `candidatesFold_contains` and
+`usedNsLoop_contains`, and `usedNs_eq_any` is the two directions of part 3.
+
+Traps met on the way, each a compile:
+
+* `by_contra` is not in core Lean (it is Mathlib). Use `Nat.le_of_not_lt (fun h => ...)`
+  or `Decidable.byContradiction`.
+* `simp [eq_comm]` loops (maximum recursion depth). For `(a == b) = (b == a)` on
+  strings: `rw [Bool.eq_iff_iff, beq_iff_eq, beq_iff_eq]; exact ⟨Eq.symm, Eq.symm⟩`.
+  `beq_comm` is not a name.
+* `String.take s n` is a `String.Slice` in Lean 4.33; `.copy` makes the `String`.
+* `rw` closes a goal that becomes `rfl`; a tactic after it fails with "no goals".
+* A `#guard` and a `csimp` replacement: the compiler applies `csimp` to the expression of
+  a `#guard`, so `#guard spec x == fast x` compares the fast form with itself. State the
+  equality as a theorem, and let the `#guard`s pin concrete texts.
+* `Std.HashSet.mem_toList` needs `LawfulBEq`; `Std.HashSet.contains_ofList` gives
+  `(ofList l).contains k = l.contains k`; both are in Lean 4.33.
+
+A recursion that wraps the text of the rest in a prefix and a suffix (`open ++ rec ++
+close`, a triple term nested in a triple term) is a loop with a depth counter: append the
+opening to the accumulator, call itself with `k + 1`, and append `k` closers at the leaf.
+The statement for every state is `loop t acc k = acc ++ spec t ++ closersStr k`, with
+`closersStr (k + 1) = " )>>" ++ closersStr k` (`String.join (List.replicate k ...)`,
+`String.join_cons`, `List.replicate_succ`). Prepending the closers to a growing suffix
+instead of counting them copies the suffix at each level and is quadratic: the
+specification is the quadratic one (it copies the text of the levels below at each
+level), and the loop must not repeat that.
+
 ## 10. Gate before commit
 
 - `#print axioms <thm>` at the end of the module: only `propext`,

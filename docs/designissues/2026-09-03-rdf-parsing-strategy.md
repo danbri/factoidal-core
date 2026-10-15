@@ -701,10 +701,12 @@ and its line is out of the allow list.
 
 *The rest of the writer.* The module header (`Stack use`) lists what the writer
 calls and why none of it takes a frame for each triple. The measurements below
-cover it. Three recursions of the module still take a frame for each step of
-something other than the triples: `tsTermToTurtle` for each level of RDF 1.2
-triple-term nesting in one object, `tsUserUsed` for each prefix of the caller's table
-that some IRI uses, and `assignLabelsAvoiding` for each numbered prefix (at most nine).
+cover it. Three recursions of the module still took a frame for each step of
+something other than the triples when this change landed: `tsTermToTurtle` for each
+level of RDF 1.2 triple-term nesting in one object, `tsUserUsed` for each prefix of the
+caller's table that some IRI uses, and `assignLabelsAvoiding` for each numbered prefix
+(at most nine). The first two are loops since issue 864 (the next paragraph);
+`assignLabelsAvoiding` has a bound.
 
 | Turtle writer, 512 KB | before (c48a4b70) | after |
 |---|---|---|
@@ -773,6 +775,142 @@ text says "Stack overflow in count_runs at 8192 KB; Lean serialises the same inp
 - `tests/known-defects/run.sh` in the CI layout (one directory with `factoidal`,
   `owl_runner`, `l4factoidal` and `l4w3c`): 24 XFAIL, 0 XPASS, 0 ERROR (out of 24).
 
+**The batch Turtle writer with a large prefix table and a deeply nested triple term (2026-10-15).**
+Tracking: https://github.com/danbri/factoidal/issues/864. Found by the repair of issue 863.
+The same writer (`turtleOfGraphOpts`, `Syntax/TurtleSerialize.lean`) took one stack frame for
+each used prefix of the caller's table and one for each nesting level of a triple term, and four
+scans of it were quadratic. The caller's table comes from the options of `serializeTurtleWith` and
+`datasetSerializeWith`, and from the prefixes that `datasetOpen` recorded for `datasetSerialize`.
+
+*Before this change* (commit 6607b7f5, native, 512 KB): a table of 8,127 used prefixes ran and 8,128
+overflowed in `tsUserUsed` (gdb names it). A triple term nested 300,000 deep overflowed.
+User CPU time of `serializeTurtleWith` with a table of 8,000, 16,000 and 32,000 prefixes, every one
+used: 2.36 s, 12.1 s and 56.7 s (ratios 5.1 and 4.7 for the two doublings). `datasetOpen` of a
+Turtle document with 16,000, 32,000 and 64,000 `@prefix` lines: 1.24 s, 7.15 s and 33.0 s. The
+Turtle text of a triple term nested 25,000, 50,000 and 100,000 deep, by the batch writer and the
+stream writer: 0.50 s, 1.76 s and 10.2 s of CPU time; at 300,000 deep about 121 s.
+
+*Causes.*
+
+1. `tsUserUsed` continued with `(ns, label) :: tsUserUsed ...` (one frame for each pair it kept),
+   scanned the list of the namespaces seen for each pair, and scanned the IRIs of the graph for
+   each pair (`tsAnyIriUsesNs`).
+2. `tsFindPrefix` scanned the table for each IRI occurrence of the document: `P * n` comparisons,
+   3 * 10^10 for 100,000 prefixes and 100,000 triples. This one showed only when the first repair
+   let the row run: the 100,000-prefix row did not finish after `tsUserUsed` alone.
+3. `freshTopSpec` (a filter in `turtleOfGraphOpts`) compared each namespace of the graph with each
+   covered row also when the budget of numbered prefixes was 0, which is the case once the caller's
+   rows and the well-known rows are 8 or more.
+4. `declarationOrderPrefixes` (`Wasm/Ops/Parse.lean`) scanned a list of the labels seen for each
+   prefix of the document: 6.3 s for 32,000 prefixes. The Turtle reader alone (`l4factoidal parse`)
+   takes 0.8 s for the same document. `datasetOpen` runs it, and so does every parse that reports
+   the prefixes of the document.
+5. `tsTermToTurtle` built the text of a triple term as `opening ++ text of the object ++ closer`, one
+   frame and one copy of the text built so far for each nesting level: a stack overflow and time
+   quadratic in the depth.
+
+*Repair.* Each specification stays in the source as it was. A fast form is proved equal to it for
+every input, and a `csimp` theorem makes the compiler run the fast form wherever the source says
+the specification. The theorems depend on `propext`, `Classical.choice` and `Quot.sound` only.
+
+| Specification | Fast form | Theorems |
+|---|---|---|
+| `tsUserUsed` | `tsUserUsedFast`: a tail loop (`tsUserUsedLoop`) with a hash set of the namespaces seen, and a hash set of the namespaces that some IRI lies under (`usedNsLoop`) | `tsUserUsedLoop_eq`, `tsUserUsedFast_eq`, `tsUserUsed_eq_fast` |
+| `tsTermToTurtle` | `tsTermToTurtleFast`: a loop (`tsTermToTurtleLoop`) with a counter of the open triple terms; it appends the opening of each, and the closers at the leaf | `tsTermToTurtleLoop_eq`, `tsTermToTurtleFast_eq`, `tsTermToTurtle_eq_fast` |
+| `turtleOfGraph` (it scans the table with `tsFindPrefix`) | `turtleOfGraphFast`: `Abbreviator` is the scan for a table of at most 64 rows for each distinct length of a namespace, and `PrefixIndex` above | `PrefixIndex.find_eq`, `Abbreviator.run_ofTable`, `turtleOfGraphFast_eq`, `turtleOfGraph_eq_fast` |
+| `freshTopSpec` | `freshTopFast`: no filter when the budget is 0 | `freshTopFast_eq`, `freshTopSpec_eq_fast` |
+| `declarationOrderPrefixes` | `declarationOrderPrefixesFast`: a hash set for the labels seen | `declarationOrderPrefixesLoop_eq`, `declarationOrderPrefixes_eq_fast` |
+
+`PrefixIndex` stores, for each namespace of the table, its first row and the rank of that row,
+and the distinct lengths of the namespaces. A lookup for an IRI of `L` characters takes, for each
+length `l < L`, the row of the namespace `take l iri`, and keeps the row of least rank.
+`PrefixIndex.find_eq` states that this is the row `List.find?` finds, which is the FIRST row of
+the table whose namespace is a proper prefix of the IRI; a longer namespace in a later row does
+not win. Its proof has five parts (`skills/lean4-proof-patterns/SKILL.md`, section 9b).
+
+| Turtle writer | before (6607b7f5) | after |
+|---|---|---|
+| `serializeTurtleWith`, 100,000 prefixes, 100,000 triples, 512 KB | overflow from 8,128 prefixes | runs: 4.7 s to 6.5 s, 546 MB |
+| `datasetOpen` of 100,000 `@prefix` lines, then `datasetSerialize`, 512 KB | overflow | runs: 7.3 s to 7.5 s, 735 MB |
+| `datasetOpen` of the triples, then `datasetSerializeWith` with 100,000 prefixes, 512 KB | overflow | runs: 4.3 s to 5.1 s, 525 MB |
+| the same three in Node, default stack and `--stack-size=512` | overflow | run: 5.9 s, 7.9 s, 5.9 s and 6.7 s, 7.7 s, 6.2 s |
+| a triple term nested 300,000 deep, both writers | overflow at 512 KB; about 121 s at the default stack | runs at 512 KB and at 64 KB: 0.8 s |
+| user CPU of `serializeTurtleWith`, 8,000, 16,000, 32,000 prefixes | 2.36 s, 12.1 s, 56.7 s | 0.24 s, 0.49 s, 1.0 s |
+| user CPU of `datasetOpen`, 16,000, 32,000, 64,000 `@prefix` lines | 1.24 s, 7.15 s, 33.0 s | 0.43 s, 0.87 s, 1.76 s |
+| CPU of the nested term, 25,000, 50,000, 100,000 levels | 0.50 s, 1.76 s, 10.2 s | 0.061 s, 0.116 s, 0.241 s |
+| `tests/stack/run.sh --canary` | 131 pass, 0 fail (out of 131); 15 expected failures, 10 for issue 864 | 135 pass, 0 fail (out of 135); 5 expected failures, none for issue 864 |
+
+*A cost paid on the way.* The first version of `Abbreviator` was a definition that returned a
+closure built from a `let`. The compiler gives such a definition the arity of all its arrows, so
+every call of the closure ran the `let` again and built the index for each IRI: 16 s for a table of
+1,000 rows, 63 s for 2,000. `Abbreviator` is a value now. Record:
+`skills/lean4-performance/SKILL.md`, "A function that returns a function runs its `let` again".
+
+*Rows.* `tests/stack/run.sh`: `turtle-write-prefixes` (the operation `serializeTurtleWith`),
+`turtle-write-prefixes-handle` (`datasetOpen` of a Turtle document with 100,000 `@prefix` lines,
+then `datasetSerialize`) and `turtle-write-prefixes-with` (`datasetOpen` of the same triples as
+N-Quads, then `datasetSerializeWith` with 100,000 prefixes in the options), each in the native,
+native canary, wasm canary and wasm routes; `turtle-triple-term` (`l4source-convert --nest-check
+300000`) in the native route and the native canary. A row also counts the `@prefix` lines of the
+output. The term of `turtle-triple-term` is built in memory by a loop: the Turtle reader takes a
+frame for each nesting level (class (b) in the allow list), so no text can carry the term, and the
+wasm module has no operation that builds one. The harness writes the term with the batch writer
+and with the stream writer, and compares both with the text that a loop builds (5,400,063 bytes).
+`tests/stack/lean_scaling.py`: `turtle-prefixes`, `turtle-prefixes-open` and `turtle-nest-time`,
+measured at n, 2n and 4n. The commit before the repair added the rows as expected failures that
+name issue 864 (10 of the 131 rows of `tests/stack/run.sh --canary`, and the 3 scaling rows); the
+repair flips them to assertions.
+
+*Same bytes.* The old binaries (commit 6607b7f5, the repair of issue 863) were copied aside
+before the change. Standard output, standard error and exit code were compared with the new
+ones.
+
+| Input | Runs | Identical | Different |
+|---|---:|---:|---:|
+| `l4factoidal parse --out turtle`: the W3C RDF 1.1 and RDF 1.2 Turtle, TriG and N-Triples files (1,215 files; the RDF 1.2 files again with `turtle12`, `trig12`, `nt12`) | 1,535 | 1,535 (770 with exit 0, 930,299 bytes; 765 the same error) | 0 |
+| the same command: the W3C N-Quads, RDF/XML, rdf-mt and rdf-semantics files (861 files) | 1,075 | 1,075 (728 with exit 0, 252,146 bytes; 347 the same error) | 0 |
+| the same command: `tests/sbm11/syntax` (27 files) | 27 | 27 (23 with exit 0; 4 the same error) | 0 |
+| the same command: 13 large inputs (67,609,181 bytes of Turtle), old on the default stack, new on the default stack and at 512 KB | 13 and 13 | 26 | 0 |
+| `l4sbm11 export --format turtle` (the stream writer, which runs `tsTermToTurtle`), with and without `--graph all`: the W3C Turtle, TriG and N-Triples files, packed by the old packer (842 of 1,215 files pack) | 1,684 | 1,684 (1,506 with exit 0, 3,766,283 bytes; 178 the same error) | 0 |
+| the same command: `tests/sbm11/syntax` | 54 | 54 | 0 |
+| the same command: the 13 large inputs | 26 | 26 (317,197,922 bytes) | 0 |
+| `parseToDatasetJson` (which reports the prefixes of the document, so `declarationOrderPrefixes`) and `datasetOpen` + `datasetSerialize` with `turtle` on the 1,215 W3C files | 2,430 | 2,430 (440 with a non-empty prefix table; 3,769,361 bytes) | 0 |
+| 3,000 random cases of `tools/turtle-writer-differential.py` (seeds 101 and 102): `datasetOpen` of N-Triples 1.2 with triple terms nested up to 5 deep, or of Turtle with prefixes bound twice; then `datasetSerialize`, `datasetSerializeWith` with a random table of 0 to 200 rows (the same namespace in two rows, namespaces inside one another, the empty namespace, non-ASCII, labels equal to the derived ones) and with `literalShorthand` false; `serializeTurtleWith`; `serializeTurtle`. In 1,521 of the cases the table has 1,100 to 2,100 more rows, every one used, which the writer indexes | 3,568 | 3,568 (913,592,880 bytes) | 0 |
+
+The 13 large inputs are the two 100,000-triple shapes, a file of 100,000 literals, graphs of
+30,000 and 300,000 triples whose five namespaces have equal counts (so that `ns1:` to `ns5:` go
+to namespaces of equal count) with three of the well-known prefixes, the same with all eight, a
+graph of 50,000 triples with none, the 40,000-paragraph slice of `gene.ttl` that the row
+`TTL-SER-725` uses, three more files of `examples/wikidata/subsets/lifesci-kgx/data` and the whole
+of `gene.ttl`. Earlier revisions of the generator ran 7,200 more cases with 0 differences.
+
+*Checks (2026-10-15).*
+
+- `lake build` (default targets): 1,716 jobs, exit 0.
+- `python3 tools/lean-tail-recursion-audit.py --gate`: exit 0 (allow list of 1,379 lines, 4 marked
+  `(a) PENDING`, 504 marked `UNTRIAGED`; the audit lists `tsUserUsed` and `tsTermToTurtle` as
+  `replaced`, and the lines of both are out of the allow list). `python3
+  tools/lean-unbuilt-modules.py --gate`: exit 0, 790 modules, 0 not reached.
+  `tools/lean-hygiene-audit.py --build-log`: clean (1,517 `#print axioms` outputs).
+  `tools/test_lean_tail_recursion_audit.py`: 12 pass, 0 fail (out of 12).
+- `tests/sbm11/run.sh`: 2,265 pass, 0 fail, 30 expected-fail (out of 2,295).
+- `tests/stack/run.sh --canary` (private `STACK_FIXTURES`, with a wasm module built from this
+  tree): 135 pass, 0 fail (out of 135); 5 expected failures (issues 816 and 817), none for
+  issue 864. Before the change, on commit 6607b7f5 with the new rows: 131 pass, 0 fail (out of
+  131); 15 expected failures, 10 of them for issue 864. The canary control passed. The rows of
+  100,000 prefixes ran in 4.6 s, 7.2 s and 5.1 s (native), 5.9 s, 7.9 s and 5.9 s (wasm) and
+  6.7 s, 7.7 s and 6.2 s (wasm under `--stack-size=512`); the triple term nested 300,000 deep in
+  0.8 s.
+- `tests/stack/lean_scaling.py --only turtle-prefixes,turtle-prefixes-open,turtle-nest-time,
+  turtle-serialize`: 4 pass, 0 fail, 0 expected-fail (out of 4). Two runs of the three new rows
+  gave ratios of 1.9 to 2.2 for each doubling (bound 3.0).
+- `formal/lean4/Wasm/cli-smoke.sh`: 106 pass, 0 fail, 0 xfail (out of 106).
+  `formal/lean4/Wasm/native-smoke.sh`: 366 pass, 0 fail, 0 xfail (out of 366).
+- `npm test` in `npm/factoidal`: 442 pass, 0 fail, 1 skipped (out of 443). `node --test
+  tests/hub/*_test.mjs`: 447 pass, 0 fail (out of 447).
+- `tests/known-defects/run.sh` in the CI layout (one directory with `factoidal`,
+  `owl_runner`, `l4factoidal` and `l4w3c`): 24 XFAIL, 0 XPASS, 0 ERROR (out of 24).
+
 **Costs open.** The RDF/XML and JSON-LD writers keep the dataset
 (https://github.com/danbri/factoidal/issues/846 and
 https://github.com/danbri/factoidal/issues/847) and take time quadratic in the
@@ -786,7 +924,9 @@ N-Quads, Turtle, TriG) and the RDF/XML export of 100,000 references run under a
 512 KB stack; the case `sbm11-export` of `tests/stack/run.sh` exports 600,001
 quads with a 300,000-byte literal in three syntaxes under that stack. The batch
 Turtle writer writes 100,000 triples in two shapes under that stack too (the
-paragraph on https://github.com/danbri/factoidal/issues/863 above). No theorem relates the stream
+paragraph on https://github.com/danbri/factoidal/issues/863 above), and a table of 100,000
+prefixes and a triple term nested 300,000 deep (the paragraph on
+https://github.com/danbri/factoidal/issues/864 above). No theorem relates the stream
 writers to the batch writers: the round trip through the store is their check
 (https://github.com/danbri/factoidal/issues/852, probes SK-1 and SK-2 of
 `tests/known-defects/run.sh`, which turn the run red when a theorem of the
