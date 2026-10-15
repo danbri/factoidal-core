@@ -364,9 +364,13 @@ owl_case OWL-720-NAMED 720 "F* <=-rule offers no merge with named individuals" \
 # Input: the header and 40000 paragraphs of the Wikidata life-science gene.ttl,
 # every fifth paragraph from the start (deterministic; no blank nodes, so the
 # N-Triples of the input and of a correct re-serialisation are the same set).
-# The stack limit is pinned at 8192 KB so the result does not depend on the
-# caller's shell. Correct answer: Lean serialises the same input to Turtle that
-# parses back to the same triples.
+# The stack limit of the F* run is pinned at 8192 KB so the result does not depend
+# on the caller's shell. Correct answer: Lean serialises the same input to Turtle
+# that parses back to the same triples. The Lean run is pinned at 512 KB
+# (LEAN_STACK_SIZE_KB=512), 16 times less than the F* run, because the Lean writer
+# had the same defect until 2026-10-15 (TurtleSerialize.countRuns, issue 863: 2,711
+# triples overflowed 512 KB), and without the pin the oracle ran on the 1 GB default
+# thread stack of a Lean program, which compares two different stack sizes.
 GENE_SRC="${ROOT}/examples/wikidata/subsets/lifesci-kgx/data/gene.ttl"
 TS_ID=TTL-SER-725; TS_ISSUE=725; TS_TITLE="F* Turtle serializer overflows the stack at 40k paragraphs"
 if [ ! -r "$GENE_SRC" ]; then
@@ -383,7 +387,7 @@ else
   ( ulimit -s 8192 && timeout 300 "$BIN" dump-turtle "$TS_IN" > "${WORKDIR}/ts-fstar.ttl" 2> "${WORKDIR}/ts-fstar.err" )
   TS_RC=$?
   TS_LEAN_RC=0
-  timeout 300 "$L4_BIN" parse "$TS_IN" --format turtle --out turtle \
+  env -u LEAN_MAIN_USE_THREAD LEAN_STACK_SIZE_KB=512 timeout 300 "$L4_BIN" parse "$TS_IN" --format turtle --out turtle \
       > "${WORKDIR}/ts-lean.ttl" 2> "${WORKDIR}/ts-lean.err" || TS_LEAN_RC=$?
   TS_SAME=no
   if [ "$TS_LEAN_RC" -eq 0 ]; then
@@ -399,7 +403,7 @@ else
       "Lean oracle failed (exit ${TS_LEAN_RC}, same triples: ${TS_SAME}); the expectation is unconfirmed"
   elif [ "$TS_RC" -ne 0 ] && grep -q 'Stack overflow' "${WORKDIR}/ts-fstar.err"; then
     record "$TS_ID" "$TS_ISSUE" "$TS_TITLE" XFAIL \
-      "F* exit ${TS_RC} with Stack overflow in count_runs; Lean serialises the same input correctly"
+      "F* exit ${TS_RC} with Stack overflow in count_runs at 8192 KB; Lean serialises the same input correctly at 512 KB"
   elif [ "$TS_RC" -eq 0 ] && [ -s "${WORKDIR}/ts-fstar.ttl" ]; then
     record "$TS_ID" "$TS_ISSUE" "$TS_TITLE" XPASS \
       "F* now serialises 40000 paragraphs -- defect appears FIXED"

@@ -54,6 +54,25 @@ they occur, and fill the rest with `ns1:`…`ns8:`. A namespace whose
 IRIs never compact cleanly earns no header line, because the per-term
 fallback already covers it.
 
+## Stack use
+
+The writer takes no native stack frame for each triple, subject, predicate, object
+or IRI occurrence of the graph
+(https://github.com/danbri/factoidal/issues/863). `walkTriples` and `joinWithAcc` are
+tail calls. `List.mergeSort` runs as the core library's `mergeSortTR₂` (tail-recursive
+merges, recursion depth logarithmic in the length), and `map`, `filter`, `filterMap`,
+`flatMap` and `zipIdx` run as their tail-recursive forms (`csimp` theorems of the core
+library). `countRuns`, which counts the runs of the sorted namespaces, is the
+specification of the loop `countRunsFast` (`countRuns_eq_countRunsFast`, a `csimp`
+theorem of this module). The rows `turtle-write-one-node`, `turtle-write-subjects`
+and `turtle-write-cli-*` of `tests/stack/run.sh` write 100,000 triples in two shapes
+under a 512 KB stack. Three recursions of this module still take a frame for each
+step of something other than the triples: `tsTermToTurtle` for each level of RDF 1.2
+triple-term nesting in one object, `tsUserUsed` for each prefix of the caller's table
+that some IRI uses, and `assignLabelsAvoiding` for each numbered prefix (at most nine).
+`insertStr` is the specification of `sortStrs`, which the compiler does not run
+(`sortStrsSpec_eq_sortStrs`).
+
 ## What the F\* module proves, and what it does not
 
 It carries `lemma_ts_abbreviate_iri_pname_safe`, a structural fact
@@ -338,6 +357,15 @@ def candidateNamespaces (iris : List String) : List String :=
     | some (ns, loc) =>
         if !loc.isEmpty && validatePnLocal loc.toList true then some ns else none)
 
+/-- The runs of equal neighbours of a list, in order, each with its length: the
+run-length encoding. `turtleOfGraphOpts` applies it to the sorted namespaces of the
+graph, one string for each IRI occurrence, so `n` is the size of the graph.
+
+This is the SPECIFICATION. It takes one stack frame for each element of the list,
+because it continues with the result of the recursive call (`(y2, n + 1) :: more` or
+`(x, 1) :: ...`). A graph of 2,711 triples overflowed a 512 KB stack
+(https://github.com/danbri/factoidal/issues/863). The compiler runs `countRunsFast`
+in its place (`countRuns_eq_countRunsFast`, a `csimp` theorem). -/
 def countRuns : List String → List (String × Nat)
   | [] => []
   | [x] => [(x, 1)]
@@ -347,6 +375,91 @@ def countRuns : List String → List (String × Nat)
         | (y2, n) :: more => (y2, n + 1) :: more
         | [] => [(x, 1)]
       else (x, 1) :: countRuns (y :: rest)
+
+/-- The loop of `countRunsFast`. `cur` is the string of the run in progress and `k`
+the number of equal strings that followed its first one, so the run has length
+`k + 1`; `acc` holds the finished runs, newest first. Every call of the loop on
+itself is a tail call, and the list is reversed once, at the end. -/
+def countRunsLoop : List String → String → Nat → List (String × Nat) → List (String × Nat)
+  | [], cur, k, acc => ((cur, k + 1) :: acc).reverse
+  | y :: rest, cur, k, acc =>
+      if cur == y then countRunsLoop rest cur (k + 1) acc
+      else countRunsLoop rest y 0 ((cur, k + 1) :: acc)
+
+/-- `countRuns` as a loop over the list: no stack frame for each element. -/
+def countRunsFast (xs : List String) : List (String × Nat) :=
+  match xs with
+  | [] => []
+  | x :: rest => countRunsLoop rest x 0 []
+
+/-- Add `k` to the length of the first run. -/
+def bumpFirstRun (k : Nat) : List (String × Nat) → List (String × Nat)
+  | [] => []
+  | (a, m) :: more => (a, k + m) :: more
+
+theorem bumpFirstRun_zero : ∀ r : List (String × Nat), bumpFirstRun 0 r = r
+  | [] => rfl
+  | (a, m) :: more => by simp [bumpFirstRun]
+
+/-- A list with a first element has a first run. -/
+theorem countRuns_ne_nil : ∀ (x : String) (l : List String), countRuns (x :: l) ≠ []
+  | x, [] => by simp [countRuns]
+  | x, y :: rest => by
+      rw [countRuns]
+      split
+      · split <;> simp
+      · simp
+
+/-- The loop, for every state it can be in: the finished runs, then the specification
+on the string in progress and the rest, with the `k` strings already counted added to
+the first run. -/
+theorem countRunsLoop_eq : ∀ (l : List String) (cur : String) (k : Nat)
+    (acc : List (String × Nat)),
+    countRunsLoop l cur k acc = acc.reverse ++ bumpFirstRun k (countRuns (cur :: l))
+  | [], cur, k, acc => by
+      simp [countRunsLoop, countRuns, bumpFirstRun]
+  | y :: rest, cur, k, acc => by
+      unfold countRunsLoop
+      by_cases h : (cur == y) = true
+      · have hcy : cur = y := eq_of_beq h
+        subst hcy
+        rw [if_pos h, countRunsLoop_eq rest cur (k + 1) acc, countRuns, if_pos h]
+        cases hr : countRuns (cur :: rest) with
+        | nil => exact absurd hr (countRuns_ne_nil cur rest)
+        | cons p more =>
+            obtain ⟨a, m⟩ := p
+            simp only [bumpFirstRun]
+            have : k + 1 + m = k + (m + 1) := by omega
+            rw [this]
+      · rw [if_neg h, countRunsLoop_eq rest y 0 ((cur, k + 1) :: acc), bumpFirstRun_zero,
+          countRuns, if_neg h]
+        simp [bumpFirstRun]
+
+theorem countRunsFast_eq (xs : List String) : countRunsFast xs = countRuns xs := by
+  cases xs with
+  | nil => rfl
+  | cons x rest =>
+      simp only [countRunsFast]
+      rw [countRunsLoop_eq]
+      simp [bumpFirstRun_zero]
+
+/-- Any call of the specification runs the loop. The call in `turtleOfGraphOpts`
+is compiled after this line, so the Turtle writer takes no frame for each IRI
+occurrence of the graph. -/
+@[csimp] theorem countRuns_eq_countRunsFast : @countRuns = @countRunsFast := by
+  funext xs; exact (countRunsFast_eq xs).symm
+
+#print axioms countRunsLoop_eq
+#print axioms countRunsFast_eq
+#print axioms countRuns_eq_countRunsFast
+
+#guard countRuns [] == []
+#guard countRuns ["a"] == [("a", 1)]
+#guard countRuns ["a", "a", "b", "a", "a", "a", "c"] ==
+  [("a", 2), ("b", 1), ("a", 3), ("c", 1)]
+#guard countRunsFast ["a", "a", "b", "a", "a", "a", "c"] ==
+  countRuns ["a", "a", "b", "a", "a", "a", "c"]
+#guard countRunsFast (List.replicate 100000 "x") == [("x", 100000)]
 
 /-- Descending by count, STABLE: namespaces of equal count keep the order they
 had, which is what F\*'s `List.Tot.sortWith count_desc_compare` gives. (An

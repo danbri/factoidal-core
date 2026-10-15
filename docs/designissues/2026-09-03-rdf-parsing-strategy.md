@@ -668,6 +668,111 @@ row keeps the sizes 5,000 (control) and 20,000 (probe).
   differ (out of 21,012). The change is in `Wasm/Cli.lean`, the root of
   `l4factoidal` only, so the WebAssembly module was not rebuilt.
 
+**The batch Turtle writer takes no stack frame for each triple (2026-10-15).** Tracking:
+https://github.com/danbri/factoidal/issues/863. The batch Turtle writer is
+`turtleOfGraphAuto` and `turtleOfGraphOpts` in `Syntax/TurtleSerialize.lean`. These
+programs call it: `l4factoidal parse --out turtle`, `l4source-convert`, the wasm
+operations `serializeTurtle`, `serializeTurtleWith`, `datasetSerialize` and
+`datasetSerializeWith` (so the npm package), the GET of the Graph Store service, the
+Solid server and the RML Turtle target. The stream writer of this section
+(`Sink.Writer`) does not derive prefixes and does not call it.
+
+Before this change the writer overflowed a 512 KB stack at 2,711 triples. The wasm
+module in Node overflowed at 100,000 triples, on the default stack and under
+`--stack-size=512`. The two shapes are one subject with N objects, and N subjects.
+
+*Cause.* The writer chooses its prefix table from the namespaces of the graph. It
+sorts one namespace string for each IRI occurrence, then counts the runs of equal
+strings with `countRuns`. `countRuns` continued with the result of its recursive
+call, so it took one stack frame for each occurrence: about 64 bytes (524,288 bytes
+for 8,133 occurrences, three for each triple of the two shapes). The allow list of
+`tools/lean-tail-recursion-allow.txt` held a line for it with no reason, from the
+first baseline. The gate passes such a line.
+
+*Repair.* `countRuns` stays as the specification. `countRunsLoop` keeps the run in
+progress and the finished runs in its arguments and calls itself in tail position.
+`countRunsFast` starts it. `countRunsLoop_eq` states that the loop equals the
+specification for every state, `countRunsFast_eq` follows, and the `csimp` theorem
+`countRuns_eq_countRunsFast` makes the compiler run the loop wherever the source says
+`countRuns`. The three theorems depend on `propext` and `Quot.sound` only. The
+emitted C of `countRunsLoop` has two `goto _start` and no call of itself, and
+`turtleOfGraphOpts` calls `countRunsFast`. The audit lists `countRuns` as `replaced`,
+and its line is out of the allow list.
+
+*The rest of the writer.* The module header (`Stack use`) lists what the writer
+calls and why none of it takes a frame for each triple. The measurements below
+cover it. Three recursions of the module still take a frame for each step of
+something other than the triples: `tsTermToTurtle` for each level of RDF 1.2
+triple-term nesting in one object, `tsUserUsed` for each prefix of the caller's table
+that some IRI uses, and `assignLabelsAvoiding` for each numbered prefix (at most nine).
+
+| Turtle writer, 512 KB | before (c48a4b70) | after |
+|---|---|---|
+| `l4factoidal parse --out turtle`, one subject with N objects | 2,710 triples ran, 2,711 overflowed | 100,000 ran (2.87 s, 297 MB); 400,000 ran at 256 KB (12.2 s, 1.13 GB) |
+| the same, N subjects | 2,710 ran, 2,711 overflowed | 100,000 ran (1.88 s, 297 MB); 400,000 ran at 256 KB (8.74 s, 1.13 GB) |
+| `serializeTurtle`, 100,000 triples, Node default stack | overflow | runs: 3.9 s (one subject with N objects) and 4.2 s (N subjects) |
+| the same, Node `--stack-size=512` | overflow | runs: 3.7 s and 4.5 s |
+| `tests/stack/run.sh --canary` | 121 pass, 0 fail (out of 121); 8 of the 12 new rows are expected failures | 121 pass, 0 fail (out of 121); 5 expected failures, none for issue 863 |
+
+The old binary on the default stack needed 2.89 s and 296 MB for the first shape. The
+loop costs no time and no memory that this measurement can see. Other shapes, all under
+`LEAN_STACK_SIZE_KB=512` and with the same bytes as the old binary on the default
+stack: 100,000 distinct namespaces (3.5 s, 354 MB), 100,000 blank-node subjects, graphs
+of 30,000 and 300,000 triples with ties in the namespace counts (so that `ns1:` to
+`ns5:` go to namespaces of equal count), and the whole of `gene.ttl` (205,530
+paragraphs; 16.2 MB of Turtle; 24.9 s and 674 MB on the default stack).
+
+*Rows.* `tests/stack/run.sh` has four rows for each shape: `turtle-write-one-node` and
+`turtle-write-subjects` (the operation `serializeTurtle`, in the native, native
+canary, wasm canary and wasm routes) and `turtle-write-cli-one-node` and
+`turtle-write-cli-subjects` (the command line, in the native route and the native
+canary; the row reads the Turtle back and counts 100,000 triples). The commit before the
+repair added the rows as expected failures that name issue 863; the repair flips them to
+assertions.
+
+*Same bytes.* The old binaries (commit c48a4b70) were copied aside before the change.
+Standard output, standard error and exit code were compared with the new ones.
+
+| Input | Runs | Identical | Different |
+|---|---:|---:|---:|
+| `l4factoidal parse --out turtle`: the W3C RDF 1.1 and RDF 1.2 Turtle, TriG and N-Triples files (1,215 files; the RDF 1.2 files again with `turtle12`, `trig12`, `nt12`) | 1,535 | 1,535 (770 with exit 0, 930,299 bytes; 765 the same error) | 0 |
+| the same command: the W3C N-Quads, RDF/XML, rdf-mt and rdf-semantics files (861 files) | 1,075 | 1,075 (728 with exit 0, 252,146 bytes; 347 the same error) | 0 |
+| the same command: `tests/sbm11/syntax` (27 files) | 27 | 27 (23 with exit 0; 4 the same error) | 0 |
+| the same command: 13 large inputs (60,055,276 bytes of Turtle), old on the default stack, new on the default stack and at 512 KB | 13 and 13 | 26 | 0 |
+| `l4sbm11 export --format turtle`, with and without `--graph all`: the W3C Turtle, TriG and N-Triples files, packed by the old packer (842 of 1,215 files pack) | 1,684 | 1,684 (1,506 with exit 0, 3,766,283 bytes; 178 the same error) | 0 |
+| the same command: `tests/sbm11/syntax` (27 files) | 54 | 54 | 0 |
+| the same command: the 13 large inputs | 26 | 26 (258,720,306 bytes) | 0 |
+
+The large inputs are the two 100,000-triple shapes, a file of 100,000 literals, graphs of 30,000 and
+300,000 triples with the eight well-known prefixes, with three of them and with two, a graph of 50,000
+triples with none, the 40,000-paragraph slice of `gene.ttl` that the row `TTL-SER-725` uses, three
+more files of `examples/wikidata/subsets/lifesci-kgx/data` and the whole of `gene.ttl`.
+
+*Known-defects row `TTL-SER-725`.* The F\* writer has the same defect (`count_runs`) and is not
+changed. The row ran the F\* writer at 8192 KB and the Lean writer at the 1 GB default stack of a
+Lean program, which compares two stack sizes. The Lean run is now pinned at 512 KB, and the detail
+text says "Stack overflow in count_runs at 8192 KB; Lean serialises the same input correctly at
+512 KB". The Lean run fails with ERROR when the writer overflows again.
+
+*Checks (2026-10-15).*
+
+- `lake build` (default targets): 1,716 jobs, exit 0.
+- `python3 tools/lean-tail-recursion-audit.py --gate`: exit 0 (allow list of 1,381 lines,
+  4 marked `(a) PENDING`, 504 marked `UNTRIAGED`). `python3
+  tools/lean-unbuilt-modules.py --gate`: exit 0, 790 modules, 0 not reached.
+  `tools/lean-hygiene-audit.py --build-log`: clean. `tools/test_lean_tail_recursion_audit.py`:
+  12 pass, 0 fail (out of 12).
+- `tests/sbm11/run.sh`: 2,265 pass, 0 fail, 30 expected-fail (out of 2,295).
+- `tests/stack/run.sh --canary` (private `STACK_FIXTURES`, with a wasm module built from
+  this tree): 121 pass, 0 fail (out of 121); 5 expected failures (issues 816 and 817), none for
+  issue 863. The canary control passed.
+- `formal/lean4/Wasm/cli-smoke.sh`: 106 pass, 0 fail, 0 xfail (out of 106).
+  `formal/lean4/Wasm/native-smoke.sh`: 366 pass, 0 fail, 0 xfail (out of 366).
+- `npm test` in `npm/factoidal`: 442 pass, 0 fail, 1 skipped (out of 443). `node --test
+  tests/hub/*_test.mjs`: 447 pass, 0 fail (out of 447).
+- `tests/known-defects/run.sh` in the CI layout (one directory with `factoidal`,
+  `owl_runner`, `l4factoidal` and `l4w3c`): 24 XFAIL, 0 XPASS, 0 ERROR (out of 24).
+
 **Costs open.** The RDF/XML and JSON-LD writers keep the dataset
 (https://github.com/danbri/factoidal/issues/846 and
 https://github.com/danbri/factoidal/issues/847) and take time quadratic in the
@@ -679,7 +784,9 @@ overflows a 512 KB stack (https://github.com/danbri/factoidal/issues/853, row
 parse --out jsonld`). The stream writers (N-Triples,
 N-Quads, Turtle, TriG) and the RDF/XML export of 100,000 references run under a
 512 KB stack; the case `sbm11-export` of `tests/stack/run.sh` exports 600,001
-quads with a 300,000-byte literal in three syntaxes under that stack. No theorem relates the stream
+quads with a 300,000-byte literal in three syntaxes under that stack. The batch
+Turtle writer writes 100,000 triples in two shapes under that stack too (the
+paragraph on https://github.com/danbri/factoidal/issues/863 above). No theorem relates the stream
 writers to the batch writers: the round trip through the store is their check
 (https://github.com/danbri/factoidal/issues/852, probes SK-1 and SK-2 of
 `tests/known-defects/run.sh`, which turn the run red when a theorem of the

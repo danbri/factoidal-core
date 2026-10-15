@@ -1148,3 +1148,63 @@ failures and each failed on the unrepaired code. Rules that the work paid for:
   `DeltaLogBytesTheorems.lean` listed four theorems that were renamed while the
   proofs were written; `grep -n '^theorem' FILE` against the header found them.
 
+## A reasonless baseline line hid a writer that overflowed at 2,711 triples (https://github.com/danbri/factoidal/issues/863, 2026-10-15)
+
+`TurtleSerialize.countRuns` had a line in `tools/lean-tail-recursion-allow.txt` with
+no reason. It came from the first baseline: 624 lines imported on 2026-10-09, before
+reasons were required, of which 623 carry no reason. The gate passes such a line. The
+section "A green gate does not cover the allow list's UNTRIAGED lines" above names
+the marker `UNTRIAGED`; these lines have no marker, so a search for the marker does
+not find them. The recursion took one frame for each IRI occurrence of the graph
+(about 64 bytes each). The Turtle writer that called it (`l4factoidal parse --out
+turtle`, the npm operation `serializeTurtle`, the Graph Store GET and the Solid server
+body) overflowed a 512 KB stack at 2,711 triples, and the default Node stack at
+100,000. The run that found it was the repair of the known-defects row `JLD-WSTACK`
+(https://github.com/danbri/factoidal/issues/853), which ran the `parse --out` writers
+under `LEAN_STACK_SIZE_KB=512`. No earlier test had written more than a few hundred
+triples as Turtle under a small stack.
+
+The repair is in `Syntax/TurtleSerialize.lean`: `countRuns` stays as the
+specification, `countRunsLoop` is a tail call, `countRunsFast` starts it, and
+`countRuns_eq_countRunsFast` (`csimp`) makes the compiler run it. The theorems use
+only `propext` and `Quot.sound`. The proof pattern for a recursion that changes the
+head of its own result is in `skills/lean4-proof-patterns/SKILL.md`, section 9a.
+The emitted C of `countRunsLoop` has two `goto _start` and no call of itself, and
+`turtleOfGraphOpts` calls `countRunsFast`.
+
+| `l4factoidal parse FILE --out turtle`, `LEAN_STACK_SIZE_KB=512` | before | after |
+|---|---|---|
+| one subject with N objects | 2,710 ran, 2,711 overflowed | 100,000 ran: 2.87 s, 297 MB |
+| N subjects | 2,710 ran, 2,711 overflowed | 100,000 ran: 1.88 s, 297 MB |
+| the same, 400,000 triples, `LEAN_STACK_SIZE_KB=256` | | 12.2 s, 1.13 GB; 8.7 s, 1.13 GB |
+| `serializeTurtle`, 100,000 triples (one subject with N objects; N subjects), Node default stack and `--stack-size=512` | overflow in both | 3.9 s and 4.2 s; 3.7 s and 4.5 s |
+
+The old binary on the default stack needed 2.89 s and 296 MB for the first shape, so
+the loop costs no time and no memory that this measurement can see.
+
+Rules from this repair:
+
+- **A line with no reason is an untriaged line.** 622 such lines remain. When a
+  function of the list lies on the path of a parser, writer, decoder or fold over
+  input-proportional data, convert it in the commit that touches that path, or
+  measure its bound and write the bound on the line. The canary row is the proof.
+- **Give a writer one row for each surface it serves, in each shape the issue
+  names.** The operation (N-Quads in, JSON envelope out), the command line (any
+  syntax in, dataset normalisation, Turtle out) and the wasm module have different
+  code around the writer and different stacks. The rows `turtle-write-one-node` and
+  `turtle-write-subjects` run the operation in four routes. The rows
+  `turtle-write-cli-*` run the command line in two routes, read the Turtle back and
+  count the triples.
+- **After a repair, run shapes the issue does not name.** Run under 512 KB, each
+  byte-identical to the old binary on the default stack: 100,000 distinct
+  namespaces, 100,000 blank-node subjects, graphs of 30,000 and 300,000 triples
+  with ties in the namespace counts, and the whole of `gene.ttl` (205,530
+  paragraphs).
+- **Compare outputs, not scores.** The old binary was copied aside before the
+  change. Standard output, standard error and exit code of `parse --out turtle`
+  were compared for 2,637 runs on the W3C Turtle, TriG, N-Triples, N-Quads and
+  RDF/XML test files and the files of `tests/sbm11/syntax`, with 0 differences,
+  and for 13 large files (60,055,276 bytes of Turtle). `l4sbm11 export --format
+  turtle` was compared on the Turtle, TriG, N-Triples and `tests/sbm11/syntax` files
+  packed by the old packer (1,738 runs, 0 differences) and on the large files (26
+  runs, 0 differences).

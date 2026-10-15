@@ -759,7 +759,8 @@ record. Conventions, by test kind:
   2026-10-10). Cases today: SE-1, JSONLD-MSG, OWL-719, OWL-720-DATA, OWL-720-NAMED (F\* tableau,
   https://github.com/danbri/factoidal/issues/719 and
   https://github.com/danbri/factoidal/issues/720), TTL-SER-725 (Turtle
-  serializer stack overflow,
+  serializer stack overflow, F\* run at 8192 KB; the Lean oracle writes the same input at
+  512 KB since 2026-10-15, https://github.com/danbri/factoidal/issues/863,
   https://github.com/danbri/factoidal/issues/725), RDFXML-LANG-SCOPE (the F\*
   RDF/XML parser gives the `xml:lang` of a property element to the next
   property elements, https://github.com/danbri/factoidal/issues/841; the Lean

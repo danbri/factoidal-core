@@ -289,14 +289,12 @@ xfail_issue() { # xfail_issue <case>; prints the issue URL or nothing
     regex-replace-groups)
       case "${2:-}" in canary|wcanary) echo "https://github.com/danbri/factoidal/issues/816" ;; esac ;;
     rdfc-bnode-chain) echo "https://github.com/danbri/factoidal/issues/817" ;;
-    # The Turtle writer (TurtleSerialize.countRuns) takes a frame for each IRI
-    # occurrence of the graph: 100,000 triples overflow the three small-stack
-    # routes and run on the 1 GB default stack of the native route. The
-    # command-line rows exist in the native and the canary route only.
-    turtle-write-one-node|turtle-write-subjects)
-      case "${2:-}" in canary|wcanary|wasm) echo "https://github.com/danbri/factoidal/issues/863" ;; esac ;;
-    turtle-write-cli-one-node|turtle-write-cli-subjects)
-      case "${2:-}" in canary) echo "https://github.com/danbri/factoidal/issues/863" ;; esac ;;
+    # (`turtle-write-one-node`, `turtle-write-subjects` and the two
+    # `turtle-write-cli-*` rows were listed for
+    # https://github.com/danbri/factoidal/issues/863 until 2026-10-15, when
+    # TurtleSerialize.countRuns became a loop. Before it, 2,710 triples ran and
+    # 2,711 overflowed 512 KB, in both shapes; 100,000 triples run now in every
+    # route.)
     # (`sparql-collection` was listed in wcanary for
     # https://github.com/danbri/factoidal/issues/818 until 2026-10-13, when
     # ggpLabeledBnodes, the INSERT DATA blank node label check and the last

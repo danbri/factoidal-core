@@ -336,6 +336,24 @@ from https://github.com/danbri/factoidal/issues/755 (2026-10-12,
   loop, and `simp_all` stalls on seven cases. Factor the expression into a
   named function used by both (`markupFragAt`).
 
+When the readable form changes the FIRST element of its recursive result (a
+run-length count: `(y2, n) :: more` becomes `(y2, n + 1) :: more`), carry the
+pending change in the loop's state and state the loop against a function that
+applies it. From https://github.com/danbri/factoidal/issues/863
+(`TurtleSerialize.countRuns`, 2026-10-15):
+
+* the loop keeps the run in progress as `(cur, k)` and the finished runs newest
+  first; it returns `((cur, k + 1) :: acc).reverse` at the end, so that its
+  statement has no `.reverse` on the left;
+* the statement is `loop l cur k acc = acc.reverse ++ bumpFirstRun k (spec (cur ::
+  l))`, where `bumpFirstRun k` adds `k` to the count of the first run. It holds for
+  every state, so `fun_induction` is not needed: plain induction on `l`, with
+  `by_cases (cur == y) = true` and `eq_of_beq` + `subst` in the equal case;
+* the specification's `[]` arm (`| [] => [(x, 1)]` after the match on its own
+  result) cannot be reached but is not definitionally false. A lemma that the
+  specification's result for a non-empty list is not empty
+  (`countRuns_ne_nil`) closes it; write that lemma first.
+
 ## 10. Gate before commit
 
 - `#print axioms <thm>` at the end of the module: only `propext`,
