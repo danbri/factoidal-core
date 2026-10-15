@@ -586,7 +586,7 @@ L4Factoidal_XML_Node_serializeList
 L4Factoidal_XML_Node_textContentList
 L4Factoidal_XML_findColons
 L4Factoidal_XML_parseAttributes
-L4Factoidal_XML_parseChildren  # specification only since https://github.com/danbri/factoidal/issues/755: its one compiled caller, parseElement, is replaced by parseElementW (@[csimp]); the audit marks only the csimp left side
+L4Factoidal_XML_parseChildren  # https://github.com/danbri/factoidal/issues/755: the specification of parseChildrenW. Its compiled callers are parseElement (replaced by parseElementW, @[csimp]) and Syntax.RdfXml.parseChildrenFold, which reads the replacement text of an entity that holds markup (found by tools/lean-csimp-reach.py, https://github.com/danbri/factoidal/issues/871); the depth is the element nesting of that text
 L4Factoidal_XML_parseSubset
 L4Factoidal_XML_peScan
 L4Factoidal_XML_textDeclAttrs_go

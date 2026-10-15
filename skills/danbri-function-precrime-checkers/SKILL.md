@@ -100,6 +100,21 @@ tail calls with an accumulator, proves them equal to the old definitions
 (`@[csimp]`), and adds the `tests/stack` case `nquads-long-literal`. Before
 relying on an UNTRIAGED function for input-proportional data, triage it.
 
+### 1b. The csimp reach check (Lean: `tools/lean-csimp-reach.py`)
+
+The scan above counts the left side of a `@[csimp]` theorem as `replaced` and does not look at its
+callers. A caller compiled before the theorem, in a module that does not import it, or through an inlined
+instance keeps calling the stack-consuming original in the emitted C
+(https://github.com/danbri/factoidal/issues/871; the first case,
+https://github.com/danbri/factoidal/issues/867, passed `lake build` and the scan above). The check reads
+the emitted C and lists the functions that still call each replaced function:
+
+    python3 tools/lean-csimp-reach.py --gate     # after a full lake build; exit 1 on a new finding
+
+Its allow list (`tools/lean-csimp-reach-allow.txt`) needs a reason on every line. Limits, stated in the
+tool: it sees a call that was kept, not a body that was copied into the caller. Self-test:
+`python3 tools/test_lean_csimp_reach.py`. Record: `docs/designissues/2026-10-15-csimp-reach.md`.
+
 ### 2. The canary run: the whole suite under a small budget
 
 Run the existing corpora once with a deliberately small stack, so anything
@@ -245,6 +260,8 @@ about 450 chunks; at 64 MB the pack needs 43 s and 3 GB. The row now reads a fil
 
 - `tools/lean-tail-recursion-audit.py` (the scanner and `--gate`),
   `tools/lean-tail-recursion-allow.txt` (the reasoned exceptions).
+- `tools/lean-csimp-reach.py` (the csimp reach check and `--gate`),
+  `tools/lean-csimp-reach-allow.txt`, `tools/test_lean_csimp_reach.py`.
 - `tests/stack/` (the deep-input stress suite and the canary run).
 - `skills/lean4-performance/SKILL.md` (the fix patterns, measure-first rule),
   `skills/lean4-proof-patterns/SKILL.md` (the `@[csimp]` twin recipe),

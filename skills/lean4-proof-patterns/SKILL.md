@@ -547,9 +547,45 @@ attempt in a scratch file against the built library, from the shape of 9c.
   symbol; for a derived instance, install the loop as `instance (priority := high) instHashableTermLoop :
   Hashable Term := ⟨Term.hashFast⟩` and keep the derived instance as the specification; `Term.hashFast_eq` is
   stated against it. The audit (`tools/lean-tail-recursion-audit.py`) cannot see this mistake: it reads
-  `replaced` from the theorem and not from the callers.
+  `replaced` from the theorem and not from the callers. `tools/lean-csimp-reach.py` reads the callers (9e).
 - **A `#guard` of a loop against a derived instance compares two functions.** `@Hashable.hash Term instHashableTerm
   t` names the derived function, which stays compiled; the guard is not the self-comparison of section 9b.
+
+## 9e. A `@[csimp]` theorem is finished when the emitted C shows its replacement in the callers
+
+From https://github.com/danbri/factoidal/issues/871 (2026-10-15). Record:
+`docs/designissues/2026-10-15-csimp-reach.md`. `lake build` and the tail-recursion audit accept a
+`@[csimp]` theorem whose replacement no caller uses. After a full `lake build`, from the repository
+root (about 7 s):
+
+    python3 tools/lean-csimp-reach.py --gate
+
+It lists the C functions that still call the left side `f` of each theorem, with a reason code
+(`before-theorem`, `not-imported`, `after-theorem`). Lean replaces `f` while it converts the value of a
+declaration, and only in declarations compiled after the theorem; an inlined body that was compiled
+earlier keeps `f`. The paths: a caller above the theorem; a caller whose module does not import the
+theorem's module; a caller in the `mutual` block of `f`; `f` as a `where` helper of its only caller; an
+inlined instance, `@[inline]` or specialised definition; an instance as a static closure over `f`.
+
+Repairs from the first run on the tree:
+
+- **`not-imported`.** Import the module of the theorem, with a comment that says why
+  (`Qlvr/Side.lean` and `Harness/Qlvr.lean` import `Qlvr.CmpBytesFast`). If that makes a cycle (the
+  theorem's module imports the owner's), give the owner a twin declared after the theorem.
+- **A `where` helper.** A theorem for the helper never reaches its caller, because the helper is part of
+  the caller's declaration. State the twin for the CALLER and put the theorem on the caller:
+  `matchingSubjectsFast` equals `matchingSubjects` by `unfold matchingSubjects matchingSubjectsFast` and
+  `rw [matchingSubjectsGo_eq_TR]` (`JSONLD/Frame.lean`).
+- **An inlined instance.** Install the fast form as an instance of higher priority (9d).
+- **A loop that calls the specification for an input where the specification does not recurse**
+  (`joinKeyLoop`, `readObject12Down`): leave it, with a `leaf` line on
+  `tools/lean-csimp-reach-allow.txt` that names the file.
+
+Every line of the allow list needs a reason; a line that matches nothing is reported stale. A finding held
+by a specification that no live code reaches (the left side of another theorem) needs no line. Code of
+`#guard` and `#eval` is not emitted, but a `private def` that only the guards call is, and is listed with
+the reason `guard`. `L4Factoidal/CsimpReachFixture.lean` holds the known-bad cases on purpose;
+`tools/test_lean_csimp_reach.py` asserts that the tool reports them.
 
 ## 10. Gate before commit
 
@@ -559,6 +595,8 @@ attempt in a scratch file against the built library, from the shape of 9c.
   (`lean-review` registry, rows 2 to 5).
 - The module is imported from `L4Factoidal.lean`; an unimported theorems
   file is not built by CI and proves nothing for the tree.
+- After a `@[csimp]` theorem: `python3 tools/lean-csimp-reach.py --gate` shows the replacement in a caller and
+  no finding for it (9e).
 - If the definition changed to make the proof possible (sections 2, 4), the
   W3C suites for that syntax are the behaviour gate, and the WASM mirrors
   are rebuilt.

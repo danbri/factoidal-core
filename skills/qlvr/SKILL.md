@@ -219,3 +219,9 @@ an accumulator, never one stack frame per item. Check with
 `python3 tools/lean-tail-recursion-audit.py --gate` (read the exit code) and a
 `tests/stack` case at a size above any wasm stack limit. Lake commands run
 with `formal/lean4/` as the working directory.
+
+A `@[csimp]` twin of a decoder (`cmpBytes` and `cmpBytesFast`) is in force only in the
+modules that import the module of its theorem. After a full `lake build`, run
+`python3 tools/lean-csimp-reach.py --gate` and read the exit code
+(https://github.com/danbri/factoidal/issues/871; its first run found two qlvr modules that
+lacked the import).

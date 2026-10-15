@@ -106,6 +106,12 @@ shard packer, the proofs between them, the costs paid and open):
 - `cd formal/lean4 && lake build` — this IS the test run and the
   proof check: `#guard` expressions evaluate during elaboration, so a
   wrong answer is a build error; every theorem is kernel-rechecked.
+- **Gates after a full `lake build`**, each run from the repository root and read by its exit code:
+  `python3 tools/lean-tail-recursion-audit.py --gate` (recursion that consumes stack),
+  `python3 tools/lean-unbuilt-modules.py --gate` (a module no build root imports), and
+  `python3 tools/lean-csimp-reach.py --gate` (a `@[csimp]` replacement that a caller does not
+  use; self-test `python3 tools/test_lean_csimp_reach.py`;
+  `docs/designissues/2026-10-15-csimp-reach.md`).
 - `formal/lean4/Wasm/build-wasm.sh` — rebuild the WebAssembly artifact.
   Needed whenever a Lean change must reach the browser, and whenever
   `lean-toolchain` is bumped (the wasm objects are generated from the

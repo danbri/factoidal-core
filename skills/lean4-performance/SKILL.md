@@ -357,6 +357,10 @@ Two more costs are not in an algorithm, and one hazard follows from the repairs:
   theorem explicitly, with a comment that says why; after moving imports,
   compare the size table (`tools/wasm-size-profile.py`) of the module before
   and after, and treat growth in a specification module as a lost `csimp`.
+  `tools/lean-csimp-reach.py` finds the callers that lack the import (reason
+  `not-imported`). First run, 2026-10-15: `Qlvr/Side.lean` and `Harness/Qlvr.lean`
+  called `cmpBytes` without importing `Qlvr.CmpBytesFast`, so the side index
+  compared words byte by byte.
 - **A `csimp` twin of a loop does not reach the other callers of its
   round.** `closure_eq_closureFast` makes `RDFS.closure` run indexed rounds,
   but `RDFS.step`, the round it is built from, has no twin. `rhoDfClosure`
@@ -465,6 +469,13 @@ def decodeEntriesImpl (version n : Nat) (bytes : List UInt8) := decodeEntriesTR 
 `@[implemented_by]` reaches the same runtime effect with no proof. It is an
 unchecked assumption about the two functions agreeing, and this tree does not
 take those. Use `csimp`.
+
+A `csimp` theorem changes only the code compiled after it. After `lake build`, run
+`python3 tools/lean-csimp-reach.py --gate`: it lists the callers that still call the
+replaced function (a caller above the theorem, a module that does not import it, an
+inlined instance, a `where` helper of the only caller) and shows the callers of the
+replacement (`skills/lean4-proof-patterns/SKILL.md`, 9e;
+`docs/designissues/2026-10-15-csimp-reach.md`).
 
 ### What it cost
 
