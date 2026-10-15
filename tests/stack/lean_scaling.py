@@ -414,6 +414,15 @@ repaired (docs/designissues/2026-10-10-lean-vs-fstar-performance.md):
                    input), 0.375 s, 2.09 s and 10.6 s for N-Quads (5.6 and 5.1; 28.2); after: 0.140 s,
                    0.269 s and 0.504 s (1.9 and 1.9; 3.6), 0.122 s, 0.259 s and 0.523 s (2.1 and 2.0;
                    4.3).
+  ntriples-lenient-long-line, nquads-lenient-long-line
+                   the same two files through `l4factoidal parse --lenient`, the reader that
+                   recovers after an error and has its own chunk walk (`LenientStream`), n =
+                   2,000,000, 4,000,000 and 8,000,000, on the user CPU time. The command must
+                   print 1. Issue https://github.com/danbri/factoidal/issues/869: the same carry
+                   of the partial last line. Before the repair (expected failure; load average
+                   7.8): 0.524 s, 2.40 s and 11.6 s user CPU for N-Triples (ratios 4.6 and 4.8 for
+                   the two doublings; 22.2 for 4x input), 0.467 s, 2.69 s and 11.4 s for N-Quads
+                   (5.8 and 4.2; 24.4).
   startup          process start: `l4factoidal version` must take at most
                    STARTUP_BUDGET (20 ms) of CPU time, minimum of 15 runs
                    (305 million instructions and 43 ms before the fixtures were
@@ -498,6 +507,8 @@ XFAIL: dict[str, str] = {
     "sbm11-pack-trig-workers": "https://github.com/danbri/factoidal/issues/842",
     "sbm11-export-rdfxml-memory": "https://github.com/danbri/factoidal/issues/846",
     "sbm11-export-jsonld-memory": "https://github.com/danbri/factoidal/issues/847",
+    "ntriples-lenient-long-line": "https://github.com/danbri/factoidal/issues/869",
+    "nquads-lenient-long-line": "https://github.com/danbri/factoidal/issues/869",
 }
 # A run longer than this is not repeated: the minimum of several runs only
 # removes timer and load noise, which is small against a run this long.
@@ -1873,6 +1884,16 @@ SERIES_ROWS = {
     "nquads-long-line": (
         2000000, long_line_nq,
         lambda p: [str(BIN), "parse", str(p), "--format", "nquads"],
+        "1", None, "user"),
+    # The same line through the lenient (recovery) reader, `parse --lenient`, which has its own
+    # chunk walk (`LenientStream`, issue 869). It prints the number of quads: 1.
+    "ntriples-lenient-long-line": (
+        2000000, long_line_nt,
+        lambda p: [str(BIN), "parse", str(p), "--format", "ntriples", "--lenient"],
+        "1", None, "user"),
+    "nquads-lenient-long-line": (
+        2000000, long_line_nq,
+        lambda p: [str(BIN), "parse", str(p), "--format", "nquads", "--lenient"],
         "1", None, "user"),
     # The OWL 2 RL closure of the same prefixes (semi-naive rounds since
     # 2026-10-13, https://github.com/danbri/factoidal/issues/756 item 2).
