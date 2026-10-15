@@ -742,7 +742,7 @@ record. Conventions, by test kind:
   Record of the 2026-10-10 landing (manifest shapes, classification, scores):
   `docs/designissues/2026-10-10-fstar-w3c-ec2ba15.md`.
 - **F\* defects found outside a W3C manifest** (`tests/known-defects/run.sh`,
-  `bin/linux-x86_64/factoidal` and its sibling binaries): one case per open
+  run from `bin/linux-x86_64`): one case per open
   issue, with the case id in the JSON row and the issue number in the table.
   XFAIL = the defect reproduces; XPASS and ERROR fail the suite. When the
   correct answer is known, the case runs the Lean engine on the same input
@@ -790,6 +790,30 @@ record. Conventions, by test kind:
   blank node labels for 740 (the oracle is the Lean N-Triples parser, with a
   control that accepts the colon-free copy and a control that rejects W3C
   `nt-syntax-bad-bnode-02`).
+  Other rows. SPARQL-747-COLLECTION-BNODE
+  (https://github.com/danbri/factoidal/issues/747) and SPARQL-OPT-FILTER-SCOPE
+  (https://github.com/danbri/factoidal/issues/815) are SPARQL cases of the same
+  kind (the F\* answer against the Lean answer). NX-1
+  (https://github.com/danbri/factoidal/issues/777), SF-1 to SF-4
+  (https://github.com/danbri/factoidal/issues/826) and SK-1, SK-2
+  (https://github.com/danbri/factoidal/issues/852) read the Lean source: XFAIL
+  while no theorem of the expected name exists. JLD-STACK
+  (https://github.com/danbri/factoidal/issues/844, the JSON-LD reader) and
+  JLD-WSTACK (https://github.com/danbri/factoidal/issues/853, the JSON-LD writer,
+  through `l4factoidal parse --out jsonld`) run `l4factoidal` under
+  `LEAN_STACK_SIZE_KB=512`: a control that must exit 0, then a probe that must
+  abort with "Stack overflow".
+  Binaries. A row may start only the four programs that the web-gates step
+  "Known defects" of danbri/factoidal-builds installs: `factoidal` and
+  `owl_runner` (F\*), `l4factoidal` and `l4w3c` (Lean). A row that starts another
+  program (`l4sbm11`, `l4sbm11-pack`, ...) reads ERROR in CI, the step fails, and
+  the web set is not published. Cost, 2026-10-14: the row JLD-WSTACK started
+  `l4sbm11` and `l4sbm11-pack`; runs 72, 73 and 74 of factoidal-builds failed and
+  published no web set. Run the suite in the CI layout before a change to it
+  lands: copy the four programs into one directory DIR, set
+  `FACTOIDAL_BIN=DIR/factoidal` and `L4FACTOIDAL_BIN=DIR/l4factoidal`, and run
+  `tests/known-defects/run.sh`. Expected on 2026-10-15: 24 XFAIL, 0 XPASS, 0 ERROR
+  (out of 24).
 
 Every score line that includes expected failures prints them separately;
 they never count as passes.

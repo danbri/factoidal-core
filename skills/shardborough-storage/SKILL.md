@@ -1081,7 +1081,10 @@ section 3f.
 - `L4Factoidal/RDF/SinkJsonLd.lean`: the JSON-LD writer (`Sink.withJsonLd`). The
   core wasm does not link it.
 - Users of the serialiser layer: `Harness/Sbm11Export.lean` (`l4sbm11 export`),
-  `Harness/SourceConvert.lean` (`l4source-convert`).
+  `Harness/SourceConvert.lean` (`l4source-convert`), `Wasm/Cli.lean`
+  (`l4factoidal parse FILE --out F`: `ntriples`, `trig`, `rdfxml` and `jsonld`
+  through `Sink.serializeDataset`; `nquads` and `turtle` keep their older writers,
+  see section 3g of the parsing strategy record).
 
 **What each syntax does.**
 
@@ -1270,7 +1273,7 @@ expected failure.
 | Turtle and TriG phase 1 runs in one worker | https://github.com/danbri/factoidal/issues/842 | rows `sbm11-pack-ttl-workers`, `sbm11-pack-trig-workers` |
 | The JSON-LD reader of the source layer takes no document loader and no processing option (18 toRdf tests) | https://github.com/danbri/factoidal/issues/848 | `w3c_roundtrip_xfail.tsv`, 18 rows |
 | No theorem relates the stream writers (`Sink.Writer`) to the batch writers | https://github.com/danbri/factoidal/issues/852 | `tests/known-defects/run.sh`, rows `SK-1`, `SK-2` |
-| The JSON-LD writer uses native stack in proportion to the number of elements: 20,000 references overflow a 512 KB stack | https://github.com/danbri/factoidal/issues/853 | `tests/known-defects/run.sh`, row `JLD-WSTACK` |
+| The JSON-LD writer uses native stack in proportion to the number of elements: 20,000 references overflow a 512 KB stack | https://github.com/danbri/factoidal/issues/853 | `tests/known-defects/run.sh`, row `JLD-WSTACK` (through `l4factoidal parse --out jsonld`) |
 | The RDF/XML export holds the whole graph | https://github.com/danbri/factoidal/issues/846 | row `sbm11-export-rdfxml-memory` |
 | The JSON-LD export holds the whole dataset | https://github.com/danbri/factoidal/issues/847 | row `sbm11-export-jsonld-memory` |
 

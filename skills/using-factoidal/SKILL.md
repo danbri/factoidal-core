@@ -153,6 +153,13 @@ $ bin/linux-x86_64/l4factoidal owl-consistent data.nq --fuel 5000
 true
 ```
 
+`parse` without `--out` prints the number of quads. With `--out F` it writes the
+dataset in the syntax F: `nquads`, `ntriples`, `turtle`, `trig`, `rdfxml` or
+`jsonld`. `nquads` is the canonical N-Quads form. N-Triples, Turtle and RDF/XML
+have no graph name, so they write the triples of all graphs as one graph, and
+`parse` prints a notice on stderr. RDF/XML and JSON-LD refuse an RDF 1.2 triple
+term (exit 1).
+
 `l4wasm-cli` (`Wasm/Main.lean`, `call`/`callseq`) is unchanged and
 stays the ABI smoke driver `Wasm/native-smoke.sh` pins — build it
 from source per §4 above. `l4factoidal`'s own smoke suite is

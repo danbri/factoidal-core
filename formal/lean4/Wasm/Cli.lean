@@ -22,8 +22,14 @@ answer the envelope the text op answers on that text (`queryDatasetOf_eq`,
 output, row order included, is unchanged.
 
   l4factoidal parse data.ttl --out nquads
+  l4factoidal parse data.nt --format ntriples --out jsonld
   l4factoidal query data.ttl --query-string 'SELECT * WHERE { ?s ?p ?o }'
   l4factoidal help          -- full verb list
+
+`parse --out F` writes the dataset in any of the six syntaxes of `RDF.RdfFormat`
+(`outDocument`, https://github.com/danbri/factoidal/issues/853): `nquads` and
+`turtle` as they have always been written, the others by the serialiser layer
+(`L4Factoidal/RDF/Sink.lean`).
 
 `l4wasm-cli` (`Wasm/Main.lean`) stays as it is — the ABI smoke driver
 `Wasm/native-smoke.sh` pins — and is unaffected by this module.
@@ -31,6 +37,7 @@ output, row order included, is unchanged.
 import Wasm.Abi
 import Wasm.Dispatch
 import L4Factoidal.RDF.Source
+import L4Factoidal.RDF.SinkJsonLd
 import L4Factoidal.Syntax.LenientFeed
 import L4Factoidal.Syntax.StrictFeed
 import L4Factoidal.Syntax.FileIri
@@ -724,6 +731,163 @@ def streamStrictFile (path format base : String) (emit : Bool) : IO (Option UInt
   | some (.done code) => pure (some code)
   | some (.whole printed turtle) => some <$> strictWhole path format base emit printed turtle
 
+/-! ## `parse --out F`: the dataset as a document in any of the six syntaxes
+
+Tracking: https://github.com/danbri/factoidal/issues/853 (the known-defects row
+`JLD-WSTACK` needs a JSON-LD writer in `l4factoidal`, a program that the CI step
+of that suite installs) and https://github.com/danbri/factoidal/issues/837 (a
+concrete syntax is named only at the source and serialiser edges).
+
+`--out` takes a label of `RDF.formatOfLabel` (`nquads`, `ntriples`, `turtle`,
+`trig`, `rdfxml`, `jsonld`, and the aliases that function reads). This module
+keeps no table of format names for it: the label becomes an `RdfFormat` and the
+writer decides the text.
+
+* `nquads` and `turtle` print the text they have always printed, byte for byte:
+  `nquads` is the canonical form of RDF 1.2 N-Quads (`Dataset.toCanonicalNQuads`:
+  language tags in lower case, the escapes of the canonical form), and `turtle`
+  is `Ops.serializeTurtleTextOf` (the dataset in its RDF 1.1 normal form, the
+  prefixes derived from the whole graph). The batch writers of the serialiser
+  layer write other bytes for some datasets (`Term.toNTriples` keeps the case of a
+  language tag and escapes fewer control characters), so these two do not go
+  through it.
+* `ntriples`, `trig`, `rdfxml` and `jsonld` are the batch meaning of the
+  serialiser layer, `Sink.serializeDataset` (`L4Factoidal/RDF/Sink.lean`), the
+  function `l4source-convert` calls. For JSON-LD it calls `FromRdf.fromRdf`
+  (`Sink.jsonLdWriter`), the function `l4sbm11 export --format jsonld` calls; the
+  row `JLD-WSTACK` of `tests/known-defects/run.sh` measures its stack use through
+  this verb.
+
+N-Triples, Turtle and RDF/XML have no place for the name of a graph. The batch
+writer of the serialiser layer writes the triples of the default graph and of all
+the named graphs as one graph (`Sink.flatten`), and `parse --out turtle` has always
+done so. This verb follows it, and says so on standard error when the dataset has a
+named graph (`graphNameNotice`); the stream writer's default (`Sink.GraphChoice.refuse`,
+an error) belongs to `l4sbm11 export`, which reads a store and has `--graph` to choose. -/
+
+/-- The labels `--out` lists in its usage error: the labels `formatLabel` gives. -/
+def outLabels : String := "nquads | ntriples | turtle | trig | rdfxml | jsonld"
+
+/-- The notice `parse --out` writes to standard error when `ds` has a named graph
+and the syntax `fmt` has no place for a graph name. -/
+def graphNameNotice (fmt : RdfFormat) (ds : Dataset) : Option String :=
+  if Source.hasNamedGraphs fmt || ds.named.isEmpty then none
+  else
+    let n := ds.named.length
+    some s!"l4factoidal parse: {formatName fmt} has no graph name; the triples of the default graph and of the {n} named {if n == 1 then "graph" else "graphs"} are written as one graph"
+
+/-- The text `parse --out` prints for `ds` in syntax `fmt`; see the section header. -/
+def outDocument (fmt : RdfFormat) (ds : Dataset) : Except String String :=
+  match fmt with
+  | .nquads => .ok (Dataset.toCanonicalNQuads ds)
+  | .turtle => Ops.serializeTurtleTextOf ds
+  | _ =>
+      (Sink.serializeDataset Sink.withJsonLd fmt .rdf12 ds).mapError fun e =>
+        s!"l4factoidal parse: cannot write {formatName fmt}: {e}"
+
+/-- Print `ds` in syntax `fmt`: the document and a line break to standard output,
+and before them the notice (if any) to standard error. Exit status 0, or 1 when the
+writer refuses the dataset: then only the error text is printed, as `--out turtle`
+has always done, and no notice. -/
+def writeOut (fmt : RdfFormat) (ds : Dataset) : IO UInt32 := do
+  match outDocument fmt ds with
+  | .error e => IO.eprintln e; pure 1
+  | .ok text =>
+      if let some notice := graphNameNotice fmt ds then IO.eprintln notice
+      IO.println text
+      pure 0
+
+/-! ### Build-time checks of `outDocument` and `graphNameNotice`
+
+The checks run the writers on two small datasets and read each document back with
+the reader of the same syntax (`Ops.parseTextToDataset`). A document that read back
+as an empty dataset would also be "equal" to an empty dataset, so each check first
+states the size of the dataset it writes. -/
+
+private def outDataset (text format : String) : Option Dataset :=
+  (Ops.parseTextToDataset text format "").toOption
+
+private def outQuads (ds : Dataset) : List (Triple × Option Subject) :=
+  ds.default.map (fun t => (t, none)) ++
+    ds.named.flatMap fun ng => ng.graph.map fun t => (t, some ng.name)
+
+/-- Equal as sets of quads, graph names included. -/
+private def sameQuadSets (a b : List (Triple × Option Subject)) : Bool :=
+  a.all (fun q => b.any (· == q)) && b.all (fun q => a.any (· == q))
+
+/-- `ds` written in `fmt` is read back, in the same syntax, as `want`. -/
+private def outReadsAs (fmt : RdfFormat) (ds : Dataset) (want : List (Triple × Option Subject)) : Bool :=
+  match outDocument fmt ds with
+  | .error _ => false
+  | .ok text =>
+      match outDataset text (formatLabel fmt) with
+      | some back => sameQuadSets (outQuads back) want
+      | none => false
+
+/-- The quads of `ds` with the graph names removed. -/
+private def outUnion (ds : Dataset) : List (Triple × Option Subject) :=
+  (outQuads ds).map fun q => (q.1, none)
+
+private def outDefaultOnly : Option Dataset :=
+  outDataset ("<http://e/a> <http://e/p> <http://e/b> .\n" ++
+    "<http://e/a> <http://e/q> \"x\\ty\"@en .\n" ++
+    "<http://e/c> <http://e/p> \"7\"^^<http://www.w3.org/2001/XMLSchema#integer> .\n") "ntriples"
+
+private def outWithNamed : Option Dataset :=
+  outDataset ("<http://e/a> <http://e/p> <http://e/b> <http://e/g> .\n" ++
+    "<http://e/c> <http://e/p> \"d\"@fr <http://e/g> .\n" ++
+    "<http://e/c> <http://e/p> <http://e/d> .\n") "nquads"
+
+private def outTripleTerm : Option Dataset :=
+  outDataset "<http://e/a> <http://e/p> <<( <http://e/s> <http://e/p> <http://e/o> )>> .\n" "ntriples12"
+
+-- A dataset with only a default graph is read back, in each of the six syntaxes, as itself.
+#guard outDefaultOnly.any fun ds => ds.default.length == 3 && ds.named.isEmpty
+#guard outDefaultOnly.any fun ds =>
+  [RdfFormat.nquads, .nt, .turtle, .trig, .rdfxml, .jsonld].all fun fmt =>
+    outReadsAs fmt ds (outQuads ds)
+
+-- A dataset with a named graph: the syntaxes with a graph name keep it, the others
+-- write all the triples as one graph.
+#guard outWithNamed.any fun ds => ds.default.length == 1 && ds.named.length == 1
+#guard outWithNamed.any fun ds =>
+  [RdfFormat.nquads, .trig, .jsonld].all fun fmt => outReadsAs fmt ds (outQuads ds)
+#guard outWithNamed.any fun ds =>
+  [RdfFormat.nt, .turtle, .rdfxml].all fun fmt => outReadsAs fmt ds (outUnion ds)
+-- The union is three triples in one graph (teeth: a writer that dropped the named
+-- graph would read back as one).
+#guard outWithNamed.any fun ds =>
+  match outDocument .nt ds with
+  | .ok text => ((text.splitOn "\n").filter (· != "")).length == 3
+  | .error _ => false
+
+-- The two syntaxes that have always been written are the canonical N-Quads and
+-- `Ops.serializeTurtleTextOf`; they are not the serialiser layer's text for a
+-- language tag in capitals.
+#guard outDefaultOnly.any fun ds =>
+  (outDocument .nquads ds).toOption == some (Dataset.toCanonicalNQuads ds) &&
+  (outDocument .turtle ds).toOption == (Ops.serializeTurtleTextOf ds).toOption
+#guard (outDataset "<http://e/a> <http://e/p> \"x\"@DE-ch .\n" "ntriples").any fun ds =>
+  match outDocument .nquads ds, outDocument .nt ds with
+  | .ok a, .ok b => (a.splitOn "@de-ch").length == 2 && (b.splitOn "@DE-ch").length == 2
+  | _, _ => false
+
+-- The notice: a syntax with no graph name and a named graph.
+#guard outWithNamed.any fun ds =>
+  [RdfFormat.nt, .turtle, .rdfxml].all (fun fmt => (graphNameNotice fmt ds).isSome) &&
+  [RdfFormat.nquads, .trig, .jsonld].all (fun fmt => (graphNameNotice fmt ds).isNone)
+#guard outDefaultOnly.any fun ds =>
+  [RdfFormat.nquads, .nt, .turtle, .trig, .rdfxml, .jsonld].all fun fmt => (graphNameNotice fmt ds).isNone
+
+-- A triple term is written as N-Triples 1.2 and refused by JSON-LD, by name.
+#guard outTripleTerm.any fun ds =>
+  (match outDocument .nt ds with
+   | .ok text => (text.splitOn "<<(").length == 2
+   | .error _ => false) &&
+  (match outDocument .jsonld ds with
+   | .error m => m.startsWith "l4factoidal parse: cannot write JSON-LD 1.1: "
+   | .ok _ => false)
+
 def parseCmd (args : List String) : IO UInt32 := do
   match scanArgs ["--format", "--base", "--out", "--max-errors"] ["--lenient"] args with
   | .error e => IO.eprintln s!"l4factoidal parse: {e}"; pure 2
@@ -731,14 +895,22 @@ def parseCmd (args : List String) : IO UInt32 := do
     if s.hasBool "--lenient" then parseLenientCmd s else
     let format := (s.value? "--format").getD "turtle"
     let base := (s.value? "--base").getD ""
+    -- `--out` names a syntax (`RDF.formatOfLabel`). An unknown label is a usage
+    -- error, found before any input is read.
+    let outLabel? := s.value? "--out"
+    let outFmt? : Option RdfFormat := outLabel?.bind formatOfLabel
+    if let some label := outLabel? then
+      if outFmt?.isNone then
+        IO.eprintln s!"l4factoidal parse: unknown --out '{label}' ({outLabels})"
+        return 2
     -- An exception of the streamed run (a missing or unreadable file) goes
     -- to the whole-file path, whose `readInput` words the error as before.
-    let streamed ← match s.positional[0]?, s.value? "--out" with
+    let streamed ← match s.positional[0]?, outFmt? with
       | some path, none =>
           if path == "-" then pure none else
           try streamStrictFile path format base false
           catch _ => pure none
-      | some path, some "nquads" =>
+      | some path, some .nquads =>
           if path == "-" then pure none else
           try streamStrictFile path format base true
           catch _ => pure none
@@ -749,7 +921,7 @@ def parseCmd (args : List String) : IO UInt32 := do
     match ← readInput s.positional[0]? with
     | .error e => IO.eprintln e; pure 1
     | .ok text =>
-      match s.value? "--out" with
+      match outFmt? with
       | none =>
           -- Count only. `parseToDatasetJson` also writes the whole dataset as
           -- N-Quads text inside a JSON string, and this verb would then parse
@@ -760,27 +932,17 @@ def parseCmd (args : List String) : IO UInt32 := do
           match parseCountOutput text format base with
           | .error msg => IO.eprintln msg; pure 1
           | .ok n => IO.println n; pure 0
-      | some out =>
+      | some fmt =>
         -- The text is printed as the op computes it, without the JSON
         -- envelope `parseToDatasetJson` / `serializeTurtle` wrap it in and
         -- this verb used to decode again (issue 724). `--out nquads` is the
         -- envelope's `nquads` member, `Dataset.toCanonicalNQuads`;
         -- `--out turtle` is `serializeTurtle` on that text
-        -- (`Ops.serializeTurtleTextOf_eq`).
+        -- (`Ops.serializeTurtleTextOf_eq`); the other syntaxes are written by
+        -- the serialiser layer (`outDocument`).
         match Ops.parseTextToDataset text format base with
         | .error msg => IO.eprintln msg; pure 1
-        | .ok ds =>
-          match out with
-          | "nquads" =>
-              IO.println (Dataset.toCanonicalNQuads ds)
-              pure 0
-          | "turtle" =>
-              match Ops.serializeTurtleTextOf ds with
-              | .error e => IO.eprintln e; pure 1
-              | .ok t => IO.println t; pure 0
-          | other =>
-              IO.eprintln s!"l4factoidal parse: unknown --out '{other}' (nquads | turtle)"
-              pure 2
+        | .ok ds => writeOut fmt ds
 
 def queryCmd (args : List String) : IO UInt32 := do
   match scanArgs ["--format", "--base", "--query", "--query-string"] ["--table", "--sparql12"] args with
@@ -1043,10 +1205,17 @@ def usageLines : List String :=
   , "Usage: l4factoidal VERB [options] [FILE...]"
   , ""
   , "Verbs:"
-  , "  parse [FILE] [--format FMT] [--base IRI] [--out nquads|turtle]"
-  , "      Parse RDF and print the quad count, or (with --out) N-Quads"
-  , "      or Turtle. FILE omitted or \"-\" reads stdin. FMT: turtle |"
-  , "      ntriples | nquads | trig | rdfxml (default turtle)."
+  , "  parse [FILE] [--format FMT] [--base IRI] [--out OUT]"
+  , "      Parse RDF and print the quad count, or (with --out) the dataset"
+  , "      as a document. FILE omitted or \"-\" reads stdin. FMT: turtle |"
+  , "      ntriples | nquads | trig | rdfxml | jsonld (default turtle)."
+  , "      OUT: nquads | ntriples | turtle | trig | rdfxml | jsonld. nquads"
+  , "      is the canonical N-Quads form. ntriples, trig, rdfxml and jsonld"
+  , "      are written by the serialiser layer (RDF/Sink.lean). ntriples,"
+  , "      turtle and rdfxml have no graph name: the triples of the default"
+  , "      graph and of the named graphs are written as one graph, and a"
+  , "      notice goes to stderr. Every OUT except nquads holds the whole"
+  , "      dataset in memory."
   , "  parse --lenient [FILE] [--format FMT] [--base IRI] [--max-errors N]"
   , "        [--out nquads]"
   , "      Recovery mode (turtle | trig | ntriples | nquads): skip each bad"

@@ -147,6 +147,94 @@ assert_text "parse missing --format value -> usage error" 2 err "missing value" 
 assert_text "parse missing file -> error" 1 err "no such file" \
   "$CLI" parse /no/such/file.ttl
 
+# --- parse --out F: every syntax of RDF.RdfFormat
+# (https://github.com/danbri/factoidal/issues/853). `nquads` and `turtle` print
+# what they have always printed; `ntriples`, `trig`, `rdfxml` and `jsonld` are
+# written by the serialiser layer (L4Factoidal/RDF/Sink.lean).
+assert_text "parse --out ntriples" 0 out "<http://example.org/a> <http://example.org/p> <http://example.org/b> ." \
+  "$CLI" parse "$TMP/data.ttl" --format turtle --out ntriples
+assert_text "parse --out trig" 0 out "<http://example.org/a> <http://example.org/p> <http://example.org/c> ." \
+  "$CLI" parse "$TMP/data.ttl" --format turtle --out trig
+assert_text "parse --out rdfxml" 0 out "<rdf:RDF" \
+  "$CLI" parse "$TMP/data.ttl" --format turtle --out rdfxml
+assert_text "parse --out jsonld" 0 out '"@id":"http://example.org/a"' \
+  "$CLI" parse "$TMP/data.ttl" --format turtle --out jsonld
+assert_text "parse unknown --out lists the six syntaxes" 2 err "nquads | ntriples | turtle | trig | rdfxml | jsonld" \
+  "$CLI" parse "$TMP/data.ttl" --out bogus
+assert_text "parse unknown --out is a usage error before the file is read" 2 err "unknown --out" \
+  "$CLI" parse /no/such/file.ttl --out bogus
+
+# The fixtures of tests/sbm11/syntax: D1 (default graph), D2 (D1 and two named
+# graphs), D4 (RDF 1.2: triple terms). The document of each syntax, read back with
+# the reader of that syntax, is the same set of quads (the canonical N-Quads lines,
+# sorted). A syntax with no graph name (N-Triples, Turtle, RDF/XML) writes the
+# triples of all the graphs as one graph, and says so on stderr.
+SYNTAX="$LEAN_DIR/../../tests/sbm11/syntax"
+# nq_set_of FILE FORMAT: sets NQSET to the sorted canonical N-Quads lines of FILE.
+nq_set_of() {
+  run_cmd "$CLI" parse "$1" --format "$2" --out nquads
+  NQSET="$(printf '%s\n' "$OUT" | sed '/^$/d' | LC_ALL=C sort -u)"
+  NQRC="$RC"
+}
+if [ ! -r "$SYNTAX/d1.nt" ] || [ ! -r "$SYNTAX/d2.trig" ] || [ ! -r "$SYNTAX/d4.trig" ]; then
+  fail "parse --out fixtures" "missing d1.nt, d2.trig or d4.trig under $SYNTAX"
+else
+  nq_set_of "$SYNTAX/d1.nt" ntriples; WANT_D1="$NQSET"
+  nq_set_of "$SYNTAX/d2.trig" trig; WANT_D2="$NQSET"
+  # D2 without its graph names.
+  WANT_D2_UNION="$(printf '%s\n' "$WANT_D2" | sed -E 's| <http://example\.org/g[12]> \.$| .|' | LC_ALL=C sort -u)"
+  N_D1="$(printf '%s\n' "$WANT_D1" | wc -l | tr -d ' ')"
+  N_D2="$(printf '%s\n' "$WANT_D2" | wc -l | tr -d ' ')"
+  N_D2U="$(printf '%s\n' "$WANT_D2_UNION" | wc -l | tr -d ' ')"
+  verdict "parse --out fixtures: D1 has 12 quads, D2 16, D2 without graph names 15" "" \
+    "$( [ "$N_D1" = 12 ] && [ "$N_D2" = 16 ] && [ "$N_D2U" = 15 ] && echo 1 || echo 0 )" \
+    "D1=$N_D1 D2=$N_D2 D2 union=$N_D2U"
+  for F in nquads ntriples turtle trig rdfxml jsonld; do
+    run_cmd "$CLI" parse "$SYNTAX/d1.nt" --format ntriples --out "$F"
+    D1_RC="$RC"; D1_ERR="$ERR"; printf '%s\n' "$OUT" > "$TMP/d1.$F"
+    nq_set_of "$TMP/d1.$F" "$F"
+    verdict "parse --out $F: D1 reads back as its $N_D1 quads, no notice" "" \
+      "$( [ "$D1_RC" -eq 0 ] && [ -z "$D1_ERR" ] && [ "$NQRC" -eq 0 ] && [ "$NQSET" = "$WANT_D1" ] && echo 1 || echo 0 )" \
+      "write exit=$D1_RC stderr=$D1_ERR read exit=$NQRC"
+    run_cmd "$CLI" parse "$SYNTAX/d2.trig" --format trig --out "$F"
+    D2_RC="$RC"; D2_ERR="$ERR"; printf '%s\n' "$OUT" > "$TMP/d2.$F"
+    nq_set_of "$TMP/d2.$F" "$F"
+    case "$F" in
+      nquads|trig|jsonld)
+        verdict "parse --out $F: D2 keeps its $N_D2 quads and graph names, no notice" "" \
+          "$( [ "$D2_RC" -eq 0 ] && [ -z "$D2_ERR" ] && [ "$NQRC" -eq 0 ] && [ "$NQSET" = "$WANT_D2" ] && echo 1 || echo 0 )" \
+          "write exit=$D2_RC stderr=$D2_ERR read exit=$NQRC" ;;
+      *)
+        verdict "parse --out $F: D2 is written as one graph of $N_D2U triples, with a notice" "" \
+          "$( [ "$D2_RC" -eq 0 ] && grep -qF 'has no graph name; the triples of the default graph and of the 2 named graphs' <<< "$D2_ERR" \
+              && [ "$NQRC" -eq 0 ] && [ "$NQSET" = "$WANT_D2_UNION" ] && echo 1 || echo 0 )" \
+          "write exit=$D2_RC stderr=$D2_ERR read exit=$NQRC" ;;
+    esac
+  done
+  # `nquads` is the canonical form (RDF 1.2 N-Quads: language tags in lower case);
+  # `ntriples` is the serialiser layer's text, which keeps the tag as it was read.
+  run_cmd "$CLI" parse "$SYNTAX/d1.nt" --format ntriples --out nquads
+  NQ_OUT="$OUT"
+  run_cmd "$CLI" parse "$SYNTAX/d1.nt" --format ntriples --out ntriples
+  verdict "parse --out nquads lower-cases a language tag, --out ntriples keeps it (D1 @de-DE)" "" \
+    "$( grep -qF '"Hallo"@de-de .' <<< "$NQ_OUT" && ! grep -qF '@de-DE' <<< "$NQ_OUT" \
+        && grep -qF '"Hallo"@de-DE .' <<< "$OUT" && echo 1 || echo 0 )" \
+    "ntriples exit=$RC"
+  # RDF 1.2: N-Triples 1.2 holds a triple term; RDF/XML and JSON-LD have no form
+  # for it, refuse by name, and print nothing.
+  run_cmd "$CLI" parse "$SYNTAX/d4.trig" --format trig12 --out ntriples
+  verdict "parse --out ntriples writes a triple term (D4)" "" \
+    "$( [ "$RC" -eq 0 ] && grep -qF '<<(' <<< "$OUT" && echo 1 || echo 0 )" "exit=$RC stderr=$ERR"
+  run_cmd "$CLI" parse "$SYNTAX/d4.trig" --format trig12 --out jsonld
+  verdict "parse --out jsonld refuses a triple term and prints nothing (D4)" "" \
+    "$( [ "$RC" -eq 1 ] && [ -z "$OUT" ] && grep -qF 'triple term' <<< "$ERR" && echo 1 || echo 0 )" \
+    "exit=$RC stdout=$OUT stderr=$ERR"
+  run_cmd "$CLI" parse "$SYNTAX/d4.trig" --format trig12 --out rdfxml
+  verdict "parse --out rdfxml refuses a triple term and prints nothing (D4)" "" \
+    "$( [ "$RC" -eq 1 ] && [ -z "$OUT" ] && grep -qF 'triple term' <<< "$ERR" && echo 1 || echo 0 )" \
+    "exit=$RC stdout=$OUT stderr=$ERR"
+fi
+
 # stdin: no positional file argument at all.
 STDIN_COUNT="$(printf '@prefix ex: <http://e/> . ex:a ex:p ex:b .' | "$CLI" parse --format turtle)"
 if [ "$STDIN_COUNT" = "1" ]; then pass "parse stdin (no file arg)"; else

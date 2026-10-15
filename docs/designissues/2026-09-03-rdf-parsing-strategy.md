@@ -551,7 +551,7 @@ under `L4Factoidal/Storage/` imports an `L4Factoidal.Syntax` module.
 
 | Function | Meaning | Used by |
 | --- | --- | --- |
-| `Sink.serializeDataset extra format version dataset` | the whole `Dataset` becomes the text, by the library serialisers (`Dataset.toNQuads`, `Graph.toNTriples`, `turtleOfGraphAuto`, `StoreEndpoint.datasetToTrig`, `graphToRdfXml`, `fromRdf`) | `l4source-convert` (its output is byte-identical to the output before the change, for 24 conversions) |
+| `Sink.serializeDataset extra format version dataset` | the whole `Dataset` becomes the text, by the library serialisers (`Dataset.toNQuads`, `Graph.toNTriples`, `turtleOfGraphAuto`, `StoreEndpoint.datasetToTrig`, `graphToRdfXml`, `fromRdf`) | `l4source-convert` (its output is byte-identical to the output before the change, for 24 conversions); `l4factoidal parse --out F` for `ntriples`, `trig`, `rdfxml` and `jsonld` (below) |
 | `Sink.Writer` (`init`, `push`, `finish`) | the quads arrive one at a time in the order the caller chooses; each call returns the text that quad completes | `l4sbm11 export` |
 
 The JSON-LD writer is in `SinkJsonLd.lean` (`Sink.withJsonLd`), as the JSON-LD
@@ -599,6 +599,75 @@ RDF/XML is a case now. Memory: rows
 `sbm11-export-*-memory` of `tests/stack/lean_scaling.py`; the numbers are in
 `2026-10-11-shardborough-vs-qlever.md` section 11.2.
 
+**The command line writes the same syntaxes (2026-10-15).** Tracking:
+https://github.com/danbri/factoidal/issues/853. `l4factoidal parse FILE --out F`
+writes the dataset of FILE in the syntax F. F is `nquads`, `ntriples`, `turtle`,
+`trig`, `rdfxml` or `jsonld`. `RDF.formatOfLabel` reads the label, so `Wasm/Cli.lean`
+has no table of syntax names. The CI step "Known defects" of
+`danbri/factoidal-builds` installs `l4factoidal` and no other program that writes
+JSON-LD. The row `JLD-WSTACK` of `tests/known-defects/run.sh` needs a JSON-LD
+writer, so the verb has one now. Four labels go to the serialiser layer. Two keep
+their older writers.
+
+| F | Writer | Notes |
+| --- | --- | --- |
+| `ntriples`, `trig`, `rdfxml`, `jsonld` | `Sink.serializeDataset` with `Sink.withJsonLd`, version `rdf12`: the call that `l4source-convert` makes | New. The verb holds the whole dataset in memory. |
+| `nquads` | `Dataset.toCanonicalNQuads` | The bytes are the same as before. This is the canonical form of RDF 1.2 N-Quads: language tags in lower case, and the canonical escapes. `Dataset.toNQuads`, which `Sink` calls, keeps the case of a tag and escapes fewer characters. D1 has `"Hallo"@de-DE`, so the two forms differ on D1. |
+| `turtle` | `Ops.serializeTurtleTextOf` | The bytes are the same as before. It writes the RDF 1.1 normal form of the dataset (a repeated triple once, tags in lower case) with prefixes from the whole graph. It refuses an RDF 1.2 dataset. |
+
+**Named graphs.** N-Triples, Turtle and RDF/XML have no graph name. The batch
+writer of `Sink` writes the triples of the default graph and of all the named
+graphs as one graph (`Sink.flatten`). `--out turtle` did the same before this
+change. The verb follows the batch writer. It prints a notice on standard error
+that gives the number of named graphs. The stream writer of `Sink` refuses such a
+dataset by default (`GraphChoice.refuse`). `l4sbm11 export` uses the stream writer
+and has `--graph` to choose. `parse` has no `--graph` option.
+
+**Errors.** A writer can refuse a dataset. RDF/XML and JSON-LD have no form for an
+RDF 1.2 triple term. The verb then prints the error, writes nothing to standard
+output, and exits with 1. An unknown label is a usage error (exit 2). The verb
+finds it before it reads the input.
+
+**Row `JLD-WSTACK`.** Until 2026-10-15 the row used `l4sbm11-pack` and `l4sbm11
+export`. Both routes call `Sink.jsonLdWriter`, which is `JSONLD.FromRdf.fromRdf` and
+`jcsDocument`. Measured under `LEAN_STACK_SIZE_KB=512`, one node with N references:
+both routes exit 0 for N = 5,000, 10,000 and 12,000, and both abort with "Stack
+overflow" for N = 15,000 and 20,000. The other `--out` writers (`nquads`,
+`ntriples`, `trig`, `rdfxml`) run at 30,000 references under the same stack. The
+row keeps the sizes 5,000 (control) and 20,000 (probe).
+
+**Checks (2026-10-15).**
+
+- `Wasm/cli-smoke.sh`: 106 pass, 0 fail, 0 xfail (out of 106); 83 pass, 0 fail
+  before. The 23 new cases write D1 and D2 in each syntax and read the document
+  back with the reader of the same syntax. They also check the notice, the canonical
+  form of `nquads`, a triple term of D4 (written as N-Triples, refused by RDF/XML
+  and JSON-LD), and the usage errors.
+- Same bytes as before for `--out nquads` and `--out turtle`. The old build (commit
+  457d8127) and the new build ran on the same inputs; stdout, stderr and the exit
+  code were compared. The 31 files of `tests/sbm11/syntax` (D1 to D4 and
+  `bnode_collide`): 62 runs, 59 identical, 3 identical on stdout and exit code with
+  the new notice on stderr (D2 written as Turtle), 0 different. The same 31 files
+  from standard input: 62 runs, 0 different. The W3C RDF 1.1 and RDF 1.2 test files
+  of Turtle, N-Triples, N-Quads, TriG and RDF/XML (1,447 files): 2,894 runs, 2,667
+  identical (1,700 with exit 0 and 967 with the same error), 227 identical on stdout
+  and exit code with the notice on stderr only, 0 different.
+- `tests/known-defects/run.sh` in the CI layout (a directory with `factoidal`,
+  `owl_runner`, `l4factoidal` and `l4w3c` only): 24 XFAIL, 0 XPASS, 0 ERROR (out of
+  24). The line of the row: `XFAIL #853 JSON-LD export of 20,000 references
+  overflows a 512 KB stack  5,000 references write under 512 KB; 20,000: exit 134,
+  Stack overflow`. The row reads ERROR with an `l4factoidal` that has no `--out
+  jsonld`, and XPASS when the probe write passes. Before this change the same
+  layout gave 23 XFAIL, 0 XPASS, 1 ERROR.
+- Other gates of this change (2026-10-15): `lake build` 1,716 jobs;
+  `tools/lean-unbuilt-modules.py --gate` 790 modules, 0 not reached;
+  `tools/lean-tail-recursion-audit.py --gate` pass; `tools/lean-hygiene-audit.py`
+  clean; `tests/sbm11/run.sh` 2,265 pass, 0 fail, 30 expected-fail (out of 2,295);
+  `tests/stack/run.sh --canary` 109 pass, 0 fail (out of 109);
+  `tools/strict-parse-differential.sh` with the old build as OLD: 21,012 agree, 0
+  differ (out of 21,012). The change is in `Wasm/Cli.lean`, the root of
+  `l4factoidal` only, so the WebAssembly module was not rebuilt.
+
 **Costs open.** The RDF/XML and JSON-LD writers keep the dataset
 (https://github.com/danbri/factoidal/issues/846 and
 https://github.com/danbri/factoidal/issues/847) and take time quadratic in the
@@ -606,7 +675,8 @@ dataset (https://github.com/danbri/factoidal/issues/845 and
 https://github.com/danbri/factoidal/issues/712). The JSON-LD writer uses native
 stack in proportion to the number of elements: one node with 20,000 references
 overflows a 512 KB stack (https://github.com/danbri/factoidal/issues/853, row
-`JLD-WSTACK` of `tests/known-defects/run.sh`). The stream writers (N-Triples,
+`JLD-WSTACK` of `tests/known-defects/run.sh`, which writes through `l4factoidal
+parse --out jsonld`). The stream writers (N-Triples,
 N-Quads, Turtle, TriG) and the RDF/XML export of 100,000 references run under a
 512 KB stack; the case `sbm11-export` of `tests/stack/run.sh` exports 600,001
 quads with a 300,000-byte literal in three syntaxes under that stack. No theorem relates the stream
