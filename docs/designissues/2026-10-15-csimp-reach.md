@@ -128,7 +128,7 @@ suppressed. The allow list below makes 7 more findings suppressed: the code that
 their specification is on the list, so the specification is no longer live. Final: 55
 findings, 29 allowed (24 and the fixture's 5), 26 suppressed, 0 new.
 
-Repaired (three defects, each with a proof that already existed or a short new one):
+Repaired (six findings in three files; the framing repair has a short new proof, the qlvr repair is an import):
 
 1. **`JSONLD.matchingSubjects`** (`L4Factoidal/JSONLD/Frame.lean`). The twin of the `where` helper
    `matchingSubjectsGo` (`matchingSubjectsGoTR`, issue 746) had no caller: the only caller is
@@ -144,9 +144,20 @@ Repaired (three defects, each with a proof that already existed or a short new o
 2. **`Qlvr.Side`** (`sortChunk`, `sideLookupM`, `testLookup`) and **`Harness/Qlvr`**
    (`SideIdx.lookup`, `runSideIndex`) called `cmpBytes` without importing
    `Qlvr.CmpBytesFast`, the module of its twin (issue 804). Repair: the import, with a comment, in
-   both modules. The C now calls `cmpBytesFast`. Test: `lake build` (the guards of `Side.lean`),
-   `tests/qlvr/queries.sh` before and after, `tests/sbm11/run.sh` (it runs `Sbm11PermCheck`,
-   which imports `Side`). The speed change is not measured.
+   both modules. The C now calls `cmpBytesFast`. Test: `lake build` (the guards of `Side.lean`);
+   the 21 QLever oracle queries of `tests/qlvr/queries.sh` with the `l4qlvr` built before and after:
+   21 pass, 0 fail, 0 refused (out of 21), the same 21 result lines; `tests/sbm11/run.sh`:
+   2,823 pass, 0 fail, 30 expected-fail (out of 2,853) (it runs `Sbm11PermCheck`, which imports
+   `Side`). The speed change is not measured.
+
+The wasm build (`formal/lean4/Wasm/build-wasm.sh`, step 6) compiles the C of every library module
+except `Harness_*`, `Wasm_Main` and `Wasm_Cli`, and the linker drops the code that the entry modules
+do not reach. `JSONLD/Frame.lean` and `Qlvr/Side.lean` (changed) and `CsimpReachFixture.lean` (new)
+are in the compile set. None of the three is in the import closure of `Wasm.Exports` or
+`Wasm.CoreExports` (356 modules together), so the linker drops their code. The wasm module is not
+rebuilt by this landing and the claim is not measured. `Harness/Qlvr.lean` is not compiled for wasm.
+The message of the commit `e2ca67a0` says "No module of the wasm build changes"; read it as "no
+module that the entry modules import".
 
 Left, 24 allow lines plus 5 for the fixture, by reason (the file has each line's module and caller):
 
