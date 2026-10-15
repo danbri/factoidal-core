@@ -54,6 +54,9 @@ Timings and peak RSS (VmHWM) go to stderr; data goes to stdout.
 import L4Factoidal.Qlvr.Scan
 import L4Factoidal.Qlvr.Query
 import Harness.QlvrKernel
+-- `cmpBytes` below compiles to `cmpBytesFast` only in a module that imports the module of its
+-- `@[csimp]` theorem (https://github.com/danbri/factoidal/issues/871, found by tools/lean-csimp-reach.py).
+import L4Factoidal.Qlvr.CmpBytesFast
 
 open L4Factoidal.Qlvr
 

@@ -511,6 +511,24 @@ theorem matchingSubjectsGoTR_go_eq (env : Env) (graph : String) (fr : Json) (fl 
   rw [matchingSubjectsGoTR, matchingSubjectsGoTR_go_eq]
   cases matchingSubjects.matchingSubjectsGo env graph fr fl fuel subjects <;> simp [Except.map]
 
+/-- The theorem above does not reach its only caller. `matchingSubjectsGo` is the `where`
+helper of `matchingSubjects`, so it cannot be declared before `matchingSubjects`, and the
+compiler replaces a constant only in code compiled after the theorem: the emitted C of
+`matchingSubjects` still called the helper that takes a native frame for each matching
+subject. `tools/lean-csimp-reach.py` found it
+(https://github.com/danbri/factoidal/issues/871). `matchingSubjects` gets a twin of its own,
+declared after the theorem, and its caller `frameRec` is compiled after that. -/
+def matchingSubjectsFast (env : Env) (graph : String) (subjects : List String) (fr : Json)
+    (fl : Flags) : Res (List String) :=
+  (matchingSubjectsGoTR env graph fr fl (Json.size fr + 16) subjects).map
+    (fun ids => ids.mergeSort (fun a b => !strLt b a))
+
+/-- Any call of `matchingSubjects` compiled after this line runs the loop. -/
+@[csimp] theorem matchingSubjects_eq_fast : @matchingSubjects = @matchingSubjectsFast := by
+  funext env graph subjects fr fl
+  unfold matchingSubjects matchingSubjectsFast
+  rw [matchingSubjectsGo_eq_TR]
+
 /-! ## The output arena -/
 
 /-- A value in the output under construction: a finished JSON value, or

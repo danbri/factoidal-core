@@ -37,6 +37,9 @@ accumulator. `sideLookupM` is a `for` loop of at most `log2 n + 2` probes.
 -/
 import L4Factoidal.Codec.Zstd
 import L4Factoidal.Qlvr.Sort
+-- `cmpBytes` below compiles to `cmpBytesFast` only in a module that imports the module of its
+-- `@[csimp]` theorem (https://github.com/danbri/factoidal/issues/871, found by tools/lean-csimp-reach.py).
+import L4Factoidal.Qlvr.CmpBytesFast
 
 namespace L4Factoidal.Qlvr.Side
 
