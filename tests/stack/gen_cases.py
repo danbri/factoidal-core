@@ -179,6 +179,24 @@ write("sparql-order-limit.nq",
 write("sparql-order-limit.rq",
       "SELECT ?s ?o WHERE { ?s <http://example.org/p> ?o } ORDER BY DESC(?o) LIMIT 3\n")
 
+# ------------------------------------------------------ Turtle writer
+# `serializeTurtle` (and `l4factoidal parse --out turtle`, one writer) prints a
+# graph of N triples. `TurtleSerialize.countRuns`, which counts the runs of the
+# sorted namespaces for the prefix table, took one native frame for each IRI
+# occurrence of the graph, so the writer overflowed a 512 KB stack from about
+# 3,000 triples (measured 2026-10-15: 2,000 ran and 3,000 overflowed, in both
+# shapes; https://github.com/danbri/factoidal/issues/863). Two shapes, as the
+# issue reports them: one node with N references (one subject, N objects) and
+# N subjects (N subjects, one shared object). N-Quads text, so that the parse
+# on the way in is the fast reader and the writer is the only long recursion.
+N_TTLW = int(os.environ.get("STACK_TURTLE_WRITE", "100000"))
+write("turtle-write-one-node-%d.nq" % N_TTLW,
+      "".join("<http://example.org/s> <http://example.org/p> <http://example.org/o%d> .\n" % i
+              for i in range(N_TTLW)))
+write("turtle-write-subjects-%d.nq" % N_TTLW,
+      "".join("<http://example.org/s%d> <http://example.org/p> <http://example.org/o> .\n" % i
+              for i in range(N_TTLW)))
+
 # -------------------------------------------------------------- JSON-LD
 # The nesting is written as text. json.dumps recurses once per nesting level
 # and raises RecursionError at 5000 levels on Python 3.13 (issue 749), so no
@@ -285,6 +303,11 @@ args("args-sparql-nested.json",
 args("args-sparql-order-limit.json",
      open(os.path.join(OUT, "sparql-order-limit.nq")).read(),
      open(os.path.join(OUT, "sparql-order-limit.rq")).read())
+
+args("args-turtle-write-one-node.json",
+     open(os.path.join(OUT, "turtle-write-one-node-%d.nq" % N_TTLW)).read())
+args("args-turtle-write-subjects.json",
+     open(os.path.join(OUT, "turtle-write-subjects-%d.nq" % N_TTLW)).read())
 
 # ------------------------------------- issue 752 (OKR batch 1 KR 2.6) cases
 # Each is above the depth at which the readable recursion overflowed under
@@ -479,6 +502,6 @@ args("args-delta-log-merge.json", "", dl_hex)
 
 print(json.dumps({
     "dir": OUT, "zstdIds": N_ZSTD_IDS, "entities": N_ENT, "literalBytes": LIT, "collection": N_COLL, "predicates": N_PRED,
-    "quads": N_Q, "unionArms": N_UNION, "nestDepth": N_NEST, "orderRows": N_ORDER,
+    "quads": N_Q, "turtleWriteTriples": N_TTLW, "unionArms": N_UNION, "nestDepth": N_NEST, "orderRows": N_ORDER,
     "jsonldDepth": N_JSONLD, "sbm11Delta": N_DELTA, "shapes": N_SHAPES, "manifestEntries": N_MAN,
     "manifestBytes": len(man), "deltaLogRecords": N_DLOG}))

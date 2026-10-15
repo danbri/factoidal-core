@@ -107,6 +107,10 @@ export STACK_SBM11_DELTA="$N_DELTA"
 # sbm11-update-where solutions (gen_cases.py reads the same variable).
 N_WHERE="${STACK_SBM11_WHERE:-12000}"
 export STACK_SBM11_WHERE="$N_WHERE"
+# Turtle writer: triples in each of the two shapes (gen_cases.py reads the
+# same variable; https://github.com/danbri/factoidal/issues/863).
+N_TTLW="${STACK_TURTLE_WRITE:-100000}"
+export STACK_TURTLE_WRITE="$N_TTLW"
 while [ $# -gt 0 ]; do
   case "$1" in
     --route) ROUTE="$2"; shift 2 ;;
@@ -285,6 +289,14 @@ xfail_issue() { # xfail_issue <case>; prints the issue URL or nothing
     regex-replace-groups)
       case "${2:-}" in canary|wcanary) echo "https://github.com/danbri/factoidal/issues/816" ;; esac ;;
     rdfc-bnode-chain) echo "https://github.com/danbri/factoidal/issues/817" ;;
+    # The Turtle writer (TurtleSerialize.countRuns) takes a frame for each IRI
+    # occurrence of the graph: 100,000 triples overflow the three small-stack
+    # routes and run on the 1 GB default stack of the native route. The
+    # command-line rows exist in the native and the canary route only.
+    turtle-write-one-node|turtle-write-subjects)
+      case "${2:-}" in canary|wcanary|wasm) echo "https://github.com/danbri/factoidal/issues/863" ;; esac ;;
+    turtle-write-cli-one-node|turtle-write-cli-subjects)
+      case "${2:-}" in canary) echo "https://github.com/danbri/factoidal/issues/863" ;; esac ;;
     # (`sparql-collection` was listed in wcanary for
     # https://github.com/danbri/factoidal/issues/818 until 2026-10-13, when
     # ggpLabeledBnodes, the INSERT DATA blank node label check and the last
@@ -382,6 +394,8 @@ CASES=(
   "turtle-predicates   parseToDatasetJson   args-turtle-predicates.json"
   "nquads-one-subject  parseToDatasetJson   args-nquads.json"
   "nquads-long-literal parseToDatasetJson   args-nquads-long-literal.json"
+  "turtle-write-one-node serializeTurtle    args-turtle-write-one-node.json"
+  "turtle-write-subjects serializeTurtle    args-turtle-write-subjects.json"
   "sparql-union        queryDataset         args-sparql-union.json"
   "sparql-nested       queryDataset         args-sparql-nested.json"
   "sparql-order-limit  queryDataset         args-sparql-order-limit.json"
@@ -480,6 +494,52 @@ if [ "$ROUTE" = wasm ] || [ "$ROUTE" = both ]; then
     done
   else
     wasm_missing wasm
+  fi
+fi
+
+# ------------------------- Turtle writer, command line (issue 863)
+# `l4factoidal parse FILE --format nquads --out turtle` on the two fixtures of
+# gen_cases.py (N_TTLW triples each: one subject with N objects, and N subjects),
+# then `l4factoidal parse` of the Turtle it wrote: the triple count must be N
+# again. The same writer serves the op `serializeTurtle`, which the rows
+# turtle-write-one-node and turtle-write-subjects above run in the wasm routes too.
+# https://github.com/danbri/factoidal/issues/863
+L4F_BIN="$LEAN_DIR/.lake/build/bin/l4factoidal"
+turtle_write_cli_case() { # turtle_write_cli_case <route> <shape> <prefix...>
+  local route="$1" shape="$2"; shift 2
+  local name="turtle-write-cli-$shape"
+  local src="$FIXTURES/turtle-write-$shape-$N_TTLW.nq" out="$FIXTURES/$name.ttl" err="$FIXTURES/$name.err"
+  local rc back=""
+  if [ ! -x "$L4F_BIN" ]; then
+    record "$route" "$name" 1 "$L4F_BIN does not exist (lake build l4factoidal)"
+    return
+  fi
+  run_capped "$TIMEOUT" "$@" "$L4F_BIN" parse "$src" --format nquads --out turtle >"$out" 2>"$err"; rc=$?
+  if [ "$rc" -eq 0 ]; then
+    back="$(run_capped "$TIMEOUT" "$@" "$L4F_BIN" parse "$out" --format turtle 2>>"$err")"; rc=$?
+  fi
+  rm -f "$out"
+  if grep -q 'Stack overflow' "$err"; then
+    score_case "$route" "$name" overflow "STACK OVERFLOW (exit $rc)"
+  elif [ "$rc" -ne 0 ] || [ "$back" != "$N_TTLW" ]; then
+    score_case "$route" "$name" error "exit $rc; triples read back: ${back:-none} (expected $N_TTLW); $(tail -1 "$err" | head -c 120)"
+  else
+    score_case "$route" "$name" ran "$N_TTLW triples written as Turtle and read back"
+  fi
+  rm -f "$err"
+}
+if [ "$ROUTE" = native ] || [ "$ROUTE" = both ]; then
+  echo
+  echo "=== Turtle writer, command line, native default stack"
+  for shape in one-node subjects; do turtle_write_cli_case native "$shape" env; done
+fi
+if [ "$CANARY" = 1 ]; then
+  echo
+  echo "=== Turtle writer, command line, native under ${CANARY_VAR}=${CANARY_KB}"
+  if [ "$CONTROL_OK" = 1 ]; then
+    for shape in one-node subjects; do turtle_write_cli_case canary "$shape" "${CANARY_PREFIX[@]}"; done
+  else
+    record canary turtle-write-cli 1 "NOT SCORED: the canary control did not pass"
   fi
 fi
 
