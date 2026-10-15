@@ -168,6 +168,77 @@ inductive Term where
   | tripleTerm (s : Subject) (p : WfIri) (o : Term)
   deriving DecidableEq, Hashable, Repr
 
+/-! ### The hash of a term nested deep
+
+`deriving Hashable` made `instHashableTerm.hash`, the SPECIFICATION of the hash of a term:
+the index of the constructor, mixed in turn with the hash of each field (`hash_iri` to
+`hash_tripleTerm` below say so, each by `rfl`). For a triple term the last field is its
+object, so the function takes one native frame for each level of nesting: a triple term
+nested 10,153 levels deep overflowed a stack of 512 KB when a dataset keyed its triple
+(https://github.com/danbri/factoidal/issues/867). `Term.hashDown` takes the part of the hash
+that does not depend on the object from each open triple term, on the way down, and mixes
+the parts into the hash of the innermost term on the way back, with a loop and no frame.
+`Term.hashFast_eq` proves it equal to the derived function for every term, so every hash
+value is the value that the derived function gave, and the order in which a hash map lists
+its keys does not change.
+
+The loop is installed as an instance of higher priority, `instHashableTermLoop`, and not
+with a `@[csimp]` theorem. The compiler inlines an instance before it replaces the constants
+of a `@[csimp]` theorem, so after such a theorem a hash map that hashed its keys with
+`instHashableTerm` still called the recursive function (measured 2026-10-15 in the emitted C
+of `FastGraph`, which called `instHashableTerm.hash` and called `Term.joinKeyFast`, the
+`@[csimp]` replacement of `Term.joinKey`, as it should). Every `Hashable Term` that is
+resolved after the instance is the loop, and so is the hash of every structure that
+derives `Hashable` after it (`Triple`). -/
+
+theorem hash_iri (i : WfIri) : hash (Term.iri i) = mixHash 0 (hash i) := rfl
+
+theorem hash_bnode (b : BNodeId) : hash (Term.bnode b) = mixHash 1 (hash b) := rfl
+
+theorem hash_literal (l : WfLiteral) : hash (Term.literal l) = mixHash 2 (hash l) := rfl
+
+theorem hash_tripleTerm (s : Subject) (p : WfIri) (o : Term) :
+    hash (Term.tripleTerm s p o) = mixHash (mixHash (mixHash 3 (hash s)) (hash p)) (hash o) := rfl
+
+/-- The part of the hash of a triple term that does not depend on its object. -/
+def hashTripleOpen (s : Subject) (p : WfIri) : UInt64 := mixHash (mixHash 3 (hash s)) (hash p)
+
+/-- The parts of the open triple terms, innermost first, mixed into the hash of the term
+below them, innermost first. Every call of this function on itself is a tail call. -/
+def hashClose : List UInt64 → UInt64 → UInt64
+  | [], h => h
+  | q :: qs, h => hashClose qs (mixHash q h)
+
+/-- The hash of a term, with the parts of the open triple terms in a list. -/
+def Term.hashDown : List UInt64 → Term → UInt64
+  | opens, .tripleTerm s p o => Term.hashDown (hashTripleOpen s p :: opens) o
+  | opens, .iri i => hashClose opens (mixHash 0 (hash i))
+  | opens, .bnode b => hashClose opens (mixHash 1 (hash b))
+  | opens, .literal l => hashClose opens (mixHash 2 (hash l))
+
+theorem Term.hashDown_eq : ∀ (t : Term) (opens : List UInt64),
+    Term.hashDown opens t = hashClose opens (hash t)
+  | .tripleTerm s p o, opens => by
+      rw [Term.hashDown, Term.hashDown_eq o, hash_tripleTerm]
+      rfl
+  | .iri i, opens => rfl
+  | .bnode b, opens => rfl
+  | .literal l, opens => rfl
+
+/-- The hash of a term as the loop. -/
+def Term.hashFast (t : Term) : UInt64 := Term.hashDown [] t
+
+/-- The loop gives the value of the derived function, for every term. -/
+theorem Term.hashFast_eq (t : Term) : Term.hashFast t = hash t := by
+  rw [Term.hashFast, Term.hashDown_eq]
+  rfl
+
+/-- The hash of a term for every use after this line is the loop. -/
+instance (priority := high) instHashableTermLoop : Hashable Term := ⟨Term.hashFast⟩
+
+#print axioms Term.hashDown_eq
+#print axioms Term.hashFast_eq
+
 /-! ## XSD term-algebra constants -/
 
 def xsdString  : WfIri := ⟨"http://www.w3.org/2001/XMLSchema#string", rfl⟩
@@ -548,6 +619,47 @@ def Term.joinKey : Term → Term
   | .literal l => .literal ⟨l.val.joinKey, by
       rw [literalWf_joinKey]; exact l.property⟩
   | .tripleTerm s p o => .tripleTerm s p o.joinKey
+
+/-! ### The join key of a term nested deep
+
+`Term.joinKey` above is the SPECIFICATION. It takes one native frame for each level of
+triple-term nesting: a dataset keys each triple by the join key of its object
+(https://github.com/danbri/factoidal/issues/867). `Term.joinKeyLoop` keeps the subject and
+the predicate of each open triple term in a list and wraps the join key of the innermost term
+in them, innermost first. `Term.joinKey_eq_fast` proves it equal and `@[csimp]` makes every
+caller compiled after it run the loop. -/
+
+/-- A term inside the triple terms of a list, the innermost first. -/
+def wrapTripleTerms : List (Subject × WfIri) → Term → Term
+  | [], t => t
+  | (s, p) :: frames, t => wrapTripleTerms frames (.tripleTerm s p t)
+
+/-- The join key of a term, with the open triple terms in a list. A term that is not a
+triple term is keyed by the specification, which does not recurse on it. -/
+def Term.joinKeyLoop : List (Subject × WfIri) → Term → Term
+  | frames, .tripleTerm s p o => Term.joinKeyLoop ((s, p) :: frames) o
+  | frames, .iri i => wrapTripleTerms frames (Term.joinKey (.iri i))
+  | frames, .bnode b => wrapTripleTerms frames (Term.joinKey (.bnode b))
+  | frames, .literal l => wrapTripleTerms frames (Term.joinKey (.literal l))
+
+theorem Term.joinKeyLoop_eq : ∀ (t : Term) (frames : List (Subject × WfIri)),
+    Term.joinKeyLoop frames t = wrapTripleTerms frames (Term.joinKey t)
+  | .tripleTerm s p o, frames => by
+      rw [Term.joinKeyLoop, Term.joinKeyLoop_eq o, Term.joinKey, wrapTripleTerms]
+  | .iri i, frames => by rw [Term.joinKeyLoop]
+  | .bnode b, frames => by rw [Term.joinKeyLoop]
+  | .literal l, frames => by rw [Term.joinKeyLoop]
+
+/-- `Term.joinKey` as the loop. -/
+def Term.joinKeyFast (t : Term) : Term := Term.joinKeyLoop [] t
+
+/-- Any join key compiled after this line is computed by the loop. -/
+@[csimp] theorem Term.joinKey_eq_fast : @Term.joinKey = @Term.joinKeyFast := by
+  funext t
+  rw [Term.joinKeyFast, Term.joinKeyLoop_eq, wrapTripleTerms]
+
+#print axioms Term.joinKeyLoop_eq
+#print axioms Term.joinKey_eq_fast
 
 /-- eqb-equal terms have identical join keys: the theorem the hash
 join's bucket lookup rests on. -/

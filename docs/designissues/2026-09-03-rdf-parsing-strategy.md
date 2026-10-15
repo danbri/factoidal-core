@@ -340,6 +340,7 @@ Modules, in data order:
 | 2026-10-10 | a Turtle collection of 100,000 elements overflowed a 512 KB native stack and a browser tab's stack; the largest that ran at 512 KB had about 4,500 elements (4,531 overflowed) | `readCollectionRest` (F* `parse_collection_rest`) made one recursive call per element | `readCollectionCells`, a tail call per element, and `linkCollectionCells` at the `)`, proved equal (2.1, 2.3). 100,000 elements run at 512 KB. Outputs of `l4factoidal parse --out nquads`, strict and `--lenient`, on the 1,022 `.ttl` and `.trig` files of the W3C RDF 1.1 and 1.2 suites: 2,044 of 2,044 byte-identical to the binary before (https://github.com/danbri/factoidal/issues/678) |
 | 2026-10-10 | one Turtle object list of 25,000 objects took 10.33 s, and 100,000 gave no result in 120 s; one statement of 10,000 predicates overflowed a 512 KB native stack, a Node `--stack-size=512` stack and Node's default stack | `readObjectList` (F* `parse_object_list_rev`) built its result with `acc ++ ...`; `readPredicateObjectList` (F* `parse_predicate_object_list_rev`) made one recursive call per `;` group | `readObjectListRev`, a reversed list and a tail call per object, and `readPredicateObjectList` as one loop over the groups, proved equal to the readable forms (2.1, 2.3). 25,000 objects 0.058 s, 100,000 objects 0.403 s; 10,000 groups run at 512 KB natively and in Node under `--stack-size=512`. `tests/stack/run.sh --canary`: 41 pass, 0 fail (out of 41) before, with three expected failures, and after, with none. Outputs of `l4factoidal parse --out nquads`, strict and `--lenient`, on the 1,022 `.ttl` and `.trig` files of the W3C RDF 1.1 and 1.2 suites: 2,044 of 2,044 byte-identical to the binary before; and the 239 RDF 1.2 files again in the 1.2 mode (`--format turtle12`, `trig12`), 478 of 478 byte-identical. With `turtle` and `trig` the CLI reads the RDF 1.2 files in the 1.1 mode, where 51 of the 239 parse and annotations are refused; in the 1.2 mode 193 parse (https://github.com/danbri/factoidal/issues/754) |
 | 2026-10-15 | a triple term nested 300,000 deep could not be read (2,536 levels ran under a 512 KB native stack and 2,537 overflowed; Node overflowed too); the text of the term in the answer of a parse took 0.41 s for 20,000 levels and more than 120 s for 300,000; 64,000 `@prefix` lines and 64,000 triples of three prefixed names took 78.8 s of CPU time; `l4sbm11 export` with 16,000 `--prefix` arguments took 3.4 s | `readTripleTerm` and `readTtObject` called each other (two frames for each level); `Term.toCanonicalNTriples` copied the text of the levels below at each level; `lookupPrefix` scanned the list of the bindings; `Sink.bodyPush` scanned the table for each IRI; `parseOpts` appended each prefix to the end of a list | `readTripleTermDown` and `closeTripleTerms`, `Term.toCanonicalNTriplesLoop`, `TurtleState.prefixIndex` with the proof `prefixIndex_ok`, `Abbreviator` in the stream writer, `prefixesRev`; all proved equal to the specifications (2.1, 2.3, 3g). 300,000 levels: 1.3 s natively at 512 KB, 1.6 s in Node at `--stack-size=512`; 64,000 prefixes 1.11 s; 16,000 `--prefix` arguments 0.15 s. Byte identity with the binary before: `l4factoidal parse` in three modes on 2,637 runs of the W3C and `tests/sbm11/syntax` files, 12,000 random documents in four modes (`tools/turtle-reader-differential.py`), `l4sbm11 export` 14,463 runs on W3C files and 6,400 on random datasets with tables of up to 1,200 prefixes (https://github.com/danbri/factoidal/issues/865) |
+| 2026-10-15 | a triple term nested 300,000 deep could not be read from N-Triples, N-Quads or TriG text (4,510 levels ran under a 512 KB native stack and 4,511 overflowed; the wasm module overflowed too), and its N-Triples text took 86.6 s (90.7 s in the answer of a CONSTRUCT query) | `readObject12` called itself once for each level; the hash that `deriving Hashable` made for `Term`, `Term.joinKey` and `Term.lowerTags` took a frame for each level; `Term.toNTriples` took a frame and copied the text of the levels below at each level | `readObject12Down` and `closeObject12`, `Term.hashFast` (the instance `instHashableTermLoop`), `Term.joinKeyLoop`, `Term.lowerTagsLoop`, `Term.toNTriplesLoop`; all proved equal to the specifications (3g). 300,000 levels: 1.3 to 1.6 s natively, 1.8 to 2.3 s in Node, the text 0.57 s. Byte identity with the binary before: 26,205 runs of `l4factoidal parse` and 12,170 of the wasm operations on the W3C files, 24,000 random documents (132,000 comparisons: `tools/ntriples-reader-differential.py`, `tools/turtle-reader-differential.py`), 9,248 exports and 1,299 round trips through the store (https://github.com/danbri/factoidal/issues/867) |
 | 2026-10-13 | the strict `l4factoidal parse FILE --out nquads` peaked at 33 to 35 bytes per input byte (400,000 N-Triples: 1,186 MB; Serd 2 MB, Oxigraph 23 MB) | the whole file as one `String`, the N-Triples `List Char` of the document, the whole dataset and the whole N-Quads `String` before the first line was written | `StrictFeed.lean` (section 3b): 64 KiB chunks, each chunk's lines written and dropped; 24 to 26 MB at every size; the count keeps the set of distinct triples only. Byte identity: `tools/strict-parse-differential.sh` (3b.4); Turtle chunk equality proved (`drainRun_eq`) |
 | 2026-09-02/03 | UK Parliament pack 6,134 s | scanner reversed the whole candidate at every line end; a 134 MB, 4,211-line statement group | seven-character `head` + proof; pack 254 s |
 | open | 22.9 s user + 21.7 s system and 5.39 GB resident to parse 134 MB (measured 2026-09-03) | `List Char` representation: about 16 bytes and one allocation per character, built twice (scanner `currentRev`, then `text.toList` for the grammar) | a `String`/`ByteArray`-position lexer with its own equality proof against 2.1 |
@@ -1094,6 +1095,144 @@ exports, were compared with the new ones.
   tests/hub/*_test.mjs`: 447 pass, 0 fail (out of 447).
 - `tests/known-defects/run.sh` in the CI layout (one directory with `factoidal`,
   `owl_runner`, `l4factoidal` and `l4w3c`): 24 XFAIL, 0 XPASS, 0 ERROR (out of 24).
+
+**The N-Triples and N-Quads 1.2 readers, the hash and the join key of a term, the N-Triples text of a term and the language tags of a term, with a deeply nested triple term (2026-10-15).**
+Tracking: https://github.com/danbri/factoidal/issues/867. The report of issue 865 named three functions that
+a triple term nested deep still reached after the Turtle reader became a loop. A row added in this change for the
+reader of a file found a fourth, `Term.lowerTags`.
+
+*Before this change* (commit 724fdd79, native, `LEAN_STACK_SIZE_KB=512`): `parseToDatasetJson` with the format
+`nt12` or `nq12` read a triple term nested 4,510 deep and overflowed at 4,511 (`readObject12`). With `trig12` and
+the term in a graph block 10,152 levels ran and 10,153 overflowed; gdb names the derived hash of a term,
+`instHashableTerm.hash`, in the first frames. `Term.joinKey` is computed first for the same key and recurses in the same way.
+`l4factoidal parse --out nt` wrote 10,151 levels and overflowed at 10,152 (`Term.toNTriples`). The wasm module
+overflowed its call stack on each of the four operations at 300,000 levels, in Node with the default stack and with
+`--stack-size=512`. `l4factoidal parse FILE --format nt12|nq12`, which reads a file in 64 KiB chunks (the reader
+that the shard packers use), overflowed too. At the default stack the batch readers ran 300,000 levels in 2.0 s,
+2.0 s and 1.7 s, and the text of the term did not: 86.6 s for `parse --out nt`, 90.7 s for the answer of a CONSTRUCT
+query, CPU time of 0.280 s, 1.23 s and 8.58 s for 25,000, 50,000 and 100,000 levels (ratios 4.4 and 7.0).
+
+*Causes.*
+
+1. `readObject12` (the object reader of N-Triples and N-Quads in the RDF 1.2 mode) called itself once for each
+   level: a native frame for each.
+2. The hash that `deriving Hashable` made for `Term` mixes the hash of the object last: a frame for each level.
+   A dataset keys each triple by `(subject, predicate, Term.joinKey object)` in a hash map (`FastGraph`,
+   `tripleKey`), so every parse of a dataset hashes the term.
+3. `Term.joinKey` wraps `Term.joinKey` of the object: a frame for each level.
+4. `Term.toNTriples` built `"<<( " ++ s ++ " <p> " ++ text of the object ++ " )>>"`: a frame and a copy of the
+   text so far for each level. `Graph.toNTriples`, `Dataset.toNQuads`, the stream writers and the answer of a
+   CONSTRUCT or DESCRIBE query write the term with it.
+5. `Term.lowerTags` wraps `Term.lowerTags` of the object: a frame for each level. The count consumer of the
+   streamed reader (`countQuad`) and `normalizeDataset` apply it to every term.
+
+*Repair.* Each specification stays in the source as it was. A loop is proved equal to it and the compiler runs the
+loop. The theorems depend on `propext`, `Classical.choice` and `Quot.sound` only.
+
+| Specification | Fast form | Theorems |
+|---|---|---|
+| `readObject12` (NTriples.lean) | `readObject12Loop`: `readObject12Down` reads the subject and the predicate of a level, puts them on a list (`OpenTerms12`) and goes to the object by a tail call, one unit of fuel for a level as the specification takes; `closeObject12` closes the open levels | `readObject12Down_eq` (every list of open levels, every fuel), `closeObject12_error`, `_nil`, `_cons`, `readObject12_open`, `readObject12_eq_loop` (`@[csimp]`) |
+| `Term.toNTriples` (NTriples.lean) | `Term.toNTriplesFast`: a loop with the text so far and a counter of the open levels, as `Term.toCanonicalNTriplesLoop`; the helpers `closersStr`, `appendClosers` and `tripleTermOpen` moved above the specification | `Term.toNTriplesLoop_eq` (the text so far, the specification and the closers; the error of RDF 1.1 mode for a triple term), `toNTriplesClose_eq`, `Term.toNTriplesFast_eq`, `Term.toNTriples_eq_fast` (`@[csimp]`) |
+| `Term.joinKey` (Core.lean) | `Term.joinKeyFast`: the subject and the predicate of each open level on a list, `wrapTripleTerms` at the end | `Term.joinKeyLoop_eq`, `Term.joinKey_eq_fast` (`@[csimp]`) |
+| `Term.lowerTags` (DatasetNormalize.lean) | `Term.lowerTagsFast`: the same shape with `wrapTripleTerms` | `Term.lowerTagsLoop_eq`, `Term.lowerTags_eq_fast` (`@[csimp]`) |
+| the hash of a term (`instHashableTerm.hash`, Core.lean) | `Term.hashFast`: the part of each level that does not depend on its object (`hashTripleOpen`) goes on a list, and `hashClose` mixes the parts into the hash of the innermost term, innermost first | `hash_iri`, `hash_bnode`, `hash_literal` and `hash_tripleTerm` (each by `rfl`: the equations of the derived function), `Term.hashDown_eq`, `Term.hashFast_eq` |
+
+The hash is an instance and not a `@[csimp]` theorem. `Term.hash_eq_fast : @instHashableTerm.hash = @Term.hashFast`
+as a `@[csimp]` theorem elaborated and the build passed, and the emitted C of `FastGraph` still called
+`instHashableTerm_hash`, while the same `tripleKey` called `Term_joinKeyFast` (the replacement of `Term.joinKey`): the
+compiler inlines an instance before it replaces the constants of a `@[csimp]` theorem. The audit could not see it:
+its class `replaced` is read from the theorem and not from the callers. `instHashableTermLoop` (priority `high`)
+is the `Hashable Term` of every module after `Core.lean`, and so of the hash of a `Triple`; the derived instance
+stays as the specification and `Term.hashFast_eq` is stated against it. After the change 12 C files call
+`Term_hashFast` and none outside `Core.c` names `instHashableTerm_hash`. Every hash value is the value the derived
+function gave, so a hash map lists its keys in the order it did before.
+
+| Time and stack, 300,000 levels | before (724fdd79) | after |
+|---|---|---|
+| `parseToDatasetJson`, format `nt12`, `nq12`, native | overflow under 512 KB (4,510 levels ran); 2.0 s at the default stack | 1.3 s and 1.5 s at the default stack; runs under 512 KB |
+| the same in Node | overflow, with the default stack and with `--stack-size=512` | 1.8 s and 2.0 s with the default stack; 2.3 s and 2.2 s at `--stack-size=512` |
+| `parseToDatasetJson`, format `trig12`, the term in a graph block | overflow under 512 KB (10,152 levels ran); 1.7 s at the default stack | 1.6 s at the default stack; runs under 512 KB; Node 2.1 s and 1.9 s |
+| `queryDataset` CONSTRUCT over the term | overflow under 512 KB; 90.7 s at the default stack | 1.4 s at the default stack; runs under 512 KB; Node 2.0 s and 2.3 s |
+| `l4factoidal parse FILE.ttl --format turtle12 --out nt` | overflow under 512 KB (10,151 levels ran); 86.6 s at the default stack | 0.57 s at the default stack; 0.80 s under 512 KB; the output equals the fixture byte for byte |
+| `l4factoidal parse FILE --format nt12`, `nq12` (the reader of a file) | overflow under 512 KB (in `readObject12`); 9.8 s and 9.9 s at the default stack | 8.5 s and 9.2 s at the default stack; 9.1 s and 9.8 s under 512 KB |
+| `ntriples-nest-time`, 25,000, 50,000, 100,000 levels (CPU) | 0.280 s, 1.23 s, 8.58 s (ratios 4.4 and 7.0) | 0.048 s, 0.091 s, 0.208 s (ratios 1.9 and 2.3) |
+| `datasetOpen` of the Turtle text, then a CONSTRUCT through the handle (probe, not a row) | overflow under 512 KB; 198 s at the default stack | 1.4 s under 512 KB; 2.2 s at the default stack |
+| `tests/stack/run.sh --canary` | 155 pass, 0 fail (out of 155) with 16 of the new rows; 18 expected failures, 13 for issue 867 | 161 pass, 0 fail (out of 161); 5 expected failures (issues 816 and 817), none for issue 867 |
+
+The time of the file reader (8 to 10 s for one line of 7.2 MB) is the same before and after the repair. The batch
+reader reads the same line in 1 to 2 s.
+
+*Rows.* `tests/stack/run.sh`: `ntriples-read-triple-term`, `nquads-read-triple-term` and `trig-read-triple-term`
+(the operation `parseToDatasetJson`, formats `nt12`, `nq12`, `trig12`, one triple whose object is a triple term
+nested 300,000 deep) and `construct-triple-term` (the operation `queryDataset`, a CONSTRUCT query over the same
+term) in the native, native canary, wasm canary and wasm routes; `ntriples-write-triple-term` (`l4factoidal parse
+FILE.ttl --format turtle12 --out nt`, compared byte for byte with a fixture) and `ntriples-read-cli-triple-term` and
+`nquads-read-cli-triple-term` (`l4factoidal parse FILE --format nt12|nq12`, the reader of a file) in the native
+route and the native canary. The rows of the operations check the answer: `"count":1` and 300,000 openings of a
+triple term. `tests/stack/lean_scaling.py`: `ntriples-nest-time`, measured at n, 2n and 4n. The commit before the
+repair added the rows as expected failures that name issue 867 (15 rows of `tests/stack/run.sh --canary` and the
+scaling row); the repair flips them to assertions.
+
+*Guards.* `L4Factoidal/Syntax/NestedTermTests.lean` pins results that the specifications gave before the change,
+recorded from the library of commit 724fdd79 by a program that called the functions directly: `readObject12` on 38
+texts at 8 fuels (the message and the offset of each error, such as "triple-term nesting too deep" at the offset
+of the next object); the five readers and writers on 31 documents, in RDF 1.2 and RDF 1.1 mode; `Term.toNTriples`,
+the hash, the join key and the hash of the join key on 14 terms. A guard that compares a specification with its
+`@[csimp]` replacement compares the replacement with itself, so the deep guards compare with texts and values built
+another way (a repeated string, a repeated `mixHash`), and the loop of the hash is compared with the derived
+instance, a different function.
+
+*Same bytes.* The old binaries (commit 724fdd79, the repair of issue 865) were copied aside before the
+change. Standard output, standard error and exit code of the commands, and the answers of the operations, were
+compared with the new ones. Issue 866 changed `l4sbm11` and `l4sbm11-pack`; the last row compares the merged
+tree's two binaries again. The other binaries of the merged tree are the same files as the ones compared.
+
+| Input | Runs | Identical | Different |
+|---|---:|---:|---:|
+| `l4factoidal parse` with no `--out` (the count), `--out nquads`, `ntriples`, `turtle` and `trig`: the W3C Turtle, TriG, N-Triples, N-Quads, RDF/XML, rdf-mt and rdf-semantics files, `tests/sbm11/syntax` and `tests/rdf-mt-generated` (2,733 files, each in the formats of its extension, the RDF 1.2 formats too) | 26,205 | 26,205 (18,488 with exit 0, 23,201,218 bytes of output; 7,717 the same error) | 0 |
+| `l4wasm-cli`: `parseToDatasetJson`, `datasetOpen` then `datasetSerialize` with `nquads` and with `turtle`, and for N-Triples and N-Quads text `queryDataset` with a CONSTRUCT and with a SELECT query, on the same files (2,717 files) | 12,170 | 12,170 | 0 |
+| `tools/ntriples-reader-differential.py`, seeds 21, 22, 23, 4,000 documents each, N-Triples and N-Quads in the RDF 1.2 mode, 40 percent damaged: the count, `--out nquads`, `ntriples`, `turtle`, `trig`, `--lenient`, and the RDF 1.1 reader | 84,000 | 84,000 (46,969 with exit 0; 37,031 the same error) | 0 |
+| `tools/turtle-reader-differential.py`, seeds 11, 12, 13, 4,000 documents each (Turtle and TriG, four ways to read) | 48,000 | 48,000 (20,209 with exit 0; 27,791 the same error) | 0 |
+| `tools/turtle-writer-differential.py`, seeds 101 and 102, 1,500 cases each | 3,568 | 3,568 (913,592,880 bytes) | 0 |
+| `l4sbm11 export` as N-Quads, N-Triples, Turtle and TriG of 2,312 generations that the old `l4sbm11-pack` made from the W3C files and `tests/sbm11/syntax` | 9,248 | 9,248 | 0 |
+| `tests/sbm11/w3c_roundtrip.sh`: store and parser outcome and detail of each test | 1,299 | 1,299 (1,281 pass, 18 expected-fail) | 0 |
+| `tests/trig-pack/compare_w3c.sh`, old against new | 717 | 717 (484 equal hashes, 2 expected, 231 refused) | 0 |
+| the same two checks, `l4sbm11` and `l4sbm11-pack` of the merged tree | 1,299 and 9,248 | 1,299 and 9,248 | 0 |
+
+A parse of 480,000 triples (`gen_multi.py`, 45.9 MB of N-Triples, 55.5 MB of N-Quads), minimum CPU time of 5 runs
+of `l4factoidal parse`: 4.60 s before and 4.39 s after for N-Triples, 6.12 s and 6.33 s for N-Quads. The hash of
+every term in the key of a hash map is now a call of `Term.hashFast`, and the time did not change by more than the
+noise.
+
+*Checks (2026-10-15).*
+
+- `lake build` (default targets) on the tree after the rebase on issue 866: 1,725 jobs, exit 0. A build after the
+  last edit of a docstring: the 965 C files (one hash over all of them) and the six binaries that the checks use
+  are the same as before.
+- `python3 tools/lean-tail-recursion-audit.py --gate`: exit 0 (allow list of 1,372 lines, 4 marked `(a) PENDING`,
+  502 marked `UNTRIAGED`; the audit lists `readObject12`, `Term.toNTriples`, `Term.joinKey` and `Term.lowerTags` as
+  `replaced`, and their four lines are out of the allow list; the line of the derived hash is marked `(s)`). The C of
+  `readObject12Down`, `closeObject12`, `Term.toNTriplesLoop`, `Term.joinKeyLoop`, `Term.lowerTagsLoop`,
+  `wrapTripleTerms`, `Term.hashDown` and `hashClose` has one `goto _start` each and no call of itself.
+  `python3 tools/lean-unbuilt-modules.py --gate`: exit 0, 794 modules, 0 not reached.
+  `tools/lean-hygiene-audit.py --build-log`: clean (6,185 `#print axioms` outputs in the logs of the builds of this
+  change). `tools/test_lean_tail_recursion_audit.py`: 12 pass, 0 fail (out of 12).
+- `tests/sbm11/run.sh`: 2,823 pass, 0 fail, 30 expected-fail (out of 2,853); 555 of them are the quad-source tests
+  of issue 866. `tests/sbm11/census.sh`, `tests/delta-log/run.sh` (46 pass, 0 fail) and `tests/sbm11/threads.sh`
+  (all answers identical): exit 0.
+- `tests/stack/run.sh --canary` (private `STACK_FIXTURES`, with a wasm module built from this tree): 161 pass,
+  0 fail (out of 161); 5 expected failures (issues 816 and 817), none for issue 867. The canary control passed.
+- `tests/stack/lean_scaling.py --only` the new row and `rdfs-closure-wideflat`, `rdfs-closure-dense`,
+  `rdfs-closure-tree`, `trig-parse`, `trig-big-graph`, `turtle-object-list`, `turtle-serialize`, `rdfc-person`,
+  `count-distinct`, `select-star`, `sparql-update-insert`, `query-vs-parse`, `sbm11-export-nq-time`,
+  `sbm11-dump-time`, `turtle-nest-time`, `turtle-read-prefixes` and `owlrl-closure-cl`: 18 pass, 0 fail,
+  0 expected-fail (out of 18).
+- `formal/lean4/Wasm/cli-smoke.sh`: 106 pass, 0 fail, 0 xfail (out of 106).
+  `formal/lean4/Wasm/native-smoke.sh`: 366 pass, 0 fail, 0 xfail (out of 366).
+- `npm test` in `npm/factoidal`: 442 pass, 0 fail, 1 skipped (out of 443). `node --test
+  tests/hub/*_test.mjs`: 447 pass, 0 fail (out of 447).
+- `tests/known-defects/run.sh` in the CI layout (one directory with `factoidal`, `owl_runner`, `l4factoidal` and
+  `l4w3c`): 24 XFAIL, 0 XPASS, 0 ERROR (out of 24).
 
 **Costs open.** The RDF/XML and JSON-LD writers keep the dataset
 (https://github.com/danbri/factoidal/issues/846 and

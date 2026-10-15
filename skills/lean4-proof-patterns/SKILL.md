@@ -508,6 +508,49 @@ Traps met, each a compile:
   goal. `unfold readTtObjectLoop; dsimp only; split` gives the cases.
 * `ST` is a core monad: a structure named `ST` in a scratch file fails with "type expected".
 
+## 9d. The same loop for a reader with no state and for a function that wraps its result; the hash, which a `@[csimp]` theorem does not reach
+
+From https://github.com/danbri/factoidal/issues/867 (`readObject12`, `Term.joinKey`, `Term.lowerTags`,
+the hash of a term, `Term.toNTriples`; 2026-10-15). The proofs are in `L4Factoidal/Syntax/NTriples.lean`,
+`L4Factoidal/RDF/Core.lean` and `L4Factoidal/RDF/DatasetNormalize.lean`. Each compiled at the first
+attempt in a scratch file against the built library, from the shape of 9c.
+
+- **A reader with no state** (`readObject12`) is 9c without the state. `closeObject12 : OpenTerms12 →
+  Object12Result → Object12Result` closes the open levels; `readObject12Down fuel opens pos cs` pushes the
+  subject and the predicate of a level and goes on to the object; `readObject12_open` writes one level of
+  the specification with `closeObject12 [(subj, pred)]`; `readObject12Down_eq` is the induction on the fuel
+  with `unfold readObject12Down; split` on the match against `<<(`. The level takes one unit of fuel, as in the
+  specification, so errors and offsets agree for every fuel.
+- **A function that wraps its result** (`joinKey`, `lowerTags`: `f (.tripleTerm s p o) = .tripleTerm s p (f o)`)
+  keeps `(s, p)` in a list, applies `f` to the first term that is not a triple term, and wraps the result:
+  `wrapTripleTerms frames t`, innermost first. The statement is `loop frames t = wrapTripleTerms frames (spec t)`
+  for every `frames`, by structural induction on `t`; the `@[csimp]` theorem is `funext t; rw [fast, loop_eq,
+  wrapTripleTerms]`. One `wrapTripleTerms` serves every such function.
+- **Write the leaf arms of the loop out.** A loop whose last arm is `| frames, t => ...` overlaps the first arm,
+  and `rw [loop]` leaves the goal `∀ s p o, t = .tripleTerm s p o → False`. Three arms (`.iri`, `.bnode`,
+  `.literal`) give the equations at once. The text loop uses a helper (`toNTriplesClose`) for the three leaves.
+- **An operation that is not associative** (the hash: `mixHash`) cannot be accumulated from the left. The loop
+  pushes the part of each level that does not depend on the object (`hashTripleOpen s p`) on a list on the way
+  down, and `hashClose (q :: qs) h = hashClose qs (mixHash q h)` mixes the parts into the hash of the leaf on the
+  way back. The equations of a derived `Hashable` instance for a type that is not nested hold by `rfl`
+  (`hash_tripleTerm : hash (.tripleTerm s p o) = mixHash (mixHash (mixHash 3 (hash s)) (hash p)) (hash o)`),
+  because `deriving Hashable` makes a structural function; then `rw [hashDown, hashDown_eq, hash_tripleTerm]; rfl`.
+- **A `@[csimp]` theorem does not reach a function that callers use through an instance.** The first version of
+  the hash loop was `@[csimp] theorem Term.hash_eq_fast : @instHashableTerm.hash = @Term.hashFast`. It elaborated
+  and `lake build` passed, and the audit lists the left side of every `@[csimp]` theorem as `replaced`. The emitted C of
+  `FastGraph.c` still called `instHashableTerm_hash`, and called `Term_joinKeyFast` (the `@[csimp]` replacement of
+  `Term.joinKey`) a few lines above it: the compiler inlines the instance, and the replacement of constants runs
+  before the inlining. It was found by reading the C of a
+  caller, three minutes into the first full build, which was then stopped; the row `trig-read-triple-term`
+  would have overflowed after the build. Rules: after a `@[csimp]` theorem for a function that callers reach through a class
+  (`Hashable`, `BEq`, `Ord`, `ToString`), `grep` the emitted C of one caller in `.lake/build/ir` for the replaced
+  symbol; for a derived instance, install the loop as `instance (priority := high) instHashableTermLoop :
+  Hashable Term := ⟨Term.hashFast⟩` and keep the derived instance as the specification; `Term.hashFast_eq` is
+  stated against it. The audit (`tools/lean-tail-recursion-audit.py`) cannot see this mistake: it reads
+  `replaced` from the theorem and not from the callers.
+- **A `#guard` of a loop against a derived instance compares two functions.** `@Hashable.hash Term instHashableTerm
+  t` names the derived function, which stays compiled; the guard is not the self-comparison of section 9b.
+
 ## 10. Gate before commit
 
 - `#print axioms <thm>` at the end of the module: only `propext`,

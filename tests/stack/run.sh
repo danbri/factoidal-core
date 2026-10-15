@@ -347,18 +347,16 @@ xfail_issue() { # xfail_issue <case>; prints the issue URL or nothing
     regex-replace-groups)
       case "${2:-}" in canary|wcanary) echo "https://github.com/danbri/factoidal/issues/816" ;; esac ;;
     rdfc-bnode-chain) echo "https://github.com/danbri/factoidal/issues/817" ;;
-    # Triple terms nested 300,000 deep in the N-Triples, N-Quads and TriG readers and in
-    # the N-Triples text of a CONSTRUCT answer (measured 2026-10-15 on 724fdd79, native):
-    # readObject12 takes a native frame for each level (nt12 and nq12: 4,510 levels ran
-    # under 512 KB and 4,511 overflowed); Term.joinKey and the derived hash of a term, which
-    # key the triple in a dataset, take one for each level (trig12 with the term in a graph
-    # block: 10,152 ran and 10,153 overflowed); Term.toNTriples takes one for each level
-    # (10,151 ran and 10,152 overflowed, ntriples-write-triple-term) and copies the text
-    # built so far at each level (86.6 s at the default stack for 300,000 levels in
-    # ntriples-write-triple-term, 90.7 s in construct-triple-term).
-    ntriples-read-triple-term|nquads-read-triple-term|trig-read-triple-term|construct-triple-term|ntriples-write-triple-term|ntriples-read-cli-triple-term|nquads-read-cli-triple-term)
-      # the native route runs on the 1 GB stack and these cases run there
-      case "${2:-}" in canary|wcanary|wasm) echo "https://github.com/danbri/factoidal/issues/867" ;; esac ;;
+    # (`ntriples-read-triple-term`, `nquads-read-triple-term`, `trig-read-triple-term`,
+    # `construct-triple-term`, `ntriples-write-triple-term`, `ntriples-read-cli-triple-term` and
+    # `nquads-read-cli-triple-term` were listed for
+    # https://github.com/danbri/factoidal/issues/867 until 2026-10-15, when readObject12 (the
+    # term reader of N-Triples and N-Quads 1.2), the hash of a term and Term.joinKey (the key
+    # of a triple in a dataset), Term.toNTriples (the N-Triples text of a term) and
+    # Term.lowerTags (applied by the streamed reader) became loops. Before them nt12 and nq12
+    # ran at 4,510 levels under 512 KB and overflowed at 4,511, trig12 at 10,152 and 10,153,
+    # the N-Triples text at 10,151 and 10,152, and the text of 300,000 levels took 86.6 s at
+    # the default stack (90.7 s in the CONSTRUCT row). 300,000 levels run in every route now.)
     # (`turtle-read-triple-term` was listed for
     # https://github.com/danbri/factoidal/issues/865 until 2026-10-15, when
     # readTtObject and readTripleTerm became a loop with the open triple terms in a
@@ -470,12 +468,6 @@ wasm_missing() { # wasm_missing <route>
 
 # `callseq` as the op of a row: the file holds op/args pairs, run in order in one
 # process (a dataset handle lives in the process).
-#
-# A fourth field `small` marks a row for the routes with a small stack (the native
-# canary, the wasm canary, the wasm route): the unrepaired code takes quadratic time on
-# it (90.7 s on the 1 GB native stack, and TIMEOUT is 120 s), which would make the native
-# route fail for a reason other than the stack (issue 867: construct-triple-term writes
-# the answer with Term.toNTriples; lean_scaling.py measures the time).
 CASES=(
   "xml-entities        parseToDatasetJson   args-xml.json"
   "xml-entities-attr   parseToDatasetJson   args-xml-attr.json"
@@ -507,7 +499,7 @@ CASES=(
   "ntriples-read-triple-term parseToDatasetJson args-ntriples-read-triple-term.json"
   "nquads-read-triple-term parseToDatasetJson args-nquads-read-triple-term.json"
   "trig-read-triple-term parseToDatasetJson args-trig-read-triple-term.json"
-  "construct-triple-term queryDataset args-construct-triple-term.json small"
+  "construct-triple-term queryDataset args-construct-triple-term.json"
 )
 
 if [ "$ROUTE" = native ] || [ "$ROUTE" = both ]; then
@@ -520,7 +512,6 @@ if [ "$ROUTE" = native ] || [ "$ROUTE" = both ]; then
   for row in "${CASES[@]}"; do
     # shellcheck disable=SC2086
     set -- $row
-    [ "${4:-}" = small ] && continue
     native_case "$1" "$2" "$3"
   done
 fi
@@ -698,9 +689,9 @@ fi
 # line break that the command adds (7,200,026 bytes). Term.toNTriples took a native frame for
 # each level and copied the text built so far at each level: 86.6 s CPU at the default stack
 # for 300,000 levels, and a stack overflow under the canary budget (measured 2026-10-15 on
-# 724fdd79). TIMEOUT is 120 s, so only the canary runs this row until the repair;
-# lean_scaling.py measures the time (ntriples-nest-time). The same writer serves the row
-# construct-triple-term above, which runs in the wasm routes too.
+# 724fdd79); it is a loop now and the row takes 1.2 s. lean_scaling.py measures the time
+# (ntriples-nest-time). The same writer serves the row construct-triple-term above, which
+# runs in the wasm routes too.
 # https://github.com/danbri/factoidal/issues/867
 ntriples_write_case() { # ntriples_write_case <route> <prefix...>
   local route="$1"; shift
@@ -728,8 +719,9 @@ ntriples_write_case() { # ntriples_write_case <route> <prefix...>
 # `l4factoidal parse FILE --format nt12|nq12`: the file is read in 64 KiB chunks by the streamed
 # reader that the shard packers use (the rows above run the batch reader), and the command
 # prints the number of triples: 1. The line of the file is 7,200,025 bytes. The unrepaired
-# reader overflowed under the canary budget, and took 10.1 s at the default stack, where the
-# batch reader takes 2 s (measured 2026-10-15 on 724fdd79).
+# reader overflowed under the canary budget (in readObject12, and then in Term.lowerTags,
+# which the count consumer applies to every term). The time at the default stack is 9 to 10 s
+# before and after the repair (measured 2026-10-15).
 # https://github.com/danbri/factoidal/issues/867
 cli_read_case() { # cli_read_case <route> <case> <file> <format> <prefix...>
   local route="$1" name="$2" file="$3" fmt="$4"; shift 4
@@ -770,6 +762,11 @@ if [ "$CANARY" = 1 ]; then
   fi
 fi
 
+if [ "$ROUTE" = native ] || [ "$ROUTE" = both ]; then
+  echo
+  echo "=== N-Triples text of a triple term nested $N_TERM deep, command line, native default stack"
+  ntriples_write_case native env
+fi
 if [ "$CANARY" = 1 ]; then
   echo
   echo "=== N-Triples text of a triple term nested $N_TERM deep, command line, native under ${CANARY_VAR}=${CANARY_KB}"

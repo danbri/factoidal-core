@@ -78,6 +78,44 @@ def Term.lowerTags : Term → Term
   | .literal l => .literal l.lowerTag
   | .tripleTerm s p o => .tripleTerm s p o.lowerTags
 
+/-! ### The language tags of a term nested deep
+
+`Term.lowerTags` above is the SPECIFICATION. It takes one native frame for each level of
+triple-term nesting. The count consumer of `l4factoidal parse FILE` and the packers that
+stream a file apply it to every term they read, and a triple term nested 300,000 deep
+overflowed a stack of 512 KB there
+(https://github.com/danbri/factoidal/issues/867). `Term.lowerTagsLoop` keeps the subject and the
+predicate of each open triple term in a list and wraps the result in them
+(`wrapTripleTerms`, `RDF/Core.lean`), as `Term.joinKeyLoop` does. `Term.lowerTags_eq_fast`
+proves it equal and `@[csimp]` makes every caller compiled after it run the loop. -/
+
+/-- `Term.lowerTags`, with the open triple terms in a list. -/
+def Term.lowerTagsLoop : List (Subject × WfIri) → Term → Term
+  | frames, .tripleTerm s p o => Term.lowerTagsLoop ((s, p) :: frames) o
+  | frames, .iri i => wrapTripleTerms frames (.iri i)
+  | frames, .bnode b => wrapTripleTerms frames (.bnode b)
+  | frames, .literal l => wrapTripleTerms frames (.literal l.lowerTag)
+
+theorem Term.lowerTagsLoop_eq : ∀ (t : Term) (frames : List (Subject × WfIri)),
+    Term.lowerTagsLoop frames t = wrapTripleTerms frames (Term.lowerTags t)
+  | .tripleTerm s p o, frames => by
+      rw [Term.lowerTagsLoop, Term.lowerTagsLoop_eq o, Term.lowerTags, wrapTripleTerms]
+  | .iri i, frames => by rw [Term.lowerTagsLoop, Term.lowerTags]
+  | .bnode b, frames => by rw [Term.lowerTagsLoop, Term.lowerTags]
+  | .literal l, frames => by rw [Term.lowerTagsLoop, Term.lowerTags]
+
+/-- `Term.lowerTags` as the loop. -/
+def Term.lowerTagsFast (t : Term) : Term := Term.lowerTagsLoop [] t
+
+/-- Any call of the specification compiled after this line runs the loop: the count consumer of
+the streamed reader, `normalizeDataset`, `Triple.lowerTags`. -/
+@[csimp] theorem Term.lowerTags_eq_fast : @Term.lowerTags = @Term.lowerTagsFast := by
+  funext t
+  rw [Term.lowerTagsFast, Term.lowerTagsLoop_eq, wrapTripleTerms]
+
+#print axioms Term.lowerTagsLoop_eq
+#print axioms Term.lowerTags_eq_fast
+
 def Triple.lowerTags (t : Triple) : Triple := { t with o := t.o.lowerTags }
 
 /-- The quads of a dataset in the order `Dataset.toCanonicalNQuads` writes

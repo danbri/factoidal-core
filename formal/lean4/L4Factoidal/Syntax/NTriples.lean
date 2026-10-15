@@ -298,6 +298,174 @@ def readObject12 : Nat → Nat → List Char → Except ParseError (Term × Nat 
       | _ =>
           .error ⟨"expected object (IRIREF, BLANK_NODE_LABEL, literal, or triple term)", pos⟩
 
+/-! ### Triple terms nested deep: the loop
+
+The definition of `readObject12` above is the SPECIFICATION. It takes one native frame
+for each level of nesting, so a triple term nested more than a few thousand levels deep
+overflowed the stack (4,510 levels ran under a 512 KB stack and 4,511 overflowed; the
+wasm module overflowed its call stack at 300,000 levels). The parser runs the loop that
+follows, `readObject12Down`, which keeps the open triple terms in a list.
+`readObject12_eq_loop` proves it equal to the specification for every fuel, and
+`@[csimp]` makes every caller defined after it run the loop
+(https://github.com/danbri/factoidal/issues/867). -/
+
+/-- The result of reading an object. -/
+abbrev Object12Result := Except ParseError (Term × Nat × List Char)
+
+/-- The triple terms that are open while the loop reads the object of the innermost one:
+the subject and the predicate of each, innermost first. A triple term nested n deep has n
+entries here and no native frame. -/
+abbrev OpenTerms12 := List (Subject × WfIri)
+
+/-- What the specification does with the result of an object: the innermost open triple
+term takes it as its object, skips the white space, reads its closing `)>>` and is itself
+the result of the object of the next one out, and so on. An error ends them all, and the
+result of the last one is the result. Every call of this function on itself is a tail
+call. -/
+def closeObject12 : OpenTerms12 → Object12Result → Object12Result
+  | _, .error e => .error e
+  | [], .ok r => .ok r
+  | (subj, pred) :: opens, .ok (obj, p6, r6) =>
+      let (p7, r7) := skipWs p6 r6
+      match r7 with
+      | ')' :: '>' :: '>' :: r8 => closeObject12 opens (.ok (.tripleTerm subj pred obj, p7 + 3, r8))
+      | _ => .error ⟨"expected ')>>'", p7⟩
+
+/-- `readObject12` with the open triple terms in a list. A triple term reads its subject and
+its predicate, takes one unit of fuel as the specification does, and goes on to its object
+by a tail call; an object that is not a triple term is read by the specification, which does
+not recurse on it, and `closeObject12` closes the open triple terms. -/
+def readObject12Down : Nat → OpenTerms12 → Nat → List Char → Object12Result
+  | 0, _, pos, _ => .error ⟨"triple-term nesting too deep", pos⟩
+  | fuel' + 1, opens, pos, cs =>
+      match cs with
+      | '<' :: '<' :: '(' :: rest =>
+          let (p1, r1) := skipWs (pos + 3) rest
+          match readSubject p1 r1 with
+          | .error e => .error e
+          | .ok (subj, p2, r2) =>
+              let (p3, r3) := skipWs p2 r2
+              match readPredicate p3 r3 with
+              | .error e => .error e
+              | .ok (pred, p4, r4) =>
+                  let (p5, r5) := skipWs p4 r4
+                  readObject12Down fuel' ((subj, pred) :: opens) p5 r5
+      | _ => closeObject12 opens (readObject12 (fuel' + 1) pos cs)
+
+theorem closeObject12_error (opens : OpenTerms12) (e : ParseError) :
+    closeObject12 opens (.error e) = .error e := by
+  cases opens <;> rfl
+
+theorem closeObject12_nil (r : Object12Result) : closeObject12 [] r = r := by
+  cases r <;> rfl
+
+/-- The innermost open triple term closes first, and the others close what it returns. -/
+theorem closeObject12_cons (fr : Subject × WfIri) (opens : OpenTerms12) (r : Object12Result) :
+    closeObject12 (fr :: opens) r = closeObject12 opens (closeObject12 [fr] r) := by
+  rcases fr with ⟨subj, pred⟩
+  cases r with
+  | error e => simp [closeObject12_error]
+  | ok x =>
+    rcases x with ⟨obj, p6, r6⟩
+    simp only [closeObject12]
+    generalize skipWs p6 r6 = w
+    rcases w with ⟨p7, r7⟩
+    dsimp only
+    split <;> simp [closeObject12]
+
+/-- The specification of one nesting level with fuel, its closing step written with
+`closeObject12`. -/
+theorem readObject12_open (f pos : Nat) (rest : List Char) :
+    readObject12 (f + 1) pos ('<' :: '<' :: '(' :: rest) =
+      (let (p1, r1) := skipWs (pos + 3) rest
+       match readSubject p1 r1 with
+       | .error e => .error e
+       | .ok (subj, p2, r2) =>
+           let (p3, r3) := skipWs p2 r2
+           match readPredicate p3 r3 with
+           | .error e => .error e
+           | .ok (pred, p4, r4) =>
+               let (p5, r5) := skipWs p4 r4
+               closeObject12 [(subj, pred)] (readObject12 f p5 r5)) := by
+  rw [readObject12]
+  generalize skipWs (pos + 3) rest = w1
+  rcases w1 with ⟨p1, r1⟩
+  dsimp only
+  cases readSubject p1 r1 with
+  | error e => rfl
+  | ok x =>
+    rcases x with ⟨subj, p2, r2⟩
+    dsimp only
+    generalize skipWs p2 r2 = w3
+    rcases w3 with ⟨p3, r3⟩
+    dsimp only
+    cases readPredicate p3 r3 with
+    | error e => rfl
+    | ok y =>
+      rcases y with ⟨pred, p4, r4⟩
+      dsimp only
+      generalize skipWs p4 r4 = w5
+      rcases w5 with ⟨p5, r5⟩
+      dsimp only
+      cases readObject12 f p5 r5 with
+      | error e => rfl
+      | ok z =>
+        rcases z with ⟨obj, p6, r6⟩
+        simp only [closeObject12]
+        all_goals
+          generalize skipWs p6 r6 = w
+          rcases w with ⟨p7, r7⟩
+          dsimp only
+          split <;> simp
+
+/-- The loop, from any list of open triple terms: the specification, and then the open
+triple terms closed. By induction on the fuel; each step of the loop takes one unit of it. -/
+theorem readObject12Down_eq :
+    ∀ (fuel : Nat) (opens : OpenTerms12) (pos : Nat) (cs : List Char),
+      readObject12Down fuel opens pos cs = closeObject12 opens (readObject12 fuel pos cs)
+  | 0, opens, pos, cs => by
+      rw [readObject12Down, readObject12, closeObject12_error]
+  | f + 1, opens, pos, cs => by
+      unfold readObject12Down
+      split
+      · rename_i rest
+        rw [readObject12_open]
+        generalize skipWs (pos + 3) rest = w1
+        rcases w1 with ⟨p1, r1⟩
+        dsimp only
+        cases readSubject p1 r1 with
+        | error e => rw [closeObject12_error]
+        | ok x =>
+          rcases x with ⟨subj, p2, r2⟩
+          dsimp only
+          generalize skipWs p2 r2 = w3
+          rcases w3 with ⟨p3, r3⟩
+          dsimp only
+          cases readPredicate p3 r3 with
+          | error e => rw [closeObject12_error]
+          | ok y =>
+            rcases y with ⟨pred, p4, r4⟩
+            dsimp only
+            generalize skipWs p4 r4 = w5
+            rcases w5 with ⟨p5, r5⟩
+            dsimp only
+            rw [readObject12Down_eq f, closeObject12_cons]
+      · rfl
+
+/-- `readObject12` as the loop. -/
+def readObject12Loop (fuel pos : Nat) (cs : List Char) : Object12Result :=
+  readObject12Down fuel [] pos cs
+
+/-- Any call of `readObject12` compiled after this line runs the loop: the readers of
+N-Triples and N-Quads 1.2 lines below, and so every caller of them (the batch parsers, the
+fast N-Quads reader behind the op `queryDataset`, the streaming readers of the packer). -/
+@[csimp] theorem readObject12_eq_loop : @readObject12 = @readObject12Loop := by
+  funext fuel pos cs
+  rw [readObject12Loop, readObject12Down_eq, closeObject12_nil]
+
+#print axioms readObject12Down_eq
+#print axioms readObject12_eq_loop
+
 /-! ### The RDF 1.2 object fuel
 
 `readObject12` takes a fuel that bounds `<<( ... )>>` NESTING, and each level
@@ -456,6 +624,29 @@ def Subject.toNTriples : Subject → String
   | .iri i   => "<" ++ i.val ++ ">"
   | .bnode b => "_:" ++ b
 
+/-- `" )>>"` written `k` times: the end of `k` open triple terms. -/
+def closersStr (k : Nat) : String := String.join (List.replicate k " )>>")
+
+theorem closersStr_zero : closersStr 0 = "" := rfl
+
+theorem closersStr_succ (k : Nat) : closersStr (k + 1) = " )>>" ++ closersStr k := by
+  simp [closersStr, List.replicate_succ, String.join_cons]
+
+/-- `acc` followed by the `k` closers, one tail call for each. -/
+def appendClosers (acc : String) : Nat → String
+  | 0 => acc
+  | k + 1 => appendClosers (acc ++ " )>>") k
+
+theorem appendClosers_eq : ∀ (k : Nat) (acc : String), appendClosers acc k = acc ++ closersStr k
+  | 0, acc => by simp [appendClosers, closersStr_zero]
+  | k + 1, acc => by
+      rw [appendClosers, appendClosers_eq k, closersStr_succ, String.append_assoc]
+
+/-- The text of a triple term up to its object, the same in the canonical form and in the
+other. -/
+def tripleTermOpen (s : Subject) (p : WfIri) : String :=
+  "<<( " ++ Subject.toNTriples s ++ " <" ++ p.val ++ "> "
+
 /-- Serialise a `Term` in N-Triples object position, mode-parametrised:
 under `.rdf11` a term that needs RDF 1.2 lexical syntax (a triple term or
 a directional literal) is a serialisation ERROR (port of the F* source's
@@ -491,6 +682,93 @@ def Term.toNTriples (mode : Mode) : Term → Except String String
         | .error e => .error e
         | .ok oStr =>
             .ok ("<<( " ++ Subject.toNTriples s ++ " <" ++ p.val ++ "> " ++ oStr ++ " )>>")
+
+/-! ### The text of a triple term nested deep
+
+`Term.toNTriples` above is the SPECIFICATION. It takes one native frame for each level
+of triple-term nesting, and at each level it copies the text of the levels below
+(`"<<( " ++ ... ++ below ++ " )>>"`), so its time is quadratic in the depth: a triple term
+nested 300,000 deep took 86.6 s to write, and a stack of 512 KB held 10,151 levels and
+overflowed at 10,152 (https://github.com/danbri/factoidal/issues/867). `Term.toNTriplesLoop`
+appends to one string and takes no frame for a nesting level; `Term.toNTriples_eq_fast`
+proves it equal, and `@[csimp]` makes every caller compiled after it run the loop:
+`Triple.toNTriples`, `Graph.toNTriples`, `Dataset.toNQuads`, the stream writers and the
+answer of a CONSTRUCT query. The loop is the one of `Term.toCanonicalNTriplesLoop` below,
+and uses the same helpers (`tripleTermOpen`, `appendClosers`, `closersStr`, defined above).
+The specification fails in two cases only: in `.rdf11` a triple term, and a directional
+literal. The loop fails in the same two. -/
+
+/-- The text of a term that is not a triple term, written by the specification, and then the
+closers of the `k` open triple terms. -/
+def toNTriplesClose (mode : Mode) (t : Term) (acc : String) (k : Nat) : Except String String :=
+  match Term.toNTriples mode t with
+  | .error e => .error e
+  | .ok str => .ok (appendClosers (acc ++ str) k)
+
+/-- The loop of `Term.toNTriplesFast`. `acc` is the text so far and `k` the number of triple
+terms open in it: a triple term appends its opening and continues with its object (under
+`.rdf11` it is the error), a term that is not a triple term appends its text and the `k`
+closers. Every call of the loop on itself is a tail call, and `acc` is appended to in
+place. -/
+def Term.toNTriplesLoop (mode : Mode) : Term → String → Nat → Except String String
+  | .tripleTerm s p o, acc, k =>
+      if mode = .rdf11 then .error "RDF 1.2 triple term requires mode .rdf12"
+      else Term.toNTriplesLoop mode o (acc ++ tripleTermOpen s p) (k + 1)
+  | .iri i, acc, k => toNTriplesClose mode (.iri i) acc k
+  | .bnode b, acc, k => toNTriplesClose mode (.bnode b) acc k
+  | .literal wl, acc, k => toNTriplesClose mode (.literal wl) acc k
+
+theorem toNTriplesClose_eq (mode : Mode) (t : Term) (acc : String) (k : Nat) :
+    toNTriplesClose mode t acc k =
+      match Term.toNTriples mode t with
+      | .error e => .error e
+      | .ok str => .ok (acc ++ str ++ closersStr k) := by
+  unfold toNTriplesClose
+  cases Term.toNTriples mode t with
+  | error e => rfl
+  | ok str => simp [appendClosers_eq]
+
+/-- The loop, for every state it can be in: the text so far, the specification on the
+term, and the closers of the open triple terms; or the error that the specification gives. -/
+theorem Term.toNTriplesLoop_eq (mode : Mode) :
+    ∀ (t : Term) (acc : String) (k : Nat),
+      Term.toNTriplesLoop mode t acc k =
+        match Term.toNTriples mode t with
+        | .error e => .error e
+        | .ok str => .ok (acc ++ str ++ closersStr k)
+  | .tripleTerm s p o, acc, k => by
+      rw [Term.toNTriplesLoop]
+      by_cases hm : mode = .rdf11
+      · simp [hm, Term.toNTriples]
+      · simp only [hm, if_false]
+        rw [Term.toNTriplesLoop_eq mode o]
+        simp only [Term.toNTriples, hm, if_false]
+        cases Term.toNTriples mode o with
+        | error e => rfl
+        | ok oStr =>
+          simp only [closersStr_succ, tripleTermOpen, String.append_assoc]
+  | .iri i, acc, k => by rw [Term.toNTriplesLoop, toNTriplesClose_eq]
+  | .bnode b, acc, k => by rw [Term.toNTriplesLoop, toNTriplesClose_eq]
+  | .literal wl, acc, k => by rw [Term.toNTriplesLoop, toNTriplesClose_eq]
+
+/-- `Term.toNTriples` as a loop. -/
+def Term.toNTriplesFast (mode : Mode) (t : Term) : Except String String :=
+  Term.toNTriplesLoop mode t "" 0
+
+theorem Term.toNTriplesFast_eq (mode : Mode) (t : Term) :
+    Term.toNTriplesFast mode t = Term.toNTriples mode t := by
+  unfold Term.toNTriplesFast
+  rw [Term.toNTriplesLoop_eq]
+  cases Term.toNTriples mode t with
+  | error e => rfl
+  | ok s => simp [closersStr_zero]
+
+/-- Any call of the specification compiled after this line runs the loop. -/
+@[csimp] theorem Term.toNTriples_eq_fast : @Term.toNTriples = @Term.toNTriplesFast := by
+  funext mode t; exact (Term.toNTriplesFast_eq mode t).symm
+
+#print axioms Term.toNTriplesLoop_eq
+#print axioms Term.toNTriples_eq_fast
 
 /-- Serialise one `Triple` as an N-Triples line, `" .\n"`-terminated.
 Port of `nq_line_for_triple_default_graph`. -/
@@ -698,36 +976,16 @@ below (`"<<( " ++ ... ++ below ++ " )>>"`), so its time is quadratic in the dept
 triple term nested 300,000 deep, read from Turtle, did not finish in 120 s
 (https://github.com/danbri/factoidal/issues/865). `Term.toCanonicalNTriplesLoop` appends
 to one string and takes no frame for a nesting level; `Term.toCanonicalNTriples_eq_fast`
-proves it equal, and `@[csimp]` makes every caller compiled after it run the loop. -/
-
-/-- `" )>>"` written `k` times: the end of `k` open triple terms. -/
-def closersStr (k : Nat) : String := String.join (List.replicate k " )>>")
-
-theorem closersStr_zero : closersStr 0 = "" := rfl
-
-theorem closersStr_succ (k : Nat) : closersStr (k + 1) = " )>>" ++ closersStr k := by
-  simp [closersStr, List.replicate_succ, String.join_cons]
-
-/-- `acc` followed by the `k` closers, one tail call for each. -/
-def appendClosers (acc : String) : Nat → String
-  | 0 => acc
-  | k + 1 => appendClosers (acc ++ " )>>") k
-
-theorem appendClosers_eq : ∀ (k : Nat) (acc : String), appendClosers acc k = acc ++ closersStr k
-  | 0, acc => by simp [appendClosers, closersStr_zero]
-  | k + 1, acc => by
-      rw [appendClosers, appendClosers_eq k, closersStr_succ, String.append_assoc]
-
-/-- The text of a triple term up to its object. -/
-def canonTripleOpen (s : Subject) (p : WfIri) : String :=
-  "<<( " ++ Subject.toNTriples s ++ " <" ++ p.val ++ "> "
+proves it equal, and `@[csimp]` makes every caller compiled after it run the loop. The
+helpers `closersStr`, `appendClosers` and `tripleTermOpen` are defined above `Term.toNTriples`,
+which has a loop of the same shape (https://github.com/danbri/factoidal/issues/867). -/
 
 /-- The loop of `Term.toCanonicalNTriplesFast`. `acc` is the text so far and `k` the
 number of triple terms open in it: a triple term appends its opening and continues with
 its object, a term that is not a triple term appends its text and the `k` closers. Every
 call of the loop on itself is a tail call, and `acc` is appended to in place. -/
 def Term.toCanonicalNTriplesLoop : Term → String → Nat → String
-  | .tripleTerm s p o, acc, k => Term.toCanonicalNTriplesLoop o (acc ++ canonTripleOpen s p) (k + 1)
+  | .tripleTerm s p o, acc, k => Term.toCanonicalNTriplesLoop o (acc ++ tripleTermOpen s p) (k + 1)
   | .iri i, acc, k => appendClosers (acc ++ ("<" ++ i.val ++ ">")) k
   | .bnode b, acc, k => appendClosers (acc ++ ("_:" ++ b)) k
   | .literal wl, acc, k =>
@@ -753,8 +1011,8 @@ theorem Term.toCanonicalNTriplesLoop_eq :
   | .tripleTerm s p o, acc, k => by
       rw [Term.toCanonicalNTriplesLoop, Term.toCanonicalNTriplesLoop_eq o, closersStr_succ]
       have : Term.toCanonicalNTriples (.tripleTerm s p o) =
-          canonTripleOpen s p ++ Term.toCanonicalNTriples o ++ " )>>" := by
-        simp only [Term.toCanonicalNTriples, canonTripleOpen, String.append_assoc]
+          tripleTermOpen s p ++ Term.toCanonicalNTriples o ++ " )>>" := by
+        simp only [Term.toCanonicalNTriples, tripleTermOpen, String.append_assoc]
       rw [this]
       simp only [String.append_assoc]
   | .iri i, acc, k => by

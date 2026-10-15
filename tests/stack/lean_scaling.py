@@ -395,7 +395,8 @@ repaired (docs/designissues/2026-10-10-lean-vs-fstar-performance.md):
                    text of each level from the text of the level below it, so it copied the text
                    built so far at each level, and took a native frame for each level.
                    Before the repair (expected failure): 0.280 s, 1.23 s and 8.58 s CPU (ratios
-                   4.4 and 7.0 for the two doublings; 30.6 for 4x input; 86.6 s at 300,000 levels).
+                   4.4 and 7.0 for the two doublings; 30.6 for 4x input; 86.6 s at 300,000 levels);
+                   after: 0.048 s, 0.091 s and 0.208 s (1.9 and 2.3; 4.3 for 4x; 1.2 s at 300,000).
   startup          process start: `l4factoidal version` must take at most
                    STARTUP_BUDGET (20 ms) of CPU time, minimum of 15 runs
                    (305 million instructions and 43 ms before the fixtures were
@@ -471,7 +472,6 @@ ROW_BOUND = {"owlrl-closure-chain": 20.0, "termwire-page-decode": 6.0}
 # Rows that fail today, each with the open issue that tracks the cost. A row
 # leaves this table in the commit that repairs it.
 XFAIL: dict[str, str] = {
-    "ntriples-nest-time": "https://github.com/danbri/factoidal/issues/867",
     "query-memory-fstar": "https://github.com/danbri/factoidal/issues/729",
     "sbm11-pack-rdfxml-memory": "https://github.com/danbri/factoidal/issues/838",
     "sbm11-pack-jsonld-memory": "https://github.com/danbri/factoidal/issues/839",

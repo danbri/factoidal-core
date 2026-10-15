@@ -125,6 +125,7 @@ import L4Factoidal.Syntax.TurtleTests
 import L4Factoidal.Syntax.TurtleStreamStateTheorems
 import L4Factoidal.Syntax.TurtleTheorems
 import L4Factoidal.Syntax.SyntaxTests
+import L4Factoidal.Syntax.NestedTermTests
 import L4Factoidal.Syntax.SyntaxTheorems
 import L4Factoidal.Syntax.RdfXml
 import L4Factoidal.Syntax.RdfXmlTests

@@ -555,11 +555,9 @@ L4Factoidal_Storage_TermWireV2_parseInlineGo
 L4Factoidal_Storage_TermWireV2_serializeInline?
 L4Factoidal_Storage_TermWireV2_tdepth
 L4Factoidal_Storage_splitBatchesSinceEpoch?
-L4Factoidal_Syntax_Term_toNTriples
 L4Factoidal_Syntax_assignLabels
 L4Factoidal_Syntax_insertByCountDesc
 L4Factoidal_Syntax_insertStr
-L4Factoidal_Syntax_readObject12
 L4Factoidal_Syntax_readStringLiteralBodyLegacy
 L4Factoidal_Syntax_sortByCountDesc
 L4Factoidal_Syntax_sortStrs
@@ -722,7 +720,7 @@ L4Factoidal_RDF_Canonical_relabelTermBy  # (b) RDF 1.2 triple-term nesting in th
 # over data, to be converted (listed in the issue; this entry keeps the gate
 # green while the list stays visible).
 L4Factoidal_OWL_instDecidableEqConcept_decEq  # (b) derived DecidableEq: nesting of one tableau concept
-L4Factoidal_RDF_instHashableTerm_hash  # (b) derived Hashable: nesting depth of RDF 1.2 triple terms
+L4Factoidal_RDF_instHashableTerm_hash  # (s) the hash that `deriving Hashable` made for Term, kept as the specification of the theorem Term.hashFast_eq (https://github.com/danbri/factoidal/issues/867): in the emitted C of 2026-10-15 no function outside RDF/Core.c names it or the instance instHashableTerm; every Hashable Term after Core.lean is instHashableTermLoop (priority high), the loop Term.hashFast
 L4Factoidal_Regex_instDecidableEqRe_decEq  # (b) derived DecidableEq: nesting of one regular expression
 L4Factoidal_Regex_instDecidableEqCRe_decEq  # (b) derived DecidableEq: nesting of one regular expression
 L4Factoidal_SPARQL_instDecidableEqPatternTerm_decEq  # (b) derived DecidableEq: nesting depth of RDF 1.2 triple terms in one pattern term
@@ -749,8 +747,6 @@ L4Factoidal_OWL_Refute_disjointUnionAxioms_unorderedCePairs  # (b) operands of o
 L4Factoidal_RDF_Canonical_hndqRun  # (a) PENDING https://github.com/danbri/factoidal/issues/817 Hash N-Degree Quads (RDFC-1.0 4.8): one level per blank node of one path, which the data sets; the budget bounds calls, and a path of n levels costs only n calls; expected failure: tests/stack case rdfc-bnode-chain, two chains of 2,000 blank nodes overflow at 512 KB (split from issue 752)
 L4Factoidal_RDF_Canonical_hndqRunF  # (a) PENDING https://github.com/danbri/factoidal/issues/817 the twin of hndqRun that csimp runs through buildCanonicalMappingBudgeted_eq_fast (https://github.com/danbri/factoidal/issues/751): the same recursion through the walkBucketsF closure; expected failure rdfc-bnode-chain (split from issue 752)
 L4Factoidal_RDF_Canonical_rewriteTermForHfdq  # (b) nesting depth of RDF 1.2 triple terms
-L4Factoidal_RDF_Term_joinKey  # (b) nesting depth of RDF 1.2 triple terms
-L4Factoidal_RDF_Term_lowerTags  # (b) nesting depth of RDF 1.2 triple terms
 L4Factoidal_RDF_Term_instance?  # (b) nesting depth of RDF 1.2 triple terms
 L4Factoidal_RDF_substTerm  # (b) nesting depth of RDF 1.2 triple terms
 L4Factoidal_RDF_termSubst  # (b) nesting depth of RDF 1.2 triple terms

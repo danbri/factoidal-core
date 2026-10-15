@@ -932,6 +932,18 @@ Also in `Harness/Sbm11Export.lean`: `prefixes := o.prefixes ++ [x]` for each `--
 argument was quadratic in the number of arguments (16,000 arguments: 1 s of the 3.4 s).
 `prefixesRev := x :: o.prefixesRev` and one `reverse`.
 
+## The key of a triple in a hash map reaches every function of a term (https://github.com/danbri/factoidal/issues/867, 2026-10-15)
+
+`FastGraph` keys a triple by `(subject, predicate, Term.joinKey object)` in a `Std.HashMap`, and every parse of a
+dataset (`addQuadFast`, the N-Quads reader, TriG) inserts each triple. The key reaches the hash of a `Term`, its
+`joinKey`, and, in the streamed reader, `Term.lowerTags`. Each of them took a native frame for each level of a
+triple term: a term nested 10,153 deep overflowed a 512 KB stack in the hash. Every function that handles a key must be
+a loop: the hash map accepts a key of any depth. A derived `Hashable` instance is replaced by an
+instance of higher priority, not by a `@[csimp]` theorem (`skills/lean4-proof-patterns/SKILL.md`, 9d). The time
+of the same term: `Term.toNTriples` copied the text of the levels below at each level, 0.28 s, 1.23 s and 8.58 s
+for 25,000, 50,000 and 100,000 levels (a factor 4.4 and 7.0 for each doubling), 0.048 s, 0.091 s and 0.208 s as a
+loop (`ntriples-nest-time` in `tests/stack/lean_scaling.py`).
+
 ## Verification and measurement
 
 After a semantic hot-path change, run the closest Lean guards and targeted

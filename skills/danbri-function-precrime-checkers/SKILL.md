@@ -1323,3 +1323,46 @@ Rules from this repair:
 | `parseToDatasetJson`, 300,000 levels, 16.2 MB of N-Quads in the answer | overflow; more than 120 s at the default stack | 1.3 s native, 1.6 s Node |
 | `turtle-read-prefixes`, 16,000, 32,000, 64,000 prefixes (CPU) | 2.59 s, 16.4 s, 78.8 s | 0.29 s, 0.58 s, 1.11 s |
 | `sbm11-export-prefixes-time`, 4,000, 8,000, 16,000 (CPU) | 0.25 s, 0.83 s, 3.41 s | 0.057 s, 0.071 s, 0.154 s |
+
+## One path, five functions: the issue named three, gdb named the first (https://github.com/danbri/factoidal/issues/867, 2026-10-15)
+
+The report of issue 865 listed three functions that a triple term nested deep still reached after the Turtle
+reader became a loop: the object reader of N-Triples and N-Quads (`readObject12`), the hash and the join key of a
+term that key a triple in a dataset, and the text of a term (`Term.toNTriples`). The repair needed five: the hash
+and the join key are two functions, and a row for a consumer that the issue did not name found a fifth.
+
+Rules from this repair:
+
+- **Run gdb on the unrepaired binary for each row before the repair, and read the first frames.** The issue said
+  the TriG row overflows in `Term.joinKey`. The first frames of the unrepaired binary named the derived hash of a
+  term, `instHashableTerm.hash`: the key is built with `joinKey` first, `joinKey` has the smaller frame, and the hash
+  of the key overflows first (10,152 levels ran, 10,153 overflowed). A repair of `joinKey` alone changes no row.
+- **The rows follow the consumers of the data, not the functions of the issue.** The four rows of the batch
+  operations (`parseToDatasetJson` with `nt12`, `nq12`, `trig12`, and a CONSTRUCT query) passed after the repair of
+  the four functions the issue named. The row for `l4factoidal parse FILE --format nt12|nq12`, the reader of a file
+  that the shard packers use, overflowed in a fifth function, `Term.lowerTags`, which its count consumer applies to
+  every term. List the consumers of the same data (batch reader, file reader, the key of a dataset, a query answer,
+  each writer, a dataset handle) and give each a row at the size of the issue.
+- **A `@[csimp]` theorem is checked in the C of a caller.** A function reached through an instance is not replaced
+  (`skills/lean4-proof-patterns/SKILL.md`, 9d). The check takes one `grep` in `.lake/build/ir`.
+- **A time row beside the stack row.** `Term.toNTriples` copied the text of the levels below at each level, so the
+  row `ntriples-nest-time` (`l4factoidal parse --out nt`, n = 25,000, 50,000, 100,000) read 0.280 s, 1.23 s and 8.58 s
+  before (ratios 4.4 and 7.0) and 0.048 s, 0.091 s and 0.208 s after. The stack row alone would have passed with a
+  larger stack and a text that takes 87 s.
+- **A table of results of the old library, recorded by a program that calls the functions.** The guards in
+  `NestedTermTests.lean` hold 38 texts at 8 fuels for the object reader, 31 documents through the five readers and
+  writers and 14 terms through the writer, the hash and the join key. The program ran against the library before the
+  change, as a Lean script that imported it; a `#guard` against a `@[csimp]` replacement compares the replacement with
+  itself, so only recorded values pin the old behaviour.
+- **A random differential beside the W3C files, for each syntax.** `tools/ntriples-reader-differential.py` writes
+  N-Triples and N-Quads 1.2 documents (white space of the grammar, language tags in capitals, directions,
+  triple terms up to 10 deep, comments, 40 percent damaged) and compares an old and a new `l4factoidal` in seven ways
+  to read and write (count, N-Quads, N-Triples, Turtle, TriG, lenient, and the RDF 1.1 reader).
+
+| 512 KB, native; Node default stack and `--stack-size=512` | before | after |
+|---|---|---|
+| `parseToDatasetJson`, `nt12` and `nq12`, 300,000 levels | 4,510 levels ran, 4,511 overflowed; Node overflowed | 1.3 s and 1.5 s at the default stack, runs under 512 KB; Node 1.8 s to 2.3 s |
+| `parseToDatasetJson`, `trig12`, the term in a graph block | 10,152 ran, 10,153 overflowed (the hash) | 1.6 s at the default stack, runs under 512 KB; Node 1.9 s and 2.1 s |
+| `queryDataset` CONSTRUCT over the term | overflow; 90.7 s at the default stack | 1.4 s at the default stack, runs under 512 KB; Node 2.0 s and 2.3 s |
+| `l4factoidal parse --out nt` | 10,151 ran, 10,152 overflowed; 86.6 s at the default stack | 0.57 s at the default stack, 0.80 s under 512 KB |
+| `l4factoidal parse FILE --format nt12\|nq12` | overflow in `readObject12`; after its repair, overflow in `Term.lowerTags` | runs under 512 KB; 8.5 s and 9.2 s at the default stack |
