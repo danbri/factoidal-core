@@ -5,10 +5,14 @@ formal/lean4/L4Factoidal/Storage/ imports an L4Factoidal.Syntax module, and none
 names one in its code. The store takes RDF quads from L4Factoidal.RDF.Source and
 does not know a concrete syntax.
 
+The producer interface of the packer, formal/lean4/L4Factoidal/RDF/QuadSource.lean
+(https://github.com/danbri/factoidal/issues/866), is held to the same rule: it imports
+no Syntax module and names none, so that a module under Storage/ can take it.
+
 Usage: storage_layering.py [STORAGE_DIR]
 Prints one line per violation and a count. Exit 0 when there is none, 1 when
-there is one, 2 when the directory has no .lean file (an empty walk is not a
-pass, anti-pattern 28)."""
+there is one, 2 when the directory has no .lean file or the producer interface is
+missing (an empty walk is not a pass, anti-pattern 28)."""
 import pathlib
 import re
 import sys
@@ -19,6 +23,11 @@ files = sorted(root.rglob("*.lean"))
 if not files:
     print(f"no .lean file under {root}", file=sys.stderr)
     sys.exit(2)
+producer = root.parent / "RDF" / "QuadSource.lean"
+if not producer.exists():
+    print(f"the producer interface {producer} is missing", file=sys.stderr)
+    sys.exit(2)
+files.append(producer)
 
 
 def code_only(text: str) -> str:
