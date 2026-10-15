@@ -74,6 +74,19 @@ Rules from that repair:
   value named in ANY later branch of the caller is alive during the call.
   Check the emitted C: `grep -n "lean_inc(v_x)" .lake/build/ir/<Module>.c`
   just above the call that updates the map.
+- **State that a task reaches through a reference made before the task is copied
+  at every update.** Lean treats the objects that the closure of `IO.asTask`
+  reaches as shared between threads (`lean_is_exclusive` in `lean.h` is false for
+  them), and a reference that the task reaches keeps what it stores shared. An update
+  of a shared object copies it. Measured
+  2026-10-15 (Lean 4.33.1, linux x86_64, two runs): 100 rounds of `let a ← r.swap #[];
+  r.set (a.push i)` on an array of 5,000,000 numbers took 9,557 ms and 7,351 ms for a
+  reference made before the task, and 29 ms and 23 ms for a reference made inside the
+  task (the program is in section 11.4 of
+  `docs/designissues/2026-10-11-shardborough-vs-qlever.md`). Make the state inside the
+  task: pass the task an `IO` action that makes it, as `Sbm11Pack.packQuads` does with
+  `Array (IO QuadSource)` (https://github.com/danbri/factoidal/issues/866). Take the state
+  out of its reference with `swap` while a step updates it (`QuadSource.ofStep`).
 - **When insertion order is observable, use `OMap`** (`JSONLD/OrderedMap.lean`:
   a `Std.TreeMap` plus the keys newest first). Lookup and update agree with
   `flLookup` and `flUpd` on the entries in insertion order

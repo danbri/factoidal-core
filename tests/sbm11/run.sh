@@ -206,6 +206,21 @@
 #                held by the representative rows, each naming
 #                https://github.com/danbri/factoidal/issues/861; DBpedia d19 when the
 #                slice generation exists. Its counts are added to this run's.
+#   (u) quad-source  tests/sbm11/quad_source.sh
+#                (https://github.com/danbri/factoidal/issues/866): the packer entry
+#                `packQuads` takes a producer of RDF quads (`QuadSource`), not a file path.
+#                In-process checks of the producers (a Dataset, an array) and of the
+#                entry (the generation does not depend on the number of producers, the
+#                batch size, the term map size or the order of the quads); a Dataset
+#                value in memory packed, dumped and compared with the dataset by
+#                isomorphism and by RDFC-1.0; the Dataset route of the command line
+#                (`--via-dataset`) byte-identical to the file route on every syntax
+#                fixture; the triples of an HDT file packed with no text in between and
+#                compared with the HDT store's own dump and with the file it was made
+#                from. Parts (h), (i) and (m) also run `compact --via-quads`, the
+#                reference route of compaction (the quads of the overlaid generation
+#                decoded to terms and given to the packer's phase 1), and require
+#                the same files as the default route. Its counts are added to this run's.
 #   (g) tamper   a copy of the generation with one byte changed in a block
 #                frame of spo.prb1 (manifest and sidecars kept): `scan` and
 #                `query` must be refused under merkle (and by default, the
@@ -216,6 +231,11 @@
 # Usage: tests/sbm11/run.sh [GEN]   (default /home/user/qlvr-work/sbm11/s3/wfull,
 # an activated olympics generation; tests/sbm11/stage3_check.sh makes one).
 # Exit 0 only when every check passes; 2 when an input is missing.
+# Env: QLVR_WORK                the QLever work directory (instance, oracle, generations)
+#      FACTOIDAL_TESTING_ROOT   the directory of the W3C fixtures for parts (p), (s) and the
+#                               HDT files of (u) (default third_party/testing of this tree);
+#                               a git worktree has no submodules, and sets it to the
+#                               checkout that has them
 set -uo pipefail
 export LC_ALL=C
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -469,6 +489,15 @@ else
   else
     v="$(same_artifacts "$H/col/gen2" "$H/fresh")"; c=$?
     record delta compact-equals-fresh-pack "$c" "$v"
+    # the reference route of compaction (issue 866 item 3): the quads of the overlaid
+    # generation decoded to RDF terms and given to the packer's phase 1
+    cqrc=0
+    "$BIN/l4sbm11" compact "$H/col" "$H/viaq" --via-quads >"$H/compactq.log" 2>&1 || cqrc=$?
+    if [ "$cqrc" -ne 0 ]; then record delta compact-via-quads 1 "exit $cqrc: $(tail -1 "$H/compactq.log")"
+    else
+      v="$(same_artifacts "$H/viaq" "$H/col/gen2")"; c=$?
+      record delta compact-via-quads-equals-default "$c" "$v"
+    fi
     "$BIN/l4sbm11" activate "$H/col" gen2 >"$H/act2.log" 2>&1 || record delta activate-compacted 1 "$(tail -1 "$H/act2.log")"
     check_all "$H/col" "$H/ops/final.nq" "compacted"
     run_q "$H/col" "$HERE/delta/ids-upd-count.rq" "$H/c.srj" "$H/c.err"
@@ -563,6 +592,17 @@ else
     grep 'ms=' "$O/compact.log" | sed 's/^/    /'
     v="$(same_artifacts "$O/col/gen2" "$O/fresh")"; c=$?
     record olympics compact-equals-fresh-pack "$c" "$v"
+    # the reference route of compaction (issue 866 item 3), and what it costs
+    cqrc=0
+    t0=$(date +%s%N)
+    "$BIN/l4sbm11" compact "$O/col" "$O/viaq" --via-quads >"$O/compactq.log" 2>&1 || cqrc=$?
+    cqwall=$(( ($(date +%s%N) - t0) / 1000000 ))
+    if [ "$cqrc" -ne 0 ]; then record olympics compact-via-quads 1 "exit $cqrc: $(tail -1 "$O/compactq.log")"
+    else
+      v="$(same_artifacts "$O/viaq" "$O/col/gen2")"; c=$?
+      record olympics compact-via-quads-equals-default "$c" "$v"
+      echo "    compact --via-quads: process wall $cqwall ms (default route $cwall ms); $(grep -o 'peak-rss=[0-9]* kB' "$O/compactq.log")"
+    fi
     bad=""
     for rq in $OQ; do
       nq="$(basename "$rq" .rq)"
@@ -798,6 +838,14 @@ else
   else
     v="$(same_artifacts "$M/col/gen2" "$M/fresh")"; c=$?
     record rdf12 compact-equals-fresh-pack "$c" "$v"
+    # the reference route decodes triple terms to terms and the packer keys them again
+    cqrc=0
+    "$BIN/l4sbm11" compact "$M/col" "$M/viaq" --via-quads >"$M/compactq.log" 2>&1 || cqrc=$?
+    if [ "$cqrc" -ne 0 ]; then record rdf12 compact-via-quads 1 "exit $cqrc: $(tail -1 "$M/compactq.log")"
+    else
+      v="$(same_artifacts "$M/viaq" "$M/col/gen2")"; c=$?
+      record rdf12 compact-via-quads-equals-default "$c" "$v"
+    fi
   fi
   # SPARQL 1.2 Update through the delta log (https://github.com/danbri/factoidal/issues/792
   # item 1, the update part). A fresh generation of the fixture takes a plain
@@ -978,6 +1026,9 @@ add_script_counts w3c-update w3c_update.sh "w3c update"
 
 echo "=== (t) grouped aggregates on ids (issue 825)"
 add_script_counts agg-ids agg_ids.sh "agg ids"
+
+echo "=== (u) the packer takes quads from any producer (issue 866)"
+add_script_counts quad-source quad_source.sh "quad source"
 
 echo
 echo "sbm11 stages 4 and 5: $PASS pass, $FAIL fail, $XFAILS expected-fail (out of $((PASS + FAIL + XFAILS)))"

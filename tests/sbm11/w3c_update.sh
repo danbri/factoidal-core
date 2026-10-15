@@ -45,6 +45,8 @@
 # or a manifest is missing.
 #
 # Env: L4_BIN_DIR      directory of the binaries (default formal/lean4/.lake/build/bin)
+#      FACTOIDAL_TESTING_ROOT  the directory of the W3C fixtures (default
+#                      third_party/testing); W3C_SPARQL11_DIR overrides the suite
 #      W3C_UPDATE_JOBS tests in parallel (default 4)
 #      W3C_UPDATE_KEEP a directory to keep the work directories of the FAILED
 #                      tests in
@@ -53,7 +55,8 @@ export LC_ALL=C
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 ROOT="$(cd "$HERE/../.." && pwd)"
 BIN="${L4_BIN_DIR:-$ROOT/formal/lean4/.lake/build/bin}"
-W3C_DIR="${W3C_SPARQL11_DIR:-$ROOT/third_party/testing/w3c/sparql/sparql11}"
+TESTING="${FACTOIDAL_TESTING_ROOT:-$ROOT/third_party/testing}"
+W3C_DIR="${W3C_SPARQL11_DIR:-$TESTING/w3c/sparql/sparql11}"
 XFAIL_TABLE="$HERE/w3c_update_xfail.tsv"
 JOBS="${W3C_UPDATE_JOBS:-4}"
 SUITES="add basic-update clear copy delete-data delete-insert delete-where delete drop move update-silent"

@@ -5,7 +5,7 @@ https://github.com/danbri/factoidal/issues/791; design record
 
   l4sbm11 update GEN ('SPARQL UPDATE' | --file U.ru) [--base IRI] [--sparql12]
                   [--max-overlay-entries N] [--max-overlay-bytes N]
-  l4sbm11 compact GEN OUTDIR [--block-rows B] [--sort-rows M] [--verify merkle|none]
+  l4sbm11 compact GEN OUTDIR [--block-rows B] [--sort-rows M] [--verify merkle|none] [--via-quads]
 
 `update` appends one DLOG batch to the generation's `deltas.dlog`
 (`Sbm11Update.appendUpdate`). Every later open replays the log into the
@@ -38,6 +38,17 @@ place of the packer's phase 1 (parse):
      term, 0 for the default graph (the phase-1 format).
   D. `packBatches`: phase 2 (dictionary, remap), phase 3 (four permutations,
      blocks, PRM1), hashes and the manifest, by the packer's own code.
+
+`--via-quads` is the reference route (https://github.com/danbri/factoidal/issues/866
+item 3). It replaces steps A to C by the packer's phase 1: one SPO scan of the
+overlaid generation decodes each row to RDF terms (`Session.termOf`) and gives the
+quads to a phase-1 worker (`Sbm11Pack.openPhase1`) as any producer of quads does; step
+D is the same. Its output is byte-identical to the default route's (run.sh parts (h), (i)
+and (m) compare them). It takes about twice as long on the olympics generation, because it
+decodes and hashes every term and the default route moves key bytes and ids; the default
+route is the tuned implementation and this one is the specification-shaped route that
+a test compares it with (design record
+`docs/designissues/2026-10-11-shardborough-vs-qlever.md` section 11.4).
 
 So the output's dictionary holds exactly the terms of its quads, in key
 order, as a pack of the same quads does: `tests/sbm11/run.sh` part (i)
@@ -80,6 +91,25 @@ inductive IdKind where
   if isDictTag tag then .dict pay
   else if tag == Overlay.tagDelta then .delta pay
   else .other
+
+/-- Phases 2 and 3 of a compaction over the phase-1 batches `batches`, and the two files
+    that record what it folded: `compacted.epoch` (the greatest epoch folded) and
+    `compacted.source.sha256` (the SHA-256 of the source manifest and the log, which is
+    also the source digest in the new manifest). Both routes of `compact` end here. -/
+def packCompacted (srcDir outDir : String) (batches : Array Sbm11Pack.Batch)
+    (blockRows sortRowsMax : Nat) : IO (Sbm11Pack.PackReport × Nat) := do
+  let manifestBytes ← IO.FS.readBinFile s!"{srcDir}/{manifestName}"
+  let (allBatches, dlogBytes, _) ← Harness.Sbm11Delta.readBatches srcDir
+  let identityInput := manifestBytes ++ dlogBytes
+  let identity := Harness.nativeSha256 identityInput
+  let r ← Sbm11Pack.packBatches outDir batches blockRows sortRowsMax identityInput.size (pure identity)
+  let baseEpoch ← Harness.CompactedEpoch.read? (System.FilePath.mk srcDir)
+  let epoch := Harness.CompactedEpoch.foldedThrough baseEpoch allBatches
+  if !(← Harness.CompactedEpoch.write (System.FilePath.mk outDir) epoch) then
+    throw (IO.userError "could not write compacted.epoch")
+  if !(← Harness.PosixRangeIO.atomicReplaceFileSyncRaw s!"{outDir}/compacted.source.sha256" identity) then
+    throw (IO.userError "could not write compacted.source.sha256")
+  pure (r, epoch)
 
 def runCompact (src outDir : String) (blockRows sortRowsMax : Nat) (v : Verify) : IO UInt32 := do
   let t0 ← IO.monoNanosNow
@@ -188,23 +218,51 @@ def runCompact (src outDir : String) (blockRows sortRowsMax : Nat) (v : Verify) 
   let quads ← rowsRef.get
   let t3 ← IO.monoNanosNow
   -- D. the packer's phases 2 and 3
-  let manifestBytes ← IO.FS.readBinFile s!"{srcDir}/{manifestName}"
-  let (allBatches, dlogBytes, _) ← Harness.Sbm11Delta.readBatches srcDir
-  let identityInput := manifestBytes ++ dlogBytes
-  let identity := Harness.nativeSha256 identityInput
   let batch : Sbm11Pack.Batch := { termRun, quadRun, terms, quads }
-  let r ← Sbm11Pack.packBatches outDir #[batch] blockRows sortRowsMax identityInput.size (pure identity)
-  let baseEpoch ← Harness.CompactedEpoch.read? (System.FilePath.mk srcDir)
-  let epoch := Harness.CompactedEpoch.foldedThrough baseEpoch allBatches
-  if !(← Harness.CompactedEpoch.write (System.FilePath.mk outDir) epoch) then
-    throw (IO.userError "could not write compacted.epoch")
-  if !(← Harness.PosixRangeIO.atomicReplaceFileSyncRaw s!"{outDir}/compacted.source.sha256" identity) then
-    throw (IO.userError "could not write compacted.source.sha256")
+  let (r, epoch) ← packCompacted srcDir outDir #[batch] blockRows sortRowsMax
   let t4 ← IO.monoNanosNow
   IO.println s!"sbm11-compact: source={srcDir} output={outDir} base-quads={ss.g.manifest.quads} {ss.deltaText} quads={r.outs[0]!.rows} terms={r.terms} new-terms-kept={vkeys.size} dictionary-terms-dropped={termCount - (terms - vkeys.size)} epoch={epoch} verify={v.name}"
   Sbm11Pack.printPermLines "sbm11-compact" r.outs
   IO.println s!"sbm11-compact: generation-bytes={r.genBytes} manifest-bytes={r.manifestBytes} merkle-bytes={r.merkleBytes} total-on-disk={r.genBytes + r.manifestBytes + r.merkleBytes}"
   IO.println s!"sbm11-compact: open-and-replay-ms={ms t0 tOpen} scan-used-ms={ms tOpen t1} term-run-ms={ms t1 t2} quad-run-ms={ms t2 t3} phase2-ms={ms 0 r.phase2Ns} phase3a-ms={ms 0 r.phase3aNs} phase3b-ms={ms 0 r.phase3bNs} hash-manifest-ms={ms 0 r.hashNs} total-ms={ms t0 t4} peak-rss={← vmHWM}"
+  pure 0
+
+/-- The reference route (`--via-quads`): the quads of the overlaid generation go to the
+    packer's phase 1 as the quads of any producer do. One SPO scan (the overlay merged)
+    decodes each row to RDF terms and pushes the rows of a block as one batch to a
+    phase-1 worker; phases 2 and 3 and the files that record the epoch are
+    `packCompacted`, the code of the default route. The worker keeps a map of 262,144
+    terms, the default of a single-worker pack. -/
+def runCompactViaQuads (src outDir : String) (blockRows sortRowsMax : Nat) (v : Verify) : IO UInt32 := do
+  let t0 ← IO.monoNanosNow
+  let ss ← openOverlaid v src
+  let tOpen ← IO.monoNanosNow
+  let srcDir := ss.g.dir
+  IO.FS.createDirAll outDir
+  let sink ← Sbm11Pack.openPhase1 outDir 0 262144
+  let rowsRef ← IO.mkRef 0
+  scanAll ss 2 #[] fun cols n => do
+    let mut batch : L4Factoidal.RDF.QuadSource.Batch := Array.mkEmpty n
+    for i in [0:n] do
+      let st ← ss.termOf (IdQuery.at64 cols[0]! i)
+      let pt ← ss.termOf (IdQuery.at64 cols[1]! i)
+      let ot ← ss.termOf (IdQuery.at64 cols[2]! i)
+      let gid := IdQuery.at64 cols[3]! i
+      let gname ← if gid == 0 then pure none else some <$> (subjectOf (← ss.termOf gid))
+      let p ← match pt with
+        | .iri i => pure i
+        | _ => throw (IO.userError "a predicate that is not an IRI")
+      batch := batch.push ({ s := ← subjectOf st, p := p, o := ot }, gname)
+    sink.consume batch
+    rowsRef.modify (· + n)
+  let w ← sink.finish
+  let t1 ← IO.monoNanosNow
+  let (r, epoch) ← packCompacted srcDir outDir w.batches blockRows sortRowsMax
+  let t4 ← IO.monoNanosNow
+  IO.println s!"sbm11-compact: via-quads source={srcDir} output={outDir} base-quads={ss.g.manifest.quads} {ss.deltaText} quads-read={← rowsRef.get} quads={r.outs[0]!.rows} terms={r.terms} epoch={epoch} verify={v.name}"
+  Sbm11Pack.printPermLines "sbm11-compact" r.outs
+  IO.println s!"sbm11-compact: generation-bytes={r.genBytes} manifest-bytes={r.manifestBytes} merkle-bytes={r.merkleBytes} total-on-disk={r.genBytes + r.manifestBytes + r.merkleBytes}"
+  IO.println s!"sbm11-compact: open-and-replay-ms={ms t0 tOpen} phase1-ms={ms tOpen t1} phase2-ms={ms 0 r.phase2Ns} phase3a-ms={ms 0 r.phase3aNs} phase3b-ms={ms 0 r.phase3bNs} hash-manifest-ms={ms 0 r.hashNs} total-ms={ms t0 t4} peak-rss={← vmHWM}"
   pure 0
 
 def parseCompactOpts : List String → Nat × Nat × Option Verify → Option (Nat × Nat × Option Verify)
@@ -269,20 +327,22 @@ def main (args : List String) : IO UInt32 := do
     | _ =>
       try Harness.Sbm11Update.appendUpdate dir (String.intercalate " " parts) version base limit
       catch e => IO.eprintln s!"l4sbm11 update: {e}"; return 1
-  | "compact" :: src :: out :: opts =>
+  | "compact" :: src :: out :: opts0 =>
+    let viaQuads := opts0.contains "--via-quads"
+    let opts := opts0.filter (· != "--via-quads")
     match parseCompactOpts opts (4096, 524288, none) with
     | none =>
-      IO.eprintln "usage: l4sbm11 compact GEN OUTDIR [--block-rows B] [--sort-rows M] [--verify merkle|none]"
+      IO.eprintln "usage: l4sbm11 compact GEN OUTDIR [--block-rows B] [--sort-rows M] [--verify merkle|none] [--via-quads]"
       return 2
     | some (b, m, v?) =>
       try
         let v ← match v? with
           | some v => pure v
           | none => cliDefaultVerify src
-        runCompact src out b m v
+        if viaQuads then runCompactViaQuads src out b m v else runCompact src out b m v
       catch e => IO.eprintln s!"l4sbm11 compact: {e}"; return 1
   | _ =>
-    IO.eprintln s!"{updateUsage} | compact GEN OUTDIR [--block-rows B] [--sort-rows M] [--verify merkle|none]"
+    IO.eprintln s!"{updateUsage} | compact GEN OUTDIR [--block-rows B] [--sort-rows M] [--verify merkle|none] [--via-quads]"
     return 2
 
 end Harness.Sbm11Compact

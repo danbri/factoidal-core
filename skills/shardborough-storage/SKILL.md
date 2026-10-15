@@ -1,6 +1,6 @@
 ---
 name: shardborough-storage
-description: Operate and extend the Lean 4 persisted RDF store (Shardborough) — pack RDF from any of six syntaxes into IBK3, IBK4, IBK5 and SBM11 generations, activate through CURRENT, query the activated collection, apply SPARQL Update through the delta log, compact, and read the format registry, the corpus ladder, the executability census and the round-trip theorem status. Use for any l4block-* CLI question or on-disk Lean storage work; not for the F* COTTAS store (see disk-storage-format).
+description: Operate and extend the Lean 4 persisted RDF store (Shardborough) — pack RDF from any of six syntaxes, from a Dataset in memory or from an HDT file into IBK3, IBK4, IBK5 and SBM11 generations, activate through CURRENT, query the activated collection, apply SPARQL Update through the delta log, compact, and read the format registry, the corpus ladder, the executability census and the round-trip theorem status. Use for any l4block-* CLI question or on-disk Lean storage work; not for the F* COTTAS store (see disk-storage-format).
 ---
 
 # Shardborough storage: the Lean persisted path
@@ -1067,7 +1067,8 @@ section 3f.
 - `L4Factoidal/RDF/SourceTheorems.lean`: the theorems, below.
 - Users of the layer: `Storage/PackStream.lean` (the IBK2 to IBK5 packers),
   `Wasm/Ops/Pack.lean` and `Wasm/Ops/Parse.lean` (wasm),
-  `Harness/Sbm11PackLib.lean` (`l4sbm11-pack`, `l4sbm11 canon`),
+  `Harness/Sbm11PackLib.lean` (`l4sbm11-pack` through `fileRangeSource`,
+  `l4sbm11 canon` through `streamRange`),
   `Harness/Sbm11DictPack.lean` (`l4sbm11-dict-pack`, through
   `Sbm11Pack.streamRange`), `Wasm/Cli.lean` (`l4factoidal parse FILE`: the strict
   route `streamStrictFile`, with `Source.Prepass` for Turtle and TriG),
@@ -1216,6 +1217,9 @@ scanner read the braces of the annotation as graph block braces. The scanner now
   https://github.com/danbri/factoidal/issues/841).
 - `tests/sbm11/w3c_roundtrip.sh`, run by `tests/sbm11/run.sh` part (p): the W3C
   RDF tests through the store, described under "The W3C tests through the store".
+- `tests/sbm11/quad_source.sh`, run by `tests/sbm11/run.sh` part (u): the producers and
+  the packer entry, described under "The packer entry". The part also checks that
+  `tests/sbm11/storage_layering.py` finds no syntax in `RDF/QuadSource.lean`.
 - `tests/sbm11/export_roundtrip.sh`, run by `tests/sbm11/run.sh` part (q): packs
   D1, D2, D3 and D4, exports each in every syntax that can write it, packs the
   export, and compares the data files (D3: RDFC-1.0 canonical N-Quads). Also: an
@@ -1315,6 +1319,81 @@ write to `tests/sbm11/export_roundtrip.sh`, and an export memory row. (8) Run
 `tests/sbm11/w3c_roundtrip.sh` with the suites of the syntax. Do not name the
 syntax in a file under `Storage/`.
 
+**The packer entry: quads from any producer (2026-10-15).**
+Owner, 2026-10-15, verbatim: "isn't packing (into shardborough?) done against
+abstract rdf graph or dataset API not a text file format???". Tracking:
+https://github.com/danbri/factoidal/issues/866. Record: section 11.4 of
+[`docs/designissues/2026-10-11-shardborough-vs-qlever.md`](../../docs/designissues/2026-10-11-shardborough-vs-qlever.md).
+Until 2026-10-15 the entry of phase 1 was a file path and a byte range
+(`phase1Worker cfg source outDir w start stop runTerms`). The entry now takes
+producers of RDF quads, and a file is one producer.
+
+- **The producer.** `L4Factoidal/RDF/QuadSource.lean`: `QuadSource` has one field,
+  `next : IO (Option Batch)`. A batch is an array of quads, each a `Triple` and an
+  `Option Subject` (`none` is the default graph). `next` gives the next batch and,
+  at the end, `none` (again at every later call). A batch is never empty. When a call
+  throws, every later call throws. The module imports no syntax module and names none
+  (`tests/sbm11/storage_layering.py` checks both). `QuadSource.ofStep` makes a producer
+  from a state and an `IO` step; `ofPull` does the same from a pure step.
+  `QuadSource.ofDataset ds batch` and `QuadSource.ofArray quads batch` are the producers
+  of a `Dataset` and of an array. `foldBatches` and `drain` use a producer.
+- **The entry.** `Sbm11Pack.packQuads sources outDir runTerms blockRows sortRowsMax
+  sourceId` (`Harness/Sbm11PackLib.lean`). `sources` is an array of `IO QuadSource`, one
+  for each phase-1 worker. Each worker opens its producer in its own thread and gives the
+  batches to the phase-1 worker (`openPhase1`: `consume` takes a batch, `finish` returns
+  the term runs and quad runs). Phases 2 and 3 are `packBatches`, as before. `sourceId`
+  is the length and the SHA-256 of the source that the manifest records
+  (`SourceId.noDocument`: 0 and the SHA-256 of the empty string).
+- **The producers in the tree.**
+
+| Producer | Code | Use |
+| --- | --- | --- |
+| a byte range of a file, in one of the six syntaxes | `fileRangeSource` (`Sbm11PackLib.lean`); `chooseFormat` and `readCfg` choose the syntax, `packQuads` names none | `l4sbm11-pack FILE OUT`: one producer for each byte range of N-Triples and N-Quads, one for any other syntax |
+| an RDF `Dataset` in memory | `QuadSource.ofDataset` | `packQuads #[QuadSource.ofDataset ds 4096] ...`; `l4sbm11-pack FILE OUT --via-dataset` reads the whole document into a `Dataset` first |
+| an array of quads | `QuadSource.ofArray` | cut an array into slices to use K workers |
+| an HDT file | `GraphStore.quadSource` (`L4Factoidal/HDT/QuadSource.lean`) | `l4sbm11-pack FILE.hdt OUT`, or `--format hdt` |
+
+- **What the output depends on.** The generation is a function of the set of quads and of
+  `sourceId`. It does not depend on the number of producers, on how the quads are divided
+  among them, on the size of their batches, on the size of the term map, or on the order of
+  the quads. `l4sbm11-quad-source selftest` packs each of seven datasets ten ways and compares
+  every file of the other nine packs with the first; `--via-dataset` is byte-identical to the file route on
+  every syntax fixture (`tests/sbm11/quad_source.sh`).
+- **Open the producer in the worker.** `packQuads` takes `IO QuadSource`, not
+  `QuadSource`. Lean marks the objects that a task closure reaches as shared between
+  threads, and a shared object is copied at its first update. A producer keeps its state in
+  a reference; a reference made before the task and used in it is copied at every update.
+  Measured 2026-10-15 (the program is in section 11.4 of the record): 100 rounds of
+  `swap`, `push` and `set` on an array of 5,000,000 numbers took 9,557 ms for a reference
+  made before the task and 29 ms for a reference made in the task. `QuadSource.ofStep` also
+  takes the state out of the reference (`swap`) while the step runs, so that the step holds
+  the only reference.
+- **Compaction.** `l4sbm11 compact` ends in the same code as the pack: `packCompacted`
+  calls `packBatches` and writes the epoch files. Its default phase 1 works on ids and key
+  bytes, with no RDF term. `l4sbm11 compact GEN OUT --via-quads` is the reference route:
+  one SPO scan of the overlaid generation decodes each row to RDF terms and gives the quads
+  to the phase-1 worker (`openPhase1`) as any producer does. The two routes give
+  byte-identical files (`tests/sbm11/run.sh` parts (h), (i) and (m)). The reference route
+  takes about twice as long on the olympics generation (section 11.4 of the record has
+  the numbers), so the id route is the default.
+- **To add a producer.** (1) Write an `IO QuadSource` in a module that is not under
+  `Storage/` (for a store: `L4Factoidal/<Store>/QuadSource.lean`), with `ofStep`. A step
+  that cannot read a structure of the store throws; it never puts a placeholder term in the
+  quad. (2) For the command line, add the case to `Sbm11Pack.producersOf`. (3) Add a case
+  to `tests/sbm11/quad_source.sh`: pack, `l4sbm11 verify`, `l4sbm11 dump`, and compare the
+  dump with the dump of the source store by isomorphism (`l4sbm11-w3c compare`). Add a check
+  that an id the reader cannot resolve is an error (`l4sbm11-quad-source hdt-errors` for the
+  HDT producer). (4) For a pure producer, state the order of its batches as
+  `QuadSourceTheorems.ofDataset_flatten` does.
+- **Theorems** (`RDF/QuadSourceTheorems.lean`; the axioms are `propext`,
+  `Classical.choice` and `Quot.sound`): `take_quads`, `take_size_le` and `take_short`
+  describe one `Cursor.take` step. `ofDataset_flatten`: the batches of `ofDataset`, taken
+  together in order, are `Dataset.quadList`. `datasetPull_batches_size`: each batch has at
+  least one quad and at most `max 1 batch` quads. `quadList_eq_foldDataset`: that order is
+  the order of `Source.foldDataset`. The statements are about the pure form (`Pull`);
+  `tests/sbm11/quad_source.sh` checks that the batches of the producer are the batches of
+  the pure form.
+
 ## Where the code is
 
 - Codecs and pure validators: `formal/lean4/L4Factoidal/Storage/`
@@ -1335,6 +1414,12 @@ syntax in a file under `Storage/`.
   `tests/sbm11/storage_layering.py`, `tests/sbm11/syntax_independence.sh`,
   `tests/sbm11/syntax_bench.sh`, `tests/sbm11/w3c_roundtrip.sh` (with
   `Harness/Sbm11W3c.lean`, the tool `l4sbm11-w3c`), `tools/pack-differential.sh`.
+- The producers of quads and the packer entry: `L4Factoidal/RDF/QuadSource.lean`
+  (`QuadSource`, `ofDataset`, `ofArray`), `RDF/QuadSourceTheorems.lean`,
+  `HDT/QuadSource.lean` (an HDT file), `Harness/Sbm11PackLib.lean` (`packQuads`,
+  `fileRangeSource`, `openPhase1`), `Harness/Sbm11Compact.lean` (`--via-quads`); the tool
+  `Harness/Sbm11QuadSource.lean` (`l4sbm11-quad-source`) and the test
+  `tests/sbm11/quad_source.sh`.
 - The serialiser layer (quads to any syntax): `formal/lean4/L4Factoidal/RDF/Sink.lean`,
   `SinkJsonLd.lean`; the export `Harness/Sbm11Export.lean` (`l4sbm11 export`);
   test `tests/sbm11/export_roundtrip.sh`.

@@ -836,6 +836,10 @@ Results:
 6. `l4sbm11-dict-pack` and `l4factoidal parse FILE` read through the source layer.
    They have no format table of their own, and their output for a valid input did
    not change (`2026-09-03-rdf-parsing-strategy.md` section 3f).
+7. The entry of the packer takes producers of RDF quads (`QuadSource`), not a file path.
+   A file is one producer. A `Dataset` in memory and an HDT file are others, and their
+   generations are tested (section 11.4,
+   https://github.com/danbri/factoidal/issues/866).
 
 ### 11.1 What each syntax costs in a pack
 
@@ -1402,3 +1406,225 @@ before, and packs it now).
   https://github.com/danbri/factoidal/issues/848.
 - The parser and the store agree on the other 1,281 tests.
 
+### 11.4 The packer entry: a producer of RDF quads (2026-10-15)
+
+Tracking: https://github.com/danbri/factoidal/issues/866. Owner, 2026-10-15,
+verbatim: "isn't packing (into shardborough?) done against abstract rdf graph or
+dataset API not a text file format???". The question follows the rule of
+2026-10-14 at the start of this section.
+
+**Before.** Below its entry, the packer used RDF terms only. Phase 1 took
+`Triple × Option Subject`, and the dictionary key is a function of the `Term`. The
+entry of phase 1 was a file. `phase1Worker cfg source outDir w start stop runTerms`
+took a path and a byte range, and read them through `RDF.Source`. No function packed
+the quads of a `Dataset` value, of the reader of another store, or of the answer of
+a query. `l4sbm11 compact` packed without text, from the generation and the delta
+log, through its own route (ids and key bytes).
+
+**After.**
+
+1. `L4Factoidal/RDF/QuadSource.lean` is in the library. It imports `RDF.Graph` and no
+   syntax module. `QuadSource` has one field, `next : IO (Option Batch)`. A batch is an
+   array of quads. A quad is a `Triple` and an `Option Subject` (`none` is the default
+   graph). `next` gives the next batch. At the end, and at every later call, it gives
+   `none`. A batch is never empty. When a call throws, every later call throws.
+2. `Pull σ` is the pure form of a producer: from a state, the next batch and the next
+   state, or `none`. `ofStep` and `ofPull` make a producer from a state and a step.
+   `ofDataset` and `ofArray` make the producers of a `Dataset` and of an array of quads.
+3. `Sbm11Pack.packQuads sources outDir runTerms blockRows sortRowsMax sourceId`
+   (`Harness/Sbm11PackLib.lean`) is the entry. `sources` has one `IO QuadSource` for
+   each phase-1 worker. Each worker opens its producer and gives each batch to the
+   phase-1 sink (`openPhase1`: `consume` and `finish`). Then the entry runs phases 2 and
+   3 (`packBatches`). Phase 1 knows RDF terms, triples and graph names.
+4. `fileRangeSource cfg path start stop` is the producer of a file. It reads the bytes
+   `[start, stop)` through the source layer, in chunks of 64 KiB. The syntax is named in
+   the code that makes the producers (`chooseFormat`, `readCfg`, `planRanges`,
+   `fileRangeSource`, `openDatasetSource`) and nowhere in `packQuads` or in the phases it
+   runs. `runPack` makes one producer for each byte range of an N-Triples or N-Quads file
+   (the cut at line starts is the optimisation of that producer, `planRanges`), and one
+   producer for a file of any other syntax.
+5. `sourceId` is what the manifest records about the source: a length and a SHA-256. A
+   file gives its own. `SourceId.noDocument` is the length 0 and the SHA-256 of the empty
+   byte string.
+6. Command line: `l4sbm11-pack FILE.hdt OUT` (or `--format hdt`) packs the triples of an
+   HDT file. `l4sbm11-pack FILE OUT --via-dataset` reads the whole document into a
+   `Dataset` and packs the `Dataset`. The first log line names the producer.
+
+**Producers.**
+
+| Producer | Code | Reads |
+| --- | --- | --- |
+| a byte range of a file | `fileRangeSource` | the six syntaxes of the source layer |
+| a `Dataset` in memory | `QuadSource.ofDataset` | the default graph, then each named graph, in list order |
+| an array of quads | `QuadSource.ofArray` | the array, in order |
+| an HDT file | `HDT.GraphStore.quadSource` | subject by subject, with the HDT reader (`HDT/Triples.lean`, `HDT/Dictionary.lean`). A structure that it cannot read stops the pack with an error. |
+
+The TDB2 reader (`Tdb2/Read.lean`) gives N-Quads lines as text (`quadLines`). The HDT
+reader gives RDF terms (`HDT.idToTerm`). So the store in this record is an HDT file.
+
+**Why `packQuads` takes `IO QuadSource`.** A producer keeps its state in a mutable
+reference. Lean marks the objects that the closure of `IO.asTask` reaches as shared
+between threads, and it copies a shared object at an update. A reference that is made
+before the task and used in the task keeps its array shared at every update. Measured
+2026-10-15 (Lean 4.33.1, linux x86_64, `lean -c` and `leanc -O2`):
+
+```lean
+def loop (r : IO.Ref (Array Nat)) (n : Nat) : IO Unit := do
+  for i in [0:n] do
+    let a ← r.swap #[]
+    r.set (a.push i)
+
+def main : IO Unit := do
+  let r ← IO.mkRef (Array.range 5000000)            -- made before the task
+  let r1 ← IO.asTask (do
+    let t ← IO.monoNanosNow
+    loop r 100
+    pure ((← IO.monoNanosNow) - t)) .dedicated
+  match r1.get with
+  | .ok dt => IO.println s!"before the task: {dt / 1000000} ms"
+  | .error e => throw e
+  let r2 ← IO.asTask (do
+    let r ← IO.mkRef (Array.range 5000000)          -- made in the task
+    let t ← IO.monoNanosNow
+    loop r 100
+    pure ((← IO.monoNanosNow) - t)) .dedicated
+  match r2.get with
+  | .ok dt => IO.println s!"in the task: {dt / 1000000} ms"
+  | .error e => throw e
+```
+
+Two runs printed `before the task: 9557 ms` and `in the task: 29 ms`, then
+`before the task: 7351 ms` and `in the task: 23 ms`. Each round copies the array of
+5,000,000 numbers when the reference is made before the task. So each worker opens its
+producer in its own thread (`IO QuadSource`), and `ofStep` takes the state out of its
+reference with `swap` while the step runs, so that the step holds the only reference.
+
+**Output before and after (2026-10-15).** The packer of origin/main 3e832dfe and the
+packer of this change, both built in the same tree, packed the same sources. The
+comparison covers the exit status, the log lines (the times and the peak RSS masked) and
+every file of the generation directory (`diff -r`: the 10 data files, their 10 `.merkle`
+files and `manifest.sbm11`, 21 files). It ran twice: with the build of this change
+before the merge of origin/main 724fdd79 (the Turtle reader commits of issue 865), and
+with the final build, which includes them. Both runs gave the result in the table.
+
+| Sources | Packs | Result |
+| --- | ---: | --- |
+| the 27 fixtures of `tests/sbm11/syntax` (D1 to D4, `bnode_collide`, `lang_scope`, `scope_paths`), each with `--workers 4` and with `--workers 1` | 54 | identical |
+| `tests/sbm11/gate/gate.nq` and `tests/sbm11/gate12/gate12.nq`, `--workers 4` | 2 | identical |
+| the generated sets of `gen_multi.py` (1,500 and 11,000 subjects) in four syntaxes, with `--workers 4` and with `--workers 3 --run-terms 3000` (many term runs) | 16 | identical |
+| the positive evaluation and syntax tests of the W3C RDF suites and of the JSON-LD toRdf manifest, as `tests/sbm11/w3c_roundtrip.sh` lists them, with `--format F --base IRI --workers 1` | 1,290 | identical: 1,278 packs, and 12 that exit 1 in both packers with the same message |
+| `olympics.nt` (337,695,911 bytes, 1,781,625 quads), `--workers 4` | 1 | identical, 21 files |
+
+In the final comparison, `l4sbm11-pack`, `l4sbm11`, `l4factoidal` and `l4sbm11-w3c` have the
+same SHA-256 as the binaries of the final build.
+
+**Time and memory on olympics (2026-10-15).** `l4sbm11-pack olympics.nt OUT --workers 4`,
+4 CPUs. Five runs of each packer, alternating, the old packer first in each pair. The new
+packer is the build before the merge of origin/main 724fdd79. Another session used the
+machine: the load average at the start of a run was between 0.85 and 3.03.
+`/usr/bin/time -f "%e %U %S %M"` gives the wall time, the CPU time (user plus system) and
+the peak RSS. The phase 1 time is `phase1-ms` of the log.
+
+| Packer | Wall s | CPU s | Phase 1 s | Peak RSS kB |
+| --- | --- | --- | --- | --- |
+| origin/main 3e832dfe | 18.42 (17.95 to 20.05) | 45.72 (43.82 to 48.10) | 9.26 (8.29 to 9.53) | 208,956 (206,980 to 218,304) |
+| this change | 18.00 (17.24 to 18.58) | 43.99 (42.57 to 45.41) | 8.57 (7.98 to 8.66) | 206,208 (201,620 to 220,468) |
+
+Median, and the least and the greatest value in brackets. The medians of the new packer are
+2 % (wall time), 4 % (CPU time), 7 % (phase 1) and 1 % (peak RSS) below those of the old
+packer. The ranges overlap in every column, so the difference is inside the noise of this
+machine: the new packer is not slower and does not use more memory. The greatest peak RSS
+of the new packer (220,468 kB) is 2,164 kB above the greatest of the old one, and the peak
+RSS of one packer differs by 11,000 to 19,000 kB between runs.
+
+**Tests of the new producers.** `bash tests/sbm11/quad_source.sh`, part (u) of
+`tests/sbm11/run.sh`: 555 pass, 0 fail, 0 expected-fail (out of 555), 12 to 14 s.
+
+1. `l4sbm11-quad-source selftest` (468 checks, in process, no document text). For seven
+   datasets and eight batch sizes (0, 1, 2, 3, 7, 100, 4,096 and 1,000,000): the batches
+   of `ofDataset` and `ofArray`, taken together, are `Dataset.quadList`. Each batch has at
+   least one quad and at most `max 1 batch` quads. They are the batches of the pure model
+   (`Pull.batches`). `next` gives `none` again after the end. A step that throws makes
+   every later call throw. Then each dataset is packed ten ways: from the `Dataset`, from
+   1, 2 and 5 producers, with batches of 1, 3 and 4,096 quads, with term maps of 7, 40 and
+   262,144 terms, with the quads in reverse order, and with the default graph and the
+   named graphs as two datasets. Every file of the nine packs, the manifest included, is
+   byte-identical to the file of the first.
+2. A `Dataset` in memory is packed, verified (`l4sbm11 verify`), dumped (`l4sbm11 dump`)
+   and compared with the `Dataset`. The comparison is by dataset isomorphism
+   (`l4sbm11-w3c compare`) and by the RDFC-1.0 canonical N-Quads of both
+   (`l4factoidal canonicalize`). Seven datasets: empty; a default graph; named graphs; a
+   mixed one (blank nodes as subject, object and graph name, a repeated triple, a triple
+   in two graphs, a named graph with no triple); one that stresses the dictionary
+   (Unicode, escapes, a literal of 100,000 characters, integers and other datatypes);
+   one with RDF 1.2 terms (a directional literal, nested triple terms); and 8,800
+   generated quads. RDFC-1.0 is defined on RDF 1.1 datasets, so the RDF 1.2 dataset is
+   compared by isomorphism only. Three of the datasets are also packed from 3 producers
+   with batches of 5 quads and a term map of 50: the files are byte-identical to those
+   of 1 producer.
+3. The file route and the Dataset route (`--via-dataset`) give byte-identical generations,
+   the manifest included, for 33 sources: every syntax fixture of `tests/sbm11/syntax`,
+   the two gate fixtures and a generated dataset of 1,500 subjects in four syntaxes.
+4. HDT. Two fixtures of hdt-cpp 1.3.3 (`third_party/testing/hdt`; 343 quads and 1 quad).
+   The dump of the generation equals the HDT store's own dump (`HDT.searchTriples`,
+   by isomorphism and by RDFC-1.0) and the N-Triples file that the fixture was made
+   from. The manifest holds the length and the SHA-256 of the HDT file. `--workers 4`
+   and `--format hdt` on a file named `store.bin` give the same files as the default.
+   A truncated file and a text file are refused with an error. On each fixture, an id of
+   the subject, predicate or object role that is 0 or lies outside the dictionary gives an
+   error and not a term, and so does a subject after the last subject of the triples
+   section (`hdt-errors`, 9 checks). The query decoders of `HDT/Store.lean` give a sentinel
+   term in these cases, and a pack would copy it into the generation.
+5. `tests/sbm11/storage_layering.py` reads 128 files and finds 0 violations. It checks
+   that `RDF/QuadSource.lean` imports no syntax module and names no syntax.
+
+**Compaction (item 3 of the issue).** `l4sbm11 compact` ends in the code of the pack.
+`Sbm11Compact.packCompacted` calls `packBatches` (phases 2 and 3) and writes the epoch
+files. Its phase 1 works on ids. Steps A to C of `Harness/Sbm11Compact.lean` scan the SPO
+permutation twice and write one term run and one quad run. A term run holds the used
+dictionary keys, which the dictionary stores in key order, merged with the keys of the
+used overlay terms. The steps build no RDF term. The phase 1 of `packQuads` builds a
+`Term` for each id, hashes it into a map, builds its key and sorts the keys.
+
+`l4sbm11 compact GEN OUT --via-quads` is compaction through that phase 1. One SPO scan of
+the overlaid generation decodes each row to RDF terms (`Session.termOf`) and gives the
+quads of a block, as one batch, to a phase-1 sink (`openPhase1`), as the producers of a
+pack do. Its output is byte-identical to the output of the default route in every test
+that compares them: the olympics generation (23 files) and parts (h) (the gate fixture
+with its updates), (i) (olympics after updates) and (m) (a base with RDF 1.2 triple
+terms) of `tests/sbm11/run.sh`. The cost, measured 2026-10-15 on the olympics generation
+(1,781,625 quads, no delta log), 3 runs of each route, alternating, with a load average of
+2.27 to 2.62 at the start of a run:
+
+| Route | Wall s | CPU s | Peak RSS kB | Phase 1 s | Phase 2 s |
+| --- | --- | --- | --- | --- | --- |
+| default (ids and key bytes) | 10.35 (9.91 to 13.34) | 13.89 (13.70 to 17.04) | 234,860 (225,960 to 257,800) | 1.31 (1.23 to 1.82) | 1.24 (1.15 to 1.49) |
+| `--via-quads` (terms) | 20.35 (20.13 to 20.90) | 23.86 (23.19 to 24.00) | 253,964 (246,804 to 255,580) | 10.00 (9.69 to 10.11) | 1.80 (1.77 to 2.10) |
+
+Median, and the least and the greatest value in brackets. For the default route, phase 1
+is steps A to C. Phases 3a and 3b take 6.10 s and 1.56 s in the default route, and 6.52 s
+and 1.51 s in the reference route. The reference route takes 1.97 times the wall time, 1.72
+times the CPU time and 1.08 times the peak RSS of the default route. Its phase 1 runs in
+one thread. The default route does not decode or hash a term: compaction moves data that
+the store already holds as ids and as key bytes in key order. So the default stays the id
+route. The reference route is the specification-shaped route and the differential oracle
+of the default route: both give the same bytes in the three states above. The condition
+`viaQuads` in `Sbm11Compact.main` selects the route.
+
+**Theorems** (`RDF/QuadSourceTheorems.lean`; their axioms are `propext`,
+`Classical.choice` and `Quot.sound`; `tools/lean-unbuilt-modules.py --gate` passes).
+`Cursor.take` adds quads of a dataset to a batch until the batch is full or the dataset
+ends. `take_quads`: the quads of the accumulator and of the start position are the quads
+of the result and of the end position. `take_size_le`: the result has at most `n` quads
+(or as many as the accumulator had). `take_short`: when the result has fewer than `n`
+quads, the end position has no quad. `datasetPull_spec`: one step of the producer
+either ends with no quad left, or gives a batch of at least one and at most `max 1 batch`
+quads and a position that holds the others. `ofDataset_flatten`: the batches of the
+producer, taken together in order, are `Dataset.quadList`, in at most as many steps as
+there are quads. `datasetPull_batches_size`: each batch has at least one quad and at most
+`max 1 batch` quads. `quadList_eq_foldDataset`: `Dataset.quadList` is the order of
+`Source.foldDataset`. So a `Dataset` that the parser returns and the producer of that
+`Dataset` give the quads in the order in which the source layer gives them for a
+document that it parses as a whole. The statements are about `Pull`, the pure form.
+`ofPull` and `ofStep` add a reference, and `l4sbm11-quad-source selftest` checks that the
+batches of the producer are those of `Pull.batches`.

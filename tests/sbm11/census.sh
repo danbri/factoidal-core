@@ -40,9 +40,13 @@ HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 ROOT="$(cd "$HERE/../.." && pwd)"
 BIN="$ROOT/formal/lean4/.lake/build/bin"
 S11="${SBM11_BIN:-$BIN/l4sbm11}"
+# FACTOIDAL_TESTING_ROOT: the directory that holds the W3C fixtures (default
+# third_party/testing of this tree). A checkout that has no submodules (a git
+# worktree) points it at the checkout that has them.
+TESTING="${FACTOIDAL_TESTING_ROOT:-$ROOT/third_party/testing}"
 suites=("$@")
 if [ ${#suites[@]} -eq 0 ]; then
-  suites=("$ROOT/third_party/testing/w3c/sparql/sparql10" "$ROOT/third_party/testing/w3c/sparql/sparql11")
+  suites=("$TESTING/w3c/sparql/sparql10" "$TESTING/w3c/sparql/sparql11")
 fi
 mkdir -p "$ROOT/tmp"
 RUN="$(mktemp -d "$ROOT/tmp/sbm11-census.XXXXXX")"

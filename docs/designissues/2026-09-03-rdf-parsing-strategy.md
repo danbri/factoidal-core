@@ -500,9 +500,21 @@ N-Triples, N-Quads and Turtle as before. Output for a valid input did not change
 - the new `parse` gives the same N-Quads for one dataset in every syntax
   (`syntax_independence.sh`, D1 and D2; D3 by RDFC-1.0 canonical N-Quads).
 
-`tests/sbm11/storage_layering.py` counts only `L4Factoidal/Storage/`. The two
+`tests/sbm11/storage_layering.py` counts only `L4Factoidal/Storage/` (and, since
+2026-10-15, `RDF/QuadSource.lean`). The two
 tools are in `Harness/` and `Wasm/`, where a format table is allowed but not
 wanted: neither has one.
+
+**The pack entry takes quads (2026-10-15).** The entry of phase 1 of `l4sbm11-pack`
+was a file path and a byte range, read through `Source.ByteReader`. It is now a
+producer of RDF quads (`L4Factoidal/RDF/QuadSource.lean`, `Sbm11Pack.packQuads`), and the
+source layer is the file producer (`Sbm11Pack.fileRangeSource`). A `Dataset` in memory,
+an array of quads and an HDT file are other producers. `--via-dataset` reads a whole
+document with `Source.parseDocument` and packs the `Dataset`; its generation is
+byte-identical to the one of the chunk reader for the 33 fixtures of
+`tests/sbm11/quad_source.sh`. Record: section 11.4 of
+`2026-10-11-shardborough-vs-qlever.md`; tracking
+https://github.com/danbri/factoidal/issues/866.
 
 **Blank node labels.** A blank node label is local to one document (RDF 1.1
 Concepts, section 3.4). Turtle and TriG mint a label for each `[]`, collection

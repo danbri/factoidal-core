@@ -6,6 +6,34 @@ shared with compaction (`Harness/Sbm11Compact.lean`, stage 5)
 
   l4sbm11-pack SOURCE OUTDIR [--format F] [--base IRI] [--workers K]
                [--run-terms N] [--block-rows B] [--sort-rows M] [--phase2-only]
+               [--via-dataset]
+
+## The entry: a producer of RDF quads
+
+The packer takes RDF quads from producers (`QuadSource`,
+`L4Factoidal/RDF/QuadSource.lean`) and does not know where they come from (owner,
+2026-10-15, https://github.com/danbri/factoidal/issues/866: "isn't packing (into
+shardborough?) done against abstract rdf graph or dataset API not a text file
+format???"). The entry is `packQuads`. It takes one way to open a producer for each
+phase-1 worker, runs phase 1 on them, and runs phases 2 and 3 (`packBatches`) on the
+batches. The producers in the tree:
+
+  * `fileRangeSource`: bytes `[start, stop)` of a file, read through the source layer
+    (`L4Factoidal/RDF/Source.lean`) in the syntax the command line names. The syntax is
+    named in the code that makes the producers (`chooseFormat`, `readCfg`, `planRanges`,
+    `fileRangeSource`, `openDatasetSource`) and nowhere in `packQuads` or in the phases it
+    runs. `runPack` makes one producer for each byte range.
+  * `QuadSource.ofDataset`, `QuadSource.ofArray`: an RDF `Dataset` or an array of quads
+    in memory. `--via-dataset` reads the whole document into a `Dataset` (the batch
+    meaning of the source layer, `Source.parseDocument`) and packs that `Dataset`.
+  * `GraphStore.quadSource` (`L4Factoidal/HDT/QuadSource.lean`): the triples of an HDT
+    file, read with the HDT reader. SOURCE ending in `.hdt`, or `--format hdt`.
+
+The pack records the length and the SHA-256 of the source in the manifest. A file or an
+HDT file gives its own. A pack with no document (`packQuads` with `noDocument`) records
+length 0 and the SHA-256 of the empty byte string.
+
+## The file producer
 
 SOURCE is a document in any of the six RDF syntaxes (N-Triples, N-Quads,
 Turtle, TriG, RDF/XML, JSON-LD). The format is `--format F` (a label of
@@ -58,6 +86,8 @@ Prints phase times and VmHWM. Exit 1 on any error.
 import Harness.Sbm11Gen
 import Harness.RunHeap
 import L4Factoidal.RDF.SourceJsonLd
+import L4Factoidal.RDF.QuadSource
+import L4Factoidal.HDT.QuadSource
 import L4Factoidal.Qlvr.Sort
 import L4Factoidal.Qlvr.CmpBytesFast
 import Std.Data.HashMap
@@ -111,6 +141,10 @@ structure ReadCfg where
 structure SourceOpts where
   format : Option String := none
   base : Option String := none
+  /-- `--via-dataset`: read the whole document into a `Dataset` and pack that
+      `Dataset` (the batch meaning of the source layer), not the chunks of the
+      reader. The memory is that of the document and of its `Dataset`. -/
+  viaDataset : Bool := false
 
 /-- The syntax of a source: `--format F` when given, else the extension of
     its name. There is no default: a source that neither names gets an error
@@ -126,6 +160,19 @@ def chooseFormat (source : String) (flag : Option String) : Except String RdfFor
       | some fmt => .ok fmt
       | none =>
           .error s!"cannot tell the RDF syntax of {source} from its name; give --format with one of ntriples, nquads, turtle, trig, rdfxml, jsonld"
+
+/-- What SOURCE is: a document in one of the RDF syntaxes, or an HDT file (a store
+    that its own reader opens; there is no text in between). `--format hdt` or the
+    extension `.hdt` makes it an HDT file. -/
+inductive SourceKind where
+  | document (fmt : RdfFormat)
+  | hdt
+
+def chooseKind (source : String) (flag : Option String) : Except String SourceKind :=
+  match flag with
+  | some "hdt" => .ok .hdt
+  | some _ => (chooseFormat source flag).map .document
+  | none => if source.endsWith ".hdt" then .ok .hdt else (chooseFormat source flag).map .document
 
 /-- How a read failure is told to the user. `start` is the byte where the
     range began, so a parse position names a place in the document. -/
@@ -159,34 +206,88 @@ def readCfg (source : String) (size : Nat) (opts : SourceOpts) : IO ReadCfg := d
     | .error m => throw (IO.userError m)
   pure { fmt, base := opts.base, bnodePrefix := ← bnodePrefixOf source fmt size }
 
-/-- Stream bytes `[start, stop)` of the source through the source layer in
-    64 KiB positioned reads. The consumer is `step` from the accumulator `init`;
-    `onFeed` sees the accumulator after every chunk and gives back the
-    accumulator to continue with. Phase 1 of the pack (`consume`, `P1`), `canon`
-    and the dictionary packer (`Sbm11DictPack`) each pass their own. -/
-def streamRange {α : Type} (cfg : ReadCfg) (source : String) (start stop : Nat)
-    (step : Source.Step α) (init : α) (onFeed : α → IO α) : IO α := do
-  let mut rd ← match Source.ByteReader.init Source.withJsonLd cfg.fmt cfg.version cfg.base
-      cfg.bnodePrefix init with
-    | .ok r => pure r
-    | .error m => throw (IO.userError s!"{source}: {m}")
-  let mut pos := start
-  for _ in [0:(stop - start) / 65536 + 2] do
-    if pos ≥ stop then break
-    let len := min 65536 (stop - pos)
-    let bytes ← pread source pos len
-    pos := pos + len
-    match rd.feed step bytes with
-    | .error f => throw (IO.userError (failureText source start pos f))
-    | .ok next =>
-      let acc ← onFeed next.acc
-      rd := next.setAcc acc
+/-- The reader of one byte range of a source, in the syntax `cfg` names, with the
+    accumulator `init`. -/
+def openRangeReader {α : Type} (cfg : ReadCfg) (source : String) (init : α) :
+    IO (Source.ByteReader α) :=
+  match Source.ByteReader.init Source.withJsonLd cfg.fmt cfg.version cfg.base cfg.bnodePrefix init with
+  | .ok r => pure r
+  | .error m => throw (IO.userError s!"{source}: {m}")
+
+/-- Read the next 64 KiB of bytes `[start, stop)` of the source, from `pos`, and
+    give them to the reader. Returns the reader and the position after the chunk. -/
+def feedChunk {α : Type} (source : String) (start stop : Nat) (step : Source.Step α)
+    (rd : Source.ByteReader α) (pos : Nat) : IO (Source.ByteReader α × Nat) := do
+  let len := min 65536 (stop - pos)
+  let bytes ← pread source pos len
+  let pos := pos + len
+  match rd.feed step bytes with
+  | .error f => throw (IO.userError (failureText source start pos f))
+  | .ok next => pure (next, pos)
+
+/-- The end of the range: the unfinished statement is read, and the accumulator is
+    returned. -/
+def finishRange {α : Type} (source : String) (start pos : Nat) (step : Source.Step α)
+    (rd : Source.ByteReader α) : IO α :=
   match rd.endBytes with
   | .error f => throw (IO.userError (failureText source start pos f))
   | .ok reader =>
     match reader.finish step with
     | .error e => throw (IO.userError (failureText source start pos (.parse e)))
-    | .ok acc => onFeed acc
+    | .ok acc => pure acc
+
+/-- Stream bytes `[start, stop)` of the source through the source layer in
+    64 KiB positioned reads. The consumer is `step` from the accumulator `init`;
+    `onFeed` sees the accumulator after every chunk and gives back the
+    accumulator to continue with. `canon` and the dictionary packer
+    (`Sbm11DictPack`) each pass their own. The packer's phase 1 takes quads from
+    `fileRangeSource` instead. -/
+def streamRange {α : Type} (cfg : ReadCfg) (source : String) (start stop : Nat)
+    (step : Source.Step α) (init : α) (onFeed : α → IO α) : IO α := do
+  let mut rd ← openRangeReader cfg source init
+  let mut pos := start
+  for _ in [0:(stop - start) / 65536 + 2] do
+    if pos ≥ stop then break
+    let (next, pos') ← feedChunk source start stop step rd pos
+    pos := pos'
+    let acc ← onFeed next.acc
+    rd := next.setAcc acc
+  let acc ← finishRange source start pos step rd
+  onFeed acc
+
+/-- The quad consumer of `fileRangeSource`: the reader's accumulator is the batch. -/
+def pushQuad : Source.Step QuadSource.Batch := fun batch t g => batch.push (t, g)
+
+/-- Where a `fileRangeSource` is: the reader, with the quads of the chunks read
+    since the last batch in its accumulator, and the position of the next chunk. -/
+structure RangePos where
+  reader : Source.ByteReader QuadSource.Batch
+  pos : Nat
+
+/-- The quads of bytes `[start, stop)` of a file, read through the source layer in
+    64 KiB chunks in the syntax `cfg` names: this is the file producer of the packer.
+    Each call of `next` reads chunks
+    until they complete a statement, and gives the quads of the statements the chunks
+    completed. The end of the range gives the quads of the last statement. A parse
+    error is an exception of `next` (`failureText`: the position is in the file). -/
+def fileRangeSource (cfg : ReadCfg) (source : String) (start stop : Nat) : IO QuadSource := do
+  let reader ← openRangeReader cfg source (#[] : QuadSource.Batch)
+  QuadSource.ofStep (some (⟨reader, start⟩ : RangePos)) fun st => do
+    match st with
+    | none => pure none
+    | some ⟨reader, pos⟩ => do
+      let mut rd := reader
+      let mut pos := pos
+      for _ in [0:(stop - start) / 65536 + 2] do
+        if pos ≥ stop then break
+        let (next, pos') ← feedChunk source start stop pushQuad rd pos
+        pos := pos'
+        -- take the quads out of the reader and leave an empty batch in it
+        let (next, batch) := next.withAcc fun acc => (#[], acc)
+        rd := next
+        if !batch.isEmpty then return some (batch, some ⟨rd, pos⟩)
+      let last ← finishRange source start pos pushQuad rd
+      pure (if last.isEmpty then none else some (last, none))
 
 def lineStartFrom (source : String) (size b : Nat) : IO Nat := do
   if b == 0 then return 0
@@ -231,7 +332,18 @@ def maxBatchQuads : Nat := 1048576
 
 def localLimit : Nat := two60
 
-def phase1Worker (cfg : ReadCfg) (source outDir : String) (w start stop runTerms : Nat) : IO WorkerOut := do
+/-- Phase 1 of one worker as an object that takes batches: `consume` gives a batch
+    to the worker, `finish` spills what is left and returns what the worker made.
+    `phase1Worker` pulls the batches of a producer into it. A caller that scans a
+    store with a callback pushes the batches itself. -/
+structure Phase1Sink where
+  consume : QuadSource.Batch → IO Unit
+  finish : IO WorkerOut
+
+/-- Open the phase-1 worker `w`: give each distinct non-inline term a batch-local
+    number, and spill a term run and a quad run whenever the map is full. The worker
+    knows RDF terms, triples and graph names only. -/
+def openPhase1 (outDir : String) (w runTerms : Nat) : IO Phase1Sink := do
   let idsRef ← IO.mkRef (({} : Std.HashMap Term Nat))
   let quadsRef ← IO.mkRef ((Array.mkEmpty 65536 : Array Nat))
   let outRef ← IO.mkRef ({} : WorkerOut)
@@ -283,12 +395,12 @@ def phase1Worker (cfg : ReadCfg) (source outDir : String) (w start stop runTerms
     let nIds := (← idsRef.get).size
     let nQ := (← quadsRef.get).size / 4
     pure (nIds ≥ runTerms || nQ ≥ maxBatchQuads)
-  /- A chunk of a streaming syntax holds a few hundred quads. The whole
-     document syntaxes (RDF/XML, JSON-LD) give all their quads to one call at
-     the end, so the batch limits are also tested inside the loop. -/
-  let onFeed (acc : P1) : IO P1 := do
+  /- A batch of a streaming syntax holds a few hundred quads. The whole
+     document syntaxes (RDF/XML, JSON-LD) and a `Dataset` give all their quads
+     in a few batches, so the batch limits are also tested inside the loop. -/
+  let onBatch (batch : QuadSource.Batch) : IO Unit := do
     let mut k := 0
-    for (tr, g) in acc.pending.reverse do
+    for (tr, g) in batch do
       let s ← slotOf tr.s.toTerm
       let p ← slotOf (.iri tr.p)
       let o ← slotOf tr.o
@@ -300,10 +412,41 @@ def phase1Worker (cfg : ReadCfg) (source outDir : String) (w start stop runTerms
       if k % 4096 == 0 then
         if (← full) then spill
     if (← full) then spill
-    pure { acc with pending := [] }
-  let _ ← streamRange cfg source start stop consume ({} : P1) onFeed
-  spill
-  outRef.get
+  pure { consume := onBatch, finish := do spill; outRef.get }
+
+/-- Phase 1 of one worker: take the batches of a producer. -/
+def phase1Worker (src : QuadSource) (outDir : String) (w runTerms : Nat) : IO WorkerOut := do
+  let sink ← openPhase1 outDir w runTerms
+  src.foldBatches () fun _ batch => sink.consume batch
+  sink.finish
+
+/-- What phase 1 of all the workers leaves: the batches (term runs and quad
+    runs, in the order of the workers), the quads read, and the occurrences of
+    inline terms. -/
+structure Phase1Out where
+  batches : Array Batch := #[]
+  quads : Nat := 0
+  inlineOcc : Nat := 0
+
+/-- Phase 1: one task for each way of opening a producer. The task opens its
+    producer itself, so that the producer and its state belong to the thread that
+    uses them (a state shared between threads is not updated in place). Each task
+    keeps a map of at most `runTerms / sources.size` terms. -/
+def phase1 (sources : Array (IO QuadSource)) (outDir : String) (runTerms : Nat) : IO Phase1Out := do
+  let perWorker := max 1 (runTerms / sources.size)
+  let mut tasks := #[]
+  for i in [0:sources.size] do
+    let openSource := sources[i]!
+    let t ← IO.asTask (do phase1Worker (← openSource) outDir i perWorker) .dedicated
+    tasks := tasks.push t
+  let mut out : Phase1Out := {}
+  for t in tasks do
+    match ← IO.wait t with
+    | .ok o =>
+      out := { batches := out.batches ++ o.batches, quads := out.quads + o.quads,
+               inlineOcc := out.inlineOcc + o.inlineOcc }
+    | .error e => throw e
+  pure out
 
 /-- The SHA-256 of the source, by the HACL* block fold in 1 MiB reads. -/
 def sourceSha (source : String) (size : Nat) : IO ByteArray := do
@@ -718,6 +861,39 @@ def packBatches (outDir : String) (batches : Array Batch) (blockRows sortRowsMax
   pure { terms, pages, records, outs, genBytes, manifestBytes, merkleBytes,
          phase2Ns := t2 - t1, phase3aNs := t3 - t2, phase3bNs := t4 - t3, hashNs := t5 - t4 }
 
+/-- Where the quads of a pack came from, as the manifest records it: a length in
+    bytes and a SHA-256. `sha256` runs when the pack needs it (after phase 3), so
+    that a caller can start it as a task that runs during phase 1. -/
+structure SourceId where
+  bytes : Nat
+  sha256 : IO ByteArray
+
+/-- A pack with no document: length 0 and the SHA-256 of the empty byte string. -/
+def SourceId.noDocument : SourceId := ⟨0, pure (Harness.nativeSha256 ByteArray.empty)⟩
+
+/-- What `packQuads` reports: phase 1, the end time of phase 1, and phases 2 and
+    3. -/
+structure PackQuadsOut where
+  workers : Nat
+  phase1 : Phase1Out
+  phase1End : Nat
+  report : PackReport
+
+/-- THE ENTRY OF THE PACKER. Pack the quads of the producers into the generation
+    directory `outDir`: phase 1 on the producers, one worker for each way of
+    opening one (`phase1`), then phases 2 and 3 on the batches (`packBatches`).
+    The packer knows RDF terms, triples and graph names. It does not know whether
+    the quads come from a file, a `Dataset`, an array or another store. The output
+    is a function of the set of quads and of `sourceId`: it does not depend on the
+    number of producers, on how the quads are divided among them, on the size of
+    their batches, or on their order (`tests/sbm11/quad_source.sh`). -/
+def packQuads (sources : Array (IO QuadSource)) (outDir : String) (runTerms blockRows sortRowsMax : Nat)
+    (sourceId : SourceId) : IO PackQuadsOut := do
+  let p1 ← phase1 sources outDir runTerms
+  let t1 ← IO.monoNanosNow
+  let report ← packBatches outDir p1.batches blockRows sortRowsMax sourceId.bytes sourceId.sha256
+  pure { workers := sources.size, phase1 := p1, phase1End := t1, report }
+
 def printPermLines (tool : String) (outs : Array PermOut) : IO Unit := do
   for p in [0:4] do
     let o := outs[p]!
@@ -733,6 +909,50 @@ def threadCpuNs : IO (Option Nat) := do
     pure ((s.splitOn " ").head?.bind String.toNat?)
   catch _ => pure none
 
+/-- The producers of a source, and what the log line says about them. -/
+structure Producers where
+  /-- The value of `format=` in the log. -/
+  label : String
+  /-- A word appended to the first log line when the source is not a file read in
+      chunks. -/
+  note : String := ""
+  /-- One way of opening a producer for each worker. -/
+  sources : Array (IO QuadSource)
+
+/-- The whole document as a `Dataset` (the batch meaning of the source layer,
+    `Source.parseDocument`), then the producer of that `Dataset`. -/
+def openDatasetSource (source : String) (fmt : RdfFormat) (base : Option String) : IO QuadSource := do
+  let bytes ← IO.FS.readBinFile source
+  let some text := String.fromUTF8? bytes
+    | throw (IO.userError s!"{source}: UTF-8 error")
+  match Source.parseDocument Source.withJsonLd fmt .rdf12 base text with
+  | .error e => throw (IO.userError s!"{source}: parse error at {e.pos}: {e.msg}")
+  | .ok ds => QuadSource.ofDataset ds 4096
+
+/-- What SOURCE is and how it is read. An HDT file is opened here (the whole file
+    is read into memory, as the HDT reader does), and its producer is the triples
+    of the store. A document is cut into byte ranges when its syntax allows
+    (`planRanges`) and each range is a `fileRangeSource`; with `--via-dataset` the
+    document is one `Dataset`. -/
+def producersOf (source : String) (size workers : Nat) (opts : SourceOpts) : IO Producers := do
+  let kind ← match chooseKind source opts.format with
+    | .ok k => pure k
+    | .error m => throw (IO.userError m)
+  match kind with
+  | .hdt =>
+      let some gs ← L4Factoidal.HDT.openGraphStore none (System.FilePath.mk source) none
+        | throw (IO.userError s!"{source}: not a readable HDT file")
+      pure { label := "hdt", sources := #[gs.quadSource 4096] }
+  | .document fmt =>
+      if opts.viaDataset then
+        pure { label := formatLabel fmt, note := " producer=dataset",
+               sources := #[openDatasetSource source fmt opts.base] }
+      else
+        let cfg ← readCfg source size opts
+        let ranges ← planRanges cfg.fmt source size workers
+        pure { label := formatLabel cfg.fmt,
+               sources := ranges.map fun (lo, hi) => fileRangeSource cfg source lo hi }
+
 /-- `--phase2-only`: phase 1, then phase 2; the quad runs are removed, and
     GDV1, GDX1 and the remap files (`run-W-J.tmp.remap`) are kept, so that
     phase 2 can be timed and its output compared byte for byte
@@ -743,19 +963,9 @@ def runPhase2Only (source outDir : String) (workers runTerms : Nat) (opts : Sour
   let t0 ← IO.monoNanosNow
   IO.FS.createDirAll outDir
   let size ← fileSize source
-  let cfg ← readCfg source size opts
-  let ranges ← planRanges cfg.fmt source size workers
-  let perWorker := max 1 (runTerms / ranges.size)
-  let mut tasks := #[]
-  for i in [0:ranges.size] do
-    let (lo, hi) := ranges[i]!
-    let t ← IO.asTask (phase1Worker cfg source outDir i lo hi perWorker) .dedicated
-    tasks := tasks.push t
-  let mut batches : Array Batch := #[]
-  for t in tasks do
-    match ← IO.wait t with
-    | .ok o => batches := batches ++ o.batches
-    | .error e => throw e
+  let ps ← producersOf source size workers opts
+  let p1 ← phase1 ps.sources outDir runTerms
+  let batches := p1.batches
   let t1 ← IO.monoNanosNow
   let c1 ← threadCpuNs
   let (terms, pages, records) ← phase2 outDir batches
@@ -765,49 +975,37 @@ def runPhase2Only (source outDir : String) (workers runTerms : Nat) (opts : Sour
   let cpu := match c1, c2 with
     | some a, some b => s!" phase2-cpu-ms={ms a b}"
     | _, _ => ""
-  IO.println s!"sbm11-pack: phase2-only source={source} format={formatLabel cfg.fmt} source-bytes={size} workers={ranges.size} terms={terms} pages={pages} batches={batches.size} run-records={records} phase1-ms={ms t0 t1} phase2-ms={ms t1 t2}{cpu} peak-rss={← vmHWM}"
+  IO.println s!"sbm11-pack: phase2-only source={source} format={ps.label} source-bytes={size} workers={ps.sources.size} terms={terms} pages={pages} batches={batches.size} run-records={records} phase1-ms={ms t0 t1} phase2-ms={ms t1 t2}{cpu} peak-rss={← vmHWM}"
   pure 0
 
+/-- `l4sbm11-pack SOURCE OUTDIR`: the producers of SOURCE (`producersOf`), then the
+    entry `packQuads`. The source recorded in the manifest is SOURCE: its length and
+    its SHA-256, which a task computes while phase 1 runs. -/
 def runPack (source outDir : String) (workers runTerms blockRows sortRowsMax : Nat)
     (opts : SourceOpts := {}) : IO UInt32 := do
   let t0 ← IO.monoNanosNow
   IO.FS.createDirAll outDir
   let size ← fileSize source
-  let cfg ← readCfg source size opts
+  let ps ← producersOf source size workers opts
   let shaTask ← IO.asTask (sourceSha source size) .dedicated
-  let ranges ← planRanges cfg.fmt source size workers
-  let perWorker := max 1 (runTerms / ranges.size)
-  let mut tasks := #[]
-  for i in [0:ranges.size] do
-    let (lo, hi) := ranges[i]!
-    let t ← IO.asTask (phase1Worker cfg source outDir i lo hi perWorker) .dedicated
-    tasks := tasks.push t
-  let mut batches : Array Batch := #[]
-  let mut quads := 0
-  let mut inlineOcc := 0
-  for t in tasks do
-    match ← IO.wait t with
-    | .ok o =>
-      batches := batches ++ o.batches
-      quads := quads + o.quads
-      inlineOcc := inlineOcc + o.inlineOcc
-    | .error e => throw e
-  let t1 ← IO.monoNanosNow
-  let r ← packBatches outDir batches blockRows sortRowsMax size (do
-    match ← IO.wait shaTask with
-    | .ok s => pure s
-    | .error e => throw e)
+  let out ← packQuads ps.sources outDir runTerms blockRows sortRowsMax
+    { bytes := size, sha256 := do
+        match ← IO.wait shaTask with
+        | .ok s => pure s
+        | .error e => throw e }
   let t5 ← IO.monoNanosNow
+  let r := out.report
   let outs := r.outs
-  IO.println s!"sbm11-pack: source={source} format={formatLabel cfg.fmt} source-bytes={size} workers={ranges.size} quads-parsed={quads} quads={outs[0]!.rows} duplicate-rows={outs[0]!.dups} terms={r.terms} pages={r.pages} batches={batches.size} run-records={r.records} inline-occurrences={inlineOcc} block-rows={blockRows}"
+  IO.println s!"sbm11-pack: source={source} format={ps.label} source-bytes={size} workers={out.workers} quads-parsed={out.phase1.quads} quads={outs[0]!.rows} duplicate-rows={outs[0]!.dups} terms={r.terms} pages={r.pages} batches={out.phase1.batches.size} run-records={r.records} inline-occurrences={out.phase1.inlineOcc} block-rows={blockRows}{ps.note}"
   printPermLines "sbm11-pack" outs
   IO.println s!"sbm11-pack: generation-bytes={r.genBytes} manifest-bytes={r.manifestBytes} merkle-bytes={r.merkleBytes} total-on-disk={r.genBytes + r.manifestBytes + r.merkleBytes}"
-  IO.println s!"sbm11-pack: phase1-ms={ms t0 t1} phase2-ms={ms 0 r.phase2Ns} phase3a-ms={ms 0 r.phase3aNs} phase3b-ms={ms 0 r.phase3bNs} hash-manifest-ms={ms 0 r.hashNs} total-ms={ms t0 t5} peak-rss={← vmHWM}"
+  IO.println s!"sbm11-pack: phase1-ms={ms t0 out.phase1End} phase2-ms={ms 0 r.phase2Ns} phase3a-ms={ms 0 r.phase3aNs} phase3b-ms={ms 0 r.phase3bNs} hash-manifest-ms={ms 0 r.hashNs} total-ms={ms t0 t5} peak-rss={← vmHWM}"
   pure 0
 
 def usage : String :=
-  "usage: l4sbm11-pack SOURCE OUTDIR [--format F] [--base IRI] [--workers K] [--run-terms N] [--block-rows B] [--sort-rows M] [--phase2-only]\n" ++
-  "  F is ntriples, nquads, turtle, trig, rdfxml or jsonld; without --format the file extension decides (.nt .nq .ttl .trig .rdf .jsonld)."
+  "usage: l4sbm11-pack SOURCE OUTDIR [--format F] [--base IRI] [--workers K] [--run-terms N] [--block-rows B] [--sort-rows M] [--phase2-only] [--via-dataset]\n" ++
+  "  F is ntriples, nquads, turtle, trig, rdfxml, jsonld or hdt; without --format the file extension decides (.nt .nq .ttl .trig .rdf .jsonld .hdt).\n" ++
+  "  --via-dataset reads the whole document into an RDF dataset and packs the dataset (the memory is that of the document and the dataset)."
 
 /-- The numbers and the source options of the command line. -/
 structure Opts where
@@ -827,6 +1025,7 @@ def parseOpts : List String → Opts → Option Opts
   | "--format" :: v :: rest, o => parseOpts rest { o with source := { o.source with format := some v } }
   | "--base" :: v :: rest, o => parseOpts rest { o with source := { o.source with base := some v } }
   | "--phase2-only" :: rest, o => parseOpts rest { o with phase2Only := true }
+  | "--via-dataset" :: rest, o => parseOpts rest { o with source := { o.source with viaDataset := true } }
   | _, _ => none
 
 end Sbm11Pack

@@ -49,6 +49,8 @@
 # 2 when a binary or a manifest is missing.
 #
 # Env: L4_BIN_DIR    directory of the binaries (default formal/lean4/.lake/build/bin)
+#      FACTOIDAL_TESTING_ROOT  the directory of the W3C fixtures (default
+#                         third_party/testing of this tree)
 #      W3C_ROUNDTRIP_JOBS  tests in parallel (default 4)
 #      W3C_ROUNDTRIP_SYNTAX  0 leaves the positive syntax tests out
 #      W3C_ROUNDTRIP_KEEP    a directory to keep the dumps and logs of the FAILED
@@ -61,8 +63,9 @@ export LC_ALL=C
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 ROOT="$(cd "$HERE/../.." && pwd)"
 BIN="${L4_BIN_DIR:-$ROOT/formal/lean4/.lake/build/bin}"
-RDF_DIR="$ROOT/third_party/testing/w3c/rdf"
-JLD_MANIFEST="$ROOT/third_party/testing/json-ld/tests/toRdf-manifest.jsonld"
+TESTING="${FACTOIDAL_TESTING_ROOT:-$ROOT/third_party/testing}"
+RDF_DIR="$TESTING/w3c/rdf"
+JLD_MANIFEST="$TESTING/json-ld/tests/toRdf-manifest.jsonld"
 XFAIL_TABLE="$HERE/w3c_roundtrip_xfail.tsv"
 JOBS="${W3C_ROUNDTRIP_JOBS:-4}"
 SYNTAX="${W3C_ROUNDTRIP_SYNTAX:-1}"

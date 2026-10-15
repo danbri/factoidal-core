@@ -1944,6 +1944,14 @@ no suite result is affected.
    (hazard #15). Check with `ls -la third_party/testing | head` first.
 3. After removing a worktree, run `git status` in the main checkout. A
    failure that names the removed worktree is this hazard.
+4. A worktree can also run the SBM11 tests with no symlink and no submodule
+   command: set `FACTOIDAL_TESTING_ROOT` to the `third_party/testing` of the
+   checkout that has the fixtures. `tests/sbm11/census.sh`,
+   `tests/sbm11/w3c_roundtrip.sh`, `tests/sbm11/w3c_update.sh`,
+   `tests/sbm11/quad_source.sh` and `tests/sbm11/run.sh` read it (default:
+   `third_party/testing` of the tree that holds the script). Added 2026-10-15
+   for https://github.com/danbri/factoidal/issues/866, whose worktree had no
+   fixtures.
 
 ## Hazard #41 — a new reference-evaluator feature and the fast paths that bypass it (2026-10-12)
 
@@ -2034,6 +2042,18 @@ agent had not read this hazard before starting the chain, and rule 3 above
 stopped and started again; its numbers were not used. Before a gate chain
 starts, list the files the agent still has to edit (comments, header counts,
 documents that name a count) and edit them first.
+
+Fourth occurrence, 2026-10-15 (issue 866 work, branch `sbm11-quad-source`): the
+header comment of `tests/sbm11/quad_source.sh` was changed (a count in a comment),
+in place, while a background job ran the script (the run took 2 minutes 52 seconds
+and was in its second part). Bash reported `line 117: syntax error near unexpected
+token 'fi'` for a script that parses, and the counts of that run were not used. A
+replacement made with `sed -i`, or by writing `FILE.new` and `mv FILE.new FILE`,
+gives the file a new inode, and a bash that already opened the old file keeps
+reading the old text. The later edits of that script in the same session were made
+that way, while a gate chain that calls the script later (`tests/sbm11/run.sh` calls
+`quad_source.sh` in part (u)) was running, and the chain read the new text when it
+reached that part.
 
 ## Hazard #43 — a fixed fixture path shared by parallel test runs (2026-10-13)
 

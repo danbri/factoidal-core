@@ -324,6 +324,9 @@ extern_lib libl4exthost pkg := do
 -- (tests/sbm11/w3c_roundtrip.sh, issue 837 item 5): the manifests' positive
 -- evaluation tests as rows, and the isomorphism of a dump with a result file.
 @[default_target] lean_exe «l4sbm11-w3c» where root := `Harness.Sbm11W3c
+-- Tests of the producers of RDF quads (L4Factoidal/RDF/QuadSource.lean) and of the
+-- packer entry that takes them (tests/sbm11/quad_source.sh, issue 866).
+@[default_target] lean_exe «l4sbm11-quad-source» where root := `Harness.Sbm11QuadSource
 -- The OWL 2 species verdict (DL or Full) of one ontology document and its
 -- imports, read as N-Triples (Harness/OwlSpeciesFile.lean). The verdict is
 -- `OWL.SyntaxDL.speciesViolations`, the function `l4owl-probe --species`

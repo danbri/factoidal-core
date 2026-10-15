@@ -147,3 +147,9 @@ mixed catalog gives plans that are sound and incomplete (open item above).
   id planner (https://github.com/danbri/factoidal/issues/776).
 - PushIR, for work placed next to the data: `docs/2026-08-blockengine.md`,
   https://github.com/danbri/factoidal/issues/799.
+- Retaining data in Shardborough without a text file: the SBM11 packer takes RDF quads from
+  any producer (`QuadSource`, `Sbm11Pack.packQuads`; `QuadSource.ofDataset` for a dataset in
+  memory, `GraphStore.quadSource` for an HDT file). A plan step that holds a dataset, or reads
+  a store whose reader gives RDF terms, can retain it without writing and parsing a document.
+  `skills/shardborough-storage/SKILL.md`,
+  https://github.com/danbri/factoidal/issues/866.
