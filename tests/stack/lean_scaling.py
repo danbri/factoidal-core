@@ -387,6 +387,15 @@ repaired (docs/designissues/2026-10-10-lean-vs-fstar-performance.md):
                    prefix in front of the others. Before the repair: 0.252 s, 0.828 s and
                    3.41 s CPU (ratios 3.3 and 4.1; 13.5 for 4x input); after: 0.057 s,
                    0.071 s and 0.154 s (1.3 and 2.2; 2.7 for 4x).
+  ntriples-nest-time
+                   `l4factoidal parse --format turtle12 --out nt` of a Turtle document with one
+                   triple whose object is a triple term nested n levels deep, n = 25,000, 50,000
+                   and 100,000, measured at x, 2x and 4x like owl-consistent-cl. Issue
+                   https://github.com/danbri/factoidal/issues/867: `Term.toNTriples` built the
+                   text of each level from the text of the level below it, so it copied the text
+                   built so far at each level, and took a native frame for each level.
+                   Before the repair (expected failure): 0.280 s, 1.23 s and 8.58 s CPU (ratios
+                   4.4 and 7.0 for the two doublings; 30.6 for 4x input; 86.6 s at 300,000 levels).
   startup          process start: `l4factoidal version` must take at most
                    STARTUP_BUDGET (20 ms) of CPU time, minimum of 15 runs
                    (305 million instructions and 43 ms before the fixtures were
@@ -462,6 +471,7 @@ ROW_BOUND = {"owlrl-closure-chain": 20.0, "termwire-page-decode": 6.0}
 # Rows that fail today, each with the open issue that tracks the cost. A row
 # leaves this table in the commit that repairs it.
 XFAIL: dict[str, str] = {
+    "ntriples-nest-time": "https://github.com/danbri/factoidal/issues/867",
     "query-memory-fstar": "https://github.com/danbri/factoidal/issues/729",
     "sbm11-pack-rdfxml-memory": "https://github.com/danbri/factoidal/issues/838",
     "sbm11-pack-jsonld-memory": "https://github.com/danbri/factoidal/issues/839",
@@ -1754,6 +1764,14 @@ def turtle_read_prefixes_ttl(n: int) -> Path:
     return fixture(f"turtle-read-prefixes-{n}.ttl", text)
 
 
+def triple_term_nest_ttl(n: int) -> Path:
+    """A Turtle document with one triple whose object is a triple term nested n deep, as
+    tests/stack/gen_cases.py writes it for the stack rows."""
+    def text():
+        return ("@prefix : <urn:> .\n:s :p " + "<<( :s :p " * n + '"deep"' + " )>>" * n + " .\n")
+    return fixture(f"triple-term-nest-{n}.ttl", text)
+
+
 # row id -> (x, make input, command, expected first line (a string, or a
 # predicate on the line, or on the line and the size n), a file the row needs or None[, the time to bound: "cpu"
 # (user plus system, the default) or "user"]). A row that holds 100 MB to 500 MB
@@ -1803,6 +1821,14 @@ SERIES_ROWS = {
         16000, turtle_read_prefixes_ttl,
         lambda p: [str(BIN), "parse", str(p), "--format", "turtle"],
         lambda line, n: line == str(n),
+        None),
+    # The N-Triples text of a triple term nested n deep (issue 867): `parse --out nt` writes it
+    # with Term.toNTriples. The first line is the start of the text: the triple and the first
+    # two levels of the term.
+    "ntriples-nest-time": (
+        25000, triple_term_nest_ttl,
+        lambda p: [str(BIN), "parse", str(p), "--format", "turtle12", "--out", "nt"],
+        lambda line: line.startswith("<urn:s> <urn:p> <<( <urn:s> <urn:p> <<( <urn:s> <urn:p> "),
         None),
     # The OWL 2 RL closure of the same prefixes (semi-naive rounds since
     # 2026-10-13, https://github.com/danbri/factoidal/issues/756 item 2).

@@ -363,6 +363,47 @@ ttl_nest = ("@prefix : <http://example.org/> .\n:s :p " + "<<( :s :p " * N_TTLN
 args("args-turtle-read-triple-term.json", ttl_nest, "turtle12", "")
 del ttl_nest
 
+# --------- RDF 1.2 triple terms nested N_TERM deep, in N-Triples, N-Quads and TriG (issue 867)
+# One triple whose object is a triple term nested N_TERM levels deep:
+#
+#     <urn:s> <urn:p> <<( <urn:s> <urn:p> <<( <urn:s> <urn:p> ... "deep" )>> )>> .
+#
+# Three functions took a native frame for each level, and the first of them was
+# not the one that issue 865 repaired (https://github.com/danbri/factoidal/issues/867):
+#   1. `readObject12`, the term reader of the N-Triples and N-Quads 1.2 readers (the
+#      formats `nt12` and `nq12`; the N-Quads fast reader behind the op `queryDataset`
+#      is the same reader);
+#   2. `Term.joinKey` and the derived hash of a term, which key the triple in a dataset
+#      (TriG with the term in a graph block, the format `trig12`);
+#   3. `Term.toNTriples`, the non-canonical text of a term, which also copied the text
+#      built so far at each level (`Graph.toNTriples`, `Dataset.toNQuads`, the stream
+#      writers; the answer of a CONSTRUCT query, `parse --out nt`).
+# The documents are 7.2 MB (N-Triples, N-Quads) and 4.2 MB (TriG, Turtle). The ops are
+# `parseToDatasetJson` with the formats `nt12`, `nq12` and `trig12`, and `queryDataset`
+# with a CONSTRUCT query whose answer must hold the term again.
+# `triple-term-nest.ttl` is the Turtle text for the command line, and
+# `triple-term-nest.nt` the bytes that `parse triple-term-nest.ttl --format turtle12
+# --out nt` writes: the N-Triples text and the line break that the command adds. It is also
+# the N-Triples input of `parse triple-term-nest.nt --format nt12` (a blank line is a line of
+# the grammar), as `triple-term-nest.nq` is the N-Quads input of `--format nq12`: the file
+# is read in chunks by the streamed reader that the packers use.
+N_TERM = int(os.environ.get("STACK_TERM_NEST", "300000"))
+nest_nt = ("<urn:s> <urn:p> " + "<<( <urn:s> <urn:p> " * N_TERM
+           + '"deep"' + " )>>" * N_TERM + " .\n")
+nest_nq = nest_nt[:-3] + " <urn:g> .\n"
+nest_trig = ("@prefix : <urn:> .\n:g { :s :p " + "<<( :s :p " * N_TERM
+             + '"deep"' + " )>>" * N_TERM + " . }\n")
+nest_ttl = ("@prefix : <urn:> .\n:s :p " + "<<( :s :p " * N_TERM
+            + '"deep"' + " )>>" * N_TERM + " .\n")
+args("args-ntriples-read-triple-term.json", nest_nt, "nt12", "")
+args("args-nquads-read-triple-term.json", nest_nq, "nq12", "")
+args("args-trig-read-triple-term.json", nest_trig, "trig12", "")
+args("args-construct-triple-term.json", nest_nt, "CONSTRUCT { ?s ?p ?o } WHERE { ?s ?p ?o }")
+write("triple-term-nest.ttl", nest_ttl)
+write("triple-term-nest.nt", nest_nt + "\n")
+write("triple-term-nest.nq", nest_nq)
+del nest_nt, nest_nq, nest_trig, nest_ttl
+
 # ------------------------------------- issue 752 (OKR batch 1 KR 2.6) cases
 # Each is above the depth at which the readable recursion overflowed under
 # LEAN_STACK_SIZE_KB=512 (measured 2026-10-13 on base 7d314f43, native):

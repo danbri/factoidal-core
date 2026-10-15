@@ -47,6 +47,10 @@ const CASES = {
   'delta-log-merge': () => ['deltaLogMerge', readArgs('args-delta-log-merge.json')],
   'turtle-write-prefixes': () => ['serializeTurtleWith', readArgs('args-turtle-write-prefixes.json')],
   'turtle-read-triple-term': () => ['parseToDatasetJson', readArgs('args-turtle-read-triple-term.json')],
+  'ntriples-read-triple-term': () => ['parseToDatasetJson', readArgs('args-ntriples-read-triple-term.json')],
+  'nquads-read-triple-term': () => ['parseToDatasetJson', readArgs('args-nquads-read-triple-term.json')],
+  'trig-read-triple-term': () => ['parseToDatasetJson', readArgs('args-trig-read-triple-term.json')],
+  'construct-triple-term': () => ['queryDataset', readArgs('args-construct-triple-term.json')],
 };
 
 // The handle rows of the Turtle writer with many prefixes (issue 864): a document
@@ -77,7 +81,31 @@ const nestedTerm = (res) => {
   const n = res.nquads.split('<<(').length - 1;
   if (n !== N_NEST) throw new Error(`the N-Quads hold ${n} triple terms, expected ${N_NEST}`);
 };
+
+// The N-Triples, N-Quads and TriG readers read one triple whose object is a triple term
+// nested N_TERM deep, and a CONSTRUCT query answers it as N-Triples text (issue 867): the
+// text of the answer holds N_TERM occurrences of `<<(`.
+const N_TERM = Number(process.env.STACK_TERM_NEST || '300000');
+const nestedTermRead = (res) => {
+  if (!res || res.ok !== true || typeof res.nquads !== 'string') {
+    throw new Error(`the engine did not answer ok:true with N-Quads: ${JSON.stringify(res).slice(0, 160)}`);
+  }
+  if (res.count !== 1) throw new Error(`the document has one triple, the engine counted ${res.count}`);
+  const n = res.nquads.split('<<(').length - 1;
+  if (n !== N_TERM) throw new Error(`the N-Quads hold ${n} triple terms, expected ${N_TERM}`);
+};
+const nestedTermConstruct = (res) => {
+  if (!res || res.ok !== true || res.kind !== 'construct' || typeof res.nquads !== 'string') {
+    throw new Error(`the engine did not answer ok:true with a construct answer: ${JSON.stringify(res).slice(0, 160)}`);
+  }
+  const n = res.nquads.split('<<(').length - 1;
+  if (n !== N_TERM) throw new Error(`the answer holds ${n} triple terms, expected ${N_TERM}`);
+};
 const CHECK = {
+  'ntriples-read-triple-term': nestedTermRead,
+  'nquads-read-triple-term': nestedTermRead,
+  'trig-read-triple-term': nestedTermRead,
+  'construct-triple-term': nestedTermConstruct,
   'turtle-write-prefixes': prefixLines,
   'turtle-write-prefixes-handle': prefixLines,
   'turtle-write-prefixes-with': prefixLines,

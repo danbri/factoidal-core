@@ -119,6 +119,11 @@ export STACK_TURTLE_PREFIXES="$N_TTLP"
 # read the same variable; https://github.com/danbri/factoidal/issues/865).
 N_TTLN="${STACK_TURTLE_NEST:-300000}"
 export STACK_TURTLE_NEST="$N_TTLN"
+# N-Triples, N-Quads and TriG readers and the N-Triples text of a CONSTRUCT answer: levels of the
+# triple term in the object (gen_cases.py and wasm_case.mjs read the same variable;
+# https://github.com/danbri/factoidal/issues/867).
+N_TERM="${STACK_TERM_NEST:-300000}"
+export STACK_TERM_NEST="$N_TERM"
 while [ $# -gt 0 ]; do
   case "$1" in
     --route) ROUTE="$2"; shift 2 ;;
@@ -180,9 +185,24 @@ cli_cmd() {
 # row_wrong <case> <output> prints why the output of a row is wrong, or nothing. A row
 # of the Turtle writer with many prefixes uses every prefix of its table, so the Turtle
 # has N_TTLP `@prefix` declarations. The row of the Turtle reader reads one triple, and
-# the N-Quads in the answer hold N_TTLN triple terms (`<<(`). Other rows print nothing.
+# the N-Quads in the answer hold N_TTLN triple terms (`<<(`). The rows of the N-Triples,
+# N-Quads and TriG readers count one triple and N_TERM triple terms in the answer, and the
+# CONSTRUCT row answers a graph that holds the same N_TERM triple terms. Other rows print
+# nothing.
 row_wrong() {
   case "$1" in
+    ntriples-read-triple-term|nquads-read-triple-term|trig-read-triple-term)
+      local c n
+      c="$(printf '%s' "$2" | grep -o '"count":[0-9]*' | head -1)"
+      n="$(printf '%s' "$2" | grep -o '<<(' | wc -l | tr -d ' ')"
+      { [ "$c" = '"count":1' ] && [ "$n" = "$N_TERM" ]; } ||
+        echo "the answer has ${c:-no count} and $n triple terms, expected \"count\":1 and $N_TERM" ;;
+    construct-triple-term)
+      local k n
+      k="$(printf '%s' "$2" | grep -o '"kind":"construct"' | head -1)"
+      n="$(printf '%s' "$2" | grep -o '<<(' | wc -l | tr -d ' ')"
+      { [ -n "$k" ] && [ "$n" = "$N_TERM" ]; } ||
+        echo "the answer is ${k:-no construct answer} with $n triple terms, expected a construct answer with $N_TERM" ;;
     turtle-write-prefixes*)
       local n
       n="$(printf '%s' "$2" | grep -o '@prefix ' | wc -l | tr -d ' ')"
@@ -327,6 +347,18 @@ xfail_issue() { # xfail_issue <case>; prints the issue URL or nothing
     regex-replace-groups)
       case "${2:-}" in canary|wcanary) echo "https://github.com/danbri/factoidal/issues/816" ;; esac ;;
     rdfc-bnode-chain) echo "https://github.com/danbri/factoidal/issues/817" ;;
+    # Triple terms nested 300,000 deep in the N-Triples, N-Quads and TriG readers and in
+    # the N-Triples text of a CONSTRUCT answer (measured 2026-10-15 on 724fdd79, native):
+    # readObject12 takes a native frame for each level (nt12 and nq12: 4,510 levels ran
+    # under 512 KB and 4,511 overflowed); Term.joinKey and the derived hash of a term, which
+    # key the triple in a dataset, take one for each level (trig12 with the term in a graph
+    # block: 10,152 ran and 10,153 overflowed); Term.toNTriples takes one for each level
+    # (10,151 ran and 10,152 overflowed, ntriples-write-triple-term) and copies the text
+    # built so far at each level (86.6 s at the default stack for 300,000 levels in
+    # ntriples-write-triple-term, 90.7 s in construct-triple-term).
+    ntriples-read-triple-term|nquads-read-triple-term|trig-read-triple-term|construct-triple-term|ntriples-write-triple-term|ntriples-read-cli-triple-term|nquads-read-cli-triple-term)
+      # the native route runs on the 1 GB stack and these cases run there
+      case "${2:-}" in canary|wcanary|wasm) echo "https://github.com/danbri/factoidal/issues/867" ;; esac ;;
     # (`turtle-read-triple-term` was listed for
     # https://github.com/danbri/factoidal/issues/865 until 2026-10-15, when
     # readTtObject and readTripleTerm became a loop with the open triple terms in a
@@ -438,6 +470,12 @@ wasm_missing() { # wasm_missing <route>
 
 # `callseq` as the op of a row: the file holds op/args pairs, run in order in one
 # process (a dataset handle lives in the process).
+#
+# A fourth field `small` marks a row for the routes with a small stack (the native
+# canary, the wasm canary, the wasm route): the unrepaired code takes quadratic time on
+# it (90.7 s on the 1 GB native stack, and TIMEOUT is 120 s), which would make the native
+# route fail for a reason other than the stack (issue 867: construct-triple-term writes
+# the answer with Term.toNTriples; lean_scaling.py measures the time).
 CASES=(
   "xml-entities        parseToDatasetJson   args-xml.json"
   "xml-entities-attr   parseToDatasetJson   args-xml-attr.json"
@@ -466,6 +504,10 @@ CASES=(
   "turtle-write-prefixes-handle callseq seq-turtle-write-prefixes-handle.json"
   "turtle-write-prefixes-with callseq seq-turtle-write-prefixes-with.json"
   "turtle-read-triple-term parseToDatasetJson args-turtle-read-triple-term.json"
+  "ntriples-read-triple-term parseToDatasetJson args-ntriples-read-triple-term.json"
+  "nquads-read-triple-term parseToDatasetJson args-nquads-read-triple-term.json"
+  "trig-read-triple-term parseToDatasetJson args-trig-read-triple-term.json"
+  "construct-triple-term queryDataset args-construct-triple-term.json small"
 )
 
 if [ "$ROUTE" = native ] || [ "$ROUTE" = both ]; then
@@ -478,6 +520,7 @@ if [ "$ROUTE" = native ] || [ "$ROUTE" = both ]; then
   for row in "${CASES[@]}"; do
     # shellcheck disable=SC2086
     set -- $row
+    [ "${4:-}" = small ] && continue
     native_case "$1" "$2" "$3"
   done
 fi
@@ -645,6 +688,95 @@ if [ "$CANARY" = 1 ]; then
     turtle_nest_case canary "${CANARY_PREFIX[@]}"
   else
     record canary turtle-triple-term 1 "NOT SCORED: the canary control did not pass"
+  fi
+fi
+
+# ------------------------- N-Triples text of a deep triple term, command line (issue 867)
+# `l4factoidal parse triple-term-nest.ttl --format turtle12 --out nt`: the Turtle text of one
+# triple whose object is a triple term nested N_TERM deep (gen_cases.py), written as N-Triples
+# by Graph.toNTriples. The bytes must equal `triple-term-nest.nt`, the N-Triples text and the
+# line break that the command adds (7,200,026 bytes). Term.toNTriples took a native frame for
+# each level and copied the text built so far at each level: 86.6 s CPU at the default stack
+# for 300,000 levels, and a stack overflow under the canary budget (measured 2026-10-15 on
+# 724fdd79). TIMEOUT is 120 s, so only the canary runs this row until the repair;
+# lean_scaling.py measures the time (ntriples-nest-time). The same writer serves the row
+# construct-triple-term above, which runs in the wasm routes too.
+# https://github.com/danbri/factoidal/issues/867
+ntriples_write_case() { # ntriples_write_case <route> <prefix...>
+  local route="$1"; shift
+  local name=ntriples-write-triple-term
+  local src="$FIXTURES/triple-term-nest.ttl" want="$FIXTURES/triple-term-nest.nt"
+  local out="$FIXTURES/$name.out" err="$FIXTURES/$name.err" rc t0 t1
+  if [ ! -x "$L4F_BIN" ]; then
+    record "$route" "$name" 1 "$L4F_BIN does not exist (lake build l4factoidal)"
+    return
+  fi
+  t0=$(python3 -c 'import time;print(int(time.time()*1000))')
+  run_capped "$TIMEOUT" "$@" "$L4F_BIN" parse "$src" --format turtle12 --out nt >"$out" 2>"$err"; rc=$?
+  t1=$(python3 -c 'import time;print(int(time.time()*1000))')
+  if grep -q 'Stack overflow' "$err"; then
+    score_case "$route" "$name" overflow "STACK OVERFLOW (exit $rc)"
+  elif [ "$rc" -ne 0 ]; then
+    score_case "$route" "$name" error "exit $rc: $(tail -1 "$err" | head -c 160)"
+  elif ! cmp -s "$out" "$want"; then
+    score_case "$route" "$name" error "the output has $(wc -c <"$out" | tr -d ' ') bytes and differs from the fixture ($(wc -c <"$want" | tr -d ' ') bytes)"
+  else
+    score_case "$route" "$name" ran "the N-Triples text equals the fixture ($((t1 - t0))ms)"
+  fi
+  rm -f "$out" "$err"
+}
+# `l4factoidal parse FILE --format nt12|nq12`: the file is read in 64 KiB chunks by the streamed
+# reader that the shard packers use (the rows above run the batch reader), and the command
+# prints the number of triples: 1. The line of the file is 7,200,025 bytes. The unrepaired
+# reader overflowed under the canary budget, and took 10.1 s at the default stack, where the
+# batch reader takes 2 s (measured 2026-10-15 on 724fdd79).
+# https://github.com/danbri/factoidal/issues/867
+cli_read_case() { # cli_read_case <route> <case> <file> <format> <prefix...>
+  local route="$1" name="$2" file="$3" fmt="$4"; shift 4
+  local err="$FIXTURES/$name.err" out rc t0 t1
+  if [ ! -x "$L4F_BIN" ]; then
+    record "$route" "$name" 1 "$L4F_BIN does not exist (lake build l4factoidal)"
+    return
+  fi
+  t0=$(python3 -c 'import time;print(int(time.time()*1000))')
+  out="$(run_capped "$TIMEOUT" "$@" "$L4F_BIN" parse "$FIXTURES/$file" --format "$fmt" 2>"$err")"; rc=$?
+  t1=$(python3 -c 'import time;print(int(time.time()*1000))')
+  if grep -q 'Stack overflow' "$err"; then
+    score_case "$route" "$name" overflow "STACK OVERFLOW (exit $rc)"
+  elif [ "$rc" -ne 0 ]; then
+    score_case "$route" "$name" error "exit $rc: $(tail -1 "$err" | head -c 160)"
+  elif [ "$out" != 1 ]; then
+    score_case "$route" "$name" error "printed '$(printf '%s' "$out" | head -c 60)', expected 1"
+  else
+    score_case "$route" "$name" ran "1 triple read from a file of $(wc -c <"$FIXTURES/$file" | tr -d ' ') bytes ($((t1 - t0))ms)"
+  fi
+  rm -f "$err"
+}
+if [ "$ROUTE" = native ] || [ "$ROUTE" = both ]; then
+  echo
+  echo "=== N-Triples and N-Quads 1.2 file with a triple term nested $N_TERM deep, command line, native default stack"
+  cli_read_case native ntriples-read-cli-triple-term triple-term-nest.nt nt12 env
+  cli_read_case native nquads-read-cli-triple-term triple-term-nest.nq nq12 env
+fi
+if [ "$CANARY" = 1 ]; then
+  echo
+  echo "=== N-Triples and N-Quads 1.2 file with a triple term nested $N_TERM deep, command line, native under ${CANARY_VAR}=${CANARY_KB}"
+  if [ "$CONTROL_OK" = 1 ]; then
+    cli_read_case canary ntriples-read-cli-triple-term triple-term-nest.nt nt12 "${CANARY_PREFIX[@]}"
+    cli_read_case canary nquads-read-cli-triple-term triple-term-nest.nq nq12 "${CANARY_PREFIX[@]}"
+  else
+    record canary ntriples-read-cli-triple-term 1 "NOT SCORED: the canary control did not pass"
+    record canary nquads-read-cli-triple-term 1 "NOT SCORED: the canary control did not pass"
+  fi
+fi
+
+if [ "$CANARY" = 1 ]; then
+  echo
+  echo "=== N-Triples text of a triple term nested $N_TERM deep, command line, native under ${CANARY_VAR}=${CANARY_KB}"
+  if [ "$CONTROL_OK" = 1 ]; then
+    ntriples_write_case canary "${CANARY_PREFIX[@]}"
+  else
+    record canary ntriples-write-triple-term 1 "NOT SCORED: the canary control did not pass"
   fi
 fi
 
