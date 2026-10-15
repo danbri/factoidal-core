@@ -115,6 +115,10 @@ export STACK_TURTLE_WRITE="$N_TTLW"
 # wasm_case.mjs read the same variable; https://github.com/danbri/factoidal/issues/864).
 N_TTLP="${STACK_TURTLE_PREFIXES:-100000}"
 export STACK_TURTLE_PREFIXES="$N_TTLP"
+# Turtle reader: levels of the triple term in the object (gen_cases.py and wasm_case.mjs
+# read the same variable; https://github.com/danbri/factoidal/issues/865).
+N_TTLN="${STACK_TURTLE_NEST:-300000}"
+export STACK_TURTLE_NEST="$N_TTLN"
 while [ $# -gt 0 ]; do
   case "$1" in
     --route) ROUTE="$2"; shift 2 ;;
@@ -173,15 +177,22 @@ cli_cmd() {
   else CLI_CMD=("$CLI" call "$1" "$FIXTURES/$2"); fi
 }
 
-# prefix_row_wrong <case> <output> prints why the output of a row of the Turtle writer
-# with many prefixes is wrong, or nothing: every prefix of the table is used, so the
-# Turtle has N_TTLP `@prefix` declarations. Other rows print nothing.
-prefix_row_wrong() {
+# row_wrong <case> <output> prints why the output of a row is wrong, or nothing. A row
+# of the Turtle writer with many prefixes uses every prefix of its table, so the Turtle
+# has N_TTLP `@prefix` declarations. The row of the Turtle reader reads one triple, and
+# the N-Quads in the answer hold N_TTLN triple terms (`<<(`). Other rows print nothing.
+row_wrong() {
   case "$1" in
     turtle-write-prefixes*)
       local n
       n="$(printf '%s' "$2" | grep -o '@prefix ' | wc -l | tr -d ' ')"
       [ "$n" = "$N_TTLP" ] || echo "the output has $n @prefix declarations, expected $N_TTLP" ;;
+    turtle-read-triple-term)
+      local c n
+      c="$(printf '%s' "$2" | grep -o '"count":[0-9]*' | head -1)"
+      n="$(printf '%s' "$2" | grep -o '<<(' | wc -l | tr -d ' ')"
+      { [ "$c" = '"count":1' ] && [ "$n" = "$N_TTLN" ]; } ||
+        echo "the answer has ${c:-no count} and $n triple terms, expected \"count\":1 and $N_TTLN" ;;
   esac
 }
 
@@ -197,8 +208,8 @@ native_case() { # native_case <case> <op> <argsfile>
     record native "$name" 1 "exit $rc after ${ms}ms: $(printf '%s' "$out" | head -c 160)"
   elif printf '%s' "$out" | grep -q '"ok":false'; then
     record native "$name" 1 "engine error after ${ms}ms: $(printf '%s' "$out" | head -c 160)"
-  elif [ -n "$(prefix_row_wrong "$name" "$out")" ]; then
-    record native "$name" 1 "$(prefix_row_wrong "$name" "$out")"
+  elif [ -n "$(row_wrong "$name" "$out")" ]; then
+    record native "$name" 1 "$(row_wrong "$name" "$out")"
   else
     record native "$name" 0 "${ms}ms"
   fi
@@ -316,6 +327,14 @@ xfail_issue() { # xfail_issue <case>; prints the issue URL or nothing
     regex-replace-groups)
       case "${2:-}" in canary|wcanary) echo "https://github.com/danbri/factoidal/issues/816" ;; esac ;;
     rdfc-bnode-chain) echo "https://github.com/danbri/factoidal/issues/817" ;;
+    # The Turtle reader with a triple term nested 300,000 deep (one triple, op
+    # parseToDatasetJson, format turtle12): readTtObject and readTripleTerm take a
+    # native frame for each nesting level (2,536 levels ran under 512 KB, 2,537
+    # overflowed; measured 2026-10-15 on 3e832dfe), and Term.toCanonicalNTriples, which
+    # writes the term into the answer, takes a frame for each level and copies the
+    # text built so far at each level (20,000 levels: 0.41 s; 300,000 levels: more than
+    # 120 s at the default stack).
+    turtle-read-triple-term) echo "https://github.com/danbri/factoidal/issues/865" ;;
     # (`turtle-write-prefixes`, `turtle-write-prefixes-handle`,
     # `turtle-write-prefixes-with` and `turtle-triple-term` were listed for
     # https://github.com/danbri/factoidal/issues/864 until 2026-10-15, when
@@ -364,8 +383,8 @@ canary_case() { # canary_case <case> <op> <argsfile>
     score_case canary "$name" error "exit $rc under ${CANARY_KB}KB: $(printf '%s' "$out" | head -c 140)"
   elif printf '%s' "$out" | grep -q '"ok":false'; then
     score_case canary "$name" error "engine error under ${CANARY_KB}KB: $(printf '%s' "$out" | head -c 140)"
-  elif [ -n "$(prefix_row_wrong "$name" "$out")" ]; then
-    score_case canary "$name" error "$(prefix_row_wrong "$name" "$out")"
+  elif [ -n "$(row_wrong "$name" "$out")" ]; then
+    score_case canary "$name" error "$(row_wrong "$name" "$out")"
   else
     score_case canary "$name" ran "ok under ${CANARY_KB}KB"
   fi
@@ -420,6 +439,11 @@ wasm_missing() { # wasm_missing <route>
 
 # `callseq` as the op of a row: the file holds op/args pairs, run in order in one
 # process (a dataset handle lives in the process).
+#
+# A fourth field `small` marks a row for the routes with a small stack (the native
+# canary, the wasm canary, the wasm route): the unrepaired code takes quadratic time on
+# it, more than TIMEOUT on the 1 GB native stack, which would make the native route fail
+# for a reason other than the stack (issue 865; lean_scaling.py measures the time).
 CASES=(
   "xml-entities        parseToDatasetJson   args-xml.json"
   "xml-entities-attr   parseToDatasetJson   args-xml-attr.json"
@@ -447,6 +471,7 @@ CASES=(
   "turtle-write-prefixes serializeTurtleWith args-turtle-write-prefixes.json"
   "turtle-write-prefixes-handle callseq seq-turtle-write-prefixes-handle.json"
   "turtle-write-prefixes-with callseq seq-turtle-write-prefixes-with.json"
+  "turtle-read-triple-term parseToDatasetJson args-turtle-read-triple-term.json small"
 )
 
 if [ "$ROUTE" = native ] || [ "$ROUTE" = both ]; then
@@ -459,6 +484,7 @@ if [ "$ROUTE" = native ] || [ "$ROUTE" = both ]; then
   for row in "${CASES[@]}"; do
     # shellcheck disable=SC2086
     set -- $row
+    [ "${4:-}" = small ] && continue
     native_case "$1" "$2" "$3"
   done
 fi

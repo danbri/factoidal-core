@@ -46,6 +46,7 @@ const CASES = {
   'delta-log-decode': () => ['deltaLogDecode', readArgs('args-delta-log-decode.json')],
   'delta-log-merge': () => ['deltaLogMerge', readArgs('args-delta-log-merge.json')],
   'turtle-write-prefixes': () => ['serializeTurtleWith', readArgs('args-turtle-write-prefixes.json')],
+  'turtle-read-triple-term': () => ['parseToDatasetJson', readArgs('args-turtle-read-triple-term.json')],
 };
 
 // The handle rows of the Turtle writer with many prefixes (issue 864): a document
@@ -64,10 +65,23 @@ const prefixLines = (res) => {
   const n = res.turtle.split('@prefix ').length - 1;
   if (n !== N_PREFIXES) throw new Error(`the Turtle has ${n} @prefix lines, expected ${N_PREFIXES}`);
 };
+
+// The Turtle reader reads one triple whose object is a triple term nested N_NEST deep
+// (issue 865), so the N-Quads of the answer hold N_NEST occurrences of `<<(`.
+const N_NEST = Number(process.env.STACK_TURTLE_NEST || '300000');
+const nestedTerm = (res) => {
+  if (!res || res.ok !== true || typeof res.nquads !== 'string') {
+    throw new Error(`the engine did not answer ok:true with N-Quads: ${JSON.stringify(res).slice(0, 160)}`);
+  }
+  if (res.count !== 1) throw new Error(`the document has one triple, the engine counted ${res.count}`);
+  const n = res.nquads.split('<<(').length - 1;
+  if (n !== N_NEST) throw new Error(`the N-Quads hold ${n} triple terms, expected ${N_NEST}`);
+};
 const CHECK = {
   'turtle-write-prefixes': prefixLines,
   'turtle-write-prefixes-handle': prefixLines,
   'turtle-write-prefixes-with': prefixLines,
+  'turtle-read-triple-term': nestedTerm,
 };
 
 const out = { case: caseName, route: 'wasm' };

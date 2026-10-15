@@ -360,6 +360,27 @@ repaired (docs/designissues/2026-10-10-lean-vs-fstar-performance.md):
                    failure): 0.50 s, 1.76 s and 10.2 s CPU (ratios 3.5 and 5.8; about 121 s
                    at 300,000); after: 0.061 s, 0.116 s and 0.241 s (1.9 and 2.1; 0.8 s at
                    300,000).
+  turtle-read-prefixes
+                   `l4factoidal parse` of a Turtle document with n `@prefix` lines and n triples
+                   whose three terms are prefixed names (the subject and the predicate under
+                   prefix i, the object under prefix i + 1; 7 MB at n = 64,000), n = 16,000,
+                   32,000 and 64,000, measured at x, 2x and 4x like owl-consistent-cl. The
+                   command must print n, the number of triples. Issue
+                   https://github.com/danbri/factoidal/issues/865: the reader kept the
+                   prefixes in a list and looked each name up with `List.find?`, a scan of
+                   the prefixes declared after it. Before the repair (expected failure): 2.59 s,
+                   16.4 s and 78.8 s CPU (ratios 6.3 and 4.8 for the two doublings; 30.4 for 4x
+                   input).
+  sbm11-export-prefixes-time
+                   `l4sbm11 export --format turtle --verify none` of a generation of n statements
+                   (the subject of statement i under namespace i, the object under namespace
+                   i + 1) with a table of n prefixes, every one used, from n `--prefix LABEL=IRI`
+                   arguments: n = 4,000, 8,000 and 16,000 (16,000 prefixes are 740 KB of
+                   arguments, and ARG_MAX is 2 MB), the rule of turtle-read-prefixes. The
+                   Turtle must declare n prefixes. Issue 865: `Sink.bodyPush` scanned the
+                   table for the prefix of each IRI, and `parseOpts` appended each prefix to
+                   the end of the list of the others. Before the repair (expected failure):
+                   0.252 s, 0.828 s and 3.41 s CPU (ratios 3.3 and 4.1; 13.5 for 4x input).
   startup          process start: `l4factoidal version` must take at most
                    STARTUP_BUDGET (20 ms) of CPU time, minimum of 15 runs
                    (305 million instructions and 43 ms before the fixtures were
@@ -444,6 +465,8 @@ XFAIL: dict[str, str] = {
     "sbm11-pack-trig-workers": "https://github.com/danbri/factoidal/issues/842",
     "sbm11-export-rdfxml-memory": "https://github.com/danbri/factoidal/issues/846",
     "sbm11-export-jsonld-memory": "https://github.com/danbri/factoidal/issues/847",
+    "turtle-read-prefixes": "https://github.com/danbri/factoidal/issues/865",
+    "sbm11-export-prefixes-time": "https://github.com/danbri/factoidal/issues/865",
 }
 # A run longer than this is not repeated: the minimum of several runs only
 # removes timer and load noise, which is small against a run this long.
@@ -1155,6 +1178,51 @@ def sbm11_read_time_row(rid):
                 f"{t4 / max(t1, 1e-9):.1f} for 4x input, bound {SBM11_READ_TIME_BOUND})")
 
 
+# CPU time of `l4sbm11 export --format turtle` with a table of n prefixes, every one used
+# (https://github.com/danbri/factoidal/issues/865). The generation has n statements, the
+# subject of statement i under namespace i and the object under namespace i + 1 (modulo n),
+# so the table of n `--prefix LABEL=IRI` arguments is used in full. The table can come from
+# the command line only, and a command line holds a few tens of thousands of them (n = 16,000
+# is about 740 KB of arguments; ARG_MAX is 2 MB). The row measures the time at n = 4,000,
+# 8,000 and 16,000 with the series rule of `doubling_check` and no proof (`--verify none`), so
+# that the work that does not depend on the table is as small as the command allows. Two
+# costs grew with the table: `parseOpts` appended each prefix to the end of the list that
+# held the others, and `Sink.bodyPush` scanned the table for the prefix of each IRI.
+SBM11_PREFIX_TIME_X = 4000
+
+
+def sbm11_pfx_nt(n: int) -> str:
+    return "".join(f"<{EX}n{i}/s> <{EX}p> <{EX}n{(i + 1) % n}/o> .\n" for i in range(n))
+
+
+def sbm11_export_prefixes_time_row(rid):
+    sbm11_need_pack_bin()
+    if not SBM11_BIN.exists():
+        raise MeasurementError(f"{SBM11_BIN} not built (cd formal/lean4 && lake build l4sbm11)")
+    pts = []
+    for n in (SBM11_PREFIX_TIME_X, 2 * SBM11_PREFIX_TIME_X, 4 * SBM11_PREFIX_TIME_X):
+        gen = sbm11_export_generation(sbm11_pfx_nt.__name__, sbm11_pfx_nt, "nt", n)
+        out = FIX / f"{rid}-out-{n}"
+        cmd = [str(SBM11_BIN), "export", str(gen), "--format", "turtle", "--out", str(out),
+               "--verify", "none"]
+        for i in range(n):
+            cmd += ["--prefix", f"n{i}={EX}n{i}/"]
+        out.unlink(missing_ok=True)
+        t = bl.run_once(cmd, CAP)
+        if t["status"] != "ok":
+            raise MeasurementError(f"{rid}: n={n}: exit status {t['status']}")
+        with out.open(encoding="utf-8") as f:
+            declared = sum(1 for line in f if line.startswith("@prefix "))
+        out.unlink(missing_ok=True)
+        if declared != n:
+            raise MeasurementError(f"{rid}: n={n}: the Turtle declares {declared} prefixes")
+        pts.append((n, t["cpu"]))
+    return doubling_check(pts, "CPU")
+
+
+SBM11_PREFIX_TIME_ROWS = {"sbm11-export-prefixes-time": sbm11_export_prefixes_time_row}
+
+
 # Peak resident memory of `l4sbm11 dump --verify merkle`
 # (https://github.com/danbri/factoidal/issues/859). `dump` reads the SPO permutation
 # block by block and turns each id into a term, as `export` does. Under `merkle` it
@@ -1672,8 +1740,18 @@ def turtle_prefixes_open_seq(n: int) -> Path:
     return fixture(f"turtle-prefixes-open-{n}.seq.json", text)
 
 
+def turtle_read_prefixes_ttl(n: int) -> Path:
+    """A Turtle document with n `@prefix` lines and n triples whose three terms are prefixed
+    names: the subject and the predicate under prefix i, the object under prefix i + 1
+    (modulo n). The reader looks each name up in the table of the prefixes declared so far."""
+    def text():
+        return "".join(f"@prefix n{i}: <{EX}n{i}/> .\n" for i in range(n)) + "".join(
+            f"n{i}:s n{i}:p n{(i + 1) % n}:o .\n" for i in range(n))
+    return fixture(f"turtle-read-prefixes-{n}.ttl", text)
+
+
 # row id -> (x, make input, command, expected first line (a string, or a
-# predicate on the line), a file the row needs or None[, the time to bound: "cpu"
+# predicate on the line, or on the line and the size n), a file the row needs or None[, the time to bound: "cpu"
 # (user plus system, the default) or "user"]). A row that holds 100 MB to 500 MB
 # bounds the user time: the system time of such a run, the page faults of the
 # virtual machine, took from 0.03 s to 1.4 s for the same command (2026-10-15,
@@ -1715,6 +1793,13 @@ SERIES_ROWS = {
         lambda n: [str(SOURCE_CONVERT_BIN), "--nest-check", str(n)],
         lambda line: line.startswith("turtle-nest-check: depth=") and line.endswith("failures=0"),
         SOURCE_CONVERT_BIN),
+    # The Turtle reader with n prefixes declared and a prefixed name looked up for each of
+    # three terms in n triples (issue 865). `parse` prints the number of triples: n.
+    "turtle-read-prefixes": (
+        16000, turtle_read_prefixes_ttl,
+        lambda p: [str(BIN), "parse", str(p), "--format", "turtle"],
+        lambda line, n: line == str(n),
+        None),
     # The OWL 2 RL closure of the same prefixes (semi-naive rounds since
     # 2026-10-13, https://github.com/danbri/factoidal/issues/756 item 2).
     # No first-line check: the output is the closure, one triple per line.
@@ -1723,6 +1808,27 @@ SERIES_ROWS = {
         lambda p: [str(BIN), "closure", str(p), "--format", "nquads", "--regime", "owl-rl"],
         None, CL_SOURCE),
 }
+
+
+def first_ok(first, got, n):
+    """The check of the first line a row prints: a string (equal), a function of the line, or
+    a function of the line and the size n of the input."""
+    if callable(first):
+        return first(got, n) if first.__code__.co_argcount == 2 else first(got)
+    return got == first
+
+
+def doubling_check(pts, label):
+    """The n, 2n, 4n assertion on three points [(n, seconds)]: each doubling at most DOUBLING
+    times the time before it, and 4x at most BOUND times the first (FLOOR keeps timer noise from
+    failing it). Returns (ok, the text that reports the three times and the ratios)."""
+    (n1, t1), (n2, t2), (n4, t4) = pts
+    r2, r4 = t2 / max(t1, 1e-9), t4 / max(t2, 1e-9)
+    ok = (t2 <= DOUBLING * max(t1, FLOOR) and t4 <= DOUBLING * max(t2, FLOOR)
+          and t4 <= BOUND * max(t1, FLOOR))
+    return ok, (f"n={n1} {t1:.3f} s -> n={n2} {t2:.3f} s -> n={n4} {t4:.3f} s {label} "
+                f"(ratios {r2:.1f} and {r4:.1f} per doubling, bound {DOUBLING}; "
+                f"{t4 / max(t1, 1e-9):.1f} for 4x input, bound {BOUND})")
 
 
 def series_row(rid, runs):
@@ -1744,19 +1850,13 @@ def series_row(rid, runs):
                 return False, f"n={n}: exit status {t['status']}"
             got = t["first_line"].decode("utf-8", "replace") if isinstance(
                 t["first_line"], bytes) else str(t["first_line"])
-            if first is not None and ((not first(got.strip())) if callable(first) else (got.strip() != first)):
+            if first is not None and not first_ok(first, got.strip(), n):
                 return False, f"n={n}: printed {got.strip()[:120]!r}, not the expected answer"
             best = t[metric] if best is None else min(best, t[metric])
             if t["wall"] > REPEAT_LIMIT:
                 break
         pts.append((n, best))
-    (n1, t1), (n2, t2), (n4, t4) = pts
-    r2, r4 = t2 / max(t1, 1e-9), t4 / max(t2, 1e-9)
-    ok = (t2 <= DOUBLING * max(t1, FLOOR) and t4 <= DOUBLING * max(t2, FLOOR)
-          and t4 <= BOUND * max(t1, FLOOR))
-    return ok, (f"n={n1} {t1:.3f} s -> n={n2} {t2:.3f} s -> n={n4} {t4:.3f} s {label} "
-                f"(ratios {r2:.1f} and {r4:.1f} per doubling, bound {DOUBLING}; "
-                f"{t4 / max(t1, 1e-9):.1f} for 4x input, bound {BOUND})")
+    return doubling_check(pts, label)
 
 
 def startup_row():
@@ -1795,9 +1895,9 @@ def main() -> int:
     series_rows = [r for r in names if r in SERIES_ROWS] or (
         [] if names else list(SERIES_ROWS))
     time_rows = [r for r in names if r in SBM11_READ_TIME_ROWS or r in MERKLE_RANGE_TIME_ROWS
-                 or r in SBM11_LOG_TIME_ROWS] or (
+                 or r in SBM11_LOG_TIME_ROWS or r in SBM11_PREFIX_TIME_ROWS] or (
         [] if names else list(SBM11_READ_TIME_ROWS) + list(MERKLE_RANGE_TIME_ROWS)
-        + list(SBM11_LOG_TIME_ROWS))
+        + list(SBM11_LOG_TIME_ROWS) + list(SBM11_PREFIX_TIME_ROWS))
     run_startup = (not names) or ("startup" in names)
     passed = failed = xfailed = 0
     print(f"Lean scaling assertion: time(4x) <= {BOUND} * max(time(x), {FLOOR} s) "
@@ -1870,6 +1970,7 @@ def main() -> int:
         try:
             ok, detail = (merkle_range_time_row if rid in MERKLE_RANGE_TIME_ROWS
                           else SBM11_LOG_TIME_ROWS[rid] if rid in SBM11_LOG_TIME_ROWS
+                          else SBM11_PREFIX_TIME_ROWS[rid] if rid in SBM11_PREFIX_TIME_ROWS
                           else sbm11_read_time_row)(rid)
         except MeasurementError as e:
             failed += 1

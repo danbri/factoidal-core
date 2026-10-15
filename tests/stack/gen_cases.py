@@ -343,6 +343,26 @@ args("seq-turtle-write-prefixes-with.json",
      ["datasetSerializeWith", ["h1", "turtle", options_pfx]])
 del nq_pfx, options_pfx, ttl_pfx
 
+# ------------------------------- Turtle reader, triple term nested N_TTLN deep (issue 865)
+# One triple whose object is an RDF 1.2 triple term nested N_TTLN levels deep:
+#
+#     @prefix : <http://example.org/> .
+#     :s :p <<( :s :p <<( :s :p ... "deep" )>> )>> .
+#
+# `readTtObject` and `readTripleTerm` took a native frame for each nesting level: 2,536
+# levels ran under a 512 KB stack and 2,537 overflowed (measured 2026-10-15 on 3e832dfe,
+# `l4factoidal parse` with the format turtle12), and the wasm module overflowed its call
+# stack. The answer of `parseToDatasetJson` holds the term as N-Quads text, which
+# `Term.toCanonicalNTriples` built with a frame and a copy of the text so far for each level
+# (20,000 levels: 0.41 s; 300,000 levels did not finish in 120 s at the default stack)
+# (https://github.com/danbri/factoidal/issues/865). The text is 4.2 MB. The op is
+# `parseToDatasetJson` with the format `turtle12` (the term is RDF 1.2 syntax).
+N_TTLN = int(os.environ.get("STACK_TURTLE_NEST", "300000"))
+ttl_nest = ("@prefix : <http://example.org/> .\n:s :p " + "<<( :s :p " * N_TTLN
+            + '"deep"' + " )>>" * N_TTLN + " .\n")
+args("args-turtle-read-triple-term.json", ttl_nest, "turtle12", "")
+del ttl_nest
+
 # ------------------------------------- issue 752 (OKR batch 1 KR 2.6) cases
 # Each is above the depth at which the readable recursion overflowed under
 # LEAN_STACK_SIZE_KB=512 (measured 2026-10-13 on base 7d314f43, native):
