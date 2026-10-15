@@ -397,6 +397,18 @@ repaired (docs/designissues/2026-10-10-lean-vs-fstar-performance.md):
                    Before the repair (expected failure): 0.280 s, 1.23 s and 8.58 s CPU (ratios
                    4.4 and 7.0 for the two doublings; 30.6 for 4x input; 86.6 s at 300,000 levels);
                    after: 0.048 s, 0.091 s and 0.208 s (1.9 and 2.3; 4.3 for 4x; 1.2 s at 300,000).
+  ntriples-long-line, nquads-long-line
+                   `l4factoidal parse` of a file of one line of n bytes (a string literal of n - 21
+                   bytes; the N-Quads line has a graph name, and a literal of n - 29 bytes), n =
+                   2,000,000, 4,000,000 and 8,000,000, measured at x, 2x and 4x like
+                   owl-consistent-cl, on the user CPU time (the run holds up to 280 MB). The command
+                   must print 1, the number of quads. Issue
+                   https://github.com/danbri/factoidal/issues/869: the strict reader kept the partial
+                   last line of a chunk as a list in order, copied it (`carry ++ chunk`) and walked it
+                   again (`splitCompleteLines`) at every 64 KiB chunk, so a line of n bytes cost about
+                   n squared over 65,536 steps. Before the repair (expected failure): 0.380 s, 2.40 s
+                   and 10.3 s user CPU for N-Triples (ratios 6.3 and 4.3 for the two doublings; 27.0
+                   for 4x input), 0.375 s, 2.09 s and 10.6 s for N-Quads (5.6 and 5.1; 28.2).
   startup          process start: `l4factoidal version` must take at most
                    STARTUP_BUDGET (20 ms) of CPU time, minimum of 15 runs
                    (305 million instructions and 43 ms before the fixtures were
@@ -481,6 +493,8 @@ XFAIL: dict[str, str] = {
     "sbm11-pack-trig-workers": "https://github.com/danbri/factoidal/issues/842",
     "sbm11-export-rdfxml-memory": "https://github.com/danbri/factoidal/issues/846",
     "sbm11-export-jsonld-memory": "https://github.com/danbri/factoidal/issues/847",
+    "ntriples-long-line": "https://github.com/danbri/factoidal/issues/869",
+    "nquads-long-line": "https://github.com/danbri/factoidal/issues/869",
 }
 # A run longer than this is not repeated: the minimum of several runs only
 # removes timer and load noise, which is small against a run this long.
@@ -1772,6 +1786,22 @@ def triple_term_nest_ttl(n: int) -> Path:
     return fixture(f"triple-term-nest-{n}.ttl", text)
 
 
+def long_line_nt(n: int) -> Path:
+    """One N-Triples line of n bytes with its line break: a string literal of n - 21 bytes
+    (issue 869)."""
+    def text():
+        return '<urn:s> <urn:p> "' + "a" * (n - 21) + '" .\n'
+    return fixture(f"long-line-{n}.nt", text)
+
+
+def long_line_nq(n: int) -> Path:
+    """One N-Quads line of n bytes with its line break: a string literal of n - 29 bytes and a
+    graph name (issue 869)."""
+    def text():
+        return '<urn:s> <urn:p> "' + "a" * (n - 29) + '" <urn:g> .\n'
+    return fixture(f"long-line-{n}.nq", text)
+
+
 # row id -> (x, make input, command, expected first line (a string, or a
 # predicate on the line, or on the line and the size n), a file the row needs or None[, the time to bound: "cpu"
 # (user plus system, the default) or "user"]). A row that holds 100 MB to 500 MB
@@ -1830,6 +1860,17 @@ SERIES_ROWS = {
         lambda p: [str(BIN), "parse", str(p), "--format", "turtle12", "--out", "nt"],
         lambda line: line.startswith("<urn:s> <urn:p> <<( <urn:s> <urn:p> <<( <urn:s> <urn:p> "),
         None),
+    # One line of n bytes in a file of N-Triples, and of N-Quads (issue 869): the strict
+    # reader carries the partial last line from one 64 KiB chunk to the next. `parse` prints
+    # the number of quads: 1. The user time, as the run holds up to 280 MB.
+    "ntriples-long-line": (
+        2000000, long_line_nt,
+        lambda p: [str(BIN), "parse", str(p), "--format", "ntriples"],
+        "1", None, "user"),
+    "nquads-long-line": (
+        2000000, long_line_nq,
+        lambda p: [str(BIN), "parse", str(p), "--format", "nquads"],
+        "1", None, "user"),
     # The OWL 2 RL closure of the same prefixes (semi-naive rounds since
     # 2026-10-13, https://github.com/danbri/factoidal/issues/756 item 2).
     # No first-line check: the output is the closure, one triple per line.
