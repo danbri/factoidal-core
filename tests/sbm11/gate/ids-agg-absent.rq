@@ -1,0 +1,5 @@
+PREFIX ex: <http://ex.org/>
+PREFIX xsd: <http://www.w3.org/2001/XMLSchema#>
+# Aggregates over a variable no pattern binds: COUNT 0, SUM 0, the others unbound.
+SELECT ?g (COUNT(?zz) AS ?c) (SUM(?zz) AS ?s) (MAX(?zz) AS ?hi) (MIN(?zz) AS ?lo) (AVG(?zz) AS ?m) (COUNT(*) AS ?n)
+WHERE { ?x ex:grp ?g } GROUP BY ?g ORDER BY ?g

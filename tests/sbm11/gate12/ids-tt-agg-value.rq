@@ -1,0 +1,8 @@
+PREFIX : <http://ex.org/>
+PREFIX rdf: <http://www.w3.org/1999/02/22-rdf-syntax-ns#>
+PREFIX xsd: <http://www.w3.org/2001/XMLSchema#>
+# COUNT, MIN, MAX and SUM over triple terms (tag 9 ids) in the aggregated column: the id
+# path aggregates on ids (the group key is an IRI); a triple term is a value of the
+# kind "term" for the aggregates, as the reference evaluator reads it.
+SELECT ?s (COUNT(?t) AS ?c) (MIN(?t) AS ?lo) (MAX(?t) AS ?hi) (SUM(?t) AS ?sum)
+WHERE { ?s :says ?t } GROUP BY ?s

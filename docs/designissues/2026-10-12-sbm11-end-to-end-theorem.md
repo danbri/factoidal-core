@@ -10,7 +10,10 @@ and the semi-join reduction of sideways information passing,
 https://github.com/danbri/factoidal/issues/809) proved 2026-10-13 (section
 12); L4a′ and L2d′ (PRM1 entries by key range, binary search over
 positioned reads, https://github.com/danbri/factoidal/issues/805) proved
-2026-10-13 (section 13). Gap issue: https://github.com/danbri/factoidal/issues/776.
+2026-10-13 (section 13); L1g, L1h and L5j proved and L5k partly proved
+(the decoder and the grouped aggregates on ids,
+https://github.com/danbri/factoidal/issues/825) 2026-10-15 (stage 4 record,
+sections 15 and 16). Gap issue: https://github.com/danbri/factoidal/issues/776.
 Tracking: https://github.com/danbri/factoidal/issues/787. Related work
 issues: https://github.com/danbri/factoidal/issues/792 (dictionary, item 4),
 https://github.com/danbri/factoidal/issues/793 (items 2 and 4),
@@ -83,6 +86,8 @@ every `G` with `denote G = norm D`" is also acceptable; a form "for every
 | L1c | Page decoder over a byte array equals the list decoder | proved before (stage 2) | `Storage/Sbm11/DictFastTheorems.lean`: `decodePageAt_eq` |
 | L1d | Lookup: over the bytes `encodeDict? keys` writes, `Dict.lookupM` answers without error a result `res` with `res = some r ↔ keys[r]? = some k` (the rank of `k` when it is a key, `none` when it is not), and the GDX1 header decodes to the key and page counts (https://github.com/danbri/factoidal/issues/792 item 4) | **proved now** | `DictLookupTheorems.lookupM_encodeDict` (with `cmpBytesAt_eq`, `searchPagesM_spec`, `pageM_dict`, `firstKeyAt_page`, `entryM_gdxBytes`, `parseGdxHeader_gdxBytes`) |
 | L1f | Walk lookup (replay in dictionary order, https://github.com/danbri/factoidal/issues/858): over the bytes `encodeDict? keys` writes, `Dict.lookupWalkM` walks a list of keys in any order and answers, for each key, `res = some r ↔ keys[r]? = some k`, as `lookupM` does; the page the finger gives is the page of the key (`Bracket`) | **proved (2026-10-14)** | `DictFingerTheorems.walkM_encodeDict`, `lookupWalkM_eq_lookupM`, `lookupWalkM_dictOk`, `pageNextM_spec`, `rank_of_bracket` |
+| L1g | A dictionary key read in place (https://github.com/danbri/factoidal/issues/825): for every byte array and range, `decodeKeySlice? buf a e` is `decodeKey?` of the list of the bytes `buf[a, e)`, and `classTagSlice buf a e` is `classTag` of that list. `Session.termOf` reads the key of an id this way | **proved (2026-10-15)** | `TermKeyFast.decodeKeySlice?_eq`, `classTagSlice_eq` (with `sliceList_cons`, `stringOfBytes_slice`) |
+| L1h | `RDF.isIri` and the form the compiler runs agree (https://github.com/danbri/factoidal/issues/792 item 5): `isIri s = isIriFast s` for every string; the `@[csimp]` theorem makes the compiled `isIri` call `isIriFast` | **proved (2026-10-15)** | `RDF.isIri_eq_isIriFast_apply`, `isIri_eq_isIriFast` |
 | L1e | `DictRange.lowerBoundM` over the same bytes answers `lowerBoundList` of the keys (the number of keys below the target) | **proved now** | `DictRangeTheorems.lowerBoundM_encodeDict` |
 | L2a | `Column.decodeColumnAt` equals `Column.decodeColumn` | proved before (stage 3) | `ColumnTheorems.decodeColumnAt_eq` |
 | L2b | `FrameWords.decodeWords b n i = decodeWordsRef b n i` (the words of `decodeColumnAt`), `n ≤ 2^64` | **proved now** | `FrameWordsTheorems.decodeWords_eq` |
@@ -117,6 +122,8 @@ every `G` with `denote G = norm D`" is also acceptable; a form "for every
 | L5g″ | Left outer join, table part: the `Table` `OptJoin.leftOuterJoin` builds (`gather`, `gatherOpt` over `ByteArray` columns, id 0 for an unbound variable) denotes the rows of `idLeftJoin` of the denotations of its inputs; the hash path (`OptJoin.hashPairs`, `Std.HashMap`) computes `innerSpec`; on two id tables whose shared variables are bound in every row (`IdQuery.flattenOptional`), id compatibility of two rows is equality of the shared columns | open; tested | `OptJoinTheorems` `#guard`s (9 sample joins: merge, hash with one and two shared columns, cross product, empty sides, unbound ids on the left); `tests/sbm11/run.sh` part (d), 16 `ids-optional-*` queries against the reference engine |
 | L5h | Semi-join reduction (issue 809): a join whose right input is filtered to the rows whose join value passes a test that every left value passes is the same join; over rows (inner join pairs, left outer join), over the index arrays of the merge loop and of `OptJoin.outerPairs` over it (join columns non-decreasing), and over solution mappings of ids (SPARQL 1.1 Join and LeftJoin; `join_decode`: decoding `idJoin` is SPARQL Join); the planner's candidates are in non-decreasing order and contain every left value | **proved (2026-10-13)**; the hash join over a reduced right side and the `Table` of `scanSipTableM` are tested only (the open steps L5b and L5a′) | `SemiJoinTheorems.joinRows_semijoin`, `ljRows_semijoin`, `mergeGo_semijoin`, `outerPairs_merge_semijoin`, `mergeSpec_rows`, `ljSpec_rows`, `idJoin_semijoin`, `idLeftJoin_semijoin`, `join_decode`; `SipScanTheorems.sipCands_sound` |
 | L5i | Post-processing on decoded rows (https://github.com/danbri/factoidal/issues/823): `substituteExistentials` returns an EXISTS-free expression unchanged, so the id path's residual FILTER (`IdQuery.residualHolds`) is the reference FILTER closure for every active graph; `evalConstruct` is `constructGraphOf` of `formSolutions`; the first-rows cut of `IdQuery.firstRowsOf` does not change `formHasSolution` (ASK), `formSolutions` (CONSTRUCT) or `selectPost` (SELECT). The id path calls `selectPost`, `formHasSolution`, `formSolutions` and `constructGraphOf` on the decoded rows, so each step equals the reference once L6a gives equal input | **proved (2026-10-13)**; that `Expr.evalIn` and the post-WHERE functions read no `EvalEnv.dataset` is by inspection | `IdPostTheorems.substituteExistentials_existsFree`, `substituteExistentialsList_existsFree`, `residualHolds_eq`, `evalConstruct_eq`, `formHasSolution_take_one`, `firstRowsOf_ask`, `formSolutions_take`, `numberRows_take`, `selectPost_take` |
+| L5j | Grouped aggregates, specification side (https://github.com/danbri/factoidal/issues/825): for COUNT, SUM, MIN, MAX and AVG of a variable, `evalAggregate` is the final value of a one-pass accumulator over the `Summary` of the variable's value in each row of the group (the type error dropped, MIN and MAX keep the last of equal values); `COUNT(*)` is the number of rows; a bound variable is never the type error, so `COUNT(?x)` needs no decoding; the SELECT items of a group with no HAVING and no trailing VALUES are computed from the aggregate values, and `selectPost` is the shared tail `groupedTail` of those rows; for a query `aggPlan?` accepts, `selectPost` is `groupedTail` of the rows `groupedRow` of the groups of `groupWhere`, with the aggregate values of `streamAgg` | **proved (2026-10-15)** | `AggStream.evalAggregate_stream`, `evalAggregate_star`, `varView_ne_error`, `evalSelectItemsGroup_pre`, `selectPost_grouped`, `selectPost_aggPlan`, `aggPlan_spec` |
+| L5k | Grouped aggregates, id side: the groups (in order of first row), the representative rows and the value streams that `IdAgg.aggregateM` builds from an id table, whose group columns hold only blank nodes, IRIs, inline integers and inline booleans, are those of `groupWhere` on the decoded rows (id equality of those ids is `erEqual`, term identity). A cached decode returns `termOf` of the id for any sequence of lookups | the cache **proved (2026-10-15)**; the rest open, tested | `IdAgg.Cache.getPure_fst`, `getPure_valid`, `getPure_list`; `IdAggTests` (36 `#guard`s), `tests/sbm11/gate/ids-agg-*.rq`, `tests/sbm11/agg_ids.sh`, the W3C census (9 id-path tests aggregate on ids) |
 | L6a | E1 from L1 to L5 | open | — |
 | L6b | E2: the fallback selection keeps every quad the query can read (the planner theorem of 2026-09-06 restated for PSO scans), and the `datasetOfQuads` bridge (that record's section 6.6 item 1) | open | — |
 | L6c | The JSON printer (`keyJsonInto`) equals `jsonOfTerm` | tested only | `tests/sbm11/run.sh` part (b), byte comparison on 21 queries |
@@ -169,6 +176,17 @@ every `G` with `denote G = norm D`" is also acceptable; a form "for every
   index arrays (`copySlice` of runs, `put64`), and a lookup characterisation
   of `Std.HashMap.alter` and `getD` for `hashPairs`. L5g and L5g′ give
   everything from the index arrays on.
+- **L5k.** The grouped aggregates of issue 825 replace `decodeRowsM` and
+  `selectPost`'s grouping by a pass over the id table (`IdAgg.aggregateM`).
+  L5j fixes what the pass must compute: the value of every aggregate and the
+  rows of the groups. Open: that the pass builds the groups of `groupWhere`.
+  Its key is the list of the ids of the GROUP BY columns in a `Std.HashMap`,
+  its order the order of the first rows, its representative the first row;
+  `groupSolutionsFast` against `groupSolutions` is open too (L6a). The
+  admission of the group columns (tags 1, 2, 4, 5) is the condition under
+  which id equality is `erEqual`. Needs the `Std.HashMap` lookup lemmas that
+  `Cache.getPure_valid` uses, for keys that are lists of ids, and an
+  invariant for the `for` loop of the pass.
 - **L6a.** Needs everything above, plus the plan rules: the permutation
   chosen by `permFor` holds the bound positions as a prefix, and the join
   order does not change the multiset. Since issue 823 (L5i) the id path also

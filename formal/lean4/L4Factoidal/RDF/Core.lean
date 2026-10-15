@@ -47,6 +47,31 @@ colon. (Port of `RDF.Term.is_iri`; the F* fuel-bounded character walk
 def isIri (s : String) : Bool :=
   !s.isEmpty && s.toList.contains ':'
 
+/-- `isIri` without the character list. `String.contains` walks the UTF-8
+bytes and stops at the first `:`, so a call reads about five characters of
+an `http:` IRI and allocates nothing; `String.toList` built one list cell
+for every character first. A call on a 50-character IRI took 653 to 706 ns
+through the list and 29 to 31 ns through `String.contains` (a compiled
+micro-benchmark, 2026-10-14). The list form cost 19 percent of phase 1 of
+the SBM11 packer and 11.6 percent of the log replay, and 9.2 percent of the
+samples of a perf profile of a DBpedia aggregate query (the key decoder and
+the inline integer decoder call it for every term they rebuild;
+https://github.com/danbri/factoidal/issues/792 item 5,
+https://github.com/danbri/factoidal/issues/825). -/
+def isIriFast (s : String) : Bool :=
+  !s.isEmpty && s.contains ':'
+
+/-- The two forms agree on every string. `isIri` stays the definition that
+the types and the theorems unfold; the compiler runs `isIriFast`
+(`isIri_eq_isIriFast`). -/
+theorem isIri_eq_isIriFast_apply (s : String) : isIri s = isIriFast s := by
+  simp [isIri, isIriFast, String.contains]
+
+/-- The compiler calls `isIriFast` wherever the source says `isIri`. A module
+that calls `isIri` gets this replacement by importing `L4Factoidal.RDF.Core`. -/
+@[csimp] theorem isIri_eq_isIriFast : @isIri = @isIriFast :=
+  funext isIri_eq_isIriFast_apply
+
 /-- A well-formed IRI — the type every term constructor and predicate
 position requires. F*: `s:iri{is_iri s}`. -/
 abbrev WfIri := { s : Iri // isIri s }

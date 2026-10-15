@@ -1452,3 +1452,9 @@ L4Factoidal_Storage_BlockMerkle_levelsFuel  # (c) one call for each level of a M
 L4Factoidal_JSONLD_maxNeed  # (b) nesting of the JSON-LD document: the pre-pass of generatedPrefix over every key and string of the tree (cycle of 3)
 L4Factoidal_JSONLD_maxNeedItems  # (b) nesting of the JSON-LD document, as maxNeed; the siblings of one array are a goto _start in the emitted C, so the three call each other once per nesting level only
 L4Factoidal_JSONLD_maxNeedFields  # (b) nesting of the JSON-LD document, as maxNeed; the members of one object are a goto _start in the emitted C
+# --- Added 2026-10-14 by the grouped aggregates on ids of https://github.com/danbri/factoidal/issues/825 ---
+L4Factoidal_SPARQL_AggStream_itemsPre  # (b) the SELECT items of one query: one call for each item, run once for each group (730 for DBpedia d19); the items are the SELECT clause of the query text
+L4Factoidal_SPARQL_AggStream_itemAggs  # (s) the values of the aggregate items of a group as evalAggregate gives them; read by the theorems evalSelectItemsGroup_pre and itemAggs_eq_streamAgg only, no function of the emitted C calls it
+L4Factoidal_SPARQL_AggStream_itemSpecs?  # (b) the SELECT items of one query: one call for each item, run once for each query (aggPlan?)
+L4Factoidal_SPARQL_AggStream_groupVarsOf?  # (b) the GROUP BY conditions of one query: one call for each condition, run once for each query (aggPlan?)
+L4Factoidal_Storage_Sbm11_IdAgg_Cache_getPureList  # (s) the lookups of a list of keys through the pure cache; read by the theorem Cache.getPure_list only, the loops of decodeRowsM and aggregateM call Cache.getM

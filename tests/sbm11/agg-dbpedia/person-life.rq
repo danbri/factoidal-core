@@ -1,0 +1,6 @@
+# One group for each person with a birth and a death date (about 190,000 groups): the
+# dates are the aggregate arguments, the person IRI is the key and the representative row.
+PREFIX dbo: <http://dbpedia.org/ontology/>
+SELECT ?p (MIN(?b) AS ?born) (MAX(?d) AS ?died) (COUNT(?b) AS ?nb)
+WHERE { ?p dbo:birthDate ?b . ?p dbo:deathDate ?d }
+GROUP BY ?p

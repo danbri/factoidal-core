@@ -563,7 +563,7 @@ version 2 (below, "Delta log versions"; since 2026-10-14). `l4sbm11 canon`
 reads RDF 1.2 through the source layer since 2026-10-14 (https://github.com/danbri/factoidal/issues/837); part (m)
 asserts that `dump` and `canon` of the triple-term fixture are equal. Records: stage 2 record section 8
 (key, tag, format names, theorems), stage 4 record section 14 (each query
-path). Gates for a change there: `tests/sbm11/run.sh` part (m) (44 queries
+path). Gates for a change there: `tests/sbm11/run.sh` part (m) (46 queries
 against `l4factoidal query --sparql12`, compaction, three SPARQL 1.2 updates
 with queries after each, the refusals),
 `l4sbm11-dict-pack --nest-check N`, and the `sbm11-triple-term` case of
@@ -930,7 +930,8 @@ the first-rows cuts); open: L6a. W3C census: id path 230 to 438 of 605, 0
 differed. DBpedia d18 (REGEX after a join) 59.6 ms warm, 23.8 MB on ids (the
 fallback was killed at 13.9 GB); d19 (MAX, AVG per group over 326,365 joined
 rows) 3.2 s, 151.5 MB on ids, 25.3 s and 832 MB on the fallback; most of
-d19's time is `Session.termOf` decoding the rows. Gates: `tests/sbm11/run.sh`
+d19's time was `Session.termOf` decoding the rows (since 2026-10-15 d19 aggregates
+on ids: 0.5 s, 51 MB, next paragraph). Gates: `tests/sbm11/run.sh`
 parts (d), (h), (l) with the `ids-ask-*`, `ids-construct-*`, `ids-expr-*`,
 `ids-agg-*`, `ids-filter-*` and `ref-*` queries; `tests/sbm11/census.sh`,
 whose CONSTRUCT and DESCRIBE answers `compare_answers.py` now compares line
@@ -938,6 +939,46 @@ by line (blank node labels masked). Traps: a residual FILTER over a variable
 bound outside its group must stay refused (inside the group it is unbound);
 a gate query that answers nothing checks nothing (d18's first REGEX matched
 no row); run the fallback for a measurement under `ulimit -v`.
+
+Grouped aggregates on ids (2026-10-15, https://github.com/danbri/factoidal/issues/825;
+record: sections 15 and 16 of the stage 4 record). A SELECT with GROUP BY
+variables (or none) whose items are variables or non-DISTINCT COUNT, SUM, MIN,
+MAX or AVG of a variable (`AggStream.aggPlan?`) no longer decodes its WHERE
+solutions. `IdAgg.aggregateM` groups the id table in one pass (key: the ids of
+the GROUP BY columns, in order of first row), steps the accumulators of
+`AggStream` with a `Summary` for each distinct id (a `Cache`; `COUNT(?x)`
+decodes nothing), decodes the first row of each group, and `IdQuery.runPostM`
+gives the rows to the reference's own tail (`groupedTail`: ORDER BY,
+projection, DISTINCT, OFFSET, LIMIT). The group columns must hold blank nodes,
+IRIs, inline integers or inline booleans (tags 1, 2, 4, 5); any other id or an
+unbound value sends the query to the decoded path. `--explain` prints `post: N
+WHERE solutions aggregated on ids into G groups (D distinct ids decoded, R
+values in the representative rows)`; `l4sbm11 query --no-agg-ids` turns the
+plan off, and the two answer byte for byte. Theorems (`SPARQL/AggStream.lean`):
+`evalAggregate_stream`, `evalAggregate_star`, `varView_ne_error`,
+`selectPost_grouped`, `selectPost_aggPlan`; `IdAgg.Cache.getPure_list`;
+`TermKeyFast.decodeKeySlice?_eq`; `RDF.isIri_eq_isIriFast` (`@[csimp]`). Open:
+lemma L5k (the groups of the pass are those of `groupWhere`; tested). DBpedia
+d19 (MAX and AVG per country, 326,365 joined rows, 2026-10-15): warm 3,008 to
+507 ms, cold 2,967 to 546 ms, peak RSS 150.9 to 50.8 MB, answers byte-identical
+to the build before and to `--reference`. Still decoded, each an expected
+failure in `tests/sbm11/agg_ids.sh` that names
+https://github.com/danbri/factoidal/issues/861: HAVING, DISTINCT aggregates,
+GROUP_CONCAT, SAMPLE, expressions, literal or unbound group keys, the
+variables of a representative row, and MIN and MAX over IRIs (every distinct IRI
+is decoded). Gates: `tests/sbm11/run.sh` parts (d), (h),
+(l) with the `ids-agg-*` queries, part (m) with `ids-tt-agg-*`, and part (t)
+(`agg_ids.sh`, with six DBpedia queries in `tests/sbm11/agg-dbpedia`);
+`IdAggTests` (build-time `#guard`s);
+`tests/sbm11/census.sh` prints how many id-path tests aggregate on ids (9 of
+438). Traps: the gate prints `path=ids` for both paths, so `agg_ids.sh` checks
+`aggregated on ids`; COUNT alone with GROUP BY variables is the older counted
+path, so a gate query of the new path needs a second aggregate; a high-cardinality
+grouping (hundreds of thousands of groups) takes its time in the dictionary
+pages and the JSON output, so the pass gains nothing there and must not lose:
+decode the representative rows through the same term cache as the aggregate
+arguments (the page cache of 2,048 pages is emptied when full, and an
+uncached decode of the same IRI for each group took 18.8 s against 12.6 s).
 
 Parallel block scans (2026-10-12 and 2026-10-13,
 https://github.com/danbri/factoidal/issues/799; record:

@@ -195,6 +195,17 @@
 #                compare by isomorphism) and through the in-memory reference engine. The
 #                store passes every test the reference passes. Its counts (the store's)
 #                are added to this run's, under their own line.
+#   (t) agg-ids  tests/sbm11/agg_ids.sh (https://github.com/danbri/factoidal/issues/825):
+#                the gate queries in the plan of `AggStream.aggPlan?` say "aggregated on
+#                ids" in --explain and answer byte for byte as `--no-agg-ids` does (the
+#                decoded rows and `selectPost`); the two gate queries whose group column
+#                the plan does not admit (a dictionary literal, an unbound value) decode
+#                the rows; six expected failures for the grouped shapes still decoded
+#                (HAVING, DISTINCT aggregates, GROUP_CONCAT, an expression in GROUP BY, a
+#                literal or an unbound value as the group key) and one for the values
+#                held by the representative rows, each naming
+#                https://github.com/danbri/factoidal/issues/861; DBpedia d19 when the
+#                slice generation exists. Its counts are added to this run's.
 #   (g) tamper   a copy of the generation with one byte changed in a block
 #                frame of spo.prb1 (manifest and sidecars kept): `scan` and
 #                `query` must be refused under merkle (and by default, the
@@ -800,7 +811,7 @@ else
   # gate12/update/*.rq query is answered by `l4sbm11 query --sparql12` on its
   # path (ids-* on path=ids, ref-* on path=reference) and by --reference,
   # equal as multisets to `l4factoidal query --sparql12` over the reference
-  # state; after u3 the 44 gate12/*.rq queries too. Then compaction: the dump
+  # state; after u3 the 46 gate12/*.rq queries too. Then compaction: the dump
   # of the compacted generation equals the reference state, and the compacted
   # generation is byte-identical to a fresh pack of it. Until 2026-10-14 this
   # part held the expected failure xfail-update-triple-term (refused: SPARQL
@@ -964,6 +975,9 @@ add_script_counts update update_where.sh "update where"
 
 echo "=== (s) the W3C SPARQL 1.1 Update evaluation tests through the store (issue 849 item 3)"
 add_script_counts w3c-update w3c_update.sh "w3c update"
+
+echo "=== (t) grouped aggregates on ids (issue 825)"
+add_script_counts agg-ids agg_ids.sh "agg ids"
 
 echo
 echo "sbm11 stages 4 and 5: $PASS pass, $FAIL fail, $XFAILS expected-fail (out of $((PASS + FAIL + XFAILS)))"

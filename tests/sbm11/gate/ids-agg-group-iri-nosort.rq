@@ -1,0 +1,6 @@
+PREFIX ex: <http://ex.org/>
+PREFIX xsd: <http://www.w3.org/2001/XMLSchema#>
+# The same without ORDER BY: the groups come in the order of their first row (the
+# reference compares the rows as multisets).
+SELECT ?g (COUNT(*) AS ?n) (SUM(?v) AS ?s) (MAX(?v) AS ?hi) (AVG(?v) AS ?m)
+WHERE { ?x ex:grp ?g . ?x ex:score ?v } GROUP BY ?g

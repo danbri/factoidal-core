@@ -1,0 +1,5 @@
+PREFIX ex: <http://ex.org/>
+PREFIX xsd: <http://www.w3.org/2001/XMLSchema#>
+# Groups keyed by the graph of a quad (an IRI from the graph column).
+SELECT ?g (COUNT(*) AS ?n) (MAX(?o) AS ?hi) (MIN(?o) AS ?lo)
+WHERE { GRAPH ?g { ?s ?p ?o } } GROUP BY ?g ORDER BY ?g

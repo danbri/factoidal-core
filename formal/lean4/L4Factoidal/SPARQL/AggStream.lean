@@ -1,0 +1,847 @@
+/-
+L4Factoidal.SPARQL.AggStream — COUNT, SUM, MIN, MAX and AVG over a plain
+variable as one pass over a stream of values, and the SELECT items of a
+grouped query computed from aggregate values that are already known
+(https://github.com/danbri/factoidal/issues/825; record
+docs/designissues/2026-10-12-sbm11-stage4.md section 16).
+
+## Why
+
+`evalAggregate` evaluates the argument of an aggregate at every row of a
+group (`evalOverGroup`: a lookup in the row's binding, the promotion of a
+literal), then filters, then folds. The SBM11 id path (`Storage/Sbm11/IdAgg`)
+holds the rows of a group as term ids. It decodes each distinct id once into a
+`Summary` (the value, its `numericView`, its numeric reading), and feeds the
+summaries of a group's rows, in row order, to the accumulator of the aggregate.
+The accumulator makes the same decisions as the list functions the reference
+calls (`filterNonError`, `sumNumericAcc`, `findMin`, `findMax`, `avgNumeric`),
+in the same order, so the theorems here say that its result IS
+`evalAggregate`'s:
+
+  * `evalAggregate_stream`: `evalAggregate env fn false (.var w) g` is
+    `finish fn` of the left fold of `step fn` over the summaries of the values
+    of `w` in the group's rows, for `fn` one of COUNT, SUM, MIN, MAX, AVG;
+  * `evalAggregate_star`: `COUNT(*)` is the number of rows of the group;
+  * `evalSelectItemsGroup_pre`: the SELECT items of a group, when each is a
+    variable or a non-DISTINCT aggregate, are `itemsPre` of the values of the
+    group's aggregates (`itemAggs`);
+  * `selectPost_grouped`: for a SELECT with grouping and no HAVING and no
+    trailing VALUES, `selectPost` is the shared tail `groupedTail` of the rows
+    `groupOmegaRow` of the groups.
+
+## What is not proved
+
+That a table of ids, grouped by the id path, gives the groups of
+`groupWhere` on the decoded rows, with the same representative rows and the
+same sequence of values in each group (lemma L5k of the end-to-end record). Like
+`groupSolutionsFast` against `groupSolutions`, it is checked by the gate
+queries of `tests/sbm11/gate` and by the W3C census, and is NOT proved.
+
+No `sorry`, no user `axiom`, no `native_decide`, no `partial`.
+-/
+import L4Factoidal.SPARQL.Query
+
+namespace L4Factoidal.SPARQL.AggStream
+
+open L4Factoidal.RDF
+
+/-! ## The value a variable has -/
+
+/-- The value `Expr.evalIn` gives a variable that is bound to `t`: a literal
+is promoted (`literalPromote`), any other term stays a term. -/
+def varView : Term → EvalResult
+  | .literal l => literalPromote l
+  | t => .term t
+
+/-- `Expr.evalIn` of a variable reads its binding and nothing else. -/
+theorem evalIn_var (env : EvalEnv) (mu : Binding) (v : VarName) :
+    Expr.evalIn env mu (.var v) =
+      (match mu.lookup v with
+       | some t => varView t
+       | none => .error) := by
+  simp only [Expr.evalIn]
+  cases mu.lookup v with
+  | none => rfl
+  | some t => cases t <;> rfl
+
+/-- A promoted literal is never the type error. -/
+theorem literalPromote_ne_error (l : WfLiteral) : literalPromote l ≠ .error := by
+  unfold literalPromote
+  split
+  · split <;> simp
+  · split
+    · simp
+    · split
+      · simp
+      · split
+        · split <;> simp
+        · simp
+
+/-- A bound variable is never the type error, so `COUNT(?x)` counts the rows
+where `?x` is bound, whatever term it is bound to. -/
+theorem varView_ne_error (t : Term) : varView t ≠ .error := by
+  cases t with
+  | literal l => exact literalPromote_ne_error l
+  | iri _ => simp [varView]
+  | bnode _ => simp [varView]
+  | tripleTerm _ _ _ => simp [varView]
+
+/-! ## What a step reads of one value -/
+
+/-- The numeric reading of a `numericView`: what `EvalResult.toNumeric?` gives
+the value it came from. -/
+def numOfView : EvalResult → Option (Scaled × NumKind)
+  | .num n => some (⟨n, 0⟩, .int)
+  | .dec s => (parseToScaled s).map (fun v => (v, .dec))
+  | .dbl s => (parseDoubleToScaled s).map (fun v => (v, .dbl))
+  | _ => none
+
+theorem toNumeric_eq_numOfView (v : EvalResult) : v.toNumeric? = numOfView (numericView v) := by
+  cases v with
+  | term t =>
+    cases t with
+    | literal l =>
+      simp only [EvalResult.toNumeric?, numericView]
+      cases literalOperandView l <;> simp [numOfView]
+    | iri _ => simp [EvalResult.toNumeric?, numericView, numOfView]
+    | bnode _ => simp [EvalResult.toNumeric?, numericView, numOfView]
+    | tripleTerm _ _ _ => simp [EvalResult.toNumeric?, numericView, numOfView]
+  | bool _ => simp [EvalResult.toNumeric?, numericView, numOfView]
+  | num _ => simp [EvalResult.toNumeric?, numericView, numOfView]
+  | dec _ => simp [EvalResult.toNumeric?, numericView, numOfView]
+  | dbl _ => simp [EvalResult.toNumeric?, numericView, numOfView]
+  | error => simp [EvalResult.toNumeric?, numericView, numOfView]
+
+/-- A value with what the aggregate steps read of it, computed once. The
+id path keeps one per distinct term id. -/
+structure Summary where
+  v : EvalResult
+  nv : EvalResult
+  tn : Option (Scaled × NumKind)
+
+instance : Inhabited Summary := ⟨⟨.error, .error, none⟩⟩
+
+def Summary.of (v : EvalResult) : Summary :=
+  let nv := numericView v
+  ⟨v, nv, numOfView nv⟩
+
+theorem Summary.of_v (v : EvalResult) : (Summary.of v).v = v := rfl
+
+theorem Summary.of_nv (v : EvalResult) : (Summary.of v).nv = numericView v := rfl
+
+theorem Summary.of_tn (v : EvalResult) : (Summary.of v).tn = v.toNumeric? := by
+  simp [Summary.of, toNumeric_eq_numOfView]
+
+/-! ## The accumulators -/
+
+/-- The state of one aggregate over one group. -/
+inductive AggAcc where
+  /-- COUNT: the values counted -/
+  | cnt (n : Nat)
+  /-- SUM and AVG: the running sum, its promoted type, the numeric operands, and
+      whether a non-numeric operand was seen -/
+  | num (s : Scaled) (k : NumKind) (c : Nat) (bad : Bool)
+  /-- MIN and MAX: the best value so far with its `numericView` -/
+  | best (b : Option (EvalResult × EvalResult))
+
+instance : Inhabited AggAcc := ⟨.cnt 0⟩
+
+/-- The aggregate functions the accumulators cover. -/
+def Streamed : AggregateFn → Bool
+  | .count | .sum | .min | .max | .avg => true
+  | _ => false
+
+def AggAcc.init : AggregateFn → AggAcc
+  | .count => .cnt 0
+  | .sum | .avg => .num ⟨0, 0⟩ .int 0 false
+  | _ => .best none
+
+def AggAcc.stepCount : AggAcc → AggAcc
+  | .cnt n => .cnt (n + 1)
+  | a => a
+
+def AggAcc.stepNum (a : AggAcc) (s : Summary) : AggAcc :=
+  match a with
+  | .num sc k c bad =>
+    match s.tn with
+    | some (x, vk) => .num (sc.add x) (promoteKind k vk) (c + 1) bad
+    | none => .num sc k c true
+  | a => a
+
+/-- MAX and MIN: a later value replaces the best one when `keep` accepts the
+comparison of the two numeric views. MAX keeps it when it is not below the best
+(`findMax` keeps the last of equal values, §18.5.1.7); MIN when it is not above
+it (`findMin`, §18.5.1.6). -/
+def AggAcc.stepBest (keep : Int → Bool) (a : AggAcc) (s : Summary) : AggAcc :=
+  match a with
+  | .best none => .best (some (s.v, s.nv))
+  | .best (some (_, bnv)) => if keep (sparqlOrder s.nv bnv) then .best (some (s.v, s.nv)) else a
+  | a => a
+
+/-- The step of the functions that keep the best value, with the type error
+dropped (§18.5.1.1). -/
+def AggAcc.stepKeep (keep : Int → Bool) (a : AggAcc) (s : Summary) : AggAcc :=
+  match s.v with
+  | .error => a
+  | _ => a.stepBest keep s
+
+def keepMax : Int → Bool := fun c => decide (c ≥ 0)
+def keepMin : Int → Bool := fun c => decide (c ≤ 0)
+
+/-- One value: the type error is dropped (§18.5.1.1), any other value goes to
+the step of the function. -/
+def AggAcc.step (fn : AggregateFn) (a : AggAcc) (s : Summary) : AggAcc :=
+  match fn with
+  | .count => (match s.v with | .error => a | _ => a.stepCount)
+  | .sum | .avg => (match s.v with | .error => a | _ => a.stepNum s)
+  | .min => a.stepKeep keepMin s
+  | .max => a.stepKeep keepMax s
+  | _ => a
+
+/-- §18.5.1.5 AVG from the sum, its type and the count: the part of
+`avgNumeric` that follows `sumNumericAcc`. -/
+def avgOfAcc (s : Scaled) (k : NumKind) (c : Nat) : EvalResult :=
+  if c == 0 then .num 0
+  else
+    let resultKind := match k with | .int => NumKind.dec | other => other
+    let extra : Nat := 10
+    let extended := s.mantissa * pow10 extra
+    let divided := intDivT extended (Int.ofNat c)
+    let resultScale := s.scale + extra
+    match resultKind with
+    | .dbl => .dbl (formatAsDouble divided resultScale)
+    | _    => .dec (stripTrailingDecimalZeros (formatScaledValue divided resultScale))
+
+theorem avgNumeric_eq (vals : List EvalResult) :
+    avgNumeric vals = avgOfAcc (sumNumericAcc vals ⟨0, 0⟩ .int 0).1 (sumNumericAcc vals ⟨0, 0⟩ .int 0).2.1
+      (sumNumericAcc vals ⟨0, 0⟩ .int 0).2.2 := by
+  unfold avgNumeric avgOfAcc
+  rfl
+
+theorem sumNumeric_eq (vals : List EvalResult) :
+    sumNumeric vals =
+      (if (sumNumericAcc vals ⟨0, 0⟩ .int 0).2.2 == 0 then .num 0
+       else formatNumericResult (sumNumericAcc vals ⟨0, 0⟩ .int 0).1 (sumNumericAcc vals ⟨0, 0⟩ .int 0).2.1) := by
+  unfold sumNumeric
+  rfl
+
+/-- The value of the aggregate from its final state. -/
+def AggAcc.finish (fn : AggregateFn) (a : AggAcc) : EvalResult :=
+  match fn, a with
+  | .count, .cnt n => .num (Int.ofNat n)
+  | .sum, .num s k c bad =>
+    if bad then .error else if c == 0 then .num 0 else formatNumericResult s k
+  | .avg, .num s k c bad => if bad then .error else avgOfAcc s k c
+  | .min, .best b | .max, .best b =>
+    match b with
+    | some (v, _) => v
+    | none => .error
+  | _, _ => .error
+
+/-- The reference's aggregate over the values of a group's rows, for the
+functions the accumulators cover (`evalAggregate` after `evalOverGroup`). -/
+def aggVals : AggregateFn → List EvalResult → EvalResult
+  | .count, vals => .num (Int.ofNat (filterNonError vals).length)
+  | .sum, vals =>
+    let vs := filterNonError vals
+    if vs.any (fun v => v.toNumeric?.isNone) then .error else sumNumeric vs
+  | .avg, vals =>
+    let vs := filterNonError vals
+    if vs.any (fun v => v.toNumeric?.isNone) then .error else avgNumeric vs
+  | .min, vals => findMin (filterNonError vals)
+  | .max, vals => findMax (filterNonError vals)
+  | _, _ => .error
+
+/-- `evalAggregate` of a non-DISTINCT aggregate over an expression other than
+the two spellings of `COUNT(*)` is `aggVals` of the values of the expression. -/
+theorem evalAggregate_eq_aggVals (env : EvalEnv) (fn : AggregateFn) (hfn : Streamed fn = true)
+    (e : Expr) (hstar : (e = .var "*" ∨ e = .boolLit true) → False) (g : SolutionGroup) :
+    evalAggregate env fn false e g = aggVals fn (evalOverGroup env e g) := by
+  cases fn with
+  | count =>
+    simp only [evalAggregate, aggVals]
+    split
+    · exact absurd (Or.inl rfl) hstar
+    · exact absurd (Or.inr rfl) hstar
+    · simp
+  | sum => simp [evalAggregate, aggVals]
+  | avg => simp [evalAggregate, aggVals]
+  | min => simp [evalAggregate, aggVals]
+  | max => simp [evalAggregate, aggVals]
+  | groupConcat s => simp [Streamed] at hfn
+  | sample => simp [Streamed] at hfn
+
+/-- COUNT(*) of a group is the number of its rows. -/
+theorem evalAggregate_star (env : EvalEnv) (g : SolutionGroup) :
+    evalAggregate env .count false (.boolLit true) g = .num (Int.ofNat g.solutions.length) ∧
+    evalAggregate env .count false (.var "*") g = .num (Int.ofNat g.solutions.length) := by
+  simp [evalAggregate]
+
+
+/-! ## The stream is the list function -/
+
+theorem filterNonError_cons (v : EvalResult) (rest : List EvalResult) :
+    filterNonError (v :: rest) = if v = .error then filterNonError rest else v :: filterNonError rest := by
+  cases v <;> simp [filterNonError]
+
+/-- COUNT: one per value that is not the type error. -/
+theorem count_stream (vals : List EvalResult) : ∀ n,
+    (vals.map Summary.of).foldl (AggAcc.step .count) (.cnt n) =
+      .cnt (n + (filterNonError vals).length) := by
+  induction vals with
+  | nil => intro n; simp [filterNonError]
+  | cons v rest ih =>
+    intro n
+    rw [filterNonError_cons]
+    cases v <;> simp [AggAcc.step, Summary.of, AggAcc.stepCount, ih] <;> omega
+
+
+/-- The step of SUM and AVG on a value that is not the type error. -/
+theorem step_num_of_ne (fn : AggregateFn) (hfn : fn = .sum ∨ fn = .avg) (a : AggAcc) (v : EvalResult)
+    (hv : v ≠ .error) : AggAcc.step fn a (Summary.of v) = a.stepNum (Summary.of v) := by
+  rcases hfn with rfl | rfl <;> cases v <;> first | exact absurd rfl hv | rfl
+
+theorem step_num_error (fn : AggregateFn) (hfn : fn = .sum ∨ fn = .avg) (a : AggAcc) :
+    AggAcc.step fn a (Summary.of .error) = a := by
+  rcases hfn with rfl | rfl <;> rfl
+
+/-- SUM and AVG: the running sum is `sumNumericAcc` over the values that are not
+the type error, and the flag is "some value has no numeric reading". -/
+theorem num_stream (fn : AggregateFn) (hfn : fn = .sum ∨ fn = .avg) (vals : List EvalResult) :
+    ∀ sc k c bad,
+    (vals.map Summary.of).foldl (AggAcc.step fn) (.num sc k c bad) =
+      .num (sumNumericAcc (filterNonError vals) sc k c).1
+           (sumNumericAcc (filterNonError vals) sc k c).2.1
+           (sumNumericAcc (filterNonError vals) sc k c).2.2
+           (bad || (filterNonError vals).any (fun v => v.toNumeric?.isNone)) := by
+  induction vals with
+  | nil => intro sc k c bad; simp [filterNonError, sumNumericAcc]
+  | cons v rest ih =>
+    intro sc k c bad
+    rw [filterNonError_cons]
+    by_cases hv : v = .error
+    · subst hv
+      simp only [if_true, List.map_cons, List.foldl_cons, step_num_error fn hfn]
+      exact ih sc k c bad
+    · simp only [hv, if_false, List.map_cons, List.foldl_cons]
+      rw [step_num_of_ne fn hfn _ v hv]
+      simp only [AggAcc.stepNum, Summary.of_tn]
+      cases hn : v.toNumeric? with
+      | none => simp [ih, sumNumericAcc, hn]
+      | some p =>
+        obtain ⟨x, vk⟩ := p
+        simp [ih, sumNumericAcc, hn]
+
+/-- The fold of MAX and MIN: the best value so far against the next. -/
+def bestFold (keep : Int → Bool) (a : EvalResult) (rest : List EvalResult) : EvalResult :=
+  rest.foldl (fun acc x => if keep (sparqlOrderValue x acc) then x else acc) a
+
+theorem findMax_eq (vals : List EvalResult) :
+    findMax vals = (match vals with
+      | [] => .error
+      | v :: rest => bestFold keepMax v rest) := by
+  cases vals with
+  | nil => rfl
+  | cons v rest => simp [findMax, bestFold, keepMax]
+
+theorem findMin_eq (vals : List EvalResult) :
+    findMin vals = (match vals with
+      | [] => .error
+      | v :: rest => bestFold keepMin v rest) := by
+  cases vals with
+  | nil => rfl
+  | cons v rest => simp [findMin, bestFold, keepMin]
+
+/-- MIN and MAX from a state that already holds a value. -/
+theorem best_stream_from (keep : Int → Bool) (vals : List EvalResult) : ∀ (a : EvalResult),
+    (vals.map Summary.of).foldl (AggAcc.stepKeep keep) (.best (some (a, numericView a))) =
+      .best (some (bestFold keep a (filterNonError vals),
+                   numericView (bestFold keep a (filterNonError vals)))) := by
+  induction vals with
+  | nil => intro a; simp [filterNonError, bestFold]
+  | cons v rest ih =>
+    intro a
+    rw [filterNonError_cons]
+    by_cases hv : v = .error
+    · subst hv
+      simp [AggAcc.stepKeep, Summary.of, ih]
+    · simp only [hv, if_false, List.map_cons, List.foldl_cons]
+      have hv' : (Summary.of v).v ≠ .error := hv
+      by_cases hk : keep (sparqlOrder (numericView v) (numericView a)) = true
+      · have h1 : AggAcc.stepKeep keep (.best (some (a, numericView a))) (Summary.of v) =
+            .best (some (v, numericView v)) := by
+          cases v <;> simp_all [AggAcc.stepKeep, AggAcc.stepBest, Summary.of]
+        rw [h1, ih v]
+        simp [bestFold, sparqlOrderValue, hk]
+      · have h1 : AggAcc.stepKeep keep (.best (some (a, numericView a))) (Summary.of v) =
+            .best (some (a, numericView a)) := by
+          cases v <;> simp_all [AggAcc.stepKeep, AggAcc.stepBest, Summary.of]
+        rw [h1, ih a]
+        simp [bestFold, sparqlOrderValue, hk]
+
+/-- MIN and MAX from the empty state: the first value that is not the type
+error starts the fold. -/
+theorem best_stream (keep : Int → Bool) (vals : List EvalResult) :
+    (vals.map Summary.of).foldl (AggAcc.stepKeep keep) (.best none) =
+      (match filterNonError vals with
+       | [] => .best none
+       | v :: rest => .best (some (bestFold keep v rest, numericView (bestFold keep v rest)))) := by
+  induction vals with
+  | nil => simp [filterNonError]
+  | cons v rest ih =>
+    rw [filterNonError_cons]
+    by_cases hv : v = .error
+    · subst hv
+      simp [AggAcc.stepKeep, Summary.of, ih]
+    · simp only [hv, if_false, List.map_cons, List.foldl_cons]
+      have h1 : AggAcc.stepKeep keep (.best none) (Summary.of v) = .best (some (v, numericView v)) := by
+        cases v <;> simp_all [AggAcc.stepKeep, AggAcc.stepBest, Summary.of]
+      rw [h1, best_stream_from]
+
+
+theorem step_min : AggAcc.step .min = AggAcc.stepKeep keepMin := rfl
+
+theorem step_max : AggAcc.step .max = AggAcc.stepKeep keepMax := rfl
+
+/-- COUNT, SUM, MIN, MAX and AVG of a variable are the value of the accumulator
+after one pass over the summaries of the variable's values in the rows of the
+group, in row order. -/
+theorem evalAggregate_stream (env : EvalEnv) (fn : AggregateFn) (hfn : Streamed fn = true)
+    (w : VarName) (hw : w ≠ "*") (g : SolutionGroup) :
+    evalAggregate env fn false (.var w) g =
+      AggAcc.finish fn ((g.solutions.map (fun mu => Summary.of (Expr.evalIn env mu (.var w)))).foldl
+        (AggAcc.step fn) (AggAcc.init fn)) := by
+  have hstar : ((Expr.var w) = .var "*" ∨ (Expr.var w) = .boolLit true) → False := by
+    intro h
+    rcases h with h | h
+    · exact hw (by injection h)
+    · cases h
+  rw [evalAggregate_eq_aggVals env fn hfn _ hstar g]
+  have hmap : (g.solutions.map (fun mu => Summary.of (Expr.evalIn env mu (.var w)))) =
+      (evalOverGroup env (.var w) g).map Summary.of := by
+    simp [evalOverGroup, List.map_map, Function.comp_def]
+  rw [hmap]
+  generalize evalOverGroup env (.var w) g = vals
+  cases fn with
+  | count =>
+    simp only [AggAcc.init, aggVals]
+    rw [count_stream vals 0]
+    simp [AggAcc.finish]
+  | sum =>
+    have h := num_stream .sum (Or.inl rfl) vals ⟨0, 0⟩ .int 0 false
+    simp only [AggAcc.init, aggVals]
+    rw [h]
+    simp only [AggAcc.finish, Bool.false_or]
+    cases hb : (filterNonError vals).any (fun v => v.toNumeric?.isNone) <;> simp [sumNumeric_eq]
+  | avg =>
+    have h := num_stream .avg (Or.inr rfl) vals ⟨0, 0⟩ .int 0 false
+    simp only [AggAcc.init, aggVals]
+    rw [h]
+    simp only [AggAcc.finish, Bool.false_or]
+    cases hb : (filterNonError vals).any (fun v => v.toNumeric?.isNone) <;> simp [avgNumeric_eq]
+  | min =>
+    simp only [AggAcc.init, aggVals, step_min]
+    rw [best_stream keepMin vals, findMin_eq]
+    cases filterNonError vals <;> simp [AggAcc.finish]
+  | max =>
+    simp only [AggAcc.init, aggVals, step_max]
+    rw [best_stream keepMax vals, findMax_eq]
+    cases filterNonError vals <;> simp [AggAcc.finish]
+  | groupConcat s => simp [Streamed] at hfn
+  | sample => simp [Streamed] at hfn
+
+
+/-! ## SELECT items from known aggregate values -/
+
+/-- The expression `rewriteAggregates` puts in place of an aggregate whose value
+is `r` (the match in its `.aggregate` arm). -/
+def aggResultExpr : EvalResult → Expr
+  | .num n => .numericLit n
+  | .bool b => .boolLit b
+  | .dec s => .decimalLit s
+  | .dbl d => .doubleLit d
+  | .term (.iri i) => .iri i
+  | .term (.literal l) => .lit l
+  | .term _ => .boolLit false
+  | .error => .var "_:error:"
+
+theorem rewriteAggregates_aggregate (env : EvalEnv) (g : SolutionGroup) (fn : AggregateFn)
+    (d : Bool) (sub : Expr) :
+    rewriteAggregates env g (.aggregate fn d sub) = aggResultExpr (evalAggregate env fn d sub g) := by
+  simp only [rewriteAggregates]
+  generalize evalAggregate env fn d sub g = result
+  cases result with
+  | term t => cases t <;> rfl
+  | _ => rfl
+
+/-- The items of a SELECT clause when the value of each aggregate is given, in
+item order. A variable item reads the row; an aggregate item evaluates the
+expression `rewriteAggregates` makes of its value, in the row. -/
+def itemsPre (env : EvalEnv) : List SelectItem → List EvalResult → Binding → Binding
+  | [], _, _ => []
+  | .var v :: rest, aggs, row =>
+      match row.lookup v with
+      | some t => (v, t) :: itemsPre env rest aggs ((v, t) :: row)
+      | none => itemsPre env rest aggs row
+  | .expr _ a :: rest, r :: aggs, row =>
+      match (Expr.evalIn env row (aggResultExpr r)).toTerm? with
+      | some t => (a, t) :: itemsPre env rest aggs ((a, t) :: row)
+      | none => itemsPre env rest aggs row
+  | .expr _ _ :: _, [], _ => []
+
+/-- A SELECT item that is a variable or a non-DISTINCT aggregate. -/
+def simpleItem : SelectItem → Bool
+  | .var _ => true
+  | .expr (.aggregate _ false _) _ => true
+  | _ => false
+
+/-- The values of the aggregate items of a group, in item order. -/
+def itemAggs (env : EvalEnv) (g : SolutionGroup) : List SelectItem → List EvalResult
+  | [] => []
+  | .expr (.aggregate fn d sub) _ :: rest => evalAggregate env fn d sub g :: itemAggs env g rest
+  | _ :: rest => itemAggs env g rest
+
+/-- The SELECT items of a group are `itemsPre` of the values of its aggregates. -/
+theorem evalSelectItemsGroup_pre (env : EvalEnv) (active : Graph) (g : SolutionGroup) :
+    ∀ (items : List SelectItem), (∀ it ∈ items, simpleItem it = true) → ∀ row,
+    evalSelectItemsGroup env active items g row = itemsPre env items (itemAggs env g items) row := by
+  intro items
+  induction items with
+  | nil => intro _ row; rfl
+  | cons it rest ih =>
+    intro hs row
+    have hrest : ∀ it' ∈ rest, simpleItem it' = true := fun it' h => hs it' (List.mem_cons_of_mem _ h)
+    have hit : simpleItem it = true := hs it (List.mem_cons_self ..)
+    cases it with
+    | var v =>
+      simp only [evalSelectItemsGroup, evalSelectItemGroup, itemAggs, itemsPre]
+      cases hl : row.lookup v with
+      | none => simpa using ih hrest row
+      | some t => simpa using ih hrest ((v, t) :: row)
+    | expr e a =>
+      cases e with
+      | aggregate fn d sub =>
+        cases d with
+        | true => simp [simpleItem] at hit
+        | false =>
+          simp only [evalSelectItemsGroup, evalSelectItemGroup, itemAggs, itemsPre,
+            substituteExistentials, rewriteAggregates_aggregate]
+          cases hr : (Expr.evalIn env row (aggResultExpr (evalAggregate env fn false sub g))).toTerm? with
+          | none => simpa using ih hrest row
+          | some t => simpa using ih hrest ((a, t) :: row)
+      | _ => simp [simpleItem] at hit
+
+/-- The row a group contributes before ORDER BY, projection and slicing in
+`selectPost`: its items, then the variables of the representative row that no
+item names (ORDER BY can still read them). -/
+def groupOmegaRow (env : EvalEnv) (active : Graph) (items : List SelectItem)
+    (g : SolutionGroup) : Binding :=
+  evalSelectItemsGroup env active items g g.representative ++
+    g.representative.filter (fun p => !(selectItemVars items).contains p.1)
+
+/-- The same row from the values of the aggregates. -/
+def groupedRow (env : EvalEnv) (items : List SelectItem) (aggs : List EvalResult)
+    (rep : Binding) : Binding :=
+  itemsPre env items aggs rep ++ rep.filter (fun p => !(selectItemVars items).contains p.1)
+
+theorem groupOmegaRow_pre (env : EvalEnv) (active : Graph) (items : List SelectItem)
+    (hs : ∀ it ∈ items, simpleItem it = true) (g : SolutionGroup) :
+    groupOmegaRow env active items g =
+      groupedRow env items (itemAggs env g items) g.representative := by
+  simp only [groupOmegaRow, groupedRow, evalSelectItemsGroup_pre env active g items hs]
+
+/-- ORDER BY, projection, DISTINCT or REDUCED, OFFSET and LIMIT of a grouped
+SELECT (steps 6 to 9 of `selectPost`). -/
+def groupedTail (env : EvalEnv) (active : Graph) (items : List SelectItem)
+    (md : SolutionModifier) (omega' : SolutionSeq) : SolutionSeq :=
+  match md with
+  | { orderBy := ob, distinct := dd, reduced := rr, offset := oo, limit := ll } =>
+    match ob with
+    | none => finishSelectRows none (projectBinding (selectItemVars items)) dd rr oo ll omega'
+    | some o => finishSelectRows
+        (some (fun mu1 mu2 => compareOnConditions env active o mu1 mu2))
+        (projectBinding (selectItemVars items)) dd rr oo ll omega'
+
+/-- `selectPost` of a SELECT with grouping, no HAVING and no trailing VALUES:
+the rows of the groups, then the shared tail. -/
+theorem selectPost_grouped (env : EvalEnv) (active : Graph) (dcs : List DatasetClause)
+    (pat : QueryPattern) (gb : Option (List GroupCondition)) (md : SolutionModifier)
+    (base : Option String) (items : List SelectItem)
+    (hgroup : (gb.isSome || selectHasAggregates (.vars items)) = true) (omega0 : SolutionSeq) :
+    selectPost env active (.mk (.select (.vars items)) dcs pat gb [] md none base) omega0 =
+      groupedTail env active items md
+        ((groupWhere env gb omega0).map (groupOmegaRow env active items)) := by
+  cases md with
+  | mk ob dd rr oo ll =>
+    unfold selectPost
+    dsimp only
+    rw [if_pos hgroup]
+    have hrows : ∀ gs : List SolutionGroup,
+        (groupedRowsWithValues gb none gs).map (fun gr =>
+          evalSelectItemsGroup env active items gr.1 gr.2 ++
+            gr.2.filter (fun p => !(selectItemVars items).contains p.1)) =
+        gs.map (groupOmegaRow env active items) := by
+      intro gs
+      simp only [groupedRowsWithValues, groupedRowsWithValuesOn, List.map_map]
+      rfl
+    simp only [List.isEmpty_nil, if_true, hrows]
+    cases ob <;> rfl
+
+
+/-! ## The grouped SELECTs the id path aggregates -/
+
+/-- The argument of an aggregate the accumulators cover: a variable, or one of
+the two spellings of `COUNT(*)` (no variable). -/
+def argSpec? (fn : AggregateFn) : Expr → Option (Option VarName)
+  | .boolLit true => if fn = .count then some none else none
+  | .var w => if w = "*" then (if fn = .count then some none else none) else some (some w)
+  | _ => none
+
+/-- (function, argument variable) of a non-DISTINCT aggregate the accumulators
+cover; no variable is `COUNT(*)`, in either of its two spellings. -/
+def aggSpec? : Expr → Option (AggregateFn × Option VarName)
+  | .aggregate fn false sub =>
+    if Streamed fn = true then (argSpec? fn sub).map (fun a => (fn, a)) else none
+  | _ => none
+
+/-- The aggregate items of a SELECT clause whose items are all variables or such
+aggregates, in item order. -/
+def itemSpecs? : List SelectItem → Option (List (AggregateFn × Option VarName))
+  | [] => some []
+  | .var _ :: rest => itemSpecs? rest
+  | .expr e _ :: rest =>
+    match aggSpec? e, itemSpecs? rest with
+    | some a, some r => some (a :: r)
+    | _, _ => none
+
+/-- The value of an aggregate over a group, from the accumulator: what the id
+path computes. -/
+def streamAgg (env : EvalEnv) (g : SolutionGroup) : AggregateFn × Option VarName → EvalResult
+  | (_, none) => .num (Int.ofNat g.solutions.length)
+  | (fn, some w) =>
+    AggAcc.finish fn ((g.solutions.map (fun mu => Summary.of (Expr.evalIn env mu (.var w)))).foldl
+      (AggAcc.step fn) (AggAcc.init fn))
+
+theorem argSpec_spec {fn : AggregateFn} {sub : Expr} {arg : Option VarName}
+    (h : argSpec? fn sub = some arg) :
+    (arg = none → fn = .count ∧ (sub = .boolLit true ∨ sub = .var "*")) ∧
+      (∀ w, arg = some w → sub = .var w ∧ w ≠ "*") := by
+  unfold argSpec? at h
+  split at h
+  · split at h
+    · rename_i hc
+      obtain rfl := Option.some.inj h
+      exact ⟨fun _ => ⟨hc, Or.inl rfl⟩, fun w hw => by simp at hw⟩
+    · simp at h
+  · rename_i w
+    split at h
+    · rename_i hw
+      split at h
+      · rename_i hc
+        obtain rfl := Option.some.inj h
+        subst hw
+        exact ⟨fun _ => ⟨hc, Or.inr rfl⟩, fun w hw => by simp at hw⟩
+      · simp at h
+    · rename_i hw
+      obtain rfl := Option.some.inj h
+      exact ⟨fun h => by simp at h, fun w' hw' => by
+        have : w = w' := by simpa using hw'
+        subst this
+        exact ⟨rfl, hw⟩⟩
+  · simp at h
+
+theorem aggSpec_spec {e : Expr} {fn : AggregateFn} {arg : Option VarName}
+    (h : aggSpec? e = some (fn, arg)) :
+    ∃ sub, e = .aggregate fn false sub ∧ Streamed fn = true ∧
+      (arg = none → fn = .count ∧ (sub = .boolLit true ∨ sub = .var "*")) ∧
+      (∀ w, arg = some w → sub = .var w ∧ w ≠ "*") := by
+  cases e with
+  | aggregate fn' d sub =>
+    cases d with
+    | true => simp [aggSpec?] at h
+    | false =>
+      simp only [aggSpec?] at h
+      by_cases hs : Streamed fn' = true
+      · simp only [hs, if_true] at h
+        cases ha : argSpec? fn' sub with
+        | none => simp [ha] at h
+        | some a =>
+          simp [ha] at h
+          obtain ⟨rfl, rfl⟩ := h
+          exact ⟨sub, rfl, hs, (argSpec_spec ha).1, (argSpec_spec ha).2⟩
+      · simp [hs] at h
+  | _ => simp [aggSpec?] at h
+
+
+theorem itemSpecs_simple : ∀ {items : List SelectItem} {specs : List (AggregateFn × Option VarName)},
+    itemSpecs? items = some specs → ∀ it ∈ items, simpleItem it = true := by
+  intro items
+  induction items with
+  | nil => intro specs _ it hit; simp at hit
+  | cons it0 rest ih =>
+    intro specs h it hit
+    cases it0 with
+    | var v =>
+      simp only [itemSpecs?] at h
+      rcases List.mem_cons.mp hit with rfl | hmem
+      · rfl
+      · exact ih h it hmem
+    | expr e a =>
+      simp only [itemSpecs?] at h
+      cases ha : aggSpec? e with
+      | none => simp [ha] at h
+      | some sp =>
+        cases hr : itemSpecs? rest with
+        | none => simp [ha, hr] at h
+        | some r =>
+          obtain ⟨sub, rfl, -, -, -⟩ := aggSpec_spec (e := e) (fn := sp.1) (arg := sp.2) (by simpa using ha)
+          rcases List.mem_cons.mp hit with rfl | hmem
+          · rfl
+          · exact ih hr it hmem
+
+theorem itemAggs_eq_streamAgg (env : EvalEnv) (g : SolutionGroup) :
+    ∀ {items : List SelectItem} {specs : List (AggregateFn × Option VarName)},
+    itemSpecs? items = some specs → itemAggs env g items = specs.map (streamAgg env g) := by
+  intro items
+  induction items with
+  | nil => intro specs h; simp [itemSpecs?] at h; subst h; rfl
+  | cons it0 rest ih =>
+    intro specs h
+    cases it0 with
+    | var v =>
+      simp only [itemSpecs?] at h
+      simp only [itemAggs]
+      exact ih h
+    | expr e a =>
+      simp only [itemSpecs?] at h
+      cases ha : aggSpec? e with
+      | none => simp [ha] at h
+      | some sp =>
+        cases hr : itemSpecs? rest with
+        | none => simp [ha, hr] at h
+        | some r =>
+          simp only [ha, hr] at h
+          obtain rfl := Option.some.inj h
+          obtain ⟨fn, arg⟩ := sp
+          obtain ⟨sub, rfl, hfn, hnone, hsome⟩ := aggSpec_spec ha
+          simp only [itemAggs, List.map_cons, ih hr]
+          congr 1
+          cases arg with
+          | none =>
+            obtain ⟨rfl, hsub⟩ := hnone rfl
+            rcases hsub with rfl | rfl
+            · exact (evalAggregate_star env g).1
+            · exact (evalAggregate_star env g).2
+          | some w =>
+            obtain ⟨rfl, hw⟩ := hsome w rfl
+            exact evalAggregate_stream env fn hfn w hw g
+
+/-- The pieces of a grouped SELECT whose aggregates the id path computes. -/
+structure AggPlan where
+  groupVars : List VarName
+  /-- no GROUP BY: the whole sequence is one group, also when it is empty -/
+  implicit : Bool
+  items : List SelectItem
+  specs : List (AggregateFn × Option VarName)
+  md : SolutionModifier
+
+def groupVarsOf? : List GroupCondition → Option (List VarName)
+  | [] => some []
+  | .var v :: rest => (groupVarsOf? rest).map (v :: ·)
+  | .expr _ _ :: _ => none
+
+/-- A SELECT with items that are variables or non-DISTINCT COUNT, SUM, MIN, MAX
+and AVG of a variable (or `COUNT(*)`), GROUP BY variables or none, no HAVING and
+no trailing VALUES. -/
+def aggPlan? : Query → Option AggPlan
+  | .mk (.select (.vars items)) _ _ gb [] md none _ =>
+    match itemSpecs? items with
+    | none => none
+    | some specs =>
+      match gb with
+      | none => if specs.isEmpty then none else some ⟨[], true, items, specs, md⟩
+      | some conds => (groupVarsOf? conds).map fun vs => ⟨vs, false, items, specs, md⟩
+  | _ => none
+
+theorem itemSpecs_hasAggregates : ∀ {items : List SelectItem} {specs : List (AggregateFn × Option VarName)},
+    itemSpecs? items = some specs → specs.isEmpty = false → selectHasAggregates (.vars items) = true := by
+  intro items
+  induction items with
+  | nil => intro specs h hne; simp [itemSpecs?] at h; subst h; simp at hne
+  | cons it0 rest ih =>
+    intro specs h hne
+    cases it0 with
+    | var v =>
+      simp only [itemSpecs?] at h
+      have := ih h hne
+      simp only [selectHasAggregates, List.any_cons] at this ⊢
+      simp [this]
+    | expr e a =>
+      simp only [itemSpecs?] at h
+      cases ha : aggSpec? e with
+      | none => simp [ha] at h
+      | some sp =>
+        cases hr : itemSpecs? rest with
+        | none => simp [ha, hr] at h
+        | some r =>
+          obtain ⟨fn, arg⟩ := sp
+          obtain ⟨sub, rfl, -, -, -⟩ := aggSpec_spec ha
+          simp [selectHasAggregates, List.any_cons, exprHasAggregate]
+
+theorem aggPlan_spec {q : Query} {p : AggPlan} (h : aggPlan? q = some p) :
+    ∃ dcs pat gb base,
+      q = .mk (.select (.vars p.items)) dcs pat gb [] p.md none base ∧
+      itemSpecs? p.items = some p.specs ∧
+      (gb.isSome || selectHasAggregates (.vars p.items)) = true := by
+  match q, h with
+  | .mk (.select (.vars items)) dcs pat gb [] md none base, h =>
+    simp only [aggPlan?] at h
+    cases hs : itemSpecs? items with
+    | none => simp [hs] at h
+    | some specs =>
+      simp only [hs] at h
+      cases gb with
+      | none =>
+        by_cases he : specs.isEmpty = true
+        · simp [he] at h
+        · simp only [he, Bool.false_eq_true, if_false] at h
+          obtain rfl := Option.some.inj h
+          have he' : specs.isEmpty = false := by simpa using he
+          exact ⟨dcs, pat, none, base, rfl, hs, by simpa using itemSpecs_hasAggregates hs he'⟩
+      | some conds =>
+        cases hg : groupVarsOf? conds with
+        | none => simp [hg] at h
+        | some vs =>
+          simp only [hg, Option.map_some] at h
+          obtain rfl := Option.some.inj h
+          exact ⟨dcs, pat, some conds, base, rfl, hs, by simp⟩
+
+/-- What a query that `aggPlan?` accepts computes: the rows of the groups from
+the values of their aggregates (`streamAgg`), then the shared tail. This is the
+specification the id path implements; lemma L5k of the end-to-end record says that it
+builds the groups, the representative rows and the streams as `groupWhere`
+does. -/
+theorem selectPost_aggPlan {q : Query} {p : AggPlan} (h : aggPlan? q = some p)
+    (env : EvalEnv) (active : Graph) (omega0 : SolutionSeq) :
+    selectPost env active q omega0 =
+      groupedTail env active p.items p.md
+        ((groupWhere env q.groupBy omega0).map
+          (fun g => groupedRow env p.items (p.specs.map (streamAgg env g)) g.representative)) := by
+  obtain ⟨dcs, pat, gb, base, hq, hs, hgroup⟩ := aggPlan_spec h
+  subst hq
+  rw [selectPost_grouped env active dcs pat gb p.md base p.items hgroup omega0]
+  simp only [Query.groupBy]
+  congr 1
+  apply List.map_congr_left
+  intro g _
+  rw [groupOmegaRow_pre env active p.items (itemSpecs_simple hs) g,
+    itemAggs_eq_streamAgg env g hs]
+
+#print axioms evalAggregate_stream
+#print axioms evalAggregate_star
+#print axioms evalSelectItemsGroup_pre
+#print axioms selectPost_grouped
+#print axioms selectPost_aggPlan
+#print axioms varView_ne_error
+
+end L4Factoidal.SPARQL.AggStream

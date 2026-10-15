@@ -1,0 +1,6 @@
+PREFIX ex: <http://ex.org/>
+PREFIX xsd: <http://www.w3.org/2001/XMLSchema#>
+# ORDER BY a variable that the SELECT clause does not name: the group reads it from
+# its first row.
+SELECT ?g (COUNT(*) AS ?n)
+WHERE { ?x ex:grp ?g . ?x ex:score ?v } GROUP BY ?g ORDER BY ?g DESC(?x)

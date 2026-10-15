@@ -1,0 +1,6 @@
+PREFIX ex: <http://ex.org/>
+PREFIX xsd: <http://www.w3.org/2001/XMLSchema#>
+# DISTINCT over the rows of the groups: the groups of _:gb and ex:G3 give the same
+# row (COUNT 0, MAX unbound), so four groups give three rows.
+SELECT DISTINCT (COUNT(?t) AS ?k) (MAX(?t) AS ?m)
+WHERE { ?x ex:grp ?g OPTIONAL { ?x ex:tag ?t } } GROUP BY ?g

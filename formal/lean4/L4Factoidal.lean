@@ -206,6 +206,7 @@ import L4Factoidal.SPARQL.StringOrderTests
 import L4Factoidal.SPARQL.AggregateExpressionTests
 import L4Factoidal.SPARQL.NumericDerivedTests
 import L4Factoidal.SPARQL.AggregateExpressionTheorems
+import L4Factoidal.SPARQL.AggStream
 import L4Factoidal.SPARQL.SelectSliceTests
 import L4Factoidal.SPARQL.AskValuesTests
 import L4Factoidal.SPARQL.ProjectionTests
@@ -363,6 +364,7 @@ import L4Factoidal.Qlvr.CmpBytesFast
 import L4Factoidal.Qlvr.Side
 import L4Factoidal.Storage.Sbm11.TermKey
 import L4Factoidal.Storage.Sbm11.TermKeyTheorems
+import L4Factoidal.Storage.Sbm11.TermKeyFast
 import L4Factoidal.Storage.Sbm11.TermId
 import L4Factoidal.Storage.Sbm11.TermIdTheorems
 import L4Factoidal.Storage.Sbm11.Dict
@@ -386,6 +388,8 @@ import L4Factoidal.Storage.Sbm11.Sip
 import L4Factoidal.Storage.Sbm11.SipTheorems
 import L4Factoidal.Storage.Sbm11.IdQuery
 import L4Factoidal.Storage.Sbm11.IdQueryTests
+import L4Factoidal.Storage.Sbm11.IdAgg
+import L4Factoidal.Storage.Sbm11.IdAggTests
 import L4Factoidal.Storage.Sbm11.IdPostTheorems
 import L4Factoidal.Storage.Sbm11.ScanTheorems
 import L4Factoidal.Storage.Sbm11.PrmAtTheorems

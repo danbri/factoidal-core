@@ -1,0 +1,5 @@
+PREFIX ex: <http://ex.org/>
+PREFIX xsd: <http://www.w3.org/2001/XMLSchema#>
+# Groups keyed by inline booleans.
+SELECT ?b (COUNT(?x) AS ?n) (MAX(?v) AS ?hi) (SUM(?v) AS ?s)
+WHERE { ?x ex:ok ?b . ?x ex:score ?v } GROUP BY ?b ORDER BY ?b

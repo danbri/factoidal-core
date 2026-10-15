@@ -1,0 +1,7 @@
+PREFIX ex: <http://ex.org/>
+PREFIX xsd: <http://www.w3.org/2001/XMLSchema#>
+# MIN, MAX and COUNT over every kind of object: numbers, strings, language-tagged and
+# typed literals, booleans, IRIs and blank nodes, one group per predicate (MIN of a
+# group with a blank node is the blank node, which the reference prints as false).
+SELECT ?p (MIN(?o) AS ?lo) (MAX(?o) AS ?hi) (COUNT(?o) AS ?n) (SUM(?o) AS ?s) (AVG(?o) AS ?m)
+WHERE { ?x ?p ?o } GROUP BY ?p ORDER BY ?p

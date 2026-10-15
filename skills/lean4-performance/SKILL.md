@@ -799,6 +799,36 @@ work by position in a `ByteArray`
 The old reader's `List UInt8` of the whole file is the part to remove. A `List`
 of the entries is small (one cell per entry) and stays.
 
+## A predicate that builds the list of the characters of a string (paid for 2026-10-15)
+
+`RDF.isIri s` was `!s.isEmpty && s.toList.contains ':'`. `String.toList` makes
+one list cell for every character before the search starts. The key decoder,
+the inline-id decoder and the parsers call it for every IRI they build: 19
+percent of phase 1 of the SBM11 packer
+(https://github.com/danbri/factoidal/issues/792 item 5) and 9.2 percent of the
+samples of a DBpedia aggregate query
+(https://github.com/danbri/factoidal/issues/825). A call on a 50-character IRI
+took 653 to 706 ns.
+
+The repair is the `csimp` pattern of the sections above for a function with no
+recursion (`L4Factoidal/RDF/Core.lean`):
+
+1. Keep the definition. `isIri` stays what the types and the theorems unfold
+   (`Iri` carries a proof about it).
+2. Add `isIriFast s = !s.isEmpty && s.contains ':'`. `String.contains` walks
+   the UTF-8 bytes and stops at the first colon; it allocates nothing (29 to 31
+   ns per call).
+3. Prove `isIri s = isIriFast s` (`simp [isIri, isIriFast, String.contains]`)
+   and install `@[csimp] theorem isIri_eq_isIriFast : @isIri = @isIriFast :=
+   funext isIri_eq_isIriFast_apply`.
+4. Look at a profile or the emitted C: the frames must name `isIriFast`
+   (`RDF_isIriFast` in the packer's profile), and a call inside a `mutual`
+   block is not replaced.
+
+After the repair `isIri` was on the stack of 0.85 percent of the packer's
+samples. `l4factoidal parse` of an 83 MB N-Triples file did not change within
+the spread (5.3 s of user time before and after); that path was not profiled.
+
 ## Verification and measurement
 
 After a semantic hot-path change, run the closest Lean guards and targeted

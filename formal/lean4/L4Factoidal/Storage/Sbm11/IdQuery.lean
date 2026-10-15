@@ -106,6 +106,7 @@ import L4Factoidal.Storage.Sbm11.TermId
 import L4Factoidal.Storage.Sbm11.FrameWords
 import L4Factoidal.Storage.Sbm11.Overlay
 import L4Factoidal.Storage.Sbm11.OptJoin
+import L4Factoidal.Storage.Sbm11.IdAgg
 import L4Factoidal.Storage.Sbm11.Sip
 import L4Factoidal.Storage.Sbm11.ParallelScan
 import L4Factoidal.SPARQL.Query
@@ -918,6 +919,12 @@ structure Store (m : Type → Type) where
       allows it: `l4sbm11 query --sip always`); `none` never
       (`--sip off`). -/
   sipFactor : Option Nat := some 16
+  /-- issue 825: a grouped SELECT that `AggStream.aggPlan?` accepts aggregates
+      its id table itself (`IdAgg.aggregateM`). `false` (`l4sbm11 query
+      --no-agg-ids`) decodes the rows and runs `selectPost`, as every other
+      post-processed query does: the measurement of the two paths and the
+      oracle of their comparison. -/
+  aggOnIds : Bool := true
 
 def ScanSpec.colPos (perm c : Nat) : Nat := if c < 3 then permOrder[perm]![c]! else 3
 
@@ -2897,26 +2904,26 @@ inductive PostAnswer where
 
 /-- The rows of `t` as solution mappings: per row, each column whose id is
     not `OptJoin.unbound`, decoded (`Store.termOf`; each distinct id once,
-    so equal ids share one term). Cost (DBpedia, 2026-10-13): the 326,365
-    rows of three variables of d19's join decode in about 2.0 s (warm), most
-    of it `Session.termOf` on the distinct dictionary ids; decoding them in
-    id order (each dictionary page read once) measured the same within the
-    spread, so the rows are decoded in table order. -/
+    so equal ids share one term). The distinct ids are kept in a `Cache`
+    (`IdAgg.Cache.getM`): every lookup returns `termOf` of the id and the
+    cache holds only such values (`IdAgg.Cache.getPure_fst`, `getPure_valid`;
+    any sequence of lookups: `IdAgg.Cache.getPure_list`). Cost (DBpedia,
+    2026-10-13): the 326,365 rows of three variables of d19's join decode in
+    about 2.0 s (warm), most of it `Session.termOf` on the distinct dictionary
+    ids; decoding them in id order (each dictionary page read once) measured
+    the same within the spread, so the rows are decoded in table order. -/
 def decodeRowsM {m : Type → Type} [Monad m] (st : Store m) (t : Table) :
     ExceptT String m L4Factoidal.SPARQL.SolutionSeq := do
-  let mut memo : Std.HashMap UInt64 Term := {}
+  let mut memo : IdAgg.Cache UInt64 Term := {}
   let mut out : Array Binding := Array.mkEmpty t.rows
   for i in [0:t.rows] do
     let mut mu : Array (String × Term) := Array.mkEmpty t.vars.size
     for c in [0:t.vars.size] do
       let x := t.at c i
       if x != OptJoin.unbound then
-        match memo.get? x with
-        | some tm => mu := mu.push (t.vars[c]!, tm)
-        | none =>
-          let tm ← st.termOf x
-          memo := memo.insert x tm
-          mu := mu.push (t.vars[c]!, tm)
+        let (tm, memo') ← memo.getM st.termOf x
+        memo := memo'
+        mu := mu.push (t.vars[c]!, tm)
     out := out.push mu.toList
   return out.toList
 
@@ -2958,13 +2965,40 @@ def whereTableM {m : Type → Type} [Monad m] (st : Store m) (plan : Plan) (env 
   return (t, lines, s)
 
 /-- Run a post-processed plan: the WHERE solutions on ids, decoded, then the
-    reference function of the query form (section above). -/
+    reference function of the query form (section above).
+
+    A SELECT that `AggStream.aggPlan?` accepts (GROUP BY variables or none,
+    items that are variables or non-DISTINCT COUNT, SUM, MIN, MAX, AVG of a
+    variable) is not decoded row by row: `IdAgg.aggregateM` groups the id
+    table and steps the accumulators of `AggStream`, the rows of the groups
+    are `groupedRow`, and the shared tail `groupedTail` (ORDER BY, projection,
+    DISTINCT, OFFSET, LIMIT) is the reference's. When the table does not meet
+    the conditions of `aggregateM` (a group column with an id that is not a
+    blank node, an IRI, an inline integer or an inline boolean, or unbound) the
+    rows are decoded and `selectPost` runs as for any other query
+    (https://github.com/danbri/factoidal/issues/825). -/
 def runPostM {m : Type → Type} [Monad m] (st : Store m) (plan : Plan) (ps : PostSpec) (env : EvalEnv) :
     ExceptT String m (PostAnswer × RunStats) := do
   let (t, lines, s) ← whereTableM st plan env ps.firstRows
-  let omega0 ← decodeRowsM st t
   let q := ps.query
   let active : Graph := Graph.empty
+  let totalLine := s!"total: rows decoded {s.rowsDecoded}; blocks read {s.blocksRead} of {s.blocksSelected} selected, {s.sipSkipped} skipped by candidates; {s.bytesRead} bytes"
+  let fast ← match q.form, (if st.aggOnIds then L4Factoidal.SPARQL.AggStream.aggPlan? q else none) with
+    | .select _, some p => do
+      match ← IdAgg.aggregateM st.termOf t p with
+      | some r => pure (some (p, r))
+      | none => pure none
+    | _, _ => pure none
+  match fast with
+  | some (p, r) =>
+    let omega' := (List.range r.reps.size).map fun g =>
+      L4Factoidal.SPARQL.AggStream.groupedRow env p.items (r.vals[g]!).toList r.reps[g]!
+    let rows := L4Factoidal.SPARQL.AggStream.groupedTail env active p.items p.md omega'
+    let line := s!"post: {t.rows} WHERE solutions aggregated on ids into {r.reps.size} groups ({r.decoded} distinct ids decoded, {r.repValues} values in the representative rows); reference tail: {rows.length} results"
+    return (PostAnswer.solutions (L4Factoidal.SPARQL.Query.projectedVars q) rows,
+            { plan := (lines.push line).push totalLine, rows := rows.length, scan := s })
+  | none =>
+  let omega0 ← decodeRowsM st t
   let (ans, n, how) ← match q.form with
     | .select _ =>
       let rows := L4Factoidal.SPARQL.selectPost env active q omega0
@@ -2977,7 +3011,7 @@ def runPostM {m : Type → Type} [Monad m] (st : Store m) (plan : Plan) (ps : Po
       pure (PostAnswer.graph g, g.length, "formSolutions, constructGraphOf")
     | .describe _ => throw "DESCRIBE is not post-processed on ids"
   let line := s!"post: {t.rows} WHERE solutions decoded{match ps.firstRows with | some k => s!" (the first {k} suffice)" | none => ""}; reference {how}: {n} results"
-  return (ans, { plan := (lines.push line).push s!"total: rows decoded {s.rowsDecoded}; blocks read {s.blocksRead} of {s.blocksSelected} selected, {s.sipSkipped} skipped by candidates; {s.bytesRead} bytes",
+  return (ans, { plan := (lines.push line).push totalLine,
                  rows := n, scan := s })
 
 end L4Factoidal.Storage.Sbm11.IdQuery

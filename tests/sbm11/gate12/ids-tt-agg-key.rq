@@ -1,0 +1,7 @@
+PREFIX : <http://ex.org/>
+PREFIX rdf: <http://www.w3.org/1999/02/22-rdf-syntax-ns#>
+PREFIX xsd: <http://www.w3.org/2001/XMLSchema#>
+# A triple term (tag 9) as the group key: the plan of the aggregates on ids does not admit
+# it, the rows are decoded and the reference groups them.
+SELECT ?t (COUNT(?s) AS ?c) (MAX(?s) AS ?m)
+WHERE { ?s :says ?t } GROUP BY ?t

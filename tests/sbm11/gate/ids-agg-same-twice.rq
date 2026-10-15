@@ -1,0 +1,5 @@
+PREFIX ex: <http://ex.org/>
+PREFIX xsd: <http://www.w3.org/2001/XMLSchema#>
+# The same aggregate twice under two names, and an alias that ORDER BY reads.
+SELECT ?g (MAX(?v) AS ?a) (MAX(?v) AS ?b) (SUM(?v) AS ?s) (SUM(?v) AS ?t)
+WHERE { ?x ex:grp ?g . ?x ex:score ?v } GROUP BY ?g ORDER BY ?s ?g

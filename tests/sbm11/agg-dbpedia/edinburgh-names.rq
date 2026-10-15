@@ -1,0 +1,7 @@
+# MIN and MAX over language-tagged names, one group for each person born in Edinburgh.
+PREFIX dbo: <http://dbpedia.org/ontology/>
+PREFIX dbr: <http://dbpedia.org/resource/>
+PREFIX foaf: <http://xmlns.com/foaf/0.1/>
+SELECT ?p (MIN(?n) AS ?lo) (MAX(?n) AS ?hi) (COUNT(?n) AS ?c) (SUM(?n) AS ?bad)
+WHERE { ?p dbo:birthPlace dbr:Edinburgh . ?p foaf:name ?n }
+GROUP BY ?p

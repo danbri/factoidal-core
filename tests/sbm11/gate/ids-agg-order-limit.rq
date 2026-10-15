@@ -1,0 +1,5 @@
+PREFIX ex: <http://ex.org/>
+PREFIX xsd: <http://www.w3.org/2001/XMLSchema#>
+# ORDER BY an aggregate alias and a group variable, with DISTINCT, OFFSET and LIMIT.
+SELECT ?g (COUNT(*) AS ?n) (MAX(?v) AS ?hi)
+WHERE { ?x ex:grp ?g . ?x ex:score ?v } GROUP BY ?g ORDER BY DESC(?n) DESC(?g) OFFSET 1 LIMIT 2

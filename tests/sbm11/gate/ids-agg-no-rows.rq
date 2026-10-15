@@ -1,0 +1,5 @@
+PREFIX ex: <http://ex.org/>
+PREFIX xsd: <http://www.w3.org/2001/XMLSchema#>
+# GROUP BY over no rows: no group, no answer row.
+SELECT ?g (COUNT(*) AS ?n) (MAX(?v) AS ?hi)
+WHERE { ?x ex:grp ?g . ?x ex:score ?v FILTER(?v > 1000000000000000000) } GROUP BY ?g

@@ -488,6 +488,27 @@ contended samples, exclude them explicitly and do not stop unrelated user
 processes to obtain a quiet host. A correct answer on that host is still a
 correctness check, not attributable performance evidence.
 
+Linux profiles of Lean executables (2026-10-15,
+https://github.com/danbri/factoidal/issues/825). `/usr/bin/perf` is a wrapper
+that finds no tools for the running kernel and exits; run the binary of the
+installed `linux-tools` package (`/usr/lib/linux-tools/6.8.0-146-generic/perf`)
+with `-e cpu-clock` (the virtual machine has no hardware counters) and
+`--call-graph dwarf,32768`. A frame-pointer call graph (`-g`) loses the stack
+inside Lean's compiled C; the DWARF graph keeps it. Then `perf script -F
+comm,tid,time,ip,sym` and count, per sample, the frames of its stack (inclusive
+share of a function = samples with the function on the stack). The check the
+issue asked for, `gdb -batch -nx -p PID -ex 'set pagination off' -ex 'thread
+apply all bt 40'`, 40 samples of the Lean main thread, agreed with perf on
+the shares of decoding (60 percent) and of `selectPost` (35 percent). Four
+things to read in a Lean profile: `mi_malloc`, `mi_free`, `lean_dec_ref_cold`
+and `clear_page_erms` together were 38 percent of the self samples of a
+decoding query (allocation, release, and the kernel clearing fresh pages); a
+function can be absent from the top of a self list and still hold half of the
+inclusive time (`Session.termOf`, 48 percent); `RDF.isIri` has few samples of
+its own, and its 9.2 percent is the samples with it on the stack, below it
+the string and reference-count functions of the character list; and profile
+under `--repeat N` so that start-up is a small part of the samples.
+
 OCaml-level profiling (the `Profile_runtime.ml` pattern, env-gated by
 `FACTOIDAL_PROFILE`) is a **temporary post-extraction step only**: it
 lives outside the F\* source of truth, must be manually reinserted

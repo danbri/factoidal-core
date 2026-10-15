@@ -1,0 +1,6 @@
+PREFIX ex: <http://ex.org/>
+PREFIX xsd: <http://www.w3.org/2001/XMLSchema#>
+# MIN, MAX, COUNT and SUM over language-tagged, plain and xsd:string literals (SUM of
+# a string is an error).
+SELECT ?g (COUNT(?l) AS ?n) (MIN(?l) AS ?lo) (MAX(?l) AS ?hi) (SUM(?l) AS ?s)
+WHERE { ?x ex:grp ?g . ?x ex:label ?l } GROUP BY ?g ORDER BY ?g

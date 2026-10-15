@@ -5,7 +5,7 @@ generation (stage 4, https://github.com/danbri/factoidal/issues/790).
   l4sbm11 query GEN ('SPARQL' | --file Q.rq) [--base IRI] [--explain]
                 [--repeat N] [--reference-render] [--reference]
                 [--verify merkle|none] [--threads N] [--sip auto|always|off]
-                [--sparql12]
+                [--sparql12] [--no-agg-ids]
   l4sbm11 serve GEN [--verify merkle|none] [--sparql12]
   l4sbm11 prm-check GEN
   l4sbm11 frame-check GEN
@@ -25,6 +25,10 @@ guard selects nothing. A line on stderr names the path that ran
   --reference-render  print every term through `jsonOfTerm` (the key
                       printer is compared with it in tests/sbm11/run.sh)
   --reference         run the reference fallback even for the id fragment
+  --no-agg-ids        decode the rows of a grouped SELECT and run `selectPost`
+                      on them, also when its aggregates could run on ids
+                      (`IdAgg.aggregateM`, issue 825): to measure and to
+                      compare the two paths. Answers are the same.
   --sparql12          read the query with the SPARQL 1.2 grammar: triple-term
                       patterns `<<( s p o )>>`, reified triples, annotations,
                       TRIPLE, SUBJECT, PREDICATE, OBJECT, isTRIPLE (the
@@ -79,6 +83,7 @@ This is a HARNESS: it does file I/O. The query engine is
 import Harness.Sbm11Gen
 import Harness.Sbm11Delta
 import L4Factoidal.Storage.Sbm11.IdQuery
+import L4Factoidal.Storage.Sbm11.TermKeyFast
 import L4Factoidal.Storage.Sbm11.ParallelScan
 import L4Factoidal.Storage.Sbm11.Overlay
 import L4Factoidal.Storage.Sbm11.OverlayLimit
@@ -541,10 +546,11 @@ def Session.termOf (ss : Session) (x : UInt64) : IO Term := do
     match (← ss.ovVocab.get)[id % two60]? with
     | some t => return t
     | none => throw (IO.userError s!"id {id}: not in the overlay vocabulary")
-  let kb ← ss.keyOf x
-  let k := kb.data.toList
-  if classTag k != tag then throw (IO.userError s!"id {id}: tag differs from the key's class")
-  match decodeKey? k with
+  -- the key is read in place from the page (`keySlice`): no copy of its bytes
+  -- and no list (`decodeKeySlice?_eq`, `classTagSlice_eq`; issue 825)
+  let (packed, a, e) ← ss.keySlice x
+  if classTagSlice packed a e != tag then throw (IO.userError s!"id {id}: tag differs from the key's class")
+  match decodeKeySlice? packed a e with
   | some t => return t
   | none => throw (IO.userError s!"id {id}: key does not decode")
 
@@ -779,9 +785,9 @@ def minRangeRows : IO Nat := do
 
 /-- The session's store with `threads` scan tasks per BGP scan (1: the
     single-thread store, `scanTable` unset). -/
-def Session.storeWith (ss : Session) (threads : Nat) (sip : Option Nat := some 16) (minRows : Nat := 8192) :
-    IdQuery.Store IO :=
-  let base := { ss.store with sipFactor := sip }
+def Session.storeWith (ss : Session) (threads : Nat) (sip : Option Nat := some 16) (minRows : Nat := 8192)
+    (aggOnIds : Bool := true) : IdQuery.Store IO :=
+  let base := { ss.store with sipFactor := sip, aggOnIds := aggOnIds }
   if threads ≤ 1 then base
   else { base with scanTable := some fun spec => scanTableParM ss spec threads minRows }
 
@@ -1171,7 +1177,7 @@ def parse (text : String) (base : Option String) (version : SparqlVersion := .v1
 
 /-- Run one parsed query on an open session. -/
 def runOne (ss : Session) (q : Query) (emit : ByteArray → IO Unit) (forceReference referenceRender : Bool)
-    (threads : Nat := 1) (sip : Option Nat := some 16) : IO Outcome := do
+    (threads : Nat := 1) (sip : Option Nat := some 16) (aggOnIds : Bool := true) : IO Outcome := do
   let plan? := if forceReference then .error "--reference" else IdQuery.translate q
   match plan? with
   | .error reason =>
@@ -1185,7 +1191,7 @@ def runOne (ss : Session) (q : Query) (emit : ByteArray → IO Unit) (forceRefer
     | some ps =>
       -- issue 823: the WHERE clause on ids, the reference post-processing on
       -- the decoded solutions
-      match ← (IdQuery.runPostM (ss.storeWith threads sip minRows) plan ps env).run with
+      match ← (IdQuery.runPostM (ss.storeWith threads sip minRows aggOnIds) plan ps env).run with
       | .ok (ans, st) =>
         emitPost ans emit
         return { rows := st.rows, path := "path=ids", plan := st.plan }
@@ -1225,6 +1231,8 @@ structure Opts where
   /-- `--sparql12`: read the query with the SPARQL 1.2 grammar (triple-term
       patterns and the triple functions; issue 792 item 1) -/
   sparql12 : Bool := false
+  /-- `--no-agg-ids` clears it (issue 825) -/
+  aggOnIds : Bool := true
 
 def parseOpts (xs : List String) : Except String Opts := Id.run do
   let arr := xs.toArray
@@ -1253,6 +1261,9 @@ def parseOpts (xs : List String) : Except String Opts := Id.run do
       i := i + 1
     else if x == "--sparql12" then
       o := { o with sparql12 := true }
+      i := i + 1
+    else if x == "--no-agg-ids" then
+      o := { o with aggOnIds := false }
       i := i + 1
     else if x == "--threads" then
       match (arr[i + 1]?).bind String.toNat? with
@@ -1309,7 +1320,7 @@ def runQuery (dir : String) (o : Opts) : IO UInt32 := do
     ss.g.fetchedBytes.set 0
     let a ← IO.monoNanosNow
     let r ← runOne ss q (if final then fun s => stdout.write s else fun _ => pure ()) o.reference o.referenceRender
-      o.threads o.sip
+      o.threads o.sip o.aggOnIds
     let b ← IO.monoNanosNow
     execs := execs.push (b - a)
     last := some r
@@ -1473,7 +1484,7 @@ def main (args : List String) : IO UInt32 := do
     try runFrameCheck dir
     catch e => IO.eprintln s!"l4sbm11 frame-check: {e}"; return 1
   | _ =>
-    IO.eprintln "usage: l4sbm11 query GEN ('SPARQL' | --file Q.rq) [--base IRI] [--explain] [--repeat N] [--reference-render] [--reference] [--verify merkle|none] [--threads N] [--sip auto|always|off] [--sparql12] | serve GEN [--verify merkle|none] [--sparql12] | prm-check GEN | frame-check GEN"
+    IO.eprintln "usage: l4sbm11 query GEN ('SPARQL' | --file Q.rq) [--base IRI] [--explain] [--repeat N] [--reference-render] [--reference] [--verify merkle|none] [--threads N] [--sip auto|always|off] [--sparql12] [--no-agg-ids] | serve GEN [--verify merkle|none] [--sparql12] | prm-check GEN | frame-check GEN"
     return 2
 
 end Harness.Sbm11Query

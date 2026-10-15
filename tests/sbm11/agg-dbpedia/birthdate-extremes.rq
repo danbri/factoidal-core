@@ -1,0 +1,5 @@
+# One group over 630,419 xsd:date literals (dictionary literals): MIN, MAX, COUNT, and SUM,
+# which is an error for dates.
+PREFIX dbo: <http://dbpedia.org/ontology/>
+SELECT (MIN(?d) AS ?first) (MAX(?d) AS ?last) (COUNT(?d) AS ?n) (SUM(?d) AS ?sum)
+WHERE { ?p dbo:birthDate ?d }

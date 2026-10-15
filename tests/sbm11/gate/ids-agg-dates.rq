@@ -1,0 +1,5 @@
+PREFIX ex: <http://ex.org/>
+PREFIX xsd: <http://www.w3.org/2001/XMLSchema#>
+# MIN and MAX over xsd:date and xsd:dateTime literals.
+SELECT ?g (MIN(?d) AS ?lo) (MAX(?d) AS ?hi) (COUNT(?d) AS ?n)
+WHERE { ?x ex:grp ?g . ?x ex:when ?d } GROUP BY ?g ORDER BY ?g

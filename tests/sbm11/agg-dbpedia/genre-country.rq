@@ -1,0 +1,6 @@
+# Two group keys (IRIs) over a join on the subject, no ORDER BY: the groups come in the
+# order of their first row.
+PREFIX dbo: <http://dbpedia.org/ontology/>
+SELECT ?g ?c (COUNT(?x) AS ?n) (MAX(?x) AS ?hi)
+WHERE { ?x dbo:genre ?g . ?x dbo:country ?c }
+GROUP BY ?g ?c

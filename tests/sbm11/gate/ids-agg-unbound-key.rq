@@ -1,0 +1,6 @@
+PREFIX ex: <http://ex.org/>
+PREFIX xsd: <http://www.w3.org/2001/XMLSchema#>
+# GROUP BY a variable that is unbound in some rows (the rows are decoded and the
+# reference groups them: one group for the unbound rows).
+SELECT ?v (COUNT(*) AS ?n) (MAX(?g) AS ?hi)
+WHERE { ?x ex:grp ?g OPTIONAL { ?x ex:score ?v } } GROUP BY ?v
