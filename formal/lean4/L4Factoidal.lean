@@ -773,5 +773,6 @@ import L4Factoidal.Planner.Kinds.Tests
 import L4Factoidal.Planner.Exec
 import L4Factoidal.Planner.ExecTests
 import L4Factoidal.TailRecursionTwins
+import L4Factoidal.CsimpReachFixture
 import L4Factoidal.OWL.ComprehensionTheorems
 import L4Factoidal.RDF.GraphPatterns
