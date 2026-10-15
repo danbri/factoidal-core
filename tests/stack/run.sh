@@ -107,6 +107,11 @@ export STACK_SBM11_DELTA="$N_DELTA"
 # sbm11-update-where solutions (gen_cases.py reads the same variable).
 N_WHERE="${STACK_SBM11_WHERE:-12000}"
 export STACK_SBM11_WHERE="$N_WHERE"
+# RDF/XML: levels of the markup entity chain that is referenced directly from the content of the
+# document element (gen_cases.py and wasm_case.mjs read the same variable;
+# https://github.com/danbri/factoidal/issues/871).
+N_MARKUP_TOP="${STACK_MARKUP_CHAIN_TOP:-10000}"
+export STACK_MARKUP_CHAIN_TOP="$N_MARKUP_TOP"
 # Turtle writer: triples in each of the two shapes (gen_cases.py reads the
 # same variable; https://github.com/danbri/factoidal/issues/863).
 N_TTLW="${STACK_TURTLE_WRITE:-100000}"
@@ -187,10 +192,16 @@ cli_cmd() {
 # has N_TTLP `@prefix` declarations. The row of the Turtle reader reads one triple, and
 # the N-Quads in the answer hold N_TTLN triple terms (`<<(`). The rows of the N-Triples,
 # N-Quads and TriG readers count one triple and N_TERM triple terms in the answer, and the
-# CONSTRUCT row answers a graph that holds the same N_TERM triple terms. Other rows print
+# CONSTRUCT row answers a graph that holds the same N_TERM triple terms. The markup chain
+# under the document element has N_MARKUP_TOP triples in the answer. Other rows print
 # nothing.
 row_wrong() {
   case "$1" in
+    xml-markup-chain-top)
+      local c
+      c="$(printf '%s' "$2" | grep -o '"count":[0-9]*' | head -1)"
+      [ "$c" = "\"count\":$N_MARKUP_TOP" ] ||
+        echo "the answer has ${c:-no count}, expected \"count\":$N_MARKUP_TOP" ;;
     ntriples-read-triple-term|nquads-read-triple-term|trig-read-triple-term)
       local c n
       c="$(printf '%s' "$2" | grep -o '"count":[0-9]*' | head -1)"
@@ -474,6 +485,7 @@ CASES=(
   "xml-entities-dtd    parseToDatasetJson   args-xml-dtd.json"
   "xml-text-chain      parseToDatasetJson   args-xml-text-chain.json"
   "xml-markup-chain    parseToDatasetJson   args-xml-markup-chain.json"
+  "xml-markup-chain-top parseToDatasetJson  args-xml-markup-chain-top.json"
   "turtle-literal      parseToDatasetJson   args-turtle-literal.json"
   "turtle-collection   parseToDatasetJson   args-turtle-collection.json"
   "turtle-predicates   parseToDatasetJson   args-turtle-predicates.json"

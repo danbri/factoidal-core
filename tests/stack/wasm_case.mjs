@@ -27,6 +27,7 @@ const CASES = {
   'xml-entities-dtd': () => ['parseToDatasetJson', readArgs('args-xml-dtd.json')],
   'xml-text-chain': () => ['parseToDatasetJson', readArgs('args-xml-text-chain.json')],
   'xml-markup-chain': () => ['parseToDatasetJson', readArgs('args-xml-markup-chain.json')],
+  'xml-markup-chain-top': () => ['parseToDatasetJson', readArgs('args-xml-markup-chain-top.json')],
   'turtle-literal': () => ['parseToDatasetJson', readArgs('args-turtle-literal.json')],
   'turtle-collection': () => ['parseToDatasetJson', readArgs('args-turtle-collection.json')],
   'turtle-predicates': () => ['parseToDatasetJson', readArgs('args-turtle-predicates.json')],
@@ -101,7 +102,17 @@ const nestedTermConstruct = (res) => {
   const n = res.nquads.split('<<(').length - 1;
   if (n !== N_TERM) throw new Error(`the answer holds ${n} triple terms, expected ${N_TERM}`);
 };
+// The markup entity chain referenced directly from the content of the document element
+// (issue 871) has one triple for each level.
+const N_MARKUP_TOP = Number(process.env.STACK_MARKUP_CHAIN_TOP || '10000');
+const markupTop = (res) => {
+  if (!res || res.ok !== true) {
+    throw new Error(`the engine did not answer ok:true: ${JSON.stringify(res).slice(0, 160)}`);
+  }
+  if (res.count !== N_MARKUP_TOP) throw new Error(`the document has ${N_MARKUP_TOP} triples, the engine counted ${res.count}`);
+};
 const CHECK = {
+  'xml-markup-chain-top': markupTop,
   'ntriples-read-triple-term': nestedTermRead,
   'nquads-read-triple-term': nestedTermRead,
   'trig-read-triple-term': nestedTermRead,

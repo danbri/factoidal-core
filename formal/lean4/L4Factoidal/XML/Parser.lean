@@ -1932,7 +1932,14 @@ document's own nesting, not the entity nesting.
 `parseElement` (same nodes, flags, notes, positions and errors), by the
 mutual functional induction of the readable pair, and
 `@[csimp] parseElement_eq_parseElementW` makes the compiler run the
-worklist form at the document element. The termination measure is
+worklist form at the document element. `parseChildren` has a second entry:
+`Syntax/RdfXml.lean` reads the children of the document element with
+`parseChildrenFold`, which reads a markup entity's replacement text with
+`parseChildren`. `@[csimp] parseChildren_eq_parseChildrenFromStart` below
+covers that entry (https://github.com/danbri/factoidal/issues/871, found by
+`tools/lean-csimp-reach.py`: a chain of markup entities referenced directly
+from the content of `rdf:RDF` overflowed 512 KB at 6,000 levels). The
+termination measure is
 `ChildFrame.weight frames + 3 ^ fuel`: putting a frame on the worklist
 replaces `3 ^ (fuel + 1)` by two terms of `3 ^ fuel`. -/
 
@@ -2182,6 +2189,22 @@ below (the document element in `parseXMLNotes`). -/
 @[csimp] theorem parseElement_eq_parseElementW : @parseElement = @parseElementW := by
   funext ents atts s pos notes fuel
   exact ((parseChildrenW_eq ents atts).2 s pos notes fuel).symm
+
+/-- `parseChildren` with an empty worklist. -/
+def parseChildrenFromStart (ents : EntityTable) (atts : List AttDecl) (s : Chars) (pos : Nat)
+    (acc : List Node) (flags : RefFlags) (notes : Notes) (fuel : Nat) :
+    PResult (List Node × RefFlags × Notes) :=
+  parseChildrenW ents atts [] s pos acc flags notes fuel
+
+/-- The compiler runs the worklist form wherever `parseChildren` is called below
+(`parseChildrenFold` in `Syntax/RdfXml.lean`, which reads the replacement text of a
+markup entity that is referenced directly from the content of the document element). -/
+@[csimp] theorem parseChildren_eq_parseChildrenFromStart :
+    @parseChildren = @parseChildrenFromStart := by
+  funext ents atts s pos acc flags notes fuel
+  have h := (parseChildrenW_eq ents atts).1 s pos acc flags notes fuel []
+  rw [resumeC_nil] at h
+  exact h.symm
 
 /-! ## `[28] doctypedecl` and the internal subset -/
 

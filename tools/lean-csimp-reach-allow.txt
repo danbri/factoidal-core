@@ -42,7 +42,6 @@ L4Factoidal.Syntax.readTtObject L4Factoidal.Syntax.readTripleTermDown          #
 # ---- bound: XML entities on a worklist (https://github.com/danbri/factoidal/issues/755)
 L4Factoidal.XML.expandEntityValue L4Factoidal.XML.expandEntityLoop             # bound: XML/Parser.lean, expandEntityLoop: the branch for a replacement text longer than expandPendingBound (2^64 characters)
 L4Factoidal.XML.entityHasWsCharRef L4Factoidal.XML.entityWsLoop                # bound: XML/Parser.lean, entityWsLoop: the same bound
-L4Factoidal.XML.parseElement L4Factoidal.XML.parseChildren                     # leaf: XML/Parser.lean: parseChildren is the readable pair of parseChildrenW; only Syntax/RdfXml.lean parseChildrenFold calls it, for the replacement text of an entity that holds markup (one frame per element nesting level of that text)
 
 # ---- twin: the fast form calls the specification for the shapes it does not improve
 L4Factoidal.Syntax.freshTopSpec L4Factoidal.Syntax.freshTopFast                # twin: Syntax/TurtleSerialize.lean: with a budget above 0 fewer than 8 rows are covered, so the specification's filter is linear

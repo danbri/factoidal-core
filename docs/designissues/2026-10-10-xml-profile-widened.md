@@ -399,7 +399,7 @@ specification and an equality theorem between the two:
 |---|---|---|
 | `expandEntityValue` | `expandEntityLoop` (pending texts: `EntPending`) | `expandEntityLoop_eq`, `expandEntityValue_eq_fast` |
 | `entityHasWsCharRef` | `entityWsLoop` (texts to scan: `WsPending`) | `entityWsLoop_eq`, `entityHasWsCharRef_eq_fast` |
-| `parseChildren`, `parseElement` | `parseChildrenW`, `parseElementW` (waiting frames: `ChildFrame`) | `parseChildrenW_eq`, `parseElement_eq_parseElementW` |
+| `parseChildren`, `parseElement` | `parseChildrenW`, `parseElementW` (waiting frames: `ChildFrame`) | `parseChildrenW_eq`, `parseElement_eq_parseElementW`, `parseChildren_eq_parseChildrenFromStart` (added 2026-10-15) |
 
 The theorems state the same characters, nodes, flags, notes, positions and
 errors, with no hypothesis. A recursive text entity is rejected by the
@@ -415,3 +415,12 @@ scored lines did not move: `l4xmlconf` 1861 pass, 0 fail (out of 1861
 scored), and the RDF/XML, XSLT, Schematron, MathML and XSD rows of
 `tools/lean-scoreboard.sh` equal those of the base build (core 24d5aab2).
 Measured canary numbers: `skills/danbri-function-precrime-checkers/SKILL.md`.
+
+Addendum, 2026-10-15 (https://github.com/danbri/factoidal/issues/871). The theorem
+`parseElement_eq_parseElementW` reaches the document element. `Syntax/RdfXml.lean` also
+calls `parseChildren` directly: `parseChildrenFold` reads the replacement text of a markup
+entity that is referenced from the content of `rdf:RDF` with it, and that call kept the recursive
+form. `xml-markup-chain` puts its reference inside a node element, so no case reached the call: a chain
+of 6,000 markup entities under `rdf:RDF` overflowed 512 KB (3,000 ran). The theorem
+`parseChildren_eq_parseChildrenFromStart` covers the call, and the case `xml-markup-chain-top` runs the
+chain at 10,000 levels. Record: `docs/designissues/2026-10-15-csimp-reach.md`, section 6, item 3.

@@ -149,6 +149,9 @@ LIMITS (state these with any result; anti-pattern 28)
     look; it does not prove the cause.
   * The tool judges which function the C calls.  It does not judge whether the
     replacement is faster.
+  * A specification that compiled code calls and that has no `@[csimp]` theorem of its
+    own is not reported (`XML.parseChildren` until 2026-10-15).  When a finding names
+    such a function as the owner, grep the tree for its other callers.
 
 WHAT THIS TOOL MISSED, AND WHY (keep this list; each entry cost a defect)
 =========================================================================
@@ -164,6 +167,15 @@ WHAT THIS TOOL MISSED, AND WHY (keep this list; each entry cost a defect)
     audit counted the helper as `replaced`.  Repaired by a twin of `matchingSubjects`.
     Two modules of the qlvr side index called `cmpBytes` without importing the module
     of its twin (issue 804).  The tool's list of findings is in the record.
+  * 2026-10-15 (reading the tool's own findings): the finding "`XML.parseElement` is still
+    called by `XML.parseChildren`" led to a second caller of `parseChildren`:
+    `Syntax/RdfXml.lean`, `parseChildrenFold`.  `parseChildren` is the specification of
+    `parseChildrenW`, but it had no `@[csimp]` theorem of its own: the theorem for
+    `parseElement` reaches the document element only.  This tool lists the callers of the
+    left sides of theorems, so it could not report that caller, and an allow-list line of
+    the tail-recursion audit said "specification only" for `parseChildren`.  A chain of
+    markup entities under `rdf:RDF` used one native frame for each level (6,000 levels
+    overflowed 512 KB).  Repaired by `parseChildren_eq_parseChildrenFromStart`.
 """
 
 import argparse

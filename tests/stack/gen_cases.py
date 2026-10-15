@@ -110,6 +110,23 @@ write("xml-markup-chain.rdf",
       '  <rdf:Description rdf:about="http://example.org/s">&m%d;</rdf:Description>\n'
       '</rdf:RDF>\n' % (markup_decls, N_MARKUP_CHAIN - 1))
 
+# The same chain, referenced directly from the content of the document element. The RDF/XML
+# reader reads those children with `parseChildrenFold`, which read a markup entity's
+# replacement text with the recursive `parseChildren` until 2026-10-15
+# (https://github.com/danbri/factoidal/issues/871): 3,000 levels ran and 6,000 levels overflowed
+# 512 KB in the native canary. Each level is one node element with one property and the
+# reference to the level below, so the parse gives N_MARKUP_TOP triples.
+N_MARKUP_TOP = int(os.environ.get("STACK_MARKUP_CHAIN_TOP", "10000"))
+top_decls = "\n".join(
+    ['<!ENTITY m0 "<rdf:Description rdf:about=\'http://example.org/s0\'><ex:p>0</ex:p></rdf:Description>">'] +
+    ['<!ENTITY m%d "<rdf:Description rdf:about=\'http://example.org/s%d\'><ex:p>%d</ex:p>'
+     '</rdf:Description>&m%d;">' % (i, i, i, i - 1) for i in range(1, N_MARKUP_TOP)])
+write("xml-markup-chain-top.rdf",
+      '<?xml version="1.0"?>\n'
+      '<!DOCTYPE rdf:RDF [\n%s\n]>\n'
+      '<rdf:RDF xmlns:rdf="http://www.w3.org/1999/02/22-rdf-syntax-ns#"\n'
+      '         xmlns:ex="http://example.org/">&m%d;</rdf:RDF>\n' % (top_decls, N_MARKUP_TOP - 1))
+
 # ------------------------------------------------------------------ Turtle
 # One literal of 1 MB on one line.
 LIT = int(os.environ.get("STACK_LITERAL_BYTES", str(1 << 20)))
@@ -279,6 +296,9 @@ args("args-xml-text-chain.json",
      "http://example.org/")
 args("args-xml-markup-chain.json",
      open(os.path.join(OUT, "xml-markup-chain.rdf")).read(), "rdfxml",
+     "http://example.org/")
+args("args-xml-markup-chain-top.json",
+     open(os.path.join(OUT, "xml-markup-chain-top.rdf")).read(), "rdfxml",
      "http://example.org/")
 args("args-turtle-literal.json",
      open(os.path.join(OUT, "turtle-literal.ttl")).read(), "turtle",

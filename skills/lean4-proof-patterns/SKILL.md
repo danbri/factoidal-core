@@ -576,6 +576,13 @@ Repairs from the first run on the tree:
   the caller's declaration. State the twin for the CALLER and put the theorem on the caller:
   `matchingSubjectsFast` equals `matchingSubjects` by `unfold matchingSubjects matchingSubjectsFast` and
   `rw [matchingSubjectsGo_eq_TR]` (`JSONLD/Frame.lean`).
+- **A specification with two entries.** `parseChildren` is the specification of the worklist
+  `parseChildrenW`. The theorem for `parseElement` covered the document element, and `parseChildrenFold`
+  in `Syntax/RdfXml.lean` called `parseChildren` directly: a chain of markup entities under `rdf:RDF`
+  overflowed 512 KB at 6,000 levels. Give the second entry its own theorem, with the twin applied to the
+  empty worklist (`parseChildren_eq_parseChildrenFromStart`: `parseChildrenW_eq` with `resumeC_nil`,
+  `XML/Parser.lean`). The tool lists callers of the left sides of theorems only, so it names such a
+  function as the OWNER of another finding; grep the tree for its other callers.
 - **An inlined instance.** Install the fast form as an instance of higher priority (9d).
 - **A loop that calls the specification for an input where the specification does not recurse**
   (`joinKeyLoop`, `readObject12Down`): leave it, with a `leaf` line on

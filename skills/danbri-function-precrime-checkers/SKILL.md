@@ -540,7 +540,10 @@ now has a twin that keeps the waiting texts on a list (`expandEntityLoop`,
 `entityWsLoop`, the mutual pair `parseChildrenW`/`parseElementW`), proved
 equal to the readable definition by its functional induction
 (`expandEntityLoop_eq`, `entityWsLoop_eq`, `parseChildrenW_eq`), and run by
-the compiler through `@[csimp]`. WFC: No Recursion is enforced as before: in
+the compiler through `@[csimp]` (`parseElement_eq_parseElementW` for the document
+element; `parseChildren_eq_parseChildrenFromStart` since 2026-10-15, for the replacement
+text that `Syntax/RdfXml.lean` reads with `parseChildren`, see the last bullet below). WFC: No
+Recursion is enforced as before: in
 text by the `visited` names, in markup because a self-referencing markup
 entity exhausts the fuel and its replacement text then does not parse as
 content (WFC: Parsed Entity). There is no nesting limit.
@@ -558,6 +561,16 @@ What the repair taught:
 - **The proof pattern** (induct on the specification, a measure with a
   run-time bound, one named function for an expression both definitions
   match on) is in `skills/lean4-proof-patterns/SKILL.md`, section 9a.
+- **A repaired function can have two entries, and a case reaches one of them.** The theorem
+  `parseElement_eq_parseElementW` covered the document element. `Syntax/RdfXml.lean`
+  (`parseChildrenFold`) called `parseChildren` directly, for a markup entity referenced from the
+  content of `rdf:RDF`, and `xml-markup-chain` puts its reference inside a node element, so the case
+  never reached that call. A chain of 6,000 entities under `rdf:RDF` overflowed 512 KB natively (3,000
+  ran). The allow list of the tail-recursion audit had said "specification only, one compiled caller"
+  since this repair. Found 2026-10-15 by reading a finding of `tools/lean-csimp-reach.py`
+  (https://github.com/danbri/factoidal/issues/871); the case `xml-markup-chain-top` runs 10,000 levels.
+  Before closing a stack issue, list the compiled callers of every function that was repaired
+  (`grep -rn`, and the emitted C), and give each caller a case.
 
 Canary numbers, linux x86_64, Lean 4.33.1, Node 22.22.0, RDF/XML through
 `parseToDatasetJson`:
@@ -568,6 +581,9 @@ Canary numbers, linux x86_64, Lean 4.33.1, Node 22.22.0, RDF/XML through
 | attribute value, 10,000 levels | overflows (3,000 runs) | overflows (3,000 runs) | overflows | runs | runs, 3.3 s | runs, 3.2 s |
 | markup, flat, 3,000 levels (`xml-markup-chain`) | runs | overflows (1,000 runs) | runs | runs | runs, 0.4 s | runs, 0.5 s |
 | markup, flat, 10,000 levels | overflows | overflows | overflows | runs, 3.8 s | runs, 2.8 s | runs, 2.7 s |
+| markup, flat, under `rdf:RDF` (`xml-markup-chain-top`): 3,000 levels | runs | not measured | not measured | runs, 0.3 s | not measured | not measured |
+| the same, 6,000 levels | overflows | not measured | not measured | runs, 1.1 s | not measured | not measured |
+| the same, 10,000 and 30,000 levels | overflows | not measured | not measured | runs, 2.4 s and 43 s | not measured | not measured |
 | text and markup, 30,000 levels, native 256 KB | | | | both run | | |
 | `<b>&eN;</b>`, 3,000 levels (element nesting) | overflows | | | overflows (class (b)) | | |
 

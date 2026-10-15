@@ -701,6 +701,13 @@ def real_cases():
             assert caller in users, "%s calls cmpBytes again" % caller
         left = {f["caller"] for f in res["findings"] if f["left"] == "L4Factoidal.Qlvr.cmpBytes" and f["status"] != "spec-internal"}
         assert left == {"L4Factoidal.Qlvr.cmpBytesFast"}, left
+        # XML: the specification parseChildren had a second entry (the RDF/XML reader's parseChildrenFold) that
+        # no theorem covered; it has its own theorem now, and the pair of specifications is held by no live code
+        assert "L4Factoidal.XML.parseChildren" in rows, "the csimp theorem for parseChildren is gone"
+        assert "L4Factoidal.Syntax.RdfXml.parseChildrenFold" in rows["L4Factoidal.XML.parseChildren"]["replacement_callers"], \
+            "parseChildrenFold calls parseChildren again"
+        ring = [f for f in res["findings"] if f["left"] in ("L4Factoidal.XML.parseChildren", "L4Factoidal.XML.parseElement")]
+        assert ring and all(f["status"] == "spec-internal" for f in ring), ring
 
     @case("real build: Lean's own @[csimp] table and the source reader list the same theorems (--cross-check)")
     def _():
