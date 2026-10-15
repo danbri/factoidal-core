@@ -203,6 +203,14 @@ not measured in the wasm routes. `Harness/Qlvr.lean` is not compiled for wasm. T
 commit `e2ca67a0` says "No module of the wasm build changes"; that is wrong for the compile set and
 for item 3.
 
+Gates on the merged tree (`b6ec77b9`, which merges `accac951` of issue 870 into this work): `lake build`
+1726 jobs, exit 0; `tools/lean-tail-recursion-audit.py --gate`, `tools/lean-unbuilt-modules.py --gate`
+(795 modules, 0 not reached) and `tools/lean-csimp-reach.py --gate --cross-check`, exit 0; self-test 33
+pass, 0 fail, 0 not run (out of 33); mutation test 17 killed (out of 17); `tests/sbm11/run.sh` 2,823 pass,
+0 fail, 30 expected-fail (out of 2,853); `tests/stack/run.sh --canary` 101 pass, 2 fail (out of 103), where
+the 2 failures are the wasm rows, NOT SCORED because this checkout has no wasm module; the RDF 1.1, RDF 1.2,
+XML 1.0 conformance and RDF/XML probe result lines equal those of the build before item 3.
+
 Left, 23 allow lines plus 5 for the fixture, by reason (the file has each line's module and caller):
 
 | reason | lines | meaning |
