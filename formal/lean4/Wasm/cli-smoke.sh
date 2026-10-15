@@ -235,7 +235,8 @@ else
     "exit=$RC stdout=$OUT stderr=$ERR"
 
   # Triple terms through every pair of reader and writer
-  # (https://github.com/danbri/factoidal/issues/870). D4 is written as N-Triples 1.2,
+  # (https://github.com/danbri/factoidal/issues/870; the four pairs with --out turtle
+  # were expected failures until 2026-10-15). D4 is written as N-Triples 1.2,
   # N-Quads 1.2, Turtle 1.2 and TriG 1.2 (d4.nt, d4.nq, d4.ttl, d4.trig): five
   # quads, three of them with a triple term (one level, and nested two deep), one
   # with a base direction. Each of the four files is read by its reader and written
@@ -256,11 +257,10 @@ else
         "$( [ "$NQRC" -eq 0 ] && [ "$NQSET" = "$WANT_D4" ] && echo 1 || echo 0 )" "read exit=$NQRC"
       for F in nquads ntriples turtle trig; do
         case "$F" in nquads) BACK=nq12 ;; ntriples) BACK=nt12 ;; turtle) BACK=turtle12 ;; *) BACK=trig12 ;; esac
-        ISSUE=""; [ "$F" = turtle ] && ISSUE=870
         run_cmd "$CLI" parse "$SYNTAX/d4.$EXT" --format "$IN" --out "$F"
         W_RC="$RC"; W_ERR="$ERR"; printf '%s\n' "$OUT" > "$TMP/d4.$EXT.$F"
         nq_set_of "$TMP/d4.$EXT.$F" "$BACK"
-        verdict "parse --format $IN --out $F: the triple terms of D4 read back as its $N_D4 quads" "$ISSUE" \
+        verdict "parse --format $IN --out $F: the triple terms of D4 read back as its $N_D4 quads" "" \
           "$( [ "$W_RC" -eq 0 ] && [ -z "$W_ERR" ] && [ "$NQRC" -eq 0 ] && [ "$NQSET" = "$WANT_D4" ] && echo 1 || echo 0 )" \
           "write exit=$W_RC stderr=$W_ERR read exit=$NQRC"
       done

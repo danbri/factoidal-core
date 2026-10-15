@@ -150,6 +150,42 @@ private def dsBadTag : Dataset :=
 -- And on the accepted shapes `datasetForOps` is the normalisation.
 #guard (datasetForOps .rdf12 dsRepeat).toOption == some (normalizeDataset dsRepeat)
 
+/-! ### `datasetForOps12Or11` and `parseNQuadsFast12Or11`
+(https://github.com/danbri/factoidal/issues/870)
+
+The operations that take N-Quads text read it as RDF 1.2 and, when that reader
+refuses it, as RDF 1.1. -/
+
+-- Triple terms and a base direction: the RDF 1.1 text round trip fails, and the answer
+-- is the normalisation (the RDF 1.2 check passes, so there is no text round trip).
+#guard (viaText .rdf11 ds12).isNone
+#guard (datasetForOps12Or11 ds12).toOption == some (normalizeDataset ds12)
+#guard (datasetForOps12Or11 ds12).toOption == viaText .rdf12 ds12
+-- A dataset that passes the RDF 1.1 check gets what `datasetForOps .rdf11` gave.
+#guard (datasetForOps12Or11 dsRepeat).toOption == (datasetForOps .rdf11 dsRepeat).toOption
+#guard (datasetForOps12Or11 dsMixed).toOption == (datasetForOps .rdf11 dsMixed).toOption
+#guard (datasetForOps12Or11 dsGraphs).toOption == (datasetForOps .rdf11 dsGraphs).toOption
+-- A language tag with a subtag of 11 characters: the RDF 1.2 reader refuses the
+-- text, the RDF 1.1 reader reads it, and the second reader is reached.
+private def dsLongTag : Dataset :=
+  one (.iri (iriW "http://e/a")) "http://e/p" (.literal (Literal.langString "x" "abcdefghijk"))
+#guard !roundTripSafe .rdf12 dsLongTag
+#guard (datasetForOps .rdf12 dsLongTag).toOption.isNone
+#guard (datasetForOps12Or11 dsLongTag).toOption.isSome
+#guard (datasetForOps12Or11 dsLongTag).toOption == viaText .rdf11 dsLongTag
+-- Both readers refuse an IRI with a space: the error is the RDF 1.1 reader's.
+#guard (match datasetForOps12Or11 dsIriSpace, datasetForOps .rdf11 dsIriSpace with
+        | .error a, .error b => a == b
+        | _, _ => false)
+-- The text readers: the same three cases.
+#guard (parseNQuadsFast12Or11 (Dataset.toCanonicalNQuads ds12)).toOption == some (normalizeDataset ds12)
+#guard (parseNQuadsFast12Or11 (Dataset.toCanonicalNQuads dsLongTag)).toOption ==
+  (parseNQuadsFast (Dataset.toCanonicalNQuads dsLongTag) .rdf11).toOption
+#guard (match parseNQuadsFast12Or11 "<http://e/a> <http://e/p> .\n",
+              parseNQuadsFast "<http://e/a> <http://e/p> .\n" .rdf11 with
+        | .error a, .error b => a == b
+        | _, _ => false)
+
 /-! ### `iriPrintSafe` through `String.all`
 
 `DatasetNormalize.lean` registers `iriPrintSafe = iriPrintSafeFast` as
@@ -169,5 +205,12 @@ private def iriSamples : List String :=
 
 #print axioms parseNQuadsFast_toCanonicalNQuads
 #print axioms datasetForOps_eq
+#print axioms parseNQuadsFast12Or11_of_rdf12
+#print axioms parseNQuadsFast12Or11_of_not_rdf12
+#print axioms parseNQuadsFast12Or11_accepts_rdf11
+#print axioms parseNQuadsFast12Or11_error
+#print axioms datasetForOps12Or11_eq
+#print axioms roundTripSafe_rdf11_rdf12
+#print axioms datasetForOps12Or11_of_safe11
 
 end L4Factoidal.RDF.DatasetNormalizeTests

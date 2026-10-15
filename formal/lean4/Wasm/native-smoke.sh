@@ -3006,22 +3006,23 @@ checkx "parseToDatasetJson XMLLiteral element with 10,001 children keeps the las
   'r["ok"] is True and "ex:last" in r["nquads"]'
 
 # --- Triple terms in the N-Quads argument of the serialising ops
-# (https://github.com/danbri/factoidal/issues/870; expected failures until the
-# repair). serializeNQuads, serializeTurtle and serializeTurtleWith read their
-# argument as RDF 1.1 N-Quads, which refuses `<<(`; parseToDatasetJson, queryDataset
-# and the other ops that read RDF 1.2 take the same text. The text: a triple term
-# one level deep, one nested two deep, and a base direction.
+# (https://github.com/danbri/factoidal/issues/870; expected failures until
+# 2026-10-15, plain assertions since the repair). serializeNQuads, serializeTurtle
+# and serializeTurtleWith read their argument as RDF 1.1 N-Quads, which refuses
+# `<<(`; they now read RDF 1.2 first and RDF 1.1 when the RDF 1.2 reader refuses the
+# text (RDF.parseNQuadsFast12Or11). The text: a triple term one level deep, one
+# nested two deep, and a base direction.
 TT_NQ='<http://example.org/alice> <http://example.org/says> <<( <http://example.org/bob> <http://example.org/age> "42"^^<http://www.w3.org/2001/XMLSchema#integer> )>> .
 <http://example.org/eve> <http://example.org/doubts> <<( <http://example.org/carol> <http://example.org/says> <<( <http://example.org/bob> <http://example.org/knows> <http://example.org/dave> )>> )>> .
 <http://example.org/alice> <http://example.org/title> "Dr"@en--ltr .
 '
 args "$TMP/tt-nq.json" "$TT_NQ"
-checkx "serializeNQuads keeps a triple term, one level and nested two deep" 870 serializeNQuads "$TMP/tt-nq.json" \
+checkx "serializeNQuads keeps a triple term, one level and nested two deep" "" serializeNQuads "$TMP/tt-nq.json" \
   'r["ok"] is True and sorted(r["nquads"].splitlines()) == sorted(l for l in json.load(open("'"$TMP"'/tt-nq.json"))[0].splitlines() if l)'
-checkx "serializeTurtle writes a triple term, one level and nested two deep" 870 serializeTurtle "$TMP/tt-nq.json" \
+checkx "serializeTurtle writes a triple term, one level and nested two deep" "" serializeTurtle "$TMP/tt-nq.json" \
   'r["ok"] is True and r["turtle"].count("<<(") == 3 and r["turtle"].count(")>>") == 3 and "@en--ltr" in r["turtle"]'
 args "$TMP/tt-with.json" "$TT_NQ" '{"prefixes":{"ex":"http://example.org/"}}'
-checkx "serializeTurtleWith writes a triple term under the prefixes of the options" 870 serializeTurtleWith "$TMP/tt-with.json" \
+checkx "serializeTurtleWith writes a triple term under the prefixes of the options" "" serializeTurtleWith "$TMP/tt-with.json" \
   'r["ok"] is True and r["turtle"].count("<<(") == 3 and "ex:alice" in r["turtle"]'
 
 # --- The core dispatch (l4factoidal-core.wasm, issue 713 stage 4) ------

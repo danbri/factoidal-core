@@ -13,6 +13,12 @@ Envelopes match `bin/npm-entry/entry_jsoo.ml`:
 The dataset handle IS the returned N-Quads string, exactly as in the F*
 entry.
 
+The N-Quads text of `serializeNQuads`, `serializeTurtle` and `serializeTurtleWith`
+is read as RDF 1.2 N-Quads and, when the RDF 1.2 reader refuses it, as RDF 1.1
+N-Quads (`RDF.parseNQuadsFast12Or11`,
+https://github.com/danbri/factoidal/issues/870). A triple term is accepted, and
+so is every text that the RDF 1.1 reader accepted before.
+
 Envelope parity with the F* entry (https://github.com/danbri/factoidal/issues/685),
 added after the lines above were written:
 
@@ -140,18 +146,21 @@ def parseToDatasetJsonBy (extra : ExtraReader) (text formatTag baseIRI : String)
               ("nquads", .string (Dataset.toCanonicalNQuads ds))]
 
 /-- `serializeNQuads(nquads)` — reparse and re-serialise in canonical
-N-Quads form. -/
+N-Quads form. The text is read as RDF 1.2 N-Quads, and as RDF 1.1 N-Quads when
+the RDF 1.2 reader refuses it (`parseNQuadsFast12Or11`,
+https://github.com/danbri/factoidal/issues/870). -/
 def serializeNQuads (nq : String) : String :=
-  match parseNQuadsFast nq with
+  match parseNQuadsFast12Or11 nq with
   | .error e => errJson (fmtParseError e)
   | .ok ds   => okWith [("nquads", .string (Dataset.toCanonicalNQuads ds))]
 
 /-- `serializeTurtle(nquads)` — prefix-compacted pretty-print. Named
 graphs are flattened into the default graph for this path (the
 fidelity-preserving path is serializeNQuads / canonicalizeToNQuads),
-mirroring `entry_jsoo.ml`'s `serialize_turtle`. -/
+mirroring `entry_jsoo.ml`'s `serialize_turtle`. The text is read as in
+`serializeNQuads`, so a triple term is written as `<<( ... )>>`. -/
 def serializeTurtle (nq : String) : String :=
-  match parseNQuadsFast nq with
+  match parseNQuadsFast12Or11 nq with
   | .error e => errJson (fmtParseError e)
   | .ok ds =>
       let g := ds.default ++ ds.named.flatMap (·.graph)
@@ -159,10 +168,10 @@ def serializeTurtle (nq : String) : String :=
 
 /-- The Turtle text `serializeTurtle` would put in its envelope for the
 canonical N-Quads of `ds`, or the envelope's error text, computed from the
-parsed dataset (`datasetForOps`, issue 724). The command line prints it
-without the JSON envelope. -/
+parsed dataset (`datasetForOps12Or11`, issues 724 and 870). The command line
+prints it without the JSON envelope. -/
 def serializeTurtleTextOf (ds : Dataset) : Except String String :=
-  match datasetForOps .rdf11 ds with
+  match datasetForOps12Or11 ds with
   | .error e => .error (fmtParseError e)
   | .ok d => .ok (turtleOfGraphAuto (d.default ++ d.named.flatMap (·.graph)))
 
@@ -174,8 +183,8 @@ theorem serializeTurtleTextOf_eq (ds : Dataset) :
       | .error e => errJson e
       | .ok t => okWith [("turtle", .string t)] := by
   unfold serializeTurtle serializeTurtleTextOf
-  rw [datasetForOps_eq]
-  cases parseNQuadsFast (Dataset.toCanonicalNQuads ds) .rdf11 <;> rfl
+  rw [datasetForOps12Or11_eq]
+  cases parseNQuadsFast12Or11 (Dataset.toCanonicalNQuads ds) <;> rfl
 
 /-! ## Positions, prefixes and blank-node scope (issue 685) -/
 
@@ -395,9 +404,10 @@ the default graph (the fidelity-preserving path is `serializeNQuads`). -/
 def flattenedGraph (ds : Dataset) : Graph :=
   ds.default ++ ds.named.flatMap (·.graph)
 
-/-- `serializeTurtleWith(nquads, optionsJson)`. -/
+/-- `serializeTurtleWith(nquads, optionsJson)`. The text is read as in
+`serializeNQuads`. -/
 def serializeTurtleWith (nq optionsJson : String) : String :=
-  match parseNQuadsFast nq with
+  match parseNQuadsFast12Or11 nq with
   | .error e => errJson (fmtParseError e)
   | .ok ds =>
       match turtleOptionsOfJson [] optionsJson with
@@ -451,5 +461,31 @@ def callParity (op : String) (args : List String) : Option String :=
 #guard (match turtleOptionsOfJson [] "{" with
         | .error m => m == "invalid optionsJson (not valid JSON)"
         | .ok _ => false)
+
+-- The N-Quads text of the serialising ops is read as RDF 1.2 and, when that reader
+-- refuses it, as RDF 1.1 (issue 870). A triple term one level deep, one nested two
+-- deep, and a base direction; the document is canonical, so `serializeNQuads` gives
+-- it back.
+private def tripleTermDoc : String :=
+  "<http://e/a> <http://e/p> <<( <http://e/b> <http://e/q> \"x\"@en--ltr )>> .\n" ++
+  "<http://e/c> <http://e/p> <<( <http://e/b> <http://e/q> <<( <http://e/d> <http://e/q> <http://e/f> )>> )>> .\n"
+#guard serializeNQuads tripleTermDoc == okWith [("nquads", .string tripleTermDoc)]
+#guard ((serializeTurtle tripleTermDoc).splitOn "<<(").length == 4
+#guard ((serializeTurtleWith tripleTermDoc "").splitOn "<<(").length == 4
+-- White space before `@` is RDF 1.2 syntax.
+#guard serializeNQuads "<http://e/a> <http://e/p> \"x\" @en .\n" ==
+  okWith [("nquads", .string "<http://e/a> <http://e/p> \"x\"@en .\n")]
+-- A language tag that only the RDF 1.1 reader reads: the second reader is reached.
+private def longTagDoc : String := "<http://e/a> <http://e/p> \"x\"@abcdefghijk .\n"
+#guard (parseNQuadsFast longTagDoc .rdf12).toOption.isNone
+#guard serializeNQuads longTagDoc == okWith [("nquads", .string longTagDoc)]
+#guard ((serializeTurtle longTagDoc).splitOn "@abcdefghijk").length == 2
+-- Both readers refuse: the error is the RDF 1.1 reader's, as before.
+private def badDoc : String := "<http://e/a> <http://e/p> .\n"
+#guard serializeNQuads badDoc ==
+  (match parseNQuadsFast badDoc with
+   | .error e => errJson (fmtParseError e)
+   | .ok _ => "")
+#guard (parseNQuadsFast badDoc .rdf12).toOption.isNone
 
 end L4Wasm.Ops

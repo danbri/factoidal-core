@@ -26,6 +26,30 @@ test("serialize(..., {format:'turtle'}) emits prefix-compacted Turtle", async (t
   assert.match(ttl2, /@prefix/);
 });
 
+// Triple terms through serializeTurtle, serializeTurtleWith and serializeNQuads
+// (https://github.com/danbri/factoidal/issues/870): the three ops read their N-Quads
+// text as RDF 1.2 and, when that reader refuses it, as RDF 1.1. A triple term one
+// level deep, one nested two deep, and a base direction.
+test('serialize: a triple term, one level and nested, with a base direction', async () => {
+  assert.ok(await entryAvailable());
+  const nt = '<http://ex/a> <http://ex/p> <<( <http://ex/b> <http://ex/q> "x"@en--ltr )>> .\n' +
+    '<http://ex/c> <http://ex/p> <<( <http://ex/b> <http://ex/q> <<( <http://ex/d> <http://ex/q> <http://ex/f> )>> )>> .\n';
+  const ttl = await factoidal.serialize(nt, { format: 'turtle', inputFormat: 'nt12' });
+  assert.equal(ttl.split('<<(').length - 1, 3, 'three triple terms in the Turtle text');
+  assert.match(ttl, /ns1:c ns1:p <<\( ns1:b ns1:q <<\( ns1:d ns1:q ns1:f \)>> \)>> \./);
+  assert.match(ttl, /"x"@en--ltr/);
+  const withPrefixes = await factoidal.serialize(nt, {
+    format: 'turtle', inputFormat: 'nt12', prefixes: { ex: 'http://ex/' },
+  });
+  assert.match(withPrefixes, /ex:a ex:p <<\( ex:b ex:q "x"@en--ltr \)>> \./);
+  // N-Quads is the canonical form: the text it was given.
+  assert.equal(await factoidal.serialize(nt, { format: 'nquads', inputFormat: 'nt12' }), nt);
+  // Text of RDF 1.1 syntax is still read.
+  const ttl11 = await factoidal.serialize('<http://ex/s> <http://ex/p> "v"@abcdefghijk .\n',
+    { format: 'turtle', inputFormat: 'ntriples' });
+  assert.match(ttl11, /"v"@abcdefghijk/);
+});
+
 test('serialize rejects an unknown output format', async () => {
   await assert.rejects(
     () => factoidal.serialize('<a> <b> <c> .', { format: 'rdfxml', inputFormat: 'ntriples' }),

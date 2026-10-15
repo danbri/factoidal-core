@@ -746,8 +746,10 @@ writer decides the text.
 * `nquads` and `turtle` print the text they have always printed, byte for byte:
   `nquads` is the canonical form of RDF 1.2 N-Quads (`Dataset.toCanonicalNQuads`:
   language tags in lower case, the escapes of the canonical form), and `turtle`
-  is `Ops.serializeTurtleTextOf` (the dataset in its RDF 1.1 normal form, the
-  prefixes derived from the whole graph). The batch writers of the serialiser
+  is `Ops.serializeTurtleTextOf` (the dataset in its normal form, as the
+  `serializeTurtle` op reads the canonical text: RDF 1.2 N-Quads, or RDF 1.1
+  N-Quads when the RDF 1.2 reader refuses it; the prefixes derived from the whole
+  graph). The batch writers of the serialiser
   layer write other bytes for some datasets (`Term.toNTriples` keeps the case of a
   language tag and escapes fewer control characters), so these two do not go
   through it.

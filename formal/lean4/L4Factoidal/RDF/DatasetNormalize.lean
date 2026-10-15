@@ -47,6 +47,11 @@ the check passes, the text round trip otherwise. `datasetForOps_eq` proves it
 equal to the text round trip for EVERY dataset, with no hypothesis, so the
 command line's answers are unchanged, row order included.
 
+`datasetForOps12Or11` is the same for the operations that read N-Quads text as
+RDF 1.2 and, when the RDF 1.2 reader refuses it, as RDF 1.1
+(`parseNQuadsFast12Or11`, https://github.com/danbri/factoidal/issues/870);
+`datasetForOps12Or11_eq` proves it equal to that text round trip.
+
 No `sorry`, no `axiom`, no `native_decide`, no `partial`.
 -/
 import L4Factoidal.Syntax.NTriplesRoundTrip
@@ -1130,5 +1135,114 @@ theorem datasetForOps_eq (mode : Mode) (ds : Dataset) :
   split
   · rename_i h; rw [parseNQuadsFast_toCanonicalNQuads ds mode h]
   · rfl
+
+/-! ## N-Quads text read as RDF 1.2, and as RDF 1.1 when that fails
+
+`serializeNQuads`, `serializeTurtle` and `serializeTurtleWith` take N-Quads
+text. Until 2026-10-15 they read it with the RDF 1.1 reader, and `parse --out
+turtle` read the canonical text of its dataset the same way, so a triple term
+made them fail with "invalid character in IRIREF"
+(https://github.com/danbri/factoidal/issues/870).
+
+The RDF 1.2 reader is not a superset of the RDF 1.1 reader. These inputs differ
+(each row measured with `parseToDatasetJson`, tags `nquads` and `nq12`):
+
+* A triple term `<<( ... )>>` and white space before `@` or `^^`: the RDF 1.2
+  reader reads them, the RDF 1.1 reader refuses them.
+* `"x"@en--ltr`: the RDF 1.2 reader reads a language tag and a base direction;
+  the RDF 1.1 reader reads the language tag `en--ltr` and no base direction.
+* A language tag with a subtag of more than 8 characters (`@abcdefghijk`), an
+  empty subtag (`@en-`), or `--` followed by a word other than `ltr` and `rtl`
+  (`@en--xyz`, `@en--LTR`): the RDF 1.1 reader reads them, the RDF 1.2 reader
+  refuses them.
+
+So these operations read the text as RDF 1.2 and, when the RDF 1.2 reader
+refuses it, as RDF 1.1. A text that either reader accepts is accepted. A text
+that both refuse gets the error of the RDF 1.1 reader, the error these
+operations gave before. The RDF 1.2 reader goes first: it reads a text of RDF 1.1
+syntax in one pass, and a dataset that `roundTripSafe .rdf12` accepts takes the
+normalisation without a text round trip. -/
+
+/-- `s` read as RDF 1.2 N-Quads; when that reader refuses it, as RDF 1.1 N-Quads. -/
+def parseNQuadsFast12Or11 (s : String) : Except ParseError Dataset :=
+  match parseNQuadsFast s .rdf12 with
+  | .ok ds => .ok ds
+  | .error _ => parseNQuadsFast s .rdf11
+
+/-- A text that the RDF 1.2 reader accepts gives the RDF 1.2 result. -/
+theorem parseNQuadsFast12Or11_of_rdf12 (s : String) (ds : Dataset)
+    (h : parseNQuadsFast s .rdf12 = .ok ds) : parseNQuadsFast12Or11 s = .ok ds := by
+  simp [parseNQuadsFast12Or11, h]
+
+/-- A text that the RDF 1.2 reader refuses gives the RDF 1.1 result, error included. -/
+theorem parseNQuadsFast12Or11_of_not_rdf12 (s : String) (e : ParseError)
+    (h : parseNQuadsFast s .rdf12 = .error e) :
+    parseNQuadsFast12Or11 s = parseNQuadsFast s .rdf11 := by
+  simp [parseNQuadsFast12Or11, h]
+
+/-- A text that the RDF 1.1 reader accepts is accepted: no input that the
+operations read before is refused now. -/
+theorem parseNQuadsFast12Or11_accepts_rdf11 (s : String) (ds : Dataset)
+    (h : parseNQuadsFast s .rdf11 = .ok ds) :
+    ∃ ds', parseNQuadsFast12Or11 s = .ok ds' := by
+  cases h12 : parseNQuadsFast s .rdf12 with
+  | ok d => exact ⟨d, parseNQuadsFast12Or11_of_rdf12 s d h12⟩
+  | error e => exact ⟨ds, by rw [parseNQuadsFast12Or11_of_not_rdf12 s e h12, h]⟩
+
+/-- A text that both readers refuse gives the error of the RDF 1.1 reader. -/
+theorem parseNQuadsFast12Or11_error (s : String) (e e' : ParseError)
+    (h12 : parseNQuadsFast s .rdf12 = .error e')
+    (h11 : parseNQuadsFast s .rdf11 = .error e) :
+    parseNQuadsFast12Or11 s = .error e := by
+  rw [parseNQuadsFast12Or11_of_not_rdf12 s e' h12, h11]
+
+/-- `datasetForOps` for the operations that read RDF 1.2 first and RDF 1.1
+second: the RDF 1.2 answer, or the RDF 1.1 answer when the RDF 1.2 text round trip
+fails. -/
+def datasetForOps12Or11 (ds : Dataset) : Except ParseError Dataset :=
+  match datasetForOps .rdf12 ds with
+  | .ok d => .ok d
+  | .error _ => datasetForOps .rdf11 ds
+
+/-- `datasetForOps12Or11` IS the text round trip of `parseNQuadsFast12Or11`, for
+every dataset. -/
+theorem datasetForOps12Or11_eq (ds : Dataset) :
+    datasetForOps12Or11 ds = parseNQuadsFast12Or11 (Dataset.toCanonicalNQuads ds) := by
+  unfold datasetForOps12Or11 parseNQuadsFast12Or11
+  rw [datasetForOps_eq, datasetForOps_eq]
+
+theorem literalSafe_rdf11_rdf12 (l : Literal) :
+    literalSafe .rdf11 l = true → literalSafe .rdf12 l = true := by
+  unfold literalSafe
+  cases l.langTag with
+  | none => exact id
+  | some tag => simp; intro a b _; exact ⟨a, b⟩
+
+theorem termSafe_rdf11_rdf12 : ∀ (t : Term), termSafe .rdf11 t = true → termSafe .rdf12 t = true
+  | .iri _, h => h
+  | .bnode _, h => h
+  | .literal l, h => literalSafe_rdf11_rdf12 l.val h
+  | .tripleTerm _ _ _, h => by simp [termSafe] at h
+
+/-- A dataset that passes the RDF 1.1 check passes the RDF 1.2 check. -/
+theorem roundTripSafe_rdf11_rdf12 (ds : Dataset) :
+    roundTripSafe .rdf11 ds = true → roundTripSafe .rdf12 ds = true := by
+  unfold roundTripSafe quadSafe tripleSafe
+  intro h
+  rw [List.all_eq_true] at h ⊢
+  intro q hq
+  have := h q hq
+  simp only [Bool.and_eq_true] at this ⊢
+  obtain ⟨⟨⟨a, b⟩, c⟩, d⟩ := this
+  exact ⟨⟨⟨a, b⟩, termSafe_rdf11_rdf12 _ c⟩, d⟩
+
+/-- For a dataset that `datasetForOps` handed to these operations by the
+normalisation before (it passes the RDF 1.1 check), `datasetForOps12Or11` gives
+the same dataset. -/
+theorem datasetForOps12Or11_of_safe11 (ds : Dataset) (h : roundTripSafe .rdf11 ds = true) :
+    datasetForOps12Or11 ds = datasetForOps .rdf11 ds := by
+  have h12 := roundTripSafe_rdf11_rdf12 ds h
+  unfold datasetForOps12Or11 datasetForOps
+  simp [h, h12]
 
 end L4Factoidal.RDF
