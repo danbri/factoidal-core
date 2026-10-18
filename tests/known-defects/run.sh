@@ -28,7 +28,7 @@
 # records ERROR in CI, the step fails, and the web set is not published. A row that
 # needs a function which only another program has needs that function in
 # `l4factoidal` first. Cost of not having this rule: on 2026-10-14 the row
-# JLD-WSTACK started `l4sbm11` and `l4sbm11-pack`; the step failed in three
+# JLD-WSTACK (removed 2026-10-18 with the repair of issue 853) started `l4sbm11` and `l4sbm11-pack`; the step failed in three
 # scheduled runs of danbri/factoidal-builds (runs 72, 73 and 74, 2026-10-14 18:42
 # UTC to 2026-10-15 00:36 UTC) and the web set was not published for any of them.
 # Before a change to this file lands, run it in the CI layout: a directory that
@@ -1057,111 +1057,6 @@ sk_probe () { # ID TITLE THEOREM
 }
 sk_probe SK-1 "stream writer = batch writer for N-Triples and N-Quads unproved" writer_nquads_eq_toNQuads
 sk_probe SK-2 "stream writer text reads back for Turtle and TriG unproved" writer_turtle_readback
-
-# ---------------------------------------------------------------------
-# JLD-STACK (https://github.com/danbri/factoidal/issues/844) -- the Lean
-# JSON-LD reader (JSONLD.parseJsonLd) uses native stack in proportion to the
-# number of elements of the document. One node with 100,000 references
-# (3.8 MB) parses under the default stack of a native process (1 GB) and
-# aborts under LEAN_STACK_SIZE_KB=512, the knob of tests/stack/run.sh. The
-# probe runs both. XFAIL needs the first to parse and the second to abort with
-# "Stack overflow"; an abort of the first, or any other failure of the second,
-# is ERROR (the probe measured nothing). When the second parses, the row reads
-# XPASS: delete it, add a tests/stack/run.sh case and close issue 844 in the
-# same commit.
-# ---------------------------------------------------------------------
-JLD_TITLE="JSON-LD parse of 100,000 references overflows a 512 KB stack"
-if [ ! -x "$L4_BIN" ]; then
-  record JLD-STACK 844 "$JLD_TITLE" ERROR "no l4factoidal at ${L4_BIN#"$ROOT"/}"
-else
-  python3 - "${WORKDIR}/jld-fanout.jsonld" <<'PY'
-import sys
-n = 100000
-with open(sys.argv[1], "w", encoding="utf-8") as f:
-    f.write('{"@id": "http://example.org/s", "http://example.org/link": ['
-            + ", ".join('{"@id": "http://example.org/o%d"}' % i for i in range(n)) + ']}')
-PY
-  jld_c=0
-  "$L4_BIN" parse "${WORKDIR}/jld-fanout.jsonld" --format jsonld >/dev/null 2>&1 || jld_c=$?
-  jld_s=0
-  jld_err="$(env -u LEAN_MAIN_USE_THREAD LEAN_STACK_SIZE_KB=512 "$L4_BIN" parse "${WORKDIR}/jld-fanout.jsonld" --format jsonld 2>&1 >/dev/null)" || jld_s=$?
-  if [ ! -s "${WORKDIR}/jld-fanout.jsonld" ]; then
-    record JLD-STACK 844 "$JLD_TITLE" ERROR "the probe wrote no document"
-  elif [ "$jld_c" -ne 0 ]; then
-    record JLD-STACK 844 "$JLD_TITLE" ERROR "control: the parse under the default stack exited $jld_c"
-  elif [ "$jld_s" -eq 0 ]; then
-    record JLD-STACK 844 "$JLD_TITLE" XPASS "the document parses under a 512 KB stack"
-  elif printf '%s' "$jld_err" | grep -q 'Stack overflow'; then
-    record JLD-STACK 844 "$JLD_TITLE" XFAIL "default stack parses; 512 KB stack: exit $jld_s, Stack overflow"
-  else
-    record JLD-STACK 844 "$JLD_TITLE" ERROR "512 KB stack: exit $jld_s without a stack overflow message: $(printf '%s' "$jld_err" | head -c 100)"
-  fi
-fi
-
-# ---------------------------------------------------------------------
-# JLD-WSTACK (https://github.com/danbri/factoidal/issues/853) -- the Lean
-# JSON-LD writer (FromRdf.fromRdf) uses native stack in proportion to the number
-# of elements of the dataset, as the reader does (JLD-STACK). The row writes the
-# dataset with `l4factoidal parse FILE.nt --format ntriples --out jsonld`, a
-# program the CI step installs (see "Binaries" in the header). One node with 5,000
-# references runs under LEAN_STACK_SIZE_KB=512 and the document holds its last
-# reference (the control: the probe measures the stack and not another failure);
-# the same node with 20,000 references aborts with "Stack overflow". The default
-# stack is not run: the write of 20,000 references takes 12 s there (measured
-# 2026-10-15; the quadratic fromRdf, issue 712).
-# XFAIL needs the first to exit 0 and the second to abort with "Stack overflow";
-# any other outcome of either is ERROR; when the second writes, the row reads
-# XPASS: delete it, add a tests/stack/run.sh case and close issue 853 in the same
-# commit.
-#
-# The route. Until 2026-10-15 the row packed the references with `l4sbm11-pack`
-# and wrote them with `l4sbm11 export --format jsonld`. Both routes call the same
-# function: `Sink.jsonLdWriter` (L4Factoidal/RDF/SinkJsonLd.lean), which is
-# `JSONLD.FromRdf.fromRdf` and `jcsDocument`; `Sink.Writer.finish` calls it for the
-# export and `Sink.serializeDataset` for `parse --out jsonld`. Measured on
-# 2026-10-15 under LEAN_STACK_SIZE_KB=512, one node with N references: both routes
-# exit 0 for N = 5,000, 10,000 and 12,000 and abort with "Stack overflow" for
-# N = 15,000 and 20,000. `parse` reads the N-Triples file whole. The reader and the
-# other writers of `parse --out` (nquads, ntriples, trig, rdfxml) run at 30,000
-# references under the same stack, so the sizes 5,000 and 20,000 separate the
-# JSON-LD writer from the rest of the path.
-# An l4factoidal built before 2026-10-15 has no `--out jsonld`: the control exits 2
-# and the row reads ERROR. Run with L4FACTOIDAL_BIN set to
-# formal/lean4/.lake/build/bin/l4factoidal until a release built from this change
-# is fetched.
-# ---------------------------------------------------------------------
-JLDW_TITLE="JSON-LD export of 20,000 references overflows a 512 KB stack"
-if [ ! -x "$L4_BIN" ]; then
-  record JLD-WSTACK 853 "$JLDW_TITLE" ERROR "no l4factoidal at ${L4_BIN#"$ROOT"/}"
-else
-  for jldw_n in 5000 20000; do
-    python3 - "${WORKDIR}/jldw-${jldw_n}.nt" "$jldw_n" <<'PY'
-import sys
-with open(sys.argv[1], "w", encoding="utf-8") as f:
-    for i in range(int(sys.argv[2])):
-        f.write("<http://example.org/s> <http://example.org/p> <http://example.org/o%d> .\n" % i)
-PY
-  done
-  jldw_c=0
-  env -u LEAN_MAIN_USE_THREAD LEAN_STACK_SIZE_KB=512 "$L4_BIN" parse "${WORKDIR}/jldw-5000.nt" --format ntriples \
-    --out jsonld >"${WORKDIR}/jldw-5000.jsonld" 2>/dev/null || jldw_c=$?
-  jldw_s=0
-  jldw_err="$(env -u LEAN_MAIN_USE_THREAD LEAN_STACK_SIZE_KB=512 "$L4_BIN" parse "${WORKDIR}/jldw-20000.nt" --format ntriples \
-    --out jsonld 2>&1 >/dev/null)" || jldw_s=$?
-  if [ ! -s "${WORKDIR}/jldw-5000.nt" ] || [ ! -s "${WORKDIR}/jldw-20000.nt" ]; then
-    record JLD-WSTACK 853 "$JLDW_TITLE" ERROR "the probe wrote no document"
-  elif [ "$jldw_c" -ne 0 ]; then
-    record JLD-WSTACK 853 "$JLDW_TITLE" ERROR "control: the write of 5,000 references under a 512 KB stack exited $jldw_c"
-  elif ! grep -qF '"http://example.org/o4999"' "${WORKDIR}/jldw-5000.jsonld"; then
-    record JLD-WSTACK 853 "$JLDW_TITLE" ERROR "control: exit 0, but the document does not hold the last of the 5,000 references"
-  elif [ "$jldw_s" -eq 0 ]; then
-    record JLD-WSTACK 853 "$JLDW_TITLE" XPASS "the write of 20,000 references runs under a 512 KB stack"
-  elif printf '%s' "$jldw_err" | grep -q 'Stack overflow'; then
-    record JLD-WSTACK 853 "$JLDW_TITLE" XFAIL "5,000 references write under 512 KB; 20,000: exit $jldw_s, Stack overflow"
-  else
-    record JLD-WSTACK 853 "$JLDW_TITLE" ERROR "20,000 references, 512 KB stack: exit $jldw_s without a stack overflow message: $(printf '%s' "$jldw_err" | head -c 100)"
-  fi
-fi
 
 # ---------------------------------------------------------------------
 # Summary + JSON

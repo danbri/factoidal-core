@@ -831,9 +831,12 @@ record. Conventions, by test kind:
   while no theorem of the expected name exists. JLD-STACK
   (https://github.com/danbri/factoidal/issues/844, the JSON-LD reader) and
   JLD-WSTACK (https://github.com/danbri/factoidal/issues/853, the JSON-LD writer,
-  through `l4factoidal parse --out jsonld`) run `l4factoidal` under
+  through `l4factoidal parse --out jsonld`) ran `l4factoidal` under
   `LEAN_STACK_SIZE_KB=512`: a control that must exit 0, then a probe that must
-  abort with "Stack overflow".
+  abort with "Stack overflow". Both were removed on 2026-10-18 with the repairs;
+  the cases are now `jsonld-read-fanout`, `jsonld-read-list` and
+  `jsonld-write-fanout` of `tests/stack/run.sh` and the `*-stack` rows of
+  `tests/stack/lean_scaling.py`.
   Binaries. A row may start only the four programs that the web-gates step
   "Known defects" of danbri/factoidal-builds installs: `factoidal` and
   `owl_runner` (F\*), `l4factoidal` and `l4w3c` (Lean). A row that starts another

@@ -61,12 +61,23 @@ repaired (docs/designissues/2026-10-10-lean-vs-fstar-performance.md):
                    `l4source-convert` (the library serialisers) writes a dataset of
                    2,000, then 8,000 subjects (`tests/sbm11/syntax/gen_multi.py`, 8
                    triples for each subject) as RDF/XML or as JSON-LD. Expected
-                   failures: https://github.com/danbri/factoidal/issues/845 (the
-                   RDF/XML writer scans the graph for each subject) and
-                   https://github.com/danbri/factoidal/issues/712 (the JSON-LD
+                   failure: https://github.com/danbri/factoidal/issues/712 (the JSON-LD
                    `fromRdf` node list). Measured 2026-10-14, total wall time of the
                    command: RDF/XML 1.1 s and 12.8 s, JSON-LD 0.75 s and 17.1 s (the
-                   Turtle writer: 0.45 s and 1.5 s)
+                   Turtle writer: 0.45 s and 1.5 s). The RDF/XML writer read the graph
+                   once for each subject (https://github.com/danbri/factoidal/issues/845);
+                   it groups the triples in one pass since 2026-10-18 (0.21 s and 0.91 s)
+  jsonld-read-*-stack, jsonld-write-*-stack, rdfxml-write-stack
+                   STACK_ROWS: the command at n, 2n and 4n under LEAN_STACK_SIZE_KB=512;
+                   every run must exit 0 and the time stay within 4.5 times (2n) and 9
+                   times (4n) of the time at n. The JSON-LD reader (one node with n
+                   references, n properties, a @list of n items; 25,000 to 100,000;
+                   https://github.com/danbri/factoidal/issues/844), the JSON-LD writer
+                   (one subject with n objects, n predicates, n subjects; 5,000 to
+                   20,000; https://github.com/danbri/factoidal/issues/853; the time bound
+                   is an expected failure for issue 712, an overflow fails the row) and
+                   the RDF/XML writer (2,000 to 8,000 subjects of gen_multi.py). Before
+                   2026-10-18 every JSON-LD row overflowed at its largest size
   sbm11-pack-ttl-memory, sbm11-pack-trig-memory
                    peak resident memory of `l4sbm11-pack` per source byte over Turtle
                    and TriG, measured at x, 2x and 4x (25,000, 50,000 and 100,000
@@ -504,8 +515,10 @@ XFAIL: dict[str, str] = {
     "query-memory-fstar": "https://github.com/danbri/factoidal/issues/729",
     "sbm11-pack-rdfxml-memory": "https://github.com/danbri/factoidal/issues/838",
     "sbm11-pack-jsonld-memory": "https://github.com/danbri/factoidal/issues/839",
-    "rdfxml-write": "https://github.com/danbri/factoidal/issues/845",
     "jsonld-write": "https://github.com/danbri/factoidal/issues/712",
+    "jsonld-write-fanout-stack": "https://github.com/danbri/factoidal/issues/712",
+    "jsonld-write-wide-stack": "https://github.com/danbri/factoidal/issues/712",
+    "jsonld-write-subjects-stack": "https://github.com/danbri/factoidal/issues/712",
     "sbm11-pack-ttl-workers": "https://github.com/danbri/factoidal/issues/842",
     "sbm11-pack-trig-workers": "https://github.com/danbri/factoidal/issues/842",
     "sbm11-export-rdfxml-memory": "https://github.com/danbri/factoidal/issues/846",
@@ -1966,6 +1979,128 @@ def startup_row():
     return best, None
 
 
+# ---------------------------------------------------------------- small stack
+# Rows that run the command at n, 2n and 4n under LEAN_STACK_SIZE_KB=512 (the knob
+# and the budget of tests/stack/run.sh --canary; LEAN_MAIN_USE_THREAD unset, so main
+# runs on the thread the knob sizes). A row passes when all three runs exit 0 and
+# time(2n) <= STACK_BOUND_2X * max(time(n), FLOOR) and
+# time(4n) <= BOUND * max(time(n), FLOOR). An exit other than 0 (a "Stack overflow"
+# abort is exit 134) is a FAIL also when the row is in XFAIL: XFAIL covers the time
+# bound only, so a row whose time is a known quadratic cost still asserts the stack.
+STACK_KB = 512
+STACK_BOUND_2X = 4.5
+
+
+def jld_fanout(n: int) -> Path:
+    """One node object with n node references (the shape of issue 844)."""
+    return fixture(f"jld-fanout-{n}.jsonld", lambda: (
+        '{"@id": "%ss", "%slink": [' % (EX, EX)
+        + ", ".join('{"@id": "%so%d"}' % (EX, i) for i in range(n)) + "]}"))
+
+
+def jld_wide(n: int) -> Path:
+    """One node object with n properties."""
+    return fixture(f"jld-wide-{n}.jsonld", lambda: (
+        '{"@id": "%ss", ' % EX + ", ".join('"%sp%d": "v%d"' % (EX, i, i) for i in range(n)) + "}"))
+
+
+def jld_list(n: int) -> Path:
+    """One node object whose property value is a @list of n strings."""
+    return fixture(f"jld-list-{n}.jsonld", lambda: (
+        '{"@id": "%ss", "%sp": {"@list": [' % (EX, EX)
+        + ", ".join('"v%d"' % i for i in range(n)) + "]}}"))
+
+
+def nt_fanout(n: int) -> Path:
+    """One subject with n IRI objects (the shape of issue 853)."""
+    return fixture(f"nt-fanout-{n}.nt", lambda: "".join(
+        "<%ss> <%sp> <%so%d> .\n" % (EX, EX, EX, i) for i in range(n)))
+
+
+def nt_wide(n: int) -> Path:
+    """One subject with n predicates."""
+    return fixture(f"nt-wide-{n}.nt", lambda: "".join(
+        "<%ss> <%sp%d> \"v%d\" .\n" % (EX, EX, i, i) for i in range(n)))
+
+
+def nt_subjects(n: int) -> Path:
+    """n subjects with one triple each."""
+    return fixture(f"nt-subjects-{n}.nt", lambda: "".join(
+        "<%ss%d> <%sp> \"v%d\" .\n" % (EX, i, EX, i) for i in range(n)))
+
+
+def _jld_read(p: Path) -> list:
+    return [str(BIN), "parse", str(p), "--format", "jsonld"]
+
+
+def _jld_write(p: Path) -> list:
+    return [str(BIN), "parse", str(p), "--format", "ntriples", "--out", "jsonld"]
+
+
+STACK_ROWS = {
+    # The JSON-LD reader (https://github.com/danbri/factoidal/issues/844): 100,000
+    # references, 100,000 properties and 5,000 list items overflowed 512 KB before
+    # Json.size and expandList became loops (measured 2026-10-18).
+    "jsonld-read-fanout-stack": (25000, jld_fanout, _jld_read),
+    "jsonld-read-wide-stack": (25000, jld_wide, _jld_read),
+    "jsonld-read-list-stack": (25000, jld_list, _jld_read),
+    # The JSON-LD writer (https://github.com/danbri/factoidal/issues/853): 20,000
+    # references, predicates or subjects overflowed 512 KB before the list functions
+    # of fromRdf and the JCS writer became loops (measured 2026-10-18). Their time is
+    # still quadratic (https://github.com/danbri/factoidal/issues/712, XFAIL).
+    "jsonld-write-fanout-stack": (5000, nt_fanout, _jld_write),
+    "jsonld-write-wide-stack": (5000, nt_wide, _jld_write),
+    "jsonld-write-subjects-stack": (5000, nt_subjects, _jld_write),
+    # The RDF/XML writer (https://github.com/danbri/factoidal/issues/845) at 16,000
+    # to 64,000 triples of tests/sbm11/syntax/gen_multi.py, under the small stack.
+    "rdfxml-write-stack": (2000, lambda n: multi_nt(n),
+                           lambda p: [str(SOURCE_CONVERT_BIN), str(p), str(FIX / "write-out-stack.rdf"),
+                                      "--from", "nquads", "--to", "rdfxml"]),
+}
+
+
+def best_of_env(cmd, runs, env):
+    best = None
+    for _ in range(runs):
+        t0 = time.perf_counter()
+        try:
+            r = subprocess.run(cmd, stdout=subprocess.DEVNULL, stderr=subprocess.PIPE,
+                               timeout=CAP, env=env)
+        except subprocess.TimeoutExpired:
+            return None, f"timeout after {CAP:.0f} s"
+        except FileNotFoundError as e:
+            return None, f"cannot run {cmd[0]}: {e.strerror}"
+        dt = time.perf_counter() - t0
+        if r.returncode != 0:
+            err = r.stderr.decode("utf-8", "replace")
+            why = "Stack overflow" if "Stack overflow" in err else err[:160]
+            return None, f"exit {r.returncode}: {why}"
+        best = dt if best is None else min(best, dt)
+        if dt > REPEAT_LIMIT:
+            break
+    return best, None
+
+
+def stack_row(rid: str, runs: int):
+    """(status, detail): status is 'pass', 'slow' (the time bound fails) or 'error'."""
+    x, make, cmd = STACK_ROWS[rid]
+    env = dict(os.environ)
+    env.pop("LEAN_MAIN_USE_THREAD", None)
+    env["LEAN_STACK_SIZE_KB"] = str(STACK_KB)
+    ts = []
+    for n in (x, 2 * x, 4 * x):
+        t, e = best_of_env(cmd(make(n)), runs, env)
+        if e:
+            return "error", f"n={n} under a {STACK_KB} KB stack: {e}"
+        ts.append(t)
+    base = max(ts[0], FLOOR)
+    ok = ts[1] <= STACK_BOUND_2X * base and ts[2] <= BOUND * base
+    detail = (f"{STACK_KB} KB stack, n={x} {ts[0]:.3f} s, n={2 * x} {ts[1]:.3f} s, "
+              f"n={4 * x} {ts[2]:.3f} s (ratios {ts[1] / max(ts[0], 1e-9):.1f} and "
+              f"{ts[2] / max(ts[0], 1e-9):.1f})")
+    return ("pass" if ok else "slow"), detail
+
+
 def main() -> int:
     ap = argparse.ArgumentParser()
     ap.add_argument("--runs", type=int, default=3)
@@ -1990,6 +2125,7 @@ def main() -> int:
         + list(SBM11_DUMP_MEMORY_ROWS) + list(SBM11_LOG_MEMORY_ROWS))
     series_rows = [r for r in names if r in SERIES_ROWS] or (
         [] if names else list(SERIES_ROWS))
+    stack_rows = [r for r in names if r in STACK_ROWS] or ([] if names else list(STACK_ROWS))
     time_rows = [r for r in names if r in SBM11_READ_TIME_ROWS or r in MERKLE_RANGE_TIME_ROWS
                  or r in SBM11_LOG_TIME_ROWS or r in SBM11_PREFIX_TIME_ROWS] or (
         [] if names else list(SBM11_READ_TIME_ROWS) + list(MERKLE_RANGE_TIME_ROWS)
@@ -2094,6 +2230,24 @@ def main() -> int:
             print(f"  UNEXPECTED PASS {rid}: {detail}: flip it to an assertion "
                   f"(remove it from XFAIL) and close {issue}")
         else:
+            passed += ok
+            failed += (not ok)
+            print(f"  {'PASS' if ok else 'FAIL'} {rid}: {detail}")
+    for rid in stack_rows:
+        issue = XFAIL.get(rid)
+        status, detail = stack_row(rid, args.runs)
+        if status == "error":
+            failed += 1
+            print(f"  FAIL {rid}: {detail}")
+        elif issue and status == "slow":
+            xfailed += 1
+            print(f"  XFAIL {rid} ({issue}): {detail}")
+        elif issue:
+            failed += 1
+            print(f"  UNEXPECTED PASS {rid}: {detail}: flip it to an assertion "
+                  f"(remove it from XFAIL) and close {issue}")
+        else:
+            ok = status == "pass"
             passed += ok
             failed += (not ok)
             print(f"  {'PASS' if ok else 'FAIL'} {rid}: {detail}")
