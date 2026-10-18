@@ -364,6 +364,27 @@ def insByKey {α : Type} (key : α → String) (x : α) : List α → List α
   | []      => [x]
   | h :: tl => if strLt (key x) (key h) then x :: h :: tl else h :: insByKey key x tl
 
+/-- `insByKey` with the elements passed in a reversed accumulator: a loop (the
+insertion sort is still the run-time sort of a list with a repeated key). -/
+def insByKeyGo {α : Type} (key : α → String) (x : α) : List α → List α → List α
+  | acc, []      => acc.reverseAux [x]
+  | acc, h :: tl =>
+    if strLt (key x) (key h) then acc.reverseAux (x :: h :: tl) else insByKeyGo key x (h :: acc) tl
+
+theorem insByKeyGo_eq {α : Type} (key : α → String) (x : α) : ∀ (acc l : List α),
+    insByKeyGo key x acc l = acc.reverse ++ insByKey key x l
+  | acc, [] => by simp [insByKeyGo, insByKey, List.reverseAux_eq]
+  | acc, h :: tl => by
+    unfold insByKeyGo insByKey
+    by_cases hh : strLt (key x) (key h) = true
+    · simp [hh, List.reverseAux_eq]
+    · simp [hh, insByKeyGo_eq key x (h :: acc) tl]
+
+def insByKeyFast {α : Type} (key : α → String) (x : α) (l : List α) : List α := insByKeyGo key x [] l
+
+@[csimp] theorem insByKey_eq_fast : @insByKey = @insByKeyFast := by
+  funext α key x l; simp [insByKeyFast, insByKeyGo_eq]
+
 def leByKey {α : Type} (key : α → String) (a b : α) : Bool := !strLt (key b) (key a)
 
 theorem strLt_iff_lt (a b : String) : strLt a b = true ↔ a < b := by
