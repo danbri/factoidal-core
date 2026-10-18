@@ -1479,6 +1479,477 @@ def buildNodemapFast (opts : Options) (nm : List FrNode) (ts : List Triple) : Op
   · rw [← buildF_spec opts ts NmF.empty NmF.good_empty]; rfl
   · exact (buildNodemapRef_eq opts nm ts).symm
 
+/-! ### Graph-name nodes -/
+
+theorem nodeExists_iff (nm : List FrNode) (id : String) :
+    nodeExists nm id = true ↔ id ∈ nm.map (·.id) := by
+  unfold nodeExists findNode
+  rw [List.find?_isSome]
+  simp
+
+def idSet (nm : List FrNode) : HashSet String := nm.foldl (fun s n => s.insert n.id) ∅
+
+theorem idSet_go : ∀ (nm : List FrNode) (s : HashSet String) (k : String),
+    (nm.foldl (fun s n => s.insert n.id) s).contains k = true ↔ s.contains k = true ∨ k ∈ nm.map (·.id)
+  | [], s, k => by simp
+  | n :: tl, s, k => by
+    rw [List.foldl_cons, idSet_go tl, HashSet.contains_insert]
+    simp only [Bool.or_eq_true, beq_iff_eq, List.map_cons, List.mem_cons]
+    constructor
+    · rintro ((e | m) | m)
+      · exact Or.inr (Or.inl e.symm)
+      · exact Or.inl m
+      · exact Or.inr (Or.inr m)
+    · rintro (m | e | m)
+      · exact Or.inl (Or.inr m)
+      · exact Or.inl (Or.inl e.symm)
+      · exact Or.inr m
+
+def addGraphNamesGo (seen : HashSet String) (acc : List FrNode) : List NamedNm → List FrNode
+  | []      => acc.reverse
+  | g :: tl =>
+    if seen.contains g.name then addGraphNamesGo seen acc tl
+    else addGraphNamesGo (seen.insert g.name)
+      ({ id := g.name, blank := g.blank, types := [], props := [] } :: acc) tl
+
+theorem addGraphNamesGo_eq (nm : List FrNode) : ∀ (gs : List NamedNm) (seen : HashSet String)
+    (acc : List FrNode), (∀ k, seen.contains k = true ↔ k ∈ (nm ++ acc.reverse).map (·.id)) →
+    addGraphNames (nm ++ acc.reverse) gs = nm ++ addGraphNamesGo seen acc gs
+  | [], _, _, _ => by simp [addGraphNames, addGraphNamesGo]
+  | g :: tl, seen, acc, h => by
+    simp only [addGraphNames, addGraphNamesGo, ensureNode]
+    by_cases hc : seen.contains g.name = true
+    · have hx : nodeExists (nm ++ acc.reverse) g.name = true := (nodeExists_iff _ _).2 ((h _).1 hc)
+      simp only [hx, if_true, hc]
+      exact addGraphNamesGo_eq nm tl seen acc h
+    · have hx : nodeExists (nm ++ acc.reverse) g.name = false := by
+        cases e : nodeExists (nm ++ acc.reverse) g.name
+        · rfl
+        · exact absurd ((h _).2 ((nodeExists_iff _ _).1 e)) hc
+      simp only [hx, Bool.false_eq_true, if_false, hc]
+      have := addGraphNamesGo_eq nm tl (seen.insert g.name)
+        ({ id := g.name, blank := g.blank, types := [], props := [] } :: acc) (by
+          intro k
+          rw [HashSet.contains_insert]
+          simp only [Bool.or_eq_true, beq_iff_eq, List.reverse_cons, ← List.append_assoc,
+            List.map_append, List.mem_append, List.map_cons, List.map_nil, List.mem_singleton]
+          rw [h k]
+          simp only [List.map_append, List.mem_append]
+          constructor
+          · rintro (e | m)
+            · exact Or.inr e.symm
+            · exact Or.inl m
+          · rintro (m | e)
+            · exact Or.inr m
+            · exact Or.inl e.symm)
+      simpa [List.append_assoc] using this
+
+def addGraphNamesFast (nm : List FrNode) (gs : List NamedNm) : List FrNode :=
+  nm ++ addGraphNamesGo (idSet nm) [] gs
+
+@[csimp] theorem addGraphNames_eq_fast : @addGraphNames = @addGraphNamesFast := by
+  funext nm gs
+  have := addGraphNamesGo_eq nm gs (idSet nm) [] (by
+    intro k; unfold idSet; rw [idSet_go]; simp)
+  simpa [addGraphNamesFast] using this
+
+/-! ### Lookups by id and the reference count -/
+
+def firstMap {α : Type} (key : α → String) (l : List α) : HashMap String α :=
+  l.foldl (fun m a => if m.contains (key a) then m else m.insert (key a) a) ∅
+
+theorem firstMap_go {α : Type} (key : α → String) : ∀ (l : List α) (m : HashMap String α) (k : String),
+    (l.foldl (fun m a => if m.contains (key a) then m else m.insert (key a) a) m)[k]? =
+      (m[k]?).or (l.find? (fun a => key a == k))
+  | [], m, k => by simp
+  | a :: tl, m, k => by
+    rw [List.foldl_cons, firstMap_go key tl]
+    by_cases hc : m.contains (key a) = true
+    · simp only [hc, if_true]
+      by_cases e : key a = k
+      · have : m[k]?.isSome := by rw [← e, ← HashMap.contains_eq_isSome_getElem?]; exact hc
+        cases hm : m[k]? with
+        | none => rw [hm] at this; simp at this
+        | some x => simp
+      · simp [List.find?_cons, e]
+    · simp only [hc, Bool.false_eq_true, if_false, HashMap.getElem?_insert]
+      by_cases e : key a = k
+      · have hn : m[k]? = none := by
+          rw [← e]; apply HashMap.getElem?_eq_none_of_contains_eq_false; simpa using hc
+        simp [e, hn, List.find?_cons]
+      · have : (key a == k) = false := by simpa using e
+        simp [this, List.find?_cons, e]
+
+theorem firstMap_get {α : Type} (key : α → String) (l : List α) (k : String) :
+    (firstMap key l)[k]? = l.find? (fun a => key a == k) := by
+  unfold firstMap; rw [firstMap_go]; simp
+
+theorem findNode_eq_firstMap (g : List FrNode) :
+    findNode g = fun id => (firstMap FrNode.id g)[id]? := by
+  funext id; rw [firstMap_get]; rfl
+
+def countMap (l : List String) : HashMap String Nat :=
+  l.foldl (fun m x => m.insert x (m.getD x 0 + 1)) ∅
+
+theorem countMap_go : ∀ (l : List String) (m : HashMap String Nat) (k : String),
+    (l.foldl (fun m x => m.insert x (m.getD x 0 + 1)) m).getD k 0 =
+      m.getD k 0 + (l.filter (fun y => y == k)).length
+  | [], m, k => by simp
+  | x :: tl, m, k => by
+    rw [List.foldl_cons, countMap_go tl, HashMap.getD_insert]
+    by_cases e : x = k
+    · subst e; simp [List.filter_cons]; omega
+    · have : (x == k) = false := by simpa using e
+      simp [this, List.filter_cons, e]
+
+theorem referencedOnce_eq_countMap (refids : List String) :
+    referencedOnce refids = fun id => (countMap refids).getD id 0 == 1 := by
+  funext id
+  unfold referencedOnce countMap
+  rw [countMap_go]
+  simp
+
+/-! ### List detection by chain length
+
+`stepC` is one step of `isCollapsible`: `none` when the node is not a list cell
+that is referenced once, `some none` when its `rdf:rest` is `rdf:nil`, and
+`some (some r)` when the chain goes on at `r`. `lenS st id B` is the number of
+cells from `id` to `rdf:nil` when that is at most `B`. -/
+
+def stepC (look : String → Option FrNode) (once : String → Bool) (id : String) :
+    Option (Option String) :=
+  match look id with
+  | none   => none
+  | some n =>
+    if !isListShape n then none
+    else if !once id then none
+    else
+      match nodePropSingle n rdfRestIri with
+      | some (.ref rt) => if rt == rdfNilIri then some none else some (some rt)
+      | _ => none
+
+def collS (st : String → Option (Option String)) : String → Nat → Bool
+  | _,  0        => false
+  | id, fuel + 1 =>
+    match st id with
+    | none          => false
+    | some none     => true
+    | some (some r) => collS st r fuel
+
+theorem isCollapsible_eq_collS (g : List FrNode) (refids : List String) :
+    ∀ (fuel : Nat) (id : String),
+      isCollapsible g refids id fuel = collS (stepC (findNode g) (referencedOnce refids)) id fuel
+  | 0, _ => by simp [isCollapsible, collS]
+  | fuel + 1, id => by
+    simp only [isCollapsible, collS, stepC]
+    cases findNode g id with
+    | none => rfl
+    | some n =>
+      simp only
+      by_cases h1 : isListShape n = true
+      · by_cases h2 : referencedOnce refids id = true
+        · simp only [h1, h2, Bool.not_true, Bool.false_eq_true, if_false]
+          cases hp : nodePropSingle n rdfRestIri with
+          | none => rfl
+          | some ov =>
+            cases ov with
+            | ref rt =>
+              simp only
+              by_cases h3 : (rt == rdfNilIri) = true
+              · simp [h3]
+              · simp only [h3, Bool.false_eq_true, if_false]
+                exact isCollapsible_eq_collS g refids fuel rt
+            | val _ => rfl
+            | lst _ => rfl
+        · simp [h1, h2]
+      · simp [h1]
+
+def lenS (st : String → Option (Option String)) : String → Nat → Option Nat
+  | _,  0     => none
+  | id, B + 1 =>
+    match st id with
+    | none          => none
+    | some none     => some 1
+    | some (some r) => (lenS st r B).map (· + 1)
+
+section LenS
+
+variable (st : String → Option (Option String))
+
+theorem collS_eq_lenS : ∀ (f : Nat) (id : String), collS st id f = (lenS st id f).isSome
+  | 0, _ => rfl
+  | f + 1, id => by
+    simp only [collS, lenS]
+    cases st id with
+    | none => rfl
+    | some o =>
+      cases o with
+      | none => rfl
+      | some r =>
+        show collS st r f = ((lenS st r f).map (· + 1)).isSome
+        rw [collS_eq_lenS f r]; cases lenS st r f <;> rfl
+
+theorem lenS_pos : ∀ (B : Nat) (id : String) (k : Nat), lenS st id B = some k → 1 ≤ k
+  | 0, _, _, h => by simp [lenS] at h
+  | B + 1, id, k, h => by
+    simp only [lenS] at h
+    cases hs : st id with
+    | none => rw [hs] at h; simp at h
+    | some o =>
+      rw [hs] at h
+      cases o with
+      | none => simp at h; omega
+      | some r =>
+        simp only at h
+        cases hl : lenS st r B with
+        | none => rw [hl] at h; simp at h
+        | some j => rw [hl] at h; simp at h; omega
+
+theorem lenS_le : ∀ (B : Nat) (id : String) (k : Nat), lenS st id B = some k → k ≤ B
+  | 0, _, _, h => by simp [lenS] at h
+  | B + 1, id, k, h => by
+    simp only [lenS] at h
+    cases hs : st id with
+    | none => rw [hs] at h; simp at h
+    | some o =>
+      rw [hs] at h
+      cases o with
+      | none => simp at h; omega
+      | some r =>
+        simp only at h
+        cases hl : lenS st r B with
+        | none => rw [hl] at h; simp at h
+        | some j =>
+          rw [hl] at h; simp at h
+          have := lenS_le B r j hl; omega
+
+theorem lenS_mono : ∀ (B : Nat) (id : String) (k : Nat), lenS st id B = some k →
+    ∀ C, B ≤ C → lenS st id C = some k
+  | 0, _, _, h, _, _ => by simp [lenS] at h
+  | B + 1, id, k, h, C, hC => by
+    obtain ⟨C', rfl⟩ : ∃ C', C = C' + 1 := ⟨C - 1, by omega⟩
+    simp only [lenS] at h ⊢
+    cases hs : st id with
+    | none => rw [hs] at h; simp at h
+    | some o =>
+      rw [hs] at h
+      cases o with
+      | none => exact h
+      | some r =>
+        simp only at h ⊢
+        cases hl : lenS st r B with
+        | none => rw [hl] at h; simp at h
+        | some j =>
+          rw [hl] at h
+          rw [lenS_mono B r j hl C' (by omega)]
+          exact h
+
+theorem lenS_down : ∀ (B : Nat) (id : String) (k C : Nat), lenS st id C = some k → k ≤ B →
+    lenS st id B = some k
+  | 0, id, k, C, h, hk => by have := lenS_pos st C id k h; omega
+  | B + 1, id, k, C, h, hk => by
+    cases C with
+    | zero => simp [lenS] at h
+    | succ C' =>
+      simp only [lenS] at h ⊢
+      cases hs : st id with
+      | none => rw [hs] at h; simp at h
+      | some o =>
+        rw [hs] at h
+        cases o with
+        | none => exact h
+        | some r =>
+          simp only at h ⊢
+          cases hl : lenS st r C' with
+          | none => rw [hl] at h; simp at h
+          | some j =>
+            rw [hl] at h
+            simp at h
+            rw [lenS_down B r j C' hl (by omega)]
+            simp [h]
+
+theorem lenS_trunc (B C : Nat) (id : String) (hBC : B ≤ C) :
+    lenS st id B = (lenS st id C).filter (· ≤ B) := by
+  cases hB : lenS st id B with
+  | some k =>
+    rw [lenS_mono st B id k hB C hBC]
+    have := lenS_le st B id k hB
+    simp [Option.filter, this]
+  | none =>
+    cases hC : lenS st id C with
+    | none => rfl
+    | some k =>
+      by_cases hk : k ≤ B
+      · rw [lenS_down st B id k C hC hk] at hB; cases hB
+      · simp [Option.filter, hk]
+
+end LenS
+
+/-! ### The chain-length table
+
+`memoC` keeps `lenS st k cap` for every node `k`, found by one walk of each
+chain: `walkC` follows the chain from a node, with the cells passed so far in an
+accumulator, until it reaches `rdf:nil`, a node not in a list, a node already
+in the table, or `cap` steps; `backC` writes the lengths back along the cells
+passed. Both are loops. A chain that is a cycle is not cut short: each of its
+nodes walks `cap` steps (the readable definition does the same). -/
+
+abbrev Memo := HashMap String (Option Nat)
+
+def MemoInv (st : String → Option (Option String)) (cap : Nat) (M : Memo) : Prop :=
+  ∀ k v, M[k]? = some v → v = lenS st k cap
+
+def walkC (st : String → Option (Option String)) (M : Memo) :
+    String → Nat → List (String × Nat) → Option Nat × Memo × List (String × Nat)
+  | _,  0,     acc => (none, M, acc)
+  | id, B + 1, acc =>
+    match M[id]? with
+    | some v => (v.filter (· ≤ B + 1), M, acc)
+    | none =>
+      match st id with
+      | none          => (none, M.insert id none, acc)
+      | some none     => (some 1, M.insert id (some 1), acc)
+      | some (some r) => walkC st M r B ((id, B + 1) :: acc)
+
+def backC (cap : Nat) : Option Nat × Memo → List (String × Nat) → Option Nat × Memo
+  | p,      []             => p
+  | (v, M), (n, bn) :: tl =>
+    let v' := v.map (· + 1)
+    backC cap (v', if v'.isSome || bn == cap then M.insert n v' else M) tl
+
+def fillC (st : String → Option (Option String)) (cap : Nat) (M : Memo) (id : String) : Memo :=
+  let r := walkC st M id cap []
+  (backC cap (r.1, r.2.1) r.2.2).2
+
+def memoC (st : String → Option (Option String)) (cap : Nat) (ids : List String) : Memo :=
+  ids.foldl (fillC st cap) ∅
+
+/-- The cells passed by a walk, most recent first: each one steps to the next. -/
+def ChainC (st : String → Option (Option String)) :
+    List (String × Nat) → String → Nat → String → Nat → Prop
+  | [],             x, bx, s, bs => x = s ∧ bx = bs
+  | (n, bn) :: tl, x, bx, s, bs => st n = some (some x) ∧ bn = bx + 1 ∧ ChainC st tl n bn s bs
+
+section MemoProofs
+
+variable (st : String → Option (Option String)) (cap : Nat)
+
+theorem chainC_le : ∀ (acc : List (String × Nat)) (x : String) (bx : Nat) (s : String) (bs : Nat),
+    ChainC st acc x bx s bs → bx ≤ bs
+  | [], _, _, _, _, h => by simp [ChainC] at h; omega
+  | (n, bn) :: tl, x, bx, s, bs, h => by
+    obtain ⟨_, e, h'⟩ := h
+    have := chainC_le tl n bn s bs h'; omega
+
+theorem memoInv_insert (M : Memo) (h : MemoInv st cap M) (n : String) (v : Option Nat)
+    (hv : v = lenS st n cap) : MemoInv st cap (M.insert n v) := by
+  intro k w hk
+  rw [HashMap.getElem?_insert] at hk
+  by_cases e : n = k
+  · have : (n == k) = true := by simpa using e
+    simp only [this, if_true, Option.some.injEq] at hk
+    subst e; rw [← hk]; exact hv
+  · have : (n == k) = false := by simpa using e
+    simp only [this, Bool.false_eq_true, if_false] at hk
+    exact h k w hk
+
+theorem backC_spec (s : String) (bs : Nat) (hbs : bs ≤ cap) :
+    ∀ (acc : List (String × Nat)) (v : Option Nat) (M : Memo) (x : String) (bx : Nat),
+      MemoInv st cap M → v = lenS st x bx → ChainC st acc x bx s bs →
+      (backC cap (v, M) acc).1 = lenS st s bs ∧ MemoInv st cap (backC cap (v, M) acc).2
+  | [], v, M, x, bx, hM, hv, hc => by
+    obtain ⟨rfl, rfl⟩ := hc
+    exact ⟨hv, hM⟩
+  | (n, bn) :: tl, v, M, x, bx, hM, hv, hc => by
+    obtain ⟨hs, hb, hc'⟩ := hc
+    have hle := chainC_le st tl n bn s bs hc'
+    have hv' : v.map (· + 1) = lenS st n bn := by
+      rw [hb, lenS, hs, hv]
+    simp only [backC]
+    apply backC_spec s bs hbs tl _ _ n bn _ hv' hc'
+    by_cases hi : ((v.map (· + 1)).isSome || bn == cap) = true
+    · simp only [hi, if_true]
+      apply memoInv_insert st cap M hM
+      rw [Bool.or_eq_true] at hi
+      rcases hi with hi | hi
+      · obtain ⟨k, hk⟩ := Option.isSome_iff_exists.1 hi
+        rw [hk] at hv' ⊢
+        exact (lenS_mono st bn n k hv'.symm cap (by omega)).symm
+      · have : bn = cap := by simpa using hi
+        rw [hv', this]
+    · simp only [hi, Bool.false_eq_true, if_false]
+      exact hM
+
+theorem walkC_spec (s : String) (bs : Nat) (hbs : bs ≤ cap) :
+    ∀ (B : Nat) (id : String) (acc : List (String × Nat)) (M : Memo),
+      MemoInv st cap M → ChainC st acc id B s bs →
+      ∃ x bx, ChainC st (walkC st M id B acc).2.2 x bx s bs ∧
+        (walkC st M id B acc).1 = lenS st x bx ∧ MemoInv st cap (walkC st M id B acc).2.1
+  | 0, id, acc, M, hM, hc => ⟨id, 0, hc, rfl, hM⟩
+  | B + 1, id, acc, M, hM, hc => by
+    have hB : B + 1 ≤ cap := by have := chainC_le st acc id (B + 1) s bs hc; omega
+    simp only [walkC]
+    cases hm : M[id]? with
+    | some v =>
+      refine ⟨id, B + 1, hc, ?_, hM⟩
+      simp only
+      rw [hM id v hm, lenS_trunc st (B + 1) cap id hB]
+    | none =>
+      simp only
+      cases hs : st id with
+      | none =>
+        refine ⟨id, B + 1, hc, by simp [lenS, hs], ?_⟩
+        apply memoInv_insert st cap M hM
+        cases cap with
+        | zero => rfl
+        | succ c => simp [lenS, hs]
+      | some o =>
+        cases o with
+        | none =>
+          refine ⟨id, B + 1, hc, by simp [lenS, hs], ?_⟩
+          apply memoInv_insert st cap M hM
+          obtain ⟨c, rfl⟩ : ∃ c, cap = c + 1 := ⟨cap - 1, by omega⟩
+          simp [lenS, hs]
+        | some r =>
+          simp only
+          exact walkC_spec s bs hbs B r ((id, B + 1) :: acc) M hM ⟨hs, rfl, hc⟩
+
+theorem fillC_inv (M : Memo) (h : MemoInv st cap M) (id : String) :
+    MemoInv st cap (fillC st cap M id) := by
+  obtain ⟨x, bx, hc, hv, hM⟩ := walkC_spec st cap id cap (Nat.le_refl _) cap id [] M h ⟨rfl, rfl⟩
+  exact (backC_spec st cap id cap (Nat.le_refl _) _ _ _ x bx hM hv hc).2
+
+theorem memoC_inv (ids : List String) : MemoInv st cap (memoC st cap ids) := by
+  unfold memoC
+  suffices ∀ (l : List String) (M : Memo), MemoInv st cap M →
+      MemoInv st cap (l.foldl (fillC st cap) M) from this ids ∅ (by intro k v h; simp at h)
+  intro l
+  induction l with
+  | nil => intro M h; exact h
+  | cons a tl ih => intro M h; exact ih _ (fillC_inv st cap M h a)
+
+/-- `collS` read from the table when the fuel is within `cap`. -/
+def collF (M : Memo) (id : String) (f : Nat) : Bool :=
+  if f ≤ cap then
+    match M[id]? with
+    | some v => (v.filter (· ≤ f)).isSome
+    | none   => collS st id f
+  else collS st id f
+
+theorem collF_eq (M : Memo) (h : MemoInv st cap M) (id : String) (f : Nat) :
+    collF st cap M id f = collS st id f := by
+  unfold collF
+  split
+  · rename_i hf
+    cases hm : M[id]? with
+    | none => rfl
+    | some v =>
+      simp only
+      rw [collS_eq_lenS, lenS_trunc st f cap id hf, h id v hm]
+  · rfl
+
+end MemoProofs
+
 end Fast
 
 end L4Factoidal.JSONLD.FromRdf
