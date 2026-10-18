@@ -188,8 +188,9 @@ stack of 512 KB in `snocUniqueOv` (https://github.com/danbri/factoidal/issues/85
 Each `...Go` form below walks the list with the elements passed so far in a
 reversed accumulator and puts them back in front with one `reverseAux` (a loop).
 Each `..._eq_fast` theorem proves the two forms equal and makes the compiler
-emit the loop for every call (`csimp`). The time is unchanged: each call still
-reads the list (https://github.com/danbri/factoidal/issues/712). -/
+emit the loop for every call (`csimp`). Each call still reads the list; the node
+map of `fromRdf` does not call these at run time, it keeps hash sets
+(`NodeF.addType`, `NodeF.addProp`; https://github.com/danbri/factoidal/issues/712). -/
 
 def snocUniqueStrGo (x : String) : List String → List String → List String
   | acc, []      => acc.reverseAux [x]
@@ -1415,8 +1416,10 @@ call returns: two native frames for each node (one node map of 20,000 subjects
 overflowed a stack of 512 KB in `insertSortedNode`, issue 853). `insertSortedNodeGo`
 walks with a reversed accumulator, and `sortNodesFast` inserts from the end of the
 list with a left fold, which is what `sortNodes` does from the inside out. The
-order of the result is the same (`sortNodes_eq_fast`); the time is still quadratic
-in the number of nodes (https://github.com/danbri/factoidal/issues/712). -/
+order of the result is the same (`sortNodes_eq_fast`). This form is still quadratic
+in the number of nodes; the emission sorts with `sortM` (`List.mergeSort` on the
+distinct ids of a node map, `sortNodes_eq_sortM`;
+https://github.com/danbri/factoidal/issues/712). -/
 
 def insertSortedNodeGo (n : FrNode) : List FrNode → List FrNode → List FrNode
   | acc, []      => acc.reverseAux [n]
