@@ -72,7 +72,8 @@ repaired (docs/designissues/2026-10-10-lean-vs-fstar-performance.md):
   jsonld-write-rest-cycle
                    the same command on a cycle of 2,000, then 8,000 rdf:rest list cells
                    (https://github.com/danbri/factoidal/issues/878). Measured 2026-10-18
-                   before the repair: 0.375 s and 9.09 s (24.2 for 4x input)
+                   before the repair: 0.375 s and 9.09 s (24.2 for 4x input); after
+                   (each cell written by one walk): 0.038 s and 0.130 s
   jsonld-read-*-stack, jsonld-write-*-stack, rdfxml-write-stack
                    STACK_ROWS: the command at n, 2n and 4n under LEAN_STACK_SIZE_KB=512;
                    every run must exit 0 and the time stay within 4.5 times (2n) and 9
@@ -545,7 +546,6 @@ XFAIL: dict[str, str] = {
     "sbm11-pack-trig-workers": "https://github.com/danbri/factoidal/issues/842",
     "sbm11-export-rdfxml-memory": "https://github.com/danbri/factoidal/issues/846",
     "sbm11-export-jsonld-memory": "https://github.com/danbri/factoidal/issues/847",
-    "jsonld-write-rest-cycle": "https://github.com/danbri/factoidal/issues/878",
 }
 # A run longer than this is not repeated: the minimum of several runs only
 # removes timer and load noise, which is small against a run this long.
@@ -847,7 +847,8 @@ ROWS = {
     # The JSON-LD writer on a cycle of rdf:rest cells, each a list cell (rdf:first and
     # rdf:rest) referenced once (https://github.com/danbri/factoidal/issues/878). List
     # detection (`memoC` in L4Factoidal/JSONLD/FromRdf.lean) walked graphFuel steps from
-    # a cell of a cycle and kept the result for that cell only.
+    # a cell of a cycle and kept the result for that cell only; since 2026-10-18 a walk
+    # that meets a cell it passed writes `none` for every cell it passed.
     "jsonld-write-rest-cycle": (
         2000,
         lambda n: rest_cycle_nt(n),
