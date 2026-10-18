@@ -1168,7 +1168,7 @@ theorem NodeF.addProp_spec (nf : NodeF) (p : String) (v : Ov) (h : nf.Good) :
       · subst e; simp [hg, snocUniqueOv_eq_if, hm]
       · simp [e]
     · have hm : v ∉ a.toList := fun m => hc ((hv v).2 m)
-      simp only [hc, Bool.false_eq_true, if_false, ei_getElem?, ei_getD, ei_contains]
+      simp only [hc, Bool.false_eq_true, if_false, ei_getD]
       refine ⟨by first | rfl | simp, by first | rfl | simp, ?_, ⟨h.types, h.nodup, ?_, ?_⟩⟩
       · apply List.map_congr_left
         intro k _
@@ -1214,7 +1214,7 @@ theorem NodeF.addProp_spec (nf : NodeF) (p : String) (v : Ov) (h : nf.Good) :
         have : (p == k) = false := by
           simp only [beq_eq_false_iff_ne]; intro e; exact hpk (e ▸ hk)
         simp [HashMap.getD_insert, this]
-      · simp [HashMap.getD_insert]
+      · simp
     · simp only [Array.toList_push]
       rw [List.nodup_append]
       refine ⟨h.nodup, by simp, ?_⟩
@@ -1298,7 +1298,7 @@ theorem NmF.ensure_spec (s : NmF) (id : String) (b : Bool) (h : s.Good) :
         have : (id == k) = false := by
           simp only [beq_eq_false_iff_ne]; intro e; exact hm (e ▸ hk)
         simp [HashMap.getD_insert, this]
-      · simp [HashMap.getD_insert, NodeF.toFr, NodeF.empty, NodeF.propsL]
+      · simp [NodeF.toFr, NodeF.empty, NodeF.propsL]
     · intro k
       simp only [HashMap.contains_insert, Bool.or_eq_true, beq_iff_eq, h.keys k,
         Array.toList_push, List.mem_append, List.mem_singleton]
@@ -1336,7 +1336,7 @@ theorem NmF.upd_spec (s : NmF) (id : String) (f : NodeF → NodeF) (g : FrNode �
   split
   · rename_i nf hn
     have hg := h.nodes id nf hn
-    simp only [ei_getElem?, ei_getD, ei_contains]
+    simp only [ei_getD]
     refine ⟨?_, ⟨?_, ?_⟩⟩
     · apply List.map_congr_left
       intro k hk
@@ -1594,14 +1594,14 @@ theorem firstMap_go {α : Type} (key : α → String) : ∀ (l : List α) (m : H
         cases hm : m[k]? with
         | none => rw [hm] at this; simp at this
         | some x => simp
-      · simp [List.find?_cons, e]
+      · simp [e]
     · simp only [hc, Bool.false_eq_true, if_false, HashMap.getElem?_insert]
       by_cases e : key a = k
       · have hn : m[k]? = none := by
           rw [← e]; apply HashMap.getElem?_eq_none_of_contains_eq_false; simpa using hc
-        simp [e, hn, List.find?_cons]
+        simp [e, hn]
       · have : (key a == k) = false := by simpa using e
-        simp [this, List.find?_cons, e]
+        simp [this]
 
 theorem firstMap_get {α : Type} (key : α → String) (l : List α) (k : String) :
     (firstMap key l)[k]? = l.find? (fun a => key a == k) := by
@@ -1621,9 +1621,9 @@ theorem countMap_go : ∀ (l : List String) (m : HashMap String Nat) (k : String
   | x :: tl, m, k => by
     rw [List.foldl_cons, countMap_go tl, HashMap.getD_insert]
     by_cases e : x = k
-    · subst e; simp [List.filter_cons]; omega
+    · subst e; simp; omega
     · have : (x == k) = false := by simpa using e
-      simp [this, List.filter_cons, e]
+      simp [this]
 
 theorem referencedOnce_eq_countMap (refids : List String) :
     referencedOnce refids = fun id => (countMap refids).getD id 0 == 1 := by
