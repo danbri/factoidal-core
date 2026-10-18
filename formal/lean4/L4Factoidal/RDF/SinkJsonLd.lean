@@ -57,4 +57,17 @@ private def exDs : Dataset :=
             (w.writeAll header (exDs.default.map fun t => (t, none))).toOption ==
               (serializeDataset withJsonLd .jsonld .rdf12 exDs).toOption)
 
+-- A named graph with no triple (RDF 1.1 Concepts section 4): JSON-LD writes a node object
+-- with an empty `@graph`, and the JSON-LD reader reads the graph back.
+private def emptyGraphDs : Dataset :=
+  { default := [], named := [{ name := .iri ⟨"http://e/g0", rfl⟩, graph := [] }] }
+
+#guard match streamDataset withJsonLd .jsonld {} emptyGraphDs with
+       | .ok text =>
+           (text.splitOn "\"@graph\":[]").length == 2 &&
+           (match Source.parseDocument Source.withJsonLd .jsonld .rdf12 none text with
+            | .ok ds => ds.named.length == 1 && ds.named.all (·.graph.isEmpty)
+            | .error _ => false)
+       | .error _ => false
+
 end L4Factoidal.RDF.Sink

@@ -1,0 +1,2 @@
+# Each named graph, and its triples when it has some.
+SELECT ?g ?s WHERE { GRAPH ?g { OPTIONAL { ?s ?p ?o } } }

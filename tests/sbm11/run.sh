@@ -222,6 +222,19 @@
 #                reference route of compaction (the quads of the overlaid generation
 #                decoded to terms and given to the packer's phase 1), and require
 #                the same files as the default route. Its counts are added to this run's.
+#   (v) graphs   tests/sbm11/named_graphs.sh (https://github.com/danbri/factoidal/issues/855
+#                and https://github.com/danbri/factoidal/issues/856): the D5 fixture
+#                (named graphs with no triple, graphs named by a blank node) packed, with
+#                a log of DROP, CREATE, CLEAR and INSERT, with a log of CLEAR NAMED (DLOG
+#                version 3), and compacted; in each state the queries of
+#                tests/sbm11/graphs/ against the in-memory reference over the same
+#                dataset (`l4sbm11-w3c query-source`, which keeps a graph with no
+#                triple), each on the path its name says; `l4sbm11 graphs`; the TriG and
+#                JSON-LD exports with the graphs with no triple compared; the notice of
+#                the N-Quads export; the refusal of N-Triples; one expected failure
+#                that names an open issue (`l4factoidal query` gives neither a graph
+#                with no triple nor a graph named by a blank node, https://github.com/danbri/factoidal/issues/876). Its
+#                counts are added to this run's.
 #   (g) tamper   a copy of the generation with one byte changed in a block
 #                frame of spo.prb1 (manifest and sidecars kept): `scan` and
 #                `query` must be refused under merkle (and by default, the
@@ -1034,6 +1047,9 @@ add_script_counts agg-ids agg_ids.sh "agg ids"
 
 echo "=== (u) the packer takes quads from any producer (issue 866)"
 add_script_counts quad-source quad_source.sh "quad source"
+
+echo "=== (v) every named graph on the query paths and the export (issues 855 and 856)"
+add_script_counts graphs named_graphs.sh "named graphs"
 
 echo
 echo "sbm11 stages 4 and 5: $PASS pass, $FAIL fail, $XFAILS expected-fail (out of $((PASS + FAIL + XFAILS)))"

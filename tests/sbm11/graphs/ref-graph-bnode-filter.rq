@@ -1,0 +1,2 @@
+# The named graphs that a blank node names, each with or without a triple.
+SELECT ?g WHERE { GRAPH ?g { } FILTER(isBlank(?g)) }

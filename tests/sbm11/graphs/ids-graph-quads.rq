@@ -1,0 +1,2 @@
+# The triples of the named graphs: the id path; a graph with no triple gives no row.
+SELECT ?g ?s ?o WHERE { GRAPH ?g { ?s <http://example.org/p> ?o } }

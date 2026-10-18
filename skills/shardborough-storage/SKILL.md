@@ -869,6 +869,18 @@ of the overlaid generation into the graph list. Gates: `tests/sbm11/update_where
 group `graphs`, `tests/delta-log/run.sh` (DLOG versions), `OverlayTheorems`
 (`named_*`), `DeltaLogCodecTheorems` (`parseLog_v3_of_frames`, `appendVersion_noV3`).
 
+Queries over named graphs with no triple (2026-10-15,
+https://github.com/danbri/factoidal/issues/855). The id path reads triples only,
+and refuses every shape that can see a graph with no triple: a GRAPH group with no
+triple pattern or with only a FILTER, FROM and FROM NAMED, MINUS, OPTIONAL inside
+GRAPH. The reference fallback (`selectedDataset`, also for the WHERE clause of
+`l4sbm11 update`) puts every named graph of the overlaid generation that the
+planner guard keeps into its dataset (`Session.namedGraphIds`), a graph with no
+selected quad with no triple, so `GRAPH ?g { }` and FROM NAMED see it. The
+reference for such a dataset is `l4sbm11-w3c query-source` and `update-source`:
+`l4factoidal query` reads N-Quads, which cannot state a graph with no triple.
+Gate: `tests/sbm11/named_graphs.sh`.
+
 OPTIONAL on ids (2026-10-13, https://github.com/danbri/factoidal/issues/775;
 record: section 10 of the stage 4 record). `{ base OPTIONAL { g1 } ...
 OPTIONAL { gk } }` at the top level runs on `path=ids` when the base is a
@@ -1165,8 +1177,19 @@ reads the blocks of one name as one graph (the W3C tests `alternating_iri_graphs
 and `alternating_bnode_graphs`), and `tests/sbm11/export_roundtrip.sh` packs the
 export again to check it.
 
+Named graphs with no triple (2026-10-15,
+https://github.com/danbri/factoidal/issues/855): the graph list GNL1 holds every
+named graph. The scan marks the listed graphs that have a quad; after the last
+quad each listed graph with no quad goes to `Sink.Writer.declare`. TriG writes
+`GRAPH <g> {` `}` (also `GRAPH _:b {` `}`), JSON-LD a node object with an empty
+`@graph`. N-Quads has no statement without a triple: the command writes the quads,
+exits 0, and standard error says `N such graphs are not in the document (the first
+is <g>)`. The summary line has `graphs-with-no-triple=N`. Gate:
+`tests/sbm11/named_graphs.sh` (part (v) of `run.sh`).
+
 N-Triples, Turtle and RDF/XML have no place for a graph name. When the generation
-has a quad in a named graph, the command stops before it writes a byte and names
+has a named graph (a listed graph, also one with no triple, or a quad in a named
+graph), the command stops before it writes a byte and names
 the first graph, unless `--graph` chooses: `default` writes the default graph,
 `all` writes the union of the graphs (a triple that is in several graphs is
 written once), an IRI writes the triples of that graph. N-Quads, TriG and JSON-LD

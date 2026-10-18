@@ -30,10 +30,15 @@ datasets with the isomorphism of the Lean W3C runners
       cannot pass to the JSON-LD parser (`specVersion=json-ld-1.0`,
       `processingMode=...`, `rdfDirection=...`, `expandContext=...`,
       `produceGeneralizedRdf=true`), else `-`.
-  l4sbm11-w3c compare EXPECTED ACTUAL --expected nt|nq|nq-lenient --mode rdf11|rdf12
-      EXPECTED is a result file. ACTUAL is N-Quads in RDF 1.2 syntax (the output of
-      `l4sbm11 dump`). Prints `pass`, `pass via-canonical` or `fail REASON` and
-      exits 0 for a pass, 1 for a fail.
+  l4sbm11-w3c compare EXPECTED ACTUAL --expected K --mode rdf11|rdf12
+                     [--actual F] [--empty drop|keep]
+      EXPECTED is a result file: K is `nt`, `nq`, `nq-lenient`, or the label of
+      a syntax that the source layer reads (`trig`, `jsonld`, ...). ACTUAL is
+      N-Quads in RDF 1.2 syntax (the output of `l4sbm11 dump`), or, with
+      `--actual F`, a document in syntax F in RDF 1.2 (the output of `l4sbm11
+      export`). Prints `pass`, `pass via-canonical` or `fail REASON` and exits 0
+      for a pass, 1 for a fail. `--empty` is the rule for a named graph with no
+      triple (below; default `drop`).
   l4sbm11-w3c check-parse SOURCE EXPECTED --format F --base IRI --expected K --mode M
       The same comparison with the dataset that `Source.parseDocument` gives for
       SOURCE (the in-memory parse, without the store).
@@ -44,6 +49,21 @@ datasets with the isomorphism of the Lean W3C runners
   l4sbm11-w3c parse-ok SOURCE --format F --base IRI --mode M
       Prints `pass` when `Source.parseDocument` accepts SOURCE (the parser's
       verdict on a positive syntax test), else `fail REASON`.
+  l4sbm11-w3c query-source SOURCE QUERY --format F --base IRI --mode M
+      The answer of the in-memory reference evaluator (`evalSelect`, `evalAsk`,
+      `evalConstruct`, `evalDescribe`) to the SPARQL 1.1 query in the file QUERY
+      over the dataset that `Source.parseDocument` gives for SOURCE, a named graph
+      with no triple included: SPARQL JSON results for SELECT and ASK, N-Triples
+      lines for CONSTRUCT and DESCRIBE, the forms `l4sbm11 query` writes. The
+      query's base IRI is the file URL of QUERY; NOW is `Harness.fixedNow`.
+      `l4factoidal query` reads its data through N-Quads, which cannot state a
+      named graph with no triple, so it cannot be the reference for one
+      (https://github.com/danbri/factoidal/issues/855).
+  l4sbm11-w3c update-source SOURCE REQUEST OUT --format F --base IRI --mode M
+      The reference update semantics (`applyUpdateIn`) applied to the dataset of
+      SOURCE: writes the result to OUT as TriG (`Sink.datasetToTrig`, which
+      writes a named graph with no triple as a block with no triple) and prints
+      `ok`, or `fail REASON` (exit 1) when the request raises an error.
 
   l4sbm11-w3c list-update MANIFEST...
       One row for each `mf:UpdateEvaluationTest` of a SPARQL 1.1 Update manifest,
@@ -67,12 +87,16 @@ Comparison rules. Both datasets go through `normalizeDataset` first: a graph is 
 set of triples (RDF 1.1 Concepts section 3; the in-memory JSON-LD toRdf output of
 test #te108 lists a quad twice, the store keeps it once) and language tags are in
 lower case (section 3.3; the packer folds them, `normalizeTerm`). Lexical forms
-compare exactly. Blank nodes compare up to a bijection. A named graph with no
-triple is dropped on both sides: an N-Quads document, the expected result of a
-TriG test and the dump of a store cannot state one. When the
-isomorphism search gives up (`IsoOutcome.budgetExceeded`), the RDFC-1.0 canonical
-N-Quads of the two datasets are compared, as `Harness/JsonLdProbe.lean` does, and
-the pass says `via-canonical`.
+compare exactly. Blank nodes compare up to a bijection, graph names included. A
+named graph with no triple: with `--empty drop` (the default) it is dropped on both
+sides, because an N-Quads document and the dump of a store cannot state one; with
+`--empty keep` both sides keep it (RDF 1.1 Concepts section 4; 2026-10-15,
+https://github.com/danbri/factoidal/issues/855), and the pass line names the number
+of them, `pass empty-named-graphs=N`. When the isomorphism search gives up
+(`IsoOutcome.budgetExceeded`), the RDFC-1.0 canonical N-Quads of the two datasets
+are compared, as `Harness/JsonLdProbe.lean` does, and the pass says
+`via-canonical`; with `--empty keep` the names of the graphs with no triple must
+then also agree (the IRIs, and the number of blank nodes).
 -/
 import Harness.Manifest
 import Harness.Run
@@ -84,6 +108,8 @@ import L4Factoidal.Syntax.NQuads
 import L4Factoidal.Syntax.NQuadsFast
 import L4Factoidal.Syntax.NTriples
 import L4Factoidal.JSON.Parser
+import L4Factoidal.RDF.SinkJsonLd
+import L4Factoidal.SPARQL.ResultsJsonFast
 
 open L4Factoidal.RDF
 open L4Factoidal.JSON
@@ -95,13 +121,14 @@ namespace Sbm11W3c
 
 inductive ExpectedKind where
   | nt | nq | nqLenient
-  deriving DecidableEq
+  /-- a document in a syntax that the source layer reads -/
+  | doc (fmt : RdfFormat)
 
 def ExpectedKind.ofLabel? : String → Option ExpectedKind
   | "nt" => some .nt
   | "nq" => some .nq
   | "nq-lenient" => some .nqLenient
-  | _ => none
+  | l => (formatOfLabel l).map .doc
 
 def modeOfLabel? : String → Option Mode
   | "rdf11" => some .rdf11
@@ -142,6 +169,10 @@ def parseExpected (kind : ExpectedKind) (mode : Mode) (text : String) : Except S
       | .ok ds => .ok ds
       | .error e => .error s!"expected-result N-Quads parse error at {e.pos}: {e.msg}"
   | .nqLenient => .ok (parseNQuadsLenient text).1
+  | .doc fmt =>
+      match Source.parseDocument Source.withJsonLd fmt mode none text with
+      | .ok ds => .ok ds
+      | .error e => .error s!"expected-result parse error at {e.pos}: {e.msg}"
 
 /-! ## Comparison -/
 
@@ -151,18 +182,55 @@ def dropEmptyNamed (ds : Dataset) : Dataset :=
 def quadCount (ds : Dataset) : Nat :=
   ds.default.length + (ds.named.map (·.graph.length)).foldl (· + ·) 0
 
-/-- `pass`, `pass via-canonical` or `fail ...`. -/
-def compareDatasets (got0 exp0 : Dataset) : Bool × String :=
-  let got := dropEmptyNamed (normalizeDataset got0)
-  let exp := dropEmptyNamed (normalizeDataset exp0)
+/-- The names of the named graphs with no triple. -/
+def emptyNames (ds : Dataset) : List Subject :=
+  (ds.named.filter (·.graph.isEmpty)).map (·.name)
+
+/-- `normalizeDataset` (which reads the quads, so it loses a graph with no
+    triple), and each name of a named graph of `ds` that has no graph in the
+    result added back as a graph with no triple. -/
+def normalizeKeepEmpty (ds : Dataset) : Dataset :=
+  let n := normalizeDataset ds
+  let present := n.named.map (·.name)
+  let extra := (emptyNames ds).eraseDups.filter (fun x => !present.contains x)
+  { n with named := n.named ++ extra.map fun x => { name := x, graph := [] } }
+
+/-- The graphs with no triple, as the canonical form cannot show them: the IRI
+    names and the number of blank node names. -/
+def emptyShape (ds : Dataset) : List String × Nat :=
+  let ns := emptyNames ds
+  let iris : List String := ns.filterMap fun n => match n with
+    | .iri i => some i.val
+    | .bnode _ => none
+  let bnodes : Nat := (ns.filter fun n => match n with
+    | .bnode _ => true
+    | .iri _ => false).length
+  (iris, bnodes)
+
+/-- Two shapes agree: the same IRI names (each list has a name once: a
+    normalised dataset has one graph for each name) and the same number of blank
+    node names. -/
+def sameEmptyShape (a b : List String × Nat) : Bool :=
+  a.2 == b.2 && a.1.length == b.1.length && a.1.all (b.1.contains ·)
+
+/-- `pass`, `pass via-canonical` or `fail ...`. `keepEmpty`: a named graph with no
+    triple is compared (`--empty keep`), else dropped on both sides. -/
+def compareDatasets (got0 exp0 : Dataset) (keepEmpty : Bool := false) : Bool × String :=
+  let got := if keepEmpty then normalizeKeepEmpty got0 else dropEmptyNamed (normalizeDataset got0)
+  let exp := if keepEmpty then normalizeKeepEmpty exp0 else dropEmptyNamed (normalizeDataset exp0)
+  let note := if keepEmpty then s!" empty-named-graphs={(emptyNames exp).length}" else ""
+  let graphsText := if keepEmpty then
+      s!", named graphs with no triple: got {(emptyNames got).length}, expected {(emptyNames exp).length}"
+    else ""
   match Dataset.isomorphicOutcome got exp with
-  | .equal => (true, "pass")
+  | .equal => (true, "pass" ++ note)
   | .notEqual =>
-      (false, s!"fail not isomorphic to the expected dataset (got {quadCount got} quads, expected {quadCount exp})")
+      (false, s!"fail not isomorphic to the expected dataset (got {quadCount got} quads, expected {quadCount exp}{graphsText})")
   | .budgetExceeded =>
-      if got.canonicalNQuads == exp.canonicalNQuads then (true, "pass via-canonical")
+      if got.canonicalNQuads == exp.canonicalNQuads && (!keepEmpty || sameEmptyShape (emptyShape got) (emptyShape exp)) then
+        (true, "pass via-canonical" ++ note)
       else
-        (false, s!"fail not isomorphic to the expected dataset by RDFC-1.0 either (got {quadCount got} quads, expected {quadCount exp})")
+        (false, s!"fail not isomorphic to the expected dataset by RDFC-1.0 either (got {quadCount got} quads, expected {quadCount exp}{graphsText})")
 
 def readFile (path : String) : IO String := IO.FS.readFile path
 
@@ -172,14 +240,25 @@ def parseDump (text : String) : Except String Dataset :=
   | .ok ds => .ok ds
   | .error e => .error s!"the dump does not parse as N-Quads at {e.pos}: {e.msg}"
 
-def runCompare (expectedPath actualPath : String) (kind : ExpectedKind) (mode : Mode) : IO UInt32 := do
+/-- The dataset of ACTUAL: the dump (N-Quads, RDF 1.2), or a document in the
+    syntax `fmt` in RDF 1.2 (an export). -/
+def parseActual (actual : Option RdfFormat) (text : String) : Except String Dataset :=
+  match actual with
+  | none => parseDump text
+  | some fmt =>
+      match Source.parseDocument Source.withJsonLd fmt .rdf12 none text with
+      | .ok ds => .ok ds
+      | .error e => .error s!"the actual document does not parse at {e.pos}: {e.msg}"
+
+def runCompare (expectedPath actualPath : String) (kind : ExpectedKind) (mode : Mode)
+    (actual : Option RdfFormat := none) (keepEmpty : Bool := false) : IO UInt32 := do
   let exp ← match parseExpected kind mode (← readFile expectedPath) with
     | .ok d => pure d
     | .error m => IO.println s!"fail {m}"; return 1
-  let got ← match parseDump (← readFile actualPath) with
+  let got ← match parseActual actual (← readFile actualPath) with
     | .ok d => pure d
     | .error m => IO.println s!"fail {m}"; return 1
-  let (ok, line) := compareDatasets got exp
+  let (ok, line) := compareDatasets got exp keepEmpty
   IO.println line
   pure (if ok then 0 else 1)
 
@@ -218,6 +297,56 @@ def runParseOk (source : String) (fmt : RdfFormat) (base : String) (mode : Mode)
   match ← parseSource source fmt base mode with
   | .error m => IO.println s!"fail {m}"; pure 1
   | .ok _ => IO.println "pass"; pure 0
+
+/-! ## The in-memory reference for a dataset with named graphs with no triple -/
+
+/-- `query-source`: the reference evaluator over the dataset of SOURCE. -/
+def runQuerySource (source queryPath : String) (fmt : RdfFormat) (base : String) (mode : Mode) :
+    IO UInt32 := do
+  let ds ← match ← parseSource source fmt base mode with
+    | .ok d => pure d
+    | .error m => IO.eprintln s!"l4sbm11-w3c: {m}"; return 1
+  let abs := (← IO.FS.realPath queryPath).toString
+  match L4Factoidal.SPARQL.parseSparql (← readFile queryPath) (some ("file://" ++ abs)) .v11 with
+  | .error e => IO.eprintln s!"l4sbm11-w3c: SPARQL parse error at {e.pos}: {e.msg}"; return 1
+  | .ok q =>
+  let env : L4Factoidal.SPARQL.EvalEnv := { now := some Harness.fixedNow, base := q.base }
+  match q.form with
+  | .select _ =>
+      let rows := (L4Factoidal.SPARQL.evalSelect env ds q).2
+      IO.println (L4Factoidal.SPARQL.QueryResult.bindings q.projectedVars rows).toSrjFast
+  | .ask =>
+      IO.println (L4Factoidal.SPARQL.QueryResult.boolean (L4Factoidal.SPARQL.evalAsk env ds q)).toSrjFast
+  | .construct _ | .describe _ =>
+      let g := match q.form with
+        | .construct _ => L4Factoidal.SPARQL.evalConstruct env ds q
+        | _ => L4Factoidal.SPARQL.evalDescribe env ds q
+      match Graph.toNTriples g .rdf12 with
+      | .ok t => IO.print t
+      | .error e => IO.eprintln s!"l4sbm11-w3c: {e}"; return 1
+  pure 0
+
+/-- `update-source`: the reference update semantics over the dataset of SOURCE,
+    written as TriG. -/
+def runUpdateSource (source requestPath outPath : String) (fmt : RdfFormat) (base : String) (mode : Mode) :
+    IO UInt32 := do
+  let ds ← match ← parseSource source fmt base mode with
+    | .ok d => pure d
+    | .error m => IO.println s!"fail {m}"; return 1
+  let abs := (← IO.FS.realPath requestPath).toString
+  match L4Factoidal.SPARQL.parseSparqlUpdate (← readFile requestPath) (some ("file://" ++ abs)) .v11 with
+  | .error e => IO.println s!"fail Update parse: {Harness.fmtParseError e}"; return 1
+  | .ok u =>
+  let env : L4Factoidal.SPARQL.EvalEnv := { now := some Harness.fixedNow, base := u.base }
+  match L4Factoidal.SPARQL.applyUpdateIn env ds u with
+  | .error e => IO.println s!"fail the request raised an error: {e}"; return 1
+  | .ok got =>
+    match Sink.datasetToTrig .rdf12 got with
+    | .error e => IO.println s!"fail cannot write TriG: {e}"; return 1
+    | .ok t =>
+      IO.FS.writeFile outPath t
+      IO.println s!"ok named-graphs={got.named.length} empty-named-graphs={(emptyNames got).length}"
+      pure 0
 
 /-! ## Lists of tests -/
 
@@ -403,10 +532,12 @@ def runRunUpdate (manifest entry : String) : IO UInt32 := do
 
 def usage : String :=
   "usage: l4sbm11-w3c list-rdf [--syntax] MANIFEST... | list-jsonld [--syntax] MANIFEST\n" ++
-  "       | compare EXPECTED ACTUAL --expected nt|nq|nq-lenient --mode rdf11|rdf12\n" ++
+  "       | compare EXPECTED ACTUAL --expected nt|nq|nq-lenient|F --mode rdf11|rdf12 [--actual F] [--empty drop|keep]\n" ++
   "       | check-parse SOURCE EXPECTED --format F --base IRI --expected nt|nq|nq-lenient --mode rdf11|rdf12\n" ++
   "       | compare-source ACTUAL SOURCE --format F --base IRI --mode rdf11|rdf12\n" ++
   "       | parse-ok SOURCE --format F --base IRI --mode rdf11|rdf12\n" ++
+  "       | query-source SOURCE QUERY --format F --base IRI --mode rdf11|rdf12\n" ++
+  "       | update-source SOURCE REQUEST OUT --format F --base IRI --mode rdf11|rdf12\n" ++
   "       | list-update MANIFEST... | prepare-update MANIFEST ENTRY OUTDIR | run-update MANIFEST ENTRY"
 
 /-- `--flag value` pairs and positional arguments, each in the order given. A
@@ -441,9 +572,17 @@ def main (args : List String) : IO UInt32 := do
         | _ => IO.eprintln usage; pure 2
     | "compare" :: rest =>
         let (pos, kv) := scan rest
-        match pos, (flag kv "--expected").bind ExpectedKind.ofLabel?, (flag kv "--mode").bind modeOfLabel? with
-        | [e, a], some k, some m => runCompare e a k m
-        | _, _, _ => IO.eprintln usage; pure 2
+        let actual? : Option (Option RdfFormat) := match flag kv "--actual" with
+          | none | some "nq" => some none
+          | some l => (formatOfLabel l).map some
+        let empty? : Option Bool := match flag kv "--empty" with
+          | none | some "drop" => some false
+          | some "keep" => some true
+          | some _ => none
+        match pos, (flag kv "--expected").bind ExpectedKind.ofLabel?, (flag kv "--mode").bind modeOfLabel?,
+            actual?, empty? with
+        | [e, a], some k, some m, some act, some keep => runCompare e a k m act keep
+        | _, _, _, _, _ => IO.eprintln usage; pure 2
     | "check-parse" :: rest =>
         let (pos, kv) := scan rest
         match pos, (flag kv "--format").bind formatOfLabel, flag kv "--base",
@@ -459,6 +598,16 @@ def main (args : List String) : IO UInt32 := do
         let (pos, kv) := scan rest
         match pos, (flag kv "--format").bind formatOfLabel, flag kv "--base", (flag kv "--mode").bind modeOfLabel? with
         | [s], some f, some b, some m => runParseOk s f b m
+        | _, _, _, _ => IO.eprintln usage; pure 2
+    | "query-source" :: rest =>
+        let (pos, kv) := scan rest
+        match pos, (flag kv "--format").bind formatOfLabel, flag kv "--base", (flag kv "--mode").bind modeOfLabel? with
+        | [s, q], some f, some b, some m => runQuerySource s q f b m
+        | _, _, _, _ => IO.eprintln usage; pure 2
+    | "update-source" :: rest =>
+        let (pos, kv) := scan rest
+        match pos, (flag kv "--format").bind formatOfLabel, flag kv "--base", (flag kv "--mode").bind modeOfLabel? with
+        | [s, r, o], some f, some b, some m => runUpdateSource s r o f b m
         | _, _, _, _ => IO.eprintln usage; pure 2
     | "list-update" :: rest =>
         for m in rest do

@@ -68,6 +68,19 @@ of that name. The W3C RDF 1.1 TriG tests `alternating_iri_graphs` and
 `alternating_bnode_graphs` alternate the blocks of two graphs, and the Lean TriG
 readers pass them.
 
+## Named graphs with no triple
+
+RDF 1.1 Concepts section 4: a named graph is a graph name and an RDF graph, and
+the RDF graph can be empty. A quad cannot state a graph with no triple, so a
+caller states it with `Writer.declare` (2026-10-15,
+https://github.com/danbri/factoidal/issues/855). TriG writes a block with no
+triple (`GRAPH <g> {` and `}`, also for a blank node name), and JSON-LD a node
+object with an empty `@graph` (the dataset of a whole writer has the graph).
+N-Quads has no statement without a triple, and N-Triples, Turtle and RDF/XML
+have no graph name: `Writer.statesEmptyGraph` is `false` for them, and the
+caller says what the document leaves out. `streamDataset` writes a whole
+`Dataset` this way: its quads, then each named graph with no triple.
+
 ## Syntaxes with no graph name
 
 N-Triples, Turtle and RDF/XML have no place for the name of a graph. A quad in a
@@ -329,9 +342,10 @@ inductive Writer where
   | ntriples (v : RdfVersion) (graphs : GraphChoice) (last : Option Triple)
   | turtle (ab : Abbreviator) (graphs : GraphChoice) (st : BodyState)
   | trig (ab : Abbreviator) (st : BodyState)
-  /-- RDF/XML, JSON-LD: the kept quads, newest first, and how to write them. -/
+  /-- RDF/XML, JSON-LD: the kept quads, newest first, how to write them, and the
+      names of the named graphs that `declare` stated, newest first. -/
   | whole (kind : WholeKind) (v : RdfVersion) (graphs : GraphChoice) (quadsRev : List (Triple × Option Subject))
-      (last : Option Triple)
+      (last : Option Triple) (declaredRev : List Subject)
 
 /-- A writer at the start of a document, and the text that starts it (the prefix
     declarations of Turtle and TriG). The only failure is a format whose writer the
@@ -342,10 +356,10 @@ def Writer.init (extra : Extra) (fmt : RdfFormat) (opts : Options) : Except Stri
   | .nt => .ok (.ntriples opts.version opts.graphs none, "")
   | .turtle => .ok (.turtle (Abbreviator.ofTable opts.prefixes) opts.graphs {}, prefixHeader opts.prefixes)
   | .trig => .ok (.trig (Abbreviator.ofTable opts.prefixes) {}, prefixHeader opts.prefixes)
-  | .rdfxml => .ok (.whole .rdfxml opts.version opts.graphs [] none, "")
+  | .rdfxml => .ok (.whole .rdfxml opts.version opts.graphs [] none [], "")
   | .jsonld =>
       match extra.jsonld with
-      | some write => .ok (.whole (.custom write) opts.version .union [] none, "")
+      | some write => .ok (.whole (.custom write) opts.version .union [] none [], "")
       | none => .error "JSON-LD is not available in this build"
 
 /-- Give the writer one quad; the text it completes comes back with the new
@@ -372,10 +386,32 @@ def Writer.push : Writer → Triple → Option Subject → Except String (Writer
       else
         let (st2, text) := bodyPushBy ab st1 t
         .ok (.trig ab st2, opening ++ text)
-  | .whole kind v graphs quadsRev last, t, g => do
-      if !(← graphs.keeps g) then pure (.whole kind v graphs quadsRev last, "")
-      else if last == some t && g.isNone then pure (.whole kind v graphs quadsRev last, "")
-      else pure (.whole kind v graphs ((t, g) :: quadsRev) (some t), "")
+  | .whole kind v graphs quadsRev last declaredRev, t, g => do
+      if !(← graphs.keeps g) then pure (.whole kind v graphs quadsRev last declaredRev, "")
+      else if last == some t && g.isNone then pure (.whole kind v graphs quadsRev last declaredRev, "")
+      else pure (.whole kind v graphs ((t, g) :: quadsRev) (some t) declaredRev, "")
+
+/-- Whether the writer can state a named graph with no triple: TriG and JSON-LD.
+    N-Quads has no statement without a triple; N-Triples, Turtle and RDF/XML have
+    no graph name. -/
+def Writer.statesEmptyGraph : Writer → Bool
+  | .trig .. => true
+  | .whole (.custom _) .. => true
+  | _ => false
+
+/-- State the named graph `name` with no triple (RDF 1.1 Concepts section 4).
+    TriG ends the open statement and block and writes a block with no triple. A
+    JSON-LD writer keeps the name, and the dataset it writes at the end has the
+    graph. The other writers cannot state it: the writer and no text come back
+    (`statesEmptyGraph` is `false`). A name that also has quads is stated twice in
+    TriG, which is the same dataset (a graph is the union of its blocks). -/
+def Writer.declare : Writer → Subject → Writer × String
+  | .trig ab st, name =>
+      let close := st.closeStatement ++ (if st.graph.isSome then "}\n\n" else "")
+      (.trig ab {}, close ++ "GRAPH " ++ tsSubjectToTurtleBy ab.run name ++ " {\n}\n\n")
+  | .whole kind v graphs quadsRev last declaredRev, name =>
+      (.whole kind v graphs quadsRev last (name :: declaredRev), "")
+  | w, _ => (w, "")
 
 /-- The dataset of kept quads given newest first: the default graph, then the
     named graphs in the order their names first appear. -/
@@ -393,6 +429,14 @@ def datasetOfQuadsRev (quadsRev : List (Triple × Option Subject)) : Dataset :=
   let (dflt, named, _) := quads.foldl step (#[], #[], {})
   { default := dflt.toList, named := named.toList.map fun (n, ts) => { name := n, graph := ts.toList } }
 
+/-- The dataset with each declared name that is not a graph name of it added as a
+    named graph with no triple, in the order of `names`. -/
+def withDeclared (ds : Dataset) (names : List Subject) : Dataset :=
+  let step := fun (acc : Array NamedGraph × Std.HashSet Subject) (n : Subject) =>
+    if acc.2.contains n then acc else (acc.1.push { name := n, graph := [] }, acc.2.insert n)
+  let (named, _) := names.foldl step (ds.named.toArray, Std.HashSet.ofList (ds.named.map (·.name)))
+  { ds with named := named.toList }
+
 /-- The end of the document: the text that closes the open statement and block,
     or, for a whole writer, the document. -/
 def Writer.finish : Writer → Except String String
@@ -400,8 +444,8 @@ def Writer.finish : Writer → Except String String
   | .ntriples .. => .ok ""
   | .turtle _ _ st => .ok st.finish
   | .trig _ st => .ok st.finish
-  | .whole kind v _ quadsRev _ =>
-      let ds := datasetOfQuadsRev quadsRev
+  | .whole kind v _ quadsRev _ declaredRev =>
+      let ds := withDeclared (datasetOfQuadsRev quadsRev) declaredRev.reverse
       match kind with
       | .rdfxml => RdfXmlWrite.graphToRdfXml (flatten ds)
       | .custom write => write v ds
@@ -423,6 +467,27 @@ def streamQuads (extra : Extra) (fmt : RdfFormat) (opts : Options)
     (quads : List (Triple × Option Subject)) : Except String String := do
   let (w, header) ← Writer.init extra fmt opts
   w.writeAll header quads
+
+/-- The text of a whole dataset by the stream writer: its quads (the default
+    graph, then each named graph in list order), then each named graph with no
+    triple, stated by `Writer.declare`. -/
+def streamDataset (extra : Extra) (fmt : RdfFormat) (opts : Options) (ds : Dataset) :
+    Except String String := do
+  let (w0, header) ← Writer.init extra fmt opts
+  let mut w := w0
+  let mut out := header
+  let quads : List (Triple × Option Subject) :=
+    ds.default.map (fun t => (t, none)) ++ ds.named.flatMap (fun ng => ng.graph.map (fun t => (t, some ng.name)))
+  for (t, g) in quads do
+    let (w', text) ← w.push t g
+    w := w'
+    out := out ++ text
+  for ng in ds.named do
+    if ng.graph.isEmpty then
+      let (w', text) := w.declare ng.name
+      w := w'
+      out := out ++ text
+  pure (out ++ (← w.finish))
 
 /-! ## Build-time checks -/
 
@@ -526,6 +591,45 @@ private def roundTrips (fmt : RdfFormat) (quads : List (Triple × Option Subject
             | .ok ds => sameQuads ds (datasetOf quadsSpo)
             | .error _ => false)
        | .error _ => false
+
+-- Named graphs with no triple: one IRI and one blank node, beside a graph with a triple.
+private def dsEmpty : Dataset :=
+  { default := [tr sA "http://e/p" (.iri (iri! "http://e/o1"))],
+    named := [ { name := gX, graph := [] }, { name := gY, graph := [] },
+               { name := sIri "http://e/g1", graph := [tr sB "http://e/p" (intLit "1")] } ] }
+
+/-- The named graphs of a dataset read back are those of `dsEmpty`: `gx` with no
+    triple, `g1` with one, and one blank node name with no triple. -/
+private def likeDsEmpty (ds : Dataset) : Bool :=
+  ds.default.length == 1 && ds.named.length == 3 &&
+  ds.named.any (fun ng => ng.name == gX && ng.graph.isEmpty) &&
+  ds.named.any (fun ng => ng.name == sIri "http://e/g1" && ng.graph.length == 1) &&
+  ds.named.any (fun ng => (match ng.name with | .bnode _ => true | .iri _ => false) && ng.graph.isEmpty)
+
+-- TriG states both graphs with no triple, and the TriG reader reads them back.
+#guard match streamDataset {} .trig {} dsEmpty with
+       | .ok text =>
+           match Source.parseDocument {} .trig .rdf12 none text with
+           | .ok ds => likeDsEmpty ds
+           | .error _ => false
+       | .error _ => false
+-- A block with no triple after an open block closes it first.
+#guard match Writer.init {} .trig {} with
+       | .ok (w, _) =>
+           match w.push (tr sA "http://e/p" (strLit "v")) (some gX) with
+           | .ok (w1, t1) =>
+               let (_, t2) := w1.declare gY
+               t1 ++ t2 == "GRAPH <http://e/gx> {\n<http://e/a> <http://e/p> \"v\" .\n\n}\n\nGRAPH _:gy {\n}\n\n"
+           | .error _ => false
+       | .error _ => false
+-- N-Quads cannot state them: the two lines of the quads only.
+#guard match streamDataset {} .nquads {} dsEmpty with
+       | .ok text => ((text.splitOn "\n").filter (· != "")).length == 2
+       | .error _ => false
+#guard (Writer.nquads .rdf12).statesEmptyGraph == false
+#guard (Writer.trig (Abbreviator.ofTable []) {}).statesEmptyGraph == true
+-- `withDeclared` adds a name once, and not a name that has a graph.
+#guard (withDeclared dsEmpty [gX, sIri "http://e/g2", sIri "http://e/g2"]).named.length == 4
 
 -- JSON-LD without a linked writer is refused at `init`, by name.
 #guard (match Writer.init ({} : Extra) .jsonld {} with

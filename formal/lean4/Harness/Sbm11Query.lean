@@ -1102,7 +1102,15 @@ def subjectOf (t : Term) : IO Subject :=
   | .bnode b => pure (.bnode b)
   | _ => throw (IO.userError "a subject or graph name that is not an IRI or a blank node")
 
-/-- The quads the planner guard selects, as the dataset they denote. -/
+/-- The quads the planner guard selects, as the dataset they denote, with every
+    named graph of the overlaid generation that the guard keeps: a named graph
+    with no selected quad (a graph with no triple, or a graph whose triples have
+    none of the selected predicates) is in the dataset with no triple. SPARQL 1.1
+    Query section 13: the named graphs of the dataset are its graph names, so
+    `GRAPH ?g { }` gives one solution for each, and FROM NAMED selects one with no
+    triple (2026-10-15, https://github.com/danbri/factoidal/issues/855). A graph
+    that the predicate selection empties contributes no solution to a pattern of
+    the planner fragment with or without it (`evalPatternBackend_restrict`). -/
 def selectedDataset (ss : Session) (q : Query) (extraGraphs : List WfIri := []) : IO (Dataset × String) := do
   let preds := L4Factoidal.Storage.ShardManifest.queryQuadConstantPredicates? q
   let graphs := L4Factoidal.Storage.ShardManifest.queryGraphNames? q
@@ -1152,7 +1160,9 @@ def selectedDataset (ss : Session) (q : Query) (extraGraphs : List WfIri := []) 
       pure "predicates=all"
   let rows ← rowsRef.get
   let mut quads : Array L4Factoidal.Storage.IndexedBlockWireV4.QuadRow := Array.mkEmpty rows.size
+  let mut withQuad : Std.HashSet UInt64 := {}
   for (s, p, o, g) in rows do
+    if g != 0 then withQuad := withQuad.insert g
     let st ← subjectOf (← ss.termOf s)
     let pt ← match ← ss.termOf p with
       | .iri i => pure i
@@ -1160,11 +1170,21 @@ def selectedDataset (ss : Session) (q : Query) (extraGraphs : List WfIri := []) 
     let ot ← ss.termOf o
     let gr : Option Subject ← if g == 0 then pure none else pure (some (← subjectOf (← ss.termOf g)))
     quads := quads.push (gr, { s := st, p := pt, o := ot })
+  -- the named graphs that hold no selected quad
+  let mut noQuad : Array NamedGraph := #[]
+  for x in ← ss.namedGraphIds do
+    let gid := x.toUInt64
+    if withQuad.contains gid then continue
+    let kept := match allowed with
+      | some xs => xs.contains gid
+      | none => true
+    if kept then noQuad := noQuad.push { name := ← subjectOf (← ss.termOf gid), graph := [] }
   let graphsText := match graphs with
     | some gs => s!"graphs={gs.length}"
     | none => "graphs=all"
-  return (L4Factoidal.Storage.QuadDataset.datasetOfQuads quads.toList,
-          s!"{what} {graphsText} quads={quads.size}")
+  let ds0 := L4Factoidal.Storage.QuadDataset.datasetOfQuads quads.toList
+  return ({ ds0 with named := ds0.named ++ noQuad.toList },
+          s!"{what} {graphsText} quads={quads.size} named-graphs-without-a-selected-quad={noQuad.size}")
 
 private def stripDatasetClauses (query : Query) : Query :=
   .mk query.form [] query.pattern query.groupBy query.having query.modifier

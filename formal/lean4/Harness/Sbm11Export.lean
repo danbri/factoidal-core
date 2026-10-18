@@ -31,10 +31,20 @@ end (https://github.com/danbri/factoidal/issues/846 and
 https://github.com/danbri/factoidal/issues/847).
 
 Graphs. N-Triples, Turtle and RDF/XML have no graph name. When the generation
-holds a quad in a named graph, the export is refused before any output, unless
+has a named graph (its graph list GNL1, or a quad in a named graph for a
+generation without the list), the export is refused before any output, unless
 `--graph` chooses: `default` (the default graph only), `all` (the union of all
 graphs; a triple that is in several graphs is written once) or an IRI (the triples
 of that graph). N-Quads, TriG and JSON-LD write every graph and refuse `--graph`.
+
+Named graphs with no triple (RDF 1.1 Concepts section 4; 2026-10-15,
+https://github.com/danbri/factoidal/issues/855). The graph list holds every named
+graph of the generation. The scan marks the graphs that have a quad; after the
+last quad, each listed graph with no quad goes to `Sink.Writer.declare`: TriG
+writes a block with no triple (`GRAPH <g> {` `}`, also for a blank node name) and
+JSON-LD a node object with an empty `@graph`. N-Quads has no statement without a
+triple: the export writes the quads, and standard error says how many named
+graphs with no triple the document leaves out (exit 0).
 
 Prefixes. Turtle and TriG write every IRI in full unless `--prefix LABEL=IRI`
 gives a namespace (the label without its colon), which is declared at the start and
@@ -103,6 +113,19 @@ def firstNamedGraphId (g : Gen) : IO (Option Nat) := do
       if c.g[j]! != 0 then return some c.g[j]!
   pure none
 
+/-- The first named graph of the generation: the first id of its graph list, or,
+    for a generation without the list, the first named graph of a quad. -/
+def firstNamedGraph (g : Gen) (listed : Option (Array Nat)) : IO (Option Nat) := do
+  match listed with
+  | some xs => pure xs[0]?
+  | none => firstNamedGraphId g
+
+/-- The position of `x` in the sorted array `xs`, when `xs` holds it
+    (`GraphList.lowerGo`, the binary search of `GraphList.contains`). -/
+def indexIn? (xs : Array Nat) (x : Nat) : Option Nat :=
+  let k := GraphList.lowerGo xs x (Nat.log2 xs.size + 2) 0 xs.size
+  if k < xs.size && xs[k]! == x then some k else none
+
 /-- Which graph ids the export keeps, decided on the id before any term is
     decoded. -/
 inductive Keep where
@@ -142,12 +165,14 @@ def runExport (dir : String) (v : Verify) (o : Opts) : IO UInt32 := do
           | some gid => pure (Sink.GraphChoice.named (.iri ⟨iri, h⟩), Keep.graph gid)
           | none => throw (IO.userError s!"the graph <{iri}> is not in the store")
         else throw (IO.userError s!"--graph takes default, all or an IRI: {iri}")
+  -- every named graph of the generation, a graph with no triple included
+  let listed ← readGraphList g
   if !namedOk && o.graph.isNone then
     -- refuse before any output, not after the first named quad
-    if let some gid := ← firstNamedGraphId g then
+    if let some gid := ← firstNamedGraph g listed then
       let cache ← IO.mkRef ({} : Std.HashMap Nat (Array ByteArray))
       let name ← ok "export" (L4Factoidal.Syntax.Term.toNTriples .rdf12 (← termOfId g cache gid))
-      throw (IO.userError s!"the generation has quads in named graphs (the first graph is {name}), and {formatName fmt} has no graph name; choose with --graph default, --graph all or --graph IRI")
+      throw (IO.userError s!"the generation has named graphs (the first graph is {name}), and {formatName fmt} has no graph name; choose with --graph default, --graph all or --graph IRI")
   let table : L4Factoidal.Syntax.PrefixTable := o.prefixes.map fun (l, iri) => (iri, l ++ ":")
   let (w0, header) ← okw (Sink.Writer.init Sink.withJsonLd fmt { version := .rdf12, graphs := choice, prefixes := table })
   -- the output: standard output, or a temporary file renamed at the end
@@ -160,7 +185,7 @@ def runExport (dir : String) (v : Verify) (o : Opts) : IO UInt32 := do
     | none => do
         let h ← IO.getStdout
         pure (fun text => h.putStr text, h.flush)
-  let finishOk : Option (Nat × Nat) ←
+  let finishOk : Option (Nat × Nat × Nat) ←
     try
       let src ← permSrc g 2
       let cache ← IO.mkRef ({} : Std.HashMap Nat (Array ByteArray))
@@ -168,10 +193,17 @@ def runExport (dir : String) (v : Verify) (o : Opts) : IO UInt32 := do
       let mut buf := header
       let mut quads := 0
       let mut bytes := 0
+      -- the listed graphs that have a quad: one byte per listed graph
+      let graphIds := listed.getD #[]
+      let mut seen := ByteArray.mk (Array.replicate graphIds.size 0)
+      let mut lastGid := 0
       for i in [0:src.metas.size] do
         let c ← readBlock g src i
         for j in [0:c.size] do
           let gid := c.g[j]!
+          if gid != 0 && gid != lastGid then
+            lastGid := gid
+            if let some k := indexIn? graphIds gid then seen := seen.set! k 1
           if !keep.keeps gid then continue
           let st ← termOfIdLimit g cache pageLimit true c.c0[j]!
           let pt ← termOfIdLimit g cache pageLimit true c.c1[j]!
@@ -192,11 +224,27 @@ def runExport (dir : String) (v : Verify) (o : Opts) : IO UInt32 := do
         -- the block is finished: its chunks are not read again
         let m := src.metas[i]!
         dropChunkRange g src.cache src.prbRef m.offset m.size
+      -- the named graphs with no triple, in id order
+      let mut noTriple := 0
+      let mut firstLeftOut : Option Nat := none
+      for k in [0:graphIds.size] do
+        let gid := graphIds[k]!
+        if seen.get! k != 0 || !keep.keeps gid then continue
+        noTriple := noTriple + 1
+        if w.statesEmptyGraph then
+          let name ← term2subject "graph name" (← termOfIdLimit g cache pageLimit true gid)
+          let (w', text) := w.declare name
+          w := w'
+          buf := buf ++ text
+        else if namedOk && firstLeftOut.isNone then firstLeftOut := some gid
       buf := buf ++ (← okw w.finish)
       put buf
       bytes := bytes + buf.utf8ByteSize
       flushOut
-      pure (some (quads, bytes))
+      if let some gid := firstLeftOut then
+        let name ← ok "export" (L4Factoidal.Syntax.Term.toNTriples .rdf12 (← termOfIdLimit g cache pageLimit true gid))
+        IO.eprintln s!"l4sbm11 export: {formatName fmt} has no statement for a named graph with no triple; {noTriple} such graphs are not in the document (the first is {name}); TriG and JSON-LD state them"
+      pure (some (quads, bytes, noTriple))
     catch e =>
       IO.eprintln s!"l4sbm11 export: {e}"
       pure none
@@ -205,11 +253,11 @@ def runExport (dir : String) (v : Verify) (o : Opts) : IO UInt32 := do
       if let some p := tmp then
         try IO.FS.removeFile p catch _ => pure ()
       pure 1
-  | some (quads, bytes) =>
+  | some (quads, bytes, noTriple) =>
       if let some p := tmp then
         IO.FS.rename p o.out.get!
       let t1 ← IO.monoNanosNow
-      IO.eprintln s!"sbm11: export format={formatLabel fmt} quads={quads} bytes={bytes} verify={g.verify.name} read-bytes={← g.readBytes.get} fetched-bytes={← g.fetchedBytes.get} file-bytes={← g.fileBytes.get} ms={ms t0 t1} peak-rss={← vmHWM}"
+      IO.eprintln s!"sbm11: export format={formatLabel fmt} quads={quads} graphs-with-no-triple={noTriple} bytes={bytes} verify={g.verify.name} read-bytes={← g.readBytes.get} fetched-bytes={← g.fetchedBytes.get} file-bytes={← g.fileBytes.get} ms={ms t0 t1} peak-rss={← vmHWM}"
       pure 0
 
 end Sbm11Export
