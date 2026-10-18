@@ -570,7 +570,6 @@ XFAIL: dict[str, str] = {
     "sbm11-export-rdfxml-memory": "https://github.com/danbri/factoidal/issues/846",
     "sbm11-export-jsonld-memory": "https://github.com/danbri/factoidal/issues/847",
     "sbm11-replay-insert-time": "https://github.com/danbri/factoidal/issues/879",
-    "rdfxml-entity-chain-time": "https://github.com/danbri/factoidal/issues/872",
     "ntriples-long-line-memory": "https://github.com/danbri/factoidal/issues/874",
     "nquads-long-line-memory": "https://github.com/danbri/factoidal/issues/874",
 }
