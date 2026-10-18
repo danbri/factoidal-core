@@ -378,6 +378,15 @@ theorem parseNQuadsFast_eq_parseNQuads (s : String) (mode : Mode) :
 
 /-! ## Axiom audit -/
 
+/-- The compiler runs `parseNQuadsFast` wherever a module that imports this one
+says `parseNQuads`. The reference parser adds each quad with `Graph.add`, a scan
+of the graph, so it takes time in n² for n quads; `l4sbm11-w3c compare` spent 80
+percent of its instructions there on 8,800 quads once the isomorphism test was
+linear (https://github.com/danbri/factoidal/issues/868). -/
+@[csimp] theorem parseNQuads_eq_fast : @parseNQuads = @parseNQuadsFast := by
+  funext s mode
+  exact (parseNQuadsFast_eq_parseNQuads s mode).symm
+
 #print axioms parseNQuadsFast_eq_parseNQuads
 
 end L4Factoidal.Syntax
