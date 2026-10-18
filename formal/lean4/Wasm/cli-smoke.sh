@@ -658,6 +658,38 @@ assert_text "owl-entails false (refutation) -> exit 1" 1 out "false" \
 assert_text "owl-entails missing conclusion file -> usage error" 2 err "need PREMISE_FILE" \
   "$CLI" owl-entails "$TMP/subclass.nq"
 
+# --- RDF 1.2 triple terms (https://github.com/danbri/factoidal/issues/873) ---
+# The closures read RDF 1.2 and treat a triple term as an opaque object term:
+# the asserted triple stays, the asserted derivation is made, and nothing is
+# derived from the triple inside the triple term. RDFC-1.0 and OWL DL refuse
+# with a message that names the missing rule; their acceptance is an xfail.
+TT='<http://e/z> <http://e/says> <<( <http://e/s> <http://www.w3.org/1999/02/22-rdf-syntax-ns#type> <http://e/C> )>> .
+<http://e/z> <http://e/says> <<( _:b1 <http://www.w3.org/1999/02/22-rdf-syntax-ns#type> <http://e/C> )>> .
+'
+printf '%s%s' "$SUBCLASS" "$TT" > "$TMP/tt.nq"
+for REG in rdfs owl-rl rho-df rdfs-plus; do
+  run_cmd "$CLI" closure "$TMP/tt.nq" --format nquads12 --regime "$REG"
+  verdict "closure --regime $REG accepts a triple term, keeps it, derives a type D, not s type D" "" \
+    "$( [ "$RC" -eq 0 ] \
+        && grep -qF '<http://e/z> <http://e/says> <<( <http://e/s> ' <<< "$OUT" \
+        && grep -qF '<http://e/a> <http://www.w3.org/1999/02/22-rdf-syntax-ns#type> <http://e/D> .' <<< "$OUT" \
+        && ! grep -qE '^(<http://e/s>|_:[^ ]*) <http://www.w3.org/1999/02/22-rdf-syntax-ns#type> <http://e/' <<< "$OUT" \
+        && echo 1 || echo 0 )" "exit=$RC" "stdout=$OUT" "stderr=$ERR"
+done
+assert_text "canonicalize triple term -> refusal names RDFC-1.0" 1 err "RDFC-1.0" \
+  "$CLI" canonicalize "$TMP/tt.nq" --format nquads12
+run_cmd "$CLI" canonicalize "$TMP/tt.nq" --format nquads12
+verdict "canonicalize labels blank nodes inside a triple term" 873 \
+  "$( [ "$RC" -eq 0 ] && grep -qF '<<( _:c14n' <<< "$OUT" && echo 1 || echo 0 )"
+assert_text "owl-consistent triple term -> refusal names OWL 2 Mapping" 1 err "OWL 2 Mapping" \
+  "$CLI" owl-consistent "$TMP/tt.nq" --format nquads12
+run_cmd "$CLI" owl-consistent "$TMP/tt.nq" --format nquads12
+verdict "owl-consistent decides a graph with a triple term" 873 \
+  "$( [ "$RC" -eq 0 ] && [ "$OUT" = true ] && echo 1 || echo 0 )"
+run_cmd "$CLI" owl-entails "$TMP/tt.nq" "$TMP/concl.nq" --format nquads12
+verdict "owl-entails decides a premise with a triple term" 873 \
+  "$( [ "$RC" -eq 0 ] && [ "$OUT" = true ] && echo 1 || echo 0 )"
+
 # --- cl ------------------------------------------------------------------
 IKL='(ist c (that (Dead OBL)))'
 printf '%s' "$IKL" > "$TMP/prop.clif"

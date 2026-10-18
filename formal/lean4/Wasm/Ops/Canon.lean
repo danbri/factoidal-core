@@ -20,6 +20,7 @@ import L4Factoidal.Syntax.NQuads
 import L4Factoidal.RDF.Canonical
 import L4Factoidal.Syntax.NQuadsFast
 import Wasm.Ops.FromDataset
+import L4Factoidal.RDF.Rdf11Terms
 
 namespace L4Wasm.Ops
 
@@ -35,22 +36,52 @@ def canonicalizeParsed (ds : Dataset) : String :=
   else
     okWith [("nquads", .string r.nquads)]
 
-/-- `canonicalizeToNQuads(nquads)`. -/
+/-- The refusal for a dataset with an RDF 1.2 term
+(https://github.com/danbri/factoidal/issues/873). RDFC-1.0 (W3C
+Recommendation, 21 May 2024) is stated on RDF 1.1 datasets (§1, §4); its
+hashing algorithms (§4.6 Hash First Degree Quads, §4.8 Hash N-Degree Quads)
+have no rule for a blank node inside a triple term, and the W3C rdf-canon
+test suite (`tests/manifest.ttl`, 86 rdfc10 cases) has no case with a triple
+term. Design record:
+`docs/designissues/2026-10-18-rdf12-terms-canon-and-closures.md`. -/
+def canonRdf12Refusal : String :=
+  "canonicalizeToNQuads: the input holds an RDF 1.2 triple term or directional "
+  ++ "language-tagged string; RDFC-1.0 (W3C Recommendation 2024, sections 4.6 "
+  ++ "and 4.8) defines canonical labels for RDF 1.1 datasets only and has no rule "
+  ++ "for these terms (https://github.com/danbri/factoidal/issues/873)"
+
+/-- Canonicalise an RDF 1.1 dataset; refuse a dataset with an RDF 1.2 term
+with the message that names the missing rule. -/
+def canonicalizeChecked (ds : Dataset) : String :=
+  if ds.isRdf11 then canonicalizeParsed ds else errJson canonRdf12Refusal
+
+/-- `canonicalizeToNQuads(nquads)`. The text is read in RDF 1.2 mode so that
+an RDF 1.2 term gives the refusal above, not a parse error. -/
 def canonicalizeToNQuads (nq : String) : String :=
-  match parseNQuadsFast nq with
+  match parseNQuadsFast nq .rdf12 with
   | .error e => errJson (fmtParseError e)
-  | .ok ds => canonicalizeParsed ds
+  | .ok ds => canonicalizeChecked ds
 
 /-- `canonicalizeToNQuads` over a dataset the caller parsed (`FromDataset.lean`,
 issue 724): the envelope the text op answers on the dataset's canonical
 N-Quads, for every dataset. -/
 def canonicalizeOf (ds : Dataset) : String :=
-  withOpsDataset .rdf11 ds canonicalizeParsed
+  withOpsDataset .rdf12 ds canonicalizeChecked
 
 theorem canonicalizeOf_eq (ds : Dataset) :
     canonicalizeOf ds = canonicalizeToNQuads (Dataset.toCanonicalNQuads ds) := by
   unfold canonicalizeOf canonicalizeToNQuads
   rw [withOpsDataset_eq]
-  cases parseNQuadsFast (Dataset.toCanonicalNQuads ds) .rdf11 <;> rfl
+  cases parseNQuadsFast (Dataset.toCanonicalNQuads ds) .rdf12 <;> rfl
+
+/-! ### RDF 1.2 input (https://github.com/danbri/factoidal/issues/873)
+
+A triple term, with or without a blank node inside it, gives the refusal; an
+RDF 1.1 dataset is canonicalised as before. -/
+
+#guard canonicalizeToNQuads "<http://example.com/a> <http://example.com/says> <<( <http://example.com/s> <http://www.w3.org/1999/02/22-rdf-syntax-ns#type> <http://example.com/C> )>> .\n<http://example.com/C> <http://www.w3.org/2000/01/rdf-schema#subClassOf> <http://example.com/D> .\n<http://example.com/x> <http://www.w3.org/1999/02/22-rdf-syntax-ns#type> <http://example.com/C> .\n" == errJson canonRdf12Refusal
+#guard canonicalizeToNQuads "<http://example.com/a> <http://example.com/says> <<( _:b1 <http://example.com/p> <http://example.com/o> )>> .\n" == errJson canonRdf12Refusal
+#guard (canonicalizeToNQuads "_:x <http://example.com/p> <http://example.com/o> .\n").startsWith
+  "{\"ok\":true"
 
 end L4Wasm.Ops

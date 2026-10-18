@@ -17,6 +17,7 @@ import L4Factoidal.RDF.Core
 import L4Factoidal.RDF.Graph
 import L4Factoidal.RDF.FastGraph
 import L4Factoidal.RDF.DatasetNormalize
+import L4Factoidal.RDF.Rdf11Terms
 import L4Factoidal.RDF.DatasetNormalizeTests
 import L4Factoidal.RDF.ConciseBoundedDescription
 import L4Factoidal.RDF.ConciseBoundedDescriptionTheorems
@@ -620,6 +621,7 @@ import L4Factoidal.SPARQL.FullText
 import L4Factoidal.SPARQL.UpdateSandbox
 import L4Factoidal.OWL.TestsManifest
 import L4Factoidal.RDFS.RegimeDispatch
+import L4Factoidal.RDFS.TripleTermClosureTests
 import L4Factoidal.RDF.VocabularyAxioms
 import L4Factoidal.Cottas.SortByKey
 import L4Factoidal.Cottas.PresenceBitmap
