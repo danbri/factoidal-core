@@ -1061,6 +1061,21 @@ theorem propAdd_map_mem (g : String → List Ov) (p : String) (v : Ov) :
 
 /-! ### Node objects under construction -/
 
+theorem ei_getElem? {β : Type} (m : HashMap String β) (k a : String) (v : β) :
+    ((m.erase k).insert k v)[a]? = (m.insert k v)[a]? := by
+  rw [HashMap.getElem?_insert, HashMap.getElem?_insert, HashMap.getElem?_erase]
+  by_cases e : (k == a) = true <;> simp [e]
+
+theorem ei_getD {β : Type} (m : HashMap String β) (k a : String) (v d : β) :
+    ((m.erase k).insert k v).getD a d = (m.insert k v).getD a d := by
+  rw [HashMap.getD_insert, HashMap.getD_insert, HashMap.getD_erase]
+  by_cases e : (k == a) = true <;> simp [e]
+
+theorem ei_contains {β : Type} (m : HashMap String β) (k a : String) (v : β) :
+    ((m.erase k).insert k v).contains a = (m.insert k v).contains a := by
+  rw [HashMap.contains_insert, HashMap.contains_insert, HashMap.contains_erase]
+  by_cases e : (k == a) = true <;> simp [e]
+
 structure NodeF where
   blank   : Bool
   types   : Array String
@@ -1122,7 +1137,11 @@ def NodeF.addProp (nf : NodeF) (p : String) (v : Ov) : NodeF :=
   match nf.pvals[p]? with
   | some (a, s) =>
     if s.contains v then nf
-    else { nf with pvals := nf.pvals.insert p (a.push v, s.insert v) }
+    else
+      -- Erase the entry first, so that `a` and `s` are not shared and `push` and
+      -- `insert` change them in place.
+      let m := nf.pvals.erase p
+      { nf with pvals := m.insert p (a.push v, s.insert v) }
   | none =>
     { nf with pkeys := nf.pkeys.push p, pvals := nf.pvals.insert p (#[v], (∅ : HashSet Ov).insert v) }
 
@@ -1149,7 +1168,7 @@ theorem NodeF.addProp_spec (nf : NodeF) (p : String) (v : Ov) (h : nf.Good) :
       · subst e; simp [hg, snocUniqueOv_eq_if, hm]
       · simp [e]
     · have hm : v ∉ a.toList := fun m => hc ((hv v).2 m)
-      simp only [hc, Bool.false_eq_true, if_false]
+      simp only [hc, Bool.false_eq_true, if_false, ei_getElem?, ei_getD, ei_contains]
       refine ⟨by first | rfl | simp, by first | rfl | simp, ?_, ⟨h.types, h.nodup, ?_, ?_⟩⟩
       · apply List.map_congr_left
         intro k _
@@ -1158,14 +1177,14 @@ theorem NodeF.addProp_spec (nf : NodeF) (p : String) (v : Ov) (h : nf.Good) :
         · have : (p == k) = false := by simpa using Ne.symm e
           simp [e, HashMap.getD_insert, this]
       · intro k
-        simp only [HashMap.contains_insert, Bool.or_eq_true, beq_iff_eq, h.keys k]
+        rw [ei_contains]; simp only [HashMap.contains_insert, Bool.or_eq_true, beq_iff_eq, h.keys k]
         constructor
         · rintro (e | m)
           · exact e ▸ hpk
           · exact m
         · intro m; exact Or.inr m
       · intro k a' s' hk w
-        rw [HashMap.getElem?_insert] at hk
+        rw [ei_getElem?, HashMap.getElem?_insert] at hk
         by_cases e : p = k
         · have : (p == k) = true := by simpa using e
           simp only [this, if_true, Option.some.injEq, Prod.mk.injEq] at hk
@@ -1303,7 +1322,10 @@ theorem NmF.ensure_spec (s : NmF) (id : String) (b : Bool) (h : s.Good) :
 /-- Shared step of `updProp` and `updType`: replace the node `id` by `f` of it. -/
 def NmF.upd (s : NmF) (id : String) (f : NodeF → NodeF) : NmF :=
   match s.nodes[id]? with
-  | some nf => { s with nodes := s.nodes.insert id (f nf) }
+  | some nf =>
+    -- Erase the entry first, so that `nf` is not shared and `f` changes it in place.
+    let m := s.nodes.erase id
+    { s with nodes := m.insert id (f nf) }
   | none    => s
 
 theorem NmF.upd_spec (s : NmF) (id : String) (f : NodeF → NodeF) (g : FrNode → FrNode)
@@ -1314,6 +1336,7 @@ theorem NmF.upd_spec (s : NmF) (id : String) (f : NodeF → NodeF) (g : FrNode �
   split
   · rename_i nf hn
     have hg := h.nodes id nf hn
+    simp only [ei_getElem?, ei_getD, ei_contains]
     refine ⟨?_, ⟨?_, ?_⟩⟩
     · apply List.map_congr_left
       intro k hk
@@ -1327,14 +1350,14 @@ theorem NmF.upd_spec (s : NmF) (id : String) (f : NodeF → NodeF) (g : FrNode �
       · have : (id == k) = false := by simpa using Ne.symm e
         simp [HashMap.getD_insert, this, NodeF.toFr, e]
     · intro k
-      simp only [HashMap.contains_insert, Bool.or_eq_true, beq_iff_eq, h.keys k]
+      rw [ei_contains]; simp only [HashMap.contains_insert, Bool.or_eq_true, beq_iff_eq, h.keys k]
       constructor
       · rintro (e | m)
         · rw [← e, ← h.keys id, HashMap.contains_eq_isSome_getElem?, hn]; rfl
         · exact m
       · intro m; exact Or.inr m
     · intro k nf' hk
-      rw [HashMap.getElem?_insert] at hk
+      rw [ei_getElem?, HashMap.getElem?_insert] at hk
       by_cases e : id = k
       · have : (id == k) = true := by simpa using e
         simp only [this, if_true, Option.some.injEq] at hk
@@ -1949,6 +1972,255 @@ theorem collF_eq (M : Memo) (h : MemoInv st cap M) (id : String) (f : Nat) :
   · rfl
 
 end MemoProofs
+
+/-! ### List conversion over lookup functions
+
+`listFromG` and `resolveOvG` are `listFromW` and `resolveOvW` with the node
+lookup, the list test and the compound-literal test passed as functions, so
+that the fast lookups can be put in their place. -/
+
+mutual
+
+def listFromG (look : String → Option FrNode) (coll : String → Nat → Bool)
+    (clc : String → Bool) (clMode : Bool) (acc : List Ov) : String → Nat → List Ov
+  | _,  0        => acc.reverse
+  | id, fuel + 1 =>
+    match look id with
+    | none   => acc.reverse
+    | some n =>
+      match nodePropSingle n rdfFirstIri, nodePropSingle n rdfRestIri with
+      | some fv, some (.ref rt) =>
+        let elem := resolveOvG look coll clc clMode fv fuel
+        if rt == rdfNilIri then (elem :: acc).reverse
+        else listFromG look coll clc clMode (elem :: acc) rt fuel
+      | _, _ => acc.reverse
+
+def resolveOvG (look : String → Option FrNode) (coll : String → Nat → Bool)
+    (clc : String → Bool) (clMode : Bool) : Ov → Nat → Ov
+  | v, 0        => v
+  | v, fuel + 1 =>
+    match v with
+    | .ref x =>
+      if x == rdfNilIri then .lst []
+      else if coll x (fuel + 1) then
+        .lst (listFromG look coll clc clMode [] x fuel)
+      else if clMode && clc x then
+        match look x with
+        | some n => match clValueObject n with
+                    | some j => .val j
+                    | none   => .ref x
+        | none   => .ref x
+      else .ref x
+    | .val j  => .val j
+    | .lst l  => .lst l
+
+end
+
+theorem listFromW_eq_G (g : List FrNode) (refids : List String) (clMode : Bool) :
+    ∀ fuel : Nat,
+      (∀ acc id, listFromW g refids clMode acc id fuel =
+        listFromG (findNode g) (isCollapsible g refids) (isClCollapsible g refids) clMode acc id fuel) ∧
+      (∀ v, resolveOvW g refids clMode v fuel =
+        resolveOvG (findNode g) (isCollapsible g refids) (isClCollapsible g refids) clMode v fuel)
+  | 0 => ⟨fun acc id => by simp [listFromW, listFromG], fun v => by simp [resolveOvW, resolveOvG]⟩
+  | fuel + 1 => by
+    obtain ⟨ihL, ihR⟩ := listFromW_eq_G g refids clMode fuel
+    refine ⟨fun acc id => ?_, fun v => ?_⟩
+    · simp only [listFromW, listFromG]
+      cases findNode g id with
+      | none => rfl
+      | some n =>
+        simp only
+        cases nodePropSingle n rdfFirstIri with
+        | none => rfl
+        | some fv =>
+          cases nodePropSingle n rdfRestIri with
+          | none => rfl
+          | some ov =>
+            cases ov with
+            | ref rt => simp only [ihR, ihL]
+            | val _ => rfl
+            | lst _ => rfl
+    · cases v with
+      | ref x =>
+        simp only [resolveOvW, resolveOvG, ihL]
+      | val _ => rfl
+      | lst _ => rfl
+
+theorem resolveOv_eq_G (g : List FrNode) (refids : List String) (clMode : Bool) (v : Ov)
+    (fuel : Nat) : resolveOv g refids clMode v fuel =
+      resolveOvG (findNode g) (isCollapsible g refids) (isClCollapsible g refids) clMode v fuel := by
+  rw [← (listFromW_eq g refids clMode fuel).2 v]
+  exact (listFromW_eq_G g refids clMode fuel).2 v
+
+def rewriteNodeG (look : String → Option FrNode) (coll : String → Nat → Bool)
+    (clc : String → Bool) (clMode : Bool) (fuel : Nat) (n : FrNode) : FrNode :=
+  { n with props := n.props.map (fun pv =>
+      (pv.1, pv.2.map (fun v => resolveOvG look coll clc clMode v fuel))) }
+
+/-! ### The node sort by `List.mergeSort`
+
+`sortNodes` is the insertion sort `insByKey FrNode.id` of `JSONLD.ToRdf`; on the
+distinct ids of a node map it is `List.mergeSort` (`foldr_insByKey_eq_fast`). -/
+
+theorem insertSortedNode_eq_insByKey (n : FrNode) : ∀ l : List FrNode,
+    insertSortedNode n l = insByKey FrNode.id n l
+  | [] => rfl
+  | h :: tl => by simp only [insertSortedNode, insByKey, insertSortedNode_eq_insByKey n tl]
+
+/-- The node sort used at run time. -/
+def sortM (l : List FrNode) : List FrNode := sortByKeyFast FrNode.id l
+
+theorem sortNodes_eq_sortM (l : List FrNode) : sortNodes l = sortM l := by
+  rw [sortNodes_eq_foldr, sortM, ← foldr_insByKey_eq_fast]
+  congr 1
+  funext n acc
+  exact insertSortedNode_eq_insByKey n acc
+
+#guard (sortM [nodeN "c", nodeN "a", nodeN "b"]).map (·.id) == ["a", "b", "c"]
+#guard (sortM [nodeN "b", nodeN "a", nodeN "b"]).map (·.id) == ["a", "b", "b"]
+#guard (sortM [nodeN "b", nodeN "a"]).map (·.id) != ["b", "a"]
+
+/-! ### Per-graph emission over the indexes -/
+
+structure GIx where
+  look : String → Option FrNode
+  coll : String → Nat → Bool
+  clc  : String → Bool
+
+def clcG (look : String → Option FrNode) (once : String → Bool) (id : String) : Bool :=
+  match look id with
+  | none   => false
+  | some n => isClShape n && once id
+
+def mkIx (once : String → Bool) (g : List FrNode) : GIx :=
+  let fm := firstMap FrNode.id g
+  let look := fun id => fm[id]?
+  let st := stepC look once
+  let cap := graphFuel g
+  let M := memoC st cap (g.map (·.id))
+  ⟨look, collF st cap M, clcG look once⟩
+
+theorem mkIx_spec (g : List FrNode) (refids : List String) (once : String → Bool)
+    (ho : referencedOnce refids = once) :
+    findNode g = (mkIx once g).look ∧ isCollapsible g refids = (mkIx once g).coll ∧
+    isClCollapsible g refids = (mkIx once g).clc := by
+  have hl := findNode_eq_firstMap g
+  refine ⟨hl, ?_, ?_⟩
+  · funext id f
+    rw [isCollapsible_eq_collS, hl, ho]
+    exact (collF_eq _ _ _ (memoC_inv _ _ _) id f).symm
+  · funext id
+    simp only [isClCollapsible, mkIx, clcG, ← ho, ← hl]
+
+def emitNamedIx (ix : GIx) (clMode : Bool) (fuel : Nat) (g : List FrNode) : List Json :=
+  let survivors := g.filter (fun n =>
+    !ix.coll n.id fuel
+    && !(clMode && ix.clc n.id)
+    && (!n.types.isEmpty || !n.props.isEmpty))
+  let rewritten := survivors.map (rewriteNodeG ix.look ix.coll ix.clc clMode fuel)
+  (sortM rewritten).map (fun n => nodeToJson n none)
+
+theorem rewriteNode_eq_G (g : List FrNode) (refids : List String) (clMode : Bool) (fuel : Nat) :
+    rewriteNode g refids clMode fuel =
+      rewriteNodeG (findNode g) (isCollapsible g refids) (isClCollapsible g refids) clMode fuel := by
+  funext n
+  simp only [rewriteNode, rewriteNodeG, resolveOv_eq_G]
+
+theorem emitNamedNodes_eq_ix (g : List FrNode) (refids : List String) (clMode : Bool)
+    (once : String → Bool) (ho : referencedOnce refids = once) :
+    emitNamedNodes g refids clMode = emitNamedIx (mkIx once g) clMode (graphFuel g) g := by
+  obtain ⟨h1, h2, h3⟩ := mkIx_spec g refids once ho
+  simp only [emitNamedNodes, emitNamedIx, rewriteNode_eq_G, sortNodes_eq_sortM]
+  rw [h1, h2, h3]
+
+def emitDefaultFast (dm : List FrNode) (named : List NamedNm) (refids : List String)
+    (clMode : Bool) : List Json :=
+  let cm := countMap refids
+  let once := fun id => cm.getD id 0 == 1
+  let gm := firstMap NamedNm.name named
+  let ix := mkIx once dm
+  let fuel := graphFuel dm
+  let survivors := dm.filter (fun n =>
+    !ix.coll n.id fuel
+    && !(clMode && ix.clc n.id)
+    && (!n.types.isEmpty || !n.props.isEmpty || gm.contains n.id))
+  let rewritten := survivors.map (rewriteNodeG ix.look ix.coll ix.clc clMode fuel)
+  (sortM rewritten).map (fun n =>
+    let gj := match gm[n.id]? with
+              | some ng => some (emitNamedIx (mkIx once ng.map) clMode (graphFuel ng.map) ng.map)
+              | none    => none
+    nodeToJson n gj)
+
+theorem isGraphName_eq_firstMap (named : List NamedNm) (id : String) :
+    isGraphName named id = (firstMap NamedNm.name named).contains id := by
+  rw [HashMap.contains_eq_isSome_getElem?, firstMap_get]
+  unfold isGraphName
+  apply Bool.eq_iff_iff.2
+  rw [List.any_eq_true, List.find?_isSome]
+
+@[csimp] theorem emitDefaultNodes_eq_fast : @emitDefaultNodes = @emitDefaultFast := by
+  funext dm named refids clMode
+  have ho := referencedOnce_eq_countMap refids
+  obtain ⟨h1, h2, h3⟩ := mkIx_spec dm refids _ ho
+  simp only [emitDefaultNodes, emitDefaultFast, rewriteNode_eq_G, sortNodes_eq_sortM,
+    isGraphName_eq_firstMap]
+  rw [h1, h2, h3]
+  apply List.map_congr_left
+  intro n _
+  congr 1
+  unfold lookupGraphMap
+  rw [HashMap.contains_eq_isSome_getElem?, firstMap_get]
+  cases h : List.find? (fun a => a.name == n.id) named with
+  | none => rfl
+  | some ng =>
+    simp only [Option.isSome_some, if_true, Option.map_some]
+    rw [emitNamedNodes_eq_ix ng.map refids clMode _ ho]
+
+/-! ### The entry point, compiled after the `csimp` theorems
+
+A `csimp` theorem changes the code of the definitions compiled after it.
+`fromRdf` and `buildNamedGo` were compiled before the theorems above, so
+`fromRdfLate` and `buildNamedLate` repeat their bodies here, and
+`fromRdf_eq_late` makes every caller use them. -/
+
+def buildNamedLate (opts : Options) : List NamedNm → List NamedGraph → Option (List NamedNm)
+  | acc, []       => some acc.reverse
+  | acc, ng :: tl =>
+    match buildNodemap opts [] ng.graph with
+    | none   => none
+    | some m =>
+      let nm := subjId ng.name
+      buildNamedLate opts ({ name := nm, blank := startsWithUnderscoreColon nm, map := m } :: acc) tl
+
+theorem buildNamedLate_eq (opts : Options) : ∀ (acc : List NamedNm) (l : List NamedGraph),
+    buildNamedLate opts acc l = buildNamedGo opts acc l
+  | _, [] => rfl
+  | acc, ng :: tl => by
+    simp only [buildNamedLate, buildNamedGo]
+    cases buildNodemap opts [] ng.graph with
+    | none => rfl
+    | some m => exact buildNamedLate_eq opts _ tl
+
+def fromRdfLate (ds : Dataset) (opts : Options) : Option Json :=
+  match buildNodemap opts [] ds.default with
+  | none     => none
+  | some dm0 =>
+    match buildNamedLate opts [] ds.named with
+    | none       => none
+    | some named =>
+      let dm := addGraphNames dm0 named
+      let allMaps := dm :: named.map NamedNm.map
+      let refids := mapsRefids allMaps
+      let clMode := opts.rdfDirection == some "compound-literal"
+      some (.array (emitDefaultNodes dm named refids clMode))
+
+@[csimp] theorem fromRdf_eq_late : @fromRdf = @fromRdfLate := by
+  funext ds opts
+  have hb : buildNamed opts ds.named = buildNamedLate opts [] ds.named := by
+    rw [buildNamed_eq_fast, buildNamedFast, buildNamedLate_eq]
+  unfold fromRdf fromRdfLate
+  rw [hb]
 
 end Fast
 
