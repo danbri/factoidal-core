@@ -761,6 +761,18 @@ def parseOptions : Options → List String → Except String (Options × List St
   | o, "--query" :: query => .ok (o, query)
   | _, _ => .error "usage: l4block-id-v3-query SHARD-DIR [--json] [--repeat N] [--base IRI] --query SELECT..."
 
+-- `--base` is read in any position before `--query`; a missing IRI, a missing
+-- `--query` and a non-numeric `--repeat` are refused.
+#guard (match parseOptions {} ["--json", "--base", "http://e/d/", "--repeat", "3", "--query", "ASK", "{}"] with
+  | .ok (o, q) => o.base == some "http://e/d/" && o.json && o.repeatCount == some 3 && q == ["ASK", "{}"]
+  | .error _ => false)
+#guard (match parseOptions {} ["--query", "ASK {}"] with
+  | .ok (o, _) => o.base.isNone && !o.json
+  | .error _ => false)
+#guard (parseOptions {} ["--base"]).toOption.isNone
+#guard (parseOptions {} ["--base", "http://e/"]).toOption.isNone
+#guard (parseOptions {} ["--repeat", "x", "--query", "ASK {}"]).toOption.isNone
+
 def main (args : List String) : IO UInt32 := do
   match args with
   | directory :: rest =>

@@ -272,7 +272,7 @@ test('serve --tdb2 DIR /ds: a TDB2 database in place, read only', { skip: hasJen
     '@prefix : <http://ex/> .\n:a :name "Alice" ; :age 42 .\n:b :name "Bob" .\n' +
     ':g { :c :name "Carol" ; :height 1.75 . }\n')
   execFileSync(join(jenaBin, 'tdb2.tdbloader'), ['--loc', tdbDir, join(dir, 'tdb.trig')], { stdio: 'ignore' })
-  const child = spawn(process.execPath, [cli, 'serve', '--tdb2', tdbDir, '/ds', '--port', '0', '--no-worker'], { stdio: ['ignore', 'pipe', 'pipe'] })
+  const child = spawn(process.execPath, [cli, 'serve', '--tdb2', tdbDir, '/ds', '--port', '0'], { stdio: ['ignore', 'pipe', 'pipe'] })
   try {
     const origin = await new Promise((resolve, reject) => {
       let buf = ''
@@ -302,6 +302,13 @@ test('serve --tdb2 DIR /ds: a TDB2 database in place, read only', { skip: hasJen
       headers: { 'content-type': 'text/turtle' }, body: '<http://ex/y> <http://ex/p> 2 .' })
     assert.equal(r.status, 501)
     assert.equal(await count(origin), 5)
+    // The same database through the library entry point.
+    const lib = await serveStore(tdbDir, { tdb2: true, queryPath: '/ds/sparql', gspPath: '/ds/data' })
+    try {
+      assert.equal(await count(lib.url.replace(/\/ds\/sparql$/, '')), 5)
+    } finally {
+      await lib.close()
+    }
   } finally {
     child.kill()
   }

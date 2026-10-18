@@ -344,6 +344,17 @@ def parseOptions (json : Bool) (base : Option String) :
   | "--query" :: query => .ok (json, base, query)
   | _ => .error "usage: l4block-quad-query COLLECTION-ROOT [--json] [--base IRI] --query SELECT..."
 
+-- `--base` and `--json` are read in either order before `--query`; a missing
+-- IRI and a missing `--query` are refused.
+#guard (match parseOptions false none ["--base", "http://e/d/", "--json", "--query", "ASK", "{}"] with
+  | .ok (json, base, q) => json && base == some "http://e/d/" && q == ["ASK", "{}"]
+  | .error _ => false)
+#guard (match parseOptions false none ["--query", "ASK {}"] with
+  | .ok (json, base, _) => !json && base.isNone
+  | .error _ => false)
+#guard (parseOptions false none ["--base"]).toOption.isNone
+#guard (parseOptions false none ["--base", "http://e/"]).toOption.isNone
+
 def main (args : List String) : IO UInt32 := do
   match args with
   | directory :: rest =>
