@@ -1979,7 +1979,6 @@ structure ChildFrame where
   s : Chars
   posAfter : Nat
   refPos : Nat
-  acc : List Node
   flags : RefFlags
   fuel : Nat
   /-- The size of the replacement text read in place of the reference. -/
@@ -2008,7 +2007,7 @@ def parseChildrenW (ents : EntityTable) (atts : List AttDecl) (frames : List Chi
       if pos < fr.size then
         .err "an entity's replacement text does not parse as content (WFC: Parsed Entity)" fr.refPos
       else
-        parseChildrenW ents atts frs fr.s fr.posAfter (acc ++ fr.acc)
+        parseChildrenW ents atts frs fr.s fr.posAfter acc
           ({ flags with entityRef := true }.merge fr.flags) notes fr.fuel
   | fuel + 1 =>
     if pos ≥ s.size || (charAt s pos == '<' && pos + 1 < s.size && charAt s (pos + 1) == '/') then
@@ -2018,7 +2017,7 @@ def parseChildrenW (ents : EntityTable) (atts : List AttDecl) (frames : List Chi
         if pos < fr.size then
           .err "an entity's replacement text does not parse as content (WFC: Parsed Entity)" fr.refPos
         else
-          parseChildrenW ents atts frs fr.s fr.posAfter (acc ++ fr.acc)
+          parseChildrenW ents atts frs fr.s fr.posAfter acc
             ({ flags with entityRef := true }.merge fr.flags) notes fr.fuel
     else if charAt s pos == '<' then
       if pos + 1 < s.size then
@@ -2047,9 +2046,9 @@ def parseChildrenW (ents : EntityTable) (atts : List AttDecl) (frames : List Chi
       | some (txt, posAfter) =>
           let farr : Chars := txt.toList.toArray
           parseChildrenW ents atts
-            ({ s := s, posAfter := posAfter, refPos := pos, acc := acc, flags := flags,
+            ({ s := s, posAfter := posAfter, refPos := pos, flags := flags,
                fuel := fuel, size := farr.size } :: frames)
-            farr 0 [] {} notes fuel
+            farr 0 acc {} notes fuel
       | none =>
       match parseTextContent ents s pos [] (s.size + 1) with
       | .err m p => .err m p
@@ -2061,7 +2060,7 @@ def parseChildrenW (ents : EntityTable) (atts : List AttDecl) (frames : List Chi
             if pos < fr.size then
               .err "an entity's replacement text does not parse as content (WFC: Parsed Entity)" fr.refPos
             else
-              parseChildrenW ents atts frs fr.s fr.posAfter (acc ++ fr.acc)
+              parseChildrenW ents atts frs fr.s fr.posAfter acc
                 ({ flags with entityRef := true }.merge fr.flags) notes fr.fuel
         else
           let (rf, undecl) := scanRefs ents s pos pos' (pos' - pos + 1)
@@ -2145,64 +2144,73 @@ end
 /-- What the waiting frames do with the result of the replacement text
 that is being read: an error ends the parse; otherwise **WFC: Parsed
 Entity** asks that the whole replacement text was read, and the first
-frame continues with the replacement text's nodes added. -/
+frame continues with the replacement text's nodes added. `base` is the
+part of `parseChildrenW`'s accumulator that the waiting frames read before
+the replacement text (in reverse order): `parseChildrenW` keeps one
+accumulator for the replacement text and the frames, so a frame that
+continues adds nothing to it (https://github.com/danbri/factoidal/issues/872;
+until 2026-10-18 each frame kept its own accumulator and the frame that
+continued appended the nodes of the replacement text to it, a cost that grew
+with the nodes read in all deeper entities). -/
 def resumeC (ents : EntityTable) (atts : List AttDecl) :
-    List ChildFrame → PResult (List Node × RefFlags × Notes) →
+    List ChildFrame → List Node → PResult (List Node × RefFlags × Notes) →
       PResult (List Node × RefFlags × Notes)
-  | [], r => r
-  | _ :: _, .err m p => .err m p
-  | fr :: frs, .ok (nodes, fl2, notes2) q =>
+  | _, _, .err m p => .err m p
+  | [], base, .ok (nodes, fl2, notes2) q => .ok ((nodes.reverse ++ base).reverse, fl2, notes2) q
+  | fr :: frs, base, .ok (nodes, fl2, notes2) q =>
       if q < fr.size then
         .err "an entity's replacement text does not parse as content (WFC: Parsed Entity)" fr.refPos
       else
-        parseChildrenW ents atts frs fr.s fr.posAfter (nodes.reverse ++ fr.acc)
+        parseChildrenW ents atts frs fr.s fr.posAfter (nodes.reverse ++ base)
           ({ fl2 with entityRef := true }.merge fr.flags) notes2 fr.fuel
 
 theorem resumeC_err (ents : EntityTable) (atts : List AttDecl) (frames : List ChildFrame)
-    (m : String) (p : Nat) : resumeC ents atts frames (.err m p) = .err m p := by
+    (base : List Node) (m : String) (p : Nat) :
+    resumeC ents atts frames base (.err m p) = .err m p := by
   cases frames <;> rfl
 
 /-- `resumeC` on the result `parseChildren` returns where it stops: this is
 the code `parseChildrenW` runs at the same place. -/
 theorem resumeC_exit (ents : EntityTable) (atts : List AttDecl) (frames : List ChildFrame)
-    (acc : List Node) (flags : RefFlags) (notes : Notes) (pos : Nat) :
-    resumeC ents atts frames (.ok (acc.reverse, flags, notes) pos) =
+    (base acc : List Node) (flags : RefFlags) (notes : Notes) (pos : Nat) :
+    resumeC ents atts frames base (.ok (acc.reverse, flags, notes) pos) =
       match frames with
-      | [] => .ok (acc.reverse, flags, notes) pos
+      | [] => .ok ((acc ++ base).reverse, flags, notes) pos
       | fr :: frs =>
         if pos < fr.size then
           .err "an entity's replacement text does not parse as content (WFC: Parsed Entity)" fr.refPos
         else
-          parseChildrenW ents atts frs fr.s fr.posAfter (acc ++ fr.acc)
+          parseChildrenW ents atts frs fr.s fr.posAfter (acc ++ base)
             ({ flags with entityRef := true }.merge fr.flags) notes fr.fuel := by
   cases frames <;> simp only [resumeC, List.reverse_reverse]
 
 theorem resumeC_nil (ents : EntityTable) (atts : List AttDecl)
-    (r : PResult (List Node × RefFlags × Notes)) : resumeC ents atts [] r = r := rfl
+    (r : PResult (List Node × RefFlags × Notes)) : resumeC ents atts [] [] r = r := by
+  rcases r with ⟨⟨nodes, fl, nt⟩, q⟩ | ⟨m, p⟩ <;> simp [resumeC]
 
 theorem resumeC_cons_ok (ents : EntityTable) (atts : List AttDecl) (fr : ChildFrame)
-    (frs : List ChildFrame) (nodes : List Node) (fl2 : RefFlags) (notes2 : Notes) (q : Nat) :
-    resumeC ents atts (fr :: frs) (.ok (nodes, fl2, notes2) q) =
+    (frs : List ChildFrame) (base nodes : List Node) (fl2 : RefFlags) (notes2 : Notes) (q : Nat) :
+    resumeC ents atts (fr :: frs) base (.ok (nodes, fl2, notes2) q) =
       if q < fr.size then
         .err "an entity's replacement text does not parse as content (WFC: Parsed Entity)" fr.refPos
       else
-        parseChildrenW ents atts frs fr.s fr.posAfter (nodes.reverse ++ fr.acc)
+        parseChildrenW ents atts frs fr.s fr.posAfter (nodes.reverse ++ base)
           ({ fl2 with entityRef := true }.merge fr.flags) notes2 fr.fuel := rfl
 
 /-- The worklist pair equals the readable pair: `parseElementW` IS
-`parseElement`, and `parseChildrenW` with a worklist is `parseChildren`
-followed by `resumeC`. Proved by the mutual functional induction of
-`parseChildren` and `parseElement`. -/
+`parseElement`, and `parseChildrenW` with a worklist, from the accumulator
+`acc ++ base`, is `parseChildren` from `acc` followed by `resumeC`. Proved by
+the mutual functional induction of `parseChildren` and `parseElement`. -/
 theorem parseChildrenW_eq (ents : EntityTable) (atts : List AttDecl) :
-    (∀ s pos acc flags notes fuel, ∀ frames,
-      parseChildrenW ents atts frames s pos acc flags notes fuel =
-        resumeC ents atts frames (parseChildren ents atts s pos acc flags notes fuel)) ∧
+    (∀ s pos acc flags notes fuel, ∀ frames base,
+      parseChildrenW ents atts frames s pos (acc ++ base) flags notes fuel =
+        resumeC ents atts frames base (parseChildren ents atts s pos acc flags notes fuel)) ∧
     (∀ s pos notes fuel,
       parseElementW ents atts s pos notes fuel = parseElement ents atts s pos notes fuel) := by
   apply parseChildren.mutual_induct ents atts
-    (motive_1 := fun s pos acc flags notes fuel => ∀ frames,
-      parseChildrenW ents atts frames s pos acc flags notes fuel =
-        resumeC ents atts frames (parseChildren ents atts s pos acc flags notes fuel))
+    (motive_1 := fun s pos acc flags notes fuel => ∀ frames base,
+      parseChildrenW ents atts frames s pos (acc ++ base) flags notes fuel =
+        resumeC ents atts frames base (parseChildren ents atts s pos acc flags notes fuel))
     (motive_2 := fun s pos notes fuel =>
       parseElementW ents atts s pos notes fuel = parseElement ents atts s pos notes fuel)
   all_goals intros
@@ -2212,7 +2220,8 @@ theorem parseChildrenW_eq (ents : EntityTable) (atts : List AttDecl) :
   all_goals simp_all (config := {zetaDelta := true}) only
     [resumeC_exit, resumeC_err, resumeC_nil, resumeC_cons_ok, ↓reduceIte, Bool.false_eq_true,
      decide_true, decide_false, Bool.and_true, Bool.or_false, Bool.and_false, Bool.false_and,
-     Bool.true_or, Bool.or_true]
+     Bool.true_or, Bool.or_true, List.cons_append, List.append_assoc, List.nil_append,
+     List.append_nil]
 
 /-- The compiler runs `parseElementW` wherever `parseElement` is called
 below (the document element in `parseXMLNotes`). -/
@@ -2232,8 +2241,8 @@ markup entity that is referenced directly from the content of the document eleme
 @[csimp] theorem parseChildren_eq_parseChildrenFromStart :
     @parseChildren = @parseChildrenFromStart := by
   funext ents atts s pos acc flags notes fuel
-  have h := (parseChildrenW_eq ents atts).1 s pos acc flags notes fuel []
-  rw [resumeC_nil] at h
+  have h := (parseChildrenW_eq ents atts).1 s pos acc flags notes fuel [] []
+  rw [resumeC_nil, List.append_nil] at h
   exact h.symm
 
 /-! ## `[28] doctypedecl` and the internal subset -/
