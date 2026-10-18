@@ -47,9 +47,9 @@
 // (https://github.com/danbri/factoidal/issues/644).
 
 import {
-  StoreHostError, appendSyncAtSize, openCollection, readWhole
+  StoreHostError, appendSyncAtSize, listNames, openCollection, readWhole
 } from '../store-host/index.mjs'
-import { joinPath, requireChildName } from '../store-host/paths.mjs'
+import { baseName, joinPath, requireChildName } from '../store-host/paths.mjs'
 import { hexOfBytes, loadEngine } from './engine.mjs'
 
 /** The ops this host needs from the engine. */
@@ -57,6 +57,9 @@ export const SERVE_OPS = [
   'storeServeKeys', 'storeServeOpen', 'storeServeRequest', 'storeServeCommit',
   'storeServeClose'
 ]
+
+/** The extra ops `serve --tdb2` needs. */
+export const TDB2_SERVE_OPS = ['tdb2ServeKeys', 'tdb2ServeOpen']
 
 /** A failure of this host, as opposed to an answer of the engine.
  *  `unknownOp` is set when the loaded module does not carry the ops. */
@@ -182,6 +185,81 @@ export async function openServedStore (root, options = {}) {
   }
 }
 
+/**
+ * Open a Jena TDB2 database directory for serving, read only
+ * (https://github.com/danbri/factoidal/issues/834).
+ *
+ * Lists the directory, asks the engine which generation is current and which
+ * files it reads (`tdb2ServeKeys`), reads them, and hands every byte to
+ * `tdb2ServeOpen` in one region. The engine decodes the B+trees and the node
+ * table (`formal/lean4/L4Factoidal/Tdb2/Read.lean`); this host decodes nothing.
+ * The returned object has the shape of `openServedStore`'s, and its engine
+ * answers every request that would change the dataset with 501, so `append`
+ * is never reached.
+ *
+ * @param {string} root the TDB2 database directory (or one Data-NNNN directory)
+ * @param {object} [options] as `openServedStore`
+ */
+export async function openServedTdb2 (root, options = {}) {
+  const engine = options.engine !== undefined ? options.engine : await loadEngine()
+  let named
+  try {
+    named = engine.call('tdb2ServeKeys', [baseName(root), JSON.stringify(listNames(root))])
+  } catch (error) {
+    if (isUnknownOp(error)) {
+      throw new ServeHostError(
+        'the loaded l4factoidal WebAssembly module does not carry the tdb2Serve ops ' +
+        '(rebuild formal/lean4/Wasm)', { unknownOp: true })
+    }
+    throw error
+  }
+  const generationDir = named.generation === '' ? root : joinPath(root, requireChildName(named.generation, 'generation'))
+  const chunks = []
+  const files = []
+  let offset = 0
+  for (const key of named.keys) {
+    const bytes = readWhole(joinPath(generationDir, requireChildName(key, 'TDB2 file')))
+    files.push({ key, offset, len: bytes.length })
+    chunks.push(bytes)
+    offset += bytes.length
+  }
+  for (const key of named.optional) {
+    const bytes = readOptional(joinPath(generationDir, requireChildName(key, 'TDB2 file')))
+    if (bytes === null) continue
+    files.push({ key, offset, len: bytes.length })
+    chunks.push(bytes)
+    offset += bytes.length
+  }
+  const config = {}
+  if (typeof options.queryPath === 'string') config.queryPath = options.queryPath
+  if (typeof options.gspPath === 'string') config.gspPath = options.gspPath
+  const info = engine.callBlobIO('tdb2ServeOpen',
+    [JSON.stringify(files), JSON.stringify(config)], concatenate(chunks)).envelope
+  const handle = info.handle
+  return {
+    engine,
+    info,
+    root,
+    generation: named.generation,
+    generationDir,
+    request (bytes) {
+      const answer = engine.callBlobIO('storeServeRequest', [handle], bytes)
+      return { envelope: answer.envelope, bytes: answer.bytes }
+    },
+    commit (pending, outcome) {
+      const answer = engine.callBlobIO('storeServeCommit', [handle, pending, outcome],
+        new Uint8Array(0))
+      return { envelope: answer.envelope, bytes: answer.bytes }
+    },
+    append () {
+      return 'a TDB2 database is served read only'
+    },
+    close () {
+      try { engine.call('storeServeClose', [handle]) } catch (_error) { /* already gone */ }
+    }
+  }
+}
+
 /** The bytes of a 500 response for a failure of this host. */
 function hostFailure (message) {
   const body = new TextEncoder().encode(`factoidal serve: ${message}\n`)
@@ -258,13 +336,16 @@ function serveConnection (served, socket, onError) {
  *
  * @param {string} root the collection root
  * @param {object} [options] as `openServedStore`, plus `port`, `host`,
- *   `onError`
+ *   `onError`, and `tdb2: true` when `root` is a Jena TDB2 database directory
+ *   (served read only: https://github.com/danbri/factoidal/issues/834)
  * @returns {Promise<{server: object, served: object, port: number,
  *                    origin: string, close: Function}>}
  */
 export async function listen (root, options = {}) {
   const net = await import('node:net')
-  const served = await openServedStore(root, options)
+  const served = options.tdb2 === true
+    ? await openServedTdb2(root, options)
+    : await openServedStore(root, options)
   const onError = typeof options.onError === 'function'
     ? options.onError
     : (error) => { console.error(`factoidal serve: ${error && error.message ? error.message : error}`) }

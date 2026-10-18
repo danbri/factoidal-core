@@ -142,7 +142,10 @@ def lean_store(nq, qfile, named, work):
     if p.returncode != 0:
         return {"error": "activate: " + (p.stderr.strip().splitlines() or ["?"])[-1]}
     tool = "l4block-quad-query" if named else "l4block-id-v3-query"
-    p = run([str(BIN / tool), str(store), "--json", "--query", Path(qfile).read_text()])
+    # The query base IRI is the query file's IRI, as for the reference evaluator
+    # (SPARQL 1.1 section 4.1.1.1; https://github.com/danbri/factoidal/issues/835).
+    p = run([str(BIN / tool), str(store), "--json", "--base", f"file://{Path(qfile).resolve()}",
+             "--query", Path(qfile).read_text()])
     shutil.rmtree(store, ignore_errors=True)
     j = last_json(p.stdout)
     if p.returncode != 0 or j is None:

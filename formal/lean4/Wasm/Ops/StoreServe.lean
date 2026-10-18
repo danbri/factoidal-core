@@ -40,6 +40,25 @@ here or in the library modules this calls:
        naming why it did not. Only after "ok" does the served view change.
   storeServeClose(handle) -> {"ok":true}
 
+A Jena TDB2 database is served in place, read only
+(https://github.com/danbri/factoidal/issues/834):
+
+  tdb2ServeKeys(baseName, childrenJson)
+    -> {"ok":true,"generation":"Data-0002"|"","keys":[...],"optional":["journal.jrnl"]}
+       `baseName` is the last component of the database path and
+       `childrenJson` a JSON array of the names in that directory. The engine
+       picks the current generation (`Tdb2.pickGeneration`; the empty string
+       means the path is itself a generation directory) and names the files of
+       it the host must read.
+  tdb2ServeOpen(filesJson, configJson) + blob
+    -> as storeServeOpen with "layout":"tdb2","writeScope":"read-only".
+       `filesJson` is the `{"key","offset","len"}` windows of the files
+       `tdb2ServeKeys` named (and `journal.jrnl` when it exists). A non-empty
+       journal is refused: Jena has not replayed it.
+  The handle then answers storeServeRequest and storeServeClose as above; a
+  request that would change the dataset answers 501, so storeServeCommit is
+  never reached.
+
 A change is two calls because the response to an update must not say "done"
 before the batch is durable, and the append is a file effect the engine
 cannot perform. The host performs it and reports; the engine decides the
@@ -57,6 +76,8 @@ import Wasm.Ops.Clock
 import Wasm.Ops.ExtFns
 import L4Factoidal.HTTP.Wire
 import L4Factoidal.SPARQL.StoreEndpoint
+import L4Factoidal.Tdb2.Read
+import L4Factoidal.Syntax.NQuadsFast
 
 namespace L4Wasm.Ops
 
@@ -189,7 +210,7 @@ def storeServeOpen (manifestHex artifactsJson stateJson configJson : String)
     -- An IBK3 generation is read as the native readers read it: the
     -- default-graph entries of the log, and no others.
     let entries := match scope with
-      | .allGraphs => entries
+      | .allGraphs | .readOnly => entries
       | .defaultGraph => entries.filter fun e => match e with
           | .add _ none | .remove _ none | .clear none => true
           | _ => false
@@ -212,6 +233,73 @@ def storeServeOpen (manifestHex artifactsJson stateJson configJson : String)
       , ("writeScope", .string scope.name)
       , ("deltaBatches", .number (toString batches.length))
       , ("logBytes", .number (toString log.size))
+      , ("graphs", .number (toString view.ds.named.length))
+      , ("queryPath", .string config.queryPath)
+      , ("gspPath", .string config.gspPath) ])
+
+/-- `tdb2ServeKeys(baseName, childrenJson)`. -/
+def tdb2ServeKeys (baseName childrenJson : String) : String :=
+  match parseJson childrenJson with
+  | .error e => errJson s!"tdb2ServeKeys: childrenJson parse error: {e}"
+  | .ok (.array items) =>
+    let names := items.filterMap fun j => match j with
+      | .string n => some n
+      | _ => none
+    if names.length != items.length then
+      errJson "tdb2ServeKeys: childrenJson must be an array of strings"
+    else
+    match L4Factoidal.Tdb2.pickGeneration (baseName.startsWith "Data-") names with
+    | .error e => errJson s!"tdb2ServeKeys: {e}"
+    | .ok generation =>
+      okWith [ ("generation", .string generation)
+             , ("keys", .array (L4Factoidal.Tdb2.databaseFileNames.map Json.string))
+             , ("optional", .array [Json.string "journal.jrnl"]) ]
+  | .ok _ => errJson "tdb2ServeKeys: childrenJson must be a JSON array"
+
+/-- The dataset a TDB2 database denotes, from its files. A non-empty journal
+is refused: Jena has not replayed it, so the index files are not the dataset. -/
+def tdb2DatasetOf (files : List (String × ByteArray)) : Except String Dataset := do
+  match files.find? (·.1 == "journal.jrnl") with
+  | some (_, j) =>
+    if j.size != 0 then
+      throw "journal.jrnl is not empty; open the database with Jena once to replay it"
+  | none => pure ()
+  let db ← L4Factoidal.Tdb2.databaseOfFiles files
+  let text ← L4Factoidal.Tdb2.databaseNQuads db
+  match L4Factoidal.Syntax.parseNQuadsFast text with
+  | .error e => throw s!"the decoded quads do not parse: {e.msg}"
+  | .ok ds => pure ds
+
+/-- `tdb2ServeOpen(filesJson, configJson)`. The dataset is every quad of the
+database (the same N-Quads text as `l4factoidal tdb2-dump`), served read only. -/
+def tdb2ServeOpen (filesJson configJson : String) (blob : ByteArray) : IO String := do
+  match serveConfigOf .readOnly configJson, artifactSources "tdb2ServeOpen" filesJson with
+  | .error e, _ | _, .error e => pure (errJson e)
+  | .ok config, .ok sources =>
+  match resolveSources "tdb2ServeOpen" sources blob with
+  | .error e => pure (errJson e)
+  | .ok files =>
+  match tdb2DatasetOf files with
+  | .error e => pure (errJson s!"tdb2ServeOpen: {e}")
+  | .ok ds =>
+  match openLog none none with
+  | .error e => pure (errJson s!"tdb2ServeOpen: {e}")
+  | .ok (log, _) =>
+    let view := View.of ds
+    let rows := ds.default.length + (ds.named.map (·.graph.length)).foldl (· + ·) 0
+    let n ← serveCounter.modifyGet fun n => (n + 1, n + 1)
+    let handle := s!"v{n}"
+    let startMillis ← unixMillisNow
+    serveTable.modify (·.insert handle
+      { layout := "tdb2", wireVersion := 0, rows, config, view, log, startMillis })
+    pure (okWith
+      [ ("handle", .string handle)
+      , ("layout", .string "tdb2")
+      , ("wireVersion", .number "0")
+      , ("rows", .number (toString rows))
+      , ("writeScope", .string WriteScope.readOnly.name)
+      , ("deltaBatches", .number "0")
+      , ("logBytes", .number "0")
       , ("graphs", .number (toString view.ds.named.length))
       , ("queryPath", .string config.queryPath)
       , ("gspPath", .string config.gspPath) ])
