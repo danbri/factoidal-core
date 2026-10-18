@@ -451,6 +451,9 @@ repaired (docs/designissues/2026-10-10-lean-vs-fstar-performance.md):
                    `pass via-canonical`; 52,800 quads 161 s (the issue). After: same labels
                    0.15, 0.33 and 0.70 s at 13,200 / 26,400 / 52,800; other labels 0.22, 0.41
                    and 0.80 s, `pass`
+  iso-noniso-search  the same compare, 2,200 quads, 100 blank nodes, against a relabelled
+                   copy with one literal changed: at most 1 s CPU. Expected failure,
+                   https://github.com/danbri/factoidal/issues/877 (9.4 s on 2026-10-18)
   startup          process start: `l4factoidal version` must take at most
                    STARTUP_BUDGET (20 ms) of CPU time, minimum of 15 runs
                    (305 million instructions and 43 ms before the fixtures were
@@ -532,6 +535,7 @@ XFAIL: dict[str, str] = {
     "sbm11-pack-rdfxml-memory": "https://github.com/danbri/factoidal/issues/838",
     "sbm11-pack-jsonld-memory": "https://github.com/danbri/factoidal/issues/839",
     "jsonld-write": "https://github.com/danbri/factoidal/issues/712",
+    "iso-noniso-search": "https://github.com/danbri/factoidal/issues/877",
     "jsonld-write-fanout-stack": "https://github.com/danbri/factoidal/issues/712",
     "jsonld-write-wide-stack": "https://github.com/danbri/factoidal/issues/712",
     "jsonld-write-subjects-stack": "https://github.com/danbri/factoidal/issues/712",
@@ -1344,7 +1348,32 @@ def iso_time_row(rid):
     return doubling_check(pts, "CPU")
 
 
+def iso_noniso_row(rid):
+    """`l4sbm11-w3c compare` of 2,200 quads with 100 blank nodes against a relabelled copy with
+    one literal changed (not isomorphic): at most ISO_NONISO_BUDGET seconds of CPU. Expected
+    failure, https://github.com/danbri/factoidal/issues/877: the verdict comes from the
+    bijection search, which runs to its work budget (9.4 s on 2026-10-18)."""
+    if not SBM11_W3C_BIN.exists():
+        raise MeasurementError(f"{SBM11_W3C_BIN} not built (cd formal/lean4 && lake build l4sbm11-w3c)")
+    n, b = 2200, 100
+    exp = fixture(f"iso-exp-{n}-{b}.nq", lambda: iso_nq(n, b, "a", False))
+    act = fixture(f"iso-noniso-{n}-{b}.nq",
+                  lambda: iso_nq(n, b, "z", True).replace('"v0"', '"v0x"', 1))
+    t = bl.run_once([str(SBM11_W3C_BIN), "compare", str(exp), str(act), "--expected", "nq",
+                     "--mode", "rdf11"], CAP)
+    if t["status"] == "cap":
+        raise MeasurementError(f"{rid}: over the {CAP} s cap")
+    first = t["first_line"].strip()
+    if not first.startswith("fail"):
+        raise MeasurementError(f"{rid}: the command printed {first!r}, not a failure")
+    return t["cpu"] <= ISO_NONISO_BUDGET, (f"n={n} B={b} not isomorphic: {t['cpu']:.3f} s CPU "
+                                           f"(budget {ISO_NONISO_BUDGET} s)")
+
+
+ISO_NONISO_BUDGET = 1.0
+
 ISO_TIME_ROWS = {
+    "iso-noniso-search": (iso_noniso_row, None, None),
     "iso-shared-bnodes": (iso_time_row, "a", lambda n: 500),
     "iso-shared-bnodes-relabel": (iso_time_row, "z", lambda n: 500),
     "iso-many-bnodes-relabel": (iso_time_row, "z", lambda n: n // 4),
