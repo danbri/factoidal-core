@@ -20,6 +20,11 @@ https://github.com/danbri/factoidal/issues/789).
       (https://github.com/danbri/factoidal/issues/859).
   l4sbm11 dump-ids GEN PERM
       Every row as `s p o g` ids (the quad order, whatever the permutation).
+  l4sbm11 graphs GEN
+      The named graphs of the generation, one name per line (N-Triples term
+      syntax), in id order: the graph list GNL1 (empty named graphs included),
+      or, for a generation that has no list, the graph names of its quads. It
+      reads the base of a generation, as `dump` does.
   --verify merkle|none   (query, serve, scan, count, dump, dump-ids, export)
       How reads are checked (https://github.com/danbri/factoidal/issues/796,
       `Sbm11Gen.Verify`). `merkle`: each read is widened to the 65,536-byte
@@ -66,7 +71,9 @@ block decodes, its rows are strictly increasing between its PRM1 first and
 last row, and every frame is the frame the packer's encoder writes for its
 column; every id has a known tag, a dictionary id is below the term count, a
 predicate is an IRI, a subject is an IRI or a blank node, a graph is the
-default graph or an IRI or a blank node; the four permutations have the
+default graph or an IRI or a blank node; the graph list GNL1, when the
+generation has one, decodes (`GraphList.decodeAt`), each of its ids is a
+dictionary id of an IRI or a blank node, and the graph of every quad is in it; the four permutations have the
 manifest's row count and the same quad digest (sum and xor of a 64-bit hash
 of each quad); and the exact check that they hold the same quads: the rows of
 POS, SPO and OSP re-keyed to PSO rows, bucketed on disk by groups of PSO
@@ -80,6 +87,7 @@ import Harness.Sbm11Query
 import Harness.Sbm11Compact
 import Harness.Sbm11PermCheck
 import Harness.Sbm11Export
+import Std.Data.HashSet
 
 open L4Factoidal.RDF
 open L4Factoidal.Storage.Sbm11
@@ -148,6 +156,9 @@ def runStats (dir : String) : IO UInt32 := do
   IO.println s!"layout: {m.layout}"
   IO.println s!"source-bytes: {m.sourceBytes} source-sha256: {hex m.sourceSha256}"
   IO.println s!"quads: {m.quads} terms: {m.terms} dictionary-pages: {g.dictHdr.pageCount}"
+  match ← readGraphList g with
+  | some ids => IO.println s!"named-graphs: {ids.size} (GNL1)"
+  | none => IO.println "named-graphs: no graph list (the named graphs are the graph names of the quads)"
   let mut total := 0
   for a in m.artifacts do
     IO.println s!"artifact {a.role}: {a.file} bytes={a.bytes} chunks={a.merkle.chunkCount} sha256={hex a.sha256}"
@@ -262,6 +273,25 @@ def runDump (dir permS : String) (idsOnly : Bool) (verify? : Option Verify) : IO
   report g t0 s!"dump perm={permS} rows={n}"
   pure 0
 
+/-! ## graphs -/
+
+/-- The named graphs of the base generation, one name per line in N-Triples term
+    syntax, in id order: the GNL1 list (empty graphs included), or, for a
+    generation that has no list, the graph names of its quads. Like `dump`, it reads
+    the base of a generation, not its log. -/
+def runGraphs (dir : String) (verify? : Option Verify) : IO UInt32 := do
+  let t0 ← IO.monoNanosNow
+  let g ← openGen (← verifyFor dir verify?) dir
+  let (ids, source) ← baseNamedGraphs g
+  let cache ← IO.mkRef ({} : Std.HashMap Nat (Array ByteArray))
+  let mut text := ""
+  for x in ids do
+    let t ← termOfIdLimit g cache 4096 false x
+    text := text ++ (← ok "N-Triples" (L4Factoidal.Syntax.Term.toNTriples .rdf12 t)) ++ "\n"
+  IO.print text
+  report g t0 s!"graphs count={ids.size} from={source}"
+  pure 0
+
 /-! ## canon -/
 
 def runCanon (source : String) (opts : Sbm11Pack.SourceOpts) : IO UInt32 := do
@@ -343,8 +373,34 @@ def verifyGenIn (dir tmp : String) : IO Nat := do
       keys := keys + 1
   if keys != m.terms then
     fails := fails + 1; IO.eprintln s!"FAIL: {keys} dictionary keys, the manifest says {m.terms}"
+  -- the graph list (GNL1): every id names a blank node or an IRI of the dictionary
+  let listRead : Except String (Option (Array Nat)) ← try pure (.ok (← readGraphList g)) catch e => pure (.error (toString e))
+  let mut listed : Std.HashSet Nat := {}
+  let mut hasList := false
+  match listRead with
+  | .error e => fails := fails + 1; IO.eprintln s!"FAIL: {e}"
+  | .ok none => pure ()
+  | .ok (some ids) =>
+    hasList := true
+    let cache ← IO.mkRef ({} : Std.HashMap Nat (Array ByteArray))
+    for x in ids do
+      listed := listed.insert x
+      if !idOk m.terms x then
+        if fails < 5 then IO.eprintln s!"FAIL: graph list id {x}: an unknown tag or a rank past the dictionary"
+        fails := fails + 1
+      else
+        let t? : Except String Term ← try pure (.ok (← termOfIdLimit g cache 4096 false x)) catch e => pure (.error (toString e))
+        match t? with
+        | .ok (.iri _) | .ok (.bnode _) => pure ()
+        | .ok _ =>
+          if fails < 5 then IO.eprintln s!"FAIL: graph list id {x} is not an IRI or a blank node"
+          fails := fails + 1
+        | .error e =>
+          if fails < 5 then IO.eprintln s!"FAIL: graph list id {x}: {e}"
+          fails := fails + 1
   let t2 ← IO.monoNanosNow
   IO.eprintln s!"sbm11-verify: dictionary keys={keys}: failures={fails} ms={ms t1 t2}"
+  IO.eprintln s!"sbm11-verify: graph list: {if hasList then s!"{listed.size} named graphs (GNL1)" else "none (the named graphs are the graph names of the quads)"}"
   -- the permutations: digests, and the buckets of the exact check (lemma
   -- L3b, `Sbm11PermCheck`, `PermSet.perms_same`)
   let groupRows ← Harness.Sbm11PermCheck.groupRowsOf
@@ -381,6 +437,11 @@ def verifyGenIn (dir tmp : String) : IO Nat := do
           let (s, p, o, gg) := ofPerm ps.perm c.c0[j]! c.c1[j]! c.c2[j]! c.g[j]!
           if let some e := checkPosition m.terms s p o gg then
             if fails < 5 then IO.eprintln s!"FAIL {name} block {i} row {j}: {e}"
+            fails := fails + 1
+          -- the graph of every quad is in the graph list, when the generation has one (the
+          -- permutations hold the same quads: PSO is enough)
+          if hasList && ps.perm == 0 && gg != 0 && !listed.contains gg then
+            if fails < 5 then IO.eprintln s!"FAIL {name} block {i} row {j}: graph {gg} is not in the graph list"
             fails := fails + 1
           d := d.add (quadDigest s p o gg)
           if ps.perm != 0 then
@@ -462,7 +523,8 @@ def runReseal (dir : String) : IO UInt32 := do
 
 def usage : String :=
   "usage: l4sbm11 stats GEN | scan GEN PERM [KEY...] [--limit N] [--ids] | count GEN PERM [KEY...]\n" ++
-  "       | dump GEN [PERM] | dump-ids GEN PERM | canon SOURCE [--format F] [--base IRI] | verify GEN | activate ROOT NAME\n" ++
+  "       | dump GEN [PERM] | dump-ids GEN PERM | graphs GEN | canon SOURCE [--format F] [--base IRI] | verify GEN\n" ++
+  "       | activate ROOT NAME\n" ++
   "       | export GEN --format F [--out FILE] [--graph default|all|IRI] [--prefix LABEL=IRI]...\n" ++
   "       | query GEN (SPARQL | --file Q.rq) [--base IRI] [--explain] [--repeat N] [--reference-render] [--reference]\n" ++
   "         [--sparql12]\n" ++
@@ -483,7 +545,7 @@ def main (args0 : List String) : IO UInt32 := do
       | .ok r => pure r
       | .error e => IO.eprintln s!"l4sbm11: {e}"; return 2
     let verifyUsed := match args with
-      | c :: _ => ["query", "serve", "scan", "count", "dump", "dump-ids", "compact", "export"].contains c
+      | c :: _ => ["query", "serve", "scan", "count", "dump", "dump-ids", "graphs", "compact", "export"].contains c
       | [] => false
     if verify?.isSome && !verifyUsed then
       IO.eprintln "l4sbm11: --verify applies to query, serve, scan, count, dump, dump-ids, compact and export"
@@ -495,6 +557,7 @@ def main (args0 : List String) : IO UInt32 := do
     | ["dump", dir] => runDump dir "spo" false verify?
     | ["dump", dir, perm] => runDump dir perm false verify?
     | ["dump-ids", dir, perm] => runDump dir perm true verify?
+    | ["graphs", dir] => runGraphs dir verify?
     | "canon" :: src :: rest =>
       match Sbm11Pack.parseOpts rest {} with
       | some o => runCanon src o.source

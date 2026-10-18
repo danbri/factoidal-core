@@ -159,7 +159,7 @@ not written yet.
 | SBM11 packer phases 1 and 2: the global dictionary `dict.gdv1` + `dict.gdx1` (stage 2, no query path yet) | `l4sbm11-dict-pack SOURCE OUTDIR [--format F] [--base IRI] [--run-terms N] [--workers K]` (SOURCE in any of the six syntaxes, read through the source layer as `l4sbm11-pack` reads it); check every key and every source term: `--check SOURCE OUTDIR [--exact]`; string-to-id by `pread`: `--lookup-bench OUTDIR [N] [ABSENT]` |
 | SBM11 packer phases 1 to 3: dictionary, PSO/POS/SPO/OSP blocks, manifest (stage 3) | `l4sbm11-pack SOURCE OUTDIR [--format F] [--base IRI] [--workers K] [--run-terms N] [--block-rows B] [--sort-rows M]` (SOURCE in any of the six syntaxes; section "The source layer"); `--phase2-only` stops after the term-run merge and keeps `dict.gdv1`, `dict.gdx1` and the remap files (`run-W-J.tmp.remap`), to time phase 2 and compare its output byte for byte (`tests/sbm11/phase2_scaling.sh`, https://github.com/danbri/factoidal/issues/804) |
 | SBM11 query (stage 4) | `l4sbm11 query GEN ('SPARQL' \| --file Q.rq) [--base IRI] [--explain] [--repeat N] [--reference-render] [--reference] [--verify merkle\|none] [--threads N] [--sip auto\|always\|off]`; `l4sbm11 serve GEN [--verify merkle\|none]` (default `none` on a generation `CURRENT` names, else `merkle`); decoder checks `l4sbm11 prm-check GEN` (PRM1 decoders, and the issue 805 range search against decoding the whole file on 385 keys per PRM1 file, over bytes, `pread` and Merkle chunks), `l4sbm11 frame-check GEN`; environment: `SBM11_PAGES` (dictionary page cache, default 2,048 pages), `SBM11_TASK_PAGES` (a scan task's own page cache, default 1,024), `SBM11_MIN_RANGE_ROWS` (fewest estimated rows per block range, default 8,192; 0 divides every scan, for tests) |
-| SBM11 reader | `l4sbm11 stats GEN`; `scan GEN PERM [KEY...] [--limit N] [--ids]` (KEY an IRI `<...>` or an id); `count GEN PERM [KEY...]`; `dump GEN [PERM]`; `dump-ids GEN PERM`; `export GEN --format F [--out FILE] [--graph default\|all\|IRI] [--prefix LABEL=IRI]...` (the dataset in any of the six syntaxes; section "The source layer", subsection "Export"); `canon SOURCE [--format F] [--base IRI]`; `verify GEN`; `activate ROOT NAME`; `reseal GEN` (test support) |
+| SBM11 reader | `l4sbm11 stats GEN`; `scan GEN PERM [KEY...] [--limit N] [--ids]` (KEY an IRI `<...>` or an id); `count GEN PERM [KEY...]`; `dump GEN [PERM]`; `dump-ids GEN PERM`; `graphs GEN` (the named graphs of the base, empty ones included: the GNL1 list, or the graph names of the quads when the generation has no list); `export GEN --format F [--out FILE] [--graph default\|all\|IRI] [--prefix LABEL=IRI]...` (the dataset in any of the six syntaxes; section "The source layer", subsection "Export"); `canon SOURCE [--format F] [--base IRI]`; `verify GEN`; `activate ROOT NAME`; `reseal GEN` (test support) |
 | Convert a dataset between syntaxes with the Lean serialisers (test data, comparisons) | `l4source-convert SOURCE OUT [--from F] [--to G] [--base IRI]` |
 | Query an activated quad generation | `l4block-quad-query COLLECTION-ROOT --query SELECT...` |
 | Superseded formats (BLK0, IBK1, IBK2) | `l4block-pack`, `l4block-id-pack`, `l4block-id-v2-pack` and their `*-file-query` / `*-diff` partners |
@@ -1039,7 +1039,8 @@ Format registry rows (wire version 11):
 | GDV1, GDX1 | `dict.gdv1`, `dict.gdx1` | landed (stage 2); key class 7, triple terms, 2026-10-14 | `Storage/Sbm11/Dict.lean`, `TermKey.lean` |
 | PRB1 | `<perm>.prb1` | landed (stage 3); column codecs 0 constant, 1 raw, 2 delta; 3 zstd reserved and refused | `Storage/Sbm11/Column.lean`, `Block.lean` |
 | PRM1 | `<perm>.prm1` | landed (stage 3) | `Storage/Sbm11/Block.lean` |
-| SBM11 manifest | `manifest.sbm11` (`"SBM0"` version 11) | landed (stage 3) | `Storage/Sbm11/Manifest.lean` |
+| SBM11 manifest | `manifest.sbm11` (`"SBM0"` version 11) | landed (stage 3); the roles of stage 3, or the same roles with `GNL1` after the dictionary, 2026-10-15 | `Storage/Sbm11/Manifest.lean` |
+| GNL1 | `graphs.gnl1` | landed 2026-10-15 (https://github.com/danbri/factoidal/issues/855, https://github.com/danbri/factoidal/issues/856): the dictionary ids of all named graphs of the dataset, a graph with no triple included, strictly increasing, tag 1 (blank node) or 2 (IRI); only in a generation that has a named graph | `Storage/Sbm11/GraphList.lean`, `GraphListTheorems.lean` |
 
 ## The source layer: the store takes a dataset, not a syntax (2026-10-14)
 
@@ -1493,6 +1494,16 @@ producers of RDF quads, and a file is one producer.
    stays version 1, byte for byte (`appendPlan?_v1`; `cmp` against the
    `cf55723e` writer). The shared term codec of BLK0, IBK1, IBK2, PTD1 and
    TLI1 was not extended; the delta log has its own.
+   Coordinator decision, 2026-10-15
+   (https://github.com/danbri/factoidal/issues/855): the graph list GNL1 kept
+   the names SBM11 and `"SBM0"` version 11. A generation that has a named
+   graph has an eleventh file and an eleventh manifest role; one that has no
+   named graph has the ten files of stage 3, byte for byte (`cmp` against the
+   packer of `e185eb00`). Measured: the `l4sbm11` of `e185eb00` refuses the
+   manifest with eleven roles at `verify`, `activate`, `stats`, `dump`,
+   `query`, `serve` and `compact` (exit 1), and its `update` refuses every
+   request that reads the generation. Record: section 12 of
+   [`docs/designissues/2026-10-12-sbm11-stage5.md`](../../docs/designissues/2026-10-12-sbm11-stage5.md).
 8. A change that moves a syntax to another reader needs a timing against the
    old route on the same bytes, not only a byte comparison. On 2026-10-14 the
    source layer gave `.nt` files to the strict N-Triples reader. Every

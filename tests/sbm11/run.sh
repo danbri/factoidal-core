@@ -423,13 +423,17 @@ run_q() {
 # every other query, path=ids
 want_path() { case $1 in ref-*) echo path=reference ;; *) echo path=ids ;; esac; }
 ARTS="dict.gdv1 dict.gdx1 pso.prb1 pso.prm1 pos.prb1 pos.prm1 spo.prb1 spo.prm1 osp.prb1 osp.prm1"
-# same_artifacts <dirA> <dirB>: every artifact and its .merkle sidecar byte-identical
+# same_artifacts <dirA> <dirB>: every artifact and its .merkle sidecar byte-identical; the
+# graph list (graphs.gnl1, a generation that has a named graph) is in both or in neither
 same_artifacts() {
-  for a in $ARTS; do
+  local a n=0
+  for a in $ARTS graphs.gnl1; do
+    if [ "$a" = graphs.gnl1 ] && [ ! -e "$1/$a" ] && [ ! -e "$2/$a" ]; then continue; fi
     cmp -s "$1/$a" "$2/$a" || { echo "$a differs"; return 1; }
     cmp -s "$1/$a.merkle" "$2/$a.merkle" || { echo "$a.merkle differs"; return 1; }
+    n=$((n + 1))
   done
-  echo "10 artifacts and their .merkle sidecars byte-identical"
+  echo "$n artifacts and their .merkle sidecars byte-identical"
 }
 
 echo "=== (h) delta overlay on the gate fixture"

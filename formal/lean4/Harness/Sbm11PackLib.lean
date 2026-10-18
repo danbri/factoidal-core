@@ -88,6 +88,7 @@ import Harness.RunHeap
 import L4Factoidal.RDF.SourceJsonLd
 import L4Factoidal.RDF.QuadSource
 import L4Factoidal.HDT.QuadSource
+import L4Factoidal.Storage.Sbm11.GraphList
 import L4Factoidal.Qlvr.Sort
 import L4Factoidal.Qlvr.CmpBytesFast
 import Std.Data.HashMap
@@ -493,6 +494,12 @@ def RunReader.nextRow (r : RunReader) : IO (Option QRow × RunReader) := do
   let i := r.pos
   return (some ⟨wordAt b i, wordAt b (i + 8), wordAt b (i + 16), wordAt b (i + 24)⟩, { r with pos := i + 32 })
 
+/-- The next 8-byte word of a word run (the graph id runs of phase 3a). -/
+def RunReader.nextWord (r : RunReader) : IO (Option UInt64 × RunReader) := do
+  if r.base + r.pos ≥ r.size then return (none, r)
+  let r ← r.ensure 8
+  return (some (wordAt r.buf r.pos), { r with pos := r.pos + 8 })
+
 structure Writer where
   gdv : IO.FS.Handle
   ent : IO.FS.Handle
@@ -637,9 +644,35 @@ def spillPerms (outDir : String) (bufs : Array (Array QRow)) (runs : Array (Arra
     | .error e => throw e
   pure runs
 
-def phase3a (outDir : String) (batches : Array Batch) (sortRowsMax : Nat) : IO (Array (Array String)) := do
+/-- Sort the graph ids of a buffer, drop the repeats, and write them as a word run
+    (8 bytes each). -/
+def spillGraphIds (outDir : String) (ids : Array UInt64) (runs : Array String) : IO (Array String) := do
+  if ids.isEmpty then return runs
+  let sorted := mergeSortBy ids (· ≤ ·)
+  let mut b := ByteArray.emptyWithCapacity (8 * sorted.size)
+  let mut last : Option UInt64 := none
+  for x in sorted do
+    if last != some x then
+      b := pushW b x
+      last := some x
+  let path := s!"{outDir}/graphids-{runs.size}.tmp"
+  IO.FS.writeBinFile path b
+  pure (runs.push path)
+
+/-- What phase 3a leaves: the row runs of each permutation, and the runs of the
+    named graph ids (each sorted, without repeats). -/
+structure Phase3a where
+  runs : Array (Array String)
+  graphRuns : Array String
+
+def phase3a (outDir : String) (batches : Array Batch) (sortRowsMax : Nat) : IO Phase3a := do
   let mut bufs : Array (Array QRow) := #[#[], #[], #[], #[]]
   let mut runs : Array (Array String) := #[#[], #[], #[], #[]]
+  -- the graph ids of the quads (not 0, the default graph); a run of quads of one graph
+  -- adds its id once
+  let mut gids : Array UInt64 := #[]
+  let mut lastG : UInt64 := 0
+  let mut graphRuns : Array String := #[]
   for b in batches do
     let remapBytes ← IO.FS.readBinFile (b.termRun ++ ".remap")
     let mut remap : Array UInt64 := Array.mkEmpty b.terms
@@ -668,15 +701,86 @@ def phase3a (outDir : String) (batches : Array Batch) (sortRowsMax : Nat) : IO (
         bufs := bufs.modify 1 (·.push (toPerm 1 s p o g))
         bufs := bufs.modify 2 (·.push (toPerm 2 s p o g))
         bufs := bufs.modify 3 (·.push (toPerm 3 s p o g))
+        if g != 0 && g != lastG then
+          gids := gids.push g
+          lastG := g
         i := i + 32
       if bufs[0]!.size ≥ sortRowsMax then
         runs ← spillPerms outDir bufs runs
         bufs := #[#[], #[], #[], #[]]
+      if gids.size ≥ sortRowsMax then
+        graphRuns ← spillGraphIds outDir gids graphRuns
+        gids := #[]
+        lastG := 0
     IO.FS.removeFile b.quadRun
     IO.FS.removeFile (b.termRun ++ ".remap")
   if !bufs[0]!.isEmpty then
     runs ← spillPerms outDir bufs runs
-  pure runs
+  graphRuns ← spillGraphIds outDir gids graphRuns
+  pure { runs, graphRuns }
+
+/-! ## The graph list (GNL1) -/
+
+/-- Merge the graph id runs (each sorted, without repeats) into the list of the
+    named graphs, and write `graphs.gnl1` when the list is not empty
+    (`Storage/Sbm11/GraphList.lean`): the magic, the count and the ids. The merge
+    holds one buffer for each run, so the memory does not grow with the number of
+    graphs. The file is read back and decoded by `GraphList.decodeAt` (the decoder
+    the readers run, `GraphListTheorems.decodeAt_eq`), which checks the order and the
+    tags, and its count is compared. Returns the number of named graphs (0: no file). -/
+def writeGraphList (outDir : String) (graphRuns : Array String) : IO Nat := do
+  let mut readers : Array RunReader := #[]
+  let mut heads : Array (Option UInt64) := #[]
+  let mut total := 0
+  for path in graphRuns do
+    let sz ← fileSize path
+    total := total + sz / 8
+    let (hd, r) ← RunReader.nextWord { path, size := sz, base := 0, buf := .empty, pos := 0,
+                                        chunk := max 65536 ((8 <<< 20) / max 1 graphRuns.size) }
+    readers := readers.push r
+    heads := heads.push hd
+  let wordsPath := s!"{outDir}/graphids-merged.tmp"
+  let h ← IO.FS.Handle.mk wordsPath .write
+  let mut buf := ByteArray.emptyWithCapacity (1 <<< 20)
+  let mut count := 0
+  let mut prev : Option UInt64 := none
+  let cmp : UInt64 → UInt64 → Ordering := fun a b => compare a b
+  let mut tree := Harness.RunHeap.build cmp heads
+  for _ in [0:total + 1] do
+    let k := Harness.RunHeap.winner tree
+    match heads[k]?.bind id with
+    | none => break
+    | some x =>
+      if prev != some x then
+        buf := pushW buf x
+        count := count + 1
+        prev := some x
+        if buf.size ≥ (1 <<< 20) then
+          h.write buf
+          buf := ByteArray.emptyWithCapacity (1 <<< 20)
+      let (hd, r) ← readers[k]!.nextWord
+      readers := readers.set! k r
+      heads := heads.set! k hd
+      tree := Harness.RunHeap.replay cmp heads tree k
+  h.write buf
+  h.flush
+  for path in graphRuns do IO.FS.removeFile path
+  if count == 0 then
+    IO.FS.removeFile wordsPath
+    return 0
+  let listPath := s!"{outDir}/{GraphList.fileName}"
+  IO.FS.withFile listPath .write fun hl => do
+    hl.write (listBytes (GraphList.magic ++ put64 count))
+    copyInto hl wordsPath
+    hl.flush
+  IO.FS.removeFile wordsPath
+  match GraphList.decodeAt (← IO.FS.readBinFile listPath) with
+  | some ids =>
+    if ids.size != count then
+      throw (IO.userError s!"{listPath}: {ids.size} graph ids decoded, {count} written")
+  | none =>
+    throw (IO.userError s!"{listPath}: the graph list does not decode (an id that is not of a blank node or an IRI, or ids out of order)")
+  pure count
 
 /-! ## Phase 3b: blocks -/
 
@@ -805,6 +909,9 @@ structure PackReport where
   pages : Nat
   records : Nat
   outs : Array PermOut
+  /-- the named graphs that GNL1 lists (0: the generation has no named graph and
+      no GNL1 file) -/
+  graphs : Nat
   genBytes : Nat
   manifestBytes : Nat
   merkleBytes : Nat
@@ -823,11 +930,13 @@ def packBatches (outDir : String) (batches : Array Batch) (blockRows sortRowsMax
   let t1 ← IO.monoNanosNow
   let (terms, pages, records) ← phase2 outDir batches
   let t2 ← IO.monoNanosNow
-  let runs ← phase3a outDir batches sortRowsMax
+  let p3 ← phase3a outDir batches sortRowsMax
+  let runs := p3.runs
   let t3 ← IO.monoNanosNow
   let mut ptasks := #[]
   for p in [0:4] do
     ptasks := ptasks.push (← IO.asTask (phase3b outDir p runs[p]! blockRows) .dedicated)
+  let graphCount ← writeGraphList outDir p3.graphRuns
   let mut outs : Array PermOut := #[]
   for t in ptasks do
     match ← IO.wait t with
@@ -840,7 +949,8 @@ def packBatches (outDir : String) (batches : Array Batch) (blockRows sortRowsMax
       throw (IO.userError s!"{permNamesArr[p]!}: {outs[p]!.rows} rows or digest differ from pso ({outs[0]!.rows})")
   -- hash every file and write the manifest
   let mut artifacts : Array Artifact := #[]
-  for role in roles do
+  -- a generation that has a named graph lists them (GNL1); one that has none has no list
+  for role in (if graphCount > 0 then rolesWithGraphs else roles) do
     let file := fileOfRole role
     let path := s!"{outDir}/{file}"
     let (sha, leaves, ref) ← hashFile path
@@ -858,7 +968,7 @@ def packBatches (outDir : String) (batches : Array Batch) (blockRows sortRowsMax
   let manifestBytes ← fileSize s!"{outDir}/{manifestName}"
   let mut merkleBytes := 0
   for a in artifacts do merkleBytes := merkleBytes + (← fileSize s!"{outDir}/{a.file}.merkle")
-  pure { terms, pages, records, outs, genBytes, manifestBytes, merkleBytes,
+  pure { terms, pages, records, outs, graphs := graphCount, genBytes, manifestBytes, merkleBytes,
          phase2Ns := t2 - t1, phase3aNs := t3 - t2, phase3bNs := t4 - t3, hashNs := t5 - t4 }
 
 /-- Where the quads of a pack came from, as the manifest records it: a length in
@@ -996,7 +1106,7 @@ def runPack (source outDir : String) (workers runTerms blockRows sortRowsMax : N
   let t5 ← IO.monoNanosNow
   let r := out.report
   let outs := r.outs
-  IO.println s!"sbm11-pack: source={source} format={ps.label} source-bytes={size} workers={out.workers} quads-parsed={out.phase1.quads} quads={outs[0]!.rows} duplicate-rows={outs[0]!.dups} terms={r.terms} pages={r.pages} batches={out.phase1.batches.size} run-records={r.records} inline-occurrences={out.phase1.inlineOcc} block-rows={blockRows}{ps.note}"
+  IO.println s!"sbm11-pack: source={source} format={ps.label} source-bytes={size} workers={out.workers} quads-parsed={out.phase1.quads} quads={outs[0]!.rows} duplicate-rows={outs[0]!.dups} terms={r.terms} pages={r.pages} named-graphs={r.graphs} batches={out.phase1.batches.size} run-records={r.records} inline-occurrences={out.phase1.inlineOcc} block-rows={blockRows}{ps.note}"
   printPermLines "sbm11-pack" outs
   IO.println s!"sbm11-pack: generation-bytes={r.genBytes} manifest-bytes={r.manifestBytes} merkle-bytes={r.merkleBytes} total-on-disk={r.genBytes + r.manifestBytes + r.merkleBytes}"
   IO.println s!"sbm11-pack: phase1-ms={ms t0 out.phase1End} phase2-ms={ms 0 r.phase2Ns} phase3a-ms={ms 0 r.phase3aNs} phase3b-ms={ms 0 r.phase3bNs} hash-manifest-ms={ms 0 r.hashNs} total-ms={ms t0 t5} peak-rss={← vmHWM}"

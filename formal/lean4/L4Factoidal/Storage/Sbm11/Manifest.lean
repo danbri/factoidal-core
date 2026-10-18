@@ -5,7 +5,10 @@ https://github.com/danbri/factoidal/issues/789).
 
 A generation of wire version 11 is ten files: the dictionary (`dict.gdv1`,
 `dict.gdx1`, stage 2) and one PRM1 and one PRB1 file per permutation (PSO,
-POS, SPO, OSP). The manifest names each file by its role and commits its
+POS, SPO, OSP). A generation that has a named graph has an eleventh file, the
+list of its named graphs (`graphs.gnl1`, `GraphList`; 2026-10-15,
+https://github.com/danbri/factoidal/issues/855): the manifest names the files
+`roles` or the files `rolesWithGraphs`, and nothing else. The manifest names each file by its role and commits its
 length, its SHA-256 and its Merkle chunk root (`ChunkedArtifact.Ref`,
 65,536-byte chunks, the commitment the SBM10 manifest uses). A positioned
 read of a block is admitted chunk by chunk against that root
@@ -29,12 +32,24 @@ A string is a u32 byte count and UTF-8 (`ShardManifest.encodeString`).
 ## Admission
 
 `manifestAdmitted`: the layout is `sbm11Layout`; both digests are 32 bytes;
-the roles are exactly `roles`, in that order; every file name is a single
+the roles are exactly `roles` or exactly `rolesWithGraphs`, in that order
+(`rolesAdmitted`); every file name is a single
 safe path component; every field inside its width; every Merkle reference
 is valid for the artifact's length. `decodeManifest` checks the same
 predicate on what it read. The round trip
 `ManifestTheorems.decodeManifest_encodeManifest?` has
 `encodeManifest? m = some bytes` as its only hypothesis.
+
+## The graph list and the readers before it
+
+A manifest without GNL1 is byte for byte what the packer wrote before the
+graph list existed, and it keeps its meaning: the named graphs of the
+generation are the graph names of its quads. A generation that has a named
+graph, empty or not, has GNL1, and its manifest names eleven files. A reader
+built before the graph list refuses that manifest (its `rolesAdmitted` was
+`== roles`): it does not read the generation, so it cannot drop an empty named
+graph without a message. Skill `shardborough-storage`, format rule 7; the
+measurement is in section 12 of `docs/designissues/2026-10-12-sbm11-stage5.md`.
 
 No `sorry`, no user `axiom`, no `native_decide`, no `partial`.
 -/
@@ -52,16 +67,27 @@ def sbm11Layout : String := "sbm11-gdv1-gdx1-prm1-prb1-pso-pos-spo-osp-merkle-v1
 
 def permNames : List String := ["pso", "pos", "spo", "osp"]
 
-/-- The roles of a stage 3 generation, in manifest order. -/
+/-- The roles of a stage 3 generation, in manifest order: a generation that has
+    no named graph. -/
 def roles : List String :=
   ["GDV1", "GDX1", "PRM1-PSO", "PRB1-PSO", "PRM1-POS", "PRB1-POS", "PRM1-SPO", "PRB1-SPO",
    "PRM1-OSP", "PRB1-OSP"]
+
+/-- The roles of a generation that has a named graph: `roles` with the graph
+    list (`GNL1`) after the dictionary. -/
+def rolesWithGraphs : List String :=
+  ["GDV1", "GDX1", "GNL1", "PRM1-PSO", "PRB1-PSO", "PRM1-POS", "PRB1-POS", "PRM1-SPO", "PRB1-SPO",
+   "PRM1-OSP", "PRB1-OSP"]
+
+/-- The role lists a manifest may have. -/
+def rolesAdmitted (rs : List String) : Bool := rs == roles || rs == rolesWithGraphs
 
 /-- The file name the packer gives each role. -/
 def fileOfRole (role : String) : String :=
   match role with
   | "GDV1" => "dict.gdv1"
   | "GDX1" => "dict.gdx1"
+  | "GNL1" => "graphs.gnl1"
   | "PRM1-PSO" => "pso.prm1"
   | "PRB1-PSO" => "pso.prb1"
   | "PRM1-POS" => "pos.prm1"
@@ -100,7 +126,7 @@ def artifactAdmitted (a : Artifact) : Bool :=
 def manifestAdmitted (m : Manifest) : Bool :=
   m.layout == sbm11Layout && fitsU32 m.layout.toUTF8.size && decide (m.sourceBytes < two64) &&
     m.sourceSha256.size == 32 && decide (m.quads < two64) && decide (m.terms < two64) &&
-    m.artifacts.map (·.role) == roles && m.artifacts.all artifactAdmitted
+    rolesAdmitted (m.artifacts.map (·.role)) && m.artifacts.all artifactAdmitted
 
 def artifactBytes (a : Artifact) : List UInt8 :=
   encodeString a.role ++ encodeString a.file ++ put64 a.bytes ++ a.sha256.toList ++
@@ -180,5 +206,8 @@ def decodeManifest (bs : List UInt8) : Option Manifest :=
 
 def artifactOf? (m : Manifest) (role : String) : Option Artifact :=
   m.artifacts.find? (·.role == role)
+
+/-- Whether the generation lists its named graphs (GNL1). -/
+def hasGraphList (m : Manifest) : Bool := (artifactOf? m "GNL1").isSome
 
 end L4Factoidal.Storage.Sbm11.Manifest

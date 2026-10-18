@@ -78,10 +78,16 @@ theorem decodeManifest_encodeManifest? (m : Manifest) (bs : List UInt8)
     obtain ⟨⟨⟨⟨⟨⟨⟨_, hlay⟩, hsb⟩, hsha⟩, hq⟩, ht⟩, hroles⟩, hall⟩ := hadm'
     have h32 : sha.toList.length = 32 := by rw [length_toList]; exact hsha
     have hcount : artifacts.length < 4294967296 := by
-      have := congrArg List.length hroles
-      simp only [List.length_map] at this
-      have h10 : roles.length = 10 := rfl
-      omega
+      simp only [rolesAdmitted, Bool.or_eq_true, beq_iff_eq] at hroles
+      rcases hroles with hroles | hroles
+      · have := congrArg List.length hroles
+        simp only [List.length_map] at this
+        have h10 : roles.length = 10 := rfl
+        omega
+      · have := congrArg List.length hroles
+        simp only [List.length_map] at this
+        have h11 : rolesWithGraphs.length = 11 := rfl
+        omega
     have he := getArtifactsGo_artifacts artifacts [] [] (fun a ha => List.all_eq_true.mp hall a ha)
     simp only [List.append_nil, List.reverse_nil, List.nil_append] at he
     have hf : decodeFields (put64 sourceBytes ++ (sha.toList ++ (put64 quads ++ (put64 terms ++

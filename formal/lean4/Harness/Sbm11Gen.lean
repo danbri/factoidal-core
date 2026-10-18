@@ -13,6 +13,7 @@ import L4Factoidal.Storage.Sbm11.Block
 import L4Factoidal.Storage.Sbm11.Manifest
 import L4Factoidal.Storage.Sbm11.Dict
 import L4Factoidal.Storage.Sbm11.TermId
+import L4Factoidal.Storage.Sbm11.GraphList
 import L4Factoidal.Storage.BlockMerkle
 import L4Factoidal.Storage.ChunkedArtifact
 import L4Factoidal.RDF.Sink
@@ -20,7 +21,9 @@ import L4Factoidal.Crypto.SHA2
 import Harness.PosixRangeIO
 import Harness.NativeHasher
 import Harness.GenerationPointer
+import L4Factoidal.Qlvr.Sort
 import Std.Data.HashMap
+import Std.Data.HashSet
 
 namespace Harness.Sbm11Gen
 
@@ -574,6 +577,55 @@ def idOfTerm (g : Gen) (t : Term) : IO (Option Nat) := do
     | some k =>
       let (r, _) ← ok "lookup" (← (Dict.lookupM (gdxFetch g) (gdvFetch g) g.dictHdr k).run)
       pure (r.map fun r => dictCode k.data.toList r)
+
+/-! ## The named graphs (GNL1) -/
+
+/-- The ids of the named graphs that GNL1 lists, read whole and checked as every
+    read of `g` is (`verifiedRead`: under `merkle` chunk by chunk against the
+    manifest's root), decoded by `GraphList.decodeAt` (proved equal to the
+    specification decoder, `GraphListTheorems.decodeAt_eq`). `none`: the
+    generation has no GNL1 file, and its named graphs are the graph names of its
+    quads (`Storage/Sbm11/Manifest.lean`, "The graph list and the readers before
+    it"). -/
+def readGraphList (g : Gen) : IO (Option (Array Nat)) := do
+  match artifactOf? g.manifest "GNL1" with
+  | none => pure none
+  | some a =>
+    let path := s!"{g.dir}/{a.file}"
+    let leaves ← loadLeaves g.verify g.fileBytes path a.merkle
+    let cache ← newChunkCache g.verify a.merkle
+    let bytes ← verifiedRead g path a.merkle leaves cache 0 a.bytes
+    match GraphList.decodeAt bytes with
+    | some ids => pure (some ids)
+    | none => throw (IO.userError s!"{path}: does not decode as a GNL1 graph list")
+
+/-- The distinct graph ids other than the default graph (0) of the quads of the
+    base generation, in increasing order: one pass over the PSO permutation. The
+    named graphs of a generation that has no GNL1 file. -/
+def graphIdsOfQuads (g : Gen) : IO (Array Nat) := do
+  let ps ← match g.perms[0]? with
+    | some ps => pure ps
+    | none => throw (IO.userError "no permutation 0")
+  let mut seen : Std.HashSet Nat := {}
+  for i in [0:ps.metas.size] do
+    let m := ps.metas[i]!
+    -- only the graph frame of the block is read and decoded
+    let off := m.offset + m.len0 + m.len1 + m.len2
+    let bytes ← verifiedRead g ps.prbPath ps.prbRef ps.leaves ps.cache off m.len3
+    match Column.decodeColumnAt bytes m.rows 0 with
+    | some (col, _) =>
+      for x in col do
+        if x != 0 then seen := seen.insert x
+    | none => throw (IO.userError s!"{ps.prbPath}: the graph frame of block {i} does not decode")
+  pure (L4Factoidal.Qlvr.mergeSortBy seen.toArray (· ≤ ·))
+
+/-- The named graphs of the base generation: the GNL1 list, or the graph ids of
+    the quads of a generation that has no list. The second component names the
+    source: `list` or `quads`. -/
+def baseNamedGraphs (g : Gen) : IO (Array Nat × String) := do
+  match ← readGraphList g with
+  | some ids => pure (ids, "list")
+  | none => pure (← graphIdsOfQuads g, "quads")
 
 /-- The N-Quads line of a quad of terms, without its line break: the line of the
     serialiser layer (`Sink.nquadsLineOfTerms`), RDF 1.2 syntax. -/
