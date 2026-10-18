@@ -452,6 +452,18 @@ repaired (docs/designissues/2026-10-10-lean-vs-fstar-performance.md):
                    4.6 and 4.8 for the two doublings; 22.2 for 4x input), 0.467 s, 2.69 s and 11.4 s
                    for N-Quads (5.8 and 4.2; 24.4); after (load average 8.5): 0.139 s, 0.292 s and
                    0.566 s (2.1 and 1.9; 4.1), 0.148 s, 0.271 s and 0.562 s (1.8 and 2.1; 3.8).
+  ntriples-long-line-memory, nquads-long-line-memory
+                   peak resident memory of the count of the same files at 2 MB and 8 MB, per
+                   input byte: at most 8. Expected failures,
+                   https://github.com/danbri/factoidal/issues/874: the reader holds the line as a
+                   `List Char`, 34 bytes per input byte.
+  rdfxml-entity-chain-time
+                   `l4factoidal parse --format rdfxml` of a document whose `rdf:RDF` content is a
+                   chain of n markup entities (the document of the stack case
+                   `xml-markup-chain-top`), n = 2,500, 5,000 and 10,000, user CPU time; the parse
+                   prints n. Expected failure, https://github.com/danbri/factoidal/issues/872:
+                   2026-10-18, 0.151 s, 0.548 s and 2.469 s (ratios 3.6 and 4.5 per doubling;
+                   16.3 for 4x levels; one run of 20,000 levels: 15.6 s).
   iso-shared-bnodes, iso-shared-bnodes-relabel, iso-many-bnodes-relabel
                    `l4sbm11-w3c compare` (RDF dataset isomorphism, `Dataset.isomorphicOutcome`)
                    of a generated N-Quads dataset with blank nodes shared by many quads
@@ -555,6 +567,9 @@ XFAIL: dict[str, str] = {
     "sbm11-export-rdfxml-memory": "https://github.com/danbri/factoidal/issues/846",
     "sbm11-export-jsonld-memory": "https://github.com/danbri/factoidal/issues/847",
     "sbm11-replay-insert-time": "https://github.com/danbri/factoidal/issues/879",
+    "rdfxml-entity-chain-time": "https://github.com/danbri/factoidal/issues/872",
+    "ntriples-long-line-memory": "https://github.com/danbri/factoidal/issues/874",
+    "nquads-long-line-memory": "https://github.com/danbri/factoidal/issues/874",
 }
 # A run longer than this is not repeated: the minimum of several runs only
 # removes timer and load noise, which is small against a run this long.
@@ -985,6 +1000,12 @@ PARSE_MEMORY_ROWS = {
     # `80dc8ffc` (the document as `List Char`, then the element tree), 12.3
     # after the repair.
     "parse-rdfxml-memory": (25000, bl.gen_rdfxml, ["--format", "rdfxml", "--out", "nquads"], 16.0),
+    # One line of n bytes (the fixtures of the long-line time rows, issue 869), 2 MB and 8 MB,
+    # counted (`parse` prints 1). https://github.com/danbri/factoidal/issues/874: the reader
+    # holds the line as a `List Char`, 34 bytes of peak RSS per input byte (8 MB: 276 MB).
+    # Bound 8: the line as bytes and the literal as a `String`, with room for the term.
+    "ntriples-long-line-memory": (2000000, lambda n: long_line_nt(n), ["--format", "ntriples"], 8.0),
+    "nquads-long-line-memory": (2000000, lambda n: long_line_nq(n), ["--format", "nquads"], 8.0),
 }
 
 
@@ -1965,6 +1986,23 @@ def long_line_nq(n: int) -> Path:
     return fixture(f"long-line-{n}.nq", text)
 
 
+def xml_markup_chain_top(n: int) -> Path:
+    """An RDF/XML document whose `rdf:RDF` content is a chain of n markup entities: entity i
+    is one node element with one property and the reference to entity i - 1, the document
+    of tests/stack/gen_cases.py `xml-markup-chain-top` (issue 872). The parse gives n
+    triples."""
+    def text():
+        decls = "\n".join(
+            ['<!ENTITY m0 "<rdf:Description rdf:about=\'http://example.org/s0\'><ex:p>0</ex:p>'
+             '</rdf:Description>">']
+            + ['<!ENTITY m%d "<rdf:Description rdf:about=\'http://example.org/s%d\'><ex:p>%d</ex:p>'
+               '</rdf:Description>&m%d;">' % (i, i, i, i - 1) for i in range(1, n)])
+        return ('<?xml version="1.0"?>\n<!DOCTYPE rdf:RDF [\n%s\n]>\n'
+                '<rdf:RDF xmlns:rdf="http://www.w3.org/1999/02/22-rdf-syntax-ns#"\n'
+                '         xmlns:ex="http://example.org/">&m%d;</rdf:RDF>\n' % (decls, n - 1))
+    return fixture(f"xml-markup-chain-top-{n}.rdf", text)
+
+
 # row id -> (x, make input, command, expected first line (a string, or a
 # predicate on the line, or on the line and the size n), a file the row needs or None[, the time to bound: "cpu"
 # (user plus system, the default) or "user"]). A row that holds 100 MB to 500 MB
@@ -2044,6 +2082,12 @@ SERIES_ROWS = {
         2000000, long_line_nq,
         lambda p: [str(BIN), "parse", str(p), "--format", "nquads", "--lenient"],
         "1", None, "user"),
+    # A chain of n markup entities under rdf:RDF (issue 872). `parse` prints the number of
+    # triples: n.
+    "rdfxml-entity-chain-time": (
+        2500, xml_markup_chain_top,
+        lambda p: [str(BIN), "parse", str(p), "--format", "rdfxml"],
+        lambda line, n: line == str(n), None, "user"),
     # The OWL 2 RL closure of the same prefixes (semi-naive rounds since
     # 2026-10-13, https://github.com/danbri/factoidal/issues/756 item 2).
     # No first-line check: the output is the closure, one triple per line.
