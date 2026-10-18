@@ -40,6 +40,8 @@ walk carries an explicit fuel `Nat` derived from the graph's node count
 and decreases it on each step. No `partial`, no well-founded recursion.
 -/
 import L4Factoidal.JSONLD.ToRdf
+import Std.Data.HashMap
+import Std.Data.HashSet
 
 namespace L4Factoidal.JSONLD.FromRdf
 
@@ -907,5 +909,576 @@ def fromRdf (ds : Dataset) (opts : Options) : Option Json :=
       let refids := mapsRefids allMaps
       let clMode := opts.rdfDirection == some "compound-literal"
       some (.array (emitDefaultNodes dm named refids clMode))
+
+/-! ## Linear-time forms (https://github.com/danbri/factoidal/issues/712)
+
+The definitions above are the readable statement of §8.5-§8.7. Run as written,
+they read the node list for every triple (`ensureNode`, `nodeUpdateProp`), the
+value list of a property for every value (`snocUniqueOv`), the whole reference
+list for every `referencedOnce` test, and the rest of an `rdf:rest` chain for
+every cell of the chain (`isCollapsible`), and they sort by insertion. A
+collection of 5,000 cells did not finish in 120 s.
+
+The forms below keep the same results and use hash maps:
+
+  * `NmF` is the node map: the node ids in order of first appearance, and a
+    hash map from id to `NodeF`. A `NodeF` keeps its types and its property
+    values as arrays, each with a hash set of the members, and its properties
+    as an array of names with a hash map from name to values. `NmF.abs` is the
+    `List FrNode` that `buildNodemap` builds (`buildNodemap_eq_fast`).
+  * `countMap` counts the references once (`referencedOnce_eq_countMap`).
+  * `firstMap` finds a node or a named graph by id in one probe
+    (`findNode_eq_firstMap`).
+  * `memoC` computes, for every node of a graph, the length of the
+    `rdf:first`/`rdf:rest` chain that starts there, in one walk of each chain
+    with the results kept (`collF_eq`). `isCollapsible` is a test on that
+    length (`isCollapsible_eq_collS`, `collS_eq_lenS`).
+  * `sortM` sorts with `List.mergeSort` when the node ids are distinct, which
+    they are in every node map (`sortNodes_eq_sortM`).
+
+Each `@[csimp]` theorem makes the compiler use the fast form; the readable
+definition stays the one every other theorem is about. -/
+
+section Fast
+
+open Std
+
+/-! ### `Ov` equality is `=` -/
+
+mutual
+
+theorem Ov.eqb_iff : ∀ a b : Ov, Ov.eqb a b = true ↔ a = b
+  | .ref a, .ref b => by simp [Ov.eqb]
+  | .val a, .val b => by simp [Ov.eqb]
+  | .lst a, .lst b => by rw [Ov.eqb, Ov.eqbList_iff a b]; simp
+  | .ref _, .val _ => by simp [Ov.eqb]
+  | .ref _, .lst _ => by simp [Ov.eqb]
+  | .val _, .ref _ => by simp [Ov.eqb]
+  | .val _, .lst _ => by simp [Ov.eqb]
+  | .lst _, .ref _ => by simp [Ov.eqb]
+  | .lst _, .val _ => by simp [Ov.eqb]
+
+theorem Ov.eqbList_iff : ∀ a b : List Ov, Ov.eqbList a b = true ↔ a = b
+  | [], [] => by simp [Ov.eqbList]
+  | x :: xs, y :: ys => by
+    rw [Ov.eqbList, Bool.and_eq_true, Ov.eqb_iff x y, Ov.eqbList_iff xs ys]; simp
+  | [], _ :: _ => by simp [Ov.eqbList]
+  | _ :: _, [] => by simp [Ov.eqbList]
+
+end
+
+instance : LawfulBEq Ov where
+  eq_of_beq h := (Ov.eqb_iff _ _).1 h
+  rfl := (Ov.eqb_iff _ _).2 rfl
+
+/-- A hash of a value that reads one level of a value object (its keys and
+its string and number members). Any function is a lawful hash here, because
+`==` on `Ov` is `=`. -/
+def jsonLeafHash : Json → UInt64
+  | .null      => 1
+  | .bool b    => if b then 2 else 3
+  | .string s  => mixHash 4 (hash s)
+  | .number s  => mixHash 5 (hash s)
+  | .array l   => mixHash 6 (hash l.length)
+  | .object l  => mixHash 7 (hash l.length)
+
+def jsonShallowHash : Json → UInt64
+  | .object kvs => kvs.foldl (fun h kv => mixHash h (mixHash (hash kv.1) (jsonLeafHash kv.2))) 8
+  | j           => jsonLeafHash j
+
+def Ov.hash : Ov → UInt64
+  | .ref x => mixHash 11 (Hashable.hash x)
+  | .val j => mixHash 13 (jsonShallowHash j)
+  | .lst l => mixHash 17 (Hashable.hash l.length)
+
+instance : Hashable Ov := ⟨Ov.hash⟩
+
+/-! ### The append-unique functions as membership tests -/
+
+theorem snocUniqueStr_eq_if : ∀ (l : List String) (x : String),
+    snocUniqueStr l x = if x ∈ l then l else l ++ [x]
+  | [], x => by simp [snocUniqueStr]
+  | h :: tl, x => by
+    by_cases hh : h = x
+    · subst hh; simp [snocUniqueStr]
+    · have hb : (h == x) = false := by simpa using hh
+      rw [snocUniqueStr, hb, snocUniqueStr_eq_if tl x]
+      by_cases hm : x ∈ tl
+      · simp [hm]
+      · have : x ∉ h :: tl := by simp [hm, Ne.symm hh]
+        simp [hm, this]
+
+theorem snocUniqueOv_eq_if : ∀ (l : List Ov) (x : Ov),
+    snocUniqueOv l x = if x ∈ l then l else l ++ [x]
+  | [], x => by simp [snocUniqueOv]
+  | h :: tl, x => by
+    by_cases hh : h = x
+    · subst hh
+      have : Ov.eqb h h = true := (Ov.eqb_iff h h).2 rfl
+      simp [snocUniqueOv, this]
+    · have hb : Ov.eqb h x = false := by
+        cases e : Ov.eqb h x
+        · rfl
+        · exact absurd ((Ov.eqb_iff h x).1 e) hh
+      rw [snocUniqueOv, hb, snocUniqueOv_eq_if tl x]
+      by_cases hm : x ∈ tl
+      · simp [hm]
+      · have : x ∉ h :: tl := by simp [hm, Ne.symm hh]
+        simp [hm, this]
+
+/-! ### `propAdd` over a list of distinct keys -/
+
+theorem propAdd_map_notMem (g : String → List Ov) (p : String) (v : Ov) :
+    ∀ keys : List String, p ∉ keys →
+      propAdd (keys.map (fun k => (k, g k))) p v = keys.map (fun k => (k, g k)) ++ [(p, [v])]
+  | [], _ => by simp [propAdd]
+  | k :: ks, h => by
+    have hk : k ≠ p := fun e => h (e ▸ List.mem_cons_self)
+    have hks : p ∉ ks := fun m => h (List.mem_cons_of_mem _ m)
+    simp [propAdd, hk, propAdd_map_notMem g p v ks hks]
+
+theorem propAdd_map_mem (g : String → List Ov) (p : String) (v : Ov) :
+    ∀ keys : List String, keys.Nodup → p ∈ keys →
+      propAdd (keys.map (fun k => (k, g k))) p v =
+        keys.map (fun k => (k, if k = p then snocUniqueOv (g k) v else g k))
+  | [], _, h => absurd h List.not_mem_nil
+  | k :: ks, nd, h => by
+    rw [List.nodup_cons] at nd
+    by_cases hk : k = p
+    · subst hk
+      simp only [List.map_cons, propAdd, beq_self_eq_true, if_true, List.cons.injEq, true_and]
+      apply List.map_congr_left
+      intro k' hk'
+      have : k' ≠ k := fun e => nd.1 (e ▸ hk')
+      simp [this]
+    · have hp : p ∈ ks := by
+        cases List.mem_cons.1 h with
+        | inl e => exact absurd e.symm hk
+        | inr m => exact m
+      have hb : (k == p) = false := by simpa using hk
+      simp only [List.map_cons, propAdd, hb, Bool.false_eq_true, if_false, hk,
+        propAdd_map_mem g p v ks nd.2 hp]
+
+/-! ### Node objects under construction -/
+
+structure NodeF where
+  blank   : Bool
+  types   : Array String
+  typeSet : HashSet String
+  pkeys   : Array String
+  pvals   : HashMap String (Array Ov × HashSet Ov)
+
+def NodeF.empty (b : Bool) : NodeF := ⟨b, #[], ∅, #[], ∅⟩
+
+instance : Inhabited NodeF := ⟨NodeF.empty false⟩
+
+def NodeF.propsL (nf : NodeF) : List (String × List Ov) :=
+  nf.pkeys.toList.map (fun k => (k, (nf.pvals.getD k (#[], ∅)).1.toList))
+
+def NodeF.toFr (k : String) (nf : NodeF) : FrNode :=
+  { id := k, blank := nf.blank, types := nf.types.toList, props := nf.propsL }
+
+@[simp] theorem NodeF.toFr_id (k : String) (nf : NodeF) : (nf.toFr k).id = k := rfl
+
+structure NodeF.Good (nf : NodeF) : Prop where
+  types : ∀ t, nf.typeSet.contains t = true ↔ t ∈ nf.types.toList
+  nodup : nf.pkeys.toList.Nodup
+  keys  : ∀ k, nf.pvals.contains k = true ↔ k ∈ nf.pkeys.toList
+  vals  : ∀ (k : String) (a : Array Ov) (s : HashSet Ov), nf.pvals[k]? = some (a, s) →
+    ∀ v, s.contains v = true ↔ v ∈ a.toList
+
+theorem NodeF.good_empty (b : Bool) : (NodeF.empty b).Good :=
+  ⟨by simp [NodeF.empty], by simp [NodeF.empty], by simp [NodeF.empty],
+   by simp [NodeF.empty]⟩
+
+def NodeF.addType (nf : NodeF) (t : String) : NodeF :=
+  if nf.typeSet.contains t then nf
+  else { nf with types := nf.types.push t, typeSet := nf.typeSet.insert t }
+
+theorem NodeF.addType_spec (nf : NodeF) (t : String) (h : nf.Good) :
+    (nf.addType t).blank = nf.blank ∧
+    (nf.addType t).types.toList = snocUniqueStr nf.types.toList t ∧
+    (nf.addType t).propsL = nf.propsL ∧ (nf.addType t).Good := by
+  unfold NodeF.addType
+  by_cases hc : nf.typeSet.contains t = true
+  · have hm : t ∈ nf.types.toList := (h.types t).1 hc
+    simp only [hc, if_true, snocUniqueStr_eq_if, hm]
+    exact ⟨by first | rfl | simp, by first | rfl | simp, by first | rfl | simp, h⟩
+  · have hm : t ∉ nf.types.toList := fun m => hc ((h.types t).2 m)
+    simp only [hc, Bool.false_eq_true, if_false, snocUniqueStr_eq_if, hm]
+    refine ⟨by first | rfl | simp, by first | rfl | simp, by first | rfl | simp, ⟨?_, h.nodup, h.keys, h.vals⟩⟩
+    intro t'
+    simp only [HashSet.contains_insert, Array.toList_push, List.mem_append, List.mem_singleton,
+      Bool.or_eq_true, beq_iff_eq, h.types t']
+    constructor
+    · rintro (e | m)
+      · exact Or.inr e.symm
+      · exact Or.inl m
+    · rintro (m | e)
+      · exact Or.inr m
+      · exact Or.inl e.symm
+
+def NodeF.addProp (nf : NodeF) (p : String) (v : Ov) : NodeF :=
+  match nf.pvals[p]? with
+  | some (a, s) =>
+    if s.contains v then nf
+    else { nf with pvals := nf.pvals.insert p (a.push v, s.insert v) }
+  | none =>
+    { nf with pkeys := nf.pkeys.push p, pvals := nf.pvals.insert p (#[v], (∅ : HashSet Ov).insert v) }
+
+theorem NodeF.addProp_spec (nf : NodeF) (p : String) (v : Ov) (h : nf.Good) :
+    (nf.addProp p v).blank = nf.blank ∧ (nf.addProp p v).types = nf.types ∧
+    (nf.addProp p v).propsL = propAdd nf.propsL p v ∧ (nf.addProp p v).Good := by
+  unfold NodeF.addProp
+  split
+  · rename_i a s hp
+    have hpk : p ∈ nf.pkeys.toList := by
+      rw [← h.keys p, HashMap.contains_eq_isSome_getElem?, hp]; rfl
+    have hg : (nf.pvals.getD p (#[], ∅)).1.toList = a.toList := by
+      rw [HashMap.getD_eq_getD_getElem?, hp]; rfl
+    have hv := h.vals p a s hp
+    unfold NodeF.propsL
+    rw [propAdd_map_mem _ p v _ h.nodup hpk]
+    by_cases hc : s.contains v = true
+    · have hm : v ∈ a.toList := (hv v).1 hc
+      simp only [hc, if_true]
+      refine ⟨by first | rfl | simp, by first | rfl | simp, ?_, h⟩
+      apply List.map_congr_left
+      intro k _
+      by_cases e : k = p
+      · subst e; simp [hg, snocUniqueOv_eq_if, hm]
+      · simp [e]
+    · have hm : v ∉ a.toList := fun m => hc ((hv v).2 m)
+      simp only [hc, Bool.false_eq_true, if_false]
+      refine ⟨by first | rfl | simp, by first | rfl | simp, ?_, ⟨h.types, h.nodup, ?_, ?_⟩⟩
+      · apply List.map_congr_left
+        intro k _
+        by_cases e : k = p
+        · subst e; simp [hg, snocUniqueOv_eq_if, hm]
+        · have : (p == k) = false := by simpa using Ne.symm e
+          simp [e, HashMap.getD_insert, this]
+      · intro k
+        simp only [HashMap.contains_insert, Bool.or_eq_true, beq_iff_eq, h.keys k]
+        constructor
+        · rintro (e | m)
+          · exact e ▸ hpk
+          · exact m
+        · intro m; exact Or.inr m
+      · intro k a' s' hk w
+        rw [HashMap.getElem?_insert] at hk
+        by_cases e : p = k
+        · have : (p == k) = true := by simpa using e
+          simp only [this, if_true, Option.some.injEq, Prod.mk.injEq] at hk
+          obtain ⟨rfl, rfl⟩ := hk
+          simp only [HashSet.contains_insert, Bool.or_eq_true, beq_iff_eq, Array.toList_push,
+            List.mem_append, List.mem_singleton, hv w]
+          constructor
+          · rintro (e | m)
+            · exact Or.inr e.symm
+            · exact Or.inl m
+          · rintro (m | e)
+            · exact Or.inr m
+            · exact Or.inl e.symm
+        · have : (p == k) = false := by simpa using e
+          simp only [this, Bool.false_eq_true, if_false] at hk
+          exact h.vals k a' s' hk w
+  · rename_i hp
+    have hpk : p ∉ nf.pkeys.toList := by
+      rw [← h.keys p, HashMap.contains_eq_isSome_getElem?, hp]; simp
+    unfold NodeF.propsL
+    rw [propAdd_map_notMem _ p v _ hpk]
+    refine ⟨by first | rfl | simp, by first | rfl | simp, ?_, ⟨h.types, ?_, ?_, ?_⟩⟩
+    · simp only [Array.toList_push, List.map_append, List.map_cons, List.map_nil]
+      congr 1
+      · apply List.map_congr_left
+        intro k hk
+        have : (p == k) = false := by
+          simp only [beq_eq_false_iff_ne]; intro e; exact hpk (e ▸ hk)
+        simp [HashMap.getD_insert, this]
+      · simp [HashMap.getD_insert]
+    · simp only [Array.toList_push]
+      rw [List.nodup_append]
+      refine ⟨h.nodup, by simp, ?_⟩
+      intro a ha b hb e
+      simp at hb; subst hb; subst e; exact hpk ha
+    · intro k
+      simp only [HashMap.contains_insert, Bool.or_eq_true, beq_iff_eq, h.keys k,
+        Array.toList_push, List.mem_append, List.mem_singleton]
+      constructor
+      · rintro (e | m)
+        · exact Or.inr e.symm
+        · exact Or.inl m
+      · rintro (m | e)
+        · exact Or.inr m
+        · exact Or.inl e.symm
+    · intro k a' s' hk w
+      rw [HashMap.getElem?_insert] at hk
+      by_cases e : p = k
+      · have : (p == k) = true := by simpa using e
+        simp only [this, if_true, Option.some.injEq, Prod.mk.injEq] at hk
+        obtain ⟨rfl, rfl⟩ := hk
+        simp [HashSet.contains_insert]
+        exact eq_comm
+      · have : (p == k) = false := by simpa using e
+        simp only [this, Bool.false_eq_true, if_false] at hk
+        exact h.vals k a' s' hk w
+
+/-! ### The node map -/
+
+structure NmF where
+  keys  : Array String
+  nodes : HashMap String NodeF
+
+def NmF.empty : NmF := ⟨#[], ∅⟩
+
+def NmF.abs (s : NmF) : List FrNode :=
+  s.keys.toList.map (fun k => (s.nodes.getD k default).toFr k)
+
+structure NmF.Good (s : NmF) : Prop where
+  keys  : ∀ k, s.nodes.contains k = true ↔ k ∈ s.keys.toList
+  nodes : ∀ (k : String) (nf : NodeF), s.nodes[k]? = some nf → nf.Good
+
+theorem NmF.good_empty : NmF.empty.Good := ⟨by simp [NmF.empty], by simp [NmF.empty]⟩
+
+theorem NmF.abs_empty : NmF.empty.abs = [] := rfl
+
+theorem nodeExists_map (F : String → FrNode) (hF : ∀ k, (F k).id = k) (keys : List String)
+    (id : String) : nodeExists (keys.map F) id = decide (id ∈ keys) := by
+  unfold nodeExists findNode
+  rw [List.find?_map]
+  cases e : List.find? ((fun n => n.id == id) ∘ F) keys with
+  | none =>
+    rw [List.find?_eq_none] at e
+    simp only [Option.map_none, Option.isSome_none, Bool.false_eq, decide_eq_false_iff_not]
+    intro m; have := e id m; simp [hF] at this
+  | some k =>
+    have hk := List.find?_some e
+    have hm := List.mem_of_find?_eq_some e
+    simp [hF] at hk; subst hk
+    simp [hm]
+
+def NmF.ensure (s : NmF) (id : String) (b : Bool) : NmF :=
+  if s.nodes.contains id then s else ⟨s.keys.push id, s.nodes.insert id (NodeF.empty b)⟩
+
+theorem NmF.ensure_spec (s : NmF) (id : String) (b : Bool) (h : s.Good) :
+    (s.ensure id b).abs = ensureNode s.abs id b ∧ (s.ensure id b).Good := by
+  unfold NmF.ensure ensureNode
+  have hx : nodeExists s.abs id = decide (id ∈ s.keys.toList) :=
+    nodeExists_map _ (fun _ => rfl) _ id
+  by_cases hc : s.nodes.contains id = true
+  · have hm : id ∈ s.keys.toList := (h.keys id).1 hc
+    simp [hc, hx, hm, h]
+  · have hm : id ∉ s.keys.toList := fun m => hc ((h.keys id).2 m)
+    simp only [hc, Bool.false_eq_true, if_false, hx, hm, decide_false]
+    refine ⟨?_, ⟨?_, ?_⟩⟩
+    · unfold NmF.abs
+      simp only [Array.toList_push, List.map_append, List.map_cons, List.map_nil]
+      congr 1
+      · apply List.map_congr_left
+        intro k hk
+        have : (id == k) = false := by
+          simp only [beq_eq_false_iff_ne]; intro e; exact hm (e ▸ hk)
+        simp [HashMap.getD_insert, this]
+      · simp [HashMap.getD_insert, NodeF.toFr, NodeF.empty, NodeF.propsL]
+    · intro k
+      simp only [HashMap.contains_insert, Bool.or_eq_true, beq_iff_eq, h.keys k,
+        Array.toList_push, List.mem_append, List.mem_singleton]
+      constructor
+      · rintro (e | m)
+        · exact Or.inr e.symm
+        · exact Or.inl m
+      · rintro (m | e)
+        · exact Or.inr m
+        · exact Or.inl e.symm
+    · intro k nf hk
+      rw [HashMap.getElem?_insert] at hk
+      by_cases e : id = k
+      · have : (id == k) = true := by simpa using e
+        simp only [this, if_true, Option.some.injEq] at hk
+        subst hk; exact NodeF.good_empty b
+      · have : (id == k) = false := by simpa using e
+        simp only [this, Bool.false_eq_true, if_false] at hk
+        exact h.nodes k nf hk
+
+/-- Shared step of `updProp` and `updType`: replace the node `id` by `f` of it. -/
+def NmF.upd (s : NmF) (id : String) (f : NodeF → NodeF) : NmF :=
+  match s.nodes[id]? with
+  | some nf => { s with nodes := s.nodes.insert id (f nf) }
+  | none    => s
+
+theorem NmF.upd_spec (s : NmF) (id : String) (f : NodeF → NodeF) (g : FrNode → FrNode)
+    (h : s.Good) (hf : ∀ nf, nf.Good → (f nf).Good ∧ (f nf).toFr id = g (nf.toFr id)) :
+    (s.upd id f).abs = s.abs.map (fun n => if n.id == id then g n else n) ∧ (s.upd id f).Good := by
+  unfold NmF.upd NmF.abs
+  rw [List.map_map]
+  split
+  · rename_i nf hn
+    have hg := h.nodes id nf hn
+    refine ⟨?_, ⟨?_, ?_⟩⟩
+    · apply List.map_congr_left
+      intro k hk
+      by_cases e : k = id
+      · subst e
+        have hd : s.nodes.getD k default = nf := by
+          rw [HashMap.getD_eq_getD_getElem?, hn]; rfl
+        simp only [HashMap.getD_insert, beq_self_eq_true, if_true, hd, Function.comp_apply,
+          NodeF.toFr_id]
+        exact (hf nf hg).2
+      · have : (id == k) = false := by simpa using Ne.symm e
+        simp [HashMap.getD_insert, this, NodeF.toFr, e]
+    · intro k
+      simp only [HashMap.contains_insert, Bool.or_eq_true, beq_iff_eq, h.keys k]
+      constructor
+      · rintro (e | m)
+        · rw [← e, ← h.keys id, HashMap.contains_eq_isSome_getElem?, hn]; rfl
+        · exact m
+      · intro m; exact Or.inr m
+    · intro k nf' hk
+      rw [HashMap.getElem?_insert] at hk
+      by_cases e : id = k
+      · have : (id == k) = true := by simpa using e
+        simp only [this, if_true, Option.some.injEq] at hk
+        subst hk; exact (hf nf hg).1
+      · have : (id == k) = false := by simpa using e
+        simp only [this, Bool.false_eq_true, if_false] at hk
+        exact h.nodes k nf' hk
+  · rename_i hn
+    have hm : id ∉ s.keys.toList := by
+      rw [← h.keys id, HashMap.contains_eq_isSome_getElem?, hn]; simp
+    refine ⟨?_, h⟩
+    apply List.map_congr_left
+    intro k hk
+    have : k ≠ id := fun e => hm (e ▸ hk)
+    simp [NodeF.toFr, this]
+
+def NmF.updProp (s : NmF) (id p : String) (v : Ov) : NmF := s.upd id (fun nf => nf.addProp p v)
+
+def NmF.updType (s : NmF) (id t : String) : NmF := s.upd id (fun nf => nf.addType t)
+
+theorem NmF.updProp_spec (s : NmF) (id p : String) (v : Ov) (h : s.Good) :
+    (s.updProp id p v).abs = nodeUpdateProp s.abs id p v ∧ (s.updProp id p v).Good := by
+  apply NmF.upd_spec s id _ (fun n => { n with props := propAdd n.props p v }) h
+  intro nf hg
+  obtain ⟨hb, ht, hp, hgood⟩ := NodeF.addProp_spec nf p v hg
+  exact ⟨hgood, by simp [NodeF.toFr, hb, ht, hp]⟩
+
+theorem NmF.updType_spec (s : NmF) (id t : String) (h : s.Good) :
+    (s.updType id t).abs = nodeUpdateType s.abs id t ∧ (s.updType id t).Good := by
+  apply NmF.upd_spec s id _ (fun n => { n with types := snocUniqueStr n.types t }) h
+  intro nf hg
+  obtain ⟨hb, ht, hp, hgood⟩ := NodeF.addType_spec nf t hg
+  exact ⟨hgood, by simp [NodeF.toFr, hb, ht, hp]⟩
+
+/-! ### Node-map construction on `NmF` -/
+
+def processTripleF (opts : Options) (s : NmF) (t : Triple) : Option NmF :=
+  let sId := subjId t.s
+  let s1 := s.ensure sId (subjIsBlank t.s)
+  let s2 := match termNodeId t.o with
+            | some (oid, ob) => s1.ensure oid ob
+            | none           => s1
+  let p := t.p.val
+  let objIsNode := match t.o with | .iri _ => true | .bnode _ => true | _ => false
+  if p == rdfTypeIri && !opts.useRdfType && objIsNode then
+    match termNodeId t.o with
+    | some (oid, _) => some (s2.updType sId oid)
+    | none          => some s2
+  else
+    match rdfToObject opts t.o with
+    | none   => none
+    | some v => some (s2.updProp sId p v)
+
+theorem processTripleF_spec (opts : Options) (s : NmF) (t : Triple) (h : s.Good) :
+    processTriple opts s.abs t = (processTripleF opts s t).map NmF.abs ∧
+    ∀ s', processTripleF opts s t = some s' → s'.Good := by
+  rcases t with ⟨ts, tp, to⟩
+  obtain ⟨e1, g1⟩ := NmF.ensure_spec s (subjId ts) (subjIsBlank ts) h
+  cases to with
+  | iri i =>
+    obtain ⟨e2, g2⟩ := NmF.ensure_spec (s.ensure (subjId ts) (subjIsBlank ts)) i.val false g1
+    simp only [processTriple, processTripleF, termNodeId, ← e1, ← e2]
+    split
+    · obtain ⟨e, g⟩ := NmF.updType_spec _ (subjId ts) i.val g2
+      exact ⟨by simp [e], fun s' hs' => by cases hs'; exact g⟩
+    · cases rdfToObject opts (Term.iri i) with
+      | none => exact ⟨rfl, fun s' hs' => by cases hs'⟩
+      | some v =>
+        obtain ⟨e, g⟩ := NmF.updProp_spec _ (subjId ts) tp.val v g2
+        exact ⟨by simp [e], fun s' hs' => by cases hs'; exact g⟩
+  | bnode b =>
+    obtain ⟨e2, g2⟩ := NmF.ensure_spec (s.ensure (subjId ts) (subjIsBlank ts)) ("_:" ++ b) true g1
+    simp only [processTriple, processTripleF, termNodeId, ← e1, ← e2]
+    split
+    · obtain ⟨e, g⟩ := NmF.updType_spec _ (subjId ts) ("_:" ++ b) g2
+      exact ⟨by simp [e], fun s' hs' => by cases hs'; exact g⟩
+    · cases rdfToObject opts (Term.bnode b) with
+      | none => exact ⟨rfl, fun s' hs' => by cases hs'⟩
+      | some v =>
+        obtain ⟨e, g⟩ := NmF.updProp_spec _ (subjId ts) tp.val v g2
+        exact ⟨by simp [e], fun s' hs' => by cases hs'; exact g⟩
+  | literal l =>
+    simp only [processTriple, processTripleF, termNodeId, ← e1, Bool.and_false,
+      Bool.false_eq_true, if_false]
+    cases rdfToObject opts (Term.literal l) with
+    | none => exact ⟨rfl, fun s' hs' => by cases hs'⟩
+    | some v =>
+      obtain ⟨e, g⟩ := NmF.updProp_spec _ (subjId ts) tp.val v g1
+      exact ⟨by simp [e], fun s' hs' => by cases hs'; exact g⟩
+  | tripleTerm a b c =>
+    simp only [processTriple, processTripleF, termNodeId, ← e1, Bool.and_false,
+      Bool.false_eq_true, if_false]
+    cases rdfToObject opts (Term.tripleTerm a b c) with
+    | none => exact ⟨rfl, fun s' hs' => by cases hs'⟩
+    | some v =>
+      obtain ⟨e, g⟩ := NmF.updProp_spec _ (subjId ts) tp.val v g1
+      exact ⟨by simp [e], fun s' hs' => by cases hs'; exact g⟩
+
+def buildF (opts : Options) : NmF → List Triple → Option NmF
+  | s, []      => some s
+  | s, t :: tl =>
+    match processTripleF opts s t with
+    | none    => none
+    | some s' => buildF opts s' tl
+
+theorem buildF_spec (opts : Options) : ∀ (ts : List Triple) (s : NmF), s.Good →
+    buildNodemap opts s.abs ts = (buildF opts s ts).map NmF.abs
+  | [], s, _ => rfl
+  | t :: tl, s, h => by
+    obtain ⟨e, g⟩ := processTripleF_spec opts s t h
+    simp only [buildNodemap, buildF, e]
+    cases hp : processTripleF opts s t with
+    | none => rfl
+    | some s' => exact buildF_spec opts tl s' (g s' hp)
+
+/-- `buildNodemap` line for line, for the inputs `buildNodemapFast` does not
+start from an empty map. -/
+def buildNodemapRef (opts : Options) : List FrNode → List Triple → Option (List FrNode)
+  | nm, []      => some nm
+  | nm, t :: tl =>
+    match processTriple opts nm t with
+    | none     => none
+    | some nm' => buildNodemapRef opts nm' tl
+
+theorem buildNodemapRef_eq (opts : Options) : ∀ nm ts, buildNodemapRef opts nm ts = buildNodemap opts nm ts
+  | _, [] => rfl
+  | nm, t :: tl => by
+    simp only [buildNodemapRef, buildNodemap]
+    cases processTriple opts nm t with
+    | none => rfl
+    | some nm' => exact buildNodemapRef_eq opts nm' tl
+
+def buildNodemapFast (opts : Options) (nm : List FrNode) (ts : List Triple) : Option (List FrNode) :=
+  match nm with
+  | [] => (buildF opts NmF.empty ts).map NmF.abs
+  | _  => buildNodemapRef opts nm ts
+
+@[csimp] theorem buildNodemap_eq_fast : @buildNodemap = @buildNodemapFast := by
+  funext opts nm ts
+  unfold buildNodemapFast
+  split
+  · rw [← buildF_spec opts ts NmF.empty NmF.good_empty]; rfl
+  · exact (buildNodemapRef_eq opts nm ts).symm
+
+end Fast
 
 end L4Factoidal.JSONLD.FromRdf
