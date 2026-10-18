@@ -251,6 +251,14 @@ export function atomicReplace (path, bytes) {
   }
 }
 
+export function listNames (directory) {
+  try {
+    return readdirSync(directory).sort()
+  } catch (cause) {
+    throw wrap('DIR_READ_FAILED', `cannot list ${directory}`, directory, cause)
+  }
+}
+
 export function listGeneration (directory) {
   let names
   try {

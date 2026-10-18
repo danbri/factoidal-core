@@ -1,6 +1,6 @@
 # Using `factoidal serve` in place of Apache Jena Fuseki
 
-Status: 2026-10-13, `@factoidal/core` 0.10.0. Every row below was tested
+Status: 2026-10-18, `@factoidal/core` 0.10.0. Every row below was tested
 with curl against the installed package, and is gated by
 `test/fuseki-compat.test.mjs` (assertions for what works, expected failures
 naming an issue for what does not).
@@ -11,7 +11,8 @@ naming an issue for what does not).
 |---|---|
 | `fuseki-server --file data.ttl /ds` | `factoidal serve --file data.ttl /ds` |
 | `fuseki-server --update --file data.ttl /ds` | the same; updates are always on |
-| `fuseki-server --loc DB /ds` (TDB2) | `factoidal pack data.nq STORE/gen-1 --layout ibk5`, `factoidal activate STORE gen-1`, then `factoidal serve STORE --query-path /ds/sparql --gsp-path /ds/data` |
+| `fuseki-server --loc DB /ds` (TDB2, read only) | `factoidal serve --tdb2 DB /ds`: the TDB2 database is read in place and is read only (see Storage) |
+| `fuseki-server --loc DB /ds` (TDB2, writable) | no TDB2 writer. Export with `tdb2.tdbdump`, then `factoidal pack data.nq STORE/gen-1 --layout ibk5`, `factoidal activate STORE gen-1`, `factoidal serve STORE --query-path /ds/sparql --gsp-path /ds/data` |
 | `--port 3030` | `--port 3030` (the default is 3030 in both) |
 | `--localhost` | the default; `--host 0.0.0.0` to listen on all addresses |
 | `--mem /ds` | `--file` with an empty file |
@@ -74,15 +75,25 @@ generation (`factoidal compact` and `factoidal update` exit 3:
 https://github.com/danbri/factoidal/issues/641); the native
 `l4block-shard-compact` of the source tree does it. Updates through the
 server work.
-TDB2 databases: the native Lean CLI reads them in place
-(`l4factoidal tdb2-dump DB`, `l4factoidal query DB --format tdb2 ...`; output
-equal to `tdb2.tdbdump` on the tested databases, record
-`docs/designissues/2026-10-13-tdb2-format.md`). The npm `factoidal serve` has
-no `--tdb2` option yet: export with `tdb2.tdbdump` and pack the N-Quads
-(https://github.com/danbri/factoidal/issues/834, xfail in
-`test/fuseki-compat.test.mjs`). Note that TDB2 itself changes the lexical form
-of numeric, boolean and date literals (`"0"^^xsd:boolean` reads back as
-`"false"`), so a dump is not always the data that was loaded.
+TDB2 databases: `factoidal serve --tdb2 DB /ds` reads a Jena TDB2 database in
+place with the Lean decoder (`L4Factoidal/Tdb2/Read.lean`; the same quads as
+`tdb2.tdbdump`, record `docs/designissues/2026-10-13-tdb2-format.md`) and
+serves SPARQL query and Graph Store GET at `/ds/sparql`, `/ds/query`,
+`/ds/get` and `/ds/data`. `serveStore(DB, { tdb2: true, queryPath, gspPath })`
+does the same from Node. The database is read only: every update and every
+Graph Store write answers 501 with the message "this dataset is a read-only
+Jena TDB2 database read in place", and changes nothing. The current
+`Data-NNNN` generation is served; a database with a non-empty `journal.jrnl`
+(Jena has not replayed it) is refused. The server holds every quad in memory
+while it runs: it does not answer a pattern from the TDB2 indexes on disk
+(https://github.com/danbri/factoidal/issues/775 is the same gap for
+Shardborough). Not decoded: RDF 1.2 triple terms, prefixed datatype names.
+The native CLI reads TDB2 as well (`l4factoidal tdb2-dump DB`,
+`l4factoidal query DB --format tdb2 ...`). Test: `test/fuseki-compat.test.mjs`
+(needs a Jena install in `SOTA_DL`; skipped with that reason otherwise).
+Note that TDB2 itself changes the lexical form of numeric, boolean and date
+literals (`"0"^^xsd:boolean` reads back as `"false"`), so a dump is not always
+the data that was loaded.
 
 ## Not supported
 

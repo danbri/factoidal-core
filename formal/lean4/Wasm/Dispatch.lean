@@ -277,7 +277,9 @@ def storeServeOpNames : List String :=
   , "storeServeOpen"
   , "storeServeRequest"
   , "storeServeCommit"
-  , "storeServeClose" ]
+  , "storeServeClose"
+  , "tdb2ServeKeys"
+  , "tdb2ServeOpen" ]
 
 /-- The Linked Web Storage 1.0 and Solid Protocol op names
 (`Wasm/Ops/Lws.lean`, `Wasm/Ops/Solid.lean`), served ONLY by `callIO`: the
@@ -551,6 +553,14 @@ def callIO (op : String) (argsJson : String) : IO String :=
       | [a, b, c, d] => Ops.storeServeOpen a b c d ByteArray.empty
       | args => pure (errJson s!"storeServeOpen expects 4 arguments, got {args.length}"))
   | "storeServeClose"  => withArgs (arityIO1 op Ops.storeServeClose)
+  | "tdb2ServeKeys"    => withArgs (fun args =>
+      match args with
+      | [a, b] => pure (Ops.tdb2ServeKeys a b)
+      | args => pure (errJson s!"tdb2ServeKeys expects 2 arguments, got {args.length}"))
+  | "tdb2ServeOpen"    => withArgs (fun args =>
+      match args with
+      | [a, b] => Ops.tdb2ServeOpen a b ByteArray.empty
+      | args => pure (errJson s!"tdb2ServeOpen expects 2 arguments, got {args.length}"))
   | "storeServeRequest" | "storeServeCommit" =>
       pure (errJson s!"{op} answers a byte region; call it through l4_call_blob_io")
   -- Linked Web Storage 1.0 and the Solid Protocol
@@ -636,6 +646,12 @@ def callBlobIO (op : String) (argsJson : String) (blob : ByteArray) :
       | .ok [a, b, c, d]    => do pure (← Ops.storeServeOpen a b c d blob, ByteArray.empty)
       | .ok args            => pure (errJson s!"storeServeOpen expects 4 arguments, got {args.length}",
                                      ByteArray.empty)
+  | "tdb2ServeOpen" =>
+      match decodeArgs argsJson with
+      | .error e         => pure (errJson e, ByteArray.empty)
+      | .ok [a, b]       => do pure (← Ops.tdb2ServeOpen a b blob, ByteArray.empty)
+      | .ok args         => pure (errJson s!"tdb2ServeOpen expects 2 arguments, got {args.length}",
+                                  ByteArray.empty)
   | "storeServeRequest" =>
       match decodeArgs argsJson with
       | .error e  => pure (errJson e, ByteArray.empty)

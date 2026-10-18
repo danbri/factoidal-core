@@ -165,8 +165,12 @@ export const normalizeNQuads = pure.normalizeNQuads;
  * Serve an activated store (a collection root that holds CURRENT) over the
  * SPARQL 1.1 Protocol, the Graph Store Protocol and the Service
  * Description: the same server as `factoidal serve STORE`. Node only.
+ * With `{tdb2: true}`, `root` is an Apache Jena TDB2 database directory,
+ * read in place and served read only (updates answer 501;
+ * https://github.com/danbri/factoidal/issues/834).
  * @param {string} root
- * @param {{port?: number, host?: string}} [options] port 0 (default) picks one
+ * @param {{port?: number, host?: string, queryPath?: string, gspPath?: string,
+ *          tdb2?: boolean}} [options] port 0 (default) picks one
  * @returns {Promise<{url: string, port: number, close: () => Promise<void>}>}
  */
 export async function serveStore(root, options = {}) {

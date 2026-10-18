@@ -290,11 +290,20 @@ options:
 
 usage: factoidal serve STORE [--port N] [--host ADDRESS] [options]
        factoidal serve --file DATA /DATASET [--port N] [options]
+       factoidal serve --tdb2 DIR /DATASET [--port N] [options]
 
 The second form matches fuseki-server --file DATA /DATASET: DATA is packed
 into a temporary collection (layout ibk5 unless --layout is given), served
 at /DATASET/sparql (also /DATASET/query and /DATASET/update) and
 /DATASET/data (also /DATASET/get, read only). Updates are lost on exit.
+
+The third form matches fuseki-server --loc DIR /DATASET for an Apache Jena
+TDB2 database: DIR is read in place, read only. SPARQL query and Graph Store
+GET work; an update or a Graph Store write answers 501 with a message. The
+current Data-NNNN generation is served; a database whose journal.jrnl is not
+empty (Jena has not replayed it) is refused. The Lean decoder reads the
+indexes and node table (formal/lean4/L4Factoidal/Tdb2/Read.lean); every
+quad is held in memory while the server runs.
 
 Serves the activated generation of STORE, with its delta log, over HTTP:
 
@@ -310,6 +319,7 @@ options:
   --query-path PATH  the query and update endpoint (default /sparql)
   --gsp-path PATH    the Graph Store endpoint (default /data)
   --file DATA        pack and serve an RDF file (see the second form)
+  --tdb2 DIR         serve a Jena TDB2 database read only (third form)
   --layout LAYOUT    with --file: ibk3, ibk4 or ibk5 (default ibk5)
   --no-worker        serve on this thread instead of a worker thread with a
                      raised call stack (large collections need the worker)
@@ -460,7 +470,7 @@ const VALUE_OPTIONS = {
   activate: new Set([]),
   update: new Set(['update', 'file']),
   compact: new Set([]),
-  serve: new Set(['port', 'host', 'query-path', 'gsp-path', 'file', 'layout']),
+  serve: new Set(['port', 'host', 'query-path', 'gsp-path', 'file', 'layout', 'tdb2']),
   'lws-serve': new Set(['port', 'host', 'base']),
   'solid-serve': new Set(['port', 'host', 'base', 'owner']),
   'solid-client': new Set(['body', 'file', 'content-type', 'interpret'])
@@ -1102,11 +1112,23 @@ async function commandServe (positional, options) {
     positional = [root]
     options = { ...options, 'query-path': `${dsName}/sparql`, 'gsp-path': `${dsName}/data` }
   }
+  // The Apache Jena Fuseki form: `serve --tdb2 DIR /ds`, a TDB2 database
+  // read in place and read only (https://github.com/danbri/factoidal/issues/834).
+  const tdb2 = typeof options.tdb2 === 'string'
+  if (tdb2) {
+    if (positional.length !== 1 || !positional[0].startsWith('/')) {
+      throw new UsageError('serve --tdb2 DIR needs one dataset name, such as /ds')
+    }
+    const dsName = positional[0].replace(/\/+$/, '')
+    positional = [options.tdb2]
+    options = { ...options, 'query-path': `${dsName}/sparql`, 'gsp-path': `${dsName}/data` }
+  }
   if (positional.length !== 1) throw new UsageError('serve needs one STORE')
   const { listen, listenOnWorker, ServeHostError } = await import('./serve.mjs')
   const serveOptions = {
     port: servePort(options, 3030),
     host: serveHost(options),
+    ...(tdb2 ? { tdb2: true } : {}),
     ...(typeof options['query-path'] === 'string' ? { queryPath: options['query-path'] } : {}),
     ...(typeof options['gsp-path'] === 'string' ? { gspPath: options['gsp-path'] } : {})
   }

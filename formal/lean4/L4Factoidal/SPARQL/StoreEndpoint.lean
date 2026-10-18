@@ -83,11 +83,16 @@ inductive WriteScope where
   | defaultGraph
   /-- IBK4 and IBK5: every graph. -/
   | allGraphs
+  /-- A Jena TDB2 database read in place
+  (https://github.com/danbri/factoidal/issues/834): nothing is written, and
+  every request that would change the dataset answers 501. -/
+  | readOnly
   deriving Repr, DecidableEq
 
 def WriteScope.name : WriteScope → String
   | .defaultGraph => "default-graph"
   | .allGraphs    => "all-graphs"
+  | .readOnly     => "read-only"
 
 structure Config where
   /-- The query and update endpoint (Protocol §2). `/query` and `/update`
@@ -202,6 +207,10 @@ def datasetSetEq (a b : Dataset) : Bool :=
 /-- Why a write scope refuses these entries, or `none`. -/
 def scopeRefusal : WriteScope → List DeltaEntry → Option String
   | .allGraphs, _ => none
+  | .readOnly, _ =>
+    some ("this dataset is a read-only Jena TDB2 database read in place: it accepts queries and " ++
+      "Graph Store reads, and no update or Graph Store write. Load the data into a " ++
+      "Shardborough collection (factoidal pack, then factoidal serve STORE) to write.")
   | .defaultGraph, es =>
     let named := es.any fun e => match e with
       | .add _ (some _) | .remove _ (some _) | .clear (some _) | .drop _ | .create _ => true
@@ -216,7 +225,11 @@ def scopeRefusal : WriteScope → List DeltaEntry → Option String
 def commitOutcome (scope : WriteScope) (old new : Dataset) (ok : HTTP.Response) : Outcome :=
   match datasetDelta old new with
   | .error why => text 501 why
-  | .ok [] => { response := ok }
+  | .ok [] =>
+    -- A read-only database refuses a write even when it would change nothing.
+    match scope with
+    | .readOnly => text 501 ((scopeRefusal scope []).getD "read-only")
+    | _ => { response := ok }
   | .ok entries =>
     match scopeRefusal scope entries with
     | some why => text 501 why
@@ -834,6 +847,34 @@ private def ctOf (o : Outcome) : String :=
   let o := run .defaultGraph (req "POST" "/sparql" [("content-type", "application/sparql-update")]
     "INSERT DATA { <http://e/a> <http://e/p> <http://e/c> }")
   statusOf o == 204 && o.commit.isSome
+-- A read-only database (a TDB2 database read in place) answers queries and refuses every
+-- write with 501 and no commit, even a write that would change nothing.
+#guard
+  let o := run .readOnly (req "POST" "/sparql" [("content-type", "application/sparql-update")]
+    "INSERT DATA { <http://e/a> <http://e/p> <http://e/c> }")
+  statusOf o == 501 && o.commit.isNone && Protocol.strContains (bodyOf o) "read-only"
+#guard
+  let o := run .readOnly (req "POST" "/sparql" [("content-type", "application/sparql-update")]
+    "DELETE DATA { <http://e/x> <http://e/y> <http://e/z> }")
+  statusOf o == 501 && o.commit.isNone
+#guard statusOf (run .readOnly (req "PUT" "/data?graph=http%3A%2F%2Fe%2Fh" [("content-type", "text/turtle")]
+    "<http://e/y> <http://e/p> <http://e/z> .")) == 501
+#guard statusOf (run .readOnly (req "GET" "/data?graph=http%3A%2F%2Fe%2Fg" [("accept", "application/n-triples")])) == 200
+#guard
+  let o := run .readOnly (req "POST" "/sparql" [("content-type", "application/sparql-query"),
+    ("accept", "text/tab-separated-values")] "SELECT ?o WHERE { <http://e/a> <http://e/p> ?o }")
+  statusOf o == 200 && bodyOf o == "?o\n<http://e/b>\n"
+-- The base IRI of a query with no BASE is the request IRI (SPARQL 1.1 section 4.1.1.1,
+-- RFC 3986 section 5.1; Fuseki does the same): a relative IRI resolves against
+-- http://h.example/sparql. A BASE declaration in the query takes precedence.
+#guard
+  let o := run .allGraphs (req "POST" "/sparql" [("content-type", "application/sparql-query"),
+    ("accept", "text/tab-separated-values")] "SELECT (IRI(\"x\") AS ?i) WHERE { }")
+  statusOf o == 200 && bodyOf o == "?i\n<http://h.example/x>\n"
+#guard
+  let o := run .allGraphs (req "POST" "/sparql" [("content-type", "application/sparql-query"),
+    ("accept", "text/tab-separated-values")] "BASE <http://other.example/d/> SELECT (IRI(\"x\") AS ?i) WHERE { }")
+  statusOf o == 200 && bodyOf o == "?i\n<http://other.example/d/x>\n"
 -- Graph Store: GET a graph (200 or 404), PUT a new graph (201, committed).
 #guard statusOf (run .allGraphs (req "GET" "/data?graph=http%3A%2F%2Fe%2Fg" [("accept", "application/n-triples")])) == 200
 #guard statusOf (run .allGraphs (req "GET" "/data?graph=http%3A%2F%2Fe%2Fnone")) == 404

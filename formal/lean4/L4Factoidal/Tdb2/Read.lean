@@ -320,15 +320,46 @@ def readTree (gen : System.FilePath) (name : String) : IO Tree := do
          idn := ← IO.FS.readBinFile (gen / s!"{name}.idn")
          dat := ← IO.FS.readBinFile (gen / s!"{name}.dat") }
 
+/-- The generation among the child names of a database directory: `isGeneration`
+    (the directory is itself a `Data-NNNN` directory) answers the empty
+    string, which means "the directory itself"; otherwise the highest-numbered
+    `Data-NNNN` child. Pure, so a host that cannot read a directory itself
+    (the wasm module) can list the names and ask. -/
+def pickGeneration (isGeneration : Bool) (children : List String) : Except String String :=
+  if isGeneration then .ok ""
+  else
+    match ((children.filter (·.startsWith "Data-")).mergeSort (· ≥ ·)) with
+    | g :: _ => .ok g
+    | [] => .error "no Data-NNNN generation directory (not a TDB2 database)"
+
+/-- The files a quad listing reads from one generation directory. -/
+def databaseFileNames : List String :=
+  [ "SPO.bpt", "SPO.idn", "SPO.dat", "GSPO.bpt", "GSPO.idn", "GSPO.dat", "nodes-data.obj" ]
+
+/-- The database from its files, keyed by the names in `databaseFileNames`. -/
+def databaseOfFiles (files : List (String × ByteArray)) : Except String Database := do
+  let get (name : String) : Except String ByteArray :=
+    match files.find? (·.1 == name) with
+    | some (_, b) => .ok b
+    | none => .error s!"the file {name} was not supplied"
+  pure { spo := { bpt := ← get "SPO.bpt", idn := ← get "SPO.idn", dat := ← get "SPO.dat" }
+         gspo := { bpt := ← get "GSPO.bpt", idn := ← get "GSPO.idn", dat := ← get "GSPO.dat" }
+         obj := ← get "nodes-data.obj" }
+
+/-- Every quad of a database as N-Quads text. -/
+def databaseNQuads (db : Database) : Except String String :=
+  (quadLines db).map fun lines => String.join (lines.toList.map (· ++ "\n"))
+
 /-- The current generation directory: `dir` itself when it is a `Data-NNNN`
     directory, else its highest-numbered `Data-NNNN` child. -/
 def generation (dir : System.FilePath) : IO (Except String System.FilePath) := do
-  if (dir.fileName.getD "").startsWith "Data-" then return .ok dir
-  let entries ← dir.readDir
-  let gens := (entries.filter (·.fileName.startsWith "Data-")).map (·.fileName)
-  match gens.toList.mergeSort (· ≥ ·) with
-  | g :: _ => return .ok (dir / g)
-  | [] => return .error s!"{dir}: no Data-NNNN generation directory (not a TDB2 database)"
+  let isGen := (dir.fileName.getD "").startsWith "Data-"
+  let names ← if isGen then pure [] else do
+    pure ((← dir.readDir).toList.map (·.fileName))
+  match pickGeneration isGen names with
+  | .error _ => return .error s!"{dir}: no Data-NNNN generation directory (not a TDB2 database)"
+  | .ok "" => return .ok dir
+  | .ok g => return .ok (dir / g)
 
 /-- Every quad of the TDB2 database at `dir`, as N-Quads text. -/
 def readDatabaseNQuads (dir : System.FilePath) : IO (Except String String) := do
@@ -371,6 +402,12 @@ private def bytes (l : List Nat) : ByteArray := ⟨l.toArray.map (·.toUInt8)⟩
 -- Inline decimal 1.50 (value 150, scale 2) prints Jena's form "1.5".
 #guard (nodeOf ByteArray.empty ((1 <<< 63) ||| (2 <<< 56) ||| (2 <<< 48) ||| 150)).toOption ==
   some "\"1.5\"^^<http://www.w3.org/2001/XMLSchema#decimal>"
+-- The current generation is the highest-numbered Data-NNNN child.
+#guard (pickGeneration false ["tdb.lock", "Data-0001", "Data-0002"]).toOption == some "Data-0002"
+#guard (pickGeneration true []).toOption == some ""
+#guard (pickGeneration false ["tdb.lock"]).toOption.isNone
+-- A missing file is named.
+#guard (databaseOfFiles []).toOption.isNone
 -- A tree with an empty state file is refused.
 #guard (treeRecords { bpt := ByteArray.empty, idn := ByteArray.empty, dat := ByteArray.empty } 24
   |>.toOption.isNone)

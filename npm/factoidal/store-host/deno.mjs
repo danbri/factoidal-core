@@ -239,6 +239,14 @@ export function atomicReplace (path, bytes) {
   }
 }
 
+export function listNames (directory) {
+  try {
+    return [...Deno.readDirSync(directory)].map((entry) => entry.name).sort()
+  } catch (cause) {
+    throw wrap('DIR_READ_FAILED', `cannot list ${directory}`, directory, cause)
+  }
+}
+
 export function listGeneration (directory) {
   const out = []
   let entries

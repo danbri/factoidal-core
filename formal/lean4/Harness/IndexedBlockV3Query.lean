@@ -104,7 +104,7 @@ private def countAllPredicates (directory : System.FilePath) (manifest : Manifes
 private def finish (query : Query) (entries : List Entry) (predicates : List WfIri)
     (triples : List Triple) (counters : Counters) (delta : DeltaResolved)
     (mode : String := "ibk3-paged-merkle") : QueryIO UInt32 := do
-  let clockEnv ← L4Wasm.Ops.emptyEnvNow
+  let clockEnv := { (← L4Wasm.Ops.emptyEnvNow) with base := query.base }
   let backend := backendFor triples delta
   let dataset : DatasetBackend := { default := backend, named := [] }
   -- §18.6: EXISTS / NOT EXISTS evaluate against the query's dataset, which
@@ -211,7 +211,7 @@ private def objectSubjectDistinctSolutions (subjectVar : VarName)
 private def finishObjectSubjectSelect (query : Query) (entries : List Entry)
     (predicates : List WfIri) (subjectVar objectVar : VarName)
     (drivers targets : List Triple) (counters : Counters) : QueryIO UInt32 := do
-  let clockEnv ← L4Wasm.Ops.emptyEnvNow
+  let clockEnv := { (← L4Wasm.Ops.emptyEnvNow) with base := query.base }
   let (executionQuery, inputRows, mode) :=
     match distinctSubjectOrderQuery? query subjectVar with
     | some q => (q, objectSubjectDistinctSolutions subjectVar targets,
@@ -232,7 +232,7 @@ private def finishObjectSubjectSelect (query : Query) (entries : List Entry)
 private def finishSubjectTripleSelect (query : Query) (entries : List Entry)
     (predicates : List WfIri) (subjectVar driverVar leftVar rightVar : VarName)
     (drivers lefts rights : List Triple) (counters : Counters) : QueryIO UInt32 := do
-  let clockEnv ← L4Wasm.Ops.emptyEnvNow
+  let clockEnv := { (← L4Wasm.Ops.emptyEnvNow) with base := query.base }
   let rows := selectPost clockEnv clockEnv.activeGraph query
     (subjectTripleSolutions subjectVar driverVar leftVar rightVar drivers lefts rights)
   printDiagnostic s!"l4block-id-v3-query shards={entries.length} open-mode=ibk3-sri2-tli1-subject-triple-direct-select({predicates.length}) delta=base logical-read-bytes={counters.requestedBytes} fetched-bytes={counters.fetchedBytes}"
@@ -250,7 +250,7 @@ private def finishCount (query : Query) (entries : List Entry)
 
 private def finishAsk (query : Query) (entries : List Entry) (predicates : List WfIri)
     (triples : List Triple) (counters : Counters) (delta : DeltaResolved) : QueryIO UInt32 := do
-  let clockEnv ← L4Wasm.Ops.emptyEnvNow
+  let clockEnv := { (← L4Wasm.Ops.emptyEnvNow) with base := query.base }
   let dataset : DatasetBackend := { default := backendFor triples delta, named := [] }
   match runAskQueryBackendDataset clockEnv query dataset with
   | none => IO.eprintln "l4block-id-v3-query failed: query was not evaluated as ASK"; return 1
@@ -270,7 +270,7 @@ private def finishAskCount (query : Query) (entries : List Entry) (count : Nat)
 
 private def finishPredicateGroup (query : Query) (entries : List Entry) (predicates : List WfIri)
     (predicateVar countAlias : VarName) (counts : List (WfIri × Nat)) (counters : Counters) : QueryIO UInt32 := do
-  let clockEnv ← L4Wasm.Ops.emptyEnvNow
+  let clockEnv := { (← L4Wasm.Ops.emptyEnvNow) with base := query.base }
   let backend : GraphBackend := .hdt
     { search := fun _ => []
       estimate := fun bound =>
@@ -614,12 +614,12 @@ private def finishSelectLimitZero (query : Query) : QueryIO UInt32 := do
   printRows query []
   return 0
 
-private def run (directoryText queryText : String) : QueryIO UInt32 := do
+private def run (directoryText queryText : String) (base : Option String := none) : QueryIO UInt32 := do
   try
     let root := System.FilePath.mk directoryText
     let directory ← resolveStoreDirectory root
     let manifestBytes ← IO.FS.readBinFile (directory / "manifest.sbm2")
-    match decode? manifestBytes, parseSparql queryText with
+    match decode? manifestBytes, parseSparql queryText base with
     | none, _ =>
         IO.eprintln s!"l4block-id-v3-query rejected: {(retiredLayoutNote? manifestBytes).getD "malformed SBM2 manifest"}"
         return 1
@@ -734,32 +734,58 @@ private def run (directoryText queryText : String) : QueryIO UInt32 := do
     iteration still opens the immutable generation and validates its requested
     ranges; this mode exists so a profiler can observe an otherwise sub-second
     physical query without changing query semantics. -/
-private def repeatRun (remaining : Nat) (directoryText queryText : String) : QueryIO UInt32 :=
+private def repeatRun (remaining : Nat) (directoryText queryText : String)
+    (base : Option String := none) : QueryIO UInt32 :=
   match remaining with
   | 0 => pure 0
   | count + 1 => do
-      let code ← run directoryText queryText
-      if code == 0 then repeatRun count directoryText queryText else pure code
+      let code ← run directoryText queryText base
+      if code == 0 then repeatRun count directoryText queryText base else pure code
+
+/-- Options before `--query`: `--json`, `--repeat N`, `--base IRI`, in any
+    order. `--base` is the base IRI of the query (SPARQL 1.1 section 4.1.1.1,
+    RFC 3986 section 5.1): relative IRIs in the query text resolve against it,
+    as `l4factoidal query` resolves them against the query file's IRI. -/
+structure Options where
+  json : Bool := false
+  repeatCount : Option Nat := none
+  base : Option String := none
+
+def parseOptions : Options → List String → Except String (Options × List String)
+  | o, "--json" :: rest => parseOptions { o with json := true } rest
+  | o, "--repeat" :: n :: rest =>
+      match n.toNat? with
+      | some c => parseOptions { o with repeatCount := some c } rest
+      | none => .error "l4block-id-v3-query --repeat requires a natural number"
+  | o, "--base" :: iri :: rest => parseOptions { o with base := some iri } rest
+  | o, "--query" :: query => .ok (o, query)
+  | _, _ => .error "usage: l4block-id-v3-query SHARD-DIR [--json] [--repeat N] [--base IRI] --query SELECT..."
+
+-- `--base` is read in any position before `--query`; a missing IRI, a missing
+-- `--query` and a non-numeric `--repeat` are refused.
+#guard (match parseOptions {} ["--json", "--base", "http://e/d/", "--repeat", "3", "--query", "ASK", "{}"] with
+  | .ok (o, q) => o.base == some "http://e/d/" && o.json && o.repeatCount == some 3 && q == ["ASK", "{}"]
+  | .error _ => false)
+#guard (match parseOptions {} ["--query", "ASK {}"] with
+  | .ok (o, _) => o.base.isNone && !o.json
+  | .error _ => false)
+#guard (parseOptions {} ["--base"]).toOption.isNone
+#guard (parseOptions {} ["--base", "http://e/"]).toOption.isNone
+#guard (parseOptions {} ["--repeat", "x", "--query", "ASK {}"]).toOption.isNone
 
 def main (args : List String) : IO UInt32 := do
   match args with
-  | directory :: "--query" :: queryParts =>
-      if queryParts.isEmpty then IO.eprintln "l4block-id-v3-query requires a query"; return 2
-      else (run directory (String.intercalate " " queryParts)).run false
-  | directory :: "--repeat" :: countText :: "--query" :: queryParts =>
-      if queryParts.isEmpty then IO.eprintln "l4block-id-v3-query requires a query"; return 2
-      else match countText.toNat? with
-      | some count => (repeatRun count directory (String.intercalate " " queryParts)).run false
-      | none => IO.eprintln "l4block-id-v3-query --repeat requires a natural number"; return 2
-  | directory :: "--json" :: "--query" :: queryParts =>
-      if queryParts.isEmpty then IO.eprintln "l4block-id-v3-query requires a query"; return 2
-      else (run directory (String.intercalate " " queryParts)).run true
-  | directory :: "--json" :: "--repeat" :: countText :: "--query" :: queryParts =>
-      if queryParts.isEmpty then IO.eprintln "l4block-id-v3-query requires a query"; return 2
-      else match countText.toNat? with
-      | some count => (repeatRun count directory (String.intercalate " " queryParts)).run true
-      | none => IO.eprintln "l4block-id-v3-query --repeat requires a natural number"; return 2
-  | _ => IO.eprintln "usage: l4block-id-v3-query SHARD-DIR [--json] [--repeat N] --query SELECT..."; return 2
+  | directory :: rest =>
+      match parseOptions {} rest with
+      | .error message => IO.eprintln message; return 2
+      | .ok (o, queryParts) =>
+          if queryParts.isEmpty then IO.eprintln "l4block-id-v3-query requires a query"; return 2
+          else
+            let query := String.intercalate " " queryParts
+            match o.repeatCount with
+            | some count => (repeatRun count directory query o.base).run o.json
+            | none => (run directory query o.base).run o.json
+  | [] => IO.eprintln "usage: l4block-id-v3-query SHARD-DIR [--json] [--repeat N] [--base IRI] --query SELECT..."; return 2
 
 end Harness.IndexedBlockV3Query
 
