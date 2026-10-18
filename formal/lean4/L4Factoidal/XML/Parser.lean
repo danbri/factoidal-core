@@ -467,6 +467,36 @@ def codepointToString (cp : Nat) : String := String.singleton (Char.ofNat cp)
 def lookupEntityDef (name : String) (ents : EntityTable) : Option EntityDef :=
   (ents.defs.find? (fun p => p.1 == name && (ents.standalone || !p.2.afterUnreadPe))).map (·.2)
 
+/-- `lookupEntityDef` through the table's index: the declarations of `name`,
+newest first, and the first one the table offers. -/
+def lookupEntityDefFast (name : String) (ents : EntityTable) : Option EntityDef :=
+  (ents.index.getD name []).find? (fun d => ents.standalone || !d.afterUnreadPe)
+
+/-- The first offered declaration of `name` in a declaration list is the first
+offered one among the declarations of `name` in its index. -/
+theorem find_defs_eq_find_index (name : String) (vis : EntityDef → Bool) :
+    ∀ defs : List (String × EntityDef),
+      (defs.find? (fun p => p.1 == name && vis p.2)).map (·.2) =
+        ((entityIndexOf defs).getD name []).find? vis
+  | [] => by simp [entityIndexOf]
+  | (n, d) :: rest => by
+    have ih := find_defs_eq_find_index name vis rest
+    simp only [entityIndexOf, Std.HashMap.getD_insert, List.find?_cons]
+    by_cases h : n = name
+    · subst h
+      cases hv : vis d <;> simp [hv, ih]
+    · have h' : (n == name) = false := by simpa using h
+      simp [h', ih]
+
+/-- The compiler runs `lookupEntityDefFast` wherever `lookupEntityDef` is
+called: one hash lookup instead of a scan of every declaration
+(https://github.com/danbri/factoidal/issues/872). -/
+@[csimp] theorem lookupEntityDef_eq_fast : @lookupEntityDef = @lookupEntityDefFast := by
+  funext name ents
+  simp only [lookupEntityDef, lookupEntityDefFast]
+  rw [ents.index_eq]
+  exact find_defs_eq_find_index name (fun d => ents.standalone || !d.afterUnreadPe) ents.defs
+
 /-- Look a declared general entity's replacement text up by name.
 Port of F* `lookup_entity`. -/
 def lookupEntity (name : String) (ents : EntityTable) : Option String :=
@@ -477,7 +507,7 @@ def lookupEntity (name : String) (ents : EntityTable) : Option String :=
 def declareEntity (name : String) (d : EntityDef) (ents : EntityTable) : EntityTable :=
   match lookupEntityDef name ents with
   | some _ => ents
-  | none   => { ents with defs := (name, d) :: ents.defs }
+  | none   => ents.cons name d
 
 /-- The five entities §4.6 says every processor must recognise whether
 or not they are declared. -/
@@ -875,7 +905,7 @@ def parseReference (inAttr : Bool) (ents : EntityTable) (s : Chars) (pos : Nat) 
                else .err "reference to undeclared entity (WFC: Entity Declared)" pos)
             else
             let subArr : Chars := ed.value.toList.toArray
-            match expandEntityValue inAttr ents [name] subArr 0 (ents.defs.length + 1)
+            match expandEntityValue inAttr ents [name] subArr 0 (ents.count + 1)
                     (subArr.size + 1) [] with
             | .err m p => .err m p
             | .ok decoded _ => .ok decoded pos'
@@ -1606,7 +1636,7 @@ def scanRefs (ents : EntityTable) (s : Chars) (start stop : Nat) : Nat → RefFl
               let (f, u) := scanRefs ents s (j + 1) stop fuel
               let undecl := !isPredefinedEntity n && (lookupEntityDef n ents).isNone
               ({ entityRef := true,
-                 wsCharRef := f.wsCharRef || (!isPredefinedEntity n && entityHasWsCharRef ents n (ents.defs.length + 1)) },
+                 wsCharRef := f.wsCharRef || (!isPredefinedEntity n && entityHasWsCharRef ents n (ents.count + 1)) },
                u || undecl)
             else scanRefs ents s (start + 1) stop fuel
         | .err _ _ => scanRefs ents s (start + 1) stop fuel
@@ -1653,7 +1683,7 @@ def scanRefsLoop (ents : EntityTable) (s : Chars) (start stop : Nat)
               let undecl := !isPredefinedEntity n && (lookupEntityDef n ents).isNone
               scanRefsLoop ents s (j + 1) stop
                 { entityRef := true,
-                  wsCharRef := fl.wsCharRef || (!isPredefinedEntity n && entityHasWsCharRef ents n (ents.defs.length + 1)) }
+                  wsCharRef := fl.wsCharRef || (!isPredefinedEntity n && entityHasWsCharRef ents n (ents.count + 1)) }
                 (u || undecl) fuel
             else scanRefsLoop ents s (start + 1) stop fl u fuel
         | .err _ _ => scanRefsLoop ents s (start + 1) stop fl u fuel
@@ -2590,7 +2620,7 @@ def parseDefaultDecl (check : Bool) (ents : EntityTable) (s : Chars) (pos : Nat)
         if !check then .ok decl p'
         else
           let body : Chars := literal.toList.toArray
-          match expandEntityValue true ents [] body 0 (ents.defs.length + 1) (body.size + 1) [] with
+          match expandEntityValue true ents [] body 0 (ents.count + 1) (body.size + 1) [] with
           | .err m _ => .err ("in an attribute default value: " ++ m) p
           | .ok _ _  => .ok decl p'
     else .err "expected #REQUIRED, #IMPLIED, #FIXED or a quoted default" p
@@ -2914,7 +2944,7 @@ def normalizeEntityValue (internal : Bool) (pes : EntityTable)
     malformed input reports nothing, while one that rejects valid
     input at least announces itself. -/
 def parseEntityDecl (resolve : Resolver) (internal : Bool) (s : Chars) (pos : Nat)
-    (ents : EntityTable) (pes : EntityTable) :
+    (ents : EntityTable) (pes : EntityTable) (unreadPe : Bool := false) :
     PResult (EntityTable × EntityTable × String × Option String) :=
   match pstring "<!ENTITY" s pos with
   | .err m p => .err m p
@@ -2946,8 +2976,8 @@ def parseEntityDecl (resolve : Resolver) (internal : Bool) (s : Chars) (pos : Na
                   -- A PARAMETER entity is not a general entity, so it
                   -- never enters the table a `&name;` reference reads.
                   -- It has its OWN table, which `%name;` reads.
-                  if isPE then .ok (ents, declareEntity name { value := value } pes, name, none) p7
-                  else .ok (declareEntity name { value := value } ents, pes, name, none) p7
+                  if isPE then .ok (ents, declareEntity name { value := value, afterUnreadPe := unreadPe } pes, name, none) p7
+                  else .ok (declareEntity name { value := value, afterUnreadPe := unreadPe } ents, pes, name, none) p7
           else
             match parseExternalIDSys s p5 with
             | .err m p => .err m p
@@ -2988,8 +3018,8 @@ def parseEntityDecl (resolve : Resolver) (internal : Bool) (s : Chars) (pos : Na
                     | none      =>
                         let ed : EntityDef :=
                           { value := "", external := true, resolved := false }
-                        if isPE then .ok (ents, declareEntity name ed pes, name, none) p'
-                        else .ok (declareEntity name ed ents, pes, name, none) p'
+                        if isPE then .ok (ents, declareEntity name { ed with afterUnreadPe := unreadPe } pes, name, none) p'
+                        else .ok (declareEntity name { ed with afterUnreadPe := unreadPe } ents, pes, name, none) p'
                     | some raw  =>
                       -- A malformed `[77] TextDecl`, or text that
                       -- section 2.11 or the `[2] Char` class refuses, is
@@ -3014,8 +3044,8 @@ def parseEntityDecl (resolve : Resolver) (internal : Bool) (s : Chars) (pos : Na
                         | .ok text => { value := text, external := true }
                         | .error m => { value := "", external := true, resolved := false,
                                         unreadable := some m }
-                      if isPE then .ok (ents, declareEntity name ed pes, name, none) p'
-                      else .ok (declareEntity name ed ents, pes, name, none) p'
+                      if isPE then .ok (ents, declareEntity name { ed with afterUnreadPe := unreadPe } pes, name, none) p'
+                      else .ok (declareEntity name { ed with afterUnreadPe := unreadPe } ents, pes, name, none) p'
 
 /-- What reading a declaration subset accumulates besides the two
 entity tables: the attribute declarations and the declared names, each
@@ -3336,22 +3366,16 @@ def parseSubset (resolve : Resolver) (endKind : SubsetEnd) (ext : Bool)
           | .err m p => .err m p
           | .ok _ pos' => parseSubset resolve endKind ext s pos' ents pes dtd fuel
         else if peekLit "<!ENTITY" s pos then
-          match parseEntityDecl resolve (endKind == .bracket) s pos ents pes with
+          match parseEntityDecl resolve (endKind == .bracket) s pos ents pes dtd.incomplete with
           | .err m p => .err m p
-          | .ok (ents1, pes1, name, ndata) pos' =>
+          | .ok (ents', pes', name, ndata) pos' =>
               -- XML 1.0 §5.1: except when `standalone="yes"`, a
               -- non-validating processor must not process an entity
               -- declaration that follows a reference to a parameter
-              -- entity it did not read. The declaration is kept, marked,
-              -- and the table does not offer it (`lookupEntityDef`).
-              let mark (old new : EntityTable) : EntityTable :=
-                if new.defs.length > old.defs.length then
-                  { new with defs := match new.defs with
-                      | (n, d) :: rest => (n, { d with afterUnreadPe := dtd.incomplete }) :: rest
-                      | [] => [] }
-                else new
-              let ents' := mark ents ents1
-              let pes' := mark pes pes1
+              -- entity it did not read. The declaration is kept, marked
+              -- (`parseEntityDecl` sets `afterUnreadPe` from
+              -- `dtd.incomplete`), and the table does not offer it
+              -- (`lookupEntityDef`).
               parseSubset resolve endKind ext s pos' ents' pes'
                 { dtd with
                     names := { dtd.names with entities := name :: dtd.names.entities },
