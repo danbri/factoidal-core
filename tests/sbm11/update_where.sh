@@ -570,9 +570,10 @@ if [ -z "$RMS40" ]; then record scaling replay-time-setup 1 "no replay time: $(t
 elif [ "$RMS40" -le 2000 ]; then record scaling replay-time 0 "40,000 entries: replay $RMS40 ms at open ($((RMS40 * 1000 / 40000)) microseconds for each entry; the bound is 2,000 ms of wall time)"
 else record scaling replay-time 1 "40,000 entries: replay $RMS40 ms at open ($((RMS40 * 1000 / 40000)) microseconds for each entry; the bound is 2,000 ms of wall time)"; fi
 
-# The third checker of the skill danbri-function-precrime-checkers. The times are the tools' own lines. Compile and
-# replay: a bound of 8 for 4 times the input (linear work gives 4, quadratic work gives 16; measured 3.9 to 5.1 for
-# the compile time in 4 runs and 3.7 to 4.5 for the replay time in 3 runs). Before 2026-10-14 the replay of 10,000 and of 40,000
+# The third checker of the skill danbri-function-precrime-checkers. The times are the tools' own lines. Compile: a
+# bound of 8 for 4 times the input (linear work gives 4, quadratic work gives 16; measured 3.9 to 5.1 for the compile
+# time in 4 runs). Replay: see the row below (3.7 to 4.5 for 4 times the entries in 3 runs on 2026-10-14, with the
+# pair 20,000 and 80,000 entries). Before 2026-10-14 the replay of 10,000 and of 40,000
 # entries took 1.2 s and 10.1 s (8.3), and the model a n + c n^2 fitted to the five sizes gives 11.5 for 20,000 and
 # 80,000 entries: `Session.idOrNew` read the size of the vocabulary with `get` before the push, which left a second
 # reference to the array, and every push copied it. (A pair of 5,000 and 40,000 entries gave 7.4 to 13.6 on the
@@ -605,7 +606,13 @@ C10="$(best_compile 10000)"; C40="$(best_compile 40000)"
 if [ -z "$C10" ] || [ -z "$C40" ]; then record scaling compile-linear 1 "an update of 10,000 or 40,000 solutions failed or printed no compile time"
 elif ratio_ok "$C10" "$C40" 8; then record scaling compile-linear 0 "10,000 solutions: $C10 ms, 40,000 solutions: $C40 ms (WHERE clause, templates, fresh labels; the bound for the quadruple is 8 times)"
 else record scaling compile-linear 1 "10,000 solutions: $C10 ms, 40,000 solutions: $C40 ms: more than 8 times for 4 times the solutions"; fi
-# replay: logs of 20,000 and 80,000 entries (INSERT DATA of that many quads on the gate fixture)
+# replay: logs of 20,000 and 160,000 entries (INSERT DATA of that many quads on the gate fixture), at most 24 times
+# for 8 times the entries. Linear work gives 8; quadratic work gives 64; the quadratic replay before 2026-10-14
+# (the model above) gives 38. Until 2026-10-18 the pair was 20,000 and 80,000 entries with a bound of 8. On this VM
+# the cost for each entry of these logs steps from 19 microseconds (up to 20,000 entries) to 31 to 39 (40,000 entries
+# and more), so that pair read 7.6 to 8.7 with the builds of 2026-10-15 and 2026-10-18, and the row failed or passed
+# by chance; 20,000 against 160,000 read 16.3. The cost for each entry is
+# https://github.com/danbri/factoidal/issues/879 (row sbm11-replay-insert-time of tests/stack/lean_scaling.py).
 replay_of() { # replay_of <n>: the replay time in ms of a log of n entries, nothing on a failure
   local n="$1" d="$TMP/scale/ins$n"
   new_store "$d" "$GATE" || return 0
@@ -621,10 +628,10 @@ PY
   [ "$URC" -eq 0 ] || return 0
   replay_ms "$d"
 }
-RMS20="$(replay_of 20000)"; RMS80="$(replay_of 80000)"
-if [ -z "$RMS20" ] || [ -z "$RMS80" ]; then record scaling replay-linear 1 "the update or the replay of 20,000 or 80,000 entries failed"
-elif ratio_ok "$RMS20" "$RMS80" 8; then record scaling replay-linear 0 "20,000 entries: $RMS20 ms, 80,000 entries: $RMS80 ms (the bound for the quadruple is 8 times)"
-else record scaling replay-linear 1 "20,000 entries: $RMS20 ms, 80,000 entries: $RMS80 ms: more than 8 times for 4 times the entries"; fi
+RMS20="$(replay_of 20000)"; RMS160="$(replay_of 160000)"
+if [ -z "$RMS20" ] || [ -z "$RMS160" ]; then record scaling replay-linear 1 "the update or the replay of 20,000 or 160,000 entries failed"
+elif ratio_ok "$RMS20" "$RMS160" 24; then record scaling replay-linear 0 "20,000 entries: $RMS20 ms, 160,000 entries: $RMS160 ms (the bound for 8 times the entries is 24 times)"
+else record scaling replay-linear 1 "20,000 entries: $RMS20 ms, 160,000 entries: $RMS160 ms: more than 24 times for 8 times the entries"; fi
 
 echo
 echo "update where: $PASS pass, $FAIL fail, $XFAIL expected-fail (out of $((PASS + FAIL + XFAIL)))"
