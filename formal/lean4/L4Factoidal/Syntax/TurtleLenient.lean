@@ -522,9 +522,11 @@ private def trigShape (r : Dataset × List Diagnostic) :
 
 #guard (trigShape (parseTriGLenient trigMixed)).2
         == [(4, .unexpectedToken), (8, .badEscape), (9, .undefinedPrefix)]
--- The good statements stay in their graphs: ex:g1 keeps two triples.
+-- The good statements stay in their graphs: ex:g1 keeps two triples. The block
+-- of ex:g2 states its graph and its one statement is dropped, so ex:g2 is a named
+-- graph with no triple (RDF 1.1 Concepts section 4; issue 855).
 #guard (trigShape (parseTriGLenient trigMixed)).1.1 == 2
-#guard ((trigShape (parseTriGLenient trigMixed)).1.2.map Prod.snd) == [2]
+#guard ((trigShape (parseTriGLenient trigMixed)).1.2.map Prod.snd) == [2, 0]
 #guard positionsAgree trigMixed (parseTriGLenient trigMixed).2
 -- No errors: the strict dataset and no diagnostics.
 private def trigGood : String :=

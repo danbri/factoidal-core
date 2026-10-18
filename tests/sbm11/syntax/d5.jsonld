@@ -1,0 +1,14 @@
+{
+  "@context": { "ex": "http://example.org/" },
+  "@graph": [
+    { "@id": "ex:s", "ex:p": { "@id": "ex:o" } },
+    { "@id": "ex:g0", "@graph": [] },
+    { "@id": "ex:g1", "@graph": [
+        { "@id": "ex:a", "ex:p": { "@id": "ex:b" } },
+        { "@id": "ex:a2", "ex:p": { "@id": "ex:b2" } } ] },
+    { "@id": "ex:g2", "@graph": [] },
+    { "@id": "_:b1", "@graph": [ { "@id": "ex:c", "ex:p": "x" } ] },
+    { "@id": "_:e", "@graph": [] },
+    { "@id": "_:f", "@graph": [] }
+  ]
+}

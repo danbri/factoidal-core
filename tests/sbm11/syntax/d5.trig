@@ -1,0 +1,16 @@
+# D5: named graphs with no triple, and graphs named by a blank node
+# (https://github.com/danbri/factoidal/issues/855,
+# https://github.com/danbri/factoidal/issues/856). RDF 1.1 Concepts section 4:
+# a named graph is a graph name (an IRI or a blank node) and an RDF graph, and
+# the RDF graph can be empty. Six named graphs: three IRIs (ex:g0 and ex:g2 have
+# no triple) and three blank nodes (_:e and the anonymous one have no triple).
+@prefix ex: <http://example.org/> .
+
+ex:s ex:p ex:o .
+ex:g0 { }
+ex:g1 { ex:a ex:p ex:b . }
+GRAPH ex:g2 { }
+_:b1 { ex:c ex:p "x" . }
+_:e { }
+[] { }
+ex:g1 { ex:a2 ex:p ex:b2 }

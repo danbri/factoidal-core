@@ -79,6 +79,12 @@ def addQuadFast (ds : FastDataset) (t : Triple) (gopt : Option Subject) : FastDa
         { ds with namesRev := name :: ds.namesRev,
                   named := ds.named.insert name (FastGraph.add t {}) }
 
+/-- The fast twin of `ensureNamed`: a named graph `name`, empty when the dataset
+    has none (`NQuadsFastTheorems.ensureNamedFast_toDataset`). -/
+def ensureNamedFast (ds : FastDataset) (name : Subject) : FastDataset :=
+  if ds.named.contains name then ds
+  else { ds with namesRev := name :: ds.namesRev, named := ds.named.insert name {} }
+
 def FastDataset.toDataset (ds : FastDataset) : Dataset :=
   { default := ds.default.toGraph
   , named := ds.namesRev.reverse.map fun name =>

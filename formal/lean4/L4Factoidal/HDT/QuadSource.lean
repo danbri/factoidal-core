@@ -63,7 +63,7 @@ def GraphStore.objectOf (gs : GraphStore) (id : Nat) : Except String Term :=
     the id of the subject after the last one read. -/
 def GraphStore.subjectBatch (gs : GraphStore) (subjects size first : Nat) :
     Except String (Batch × Nat) := do
-  let mut out : Batch := #[]
+  let mut out : Batch := {}
   let mut sid := first
   for _ in [0:subjects + 1] do
     if subjects < sid || size ≤ out.size then break
@@ -73,7 +73,7 @@ def GraphStore.subjectBatch (gs : GraphStore) (subjects size first : Nat) :
     for (pid, oid) in pairs do
       let p ← gs.predicateOf pid
       let o ← gs.objectOf oid
-      out := out.push ({ s := s, p := p, o := o }, none)
+      out := out.pushQuad ({ s := s, p := p, o := o }, none)
     sid := sid + 1
   return (out, sid)
 

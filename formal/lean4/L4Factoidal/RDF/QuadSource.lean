@@ -10,7 +10,23 @@ takes the RDF abstract syntax (the terms, triples and quads of RDF 1.1 and RDF
 
 A `QuadSource` gives the quads of an RDF dataset batch by batch. Each call of
 `next` returns the next batch, or `none` at the end. A batch is an array of
-quads in the order the producer states them. The type names no syntax and
+quads in the order the producer states them, and an array of graph names that
+the source declares.
+
+## Graph names
+
+RDF 1.1 Concepts section 4: a named graph is a pair of a graph name (an IRI or
+a blank node) and an RDF graph, and that graph can be empty. A quad states a
+named graph that has a triple; it cannot state an empty one. So a batch also
+carries `graphs`: the names of the named graphs the source declares, empty or
+not (2026-10-15, https://github.com/danbri/factoidal/issues/855). A source of
+quads only (an N-Quads document, an array of quads, an HDT file) declares no
+graph, and the named graphs it gives are the graph names of its quads. A source
+that can state an empty graph declares its graphs: `ofDataset` declares every
+named graph of the `Dataset`; the source layer declares each graph block of a
+TriG document and each named graph of a JSON-LD document. A consumer takes the
+union: the named graphs are the declared names and the graph names of the
+quads. The type names no syntax and
 imports none (`tests/sbm11/storage_layering.py` checks both). A consumer, such as
 the SBM11 packer (`Harness/Sbm11PackLib.lean`, `packQuads`), takes a `QuadSource`
 and does not know where the quads come from. The producers in the tree are:
@@ -40,7 +56,10 @@ checks that the batches the lift gives are the batches of the pure form.
 `Dataset.quadList` (`RDF/DatasetNormalize.lean`, the order in which
 `Dataset.toCanonicalNQuads` writes the quads), and the order of
 `Source.foldDataset`, in which the source layer gives the quads of a document
-that it parses as a whole (`QuadSourceTheorems.quadList_eq_foldDataset`).
+that it parses as a whole (`QuadSourceTheorems.quadList_eq_foldDataset`). It
+declares the name of each named graph when it starts on that graph, so the
+declared names are the names of `Dataset.named`, in order
+(`QuadSourceTheorems.ofDataset_graphs`).
 
 No `sorry`, no user `axiom`, no `native_decide`, no `partial`.
 -/
@@ -54,13 +73,33 @@ namespace QuadSource
     the default graph (RDF 1.1 Concepts section 4). -/
 abbrev Quad := Triple × Option Subject
 
-/-- The quads one call of `next` gives, in the order the producer states them. -/
-abbrev Batch := Array Quad
+/-- What one call of `next` gives: quads, in the order the producer states them,
+    and the names of named graphs that the source declares (see "Graph names"). -/
+structure Batch where
+  quads : Array Quad := #[]
+  graphs : Array Subject := #[]
+  deriving Inhabited, BEq
+
+/-- No quad and no graph name. -/
+def Batch.isEmpty (b : Batch) : Bool := b.quads.isEmpty && b.graphs.isEmpty
+
+/-- The number of quads and graph names. -/
+def Batch.size (b : Batch) : Nat := b.quads.size + b.graphs.size
+
+/-- A batch of quads only. -/
+def Batch.ofQuads (qs : Array Quad) : Batch := { quads := qs }
+
+/-- One more quad. -/
+def Batch.pushQuad (b : Batch) (q : Quad) : Batch := { b with quads := b.quads.push q }
+
+/-- One more declared graph name. -/
+def Batch.pushGraph (b : Batch) (g : Subject) : Batch := { b with graphs := b.graphs.push g }
 
 end QuadSource
 
 /-- A producer of RDF quads. `next` gives the next batch and `none` at the end.
-    After the first `none`, every call gives `none`. A batch is never empty. When
+    After the first `none`, every call gives `none`. A batch is never empty: it
+    has a quad or a declared graph name. When
     a call throws, every later call throws. A producer is used by one consumer in
     one thread: a consumer that starts workers gives each worker a way to open its
     producer (`Harness/Sbm11PackLib.lean`, `packQuads`), so that the producer and
@@ -136,11 +175,12 @@ structure ArrayPos where
   quads : Array Quad
   pos : Nat
 
-/-- Batches of `batch` quads (at least 1), the last one possibly shorter. -/
+/-- Batches of `batch` quads (at least 1), the last one possibly shorter. An
+    array of quads declares no graph name. -/
 def arrayPull (batch : Nat) : Pull ArrayPos := fun s =>
   if s.pos < s.quads.size then
     let stop := min s.quads.size (s.pos + max 1 batch)
-    some (s.quads.extract s.pos stop, { s with pos := stop })
+    some (Batch.ofQuads (s.quads.extract s.pos stop), { s with pos := stop })
   else none
 
 /-- The quads of an array, `batch` at a time. -/
@@ -165,16 +205,21 @@ def Cursor.quads (c : Cursor) : List Quad :=
   c.triples.map (fun t => (t, c.graph)) ++
     c.later.flatMap (fun ng => ng.graph.map (fun t => (t, some ng.name)))
 
-/-- Add quads to `acc` until it holds `n` or the dataset has no more, and give
-    the position after them. A named graph with no triple is passed over. Each step
-    gives one triple or passes to the next graph, so the triples still to give, and one
-    for each later graph, decrease (`termination_by`). -/
+/-- The names of the named graphs still to declare: those after the graph being
+    read. -/
+def Cursor.names (c : Cursor) : List Subject := c.later.map (·.name)
+
+/-- Add quads and graph names to `acc` until it holds `n` of them or the dataset
+    has no more, and give the position after them. Passing to the next named graph
+    declares its name, so a named graph with no triple is declared too. Each step
+    gives one triple or passes to the next graph, so the triples still to give, and
+    one for each later graph, decrease (`termination_by`). -/
 def Cursor.take (n : Nat) (c : Cursor) (acc : Batch) : Batch × Cursor :=
   if n ≤ acc.size then (acc, c)
   else
     match c with
-    | ⟨g, t :: ts, later⟩ => Cursor.take n ⟨g, ts, later⟩ (acc.push (t, g))
-    | ⟨_, [], ng :: rest⟩ => Cursor.take n ⟨some ng.name, ng.graph, rest⟩ acc
+    | ⟨g, t :: ts, later⟩ => Cursor.take n ⟨g, ts, later⟩ (acc.pushQuad (t, g))
+    | ⟨_, [], ng :: rest⟩ => Cursor.take n ⟨some ng.name, ng.graph, rest⟩ (acc.pushGraph ng.name)
     | ⟨_, [], []⟩ => (acc, c)
 termination_by c.triples.length + (c.later.map fun ng => ng.graph.length + 1).sum
 decreasing_by
@@ -182,15 +227,17 @@ decreasing_by
   all_goals simp
   all_goals omega
 
-/-- Batches of `batch` quads (at least 1) of a dataset, the last one possibly
-    shorter. A position with no quad left gives `none`. -/
+/-- Batches of `batch` quads and graph names (at least 1) of a dataset, the last
+    one possibly shorter. A position with no quad and no graph name left gives
+    `none`. -/
 def datasetPull (batch : Nat) : Pull Cursor := fun c =>
-  match c.take (max 1 batch) #[] with
+  match c.take (max 1 batch) {} with
   | (b, c') => if b.isEmpty then none else some (b, c')
 
 /-- The quads of a dataset, `batch` at a time: the default graph, then each
-    named graph in order. The producer holds the dataset and a position in it,
-    and copies one batch at a time. -/
+    named graph in order, each declared when the producer starts on it. The
+    producer holds the dataset and a position in it, and copies one batch at a
+    time. -/
 def ofDataset (ds : Dataset) (batch : Nat) : IO QuadSource :=
   ofPull (Cursor.start ds) (datasetPull batch)
 
@@ -205,9 +252,9 @@ def foldBatches {α : Type} (src : QuadSource) (init : α) (f : α → Batch →
     | some b => acc ← f acc b
   pure acc
 
-/-- All the quads that remain, in order. -/
-def drain (src : QuadSource) : IO (Array Quad) :=
-  src.foldBatches #[] fun acc b => pure (acc ++ b)
+/-- All the quads and declared graph names that remain, in order. -/
+def drain (src : QuadSource) : IO Batch :=
+  src.foldBatches {} fun acc b => pure { quads := acc.quads ++ b.quads, graphs := acc.graphs ++ b.graphs }
 
 end QuadSource
 

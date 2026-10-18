@@ -51,14 +51,26 @@ open L4Factoidal.RDF
 
 /-! ## Dataset assembly -/
 
+/-- The dataset with the named graph of a graph block, empty or not: `ensureNamed`
+for a graph name, nothing for the default graph. -/
+def ensureGraphOf (ds : Dataset) : Option Subject → Dataset
+  | some name => ensureNamed ds name
+  | none => ds
+
 /-- Add a statement's triples to the default graph or to a named graph,
 creating the named graph if it does not exist yet. Port of
 `trig_dataset_add_triples` / `trig_dataset_add`; the graph-name key is
 the `Subject` the `[7g] labelOrSubject` production yields — an IRI or a
 blank node, per RDF 1.1 Concepts §4 — stored as-is, the same key
-N-Quads uses. -/
+N-Quads uses.
+
+A graph block declares its graph even when it holds no triple (`<g> { }`): RDF
+1.1 Concepts section 4 lets a named graph be empty, and RDF 1.1 TriG section
+2.2 states a graph block, so the graph is created before the triples are added
+(`ensureGraphOf`; 2026-10-15, https://github.com/danbri/factoidal/issues/855).
+Until then an empty graph block was dropped. -/
 def addTriplesTo (ds : Dataset) (gname : Option Subject) (ts : List Triple) : Dataset :=
-  ts.foldl (fun d t => addQuad d t gname) ds
+  ts.foldl (fun d t => addQuad d t gname) (ensureGraphOf ds gname)
 
 /-! ## Keyword and directive lookahead
 
@@ -247,11 +259,16 @@ def readTriGStatement (fuel : Nat) (st : TurtleState) (pos : Nat) (cs : List Cha
 
 /-! ## [1g] trigDoc -/
 
+/-- `ensureGraphOf` on the indexed accumulator. -/
+def ensureGraphOfFast (ds : FastDataset) : Option Subject → FastDataset
+  | some name => ensureNamedFast ds name
+  | none => ds
+
 /-- Add a statement's triples to a dataset under construction: the
 `FastDataset` twin of `addTriplesTo`. -/
 def addTriplesToFast (ds : FastDataset) (gname : Option Subject) (ts : List Triple) :
     FastDataset :=
-  ts.foldl (fun d t => addQuadFast d t gname) ds
+  ts.foldl (fun d t => addQuadFast d t gname) (ensureGraphOfFast ds gname)
 
 /-- `trigDoc ::= (directive | block)*`. STRICT, with a no-progress guard
 (same shape as `Syntax.Turtle.parseStatements`). The fuel starts above the
@@ -283,12 +300,14 @@ def parseTriG (text : String) (base : Option String := none) (mode : Mode := .rd
   | .error e    => .error e
   | .ok (ds, _) => .ok ds.toDataset
 
-/-- Adding a statement's triples with the indexed accumulator denotes adding
-them with `addQuad`, whenever the accumulator satisfies its invariant. -/
-theorem addTriplesToFast_toDataset (gname : Option Subject) (ts : List Triple) :
+/-- The triples of a statement added one by one with the indexed accumulator
+denote the same additions with `addQuad`, whenever the accumulator satisfies its
+invariant. -/
+theorem foldAddFast_toDataset (gname : Option Subject) (ts : List Triple) :
     ∀ ds : FastDataset, ds.Inv →
-      (addTriplesToFast ds gname ts).Inv
-      ∧ (addTriplesToFast ds gname ts).toDataset = addTriplesTo ds.toDataset gname ts := by
+      (ts.foldl (fun d t => addQuadFast d t gname) ds).Inv
+      ∧ (ts.foldl (fun d t => addQuadFast d t gname) ds).toDataset
+          = ts.foldl (fun d t => addQuad d t gname) ds.toDataset := by
   induction ts with
   | nil => intro ds h; exact ⟨h, rfl⟩
   | cons t ts ih =>
@@ -296,9 +315,29 @@ theorem addTriplesToFast_toDataset (gname : Option Subject) (ts : List Triple) :
       have h1 := FastDataset.add_inv (t := t) (gopt := gname) h
       have h2 := ih (addQuadFast ds t gname) h1
       refine ⟨h2.1, ?_⟩
-      show (addTriplesToFast (addQuadFast ds t gname) gname ts).toDataset
-          = addTriplesTo (addQuad ds.toDataset t gname) gname ts
+      simp only [List.foldl_cons]
       rw [h2.2, addQuadFast_toDataset t gname h]
+
+/-- `ensureGraphOfFast` keeps the invariant and denotes `ensureGraphOf`. -/
+theorem ensureGraphOfFast_toDataset (gname : Option Subject) (ds : FastDataset) (h : ds.Inv) :
+    (ensureGraphOfFast ds gname).Inv ∧ (ensureGraphOfFast ds gname).toDataset = ensureGraphOf ds.toDataset gname := by
+  cases gname with
+  | none => exact ⟨h, rfl⟩
+  | some name => exact ⟨FastDataset.ensure_inv name h, ensureNamedFast_toDataset name h⟩
+
+/-- Adding a statement's triples with the indexed accumulator denotes adding
+them with `addQuad`, after the graph is created, whenever the accumulator
+satisfies its invariant. -/
+theorem addTriplesToFast_toDataset (gname : Option Subject) (ts : List Triple) :
+    ∀ ds : FastDataset, ds.Inv →
+      (addTriplesToFast ds gname ts).Inv
+      ∧ (addTriplesToFast ds gname ts).toDataset = addTriplesTo ds.toDataset gname ts := by
+  intro ds h
+  have he := ensureGraphOfFast_toDataset gname ds h
+  have hf := foldAddFast_toDataset gname ts (ensureGraphOfFast ds gname) he.1
+  refine ⟨hf.1, ?_⟩
+  simp only [addTriplesToFast, addTriplesTo]
+  rw [hf.2, he.2]
 
 /-! ## The superseded reader, kept as the record (2026-10-10)
 

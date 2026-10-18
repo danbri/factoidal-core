@@ -70,7 +70,7 @@ theorem whole_readAll {α : Type} (step : Step α) (parse : DocParser) (mode : M
       (parse mode base (String.join chunks)).map (foldDataset step acc) := by
   simp only [Reader.readAll]
   rw [whole_foldlM]
-  simp [Reader.finish]
+  simp [Reader.finish, Reader.finishD]
 
 /-- RDF/XML: the reader that `init` gives reads `parseDocument` of the joined
 chunks, for every list of chunks. -/

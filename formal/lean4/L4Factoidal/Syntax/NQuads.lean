@@ -171,6 +171,16 @@ def addQuad (ds : Dataset) (t : Triple) (gopt : Option Subject) : Dataset :=
       | none =>
           { ds with named := ds.named ++ [{ name := name, graph := [t] }] }
 
+/-- The dataset with a named graph `name`: unchanged when it has one, else with an
+empty named graph `name` after the others. RDF 1.1 Concepts section 4: a named
+graph is a pair of a graph name and an RDF graph, and that graph can be empty. A
+TriG graph block with no triple states such a graph (`Syntax.addTriplesTo`); a
+line of N-Quads cannot. -/
+def ensureNamed (ds : Dataset) (name : Subject) : Dataset :=
+  match ds.named.find? (fun ng => ng.name == name) with
+  | some _ => ds
+  | none => { ds with named := ds.named ++ [{ name := name, graph := [] }] }
+
 /-! ## Document — [1] nquadsDoc
 
 `nquadsDoc ::= statement? (EOL statement?)*`, plus `#`-comments and blank
