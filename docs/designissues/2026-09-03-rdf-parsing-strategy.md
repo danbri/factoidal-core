@@ -2412,6 +2412,19 @@ for them. `tests/stack/run.sh`: cases `jsonld-read-fanout` (100,000 references),
 each checking the count in the answer. The known-defects rows `JLD-STACK` and
 `JLD-WSTACK` are removed.
 
+**Gates (2026-10-18, this change).** Full `lake build` exit 0 (1,726 jobs);
+`tools/lean-unbuilt-modules.py --gate`: 795 modules, 0 not reached;
+`tools/lean-tail-recursion-audit.py --gate` (stale IR removed first) passes: the 31
+lines of the replaced specifications left the allow list and the 19 loop forms are
+listed with `(b)`, each checked in the emitted C (`goto _start`, no self-call, one
+call into the nested value); `tools/lean-csimp-reach.py --gate`: 0 new findings;
+`tools/lean-hygiene-audit.py --build-log`: clean (163 `partial def`, the baseline);
+`tests/stack/lean_scaling.sh`: 67 pass, 0 fail, 11 expected-fail (out of 78);
+`tests/stack/run.sh --canary` with the rebuilt wasm module: 173 pass, 0 fail (out of
+173), and the three new cases abort with "Stack overflow" under 512 KB on the build
+before this change; `npm test` in `npm/factoidal`: 443 pass, 0 fail, 1 skipped (out of
+444).
+
 ## 4. Rules that follow
 
 1. A new fast path is added beside the reference parser with a theorem or,
