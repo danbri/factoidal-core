@@ -1807,36 +1807,50 @@ end LenS
 `memoC` keeps `lenS st k cap` for every node `k`, found by one walk of each
 chain: `walkC` follows the chain from a node, with the cells passed so far in an
 accumulator, until it reaches `rdf:nil`, a node not in a list, a node already
-in the table, or `cap` steps; `backC` writes the lengths back along the cells
-passed. Both are loops. A chain that is a cycle is not cut short: each of its
-nodes walks `cap` steps (the readable definition does the same). -/
+in the table, a node it passed already in this walk (a cycle), or `cap` steps;
+`backC` writes the lengths back along the cells passed. Both are loops.
+
+A walk that ends at a node that is not a list cell, at a node whose entry in
+the table is `none`, or at a node it passed already, knows that no cell it
+passed reaches `rdf:nil` within `cap` steps (`dead`), and `backC` writes
+`none` for each of them. Until 2026-10-18 the walk had no `dead` and no set of
+the cells passed: a cycle of n cells was walked `cap` steps from its first
+cell and n - 1, n - 2, ... steps from the next ones, as each walk wrote its
+start cell only (https://github.com/danbri/factoidal/issues/878: 0.375 s at
+2,000 cells, 9.09 s at 8,000). Now each cell is passed by one walk that
+writes it, and read from the table by the others. -/
 
 abbrev Memo := HashMap String (Option Nat)
 
 def MemoInv (st : String → Option (Option String)) (cap : Nat) (M : Memo) : Prop :=
   ∀ k v, M[k]? = some v → v = lenS st k cap
 
-def walkC (st : String → Option (Option String)) (M : Memo) :
-    String → Nat → List (String × Nat) → Option Nat × Memo × List (String × Nat)
-  | _,  0,     acc => (none, M, acc)
+/-- The walk: the length found (or `none`), whether no cell passed reaches
+`rdf:nil` (`dead`), the table, and the cells passed. `vis` holds the cells
+passed in this walk. -/
+def walkC (st : String → Option (Option String)) (M : Memo) (vis : HashSet String) :
+    String → Nat → List (String × Nat) → Option Nat × Bool × Memo × List (String × Nat)
+  | _,  0,     acc => (none, false, M, acc)
   | id, B + 1, acc =>
     match M[id]? with
-    | some v => (v.filter (· ≤ B + 1), M, acc)
+    | some v => (v.filter (· ≤ B + 1), v.isNone, M, acc)
     | none =>
-      match st id with
-      | none          => (none, M.insert id none, acc)
-      | some none     => (some 1, M.insert id (some 1), acc)
-      | some (some r) => walkC st M r B ((id, B + 1) :: acc)
+      if vis.contains id then (none, true, M, acc)
+      else
+        match st id with
+        | none          => (none, true, M.insert id none, acc)
+        | some none     => (some 1, false, M.insert id (some 1), acc)
+        | some (some r) => walkC st M (vis.insert id) r B ((id, B + 1) :: acc)
 
-def backC (cap : Nat) : Option Nat × Memo → List (String × Nat) → Option Nat × Memo
+def backC (cap : Nat) (dead : Bool) : Option Nat × Memo → List (String × Nat) → Option Nat × Memo
   | p,      []             => p
   | (v, M), (n, bn) :: tl =>
     let v' := v.map (· + 1)
-    backC cap (v', if v'.isSome || bn == cap then M.insert n v' else M) tl
+    backC cap dead (v', if v'.isSome || bn == cap || dead then M.insert n v' else M) tl
 
 def fillC (st : String → Option (Option String)) (cap : Nat) (M : Memo) (id : String) : Memo :=
-  let r := walkC st M id cap []
-  (backC cap (r.1, r.2.1) r.2.2).2
+  let r := walkC st M ∅ id cap []
+  (backC cap r.2.1 (r.1, r.2.2.1) r.2.2.2).2
 
 def memoC (st : String → Option (Option String)) (cap : Nat) (ids : List String) : Memo :=
   ids.foldl (fillC st cap) ∅
@@ -1870,71 +1884,174 @@ theorem memoInv_insert (M : Memo) (h : MemoInv st cap M) (n : String) (v : Optio
     simp only [this, Bool.false_eq_true, if_false] at hk
     exact h k w hk
 
-theorem backC_spec (s : String) (bs : Nat) (hbs : bs ≤ cap) :
+/-- `k` steps of the chain from `y` reach `z`. -/
+def PathN : String → Nat → String → Prop
+  | y, 0,     z => y = z
+  | y, k + 1, z => ∃ r, st y = some (some r) ∧ PathN r k z
+
+theorem pathN_snoc : ∀ (k : Nat) (y n x : String),
+    PathN st y k n → st n = some (some x) → PathN st y (k + 1) x
+  | 0, y, n, x, h, hs => by
+    simp only [PathN] at h; subst h; exact ⟨x, hs, rfl⟩
+  | k + 1, y, n, x, h, hs => by
+    obtain ⟨r, hr, hp⟩ := h
+    exact ⟨r, hr, pathN_snoc k r n x hp hs⟩
+
+/-- A cell passed by a walk reaches the walk's current cell. -/
+theorem chainC_path : ∀ (acc : List (String × Nat)) (x : String) (bx : Nat) (s : String) (bs : Nat),
+    ChainC st acc x bx s bs → ∀ (y : String) (b : Nat), (y, b) ∈ acc →
+      bx < b ∧ PathN st y (b - bx) x
+  | [], _, _, _, _, _, _, _, hm => absurd hm (List.not_mem_nil)
+  | (n, bn) :: tl, x, bx, s, bs, h, y, b, hm => by
+    obtain ⟨hs, hb, h'⟩ := h
+    rcases List.mem_cons.1 hm with e | e
+    · simp only [Prod.mk.injEq] at e
+      obtain ⟨e1, e2⟩ := e
+      rw [e1, e2]
+      refine ⟨by omega, ?_⟩
+      rw [show bn - bx = 0 + 1 by omega]
+      exact ⟨x, hs, rfl⟩
+    · obtain ⟨hlt, hp⟩ := chainC_path tl n bn s bs h' y b e
+      refine ⟨by omega, ?_⟩
+      rw [show b - bx = (b - bn) + 1 by omega]
+      exact pathN_snoc st _ y n x hp hs
+
+theorem lenS_path_short : ∀ (k : Nat) (y z : String), PathN st y k z →
+    ∀ B, B ≤ k → lenS st y B = none
+  | _, _, _, _, 0, _ => rfl
+  | 0, _, _, _, _ + 1, hB => by omega
+  | k + 1, y, z, h, B + 1, hB => by
+    obtain ⟨r, hr, hp⟩ := h
+    simp only [lenS, hr]
+    rw [lenS_path_short k r z hp B (by omega)]
+    rfl
+
+theorem lenS_path_long : ∀ (k : Nat) (y z : String), PathN st y k z →
+    ∀ B, lenS st y (B + k) = (lenS st z B).map (· + k)
+  | 0, y, z, h, B => by
+    simp only [PathN] at h; subst h
+    cases lenS st y B <;> rfl
+  | k + 1, y, z, h, B => by
+    obtain ⟨r, hr, hp⟩ := h
+    rw [show B + (k + 1) = (B + k) + 1 by omega]
+    simp only [lenS, hr]
+    rw [lenS_path_long k r z hp B]
+    cases lenS st z B with
+    | none => rfl
+    | some j => simp only [Option.map_some, Option.some.injEq]; omega
+
+/-- A cell on a cycle never reaches `rdf:nil`. -/
+theorem lenS_cycle (x : String) (k : Nat) (h : PathN st x k x) (hk : 0 < k) (B : Nat) :
+    lenS st x B = none :=
+    if hB : B ≤ k then lenS_path_short st k x x h B hB
+    else by
+      rw [show B = (B - k) + k by omega, lenS_path_long st k x x h (B - k),
+        lenS_cycle x k h hk (B - k)]
+      rfl
+termination_by B
+decreasing_by omega
+
+theorem lenS_dead_back (n x : String) (hs : st n = some (some x))
+    (hx : lenS st x cap = none) (hc : 1 ≤ cap) : lenS st n cap = none := by
+  obtain ⟨c, rfl⟩ : ∃ c, cap = c + 1 := ⟨cap - 1, by omega⟩
+  simp only [lenS, hs]
+  rw [lenS_trunc st c (c + 1) x (by omega), hx]
+  rfl
+
+theorem backC_spec (s : String) (bs : Nat) (hbs : bs ≤ cap) (dead : Bool) :
     ∀ (acc : List (String × Nat)) (v : Option Nat) (M : Memo) (x : String) (bx : Nat),
       MemoInv st cap M → v = lenS st x bx → ChainC st acc x bx s bs →
-      (backC cap (v, M) acc).1 = lenS st s bs ∧ MemoInv st cap (backC cap (v, M) acc).2
-  | [], v, M, x, bx, hM, hv, hc => by
+      (dead = true → lenS st x cap = none) →
+      (backC cap dead (v, M) acc).1 = lenS st s bs ∧ MemoInv st cap (backC cap dead (v, M) acc).2
+  | [], v, M, x, bx, hM, hv, hc, _ => by
     obtain ⟨rfl, rfl⟩ := hc
     exact ⟨hv, hM⟩
-  | (n, bn) :: tl, v, M, x, bx, hM, hv, hc => by
+  | (n, bn) :: tl, v, M, x, bx, hM, hv, hc, hd => by
     obtain ⟨hs, hb, hc'⟩ := hc
     have hle := chainC_le st tl n bn s bs hc'
     have hv' : v.map (· + 1) = lenS st n bn := by
       rw [hb, lenS, hs, hv]
+    have hd' : dead = true → lenS st n cap = none :=
+      fun h => lenS_dead_back st cap n x hs (hd h) (by omega)
     simp only [backC]
-    apply backC_spec s bs hbs tl _ _ n bn _ hv' hc'
-    by_cases hi : ((v.map (· + 1)).isSome || bn == cap) = true
+    apply backC_spec s bs hbs dead tl _ _ n bn _ hv' hc' hd'
+    by_cases hi : ((v.map (· + 1)).isSome || bn == cap || dead) = true
     · simp only [hi, if_true]
       apply memoInv_insert st cap M hM
-      rw [Bool.or_eq_true] at hi
-      rcases hi with hi | hi
+      simp only [Bool.or_eq_true] at hi
+      rcases hi with (hi | hi) | hi
       · obtain ⟨k, hk⟩ := Option.isSome_iff_exists.1 hi
         rw [hk] at hv' ⊢
         exact (lenS_mono st bn n k hv'.symm cap (by omega)).symm
       · have : bn = cap := by simpa using hi
         rw [hv', this]
+      · rw [hv', lenS_trunc st bn cap n (by omega), hd' hi]
+        rfl
     · simp only [hi, Bool.false_eq_true, if_false]
       exact hM
 
 theorem walkC_spec (s : String) (bs : Nat) (hbs : bs ≤ cap) :
-    ∀ (B : Nat) (id : String) (acc : List (String × Nat)) (M : Memo),
+    ∀ (B : Nat) (id : String) (acc : List (String × Nat)) (M : Memo) (vis : HashSet String),
       MemoInv st cap M → ChainC st acc id B s bs →
-      ∃ x bx, ChainC st (walkC st M id B acc).2.2 x bx s bs ∧
-        (walkC st M id B acc).1 = lenS st x bx ∧ MemoInv st cap (walkC st M id B acc).2.1
-  | 0, id, acc, M, hM, hc => ⟨id, 0, hc, rfl, hM⟩
-  | B + 1, id, acc, M, hM, hc => by
+      (∀ y, vis.contains y = true → ∃ b, (y, b) ∈ acc) →
+      ∃ x bx, ChainC st (walkC st M vis id B acc).2.2.2 x bx s bs ∧
+        (walkC st M vis id B acc).1 = lenS st x bx ∧
+        MemoInv st cap (walkC st M vis id B acc).2.2.1 ∧
+        ((walkC st M vis id B acc).2.1 = true → lenS st x cap = none)
+  | 0, id, acc, M, vis, hM, hc, _ => ⟨id, 0, hc, rfl, hM, by simp [walkC]⟩
+  | B + 1, id, acc, M, vis, hM, hc, hvis => by
     have hB : B + 1 ≤ cap := by have := chainC_le st acc id (B + 1) s bs hc; omega
     simp only [walkC]
     cases hm : M[id]? with
     | some v =>
-      refine ⟨id, B + 1, hc, ?_, hM⟩
-      simp only
-      rw [hM id v hm, lenS_trunc st (B + 1) cap id hB]
+      refine ⟨id, B + 1, hc, ?_, hM, ?_⟩
+      · simp only
+        rw [hM id v hm, lenS_trunc st (B + 1) cap id hB]
+      · intro hn
+        have : v = none := by simpa using hn
+        rw [← hM id v hm, this]
     | none =>
       simp only
-      cases hs : st id with
-      | none =>
-        refine ⟨id, B + 1, hc, by simp [lenS, hs], ?_⟩
-        apply memoInv_insert st cap M hM
-        cases cap with
-        | zero => rfl
-        | succ c => simp [lenS, hs]
-      | some o =>
-        cases o with
+      by_cases hv : vis.contains id = true
+      · simp only [hv, if_true]
+        obtain ⟨b, hmem⟩ := hvis id hv
+        obtain ⟨hlt, hp⟩ := chainC_path st acc id (B + 1) s bs hc id b hmem
+        have cyc := lenS_cycle st id (b - (B + 1)) hp (by omega)
+        exact ⟨id, B + 1, hc, (cyc _).symm, hM, fun _ => cyc _⟩
+      · simp only [hv, Bool.false_eq_true, if_false]
+        cases hs : st id with
         | none =>
-          refine ⟨id, B + 1, hc, by simp [lenS, hs], ?_⟩
-          apply memoInv_insert st cap M hM
-          obtain ⟨c, rfl⟩ : ∃ c, cap = c + 1 := ⟨cap - 1, by omega⟩
-          simp [lenS, hs]
-        | some r =>
-          simp only
-          exact walkC_spec s bs hbs B r ((id, B + 1) :: acc) M hM ⟨hs, rfl, hc⟩
+          have hn : none = lenS st id cap := by
+            cases cap with
+            | zero => rfl
+            | succ c => simp [lenS, hs]
+          exact ⟨id, B + 1, hc, by simp [lenS, hs], memoInv_insert st cap M hM id none hn,
+            fun _ => hn.symm⟩
+        | some o =>
+          cases o with
+          | none =>
+            refine ⟨id, B + 1, hc, by simp [lenS, hs], ?_, by simp⟩
+            apply memoInv_insert st cap M hM
+            obtain ⟨c, rfl⟩ : ∃ c, cap = c + 1 := ⟨cap - 1, by omega⟩
+            simp [lenS, hs]
+          | some r =>
+            simp only
+            refine walkC_spec s bs hbs B r ((id, B + 1) :: acc) M (vis.insert id) hM ⟨hs, rfl, hc⟩ ?_
+            intro y hy
+            rw [HashSet.contains_insert] at hy
+            by_cases e : id = y
+            · subst e; exact ⟨B + 1, List.mem_cons_self⟩
+            · have : (id == y) = false := by simpa using e
+              rw [this, Bool.false_or] at hy
+              obtain ⟨b, hb⟩ := hvis y hy
+              exact ⟨b, List.mem_cons_of_mem _ hb⟩
 
 theorem fillC_inv (M : Memo) (h : MemoInv st cap M) (id : String) :
     MemoInv st cap (fillC st cap M id) := by
-  obtain ⟨x, bx, hc, hv, hM⟩ := walkC_spec st cap id cap (Nat.le_refl _) cap id [] M h ⟨rfl, rfl⟩
-  exact (backC_spec st cap id cap (Nat.le_refl _) _ _ _ x bx hM hv hc).2
+  obtain ⟨x, bx, hc, hv, hM, hd⟩ :=
+    walkC_spec st cap id cap (Nat.le_refl _) cap id [] M ∅ h ⟨rfl, rfl⟩
+      (by intro y hy; simp at hy)
+  exact (backC_spec st cap id cap (Nat.le_refl _) _ _ _ _ x bx hM hv hc hd).2
 
 theorem memoC_inv (ids : List String) : MemoInv st cap (memoC st cap ids) := by
   unfold memoC
@@ -1980,6 +2097,26 @@ private def memoEx : Memo := memoC stEx 10 ["c", "d", "b", "a", "x"]
 #guard !collF stEx 10 memoEx "c" 10 && !collF stEx 10 memoEx "x" 10
 #guard (["a", "b", "c", "d", "x"].all fun k => (List.range 12).all fun f =>
   collF stEx 10 memoEx k f == collS stEx k f)
+
+/-- A cycle `e → f → g → h → e`, a cell `p` whose chain enters it, and a chain
+`a → b → nil` (https://github.com/danbri/factoidal/issues/878). -/
+private def stCyc (id : String) : Option (Option String) :=
+  if id == "e" then some (some "f") else if id == "f" then some (some "g")
+  else if id == "g" then some (some "h") else if id == "h" then some (some "e")
+  else if id == "p" then some (some "e")
+  else if id == "a" then some (some "b") else if id == "b" then some none else none
+
+-- One walk from `e` writes `none` for every cell of the cycle (until 2026-10-18 it
+-- wrote `e` only, and each later cell walked the cycle again).
+#guard (["e", "f", "g", "h"].all fun k => (fillC stCyc 40 ∅ k)["e"]? == some none &&
+  (fillC stCyc 40 ∅ "e")[k]? == some none)
+#guard (fillC stCyc 40 ∅ "p").size == 5 && (fillC stCyc 40 ∅ "p")["p"]? == some none
+-- A chain to `rdf:nil` keeps its lengths, and a walk stopped by the fuel writes
+-- only its start cell.
+#guard (fillC stCyc 40 ∅ "a")["a"]? == some (some 2) && (fillC stCyc 40 ∅ "a")["b"]? == some (some 1)
+#guard (fillC stCyc 1 ∅ "a")["a"]? == some none && (fillC stCyc 1 ∅ "a")["b"]? == none
+#guard (["e", "f", "g", "h", "p", "a", "b", "x"].all fun k => (List.range 42).all fun f =>
+  collF stCyc 40 (memoC stCyc 40 ["e", "f", "g", "h", "p", "a", "b", "x"]) k f == collS stCyc k f)
 
 /-! ### List conversion over lookup functions
 

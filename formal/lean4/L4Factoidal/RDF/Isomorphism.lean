@@ -924,6 +924,115 @@ def Dataset.isomorphicOutcome (ds1 ds2 : Dataset) : IsoOutcome :=
   else if (Dataset.isoSearchStepFull ds1 ds2).2 == 0 then .budgetExceeded
   else .notEqual
 
+/-! ## The executable forms: each certificate runs once
+
+`isomorphismMap?` certifies the mapping of `isoSearch` again, and
+`isoSearch` certifies the mapping of `IsoRefine.candidate` again, which
+`candidate` already certified (`IsoRefine.candidate_cert`). So an
+`equal` answer from colour refinement ran the full certificate three
+times, and the blank-node lists `Dataset.bnodes` five times
+(https://github.com/danbri/factoidal/issues/868, measured 2026-10-18:
+the certificate was 23 per cent of the instructions of
+`l4sbm11-w3c compare` at 52,800 quads). The forms below compute the
+blank-node lists once and run each certificate once. The `@[csimp]`
+theorems prove them equal to the definitions above, so every theorem
+about those definitions holds of the compiled code. -/
+
+def Graph.isomorphismMapFast? (g1 g2 : Graph) : Option (List (BNodeId × BNodeId)) :=
+  let bs1 := g1.bnodes
+  let bs2 := g2.bnodes
+  let idm := bs1.map (fun b => (b, b))
+  if Graph.isoCert idm g1 g2 bs1 bs2 then some idm
+  else
+    match IsoRefine.candidate (IsoRefine.graphQuads g1) (IsoRefine.graphQuads g2)
+            bs1 bs2 (fun m => Graph.isoCert m g1 g2 bs1 bs2) with
+    | some m => some m
+    | none =>
+        match Graph.isoSearchStep g1 g2 with
+        | some m => if Graph.isoCert m g1 g2 bs1 bs2 then some m else none
+        | none => none
+
+@[csimp] theorem Graph.isomorphismMap_eq_fast :
+    @Graph.isomorphismMap? = @Graph.isomorphismMapFast? := by
+  funext g1 g2
+  unfold Graph.isomorphismMap? Graph.isomorphismMapFast? Graph.isoSearch Graph.idMapping
+  by_cases hid : Graph.isoCert (g1.bnodes.map (fun b => (b, b))) g1 g2 g1.bnodes g2.bnodes = true
+  · simp only [hid, ↓reduceIte]
+  · simp only [hid, Bool.false_eq_true, ↓reduceIte]
+    cases hc : IsoRefine.candidate (IsoRefine.graphQuads g1) (IsoRefine.graphQuads g2)
+          g1.bnodes g2.bnodes (fun m => Graph.isoCert m g1 g2 g1.bnodes g2.bnodes) with
+    | none => rfl
+    | some m =>
+      have hm : Graph.isoCert m g1 g2 g1.bnodes g2.bnodes = true := IsoRefine.candidate_cert hc
+      simp only [hm, ↓reduceIte]
+
+def Graph.isomorphicOutcomeFast (g1 g2 : Graph) : IsoOutcome :=
+  if (g1.isomorphismMapFast? g2).isSome then .equal
+  else if g1.bnodes.length > isoBnodeBudget || g2.bnodes.length > isoBnodeBudget
+  then .budgetExceeded
+  else if (Graph.isoSearchStepFull g1 g2).2 == 0 then .budgetExceeded
+  else .notEqual
+
+@[csimp] theorem Graph.isomorphicOutcome_eq_fast :
+    @Graph.isomorphicOutcome = @Graph.isomorphicOutcomeFast := by
+  funext g1 g2
+  simp only [Graph.isomorphicOutcome, Graph.isomorphicOutcomeFast, Graph.isomorphismMap_eq_fast]
+
+def Graph.isomorphicFast? (g1 g2 : Graph) : Bool := (g1.isomorphismMapFast? g2).isSome
+
+@[csimp] theorem Graph.isomorphic_eq_fast : @Graph.isomorphic? = @Graph.isomorphicFast? := by
+  funext g1 g2
+  simp only [Graph.isomorphic?, Graph.isomorphicFast?, Graph.isomorphismMap_eq_fast]
+
+def Dataset.isomorphismMapFast? (ds1 ds2 : Dataset) : Option (List (BNodeId × BNodeId)) :=
+  let bs1 := ds1.bnodes
+  let bs2 := ds2.bnodes
+  let idm := bs1.map (fun b => (b, b))
+  if Dataset.isoCert idm ds1 ds2 bs1 bs2 then some idm
+  else
+    match IsoRefine.candidate (IsoRefine.datasetQuads ds1) (IsoRefine.datasetQuads ds2)
+            bs1 bs2 (fun m => Dataset.isoCert m ds1 ds2 bs1 bs2) with
+    | some m => some m
+    | none =>
+        match Dataset.isoSearchStep ds1 ds2 with
+        | some m => if Dataset.isoCert m ds1 ds2 bs1 bs2 then some m else none
+        | none => none
+
+@[csimp] theorem Dataset.isomorphismMap_eq_fast :
+    @Dataset.isomorphismMap? = @Dataset.isomorphismMapFast? := by
+  funext ds1 ds2
+  unfold Dataset.isomorphismMap? Dataset.isomorphismMapFast? Dataset.isoSearch Dataset.idMapping
+  by_cases hid :
+      Dataset.isoCert (ds1.bnodes.map (fun b => (b, b))) ds1 ds2 ds1.bnodes ds2.bnodes = true
+  · simp only [hid, ↓reduceIte]
+  · simp only [hid, Bool.false_eq_true, ↓reduceIte]
+    cases hc : IsoRefine.candidate (IsoRefine.datasetQuads ds1) (IsoRefine.datasetQuads ds2)
+          ds1.bnodes ds2.bnodes (fun m => Dataset.isoCert m ds1 ds2 ds1.bnodes ds2.bnodes) with
+    | none => rfl
+    | some m =>
+      have hm : Dataset.isoCert m ds1 ds2 ds1.bnodes ds2.bnodes = true := IsoRefine.candidate_cert hc
+      simp only [hm, ↓reduceIte]
+
+def Dataset.isomorphicOutcomeFast (ds1 ds2 : Dataset) : IsoOutcome :=
+  if (ds1.isomorphismMapFast? ds2).isSome then .equal
+  else if ds1.bnodes.length > isoBnodeBudget || ds2.bnodes.length > isoBnodeBudget
+  then .budgetExceeded
+  else if (Dataset.isoSearchStepFull ds1 ds2).2 == 0 then .budgetExceeded
+  else .notEqual
+
+@[csimp] theorem Dataset.isomorphicOutcome_eq_fast :
+    @Dataset.isomorphicOutcome = @Dataset.isomorphicOutcomeFast := by
+  funext ds1 ds2
+  simp only [Dataset.isomorphicOutcome, Dataset.isomorphicOutcomeFast,
+    Dataset.isomorphismMap_eq_fast]
+
+def Dataset.isomorphicFast? (ds1 ds2 : Dataset) : Bool := (ds1.isomorphismMapFast? ds2).isSome
+
+@[csimp] theorem Dataset.isomorphic_eq_fast :
+    @Dataset.isomorphic? = @Dataset.isomorphicFast? := by
+  funext ds1 ds2
+  simp only [Dataset.isomorphic?, Dataset.isomorphicFast?, Dataset.isomorphismMap_eq_fast]
+
 /-! ## The procedure without colour refinement
 
 `isoSearchRef` is `isoSearch` as it was before colour refinement

@@ -2485,8 +2485,14 @@ use the fast form.
     (`collS_eq_lenS`, `lenS_trunc`). `memoC` walks each chain once (`walkC`, with
     the cells passed in an accumulator) and writes the lengths back (`backC`);
     `collF` answers from that table (`collF_eq`, from `walkC_spec`, `backC_spec`,
-    `memoC_inv`). A cycle of list cells is still walked `graphFuel` steps from
-    each of its cells, as the readable definition does.
+    `memoC_inv`). Until 2026-10-18 a cycle of list cells was walked `graphFuel`
+    steps from its first cell and to the first written cell from each later one
+    (about n squared over 2 steps for n cells; 8,000 cells 9.09 s). The walk now
+    keeps the set of cells it passed and ends `dead` at a cell it passed, at a
+    node that is no list cell, or at a table entry `none`; `backC` then writes
+    `none` for every cell passed (`lenS_cycle`, `lenS_dead_back`, the restated
+    `walkC_spec` and `backC_spec`). 8,000 cells: 0.130 s, output byte-identical
+    (https://github.com/danbri/factoidal/issues/878).
   * `addGraphNames` called `ensureNode` for each graph: a hash set of the ids
     (`addGraphNames_eq_fast`).
   * `sortNodes` and the JCS member sort `jcsSortFields` were insertion sorts. On

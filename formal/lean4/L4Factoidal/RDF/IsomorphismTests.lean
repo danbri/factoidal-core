@@ -482,6 +482,34 @@ private def diffCase (seed : Nat) : Bool :=
   Graph.isomorphicOutcome ds.default x.default == Graph.isomorphicOutcomeRef ds.default x.default
 
 #guard (List.range 120).all diffCase
+
+/- `IsoRefine.candidate` (indexed colours) gives the mapping that
+`IsoRefine.candidateRef` (colours keyed by label) gives: with the dataset
+certificate, with a certificate that accepts every mapping (the first leaf of
+the search), and with one that refuses every mapping (`none` from both, after
+the whole work budget). -/
+private def candAgree (ds1 ds2 : Dataset) : Bool :=
+  let q1 := IsoRefine.datasetQuads ds1
+  let q2 := IsoRefine.datasetQuads ds2
+  let cert := fun m => Dataset.isoCert m ds1 ds2 ds1.bnodes ds2.bnodes
+  [cert, fun _ => true, fun _ => false].all (fun c =>
+    IsoRefine.candidate q1 q2 ds1.bnodes ds2.bnodes c ==
+      IsoRefine.candidateRef q1 q2 ds1.bnodes ds2.bnodes c)
+
+private def graphDs (g : Graph) : Dataset := { default := g, named := [] }
+
+#guard (List.range 120).all (fun seed =>
+  let ds := genDs seed
+  let r := relabelDs (2 + seed % 8) ds
+  candAgree ds r && candAgree ds (perturbDs r) && candAgree r ds)
+#guard candAgree (graphDs (hugeBnodes "a")) (graphDs (hugeBnodes "b"))
+#guard candAgree (graphDs (bnodeCycle "a" 130))
+  (graphDs ((bnodeCycle "b" 130).map (Triple.renameBnodes (fun x => x ++ "'"))))
+#guard candAgree (graphDs (bnodeCycle "a" 130)) (graphDs (bnodeCycle "b" 65 ++ bnodeCycle "c" 65))
+-- The guards compare answers that are not all `none`.
+#guard (IsoRefine.candidate (IsoRefine.graphQuads (hugeBnodes "a"))
+  (IsoRefine.graphQuads (hugeBnodes "b")) (hugeBnodes "a").bnodes (hugeBnodes "b").bnodes
+  (fun _ => true)).isSome
 -- The generator reaches both answers: some perturbed copies are not isomorphic.
 #guard (List.range 120).any (fun seed =>
   Dataset.isomorphicOutcome (genDs seed) (perturbDs (relabelDs (2 + seed % 8) (genDs seed)))
