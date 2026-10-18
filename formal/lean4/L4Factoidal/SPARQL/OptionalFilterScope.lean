@@ -43,6 +43,9 @@ Contents:
 import L4Factoidal.SPARQL.Parser
 import L4Factoidal.SPARQL.StoreDataset
 import L4Factoidal.Syntax.NQuads
+-- `parseNQuads_eq_fast` (@[csimp]): the calls of `parseNQuads` here run `parseNQuadsFast`
+-- (https://github.com/danbri/factoidal/issues/868; `tools/lean-csimp-reach.py`, not-imported).
+import L4Factoidal.Syntax.NQuadsFastTheorems
 
 namespace L4Factoidal.SPARQL.OptionalFilterScope
 

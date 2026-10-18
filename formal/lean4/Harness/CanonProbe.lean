@@ -19,6 +19,9 @@ Defaults are the vendored corpus, relative to the repository root.
 -/
 import L4Factoidal.RDF.Canonical
 import L4Factoidal.Syntax.NQuads
+-- `parseNQuads_eq_fast` (@[csimp]): the calls of `parseNQuads` here run `parseNQuadsFast`
+-- (https://github.com/danbri/factoidal/issues/868; `tools/lean-csimp-reach.py`, not-imported).
+import L4Factoidal.Syntax.NQuadsFastTheorems
 
 open L4Factoidal.RDF
 open L4Factoidal.RDF.Canonical

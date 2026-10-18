@@ -20,6 +20,9 @@ same first-degree hash" case that forces Hash N-Degree Quads (§4.7).
 -/
 import L4Factoidal.RDF.Canonical
 import L4Factoidal.Syntax.NQuads
+-- `parseNQuads_eq_fast` (@[csimp]): the calls of `parseNQuads` here run `parseNQuadsFast`
+-- (https://github.com/danbri/factoidal/issues/868; `tools/lean-csimp-reach.py`, not-imported).
+import L4Factoidal.Syntax.NQuadsFastTheorems
 
 namespace L4Factoidal.RDF.CanonicalTests
 

@@ -60,6 +60,9 @@ import Harness.JsonLdScale
 import L4Factoidal.Syntax.NQuads
 import L4Factoidal.RDF.Isomorphism
 import L4Factoidal.RDF.Canonical
+-- `parseNQuads_eq_fast` (@[csimp]): the calls of `parseNQuads` here run `parseNQuadsFast`
+-- (https://github.com/danbri/factoidal/issues/868; `tools/lean-csimp-reach.py`, not-imported).
+import L4Factoidal.Syntax.NQuadsFastTheorems
 
 open L4Factoidal.JSON
 open L4Factoidal.JSONLD
