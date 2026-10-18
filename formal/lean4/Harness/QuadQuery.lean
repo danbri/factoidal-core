@@ -194,7 +194,7 @@ private def header (entries : List Entry) (mode : String) (graphs : Nat)
 
 private def finish (query : Query) (entries : List Entry) (codec : String) (ds : Dataset)
     (bytes : Nat) (zoneExcluded : Nat) (json : Bool) : IO UInt32 := do
-  let clockEnv ← L4Wasm.Ops.emptyEnvNow
+  let clockEnv := { (← L4Wasm.Ops.emptyEnvNow) with base := query.base }
   let printDiagnostic := if json then IO.eprintln else IO.println
   let (applied, _) := applyDataset query.dataset ds ds.default
   let stripped := stripDatasetClauses query
@@ -280,7 +280,8 @@ private def zoneTermKey (t : Term) : Option (List UInt8) :=
   L4Factoidal.Storage.TermWireV2.keyBytes
     (L4Factoidal.Storage.TermWireV2.toWire Harness.nativeHasher.digest t)
 
-private def run (directoryText queryText : String) (json : Bool := false) : IO UInt32 := do
+private def run (directoryText queryText : String) (json : Bool := false)
+    (base : Option String := none) : IO UInt32 := do
   try
     let root := System.FilePath.mk directoryText
     let directory ← resolveStoreDirectory root
@@ -298,7 +299,7 @@ private def run (directoryText queryText : String) (json : Bool := false) : IO U
            is what makes `LANGDIR`, `hasLANGDIR`, `STRLANGDIR` and the triple
            term syntax available. Every earlier generation keeps SPARQL 1.1,
            where those spellings are prefixed names. -/
-        match parseSparql queryText none (if ibk5 then .v12 else .v11) with
+        match parseSparql queryText base (if ibk5 then .v12 else .v11) with
         | .error error =>
             IO.eprintln s!"l4block-quad-query query parse error at {error.pos}: {error.msg}"
             return 1
@@ -333,15 +334,36 @@ private def run (directoryText queryText : String) (json : Bool := false) : IO U
               bytes zoneExcluded json
   catch error => IO.eprintln s!"l4block-quad-query failure: {error}"; return 1
 
+/-- Options before `--query`: `--json` and `--base IRI`, in either order.
+    `--base` is the base IRI of the query (SPARQL 1.1 section 4.1.1.1,
+    RFC 3986 section 5.1). -/
+def parseOptions (json : Bool) (base : Option String) :
+    List String → Except String (Bool × Option String × List String)
+  | "--json" :: rest => parseOptions true base rest
+  | "--base" :: iri :: rest => parseOptions json (some iri) rest
+  | "--query" :: query => .ok (json, base, query)
+  | _ => .error "usage: l4block-quad-query COLLECTION-ROOT [--json] [--base IRI] --query SELECT..."
+
+-- `--base` and `--json` are read in either order before `--query`; a missing
+-- IRI and a missing `--query` are refused.
+#guard (match parseOptions false none ["--base", "http://e/d/", "--json", "--query", "ASK", "{}"] with
+  | .ok (json, base, q) => json && base == some "http://e/d/" && q == ["ASK", "{}"]
+  | .error _ => false)
+#guard (match parseOptions false none ["--query", "ASK {}"] with
+  | .ok (json, base, _) => !json && base.isNone
+  | .error _ => false)
+#guard (parseOptions false none ["--base"]).toOption.isNone
+#guard (parseOptions false none ["--base", "http://e/"]).toOption.isNone
+
 def main (args : List String) : IO UInt32 := do
   match args with
-  | directory :: "--query" :: queryParts =>
-      if queryParts.isEmpty then IO.eprintln "l4block-quad-query requires a query"; return 2
-      else run directory (String.intercalate " " queryParts)
-  | directory :: "--json" :: "--query" :: queryParts =>
-      if queryParts.isEmpty then IO.eprintln "l4block-quad-query requires a query"; return 2
-      else run directory (String.intercalate " " queryParts) true
-  | _ => IO.eprintln "usage: l4block-quad-query COLLECTION-ROOT [--json] --query SELECT..."; return 2
+  | directory :: rest =>
+      match parseOptions false none rest with
+      | .error message => IO.eprintln message; return 2
+      | .ok (json, base, queryParts) =>
+          if queryParts.isEmpty then IO.eprintln "l4block-quad-query requires a query"; return 2
+          else run directory (String.intercalate " " queryParts) json base
+  | [] => IO.eprintln "usage: l4block-quad-query COLLECTION-ROOT [--json] [--base IRI] --query SELECT..."; return 2
 
 end Harness.QuadQuery
 

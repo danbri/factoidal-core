@@ -125,7 +125,7 @@ speed record of 2026-10-13.
 - JSON-LD Framing: 63 of 92 tests fail. SHACL 1.2 Core: 30 of 133 fail.
   RDF 1.2 Semantics: 7 of 47 fail [B].
 - `factoidal update` and `factoidal compact` exit 3: https://github.com/danbri/factoidal/issues/641 (open).
-- As a Fuseki replacement: no administration API, one dataset per process, no authentication, no TDB2: https://github.com/danbri/factoidal/issues/831 to https://github.com/danbri/factoidal/issues/834 (open).
+- As a Fuseki replacement: no administration API, one dataset per process, no authentication, and TDB2 databases are served read only (`serve --tdb2`, https://github.com/danbri/factoidal/issues/834): https://github.com/danbri/factoidal/issues/831 to https://github.com/danbri/factoidal/issues/833 (open).
 - Node's default stack can raise a `RangeError` in the wasm on some
   row-at-a-time queries over large results; `node --stack-size=4000` or Deno
   clears it (`skills/npm-release/SKILL.md`, trap 11).

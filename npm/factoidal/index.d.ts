@@ -1510,4 +1510,4 @@ export function proofCheck(bundleJson: string): Promise<Record<string, unknown>>
 export function proofInspect(bundleJson: string): Promise<Record<string, unknown>>;
 export function canonicalizeNQuads(nquads: string): Promise<string>;
 export function normalizeNQuads(nquads: string): Promise<string>;
-export function serveStore(root: string, options?: { port?: number; host?: string; queryPath?: string; gspPath?: string }): Promise<{ url: string; port: number; close(): Promise<void> }>;
+export function serveStore(root: string, options?: { port?: number; host?: string; queryPath?: string; gspPath?: string; tdb2?: boolean }): Promise<{ url: string; port: number; close(): Promise<void> }>;

@@ -190,6 +190,18 @@ export function listGeneration (directory) {
   return impl.listGeneration(directory)
 }
 
+/**
+ * The names (files and subdirectories) in one directory, sorted. A host
+ * primitive for the engine, which decides what the names mean (the current
+ * generation of a Jena TDB2 database: `tdb2ServeKeys`).
+ * @param {string} directory
+ * @returns {string[]}
+ */
+export function listNames (directory) {
+  requirePath(directory, 'directory')
+  return impl.listNames(directory)
+}
+
 // The manifest file names a generation directory can carry, in the order
 // `Harness.ShardMerklePread.readManifest` tries them. This module reads
 // whichever exists and returns its bytes untouched; it does not look

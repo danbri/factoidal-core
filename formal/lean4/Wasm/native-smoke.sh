@@ -818,6 +818,18 @@ check "storeServeKeys names every block and the two state files" storeServeKeys 
    and r["state"] == ["deltas.dlog","compacted.epoch"]'
 check "storeServeKeys refuses bytes that do not decode" storeServeKeys "$TMP/store-inspect-bad.json" \
   'r["ok"] is False and "do not decode" in r["error"]'
+# TDB2 served in place (issue 834): the engine picks the current Data-NNNN
+# generation from the listing the host gives and names the files it reads.
+printf '%s' '["tdb","[\"tdb.lock\",\"Data-0001\",\"Data-0002\"]"]' > "$TMP/tdb2-keys-a.json"
+printf '%s' '["Data-0003","[]"]' > "$TMP/tdb2-keys-b.json"
+printf '%s' '["tdb","[\"tdb.lock\"]"]' > "$TMP/tdb2-keys-c.json"
+check "tdb2ServeKeys picks the highest Data-NNNN generation and names its files" tdb2ServeKeys "$TMP/tdb2-keys-a.json" \
+  'r["ok"] is True and r["generation"] == "Data-0002" and "SPO.bpt" in r["keys"]
+   and "GSPO.dat" in r["keys"] and "nodes-data.obj" in r["keys"] and r["optional"] == ["journal.jrnl"]'
+check "tdb2ServeKeys serves a Data-NNNN directory itself" tdb2ServeKeys "$TMP/tdb2-keys-b.json" \
+  'r["ok"] is True and r["generation"] == ""'
+check "tdb2ServeKeys refuses a directory with no generation" tdb2ServeKeys "$TMP/tdb2-keys-c.json" \
+  'r["ok"] is False and "not a TDB2 database" in r["error"]'
 python3 - "$TMP/serve-seq.json" "$TMP/store-ibk3/manifest.sbm2" "$TMP/store-ibk3" <<'EOF'
 import json, pathlib, sys
 out, manifest, directory = sys.argv[1:4]
@@ -2935,7 +2947,8 @@ check "ops reflection (incl. handle ops via callIO)" ops "$TMP/empty.json" \
             "extRegister","extUnregister","extClear","extList"]) <= set(r["ops"])
    and r["blobOps"] == ["storeQuery","activateVerify","queryHdt"]
    and set(["storeServeKeys","storeServeOpen","storeServeRequest",
-            "storeServeCommit","storeServeClose"]) <= set(r["ops"])
+            "storeServeCommit","storeServeClose",
+            "tdb2ServeKeys","tdb2ServeOpen"]) <= set(r["ops"])
    and r["blobIoOps"] == ["blobEcho","packFeed","packNext",
                           "storeServeRequest","storeServeCommit"]'
 

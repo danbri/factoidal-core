@@ -121,7 +121,7 @@ def fullOnlyOpNames : List String :=
   , "tableauMaterialise", "tableauDlInconsistent", "queryHdt", "shexValidate"
   , "storeOpen", "storeHandleQuery", "storeHandleList", "storeHandleClose"
   , "storeServeKeys", "storeServeOpen", "storeServeRequest", "storeServeCommit"
-  , "storeServeClose"
+  , "storeServeClose", "tdb2ServeKeys", "tdb2ServeOpen"
   , "packBegin", "packFeed", "packEndPass", "packNext", "packFinish", "packClose"
   , "lwsOpen", "lwsStep", "lwsClose", "solidOpen", "solidStep", "solidClose"
   , "solidClientRequest", "solidClientResponse"

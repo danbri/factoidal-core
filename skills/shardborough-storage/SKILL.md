@@ -161,7 +161,7 @@ not written yet.
 | SBM11 query (stage 4) | `l4sbm11 query GEN ('SPARQL' \| --file Q.rq) [--base IRI] [--explain] [--repeat N] [--reference-render] [--reference] [--verify merkle\|none] [--threads N] [--sip auto\|always\|off]`; `l4sbm11 serve GEN [--verify merkle\|none]` (default `none` on a generation `CURRENT` names, else `merkle`); decoder checks `l4sbm11 prm-check GEN` (PRM1 decoders, and the issue 805 range search against decoding the whole file on 385 keys per PRM1 file, over bytes, `pread` and Merkle chunks), `l4sbm11 frame-check GEN`; environment: `SBM11_PAGES` (dictionary page cache, default 2,048 pages), `SBM11_TASK_PAGES` (a scan task's own page cache, default 1,024), `SBM11_MIN_RANGE_ROWS` (fewest estimated rows per block range, default 8,192; 0 divides every scan, for tests) |
 | SBM11 reader | `l4sbm11 stats GEN`; `scan GEN PERM [KEY...] [--limit N] [--ids]` (KEY an IRI `<...>` or an id); `count GEN PERM [KEY...]`; `dump GEN [PERM]`; `dump-ids GEN PERM`; `graphs GEN` (the named graphs of the base, empty ones included: the GNL1 list, or the graph names of the quads when the generation has no list); `export GEN --format F [--out FILE] [--graph default\|all\|IRI] [--prefix LABEL=IRI]...` (the dataset in any of the six syntaxes; section "The source layer", subsection "Export"); `canon SOURCE [--format F] [--base IRI]`; `verify GEN`; `activate ROOT NAME`; `reseal GEN` (test support) |
 | Convert a dataset between syntaxes with the Lean serialisers (test data, comparisons) | `l4source-convert SOURCE OUT [--from F] [--to G] [--base IRI]` |
-| Query an activated quad generation | `l4block-quad-query COLLECTION-ROOT --query SELECT...` |
+| Query an activated quad generation | `l4block-quad-query COLLECTION-ROOT [--json] [--base IRI] --query SELECT...` |
 | Superseded formats (BLK0, IBK1, IBK2) | `l4block-pack`, `l4block-id-pack`, `l4block-id-v2-pack` and their `*-file-query` / `*-diff` partners |
 
 `l4block-shard-merkle-query SHARD-DIR --explain|--explain-json|--explain-analyze` prints the physical plan and, with `-analyze`, the executed
@@ -1528,5 +1528,11 @@ producers of RDF quads, and a file is one producer.
   Needs Jena (`SOTA_DL`), about 20 minutes.
 - `l4factoidal tdb2-dump DB` and `--format tdb2`: read a Jena TDB2 database
   in place; `tests/tdb2/run.sh` compares with `tdb2.tdbdump`.
+  `factoidal serve --tdb2 DB /ds` (npm) serves one read only.
+- `l4block-id-v3-query` and `l4block-quad-query` take `--base IRI`: the base
+  IRI of the query (SPARQL 1.1 section 4.1.1.1, RFC 3986 section 5.1), used
+  for relative IRIs and `IRI()`; a `BASE` declaration in the query takes
+  precedence. `serve` uses the request IRI as base
+  (https://github.com/danbri/factoidal/issues/835).
 - Record: `docs/designissues/2026-10-13-tdb2-format.md`
   (https://github.com/danbri/factoidal/issues/834).
