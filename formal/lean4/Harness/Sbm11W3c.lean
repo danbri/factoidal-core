@@ -106,6 +106,8 @@ import L4Factoidal.RDF.Canonical
 import L4Factoidal.RDF.DatasetNormalize
 import L4Factoidal.Syntax.NQuads
 import L4Factoidal.Syntax.NQuadsFast
+-- `parseNQuads_eq_fast`: the expected results are parsed by the indexed parser.
+import L4Factoidal.Syntax.NQuadsFastTheorems
 import L4Factoidal.Syntax.NTriples
 import L4Factoidal.JSON.Parser
 import L4Factoidal.RDF.SinkJsonLd

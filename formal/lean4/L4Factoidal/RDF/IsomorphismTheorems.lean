@@ -528,4 +528,79 @@ axiom, no `Lean.ofReduceBool` (which `native_decide` would add). -/
 #print axioms Dataset.isomorphic?_sound
 #print axioms Dataset.isomorphic?_refl
 
+/-- Colour refinement loses no answer of the procedure without it: when the
+reference finds a certified mapping, so does `Graph.isomorphismMap?`. -/
+theorem Graph.isomorphismMap?_isSome_of_ref {g1 g2 : Graph}
+    (h : (g1.isomorphismMapRef? g2).isSome = true) :
+    (g1.isomorphismMap? g2).isSome = true := by
+  unfold Graph.isomorphismMapRef? Graph.isoSearchRef at h
+  unfold Graph.isomorphismMap? Graph.isoSearch
+  by_cases hid : Graph.isoCert g1.idMapping g1 g2 g1.bnodes g2.bnodes = true
+  · rw [if_pos hid] at h ⊢; exact h
+  · rw [if_neg hid] at h ⊢
+    cases hc : IsoRefine.candidate (IsoRefine.graphQuads g1) (IsoRefine.graphQuads g2)
+          g1.bnodes g2.bnodes (fun m => Graph.isoCert m g1 g2 g1.bnodes g2.bnodes) with
+    | none => exact h
+    | some m =>
+      by_cases hm : Graph.isoCert m g1 g2 g1.bnodes g2.bnodes = true
+      · simp [hm]
+      · simp only [hm, Bool.false_eq_true, ↓reduceIte]; exact h
+
+/-- **The outcome with colour refinement against the outcome without it**
+(https://github.com/danbri/factoidal/issues/868). Either they are the same, or
+the new outcome is `equal` and the inputs are isomorphic (RDF 1.1 Concepts
+section 3.6, with the certified mapping as the witness). So a `notEqual` or a
+`budgetExceeded` of the new procedure is the reference's answer, and the only
+change is a `budgetExceeded` (or a reference `notEqual`, if the reference
+search were incomplete) becoming `equal` with a witness. -/
+theorem Graph.isomorphicOutcome_vs_ref (g1 g2 : Graph) :
+    Graph.isomorphicOutcome g1 g2 = Graph.isomorphicOutcomeRef g1 g2 ∨
+    (Graph.isomorphicOutcome g1 g2 = .equal ∧ Graph.Isomorphic g1 g2) := by
+  by_cases hs : (g1.isomorphismMap? g2).isSome = true
+  · exact Or.inr ⟨by simp [Graph.isomorphicOutcome, hs], Graph.isomorphic?_sound hs⟩
+  · have hr : ¬ (g1.isomorphismMapRef? g2).isSome = true :=
+      fun h => hs (Graph.isomorphismMap?_isSome_of_ref h)
+    left
+    unfold Graph.isomorphicOutcome Graph.isomorphicOutcomeRef
+    rw [if_neg hs, if_neg hr]
+
+/-- Colour refinement loses no answer of the procedure without it: when the
+reference finds a certified mapping, so does `Dataset.isomorphismMap?`. -/
+theorem Dataset.isomorphismMap?_isSome_of_ref {ds1 ds2 : Dataset}
+    (h : (ds1.isomorphismMapRef? ds2).isSome = true) :
+    (ds1.isomorphismMap? ds2).isSome = true := by
+  unfold Dataset.isomorphismMapRef? Dataset.isoSearchRef at h
+  unfold Dataset.isomorphismMap? Dataset.isoSearch
+  by_cases hid : Dataset.isoCert ds1.idMapping ds1 ds2 ds1.bnodes ds2.bnodes = true
+  · rw [if_pos hid] at h ⊢; exact h
+  · rw [if_neg hid] at h ⊢
+    cases hc : IsoRefine.candidate (IsoRefine.datasetQuads ds1) (IsoRefine.datasetQuads ds2)
+          ds1.bnodes ds2.bnodes (fun m => Dataset.isoCert m ds1 ds2 ds1.bnodes ds2.bnodes) with
+    | none => exact h
+    | some m =>
+      by_cases hm : Dataset.isoCert m ds1 ds2 ds1.bnodes ds2.bnodes = true
+      · simp [hm]
+      · simp only [hm, Bool.false_eq_true, ↓reduceIte]; exact h
+
+/-- **The outcome with colour refinement against the outcome without it**
+(https://github.com/danbri/factoidal/issues/868). Either they are the same, or
+the new outcome is `equal` and the inputs are isomorphic (RDF 1.1 Concepts
+section 3.6, with the certified mapping as the witness). So a `notEqual` or a
+`budgetExceeded` of the new procedure is the reference's answer, and the only
+change is a `budgetExceeded` (or a reference `notEqual`, if the reference
+search were incomplete) becoming `equal` with a witness. -/
+theorem Dataset.isomorphicOutcome_vs_ref (ds1 ds2 : Dataset) :
+    Dataset.isomorphicOutcome ds1 ds2 = Dataset.isomorphicOutcomeRef ds1 ds2 ∨
+    (Dataset.isomorphicOutcome ds1 ds2 = .equal ∧ Dataset.Isomorphic ds1 ds2) := by
+  by_cases hs : (ds1.isomorphismMap? ds2).isSome = true
+  · exact Or.inr ⟨by simp [Dataset.isomorphicOutcome, hs], Dataset.isomorphic?_sound hs⟩
+  · have hr : ¬ (ds1.isomorphismMapRef? ds2).isSome = true :=
+      fun h => hs (Dataset.isomorphismMap?_isSome_of_ref h)
+    left
+    unfold Dataset.isomorphicOutcome Dataset.isomorphicOutcomeRef
+    rw [if_neg hs, if_neg hr]
+
+#print axioms Graph.isomorphicOutcome_vs_ref
+#print axioms Dataset.isomorphicOutcome_vs_ref
+
 end L4Factoidal.RDF

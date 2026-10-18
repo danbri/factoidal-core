@@ -177,7 +177,10 @@ def caseBig (n : Nat) : Dataset :=
 
 def cases : List (String × Dataset) :=
   [("empty", Dataset.empty), ("default", caseDefault), ("named", caseNamed), ("mixed", caseMixed),
-   ("terms", caseTerms), ("terms12", caseTerms12), ("big", caseBig 1000)]
+   ("terms", caseTerms), ("terms12", caseTerms12),
+   -- 6,000 subjects: 52,800 quads that share 500 blank nodes. It was 1,000 (8,800 quads)
+   -- while the isomorphism test took time in n² (https://github.com/danbri/factoidal/issues/868).
+   ("big", caseBig 6000)]
 
 /-- Whether a term is RDF 1.2 only: a triple term or a directional literal. -/
 def termIsRdf12 : Term → Bool

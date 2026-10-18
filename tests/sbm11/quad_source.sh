@@ -26,7 +26,7 @@
 #                  named graph with no triple), one that stresses the dictionary
 #                  (Unicode, escapes, a 100,000-character literal, integers and other
 #                  datatypes), one with RDF 1.2 terms (a directional literal, nested
-#                  triple terms), and 8,800 generated quads. RDFC-1.0 is defined on
+#                  triple terms), and 52,800 generated quads. RDFC-1.0 is defined on
 #                  RDF 1.1 datasets, so the RDF 1.2 dataset is compared by isomorphism
 #                  only. The generation passes the activation checks
 #                  (`l4sbm11 verify`). The named graphs of the generation

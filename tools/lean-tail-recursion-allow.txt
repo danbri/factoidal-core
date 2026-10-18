@@ -1440,3 +1440,7 @@ L4Factoidal_JSONLD_FromRdf_listFromW  # (b) loop over the cells of one rdf:first
 L4Factoidal_JSONLD_FromRdf_resolveOvW  # (b) nesting of RDF collections whose first values are collections
 L4Factoidal_JSONLD_FromRdf_ovToJsonW  # (b) nesting of @list values
 L4Factoidal_JSONLD_FromRdf_ovListToJsonW  # (b) loop over the elements of one @list (reversed accumulator); one call into ovToJsonW for each
+L4Factoidal_RDF_IsoRefine_termHash  # (b) nesting of RDF 1.2 triple terms in one term (issue 868)
+L4Factoidal_RDF_IsoRefine_termBnodes  # (b) nesting of RDF 1.2 triple terms in one term (issue 868)
+L4Factoidal_RDF_IsoRefine_matchSearch  # (c) depth at most refineDepth + 1 = 1025 levels, a constant (issue 868)
+L4Factoidal_RDF_IsoRefine_tryEach  # (c) same cycle as matchSearch: depth at most refineDepth + 1 (issue 868)

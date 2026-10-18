@@ -437,6 +437,23 @@ repaired (docs/designissues/2026-10-10-lean-vs-fstar-performance.md):
                    4.6 and 4.8 for the two doublings; 22.2 for 4x input), 0.467 s, 2.69 s and 11.4 s
                    for N-Quads (5.8 and 4.2; 24.4); after (load average 8.5): 0.139 s, 0.292 s and
                    0.566 s (2.1 and 1.9; 4.1), 0.148 s, 0.271 s and 0.562 s (1.8 and 2.1; 3.8).
+  iso-shared-bnodes, iso-shared-bnodes-relabel, iso-many-bnodes-relabel
+                   `l4sbm11-w3c compare` (RDF dataset isomorphism, `Dataset.isomorphicOutcome`)
+                   of a generated N-Quads dataset with blank nodes shared by many quads
+                   against a shuffled copy, at n = 13,200, 26,400 and 52,800 quads, CPU
+                   time, the series rule of `doubling_check`. The copy has the same labels
+                   (500 blank nodes), other labels (500 blank nodes), or other labels and
+                   n/4 blank nodes. The command must print `pass`, not `pass via-canonical`
+                   (the RDFC-1.0 fallback after a refusal of the search). Issue
+                   https://github.com/danbri/factoidal/issues/868. Before the repair
+                   (2026-10-18, user CPU, 4,400 / 8,800 / 17,600 quads, 500 blank nodes): same
+                   labels 0.24, 0.91 and 3.46 s; other labels 0.17, 0.50 and 1.64 s, each
+                   `pass via-canonical`; 52,800 quads 161 s (the issue). After: same labels
+                   0.15, 0.33 and 0.70 s at 13,200 / 26,400 / 52,800; other labels 0.22, 0.41
+                   and 0.80 s, `pass`
+  iso-noniso-search  the same compare, 2,200 quads, 100 blank nodes, against a relabelled
+                   copy with one literal changed: at most 1 s CPU. Expected failure,
+                   https://github.com/danbri/factoidal/issues/877 (9.4 s on 2026-10-18)
   startup          process start: `l4factoidal version` must take at most
                    STARTUP_BUDGET (20 ms) of CPU time, minimum of 15 runs
                    (305 million instructions and 43 ms before the fixtures were
@@ -470,6 +487,7 @@ Env:    L4_BIN     path of l4factoidal (default formal/lean4/.lake/build/bin/l4f
         L4_SBM11_PACK_BIN  path of l4sbm11-pack (default: beside L4_BIN)
         L4_SOURCE_CONVERT_BIN  path of l4source-convert (default: beside L4_BIN)
         L4_SBM11_BIN  path of l4sbm11, for the export rows (default: beside L4_BIN)
+        L4_SBM11_W3C_BIN  path of l4sbm11-w3c, for the iso-* rows (default: beside L4_BIN)
         L4_SCALING_FIXTURES  fixture directory (default: $STACK_FIXTURES/lean-scaling
                    when STACK_FIXTURES is set, else /tmp/factoidal-lean-scaling)
         L4_SCALING_CAP   seconds per run before it counts as a failure (default 120)
@@ -499,6 +517,7 @@ SPECIES_BIN = Path(os.environ.get("L4_SPECIES_BIN", BIN.parent / "l4owl-species"
 WASMCLI_BIN = Path(os.environ.get("L4_WASMCLI_BIN", BIN.parent / "l4wasm-cli"))
 SOURCE_CONVERT_BIN = Path(os.environ.get("L4_SOURCE_CONVERT_BIN", BIN.parent / "l4source-convert"))
 SBM11_BIN = Path(os.environ.get("L4_SBM11_BIN", BIN.parent / "l4sbm11"))
+SBM11_W3C_BIN = Path(os.environ.get("L4_SBM11_W3C_BIN", BIN.parent / "l4sbm11-w3c"))
 CAP = float(os.environ.get("L4_SCALING_CAP", "120"))
 # A fixture directory of one's own (hazard #43 of
 # skills/workflow-gotchas-debugging: runs that share a directory delete each
@@ -516,6 +535,7 @@ XFAIL: dict[str, str] = {
     "sbm11-pack-rdfxml-memory": "https://github.com/danbri/factoidal/issues/838",
     "sbm11-pack-jsonld-memory": "https://github.com/danbri/factoidal/issues/839",
     "jsonld-write": "https://github.com/danbri/factoidal/issues/712",
+    "iso-noniso-search": "https://github.com/danbri/factoidal/issues/877",
     "jsonld-write-fanout-stack": "https://github.com/danbri/factoidal/issues/712",
     "jsonld-write-wide-stack": "https://github.com/danbri/factoidal/issues/712",
     "jsonld-write-subjects-stack": "https://github.com/danbri/factoidal/issues/712",
@@ -1277,6 +1297,87 @@ def sbm11_export_prefixes_time_row(rid):
 
 
 SBM11_PREFIX_TIME_ROWS = {"sbm11-export-prefixes-time": sbm11_export_prefixes_time_row}
+
+
+# CPU time of `l4sbm11-w3c compare EXPECTED ACTUAL` (`Dataset.isomorphicOutcome`, RDF 1.1
+# Concepts section 3.6) with blank nodes shared by many quads
+# (https://github.com/danbri/factoidal/issues/868). Quad i has the subject _:Lb with
+# b = i mod B; an even i has a literal object "vi", an odd i the blank-node object
+# _:Lc with c = (7i + 3) mod B; i mod 3 = 0 is in the default graph, the others in one of
+# five named graphs. The actual file is the expected one in a shuffled order, with the
+# same label prefix (`iso-shared-bnodes`) or another (`-relabel` rows).
+ISO_TIME_X = 13200
+
+
+def iso_nq(n: int, b: int, lab: str, shuffle: bool) -> str:
+    import random
+    rows = []
+    for i in range(n):
+        s, c = i % b, (i * 7 + 3) % b
+        g = "" if i % 3 == 0 else f" <{EX}g{i % 5}>"
+        if i % 2 == 0:
+            rows.append(f'_:{lab}{s} <{EX}p{i % 11}> "v{i}"{g} .')
+        else:
+            rows.append(f"_:{lab}{s} <{EX}q{i % 13}> _:{lab}{c}{g} .")
+    if shuffle:
+        random.Random(1).shuffle(rows)
+    return "\n".join(rows) + "\n"
+
+
+def iso_time_row(rid):
+    if not SBM11_W3C_BIN.exists():
+        raise MeasurementError(f"{SBM11_W3C_BIN} not built (cd formal/lean4 && lake build l4sbm11-w3c)")
+    lab, blanks = ISO_TIME_ROWS[rid][1:]
+    pts = []
+    for n in (ISO_TIME_X, 2 * ISO_TIME_X, 4 * ISO_TIME_X):
+        b = blanks(n)
+        exp = fixture(f"iso-exp-{n}-{b}.nq", lambda: iso_nq(n, b, "a", False))
+        act = fixture(f"iso-act-{lab}-{n}-{b}.nq", lambda: iso_nq(n, b, lab, True))
+        cmd = [str(SBM11_W3C_BIN), "compare", str(exp), str(act), "--expected", "nq",
+               "--mode", "rdf11"]
+        best = None
+        for _ in range(3):
+            t = bl.run_once(cmd, CAP)
+            if t["status"] != "ok":
+                raise MeasurementError(f"{rid}: n={n}: exit status {t['status']}: {t['stderr']}")
+            first = t["first_line"].strip()
+            if first != "pass":
+                raise MeasurementError(f"{rid}: n={n}: the command printed {first!r}, not 'pass'")
+            best = t["cpu"] if best is None else min(best, t["cpu"])
+        pts.append((n, best))
+    return doubling_check(pts, "CPU")
+
+
+def iso_noniso_row(rid):
+    """`l4sbm11-w3c compare` of 2,200 quads with 100 blank nodes against a relabelled copy with
+    one literal changed (not isomorphic): at most ISO_NONISO_BUDGET seconds of CPU. Expected
+    failure, https://github.com/danbri/factoidal/issues/877: the verdict comes from the
+    bijection search, which runs to its work budget (9.4 s on 2026-10-18)."""
+    if not SBM11_W3C_BIN.exists():
+        raise MeasurementError(f"{SBM11_W3C_BIN} not built (cd formal/lean4 && lake build l4sbm11-w3c)")
+    n, b = 2200, 100
+    exp = fixture(f"iso-exp-{n}-{b}.nq", lambda: iso_nq(n, b, "a", False))
+    act = fixture(f"iso-noniso-{n}-{b}.nq",
+                  lambda: iso_nq(n, b, "z", True).replace('"v0"', '"v0x"', 1))
+    t = bl.run_once([str(SBM11_W3C_BIN), "compare", str(exp), str(act), "--expected", "nq",
+                     "--mode", "rdf11"], CAP)
+    if t["status"] == "cap":
+        raise MeasurementError(f"{rid}: over the {CAP} s cap")
+    first = t["first_line"].strip()
+    if not first.startswith("fail"):
+        raise MeasurementError(f"{rid}: the command printed {first!r}, not a failure")
+    return t["cpu"] <= ISO_NONISO_BUDGET, (f"n={n} B={b} not isomorphic: {t['cpu']:.3f} s CPU "
+                                           f"(budget {ISO_NONISO_BUDGET} s)")
+
+
+ISO_NONISO_BUDGET = 1.0
+
+ISO_TIME_ROWS = {
+    "iso-noniso-search": (iso_noniso_row, None, None),
+    "iso-shared-bnodes": (iso_time_row, "a", lambda n: 500),
+    "iso-shared-bnodes-relabel": (iso_time_row, "z", lambda n: 500),
+    "iso-many-bnodes-relabel": (iso_time_row, "z", lambda n: n // 4),
+}
 
 
 # Peak resident memory of `l4sbm11 dump --verify merkle`
@@ -2127,9 +2228,10 @@ def main() -> int:
         [] if names else list(SERIES_ROWS))
     stack_rows = [r for r in names if r in STACK_ROWS] or ([] if names else list(STACK_ROWS))
     time_rows = [r for r in names if r in SBM11_READ_TIME_ROWS or r in MERKLE_RANGE_TIME_ROWS
-                 or r in SBM11_LOG_TIME_ROWS or r in SBM11_PREFIX_TIME_ROWS] or (
+                 or r in SBM11_LOG_TIME_ROWS or r in SBM11_PREFIX_TIME_ROWS
+                 or r in ISO_TIME_ROWS] or (
         [] if names else list(SBM11_READ_TIME_ROWS) + list(MERKLE_RANGE_TIME_ROWS)
-        + list(SBM11_LOG_TIME_ROWS) + list(SBM11_PREFIX_TIME_ROWS))
+        + list(SBM11_LOG_TIME_ROWS) + list(SBM11_PREFIX_TIME_ROWS) + list(ISO_TIME_ROWS))
     run_startup = (not names) or ("startup" in names)
     passed = failed = xfailed = 0
     print(f"Lean scaling assertion: time(4x) <= {BOUND} * max(time(x), {FLOOR} s) "
@@ -2203,6 +2305,7 @@ def main() -> int:
             ok, detail = (merkle_range_time_row if rid in MERKLE_RANGE_TIME_ROWS
                           else SBM11_LOG_TIME_ROWS[rid] if rid in SBM11_LOG_TIME_ROWS
                           else SBM11_PREFIX_TIME_ROWS[rid] if rid in SBM11_PREFIX_TIME_ROWS
+                          else ISO_TIME_ROWS[rid][0] if rid in ISO_TIME_ROWS
                           else sbm11_read_time_row)(rid)
         except MeasurementError as e:
             failed += 1
