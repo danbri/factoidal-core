@@ -1447,3 +1447,7 @@ L4Factoidal_RDF_IsoRefine_termHash  # (b) nesting of RDF 1.2 triple terms in one
 L4Factoidal_RDF_IsoRefine_termBnodes  # (b) nesting of RDF 1.2 triple terms in one term (issue 868)
 L4Factoidal_RDF_IsoRefine_matchSearch  # (c) depth at most refineDepth + 1 = 1025 levels, a constant (issue 868)
 L4Factoidal_RDF_IsoRefine_tryEach  # (c) same cycle as matchSearch: depth at most refineDepth + 1 (issue 868)
+L4Factoidal_RDF_IsoRefine_matchSearchRef  # (c) the label-keyed reference of matchSearch: depth at most refineDepth + 1 (issue 868)
+L4Factoidal_RDF_IsoRefine_tryEachRef  # (c) same cycle as matchSearchRef: depth at most refineDepth + 1 (issue 868)
+L4Factoidal_RDF_IsoRefine_CT_hash  # (b) nesting of RDF 1.2 triple terms in one compiled term, as termHash (issue 868)
+L4Factoidal_RDF_IsoRefine_compileTerm  # (b) nesting of RDF 1.2 triple terms in one term, as termHash (issue 868)
