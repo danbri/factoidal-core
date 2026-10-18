@@ -196,6 +196,62 @@ def candidate (q1 q2 : List Quad) (bs1 bs2 : List BNodeId)
     let levels := min bs1.length refineDepth
     (matchSearch q1 q2 bs1 bs2 cert (levels + 1) c0 d0 (refineWork + levels)).1
 
+/-! ## A returned candidate passes the certificate
+
+`matchSearch` returns `some m` only after `cert m` (the singleton-class
+branch). So a caller that gives `candidate` its certificate does not need to
+run the certificate again on the result (`Dataset.isomorphismMap_eq_fast`,
+`Graph.isomorphismMap_eq_fast` in `Isomorphism.lean`). -/
+
+mutual
+
+theorem matchSearch_cert (q1 q2 : List Quad) (bs1 bs2 : List BNodeId)
+    (cert : List (BNodeId × BNodeId) → Bool) :
+    ∀ (d : Nat) (c1 c2 : Colours) (w : Nat) (m : List (BNodeId × BNodeId)),
+      (matchSearch q1 q2 bs1 bs2 cert d c1 c2 w).1 = some m → cert m = true
+  | 0, _, _, _, m, h => by simp [matchSearch] at h
+  | d + 1, c1, c2, w, m, h => by
+      rw [matchSearch] at h
+      simp only at h
+      split at h
+      · simp at h
+      · split at h
+        · split at h
+          · rename_i hc; simp only [Option.some.injEq] at h; subst h; exact hc
+          · simp at h
+        · split at h
+          · simp at h
+          · exact tryEach_cert q1 q2 bs1 bs2 cert d _ _ _ _ _ m h
+termination_by d _ _ _ _ _ => (d, 0, 0)
+
+theorem tryEach_cert (q1 q2 : List Quad) (bs1 bs2 : List BNodeId)
+    (cert : List (BNodeId × BNodeId) → Bool) (d : Nat) :
+    ∀ (c1 c2 : Colours) (ic : UInt64) (cands : List BNodeId) (w : Nat)
+      (m : List (BNodeId × BNodeId)),
+      (tryEach q1 q2 bs1 bs2 cert d c1 c2 ic cands w).1 = some m → cert m = true
+  | _, _, _, [], _, m, h => by simp [tryEach] at h
+  | c1, c2, ic, b2 :: rest, w, m, h => by
+      cases w with
+      | zero => simp [tryEach] at h
+      | succ w' =>
+        rw [tryEach] at h
+        split at h
+        · rename_i m' w2 hs
+          simp at h; subst h
+          exact matchSearch_cert q1 q2 bs1 bs2 cert d c1 _ w' m' (by rw [hs])
+        · exact tryEach_cert q1 q2 bs1 bs2 cert d c1 c2 ic rest _ m h
+termination_by _ _ _ cands _ _ => (d, 1, cands.length)
+
+end
+
+theorem candidate_cert {q1 q2 : List Quad} {bs1 bs2 : List BNodeId}
+    {cert : List (BNodeId × BNodeId) → Bool} {m : List (BNodeId × BNodeId)}
+    (h : candidate q1 q2 bs1 bs2 cert = some m) : cert m = true := by
+  unfold candidate at h
+  split at h
+  · simp at h
+  · exact matchSearch_cert q1 q2 bs1 bs2 cert _ _ _ _ m h
+
 /-- The quads of a graph, in the default graph. -/
 def graphQuads (g : Graph) : List Quad := g.map (fun t => (t, none))
 
