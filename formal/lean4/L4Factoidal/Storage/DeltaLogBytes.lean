@@ -214,6 +214,7 @@ def parseLogAt (b : ByteArray) : Option (List DeltaBatch × Nat) :=
       | some version =>
         if version == deltaLogVersion then some (replayBatchesAt .v1 b 8 b.size)
         else if version == deltaLogVersion2 then some (replayBatchesAt .v2 b 8 b.size)
+        else if version == deltaLogVersion3 then some (replayBatchesAt .v3 b 8 b.size)
         else none
 
 /-- `logHeaderVersion?` on the whole array. -/
@@ -250,11 +251,9 @@ def parseLogCheckedBA (b : ByteArray) : Except String (List DeltaBatch × Bool) 
 
 /-- `parseLogCheckedV1` on the whole array. -/
 def parseLogCheckedV1BA (b : ByteArray) : Except String (List DeltaBatch × Bool) :=
-  if logHeaderVersionAt? b == some deltaLogVersion2 then
-    .error ("the DLOG has header version 2 (its entries may hold RDF 1.2 terms); " ++
-      "the SBM11 tools (l4sbm11) read it, and this reader of IBK3, IBK4 and IBK5 " ++
-      "collections does not (https://github.com/danbri/factoidal/issues/792)")
-  else parseLogCheckedBA b
+  match v1Refusal? (logHeaderVersionAt? b) with
+  | some e => .error e
+  | none => parseLogCheckedBA b
 
 /-! ## The encoder -/
 
@@ -318,14 +317,12 @@ def logHeaderBA (version : UInt32) : ByteArray := pushU32 (pushU32 ByteArray.emp
 /-- `AppendPlan` with the bytes in a byte array. -/
 structure AppendPlanBA where
   version : UInt32
-  setVersion2 : Bool
+  setVersion : Bool
   bytes : ByteArray
 
 /-- `appendPlan?` with the bytes in a byte array. -/
 def appendPlanBA? (logVersion : Option UInt32) (batch : DeltaBatch) : Option AppendPlanBA :=
-  let version :=
-    if batch.ops.any entryNeedsV2 || logVersion == some deltaLogVersion2 then deltaLogVersion2
-    else deltaLogVersion
+  let version := appendVersion logVersion batch
   match DeltaTermCodec.ofVersion version with
   | none => none
   | some tc =>
@@ -333,11 +330,11 @@ def appendPlanBA? (logVersion : Option UInt32) (batch : DeltaBatch) : Option App
     | none =>
       match batchBA? tc (logHeaderBA version) batch with
       | none => none
-      | some bytes => some { version, setVersion2 := false, bytes }
+      | some bytes => some { version, setVersion := false, bytes }
     | some v =>
       match batchBA? tc ByteArray.empty batch with
       | none => none
-      | some bytes => some { version, setVersion2 := v != version, bytes }
+      | some bytes => some { version, setVersion := v != version, bytes }
 
 /-! ## Build-time checks
 
@@ -353,21 +350,29 @@ private def ttNested : Term :=
     (.tripleTerm (.iri exIri) exP (.literal (Literal.dirLangString "salaam" "ar" .rtl)))
 private def plainBatch : DeltaBatch :=
   { seq := 1, epoch := 1, ops := [.add ⟨.iri exIri, exP, .literal (Literal.string "v")⟩ none,
-      .remove ⟨.bnode "x", exP, .literal (Literal.langString "hi" "en")⟩ (some "http://example.org/g"),
-      .clear none, .drop "http://example.org/g", .create "http://example.org/h"] }
+      .remove ⟨.bnode "x", exP, .literal (Literal.langString "hi" "en")⟩ (some (.iri "http://example.org/g")),
+      .clear none, .drop (.iri "http://example.org/g"), .create (.iri "http://example.org/h")] }
 private def ttBatch : DeltaBatch :=
-  { seq := 2, epoch := 1, ops := [.add ⟨.iri exIri, exP, ttNested⟩ (some "http://example.org/g")] }
+  { seq := 2, epoch := 1, ops := [.add ⟨.iri exIri, exP, ttNested⟩ (some (.iri "http://example.org/g"))] }
+private def bnBatch : DeltaBatch :=
+  { seq := 3, epoch := 1, ops := [.clear (some (.bnode "g")), .drop (.bnode "g"), .create (.bnode "h"),
+      .add ⟨.iri exIri, exP, ttNested⟩ (some (.bnode "h"))] }
 
-#guard (appendPlanBA? none plainBatch).map (fun p => (p.version, p.setVersion2, p.bytes.data.toList)) ==
-  (appendPlan? none plainBatch).map (fun p => (p.version, p.setVersion2, p.bytes))
-#guard (appendPlanBA? (some 1) plainBatch).map (fun p => (p.version, p.setVersion2, p.bytes.data.toList)) ==
-  (appendPlan? (some 1) plainBatch).map (fun p => (p.version, p.setVersion2, p.bytes))
-#guard (appendPlanBA? (some 1) ttBatch).map (fun p => (p.version, p.setVersion2, p.bytes.data.toList)) ==
-  (appendPlan? (some 1) ttBatch).map (fun p => (p.version, p.setVersion2, p.bytes))
-#guard (appendPlanBA? none ttBatch).map (fun p => (p.version, p.setVersion2, p.bytes.data.toList)) ==
-  (appendPlan? none ttBatch).map (fun p => (p.version, p.setVersion2, p.bytes))
-#guard (appendPlanBA? (some 2) plainBatch).map (fun p => (p.version, p.setVersion2, p.bytes.data.toList)) ==
-  (appendPlan? (some 2) plainBatch).map (fun p => (p.version, p.setVersion2, p.bytes))
+#guard (appendPlanBA? none plainBatch).map (fun p => (p.version, p.setVersion, p.bytes.data.toList)) ==
+  (appendPlan? none plainBatch).map (fun p => (p.version, p.setVersion, p.bytes))
+#guard (appendPlanBA? (some 1) plainBatch).map (fun p => (p.version, p.setVersion, p.bytes.data.toList)) ==
+  (appendPlan? (some 1) plainBatch).map (fun p => (p.version, p.setVersion, p.bytes))
+#guard (appendPlanBA? (some 1) ttBatch).map (fun p => (p.version, p.setVersion, p.bytes.data.toList)) ==
+  (appendPlan? (some 1) ttBatch).map (fun p => (p.version, p.setVersion, p.bytes))
+#guard (appendPlanBA? none ttBatch).map (fun p => (p.version, p.setVersion, p.bytes.data.toList)) ==
+  (appendPlan? none ttBatch).map (fun p => (p.version, p.setVersion, p.bytes))
+#guard (appendPlanBA? (some 2) plainBatch).map (fun p => (p.version, p.setVersion, p.bytes.data.toList)) ==
+  (appendPlan? (some 2) plainBatch).map (fun p => (p.version, p.setVersion, p.bytes))
+#guard [none, some 1, some 2, some 3].all fun lv =>
+  (appendPlanBA? lv bnBatch).map (fun p => (p.version, p.setVersion, p.bytes.data.toList)) ==
+    (appendPlan? lv bnBatch).map (fun p => (p.version, p.setVersion, p.bytes))
+#guard (appendPlanBA? (some 3) plainBatch).map (fun p => (p.version, p.setVersion, p.bytes.data.toList)) ==
+  (appendPlan? (some 3) plainBatch).map (fun p => (p.version, p.setVersion, p.bytes))
 -- a batch the format cannot hold: a sequence number of 2 ^ 64
 #guard (appendPlanBA? none { plainBatch with seq := 18446744073709551616 }).isNone
 
@@ -377,6 +382,8 @@ private def v1log : List UInt8 :=
 private def v2log : List UInt8 :=
   ((appendPlan? none plainBatch).map (·.bytes)).getD [] ++
     ((appendPlan? (some 2) ttBatch).map (·.bytes)).getD []
+private def v3log : List UInt8 :=
+  logHeader 3 ++ v2log.drop 8 ++ ((appendPlan? (some 3) bnBatch).map (·.bytes)).getD []
 
 private def viewChecked (r : Except String (List DeltaBatch × Bool)) :
     Except String (List DeltaBatch × Bool) := r
@@ -400,6 +407,12 @@ private def sameCheckedV1 (bs : List UInt8) : Bool :=
 #guard sameChecked (logHeader 2 ++ v2log.drop 8)
 #guard sameChecked (logHeader 1 ++ v2log.drop 8)
 #guard sameChecked (logHeader 3 ++ v2log.drop 8)
+#guard sameChecked (logHeader 4 ++ v2log.drop 8)
+#guard (match parseLogCheckedBA (ba v3log) with
+  | .ok (bs, false) => bs == [plainBatch, ttBatch, bnBatch] | _ => false)
+#guard sameChecked v3log
+#guard sameChecked (logHeader 2 ++ v3log.drop 8)
+#guard sameCheckedV1 v3log
 #guard sameChecked []
 #guard sameChecked [0x44, 0x4C, 0x4F]
 #guard sameChecked (logHeader 1)
@@ -411,6 +424,8 @@ private def sameCheckedV1 (bs : List UInt8) : Bool :=
 #guard (List.range v1log.length).all fun i =>
   sameChecked (v1log.set i (v1log.getD i 0 + 1)) && sameChecked (v1log.set i (v1log.getD i 0 ^^^ 0xFF))
 #guard (List.range (v2log.length + 1)).all fun n => sameChecked (v2log.take n)
+#guard (List.range (v3log.length + 1)).all fun n => sameChecked (v3log.take n)
+#guard (List.range v3log.length).all fun i => sameChecked (v3log.set i (v3log.getD i 0 ^^^ 0xFF))
 #guard (List.range v2log.length).all fun i =>
   sameChecked (v2log.set i (v2log.getD i 0 + 1)) && sameChecked (v2log.set i (v2log.getD i 0 ^^^ 0xFF))
 

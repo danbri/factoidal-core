@@ -69,11 +69,17 @@
 #                replay of 40,000 entries in at most 1,000 ms at open
 #                (https://github.com/danbri/factoidal/issues/858, repaired 2026-10-14: it was
 #                93 microseconds for each entry).
-#   shortfalls   expected failures that name an open issue: an empty named graph is not
-#                stored (https://github.com/danbri/factoidal/issues/855), CLEAR NAMED
-#                with a graph named by a blank node (https://github.com/danbri/factoidal/issues/856),
-#                and no automatic compaction when the log passes its limit
-#                (https://github.com/danbri/factoidal/issues/803 item 4).
+#   graphs       every named graph of the dataset, a graph with no triple and a graph named by a
+#                blank node included (RDF 1.1 Concepts section 4; 2026-10-15,
+#                https://github.com/danbri/factoidal/issues/855 and
+#                https://github.com/danbri/factoidal/issues/856): CREATE adds a graph, CLEAR and
+#                DELETE keep it, DROP removes it, the graph-wide forms act on every named graph.
+#                After each request (store and reference both accept it, or both refuse it) the
+#                compacted generation lists exactly the expected named graphs (`l4sbm11 graphs`:
+#                the graph list GNL1), and the state and query checks of `check_state` run. A
+#                request that names a graph by a blank node writes a log of version 3.
+#   shortfalls   expected failures that name an open issue: no automatic compaction when the
+#                log passes its limit (https://github.com/danbri/factoidal/issues/803 item 4).
 #
 # Prints "N pass, M fail, K expected-fail (out of T)". Exit 0 when no case failed and no
 # expected failure passed; 2 when a binary is missing.
@@ -419,25 +425,94 @@ done
 if [ "$okn" -eq 4 ]; then record limit off-by-default 0 "no flag and no environment variable: 4 requests, 40 entries, all accepted"
 else record limit off-by-default 1 "$okn of 4 requests accepted"; fi
 
+echo "=== graphs: every named graph, with or without a triple, named by an IRI or a blank node"
+# The expected named graphs follow SPARQL 1.1 Update: CREATE adds a graph with no triple (3.2.1),
+# INSERT adds the graph it inserts into (3.1.1), DELETE and CLEAR keep the graph (3.1.2, 3.1.3, 3.1.5),
+# DROP removes it (3.2.2). The reference engine must agree on acceptance; its N-Quads state cannot hold
+# a graph with no triple, so the lists below are the expected graph names, checked against `l4sbm11
+# graphs` of the compacted generation (IRIs exactly, blank nodes by number: a label is a name for one
+# document).
+GR="$TMP/graphs"; mkdir -p "$GR"
+# graphs_of <dir>: the named graphs of the generation after compaction, IRIs sorted, then "bnodes=N"
+graphs_of() {
+  rm -rf "$1/gcmp"
+  "$BIN/l4sbm11" compact "$1" "$1/gcmp" >"$1.gcompact.log" 2>&1 || { echo "compact failed: $(tail -1 "$1.gcompact.log")"; return; }
+  "$BIN/l4sbm11" graphs "$1/gcmp" 2>/dev/null >"$1.graphs" || { echo "graphs failed"; return; }
+  printf '%s bnodes=%s' "$(grep '^<' "$1.graphs" | sort | tr '\n' ' ')" "$(grep -c '^_:' "$1.graphs")"
+}
+# graph_case <name> <fixture> <request text> <expected graphs line> [expected log version]
+graph_case() {
+  local name="$1" fx="$2" text="$3" want="$4" wantv="${5:-}" d="$GR/$1" got
+  new_store "$d" "$fx"
+  printf '%s\n' "$text" >"$GR/$name.ru"
+  store_update "$d" "$GR/$name.ru"
+  ref_update "$fx" "$GR/$name.ru" "$GR/$name.nq" --format nquads
+  if [ "$URC" -ne 0 ] || [ "$RRC" -ne 0 ]; then
+    record graphs "$name" 1 "store exit $URC, reference exit $RRC: $(grep -v ' op ' "$d.upd" | tail -1 | cut -c1-160) $(head -c 120 "$GR/$name.nq.err")"; return
+  fi
+  if [ -n "$wantv" ] && ! grep -q "log-version=$wantv" "$d.upd"; then
+    record graphs "$name" 1 "the log is not version $wantv: $(grep -o 'log-version=[0-9]*.*' "$d.upd")"; return
+  fi
+  got="$(graphs_of "$d")"
+  if [ "$got" = "$want" ]; then record graphs "$name" 0 "$(grep -o 'log-version=[0-9]*' "$d.upd"); named graphs: $got"
+  else record graphs "$name" 1 "named graphs: '$got', want '$want'"; fi
+  check_state "$d" "$GR/$name.nq" graphs "$name" rdf11
+}
+EX='PREFIX ex: <http://ex.org/>'
+G12='<http://ex.org/g1> <http://ex.org/g2> '
+graph_case create-clear "$GATE" "$EX CREATE GRAPH ex:gx ; CLEAR GRAPH ex:gx" "$G12<http://ex.org/gx>  bnodes=0" 1
+graph_case create-drop "$GATE" "$EX CREATE GRAPH ex:gx ; DROP GRAPH ex:gx" "$G12 bnodes=0" 1
+graph_case delete-last-triple "$GATE" "$EX DELETE WHERE { GRAPH ex:g1 { ?s ?p ?o } }" "$G12 bnodes=0" 1
+graph_case clear-named "$GATE" "CLEAR NAMED" "$G12 bnodes=0" 1
+graph_case drop-named "$GATE" "DROP NAMED" " bnodes=0" 1
+graph_case drop-all "$GATE" "DROP ALL" " bnodes=0" 1
+graph_case insert-then-delete "$GATE" "$EX INSERT DATA { GRAPH ex:gy { ex:s ex:p ex:o } } ; DELETE DATA { GRAPH ex:gy { ex:s ex:p ex:o } }" "$G12<http://ex.org/gy>  bnodes=0" 1
+graph_case copy-to-new "$GATE" "$EX CREATE GRAPH ex:gz ; COPY ex:gz TO ex:gw" "$G12<http://ex.org/gw> <http://ex.org/gz>  bnodes=0" 1
+# a generation with no named graph has no graph list: graph existence comes from its quads
+graph_case no-list-clear-named "$FX/labels.nq" "CLEAR NAMED" " bnodes=0" 1
+graph_case no-list-create "$FX/labels.nq" "$EX CREATE GRAPH ex:gx ; INSERT DATA { GRAPH ex:gy { ex:s ex:p ex:o } }" "<http://ex.org/gx> <http://ex.org/gy>  bnodes=0" 1
+graph_case bnode-clear-named "$FX/bnode-graph.nq" "CLEAR NAMED" "<http://ex.org/g1>  bnodes=1" 3
+graph_case bnode-clear-all "$FX/bnode-graph.nq" "CLEAR ALL" "<http://ex.org/g1>  bnodes=1" 3
+graph_case bnode-drop-named "$FX/bnode-graph.nq" "DROP NAMED" " bnodes=0" 3
+graph_case bnode-drop-all "$FX/bnode-graph.nq" "DROP ALL" " bnodes=0" 3
+# CREATE of a graph that exists with no triple is an error (3.2.1), with SILENT nothing; the second
+# request is evaluated on the state the first left, by the store and by the reference
+C2="$GR/create-twice"
+new_store "$C2" "$GATE"
+printf '%s\n' "$EX CREATE GRAPH ex:gx" >"$GR/c1.ru"
+printf '%s\n' "$EX CREATE GRAPH ex:gx" >"$GR/c2.ru"
+printf '%s\n' "$EX CREATE SILENT GRAPH ex:gx" >"$GR/c3.ru"
+store_update "$C2" "$GR/c1.ru"; U1=$URC
+cp "$C2/gen/deltas.dlog" "$GR/c2.before" 2>/dev/null
+store_update "$C2" "$GR/c2.ru"; U2=$URC
+cmp -s "$C2/gen/deltas.dlog" "$GR/c2.before"; SAME=$?
+store_update "$C2" "$GR/c3.ru"; U3=$URC
+ref_update "$GATE" "$GR/c1.ru" "$GR/c1.nq" --format nquads; R1=$RRC
+# the reference state after c1 is the gate fixture plus an empty graph, which N-Quads cannot hold:
+# the reference is asked for the two requests at once
+printf '%s\n' "$EX CREATE GRAPH ex:gx ; CREATE GRAPH ex:gx" >"$GR/c12.ru"
+ref_update "$GATE" "$GR/c12.ru" "$GR/c12.nq" --format nquads; R2=$RRC
+if [ "$U1$U2$U3" = "010" ] && [ "$R1" -eq 0 ] && [ "$R2" -ne 0 ] && [ "$SAME" -eq 0 ]; then
+  record graphs create-existing-empty 0 "CREATE GRAPH of a graph with no triple that exists: refused by the store (exit 1, log unchanged) and by the reference; CREATE SILENT accepted"
+else record graphs create-existing-empty 1 "store exits $U1 $U2 $U3 (want 0 1 0), reference exits $R1 $R2 (want 0 and non-zero), log unchanged by the refusal: $([ $SAME -eq 0 ] && echo yes || echo no)"; fi
+# a graph with no triple in the base generation (its graph list) exists: CLEAR and DROP act on it,
+# a second DROP is an error
+B2="$GR/base-empty"
+new_store "$B2" "$GATE"
+printf '%s\n' "$EX CREATE GRAPH ex:gq" >"$GR/q1.ru"
+store_update "$B2" "$GR/q1.ru"; Q1=$URC
+rm -rf "$B2/cmp"
+"$BIN/l4sbm11" compact "$B2" "$B2/cmp" >"$B2.compact.log" 2>&1 && "$BIN/l4sbm11" activate "$B2" cmp >/dev/null 2>&1; QA=$?
+printf '%s\n' "$EX CLEAR GRAPH ex:gq" >"$GR/q2.ru"
+printf '%s\n' "$EX DROP GRAPH ex:gq" >"$GR/q3.ru"
+store_update "$B2" "$GR/q2.ru"; Q2=$URC
+store_update "$B2" "$GR/q3.ru"; Q3=$URC
+store_update "$B2" "$GR/q3.ru"; Q4=$URC
+if [ "$Q1$QA$Q2$Q3$Q4" = "00001" ] && [ "$(graphs_of "$B2")" = "$G12 bnodes=0" ]; then
+  record graphs base-graph-with-no-triple 0 "CREATE, compact and activate: the graph list of the base holds ex:gq; CLEAR GRAPH and DROP GRAPH accepted, a second DROP refused"
+else record graphs base-graph-with-no-triple 1 "exits create $Q1, compact and activate $QA, clear $Q2, drop $Q3, second drop $Q4 (want 0 0 0 0 1); graphs: $(graphs_of "$B2")"; fi
+
 echo "=== shortfalls: expected failures, each with an open issue"
-# https://github.com/danbri/factoidal/issues/855: the store has no slot for an empty named graph
-X="$TMP/short/empty"
-new_store "$X" "$GATE"
-printf 'PREFIX ex: <http://ex.org/>\nCREATE GRAPH ex:gx ; CLEAR GRAPH ex:gx\n' >"$TMP/short/create-clear.ru"
-store_update "$X" "$TMP/short/create-clear.ru"
-ref_update "$GATE" "$TMP/short/create-clear.ru" "$TMP/short/create-clear.nq" --format nquads
-if [ "$RRC" -ne 0 ]; then record shortfalls empty-graph-reference 1 "the reference engine refused CREATE then CLEAR (exit $RRC)"
-elif [ "$URC" -ne 0 ]; then xfail shortfalls xfail-empty-graph-slot https://github.com/danbri/factoidal/issues/855 0 "the reference accepts CREATE GRAPH then CLEAR GRAPH, the store refuses: $(grep refused "$X.upd" | head -1 | cut -c1-100)"
-else xfail shortfalls xfail-empty-graph-slot https://github.com/danbri/factoidal/issues/855 1 "the store accepts CREATE GRAPH then CLEAR GRAPH"; fi
-# https://github.com/danbri/factoidal/issues/856: a graph named by a blank node cannot be named in a log entry
-Y="$TMP/short/bnode"
-new_store "$Y" "$FX/bnode-graph.nq"
-printf 'CLEAR NAMED\n' >"$TMP/short/clear-named.ru"
-store_update "$Y" "$TMP/short/clear-named.ru"
-ref_update "$FX/bnode-graph.nq" "$TMP/short/clear-named.ru" "$TMP/short/clear-named.nq" --format nquads
-if [ "$RRC" -ne 0 ]; then record shortfalls bnode-graph-reference 1 "the reference engine refused CLEAR NAMED (exit $RRC)"
-elif [ "$URC" -ne 0 ]; then xfail shortfalls xfail-bnode-named-graph https://github.com/danbri/factoidal/issues/856 0 "the reference clears the graph named by a blank node, the store refuses: $(grep refused "$Y.upd" | head -1 | cut -c1-100)"
-else xfail shortfalls xfail-bnode-named-graph https://github.com/danbri/factoidal/issues/856 1 "the store accepts CLEAR NAMED with a graph named by a blank node"; fi
 
 # https://github.com/danbri/factoidal/issues/803 item 4: nothing folds the log into a new generation when it passes its limit; the
 # writer refuses the request (group `limit`). The wanted flag is `--auto-compact`: with it, a request that would pass the limit

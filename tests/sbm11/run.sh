@@ -184,11 +184,12 @@
 #                (`l4factoidal update`), the states compared by isomorphism and the
 #                queries on the overlay by value; the replay of the log in dictionary order
 #                against one lookup for each term (issue 858); the size limit of the log (issue
-#                851); the scaling of the update path (issues 857 and 858); three expected
-#                failures that name open issues (https://github.com/danbri/factoidal/issues/855,
-#                https://github.com/danbri/factoidal/issues/856 and
-#                https://github.com/danbri/factoidal/issues/803). Its counts are added
-#                to this run's.
+#                851); the scaling of the update path (issues 857 and 858); every named
+#                graph, also one with no triple and one named by a blank node (group
+#                `graphs`; https://github.com/danbri/factoidal/issues/855 and
+#                https://github.com/danbri/factoidal/issues/856); one expected failure
+#                that names an open issue (https://github.com/danbri/factoidal/issues/803
+#                item 4). Its counts are added to this run's.
 #   (s) w3c-update  tests/sbm11/w3c_update.sh: the 94 W3C SPARQL 1.1 Update evaluation
 #                tests, read from the manifests on disk, run through the store (pack the
 #                initial Graph Store, `l4sbm11 update`, `l4sbm11 compact`, `l4sbm11 dump`,

@@ -62,14 +62,19 @@ labels are in the batch, so replay and compaction give the same blank nodes.
 A candidate is looked up in the dictionary only when the dictionary holds a
 label with the prefix, and in the log's labels only when the log holds one.
 
-Graph existence. The store has no slot for an empty named graph, so a named
-graph exists when some quad of the overlaid generation has it. CLEAR GRAPH, DROP
-GRAPH, COPY, MOVE and ADD of a graph that does not exist raise the error of
+Graph existence. The store keeps every named graph, also one with no triple
+(RDF 1.1 Concepts section 4; 2026-10-15,
+https://github.com/danbri/factoidal/issues/855): the named graphs of the
+overlaid generation are the base named graphs (its graph list GNL1) that the log
+did not drop, and the graphs that the log created (CREATE, or an INSERT into a
+graph that did not exist): `Session.hasNamedGraph`, `Session.namedGraphIds`,
+`Overlay.denoteNamed`. CLEAR keeps a graph and DROP removes it. CLEAR GRAPH,
+DROP GRAPH, COPY, MOVE and ADD of a graph that does not exist raise the error of
 section 3.2 unless SILENT, CREATE of a graph that exists raises one, and the
-graph-wide forms act on the graphs that exist. The reference semantics keeps
-the slot of a graph that CLEAR or CREATE leaves empty, so a request that names
-such a graph again behaves differently
-(https://github.com/danbri/factoidal/issues/855).
+graph-wide forms (CLEAR NAMED, CLEAR ALL, DROP NAMED, DROP ALL) act on every
+named graph, also a graph with no triple and a graph named by a blank node
+(https://github.com/danbri/factoidal/issues/856). An entry that names a graph by
+a blank node makes the log version 3 (`appendPlan?`).
 
 This is a HARNESS: it does file I/O. The semantics is
 `L4Factoidal.SPARQL.UpdateStore` (pure) and the reference
@@ -218,23 +223,12 @@ def Run.draw (r : Run) : IO BNodeId := do
 
 /-! ## Reading the store -/
 
-/-- Does the graph with id `gid` hold a quad in the overlaid generation? The
-    scan stops at the first block that has one. -/
-def graphHasQuad (ss : Session) (gid : UInt64) : IO Bool := do
-  let pat : IdQuery.Pat := { s := .var "s", p := .var "p", o := .var "o", g := .const gid, named := false }
-  let spec := IdQuery.mkSpec pat (IdQuery.permFor pat none) (fun v => v == "s")
-  let found ← IO.mkRef false
-  match ← (IdQuery.scanFoldM ss.store spec true () fun _ ch => do
-      if ch.table.rows > 0 then liftIO (found.set true)
-      pure ((), ch.table.rows == 0)).run with
-  | .error e => throw (IO.userError s!"graph scan failed: {e}")
-  | .ok _ => found.get
-
-/-- Does the named graph exist? A graph whose name has no id holds no quad. -/
+/-- Does the named graph exist in the overlaid generation, with or without a
+    triple? A graph whose name has no id does not exist. -/
 def graphExists (ss : Session) (g : WfIri) : IO Bool := do
   match ← ss.idOf (.iri g) with
   | none => return false
-  | some x => graphHasQuad ss x
+  | some x => ss.hasNamedGraph x.toNat
 
 /-- The triples of the graph with id `gid` (0: the default graph) in the
     overlaid generation: one scan of a permutation, filtered by the graph. -/
@@ -262,29 +256,15 @@ def refTriples (ss : Session) : L4Factoidal.SPARQL.GraphRef → IO (List Triple)
     | some x => graphTriples ss x
   | _ => return []
 
-/-- The IRIs of the named graphs: one scan that reads the graph column only
-    and keeps the distinct ids. A graph named by a blank node cannot be named
-    in a log entry, so a store that has one refuses the graph-wide forms. -/
-def namedGraphs (ss : Session) : IO (List WfIri) := do
-  let pat : IdQuery.Pat := { s := .var "s", p := .var "p", o := .var "o", g := .var "g", named := true }
-  let spec := IdQuery.mkSpec pat 0 (fun v => v == "g")
-  let seen ← IO.mkRef ({} : Std.HashSet UInt64)
-  match ← (IdQuery.scanFoldM ss.store spec true () fun _ ch => do
-      let mut s ← liftIO seen.get
-      liftIO (seen.set {})
-      for i in [0:ch.table.rows] do
-        s := s.insert (ch.table.at 0 i)
-      liftIO (seen.set s)
-      pure ((), true)).run with
-  | .error e => throw (IO.userError s!"graph scan failed: {e}")
-  | .ok _ => pure ()
-  let ids := L4Factoidal.Qlvr.mergeSortBy (← seen.get).toArray (· ≤ ·)
-  let mut out : Array WfIri := #[]
-  for x in ids do
-    match ← ss.termOf x with
-    | .iri i => out := out.push i
-    | _ =>
-      throw (IO.userError "refused: the store has a graph named by a blank node, which a log entry cannot name; the graph-wide forms of CLEAR and DROP cannot act on it")
+/-- The names of the named graphs of the overlaid generation, in id order: IRIs
+    and blank nodes, a graph with no triple included (`Session.namedGraphIds`). -/
+def namedGraphs (ss : Session) : IO (List DeltaGraphName) := do
+  let mut out : Array DeltaGraphName := #[]
+  for x in ← ss.namedGraphIds do
+    match ← ss.termOf x.toUInt64 with
+    | .iri i => out := out.push (.iri i.val)
+    | .bnode b => out := out.push (.bnode b)
+    | _ => throw (IO.userError s!"the named graph id {x} is not an IRI or a blank node")
   return out.toList
 
 /-! ## The WHERE clause -/
@@ -526,18 +506,19 @@ def appendUpdate (dir0 text : String) (sparql : SparqlVersion := .v11) (base : O
           let t2 ← IO.monoNanosNow
           let rssEncode ← vmHWM
           let size := UInt64.ofNat bytes.size
-          -- a version 1 log gets version 2 before the first RDF 1.2 batch; a
+          -- a log gets version 2 before the first RDF 1.2 batch and version 3
+          -- before the first batch that names a graph by a blank node; a
           -- concurrent append changes the size, and the loop reads again
-          let headerOk ← if plan.setVersion2 then
+          let headerOk ← if plan.setVersion then
               Harness.PosixRangeIO.writeAtSizeSyncRaw path size 4
-                (Harness.Sbm11Delta.asBytes (writeU32LE deltaLogVersion2))
+                (Harness.Sbm11Delta.asBytes (writeU32LE plan.version))
             else pure true
           if headerOk then
             if ← Harness.PosixRangeIO.appendSyncAtSizeRaw path size plan.bytes then
               let t3 ← IO.monoNanosNow
               let frameBytes := if bytes.isEmpty then plan.bytes.size - 8 else plan.bytes.size
               IO.eprintln s!"sbm11-update: entries {entries.size}; generation opened {(← run.base.get).isSome}, log replayed {(← run.overlaid.get).isSome}; compile {ms t0 t1} ms; batch encode {ms t1 t2} ms; append {ms t2 t3} ms; peak RSS after compile {rssCompile}, after encode {rssEncode}; peak RSS (VmHWM): {← vmHWM}"
-              IO.println s!"l4sbm11 update: committed path={path} seq={batch.seq} epoch={batch.epoch} ops={batch.ops.length} bytes={frameBytes} log-version={plan.version}{if plan.setVersion2 then " (set from 1)" else ""}"
+              IO.println s!"l4sbm11 update: committed path={path} seq={batch.seq} epoch={batch.epoch} ops={batch.ops.length} bytes={frameBytes} log-version={plan.version}{match logVersion with | some v => if plan.setVersion then s!" (set from {v})" else "" | none => ""}"
               return 0
     IO.eprintln "l4sbm11 update: concurrent writers prevented a stable append after 3 tries"
     return 1

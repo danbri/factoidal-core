@@ -2,9 +2,10 @@
 """Change the bytes of a DLOG file (deltas.dlog) the way a crash or damage
 would, for tests/delta-log/run.sh (https://github.com/danbri/factoidal/issues/843).
 
-The format is Storage/DeltaLog.lean: an eight-byte header ('DLOG', version 1
-or 2; version 2 when an entry may hold an RDF 1.2 term,
-https://github.com/danbri/factoidal/issues/792 item 1),
+The format is Storage/DeltaLog.lean: an eight-byte header ('DLOG', version 1,
+2 or 3; version 2 when an entry may hold an RDF 1.2 term,
+https://github.com/danbri/factoidal/issues/792 item 1; version 3 when an entry
+may name a graph by a blank node, https://github.com/danbri/factoidal/issues/856),
 then DLB1 frames: magic 'DLB1', version u32 1, body length u32, body, checksum
 u32 (the sum of the body bytes modulo 2^32). A body is seq u64, epoch u64,
 entry count u32, then DLE1 entry frames of the same shape.

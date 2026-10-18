@@ -46,15 +46,15 @@ def deltaEntriesForOp? (renameBnode : BNodeId → BNodeId) : UpdateOp → Option
   | .insertData quads =>
       some ((collectQuads none quads).map fun q =>
         let (graph, triple) := Quad.renameBnodes renameBnode q
-        DeltaEntry.add triple graph)
+        DeltaEntry.add triple (graph.map DeltaGraphName.ofWf))
   | .deleteData quads =>
       let collected := collectQuads none quads
       if collected.any (fun q => tripleMentionsBnode q.2) then none
-      else some (collected.map fun q => DeltaEntry.remove q.2 q.1)
+      else some (collected.map fun q => DeltaEntry.remove q.2 (q.1.map DeltaGraphName.ofWf))
   | .clear _ .default => some [.clear none]
-  | .clear _ (.graph graph) => some [.clear (some graph)]
-  | .drop _ (.graph graph) => some [.drop graph]
-  | .create _ graph => some [.create graph]
+  | .clear _ (.graph graph) => some [.clear (some (DeltaGraphName.ofWf graph))]
+  | .drop _ (.graph graph) => some [.drop (DeltaGraphName.ofWf graph)]
+  | .create _ graph => some [.create (DeltaGraphName.ofWf graph)]
   | _ => none
 
 /-- Compile a whole request in source order.  `none` is an explicit admission

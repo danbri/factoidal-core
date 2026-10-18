@@ -385,16 +385,45 @@ payload its type and its bytes — the port of sections 3 and 4 of
 module left out. An UPDATE's effect on the store is one of five
 things, and each is what a replay re-applies. -/
 
+/-- The name of a named graph in a log entry: an IRI or a blank node. RDF 1.1
+    Concepts section 4: a graph name is an IRI or a blank node. The IRI is a
+    plain `Iri`, as before (section "Graph names" below); a blank node is its
+    label. Only a DLOG of version 3 holds a graph named by a blank node
+    (`entryNeedsV3`; 2026-10-15, https://github.com/danbri/factoidal/issues/856). -/
+inductive DeltaGraphName where
+  | iri (i : Iri)
+  | bnode (label : String)
+  deriving Repr, DecidableEq, Hashable, Inhabited
+
+/-- A graph named by a blank node. -/
+def DeltaGraphName.isBnode : DeltaGraphName → Bool
+  | .bnode _ => true
+  | .iri _ => false
+
+/-- The IRI of a graph name; `none` for a blank node. -/
+def DeltaGraphName.iri? : DeltaGraphName → Option Iri
+  | .iri i => some i
+  | .bnode _ => none
+
+/-- The graph name that a subject term is: an IRI or a blank node. -/
+def DeltaGraphName.ofSubject : Subject → DeltaGraphName
+  | .iri i => .iri i.val
+  | .bnode b => .bnode b
+
+/-- The graph name of an IRI. -/
+def DeltaGraphName.ofWf (i : WfIri) : DeltaGraphName := .iri i.val
+
 /-- What one committed UPDATE operation did.
 
     `clear` takes `none` for the default graph; `drop` and `create`
-    always name a graph, so they carry a bare `Iri`. -/
+    always name a graph. A graph name is an IRI or a blank node
+    (`DeltaGraphName`); versions 1 and 2 of the log hold IRIs only. -/
 inductive DeltaEntry where
-  | add    (t : Triple) (graph : Option Iri)
-  | remove (t : Triple) (graph : Option Iri)
-  | clear  (graph : Option Iri)
-  | drop   (graph : Iri)
-  | create (graph : Iri)
+  | add    (t : Triple) (graph : Option DeltaGraphName)
+  | remove (t : Triple) (graph : Option DeltaGraphName)
+  | clear  (graph : Option DeltaGraphName)
+  | drop   (graph : DeltaGraphName)
+  | create (graph : DeltaGraphName)
   deriving Repr, DecidableEq
 
 def deTagAdd    : UInt8 := 0
@@ -402,6 +431,10 @@ def deTagRemove : UInt8 := 1
 def deTagClear  : UInt8 := 2
 def deTagDrop   : UInt8 := 3
 def deTagCreate : UInt8 := 4
+/-- DROP of a graph named by a blank node (DLOG version 3). -/
+def deTagDropBnode   : UInt8 := 5
+/-- CREATE of a graph named by a blank node (DLOG version 3). -/
+def deTagCreateBnode : UInt8 := 6
 
 def subjTagIri   : UInt8 := 0
 def subjTagBnode : UInt8 := 1
@@ -778,28 +811,70 @@ def termNeedsV2 : Term → Bool
 
 /-! ### Graph names
 
-A graph name is a plain `Iri`, NOT a `WfIri`. The F\* module says why:
-the default graph and the graph-management targets are not required to
-satisfy the IRI grammar, so there is no well-formedness check on the
-parse side either. -/
+The IRI of a graph name is a plain `Iri`, NOT a `WfIri`. The F\* module says
+why: the default graph and the graph-management targets are not required to
+satisfy the IRI grammar, so there is no well-formedness check on the parse
+side either.
 
-def serializeGraphOpt (g : Option Iri) : List UInt8 :=
+`bn` says whether a codec admits a graph named by a blank node: `false` for
+DLOG versions 1 and 2, `true` for version 3. The graph of `add`, `remove` and
+`clear` is a tag byte: 0 the default graph, 1 an IRI and its string, 2 a blank
+node and its label (version 3 only). The graph of `drop` and `create` is the
+string of the IRI after the entry tag 3 or 4, as in version 1; a graph named by
+a blank node has the entry tag 5 (`drop`) or 6 (`create`) and its label
+(version 3 only). So every entry that version 2 admits has the same bytes in
+version 3 (`DeltaLogCodecTheorems.DeltaTermCodec.v3_extends_v2`). -/
+
+def graphTagDefault : UInt8 := 0
+def graphTagIri : UInt8 := 1
+def graphTagBnode : UInt8 := 2
+
+/-- The total encoder of an optional graph name (`serializeDeltaEntryPayload`).
+    A blank node gets the version 3 bytes, which the version 1 parser refuses. -/
+def serializeGraphOpt (g : Option DeltaGraphName) : List UInt8 :=
   match g with
-  | none   => [(0 : UInt8)]
-  | some i => (1 : UInt8) :: serializeLString i
+  | none   => [graphTagDefault]
+  | some (.iri i) => graphTagIri :: serializeLString i
+  | some (.bnode b) => graphTagBnode :: serializeLString b
 
-def serializeGraphOpt? (g : Option Iri) : Option (List UInt8) :=
+/-- An optional graph name, `none` when a string does not fit its length prefix
+    or when the codec does not admit a blank node graph name (`bn` false). -/
+def serializeGraphOptWith? (bn : Bool) (g : Option DeltaGraphName) : Option (List UInt8) :=
   match g with
-  | none => some [(0 : UInt8)]
-  | some i => (serializeLString? i).map ((1 : UInt8) :: ·)
+  | none => some [graphTagDefault]
+  | some (.iri i) => (serializeLString? i).map (graphTagIri :: ·)
+  | some (.bnode b) => if bn then (serializeLString? b).map (graphTagBnode :: ·) else none
 
-def parseGraphOpt (bs : List UInt8) : Option (Option Iri × List UInt8) := do
+/-- The encoder of versions 1 and 2. -/
+def serializeGraphOpt? (g : Option DeltaGraphName) : Option (List UInt8) :=
+  serializeGraphOptWith? false g
+
+def parseGraphOptWith (bn : Bool) (bs : List UInt8) : Option (Option DeltaGraphName × List UInt8) := do
   let (tag, after) ← parseU8 bs
-  if tag == 0 then some (none, after)
-  else if tag == 1 then do
+  if tag == graphTagDefault then some (none, after)
+  else if tag == graphTagIri then do
     let (i, rest) ← parseLString after
-    some (some i, rest)
+    some (some (.iri i), rest)
+  else if bn && tag == graphTagBnode then do
+    let (b, rest) ← parseLString after
+    some (some (.bnode b), rest)
   else none
+
+/-- The parser of versions 1 and 2. -/
+def parseGraphOpt (bs : List UInt8) : Option (Option DeltaGraphName × List UInt8) :=
+  parseGraphOptWith false bs
+
+/-- The payload of DROP or CREATE: the entry tag `tag` and the string of an
+    IRI, or the entry tag `tagB` and the label of a blank node (`bn` true, DLOG
+    version 3). -/
+def serializeGraphOpWith? (bn : Bool) (tag tagB : UInt8) : DeltaGraphName → Option (List UInt8)
+  | .iri i => (serializeLString? i).map (tag :: ·)
+  | .bnode b => if bn then (serializeLString? b).map (tagB :: ·) else none
+
+/-- The total encoder of a DROP or CREATE payload. -/
+def serializeGraphOp (tag tagB : UInt8) : DeltaGraphName → List UInt8
+  | .iri i => tag :: serializeLString i
+  | .bnode b => tagB :: serializeLString b
 
 /-! ### The payload -/
 
@@ -808,8 +883,8 @@ def serializeDeltaEntryPayload (e : DeltaEntry) : List UInt8 :=
   | .add t g    => deTagAdd :: (serializeTriple t ++ serializeGraphOpt g)
   | .remove t g => deTagRemove :: (serializeTriple t ++ serializeGraphOpt g)
   | .clear g    => deTagClear :: serializeGraphOpt g
-  | .drop g     => deTagDrop :: serializeLString g
-  | .create g   => deTagCreate :: serializeLString g
+  | .drop g     => serializeGraphOp deTagDrop deTagDropBnode g
+  | .create g   => serializeGraphOp deTagCreate deTagCreateBnode g
 
 /-- Admission-preserving payload encoding used by durable DLB1/DLOG writers.
     Every nested length prefix is checked, and unsupported triple terms are
@@ -825,8 +900,8 @@ def serializeDeltaEntryPayload? (e : DeltaEntry) : Option (List UInt8) :=
       let graph ← serializeGraphOpt? g
       some (deTagRemove :: (triple ++ graph))
   | .clear g => (serializeGraphOpt? g).map (deTagClear :: ·)
-  | .drop g => (serializeLString? g).map (deTagDrop :: ·)
-  | .create g => (serializeLString? g).map (deTagCreate :: ·)
+  | .drop g => serializeGraphOpWith? false deTagDrop deTagDropBnode g
+  | .create g => serializeGraphOpWith? false deTagCreate deTagCreateBnode g
 
 def parseDeltaEntryPayload (bs : List UInt8) : Option (DeltaEntry × List UInt8) := do
   let (tag, afterTag) ← parseU8 bs
@@ -843,10 +918,10 @@ def parseDeltaEntryPayload (bs : List UInt8) : Option (DeltaEntry × List UInt8)
     some (.clear g, rest)
   else if tag == deTagDrop then do
     let (g, rest) ← parseLString afterTag
-    some (.drop g, rest)
+    some (.drop (.iri g), rest)
   else if tag == deTagCreate then do
     let (g, rest) ← parseLString afterTag
-    some (.create g, rest)
+    some (.create (.iri g), rest)
   else none
 
 /-! ### Batches
@@ -1095,20 +1170,30 @@ version 1 functions (`*With_v1`, `rfl`), and `DeltaTermCodec.v2` the codec of
 a DLOG version 2. `TermCodecTheorems` and `DeltaLogCodecTheorems` prove the
 round trips once, over every term codec that has one. -/
 
-/-- How a DLE1 entry encodes the object of a triple. -/
+/-- How a DLE1 entry encodes the object of a triple, and whether it admits a
+    graph named by a blank node (`bnodeGraphs`, section "Graph names"). -/
 structure DeltaTermCodec where
   encode : Term → Option (List UInt8)
   decode : List UInt8 → Option (Term × List UInt8)
+  bnodeGraphs : Bool := false
 
 /-- Version 1: `serializeTerm?` and `parseTerm`. -/
-def DeltaTermCodec.v1 : DeltaTermCodec := ⟨serializeTerm?, parseTerm⟩
+def DeltaTermCodec.v1 : DeltaTermCodec := { encode := serializeTerm?, decode := parseTerm }
 /-- Version 2: `serializeDeltaTerm?` and `parseDeltaTerm`. -/
-def DeltaTermCodec.v2 : DeltaTermCodec := ⟨serializeDeltaTerm?, parseDeltaTerm⟩
+def DeltaTermCodec.v2 : DeltaTermCodec := { encode := serializeDeltaTerm?, decode := parseDeltaTerm }
+/-- Version 3: the terms of version 2 and graphs named by blank nodes. -/
+def DeltaTermCodec.v3 : DeltaTermCodec :=
+  { encode := serializeDeltaTerm?, decode := parseDeltaTerm, bnodeGraphs := true }
+
+/-- The DLOG header version of a log whose entries may name a graph by a blank
+    node (2026-10-15, https://github.com/danbri/factoidal/issues/856). -/
+def deltaLogVersion3 : UInt32 := 3
 
 /-- The term codec of a DLOG header version. -/
 def DeltaTermCodec.ofVersion (v : UInt32) : Option DeltaTermCodec :=
   if v == deltaLogVersion then some .v1
   else if v == deltaLogVersion2 then some .v2
+  else if v == deltaLogVersion3 then some .v3
   else none
 
 def serializeTripleWith? (tc : DeltaTermCodec) (t : Triple) : Option (List UInt8) := do
@@ -1129,36 +1214,42 @@ def serializeDeltaEntryPayloadWith? (tc : DeltaTermCodec) (e : DeltaEntry) : Opt
   match e with
   | .add t g => do
       let triple ← serializeTripleWith? tc t
-      let graph ← serializeGraphOpt? g
+      let graph ← serializeGraphOptWith? tc.bnodeGraphs g
       some (deTagAdd :: (triple ++ graph))
   | .remove t g => do
       let triple ← serializeTripleWith? tc t
-      let graph ← serializeGraphOpt? g
+      let graph ← serializeGraphOptWith? tc.bnodeGraphs g
       some (deTagRemove :: (triple ++ graph))
-  | .clear g => (serializeGraphOpt? g).map (deTagClear :: ·)
-  | .drop g => (serializeLString? g).map (deTagDrop :: ·)
-  | .create g => (serializeLString? g).map (deTagCreate :: ·)
+  | .clear g => (serializeGraphOptWith? tc.bnodeGraphs g).map (deTagClear :: ·)
+  | .drop g => serializeGraphOpWith? tc.bnodeGraphs deTagDrop deTagDropBnode g
+  | .create g => serializeGraphOpWith? tc.bnodeGraphs deTagCreate deTagCreateBnode g
 
 def parseDeltaEntryPayloadWith (tc : DeltaTermCodec) (bs : List UInt8) :
     Option (DeltaEntry × List UInt8) := do
   let (tag, afterTag) ← parseU8 bs
   if tag == deTagAdd then do
     let (t, afterT) ← parseTripleWith tc afterTag
-    let (g, rest)   ← parseGraphOpt afterT
+    let (g, rest)   ← parseGraphOptWith tc.bnodeGraphs afterT
     some (.add t g, rest)
   else if tag == deTagRemove then do
     let (t, afterT) ← parseTripleWith tc afterTag
-    let (g, rest)   ← parseGraphOpt afterT
+    let (g, rest)   ← parseGraphOptWith tc.bnodeGraphs afterT
     some (.remove t g, rest)
   else if tag == deTagClear then do
-    let (g, rest) ← parseGraphOpt afterTag
+    let (g, rest) ← parseGraphOptWith tc.bnodeGraphs afterTag
     some (.clear g, rest)
   else if tag == deTagDrop then do
     let (g, rest) ← parseLString afterTag
-    some (.drop g, rest)
+    some (.drop (.iri g), rest)
   else if tag == deTagCreate then do
     let (g, rest) ← parseLString afterTag
-    some (.create g, rest)
+    some (.create (.iri g), rest)
+  else if tc.bnodeGraphs && tag == deTagDropBnode then do
+    let (b, rest) ← parseLString afterTag
+    some (.drop (.bnode b), rest)
+  else if tc.bnodeGraphs && tag == deTagCreateBnode then do
+    let (b, rest) ← parseLString afterTag
+    some (.create (.bnode b), rest)
   else none
 
 def serializeFramedDeltaEntryWith? (tc : DeltaTermCodec) (entry : DeltaEntry) :
@@ -1244,14 +1335,16 @@ def serializeLog (batches : List DeltaBatch) : List UInt8 :=
 /-- Read a DLOG: the header, then the batches. Version 1 entries are read with
     the version 1 term codec, so a version 1 log that holds a tag 3 or a
     literal flag 2 is refused at that batch (`classifyTail`: undecodable);
-    version 2 entries with `DeltaTermCodec.v2`. Any other version is refused
-    at the header, by this reader and by every reader before version 2. -/
+    version 2 entries with `DeltaTermCodec.v2`, version 3 entries with
+    `DeltaTermCodec.v3` (graphs named by blank nodes). Any other version is
+    refused at the header, by this reader and by every reader before it. -/
 def parseLog (bs : List UInt8) : Option (List DeltaBatch × List UInt8) := do
   let magic ← readU32LE bs 0
   if magic != deltaLogMagic then none else
   let version ← readU32LE bs 4
   if version == deltaLogVersion then some (replayDeltaBatches (bs.drop 8))
   else if version == deltaLogVersion2 then some (replayDeltaBatchesWith .v2 (bs.drop 8))
+  else if version == deltaLogVersion3 then some (replayDeltaBatchesWith .v3 (bs.drop 8))
   else none
 
 /-- The header of a DLOG of `version`. -/
@@ -1268,32 +1361,45 @@ def entryNeedsV2 : DeltaEntry → Bool
   | .add t _ | .remove t _ => termNeedsV2 t.o
   | _ => false
 
+/-- An entry that names a graph by a blank node needs DLOG version 3. -/
+def entryNeedsV3 : DeltaEntry → Bool
+  | .add _ g | .remove _ g | .clear g => g.any DeltaGraphName.isBnode
+  | .drop g | .create g => g.isBnode
+
+/-- The header version of the log after an append of `batch` to a log of
+    header version `logVersion` (`none`: no log yet). A batch that names a graph
+    by a blank node needs version 3, one that holds an RDF 1.2 term version 2. A
+    log keeps its version, and the bytes of that version, until a batch needs a
+    higher one; it never goes back to a lower version. -/
+def appendVersion (logVersion : Option UInt32) (batch : DeltaBatch) : UInt32 :=
+  if batch.ops.any entryNeedsV3 || logVersion == some deltaLogVersion3 then deltaLogVersion3
+  else if batch.ops.any entryNeedsV2 || logVersion == some deltaLogVersion2 then deltaLogVersion2
+  else deltaLogVersion
+
 /-- What a writer appends for one batch. `version` is the header version of
-    the log after the append; `setVersion2` says that an existing version 1
-    log must first get version 2 in its header (four bytes at byte 4, in
-    place, under the append lock); `bytes` are the bytes to append (the header
-    too, for a new log). -/
+    the log after the append; `setVersion` says that an existing log must
+    first get `version` in its header (four bytes at byte 4, in place, under
+    the append lock); `bytes` are the bytes to append (the header too, for a
+    new log). -/
 structure AppendPlan where
   version : UInt32
-  setVersion2 : Bool
+  setVersion : Bool
   bytes : List UInt8
   deriving Repr, DecidableEq
 
 /-- The append plan for `batch` on a log of header version `logVersion`
-    (`none`: no log yet). A batch that holds an RDF 1.2 term needs version 2;
-    a log keeps version 1, and the version 1 bytes, until one does. `none`
-    when the batch does not fit the wire format. -/
+    (`none`: no log yet), at the version `appendVersion` gives. `none` when the
+    batch does not fit the wire format or the log has a version this writer
+    does not write. -/
 def appendPlan? (logVersion : Option UInt32) (batch : DeltaBatch) : Option AppendPlan :=
-  let version :=
-    if batch.ops.any entryNeedsV2 || logVersion == some deltaLogVersion2 then deltaLogVersion2
-    else deltaLogVersion
+  let version := appendVersion logVersion batch
   match DeltaTermCodec.ofVersion version with
   | none => none
   | some tc => do
     let frame ← serializeDeltaBatchWith? tc batch
     match logVersion with
-    | none => some { version, setVersion2 := false, bytes := logHeader version ++ frame }
-    | some v => some { version, setVersion2 := v != version, bytes := frame }
+    | none => some { version, setVersion := false, bytes := logHeader version ++ frame }
+    | some v => some { version, setVersion := v != version, bytes := frame }
 
 /-! ### The bytes after the committed batches
 
@@ -1394,22 +1500,41 @@ def parseLogChecked (bs : List UInt8) : Except String (List DeltaBatch × Bool) 
     | k => .error (k.text (bs.length - tail.length) tail.length ++
         "; the log is not replayed (https://github.com/danbri/factoidal/issues/843)")
 
+/-- Why a reader of IBK3, IBK4 and IBK5 collections refuses a DLOG of header
+    version `v`: version 2 may hold RDF 1.2 terms, version 3 graphs named by
+    blank nodes, and their block formats store neither. `none` for any other
+    version (version 1 is read; an unknown version is refused by
+    `parseLogChecked`). -/
+def v1Refusal? (v : Option UInt32) : Option String :=
+  if v == some deltaLogVersion2 then
+    some ("the DLOG has header version 2 (its entries may hold RDF 1.2 terms); " ++
+      "the SBM11 tools (l4sbm11) read it, and this reader of IBK3, IBK4 and IBK5 " ++
+      "collections does not (https://github.com/danbri/factoidal/issues/792)")
+  else if v == some deltaLogVersion3 then
+    some ("the DLOG has header version 3 (its entries may name a graph by a blank node); " ++
+      "the SBM11 tools (l4sbm11) read it, and this reader of IBK3, IBK4 and IBK5 " ++
+      "collections does not (https://github.com/danbri/factoidal/issues/856)")
+  else none
+
 /-- `parseLogChecked` for the readers of IBK3, IBK4 and IBK5 collections
     (`l4block-shard-activate`, `l4block-id-v3-query` through the Merkle
     materialiser, `l4block-shard-compact`, the `l4block-delta-log` writer and
     the store server, `SPARQL.StoreEndpoint`). They refuse a DLOG of version
-    2: its entries may hold RDF 1.2 terms, which their block formats do not
-    store. Only the SBM11 tools read version 2
-    (https://github.com/danbri/factoidal/issues/792 item 1). -/
+    2 or 3 (`v1Refusal?`): its entries may hold RDF 1.2 terms or graphs named
+    by blank nodes, which their block formats do not store. Only the SBM11
+    tools read versions 2 and 3
+    (https://github.com/danbri/factoidal/issues/792 item 1,
+    https://github.com/danbri/factoidal/issues/856). -/
 def parseLogCheckedV1 (bs : List UInt8) : Except String (List DeltaBatch × Bool) :=
-  if logHeaderVersion? bs == some deltaLogVersion2 then
-    .error ("the DLOG has header version 2 (its entries may hold RDF 1.2 terms); " ++
-      "the SBM11 tools (l4sbm11) read it, and this reader of IBK3, IBK4 and IBK5 " ++
-      "collections does not (https://github.com/danbri/factoidal/issues/792)")
-  else parseLogChecked bs
+  match v1Refusal? (logHeaderVersion? bs) with
+  | some e => .error e
+  | none => parseLogChecked bs
 
 #guard (match parseLogCheckedV1 (logHeader deltaLogVersion2) with
   | .error e => e.startsWith "the DLOG has header version 2"
+  | .ok _ => false)
+#guard (match parseLogCheckedV1 (logHeader deltaLogVersion3) with
+  | .error e => e.startsWith "the DLOG has header version 3"
   | .ok _ => false)
 #guard (match parseLogCheckedV1 (logHeader deltaLogVersion) with
   | .ok ([], false) => true
@@ -1433,11 +1558,11 @@ private def exIri : WfIri := ⟨"http://example.org/s", by decide⟩
 private def exP   : WfIri := ⟨"http://example.org/p", by decide⟩
 
 #guard rtEntry (.clear none)
-#guard rtEntry (.clear (some "http://example.org/g"))
-#guard rtEntry (.drop "http://example.org/g")
-#guard rtEntry (.create "")
+#guard rtEntry (.clear (some (.iri "http://example.org/g")))
+#guard rtEntry (.drop (.iri "http://example.org/g"))
+#guard rtEntry (.create (.iri ""))
 #guard rtEntry (.add ⟨.iri exIri, exP, .iri exIri⟩ none)
-#guard rtEntry (.add ⟨.bnode "b0", exP, .bnode "b1"⟩ (some "http://example.org/g"))
+#guard rtEntry (.add ⟨.bnode "b0", exP, .bnode "b1"⟩ (some (.iri "http://example.org/g")))
 #guard rtEntry (.remove ⟨.iri exIri, exP, .literal (Literal.string "plain")⟩ none)
 #guard rtEntry (.remove ⟨.iri exIri, exP, .literal (Literal.langString "hi" "en")⟩ none)
 
@@ -1481,14 +1606,14 @@ version 2. -/
 private def plainBatch : DeltaBatch :=
   { seq := 1, epoch := 1, ops := [.add ⟨.iri exIri, exP, .literal (Literal.string "v")⟩ none] }
 private def ttBatch : DeltaBatch :=
-  { seq := 2, epoch := 1, ops := [.add ⟨.iri exIri, exP, ttNested⟩ (some "http://example.org/g")] }
+  { seq := 2, epoch := 1, ops := [.add ⟨.iri exIri, exP, ttNested⟩ (some (.iri "http://example.org/g"))] }
 
 #guard (appendPlan? none plainBatch).map (·.bytes) ==
   (serializeLog? [plainBatch])
 #guard (appendPlan? (some 1) plainBatch).map (·.bytes) == serializeDeltaBatch? plainBatch
-#guard (appendPlan? (some 1) ttBatch).map (fun p => (p.version, p.setVersion2)) == some (2, true)
+#guard (appendPlan? (some 1) ttBatch).map (fun p => (p.version, p.setVersion)) == some (2, true)
 #guard (appendPlan? none ttBatch).map (·.version) == some 2
-#guard (appendPlan? (some 2) plainBatch).map (fun p => (p.version, p.setVersion2)) == some (2, false)
+#guard (appendPlan? (some 2) plainBatch).map (fun p => (p.version, p.setVersion)) == some (2, false)
 -- A version 2 log of both batches replays to them; a version 1 header over
 -- the same frames refuses the RDF 1.2 batch (undecodable).
 private def v2log : List UInt8 :=
@@ -1498,7 +1623,43 @@ private def v2log : List UInt8 :=
 #guard (match parseLog (logHeader 1 ++ v2log.drop 8) with
   | some ([b], rest) => b == plainBatch && classifyTail rest == .undecodable
   | _ => false)
-#guard (parseLog (logHeader 3 ++ v2log.drop 8)).isNone
+-- version 3 reads the frames of versions 1 and 2; version 4 is refused at the header
+#guard parseLog (logHeader 3 ++ v2log.drop 8) == some ([plainBatch, ttBatch], [])
+#guard (parseLog (logHeader 4 ++ v2log.drop 8)).isNone
+
+/-! Graphs named by blank nodes: version 3 only. The encoders of versions 1 and
+2 refuse them; version 3 reads them back; a log that gets one is set to version
+3; a log without one keeps its version and its bytes. -/
+
+private def bnBatch : DeltaBatch :=
+  { seq := 3, epoch := 1, ops := [.clear (some (.bnode "g")), .drop (.bnode "g"), .create (.bnode "h"),
+      .add ⟨.iri exIri, exP, .iri exIri⟩ (some (.bnode "h")), .remove ⟨.iri exIri, exP, ttNested⟩ (some (.bnode "h")),
+      .drop (.iri "http://example.org/g"), .create (.iri "http://example.org/g")] }
+private def rtEntryWith (tc : DeltaTermCodec) (e : DeltaEntry) : Bool :=
+  match serializeDeltaEntryPayloadWith? tc e with
+  | some bs => parseDeltaEntryPayloadWith tc (bs ++ tail) == some (e, tail)
+  | none => false
+
+#guard bnBatch.ops.all (rtEntryWith .v3)
+#guard bnBatch.ops.all fun e => entryNeedsV3 e == (serializeDeltaEntryPayloadWith? .v2 e).isNone
+#guard (serializeDeltaEntryPayload? (.drop (.bnode "g"))).isNone
+#guard (parseDeltaEntryPayload (serializeDeltaEntryPayload (.clear (some (.bnode "g"))))).isNone
+#guard (parseDeltaEntryPayload (serializeDeltaEntryPayload (.create (.bnode "g")))).isNone
+-- an IRI graph has the same bytes in versions 1, 2 and 3
+#guard [plainBatch, ttBatch].all fun b => b.ops.all fun e =>
+  serializeDeltaEntryPayloadWith? .v3 e == serializeDeltaEntryPayloadWith? .v2 e
+#guard (appendPlan? (some 1) bnBatch).map (fun p => (p.version, p.setVersion)) == some (3, true)
+#guard (appendPlan? (some 2) bnBatch).map (fun p => (p.version, p.setVersion)) == some (3, true)
+#guard (appendPlan? none bnBatch).map (·.version) == some 3
+#guard (appendPlan? (some 3) plainBatch).map (fun p => (p.version, p.setVersion)) == some (3, false)
+#guard (appendPlan? (some 2) ttBatch).map (fun p => (p.version, p.setVersion)) == some (2, false)
+private def v3log : List UInt8 :=
+  v2log ++ ((appendPlan? (some 2) bnBatch).map (·.bytes)).getD []
+#guard parseLog (logHeader 3 ++ v3log.drop 8) == some ([plainBatch, ttBatch, bnBatch], [])
+-- under a version 2 header the blank node batch is a committed frame that does not decode
+#guard (match parseLog (logHeader 2 ++ v3log.drop 8) with
+  | some ([_, _], rest) => classifyTail rest == .undecodable
+  | _ => false)
 
 /-! An unknown entry tag is refused. -/
 

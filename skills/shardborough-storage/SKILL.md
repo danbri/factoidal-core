@@ -847,6 +847,28 @@ another version at the header. A new reader of a delta log uses
 `delta-log-triple-term` case of `tests/stack/run.sh --canary` (depth 300,000),
 `DeltaLogCodecTheorems.lean`.
 
+Delta log version 3 and graph slots (2026-10-15,
+https://github.com/danbri/factoidal/issues/855 and
+https://github.com/danbri/factoidal/issues/856; record: section 12.6 of the
+stage 5 record). A log entry names a graph by a `DeltaGraphName`: an IRI or a
+blank node. A DLOG of header version 3 holds the entries of version 2 and the
+entries that name a graph by a blank node (graph tag 2; entry tags 5 and 6 for
+DROP and CREATE); every entry that version 2 admits has the same bytes. A log
+gets version 3 in place before the first batch with such an entry
+(`appendVersion`, `AppendPlan.setVersion`) and keeps its version and its bytes
+otherwise. The SBM11 tools read versions 1 to 3; the IBK3, IBK4 and IBK5 readers
+refuse versions 2 and 3 (`v1Refusal?`); the readers before this change refuse
+version 3 at the header. The replay keeps the graphs that the log created and
+dropped (`Overlay.State.created`, `dropped`): the named graphs of the overlaid
+generation are `Overlay.denoteNamed` over the graph list (`Session.hasNamedGraph`,
+`Session.namedGraphIds`). CREATE adds a graph with no triple, CLEAR and DELETE
+keep the graph, DROP removes it; CLEAR NAMED, CLEAR ALL, DROP NAMED and DROP ALL
+act on every named graph, also one with no triple and one named by a blank node;
+ADD, COPY and MOVE create a named destination. Compaction writes the named graphs
+of the overlaid generation into the graph list. Gates: `tests/sbm11/update_where.sh`
+group `graphs`, `tests/delta-log/run.sh` (DLOG versions), `OverlayTheorems`
+(`named_*`), `DeltaLogCodecTheorems` (`parseLog_v3_of_frames`, `appendVersion_noV3`).
+
 OPTIONAL on ids (2026-10-13, https://github.com/danbri/factoidal/issues/775;
 record: section 10 of the stage 4 record). `{ base OPTIONAL { g1 } ...
 OPTIONAL { gk } }` at the top level runs on `path=ids` when the base is a
@@ -1041,6 +1063,7 @@ Format registry rows (wire version 11):
 | PRM1 | `<perm>.prm1` | landed (stage 3) | `Storage/Sbm11/Block.lean` |
 | SBM11 manifest | `manifest.sbm11` (`"SBM0"` version 11) | landed (stage 3); the roles of stage 3, or the same roles with `GNL1` after the dictionary, 2026-10-15 | `Storage/Sbm11/Manifest.lean` |
 | GNL1 | `graphs.gnl1` | landed 2026-10-15 (https://github.com/danbri/factoidal/issues/855, https://github.com/danbri/factoidal/issues/856): the dictionary ids of all named graphs of the dataset, a graph with no triple included, strictly increasing, tag 1 (blank node) or 2 (IRI); only in a generation that has a named graph | `Storage/Sbm11/GraphList.lean`, `GraphListTheorems.lean` |
+| DLOG | `deltas.dlog` | version 1; version 2: RDF 1.2 terms (2026-10-14, https://github.com/danbri/factoidal/issues/792 item 1); version 3: a graph named by a blank node, graph tag 2 and entry tags 5 and 6 (2026-10-15, https://github.com/danbri/factoidal/issues/856). A log has the lowest version that admits all its entries | `Storage/DeltaLog.lean`, `DeltaLogBytes.lean`, `DeltaLogCodecTheorems.lean` |
 
 ## The source layer: the store takes a dataset, not a syntax (2026-10-14)
 
@@ -1508,6 +1531,16 @@ producers of RDF quads, and a file is one producer.
    `query`, `serve` and `compact` (exit 1), and its `update` refuses every
    request that reads the generation. Record: section 12 of
    [`docs/designissues/2026-10-12-sbm11-stage5.md`](../../docs/designissues/2026-10-12-sbm11-stage5.md).
+   Coordinator decision, 2026-10-15
+   (https://github.com/danbri/factoidal/issues/856): a log entry that names a
+   graph by a blank node needs DLOG version 3, for the reason of the RDF 1.2
+   terms (condition (b) fails for the readers before section 8). Measured: the
+   `l4sbm11` of `e185eb00` refuses a version 3 log at `query`, `serve`, `compact`
+   and `update` (exit 1, `the DLOG header is malformed or unsupported`; no
+   compaction output, the log bytes unchanged), and its `l4block-delta-log
+   --inspect` refuses it too.
+   A log without such an entry keeps its version and its bytes
+   (`appendVersion_noV3`, `serializeDeltaEntryPayloadWith?_v3_eq_v2`).
 8. A change that moves a syntax to another reader needs a timing against the
    old route on the same bytes, not only a byte comparison. On 2026-10-14 the
    source layer gave `.nt` files to the strict N-Triples reader. Every

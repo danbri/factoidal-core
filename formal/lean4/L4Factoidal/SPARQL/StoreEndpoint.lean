@@ -73,7 +73,7 @@ open L4Factoidal.SPARQL.Protocol
 open L4Factoidal.SPARQL.ProtocolService (Payload datasetClauses withProtocolDataset withUsing)
 open L4Factoidal.SPARQL.StoreDataset (DatasetBackend indexedDatasetBackend
   runSelectQueryBackendDataset runAskQueryBackendDataset)
-open L4Factoidal.Storage (DeltaEntry DeltaBatch)
+open L4Factoidal.Storage (DeltaEntry DeltaBatch DeltaGraphName)
 
 /-! ## Configuration and the served view -/
 
@@ -139,12 +139,13 @@ private def tripleSet (g : Graph) : Std.HashSet Triple :=
 /-- The entries that turn graph `old` into graph `new`, for graph `key`.
 A graph that becomes empty is one `clear`, not one tombstone per triple. -/
 def graphDelta (key : Option Iri) (old new : Graph) : List DeltaEntry :=
-  if new.isEmpty && !old.isEmpty then [.clear key]
+  let gkey := key.map DeltaGraphName.iri
+  if new.isEmpty && !old.isEmpty then [.clear gkey]
   else
     let o := tripleSet old
     let n := tripleSet new
-    (old.filter (fun t => !n.contains t)).map (fun t => DeltaEntry.remove t key) ++
-    (new.filter (fun t => !o.contains t)).map (fun t => DeltaEntry.add t key)
+    (old.filter (fun t => !n.contains t)).map (fun t => DeltaEntry.remove t gkey) ++
+    (new.filter (fun t => !o.contains t)).map (fun t => DeltaEntry.add t gkey)
 
 private def iriNamed (ds : Dataset) : List (WfIri × Graph) :=
   ds.named.filterMap fun ng => match ng.name with
@@ -157,16 +158,20 @@ private def bnodeNamed (ds : Dataset) : List NamedGraph :=
     | .bnode _ => true
 
 /-- The entries whose replay turns `old` into `new` (`applyDeltaEntries`).
-A delta log names a graph by IRI, so a change to a graph named by a blank
-node cannot be written; that is an error, never a silently dropped change. -/
+This server writes a delta log of version 1 or 2, which names a graph by IRI;
+a graph named by a blank node needs version 3, which the readers of IBK3, IBK4
+and IBK5 collections refuse (https://github.com/danbri/factoidal/issues/856).
+So a change to a graph named by a blank node cannot be written; that is an
+error, never a silently dropped change. -/
 def datasetDelta (old new : Dataset) : Except String (List DeltaEntry) := do
   if bnodeNamed old != bnodeNamed new then
     throw "the request changes a graph whose name is a blank node; the delta log names graphs by IRI"
   let oldI := iriNamed old
   let newI := iriNamed new
-  let drops := (oldI.filter fun p => !(newI.any (·.1 == p.1))).map fun p => DeltaEntry.drop p.1.val
+  let drops := (oldI.filter fun p => !(newI.any (·.1 == p.1))).map fun p =>
+    DeltaEntry.drop (.iri p.1.val)
   let creates := (newI.filter fun p => !(oldI.any (·.1 == p.1))).flatMap fun p =>
-    DeltaEntry.create p.1.val :: p.2.map (fun t => DeltaEntry.add t (some p.1.val))
+    DeltaEntry.create (.iri p.1.val) :: p.2.map (fun t => DeltaEntry.add t (some (.iri p.1.val)))
   let changes := newI.flatMap fun p =>
     match oldI.find? (·.1 == p.1) with
     | some q => graphDelta (some p.1.val) q.2 p.2
@@ -174,10 +179,13 @@ def datasetDelta (old new : Dataset) : Except String (List DeltaEntry) := do
   pure (graphDelta none old.default new.default ++ drops ++ creates ++ changes)
 
 /-- Replay one entry over a dataset. A graph name that is not an IRI names
-nothing, so its entry changes nothing. -/
+nothing, so its entry changes nothing; a graph named by a blank node is in no
+log that this server reads (`parseLogCheckedV1` refuses version 3). -/
 def applyDeltaEntry (ds : Dataset) (e : DeltaEntry) : Dataset :=
-  let withIri (g : Iri) (k : WfIri → Dataset) : Dataset :=
-    if h : isIri g then k ⟨g, h⟩ else ds
+  let withIri (g : DeltaGraphName) (k : WfIri → Dataset) : Dataset :=
+    match g with
+    | .iri i => if h : isIri i then k ⟨i, h⟩ else ds
+    | .bnode _ => ds
   match e with
   | .add t none => L4Factoidal.RDF.Dataset.insertQuad ds (none, t)
   | .add t (some g) => withIri g fun i => L4Factoidal.RDF.Dataset.insertQuad ds (some i, t)

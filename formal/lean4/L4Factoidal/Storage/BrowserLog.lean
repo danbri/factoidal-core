@@ -151,10 +151,14 @@ def decode (bs : List UInt8) : LogRead := decodeGo bs.length bs []
 /-- Replay one entry over a dataset. This is the definition of
 `SPARQL.StoreEndpoint.applyDeltaEntry`, the replay step of the served store;
 `BrowserLogTests` proves the two equal. A graph name that is not an IRI names
-nothing, so its entry changes nothing. -/
+nothing, so its entry changes nothing. A graph named by a blank node is in no
+entry of this log: its version 1 codec refuses one (`serializeGraphOpt?`), and
+only a DLOG of version 3 holds one. -/
 def applyEntry (ds : Dataset) (e : DeltaEntry) : Dataset :=
-  let withIri (g : Iri) (k : WfIri → Dataset) : Dataset :=
-    if h : isIri g then k ⟨g, h⟩ else ds
+  let withIri (g : DeltaGraphName) (k : WfIri → Dataset) : Dataset :=
+    match g with
+    | .iri i => if h : isIri i then k ⟨i, h⟩ else ds
+    | .bnode _ => ds
   match e with
   | .add t none => L4Factoidal.RDF.Dataset.insertQuad ds (none, t)
   | .add t (some g) => withIri g fun i => L4Factoidal.RDF.Dataset.insertQuad ds (some i, t)
@@ -187,7 +191,7 @@ runs it and the theorems of `BrowserLogTheorems.lean` hold for it. -/
 def applyEntryIx (d : DatasetIx) (e : DeltaEntry) : DatasetIx :=
   match e with
   | .add t none => d.insertQuad (none, t)
-  | .add t (some g) => if h : isIri g then d.insertQuad (some ⟨g, h⟩, t) else d
+  | .add t (some (.iri g)) => if h : isIri g then d.insertQuad (some ⟨g, h⟩, t) else d
   | e => DatasetIx.ofDataset (applyEntry d.toDataset e)
 
 theorem toDataset_applyEntryIx (d : DatasetIx) (e : DeltaEntry) :
@@ -251,8 +255,8 @@ private def frank : Triple := ⟨.iri exS, exP, .literal (Literal.langString "Fr
 
 private def b0 : DeltaBatch := { seq := 0, epoch := 0, ops := [.add eve none] }
 private def b1 : DeltaBatch :=
-  { seq := 1, epoch := 0, ops := [.add frank (some exG.val), .remove eve none, .create exG.val] }
-private def b2 : DeltaBatch := { seq := 2, epoch := 3, ops := [.clear none, .drop exG.val] }
+  { seq := 1, epoch := 0, ops := [.add frank (some (.iri exG.val)), .remove eve none, .create (.iri exG.val)] }
+private def b2 : DeltaBatch := { seq := 2, epoch := 3, ops := [.clear none, .drop (.iri exG.val)] }
 
 private def log3 : List UInt8 := (encodeLog? [b0, b1, b2]).getD []
 

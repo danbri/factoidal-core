@@ -285,9 +285,18 @@ theorem mergeRows_eq_of_spec (cl : Nat → Bool) (base del ins out : List Row)
 
 /-! ## Replay -/
 
+/-- Recording whether a named graph exists does not change the quads. -/
+theorem denote_setNamed (base : Row → Bool) (st : State) (g : Nat) (b : Bool) (r : Row) :
+    denote base (setNamed st g b) r = denote base st r := by
+  unfold setNamed
+  split
+  · rfl
+  · split <;> rfl
+
 theorem step_add (base : Row → Bool) (st : State) (q r : Row) :
     denote base (step st (.add q)) r = (denote base st r || q == r) := by
-  simp only [denote, step, Std.HashSet.contains_insert, Std.HashSet.contains_erase]
+  simp only [step, denote_setNamed]
+  simp only [denote, Std.HashSet.contains_insert, Std.HashSet.contains_erase]
   by_cases h : q = r
   · subst h; simp
   · have : (q == r) = false := by simpa using h
@@ -317,8 +326,8 @@ theorem contains_filter (m : Std.HashSet Row) (f : Row → Bool) (r : Row) :
     rw [Std.HashSet.get_eq] at hf
     rw [Std.HashSet.mem_iff_contains.mp h, hf]; rfl
 
-theorem step_clear (base : Row → Bool) (st : State) (g : Nat) (r : Row) :
-    denote base (step st (.clear g)) r = (denote base st r && r.g != g) := by
+theorem denote_clearState (base : Row → Bool) (st : State) (g : Nat) (r : Row) :
+    denote base (clearState st g) r = (denote base st r && r.g != g) := by
   have hcl : ∀ x, (if st.cleared.contains g = true then st.cleared else g :: st.cleared).contains x
       = (st.cleared.contains x || x == g) := by
     intro x
@@ -329,10 +338,113 @@ theorem step_clear (base : Row → Bool) (st : State) (g : Nat) (r : Row) :
       · have : (x == g) = false := by simpa using hx
         simp [this]
     · rw [if_neg h, List.contains_cons, Bool.or_comm]
-  simp only [denote, step]
+  simp only [denote, clearState]
   rw [contains_filter, hcl]
   cases h1 : base r <;> cases h2 : st.del.contains r <;> cases h3 : st.cleared.contains r.g <;>
     cases h4 : st.ins.contains r <;> cases h5 : (r.g == g) <;> simp_all
+
+/-- CLEAR (section 3.1.5) removes the triples of the graph. -/
+theorem step_clear (base : Row → Bool) (st : State) (g : Nat) (r : Row) :
+    denote base (step st (.clear g)) r = (denote base st r && r.g != g) :=
+  denote_clearState base st g r
+
+/-- DROP (section 3.2.2) removes the triples of the graph too. -/
+theorem step_drop (base : Row → Bool) (st : State) (g : Nat) (r : Row) :
+    denote base (step st (.drop g)) r = (denote base st r && r.g != g) := by
+  simp only [step, denote_setNamed]
+  exact denote_clearState base st g r
+
+/-- CREATE (section 3.2.1) adds no triple. -/
+theorem step_create (base : Row → Bool) (st : State) (g : Nat) (r : Row) :
+    denote base (step st (.create g)) r = denote base st r := by
+  simp only [step, denote_setNamed]
+
+/-! ## The named graphs of the replay -/
+
+/-- `setNamed` decides the existence of `g` and of no other graph. -/
+theorem named_setNamed (bn : Nat → Bool) (st : State) (g : Nat) (b : Bool) (x : Nat) :
+    denoteNamed bn (setNamed st g b) x =
+      (if x != 0 && x == g then b else denoteNamed bn st x) := by
+  by_cases hg : g = 0
+  · subst hg
+    have hs : setNamed st 0 b = st := by simp [setNamed]
+    rw [hs]
+    by_cases hx : x = 0
+    · subst hx; simp [denoteNamed]
+    · have : (x == 0) = false := by simpa using hx
+      simp [this]
+  · have hg' : (g == 0) = false := by simpa using hg
+    have hs : setNamed st g b = (if b then { st with created := st.created.insert g, dropped := st.dropped.erase g }
+        else { st with created := st.created.erase g, dropped := st.dropped.insert g }) := by
+      simp only [setNamed, hg', Bool.false_eq_true, if_false]
+    rw [hs]
+    by_cases hx : x = g
+    · subst hx
+      have hx0 : (x != 0) = true := by simpa using hg
+      cases b
+      · simp only [Bool.false_eq_true, if_false, denoteNamed, beq_self_eq_true, hx0, Bool.and_true,
+          if_true]
+        rw [Std.HashSet.contains_erase, Std.HashSet.contains_insert]
+        simp
+      · simp only [if_true, denoteNamed, beq_self_eq_true, hx0, Bool.and_true]
+        rw [Std.HashSet.contains_insert]
+        simp
+    · have hxg : (x == g) = false := by simpa using hx
+      have hgx : (g == x) = false := by simpa using Ne.symm hx
+      cases b
+      · simp only [Bool.false_eq_true, if_false, denoteNamed, hxg, Bool.and_false]
+        rw [Std.HashSet.contains_erase, Std.HashSet.contains_insert, hgx]
+        simp
+      · simp only [if_true, denoteNamed, hxg, Bool.and_false, Bool.false_eq_true, if_false]
+        rw [Std.HashSet.contains_insert, Std.HashSet.contains_erase, hgx]
+        simp
+
+/-- INSERT into a named graph adds the graph when it does not exist
+    (section 3.1.1). -/
+theorem named_add (bn : Nat → Bool) (st : State) (q : Row) (x : Nat) :
+    denoteNamed bn (step st (.add q)) x = (denoteNamed bn st x || (x != 0 && x == q.g)) := by
+  simp only [step, named_setNamed]
+  by_cases h : (x != 0 && x == q.g) = true
+  · simp [h]
+  · have h' : (x != 0 && x == q.g) = false := by simpa using h
+    simp only [h', Bool.false_eq_true, if_false, Bool.or_false]
+    rfl
+
+/-- DELETE keeps the graph (sections 3.1.2 and 3.1.3). -/
+theorem named_remove (bn : Nat → Bool) (st : State) (q : Row) (x : Nat) :
+    denoteNamed bn (step st (.remove q)) x = denoteNamed bn st x := rfl
+
+/-- CLEAR keeps the graph (section 3.1.5). -/
+theorem named_clear (bn : Nat → Bool) (st : State) (g x : Nat) :
+    denoteNamed bn (step st (.clear g)) x = denoteNamed bn st x := rfl
+
+/-- DROP removes the graph (section 3.2.2). -/
+theorem named_drop (bn : Nat → Bool) (st : State) (g x : Nat) :
+    denoteNamed bn (step st (.drop g)) x = (denoteNamed bn st x && x != g) := by
+  simp only [step, named_setNamed]
+  have hc : denoteNamed bn (clearState st g) x = denoteNamed bn st x := rfl
+  rw [hc]
+  by_cases hx : x = g
+  · subst hx
+    by_cases h0 : x = 0
+    · subst h0; simp [denoteNamed]
+    · have : (x != 0) = true := by simpa using h0
+      simp [this]
+  · have hxg : (x == g) = false := by simpa using hx
+    have hne : (x != g) = true := by simpa using hx
+    simp [hxg, hne]
+
+/-- CREATE adds an empty graph (section 3.2.1). -/
+theorem named_create (bn : Nat → Bool) (st : State) (g x : Nat) :
+    denoteNamed bn (step st (.create g)) x = (denoteNamed bn st x || (x != 0 && x == g)) := by
+  simp only [step, named_setNamed]
+  by_cases h : (x != 0 && x == g) = true
+  · simp [h]
+  · have h' : (x != 0 && x == g) = false := by simpa using h
+    simp [h']
+
+/-- The default graph is never a named graph. -/
+theorem named_zero (bn : Nat → Bool) (st : State) : denoteNamed bn st 0 = false := rfl
 
 theorem replay_append (st : State) (a b : List Op) :
     Overlay.replay st (a ++ b) = Overlay.replay (Overlay.replay st a) b := by
@@ -349,5 +461,12 @@ theorem denote_empty (base : Row → Bool) (r : Row) : denote base {} r = base r
 #print axioms step_add
 #print axioms step_remove
 #print axioms step_clear
+#print axioms step_drop
+#print axioms step_create
+#print axioms named_add
+#print axioms named_remove
+#print axioms named_clear
+#print axioms named_drop
+#print axioms named_create
 
 end L4Factoidal.Storage.Sbm11.OverlayTheorems

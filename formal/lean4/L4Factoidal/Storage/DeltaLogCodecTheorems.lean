@@ -48,6 +48,9 @@ theorem DeltaTermCodec.v1_roundTrip : DeltaTermCodec.v1.RoundTrip :=
 theorem DeltaTermCodec.v2_roundTrip : DeltaTermCodec.v2.RoundTrip :=
   fun t bs rest h => parseDeltaTerm_serializeDeltaTerm? t bs rest h
 
+theorem DeltaTermCodec.v3_roundTrip : DeltaTermCodec.v3.RoundTrip :=
+  fun t bs rest h => parseDeltaTerm_serializeDeltaTerm? t bs rest h
+
 section
 variable (tc : DeltaTermCodec) (hrt : tc.RoundTrip)
 include hrt
@@ -85,7 +88,7 @@ theorem parseDeltaEntryPayloadWith_serializeDeltaEntryPayloadWith? (e : DeltaEnt
       cases ht : serializeTripleWith? tc t with
       | none => simp [ht, bind, Option.bind] at h
       | some tb =>
-      cases hg : serializeGraphOpt? g with
+      cases hg : serializeGraphOptWith? tc.bnodeGraphs g with
       | none => simp [ht, hg, bind, Option.bind] at h
       | some gb =>
       simp only [ht, hg, bind, Option.bind, Option.some.injEq] at h
@@ -93,13 +96,13 @@ theorem parseDeltaEntryPayloadWith_serializeDeltaEntryPayloadWith? (e : DeltaEnt
       rw [List.cons_append, List.append_assoc, parseDeltaEntryPayloadWith]
       simp [bind, Option.bind, parseU8, deTagAdd,
         parseTripleWith_serializeTripleWith? tc hrt t tb _ ht,
-        BrowserLog.parseGraphOpt_serializeGraphOpt? g gb rest hg]
+        BrowserLog.parseGraphOptWith_serializeGraphOptWith? tc.bnodeGraphs g gb rest hg]
   | remove t g =>
       rw [serializeDeltaEntryPayloadWith?] at h
       cases ht : serializeTripleWith? tc t with
       | none => simp [ht, bind, Option.bind] at h
       | some tb =>
-      cases hg : serializeGraphOpt? g with
+      cases hg : serializeGraphOptWith? tc.bnodeGraphs g with
       | none => simp [ht, hg, bind, Option.bind] at h
       | some gb =>
       simp only [ht, hg, bind, Option.bind, Option.some.injEq] at h
@@ -107,25 +110,50 @@ theorem parseDeltaEntryPayloadWith_serializeDeltaEntryPayloadWith? (e : DeltaEnt
       rw [List.cons_append, List.append_assoc, parseDeltaEntryPayloadWith]
       simp [bind, Option.bind, parseU8, deTagAdd, deTagRemove,
         parseTripleWith_serializeTripleWith? tc hrt t tb _ ht,
-        BrowserLog.parseGraphOpt_serializeGraphOpt? g gb rest hg]
+        BrowserLog.parseGraphOptWith_serializeGraphOptWith? tc.bnodeGraphs g gb rest hg]
   | clear g =>
       rw [serializeDeltaEntryPayloadWith?, Option.map_eq_some_iff] at h
       obtain ⟨gb, hg, rfl⟩ := h
       rw [List.cons_append, parseDeltaEntryPayloadWith]
       simp [bind, Option.bind, parseU8, deTagAdd, deTagRemove, deTagClear,
-        BrowserLog.parseGraphOpt_serializeGraphOpt? g gb rest hg]
+        BrowserLog.parseGraphOptWith_serializeGraphOptWith? tc.bnodeGraphs g gb rest hg]
   | drop g =>
-      rw [serializeDeltaEntryPayloadWith?, Option.map_eq_some_iff] at h
-      obtain ⟨gb, hg, rfl⟩ := h
-      rw [List.cons_append, parseDeltaEntryPayloadWith]
-      simp [bind, Option.bind, parseU8, deTagAdd, deTagRemove, deTagClear, deTagDrop,
-        parseLString_serializeLString? g gb rest hg]
+      cases g with
+      | iri i =>
+        simp only [serializeDeltaEntryPayloadWith?, serializeGraphOpWith?, Option.map_eq_some_iff] at h
+        obtain ⟨gb, hg, rfl⟩ := h
+        rw [List.cons_append, parseDeltaEntryPayloadWith]
+        simp [bind, Option.bind, parseU8, deTagAdd, deTagRemove, deTagClear, deTagDrop,
+          parseLString_serializeLString? i gb rest hg]
+      | bnode b =>
+        cases hb : tc.bnodeGraphs with
+        | false => simp [serializeDeltaEntryPayloadWith?, serializeGraphOpWith?, hb] at h
+        | true =>
+          simp only [serializeDeltaEntryPayloadWith?, serializeGraphOpWith?, hb, if_true,
+            Option.map_eq_some_iff] at h
+          obtain ⟨gb, hg, rfl⟩ := h
+          rw [List.cons_append, parseDeltaEntryPayloadWith]
+          simp [bind, Option.bind, parseU8, deTagAdd, deTagRemove, deTagClear, deTagDrop,
+            deTagCreate, deTagDropBnode, hb, parseLString_serializeLString? b gb rest hg]
   | create g =>
-      rw [serializeDeltaEntryPayloadWith?, Option.map_eq_some_iff] at h
-      obtain ⟨gb, hg, rfl⟩ := h
-      rw [List.cons_append, parseDeltaEntryPayloadWith]
-      simp [bind, Option.bind, parseU8, deTagAdd, deTagRemove, deTagClear, deTagDrop,
-        deTagCreate, parseLString_serializeLString? g gb rest hg]
+      cases g with
+      | iri i =>
+        simp only [serializeDeltaEntryPayloadWith?, serializeGraphOpWith?, Option.map_eq_some_iff] at h
+        obtain ⟨gb, hg, rfl⟩ := h
+        rw [List.cons_append, parseDeltaEntryPayloadWith]
+        simp [bind, Option.bind, parseU8, deTagAdd, deTagRemove, deTagClear, deTagDrop,
+          deTagCreate, parseLString_serializeLString? i gb rest hg]
+      | bnode b =>
+        cases hb : tc.bnodeGraphs with
+        | false => simp [serializeDeltaEntryPayloadWith?, serializeGraphOpWith?, hb] at h
+        | true =>
+          simp only [serializeDeltaEntryPayloadWith?, serializeGraphOpWith?, hb, if_true,
+            Option.map_eq_some_iff] at h
+          obtain ⟨gb, hg, rfl⟩ := h
+          rw [List.cons_append, parseDeltaEntryPayloadWith]
+          simp [bind, Option.bind, parseU8, deTagAdd, deTagRemove, deTagClear, deTagDrop,
+            deTagCreate, deTagDropBnode, deTagCreateBnode, hb,
+            parseLString_serializeLString? b gb rest hg]
 
 theorem parseFramedDeltaEntryWith_serializeFramedDeltaEntryWith? (e : DeltaEntry)
     (bs rest : List UInt8) (h : serializeFramedDeltaEntryWith? tc e = some bs) :
@@ -283,6 +311,13 @@ theorem parseDeltaBatchWith_v2 (b : DeltaBatch) (frame rest : List UInt8)
     parseDeltaBatchWith .v2 (frame ++ rest) = some (b, rest) :=
   parseDeltaBatchWith_serializeDeltaBatchWith? .v2 DeltaTermCodec.v2_roundTrip b frame rest h
 
+/-- The DLB1 frame of a DLOG of version 3 reads back with any bytes after it:
+    graphs named by blank nodes included. -/
+theorem parseDeltaBatchWith_v3 (b : DeltaBatch) (frame rest : List UInt8)
+    (h : serializeDeltaBatchWith? .v3 b = some frame) :
+    parseDeltaBatchWith .v3 (frame ++ rest) = some (b, rest) :=
+  parseDeltaBatchWith_serializeDeltaBatchWith? .v3 DeltaTermCodec.v3_roundTrip b frame rest h
+
 /-- The version 1 instance is the version 1 writer. -/
 theorem serializeDeltaBatchWith?_v1 : serializeDeltaBatchWith? .v1 = serializeDeltaBatch? := rfl
 
@@ -290,14 +325,14 @@ theorem serializeDeltaBatchWith?_v1 : serializeDeltaBatchWith? .v1 = serializeDe
     version 1 and gets the bytes of the version 1 writer. -/
 theorem appendPlan?_v1 (b : DeltaBatch) (logVersion : Option UInt32)
     (hlog : logVersion = none ∨ logVersion = some deltaLogVersion)
-    (hb : b.ops.any entryNeedsV2 = false) :
+    (hb : b.ops.any entryNeedsV2 = false) (hb3 : b.ops.any entryNeedsV3 = false) :
     appendPlan? logVersion b =
       (serializeDeltaBatch? b).map fun frame =>
-        { version := deltaLogVersion, setVersion2 := false,
+        { version := deltaLogVersion, setVersion := false,
           bytes := (if logVersion = none then logHeader deltaLogVersion else []) ++ frame } := by
-  have hver : (if b.ops.any entryNeedsV2 || logVersion == some deltaLogVersion2 then
-      deltaLogVersion2 else deltaLogVersion) = deltaLogVersion := by
-    rcases hlog with rfl | rfl <;> simp [hb, deltaLogVersion, deltaLogVersion2]
+  have hver : appendVersion logVersion b = deltaLogVersion := by
+    unfold appendVersion
+    rcases hlog with rfl | rfl <;> simp [hb, hb3, deltaLogVersion, deltaLogVersion2, deltaLogVersion3]
   unfold appendPlan?
   simp only [hver]
   rw [show DeltaTermCodec.ofVersion deltaLogVersion = some .v1 by rfl]
@@ -307,9 +342,11 @@ theorem appendPlan?_v1 (b : DeltaBatch) (logVersion : Option UInt32)
   | some frame =>
     rcases hlog with rfl | rfl <;> simp [bind, Option.bind]
 
-/-- `tc2` writes every term that `tc1` writes, with the same bytes. -/
+/-- `tc2` writes every term that `tc1` writes, with the same bytes, and admits
+    a graph named by a blank node when `tc1` does. -/
 def DeltaTermCodec.Extends (tc1 tc2 : DeltaTermCodec) : Prop :=
-  ∀ (t : Term) (bs : List UInt8), tc1.encode t = some bs → tc2.encode t = some bs
+  (∀ (t : Term) (bs : List UInt8), tc1.encode t = some bs → tc2.encode t = some bs) ∧
+  (tc1.bnodeGraphs = true → tc2.bnodeGraphs = true)
 
 /-- The version 1 encoder admits only terms that `termSupported` admits. -/
 theorem termSupported_of_serializeTerm? (t : Term) (bs : List UInt8)
@@ -326,11 +363,45 @@ theorem termSupported_of_serializeTerm? (t : Term) (bs : List UInt8)
 /-- The version 2 encoder writes every term the version 1 encoder writes, with
     the same bytes. -/
 theorem DeltaTermCodec.v2_extends_v1 : DeltaTermCodec.v1.Extends DeltaTermCodec.v2 := by
+  refine ⟨?_, fun h => absurd h (by decide)⟩
   intro t bs h
   have h' : serializeTerm? t = some bs := h
   show serializeDeltaTerm? t = some bs
   rw [serializeDeltaTerm?_of_supported t (termSupported_of_serializeTerm? t bs h')]
   exact h'
+
+/-- The version 3 encoder writes every entry the version 2 encoder writes, with
+    the same bytes: the same terms, and graphs named by blank nodes added. -/
+theorem DeltaTermCodec.v3_extends_v2 : DeltaTermCodec.v2.Extends DeltaTermCodec.v3 :=
+  ⟨fun _ _ h => h, fun _ => rfl⟩
+
+theorem DeltaTermCodec.Extends.trans {tc1 tc2 tc3 : DeltaTermCodec}
+    (h12 : tc1.Extends tc2) (h23 : tc2.Extends tc3) : tc1.Extends tc3 :=
+  ⟨fun t bs h => h23.1 t bs (h12.1 t bs h), fun h => h23.2 (h12.2 h)⟩
+
+/-- An optional graph name that an encoder of flag `b1` writes, an encoder of a
+    flag `b2` that admits at least as much writes with the same bytes. -/
+theorem serializeGraphOptWith?_mono {b1 b2 : Bool} (hb : b1 = true → b2 = true)
+    (g : Option DeltaGraphName) (bs : List UInt8) (h : serializeGraphOptWith? b1 g = some bs) :
+    serializeGraphOptWith? b2 g = some bs := by
+  match g with
+  | none => exact h
+  | some (.iri _) => exact h
+  | some (.bnode _) =>
+    cases b1 with
+    | false => simp [serializeGraphOptWith?] at h
+    | true => rw [hb rfl]; exact h
+
+theorem serializeGraphOpWith?_mono {b1 b2 : Bool} (hb : b1 = true → b2 = true)
+    (tag tagB : UInt8) (g : DeltaGraphName) (bs : List UInt8)
+    (h : serializeGraphOpWith? b1 tag tagB g = some bs) :
+    serializeGraphOpWith? b2 tag tagB g = some bs := by
+  cases g with
+  | iri _ => exact h
+  | bnode _ =>
+    cases b1 with
+    | false => simp [serializeGraphOpWith?] at h
+    | true => rw [hb rfl]; exact h
 
 section
 variable {tc1 tc2 : DeltaTermCodec} (hx : tc1.Extends tc2)
@@ -349,7 +420,7 @@ theorem serializeTripleWith?_extends (t : Triple) (bs : List UInt8)
   | none => simp [hs, hp, ho, bind, Option.bind] at h
   | some ob =>
   simp only [hs, hp, ho, bind, Option.bind] at h
-  simp only [hx t.o ob ho, bind, Option.bind]
+  simp only [hx.1 t.o ob ho, bind, Option.bind]
   exact h
 
 theorem serializeDeltaEntryPayloadWith?_extends (e : DeltaEntry) (bs : List UInt8)
@@ -361,20 +432,36 @@ theorem serializeDeltaEntryPayloadWith?_extends (e : DeltaEntry) (bs : List UInt
       cases ht : serializeTripleWith? tc1 t with
       | none => simp [ht, bind, Option.bind] at h
       | some tb =>
-        simp only [ht, bind, Option.bind] at h
-        simp only [serializeTripleWith?_extends hx t tb ht, bind, Option.bind]
-        exact h
+        cases hg : serializeGraphOptWith? tc1.bnodeGraphs g with
+        | none => simp [ht, hg, bind, Option.bind] at h
+        | some gb =>
+          simp only [ht, hg, bind, Option.bind] at h
+          simp only [serializeTripleWith?_extends hx t tb ht,
+            serializeGraphOptWith?_mono hx.2 g gb hg, bind, Option.bind]
+          exact h
   | remove t g =>
       unfold serializeDeltaEntryPayloadWith? at h ⊢
       cases ht : serializeTripleWith? tc1 t with
       | none => simp [ht, bind, Option.bind] at h
       | some tb =>
-        simp only [ht, bind, Option.bind] at h
-        simp only [serializeTripleWith?_extends hx t tb ht, bind, Option.bind]
-        exact h
-  | clear g => exact h
-  | drop g => exact h
-  | create g => exact h
+        cases hg : serializeGraphOptWith? tc1.bnodeGraphs g with
+        | none => simp [ht, hg, bind, Option.bind] at h
+        | some gb =>
+          simp only [ht, hg, bind, Option.bind] at h
+          simp only [serializeTripleWith?_extends hx t tb ht,
+            serializeGraphOptWith?_mono hx.2 g gb hg, bind, Option.bind]
+          exact h
+  | clear g =>
+      unfold serializeDeltaEntryPayloadWith? at h ⊢
+      rw [Option.map_eq_some_iff] at h ⊢
+      obtain ⟨gb, hg, rfl⟩ := h
+      exact ⟨gb, serializeGraphOptWith?_mono hx.2 g gb hg, rfl⟩
+  | drop g =>
+      unfold serializeDeltaEntryPayloadWith? at h ⊢
+      exact serializeGraphOpWith?_mono hx.2 _ _ g bs h
+  | create g =>
+      unfold serializeDeltaEntryPayloadWith? at h ⊢
+      exact serializeGraphOpWith?_mono hx.2 _ _ g bs h
 
 theorem serializeFramedDeltaEntryWith?_extends (e : DeltaEntry) (bs : List UInt8)
     (h : serializeFramedDeltaEntryWith? tc1 e = some bs) :
@@ -442,6 +529,24 @@ theorem parseDeltaBatchWith_v2_of_v1 (b : DeltaBatch) (frame rest : List UInt8)
     parseDeltaBatchWith .v2 (frame ++ rest) = some (b, rest) :=
   parseDeltaBatchWith_v2 b frame rest
     (serializeDeltaBatchWith?_extends DeltaTermCodec.v2_extends_v1 b frame
+      (by rw [serializeDeltaBatchWith?_v1]; exact h))
+
+/-- A frame the version 2 writer wrote reads back the same under the version 3
+    reader: the frames of a version 2 log are unchanged when its header gets
+    version 3. -/
+theorem parseDeltaBatchWith_v3_of_v2 (b : DeltaBatch) (frame rest : List UInt8)
+    (h : serializeDeltaBatchWith? .v2 b = some frame) :
+    parseDeltaBatchWith .v3 (frame ++ rest) = some (b, rest) :=
+  parseDeltaBatchWith_v3 b frame rest
+    (serializeDeltaBatchWith?_extends DeltaTermCodec.v3_extends_v2 b frame h)
+
+/-- The same for a frame the version 1 writer wrote. -/
+theorem parseDeltaBatchWith_v3_of_v1 (b : DeltaBatch) (frame rest : List UInt8)
+    (h : serializeDeltaBatch? b = some frame) :
+    parseDeltaBatchWith .v3 (frame ++ rest) = some (b, rest) :=
+  parseDeltaBatchWith_v3 b frame rest
+    (serializeDeltaBatchWith?_extends
+      (DeltaTermCodec.v2_extends_v1.trans DeltaTermCodec.v3_extends_v2) b frame
       (by rw [serializeDeltaBatchWith?_v1]; exact h))
 
 theorem serializeDeltaBatchWith?_ne_nil (tc : DeltaTermCodec) (b : DeltaBatch) (frame : List UInt8)
@@ -542,6 +647,134 @@ theorem parseLog_v2_of_frames (pairs : List (DeltaBatch × List UInt8))
   simp only [bind, Option.bind, hm, hv, hd, hr, bne_self_eq_false, Bool.false_eq_true, if_false,
     h21, h22, if_true]
 
+/-- A DLOG of version 3 whose frames were written by the version 1, 2 or 3
+    writer (before or after its header got version 3) reads back every batch, in
+    order, with nothing left over. -/
+theorem parseLog_v3_of_frames (pairs : List (DeltaBatch × List UInt8))
+    (h : ∀ p ∈ pairs, serializeDeltaBatch? p.1 = some p.2 ∨
+      serializeDeltaBatchWith? .v2 p.1 = some p.2 ∨ serializeDeltaBatchWith? .v3 p.1 = some p.2) :
+    parseLog (logHeader deltaLogVersion3 ++ (pairs.map Prod.snd).flatten) =
+      some (pairs.map Prod.fst, []) := by
+  have hm : readU32LE (logHeader deltaLogVersion3 ++ (pairs.map Prod.snd).flatten) 0 =
+      some deltaLogMagic := by
+    unfold logHeader; rw [List.append_assoc]; exact readU32LE_writeU32LE_append _ _
+  have hv : readU32LE (logHeader deltaLogVersion3 ++ (pairs.map Prod.snd).flatten) 4 =
+      some deltaLogVersion3 := by
+    unfold logHeader
+    have h4 : (writeU32LE deltaLogMagic).length = 4 := writeU32LE_length _
+    have := readU32LE_append_writeU32LE (writeU32LE deltaLogMagic) deltaLogVersion3
+      ((pairs.map Prod.snd).flatten)
+    rwa [h4] at this
+  have hd : (logHeader deltaLogVersion3 ++ (pairs.map Prod.snd).flatten).drop 8 =
+      (pairs.map Prod.snd).flatten := by
+    unfold logHeader
+    have h8 : (writeU32LE deltaLogMagic ++ writeU32LE deltaLogVersion3).length = 8 := by simp
+    rw [← h8, List.drop_left]
+  have hr := replayDeltaBatchesWith_frames .v3 pairs
+    (fun p hm rest => (h p hm).elim (fun h1 => parseDeltaBatchWith_v3_of_v1 p.1 p.2 rest h1)
+      (fun h23 => h23.elim (fun h2 => parseDeltaBatchWith_v3_of_v2 p.1 p.2 rest h2)
+        (fun h3 => parseDeltaBatchWith_v3 p.1 p.2 rest h3)))
+    (fun p hm => (h p hm).elim
+      (fun h1 => serializeDeltaBatchWith?_ne_nil .v1 p.1 p.2
+        (by rw [serializeDeltaBatchWith?_v1]; exact h1))
+      (fun h23 => h23.elim (fun h2 => serializeDeltaBatchWith?_ne_nil .v2 p.1 p.2 h2)
+        (fun h3 => serializeDeltaBatchWith?_ne_nil .v3 p.1 p.2 h3)))
+  have h31 : (deltaLogVersion3 == deltaLogVersion) = false := by decide
+  have h32 : (deltaLogVersion3 == deltaLogVersion2) = false := by decide
+  have h33 : (deltaLogVersion3 == deltaLogVersion3) = true := by decide
+  unfold parseLog
+  simp only [bind, Option.bind, hm, hv, hd, hr, bne_self_eq_false, Bool.false_eq_true, if_false,
+    h31, h32, h33, if_true]
+
+/-- A batch with no graph named by a blank node, on a log of version 1 or 2 or
+    on a new log, gets the version and the bytes of the writer before version 3
+    existed (`appendVersion` without its first branch): a log that holds no such
+    graph does not change. -/
+theorem appendVersion_noV3 (b : DeltaBatch) (logVersion : Option UInt32)
+    (hlog : logVersion ≠ some deltaLogVersion3) (hb3 : b.ops.any entryNeedsV3 = false) :
+    appendVersion logVersion b =
+      (if b.ops.any entryNeedsV2 || logVersion == some deltaLogVersion2 then deltaLogVersion2
+       else deltaLogVersion) := by
+  unfold appendVersion
+  have : (logVersion == some deltaLogVersion3) = false := by simpa using hlog
+  simp [hb3, this]
+
+/-- An entry that names no graph by a blank node has the same bytes, or the
+    same refusal, in versions 2 and 3. -/
+theorem serializeDeltaEntryPayloadWith?_v3_eq_v2 (e : DeltaEntry) (h : entryNeedsV3 e = false) :
+    serializeDeltaEntryPayloadWith? .v3 e = serializeDeltaEntryPayloadWith? .v2 e := by
+  cases e with
+  | add t g =>
+    cases g with
+    | none => rfl
+    | some n =>
+      cases n with
+      | iri _ => rfl
+      | bnode _ => simp [entryNeedsV3, DeltaGraphName.isBnode] at h
+  | remove t g =>
+    cases g with
+    | none => rfl
+    | some n =>
+      cases n with
+      | iri _ => rfl
+      | bnode _ => simp [entryNeedsV3, DeltaGraphName.isBnode] at h
+  | clear g =>
+    cases g with
+    | none => rfl
+    | some n =>
+      cases n with
+      | iri _ => rfl
+      | bnode _ => simp [entryNeedsV3, DeltaGraphName.isBnode] at h
+  | drop g =>
+    cases g with
+    | iri _ => rfl
+    | bnode _ => simp [entryNeedsV3, DeltaGraphName.isBnode] at h
+  | create g =>
+    cases g with
+    | iri _ => rfl
+    | bnode _ => simp [entryNeedsV3, DeltaGraphName.isBnode] at h
+
+/-- The version 2 encoder refuses every entry that names a graph by a blank
+    node: a log of version 1 or 2 cannot hold one. -/
+theorem serializeDeltaEntryPayloadWith?_v2_of_needsV3 (e : DeltaEntry) (h : entryNeedsV3 e = true) :
+    serializeDeltaEntryPayloadWith? .v2 e = none := by
+  cases e with
+  | add t g =>
+    cases g with
+    | none => simp [entryNeedsV3] at h
+    | some n =>
+      cases n with
+      | iri _ => simp [entryNeedsV3, DeltaGraphName.isBnode] at h
+      | bnode _ =>
+        simp [serializeDeltaEntryPayloadWith?, serializeGraphOptWith?, DeltaTermCodec.v2, bind,
+          Option.bind]
+        split <;> rfl
+  | remove t g =>
+    cases g with
+    | none => simp [entryNeedsV3] at h
+    | some n =>
+      cases n with
+      | iri _ => simp [entryNeedsV3, DeltaGraphName.isBnode] at h
+      | bnode _ =>
+        simp [serializeDeltaEntryPayloadWith?, serializeGraphOptWith?, DeltaTermCodec.v2, bind,
+          Option.bind]
+        split <;> rfl
+  | clear g =>
+    cases g with
+    | none => simp [entryNeedsV3] at h
+    | some n =>
+      cases n with
+      | iri _ => simp [entryNeedsV3, DeltaGraphName.isBnode] at h
+      | bnode _ => rfl
+  | drop g =>
+    cases g with
+    | iri _ => simp [entryNeedsV3, DeltaGraphName.isBnode] at h
+    | bnode _ => rfl
+  | create g =>
+    cases g with
+    | iri _ => simp [entryNeedsV3, DeltaGraphName.isBnode] at h
+    | bnode _ => rfl
+
 theorem termNeedsV2_eq (t : Term) : termNeedsV2 t = !BlockWireV0.termSupported t := by
   cases t with
   | iri _ => rfl
@@ -568,6 +801,15 @@ theorem termNeedsV2_eq (t : Term) : termNeedsV2 t = !BlockWireV0.termSupported t
 #print axioms parseDeltaBatchWith_v2_of_v1
 #print axioms replayDeltaBatchesWith_frames
 #print axioms parseLog_v2_of_frames
+#print axioms DeltaTermCodec.v3_roundTrip
+#print axioms parseDeltaBatchWith_v3
+#print axioms DeltaTermCodec.v3_extends_v2
+#print axioms parseDeltaBatchWith_v3_of_v2
+#print axioms parseDeltaBatchWith_v3_of_v1
+#print axioms parseLog_v3_of_frames
+#print axioms appendVersion_noV3
+#print axioms serializeDeltaEntryPayloadWith?_v3_eq_v2
+#print axioms serializeDeltaEntryPayloadWith?_v2_of_needsV3
 #print axioms termNeedsV2_eq
 
 end L4Factoidal.Storage

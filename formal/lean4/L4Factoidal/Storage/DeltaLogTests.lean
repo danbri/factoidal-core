@@ -72,7 +72,7 @@ private def exP   : WfIri := ⟨"http://example.org/p", by decide⟩
 private def batch : DeltaBatch := {
   seq := 7, epoch := 3,
   ops := [.add ⟨.iri exIri, exP, .literal (Literal.string "hello")⟩ none,
-          .remove ⟨.iri exIri, exP, .iri exIri⟩ (some "http://example.org/g")] }
+          .remove ⟨.iri exIri, exP, .iri exIri⟩ (some (.iri "http://example.org/g"))] }
 
 -- A compacted base through epoch 3 replays only the later request.
 #guard (filterBatchesSinceEpoch (some 3) [batch, { batch with seq := 8, epoch := 4 }]).map (·.seq) == [8]

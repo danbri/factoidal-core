@@ -26,14 +26,14 @@ adds what a disk-resident store needs for the rest:
     and DROP of the named graphs, ADD, COPY and MOVE, given the facts the store
     computes (which named graphs exist, the triples of a graph).
 
-The store has no slot for an empty named graph: a named graph exists exactly
-when some quad has it. The reference semantics keeps the slot of a graph that
-CREATE or CLEAR leaves empty, so a request that names such a graph again behaves
-differently (https://github.com/danbri/factoidal/issues/855). The functions
-below take `has` (does the graph exist) as a parameter; the harness computes it
-from the overlaid generation. A graph named by a blank node cannot be named in
-a log entry, so the graph-wide forms refuse a store that has one
-(https://github.com/danbri/factoidal/issues/856).
+The store keeps every named graph of the dataset, also a graph with no triple
+(RDF 1.1 Concepts section 4; 2026-10-15,
+https://github.com/danbri/factoidal/issues/855), and a graph name can be a
+blank node (https://github.com/danbri/factoidal/issues/856): a log entry names a
+graph by a `DeltaGraphName`, and a log that holds a blank node graph name has DLOG
+version 3. The functions below take `has` (does the graph of an IRI exist) and
+`named` (the named graphs, IRIs and blank nodes) as parameters; the harness
+computes them from the named graphs of the overlaid generation.
 
 Nothing here does I/O. Every function over a list or over the nesting of a
 triple term is a fold or a tail call. No `sorry`, no `axiom`, no
@@ -205,8 +205,8 @@ def deleteWhereQuads (sols : SolutionSeq) (p : QueryPattern) : List Quad :=
   let rewritten := p.rewriteBnodes
   sols.flatMap fun mu => instQuads id mu none rewritten
 
-def addEntry (q : Quad) : DeltaEntry := .add q.2 (q.1.map (·.val))
-def removeEntry (q : Quad) : DeltaEntry := .remove q.2 (q.1.map (·.val))
+def addEntry (q : Quad) : DeltaEntry := .add q.2 (q.1.map DeltaGraphName.ofWf)
+def removeEntry (q : Quad) : DeltaEntry := .remove q.2 (q.1.map DeltaGraphName.ofWf)
 
 /-- The log entries of one DELETE/INSERT: every remove, then every add. -/
 def changeEntries (dels adds : List Quad) : List DeltaEntry :=
@@ -220,40 +220,41 @@ operation; the harness computes it from the overlaid generation. -/
 /-- The slot a graph reference names in a log entry: `some none` the default
     graph, `some (some g)` the named graph `g`; the forms `NAMED` and `ALL` name
     no one slot. -/
-def slotOf : GraphRef → Option (Option Iri)
+def slotOf : GraphRef → Option (Option DeltaGraphName)
   | .default => some none
-  | .graph i => some (some i.val)
+  | .graph i => some (some (DeltaGraphName.ofWf i))
   | _ => none
 
-/-- CLEAR (section 3.1.5). `named` are the named graphs the store holds. -/
-def clearEntries (silent : Bool) (named : List WfIri) (has : WfIri → Bool) :
+/-- CLEAR (section 3.1.5): the triples go, the graphs stay. `named` are the
+    named graphs the store holds, a graph with no triple and a graph named by a
+    blank node included. -/
+def clearEntries (silent : Bool) (named : List DeltaGraphName) (has : WfIri → Bool) :
     GraphRef → Except UpdateError (List DeltaEntry)
   | .default => .ok [.clear none]
-  | .named => .ok (named.map fun g => .clear (some g.val))
-  | .all => .ok (.clear none :: named.map fun g => .clear (some g.val))
+  | .named => .ok (named.map fun g => .clear (some g))
+  | .all => .ok (.clear none :: named.map fun g => .clear (some g))
   | .graph i =>
-    if has i then .ok [.clear (some i.val)]
+    if has i then .ok [.clear (some (DeltaGraphName.ofWf i))]
     else if silent then .ok []
     else .error (.graphMissing i)
 
-/-- DROP (section 3.2.2): the default graph cannot be removed, so DROP DEFAULT
-    empties it. -/
-def dropEntries (silent : Bool) (named : List WfIri) (has : WfIri → Bool) :
+/-- DROP (section 3.2.2): the graphs go; the default graph cannot be removed,
+    so DROP DEFAULT empties it. -/
+def dropEntries (silent : Bool) (named : List DeltaGraphName) (has : WfIri → Bool) :
     GraphRef → Except UpdateError (List DeltaEntry)
   | .default => .ok [.clear none]
-  | .named => .ok (named.map fun g => .drop g.val)
-  | .all => .ok (.clear none :: named.map fun g => .drop g.val)
+  | .named => .ok (named.map .drop)
+  | .all => .ok (.clear none :: named.map .drop)
   | .graph i =>
-    if has i then .ok [.drop i.val]
+    if has i then .ok [.drop (DeltaGraphName.ofWf i)]
     else if silent then .ok []
     else .error (.graphMissing i)
 
-/-- CREATE (section 3.2.1). A store with no slot for an empty graph records the
-    entry and does nothing else with it. -/
+/-- CREATE (section 3.2.1): a graph with no triple. -/
 def createEntries (silent : Bool) (has : WfIri → Bool) (i : WfIri) :
     Except UpdateError (List DeltaEntry) :=
   if has i then (if silent then .ok [] else .error (.graphExists i))
-  else .ok [.create i.val]
+  else .ok [.create (DeltaGraphName.ofWf i)]
 
 /-- LOAD (section 3.1.4) fetches a document, which this semantics does not do:
     LOAD SILENT does nothing, any other LOAD is an error. -/
@@ -272,6 +273,14 @@ def sourceMissing (silent : Bool) (has : WfIri → Bool) : GraphRef → Option U
   | .graph i => if has i || silent then none else some (.graphMissing i)
   | _ => none
 
+/-- The slot of a named destination of ADD, COPY or MOVE: the reference writes
+    the destination with `Dataset.setGraph`, which creates the graph when it does
+    not exist, also when the source has no triple (sections 3.2.3 to 3.2.5). A
+    CREATE entry is idempotent on replay (`Overlay.named_create`). -/
+def createSlot : Option DeltaGraphName → List DeltaEntry
+  | some g => [.create g]
+  | none => []
+
 /-- ADD (section 3.2.5): every triple of the source goes into the destination.
     `triples src` are the triples of the source graph. -/
 def addGraphEntries (silent : Bool) (has : WfIri → Bool) (triples : List Triple)
@@ -283,7 +292,7 @@ def addGraphEntries (silent : Bool) (has : WfIri → Bool) (triples : List Tripl
       if !refExistsWith has src then .ok []
       else match slotOf dst with
         | none => .ok []
-        | some dg => .ok (triples.map fun t => .add t dg)
+        | some dg => .ok (createSlot dg ++ triples.map fun t => .add t dg)
 
 /-- COPY (section 3.2.3): the destination becomes a copy of the source. -/
 def copyGraphEntries (silent : Bool) (has : WfIri → Bool) (triples : List Triple)
@@ -295,7 +304,7 @@ def copyGraphEntries (silent : Bool) (has : WfIri → Bool) (triples : List Trip
       if !refExistsWith has src then .ok []
       else match slotOf dst with
         | none => .ok []
-        | some dg => .ok (.clear dg :: triples.map fun t => .add t dg)
+        | some dg => .ok (createSlot dg ++ .clear dg :: triples.map fun t => .add t dg)
 
 /-- MOVE (section 3.2.4): COPY, then DROP of the source (CLEAR for the default
     graph). -/
@@ -311,9 +320,9 @@ def moveGraphEntries (silent : Bool) (has : WfIri → Bool) (triples : List Trip
         | some dg =>
           let tail : List DeltaEntry := match src with
             | .default => [.clear none]
-            | .graph i => [.drop i.val]
+            | .graph i => [.drop (DeltaGraphName.ofWf i)]
             | _ => []
-          .ok (.clear dg :: (triples.map fun t => .add t dg) ++ tail)
+          .ok (createSlot dg ++ .clear dg :: (triples.map fun t => .add t dg) ++ tail)
 
 /-! ## Examples, checked when the module is built -/
 

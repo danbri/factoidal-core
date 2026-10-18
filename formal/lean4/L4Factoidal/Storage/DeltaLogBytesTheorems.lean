@@ -532,7 +532,11 @@ theorem parseLog_eq (b : ByteArray) :
           · simp only [h2', if_true, Option.map_some]
             rw [win_drop, replayBatchesAt_eq .v2 b 8 b.size hs, win_end, win_zero_size]
           · simp only [h2', Bool.false_eq_true, if_false]
-            rfl
+            by_cases h3' : (version == deltaLogVersion3) = true
+            · simp only [h3', if_true, Option.map_some]
+              rw [win_drop, replayBatchesAt_eq .v3 b 8 b.size hs, win_end, win_zero_size]
+            · simp only [h3', Bool.false_eq_true, if_false]
+              rfl
 
 theorem win_take_min (b : ByteArray) (q stop n : Nat) :
     (win b q stop).take n = win b q (min stop (q + n)) := by
@@ -607,6 +611,7 @@ theorem parseLogCheckedV1_eq (b : ByteArray) :
     parseLogCheckedV1 b.data.toList = parseLogCheckedV1BA b := by
   unfold parseLogCheckedV1 parseLogCheckedV1BA
   rw [logHeaderVersion_eq, parseLogChecked_eq]
+  cases v1Refusal? (logHeaderVersionAt? b) <;> rfl
 
 /-! ## The encoder -/
 
@@ -725,12 +730,11 @@ theorem logHeaderBA_data (version : UInt32) :
   simp [logHeaderBA, logHeader, pushU32_data]
 
 theorem appendPlanBA?_eq (logVersion : Option UInt32) (batch : DeltaBatch) :
-    (appendPlanBA? logVersion batch).map (fun p => (p.version, p.setVersion2, p.bytes.data.toList)) =
-      (appendPlan? logVersion batch).map (fun p => (p.version, p.setVersion2, p.bytes)) := by
+    (appendPlanBA? logVersion batch).map (fun p => (p.version, p.setVersion, p.bytes.data.toList)) =
+      (appendPlan? logVersion batch).map (fun p => (p.version, p.setVersion, p.bytes)) := by
   unfold appendPlanBA? appendPlan?
   dsimp only
-  generalize (if batch.ops.any entryNeedsV2 || logVersion == some deltaLogVersion2 then deltaLogVersion2
-    else deltaLogVersion) = version
+  generalize appendVersion logVersion batch = version
   cases hv : DeltaTermCodec.ofVersion version with
   | none => rfl
   | some tc =>
@@ -778,7 +782,7 @@ theorem appendPlanBA?_eq (logVersion : Option UInt32) (batch : DeltaBatch) :
     the end, for a caller that wants a list. -/
 def appendPlanViaBA (logVersion : Option UInt32) (batch : DeltaBatch) : Option AppendPlan :=
   (appendPlanBA? logVersion batch).map fun p =>
-    { version := p.version, setVersion2 := p.setVersion2, bytes := p.bytes.data.toList }
+    { version := p.version, setVersion := p.setVersion, bytes := p.bytes.data.toList }
 
 theorem appendPlan?_eq_viaBA (logVersion : Option UInt32) (batch : DeltaBatch) :
     appendPlan? logVersion batch = appendPlanViaBA logVersion batch := by

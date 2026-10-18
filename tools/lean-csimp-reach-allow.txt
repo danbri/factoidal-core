@@ -56,6 +56,8 @@ L4Factoidal.OWL.SyntaxDL.graphBodyViolations L4Factoidal.OWL.SyntaxDL.hasV     #
 L4Factoidal.Storage.appendPlan? L4Factoidal.Storage.v2log                      # guard: Storage/DeltaLog.lean, a private test log (evaluated once, at module initialisation)
 L4Factoidal.Storage.appendPlan? L4Factoidal.Storage.DeltaLogBytes.v1log        # guard: Storage/DeltaLogBytes.lean, a private test log
 L4Factoidal.Storage.appendPlan? L4Factoidal.Storage.DeltaLogBytes.v2log        # guard: Storage/DeltaLogBytes.lean, a private test log
+L4Factoidal.Storage.appendPlan? L4Factoidal.Storage.v3log                      # guard: Storage/DeltaLog.lean, a private test log with a graph named by a blank node (evaluated once, at module initialisation)
+L4Factoidal.Storage.appendPlan? L4Factoidal.Storage.DeltaLogBytes.v3log        # guard: Storage/DeltaLogBytes.lean, a private test log with a graph named by a blank node
 L4Factoidal.Storage.parseLogChecked L4Factoidal.Storage.checkedIs              # guard: Storage/DeltaLog.lean, a private helper of the #guard lines
 L4Factoidal.Storage.parseLogChecked L4Factoidal.Storage.DeltaLogBytes.sameChecked     # guard: Storage/DeltaLogBytes.lean, a private helper that compares the specification with the byte array reader on purpose
 L4Factoidal.Storage.parseLogCheckedV1 L4Factoidal.Storage.DeltaLogBytes.sameCheckedV1 # guard: the same, for the version 1 reader

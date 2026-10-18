@@ -52,7 +52,7 @@ namespace L4Factoidal.RDF
 
 open L4Factoidal.SPARQL (PatternBound boundMatches tripleMatchesBound
   mem_tripleMatchesBound)
-open L4Factoidal.Storage (DeltaEntry DeltaBatch filterBatchesSinceEpoch
+open L4Factoidal.Storage (DeltaEntry DeltaBatch DeltaGraphName filterBatchesSinceEpoch
   splitBatchesSinceEpoch? splitBatchesSinceEpoch?_sound)
 
 /-! ## One graph's resolved diff -/
@@ -88,7 +88,7 @@ IS commit order. -/
 /-- Apply one entry. An entry that targets a different graph leaves the
 diff untouched; `none` is the default graph, matching the entry type's
 own convention. -/
-def applyEntryToDelta (graphKey : Option Iri) (dr : DeltaResolved) (e : DeltaEntry) :
+def applyEntryToDelta (graphKey : Option DeltaGraphName) (dr : DeltaResolved) (e : DeltaEntry) :
     DeltaResolved :=
   match e with
   | .add t g =>
@@ -103,7 +103,7 @@ def applyEntryToDelta (graphKey : Option Iri) (dr : DeltaResolved) (e : DeltaEnt
   | .drop g  => if some g == graphKey then deltaResolvedCleared else dr
   | .create _ => dr        -- existence bookkeeping only, no triple-set effect
 
-def foldEntriesForGraph (graphKey : Option Iri) :
+def foldEntriesForGraph (graphKey : Option DeltaGraphName) :
     List DeltaEntry → DeltaResolved → DeltaResolved
   | [], acc => acc
   | e :: rest, acc => foldEntriesForGraph graphKey rest (applyEntryToDelta graphKey acc e)
@@ -111,7 +111,7 @@ def foldEntriesForGraph (graphKey : Option Iri) :
 /-- The whole-log fold for one graph. Concatenating the batches'
 operation lists preserves commit order, because the batches are already
 in it. -/
-def foldDeltaBatches (batches : List DeltaBatch) (graphKey : Option Iri) : DeltaResolved :=
+def foldDeltaBatches (batches : List DeltaBatch) (graphKey : Option DeltaGraphName) : DeltaResolved :=
   foldEntriesForGraph graphKey (batches.flatMap (·.ops)) deltaResolvedEmpty
 
 /-! ## Which named graphs does this log mention?
@@ -123,14 +123,17 @@ give each one a slot. -/
 
 def entryGraphMentions (e : DeltaEntry) : List Iri :=
   match e with
-  | .add _ g | .remove _ g | .clear g => match g with | none => [] | some gi => [gi]
-  | .drop g | .create g => [g]
+  | .add _ g | .remove _ g | .clear g => match g with | some (.iri gi) => [gi] | _ => []
+  | .drop g | .create g => g.iri?.toList
 
 def dedupIri (xs : List Iri) : List Iri :=
   xs.foldl (fun seen x => if seen.contains x then seen else seen ++ [x]) []
 
 /-- Every distinct named-graph IRI mentioned anywhere in the log, in
-first-seen order. The default graph is absent, since it has no IRI. -/
+first-seen order. The default graph is absent, since it has no IRI. A graph
+named by a blank node is absent too: only a DLOG of version 3 names one, and
+the readers of IBK3, IBK4 and IBK5 collections that use this refuse version 3
+(`parseLogCheckedV1`). -/
 def deltaBatchesNamedGraphs (batches : List DeltaBatch) : List Iri :=
   dedupIri (batches.flatMap (fun b => b.ops.flatMap entryGraphMentions))
 
@@ -174,7 +177,7 @@ What a durable-update-naive in-memory engine would do if it re-applied
 the same entries as literal graph operations, with no base-plus-delta
 split at all. The theorem below says the two agree. -/
 
-def applyEntryRefStep (graphKey : Option Iri) (g : Graph) (e : DeltaEntry) : Graph :=
+def applyEntryRefStep (graphKey : Option DeltaGraphName) (g : Graph) (e : DeltaEntry) : Graph :=
   match e with
   | .add t gr    => if gr == graphKey then g.add t else g
   | .remove t gr => if gr == graphKey then Graph.remove t g else g
@@ -182,7 +185,7 @@ def applyEntryRefStep (graphKey : Option Iri) (g : Graph) (e : DeltaEntry) : Gra
   | .drop gr     => if some gr == graphKey then [] else g
   | .create _    => g
 
-def applyEntriesRef (graphKey : Option Iri) : Graph → List DeltaEntry → Graph
+def applyEntriesRef (graphKey : Option DeltaGraphName) : Graph → List DeltaEntry → Graph
   | g, [] => g
   | g, e :: rest => applyEntriesRef graphKey (applyEntryRefStep graphKey g e) rest
 
@@ -237,7 +240,7 @@ theorem mem_filterTombstoned (baseResults : Graph) (dr : DeltaResolved) (t : Tri
 /-- One entry preserves the invariant. Each of the five constructors
 either leaves both sides untouched, or moves both through the SAME add,
 remove or clear. -/
-theorem stateAgrees_step (graphKey : Option Iri) (gRef gBase : Graph)
+theorem stateAgrees_step (graphKey : Option DeltaGraphName) (gRef gBase : Graph)
     (dr : DeltaResolved) (e : DeltaEntry) (h : StateAgrees gRef gBase dr) :
     StateAgrees (applyEntryRefStep graphKey gRef e) gBase
       (applyEntryToDelta graphKey dr e) := by
@@ -276,7 +279,7 @@ theorem stateAgrees_step (graphKey : Option Iri) (gRef gBase : Graph)
       simp only [applyEntryRefStep, applyEntryToDelta]
       exact ht
 
-theorem applyEntries_stateAgrees (graphKey : Option Iri) (gBase : Graph) :
+theorem applyEntries_stateAgrees (graphKey : Option DeltaGraphName) (gBase : Graph) :
     ∀ (entries : List DeltaEntry) (gRef : Graph) (dr : DeltaResolved),
       StateAgrees gRef gBase dr →
       StateAgrees (applyEntriesRef graphKey gRef entries) gBase
@@ -297,7 +300,7 @@ additions after the surviving base rows while the reference model keeps
 each triple where it first landed. SPARQL gives an unordered basic
 graph pattern no order guarantee, so this is the property the evaluator
 relies on. -/
-theorem mergeOnRead_matches_applyEntries (graphKey : Option Iri) (gBase : Graph)
+theorem mergeOnRead_matches_applyEntries (graphKey : Option DeltaGraphName) (gBase : Graph)
     (entries : List DeltaEntry) (b : PatternBound) (t : Triple) :
     Graph.mem t (tripleMatchesBound b (applyEntriesRef graphKey gBase entries)) =
     Graph.mem t (mergeOnRead (tripleMatchesBound b gBase)
@@ -318,7 +321,7 @@ theorem mergeOnRead_matches_applyEntries (graphKey : Option Iri) (gBase : Graph)
 /-- Applying an older log prefix to a base and then a newer suffix is the
 same reference history as applying their concatenation. This is the algebraic
 form a compactor needs before it may discard the prefix from replay. -/
-theorem applyEntriesRef_append (graphKey : Option Iri) (gBase : Graph)
+theorem applyEntriesRef_append (graphKey : Option DeltaGraphName) (gBase : Graph)
     (older newer : List DeltaEntry) :
     applyEntriesRef graphKey gBase (older ++ newer) =
       applyEntriesRef graphKey (applyEntriesRef graphKey gBase older) newer := by
@@ -332,7 +335,7 @@ theorem applyEntriesRef_append (graphKey : Option Iri) (gBase : Graph)
 base, replaying only `newer` through `mergeOnRead` has the same membership
 answer as applying the full pre-compaction history. Epoch filtering supplies
 that `newer` suffix at the durable-store boundary. -/
-theorem mergeOnRead_after_compaction (graphKey : Option Iri) (gBase : Graph)
+theorem mergeOnRead_after_compaction (graphKey : Option DeltaGraphName) (gBase : Graph)
     (older newer : List DeltaEntry) (b : PatternBound) (t : Triple) :
     Graph.mem t (tripleMatchesBound b (applyEntriesRef graphKey gBase (older ++ newer))) =
     Graph.mem t (mergeOnRead
@@ -350,7 +353,7 @@ theorem mergeOnRead_after_compaction (graphKey : Option Iri) (gBase : Graph)
     cannot double-apply the compacted prefix and has the same membership
     result as the complete history. -/
 theorem mergeOnRead_after_epoch_compaction (baseEpoch : Nat)
-    (graphKey : Option Iri) (gBase : Graph) (batches newer : List DeltaBatch)
+    (graphKey : Option DeltaGraphName) (gBase : Graph) (batches newer : List DeltaBatch)
     (older : List DeltaEntry)
     (hHistory : batches.flatMap (·.ops) = older ++ newer.flatMap (·.ops))
     (hFiltered : filterBatchesSinceEpoch (some baseEpoch) batches = newer)
@@ -367,7 +370,7 @@ theorem mergeOnRead_after_epoch_compaction (baseEpoch : Nat)
     supplies both facts required by `mergeOnRead_after_epoch_compaction`, so
     callers do not need to assume a separate history split or filter result. -/
 theorem mergeOnRead_after_epoch_partition (baseEpoch : Nat)
-    (graphKey : Option Iri) (gBase : Graph) (batches older newer : List DeltaBatch)
+    (graphKey : Option DeltaGraphName) (gBase : Graph) (batches older newer : List DeltaBatch)
     (hPartition : splitBatchesSinceEpoch? baseEpoch batches = some (older, newer))
     (b : PatternBound) (t : Triple) :
     Graph.mem t (tripleMatchesBound b
@@ -394,17 +397,17 @@ WHERE clause, no multi-graph fan-out and no blank-node freshening. -/
 triple: the fold processes entries in order and a CLEAR resets the
 addition set, so the ADDs that follow land in a genuinely emptied
 accumulator. -/
-def gspPutToDeltaEntries (graphKey : Option Iri) (g : Graph) : List DeltaEntry :=
+def gspPutToDeltaEntries (graphKey : Option DeltaGraphName) (g : Graph) : List DeltaEntry :=
   .clear graphKey :: g.map (fun t => .add t graphKey)
 
 /-- POST merges. No CLEAR — `mergeOnRead`'s union with the base already
 gives set semantics, and `Graph.add`'s deduplication makes a re-added
 triple a no-op. -/
-def gspPostToDeltaEntries (graphKey : Option Iri) (g : Graph) : List DeltaEntry :=
+def gspPostToDeltaEntries (graphKey : Option DeltaGraphName) (g : Graph) : List DeltaEntry :=
   g.map (fun t => .add t graphKey)
 
 /-- DELETE empties the graph: one CLEAR. -/
-def gspDeleteToDeltaEntries (graphKey : Option Iri) : List DeltaEntry :=
+def gspDeleteToDeltaEntries (graphKey : Option DeltaGraphName) : List DeltaEntry :=
   [.clear graphKey]
 
 /-! ## Build-time checks -/
@@ -421,9 +424,9 @@ private def t2 : Triple := ⟨.iri (iriW "http://e.org/b"), iriW "http://e.org/p
 private def t3 : Triple := ⟨.iri (iriW "http://e.org/c"), iriW "http://e.org/q",
                             .iri (iriW "http://e.org/3")⟩
 
-private def g1 : Iri := "http://e.org/g1"
+private def g1 : DeltaGraphName := .iri "http://e.org/g1"
 
-private def fold (es : List DeltaEntry) (k : Option Iri) : DeltaResolved :=
+private def fold (es : List DeltaEntry) (k : Option DeltaGraphName) : DeltaResolved :=
   foldEntriesForGraph k es deltaResolvedEmpty
 
 /-! ### An entry for another graph does not touch this graph's diff -/
@@ -457,8 +460,9 @@ it. -/
 /-! ### CREATE moves no triple -/
 
 #guard deltaResolvedIsEmpty (fold [.create g1] (some g1))
-#guard deltaBatchesNamedGraphs [⟨0, 0, [.create g1]⟩] == [g1]
-#guard deltaBatchesNamedGraphs [⟨0, 0, [.add t1 none, .create g1, .drop g1]⟩] == [g1]
+#guard deltaBatchesNamedGraphs [⟨0, 0, [.create g1]⟩] == ["http://e.org/g1"]
+#guard deltaBatchesNamedGraphs [⟨0, 0, [.add t1 none, .create g1, .drop g1]⟩] == ["http://e.org/g1"]
+#guard deltaBatchesNamedGraphs [⟨0, 0, [.create (.bnode "b")]⟩] == []
 
 /-! ### merge-on-read: the base survives, the tombstone hides, the
 addition appears -/

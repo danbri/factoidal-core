@@ -22,10 +22,17 @@ item 1). A batch that holds one needs a DLOG of version 2 (`appendPlan?`): a new
 log gets that header, and an existing version 1 log gets its header version set
 to 2 in place (four bytes, under the append lock, synced) before the batch is
 appended. A log that holds no RDF 1.2 term keeps version 1 and its bytes.
+A batch that names a graph by a blank node (CLEAR NAMED, DROP ALL and the other
+graph-wide forms on a store that has such a graph) needs a DLOG of version 3
+(https://github.com/danbri/factoidal/issues/856), in the same way; a log that
+holds no such name keeps its version and its bytes
+(`DeltaLogCodecTheorems.appendVersion_noV3`).
 
 This is a HARNESS: it does file I/O. The replay semantics is
 `L4Factoidal.Storage.Sbm11.Overlay` (proved: `OverlayTheorems.step_add`,
-`step_remove`, `step_clear`).
+`step_remove`, `step_clear`, `step_drop`, `step_create` for the quads, and
+`named_add`, `named_remove`, `named_clear`, `named_drop`, `named_create` for the
+named graphs).
 -/
 import L4Factoidal.SPARQL.UpdateParser
 import L4Factoidal.SPARQL.UpdateDelta

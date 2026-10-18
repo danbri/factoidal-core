@@ -216,6 +216,9 @@ structure Session where
       update` (`Harness/Sbm11Update.lean`) applies the entries of a request to
       it, so that each operation reads the state the one before left -/
   ovState : L4Factoidal.Storage.Sbm11.Overlay.State := {}
+  /-- the named graphs of the base generation (`baseNamedGraphs`: the graph
+      list GNL1, or the graph ids of the base quads), read at the first use -/
+  baseNamedRef : IO.Ref (Option (Array Nat))
   /-- the size in bytes of the log file the replay read (0: no log); a
       positioned append of `l4sbm11 update` uses it -/
   ovLogBytes : Nat := 0
@@ -249,6 +252,7 @@ def openSession (v : Verify) (dir0 : String) : IO Session := do
            pages := ← IO.mkRef {}, frameBytes := ← IO.mkRef 0, prmBytes := ← IO.mkRef 0,
            lookups := ← IO.mkRef 0,
            gdx := ← IO.mkRef none, ovVocab := ← IO.mkRef #[], ovIds := ← IO.mkRef {}, baseIds := ← IO.mkRef {},
+           baseNamedRef := ← IO.mkRef none,
            lock := ← Std.Mutex.new (), dictLock := ← Std.Mutex.new (), taskPages := ← IO.mkRef {} }
 
 /-- A positioned read of a PRM1 file (`PrmRange`'s `read`): under `none` one
@@ -809,18 +813,21 @@ def Session.idOrNew (ss : Session) (t0 : Term) : IO Nat := do
     ss.ovIds.modify (·.insert t n)
     pure (L4Factoidal.Storage.Sbm11.Overlay.tagDelta * two60 + n)
 
-/-- A graph name of a DLOG entry as a term. -/
-def graphTerm (g : Iri) : IO Term :=
-  if h : isIri g = true then pure (.iri ⟨g, h⟩)
-  else throw (IO.userError s!"delta log: graph name is not an IRI: {g}")
+/-- A graph name of a DLOG entry as a term: an IRI or a blank node. -/
+def graphTerm : L4Factoidal.Storage.DeltaGraphName → IO Term
+  | .iri g =>
+    if h : isIri g = true then pure (.iri ⟨g, h⟩)
+    else throw (IO.userError s!"delta log: graph name is not an IRI: {g}")
+  | .bnode b => pure (.bnode b)
 
-def Session.graphIdOrNew (ss : Session) : Option Iri → IO Nat
+def Session.graphIdOrNew (ss : Session) : Option L4Factoidal.Storage.DeltaGraphName → IO Nat
   | none => pure 0
   | some g => do ss.idOrNew (← graphTerm g)
 
 /-- The id of a quad when every term has an id (a quad with a term that has
     no id is in no generation). -/
-def Session.quadIds? (ss : Session) (t : Triple) (g : Option Iri) : IO (Option Row) := do
+def Session.quadIds? (ss : Session) (t : Triple) (g : Option L4Factoidal.Storage.DeltaGraphName) :
+    IO (Option Row) := do
   let some s ← ss.idOf t.s.toTerm | return none
   let some p ← ss.idOf (.iri t.p) | return none
   let some o ← ss.idOf t.o | return none
@@ -837,17 +844,19 @@ def Session.quadIds? (ss : Session) (t : Triple) (g : Option Iri) : IO (Option R
 def replayEach : IO Bool := do
   return (← IO.getEnv "SBM11_REPLAY_LOOKUP") == some "each"
 
-/-- A graph name as a term when it is an IRI (`graphTerm` without the error). -/
-def graphTerm? (g : Iri) : Option Term :=
-  if h : isIri g = true then some (.iri ⟨g, h⟩) else none
+/-- A graph name as a term (`graphTerm` without the error for a string that is
+    not an IRI). -/
+def graphTerm? : L4Factoidal.Storage.DeltaGraphName → Option Term
+  | .iri g => if h : isIri g = true then some (.iri ⟨g, h⟩) else none
+  | .bnode b => some (.bnode b)
 
 /-- The terms that `stepEntry` maps to ids for the entry `e`. A graph name that
-    is not an IRI is left out: `stepEntry` refuses it. -/
+    is not an IRI or a blank node is left out: `stepEntry` refuses it. -/
 def entryTerms : L4Factoidal.Storage.DeltaEntry → List Term
   | .add t g | .remove t g =>
     t.s.toTerm :: .iri t.p :: t.o :: (match g with | some gi => (graphTerm? gi).toList | none => [])
-  | .clear (some g) | .drop g => (graphTerm? g).toList
-  | .clear none | .create _ => []
+  | .clear (some g) | .drop g | .create g => (graphTerm? g).toList
+  | .clear none => []
 
 /-- Look the distinct terms of the entries that `forEach` gives up in the
     dictionary, in dictionary order, and keep their ids in `baseIds` (stage 5,
@@ -903,7 +912,9 @@ def Session.prefillBaseIds (ss : Session) (entries : Nat)
 /-- One log entry applied to an overlay state: the terms of the entry mapped to
     ids (a term that has no id gets an overlay id, `idOrNew`), then
     `Overlay.step`. A removed quad with a term that has no id is in no
-    generation and changes nothing. -/
+    generation and changes nothing; so does CLEAR or DROP of a graph whose name
+    has no id (it holds no quad and has no slot). CREATE gives its graph name an
+    id, a new overlay id when the dictionary does not hold it, and a slot. -/
 def Session.stepEntry (ss : Session) (st : L4Factoidal.Storage.Sbm11.Overlay.State)
     (e : L4Factoidal.Storage.DeltaEntry) : IO L4Factoidal.Storage.Sbm11.Overlay.State := do
   match e with
@@ -918,11 +929,78 @@ def Session.stepEntry (ss : Session) (st : L4Factoidal.Storage.Sbm11.Overlay.Sta
       return L4Factoidal.Storage.Sbm11.Overlay.step st (.remove r)
     return st
   | .clear none => return L4Factoidal.Storage.Sbm11.Overlay.step st (.clear 0)
-  | .clear (some g) | .drop g =>
+  | .clear (some g) =>
     if let some x ← ss.idOf (← graphTerm g) then
       return L4Factoidal.Storage.Sbm11.Overlay.step st (.clear x.toNat)
     return st
-  | .create _ => return st
+  | .drop g =>
+    if let some x ← ss.idOf (← graphTerm g) then
+      return L4Factoidal.Storage.Sbm11.Overlay.step st (.drop x.toNat)
+    return st
+  | .create g =>
+    let x ← ss.idOrNew (← graphTerm g)
+    return L4Factoidal.Storage.Sbm11.Overlay.step st (.create x)
+
+/-- The distinct graph ids other than the default graph (0) of the BASE quads,
+    sorted: one scan of the graph column of the PSO permutation with the overlay
+    left out. The named graphs of a generation that has no graph list. A session
+    opens its permutations when it first reads them (`Session.perm`), so it does
+    not use `Sbm11Gen.graphIdsOfQuads`, which reads the permutations of `openGen`.
+    Until 2026-10-15 this read the overlaid generation; the log decides only
+    `created` and `dropped`. -/
+def Session.baseGraphIdsOfQuads (ss : Session) : IO (Array Nat) := do
+  let base : Session := { ss with ovl := #[{}, {}, {}, {}] }
+  let pat : IdQuery.Pat := { s := .var "s", p := .var "p", o := .var "o", g := .var "g", named := true }
+  let spec := IdQuery.mkSpec pat 0 (fun v => v == "g")
+  let seen ← IO.mkRef ({} : Std.HashSet Nat)
+  match ← (IdQuery.scanFoldM base.store spec true () fun _ ch => do
+      let mut s ← liftIO seen.get
+      liftIO (seen.set {})
+      for i in [0:ch.table.rows] do
+        let x := (ch.table.at 0 i).toNat
+        if x != 0 then s := s.insert x
+      liftIO (seen.set s)
+      pure ((), true)).run with
+  | .error e => throw (IO.userError s!"graph scan failed: {e}")
+  | .ok _ => pure ()
+  return L4Factoidal.Qlvr.mergeSortBy (← seen.get).toArray (· ≤ ·)
+
+/-- The named graphs of the base generation: the graph list GNL1, or the graph
+    ids of the base quads for a generation that has no list
+    (`baseGraphIdsOfQuads`), sorted; read once. -/
+def Session.baseNamed (ss : Session) : IO (Array Nat) := do
+  match ← ss.baseNamedRef.get with
+  | some xs => return xs
+  | none =>
+    let xs ← match ← readGraphList ss.g with
+      | some ids => pure ids
+      | none => ss.baseGraphIdsOfQuads
+    ss.baseNamedRef.set (some xs)
+    return xs
+
+/-- Does the named graph with id `x` exist in the overlaid generation?
+    `Overlay.denoteNamed` over the base named graphs: created by the log, or a
+    base named graph the log did not drop. -/
+def Session.hasNamedGraph (ss : Session) (x : Nat) : IO Bool := do
+  if x == 0 then return false
+  let st := ss.ovState
+  if st.created.contains x then return true
+  if st.dropped.contains x then return false
+  return L4Factoidal.Storage.Sbm11.GraphList.contains (← ss.baseNamed) x
+
+/-- The ids of the named graphs of the overlaid generation, sorted: the base
+    named graphs the log did not drop, and the graphs the log created
+    (`Overlay.denoteNamed`; `created` and `dropped` are disjoint, so a base
+    graph that is not dropped is in). A graph with no triple is in. -/
+def Session.namedGraphIds (ss : Session) : IO (Array Nat) := do
+  let base ← ss.baseNamed
+  let st := ss.ovState
+  let mut out : Array Nat := Array.mkEmpty (base.size + st.created.size)
+  for x in base do
+    if !st.dropped.contains x then out := out.push x
+  for x in st.created do
+    if !L4Factoidal.Storage.Sbm11.GraphList.contains base x then out := out.push x
+  return L4Factoidal.Qlvr.mergeSortBy out (· ≤ ·)
 
 /-- The session with the overlay state `st`: `ovl` cut from it per
     permutation, and the counters of `deltaText` read from it. -/

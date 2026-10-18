@@ -30,12 +30,18 @@ place of the packer's phase 1 (parse):
 
   A. One SPO scan of the overlaid generation (overlay merged) marks the ids
      the remaining quads use: dictionary ranks and overlay vocabulary entries.
+     The names of the named graphs of the overlaid generation
+     (`Session.namedGraphIds`: a graph with no triple and a graph named by a
+     blank node included; https://github.com/danbri/factoidal/issues/855) are
+     marked too.
   B. One term run: the used dictionary keys (read page by page, already in key
      order) merged with the sorted keys of the used overlay terms; each gets a
      run-local number.
   C. A second SPO scan writes one quad run: per quad four words, a run-local
      number for a dictionary or overlay term, the id itself for an inline
-     term, 0 for the default graph (the phase-1 format).
+     term, 0 for the default graph (the phase-1 format). The named graphs go to
+     a graph run (one word each, the run-local number of the name), which phase
+     3a adds to the graph list GNL1.
   D. `packBatches`: phase 2 (dictionary, remap), phase 3 (four permutations,
      blocks, PRM1), hashes and the manifest, by the packer's own code.
 
@@ -50,8 +56,8 @@ route is the tuned implementation and this one is the specification-shaped route
 a test compares it with (design record
 `docs/designissues/2026-10-11-shardborough-vs-qlever.md` section 11.4).
 
-So the output's dictionary holds exactly the terms of its quads, in key
-order, as a pack of the same quads does: `tests/sbm11/run.sh` part (i)
+So the output's dictionary holds exactly the terms of its quads and the names
+of its named graphs, in key order, as a pack of the same dataset does: `tests/sbm11/run.sh` part (i)
 compares every artifact of a compacted generation with a fresh pack of the
 updated source, byte for byte. Then `compacted.epoch` (the greatest epoch
 folded) and `compacted.source.sha256` (SHA-256 of the source manifest and
@@ -135,6 +141,13 @@ def runCompact (src outDir : String) (blockRows sortRowsMax : Nat) (v : Verify) 
     usedRef.set u
     usedVRef.set uv
     rowsRef.modify (· + n)
+  -- the named graphs of the overlaid generation, with or without a triple
+  let named ← ss.namedGraphIds
+  for x in named do
+    match kindOf x.toUInt64 with
+    | .dict r => usedRef.modify (·.set! r 1)
+    | .delta k => usedVRef.modify (·.set! k 1)
+    | .other => throw (IO.userError s!"named graph id {x} is not a term of the dictionary or of the log")
   let used ← usedRef.get
   let usedV ← usedVRef.get
   let t1 ← IO.monoNanosNow
@@ -216,9 +229,21 @@ def runCompact (src outDir : String) (blockRows sortRowsMax : Nat) (v : Verify) 
   hQ.flush
   if (← badRef.get) != 0 then throw (IO.userError s!"{← badRef.get} ids without a run-local number")
   let quads ← rowsRef.get
+  -- the graph run: the run-local number of each named graph
+  let graphRun := if named.isEmpty then "" else s!"{outDir}/graphs-compact-0.tmp"
+  if !named.isEmpty then
+    let mut gb := ByteArray.emptyWithCapacity (8 * named.size)
+    for x in named do
+      let y : Nat := match kindOf x.toUInt64 with
+        | .dict r => localOf[r]!
+        | .delta k => localOfV[k]!
+        | .other => 0
+      if y == 0 then throw (IO.userError s!"named graph id {x} has no run-local number")
+      gb := Sbm11Pack.pushW gb y.toUInt64
+    IO.FS.writeBinFile graphRun gb
   let t3 ← IO.monoNanosNow
   -- D. the packer's phases 2 and 3
-  let batch : Sbm11Pack.Batch := { termRun, quadRun, terms, quads }
+  let batch : Sbm11Pack.Batch := { termRun, quadRun, terms, quads, graphRun, graphs := named.size }
   let (r, epoch) ← packCompacted srcDir outDir #[batch] blockRows sortRowsMax
   let t4 ← IO.monoNanosNow
   IO.println s!"sbm11-compact: source={srcDir} output={outDir} base-quads={ss.g.manifest.quads} {ss.deltaText} quads={r.outs[0]!.rows} terms={r.terms} new-terms-kept={vkeys.size} dictionary-terms-dropped={termCount - (terms - vkeys.size)} epoch={epoch} verify={v.name}"
@@ -255,6 +280,11 @@ def runCompactViaQuads (src outDir : String) (blockRows sortRowsMax : Nat) (v : 
       batch := batch.pushQuad ({ s := ← subjectOf st, p := p, o := ot }, gname)
     sink.consume batch
     rowsRef.modify (· + n)
+  -- the named graphs of the overlaid generation, with or without a triple
+  let mut decl : L4Factoidal.RDF.QuadSource.Batch := {}
+  for x in ← ss.namedGraphIds do
+    decl := decl.pushGraph (← subjectOf (← ss.termOf x.toUInt64))
+  if !decl.isEmpty then sink.consume decl
   let w ← sink.finish
   let t1 ← IO.monoNanosNow
   let (r, epoch) ← packCompacted srcDir outDir w.batches blockRows sortRowsMax

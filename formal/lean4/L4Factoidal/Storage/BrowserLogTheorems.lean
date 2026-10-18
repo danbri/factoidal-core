@@ -71,19 +71,36 @@ theorem parseTriple_serializeTriple? (t : Triple) (bs rest : List UInt8)
     dif_pos t.p.property,
     parseTerm_serializeTerm?_checked t.o ob rest ho]
 
-theorem parseGraphOpt_serializeGraphOpt? (g : Option Iri) (bs rest : List UInt8)
-    (h : serializeGraphOpt? g = some bs) :
-    parseGraphOpt (bs ++ rest) = some (g, rest) := by
-  cases g with
+/-- An optional graph name reads back, for both settings of `bn` (a graph named
+    by a blank node: DLOG version 3 only). -/
+theorem parseGraphOptWith_serializeGraphOptWith? (bn : Bool) (g : Option DeltaGraphName)
+    (bs rest : List UInt8) (h : serializeGraphOptWith? bn g = some bs) :
+    parseGraphOptWith bn (bs ++ rest) = some (g, rest) := by
+  match g with
   | none =>
-      simp only [serializeGraphOpt?, Option.some.injEq] at h
+      simp only [serializeGraphOptWith?, Option.some.injEq] at h
       subst h
       rfl
-  | some i =>
-      rw [serializeGraphOpt?, Option.map_eq_some_iff] at h
+  | some (.iri i) =>
+      simp only [serializeGraphOptWith?, Option.map_eq_some_iff] at h
       obtain ⟨sb, hsb, rfl⟩ := h
-      rw [List.cons_append, parseGraphOpt]
-      simp [bind, Option.bind, parseU8, parseLString_serializeLString? i sb rest hsb]
+      rw [List.cons_append, parseGraphOptWith]
+      simp [bind, Option.bind, parseU8, graphTagDefault, graphTagIri,
+        parseLString_serializeLString? i sb rest hsb]
+  | some (.bnode b) =>
+      cases bn with
+      | false => simp [serializeGraphOptWith?] at h
+      | true =>
+        simp only [serializeGraphOptWith?, if_true, Option.map_eq_some_iff] at h
+        obtain ⟨sb, hsb, rfl⟩ := h
+        rw [List.cons_append, parseGraphOptWith]
+        simp [bind, Option.bind, parseU8, graphTagDefault, graphTagIri, graphTagBnode,
+          parseLString_serializeLString? b sb rest hsb]
+
+theorem parseGraphOpt_serializeGraphOpt? (g : Option DeltaGraphName) (bs rest : List UInt8)
+    (h : serializeGraphOpt? g = some bs) :
+    parseGraphOpt (bs ++ rest) = some (g, rest) :=
+  parseGraphOptWith_serializeGraphOptWith? false g bs rest h
 
 theorem parseDeltaEntryPayload_serializeDeltaEntryPayload? (e : DeltaEntry)
     (bs rest : List UInt8) (h : serializeDeltaEntryPayload? e = some bs) :
@@ -124,17 +141,23 @@ theorem parseDeltaEntryPayload_serializeDeltaEntryPayload? (e : DeltaEntry)
       simp [bind, Option.bind, parseU8, deTagAdd, deTagRemove, deTagClear,
         parseGraphOpt_serializeGraphOpt? g gb rest hg]
   | drop g =>
-      rw [serializeDeltaEntryPayload?, Option.map_eq_some_iff] at h
-      obtain ⟨gb, hg, rfl⟩ := h
-      rw [List.cons_append, parseDeltaEntryPayload]
-      simp [bind, Option.bind, parseU8, deTagAdd, deTagRemove, deTagClear, deTagDrop,
-        parseLString_serializeLString? g gb rest hg]
+      cases g with
+      | iri i =>
+        simp only [serializeDeltaEntryPayload?, serializeGraphOpWith?, Option.map_eq_some_iff] at h
+        obtain ⟨gb, hg, rfl⟩ := h
+        rw [List.cons_append, parseDeltaEntryPayload]
+        simp [bind, Option.bind, parseU8, deTagAdd, deTagRemove, deTagClear, deTagDrop,
+          parseLString_serializeLString? i gb rest hg]
+      | bnode b => simp [serializeDeltaEntryPayload?, serializeGraphOpWith?] at h
   | create g =>
-      rw [serializeDeltaEntryPayload?, Option.map_eq_some_iff] at h
-      obtain ⟨gb, hg, rfl⟩ := h
-      rw [List.cons_append, parseDeltaEntryPayload]
-      simp [bind, Option.bind, parseU8, deTagAdd, deTagRemove, deTagClear, deTagDrop,
-        deTagCreate, parseLString_serializeLString? g gb rest hg]
+      cases g with
+      | iri i =>
+        simp only [serializeDeltaEntryPayload?, serializeGraphOpWith?, Option.map_eq_some_iff] at h
+        obtain ⟨gb, hg, rfl⟩ := h
+        rw [List.cons_append, parseDeltaEntryPayload]
+        simp [bind, Option.bind, parseU8, deTagAdd, deTagRemove, deTagClear, deTagDrop,
+          deTagCreate, parseLString_serializeLString? i gb rest hg]
+      | bnode b => simp [serializeDeltaEntryPayload?, serializeGraphOpWith?] at h
 
 theorem parseFramedDeltaEntry_serializeFramedDeltaEntry? (e : DeltaEntry)
     (bs rest : List UInt8) (h : serializeFramedDeltaEntry? e = some bs) :

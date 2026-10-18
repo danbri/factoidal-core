@@ -132,7 +132,7 @@ private def nestCheck (n : Nat) : IO UInt32 := do
   let s : Subject := .iri ⟨"a:s", rfl⟩
   let p : WfIri := ⟨"a:p", rfl⟩
   let leaf : Term := .literal (Literal.dirLangString "deep" "ar" .rtl)
-  let g : Option Iri := some "http://example.org/g"
+  let g : Option DeltaGraphName := some (.iri "http://example.org/g")
   let batch : DeltaBatch := { seq := 1, epoch := 1, ops := [.add ⟨s, p, nestGo s p n leaf⟩ g] }
   let some plan := appendPlan? none batch
     | IO.eprintln "FAIL: the batch has no append plan"; return 1

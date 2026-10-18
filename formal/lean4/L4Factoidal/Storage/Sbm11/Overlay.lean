@@ -5,21 +5,35 @@ https://github.com/danbri/factoidal/issues/787). Design:
 docs/designissues/2026-10-11-shardborough-vs-qlever.md section 6.7; record:
 docs/designissues/2026-10-12-sbm11-stage5.md.
 
-The committed DLOG batches of a generation (term-level `DeltaEntry` values,
-unchanged format) are replayed into a state over quad ids:
+The committed DLOG batches of a generation (term-level `DeltaEntry` values)
+are replayed into a state over quad ids:
 
   * `ins`: quads added and not removed since,
   * `del`: quads removed and not added since,
   * `cleared`: graph ids of `CLEAR` and `DROP` (every base quad of the graph
-    is hidden; quads added after the clear are in `ins`).
+    is hidden; quads added after the clear are in `ins`),
+  * `created`, `dropped`: the named graphs whose existence the log decided
+    (2026-10-15, https://github.com/danbri/factoidal/issues/855). RDF 1.1
+    Concepts section 4: a named graph can be empty. SPARQL 1.1 Update: CREATE
+    adds an empty graph (section 3.2.1), an INSERT into a graph that does not
+    exist adds the graph (section 3.1.1), DELETE and CLEAR keep the graph
+    (sections 3.1.2, 3.1.3, 3.1.5), and DROP removes it (section 3.2.2).
 
 The quads the overlaid generation denotes are (`denote`):
 
-  `(base r ∧ r ∉ del ∧ r.g ∉ cleared) ∨ r ∈ ins`.
+  `(base r ∧ r ∉ del ∧ r.g ∉ cleared) ∨ r ∈ ins`,
 
-`OverlayTheorems.step_add`, `step_remove`, `step_clear` prove that one step of
-the replay changes this set exactly as the operation says (SPARQL 1.1 Update
-section 3.1.1 INSERT DATA, 3.1.2 DELETE DATA, 3.2.2 CLEAR, 3.2.4 DROP).
+and its named graphs (`denoteNamed`, with `baseNamed` the named graphs of the
+base generation: its graph list GNL1, or the graph names of its quads):
+
+  `g ≠ 0 ∧ (g ∈ created ∨ (baseNamed g ∧ g ∉ dropped))`.
+
+`OverlayTheorems.step_add`, `step_remove`, `step_clear`, `step_drop` and
+`step_create` prove that one step of the replay changes the quads exactly as the
+operation says (SPARQL 1.1 Update section 3.1.1 INSERT DATA, 3.1.2 DELETE DATA,
+3.1.5 CLEAR, 3.2.2 DROP, 3.2.1 CREATE); `named_add`, `named_remove`,
+`named_clear`, `named_drop` and `named_create` do the same for the named
+graphs.
 
 For a scan, the state is cut per permutation into sorted arrays (`forPerm`):
 rows in the permutation's column order, sorted by `Row.lt`. A scan merges the
@@ -88,25 +102,45 @@ def mergeRows (cl : Nat → Bool) (base del ins : List Row) : List Row :=
 
 /-- A DLOG entry with its terms mapped to ids. A quad is a `Row` in SPO order
     (`c0` subject, `c1` predicate, `c2` object, `g` graph id, 0 the default
-    graph). -/
+    graph). `clear` removes the triples of a graph and keeps the graph; `drop`
+    removes the graph; `create` adds an empty graph. -/
 inductive Op where
   | add (r : Row)
   | remove (r : Row)
   | clear (g : Nat)
+  | drop (g : Nat)
+  | create (g : Nat)
   deriving Repr, Inhabited
 
 structure State where
   ins : Std.HashSet Row := {}
   del : Std.HashSet Row := {}
   cleared : List Nat := []
+  /-- named graphs the log created (CREATE, or a quad added) and did not drop
+      after -/
+  created : Std.HashSet Nat := {}
+  /-- named graphs the log dropped and did not create after -/
+  dropped : Std.HashSet Nat := {}
   deriving Inhabited
 
+/-- The triples of graph `g` removed: its base quads hidden, its inserts gone. -/
+def clearState (st : State) (g : Nat) : State :=
+  { st with ins := st.ins.filter (fun r => r.g != g),
+            cleared := if st.cleared.contains g then st.cleared else g :: st.cleared }
+
+/-- The named graph `g` exists (`true`) or does not (`false`) after this step;
+    the default graph (0) always exists and is not recorded. -/
+def setNamed (st : State) (g : Nat) (present : Bool) : State :=
+  if g == 0 then st
+  else if present then { st with created := st.created.insert g, dropped := st.dropped.erase g }
+  else { st with created := st.created.erase g, dropped := st.dropped.insert g }
+
 def step (st : State) : Op → State
-  | .add r => { st with ins := st.ins.insert r, del := st.del.erase r }
+  | .add r => setNamed { st with ins := st.ins.insert r, del := st.del.erase r } r.g true
   | .remove r => { st with ins := st.ins.erase r, del := st.del.insert r }
-  | .clear g =>
-    { st with ins := st.ins.filter (fun r => r.g != g),
-              cleared := if st.cleared.contains g then st.cleared else g :: st.cleared }
+  | .clear g => clearState st g
+  | .drop g => setNamed (clearState st g) g false
+  | .create g => setNamed st g true
 
 /-- Replay a list of operations (a tail-recursive fold). -/
 def replay (st : State) (ops : List Op) : State := ops.foldl step st
@@ -116,7 +150,14 @@ def replay (st : State) (ops : List Op) : State := ops.foldl step st
 def denote (base : Row → Bool) (st : State) (r : Row) : Bool :=
   (base r && !st.del.contains r && !st.cleared.contains r.g) || st.ins.contains r
 
-def State.isEmpty (st : State) : Bool := st.ins.isEmpty && st.del.isEmpty && st.cleared.isEmpty
+/-- The named graphs of the overlaid generation, as a membership test:
+    `baseNamed` is the membership test of the named graphs of the base
+    generation (its graph list GNL1, or the graph names of its quads). -/
+def denoteNamed (baseNamed : Nat → Bool) (st : State) (g : Nat) : Bool :=
+  g != 0 && (st.created.contains g || (baseNamed g && !st.dropped.contains g))
+
+def State.isEmpty (st : State) : Bool :=
+  st.ins.isEmpty && st.del.isEmpty && st.cleared.isEmpty && st.created.isEmpty && st.dropped.isEmpty
 
 /-! ## Per permutation -/
 
