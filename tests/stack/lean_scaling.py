@@ -60,22 +60,24 @@ repaired (docs/designissues/2026-10-10-lean-vs-fstar-performance.md):
   rdfxml-write, jsonld-write
                    `l4source-convert` (the library serialisers) writes a dataset of
                    2,000, then 8,000 subjects (`tests/sbm11/syntax/gen_multi.py`, 8
-                   triples for each subject) as RDF/XML or as JSON-LD. Expected
-                   failure: https://github.com/danbri/factoidal/issues/712 (the JSON-LD
-                   `fromRdf` node list). Measured 2026-10-14, total wall time of the
-                   command: RDF/XML 1.1 s and 12.8 s, JSON-LD 0.75 s and 17.1 s (the
-                   Turtle writer: 0.45 s and 1.5 s). The RDF/XML writer read the graph
-                   once for each subject (https://github.com/danbri/factoidal/issues/845);
-                   it groups the triples in one pass since 2026-10-18 (0.21 s and 0.91 s)
+                   triples for each subject) as RDF/XML or as JSON-LD. Measured
+                   2026-10-14, total wall time of the command: RDF/XML 1.1 s and 12.8 s,
+                   JSON-LD 0.75 s and 17.1 s (the Turtle writer: 0.45 s and 1.5 s). The
+                   RDF/XML writer read the graph once for each subject
+                   (https://github.com/danbri/factoidal/issues/845); it groups the
+                   triples in one pass since 2026-10-18 (0.21 s and 0.91 s). The JSON-LD
+                   `fromRdf` kept its node map as a list
+                   (https://github.com/danbri/factoidal/issues/712); it uses hash maps
+                   since 2026-10-18
   jsonld-read-*-stack, jsonld-write-*-stack, rdfxml-write-stack
                    STACK_ROWS: the command at n, 2n and 4n under LEAN_STACK_SIZE_KB=512;
                    every run must exit 0 and the time stay within 4.5 times (2n) and 9
                    times (4n) of the time at n. The JSON-LD reader (one node with n
                    references, n properties, a @list of n items; 25,000 to 100,000;
                    https://github.com/danbri/factoidal/issues/844), the JSON-LD writer
-                   (one subject with n objects, n predicates, n subjects; 5,000 to
-                   20,000; https://github.com/danbri/factoidal/issues/853; the time bound
-                   is an expected failure for issue 712, an overflow fails the row) and
+                   (one subject with n objects, n predicates, n subjects, a collection
+                   of n cells; 5,000 to 20,000; https://github.com/danbri/factoidal/issues/853
+                   and https://github.com/danbri/factoidal/issues/712) and
                    the RDF/XML writer (2,000 to 8,000 subjects of gen_multi.py). Before
                    2026-10-18 every JSON-LD row overflowed at its largest size
   sbm11-pack-ttl-memory, sbm11-pack-trig-memory
@@ -515,10 +517,6 @@ XFAIL: dict[str, str] = {
     "query-memory-fstar": "https://github.com/danbri/factoidal/issues/729",
     "sbm11-pack-rdfxml-memory": "https://github.com/danbri/factoidal/issues/838",
     "sbm11-pack-jsonld-memory": "https://github.com/danbri/factoidal/issues/839",
-    "jsonld-write": "https://github.com/danbri/factoidal/issues/712",
-    "jsonld-write-fanout-stack": "https://github.com/danbri/factoidal/issues/712",
-    "jsonld-write-wide-stack": "https://github.com/danbri/factoidal/issues/712",
-    "jsonld-write-subjects-stack": "https://github.com/danbri/factoidal/issues/712",
     "sbm11-pack-ttl-workers": "https://github.com/danbri/factoidal/issues/842",
     "sbm11-pack-trig-workers": "https://github.com/danbri/factoidal/issues/842",
     "sbm11-export-rdfxml-memory": "https://github.com/danbri/factoidal/issues/846",
@@ -2029,6 +2027,15 @@ def nt_subjects(n: int) -> Path:
         "<%ss%d> <%sp> \"v%d\" .\n" % (EX, i, EX, i) for i in range(n)))
 
 
+def nt_collection(n: int) -> Path:
+    """One subject whose object is an RDF collection of n cells (rdf:first, rdf:rest)."""
+    rdf = "http://www.w3.org/1999/02/22-rdf-syntax-ns#"
+    return fixture(f"nt-collection-{n}.nt", lambda: "<%ss> <%sp> _:c0 .\n" % (EX, EX) + "".join(
+        "_:c%d <%sfirst> \"v%d\" .\n_:c%d <%srest> %s .\n"
+        % (i, rdf, i, i, rdf, ("_:c%d" % (i + 1)) if i + 1 < n else "<%snil>" % rdf)
+        for i in range(n)))
+
+
 def _jld_read(p: Path) -> list:
     return [str(BIN), "parse", str(p), "--format", "jsonld"]
 
@@ -2046,11 +2053,16 @@ STACK_ROWS = {
     "jsonld-read-list-stack": (25000, jld_list, _jld_read),
     # The JSON-LD writer (https://github.com/danbri/factoidal/issues/853): 20,000
     # references, predicates or subjects overflowed 512 KB before the list functions
-    # of fromRdf and the JCS writer became loops (measured 2026-10-18). Their time is
-    # still quadratic (https://github.com/danbri/factoidal/issues/712, XFAIL).
+    # of fromRdf and the JCS writer became loops (measured 2026-10-18). Their time was
+    # quadratic until the node map, the reference count, the list test and the sorts
+    # used hash maps and merge sort (https://github.com/danbri/factoidal/issues/712;
+    # 2026-10-18, n=20,000: one subject with n objects 8.4 s to 0.15 s, n predicates
+    # 3.1 s to 0.28 s, n subjects 6.7 s to 0.16 s, a collection of n cells more than
+    # 120 s to 0.35 s).
     "jsonld-write-fanout-stack": (5000, nt_fanout, _jld_write),
     "jsonld-write-wide-stack": (5000, nt_wide, _jld_write),
     "jsonld-write-subjects-stack": (5000, nt_subjects, _jld_write),
+    "jsonld-write-collection-stack": (5000, nt_collection, _jld_write),
     # The RDF/XML writer (https://github.com/danbri/factoidal/issues/845) at 16,000
     # to 64,000 triples of tests/sbm11/syntax/gen_multi.py, under the small stack.
     "rdfxml-write-stack": (2000, lambda n: multi_nt(n),

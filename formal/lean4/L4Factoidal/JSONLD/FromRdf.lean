@@ -1973,6 +1973,20 @@ theorem collF_eq (M : Memo) (h : MemoInv st cap M) (id : String) (f : Nat) :
 
 end MemoProofs
 
+/-- A chain `a → b → nil`, a cycle `c → d → c`, and `x` that is no list cell. -/
+private def stEx (id : String) : Option (Option String) :=
+  if id == "a" then some (some "b") else if id == "b" then some none
+  else if id == "c" then some (some "d") else if id == "d" then some (some "c") else none
+
+private def memoEx : Memo := memoC stEx 10 ["c", "d", "b", "a", "x"]
+
+#guard memoEx["a"]? == some (some 2) && memoEx["b"]? == some (some 1)
+#guard memoEx["c"]? == some none && memoEx["x"]? == some none
+#guard collF stEx 10 memoEx "a" 2 && !collF stEx 10 memoEx "a" 1
+#guard !collF stEx 10 memoEx "c" 10 && !collF stEx 10 memoEx "x" 10
+#guard (["a", "b", "c", "d", "x"].all fun k => (List.range 12).all fun f =>
+  collF stEx 10 memoEx k f == collS stEx k f)
+
 /-! ### List conversion over lookup functions
 
 `listFromG` and `resolveOvG` are `listFromW` and `resolveOvW` with the node
