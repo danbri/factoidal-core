@@ -668,25 +668,25 @@ TT='<http://e/z> <http://e/says> <<( <http://e/s> <http://www.w3.org/1999/02/22-
 '
 printf '%s%s' "$SUBCLASS" "$TT" > "$TMP/tt.nq"
 for REG in rdfs owl-rl rho-df rdfs-plus; do
-  run_cmd "$CLI" closure "$TMP/tt.nq" --format nquads --regime "$REG"
+  run_cmd "$CLI" closure "$TMP/tt.nq" --format nquads12 --regime "$REG"
   verdict "closure --regime $REG accepts a triple term, keeps it, derives a type D, not s type D" "" \
     "$( [ "$RC" -eq 0 ] \
         && grep -qF '<http://e/z> <http://e/says> <<( <http://e/s> ' <<< "$OUT" \
         && grep -qF '<http://e/a> <http://www.w3.org/1999/02/22-rdf-syntax-ns#type> <http://e/D> .' <<< "$OUT" \
-        && ! grep -qF '<http://e/s> <http://www.w3.org/1999/02/22-rdf-syntax-ns#type> <http://e/' <<< "$OUT" \
+        && ! grep -qE '^(<http://e/s>|_:[^ ]*) <http://www.w3.org/1999/02/22-rdf-syntax-ns#type> <http://e/' <<< "$OUT" \
         && echo 1 || echo 0 )" "exit=$RC" "stdout=$OUT" "stderr=$ERR"
 done
 assert_text "canonicalize triple term -> refusal names RDFC-1.0" 1 err "RDFC-1.0" \
-  "$CLI" canonicalize "$TMP/tt.nq" --format nquads
-run_cmd "$CLI" canonicalize "$TMP/tt.nq" --format nquads
+  "$CLI" canonicalize "$TMP/tt.nq" --format nquads12
+run_cmd "$CLI" canonicalize "$TMP/tt.nq" --format nquads12
 verdict "canonicalize labels blank nodes inside a triple term" 873 \
   "$( [ "$RC" -eq 0 ] && grep -qF '<<( _:c14n' <<< "$OUT" && echo 1 || echo 0 )"
-assert_text "owl-consistent triple term -> refusal names OWL 2 Mapping" 2 err "OWL 2 Mapping" \
-  "$CLI" owl-consistent "$TMP/tt.nq" --format nquads
-run_cmd "$CLI" owl-consistent "$TMP/tt.nq" --format nquads
+assert_text "owl-consistent triple term -> refusal names OWL 2 Mapping" 1 err "OWL 2 Mapping" \
+  "$CLI" owl-consistent "$TMP/tt.nq" --format nquads12
+run_cmd "$CLI" owl-consistent "$TMP/tt.nq" --format nquads12
 verdict "owl-consistent decides a graph with a triple term" 873 \
   "$( [ "$RC" -eq 0 ] && [ "$OUT" = true ] && echo 1 || echo 0 )"
-run_cmd "$CLI" owl-entails "$TMP/tt.nq" "$TMP/concl.nq" --format nquads
+run_cmd "$CLI" owl-entails "$TMP/tt.nq" "$TMP/concl.nq" --format nquads12
 verdict "owl-entails decides a premise with a triple term" 873 \
   "$( [ "$RC" -eq 0 ] && [ "$OUT" = true ] && echo 1 || echo 0 )"
 
