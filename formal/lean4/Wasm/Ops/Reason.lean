@@ -64,7 +64,7 @@ private def cmpSlice (g : Graph) : List WfIri :=
 envelope when a term cannot be serialised. -/
 private def ntriplesEnvelope (key : String) (g : Graph)
     (extra : List (String × Json) := []) : String :=
-  match Graph.toNTriples g with
+  match Graph.toNTriples g .rdf12 with
   | .error e  => errJson s!"closure serialisation: {e}"
   | .ok lines => okWith (((key, Json.string lines)) :: extra)
 
@@ -82,7 +82,7 @@ def owlClosureParsed (ds : Dataset) (mode : String) : String :=
 
 /-- `owlClosure(nquads, mode)`. -/
 def owlClosure (nq mode : String) : String :=
-  match parseNQuadsFast nq with
+  match parseNQuadsFast nq .rdf12 with
   | .error e => errJson (fmtParseError e)
   | .ok ds => owlClosureParsed ds mode
 
@@ -115,13 +115,13 @@ def rhoDfClosureParsed (ds : Dataset) : String :=
 
 /-- `rhoDfClosure(nquads)`. -/
 def rhoDfClosure (nq : String) : String :=
-  match parseNQuadsFast nq with
+  match parseNQuadsFast nq .rdf12 with
   | .error e => errJson (fmtParseError e)
   | .ok ds => rhoDfClosureParsed ds
 
 /-- `rhoDfFragmentCheck(nquads)`. -/
 def rhoDfFragmentCheck (nq : String) : String :=
-  match parseNQuadsFast nq with
+  match parseNQuadsFast nq .rdf12 with
   | .error e => errJson (fmtParseError e)
   | .ok ds =>
       okWith [("fragment", .bool (L4Factoidal.RDFS.isRhoDfFrag ds.default))]
@@ -137,7 +137,7 @@ def rdfsPlusClosureParsed (ds : Dataset) : String :=
 
 /-- `rdfsPlusClosure(nquads)`. -/
 def rdfsPlusClosure (nq : String) : String :=
-  match parseNQuadsFast nq with
+  match parseNQuadsFast nq .rdf12 with
   | .error e => errJson (fmtParseError e)
   | .ok ds => rdfsPlusClosureParsed ds
 
@@ -147,31 +147,31 @@ The command line's entries (issue 724). Each answers the envelope the text op
 answers on the canonical N-Quads of its datasets, for every dataset. -/
 
 def owlClosureOf (ds : Dataset) (mode : String) : String :=
-  withOpsDataset .rdf11 ds (fun d => owlClosureParsed d mode)
+  withOpsDataset .rdf12 ds (fun d => owlClosureParsed d mode)
 
 theorem owlClosureOf_eq (ds : Dataset) (mode : String) :
     owlClosureOf ds mode = owlClosure (Dataset.toCanonicalNQuads ds) mode := by
   unfold owlClosureOf owlClosure
   rw [withOpsDataset_eq]
-  cases parseNQuadsFast (Dataset.toCanonicalNQuads ds) .rdf11 <;> rfl
+  cases parseNQuadsFast (Dataset.toCanonicalNQuads ds) .rdf12 <;> rfl
 
 def rhoDfClosureOf (ds : Dataset) : String :=
-  withOpsDataset .rdf11 ds rhoDfClosureParsed
+  withOpsDataset .rdf12 ds rhoDfClosureParsed
 
 theorem rhoDfClosureOf_eq (ds : Dataset) :
     rhoDfClosureOf ds = rhoDfClosure (Dataset.toCanonicalNQuads ds) := by
   unfold rhoDfClosureOf rhoDfClosure
   rw [withOpsDataset_eq]
-  cases parseNQuadsFast (Dataset.toCanonicalNQuads ds) .rdf11 <;> rfl
+  cases parseNQuadsFast (Dataset.toCanonicalNQuads ds) .rdf12 <;> rfl
 
 def rdfsPlusClosureOf (ds : Dataset) : String :=
-  withOpsDataset .rdf11 ds rdfsPlusClosureParsed
+  withOpsDataset .rdf12 ds rdfsPlusClosureParsed
 
 theorem rdfsPlusClosureOf_eq (ds : Dataset) :
     rdfsPlusClosureOf ds = rdfsPlusClosure (Dataset.toCanonicalNQuads ds) := by
   unfold rdfsPlusClosureOf rdfsPlusClosure
   rw [withOpsDataset_eq]
-  cases parseNQuadsFast (Dataset.toCanonicalNQuads ds) .rdf11 <;> rfl
+  cases parseNQuadsFast (Dataset.toCanonicalNQuads ds) .rdf12 <;> rfl
 
 /-! ### The command line's `closure` verb, one line at a time
 
@@ -219,23 +219,23 @@ def closureEnvelopeTail (regime : String) (d : Dataset) : String × List (String
 /-- What `l4factoidal closure --regime REGIME` writes: the closure graph,
 each of whose triples has an N-Triples line, or the error text. -/
 def closureStreamOf (ds : Dataset) (regime : String) : Except String Graph :=
-  match datasetForOps .rdf11 ds with
+  match datasetForOps .rdf12 ds with
   | .error e => .error (fmtParseError e)
   | .ok d =>
       let g := closureGraphOfRegime regime d
-      match Graph.firstNTriplesError g with
+      match Graph.firstNTriplesError g .rdf12 with
       | some e => .error s!"closure serialisation: {e}"
       | none => .ok g
 
 private theorem ntriplesEnvelope_lines (key : String) (g : Graph) (extra : List (String × Json)) :
     ntriplesEnvelope key g extra =
-      match Graph.firstNTriplesError g with
+      match Graph.firstNTriplesError g .rdf12 with
       | some e => errJson s!"closure serialisation: {e}"
-      | none => okWith ((key, Json.string (String.join (g.map (Triple.toNTriplesLine .rdf11))))
+      | none => okWith ((key, Json.string (String.join (g.map (Triple.toNTriplesLine .rdf12))))
                   :: extra) := by
   unfold ntriplesEnvelope
   rw [Graph.toNTriples_eq_lines]
-  cases Graph.firstNTriplesError g .rdf11 <;> rfl
+  cases Graph.firstNTriplesError g .rdf12 <;> rfl
 
 /-- The envelope is the stream's error, or the stream's lines concatenated in
 the member the command line printed. -/
@@ -244,14 +244,14 @@ theorem closureEnvelopeOf_stream (ds : Dataset) (regime : String) :
       match closureStreamOf ds regime with
       | .error m => errJson m
       | .ok g =>
-          okWith (((closureEnvelopeTail regime (match datasetForOps .rdf11 ds with
+          okWith (((closureEnvelopeTail regime (match datasetForOps .rdf12 ds with
                       | .ok d => d | .error _ => ds)).1,
-                    Json.string (String.join (g.map (Triple.toNTriplesLine .rdf11))))
-                  :: (closureEnvelopeTail regime (match datasetForOps .rdf11 ds with
+                    Json.string (String.join (g.map (Triple.toNTriplesLine .rdf12))))
+                  :: (closureEnvelopeTail regime (match datasetForOps .rdf12 ds with
                       | .ok d => d | .error _ => ds)).2) := by
   unfold closureEnvelopeOf closureStreamOf owlClosureOf rhoDfClosureOf rdfsPlusClosureOf
     withOpsDataset
-  cases datasetForOps .rdf11 ds with
+  cases datasetForOps .rdf12 ds with
   | error e => split <;> rfl
   | ok d =>
       simp only
@@ -259,8 +259,36 @@ theorem closureEnvelopeOf_stream (ds : Dataset) (regime : String) :
       split <;>
         simp only [owlClosureParsed, rhoDfClosureParsed, rdfsPlusClosureParsed,
           ntriplesEnvelope_lines] <;>
-        cases Graph.firstNTriplesError _ <;> rfl
+        cases Graph.firstNTriplesError _ .rdf12 <;> rfl
 
 #print axioms closureEnvelopeOf_stream
+
+/-! ### RDF 1.2 input (https://github.com/danbri/factoidal/issues/873)
+
+The ops read RDF 1.2 N-Quads and write RDF 1.2 N-Triples. A triple term is a
+term in object position; no rule reads the triple inside it
+(`L4Factoidal/RDFS/TripleTermClosureTests.lean`). On RDF 1.1 input the
+output is the same text as before: the RDF 1.2 reader accepts every RDF 1.1
+document with the same dataset, and `Term.toNTriples` writes an RDF 1.1 term
+in the same text in both modes. -/
+
+private def tt873 : String := "<http://example.com/a> <http://example.com/says> <<( <http://example.com/s> <http://www.w3.org/1999/02/22-rdf-syntax-ns#type> <http://example.com/C> )>> .\n<http://example.com/C> <http://www.w3.org/2000/01/rdf-schema#subClassOf> <http://example.com/D> .\n<http://example.com/x> <http://www.w3.org/1999/02/22-rdf-syntax-ns#type> <http://example.com/C> .\n"
+
+private def has873 (hay needle : String) : Bool := (hay.splitOn needle).length > 1
+
+private def sTypeD : String :=
+  "<http://example.com/s> <http://www.w3.org/1999/02/22-rdf-syntax-ns#type> <http://example.com/D>"
+
+private def xTypeD : String :=
+  "<http://example.com/x> <http://www.w3.org/1999/02/22-rdf-syntax-ns#type> <http://example.com/D>"
+
+-- Accepted, the asserted triple with the triple term kept, the asserted
+-- derivation made, and nothing derived from inside the triple term.
+#guard [owlClosure tt873 "RDFS", owlClosure tt873 "OWL-RL", rhoDfClosure tt873,
+        rdfsPlusClosure tt873].all (fun r =>
+  r.startsWith "{\"ok\":true" && has873 r "<<( <http://example.com/s>"
+    && has873 r xTypeD && !has873 r sTypeD)
+#guard (rdfsPlusClosure "<http://example.com/a> <http://example.com/says> <<( _:b1 <http://example.com/p> <http://example.com/o> )>> .\n").startsWith "{\"ok\":true"
+#guard has873 (rhoDfClosure "<http://example.com/a> <http://example.com/says> <<( _:b1 <http://example.com/p> <http://example.com/o> )>> .\n") "<<( _:b1"
 
 end L4Wasm.Ops

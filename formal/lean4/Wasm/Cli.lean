@@ -1037,7 +1037,7 @@ private def closureViaEnvelope (ds : Dataset) (regime : String) : Except String 
 `Ops.closureStreamOf`, or its error text. -/
 private def closureViaStream (ds : Dataset) (regime : String) : Except String String :=
   (Ops.closureStreamOf ds regime).map fun g =>
-    String.join (g.map (Triple.toNTriplesLine .rdf11))
+    String.join (g.map (Triple.toNTriplesLine .rdf12))
 
 private def closureSample : Option Dataset :=
   (Ops.parseTextToDataset ("@prefix e: <http://e/> . @prefix rdfs: <http://www.w3.org/2000/01/rdf-schema#> . " ++
@@ -1097,7 +1097,7 @@ def closureCmd (args : List String) : IO UInt32 := do
           | .ok g =>
               let out ← IO.getStdout
               for t in g do
-                out.putStr (Triple.toNTriplesLine .rdf11 t)
+                out.putStr (Triple.toNTriplesLine .rdf12 t)
               out.putStr "\n"
               out.flush
               pure 0
