@@ -558,7 +558,6 @@ XFAIL: dict[str, str] = {
     "sbm11-export-rdfxml-memory": "https://github.com/danbri/factoidal/issues/846",
     "sbm11-export-jsonld-memory": "https://github.com/danbri/factoidal/issues/847",
     "sbm11-replay-insert-time": "https://github.com/danbri/factoidal/issues/879",
-    "rdfxml-markup-chain": "https://github.com/danbri/factoidal/issues/872",
 }
 # A run longer than this is not repeated: the minimum of several runs only
 # removes timer and load noise, which is small against a run this long.

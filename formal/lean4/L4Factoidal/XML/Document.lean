@@ -384,6 +384,27 @@ def entityIndexOf : List (String × EntityDef) → Std.HashMap String (List Enti
   | [] => {}
   | (n, d) :: rest => (entityIndexOf rest).insert n (d :: (entityIndexOf rest).getD n [])
 
+/-- One step of `entityIndexOf`: add the declaration `(n, d)` in front. -/
+def entityIndexStep (m : Std.HashMap String (List EntityDef)) (p : String × EntityDef) :
+    Std.HashMap String (List EntityDef) :=
+  m.insert p.1 (p.2 :: m.getD p.1 [])
+
+/-- `entityIndexOf` as a loop: the declarations from the oldest. -/
+def entityIndexOfFast (defs : List (String × EntityDef)) : Std.HashMap String (List EntityDef) :=
+  defs.reverse.foldl entityIndexStep {}
+
+theorem entityIndexOf_eq_foldr (defs : List (String × EntityDef)) :
+    entityIndexOf defs = defs.foldr (fun p m => entityIndexStep m p) {} := by
+  induction defs with
+  | nil => rfl
+  | cons p rest ih => obtain ⟨n, d⟩ := p; simp [entityIndexOf, ih, entityIndexStep]
+
+/-- The compiler runs the loop wherever `entityIndexOf` is called (one stack
+frame for any number of declarations). -/
+@[csimp] theorem entityIndexOf_eq_fast : @entityIndexOf = @entityIndexOfFast := by
+  funext defs
+  rw [entityIndexOf_eq_foldr, entityIndexOfFast, List.foldl_reverse]
+
 /-- The declared general entities, or (kept apart, section 4.1) the
 declared parameter entities.
 
