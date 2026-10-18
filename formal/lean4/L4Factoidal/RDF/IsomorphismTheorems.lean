@@ -602,5 +602,9 @@ theorem Dataset.isomorphicOutcome_vs_ref (ds1 ds2 : Dataset) :
 
 #print axioms Graph.isomorphicOutcome_vs_ref
 #print axioms Dataset.isomorphicOutcome_vs_ref
+#print axioms IsoRefine.candidate_cert
+#print axioms Graph.isomorphismMap_eq_fast
+#print axioms Dataset.isomorphismMap_eq_fast
+#print axioms Dataset.isomorphicOutcome_eq_fast
 
 end L4Factoidal.RDF
