@@ -232,9 +232,10 @@
 #                dataset (`l4sbm11-w3c query-source`, which keeps a graph with no
 #                triple), each on the path its name says; `l4sbm11 graphs`; the TriG and
 #                JSON-LD exports with the graphs with no triple compared; the notice of
-#                the N-Quads export; the refusal of N-Triples; one expected failure
-#                that names an open issue (`l4factoidal query` gives neither a graph
-#                with no triple nor a graph named by a blank node, https://github.com/danbri/factoidal/issues/876). Its
+#                the N-Quads export; the refusal of N-Triples; expected failures
+#                that name open issues (`l4factoidal query` gives neither a graph
+#                with no triple nor a graph named by a blank node, https://github.com/danbri/factoidal/issues/876;
+#                the IBK4 and IBK5 stores lose a graph with no triple, https://github.com/danbri/factoidal/issues/880). Its
 #                counts are added to this run's.
 #   (g) tamper   a copy of the generation with one byte changed in a block
 #                frame of spo.prb1 (manifest and sidecars kept): `scan` and

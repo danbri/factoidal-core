@@ -35,9 +35,11 @@
 # names on standard error the graphs it cannot state; and the refusal of N-Triples
 # without --graph.
 #
-# And one expected failure that names an open issue: `l4factoidal query`, the in-memory
-# query ops, gives neither a graph with no triple nor a graph named by a blank node
-# (https://github.com/danbri/factoidal/issues/876); the run fails when it passes.
+# And expected failures that name open issues; the run fails when one passes:
+# `l4factoidal query`, the in-memory query ops, gives neither a graph with no triple nor a
+# graph named by a blank node (https://github.com/danbri/factoidal/issues/876); the IBK4
+# and IBK5 stores lose a graph with no triple, in the pack and after CREATE GRAPH
+# (https://github.com/danbri/factoidal/issues/880).
 #
 # Prints "named graphs: N pass, M fail, K expected-fail (out of T)". Exit 0 when no case
 # failed and no expected failure passed; 2 when a binary is missing.
@@ -218,6 +220,39 @@ if [ -x "$BIN/l4factoidal" ]; then
 fi
 if [ "$rows" = 6 ]; then xfail xfail-l4factoidal-graph-names https://github.com/danbri/factoidal/issues/876 1 "l4factoidal query gives the 6 named graphs of d5.trig"
 else xfail xfail-l4factoidal-graph-names https://github.com/danbri/factoidal/issues/876 0 "GRAPH ?g { } on d5.trig: l4factoidal query gives $rows rows, the reference evaluator 6"; fi
+
+echo "=== shortfall: the IBK4 and IBK5 stores"
+# The IBK stores have no graph list and their log (DLOG version 1) has no graph slot, so a
+# named graph with no triple is lost: in the pack of a TriG graph block, and after CREATE
+# GRAPH, which is committed with exit 0 (https://github.com/danbri/factoidal/issues/880).
+# A missing binary is a failure, not an expected failure.
+ibk_rows() { # ibk_rows <collection root>: the rows of GRAPH ?g { }, "error" on a failure
+  timeout 120 "$BIN/l4block-quad-query" "$1" --json --query "$(cat "$QDIR/ref-graph-names.rq")" 2>"$1.q.err" \
+    | tail -1 >"$1.srj"
+  python3 -I -c 'import json, sys; print(len(json.load(open(sys.argv[1]))["results"]["bindings"]))' "$1.srj" 2>/dev/null \
+    || echo error
+}
+ibk_ok=0
+for need in l4block-shard-pack l4block-shard-activate l4block-quad-query l4block-delta-log; do
+  [ -x "$BIN/$need" ] || { record ibk-binaries 1 "missing: $BIN/$need"; ibk_ok=1; }
+done
+if [ "$ibk_ok" = 0 ]; then
+  for fmt in ibk4 ibk5; do
+    c="$TMP/$fmt"; mkdir -p "$c"
+    if timeout 120 "$BIN/l4block-shard-pack" "$FX" "$c/gen-1" "$fmt" >"$c.pack.log" 2>&1 \
+        && timeout 120 "$BIN/l4block-shard-activate" "$c" gen-1 >"$c.act.log" 2>&1; then
+      rows="$(ibk_rows "$c")"
+      if [ "$rows" = 6 ]; then xfail "xfail-$fmt-graph-names" https://github.com/danbri/factoidal/issues/880 1 "the $fmt store gives the 6 named graphs of d5.trig"
+      else xfail "xfail-$fmt-graph-names" https://github.com/danbri/factoidal/issues/880 0 "GRAPH ?g { } on d5.trig: the $fmt store gives $rows rows, the reference 6"; fi
+    else record "$fmt-pack" 1 "pack or activation of d5.trig failed: $(tail -1 "$c.pack.log" "$c.act.log" 2>/dev/null | tr '\n' ' ' | cut -c1-160)"; fi
+  done
+  c="$TMP/ibk5"
+  if [ -f "$c/CURRENT" ] && timeout 120 "$BIN/l4block-delta-log" "$c" --update 'CREATE GRAPH <http://example.org/g9>' >"$c.upd.log" 2>&1; then
+    rows="$(ibk_rows "$c")"
+    if [ "$rows" = 7 ]; then xfail xfail-ibk5-create-graph https://github.com/danbri/factoidal/issues/880 1 "after CREATE GRAPH ex:g9 the ibk5 store gives 7 named graphs"
+    else xfail xfail-ibk5-create-graph https://github.com/danbri/factoidal/issues/880 0 "CREATE GRAPH ex:g9 committed; GRAPH ?g { } then gives $rows rows, the reference 7"; fi
+  else record ibk5-create-graph 1 "the ibk5 store or its update failed: $(tail -1 "$c.upd.log" 2>/dev/null | cut -c1-160)"; fi
+fi
 
 echo "named graphs: $PASS pass, $FAIL fail, $XFAIL expected-fail (out of $((PASS + FAIL + XFAIL)))"
 [ "$FAIL" -eq 0 ]
