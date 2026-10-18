@@ -164,18 +164,6 @@ L4Factoidal_HDT_splitOnSemi
 L4Factoidal_JOSE_Base64Url_decodeDigits
 L4Factoidal_JOSE_Base64Url_digitsOf?
 L4Factoidal_JOSE_Base64Url_encodeToDigits
-L4Factoidal_JSONLD_FromRdf_buildNamed
-L4Factoidal_JSONLD_FromRdf_insertSortedNode
-L4Factoidal_JSONLD_FromRdf_listFrom
-L4Factoidal_JSONLD_FromRdf_mapsRefids
-L4Factoidal_JSONLD_FromRdf_nodesRefids
-L4Factoidal_JSONLD_FromRdf_ovListToJson
-L4Factoidal_JSONLD_FromRdf_ovsRefids
-L4Factoidal_JSONLD_FromRdf_propAdd
-L4Factoidal_JSONLD_FromRdf_propsRefids
-L4Factoidal_JSONLD_FromRdf_snocUniqueOv
-L4Factoidal_JSONLD_FromRdf_snocUniqueStr
-L4Factoidal_JSONLD_FromRdf_sortNodes
 L4Factoidal_JSONLD_Html_joinContents
 L4Factoidal_JSONLD_cmpAddValue
 L4Factoidal_JSONLD_cmpCompactTypes
@@ -204,7 +192,6 @@ L4Factoidal_JSONLD_expandGraphItems
 L4Factoidal_JSONLD_expandIdMap
 L4Factoidal_JSONLD_expandIncludedItems
 L4Factoidal_JSONLD_expandLanguageMap
-L4Factoidal_JSONLD_expandList
 L4Factoidal_JSONLD_expandNestArray
 L4Factoidal_JSONLD_expandPlainIndexMap
 L4Factoidal_JSONLD_expandProperty
@@ -220,10 +207,6 @@ L4Factoidal_JSONLD_injectIndexItems
 L4Factoidal_JSONLD_insertSorted
 L4Factoidal_JSONLD_invUpdate
 L4Factoidal_JSONLD_invUpdateCont
-L4Factoidal_JSONLD_jcsInsertSorted
-L4Factoidal_JSONLD_jcsSerializeFields
-L4Factoidal_JSONLD_jcsSerializeItems
-L4Factoidal_JSONLD_jcsSortFields
 L4Factoidal_JSONLD_keywordAliasesOf
 L4Factoidal_JSONLD_languageMapEntryItems
 L4Factoidal_JSONLD_mapEntryInsert
@@ -238,8 +221,6 @@ L4Factoidal_JSONLD_sortStrings
 L4Factoidal_JSONSchema_percentDecode_go
 L4Factoidal_JSONSchema_pow10
 L4Factoidal_JSON_Json_decEqJsonList
-L4Factoidal_JSON_Json_sizeFields
-L4Factoidal_JSON_Json_sizeItems
 L4Factoidal_JSON_toStringFields
 L4Factoidal_JSON_toStringFieldsPretty
 L4Factoidal_JSON_toStringItems
@@ -899,7 +880,6 @@ L4Factoidal_JSON_toStringItemsPrettyAcc  # UNTRIAGED https://github.com/danbri/f
 L4Factoidal_JSON_toStringPrettyAt  # UNTRIAGED https://github.com/danbri/factoidal/issues/753 length, cycle of 3, L4Factoidal/JSON/Serialize.lean:218
 L4Factoidal_JSON_Json_decEqJson  # UNTRIAGED https://github.com/danbri/factoidal/issues/753 depth, cycle of 3, L4Factoidal/JSON/Value.lean:68
 L4Factoidal_JSON_Json_decEqJsonFields  # UNTRIAGED https://github.com/danbri/factoidal/issues/753 length, cycle of 3, L4Factoidal/JSON/Value.lean:106
-L4Factoidal_JSON_Json_size  # UNTRIAGED https://github.com/danbri/factoidal/issues/753 depth, cycle of 3, L4Factoidal/JSON/Value.lean:144
 L4Factoidal_JSONLD_cmpItemAdd  # UNTRIAGED https://github.com/danbri/factoidal/issues/753 length, cycle of 8, L4Factoidal/JSONLD/Compact.lean:1154
 L4Factoidal_JSONLD_compactElem  # UNTRIAGED https://github.com/danbri/factoidal/issues/753 length, cycle of 8, L4Factoidal/JSONLD/Compact.lean:841
 L4Factoidal_JSONLD_compactFields  # UNTRIAGED https://github.com/danbri/factoidal/issues/753 length, cycle of 8, L4Factoidal/JSONLD/Compact.lean:951
@@ -945,17 +925,6 @@ L4Factoidal_JSONLD_matValsAcc  # UNTRIAGED https://github.com/danbri/factoidal/i
 L4Factoidal_JSONLD_nodeMatch  # UNTRIAGED https://github.com/danbri/factoidal/issues/753 depth, cycle of 5, L4Factoidal/JSONLD/Frame.lean:337
 L4Factoidal_JSONLD_FromRdf_Ov_eqb  # UNTRIAGED https://github.com/danbri/factoidal/issues/753 depth, cycle of 2, L4Factoidal/JSONLD/FromRdf.lean:104
 L4Factoidal_JSONLD_FromRdf_Ov_eqbList  # UNTRIAGED https://github.com/danbri/factoidal/issues/753 length, cycle of 2, L4Factoidal/JSONLD/FromRdf.lean:110
-L4Factoidal_JSONLD_FromRdf_ovToJson  # UNTRIAGED https://github.com/danbri/factoidal/issues/753 depth, cycle of 2, L4Factoidal/JSONLD/FromRdf.lean:480
-L4Factoidal_JSONLD_FromRdf_resolveOv  # UNTRIAGED https://github.com/danbri/factoidal/issues/753 length, cycle of 2, L4Factoidal/JSONLD/FromRdf.lean:450
-L4Factoidal_JSONLD_expandFieldsR  # UNTRIAGED https://github.com/danbri/factoidal/issues/753 length, cycle of 9, L4Factoidal/JSONLD/ToRdf.lean:717
-L4Factoidal_JSONLD_expandGraphNodes  # UNTRIAGED https://github.com/danbri/factoidal/issues/753 length, cycle of 9, L4Factoidal/JSONLD/ToRdf.lean:805
-L4Factoidal_JSONLD_expandNodeR  # UNTRIAGED https://github.com/danbri/factoidal/issues/753 depth, cycle of 9, L4Factoidal/JSONLD/ToRdf.lean:683
-L4Factoidal_JSONLD_expandPropertyR  # UNTRIAGED https://github.com/danbri/factoidal/issues/753 length, cycle of 9, L4Factoidal/JSONLD/ToRdf.lean:788
-L4Factoidal_JSONLD_expandReverseEntries  # UNTRIAGED https://github.com/danbri/factoidal/issues/753 length, cycle of 9, L4Factoidal/JSONLD/ToRdf.lean:750
-L4Factoidal_JSONLD_expandReverseMap  # UNTRIAGED https://github.com/danbri/factoidal/issues/753 depth, cycle of 9, L4Factoidal/JSONLD/ToRdf.lean:740
-L4Factoidal_JSONLD_expandReverseProp  # UNTRIAGED https://github.com/danbri/factoidal/issues/753 length, cycle of 9, L4Factoidal/JSONLD/ToRdf.lean:771
-L4Factoidal_JSONLD_expandValue  # UNTRIAGED https://github.com/danbri/factoidal/issues/753 depth, cycle of 9, L4Factoidal/JSONLD/ToRdf.lean:621
-L4Factoidal_JSONLD_jcsSerialize  # UNTRIAGED https://github.com/danbri/factoidal/issues/753 length, cycle of 3, L4Factoidal/JSONLD/ToRdf.lean:308
 L4Factoidal_JSONSchema_collectIds  # UNTRIAGED https://github.com/danbri/factoidal/issues/753 length, cycle of 3, L4Factoidal/JSONSchema/Validate.lean:334
 L4Factoidal_JSONSchema_jsonEq  # UNTRIAGED https://github.com/danbri/factoidal/issues/753 depth, cycle of 3, L4Factoidal/JSONSchema/Validate.lean:135
 L4Factoidal_JSONSchema_validateIn  # UNTRIAGED https://github.com/danbri/factoidal/issues/753 length, cycle of 14, L4Factoidal/JSONSchema/Validate.lean:424
@@ -1447,3 +1416,27 @@ L4Factoidal_SPARQL_AggStream_itemAggs  # (s) the values of the aggregate items o
 L4Factoidal_SPARQL_AggStream_itemSpecs?  # (b) the SELECT items of one query: one call for each item, run once for each query (aggPlan?)
 L4Factoidal_SPARQL_AggStream_groupVarsOf?  # (b) the GROUP BY conditions of one query: one call for each condition, run once for each query (aggPlan?)
 L4Factoidal_Storage_Sbm11_IdAgg_Cache_getPureList  # (s) the lookups of a list of keys through the pure cache; read by the theorem Cache.getPure_list only, the loops of decodeRowsM and aggregateM call Cache.getM
+
+# --- Added 2026-10-18 by the scaling repairs of https://github.com/danbri/factoidal/issues/844, https://github.com/danbri/factoidal/issues/853 and https://github.com/danbri/factoidal/issues/845 ---
+# The run-time forms below loop over the siblings of an array, an object, a list or a
+# chain (each has `goto _start` and no self-call in the emitted C); the cycle is one
+# call into the nested value. The specifications they replace (csimp) left this list.
+L4Factoidal_JSON_Json_sizeAcc  # (b) nesting of the JSON value; the members of an array or an object are the loops sizeItemsAcc and sizeFieldsAcc
+L4Factoidal_JSON_Json_sizeItemsAcc  # (b) loop over the items of one array; one call into sizeAcc for each item, whose depth is the nesting
+L4Factoidal_JSON_Json_sizeFieldsAcc  # (b) loop over the members of one object; one call into sizeAcc for each member, whose depth is the nesting
+L4Factoidal_JSONLD_jcsSerW  # (b) nesting of the JSON document written; items and members are the loops jcsItemsW and jcsFieldsW
+L4Factoidal_JSONLD_jcsItemsW  # (b) loop over the items of one array (accumulator string); one call into jcsSerW for each item
+L4Factoidal_JSONLD_jcsFieldsW  # (b) loop over the members of one object (accumulator string); one call into jcsSerW for each member
+L4Factoidal_JSONLD_expandValueW  # (b) nesting of the expanded JSON-LD document (node objects and @list values inside property values)
+L4Factoidal_JSONLD_expandListGo  # (b) loop over the items of one @list (cells kept in pend, triples prepended by the loop listCells); one call into expandValueW for each item
+L4Factoidal_JSONLD_expandNodeRW  # (b) nesting of node objects in the expanded document
+L4Factoidal_JSONLD_expandFieldsRW  # (b) loop over the members of one node object; one call into the value of each member
+L4Factoidal_JSONLD_expandReverseMapW  # (b) nesting: the @reverse member of one node object
+L4Factoidal_JSONLD_expandReverseEntriesW  # (b) loop over the properties of one @reverse map
+L4Factoidal_JSONLD_expandReversePropW  # (b) loop over the values of one reverse property; one call into expandNodeRW for each
+L4Factoidal_JSONLD_expandPropertyRW  # (b) loop over the values of one property; one call into expandValueW for each
+L4Factoidal_JSONLD_expandGraphNodesW  # (b) loop over the nodes of one @graph or @included array; one call into expandNodeRW for each
+L4Factoidal_JSONLD_FromRdf_listFromW  # (b) loop over the cells of one rdf:first/rdf:rest chain (reversed accumulator); one call into resolveOvW for each first value, which re-enters only for a nested list
+L4Factoidal_JSONLD_FromRdf_resolveOvW  # (b) nesting of RDF collections whose first values are collections
+L4Factoidal_JSONLD_FromRdf_ovToJsonW  # (b) nesting of @list values
+L4Factoidal_JSONLD_FromRdf_ovListToJsonW  # (b) loop over the elements of one @list (reversed accumulator); one call into ovToJsonW for each

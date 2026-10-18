@@ -37,6 +37,27 @@ def args(name, *values):
     return path
 
 
+# ---------------------------------------------------------------- JSON-LD
+# The JSON-LD reader and writer over a dimension the document controls
+# (https://github.com/danbri/factoidal/issues/844 and
+# https://github.com/danbri/factoidal/issues/853): one node with N_JLDF node
+# references, one node whose value is a @list of N_JLDL strings (read), and one
+# subject with N_JLDW IRI objects (written). Before the repairs of 2026-10-18 the
+# reader overflowed 512 KB at 100,000 references (Json.size) and at 5,000 list
+# items (expandList), and the writer at 20,000 references (snocUniqueOv).
+N_JLDF = int(os.environ.get("STACK_JSONLD_FANOUT", "100000"))
+N_JLDL = int(os.environ.get("STACK_JSONLD_LIST", "100000"))
+N_JLDW = int(os.environ.get("STACK_JSONLD_WRITE", "20000"))
+args("args-jsonld-fanout.json",
+     '{"@id": "http://example.org/s", "http://example.org/link": ['
+     + ", ".join('{"@id": "http://example.org/o%d"}' % i for i in range(N_JLDF)) + "]}", "")
+args("args-jsonld-list.json",
+     '{"@id": "http://example.org/s", "http://example.org/p": {"@list": ['
+     + ", ".join('"v%d"' % i for i in range(N_JLDL)) + "]}}", "")
+args("args-jsonld-write-fanout.json",
+     "".join("<http://example.org/s> <http://example.org/p> <http://example.org/o%d> .\n" % i
+             for i in range(N_JLDW)), "")
+
 # ---------------------------------------------------------------- RDF/XML
 # 10,000 sequential entity references in one element's content.  Sequential,
 # not nested: the depth this can reach is set by the DOCUMENT, and the

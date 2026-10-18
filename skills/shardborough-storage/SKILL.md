@@ -1272,15 +1272,19 @@ expected failure.
 | TriG chunk walk against `parseTriG`; block order differs on a source whose graphs interleave | https://github.com/danbri/factoidal/issues/836 | `tests/trig-pack/order_xfail.sh` |
 | RDF/XML is read whole | https://github.com/danbri/factoidal/issues/838 | row `sbm11-pack-rdfxml-memory` |
 | JSON-LD is read whole | https://github.com/danbri/factoidal/issues/839 | row `sbm11-pack-jsonld-memory` |
-| The JSON-LD reader uses stack in proportion to the number of elements: 25,000 to 100,000 elements overflow a 512 KB stack | https://github.com/danbri/factoidal/issues/844 | `tests/known-defects/run.sh`, row `JLD-STACK` |
-| The Lean RDF/XML writer takes time quadratic in the number of triples | https://github.com/danbri/factoidal/issues/845 | row `rdfxml-write` |
 | The Lean JSON-LD writer (`fromRdf` node list) takes time quadratic in the number of triples | https://github.com/danbri/factoidal/issues/712 | row `jsonld-write` |
 | Turtle and TriG phase 1 runs in one worker | https://github.com/danbri/factoidal/issues/842 | rows `sbm11-pack-ttl-workers`, `sbm11-pack-trig-workers` |
 | The JSON-LD reader of the source layer takes no document loader and no processing option (18 toRdf tests) | https://github.com/danbri/factoidal/issues/848 | `w3c_roundtrip_xfail.tsv`, 18 rows |
 | No theorem relates the stream writers (`Sink.Writer`) to the batch writers | https://github.com/danbri/factoidal/issues/852 | `tests/known-defects/run.sh`, rows `SK-1`, `SK-2` |
-| The JSON-LD writer uses native stack in proportion to the number of elements: 20,000 references overflow a 512 KB stack | https://github.com/danbri/factoidal/issues/853 | `tests/known-defects/run.sh`, row `JLD-WSTACK` (through `l4factoidal parse --out jsonld`) |
 | The RDF/XML export holds the whole graph | https://github.com/danbri/factoidal/issues/846 | row `sbm11-export-rdfxml-memory` |
 | The JSON-LD export holds the whole dataset | https://github.com/danbri/factoidal/issues/847 | row `sbm11-export-jsonld-memory` |
+
+Repaired on 2026-10-18 and removed from the table: the JSON-LD reader's stack
+(https://github.com/danbri/factoidal/issues/844), the RDF/XML writer's quadratic
+time (https://github.com/danbri/factoidal/issues/845) and the JSON-LD writer's stack
+(https://github.com/danbri/factoidal/issues/853). The rows `rdfxml-write` and the
+`*-stack` rows of `tests/stack/lean_scaling.py`, and the cases `jsonld-read-fanout`,
+`jsonld-read-list` and `jsonld-write-fanout` of `tests/stack/run.sh`, assert them.
 
 **Measured** (2026-10-14, `tests/sbm11/syntax_bench.sh`): one generated dataset
 (110,000 subjects, 880,000 quads; `gen_multi.py`) packed from each syntax with

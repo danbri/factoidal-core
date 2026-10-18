@@ -177,6 +177,54 @@ def snocUniqueOv : List Ov → Ov → List Ov
   | [],      x => [x]
   | h :: tl, x => if Ov.eqb h x then h :: tl else h :: snocUniqueOv tl x
 
+/-! ### Run-time forms of the list primitives
+
+`snocUniqueStr`, `snocUniqueOv` and `propAdd` rebuild the list in front of the
+place they change after their recursive call returns, so each takes one native
+frame for each element it passes: one node with 20,000 references overflowed a
+stack of 512 KB in `snocUniqueOv` (https://github.com/danbri/factoidal/issues/853).
+Each `...Go` form below walks the list with the elements passed so far in a
+reversed accumulator and puts them back in front with one `reverseAux` (a loop).
+Each `..._eq_fast` theorem proves the two forms equal and makes the compiler
+emit the loop for every call (`csimp`). The time is unchanged: each call still
+reads the list (https://github.com/danbri/factoidal/issues/712). -/
+
+def snocUniqueStrGo (x : String) : List String → List String → List String
+  | acc, []      => acc.reverseAux [x]
+  | acc, h :: tl => if h == x then acc.reverseAux (h :: tl) else snocUniqueStrGo x (h :: acc) tl
+
+theorem snocUniqueStrGo_eq (x : String) : ∀ (acc l : List String),
+    snocUniqueStrGo x acc l = acc.reverse ++ snocUniqueStr l x
+  | acc, [] => by simp [snocUniqueStrGo, snocUniqueStr, List.reverseAux_eq]
+  | acc, h :: tl => by
+    unfold snocUniqueStrGo snocUniqueStr
+    by_cases hh : (h == x) = true
+    · simp [hh, List.reverseAux_eq]
+    · simp [hh, snocUniqueStrGo_eq x (h :: acc) tl]
+
+def snocUniqueStrFast (l : List String) (x : String) : List String := snocUniqueStrGo x [] l
+
+@[csimp] theorem snocUniqueStr_eq_fast : @snocUniqueStr = @snocUniqueStrFast := by
+  funext l x; simp [snocUniqueStrFast, snocUniqueStrGo_eq]
+
+def snocUniqueOvGo (x : Ov) : List Ov → List Ov → List Ov
+  | acc, []      => acc.reverseAux [x]
+  | acc, h :: tl => if Ov.eqb h x then acc.reverseAux (h :: tl) else snocUniqueOvGo x (h :: acc) tl
+
+theorem snocUniqueOvGo_eq (x : Ov) : ∀ (acc l : List Ov),
+    snocUniqueOvGo x acc l = acc.reverse ++ snocUniqueOv l x
+  | acc, [] => by simp [snocUniqueOvGo, snocUniqueOv, List.reverseAux_eq]
+  | acc, h :: tl => by
+    unfold snocUniqueOvGo snocUniqueOv
+    by_cases hh : Ov.eqb h x = true
+    · simp [hh, List.reverseAux_eq]
+    · simp [hh, snocUniqueOvGo_eq x (h :: acc) tl]
+
+def snocUniqueOvFast (l : List Ov) (x : Ov) : List Ov := snocUniqueOvGo x [] l
+
+@[csimp] theorem snocUniqueOv_eq_fast : @snocUniqueOv = @snocUniqueOvFast := by
+  funext l x; simp [snocUniqueOvFast, snocUniqueOvGo_eq]
+
 def findProp (props : List (String × List Ov)) (p : String) : Option (List Ov) :=
   (props.find? (fun kv => kv.1 == p)).map Prod.snd
 
@@ -191,6 +239,35 @@ def propAdd : List (String × List Ov) → String → Ov → List (String × Lis
   | (k, vals) :: tl, p, v =>
     if k == p then (k, snocUniqueOv vals v) :: tl
     else (k, vals) :: propAdd tl p v
+
+def propAddGo (p : String) (v : Ov) :
+    List (String × List Ov) → List (String × List Ov) → List (String × List Ov)
+  | acc, []              => acc.reverseAux [(p, [v])]
+  | acc, (k, vals) :: tl =>
+    if k == p then acc.reverseAux ((k, snocUniqueOv vals v) :: tl)
+    else propAddGo p v ((k, vals) :: acc) tl
+
+theorem propAddGo_eq (p : String) (v : Ov) : ∀ (acc l : List (String × List Ov)),
+    propAddGo p v acc l = acc.reverse ++ propAdd l p v
+  | acc, [] => by simp [propAddGo, propAdd, List.reverseAux_eq]
+  | acc, (k, vals) :: tl => by
+    unfold propAddGo propAdd
+    by_cases hh : (k == p) = true
+    · simp [hh, List.reverseAux_eq]
+    · simp [hh, propAddGo_eq p v ((k, vals) :: acc) tl]
+
+def propAddFast (l : List (String × List Ov)) (p : String) (v : Ov) : List (String × List Ov) :=
+  propAddGo p v [] l
+
+@[csimp] theorem propAdd_eq_fast : @propAdd = @propAddFast := by
+  funext l p v; simp [propAddFast, propAddGo_eq]
+
+#guard (snocUniqueStrFast ["a", "b"] "b") == ["a", "b"]
+#guard (snocUniqueStrFast ["a", "b"] "c") == ["a", "b", "c"]
+#guard (snocUniqueOvFast [.ref "a"] (.ref "a")).length == 1
+#guard (snocUniqueOvFast [.ref "a"] (.ref "b")).length == 2
+#guard ((propAddFast [("p", [.ref "a"]), ("q", [])] "q" (.ref "b")).map (·.2.length)) == [1, 1]
+#guard ((propAddFast [("p", [.ref "a"])] "r" (.ref "b")).map (·.1)) == ["p", "r"]
 
 def nodeUpdateProp (nm : List FrNode) (id p : String) (v : Ov) : List FrNode :=
   nm.map (fun n => if n.id == id then { n with props := propAdd n.props p v } else n)
@@ -326,6 +403,34 @@ def buildNamed (opts : Options) : List NamedGraph → Option (List NamedNm)
         let nm := subjId ng.name
         some ({ name := nm, blank := startsWithUnderscoreColon nm, map := m } :: others)
 
+/-- `buildNamed` with the graphs built so far in a reversed accumulator: a loop
+over the named graphs (`buildNamed` waits for the rest of the list before it
+conses, one native frame for each graph, issue 853). -/
+def buildNamedGo (opts : Options) : List NamedNm → List NamedGraph → Option (List NamedNm)
+  | acc, []       => some acc.reverse
+  | acc, ng :: tl =>
+    match buildNodemap opts [] ng.graph with
+    | none   => none
+    | some m =>
+      let nm := subjId ng.name
+      buildNamedGo opts ({ name := nm, blank := startsWithUnderscoreColon nm, map := m } :: acc) tl
+
+theorem buildNamedGo_eq (opts : Options) : ∀ (acc : List NamedNm) (l : List NamedGraph),
+    buildNamedGo opts acc l = (buildNamed opts l).map (acc.reverse ++ ·)
+  | acc, [] => by simp [buildNamedGo, buildNamed]
+  | acc, ng :: tl => by
+    simp only [buildNamedGo, buildNamed]
+    split
+    · rfl
+    · rw [buildNamedGo_eq opts _ tl]
+      cases buildNamed opts tl <;> simp
+
+def buildNamedFast (opts : Options) (l : List NamedGraph) : Option (List NamedNm) :=
+  buildNamedGo opts [] l
+
+@[csimp] theorem buildNamed_eq_fast : @buildNamed = @buildNamedFast := by
+  funext opts l; simp [buildNamedFast, buildNamedGo_eq]
+
 def addGraphNames : List FrNode → List NamedNm → List FrNode
   | nm, []      => nm
   | nm, g :: tl => addGraphNames (ensureNode nm g.name g.blank) tl
@@ -357,6 +462,64 @@ def nodesRefids : List FrNode → List String
 def mapsRefids : List (List FrNode) → List String
   | []      => []
   | m :: tl => nodesRefids m ++ mapsRefids tl
+
+/-! ### Run-time forms of the reference lists
+
+The four functions above append the rest of their list after the recursive call
+returns: one native frame for each value, property, node or graph (issue 853).
+The `...Fast` forms are the same lists as `filterMap` and `flatMap`, which run as
+loops (their `csimp` theorems in Lean core). -/
+
+def ovRefid? : Ov → Option String
+  | .ref x => some x
+  | _      => none
+
+def ovsRefidsFast (l : List Ov) : List String := l.filterMap ovRefid?
+
+theorem ovsRefids_eq_filterMap : ∀ l : List Ov, ovsRefids l = l.filterMap ovRefid?
+  | [] => rfl
+  | .ref x :: tl => by simp [ovsRefids, ovRefid?, ovsRefids_eq_filterMap tl]
+  | .val _ :: tl => by
+    simp only [ovsRefids]; rw [List.filterMap_cons]; exact ovsRefids_eq_filterMap tl
+  | .lst _ :: tl => by
+    simp only [ovsRefids]; rw [List.filterMap_cons]; exact ovsRefids_eq_filterMap tl
+
+@[csimp] theorem ovsRefids_eq_fast : @ovsRefids = @ovsRefidsFast := by
+  funext l; exact ovsRefids_eq_filterMap l
+
+def propsRefidsFast (l : List (String × List Ov)) : List String :=
+  l.flatMap (fun kv => ovsRefids kv.2)
+
+theorem propsRefids_eq_flatMap : ∀ l : List (String × List Ov),
+    propsRefids l = l.flatMap (fun kv => ovsRefids kv.2)
+  | [] => rfl
+  | (_, vals) :: tl => by simp [propsRefids, propsRefids_eq_flatMap tl]
+
+@[csimp] theorem propsRefids_eq_fast : @propsRefids = @propsRefidsFast := by
+  funext l; exact propsRefids_eq_flatMap l
+
+def nodesRefidsFast (l : List FrNode) : List String := l.flatMap (fun n => propsRefids n.props)
+
+theorem nodesRefids_eq_flatMap : ∀ l : List FrNode,
+    nodesRefids l = l.flatMap (fun n => propsRefids n.props)
+  | [] => rfl
+  | n :: tl => by simp [nodesRefids, nodesRefids_eq_flatMap tl]
+
+@[csimp] theorem nodesRefids_eq_fast : @nodesRefids = @nodesRefidsFast := by
+  funext l; exact nodesRefids_eq_flatMap l
+
+def mapsRefidsFast (l : List (List FrNode)) : List String := l.flatMap nodesRefids
+
+theorem mapsRefids_eq_flatMap : ∀ l : List (List FrNode), mapsRefids l = l.flatMap nodesRefids
+  | [] => rfl
+  | m :: tl => by simp [mapsRefids, mapsRefids_eq_flatMap tl]
+
+@[csimp] theorem mapsRefids_eq_fast : @mapsRefids = @mapsRefidsFast := by
+  funext l; exact mapsRefids_eq_flatMap l
+
+#guard ovsRefidsFast [.ref "a", .val .null, .ref "b", .lst [.ref "c"]] == ["a", "b"]
+#guard ovsRefidsFast [.val .null] == []
+#guard propsRefidsFast [("p", [.ref "a"]), ("q", [.ref "b", .ref "a"])] == ["a", "b", "a"]
 
 def referencedOnce (refids : List String) (id : String) : Bool :=
   (refids.filter (fun y => y == id)).length == 1
@@ -468,6 +631,93 @@ def resolveOv (g : List FrNode) (refids : List String) (clMode : Bool)
 
 end
 
+/-! ### Run-time form of the list conversion
+
+`listFrom` conses each element onto the result of its recursive call: one native
+frame for each cell of an `rdf:first`/`rdf:rest` chain (issue 853). `listFromW`
+collects the elements in a reversed accumulator and `resolveOvW` calls it;
+otherwise the two functions are `listFrom` and `resolveOv` line for line.
+`listFromW_eq` proves them equal at every fuel (induction on the fuel, both
+functions at once), and `resolveOv_eq_fast` makes the compiler emit `resolveOvW`
+for the calls outside the block. -/
+
+mutual
+
+def listFromW (g : List FrNode) (refids : List String) (clMode : Bool)
+    (acc : List Ov) : String → Nat → List Ov
+  | _,  0        => acc.reverse
+  | id, fuel + 1 =>
+    match findNode g id with
+    | none   => acc.reverse
+    | some n =>
+      match nodePropSingle n rdfFirstIri, nodePropSingle n rdfRestIri with
+      | some fv, some (.ref rt) =>
+        let elem := resolveOvW g refids clMode fv fuel
+        if rt == rdfNilIri then (elem :: acc).reverse
+        else listFromW g refids clMode (elem :: acc) rt fuel
+      | _, _ => acc.reverse
+
+def resolveOvW (g : List FrNode) (refids : List String) (clMode : Bool)
+    : Ov → Nat → Ov
+  | v, 0        => v
+  | v, fuel + 1 =>
+    match v with
+    | .ref x =>
+      if x == rdfNilIri then .lst []
+      else if isCollapsible g refids x (fuel + 1) then
+        .lst (listFromW g refids clMode [] x fuel)
+      else if clMode && isClCollapsible g refids x then
+        match findNode g x with
+        | some n => match clValueObject n with
+                    | some j => .val j
+                    | none   => .ref x
+        | none   => .ref x
+      else .ref x
+    | .val j  => .val j
+    | .lst l  => .lst l
+
+end
+
+theorem listFromW_eq (g : List FrNode) (refids : List String) (clMode : Bool) :
+    ∀ fuel : Nat,
+      (∀ acc id, listFromW g refids clMode acc id fuel =
+                   acc.reverse ++ listFrom g refids clMode id fuel) ∧
+      (∀ v, resolveOvW g refids clMode v fuel = resolveOv g refids clMode v fuel)
+  | 0 => ⟨fun acc id => by simp [listFromW, listFrom], fun v => by simp [resolveOvW, resolveOv]⟩
+  | fuel + 1 => by
+    obtain ⟨ihL, ihR⟩ := listFromW_eq g refids clMode fuel
+    refine ⟨fun acc id => ?_, fun v => ?_⟩
+    · simp only [listFromW, listFrom]
+      split
+      · simp
+      · split
+        · rename_i fv rt _ _
+          simp only [ihR]
+          split
+          · simp
+          · rw [ihL]; simp
+        · simp
+    · simp only [resolveOvW, resolveOv]
+      split
+      · rename_i x
+        simp only [ihL, List.reverse_nil, List.nil_append]
+      · rfl
+      · rfl
+
+def resolveOvFast (g : List FrNode) (refids : List String) (clMode : Bool) (v : Ov) (fuel : Nat) : Ov :=
+  resolveOvW g refids clMode v fuel
+
+@[csimp] theorem resolveOv_eq_fast : @resolveOv = @resolveOvFast := by
+  funext g refids clMode v fuel; exact ((listFromW_eq g refids clMode fuel).2 v).symm
+
+def listFromFast (g : List FrNode) (refids : List String) (clMode : Bool) (id : String)
+    (fuel : Nat) : List Ov :=
+  listFromW g refids clMode [] id fuel
+
+@[csimp] theorem listFrom_eq_fast : @listFrom = @listFromFast := by
+  funext g refids clMode id fuel
+  simp [listFromFast, (listFromW_eq g refids clMode fuel).1]
+
 def rewriteNode (g : List FrNode) (refids : List String) (clMode : Bool) (fuel : Nat)
     (n : FrNode) : FrNode :=
   { n with props := n.props.map (fun pv =>
@@ -487,6 +737,55 @@ def ovListToJson : List Ov → List Json
   | v :: tl => ovToJson v :: ovListToJson tl
 
 end
+
+/-! ### Run-time form of the JSON emission of a value
+
+`ovListToJson` conses the head onto the result of its recursive call: one native
+frame for each element of a `@list` (issue 853). `ovListToJsonW` collects the
+elements in a reversed accumulator; the depth of the recursion is the nesting of
+the lists. `ovToJsonW_eq` proves both forms equal and `ovToJson_eq_fast` makes the
+compiler emit `ovToJsonW` for the calls outside the block. -/
+
+mutual
+
+def ovToJsonW : Ov → Json
+  | .ref id => .object [("@id", .string id)]
+  | .val j  => j
+  | .lst l  => .object [("@list", .array (ovListToJsonW [] l))]
+
+def ovListToJsonW : List Json → List Ov → List Json
+  | acc, []      => acc.reverse
+  | acc, v :: tl => ovListToJsonW (ovToJsonW v :: acc) tl
+
+end
+
+mutual
+
+theorem ovToJsonW_eq : ∀ v : Ov, ovToJsonW v = ovToJson v
+  | .ref _ => by simp [ovToJsonW, ovToJson]
+  | .val _ => by simp [ovToJsonW, ovToJson]
+  | .lst l => by simp [ovToJsonW, ovToJson, ovListToJsonW_eq [] l]
+
+theorem ovListToJsonW_eq : ∀ (acc : List Json) (l : List Ov),
+    ovListToJsonW acc l = acc.reverse ++ ovListToJson l
+  | acc, [] => by simp [ovListToJsonW, ovListToJson]
+  | acc, v :: tl => by
+    rw [ovListToJsonW, ovListToJsonW_eq (ovToJsonW v :: acc) tl, ovToJsonW_eq v]
+    simp [ovListToJson]
+
+end
+
+@[csimp] theorem ovToJson_eq_fast : @ovToJson = @ovToJsonW := by
+  funext v; exact (ovToJsonW_eq v).symm
+
+def ovListToJsonFast (l : List Ov) : List Json := ovListToJsonW [] l
+
+@[csimp] theorem ovListToJson_eq_fast : @ovListToJson = @ovListToJsonFast := by
+  funext l; simp [ovListToJsonFast, ovListToJsonW_eq]
+
+#guard ovToJsonW (.lst [.ref "a", .val (.string "x")]) ==
+  .object [("@list", .array [.object [("@id", .string "a")], .string "x"])]
+#guard ovToJsonW (.lst [.ref "a", .ref "b"]) != .object [("@list", .array [.object [("@id", .string "b")], .object [("@id", .string "a")]])]
 
 def typesField (types : List String) : List (String × Json) :=
   if types.isEmpty then [] else [("@type", .array (types.map Json.string))]
@@ -511,6 +810,52 @@ def insertSortedNode (n : FrNode) : List FrNode → List FrNode
 def sortNodes : List FrNode → List FrNode
   | []      => []
   | h :: tl => insertSortedNode h (sortNodes tl)
+
+/-! ### Run-time form of the node sort
+
+`insertSortedNode` rebuilds the nodes in front of the place of the new node after
+its recursive call returns, and `sortNodes` inserts the head after its recursive
+call returns: two native frames for each node (one node map of 20,000 subjects
+overflowed a stack of 512 KB in `insertSortedNode`, issue 853). `insertSortedNodeGo`
+walks with a reversed accumulator, and `sortNodesFast` inserts from the end of the
+list with a left fold, which is what `sortNodes` does from the inside out. The
+order of the result is the same (`sortNodes_eq_fast`); the time is still quadratic
+in the number of nodes (https://github.com/danbri/factoidal/issues/712). -/
+
+def insertSortedNodeGo (n : FrNode) : List FrNode → List FrNode → List FrNode
+  | acc, []      => acc.reverseAux [n]
+  | acc, h :: tl =>
+    if strLt n.id h.id then acc.reverseAux (n :: h :: tl) else insertSortedNodeGo n (h :: acc) tl
+
+theorem insertSortedNodeGo_eq (n : FrNode) : ∀ (acc l : List FrNode),
+    insertSortedNodeGo n acc l = acc.reverse ++ insertSortedNode n l
+  | acc, [] => by simp [insertSortedNodeGo, insertSortedNode, List.reverseAux_eq]
+  | acc, h :: tl => by
+    unfold insertSortedNodeGo insertSortedNode
+    by_cases hh : strLt n.id h.id = true
+    · simp [hh, List.reverseAux_eq]
+    · simp [hh, insertSortedNodeGo_eq n (h :: acc) tl]
+
+def insertSortedNodeFast (n : FrNode) (l : List FrNode) : List FrNode := insertSortedNodeGo n [] l
+
+@[csimp] theorem insertSortedNode_eq_fast : @insertSortedNode = @insertSortedNodeFast := by
+  funext n l; simp [insertSortedNodeFast, insertSortedNodeGo_eq]
+
+def sortNodesFast (l : List FrNode) : List FrNode :=
+  l.reverse.foldl (fun acc h => insertSortedNode h acc) []
+
+theorem sortNodes_eq_foldr : ∀ l : List FrNode, sortNodes l = l.foldr insertSortedNode []
+  | [] => rfl
+  | h :: tl => by simp [sortNodes, sortNodes_eq_foldr tl]
+
+@[csimp] theorem sortNodes_eq_fast : @sortNodes = @sortNodesFast := by
+  funext l; simp [sortNodesFast, sortNodes_eq_foldr, List.foldl_reverse]
+
+private def nodeN (id : String) : FrNode := { id := id, blank := false, types := [], props := [] }
+#guard (sortNodesFast [nodeN "c", nodeN "a", nodeN "b"]).map (·.id) == ["a", "b", "c"]
+#guard (sortNodesFast [nodeN "c", nodeN "a", nodeN "b"]).map (·.id) ==
+  (sortNodes [nodeN "c", nodeN "a", nodeN "b"]).map (·.id)
+#guard (sortNodesFast [nodeN "b", nodeN "a"]).map (·.id) != ["b", "a"]
 
 /-! ## Per-graph node emission -/
 

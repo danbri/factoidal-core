@@ -2300,6 +2300,131 @@ The commit before this change is the RDF/XML scope repair of section 3c.7.
 - `tests/known-defects/run.sh` (Lean CLI of this build): 23 XFAIL, 0 XPASS, 0
   ERROR before; 24 XFAIL, 0 XPASS, 0 ERROR after.
 
+### 3i. The RDF/XML writer's time and the JSON-LD stack (2026-10-18)
+
+Issues: https://github.com/danbri/factoidal/issues/845 (the RDF/XML writer is
+quadratic), https://github.com/danbri/factoidal/issues/853 (the JSON-LD writer's
+native stack grows with the elements) and
+https://github.com/danbri/factoidal/issues/844 (the JSON-LD reader's native stack
+grows with the elements). Owner goal of 2026-10-12, verbatim: "OKRs addresses
+successfully especially perf and scaling should approach SOTA".
+
+**Method.** Time: `l4source-convert multi.nt out --from nquads --to rdfxml` on the
+datasets of `tests/sbm11/syntax/gen_multi.py` (8 triples for each subject); the
+`write-ms` field the tool prints. Stack: `l4factoidal parse` under
+`LEAN_STACK_SIZE_KB=512` with `LEAN_MAIN_USE_THREAD` unset (the knob of
+`tests/stack/run.sh`); for each overflow, `gdb` stopped at the SIGSEGV of the guard
+page and the 400 innermost frames were counted by function name. Base: e185eb00.
+
+**RDF/XML writer, before and after** (`write-ms`, same machine, same files):
+
+| subjects | triples | before | after |
+| ---: | ---: | ---: | ---: |
+| 2,000 | 16,000 | 731 | 91 |
+| 4,000 | 32,000 | 2,581 | 224 |
+| 8,000 | 64,000 | 10,488 | 440 |
+| 16,000 | 128,000 | 39,746 | 952 |
+| 32,000 | 256,000 | 202,201 | 1,796 |
+
+Cause: `graphToRdfXml` kept the subjects found so far in a list (`acc.contains`,
+`acc ++ [k]`) and read the whole graph once for each subject (`g.filter`). Repair:
+`subjectGroups` (the subjects in the order of their first triple, each with its
+triples in graph order) is the specification, written as the old code computed it;
+`subjectGroupsFast` reads the graph once with a hash map from subject key to that
+subject's triples (reversed) and the keys in reverse order of first use.
+`subjectGroups_eq_fast` (`@[csimp]`) is proved from the invariant `GroupInv`
+(`groupInv_step`, `groupInv_foldl`, `mem_subjectOrder`). The output bytes are the
+same: `cmp` on the five datasets above, and a differential of the old and the new
+`l4source-convert` on 720 W3C files (every `.rdf` of the RDF 1.1 and RDF 1.2
+RDF/XML suites, every RDF 1.1 Turtle `.ttl` and N-Triples `.nt`) re-serialised as
+RDF/XML: 720 identical (458 written, 262 refused or not parsed, with the same
+text), 0 different.
+
+**JSON-LD reader, the frames found** (512 KB stack, before):
+
+| shape | elements | before | frames at the overflow | after |
+| --- | ---: | --- | --- | --- |
+| one node, n references | 100,000 | overflow | `Json.sizeItems` | runs, 0.64 s |
+| one node, n properties | 100,000 | overflow | `Json.sizeFields` | runs, 0.85 s |
+| n node objects (hub) | 100,000 | overflow | `Json.sizeItems` | runs, 3.74 s |
+| n `@graph` objects | 100,000 | overflow | `Json.sizeItems` | runs, 2.16 s |
+| one node, n blank node objects | 100,000 | overflow | `Json.sizeItems` | runs, 1.05 s |
+| one `@list` of n strings | 5,000 | overflow | `expandList` | runs at 100,000, 0.74 s |
+
+`datasetOfJson` takes its fuel from `Json.size root`, and `sizeItems` added the
+size of the rest of the list after its recursive call. `sizeAcc` adds into an
+accumulator (`sizeAcc_eq : sizeAcc j n = n + size j`; `size_eq_sizeFast`,
+`sizeItems_eq_fast`, `sizeFields_eq_fast`, all `@[csimp]`). `expandList` allocated
+the cell of the first item, converted the rest, and prepended the first cell's
+triples on the way back. `expandListGo` converts the items left to right, keeps the
+cells in `pend`, and `listCells` prepends their triples last cell first, which is
+the order of the returns of `expandList`. A `csimp` theorem cannot replace a call
+inside its own `mutual` block, so the nine functions of the walk are twinned (`W`)
+and `expandW_eq` proves all nine equal to the specification at every fuel; every
+member of the specification block has a `csimp` theorem, so no compiled code calls
+into it (checked with `tools/lean-csimp-reach.py`). Documents with an `@context` go
+through `JSONLD.Expand` first, whose frames are tracked by
+https://github.com/danbri/factoidal/issues/753; this landing does not change them.
+
+**JSON-LD writer, the frames found** (512 KB stack, `parse FILE.nt --out jsonld`):
+
+| shape | elements | before | frames | after |
+| --- | ---: | --- | --- | --- |
+| one subject, n IRI objects | 20,000 | overflow | `snocUniqueOv` | runs, 8.5 s |
+| one subject, n predicates | 20,000 | overflow | `propAdd` | runs, 3.0 s; 100,000 run in 77 s |
+| n subjects | 20,000 | overflow | `insertSortedNode` | runs, 7.3 s |
+
+Each repaired function has a loop form and a `@[csimp]` equality in
+`JSONLD/FromRdf.lean`: `snocUniqueStr`, `snocUniqueOv`, `propAdd` (a reversed
+accumulator and one `reverseAux`), `ovsRefids`, `propsRefids`, `nodesRefids`,
+`mapsRefids` (`filterMap` and `flatMap`), `insertSortedNode` and `sortNodes` (a left
+fold from the end), `ovToJson`/`ovListToJson` and `listFrom`/`resolveOv` (twinned
+blocks with an accumulator, proved by induction), `buildNamed`. The JCS writer in
+`JSONLD/ToRdf.lean`: `jcsInsertSorted`, `jcsSortFields`, and the block
+`jcsSerialize`/`jcsSerializeItems`/`jcsSerializeFields`, which now appends each
+piece to an accumulator string (`jcsSerW_eq`). The writer's time is still quadratic
+in the number of nodes and values: the node map is a list and each triple searches
+it (https://github.com/danbri/factoidal/issues/712; rows `jsonld-write` and
+`jsonld-write-*-stack` are expected failures of the time bound only). An
+`rdf:first`/`rdf:rest` chain of 5,000 cells did not finish in 60 s before or after
+(`isCollapsible` walks the chain from every cell, each step a list search; issue
+712), so the `listFrom` repair is shown by its theorem and by the W3C suites, not by
+a large run.
+
+**Outputs.** A differential of the old and the new `l4factoidal` on 911 W3C JSON-LD
+files (every toRdf and expand `-in.jsonld` read to N-Quads, every fromRdf `-in.nq`
+written as JSON-LD): 911 identical (715 exit 0), 0 different. The scoreboard rows
+are the same numbers before and after (runner logs identical apart from the times):
+JSON-LD toRdf 467 pass, 0 fail (out of 467); expand 385 pass, 0 fail (out of 385);
+compact 245 pass, 0 fail, 1 other (out of 246); flatten 58 pass, 0 fail (out of 58);
+fromRdf 53 pass, 0 fail, 1 other (out of 54); html 50 pass, 0 fail (out of 50);
+framing 91 pass, 0 fail, 1 other (out of 92); RDF 1.1 RDF/XML probe 132, 41 and 132
+pass, 0 fail; RDF 1.1 RDF/XML (l4w3c) 166 pass, 0 fail (out of 166); RDF 1.2 RDF/XML
+eval 31 pass, 0 fail (out of 31).
+
+**Gates added.** `tests/stack/lean_scaling.py`: the row `rdfxml-write` is an
+assertion (it was an expected failure for issue 845), and seven rows run at n, 2n
+and 4n under a 512 KB stack (`STACK_ROWS`): every run must exit 0, and the time must
+stay within 4.5 times (2n) and 9 times (4n) of the time at n. The three writer rows
+are expected failures of the time bound (issue 712); an overflow is a failure also
+for them. `tests/stack/run.sh`: cases `jsonld-read-fanout` (100,000 references),
+`jsonld-read-list` (100,000 items) and `jsonld-write-fanout` (20,000 references),
+each checking the count in the answer. The known-defects rows `JLD-STACK` and
+`JLD-WSTACK` are removed.
+
+**Gates (2026-10-18, this change).** Full `lake build` exit 0 (1,726 jobs);
+`tools/lean-unbuilt-modules.py --gate`: 795 modules, 0 not reached;
+`tools/lean-tail-recursion-audit.py --gate` (stale IR removed first) passes: the 31
+lines of the replaced specifications left the allow list and the 19 loop forms are
+listed with `(b)`, each checked in the emitted C (`goto _start`, no self-call, one
+call into the nested value); `tools/lean-csimp-reach.py --gate`: 0 new findings;
+`tools/lean-hygiene-audit.py --build-log`: clean (163 `partial def`, the baseline);
+`tests/stack/lean_scaling.sh`: 67 pass, 0 fail, 11 expected-fail (out of 78);
+`tests/stack/run.sh --canary` with the rebuilt wasm module: 173 pass, 0 fail (out of
+173), and the three new cases abort with "Stack overflow" under 512 KB on the build
+before this change; `npm test` in `npm/factoidal`: 443 pass, 0 fail, 1 skipped (out of
+444).
+
 ## 4. Rules that follow
 
 1. A new fast path is added beside the reference parser with a theorem or,

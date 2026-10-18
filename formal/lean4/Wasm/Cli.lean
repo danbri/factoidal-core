@@ -757,8 +757,9 @@ writer decides the text.
   serialiser layer, `Sink.serializeDataset` (`L4Factoidal/RDF/Sink.lean`), the
   function `l4source-convert` calls. For JSON-LD it calls `FromRdf.fromRdf`
   (`Sink.jsonLdWriter`), the function `l4sbm11 export --format jsonld` calls; the
-  row `JLD-WSTACK` of `tests/known-defects/run.sh` measures its stack use through
-  this verb.
+  row `jsonld-write-fanout-stack` of `tests/stack/lean_scaling.py` measures its
+  stack use through this verb (the known-defects row `JLD-WSTACK` did until the
+  repair of issue 853, 2026-10-18).
 
 N-Triples, Turtle and RDF/XML have no place for the name of a graph. The batch
 writer of the serialiser layer writes the triples of the default graph and of all
