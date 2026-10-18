@@ -1058,14 +1058,18 @@ private def closureSample : Option Dataset :=
 #guard closureSample.any fun ds => match closureViaStream ds "rdfs" with
   | .ok t => (t.splitOn "<http://e/x> <http://e/p> <http://e/z> .").length == 1
   | .error _ => false
--- The error path: a dataset that the RDF 1.1 round trip refuses (a triple
--- term) gives the envelope's error text.
+-- A triple term: until 2026-10-18 the ops read RDF 1.1 and this dataset was
+-- the error path (both texts the same error). The ops now read and write
+-- RDF 1.2 (https://github.com/danbri/factoidal/issues/873): the stream and
+-- the envelope give the same text, for every regime, and it holds the triple.
 private def closureTripleTerm : Option Dataset :=
   (Ops.parseTextToDataset "<http://e/a> <http://e/p> <<( <http://e/s> <http://e/p> <http://e/o> )>> ."
     "ntriples12" "").toOption
-#guard closureTripleTerm.any fun ds =>
-  sameOutput (closureViaStream ds "owl-rl") (closureViaEnvelope ds "owl-rl") &&
-  (closureViaStream ds "owl-rl" matches .error _)
+#guard closureTripleTerm.any fun ds => ["owl-rl", "rdfs", "rho-df", "rdfs-plus"].all fun r =>
+  sameOutput (closureViaStream ds r) (closureViaEnvelope ds r) &&
+  (match closureViaStream ds r with
+   | .ok t => (t.splitOn "<http://e/a> <http://e/p> <<( <http://e/s> <http://e/p> <http://e/o> )>> .").length == 2
+   | .error _ => false)
 
 def closureCmd (args : List String) : IO UInt32 := do
   match scanArgs ["--format", "--base", "--regime"] [] args with

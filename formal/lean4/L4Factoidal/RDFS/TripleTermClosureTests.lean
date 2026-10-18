@@ -3,7 +3,7 @@ L4Factoidal.RDFS.TripleTermClosureTests — the RDFS and OWL 2 RL closures on
 graphs that hold RDF 1.2 triple terms
 (https://github.com/danbri/factoidal/issues/873).
 
-RDF 1.2 Semantics §5 ("Simple Interpretations"): a triple term denotes a
+RDF 1.2 Semantics, section "Simple Interpretations": a triple term denotes a
 proposition, and a triple term is not asserted. The entailment rules of
 RDF 1.2 Semantics §8 and §9 (and the OWL 2 RL rules of OWL 2 Profiles §4.3)
 match ASSERTED triples. A triple term is one term in the object position of
@@ -13,9 +13,16 @@ an asserted triple; no rule reads the triple inside it. So:
 * it derives nothing from the triple inside a triple term: from
   `ex:a ex:says <<( ex:s rdf:type ex:C )>>` and `ex:C rdfs:subClassOf ex:D`
   it does not derive `ex:s rdf:type ex:D` (nor `ex:s rdf:type ex:C`);
-* it does not rewrite inside a triple term: `ex:s owl:sameAs ex:t` does not
-  give `ex:a ex:says <<( ex:t rdf:type ex:C )>>` (W3C rdf12 rdf-semantics
-  test `opaque-iri`, `superman_undesired_entailment.ttl`);
+* the OWL 2 RL closure applies the rule table of OWL 2 Profiles §4.3, whose
+  eq-rep-o replaces a whole object term; it does not substitute inside a
+  triple term. RDF 1.2 Semantics makes the IRIs inside a triple term
+  transparent, so `ex:s owl:sameAs ex:t` does entail
+  `ex:a ex:says <<( ex:t rdf:type ex:C )>>` (W3C rdf12 rdf-semantics test
+  `opaque-iri`, which the manifest lists but leaves out of its entries, "relies
+  on non-standard entailment regime"). `RDF.regimeEntails .rdfsPlus` decides
+  that case (`RDF/EntailmentTests.lean`); the closure op does not derive it,
+  an expected failure in `npm/factoidal/test/rdf12-terms.test.js`
+  (https://github.com/danbri/factoidal/issues/873);
 * the derivations from asserted triples stay (`ex:x rdf:type ex:D`).
 
 Each fixture checks a triple the rules must derive AND triples they must not
@@ -79,11 +86,7 @@ private def closures : List Graph :=
 -- Not derived: no new triple term made from the inside of a triple term.
 #guard closures.all (fun c => !c.any (fun u =>
   u.o == .tripleTerm (.iri s) rdfType (.iri D)))
--- Not derived: OWL 2 RL eq-rep-o replaces the whole object term; it does
--- not rewrite the subject inside a triple term (`opaque-iri`).
-#guard !Graph.mem (saysType (.iri t)) (OWL.RL.closureFix g)
--- Derived: eq-rep-s applies to the asserted subject `ex:s` of no triple
--- here, but sameAs symmetry (eq-sym) does apply.
+-- Derived: OWL 2 RL eq-sym on the asserted `owl:sameAs`.
 #guard Graph.mem (tr t sameAs s) (OWL.RL.closureFix g)
 
 end L4Factoidal.RDFS.TripleTermClosureTests

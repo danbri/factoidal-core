@@ -2,8 +2,8 @@
 L4Factoidal.RDF.Rdf11Terms — which terms of a dataset are outside RDF 1.1.
 
 RDF 1.2 Concepts adds two kinds of term to the RDF 1.1 abstract syntax: the
-triple term (RDF 1.2 Concepts §3.6, "Triple Terms") and the directional
-language-tagged string (§3.4, "Literals", the base direction). An operation
+triple term (RDF 1.2 Concepts, section "Triple Terms") and the directional
+language-tagged string (section "Literals", the base direction). An operation
 whose specification is stated on RDF 1.1 datasets only, and which has no rule
 for these terms, uses `Dataset.isRdf11` to refuse such input with a message
 that names the missing rule, instead of a parse error at an unrelated offset
