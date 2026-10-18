@@ -56,21 +56,21 @@ for (const [name, run, key] of CLOSURES) {
   });
 }
 
+// `eng.call` throws the error text of an {ok:false} envelope.
 test('canonicalizeToNQuads refuses a triple term with the RDFC-1.0 rule named', async () => {
-  const r = (await engine()).call('canonicalizeToNQuads', [TT_BNODE]);
-  assert.equal(r.ok, false);
-  assert.match(r.error, /RDFC-1\.0/);
-  assert.match(r.error, /issues\/873/);
+  const eng = await engine();
+  assert.throws(() => eng.call('canonicalizeToNQuads', [TT_BNODE]), /RDFC-1\.0.*issues\/873/);
+  // An RDF 1.1 dataset is canonicalised as before.
+  const r = eng.call('canonicalizeToNQuads', [`_:x <${X}p> <${X}o> .\n`]);
+  assert.equal(r.ok, true);
+  assert.ok(r.nquads.includes('_:c14n0'));
 });
 
 test('owlIsConsistent and owlEntails refuse a triple term with the rule named', async () => {
   const eng = await engine();
-  const c = eng.call('owlIsConsistent', [DATA, '']);
-  assert.equal(c.ok, false);
-  assert.match(c.error, /OWL 2 Mapping to RDF Graphs/);
-  const e = eng.call('owlEntails', [DATA, `<${X}x> <${RDF_TYPE}> <${X}D> .\n`, '']);
-  assert.equal(e.ok, false);
-  assert.match(e.error, /OWL 2 Mapping to RDF Graphs/);
+  assert.throws(() => eng.call('owlIsConsistent', [DATA, '']), /OWL 2 Mapping to RDF Graphs.*issues\/873/);
+  assert.throws(() => eng.call('owlEntails', [DATA, `<${X}x> <${RDF_TYPE}> <${X}D> .\n`, '']),
+    /OWL 2 Mapping to RDF Graphs.*issues\/873/);
 });
 
 xfail('canonicalizeToNQuads gives canonical labels to blank nodes inside a triple term', ISSUE, async () => {
