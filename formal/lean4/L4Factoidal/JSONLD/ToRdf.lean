@@ -64,6 +64,7 @@ import L4Factoidal.RDF.Core
 import L4Factoidal.RDF.Graph
 import L4Factoidal.RDF.Canonical
 import L4Factoidal.JSONLD.Expand
+import Std.Data.HashSet
 
 namespace L4Factoidal.JSONLD
 
@@ -347,8 +348,160 @@ def jcsInsertSortedFast (kv : String × Json) (l : List (String × Json)) : List
 @[csimp] theorem jcsInsertSorted_eq_fast : @jcsInsertSorted = @jcsInsertSortedFast := by
   funext kv l; simp [jcsInsertSortedFast, jcsInsertSortedGo_eq]
 
+/-! ### Insertion sort by a string key equals `List.mergeSort` on distinct keys
+
+The insertion sorts of this file and of `JSONLD.FromRdf` (`jcsSortFields`,
+`sortNodes`) take time quadratic in the number of members
+(https://github.com/danbri/factoidal/issues/712: one object of 20,000 members took
+1.6 s to sort, 80,000 took 9.4 s). On a list whose keys are distinct, an
+insertion sort that puts a new element after the smaller keys is
+`List.mergeSort` with the order `≤` on the keys (`foldr_insByKey_eq_mergeSort`).
+`keysDistinct` tests the condition in one pass with a hash set; on a list with a
+repeated key the insertion sort stays (`mergeSort` would order the equal keys
+differently). -/
+
+def insByKey {α : Type} (key : α → String) (x : α) : List α → List α
+  | []      => [x]
+  | h :: tl => if strLt (key x) (key h) then x :: h :: tl else h :: insByKey key x tl
+
+/-- `insByKey` with the elements passed in a reversed accumulator: a loop (the
+insertion sort is still the run-time sort of a list with a repeated key). -/
+def insByKeyGo {α : Type} (key : α → String) (x : α) : List α → List α → List α
+  | acc, []      => acc.reverseAux [x]
+  | acc, h :: tl =>
+    if strLt (key x) (key h) then acc.reverseAux (x :: h :: tl) else insByKeyGo key x (h :: acc) tl
+
+theorem insByKeyGo_eq {α : Type} (key : α → String) (x : α) : ∀ (acc l : List α),
+    insByKeyGo key x acc l = acc.reverse ++ insByKey key x l
+  | acc, [] => by simp [insByKeyGo, insByKey, List.reverseAux_eq]
+  | acc, h :: tl => by
+    unfold insByKeyGo insByKey
+    by_cases hh : strLt (key x) (key h) = true
+    · simp [hh, List.reverseAux_eq]
+    · simp [hh, insByKeyGo_eq key x (h :: acc) tl]
+
+def insByKeyFast {α : Type} (key : α → String) (x : α) (l : List α) : List α := insByKeyGo key x [] l
+
+@[csimp] theorem insByKey_eq_fast : @insByKey = @insByKeyFast := by
+  funext α key x l; simp [insByKeyFast, insByKeyGo_eq]
+
+def leByKey {α : Type} (key : α → String) (a b : α) : Bool := !strLt (key b) (key a)
+
+theorem strLt_iff_lt (a b : String) : strLt a b = true ↔ a < b := by
+  rw [strLt_eq_strLtFast_apply]; simp [strLtFast]
+
+theorem leByKey_iff {α : Type} (key : α → String) (a b : α) :
+    leByKey key a b = true ↔ key a ≤ key b := by
+  unfold leByKey
+  have hs := strLt_iff_lt (key b) (key a)
+  cases h : strLt (key b) (key a)
+  · simp only [Bool.not_false, true_iff]
+    exact String.not_lt.1 (fun hl => by rw [hs.2 hl] at h; cases h)
+  · simp only [Bool.not_true, Bool.false_eq_true, false_iff]
+    intro hle; exact (String.not_lt.2 hle) (hs.1 h)
+
+theorem leByKey_trans {α : Type} (key : α → String) :
+    ∀ (a b c : α), leByKey key a b → leByKey key b c → leByKey key a c := by
+  intro a b c h1 h2
+  rw [leByKey_iff] at *
+  exact String.le_trans h1 h2
+
+theorem leByKey_total {α : Type} (key : α → String) :
+    ∀ (a b : α), (leByKey key a b || leByKey key b a) := by
+  intro a b
+  rw [Bool.or_eq_true, leByKey_iff, leByKey_iff]
+  exact String.le_total _ _
+
+theorem insByKey_split {α : Type} (key : α → String) (x : α) : ∀ (l₁ l₂ : List α),
+    (∀ b ∈ l₁, strLt (key b) (key x) = true) → (∀ b ∈ l₂, strLt (key x) (key b) = true) →
+    insByKey key x (l₁ ++ l₂) = l₁ ++ x :: l₂
+  | [], [], _, _ => rfl
+  | [], b :: t, _, h2 => by simp [insByKey, h2 b List.mem_cons_self]
+  | b :: t, l₂, h1, h2 => by
+    have hb := (strLt_iff_lt _ _).1 (h1 b List.mem_cons_self)
+    have : strLt (key x) (key b) = false := by
+      cases e : strLt (key x) (key b)
+      · rfl
+      · exact absurd ((strLt_iff_lt _ _).1 e) (String.lt_asymm hb)
+    simp only [List.cons_append, insByKey, this, Bool.false_eq_true, if_false,
+      insByKey_split key x t l₂ (fun c hc => h1 c (List.mem_cons_of_mem _ hc)) h2]
+
+theorem foldr_insByKey_eq_mergeSort {α : Type} (key : α → String) : ∀ l : List α,
+    (l.map key).Nodup → l.foldr (insByKey key) [] = l.mergeSort (leByKey key)
+  | [], _ => by simp
+  | x :: l, nd => by
+    rw [List.map_cons, List.nodup_cons] at nd
+    obtain ⟨l₁, l₂, h1, h2, h3⟩ :=
+      List.mergeSort_cons (leByKey_trans key) (leByKey_total key) x l
+    rw [List.foldr_cons, foldr_insByKey_eq_mergeSort key l nd.2, h2, h1]
+    apply insByKey_split
+    · intro b hb
+      have := h3 b hb
+      simpa [leByKey] using this
+    · intro b hb
+      have hs := List.pairwise_mergeSort (leByKey_trans key) (leByKey_total key) (x :: l)
+      rw [h1, List.pairwise_append] at hs
+      have hxb : leByKey key x b = true := (List.pairwise_cons.1 hs.2.1).1 b hb
+      have hbl : b ∈ l := by
+        rw [← List.mem_mergeSort (le := leByKey key), h2]; exact List.mem_append_right _ hb
+      have hne : key x ≠ key b := fun e => nd.1 (e ▸ List.mem_map_of_mem hbl)
+      rw [strLt_iff_lt]
+      rw [leByKey_iff] at hxb
+      by_cases hlt : key x < key b
+      · exact hlt
+      · exact absurd (String.le_antisymm hxb (String.not_lt.1 hlt)) hne
+
+def keysDistinctGo {α : Type} (key : α → String) (seen : Std.HashSet String) : List α → Bool
+  | []      => true
+  | x :: tl => if seen.contains (key x) then false else keysDistinctGo key (seen.insert (key x)) tl
+
+theorem keysDistinctGo_spec {α : Type} (key : α → String) : ∀ (l : List α) (seen : Std.HashSet String),
+    keysDistinctGo key seen l = true → (l.map key).Nodup ∧ ∀ x ∈ l, seen.contains (key x) = false
+  | [], _, _ => by simp
+  | x :: tl, seen, h => by
+    unfold keysDistinctGo at h
+    by_cases hc : seen.contains (key x) = true
+    · simp [hc] at h
+    · simp only [hc, Bool.false_eq_true, if_false] at h
+      obtain ⟨nd, hs⟩ := keysDistinctGo_spec key tl _ h
+      refine ⟨?_, ?_⟩
+      · rw [List.map_cons, List.nodup_cons]
+        refine ⟨?_, nd⟩
+        intro m
+        obtain ⟨c, hc', e⟩ := List.mem_map.1 m
+        have := hs c hc'
+        rw [Std.HashSet.contains_insert, e] at this
+        simp at this
+      · intro c hc'
+        cases List.mem_cons.1 hc' with
+        | inl e => subst e; simpa using hc
+        | inr m =>
+          have := hs c m
+          rw [Std.HashSet.contains_insert] at this
+          simp only [Bool.or_eq_false_iff] at this
+          exact this.2
+
+/-- An insertion sort by `key`, run as `List.mergeSort` when the keys are distinct. -/
+def sortByKeyFast {α : Type} (key : α → String) (l : List α) : List α :=
+  if keysDistinctGo key ∅ l then l.mergeSort (leByKey key)
+  else l.reverse.foldl (fun acc x => insByKey key x acc) []
+
+theorem foldr_insByKey_eq_fast {α : Type} (key : α → String) (l : List α) :
+    l.foldr (insByKey key) [] = sortByKeyFast key l := by
+  unfold sortByKeyFast
+  split
+  · rename_i h
+    exact foldr_insByKey_eq_mergeSort key l (keysDistinctGo_spec key l ∅ h).1
+  · simp [List.foldl_reverse]
+
+theorem jcsInsertSorted_eq_insByKey (kv : String × Json) : ∀ l : List (String × Json),
+    jcsInsertSorted kv l = insByKey Prod.fst kv l
+  | [] => rfl
+  | (k2, v2) :: rest => by
+    simp only [jcsInsertSorted, insByKey, jcsInsertSorted_eq_insByKey kv rest]
+
 def jcsSortFieldsFast (l : List (String × Json)) : List (String × Json) :=
-  l.reverse.foldl (fun acc kv => jcsInsertSorted kv acc) []
+  sortByKeyFast Prod.fst l
 
 theorem jcsSortFields_eq_foldr : ∀ l : List (String × Json),
     jcsSortFields l = l.foldr jcsInsertSorted []
@@ -356,7 +509,17 @@ theorem jcsSortFields_eq_foldr : ∀ l : List (String × Json),
   | kv :: tl => by simp [jcsSortFields, jcsSortFields_eq_foldr tl]
 
 @[csimp] theorem jcsSortFields_eq_fast : @jcsSortFields = @jcsSortFieldsFast := by
-  funext l; simp [jcsSortFieldsFast, jcsSortFields_eq_foldr, List.foldl_reverse]
+  funext l
+  rw [jcsSortFields_eq_foldr, jcsSortFieldsFast, ← foldr_insByKey_eq_fast]
+  congr 1
+  funext kv acc
+  exact jcsInsertSorted_eq_insByKey kv acc
+
+#guard jcsSortFieldsFast [("b", .null), ("a", .null), ("c", .null)] ==
+  [("a", .null), ("b", .null), ("c", .null)]
+#guard jcsSortFieldsFast [("b", .null), ("a", .bool true), ("a", .bool false)] ==
+  jcsSortFields [("b", .null), ("a", .bool true), ("a", .bool false)]
+#guard jcsSortFieldsFast [("b", .null), ("a", .null)] != [("b", .null), ("a", .null)]
 
 mutual
 

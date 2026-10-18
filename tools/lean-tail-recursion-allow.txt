@@ -1438,6 +1438,9 @@ L4Factoidal_JSONLD_expandPropertyRW  # (b) loop over the values of one property;
 L4Factoidal_JSONLD_expandGraphNodesW  # (b) loop over the nodes of one @graph or @included array; one call into expandNodeRW for each
 L4Factoidal_JSONLD_FromRdf_listFromW  # (b) loop over the cells of one rdf:first/rdf:rest chain (reversed accumulator); one call into resolveOvW for each first value, which re-enters only for a nested list
 L4Factoidal_JSONLD_FromRdf_resolveOvW  # (b) nesting of RDF collections whose first values are collections
+L4Factoidal_JSONLD_FromRdf_listFromG  # (b) loop over the cells of one rdf:first/rdf:rest chain (reversed accumulator); one call into resolveOvG for each first value, which re-enters only for a nested list (issue 712)
+L4Factoidal_JSONLD_FromRdf_resolveOvG  # (b) nesting of RDF collections whose first values are collections (issue 712)
+L4Factoidal_JSONLD_FromRdf_lenS  # (s) specification only: the chain length of collS_eq_lenS and collF_eq; the executed path is memoC (walkC, backC, loops) and collF (issue 712)
 L4Factoidal_JSONLD_FromRdf_ovToJsonW  # (b) nesting of @list values
 L4Factoidal_JSONLD_FromRdf_ovListToJsonW  # (b) loop over the elements of one @list (reversed accumulator); one call into ovToJsonW for each
 L4Factoidal_RDF_IsoRefine_termHash  # (b) nesting of RDF 1.2 triple terms in one term (issue 868)

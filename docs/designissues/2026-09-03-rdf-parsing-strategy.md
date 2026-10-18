@@ -2425,6 +2425,111 @@ call into the nested value); `tools/lean-csimp-reach.py --gate`: 0 new findings;
 before this change; `npm test` in `npm/factoidal`: 443 pass, 0 fail, 1 skipped (out of
 444).
 
+### 3j. The JSON-LD writer's time (2026-10-18)
+
+Issue: https://github.com/danbri/factoidal/issues/712 (the Lean JSON-LD writer,
+`fromRdf`, is quadratic). It continues 3i, which made the writer's stack flat and
+left its time quadratic.
+
+**Method.** `l4factoidal parse FILE.nt --format ntriples --out jsonld`, total wall
+time, at n = 5,000, 10,000 and 20,000 (more where shown) for four shapes: one
+subject with n IRI objects, one subject with n predicates, n subjects with one
+triple each, and one subject whose object is an RDF collection of n cells.
+`valgrind --tool=callgrind` on the 5,000 and 20,000 inputs named the functions.
+Base: a345c583.
+
+**Before and after** (seconds; the machine was shared, so the small times carry
+about 0.05 s of noise):
+
+| shape | n | before | after |
+| --- | ---: | ---: | ---: |
+| one subject, n objects | 5,000 / 10,000 / 20,000 | 0.45 / 1.76 / 8.42 | 0.05 / 0.09 / 0.15 |
+| one subject, n predicates | 5,000 / 10,000 / 20,000 | 0.14 / 0.48 / 3.11 | 0.04 / 0.10 / 0.28 |
+| n subjects | 5,000 / 10,000 / 20,000 | 0.29 / 1.07 / 6.69 | 0.04 / 0.07 / 0.16 |
+| a collection of n cells | 500 / 1,000 / 2,000 | 0.65 / 4.70 / 31.8 | under 0.05 |
+| a collection of n cells | 5,000 / 10,000 / 20,000 | over 120 (timeout) | 0.07 / 0.12 / 0.35 |
+| one subject, n predicates | 80,000 | not run | 0.70 |
+| a collection of n cells | 80,000 | not run | 2.6 |
+
+The row `jsonld-write` of `lean_scaling.py` (gen_multi.py, 2,000 and 8,000
+subjects): 0.75 s and 17.1 s before (2026-10-14), 0.15 s and 0.71 s after.
+
+**What the profile showed, and the repair.** All in `JSONLD/FromRdf.lean` except
+the last item, which is in `JSONLD/ToRdf.lean`. Every readable definition stays;
+each fast form is proved equal to it, and a `@[csimp]` theorem makes the compiler
+use the fast form.
+
+  * The node map was a `List FrNode`: `ensureNode` and `nodeUpdateProp` read the
+    whole list for every triple, `snocUniqueOv` read every value of the property
+    for every value, `propAdd` every property. `NmF` keeps the ids in order of
+    first use and a hash map from id to `NodeF`; a `NodeF` keeps its types and its
+    values in arrays, each with a hash set, and its property names in an array
+    with a hash map. `NmF.abs` is the list the old code builds, and
+    `buildNodemap_eq_fast` proves `buildNodemap opts [] ts` equal to the hash-map
+    build (`processTripleF_spec`, `NmF.ensure_spec`, `NmF.updProp_spec`,
+    `NmF.updType_spec`, `NodeF.addProp_spec`, from the invariants `NmF.Good` and
+    `NodeF.Good`). The first fast form still took 8.7 s for one subject with
+    20,000 objects: `upd` and `addProp` read the entry from the map and inserted
+    the changed copy, so the array was shared and `Array.push` copied it each time
+    (`lean_copy_expand_array`, 37 % of the instructions). The entry is now erased
+    before it is changed (`ei_getElem?`, `ei_getD`, `ei_contains` carry the
+    proofs over).
+  * `referencedOnce` filtered the whole reference list for every test:
+    `countMap` counts once (`referencedOnce_eq_countMap`).
+  * `findNode`, `isGraphName` and `lookupGraphMap` read a list: `firstMap` keeps
+    the first element of each key (`findNode_eq_firstMap`,
+    `isGraphName_eq_firstMap`).
+  * `isCollapsible` walked the `rdf:rest` chain from every cell, each step a list
+    search: cubic for a collection. `stepC` is one step and `collS` the walk
+    (`isCollapsible_eq_collS`); `lenS` is the length of the chain within a fuel
+    (`collS_eq_lenS`, `lenS_trunc`). `memoC` walks each chain once (`walkC`, with
+    the cells passed in an accumulator) and writes the lengths back (`backC`);
+    `collF` answers from that table (`collF_eq`, from `walkC_spec`, `backC_spec`,
+    `memoC_inv`). A cycle of list cells is still walked `graphFuel` steps from
+    each of its cells, as the readable definition does.
+  * `addGraphNames` called `ensureNode` for each graph: a hash set of the ids
+    (`addGraphNames_eq_fast`).
+  * `sortNodes` and the JCS member sort `jcsSortFields` were insertion sorts. On
+    distinct keys an insertion sort that puts a new element after the smaller keys
+    is `List.mergeSort` on `≤` (`foldr_insByKey_eq_mergeSort`, from Lean's
+    `mergeSort_cons` and `pairwise_mergeSort`); `keysDistinctGo` checks the
+    condition in one pass; a list with a repeated key keeps the insertion sort
+    (`sortByKeyFast`, `sortNodes_eq_sortM`, `jcsSortFields_eq_fast`). One object
+    of 20,000 members spent 93 % of its instructions in `jcsInsertSortedGo`.
+
+`emitDefaultNodes_eq_fast` puts these together for the emission, and the two fast
+blocks are placed before `buildNamed` and before `fromRdf`, so that the code of
+every caller is compiled after the theorems (`tools/lean-csimp-reach.py --gate`:
+0 new findings).
+
+**Outputs.** A differential of the old and the new `l4factoidal` (bytes and exit
+code): every W3C fromRdf `-in.nq` written as JSON-LD, every W3C toRdf `-in.jsonld`
+read and written as JSON-LD, and the generated inputs above (the collection at
+500, 1,000 and 2,000 cells, where the old binary finishes): 534 identical (437
+exit 0), 0 different. The JSON-LD scoreboard rows are the same before and after:
+toRdf 467 pass, 0 fail (out of 467); expand 385 pass, 0 fail (out of 385); compact
+245 pass, 0 fail, 1 other (out of 246); flatten 58 pass, 0 fail (out of 58);
+fromRdf 53 pass, 0 fail, 1 other (out of 54); html 50 pass, 0 fail (out of 50);
+framing 91 pass, 0 fail, 1 other (out of 92).
+
+**Gates added.** `tests/stack/lean_scaling.py`: the rows `jsonld-write`,
+`jsonld-write-fanout-stack`, `jsonld-write-wide-stack` and
+`jsonld-write-subjects-stack` are assertions (they were expected failures for issue
+712), and the row `jsonld-write-collection-stack` (a collection of 5,000, 10,000
+and 20,000 cells under a 512 KB stack) is new.
+
+**Gates (2026-10-18, this change).** Full `lake build` exit 0 (1,729 jobs);
+`tools/lean-unbuilt-modules.py --gate`: 797 modules, 0 not reached;
+`tools/lean-tail-recursion-audit.py --gate` (stale IR removed first) passes, with
+three new allow-list lines (`listFromG` and `resolveOvG` `(b)`, as their `W`
+twins; `lenS` `(s)`, a specification nothing at run time calls);
+`tools/lean-csimp-reach.py --gate`: 0 new findings; `tools/lean-hygiene-audit.py
+--build-log`: clean (163 `partial def`, the baseline; no `sorry`, axiom,
+`native_decide`, `unsafe` or `implemented_by`); `tests/stack/lean_scaling.sh`: 72
+pass, 0 fail, 7 expected-fail (out of 79); `tests/stack/run.sh --canary` with the
+rebuilt wasm module: 173 pass, 0 fail (out of 173); `npm test` in `npm/factoidal`:
+443 pass, 0 fail, 2 skipped (out of 445).
+
 ## 4. Rules that follow
 
 1. A new fast path is added beside the reference parser with a theorem or,
