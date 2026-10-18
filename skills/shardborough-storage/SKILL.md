@@ -1334,10 +1334,14 @@ Until 2026-10-15 the entry of phase 1 was a file path and a byte range
 producers of RDF quads, and a file is one producer.
 
 - **The producer.** `L4Factoidal/RDF/QuadSource.lean`: `QuadSource` has one field,
-  `next : IO (Option Batch)`. A batch is an array of quads, each a `Triple` and an
-  `Option Subject` (`none` is the default graph). `next` gives the next batch and,
-  at the end, `none` (again at every later call). A batch is never empty. When a call
-  throws, every later call throws. The module imports no syntax module and names none
+  `next : IO (Option Batch)`. A batch has two arrays: `quads`, each a `Triple` and an
+  `Option Subject` (`none` is the default graph), and `graphs`, the names of the named
+  graphs that the source declares, with or without a triple (RDF 1.1 Concepts section
+  4: a named graph can be empty; 2026-10-15,
+  https://github.com/danbri/factoidal/issues/855). A consumer takes the union: the
+  named graphs are the declared names and the graph names of the quads. `next` gives
+  the next batch and, at the end, `none` (again at every later call). A batch is never
+  empty: it has a quad or a graph name. When a call throws, every later call throws. The module imports no syntax module and names none
   (`tests/sbm11/storage_layering.py` checks both). `QuadSource.ofStep` makes a producer
   from a state and an `IO` step; `ofPull` does the same from a pure step.
   `QuadSource.ofDataset ds batch` and `QuadSource.ofArray quads batch` are the producers
@@ -1353,13 +1357,13 @@ producers of RDF quads, and a file is one producer.
 
 | Producer | Code | Use |
 | --- | --- | --- |
-| a byte range of a file, in one of the six syntaxes | `fileRangeSource` (`Sbm11PackLib.lean`); `chooseFormat` and `readCfg` choose the syntax, `packQuads` names none | `l4sbm11-pack FILE OUT`: one producer for each byte range of N-Triples and N-Quads, one for any other syntax |
-| an RDF `Dataset` in memory | `QuadSource.ofDataset` | `packQuads #[QuadSource.ofDataset ds 4096] ...`; `l4sbm11-pack FILE OUT --via-dataset` reads the whole document into a `Dataset` first |
-| an array of quads | `QuadSource.ofArray` | cut an array into slices to use K workers |
-| an HDT file | `GraphStore.quadSource` (`L4Factoidal/HDT/QuadSource.lean`) | `l4sbm11-pack FILE.hdt OUT`, or `--format hdt` |
+| a byte range of a file, in one of the six syntaxes | `fileRangeSource` (`Sbm11PackLib.lean`); `chooseFormat` and `readCfg` choose the syntax, `packQuads` names none; the source layer declares each TriG graph block (also `<g> { }`) and each named graph of a JSON-LD document (`Source.Decl`, `feedD`, `finishD`) | `l4sbm11-pack FILE OUT`: one producer for each byte range of N-Triples and N-Quads, one for any other syntax |
+| an RDF `Dataset` in memory | `QuadSource.ofDataset`: declares every named graph of `Dataset.named` (`QuadSourceTheorems.ofDataset_graphs`) | `packQuads #[QuadSource.ofDataset ds 4096] ...`; `l4sbm11-pack FILE OUT --via-dataset` reads the whole document into a `Dataset` first |
+| an array of quads | `QuadSource.ofArray`: declares no graph | cut an array into slices to use K workers |
+| an HDT file | `GraphStore.quadSource` (`L4Factoidal/HDT/QuadSource.lean`): declares no graph | `l4sbm11-pack FILE.hdt OUT`, or `--format hdt` |
 
-- **What the output depends on.** The generation is a function of the set of quads and of
-  `sourceId`. It does not depend on the number of producers, on how the quads are divided
+- **What the output depends on.** The generation is a function of the set of quads, the
+  set of declared graph names and `sourceId`. It does not depend on the number of producers, on how the quads are divided
   among them, on the size of their batches, on the size of the term map, or on the order of
   the quads. `l4sbm11-quad-source selftest` packs each of seven datasets ten ways and compares
   every file of the other nine packs with the first; `--via-dataset` is byte-identical to the file route on

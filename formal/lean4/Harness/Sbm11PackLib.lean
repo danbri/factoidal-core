@@ -216,24 +216,27 @@ def openRangeReader {α : Type} (cfg : ReadCfg) (source : String) (init : α) :
   | .error m => throw (IO.userError s!"{source}: {m}")
 
 /-- Read the next 64 KiB of bytes `[start, stop)` of the source, from `pos`, and
-    give them to the reader. Returns the reader and the position after the chunk. -/
+    give them to the reader. Returns the reader and the position after the chunk.
+    `decl` gets the named graphs the chunk declares (a TriG graph block). -/
 def feedChunk {α : Type} (source : String) (start stop : Nat) (step : Source.Step α)
-    (rd : Source.ByteReader α) (pos : Nat) : IO (Source.ByteReader α × Nat) := do
+    (rd : Source.ByteReader α) (pos : Nat) (decl : Source.Decl α := Source.noDecl) :
+    IO (Source.ByteReader α × Nat) := do
   let len := min 65536 (stop - pos)
   let bytes ← pread source pos len
   let pos := pos + len
-  match rd.feed step bytes with
+  match rd.feedD step decl bytes with
   | .error f => throw (IO.userError (failureText source start pos f))
   | .ok next => pure (next, pos)
 
 /-- The end of the range: the unfinished statement is read, and the accumulator is
-    returned. -/
+    returned. A whole reader (RDF/XML, JSON-LD) declares the named graphs of its
+    dataset here. -/
 def finishRange {α : Type} (source : String) (start pos : Nat) (step : Source.Step α)
-    (rd : Source.ByteReader α) : IO α :=
+    (rd : Source.ByteReader α) (decl : Source.Decl α := Source.noDecl) : IO α :=
   match rd.endBytes with
   | .error f => throw (IO.userError (failureText source start pos f))
   | .ok reader =>
-    match reader.finish step with
+    match reader.finishD step decl with
     | .error e => throw (IO.userError (failureText source start pos (.parse e)))
     | .ok acc => pure acc
 
@@ -257,7 +260,12 @@ def streamRange {α : Type} (cfg : ReadCfg) (source : String) (start stop : Nat)
   onFeed acc
 
 /-- The quad consumer of `fileRangeSource`: the reader's accumulator is the batch. -/
-def pushQuad : Source.Step QuadSource.Batch := fun batch t g => batch.push (t, g)
+def pushQuad : Source.Step QuadSource.Batch := fun batch t g => batch.pushQuad (t, g)
+
+/-- The declaration consumer of `fileRangeSource`: a named graph that the document
+    declares goes into the batch, empty or not (a TriG graph block, a named graph of
+    a JSON-LD document). -/
+def pushGraph : Source.Decl QuadSource.Batch := fun batch g => batch.pushGraph g
 
 /-- Where a `fileRangeSource` is: the reader, with the quads of the chunks read
     since the last batch in its accumulator, and the position of the next chunk. -/
@@ -269,10 +277,11 @@ structure RangePos where
     64 KiB chunks in the syntax `cfg` names: this is the file producer of the packer.
     Each call of `next` reads chunks
     until they complete a statement, and gives the quads of the statements the chunks
-    completed. The end of the range gives the quads of the last statement. A parse
-    error is an exception of `next` (`failureText`: the position is in the file). -/
+    completed, and the named graphs they declared. The end of the range gives the
+    quads of the last statement. A parse error is an exception of `next`
+    (`failureText`: the position is in the file). -/
 def fileRangeSource (cfg : ReadCfg) (source : String) (start stop : Nat) : IO QuadSource := do
-  let reader ← openRangeReader cfg source (#[] : QuadSource.Batch)
+  let reader ← openRangeReader cfg source ({} : QuadSource.Batch)
   QuadSource.ofStep (some (⟨reader, start⟩ : RangePos)) fun st => do
     match st with
     | none => pure none
@@ -281,13 +290,13 @@ def fileRangeSource (cfg : ReadCfg) (source : String) (start stop : Nat) : IO Qu
       let mut pos := pos
       for _ in [0:(stop - start) / 65536 + 2] do
         if pos ≥ stop then break
-        let (next, pos') ← feedChunk source start stop pushQuad rd pos
+        let (next, pos') ← feedChunk source start stop pushQuad rd pos pushGraph
         pos := pos'
         -- take the quads out of the reader and leave an empty batch in it
-        let (next, batch) := next.withAcc fun acc => (#[], acc)
+        let (next, batch) := next.withAcc fun acc => ({}, acc)
         rd := next
         if !batch.isEmpty then return some (batch, some ⟨rd, pos⟩)
-      let last ← finishRange source start pos pushQuad rd
+      let last ← finishRange source start pos pushQuad rd pushGraph
       pure (if last.isEmpty then none else some (last, none))
 
 def lineStartFrom (source : String) (size b : Nat) : IO Nat := do
@@ -322,6 +331,11 @@ structure Batch where
   quadRun : String
   terms : Nat
   quads : Nat
+  /-- the run of the named graphs the batch's producers declared (8 bytes each, the
+      run-local number of the name), and their number; `""` and 0 when they declared
+      none -/
+  graphRun : String := ""
+  graphs : Nat := 0
   deriving Inhabited
 
 structure WorkerOut where
@@ -343,10 +357,14 @@ structure Phase1Sink where
 
 /-- Open the phase-1 worker `w`: give each distinct non-inline term a batch-local
     number, and spill a term run and a quad run whenever the map is full. The worker
-    knows RDF terms, triples and graph names only. -/
+    knows RDF terms, triples and graph names only. A declared named graph (a batch's
+    `graphs`) is a term of the dictionary, also when no quad has it, and its
+    number goes to the graph run of the batch, which phase 3a adds to the graph
+    list. -/
 def openPhase1 (outDir : String) (w runTerms : Nat) : IO Phase1Sink := do
   let idsRef ← IO.mkRef (({} : Std.HashMap Term Nat))
   let quadsRef ← IO.mkRef ((Array.mkEmpty 65536 : Array Nat))
+  let graphsRef ← IO.mkRef (#[] : Array Nat)
   let outRef ← IO.mkRef ({} : WorkerOut)
   let slotOf (t0 : Term) : IO Nat := do
     let t := normalizeTerm t0
@@ -367,7 +385,8 @@ def openPhase1 (outDir : String) (w runTerms : Nat) : IO Phase1Sink := do
   let spill : IO Unit := do
     let ids ← idsRef.swap {}
     let quads ← quadsRef.swap #[]
-    if quads.isEmpty && ids.isEmpty then return
+    let declared ← graphsRef.swap #[]
+    if quads.isEmpty && ids.isEmpty && declared.isEmpty then return
     let mut pairs : Array (ByteArray × Nat) := Array.mkEmpty ids.size
     for (t, n) in ids do
       match termKeyBytes? t with
@@ -390,7 +409,16 @@ def openPhase1 (outDir : String) (w runTerms : Nat) : IO Phase1Sink := do
       let v' := if v ≥ 1 && v < localLimit then rankOf[v - 1]! + 1 else v
       qb := pushW qb v'.toUInt64
     IO.FS.writeBinFile quadRun qb
-    outRef.set { o with batches := o.batches.push { termRun, quadRun, terms := sorted.size, quads := quads.size / 4 },
+    -- the declared named graphs: run-local numbers, as in the quad run
+    let graphRun := if declared.isEmpty then "" else s!"{outDir}/graphs-{w}-{j}.tmp"
+    if !declared.isEmpty then
+      let mut gb := ByteArray.emptyWithCapacity (declared.size * 8)
+      for v in declared do
+        let v' := if v ≥ 1 && v < localLimit then rankOf[v - 1]! + 1 else v
+        gb := pushW gb v'.toUInt64
+      IO.FS.writeBinFile graphRun gb
+    outRef.set { o with batches := o.batches.push { termRun, quadRun, terms := sorted.size, quads := quads.size / 4,
+                                                     graphRun, graphs := declared.size },
                         quads := o.quads + quads.size / 4 }
   let full : IO Bool := do
     let nIds := (← idsRef.get).size
@@ -400,8 +428,11 @@ def openPhase1 (outDir : String) (w runTerms : Nat) : IO Phase1Sink := do
      document syntaxes (RDF/XML, JSON-LD) and a `Dataset` give all their quads
      in a few batches, so the batch limits are also tested inside the loop. -/
   let onBatch (batch : QuadSource.Batch) : IO Unit := do
+    for gn in batch.graphs do
+      let gs ← slotOf gn.toTerm
+      graphsRef.modify (·.push gs)
     let mut k := 0
-    for (tr, g) in batch do
+    for (tr, g) in batch.quads do
       let s ← slotOf tr.s.toTerm
       let p ← slotOf (.iri tr.p)
       let o ← slotOf tr.o
@@ -708,6 +739,24 @@ def phase3a (outDir : String) (batches : Array Batch) (sortRowsMax : Nat) : IO P
       if bufs[0]!.size ≥ sortRowsMax then
         runs ← spillPerms outDir bufs runs
         bufs := #[#[], #[], #[], #[]]
+      if gids.size ≥ sortRowsMax then
+        graphRuns ← spillGraphIds outDir gids graphRuns
+        gids := #[]
+        lastG := 0
+    -- the named graphs the batch's producers declared, empty or not
+    if b.graphs > 0 then
+      let gb ← IO.FS.readBinFile b.graphRun
+      for k in [0:b.graphs] do
+        let v := wordAt gb (8 * k)
+        let g ← if v ≥ 1 && v.toNat < localLimit then
+            match remap[v.toNat - 1]? with
+            | some x => pure x
+            | none => throw (IO.userError s!"{b.graphRun}: local number {v} not in the remap")
+          else pure v
+        if g != 0 && g != lastG then
+          gids := gids.push g
+          lastG := g
+      IO.FS.removeFile b.graphRun
       if gids.size ≥ sortRowsMax then
         graphRuns ← spillGraphIds outDir gids graphRuns
         gids := #[]
@@ -1081,7 +1130,9 @@ def runPhase2Only (source outDir : String) (workers runTerms : Nat) (opts : Sour
   let (terms, pages, records) ← phase2 outDir batches
   let c2 ← threadCpuNs
   let t2 ← IO.monoNanosNow
-  for b in batches do IO.FS.removeFile b.quadRun
+  for b in batches do
+    IO.FS.removeFile b.quadRun
+    if b.graphs > 0 then IO.FS.removeFile b.graphRun
   let cpu := match c1, c2 with
     | some a, some b => s!" phase2-cpu-ms={ms a b}"
     | _, _ => ""

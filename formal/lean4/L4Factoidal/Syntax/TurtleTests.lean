@@ -457,8 +457,12 @@ def trigShape (s : String) (base : Option String := none) : Nat × Nat × Nat :=
 -- [6g] the last statement of a block may omit its `.`.
 #guard trigShape "@prefix p: <http://a/> . { p:s p:p p:o }" == (1, 0, 0)
 #guard trigShape "@prefix p: <http://a/> . { p:s p:p p:o1 . p:s p:p p:o2 }" == (2, 0, 0)
--- An empty block is legal and contributes nothing.
-#guard trigShape "@prefix p: <http://a/> . p:g { }" == (0, 0, 0)
+-- An empty block is legal and states a named graph with no triple (RDF 1.1
+-- Concepts section 4: a named graph can be empty; until 2026-10-15 the block was
+-- dropped, https://github.com/danbri/factoidal/issues/855).
+#guard trigShape "@prefix p: <http://a/> . p:g { }" == (0, 1, 0)
+#guard trigShape "@prefix p: <http://a/> . GRAPH p:g { } p:g { p:s p:p p:o . }" == (0, 1, 1)
+#guard trigShape "@prefix p: <http://a/> . _:g { } [] { }" == (0, 2, 0)
 -- A directive inside a block, and a nested GRAPH, are syntax errors.
 #guard trigRejects "@prefix p: <http://a/> . { @prefix q: <http://b/> . p:s p:p p:o . }"
 #guard trigRejects "@prefix p: <http://a/> . { GRAPH p:g { p:s p:p p:o . } }"

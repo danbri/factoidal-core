@@ -26,6 +26,11 @@ held `{` opens a graph block (`closeInput`). Without these rules every TriG 1.2
 document with an annotation block was cut at the wrong brace
 (https://github.com/danbri/factoidal/issues/837, item 5).
 
+A block of a named graph is handed to the step once with no triple when it
+opens (`step acc (some g) []`), so a consumer sees the graph of an empty block
+(`<g> { }`; RDF 1.1 Concepts section 4: a named graph can be empty). A consumer
+that folds the triples (`ts.foldl`) sees nothing new.
+
 Every candidate is read by the landed grammar functions, not by new ones:
 a top-level candidate by `readTriGStatement`; a header by `readLabelOrSubject`
 after the directives `readTriGStatement` also accepts; a statement inside a
@@ -245,7 +250,13 @@ def applyEvent (step : α → Option Subject → List Triple → α)
       let cs := header.toList
       match readBlockHeader (cs.length + 2) state.turtle state.pos cs with
       | .error e => .error e
-      | .ok (g, turtle) => .ok { state with turtle, block := some g }
+      | .ok (g, turtle) =>
+          -- a block of a named graph declares the graph, also when it holds no triple
+          -- (`<g> { }`): the step gets the graph with no triple (`Source.trigStep`)
+          let acc := match g with
+            | some _ => step state.acc g []
+            | none => state.acc
+          .ok { state with turtle, acc, block := some g }
   | .blockClose rest =>
       match state.block with
       | none => .error ⟨"unexpected '}' outside a graph block", state.pos⟩
@@ -377,5 +388,39 @@ private def walkAgrees12 (d : String) : Bool :=
   want.isSome && (List.range (d.length + 1)).all (fun cut => walkCount12 d cut == want)
 
 #guard walkDocs12.all walkAgrees12
+
+/-! The graph names a walk sees, at every cut, are the named graphs of `parseTriG`,
+in the same order: an empty graph block declares its graph (RDF 1.1 Concepts
+section 4; https://github.com/danbri/factoidal/issues/855). -/
+
+private def walkNames (d : String) (cut : Nat) : Option (List Subject) :=
+  let cs := d.toList
+  let step := fun (acc : List Subject) (g : Option Subject) (_ : List Triple) =>
+    match g with
+    | some n => if acc.contains n then acc else n :: acc
+    | none => acc
+  let chunks := [String.ofList (cs.take cut), String.ofList (cs.drop cut)]
+  let initial : Except ParseError (TriGChunkFoldState (List Subject)) :=
+    .ok (TriGChunkFoldState.init (freshBnodePrefix d) [] none .rdf11)
+  match chunks.foldl (fun r chunk => match r with
+      | .error e => .error e
+      | .ok st => st.feed step chunk) initial with
+  | .error _ => none
+  | .ok st => (st.finish step).toOption.map List.reverse
+
+private def namesAgree (d : String) : Bool :=
+  let want := (parseTriG d none .rdf11).toOption.map fun ds => ds.named.map (·.name)
+  want.isSome && (List.range (d.length + 1)).all (fun cut => walkNames d cut == want)
+
+private def emptyBlockDocs : List String :=
+  [ "<http://e/g> { }",
+    "{ } <http://e/g> { } GRAPH _:b { <http://e/a> <http://e/p> <http://e/b> }",
+    "@prefix e: <http://e/> . e:g { } e:h { e:a e:p e:b } e:g { e:c e:p e:d } GRAPH e:k { }",
+    "@prefix e: <http://e/> . [] { } e:a e:p e:b ." ]
+
+#guard emptyBlockDocs.all namesAgree
+-- an empty block is a named graph with no triple in the dataset
+#guard (parseTriG "<http://e/g> { }" none .rdf11).toOption.map (fun ds => (ds.named.length, quadCount ds)) == some (1, 0)
+#guard (parseTriG "{ }" none .rdf11).toOption.map (fun ds => ds.named.length) == some 0
 
 end L4Factoidal.Syntax

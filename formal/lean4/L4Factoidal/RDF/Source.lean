@@ -143,6 +143,19 @@ abbrev Step (α : Type) := α → Triple → Option Subject → α
     it. -/
 def collect : Step (List Triple) := fun acc t _ => t :: acc
 
+/-- The consumer of the named graphs a document declares: the name of a named
+    graph that the document states, with or without a triple (RDF 1.1 Concepts
+    section 4: a named graph can be empty). A TriG graph block declares its graph,
+    and a JSON-LD document declares each named graph of its dataset. N-Triples,
+    Turtle and RDF/XML have no named graph, and an N-Quads line states the graph
+    of its quad, so these declare none (2026-10-15,
+    https://github.com/danbri/factoidal/issues/855). -/
+abbrev Decl (α : Type) := α → Subject → α
+
+/-- The consumer that ignores the declarations. The readers without the `D`
+    suffix use it, so a consumer of quads only sees what it saw before. -/
+def noDecl {α : Type} : Decl α := fun a _ => a
+
 /-- A parser of one whole document. -/
 abbrev DocParser := Mode → Option String → String → Except ParseError Dataset
 
@@ -195,6 +208,15 @@ def foldDataset {α : Type} (step : Step α) (acc : α) (ds : Dataset) : α :=
   ds.named.foldl (fun a ng => ng.graph.foldl (fun a t => step a t (some ng.name)) a)
     (ds.default.foldl (fun a t => step a t none) acc)
 
+/-- `foldDataset` that also declares each named graph, before its triples: an
+    empty named graph reaches the consumer. -/
+def foldDatasetD {α : Type} (step : Step α) (decl : Decl α) (acc : α) (ds : Dataset) : α :=
+  ds.named.foldl (fun a ng => ng.graph.foldl (fun a t => step a t (some ng.name)) (decl a ng.name))
+    (ds.default.foldl (fun a t => step a t none) acc)
+
+@[simp] theorem foldDatasetD_noDecl {α : Type} (step : Step α) (acc : α) :
+    foldDatasetD step noDecl acc = foldDataset step acc := rfl
+
 /-! ## The chunk meaning -/
 
 /-- The Turtle chunk fold hands over the triples a statement completed. -/
@@ -202,9 +224,18 @@ def turtleStep {α : Type} (step : Step α) (acc : α) (ts : List Triple) : α :
   ts.foldl (fun a t => step a t none) acc
 
 /-- The TriG chunk fold hands over the triples a unit completed, with the
-    graph the unit belongs to. -/
+    graph the unit belongs to; a graph block of a named graph is handed over once
+    with no triple when it opens (`TriGChunkFold.applyEvent`), which is its
+    declaration. -/
+def trigStepD {α : Type} (step : Step α) (decl : Decl α) (acc : α) (g : Option Subject)
+    (ts : List Triple) : α :=
+  match g, ts with
+  | some n, [] => decl acc n
+  | _, _ => ts.foldl (fun a t => step a t g) acc
+
+/-- `trigStepD` without declarations. -/
 def trigStep {α : Type} (step : Step α) (acc : α) (g : Option Subject) (ts : List Triple) : α :=
-  ts.foldl (fun a t => step a t g) acc
+  trigStepD step noDecl acc g ts
 
 /-- A reader of one document, generic in the consumer's accumulator `α`.
 
@@ -239,25 +270,35 @@ def Reader.init {α : Type} (extra : Extra) (fmt : RdfFormat) (mode : Mode)
       | none => .error "JSON-LD is not available in this build"
 
 /-- Feed one decoded chunk. The consumer sees every quad of every statement
-    the chunk completes. A parse error is returned at once. -/
-def Reader.feed {α : Type} (step : Step α) : Reader α → String → Except ParseError (Reader α)
+    the chunk completes, and `decl` every named graph the chunk declares (a TriG
+    graph block). A parse error is returned at once. -/
+def Reader.feedD {α : Type} (step : Step α) (decl : Decl α) : Reader α → String → Except ParseError (Reader α)
   | .nquads mode s, text =>
       (StrictFeed.LineFeed.feed (quadReader mode) step s text.toList).map (.nquads mode)
   | .ntriples mode s, text =>
       (StrictFeed.LineFeed.feed (tripleReader mode) step s text.toList).map (.ntriples mode)
   | .turtle f, text => (f.feed (turtleStep step) text).map .turtle
-  | .trig f, text => (f.feed (trigStep step) text).map .trig
+  | .trig f, text => (f.feed (trigStepD step decl) text).map .trig
   | .whole parse mode base acc bufRev, text => .ok (.whole parse mode base acc (text :: bufRev))
 
+/-- `feedD` without declarations. -/
+def Reader.feed {α : Type} (step : Step α) (r : Reader α) (text : String) : Except ParseError (Reader α) :=
+  r.feedD step noDecl text
+
 /-- End of the document: the unfinished statement is read, and a `whole`
-    reader parses the joined chunks. -/
-def Reader.finish {α : Type} (step : Step α) : Reader α → Except ParseError α
+    reader parses the joined chunks and declares each named graph of the
+    dataset. -/
+def Reader.finishD {α : Type} (step : Step α) (decl : Decl α) : Reader α → Except ParseError α
   | .nquads mode s => StrictFeed.LineFeed.finish (quadReader mode) step s
   | .ntriples mode s => StrictFeed.LineFeed.finish (tripleReader mode) step s
   | .turtle f => f.finish (turtleStep step)
-  | .trig f => f.finish (trigStep step)
+  | .trig f => f.finish (trigStepD step decl)
   | .whole parse mode base acc bufRev =>
-      (parse mode base (String.join bufRev.reverse)).map (foldDataset step acc)
+      (parse mode base (String.join bufRev.reverse)).map (foldDatasetD step decl acc)
+
+/-- `finishD` without declarations. -/
+def Reader.finish {α : Type} (step : Step α) (r : Reader α) : Except ParseError α :=
+  r.finishD step noDecl
 
 /-- The accumulator now. -/
 def Reader.acc {α : Type} : Reader α → α
@@ -299,6 +340,13 @@ def Reader.readAll {α : Type} (step : Step α) (r : Reader α) (chunks : List S
   | .error e => .error e
   | .ok r => r.finish step
 
+/-- `readAll` with the declarations. -/
+def Reader.readAllD {α : Type} (step : Step α) (decl : Decl α) (r : Reader α) (chunks : List String) :
+    Except ParseError α :=
+  match chunks.foldlM (fun r c => r.feedD step decl c) r with
+  | .error e => .error e
+  | .ok r => r.finishD step decl
+
 /-! ## From bytes -/
 
 /-- Why a read stopped. -/
@@ -320,14 +368,19 @@ def ByteReader.init {α : Type} (extra : Extra) (fmt : RdfFormat) (mode : Mode)
     (base : Option String) (bnodePrefix : String) (acc : α) : Except String (ByteReader α) :=
   (Reader.init extra fmt mode base bnodePrefix acc).map fun reader => ⟨Utf8Stream.init, reader⟩
 
-def ByteReader.feed {α : Type} (step : Step α) : ByteReader α → ByteArray → Except Failure (ByteReader α)
+def ByteReader.feedD {α : Type} (step : Step α) (decl : Decl α) :
+    ByteReader α → ByteArray → Except Failure (ByteReader α)
   | ⟨utf8, reader⟩, bytes =>
       match utf8.feed bytes with
       | .error m => .error (.utf8 m)
       | .ok (text, utf8) =>
-          match reader.feed step text with
+          match reader.feedD step decl text with
           | .error e => .error (.parse e)
           | .ok reader => .ok ⟨utf8, reader⟩
+
+def ByteReader.feed {α : Type} (step : Step α) (r : ByteReader α) (bytes : ByteArray) :
+    Except Failure (ByteReader α) :=
+  r.feedD step noDecl bytes
 
 /-- The end of the bytes: a partial code point is an error. The reader is
     returned, not finished, so that a caller can check the source digest
@@ -337,10 +390,13 @@ def ByteReader.endBytes {α : Type} (r : ByteReader α) : Except Failure (Reader
   | .error m => .error (.utf8 m)
   | .ok _ => .ok r.reader
 
-def ByteReader.finish {α : Type} (step : Step α) (r : ByteReader α) : Except Failure α :=
+def ByteReader.finishD {α : Type} (step : Step α) (decl : Decl α) (r : ByteReader α) : Except Failure α :=
   match r.endBytes with
   | .error f => .error f
-  | .ok reader => (reader.finish step).mapError .parse
+  | .ok reader => (reader.finishD step decl).mapError .parse
+
+def ByteReader.finish {α : Type} (step : Step α) (r : ByteReader α) : Except Failure α :=
+  r.finishD step noDecl
 
 /-- `Reader.withAcc`, through the byte layer. -/
 def ByteReader.withAcc {α β : Type} (f : α → α × β) : ByteReader α → ByteReader α × β
@@ -460,6 +516,28 @@ private def xmlDoc : String :=
 #guard (match Reader.init ({} : Extra) .jsonld .rdf11 none "" (0 : Nat) with
         | .error m => m == "JSON-LD is not available in this build"
         | .ok _ => false)
+
+-- The declared named graphs: each graph block of a TriG document, empty or not, at
+-- every cut, in the order of `parseDocument`'s named graphs; none for N-Quads, whose
+-- named graphs are the graphs of its quads.
+private def declCut (fmt : RdfFormat) (doc : String) (cut : Nat) : Option (List Subject) :=
+  let cs := doc.toList
+  let chunks := [String.ofList (cs.take cut), String.ofList (cs.drop cut)]
+  match Reader.init ({} : Extra) fmt .rdf11 none (freshBnodePrefix doc) ([] : List Subject) with
+  | .error _ => none
+  | .ok r =>
+      match r.readAllD (fun a _ _ => a) (fun a n => if a.contains n then a else n :: a) chunks with
+      | .ok names => some names.reverse
+      | .error _ => none
+
+private def trigEmptyDoc : String :=
+  "@prefix e: <http://e/> .\ne:g0 { }\n{ e:a e:p e:b }\ne:g1 { e:c e:p e:d }\nGRAPH _:b { }\n[] { }\n"
+
+#guard (List.range (trigEmptyDoc.length + 1)).all fun cut =>
+  declCut .trig trigEmptyDoc cut ==
+    (parseDocument {} .trig .rdf11 none trigEmptyDoc).toOption.map fun ds => ds.named.map (·.name)
+#guard (parseDocument {} .trig .rdf11 none trigEmptyDoc).toOption.map (fun ds => ds.named.length) == some 4
+#guard (List.range (nqDoc.length + 1)).all fun cut => declCut .nquads nqDoc cut == some []
 
 -- Generated labels never equal a written one: the explicit label that a
 -- prefix of one underscore less would mint is a different node.

@@ -195,6 +195,77 @@ theorem addQuadFast_toDataset {ds : FastDataset} (t : Triple) (gopt : Option Sub
             simp only [Std.HashMap.getD_insert, hbn, Bool.false_eq_true, if_false]
           · simp [Std.HashMap.getD_insert_self, FastGraph.add, FastGraph.toGraph]
 
+/-- `ensureNamedFast` keeps the invariant. -/
+theorem FastDataset.ensure_inv {ds : FastDataset} (name : Subject) (h : ds.Inv) :
+    (ensureNamedFast ds name).Inv := by
+  obtain ⟨hd, hnames, hgraphs⟩ := h
+  simp only [ensureNamedFast]
+  cases hlk : ds.named[name]? with
+  | some g =>
+      rw [if_pos (by rw [Std.HashMap.contains_eq_isSome_getElem?, hlk]; rfl)]
+      exact ⟨hd, hnames, hgraphs⟩
+  | none =>
+      rw [if_neg (by rw [Std.HashMap.contains_eq_isSome_getElem?, hlk]; simp)]
+      refine ⟨hd, ?_, ?_⟩
+      · intro n
+        simp only [Std.HashMap.getElem?_insert]
+        by_cases hb : (name == n) = true
+        · have hb' : name = n := eq_of_beq hb
+          subst hb'
+          simp
+        · simp only [Bool.not_eq_true] at hb
+          simp only [hb, Bool.false_eq_true, if_false, List.mem_cons]
+          constructor
+          · intro hi
+            exact Or.inr ((hnames n).mp hi)
+          · intro hi
+            rcases hi with hi | hi
+            · rw [hi] at hb; simp at hb
+            · exact (hnames n).mpr hi
+      · intro n g' hg'
+        simp only [Std.HashMap.getElem?_insert] at hg'
+        by_cases hb : (name == n) = true
+        · simp only [hb, if_pos] at hg'
+          cases hg'
+          exact FastGraph.inv_empty
+        · simp only [Bool.not_eq_true] at hb
+          simp only [hb, Bool.false_eq_true, if_false] at hg'
+          exact hgraphs n g' hg'
+
+/-- The indexed accumulator refines `ensureNamed` on the denoted dataset. -/
+theorem ensureNamedFast_toDataset {ds : FastDataset} (name : Subject) (h : ds.Inv) :
+    (ensureNamedFast ds name).toDataset = ensureNamed ds.toDataset name := by
+  obtain ⟨hd, hnames, hgraphs⟩ := h
+  simp only [ensureNamedFast]
+  cases hlk : ds.named[name]? with
+  | some g =>
+      rw [if_pos (by rw [Std.HashMap.contains_eq_isSome_getElem?, hlk]; rfl)]
+      have hmem : name ∈ ds.namesRev := (hnames name).mp (by rw [hlk]; rfl)
+      simp only [FastDataset.toDataset, ensureNamed]
+      rw [find?_map_named (fun n => (ds.named.getD n {}).toGraph) name
+            ds.namesRev.reverse (List.mem_reverse.mpr hmem)]
+  | none =>
+      rw [if_neg (by rw [Std.HashMap.contains_eq_isSome_getElem?, hlk]; simp)]
+      have hmem : name ∉ ds.namesRev := by
+        intro hc
+        have := (hnames name).mpr hc
+        rw [hlk] at this
+        simp at this
+      simp only [FastDataset.toDataset, ensureNamed]
+      rw [find?_map_named_none (fun n => (ds.named.getD n {}).toGraph) name
+            ds.namesRev.reverse (fun hc => hmem (List.mem_reverse.mp hc))]
+      simp only [List.reverse_cons, List.map_append, List.map_cons, List.map_nil]
+      congr 1
+      congr 1
+      · apply List.map_congr_left
+        intro n hn
+        have hbn : (name == n) = false := by
+          have : name ≠ n := by
+            intro hc; exact hmem (hc ▸ List.mem_reverse.mp hn)
+          simp [this]
+        simp only [Std.HashMap.getD_insert, hbn, Bool.false_eq_true, if_false]
+      · simp [Std.HashMap.getD_insert_self, FastGraph.toGraph]
+
 /-! ## Transporting a step-wise relation through the fold -/
 
 /-- Two parse outcomes agree: the same error, or accumulators in `R`. -/

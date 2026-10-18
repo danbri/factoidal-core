@@ -7,25 +7,37 @@ runs it). It is a HARNESS: it writes and reads files and prints.
   l4sbm11-quad-source selftest WORKDIR
       In process, with no document text. For every test dataset and every batch
       size: the batches of `QuadSource.ofDataset` and `QuadSource.ofArray` taken
-      together are the quads of the dataset in order (`Dataset.quadList`), each
-      batch has at least one quad and at most `max 1 batch` quads, they are the
-      batches of the pure model (`Pull.batches`, the object of the theorems in
-      `L4Factoidal/RDF/QuadSourceTheorems.lean`), and `next` gives `none` again
-      after the end. A step that throws makes every later call throw. Then each
-      dataset is packed by `packQuads` ten ways: from the dataset, from 1, 2 and 5
-      producers (an array cut into slices), with batches of 1, 3 and 4,096 quads, with
-      term maps of 7, 40 and 262,144 terms, from the quads in reverse order, and with
-      the default graph and the named graphs as two datasets. Every file of the nine
-      generations, the manifest included, is byte-identical to the file of the first.
+      together are the quads of the dataset in order (`Dataset.quadList`); the
+      graph names that `ofDataset` declares are the names of `Dataset.named`, in
+      order (`QuadSourceTheorems.ofDataset_graphs`), and an array declares none;
+      each batch has at least one quad or graph name and at most `max 1 batch` of
+      them, they are the batches of the pure model (`Pull.batches`, the object of
+      the theorems in `L4Factoidal/RDF/QuadSourceTheorems.lean`), and `next` gives
+      `none` again after the end. A step that throws makes every later call throw.
+      Then each dataset is packed by `packQuads` ten ways: from the dataset, from 1,
+      2 and 5 producers (an array cut into slices), with batches of 1, 3 and 4,096
+      quads, with term maps of 7, 40 and 262,144 terms, from the quads in reverse
+      order, and with the default graph and the named graphs as two datasets. The
+      array producers have one more producer that declares the named graphs of the
+      dataset (`namesSource`): a named graph with no triple is in no quad. Every
+      file of the nine generations, the manifest and the graph list included, is
+      byte-identical to the file of the first. A pack of the array producers
+      without the declarations differs from the first exactly when the dataset has
+      a named graph with no triple (the declarations are not without effect).
       WORKDIR holds the generations (deleted as the run goes).
       Prints "quad source selftest: N pass, M fail (out of T)".
   l4sbm11-quad-source cases
       The test datasets: name, number of quads, `rdf11` or `rdf12` (the dataset has a
       triple term or a directional literal).
+  l4sbm11-quad-source names CASE
+      The distinct names of the named graphs of the test dataset CASE, empty graphs
+      included, one term on each line (`<IRI>` or `_:label`), in the order of their
+      first named graph: what `l4sbm11 graphs` of its pack must list.
   l4sbm11-quad-source pack-dataset CASE OUTDIR [--batch B] [--producers K]
                                    [--run-terms N] [--expected FILE]
       Pack the test dataset CASE from memory into OUTDIR with `packQuads`: K
-      producers (default 1) of batches of B quads (default 4,096). With
+      producers (default 1) of batches of B quads (default 4,096); for K > 1, an
+      array cut into K slices and one producer that declares the named graphs. With
       `--expected FILE`, write the dataset as N-Quads text to FILE, for
       `l4sbm11-w3c compare` (the text is the expected side of a comparison; the
       pack does not read it).
@@ -201,7 +213,28 @@ def batchesOf (src : QuadSource) : IO (Array Batch) := do
     | some b => out := out.push b
   pure out
 
-def flat (bs : Array Batch) : Array Quad := bs.foldl (· ++ ·) #[]
+def flat (bs : Array Batch) : Array Quad := bs.foldl (fun acc b => acc ++ b.quads) #[]
+
+/-- The graph names that the batches declare, in order. -/
+def graphsOf (bs : Array Batch) : Array Subject := bs.foldl (fun acc b => acc ++ b.graphs) #[]
+
+/-- The names of the named graphs of a dataset, one for each named graph, in order:
+    what `ofDataset` declares (`QuadSourceTheorems.ofDataset_graphs`). -/
+def namesOf (d : Dataset) : Array Subject := (d.named.map (·.name)).toArray
+
+/-- A producer that declares graph names and gives no quad: one batch, or none
+    when there is no name. The array producers have no named graph that has no
+    triple; this producer gives them one. -/
+def namesSource (names : Array Subject) : IO QuadSource :=
+  QuadSource.ofPull (some names) fun s =>
+    match s with
+    | some ns => if ns.isEmpty then none else some ({ graphs := ns }, none)
+    | none => none
+
+/-- Whether a named graph of the dataset has no triple in any of its blocks: it is
+    in no quad. -/
+def hasEmptyGraph (d : Dataset) : Bool :=
+  d.named.any fun ng => !(d.quadList.any fun (_, g) => g == some ng.name)
 
 def batchSizes : List Nat := [0, 1, 2, 3, 7, 100, 4096, 1000000]
 
@@ -214,8 +247,10 @@ def checkProducers (t : IO.Ref Tally) : IO Unit := do
       let src ← QuadSource.ofDataset d b
       let bs ← batchesOf src
       record t s!"ofDataset {label} concatenation" (flat bs == want) s!"{(flat bs).size} quads, want {want.size}"
+      record t s!"ofDataset {label} declared graph names" (graphsOf bs == namesOf d)
+        s!"{(graphsOf bs).size} names, want {d.named.length}"
       record t s!"ofDataset {label} batch sizes" (bs.all fun x => 0 < x.size && x.size ≤ max 1 b)
-      let model := ((datasetPull b).batches want.size (Cursor.start d)).toArray
+      let model := ((datasetPull b).batches (want.size + d.named.length) (Cursor.start d)).toArray
       record t s!"ofDataset {label} equals the pure model" (bs == model)
       let again1 ← src.next
       let again2 ← src.next
@@ -224,6 +259,7 @@ def checkProducers (t : IO.Ref Tally) : IO Unit := do
       let srcA ← QuadSource.ofArray want b
       let bsA ← batchesOf srcA
       record t s!"ofArray {label} concatenation" (flat bsA == want)
+      record t s!"ofArray {label} declares no graph name" (graphsOf bsA).isEmpty
       record t s!"ofArray {label} batch sizes" (bsA.all fun x => 0 < x.size && x.size ≤ max 1 b)
       let endA ← srcA.next
       record t s!"ofArray {label} ended" endA.isNone
@@ -231,7 +267,7 @@ def checkProducers (t : IO.Ref Tally) : IO Unit := do
   let e ← QuadSource.empty
   record t "empty producer" ((← e.next).isNone)
   -- a step that throws: the call throws, and so does every later call
-  let one : Batch := #[(tr (sIri (ex "s")) (ex "p") (tIri (ex "o")), none)]
+  let one : Batch := { quads := #[(tr (sIri (ex "s")) (ex "p") (tIri (ex "o")), none)] }
   let bad ← QuadSource.ofStep (0 : Nat) fun n =>
     if n == 0 then pure (some (one, 1)) else throw (IO.userError "boom")
   let first ← bad.next
@@ -246,10 +282,16 @@ def checkProducers (t : IO.Ref Tally) : IO Unit := do
   -- drain and foldBatches
   let srcD ← QuadSource.ofDataset caseMixed 2
   let all ← srcD.drain
-  record t "drain" (all == caseMixed.quadList.toArray)
+  record t "drain" (all.quads == caseMixed.quadList.toArray && all.graphs == namesOf caseMixed)
   let srcF ← QuadSource.ofDataset caseMixed 2
-  let count ← srcF.foldBatches 0 fun n b => pure (n + b.size)
+  let count ← srcF.foldBatches 0 fun n b => pure (n + b.quads.size)
   record t "foldBatches" (count == caseMixed.quadList.length)
+  -- the producer of declarations alone
+  let ns ← batchesOf (← namesSource (namesOf caseMixed))
+  record t "namesSource" (flat ns).isEmpty
+  record t "namesSource declares the names" (graphsOf ns == namesOf caseMixed)
+  let none0 ← (← namesSource #[]).next
+  record t "namesSource of no name gives no batch" none0.isNone
 
 /-! ## The packer entry -/
 
@@ -282,20 +324,28 @@ def checkPacks (t : IO.Ref Tally) (work : String) : IO Unit := do
     record t s!"pack {name} writes files" (refFiles.size > 0)
     -- the number of producers, the batch size and the term map size
     let mut n := 0
+    let names := namesOf d
     for (parts, batch, runTerms) in [(1, 1, 262144), (1, 3, 262144), (2, 4096, 262144), (5, 3, 262144),
                                       (2, 1, 40), (5, 4096, 40), (1, 4096, 7)] do
       let dir := s!"{work}/{name}-p{n}"
       n := n + 1
-      let sources := (slices qs parts).map fun s => QuadSource.ofArray s batch
+      let sources := ((slices qs parts).map fun s => QuadSource.ofArray s batch).push (namesSource names)
       packFrom sources dir runTerms
       record t s!"pack {name} producers={parts} batch={batch} run-terms={runTerms} equals the first pack"
         (sameFiles refFiles (← readDir dir))
       IO.FS.removeDirAll (System.FilePath.mk dir)
     -- the order of the quads
     let rev := s!"{work}/{name}-rev"
-    packFrom #[QuadSource.ofArray qs.reverse 5] rev 262144
+    packFrom #[QuadSource.ofArray qs.reverse 5, namesSource names.reverse] rev 262144
     record t s!"pack {name} from the quads in reverse order equals the first pack" (sameFiles refFiles (← readDir rev))
     IO.FS.removeDirAll (System.FilePath.mk rev)
+    -- without the declarations: a named graph with no triple is lost, and only then
+    let bare := s!"{work}/{name}-bare"
+    packFrom ((slices qs 2).map fun s => QuadSource.ofArray s 4096) bare 262144
+    let same := sameFiles refFiles (← readDir bare)
+    record t s!"pack {name} without the declared names {if hasEmptyGraph d then "differs from" else "equals"} the first pack"
+      (same == !hasEmptyGraph d)
+    IO.FS.removeDirAll (System.FilePath.mk bare)
     -- datasets as producers: the default graph and each named graph cut among producers
     let part := s!"{work}/{name}-ds"
     let halves : Array Dataset := #[{ d with named := [] }, { default := [], named := d.named }]
@@ -341,7 +391,7 @@ def packDataset (name dir : String) (o : PackOpts) : IO UInt32 := do
   let qs := d.quadList.toArray
   let sources : Array (IO QuadSource) :=
     if o.producers == 1 then #[QuadSource.ofDataset d o.batch]
-    else (slices qs o.producers).map fun s => QuadSource.ofArray s o.batch
+    else ((slices qs o.producers).map fun s => QuadSource.ofArray s o.batch).push (namesSource (namesOf d))
   IO.FS.createDirAll dir
   let r ← Sbm11Pack.packQuads sources dir o.runTerms 4096 524288 Sbm11Pack.SourceId.noDocument
   IO.println s!"quad-source: pack-dataset case={name} producers={r.workers} batch={o.batch} quads-read={r.phase1.quads} quads={r.report.outs[0]!.rows} terms={r.report.terms} batches={r.phase1.batches.size}"
@@ -382,8 +432,22 @@ def hdtErrors (file : String) : IO UInt32 := do
   IO.println s!"hdt errors: {r.pass} pass, {r.fail} fail (out of {r.pass + r.fail})"
   pure (if r.fail == 0 then 0 else 1)
 
+/-- The distinct graph names of the test dataset, in the order of their first named
+    graph, one term on each line. -/
+def printNames (name : String) : IO UInt32 := do
+  let some d := findCase name
+    | IO.eprintln s!"l4sbm11-quad-source: no test dataset '{name}'"; return 2
+  let mut seen : Array Subject := #[]
+  for g in namesOf d do
+    if !seen.contains g then
+      seen := seen.push g
+      match g with
+      | .iri i => IO.println s!"<{i.val}>"
+      | .bnode b => IO.println s!"_:{b}"
+  pure 0
+
 def usage : String :=
-  "usage: l4sbm11-quad-source selftest WORKDIR | cases | pack-dataset CASE OUTDIR [--batch B] [--producers K] [--run-terms N] [--expected FILE] | hdt-dump FILE.hdt | hdt-errors FILE.hdt"
+  "usage: l4sbm11-quad-source selftest WORKDIR | cases | names CASE | pack-dataset CASE OUTDIR [--batch B] [--producers K] [--run-terms N] [--expected FILE] | hdt-dump FILE.hdt | hdt-errors FILE.hdt"
 
 end Sbm11QuadSource
 
@@ -395,6 +459,7 @@ def main (args : List String) : IO UInt32 := do
     | ["cases"] => do
         for (n, d) in cases do IO.println s!"{n}\t{d.quadList.length}\t{if datasetIsRdf12 d then "rdf12" else "rdf11"}"
         pure 0
+    | ["names", name] => printNames name
     | "pack-dataset" :: name :: dir :: rest =>
         match parsePackOpts rest {} with
         | some o => packDataset name dir o

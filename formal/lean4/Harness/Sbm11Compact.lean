@@ -242,7 +242,7 @@ def runCompactViaQuads (src outDir : String) (blockRows sortRowsMax : Nat) (v : 
   let sink ← Sbm11Pack.openPhase1 outDir 0 262144
   let rowsRef ← IO.mkRef 0
   scanAll ss 2 #[] fun cols n => do
-    let mut batch : L4Factoidal.RDF.QuadSource.Batch := Array.mkEmpty n
+    let mut batch : L4Factoidal.RDF.QuadSource.Batch := { quads := Array.mkEmpty n }
     for i in [0:n] do
       let st ← ss.termOf (IdQuery.at64 cols[0]! i)
       let pt ← ss.termOf (IdQuery.at64 cols[1]! i)
@@ -252,7 +252,7 @@ def runCompactViaQuads (src outDir : String) (blockRows sortRowsMax : Nat) (v : 
       let p ← match pt with
         | .iri i => pure i
         | _ => throw (IO.userError "a predicate that is not an IRI")
-      batch := batch.push ({ s := ← subjectOf st, p := p, o := ot }, gname)
+      batch := batch.pushQuad ({ s := ← subjectOf st, p := p, o := ot }, gname)
     sink.consume batch
     rowsRef.modify (· + n)
   let w ← sink.finish

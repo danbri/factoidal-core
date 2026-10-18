@@ -29,12 +29,20 @@
 #                  triple terms), and 8,800 generated quads. RDFC-1.0 is defined on
 #                  RDF 1.1 datasets, so the RDF 1.2 dataset is compared by isomorphism
 #                  only. The generation passes the activation checks
-#                  (`l4sbm11 verify`).
+#                  (`l4sbm11 verify`). The named graphs of the generation
+#                  (`l4sbm11 graphs`, the graph list GNL1) are the named graphs of
+#                  the dataset, the graph with no triple and the graph named by a
+#                  blank node included (`names CASE`; issues 855 and 856): the same
+#                  IRIs and the same number of blank nodes.
 #   (3) file       The command line: the file route and the Dataset route
 #                  (`--via-dataset`: the whole document is read into a Dataset, then
 #                  packed from the Dataset producer) give byte-identical generations,
 #                  the manifest included, for every syntax fixture of
 #                  tests/sbm11/syntax, the gate fixtures and a 1 MB generated dataset.
+#                  D5 (d5.trig, d5.jsonld): six named graphs, three of them with no
+#                  triple, three named by a blank node; the TriG reader declares each
+#                  graph block and the JSON-LD reader each named graph, and
+#                  `l4sbm11 graphs` of the pack lists all six.
 #   (4) hdt        The triples of an HDT file packed with no text in between
 #                  (`l4sbm11-pack FILE.hdt`): the vendored hdt-cpp 1.3.3 fixtures
 #                  (third_party/testing/hdt). The dump of the generation equals the
@@ -76,6 +84,18 @@ record() { # record <name> <ok:0|1> <detail>
   if [ "$2" = 0 ]; then PASS=$((PASS + 1)); printf 'ok     %-44s %s\n' "$1" "$3"
   else FAIL=$((FAIL + 1)); printf 'FAIL   %-44s %s\n' "$1" "$3"; fi
 }
+# same_names WANT GOT: the same IRIs (one `<...>` on each line) and the same number of
+# blank nodes (`_:` lines; a label is a name for one document); prints a summary
+same_names() {
+  local wi gi wb gb
+  wi="$(grep '^<' "$1" | sort)"; gi="$(grep '^<' "$2" | sort)"
+  wb="$(grep -c '^_:' "$1")"; gb="$(grep -c '^_:' "$2")"
+  if [ "$wi" = "$gi" ] && [ "$wb" = "$gb" ]; then
+    echo "$(grep -c . "$2") named graphs: $(printf '%s' "$gi" | grep -c .) IRIs, $gb blank nodes"; return 0
+  fi
+  echo "want IRIs [$(printf '%s' "$wi" | tr '\n' ' ')] and $wb blank nodes; the generation lists [$(printf '%s' "$gi" | tr '\n' ' ')] and $gb blank nodes"
+  return 1
+}
 
 echo "=== (1) producers and the entry, in process"
 rc=0
@@ -100,6 +120,11 @@ while IFS=$'\t' read -r name nquads version; do
   if [ "$rc" -ne 0 ]; then record "dataset $name pack" 1 "exit $rc: $(tail -1 "$d/pack.log")"; continue; fi
   rc=0; "$BIN/l4sbm11" verify "$d/gen" >"$d/verify.log" 2>&1 || rc=$?
   if [ "$rc" -ne 0 ]; then record "dataset $name verify" 1 "exit $rc: $(grep -m1 FAIL "$d/verify.log")"; continue; fi
+  # the named graphs, empty ones included: the graph list of the generation
+  "$BIN/l4sbm11-quad-source" names "$name" >"$d/names.want" 2>"$d/names.err"
+  rc=0; "$BIN/l4sbm11" graphs "$d/gen" >"$d/names.got" 2>"$d/graphs.err" || rc=$?
+  if [ "$rc" -ne 0 ]; then record "dataset $name named graphs" 1 "exit $rc: $(tail -1 "$d/graphs.err")"
+  else out="$(same_names "$d/names.want" "$d/names.got")"; record "dataset $name named graphs" "$?" "$out"; fi
   rc=0; timeout 600 "$BIN/l4sbm11" dump "$d/gen" >"$d/dump.nq" 2>"$d/dump.err" || rc=$?
   if [ "$rc" -ne 0 ]; then record "dataset $name dump" 1 "exit $rc: $(tail -1 "$d/dump.err")"; continue; fi
   out="$("$BIN/l4sbm11-w3c" compare "$d/expected.nq" "$d/dump.nq" --expected nq --mode rdf12 2>&1)"; rc=$?
@@ -150,8 +175,22 @@ check_via() { # check_via LABEL FILE [ARGS...]
   record "via-dataset $label" "$r" "$out"
   rm -rf "$a" "$b"
 }
-for f in "$FX"/d1.* "$FX"/d2.* "$FX"/d3.* "$FX"/d4.* "$FX"/bnode_collide.* "$FX"/lang_scope.* "$FX"/scope_paths.*; do
+for f in "$FX"/d1.* "$FX"/d2.* "$FX"/d3.* "$FX"/d4.* "$FX"/d5.* "$FX"/bnode_collide.* "$FX"/lang_scope.* "$FX"/scope_paths.*; do
   check_via "$(basename "$f")" "$f"
+done
+# D5: the named graphs with no triple and the graphs named by a blank node reach the graph list
+printf '<http://example.org/g0>\n<http://example.org/g1>\n<http://example.org/g2>\n_:x1\n_:x2\n_:x3\n' >"$TMP/d5.want"
+for f in "$FX"/d5.trig "$FX"/d5.jsonld; do
+  g="$TMP/d5-$(basename "$f")"; rm -rf "$g"
+  rc=0; timeout 600 "$BIN/l4sbm11-pack" "$f" "$g" >"$g.log" 2>&1 || rc=$?
+  if [ "$rc" -ne 0 ]; then record "named graphs $(basename "$f")" 1 "pack exit $rc: $(tail -1 "$g.log")"; continue; fi
+  rc=0; "$BIN/l4sbm11" verify "$g" >"$g.verify" 2>&1 || rc=$?
+  "$BIN/l4sbm11" graphs "$g" >"$g.names" 2>"$g.err" || rc=$((rc + 10))
+  if [ "$rc" -ne 0 ]; then record "named graphs $(basename "$f")" 1 "verify or graphs exit $rc: $(grep -m1 FAIL "$g.verify") $(tail -1 "$g.err")"; continue; fi
+  out="$(same_names "$TMP/d5.want" "$g.names")"; r=$?
+  grep -q 'named-graphs=6 ' "$g.log" || { r=1; out="$out; the pack line says $(grep -o 'named-graphs=[0-9]*' "$g.log")"; }
+  record "named graphs $(basename "$f")" "$r" "$out (2 IRIs and 2 blank nodes with no triple)"
+  rm -rf "$g"
 done
 check_via gate.nq "$HERE/gate/gate.nq"
 check_via gate12.nq "$HERE/gate12/gate12.nq"
