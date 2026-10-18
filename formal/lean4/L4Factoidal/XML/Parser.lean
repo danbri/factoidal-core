@@ -467,6 +467,36 @@ def codepointToString (cp : Nat) : String := String.singleton (Char.ofNat cp)
 def lookupEntityDef (name : String) (ents : EntityTable) : Option EntityDef :=
   (ents.defs.find? (fun p => p.1 == name && (ents.standalone || !p.2.afterUnreadPe))).map (·.2)
 
+/-- `lookupEntityDef` through the table's index: the declarations of `name`,
+newest first, and the first one the table offers. -/
+def lookupEntityDefFast (name : String) (ents : EntityTable) : Option EntityDef :=
+  (ents.index.getD name []).find? (fun d => ents.standalone || !d.afterUnreadPe)
+
+/-- The first offered declaration of `name` in a declaration list is the first
+offered one among the declarations of `name` in its index. -/
+theorem find_defs_eq_find_index (name : String) (vis : EntityDef → Bool) :
+    ∀ defs : List (String × EntityDef),
+      (defs.find? (fun p => p.1 == name && vis p.2)).map (·.2) =
+        ((entityIndexOf defs).getD name []).find? vis
+  | [] => by simp [entityIndexOf]
+  | (n, d) :: rest => by
+    have ih := find_defs_eq_find_index name vis rest
+    simp only [entityIndexOf, Std.HashMap.getD_insert, List.find?_cons]
+    by_cases h : n = name
+    · subst h
+      cases hv : vis d <;> simp [hv, ih]
+    · have h' : (n == name) = false := by simpa using h
+      simp [h', ih]
+
+/-- The compiler runs `lookupEntityDefFast` wherever `lookupEntityDef` is
+called: one hash lookup instead of a scan of every declaration
+(https://github.com/danbri/factoidal/issues/872). -/
+@[csimp] theorem lookupEntityDef_eq_fast : @lookupEntityDef = @lookupEntityDefFast := by
+  funext name ents
+  simp only [lookupEntityDef, lookupEntityDefFast]
+  rw [ents.index_eq]
+  exact find_defs_eq_find_index name (fun d => ents.standalone || !d.afterUnreadPe) ents.defs
+
 /-- Look a declared general entity's replacement text up by name.
 Port of F* `lookup_entity`. -/
 def lookupEntity (name : String) (ents : EntityTable) : Option String :=
@@ -477,7 +507,7 @@ def lookupEntity (name : String) (ents : EntityTable) : Option String :=
 def declareEntity (name : String) (d : EntityDef) (ents : EntityTable) : EntityTable :=
   match lookupEntityDef name ents with
   | some _ => ents
-  | none   => { ents with defs := (name, d) :: ents.defs }
+  | none   => ents.cons name d
 
 /-- The five entities §4.6 says every processor must recognise whether
 or not they are declared. -/
@@ -875,7 +905,7 @@ def parseReference (inAttr : Bool) (ents : EntityTable) (s : Chars) (pos : Nat) 
                else .err "reference to undeclared entity (WFC: Entity Declared)" pos)
             else
             let subArr : Chars := ed.value.toList.toArray
-            match expandEntityValue inAttr ents [name] subArr 0 (ents.defs.length + 1)
+            match expandEntityValue inAttr ents [name] subArr 0 (ents.count + 1)
                     (subArr.size + 1) [] with
             | .err m p => .err m p
             | .ok decoded _ => .ok decoded pos'
@@ -1606,7 +1636,7 @@ def scanRefs (ents : EntityTable) (s : Chars) (start stop : Nat) : Nat → RefFl
               let (f, u) := scanRefs ents s (j + 1) stop fuel
               let undecl := !isPredefinedEntity n && (lookupEntityDef n ents).isNone
               ({ entityRef := true,
-                 wsCharRef := f.wsCharRef || (!isPredefinedEntity n && entityHasWsCharRef ents n (ents.defs.length + 1)) },
+                 wsCharRef := f.wsCharRef || (!isPredefinedEntity n && entityHasWsCharRef ents n (ents.count + 1)) },
                u || undecl)
             else scanRefs ents s (start + 1) stop fuel
         | .err _ _ => scanRefs ents s (start + 1) stop fuel
@@ -1653,7 +1683,7 @@ def scanRefsLoop (ents : EntityTable) (s : Chars) (start stop : Nat)
               let undecl := !isPredefinedEntity n && (lookupEntityDef n ents).isNone
               scanRefsLoop ents s (j + 1) stop
                 { entityRef := true,
-                  wsCharRef := fl.wsCharRef || (!isPredefinedEntity n && entityHasWsCharRef ents n (ents.defs.length + 1)) }
+                  wsCharRef := fl.wsCharRef || (!isPredefinedEntity n && entityHasWsCharRef ents n (ents.count + 1)) }
                 (u || undecl) fuel
             else scanRefsLoop ents s (start + 1) stop fl u fuel
         | .err _ _ => scanRefsLoop ents s (start + 1) stop fl u fuel
@@ -1949,7 +1979,6 @@ structure ChildFrame where
   s : Chars
   posAfter : Nat
   refPos : Nat
-  acc : List Node
   flags : RefFlags
   fuel : Nat
   /-- The size of the replacement text read in place of the reference. -/
@@ -1978,7 +2007,7 @@ def parseChildrenW (ents : EntityTable) (atts : List AttDecl) (frames : List Chi
       if pos < fr.size then
         .err "an entity's replacement text does not parse as content (WFC: Parsed Entity)" fr.refPos
       else
-        parseChildrenW ents atts frs fr.s fr.posAfter (acc ++ fr.acc)
+        parseChildrenW ents atts frs fr.s fr.posAfter acc
           ({ flags with entityRef := true }.merge fr.flags) notes fr.fuel
   | fuel + 1 =>
     if pos ≥ s.size || (charAt s pos == '<' && pos + 1 < s.size && charAt s (pos + 1) == '/') then
@@ -1988,7 +2017,7 @@ def parseChildrenW (ents : EntityTable) (atts : List AttDecl) (frames : List Chi
         if pos < fr.size then
           .err "an entity's replacement text does not parse as content (WFC: Parsed Entity)" fr.refPos
         else
-          parseChildrenW ents atts frs fr.s fr.posAfter (acc ++ fr.acc)
+          parseChildrenW ents atts frs fr.s fr.posAfter acc
             ({ flags with entityRef := true }.merge fr.flags) notes fr.fuel
     else if charAt s pos == '<' then
       if pos + 1 < s.size then
@@ -2017,9 +2046,9 @@ def parseChildrenW (ents : EntityTable) (atts : List AttDecl) (frames : List Chi
       | some (txt, posAfter) =>
           let farr : Chars := txt.toList.toArray
           parseChildrenW ents atts
-            ({ s := s, posAfter := posAfter, refPos := pos, acc := acc, flags := flags,
+            ({ s := s, posAfter := posAfter, refPos := pos, flags := flags,
                fuel := fuel, size := farr.size } :: frames)
-            farr 0 [] {} notes fuel
+            farr 0 acc {} notes fuel
       | none =>
       match parseTextContent ents s pos [] (s.size + 1) with
       | .err m p => .err m p
@@ -2031,7 +2060,7 @@ def parseChildrenW (ents : EntityTable) (atts : List AttDecl) (frames : List Chi
             if pos < fr.size then
               .err "an entity's replacement text does not parse as content (WFC: Parsed Entity)" fr.refPos
             else
-              parseChildrenW ents atts frs fr.s fr.posAfter (acc ++ fr.acc)
+              parseChildrenW ents atts frs fr.s fr.posAfter acc
                 ({ flags with entityRef := true }.merge fr.flags) notes fr.fuel
         else
           let (rf, undecl) := scanRefs ents s pos pos' (pos' - pos + 1)
@@ -2115,64 +2144,73 @@ end
 /-- What the waiting frames do with the result of the replacement text
 that is being read: an error ends the parse; otherwise **WFC: Parsed
 Entity** asks that the whole replacement text was read, and the first
-frame continues with the replacement text's nodes added. -/
+frame continues with the replacement text's nodes added. `base` is the
+part of `parseChildrenW`'s accumulator that the waiting frames read before
+the replacement text (in reverse order): `parseChildrenW` keeps one
+accumulator for the replacement text and the frames, so a frame that
+continues adds nothing to it (https://github.com/danbri/factoidal/issues/872;
+until 2026-10-18 each frame kept its own accumulator and the frame that
+continued appended the nodes of the replacement text to it, a cost that grew
+with the nodes read in all deeper entities). -/
 def resumeC (ents : EntityTable) (atts : List AttDecl) :
-    List ChildFrame → PResult (List Node × RefFlags × Notes) →
+    List ChildFrame → List Node → PResult (List Node × RefFlags × Notes) →
       PResult (List Node × RefFlags × Notes)
-  | [], r => r
-  | _ :: _, .err m p => .err m p
-  | fr :: frs, .ok (nodes, fl2, notes2) q =>
+  | _, _, .err m p => .err m p
+  | [], base, .ok (nodes, fl2, notes2) q => .ok ((nodes.reverse ++ base).reverse, fl2, notes2) q
+  | fr :: frs, base, .ok (nodes, fl2, notes2) q =>
       if q < fr.size then
         .err "an entity's replacement text does not parse as content (WFC: Parsed Entity)" fr.refPos
       else
-        parseChildrenW ents atts frs fr.s fr.posAfter (nodes.reverse ++ fr.acc)
+        parseChildrenW ents atts frs fr.s fr.posAfter (nodes.reverse ++ base)
           ({ fl2 with entityRef := true }.merge fr.flags) notes2 fr.fuel
 
 theorem resumeC_err (ents : EntityTable) (atts : List AttDecl) (frames : List ChildFrame)
-    (m : String) (p : Nat) : resumeC ents atts frames (.err m p) = .err m p := by
+    (base : List Node) (m : String) (p : Nat) :
+    resumeC ents atts frames base (.err m p) = .err m p := by
   cases frames <;> rfl
 
 /-- `resumeC` on the result `parseChildren` returns where it stops: this is
 the code `parseChildrenW` runs at the same place. -/
 theorem resumeC_exit (ents : EntityTable) (atts : List AttDecl) (frames : List ChildFrame)
-    (acc : List Node) (flags : RefFlags) (notes : Notes) (pos : Nat) :
-    resumeC ents atts frames (.ok (acc.reverse, flags, notes) pos) =
+    (base acc : List Node) (flags : RefFlags) (notes : Notes) (pos : Nat) :
+    resumeC ents atts frames base (.ok (acc.reverse, flags, notes) pos) =
       match frames with
-      | [] => .ok (acc.reverse, flags, notes) pos
+      | [] => .ok ((acc ++ base).reverse, flags, notes) pos
       | fr :: frs =>
         if pos < fr.size then
           .err "an entity's replacement text does not parse as content (WFC: Parsed Entity)" fr.refPos
         else
-          parseChildrenW ents atts frs fr.s fr.posAfter (acc ++ fr.acc)
+          parseChildrenW ents atts frs fr.s fr.posAfter (acc ++ base)
             ({ flags with entityRef := true }.merge fr.flags) notes fr.fuel := by
   cases frames <;> simp only [resumeC, List.reverse_reverse]
 
 theorem resumeC_nil (ents : EntityTable) (atts : List AttDecl)
-    (r : PResult (List Node × RefFlags × Notes)) : resumeC ents atts [] r = r := rfl
+    (r : PResult (List Node × RefFlags × Notes)) : resumeC ents atts [] [] r = r := by
+  rcases r with ⟨⟨nodes, fl, nt⟩, q⟩ | ⟨m, p⟩ <;> simp [resumeC]
 
 theorem resumeC_cons_ok (ents : EntityTable) (atts : List AttDecl) (fr : ChildFrame)
-    (frs : List ChildFrame) (nodes : List Node) (fl2 : RefFlags) (notes2 : Notes) (q : Nat) :
-    resumeC ents atts (fr :: frs) (.ok (nodes, fl2, notes2) q) =
+    (frs : List ChildFrame) (base nodes : List Node) (fl2 : RefFlags) (notes2 : Notes) (q : Nat) :
+    resumeC ents atts (fr :: frs) base (.ok (nodes, fl2, notes2) q) =
       if q < fr.size then
         .err "an entity's replacement text does not parse as content (WFC: Parsed Entity)" fr.refPos
       else
-        parseChildrenW ents atts frs fr.s fr.posAfter (nodes.reverse ++ fr.acc)
+        parseChildrenW ents atts frs fr.s fr.posAfter (nodes.reverse ++ base)
           ({ fl2 with entityRef := true }.merge fr.flags) notes2 fr.fuel := rfl
 
 /-- The worklist pair equals the readable pair: `parseElementW` IS
-`parseElement`, and `parseChildrenW` with a worklist is `parseChildren`
-followed by `resumeC`. Proved by the mutual functional induction of
-`parseChildren` and `parseElement`. -/
+`parseElement`, and `parseChildrenW` with a worklist, from the accumulator
+`acc ++ base`, is `parseChildren` from `acc` followed by `resumeC`. Proved by
+the mutual functional induction of `parseChildren` and `parseElement`. -/
 theorem parseChildrenW_eq (ents : EntityTable) (atts : List AttDecl) :
-    (∀ s pos acc flags notes fuel, ∀ frames,
-      parseChildrenW ents atts frames s pos acc flags notes fuel =
-        resumeC ents atts frames (parseChildren ents atts s pos acc flags notes fuel)) ∧
+    (∀ s pos acc flags notes fuel, ∀ frames base,
+      parseChildrenW ents atts frames s pos (acc ++ base) flags notes fuel =
+        resumeC ents atts frames base (parseChildren ents atts s pos acc flags notes fuel)) ∧
     (∀ s pos notes fuel,
       parseElementW ents atts s pos notes fuel = parseElement ents atts s pos notes fuel) := by
   apply parseChildren.mutual_induct ents atts
-    (motive_1 := fun s pos acc flags notes fuel => ∀ frames,
-      parseChildrenW ents atts frames s pos acc flags notes fuel =
-        resumeC ents atts frames (parseChildren ents atts s pos acc flags notes fuel))
+    (motive_1 := fun s pos acc flags notes fuel => ∀ frames base,
+      parseChildrenW ents atts frames s pos (acc ++ base) flags notes fuel =
+        resumeC ents atts frames base (parseChildren ents atts s pos acc flags notes fuel))
     (motive_2 := fun s pos notes fuel =>
       parseElementW ents atts s pos notes fuel = parseElement ents atts s pos notes fuel)
   all_goals intros
@@ -2182,7 +2220,8 @@ theorem parseChildrenW_eq (ents : EntityTable) (atts : List AttDecl) :
   all_goals simp_all (config := {zetaDelta := true}) only
     [resumeC_exit, resumeC_err, resumeC_nil, resumeC_cons_ok, ↓reduceIte, Bool.false_eq_true,
      decide_true, decide_false, Bool.and_true, Bool.or_false, Bool.and_false, Bool.false_and,
-     Bool.true_or, Bool.or_true]
+     Bool.true_or, Bool.or_true, List.cons_append, List.append_assoc, List.nil_append,
+     List.append_nil]
 
 /-- The compiler runs `parseElementW` wherever `parseElement` is called
 below (the document element in `parseXMLNotes`). -/
@@ -2202,8 +2241,8 @@ markup entity that is referenced directly from the content of the document eleme
 @[csimp] theorem parseChildren_eq_parseChildrenFromStart :
     @parseChildren = @parseChildrenFromStart := by
   funext ents atts s pos acc flags notes fuel
-  have h := (parseChildrenW_eq ents atts).1 s pos acc flags notes fuel []
-  rw [resumeC_nil] at h
+  have h := (parseChildrenW_eq ents atts).1 s pos acc flags notes fuel [] []
+  rw [resumeC_nil, List.append_nil] at h
   exact h.symm
 
 /-! ## `[28] doctypedecl` and the internal subset -/
@@ -2590,7 +2629,7 @@ def parseDefaultDecl (check : Bool) (ents : EntityTable) (s : Chars) (pos : Nat)
         if !check then .ok decl p'
         else
           let body : Chars := literal.toList.toArray
-          match expandEntityValue true ents [] body 0 (ents.defs.length + 1) (body.size + 1) [] with
+          match expandEntityValue true ents [] body 0 (ents.count + 1) (body.size + 1) [] with
           | .err m _ => .err ("in an attribute default value: " ++ m) p
           | .ok _ _  => .ok decl p'
     else .err "expected #REQUIRED, #IMPLIED, #FIXED or a quoted default" p
@@ -2914,7 +2953,7 @@ def normalizeEntityValue (internal : Bool) (pes : EntityTable)
     malformed input reports nothing, while one that rejects valid
     input at least announces itself. -/
 def parseEntityDecl (resolve : Resolver) (internal : Bool) (s : Chars) (pos : Nat)
-    (ents : EntityTable) (pes : EntityTable) :
+    (ents : EntityTable) (pes : EntityTable) (unreadPe : Bool := false) :
     PResult (EntityTable × EntityTable × String × Option String) :=
   match pstring "<!ENTITY" s pos with
   | .err m p => .err m p
@@ -2946,8 +2985,8 @@ def parseEntityDecl (resolve : Resolver) (internal : Bool) (s : Chars) (pos : Na
                   -- A PARAMETER entity is not a general entity, so it
                   -- never enters the table a `&name;` reference reads.
                   -- It has its OWN table, which `%name;` reads.
-                  if isPE then .ok (ents, declareEntity name { value := value } pes, name, none) p7
-                  else .ok (declareEntity name { value := value } ents, pes, name, none) p7
+                  if isPE then .ok (ents, declareEntity name { value := value, afterUnreadPe := unreadPe } pes, name, none) p7
+                  else .ok (declareEntity name { value := value, afterUnreadPe := unreadPe } ents, pes, name, none) p7
           else
             match parseExternalIDSys s p5 with
             | .err m p => .err m p
@@ -2988,8 +3027,8 @@ def parseEntityDecl (resolve : Resolver) (internal : Bool) (s : Chars) (pos : Na
                     | none      =>
                         let ed : EntityDef :=
                           { value := "", external := true, resolved := false }
-                        if isPE then .ok (ents, declareEntity name ed pes, name, none) p'
-                        else .ok (declareEntity name ed ents, pes, name, none) p'
+                        if isPE then .ok (ents, declareEntity name { ed with afterUnreadPe := unreadPe } pes, name, none) p'
+                        else .ok (declareEntity name { ed with afterUnreadPe := unreadPe } ents, pes, name, none) p'
                     | some raw  =>
                       -- A malformed `[77] TextDecl`, or text that
                       -- section 2.11 or the `[2] Char` class refuses, is
@@ -3014,8 +3053,8 @@ def parseEntityDecl (resolve : Resolver) (internal : Bool) (s : Chars) (pos : Na
                         | .ok text => { value := text, external := true }
                         | .error m => { value := "", external := true, resolved := false,
                                         unreadable := some m }
-                      if isPE then .ok (ents, declareEntity name ed pes, name, none) p'
-                      else .ok (declareEntity name ed ents, pes, name, none) p'
+                      if isPE then .ok (ents, declareEntity name { ed with afterUnreadPe := unreadPe } pes, name, none) p'
+                      else .ok (declareEntity name { ed with afterUnreadPe := unreadPe } ents, pes, name, none) p'
 
 /-- What reading a declaration subset accumulates besides the two
 entity tables: the attribute declarations and the declared names, each
@@ -3336,22 +3375,16 @@ def parseSubset (resolve : Resolver) (endKind : SubsetEnd) (ext : Bool)
           | .err m p => .err m p
           | .ok _ pos' => parseSubset resolve endKind ext s pos' ents pes dtd fuel
         else if peekLit "<!ENTITY" s pos then
-          match parseEntityDecl resolve (endKind == .bracket) s pos ents pes with
+          match parseEntityDecl resolve (endKind == .bracket) s pos ents pes dtd.incomplete with
           | .err m p => .err m p
-          | .ok (ents1, pes1, name, ndata) pos' =>
+          | .ok (ents', pes', name, ndata) pos' =>
               -- XML 1.0 §5.1: except when `standalone="yes"`, a
               -- non-validating processor must not process an entity
               -- declaration that follows a reference to a parameter
-              -- entity it did not read. The declaration is kept, marked,
-              -- and the table does not offer it (`lookupEntityDef`).
-              let mark (old new : EntityTable) : EntityTable :=
-                if new.defs.length > old.defs.length then
-                  { new with defs := match new.defs with
-                      | (n, d) :: rest => (n, { d with afterUnreadPe := dtd.incomplete }) :: rest
-                      | [] => [] }
-                else new
-              let ents' := mark ents ents1
-              let pes' := mark pes pes1
+              -- entity it did not read. The declaration is kept, marked
+              -- (`parseEntityDecl` sets `afterUnreadPe` from
+              -- `dtd.incomplete`), and the table does not offer it
+              -- (`lookupEntityDef`).
               parseSubset resolve endKind ext s pos' ents' pes'
                 { dtd with
                     names := { dtd.names with entities := name :: dtd.names.entities },

@@ -57,6 +57,9 @@ repaired (docs/designissues/2026-10-10-lean-vs-fstar-performance.md):
                    from 4 MB to 16 MB: at most 20 bytes
                    (https://github.com/danbri/factoidal/issues/769; 70.7 on the
                    whole-source route, 11.9 on the chunk route)
+  rdfxml-markup-chain  RDF/XML parse of a chain of n markup entities referenced
+                   from the content of rdf:RDF, 5,000 against 20,000
+                   (https://github.com/danbri/factoidal/issues/872)
   rdfxml-write, jsonld-write
                    `l4source-convert` (the library serialisers) writes a dataset of
                    2,000, then 8,000 subjects (`tests/sbm11/syntax/gen_multi.py`, 8
@@ -725,6 +728,19 @@ def owl_species_bnode_edges(n: int) -> str:
     return "\n".join(out) + "\n"
 
 
+def rdfxml_markup_chain(n: int) -> str:
+    """n markup entities, each a node element and a reference to the one
+    declared before it, referenced once from the content of rdf:RDF (the case
+    xml-markup-chain-top of tests/stack/gen_cases.py): n triples."""
+    decls = ['<!ENTITY m0 "<rdf:Description rdf:about=\'http://example.org/s0\'>'
+             '<ex:p>0</ex:p></rdf:Description>">']
+    decls += ['<!ENTITY m%d "<rdf:Description rdf:about=\'http://example.org/s%d\'><ex:p>%d</ex:p>'
+              '</rdf:Description>&m%d;">' % (i, i, i, i - 1) for i in range(1, n)]
+    return ('<?xml version="1.0"?>\n<!DOCTYPE rdf:RDF [\n%s\n]>\n'
+            '<rdf:RDF xmlns:rdf="http://www.w3.org/1999/02/22-rdf-syntax-ns#"\n'
+            '         xmlns:ex="http://example.org/">&m%d;</rdf:RDF>\n' % ("\n".join(decls), n - 1))
+
+
 def turtle_object_list(n: int) -> str:
     """One statement, one subject, one predicate, n objects."""
     objs = ", ".join(str(i) for i in range(n))
@@ -771,6 +787,14 @@ ROWS = {
     "parse-rdfxml": (
         12500,
         lambda n: bl.gen_rdfxml(n),
+        lambda p: [str(BIN), "parse", str(p), "--format", "rdfxml"]),
+    # RDF/XML, a chain of n markup entities referenced from the content of
+    # rdf:RDF (https://github.com/danbri/factoidal/issues/872): each entity
+    # lookup scanned the list of declarations, and each replacement text
+    # appended the nodes of all deeper ones to its frame's accumulator.
+    "rdfxml-markup-chain": (
+        5000,
+        lambda n: fixture(f"rdfxml-markup-chain-{n}.rdf", lambda: rdfxml_markup_chain(n)),
         lambda p: [str(BIN), "parse", str(p), "--format", "rdfxml"]),
     "rdfc-iri": (
         1000,

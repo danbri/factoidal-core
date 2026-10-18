@@ -1,3 +1,4 @@
+import Std.Data.HashMap
 /-
 L4Factoidal.XML.Document — the XML infoset data model and the
 character classes the grammar is stated over.
@@ -375,6 +376,35 @@ structure EntityDef where
   afterUnreadPe : Bool := false
 deriving DecidableEq, Repr, Inhabited
 
+/-- The declarations of each name in `defs` (newest first), as the index
+`EntityTable` keeps beside its list. A declaration list is read newest
+first, so the index of `(n, d) :: rest` puts `d` before the declarations of
+`n` in `rest`. -/
+def entityIndexOf : List (String × EntityDef) → Std.HashMap String (List EntityDef)
+  | [] => {}
+  | (n, d) :: rest => (entityIndexOf rest).insert n (d :: (entityIndexOf rest).getD n [])
+
+/-- One step of `entityIndexOf`: add the declaration `(n, d)` in front. -/
+def entityIndexStep (m : Std.HashMap String (List EntityDef)) (p : String × EntityDef) :
+    Std.HashMap String (List EntityDef) :=
+  m.insert p.1 (p.2 :: m.getD p.1 [])
+
+/-- `entityIndexOf` as a loop: the declarations from the oldest. -/
+def entityIndexOfFast (defs : List (String × EntityDef)) : Std.HashMap String (List EntityDef) :=
+  defs.reverse.foldl entityIndexStep {}
+
+theorem entityIndexOf_eq_foldr (defs : List (String × EntityDef)) :
+    entityIndexOf defs = defs.foldr (fun p m => entityIndexStep m p) {} := by
+  induction defs with
+  | nil => rfl
+  | cons p rest ih => obtain ⟨n, d⟩ := p; simp [entityIndexOf, ih, entityIndexStep]
+
+/-- The compiler runs the loop wherever `entityIndexOf` is called (one stack
+frame for any number of declarations). -/
+@[csimp] theorem entityIndexOf_eq_fast : @entityIndexOf = @entityIndexOfFast := by
+  funext defs
+  rw [entityIndexOf_eq_foldr, entityIndexOfFast, List.foldl_reverse]
+
 /-- The declared general entities, or (kept apart, section 4.1) the
 declared parameter entities.
 
@@ -388,7 +418,11 @@ DECLARATIONS, not of any one entity:
   subset which contains no parameter entity references, or a document
   with `standalone='yes'`". Outside those, a reference to an
   undeclared entity is a VALIDITY error, which a non-validating
-  processor must not report. -/
+  processor must not report.
+
+`index` and `count` are functions of `defs` (the fields `index_eq` and
+`count_eq`), so two tables are equal when their `defs` and flags are equal;
+`EntityTable.cons` adds a declaration to all three. -/
 structure EntityTable where
   defs  : List (String × EntityDef) := []
   sawPe : Bool := false
@@ -401,7 +435,45 @@ structure EntityTable where
   reference to a parameter entity that was not read is processed all the
   same (§5.1). -/
   standalone : Bool := false
-deriving DecidableEq, Repr, Inhabited
+  /-- The declarations of each name, newest first (`entityIndexOf defs`).
+  A lookup by name reads this index instead of the whole list
+  (https://github.com/danbri/factoidal/issues/872). -/
+  index : Std.HashMap String (List EntityDef) := entityIndexOf defs
+  /-- The number of declarations (`defs.length`). -/
+  count : Nat := defs.length
+  index_eq : index = entityIndexOf defs := by rfl
+  count_eq : count = defs.length := by rfl
+deriving Inhabited
+
+instance : Repr EntityTable where
+  reprPrec t _ := "{ defs := " ++ repr t.defs ++ ", sawPe := " ++ repr t.sawPe ++
+    ", lax := " ++ repr t.lax ++ ", version := " ++ repr t.version ++
+    ", standalone := " ++ repr t.standalone ++ " }"
+
+instance : DecidableEq EntityTable := fun a b =>
+  if h : a.defs = b.defs ∧ a.sawPe = b.sawPe ∧ a.lax = b.lax ∧ a.version = b.version ∧
+      a.standalone = b.standalone then
+    isTrue (by
+      obtain ⟨d1, s1, l1, v1, st1, i1, c1, ie1, ce1⟩ := a
+      obtain ⟨d2, s2, l2, v2, st2, i2, c2, ie2, ce2⟩ := b
+      obtain ⟨h1, h2, h3, h4, h5⟩ := h
+      simp only at h1 h2 h3 h4 h5 ie1 ie2 ce1 ce2
+      subst h1 h2 h3 h4 h5 ie1 ie2 ce1 ce2
+      rfl)
+  else isFalse (by intro e; subst e; exact h ⟨rfl, rfl, rfl, rfl, rfl⟩)
+
+/-- Add the declaration `(n, d)` in front of `defs`, with the index and the
+count. -/
+def EntityTable.cons (t : EntityTable) (n : String) (d : EntityDef) : EntityTable :=
+  { t with
+    defs := (n, d) :: t.defs
+    index := t.index.insert n (d :: t.index.getD n [])
+    count := t.count + 1
+    index_eq := by rw [t.index_eq]; rfl
+    count_eq := by rw [t.count_eq]; rfl }
+
+@[simp] theorem EntityTable.cons_defs (t : EntityTable) (n : String) (d : EntityDef) :
+    (t.cons n d).defs = (n, d) :: t.defs := rfl
 
 /-- `[54] AttType` — the declared type of an attribute (XML 1.0 §3.3.1).
 

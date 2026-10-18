@@ -424,3 +424,49 @@ form. `xml-markup-chain` puts its reference inside a node element, so no case re
 of 6,000 markup entities under `rdf:RDF` overflowed 512 KB (3,000 ran). The theorem
 `parseChildren_eq_parseChildrenFromStart` covers the call, and the case `xml-markup-chain-top` runs the
 chain at 10,000 levels. Record: `docs/designissues/2026-10-15-csimp-reach.md`, section 6, item 3.
+
+Addendum, 2026-10-18 (https://github.com/danbri/factoidal/issues/872). After issue 871 the chain of
+markup entities under `rdf:RDF` ran in bounded stack, but its time grew faster than the number of
+levels. Measurement (`l4wasm-cli call parseToDatasetJson` on `xml-markup-chain-top`, one triple for each
+level; callgrind at 5,000 levels, 2.90 G instructions) found three costs that each grow with the square
+of the number of declarations or levels:
+
+1. `lookupEntityDef` scanned the list of declarations: 967 M instructions, half from `declareEntity`
+   (the check for an earlier declaration of the same name, a full scan for a new name) and half from
+   `generalEntityRaw` (each reference).
+2. The `mark` step of `parseSubset` measured `defs.length` twice for each declaration: 325 M.
+3. `parseChildrenW` gave each waiting frame its own accumulator. The frame that continued after a
+   replacement text appended the nodes of that text, which held the nodes of all deeper texts, to it
+   (`acc ++ fr.acc`): 275 M in `List.appendTR`, and the frees of the copies.
+
+Repair:
+
+1. `EntityTable` (`XML/Document.lean`) keeps, beside `defs`, `index` (a hash map from a name to its
+   declarations, newest first) and `count`, with the fields `index_eq : index = entityIndexOf defs` and
+   `count_eq : count = defs.length`. `EntityTable.cons` adds a declaration to the three.
+   `@[csimp] lookupEntityDef_eq_fast` (`XML/Parser.lean`) runs the lookup through the index; the proof is
+   `find_defs_eq_find_index` by induction on the declarations. Equality of tables compares `defs` and
+   the flags (a hand-written `DecidableEq`, lawful because `index` and `count` are functions of `defs`).
+   The fuel bounds that were `ents.defs.length + 1` are `ents.count + 1`.
+2. `parseEntityDecl` takes `unreadPe` (the `dtd.incomplete` of the caller) and sets `afterUnreadPe` on
+   the declaration that it adds. The `mark` step that compared lengths and changed the newest
+   declaration afterwards is removed; the table that results is the same.
+3. `parseChildrenW` keeps one accumulator for the replacement text and the waiting frames, and
+   `ChildFrame` has no accumulator. `resumeC` takes the part of the accumulator that the frames read
+   before the replacement text (`base`), and `parseChildrenW_eq` now states
+   `parseChildrenW frames s pos (acc ++ base) … = resumeC frames base (parseChildren s pos acc …)`,
+   proved by the same mutual functional induction.
+
+| levels | before | after |
+|---:|---:|---:|
+| 2,500 | 0.29 s | 0.14 s |
+| 5,000 | 0.55 s | 0.17 s |
+| 10,000 | 2.28 s | 0.39 s |
+| 20,000 | 12.39 s | 0.51 s |
+| 30,000 | 35.07 s | 1.06 s |
+| 40,000 | 76.31 s | 1.04 s |
+
+Callgrind: 5,000 levels 2.90 G to 1.34 G instructions, 10,000 levels 9.44 G to 2.64 G (ratio 1.97 for
+twice the levels). The row `rdfxml-markup-chain` of `tests/stack/lean_scaling.sh` (`l4factoidal parse
+--format rdfxml`, 5,000 against 20,000 levels) failed the bound with the build before (0.470 s to
+10.770 s, ratio 22.9) and passes after.

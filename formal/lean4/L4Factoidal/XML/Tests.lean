@@ -1455,6 +1455,40 @@ def rootChildCount (doc : String) : Option Nat :=
 #print axioms parseElement_eq_parseElementW
 #print axioms parseChildren_eq_parseChildrenFromStart
 
+-- The entity table's index (https://github.com/danbri/factoidal/issues/872).
+-- The first declaration of a name wins (section 4.2), with the index as with
+-- the list:
+#guard rootText "<!DOCTYPE a [<!ENTITY e \"1\"><!ENTITY e \"2\">]><a>&e;</a>" == some "1"
+#guard rootText "<!DOCTYPE a [<!ENTITY e \"1\"><!ENTITY e \"2\">]><a>&e;</a>" != some "2"
+-- A declaration that the table does not offer (`afterUnreadPe`) is skipped by
+-- the lookup, and an older one of the same name is found; without
+-- `standalone` nothing is found when that is the only one.
+#guard (lookupEntityDef "e" ((({} : EntityTable).cons "e" { value := "old" }).cons "e"
+          { value := "new", afterUnreadPe := true })).map (·.value) == some "old"
+#guard (lookupEntityDef "e" (({} : EntityTable).cons "e"
+          { value := "new", afterUnreadPe := true })).isNone
+#guard (lookupEntityDef "e" { (({} : EntityTable).cons "e"
+          { value := "new", afterUnreadPe := true }) with standalone := true }).map (·.value) ==
+        some "new"
+#guard (lookupEntityDef "f" (({} : EntityTable).cons "e" { value := "x" })).isNone
+-- `count` is the number of declarations, duplicates included.
+#guard ((({} : EntityTable).cons "e" { value := "1" }).cons "e" { value := "2" }).count == 2
+-- Equality of tables compares the declarations.
+#guard (({} : EntityTable).cons "e" { value := "1" }) == (({} : EntityTable).cons "e" { value := "1" })
+#guard (({} : EntityTable).cons "e" { value := "1" }) != (({} : EntityTable).cons "e" { value := "2" })
+-- Document order with one accumulator for the replacement texts and their
+-- frames: the nodes of a nested replacement text come between the nodes
+-- before and after its reference, at every level.
+#guard rootText ("<!DOCTYPE a [<!ENTITY i \"<d>3</d>\"><!ENTITY o \"<b>2</b>&i;<c>4</c>\">]>" ++
+          "<a>1&o;5&o;6</a>") == some "123452346"
+#guard rootText ("<!DOCTYPE a [<!ENTITY i \"<d>3</d>\"><!ENTITY o \"<b>2</b>&i;<c>4</c>\">]>" ++
+          "<a>1&o;5&o;6</a>") != some "123234456"
+#guard rootChildCount ("<!DOCTYPE a [<!ENTITY i \"<d>3</d>\"><!ENTITY o \"<b>2</b>&i;<c>4</c>\">]>" ++
+          "<a>1&o;5&o;6</a>") == some 9
+
+#print axioms lookupEntityDef_eq_fast
+#print axioms parseChildrenW_eq
+
 -- The document characters without a `List Char`
 -- (https://github.com/danbri/factoidal/issues/771, `documentChars_eq_fast`):
 -- section 2.11 still rewrites every line end, a byte order mark is still
