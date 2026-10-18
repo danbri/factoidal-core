@@ -79,6 +79,7 @@ that already agree on labels — the common case for a parser eval test
 -/
 import L4Factoidal.RDF.Graph
 import L4Factoidal.RDF.GraphIndex
+import L4Factoidal.RDF.IsoRefine
 import Std.Data.HashMap
 
 namespace L4Factoidal.RDF
@@ -698,11 +699,18 @@ def Graph.isoSearchStep (g1 g2 : Graph) : Option (List (BNodeId × BNodeId)) :=
   (Graph.isoSearchStepFull g1 g2).1
 
 /-- Candidate mapping: the identity first (the common eval-test case,
-one set comparison, no search and no budget), then the search. -/
+one set comparison, no search and no budget), then the mapping of colour
+refinement (`RDF/IsoRefine.lean`, certified inside it; no blank-node limit),
+then the search. -/
 def Graph.isoSearch (g1 g2 : Graph) : Option (List (BNodeId × BNodeId)) :=
   if Graph.isoCert g1.idMapping g1 g2 g1.bnodes g2.bnodes
   then some g1.idMapping
-  else Graph.isoSearchStep g1 g2
+  else
+    match IsoRefine.candidate (IsoRefine.graphQuads g1) (IsoRefine.graphQuads g2)
+            g1.bnodes g2.bnodes (fun m => Graph.isoCert m g1 g2 g1.bnodes g2.bnodes) with
+    | some m =>
+        if Graph.isoCert m g1 g2 g1.bnodes g2.bnodes then some m else Graph.isoSearchStep g1 g2
+    | none   => Graph.isoSearchStep g1 g2
 
 /-- The mapping search for graphs. Returns the WITNESS, not just a
 Bool, and certifies it on the way out, so soundness needs NOTHING from
@@ -887,7 +895,12 @@ def Dataset.isoSearchStep (ds1 ds2 : Dataset) :
 def Dataset.isoSearch (ds1 ds2 : Dataset) : Option (List (BNodeId × BNodeId)) :=
   if Dataset.isoCert ds1.idMapping ds1 ds2 ds1.bnodes ds2.bnodes
   then some ds1.idMapping
-  else Dataset.isoSearchStep ds1 ds2
+  else
+    match IsoRefine.candidate (IsoRefine.datasetQuads ds1) (IsoRefine.datasetQuads ds2)
+            ds1.bnodes ds2.bnodes (fun m => Dataset.isoCert m ds1 ds2 ds1.bnodes ds2.bnodes) with
+    | some m =>
+        if Dataset.isoCert m ds1 ds2 ds1.bnodes ds2.bnodes then some m else Dataset.isoSearchStep ds1 ds2
+    | none   => Dataset.isoSearchStep ds1 ds2
 
 /-- The mapping search for datasets. Same shape as the graph one; the
 signature pruning uses the flattened dataset, the certificate does
@@ -906,6 +919,50 @@ def Dataset.isomorphic? (ds1 ds2 : Dataset) : Bool :=
 /-- Dataset comparison with the three-way outcome. -/
 def Dataset.isomorphicOutcome (ds1 ds2 : Dataset) : IsoOutcome :=
   if (ds1.isomorphismMap? ds2).isSome then .equal
+  else if ds1.bnodes.length > isoBnodeBudget || ds2.bnodes.length > isoBnodeBudget
+  then .budgetExceeded
+  else if (Dataset.isoSearchStepFull ds1 ds2).2 == 0 then .budgetExceeded
+  else .notEqual
+
+/-! ## The procedure without colour refinement
+
+`isoSearchRef` is `isoSearch` as it was before colour refinement
+(https://github.com/danbri/factoidal/issues/868): the identity, then the
+bijection search. The outcome functions built on it are the reference of the
+differential tests (`IsomorphismTests.lean`) and of the theorems
+`Graph.isomorphicOutcome_vs_ref` and `Dataset.isomorphicOutcome_vs_ref`
+(`IsomorphismTheorems.lean`): the outcome is the reference outcome, or it is
+`equal` and the inputs are isomorphic. -/
+
+def Graph.isoSearchRef (g1 g2 : Graph) : Option (List (BNodeId × BNodeId)) :=
+  if Graph.isoCert g1.idMapping g1 g2 g1.bnodes g2.bnodes
+  then some g1.idMapping
+  else Graph.isoSearchStep g1 g2
+
+def Graph.isomorphismMapRef? (g1 g2 : Graph) : Option (List (BNodeId × BNodeId)) :=
+  match Graph.isoSearchRef g1 g2 with
+  | some m => if Graph.isoCert m g1 g2 g1.bnodes g2.bnodes then some m else none
+  | none   => none
+
+def Graph.isomorphicOutcomeRef (g1 g2 : Graph) : IsoOutcome :=
+  if (g1.isomorphismMapRef? g2).isSome then .equal
+  else if g1.bnodes.length > isoBnodeBudget || g2.bnodes.length > isoBnodeBudget
+  then .budgetExceeded
+  else if (Graph.isoSearchStepFull g1 g2).2 == 0 then .budgetExceeded
+  else .notEqual
+
+def Dataset.isoSearchRef (ds1 ds2 : Dataset) : Option (List (BNodeId × BNodeId)) :=
+  if Dataset.isoCert ds1.idMapping ds1 ds2 ds1.bnodes ds2.bnodes
+  then some ds1.idMapping
+  else Dataset.isoSearchStep ds1 ds2
+
+def Dataset.isomorphismMapRef? (ds1 ds2 : Dataset) : Option (List (BNodeId × BNodeId)) :=
+  match Dataset.isoSearchRef ds1 ds2 with
+  | some m => if Dataset.isoCert m ds1 ds2 ds1.bnodes ds2.bnodes then some m else none
+  | none   => none
+
+def Dataset.isomorphicOutcomeRef (ds1 ds2 : Dataset) : IsoOutcome :=
+  if (ds1.isomorphismMapRef? ds2).isSome then .equal
   else if ds1.bnodes.length > isoBnodeBudget || ds2.bnodes.length > isoBnodeBudget
   then .budgetExceeded
   else if (Dataset.isoSearchStepFull ds1 ds2).2 == 0 then .budgetExceeded

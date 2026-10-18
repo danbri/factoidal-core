@@ -321,16 +321,43 @@ private def manyBnodes (pre : String) : Graph :=
 #guard Graph.isomorphicOutcome (manyBnodes "a") (manyBnodes "b")
          = IsoOutcome.equal
 
--- Above the node budget the procedure refuses and SAYS SO. The
+-- Above the node budget the bijection search refuses and SAYS SO. The
 -- identity fast path runs first, so differing labels are needed to
 -- reach the refusal at all.
 private def hugeBnodes (pre : String) : Graph :=
   (List.range (isoBnodeBudget + 1)).map (fun i => tb (pre ++ toString i) iP (oi iA))
 
 #guard (Graph.bnodes (hugeBnodes "a")).length = isoBnodeBudget + 1
-#guard Graph.isomorphic? (hugeBnodes "a") (hugeBnodes "b") = false
+-- Until 2026-10-18 the two guards below read `isomorphic? = false` and
+-- `budgetExceeded`: the 129 blank nodes are interchangeable, so every
+-- mapping is an isomorphism, and `false` was the refusal of the search.
+-- Colour refinement (`RDF/IsoRefine.lean`, issue
+-- https://github.com/danbri/factoidal/issues/868) individualises one blank
+-- node per level and finds a certified mapping. The procedure without it
+-- (`isomorphicOutcomeRef`) still refuses.
+#guard Graph.isomorphic? (hugeBnodes "a") (hugeBnodes "b") = true
 #guard Graph.isomorphicOutcome (hugeBnodes "a") (hugeBnodes "b")
+         = IsoOutcome.equal
+#guard Graph.isomorphicOutcomeRef (hugeBnodes "a") (hugeBnodes "b")
          = IsoOutcome.budgetExceeded
+
+-- A refusal that colour refinement cannot turn into an answer: one cycle of
+-- 130 blank nodes against two cycles of 65. Both are 2-regular, so every
+-- blank node has the same colour on both sides; they are not isomorphic,
+-- refinement finds no certified mapping, and above the node budget the
+-- search refuses. The outcome is `budgetExceeded`, never `notEqual`.
+private def bnodeCycle (pre : String) (n : Nat) : Graph :=
+  (List.range n).map (fun i => tb (pre ++ toString i) iP (ob (pre ++ toString ((i + 1) % n))))
+
+#guard Graph.isomorphicOutcome (bnodeCycle "a" 130) (bnodeCycle "b" 65 ++ bnodeCycle "c" 65)
+         = IsoOutcome.budgetExceeded
+#guard Graph.isomorphicOutcomeRef (bnodeCycle "a" 130) (bnodeCycle "b" 65 ++ bnodeCycle "c" 65)
+         = IsoOutcome.budgetExceeded
+-- One cycle of 130 against the same cycle relabelled from another start:
+-- isomorphic, and found.
+#guard Graph.isomorphicOutcome (bnodeCycle "a" 130)
+         ((bnodeCycle "b" 130).map (Triple.renameBnodes (fun x => x ++ "'")))
+         = IsoOutcome.equal
 -- A node-budget refusal reports ZERO remaining work, which is how the
 -- outcome tells a refusal from a completed search that found nothing.
 #guard (Graph.isoSearchStepFull (hugeBnodes "a") (hugeBnodes "b")).2 = 0
@@ -393,5 +420,71 @@ private def xmlOther : Graph :=
 #guard Graph.isomorphic? xmlOther xmlBare = false
 #guard Triple.sigKey "x" (tb "x" iQ (xl "<br xmlns:eg=\"http://example.org/\"></br>"))
          = Triple.sigKey "x" (tb "x" iQ (xl "<br></br>"))
+
+/-! ## 12. Differential: colour refinement against the procedure without it
+
+https://github.com/danbri/factoidal/issues/868. `isomorphicOutcome` runs
+colour refinement before the bijection search; `isomorphicOutcomeRef` is the
+procedure as it was. `isomorphicOutcome_vs_ref` (`IsomorphismTheorems.lean`)
+proves the two equal except where the new one is `equal` with a certified
+mapping. The guards below check that they are EQUAL on generated datasets of
+up to 9 blank nodes (where the bijection search always answers): each
+dataset against itself relabelled and reordered (isomorphic), and against
+the relabelled copy with one triple changed (usually not isomorphic). -/
+
+/-- A pseudo-random number generator (the C library constants). -/
+private def lcg (x : Nat) : Nat := (x * 1103515245 + 12345) % 2147483648
+
+private def pickTerm (r k : Nat) : Term :=
+  match r % 4 with
+  | 0 => oi iA
+  | 1 => ol (toString (r % 3))
+  | _ => ob ("b" ++ toString (r / 4 % k))
+
+/-- Dataset number `seed`: `k` blank nodes, `t` triples, a default graph and
+two named graphs (one named by an IRI, one by a blank node). -/
+private def genDs (seed : Nat) : Dataset :=
+  let k := 2 + seed % 8
+  let t := 3 + seed % 13
+  let (ts, _) := (List.range t).foldl (fun (acc : List (Nat × Triple) × Nat) i =>
+    let r1 := lcg acc.2; let r2 := lcg r1; let r3 := lcg r2
+    let s : Subject := if r1 % 3 == 0 then .iri iB else .bnode ("b" ++ toString (r1 / 3 % k))
+    let tr : Triple := ⟨s, if r2 % 2 == 0 then iP else iQ, pickTerm r3 k⟩
+    ((i % 3, tr) :: acc.1, r3)) ([], seed * 7919 + 1)
+  { default := (ts.filter (·.1 == 0)).map (·.2),
+    named := [ { name := .iri iC, graph := (ts.filter (·.1 == 1)).map (·.2) },
+               { name := .bnode "b0", graph := (ts.filter (·.1 == 2)).map (·.2) } ] }
+
+/-- Relabel `bI` to `zJ` with `J` the reverse position, and reverse every
+graph's triple order. -/
+private def relabelDs (k : Nat) (ds : Dataset) : Dataset :=
+  let f : BNodeId → BNodeId := fun b =>
+    "z" ++ toString (k - 1 - ((b.drop 1).toString.toNat?.getD 0))
+  let r := ds.renameBnodes f
+  { default := r.default.reverse,
+    named := r.named.map (fun ng => { ng with graph := ng.graph.reverse }) }
+
+/-- Change the object of the first default-graph triple to a fresh literal. -/
+private def perturbDs (ds : Dataset) : Dataset :=
+  match ds.default with
+  | t :: rest => { ds with default := { t with o := ol "changed" } :: rest }
+  | [] => { ds with default := [ ti iA iP (ol "changed") ] }
+
+private def diffCase (seed : Nat) : Bool :=
+  let ds := genDs seed
+  let k := 2 + seed % 8
+  let r := relabelDs k ds
+  let x := perturbDs r
+  Dataset.isomorphicOutcome ds r == Dataset.isomorphicOutcomeRef ds r &&
+  Dataset.isomorphicOutcome ds r == IsoOutcome.equal &&
+  Dataset.isomorphicOutcome ds x == Dataset.isomorphicOutcomeRef ds x &&
+  Graph.isomorphicOutcome ds.default r.default == Graph.isomorphicOutcomeRef ds.default r.default &&
+  Graph.isomorphicOutcome ds.default x.default == Graph.isomorphicOutcomeRef ds.default x.default
+
+#guard (List.range 120).all diffCase
+-- The generator reaches both answers: some perturbed copies are not isomorphic.
+#guard (List.range 120).any (fun seed =>
+  Dataset.isomorphicOutcome (genDs seed) (perturbDs (relabelDs (2 + seed % 8) (genDs seed)))
+    == IsoOutcome.notEqual)
 
 end L4Factoidal.RDF.IsoTests
