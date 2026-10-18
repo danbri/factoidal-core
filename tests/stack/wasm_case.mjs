@@ -52,6 +52,9 @@ const CASES = {
   'nquads-read-triple-term': () => ['parseToDatasetJson', readArgs('args-nquads-read-triple-term.json')],
   'trig-read-triple-term': () => ['parseToDatasetJson', readArgs('args-trig-read-triple-term.json')],
   'construct-triple-term': () => ['queryDataset', readArgs('args-construct-triple-term.json')],
+  'jsonld-read-fanout': () => ['jsonldToRdf', readArgs('args-jsonld-fanout.json')],
+  'jsonld-read-list': () => ['jsonldToRdf', readArgs('args-jsonld-list.json')],
+  'jsonld-write-fanout': () => ['jsonldFromRdf', readArgs('args-jsonld-write-fanout.json')],
 };
 
 // The handle rows of the Turtle writer with many prefixes (issue 864): a document

@@ -24,6 +24,16 @@ RDF/XML form, and the serialiser says so instead of inventing a
 namespace (RDF/XML 1.1 section 7.2.2; the note on serialising URIs as
 property elements). A triple term object has no RDF/XML 1.1 form and is
 refused. Characters XML 1.0 cannot carry are refused.
+
+## Cost
+
+One `rdf:Description` per subject, in the order of the subject's first triple, with
+the subject's triples in graph order (`subjectGroups`). The run-time form groups the
+triples in one pass with a hash map (`subjectGroupsFast`, `subjectGroups_eq_fast`),
+so the writer's time is linear in the number of triples
+(https://github.com/danbri/factoidal/issues/845: 64,000 triples took 10.5 s before,
+0.44 s after; `tests/stack/lean_scaling.py`, rows `rdfxml-write` and
+`rdfxml-write-stack`).
 -/
 import L4Factoidal.Syntax.RdfXml
 import L4Factoidal.Syntax.TurtleSerialize

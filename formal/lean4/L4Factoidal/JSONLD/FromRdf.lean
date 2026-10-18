@@ -710,6 +710,14 @@ def resolveOvFast (g : List FrNode) (refids : List String) (clMode : Bool) (v : 
 @[csimp] theorem resolveOv_eq_fast : @resolveOv = @resolveOvFast := by
   funext g refids clMode v fuel; exact ((listFromW_eq g refids clMode fuel).2 v).symm
 
+def listFromFast (g : List FrNode) (refids : List String) (clMode : Bool) (id : String)
+    (fuel : Nat) : List Ov :=
+  listFromW g refids clMode [] id fuel
+
+@[csimp] theorem listFrom_eq_fast : @listFrom = @listFromFast := by
+  funext g refids clMode id fuel
+  simp [listFromFast, (listFromW_eq g refids clMode fuel).1]
+
 def rewriteNode (g : List FrNode) (refids : List String) (clMode : Bool) (fuel : Nat)
     (n : FrNode) : FrNode :=
   { n with props := n.props.map (fun pv =>
@@ -769,6 +777,11 @@ end
 
 @[csimp] theorem ovToJson_eq_fast : @ovToJson = @ovToJsonW := by
   funext v; exact (ovToJsonW_eq v).symm
+
+def ovListToJsonFast (l : List Ov) : List Json := ovListToJsonW [] l
+
+@[csimp] theorem ovListToJson_eq_fast : @ovListToJson = @ovListToJsonFast := by
+  funext l; simp [ovListToJsonFast, ovListToJsonW_eq]
 
 #guard ovToJsonW (.lst [.ref "a", .val (.string "x")]) ==
   .object [("@list", .array [.object [("@id", .string "a")], .string "x"])]

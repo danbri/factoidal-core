@@ -112,6 +112,9 @@ export STACK_SBM11_WHERE="$N_WHERE"
 # https://github.com/danbri/factoidal/issues/871).
 N_MARKUP_TOP="${STACK_MARKUP_CHAIN_TOP:-10000}"
 export STACK_MARKUP_CHAIN_TOP="$N_MARKUP_TOP"
+N_JLDF="${STACK_JSONLD_FANOUT:-100000}"; export STACK_JSONLD_FANOUT="$N_JLDF"
+N_JLDL="${STACK_JSONLD_LIST:-100000}"; export STACK_JSONLD_LIST="$N_JLDL"
+N_JLDW="${STACK_JSONLD_WRITE:-20000}"; export STACK_JSONLD_WRITE="$N_JLDW"
 # Turtle writer: triples in each of the two shapes (gen_cases.py reads the
 # same variable; https://github.com/danbri/factoidal/issues/863).
 N_TTLW="${STACK_TURTLE_WRITE:-100000}"
@@ -218,6 +221,18 @@ row_wrong() {
       local n
       n="$(printf '%s' "$2" | grep -o '@prefix ' | wc -l | tr -d ' ')"
       [ "$n" = "$N_TTLP" ] || echo "the output has $n @prefix declarations, expected $N_TTLP" ;;
+    jsonld-read-fanout)
+      local n
+      n="$(printf '%s' "$2" | grep -o 'example.org/link' | wc -l | tr -d ' ')"
+      [ "$n" = "$N_JLDF" ] || echo "the N-Quads hold $n link triples, expected $N_JLDF" ;;
+    jsonld-read-list)
+      local n
+      n="$(printf '%s' "$2" | grep -o 'rdf-syntax-ns#first' | wc -l | tr -d ' ')"
+      [ "$n" = "$N_JLDL" ] || echo "the N-Quads hold $n rdf:first triples, expected $N_JLDL" ;;
+    jsonld-write-fanout)
+      local n
+      n="$(printf '%s' "$2" | grep -o 'example.org/o[0-9]*' | sort -u | wc -l | tr -d ' ')"
+      [ "$n" = "$N_JLDW" ] || echo "the JSON-LD holds $n distinct references, expected $N_JLDW" ;;
     turtle-read-triple-term)
       local c n
       c="$(printf '%s' "$2" | grep -o '"count":[0-9]*' | head -1)"
@@ -512,6 +527,9 @@ CASES=(
   "nquads-read-triple-term parseToDatasetJson args-nquads-read-triple-term.json"
   "trig-read-triple-term parseToDatasetJson args-trig-read-triple-term.json"
   "construct-triple-term queryDataset args-construct-triple-term.json"
+  "jsonld-read-fanout jsonldToRdf args-jsonld-fanout.json"
+  "jsonld-read-list jsonldToRdf args-jsonld-list.json"
+  "jsonld-write-fanout jsonldFromRdf args-jsonld-write-fanout.json"
 )
 
 if [ "$ROUTE" = native ] || [ "$ROUTE" = both ]; then

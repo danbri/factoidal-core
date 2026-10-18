@@ -446,6 +446,16 @@ theorem jcsSerW_eq : ∀ fuel : Nat,
 @[csimp] theorem jcsSerialize_eq_fast : @jcsSerialize = @jcsSerW := by
   funext j fuel; exact ((jcsSerW_eq fuel).1 j).symm
 
+def jcsSerializeItemsFast (items : List Json) (fuel : Nat) : String := jcsItemsW "" items fuel
+def jcsSerializeFieldsFast (fields : List (String × Json)) (fuel : Nat) : String :=
+  jcsFieldsW "" fields fuel
+
+@[csimp] theorem jcsSerializeItems_eq_fast : @jcsSerializeItems = @jcsSerializeItemsFast := by
+  funext items fuel; simp [jcsSerializeItemsFast, (jcsSerW_eq fuel).2.1]
+
+@[csimp] theorem jcsSerializeFields_eq_fast : @jcsSerializeFields = @jcsSerializeFieldsFast := by
+  funext fields fuel; simp [jcsSerializeFieldsFast, (jcsSerW_eq fuel).2.2]
+
 #guard jcsSerW (.array [.number "1", .object [("b", .null), ("a", .bool true)], .string "x"]) 20 ==
   "[1,{\"a\":true,\"b\":null},\"x\"]"
 #guard jcsSerW (.array [.number "1", .number "2"]) 20 != "[2,1]"
@@ -1242,6 +1252,31 @@ theorem expandW_eq (rdir : RdfDirectionMode) : ∀ fuel : Nat,
 
 @[csimp] theorem expandGraphNodes_eq_fast : @expandGraphNodes = @expandGraphNodesW := by
   funext rdir nodes st fuel; exact ((expandW_eq rdir fuel).2.2.2.2.2.2.2.2 nodes st).symm
+
+-- The other members of the block get their own replacement, so that no compiled
+-- code keeps a call into the specification block.
+@[csimp] theorem expandValue_eq_fast : @expandValue = @expandValueW := by
+  funext rdir v st fuel; exact ((expandW_eq rdir fuel).1 v st).symm
+
+def expandListFast (rdir : RdfDirectionMode) (items : List Json) (st : RdfAcc) (fuel : Nat) :
+    Term × RdfAcc :=
+  expandListGo rdir items st fuel []
+
+@[csimp] theorem expandList_eq_fast : @expandList = @expandListFast := by
+  funext rdir items st fuel
+  simp [expandListFast, (expandW_eq rdir fuel).2.1, listCells]
+
+@[csimp] theorem expandReverseMap_eq_fast : @expandReverseMap = @expandReverseMapW := by
+  funext rdir subj v st fuel; exact ((expandW_eq rdir fuel).2.2.2.2.1 subj v st).symm
+
+@[csimp] theorem expandReverseEntries_eq_fast : @expandReverseEntries = @expandReverseEntriesW := by
+  funext rdir subj entries st fuel; exact ((expandW_eq rdir fuel).2.2.2.2.2.1 subj entries st).symm
+
+@[csimp] theorem expandReverseProp_eq_fast : @expandReverseProp = @expandReversePropW := by
+  funext rdir subj prop vals st fuel; exact ((expandW_eq rdir fuel).2.2.2.2.2.2.1 subj prop vals st).symm
+
+@[csimp] theorem expandPropertyR_eq_fast : @expandPropertyR = @expandPropertyRW := by
+  funext rdir subj prop vals st fuel; exact ((expandW_eq rdir fuel).2.2.2.2.2.2.2.1 subj prop vals st).symm
 
 private def listSt0 : RdfAcc := { acc := [], named := [], ctr := 0, labelPrefix := "_jld_anon" }
 -- A list of three items: three cells, three `rdf:first` and three `rdf:rest`

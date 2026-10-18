@@ -217,6 +217,17 @@ def sizeFast (j : Json) : Nat := sizeAcc j 0
 @[csimp] theorem size_eq_sizeFast : @size = @sizeFast := by
   funext j; simp [sizeFast, sizeAcc_eq]
 
+-- The other two members of the block get their own replacement, so that no
+-- compiled code keeps a call into the non-tail block.
+def sizeItemsFast (xs : List Json) : Nat := sizeItemsAcc xs 0
+def sizeFieldsFast (fs : List (String × Json)) : Nat := sizeFieldsAcc fs 0
+
+@[csimp] theorem sizeItems_eq_fast : @sizeItems = @sizeItemsFast := by
+  funext xs; simp [sizeItemsFast, sizeItemsAcc_eq]
+
+@[csimp] theorem sizeFields_eq_fast : @sizeFields = @sizeFieldsFast := by
+  funext fs; simp [sizeFieldsFast, sizeFieldsAcc_eq]
+
 #guard sizeFast (array [null, object [("a", bool true)], string "x"]) ==
   size (array [null, object [("a", bool true)], string "x"])
 #guard sizeFast (array [null, null]) == 5
