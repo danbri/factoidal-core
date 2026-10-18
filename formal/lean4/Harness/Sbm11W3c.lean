@@ -71,13 +71,16 @@ datasets with the isomorphism of the Lean W3C runners
       directory of the manifest), entry (the local name of the test node), the
       `mf:name`, the manifest, the `ut:request` file.
   l4sbm11-w3c prepare-update MANIFEST ENTRY OUTDIR
-      Writes `OUTDIR/input.nq` (the initial Graph Store: `ut:data` as the default
-      graph and each `ut:graphData` as the named graph its `rdfs:label` names;
-      the loader of the Lean update runner, `Harness.loadUpdateStore`) and
-      `OUTDIR/expected.nq` (the same for `mf:result`), and prints `ok`, or
-      `skip REASON` (exit 3) when a file is missing or the request has a LOAD
-      without SILENT (no document is fetched: the Lean update runner skips it
-      too), or `fail REASON` (exit 1).
+      Writes `OUTDIR/input.nq` and `OUTDIR/input.trig` (the initial Graph Store:
+      `ut:data` as the default graph and each `ut:graphData` as the named graph
+      its `rdfs:label` names; the loader of the Lean update runner,
+      `Harness.loadUpdateStore`) and `OUTDIR/expected.nq` and
+      `OUTDIR/expected.trig` (the same for `mf:result`). The TriG files state a
+      named graph with no triple (a `ut:graphData` file with no triple); the
+      N-Quads files cannot. Prints `ok input-graphs-with-no-triple=N
+      expected-graphs-with-no-triple=M`, or `skip REASON` (exit 3) when a file is
+      missing or the request has a LOAD without SILENT (no document is fetched:
+      the Lean update runner skips it too), or `fail REASON` (exit 1).
   l4sbm11-w3c run-update MANIFEST ENTRY
       The test through the in-memory reference engine, the existing Lean update
       runner (`Harness.runUpdateEvaluation`): `pass`, `fail REASON` (exit 1) or
@@ -516,11 +519,14 @@ def runPrepareUpdate (manifest entry outDir : String) : IO UInt32 := do
     | .ok d => pure d
     | .error o => let (l, c) := outcomeLine o; IO.println l; return c
   IO.FS.createDirAll outDir
-  for (name, ds) in [("input.nq", input), ("expected.nq", expected)] do
+  for (name, ds) in [("input", input), ("expected", expected)] do
     match Dataset.toNQuads ds .rdf11 with
-    | .ok t => IO.FS.writeFile s!"{outDir}/{name}" t
-    | .error e => IO.println s!"fail cannot write {name}: {e}"; return 1
-  IO.println "ok"
+    | .ok t => IO.FS.writeFile s!"{outDir}/{name}.nq" t
+    | .error e => IO.println s!"fail cannot write {name}.nq: {e}"; return 1
+    match Sink.datasetToTrig .rdf11 ds with
+    | .ok t => IO.FS.writeFile s!"{outDir}/{name}.trig" t
+    | .error e => IO.println s!"fail cannot write {name}.trig: {e}"; return 1
+  IO.println s!"ok input-graphs-with-no-triple={(emptyNames input).length} expected-graphs-with-no-triple={(emptyNames expected).length}"
   pure 0
 
 def runRunUpdate (manifest entry : String) : IO UInt32 := do

@@ -192,10 +192,11 @@
 #                item 4). Its counts are added to this run's.
 #   (s) w3c-update  tests/sbm11/w3c_update.sh: the 94 W3C SPARQL 1.1 Update evaluation
 #                tests, read from the manifests on disk, run through the store (pack the
-#                initial Graph Store, `l4sbm11 update`, `l4sbm11 compact`, `l4sbm11 dump`,
-#                compare by isomorphism) and through the in-memory reference engine. The
-#                store passes every test the reference passes. Its counts (the store's)
-#                are added to this run's, under their own line.
+#                initial Graph Store as TriG, `l4sbm11 update`, `l4sbm11 compact`, `l4sbm11
+#                export --format trig`, compare by isomorphism with every named graph
+#                compared, also one with no triple: issue 855) and through the in-memory
+#                reference engine. The store passes every test the reference passes. Its
+#                counts (the store's) are added to this run's, under their own line.
 #   (t) agg-ids  tests/sbm11/agg_ids.sh (https://github.com/danbri/factoidal/issues/825):
 #                the gate queries in the plan of `AggStream.aggPlan?` say "aggregated on
 #                ids" in --explain and answer byte for byte as `--no-agg-ids` does (the

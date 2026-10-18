@@ -771,7 +771,9 @@ lemma): a batch of 48,000 entries overflowed a 512 KB stack at every open. Gates
 `l4factoidal update`, by compaction and dump, and 7 queries on the overlay;
 `scaling`: compile time for n and 4n solutions, replay time for n and 8n
 entries) and `tests/sbm11/w3c_update.sh` (the 94 W3C Update evaluation tests
-through the store and through the reference), parts (r) and (s) of
+through the store and through the reference; since 2026-10-15 the store is packed
+from TriG and exported as TriG, and every named graph is compared, also one with
+no triple: `compare --empty keep`), parts (r) and (s) of
 `tests/sbm11/run.sh`; the stack case `sbm11-update-where` of
 `tests/stack/run.sh`; proofs in `SPARQL/UpdateStoreTheorems.lean` and
 `Storage/Sbm11/UpdateOverlayTheorems.lean`.

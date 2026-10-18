@@ -16,23 +16,33 @@
 #      `ut:graphData`, `applyUpdateIn`, compare with `mf:result`;
 #   3. STORE: `l4sbm11-w3c prepare-update` writes the initial Graph Store (the
 #      default graph and every `ut:graphData` with its graph name, loaded as the
-#      reference loads it) and the expected Graph Store as N-Quads;
-#      `l4sbm11-pack` packs the initial store (the source layer reads the N-Quads);
+#      reference loads it) and the expected Graph Store as TriG, which states a
+#      named graph with no triple (a `ut:graphData` whose file has no triple, such
+#      as the `empty.ttl` of a CLEAR test); `l4sbm11-pack` packs the initial store
+#      (the source layer reads the TriG and declares each graph);
 #      `l4sbm11 update GEN --file REQUEST --base FILE-URL` appends the request as
 #      one log batch; `l4sbm11 compact` folds the log into a new generation
-#      (`l4sbm11 dump` reads the base of a generation, not the overlay; the
-#      compaction reads the overlaid generation by the scans a query uses);
-#      `l4sbm11 dump` writes the compacted generation as N-Quads; and
-#      `l4sbm11-w3c compare` compares it with the expected store by RDF dataset
-#      isomorphism, after the Lean runner's rule that a named graph with no triple
-#      is dropped on both sides (the store holds no empty graph).
+#      (`l4sbm11 export` reads the base of a generation, not the overlay; the
+#      compaction reads the overlaid generation and writes its graph list);
+#      `l4sbm11 export --format trig` writes the compacted generation, a named
+#      graph with no triple included; and `l4sbm11-w3c compare --empty keep`
+#      compares it with the expected store by RDF dataset isomorphism, every named
+#      graph compared, also one with no triple (RDF 1.1 Concepts section 4;
+#      2026-10-15, https://github.com/danbri/factoidal/issues/855). Until then the
+#      store held no graph with no triple, and the comparison dropped such graphs on
+#      both sides, as the Lean runner does.
+#   4. REFERENCE WITH THE GRAPHS WITH NO TRIPLE: `l4sbm11-w3c update-source` applies
+#      the request to the initial TriG with the reference semantics and writes TriG;
+#      `compare --empty keep` compares it with the expected store. This column says
+#      whether the reference semantics keeps the graphs the W3C results list.
 #
 # A request with a LOAD without SILENT is skipped by both (no document is fetched).
 #
 # Prints, for each suite, "store: N pass, M fail, K expected-fail, S skip (out of
 # T); reference: N pass, M fail, S skip (out of T)", then the store-only failures
 # (a test that the reference passes and the store fails), the failures of both,
-# and the total:
+# the number of tests whose expected store has a named graph with no triple, the
+# reference with those graphs compared, and the total:
 #
 #   w3c update: store: N pass, M fail, K expected-fail, S skip (out of T); reference: ...
 #
@@ -96,14 +106,15 @@ run_row() {
   # store
   rc=0
   out="$(timeout 120 "$BIN/l4sbm11-w3c" prepare-update "$manifest" "$entry" "$d" 2>&1)" || rc=$?
+  local empties=-
   case "$out" in
-    ok) ;;
+    ok*) empties="$(printf '%s' "$out" | sed -n 's/.*expected-graphs-with-no-triple=\([0-9]*\).*/\1/p')" ;;
     skip*) store=skip; stored="$(printf '%s' "$out" | head -1 | cut -c1-200)" ;;
     *) store=fail; stored="prepare: $(printf '%s' "$out" | head -1 | cut -c1-200)" ;;
   esac
   if [ -z "${store:-}" ]; then
     rc=0
-    timeout 120 "$BIN/l4sbm11-pack" "$d/input.nq" "$d/col/gen" --workers 1 >"$d/pack.log" 2>&1 || rc=$?
+    timeout 120 "$BIN/l4sbm11-pack" "$d/input.trig" "$d/col/gen" --workers 1 >"$d/pack.log" 2>&1 || rc=$?
     if [ "$rc" -ne 0 ]; then store=fail; stored="pack exit $rc: $(tail -1 "$d/pack.log" | cut -c1-200)"; fi
   fi
   if [ -z "${store:-}" ]; then
@@ -118,21 +129,32 @@ run_row() {
   fi
   if [ -z "${store:-}" ]; then
     rc=0
-    timeout 120 "$BIN/l4sbm11" dump "$d/col/gen2" >"$d/dump.nq" 2>"$d/dump.err" || rc=$?
-    if [ "$rc" -ne 0 ]; then store=fail; stored="dump exit $rc: $(tail -1 "$d/dump.err" | cut -c1-200)"; fi
+    timeout 120 "$BIN/l4sbm11" export "$d/col/gen2" --format trig --out "$d/export.trig" >"$d/export.log" 2>&1 || rc=$?
+    if [ "$rc" -ne 0 ]; then store=fail; stored="export exit $rc: $(tail -1 "$d/export.log" | cut -c1-200)"; fi
   fi
   if [ -z "${store:-}" ]; then
-    out="$("$BIN/l4sbm11-w3c" compare "$d/expected.nq" "$d/dump.nq" --expected nq --mode rdf11 2>&1)" || true
+    out="$("$BIN/l4sbm11-w3c" compare "$d/expected.trig" "$d/export.trig" --expected trig --actual trig --empty keep --mode rdf11 2>&1)" || true
     case "$out" in
       pass*) store=pass; stored="$(grep -o 'where path=[a-z]*' "$d/update.log" | sort | uniq -c | tr '\n' ' ' | sed 's/  */ /g; s/ *$//')"; [ -n "$stored" ] || stored=- ;;
       *) store=fail; stored="$(printf '%s' "$out" | head -1 | cut -c1-240)" ;;
+    esac
+  fi
+  # the reference semantics with the graphs with no triple compared
+  local refk=- refkd=-
+  if [ -f "$d/input.trig" ] && [ "$ref" != skip ]; then
+    out="$(timeout 120 "$BIN/l4sbm11-w3c" update-source "$d/input.trig" "$request" "$d/ref.trig" --format trig --base - --mode rdf11 2>&1)" || true
+    case "$out" in
+      ok*)
+        out="$("$BIN/l4sbm11-w3c" compare "$d/expected.trig" "$d/ref.trig" --expected trig --actual trig --empty keep --mode rdf11 2>&1)" || true
+        case "$out" in pass*) refk=pass ;; *) refk=fail; refkd="$(printf '%s' "$out" | head -1 | cut -c1-200)" ;; esac ;;
+      *) refk=fail; refkd="update-source: $(printf '%s' "$out" | head -1 | cut -c1-200)" ;;
     esac
   fi
   if [ -n "${W3C_UPDATE_KEEP:-}" ] && [ "$store" = fail ]; then
     mkdir -p "$W3C_UPDATE_KEEP/$idx"; cp -r "$d/." "$W3C_UPDATE_KEEP/$idx/" 2>/dev/null || true
   fi
   rm -rf "$d/col"
-  printf '%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\n' "$idx" "$suite" "$entry" "$name" "$ref" "$refd" "$store" "$stored"
+  printf '%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\n' "$idx" "$suite" "$entry" "$name" "$ref" "$refd" "$store" "$stored" "$empties" "$refk" "$refkd"
 }
 export -f run_row
 export TMP BIN
@@ -167,16 +189,22 @@ for ln, line in enumerate(open(xfail_path, encoding="utf-8"), 1):
 rows = {}
 for line in open(results_path, encoding="utf-8"):
     f = line.rstrip("\n").split("\t")
-    idx, suite, entry, name, ref, refd, store, stored = f
-    rows.setdefault(suite, []).append((int(idx), entry, name, ref, refd, store, stored))
+    idx, suite, entry, name, ref, refd, store, stored, empties, refk, refkd = f
+    rows.setdefault(suite, []).append((int(idx), entry, name, ref, refd, store, stored, empties, refk, refkd))
 
 seen_x = set()
 tot = dict(sp=0, sf=0, sx=0, ss=0, rp=0, rf=0, rs=0, n=0)
 only_store, both_fail, xpass = [], [], []
+with_empty, empty_graphs, refk_pass, refk_fail = 0, 0, 0, []
 for suite in order:
     rs = sorted(rows.get(suite, []))
     sp = sf = sx = ss = rp = rf = rsk = 0
-    for idx, entry, name, ref, refd, store, stored in rs:
+    for idx, entry, name, ref, refd, store, stored, empties, refk, refkd in rs:
+        if empties.isdigit() and int(empties) > 0:
+            with_empty += 1
+            empty_graphs += int(empties)
+        if refk == "pass": refk_pass += 1
+        elif refk == "fail": refk_fail.append((suite, entry, name, refkd))
         key = (suite, entry)
         entry_x = xfail.get(key)
         if ref == "pass": rp += 1
@@ -229,6 +257,11 @@ if missing:
     print(f"rows of the expected-failure table that match no test: {len(missing)}")
     for s, e in missing:
         print(f"  STALE {s} {e}")
+print(f"named graphs with no triple: {with_empty} tests have {empty_graphs} in the expected store; "
+      f"every named graph is compared, also one with no triple (https://github.com/danbri/factoidal/issues/855)")
+print(f"reference semantics with the graphs with no triple compared: {refk_pass} pass, {len(refk_fail)} fail")
+for s, e, n, d in refk_fail:
+    print(f"  reference-keep-fail {s} {e} ({n}): {d}")
 by_issue = {}
 for (s, e), (issue, reason) in xfail.items():
     if (s, e) in seen_x:
