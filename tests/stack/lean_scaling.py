@@ -69,6 +69,10 @@ repaired (docs/designissues/2026-10-10-lean-vs-fstar-performance.md):
                    `fromRdf` kept its node map as a list
                    (https://github.com/danbri/factoidal/issues/712); it uses hash maps
                    since 2026-10-18
+  jsonld-write-rest-cycle
+                   the same command on a cycle of 2,000, then 8,000 rdf:rest list cells
+                   (https://github.com/danbri/factoidal/issues/878). Measured 2026-10-18
+                   before the repair: 0.375 s and 9.09 s (24.2 for 4x input)
   jsonld-read-*-stack, jsonld-write-*-stack, rdfxml-write-stack
                    STACK_ROWS: the command at n, 2n and 4n under LEAN_STACK_SIZE_KB=512;
                    every run must exit 0 and the time stay within 4.5 times (2n) and 9
@@ -541,6 +545,7 @@ XFAIL: dict[str, str] = {
     "sbm11-pack-trig-workers": "https://github.com/danbri/factoidal/issues/842",
     "sbm11-export-rdfxml-memory": "https://github.com/danbri/factoidal/issues/846",
     "sbm11-export-jsonld-memory": "https://github.com/danbri/factoidal/issues/847",
+    "jsonld-write-rest-cycle": "https://github.com/danbri/factoidal/issues/878",
 }
 # A run longer than this is not repeated: the minimum of several runs only
 # removes timer and load noise, which is small against a run this long.
@@ -553,6 +558,15 @@ def fixture(name: str, text_fn) -> Path:
     if not p.exists():
         p.write_text(text_fn(), encoding="utf-8")
     return p
+
+
+def rest_cycle_nt(n: int) -> Path:
+    """A subject whose object is the first of n list cells whose last rdf:rest is the first
+    cell again (a cycle, not a well-formed collection)."""
+    rdf = "http://www.w3.org/1999/02/22-rdf-syntax-ns#"
+    return fixture(f"rest-cycle-{n}.nt", lambda: "<%ss> <%sp> _:c0 .\n" % (EX, EX) + "".join(
+        "_:c%d <%sfirst> \"v%d\" .\n_:c%d <%srest> _:c%d .\n" % (i, rdf, i, i, rdf, (i + 1) % n)
+        for i in range(n)))
 
 
 def multi_nt(n: int) -> Path:
@@ -828,6 +842,15 @@ ROWS = {
     "jsonld-write": (
         2000,
         lambda n: multi_nt(n),
+        lambda p: [str(SOURCE_CONVERT_BIN), str(p), str(FIX / "write-out.jsonld"),
+                   "--from", "nquads", "--to", "jsonld"]),
+    # The JSON-LD writer on a cycle of rdf:rest cells, each a list cell (rdf:first and
+    # rdf:rest) referenced once (https://github.com/danbri/factoidal/issues/878). List
+    # detection (`memoC` in L4Factoidal/JSONLD/FromRdf.lean) walked graphFuel steps from
+    # a cell of a cycle and kept the result for that cell only.
+    "jsonld-write-rest-cycle": (
+        2000,
+        lambda n: rest_cycle_nt(n),
         lambda p: [str(SOURCE_CONVERT_BIN), str(p), str(FIX / "write-out.jsonld"),
                    "--from", "nquads", "--to", "jsonld"]),
 }
