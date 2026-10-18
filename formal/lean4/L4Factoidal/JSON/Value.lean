@@ -159,6 +159,69 @@ def sizeFields : List (String × Json) → Nat
 
 end
 
+/-! ### The run-time form of `size`
+
+`sizeItems` adds the size of the rest of the list after its recursive call
+returns, so it takes one native frame for each element: an array of 100,000
+elements overflowed a stack of 512 KB in `datasetOfJson`, whose fuel is
+`size root + 1` (https://github.com/danbri/factoidal/issues/844). `sizeAcc`
+adds into an accumulator: the siblings of an array or an object are a loop, and
+the depth of the recursion is the nesting of the value. `sizeAcc_eq` proves
+`sizeAcc j n = n + size j`, and `size_eq_sizeFast` makes the compiler emit
+`sizeFast` for every call of `size`. -/
+
+mutual
+
+def sizeAcc : Json → Nat → Nat
+  | array xs, n  => sizeItemsAcc xs (n + 1)
+  | object fs, n => sizeFieldsAcc fs (n + 1)
+  | _, n         => n + 1
+
+def sizeItemsAcc : List Json → Nat → Nat
+  | [], n       => n
+  | hd :: tl, n => sizeItemsAcc tl (sizeAcc hd (n + 1))
+
+def sizeFieldsAcc : List (String × Json) → Nat → Nat
+  | [], n            => n
+  | (_, v) :: tl, n  => sizeFieldsAcc tl (sizeAcc v (n + 1))
+
+end
+
+mutual
+
+theorem sizeAcc_eq : ∀ (j : Json) (n : Nat), sizeAcc j n = n + size j
+  | null, n => by simp [sizeAcc, size]
+  | bool _, n => by simp [sizeAcc, size]
+  | string _, n => by simp [sizeAcc, size]
+  | number _, n => by simp [sizeAcc, size]
+  | array xs, n => by
+    simp only [sizeAcc, size]; rw [sizeItemsAcc_eq]; omega
+  | object fs, n => by
+    simp only [sizeAcc, size]; rw [sizeFieldsAcc_eq]; omega
+
+theorem sizeItemsAcc_eq : ∀ (xs : List Json) (n : Nat), sizeItemsAcc xs n = n + sizeItems xs
+  | [], n => by simp [sizeItemsAcc, sizeItems]
+  | hd :: tl, n => by
+    simp only [sizeItemsAcc, sizeItems]; rw [sizeItemsAcc_eq, sizeAcc_eq]; omega
+
+theorem sizeFieldsAcc_eq : ∀ (fs : List (String × Json)) (n : Nat),
+    sizeFieldsAcc fs n = n + sizeFields fs
+  | [], n => by simp [sizeFieldsAcc, sizeFields]
+  | (_, v) :: tl, n => by
+    simp only [sizeFieldsAcc, sizeFields]; rw [sizeFieldsAcc_eq, sizeAcc_eq]; omega
+
+end
+
+def sizeFast (j : Json) : Nat := sizeAcc j 0
+
+@[csimp] theorem size_eq_sizeFast : @size = @sizeFast := by
+  funext j; simp [sizeFast, sizeAcc_eq]
+
+#guard sizeFast (array [null, object [("a", bool true)], string "x"]) ==
+  size (array [null, object [("a", bool true)], string "x"])
+#guard sizeFast (array [null, null]) == 5
+#guard sizeFast null != 0
+
 /-! ## Field access — port of `json_get_field` and friends -/
 
 /-- Field lookup by name on an object: the FIRST matching member.
