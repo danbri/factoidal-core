@@ -213,6 +213,14 @@ repaired (docs/designissues/2026-10-10-lean-vs-fstar-performance.md):
                    for each entry on this fixture, 283 on the olympics generation (203,264
                    entries: 57.9 s). Since 2026-10-14 the replay looks the distinct terms of the
                    log up in dictionary order with a finger (`Dict.lookupWalkM`).
+  sbm11-replay-insert-time
+                   the same bounds for a log of n adds whose subject and object are not in the
+                   dictionary (`gen_dlog.py --kind insert`: two new overlay terms for each
+                   entry). Expected failure, https://github.com/danbri/factoidal/issues/879: the
+                   overlay ids of new terms are above 2^63, so a Lean `Nat` holds them as GMP
+                   numbers, and the sort of the overlay rows for each permutation
+                   (`Session.withOverlay`) compares them with `mpz_cmp` (2026-10-18: 42.0
+                   microseconds for each entry, 6.6 for 4x entries; the `rename` log 17.7).
   sbm11-pack-nt-vs-nq  `l4sbm11-pack` over 100,000 N-Triples statements takes at most
                    2.0 times the CPU time of the same pack over the same triples as
                    N-Quads text (one graph name on every line). N-Triples was read
@@ -546,6 +554,7 @@ XFAIL: dict[str, str] = {
     "sbm11-pack-trig-workers": "https://github.com/danbri/factoidal/issues/842",
     "sbm11-export-rdfxml-memory": "https://github.com/danbri/factoidal/issues/846",
     "sbm11-export-jsonld-memory": "https://github.com/danbri/factoidal/issues/847",
+    "sbm11-replay-insert-time": "https://github.com/danbri/factoidal/issues/879",
 }
 # A run longer than this is not repeated: the minimum of several runs only
 # removes timer and load noise, which is small against a run this long.
@@ -1623,24 +1632,26 @@ _OPEN_BASE: list = []
 _OPEN_RUNS: dict = {}
 
 
-def sbm11_open_run(n: int) -> dict:
-    """The open (replay) of a generation with a log of n entries, run three times (the result
-    is kept for the rest of the process): the least CPU time, the least peak RSS, the log
-    bytes, and the replay time that the command reports in the run of least CPU time. The
-    user CPU time of one binary on one fixture varies by 15 % to 20 % on this VM."""
+def sbm11_open_run(n: int, kind: str = "rename") -> dict:
+    """The open (replay) of a generation with a log of n entries of `gen_dlog.py --kind KIND`,
+    run three times (the result is kept for the rest of the process): the least CPU time, the
+    least peak RSS, the log bytes, and the replay time that the command reports in the run of
+    least CPU time. The user CPU time of one binary on one fixture varies by 15 % to 20 % on
+    this VM."""
     import re
     import shutil
-    if n in _OPEN_RUNS:
-        return _OPEN_RUNS[n]
+    if (n, kind) in _OPEN_RUNS:
+        return _OPEN_RUNS[(n, kind)]
     sbm11_need_sbm11()
     if not GEN_DLOG.exists():
         raise MeasurementError(f"{GEN_DLOG} missing")
     if not _OPEN_BASE:
         _OPEN_BASE.append(sbm11_packed_root("sbm11-open-base", SBM11_LOG_STATEMENTS))
-    work = FIX / f"sbm11-open-{n}"
+    work = FIX / f"sbm11-open-{kind}-{n}"
     shutil.rmtree(work, ignore_errors=True)
     shutil.copytree(_OPEN_BASE[0], work)
-    r = subprocess.run([sys.executable, "-I", str(GEN_DLOG), str(work / "gen" / "deltas.dlog"), str(n)],
+    r = subprocess.run([sys.executable, "-I", str(GEN_DLOG), str(work / "gen" / "deltas.dlog"), str(n),
+                        "--kind", kind],
                        stdout=subprocess.PIPE, stderr=subprocess.PIPE, timeout=CAP)
     if r.returncode != 0:
         raise MeasurementError(f"gen_dlog.py {n}: exit {r.returncode}: {r.stderr.decode()[-160:]}")
@@ -1659,9 +1670,9 @@ def sbm11_open_run(n: int) -> dict:
         runs.append({"cpu": t["cpu"], "rss_kb": t["rss_kb"], "replay_ms": float(m.group(3))})
     shutil.rmtree(work, ignore_errors=True)
     best = min(runs, key=lambda r: r["cpu"])
-    _OPEN_RUNS[n] = {"n": n, "log": log, "rss_kb": min(r["rss_kb"] for r in runs), "cpu": best["cpu"],
-                     "replay_ms": best["replay_ms"]}
-    return _OPEN_RUNS[n]
+    _OPEN_RUNS[(n, kind)] = {"n": n, "log": log, "rss_kb": min(r["rss_kb"] for r in runs), "cpu": best["cpu"],
+                             "replay_ms": best["replay_ms"]}
+    return _OPEN_RUNS[(n, kind)]
 
 
 def sbm11_open_memory_row(rid):
@@ -1674,8 +1685,8 @@ def sbm11_open_memory_row(rid):
                             f"{c['rss_kb'] / 1024:.0f} MB: {slope:.1f} bytes of peak RSS per log byte (bound {bound})")
 
 
-def sbm11_replay_time_row(rid):
-    runs = [sbm11_open_run(n) for n in SBM11_OPEN_SIZES]
+def sbm11_replay_time_row(rid, kind: str = "rename"):
+    runs = [sbm11_open_run(n, kind) for n in SBM11_OPEN_SIZES]
     a, b, c = runs
     us = (c["cpu"] - a["cpu"]) * 1e6 / (c["n"] - a["n"])
     ratio = c["cpu"] / max(a["cpu"], FLOOR)
@@ -1791,7 +1802,8 @@ def sbm11_workers_row(rid):
 
 SBM11_LOG_MEMORY_ROWS = {"sbm11-update-memory": sbm11_update_memory_row,
                          "sbm11-open-log-memory": sbm11_open_memory_row}
-SBM11_LOG_TIME_ROWS = {"sbm11-replay-time": sbm11_replay_time_row}
+SBM11_LOG_TIME_ROWS = {"sbm11-replay-time": sbm11_replay_time_row,
+                       "sbm11-replay-insert-time": lambda rid: sbm11_replay_time_row(rid, "insert")}
 
 
 def memory_row(rid):

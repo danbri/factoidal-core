@@ -238,6 +238,26 @@ about 450 chunks; at 64 MB the pack needs 43 s and 3 GB. The row now reads a fil
   `readVerifiedChunkProof?`, `tests/merkle-range/run.sh` gave 746 pass, 477 fail (out of
   1,223).
 
+**A pair of sizes can straddle a step in the cost for each item**
+(https://github.com/danbri/factoidal/issues/879, 2026-10-18). The row `replay-linear` of
+`tests/sbm11/update_where.sh` compared the replay of logs of 20,000 and 80,000 entries
+against a bound of 8 for 4x (linear 4, quadratic 16). On this VM the replay of those logs
+costs 19 microseconds for each entry up to 20,000 entries and 31 to 39 from 40,000 (the
+overlay ids are above 2^63, so a Lean `Nat` holds them as GMP numbers, and the sort of the
+overlay leaves the cache). The pair read 7.6 to 8.7 with the builds of 2026-10-15 and
+2026-10-18, so the row failed or passed by chance. The agent of issues 855 and 856 saw 8.5,
+ran the row again, saw 7.97, and reported "the bound is tight". Rules:
+
+- Before you choose the sizes of a ratio row, measure five sizes over a factor of 16 and
+  look for a step in the cost for each item. Causes found in this repository: a cache
+  level, the clearing of new huge pages for a growing heap, and a Lean `Nat` above 2^63.
+- Take the pair at least 8x apart, or both sizes above the step, and set the bound from
+  the step factor. The row now compares 20,000 and 160,000 entries: 16.3 against a bound
+  of 24 (linear 8, quadratic 64, the quadratic replay of 2026-10-14 38).
+- A row that fails and then passes on a second run is a finding. Measure the curve before
+  you accept the pass. If the step is a cost, give it its own row and an issue: here the
+  expected failure `sbm11-replay-insert-time` of `tests/stack/lean_scaling.py`.
+
 ## The rule
 
 1. **A function over input-proportional data is not done until its scaling is
