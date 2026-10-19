@@ -655,6 +655,7 @@ L4Factoidal_OWL_SyntaxDL_drDatatypes  # (b) data-range nesting in the RDF graph;
 L4Factoidal_RDF_Term_ttDepth  # (b) nesting depth of RDF 1.2 triple terms (object position)
 L4Factoidal_RDF_Term_bnodeLabels  # (b) nesting depth of RDF 1.2 triple terms
 L4Factoidal_RDF_replaceTermIn  # (b) nesting depth of RDF 1.2 triple terms
+L4Factoidal_OWL_RL_ttRepAll  # (b) nesting depth of RDF 1.2 triple terms (object position); OWL RL eq-rep-tt, issue 873
 L4Factoidal_RDF_generalisableTerms  # (b) nesting depth of RDF 1.2 triple terms
 L4Factoidal_RML_scopeTerm  # (b) nesting depth of RDF 1.2 triple terms
 L4Factoidal_RML_renameTerm  # (b) nesting depth of RDF 1.2 triple terms

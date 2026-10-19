@@ -291,4 +291,15 @@ private def xTypeD : String :=
 #guard (rdfsPlusClosure "<http://example.com/a> <http://example.com/says> <<( _:b1 <http://example.com/p> <http://example.com/o> )>> .\n").startsWith "{\"ok\":true"
 #guard has873 (rhoDfClosure "<http://example.com/a> <http://example.com/says> <<( _:b1 <http://example.com/p> <http://example.com/o> )>> .\n") "<<( _:b1"
 
+-- `opaque-iri` (row eq-rep-tt): the OWL 2 RL closure substitutes
+-- `owl:sameAs` inside a triple term; the RDFS closure does not, and the
+-- inner triple is not asserted.
+private def clark873 : String := "<http://example.com/clark> <http://example.com/reports> <<( <http://example.com/superman> <http://example.com/can> <http://example.com/fly> )>> .\n<http://example.com/clark> <http://www.w3.org/2002/07/owl#sameAs> <http://example.com/superman> .\n"
+private def clarkReports : String :=
+  "<http://example.com/clark> <http://example.com/reports> <<( <http://example.com/clark> <http://example.com/can> <http://example.com/fly> )>> ."
+#guard has873 (owlClosure clark873 "OWL-RL") clarkReports
+#guard !has873 (owlClosure clark873 "RDFS") clarkReports
+#guard !has873 (owlClosure clark873 "OWL-RL")
+  "<http://example.com/superman> <http://example.com/can> <http://example.com/fly> ."
+
 end L4Wasm.Ops

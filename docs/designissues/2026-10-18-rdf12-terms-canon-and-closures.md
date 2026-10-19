@@ -59,15 +59,41 @@ Entailments that the closure ops do not compute:
   (`RDF/Entailment.lean`, `Regime.closure`); `RDF.regimeEntails` applies
   these patterns before the closure, on the graph-entailment path the W3C
   `rdf-semantics` suite runs.
-- `owl:sameAs` substitution inside a triple term. RDF 1.2 Semantics makes the
-  IRIs inside a triple term transparent, so `ex:clark owl:sameAs ex:superman`
-  with `ex:clark ex:reports <<( ex:superman ex:can ex:fly )>>` entails
-  `ex:clark ex:reports <<( ex:clark ex:can ex:fly )>>` (W3C test `opaque-iri`;
-  the manifest lists it but leaves it out of its entries, "relies on
-  non-standard entailment regime"). `RDF.regimeEntails .rdfsPlus` decides
-  it. The OWL 2 RL closure applies the rule table of OWL 2 Profiles §4.3,
-  whose eq-rep-o replaces a whole object term. Expected failure:
-  `npm/factoidal/test/rdf12-terms.test.js`, issue 873.
+
+## `owl:sameAs` inside a triple term in the OWL 2 RL closure (2026-10-19)
+
+Decision: CLAUDE.md, "Triple-term transparency and the isomorphism row
+(2026-10-19)". RDF 1.2 Semantics makes the IRIs inside a triple term
+transparent, so `ex:clark owl:sameAs ex:superman` with
+`ex:clark ex:reports <<( ex:superman ex:can ex:fly )>>` entails
+`ex:clark ex:reports <<( ex:clark ex:can ex:fly )>>` (W3C test
+`opaque-iri`). The OWL 2 Profiles §4.3 rule table is the floor.
+
+Rule implemented: the `[ext]` row eq-rep-tt.
+
+- Specification relation: `OWL.RL.TtRep x y o o'` (`o'` is the triple term
+  `o` with one occurrence of the IRI `x`, in subject, predicate or object
+  position, at any nesting depth, replaced by `y`) and the constructor
+  `Derives.eqRepTt` (premises `x owl:sameAs y`, both IRIs, and `s p o`).
+- Engine row: `RLClosure.eqRepTtFor` and `RLClosureIndexed.eqRepTtForS`,
+  appended last in `conclusionsList`, `conclusionsListS` and `rowTable`
+  (`RowSpec.additive owlSameAs`). Driven by an `owl:sameAs` triple between
+  two distinct IRIs; it scans the round's graph for triples whose object is
+  a triple term. It emits nothing on a graph with no triple term, so the
+  closure of such a graph is the same list as before.
+- Model theory: `RlCondEqRepTt` over `SemTtRep` (the replacement on
+  `iTt` denotations), a field of `RlConditions`; `rl_derives_holds` covers
+  the row. The Herbrand completeness model satisfies it because its `iTt`
+  is constant. In the unified schema the row is in `OwlRlInterpCond`,
+  because a `DTerm` has no function symbol for `iTt`.
+- Nothing else is derived from inside a triple term: the negative guards of
+  `RDFS/TripleTermClosureTests.lean` stay, and new ones check that the
+  substituted inner triple is not asserted and that a blank node inside a
+  triple term is not replaced.
+- The RDFS closures (`RDFS.closureFix`, `fullClosure`) have no
+  `owl:sameAs` semantics and do not substitute. `rdfsPlusClosureFix` does
+  not run this row either; `RDF.regimeEntails .rdfsPlus` decides the case on
+  the graph-entailment path.
 
 ## RDFC-1.0: refused, with the missing rule named
 
@@ -113,3 +139,12 @@ op-level theorems `owlClosureOf_eq`, `rhoDfClosureOf_eq`,
 `rdfsPlusClosureOf_eq`, `closureEnvelopeOf_stream`, `canonicalizeOf_eq`,
 `owlIsConsistentOf_eq`, `owlEntailsOf_eq` are restated for mode `.rdf12`
 and build.
+
+2026-10-19, eq-rep-tt: `Derives` has the new constructor `eqRepTt`. Every
+induction over it was extended and builds: `Derives.mono`, `Derives.cut`,
+`conclusionsFrom_sound` (closure soundness), the saturated-closure
+completeness induction in `RLTheorems.lean`, `derives_irisNonReserved` and
+`rl_derives_holds` (`RLSemantics.lean`), `rlHerb_conditions`. The
+semi-naive equality `indexedClosureSN_eq` holds with the row in `rowTable`
+(`eqRepTtForS_add`). New lemmas: `mem_ttRepAll`, `ttRepAll_of_ttRep`,
+`ttRep_self`, `eqRepTtFor_sound`, `ttRep_termIris`, `semTtRep_of_ttRep`.

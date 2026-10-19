@@ -676,6 +676,18 @@ for REG in rdfs owl-rl rho-df rdfs-plus; do
         && ! grep -qE '^(<http://e/s>|_:[^ ]*) <http://www.w3.org/1999/02/22-rdf-syntax-ns#type> <http://e/' <<< "$OUT" \
         && echo 1 || echo 0 )" "exit=$RC" "stdout=$OUT" "stderr=$ERR"
 done
+# opaque-iri: the OWL 2 RL closure substitutes owl:sameAs inside a triple
+# term (row eq-rep-tt); the inner triple is not asserted.
+CLARK='<http://e/clark> <http://e/reports> <<( <http://e/superman> <http://e/can> <http://e/fly> )>> .
+<http://e/clark> <http://www.w3.org/2002/07/owl#sameAs> <http://e/superman> .
+'
+printf '%s' "$CLARK" > "$TMP/clark.nq"
+run_cmd "$CLI" closure "$TMP/clark.nq" --format nquads12 --regime owl-rl
+verdict "closure --regime owl-rl substitutes owl:sameAs inside a triple term" "" \
+  "$( [ "$RC" -eq 0 ] \
+      && grep -qF '<http://e/clark> <http://e/reports> <<( <http://e/clark> <http://e/can> <http://e/fly> )>> .' <<< "$OUT" \
+      && ! grep -qF '<http://e/superman> <http://e/can> <http://e/fly> .' <<< "$OUT" \
+      && echo 1 || echo 0 )" "exit=$RC" "stdout=$OUT" "stderr=$ERR"
 assert_text "canonicalize triple term -> refusal names RDFC-1.0" 1 err "RDFC-1.0" \
   "$CLI" canonicalize "$TMP/tt.nq" --format nquads12
 run_cmd "$CLI" canonicalize "$TMP/tt.nq" --format nquads12
