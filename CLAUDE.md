@@ -632,6 +632,22 @@ https://github.com/danbri/factoidal/issues/713.
   labelled not valid in `tools/lean-scoreboard.sh` with its failures
   uncounted. The owner corrected the scope; the suite-level label is removed.
 
+### Triple-term transparency and the isomorphism row (2026-10-19)
+
+Owner, verbatim, on two open questions: "Decisions: go with your gut".
+The choices below are the coordinator's, under that delegation.
+
+- https://github.com/danbri/factoidal/issues/873, W3C `opaque-iri`: the
+  OWL 2 RL closure op applies `owl:sameAs` substitution to IRIs inside a
+  triple term, as RDF 1.2 Semantics and the W3C positive entailment test
+  require, and as `regimeEntails .rdfsPlus` already does. The OWL 2
+  Profiles §4.3 rule table is the floor, not the ceiling.
+- https://github.com/danbri/factoidal/issues/868, row
+  `iso-many-bnodes-relabel`: keep the time bound of 3.0 per doubling.
+  Instructions grow linearly (4.01x for 4x input); the extra time is
+  cache misses, and a linear parse alone gives 2.1 to 2.2 on the same
+  machine. No instruction-count harness is added for this row.
+
 ### There are no users. Prefer the right structure to the compatible one
 
 The issue-566 ruling above says "We have no users so rip it up where
