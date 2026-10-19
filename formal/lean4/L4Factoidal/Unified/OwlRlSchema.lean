@@ -2279,6 +2279,13 @@ schema-relative completeness needs
 (https://github.com/danbri/factoidal/issues/613 item 2). The families
 keep every row binary and cost no model.
 
+**eq-rep-tt** `[ext]` (2026-10-19,
+https://github.com/danbri/factoidal/issues/873) is the fourth row in
+the bundle. Its premise and conclusion relate the denotation `iTt` of a
+triple term at any nesting depth (`RlCondEqRepTt` over `SemTtRep`), and
+a `DTerm` is a variable, a constant or a literal, with no function
+symbol for `iTt`; the row is therefore no `DRule`.
+
 The statement of `unified_owlRl_sound` names `OwlRlInterpCond`
 explicitly, so the boundary is visible in the theorem, not only in
 prose; `owlRlSchema_cardinality_rows` and `owlRlSchema_seq_rows` below
@@ -2309,7 +2316,8 @@ def OwlRlInterpCond (i : CL.Interp) : Prop :=
   RlCondCompDw (restrictInterp i) ∧
   RlCondCompMqc (restrictInterp i) ∧
   RlCondMinc1 (restrictInterp i) ∧
-  RlNCondPrpFpLit (restrictInterp i)
+  RlNCondPrpFpLit (restrictInterp i) ∧
+  RlCondEqRepTt (restrictInterp i)
 
 theorem satisfiesSchema_owlRl_parts {i : CL.Interp}
     (hS : SatisfiesSchema i owlRlSchema) :
@@ -2350,7 +2358,7 @@ theorem owlRlSchema_conditions {i : CL.Interp}
     (hS : SatisfiesSchema i owlRlSchema) (hc : OwlRlInterpCond i) :
     RlConditions (restrictInterp i) ∧ RlClashConditions (restrictInterp i) := by
   obtain ⟨hH, hF, hQ, hN⟩ := satisfiesSchema_owlRl_parts hS
-  obtain ⟨kCompDw, kCompMqc, kMinc1, kPrpFpLit⟩ := hc
+  obtain ⟨kCompDw, kCompMqc, kMinc1, kPrpFpLit, kEqRepTt⟩ := hc
   refine ⟨?_, ?_⟩
   · exact
     { eqRefS := cond_eqRefS hH
@@ -2361,6 +2369,7 @@ theorem owlRlSchema_conditions {i : CL.Interp}
       eqRepS := cond_eqRepS hH
       eqRepP := cond_eqRepP hH
       eqRepO := cond_eqRepO hH
+      eqRepTt := kEqRepTt
       prpDom := cond_prpDom hH
       prpRng := cond_prpRng hH
       prpFp := cond_prpFp hH

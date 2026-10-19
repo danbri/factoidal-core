@@ -13,16 +13,17 @@ an asserted triple; no rule reads the triple inside it. So:
 * it derives nothing from the triple inside a triple term: from
   `ex:a ex:says <<( ex:s rdf:type ex:C )>>` and `ex:C rdfs:subClassOf ex:D`
   it does not derive `ex:s rdf:type ex:D` (nor `ex:s rdf:type ex:C`);
-* the OWL 2 RL closure applies the rule table of OWL 2 Profiles §4.3, whose
-  eq-rep-o replaces a whole object term; it does not substitute inside a
-  triple term. RDF 1.2 Semantics makes the IRIs inside a triple term
-  transparent, so `ex:s owl:sameAs ex:t` does entail
+* the one exception is `owl:sameAs`. RDF 1.2 Semantics makes the IRIs inside
+  a triple term transparent, so `ex:s owl:sameAs ex:t` entails
   `ex:a ex:says <<( ex:t rdf:type ex:C )>>` (W3C rdf12 rdf-semantics test
   `opaque-iri`, which the manifest lists but leaves out of its entries, "relies
-  on non-standard entailment regime"). `RDF.regimeEntails .rdfsPlus` decides
-  that case (`RDF/EntailmentTests.lean`); the closure op does not derive it,
-  an expected failure in `npm/factoidal/test/rdf12-terms.test.js`
-  (https://github.com/danbri/factoidal/issues/873);
+  on non-standard entailment regime"). The OWL 2 RL closure derives it with
+  the `[ext]` row eq-rep-tt (`OWL.RL.eqRepTtFor`, `Derives.eqRepTt`): one
+  occurrence of an IRI in subject, predicate or object position of a triple
+  term, at any nesting depth, is replaced by an IRI it is `owl:sameAs` to.
+  The RDFS closures have no `owl:sameAs` semantics and do not substitute;
+  `RDF.regimeEntails .rdfsPlus` decides the case on the graph-entailment path
+  (`RDF/EntailmentTests.lean`);
 * the derivations from asserted triples stay (`ex:x rdf:type ex:D`).
 
 Each fixture checks a triple the rules must derive AND triples they must not
@@ -88,5 +89,75 @@ private def closures : List Graph :=
   u.o == .tripleTerm (.iri s) rdfType (.iri D)))
 -- Derived: OWL 2 RL eq-sym on the asserted `owl:sameAs`.
 #guard Graph.mem (tr t sameAs s) (OWL.RL.closureFix g)
+
+-- eq-rep-tt (issue 873, W3C `opaque-iri`): the OWL 2 RL closure, in the
+-- list form and in the indexed semi-naive form, substitutes `owl:sameAs`
+-- inside a triple term.
+private def owlClosures (h : Graph) : List Graph :=
+  [ OWL.RL.closureFix h,
+    OWL.RL.indexedClosureSN h (OWL.RL.closureFuelBound h) ]
+
+private def saysTypeC (subj : WfIri) : Triple :=
+  ⟨.iri a, says, .tripleTerm (.iri subj) rdfType (.iri C)⟩
+
+#guard (owlClosures g).all (fun c => Graph.mem (saysTypeC t) c)
+-- Not derived: the RDFS closures have no `owl:sameAs` semantics.
+#guard !Graph.mem (saysTypeC t) (RDFS.closureFix g)
+#guard !Graph.mem (saysTypeC t) (fullClosure (withMinimalD []) [rdf1] g)
+-- Not derived: the substituted triple term is still not asserted, and no
+-- rule reads inside it.
+#guard (owlClosures g).all (fun c => !Graph.mem (tr t rdfType C) c)
+#guard (owlClosures g).all (fun c => !Graph.mem (tr t rdfType D) c)
+#guard (owlClosures g).all (fun c => !c.any (fun u =>
+  u.o == .tripleTerm (.iri t) rdfType (.iri D)))
+-- Not derived: a blank node inside a triple term is not replaced by an IRI.
+#guard (owlClosures g).all (fun c => !c.any (fun u =>
+  u.s == .iri a && u.o == .tripleTerm (.bnode "b1") rdfType (.iri t)))
+
+-- Nested triple term, and the predicate and object positions.
+private def p1 : WfIri := iri! "http://example.com/p1"
+private def p2 : WfIri := iri! "http://example.com/p2"
+private def inner (u : WfIri) : Term := .tripleTerm (.iri u) rdfType (.iri C)
+private def nested (u v : WfIri) : Triple :=
+  ⟨.iri a, says, .tripleTerm (.iri u) p1 (inner v)⟩
+private def g2 : Graph :=
+  [ nested s s,
+    tr s sameAs t,
+    tr p1 sameAs p2,
+    ⟨.iri a, says, .tripleTerm (.iri x) p1 (.iri s)⟩ ]
+
+-- Every combination of the two occurrences of `ex:s`, at depth 1 and 2.
+#guard (owlClosures g2).all (fun c => Graph.mem (nested t s) c)
+#guard (owlClosures g2).all (fun c => Graph.mem (nested s t) c)
+#guard (owlClosures g2).all (fun c => Graph.mem (nested t t) c)
+-- Predicate position.
+#guard (owlClosures g2).all (fun c =>
+  Graph.mem ⟨.iri a, says, .tripleTerm (.iri s) p2 (inner s)⟩ c)
+-- Object position.
+#guard (owlClosures g2).all (fun c =>
+  Graph.mem ⟨.iri a, says, .tripleTerm (.iri x) p1 (.iri t)⟩ c)
+-- Not derived: `ex:C` has no `owl:sameAs` partner, so it is not replaced;
+-- the inner triple is not asserted.
+#guard (owlClosures g2).all (fun c => !c.any (fun u =>
+  u.o == .tripleTerm (.iri s) p1 (.tripleTerm (.iri s) rdfType (.iri D))))
+#guard (owlClosures g2).all (fun c => !Graph.mem (tr t rdfType C) c)
+#guard (owlClosures g2).all (fun c => !Graph.mem ⟨.iri s, p1, inner s⟩ c)
+
+-- The W3C `opaque-iri` case (as `RDF/EntailmentTests.lean` transcribes it):
+-- `ex:clark owl:sameAs ex:superman`,
+-- `ex:clark ex:reports <<( ex:superman ex:can ex:fly )>>` gives
+-- `ex:clark ex:reports <<( ex:clark ex:can ex:fly )>>`.
+private def clark : WfIri := iri! "http://example.com/clark"
+private def superman : WfIri := iri! "http://example.com/superman"
+private def reports : WfIri := iri! "http://example.com/reports"
+private def can : WfIri := iri! "http://example.com/can"
+private def fly : WfIri := iri! "http://example.com/fly"
+private def clarkG : Graph :=
+  [ tr clark sameAs superman,
+    ⟨.iri clark, reports, .tripleTerm (.iri superman) can (.iri fly)⟩ ]
+#guard (owlClosures clarkG).all (fun c =>
+  Graph.mem ⟨.iri clark, reports, .tripleTerm (.iri clark) can (.iri fly)⟩ c)
+#guard (owlClosures clarkG).all (fun c => !Graph.mem (tr superman can fly) c)
+#guard (owlClosures clarkG).all (fun c => !Graph.mem (tr clark can fly) c)
 
 end L4Factoidal.RDFS.TripleTermClosureTests

@@ -104,7 +104,8 @@ def rows : List (String × (Store → Triple → List Triple)) := [
   ("clsMaxqc1ToComplement", clsMaxqc1ToComplementForS),
   ("minCard1Comprehension", minCard1ComprehensionForS),
   ("caxAdcToDw", caxAdcToDwForS),
-  ("inverseOfDomRngFlip", inverseOfDomRngFlipForS)
+  ("inverseOfDomRngFlip", inverseOfDomRngFlipForS),
+  ("eqRepTt", eqRepTtForS)
 ]
 
 def ms (n : Nat) : String :=

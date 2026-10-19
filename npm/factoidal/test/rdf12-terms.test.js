@@ -2,9 +2,11 @@
 // (https://github.com/danbri/factoidal/issues/873).
 //
 // RDF 1.2 Semantics: a triple term is a term; it is not asserted. The RDFS
-// and OWL 2 RL closures accept it as an opaque object term: the asserted
-// triple stays, derivations from asserted triples are made, and nothing is
-// derived from the triple inside a triple term. RDFC-1.0 (W3C
+// and OWL 2 RL closures accept it as an object term: the asserted triple
+// stays, derivations from asserted triples are made, and nothing is derived
+// from the triple inside a triple term. The one exception is owl:sameAs: the
+// OWL 2 RL closure replaces an IRI inside a triple term by an IRI it is
+// owl:sameAs to (opaque-iri). RDFC-1.0 (W3C
 // Recommendation 2024) and OWL 2 Mapping to RDF Graphs define no rule for a
 // triple term, so canonicalizeToNQuads, owlIsConsistent and owlEntails
 // refuse such input with a message that names the missing rule; their
@@ -92,14 +94,29 @@ xfail('owlEntails decides a premise with a triple term', ISSUE, async () => {
 });
 
 // RDF 1.2 Semantics: the IRIs inside a triple term are transparent, so
-// owl:sameAs substitutes inside it (W3C rdf12 rdf-semantics `opaque-iri`,
-// superman.ttl). The OWL 2 RL closure applies the OWL 2 Profiles §4.3 rule
-// table, whose eq-rep-o replaces a whole object term only.
-xfail('owlClosure OWL-RL substitutes owl:sameAs inside a triple term (opaque-iri)', ISSUE, async () => {
+// owl:sameAs substitutes inside it (W3C rdf12 rdf-semantics `opaque-iri`).
+// The OWL 2 RL closure does this with the [ext] row eq-rep-tt
+// (OWL.RL.eqRepTtFor), one occurrence at a time, at any nesting depth.
+test('owlClosure OWL-RL substitutes owl:sameAs inside a triple term (opaque-iri)', async () => {
   const data =
     `<${X}clark> <${X}reports> <<( <${X}superman> <${X}can> <${X}fly> )>> .\n` +
     `<${X}clark> <http://www.w3.org/2002/07/owl#sameAs> <${X}superman> .\n`;
   const r = (await engine()).call('owlClosure', [data, 'OWL-RL']);
   assert.equal(r.ok, true, JSON.stringify(r));
-  assert.ok(r.nquads.includes(`<${X}clark> <${X}reports> <<( <${X}clark> <${X}can> <${X}fly> )>> .`));
+  assert.ok(r.nquads.includes(`<${X}clark> <${X}reports> <<( <${X}clark> <${X}can> <${X}fly> )>> .`),
+    'owl:sameAs substitutes inside the triple term');
+  assert.ok(!r.nquads.includes(`<${X}superman> <${X}can> <${X}fly> .`),
+    'the triple inside a triple term is not asserted');
+  assert.ok(!r.nquads.includes(`<${X}clark> <${X}can> <${X}fly> .`),
+    'the substituted triple inside a triple term is not asserted');
+});
+
+// The RDFS closures have no owl:sameAs semantics and do not substitute.
+test('owlClosure RDFS does not substitute inside a triple term', async () => {
+  const data =
+    `<${X}clark> <${X}reports> <<( <${X}superman> <${X}can> <${X}fly> )>> .\n` +
+    `<${X}clark> <http://www.w3.org/2002/07/owl#sameAs> <${X}superman> .\n`;
+  const r = (await engine()).call('owlClosure', [data, 'RDFS']);
+  assert.equal(r.ok, true, JSON.stringify(r));
+  assert.ok(!r.nquads.includes(`<${X}clark> <${X}reports> <<( <${X}clark> <${X}can> <${X}fly> )>> .`));
 });

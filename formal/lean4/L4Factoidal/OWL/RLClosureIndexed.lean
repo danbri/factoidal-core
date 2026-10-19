@@ -831,6 +831,17 @@ def inverseOfDomRngFlipForS (s : Store) (d : Triple) : List Triple :=
           | _, _ => [])))
   else []
 
+/-- **eq-rep-tt** `[ext]` — the store version scans `s.graph`, exactly
+as the list version scans `g`. -/
+def eqRepTtForS (s : Store) (d : Triple) : List Triple :=
+  if d.p == owlSameAs then
+    match d.s, d.o with
+    | .iri x, .iri y =>
+        if x == y then []
+        else s.graph.flatMap (fun u => (ttRepAll x y u.o).map (fun o' => ⟨u.s, u.p, o'⟩))
+    | _, _ => []
+  else []
+
 def conclusionsListS (s : Store) (d : Triple) : List (List Triple) :=
     [ eqRefSForS s d, eqRefPForS s d, eqRefOForS s d,
       eqSymForS s d, eqTransForS s d,
@@ -859,7 +870,7 @@ def conclusionsListS (s : Store) (d : Triple) : List (List Triple) :=
       xsdAxiomsForS s d, dtRangeIntersectForS s d,
       caxDwToComplementForS s d, clsMaxqc1ToComplementForS s d,
       minCard1ComprehensionForS s d, caxAdcToDwForS s d,
-      inverseOfDomRngFlipForS s d ]
+      inverseOfDomRngFlipForS s d, eqRepTtForS s d ]
 
 def conclusionsFromS (s : Store) (d : Triple) : List Triple :=
   (conclusionsListS s d).flatten
@@ -1292,6 +1303,8 @@ theorem minCard1ComprehensionForS_ofGraph (g : Graph) :
     minCard1ComprehensionForS (Store.ofGraph g) = minCard1ComprehensionFor g := rfl
 theorem inverseOfDomRngFlipForS_ofGraph (g : Graph) :
     inverseOfDomRngFlipForS (Store.ofGraph g) = inverseOfDomRngFlipFor g := rfl
+theorem eqRepTtForS_ofGraph (g : Graph) :
+    eqRepTtForS (Store.ofGraph g) = eqRepTtFor g := rfl
 theorem caxAdcToDwForS_ofGraph (g : Graph) :
     caxAdcToDwForS (Store.ofGraph g) = caxAdcToDwFor g := by
   funext d
@@ -1332,7 +1345,7 @@ theorem conclusionsFromS_ofGraph (g : Graph) :
     xsdAxiomsForS_ofGraph, dtRangeIntersectForS_ofGraph,
     caxDwToComplementForS_ofGraph, clsMaxqc1ToComplementForS_ofGraph,
     minCard1ComprehensionForS_ofGraph, caxAdcToDwForS_ofGraph,
-    inverseOfDomRngFlipForS_ofGraph]
+    inverseOfDomRngFlipForS_ofGraph, eqRepTtForS_ofGraph]
 
 theorem stepConclusionsS_ofGraph (g : Graph) :
     stepConclusionsS (Store.ofGraph g) = stepConclusions g := by
@@ -1816,6 +1829,15 @@ theorem dtRangeIntersectForS_add (P D : Graph) (d : Triple) : dtRangeIntersectFo
 theorem inverseOfDomRngFlipForS_add (P D : Graph) (d : Triple) : inverseOfDomRngFlipForS (Store.ofGraph (P ++ D)) d =
     inverseOfDomRngFlipForS (Store.ofGraph P) d ++ inverseOfDomRngFlipForS (Store.ofGraph D) d := by
   revert P D d; unfold inverseOfDomRngFlipForS; additive_row
+theorem eqRepTtForS_add (P D : Graph) (d : Triple) : eqRepTtForS (Store.ofGraph (P ++ D)) d =
+    eqRepTtForS (Store.ofGraph P) d ++ eqRepTtForS (Store.ofGraph D) d := by
+  unfold eqRepTtForS
+  simp only [Store.ofGraph, List.flatMap_append]
+  split
+  · split
+    · split <;> simp
+    · simp
+  · simp
 
 /-! ### Delta terms of two collection rows: prp-spo2 and cls-int1
 
@@ -2233,7 +2255,8 @@ def rowTable : List RowSpec := [
     RowSpec.full owlMaxQualifiedCardinality clsMaxqc1ToComplementForS,
     RowSpec.indep minCard1ComprehensionForS,
     RowSpec.full rdfType caxAdcToDwForS,
-    RowSpec.additive owlInverseOf inverseOfDomRngFlipForS ]
+    RowSpec.additive owlInverseOf inverseOfDomRngFlipForS,
+    RowSpec.additive owlSameAs eqRepTtForS ]
 
 /-- `rowTable` lists the rows of `conclusionsListS`, in its order. -/
 theorem rowTable_f (s : Store) (d : Triple) :
@@ -2246,7 +2269,7 @@ theorem rowTable_f (s : Store) (d : Triple) :
 theorem rowTable_ok : ∀ r ∈ rowTable, r.Ok := by
   intro r hr
   simp only [rowTable, List.mem_cons, List.not_mem_nil, or_false] at hr
-  rcases hr with rfl | rfl | rfl | rfl | rfl | rfl | rfl | rfl | rfl | rfl | rfl | rfl | rfl | rfl | rfl | rfl | rfl | rfl | rfl | rfl | rfl | rfl | rfl | rfl | rfl | rfl | rfl | rfl | rfl | rfl | rfl | rfl | rfl | rfl | rfl | rfl | rfl | rfl | rfl | rfl | rfl | rfl | rfl | rfl | rfl | rfl | rfl | rfl | rfl | rfl | rfl | rfl | rfl | rfl | rfl | rfl | rfl | rfl | rfl | rfl | rfl | rfl | rfl | rfl | rfl | rfl | rfl | rfl | rfl | rfl | rfl | rfl | rfl | rfl
+  rcases hr with rfl | rfl | rfl | rfl | rfl | rfl | rfl | rfl | rfl | rfl | rfl | rfl | rfl | rfl | rfl | rfl | rfl | rfl | rfl | rfl | rfl | rfl | rfl | rfl | rfl | rfl | rfl | rfl | rfl | rfl | rfl | rfl | rfl | rfl | rfl | rfl | rfl | rfl | rfl | rfl | rfl | rfl | rfl | rfl | rfl | rfl | rfl | rfl | rfl | rfl | rfl | rfl | rfl | rfl | rfl | rfl | rfl | rfl | rfl | rfl | rfl | rfl | rfl | rfl | rfl | rfl | rfl | rfl | rfl | rfl | rfl | rfl | rfl | rfl | rfl
   · exact RowSpec.indep_ok (fun _ _ _ => rfl)
   · exact RowSpec.indep_ok (fun _ _ _ => rfl)
   · exact RowSpec.indep_ok (fun _ _ _ => rfl)
@@ -2321,6 +2344,7 @@ theorem rowTable_ok : ∀ r ∈ rowTable, r.Ok := by
   · exact RowSpec.indep_ok (fun _ _ _ => rfl)
   · exact RowSpec.full_ok _ _
   · exact RowSpec.additive_ok inverseOfDomRngFlipForS_add
+  · exact RowSpec.additive_ok eqRepTtForS_add
 
 
 /-! ### The round -/
@@ -2352,7 +2376,7 @@ theorem beq_false_of_guard {g : WfIri} {d : Triple} (h : some g ≠ some d.p) :
 theorem rowTable_guard : ∀ r ∈ rowTable, r.GuardOk := by
   intro r hr
   simp only [rowTable, List.mem_cons, List.not_mem_nil, or_false] at hr
-  rcases hr with rfl | rfl | rfl | rfl | rfl | rfl | rfl | rfl | rfl | rfl | rfl | rfl | rfl | rfl | rfl | rfl | rfl | rfl | rfl | rfl | rfl | rfl | rfl | rfl | rfl | rfl | rfl | rfl | rfl | rfl | rfl | rfl | rfl | rfl | rfl | rfl | rfl | rfl | rfl | rfl | rfl | rfl | rfl | rfl | rfl | rfl | rfl | rfl | rfl | rfl | rfl | rfl | rfl | rfl | rfl | rfl | rfl | rfl | rfl | rfl | rfl | rfl | rfl | rfl | rfl | rfl | rfl | rfl | rfl | rfl | rfl | rfl | rfl | rfl
+  rcases hr with rfl | rfl | rfl | rfl | rfl | rfl | rfl | rfl | rfl | rfl | rfl | rfl | rfl | rfl | rfl | rfl | rfl | rfl | rfl | rfl | rfl | rfl | rfl | rfl | rfl | rfl | rfl | rfl | rfl | rfl | rfl | rfl | rfl | rfl | rfl | rfl | rfl | rfl | rfl | rfl | rfl | rfl | rfl | rfl | rfl | rfl | rfl | rfl | rfl | rfl | rfl | rfl | rfl | rfl | rfl | rfl | rfl | rfl | rfl | rfl | rfl | rfl | rfl | rfl | rfl | rfl | rfl | rfl | rfl | rfl | rfl | rfl | rfl | rfl | rfl
   · intro _ _ _ _ _; rfl
   · intro _ _ _ _ _; rfl
   · intro _ _ _ _ _; rfl
@@ -2549,6 +2573,9 @@ theorem rowTable_guard : ∀ r ∈ rowTable, r.GuardOk := by
   · intro sS sD lo d h
     have hb := beq_false_of_guard (g := owlInverseOf) h
     simp only [RowSpec.additive, inverseOfDomRngFlipForS, hb, Bool.false_eq_true, ↓reduceIte]
+  · intro sS sD lo d h
+    have hb := beq_false_of_guard (g := owlSameAs) h
+    simp only [RowSpec.additive, eqRepTtForS, hb, Bool.false_eq_true, ↓reduceIte]
 
 /-- The rows of `rowTable` whose guard is `p`, in `rowTable` order. -/
 def rowsFor (p : WfIri) : List RowSpec := rowTable.filter (fun r => r.guard == some p)

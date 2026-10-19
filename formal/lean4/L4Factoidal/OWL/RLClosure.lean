@@ -985,6 +985,37 @@ def caxAdcToDwFor (g : Graph) (d : Triple) : List Triple :=
               else [⟨Subject.iri ci', owlDisjointWith, Term.iri cj'⟩])))))
   else []
 
+/-- Every term obtained from `t` by replacing ONE occurrence of the IRI
+`x` INSIDE a triple term by `y` (`RLRules.TtRep`). A term that is not a
+triple term gives `[]`. -/
+def ttRepAll (x y : WfIri) : Term → List Term
+  | .tripleTerm s p o =>
+      (match s with
+       | .iri a => if a == x then [Term.tripleTerm (.iri y) p o] else []
+       | .bnode _ => []) ++
+      (if p == x then [Term.tripleTerm s y o] else []) ++
+      (match o with
+       | .iri a => if a == x then [Term.tripleTerm s p (.iri y)] else []
+       | _ => []) ++
+      (ttRepAll x y o).map (fun o' => Term.tripleTerm s p o')
+  | _ => []
+
+/-- **eq-rep-tt** `[ext]` — `owl:sameAs` substitution inside a triple
+term (RDF 1.2 Semantics; issue
+https://github.com/danbri/factoidal/issues/873, W3C test `opaque-iri`).
+Driven by an `owl:sameAs` triple between two DISTINCT IRIs (for `x = y`
+the substitution gives the input term back, so nothing new); scans `g`
+for triples whose object is a triple term and replaces one occurrence of
+`x` inside it. Emits nothing on a graph with no triple term. -/
+def eqRepTtFor (g : Graph) (d : Triple) : List Triple :=
+  if d.p == owlSameAs then
+    match d.s, d.o with
+    | .iri x, .iri y =>
+        if x == y then []
+        else g.flatMap (fun u => (ttRepAll x y u.o).map (fun o' => ⟨u.s, u.p, o'⟩))
+    | _, _ => []
+  else []
+
 /-! ## Section 6 — one round
 
 `conclusionsFrom` is written as `List.flatten` of a literal list of
@@ -1022,7 +1053,7 @@ def conclusionsList (g : Graph) (d : Triple) : List (List Triple) :=
       xsdAxiomsFor g d, dtRangeIntersectFor g d,
       caxDwToComplementFor g d, clsMaxqc1ToComplementFor g d,
       minCard1ComprehensionFor g d, caxAdcToDwFor g d,
-      inverseOfDomRngFlipFor g d ]
+      inverseOfDomRngFlipFor g d, eqRepTtFor g d ]
 
 /-- The flattening of `conclusionsList`. -/
 def conclusionsFrom (g : Graph) (d : Triple) : List Triple :=

@@ -650,6 +650,24 @@ def iriIndividuals (g : Graph) : List WfIri :=
     (match t.s with | .iri i => [i] | _ => []) ++
     (match t.o with | .iri i => [i] | _ => []))
 
+/-- `TtRep x y o o'` — `o'` is the triple term `o` with ONE occurrence
+of the IRI `x` inside it (subject, predicate or object position, at any
+nesting depth) replaced by `y`. RDF 1.2 Semantics, "Simple
+Interpretations": a triple term denotes a function of the denotations of
+its three components, so the IRIs inside it are transparent and
+`owl:sameAs` substitutes there as it does in asserted positions (W3C
+rdf12 `rdf-semantics` test `opaque-iri`). Only an occurrence INSIDE a
+triple term is covered; the top-level positions are eq-rep-s/p/o. -/
+inductive TtRep (x y : WfIri) : Term → Term → Prop where
+  | subj {p : WfIri} {o : Term} :
+      TtRep x y (.tripleTerm (.iri x) p o) (.tripleTerm (.iri y) p o)
+  | pred {s : Subject} {o : Term} :
+      TtRep x y (.tripleTerm s x o) (.tripleTerm s y o)
+  | obj {s : Subject} {p : WfIri} :
+      TtRep x y (.tripleTerm s p (.iri x)) (.tripleTerm s p (.iri y))
+  | deep {s : Subject} {p : WfIri} {o o' : Term} (h : TtRep x y o o') :
+      TtRep x y (.tripleTerm s p o) (.tripleTerm s p o')
+
 /-! ## The derivation relation
 
 `Derives g t` — "graph `g` OWL 2 RL/RDF-derives triple `t`". Base case
@@ -708,6 +726,17 @@ inductive Derives (g : Graph) : Triple → Prop where
   | eqRepO {os s : Subject} {o' : Term} {p : WfIri}
       (heq : Derives g ⟨os, owlSameAs, o'⟩)
       (hd : Derives g ⟨s, p, os.toTerm⟩) :
+      Derives g ⟨s, p, o'⟩
+  /-- **eq-rep-tt** `[ext]` — `T(?x, owl:sameAs, ?y) T(?s,?p,?o) |
+  T(?s,?p,?o')` where `?o'` is the triple term `?o` with one occurrence
+  of the IRI `?x` inside it replaced by the IRI `?y` (`TtRep`). OWL 2
+  Profiles §4.3's eq-rep-o replaces a whole object term; RDF 1.2
+  Semantics makes the IRIs inside a triple term transparent, which this
+  row implements (issue https://github.com/danbri/factoidal/issues/873,
+  W3C test `opaque-iri`). -/
+  | eqRepTt {x y : WfIri} {s : Subject} {p : WfIri} {o o' : Term}
+      (heq : Derives g ⟨Subject.iri x, owlSameAs, Term.iri y⟩)
+      (hd : Derives g ⟨s, p, o⟩) (hr : TtRep x y o o') :
       Derives g ⟨s, p, o'⟩
 
   -- ===================================================================
@@ -1724,6 +1753,7 @@ theorem Derives.mono {g g' : Graph} (hsub : ∀ u, u ∈ g → u ∈ g')
   | eqRepS _ _ ih1 ih2 => exact Derives.eqRepS ih1 ih2
   | eqRepP _ _ ih1 ih2 => exact Derives.eqRepP ih1 ih2
   | eqRepO _ _ ih1 ih2 => exact Derives.eqRepO ih1 ih2
+  | eqRepTt _ _ hr ih1 ih2 => exact Derives.eqRepTt ih1 ih2 hr
   | prpDom _ _ ih1 ih2 => exact Derives.prpDom ih1 ih2
   | prpRng _ _ ih1 ih2 => exact Derives.prpRng ih1 ih2
   | prpFp _ _ _ ih1 ih2 ih3 => exact Derives.prpFp ih1 ih2 ih3
@@ -1845,6 +1875,7 @@ theorem Derives.cut {g g' : Graph} (hall : ∀ u, u ∈ g' → Derives g u)
   | eqRepS _ _ ih1 ih2 => exact Derives.eqRepS ih1 ih2
   | eqRepP _ _ ih1 ih2 => exact Derives.eqRepP ih1 ih2
   | eqRepO _ _ ih1 ih2 => exact Derives.eqRepO ih1 ih2
+  | eqRepTt _ _ hr ih1 ih2 => exact Derives.eqRepTt ih1 ih2 hr
   | prpDom _ _ ih1 ih2 => exact Derives.prpDom ih1 ih2
   | prpRng _ _ ih1 ih2 => exact Derives.prpRng ih1 ih2
   | prpFp _ _ _ ih1 ih2 ih3 => exact Derives.prpFp ih1 ih2 ih3
