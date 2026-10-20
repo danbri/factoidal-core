@@ -15,7 +15,8 @@ const path = require('node:path');
 const os = require('node:os');
 
 const factoidal = require('../index.js');
-const { openStore, queryStore, listStores, sampleStorePath, sampleStoreFacts, Store, Dataset } = factoidal;
+const { openStore, queryStore, listStores, Store, Dataset } = factoidal;
+const { sampleStorePath, sampleStoreFacts } = require('./fixtures/sample-store.mjs');
 
 const SKOS = 'http://www.w3.org/2004/02/skos/core#';
 const COUNT = 'SELECT (COUNT(*) AS ?n) WHERE { ?s ?p ?o }';

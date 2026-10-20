@@ -165,46 +165,14 @@ JavaScript source. `bundler` users: the
 
 `tests/web-demos/npm_browser_smoke.sh` runs a parse, a SELECT, a
 canonicalization, an XPath evaluation and a store query from a static page
-in headless Chromium, and a second page over the core entry.
+in headless Chromium.
 
-### The core engine: `@factoidal/core/core`
+### One engine
 
-The full engine (`l4factoidal.wasm`) serves every function of this package.
-`@factoidal/core/core` loads the core engine (`l4factoidal-core.wasm`): the
-same Lean library with a dispatch table that reaches a subset of it, so the
-linker drops the rest. It has the same exports and types as `@factoidal/core`
-(in Node, `core.mjs`; in a browser or a bundler, its `browser` condition,
-`core-browser.js`).
-
-The core engine serves: `parse` and `serialize` for Turtle, TriG, N-Triples
-and N-Quads (RDF 1.1 and 1.2) and RDF/XML, with `{lenient: true}`; `query`,
-`update`, `openDataset` and `queryRaw` (SPARQL 1.1 and 1.2, extension
-functions, SERVICE endpoints, the entailment regimes); `canonicalize`,
-`graphs` and `canonicalHash`; `owlClosure`, `coreRdfsClosure`,
-`rdfsPlusClosure` and the core-RDFS checks; `shaclValidate`. Every other
-function (JSON-LD, the XML family, CSVW, RML, ShEx, the OWL DL refuter and
-tableau, RIF, HDT, the store, VC and DID, the maths, Common Logic) rejects
-with an error that names `@factoidal/core`, and `capabilities()` reports
-`profile: 'core'` and `false` for it.
-
-```js
-import { parse, query, capabilities } from "@factoidal/core/core";
-(await capabilities()).profile; // 'core'
-```
-
-Sizes (version 0.9.0 tree of 2026-10-10; gzip is `gzip -9`, brotli quality 11):
-
-| Module | Raw | gzip | brotli |
-|---|---:|---:|---:|
-| `l4factoidal.wasm` (full, `@factoidal/core`) | 10.54 MB | 2.07 MB | 1.29 MB |
-| `l4factoidal-core.wasm` (core, `@factoidal/core/core`) | 5.68 MB | 1.07 MB | 0.69 MB |
-| the F\* engine bundle of 0.8.0 (`factoidal-npm-entry.js`), for comparison | 1.19 MB | 0.35 MB | 0.28 MB |
-
-Each entry also loads about 68 KB (gzip) of JavaScript. The browser default
-(`@factoidal/core`, `browser.js`) stays the full engine, so a page gets every
-function unless it chooses the core entry. What each module is made of, by
-Lean namespace: `docs/designissues/2026-10-10-npm-lean-only.md` § 9 in the
-source repository.
+One wasm, `l4factoidal.wasm`, carries every capability of the package
+(owner, 2026-10-20: "all this stuff goes into a single mod we call
+Factoidal/core and a dingle wasm"). The duplicate smaller wasm and its
+`./core` and `./core-browser` subpaths are gone since 0.10.0.
 
 ### Bundlers and Content Security Policy
 
@@ -395,22 +363,24 @@ manifest that commits every artifact's SHA-256, and a `CURRENT` pointer to
 the activated generation
 ([`skills/shardborough-storage`](../../skills/shardborough-storage/SKILL.md),
 [`docs/shardborough-storage-spec.md`](../../docs/shardborough-storage-spec.md)).
-The package carries one, the sample store (4,434 triples, IPTC NewsCodes,
-CC BY 4.0; see `NOTICE`).
+`factoidal pack` and `factoidal activate` make one from an RDF file;
+`sampleStorePath()` (and `factoidal sample-store`) packs a small built-in one.
 
 ```js
-import { openStore, queryStore, sampleStorePath } from "@factoidal/core";
+import { openStore, queryStore } from "@factoidal/core";
+import { sampleStorePath } from "@factoidal/core/sample-store";
+const root = sampleStorePath();   // packs a small built-in store under the temp directory
 
-const store = await openStore(sampleStorePath());   // reads CURRENT, verifies every block once
+const store = await openStore(root);                 // reads CURRENT, verifies every block once
 const rows = await store.query(`
   SELECT ?c ?l WHERE {
     ?c <http://www.w3.org/2004/02/skos/core#prefLabel> ?l
     FILTER(CONTAINS(LCASE(STR(?l)), "video")) } LIMIT 5`);
-console.log(store.layout, store.rows);              // predicate-ibk3-…  4434
+console.log(store.rows);                             // 15
 await store.close();
 
 // One query: open only the blocks this query's plan names, query, close.
-const n = await queryStore(sampleStorePath(), 'SELECT (COUNT(*) AS ?n) WHERE { ?s ?p ?o }');
+const n = await queryStore(root, 'SELECT (COUNT(*) AS ?n) WHERE { ?s ?p ?o }');
 ```
 
 `source` is a collection root path (Node), or a reader function from a
@@ -482,40 +452,22 @@ SHA-256, evaluating the SPARQL).
 
 > This command is not the native `factoidal` binary of the repository
 > (`bin/<platform>/factoidal`, which takes subcommands such as `shex` and
-> `compact`). This one takes `version`, `sample-store`, `inspect`,
+> `compact`). This one takes `version`, `sample-store`, `pack`, `activate`, `inspect`,
 > `query`, `serve`, `lws-serve`, `solid-serve` and `solid-client`.
 
-### First query, with nothing else to download
+### First query
 
-The package carries an activated store, so a fresh install answers a
-SPARQL query at once:
+`factoidal sample-store` packs a small built-in store (15 triples held in
+`sample-store.mjs`; no data file ships) and prints its path:
 
 ```console
 $ npm install @factoidal/core
 $ npx factoidal query "$(npx factoidal sample-store)" \
-    'SELECT ?c ?l
-     WHERE { ?c <http://www.w3.org/2004/02/skos/core#inScheme>
-                <http://cv.iptc.org/newscodes/videocodec/> ;
-                <http://www.w3.org/2004/02/skos/core#prefLabel> ?l .
-             FILTER(langMatches(lang(?l), "en")) }
-     LIMIT 4'
-c                                               l
-<http://cv.iptc.org/newscodes/videocodec/c001>  "Analogue Black and White"@en-gb
-<http://cv.iptc.org/newscodes/videocodec/c002>  "PAL"@en-gb
-<http://cv.iptc.org/newscodes/videocodec/c003>  "NTSC"@en-gb
-<http://cv.iptc.org/newscodes/videocodec/c004>  "SECAM"@en-gb
+    'SELECT ?c ?l WHERE { ?c <http://www.w3.org/2004/02/skos/core#prefLabel> ?l }'
 ```
 
-`factoidal sample-store` prints the path; `--json` adds what was
-recorded when the store was packed. From JavaScript:
-
-```js
-import { sampleStorePath, sampleStoreFacts } from '@factoidal/core/sample-store'
-```
-
-The store holds 4,434 triples in 13 predicate blocks: five IPTC
-NewsCodes vocabularies, published by the IPTC under CC BY 4.0 and taken
-from [danbri/skosdex](https://github.com/danbri/skosdex). See `NOTICE`.
+From JavaScript (Node): `import { sampleStorePath } from '@factoidal/core/sample-store'`.
+Your own data: `factoidal pack data.ttl store/gen-1 && factoidal activate store gen-1`.
 
 ### Any other store
 
@@ -622,8 +574,9 @@ flat at 527 MB over 4,000 requests (`skills/shardborough-storage`, § Serving).
 
 ```js
 import { listen, listenOnWorker } from '@factoidal/core/serve'
-import { sampleStorePath } from '@factoidal/core/sample-store'
-const running = await listen(sampleStorePath(), { port: 0 })
+import { sampleStorePath } from "@factoidal/core/sample-store";
+const root = sampleStorePath();   // packs a small built-in store under the temp directory
+const running = await listen(root, { port: 0 })
 await running.close()
 // running.origin, running.served.info, await running.close()
 // listenOnWorker(root, options): the same on a worker thread with a raised
@@ -653,9 +606,10 @@ import { openStore, openStoreHandle, listStoreHandles } from '@factoidal/core/st
 const engine = await loadEngine()
 
 // Two stores, open at once, held for the life of the process.
-import { sampleStorePath } from '@factoidal/core/sample-store'
-const skos = openStoreHandle(engine, openStore(sampleStorePath()))
-const docs = openStoreHandle(engine, openStore(sampleStorePath()))
+import { sampleStorePath } from "@factoidal/core/sample-store";
+const root = sampleStorePath();   // packs a small built-in store under the temp directory
+const skos = openStoreHandle(engine, openStore(root))
+const docs = openStoreHandle(engine, openStore(root))
 
 console.log(listStoreHandles(engine))
 // { ok: true, handles: [ {handle:'s1', bytes:…, rows:…}, {handle:'s2', …} ],
@@ -758,9 +712,10 @@ import { openStoreHandleOnWorker, closeSharedStoreWorkerSession }
 // No runtime flag. One worker thread, shared by every handle opened
 // this way, so a caller that opens several stores pays for one thread
 // and one copy of the module.
-import { sampleStorePath } from '@factoidal/core/sample-store'
+import { sampleStorePath } from "@factoidal/core/sample-store";
+const root = sampleStorePath();   // packs a small built-in store under the temp directory
 const PREFIX = 'PREFIX skos: <http://www.w3.org/2004/02/skos/core#>'
-const handle = await openStoreHandleOnWorker(sampleStorePath(), {})
+const handle = await openStoreHandleOnWorker(root, {})
 const answer = await handle.query(`${PREFIX}
   SELECT ?c ?l WHERE { GRAPH <urn:g> { ?c skos:prefLabel ?l }
     FILTER(CONTAINS(LCASE(STR(?l)), "volcan")) } LIMIT 8`)
@@ -777,7 +732,7 @@ await closeSharedStoreWorkerSession()
 | `{worker: false}` | open in this process, with no thread |
 
 What it costs, all **measured 2026-09-05** on the same machine, against
-the bundled sample store so the overhead is not lost in the query:
+a 4,434-triple store (the test fixture `test/fixtures/sample-store`) so the overhead is not lost in the query:
 
 | | in process | on a worker |
 |---|---|---|
@@ -1060,7 +1015,6 @@ const { conforms, report } = await validate(ds, await parse(shapesTtl)); // SHAC
 | `queryRaw` | `(dataText, sparql, {dataFormat?, entail?, output?}) => object \| string` | one call, serialized answer: `json` (parsed), `csv`, `tsv`, `xml`, `table`, `ntriples` |
 | `queryHdt` | `(hdtBytes, sparql) => Bindings[] \| boolean` | SELECT/ASK over an HDT file's bytes |
 | `openStore`, `queryStore`, `listStores` | see "The persisted store" | `Store`: `.query`, `.inspect`, `.close`, `.handle`/`.layout`/`.wireVersion`/`.rows`/`.bytes`/`.artifacts`/`.generation`/`.activated`/`.closed` |
-| `sampleStorePath`, `sampleStoreFacts` | `() => string`, object | Node only |
 | `registerExtensionFunction`, `unregisterExtensionFunction`, `clearExtensionFunctions` | see above | SPARQL 1.1 §17.6 |
 | `registerServiceEndpoint`, `clearServiceEndpoints` | `(iri, data)` | `SERVICE <iri>` answers from this snapshot |
 | `shaclValidate` | `(data, shapes) => {conforms, report: Dataset}` | SHACL Core, SHACL-SPARQL, SHACL 1.2 node expressions |
@@ -1078,7 +1032,6 @@ const { conforms, report } = await validate(ds, await parse(shapesTtl)); // SHAC
 | `xmlWellformed`, `xpathEval`, `xsltTransform`, `schematronValidate`, `jsonSchemaValidate`, `xformsRecalc`, `mathmlEval` | | XML 1.0, XPath 1.0, XSLT 1.0, Schematron, JSON Schema draft-07, XForms recalculation, Content MathML |
 | `clParse`, `clSerialize`, `clAlphaNorm`, `clNormalize` | `(clifText) => {…}` | Common Logic (ISO/IEC 24707) and IKL; `clSerialize` reports `roundTripProved: false`, `clNormalize` reports `preserves: "satisfiability"` |
 | `toanSummation`, `toanProduct`, `toanSimplify`, `toanDiff`, `toanSubst` | | symbolic algebra over Content MathML |
-| `matrixDeterminant`, `matrixScalarProduct`, `matrixVectorProduct`, `matrixOuterProduct`, `sigmoidPoints`, `sigmoidFormulaMathml` | | exact rational matrices; sigmoid samples |
 | `vcSha256Hex`, `vcEd25519SecretToPublic`, `vcEd25519Sign`, `vcEd25519Verify`, `vcEddsaCreateFromCanonical`, `vcEddsaVerifyFromCanonical` | | VC Data Integrity `eddsa-rdfc-2022`; Ed25519 is HACL\*'s C code in the wasm module; no initialisation step |
 | `vcCheckCredential`, `vcCheckCredentialSubject`, `vcCheckNoDataLoss`, `vcCheckRelatedResourceDigests`, `didKeyResolve` | | VCDM 2.0 checks; `did:key` (Ed25519) resolution |
 | `capabilities` | `() => {…}` | which ops the loaded wasm serves |

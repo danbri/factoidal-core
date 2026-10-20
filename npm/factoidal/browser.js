@@ -15,12 +15,7 @@
 // fetched bytes instead). setAssetsUrl() names another directory holding
 // l4factoidal.js, l4factoidal.mjs and l4factoidal.wasm.
 //
-// core-browser.js is the same entry over the core engine
-// (l4factoidal-core.wasm, '@factoidal/core/core'), a smaller module that
-// serves a subset of the functions (issue 713 stage 4).
-//
-// The exports and their types are index.mjs's (index.d.ts), except
-// sampleStorePath, and openStore() takes a reader function, (path) =>
+// The exports and their types are index.mjs's (index.d.ts), and openStore() takes a reader function, (path) =>
 // bytes, because a page has no file system:
 //
 //   const store = await openStore((p) => fetch(base + p).then((r) => r.arrayBuffer()));
@@ -137,12 +132,6 @@ export const toanProduct = api.toanProduct;
 export const toanSimplify = api.toanSimplify;
 export const toanDiff = api.toanDiff;
 export const toanSubst = api.toanSubst;
-export const matrixDeterminant = api.matrixDeterminant;
-export const matrixScalarProduct = api.matrixScalarProduct;
-export const matrixVectorProduct = api.matrixVectorProduct;
-export const matrixOuterProduct = api.matrixOuterProduct;
-export const sigmoidPoints = api.sigmoidPoints;
-export const sigmoidFormulaMathml = api.sigmoidFormulaMathml;
 
 // Verifiable Credentials and DID
 export const vcSha256Hex = api.vcSha256Hex;

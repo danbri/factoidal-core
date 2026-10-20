@@ -886,20 +886,7 @@ export function deltaLogDestroy(handle: DeltaLogHandle): Promise<void>;
 /** TEST ONLY: cut the last 4 bytes of the last record, as a torn write would. False when the log is empty. */
 export function _deltaLogCorruptLastForTest(handle: DeltaLogHandle): Promise<boolean>;
 
-/** The collection root of the sample store this package carries (Node only). */
-export function sampleStorePath(): string;
 
-/** What the sample store holds, as recorded when it was packed. */
-export const sampleStoreFacts: Readonly<{
-  triples: number;
-  blocks: number;
-  layout: string;
-  wireVersion: number;
-  source: string;
-  licence: string;
-  licenceUrl: string;
-  publisher: string;
-}>;
 
 // ---------------------------------------------------------------------
 // Common Logic (ISO/IEC 24707:2018) and IKL
@@ -1115,81 +1102,7 @@ export function toanSubst(
   value: ToanExpr
 ): Promise<string>;
 
-/** A matrix/vector cell: an integer or an exact [num, den] rational. */
-export type MatrixCell = number | [number, number];
 
-/** The rendered result of a matrix/vector operation. */
-export interface MatrixResult {
-  /** Math.Matrix.mres_to_string of the result ("undef" on failure). */
-  result: string;
-  /** The diagnostic reason when the result is undefined, else "". */
-  reason: string;
-}
-
-/** Exact determinant of a square matrix (Math.Matrix.dyn_determinant). */
-export function matrixDeterminant(
-  matrix: MatrixCell[][]
-): Promise<MatrixResult>;
-
-/** Dot product of two vectors (Math.Matrix.dyn_scalarproduct). */
-export function matrixScalarProduct(
-  a: MatrixCell[],
-  b: MatrixCell[]
-): Promise<MatrixResult>;
-
-/** Cross product of two 3-vectors (Math.Matrix.dyn_vectorproduct). */
-export function matrixVectorProduct(
-  a: MatrixCell[],
-  b: MatrixCell[]
-): Promise<MatrixResult>;
-
-/** Outer product of two vectors (Math.Matrix.dyn_outerproduct). */
-export function matrixOuterProduct(
-  a: MatrixCell[],
-  b: MatrixCell[]
-): Promise<MatrixResult>;
-
-/**
- * A fixed-precision decimal (Math.Sigmoid.scaled: mantissa / 10^scale),
- * the same (mantissa, scale) convention SPARQL11.Algebra.parse_to_scaled
- * uses for xsd:decimal literals. `decimal` is the same pair formatted
- * back to a string by SPARQL11_Algebra.format_scaled_value.
- */
-export interface ScaledValue {
-  mantissa: string;
-  scale: string;
-  decimal: string;
-}
-
-/** Parameters for {@link sigmoidPoints}: decimal-literal strings/numbers. */
-export interface SigmoidParams {
-  k: number | string;
-  x0: number | string;
-  l: number | string;
-  xmin: number | string;
-  xmax: number | string;
-  n: number | string;
-}
-
-/**
- * n+1 evenly spaced samples of the logistic sigmoid
- * L / (1 + exp(-k*(x - x0))) over [xmin, xmax] (Math.Sigmoid.
- * sigmoid_points). All arithmetic -- argument reduction, the
- * truncated Taylor series, repeated squaring, and the x samples
- * themselves -- runs as exact rational arithmetic inside
- * Math.Sigmoid.fst; see that module's header for the documented error
- * bound on the returned (rounded) values.
- */
-export function sigmoidPoints(
-  params: SigmoidParams
-): Promise<Array<{ x: ScaledValue; y: ScaledValue }>>;
-
-/**
- * Presentation MathML for the sigmoid formula L / (1 + exp(-k*(x - x0))),
- * engine-serialized (MathML.Present.to_presentation_mathml applied to a
- * fixed Math.Expr.expr) -- never hand-written MathML.
- */
-export function sigmoidFormulaMathml(): Promise<string>;
 
 // ---------------------------------------------------------------------
 // VC Data Integrity crypto (eddsa-rdfc-2022), the ops of
@@ -1321,9 +1234,6 @@ export function capabilities(): Promise<{
   jsonSchema: boolean;
   schematron: boolean;
   toan: boolean;
-  matrix: boolean;
-  /** The sigmoid (Math.Sigmoid) ABI exports are present. */
-  sigmoid: boolean;
   /** The VC Data Integrity crypto ops are present. */
   vcCrypto: boolean;
   /** query()'s `entail` regimes (op queryRaw) are served. */
@@ -1458,12 +1368,6 @@ declare const _default: {
   toanSimplify: typeof toanSimplify;
   toanDiff: typeof toanDiff;
   toanSubst: typeof toanSubst;
-  matrixDeterminant: typeof matrixDeterminant;
-  matrixScalarProduct: typeof matrixScalarProduct;
-  matrixVectorProduct: typeof matrixVectorProduct;
-  matrixOuterProduct: typeof matrixOuterProduct;
-  sigmoidPoints: typeof sigmoidPoints;
-  sigmoidFormulaMathml: typeof sigmoidFormulaMathml;
   vcSha256Hex: typeof vcSha256Hex;
   vcEd25519SecretToPublic: typeof vcEd25519SecretToPublic;
   vcEd25519Sign: typeof vcEd25519Sign;
@@ -1496,3 +1400,8 @@ export function proofInspect(bundleJson: string): Promise<Record<string, unknown
 export function canonicalizeNQuads(nquads: string): Promise<string>;
 export function normalizeNQuads(nquads: string): Promise<string>;
 export function serveStore(root: string, options?: { port?: number; host?: string; queryPath?: string; gspPath?: string; tdb2?: boolean }): Promise<{ url: string; port: number; close(): Promise<void> }>;
+
+/** Pack a small built-in store (Node only) under dir or a temporary directory; returns the collection root. */
+export function sampleStorePath(dir?: string): string;
+/** What the sample store holds. */
+export const sampleStoreFacts: Readonly<{ triples: number; source: string; layout: string }>;

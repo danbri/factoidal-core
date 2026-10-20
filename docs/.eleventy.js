@@ -46,7 +46,7 @@ module.exports = function(eleventyConfig) {
   // mirror is no longer read, and a directory there would write the same
   // output paths as these entries.
   for (const rel of [
-    "browser.js", "core-browser.js", "api.mjs", "rdfjs.mjs", "sample-store.mjs",
+    "browser.js", "api.mjs", "rdfjs.mjs",
     "lib", "l4-assets", "store-host", "store-http",
   ]) {
     eleventyConfig.addPassthroughCopy({ [`../npm/factoidal/${rel}`]: `npm/factoidal/${rel}` });
@@ -115,6 +115,9 @@ module.exports = function(eleventyConfig) {
   // graph and error results in Hub notebooks.  Kept as a normal module asset
   // so it can also be reused by non-notebook documentation pages.
   eleventyConfig.addPassthroughCopy("web/hub/assets/sparql-result-elements.mjs");
+  // The demonstration maths wrappers posts 28 and 34 call (not in the npm
+  // package since 0.10.0; docs/web/hub/assets/demo-maths.mjs).
+  eleventyConfig.addPassthroughCopy("web/hub/assets/demo-maths.mjs");
 
   // The store-over-HTTP host of @factoidal/core (hub post 54's
   // fn.openStoreOverHttp target) reaches /npm/factoidal/store-http/
@@ -125,18 +128,18 @@ module.exports = function(eleventyConfig) {
 
   // Pass-through the sample Shardborough store the package ships (13
   // predicate blocks of IPTC NewsCodes SKOS, CC BY 4.0 -- provenance in
-  // npm/factoidal/sample-store.mjs and NOTICE). Post 54 opens it as an
+  // npm/factoidal/test/fixtures/sample-store.mjs and NOTICE). Post 54 opens it as an
   // ordinary object store over HTTP, so the notebook's default target is
   // same-origin and works under the strict page's connect-src 'self'.
   // Again one copy in git, under npm/, where its tests read it.
   eleventyConfig.addPassthroughCopy({
-    "../npm/factoidal/sample-store": "web/hub/assets/store/sample"
+    "../npm/factoidal/test/fixtures/sample-store": "web/hub/assets/store/sample"
   });
   // The live twin (hub-live/) resolves the same relative path from its own
   // directory, so it needs its own copy; without it the twin's sample
   // target answered 404 (found on the deployed site, 2026-09-07).
   eleventyConfig.addPassthroughCopy({
-    "../npm/factoidal/sample-store": "web/hub-live/assets/store/sample"
+    "../npm/factoidal/test/fixtures/sample-store": "web/hub-live/assets/store/sample"
   });
 
   // Pass-through the project-owned reactive-cell compiler

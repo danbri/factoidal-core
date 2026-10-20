@@ -62,26 +62,11 @@
       "types": "./browser.d.ts",
       "default": "./browser.js"
     },
-    "./core": {
-      "types": "./core.d.ts",
-      "browser": "./core-browser.js",
-      "import": "./core.mjs",
-      "require": "./core.js",
-      "default": "./core.js"
-    },
-    "./core-browser": {
-      "types": "./core-browser.d.ts",
-      "default": "./core-browser.js"
-    },
     "./package.json": "./package.json",
     "./l4-assets/*": "./l4-assets/*",
     "./store-host": "./store-host/index.mjs",
     "./store-host/paths": "./store-host/paths.mjs",
     "./xmpp": "./xmpp/index.mjs",
-    "./sample-store": {
-      "types": "./sample-store.d.ts",
-      "default": "./sample-store.mjs"
-    },
     "./store": {
       "default": "./bin/store.mjs"
     },
@@ -105,6 +90,10 @@
     },
     "./solid/client": {
       "default": "./solid/client/index.mjs"
+    },
+    "./sample-store": {
+      "types": "./sample-store.d.ts",
+      "default": "./sample-store.mjs"
     }
   },
   "files": [
@@ -120,11 +109,7 @@
     "fn.d.ts",
     "browser.js",
     "browser.d.ts",
-    "core.js",
-    "core.mjs",
-    "core.d.ts",
-    "core-browser.js",
-    "core-browser.d.ts",
+    "!l4-assets/l4factoidal-core.*",
     "l4-assets/",
     "lib/",
     "bin/",
@@ -134,7 +119,6 @@
     "xmpp/",
     "sample-store.mjs",
     "sample-store.d.ts",
-    "sample-store/",
     "docs/",
     "README.md",
     "CHANGELOG.md",

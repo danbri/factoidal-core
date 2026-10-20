@@ -11,13 +11,12 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import * as full from '../index.mjs';
-import * as core from '../core.mjs';
 import { buildApi } from '../lib/api.mjs';
 import { entryFromEngine } from '../lib/lean-entry.mjs';
 
 const ins = (s, o) => `INSERT DATA { <http://example.org/${s}> <http://example.org/p> "${o}" . }`;
 
-for (const [label, api] of [['full', full], ['core', core]]) {
+for (const [label, api] of [['full', full]]) {
   test(`deltaLog (${label}): append, read, merge, inspect, torn last record`, async () => {
     const h = await api.deltaLogOpen(`delta-log-test-${label}`);
     await api.deltaLogDestroy(h);
