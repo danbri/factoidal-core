@@ -573,9 +573,14 @@ rather than proving it twice. Lean first; F\* optional.
 > Earlier the same day: "Hold off on the grouping" (no README tiers of
 > conformance-tested / own-suite / experimental).
 
-- `@factoidal/core` ships one wasm that carries every capability the Lean
-  tree has. The second, smaller `l4factoidal-core.wasm` profile and its
-  subpaths leave the npm package. Profiles per package (`@factoidal/kgx`,
+- `@factoidal/core` is one module with one wasm that carries every
+  capability the Lean tree has. Owner, same day, verbatim: "all this stuff
+  goes into a single mod we call Factoidal/core and a dingle wasm. Filename
+  is less important". No capability is removed: the old second wasm
+  (`l4factoidal-core.wasm`) served a subset of the full table
+  (`Wasm/Dispatch.lean` holds every core op; `Wasm/CoreDispatchTests.lean`
+  checks this at build time), so dropping it from the package removes a
+  duplicate, not a function. Profiles per package (`@factoidal/kgx`,
   `kgx-lite`, `xml`) are deferred, not refused.
 - The bundled sample store and demonstration-only functions (`matrix*`,
   `sigmoid*`) leave the tarball.
