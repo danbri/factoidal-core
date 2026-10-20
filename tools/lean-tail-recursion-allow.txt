@@ -1452,3 +1452,4 @@ L4Factoidal_RDF_IsoRefine_matchSearchRef  # (c) the label-keyed reference of mat
 L4Factoidal_RDF_IsoRefine_tryEachRef  # (c) same cycle as matchSearchRef: depth at most refineDepth + 1 (issue 868)
 L4Factoidal_RDF_IsoRefine_CT_hash  # (b) nesting of RDF 1.2 triple terms in one compiled term, as termHash (issue 868)
 L4Factoidal_RDF_IsoRefine_compileTerm  # (b) nesting of RDF 1.2 triple terms in one term, as termHash (issue 868)
+L4Factoidal_SPARQL_ExistsIndex_bgpNonempty  # (b) one frame for each triple pattern of an EXISTS body (the query), not for each row or triple; issue 881
