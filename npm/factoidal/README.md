@@ -82,9 +82,9 @@ key. Other inputs and outputs are strings, objects or `Uint8Array`.
 - XML: `xmlWellformed`, `xpathEval`, `xsltTransform`, `xformsRecalc`
 - Store: `openStore`, `queryStore`, `listStores`, `Store`; `serveStore(root, {port})` gives `{url, port, close()}`, a SPARQL 1.1 Protocol server (Node only); `deltaLogOpen`, `deltaLogAppend`, `deltaLogInspect`, `deltaLogMerge`, `deltaLogReadAllHex`, `deltaLogDestroy`
 - Credentials and crypto: `vcCheckCredential`, `vcCheckCredentialSubject`, `vcCheckNoDataLoss`, `vcCheckRelatedResourceDigests`, `vcEddsaCreateFromCanonical`, `vcEddsaVerifyFromCanonical`, `vcEd25519Sign`, `vcEd25519Verify`, `vcEd25519SecretToPublic`, `vcSha256Hex`, `didKeyResolve`, `aeadSeal`, `aeadOpen` (ChaCha20-Poly1305), `hpkeSeal`, `hpkeOpen` (RFC 9180), `proofCheck`, `proofInspect`
-- Mathematics: `mathmlEval`, `clParse`, `clSerialize`, `clNormalize`, `clAlphaNorm`, `toanSimplify`, `toanDiff`, `toanSubst`, `toanSummation`, `toanProduct`, `matrix*`, `sigmoid*`
+- Mathematics: `mathmlEval`, `clParse`, `clSerialize`, `clNormalize`, `clAlphaNorm`, `toanSimplify`, `toanDiff`, `toanSubst`, `toanSummation`, `toanProduct`
 - Engine: `capabilities`, `version`, `engine`, `loadEngine` (raw `call(op, args)` for every op)
-- Subpaths: `@factoidal/core/core` (smaller wasm, no store ops), `/rdfjs`, `/api`, `/fn`; `lws/`, `solid/`, `xmpp/` hosts
+- Subpaths: `/rdfjs` (RDF/JS terms and an in-memory DatasetCore), `/api`, `/fn` (frozen FnDataset over the same engine Dataset); `lws/`, `solid/`, `xmpp/` hosts. One wasm, `l4factoidal.wasm`, carries every capability
 
 ## Command line
 
@@ -94,7 +94,11 @@ key. Other inputs and outputs are strings, objects or `Uint8Array`.
 - `query STORE QUERY`, `inspect STORE`; `update` and `compact` exit 3 (https://github.com/danbri/factoidal/issues/641); updates work through `serve`
 - `serve --file DATA /ds` (the `fuseki-server --file` form) or `serve STORE --port N`: SPARQL 1.1 Protocol at `/sparql`, Graph Store Protocol at `/data`, Service Description. W3C protocol tests against this server: 50 pass, 0 fail (out of 50) [P]
 - `lws-serve DIR`, `solid-serve DIR`, `solid-client OP URL`: Linked Web Storage 1.0 and Solid Protocol
-- `version`, `sample-store`
+- `version`; `sample-store [DIR]` packs a small built-in store (15 triples held in the JavaScript, no data file) and prints its path:
+
+```console
+$ npx factoidal query "$(npx factoidal sample-store)" 'SELECT (COUNT(*) AS ?n) WHERE { ?s ?p ?o }'
+```
 
 Replacing Apache Jena Fuseki: [docs/fuseki-replacement.md](https://github.com/danbri/factoidal-core/blob/main/npm/factoidal/docs/fuseki-replacement.md).
 
@@ -158,9 +162,9 @@ speed record of 2026-10-13.
 
 ## Weaknesses and known gaps
 
-- Size: the tarball is about 3.8 MB packed, 19 MB unpacked. It carries two
-  wasm modules (11.6 MB full, 6.3 MB `./core` subset; 11,614,907 and
-  6,277,079 bytes in the web release built from core commit 78fab4d3).
+- Size: the tarball is 2.5 MB packed, 12.4 MB unpacked, 57 files
+  (`npm pack --dry-run` of this tree, 2026-10-20). It carries one wasm
+  module, `l4factoidal.wasm` (11,692,530 bytes in that build).
 - Parse speed: N-Triples 4.4 times and Turtle 3.0 times the time of Serd;
   RDF/XML 6.2 times the time of Oxigraph and 9.5 times its memory [S].
   RDF/XML memory per document byte: https://github.com/danbri/factoidal/issues/771 (open).

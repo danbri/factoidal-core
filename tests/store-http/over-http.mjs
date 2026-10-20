@@ -32,7 +32,7 @@ import {
   openStoreOverHttp, HttpStoreError
 } from '../../npm/factoidal/store-http/index.mjs'
 
-const SAMPLE = new URL('../../npm/factoidal/sample-store', import.meta.url).pathname
+const SAMPLE = new URL('../../npm/factoidal/test/fixtures/sample-store', import.meta.url).pathname
 const SKOS = 'PREFIX skos: <http://www.w3.org/2004/02/skos/core#>\n'
 
 let pass = 0

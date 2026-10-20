@@ -2,7 +2,7 @@
 // functions of the main entry (index.d.ts), loaded in the browser. The
 // engine's wasm is fetched and compiled with WebAssembly.instantiateStreaming
 // on the first call. openStore() takes a StoreReader: a page has no file
-// system, so a path string rejects. sampleStorePath is Node only.
+// system, so a path string rejects.
 
 export type {
   NamedNode, BlankNode, Literal, Variable, DefaultGraph, Quad, Term, DataFactory,
@@ -72,12 +72,6 @@ export {
   toanSimplify,
   toanDiff,
   toanSubst,
-  matrixDeterminant,
-  matrixScalarProduct,
-  matrixVectorProduct,
-  matrixOuterProduct,
-  sigmoidPoints,
-  sigmoidFormulaMathml,
   vcSha256Hex,
   vcEd25519SecretToPublic,
   vcEd25519Sign,

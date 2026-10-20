@@ -12,7 +12,11 @@ import { NPM_FACTOIDAL_INDEX, extractObservableCells, runReactivePost, pretty } 
 import test from 'node:test';
 import assert from 'node:assert/strict';
 
-const factoidal = (await import(NPM_FACTOIDAL_INDEX)).default;
+const pkg = (await import(NPM_FACTOIDAL_INDEX)).default;
+// The page's fn is the package plus hub.njk's hubHelpers (the maths
+// functions are hub helpers since 0.10.0, docs/web/hub/assets/demo-maths.mjs).
+const { demoMathsFor } = await import(new URL('../../docs/web/hub/assets/demo-maths.mjs', import.meta.url).href);
+const factoidal = { ...pkg, ...demoMathsFor((await import(NPM_FACTOIDAL_INDEX)).loadEngine) };
 const POST_FILE = '34-extension-functions.md';
 
 const cells = extractObservableCells(POST_FILE);

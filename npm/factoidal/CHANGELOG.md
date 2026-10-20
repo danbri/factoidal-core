@@ -4,6 +4,25 @@
 
 ### Breaking changes
 
+One wasm carries every capability (owner, 2026-10-20: "all this stuff goes
+into a single mod we call Factoidal/core and a dingle wasm"):
+
+- The duplicate smaller wasm (`l4-assets/l4factoidal-core.{wasm,mjs,js}`) and
+  its `./core` and `./core-browser` subpaths are gone. `l4factoidal.wasm`
+  serves every function of the package; import `@factoidal/core`.
+  `l4-assets/version.json` has no `coreWasmSha256`/`coreWasmBytes`.
+- No demonstration triples ship (owner: "All the CLIs are still bundled i
+  just didn't want any actual demo triples cluttering the file"): the
+  4,434-triple `sample-store/` directory is gone. `factoidal sample-store
+  [DIR]` and `sampleStorePath([dir])` now pack 15 triples held in
+  `sample-store.mjs` into a store under DIR or the temporary directory and
+  return its path; `sampleStoreFacts` describes that store.
+- The demonstration functions `matrixDeterminant`, `matrixScalarProduct`,
+  `matrixVectorProduct`, `matrixOuterProduct`, `sigmoidPoints` and
+  `sigmoidFormulaMathml` (and `capabilities().matrix`/`.sigmoid`) left the
+  JavaScript API, `@factoidal/core/fn` and the types. The Lean ops stay and
+  answer through `loadEngine().call(op, args)`.
+
 One `Dataset` class whose data stays in the engine
 (https://github.com/danbri/factoidal/issues/882 item 1):
 

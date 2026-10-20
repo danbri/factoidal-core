@@ -528,6 +528,7 @@ tiles or query remote SPARQL endpoints (data, never scripts){% endif %}.
 import { Runtime } from "{{ '/vendor/observable/runtime.esm.js' | url }}";
 import { Inspector } from "{{ '/vendor/observable/inspector.esm.js' | url }}";
 import * as Factoidal from "{{ '/npm/factoidal/browser.js' | url }}";
+import * as demoMaths from "{{ '/web/hub/assets/demo-maths.mjs' | url }}";
 import * as d3 from "{{ '/vendor/observable/d3.esm.js' | url }}";
 import * as Plot from "{{ '/vendor/observable/plot.esm.js' | url }}";
 import * as stdlib from "{{ '/vendor/observable/stdlib.esm.js' | url }}";
@@ -706,6 +707,17 @@ const hubHelpers = {
   async l4Call(op, args) {
     return (await this.loadL4()).call(op, args);
   },
+  /**
+   * The demonstration maths ops (posts 28 and 34) over this page's engine;
+   * the npm package dropped these functions in 0.10.0
+   * (docs/web/hub/assets/demo-maths.mjs).
+   */
+  async matrixDeterminant(m) { return demoMaths.matrixDeterminant(await this.loadL4(), m); },
+  async matrixScalarProduct(a, b) { return demoMaths.matrixScalarProduct(await this.loadL4(), a, b); },
+  async matrixVectorProduct(a, b) { return demoMaths.matrixVectorProduct(await this.loadL4(), a, b); },
+  async matrixOuterProduct(a, b) { return demoMaths.matrixOuterProduct(await this.loadL4(), a, b); },
+  async sigmoidPoints(p) { return demoMaths.sigmoidPoints(await this.loadL4(), p); },
+  async sigmoidFormulaMathml() { return demoMaths.sigmoidFormulaMathml(await this.loadL4()); },
   /**
    * The dispatch ABI plus ONE contiguous byte region in and one out
    * (hub posts 42 and 54): `args` say which window of the region belongs

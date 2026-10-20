@@ -542,23 +542,24 @@ PYEOF
   L4ASSETS="$LEAN_DIR/../../npm/factoidal/l4-assets"
   if [ -d "$L4ASSETS" ]; then
     cp "$ASSETS/l4factoidal.js" "$ASSETS/l4factoidal.mjs" "$ASSETS/l4factoidal.wasm" "$L4ASSETS/"
-    cp "$ASSETS/l4factoidal-core.js" "$ASSETS/l4factoidal-core.mjs" \
-       "$ASSETS/l4factoidal-core.wasm" "$L4ASSETS/"
+    # The package ships the full engine only (owner, 2026-10-20: "For now, we
+    # have a single fat core"); the core profile stays in the hub assets.
+    rm -f "$L4ASSETS/l4factoidal-core.js" "$L4ASSETS/l4factoidal-core.mjs" \
+       "$L4ASSETS/l4factoidal-core.wasm"
     # Its version.json carries `engine` and `note` members the companion
     # package's does not, so refresh the provenance fields in place
     # instead of overwriting the file.
-    python3 - "$L4ASSETS/version.json" "$NPMLEAN/version.json" "$ASSETS/l4factoidal-core.wasm" "$CORE_SHA" <<'PYSYNC'
+    python3 - "$L4ASSETS/version.json" "$NPMLEAN/version.json" <<'PYSYNC'
 import json, os, sys
 dst_path, src_path = sys.argv[1], sys.argv[2]
-core_wasm, core_sha = sys.argv[3], sys.argv[4]
 src = json.load(open(src_path))
 dst = json.load(open(dst_path))
 for k in ("version", "gitSha", "builtAt", "leanToolchain", "emscripten",
           "abiVersion", "wasmSha256", "wasmBytes", "claims"):
     dst[k] = src[k]
-# The core module (issue 713 stage 4), built from the same commit.
-dst["coreWasmSha256"] = core_sha
-dst["coreWasmBytes"] = os.path.getsize(core_wasm)
+# The package carries no core module since 2026-10-20.
+dst.pop("coreWasmSha256", None)
+dst.pop("coreWasmBytes", None)
 # A stale-artifact note is a claim about the PREVIOUS build; a fresh
 # build is exactly the event that retires it.
 dst.pop("sourceDrift", None)
@@ -587,7 +588,7 @@ PYSYNC
       BADCOPY=1
     fi
   done
-  for d in "$ASSETS" "$LEAN_DIR/../../npm/factoidal/l4-assets"; do
+  for d in "$ASSETS"; do
     [ -f "$d/l4factoidal-core.wasm" ] || continue
     THIS=$(sha256sum "$d/l4factoidal-core.wasm" | cut -d' ' -f1)
     if [ "$THIS" != "$CORE_SHA" ]; then

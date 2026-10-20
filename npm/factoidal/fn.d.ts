@@ -16,10 +16,6 @@ import type {
   XFormsNodeValidity,
   SchematronFinding,
   ToanExpr,
-  MatrixCell,
-  MatrixResult,
-  ScaledValue,
-  SigmoidParams,
 } from './index';
 
 export type {
@@ -28,10 +24,6 @@ export type {
   XFormsNodeValidity,
   SchematronFinding,
   ToanExpr,
-  MatrixCell,
-  MatrixResult,
-  ScaledValue,
-  SigmoidParams,
 } from './index';
 
 /**
@@ -409,25 +401,6 @@ export function toanSubst(
   variable: string,
   value: ToanExpr
 ): Promise<string>;
-export function matrixDeterminant(
-  matrix: MatrixCell[][]
-): Promise<MatrixResult>;
-export function matrixScalarProduct(
-  a: MatrixCell[],
-  b: MatrixCell[]
-): Promise<MatrixResult>;
-export function matrixVectorProduct(
-  a: MatrixCell[],
-  b: MatrixCell[]
-): Promise<MatrixResult>;
-export function matrixOuterProduct(
-  a: MatrixCell[],
-  b: MatrixCell[]
-): Promise<MatrixResult>;
-export function sigmoidPoints(
-  params: SigmoidParams
-): Promise<Array<{ x: ScaledValue; y: ScaledValue }>>;
-export function sigmoidFormulaMathml(): Promise<string>;
 
 // ---------------------------------------------------------------------
 // VC Data Integrity crypto (eddsa-rdfc-2022, HACL* wasm backend).

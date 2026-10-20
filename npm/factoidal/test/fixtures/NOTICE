@@ -1,0 +1,22 @@
+Test fixtures of @factoidal/core (not in the npm tarball)
+========================================================
+
+sample-store/
+-------------
+
+The sample Shardborough store holds five IPTC NewsCodes
+vocabularies, converted from the publisher's RDF/XML and packed into
+IBK3 predicate blocks:
+
+  spamfstat, videoqualifier, subjectqualifier, videocodec, spct
+
+  Publisher: International Press Telecommunications Council
+             https://iptc.org/
+  Licence:   Creative Commons Attribution 4.0 International (CC BY 4.0)
+             https://creativecommons.org/licenses/by/4.0/
+  Obtained through: https://github.com/danbri/skosdex third_party/skos
+
+The IRIs, labels and structure are the IPTC's. The block layout, the
+dictionary, the indexes and the manifest are this package's encoding of
+them. Redistribution of the vocabulary content stays under CC BY 4.0.
+

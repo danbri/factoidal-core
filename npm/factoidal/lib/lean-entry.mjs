@@ -29,7 +29,9 @@ const XSD = 'http://www.w3.org/2001/XMLSchema#';
 // (`fullOnlyOps`, `fullOnlyFormats`); a call to one of those names the
 // entry that has it.
 export const FULL_ENTRY = '@factoidal/core';
-export const CORE_ENTRY = '@factoidal/core/core';
+// The core profile is built for the hub pages only; the package ships the
+// full engine (owner, 2026-10-20).
+export const CORE_ENTRY = 'l4factoidal-core.js (the hub build of the core profile)';
 
 /**
  * The message of a refusal by the core engine of something only the full
@@ -37,8 +39,8 @@ export const CORE_ENTRY = '@factoidal/core/core';
  * @param {string} what the function, op or format refused
  */
 export function fullEngineMessage(what) {
-  return `${what} is not in the core engine that '${CORE_ENTRY}' loads ` +
-    `(l4factoidal-core.wasm); import '${FULL_ENTRY}', whose full engine ` +
+  return `${what} is not in the core engine (${CORE_ENTRY}, ` +
+    `l4factoidal-core.wasm); import '${FULL_ENTRY}', whose full engine ` +
     '(l4factoidal.wasm) serves it';
 }
 

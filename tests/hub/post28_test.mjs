@@ -38,7 +38,11 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 
 const POST_FILE = '28-verified-math-rendered.md';
-const fn = (await import(NPM_FACTOIDAL_INDEX)).default;
+const pkg = (await import(NPM_FACTOIDAL_INDEX)).default;
+// The page's fn is the package plus hub.njk's hubHelpers; the maths
+// functions are hub helpers since 0.10.0 (docs/web/hub/assets/demo-maths.mjs).
+const { demoMathsFor } = await import(new URL('../../docs/web/hub/assets/demo-maths.mjs', import.meta.url).href);
+const fn = { ...pkg, ...demoMathsFor((await import(NPM_FACTOIDAL_INDEX)).loadEngine) };
 
 // Node-side stand-in for @observablehq/stdlib's `html` tagged template.
 // Only string interpolations appear in this post's cells (no DOM Node
