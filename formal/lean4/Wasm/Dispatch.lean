@@ -293,9 +293,11 @@ def lwsSolidOpNames : List String :=
   [ "lwsOpen"
   , "lwsStep"
   , "lwsClose"
+  , "lwsSnapshot"
   , "solidOpen"
   , "solidStep"
   , "solidClose"
+  , "solidSnapshot"
   , "solidClientRequest"
   , "solidClientResponse" ]
 
@@ -570,6 +572,8 @@ def callIO (op : String) (argsJson : String) : IO String :=
   | "lwsOpen"          => withArgs (arityIO1 op Ops.lwsOpen)
   | "lwsStep"          => withArgs (arityIO2 op Ops.lwsStep)
   | "lwsClose"         => withArgs (arityIO1 op Ops.lwsClose)
+  | "lwsSnapshot"      => withArgs (arityIO1 op Ops.lwsSnapshot)
+  | "solidSnapshot"    => withArgs (arityIO1 op Ops.solidSnapshot)
   | "solidOpen"        => withArgs (arityIO1 op Ops.solidOpen)
   | "solidStep"        => withArgs (arityIO2 op Ops.solidStep)
   | "solidClose"       => withArgs (arityIO1 op Ops.solidClose)

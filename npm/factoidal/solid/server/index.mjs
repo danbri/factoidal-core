@@ -47,9 +47,10 @@
 // stay distinct.
 
 import { loadEngine } from '../../bin/engine.mjs'
+import { readSnapshot, persistIfChanged } from '../../lws/persist.mjs'
 
 /** The ops this host needs from the engine. */
-export const SOLID_SERVER_OPS = ['solidOpen', 'solidStep', 'solidClose']
+export const SOLID_SERVER_OPS = ['solidOpen', 'solidStep', 'solidClose', 'solidSnapshot']
 
 /** An error raised by the Solid server host. `unknownOp` is set when the
  *  loaded WebAssembly module does not carry the operation at all, which
@@ -141,6 +142,13 @@ export async function openSolidStorage (options = {}) {
   if (typeof options.now === 'number') config.now = options.now
   if (typeof options.owner === 'string') config.owner = options.owner
   if (typeof options.agent === 'string') config.agent = options.agent
+  // `dir` names the storage directory. The snapshot found there, if any,
+  // is the storage to continue from; the engine checks it.
+  const dir = typeof options.dir === 'string' ? options.dir : null
+  if (dir !== null) {
+    const snapshot = readSnapshot(dir)
+    if (snapshot !== null) config.snapshot = snapshot
+  }
   let opened
   try {
     opened = engine.call('solidOpen', [JSON.stringify(config)])
@@ -170,7 +178,10 @@ export async function openSolidStorage (options = {}) {
       const record = options.realClock === true
         ? { ...request, now: Math.floor(Date.now() / 1000) }
         : request
-      return responseOf(engine.call('solidStep', [handle, JSON.stringify(record)]))
+      const envelope = engine.call('solidStep', [handle, JSON.stringify(record)])
+      const answer = responseOf(envelope)
+      if (dir !== null) persistIfChanged(engine, 'solidSnapshot', handle, envelope, dir)
+      return answer
     },
     close () {
       try { engine.call('solidClose', [handle]) } catch (_error) { /* already gone */ }

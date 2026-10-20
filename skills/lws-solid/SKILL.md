@@ -72,9 +72,21 @@ Operating manual, scores and measurements:
 § Serving. `--base` sets
 `baseIri`, defaulting to the bound origin.
 
-`DIR` names the storage directory and **is not read or written yet**: the
-first slice keeps the resource tree in the engine handle (design record,
-section 2). Persisting it into the Shardborough store is a later step.
+`DIR` names the storage directory. The engine handle holds the storage;
+after every step whose envelope says `"changed": true` the host writes
+`lwsSnapshot`/`solidSnapshot` to `DIR/lws-state.json` (temporary file,
+fsync, rename: `npm/factoidal/lws/persist.mjs`) and reads it back at start.
+`L4Factoidal/LWS/Snapshot.lean` decides the format and refuses traversal
+paths; request paths with dot segments or encoded traversal get 400
+(`validTarget`). Persisting into the Shardborough store is a later step.
+
+The LWS binding of the 2026-10-19 editor's draft (ETag, conditional
+requests, ranges, `application/lws+json` listings, linksets, the
+`application/lws+cid` storage description at `/.well-known/lws-storage`,
+JSON Patch, RFC 9457 errors) is `L4Factoidal/LWS/Binding.lean`; the audit
+table is in the ledger, section "LWS editor's draft 2026-10-19 audit", and
+`node tests/lws/draft-binding.mjs` is its host suite (with xfails for
+https://github.com/danbri/factoidal/issues/886 to 890).
 
 From JavaScript:
 

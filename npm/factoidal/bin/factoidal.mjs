@@ -351,9 +351,12 @@ usage: factoidal lws-serve DIR [--port N] [--host ADDRESS]
 Starts a Node HTTP server that answers every request through the engine's
 lwsStep operation.
 
-DIR names the storage directory. The first slice keeps the resource tree
-in the engine handle, so DIR is not read or written yet; it is the place
-a later snapshot goes (design record, section 2).
+DIR names the storage directory. The storage is kept in the engine
+handle and written to DIR/lws-state.json after every request that
+changed it (temporary file, fsync, rename), and read back on the next
+start. The engine decides the snapshot format and refuses a snapshot
+path with a dot segment or other traversal form
+(formal/lean4/L4Factoidal/LWS/Snapshot.lean).
 
   --port N        the port to bind; 0 takes an ephemeral one (default 3000)
   --host ADDRESS  the address to bind (default 127.0.0.1)
@@ -374,9 +377,12 @@ usage: factoidal solid-serve DIR [--port N] [--host ADDRESS]
 Starts a Node HTTP server that answers every request through the engine's
 solidStep operation.
 
-DIR names the storage directory. The first slice keeps the resource tree
-in the engine handle, so DIR is not read or written yet; it is the place
-a later snapshot goes (design record, section 2).
+DIR names the storage directory. The storage is kept in the engine
+handle and written to DIR/lws-state.json after every request that
+changed it (temporary file, fsync, rename), and read back on the next
+start. The engine decides the snapshot format and refuses a snapshot
+path with a dot segment or other traversal form
+(formal/lean4/L4Factoidal/LWS/Snapshot.lean).
 
   --port N        the port to bind; 0 takes an ephemeral one (default 3000)
   --host ADDRESS  the address to bind (default 127.0.0.1)
@@ -1242,7 +1248,8 @@ async function commandLwsServe (positional, options) {
       port: servePort(options, 3000),
       host: serveHost(options),
       ...(typeof options.base === 'string' ? { baseIri: options.base } : {}),
-      realClock: true
+      realClock: true,
+      dir: positional[0]
     })
   } catch (error) {
     if (error instanceof LwsHostError && error.unknownOp) {
@@ -1266,7 +1273,8 @@ async function commandSolidServe (positional, options) {
       host: serveHost(options),
       ...(typeof options.base === 'string' ? { baseIri: options.base } : {}),
       ...(typeof options.owner === 'string' ? { owner: options.owner } : {}),
-      realClock: true
+      realClock: true,
+      dir: positional[0]
     })
   } catch (error) {
     if (error instanceof SolidServerHostError && error.unknownOp) {

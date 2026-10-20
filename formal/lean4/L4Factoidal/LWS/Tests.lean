@@ -12,6 +12,7 @@ import L4Factoidal.LWS.Operations
 import L4Factoidal.LWS.Patch
 import L4Factoidal.LWS.Conformance
 import L4Factoidal.Syntax.Turtle
+import L4Factoidal.LWS.Snapshot
 
 namespace L4Factoidal.LWS.Tests
 
@@ -440,6 +441,37 @@ def lwsGuardTraversalRefused : Bool :=
 #guard lwsGuardTraversalRefused
 #guard (run (req "PUT" "/a/b..c" turtle "x") emptyStorage).1.status == 201
 #guard validTarget "/" && validTarget "/a/b/" && !validTarget "" && !validTarget "/.."
+
+/-! ## The durable snapshot (`L4Factoidal.LWS.Snapshot`) -/
+
+/-- A snapshot reads back to the same entries, and a write after the
+restore stamps a later time than every stored one. -/
+def lwsGuardSnapshotRoundTrip : Bool :=
+  match parseJson (toStringCompact (snapshotJson populated)) with
+  | .error _ => false
+  | .ok j =>
+      match memStateOfJson j with
+      | .error _ => false
+      | .ok m =>
+          (m.entries.map (fun e => (e.path, e.body, e.mtime, e.contentType))) ==
+            (populated.entries.map (fun e => (e.path, e.body, e.mtime, e.contentType))) &&
+          m.entries.all (fun e => decide (e.mtime < m.clock))
+#guard lwsGuardSnapshotRoundTrip
+
+/-- A snapshot carrying a traversal path, or no storage root, is refused. -/
+def lwsGuardSnapshotRefusesTraversal : Bool :=
+  let bad (p : String) : Json :=
+    .object [ ("format", .string snapshotFormat), ("clock", .number "5")
+            , ("entries", .array [ entryJson { path := "/", kind := .storageRoot,
+                                               contentType := "text/turtle", body := "", mtime := 0 }
+                                 , entryJson { path := p, kind := .dataResource,
+                                               contentType := "text/plain", body := "x", mtime := 1 } ]) ]
+  (match memStateOfJson (bad "/../../etc/passwd") with | .error _ => true | .ok _ => false) &&
+  (match memStateOfJson (bad "/a/%2e%2e/b") with | .error _ => true | .ok _ => false) &&
+  (match memStateOfJson (bad "/ok") with | .ok _ => true | .error _ => false) &&
+  (match memStateOfJson (.object [("format", .string snapshotFormat), ("entries", .array [])]) with
+   | .error _ => true | .ok _ => false)
+#guard lwsGuardSnapshotRefusesTraversal
 
 /-! ## The registry's own arithmetic -/
 
