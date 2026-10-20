@@ -211,7 +211,10 @@ export class Dataset implements Iterable<Quad> {
   toString(formatOrOptions?: WriteFormat | WriteOptions): string;
   toNQuads(): string;
   clone(): Dataset;
+  /** RDF/JS DatasetCore (https://rdf.js.org/dataset-spec/); match and has use the engine indexes. */
   has(quad: Quad): boolean;
+  add(quad: Quad): this;
+  delete(quad: Quad): this;
   match(subject?: Term | null, predicate?: Term | null, object?: Term | null, graph?: Term | null): Dataset;
   toArray(): Quad[];
   [Symbol.iterator](): Iterator<Quad>;

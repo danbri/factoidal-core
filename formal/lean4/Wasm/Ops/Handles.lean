@@ -65,6 +65,7 @@ import Wasm.Ops.Parse
 import Wasm.Ops.Query
 import Wasm.Ops.Clock
 import Wasm.Ops.QueryExtras
+import L4Factoidal.SPARQL.Update
 import Wasm.Ops.Reason
 import Wasm.Ops.Validate
 import Wasm.Ops.Canon
@@ -89,14 +90,19 @@ handle is opened or updated, so every `datasetQuery` on the handle runs
 the optimized physical-plan path without rebuilding indexes. -/
 structure OpenDataset where
   ds : Dataset
-  backend : DatasetBackend
+  /-- Built on the first query after an open or a change, then kept: an
+  `add` of one quad does not rebuild every index. -/
+  backendThunk : Thunk DatasetBackend
   /-- The prefixes the document declared, each label once, in declaration order.
   Turtle output of the handle uses them. -/
   prefixes : List (String × String) := []
 
 private def openDataset (ds : Dataset) (prefixes : List (String × String) := []) :
     OpenDataset :=
-  { ds, backend := indexedDatasetBackend ds, prefixes }
+  { ds, backendThunk := Thunk.mk (fun _ => indexedDatasetBackend ds), prefixes }
+
+/-- The indexed backend of an open dataset. -/
+private def OpenDataset.backend (od : OpenDataset) : DatasetBackend := od.backendThunk.get
 
 /-- The open datasets, keyed by handle string. -/
 initialize handleTable : IO.Ref (Std.HashMap String OpenDataset) ← IO.mkRef ∅
@@ -380,5 +386,150 @@ def detectFormat (text : String) : IO String :=
     | .trig => "trig12"
     | _ => "turtle12"
   pure (okWith [("format", .string tag)])
+
+
+/-! ## RDF/JS DatasetCore: add, delete, match (issue 882)
+
+A quad pattern is a JSON array of four strings, subject, predicate, object,
+graph. `""` leaves the position unbound; otherwise the string is the
+N-Triples (N-Quads) form of the term, and for the graph `"DEFAULT"` names the
+default graph. Matching uses the stored dataset's indexes
+(`backendSearch` over `indexedDatasetBackend`). -/
+
+/-- The term an N-Triples token denotes, read through the N-Quads reader in
+RDF 1.2 mode: the token is placed at position `pos` (0 subject, 1 predicate,
+2 object, 3 graph) of a line whose other positions are fixed IRIs. -/
+def termOfToken (pos : Nat) (tok : String) : Option (Option Subject × Option WfIri × Option Term × Option Subject) :=
+  let fill := ["<urn:x:s>", "<urn:x:p>", "<urn:x:o>"]
+  let parts := (fill.set pos tok) ++ (if pos == 3 then [tok] else [])
+  match parseNQuadsFast (String.intercalate " " parts ++ " .\n") .rdf12 with
+  | .error _ => none
+  | .ok ds =>
+    match ds.default, ds.named with
+    | [t], [] => some (some t.s, some t.p, some t.o, none)
+    | [], [ng] =>
+        match ng.graph with
+        | [t] => some (some t.s, some t.p, some t.o, some ng.name)
+        | _ => none
+    | _, _ => none
+
+/-- What a pattern asks for: the bound subject, predicate and object, and the
+graph (`none` any graph, `some none` the default graph, `some (some g)`). -/
+structure QuadPattern where
+  bound : L4Factoidal.SPARQL.PatternBound := {}
+  graph : Option (Option Subject) := none
+
+/-- Read a pattern; `none` when a token is not a term of its position. -/
+def quadPatternOf (json : String) : Option QuadPattern := do
+  let j ← parseJson? json
+  let arr ← match j with | .array xs => some xs | _ => none
+  let toks ← arr.mapM (fun x => match x with | .string t => some t | _ => none)
+  match toks with
+  | [s, p, o, g] =>
+    let sB ← if s == "" then some none else (termOfToken 0 s).bind (·.1) |>.map some
+    let pB ← if p == "" then some none else (termOfToken 1 p).bind (·.2.1) |>.map some
+    let oB ← if o == "" then some none else (termOfToken 2 o).bind (·.2.2.1) |>.map some
+    let gB ← if g == "" then some none
+             else if g == "DEFAULT" then some (some none)
+             else (termOfToken 3 g).bind (·.2.2.2) |>.map (fun x => some (some x))
+    pure { bound := { s := sB, p := pB, o := oB }, graph := gB }
+  | _ => none
+
+/-- The quads of `od` that match `pat`, as a dataset, through the indexes. -/
+def matchDataset (od : OpenDataset) (pat : QuadPattern) : Dataset :=
+  let be : DatasetBackend := od.backendThunk.get
+  let wantDefault := match pat.graph with | none | some none => true | _ => false
+  let dflt := if wantDefault then L4Factoidal.SPARQL.StoreBackend.backendSearch be.default pat.bound else []
+  let named := (od.ds.named.zip be.named).filterMap fun (ng, nb) =>
+    let take := match pat.graph with
+      | none => true
+      | some none => false
+      | some (some g) => g == ng.name
+    if !take then none
+    else
+      let ts := L4Factoidal.SPARQL.StoreBackend.backendSearch nb.backend pat.bound
+      if ts.isEmpty then none else some { name := ng.name, graph := ts }
+  { default := dflt, named }
+
+/-- `datasetMatch(handle, patternJson)` — the matching quads under a new handle. -/
+def datasetMatch (h patternJson : String) : IO String := do
+  let tbl ← handleTable.get
+  match tbl[h]? with
+  | none => pure (unknownHandle h)
+  | some od =>
+    match quadPatternOf patternJson with
+    | none => pure (errJson s!"datasetMatch: not a quad pattern: {patternJson}")
+    | some pat => storeNewHandle (matchDataset od pat) od.prefixes
+
+/-- `datasetMatchCount(handle, patternJson)` — `{"ok":true,"count":N}`, the
+number of matching quads, with no new handle. -/
+def datasetMatchCount (h patternJson : String) : IO String := do
+  let tbl ← handleTable.get
+  match tbl[h]? with
+  | none => pure (unknownHandle h)
+  | some od =>
+    match quadPatternOf patternJson with
+    | none => pure (errJson s!"datasetMatchCount: not a quad pattern: {patternJson}")
+    | some pat => pure (okWith [("count", .number (toString (datasetQuadCount (matchDataset od pat))))])
+
+/-- The quads of an N-Quads text as SPARQL Update quads. A graph named by a
+blank node has no Update quad form and is refused. -/
+def updateQuadsOf (nq : String) : Except String (List (Option WfIri × Triple)) := do
+  let ds ← (parseNQuadsFast nq .rdf12).mapError fmtParseError
+  let named ← ds.named.mapM fun ng =>
+    match ng.name with
+    | .iri i => .ok (ng.graph.map fun t => ((some i : Option WfIri), t))
+    | .bnode _ => .error "a quad in a graph named by a blank node cannot be added or deleted here"
+  pure (ds.default.map (fun t => ((none : Option WfIri), t)) ++ named.flatten)
+
+/-- Replace the stored dataset of `h` with `f` of it; answers the new count. -/
+private def changeHandle (who h nq : String)
+    (f : Dataset → List (Option WfIri × Triple) → Dataset) : IO String := do
+  let tbl ← handleTable.get
+  match tbl[h]? with
+  | none => pure (unknownHandle h)
+  | some od =>
+    match updateQuadsOf nq with
+    | .error e => pure (errJson s!"{who}: {e}")
+    | .ok qs =>
+      let ds' := f od.ds qs
+      handleTable.modify (·.insert h (openDataset ds' od.prefixes))
+      pure (okWith [("count", .number (toString (datasetQuadCount ds')))])
+
+/-- `datasetAddQuads(handle, nquads)` — add the quads (set semantics), as
+INSERT DATA does (`Dataset.insertQuads`). Blank-node labels are kept as
+written, so a label the dataset holds names the same node. -/
+def datasetAddQuads (h nq : String) : IO String :=
+  changeHandle "datasetAddQuads" h nq Dataset.insertQuads
+
+/-- `datasetDeleteQuads(handle, nquads)` — remove the quads
+(`Dataset.deleteQuads`). -/
+def datasetDeleteQuads (h nq : String) : IO String :=
+  changeHandle "datasetDeleteQuads" h nq Dataset.deleteQuads
+
+/-! ## Build-time checks (positive and negative) -/
+
+#guard writerTagVersion "turtle11" == ("turtle", true)
+#guard writerTagVersion "TriG12" == ("trig", false)
+#guard writerTagVersion "rdfxml" == ("rdfxml", false)
+#guard (quadPatternOf "[\"<http://e/a>\",\"\",\"\",\"DEFAULT\"]").isSome
+#guard ((quadPatternOf "[\"<http://e/a>\",\"\",\"\",\"\"]").map (·.graph)) == some none
+#guard (quadPatternOf "[\"not a term\",\"\",\"\",\"\"]").isNone
+#guard (quadPatternOf "[\"\",\"_:b\",\"\",\"\"]").isNone
+#guard (quadPatternOf "[\"\",\"\"]").isNone
+#guard match updateQuadsOf "<http://e/a> <http://e/p> \"x\" <http://e/g> .\n" with
+  | .ok [(some _, _)] => true | _ => false
+#guard match updateQuadsOf "<http://e/a> <http://e/p> \"x\" _:g .\n" with
+  | .error _ => true | _ => false
+
+private def tt12 : Dataset :=
+  match parseNQuadsFast "<http://e/a> <http://e/p> <<( <http://e/s> <http://e/p> <http://e/o> )>> .\n" .rdf12 with
+  | .ok ds => ds
+  | .error _ => Dataset.empty
+
+#guard match handleWriterText "ntriples11" tt12 with | some (.error _) => true | _ => false
+#guard match handleWriterText "ntriples12" tt12 with | some (.ok _) => true | _ => false
+#guard match handleWriterText "rdfxml" tt12 with | some (.error _) => true | _ => false
+#guard (handleWriterText "hdt" tt12).isNone
 
 end L4Wasm.Ops

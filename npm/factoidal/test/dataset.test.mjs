@@ -127,3 +127,54 @@ test('query results formats', async () => {
 test('DatasetHandle is a deprecated alias of Dataset', () => {
   assert.equal(f.DatasetHandle, f.Dataset);
 });
+
+test('RDF/JS DatasetCore: size, add, delete, has, match, iteration', async () => {
+  const df = f.dataFactory;
+  const ds = await f.parse(TTL, { format: 'turtle' });
+  const alice = df.namedNode('http://example.org/alice');
+  const name = df.namedNode('http://example.org/name');
+  const q = df.quad(alice, df.namedNode('http://e/new'), df.literal('v'));
+  assert.equal(ds.has(q), false);
+  assert.equal(ds.add(q), ds);
+  assert.equal(ds.add(q).size, 4); // set semantics
+  assert.equal(ds.has(q), true);
+  const m = ds.match(alice, name);
+  assert.ok(m instanceof f.Dataset);
+  assert.deepEqual([...m].map((x) => x.object.value), ['Alice']);
+  assert.equal(ds.match(null, name).size, 2);
+  assert.equal(ds.match(null, null, null, df.defaultGraph()).size, 4);
+  assert.equal(ds.match(null, null, null, df.namedNode('http://e/g')).size, 0);
+  ds.delete(q);
+  assert.equal(ds.size, 3);
+  assert.equal(ds.has(q), false);
+  const g = df.quad(alice, name, df.literal('A2'), df.namedNode('http://e/g'));
+  ds.add(g);
+  assert.equal(ds.match(null, null, null, df.namedNode('http://e/g')).size, 1);
+  // A blank node from iteration names the same node when added back.
+  const bnodeDs = await f.parse('_:x <http://e/p> "1" .', { format: 'ntriples' });
+  const [bq] = [...bnodeDs];
+  bnodeDs.add(df.quad(bq.subject, df.namedNode('http://e/p'), df.literal('2')));
+  assert.equal((await bnodeDs.query('SELECT DISTINCT ?s WHERE { ?s ?p ?o }')).length, 1);
+  for (const d of [ds, m, bnodeDs]) d.dispose();
+});
+
+const STREAM_ISSUE = 'https://github.com/danbri/factoidal/issues/884';
+function xfail(name, issueUrl, fn) {
+  test(`xfail: ${name} (${issueUrl})`, async (t) => {
+    let failed = false;
+    try { await fn(); } catch (err) { failed = true; t.diagnostic(String(err && err.message)); }
+    assert.ok(failed, `unexpected pass: ${name} now works; flip this xfail to an assertion and close ${issueUrl}`);
+  });
+}
+xfail('RDF/JS Stream: Dataset is a Source (match answers a Stream)', STREAM_ISSUE, async () => {
+  const ds = await f.parse(TTL, { format: 'turtle' });
+  try { assert.equal(typeof ds.match().on, 'function'); } finally { ds.dispose(); }
+});
+xfail('RDF/JS Stream: Dataset is a Sink (import)', STREAM_ISSUE, async () => {
+  const ds = await f.parse(TTL, { format: 'turtle' });
+  try { assert.equal(typeof ds.import, 'function'); } finally { ds.dispose(); }
+});
+xfail('RDF/JS Stream: a parser and a serializer stream', STREAM_ISSUE, async () => {
+  assert.equal(typeof f.StreamParser, 'function');
+  assert.equal(typeof f.StreamWriter, 'function');
+});

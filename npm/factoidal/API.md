@@ -238,9 +238,9 @@ const q = quad(blankNode("x"),
                namedNode("http://xmlns.com/foaf/0.1/name"),
                literal("Alice", "en"));
 // Terms implement termType/value/language/datatype/.equals per the
-// RDF/JS data-model spec. A Dataset gives the read half of DatasetCore
-// (size, has, match, iteration); it changes through update(). An in-memory
-// DatasetCore with add/delete is in "@factoidal/core/rdfjs".
+// RDF/JS data-model spec. A Dataset implements RDF/JS DatasetCore (size,
+// add, delete, has, match, iteration) in the engine; an in-memory
+// DatasetCore is in "@factoidal/core/rdfjs".
 ```
 
 ## Blank nodes, labels and statement order

@@ -9,9 +9,9 @@ One `Dataset` class whose data stays in the engine
 
 - `Dataset` is a handle into the engine's dataset store; it no longer holds
   N-Quads text. `new Dataset(...)` and `Dataset.fromNQuads(...)` are gone:
-  make one with `parse`, `openDataset` or another producer. `add` and
-  `delete` are gone; change a Dataset with `dataset.update(sparqlUpdate)`.
-  `match` answers a new Dataset. The in-memory RDF/JS DatasetCore is
+  make one with `parse`, `openDataset` or another producer. It still implements RDF/JS DatasetCore:
+  `add`, `delete`, `has` and `match` run in the engine (`match` and `has` use
+  its indexes; `match` answers a new Dataset). The in-memory RDF/JS DatasetCore is
   `DatasetCore` in `@factoidal/core/rdfjs` (that subpath no longer exports
   `Dataset`).
 - `DatasetHandle` is a deprecated alias of `Dataset` (removed in 0.11.0).

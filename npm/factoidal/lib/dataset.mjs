@@ -15,7 +15,7 @@
 // released by a FinalizationRegistry callback. Every method of a disposed
 // Dataset throws a TypeError that names the method.
 
-import { nquadsLineToQuad, quadToNQuads, termFromSrj } from '../rdfjs.mjs';
+import { nquadsLineToQuad, quadToNQuads, termToNQuads, termFromSrj } from '../rdfjs.mjs';
 
 const INTERNAL = Symbol('factoidal.Dataset.internal');
 
@@ -299,25 +299,53 @@ class Dataset {
     return this._quads.slice();
   }
 
-  /** RDF/JS DatasetCore.has. */
+  // A quad pattern for the ops datasetMatch and datasetMatchCount: four
+  // N-Triples term tokens, '' for an unbound position, 'DEFAULT' for the
+  // default graph.
+  _pattern(subject, predicate, object, graph) {
+    const tok = (t) => (t == null ? '' : termToNQuads(t));
+    const g = graph == null ? '' : (graph.termType === 'DefaultGraph' ? 'DEFAULT' : termToNQuads(graph));
+    return JSON.stringify([tok(subject), tok(predicate), tok(object), g]);
+  }
+
+  /** RDF/JS DatasetCore.has: one indexed lookup in the engine. */
   has(quad) {
     this._open('has');
-    const line = quadToNQuads(quad);
-    return this.toArray().some((q) => quadToNQuads(q) === line);
+    const r = envelope(this._ctx.e.datasetMatchCount(this._handle,
+      this._pattern(quad.subject, quad.predicate, quad.object, quad.graph || { termType: 'DefaultGraph' })), 'has');
+    return r.count > 0;
   }
 
   /**
-   * RDF/JS DatasetCore.match: the quads that match, as a new Dataset.
-   * `null`/`undefined` matches any term.
+   * RDF/JS DatasetCore.match: the matching quads as a new Dataset, found
+   * through the engine's indexes. `null`/`undefined` matches any term.
    */
   match(subject, predicate, object, graph) {
     this._open('match');
-    const keep = this.toArray().filter((q) =>
-      (!subject || subject.equals(q.subject)) &&
-      (!predicate || predicate.equals(q.predicate)) &&
-      (!object || object.equals(q.object)) &&
-      (!graph || graph.equals(q.graph)));
-    return this._ctx.fromNQuads(keep.map(quadToNQuads).join(''), this._prefixes);
+    const r = envelope(this._ctx.e.datasetMatch(this._handle,
+      this._pattern(subject, predicate, object, graph)), 'match');
+    return this._ctx.wrap(r, this._prefixes);
+  }
+
+  /**
+   * RDF/JS DatasetCore.add: add one quad (set semantics). A blank node is
+   * the node of that label in this Dataset. Each call changes the engine
+   * copy and costs time in the dataset size; for many quads use update()
+   * or parse().
+   */
+  add(quad) {
+    this._open('add');
+    const r = envelope(this._ctx.e.datasetAddQuads(this._handle, quadToNQuads(quad)), 'add');
+    this._changed(r.count);
+    return this;
+  }
+
+  /** RDF/JS DatasetCore.delete: remove one quad. */
+  delete(quad) {
+    this._open('delete');
+    const r = envelope(this._ctx.e.datasetDeleteQuads(this._handle, quadToNQuads(quad)), 'delete');
+    this._changed(r.count);
+    return this;
   }
 
   /** Release the engine copy. Idempotent. */

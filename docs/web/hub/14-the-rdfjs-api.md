@@ -34,7 +34,7 @@ a `dataFactory` (`namedNode`/`blankNode`/`literal`/`variable`/
 `.equals()`), and a minimal in-memory `DatasetCore` — `size`,
 `add`/`delete`/`has`, `match(s, p, o, g)`, iteration, `toNQuads()`. Since
 0.10.0 the package's own `Dataset` keeps its quads in the engine and gives
-the read half (`size`, `has`, `match`, iteration). It
+RDF/JS DatasetCore (`size`, `add`, `delete`, `has`, `match`, iteration) in the engine. It
 is genuinely small: no parsing logic lives here (RDF parsing is F\*'s
 job, per Iron Rule #4) — `rdfjs.js` only builds/compares/tokenizes terms
 that some other layer already produced.

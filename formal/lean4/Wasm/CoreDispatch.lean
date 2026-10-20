@@ -101,6 +101,10 @@ def coreIOOpNames : List String :=
   , "datasetQueryRaw"
   , "datasetFormats"
   , "detectFormat"
+  , "datasetMatch"
+  , "datasetMatchCount"
+  , "datasetAddQuads"
+  , "datasetDeleteQuads"
   , "extRegister"
   , "extUnregister"
   , "extClear"
@@ -299,6 +303,10 @@ def callIOArgsBy (extra : ExtraReader) (op : String) (args : List String) :
   | "datasetQueryRaw"  => some (arityIO3 op Ops.datasetQueryRaw args)
   | "datasetFormats"   => some (arityIO0 op Ops.datasetFormats args)
   | "detectFormat"     => some (arityIO1 op Ops.detectFormat args)
+  | "datasetMatch"     => some (arityIO2 op Ops.datasetMatch args)
+  | "datasetMatchCount" => some (arityIO2 op Ops.datasetMatchCount args)
+  | "datasetAddQuads"  => some (arityIO2 op Ops.datasetAddQuads args)
+  | "datasetDeleteQuads" => some (arityIO2 op Ops.datasetDeleteQuads args)
   -- Each document parsed through the IO entry gets its own blank-node scope
   -- (`d<N>_`), https://github.com/danbri/factoidal/issues/685.
   | "parseToDatasetJson" => some (arityIO3 op (Ops.parseToDatasetJsonScopedBy extra) args)

@@ -92,9 +92,33 @@ function arrayBackend(quads) {
     kind: 'array',
     size: quads.length,
     quads: () => quads,
+    engine: null,
     precomputedHash: null,
   };
 }
+
+// The engine backend (0.10.0, issue 882 of danbri/factoidal): the quads are
+// an engine Dataset (lib/dataset.mjs) that this module never changes. Every
+// engine operation takes that Dataset itself, so no N-Quads text crosses
+// between steps. The JS quad array is read once, on demand.
+function engineBackend(eds) {
+  let quads = null;
+  return {
+    kind: 'engine',
+    size: eds.size,
+    quads: () => (quads ||= Object.freeze(eds.toArray())),
+    engine: eds,
+    precomputedHash: null,
+  };
+}
+
+// An FnDataset over an engine Dataset this module made and never shares.
+function wrapEngine(eds) {
+  return new FnDataset(engineBackend(eds));
+}
+
+// ds (array-backed FnDataset) -> engine Dataset, opened once from its quads.
+const ENGINE_CACHE = new WeakMap();
 
 // Build a de-duplicated FnDataset from any iterable of RDF/JS quads.
 // Every public constructor path (fromDataset, union, difference,
@@ -147,14 +171,15 @@ class FnDataset {
   toNQuads() {
     let cached = NQUADS_CACHE.get(this);
     if (cached === undefined) {
-      cached = quadsToNQuads(this.toArray());
+      cached = this._backend.engine ? this._backend.engine.toNQuads() : quadsToNQuads(this.toArray());
       NQUADS_CACHE.set(this, cached);
     }
     return cached;
   }
 
-  /** Read-only quad-pattern match (RDF/JS DatasetCore shape), no engine call. */
+  /** Read-only quad-pattern match (RDF/JS DatasetCore shape); the engine's indexes for an engine-backed dataset. */
   match(subject, predicate, object, graph) {
+    if (this._backend.engine) return wrapEngine(this._backend.engine.match(subject, predicate, object, graph));
     return makeFnDataset(this.toArray().filter((q) =>
       (!subject || subject.equals(q.subject)) &&
       (!predicate || predicate.equals(q.predicate)) &&
@@ -172,15 +197,23 @@ const EMPTY = new FnDataset(arrayBackend(Object.freeze([])));
 
 /** Snapshot a Dataset (the engine's, or an RDF/JS DatasetCore) into an FnDataset. */
 function fromDataset(dataset) {
-  if (!(dataset instanceof engineApi.Dataset) && !(dataset instanceof DatasetCore)) {
+  if (dataset instanceof engineApi.Dataset) return wrapEngine(dataset.clone());
+  if (!(dataset instanceof DatasetCore)) {
     throw new TypeError('fromDataset: expected a Dataset or an RDF/JS DatasetCore');
   }
   return makeFnDataset(dataset);
 }
 
-// The engine input for an FnDataset: its N-Quads text, format named.
-function engineInput(ds) {
-  return { text: quadsToNQuads(ds.toArray()), format: 'nquads' };
+// The engine Dataset of an FnDataset: its own, or (for one built from JS
+// quads) one opened from its quads once and kept.
+async function engineOf(ds) {
+  if (ds._backend.engine) return ds._backend.engine;
+  let eds = ENGINE_CACHE.get(ds);
+  if (!eds) {
+    eds = await engineApi.openDataset({ text: quadsToNQuads(ds.toArray()), format: 'nquads' });
+    ENGINE_CACHE.set(ds, eds);
+  }
+  return eds;
 }
 
 /** Materialize an FnDataset into a fresh, independently-mutable RDF/JS DatasetCore. */
@@ -252,7 +285,7 @@ async function fromChunks(chunks) {
 
 /** Parse one RDF document into an FnDataset. Mirrors index.js's parse(). */
 async function parse(text, options) {
-  return fromDataset(await engineApi.parse(text, options));
+  return wrapEngine(await engineApi.parse(text, options));
 }
 
 /** Set union, first-seen order (a's quads, then b's not already present). */
@@ -301,8 +334,8 @@ function mapQuads(ds, f) {
  */
 async function query(ds, sparql, options) {
   assertFnDataset(ds, 'query');
-  const result = await engineApi.query(engineInput(ds), sparql, options);
-  return result instanceof engineApi.Dataset ? fromDataset(result) : result;
+  const result = await engineApi.query((await engineOf(ds)), sparql, options);
+  return result instanceof engineApi.Dataset ? wrapEngine(result) : result;
 }
 
 /**
@@ -376,7 +409,7 @@ function rejectIklRegime(regime, who) {
 async function entail(ds, regime) {
   assertFnDataset(ds, 'entail');
   rejectIklRegime(regime, 'entail');
-  const rows = await engineApi.query(engineInput(ds), 'SELECT ?s ?p ?o WHERE { ?s ?p ?o }',
+  const rows = await engineApi.query((await engineOf(ds)), 'SELECT ?s ?p ?o WHERE { ?s ?p ?o }',
     { entail: normalizeEntailRegime(regime) });
   return makeFnDataset(
     rows.map((row) => dataFactory.quad(row.get('s'), row.get('p'), row.get('o'))));
@@ -396,8 +429,8 @@ async function entail(ds, regime) {
 async function validate(ds, shapes) {
   assertFnDataset(ds, 'validate');
   assertFnDataset(shapes, 'validate');
-  const r = await engineApi.shaclValidate(engineInput(ds), engineInput(shapes));
-  return { conforms: r.conforms, report: fromDataset(r.report) };
+  const r = await engineApi.shaclValidate((await engineOf(ds)), (await engineOf(shapes)));
+  return { conforms: r.conforms, report: wrapEngine(r.report) };
 }
 
 /**
@@ -415,7 +448,7 @@ async function validate(ds, shapes) {
  */
 async function shex(ds, schema, focus, shape) {
   assertFnDataset(ds, 'shex');
-  return engineApi.shexValidate(engineInput(ds), schema, focus, shape);
+  return engineApi.shexValidate((await engineOf(ds)), schema, focus, shape);
 }
 
 /**
@@ -432,7 +465,7 @@ async function shex(ds, schema, focus, shape) {
  */
 async function fromMapping(mapping, source, kind) {
   assertFnDataset(mapping, 'fromMapping');
-  return fromDataset(await engineApi.rmlMap(engineInput(mapping), source, kind));
+  return wrapEngine(await engineApi.rmlMap((await engineOf(mapping)), source, kind));
 }
 
 /**
@@ -455,7 +488,7 @@ async function fromMapping(mapping, source, kind) {
  * @returns {Promise<FnDataset>}
  */
 async function fromCsvw(csv, metadata, options) {
-  return fromDataset(await engineApi.csvwToRdf(csv, metadata, options));
+  return wrapEngine(await engineApi.csvwToRdf(csv, metadata, options));
 }
 
 /**
@@ -469,7 +502,7 @@ async function fromCsvw(csv, metadata, options) {
  */
 async function rif(ds, rules) {
   assertFnDataset(ds, 'rif');
-  return fromDataset(await engineApi.rifEval(engineInput(ds), rules));
+  return wrapEngine(await engineApi.rifEval((await engineOf(ds)), rules));
 }
 
 /**
@@ -490,8 +523,8 @@ async function rif(ds, rules) {
  */
 async function coreRdfsClosure(ds, options) {
   assertFnDataset(ds, 'coreRdfsClosure');
-  const r = await engineApi.coreRdfsClosure(engineInput(ds), options);
-  return { ok: true, dataset: fromDataset(r) };
+  const r = await engineApi.coreRdfsClosure((await engineOf(ds)), options);
+  return { ok: true, dataset: wrapEngine(r) };
 }
 /** Literature-name alias for coreRdfsClosure (ρdf; see above). */
 const rhoDfClosure = coreRdfsClosure;
@@ -506,7 +539,7 @@ const rhoDfClosure = coreRdfsClosure;
  */
 async function coreRdfsCheck(ds, options) {
   assertFnDataset(ds, 'coreRdfsCheck');
-  return engineApi.coreRdfsCheck(engineInput(ds), options);
+  return engineApi.coreRdfsCheck((await engineOf(ds)), options);
 }
 /** Literature-name alias for coreRdfsCheck (ρdf; see above). */
 const rhoDfFragmentCheck = coreRdfsCheck;
@@ -526,10 +559,10 @@ const rhoDfFragmentCheck = coreRdfsCheck;
  */
 async function rdfsPlusClosure(ds, options) {
   assertFnDataset(ds, 'rdfsPlusClosure');
-  const r = await engineApi.rdfsPlusClosure(engineInput(ds), options);
+  const r = await engineApi.rdfsPlusClosure((await engineOf(ds)), options);
   return {
     ok: true,
-    dataset: fromDataset(r),
+    dataset: wrapEngine(r),
   };
 }
 
@@ -548,8 +581,8 @@ async function rdfsPlusClosure(ds, options) {
  */
 async function tableauMaterialise(ds) {
   assertFnDataset(ds, 'tableauMaterialise');
-  const r = await engineApi.tableauMaterialise(engineInput(ds));
-  return { dataset: fromDataset(r.dataset), addedCount: r.addedCount };
+  const r = await engineApi.tableauMaterialise((await engineOf(ds)));
+  return { dataset: wrapEngine(r.dataset), addedCount: r.addedCount };
 }
 
 /**
@@ -563,7 +596,7 @@ async function tableauMaterialise(ds) {
  */
 async function tableauDlInconsistent(ds) {
   assertFnDataset(ds, 'tableauDlInconsistent');
-  return engineApi.tableauDlInconsistent(engineInput(ds));
+  return engineApi.tableauDlInconsistent((await engineOf(ds)));
 }
 
 /**
@@ -583,7 +616,7 @@ async function tableauDlInconsistent(ds) {
  * @returns {Promise<{consistent: boolean|null, reason?: string}>}
  */
 async function owlIsConsistent(ontology, options) {
-  const data = ontology instanceof FnDataset ? engineInput(ontology) : ontology;
+  const data = ontology instanceof FnDataset ? (await engineOf(ontology)) : ontology;
   return engineApi.owlIsConsistent(data, options);
 }
 
@@ -601,8 +634,8 @@ async function owlIsConsistent(ontology, options) {
  * @returns {Promise<{entailed: boolean|null, via: 'closure'|'refutation', reason?: string}>}
  */
 async function owlEntails(premise, conclusion, options) {
-  const p = premise instanceof FnDataset ? engineInput(premise) : premise;
-  const c = conclusion instanceof FnDataset ? engineInput(conclusion) : conclusion;
+  const p = premise instanceof FnDataset ? (await engineOf(premise)) : premise;
+  const c = conclusion instanceof FnDataset ? (await engineOf(conclusion)) : conclusion;
   return engineApi.owlEntails(p, c, options);
 }
 
@@ -614,7 +647,7 @@ async function canonicalize(ds) {
   assertFnDataset(ds, 'canonicalize');
   let cached = CANON_CACHE.get(ds);
   if (cached === undefined) {
-    const p = engineApi.canonicalize(engineInput(ds)).then((text) => {
+    const p = engineApi.canonicalize((await engineOf(ds))).then((text) => {
       CANON_CACHE.set(ds, text); // replace the in-flight promise
       return text;
     });
@@ -712,8 +745,11 @@ async function equals(a, b) {
  */
 function graphs(ds) {
   assertFnDataset(ds, 'graphs');
-  return engineApi.graphs(engineInput(ds))
-    .map(([iri, graphDataset]) => [iri, fromDataset(graphDataset)]);
+  const seen = new Map();
+  for (const q of ds) {
+    if (q.graph.termType !== 'DefaultGraph' && !seen.has(q.graph.value)) seen.set(q.graph.value, q.graph);
+  }
+  return [...seen].map(([iri, g]) => [iri, ds.match(null, null, null, g)]);
 }
 
 // ---------------------------------------------------------------------
