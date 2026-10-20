@@ -114,8 +114,8 @@ test('core entry: dataset handles and SPARQL 1.2 answer as the full entry', asyn
   const q12 = 'PREFIX : <http://example.org/> SELECT ?s WHERE { ?s :p ?o . FILTER(isLiteral(?o)) }';
   assert.equal(rowsText(await hc.query(q12, { sparql12: true })),
     rowsText(await hf.query(q12, { sparql12: true })));
-  await hc.close();
-  await hf.close();
+  hc.dispose();
+  hf.dispose();
 });
 
 test('core entry: canonicalize, the closures and SHACL answer as the full entry', async () => {

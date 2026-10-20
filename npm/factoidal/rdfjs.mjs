@@ -497,7 +497,12 @@ function quadKey(q) {
     termKey(q.graph || DEFAULT_GRAPH);
 }
 
-class Dataset {
+/**
+ * An in-memory RDF/JS DatasetCore over a quad array. The package's Dataset
+ * (lib/dataset.mjs) keeps its data in the engine; this class is for callers
+ * that build quads in JavaScript, for example to hand to fn.js.
+ */
+class DatasetCore {
   constructor(quads, options) {
     this._quads = [];
     // The quadKey() of every quad in _quads, for set semantics in O(1).
@@ -540,7 +545,7 @@ class Dataset {
     return this._keys.has(quadKey(quad));
   }
   match(subject, predicate, object, graph) {
-    const out = new Dataset();
+    const out = new DatasetCore();
     for (const q of this._quads) {
       if (subject   && !subject.equals(q.subject))     continue;
       if (predicate && !predicate.equals(q.predicate)) continue;
@@ -565,7 +570,7 @@ class Dataset {
     return this.toNQuads();
   }
   static fromNQuads(text, options) {
-    return new Dataset(nquadsToQuads(text, options), options);
+    return new DatasetCore(nquadsToQuads(text, options), options);
   }
 }
 
@@ -577,8 +582,9 @@ export {
   Variable,
   DefaultGraph,
   Quad,
-  Dataset,
+  DatasetCore,
   termFromSrj,
+  nquadsLineToQuad,
   termToNQuads,
   quadToNQuads,
   quadsToNQuads,

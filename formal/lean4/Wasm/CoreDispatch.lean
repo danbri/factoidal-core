@@ -94,6 +94,17 @@ def coreIOOpNames : List String :=
   , "datasetSerialize"
   , "datasetSerializeWith"
   , "datasetClose"
+  , "datasetClone"
+  , "datasetCanonicalize"
+  , "datasetClosure"
+  , "datasetShaclValidate"
+  , "datasetQueryRaw"
+  , "datasetFormats"
+  , "detectFormat"
+  , "datasetMatch"
+  , "datasetMatchCount"
+  , "datasetAddQuads"
+  , "datasetDeleteQuads"
   , "extRegister"
   , "extUnregister"
   , "extClear"
@@ -119,6 +130,8 @@ def fullOnlyOpNames : List String :=
   , "xpathEval", "xsltTransform", "schematronValidate", "jsonSchemaValidate"
   , "mathmlEval", "xformsRecalc", "rifEval"
   , "tableauMaterialise", "tableauDlInconsistent", "queryHdt", "shexValidate"
+  , "datasetFromCsvw", "datasetFromRml", "datasetFromJsonLd", "datasetToJsonLd"
+  , "datasetShexValidate", "datasetRifEval"
   , "storeOpen", "storeHandleQuery", "storeHandleList", "storeHandleClose"
   , "storeServeKeys", "storeServeOpen", "storeServeRequest", "storeServeCommit"
   , "storeServeClose", "tdb2ServeKeys", "tdb2ServeOpen"
@@ -283,6 +296,17 @@ def callIOArgsBy (extra : ExtraReader) (op : String) (args : List String) :
   | "datasetSerialize" => some (arityIO2 op Ops.datasetSerialize args)
   | "datasetSerializeWith" => some (arityIO3 op Ops.datasetSerializeWith args)
   | "datasetClose"     => some (arityIO1 op Ops.datasetClose args)
+  | "datasetClone"     => some (arityIO1 op Ops.datasetClone args)
+  | "datasetCanonicalize" => some (arityIO1 op Ops.datasetCanonicalize args)
+  | "datasetClosure"   => some (arityIO2 op Ops.datasetClosure args)
+  | "datasetShaclValidate" => some (arityIO2 op Ops.datasetShaclValidate args)
+  | "datasetQueryRaw"  => some (arityIO3 op Ops.datasetQueryRaw args)
+  | "datasetFormats"   => some (arityIO0 op Ops.datasetFormats args)
+  | "detectFormat"     => some (arityIO1 op Ops.detectFormat args)
+  | "datasetMatch"     => some (arityIO2 op Ops.datasetMatch args)
+  | "datasetMatchCount" => some (arityIO2 op Ops.datasetMatchCount args)
+  | "datasetAddQuads"  => some (arityIO2 op Ops.datasetAddQuads args)
+  | "datasetDeleteQuads" => some (arityIO2 op Ops.datasetDeleteQuads args)
   -- Each document parsed through the IO entry gets its own blank-node scope
   -- (`d<N>_`), https://github.com/danbri/factoidal/issues/685.
   | "parseToDatasetJson" => some (arityIO3 op (Ops.parseToDatasetJsonScopedBy extra) args)

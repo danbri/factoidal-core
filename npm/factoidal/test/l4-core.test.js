@@ -230,7 +230,7 @@ test("l4-core serialize format:'ntriples' answers the default graph and refuses 
   await assert.rejects(
     () => l4core.serialize(`<${X}s> <${X}p> "c" <${X}g> .`,
       { format: 'ntriples', inputFormat: 'nquads' }),
-    /named graph; use format 'nquads'/);
+    /named graph and N-Triples holds one graph/);
 });
 
 // ---------------------------------------------------------------------
@@ -258,22 +258,20 @@ const RDFS_DATA =
 test('l4-core coreRdfsClosure infers a type via subClassOf', async (t) => {
   if (skipUnlessAvailable(t)) return;
   const r = await l4core.coreRdfsClosure(RDFS_DATA, { format: 'ntriples' });
-  assert.equal(r.ok, true);
-  assert.ok(r.ntriples.includes(`<${X}i> <${RDF_TYPE}> <${X}B> .`),
+  assert.ok(r.toNQuads().includes(`<${X}i> <${RDF_TYPE}> <${X}B> .`),
     'closure contains the rdfs9-derived type triple');
 });
 
 test('l4-core rhoDfClosure / rdfsPlusClosure return certified envelopes', async (t) => {
   if (skipUnlessAvailable(t)) return;
-  // Same contract as index.js: {ok, ntriples} — the raw certified
-  // result the theorem registry talks about, not a Dataset.
+  // Since 0.10.0 every closure answers a Dataset; `info.rounds` is the
+  // rounds member the text ops answer.
   const rho = await l4core.rhoDfClosure(RDFS_DATA, { format: 'ntriples' });
-  assert.equal(rho.ok, true);
-  assert.equal(typeof rho.ntriples, 'string');
+  assert.equal(rho.size, 3);
+  assert.equal(typeof rho.info.rounds, 'number');
   const plus = await l4core.rdfsPlusClosure(RDFS_DATA, { format: 'ntriples' });
-  assert.equal(plus.ok, true);
-  assert.equal(typeof plus.ntriples, 'string');
-  assert.ok(plus.ntriples.includes(`<${X}i> <${RDF_TYPE}> <${X}B> .`));
+  assert.equal(typeof plus.info.rounds, 'number');
+  assert.ok(plus.toNQuads().includes(`<${X}i> <${RDF_TYPE}> <${X}B> .`));
 });
 
 test('l4-core coreRdfsCheck / rhoDfFragmentCheck report booleans', async (t) => {
@@ -593,7 +591,7 @@ test('l4-core dataset handle: open, query, update, serialize, close', async (t) 
   if (await skipUnlessOps(t, 'datasetOpen')) return;
   const h = await l4core.openDataset(JOIN_NT, { format: 'ntriples' });
   assert.equal(h.size, 4);
-  assert.equal(h.closed, false);
+  assert.equal(h.disposed, false);
   const rows = await h.query(JOIN_Q);
   assert.equal(rows.length, 2);
   assert.deepEqual(rowMultiset(rows), rowMultiset(
@@ -609,9 +607,9 @@ test('l4-core dataset handle: open, query, update, serialize, close', async (t) 
   const nq = await h.serialize({ format: 'nquads' });
   assert.match(nq, /carol/);
 
-  await h.close();
-  assert.equal(h.closed, true);
-  await assert.rejects(() => h.query(JOIN_Q), /closed/);
+  h.dispose();
+  assert.equal(h.disposed, true);
+  await assert.rejects(() => h.query(JOIN_Q), /disposed/);
 });
 
 // The four envelope features of https://github.com/danbri/factoidal/issues/685.
@@ -641,7 +639,7 @@ test('dataset handle records prefixes from a Turtle open()', async (t) => {
   try {
     assert.deepEqual({ ...h.prefixes }, { ex: X });
   } finally {
-    await h.close();
+    h.dispose();
   }
 });
 
@@ -653,7 +651,7 @@ test('dataset handle serialize({format:"turtle", literalShorthand:false}) is sup
     const ttl = await h.serialize({ format: 'turtle', literalShorthand: false });
     assert.match(ttl, /"1"\^\^xsd:integer/, `expected the quoted form; got: ${ttl}`);
   } finally {
-    await h.close();
+    h.dispose();
   }
 });
 
@@ -667,6 +665,6 @@ test('dataset handle Turtle output prints small integers bare (literal shorthand
       `expected the integer to print bare, same as the F* engine; got: ${ttl}`);
     assert.match(ttl, / 1 \./);
   } finally {
-    await h.close();
+    h.dispose();
   }
 });

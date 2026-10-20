@@ -38,8 +38,8 @@ test('post32: the org graph is IN the proved fragment', async () => {
 
 test('post32: certified closure derives the two-step subclass fact (rdfs9 twice) and the domain fact (rdfs2)', async () => {
   const closed = await factoidal.coreRdfsClosure(ORG_TTL);
-  assert.equal(closed.ok, true);
-  const nt = closed.ntriples;
+  assert.ok(closed instanceof factoidal.Dataset);
+  const nt = closed.toString("ntriples");
   assert.match(nt, /org#ada>\s+<http:\/\/www\.w3\.org\/1999\/02\/22-rdf-syntax-ns#type>\s+<http:\/\/example\.org\/org#Agent>/);
   assert.match(nt, /org#grace>\s+<http:\/\/www\.w3\.org\/1999\/02\/22-rdf-syntax-ns#type>\s+<http:\/\/example\.org\/org#Manager>/);
   // rdfs7: manages ⊑ worksWith lifts the fact
@@ -48,14 +48,14 @@ test('post32: certified closure derives the two-step subclass fact (rdfs9 twice)
 
 test('post32: the certified closure is idempotent (saturation is real, not one-round luck)', async () => {
   const once = await factoidal.coreRdfsClosure(ORG_TTL);
-  const twice = await factoidal.coreRdfsClosure(once.ntriples);
+  const twice = await factoidal.coreRdfsClosure(once.toString("ntriples"));
   const setOf = (nt) => new Set(nt.split('\n').map(l => l.trim()).filter(Boolean));
-  assert.deepEqual(setOf(twice.ntriples), setOf(once.ntriples));
+  assert.deepEqual(setOf(twice.toString("ntriples")), setOf(once.toString("ntriples")));
 });
 
 test('post32: the ASK over the closure answers true — the theorem-backed answer of the page', async () => {
   const closed = await factoidal.coreRdfsClosure(ORG_TTL);
-  const dataset = await factoidal.parse(closed.ntriples, { format: 'ntriples' });
+  const dataset = await factoidal.parse(closed.toString("ntriples"), { format: 'ntriples' });
   const ask = await factoidal.query(dataset, `
     PREFIX rdf: <http://www.w3.org/1999/02/22-rdf-syntax-ns#>
     PREFIX : <http://example.org/org#>
@@ -74,7 +74,7 @@ test('post32: the fragment-escape counterexample behaves exactly as finding F-1 
   const before = await factoidal.coreRdfsCheck(escape);
   assert.equal(before.fragment, true);
   const closed = await factoidal.coreRdfsClosure(escape);
-  const after = await factoidal.coreRdfsCheck(closed.ntriples);
+  const after = await factoidal.coreRdfsCheck(closed.toString("ntriples"));
   assert.equal(after.fragment, false);
 });
 
@@ -93,8 +93,8 @@ test('post32: the perf cell runs — both closures complete on the 60-class chai
   for (let i = 0; i < 60; i++) chain += `:C${i} rdfs:subClassOf :C${i + 1} .\n`;
   chain += ':x rdf:type :C0 .\n';
   const six = await factoidal.coreRdfsClosure(chain);
-  assert.equal(six.ok, true);
-  assert.match(six.ntriples, /c#x>\s+<http:\/\/www\.w3\.org\/1999\/02\/22-rdf-syntax-ns#type>\s+<http:\/\/example\.org\/c#C60>/);
+  assert.ok(six instanceof factoidal.Dataset);
+  assert.match(six.toString("ntriples"), /c#x>\s+<http:\/\/www\.w3\.org\/1999\/02\/22-rdf-syntax-ns#type>\s+<http:\/\/example\.org\/c#C60>/);
   const full = await factoidal.owlClosure(chain, 'RDFS');
   assert.ok(full);
 });
@@ -147,18 +147,18 @@ test('post32 step 4: RDFS-Plus derives the symmetric worksWith row the corerdfs 
   const withSym = ORG_TTL + '\n  :worksWith <http://www.w3.org/1999/02/22-rdf-syntax-ns#type> <http://www.w3.org/2002/07/owl#SymmetricProperty> .\n';
   // corerdfs: symmetry is not expressible -- one direction only.
   const core = await factoidal.coreRdfsClosure(withSym);
-  assert.doesNotMatch(core.ntriples, /org#ada>\s+<http:\/\/example\.org\/org#worksWith>\s+<http:\/\/example\.org\/org#grace>/);
+  assert.doesNotMatch(core.toString("ntriples"), /org#ada>\s+<http:\/\/example\.org\/org#worksWith>\s+<http:\/\/example\.org\/org#grace>/);
   // RDFS-Plus: prp-symp (proved licensing + truth) derives the reverse edge.
   const plus = await factoidal.rdfsPlusClosure(withSym);
-  assert.equal(plus.ok, true);
-  assert.match(plus.ntriples, /org#grace>\s+<http:\/\/example\.org\/org#worksWith>\s+<http:\/\/example\.org\/org#ada>/);
-  assert.match(plus.ntriples, /org#ada>\s+<http:\/\/example\.org\/org#worksWith>\s+<http:\/\/example\.org\/org#grace>/);
+  assert.ok(plus instanceof factoidal.Dataset);
+  assert.match(plus.toString("ntriples"), /org#grace>\s+<http:\/\/example\.org\/org#worksWith>\s+<http:\/\/example\.org\/org#ada>/);
+  assert.match(plus.toString("ntriples"), /org#ada>\s+<http:\/\/example\.org\/org#worksWith>\s+<http:\/\/example\.org\/org#grace>/);
 });
 
 test('post32 step 4: the SELECT over the RDFS-Plus closure returns both directions', async () => {
   const withSym = ORG_TTL + '\n  :worksWith <http://www.w3.org/1999/02/22-rdf-syntax-ns#type> <http://www.w3.org/2002/07/owl#SymmetricProperty> .\n';
   const plus = await factoidal.rdfsPlusClosure(withSym);
-  const dataset = await factoidal.parse(plus.ntriples, { format: 'ntriples' });
+  const dataset = await factoidal.parse(plus.toString("ntriples"), { format: 'ntriples' });
   const rows = await factoidal.query(dataset, 'PREFIX : <http://example.org/org#> SELECT * WHERE { ?x :worksWith ?y }');
   assert.equal(rows.length, 2);
 });

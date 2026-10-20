@@ -55,11 +55,9 @@ private def schemaOfText (text : String) : Except String L4Factoidal.ShEx.Schema
   else
     L4Factoidal.ShEx.Compact.parseShExC text
 
-/-- `shexValidate(dataNquads, schemaText, focus, shape)`. -/
-def shexValidate (dataNq schemaText focus shape : String) : String :=
-  match parseNQuadsFast dataNq .rdf12 with
-  | .error e => errJson s!"shexValidate(data): {fmtParseError e}"
-  | .ok ds =>
+/-- `shexValidate` over a dataset already parsed (its default graph is the
+data graph); the dataset-handle op `datasetShexValidate` calls it. -/
+def shexValidateParsed (ds : Dataset) (schemaText focus shape : String) : String :=
   match schemaOfText schemaText with
   | .error e => errJson s!"shexValidate(schema): {e}"
   | .ok sch =>
@@ -70,6 +68,12 @@ def shexValidate (dataNq schemaText focus shape : String) : String :=
       if shape.isEmpty then L4Factoidal.ShEx.validateStart sch ds.default n
       else L4Factoidal.ShEx.validateNode sch ds.default shape n
     okWith [("verdict", .bool verdict)]
+
+/-- `shexValidate(dataNquads, schemaText, focus, shape)`. -/
+def shexValidate (dataNq schemaText focus shape : String) : String :=
+  match parseNQuadsFast dataNq .rdf12 with
+  | .error e => errJson s!"shexValidate(data): {fmtParseError e}"
+  | .ok ds => shexValidateParsed ds schemaText focus shape
 
 /-! ## Build-time checks (positive and negative) -/
 

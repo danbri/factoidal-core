@@ -20,7 +20,8 @@
 
 import { buildApi, ParseError, DatasetHandle, Store } from './lib/api.mjs';
 import { entryFromEngine } from './lib/lean-entry.mjs';
-import { Dataset, dataFactory } from './rdfjs.mjs';
+import { dataFactory } from './rdfjs.mjs';
+import { Dataset } from './lib/dataset.mjs';
 import { version } from './lib/version.mjs';
 
 function isThenable(x) {

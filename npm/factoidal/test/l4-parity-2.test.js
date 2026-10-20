@@ -640,7 +640,7 @@ test('l4-core openDataset: prefixes at open, handle prefixes in Turtle output, o
     assert.match(extra, /"5\."\^\^xs:decimal/);
     assert.doesNotMatch(extra, /xsd:/);
   } finally {
-    await h.close();
+    h.dispose();
   }
   await assert.rejects(l4core.openDataset('this is not turtle', { format: 'turtle' }),
     (err) => { assertParseError(err, 'openDataset'); assert.equal(err.line, 1); return true; });
