@@ -21,8 +21,7 @@ test('version.json is the placeholder or matches the installed wasm', () => {
     }
     return
   }
-  for (const [file, shaKey, bytesKey] of [['l4factoidal.wasm', 'wasmSha256', 'wasmBytes'],
-    ['l4factoidal-core.wasm', 'coreWasmSha256', 'coreWasmBytes']]) {
+  for (const [file, shaKey, bytesKey] of [['l4factoidal.wasm', 'wasmSha256', 'wasmBytes']]) {
     const path = join(pkg, 'l4-assets', file)
     if (!existsSync(path)) continue
     const bytes = readFileSync(path)

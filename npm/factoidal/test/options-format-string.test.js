@@ -46,7 +46,7 @@ test("openDataset(text, 'ntriples') and handle.serialize('turtle')", async (t) =
     assert.match(await h.serialize('turtle'), /@prefix/);
     assert.equal(await h.serialize('nquads'), await h.serialize({ format: 'nquads' }));
   } finally {
-    await h.close();
+    h.dispose();
   }
 });
 

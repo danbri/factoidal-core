@@ -14,14 +14,13 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 
 import * as full from '../index.mjs';
-import * as core from '../core.mjs';
 
 const N = 20000;
 const lines = [];
 for (let i = 0; i < N; i += 1) lines.push(`<http://e/s${i}> <http://e/p> "${i}" .`);
 const NT = lines.join('\n') + '\n';
 
-for (const [name, api] of [['full', full], ['core', core]]) {
+for (const [name, api] of [['full', full]]) {
   test(`${name} entry: SELECT with ${N} solutions answers on the default stack`, async () => {
     const ds = await api.parse(NT, { format: 'ntriples' });
     assert.equal(ds.size, N);
@@ -32,7 +31,7 @@ for (const [name, api] of [['full', full], ['core', core]]) {
       const viaHandle = await handle.query('SELECT ?o WHERE { ?s <http://e/p> ?o } ORDER BY ?o');
       assert.equal(viaHandle.length, N);
     } finally {
-      await handle.close();
+      handle.dispose();
     }
   });
 }
@@ -46,7 +45,7 @@ for (let i = 0; i < B; i += 1) {
 }
 const BNQ = bl.join('\n') + '\n';
 
-for (const [name, api] of [['full', full], ['core', core]]) {
+for (const [name, api] of [['full', full]]) {
   test(`${name} entry: canonicalize of ${3 * B} blank-node quads answers on the default stack`, async () => {
     const out = await api.canonicalize(BNQ, { format: 'nquads' });
     const lines = out.split('\n').filter(Boolean);

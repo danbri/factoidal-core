@@ -52,6 +52,8 @@ export const canonicalize = api.canonicalize;
 export const graphs = api.graphs;
 export const canonicalHash = api.canonicalHash;
 export const openDataset = api.openDataset;
+export const closure = api.closure;
+export const formats = api.formats;
 export const queryRaw = api.queryRaw;
 export const queryHdt = api.queryHdt;
 export const registerExtensionFunction = api.registerExtensionFunction;
@@ -114,12 +116,6 @@ export const toanProduct = api.toanProduct;
 export const toanSimplify = api.toanSimplify;
 export const toanDiff = api.toanDiff;
 export const toanSubst = api.toanSubst;
-export const matrixDeterminant = api.matrixDeterminant;
-export const matrixScalarProduct = api.matrixScalarProduct;
-export const matrixVectorProduct = api.matrixVectorProduct;
-export const matrixOuterProduct = api.matrixOuterProduct;
-export const sigmoidPoints = api.sigmoidPoints;
-export const sigmoidFormulaMathml = api.sigmoidFormulaMathml;
 
 // Verifiable Credentials and DID
 export const vcSha256Hex = api.vcSha256Hex;
@@ -143,9 +139,6 @@ export const ParseError = api.ParseError;
 export const dataFactory = api.dataFactory;
 export const version = api.version;
 export const engine = api.engine;
-// The sample store this package carries (sample-store/, IPTC NewsCodes,
-// CC BY 4.0): openStore(sampleStorePath()) answers with no download.
-export { sampleStorePath, sampleStoreFacts } from './sample-store.mjs';
 
 export default api;
 
@@ -178,3 +171,7 @@ export async function serveStore(root, options = {}) {
   const s = await listen(root, { ...options, engine: await loadEngine() });
   return { url: `${s.origin}${options.queryPath ?? "/sparql"}`, port: s.port, close: () => s.close() };
 }
+
+// A small store packed on demand from triples held in sample-store.mjs (no
+// data file ships; owner, 2026-10-20). Node only.
+export { sampleStorePath, sampleStoreFacts } from './sample-store.mjs';

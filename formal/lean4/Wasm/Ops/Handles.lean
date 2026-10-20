@@ -24,6 +24,23 @@ store so later calls carry only a handle string and the query:
   datasetClose(handle)
     -> {"ok":true}
 
+The ops below keep the data in the store between steps
+(https://github.com/danbri/factoidal/issues/882 item 1): an op that makes a
+dataset answers a NEW handle, and an op that reads one takes a handle, so a
+host never moves N-Quads text between two steps.
+
+  datasetSerialize(handle, formatTag)   — also ntriples | trig | rdfxml
+    -> {"ok":true,"text":"…"} (and the `nquads`/`turtle` member as before)
+  datasetClone(handle)
+    -> the `datasetOpen` envelope of a new handle with the same dataset
+  datasetCanonicalize(handle)
+    -> the `canonicalizeToNQuads` envelope of the stored dataset
+  datasetClosure(handle, regime)        — rdfs | owl-rl | rho-df | rdfs-plus
+    -> the `datasetOpen` envelope of a new handle: the closure of the default
+       graph (`closureStreamOf`, the graph the closure ops write)
+  datasetShaclValidate(dataHandle, shapesHandle)
+    -> the `shaclValidate` envelope
+
 Any op naming a handle that is not in the store (never opened, or
 closed) answers {"ok":false,"error":"unknown dataset handle: …"}.
 
@@ -47,6 +64,14 @@ import Std.Data.HashMap
 import Wasm.Ops.Parse
 import Wasm.Ops.Query
 import Wasm.Ops.Clock
+import Wasm.Ops.QueryExtras
+import L4Factoidal.SPARQL.Update
+import Wasm.Ops.Reason
+import Wasm.Ops.Validate
+import Wasm.Ops.Canon
+import Wasm.Ops.FromDataset
+import L4Factoidal.RDF.Sink
+import L4Factoidal.RDF.Format
 
 namespace L4Wasm.Ops
 
@@ -65,14 +90,19 @@ handle is opened or updated, so every `datasetQuery` on the handle runs
 the optimized physical-plan path without rebuilding indexes. -/
 structure OpenDataset where
   ds : Dataset
-  backend : DatasetBackend
+  /-- Built on the first query after an open or a change, then kept: an
+  `add` of one quad does not rebuild every index. -/
+  backendThunk : Thunk DatasetBackend
   /-- The prefixes the document declared, each label once, in declaration order.
   Turtle output of the handle uses them. -/
   prefixes : List (String × String) := []
 
 private def openDataset (ds : Dataset) (prefixes : List (String × String) := []) :
     OpenDataset :=
-  { ds, backend := indexedDatasetBackend ds, prefixes }
+  { ds, backendThunk := Thunk.mk (fun _ => indexedDatasetBackend ds), prefixes }
+
+/-- The indexed backend of an open dataset. -/
+private def OpenDataset.backend (od : OpenDataset) : DatasetBackend := od.backendThunk.get
 
 /-- The open datasets, keyed by handle string. -/
 initialize handleTable : IO.Ref (Std.HashMap String OpenDataset) ← IO.mkRef ∅
@@ -146,6 +176,74 @@ def datasetUpdate (h updateText : String) (base : Option String := none) : IO St
         handleTable.modify (·.insert h (openDataset ds' od.prefixes))
         pure (okWith [("count", .number (toString (datasetQuadCount ds')))])
 
+/-- A writer tag and the RDF version it asks for: a tag ending in `11` asks
+for RDF 1.1 (a dataset with an RDF 1.2 term is refused), one ending in `12`
+or with no suffix writes every term the dataset has. -/
+def writerTagVersion (formatTag : String) : String × Bool :=
+  let t := formatTag.toLower
+  if t.endsWith "11" then (t.dropEnd 2 |>.toString, true)
+  else if t.endsWith "12" then (t.dropEnd 2 |>.toString, false)
+  else (t, false)
+
+/-- The refusal of an RDF 1.1 writer for a dataset with an RDF 1.2 term. -/
+def rdf11WriterRefusal (fmt : String) : String :=
+  s!"the dataset holds an RDF 1.2 triple term or directional language-tagged string and {fmt} in RDF 1.1 has no form for it; write it in the RDF 1.2 form"
+
+/-- The text of `ds` in the syntax `formatTag` names (`writerTagVersion`):
+N-Quads, N-Triples (refused when `ds` has a named graph, as N-Triples has no
+graph name), Turtle, TriG and RDF/XML through the `Sink` writers (Turtle and
+RDF/XML write the named graphs as one graph, `Sink.flatten`), and `rdfc`, the
+RDFC-1.0 canonical N-Quads (`canonicalizeOf`). JSON-LD is the full engine's
+`datasetToJsonLd`. `none` for any other tag. -/
+def handleWriterText (formatTag : String) (ds : Dataset) : Option (Except String String) :=
+  let (tag, v11) := writerTagVersion formatTag
+  let checked (name : String) (k : Unit → Except String String) : Option (Except String String) :=
+    if v11 && !ds.isRdf11 then some (.error (rdf11WriterRefusal name)) else some (k ())
+  match tag with
+  | "nquads" | "nq" | "n-quads" =>
+      checked "N-Quads" fun _ => .ok (Dataset.toCanonicalNQuads ds)
+  | "ntriples" | "nt" | "n-triples" =>
+      if !ds.named.isEmpty then
+        some (.error "the dataset has a named graph and N-Triples holds one graph; use nquads or trig")
+      else checked "N-Triples" fun _ => L4Factoidal.RDF.Sink.serializeDataset {} .nt .rdf12 ds
+  | "turtle" | "ttl" =>
+      checked "Turtle" fun _ => L4Factoidal.RDF.Sink.serializeDataset {} .turtle .rdf12 ds
+  | "trig" => checked "TriG" fun _ => L4Factoidal.RDF.Sink.serializeDataset {} .trig .rdf12 ds
+  | "rdfxml" | "rdf-xml" | "rdf" =>
+      checked "RDF/XML" fun _ => L4Factoidal.RDF.Sink.serializeDataset {} .rdfxml .rdf12 ds
+  | "rdfc" | "canonical" =>
+      match parseJson? (canonicalizeOf ds) with
+      | some j =>
+          match j.getString? "nquads" with
+          | some text => some (.ok text)
+          | none => some (.error ((j.getString? "error").getD "RDFC-1.0 canonicalisation failed"))
+      | none => some (.error "RDFC-1.0 canonicalisation failed")
+  | _ => none
+
+/-- The syntaxes the engine reads and writes, for a host's capability table:
+`(name, read11, read12, write11, write12, engine)`; `engine` is `core` when
+both engines serve the syntax and `full` when only the full engine does. The
+npm test `formats-table.test.mjs` checks each `true` write cell by writing a
+dataset and reading it back. -/
+def formatTable : List (String × Bool × Bool × Bool × Bool × String) :=
+  [ ("nquads",   true,  true,  true,  true,  "core")
+  , ("ntriples", true,  true,  true,  true,  "core")
+  , ("turtle",   true,  true,  true,  true,  "core")
+  , ("trig",     true,  true,  true,  true,  "core")
+  , ("rdfxml",   true,  false, true,  false, "core")
+  , ("jsonld",   true,  false, true,  false, "full")
+  , ("rdfc",     false, false, true,  false, "core")
+  , ("sparql-results-json", false, false, true, true, "core")
+  , ("sparql-results-xml",  false, false, true, true, "core")
+  , ("sparql-results-csv",  false, false, true, true, "core")
+  , ("sparql-results-tsv",  false, false, true, true, "core") ]
+
+/-- `datasetFormats()` — `formatTable` as JSON. -/
+def datasetFormats : IO String :=
+  pure (okWith [("formats", .array (formatTable.map fun (n, r11, r12, w11, w12, eng) =>
+    Json.object [("name", .string n), ("read11", .bool r11), ("read12", .bool r12),
+                 ("write11", .bool w11), ("write12", .bool w12), ("engine", .string eng)]))])
+
 /-- The handle's own prefixes as the renderer's (namespace, `label:`) pairs. -/
 private def handlePrefixTable (od : OpenDataset) : PrefixTable :=
   od.prefixes.map fun (label, iri) => (iri, label ++ ":")
@@ -164,7 +262,11 @@ def datasetSerialize (h formatTag : String) : IO String :=
         pure (okWith [("turtle", .string
           (turtleOfGraphOpts { prefixes := handlePrefixTable od } (flattenedGraph ds)))])
     | _ =>
-        pure (errJson s!"datasetSerialize: unknown format tag '{formatTag}' (nquads | turtle)")
+        match handleWriterText formatTag ds with
+        | some (.ok text) => pure (okWith [("text", .string text)])
+        | some (.error e) => pure (errJson s!"datasetSerialize: {e}")
+        | none => pure (errJson
+            s!"datasetSerialize: unknown format tag '{formatTag}' (nquads | turtle | ntriples | trig | rdfxml)")
 
 /-- `datasetSerializeWith(handle, formatTag, optionsJson)` — as
 `datasetSerialize`, with the caller's options. An absent `prefixes` member keeps
@@ -181,8 +283,11 @@ def datasetSerializeWith (h formatTag optionsJson : String) : IO String :=
         | .ok opts =>
             pure (okWith [("turtle", .string (turtleOfGraphOpts opts (flattenedGraph ds)))])
     | _ =>
-        pure (errJson
-          s!"datasetSerializeWith: unknown format tag '{formatTag}' (nquads | turtle)")
+        match handleWriterText formatTag ds with
+        | some (.ok text) => pure (okWith [("text", .string text)])
+        | some (.error e) => pure (errJson s!"datasetSerializeWith: {e}")
+        | none => pure (errJson
+            s!"datasetSerializeWith: unknown format tag '{formatTag}' (nquads | turtle | ntriples | trig | rdfxml)")
 
 /-- `datasetClose(handle)` — drop the dataset from the store. Closing
 an unknown (or already-closed) handle is the shared handle error. -/
@@ -193,5 +298,238 @@ def datasetClose (h : String) : IO String := do
     pure (okWith [])
   else
     pure (unknownHandle h)
+
+/-! ## Ops that keep the data in the store (issue 882 item 1) -/
+
+/-- Store `ds` under a new handle and answer the `datasetOpen` envelope. -/
+def storeNewHandle (ds : Dataset) (prefixes : List (String × String) := [])
+    (extra : List (String × Json) := []) : IO String := do
+  let n ← handleCounter.modifyGet fun n => (n + 1, n + 1)
+  let h := s!"h{n}"
+  handleTable.modify (·.insert h (openDataset ds prefixes))
+  pure (okWith ([("handle", .string h),
+                ("count", .number (toString (datasetQuadCount ds))),
+                ("prefixes", prefixesJson prefixes)] ++ extra))
+
+/-- The stored dataset of `h`, or `none` when the handle is not open. -/
+def lookupHandleDataset (h : String) : IO (Option (Dataset × List (String × String))) := do
+  pure (((← handleTable.get)[h]?).map fun od => (od.ds, od.prefixes))
+
+/-- Run `f` on the stored dataset of `h`; an unknown handle is the shared error. -/
+def withHandleDataset (h : String) (f : Dataset → List (String × String) → IO String) :
+    IO String := do
+  match ← lookupHandleDataset h with
+  | none => pure (unknownHandle h)
+  | some (ds, prefixes) => f ds prefixes
+
+/-- `datasetClone(handle)` — a new handle holding the same dataset and
+prefixes; an update of one handle leaves the other unchanged. -/
+def datasetClone (h : String) : IO String :=
+  withHandleDataset h fun ds prefixes => storeNewHandle ds prefixes
+
+/-- `datasetCanonicalize(handle)` — `canonicalizeOf` of the stored dataset:
+the envelope `canonicalizeToNQuads` answers on its canonical N-Quads. -/
+def datasetCanonicalize (h : String) : IO String :=
+  withHandleDataset h fun ds _ => pure (canonicalizeOf ds)
+
+/-- The regime names `datasetClosure` reads. -/
+def closureRegimes : List String := ["rdfs", "owl-rl", "rho-df", "rdfs-plus"]
+
+/-- `datasetClosure(handle, regime)` — the closure of the default graph of the
+stored dataset under `regime`, stored under a new handle. The graph is
+`closureStreamOf`'s, which `closureEnvelopeOf_stream` proves is the graph the
+text closure ops write. The new dataset has no named graph, as the text ops'
+output has none. For `rho-df` and `rdfs-plus` the envelope also has `rounds`,
+the member the text ops answer (`closureEnvelopeTail`). -/
+def datasetClosure (h regime : String) : IO String :=
+  if !closureRegimes.contains regime then
+    pure (errJson s!"datasetClosure: unknown regime '{regime}' (rdfs | owl-rl | rho-df | rdfs-plus)")
+  else
+  withHandleDataset h fun ds prefixes =>
+    match closureStreamOf ds regime with
+    | .error e => pure (errJson e)
+    | .ok g =>
+        let tail := match datasetForOps .rdf12 ds with
+          | .ok d => (closureEnvelopeTail regime d).2
+          | .error _ => []
+        storeNewHandle { default := g, named := [] } prefixes tail
+
+/-- `datasetShaclValidate(dataHandle, shapesHandle)` — `shaclValidateParsed` on
+the two stored datasets, each normalised as the text op would read it
+(`datasetForOps`). -/
+def datasetShaclValidate (hData hShapes : String) : IO String :=
+  withHandleDataset hData fun dataDs _ =>
+  withHandleDataset hShapes fun shapesDs _ =>
+    match datasetForOps .rdf12 dataDs, datasetForOps .rdf12 shapesDs with
+    | .error e, _ => pure (errJson s!"shaclValidate(data): {fmtParseError e}")
+    | _, .error e => pure (errJson s!"shaclValidate(shapes): {fmtParseError e}")
+    | .ok d, .ok s => pure (shaclValidateParsed d s)
+
+/-- `datasetQueryRaw(handle, sparql, optsJson)` — `queryRaw` over the stored
+dataset: `optsJson` members `entail` (none | RDFS | OWL-RL | x-rdfscore |
+x-rdfsplus) and `output` (json | xml | csv | tsv | table | ntriples). The
+clock is read once per call. -/
+def datasetQueryRaw (h sparql optsJson : String) : IO String := do
+  let now ← nowDateTime
+  let opts : Option Json := if optsJson == "" then none else parseJson? optsJson
+  let field (k d : String) : String := ((opts.bind (fun j => j.getString? k))).getD d
+  withHandleDataset h fun ds _ =>
+    pure (queryRawParsed ds sparql (field "entail" "none") (field "output" "json") (some now))
+
+/-- `detectFormat(text)` — `{"ok":true,"format":TAG}`, the parse tag of
+`formatOfContent`; Turtle and TriG are read in RDF 1.2 mode (`turtle12`,
+`trig12`), which also reads every RDF 1.1 document. -/
+def detectFormat (text : String) : IO String :=
+  let tag := match L4Factoidal.RDF.formatOfContent text with
+    | .jsonld => "jsonld"
+    | .rdfxml => "rdfxml"
+    | .trig => "trig12"
+    | _ => "turtle12"
+  pure (okWith [("format", .string tag)])
+
+
+/-! ## RDF/JS DatasetCore: add, delete, match (issue 882)
+
+A quad pattern is a JSON array of four strings, subject, predicate, object,
+graph. `""` leaves the position unbound; otherwise the string is the
+N-Triples (N-Quads) form of the term, and for the graph `"DEFAULT"` names the
+default graph. Matching uses the stored dataset's indexes
+(`backendSearch` over `indexedDatasetBackend`). -/
+
+/-- The term an N-Triples token denotes, read through the N-Quads reader in
+RDF 1.2 mode: the token is placed at position `pos` (0 subject, 1 predicate,
+2 object, 3 graph) of a line whose other positions are fixed IRIs. -/
+def termOfToken (pos : Nat) (tok : String) : Option (Option Subject × Option WfIri × Option Term × Option Subject) :=
+  let fill := ["<urn:x:s>", "<urn:x:p>", "<urn:x:o>"]
+  let parts := (fill.set pos tok) ++ (if pos == 3 then [tok] else [])
+  match parseNQuadsFast (String.intercalate " " parts ++ " .\n") .rdf12 with
+  | .error _ => none
+  | .ok ds =>
+    match ds.default, ds.named with
+    | [t], [] => some (some t.s, some t.p, some t.o, none)
+    | [], [ng] =>
+        match ng.graph with
+        | [t] => some (some t.s, some t.p, some t.o, some ng.name)
+        | _ => none
+    | _, _ => none
+
+/-- What a pattern asks for: the bound subject, predicate and object, and the
+graph (`none` any graph, `some none` the default graph, `some (some g)`). -/
+structure QuadPattern where
+  bound : L4Factoidal.SPARQL.PatternBound := {}
+  graph : Option (Option Subject) := none
+
+/-- Read a pattern; `none` when a token is not a term of its position. -/
+def quadPatternOf (json : String) : Option QuadPattern := do
+  let j ← parseJson? json
+  let arr ← match j with | .array xs => some xs | _ => none
+  let toks ← arr.mapM (fun x => match x with | .string t => some t | _ => none)
+  match toks with
+  | [s, p, o, g] =>
+    let sB ← if s == "" then some none else (termOfToken 0 s).bind (·.1) |>.map some
+    let pB ← if p == "" then some none else (termOfToken 1 p).bind (·.2.1) |>.map some
+    let oB ← if o == "" then some none else (termOfToken 2 o).bind (·.2.2.1) |>.map some
+    let gB ← if g == "" then some none
+             else if g == "DEFAULT" then some (some none)
+             else (termOfToken 3 g).bind (·.2.2.2) |>.map (fun x => some (some x))
+    pure { bound := { s := sB, p := pB, o := oB }, graph := gB }
+  | _ => none
+
+/-- The quads of `od` that match `pat`, as a dataset, through the indexes. -/
+def matchDataset (od : OpenDataset) (pat : QuadPattern) : Dataset :=
+  let be : DatasetBackend := od.backendThunk.get
+  let wantDefault := match pat.graph with | none | some none => true | _ => false
+  let dflt := if wantDefault then L4Factoidal.SPARQL.StoreBackend.backendSearch be.default pat.bound else []
+  let named := (od.ds.named.zip be.named).filterMap fun (ng, nb) =>
+    let take := match pat.graph with
+      | none => true
+      | some none => false
+      | some (some g) => g == ng.name
+    if !take then none
+    else
+      let ts := L4Factoidal.SPARQL.StoreBackend.backendSearch nb.backend pat.bound
+      if ts.isEmpty then none else some { name := ng.name, graph := ts }
+  { default := dflt, named }
+
+/-- `datasetMatch(handle, patternJson)` — the matching quads under a new handle. -/
+def datasetMatch (h patternJson : String) : IO String := do
+  let tbl ← handleTable.get
+  match tbl[h]? with
+  | none => pure (unknownHandle h)
+  | some od =>
+    match quadPatternOf patternJson with
+    | none => pure (errJson s!"datasetMatch: not a quad pattern: {patternJson}")
+    | some pat => storeNewHandle (matchDataset od pat) od.prefixes
+
+/-- `datasetMatchCount(handle, patternJson)` — `{"ok":true,"count":N}`, the
+number of matching quads, with no new handle. -/
+def datasetMatchCount (h patternJson : String) : IO String := do
+  let tbl ← handleTable.get
+  match tbl[h]? with
+  | none => pure (unknownHandle h)
+  | some od =>
+    match quadPatternOf patternJson with
+    | none => pure (errJson s!"datasetMatchCount: not a quad pattern: {patternJson}")
+    | some pat => pure (okWith [("count", .number (toString (datasetQuadCount (matchDataset od pat))))])
+
+/-- The quads of an N-Quads text as SPARQL Update quads. A graph named by a
+blank node has no Update quad form and is refused. -/
+def updateQuadsOf (nq : String) : Except String (List (Option WfIri × Triple)) := do
+  let ds ← (parseNQuadsFast nq .rdf12).mapError fmtParseError
+  let named ← ds.named.mapM fun ng =>
+    match ng.name with
+    | .iri i => .ok (ng.graph.map fun t => ((some i : Option WfIri), t))
+    | .bnode _ => .error "a quad in a graph named by a blank node cannot be added or deleted here"
+  pure (ds.default.map (fun t => ((none : Option WfIri), t)) ++ named.flatten)
+
+/-- Replace the stored dataset of `h` with `f` of it; answers the new count. -/
+private def changeHandle (who h nq : String)
+    (f : Dataset → List (Option WfIri × Triple) → Dataset) : IO String := do
+  let tbl ← handleTable.get
+  match tbl[h]? with
+  | none => pure (unknownHandle h)
+  | some od =>
+    match updateQuadsOf nq with
+    | .error e => pure (errJson s!"{who}: {e}")
+    | .ok qs =>
+      let ds' := f od.ds qs
+      handleTable.modify (·.insert h (openDataset ds' od.prefixes))
+      pure (okWith [("count", .number (toString (datasetQuadCount ds')))])
+
+/-- `datasetAddQuads(handle, nquads)` — add the quads (set semantics), as
+INSERT DATA does (`Dataset.insertQuads`). Blank-node labels are kept as
+written, so a label the dataset holds names the same node. -/
+def datasetAddQuads (h nq : String) : IO String :=
+  changeHandle "datasetAddQuads" h nq Dataset.insertQuads
+
+/-- `datasetDeleteQuads(handle, nquads)` — remove the quads
+(`Dataset.deleteQuads`). -/
+def datasetDeleteQuads (h nq : String) : IO String :=
+  changeHandle "datasetDeleteQuads" h nq Dataset.deleteQuads
+
+/-! ## Build-time checks (positive and negative) -/
+
+#guard writerTagVersion "turtle11" == ("turtle", true)
+#guard writerTagVersion "TriG12" == ("trig", false)
+#guard writerTagVersion "rdfxml" == ("rdfxml", false)
+#guard (quadPatternOf "[\"<http://e/a>\",\"\",\"\",\"DEFAULT\"]").isSome
+#guard ((quadPatternOf "[\"<http://e/a>\",\"\",\"\",\"\"]").map (·.graph)) == some none
+#guard (quadPatternOf "[\"not a term\",\"\",\"\",\"\"]").isNone
+#guard (quadPatternOf "[\"\",\"_:b\",\"\",\"\"]").isNone
+#guard (quadPatternOf "[\"\",\"\"]").isNone
+#guard match updateQuadsOf "<http://e/a> <http://e/p> \"x\" <http://e/g> .\n" with
+  | .ok [(some _, _)] => true | _ => false
+#guard match updateQuadsOf "<http://e/a> <http://e/p> \"x\" _:g .\n" with
+  | .error _ => true | _ => false
+
+private def tt12 : Dataset :=
+  match parseNQuadsFast "<http://e/a> <http://e/p> <<( <http://e/s> <http://e/p> <http://e/o> )>> .\n" .rdf12 with
+  | .ok ds => ds
+  | .error _ => Dataset.empty
+
+#guard match handleWriterText "ntriples11" tt12 with | some (.error _) => true | _ => false
+#guard match handleWriterText "ntriples12" tt12 with | some (.ok _) => true | _ => false
+#guard match handleWriterText "rdfxml" tt12 with | some (.error _) => true | _ => false
+#guard (handleWriterText "hdt" tt12).isNone
 
 end L4Wasm.Ops

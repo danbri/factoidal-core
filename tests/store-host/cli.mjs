@@ -373,31 +373,31 @@ console.log(`factoidal command differential (${shim.runtimeName})`)
 const binDirectory = nativeBinDirectory()
 const workDirectory = shim.mkdirTemp('factoidal-cli-')
 
-// The store the package carries. These checks need no native binary,
-// because the point of the bundled store is that a fresh install with
-// nothing else on the machine answers a query.
+// A small store fixture (npm/factoidal/test/fixtures/sample-store; the package
+// stopped carrying it on 2026-10-20, owner: "Remove demo triplestore fontent
+// and demo functions from npm zip"). These checks need no native binary.
+const SAMPLE_ROOT = joinPath(repoRoot, 'npm/factoidal/test/fixtures/sample-store')
+const sampleFacts = (await import(joinPath(repoRoot, 'npm/factoidal/test/fixtures/sample-store.mjs'))).sampleStoreFacts
 
-await check('sample-store prints a path that holds CURRENT', () => {
-  const printed = runCli(['sample-store'])
+await check('sample-store packs its inline triples and prints a root that answers COUNT 15', () => {
+  const dir = joinPath(workDirectory, 'inline-sample')
+  const printed = runCliWrite(['sample-store', dir])
   assert(printed.code === 0, `sample-store exited ${printed.code}: ${printed.stderr.trim()}`)
   const root = printed.stdout.trim()
-  assert(root.length > 0, 'sample-store printed nothing')
-  assert(shim.exists(joinPath(root, 'CURRENT')),
-    `there is no CURRENT under ${root}`)
-})
-
-await check('sample-store --json names the licence of what it carries', () => {
-  const printed = runCli(['sample-store', '--json'])
-  assert(printed.code === 0, `sample-store --json exited ${printed.code}`)
-  const facts = JSON.parse(printed.stdout)
-  assert(facts.triples === 4434, `the facts claim ${facts.triples} triples, expected 4434`)
-  assert(facts.blocks === 13, `the facts claim ${facts.blocks} blocks, expected 13`)
-  assert(facts.licence === 'CC BY 4.0', `the facts claim the licence "${facts.licence}"`)
+  assert(root === dir, `sample-store printed "${root}", expected "${dir}"`)
+  assert(shim.exists(joinPath(root, 'CURRENT')), `there is no CURRENT under ${root}`)
+  const again = runCliWrite(['sample-store', dir])
+  assert(again.code === 0 && again.stdout.trim() === dir, 'a second call does not reuse the store')
+  const result = runCli(['query', root, '--query',
+    'SELECT (COUNT(*) AS ?n) WHERE { ?s ?p ?o }', '--format', 'json', '--quiet'])
+  assert(result.code === 0, `query exited ${result.code}: ${result.stderr.trim()}`)
+  const n = JSON.parse(result.stdout).results.bindings[0].n.value
+  assert(n === '15', `COUNT answered ${n}, expected 15`)
 })
 
 await check('inspect reads the bundled store and agrees with its own facts', () => {
-  const root = runCli(['sample-store']).stdout.trim()
-  const facts = JSON.parse(runCli(['sample-store', '--json']).stdout)
+  const root = SAMPLE_ROOT
+  const facts = sampleFacts
   const inspected = runCli(['inspect', root, '--json'])
   assert(inspected.code === 0, `inspect exited ${inspected.code}: ${inspected.stderr.trim()}`)
   const envelope = JSON.parse(inspected.stdout)
@@ -410,7 +410,7 @@ await check('inspect reads the bundled store and agrees with its own facts', () 
 })
 
 await check('the bundled store answers a COUNT with no native binary', () => {
-  const root = runCli(['sample-store']).stdout.trim()
+  const root = SAMPLE_ROOT
   const result = runCli(['query', root, '--query',
     'SELECT (COUNT(*) AS ?n) WHERE { ?s ?p ?o }', '--format', 'json', '--quiet'])
   assert(result.code === 0, `query exited ${result.code}: ${result.stderr.trim()}`)
@@ -470,7 +470,7 @@ await check('pack accepts --batch-bytes, the documented publication interval', (
 })
 
 await check('the bundled store answers the join the README prints', () => {
-  const root = runCli(['sample-store']).stdout.trim()
+  const root = SAMPLE_ROOT
   const result = runCli(['query', root, '--query',
     'SELECT ?c ?l WHERE { ' +
     '?c <http://www.w3.org/2004/02/skos/core#inScheme> ' +

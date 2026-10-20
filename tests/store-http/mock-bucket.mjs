@@ -21,7 +21,7 @@
 //   await bucket.close()
 //
 // Standalone, to point a browser at it:
-//   node tests/store-http/mock-bucket.mjs --root npm/factoidal/sample-store \
+//   node tests/store-http/mock-bucket.mjs --root npm/factoidal/test/fixtures/sample-store \
 //        --prefix skosall --port 8787
 
 import { createServer } from 'node:http'
@@ -183,7 +183,7 @@ if (import.meta.url === `file://${process.argv[1]}`) {
     return at >= 0 && at + 1 < process.argv.length ? process.argv[at + 1] : fallback
   }
   const bucket = await startMockBucket({
-    root: argument('root', 'npm/factoidal/sample-store'),
+    root: argument('root', 'npm/factoidal/test/fixtures/sample-store'),
     prefix: argument('prefix', 'skosall'),
     port: Number(argument('port', '8787'))
   })

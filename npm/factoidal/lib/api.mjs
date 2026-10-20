@@ -22,7 +22,8 @@
 // JSDoc note "entry_jsoo.ml's X" below names that lineage. The Lean op of
 // the same name serves X now (formal/lean4/Wasm/Dispatch.lean lists them).
 
-import { Dataset, dataFactory, termFromSrj } from '../rdfjs.mjs';
+import { dataFactory, termFromSrj, quadToNQuads } from '../rdfjs.mjs';
+import { Dataset, INTERNAL, checkOptions, makeRegistry, WRITER_TAGS } from './dataset.mjs';
 import { version as packageVersion } from './version.mjs';
 import { openGeneration, readRegion, manifestKeys, hexOfBytes } from './store.mjs';
 import { fullEngineMessage } from './lean-entry.mjs';
@@ -275,161 +276,9 @@ function parseResult(jsonText, what, text) {
   }
 }
 
-// ---------------------------------------------------------------------
-// Dataset handles (issue #680) -- parse once via openDataset(), then
-// query()/update()/serialize() many times against the engine's own
-// cached, indexed copy instead of re-parsing N-Quads text and
-// rebuilding the SPARQL index on every call (mirrors
-// formal/lean4/Wasm/Ops/Handles.lean's op names/envelopes on the Lean
-// side, the op names and envelopes).
-//
-// Module-level (like ParseError above), not defined inside buildApi():
-// every method here needs only `entryResult`/`bindingsFromSrj`/
-// `Dataset`/`pendingError`, which are all free of per-driver state.
-// The two exceptions -- `freshBnodePrefix` (so toDataset()'s blank
-// nodes don't collide with another parse from the same api instance)
-// and `withExtensionRounds` (the same async-extension-function
-// trampoline query()/update() use, since a handle's engine object `e`
-// is the SAME entry object those register against) -- are per-driver
-// closures, so openDataset() passes them in at construction time.
-// ---------------------------------------------------------------------
-class DatasetHandle {
-  constructor(e, handle, size, prefixes, freshBnodePrefix, withExtensionRounds) {
-    this._e = e;
-    this._handle = handle;
-    this._size = size;
-    this._prefixes = Object.freeze({ ...(prefixes || {}) });
-    this._closed = false;
-    this._freshBnodePrefix = freshBnodePrefix;
-    this._withExtensionRounds = withExtensionRounds;
-  }
-  /** The opaque engine handle id (e.g. "h1"). */
-  get handle() { return this._handle; }
-  /** Quad count as of the last open()/update(). */
-  get size() { return this._size; }
-  /** Prefixes recorded at open (or carried over from a Dataset argument). */
-  get prefixes() { return this._prefixes; }
-  /** True once close() has run -- every other method rejects after. */
-  get closed() { return this._closed; }
-
-  _assertOpen(who) {
-    if (this._closed) {
-      throw new Error(`DatasetHandle.${who}: handle '${this._handle}' is closed`);
-    }
-  }
-
-  /**
-   * Run a SPARQL 1.1 query against the stored dataset (no re-parse, no
-   * backend rebuild).
-   * @param {string} sparql
-   * @param {{sparql12?: boolean, version?: string}} [options]
-   * @returns {Promise<Array<Map<string, object>>|boolean|Dataset>}
-   */
-  async query(sparql, options) {
-    this._assertOpen('query');
-    if (typeof sparql !== 'string') {
-      throw new TypeError('DatasetHandle.query: sparql must be a string');
-    }
-    const opts = options || {};
-    const sparql12 = opts.sparql12 === true || String(opts.version || '') === '1.2';
-    const fn = sparql12 ? this._e.datasetQuery12 : this._e.datasetQuery;
-    if (typeof fn !== 'function') {
-      throw missingOpError(`DatasetHandle.query (datasetQuery${sparql12 ? '12' : ''})`);
-    }
-    const run = () => entryResult(fn(this._handle, sparql), 'query');
-    const r = this._withExtensionRounds ? await this._withExtensionRounds(run) : run();
-    if (r.kind === 'ask') return r.boolean;
-    if (r.kind === 'construct' || r.kind === 'describe') {
-      return Dataset.fromNQuads(r.nquads, { blankNodePrefix: this._freshBnodePrefix(), prefixes: { ...this._prefixes } });
-    }
-    return bindingsFromSrj(r.srj);
-  }
-
-  /**
-   * Apply a SPARQL 1.1 Update to the stored dataset IN PLACE (the
-   * stored dataset is replaced and its backend rebuilt).
-   * @param {string} updateText
-   * @returns {Promise<DatasetHandle>} this handle, refreshed.
-   */
-  async update(updateText) {
-    this._assertOpen('update');
-    if (typeof updateText !== 'string') {
-      throw new TypeError('DatasetHandle.update: updateText must be a string');
-    }
-    if (typeof this._e.datasetUpdate !== 'function') {
-      throw missingOpError('DatasetHandle.update');
-    }
-    const r = entryResult(this._e.datasetUpdate(this._handle, updateText), 'update');
-    this._size = r.count;
-    return this;
-  }
-
-  /**
-   * Serialize the stored dataset. 'turtle' uses the handle's own
-   * recorded prefixes (from openDataset(), or from a Dataset
-   * argument's `.prefixes`) automatically; pass `prefixes` to add to
-   * them or `literalShorthand:false` to turn off the bare-literal
-   * shorthand -- either forces the prefix/shorthand-aware ABI call.
-   * @param {{format?: 'nquads'|'turtle'|'ttl', prefixes?: object,
-   *   literalShorthand?: boolean}} [options]
-   * @returns {Promise<string>}
-   */
-  async serialize(options) {
-    this._assertOpen('serialize');
-    const opts = optionsOf('DatasetHandle.serialize', options);
-    const rawOut = String(opts.format || 'nquads').toLowerCase();
-    const outFormat = rawOut === 'ttl' ? 'turtle' : rawOut;
-    if (outFormat !== 'nquads' && outFormat !== 'turtle') {
-      throw new TypeError("DatasetHandle.serialize: format must be 'nquads' or 'turtle'");
-    }
-    if (outFormat === 'turtle') {
-      const mergedPrefixes = { ...this._prefixes, ...(opts.prefixes || {}) };
-      const needsWith = Object.keys(mergedPrefixes).length > 0 ||
-        opts.literalShorthand !== undefined;
-      if (needsWith) {
-        if (typeof this._e.datasetSerializeWith !== 'function') {
-          throw missingOpError('DatasetHandle.serialize (prefixes/literalShorthand)');
-        }
-        const optionsJson = JSON.stringify({
-          prefixes: mergedPrefixes,
-          ...(opts.literalShorthand !== undefined ? { literalShorthand: !!opts.literalShorthand } : {}),
-        });
-        return entryResult(
-          this._e.datasetSerializeWith(this._handle, 'turtle', optionsJson), 'serialize').turtle;
-      }
-    }
-    if (typeof this._e.datasetSerialize !== 'function') throw missingOpError('DatasetHandle.serialize');
-    const r = entryResult(this._e.datasetSerialize(this._handle, outFormat), 'serialize');
-    return outFormat === 'turtle' ? r.turtle : r.nquads;
-  }
-
-  /** Materialize the stored dataset as a heap Dataset. */
-  async toDataset() {
-    const nq = await this.serialize({ format: 'nquads' });
-    return Dataset.fromNQuads(nq, {
-      blankNodePrefix: this._freshBnodePrefix(),
-      prefixes: this._prefixes,
-    });
-  }
-
-  /** RDFC-1.0 canonical N-Quads of the stored dataset. */
-  async canonicalize() {
-    this._assertOpen('canonicalize');
-    const nq = await this.serialize({ format: 'nquads' });
-    if (typeof this._e.canonicalizeToNQuads !== 'function') {
-      throw missingOpError('DatasetHandle.canonicalize');
-    }
-    return entryResult(this._e.canonicalizeToNQuads(nq), 'canonicalize').nquads;
-  }
-
-  /** Release the handle. Idempotent; every other method rejects after. */
-  async close() {
-    if (this._closed) return;
-    this._closed = true;
-    if (typeof this._e.datasetClose !== 'function') return;
-    entryResult(this._e.datasetClose(this._handle), 'close');
-  }
-}
+// DatasetHandle: the name of the engine-resident dataset class before
+// 0.10.0. Deprecated alias of Dataset, kept for 0.10.x only.
+const DatasetHandle = Dataset;
 
 // ---------------------------------------------------------------------
 // The Lean persisted store (Shardborough generations: IBK3, IBK4, IBK5
@@ -442,13 +291,13 @@ class DatasetHandle {
 // is never one of a partial generation.
 // ---------------------------------------------------------------------
 class Store {
-  constructor(e, env, gen, manifestHex, freshBnodePrefix, withExtensionRounds) {
+  constructor(e, env, gen, manifestHex, fromNQuads, withExtensionRounds) {
     this._e = e;
     this._env = env;
     this._gen = gen;
     this._manifestHex = manifestHex;
     this._closed = false;
-    this._freshBnodePrefix = freshBnodePrefix;
+    this._fromNQuads = fromNQuads;
     this._withExtensionRounds = withExtensionRounds;
   }
   /** The engine's handle id. */
@@ -488,7 +337,7 @@ class Store {
     const r = this._withExtensionRounds ? await this._withExtensionRounds(run) : run();
     if (r.kind === 'ask') return r.boolean;
     if (r.kind === 'construct' || r.kind === 'describe') {
-      return Dataset.fromNQuads(r.nquads, { blankNodePrefix: this._freshBnodePrefix() });
+      return this._fromNQuads(r.nquads);
     }
     return bindingsFromSrj(r.srj);
   }
@@ -525,7 +374,6 @@ class Store {
  *        default keeps them in the memory of this process.
  */
 function buildApi(driver) {
-  let parseCounter = 0;
   let entryPromise; // memoized; a failed load is retried on the next call
 
   // The entry object. A failure to load the engine (assets missing, a
@@ -547,9 +395,6 @@ function buildApi(driver) {
   // entryResult() is now module-level (see above ParseError) -- pure,
   // shared by every buildApi() instance and by DatasetHandle.
 
-  function freshBnodePrefix() {
-    return `p${parseCounter++}_`;
-  }
 
   // ---------------------------------------------------------------
   // SPARQL 1.1 §17.6 extension functions — issue #463.
@@ -680,8 +525,8 @@ function buildApi(driver) {
     if (typeof e.registerServiceEndpoint !== 'function') {
       throw missingOpError('registerServiceEndpoint');
     }
-    const docs = toDocs(data, options);
-    const nq = docsToEntryNQuads(e, docs, 'registerServiceEndpoint');
+    const opts = checkOptions('registerServiceEndpoint', optionsOf('registerServiceEndpoint', options), ['format', 'baseIRI']);
+    const nq = await nquadsOf(data, opts, 'registerServiceEndpoint');
     return entryResult(e.registerServiceEndpoint(iri, nq),
       'registerServiceEndpoint');
   }
@@ -721,31 +566,6 @@ function buildApi(driver) {
     }
   }
 
-  // Normalize the `data` argument of query/update/serialize/
-  // canonicalize into engine inputs. Accepts a Dataset, a raw string
-  // (with options.format, default turtle), or an array of those —
-  // each element is loaded as its own document so blank-node labels
-  // stay document-scoped (the engine's IO entry gives every parsed
-  // document its own blank-node scope, Wasm/Dispatch.lean's
-  // parseToDatasetJsonScoped).
-  function toDocs(data, options) {
-    const opts = optionsOf('data', options);
-    const items = Array.isArray(data) ? data : [data];
-    return items.map((item, i) => {
-      if (item instanceof Dataset) {
-        return { ext: 'nq', content: item.toNQuads() };
-      }
-      if (typeof item === 'string') {
-        return { ext: extForFormat(opts.format), content: item };
-      }
-      if (item && typeof item.text === 'string') {
-        return { ext: extForFormat(item.format || opts.format), content: item.text };
-      }
-      throw new TypeError(
-        `data[${i}]: expected a Dataset, a string, or {text, format}`);
-    });
-  }
-
   // The prefixes a result Dataset inherits from its inputs: the union of
   // every Dataset input's `prefixes`, in input order, the first
   // declaration of a label winning. update() and CONSTRUCT answer a
@@ -765,24 +585,6 @@ function buildApi(driver) {
     return out;
   }
 
-  // Normalize toDocs() output into one concatenated N-Quads string: each
-  // non-N-Quads document goes through parseToDatasetJson (its own
-  // blank-node scope), N-Quads text is passed on as it is. Every
-  // operation that takes `data` hands the engine this string. A parse
-  // failure rejects with a ParseError whose offset indexes that
-  // document's own text.
-  function docsToEntryNQuads(e, docs, what) {
-    let nq = '';
-    for (const d of docs) {
-      if (d.ext === 'nq') { nq += d.content; continue; }
-      const r = parseResult(
-        e.parseToDatasetJson(d.content, DATA_FORMAT_TAG[d.ext], ''),
-        `${what}(parse)`, d.content);
-      nq += r.nquads;
-    }
-    return nq;
-  }
-
   // A ShEx focus/shape-label argument is either a raw string (an IRI,
   // or "_:label" for a blank node -- the entry ABI's own convention)
   // or an RDF/JS term (NamedNode/BlankNode); accepting both lets a
@@ -797,93 +599,121 @@ function buildApi(driver) {
     throw new TypeError(`${who}: expected a string or an RDF/JS term`);
   }
 
-  // Everything below is async: the engine loads asynchronously, and an
-  // extension function may answer with a Promise.
+  // ---------------------------------------------------------------
+  // Datasets (https://github.com/danbri/factoidal/issues/882 item 1).
+  // Every producer answers a Dataset (lib/dataset.mjs): a handle into the
+  // engine's dataset store. Every consumer takes a Dataset, or text with
+  // an explicit {format}; when the format is omitted the engine infers it
+  // (op detectFormat) and the result reports it (Dataset.format,
+  // Dataset.formatInferred, or the error message).
+  // ---------------------------------------------------------------
+  let ctxCache = null;
+  const registry = makeRegistry();
 
-  /**
-   * Parse one RDF document into a Dataset. Strict by default (issue
-   * #344): a syntax error, an undeclared prefix, or an unresolvable
-   * relative IRI (no baseIRI in effect) rejects with a ParseError
-   * (`line`/`column`/`offset` present for Turtle/TriG/N-Triples/
-   * N-Quads; RDF/XML and JSON-LD failures carry a message only).
-   * `{lenient:true}` uses the engine op parseDocument
-   * (https://github.com/danbri/factoidal/issues/716): Turtle, TriG,
-   * N-Triples and N-Quads skip each bad statement, keep the good ones and
-   * list one diagnostic per skipped statement in `dataset.diagnostics`
-   * (`message`, `offset`, `line`, `column`, `class`). `maxErrors: n` stops
-   * after n diagnostics with one `too-many-errors` diagnostic. RDF/XML and
-   * JSON-LD parse strictly. A wasm without the op rejects naming it.
-   * @param {string} text
-   * @param {{format?: string, baseIRI?: string, lenient?: boolean,
-   *   maxErrors?: number}} [options]
-   * @returns {Promise<Dataset>}
-   */
-  async function parse(text, options) {
-    if (typeof text !== 'string') {
-      throw new TypeError('parse: text must be a string');
-    }
-    const opts = optionsOf('parse', options);
-    const ext = extForFormat(opts.format);
-    const baseIRI = opts.baseIRI || '';
-    const bnodePrefix = freshBnodePrefix();
-
+  async function ctx() {
     const e = await entry();
-    if (opts.lenient) {
-      if (typeof e.parseDocument !== 'function') {
-        throw missingOpError('parse {lenient:true} (parseDocument)');
-      }
-      const r = parseResult(
-        e.parseDocument(text, DATA_FORMAT_TAG[ext], baseIRI, JSON.stringify(
-          Number.isInteger(opts.maxErrors) && opts.maxErrors >= 0
-            ? { lenient: true, maxErrors: opts.maxErrors }
-            : { lenient: true })),
-        'parse', text);
-      return Dataset.fromNQuads(r.nquads, {
-        blankNodePrefix: bnodePrefix,
-        prefixes: r.prefixes,
-        diagnostics: utf16Diagnostics(text, r.diagnostics),
-      });
-    }
-    const r = parseResult(
-      e.parseToDatasetJson(text, DATA_FORMAT_TAG[ext], baseIRI), 'parse', text);
-    return Dataset.fromNQuads(r.nquads, {
-      blankNodePrefix: bnodePrefix,
-      prefixes: r.prefixes,
-    });
+    if (ctxCache && ctxCache.e === e) return ctxCache;
+    const c = {
+      e,
+      registry,
+      missing: (what, op) => missingOpError(what, e, op),
+      wrap(r, prefixes, extra) {
+        const { ok: _ok, handle, count, prefixes: own, ...info } = r;
+        return new Dataset(INTERNAL, c, handle, count,
+          prefixes !== undefined ? prefixes : own, { ...(extra || {}), info });
+      },
+      fromNQuads(text, prefixes) {
+        requireEntryFn(e, 'datasetOpen', 'Dataset');
+        const r = entryResult(e.datasetOpen(text, 'nquads', ''), 'Dataset');
+        return c.wrap(r, prefixes || {});
+      },
+      async queryHandle(ds, sparql, opts) { return queryDatasetHandle(c, ds, sparql, opts); },
+      async shacl(ds, shapes, opts) { return shaclOnHandle(c, ds, shapes, opts); },
+      async shex(ds, schema, opts) {
+        if (!opts || opts.focus == null) {
+          throw new TypeError('Dataset.validateShex: options.focus is required');
+        }
+        return shexOnHandle(c, ds, schema, opts.focus, opts.shape);
+      },
+      async closure(ds, regime) { return closureOnHandle(c, ds, regime); },
+    };
+    ctxCache = c;
+    return c;
   }
 
-  /**
-   * Run a SPARQL 1.1 query.
-   * @param {Dataset|string|Array} data
-   * @param {string} sparql
-   * @param {{format?: string, entail?: 'none'|'RDFS'|'OWL-RL'|'x-rdfscore'|'x-rdfsplus',
-   *   sparql12?: boolean, version?: string}} [options]
-   * @returns {Promise<Array<Map<string, object>>|boolean|Dataset>}
-   *   SELECT -> Bindings[] (Map of variable name -> RDF/JS Term),
-   *   ASK -> boolean, CONSTRUCT and DESCRIBE -> Dataset.
-   */
-  async function query(data, sparql, options) {
-    if (typeof sparql !== 'string') {
-      throw new TypeError('query: sparql must be a string');
+  // The parse tag of `format`, or the engine's inference when it is omitted.
+  function formatTagOf(c, text, format, who) {
+    if (format === undefined || format === null || format === '') {
+      requireEntryFn(c.e, 'detectFormat', `${who} (format inference)`);
+      return { tag: entryResult(c.e.detectFormat(text), who).format, inferred: true };
     }
-    const opts = optionsOf('query', options);
+    return { tag: DATA_FORMAT_TAG[extForFormat(format)], inferred: false };
+  }
+
+  // Open `text` as a Dataset. A parse error names the format and says
+  // whether it was inferred.
+  function openText(c, text, format, baseIRI, who) {
+    const { tag, inferred } = formatTagOf(c, text, format, who);
+    requireEntryFn(c.e, 'datasetOpen', who);
+    let r;
+    try {
+      r = parseResult(c.e.datasetOpen(text, tag, baseIRI || ''), who, text);
+    } catch (err) {
+      if (inferred) {
+        err.message += ` (format inferred as '${tag}' because none was given; pass {format} to choose)`;
+        err.formatInferred = true;
+      }
+      err.format = err.format || tag;
+      throw err;
+    }
+    return c.wrap(r, undefined, { format: tag, formatInferred: inferred });
+  }
+
+  // The Dataset a consumer reads: `data` itself when it is a Dataset, else
+  // a temporary one the caller disposes (`temp` true). An array opens as
+  // one dataset: its members' N-Quads, each document in its own blank-node
+  // scope.
+  function datasetOf(c, data, opts, who) {
+    if (data instanceof Dataset) {
+      if (data.disposed) data.size; // throws the disposed error
+      return { ds: data, temp: false };
+    }
+    if (typeof data === 'string') {
+      return { ds: openText(c, data, opts.format, opts.baseIRI, who), temp: true };
+    }
+    if (data && typeof data.text === 'string' && !Array.isArray(data)) {
+      return { ds: openText(c, data.text, data.format || opts.format, data.baseIRI || opts.baseIRI, who), temp: true };
+    }
+    if (Array.isArray(data)) {
+      let nq = '';
+      for (const item of data) {
+        const { ds, temp } = datasetOf(c, item, opts, who);
+        nq += ds.toNQuads();
+        if (temp) ds.dispose();
+      }
+      return { ds: c.fromNQuads(nq, prefixesOfData(data)), temp: true };
+    }
+    throw new TypeError(`${who}: expected a Dataset, a string, {text, format}, or an array of those`);
+  }
+
+  async function withDataset(data, opts, who, f) {
+    const c = await ctx();
+    const { ds, temp } = datasetOf(c, data, opts, who);
+    try {
+      return await f(c, ds);
+    } finally {
+      if (temp) ds.dispose();
+    }
+  }
+
+  // The N-Quads text of `data`, for the ops that read text only.
+  async function nquadsOf(data, opts, who) {
+    return withDataset(data, opts, who, (_c, ds) => ds.toNQuads());
+  }
+
+  async function queryDatasetHandle(c, ds, sparql, opts) {
+    if (typeof sparql !== 'string') throw new TypeError('query: sparql must be a string');
     const entail = opts.entail || 'none';
-    // x-ikl-* is NOT IMPLEMENTED. It is not withheld by policy.
-    //
-    // CORRECTION 2026-08-26: this comment previously cited the owner's
-    // direction-B ruling (danbri/factoidal#618) as the reason. That
-    // ruling was about the IKL-to-RDF projection, not this regime
-    // family, and citing it here misstated a decision the owner did
-    // not make. The family is the OWNER'S design
-    // (danbri/factoidal#581); its Lean dispatch was deleted on
-    // 2026-08-26 as collateral of the projection purge
-    // (danbri/factoidal#626), not as its target. The semantics
-    // survived -- Unified/ClBridge.lean's asserted_merge_sound is the
-    // regime's soundness statement -- so restoring it is a dispatch
-    // branch, not a redesign. Checked explicitly (not just left out of
-    // ENTAIL_VALUES below) so a future ENTAIL_VALUES edit can't
-    // reopen this without deliberately removing this check too; see
-    // test/select.test.js's regression test.
     if (/^x-ikl/i.test(entail)) {
       throw new TypeError(
         `query: entail '${entail}' is not implemented. The x-ikl-* ` +
@@ -894,78 +724,168 @@ function buildApi(driver) {
         'policy exclusion.');
     }
     if (!ENTAIL_VALUES.has(entail)) {
-      throw new TypeError(
-        `query: entail must be one of ${[...ENTAIL_VALUES].join(', ')}`);
+      throw new TypeError(`query: entail must be one of ${[...ENTAIL_VALUES].join(', ')}`);
     }
-
-    if (data instanceof DatasetHandle) {
-      if (entail !== 'none') {
-        throw new TypeError(
-          "query: entail must be 'none' when data is a DatasetHandle " +
-          '(a handle carries no entailment-closure step)');
-      }
-      return data.query(sparql, opts);
+    if (opts.version !== undefined && !['1.1', '1.2'].includes(String(opts.version))) {
+      throw new TypeError("query: version must be '1.1' or '1.2'");
     }
-
-    const form = sniffQueryForm(sparql);
-    const docs = toDocs(data, opts);
-    const e = await entry();
-    const nq = docsToEntryNQuads(e, docs, 'query');
-    // SPARQL 1.2 opt-in: {sparql12:true} or {version:'1.2'} routes to the
-    // op queryDataset12 (the Lean SPARQL parser's 1.2 mode: triple-term
-    // patterns, reified triples, annotations, TRIPLE/isTRIPLE/SUBJECT/
-    // PREDICATE/OBJECT). The default stays SPARQL 1.1.
     const sparql12 = opts.sparql12 === true || String(opts.version || '') === '1.2';
-
-    if (entail !== 'none') {
-      // An entailment regime: the engine closes the DEFAULT graph under the
-      // regime, then evaluates the query (one op, queryRaw, in
-      // Wasm/Ops/QueryExtras.lean). Extension functions and SERVICE
-      // registrations are not in scope on this path.
+    const e = c.e;
+    if (entail !== 'none' || opts.output !== undefined) {
+      // queryRaw over the stored dataset: an entailment regime, or a
+      // results format (SPARQL 1.1 Query Results JSON, XML, CSV, TSV).
       if (sparql12) {
         throw new TypeError(
-          "query: entail and SPARQL 1.2 cannot be combined; the entailment path reads SPARQL 1.1");
+          "query: entail/output and SPARQL 1.2 cannot be combined; that path reads SPARQL 1.1");
       }
-      requireEntryFn(e, 'queryRaw', `query {entail:'${entail}'}`);
+      const output = opts.output || 'json';
+      if (!RAW_OUTPUT_FORMATS.has(output)) {
+        throw new TypeError(`query: output must be one of ${[...RAW_OUTPUT_FORMATS].join(', ')}`);
+      }
+      const form = sniffQueryForm(sparql);
       const graphForm = form === 'construct' || form === 'describe';
-      const r = entryResult(e.queryRaw(nq, sparql, JSON.stringify({
-        dataFormat: 'nquads', entail, output: graphForm ? 'ntriples' : 'json',
-      })), 'query');
-      if (graphForm) {
-        return Dataset.fromNQuads(r.text, {
-          blankNodePrefix: freshBnodePrefix(),
-          prefixes: prefixesOfData(data),
-        });
+      requireEntryFn(e, 'datasetQueryRaw', `query {entail/output}`);
+      if (opts.output === undefined) {
+        // An entailment regime with the default answer shape.
+        const r = entryResult(e.datasetQueryRaw(ds.handle, sparql, JSON.stringify({
+          entail, output: graphForm ? 'ntriples' : 'json' })), 'query');
+        if (graphForm) return c.fromNQuads(r.text, ds.prefixes);
+        const srj = JSON.parse(r.text);
+        if (typeof srj.boolean === 'boolean') return srj.boolean;
+        return bindingsFromSrj(srj);
       }
-      const srj = JSON.parse(r.text);
-      if (typeof srj.boolean === 'boolean') return srj.boolean;
-      return bindingsFromSrj(srj);
+      const r = entryResult(e.datasetQueryRaw(ds.handle, sparql,
+        JSON.stringify({ entail, output })), 'query');
+      return output === 'json' && !graphForm ? JSON.parse(r.text) : r.text;
     }
-
-    if (sparql12 && typeof e.queryDataset12 !== 'function') {
-      throw missingOpError('query {sparql12:true} (queryDataset12)');
+    const fn = sparql12 ? e.datasetQuery12 : e.datasetQuery;
+    if (typeof fn !== 'function') {
+      throw missingOpError(`query (datasetQuery${sparql12 ? '12' : ''})`, e,
+        sparql12 ? 'datasetQuery12' : 'datasetQuery');
     }
-    const r = await withExtensionRounds(() => entryResult(
-      (sparql12 ? e.queryDataset12 : e.queryDataset)(nq, sparql), 'query'));
+    const r = await withExtensionRounds(() => entryResult(fn(ds.handle, sparql), 'query'));
     if (r.kind === 'ask') return r.boolean;
     if (r.kind === 'construct' || r.kind === 'describe') {
-      return Dataset.fromNQuads(r.nquads, {
-        blankNodePrefix: freshBnodePrefix(),
-        prefixes: prefixesOfData(data),
-      });
+      return c.fromNQuads(r.nquads, ds.prefixes);
     }
     return bindingsFromSrj(r.srj);
   }
 
+  async function shaclOnHandle(c, ds, shapes, opts) {
+    requireEntryFn(c.e, 'datasetShaclValidate', 'SHACL validation');
+    const s = datasetOf(c, shapes, opts, 'shaclValidate(shapes)');
+    try {
+      const r = entryResult(c.e.datasetShaclValidate(ds.handle, s.ds.handle), 'shaclValidate');
+      return { conforms: r.conforms, report: c.fromNQuads(r.reportNquads, {}) };
+    } finally {
+      if (s.temp) s.ds.dispose();
+    }
+  }
+
+  async function shexOnHandle(c, ds, schema, focus, shape) {
+    requireEntryFn(c.e, 'datasetShexValidate', 'ShEx validation');
+    if (typeof schema !== 'string') throw new TypeError('shexValidate: schema must be a string');
+    const focusStr = shexTermToString(focus, 'shexValidate(focus)');
+    const shapeStr = shape == null ? '' : shexTermToString(shape, 'shexValidate(shape)');
+    return entryResult(
+      c.e.datasetShexValidate(ds.handle, schema, focusStr, shapeStr), 'shexValidate').verdict;
+  }
+
+  const CLOSURE_REGIMES = {
+    rdfs: 'rdfs', 'owl-rl': 'owl-rl', owlrl: 'owl-rl', owl_rl: 'owl-rl',
+    'rho-df': 'rho-df', rhodf: 'rho-df', 'core-rdfs': 'rho-df',
+    'rdfs-plus': 'rdfs-plus', rdfsplus: 'rdfs-plus',
+  };
+
+  async function closureOnHandle(c, ds, regime) {
+    const r0 = CLOSURE_REGIMES[String(regime || '').toLowerCase()];
+    if (!r0) {
+      throw new TypeError(
+        `closure: regime must be one of rdfs, owl-rl, rho-df, rdfs-plus (got '${regime}')`);
+    }
+    requireEntryFn(c.e, 'datasetClosure', 'closure');
+    const r = entryResult(c.e.datasetClosure(ds.handle, r0), 'closure');
+    return c.wrap(r, ds.prefixes);
+  }
+
+  // Everything below is async: the engine loads asynchronously, and an
+  // extension function may answer with a Promise.
+
   /**
-   * Run a SPARQL 1.1 query against a read-only HDT (Header-Dictionary-
-   * Triples) file's raw bytes. The bytes travel to the engine as the
-   * dispatch ABI's byte region (op queryHdt, Wasm/Ops/QueryExtras.lean),
-   * with no text encoding. Default graph only (an HDT file holds one
-   * graph); SELECT and ASK only.
-   * @param {Uint8Array|ArrayBuffer|Buffer|string} hdtBytes whole .hdt
-   *   file contents (a string is read as one char per byte)
-   * @param {string} sparql a SELECT or ASK query
+   * Parse one RDF document into a Dataset. Strict by default: a syntax
+   * error rejects with a ParseError (`line`/`column`/`offset` for Turtle,
+   * TriG, N-Triples and N-Quads). `{lenient:true}` skips each bad statement
+   * of Turtle, TriG, N-Triples and N-Quads and lists one diagnostic per
+   * skipped statement in `dataset.diagnostics`
+   * (https://github.com/danbri/factoidal/issues/716); `maxErrors: n` stops
+   * after n diagnostics. With no `format` the engine infers one
+   * (`dataset.format`, `dataset.formatInferred`).
+   * @param {string} text
+   * @param {{format?: string, baseIRI?: string, lenient?: boolean,
+   *   maxErrors?: number}} [options]
+   * @returns {Promise<Dataset>}
+   */
+  async function parse(text, options) {
+    if (typeof text !== 'string') throw new TypeError('parse: text must be a string');
+    const opts = checkOptions('parse', optionsOf('parse', options),
+      ['format', 'baseIRI', 'lenient', 'maxErrors']);
+    const c = await ctx();
+    if (opts.lenient) {
+      const { tag, inferred } = formatTagOf(c, text, opts.format, 'parse');
+      requireEntryFn(c.e, 'parseDocument', 'parse {lenient:true} (parseDocument)');
+      const r = parseResult(
+        c.e.parseDocument(text, tag, opts.baseIRI || '', JSON.stringify(
+          Number.isInteger(opts.maxErrors) && opts.maxErrors >= 0
+            ? { lenient: true, maxErrors: opts.maxErrors }
+            : { lenient: true })),
+        'parse', text);
+      const opened = entryResult(c.e.datasetOpen(r.nquads, 'nquads', ''), 'parse');
+      return c.wrap(opened, r.prefixes, {
+        diagnostics: utf16Diagnostics(text, r.diagnostics),
+        format: tag, formatInferred: inferred,
+      });
+    }
+    return openText(c, text, opts.format, opts.baseIRI, 'parse');
+  }
+
+  /**
+   * Open `data` as a Dataset: the same as parse() for text; for a Dataset,
+   * a clone; for an array, one Dataset of all its members.
+   * @param {Dataset|string|Array|{text, format}} data
+   * @param {{format?: string, baseIRI?: string}} [options]
+   * @returns {Promise<Dataset>}
+   */
+  async function openDataset(data, options) {
+    const opts = checkOptions('openDataset', optionsOf('openDataset', options), ['format', 'baseIRI']);
+    const c = await ctx();
+    if (data instanceof Dataset) return data.clone();
+    return datasetOf(c, data, opts, 'openDataset').ds;
+  }
+
+  /**
+   * Run a SPARQL 1.1 (or 1.2) query.
+   * @param {Dataset|string|Array} data
+   * @param {string} sparql
+   * @param {{format?: string, baseIRI?: string,
+   *   entail?: 'none'|'RDFS'|'OWL-RL'|'x-rdfscore'|'x-rdfsplus',
+   *   sparql12?: boolean, version?: '1.1'|'1.2',
+   *   output?: 'json'|'xml'|'csv'|'tsv'|'table'|'ntriples'}} [options]
+   * @returns {Promise<Array<Map<string, object>>|boolean|Dataset|string|object>}
+   *   SELECT -> Bindings[], ASK -> boolean, CONSTRUCT/DESCRIBE -> Dataset;
+   *   with `output`, the results document (text; 'json' parsed).
+   */
+  async function query(data, sparql, options) {
+    if (typeof sparql !== 'string') throw new TypeError('query: sparql must be a string');
+    const opts = checkOptions('query', optionsOf('query', options),
+      ['format', 'baseIRI', 'entail', 'sparql12', 'version', 'output']);
+    return withDataset(data, opts, 'query', (c, ds) => queryDatasetHandle(c, ds, sparql, opts));
+  }
+
+  /**
+   * Run a SPARQL 1.1 query against a read-only HDT file's raw bytes.
+   * SELECT and ASK only; default graph only.
+   * @param {Uint8Array|ArrayBuffer|Buffer|string} hdtBytes
+   * @param {string} sparql
    * @returns {Promise<Array<Map<string, object>>|boolean>}
    */
   async function queryHdt(hdtBytes, sparql) {
@@ -985,491 +905,267 @@ function buildApi(driver) {
   }
 
   /**
-   * Apply a SPARQL 1.1 Update to a dataset, returning the new Dataset.
+   * Apply a SPARQL 1.1 Update and answer a NEW Dataset; a Dataset argument
+   * is not changed (use `dataset.update()` to change one in place).
    * @param {Dataset|string|Array} data
    * @param {string} updateText
-   * @param {{format?: string}} [options]
+   * @param {{format?: string, baseIRI?: string}} [options]
    * @returns {Promise<Dataset>}
    */
   async function update(data, updateText, options) {
-    if (typeof updateText !== 'string') {
-      throw new TypeError('update: updateText must be a string');
+    if (typeof updateText !== 'string') throw new TypeError('update: updateText must be a string');
+    const opts = checkOptions('update', optionsOf('update', options), ['format', 'baseIRI']);
+    const c = await ctx();
+    const { ds, temp } = datasetOf(c, data, opts, 'update');
+    const out = temp ? ds : ds.clone();
+    try {
+      return await out.update(updateText);
+    } catch (err) {
+      out.dispose();
+      throw err;
     }
-    if (data instanceof DatasetHandle) {
-      throw new TypeError(
-        'update: data is a DatasetHandle; call handle.update() directly ' +
-        '-- update() always returns a FRESH Dataset, but a handle\'s own ' +
-        'update() mutates the handle in place and returns the handle.');
-    }
-    const e = await entry();
-    const opts = optionsOf('update', options);
-    const nq = docsToEntryNQuads(e, toDocs(data, opts), 'update');
-    const sparql12 = opts.sparql12 === true || String(opts.version || '') === '1.2';
-    if (sparql12 && typeof e.updateDataset12 !== 'function') {
-      throw missingOpError('update {sparql12:true} (updateDataset12)');
-    }
-    const r = entryResult(
-      (sparql12 ? e.updateDataset12 : e.updateDataset)(nq, updateText), 'update');
-    return Dataset.fromNQuads(r.nquads, {
-      blankNodePrefix: freshBnodePrefix(),
-      prefixes: prefixesOfData(data),
-    });
   }
 
   /**
-   * Open a dataset handle (issue #680): parse `data` once, then run
-   * many query()/update()/serialize() calls against the engine's own
-   * cached, indexed copy -- no re-parse, no SPARQL-index rebuild per
-   * call (see the tests/perf/npm_handle_vs_stateless.mjs numbers for
-   * the measured difference).
-   * @param {Dataset|string|Array|{text,format}} data a Dataset (opened
-   *   as N-Quads, keeping the Dataset's own `.prefixes` on the handle
-   *   for Turtle output), a string (`options.format`/`baseIRI` apply),
-   *   or an array of those (each non-N-Quads document normalizes
-   *   through parseToDatasetJson first, then the whole array opens as
-   *   one N-Quads document -- no per-document prefixes survive that
-   *   merge).
-   * @param {{format?: string, baseIRI?: string}} [options]
-   * @returns {Promise<DatasetHandle>}
-   */
-  async function openDataset(data, options) {
-    const e = await entry();
-    requireEntryFn(e, 'datasetOpen', 'openDataset');
-    const opts = optionsOf('openDataset', options);
-
-    if (data instanceof Dataset) {
-      const r = entryResult(e.datasetOpen(data.toNQuads(), 'nquads', ''), 'openDataset');
-      return new DatasetHandle(e, r.handle, r.count, data.prefixes, freshBnodePrefix, withExtensionRounds);
-    }
-    if (typeof data === 'string') {
-      const ext = extForFormat(opts.format);
-      const baseIRI = opts.baseIRI || '';
-      const r = parseResult(
-        e.datasetOpen(data, DATA_FORMAT_TAG[ext], baseIRI), 'openDataset', data);
-      return new DatasetHandle(e, r.handle, r.count, r.prefixes, freshBnodePrefix, withExtensionRounds);
-    }
-    const docs = toDocs(data, opts);
-    const nq = docsToEntryNQuads(e, docs, 'openDataset');
-    const r = entryResult(e.datasetOpen(nq, 'nquads', ''), 'openDataset');
-    return new DatasetHandle(e, r.handle, r.count, {}, freshBnodePrefix, withExtensionRounds);
-  }
-
-  /**
-   * Serialize a dataset (engine-produced bytes, sorted N-Quads order).
-   * @param {Dataset|string|Array|DatasetHandle} data a DatasetHandle
-   *   routes to `data.serialize(options)`.
-   *   'nquads' and 'ntriples' answer the engine's N-Quads text in sorted
-   *   line order; 'ntriples' refuses data with a named graph.
-   * @param {{format?: 'nquads'|'ntriples'|'turtle', inputFormat?: string,
-   *   prefixes?: object, literalShorthand?: boolean}} [options]
-   *   `prefixes`/`literalShorthand` apply to 'turtle' only.
+   * Write a dataset in a concrete syntax.
+   * @param {Dataset|string|Array} data
+   * @param {{format?: string, version?: '1.1'|'1.2', prefixes?: object,
+   *   literalShorthand?: boolean, useNativeTypes?: boolean,
+   *   useRdfType?: boolean, rdfDirection?: string,
+   *   inputFormat?: string, baseIRI?: string}} [options]
+   *   format: nquads (default), ntriples, turtle, trig, rdfxml, jsonld,
+   *   rdfc. inputFormat and baseIRI read text `data`.
    * @returns {Promise<string>}
-   *   'turtle' (prefix-compacted, subject-grouped; the ops
-   *   serializeTurtle/serializeTurtleWith, Syntax/TurtleSerialize.lean)
-   *   flattens every named graph into the default graph
-   *   (Turtle has no named-graph notion); use 'nquads' when graph
-   *   names must survive. `prefixes` is used, and unused caller
-   *   namespaces are dropped, when given or when `data` is a Dataset
-   *   with non-empty `.prefixes` (that Dataset's own prefixes are used
-   *   automatically); `literalShorthand` (default true) controls
-   *   whether xsd:integer/decimal/double/boolean literals with a
-   *   Turtle-grammar-matching lexical form print bare.
    */
   async function serialize(data, options) {
-    const opts = optionsOf('serialize', options);
-    if (data instanceof DatasetHandle) {
-      return data.serialize(opts);
+    const opts = checkOptions('serialize', optionsOf('serialize', options),
+      ['format', 'version', 'prefixes', 'literalShorthand', 'useNativeTypes',
+        'useRdfType', 'rdfDirection', 'inputFormat', 'baseIRI']);
+    const { inputFormat, baseIRI, ...writeOpts } = opts;
+    if (writeOpts.format !== undefined && !WRITER_TAGS[String(writeOpts.format).toLowerCase()]) {
+      throw new TypeError(`serialize: unknown format '${writeOpts.format}'. Known formats: ` +
+        [...new Set(Object.values(WRITER_TAGS))].join(', '));
     }
-    const rawOut = String(opts.format || 'nquads').toLowerCase();
-    const outFormat = rawOut === 'ttl' ? 'turtle' : rawOut;
-    if (outFormat !== 'nquads' && outFormat !== 'ntriples' && outFormat !== 'turtle') {
-      throw new TypeError(
-        "serialize: format must be 'nquads', 'ntriples', or 'turtle'");
-    }
-    const docs = toDocs(data, { format: opts.inputFormat });
-
-    const e = await entry();
-    if (outFormat === 'turtle') {
-      const nq = docsToEntryNQuads(e, docs, 'serialize(turtle)');
-      const dataPrefixes = (data instanceof Dataset) ? data.prefixes : null;
-      const hasOptions = opts.prefixes !== undefined || opts.literalShorthand !== undefined;
-      const useWith = hasOptions || (dataPrefixes && Object.keys(dataPrefixes).length > 0);
-      if (useWith) {
-        requireEntryFn(e, 'serializeTurtleWith', 'Turtle serialization (prefixes/literalShorthand)');
-        const mergedPrefixes = { ...(dataPrefixes || {}), ...(opts.prefixes || {}) };
-        const optionsJson = JSON.stringify({
-          prefixes: mergedPrefixes,
-          ...(opts.literalShorthand !== undefined ? { literalShorthand: !!opts.literalShorthand } : {}),
-        });
-        return entryResult(e.serializeTurtleWith(nq, optionsJson), 'serialize').turtle;
-      }
-      requireEntryFn(e, 'serializeTurtle', 'Turtle serialization');
-      return entryResult(e.serializeTurtle(nq), 'serialize').turtle;
-    }
-
-    // N-Quads, sorted (the engine's canonical N-Quads line order).
-    // 'ntriples' is the same text when every quad is in the default
-    // graph; N-Triples has no graph term, so data with a named graph is
-    // refused for that format rather than flattened.
-    const nq = docs.every((d) => d.ext === 'nq')
-      ? docs.map((d) => d.content).join('')
-      : docsToEntryNQuads(e, docs, `serialize(${outFormat})`);
-    const out = entryResult(e.serializeNQuads(nq), 'serialize').nquads;
-    if (outFormat === 'ntriples') {
-      for (const q of Dataset.fromNQuads(out)) {
-        if (q.graph.termType !== 'DefaultGraph') {
-          throw new TypeError(
-            "serialize: format 'ntriples' holds one graph and the data has a " +
-            "named graph; use format 'nquads'");
-        }
-      }
-    }
-    return out;
+    return withDataset(data, { format: inputFormat, baseIRI }, 'serialize',
+      (_c, ds) => ds.serialize(writeOpts));
   }
 
   /**
-   * RDFC-1.0 canonicalization: canonical blank-node labels + sorted
-   * canonical N-Quads.
+   * RDFC-1.0 canonical N-Quads.
    * @param {Dataset|string|Array} data
-   * @param {{format?: string}} [options]
+   * @param {{format?: string, baseIRI?: string}} [options]
    * @returns {Promise<string>}
    */
   async function canonicalize(data, options) {
-    if (data instanceof DatasetHandle) {
-      return data.canonicalize();
-    }
-    const docs = toDocs(data, optionsOf('canonicalize', options));
-    const e = await entry();
-    const nq = docsToEntryNQuads(e, docs, 'canonicalize');
-    return entryResult(e.canonicalizeToNQuads(nq), 'canonicalize').nquads;
+    const opts = checkOptions('canonicalize', optionsOf('canonicalize', options), ['format', 'baseIRI']);
+    return withDataset(data, opts, 'canonicalize', (_c, ds) => ds.toString('rdfc'));
   }
 
   /**
-   * Enumerate the named graphs of an already-parsed Dataset.
-   *
-   * Graphs-api design (docs/designissues/2026-07-05-graphs-api-design.md
-   * section 1.3): DatasetCore.match(null,null,null,graphNode) already
-   * gives per-graph read access, but match() alone cannot answer "what
-   * graph names exist" -- this is exactly that enumeration, and only
-   * that: it walks quads already produced by the engine's parser, so
-   * it needs no engine round-trip (no new RDF/SPARQL semantics, rule
-   * #11 stays satisfied trivially).
-   *
+   * The named graphs of a Dataset, each as a Dataset (default graph
+   * excluded, first-seen order).
    * @param {Dataset} dataset
    * @returns {Array<[iri: string, graph: Dataset]>}
-   *   default graph excluded, first-seen order.
    */
   function graphs(dataset) {
-    if (!(dataset instanceof Dataset)) {
-      throw new TypeError('graphs: expected a Dataset');
-    }
-    const seen = new Map(); // iri -> graph term (first occurrence)
+    if (!(dataset instanceof Dataset)) throw new TypeError('graphs: expected a Dataset');
+    const seen = new Map();
     for (const q of dataset) {
       const g = q.graph;
       if (!g || g.termType === 'DefaultGraph') continue;
       if (!seen.has(g.value)) seen.set(g.value, g);
     }
     const out = [];
-    for (const [iri, gTerm] of seen) {
-      out.push([iri, dataset.match(null, null, null, gTerm)]);
-    }
+    for (const [iri, gTerm] of seen) out.push([iri, dataset.match(null, null, null, gTerm)]);
     return out;
   }
 
   /**
-   * RDFC-1.0 canonical hash of a single graph -- the graph-scoped
-   * sibling of canonicalize(), gated via capabilities() the same way
-   * (docs/designissues/2026-07-05-graphs-api-design.md section 1.3).
-   * Accepts a whole dataset or (more usually) one entry of graphs()'s
-   * output; either way, every quad's graph component is dropped before
-   * canonicalizing, matching RDF.Canonical.fst's
-   * canonicalize_named_graph, which projects the named graph into
-   * `{ ds_default = g; ds_named = [] }` before reusing
-   * canonicalize_to_nquads unmodified.
-   *
+   * RDFC-1.0 canonical N-Quads of one graph: every quad's graph name is
+   * dropped first. Text, not a digest.
    * @param {Dataset} datasetOrGraph
-   * @returns {Promise<string>} canonical N-Quads text for that graph alone.
+   * @returns {Promise<string>}
    */
   async function canonicalHash(datasetOrGraph) {
     if (!(datasetOrGraph instanceof Dataset)) {
-      throw new TypeError(
-        'canonicalHash: expected a Dataset (e.g. one entry of graphs())');
+      throw new TypeError('canonicalHash: expected a Dataset (e.g. one entry of graphs())');
     }
-    const asDefaultGraph = new Dataset(
-      datasetOrGraph.toArray().map(
-        (q) => dataFactory.quad(q.subject, q.predicate, q.object)));
-    return canonicalize(asDefaultGraph.toNQuads(), { format: 'nquads' });
+    const asDefault = datasetOrGraph.toArray()
+      .map((q) => quadToNQuads(dataFactory.quad(q.subject, q.predicate, q.object))).join('');
+    return canonicalize(asDefault, { format: 'nquads' });
   }
 
   // A wasm module older than this package can lack an op: `e[fnName]` is
-  // then undefined, which would otherwise surface as "e.x is not a
-  // function". Fail with missingOpError(), which names the op.
+  // then undefined. Fail with missingOpError(), which names the op.
   function requireEntryFn(e, fnName, what) {
     if (typeof e[fnName] !== 'function') throw missingOpError(what, e, fnName);
   }
 
   /**
-   * SHACL validation (op shaclValidate, Wasm/Ops/Validate.lean): SHACL
-   * Core, SHACL-SPARQL constraints and SHACL 1.2 node expressions, over
-   * the default graph of each argument. A shapes graph with a feature
-   * the validator does not read (the SPARQL-based target of SHACL-AF)
-   * and a validation failure (SHACL 5.3.2) reject.
+   * SHACL validation over the default graph of each argument.
    * @param {Dataset|string|Array} data
    * @param {Dataset|string|Array} shapes
-   * @param {{format?: string}} [options] applies to both data and shapes
+   * @param {{format?: string, baseIRI?: string}} [options] read text arguments
    * @returns {Promise<{conforms: boolean, report: Dataset}>}
-   *   report is the validation report graph (one sh:ValidationReport
-   *   with sh:conforms, and one sh:result per validation result).
    */
   async function shaclValidate(data, shapes, options) {
-    const e = await entry();
-    requireEntryFn(e, 'shaclValidate', 'SHACL validation');
-    const dataNq = docsToEntryNQuads(e, toDocs(data, options), 'shaclValidate(data)');
-    const shapesNq = docsToEntryNQuads(e, toDocs(shapes, options), 'shaclValidate(shapes)');
-    const r = entryResult(e.shaclValidate(dataNq, shapesNq), 'shaclValidate');
-    return {
-      conforms: r.conforms,
-      report: Dataset.fromNQuads(r.reportNquads, {
-        blankNodePrefix: freshBnodePrefix(),
-      }),
-    };
+    const opts = checkOptions('shaclValidate', optionsOf('shaclValidate', options), ['format', 'baseIRI']);
+    return withDataset(data, opts, 'shaclValidate(data)', (c, ds) => shaclOnHandle(c, ds, shapes, opts));
   }
 
   /**
-   * ShEx (Shape Expressions) validation of one focus node against one
-   * shape (op shexValidate, Wasm/Ops/Validate.lean), over the default
-   * graph of `data`.
+   * ShEx validation of one focus node against one shape (or the schema's
+   * start), over the default graph of `data`. The schema text is ShExJ when
+   * its first non-blank character is '{', ShExC otherwise.
    * @param {Dataset|string|Array} data
-   * @param {string} schemaJson the schema, as text -- either ShExJ (a
-   *   JSON Schema document) or ShExC (the compact human-readable
-   *   syntax; L4Factoidal/ShEx/Compact.lean). Dispatch rule: the schema
-   *   text's first non-whitespace character decides the format -- '{'
-   *   means ShExJ, anything else is parsed as ShExC. No separate flag
-   *   or file-extension hint is needed; a schema whose ShExC text
-   *   happens to start with whitespace then '{' would misdetect, but no
-   *   valid ShExC document starts that way (ShExC always opens with a
-   *   directive keyword, a shape label, or START).
-   * @param {string|{termType,value}} focus an IRI, "_:label", or an
-   *   RDF/JS NamedNode/BlankNode term
-   * @param {string|{termType,value}|null} [shape] a shape label (same
-   *   shapes as focus); omit/null to validate against the schema's own `start`
-   * @param {{format?: string}} [options]
-   * @returns {Promise<boolean>} the verdict. (The type allows null for
-   *   an engine that defers a schema; the Lean validator decides every
-   *   schema it reads.)
+   * @param {string} schema
+   * @param {string|{termType,value}} focus
+   * @param {string|{termType,value}|null} [shape]
+   * @param {{format?: string, baseIRI?: string}} [options]
+   * @returns {Promise<boolean>}
    */
-  async function shexValidate(data, schemaJson, focus, shape, options) {
-    const e = await entry();
-    requireEntryFn(e, 'shexValidate', 'ShEx validation');
-    if (typeof schemaJson !== 'string') {
-      throw new TypeError('shexValidate: schemaJson must be a string');
-    }
-    const dataNq = docsToEntryNQuads(e, toDocs(data, options), 'shexValidate(data)');
-    const focusStr = shexTermToString(focus, 'shexValidate(focus)');
-    const shapeStr = shape == null ? '' : shexTermToString(shape, 'shexValidate(shape)');
-    const r = entryResult(
-      e.shexValidate(dataNq, schemaJson, focusStr, shapeStr), 'shexValidate');
-    return r.verdict;
-  }
-
-  const OWL_CLOSURE_MODES = { rdfs: 'RDFS', 'owl-rl': 'OWL-RL', owlrl: 'OWL-RL', owl_rl: 'OWL-RL' };
-
-  function normalizeClosureMode(mode) {
-    const canonical = OWL_CLOSURE_MODES[String(mode || '').toLowerCase()];
-    if (!canonical) {
-      throw new TypeError(
-        `owlClosure: mode must be 'RDFS' or 'OWL-RL' (got '${mode}')`);
-    }
-    return canonical;
+  async function shexValidate(data, schema, focus, shape, options) {
+    const opts = checkOptions('shexValidate', optionsOf('shexValidate', options), ['format', 'baseIRI']);
+    if (typeof schema !== 'string') throw new TypeError('shexValidate: schema must be a string');
+    return withDataset(data, opts, 'shexValidate(data)', (c, ds) => shexOnHandle(c, ds, schema, focus, shape));
   }
 
   /**
-   * RDFS or OWL-RL entailment closure, materialized as a new Dataset
-   * (input triples + derived triples). Only the default graph is
-   * closed over.
+   * Closure of the default graph, as a new Dataset.
+   * @param {Dataset|string|Array} data
+   * @param {'rdfs'|'owl-rl'|'rho-df'|'rdfs-plus'} regime
+   * @param {{format?: string, baseIRI?: string}} [options]
+   * @returns {Promise<Dataset>}
+   */
+  async function closure(data, regime, options) {
+    const opts = checkOptions('closure', optionsOf('closure', options), ['format', 'baseIRI']);
+    return withDataset(data, opts, 'closure', (c, ds) => closureOnHandle(c, ds, regime));
+  }
+
+  /**
+   * RDFS or OWL 2 RL closure of the default graph, as a new Dataset.
    * @param {Dataset|string|Array} data
    * @param {'RDFS'|'OWL-RL'} mode
-   * @param {{format?: string}} [options]
+   * @param {{format?: string, baseIRI?: string}} [options]
    * @returns {Promise<Dataset>}
    */
   async function owlClosure(data, mode, options) {
-    const e = await entry();
-    requireEntryFn(e, 'owlClosure', 'OWL/RDFS closure');
-    const dataNq = docsToEntryNQuads(e, toDocs(data, options), 'owlClosure(data)');
-    const r = entryResult(
-      e.owlClosure(dataNq, normalizeClosureMode(mode)), 'owlClosure');
-    return Dataset.fromNQuads(r.nquads, { blankNodePrefix: freshBnodePrefix() });
+    const m = String(mode || '').toLowerCase();
+    if (!['rdfs', 'owl-rl', 'owlrl', 'owl_rl'].includes(m)) {
+      throw new TypeError(`owlClosure: mode must be 'RDFS' or 'OWL-RL' (got '${mode}')`);
+    }
+    return closure(data, m, options);
   }
 
   /**
-   * The core-RDFS closure (L4Factoidal/RDFS/Closure.lean, `closureFix`):
-   * rdfs2/3/5/7/9/11 only.
-   * "corerdfs" is this project's API name for the fragment the
-   * literature calls ρdf — subPropertyOf/subClassOf/type/domain/range,
-   * per Muñoz, Pérez & Gutierrez, "Simple and Efficient Minimal
-   * RDFS", J. Web Semantics 7(3), 2009. `rhoDfClosure` remains as an
-   * alias so code can be grepped against the theorem registry.
-   * Returns the raw certified result, not a Dataset: the N-Triples
-   * text is the object the theorems talk about.
+   * The core-RDFS (rho-df: subPropertyOf, subClassOf, type, domain, range;
+   * Munoz, Perez and Gutierrez 2009) closure, as a new Dataset.
    * @param {Dataset|string|Array} data
-   * @param {{format?: string}} [options]
-   * @returns {Promise<{ok: boolean, ntriples: string}>}
+   * @param {{format?: string, baseIRI?: string}} [options]
+   * @returns {Promise<Dataset>}
    */
   async function coreRdfsClosure(data, options) {
-    const e = await entry();
-    requireEntryFn(e, 'rhoDfClosure', 'certified core-RDFS closure');
-    const dataNq = docsToEntryNQuads(e, toDocs(data, options), 'coreRdfsClosure(data)');
-    return entryResult(e.rhoDfClosure(dataNq), 'coreRdfsClosure');
+    return closure(data, 'rho-df', options);
   }
-  /** Literature-name alias for coreRdfsClosure (ρdf; see above). */
+  /** Literature-name alias for coreRdfsClosure. */
   const rhoDfClosure = coreRdfsClosure;
 
   /**
-   * Decidable core-RDFS fragment check (`is_rho_df_frag`, tied by an
-   * F* lemma to the prop the regime theorems quantify over): does the
-   * certified path's guarantee apply to this data? Naming: see
-   * coreRdfsClosure above. `rhoDfFragmentCheck` remains as an alias.
+   * Is `data` in the core-RDFS fragment the certified closure covers?
    * @param {Dataset|string|Array} data
-   * @param {{format?: string}} [options]
+   * @param {{format?: string, baseIRI?: string}} [options]
    * @returns {Promise<{ok: boolean, fragment: boolean}>}
    */
   async function coreRdfsCheck(data, options) {
+    const opts = checkOptions('coreRdfsCheck', optionsOf('coreRdfsCheck', options), ['format', 'baseIRI']);
+    const nq = await nquadsOf(data, opts, 'coreRdfsCheck(data)');
     const e = await entry();
     requireEntryFn(e, 'rhoDfFragmentCheck', 'core-RDFS fragment check');
-    const dataNq = docsToEntryNQuads(e, toDocs(data, options), 'coreRdfsCheck(data)');
-    return entryResult(e.rhoDfFragmentCheck(dataNq), 'coreRdfsCheck');
+    return entryResult(e.rhoDfFragmentCheck(nq), 'coreRdfsCheck');
   }
-  /** Literature-name alias for coreRdfsCheck (ρdf; see above). */
+  /** Literature-name alias for coreRdfsCheck. */
   const rhoDfFragmentCheck = coreRdfsCheck;
 
   /**
-   * RDFS-Plus closure (RDF.Entailment.RDFSPlus.fst's
-   * `rdfs_plus_closure`): the full RDFS step plus the practical OWL
-   * subset -- owl:sameAs (symmetry/transitivity/substitution),
-   * owl:inverseOf, Symmetric/Transitive/Functional/
-   * InverseFunctionalProperty, equivalentClass/Property. The tier the
-   * literature calls RDFS-Plus (Allemang & Hendler, "Semantic Web for
-   * the Working Ontologist", 2008) or RDFS++ (AllegroGraph). Claim
-   * level, weaker than coreRdfsClosure's and stated exactly: every OWL
-   * row runs under a PROVED licensing + truth lemma (per-rule
-   * certificates in the theorem registry); no chain-level completeness
-   * is claimed -- owl:sameAs equality breaks the Herbrand argument the
-   * corerdfs completeness theorem uses.
+   * RDFS-Plus closure (RDFS with owl:sameAs, inverseOf, Symmetric,
+   * Transitive, Functional and InverseFunctional properties,
+   * equivalentClass and equivalentProperty), as a new Dataset.
    * @param {Dataset|string|Array} data
-   * @param {{format?: string}} [options]
-   * @returns {Promise<{ok: boolean, ntriples: string, rounds: number}>}
+   * @param {{format?: string, baseIRI?: string}} [options]
+   * @returns {Promise<Dataset>}
    */
   async function rdfsPlusClosure(data, options) {
-    const e = await entry();
-    requireEntryFn(e, 'rdfsPlusClosure', 'RDFS-Plus closure');
-    const dataNq = docsToEntryNQuads(e, toDocs(data, options), 'rdfsPlusClosure(data)');
-    return entryResult(e.rdfsPlusClosure(dataNq), 'rdfsPlusClosure');
+    return closure(data, 'rdfs-plus', options);
   }
 
   /**
-   * OWL tableau materialisation (formal/fstar/Tableau.fst's
-   * `tableau_materialise`): add `i rdf:type <ClassExpression>` for
-   * every individual the model-construction reasoner can prove is a
-   * member of an OWL class expression (someValuesFrom / hasValue /
-   * unionOf / intersectionOf, and the named class an equivalentClass
-   * restriction defines). This is the same F* function the SPARQL 1.1
-   * entailment-regime suite runs under the DL regime. Needs the
-   * Default graph only (same scope cut as owlClosure).
+   * OWL tableau materialisation over the default graph.
    * @param {Dataset|string|Array} data
-   * @param {{format?: string}} [options]
+   * @param {{format?: string, baseIRI?: string}} [options]
    * @returns {Promise<{dataset: Dataset, addedCount: number, budgetHit?: boolean}>}
-   *   dataset is input + tableau-derived triples; addedCount is how many
-   *   the tableau added; budgetHit (Lean engine only) is true when the
-   *   materialisation work budget ran out.
    */
   async function tableauMaterialise(data, options) {
-    const e = await entry();
-    requireEntryFn(e, 'tableauMaterialise', 'OWL tableau materialisation');
-    const dataNq = docsToEntryNQuads(e, toDocs(data, options), 'tableauMaterialise(data)');
-    const r = entryResult(e.tableauMaterialise(dataNq), 'tableauMaterialise');
+    const opts = checkOptions('tableauMaterialise', optionsOf('tableauMaterialise', options), ['format', 'baseIRI']);
+    const nq = await nquadsOf(data, opts, 'tableauMaterialise(data)');
+    const c = await ctx();
+    requireEntryFn(c.e, 'tableauMaterialise', 'OWL tableau materialisation');
+    const r = entryResult(c.e.tableauMaterialise(nq), 'tableauMaterialise');
     return {
-      dataset: Dataset.fromNQuads(r.nquads, { blankNodePrefix: freshBnodePrefix() }),
+      dataset: c.fromNQuads(r.nquads, {}),
       addedCount: r.addedCount,
-      // Only the Lean engine reports it: true when the materialisation
-      // work budget ran out, so an absent membership is a cap, not a proof.
       ...(r.budgetHit !== undefined ? { budgetHit: r.budgetHit } : {}),
     };
   }
 
   /**
-   * OWL DL inconsistency verdict: OWL RL closure, one class-expression
-   * materialisation pass, OWL RL closure again, then the clash decision
-   * (Wasm/Ops/Reasoning.lean). `rlAlone` is the plain OWL-RL verdict on the same
-   * input, so a caller can see the DL>=RL cases the tableau adds: a
-   * disjointness clash reached only after the tableau materialises a
-   * restriction membership the Datalog closure never derives. Default
-   * graph only.
+   * OWL DL inconsistency verdict (RL closure, one class-expression pass,
+   * RL closure, clash decision); `rlAlone` is the plain OWL-RL verdict.
    * @param {Dataset|string|Array} data
-   * @param {{format?: string}} [options]
+   * @param {{format?: string, baseIRI?: string}} [options]
    * @returns {Promise<{inconsistent: boolean, rlAlone: boolean}>}
    */
   async function tableauDlInconsistent(data, options) {
+    const opts = checkOptions('tableauDlInconsistent', optionsOf('tableauDlInconsistent', options), ['format', 'baseIRI']);
+    const nq = await nquadsOf(data, opts, 'tableauDlInconsistent(data)');
     const e = await entry();
     requireEntryFn(e, 'tableauDlInconsistent', 'OWL tableau DL inconsistency check');
-    const dataNq = docsToEntryNQuads(e, toDocs(data, options), 'tableauDlInconsistent(data)');
-    const r = entryResult(e.tableauDlInconsistent(dataNq), 'tableauDlInconsistent');
+    const r = entryResult(e.tableauDlInconsistent(nq), 'tableauDlInconsistent');
     return { inconsistent: r.inconsistent, rlAlone: r.rlAlone };
   }
 
   /**
-   * OWL DL consistency verdict via the clash-detecting tableau
-   * (L4Factoidal/OWL/Refute.lean, `tableauConsistent`) over the OWL RL
-   * closure. Default graph only (same scope cut as
-   * tableauDlInconsistent).
-   *
-   * Three-valued: `consistent` is `false` (a clash on every
-   * tableau branch), `true` (a model was constructed with no clash), or
-   * `null` -- the refuter ran out of budget before deciding, with
-   * `reason` naming the fuel cap. `null` is never collapsed to `false`.
-   *
-   * @param {Dataset|string|Array} data the ontology + ABox graph
-   * @param {{format?: string, fuel?: number|string}} [options] format
-   *   parses `data` (default 'turtle'); fuel overrides the refutation
-   *   budget (default 20000).
+   * OWL DL consistency: `consistent` is true, false, or null (the refuter's
+   * budget ran out; `reason` names the cap).
+   * @param {Dataset|string|Array} data
+   * @param {{format?: string, baseIRI?: string, fuel?: number|string}} [options]
    * @returns {Promise<{consistent: boolean|null, reason?: string}>}
    */
   async function owlIsConsistent(data, options) {
+    const opts = checkOptions('owlIsConsistent', optionsOf('owlIsConsistent', options), ['format', 'baseIRI', 'fuel']);
+    const nq = await nquadsOf(data, opts, 'owlIsConsistent(data)');
     const e = await entry();
     requireEntryFn(e, 'owlIsConsistent', 'OWL DL consistency check');
-    const opts = options || {};
-    const dataNq = docsToEntryNQuads(e, toDocs(data, opts), 'owlIsConsistent(data)');
     const optsJson = JSON.stringify(opts.fuel != null ? { fuel: String(opts.fuel) } : {});
-    const r = entryResult(e.owlIsConsistent(dataNq, optsJson), 'owlIsConsistent');
+    const r = entryResult(e.owlIsConsistent(nq, optsJson), 'owlIsConsistent');
     return r.reason === undefined
       ? { consistent: r.consistent }
       : { consistent: r.consistent, reason: r.reason };
   }
 
   /**
-   * OWL entailment check: does `premise` entail `conclusion`? Two
-   * paths (Wasm/Ops/Reason.lean): `via: "closure"` when every conclusion
-   * triple is in the OWL-RL closure of the premise; `via: "refutation"`
-   * when the negated conclusion (L4Factoidal/OWL/NegationGoals.lean) is
-   * refuted on every goal by the clash-detecting tableau. Default graph
-   * only.
-   *
-   * Three-valued: `entailed` is `true`, `false`, or `null` (a refutation
-   * goal exhausted its fuel budget -- indeterminate, never a silent
-   * `false`; `reason` names the cap).
-   *
+   * Does `premise` entail `conclusion`? `entailed` is true, false, or null
+   * (a refutation goal ran out of budget; `reason` names the cap).
    * @param {Dataset|string|Array} premise
    * @param {Dataset|string|Array} conclusion
-   * @param {{format?: string, fuel?: number|string}} [options] format
-   *   parses both graphs (default 'turtle'); fuel overrides the
-   *   refutation budget (default 20000).
+   * @param {{format?: string, baseIRI?: string, fuel?: number|string}} [options]
    * @returns {Promise<{entailed: boolean|null, via: 'closure'|'refutation', reason?: string}>}
    */
   async function owlEntails(premise, conclusion, options) {
+    const opts = checkOptions('owlEntails', optionsOf('owlEntails', options), ['format', 'baseIRI', 'fuel']);
+    const premiseNq = await nquadsOf(premise, opts, 'owlEntails(premise)');
+    const conclusionNq = await nquadsOf(conclusion, opts, 'owlEntails(conclusion)');
     const e = await entry();
     requireEntryFn(e, 'owlEntails', 'OWL entailment check');
-    const opts = options || {};
-    const premiseNq = docsToEntryNQuads(e, toDocs(premise, opts), 'owlEntails(premise)');
-    const conclusionNq = docsToEntryNQuads(e, toDocs(conclusion, opts), 'owlEntails(conclusion)');
     const optsJson = JSON.stringify(opts.fuel != null ? { fuel: String(opts.fuel) } : {});
     const r = entryResult(e.owlEntails(premiseNq, conclusionNq, optsJson), 'owlEntails');
     return r.reason === undefined
@@ -1478,141 +1174,114 @@ function buildApi(driver) {
   }
 
   /**
-   * Evaluate an RML mapping graph against one logical source's raw
-   * data, returning the generated triples as a Dataset. Every triples
-   * map in `mapping` reads the SAME `sourceData`, so a join across two
-   * different logical sources is not reachable through this one-source
-   * function. The iteration format is the mapping's
-   * `rml:referenceFormulation` (RML Core); `sourceKind` is checked.
-   * @param {Dataset|string|Array} mapping the RML mapping graph (Turtle by default)
-   * @param {string} sourceData raw JSON or CSV text (not RDF)
+   * Evaluate an RML mapping graph over one logical source's raw text.
+   * Every triples map reads the same `sourceData`.
+   * @param {Dataset|string|Array} mapping the mapping graph
+   * @param {string} sourceData raw JSON or CSV text
    * @param {'json'|'csv'} sourceKind
-   * @param {{format?: string}} [options] applies to `mapping`
+   * @param {{format?: string, baseIRI?: string}} [options] read `mapping` text
    * @returns {Promise<Dataset>}
    */
   async function rmlMap(mapping, sourceData, sourceKind, options) {
-    const e = await entry();
-    requireEntryFn(e, 'rmlMap', 'RML mapping evaluation');
-    if (typeof sourceData !== 'string') {
-      throw new TypeError('rmlMap: sourceData must be a string');
-    }
+    if (typeof sourceData !== 'string') throw new TypeError('rmlMap: sourceData must be a string');
     const kind = String(sourceKind || '').toLowerCase();
-    if (kind !== 'json' && kind !== 'csv') {
-      throw new TypeError("rmlMap: sourceKind must be 'json' or 'csv'");
-    }
-    const mappingNq = docsToEntryNQuads(e, toDocs(mapping, options), 'rmlMap(mapping)');
-    const r = entryResult(e.rmlMap(mappingNq, sourceData, kind), 'rmlMap');
-    return Dataset.fromNQuads(r.nquads, { blankNodePrefix: freshBnodePrefix() });
+    if (kind !== 'json' && kind !== 'csv') throw new TypeError("rmlMap: sourceKind must be 'json' or 'csv'");
+    const opts = checkOptions('rmlMap', optionsOf('rmlMap', options), ['format', 'baseIRI']);
+    return withDataset(mapping, opts, 'rmlMap(mapping)', (c, ds) => {
+      requireEntryFn(c.e, 'datasetFromRml', 'RML mapping evaluation');
+      return c.wrap(entryResult(c.e.datasetFromRml(ds.handle, sourceData, kind), 'rmlMap'), {});
+    });
   }
 
   /**
-   * CSVW csv2rdf conversion (w3.org/TR/csv2rdf): convert tabular data
-   * plus an optional CSVW metadata document into a Dataset (op
-   * csvwToRdf, L4Factoidal/CSVW). Every table in a multi-table `tables`
-   * group reads the SAME `csvText`; a `tableSchema` given as a URL is not
-   * fetched.
-   * @param {string} csvText raw RFC 4180 tabular data (not RDF)
-   * @param {string} [metadataJson] CSVW metadata document (JSON text);
-   *   '' / omitted infers the schema from the CSV's own header row
-   * @param {{mode?: 'standard'|'minimal', base?: string, url?: string}}
-   *   [options] mode defaults to 'standard' (full csvw:TableGroup/
-   *   Table/Row wrapper); base is the resolution base IRI (default
-   *   'file:///'); url is the tabular file's own URL used when the
-   *   metadata carries none (default 'table.csv') -- cell predicates
-   *   default to `<tableUrl>#<colName>`, so url shapes every emitted
-   *   predicate IRI.
+   * CSVW csv2rdf (https://www.w3.org/TR/csv2rdf/): tabular data plus an
+   * optional metadata document to a Dataset. Every table of a group reads
+   * the same `csvText`; a `tableSchema` URL is not fetched.
+   * @param {string} csvText
+   * @param {string} [metadataJson] '' or omitted: the header row describes the table
+   * @param {{mode?: 'standard'|'minimal', base?: string, url?: string}} [options]
    * @returns {Promise<Dataset>}
    */
   async function csvwToRdf(csvText, metadataJson, options) {
-    if (typeof csvText !== 'string') {
-      throw new TypeError('csvwToRdf: csvText must be a string');
-    }
+    if (typeof csvText !== 'string') throw new TypeError('csvwToRdf: csvText must be a string');
     const meta = metadataJson == null ? '' : metadataJson;
-    if (typeof meta !== 'string') {
-      throw new TypeError('csvwToRdf: metadataJson must be a string');
-    }
-    const e = await entry();
-    requireEntryFn(e, 'csvwToRdf', 'CSVW csv2rdf conversion');
-    const opts = options || {};
+    if (typeof meta !== 'string') throw new TypeError('csvwToRdf: metadataJson must be a string');
+    const opts = checkOptions('csvwToRdf', options, ['mode', 'base', 'url']);
+    const c = await ctx();
+    requireEntryFn(c.e, 'datasetFromCsvw', 'CSVW csv2rdf conversion');
     const optionsJson = JSON.stringify({
       ...(opts.mode ? { mode: String(opts.mode).toLowerCase() } : {}),
       ...(opts.base ? { base: opts.base } : {}),
       ...(opts.url ? { url: opts.url } : {}),
     });
-    const r = entryResult(e.csvwToRdf(csvText, meta, optionsJson), 'csvwToRdf');
-    return Dataset.fromNQuads(r.nquads, { blankNodePrefix: freshBnodePrefix() });
+    return c.wrap(entryResult(c.e.datasetFromCsvw(csvText, meta, optionsJson), 'csvwToRdf'), {});
   }
 
   /**
-   * Parse a JSON-LD document into a Dataset, with JSON-LD-specific
-   * options `parse()` has no room for (plain `parse(text,
-   * {format:'jsonld'})` also works; this exists for callers that need
-   * rdfDirection/expandContext/processingMode). A remote `@context` is
-   * not fetched (no network access through the engine).
+   * JSON-LD 1.1 to RDF with the JSON-LD options parse() has no room for.
+   * A remote `@context` is not fetched.
    * @param {string} jsonldText
    * @param {{base?: string, rdfDirection?: string, expandContext?: string,
    *   processingMode?: string}} [options]
    * @returns {Promise<Dataset>}
    */
   async function jsonldToRdf(jsonldText, options) {
-    if (typeof jsonldText !== 'string') {
-      throw new TypeError('jsonldToRdf: jsonldText must be a string');
-    }
-    const e = await entry();
-    requireEntryFn(e, 'jsonldToRdf', 'jsonldToRdf');
-    const opts = options || {};
+    if (typeof jsonldText !== 'string') throw new TypeError('jsonldToRdf: jsonldText must be a string');
+    const opts = checkOptions('jsonldToRdf', options, ['base', 'rdfDirection', 'expandContext', 'processingMode']);
+    const c = await ctx();
+    requireEntryFn(c.e, 'datasetFromJsonLd', 'jsonldToRdf');
     const optionsJson = JSON.stringify({
       ...(opts.base ? { base: opts.base } : {}),
       ...(opts.rdfDirection ? { rdfDirection: opts.rdfDirection } : {}),
       ...(opts.expandContext ? { expandContext: opts.expandContext } : {}),
       ...(opts.processingMode ? { processingMode: opts.processingMode } : {}),
     });
-    const r = entryResult(e.jsonldToRdf(jsonldText, optionsJson), 'jsonldToRdf');
-    return Dataset.fromNQuads(r.nquads, { blankNodePrefix: freshBnodePrefix() });
+    return c.wrap(entryResult(c.e.datasetFromJsonLd(jsonldText, optionsJson), 'jsonldToRdf'), {},
+      { format: 'jsonld', formatInferred: false });
   }
 
   /**
-   * RIF Core forward-chaining saturation, materialized as a new
-   * Dataset (input triples + derived triples, default graph only --
-   * RIF Core has no named-graph notion).
-   * @param {Dataset|string|Array} data the premise graph
-   * @param {string} rifRulesXml a RIF Core XML rule document
-   * @param {{format?: string}} [options] applies to `data`
+   * RIF Core forward-chaining saturation of the default graph, as a new
+   * Dataset (input and derived triples).
+   * @param {Dataset|string|Array} data
+   * @param {string} rifRulesXml
+   * @param {{format?: string, baseIRI?: string}} [options]
    * @returns {Promise<Dataset>}
    */
   async function rifEval(data, rifRulesXml, options) {
-    const e = await entry();
-    requireEntryFn(e, 'rifEval', 'RIF Core evaluation');
-    if (typeof rifRulesXml !== 'string') {
-      throw new TypeError('rifEval: rifRulesXml must be a string');
-    }
-    const dataNq = docsToEntryNQuads(e, toDocs(data, options), 'rifEval(data)');
-    const r = entryResult(e.rifEval(rifRulesXml, dataNq), 'rifEval');
-    return Dataset.fromNQuads(r.saturatedNquads, {
-      blankNodePrefix: freshBnodePrefix(),
+    if (typeof rifRulesXml !== 'string') throw new TypeError('rifEval: rifRulesXml must be a string');
+    const opts = checkOptions('rifEval', optionsOf('rifEval', options), ['format', 'baseIRI']);
+    return withDataset(data, opts, 'rifEval(data)', (c, ds) => {
+      requireEntryFn(c.e, 'datasetRifEval', 'RIF Core evaluation');
+      return c.wrap(entryResult(c.e.datasetRifEval(rifRulesXml, ds.handle), 'rifEval'), ds.prefixes);
     });
   }
 
   /**
-   * Serialize an RDF dataset as an expanded-form JSON-LD document --
-   * the reverse of jsonldToRdf (entry_jsoo.ml's jsonldFromRdf export ->
-   * the verified JSONLD.FromRdf.from_rdf). Returns the parsed JSON-LD
-   * value (an array of node objects).
+   * Expanded JSON-LD of a dataset (JSON-LD 1.1 API section 8), parsed.
+   * The text form is `serialize(data, {format: 'jsonld'})`.
    * @param {Dataset|string|Array} data
-   * @param {{useNativeTypes?:boolean,useRdfType?:boolean,format?:string}} [options]
-   * @returns {Promise<any>} the JSON-LD document (JCS-canonical, parsed)
+   * @param {{useNativeTypes?: boolean, useRdfType?: boolean,
+   *   rdfDirection?: string, format?: string, baseIRI?: string}} [options]
+   * @returns {Promise<any>}
    */
   async function jsonldFromRdf(data, options) {
+    const opts = checkOptions('jsonldFromRdf', optionsOf('jsonldFromRdf', options),
+      ['useNativeTypes', 'useRdfType', 'rdfDirection', 'format', 'baseIRI']);
+    const { format, baseIRI, ...w } = opts;
+    return withDataset(data, { format, baseIRI }, 'jsonldFromRdf(data)',
+      (_c, ds) => JSON.parse(ds.toString({ format: 'jsonld', ...w })));
+  }
+
+  /**
+   * The syntaxes the engine reads and writes (op datasetFormats).
+   * @returns {Promise<Array<{name: string, read11: boolean, read12: boolean,
+   *   write11: boolean, write12: boolean, engine: 'core'|'full'}>>}
+   */
+  async function formats() {
     const e = await entry();
-    requireEntryFn(e, 'jsonldFromRdf', 'jsonldFromRdf');
-    const dataNq = docsToEntryNQuads(e, toDocs(data, options), 'jsonldFromRdf(data)');
-    const opts = options || {};
-    const optionsJson = JSON.stringify({
-      ...(opts.useNativeTypes ? { useNativeTypes: true } : {}),
-      ...(opts.useRdfType ? { useRdfType: true } : {}),
-    });
-    const r = entryResult(e.jsonldFromRdf(dataNq, optionsJson), 'jsonldFromRdf');
-    return JSON.parse(r.jsonld);
+    requireEntryFn(e, 'datasetFormats', 'formats');
+    return entryResult(e.datasetFormats(), 'formats').formats;
   }
 
   /**
@@ -1629,7 +1298,7 @@ function buildApi(driver) {
     const e = await entry();
     requireEntryFn(e, 'didKeyResolve', 'did:key resolution');
     const r = entryResult(e.didKeyResolve(didString), 'didKeyResolve');
-    return Dataset.fromNQuads(r.nquads, { blankNodePrefix: freshBnodePrefix() });
+    return (await ctx()).fromNQuads(r.nquads, {});
   }
 
   /**
@@ -2214,111 +1883,7 @@ function buildApi(driver) {
       JSON.stringify(expr), variable, JSON.stringify(value));
   }
 
-  // Matrix / vector algebra over exact rationals (Math.Matrix). A
-  // matrix is a JSON array of rows; a vector a JSON array of cells;
-  // a cell is an integer or a [num,den] pair. Results render via
-  // Math.Matrix.mres_to_string ("undef" carries a `reason`).
-  async function matrixCall(fnName, what, ...jsonArgs) {
-    const e = await entry();
-    requireEntryFn(e, fnName, what);
-    const r = entryResult(e[fnName](...jsonArgs.map((a) => JSON.stringify(a))), fnName);
-    return { result: r.result, reason: r.reason || '' };
-  }
 
-  /**
-   * Determinant of a square matrix (entry_jsoo.ml's matrixDeterminant
-   * -> Math.Matrix.dyn_determinant), exact.
-   * @param {Array<Array<number|[number,number]>>} matrix
-   * @returns {Promise<{result:string,reason:string}>}
-   */
-  async function matrixDeterminant(matrix) {
-    if (!Array.isArray(matrix)) throw new TypeError('matrixDeterminant: matrix must be an array of rows');
-    return matrixCall('matrixDeterminant', 'matrix determinant', matrix);
-  }
-
-  /**
-   * Dot / scalar product of two vectors (entry_jsoo.ml's
-   * matrixScalarProduct -> Math.Matrix.dyn_scalarproduct).
-   * @param {Array<number|[number,number]>} a
-   * @param {Array<number|[number,number]>} b
-   * @returns {Promise<{result:string,reason:string}>}
-   */
-  async function matrixScalarProduct(a, b) {
-    if (!Array.isArray(a) || !Array.isArray(b)) throw new TypeError('matrixScalarProduct: a and b must be arrays');
-    return matrixCall('matrixScalarProduct', 'vector scalar product', a, b);
-  }
-
-  /**
-   * Cross product of two 3-vectors (entry_jsoo.ml's
-   * matrixVectorProduct -> Math.Matrix.dyn_vectorproduct).
-   * @param {Array<number|[number,number]>} a
-   * @param {Array<number|[number,number]>} b
-   * @returns {Promise<{result:string,reason:string}>}
-   */
-  async function matrixVectorProduct(a, b) {
-    if (!Array.isArray(a) || !Array.isArray(b)) throw new TypeError('matrixVectorProduct: a and b must be arrays');
-    return matrixCall('matrixVectorProduct', 'vector cross product', a, b);
-  }
-
-  /**
-   * Outer product of two vectors (entry_jsoo.ml's matrixOuterProduct
-   * -> Math.Matrix.dyn_outerproduct).
-   * @param {Array<number|[number,number]>} a
-   * @param {Array<number|[number,number]>} b
-   * @returns {Promise<{result:string,reason:string}>}
-   */
-  async function matrixOuterProduct(a, b) {
-    if (!Array.isArray(a) || !Array.isArray(b)) throw new TypeError('matrixOuterProduct: a and b must be arrays');
-    return matrixCall('matrixOuterProduct', 'vector outer product', a, b);
-  }
-
-  // A `scaled` value as entry_jsoo.ml's scaledJson envelope decodes it:
-  // {mantissa,scale,decimal} strings straight off the wire.
-  function scaledFromJson(s) {
-    return { mantissa: s.mantissa, scale: s.scale, decimal: s.decimal };
-  }
-
-  /**
-   * n+1 evenly spaced samples of the logistic sigmoid
-   * L / (1 + exp(-k*(x - x0))) over [xmin, xmax] (entry_jsoo.ml's
-   * sigmoidPoints -> Math.Sigmoid.sigmoid_points). All arithmetic --
-   * argument reduction, the truncated Taylor series, repeated
-   * squaring, and the x samples themselves -- runs as exact rational
-   * arithmetic inside Math.Sigmoid.fst; see that module's header for
-   * the documented error bound on the returned (rounded) values. This
-   * wrapper only marshals JSON; it never computes exp itself.
-   * @param {{k:number|string,x0:number|string,l:number|string,
-   *   xmin:number|string,xmax:number|string,n:number|string}} params
-   * @returns {Promise<Array<{x:{mantissa:string,scale:string,decimal:string},
-   *   y:{mantissa:string,scale:string,decimal:string}}>>}
-   */
-  async function sigmoidPoints(params) {
-    if (!params || typeof params !== 'object') {
-      throw new TypeError('sigmoidPoints: params must be an object');
-    }
-    const e = await entry();
-    requireEntryFn(e, 'sigmoidPoints', 'sigmoid points');
-    const wire = {
-      k: String(params.k), x0: String(params.x0), l: String(params.l),
-      xmin: String(params.xmin), xmax: String(params.xmax), n: String(params.n),
-    };
-    const r = entryResult(e.sigmoidPoints(JSON.stringify(wire)), 'sigmoid points');
-    return r.points.map((p) => ({ x: scaledFromJson(p.x), y: scaledFromJson(p.y) }));
-  }
-
-  /**
-   * Presentation MathML for the sigmoid formula L / (1 + exp(-k*(x - x0))),
-   * engine-serialized (entry_jsoo.ml's sigmoidFormulaMathml ->
-   * MathML.Present.to_presentation_mathml applied to a fixed
-   * Math.Expr.expr) -- never hand-written MathML.
-   * @returns {Promise<string>} a `<math>...</math>` Presentation MathML document
-   */
-  async function sigmoidFormulaMathml() {
-    const e = await entry();
-    requireEntryFn(e, 'sigmoidFormulaMathml', 'sigmoid formula MathML');
-    const r = entryResult(e.sigmoidFormulaMathml(), 'sigmoid formula MathML');
-    return r.mathml;
-  }
 
   // -----------------------------------------------------------------
   // The Lean persisted store (see the Store class above).
@@ -2367,7 +1932,8 @@ function buildApi(driver) {
     }
     const { blob, artifacts } = await readRegion(reader, gen.generation, keys);
     const env = entryResult(e.storeOpen(manifestHex, JSON.stringify(artifacts), blob), 'openStore');
-    return new Store(e, env, gen, manifestHex, freshBnodePrefix, withExtensionRounds);
+    const c = await ctx();
+    return new Store(e, env, gen, manifestHex, (nq) => c.fromNQuads(nq, {}), withExtensionRounds);
   }
 
   /**
@@ -2414,7 +1980,7 @@ function buildApi(driver) {
     if (typeof queryString !== 'string') {
       throw new TypeError('queryRaw: queryString must be a string');
     }
-    const opts = options || {};
+    const opts = checkOptions('queryRaw', options, ['dataFormat', 'entail', 'output']);
     const dataFormat = String(opts.dataFormat || 'turtle').toLowerCase();
     const entail = opts.entail || 'none';
     const output = opts.output || 'json';
@@ -2624,8 +2190,6 @@ function buildApi(driver) {
       jsonSchema: has('jsonSchemaValidate'),
       schematron: has('schematronValidate'),
       toan: has('toanSummation'),
-      matrix: has('matrixDeterminant'),
-      sigmoid: has('sigmoidPoints') && has('sigmoidFormulaMathml'),
       hdt: has('queryHdt'),
       // VC Data Integrity: Ed25519 is HACL* compiled into the wasm module,
       // SHA-256 is the Lean hash; no separate crypto module or init step.
@@ -2634,6 +2198,7 @@ function buildApi(driver) {
       abiVersion: e.abiVersion,
       datasetHandles: has('datasetOpen') && has('datasetQuery') &&
         has('datasetUpdate') && has('datasetSerialize') && has('datasetClose'),
+      datasetInEngine: has('datasetClone') && has('datasetClosure') && has('datasetQueryRaw'),
       sparql12: has('queryDataset12') && has('datasetQuery12'),
       parseDiagnostics: has('parseDocument'),
       turtlePrefixes: has('serializeTurtleWith'),
@@ -2648,6 +2213,8 @@ function buildApi(driver) {
     queryHdt,
     update,
     openDataset,
+    closure,
+    formats,
     registerExtensionFunction,
     unregisterExtensionFunction,
     clearExtensionFunctions,
@@ -2691,12 +2258,6 @@ function buildApi(driver) {
     toanSimplify,
     toanDiff,
     toanSubst,
-    matrixDeterminant,
-    matrixScalarProduct,
-    matrixVectorProduct,
-    matrixOuterProduct,
-    sigmoidPoints,
-    sigmoidFormulaMathml,
     vcSha256Hex,
     vcEd25519SecretToPublic,
     vcEd25519Sign,

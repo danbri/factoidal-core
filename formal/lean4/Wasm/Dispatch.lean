@@ -56,6 +56,7 @@ import Wasm.Ops.StoreServe
 import Wasm.Ops.CL
 import Wasm.Ops.Proof
 import Wasm.Ops.Handles
+import Wasm.Ops.DatasetFull
 import Wasm.Ops.Pack
 import Wasm.Ops.ExtFns
 import Wasm.Ops.Lws
@@ -230,7 +231,24 @@ def handleOpNames : List String :=
   , "datasetUpdate"
   , "datasetSerialize"
   , "datasetSerializeWith"
-  , "datasetClose" ]
+  , "datasetClose"
+  , "datasetClone"
+  , "datasetCanonicalize"
+  , "datasetClosure"
+  , "datasetShaclValidate"
+  , "datasetQueryRaw"
+  , "datasetFormats"
+  , "detectFormat"
+  , "datasetMatch"
+  , "datasetMatchCount"
+  , "datasetAddQuads"
+  , "datasetDeleteQuads"
+  , "datasetFromCsvw"
+  , "datasetFromRml"
+  , "datasetFromJsonLd"
+  , "datasetToJsonLd"
+  , "datasetShexValidate"
+  , "datasetRifEval" ]
 
 /-- The store-handle op names (`Wasm/Ops/StoreHandles.lean`), served ONLY by
 `callIO` and `callBlobIO` — the pure `call` cannot reach the store-handle
@@ -540,6 +558,16 @@ def callIO (op : String) (argsJson : String) : IO String :=
       pure (errJson s!"{op} carries a byte region; call it through l4_call_blob_io")
   | "storeOpen"        => withArgs (arityIO2 op (fun a b => Ops.storeOpen a b ByteArray.empty))
   | "storeHandleQuery" => withArgs (arityIO2 op Ops.storeHandleQuery)
+  -- The dataset-handle ops of the full engine (`Wasm/Ops/DatasetFull.lean`).
+  | "datasetFromCsvw"  => withArgs (arityIO3 op Ops.datasetFromCsvw)
+  | "datasetFromRml"   => withArgs (arityIO3 op Ops.datasetFromRml)
+  | "datasetFromJsonLd" => withArgs (arityIO2 op Ops.datasetFromJsonLd)
+  | "datasetToJsonLd"  => withArgs (arityIO2 op Ops.datasetToJsonLd)
+  | "datasetShexValidate" => withArgs (fun args =>
+      match args with
+      | [a, b, c, d] => Ops.datasetShexValidate a b c d
+      | _ => pure (errJson s!"{op} expects 4 arguments, got {args.length}"))
+  | "datasetRifEval"   => withArgs (arityIO2 op Ops.datasetRifEval)
   | "storeHandleClose" => withArgs (arityIO1 op Ops.storeHandleClose)
   -- The SPARQL endpoint over a served generation (issue 669). The open
   -- carries a byte region; through this entry it takes the hex descriptor

@@ -468,7 +468,7 @@ node tests/store-http/over-http.mjs
 node --test tests/hub/post54_test.mjs
 
 # A mock bucket you can point a browser at.
-node tests/store-http/mock-bucket.mjs --root npm/factoidal/sample-store \
+node tests/store-http/mock-bucket.mjs --root npm/factoidal/test/fixtures/sample-store \
   --prefix skosall --port 8787
 
 # The public bucket, checked by hand.

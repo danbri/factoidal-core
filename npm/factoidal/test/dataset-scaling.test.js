@@ -1,6 +1,6 @@
-// Dataset (rdfjs.mjs) keeps set semantics in O(1) per quad: add(), has()
+// DatasetCore (rdfjs.mjs) keeps set semantics in O(1) per quad: add(), has()
 // and delete() use a Set of quad keys. Until 2026-10-10 add() scanned the
-// quad array, so a parse() of 12,000 quads spent 3.1 s building its Dataset
+// quad array, so a parse() of 12,000 quads spent 3.1 s building its DatasetCore
 // (issue 713 stage 5, https://github.com/danbri/factoidal/issues/713). The
 // scaling case fails when building 4n quads costs more than 9 times n quads
 // (skills/danbri-function-precrime-checkers: the n/4n assertion).
@@ -22,8 +22,8 @@ function quadsOf(f, n) {
   return out;
 }
 
-test('Dataset: set semantics by term equality', async () => {
-  const { Dataset, dataFactory: f } = await rdfjs();
+test('DatasetCore: set semantics by term equality', async () => {
+  const { DatasetCore, dataFactory: f } = await rdfjs();
   const a = f.quad(f.namedNode('http://e/a'), f.namedNode('http://e/p'), f.literal('x'));
   const a2 = f.quad(f.namedNode('http://e/a'), f.namedNode('http://e/p'), f.literal('x'));
   const lang = f.quad(f.namedNode('http://e/a'), f.namedNode('http://e/p'), f.literal('x', 'en'));
@@ -31,7 +31,7 @@ test('Dataset: set semantics by term equality', async () => {
   const iri = f.quad(f.namedNode('http://e/a'), f.namedNode('http://e/p'), f.namedNode('x'));
   const named = f.quad(f.namedNode('http://e/a'), f.namedNode('http://e/p'), f.literal('x'),
     f.namedNode('http://e/g'));
-  const ds = new Dataset([a, a2, lang, langUpper, iri, named]);
+  const ds = new DatasetCore([a, a2, lang, langUpper, iri, named]);
   // a and a2 are equal; the literal with a language tag, the IRI and the
   // quad in a named graph are not equal to a, nor to each other.
   assert.equal(ds.size, 5);
@@ -42,7 +42,7 @@ test('Dataset: set semantics by term equality', async () => {
   assert.ok(!ds.has(a));
   ds.add(a);
   assert.equal(ds.size, 5);
-  // match() answers a Dataset with the same set semantics.
+  // match() answers a DatasetCore with the same set semantics.
   const m = ds.match(f.namedNode('http://e/a'));
   assert.equal(m.size, 5);
   assert.ok(m.has(named));
@@ -50,8 +50,8 @@ test('Dataset: set semantics by term equality', async () => {
   assert.equal(m.size, 5);
 });
 
-test('Dataset: building 4n quads costs at most 9 times n quads', async () => {
-  const { Dataset, dataFactory: f } = await rdfjs();
+test('DatasetCore: building 4n quads costs at most 9 times n quads', async () => {
+  const { DatasetCore, dataFactory: f } = await rdfjs();
   const n = 5000;
   const small = quadsOf(f, n);
   const large = quadsOf(f, 4 * n);
@@ -59,7 +59,7 @@ test('Dataset: building 4n quads costs at most 9 times n quads', async () => {
     let best = Infinity;
     for (let r = 0; r < 3; r += 1) {
       const t = performance.now();
-      const ds = new Dataset(qs);
+      const ds = new DatasetCore(qs);
       best = Math.min(best, performance.now() - t);
       assert.equal(ds.size, qs.length);
     }
@@ -68,5 +68,5 @@ test('Dataset: building 4n quads costs at most 9 times n quads', async () => {
   const tn = time(small);
   const t4n = time(large);
   assert.ok(t4n <= 9 * Math.max(tn, 20),
-    `Dataset of ${4 * n} quads: ${t4n.toFixed(1)} ms; of ${n}: ${tn.toFixed(1)} ms`);
+    `DatasetCore of ${4 * n} quads: ${t4n.toFixed(1)} ms; of ${n}: ${tn.toFixed(1)} ms`);
 });

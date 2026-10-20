@@ -23,7 +23,7 @@ import { openStoreOverHttp } from '../../npm/factoidal/store-http/index.mjs';
 
 const POST_FILE = '54-skosdex-over-r2.md';
 const POST_PATH = new URL(`../../docs/web/hub/${POST_FILE}`, import.meta.url);
-const SAMPLE = new URL('../../npm/factoidal/sample-store', import.meta.url).pathname;
+const SAMPLE = new URL('../../npm/factoidal/test/fixtures/sample-store', import.meta.url).pathname;
 const HUB_NJK = new URL('../../docs/_includes/hub.njk', import.meta.url);
 const ELEVENTY = new URL('../../docs/.eleventy.js', import.meta.url);
 
@@ -108,7 +108,7 @@ test('post54: the page can reach the engine and the store the cell asks for', ()
   assert.match(eleventy, /\[`\.\.\/npm\/factoidal\/\$\{rel\}`\]: `npm\/factoidal\/\$\{rel\}`/);
   const list = /for \(const rel of \[([^\]]*)\]\)/.exec(eleventy);
   assert.ok(list && /"store-http"/.test(list[1]), 'the package pass-through list names store-http');
-  assert.match(eleventy, /"\.\.\/npm\/factoidal\/sample-store": "web\/hub\/assets\/store\/sample"/);
+  assert.match(eleventy, /"\.\.\/npm\/factoidal\/test\/fixtures\/sample-store": "web\/hub\/assets\/store\/sample"/);
 });
 
 test('post54: the nine shapes answer over HTTP, and the table is what they cost',

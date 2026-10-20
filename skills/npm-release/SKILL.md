@@ -46,7 +46,9 @@ It compiles `L4Factoidal` to `l4factoidal.wasm`, writes Emscripten's glue
 core module `l4factoidal-core.wasm` from the same objects (issue 713 stage 4;
 its glue `l4factoidal-core.mjs` and its loader `l4factoidal-core.js`, which
 step 8 generates from `l4factoidal.js`), then installs **four byte-identical
-copies** of the full module and two of the core module (copies 1 and 2):
+copies** of the full module and one of the core module (the hub assets only;
+since 2026-10-20 the npm package ships the full module alone, owner: "For now,
+we have a single fat core"):
 
 | Copy | Directory | Who reads it |
 | --- | --- | --- |
@@ -111,12 +113,12 @@ tests/engine-compare/run.sh docs/fstar-extracted/factoidal-npm-entry.js
 - The typed layer: `lib/` (`api.mjs`, `lean-entry.mjs`, `store.mjs`,
   `version.mjs`). ES modules with no Node built-ins: the browser imports
   them as they are.
-- The engines: `l4-assets/` (`l4factoidal.js`, `.mjs`, `.wasm`, the same
-  three for `l4factoidal-core`, `version.json`, `package.json`). Step 9 adds
-  `coreWasmSha256` and `coreWasmBytes` to `version.json`; like the other
-  stamped members, do not commit them.
+- The engine: `l4-assets/` (`l4factoidal.js`, `.mjs`, `.wasm`,
+  `version.json`, `package.json`). Since 0.10.0 no `l4factoidal-core.*` and
+  no `coreWasm*` members; `files` excludes `l4-assets/l4factoidal-core.*`.
 - Store, command and protocol hosts: `store-host/`, `bin/`, `lws/`,
-  `solid/`, `xmpp/`, `sample-store/` + `sample-store.mjs`.
+  `solid/`, `xmpp/`. The sample store left the tarball in 0.10.0; it is the
+  test fixture `npm/factoidal/test/fixtures/sample-store`.
 - Metadata: `README.md`, `CHANGELOG.md`, `LICENSE`, `NOTICE`.
 
 The wasm is not in git (iron rule 9). A tarball packed from a checkout

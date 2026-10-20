@@ -62,7 +62,7 @@ const provenance = {
 }
 
 const targets = [
-  { dir: 'npm/factoidal/l4-assets', core: true },
+  { dir: 'npm/factoidal/l4-assets', core: false },
   { dir: 'npm/factoidal-lean', core: false }
 ]
 let wrote = 0

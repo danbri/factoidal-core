@@ -56,7 +56,7 @@ Every engine call returns a Promise. The engine loads on the first call.
 ```js
 import { parse, query, serialize, canonicalize } from "@factoidal/core";
 
-// Parse any supported syntax into an RDF/JS DatasetCore.
+// Parse any supported syntax into a Dataset; its quads stay in the engine.
 const ds = await parse(`
   @prefix foaf: <http://xmlns.com/foaf/0.1/> .
   _:a foaf:name "Alice" ; foaf:knows _:b .
@@ -73,6 +73,8 @@ for (const b of rows) console.log(b.get("name").value); // Alice, Bob
 const yes = await query(ds, "ASK { ?s ?p ?o }");        // true
 const c14n = await canonicalize(ds);                    // RDFC-1.0 N-Quads
 const nq = await serialize(ds, { format: "nquads" });
+const xml = ds.toString("rdfxml");                      // RDF/XML, synchronous
+ds.dispose();                                           // release the engine copy
 ```
 
 CommonJS: `const factoidal = require("@factoidal/core")`. It is the same
@@ -88,7 +90,7 @@ import { parse, ParseError } from "@factoidal/core";
 
 const text = '<http://x/s> <http://x/p> "😀" .\nBOGUS .\n';
 try {
-  await parse(text);
+  await parse(text, { format: "ntriples" });
 } catch (err) {
   if (err instanceof ParseError) {
     console.log(err.line, err.column);   // 2 6
@@ -113,6 +115,8 @@ good one. `dataset.diagnostics` has one entry per skipped statement, in
 document order:
 
 ```js
+import { parse } from "@factoidal/core";
+
 const text = '<http://x/a> <http://x/p> "1" .\n<http://x/b> <http://x/p> .\n' +
   '<http://x/c> <http://x/p> "3" .\n';
 const ds = await parse(text, { format: "turtle", lenient: true });
@@ -161,53 +165,21 @@ JavaScript source. `bundler` users: the
 
 `tests/web-demos/npm_browser_smoke.sh` runs a parse, a SELECT, a
 canonicalization, an XPath evaluation and a store query from a static page
-in headless Chromium, and a second page over the core entry.
+in headless Chromium.
 
-### The core engine: `@factoidal/core/core`
+### One engine
 
-The full engine (`l4factoidal.wasm`) serves every function of this package.
-`@factoidal/core/core` loads the core engine (`l4factoidal-core.wasm`): the
-same Lean library with a dispatch table that reaches a subset of it, so the
-linker drops the rest. It has the same exports and types as `@factoidal/core`
-(in Node, `core.mjs`; in a browser or a bundler, its `browser` condition,
-`core-browser.js`).
-
-The core engine serves: `parse` and `serialize` for Turtle, TriG, N-Triples
-and N-Quads (RDF 1.1 and 1.2) and RDF/XML, with `{lenient: true}`; `query`,
-`update`, `openDataset` and `queryRaw` (SPARQL 1.1 and 1.2, extension
-functions, SERVICE endpoints, the entailment regimes); `canonicalize`,
-`graphs` and `canonicalHash`; `owlClosure`, `coreRdfsClosure`,
-`rdfsPlusClosure` and the core-RDFS checks; `shaclValidate`. Every other
-function (JSON-LD, the XML family, CSVW, RML, ShEx, the OWL DL refuter and
-tableau, RIF, HDT, the store, VC and DID, the maths, Common Logic) rejects
-with an error that names `@factoidal/core`, and `capabilities()` reports
-`profile: 'core'` and `false` for it.
-
-```js
-import { parse, query, capabilities } from "@factoidal/core/core";
-(await capabilities()).profile; // 'core'
-```
-
-Sizes (version 0.9.0 tree of 2026-10-10; gzip is `gzip -9`, brotli quality 11):
-
-| Module | Raw | gzip | brotli |
-|---|---:|---:|---:|
-| `l4factoidal.wasm` (full, `@factoidal/core`) | 10.54 MB | 2.07 MB | 1.29 MB |
-| `l4factoidal-core.wasm` (core, `@factoidal/core/core`) | 5.68 MB | 1.07 MB | 0.69 MB |
-| the F\* engine bundle of 0.8.0 (`factoidal-npm-entry.js`), for comparison | 1.19 MB | 0.35 MB | 0.28 MB |
-
-Each entry also loads about 68 KB (gzip) of JavaScript. The browser default
-(`@factoidal/core`, `browser.js`) stays the full engine, so a page gets every
-function unless it chooses the core entry. What each module is made of, by
-Lean namespace: `docs/designissues/2026-10-10-npm-lean-only.md` § 9 in the
-source repository.
+One wasm, `l4factoidal.wasm`, carries every capability of the package
+(owner, 2026-10-20: "all this stuff goes into a single mod we call
+Factoidal/core and a dingle wasm"). The duplicate smaller wasm and its
+`./core` and `./core-browser` subpaths are gone since 0.10.0.
 
 ### Bundlers and Content Security Policy
 
 `@factoidal/core/api` builds the typed API over an engine you load
 yourself, for a bundler build or a page with its own asset layout:
 
-```js
+```js browser
 import { createApi } from "@factoidal/core/api";
 import { loadL4 } from "@factoidal/core/l4-assets/l4factoidal.js";
 
@@ -234,8 +206,9 @@ const q = quad(blankNode("x"),
                namedNode("http://xmlns.com/foaf/0.1/name"),
                literal("Alice", "en"));
 // Terms implement termType/value/language/datatype/.equals per the
-// RDF/JS data-model spec; Dataset implements DatasetCore
-// (add/delete/has/match/size/iteration).
+// RDF/JS data-model spec. A Dataset implements RDF/JS DatasetCore (size,
+// add, delete, has, match, iteration) in the engine; an in-memory
+// DatasetCore is in "@factoidal/core/rdfjs".
 ```
 
 ## Blank nodes, labels and statement order
@@ -260,20 +233,27 @@ the same graph, and two parses never share a node.
 ## SPARQL 1.2 queries
 
 ```js
+import { query } from "@factoidal/core";
+
+const data = '<http://e/w> <http://e/says> <<( <http://e/a> <http://e/p> <http://e/o> )>> .\n';
 const rows = await query(data,
   'SELECT ?s WHERE { ?who <http://e/says> <<( ?s <http://e/p> <http://e/o> )>> }',
   { sparql12: true, format: 'nquads12' });
+console.log(rows[0].get("s").value); // http://e/a
 ```
 
 `{sparql12: true}` (or `{version: '1.2'}`) reads the query with the Lean
-SPARQL parser's 1.2 grammar (op `queryDataset12`; on a `DatasetHandle`,
-`handle.query(q, {sparql12: true})`, op `datasetQuery12`). The data formats
+SPARQL parser's 1.2 grammar (op `datasetQuery12`; also
+`dataset.query(q, {sparql12: true})`). The data formats
 `turtle12`, `ntriples12`, `nquads12` and `trig12` read RDF 1.2 terms.
 
 ## Entailment regimes
 
 ```js
-await query(ttl, 'ASK { <http://e/a> a <http://e/D> }', { entail: 'RDFS' });
+import { query } from "@factoidal/core";
+
+const ttl = '<http://e/a> a <http://e/C> . <http://e/C> <http://www.w3.org/2000/01/rdf-schema#subClassOf> <http://e/D> .';
+await query(ttl, 'ASK { <http://e/a> a <http://e/D> }', { entail: 'RDFS', format: 'turtle' }); // true
 ```
 
 `entail` is `'none'` (default), `'RDFS'`, `'OWL-RL'`, `'x-rdfscore'` (the
@@ -281,7 +261,7 @@ core RDFS, ρdf, closure) or `'x-rdfsplus'` (RDFS-Plus: RDFS plus
 `owl:sameAs`, `owl:inverseOf`, symmetric, transitive, functional and
 inverse-functional properties, equivalent classes and properties). The
 engine closes the default graph under the regime, then answers the query
-(op `queryRaw`): SELECT, ASK, CONSTRUCT and DESCRIBE. Extension functions
+(op `datasetQueryRaw`): SELECT, ASK, CONSTRUCT and DESCRIBE. Extension functions
 and SERVICE registrations are not in scope on this path. `x-ikl-*` names are
 refused ([issue 581](https://github.com/danbri/factoidal/issues/581)).
 
@@ -295,7 +275,9 @@ requires (unbound in SELECT/BIND position, row dropped in FILTER position).
 Issue: [#463](https://github.com/danbri/factoidal/issues/463).
 
 ```js
-import { query, registerExtensionFunction } from "@factoidal/core";
+import { parse, query, registerExtensionFunction } from "@factoidal/core";
+
+const ds = await parse('<http://e/x> <http://example.org/age> 20 .', { format: "turtle" });
 
 await registerExtensionFunction(
   "http://example.org/fn#isAdult",
@@ -318,29 +300,60 @@ registered function also reaches dataset handles and store queries. Every
 call crosses into JavaScript, so a function in a FILTER runs once per row.
 Design: [`docs/designissues/2026-09-04-lean-extension-functions.md`](../../docs/designissues/2026-09-04-lean-extension-functions.md).
 
-## Dataset handles
+## Datasets
 
-`openDataset()` parses once and keeps the dataset indexed in the engine,
-so repeated `query()`/`update()`/`serialize()` calls skip the re-parse and
-the index build:
+A `Dataset` is a handle into the engine: its quads are parsed and indexed
+once and stay in the wasm memory. Every producer (`parse`, `openDataset`,
+`csvwToRdf`, `rmlMap`, `jsonldToRdf`, `closure` and the closure functions,
+`rifEval`, CONSTRUCT and DESCRIBE) answers one, and every consumer takes
+one, so a pipeline moves no N-Quads text between its steps
+(https://github.com/danbri/factoidal/issues/882).
 
 ```js
-import { openDataset } from "@factoidal/core";
+import { parse, csvwToRdf, closure } from "@factoidal/core";
 
-const handle = await openDataset(`
+const ds = await parse(`
   @prefix ex: <http://example.org/> .
   ex:alice ex:name "Alice" ; ex:knows ex:bob .
 `, { format: "turtle" });
 
-const rows = await handle.query("SELECT * WHERE { ?s ?p ?o }");
-await handle.update('PREFIX ex: <http://example.org/> INSERT DATA { ex:carol ex:name "Carol" }');
-const ttl = await handle.serialize({ format: "turtle" }); // uses the document's prefixes
-await handle.close(); // every method rejects after this
+const rows = await ds.query("SELECT * WHERE { ?s ?p ?o }");
+await ds.update('PREFIX ex: <http://example.org/> INSERT DATA { ex:carol ex:name "Carol" }');
+console.log(ds.size);                                   // 3
+const ttl = await ds.serialize({ format: "turtle" });   // uses the document's prefixes
+const trig = ds.toString("trig");
+const csv = await ds.query("SELECT ?s WHERE { ?s ?p ?o }", { output: "csv" });
+for (const q of ds) console.log(q.subject.value);       // RDF/JS quads, read lazily
+const copy = ds.clone();                                // independent of ds
+ds.dispose();                                           // every method throws after this
+
+const table = await csvwToRdf("id,name\n1,a\n", "", { mode: "minimal", url: "http://x/t.csv" });
+const inferred = await closure(table, "rdfs");          // a new Dataset
+console.log(inferred.size >= table.size);               // true
+for (const d of [copy, table, inferred]) d.dispose();
 ```
 
-`query`, `serialize` and `canonicalize` accept a handle for `data`;
-`update(handle, …)` rejects with a `TypeError`, because `update()` answers a
-fresh Dataset while `handle.update()` changes the handle.
+Methods: `query(sparql, {sparql12?, version?, entail?, output?})`,
+`update(text)` (in place; answers the Dataset), `validateShacl(shapes,
+{format?, baseIRI?})`, `validateShex(schema, {focus, shape?})`,
+`closure('rdfs' | 'owl-rl' | 'rho-df' | 'rdfs-plus')`, `canonicalize()`,
+`serialize({format, version?, prefixes?, literalShorthand?,
+useNativeTypes?, useRdfType?, rdfDirection?})`, `toString(format)`
+(synchronous), `toNQuads()`, `clone()`, `has(quad)`, `match(s, p, o, g)`
+(a new Dataset), `toArray()`, iteration, `size`, `prefixes`,
+`diagnostics`, `format`, `formatInferred`, `dispose()` and
+`[Symbol.dispose]` (for `using` where the runtime has it). A Dataset that is
+garbage collected without `dispose()` is released by a
+`FinalizationRegistry`.
+
+`serialize` formats: `nquads`, `ntriples` (refuses a named graph), `turtle`,
+`trig`, `rdfxml`, `jsonld`, `rdfc` (RDFC-1.0 canonical N-Quads);
+`version: '1.1'` refuses a dataset with an RDF 1.2 term. `formats()` gives
+the engine's list with read and write support per RDF version. The functional
+`update(data, text)` answers a NEW Dataset and leaves a Dataset argument
+unchanged. Text input takes `{format}`; with no format the engine infers one
+and reports it. Every function throws a `TypeError` for an unknown option
+key. `DatasetHandle` is a deprecated alias of `Dataset` and goes in 0.11.0.
 
 ## The persisted store
 
@@ -350,29 +363,32 @@ manifest that commits every artifact's SHA-256, and a `CURRENT` pointer to
 the activated generation
 ([`skills/shardborough-storage`](../../skills/shardborough-storage/SKILL.md),
 [`docs/shardborough-storage-spec.md`](../../docs/shardborough-storage-spec.md)).
-The package carries one, the sample store (4,434 triples, IPTC NewsCodes,
-CC BY 4.0; see `NOTICE`).
+`factoidal pack` and `factoidal activate` make one from an RDF file;
+`sampleStorePath()` (and `factoidal sample-store`) packs a small built-in one.
 
 ```js
-import { openStore, queryStore, sampleStorePath } from "@factoidal/core";
+import { openStore, queryStore } from "@factoidal/core";
+import { sampleStorePath } from "@factoidal/core/sample-store";
+const root = sampleStorePath();   // packs a small built-in store under the temp directory
 
-const store = await openStore(sampleStorePath());   // reads CURRENT, verifies every block once
+const store = await openStore(root);                 // reads CURRENT, verifies every block once
 const rows = await store.query(`
   SELECT ?c ?l WHERE {
     ?c <http://www.w3.org/2004/02/skos/core#prefLabel> ?l
     FILTER(CONTAINS(LCASE(STR(?l)), "video")) } LIMIT 5`);
-console.log(store.layout, store.rows);              // predicate-ibk3-…  4434
+console.log(store.rows);                             // 15
 await store.close();
 
 // One query: open only the blocks this query's plan names, query, close.
-const n = await queryStore(sampleStorePath(), 'SELECT (COUNT(*) AS ?n) WHERE { ?s ?p ?o }');
+const n = await queryStore(root, 'SELECT (COUNT(*) AS ?n) WHERE { ?s ?p ?o }');
 ```
 
 `source` is a collection root path (Node), or a reader function from a
 root-relative path to the file's bytes, which works in any runtime:
 
-```js
+```js browser
 // In a page: the store's files served under /store/.
+// (Browser example; the Node test checks its syntax only.)
 const store = await openStore((path) => fetch("/store/" + path).then((r) => r.arrayBuffer()));
 ```
 
@@ -405,7 +421,7 @@ A SPARQL Update log that survives a page reload (hub post 18,
 each log is an IndexedDB database; under Node it lives in the memory of the
 process.
 
-```js
+```js browser
 import { deltaLogOpen, deltaLogAppend, deltaLogMerge, deltaLogInspect } from '@factoidal/core/browser';
 const log = await deltaLogOpen('my-log');
 const { seq, opCount } = await deltaLogAppend(log,
@@ -436,40 +452,22 @@ SHA-256, evaluating the SPARQL).
 
 > This command is not the native `factoidal` binary of the repository
 > (`bin/<platform>/factoidal`, which takes subcommands such as `shex` and
-> `compact`). This one takes `version`, `sample-store`, `inspect`,
+> `compact`). This one takes `version`, `sample-store`, `pack`, `activate`, `inspect`,
 > `query`, `serve`, `lws-serve`, `solid-serve` and `solid-client`.
 
-### First query, with nothing else to download
+### First query
 
-The package carries an activated store, so a fresh install answers a
-SPARQL query at once:
+`factoidal sample-store` packs a small built-in store (15 triples held in
+`sample-store.mjs`; no data file ships) and prints its path:
 
 ```console
 $ npm install @factoidal/core
 $ npx factoidal query "$(npx factoidal sample-store)" \
-    'SELECT ?c ?l
-     WHERE { ?c <http://www.w3.org/2004/02/skos/core#inScheme>
-                <http://cv.iptc.org/newscodes/videocodec/> ;
-                <http://www.w3.org/2004/02/skos/core#prefLabel> ?l .
-             FILTER(langMatches(lang(?l), "en")) }
-     LIMIT 4'
-c                                               l
-<http://cv.iptc.org/newscodes/videocodec/c001>  "Analogue Black and White"@en-gb
-<http://cv.iptc.org/newscodes/videocodec/c002>  "PAL"@en-gb
-<http://cv.iptc.org/newscodes/videocodec/c003>  "NTSC"@en-gb
-<http://cv.iptc.org/newscodes/videocodec/c004>  "SECAM"@en-gb
+    'SELECT ?c ?l WHERE { ?c <http://www.w3.org/2004/02/skos/core#prefLabel> ?l }'
 ```
 
-`factoidal sample-store` prints the path; `--json` adds what was
-recorded when the store was packed. From JavaScript:
-
-```js
-import { sampleStorePath, sampleStoreFacts } from '@factoidal/core/sample-store'
-```
-
-The store holds 4,434 triples in 13 predicate blocks: five IPTC
-NewsCodes vocabularies, published by the IPTC under CC BY 4.0 and taken
-from [danbri/skosdex](https://github.com/danbri/skosdex). See `NOTICE`.
+From JavaScript (Node): `import { sampleStorePath } from '@factoidal/core/sample-store'`.
+Your own data: `factoidal pack data.ttl store/gen-1 && factoidal activate store gen-1`.
 
 ### Any other store
 
@@ -576,7 +574,10 @@ flat at 527 MB over 4,000 requests (`skills/shardborough-storage`, § Serving).
 
 ```js
 import { listen, listenOnWorker } from '@factoidal/core/serve'
-const running = await listen('./mystore', { port: 0 })
+import { sampleStorePath } from "@factoidal/core/sample-store";
+const root = sampleStorePath();   // packs a small built-in store under the temp directory
+const running = await listen(root, { port: 0 })
+await running.close()
 // running.origin, running.served.info, await running.close()
 // listenOnWorker(root, options): the same on a worker thread with a raised
 // stack, which a large store needs (what `factoidal serve` uses)
@@ -599,14 +600,16 @@ indexes the rows, once. `handle.query()` then answers from what it
 retained. Several stores can be open at the same time.
 
 ```js
-import { loadEngine } from '@factoidal/core/bin/engine.mjs'
+import { loadEngine } from '@factoidal/core/engine'
 import { openStore, openStoreHandle, listStoreHandles } from '@factoidal/core/store'
 
 const engine = await loadEngine()
 
 // Two stores, open at once, held for the life of the process.
-const skos = openStoreHandle(engine, openStore('./skos-store'))
-const docs = openStoreHandle(engine, openStore('./docs-store'))
+import { sampleStorePath } from "@factoidal/core/sample-store";
+const root = sampleStorePath();   // packs a small built-in store under the temp directory
+const skos = openStoreHandle(engine, openStore(root))
+const docs = openStoreHandle(engine, openStore(root))
 
 console.log(listStoreHandles(engine))
 // { ok: true, handles: [ {handle:'s1', bytes:…, rows:…}, {handle:'s2', …} ],
@@ -709,9 +712,10 @@ import { openStoreHandleOnWorker, closeSharedStoreWorkerSession }
 // No runtime flag. One worker thread, shared by every handle opened
 // this way, so a caller that opens several stores pays for one thread
 // and one copy of the module.
-const handle = await openStoreHandleOnWorker('/path/to/store', {
-  sparql: 'SELECT ?c ?l WHERE { GRAPH <urn:g> { ?c ?p ?l } }'
-})
+import { sampleStorePath } from "@factoidal/core/sample-store";
+const root = sampleStorePath();   // packs a small built-in store under the temp directory
+const PREFIX = 'PREFIX skos: <http://www.w3.org/2004/02/skos/core#>'
+const handle = await openStoreHandleOnWorker(root, {})
 const answer = await handle.query(`${PREFIX}
   SELECT ?c ?l WHERE { GRAPH <urn:g> { ?c skos:prefLabel ?l }
     FILTER(CONTAINS(LCASE(STR(?l)), "volcan")) } LIMIT 8`)
@@ -728,7 +732,7 @@ await closeSharedStoreWorkerSession()
 | `{worker: false}` | open in this process, with no thread |
 
 What it costs, all **measured 2026-09-05** on the same machine, against
-the bundled sample store so the overhead is not lost in the query:
+a 4,434-triple store (the test fixture `test/fixtures/sample-store`) so the overhead is not lost in the query:
 
 | | in process | on a worker |
 |---|---|---|
@@ -931,7 +935,7 @@ reaches the host as a `{status, headers, body}` record.
 import { listen } from '@factoidal/core/solid/server'
 import { createSolidClient } from '@factoidal/core/solid/client'
 
-const running = await listen({ port: 3000 })
+const running = await listen({ port: 0 })
 const client = await createSolidClient({ baseIri: running.origin })
 await client.replace('/notes/one', '<#it> <#p> "v" .', 'text/turtle')
 const read = await client.read('/notes/one')
@@ -971,7 +975,9 @@ dataflow graph skip recomputation. Design:
 [`docs/designissues/2026-07-05-functional-dataset-api.md`](../../docs/designissues/2026-07-05-functional-dataset-api.md).
 
 ```js
-const { parse, filter, hash, cell, derive, validate, shex } = require('@factoidal/core/fn');
+import fn from '@factoidal/core/fn';
+const { parse, filter, hash, cell, derive, validate } = fn;
+const shapesTtl = '@prefix sh: <http://www.w3.org/ns/shacl#> . <http://e/S> a sh:NodeShape .';
 
 const ds = await parse(`
   @prefix foaf: <http://xmlns.com/foaf/0.1/> .
@@ -986,7 +992,8 @@ await hash(ds);                // sha256 hex of the RDFC-1.0 canonical N-Quads
 const { conforms, report } = await validate(ds, await parse(shapesTtl)); // SHACL
 ```
 
-`fromDataset`/`toDataset` convert to and from the RDF/JS `Dataset`.
+`fromDataset` snapshots a `Dataset` (or an RDF/JS DatasetCore);
+`toDataset` gives an in-memory RDF/JS DatasetCore.
 `union`/`difference`/`filter`/`mapQuads` are set algebra;
 `query`/`entail`/`canonicalize`/`graphs`/`validate`/`shex`/`fromMapping`/
 `fromCsvw`/`rif` wrap the functions of the main entry.
@@ -995,24 +1002,26 @@ const { conforms, report } = await validate(ds, await parse(shapesTtl)); // SHAC
 
 | Function | Signature (informal) | Notes |
 |---|---|---|
-| `parse` | `(text, {format?, baseIRI?}) => Dataset` | `turtle`, `ntriples`, `nquads`, `trig`, `rdfxml`, `jsonld`, and `turtle12`, `ntriples12`, `nquads12`, `trig12`. One call is one document. Strict: a syntax error rejects with `ParseError`. `dataset.prefixes` is the declared map |
-| `query` | `(data, sparql, {format?, entail?, sparql12?}) => Bindings[] \| boolean \| Dataset` | SELECT → `Map<var, Term>[]`; ASK → boolean; CONSTRUCT and DESCRIBE → Dataset. `data` is a Dataset, a string, `{text, format}`, an array of those, or a `DatasetHandle` |
-| `update` | `(data, sparqlUpdate) => Dataset` | in memory; answers a fresh Dataset |
-| `openDataset` | `(data, {format?, baseIRI?}) => DatasetHandle` | parse and index once (above) |
-| `serialize` | `(data, {format, prefixes?, literalShorthand?}) => string` | `nquads`, `ntriples` (refuses a named graph), `turtle` (prefix-compacted, subject-grouped; named graphs flattened). `literalShorthand` (default `true`) prints numeric and boolean literals bare |
-| `canonicalize` | `(data) => string` | RDFC-1.0 canonical N-Quads |
-| `graphs` | `(Dataset) => Array<[iri, Dataset]>` | named graphs, default graph excluded; no engine call |
+| `parse` | `(text, {format?, baseIRI?, lenient?, maxErrors?}) => Dataset` | `turtle`, `ntriples`, `nquads`, `trig`, `rdfxml`, `jsonld`, and `turtle12`, `ntriples12`, `nquads12`, `trig12`; no format: inferred and reported. One call is one document. Strict: a syntax error rejects with `ParseError`. `dataset.prefixes` is the declared map |
+| `query` | `(data, sparql, {format?, baseIRI?, entail?, sparql12?, version?, output?}) => Bindings[] \| boolean \| Dataset \| string` | SELECT → `Map<var, Term>[]`; ASK → boolean; CONSTRUCT and DESCRIBE → Dataset; with `output` the results document (`json`, `xml`, `csv`, `tsv`, `table`, `ntriples`). `data` is a Dataset, a string, `{text, format}`, or an array of those |
+| `update` | `(data, sparqlUpdate, {format?, baseIRI?}) => Dataset` | answers a NEW Dataset; `dataset.update()` changes one in place |
+| `openDataset` | `(data, {format?, baseIRI?}) => Dataset` | a Dataset argument is cloned |
+| `closure` | `(data, 'rdfs' \| 'owl-rl' \| 'rho-df' \| 'rdfs-plus') => Dataset` | the closure of the default graph |
+| `serialize` | `(data, {format, version?, prefixes?, literalShorthand?, useNativeTypes?, useRdfType?, rdfDirection?, inputFormat?, baseIRI?}) => string` | `nquads`, `ntriples` (refuses a named graph), `turtle`, `trig`, `rdfxml`, `jsonld`, `rdfc`; see "Datasets" |
+| `formats` | `() => [{name, read11, read12, write11, write12, engine}]` | the engine's list |
+| `canonicalize` | `(data, {format?, baseIRI?}) => string` | RDFC-1.0 canonical N-Quads |
+| `graphs` | `(Dataset) => Array<[iri, Dataset]>` | named graphs, default graph excluded |
 | `canonicalHash` | `(Dataset) => string` | RDFC-1.0 canonical N-Quads of one graph |
 | `queryRaw` | `(dataText, sparql, {dataFormat?, entail?, output?}) => object \| string` | one call, serialized answer: `json` (parsed), `csv`, `tsv`, `xml`, `table`, `ntriples` |
 | `queryHdt` | `(hdtBytes, sparql) => Bindings[] \| boolean` | SELECT/ASK over an HDT file's bytes |
 | `openStore`, `queryStore`, `listStores` | see "The persisted store" | `Store`: `.query`, `.inspect`, `.close`, `.handle`/`.layout`/`.wireVersion`/`.rows`/`.bytes`/`.artifacts`/`.generation`/`.activated`/`.closed` |
-| `sampleStorePath`, `sampleStoreFacts` | `() => string`, object | Node only |
 | `registerExtensionFunction`, `unregisterExtensionFunction`, `clearExtensionFunctions` | see above | SPARQL 1.1 §17.6 |
 | `registerServiceEndpoint`, `clearServiceEndpoints` | `(iri, data)` | `SERVICE <iri>` answers from this snapshot |
 | `shaclValidate` | `(data, shapes) => {conforms, report: Dataset}` | SHACL Core, SHACL-SPARQL, SHACL 1.2 node expressions |
 | `shexValidate` | `(data, schemaText, focus, shape?) => boolean` | ShExJ when the text starts with `{`, else ShExC; no `shape` = the schema's START |
 | `owlClosure` | `(data, 'RDFS' \| 'OWL-RL') => Dataset` | input + derived triples, default graph |
-| `coreRdfsClosure`/`rhoDfClosure`, `coreRdfsCheck`/`rhoDfFragmentCheck`, `rdfsPlusClosure` | `(data) => {ok, ntriples, …}` | ρdf closure, fragment check, RDFS-Plus closure |
+| `coreRdfsClosure`/`rhoDfClosure`, `rdfsPlusClosure` | `(data) => Dataset` | ρdf closure, RDFS-Plus closure |
+| `coreRdfsCheck`/`rhoDfFragmentCheck` | `(data) => {ok, fragment}` | ρdf fragment check |
 | `tableauMaterialise` | `(data) => {dataset, addedCount, budgetHit}` | class-expression memberships; `budgetHit` true when the work budget ran out |
 | `tableauDlInconsistent` | `(data) => {inconsistent, rlAlone}` | OWL DL clash after RL closure + materialisation |
 | `owlIsConsistent`, `owlEntails` | `(data, {fuel?})`, `(premise, conclusion, {fuel?})` | three-valued: `true`, `false`, `null` (budget out, with `reason`) |
@@ -1023,12 +1032,11 @@ const { conforms, report } = await validate(ds, await parse(shapesTtl)); // SHAC
 | `xmlWellformed`, `xpathEval`, `xsltTransform`, `schematronValidate`, `jsonSchemaValidate`, `xformsRecalc`, `mathmlEval` | | XML 1.0, XPath 1.0, XSLT 1.0, Schematron, JSON Schema draft-07, XForms recalculation, Content MathML |
 | `clParse`, `clSerialize`, `clAlphaNorm`, `clNormalize` | `(clifText) => {…}` | Common Logic (ISO/IEC 24707) and IKL; `clSerialize` reports `roundTripProved: false`, `clNormalize` reports `preserves: "satisfiability"` |
 | `toanSummation`, `toanProduct`, `toanSimplify`, `toanDiff`, `toanSubst` | | symbolic algebra over Content MathML |
-| `matrixDeterminant`, `matrixScalarProduct`, `matrixVectorProduct`, `matrixOuterProduct`, `sigmoidPoints`, `sigmoidFormulaMathml` | | exact rational matrices; sigmoid samples |
 | `vcSha256Hex`, `vcEd25519SecretToPublic`, `vcEd25519Sign`, `vcEd25519Verify`, `vcEddsaCreateFromCanonical`, `vcEddsaVerifyFromCanonical` | | VC Data Integrity `eddsa-rdfc-2022`; Ed25519 is HACL\*'s C code in the wasm module; no initialisation step |
 | `vcCheckCredential`, `vcCheckCredentialSubject`, `vcCheckNoDataLoss`, `vcCheckRelatedResourceDigests`, `didKeyResolve` | | VCDM 2.0 checks; `did:key` (Ed25519) resolution |
 | `capabilities` | `() => {…}` | which ops the loaded wasm serves |
 | `loadEngine` | `() => engine` | the low-level handle, `call(op, args)`, for ops this layer does not wrap |
-| `Dataset`, `DatasetHandle`, `Store`, `ParseError`, `dataFactory`, `version`, `engine` | | `engine` is `'lean4-wasm'` |
+| `Dataset`, `Store`, `ParseError`, `dataFactory`, `version`, `engine` | | `engine` is `'lean4-wasm'`; `DatasetHandle` is a deprecated alias of `Dataset` |
 
 `./l4` and `./l4-core` are aliases of the main entry in 0.9.x and go in
 0.10.0.

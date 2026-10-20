@@ -343,28 +343,30 @@ def xformsRecalc (instanceXml bindsJson : String) : String :=
 
 /-! ## JSON-LD -/
 
+/-- The dataset `jsonldToRdf` writes, or its error text. The dataset-handle op
+`datasetFromJsonLd` (`Wasm/Ops/DatasetFull.lean`) stores it without the
+N-Quads text. -/
+def jsonldDataset (text optsJson : String) : Except String Dataset :=
+  let opts := readOptions optsJson
+  match L4Factoidal.JSONLD.parseJsonLd L4Factoidal.JSONLD.Loader.none text
+          (optString opts "base") (optString opts "rdfDirection")
+          (optString opts "expandContext") (optString opts "processingMode") with
+  | .ok ds => .ok ds
+  | .error e => .error ("invalid or unsupported JSON-LD (" ++ e.code ++ ")")
+
 /-- `jsonldToRdf(text, optsJson)`. `optsJson` is `""` or an object with
 the members `base`, `rdfDirection`, `expandContext`, `processingMode`
 (all strings). No document loader is installed, so a remote `@context`
 is the JSON-LD error `loading remote context failed`, as it is in the F*
 entry. -/
 def jsonldToRdf (text optsJson : String) : String :=
-  let opts := readOptions optsJson
-  match L4Factoidal.JSONLD.parseJsonLd L4Factoidal.JSONLD.Loader.none text
-          (optString opts "base") (optString opts "rdfDirection")
-          (optString opts "expandContext") (optString opts "processingMode") with
+  match jsonldDataset text optsJson with
   | .ok ds => nquadsEnvelope ds
-  | .error e =>
-      errJson ("invalid or unsupported JSON-LD (" ++ e.code ++ ")")
-
-/-- `jsonldFromRdf(nquads, optsJson)`: JSON-LD 1.1 API section 8,
-Serialize RDF as JSON-LD, to an expanded-form document written in
-RFC 8785 canonical form. `optsJson` members: `useNativeTypes`,
-`useRdfType` (booleans), `rdfDirection` (string). -/
-def jsonldFromRdf (nq optsJson : String) : String :=
-  match readHandle "jsonldFromRdf" nq with
   | .error e => errJson e
-  | .ok ds =>
+
+/-- `jsonldFromRdf` over a dataset already parsed; the dataset-handle op
+`datasetToJsonLd` calls it with the stored dataset. -/
+def jsonldFromRdfParsed (ds : Dataset) (optsJson : String) : String :=
     let opts := readOptions optsJson
     let o : L4Factoidal.JSONLD.FromRdf.Options :=
       { useNativeTypes := optBool opts "useNativeTypes"
@@ -376,10 +378,30 @@ def jsonldFromRdf (nq optsJson : String) : String :=
                  ++ "literal in the input is not valid JSON)")
     | some doc => okWith [("jsonld", .string (L4Factoidal.JSONLD.jcsDocument doc))]
 
+/-- `jsonldFromRdf(nquads, optsJson)`: JSON-LD 1.1 API section 8,
+Serialize RDF as JSON-LD, to an expanded-form document written in
+RFC 8785 canonical form. `optsJson` members: `useNativeTypes`,
+`useRdfType` (booleans), `rdfDirection` (string). -/
+def jsonldFromRdf (nq optsJson : String) : String :=
+  match readHandle "jsonldFromRdf" nq with
+  | .error e => errJson e
+  | .ok ds => jsonldFromRdfParsed ds optsJson
+
 /-! ## RML -/
 
 private def rmlErrorsText (es : List L4Factoidal.RML.RmlError) : String :=
   String.intercalate "; " (es.map (fun e => e.message))
+
+/-- The dataset an RML mapping graph (the default graph of `mapping`) makes
+from one logical source, or the error text of `rmlMap`. -/
+def rmlDataset (mapping : Dataset) (source : String) : Except String Dataset :=
+  let fa : L4Factoidal.RML.FileAccess :=
+    { read := fun _ _ => some source.toUTF8 }
+  let r := L4Factoidal.RML.runMappingGraphFiles mapping.default none fa
+  if r.errors.isEmpty then
+    .ok (L4Factoidal.RML.datasetOfQuads r.quads)
+  else
+    .error s!"rmlMap: {rmlErrorsText r.errors}"
 
 /-- `rmlMap(mappingNquads, source, kind)`: evaluate an RML mapping graph
 over ONE logical source whose raw text is `source`. Every logical
@@ -396,13 +418,9 @@ def rmlMap (mappingNq source kind : String) : String :=
   match readHandle "rmlMap" mappingNq with
   | .error e => errJson e
   | .ok ds =>
-    let fa : L4Factoidal.RML.FileAccess :=
-      { read := fun _ _ => some source.toUTF8 }
-    let r := L4Factoidal.RML.runMappingGraphFiles ds.default none fa
-    if r.errors.isEmpty then
-      nquadsEnvelope (L4Factoidal.RML.datasetOfQuads r.quads)
-    else
-      errJson s!"rmlMap: {rmlErrorsText r.errors}"
+    match rmlDataset ds source with
+    | .ok out => nquadsEnvelope out
+    | .error e => errJson e
 
 /-! ## CSVW -/
 
@@ -412,13 +430,16 @@ URL, default `file:///`), `url` (the table's URL when the metadata names
 none, default `table.csv`). Every table of a table group reads the same
 `csv` text. With `metadataJson == ""` the table is described by its own
 header row. -/
-def csvwToRdf (csv metadataJson optsJson : String) : String :=
+-- The dataset `csvwToRdf` writes, or its error text; the dataset-handle op
+-- `datasetFromCsvw` (`Wasm/Ops/DatasetFull.lean`) stores it without the
+-- N-Quads text.
+def csvwDataset (csv metadataJson optsJson : String) : Except String Dataset :=
   let opts := readOptions optsJson
   let mode := (optString opts "mode").getD "standard"
   let base := (optString opts "base").getD "file:///"
   let fallbackUrl := (optString opts "url").getD "table.csv"
   if mode != "standard" && mode != "minimal" then
-    errJson s!"csvwToRdf: unknown mode '{mode}' (expected 'standard' or 'minimal')"
+    .error s!"csvwToRdf: unknown mode '{mode}' (expected 'standard' or 'minimal')"
   else
   let described : Option (L4Factoidal.CSVW.TableGroup × L4Factoidal.CSVW.Ctx) :=
     if metadataJson == "" then
@@ -426,15 +447,28 @@ def csvwToRdf (csv metadataJson optsJson : String) : String :=
     else L4Factoidal.CSVW.parseMetadataText metadataJson
   match described with
   | none =>
-      errJson "csvwToRdf: metadataJson is not a decodable CSVW metadata document"
+      .error "csvwToRdf: metadataJson is not a decodable CSVW metadata document"
   | some (group, ctx) =>
     let mbase := L4Factoidal.CSVW.effectiveBase base ctx
     let pairs := group.tables.map (fun t =>
       (t, L4Factoidal.CSVW.read (L4Factoidal.CSVW.effectiveDialect group t).resolve csv))
     let triples := L4Factoidal.CSVW.convert mbase ctx group (mode == "minimal") pairs
-    nquadsEnvelope { default := triples, named := [] }
+    .ok { default := triples, named := [] }
+
+def csvwToRdf (csv metadataJson optsJson : String) : String :=
+  match csvwDataset csv metadataJson optsJson with
+  | .ok ds => nquadsEnvelope ds
+  | .error e => errJson e
 
 /-! ## RIF Core -/
+
+/-- The premise (the default graph of `ds`) and its saturation under the
+RIF-XML rules, or the error text of `rifEval`. -/
+def rifSaturate (rifXml : String) (ds : Dataset) : Except String (Graph × Graph) :=
+  let premise := ds.default
+  match L4Factoidal.RIF.Saturate.saturateWithProgram rifXml premise with
+  | none => .error "RIF-XML parse error (RIF.Xml.parseRifProgram returned none)"
+  | some saturated => .ok (premise, saturated)
 
 /-- `rifEval(rifXml, nquads)`: parse RIF-XML rules, forward-chain over the
 default graph of the premise to the round bound of
@@ -445,11 +479,9 @@ def rifEval (rifXml nq : String) : String :=
   match readHandle "rifEval" nq with
   | .error e => errJson e
   | .ok ds =>
-    let premise := ds.default
-    match L4Factoidal.RIF.Saturate.saturateWithProgram rifXml premise with
-    | none =>
-        errJson "RIF-XML parse error (RIF.Xml.parseRifProgram returned none)"
-    | some saturated =>
+    match rifSaturate rifXml ds with
+    | .error e => errJson e
+    | .ok (premise, saturated) =>
       match Graph.toNTriples premise, Graph.toNTriples saturated with
       | .ok inLines, .ok outLines =>
           okWith [("inputNquads", .string inLines),

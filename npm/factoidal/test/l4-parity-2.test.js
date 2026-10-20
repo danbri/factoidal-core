@@ -58,133 +58,10 @@ async function skipUnlessOps(_t, ...ops) {
 // 1. Maths
 // ---------------------------------------------------------------------
 
-const MATRIX_OPS = ['matrixDeterminant', 'matrixScalarProduct', 'matrixVectorProduct', 'matrixOuterProduct'];
+// The matrix and sigmoid ops are not in the JS API since 0.10.0 (owner,
+// 2026-10-20: demonstration functions leave the package); their Lean code
+// keeps its build-time #guard checks.
 
-test('l4-core matrixDeterminant: exact values', async (t) => {
-  if (await skipUnlessOps(t, ...MATRIX_OPS)) return;
-  assert.deepEqual(await l4core.matrixDeterminant([[1, 2], [3, 4]]), { result: '-2', reason: '' });
-  // 2*(3*1-2*1) - 0*(1*1-2*1) + 1*(1*1-3*1) = 2 - 0 - 2 = 0
-  assert.deepEqual(await l4core.matrixDeterminant([[2, 0, 1], [1, 3, 2], [1, 1, 1]]), { result: '0', reason: '' });
-  // 1*(5*10-6*8) - 2*(4*10-6*7) + 3*(4*8-5*7) = 2 + 4 - 9 = -3
-  assert.equal((await l4core.matrixDeterminant([[1, 2, 3], [4, 5, 6], [7, 8, 10]])).result, '-3');
-  // The 0 x 0 matrix has determinant 1 by convention.
-  assert.equal((await l4core.matrixDeterminant([])).result, '1');
-  // Exact rational entries: [[1/2, 0], [0, 1/2]] has determinant 1/4.
-  assert.equal((await l4core.matrixDeterminant([[[1, 2], 0], [0, [1, 2]]])).result, '1/4');
-  // Entries reduce to lowest terms with a positive denominator.
-  assert.equal((await l4core.matrixDeterminant([[[2, 4], 0], [0, [-3, -6]]])).result, '1/4');
-});
-
-test('l4-core matrixDeterminant: undefined results carry a reason', async (t) => {
-  if (await skipUnlessOps(t, ...MATRIX_OPS)) return;
-  let r = await l4core.matrixDeterminant([[1, 2, 3], [4, 5, 6]]);
-  assert.equal(r.result, 'undef');
-  assert.match(r.reason, /square/);
-  r = await l4core.matrixDeterminant([[1, 2], [3]]);
-  assert.equal(r.result, 'undef');
-  assert.match(r.reason, /non-rectangular/);
-  // A zero denominator is an undefined entry, never an exception or a number.
-  r = await l4core.matrixDeterminant([[1, [1, 0]], [3, 4]]);
-  assert.equal(r.result, 'undef');
-  assert.equal(r.reason, 'division-by-zero');
-});
-
-test('l4-core matrix vector operations', async (t) => {
-  if (await skipUnlessOps(t, ...MATRIX_OPS)) return;
-  assert.equal((await l4core.matrixScalarProduct([1, 2, 3], [4, 5, 6])).result, '32');
-  assert.equal((await l4core.matrixScalarProduct([[1, 2], 1], [2, [1, 3]])).result, '4/3');
-  let r = await l4core.matrixScalarProduct([1, 2, 3], [4, 5]);
-  assert.equal(r.result, 'undef');
-  assert.match(r.reason, /length/);
-  // e_x x e_y = e_z, and the cross product is anti-commutative.
-  assert.equal((await l4core.matrixVectorProduct([1, 0, 0], [0, 1, 0])).result, '[0,0,1]');
-  assert.equal((await l4core.matrixVectorProduct([0, 1, 0], [1, 0, 0])).result, '[0,0,-1]');
-  assert.equal((await l4core.matrixVectorProduct([1, 2, 3], [4, 5, 6])).result, '[-3,6,-3]');
-  r = await l4core.matrixVectorProduct([1, 0], [0, 1]);
-  assert.equal(r.result, 'undef');
-  assert.match(r.reason, /3-vectors/);
-  assert.equal((await l4core.matrixOuterProduct([1, 2], [3, 4])).result, '[[3,4],[6,8]]');
-  assert.equal((await l4core.matrixOuterProduct([1, 2, 3], [[1, 2]])).result, '[[1/2],[1],[3/2]]');
-});
-
-test('l4-core matrix wrappers reject non-array arguments before any engine call', async () => {
-  await assert.rejects(() => l4core.matrixDeterminant('x'), TypeError);
-  await assert.rejects(() => l4core.matrixScalarProduct([1], 2), TypeError);
-  await assert.rejects(() => l4core.matrixVectorProduct(1, [1]), TypeError);
-  await assert.rejects(() => l4core.matrixOuterProduct(null, [1]), TypeError);
-});
-
-test('l4-core matrix: a cell that is not an integer or a [num,den] pair rejects', async (t) => {
-  if (await skipUnlessOps(t, ...MATRIX_OPS)) return;
-  await assert.rejects(() => l4core.matrixDeterminant([[1.5, 2], [3, 4]]), /each cell/);
-  await assert.rejects(() => l4core.matrixDeterminant([['x', 2], [3, 4]]), /each cell/);
-  await assert.rejects(() => l4core.matrixScalarProduct([[1, 2, 3]], [1]), /each cell/);
-});
-
-const SIGMOID_OPS = ['sigmoidPoints', 'sigmoidFormulaMathml'];
-
-test('l4-core sigmoidPoints: n+1 samples, exact midpoint, monotone, close to Math.exp', async (t) => {
-  if (await skipUnlessOps(t, ...SIGMOID_OPS)) return;
-  const pts = await l4core.sigmoidPoints({ k: '1', x0: '0', l: '1', xmin: '-6', xmax: '6', n: 24 });
-  assert.equal(pts.length, 25);
-  for (const p of pts) {
-    for (const v of [p.x, p.y]) {
-      assert.deepEqual(Object.keys(v), ['mantissa', 'scale', 'decimal']);
-      assert.equal(typeof v.mantissa, 'string');
-      assert.equal(v.scale, '9');
-    }
-  }
-  // x = x0 = 0 is sample 12; k*(x-x0) = 0 exactly, so y = 1 / (1 + 1) with no rounding.
-  assert.equal(pts[12].x.decimal, '0.000000000');
-  assert.equal(pts[12].y.decimal, '0.500000000');
-  assert.equal(pts[12].y.mantissa, '500000000');
-  assert.equal(pts[0].x.decimal, '-6.000000000');
-  assert.equal(pts[24].x.decimal, '6.000000000');
-  for (let i = 1; i < pts.length; i++) {
-    assert.ok(Number(pts[i].x.decimal) > Number(pts[i - 1].x.decimal));
-    assert.ok(Number(pts[i].y.decimal) > Number(pts[i - 1].y.decimal));
-  }
-  // The documented bound is 1e-9 over the practical range; Math.exp is the independent witness.
-  for (const p of pts) {
-    const x = Number(p.x.decimal);
-    const want = 1 / (1 + Math.exp(-x));
-    assert.ok(Math.abs(Number(p.y.decimal) - want) < 2e-9, `sigmoid(${x})`);
-  }
-  // Symmetry: sigmoid(x) + sigmoid(-x) = 1.
-  for (let i = 0; i < 12; i++) {
-    const sum = BigInt(pts[i].y.mantissa) + BigInt(pts[24 - i].y.mantissa);
-    assert.ok(sum >= 999999998n && sum <= 1000000002n, `symmetry at ${i}`);
-  }
-});
-
-test('l4-core sigmoidPoints: parameters, n = 0, and refusals', async (t) => {
-  if (await skipUnlessOps(t, ...SIGMOID_OPS)) return;
-  // Numbers and strings are both accepted; L scales the curve.
-  const pts = await l4core.sigmoidPoints({ k: 2, x0: '1.5', l: 10, xmin: 0, xmax: 3, n: 2 });
-  assert.equal(pts.length, 3);
-  assert.equal(pts[1].x.decimal, '1.500000000');
-  assert.equal(pts[1].y.decimal, '5.000000000');
-  // n = 0 is the single sample at xmin.
-  const one = await l4core.sigmoidPoints({ k: 1, x0: 0, l: 1, xmin: -2, xmax: 2, n: 0 });
-  assert.equal(one.length, 1);
-  assert.equal(one[0].x.decimal, '-2.000000000');
-  await assert.rejects(() => l4core.sigmoidPoints({ k: 1, x0: 0, l: 1, xmin: -2, xmax: 2, n: -1 }), /negative/);
-  await assert.rejects(() => l4core.sigmoidPoints({ k: 'one', x0: 0, l: 1, xmin: -2, xmax: 2, n: 1 }), /not a decimal/);
-  // The wrapper sends every parameter as text, so an absent one reaches the engine as "undefined".
-  await assert.rejects(() => l4core.sigmoidPoints({ k: 1 }), /not a decimal literal: undefined/);
-  await assert.rejects(() => l4core.sigmoidPoints(null), TypeError);
-});
-
-test('l4-core sigmoidFormulaMathml: Presentation MathML of L / (1 + e^(-k(x - x0)))', async (t) => {
-  if (await skipUnlessOps(t, ...SIGMOID_OPS)) return;
-  const mathml = await l4core.sigmoidFormulaMathml();
-  assert.match(mathml, /^<math xmlns="http:\/\/www\.w3\.org\/1998\/Math\/MathML">/);
-  assert.match(mathml, /<mfrac>/);
-  assert.match(mathml, /<msup><mi>e<\/mi>/);
-  assert.match(mathml, /<mi>L<\/mi>/);
-  assert.match(mathml, /<mi>x0<\/mi>/);
-  assert.match(mathml, /<\/math>$/);
-});
 
 // ---------------------------------------------------------------------
 // 2. VC and DID
@@ -640,7 +517,7 @@ test('l4-core openDataset: prefixes at open, handle prefixes in Turtle output, o
     assert.match(extra, /"5\."\^\^xs:decimal/);
     assert.doesNotMatch(extra, /xsd:/);
   } finally {
-    await h.close();
+    h.dispose();
   }
   await assert.rejects(l4core.openDataset('this is not turtle', { format: 'turtle' }),
     (err) => { assertParseError(err, 'openDataset'); assert.equal(err.line, 1); return true; });

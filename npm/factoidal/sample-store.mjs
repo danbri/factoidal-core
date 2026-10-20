@@ -1,37 +1,47 @@
-// The sample Shardborough store this package carries, so a fresh install
-// answers a SPARQL query with no other download and no native binary.
+// @factoidal/core/sample-store - a small store made on demand (Node only).
 //
-// The store was packed by `l4block-shard-pack … ibk3` and activated by
-// `l4block-shard-activate`. Nothing here decodes it; this module only
-// resolves its path inside the installed package.
-//
-// CONTENT AND LICENCE. Five IPTC NewsCodes vocabularies, published by the
-// IPTC under CC BY 4.0 and taken from danbri/skosdex third_party/skos:
-// spamfstat, videoqualifier, subjectqualifier, videocodec and spct.
-// 4,434 triples in 13 predicate blocks. See NOTICE.
+// Owner, 2026-10-20, verbatim: "All the CLIs are still bundled i just didn't
+// want any actual demo triples cluttering the file." So the package ships no
+// store. sampleStorePath() packs the few triples below (written for this
+// package, no third-party content) into a Shardborough store with the
+// package's own `factoidal pack` and `factoidal activate`, under DIR or the
+// OS temporary directory, and returns the collection root. A DIR that
+// already holds CURRENT is returned as it is.
 
-import { fileUrlToPath, joinPath } from './store-host/paths.mjs'
+import { execFileSync } from 'node:child_process'
+import { existsSync } from 'node:fs'
+import { join } from 'node:path'
+import { fileURLToPath } from 'node:url'
 
-/** The collection root of the bundled sample store: the directory holding
- * CURRENT. Pass it to `factoidal inspect` / `factoidal query`, or to
- * `openStore` from `@factoidal/core/store-host`. */
-export function sampleStorePath () {
-  const packageRoot = fileUrlToPath(new URL('.', import.meta.url).href)
-  return joinPath(packageRoot, 'sample-store')
-}
+/** The triples of the sample store, as Turtle. */
+export const SAMPLE_TURTLE = `@prefix skos: <http://www.w3.org/2004/02/skos/core#> .
+@prefix ex: <http://example.org/codec/> .
+ex:scheme a skos:ConceptScheme ; skos:prefLabel "Video codecs"@en .
+ex:c1 a skos:Concept ; skos:inScheme ex:scheme ; skos:prefLabel "PAL"@en ; skos:notation "c1" .
+ex:c2 a skos:Concept ; skos:inScheme ex:scheme ; skos:prefLabel "NTSC"@en ; skos:notation "c2" .
+ex:c3 a skos:Concept ; skos:inScheme ex:scheme ; skos:prefLabel "SECAM"@en ; skos:notation "c3" ;
+  skos:broader ex:c1 .
+`
 
-/** What the sample store holds, as recorded when it was packed. The engine
- * is the authority on every one of these numbers at run time; they are here
- * so a caller can print something before it opens the store. */
+/** What the sample store holds. */
 export const sampleStoreFacts = Object.freeze({
-  triples: 4434,
-  blocks: 13,
-  layout: 'predicate-ibk3-ptd1-sri2-tli1-oli2-merkle-v0',
-  wireVersion: 6,
-  source: 'IPTC NewsCodes (spamfstat, videoqualifier, subjectqualifier, videocodec, spct)',
-  licence: 'CC BY 4.0',
-  licenceUrl: 'https://creativecommons.org/licenses/by/4.0/',
-  publisher: 'https://iptc.org/'
+  triples: 15,
+  source: 'SAMPLE_TURTLE in sample-store.mjs (written for this package)',
+  layout: 'ibk3'
 })
+
+/**
+ * Pack the sample store (if DIR holds no CURRENT) and return its root.
+ * @param {string} [dir] the collection root to use; default a new
+ *   directory under the OS temporary directory
+ * @returns {string}
+ */
+export function sampleStorePath (dir) {
+  if (typeof dir === 'string' && existsSync(join(dir, 'CURRENT'))) return dir
+  const cli = fileURLToPath(new URL('./bin/factoidal.mjs', import.meta.url))
+  const args = [cli, 'sample-store']
+  if (typeof dir === 'string') args.push(dir)
+  return execFileSync(process.execPath, args, { encoding: 'utf8' }).trim()
+}
 
 export default sampleStorePath

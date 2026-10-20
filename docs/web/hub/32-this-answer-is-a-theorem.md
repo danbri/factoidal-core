@@ -35,13 +35,13 @@ same extracted engine the theorems are about.
 ## What the two API calls do, in plain terms
 
 **`fn.coreRdfsClosure(data)`** takes an RDF document (Turtle or
-N-Triples text) and returns `{ok, ntriples, rounds}`: the same graph
+N-Triples text) and returns a `Dataset` (`info.rounds` is the pass count): the same graph
 with **every fact the five schema properties imply added as an
 explicit triple**. That is all "closure" means. If your data says
 `:Engineer rdfs:subClassOf :Employee` and `:ada rdf:type :Engineer`,
 the output also contains `:ada rdf:type :Employee` — and every other
-consequence, chained to any depth (`rounds` reports how many passes
-that took). You run it once, store or query the result, and from then
+consequence, chained to any depth (`info.rounds` reports how many passes
+that took, `dataset.info.rounds`). You run it once, store or query the result, and from then
 on **plain SPARQL — no reasoner, no entailment setting — sees every
 schema-implied fact**, because the facts are physically there.
 
@@ -122,7 +122,7 @@ closed = fn.coreRdfsClosure(ttl) // a promise: dependent cells receive it awaite
 subclass steps entail it.
 
 ```observable-js
-const dataset = await fn.parse(closed.ntriples, {format: "ntriples"});
+const dataset = await fn.parse(closed.toString("ntriples"), {format: "ntriples"});
 const rows = await fn.query(dataset, `
   # Does the closure make Ada an Agent, via two chained subclass steps?
   PREFIX rdf: <http://www.w3.org/1999/02/22-rdf-syntax-ns#>
@@ -146,7 +146,7 @@ acts on it:
 ```observable-js
 const withSym = ttl + `\n  :worksWith rdf:type <http://www.w3.org/2002/07/owl#SymmetricProperty> .\n`;
 const plus = await fn.rdfsPlusClosure(withSym);
-const dataset2 = await fn.parse(plus.ntriples, {format: "ntriples"});
+const dataset2 = await fn.parse(plus.toString("ntriples"), {format: "ntriples"});
 const rows = await fn.query(dataset2, `
   # Who works with whom, now that the symmetric property makes it mutual?
   PREFIX : <http://example.org/org#>
@@ -208,7 +208,7 @@ const escape = `
 `;
 const before = await fn.coreRdfsCheck(escape);
 const closedEsc = await fn.coreRdfsClosure(escape);
-const after  = await fn.coreRdfsCheck(closedEsc.ntriples);
+const after  = await fn.coreRdfsCheck(closedEsc.toString("ntriples"));
 return pretty({fragmentBefore: before.fragment, fragmentAfter: after.fragment});
 // true, then false — one rdfs7 step derives ':a rdfs:subPropertyOf _:b1',
 // whose blank-node object leaves the fragment. Machine-checked as
@@ -276,7 +276,7 @@ const t2 = performance.now();
 return pretty({
   sixRuleMs: +(t1 - t0).toFixed(1),
   fullClosureMs: +(t2 - t1).toFixed(1),
-  derivedTriples: six.ntriples.split("\n").filter(l => l.trim()).length,
+  derivedTriples: six.toString("ntriples").split("\n").filter(l => l.trim()).length,
   note: "timings are measured in YOUR browser just now — not vendor numbers"
 });
 ```

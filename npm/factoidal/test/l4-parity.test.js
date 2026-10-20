@@ -73,7 +73,7 @@ test('capabilities: the stage-1, stage-2 and stage-3 families are reported true'
   // the package, so its flag is gone; lenient parse is served by the op
   // parseDocument (Wasm/Ops/Lenient.lean,
   // https://github.com/danbri/factoidal/issues/716).
-  for (const key of ['shacl', 'shex', 'matrix', 'sigmoid', 'vcCrypto', 'didKey',
+  for (const key of ['shacl', 'shex', 'vcCrypto', 'didKey',
     'entailment', 'hdt', 'sparql12', 'store', 'datasetHandles', 'turtlePrefixes',
     'parseDiagnostics']) {
     assert.equal(caps[key], true, `capabilities().${key}`);
@@ -797,7 +797,7 @@ test('registerServiceEndpoint: SERVICE resolves against a registered snapshot un
     const handle = await lean.openDataset(local, { format: 'ntriples' });
     const viaHandle = await handle.query(q);
     assert.equal(viaHandle.length, 1);
-    await handle.close();
+    handle.dispose();
     // registering the same IRI again replaces the snapshot
     await lean.registerServiceEndpoint(ENDPOINT, '<http://e/a> <http://e/p> "w" .',
       { format: 'ntriples' });

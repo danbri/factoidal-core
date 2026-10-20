@@ -31,8 +31,10 @@ inter-operate through. A library that speaks this shape can hand a
 a `dataFactory` (`namedNode`/`blankNode`/`literal`/`variable`/
 `defaultGraph`/`quad`/`fromTerm`/`fromQuad`), the five term classes plus
 `Quad` (each frozen at construction, each with a spec-correct
-`.equals()`), and a minimal `Dataset` — `size`, `add`/`delete`/`has`,
-`match(s, p, o, g)`, iteration, `toNQuads()`/`Dataset.fromNQuads()`. It
+`.equals()`), and a minimal in-memory `DatasetCore` — `size`,
+`add`/`delete`/`has`, `match(s, p, o, g)`, iteration, `toNQuads()`. Since
+0.10.0 the package's own `Dataset` keeps its quads in the engine and gives
+RDF/JS DatasetCore (`size`, `add`, `delete`, `has`, `match`, iteration) in the engine. It
 is genuinely small: no parsing logic lives here (RDF parsing is F\*'s
 job, per Iron Rule #4) — `rdfjs.js` only builds/compares/tokenizes terms
 that some other layer already produced.

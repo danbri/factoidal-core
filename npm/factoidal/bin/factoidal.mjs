@@ -25,9 +25,9 @@ import {
 } from '../store-host/index.mjs'
 import { fileUrlToPath, joinPath } from '../store-host/paths.mjs'
 import { hexOfBytes, loadEngine } from './engine.mjs'
-import { sampleStoreFacts, sampleStorePath } from '../sample-store.mjs'
 import { PackError, packSupported, verifyGeneration } from './pack.mjs'
 import { denoReexec, isStackOverflow, runPack } from './pack-host.mjs'
+import { SAMPLE_TURTLE, sampleStoreFacts } from '../sample-store.mjs'
 import {
   planQueryOnWorker, queryStoreOnWorker, workerRouteAvailable
 } from './store-worker-host.mjs'
@@ -91,7 +91,8 @@ function exit (code) {
   else process.exitCode = code
 }
 
-function out (line) { console.log(line) }
+let outSilenced = false
+function out (line) { if (!outSilenced) console.log(line) }
 function err (line) { console.error(line) }
 
 // ---------------------------------------------------------------- usage
@@ -102,7 +103,7 @@ usage: factoidal <command> [options]
 
 commands:
   version                     print the package and engine versions
-  sample-store                print the path of the bundled sample store
+  sample-store [DIR]          pack a small built-in store and print its path
   inspect  STORE              report what the activated manifest commits
   query    STORE [QUERY]      evaluate a SPARQL query against a store
   pack     INPUT OUTPUT       build one immutable generation from an RDF file
@@ -123,12 +124,23 @@ global options:
 exit codes:
   0 success   1 failure   2 usage error   3 not yet wired (${ISSUE})
 
-STORE is a collection root: the directory that holds CURRENT. This package
-carries one, so the first query needs no other download:
+STORE is a collection root: the directory that holds CURRENT. Make one from
+an RDF file with pack and activate, or try a small built-in one:
 
   factoidal query "$(factoidal sample-store)" 'SELECT * WHERE { ?s ?p ?o } LIMIT 5'`
 
 const COMMAND_USAGE = {
+  'sample-store': `factoidal sample-store - pack a small built-in store, print its path
+
+usage: factoidal sample-store [DIR] [--json]
+
+Packs the few triples held in sample-store.mjs (no data file ships) into a
+store under DIR, or under the OS temporary directory, activates it, and
+prints the collection root. A DIR that already holds CURRENT is reused.
+
+  factoidal query "$(factoidal sample-store)" \\
+    'SELECT ?c ?l WHERE { ?c <http://www.w3.org/2004/02/skos/core#prefLabel> ?l }'`,
+
   version: `factoidal version - print the package and engine versions
 
 usage: factoidal version [--json]
@@ -136,20 +148,6 @@ usage: factoidal version [--json]
 Prints the npm package version, the Lean engine's WebAssembly digest as
 recorded by its build, and which host-I/O implementation is loaded.`,
 
-  'sample-store': `factoidal sample-store - print the bundled store's path
-
-usage: factoidal sample-store [--json]
-
-Prints the collection root of the Shardborough store this package
-carries, so a fresh install can query something at once:
-
-  factoidal inspect "$(factoidal sample-store)"
-  factoidal query "$(factoidal sample-store)" \\
-    'SELECT (COUNT(*) AS ?n) WHERE { ?s ?p ?o }'
-
-The store holds five IPTC NewsCodes vocabularies (CC BY 4.0; see NOTICE)
-packed into IBK3 predicate blocks. --json adds what was recorded when it
-was packed.`,
 
   inspect: `factoidal inspect - report what a store's manifest commits
 
@@ -509,7 +507,7 @@ async function commandVersion (options) {
   }
   const stamped = stamp !== null && stamp.stamped === true
   const installed = {}
-  for (const [key, file] of [['wasm', 'l4factoidal.wasm'], ['coreWasm', 'l4factoidal-core.wasm']]) {
+  for (const [key, file] of [['wasm', 'l4factoidal.wasm']]) {
     try {
       const bytes = readWhole(joinPath(root, `l4-assets/${file}`))
       installed[key] = { sha256: await sha256Hex(bytes), bytes: bytes.length }
@@ -528,8 +526,7 @@ async function commandVersion (options) {
   }
   const mismatches = []
   if (stamped) {
-    for (const [key, shaKey, bytesKey] of [['wasm', 'wasmSha256', 'wasmBytes'],
-      ['coreWasm', 'coreWasmSha256', 'coreWasmBytes']]) {
+    for (const [key, shaKey, bytesKey] of [['wasm', 'wasmSha256', 'wasmBytes']]) {
       if (installed[key] === null) continue
       if (stamp[shaKey] !== installed[key].sha256 || stamp[bytesKey] !== installed[key].bytes) {
         mismatches.push(`${key}: version.json says sha256 ${stamp[shaKey]} (${stamp[bytesKey]} bytes), ` +
@@ -556,9 +553,7 @@ async function commandVersion (options) {
             release: stamp.release,
             leanToolchain: stamp.leanToolchain,
             wasmSha256: stamp.wasmSha256,
-            wasmBytes: stamp.wasmBytes,
-            coreWasmSha256: stamp.coreWasmSha256,
-            coreWasmBytes: stamp.coreWasmBytes
+            wasmBytes: stamp.wasmBytes
           }
         : { stamped: false, status: stamp.status || 'stamped at release' },
     installed,
@@ -581,9 +576,8 @@ async function commandVersion (options) {
         (stamp.release ? ` (${stamp.release})` : ''))
       out(`stamp: engine ${stamp.engineVersion} (${stamp.leanToolchain})`)
       out(`stamp: wasm sha256 ${stamp.wasmSha256} (${stamp.wasmBytes} bytes)`)
-      out(`stamp: core wasm sha256 ${stamp.coreWasmSha256} (${stamp.coreWasmBytes} bytes)`)
     }
-    for (const [key, label] of [['wasm', 'wasm'], ['coreWasm', 'core wasm']]) {
+    for (const [key, label] of [['wasm', 'wasm']]) {
       out(installed[key] === null
         ? `installed ${label}: absent`
         : `installed ${label} sha256 ${installed[key].sha256} (${installed[key].bytes} bytes)`)
@@ -599,15 +593,6 @@ async function commandVersion (options) {
   return EXIT_OK
 }
 
-function commandSampleStore (options) {
-  const path = sampleStorePath()
-  if (options.json === true) {
-    out(JSON.stringify({ path, ...sampleStoreFacts }, null, 2))
-    return EXIT_OK
-  }
-  out(path)
-  return EXIT_OK
-}
 
 // ------------------------------------------------------------ rendering
 
@@ -1047,6 +1032,34 @@ async function commandPack (positional, options) {
   return EXIT_OK
 }
 
+async function commandSampleStore (positional, options) {
+  if (positional.length > 1) throw new UsageError('sample-store takes at most one DIR')
+  const { mkdtempSync, writeFileSync, existsSync } = await import('node:fs')
+  const { tmpdir } = await import('node:os')
+  const root = positional.length === 1
+    ? positional[0]
+    : mkdtempSync(joinPath(tmpdir(), 'factoidal-sample-store-'))
+  if (!existsSync(joinPath(root, 'CURRENT'))) {
+    makeDirectory(joinPath(root, 'gen-1'))
+    const source = joinPath(root, 'sample.ttl')
+    writeFileSync(source, SAMPLE_TURTLE)
+    outSilenced = true
+    try {
+      let code = await commandPack([source, joinPath(root, 'gen-1')], { quiet: true })
+      if (code === EXIT_OK) code = await commandActivate([root, 'gen-1'], { quiet: true })
+      if (code !== EXIT_OK) return code
+    } finally {
+      outSilenced = false
+    }
+  }
+  if (options.json === true) {
+    out(JSON.stringify({ path: root, ...sampleStoreFacts }, null, 2))
+  } else {
+    out(root)
+  }
+  return EXIT_OK
+}
+
 async function commandActivate (positional, options) {
   if (positional.length !== 2) throw new UsageError('activate needs STORE and GENERATION')
   const [root, generation] = positional
@@ -1337,7 +1350,7 @@ async function commandSolidClient (positional, options) {
 
 const COMMANDS = {
   version: (positional, options) => commandVersion(options),
-  'sample-store': (positional, options) => commandSampleStore(options),
+  'sample-store': (positional, options) => commandSampleStore(positional, options),
   inspect: commandInspect,
   query: commandQuery,
   pack: commandPack,

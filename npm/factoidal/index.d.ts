@@ -131,53 +131,109 @@ export interface ParseDiagnostic {
   class: string;
 }
 
+/** Every options key of Dataset.serialize(), serialize() and toString(). */
+export interface WriteOptions {
+  /**
+   * 'nquads' (default; sorted line order), 'ntriples' (refused when the
+   * dataset has a named graph), 'turtle', 'trig', 'rdfxml', 'jsonld'
+   * (expanded JSON-LD 1.1), 'rdfc' (RDFC-1.0 canonical N-Quads). Turtle and
+   * RDF/XML write the named graphs as one graph. `formats()` lists what
+   * each writer supports.
+   */
+  format?: WriteFormat;
+  /** '1.1' refuses a dataset with an RDF 1.2 term; '1.2' (default) writes it. */
+  version?: '1.1' | '1.2';
+  /** 'turtle' only: prefix label -> namespace IRI, merged over `dataset.prefixes`. */
+  prefixes?: Record<string, string>;
+  /** 'turtle' only. Default true: integers, decimals, doubles and booleans print bare. */
+  literalShorthand?: boolean;
+  /** 'jsonld' only (JSON-LD 1.1 API section 8). */
+  useNativeTypes?: boolean;
+  /** 'jsonld' only. */
+  useRdfType?: boolean;
+  /** 'jsonld' only. */
+  rdfDirection?: string;
+}
+
+export type WriteFormat =
+  | 'nquads' | 'nq' | 'ntriples' | 'nt' | 'turtle' | 'ttl' | 'trig'
+  | 'rdfxml' | 'rdf-xml' | 'rdf' | 'jsonld' | 'json-ld' | 'rdfc' | 'canonical';
+
+/** Results formats of query() with `output`. */
+export type ResultsFormat = 'json' | 'xml' | 'csv' | 'tsv' | 'table' | 'ntriples';
+
+/** One row of formats(). */
+export interface FormatCapability {
+  name: string;
+  read11: boolean;
+  read12: boolean;
+  write11: boolean;
+  write12: boolean;
+  /** 'core' when both engines serve it; 'full' when only the full engine does. */
+  engine: 'core' | 'full';
+}
+
 /**
- * An in-memory RDF/JS DatasetCore
- * (https://rdf.js.org/dataset-spec/#datasetcore-interface) that also
- * round-trips to the engine's N-Quads interchange text.
+ * An RDF dataset held inside the engine (https://github.com/danbri/factoidal/issues/882).
+ * Every producer (parse, csvwToRdf, rmlMap, jsonldToRdf, the closures,
+ * rifEval, CONSTRUCT) answers one; every consumer accepts one. The data
+ * stays in the wasm memory: a method sends the handle id, not the data.
+ * Release it with dispose() or `using`; a Dataset collected without
+ * dispose() is released by a FinalizationRegistry. A method of a disposed
+ * Dataset throws a TypeError.
  */
 export class Dataset implements Iterable<Quad> {
-  constructor(
-    quads?: Iterable<Quad>,
-    options?: { prefixes?: Record<string, string>; diagnostics?: ParseDiagnostic[] }
-  );
+  private constructor();
+  /** The engine's handle id (opaque). */
+  readonly handle: string;
+  /** Number of quads. */
   readonly size: number;
-  /**
-   * Prefixes the engine reported at parse time (declaration order, no
-   * colons), or `{}` for a Dataset with none recorded. A frozen, own,
-   * non-enumerable property -- absent from `JSON.stringify()`/
-   * `Object.keys()`, and from `toArray()`'s quads.
-   */
+  /** Prefixes the source document declared (label -> namespace IRI). */
   readonly prefixes: Record<string, string>;
-  /**
-   * Recoverable-parse diagnostics from a `{lenient:true}` parse() call,
-   * or `[]` for a strict parse (or one with no errors). Same
-   * non-enumerable-property treatment as `prefixes`.
-   */
+  /** Diagnostics of a `{lenient:true}` parse; else empty. */
   readonly diagnostics: ParseDiagnostic[];
+  /** The parse format tag, when the data was read from text. */
+  readonly format: string | undefined;
+  /** True when `format` was inferred because the caller gave none. */
+  readonly formatInferred: boolean;
+  /** True after dispose(). */
+  readonly disposed: boolean;
+  /** Members the producing op reported: `rounds` (rho-df, RDFS-Plus closures); `inputCount`, `derivedCount`, `fuel` (rifEval). */
+  readonly info: Record<string, unknown>;
+  query(sparql: string, options?: DatasetQueryOptions): Promise<Bindings[] | boolean | Dataset | string | object>;
+  /** SPARQL 1.1 Update in place; answers this Dataset. */
+  update(updateText: string, options?: Record<string, never>): Promise<this>;
+  validateShacl(shapes: DataInput, options?: { format?: DataFormat; baseIRI?: string }): Promise<ShaclValidateResult>;
+  validateShex(schema: string, options: { focus: string | NamedNode | BlankNode; shape?: string | NamedNode | BlankNode | null }): Promise<boolean>;
+  closure(regime: ClosureRegime): Promise<Dataset>;
+  canonicalize(): Promise<string>;
+  serialize(options?: WriteOptions): Promise<string>;
+  toString(formatOrOptions?: WriteFormat | WriteOptions): string;
+  toNQuads(): string;
+  clone(): Dataset;
+  /** RDF/JS DatasetCore (https://rdf.js.org/dataset-spec/); match and has use the engine indexes. */
+  has(quad: Quad): boolean;
   add(quad: Quad): this;
   delete(quad: Quad): this;
-  has(quad: Quad): boolean;
-  match(
-    subject?: Term | null,
-    predicate?: Term | null,
-    object?: Term | null,
-    graph?: Term | null
-  ): Dataset;
-  [Symbol.iterator](): Iterator<Quad>;
+  match(subject?: Term | null, predicate?: Term | null, object?: Term | null, graph?: Term | null): Dataset;
   toArray(): Quad[];
-  /** N-Quads serialization of the quads (the engine interchange form). */
-  toNQuads(): string;
-  toString(): string;
-  static fromNQuads(
-    text: string,
-    options?: {
-      blankNodePrefix?: string;
-      factory?: DataFactory;
-      prefixes?: Record<string, string>;
-      diagnostics?: ParseDiagnostic[];
-    }
-  ): Dataset;
+  [Symbol.iterator](): Iterator<Quad>;
+  dispose(): void;
+  [Symbol.dispose](): void;
+}
+
+/** @deprecated The name of Dataset before 0.10.0; removed in 0.11.0. */
+export const DatasetHandle: typeof Dataset;
+
+export type ClosureRegime = 'rdfs' | 'owl-rl' | 'rho-df' | 'rdfs-plus';
+
+export interface DatasetQueryOptions {
+  sparql12?: boolean;
+  version?: '1.1' | '1.2';
+  /** Close the default graph under a regime before the query. */
+  entail?: EntailRegime;
+  /** Answer the results document in this format (text; 'json' parsed). */
+  output?: ResultsFormat;
 }
 
 // ---------------------------------------------------------------------
@@ -219,18 +275,22 @@ export type EntailRegime = 'none' | 'RDFS' | 'OWL-RL' | 'x-rdfscore' | 'x-rdfspl
  */
 export type Bindings = Map<string, Term>;
 
-/** Input data: a Dataset, a document string, or several of either. */
+/**
+ * Input data: a Dataset, a document string, or several of either. Text
+ * is read in `options.format`; with no format the engine infers one and
+ * the error (or `dataset.format`) reports it.
+ */
 export type DataInput =
   | Dataset
   | string
-  | { text: string; format?: DataFormat }
-  | Array<Dataset | string | { text: string; format?: DataFormat }>;
+  | { text: string; format?: DataFormat; baseIRI?: string }
+  | Array<Dataset | string | { text: string; format?: DataFormat; baseIRI?: string }>;
 
-/** Anything query()/serialize()/canonicalize() accept: DataInput, or an already-open DatasetHandle. */
-export type QueryInput = DataInput | DatasetHandle;
+/** Same as DataInput (kept for 0.9 type imports). */
+export type QueryInput = DataInput;
 
 export interface ParseOptions {
-  /** Default: 'turtle'. */
+  /** Omitted: inferred by the engine (op detectFormat), reported in `dataset.format`. */
   format?: DataFormat;
   /** Base IRI for resolving relative IRIs (Turtle/TriG/RDF-XML). */
   baseIRI?: string;
@@ -252,22 +312,10 @@ export interface ParseOptions {
   maxErrors?: number;
 }
 
-export interface QueryOptions {
-  /** Format tag for string data inputs. Default: 'turtle'. */
+export interface QueryOptions extends DatasetQueryOptions {
+  /** Format tag for string data inputs; omitted: inferred. */
   format?: DataFormat;
-  /**
-   * Default: 'none'. Any other regime closes the DEFAULT graph under it
-   * before the query (op queryRaw); extension functions and SERVICE
-   * registrations are not in scope on that path.
-   */
-  entail?: EntailRegime;
-  /**
-   * Read the query with the SPARQL 1.2 grammar (triple-term patterns
-   * `<<( s p o )>>`, reified triples, annotations, TRIPLE / isTRIPLE /
-   * SUBJECT / PREDICATE / OBJECT). Same as `version: '1.2'`.
-   */
-  sparql12?: boolean;
-  version?: '1.1' | '1.2';
+  baseIRI?: string;
 }
 
 /**
@@ -298,7 +346,7 @@ export function query(
   data: QueryInput,
   sparql: string,
   options?: QueryOptions | DataFormat
-): Promise<Bindings[] | boolean | Dataset>;
+): Promise<Bindings[] | boolean | Dataset | string | object>;
 
 /**
  * Run a SPARQL 1.1 query against a read-only HDT (Header-Dictionary-
@@ -355,119 +403,45 @@ export function clearExtensionFunctions(): Promise<void>;
 export function registerServiceEndpoint(
   iri: string,
   data: DataInput,
-  options?: { format?: DataFormat }
+  options?: { format?: DataFormat; baseIRI?: string }
 ): Promise<{ ok: true; count: number }>;
 
 /** Remove every registered SERVICE endpoint snapshot. */
 export function clearServiceEndpoints(): Promise<void>;
 
-/**
- * Apply a SPARQL 1.1 Update, returning the updated Dataset. `data`
- * must NOT be a DatasetHandle -- update() always returns a FRESH
- * Dataset, whereas a handle's own `handle.update()` mutates the
- * handle in place and returns it; passing a handle here rejects with
- * a TypeError naming `handle.update()`.
- *
- */
+/** Apply a SPARQL 1.1 Update and answer a NEW Dataset; a Dataset argument is unchanged. */
 export function update(
   data: DataInput,
   updateText: string,
-  options?: { format?: DataFormat } | DataFormat
+  options?: { format?: DataFormat; baseIRI?: string } | DataFormat
 ): Promise<Dataset>;
 
-/**
- * Open a dataset handle (issue #680): parse `data` once, then run
- * many query()/update()/serialize() calls against the engine's own
- * cached, indexed copy -- no re-parse, no SPARQL-index rebuild per
- * call.
- * @param data a Dataset (opened as N-Quads, keeping the Dataset's own
- *   `.prefixes` on the handle for Turtle output), a string
- *   (`options.format`/`baseIRI` apply), or an array of those (each
- *   non-N-Quads document normalizes through the strict parser first,
- *   then the whole array opens as one N-Quads document -- no
- *   per-document prefixes survive that merge).
- */
+/** Open `data` as a Dataset (a Dataset argument is cloned). */
 export function openDataset(
   data: DataInput,
   options?: { format?: DataFormat; baseIRI?: string } | DataFormat
-): Promise<DatasetHandle>;
+): Promise<Dataset>;
 
-/**
- * A dataset kept open and indexed in the engine (issue #680), from
- * openDataset(). Every method rejects once `closed` is true.
- */
-export class DatasetHandle {
-  /** The opaque engine handle id (e.g. "h1"). */
-  readonly handle: string;
-  /** Quad count as of the last open()/update(). */
-  readonly size: number;
-  /** Prefixes recorded at open (or carried over from a Dataset argument). */
-  readonly prefixes: Record<string, string>;
-  /** True once close() has run. */
-  readonly closed: boolean;
-  /** Run a SPARQL 1.1 query against the stored dataset. */
-  query(
-    sparql: string,
-    options?: { sparql12?: boolean; version?: string }
-  ): Promise<Bindings[] | boolean | Dataset>;
-  /** Apply a SPARQL 1.1 Update in place. Returns this handle, refreshed. */
-  update(updateText: string): Promise<DatasetHandle>;
-  /**
-   * Serialize the stored dataset. 'turtle' uses the handle's own
-   * recorded prefixes automatically; pass `prefixes` to add to them,
-   * or `literalShorthand:false` to turn off the bare-literal
-   * shorthand.
-   */
-  serialize(options?: {
-    format?: 'nquads' | 'turtle' | 'ttl';
-    prefixes?: Record<string, string>;
-    literalShorthand?: boolean;
-  } | 'nquads' | 'turtle' | 'ttl'): Promise<string>;
-  /** Materialize the stored dataset as a heap Dataset. */
-  toDataset(): Promise<Dataset>;
-  /** RDFC-1.0 canonical N-Quads of the stored dataset. */
-  canonicalize(): Promise<string>;
-  /** Release the handle. Idempotent; every other method rejects after. */
-  close(): Promise<void>;
-}
+/** Closure of the default graph under `regime`, as a new Dataset. */
+export function closure(
+  data: DataInput,
+  regime: ClosureRegime,
+  options?: { format?: DataFormat; baseIRI?: string }
+): Promise<Dataset>;
 
-export interface SerializeOptions {
-  /**
-   * Output format. Default: 'nquads'. A bare string in place of the
-   * options object names the format: serialize(ds, 'turtle'). 'nquads'
-   * is the engine's N-Quads text, lines in sorted order (not document
-   * order); 'ntriples' is the same text and refuses data with a named
-   * graph. 'turtle' (prefix-compacted, subject-grouped) flattens every
-   * named graph into the default graph — use 'nquads' when graph names
-   * must survive.
-   */
-  format?: 'nquads' | 'ntriples' | 'turtle' | 'ttl';
-  /** Format tag for string data inputs. Default: 'turtle'. */
+/** The syntaxes the engine reads and writes, from the engine (op datasetFormats). */
+export function formats(): Promise<FormatCapability[]>;
+
+export interface SerializeOptions extends WriteOptions {
+  /** Format of string `data`; omitted: inferred. */
   inputFormat?: DataFormat;
-  /**
-   * 'turtle' only (issue #681): caller prefix pairs win, in the
-   * caller's order; unused caller namespaces are not emitted; auto
-   * `nsN:` labels skip caller labels. Used automatically, merged with
-   * any pairs given here, when `data` is a Dataset with non-empty
-   * `.prefixes`.
-   */
-  prefixes?: Record<string, string>;
-  /**
-   * 'turtle' only. Default: true. Whether xsd:integer/decimal/double/
-   * boolean literals with a Turtle-grammar-matching lexical form print
-   * bare (`22`) instead of typed (`"22"^^xsd:integer`).
-   */
-  literalShorthand?: boolean;
+  baseIRI?: string;
 }
 
-/**
- * Serialize a dataset (engine-produced, sorted N-Quads order). `data`
- * may be a DatasetHandle, in which case this routes to
- * `data.serialize(options)`.
- */
+/** Write a dataset in a concrete syntax (see WriteOptions). */
 export function serialize(
-  data: QueryInput,
-  options?: SerializeOptions | NonNullable<SerializeOptions['format']>
+  data: DataInput,
+  options?: SerializeOptions | WriteFormat
 ): Promise<string>;
 
 /**
@@ -477,8 +451,8 @@ export function serialize(
  * routes to `data.canonicalize()` (options are ignored for a handle).
  */
 export function canonicalize(
-  data: QueryInput,
-  options?: { format?: DataFormat } | DataFormat
+  data: DataInput,
+  options?: { format?: DataFormat; baseIRI?: string } | DataFormat
 ): Promise<string>;
 
 /**
@@ -521,7 +495,7 @@ export interface ShaclValidateResult {
 export function shaclValidate(
   data: DataInput,
   shapes: DataInput,
-  options?: { format?: DataFormat }
+  options?: { format?: DataFormat; baseIRI?: string }
 ): Promise<ShaclValidateResult>;
 
 /**
@@ -541,7 +515,7 @@ export function shexValidate(
   schemaJson: string,
   focus: string | NamedNode | BlankNode,
   shape?: string | NamedNode | BlankNode | null,
-  options?: { format?: DataFormat }
+  options?: { format?: DataFormat; baseIRI?: string }
 ): Promise<boolean | null>;
 
 /**
@@ -551,7 +525,7 @@ export function shexValidate(
 export function owlClosure(
   data: DataInput,
   mode: 'RDFS' | 'OWL-RL',
-  options?: { format?: DataFormat }
+  options?: { format?: DataFormat; baseIRI?: string }
 ): Promise<Dataset>;
 
 /**
@@ -560,7 +534,7 @@ export function owlClosure(
  * `rho_df_closure`): rdfs2/3/5/7/9/11 only, with the machine-checked
  * decides-iff — on fragment inputs the result's simple query answers
  * are exactly the entailed consequences (see
- * docs/theorem-registry.md). Returns N-Triples text plus status.
+ * docs/theorem-registry.md). Returns the closure as a new Dataset.
  * "corerdfs" is this project's API name for the fragment the
  * literature calls ρdf (subPropertyOf/subClassOf/type/domain/range —
  * Muñoz, Pérez & Gutierrez, "Simple and Efficient Minimal RDFS",
@@ -568,8 +542,8 @@ export function owlClosure(
  */
 export function coreRdfsClosure(
   data: DataInput,
-  options?: { format?: DataFormat }
-): Promise<{ ok: boolean; ntriples: string }>;
+  options?: { format?: DataFormat; baseIRI?: string }
+): Promise<Dataset>;
 
 /**
  * Decidable core-RDFS fragment check (L4Factoidal/RDFS, `isRhoDfFrag`):
@@ -577,19 +551,19 @@ export function coreRdfsClosure(
  */
 export function coreRdfsCheck(
   data: DataInput,
-  options?: { format?: DataFormat }
+  options?: { format?: DataFormat; baseIRI?: string }
 ): Promise<{ ok: boolean; fragment: boolean }>;
 
 /** Literature-name alias for coreRdfsClosure (ρdf). */
 export function rhoDfClosure(
   data: DataInput,
-  options?: { format?: DataFormat }
-): Promise<{ ok: boolean; ntriples: string }>;
+  options?: { format?: DataFormat; baseIRI?: string }
+): Promise<Dataset>;
 
 /** Literature-name alias for coreRdfsCheck (ρdf). */
 export function rhoDfFragmentCheck(
   data: DataInput,
-  options?: { format?: DataFormat }
+  options?: { format?: DataFormat; baseIRI?: string }
 ): Promise<{ ok: boolean; fragment: boolean }>;
 
 /**
@@ -602,8 +576,8 @@ export function rhoDfFragmentCheck(
  */
 export function rdfsPlusClosure(
   data: DataInput,
-  options?: { format?: DataFormat }
-): Promise<{ ok: boolean; ntriples: string; rounds: number }>;
+  options?: { format?: DataFormat; baseIRI?: string }
+): Promise<Dataset>;
 
 /**
  * OWL tableau materialisation (L4Factoidal/OWL/Materialise.lean,
@@ -618,7 +592,7 @@ export function rdfsPlusClosure(
  */
 export function tableauMaterialise(
   data: DataInput,
-  options?: { format?: DataFormat }
+  options?: { format?: DataFormat; baseIRI?: string }
 ): Promise<{ dataset: Dataset; addedCount: number; budgetHit?: boolean }>;
 
 /**
@@ -629,7 +603,7 @@ export function tableauMaterialise(
  */
 export function tableauDlInconsistent(
   data: DataInput,
-  options?: { format?: DataFormat }
+  options?: { format?: DataFormat; baseIRI?: string }
 ): Promise<{ inconsistent: boolean; rlAlone: boolean }>;
 
 /**
@@ -668,7 +642,7 @@ export function rmlMap(
   mapping: DataInput,
   sourceData: string,
   sourceKind: 'json' | 'csv',
-  options?: { format?: DataFormat }
+  options?: { format?: DataFormat; baseIRI?: string }
 ): Promise<Dataset>;
 
 export interface CsvwOptions {
@@ -775,7 +749,7 @@ export function xpathEval(
 export function rifEval(
   data: DataInput,
   rifRulesXml: string,
-  options?: { format?: DataFormat }
+  options?: { format?: DataFormat; baseIRI?: string }
 ): Promise<Dataset>;
 
 // ---------------------------------------------------------------------
@@ -912,20 +886,7 @@ export function deltaLogDestroy(handle: DeltaLogHandle): Promise<void>;
 /** TEST ONLY: cut the last 4 bytes of the last record, as a torn write would. False when the log is empty. */
 export function _deltaLogCorruptLastForTest(handle: DeltaLogHandle): Promise<boolean>;
 
-/** The collection root of the sample store this package carries (Node only). */
-export function sampleStorePath(): string;
 
-/** What the sample store holds, as recorded when it was packed. */
-export const sampleStoreFacts: Readonly<{
-  triples: number;
-  blocks: number;
-  layout: string;
-  wireVersion: number;
-  source: string;
-  licence: string;
-  licenceUrl: string;
-  publisher: string;
-}>;
 
 // ---------------------------------------------------------------------
 // Common Logic (ISO/IEC 24707:2018) and IKL
@@ -1141,81 +1102,7 @@ export function toanSubst(
   value: ToanExpr
 ): Promise<string>;
 
-/** A matrix/vector cell: an integer or an exact [num, den] rational. */
-export type MatrixCell = number | [number, number];
 
-/** The rendered result of a matrix/vector operation. */
-export interface MatrixResult {
-  /** Math.Matrix.mres_to_string of the result ("undef" on failure). */
-  result: string;
-  /** The diagnostic reason when the result is undefined, else "". */
-  reason: string;
-}
-
-/** Exact determinant of a square matrix (Math.Matrix.dyn_determinant). */
-export function matrixDeterminant(
-  matrix: MatrixCell[][]
-): Promise<MatrixResult>;
-
-/** Dot product of two vectors (Math.Matrix.dyn_scalarproduct). */
-export function matrixScalarProduct(
-  a: MatrixCell[],
-  b: MatrixCell[]
-): Promise<MatrixResult>;
-
-/** Cross product of two 3-vectors (Math.Matrix.dyn_vectorproduct). */
-export function matrixVectorProduct(
-  a: MatrixCell[],
-  b: MatrixCell[]
-): Promise<MatrixResult>;
-
-/** Outer product of two vectors (Math.Matrix.dyn_outerproduct). */
-export function matrixOuterProduct(
-  a: MatrixCell[],
-  b: MatrixCell[]
-): Promise<MatrixResult>;
-
-/**
- * A fixed-precision decimal (Math.Sigmoid.scaled: mantissa / 10^scale),
- * the same (mantissa, scale) convention SPARQL11.Algebra.parse_to_scaled
- * uses for xsd:decimal literals. `decimal` is the same pair formatted
- * back to a string by SPARQL11_Algebra.format_scaled_value.
- */
-export interface ScaledValue {
-  mantissa: string;
-  scale: string;
-  decimal: string;
-}
-
-/** Parameters for {@link sigmoidPoints}: decimal-literal strings/numbers. */
-export interface SigmoidParams {
-  k: number | string;
-  x0: number | string;
-  l: number | string;
-  xmin: number | string;
-  xmax: number | string;
-  n: number | string;
-}
-
-/**
- * n+1 evenly spaced samples of the logistic sigmoid
- * L / (1 + exp(-k*(x - x0))) over [xmin, xmax] (Math.Sigmoid.
- * sigmoid_points). All arithmetic -- argument reduction, the
- * truncated Taylor series, repeated squaring, and the x samples
- * themselves -- runs as exact rational arithmetic inside
- * Math.Sigmoid.fst; see that module's header for the documented error
- * bound on the returned (rounded) values.
- */
-export function sigmoidPoints(
-  params: SigmoidParams
-): Promise<Array<{ x: ScaledValue; y: ScaledValue }>>;
-
-/**
- * Presentation MathML for the sigmoid formula L / (1 + exp(-k*(x - x0))),
- * engine-serialized (MathML.Present.to_presentation_mathml applied to a
- * fixed Math.Expr.expr) -- never hand-written MathML.
- */
-export function sigmoidFormulaMathml(): Promise<string>;
 
 // ---------------------------------------------------------------------
 // VC Data Integrity crypto (eddsa-rdfc-2022), the ops of
@@ -1347,9 +1234,6 @@ export function capabilities(): Promise<{
   jsonSchema: boolean;
   schematron: boolean;
   toan: boolean;
-  matrix: boolean;
-  /** The sigmoid (Math.Sigmoid) ABI exports are present. */
-  sigmoid: boolean;
   /** The VC Data Integrity crypto ops are present. */
   vcCrypto: boolean;
   /** query()'s `entail` regimes (op queryRaw) are served. */
@@ -1439,6 +1323,8 @@ declare const _default: {
   queryHdt: typeof queryHdt;
   update: typeof update;
   openDataset: typeof openDataset;
+  closure: typeof closure;
+  formats: typeof formats;
   serialize: typeof serialize;
   canonicalize: typeof canonicalize;
   graphs: typeof graphs;
@@ -1482,12 +1368,6 @@ declare const _default: {
   toanSimplify: typeof toanSimplify;
   toanDiff: typeof toanDiff;
   toanSubst: typeof toanSubst;
-  matrixDeterminant: typeof matrixDeterminant;
-  matrixScalarProduct: typeof matrixScalarProduct;
-  matrixVectorProduct: typeof matrixVectorProduct;
-  matrixOuterProduct: typeof matrixOuterProduct;
-  sigmoidPoints: typeof sigmoidPoints;
-  sigmoidFormulaMathml: typeof sigmoidFormulaMathml;
   vcSha256Hex: typeof vcSha256Hex;
   vcEd25519SecretToPublic: typeof vcEd25519SecretToPublic;
   vcEd25519Sign: typeof vcEd25519Sign;
@@ -1520,3 +1400,8 @@ export function proofInspect(bundleJson: string): Promise<Record<string, unknown
 export function canonicalizeNQuads(nquads: string): Promise<string>;
 export function normalizeNQuads(nquads: string): Promise<string>;
 export function serveStore(root: string, options?: { port?: number; host?: string; queryPath?: string; gspPath?: string; tdb2?: boolean }): Promise<{ url: string; port: number; close(): Promise<void> }>;
+
+/** Pack a small built-in store (Node only) under dir or a temporary directory; returns the collection root. */
+export function sampleStorePath(dir?: string): string;
+/** What the sample store holds. */
+export const sampleStoreFacts: Readonly<{ triples: number; source: string; layout: string }>;

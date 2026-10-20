@@ -19,7 +19,7 @@ const {
   cell, derive, capabilities,
 } = fn;
 
-const { Dataset, dataFactory: df } = require('../rdfjs.js');
+const { DatasetCore, dataFactory: df } = require('../rdfjs.js');
 
 
 const TTL = `
@@ -250,7 +250,7 @@ test('fromChunks: consumes an async iterable of quad batches into one FnDataset'
 // ---------------------------------------------------------------------
 
 test('interop: fromDataset/toDataset round-trips quad content', () => {
-  const mutable = new Dataset([
+  const mutable = new DatasetCore([
     df.quad(df.namedNode('http://x/a'), df.namedNode('http://x/p'),
       df.literal('v')),
   ]);
@@ -259,7 +259,7 @@ test('interop: fromDataset/toDataset round-trips quad content', () => {
   assert.ok(Object.isFrozen(frozen));
 
   const back = toDataset(frozen);
-  assert.ok(back instanceof Dataset);
+  assert.ok(back instanceof DatasetCore);
   assert.equal(back.size, 1);
   assert.equal(back.toNQuads(), mutable.toNQuads());
 
