@@ -30,7 +30,7 @@ cd "$ROOT"
 
 PORT="${SOLID_CSS_PORT:-3003}"
 SCRATCH="${SOLID_CSS_DATA:-${TMPDIR:-/tmp}/factoidal-css-$$}"
-CSS_LOG="$(mktemp -t css-log)"
+CSS_LOG="$(mktemp -t css-log.XXXXXX)"
 CSS_PID=""
 
 cleanup() {
@@ -86,7 +86,7 @@ fi
 mkdir -p "$SCRATCH"
 echo "solid-client-interop: starting Community Solid Server on port $PORT"
 npx --yes @solid/community-server \
-  -p "$PORT" -c @css:config/file-no-setup.json -f "$SCRATCH" \
+  -p "$PORT" -c @css:config/file.json -f "$SCRATCH" \
   > "$CSS_LOG" 2>&1 &
 CSS_PID=$!
 
