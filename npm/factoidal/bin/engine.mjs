@@ -10,9 +10,9 @@
 // its own basename, so a rename breaks the load on every runtime
 // (skills/lean4-wasm-export, "the naming trap").
 //
-// `npm/factoidal/l4.js` does the same resolution for the CommonJS API. It
-// is not reused here because it is CommonJS and this command must load
-// under Deno without the require() compatibility path.
+// The library entries (`index.mjs`, `browser.js`) load the engine their
+// own way; this file stays free of require() so the command loads under
+// Deno without the CommonJS compatibility path.
 //
 // WHAT THIS FILE IS ALLOWED TO DO
 // Find the engine, load it, and turn bytes into the hexadecimal string

@@ -142,13 +142,10 @@ test('browser.js exports the main entry minus the Node-only names, plus setAsset
   assert.deepEqual([...browser].filter((n) => !browserOnly.has(n) && !main.has(n)), []);
 });
 
-test('l4.d.ts and l4-core.d.ts re-export index.d.ts, and the modules are the main entry', () => {
-  for (const f of ['l4.d.ts', 'l4-core.d.ts']) {
-    const src = fs.readFileSync(path.join(__dirname, '..', f), 'utf8');
-    assert.match(src, /^export \* from '\.\/index';$/m, f);
+test('no l4.d.ts or l4-core.d.ts ships (the aliases went in 0.10.0)', () => {
+  for (const f of ['l4.d.ts', 'l4-core.d.ts', 'l4.js', 'l4-core.js']) {
+    assert.equal(fs.existsSync(path.join(__dirname, '..', f)), false, f);
   }
-  assert.equal(require('../l4.js'), require('../index.js'));
-  assert.equal(require('../l4-core.js'), require('../index.js'));
 });
 
 test('lib/version.mjs carries package.json version', async () => {

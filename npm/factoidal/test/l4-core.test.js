@@ -20,7 +20,7 @@ const test = require('node:test');
 const assert = require('node:assert/strict');
 const { LENIENT_ISSUE } = require('./helpers.js');
 
-const l4core = require('../l4-core.js');
+const l4core = require('../index.js');
 
 // The ops the loaded wasm serves (its `ops` reflection). Since 0.9.0 the
 // wasm in l4-assets/ is the package's only engine, so it must serve every op

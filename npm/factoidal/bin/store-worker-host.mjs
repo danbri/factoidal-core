@@ -8,7 +8,7 @@
 // of Deno, and the failure is `Maximum call stack size exceeded` rather
 // than an engine refusal. MEASURED 2026-09-05 against the committed
 // module, on a 7,315,251-quad collection of 3,286 blocks in 204 graphs
-// (`/Users/danbri/working/factoidal-skosfull`): `storeQueryPlan` alone
+// (a local SKOS corpus): `storeQueryPlan` alone
 // overflows on plain `node`, before a single artifact byte is read, and
 // `node --stack-size=60000` clears the plan, the open and every query.
 // Earlier the same limit was narrowed to any query that materialises

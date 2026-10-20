@@ -173,6 +173,22 @@ PY
   log "$S: installed $TAG"
 done
 
+# Stamp l4-assets/version.json from the web release that built the
+# installed wasm (also when that release was already installed). The stamper
+# re-checks both wasm files against build-info.json and asks the wasm for its
+# own version(); a failure here is a failed install.
+if [ "$CHECK" = 0 ] && [ -f "$REPO_ROOT/.factoidal-builds/web.tag" ] \
+   && [ -f "$REPO_ROOT/.factoidal-builds/web.build-info.json" ]; then
+  for S in "${SETS[@]}"; do
+    [ "$S" = web ] || continue
+    STAMP_RC=0
+    node "$REPO_ROOT/tools/stamp-l4-version.mjs" \
+      "$REPO_ROOT/.factoidal-builds/web.build-info.json" \
+      "$(cat "$REPO_ROOT/.factoidal-builds/web.tag")" || STAMP_RC=$?
+    if [ "$STAMP_RC" -ne 0 ]; then log "web: stamping version.json FAILED"; RC=1; fi
+  done
+fi
+
 # ocaml-output/ symlinks into bin/<platform>/ (tests/local scripts use them).
 if [ -n "$PLAT" ] && [ -d "$REPO_ROOT/bin/$PLAT" ]; then
   for b in w3c_runner factoidal factoidal-http owl_runner rdfc10_runner; do

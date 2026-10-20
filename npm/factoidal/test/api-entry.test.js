@@ -90,18 +90,18 @@ test('createApi: openStore takes a reader function only (no file system)', async
 test('version matches package.json on every entry point', () => {
   assert.equal(indexEngine.version, pkgVersion);
   assert.equal(require('../api.js').version, pkgVersion);
-  assert.equal(require('../l4-core.js').version, pkgVersion);
-  assert.equal(require('../l4.js').version, pkgVersion);
 });
 
 test('engine field is lean4-wasm on every entry point', async () => {
   assert.equal(indexEngine.engine, 'lean4-wasm');
-  assert.equal(require('../l4-core.js').engine, 'lean4-wasm');
   assert.equal(createApi(await loadHandle()).engine, 'lean4-wasm');
 });
 
-test('./l4 and ./l4-core are the main entry (the same module instance)', () => {
-  assert.equal(require('../l4.js'), indexEngine);
-  assert.equal(require('../l4-core.js'), indexEngine);
-  assert.equal(require('../l4-core.js').Dataset, indexEngine.Dataset);
+test('the 0.9.x aliases ./l4 and ./l4-core are gone in 0.10.0', () => {
+  const pkg = require('../package.json');
+  assert.equal(pkg.exports['./l4'], undefined);
+  assert.equal(pkg.exports['./l4-core'], undefined);
+  for (const f of ['l4.js', 'l4.d.ts', 'l4-core.js', 'l4-core.d.ts']) {
+    assert.ok(!pkg.files.includes(f), f);
+  }
 });

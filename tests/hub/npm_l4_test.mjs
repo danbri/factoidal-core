@@ -1,6 +1,6 @@
-// Pins the `factoidal/l4` npm subpath (npm/factoidal/l4.js). Since 0.9.0
-// @factoidal/core carries one engine, the Lean 4 wasm, and `./l4` is an
-// alias of the main entry for 0.9.x (it goes in 0.10.0). The low-level
+// Pins the main entry of @factoidal/core (the `./l4` alias of 0.9.x was
+// removed in 0.10.0). Since 0.9.0 the package carries one engine, the
+// Lean 4 wasm. The low-level
 // engine handle it used to export is `loadEngine()`. The test pins the
 // alias, the engine handle's version, bgpQuery and IBK3 scan, one join
 // through the low-level bgpQuery and the typed query(), and the
@@ -13,7 +13,7 @@ import { readFileSync } from 'node:fs';
 import { NPM_FACTOIDAL_INDEX } from './_helpers.mjs';
 
 const require = createRequire(import.meta.url);
-const l4 = require('../../npm/factoidal/l4.js');
+const l4 = require('../../npm/factoidal/index.js');
 const factoidal = (await import(NPM_FACTOIDAL_INDEX)).default;
 
 const EX = 'http://example.org/';

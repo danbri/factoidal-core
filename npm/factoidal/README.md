@@ -18,6 +18,11 @@ console.log(rows[0].get("n").value);      // A
 console.log(await canonicalize(ds));       // RDFC-1.0 canonical N-Quads
 ```
 
+Formats for `parse`: `turtle`, `ntriples`, `nquads`, `trig`, `rdfxml`,
+`jsonld` (RDF 1.1). For RDF 1.2 syntax (triple terms, reifiers,
+annotations) use `turtle12`, `ntriples12`, `nquads12` or `trig12`; the RDF
+1.1 tags reject it with "requires RDF 1.2 mode".
+
 Full API: [API.md](https://github.com/danbri/factoidal-core/blob/main/npm/factoidal/API.md).
 Changes: [CHANGELOG.md](CHANGELOG.md).
 
@@ -27,9 +32,9 @@ All functions return a Promise. Datasets are `Dataset` values or
 `DatasetHandle`s; other inputs and outputs are strings, objects or
 `Uint8Array`.
 
-- RDF: `parse`, `serialize`, `graphs`, `dataFactory`, `openDataset` (handle), `jsonldToRdf`, `jsonldFromRdf`, `normalizeNQuads`
+- RDF: `parse`, `serialize` (writes N-Triples, N-Quads and Turtle only; `jsonldFromRdf` gives expanded JSON-LD; no TriG or RDF/XML writer), `graphs`, `dataFactory`, `openDataset` (handle), `jsonldToRdf`, `jsonldFromRdf`, `normalizeNQuads`
 - SPARQL: `query`, `update`, `queryRaw`, `queryHdt`, `registerExtensionFunction`, `unregisterExtensionFunction`, `clearExtensionFunctions`, `registerServiceEndpoint`, `clearServiceEndpoints`
-- Canonicalization: `canonicalize`, `canonicalizeNQuads`, `canonicalHash`
+- Canonicalization: `canonicalize`, `canonicalizeNQuads`, `canonicalHash` (the RDFC-1.0 canonical N-Quads text of one graph, with graph names dropped; it is text, not a digest)
 - Reasoning: `rhoDfClosure`, `rhoDfFragmentCheck`, `coreRdfsClosure`, `coreRdfsCheck`, `rdfsPlusClosure`, `owlClosure`, `owlEntails`, `owlIsConsistent`, `tableauDlInconsistent`, `tableauMaterialise`, `rifEval`
 - Validation and mapping: `shaclValidate`, `shexValidate`, `rmlMap`, `csvwToRdf`, `jsonSchemaValidate`, `schematronValidate`
 - XML: `xmlWellformed`, `xpathEval`, `xsltTransform`, `xformsRecalc`
@@ -77,13 +82,15 @@ speed record of 2026-10-13.
 - RML Core: 60 pass, 0 fail, 16 not attempted (out of 76) [B]
 - XML 1.0 (xmlconf): 1861 pass, 0 fail, 516 not run [B]
 - XSD 1.1 datatypes (W3C instance tests): 18951 pass, 5 fail (out of 18956) [B]
-- XPath 1.0 (repository battery, not a W3C suite): 100 pass, 0 fail (out of 100) [B]
+- XPath 1.0 (repository battery, not a W3C suite): 100 pass, 0 fail (out of 100) [X]
 - XSLT 1.0: 84 pass, 3 fail, 1 refused (out of 88) [B]
 - JSON Schema draft-07: 770 pass, 0 fail (out of 770) [B]
 - VC Data Integrity eddsa-rdfc-2022, did:key, Ed25519 (RFC 8032): 58 pass, 0 fail (out of 58) [B]
 - A persisted store (Shardborough generations, read and query; SHA-256 per block) and RDF/JS DataFactory and DatasetCore
 
 [B] https://github.com/danbri/factoidal-core/blob/03e2e6deee8146ce7e6fdc3f8f34b8245af5ab54/docs/designissues/2026-10-09-lean-conformance-baseline.md
+
+[X] https://github.com/danbri/factoidal-core/blob/cb871c2de8354362ae6226eb57fb6c549624ea1a/docs/designissues/2026-10-10-xml-profile-widened.md (`l4xpath`)
 
 [P] https://github.com/danbri/factoidal-core/blob/9a4045f1572a032b53ccb867f8395fe0c8d97bb9/docs/designissues/2026-10-10-store-serve.md
 
@@ -95,7 +102,8 @@ speed record of 2026-10-13.
   `.wasm`; the parsers, SPARQL evaluator, reasoners and validators are Lean
   code, and the JavaScript only moves arguments and results.
 - The Lean library contains no `sorry`, no user axioms and no `native_decide`
-  (`l4-assets/version.json`, member `claims`).
+  (`l4-assets/version.json`, member `claims`, stamped at release with the
+  sha256 of the wasm it describes; `npx factoidal version` checks it).
 - No failures on the W3C SPARQL 1.1, SPARQL 1.2, RDF 1.1 syntax, RDFC-1.0,
   JSON-LD toRdf/expand, ShEx and SHACL 1.0 suites (scores above, [B]).
 - OWL 2 RL closure on nine real ontologies: 0.04 to 1.6 times the time of Jena
@@ -109,7 +117,8 @@ speed record of 2026-10-13.
 ## Weaknesses and known gaps
 
 - Size: the tarball is about 3.8 MB packed, 19 MB unpacked. It carries two
-  wasm modules (11.2 MB full, 6.1 MB `./core` subset).
+  wasm modules (11.6 MB full, 6.3 MB `./core` subset; 11,614,907 and
+  6,277,079 bytes in the web release built from core commit 78fab4d3).
 - Parse speed: N-Triples 4.4 times and Turtle 3.0 times the time of Serd;
   RDF/XML 6.2 times the time of Oxigraph and 9.5 times its memory [S].
   RDF/XML memory per document byte: https://github.com/danbri/factoidal/issues/771 (open).
@@ -125,7 +134,17 @@ speed record of 2026-10-13.
 - JSON-LD Framing: 63 of 92 tests fail. SHACL 1.2 Core: 30 of 133 fail.
   RDF 1.2 Semantics: 7 of 47 fail [B].
 - `factoidal update` and `factoidal compact` exit 3: https://github.com/danbri/factoidal/issues/641 (open).
-- As a Fuseki replacement: no administration API, one dataset per process, no authentication, and TDB2 databases are served read only (`serve --tdb2`, https://github.com/danbri/factoidal/issues/834): https://github.com/danbri/factoidal/issues/831 to https://github.com/danbri/factoidal/issues/833 (open).
+- As a Fuseki replacement ([docs/fuseki-replacement.md](https://github.com/danbri/factoidal-core/blob/main/npm/factoidal/docs/fuseki-replacement.md)):
+  the administration API is read only (`/$/ping`, `/$/datasets`, `/$/stats`,
+  `/$/server`; no create, delete, backup or UI:
+  https://github.com/danbri/factoidal/issues/831); one dataset per process
+  and no configuration file (https://github.com/danbri/factoidal/issues/832);
+  no authentication (https://github.com/danbri/factoidal/issues/833);
+  Graph Store GET in JSON-LD answers 406
+  (https://github.com/danbri/factoidal/issues/830); TDB2 databases are
+  served read only (`serve --tdb2`, https://github.com/danbri/factoidal/issues/834).
+- `FILTER NOT EXISTS` over 100,000 triples takes 94 to 247 s (the answer is
+  correct): https://github.com/danbri/factoidal/issues/881 (open).
 - Node's default stack can raise a `RangeError` in the wasm on some
   row-at-a-time queries over large results; `node --stack-size=4000` or Deno
   clears it (`skills/npm-release/SKILL.md`, trap 11).

@@ -11,7 +11,7 @@
 //                    bare Turtle literals
 //   4. blank-node scope per document when documents are merged
 //
-// Every case runs through require('../l4-core.js'), which is the main entry
+// Every case runs through require('../index.js'), which is the main entry
 // since 0.9.0. An independent cross-check keeps the Lean answers from
 // agreeing only with themselves: node:crypto (SHA-256 and Ed25519) for the
 // VC primitives, and Math.exp for the sigmoid. The cross-checks against the
@@ -28,7 +28,7 @@ const crypto = require('node:crypto');
 const fs = require('node:fs');
 const path = require('node:path');
 
-const l4core = require('../l4-core.js');
+const l4core = require('../index.js');
 
 const REPO = path.join(__dirname, '..', '..', '..');
 

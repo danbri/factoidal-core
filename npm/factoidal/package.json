@@ -74,14 +74,6 @@
       "default": "./core-browser.js"
     },
     "./package.json": "./package.json",
-    "./l4": {
-      "types": "./l4.d.ts",
-      "default": "./l4.js"
-    },
-    "./l4-core": {
-      "types": "./l4-core.d.ts",
-      "default": "./l4-core.js"
-    },
     "./l4-assets/*": "./l4-assets/*",
     "./store-host": "./store-host/index.mjs",
     "./store-host/paths": "./store-host/paths.mjs",
@@ -133,10 +125,6 @@
     "core.d.ts",
     "core-browser.js",
     "core-browser.d.ts",
-    "l4.js",
-    "l4.d.ts",
-    "l4-core.js",
-    "l4-core.d.ts",
     "l4-assets/",
     "lib/",
     "bin/",

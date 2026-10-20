@@ -509,6 +509,7 @@ if [ -d "$NPMLEAN" ]; then
   python3 - "$NPMLEAN/version.json" <<PYEOF
 import json, sys, datetime
 json.dump({
+  "stamped": True,
   "version": "$PKG_VER",
   "gitSha": "$GIT_SHA",
   "builtAt": datetime.datetime.now(datetime.timezone.utc).isoformat(timespec="seconds"),
@@ -561,6 +562,9 @@ dst["coreWasmBytes"] = os.path.getsize(core_wasm)
 # A stale-artifact note is a claim about the PREVIOUS build; a fresh
 # build is exactly the event that retires it.
 dst.pop("sourceDrift", None)
+# The committed placeholder says "stamped at release"; a local build stamps it.
+dst["stamped"] = True
+dst.pop("status", None)
 with open(dst_path, "w") as f:
     json.dump(dst, f, indent=2)
     f.write("\n")

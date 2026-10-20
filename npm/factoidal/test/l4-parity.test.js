@@ -1,6 +1,6 @@
 // Stage 1 of https://github.com/danbri/factoidal/issues/713: every
 // F*-engine main-entry function that the Lean library implements, run
-// over the Lean engine (require('../l4-core.js')) with the INPUTS AND
+// over the Lean engine (require('../index.js')) with the INPUTS AND
 // EXPECTED RESULTS of the existing F*-engine tests:
 //
 //   api.test.js        jsonldToRdf, jsonldFromRdf, parse(jsonld), rmlMap,
@@ -25,7 +25,7 @@ const assert = require('node:assert/strict');
 const fs = require('node:fs');
 const path = require('node:path');
 
-const lean = require('../l4-core.js');
+const lean = require('../index.js');
 const { Dataset, dataFactory: df } = lean;
 
 // The ops the loaded wasm serves (its `ops` reflection). Since 0.9.0 the

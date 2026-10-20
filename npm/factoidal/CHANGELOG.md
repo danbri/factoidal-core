@@ -21,6 +21,19 @@
 - The wasm is rebuilt from `main`; the package carries the Lean 4 engine only.
   Package suite: 432 pass, 0 fail (out of 432); 4 of them are expected
   failures naming issues 829, 830 and 831.
+- Removed: the 0.9.x subpath aliases `@factoidal/core/l4` and
+  `@factoidal/core/l4-core` (files `l4.js`, `l4.d.ts`, `l4-core.js`,
+  `l4-core.d.ts`), as announced in 0.9.0. Import `@factoidal/core`; the
+  low-level engine handle is `loadEngine()`.
+- `l4-assets/version.json` is written at release from the
+  `danbri/factoidal-builds` release that built the wasm
+  (`tools/fetch-builds.sh --set web`): source commit, build time, sha256 and
+  size of both wasm files, and the engine's own version. The committed file
+  is a placeholder. `factoidal version` prints the stamp and the loaded
+  engine's `version()`, and exits 1 when the stamped sha256 differs from the
+  installed wasm.
+- RDF 1.2 format tags `turtle12`, `ntriples12`, `nquads12`, `trig12` are in
+  the `DataFormat` type.
 - Includes the entries listed under "Unreleased" below.
 
 ## Unreleased (included in 0.10.0)

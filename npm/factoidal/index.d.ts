@@ -191,7 +191,14 @@ export type DataFormat =
   | 'nquads' | 'nq'
   | 'trig'
   | 'rdfxml' | 'rdf-xml' | 'rdf'
-  | 'jsonld' | 'json-ld';
+  | 'jsonld' | 'json-ld'
+  // RDF 1.2 parsers (triple terms, reifiers, annotations, VERSION,
+  // directional language tags). The names above parse RDF 1.1 and reject
+  // RDF 1.2 syntax with "requires RDF 1.2 mode".
+  | 'turtle12' | 'ttl12'
+  | 'ntriples12' | 'nt12'
+  | 'nquads12' | 'nq12'
+  | 'trig12';
 
 /** Entailment regime applied to the data before evaluation. */
 /**
@@ -484,10 +491,12 @@ export function canonicalize(
 export function graphs(dataset: Dataset): Array<[iri: string, graph: Dataset]>;
 
 /**
- * RDFC-1.0 canonical hash of a single graph -- the graph-scoped
- * sibling of canonicalize(). Every quad's graph component is dropped
+ * RDFC-1.0 canonical form of a single graph -- the graph-scoped
+ * sibling of canonicalize(). It returns the canonical N-Quads TEXT, not
+ * a digest: hash the string yourself (for example `vcSha256Hex`) when a
+ * fixed-length value is needed. Every quad's graph component is dropped
  * before canonicalizing, so isomorphic graphs (including under
- * blank-node relabeling) hash to the same string regardless of what
+ * blank-node relabeling) give the same string regardless of what
  * graph name they were extracted from. Typically called with one
  * entry of graphs()'s output.
  */

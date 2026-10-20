@@ -106,8 +106,8 @@ tests/engine-compare/run.sh docs/fstar-extracted/factoidal-npm-entry.js
   `core.mjs` + `core.js` + `core-browser.js` (the `./core` entry over the core
   module, issue 713 stage 4; `core-browser.js` is its `browser` condition),
   `api.js` + `api.mjs` (`createApi(engine)`), `fn.js`, `rdfjs.js` +
-  `rdfjs.mjs`, the 0.9.x aliases `l4.js` and `l4-core.js`, and a `.d.ts`
-  beside each.
+  `rdfjs.mjs`, and a `.d.ts` beside each. The 0.9.x aliases `l4.js` and
+  `l4-core.js` were removed in 0.10.0.
 - The typed layer: `lib/` (`api.mjs`, `lean-entry.mjs`, `store.mjs`,
   `version.mjs`). ES modules with no Node built-ins: the browser imports
   them as they are.
@@ -143,25 +143,37 @@ working tree holds.
 
 ## How the version and the digests are stamped
 
-Two `version.json` files, two writers. (Until 0.9.0 a third,
-`npm/factoidal/version.json`, carried the F\* engine's claims; it left the
-package and git with the F\* engine.)
+Two `version.json` files. Both are committed as PLACEHOLDERS
+(`"stamped": false, "status": "stamped at release"`) and carry no sha256, no
+commit and no build date. Two writers fill them:
 
-| File | Written by | Carries |
+| Writer | When | Source of every value |
 | --- | --- | --- |
-| `npm/factoidal/l4-assets/version.json` | `build-wasm.sh` step 9 | the Lean engine's provenance, refreshed in place so its `engine` and `note` members survive |
-| `npm/factoidal-lean/version.json` | `build-wasm.sh` step 9 | the same provenance for the superseded companion |
+| `tools/fetch-builds.sh --set web` (calls `tools/stamp-l4-version.mjs`) | every install of a `web` release, and the publish workflow | the release's `build-info.json` (commit, build time, toolchains); sha256 and size of `l4factoidal.wasm` and `l4factoidal-core.wasm`, re-checked against `build-info.json`; `engineVersion` from the loaded wasm's own `version()` |
+| `formal/lean4/Wasm/build-wasm.sh` step 9 | a local build | the local build |
 
-The Lean provenance members are `version`, `gitSha`, `builtAt`,
-`leanToolchain`, `emscripten`, `abiVersion`, `wasmSha256`, `wasmBytes`
-and `claims`. `factoidal version` prints them, which is the quickest way
-to see which engine an install actually holds.
+Members: `stamped`, `release`, `releaseRun`, `gitSha`, `builtAt`,
+`leanToolchain`, `emscripten`, `abiVersion`, `engineVersion`, `version`,
+`wasmSha256`, `wasmBytes`, `coreWasmSha256`, `coreWasmBytes`, and the kept
+members `engine`, `note`, `claims`.
 
-`l4-assets/version.json` is tracked in git with its `engine` and `note`
-members; step 9 rewrites the provenance members in place on every build.
-Commit only a deliberate edit of `engine`, `note` or `claims`, never the
-stamped members (the same holds for the `WASM_VERSION` line the build
-stamps into `docs/web/hub/assets/l4/l4factoidal.js`).
+**Defect closed 2026-10-20** (0.10.0 release audit, finding 1): the web
+release never wrote `npm/factoidal/l4-assets/version.json`, so the package
+shipped the committed copy, which described the wasm of 2026-09-08
+(`a26edea`, sha256 `6201b6c4...`) while the tarball carried `e1dccb98...`.
+`factoidal version` printed the stale digest. Now the committed file claims
+nothing, the stamp comes from the release, and:
+
+- `factoidal version` prints the stamp, the sha256 of the installed wasm
+  files and the engine's `version()`, says "not stamped" for the placeholder,
+  and exits 1 on any mismatch (`test/version-stamp.test.mjs` gates it);
+- the publish workflow (`danbri/factoidal-builds`,
+  `.github/workflows/npm-publish.yml`, step "Check tarball contents") fails
+  when the packed `version.json` is unstamped or its sha256 values differ
+  from the packed wasm files.
+
+Never commit a stamped `version.json`: after `fetch-builds.sh` the working
+tree shows it modified; leave it unstaged.
 
 Bumping the package version is a manual edit of `version` in
 `npm/factoidal/package.json`, `package-lock.json` (two places) and

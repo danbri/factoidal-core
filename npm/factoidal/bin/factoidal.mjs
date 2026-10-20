@@ -24,7 +24,7 @@ import {
   runtime
 } from '../store-host/index.mjs'
 import { fileUrlToPath, joinPath } from '../store-host/paths.mjs'
-import { loadEngine } from './engine.mjs'
+import { hexOfBytes, loadEngine } from './engine.mjs'
 import { sampleStoreFacts, sampleStorePath } from '../sample-store.mjs'
 import { PackError, packSupported, verifyGeneration } from './pack.mjs'
 import { denoReexec, isStackOverflow, runPack } from './pack-host.mjs'
@@ -487,41 +487,114 @@ function readJsonFile (path) {
   return JSON.parse(new TextDecoder('utf-8', { fatal: true }).decode(bytes))
 }
 
-function commandVersion (options) {
+async function sha256Hex (bytes) {
+  const digest = await globalThis.crypto.subtle.digest('SHA-256', bytes)
+  return hexOfBytes(new Uint8Array(digest))
+}
+
+// `factoidal version`: what l4-assets/version.json says (the release stamp,
+// written by tools/fetch-builds.sh --set web from the factoidal-builds
+// release that built the wasm), what the installed wasm files hash to, and
+// the loaded engine's own version(). A stamp whose sha256 differs from the
+// installed wasm is an error (exit 1): the stamp then describes another
+// build. A source checkout carries the unstamped placeholder.
+async function commandVersion (options) {
   const root = packageDirectory()
   const own = readJsonFile(joinPath(root, 'package.json'))
-  let engine = null
+  let stamp = null
   try {
-    engine = readJsonFile(joinPath(root, 'l4-assets/version.json'))
+    stamp = readJsonFile(joinPath(root, 'l4-assets/version.json'))
   } catch (_error) {
-    engine = null
+    stamp = null
+  }
+  const stamped = stamp !== null && stamp.stamped === true
+  const installed = {}
+  for (const [key, file] of [['wasm', 'l4factoidal.wasm'], ['coreWasm', 'l4factoidal-core.wasm']]) {
+    try {
+      const bytes = readWhole(joinPath(root, `l4-assets/${file}`))
+      installed[key] = { sha256: await sha256Hex(bytes), bytes: bytes.length }
+    } catch (_error) {
+      installed[key] = null
+    }
+  }
+  let engineVersion = null
+  let engineError = null
+  if (installed.wasm !== null) {
+    try {
+      engineVersion = (await loadEngine()).version()
+    } catch (error) {
+      engineError = String(error && error.message ? error.message : error)
+    }
+  }
+  const mismatches = []
+  if (stamped) {
+    for (const [key, shaKey, bytesKey] of [['wasm', 'wasmSha256', 'wasmBytes'],
+      ['coreWasm', 'coreWasmSha256', 'coreWasmBytes']]) {
+      if (installed[key] === null) continue
+      if (stamp[shaKey] !== installed[key].sha256 || stamp[bytesKey] !== installed[key].bytes) {
+        mismatches.push(`${key}: version.json says sha256 ${stamp[shaKey]} (${stamp[bytesKey]} bytes), ` +
+          `installed file is ${installed[key].sha256} (${installed[key].bytes} bytes)`)
+      }
+    }
+    if (engineVersion !== null && typeof stamp.engineVersion === 'string' &&
+        stamp.engineVersion !== engineVersion) {
+      mismatches.push(`engine: version.json says ${stamp.engineVersion}, the loaded wasm says ${engineVersion}`)
+    }
   }
   const report = {
     package: own.name,
     version: own.version,
     host: runtime,
-    engine: engine === null
+    stamp: stamp === null
       ? null
-      : {
-          engine: engine.engine,
-          version: engine.version,
-          gitSha: engine.gitSha,
-          leanToolchain: engine.leanToolchain,
-          wasmSha256: engine.wasmSha256,
-          wasmBytes: engine.wasmBytes
-        }
+      : stamped
+        ? {
+            stamped: true,
+            engineVersion: stamp.engineVersion,
+            gitSha: stamp.gitSha,
+            builtAt: stamp.builtAt,
+            release: stamp.release,
+            leanToolchain: stamp.leanToolchain,
+            wasmSha256: stamp.wasmSha256,
+            wasmBytes: stamp.wasmBytes,
+            coreWasmSha256: stamp.coreWasmSha256,
+            coreWasmBytes: stamp.coreWasmBytes
+          }
+        : { stamped: false, status: stamp.status || 'stamped at release' },
+    installed,
+    engineVersion,
+    engineError,
+    mismatches
   }
   if (options.json) {
     out(JSON.stringify(report, null, 2))
-    return EXIT_OK
-  }
-  out(`${report.package} ${report.version}`)
-  out(`host-io ${report.host}`)
-  if (report.engine !== null) {
-    out(`engine ${report.engine.engine} ${report.engine.version} (${report.engine.leanToolchain})`)
-    out(`wasm sha256 ${report.engine.wasmSha256} (${report.engine.wasmBytes} bytes)`)
   } else {
-    out('engine (no l4-assets/version.json in this install)')
+    out(`${report.package} ${report.version}`)
+    out(`host-io ${report.host}`)
+    if (stamp === null) {
+      out('stamp: no l4-assets/version.json in this install')
+    } else if (!stamped) {
+      out('stamp: not stamped (l4-assets/version.json is the source placeholder; ' +
+        'it is stamped at release by tools/fetch-builds.sh --set web)')
+    } else {
+      out(`stamp: built from ${stamp.gitSha} at ${stamp.builtAt}` +
+        (stamp.release ? ` (${stamp.release})` : ''))
+      out(`stamp: engine ${stamp.engineVersion} (${stamp.leanToolchain})`)
+      out(`stamp: wasm sha256 ${stamp.wasmSha256} (${stamp.wasmBytes} bytes)`)
+      out(`stamp: core wasm sha256 ${stamp.coreWasmSha256} (${stamp.coreWasmBytes} bytes)`)
+    }
+    for (const [key, label] of [['wasm', 'wasm'], ['coreWasm', 'core wasm']]) {
+      out(installed[key] === null
+        ? `installed ${label}: absent`
+        : `installed ${label} sha256 ${installed[key].sha256} (${installed[key].bytes} bytes)`)
+    }
+    out(engineVersion !== null
+      ? `engine version() ${engineVersion}`
+      : `engine version() unavailable${engineError ? ': ' + engineError : ''}`)
+  }
+  if (mismatches.length > 0) {
+    for (const m of mismatches) err(`factoidal version: STAMP MISMATCH ${m}`)
+    return EXIT_FAILURE
   }
   return EXIT_OK
 }
