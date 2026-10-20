@@ -564,6 +564,24 @@ Where a property holds of both trees, state it once over an abstraction
 (a typeclass or parameterised structure in Lean) and instantiate it,
 rather than proving it twice. Lean first; F\* optional.
 
+### One fat core wasm; no demo content in the package (owner, 2026-10-20)
+
+> "Ok that settles it / For now, we have a single fat core. / PUT EVERYTHING
+> IT. Remove demo triplestore fontent and demo functions from npm zip. We can
+> revisit efficient modules later. / We will also try to improve LWS before
+> shipping"
+> Earlier the same day: "Hold off on the grouping" (no README tiers of
+> conformance-tested / own-suite / experimental).
+
+- `@factoidal/core` ships one wasm that carries every capability the Lean
+  tree has. The second, smaller `l4factoidal-core.wasm` profile and its
+  subpaths leave the npm package. Profiles per package (`@factoidal/kgx`,
+  `kgx-lite`, `xml`) are deferred, not refused.
+- The bundled sample store and demonstration-only functions (`matrix*`,
+  `sigmoid*`) leave the tarball.
+- LWS work happens before 0.10.0 is published.
+- Tracker: https://github.com/danbri/factoidal/issues/882.
+
 ### The npm package is Lean 4 only (owner, 2026-10-10)
 
 > "I understand our NPM module Factoidal/core is currently a mix of components
