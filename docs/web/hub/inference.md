@@ -85,10 +85,6 @@ rdfsTypes = rdfs.query(`PREFIX ex: <http://example.org/>
 SELECT ?thing ?type WHERE { ?thing a ?type . FILTER(STRSTARTS(STR(?type), STR(ex:))) } ORDER BY ?thing ?type`)
 ```
 
-```observable-js
-pretty(rdfsTypes)
-```
-
 ## OWL 2 RL closure
 
 `owl:inverseOf` is outside RDFS. The OWL 2 RL closure derives the
@@ -101,10 +97,6 @@ owlRl = merged.closure('owl-rl')
 ```observable-js
 servedBy = owlRl.query(`PREFIX ex: <http://example.org/>
 SELECT ?station ?line WHERE { ?station ex:servedBy ?line } ORDER BY ?station`)
-```
-
-```observable-js
-pretty(servedBy)
 ```
 
 A query can also ask for the closure itself, with the `entail` option:
@@ -137,10 +129,6 @@ withInferences = {
 ```observable-js
 padFacts = withInferences.query(`PREFIX ex: <http://example.org/>
 SELECT ?p ?o ?g WHERE { GRAPH ?g { <http://example.org/station/pad> ?p ?o } } ORDER BY ?g ?p ?o`)
-```
-
-```observable-js
-pretty(padFacts)
 ```
 
 ## OWL 2 DL: consistency and entailment

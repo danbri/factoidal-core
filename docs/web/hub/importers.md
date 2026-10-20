@@ -44,10 +44,6 @@ stationsMetadata = JSON.stringify({
 fromCsvw = Factoidal.csvwToRdf(stationsCsv, stationsMetadata, { base: 'http://example.org/', mode: 'minimal' })
 ```
 
-```observable-js
-pretty(fromCsvw)
-```
-
 ## Step 2: JSON with an RML mapping
 
 [RML](https://kg-construct.github.io/rml-core/spec/docs/): a triples map
@@ -78,10 +74,6 @@ ex:LinesMap a rml:TriplesMap ;
 fromRml = Factoidal.rmlMap(linesMapping, linesJson, 'json')
 ```
 
-```observable-js
-pretty(fromRml)
-```
-
 ## Step 3: JSON-LD
 
 ```observable-js
@@ -92,10 +84,6 @@ fromJsonLd = Factoidal.jsonldToRdf(JSON.stringify({
     { '@id': 'ex:station/kgx', step: 'false' },
   ],
 }))
-```
-
-```observable-js
-pretty(fromJsonLd)
 ```
 
 ## Step 4: XHTML through XSLT, as GRDDL does
@@ -133,10 +121,6 @@ noticeXslt = `<xsl:stylesheet version="1.0" xmlns:xsl="http://www.w3.org/1999/XS
 fromXhtml = Factoidal.parse(await Factoidal.xsltTransform(noticeXslt, noticeXhtml), { format: 'rdfxml' })
 ```
 
-```observable-js
-pretty(fromXhtml)
-```
-
 ## One dataset, one named graph per step
 
 `Dataset` is an RDF/JS `DatasetCore`, so `add` puts a quad into it. Each
@@ -159,10 +143,6 @@ pipeline = {
 perGraph = pipeline.query(`SELECT ?g (COUNT(*) AS ?triples) WHERE { GRAPH ?g { ?s ?p ?o } } GROUP BY ?g ORDER BY ?g`)
 ```
 
-```observable-js
-pretty(perGraph)
-```
-
 A query that joins facts from four steps, and reports the graph of each
 fact:
 
@@ -177,14 +157,10 @@ SELECT ?station ?line ?stepFree ?notice ?nameFrom ?lineFrom WHERE {
 } ORDER BY ?station`)
 ```
 
-```observable-js
-pretty(joined)
-```
-
 The whole pipeline as TriG:
 
 ```observable-js
-pipeline.serialize({ format: 'trig' })
+return pipeline.serialize({ format: 'trig' })
 ```
 
 The [inference page](../inference/) runs RDFS and OWL reasoning over a

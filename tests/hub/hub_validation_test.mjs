@@ -12,16 +12,15 @@ const post = runReactivePost(cells, { Factoidal, fn: Factoidal.default, pretty }
 const tail = (t) => t.value.split(/[/#]/).pop();
 
 test('validation: SHACL report as a Dataset', async () => {
-  const shacl = await post.value('shacl');
-  assert.equal(shacl.conforms, false);
+  assert.equal(await post.value('conforms'), false);
+  assert.ok((await post.value('report')).size > 0);
   const rows = await post.value('violations');
   const got = rows.map((r) => `${tail(r.get('focus'))} ${tail(r.get('component'))}`).sort();
   assert.deepEqual(got, ['bob ClassConstraintComponent', 'bob DatatypeConstraintComponent', 'bob MinCountConstraintComponent']);
 });
 
 test('validation: SHACL-SPARQL constraint', async () => {
-  const r = await post.value('sparqlConstraint');
-  assert.equal(r.conforms, false, 'alice knows bob who knows carol, a Document');
+  assert.equal(await post.value('sparqlConstraint'), false, 'alice knows bob who knows carol, a Document');
 });
 
 test('validation: ShEx', async () => {

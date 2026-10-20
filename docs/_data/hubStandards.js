@@ -17,6 +17,10 @@ const path = require("path");
 const RECORD_DIR = path.join(__dirname, "..", "web", "hub", "records");
 
 function score(row) {
+  if (row.status === "census") {
+    return { text: `census: ${row.raw_summary_line || row.total + " files"} (no expected verdicts)`, measured: true };
+  }
+  if (row.status === "none") return { text: "no Lean runner", measured: false };
   if (row.status !== "ok" && row.status !== "fail") {
     return { text: `not measured (${row.status})`, measured: false };
   }

@@ -36,22 +36,14 @@ SELECT ?part ?whole WHERE { ?part ex:partOf+ ?whole } ORDER BY ?part ?whole`)
 ```
 
 ```observable-js
-pretty(partOf)
-```
-
-```observable-js
 counted = places.query(`PREFIX ex: <http://example.org/>
 SELECT ?whole (COUNT(?part) AS ?n) WHERE { ?part ex:partOf+ ?whole } GROUP BY ?whole ORDER BY DESC(?n)`)
-```
-
-```observable-js
-pretty(counted)
 ```
 
 A result can also come back as a SPARQL results document:
 
 ```observable-js
-places.query('SELECT ?s WHERE { ?s a <http://example.org/Place> } ORDER BY ?s LIMIT 2', { output: 'csv' })
+return places.query('SELECT ?s WHERE { ?s a <http://example.org/Place> } ORDER BY ?s LIMIT 2', { output: 'csv' })
 ```
 
 ## ASK, CONSTRUCT and Update
@@ -63,10 +55,6 @@ hasKiosk = places.query('ASK { <http://example.org/kiosk> <http://example.org/pa
 ```observable-js
 constructed = places.query(`PREFIX ex: <http://example.org/>
 CONSTRUCT { ?whole ex:hasPart ?part } WHERE { ?part ex:partOf ?whole }`)
-```
-
-```observable-js
-pretty(constructed)
 ```
 
 `update` changes the dataset in place, so this cell works on a copy:
@@ -100,10 +88,6 @@ SELECT ?place ?inside ?distance WHERE {
 } ORDER BY ?place`)
 ```
 
-```observable-js
-pretty(inPark)
-```
-
 ## Text search with text:query
 
 The `text:query` property function of Apache Jena text search matches
@@ -113,10 +97,6 @@ literals that hold every token of the search string.
 textHits = places.query(`PREFIX text: <http://jena.apache.org/text#>
 PREFIX rdfs: <http://www.w3.org/2000/01/rdf-schema#>
 SELECT ?s ?label WHERE { ?s text:query (rdfs:label "park") ; rdfs:label ?label } ORDER BY ?s`)
-```
-
-```observable-js
-pretty(textHits)
 ```
 
 ## Extension functions in JavaScript and WebAssembly
@@ -132,10 +112,6 @@ jsFunction = {
 SELECT ?label (<http://example.org/fn/initials>(?label) AS ?initials)
 WHERE { ?s rdfs:label ?label } ORDER BY ?label`);
 }
-```
-
-```observable-js
-pretty(jsFunction)
 ```
 
 This one calls a WebAssembly module. The 41 bytes below are a complete
@@ -174,10 +150,6 @@ SELECT ?label ?perHour WHERE {
 }
 ```
 
-```observable-js
-pretty(federated)
-```
-
 ## SPARQL 1.2: triple terms, reifiers, annotations
 
 The SPARQL 1.2 grammar is read when the call passes `sparql12: true`.
@@ -196,17 +168,9 @@ SELECT ?who ?drink WHERE { ?who ex:said <<( ex:bob ex:likes ?drink )>> } ORDER B
 ```
 
 ```observable-js
-pretty(whoSaidWhat)
-```
-
-```observable-js
 tripleFunctions = claims.query(`PREFIX ex: <http://example.org/>
 SELECT ?t (isTRIPLE(?t) AS ?isTriple) (SUBJECT(?t) AS ?s) (OBJECT(?t) AS ?o)
 WHERE { ex:alice ex:said ?t }`, { sparql12: true })
-```
-
-```observable-js
-pretty(tripleFunctions)
 ```
 
 A reifier (`~`) and an annotation block (`{| |}`) in a query pattern:
@@ -214,10 +178,6 @@ A reifier (`~`) and an annotation block (`{| |}`) in a query pattern:
 ```observable-js
 annotations = claims.query(`PREFIX ex: <http://example.org/>
 SELECT ?reifier ?source WHERE { ex:bob ex:likes ex:tea ~ ?reifier {| ex:source ?source |} }`, { sparql12: true })
-```
-
-```observable-js
-pretty(annotations)
 ```
 
 ## Limits

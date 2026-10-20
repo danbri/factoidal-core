@@ -33,27 +33,25 @@ ex:PersonShape a sh:NodeShape ;
   sh:property [ sh:path foaf:knows ; sh:class foaf:Person ] .`
 ```
 
-```observable-js
-shacl = people.validateShacl(shapes, { format: 'turtle' })
-```
+`validateShacl` answers `{ conforms, report }`:
 
 ```observable-js
-shacl.conforms
+conforms = people.validateShacl(shapes, { format: 'turtle' }).then((r) => r.conforms)
 ```
 
 The report is a `Dataset` that holds one `sh:ValidationReport`, so it can
 be queried:
 
 ```observable-js
-violations = shacl.report.query(`PREFIX sh: <http://www.w3.org/ns/shacl#>
+report = people.validateShacl(shapes, { format: 'turtle' }).then((r) => r.report)
+```
+
+```observable-js
+violations = report.query(`PREFIX sh: <http://www.w3.org/ns/shacl#>
 SELECT ?focus ?path ?component WHERE {
   ?r a sh:ValidationResult ; sh:focusNode ?focus ; sh:sourceConstraintComponent ?component .
   OPTIONAL { ?r sh:resultPath ?path }
 } ORDER BY ?focus ?component`)
-```
-
-```observable-js
-pretty(violations)
 ```
 
 SHACL-SPARQL: a constraint written as a SPARQL SELECT query.
@@ -65,11 +63,7 @@ sparqlConstraint = people.validateShacl(`@prefix sh: <http://www.w3.org/ns/shacl
 ex:NoSelfKnows a sh:NodeShape ; sh:targetClass foaf:Person ;
   sh:sparql [ sh:select """PREFIX foaf: <http://xmlns.com/foaf/0.1/>
     SELECT $this WHERE { $this foaf:knows ?other . ?other foaf:knows ?third . FILTER NOT EXISTS { ?third a foaf:Person } }""" ] .`,
-  { format: 'turtle' })
-```
-
-```observable-js
-sparqlConstraint.conforms
+  { format: 'turtle' }).then((r) => r.conforms)
 ```
 
 ## ShEx
@@ -98,8 +92,7 @@ No node conforms: Bob has no `foaf:name` and his age is not an
 `xsd:integer`; Carol has no name; Alice knows Bob, and `@ex:Person`
 requires Bob to conform.
 
-## Limits
+## Conformance
 
-- SHACL 1.2 Core and SHACL-SPARQL have failing W3C tests; see the
-  [standards table](../#standards-support) and
-  <https://github.com/danbri/factoidal/issues/553>.
+The W3C SHACL and ShEx suite scores are in the
+[standards table](../#standards-support).

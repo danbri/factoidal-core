@@ -33,10 +33,6 @@ ds = Factoidal.parse(turtle, { format: 'turtle' })
 summary = ({ quads: ds.size, format: ds.format, prefixes: ds.prefixes })
 ```
 
-```observable-js
-pretty(ds)
-```
-
 ## Write it in each syntax
 
 ```observable-js
@@ -50,7 +46,7 @@ written = {
 ```
 
 ```observable-js
-written.rdfxml
+return written.rdfxml
 ```
 
 Read the RDF/XML back and compare the two datasets by their RDFC-1.0
@@ -115,11 +111,7 @@ ds12 = Factoidal.parse(turtle12, { format: 'turtle12' })
 ```
 
 ```observable-js
-pretty(ds12)
-```
-
-```observable-js
-ds12.serialize({ format: 'nquads' })
+return ds12.serialize({ format: 'nquads' })
 ```
 
 ```observable-js
@@ -136,7 +128,7 @@ refusedAs11 = {
 ## What each writer supports
 
 ```observable-js
-pretty(await Factoidal.formats())
+formatTable = Factoidal.formats()
 ```
 
 ## Limits

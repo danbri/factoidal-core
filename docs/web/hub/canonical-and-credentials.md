@@ -101,10 +101,6 @@ the DID document locally; no network request is made.
 didDocument = Factoidal.didKeyResolve('did:key:z6MkhaXgBZDvotDkL5257faiztiGiC2QtKLGpbnnEGta2doK')
 ```
 
-```observable-js
-pretty(didDocument)
-```
-
 ## Limits
 
 - RDFC-1.0 refuses a dataset that holds an RDF 1.2 triple term or a
