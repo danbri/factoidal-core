@@ -1,7 +1,7 @@
 {
   "name": "@factoidal/core",
   "version": "0.10.0",
-  "description": "Factoidal: a linked information system with graph data and the Web at its heart - RDF parsing (Turtle, TriG, N-Triples, N-Quads, RDF/XML, JSON-LD), SPARQL 1.1 query and update, RDFC-1.0 canonicalization, RDFS/OWL reasoning, SHACL and ShEx validation and a persisted store, for Node and the browser. One engine: the Lean 4 library L4Factoidal compiled to WebAssembly.",
+  "description": "RDF parsing and writing (Turtle, TriG, N-Triples, N-Quads, RDF/XML, JSON-LD), SPARQL 1.1 and 1.2, RDFS and OWL reasoning, SHACL and ShEx validation, CSVW and RML mapping, RDFC-1.0, and SPARQL, LWS and Solid servers, for Node, Deno and browsers.",
   "keywords": [
     "sparql",
     "rdf",
@@ -10,12 +10,15 @@
     "nquads",
     "trig",
     "rdf-xml",
-    "formal-verification",
     "semantic-web",
-    "lean4",
     "webassembly",
     "shacl",
-    "json-ld"
+    "json-ld",
+    "owl",
+    "shex",
+    "csvw",
+    "linked-data",
+    "solid"
   ],
   "homepage": "https://github.com/danbri/factoidal",
   "bugs": {
