@@ -33,8 +33,8 @@ test('post14: dataFactory-built quads round-trip through N-Quads text', async ()
     df.namedNode('http://example.org/alice'),
     df.namedNode('http://xmlns.com/foaf/0.1/name'),
     df.literal('Alice'));
-  const ds = new factoidal.Dataset([q]);
-  const back = factoidal.Dataset.fromNQuads(ds.toNQuads());
+  const { quadToNQuads } = await import('../../npm/factoidal/rdfjs.mjs');
+  const back = await factoidal.parse(quadToNQuads(q), { format: 'nquads' });
   assert.equal(back.size, 1);
   assert.ok([...back][0].equals(q));
 });

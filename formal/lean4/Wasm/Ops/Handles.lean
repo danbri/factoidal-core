@@ -296,13 +296,14 @@ def datasetClose (h : String) : IO String := do
 /-! ## Ops that keep the data in the store (issue 882 item 1) -/
 
 /-- Store `ds` under a new handle and answer the `datasetOpen` envelope. -/
-def storeNewHandle (ds : Dataset) (prefixes : List (String × String) := []) : IO String := do
+def storeNewHandle (ds : Dataset) (prefixes : List (String × String) := [])
+    (extra : List (String × Json) := []) : IO String := do
   let n ← handleCounter.modifyGet fun n => (n + 1, n + 1)
   let h := s!"h{n}"
   handleTable.modify (·.insert h (openDataset ds prefixes))
-  pure (okWith [("handle", .string h),
+  pure (okWith ([("handle", .string h),
                 ("count", .number (toString (datasetQuadCount ds))),
-                ("prefixes", prefixesJson prefixes)])
+                ("prefixes", prefixesJson prefixes)] ++ extra))
 
 /-- The stored dataset of `h`, or `none` when the handle is not open. -/
 def lookupHandleDataset (h : String) : IO (Option (Dataset × List (String × String))) := do
@@ -332,7 +333,8 @@ def closureRegimes : List String := ["rdfs", "owl-rl", "rho-df", "rdfs-plus"]
 stored dataset under `regime`, stored under a new handle. The graph is
 `closureStreamOf`'s, which `closureEnvelopeOf_stream` proves is the graph the
 text closure ops write. The new dataset has no named graph, as the text ops'
-output has none. -/
+output has none. For `rho-df` and `rdfs-plus` the envelope also has `rounds`,
+the member the text ops answer (`closureEnvelopeTail`). -/
 def datasetClosure (h regime : String) : IO String :=
   if !closureRegimes.contains regime then
     pure (errJson s!"datasetClosure: unknown regime '{regime}' (rdfs | owl-rl | rho-df | rdfs-plus)")
@@ -340,7 +342,11 @@ def datasetClosure (h regime : String) : IO String :=
   withHandleDataset h fun ds prefixes =>
     match closureStreamOf ds regime with
     | .error e => pure (errJson e)
-    | .ok g => storeNewHandle { default := g, named := [] } prefixes
+    | .ok g =>
+        let tail := match datasetForOps .rdf12 ds with
+          | .ok d => (closureEnvelopeTail regime d).2
+          | .error _ => []
+        storeNewHandle { default := g, named := [] } prefixes tail
 
 /-- `datasetShaclValidate(dataHandle, shapesHandle)` — `shaclValidateParsed` on
 the two stored datasets, each normalised as the text op would read it

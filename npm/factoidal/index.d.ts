@@ -198,6 +198,8 @@ export class Dataset implements Iterable<Quad> {
   readonly formatInferred: boolean;
   /** True after dispose(). */
   readonly disposed: boolean;
+  /** Members the producing op reported: `rounds` (rho-df, RDFS-Plus closures); `inputCount`, `derivedCount`, `fuel` (rifEval). */
+  readonly info: Record<string, unknown>;
   query(sparql: string, options?: DatasetQueryOptions): Promise<Bindings[] | boolean | Dataset | string | object>;
   /** SPARQL 1.1 Update in place; answers this Dataset. */
   update(updateText: string, options?: Record<string, never>): Promise<this>;

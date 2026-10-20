@@ -88,14 +88,10 @@ def datasetRifEval (rifXml h : String) : IO String :=
   withReadDataset "rifEval" h fun ds =>
     match rifSaturate rifXml ds with
     | .error e => pure (errJson e)
-    | .ok (premise, saturated) => do
-        let opened ← storeNewHandle { default := saturated, named := [] }
-        match parseJson? opened with
-        | some (.object fields) =>
-            pure (Json.object (fields ++
-              [ ("inputCount", .number (toString premise.length))
-              , ("derivedCount", .number (toString (saturated.length - premise.length)))
-              , ("fuel", .number (toString L4Factoidal.RIF.Saturate.defaultRounds)) ])).toString
-        | _ => pure opened
+    | .ok (premise, saturated) =>
+        storeNewHandle { default := saturated, named := [] } []
+          [ ("inputCount", .number (toString premise.length))
+          , ("derivedCount", .number (toString (saturated.length - premise.length)))
+          , ("fuel", .number (toString L4Factoidal.RIF.Saturate.defaultRounds)) ]
 
 end L4Wasm.Ops

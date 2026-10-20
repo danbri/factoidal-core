@@ -797,7 +797,7 @@ test('registerServiceEndpoint: SERVICE resolves against a registered snapshot un
     const handle = await lean.openDataset(local, { format: 'ntriples' });
     const viaHandle = await handle.query(q);
     assert.equal(viaHandle.length, 1);
-    await handle.close();
+    handle.dispose();
     // registering the same IRI again replaces the snapshot
     await lean.registerServiceEndpoint(ENDPOINT, '<http://e/a> <http://e/p> "w" .',
       { format: 'ntriples' });

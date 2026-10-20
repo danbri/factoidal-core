@@ -72,6 +72,7 @@ class Dataset {
     this._diagnostics = Object.freeze((x.diagnostics || []).slice());
     this._format = x.format;
     this._formatInferred = !!x.formatInferred;
+    this._info = Object.freeze({ ...(x.info || {}) });
     this._disposed = false;
     this._nquads = null;   // cached N-Quads text, dropped on update
     this._quads = null;    // cached quad array, dropped on update
@@ -92,6 +93,11 @@ class Dataset {
   get formatInferred() { return this._formatInferred; }
   /** True after dispose(). */
   get disposed() { return this._disposed; }
+  /**
+   * What the producing op reported beside the data: `rounds` for the rho-df
+   * and RDFS-Plus closures; `inputCount`, `derivedCount`, `fuel` for rifEval.
+   */
+  get info() { return this._info; }
 
   _open(who) {
     if (this._disposed) {

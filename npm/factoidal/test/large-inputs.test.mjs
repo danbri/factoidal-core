@@ -32,7 +32,7 @@ for (const [name, api] of [['full', full], ['core', core]]) {
       const viaHandle = await handle.query('SELECT ?o WHERE { ?s <http://e/p> ?o } ORDER BY ?o');
       assert.equal(viaHandle.length, N);
     } finally {
-      await handle.close();
+      handle.dispose();
     }
   });
 }

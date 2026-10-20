@@ -8,7 +8,7 @@ const assert = require('node:assert/strict');
 
 const {
   dataFactory: df,
-  Dataset,
+  DatasetCore,
   termFromSrj,
   termToNQuads,
   quadToNQuads,
@@ -154,14 +154,14 @@ test('nquadsToQuads blankNodePrefix keeps documents apart', () => {
   assert.ok(!q1.subject.equals(q2.subject));
 });
 
-test('Dataset: DatasetCore contract (size/add/delete/has/match/iterate)', () => {
+test('DatasetCore: DatasetCore contract (size/add/delete/has/match/iterate)', () => {
   const s = df.namedNode('http://x/s');
   const p = df.namedNode('http://x/p');
   const g = df.namedNode('http://x/g');
   const q1 = df.quad(s, p, df.literal('1'));
   const q2 = df.quad(s, p, df.literal('2'), g);
 
-  const ds = new Dataset([q1, q2, q1]); // duplicate ignored
+  const ds = new DatasetCore([q1, q2, q1]); // duplicate ignored
   assert.equal(ds.size, 2);
   assert.ok(ds.has(q1));
   assert.ok(ds.has(df.quad(s, p, df.literal('1'))), 'has() is by value');
@@ -177,12 +177,12 @@ test('Dataset: DatasetCore contract (size/add/delete/has/match/iterate)', () => 
   assert.ok(!ds.has(q1));
 });
 
-test('Dataset: toNQuads / fromNQuads round-trip', () => {
-  const ds = new Dataset([
+test('DatasetCore: toNQuads / fromNQuads round-trip', () => {
+  const ds = new DatasetCore([
     df.quad(df.namedNode('http://x/s'), df.namedNode('http://x/p'),
       df.literal('v', 'en'), df.namedNode('http://x/g')),
   ]);
-  const back = Dataset.fromNQuads(ds.toNQuads());
+  const back = DatasetCore.fromNQuads(ds.toNQuads());
   assert.equal(back.size, 1);
   assert.ok([...back][0].equals([...ds][0]));
 });

@@ -618,8 +618,9 @@ function buildApi(driver) {
       registry,
       missing: (what, op) => missingOpError(what, e, op),
       wrap(r, prefixes, extra) {
-        return new Dataset(INTERNAL, c, r.handle, r.count,
-          prefixes !== undefined ? prefixes : r.prefixes, extra);
+        const { ok: _ok, handle, count, prefixes: own, ...info } = r;
+        return new Dataset(INTERNAL, c, handle, count,
+          prefixes !== undefined ? prefixes : own, { ...(extra || {}), info });
       },
       fromNQuads(text, prefixes) {
         requireEntryFn(e, 'datasetOpen', 'Dataset');

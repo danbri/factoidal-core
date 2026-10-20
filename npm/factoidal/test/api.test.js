@@ -203,9 +203,11 @@ test('serialize: engine round-trip is stable (nquads)', async () => {
   const once = await serialize(ds);
   assert.equal(typeof once, 'string');
   assert.ok(once.includes('<http://example.org/alice>'));
-  const again = await serialize(Dataset.fromNQuads(once));
-  assert.equal(again, once, 'serialize is a fixpoint on its own output');
-  assert.equal(Dataset.fromNQuads(once).size, ds.size);
+  const reread = await parse(once, { format: 'nquads' });
+  const again = await serialize(reread);
+  assert.equal(await canonicalize(again, { format: 'nquads' }), await canonicalize(once, { format: 'nquads' }),
+    'serialize is a fixpoint on its own output, up to blank-node labels');
+  assert.equal(reread.size, ds.size);
 });
 
 test('serialize: ntriples output', async () => {
@@ -638,7 +640,7 @@ test('query: each solution Map iterates in the SELECT projection order', async (
     const viaHandle = await h.query(q);
     assert.deepEqual([...viaHandle[0].keys()], ['name', 'age', 'p']);
   } finally {
-    await h.close();
+    h.dispose();
   }
   // An unbound variable is absent from the Map; the bound ones keep the order.
   const opt = await query(ds, 'PREFIX foaf: <http://xmlns.com/foaf/0.1/> ' +
