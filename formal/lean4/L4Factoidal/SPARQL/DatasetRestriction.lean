@@ -582,7 +582,8 @@ theorem evalPatternBackend_nil (env : EvalEnv) (dsb : DatasetBackend)
       simp only [graphFree, Bool.and_eq_true] at hg
       simp only [PatternKept] at hk
       rcases evalPatternBackend_nil env dsb keep a hf.1 hg.1 hk.1 with ha | ha
-      · exact Or.inl (by simp only [evalPatternBackend, ha, SPARQL.minus, List.filter_nil])
+      · exact Or.inl (by simp only [evalPatternBackend, ha, hashMinus_eq_minus, SPARQL.minus,
+          List.filter_nil])
       · exact Or.inr ha
   | .leftJoin a b c, hf, hg, hk => by
       simp only [plannerFragment, Bool.and_eq_true] at hf
