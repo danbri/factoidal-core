@@ -1,4 +1,4 @@
-// Pins docs/web/hub/29-validating-data-json-schema-and-xforms.md.
+// Pins docs/web/historical-fstar-notebooks/29-validating-data-json-schema-and-xforms.md.
 //
 // Like post27/post28, the cells call the typed `fn` methods now
 // (jsonSchemaValidate/xformsRecalc) rather than reaching for the raw

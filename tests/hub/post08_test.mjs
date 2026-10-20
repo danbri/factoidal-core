@@ -1,4 +1,4 @@
-// Pins every code sample in docs/web/hub/08-canonical-graphs-rdfc10.md.
+// Pins every code sample in docs/web/historical-fstar-notebooks/08-canonical-graphs-rdfc10.md.
 
 import { NPM_FACTOIDAL_INDEX, extractObservableCells, runReactivePost } from './_helpers.mjs';
 

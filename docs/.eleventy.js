@@ -172,7 +172,8 @@ module.exports = function(eleventyConfig) {
   // per build, in one place, shared with the sw.js stamping below.
   eleventyConfig.addGlobalData("buildVersion", BUILD_VERSION);
 
-  // The numbered hub posts (web/hub/NN-*.md), excluding the hub index
+  // The numbered historical hub posts (web/historical-fstar-notebooks/NN-*.md),
+  // moved from web/hub/ on 2026-10-20, excluding their index
   // and its README, as a collection -- the "least duplication"
   // mechanism task #105 asked for: web/hub-live.11ty.js paginates over
   // this collection to auto-generate one relaxed-CSP "live mode" twin
@@ -182,8 +183,8 @@ module.exports = function(eleventyConfig) {
   // rather than front matter, so a post never needs to opt in by hand.
   eleventyConfig.addCollection("hubPosts", (collectionApi) =>
     collectionApi
-      .getFilteredByGlob("web/hub/*.md")
-      .filter((item) => /\/web\/hub\/\d+-[^/]+\.md$/.test(item.inputPath))
+      .getFilteredByGlob("web/historical-fstar-notebooks/*.md")
+      .filter((item) => /\/web\/historical-fstar-notebooks\/\d+-[^/]+\.md$/.test(item.inputPath))
   );
 
   // HDT hub post (web/hub/24-...) fetches the in-repo RML-Core ontology
@@ -195,7 +196,18 @@ module.exports = function(eleventyConfig) {
   // ontology.hdt") resolves regardless of pathPrefix.
   eleventyConfig.addPassthroughCopy({
     "../third_party/testing/hdt/rml-core-ontology.hdt":
-      "web/hub/rml-core-ontology.hdt",
+      "web/historical-fstar-notebooks/rml-core-ontology.hdt",
+  });
+
+  // The historical notebooks (docs/web/historical-fstar-notebooks/, the
+  // hub posts before 2026-10-20, kept unchanged) refer to their assets
+  // as ../assets/...; the directory sits at the same depth as web/hub/,
+  // so a second copy of web/hub/assets/ beside it keeps those relative
+  // URLs working without editing the posts.
+  eleventyConfig.addPassthroughCopy({ "web/hub/assets": "web/historical-fstar-notebooks/assets" });
+  eleventyConfig.addPassthroughCopy({ "../third_party/valis": "web/historical-fstar-notebooks/assets/valis" });
+  eleventyConfig.addPassthroughCopy({
+    "../npm/factoidal/sample-store": "web/historical-fstar-notebooks/assets/store/sample"
   });
 
   // F* module dep-graph demo (web/demos/dep-graph/index.html) fetches

@@ -1,4 +1,4 @@
-// Pins every code sample in docs/web/hub/07-json-ld-rdf-as-json.md.
+// Pins every code sample in docs/web/historical-fstar-notebooks/07-json-ld-rdf-as-json.md.
 
 import { NPM_FACTOIDAL_INDEX, extractObservableCells, runObservableCell, runReactivePost } from './_helpers.mjs';
 

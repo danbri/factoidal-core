@@ -1,4 +1,4 @@
-// Pins every live cell in docs/web/hub/34-extension-functions.md.
+// Pins every live cell in docs/web/historical-fstar-notebooks/34-extension-functions.md.
 //
 // node:test against the committed npm/factoidal typed API (the same
 // external contract docs/_includes/hub.njk's `fn` adapter mirrors).

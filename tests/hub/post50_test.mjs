@@ -135,7 +135,7 @@ SELECT ?variant ?gene ?disease ?drug WHERE {
 });
 
 test('post50: documents the bounded, cross-graph workload', () => {
-  const source = fs.readFileSync('docs/web/hub/50-shardborough-life-sciences.md', 'utf8');
+  const source = fs.readFileSync('docs/web/historical-fstar-notebooks/50-shardborough-life-sciences.md', 'utf8');
   assert.match(source, /GRAPH <urn:kgx:chromosome>/);
   assert.match(source, /GRAPH <urn:kgx:sequence_variant>/);
   assert.match(source, /LIMIT 20/);

@@ -1,4 +1,4 @@
-// Pins every code sample in docs/web/hub/04-concept-schemes-skos.md.
+// Pins every code sample in docs/web/historical-fstar-notebooks/04-concept-schemes-skos.md.
 //
 // Fixtures mirror skills/skos-integrity/sample-vocab.ttl and
 // sample-vocab-broken.ttl (and a trimmed skos-shapes.ttl excerpt) --

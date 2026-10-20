@@ -1,5 +1,5 @@
 // Pins every code sample in
-// docs/web/hub/31-rdf-1-2-triple-terms.md.
+// docs/web/historical-fstar-notebooks/31-rdf-1-2-triple-terms.md.
 //
 // The live page binds `fn` to the in-browser adapter (browser.js +
 // hub.njk); here `fn === factoidal` (the node npm API). Both reach the

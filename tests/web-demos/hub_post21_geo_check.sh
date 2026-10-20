@@ -4,7 +4,7 @@
 # Headless-Chromium checks for task #105 (GeoSPARQL map fix + fullscreen
 # + live-mode hub twin): builds the site offline with the vendored
 # Eleventy, serves it under /factoidal/, and drives Playwright over
-# BOTH docs/web/hub/21-geosparql-geometry-and-topology.md (the strict
+# BOTH docs/web/historical-fstar-notebooks/21-geosparql-geometry-and-topology.md (the strict
 # page) and its auto-generated docs/web/hub-live/21-.../ twin
 # (docs/web/hub-live.11ty.js). Sibling to hub_browser_all.sh (every
 # post, shallow pageerror/rejected-cell check only) and
@@ -18,7 +18,7 @@
 # runtime, not just in the CSP string.
 #
 # Checks:
-#   STRICT page (web/hub/21-.../):
+#   STRICT page (web/historical-fstar-notebooks/21-.../):
 #     1. Zero pageerror / console.error events.
 #     2. No cell ends in the Inspector's REJECTED (observable-cell-error)
 #        state.
@@ -118,7 +118,7 @@ if [ "$BUILD_RC" -ne 0 ]; then
   fi
 fi
 
-STRICT_PAGE="$SITE_DIR/web/hub/21-geosparql-geometry-and-topology/index.html"
+STRICT_PAGE="$SITE_DIR/web/historical-fstar-notebooks/21-geosparql-geometry-and-topology/index.html"
 LIVE_PAGE="$SITE_DIR/web/hub-live/21-geosparql-geometry-and-topology/index.html"
 [ -f "$STRICT_PAGE" ] || { echo "FAIL: $STRICT_PAGE was not produced." >&2; exit 1; }
 [ -f "$LIVE_PAGE" ] || { echo "FAIL: $LIVE_PAGE was not produced -- web/hub-live.11ty.js's pagination over collections.hubPosts did not include post 21." >&2; exit 1; }
@@ -133,7 +133,7 @@ PORT="${HUB_POST21_GEO_CHECK_PORT:-8941}"
 HTTP_PID=$!
 
 for _ in $(seq 1 50); do
-  curl -sS -o /dev/null "http://127.0.0.1:$PORT/factoidal/web/hub/21-geosparql-geometry-and-topology/" 2>/dev/null && break
+  curl -sS -o /dev/null "http://127.0.0.1:$PORT/factoidal/web/historical-fstar-notebooks/21-geosparql-geometry-and-topology/" 2>/dev/null && break
   sleep 0.2
 done
 
@@ -181,7 +181,7 @@ async function waitForCellsSettled(page) {
     return route.continue();
   });
 
-  await page.goto(`${BASE}/web/hub/21-geosparql-geometry-and-topology/`, { waitUntil: 'networkidle', timeout: 30000 });
+  await page.goto(`${BASE}/web/historical-fstar-notebooks/21-geosparql-geometry-and-topology/`, { waitUntil: 'networkidle', timeout: 30000 });
   await waitForCellsSettled(page);
 
   const rejectedCells = await page.$$eval('.observable-cell', (els) =>

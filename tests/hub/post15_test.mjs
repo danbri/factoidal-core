@@ -1,4 +1,4 @@
-// Pins the live cell in docs/web/hub/15-how-fast-the-performance-story.md.
+// Pins the live cell in docs/web/historical-fstar-notebooks/15-how-fast-the-performance-story.md.
 //
 // node:test, requiring the committed npm/factoidal bundles (no F*
 // toolchain needed) — mirrors npm/factoidal/test's own harness style.

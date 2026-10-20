@@ -1,4 +1,4 @@
-// Pins every live cell in docs/web/hub/37-from-the-registry.md.
+// Pins every live cell in docs/web/historical-fstar-notebooks/37-from-the-registry.md.
 //
 // Unlike every other hub post test, this one does NOT run its cells
 // against npm/factoidal (the in-repo copy). Its whole point is to

@@ -64,7 +64,7 @@
   post's prose links (../README/, ./24-hdt-.../) AND, more
   load-bearing, any page-relative fetch() a cell makes at runtime
   (post 24 fetches "../rml-core-ontology.hdt") -- was authored against
-  the strict post's /web/hub/<slug>/ directory. This <base> makes all
+  the strict post's /web/historical-fstar-notebooks/<slug>/ directory. This <base> makes all
   of them resolve there instead of against /web/hub-live/<slug>/,
   where they would 404. It's also why live mode's CSP above says
   base-uri 'self' where strict says 'none': strict pages have no
@@ -76,7 +76,7 @@
   section -- same content, strict capabilities; acceptable for a
   secondary view of the same post.
 -->
-<base href="{{ ('/web/hub/' + livePostSlug + '/') | url }}">
+<base href="{{ ('/web/historical-fstar-notebooks/' + livePostSlug + '/') | url }}">
 {% endif %}
 <!--
   Vendored Leaflet (third_party/leaflet/, BSD-2-Clause, see its
@@ -477,7 +477,7 @@
 <nav>
   <a href="{{ '/' | url }}">Home</a>
   <a href="{{ '/web/hub/' | url }}">Hub</a>
-  <a href="{{ '/web/hub/47-writing-hub-notebooks/' | url }}">Notebook guide</a>
+  <a href="{{ '/web/historical-fstar-notebooks/' | url }}">Historical notebooks</a>
   <a href="{{ '/test-results/' | url }}">Test Results</a>
   <a href="https://github.com/danbri/factoidal">GitHub</a>
 </nav>
@@ -485,7 +485,7 @@
 <div class="hub-live-banner" role="note">
   <strong>Live mode</strong> — this page may load external map tiles
   and query remote endpoints; the
-  <a href="{{ ('/web/hub/' + livePostSlug + '/') | url }}">standard hub</a>
+  <a href="{{ ('/web/historical-fstar-notebooks/' + livePostSlug + '/') | url }}">standard hub</a>
   is fully self-contained (same cells, no network).
 </div>
 {% elif series_order is defined and hubAllowRegistryCdn %}
@@ -663,7 +663,7 @@ const hubHelpers = {
     if (typeof globalThis.wikifnCompiledCall === "function") return true;
     await new Promise((resolve, reject) => {
       const s = document.createElement("script");
-      s.src = "../assets/wikifn/wikifn_engine.js";
+      s.src = "{{ '/web/hub/assets/wikifn/wikifn_engine.js' | url }}";
       s.onload = resolve;
       s.onerror = () => reject(new Error("could not load wikifn_engine.js"));
       document.head.appendChild(s);

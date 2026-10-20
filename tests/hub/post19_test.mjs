@@ -1,4 +1,4 @@
-// Pins every live cell in docs/web/hub/19-correlated-joins-lateral.md.
+// Pins every live cell in docs/web/historical-fstar-notebooks/19-correlated-joins-lateral.md.
 //
 // node:test against the committed npm/factoidal typed API (the same
 // external contract docs/_includes/hub.njk's `fn` adapter mirrors), with

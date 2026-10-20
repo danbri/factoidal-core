@@ -1,4 +1,4 @@
-// Pins every live cell in docs/web/hub/25-xml-wellformedness-and-xpath.md.
+// Pins every live cell in docs/web/historical-fstar-notebooks/25-xml-wellformedness-and-xpath.md.
 //
 // The post's four cells call `Factoidal.xmlWellformed(xml)` and
 // `Factoidal.xpathEval(xml, expr)` -- the raw browser.js exports backed

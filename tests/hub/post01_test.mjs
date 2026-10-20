@@ -1,5 +1,5 @@
 // Pins every code sample in
-// docs/web/hub/01-triples-rdf-from-first-principles.md.
+// docs/web/historical-fstar-notebooks/01-triples-rdf-from-first-principles.md.
 //
 // node:test, requiring the committed npm/factoidal bundles (no F*
 // toolchain needed) — mirrors npm/factoidal/test's own harness style.

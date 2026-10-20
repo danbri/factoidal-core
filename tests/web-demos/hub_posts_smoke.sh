@@ -2,7 +2,7 @@
 # tests/web-demos/hub_posts_smoke.sh
 #
 # Smoke test for the five published documentation-hub posts
-# (docs/web/hub/01-*.md through 05-*.md): builds the site offline
+# (docs/web/historical-fstar-notebooks/01-*.md through 05-*.md): builds the site offline
 # with the vendored Eleventy (third_party/eleventy/), serves the built
 # _site under its real /factoidal/ pathPrefix, and drives headless
 # Chromium (Playwright) over each post page to confirm:
@@ -93,24 +93,24 @@ if [ "$BUILD_RC" -ne 0 ]; then
 fi
 
 POSTS=(
-  "web/hub/01-triples-rdf-from-first-principles/"
-  "web/hub/02-asking-questions-sparql/"
-  "web/hub/03-schemas-that-infer-rdfs-owl/"
-  "web/hub/04-concept-schemes-skos/"
-  "web/hub/05-shapes-that-validate-shacl/"
-  "web/hub/06-shapes-the-other-dialect-shex/"
-  "web/hub/07-json-ld-rdf-as-json/"
-  "web/hub/08-canonical-graphs-rdfc10/"
-  "web/hub/09-mapping-tables-to-triples-rml/"
-  "web/hub/10-rules-rif-core/"
-  "web/hub/11-one-graph-five-syntaxes/"
-  "web/hub/12-the-api-tour/"
-  "web/hub/13-verifiable-credentials-and-csvw/"
-  "web/hub/14-the-rdfjs-api/"
-  "web/hub/15-how-fast-the-performance-story/"
-  "web/hub/16-the-verified-in-fstar-story/"
-  "web/hub/17-mutating-and-serving-data/"
-  "web/hub/18-the-durable-log-live/"
+  "web/historical-fstar-notebooks/01-triples-rdf-from-first-principles/"
+  "web/historical-fstar-notebooks/02-asking-questions-sparql/"
+  "web/historical-fstar-notebooks/03-schemas-that-infer-rdfs-owl/"
+  "web/historical-fstar-notebooks/04-concept-schemes-skos/"
+  "web/historical-fstar-notebooks/05-shapes-that-validate-shacl/"
+  "web/historical-fstar-notebooks/06-shapes-the-other-dialect-shex/"
+  "web/historical-fstar-notebooks/07-json-ld-rdf-as-json/"
+  "web/historical-fstar-notebooks/08-canonical-graphs-rdfc10/"
+  "web/historical-fstar-notebooks/09-mapping-tables-to-triples-rml/"
+  "web/historical-fstar-notebooks/10-rules-rif-core/"
+  "web/historical-fstar-notebooks/11-one-graph-five-syntaxes/"
+  "web/historical-fstar-notebooks/12-the-api-tour/"
+  "web/historical-fstar-notebooks/13-verifiable-credentials-and-csvw/"
+  "web/historical-fstar-notebooks/14-the-rdfjs-api/"
+  "web/historical-fstar-notebooks/15-how-fast-the-performance-story/"
+  "web/historical-fstar-notebooks/16-the-verified-in-fstar-story/"
+  "web/historical-fstar-notebooks/17-mutating-and-serving-data/"
+  "web/historical-fstar-notebooks/18-the-durable-log-live/"
 )
 for p in "${POSTS[@]}"; do
   [ -f "$SITE_DIR/$p/index.html" ] || { echo "FAIL: $SITE_DIR/$p/index.html was not produced." >&2; exit 1; }
@@ -143,8 +143,8 @@ POSTS_JSON="${POSTS_JSON%,}]"
 # and this post's own brief for why a second cell would not add
 # anything real).
 MIN_CELLS_JSON='{
-  "web/hub/15-how-fast-the-performance-story/": 1,
-  "web/hub/16-the-verified-in-fstar-story/": 1
+  "web/historical-fstar-notebooks/15-how-fast-the-performance-story/": 1,
+  "web/historical-fstar-notebooks/16-the-verified-in-fstar-story/": 1
 }'
 
 timeout 120 node --input-type=module -e "

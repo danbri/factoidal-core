@@ -1,23 +1,21 @@
 ---
-title: Documentation Hub
+title: Historical F* notebooks
 layout: hub.njk
 ---
 
-# Documentation Hub
+# Historical F\* notebooks
 
-A collection of maintained, runnable RDF/SPARQL notebooks. Each post
-shows a real Factoidal capability rather than a screenshot: parse and
-query RDF, follow property paths, validate data, transform it, or
-inspect a storage experiment.
+These 54 notebooks were the Factoidal documentation hub until
+2026-10-20. Most of them were written while the F\* engine was the
+engine of the npm package, and their text describes that engine (posts
+36 onwards also use the Lean 4 engine). They are kept here unchanged as
+a record. They are not maintained as the primary documentation.
 
-Start with [SPARQL queries and property paths](./02-asking-questions-sparql/),
-then try the [life-sciences named-graph workload](./45-life-sciences-named-graphs/)
-or [browser block artifacts](./46-browser-block-artifacts/).
+Since `@factoidal/core` 0.9.0 the package carries only the Lean 4
+engine, so a live cell on these pages now runs against the Lean 4 build.
+A cell that depended on an F\*-only function can fail.
 
-
-The pages use a small, vendored Observable-style runtime. The
-[Hub notebook guide](./47-writing-hub-notebooks/) covers the live-cell
-model, Factoidal API, and test contract.
+The current documentation is the [Factoidal hub](../hub/).
 
 ## The series
 

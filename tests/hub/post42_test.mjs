@@ -1,4 +1,4 @@
-// Pins every live cell in docs/web/hub/42-cottas-a-store-at-scale.md.
+// Pins every live cell in docs/web/historical-fstar-notebooks/42-cottas-a-store-at-scale.md.
 //
 // `fn === factoidal`, the real npm/factoidal typed API (same shape the
 // browser adapter in docs/_includes/hub.njk exposes: parse/query/

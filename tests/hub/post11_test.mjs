@@ -1,4 +1,4 @@
-// Pins every code sample in docs/web/hub/11-one-graph-five-syntaxes.md.
+// Pins every code sample in docs/web/historical-fstar-notebooks/11-one-graph-five-syntaxes.md.
 
 import { NPM_FACTOIDAL_INDEX, extractObservableCells, runReactivePost } from './_helpers.mjs';
 

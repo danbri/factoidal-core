@@ -1,4 +1,4 @@
-// Pins every live cell in docs/web/hub/43-one-model-theory-under-all-of-it.md.
+// Pins every live cell in docs/web/historical-fstar-notebooks/43-one-model-theory-under-all-of-it.md.
 //
 // Post 43 is the stage 7 account of the unified-semantics programme
 // (https://github.com/danbri/factoidal/issues/598): LBase/IKL-style

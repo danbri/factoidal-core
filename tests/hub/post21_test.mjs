@@ -1,5 +1,5 @@
 // Pins every live cell in
-// docs/web/hub/21-geosparql-geometry-and-topology.md.
+// docs/web/historical-fstar-notebooks/21-geosparql-geometry-and-topology.md.
 //
 // The post's cells call the typed `fn` adapter only (fn.parse /
 // fn.query) -- geof: functions are ordinary SPARQL expressions, so a
@@ -91,7 +91,7 @@ test('post21 cell 2 (geof:sfWithin): the two inside pairs, ordered', async () =>
 // Mirrors the map cell's own inline `geomToWkt`/`ringToWkt`/
 // `polygonCoordsToWkt` -- see the header comment above for why this is
 // a duplicate rather than a shared import. Keep in sync by hand with
-// the copy in docs/web/hub/21-geosparql-geometry-and-topology.md if
+// the copy in docs/web/historical-fstar-notebooks/21-geosparql-geometry-and-topology.md if
 // either changes.
 function ringToWkt(ring) {
   return '(' + ring.map(([lon, lat]) => lon + ' ' + lat).join(', ') + ')';

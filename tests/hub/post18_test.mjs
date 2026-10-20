@@ -1,4 +1,4 @@
-// Pins the live cells in docs/web/hub/18-the-durable-log-live.md.
+// Pins the live cells in docs/web/historical-fstar-notebooks/18-the-durable-log-live.md.
 //
 // The hub runs the Lean engine of @factoidal/core (issue 726); `fn` and
 // `Factoidal` here are npm/factoidal, the same typed API the page binds.
@@ -257,7 +257,7 @@ test('post18: the C demo transcript quoted in this post is printed by the commit
     REPO_ROOT, 'formal', 'fstar', 'c-output', 'deltalog', 'demo', 'delta_log_demo.c'), 'utf8');
   assert.ok(demoSrc.includes('"parse_delta_batch(corrupted bytes) = None (checksum rejects it)"'));
   assert.ok(demoSrc.includes('All checks passed'));
-  const post = fs.readFileSync(path.join(REPO_ROOT, 'docs', 'web', 'hub', POST_FILE), 'utf8');
+  const post = fs.readFileSync(path.join(REPO_ROOT, 'docs', 'web', 'historical-fstar-notebooks', POST_FILE), 'utf8');
   assert.match(post, /parse_delta_batch\(corrupted bytes\) = None \(checksum rejects it\)\s+OK/);
   assert.match(post, /All checks passed/);
 });

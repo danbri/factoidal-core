@@ -1,5 +1,5 @@
 // Pins every live cell in
-// docs/web/hub/35-wikifunctions-extension-functions.md.
+// docs/web/historical-fstar-notebooks/35-wikifunctions-extension-functions.md.
 //
 // node:test against the committed npm/factoidal typed API. The one
 // browser-vs-test duality (post24's fn.queryHdt pattern): the page's

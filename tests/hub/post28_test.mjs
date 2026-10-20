@@ -1,4 +1,4 @@
-// Pins docs/web/hub/28-verified-math-rendered.md.
+// Pins docs/web/historical-fstar-notebooks/28-verified-math-rendered.md.
 //
 // Like post27, the cells call the typed `fn` methods now
 // (mathmlEval/toanSummation/matrixDeterminant) rather than reaching

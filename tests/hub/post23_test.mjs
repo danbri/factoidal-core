@@ -1,5 +1,5 @@
 // Pins every live cell in
-// docs/web/hub/23-decentralized-identifiers-did-key.md.
+// docs/web/historical-fstar-notebooks/23-decentralized-identifiers-did-key.md.
 //
 // The post's cells call `Factoidal.didKeyResolve` (the raw browser.js
 // export backed by the F*-extracted DID_Key.did_key_document) and the

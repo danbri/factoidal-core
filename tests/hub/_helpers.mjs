@@ -46,7 +46,7 @@ export const NPM_FACTOIDAL_INDEX =
 
 // Root a hub post's shipped Markdown file, for pinning tests that
 // extract and execute its live cells' exact source.
-export const HUB_POST_DIR = path.join(__dirname, '..', '..', 'docs', 'web', 'hub');
+export const HUB_POST_DIR = path.join(__dirname, '..', '..', 'docs', 'web', 'historical-fstar-notebooks');
 
 /**
  * Extract every ```observable-js fenced code block's source, in

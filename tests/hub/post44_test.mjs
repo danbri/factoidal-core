@@ -1,5 +1,5 @@
 // Pins every live cell in
-// docs/web/hub/44-a-little-ikl-walkthrough.md.
+// docs/web/historical-fstar-notebooks/44-a-little-ikl-walkthrough.md.
 //
 // Post 44 tells one squirrel story twice -- once where Clud's report
 // incriminates Jon, once where a retelling mix-up produced the same

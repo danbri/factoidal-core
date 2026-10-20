@@ -1,4 +1,4 @@
-// Pins every code sample in docs/web/hub/14-the-rdfjs-api.md.
+// Pins every code sample in docs/web/historical-fstar-notebooks/14-the-rdfjs-api.md.
 //
 // node:test, requiring the committed npm/factoidal bundles (no F*
 // toolchain needed) — mirrors npm/factoidal/test's own harness style.

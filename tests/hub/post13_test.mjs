@@ -1,4 +1,4 @@
-// Pins every live code cell in docs/web/hub/13-verifiable-credentials-and-csvw.md.
+// Pins every live code cell in docs/web/historical-fstar-notebooks/13-verifiable-credentials-and-csvw.md.
 //
 // The post has seven live cells, in document order (the shared VC
 // `credential` dataset and the shared CSVW `csvText`/`metadataJson`

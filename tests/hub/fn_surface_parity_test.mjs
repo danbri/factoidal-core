@@ -34,12 +34,18 @@ import { xfail } from './_helpers.mjs';
 // https://github.com/danbri/factoidal/issues/728.)
 const KNOWN_GAPS = {};
 
+// The hub pages (docs/web/hub/*.md) and the historical notebooks moved out
+// of the hub on 2026-10-20 (docs/web/historical-fstar-notebooks/NN-*.md).
 const HUB_DIR = new URL('../../docs/web/hub/', import.meta.url);
+const HISTORICAL_DIR = new URL('../../docs/web/historical-fstar-notebooks/', import.meta.url);
 const hub = readFileSync(new URL('../../docs/_includes/hub.njk', import.meta.url), 'utf8');
 const browser = await import(new URL('../../npm/factoidal/browser.js', import.meta.url).href);
 const nodeEntry = await import(new URL('../../npm/factoidal/index.mjs', import.meta.url).href);
 
-const postFiles = readdirSync(HUB_DIR).filter((f) => /^\d{2}-.*\.md$/.test(f)).sort();
+const postFiles = [
+  ...readdirSync(HISTORICAL_DIR).filter((f) => /^\d{2}-.*\.md$/.test(f)).sort().map((f) => new URL(f, HISTORICAL_DIR)),
+  ...readdirSync(HUB_DIR).filter((f) => /\.md$/.test(f) && f !== 'README.md').sort().map((f) => new URL(f, HUB_DIR)),
+];
 
 // The hubHelpers object literal of hub.njk, and the method names it defines.
 const helpersSource = (() => {
@@ -67,7 +73,7 @@ test('fn-surface parity: every fn.* and Factoidal.* name called by any published
   const missingFn = [];
   const missingFactoidal = [];
   for (const f of postFiles) {
-    const page = readFileSync(new URL(f, HUB_DIR), 'utf8');
+    const page = readFileSync(f, 'utf8');
     const cells = [...page.matchAll(/```observable-js[^\n]*\n([\s\S]*?)```/g)].map((m) => m[1]).join('\n');
     for (const name of new Set([...cells.matchAll(/\bfn\.([A-Za-z_][A-Za-z0-9_]*)\b/g)].map((m) => m[1]))) {
       if (!(name in browser.default) && !helperNames.has(name)) missingFn.push(`${f}: fn.${name}`);

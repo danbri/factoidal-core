@@ -1,4 +1,4 @@
-// Pins every live cell in docs/web/hub/53-xmpp-protocol-logic-in-lean.md.
+// Pins every live cell in docs/web/historical-fstar-notebooks/53-xmpp-protocol-logic-in-lean.md.
 //
 // Harness shape follows tests/hub/post38_test.mjs: `fn` here is the
 // node package's `l4Call` layered over the SAME on-disk loader the
