@@ -186,8 +186,10 @@ def evalPatternBackend (env : EvalEnv) (dsb : DatasetBackend) :
         (QueryPattern.leftJoin p1 p2 cond).lowerWith env Binding.empty |>.evalIn ds gCurrent
   | .union p1 p2, gb =>
       SPARQL.union (evalPatternBackend env dsb p1 gb) (evalPatternBackend env dsb p2 gb)
+  -- The hash MINUS, equal to `SPARQL.minus` as a list
+  -- (`hashMinus_eq_minus`, https://github.com/danbri/factoidal/issues/881).
   | .minus p1 p2, gb =>
-      SPARQL.minus (evalPatternBackend env dsb p1 gb) (evalPatternBackend env dsb p2 gb)
+      SPARQL.hashMinus (evalPatternBackend env dsb p1 gb) (evalPatternBackend env dsb p2 gb)
   -- GRAPH with a CONSTANT IRI routes to that graph's own backend. An
   -- IRI the dataset does not name contributes nothing, as in §18.6.
   | .graph (.iri i) p, _ =>

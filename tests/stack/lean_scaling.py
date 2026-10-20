@@ -484,6 +484,16 @@ repaired (docs/designissues/2026-10-10-lean-vs-fstar-performance.md):
   iso-noniso-search  the same compare, 2,200 quads, 100 blank nodes, against a relabelled
                    copy with one literal changed: at most 1 s CPU. Expected failure,
                    https://github.com/danbri/factoidal/issues/877 (9.4 s on 2026-10-18)
+  not-exists-filter, minus
+                   `query --table` of FILTER NOT EXISTS and of MINUS over 5,000, 10,000
+                   and 20,000 typed subjects (9,950 to 39,800 triples): the n, 2n, 4n
+                   assertion, and the number of answer lines. Issue
+                   https://github.com/danbri/factoidal/issues/881: the FILTER lowering
+                   read the whole graph for each row, and MINUS tested every pair of
+                   rows. Measured 2026-10-20 before the repair (expected failures, CPU):
+                   NOT EXISTS 1.77 s, 5.77 s and 40.3 s; MINUS 0.59 s, 1.91 s and 7.12 s.
+                   After (`ExistsIndex`, `existsBgpFilter`, `hashMinus`): NOT EXISTS 0.13 s,
+                   0.28 s and 0.74 s; MINUS 0.09 s, 0.22 s and 0.61 s.
   startup          process start: `l4factoidal version` must take at most
                    STARTUP_BUDGET (20 ms) of CPU time, minimum of 15 runs
                    (305 million instructions and 43 ms before the fixtures were
@@ -2026,13 +2036,48 @@ def xml_markup_chain_top(n: int) -> Path:
     return fixture(f"xml-markup-chain-top-{n}.rdf", text)
 
 
+def typed_subjects_nt(n: int) -> Path:
+    """n subjects, each with an rdf:type ex:T triple; all but the subjects i with
+    i % 100 == 7 also have an ex:p triple (issue 881). 2n - n/100 triples; the
+    NOT EXISTS and the MINUS queries of the rows below answer the n/100 subjects
+    without ex:p."""
+    def text():
+        rows = []
+        for i in range(n):
+            rows.append(f"<{EX}s{i}> <http://www.w3.org/1999/02/22-rdf-syntax-ns#type> <{EX}T> .\n")
+            if i % 100 != 7:
+                rows.append(f'<{EX}s{i}> <{EX}p> "v{i}" .\n')
+        return "".join(rows)
+    return fixture(f"typed-subjects-{n}.nt", text)
+
+
+def typed_subjects_answer_lines(n: int) -> int:
+    """`query --table` prints a header line and one line for each subject with no ex:p."""
+    return 1 + sum(1 for i in range(n) if i % 100 == 7)
+
+
 # row id -> (x, make input, command, expected first line (a string, or a
 # predicate on the line, or on the line and the size n), a file the row needs or None[, the time to bound: "cpu"
-# (user plus system, the default) or "user"]). A row that holds 100 MB to 500 MB
+# (user plus system, the default) or "user"[, a function of n that gives the number of
+# lines the command must print]]). A row that holds 100 MB to 500 MB
 # bounds the user time: the system time of such a run, the page faults of the
 # virtual machine, took from 0.03 s to 1.4 s for the same command (2026-10-15,
 # turtle-prefixes-open at 64,000 prefixes), while the user time varied by 6 percent.
 SERIES_ROWS = {
+    # FILTER NOT EXISTS and MINUS over n typed subjects (5,000, 10,000 and 20,000:
+    # 9,950 to 39,800 triples), `query --table` (https://github.com/danbri/factoidal/issues/881).
+    # The reference evaluator substituted each row into the EXISTS body and read the
+    # whole graph for it, and MINUS tested every pair of rows.
+    "not-exists-filter": (
+        5000, typed_subjects_nt,
+        lambda p: [str(BIN), "query", str(p), "--format", "ntriples", "--table", "--query-string",
+                   f"SELECT ?s WHERE {{ ?s a <{EX}T> FILTER NOT EXISTS {{ ?s <{EX}p> ?o }} }}"],
+        None, None, "cpu", typed_subjects_answer_lines),
+    "minus": (
+        5000, typed_subjects_nt,
+        lambda p: [str(BIN), "query", str(p), "--format", "ntriples", "--table", "--query-string",
+                   f"SELECT ?s WHERE {{ ?s a <{EX}T> MINUS {{ ?s <{EX}p> ?o }} }}"],
+        None, None, "cpu", typed_subjects_answer_lines),
     "owl-consistent-cl": (
         10000, cl_prefix,
         lambda p: [str(BIN), "owl-consistent", str(p), "--format", "nquads"], "true",
@@ -2145,6 +2190,7 @@ def doubling_check(pts, label):
 def series_row(rid, runs):
     x, make, cmd, first, needs = SERIES_ROWS[rid][:5]
     metric = SERIES_ROWS[rid][5] if len(SERIES_ROWS[rid]) > 5 else "cpu"
+    lines = SERIES_ROWS[rid][6] if len(SERIES_ROWS[rid]) > 6 else None
     label = "CPU" if metric == "cpu" else "user CPU"
     if needs is not None and not needs.exists():
         return False, f"{needs} missing"
@@ -2163,6 +2209,8 @@ def series_row(rid, runs):
                 t["first_line"], bytes) else str(t["first_line"])
             if first is not None and not first_ok(first, got.strip(), n):
                 return False, f"n={n}: printed {got.strip()[:120]!r}, not the expected answer"
+            if lines is not None and t["out_lines"] != lines(n):
+                return False, f"n={n}: printed {t['out_lines']} lines, not {lines(n)}"
             best = t[metric] if best is None else min(best, t[metric])
             if t["wall"] > REPEAT_LIMIT:
                 break

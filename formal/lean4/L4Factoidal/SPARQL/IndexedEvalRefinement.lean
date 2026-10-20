@@ -763,6 +763,49 @@ theorem evalIn_bgp (ds : Dataset) (active : Graph) (b : Bgp) :
     (GraphPattern.bgp b).evalIn ds active = evalBgp b active := by
   rw [GraphPattern.evalIn, evalBgpIdx_eq_evalBgp]
 
+/-! ## The hash MINUS equals §18.5's MINUS
+
+https://github.com/danbri/factoidal/issues/881. The per-μ1 test of
+`minus` is an `any` over Ω2 of a predicate that is false on every row
+incompatible with μ1. `bucketProbe_filterMap_eq` already shows that
+the bucket at μ1's key keeps every compatible row of Ω2, so the `any`
+over the bucket has the same value. -/
+
+private theorem any_eq_not_isEmpty_filterMap {α : Type} (p : α → Bool) :
+    ∀ (l : List α), l.any p = !(l.filterMap (fun a => if p a then some () else none)).isEmpty
+  | [] => rfl
+  | a :: rest => by
+      rw [List.any_cons, List.filterMap_cons, any_eq_not_isEmpty_filterMap p rest]
+      cases p a <;> simp
+
+/-- The keyed hash MINUS equals `minus` whenever every row of Ω2 binds
+every key variable. -/
+theorem hashMinusKeyed_eq_minus (kvs : List VarName) (o1 o2 : SolutionSeq)
+    (hb : ∀ v ∈ kvs, ∀ m ∈ o2, (Binding.lookup v m).isSome) :
+    hashMinusKeyed kvs o1 o2 = minus o1 o2 := by
+  unfold hashMinusKeyed minus
+  apply List.filter_congr
+  intro mu1 _
+  cases hk1 : Binding.hashKey? kvs mu1 with
+  | none => rfl
+  | some k =>
+      simp only
+      rw [any_eq_not_isEmpty_filterMap, any_eq_not_isEmpty_filterMap,
+        bucketProbe_filterMap_eq kvs mu1 o2 k _ hb hk1
+          (fun mu2 hc => by simp [hc])]
+
+/-- **The MINUS theorem.** The hash MINUS returns the same solution
+sequence as §18.5's `minus`: the same list, in the same order. -/
+theorem hashMinus_eq_minus (o1 o2 : SolutionSeq) :
+    hashMinus o1 o2 = minus o1 o2 := by
+  unfold hashMinus
+  cases hkv : joinKeyVars o1 o2 with
+  | nil => rfl
+  | cons v0 vs0 =>
+      apply hashMinusKeyed_eq_minus
+      intro v hv m hm
+      exact joinKeyVars_bound_right o1 o2 v (by rw [hkv]; exact hv) m hm
+
 /-! ## Build-time differential checks
 
 The hazardous case is the coarse engine equality: rows that agree only
@@ -794,7 +837,21 @@ misses `x`, so `x` leaves the key and both rows still join. -/
 #guard hashJoin [[(vX, .iri iriA)]] [[(vX, .iri iriA)], [(vY, .iri iriB)]]
         == join [[(vX, .iri iriA)]] [[(vX, .iri iriA)], [(vY, .iri iriB)]]
 
+/-! MINUS: equal keys remove the row, other keys keep it; a row with no
+shared variable is kept (§18.5 dom(μ1) ∩ dom(μ2) = ∅); language-tag
+case folds into one bucket. -/
+#guard hashMinus [[(vX, .iri iriA)], [(vX, .iri iriB)]] [[(vX, .iri iriA)]]
+        == [[(vX, .iri iriB)]]
+#guard hashMinus [[(vX, .iri iriA)]] [[(vY, .iri iriA)]] == [[(vX, .iri iriA)]]
+#guard hashMinus [[(vX, litEnUS)]] [[(vX, litEnUSUpper)]] == []
+#guard hashMinus [[(vX, .iri iriA), (vY, .iri iriB)], [(vX, .iri iriB)]]
+          [[(vX, .iri iriA)], [(vY, .iri iriA)]]
+        == minus [[(vX, .iri iriA), (vY, .iri iriB)], [(vX, .iri iriB)]]
+          [[(vX, .iri iriA)], [(vY, .iri iriA)]]
+
 /-! ## Axiom audit -/
+
+#print axioms hashMinus_eq_minus
 
 #print axioms hashLeftJoin_eq_leftJoin
 #print axioms hashJoin_eq_join

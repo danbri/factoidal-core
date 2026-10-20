@@ -84,6 +84,9 @@ import L4Factoidal.SPARQL.FullText
 import L4Factoidal.RDF.ConciseBoundedDescription
 import Std.Data.HashMap
 import L4Factoidal.SPARQL.OrderedPrefix
+-- `ExistsIndex`: the indexed §18.6 EXISTS test for a BGP body that the
+-- `.filter` lowering uses (https://github.com/danbri/factoidal/issues/881).
+import L4Factoidal.SPARQL.ExistsIndex
 
 namespace L4Factoidal.SPARQL
 
@@ -1939,6 +1942,50 @@ def findSomeNumbered (f : String → Binding → Option ServiceFailure) :
       | some x => some x
       | none   => findSomeNumbered f rest (i + 1)
 
+/-- One row of `existsBgpFilter`: the indexed §18.6 test of `EXISTS { BGP }`
+(`negated = false`) or `NOT EXISTS { BGP }` (`negated = true`) on `row`,
+with the reference condition `general` as the fallback. It substitutes the
+row into the BGP (§18.6 `substitute`) and tests the result with
+`ExistsIndex.bgpNonempty` from the empty binding. With no dataset in the
+environment, or a full-text pattern in the BGP, it is `general`. -/
+def existsBgpRow (env : EvalEnv) (mu : Binding) (b : Bgp) (negated : Bool)
+    (general : Graph → Binding → Bool) (ix : ExistsIndex) (active : Graph)
+    (row : Binding) : Bool :=
+  match env.dataset with
+  | none => general active row
+  | some _ =>
+      let b' := substBgp (mu.merge row) b
+      if bgpHasFulltext b' then general active row
+      else
+        let found := ix.bgpNonempty b' Binding.empty
+        if negated then !found else found
+
+/-- The FILTER of `EXISTS { BGP }` or `NOT EXISTS { BGP }` over a whole row
+sequence (https://github.com/danbri/factoidal/issues/881). It builds ONE
+`ExistsIndex` of the active graph for all the rows, so the rows probe the
+same lazy indexes. It is a function of the row SEQUENCE (the `.modified`
+form) because the code generator compiles a function of type
+`Graph → Binding → Bool` as one function of both arguments: a `let`
+between the two lambdas is computed again for each row (measured
+2026-10-20: 424 s for 10,000 subjects, against 7.2 s before any index).
+`filterLowered_evalIn` proves the result equal to the reference FILTER. -/
+def existsBgpFilter (env : EvalEnv) (mu : Binding) (b : Bgp) (negated : Bool)
+    (general : Graph → Binding → Bool) : Graph → SolutionSeq → SolutionSeq :=
+  fun active rows =>
+    let ix := ExistsIndex.ofGraph active
+    rows.filter (existsBgpRow env mu b negated general ix active)
+
+/-- The pattern the FILTER lowering builds: the indexed form for
+`EXISTS { BGP }` and `NOT EXISTS { BGP }`, the reference `.filter` with
+`general` otherwise. -/
+def filterLowered (env : EvalEnv) (mu : Binding) (c : Expr)
+    (general : Graph → Binding → Bool) (q : GraphPattern)
+    (twin : Option (Graph → Binding → Option ServiceFailure)) : GraphPattern :=
+  match c with
+  | .existsPat (.bgp b) => .modified (existsBgpFilter env mu b false general) q none
+  | .notExistsPat (.bgp b) => .modified (existsBgpFilter env mu b true general) q none
+  | _ => .filter general q twin
+
 mutual
 
 def QueryPattern.lowerWith (env : EvalEnv) (mu : Binding) (p : QueryPattern) :
@@ -1959,7 +2006,10 @@ def QueryPattern.lowerWith (env : EvalEnv) (mu : Binding) (p : QueryPattern) :
            some (fun active row => existsFailure env active (mu.merge row) c)
          else none)
   | .filter c q  =>
-      .filter (fun active row =>
+      -- `filterLowered`: one index of the active graph for all the rows
+      -- when `c` is `EXISTS { BGP }` or `NOT EXISTS { BGP }`; the
+      -- reference FILTER below otherwise (`filterLowered_evalIn`).
+      filterLowered env mu c (fun active row =>
           let mu' := mu.merge row
           ebvOrFalse (Expr.evalIn env mu' (substituteExistentials env active mu' c)))
         (QueryPattern.lowerWith env mu q)
@@ -2561,6 +2611,66 @@ def selectPostFailure (env : EvalEnv) (active : Graph) (q : Query)
     | _ => none
 
 end
+
+/-- One row of the indexed FILTER has the value of the reference condition:
+for `EXISTS { BGP }` and `NOT EXISTS { BGP }`, the indexed test has the value
+that §18.6 `exists(substitute(BGP, μ))` has
+(https://github.com/danbri/factoidal/issues/881). -/
+theorem existsBgpRow_ofGraph (env : EvalEnv) (mu : Binding) (b : Bgp) (negated : Bool)
+    (active : Graph) (row : Binding) :
+    existsBgpRow env mu b negated (fun active row =>
+        let mu' := mu.merge row
+        ebvOrFalse (Expr.evalIn env mu' (substituteExistentials env active mu'
+          (if negated then .notExistsPat (.bgp b) else .existsPat (.bgp b)))))
+      (ExistsIndex.ofGraph active) active row
+      = (let mu' := mu.merge row
+         ebvOrFalse (Expr.evalIn env mu' (substituteExistentials env active mu'
+          (if negated then .notExistsPat (.bgp b) else .existsPat (.bgp b))))) := by
+  unfold existsBgpRow
+  cases hd : env.dataset with
+  | none => rfl
+  | some ds =>
+    simp only
+    split
+    · rfl
+    · rename_i hft
+      cases negated <;>
+        simp only [substituteExistentials, hd, QueryPattern.lowerWith,
+          lowerBgp_of_no_fulltext _ (by simpa using hft), evalIn_bgp, evalBgp,
+          ExistsIndex.bgpNonempty_ofGraph, Bool.false_eq_true, if_false, if_true] <;>
+        simp [Expr.evalIn, ebvOrFalse, ebv]
+
+/-- The pattern the FILTER lowering builds evaluates to the reference
+FILTER, `filterSeq` of the reference condition, for every dataset and
+active graph (https://github.com/danbri/factoidal/issues/881). -/
+theorem filterLowered_evalIn (env : EvalEnv) (mu : Binding) (c : Expr)
+    (q : GraphPattern) (twin : Option (Graph → Binding → Option ServiceFailure))
+    (ds : Dataset) (active : Graph) :
+    (filterLowered env mu c (fun active row =>
+        let mu' := mu.merge row
+        ebvOrFalse (Expr.evalIn env mu' (substituteExistentials env active mu' c)))
+      q twin).evalIn ds active
+      = filterSeq (fun row =>
+          let mu' := mu.merge row
+          ebvOrFalse (Expr.evalIn env mu' (substituteExistentials env active mu' c)))
+        (q.evalIn ds active) := by
+  unfold filterLowered
+  split
+  · rw [GraphPattern.evalIn]
+    unfold existsBgpFilter filterSeq
+    simp only
+    apply List.filter_congr
+    intro row _
+    exact existsBgpRow_ofGraph env mu _ false active row
+  · rw [GraphPattern.evalIn]
+    unfold existsBgpFilter filterSeq
+    simp only
+    apply List.filter_congr
+    intro row _
+    exact existsBgpRow_ofGraph env mu _ true active row
+  · rw [GraphPattern.evalIn]
+
+#print axioms filterLowered_evalIn
 
 /-- Compile a query pattern into the §18.5 algebra. -/
 def QueryPattern.lower (env : EvalEnv) (p : QueryPattern) : GraphPattern :=

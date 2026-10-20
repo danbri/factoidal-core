@@ -889,6 +889,17 @@ value, so `ab.run` is a partial application that has the index already. A `struc
 the state in a field does the same. A closure returned from a definition is not
 memoisation.
 
+Second cost, 2026-10-20 (https://github.com/danbri/factoidal/issues/881): the indexed
+FILTER NOT EXISTS was first written as a condition `fun active => let ix :=
+ExistsIndex.ofGraph active; fun row => ...` for the `Graph → Binding → Bool` field of
+`GraphPattern.filter`. A `@[noinline]` identity around the inner lambda did not help: the
+emitted C was still one function of seven arguments that called `ExistsIndex.ofGraph` for
+each row. 10,000 subjects took 424 s, against 7.2 s with no index at all. When the type of
+the consumer is a function of the row, give the shared state a level whose argument is
+the whole input: here `.modified (fun active rows => let ix := ...; rows.filter ...)`, a
+function of the row SEQUENCE, so the `let` runs once for each sequence. Read the arity of
+the emitted function in `.lake/build/ir/<Module>.c` before you time.
+
 How it was found: a timed `#eval` of the pieces in a scratch file (`lake env lean
 scratch.lean`, `IO.monoMsNow` around the call), at 1,000 and 2,000 rows. Four times the
 time for twice the rows, in a function with one pass over its input, means work done for

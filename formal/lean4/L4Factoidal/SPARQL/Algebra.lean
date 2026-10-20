@@ -529,6 +529,28 @@ def hashLeftJoin (omega1 omega2 : SolutionSeq) (cond : Binding → Bool) :
   | [] => leftJoin omega1 omega2 cond
   | v :: vs => hashLeftJoinKeyed (v :: vs) omega1 omega2 cond
 
+/-- The keyed core of the hash MINUS: bucket Ω2 on the key ONCE, and
+test each μ1 only against the rows of its bucket. The per-row test is
+§18.5's own (`minus`). The `none` fallback (a μ1 missing a key variable)
+tests all of Ω2 as `minus` does. https://github.com/danbri/factoidal/issues/881:
+`minus` tests every pair of rows, which is quadratic in the row count. -/
+def hashMinusKeyed (kvs : List VarName) (omega1 omega2 : SolutionSeq) :
+    SolutionSeq :=
+  let idx := groupByKey (Binding.hashKey? kvs) omega2
+  omega1.filter (fun mu1 =>
+    !(match Binding.hashKey? kvs mu1 with
+      | none => omega2
+      | some k => bucketOf idx (some k)).any (fun mu2 =>
+        mu1.compatible mu2 && !domainsDisjoint mu1 mu2))
+
+/-- Minus(Ω1, Ω2) by hash: equal to `minus` as a list
+(`hashMinus_eq_minus`, IndexedEvalRefinement.lean). With no usable key
+variable it IS `minus`. -/
+def hashMinus (omega1 omega2 : SolutionSeq) : SolutionSeq :=
+  match joinKeyVars omega1 omega2 with
+  | [] => minus omega1 omega2
+  | v :: vs => hashMinusKeyed (v :: vs) omega1 omega2
+
 /-! ### The indexed BGP step
 
 `evalBgpFrom` scans the whole graph once per row per pattern. The
@@ -1031,8 +1053,12 @@ def GraphPattern.evalIn (ds : Dataset) (active : Graph) (p : GraphPattern) :
   | .filter c q _   => filterSeq (c active) (GraphPattern.evalIn ds active q)
   | .union l r      =>
       SPARQL.union (GraphPattern.evalIn ds active l) (GraphPattern.evalIn ds active r)
+  -- Wired to the hash MINUS; `hashMinus_eq_minus`
+  -- (IndexedEvalRefinement.lean) proves it returns exactly §18.5's
+  -- `SPARQL.minus`, list order included
+  -- (https://github.com/danbri/factoidal/issues/881).
   | .minus l r      =>
-      SPARQL.minus (GraphPattern.evalIn ds active l) (GraphPattern.evalIn ds active r)
+      SPARQL.hashMinus (GraphPattern.evalIn ds active l) (GraphPattern.evalIn ds active r)
   -- §18.6 GRAPH.
   | .graph name q =>
       match name with
