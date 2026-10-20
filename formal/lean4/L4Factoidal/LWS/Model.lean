@@ -157,11 +157,14 @@ sections that are still empty, so the relations used here are Solid's
 structure Link where
   target : String
   rel    : String
+  /-- Target attributes (RFC 8288 §3.4), for example `type`. -/
+  attrs  : List (String × String) := []
 deriving DecidableEq, Repr, Inhabited
 
 /-- Serialise one link into `Link` header field value syntax. -/
 def Link.render (l : Link) : String :=
-  "<" ++ l.target ++ ">; rel=\"" ++ l.rel ++ "\""
+  "<" ++ l.target ++ ">; rel=\"" ++ l.rel ++ "\"" ++
+    String.join (l.attrs.map (fun (k, v) => "; " ++ k ++ "=\"" ++ v ++ "\""))
 
 /-- Serialise a list of links into ONE `Link` header field value. RFC 8288
 allows several links in one field, comma separated. -/

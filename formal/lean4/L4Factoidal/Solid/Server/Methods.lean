@@ -160,6 +160,9 @@ def bodyEditsContainment (baseIri target body : String) : Bool :=
 /-- One Solid request. Total, like the LWS `step` it refines. -/
 def step (S : Store σ) (cfg : ServerConfig) (r : Request) (st : σ) :
     Response × σ :=
+  -- Solid applies N3 Patch itself and passes JSON Patch to the LWS binding,
+  -- so its `Accept-Patch` names both.
+  let cfg := { cfg with lws := { cfg.lws with acceptPatch := ["text/n3", mediaJsonPatch] } }
   let target := r.path
   let who := requesterOf cfg r
   let mode := requiredMode r.method (targetsAcl target)
@@ -217,6 +220,7 @@ where
             if e.kind.isContainer then
               let g := containerGraph S cfg.lws.baseIri st target
               let (base, st') := LWS.step S cfg.lws r st
+              if base.status != 200 then (base, st') else
               ({ base with
                  body := if r.method == "HEAD" then "" else turtleOfGraphAuto g,
                  headers := base.headers.map (fun (k, v) =>
@@ -239,6 +243,7 @@ where
     | "PATCH" =>
         if hasContent r && (r.header? "content-type").isNone then
           (refuse 400 "PATCH with content requires a Content-Type header field", st)
+        else if contentTypeOf r == some mediaJsonPatch then LWS.step S cfg.lws r st
         else if contentTypeOf r != some "text/n3" then
           (refuse 415 "PATCH accepts text/n3 (N3 Patch)", st)
         else if pathIsContainer target then

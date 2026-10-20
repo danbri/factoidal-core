@@ -11,6 +11,7 @@ statement it decides.
 import L4Factoidal.LWS.Operations
 import L4Factoidal.LWS.Patch
 import L4Factoidal.LWS.Conformance
+import L4Factoidal.Syntax.Turtle
 
 namespace L4Factoidal.LWS.Tests
 
@@ -18,6 +19,8 @@ open L4Factoidal.RDF
 open L4Factoidal.SPARQL
 open L4Factoidal.HTTP (Request Response)
 open L4Factoidal.LWS
+open L4Factoidal.JSON
+open L4Factoidal.Syntax
 
 /-! ## Fixtures -/
 
@@ -201,6 +204,242 @@ def lwsGuardCreatedIsNotSuccess : Bool :=
 in the LWS containment hierarchy". -/
 theorem rootHasNoParent : parent? rootPath = none := by
   simp [parent?, rootPath]
+
+/-! ## LWS editor's draft 2026-10-19 (w3c/lws-protocol 9a08ff65): the HTTP binding
+
+Rows `lws-ed-NN` of the registry. Each behaviour has a positive guard and a
+negative guard, so an engine that answers yes to everything fails the build. -/
+
+def json : List (String × String) := [("content-type", "application/json")]
+
+def hasLink (resp : Response) (frag : String) : Bool :=
+  match hdr resp "link" with
+  | some v => (v.splitOn frag).length > 1
+  | none => false
+
+/-- lws-ed-01, §Read Resource: "Responses MUST include an `ETag` header". -/
+def lwsGuardEtagOnRead : Bool :=
+  let (_, st) := run (req "PUT" "/a" turtle "x") emptyStorage
+  let (g, _) := run (req "GET" "/a") st
+  let (h, _) := run (req "HEAD" "/a") st
+  let (c, _) := run (req "GET" "/") st
+  (hdr g "etag").isSome && hdr g "etag" == hdr h "etag" && (hdr c "etag").isSome
+#guard lwsGuardEtagOnRead
+-- A write changes the tag.
+#guard
+  let (rs, _) := runAll [req "PUT" "/a" turtle "x", req "GET" "/a",
+                         req "PUT" "/a" turtle "y", req "GET" "/a"] emptyStorage
+  (rs[1]?.bind (hdr · "etag")) != (rs[3]?.bind (hdr · "etag"))
+
+/-- lws-ed-02, §Update Resource: a failed `If-Match` answers 412 and does
+not write; a matching one writes. -/
+def lwsGuardIfMatch : Bool :=
+  let (_, st) := run (req "PUT" "/a" turtle "x") emptyStorage
+  let tag := (hdr (run (req "GET" "/a") st).1 "etag").getD ""
+  let (bad, st1) := run (req "PUT" "/a" (("if-match", "\"nope\"") :: turtle) "y") st
+  let (good, st2) := run (req "PUT" "/a" (("if-match", tag) :: turtle) "z") st
+  bad.status == 412 && (memLookup st1 "/a").map (·.body) == some "x" &&
+  good.status == 204 && (memLookup st2 "/a").map (·.body) == some "z"
+#guard lwsGuardIfMatch
+-- If-Match on an absent resource fails; If-None-Match: * on an absent one writes.
+#guard (run (req "PUT" "/b" (("if-match", "*") :: turtle) "y") emptyStorage).1.status == 412
+#guard (run (req "PUT" "/b" (("if-none-match", "*") :: turtle) "y") emptyStorage).1.status == 201
+#guard
+  let (_, st) := run (req "PUT" "/b" turtle "y") emptyStorage
+  (run (req "PUT" "/b" (("if-none-match", "*") :: turtle) "z") st).1.status == 412
+
+/-- lws-ed-03, §Read Resource: "If the resource or container listing has
+not changed, respond with `304 Not Modified`". -/
+def lwsGuardNotModified : Bool :=
+  let (_, st) := run (req "PUT" "/a" turtle "x") emptyStorage
+  let (g, _) := run (req "GET" "/a") st
+  let tag := (hdr g "etag").getD ""
+  let lm := (hdr g "last-modified").getD ""
+  let (n1, _) := run (req "GET" "/a" [("if-none-match", tag)]) st
+  let (n2, _) := run (req "GET" "/a" [("if-modified-since", lm)]) st
+  let (o, _) := run (req "GET" "/a" [("if-none-match", "\"other\"")]) st
+  n1.status == 304 && n1.body == "" && n2.status == 304 && o.status == 200
+#guard lwsGuardNotModified
+
+/-- lws-ed-04, §Read Resource: "Servers MUST support range requests". -/
+def lwsGuardRange : Bool :=
+  let (_, st) := run (req "PUT" "/t" [("content-type", "text/plain")] "abcdefghij") emptyStorage
+  let (r1, _) := run (req "GET" "/t" [("range", "bytes=2-4")]) st
+  let (r2, _) := run (req "GET" "/t" [("range", "bytes=-3")]) st
+  let (r3, _) := run (req "GET" "/t" [("range", "bytes=7-")]) st
+  r1.status == 206 && r1.body == "cde" && hdr r1 "content-range" == some "bytes 2-4/10" &&
+  r2.body == "hij" && r3.body == "hij" && hdr r1 "accept-ranges" == some "bytes"
+#guard lwsGuardRange
+-- Unsatisfiable: 416 with `bytes */len`; a syntax this server ignores: 200.
+#guard
+  let (_, st) := run (req "PUT" "/t" [("content-type", "text/plain")] "abc") emptyStorage
+  let (r, _) := run (req "GET" "/t" [("range", "bytes=9-")]) st
+  r.status == 416 && hdr r "content-range" == some "bytes */3"
+#guard
+  let (_, st) := run (req "PUT" "/t" [("content-type", "text/plain")] "abc") emptyStorage
+  (run (req "GET" "/t" [("range", "items=0-1")]) st).1.status == 200
+
+/-- lws-ed-05, §Container Representation and §LWS Media Type: the
+`application/lws+json` listing with `id`, `type`, `totalItems`, `items`. -/
+def lwsGuardContainerListing : Bool :=
+  let (resp, _) := run (req "GET" "/alice/" [("accept", "application/lws+json")]) populated
+  hdr resp "content-type" == some "application/lws+json" &&
+  (match parseJson resp.body with
+   | .ok j =>
+       j.getString? "type" == some "Container" &&
+       j.getString? "id" == some "http://example.org/alice/" &&
+       (match j.field? "totalItems" with | some (.number "2") => true | _ => false) &&
+       (match j.getArray? "items" with
+        | some items =>
+            items.length == 2 &&
+            items.any (fun i => i.getString? "id" == some "http://example.org/alice/card" &&
+                                i.getString? "type" == some "DataResource" &&
+                                i.getString? "format" == some "text/turtle") &&
+            items.any (fun i => i.getString? "type" == some "Container")
+        | none => false)
+   | .error _ => false)
+#guard lwsGuardContainerListing
+-- An empty container lists `items: []`; a data resource is never listed as one.
+#guard
+  let (_, st) := run (req "PUT" "/e/" turtle "") emptyStorage
+  let (resp, _) := run (req "GET" "/e/") st
+  (resp.body.splitOn "\"items\":[]").length > 1 && (resp.body.splitOn "\"totalItems\":0").length > 1
+#guard ((run (req "GET" "/alice/card") populated).1.body.splitOn "totalItems").length == 1
+
+/-- lws-ed-06, §Content Negotiation: the Turtle LWS profile on request,
+with the profile in `Content-Type` and `Vary: Accept`. -/
+def lwsGuardContainerTurtle : Bool :=
+  let (resp, _) := run (req "GET" "/alice/" [("accept", "text/turtle")]) populated
+  hdr resp "content-type" == some "text/turtle; profile=\"https://www.w3.org/ns/lws/v1\"" &&
+  hdr resp "vary" == some "accept" &&
+  (resp.body.splitOn "a lws:Container").length > 1 &&
+  (match parseTurtle resp.body none .rdf11 with | .ok g => g.length > 4 | .error _ => false)
+#guard lwsGuardContainerTurtle
+-- The two representations carry different entity tags.
+#guard
+  hdr (run (req "GET" "/alice/" [("accept", "text/turtle")]) populated).1 "etag" !=
+  hdr (run (req "GET" "/alice/" [("accept", "application/lws+json")]) populated).1 "etag"
+
+/-- lws-ed-07, §Containment and §Discovery: `up` on every non-root
+resource, `type`, `linkset`, and `lws#storage` on every read. -/
+def lwsGuardLwsLinks : Bool :=
+  let (d, _) := run (req "GET" "/alice/card") populated
+  let (root, _) := run (req "HEAD" "/") populated
+  hasLink d "</alice/>; rel=\"up\"" &&
+  hasLink d "<https://www.w3.org/ns/lws#DataResource>; rel=\"type\"" &&
+  hasLink d "</alice/card?linkset>; rel=\"linkset\"; type=\"application/linkset+json\"" &&
+  hasLink d "rel=\"https://www.w3.org/ns/lws#storage\"" &&
+  hasLink root "<https://www.w3.org/ns/lws#Container>; rel=\"type\"" &&
+  !hasLink root "rel=\"up\""
+#guard lwsGuardLwsLinks
+
+/-- lws-ed-08, §Create Resource: 201 with `Location`, `up`, `linkset`,
+`type`; a `Link` with `rel="type"` to lws:Container creates a container. -/
+def lwsGuardPostCreates : Bool :=
+  let (resp, st) := run (req "POST" "/alice/"
+    [("content-type", "text/plain"), ("link", "<https://www.w3.org/ns/lws#Container>; rel=\"type\"")]
+    "") populated
+  let loc := (hdr resp "location").getD ""
+  resp.status == 201 && loc.endsWith "/" && hasLink resp "rel=\"up\"" &&
+  hasLink resp "rel=\"linkset\"" && hasLink resp "lws#Container" &&
+  ((memLookup st loc).map (·.kind.isContainer)) == some true
+#guard lwsGuardPostCreates
+-- A Slug that names an existing resource does not overwrite it.
+#guard
+  let (resp, st) := run (req "POST" "/alice/" (("slug", "card") :: turtle) "new") populated
+  hdr resp "location" != some "/alice/card" &&
+  (memLookup st "/alice/card").map (·.body) == some "a"
+-- A Slug with a slash is not used as a path.
+#guard
+  let (resp, _) := run (req "POST" "/alice/" (("slug", "../x") :: turtle) "new") populated
+  match hdr resp "location" with
+  | some l => l.startsWith "/alice/res" | none => false
+
+/-- lws-ed-09, §Delete Resource: `Depth: infinity` deletes a non-empty
+container and everything in it; without it the answer is 409. -/
+def lwsGuardRecursiveDelete : Bool :=
+  let (r1, st1) := run (req "DELETE" "/alice/" [("depth", "infinity")]) populated
+  r1.status == 204 && (memLookup st1 "/alice/notes/one").isNone &&
+  (memLookup st1 "/alice/").isNone && (memLookup st1 "/").isSome
+#guard lwsGuardRecursiveDelete
+#guard (run (req "DELETE" "/alice/") populated).1.status == 409
+
+/-- lws-ed-10, §Update Resource: "LWS server MUST minimally support JSON
+Patch (`application/json-patch+json`)". -/
+def lwsGuardJsonPatch : Bool :=
+  let (_, st) := run (req "PUT" "/d.json" json "{\"a\":1,\"b\":[1,2]}") emptyStorage
+  let patch := "[{\"op\":\"replace\",\"path\":\"/a\",\"value\":5},{\"op\":\"add\",\"path\":\"/b/-\",\"value\":3},{\"op\":\"test\",\"path\":\"/b/0\",\"value\":1}]"
+  let (resp, st') := run (req "PATCH" "/d.json" [("content-type", "application/json-patch+json")] patch) st
+  resp.status == 204 &&
+  (memLookup st' "/d.json").map (·.body) == some "{\"a\":5,\"b\":[1,2,3]}"
+#guard lwsGuardJsonPatch
+-- A failing `test` leaves the resource unchanged and answers 409.
+#guard
+  let (_, st) := run (req "PUT" "/d.json" json "{\"a\":1}") emptyStorage
+  let patch := "[{\"op\":\"remove\",\"path\":\"/a\"},{\"op\":\"test\",\"path\":\"/z\",\"value\":1}]"
+  let (resp, st') := run (req "PATCH" "/d.json" [("content-type", "application/json-patch+json")] patch) st
+  resp.status == 409 && (memLookup st' "/d.json").map (·.body) == some "{\"a\":1}"
+-- Another patch format is 415 with `Accept-Patch`.
+#guard
+  let (_, st) := run (req "PUT" "/d.json" json "{}") emptyStorage
+  let (resp, _) := run (req "PATCH" "/d.json" [("content-type", "text/n3")] "x") st
+  resp.status == 415 && hdr resp "accept-patch" == some "application/json-patch+json"
+
+/-- lws-ed-11, §Metadata: the linkset resource is `application/linkset+json`,
+advertises GET and PATCH in `Allow`, JSON Patch in `Accept-Patch`, and goes
+away with its resource. -/
+def lwsGuardLinkset : Bool :=
+  let (resp, _) := run (req "GET" "/alice/card?linkset") populated
+  let (_, gone) := run (req "DELETE" "/alice/card") populated
+  resp.status == 200 && hdr resp "content-type" == some "application/linkset+json" &&
+  ((hdr resp "allow").map (fun a => decide ((a.splitOn "PATCH").length > 1))) == some true &&
+  hdr resp "accept-patch" == some "application/json-patch+json" &&
+  (resp.body.splitOn "\"anchor\":\"http://example.org/alice/card\"").length > 1 &&
+  (resp.body.splitOn "\"up\"").length > 1 &&
+  (run (req "GET" "/alice/card?linkset") gone).1.status == 404
+#guard lwsGuardLinkset
+-- PUT on a linkset is 405; a PATCH that changes a server-managed link is 409;
+-- a PATCH that only tests is 204.
+#guard (run (req "PUT" "/alice/card?linkset" [("content-type", "application/linkset+json")] "{}") populated).1.status == 405
+#guard (run (req "PATCH" "/alice/card?linkset" [("content-type", "application/json-patch+json")]
+          "[{\"op\":\"remove\",\"path\":\"/linkset/0/up\"}]") populated).1.status == 409
+#guard (run (req "PATCH" "/alice/card?linkset" [("content-type", "application/json-patch+json")]
+          "[{\"op\":\"test\",\"path\":\"/linkset/0/anchor\",\"value\":\"http://example.org/alice/card\"}]") populated).1.status == 204
+
+/-- lws-ed-12, §Discovery: the storage description is `application/lws+cid`
+with `id`, `type: Storage` and a `StorageRoot` service. -/
+def lwsGuardStorageDescription : Bool :=
+  let (resp, _) := run (req "GET" "/.well-known/lws-storage") populated
+  hdr resp "content-type" == some "application/lws+cid" &&
+  (match parseJson resp.body with
+   | .ok j => j.getString? "type" == some "Storage" &&
+              j.getString? "id" == some "http://example.org/.well-known/lws-storage" &&
+              (resp.body.splitOn "\"serviceEndpoint\":\"http://example.org/\"").length > 1 &&
+              (resp.body.splitOn "\"@context\":[\"https://www.w3.org/ns/cid/v1\",\"https://www.w3.org/ns/lws/v1\"]").length > 1
+   | .error _ => false)
+#guard lwsGuardStorageDescription
+#guard (run (req "PUT" "/.well-known/lws-storage" turtle "x") populated).1.status == 405
+
+/-- lws-ed-13, §Summary of HTTP Status Mappings: RFC 9457 problem details. -/
+def lwsGuardProblemDetails : Bool :=
+  let (resp, _) := run (req "GET" "/nothing") populated
+  resp.status == 404 && hdr resp "content-type" == some "application/problem+json" &&
+  (match parseJson resp.body with
+   | .ok j => j.getString? "title" == some "Not Found" && j.getString? "instance" == some "/nothing"
+   | .error _ => false)
+#guard lwsGuardProblemDetails
+#guard hdr (run (req "GET" "/alice/card") populated).1 "content-type" == some "text/turtle"
+
+/-- lws-ed-14: a request path with a dot segment or other traversal form is
+refused with 400 and touches nothing. -/
+def lwsGuardTraversalRefused : Bool :=
+  ["/../etc/passwd", "/a/../b", "/./a", "/a/%2e%2e/b", "/a%2fb", "a", "/a//b", "/a\\b"].all
+    (fun t =>
+      let (resp, st) := run (req "PUT" t turtle "x") emptyStorage
+      resp.status == 400 && st.entries.length == emptyStorage.entries.length)
+#guard lwsGuardTraversalRefused
+#guard (run (req "PUT" "/a/b..c" turtle "x") emptyStorage).1.status == 201
+#guard validTarget "/" && validTarget "/a/b/" && !validTarget "" && !validTarget "/.."
 
 /-! ## The registry's own arithmetic -/
 
