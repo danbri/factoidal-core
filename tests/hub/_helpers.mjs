@@ -46,7 +46,11 @@ export const NPM_FACTOIDAL_INDEX =
 
 // Root a hub post's shipped Markdown file, for pinning tests that
 // extract and execute its live cells' exact source.
+// The historical notebooks (the hub posts before 2026-10-20, kept unchanged).
 export const HUB_POST_DIR = path.join(__dirname, '..', '..', 'docs', 'web', 'historical-fstar-notebooks');
+
+// The hub pages written for the Lean 4 engine and the npm Dataset API.
+export const HUB_PAGE_DIR = path.join(__dirname, '..', '..', 'docs', 'web', 'hub');
 
 /**
  * Extract every ```observable-js fenced code block's source, in
@@ -61,8 +65,8 @@ export const HUB_POST_DIR = path.join(__dirname, '..', '..', 'docs', 'web', 'his
  * @param {string} postFilename e.g. '01-triples-rdf-from-first-principles.md'
  * @returns {string[]} cell source bodies, in order
  */
-export function extractObservableCells(postFilename) {
-  const text = fs.readFileSync(path.join(HUB_POST_DIR, postFilename), 'utf8');
+export function extractObservableCells(postFilename, dir = HUB_POST_DIR) {
+  const text = fs.readFileSync(path.join(dir, postFilename), 'utf8');
   const re = /```observable-js[^\n]*\n([\s\S]*?)```/g;
   const cells = [];
   let m;
