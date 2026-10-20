@@ -68,10 +68,10 @@ export class FnDataset implements Iterable<Quad> {
 export const EMPTY: FnDataset;
 
 /** Snapshot a (possibly mutable) RDF/JS Dataset into an FnDataset. */
-export function fromDataset(dataset: Dataset): FnDataset;
+export function fromDataset(dataset: Dataset | (Iterable<Quad> & { size: number })): FnDataset;
 
-/** Materialize an FnDataset into a fresh, independently-mutable Dataset. */
-export function toDataset(ds: FnDataset): Dataset;
+/** Materialize an FnDataset into a fresh, mutable RDF/JS DatasetCore (from @factoidal/core/rdfjs). */
+export function toDataset(ds: FnDataset): Iterable<Quad> & { size: number; add(q: Quad): unknown; delete(q: Quad): unknown; has(q: Quad): boolean };
 
 /**
  * A mutable accumulator for incrementally-arriving quads — the
@@ -251,7 +251,7 @@ export function rhoDfFragmentCheck(
 export function rdfsPlusClosure(
   ds: FnDataset,
   options?: { format?: string }
-): Promise<{ ok: boolean; dataset: FnDataset; rounds: number }>;
+): Promise<{ ok: boolean; dataset: FnDataset }>;
 
 /**
  * OWL tableau materialisation (formal/fstar/Tableau.fst's

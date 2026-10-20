@@ -25,7 +25,7 @@ const crypto = require('node:crypto');
 
 const engineApi = require('./index.js');
 const {
-  Dataset,
+  DatasetCore,
   dataFactory,
   quadToNQuads,
   quadsToNQuads,
@@ -170,18 +170,23 @@ const EMPTY = new FnDataset(arrayBackend(Object.freeze([])));
 // Interop with the mutable RDF/JS layer.
 // ---------------------------------------------------------------------
 
-/** Snapshot a (possibly mutable) RDF/JS Dataset into an FnDataset. */
+/** Snapshot a Dataset (the engine's, or an RDF/JS DatasetCore) into an FnDataset. */
 function fromDataset(dataset) {
-  if (!(dataset instanceof Dataset)) {
-    throw new TypeError('fromDataset: expected an RDF/JS Dataset');
+  if (!(dataset instanceof engineApi.Dataset) && !(dataset instanceof DatasetCore)) {
+    throw new TypeError('fromDataset: expected a Dataset or an RDF/JS DatasetCore');
   }
   return makeFnDataset(dataset);
 }
 
-/** Materialize an FnDataset into a fresh, independently-mutable Dataset. */
+// The engine input for an FnDataset: its N-Quads text, format named.
+function engineInput(ds) {
+  return { text: quadsToNQuads(ds.toArray()), format: 'nquads' };
+}
+
+/** Materialize an FnDataset into a fresh, independently-mutable RDF/JS DatasetCore. */
 function toDataset(ds) {
   assertFnDataset(ds, 'toDataset');
-  return new Dataset(ds.toArray());
+  return new DatasetCore(ds.toArray());
 }
 
 // ---------------------------------------------------------------------
@@ -296,8 +301,8 @@ function mapQuads(ds, f) {
  */
 async function query(ds, sparql, options) {
   assertFnDataset(ds, 'query');
-  const result = await engineApi.query(toDataset(ds), sparql, options);
-  return result instanceof Dataset ? fromDataset(result) : result;
+  const result = await engineApi.query(engineInput(ds), sparql, options);
+  return result instanceof engineApi.Dataset ? fromDataset(result) : result;
 }
 
 /**
@@ -371,8 +376,7 @@ function rejectIklRegime(regime, who) {
 async function entail(ds, regime) {
   assertFnDataset(ds, 'entail');
   rejectIklRegime(regime, 'entail');
-  const rows = await engineApi.query(
-    toDataset(ds), 'SELECT ?s ?p ?o WHERE { ?s ?p ?o }',
+  const rows = await engineApi.query(engineInput(ds), 'SELECT ?s ?p ?o WHERE { ?s ?p ?o }',
     { entail: normalizeEntailRegime(regime) });
   return makeFnDataset(
     rows.map((row) => dataFactory.quad(row.get('s'), row.get('p'), row.get('o'))));
@@ -392,7 +396,7 @@ async function entail(ds, regime) {
 async function validate(ds, shapes) {
   assertFnDataset(ds, 'validate');
   assertFnDataset(shapes, 'validate');
-  const r = await engineApi.shaclValidate(toDataset(ds), toDataset(shapes));
+  const r = await engineApi.shaclValidate(engineInput(ds), engineInput(shapes));
   return { conforms: r.conforms, report: fromDataset(r.report) };
 }
 
@@ -411,7 +415,7 @@ async function validate(ds, shapes) {
  */
 async function shex(ds, schema, focus, shape) {
   assertFnDataset(ds, 'shex');
-  return engineApi.shexValidate(toDataset(ds), schema, focus, shape);
+  return engineApi.shexValidate(engineInput(ds), schema, focus, shape);
 }
 
 /**
@@ -428,7 +432,7 @@ async function shex(ds, schema, focus, shape) {
  */
 async function fromMapping(mapping, source, kind) {
   assertFnDataset(mapping, 'fromMapping');
-  return fromDataset(await engineApi.rmlMap(toDataset(mapping), source, kind));
+  return fromDataset(await engineApi.rmlMap(engineInput(mapping), source, kind));
 }
 
 /**
@@ -465,7 +469,7 @@ async function fromCsvw(csv, metadata, options) {
  */
 async function rif(ds, rules) {
   assertFnDataset(ds, 'rif');
-  return fromDataset(await engineApi.rifEval(toDataset(ds), rules));
+  return fromDataset(await engineApi.rifEval(engineInput(ds), rules));
 }
 
 /**
@@ -478,7 +482,7 @@ async function rif(ds, rules) {
  * Gutierrez, "Simple and Efficient Minimal RDFS", J. Web Semantics
  * 7(3), 2009). Mirrors engineApi.coreRdfsClosure's `{ok, ntriples}`
  * result, with `ntriples` parsed into an FnDataset via
- * Dataset.fromNQuads — pure JS, no extra engine round-trip. `rhoDfClosure` is kept below as a
+ * the engine Dataset of the closure. `rhoDfClosure` is kept below as a
  * literature-name alias.
  * @param {FnDataset} ds
  * @param {{format?: string}} [options]
@@ -486,8 +490,8 @@ async function rif(ds, rules) {
  */
 async function coreRdfsClosure(ds, options) {
   assertFnDataset(ds, 'coreRdfsClosure');
-  const r = await engineApi.coreRdfsClosure(toDataset(ds), options);
-  return { ok: r.ok, dataset: fromDataset(Dataset.fromNQuads(r.ntriples)) };
+  const r = await engineApi.coreRdfsClosure(engineInput(ds), options);
+  return { ok: true, dataset: fromDataset(r) };
 }
 /** Literature-name alias for coreRdfsClosure (ρdf; see above). */
 const rhoDfClosure = coreRdfsClosure;
@@ -502,7 +506,7 @@ const rhoDfClosure = coreRdfsClosure;
  */
 async function coreRdfsCheck(ds, options) {
   assertFnDataset(ds, 'coreRdfsCheck');
-  return engineApi.coreRdfsCheck(toDataset(ds), options);
+  return engineApi.coreRdfsCheck(engineInput(ds), options);
 }
 /** Literature-name alias for coreRdfsCheck (ρdf; see above). */
 const rhoDfFragmentCheck = coreRdfsCheck;
@@ -518,15 +522,14 @@ const rhoDfFragmentCheck = coreRdfsCheck;
  * coreRdfsClosure's decides-iff guarantee.
  * @param {FnDataset} ds
  * @param {{format?: string}} [options]
- * @returns {Promise<{ok: boolean, dataset: FnDataset, rounds: number}>}
+ * @returns {Promise<{ok: boolean, dataset: FnDataset}>}
  */
 async function rdfsPlusClosure(ds, options) {
   assertFnDataset(ds, 'rdfsPlusClosure');
-  const r = await engineApi.rdfsPlusClosure(toDataset(ds), options);
+  const r = await engineApi.rdfsPlusClosure(engineInput(ds), options);
   return {
-    ok: r.ok,
-    dataset: fromDataset(Dataset.fromNQuads(r.ntriples)),
-    rounds: r.rounds,
+    ok: true,
+    dataset: fromDataset(r),
   };
 }
 
@@ -545,7 +548,7 @@ async function rdfsPlusClosure(ds, options) {
  */
 async function tableauMaterialise(ds) {
   assertFnDataset(ds, 'tableauMaterialise');
-  const r = await engineApi.tableauMaterialise(toDataset(ds));
+  const r = await engineApi.tableauMaterialise(engineInput(ds));
   return { dataset: fromDataset(r.dataset), addedCount: r.addedCount };
 }
 
@@ -560,7 +563,7 @@ async function tableauMaterialise(ds) {
  */
 async function tableauDlInconsistent(ds) {
   assertFnDataset(ds, 'tableauDlInconsistent');
-  return engineApi.tableauDlInconsistent(toDataset(ds));
+  return engineApi.tableauDlInconsistent(engineInput(ds));
 }
 
 /**
@@ -580,7 +583,7 @@ async function tableauDlInconsistent(ds) {
  * @returns {Promise<{consistent: boolean|null, reason?: string}>}
  */
 async function owlIsConsistent(ontology, options) {
-  const data = ontology instanceof FnDataset ? toDataset(ontology) : ontology;
+  const data = ontology instanceof FnDataset ? engineInput(ontology) : ontology;
   return engineApi.owlIsConsistent(data, options);
 }
 
@@ -598,8 +601,8 @@ async function owlIsConsistent(ontology, options) {
  * @returns {Promise<{entailed: boolean|null, via: 'closure'|'refutation', reason?: string}>}
  */
 async function owlEntails(premise, conclusion, options) {
-  const p = premise instanceof FnDataset ? toDataset(premise) : premise;
-  const c = conclusion instanceof FnDataset ? toDataset(conclusion) : conclusion;
+  const p = premise instanceof FnDataset ? engineInput(premise) : premise;
+  const c = conclusion instanceof FnDataset ? engineInput(conclusion) : conclusion;
   return engineApi.owlEntails(p, c, options);
 }
 
@@ -611,7 +614,7 @@ async function canonicalize(ds) {
   assertFnDataset(ds, 'canonicalize');
   let cached = CANON_CACHE.get(ds);
   if (cached === undefined) {
-    const p = engineApi.canonicalize(toDataset(ds)).then((text) => {
+    const p = engineApi.canonicalize(engineInput(ds)).then((text) => {
       CANON_CACHE.set(ds, text); // replace the in-flight promise
       return text;
     });
@@ -709,7 +712,7 @@ async function equals(a, b) {
  */
 function graphs(ds) {
   assertFnDataset(ds, 'graphs');
-  return engineApi.graphs(toDataset(ds))
+  return engineApi.graphs(engineInput(ds))
     .map(([iri, graphDataset]) => [iri, fromDataset(graphDataset)]);
 }
 

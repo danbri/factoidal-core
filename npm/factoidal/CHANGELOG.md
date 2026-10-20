@@ -1,6 +1,61 @@
 # Changelog
 
-## 0.10.0 (2026-10-13)
+## 0.10.0 (unreleased)
+
+### Breaking changes
+
+One `Dataset` class whose data stays in the engine
+(https://github.com/danbri/factoidal/issues/882 item 1):
+
+- `Dataset` is a handle into the engine's dataset store; it no longer holds
+  N-Quads text. `new Dataset(...)` and `Dataset.fromNQuads(...)` are gone:
+  make one with `parse`, `openDataset` or another producer. `add` and
+  `delete` are gone; change a Dataset with `dataset.update(sparqlUpdate)`.
+  `match` answers a new Dataset. The in-memory RDF/JS DatasetCore is
+  `DatasetCore` in `@factoidal/core/rdfjs` (that subpath no longer exports
+  `Dataset`).
+- `DatasetHandle` is a deprecated alias of `Dataset` (removed in 0.11.0).
+  `handle.close()`, `handle.closed` and `handle.toDataset()` are replaced by
+  `dispose()`, `disposed` and the Dataset itself. Using a disposed Dataset
+  throws a `TypeError`.
+- `openDataset` answers a `Dataset` (a Dataset argument is cloned).
+- `coreRdfsClosure`/`rhoDfClosure` and `rdfsPlusClosure` answer a `Dataset`
+  (before: `{ok, ntriples}` and `{ok, ntriples, rounds}`; `rounds` is gone).
+  `fn.coreRdfsClosure` and `fn.rdfsPlusClosure` drop `rounds` too.
+- Text input with no `format` is no longer read as Turtle: the engine infers
+  the format (op `detectFormat`: JSON-LD, RDF/XML, TriG or Turtle, in RDF
+  1.2 mode) and reports it in `dataset.format` / `dataset.formatInferred`, or
+  in the error message. N-Quads is never inferred; name it.
+- Every function throws a `TypeError` for an unknown option key.
+- `update(dataset, text)` answers a new Dataset and leaves its argument
+  unchanged (as before); `dataset.update(text)` changes it in place.
+- `fn.toDataset` answers a DatasetCore; `fn.fromDataset` takes a `Dataset`
+  or a DatasetCore.
+
+### New
+
+- `Dataset` methods: `query` (with `entail` and `output`: SPARQL results
+  JSON, XML, CSV, TSV), `update`, `validateShacl`, `validateShex`,
+  `closure(regime)`, `canonicalize`, `serialize({format, version})`,
+  `toString(format)`, `clone`, `has`, `match`, lazy RDF/JS quad iteration,
+  `dispose`, `[Symbol.dispose]`; a `FinalizationRegistry` releases a
+  collected Dataset.
+- `serialize` writes every writer the engine has: N-Quads, N-Triples,
+  Turtle, TriG, RDF/XML, JSON-LD, RDFC-1.0 canonical N-Quads, each with
+  `version: '1.1'` (refuses RDF 1.2 terms) or `'1.2'`. `formats()` gives the
+  engine's list; the README table is generated from it. Writers the engine
+  lacks: https://github.com/danbri/factoidal/issues/883.
+- `closure(data, regime)`.
+- Engine ops (Lean, `Wasm/Ops/Handles.lean`, `Wasm/Ops/DatasetFull.lean`):
+  `datasetClone`, `datasetCanonicalize`, `datasetClosure`,
+  `datasetShaclValidate`, `datasetQueryRaw`, `datasetFormats`,
+  `detectFormat`, `datasetFromCsvw`, `datasetFromRml`, `datasetFromJsonLd`,
+  `datasetToJsonLd`, `datasetShexValidate`, `datasetRifEval`; and
+  `datasetSerialize` writes N-Triples, TriG, RDF/XML and RDFC-1.0.
+- Every example in README.md and API.md is executed by
+  `test/doc-examples.test.mjs`.
+
+### Other changes
 
 - The README is a short summary: what the package is, a usage example, the
   JavaScript API and command list, the specifications covered with test
