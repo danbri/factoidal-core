@@ -52,8 +52,8 @@ test('serialize: a triple term, one level and nested, with a base direction', as
 
 test('serialize rejects an unknown output format', async () => {
   await assert.rejects(
-    () => factoidal.serialize('<a> <b> <c> .', { format: 'rdfxml', inputFormat: 'ntriples' }),
-    /format must be/);
+    () => factoidal.serialize('<a> <b> <c> .', { format: 'hdt', inputFormat: 'ntriples' }),
+    /unknown format/);
 });
 
 // ---------------------------------------------------------------------

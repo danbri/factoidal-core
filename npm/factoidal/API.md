@@ -647,7 +647,7 @@ indexes the rows, once. `handle.query()` then answers from what it
 retained. Several stores can be open at the same time.
 
 ```js
-import { loadEngine } from '@factoidal/core/bin/engine.mjs'
+import { loadEngine } from '@factoidal/core/engine'
 import { openStore, openStoreHandle, listStoreHandles } from '@factoidal/core/store'
 
 const engine = await loadEngine()

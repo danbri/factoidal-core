@@ -20,6 +20,8 @@ export {
   graphs,
   canonicalHash,
   openDataset,
+  closure,
+  formats,
   queryRaw,
   queryHdt,
   registerExtensionFunction,

@@ -67,7 +67,7 @@ for (const row of table) {
   }
   if (row.write11) {
     test(`${row.name} writes RDF 1.1${row.read11 ? ' and reads it back' : ''}`, async () => {
-      const src = (row.name === 'ntriples' || row.name === 'rdfxml') ? RDF11 : RDF11_Q;
+      const src = ['nquads', 'trig', 'jsonld', 'rdfc'].includes(row.name) ? RDF11_Q : RDF11;
       const ds = await f.parse(src, { format: 'nquads' });
       const text = await ds.serialize({ format: row.name, version: '1.1' });
       assert.ok(text.length > 0);

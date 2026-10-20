@@ -48,7 +48,7 @@ test('Dataset methods: query, update in place, closure, validate, clone', async 
   assert.equal(await ds.update('INSERT DATA { <http://e/x> <http://e/y> <http://e/z> }'), ds);
   assert.equal(ds.size, 4);
   assert.equal(copy.size, 3);
-  const onto = await f.parse('<http://e/a> a <http://e/C> . <http://e/C> <http://www.w3.org/2000/01/rdf-schema#subClassOf> <http://e/D> .', { format: 'ntriples' });
+  const onto = await f.parse('<http://e/a> a <http://e/C> . <http://e/C> <http://www.w3.org/2000/01/rdf-schema#subClassOf> <http://e/D> .', { format: 'turtle' });
   const closed = await onto.closure('rdfs');
   assert.ok(closed instanceof f.Dataset);
   assert.equal(await closed.query('ASK { <http://e/a> a <http://e/D> }'), true);

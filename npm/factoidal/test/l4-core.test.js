@@ -230,7 +230,7 @@ test("l4-core serialize format:'ntriples' answers the default graph and refuses 
   await assert.rejects(
     () => l4core.serialize(`<${X}s> <${X}p> "c" <${X}g> .`,
       { format: 'ntriples', inputFormat: 'nquads' }),
-    /named graph; use format 'nquads'/);
+    /named graph and N-Triples holds one graph/);
 });
 
 // ---------------------------------------------------------------------

@@ -194,6 +194,7 @@ class Dataset {
    */
   async serialize(options) {
     this._open('serialize');
+    if (typeof options === 'string') return this._write({ format: options });
     return this._write(checkOptions('Dataset.serialize', options, SERIALIZE_OPTIONS));
   }
 

@@ -23,7 +23,7 @@
 // the same name serves X now (formal/lean4/Wasm/Dispatch.lean lists them).
 
 import { dataFactory, termFromSrj, quadToNQuads } from '../rdfjs.mjs';
-import { Dataset, INTERNAL, checkOptions, makeRegistry } from './dataset.mjs';
+import { Dataset, INTERNAL, checkOptions, makeRegistry, WRITER_TAGS } from './dataset.mjs';
 import { version as packageVersion } from './version.mjs';
 import { openGeneration, readRegion, manifestKeys, hexOfBytes } from './store.mjs';
 import { fullEngineMessage } from './lean-entry.mjs';
@@ -942,6 +942,10 @@ function buildApi(driver) {
       ['format', 'version', 'prefixes', 'literalShorthand', 'useNativeTypes',
         'useRdfType', 'rdfDirection', 'inputFormat', 'baseIRI']);
     const { inputFormat, baseIRI, ...writeOpts } = opts;
+    if (writeOpts.format !== undefined && !WRITER_TAGS[String(writeOpts.format).toLowerCase()]) {
+      throw new TypeError(`serialize: unknown format '${writeOpts.format}'. Known formats: ` +
+        [...new Set(Object.values(WRITER_TAGS))].join(', '));
+    }
     return withDataset(data, { format: inputFormat, baseIRI }, 'serialize',
       (_c, ds) => ds.serialize(writeOpts));
   }
