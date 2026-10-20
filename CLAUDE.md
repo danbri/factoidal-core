@@ -582,8 +582,11 @@ rather than proving it twice. Lean first; F\* optional.
   checks this at build time), so dropping it from the package removes a
   duplicate, not a function. Profiles per package (`@factoidal/kgx`,
   `kgx-lite`, `xml`) are deferred, not refused.
-- The bundled sample store and demonstration-only functions (`matrix*`,
-  `sigmoid*`) leave the tarball.
+- The bundled sample-store data (4,434 triples) and the demonstration-only
+  functions (`matrix*`, `sigmoid*`) leave the tarball. Every CLI command
+  stays. Owner, verbatim: "All the CLIs are still bundled i just didn't
+  want any actual demo triples cluttering the file." The `sample-store`
+  command builds a small store from inline triples on demand.
 - LWS work happens before 0.10.0 is published.
 - Tracker: https://github.com/danbri/factoidal/issues/882.
 
