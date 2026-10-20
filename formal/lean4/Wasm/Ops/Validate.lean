@@ -39,14 +39,11 @@ open L4Factoidal.RDF
 open L4Factoidal.Syntax
 open L4Factoidal.JSON
 
-/-- `shaclValidate(dataNquads, shapesNquads)`. -/
-def shaclValidate (dataNq shapesNq : String) : String :=
-  match parseNQuadsFast dataNq .rdf12 with
-  | .error e => errJson s!"shaclValidate(data): {fmtParseError e}"
-  | .ok dataDs =>
-  match parseNQuadsFast shapesNq .rdf12 with
-  | .error e => errJson s!"shaclValidate(shapes): {fmtParseError e}"
-  | .ok shapesDs =>
+/-- `shaclValidate` over datasets already parsed: the data graph is the
+default graph of `dataDs`, the shapes graph the default graph of `shapesDs`.
+The dataset-handle op `datasetShaclValidate` (`Wasm/Ops/Handles.lean`) calls
+it with the stored datasets, so the text op and the handle op share one body. -/
+def shaclValidateParsed (dataDs shapesDs : Dataset) : String :=
     let shapesG := shapesDs.default
     let sg := L4Factoidal.SHACL.decodeShapesGraph shapesG
     if !sg.unsupported.isEmpty then
@@ -61,6 +58,17 @@ def shaclValidate (dataNq shapesNq : String) : String :=
       | .error e => errJson s!"shaclValidate: report serialisation: {e}"
       | .ok lines =>
           okWith [("conforms", .bool report.conforms), ("reportNquads", .string lines)]
+
+
+/-- `shaclValidate(dataNquads, shapesNquads)`. -/
+def shaclValidate (dataNq shapesNq : String) : String :=
+  match parseNQuadsFast dataNq .rdf12 with
+  | .error e => errJson s!"shaclValidate(data): {fmtParseError e}"
+  | .ok dataDs =>
+  match parseNQuadsFast shapesNq .rdf12 with
+  | .error e => errJson s!"shaclValidate(shapes): {fmtParseError e}"
+  | .ok shapesDs =>
+    shaclValidateParsed dataDs shapesDs
 
 /-! ## Build-time checks (positive and negative) -/
 

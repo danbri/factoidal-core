@@ -169,6 +169,24 @@ private def renderRaw (output : String) (a : RawAnswer) : Except String String :
     | "ntriples", .bindings vars rows => .ok (varEqualsText vars rows)
     | other, _ => .error s!"queryRaw: unknown output format '{other}'"
 
+/-- `queryRaw` after the parse: close the default graph of `ds0` under
+`entail`, evaluate, and write the answer in `output`. The dataset-handle op
+`datasetQueryRaw` (`Wasm/Ops/Handles.lean`) calls it with a stored dataset. -/
+def queryRawParsed (ds0 : Dataset) (sparql entail output : String)
+    (now : Option String := none) : String :=
+  if !(["json", "csv", "tsv", "xml", "table", "ntriples"].contains output) then
+    errJson s!"queryRaw: output must be json, csv, tsv, xml, table or ntriples (got '{output}')"
+  else
+    match closeDefaultGraph entail ds0 with
+    | .error e => errJson e
+    | .ok ds =>
+      match evalRaw ds sparql now with
+      | .error e => errJson e
+      | .ok a =>
+        match renderRaw output a with
+        | .error e => errJson e
+        | .ok text => okWith [("text", .string text)]
+
 /-- `queryRaw(data, sparql, optsJson)`; `extra` reads the syntaxes outside
 `Wasm/Ops/Parse.lean`'s table. `now` is the value of `NOW()` (SPARQL 1.1
 §17.4.5.1); this pure form reads no clock, so with `now = none` a `NOW()` call
@@ -186,16 +204,7 @@ def queryRawBy (extra : ExtraReader) (data sparql optsJson : String)
   else
   match parseTextToDatasetBy extra data (field "dataFormat" "turtle") "" with
   | .error e => errJson s!"queryRaw: {e}"
-  | .ok ds0 =>
-    match closeDefaultGraph (field "entail" "none") ds0 with
-    | .error e => errJson e
-    | .ok ds =>
-      match evalRaw ds sparql now with
-      | .error e => errJson e
-      | .ok a =>
-        match renderRaw output a with
-        | .error e => errJson e
-        | .ok text => okWith [("text", .string text)]
+  | .ok ds0 => queryRawParsed ds0 sparql (field "entail" "none") output now
 
 /-- `queryRaw` through the IO dispatch entry: the same envelope, with the clock
 read ONCE for the query (SPARQL 1.1 §17.4.5.1), so `NOW()` is the instant of

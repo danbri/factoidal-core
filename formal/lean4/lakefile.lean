@@ -231,6 +231,7 @@ extern_lib libl4exthost pkg := do
              `Wasm.Ops.StoreServe,
              `Wasm.Ops.Proof,
              `Wasm.Ops.Handles,
+             `Wasm.Ops.DatasetFull,
              `Wasm.Ops.Pack,
              `Wasm.Ops.Lws,
              `Wasm.Ops.Solid,
