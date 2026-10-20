@@ -116,8 +116,19 @@ PAGES=(
   "web/hub/"
   "web/historical-fstar-notebooks/"
 )
+# The redirect stubs at web/hub/NN-slug/ hold one meta refresh, which a
+# headless browser follows mid-collection; they are checked here instead:
+# each stub's target must be a built page.
+STUB_FAIL=0
+while IFS= read -r d; do
+  target="$SITE_DIR/web/historical-fstar-notebooks/$(basename "$d")/index.html"
+  grep -q 'http-equiv="refresh"' "$d/index.html" || { echo "FAIL: $d/index.html is not a redirect stub" >&2; STUB_FAIL=1; }
+  [ -f "$target" ] || { echo "FAIL: redirect stub $d points at a page that was not built" >&2; STUB_FAIL=1; }
+done < <(find "$SITE_DIR/web/hub" -mindepth 1 -maxdepth 1 -type d -name '[0-9][0-9]-*' | sort)
+[ "$STUB_FAIL" -eq 0 ] || exit 1
 while IFS= read -r d; do
   [ -f "$d/index.html" ] || continue
+  case "$(basename "$d")" in [0-9][0-9]-*) [ "$(basename "$(dirname "$d")")" = hub ] && continue ;; esac
   PAGES+=("${d#"$SITE_DIR"/}/")
 done < <(find "$SITE_DIR/web/hub" "$SITE_DIR/web/historical-fstar-notebooks" -mindepth 1 -maxdepth 1 -type d | sort)
 PAGES+=("")
@@ -146,7 +157,7 @@ PAGES_JSON="${PAGES_JSON%,}]"
 
 RESULT_JSON="$WORKDIR/result.json"
 
-timeout 90 node --input-type=module -e "
+timeout 600 node --input-type=module -e "
 import { chromium } from '$PLAYWRIGHT_IMPORT_SPEC';
 import fs from 'node:fs';
 
@@ -154,14 +165,27 @@ const PORT = $PORT;
 const PAGES = $PAGES_JSON;
 
 const browser = await chromium.launch();
-const page = await browser.newPage();
 
 const linksByPage = {};
 for (const p of PAGES) {
   const url = 'http://127.0.0.1:' + PORT + '/factoidal/' + p;
-  await page.goto(url, { waitUntil: 'networkidle' });
-  const hrefs = await page.\$\$eval('a[href]', els => els.map(e => e.getAttribute('href')));
+  const page = await browser.newPage();
+  await page.goto(url, { waitUntil: 'domcontentloaded', timeout: 60000 });
+  // A page whose cell reloads it (post 18's persistence demo) destroys the
+  // context once; read the links again after it settles.
+  let hrefs;
+  for (let attempt = 0; ; attempt++) {
+    try {
+      hrefs = await page.\$\$eval('a[href]', els => els.map(e => e.getAttribute('href')));
+      break;
+    } catch (e) {
+      if (attempt >= 3) throw e;
+      await page.waitForLoadState('load').catch(() => {});
+      await page.waitForTimeout(1000);
+    }
+  }
   linksByPage[p || '(homepage)'] = hrefs;
+  await page.close({ runBeforeUnload: false });
 }
 
 await browser.close();

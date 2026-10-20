@@ -214,7 +214,7 @@ module.exports = function(eleventyConfig) {
   eleventyConfig.addPassthroughCopy({ "web/hub/assets": "web/historical-fstar-notebooks/assets" });
   eleventyConfig.addPassthroughCopy({ "../third_party/valis": "web/historical-fstar-notebooks/assets/valis" });
   eleventyConfig.addPassthroughCopy({
-    "../npm/factoidal/sample-store": "web/historical-fstar-notebooks/assets/store/sample"
+    "../npm/factoidal/test/fixtures/sample-store": "web/historical-fstar-notebooks/assets/store/sample"
   });
 
   // F* module dep-graph demo (web/demos/dep-graph/index.html) fetches
