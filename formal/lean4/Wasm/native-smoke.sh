@@ -1614,7 +1614,7 @@ seq = [
   ["datasetOpen",      ["<http://f/c> <http://f/q> <http://f/d> .", "ntriples", ""]],
   ["datasetUpdate",    ["h2", "INSERT DATA { <http://f/x> <http://f/q> <http://f/y> }"]],
   ["datasetSerialize", ["h1", "nquads"]],
-  ["datasetSerialize", ["h1", "trig"]],
+  ["datasetSerialize", ["h1", "no-such-format"]],
   ["datasetClose",     ["h2"]],
   ["datasetClose",     ["h2"]],
   ["datasetQuery",     ["h1", "ASK { <http://e/a> <http://e/p> <http://e/b> }"]],

@@ -2894,7 +2894,7 @@ if [[ "$STEP" == "npm" ]]; then
   MISSING_PKG_FILES=$(cd "$NPMDIR" && node -e '
     const fs = require("fs");
     const files = JSON.parse(fs.readFileSync("package.json", "utf8")).files || [];
-    const missing = files.filter(f => !fs.existsSync(f.replace(/\/$/, "")));
+    const missing = files.filter(f => !f.startsWith("!") && !fs.existsSync(f.replace(/\/$/, "")));
     if (missing.length) { console.log(missing.join(" ")); }
   ')
   if [[ -n "$MISSING_PKG_FILES" ]]; then
