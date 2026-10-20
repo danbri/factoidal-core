@@ -118,15 +118,6 @@ Official test suites, pass / fail / total, 2026-10-09 [B] unless marked.
 [B] https://github.com/danbri/factoidal-core/blob/03e2e6deee8146ce7e6fdc3f8f34b8245af5ab54/docs/designissues/2026-10-09-lean-conformance-baseline.md
 [P] https://github.com/danbri/factoidal-core/blob/9a4045f1572a032b53ccb867f8395fe0c8d97bb9/docs/designissues/2026-10-10-store-serve.md
 [X] https://github.com/danbri/factoidal-core/blob/cb871c2de8354362ae6226eb57fb6c549624ea1a/docs/designissues/2026-10-10-xml-profile-widened.md
-[S] https://github.com/danbri/factoidal-core/blob/06f79fd3a3f434c7d1a6ffd2bd0b0bbc0044203c/docs/designissues/2026-10-12-sota-reference.md
-
-## Speed, against other engines [S]
-
-- OWL 2 RL closure, nine real ontologies: 0.04 to 1.6 times the time of Jena OWL Micro.
-- OWL 2 DL consistency (SKOS, FOAF, PROV-O, BFO, Pizza): 0.07 to 1.1 times the time of HermiT.
-- Slower: N-Triples parse 4.4 and Turtle 3.0 times Serd; RDF/XML 6.2 times
-  Oxigraph; SPARQL in memory 3.4 to 4.1 times Oxigraph; RDFC-1.0 1.5 to 2.0
-  times Oxigraph; OWL 2 DL on wine and QUDT about 9 times HermiT.
 
 ## Limits
 
