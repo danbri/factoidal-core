@@ -1,5 +1,24 @@
 # Documentation hub — cell-authoring contract
 
+Since 2026-10-20 the hub has two parts:
+
+- `docs/web/hub/*.md` (this directory): the hub pages. Their cells call
+  `Factoidal.*`, the npm Dataset API (`parse` returns a `Dataset`; the
+  producers `csvwToRdf`, `rmlMap`, `jsonldToRdf` and the closures do too).
+  Each page has a pinned test `tests/hub/hub_<page>_test.mjs` that reads
+  its cells with `extractObservableCells(file, HUB_PAGE_DIR)`. The
+  standards table of the index is built from
+  `docs/web/hub/records/lean-scoreboard-YYYY-MM-DD.json` by
+  `docs/_data/hubStandards.js`; refresh it by running
+  `tools/lean-scoreboard.sh --json` and committing the JSON and the
+  printed table there.
+- `docs/web/historical-fstar-notebooks/NN-*.md`: the posts written before
+  2026-10-20, kept unchanged, with redirect pages at their old
+  `/web/hub/NN-*/` URLs (`docs/web/hub-redirects.11ty.js`). Their tests
+  are `tests/hub/postNN_test.mjs`.
+
+The contract below applies to both.
+
 This is the implementation reference for writing a hub post. The
 reader-facing explanation lives in [the hub index](../)'s "How the
 interactive cells work" section; this file is the fuller contract for

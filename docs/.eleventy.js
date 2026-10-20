@@ -204,6 +204,10 @@ module.exports = function(eleventyConfig) {
   // as ../assets/...; the directory sits at the same depth as web/hub/,
   // so a second copy of web/hub/assets/ beside it keeps those relative
   // URLs working without editing the posts.
+  // The scoreboard records the hub index's standards table is built from
+  // (docs/_data/hubStandards.js); each row of the table links to them.
+  eleventyConfig.addPassthroughCopy("web/hub/records");
+
   eleventyConfig.addPassthroughCopy({ "web/hub/assets": "web/historical-fstar-notebooks/assets" });
   eleventyConfig.addPassthroughCopy({ "../third_party/valis": "web/historical-fstar-notebooks/assets/valis" });
   eleventyConfig.addPassthroughCopy({

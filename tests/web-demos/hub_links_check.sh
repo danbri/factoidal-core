@@ -109,13 +109,17 @@ fi
 # Page list is NOT hardcoded: every built post under _site/web/hub/
 # lands in this checker automatically (the original five-post list went
 # stale as posts 06-32 published unchecked; found 2026-08-09).
+# Since 2026-10-20: the hub pages (every directory under web/hub/ with an
+# index.html, which includes the redirect stubs at the old NN-slug URLs),
+# and the historical notebooks with their index.
 PAGES=(
   "web/hub/"
-  "web/hub/README/"
+  "web/historical-fstar-notebooks/"
 )
 while IFS= read -r d; do
-  PAGES+=("web/hub/$(basename "$d")/")
-done < <(find "$SITE_DIR/web/hub" -mindepth 1 -maxdepth 1 -type d -name '[0-9][0-9]-*' | sort)
+  [ -f "$d/index.html" ] || continue
+  PAGES+=("${d#"$SITE_DIR"/}/")
+done < <(find "$SITE_DIR/web/hub" "$SITE_DIR/web/historical-fstar-notebooks" -mindepth 1 -maxdepth 1 -type d | sort)
 PAGES+=("")
 for p in "${PAGES[@]}"; do
   [ -z "$p" ] && continue

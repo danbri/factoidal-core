@@ -144,12 +144,27 @@ fi
 # basename-per-line via -exec (portable: BSD/macOS find has no -printf; the
 # GNU-only flag made every macOS run fail with "no post directories found",
 # 2026-08-22)
-mapfile -t POSTS < <(find "$SITE_DIR/web/hub" -mindepth 1 -maxdepth 1 -type d -exec basename {} \; | grep -E '^[0-9]+-' | sort)
+# Since 2026-10-20 the hub has two parts: the hub pages (web/hub/ and its
+# index, written for the npm Dataset API) and the historical notebooks
+# (web/historical-fstar-notebooks/NN-*/). A page is every directory under
+# either whose index.html holds a live cell; the redirect stubs at the old
+# web/hub/NN-*/ URLs hold none, so they are not swept. Each entry is the
+# page's path under the site root.
+mapfile -t POSTS < <(
+  {
+    echo "$SITE_DIR/web/hub"
+    find "$SITE_DIR/web/hub" "$SITE_DIR/web/historical-fstar-notebooks" -mindepth 1 -maxdepth 1 -type d
+  } | while read -r d; do
+    if [ -f "$d/index.html" ] && grep -q 'language-observable-js' "$d/index.html"; then
+      echo "${d#"$SITE_DIR"/}"
+    fi
+  done | sort
+)
 if [ "${#POSTS[@]}" -eq 0 ]; then
-  echo "FAIL: no post directories found under $SITE_DIR/web/hub" >&2
+  echo "FAIL: no pages with live cells found under $SITE_DIR/web/hub or web/historical-fstar-notebooks" >&2
   exit 1
 fi
-echo "== Found ${#POSTS[@]} post(s) under web/hub/ =="
+echo "== Found ${#POSTS[@]} page(s) with live cells =="
 
 echo "== Serving $SITE_DIR under /factoidal/ and driving headless Chromium =="
 SERVE_ROOT="$WORKDIR/serve-root"
@@ -270,7 +285,7 @@ let fail = 0;
 
 for (const slug of POSTS) {
   const allow = allowlistFor(slug);
-  const url = `http://127.0.0.1:${PORT}/factoidal/web/hub/${slug}/`;
+  const url = `http://127.0.0.1:${PORT}/factoidal/${slug}/`;
 
   if (!browser.isConnected()) {
     console.log(`FAIL ${slug}: browser process disconnected during an earlier post's run (see output above)`);
