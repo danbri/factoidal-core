@@ -555,17 +555,24 @@ let rec candidate_namespaces_acc (iris : list string) (acc : list string)
          candidate_namespaces_acc rest acc)
 
 // Run-length count a SORTED string list into (value, count) pairs.
-let rec count_runs (sorted : list string) : Tot (list (string * nat)) (decreases sorted) =
+// 2026-10-21: a loop with an accumulator (one stack frame for any input),
+// so the writer does not overflow the stack on a large graph (40,000
+// paragraphs: issue https://github.com/danbri/factoidal/issues/725, the
+// known-defects row). The output is the same list as the earlier recursive
+// form: one (value, count) pair per run, in order. No equality theorem is
+// stated in F*; the Lean twin countRuns has one (commit 6607b7f5).
+let rec count_runs_loop (cur : string) (n : nat) (rest : list string)
+  (acc : list (string * nat)) : Tot (list (string * nat)) (decreases rest) =
+  match rest with
+  | [] -> List.Tot.rev_acc acc [(cur, n)]
+  | y :: r ->
+    if y = cur then count_runs_loop cur (n + 1) r acc
+    else count_runs_loop y 1 r ((cur, n) :: acc)
+
+let count_runs (sorted : list string) : Tot (list (string * nat)) =
   match sorted with
   | [] -> []
-  | [x] -> [(x, 1)]
-  | x :: y :: rest ->
-    if x = y then
-      (match count_runs (y :: rest) with
-       | (y', n) :: more -> (y', n + 1) :: more
-       | [] -> [(x, 1)])
-    else
-      (x, 1) :: count_runs (y :: rest)
+  | x :: r -> count_runs_loop x 1 r []
 
 let count_desc_compare (a b : (string * nat)) : int =
   if snd a = snd b then 0

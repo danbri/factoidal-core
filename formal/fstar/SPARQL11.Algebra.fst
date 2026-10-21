@@ -6075,6 +6075,24 @@ let eval_select_item_group_row (base : option wf_iri) (item : select_item)
      | Some t -> Some (v, t)
      | None -> None)
 
+// The SELECT items of a grouped row, left to right: each item is evaluated on
+// the row extended with the bindings of the items before it. SPARQL 1.1
+// section 11.4 lets a projection use a variable "introduced by an earlier
+// SELECT expression in the same SELECT clause" (W3C sparql12
+// select-variable-reuse: (COUNT(?v) AS ?count) (?count + 1 AS ?countPlusOne)).
+// [acc] holds the bindings made so far, newest first. Same rule as the Lean
+// evalSelectItemsGroup (commit fc9bc69a).
+let rec grouped_select_items_acc (base : option wf_iri) (items : list select_item)
+                                 (g : group) (row : solution_mapping)
+                                 (acc : list (var_name & rdf_term))
+  : Tot (list (var_name & rdf_term)) (decreases items) =
+  match items with
+  | [] -> List.Tot.rev acc
+  | item :: rest ->
+    (match eval_select_item_group_row base item g (List.Tot.append acc row) with
+     | Some b -> grouped_select_items_acc base rest g row (b :: acc)
+     | None -> grouped_select_items_acc base rest g row acc)
+
 // The SELECT clause's own bindings first, then the other variables of the row,
 // so that ORDER BY (before projection) can name them. A projected name is
 // taken from the items only: an item whose expression fails stays unbound.
@@ -6082,7 +6100,7 @@ let grouped_select_row (base : option wf_iri) (items : list select_item)
                        (g : group) (ov : solution_mapping)
   : solution_mapping =
   let row = group_row_base g ov in
-  let own = list_filter_map (fun (item : select_item) -> eval_select_item_group_row base item g row) items in
+  let own = grouped_select_items_acc base items g row [] in
   let item_vars = select_item_vars items in
   List.Tot.append own
     (List.Tot.filter (fun (b : var_name & rdf_term) -> not (List.Tot.mem (fst b) item_vars)) row)
