@@ -41,6 +41,22 @@ open L4Factoidal.HTTP (Request Response)
 
 /-! ## Reading the JSON contract -/
 
+/-- The content of a request document as bytes, or `none` for text in
+`body`. See `requestOfJson`. -/
+def requestBytes (j : Json) (blob : Option ByteArray) : Except String (Option ByteArray) :=
+  match blob, j.getString? "bodyBase64" with
+  | some b, none =>
+      if (j.field? "body").isSome then
+        .error "request: a request with a byte region carries no \"body\" member"
+      else .ok (some b)
+  | some _, some _ =>
+      .error "request: a request with a byte region carries no \"bodyBase64\" member"
+  | none, some t =>
+      match Base64.decode? t with
+      | some b => .ok (some b)
+      | none => .error "request: member \"bodyBase64\" is not base64"
+  | none, none => .ok none
+
 /-- Decode a request document: `{method, target, headers, body}`, with the
 optional `now` and `agent` overrides. Header names are lower-cased on the
 way in, which is what `HTTP.Request.header?` expects.
@@ -66,17 +82,7 @@ def requestOfJson (j : Json) (blob : Option ByteArray := none) :
         | .array [.string n, .string v] => some (n.toLower, v)
         | _ => none)
   let body := (j.getString? "body").getD ""
-  let bytes ← match blob, j.getString? "bodyBase64" with
-    | some b, none => if (j.field? "body").isSome then
-        .error "request: a request with a byte region carries no \"body\" member"
-        else .ok (some b)
-    | some _, some _ =>
-        .error "request: a request with a byte region carries no \"bodyBase64\" member"
-    | none, some t =>
-        match Base64.decode? t with
-        | some b => .ok (some b)
-        | none => .error "request: member \"bodyBase64\" is not base64"
-    | none, none => .ok none
+  let bytes ← requestBytes j blob
   let now : Option Nat :=
     match j.field? "now" with
     | some (.number s) => s.toNat?

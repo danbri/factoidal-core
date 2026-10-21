@@ -33,8 +33,10 @@ its bodies are the UTF-8 encoding of that string, which is what the format-1
 writer stored.
 
 Theorems: `Base64.decode_encode` (decoding the encoding of any byte array
-gives it back) and `entryOfJson_entryJson` (an entry written by `entryJson`
-reads back as the same entry).
+gives it back), `entryOfJson_entryJson` (an entry written by `entryJson`
+reads back as the same entry) and `memStateOfJson_snapshotJson` (a storage
+written by `snapshotJson` reads back as the same storage, under the checks
+the reader makes and the clock invariant).
 -/
 import L4Factoidal.LWS.Store
 import L4Factoidal.LWS.Binding
@@ -305,5 +307,38 @@ theorem entryOfJson_entryJson (e : Entry) (h : validTarget e.path = true) :
   simp_all [entryOfJson, entryJson, entryBodyOfJson, natField, Json.getString?, Json.field?,
     Json.asString?, ResourceKind.ofName?_name, Base64.decode_encode, Nat.toNat?_repr]
   simp [bind, Except.bind, h]
+
+theorem mapM_entryOfJson (es : List Entry) (h : ∀ e ∈ es, validTarget e.path = true) :
+    (es.map entryJson).mapM (entryOfJson · false) = .ok es := by
+  induction es with
+  | nil => rfl
+  | cons e rest ih =>
+      have he := entryOfJson_entryJson e (h e (by simp))
+      have hr := ih (fun x hx => h x (by simp [hx]))
+      simp only [List.map_cons, List.mapM_cons, he, hr]
+      rfl
+
+/-- The snapshot round trip for a whole storage: reading back the document
+`snapshotJson s` writes gives `s`, every entry and the clock. The
+hypotheses are the checks `memStateOfJson` makes (valid paths, a storage
+root, no repeated path) and the clock invariant the operations keep (the
+clock is above every modification time, `StoreLaws.nowTick`). -/
+theorem memStateOfJson_snapshotJson (s : MemState)
+    (hv : ∀ e ∈ s.entries, validTarget e.path = true)
+    (hroot : s.entries.any (fun e => e.path == rootPath && e.kind == .storageRoot) = true)
+    (hdup : (s.entries.map (·.path)).eraseDups.length = (s.entries.map (·.path)).length)
+    (hclock : s.entries.foldl (fun m e => max m e.mtime) 0 + 1 ≤ s.clock) :
+    memStateOfJson (snapshotJson s) = .ok s := by
+  have hm := mapM_entryOfJson s.entries hv
+  simp only [List.any_eq_true, Bool.and_eq_true, beq_iff_eq] at hroot
+  obtain ⟨r, hr, hrp, hrk⟩ := hroot
+  simp [memStateOfJson, snapshotJson, Json.getString?, Json.field?, Json.getArray?, Json.asString?,
+    Json.asArray?, natField, snapshotFormat, snapshotFormatV1, hm, Nat.toNat?_repr, bind,
+    Except.bind]
+  have hnot : ¬ (∀ (x : Entry), x ∈ s.entries → x.path = rootPath →
+      ¬x.kind = ResourceKind.storageRoot) := fun hall => hall r hr hrp hrk
+  have hlen : (List.map (fun x => x.path) s.entries).eraseDups.length = s.entries.length := by
+    rw [hdup, List.length_map]
+  rw [if_neg hnot, if_pos hlen, Nat.max_eq_left hclock]
 
 end L4Factoidal.LWS

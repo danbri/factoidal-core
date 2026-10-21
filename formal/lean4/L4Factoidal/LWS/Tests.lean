@@ -519,7 +519,7 @@ def lwsGuardRangeInsideSequence : Bool :=
   r.status == 206 && r.content.toList == [0xc3] && s.status == 206 && s.content.toList == [0xa9]
 #guard lwsGuardRangeInsideSequence
 
-/-- Negative: a range past the end is 416 with `bytes */len`. -/
+-- Negative: a range past the end is 416 with `bytes */len`.
 #guard
   let st := (run (reqBytes "PUT" "/b.png" octet pngLike) emptyStorage).2
   let (r, _) := run (req "GET" "/b.png" [("range", "bytes=10-12")]) st
@@ -537,14 +537,14 @@ def lwsGuardInvalidUtf8Turtle : Bool :=
   ok.status == 201 && (memLookup st3 "/x.bin").map (·.body.toList) == some bad.toList
 #guard lwsGuardInvalidUtf8Turtle
 
-/-- The entity tag is computed on the bytes: two bodies with the same clock
-and different bytes get different tags. -/
+-- The entity tag is computed on the bytes: two bodies with the same clock
+-- and different bytes get different tags.
 #guard
   let e1 : Entry := { path := "/a", kind := .dataResource, contentType := "x", body := ⟨#[1]⟩, mtime := 3 }
   let e2 : Entry := { e1 with body := ⟨#[2]⟩ }
   etagFor e1 "x" != etagFor e2 "x" && etagFor e1 "x" == etagFor e1 "x"
 
-/-- Base64 of RFC 4648 §10, and its refusals. -/
+-- Base64 of RFC 4648 §10, and its refusals.
 #guard Base64.encode (textBytes "") == ""
 #guard Base64.encode (textBytes "f") == "Zg=="
 #guard Base64.encode (textBytes "fo") == "Zm8="
