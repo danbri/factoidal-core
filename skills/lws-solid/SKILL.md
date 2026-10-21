@@ -142,6 +142,14 @@ reads a body as text. Rules, all in Lean:
   is still read (`Snapshot.lean`, theorems `Base64.decode_encode` and
   `entryOfJson_entryJson`).
 
+Cost: one PUT and one GET of a body must stay linear in its bytes.
+`node tests/lws/scaling.mjs` checks n, 2n, 4n (25,000 to 100,000 triples)
+for time, peak memory and byte identity
+(https://github.com/danbri/factoidal/issues/903: a `Nat` FNV-1a fold made
+heap numbers per byte on wasm32; a 100,000-triple PUT took 17 s). Any
+per-byte fold in this path runs in machine-word types, with a theorem that
+it equals the `Nat` reference (`fnv1a32_eq_spec`).
+
 Test: `node tests/lws/binary-bodies.mjs` (both servers: a PNG-like body with
 NUL and 0xFF, every byte range of a small body, restart persistence, a
 format-1 snapshot, invalid UTF-8 as Turtle).

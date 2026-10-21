@@ -76,9 +76,20 @@ const CLI = join(PKG, 'bin/factoidal.mjs');
  * here and the issue is updated.
  */
 const XFAIL = {
-  // the GET after six PUTs of the same 100,000-triple resource stops the
-  // engine with out of memory (each PUT takes about 17 s)
-  '100000 lws-get': 'https://github.com/danbri/factoidal/issues/903',
+};
+
+/**
+ * Absolute bounds in milliseconds, key `SIZE op`, checked on the median
+ * before the comparison with the committed result. The LWS rows are the
+ * target of https://github.com/danbri/factoidal/issues/903: until the repair
+ * of 2026-10-21 one 100,000-triple PUT took about 17 s and the GET stopped
+ * the engine with out of memory (the entity tag's FNV-1a digest ran in
+ * `Nat`, a heap number per byte on wasm32). The scaling assertion for the
+ * same requests is tests/lws/scaling.mjs.
+ */
+const LIMIT_MS = {
+  '100000 lws-put': 2000,
+  '100000 lws-get': 2000,
 };
 const EX = 'http://example.org/';
 
@@ -289,6 +300,12 @@ for (const [n, cur] of Object.entries(result.sizes)) {
       fails++;
       console.log(`FAIL ${n} ${op}: UNEXPECTED PASS of the expected failure ${xf} ` +
                   `(${r.median_ms} ms); remove the XFAIL key and update the issue`);
+      continue;
+    }
+    const lim = LIMIT_MS[`${n} ${op}`];
+    if (lim !== undefined && r.median_ms > lim) {
+      fails++;
+      console.log(`FAIL ${n} ${op}: ${r.median_ms} ms is above the absolute bound ${lim} ms`);
       continue;
     }
     const p = prev.sizes?.[n]?.ops?.[op];

@@ -66,6 +66,18 @@ Linked Web Storage, two rules of the editor's draft (w3c/lws-protocol
 - PUT on a linkset resource replaces the client links. Before, it answered
   405.
 
+### Performance
+
+- LWS and Solid PUT and GET of a large body
+  (https://github.com/danbri/factoidal/issues/903): one 100,000-triple
+  N-Triples body (7.7 MB) took about 17 s to PUT and the GET stopped the
+  engine with out of memory; now the PUT takes 85 ms and the GET 40 ms
+  (`npm run test:costs`). The cause was the FNV-1a digest of the entity tag,
+  computed in `Nat`: on wasm32 each byte made heap numbers. It now runs in
+  `UInt32` (theorem `fnv1a32_eq_spec`: same value as the `Nat` definition).
+  Peak memory of the 100,000-triple PUT and GET fell from 2,640 MiB to
+  288 MiB. Scaling check: `node tests/lws/scaling.mjs`.
+
 ## 0.11.0 — 2026-10-21
 
 No RDF, SPARQL, datatype or IRI decision is made in JavaScript any more

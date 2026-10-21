@@ -180,9 +180,62 @@ def mediaTagSuffix (media : String) : String :=
 
 /-- FNV-1a, 32 bits, over a byte region: the offset basis 2166136261 and the
 prime 16777619 of the FNV specification (draft-eastlake-fnv). A content
-digest for entity tags, not a cryptographic one. -/
-def fnv1a32 (b : ByteArray) : Nat :=
+digest for entity tags, not a cryptographic one.
+
+This is the reference definition, over `Nat`. It is not the one that runs:
+on wasm32 a `Nat` above 2^31 - 1 is a heap number, so each byte allocated
+two of them, and this fold was most of the cost of an LWS PUT or GET of a
+large body (https://github.com/danbri/factoidal/issues/903). `fnv1a32`
+below runs `fnv1a32U32`, and theorem `fnv1a32_eq_spec` says the two agree. -/
+def fnv1a32Spec (b : ByteArray) : Nat :=
   b.foldl (fun h x => ((h ^^^ x.toNat) * 16777619) % 4294967296) 2166136261
+
+/-- FNV-1a, 32 bits, in `UInt32` arithmetic: multiplication modulo 2^32 is
+`UInt32` multiplication, so no number leaves the machine word. -/
+def fnv1a32U32 (b : ByteArray) : UInt32 :=
+  b.foldl (fun h x => (h ^^^ x.toUInt32) * 16777619) 2166136261
+
+/-- `ByteArray.foldl` commutes with a map that commutes with one step. -/
+private theorem foldlLoop_hom {α β : Type} (f : α → β) (g₁ : α → UInt8 → α)
+    (g₂ : β → UInt8 → β) (hg : ∀ x y, g₂ (f x) y = f (g₁ x y)) (as : ByteArray)
+    (stop : Nat) (hs : stop ≤ as.size) :
+    ∀ (i j : Nat) (x : α),
+      ByteArray.foldlM.loop (m := Id) (fun b y => pure (g₂ b y)) as stop hs i j (f x)
+        = f (ByteArray.foldlM.loop (m := Id) (fun b y => pure (g₁ b y)) as stop hs i j x) := by
+  intro i
+  induction i with
+  | zero =>
+    intro j x
+    unfold ByteArray.foldlM.loop
+    split <;> rfl
+  | succ n ih =>
+    intro j x
+    unfold ByteArray.foldlM.loop
+    split
+    · simp only [bind, pure]
+      rw [hg]
+      exact ih (j + 1) (g₁ x as[j])
+    · rfl
+
+private theorem byteArrayFoldl_hom {α β : Type} (f : α → β) (g₁ : α → UInt8 → α)
+    (g₂ : β → UInt8 → β) (hg : ∀ x y, g₂ (f x) y = f (g₁ x y)) (as : ByteArray) (x : α) :
+    as.foldl g₂ (f x) = f (as.foldl g₁ x) := by
+  unfold ByteArray.foldl ByteArray.foldlM
+  simp only [Nat.le_refl, dite_true]
+  exact foldlLoop_hom f g₁ g₂ hg as as.size (Nat.le_refl _) _ _ x
+
+/-- FNV-1a, 32 bits, as a `Nat`: the value of `fnv1a32Spec`, computed by
+`fnv1a32U32`. -/
+def fnv1a32 (b : ByteArray) : Nat := (fnv1a32U32 b).toNat
+
+theorem fnv1a32_eq_spec (b : ByteArray) : fnv1a32 b = fnv1a32Spec b := by
+  unfold fnv1a32 fnv1a32U32 fnv1a32Spec
+  have := byteArrayFoldl_hom (fun (h : UInt32) => h.toNat)
+    (fun h x => (h ^^^ x.toUInt32) * 16777619)
+    (fun h x => ((h ^^^ x.toNat) * 16777619) % 4294967296)
+    (by intro h y; simp [UInt32.toNat_mul, UInt32.toNat_xor, UInt8.toNat_toUInt32])
+    b 2166136261
+  simpa using this.symm
 
 private def hexDigit (n : Nat) : Char :=
   if n < 10 then Char.ofNat (48 + n) else Char.ofNat (87 + n)
