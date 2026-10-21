@@ -297,15 +297,20 @@ private def wQG : W := postGrant wQ (grantDoc ["read"] bob ["box/"])
 
 /-! ## Persistence -/
 
-private def reloaded (w : W) : Option AccessState :=
-  match stateOfJson base (storageIris cfg az0) (stateJson w.az.access) with
-  | .ok s => some s
-  | .error _ => none
-
-#guard (reloaded wQG).map (fun s => (s.requests.length, s.grants.length, s.seq)) == some (1, 1, 2)
 private def bobReads (p : String) : Ctx :=
   { agent := some bob, now := 1100, action := .read, path := p, entry := memLookup st0 p }
 
+private def reloaded (w : W) : Option AccessState :=
+  match stateOfJson base (storageIris cfg az0) (stateJson base w.az.access) with
+  | .ok s => some s
+  | .error _ => none
+
+-- Reopened under another origin: the grants keep their storage paths.
+#guard (match stateOfJson "http://other.example/" ["http://other.example/.well-known/lws-storage"]
+    (stateJson base wF.az.access) with
+  | .ok s => grantsPermit s.grants (bobReads "/doc.txt")
+  | .error _ => false)
+#guard (reloaded wQG).map (fun s => (s.requests.length, s.grants.length, s.seq)) == some (1, 1, 2)
 #guard (reloaded wF).map (fun s => grantsPermit s.grants (bobReads "/c.csv")) == some false
 #guard (reloaded wF).map (fun s => grantsPermit s.grants (bobReads "/doc.txt")) == some true
 

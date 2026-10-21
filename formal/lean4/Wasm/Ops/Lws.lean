@@ -442,7 +442,7 @@ def lwsSnapshot (h : String) : IO String := do
         | other, _ => other
       let snap := match snapshotJson open_.mem.base with
         | .object fs => Json.object (fs ++ [("notifications", notif),
-            ("access", AccessPolicy.stateJson open_.authz.access)])
+            ("access", AccessPolicy.stateJson open_.cfg.baseIri open_.authz.access)])
         | other => other
       pure (okWith [("snapshot", snap)])
 

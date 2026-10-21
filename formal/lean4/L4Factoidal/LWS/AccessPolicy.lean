@@ -671,9 +671,11 @@ def recordJson (r : Record) : Json :=
           , ("created", .number (toString r.created))
           , ("doc", r.doc) ]
 
-/-- The durable form: the counter, the requests and the grants. -/
-def stateJson (s : AccessState) : Json :=
-  .object [ ("seq", .number (toString s.seq))
+/-- The durable form: the base IRI the documents were written under, the
+counter, the requests and the grants. -/
+def stateJson (baseIri : String) (s : AccessState) : Json :=
+  .object [ ("baseIri", .string baseIri)
+          , ("seq", .number (toString s.seq))
           , ("requests", .array (s.requests.map recordJson))
           , ("grants", .array (s.grants.map recordJson)) ]
 
@@ -683,9 +685,15 @@ private def natOf? (j : Json) (k : String) : Option Nat :=
   | _ => none
 
 /-- Read the durable form back; every document is read again by
-`parseDoc`, so a stored grant permits exactly what a posted one would. -/
+`parseDoc`, so a stored grant permits exactly what a posted one would. The
+documents are read against the base IRI they were written under (member
+`baseIri`), so a storage reopened under another origin keeps its grants:
+their targets are storage paths. -/
 def stateOfJson (baseIri : String) (storageIris : List String) (j : Json) :
     Except String AccessState := do
+  let (baseIri, storageIris) := match j.getString? "baseIri" with
+    | some b => (b, storageIris ++ [storageIdOf b, b])
+    | none => (baseIri, storageIris)
   let one (kind : String) (it : Json) : Except String Record := do
     let id ← (it.getString? "id").elim (.error "access: a record has no id") .ok
     if id == "" || id.any (fun c => c == '/' || c == '?' || c == '#') then
