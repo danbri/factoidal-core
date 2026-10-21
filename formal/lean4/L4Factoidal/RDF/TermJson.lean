@@ -28,12 +28,23 @@ Theorems:
   * `toCanonicalNQuads_eq_quadList` : the order of `quadList` is the line
     order of `Dataset.toCanonicalNQuads`
   * `quadPage_append` : consecutive pages concatenate to the list
+  * `decodeCheckedTerm_encodeTerm` : a term that satisfies `termChecked`
+    round-trips through the checked decoder unchanged
+
+A term may also come as text, `{"type":"nt","value":TEXT}`, where TEXT is
+one RDF 1.2 N-Triples term (`readTermString`): `<IRI>`, `_:label`, a
+literal, or `<<( s p o )>>`. Every decoder below reads that form through
+the same reader, so a host never decides whether a string is an IRI or a
+blank node (https://github.com/danbri/factoidal/issues/894).
 -/
 import L4Factoidal.RDF.Core
 import L4Factoidal.RDF.Graph
 import L4Factoidal.JSON.Value
 import L4Factoidal.JSON.Serialize
 import L4Factoidal.Syntax.NQuads
+import L4Factoidal.RDF.IriSyntax
+import L4Factoidal.RDF.LangTag
+import L4Factoidal.JSON.Parser
 import Std.Data.HashMap
 
 namespace L4Factoidal.RDF.TermJson
@@ -90,18 +101,81 @@ def encodeQuad : Quad → Json
 
 /-! ## Decoding -/
 
+/-! ## What RDF requires of a term a host supplies
+
+RDF 1.1 Concepts §3.2 (an IRI in an RDF graph is absolute), §3.3 (a
+datatype is an IRI; a language tag is well-formed under BCP 47). An
+ill-typed literal (a lexical form outside the datatype's lexical space)
+is still a literal (§3.3), so this check reads no lexical form. -/
+
+def literalChecked (l : Literal) : Bool :=
+  isAbsoluteIri l.datatype.val &&
+    (match l.langTag with
+     | some t => isWellFormedLangTag t
+     | none => true)
+
+def subjectChecked : Subject → Bool
+  | .iri i => isAbsoluteIri i.val
+  | .bnode b => !b.isEmpty
+
+def termChecked : Term → Bool
+  | .iri i => isAbsoluteIri i.val
+  | .bnode b => !b.isEmpty
+  | .literal l => literalChecked l.val
+  | .tripleTerm s p o => subjectChecked s && isAbsoluteIri p.val && termChecked o
+
+/-- One RDF term written in RDF 1.2 N-Triples term syntax (RDF 1.2
+N-Triples §2.4–2.6: IRIREF, BLANK_NODE_LABEL, literal, tripleTerm), with
+nothing after it but spaces and tabs, that also satisfies `termChecked`.
+This is the one reader of a term given as a string: `_:x` is a blank node
+and `<…>` an IRI everywhere. -/
+def readTermString (s : String) : Option Term :=
+  let cs := s.toList
+  match readObject12 (cs.length + 1) 0 cs with
+  | .ok (t, _, rest) =>
+      if rest.all (fun c => c == ' ' || c == '\t') && termChecked t then some t else none
+  | .error _ => none
+
+theorem termChecked_of_readTermString {s : String} {t : Term}
+    (h : readTermString s = some t) : termChecked t = true := by
+  unfold readTermString at h
+  dsimp only at h
+  split at h
+  · split at h
+    · rename_i hc
+      simp only [Option.some.injEq] at h
+      subst h
+      simp only [Bool.and_eq_true] at hc
+      exact hc.2
+    · exact absurd h (by simp)
+  · exact absurd h (by simp)
+
+def readSubjectString (s : String) : Option Subject :=
+  match readTermString s with
+  | some (.iri i) => some (.iri i)
+  | some (.bnode b) => some (.bnode b)
+  | _ => none
+
+def readIriString (s : String) : Option WfIri :=
+  match readTermString s with
+  | some (.iri i) => some i
+  | _ => none
+
 def iriOf? (s : String) : Option WfIri := if h : isIri s then some ⟨s, h⟩ else none
 
 theorem iriOf?_val (i : WfIri) : iriOf? i.val = some i := by
   simp [iriOf?, i.property]
 
 def decodeIri (j : Json) : Option WfIri := do
-  if j.getString? "type" == some "uri" then (j.getString? "value").bind iriOf? else none
+  if j.getString? "type" == some "uri" then (j.getString? "value").bind iriOf?
+  else if j.getString? "type" == some "nt" then (j.getString? "value").bind readIriString
+  else none
 
 def decodeSubject (j : Json) : Option Subject :=
   match j.getString? "type" with
   | some "uri" => ((j.getString? "value").bind iriOf?).map .iri
   | some "bnode" => (j.getString? "value").map .bnode
+  | some "nt" => (j.getString? "value").bind readSubjectString
   | _ => none
 
 /-- The literal of the members; `none` when the four do not form a
@@ -139,6 +213,7 @@ def decodeTermFuel : Nat → Json → Option Term
         let p ← (v.field? "predicate").bind decodeIri
         let o ← (v.field? "object").bind (decodeTermFuel n)
         pure (.tripleTerm s p o)
+    | some "nt" => (j.getString? "value").bind readTermString
     | _ => none
 
 -- Nesting depth of a JSON value: the fuel the decoder is given.
@@ -239,6 +314,64 @@ theorem decodeTermFuel_encodeTerm (t : Term) :
 /-- The encoding round-trips: `decode (encode t) = t`. -/
 theorem decodeTerm_encodeTerm (t : Term) : decodeTerm (encodeTerm t) = some t :=
   decodeTermFuel_encodeTerm t _ (jsonDepth_encodeTerm t)
+
+/-! ## A term an application supplies
+
+An application may answer with an exact term (an extension function's
+answer, https://github.com/danbri/factoidal/issues/894): the lexical form
+and the datatype IRI are kept as given. `decodeCheckedTerm` adds to
+`decodeTerm` only what RDF requires (`termChecked`), and refuses a
+`datatype` member that names a datatype other than the one the term has
+(a language-tagged string with no direction is `rdf:langString`). -/
+
+/-- Each `datatype` member names the datatype of its literal. -/
+def datatypeAgrees : Term → Json → Bool
+  | .literal l, j =>
+      match j.getString? "datatype" with
+      | some d => d == l.val.datatype.val
+      | none => true
+  | .tripleTerm _ _ o, j =>
+      match (j.field? "value").bind (·.field? "object") with
+      | some oj => datatypeAgrees o oj
+      | none => true
+  | _, _ => true
+
+def decodeCheckedTerm (j : Json) : Option Term :=
+  match decodeTerm j with
+  | some t => if termChecked t && datatypeAgrees t j then some t else none
+  | none => none
+
+theorem datatypeAgrees_encodeTerm (t : Term) : datatypeAgrees t (encodeTerm t) = true := by
+  induction t with
+  | iri i => simp [datatypeAgrees]
+  | bnode b => simp [datatypeAgrees]
+  | literal l =>
+      obtain ⟨⟨lex, dt, lang, dir⟩, h⟩ := l
+      cases lang <;> cases dir <;>
+        simp [datatypeAgrees, encodeTerm, literalJson, Json.getString?, Json.field?,
+          Json.asString?]
+  | tripleTerm s p o ih =>
+      simp [datatypeAgrees, encodeTerm, Json.field?, ih]
+
+/-- An application-supplied term that RDF admits comes back unchanged:
+the same lexical form, datatype IRI, language tag and direction. -/
+theorem decodeCheckedTerm_encodeTerm (t : Term) (h : termChecked t = true) :
+    decodeCheckedTerm (encodeTerm t) = some t := by
+  simp [decodeCheckedTerm, decodeTerm_encodeTerm, h, datatypeAgrees_encodeTerm]
+
+/-- The checked decoder never answers a term RDF does not admit. -/
+theorem termChecked_of_decodeCheckedTerm {j : Json} {t : Term}
+    (h : decodeCheckedTerm j = some t) : termChecked t = true := by
+  unfold decodeCheckedTerm at h
+  split at h
+  · split at h
+    · rename_i hc
+      simp only [Option.some.injEq] at h
+      subst h
+      simp only [Bool.and_eq_true] at hc
+      exact hc.1
+    · exact absurd h (by simp)
+  · exact absurd h (by simp)
 
 theorem decodeQuad_encodeQuad (q : Quad) : decodeQuad (encodeQuad q) = some q := by
   obtain ⟨g, ⟨s, p, o⟩⟩ := q
@@ -655,5 +788,72 @@ private def exIri : WfIri := ⟨"http://e/a", rfl⟩
 #print axioms compactCertified_sound
 #print axioms decodeCompactArr_eq
 #print axioms termText_eq
+
+/-! ## Build-time checks: the term-string reader and the checked decoder -/
+
+-- one reader: `_:x` is a blank node, `<…>` an IRI
+#guard readTermString "_:x" == some (.bnode "x")
+#guard (readTermString "<http://e/x>").isSome && readTermString "<http://e/x>" != some (.bnode "x")
+#guard match readTermString "<http://e/x>" with | some (.iri i) => i.val == "http://e/x" | _ => false
+#guard match readTermString "\"007\"^^<http://www.w3.org/2001/XMLSchema#integer>" with
+  | some (.literal l) => l.val.lexicalForm == "007" &&
+      l.val.datatype.val == "http://www.w3.org/2001/XMLSchema#integer"
+  | _ => false
+#guard match readTermString "\"a\"@en--rtl" with
+  | some (.literal l) => l.val.langTag == some "en" && l.val.direction == some .rtl
+  | _ => false
+#guard match readTermString "<<( _:s <http://e/p> \"o\" )>>" with
+  | some (.tripleTerm (.bnode "s") _ _) => true
+  | _ => false
+-- negative: a bare IRI, an IRI that is not absolute, a bad language tag,
+-- trailing text, an empty label, an empty string
+#guard readTermString "http://e/x" == none
+#guard readTermString "<x>" == none
+#guard readTermString "\"a\"^^<int>" == none
+#guard readTermString "\"a\"@en-" == none
+#guard readTermString "\"a\"@123456789" == none
+#guard readTermString "<http://e/x> ." == none
+#guard readTermString "_:" == none
+#guard readTermString "" == none
+#guard readSubjectString "\"a\"" == none
+#guard readIriString "_:x" == none
+
+private def jsonOf (s : String) : Json := (parseJson? s).getD .null
+
+-- the `nt` form goes through the same reader in every decoder
+#guard decodeSubject (jsonOf "{\"type\":\"nt\",\"value\":\"_:g\"}") == some (.bnode "g")
+#guard (decodeSubject (jsonOf "{\"type\":\"nt\",\"value\":\"<urn:g>\"}")).isSome
+#guard decodeSubject (jsonOf "{\"type\":\"nt\",\"value\":\"urn:g\"}") == none
+#guard (decodeIri (jsonOf "{\"type\":\"nt\",\"value\":\"_:g\"}")).isNone
+
+-- checked decoding: exact lexical form and datatype kept
+#guard match decodeCheckedTerm (jsonOf
+    "{\"type\":\"literal\",\"value\":\"007\",\"datatype\":\"http://www.w3.org/2001/XMLSchema#integer\"}") with
+  | some (.literal l) => l.val.lexicalForm == "007"
+  | _ => false
+#guard match decodeCheckedTerm (jsonOf
+    "{\"type\":\"literal\",\"value\":\"1e21\",\"datatype\":\"http://www.w3.org/2001/XMLSchema#double\"}") with
+  | some (.literal l) => l.val.lexicalForm == "1e21"
+  | _ => false
+#guard match decodeCheckedTerm (jsonOf
+    "{\"type\":\"literal\",\"value\":\"x\",\"datatype\":\"http://example.org/dt#mine\"}") with
+  | some (.literal l) => l.val.datatype.val == "http://example.org/dt#mine"
+  | _ => false
+#guard (decodeCheckedTerm (jsonOf
+    "{\"type\":\"literal\",\"value\":\"a\",\"xml:lang\":\"ar\",\"its:dir\":\"rtl\",\"datatype\":\"http://www.w3.org/1999/02/22-rdf-syntax-ns#dirLangString\"}")).isSome
+-- checked decoding: what RDF refuses
+#guard (decodeCheckedTerm (jsonOf "{\"type\":\"literal\",\"value\":\"x\",\"datatype\":\"int\"}")).isNone
+#guard (decodeCheckedTerm (jsonOf "{\"type\":\"literal\",\"value\":\"x\",\"datatype\":\"1x:abc\"}")).isNone
+#guard (decodeCheckedTerm (jsonOf "{\"type\":\"literal\",\"value\":\"x\",\"xml:lang\":\"en_US\"}")).isNone
+#guard (decodeCheckedTerm (jsonOf "{\"type\":\"literal\",\"value\":\"x\",\"xml:lang\":\"en\",\"its:dir\":\"up\"}")).isNone
+#guard (decodeCheckedTerm (jsonOf
+    "{\"type\":\"literal\",\"value\":\"x\",\"xml:lang\":\"en\",\"datatype\":\"http://www.w3.org/2001/XMLSchema#string\"}")).isNone
+#guard (decodeCheckedTerm (jsonOf "{\"type\":\"uri\",\"value\":\"rel/x\"}")).isNone
+#guard (decodeCheckedTerm (jsonOf "{\"type\":\"bnode\",\"value\":\"\"}")).isNone
+-- unchecked decodeTerm keeps its old behaviour for stored data
+#guard (decodeTerm (jsonOf "{\"type\":\"literal\",\"value\":\"x\",\"xml:lang\":\"en_US\"}")).isSome
+
+#print axioms decodeCheckedTerm_encodeTerm
+#print axioms termChecked_of_readTermString
 
 end L4Factoidal.RDF.TermJson

@@ -46,6 +46,7 @@ import L4Factoidal.SPARQL.Expr
 import L4Factoidal.SPARQL.ResultsJson
 import L4Factoidal.Geo.Functions
 import L4Factoidal.XSD.JsValue
+import L4Factoidal.RDF.TermJson
 
 namespace L4Wasm.Ops
 
@@ -80,17 +81,38 @@ def jsValueTerm (j : Json) : Option Term := do
   let (dt, lex) ← L4Factoidal.XSD.JsValue.jsLiteral tag v
   mkResultLiteral lex ("http://www.w3.org/2001/XMLSchema#" ++ dt) none
 
-/-- Decode the host's answer: a tagged JavaScript value (`jsValueTerm`) or an
-SRJ binding-value object (a term the host built). The empty string, an
-unparsable document, and a document both decoders reject are all the same
-§17.6 error. -/
+/-- Decode one parsed answer: a tagged JavaScript value (`jsValueTerm`, the
+engine chooses datatype and lexical form), or a term the application built
+(`TermJson.decodeCheckedTerm`: the lexical form and the datatype IRI are kept
+exactly as given, RDF 1.1 Concepts §3.3, and only what RDF requires is
+checked). A term RDF does not admit is the §17.6 error for this call. -/
+def extAnswerJson (j : Json) : Option EvalResult :=
+  if (j.field? "js").isSome then (jsValueTerm j).map EvalResult.term
+  else (TermJson.decodeCheckedTerm j).map EvalResult.term
+
+/-- Decode the host's answer text. The empty string, an unparsable document,
+and a document `extAnswerJson` rejects are all the same §17.6 error. -/
 def extAnswer (s : String) : Option EvalResult :=
   if s.isEmpty then none
   else match parseJson s with
     | .error _ => none
-    | .ok j =>
-        if (j.field? "js").isSome then (jsValueTerm j).map EvalResult.term
-        else (parseBindingValueJson j).map EvalResult.term
+    | .ok j => extAnswerJson j
+
+/-- An application-supplied term that RDF admits is the answer, unchanged
+(https://github.com/danbri/factoidal/issues/894: the application, not the
+engine, chose its datatype and lexical form). -/
+theorem extAnswerJson_encodeTerm (t : Term) (h : TermJson.termChecked t = true) :
+    extAnswerJson (TermJson.encodeTerm t) = some (.term t) := by
+  have hjs : (TermJson.encodeTerm t).field? "js" = none := by
+    cases t with
+    | literal l =>
+        obtain ⟨⟨lex, dt, lang, dir⟩, _⟩ := l
+        cases lang <;> cases dir <;>
+          simp [TermJson.encodeTerm, TermJson.literalJson, Json.field?]
+    | _ => simp [TermJson.encodeTerm, TermJson.iriJson, TermJson.bnodeJson, Json.field?]
+  simp [extAnswerJson, hjs, TermJson.decodeCheckedTerm_encodeTerm t h]
+
+#print axioms extAnswerJson_encodeTerm
 
 /-- The extension table a query runs with: the built-in `geof:` family
 first, then the host for a registered IRI, then the §17.6 error.
@@ -158,5 +180,21 @@ def extList : IO String := do
   | _ => false
 #guard (extAnswer "{\"js\":\"number\",\"v\":\"x\"}").isNone
 #guard (extAnswer "{\"js\":\"symbol\",\"v\":\"x\"}").isNone
+-- an application-supplied term keeps its lexical form and datatype IRI
+#guard match extAnswer "{\"type\":\"literal\",\"value\":\"007\",\"datatype\":\"http://www.w3.org/2001/XMLSchema#integer\"}" with
+  | some (.term (.literal l)) => l.val.lexicalForm == "007"
+  | _ => false
+#guard match extAnswer "{\"type\":\"literal\",\"value\":\"1e21\",\"datatype\":\"http://www.w3.org/2001/XMLSchema#double\"}" with
+  | some (.term (.literal l)) => l.val.lexicalForm == "1e21"
+  | _ => false
+#guard match extAnswer "{\"type\":\"nt\",\"value\":\"_:b1\"}" with
+  | some (.term (.bnode b)) => b == "b1"
+  | _ => false
+#guard (extAnswer "{\"type\":\"literal\",\"value\":\"x\",\"datatype\":\"rel\"}").isNone
+#guard (extAnswer "{\"type\":\"literal\",\"value\":\"x\",\"xml:lang\":\"not a tag\"}").isNone
+-- a plain JavaScript string that looks like a blank node is a string literal
+#guard match extAnswer "{\"js\":\"string\",\"v\":\"_:x\"}" with
+  | some (.term (.literal l)) => l.val.lexicalForm == "_:x"
+  | _ => false
 
 end L4Wasm.Ops
