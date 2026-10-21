@@ -10,6 +10,10 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { lean, fstar, rowMultiset } from './engines.mjs';
+// The npm package dropped matrix* and sigmoid* in 0.10.0 (owner, 2026-10-20);
+// the Lean ops stay and are reached through the hub's marshalling helper.
+import { demoMathsFor } from '../../docs/web/hub/assets/demo-maths.mjs';
+const leanMaths = demoMathsFor(() => lean.loadEngine());
 
 const REPO = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..', '..');
 
@@ -70,14 +74,14 @@ test('matrix functions: same results on the same inputs', async () => {
   const matrices = [[[1, 2], [3, 4]], [[1, 2, 3], [4, 5, 6]], [[[1, 2], 0], [0, [1, 2]]],
     [[2, 0, 1], [1, 3, 2], [1, 1, 1]], [[1, [1, 0]], [3, 4]], [[1, 2], [3]], []];
   for (const m of matrices) {
-    assert.deepEqual(await lean.matrixDeterminant(m), await fstar.matrixDeterminant(m),
+    assert.deepEqual(await leanMaths.matrixDeterminant(m), await fstar.matrixDeterminant(m),
       `matrixDeterminant ${JSON.stringify(m)}`);
   }
   const pairs = [[[1, 2, 3], [4, 5, 6]], [[1, 0, 0], [0, 1, 0]], [[1, 2], [3, 4]], [[1, 2, 3], [4, 5]],
     [[[1, 2], 1], [2, [1, 3]]], [[1, [1, 0]], [2, 3]]];
   for (const [a, b] of pairs) {
     for (const fn of ['matrixScalarProduct', 'matrixVectorProduct', 'matrixOuterProduct']) {
-      assert.deepEqual(await lean[fn](a, b), await fstar[fn](a, b), `${fn} ${JSON.stringify([a, b])}`);
+      assert.deepEqual(await leanMaths[fn](a, b), await fstar[fn](a, b), `${fn} ${JSON.stringify([a, b])}`);
     }
   }
 });
@@ -88,10 +92,10 @@ test('sigmoidPoints and sigmoidFormulaMathml: identical digits and markup', asyn
     { k: '2.5', x0: '-1.25', l: '3', xmin: '-4', xmax: '4', n: 16 },
     { k: '0.5', x0: '3', l: '1', xmin: '0', xmax: '10', n: 10 },
   ]) {
-    assert.deepEqual(await lean.sigmoidPoints(params), await fstar.sigmoidPoints(params),
+    assert.deepEqual(await leanMaths.sigmoidPoints(params), await fstar.sigmoidPoints(params),
       JSON.stringify(params));
   }
-  assert.equal(await lean.sigmoidFormulaMathml(), await fstar.sigmoidFormulaMathml());
+  assert.equal(await leanMaths.sigmoidFormulaMathml(), await fstar.sigmoidFormulaMathml());
 });
 
 // ------------------------------------------------------------ VCDM 2.0
