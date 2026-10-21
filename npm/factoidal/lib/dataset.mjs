@@ -15,7 +15,7 @@
 // released by a FinalizationRegistry callback. Every method of a disposed
 // Dataset throws a TypeError that names the method.
 
-import { dataFactory, quadFromJson, quadToJson, termToJson, termFromSrj } from '../rdfjs.mjs';
+import { dataFactory, quadFromJson, quadToJson, termToJson, termFromSrj, Literal, NamedNode } from '../rdfjs.mjs';
 
 const INTERNAL = Symbol('factoidal.Dataset.internal');
 
@@ -60,6 +60,68 @@ function quadsFromCompact(terms, ixs) {
   return ixs.map((ix) => dataFactory.quad(ts[ix[0]], ts[ix[1]], ts[ix[2]],
     ix.length > 3 ? ts[ix[3]] : dg));
 }
+
+// The region of op datasetQuadsBin, read as the engine wrote it
+// (formal/lean4/L4Factoidal/RDF/QuadsBin.lean: `binSpec` is the layout,
+// `decodeBin` the reader this function follows, `decodeBin_quadsBin` the
+// theorem that the region reads back as exactly the quads). Every number is a
+// u32 little-endian; each term is in the term codec of DLOG version 2, which
+// names the term kind, the datatype IRI, the language tag and the base
+// direction explicitly, so this function copies fields and decides nothing.
+const UTF8 = new TextDecoder('utf-8', { fatal: true });
+const DIRECTION = ['', 'ltr', 'rtl'];
+
+function quadsFromRegion(bytes, out) {
+  const v = new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength);
+  if (bytes.length < 12 || v.getUint32(0, true) !== 0x31425146) {
+    throw new Error('iterate: the engine answered no datasetQuadsBin region');
+  }
+  const nTerms = v.getUint32(4, true);
+  const nQuads = v.getUint32(8, true);
+  let p = 12;
+  const str = () => {
+    const n = v.getUint32(p, true);
+    const s = UTF8.decode(bytes.subarray(p + 4, p + 4 + n));
+    p += 4 + n;
+    return s;
+  };
+  const datatypes = new Map();
+  const term = () => {
+    switch (bytes[p++]) {
+      case 0: return new NamedNode(str());
+      case 1: return dataFactory.blankNode(str());
+      case 2: {
+        const lexical = str();
+        const dt = str();
+        let datatype = datatypes.get(dt);
+        if (datatype === undefined) { datatype = new NamedNode(dt); datatypes.set(dt, datatype); }
+        const flag = bytes[p++];
+        const language = flag === 0 ? '' : str();
+        const direction = flag === 2 ? DIRECTION[bytes[p++]] : '';
+        return new Literal(lexical, language, datatype, direction);
+      }
+      case 3: {
+        const s = term();
+        const pr = term();
+        return dataFactory.quad(s, pr, term());
+      }
+      default: throw new Error('iterate: a term tag outside the DLOG version 2 codec');
+    }
+  };
+  const ts = new Array(nTerms);
+  for (let i = 0; i < nTerms; i++) ts[i] = term();
+  const dg = dataFactory.defaultGraph();
+  for (let i = 0; i < nQuads; i++, p += 16) {
+    const g = v.getUint32(p + 12, true);
+    out.push(dataFactory.quad(ts[v.getUint32(p, true)], ts[v.getUint32(p + 4, true)],
+      ts[v.getUint32(p + 8, true)], g === 0 ? dg : ts[g - 1]));
+  }
+  return nQuads;
+}
+
+// Quads per datasetQuadsBin call while iterating: an iteration that stops
+// early reads one page, not the whole dataset.
+const PAGE = 16384;
 
 class Dataset {
   /** @private Datasets come from parse(), csvwToRdf() and the other producers. */
@@ -284,18 +346,42 @@ class Dataset {
    */
   *[Symbol.iterator]() {
     this._open('iterate');
-    if (!this._quads) {
-      const r = envelope(this._ctx.e.datasetQuadsJson(this._handle, '{"compact":true}'), 'iterate');
-      this._quads = Object.freeze(r.ixs ? quadsFromCompact(r.terms, r.ixs) : r.quads.map((q) => quadFromJson(q)));
+    if (this._quads) { yield* this._quads; return; }
+    const e = this._ctx.e;
+    if (typeof e.datasetQuadsBin !== 'function') { yield* this._allQuads(); return; }
+    // One page of the engine's region at a time (op datasetQuadsBin); the
+    // pages are kept, and the whole list is cached when the last one is read.
+    const acc = [];
+    for (let offset = 0; ; offset += PAGE) {
+      const r = e.datasetQuadsBin(this._handle, `{"offset":${offset},"limit":${PAGE}}`);
+      const from = acc.length;
+      const n = quadsFromRegion(r.bytes, acc);
+      for (let i = from; i < acc.length; i++) yield acc[i];
+      if (n < PAGE || offset + n >= r.envelope.total) break;
     }
-    yield* this._quads;
+    if (!this._quads) this._quads = Object.freeze(acc);
+  }
+
+  // Every quad, read once and cached.
+  _allQuads() {
+    if (!this._quads) {
+      const e = this._ctx.e;
+      if (typeof e.datasetQuadsBin === 'function') {
+        const acc = [];
+        quadsFromRegion(e.datasetQuadsBin(this._handle, '').bytes, acc);
+        this._quads = Object.freeze(acc);
+      } else {
+        const r = envelope(e.datasetQuadsJson(this._handle, '{"compact":true}'), 'iterate');
+        this._quads = Object.freeze(r.ixs ? quadsFromCompact(r.terms, r.ixs) : r.quads.map((q) => quadFromJson(q)));
+      }
+    }
+    return this._quads;
   }
 
   /** Every quad as an array. */
   toArray() {
     this._open('toArray');
-    if (!this._quads) for (const _q of this) break;
-    return this._quads.slice();
+    return this._allQuads().slice();
   }
 
   // A quad pattern for the ops datasetMatch and datasetMatchCount: four

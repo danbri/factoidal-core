@@ -202,5 +202,13 @@ export function entryFromEngine(eng) {
       }
     };
   }
+  // datasetQuadsBin answers a byte region (formal/lean4/L4Factoidal/RDF/QuadsBin.lean):
+  // this method answers {envelope, bytes} and throws on a refusal.
+  if (typeof eng.callBlobIO === 'function' && ops.includes('datasetQuadsBin')) {
+    entry.datasetQuadsBin = (handle, optsJson) =>
+      eng.callBlobIO('datasetQuadsBin', [String(handle), String(optsJson ?? '')], new Uint8Array(0));
+  } else {
+    delete entry.datasetQuadsBin;
+  }
   return entry;
 }

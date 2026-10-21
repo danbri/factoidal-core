@@ -436,13 +436,23 @@ def CompactState.index (st : CompactState) (t : Term) : Nat × CompactState :=
       | none => (st.tbl.size, { st with bnodes := st.bnodes.insert b st.tbl.size, tbl := st.tbl.push t })
   | _ => (st.tbl.size, { st with tbl := st.tbl.push t })
 
+/-- The indices of the terms `ts`, appended to `ix` (a loop). -/
+def indexTerms (st : CompactState) : List Term → Array Nat → Array Nat × CompactState
+  | [], ix => (ix, st)
+  | t :: ts, ix =>
+      let r := st.index t
+      indexTerms r.2 ts (ix.push r.1)
+
+/-- The index lists of the quads, appended to `acc` (a loop). -/
+def compactLoop (st : CompactState) : List Quad → Array (List Nat) → CompactState × Array (List Nat)
+  | [], acc => (st, acc)
+  | q :: qs, acc =>
+      let r := indexTerms st (quadTerms q) #[]
+      compactLoop r.2 qs (acc.push r.1.toList)
+
 def compactFast (qs : List Quad) : Array Term × List (List Nat) :=
-  let (st, ixs) := qs.foldl (fun (st, acc) q =>
-      let (ix, st) := (quadTerms q).foldl (fun (ix, st) t =>
-        let (i, st) := st.index t
-        (ix.push i, st)) (#[], st)
-      (st, acc.push ix.toList)) (({} : CompactState), #[])
-  (st.tbl, ixs.toList)
+  let r := compactLoop {} qs #[]
+  (r.1.tbl, r.2.toList)
 
 /-- One quad of index list `ix`. -/
 def decodeIx (tbl : Array Term) (ix : List Nat) : Option Quad := do

@@ -166,7 +166,8 @@ reads one chunk of the source from the IN region and builds no OUT region;
 because both are served by the one entry which carries a region in either
 direction. -/
 def blobIoOpNames : List String :=
-  [ "blobEcho", "packFeed", "packNext", "storeServeRequest", "storeServeCommit" ] ++
+  [ "blobEcho", "packFeed", "packNext", "storeServeRequest", "storeServeCommit",
+    "datasetQuadsBin" ] ++
   Ops.lwsBlobIoOpNames
 
 /-- Largest out region `blobEcho` builds: 67,108,864 bytes. A count above
@@ -607,7 +608,7 @@ def callIO (op : String) (argsJson : String) : IO String :=
       match args with
       | [a, b] => Ops.tdb2ServeOpen a b ByteArray.empty
       | args => pure (errJson s!"tdb2ServeOpen expects 2 arguments, got {args.length}"))
-  | "storeServeRequest" | "storeServeCommit" =>
+  | "storeServeRequest" | "storeServeCommit" | "datasetQuadsBin" =>
       pure (errJson s!"{op} answers a byte region; call it through l4_call_blob_io")
   -- Linked Web Storage 1.0 and the Solid Protocol
   -- (https://github.com/danbri/factoidal/issues/659). `lwsOpen`,
@@ -702,6 +703,13 @@ def callBlobIO (op : String) (argsJson : String) (blob : ByteArray) :
       | .ok [a, b]       => do pure (← Ops.tdb2ServeOpen a b blob, ByteArray.empty)
       | .ok args         => pure (errJson s!"tdb2ServeOpen expects 2 arguments, got {args.length}",
                                   ByteArray.empty)
+  | "datasetQuadsBin" =>
+      match decodeArgs argsJson with
+      | .error e    => pure (errJson e, ByteArray.empty)
+      | .ok [a]     => Ops.datasetQuadsBin a ""
+      | .ok [a, b]  => Ops.datasetQuadsBin a b
+      | .ok args    => pure (errJson s!"datasetQuadsBin expects 1 or 2 arguments, got {args.length}",
+                             ByteArray.empty)
   | "storeServeRequest" =>
       match decodeArgs argsJson with
       | .error e  => pure (errJson e, ByteArray.empty)

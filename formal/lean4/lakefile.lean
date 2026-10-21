@@ -369,6 +369,12 @@ extern_lib libl4exthost pkg := do
 -- normalize, index, eval, output), each followed by the resident memory of
 -- the process, with `--stop-after PHASE` (Harness/QueryPhases.lean,
 -- https://github.com/danbri/factoidal/issues/729).
+-- The phases of the Dataset iteration ops, timed natively
+-- (Harness/IterPhases.lean, https://github.com/danbri/factoidal/issues/900).
+@[default_target] lean_exe «l4iter-phases» where
+  srcDir := "."
+  root := `Harness.IterPhases
+
 @[default_target] lean_exe «l4query-phases» where
   srcDir := "."
   root := `Harness.QueryPhases

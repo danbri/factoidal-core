@@ -73,6 +73,7 @@ import Wasm.Ops.FromDataset
 import L4Factoidal.RDF.Sink
 import L4Factoidal.RDF.Format
 import L4Factoidal.RDF.TermJson
+import L4Factoidal.RDF.QuadsBin
 import L4Factoidal.RDF.Isomorphism
 import L4Factoidal.Syntax.IriResolve
 
@@ -604,6 +605,32 @@ def datasetQuadsJson (h optsJson : String) : IO String :=
         pure ("{\"ok\":true,\"total\":" ++ toString qs.length ++ ",\"offset\":" ++ toString off ++
           ",\"terms\":[" ++ termsText ++ "],\"ixs\":[" ++ ixText ++ "]}")
     | none => pure (okWith (head ++ [("quads", .array (page.map TermJson.encodeQuad))]))
+
+/-- `datasetQuadsBin(handle, optsJson)` — the quads of `quadPage` as ONE byte
+region (`l4_call_blob_io`), in the layout of `QuadsBin.binSpec`: the distinct
+terms in the term codec of DLOG version 2 and each quad as four u32 indices.
+The envelope is `{"ok":true,"total":N,"offset":O,"count":C}`. `optsJson`
+members `offset` (default 0) and `limit` (default all), as `datasetQuadsJson`.
+`QuadsBin.decodeBin_quadsBin`: the region reads back as exactly the page,
+in the line order of `datasetSerialize` N-Quads. A page the region cannot hold
+(a string of 2^32 bytes or more) is refused; `datasetQuadsJson` serves it.
+https://github.com/danbri/factoidal/issues/900 -/
+def datasetQuadsBin (h optsJson : String) : IO (String × ByteArray) := do
+  match ← lookupHandleDataset h with
+  | none => pure (unknownHandle h, ByteArray.empty)
+  | some (ds, _) =>
+    let opts := if optsJson == "" then none else parseJson? optsJson
+    let qs := TermJson.Dataset.quadList ds
+    let n := qs.length
+    let off := (natMember opts "offset").getD 0
+    let lim := (natMember opts "limit").getD n
+    let page := (qs.drop off).take lim
+    match QuadsBin.quadsBin page with
+    | some b =>
+        pure ("{\"ok\":true,\"total\":" ++ toString n ++ ",\"offset\":" ++ toString off ++
+          ",\"count\":" ++ toString page.length ++ "}", b)
+    | none => pure (errJson "datasetQuadsBin: a term string of 2^32 bytes or more; use datasetQuadsJson",
+        ByteArray.empty)
 
 private def changeHandleJson (who h text : String)
     (f : Dataset → List (Option WfIri × Triple) → Dataset) : IO String := do
