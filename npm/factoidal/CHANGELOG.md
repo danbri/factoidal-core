@@ -1,5 +1,35 @@
 # Changelog
 
+## 0.12.0 (unreleased)
+
+Linked Web Storage, two rules of the editor's draft (w3c/lws-protocol
+`9a08ff65`, 2026-10-19), both decided in Lean:
+
+- Container pagination (§LWS Media Type, Pagination;
+  https://github.com/danbri/factoidal/issues/887). A container with more
+  than `pageSize` members (option of `listen`/`openLwsStorage`, default 100,
+  0 turns it off) answers in pages: `Link` relations `first`, `last`, `next`
+  (not on the last page) and `prev` (not on the first page), page URIs
+  `CONTAINER?page=N`, `totalItems` over the full membership, one `ETag` per
+  page. Members are listed in increasing path order, each once (theorem
+  `pageItems_concat`).
+- Client-managed links (§Metadata, §Update Resource;
+  https://github.com/danbri/factoidal/issues/888): `Link` with
+  `Prefer: set-linkset` on PUT (replace) and PATCH (add), `Link` on POST, and
+  JSON Patch or PUT of `application/linkset+json` on `PATH?linkset`.
+  Server-managed relations (`linkset`, `type`, `format`, `size`, `modified`,
+  `up`, `items`, `lws#storage`) answer 409; a malformed link answers 400.
+  Client links are kept in the storage snapshot.
+
+### Breaking changes
+
+- A container listing is in increasing path order. Before, it was in the
+  order of the store (newest write first).
+- A container with more than 100 members returns only its first 100 members
+  unless `pageSize` is set; follow `rel="next"`.
+- PUT on a linkset resource replaces the client links. Before, it answered
+  405.
+
 ## 0.11.0 — 2026-10-21
 
 No RDF, SPARQL, datatype or IRI decision is made in JavaScript any more
