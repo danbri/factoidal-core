@@ -925,13 +925,17 @@ open L4Factoidal.Solid.Server (Requester allowed aclGraphOf requiredMode targets
   authorizationSubject)
 
 /-- The access check of notifications: Web Access Control read access over
-the storage's ACL resources (the policy `Authorization.decide` enforces),
-or everything in the development mode. -/
+the storage's ACL resources, or a `read` access grant
+(`AccessPolicy.grantAllows`, at the store's clock, with no client: a grant
+limited to one client application reaches no notification), which is the
+policy `Authorization.decide` enforces; or everything in the development
+mode. -/
 def wacCanRead (S : Store σ) (cfg : Config) (a : Authorization.AuthzConfig)
     (who : Option String) (st : σ) (p : String) : Bool :=
   a.insecureNoAuth ||
     allowed S aclGraphOf cfg.baseIri st (authorizationSubject p) { webId := who }
-      (requiredMode "GET" (targetsAcl p))
+      (requiredMode "GET" (targetsAcl p)) ||
+    AccessPolicy.grantAllows S st a.access.grants who none (S.now st) "GET" p
 
 /-- One request to a storage that offers notifications: authorization
 (`Authorization.decide`), then the subscription endpoint or the storage

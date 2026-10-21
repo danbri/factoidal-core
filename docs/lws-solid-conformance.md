@@ -307,12 +307,25 @@ server does not advertise.
 | Webhook: Signature Requirements | covers `@method`, `@scheme`, `@authority`, `@path`, `content-type`, `content-digest` (RFC 9530); `created` and `keyid` | tested | `NotificationsTests` "Signatures"; draft-binding |
 | Webhook: Subscription Management | the endpoint lists the subscriber's subscriptions as an LWS container (SHOULD page); GET and DELETE on each | tested (paged at `pageSize`; another agent's subscription is 404) | `NotificationsTests` "Subscription management"; draft-binding; authorization.mjs |
 | Webhook: Notification Delivery | POST to the inbox, body `application/lws+json`; MAY retry; MAY deactivate after repeated failures | tested (3 attempts for no answer, 408, 425, 429, 5xx; 410 or 3 failed deliveries deactivate) | `NotificationsTests` "Delivery outcomes"; draft-binding "503 is tried again" |
-| Access Requests | AccessRequestService, AccessGrantService | missing | https://github.com/danbri/factoidal/issues/913; draft-binding xfail |
+| Access Requests: Discovery | MAY advertise; `AccessRequestService` and `AccessGrantService` service objects; SHOULD `conformsTo` the access profiles | tested (both, with `conformsTo` the Access Profile) | `lwsGuardAccessDiscovery`; draft-binding "Access Requests and Grants: the storage description advertises" |
+| Access Requests: Protocol | the endpoints are LWS containers; GET and POST, DELETE RECOMMENDED; JSON-LD payloads both ways | tested (paged listing with `Link` type Container; 415 for another media type) | `AccessGrantsTests` "The endpoints are LWS containers"; draft-binding "the grant endpoint is an LWS container" |
+| Access Requests: Protocol | an agent POSTs an access request; a storage controller POSTs an access grant; a successful POST MUST answer with `Location` | tested (201 with `Location`; a grant from an agent that is not the controller is 403; theorem `accessStep_grant_needs_controller`) | `lwsGuardAccessCreate`; draft-binding; authorization.mjs "only the storage controller" |
+| Access Requests: Types, Storage, Inbox, Access | `type` MUST include `AccessRequest`/`AccessGrant`; `storage` REQUIRED, a URI; `inbox` OPTIONAL, a URI; `access` REQUIRED, one or more objects; `@context` MUST include the LWS context | tested (400 otherwise; `storage` must name this storage) | `AccessGrantsTests` "Incomplete or malformed grants"; draft-binding "a grant missing type..." |
+| Access Profile: Types, Actions, Assignee, Targets | policy `type` MUST include `AccessPolicy`; `action` one or more of read, modify, create, delete (MUST be supported); `assignee` a URI, `foaf:Agent` MAY give public access; `target` an object with `type` and `value` | tested (400 otherwise; a grant permits exactly its actions on exactly its targets: theorems `grantsPermit_sound`, `grantAllows_sound`, `grantAllows_acl`) | `AccessGrantsTests` "Creating, reading, enforcing"; authorization.mjs "Access grants" |
+| Access Profile: Constraints | each constraint has `leftOperand`, `operator`, `rightOperand`; all MUST be satisfied; MUST support `client`, `format`, `type`, `purpose`, `dateTime` | tested (`purpose` is accepted and no request satisfies it; a window that does not hold permits nothing: theorems `policyPermits_excluded`, `recordPermits_expired`) | `lwsGuardAccessConstraints`; authorization.mjs "constraints must all hold" |
+| Access Requests (overview) | when a grant is created or revoked the server adjusts the access policy | tested (grants are part of `Authorization.decide`, notification checks and the type index; theorem `grantsPermit_revoke`) | authorization.mjs "revoking it ends the access", "subscribe after the revocation" |
+| Access Requests: Notifications | with an `inbox`, SHOULD notify; on grant creation SHOULD notify the inbox of the associated request | tested (one `Create` notification to the grant's inbox and to the inbox of each request naming one of its assignees) | `AccessGrantsTests` "Access requests"; draft-binding "are announced there" |
+| Access Requests: Notification Events | on access request creation the storage controller SHOULD be notified | missing (the draft names no controller inbox) | https://github.com/danbri/factoidal/issues/920; draft-binding xfail |
 | Data resource | any bytes (images, documents) | tested: stored and returned byte for byte; RDF media types are read as UTF-8 and content that is not UTF-8 gets 400 | `lwsGuardBinaryRoundTrip`, `lwsGuardInvalidUtf8Turtle`; draft-binding "Data resources: a non-UTF-8 body round-trips byte for byte"; `tests/lws/binary-bodies.mjs` (https://github.com/danbri/factoidal/issues/889) |
 | (server choice) | request paths with dot segments or encoded traversal are refused | tested | `lwsGuardTraversalRefused`; draft-binding "Paths" |
 | (server choice) | storage persists under `DIR` | tested | `lwsGuardSnapshotRoundTrip`, `lwsGuardSnapshotRefusesTraversal`; draft-binding "Persistence" |
 
-Counts: 70 tested, 2 missing, 1 not applicable (out of 73 rows). Updated
+Counts: 78 tested, 2 missing, 1 not applicable (out of 81 rows). Updated
+2026-10-21 for https://github.com/danbri/factoidal/issues/913: the Access Requests
+row became nine rows of §Access Requests and Grants (eight tested; the
+notification of the controller for a new request is missing, with an xfail,
+https://github.com/danbri/factoidal/issues/920). The count line before this
+update said 70 tested, 2 missing, 1 not applicable (out of 73 rows). Updated
 2026-10-21 for https://github.com/danbri/factoidal/issues/914: the Discovery
 `MoveResource` row and the Move activity row became tested, and nine rows of
 §Moving Resources were added (eight tested; the 301 SHOULD is missing, with
@@ -400,8 +413,8 @@ Solid Protocol's binding is used and the row says so.
 Score, from `lake exe l4lws-probe`:
 
 ```
-guarded checks: 14 pass, 0 fail (out of 14)
-registry: 5 proved, 14 guarded, 0 host-verified, 6 open (out of 25)
+guarded checks: 17 pass, 0 fail (out of 17)
+registry: 9 proved, 17 guarded, 0 host-verified, 5 open (out of 31)
 ```
 
 Table generated by `lake exe l4lws-probe -- --markdown`.
@@ -424,7 +437,7 @@ Table generated by `lake exe l4lws-probe -- --markdown`.
 | `lws-core-14` | Resource Access | unknown requester | `L4Factoidal.Solid.Server.Auth` | guarded | solidGuardSolidOidcDpop |
 | `lws-core-15` | Authentication | LWS makes use of user authentication as defined in specifications for OpenID Connect, SAML 2.0, and self-signed controlled identifiers (CIDs), for example. | `L4Factoidal.Solid.Server.Auth` | guarded | solidGuardSolidOidcDpop |
 | `lws-core-16` | Notifications | notification — a message describing an event that has occurred on a resource. | `L4Factoidal.LWS.Notifications` | guarded | lwsGuardNotificationsDelivered |
-| `lws-core-17` | Access Requests and Grants | access grant — a data object created by a storage controller, expressing an ability for an agent to perform specific actions on storage resources within certain defined constraints. | `(none)` | open | not in the first slice |
+| `lws-core-17` | Access Requests and Grants | access grant — a data object created by a storage controller, expressing an ability for an agent to perform specific actions on storage resources within certain defined constraints. | `L4Factoidal.LWS.AccessPolicy.grantsPermit` | proved | L4Factoidal.LWS.AccessPolicy.grantsPermit_sound |
 | `lws-core-18` | Terminology | storage description — an LWS resource, conforming to the requirements of a W3C Controlled Identifier document [CID-1.0], that describes a storage along with its services and capabilities. | `L4Factoidal.LWS.Discovery.storageDescriptionPath` | open | the link is advertised; the description document does not yet conform to CID 1.0 |
 | `lws-core-19` | Moving Resources | On a successful update, the server MUST atomically remove the resource from the items list of its former parent container and add it to the items list of the destination container. | `L4Factoidal.LWS.Move.move` | proved | L4Factoidal.LWS.move_tree |
 | `lws-index-01` | lws10-index: Discovery | A storage that supports one of these services MUST advertise it with a service object in the service array of its storage description resource: the entry for the Type Index Service MUST have a type equal to TypeIndexService, and the entry for the Type Search Service MUST have a type equal to TypeSearchService. | `L4Factoidal.LWS.Binding.storageDescription` | guarded | L4Factoidal.LWS.SearchTests.lwsGuardIndexDiscovery |
@@ -433,6 +446,12 @@ Table generated by `lake exe l4lws-probe -- --markdown`.
 | `lws-index-04` | lws10-index: Security and Authorization | Unauthorized entries MUST be omitted entirely. | `L4Factoidal.LWS.Search.searchAnswer` | proved | L4Factoidal.LWS.Search.searchAnswer_authorized |
 | `lws-index-05` | lws10-index: Security and Authorization | A server MAY maintain a derived index for performance, but it MUST apply current authorization as a filter over that index on every request. | `L4Factoidal.LWS.Search.serverStep` | guarded | L4Factoidal.LWS.SearchTests.lwsGuardSearchAuthorized |
 | `lws-index-06` | lws10-index: Type and Relation Derivation | When a server enriches the type index from resource content, the types it surfaces MUST be treated identically to those derived from Link headers for the purposes of indexing, search, and authorization filtering. | `L4Factoidal.LWS.TypeIndex.entryFacts` | proved | L4Factoidal.LWS.Search.ixSearch_eq_specSearch |
+| `lws-access-01` | Access Requests and Grants: Discovery | When such support is advertised, a service object describing an endpoint for access requests MUST have a type equal to the string AccessRequestService, and a service object describing an endpoint for access grants MUST have a type equal to the string AccessGrantService. | `L4Factoidal.LWS.Binding.storageDescription` | guarded | L4Factoidal.LWS.AccessGrantsTests.lwsGuardAccessDiscovery |
+| `lws-access-02` | Access Requests and Grants: Protocol | A successful POST operation MUST respond with a Location header set to the URL of the new resource. | `L4Factoidal.LWS.AccessGrants.accessStep` | guarded | L4Factoidal.LWS.AccessGrantsTests.lwsGuardAccessCreate |
+| `lws-access-03` | Access Requests and Grants: Constraints | When multiple constraint objects are present, all of them MUST be satisfied. | `L4Factoidal.LWS.AccessPolicy.policyPermits` | guarded | L4Factoidal.LWS.AccessGrantsTests.lwsGuardAccessConstraints |
+| `lws-access-04` | Access Requests and Grants | When an access grant is created or revoked (deleted), it is the responsibility of the server to adjust any underlying access policy to account for the change. | `L4Factoidal.LWS.AccessPolicy.revoke` | proved | L4Factoidal.LWS.AccessPolicy.grantsPermit_revoke |
+| `lws-access-05` | Access Requests and Grants: Temporal Constraints | The gteq operator defines the start of the window and the lteq operator defines the end. | `L4Factoidal.LWS.AccessPolicy.satisfied` | proved | L4Factoidal.LWS.AccessPolicy.recordPermits_expired |
+| `lws-access-06` | Access Requests and Grants: Protocol | A storage controller creates an access grant by submitting a POST request to the access grant endpoint. | `L4Factoidal.LWS.AccessGrants.accessStep` | proved | L4Factoidal.LWS.AccessGrants.accessStep_grant_needs_controller |
 
 ## Solid Protocol
 

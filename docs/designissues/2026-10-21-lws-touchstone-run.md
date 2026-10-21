@@ -427,6 +427,105 @@ provided by the client during resource creation or modification". The
 reading used here, and the draft issue text, are in
 `docs/designissues/2026-10-21-lws-draft-inconsistencies.md` (Issue 2).
 
+## Access requests and grants (issue 913)
+
+Run 2026-10-21 on branch `claude/wt-lws913` (access requests and grants,
+https://github.com/danbri/factoidal/issues/913, merged with the type index
+branch `claude/wt-lws912` at a7a00af9), `bash tools/lws-touchstone.sh
+--config both`, no `--shim`, same Touchstone commit. The script exits 0.
+Reports: `docs/test-results/lws-touchstone-2026-10-21-access/` (`report.md`
+and `earl.ttl` per configuration, `run.txt` the script output).
+
+| configuration | tests | passed | failed | cantTell | inapplicable |
+|---|---:|---:|---:|---:|---:|
+| ours, `--insecure-no-auth`, direct | 221 | 76 | 0 | 0 | 145 |
+| ours, default authorization, direct | 221 | 215 | 0 | 0 | 6 |
+
+In the authorization row, 40 passes test Touchstone's reference
+authorization server, as before; the tests that send requests to our storage
+server are 175 pass, 0 fail.
+
+Per definition file (out of the file's test count, both configurations):
+
+| file | open | authorization |
+|---|---|---|
+| `core/access_grants` (17) | 1 pass, 0 fail, 16 inapplicable | 17 pass, 0 fail, 0 inapplicable |
+| `core/notifications` (15) | 5 pass, 0 fail, 10 inapplicable | 15 pass, 0 fail, 0 inapplicable |
+| `notifications/webhook` (11) | 0 pass, 0 fail, 11 inapplicable | 11 pass, 0 fail, 0 inapplicable |
+| `index` (40) | 0 pass, 0 fail, 40 inapplicable | 39 pass, 0 fail, 1 inapplicable |
+| `core/moving` (12) | 6 pass, 0 fail, 6 inapplicable | 9 pass, 0 fail, 3 inapplicable |
+
+What became applicable: every test whose prerequisite grants bob (or the
+public) access through the AccessGrantService. Before this branch, under
+authorization: access grants 17 inapplicable; the five index tests
+`type-index-lists-readable-types`, `type-index-omits-unreadable-type`,
+`type-search-authorization-filtered`, `type-search-revoked-not-shown`,
+`type-search-content-types-identical`; the five notification tests
+`subscription-unreadable-topic-refused`, `subscription-after-revocation-refused`,
+`notification-not-delivered-for-unreadable-resource`,
+`notification-stops-after-revocation` and the webhook test
+`webhook-subscription-listed`; and the two moving tests
+`move-needs-create-in-destination`, `move-needs-delete-of-resource`. All
+pass.
+
+The open configuration declares no `Authentication`, so 16 of the 17
+access-grant tests are inapplicable there by Touchstone's own rule
+(EXECUTION.md §4.2 item 1); `access-grant-endpoint-is-container` needs no
+token and passes.
+
+The six inapplicable tests under authorization are the same as before
+except that no access-grant test remains: `linkset-put-405-when-unsupported`
+(we support PUT on the linkset), `pagination-single-page` (applies only to a
+server that does not page a five-member container), the three moving tests
+whose preconditions exclude one another (§ Moving resources), and
+`type-search-content-location-protected` (§ Type index and type search).
+
+How each test is met (all in `formal/lean4/L4Factoidal/LWS/`):
+
+* Discovery and the endpoints (`access-grant-endpoint-is-container`,
+  `access-grant-create`, `access-request-create`, `access-grant-document-shape`):
+  `Binding.storageDescription` with `conformsTo` the Access Profile;
+  `AccessGrants.accessStep`; the served document is the posted one with
+  `@context` as an array and `id` added.
+* Validation (`access-grant-incomplete-refused`,
+  `access-grant-extra-properties-accepted`, `access-grant-left-operands-accepted`):
+  `AccessPolicy.parseDoc`. The draft gives no status for a document that
+  breaks a MUST; we answer 400, which the test accepts as `4xx`.
+* Enforcement (`access-grant-authenticated-agent`, `access-grant-revoke`,
+  `getContainer-public-read`, `readDataResource-public-read`, the constraint
+  tests, `container-listing-filtered-metadata`): `AccessPolicy.grantAllows`
+  in `Authorization.decide`. The `client` constraint compares the token's
+  `client_id` (RFC 9068 §2.2), which the Touchstone harness sets to its own
+  client.
+* `access-grant-inbox-notified`: `AccessGrants.announce`, one `Create`
+  notification to the grant's `inbox`.
+
+Spec and test text read together: no disagreement between a test and the
+draft was found. Three points where the draft is silent and the test and
+this server agree: the draft does not say whether a grant on a container
+reaches its members (Touchstone's `readDataResource-public-read` comment;
+here it does not); it gives no status for a malformed grant (here 400); and
+it gives a request no way to state a `purpose` (Touchstone tests only that a
+`purpose` constraint is accepted; here no request satisfies one). One SHOULD
+is not done: "Access Request creation: When a new access request is
+submitted, the storage controller SHOULD be notified", because the draft
+names no inbox for the controller
+(https://github.com/danbri/factoidal/issues/920, an xfail in
+`tests/lws/draft-binding.mjs`); no Touchstone test covers it.
+
+Gates on the branch (after the merge of `claude/wt-lws912`): full `lake
+build` exit 0 (1788 jobs); `tools/lean-unbuilt-modules.py --gate` 825 of 825
+modules reached; `Wasm/native-smoke.sh` 375 pass, 0 fail (out of 375);
+`npm test` 536 pass, 0 fail, 2 skipped (out of 538); `tests/lws/server.mjs`
+8 pass, 0 fail (out of 8); `authorization.mjs` 28 pass, 0 fail (out of 28);
+`binary-bodies.mjs` 20 pass, 0 fail (out of 20); `draft-binding.mjs` 64
+pass, 0 fail, 4 xfail (out of 68); `scaling.mjs` 12 pass, 0 fail (out of
+12); `tests/solid/server/protocol.mjs` 12 pass, 0 fail (out of 12);
+`tests/solid/server/oidc.mjs` 21 pass, 0 fail (out of 21);
+`tests/solid/client/against-own-server.mjs` 7 pass, 0 fail (out of 7);
+`tools/host-purity-lint.sh` 35 pass, 0 fail (out of 35); `lake exe
+l4lws-probe` guarded checks 17 pass, 0 fail (out of 17).
+
 ## Run details
 
 * Host: Linux, OpenJDK 21.0.12, Maven 3.9.11, Node 22.22.0. No Docker

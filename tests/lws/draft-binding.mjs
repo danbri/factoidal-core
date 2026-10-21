@@ -135,7 +135,15 @@ const CHECKS = [
   'Type search: rel="next" pages through the answer with GET; an altered page link answers 404',
   'Type index: GET lists the types in application/lws+json, paged, with Cache-Control private',
   'Type search: a set-linkset update, a delete and a move are reflected in the next search',
-  'Type search: the index is rebuilt from DIR/lws-state.json after a restart'
+  'Type search: the index is rebuilt from DIR/lws-state.json after a restart',
+  'Access Requests and Grants: the storage description advertises AccessRequestService and AccessGrantService with conformsTo the Access Profile',
+  'Access Requests and Grants: the grant endpoint is an LWS container (application/lws+json, rel="type" Container, items)',
+  'Access Requests and Grants: POST of a grant answers 201 with Location, and the grant reads back in the access data model',
+  'Access Requests and Grants: a grant missing type, storage, access, policy type, action or assignee, or with a bad inbox, target or action, answers 400',
+  'Access Requests and Grants: an access request answers 201 and reads back as an AccessRequest; DELETE cancels it',
+  'Access Requests and Grants: a grant with an inbox, and a grant answering an access request with an inbox, are announced there',
+  'Access Requests and Grants: DELETE revokes a grant (204, then 404)',
+  'Access Requests and Grants: grants and requests survive a restart'
 ]
 
 /** A local webhook receiver: records every POST and answers with the
@@ -891,13 +899,132 @@ async function main () {
           }
         })
 
-      // LWS §Access Requests and Grants is not implemented; the xfail turns
-      // the run red when it starts to pass.
-      await xfail('Access Requests: the storage description advertises an AccessGrantService',
-        'https://github.com/danbri/factoidal/issues/913', async () => {
-          const d = await (await fetch(`${o}/.well-known/lws-storage`)).json()
-          assert(d.service.some((s) => s.type === 'AccessGrantService'), JSON.stringify(d.service))
+      // LWS §Access Requests and Grants
+      // (https://github.com/danbri/factoidal/issues/913). Decided by
+      // formal/lean4/L4Factoidal/LWS/AccessGrants.lean and AccessPolicy.lean.
+      // This server runs without authorization, so every agent is the
+      // storage controller here; enforcement is checked with real tokens in
+      // tests/lws/authorization.mjs.
+      const storageId = `${o}/.well-known/lws-storage`
+      let grants = `${o}/.well-known/lws-access-grants/`
+      let requests = `${o}/.well-known/lws-access-requests/`
+      const grantDoc = (extra = {}, policy = {}) => Object.assign({
+        '@context': ctx,
+        type: ['AccessGrant'],
+        storage: storageId,
+        access: [Object.assign({
+          type: ['AccessPolicy'], action: ['read'], assignee: 'https://id.example/bob',
+          target: { type: 'StorageResource', value: [`${o}/watched/old.txt`] }
+        }, policy)]
+      }, extra)
+      const post = (url, body) => fetch(url, {
+        method: 'POST', headers: { 'content-type': 'application/lws+json' }, body: JSON.stringify(body)
+      })
+      await check('Access Requests and Grants: the storage description advertises AccessRequestService and AccessGrantService with conformsTo the Access Profile', async () => {
+        const d = await (await fetch(`${o}/.well-known/lws-storage`)).json()
+        const g = d.service.find((s) => s.type === 'AccessGrantService')
+        const q = d.service.find((s) => s.type === 'AccessRequestService')
+        assert(g && q, JSON.stringify(d.service))
+        for (const s of [g, q]) {
+          assert(Array.isArray(s.conformsTo) && s.conformsTo.includes('https://www.w3.org/ns/lws#AccessProfile'), JSON.stringify(s))
+        }
+        grants = new URL(g.serviceEndpoint, `${o}/`).href
+        requests = new URL(q.serviceEndpoint, `${o}/`).href
+      })
+      await check('Access Requests and Grants: the grant endpoint is an LWS container (application/lws+json, rel="type" Container, items)', async () => {
+        const r = await fetch(grants, { headers: { accept: 'application/lws+json' } })
+        const j = await r.json()
+        assert(r.status === 200, `answered ${r.status}`)
+        assert((r.headers.get('content-type') || '').startsWith('application/lws+json'), r.headers.get('content-type'))
+        assert(linkTarget(r.headers.get('link'), 'type') === 'https://www.w3.org/ns/lws#Container', r.headers.get('link'))
+        assert(Array.isArray(j.items) && j.type === 'Container', JSON.stringify(j))
+      })
+      let grant = null
+      await check('Access Requests and Grants: POST of a grant answers 201 with Location, and the grant reads back in the access data model', async () => {
+        const r = await post(grants, grantDoc())
+        await r.text()
+        assert(r.status === 201, `answered ${r.status}`)
+        grant = new URL(r.headers.get('location'), grants).href
+        const g = await fetch(grant, { headers: { accept: 'application/lws+json' } })
+        const j = await g.json()
+        assert(g.status === 200, `GET answered ${g.status}`)
+        assert(Array.isArray(j['@context']) && j['@context'].includes('https://www.w3.org/ns/lws/v1'), JSON.stringify(j))
+        assert(j.type.includes('AccessGrant') && j.storage === storageId && j.id === grant, JSON.stringify(j))
+        const p = j.access[0]
+        assert(p.type.includes('AccessPolicy') && Array.isArray(p.action) && p.assignee === 'https://id.example/bob' &&
+          p.target.type === 'StorageResource' && Array.isArray(p.target.value), JSON.stringify(p))
+        const list = await (await fetch(grants)).json()
+        assert(list.items.some((i) => i.id === grant && i.type === 'DataResource'), JSON.stringify(list))
+      })
+      await check('Access Requests and Grants: a grant missing type, storage, access, policy type, action or assignee, or with a bad inbox, target or action, answers 400', async () => {
+        const drop = (x, k) => { const c = Object.assign({}, x); delete c[k]; return c }
+        const p0 = grantDoc().access[0]
+        const bad = [
+          drop(grantDoc(), 'type'), drop(grantDoc(), 'storage'), drop(grantDoc(), 'access'),
+          grantDoc({ access: [] }), grantDoc({ access: [drop(p0, 'type')] }),
+          grantDoc({}, { type: ['urn:x:not-a-policy'] }), grantDoc({ access: [drop(p0, 'action')] }),
+          grantDoc({ access: [drop(p0, 'assignee')] }), grantDoc({}, { target: `${o}/watched/old.txt` }),
+          grantDoc({ inbox: 'not a uri' }), grantDoc({}, { action: ['write'] }),
+          grantDoc({ storage: 'https://other.example/' })
+        ]
+        for (const b of bad) {
+          const r = await post(grants, b)
+          await r.text()
+          assert(r.status === 400, `${JSON.stringify(b)} answered ${r.status}`)
+        }
+        const t = await fetch(grants, { method: 'POST', headers: { 'content-type': 'text/turtle' }, body: 'x' })
+        await t.text()
+        assert(t.status === 415, `text/turtle answered ${t.status}`)
+      })
+      await check('Access Requests and Grants: an access request answers 201 and reads back as an AccessRequest; DELETE cancels it', async () => {
+        const r = await post(requests, grantDoc({ type: ['AccessRequest'] }))
+        await r.text()
+        assert(r.status === 201, `answered ${r.status}`)
+        const q = new URL(r.headers.get('location'), requests).href
+        const j = await (await fetch(q)).json()
+        assert(j.type.includes('AccessRequest'), JSON.stringify(j))
+        const d = await fetch(q, { method: 'DELETE' })
+        await d.text()
+        assert(d.status === 204, `DELETE answered ${d.status}`)
+        const g = await fetch(q)
+        await g.text()
+        assert(g.status === 404, `after DELETE: ${g.status}`)
+      })
+      await check('Access Requests and Grants: a grant with an inbox, and a grant answering an access request with an inbox, are announced there', async () => {
+        const g1 = await post(grants, grantDoc({ inbox: `${receiver.origin}/hook/grant` }))
+        await g1.text()
+        const q = await post(requests, grantDoc({ type: ['AccessRequest'], inbox: `${receiver.origin}/hook/request` },
+          { assignee: 'https://id.example/carol' }))
+        await q.text()
+        const g2 = await post(grants, grantDoc({}, { assignee: 'https://id.example/carol' }))
+        await g2.text()
+        await settle()
+        for (const [path, location] of [['/hook/grant', g1.headers.get('location')], ['/hook/request', g2.headers.get('location')]]) {
+          const ds = receiver.got.filter((d) => d.path === path)
+          assert(ds.length === 1, `${path}: ${ds.length} deliveries`)
+          const a = activitiesOf(ds[0])[0]
+          assert(ds[0].body.type === 'Notification' && a.type.includes('Create') && typeof a.id === 'string' &&
+            typeof a.published === 'string' && a.object.id === new URL(location, grants).href, JSON.stringify(ds[0].body))
+        }
+      })
+      // The draft names no inbox for the storage controller; the xfail
+      // turns the run red when it starts to pass.
+      await xfail('Access Requests and Grants: creating an access request notifies the storage controller',
+        'https://github.com/danbri/factoidal/issues/920', async () => {
+          const before = receiver.got.length
+          const r = await post(requests, grantDoc({ type: ['AccessRequest'] }))
+          await r.text()
+          await settle()
+          assert(receiver.got.length > before, 'no delivery for a new access request')
         })
+      await check('Access Requests and Grants: DELETE revokes a grant (204, then 404)', async () => {
+        const d = await fetch(grant, { method: 'DELETE' })
+        await d.text()
+        assert(d.status === 204, `DELETE answered ${d.status}`)
+        const g = await fetch(grant)
+        await g.text()
+        assert(g.status === 404, `after DELETE: ${g.status}`)
+      })
     } finally {
       await receiver.close()
     }
@@ -1277,6 +1404,45 @@ async function main () {
         }
       } finally {
         await receiver.close()
+      }
+    })
+
+    await check('Access Requests and Grants: grants and requests survive a restart', async () => {
+      const first = await listen({ engine, port: 0, insecureNoAuth: true, now: 5000, dir })
+      let grant
+      let request
+      try {
+        const sid = `${first.origin}/.well-known/lws-storage`
+        const doc = (type) => ({
+          '@context': ['https://www.w3.org/ns/lws/v1'],
+          type: [type],
+          storage: sid,
+          access: [{
+            type: ['AccessPolicy'], action: ['read', 'create'], assignee: 'https://id.example/bob',
+            target: { type: 'Container', value: [`${first.origin}/kept/`] }
+          }]
+        })
+        for (const [path, type] of [['/.well-known/lws-access-grants/', 'AccessGrant'], ['/.well-known/lws-access-requests/', 'AccessRequest']]) {
+          const r = await fetch(`${first.origin}${path}`, {
+            method: 'POST', headers: { 'content-type': 'application/lws+json' }, body: JSON.stringify(doc(type))
+          })
+          await r.text()
+          assert(r.status === 201, `${type} answered ${r.status}`)
+          if (type === 'AccessGrant') grant = new URL(r.headers.get('location')).pathname
+          else request = new URL(r.headers.get('location')).pathname
+        }
+      } finally {
+        await first.close()
+      }
+      const second = await listen({ engine, port: 0, insecureNoAuth: true, dir, baseIri: `${first.origin}/` })
+      try {
+        for (const p of [grant, request]) {
+          const g = await fetch(`${second.origin}${p}`)
+          const j = await g.json()
+          assert(g.status === 200 && j.access[0].action.includes('create'), `${p} after a restart: ${g.status} ${JSON.stringify(j)}`)
+        }
+      } finally {
+        await second.close()
       }
     })
 

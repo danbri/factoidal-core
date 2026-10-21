@@ -38,6 +38,7 @@ import L4Factoidal.LWS.SnapshotSeal
 import L4Factoidal.LWS.Authorization
 import L4Factoidal.LWS.Notifications
 import L4Factoidal.LWS.Search
+import L4Factoidal.LWS.AccessGrants
 import L4Factoidal.JOSE.Base64Url
 import L4Factoidal.Crypto.P256Native
 import L4Factoidal.Crypto.RsaNative
@@ -147,6 +148,10 @@ structure OpenConfig where
   (lws10-index, `L4Factoidal.LWS.Search`)? On unless the configuration says
   `"typeIndex": false`. -/
   typeIndex : Bool := true
+  /-- Does the storage offer access requests and grants (LWS §Access
+  Requests and Grants, `L4Factoidal.LWS.AccessGrants`)? On unless the
+  configuration says `"accessGrants": false`. -/
+  accessGrants : Bool := true
   /-- Random bytes from the host (`entropy`, base64), read once at open:
   the seed of the notification signing key when the snapshot holds none,
   and of the run tag of activity identifiers. -/
@@ -210,6 +215,18 @@ def openConfigOfJson (text : String) : Except String OpenConfig :=
         let notifications := j.field? "notifications" != some (.bool false)
         let moves := j.field? "moves" != some (.bool false)
         let typeIndex := j.field? "typeIndex" != some (.bool false)
+        let accessGrants := j.field? "accessGrants" != some (.bool false)
+        -- The access requests and grants of a snapshot written earlier, read
+        -- again as documents (`AccessPolicy.stateOfJson`), into the policy.
+        let access ← match snapDoc with
+          | some sj => match sj.field? "access" with
+            | none | some .null => .ok {}
+            | some aj =>
+                let c : Config := { baseIri }
+                AccessPolicy.stateOfJson baseIri
+                  (AccessGrants.storageIris c authz) aj
+          | none => .ok {}
+        let authz := { authz with access }
         let entropy ← match j.getString? "entropy" with
           | none => .ok none
           | some t => match Base64.decode? t with
@@ -225,7 +242,8 @@ def openConfigOfJson (text : String) : Except String OpenConfig :=
                 .ok (some ns, key.filter (·.size == 32))
           | none => .ok (none, none)
         .ok { cfg := { baseIri, owner, agent, pageSize }, now, rootAcl, snapshot, authz,
-              notifications, moves, typeIndex, entropy, notif, signingKey, storageKey }
+              notifications, moves, typeIndex, accessGrants, entropy, notif, signingKey,
+              storageKey }
 
 /-- The JWS verifiers over the vendored HACL* primitives (P-256 ECDSA,
 RSA PKCS#1 v1.5, Ed25519): `skills/crypto-policy`. -/
@@ -297,7 +315,8 @@ def lwsOpen (configJson : String) : IO String := do
       let notif := { (oc.notif.getD {}) with run }
       lwsTable.modify (·.insert h
         { cfg := { oc.cfg with notifications := oc.notifications, notificationKeyX := keyX,
-                                moves := oc.moves, typeIndex := oc.typeIndex },
+                                moves := oc.moves, typeIndex := oc.typeIndex,
+                                accessGrants := oc.accessGrants },
           -- The type index is built from the entries in one pass
           -- (`TypeIndex.rebuildEntries`), then kept by the store.
           mem := IxState.ofMem oc.cfg.baseIri
@@ -337,19 +356,24 @@ def lwsStepWith (h requestJson : String) (blob : Option ByteArray) :
                 | some a => if open_.authz.insecureNoAuth then { open_.cfg with agent := some a }
                             else open_.cfg
                 | none   => open_.cfg
-              match Search.serverStep lwsVerifiers MemStore memStoreLaws cfg open_.authz
-                      open_.signer (now?.getD mem.base.clock) r mem open_.notif with
+              let now := now?.getD mem.base.clock
+              match AccessGrants.serverStepWith lwsVerifiers (IndexedStore MemStore memStoreLaws)
+                      cfg open_.authz open_.signer now r mem open_.notif
+                      (fun r st ns => Search.serverStep lwsVerifiers MemStore memStoreLaws cfg
+                        open_.authz open_.signer now r st ns) with
               | .inl (issuer, url) =>
                   pure (noBytes (okWith [("fetch", .object [("issuer", .string issuer),
                                                    ("url", .string url)])]))
-              | .inr (resp, mem', notif', ds) =>
-                  lwsTable.modify (·.insert h { open_ with mem := mem', notif := notif' })
+              | .inr (resp, mem', notif', access', ds) =>
+                  let authz' := { open_.authz with access := access' }
+                  lwsTable.modify (·.insert h { open_ with mem := mem', notif := notif', authz := authz' })
                   -- Every mutation advances the clock (`StoreLaws.nowTick`),
                   -- so a changed clock is exactly "the storage changed"; a
                   -- subscription change advances the notification revision.
                   -- A host that persists writes `lwsSnapshot` when this is true.
                   let changed := mem'.base.clock != mem.base.clock ||
-                    notif'.revision != open_.notif.revision
+                    notif'.revision != open_.notif.revision ||
+                    access'.revision != open_.authz.access.revision
                   pure (okWith ([ ("response", jsonOfResponse resp blobOut)
                                 , ("changed", .bool changed) ] ++
                                 (if ds.isEmpty then []
@@ -460,7 +484,8 @@ def lwsSnapshot (h : String) (optsJson : String := "") : IO String := do
         | .object fs, some sk => .object (fs ++ [("signingKey", .string (Base64.encode sk))])
         | other, _ => other
       let snap := match snapshotJson open_.mem.base with
-        | .object fs => Json.object (fs ++ [("notifications", notif)])
+        | .object fs => Json.object (fs ++ [("notifications", notif),
+            ("access", AccessPolicy.stateJson open_.cfg.baseIri open_.authz.access)])
         | other => other
       pure (snapshotAnswer open_.storageKey optsJson snap)
 
