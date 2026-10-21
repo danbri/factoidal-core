@@ -761,6 +761,7 @@ import L4Factoidal.LWS.AccessGrants
 import L4Factoidal.LWS.AccessGrantsTests
 import L4Factoidal.LWS.Merkle
 import L4Factoidal.LWS.MerkleTests
+import L4Factoidal.LWS.MerkleHttp
 import L4Factoidal.Solid.Tests
 
 -- XMPP / GC3 (https://github.com/danbri/factoidal/ ... xmpp/DESIGN.md

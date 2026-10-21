@@ -248,6 +248,10 @@ export async function openLwsStorage (options = {}) {
   if (options.searchResults === true) config.searchResults = true
   if (typeof options.searchResultsTtl === 'number') config.searchResultsTtl = options.searchResultsTtl
   if (typeof options.searchResultsMax === 'number') config.searchResultsMax = options.searchResultsMax
+  // Merkle hashes (https://github.com/danbri/factoidal/issues/919): off
+  // unless the caller turns them on (L4Factoidal/LWS/MerkleHttp.lean decides
+  // every field and member they add).
+  if (options.merkle === true) config.merkle = true
   config.entropy = entropyBase64()
   // Encryption at rest (issue 921): the key text from `storageKey` or the
   // environment variable FACTOIDAL_LWS_KEY, passed unread. The engine checks

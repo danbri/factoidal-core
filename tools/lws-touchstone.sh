@@ -12,7 +12,7 @@
 #
 # USAGE
 #   bash tools/lws-touchstone.sh [--config open|auth|both] [--shim]
-#                                [--unstable-search-results]
+#                                [--unstable-search-results] [--merkle]
 #
 #   --config open  our server with --insecure-no-auth
 #   --config auth  our server with authorization on (the default of
@@ -38,6 +38,10 @@
 #                  (https://github.com/danbri/factoidal/issues/922; lws10-index
 #                  defines no such resource). Off by default; the target ids
 #                  get the suffix "-unstable". A default run never sets it.
+#   --merkle       start the server with `lws-serve --merkle`: the optional
+#                  Merkle hashes (https://github.com/danbri/factoidal/issues/919;
+#                  Repr-Digest, container roots). Off by default; the target
+#                  ids get the suffix "-merkle". A default run never sets it.
 #
 # ENVIRONMENT
 #   TOUCHSTONE_SRC   an existing Touchstone clone to copy (it is not changed);
@@ -82,12 +86,14 @@ fi
 CONFIG=both
 SHIM=0
 UNSTABLE=()
+MERKLE=()
 SUFFIX=""
 while [ $# -gt 0 ]; do
   case "$1" in
     --config) CONFIG="${2:-}"; shift 2 ;;
     --shim) SHIM=1; shift ;;
-    --unstable-search-results) UNSTABLE=(--unstable-search-results); SUFFIX="-unstable"; shift ;;
+    --unstable-search-results) UNSTABLE=(--unstable-search-results); SUFFIX="$SUFFIX-unstable"; shift ;;
+    --merkle) MERKLE=(--merkle); SUFFIX="$SUFFIX-merkle"; shift ;;
     -h|--help) sed -n '2,70p' "$0"; exit 0 ;;
     *) echo "lws-touchstone: unknown argument $1" >&2; exit 2 ;;
   esac
@@ -248,7 +254,7 @@ wait_for () {
 start_server () {
   local name="$1" dir="$2" port="$3" base="$4"; shift 4
   node "$SERVE" lws-serve "$dir" --port "$port" --host 127.0.0.1 --base "$base" \
-    --page-size "${LWS_PAGE_SIZE:-4}" ${UNSTABLE[@]+"${UNSTABLE[@]}"} "$@" \
+    --page-size "${LWS_PAGE_SIZE:-4}" ${UNSTABLE[@]+"${UNSTABLE[@]}"} ${MERKLE[@]+"${MERKLE[@]}"} "$@" \
     > "$WORK/$name-server.log" 2>&1 &
   PIDS+=($!)
   wait_for "$WORK/$name-server.log" '^http://' 60 || {
@@ -368,7 +374,8 @@ if [ "$CONFIG" = auth ] || [ "$CONFIG" = both ]; then
 fi
 
 [ "$SHIM" = 1 ] && echo "NOTE: --shim was on; these are diagnostic numbers, not conformance scores."
-[ -n "$SUFFIX" ] && echo "NOTE: --unstable-search-results was on (issue 922): an anticipatory, unstable extension."
+[ ${#UNSTABLE[@]} -gt 0 ] && echo "NOTE: --unstable-search-results was on (issue 922): an anticipatory, unstable extension."
+[ ${#MERKLE[@]} -gt 0 ] && echo "NOTE: --merkle was on (issue 919): Merkle hashes, an optional extension."
 case "$WORST" in
   0) echo "lws-touchstone: every configuration ran; no test failed" ;;
   1) echo "lws-touchstone: FAIL" ;;

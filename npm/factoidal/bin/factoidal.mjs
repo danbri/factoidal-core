@@ -333,7 +333,7 @@ https://www.w3.org/TR/sparql11-service-description/`,
 usage: factoidal lws-serve DIR (--issuer IRI | --auth-config FILE | --insecure-no-auth)
                          [--owner WEBID] [--root-acl FILE] [--audience IRI]
                          [--port N] [--host ADDRESS] [--base IRI] [--page-size N]
-                         [--unstable-search-results]
+                         [--unstable-search-results] [--merkle]
 
 Starts a Node HTTP server that answers every request through the engine's
 lwsStep operation.
@@ -365,6 +365,15 @@ It protects the file on disk only (formal/lean4/L4Factoidal/LWS/SnapshotSeal.lea
                   Content-Location (RFC 10008 section 2.3). lws10-index
                   defines no such resource; this is likely to change.
                   https://github.com/danbri/factoidal/issues/922
+  --merkle        off by default: keep a SHA-256 digest of every resource
+                  and a Merkle root of every container, and show them: an
+                  RFC 9530 Repr-Digest field on GET of a resource, a
+                  Factoidal-Merkle-Root field and listing member on a
+                  container, and the storage root's digest in the storage
+                  description (roots to the storage controller only under
+                  authorization). Entity tags do not change. The hashes are
+                  rebuilt when the storage is opened, not stored.
+                  https://github.com/danbri/factoidal/issues/919
 
 Authorization (LWS editor's draft, section Authorization; one of the three
 is required):
@@ -1364,6 +1373,7 @@ async function commandLwsServe (positional, options) {
       ...(typeof options.base === 'string' ? { baseIri: options.base } : {}),
       ...(options['page-size'] !== undefined ? { pageSize: pageSizeOption(options['page-size']) } : {}),
       ...(options['unstable-search-results'] === true ? { searchResults: true } : {}),
+      ...(options.merkle === true ? { merkle: true } : {}),
       ...(insecure ? { insecureNoAuth: true } : { auth }),
       ...(typeof options.owner === 'string' ? { owner: options.owner } : {}),
       ...(typeof options['root-acl'] === 'string'
