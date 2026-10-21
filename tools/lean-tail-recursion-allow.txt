@@ -1456,3 +1456,12 @@ L4Factoidal_SPARQL_ExistsIndex_bgpNonempty  # (b) one frame for each triple patt
 L4Factoidal_LWS_addAt  # (b) the depth is the nesting of the JSON document the pointer walks
 L4Factoidal_LWS_removeAt  # (b) the depth is the nesting of the JSON document the pointer walks
 L4Factoidal_LWS_setAt  # (b) the depth is the nesting of the JSON document the pointer walks
+# --- JS purity ops (issue 894, 2026-10-21) ---
+L4Factoidal_RDF_TermJson_encodeTerm  # (b) depth is the RDF 1.2 triple-term nesting of one term, the same bound as L4Factoidal_SPARQL_jsonOfTerm
+L4Factoidal_RDF_TermJson_decodeTermFuel  # (b) depth is the triple-term nesting of one JSON term (fuel = its JSON nesting), as L4Factoidal_SPARQL_parseSrjBindingValueFuel
+L4Factoidal_RDF_TermJson_Term_nest  # (s) specification only: the fuel theorem of decodeTermFuel; no executed caller
+L4Factoidal_RDF_TermJson_jsonDepth  # (b) depth is the nesting of one JSON term value a host sent
+L4Factoidal_RDF_TermJson_fieldsDepth  # (b) members of one JSON object of one term (at most five)
+L4Factoidal_RDF_TermJson_itemsDepth  # (b) items of one JSON array of one quad (at most four)
+L4Factoidal_XSD_JsValue_natLex  # (c) frames = decimal digits of one exponent or one integer value of a JS answer (logarithmic in the value)
+L4Factoidal_XSD_JsValue_dropZerosN  # (c) characters of one JS Number::toString text (at most 25 digits)

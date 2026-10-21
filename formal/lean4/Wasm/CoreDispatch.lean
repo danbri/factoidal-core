@@ -105,6 +105,19 @@ def coreIOOpNames : List String :=
   , "datasetMatchCount"
   , "datasetAddQuads"
   , "datasetDeleteQuads"
+  , "datasetQuadsJson"
+  , "datasetAddQuadsJson"
+  , "datasetDeleteQuadsJson"
+  , "datasetFromQuadsJson"
+  , "datasetGraphNames"
+  , "datasetGraphAsDefault"
+  , "datasetIsomorphic"
+  , "termsToNTriples"
+  , "resolveIri"
+  , "queryForm"
+  , "engineTables"
+  , "parseQuadsJson"
+  , "quadsToNQuads"
   , "extRegister"
   , "extUnregister"
   , "extClear"
@@ -308,6 +321,19 @@ def callIOArgsBy (extra : ExtraReader) (op : String) (args : List String) :
   | "datasetMatchCount" => some (arityIO2 op Ops.datasetMatchCount args)
   | "datasetAddQuads"  => some (arityIO2 op Ops.datasetAddQuads args)
   | "datasetDeleteQuads" => some (arityIO2 op Ops.datasetDeleteQuads args)
+  | "datasetQuadsJson" => some (arityIO2 op Ops.datasetQuadsJson args)
+  | "datasetAddQuadsJson" => some (arityIO2 op Ops.datasetAddQuadsJson args)
+  | "datasetDeleteQuadsJson" => some (arityIO2 op Ops.datasetDeleteQuadsJson args)
+  | "datasetFromQuadsJson" => some (arityIO1 op Ops.datasetFromQuadsJson args)
+  | "datasetGraphNames" => some (arityIO1 op Ops.datasetGraphNames args)
+  | "datasetGraphAsDefault" => some (arityIO2 op Ops.datasetGraphAsDefault args)
+  | "datasetIsomorphic" => some (arityIO2 op Ops.datasetIsomorphic args)
+  | "termsToNTriples" => some (arityIO1 op Ops.termsToNTriples args)
+  | "resolveIri" => some (arityIO2 op Ops.resolveIriOp args)
+  | "queryForm" => some (arityIO1 op Ops.queryForm args)
+  | "engineTables" => some (arityIO0 op Ops.engineTables args)
+  | "parseQuadsJson" => some (arityIO3 op (Ops.parseQuadsJsonBy extra) args)
+  | "quadsToNQuads" => some (arityIO1 op Ops.quadsToNQuadsText args)
   -- Each document parsed through the IO entry gets its own blank-node scope
   -- (`d<N>_`), https://github.com/danbri/factoidal/issues/685.
   | "parseToDatasetJson" => some (arityIO3 op (Ops.parseToDatasetJsonScopedBy extra) args)

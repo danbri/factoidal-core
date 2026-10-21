@@ -45,6 +45,7 @@ import Wasm.Ops.Support
 import L4Factoidal.SPARQL.Expr
 import L4Factoidal.SPARQL.ResultsJson
 import L4Factoidal.Geo.Functions
+import L4Factoidal.XSD.JsValue
 
 namespace L4Wasm.Ops
 
@@ -66,14 +67,30 @@ def extArgsJson (args : List EvalResult) : Option String :=
   (args.mapM EvalResult.toTerm?).map fun ts =>
     (Json.array (ts.map jsonOfTerm)).toString
 
-/-- Decode the host's answer. The empty string, an unparsable
-document, and a document the SRJ binding-value decoder rejects are all
-the same §17.6 error. -/
+/-- The literal of a JavaScript value the host tagged with its JavaScript type,
+`{"js":"number"|"bigint"|"boolean"|"string","v":…}`: the datatype and the
+lexical form are `XSD.JsValue.jsLiteral`'s choice
+(https://github.com/danbri/factoidal/issues/894 item 3). -/
+def jsValueTerm (j : Json) : Option Term := do
+  let tag ← j.getString? "js"
+  let v ← match j.field? "v" with
+    | some (.string x) => some x
+    | some (.bool b) => some (if b then "true" else "false")
+    | _ => none
+  let (dt, lex) ← L4Factoidal.XSD.JsValue.jsLiteral tag v
+  mkResultLiteral lex ("http://www.w3.org/2001/XMLSchema#" ++ dt) none
+
+/-- Decode the host's answer: a tagged JavaScript value (`jsValueTerm`) or an
+SRJ binding-value object (a term the host built). The empty string, an
+unparsable document, and a document both decoders reject are all the same
+§17.6 error. -/
 def extAnswer (s : String) : Option EvalResult :=
   if s.isEmpty then none
   else match parseJson s with
     | .error _ => none
-    | .ok j => (parseBindingValueJson j).map EvalResult.term
+    | .ok j =>
+        if (j.field? "js").isSome then (jsValueTerm j).map EvalResult.term
+        else (parseBindingValueJson j).map EvalResult.term
 
 /-- The extension table a query runs with: the built-in `geof:` family
 first, then the host for a registered IRI, then the §17.6 error.
@@ -127,5 +144,19 @@ def extClear : IO String := do
 /-- `extList()` — the registered IRIs, in registration order. -/
 def extList : IO String := do
   pure (registryEnvelope (← extRegistry.get))
+
+#guard (extAnswer "{\"js\":\"number\",\"v\":\"1e+21\"}").isSome
+#guard match extAnswer "{\"js\":\"number\",\"v\":\"1e+21\"}" with
+  | some (.term (.literal l)) => l.val.lexicalForm == "1.0E21" &&
+      l.val.datatype.val == "http://www.w3.org/2001/XMLSchema#double"
+  | _ => false
+#guard match extAnswer "{\"js\":\"number\",\"v\":\"7\"}" with
+  | some (.term (.literal l)) => l.val.datatype.val == "http://www.w3.org/2001/XMLSchema#integer"
+  | _ => false
+#guard match extAnswer "{\"js\":\"boolean\",\"v\":true}" with
+  | some (.term (.literal l)) => l.val.lexicalForm == "true"
+  | _ => false
+#guard (extAnswer "{\"js\":\"number\",\"v\":\"x\"}").isNone
+#guard (extAnswer "{\"js\":\"symbol\",\"v\":\"x\"}").isNone
 
 end L4Wasm.Ops

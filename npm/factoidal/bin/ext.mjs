@@ -33,10 +33,11 @@
 // times the physical plan evaluates the expression, and across
 // re-evaluation rounds.
 
-const XSD = 'http://www.w3.org/2001/XMLSchema#'
 
 /** How many evaluation rounds an async resolution may take. */
 export const EXT_MAX_ROUNDS = 25
+
+import { termToJson } from '../rdfjs.mjs'
 
 const extFunctions = new Map()
 const extRegistered = new Set()
@@ -45,29 +46,26 @@ let extPending = []
 let bridgeInstalled = false
 
 /**
- * Encode one JavaScript answer as an SRJ binding-value object, as a JSON
- * string. `''` means "no value" — the §17.6 error.
+ * Encode one JavaScript answer for Wasm/Ops/ExtFns.lean, as a JSON string:
+ * the value tagged with its JavaScript type ({js, v}; a number as its
+ * Number::toString text), or a term object. The engine chooses the datatype
+ * and the lexical form (L4Factoidal.XSD.JsValue.jsLiteral,
+ * https://github.com/danbri/factoidal/issues/894 item 3). `''` means
+ * "no value", the section 17.6 error.
  */
 function encodeAnswer (out) {
   if (out === null || out === undefined) return ''
-  if (typeof out === 'boolean') {
-    return JSON.stringify({ type: 'literal', value: out ? 'true' : 'false', datatype: XSD + 'boolean' })
+  switch (typeof out) {
+    case 'boolean': return JSON.stringify({ js: 'boolean', v: out })
+    case 'number': return JSON.stringify({ js: 'number', v: Object.is(out, -0) ? '-0' : String(out) })
+    case 'bigint': return JSON.stringify({ js: 'bigint', v: out.toString() })
+    case 'string': return JSON.stringify({ js: 'string', v: out })
+    case 'object':
+      if (typeof out.type === 'string') return JSON.stringify(out)
+      if (typeof out.termType === 'string') return JSON.stringify(termToJson(out))
+      return ''
+    default: return ''
   }
-  if (typeof out === 'number') {
-    if (!Number.isFinite(out)) return ''
-    return Number.isInteger(out)
-      ? JSON.stringify({ type: 'literal', value: String(out), datatype: XSD + 'integer' })
-      : JSON.stringify({ type: 'literal', value: String(out), datatype: XSD + 'double' })
-  }
-  if (typeof out === 'string') {
-    return JSON.stringify({ type: 'literal', value: out })
-  }
-  if (typeof out === 'object' && typeof out.type === 'string') {
-    // Already an SRJ binding-value object (or an RDF/JS-shaped term the
-    // caller built): pass it through and let the Lean decoder judge it.
-    return JSON.stringify(out)
-  }
-  return ''
 }
 
 /** The synchronous bridge the wasm module calls. */

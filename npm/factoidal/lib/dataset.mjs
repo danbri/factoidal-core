@@ -15,21 +15,16 @@
 // released by a FinalizationRegistry callback. Every method of a disposed
 // Dataset throws a TypeError that names the method.
 
-import { nquadsLineToQuad, quadToNQuads, termToNQuads, termFromSrj } from '../rdfjs.mjs';
+import { dataFactory, quadFromJson, quadToJson, termToJson, termFromSrj } from '../rdfjs.mjs';
 
 const INTERNAL = Symbol('factoidal.Dataset.internal');
 
-// Writer names (lower case) -> the engine's writer tag. JSON-LD is served
+// Writer names (lower case) -> the engine's writer tag: the engine's table
+// (op engineTables, `writerFormats`), read once per engine. JSON-LD is served
 // by the op datasetToJsonLd; the SPARQL results formats are query outputs.
-const WRITER_TAGS = {
-  nquads: 'nquads', nq: 'nquads', 'n-quads': 'nquads',
-  ntriples: 'ntriples', nt: 'ntriples', 'n-triples': 'ntriples',
-  turtle: 'turtle', ttl: 'turtle',
-  trig: 'trig',
-  rdfxml: 'rdfxml', 'rdf-xml': 'rdfxml', rdf: 'rdfxml',
-  jsonld: 'jsonld', 'json-ld': 'jsonld',
-  rdfc: 'rdfc', canonical: 'rdfc', 'rdfc-1.0': 'rdfc',
-};
+// `WRITER_TAGS` stays exported for callers that read it; it is filled from
+// the engine on the first Dataset.
+const WRITER_TAGS = {};
 
 const VERSIONS = { '1.1': '11', '1.2': '12' };
 
@@ -56,6 +51,15 @@ function envelope(jsonText, what) {
 
 const SERIALIZE_OPTIONS = ['format', 'version', 'prefixes', 'literalShorthand',
   'useNativeTypes', 'useRdfType', 'rdfDirection'];
+
+// The quads of the compact answer of datasetQuadsJson: each distinct term is
+// built once and shared (TermJson.compactCertified).
+function quadsFromCompact(terms, ixs) {
+  const ts = terms.map(termFromSrj);
+  const dg = dataFactory.defaultGraph();
+  return ixs.map((ix) => dataFactory.quad(ts[ix[0]], ts[ix[1]], ts[ix[2]],
+    ix.length > 3 ? ts[ix[3]] : dg));
+}
 
 class Dataset {
   /** @private Datasets come from parse(), csvwToRdf() and the other producers. */
@@ -214,11 +218,12 @@ class Dataset {
   _write(opts) {
     const e = this._ctx.e;
     const name = String(opts.format || 'nquads').toLowerCase();
-    const tag = WRITER_TAGS[name];
+    const writerTags = this._ctx.tables().writerFormats;
+    const tag = writerTags[name];
     if (!tag) {
       throw new TypeError(
         `Dataset.serialize: unknown format '${opts.format}'. Known formats: ` +
-        [...new Set(Object.values(WRITER_TAGS))].join(', '));
+        [...new Set(Object.values(writerTags))].join(', '));
     }
     let suffix = '';
     if (opts.version !== undefined) {
@@ -273,40 +278,32 @@ class Dataset {
   }
 
   /**
-   * RDF/JS quads, read from the engine's N-Quads text one line at a time.
+   * RDF/JS quads, built from the engine's term objects (op datasetQuadsJson),
+   * in the line order of toNQuads(). No N-Quads text is read here.
    * @returns {Iterator<object>}
    */
   *[Symbol.iterator]() {
     this._open('iterate');
-    if (this._quads) { yield* this._quads; return; }
-    const text = this.toNQuads();
-    let start = 0;
-    let lineNo = 0;
-    while (start < text.length) {
-      let end = text.indexOf('\n', start);
-      if (end < 0) end = text.length;
-      lineNo += 1;
-      const line = text.slice(start, end);
-      start = end + 1;
-      const q = nquadsLineToQuad(line, lineNo);
-      if (q) yield q;
+    if (!this._quads) {
+      const r = envelope(this._ctx.e.datasetQuadsJson(this._handle, '{"compact":true}'), 'iterate');
+      this._quads = Object.freeze(r.ixs ? quadsFromCompact(r.terms, r.ixs) : r.quads.map((q) => quadFromJson(q)));
     }
+    yield* this._quads;
   }
 
   /** Every quad as an array. */
   toArray() {
     this._open('toArray');
-    if (!this._quads) this._quads = Object.freeze([...this]);
+    if (!this._quads) for (const _q of this) break;
     return this._quads.slice();
   }
 
   // A quad pattern for the ops datasetMatch and datasetMatchCount: four
-  // N-Triples term tokens, '' for an unbound position, 'DEFAULT' for the
-  // default graph.
+  // engine term objects, null for an unbound position, {type:'default'} for
+  // the default graph.
   _pattern(subject, predicate, object, graph) {
-    const tok = (t) => (t == null ? '' : termToNQuads(t));
-    const g = graph == null ? '' : (graph.termType === 'DefaultGraph' ? 'DEFAULT' : termToNQuads(graph));
-    return JSON.stringify([tok(subject), tok(predicate), tok(object), g]);
+    return JSON.stringify([termToJson(subject), termToJson(predicate), termToJson(object),
+      termToJson(graph)]);
   }
 
   /** RDF/JS DatasetCore.has: one indexed lookup in the engine. */
@@ -336,7 +333,8 @@ class Dataset {
    */
   add(quad) {
     this._open('add');
-    const r = envelope(this._ctx.e.datasetAddQuads(this._handle, quadToNQuads(quad)), 'add');
+    const r = envelope(this._ctx.e.datasetAddQuadsJson(this._handle,
+      JSON.stringify([quadToJson(quad)])), 'add');
     this._changed(r.count);
     return this;
   }
@@ -344,7 +342,8 @@ class Dataset {
   /** RDF/JS DatasetCore.delete: remove one quad. */
   delete(quad) {
     this._open('delete');
-    const r = envelope(this._ctx.e.datasetDeleteQuads(this._handle, quadToNQuads(quad)), 'delete');
+    const r = envelope(this._ctx.e.datasetDeleteQuadsJson(this._handle,
+      JSON.stringify([quadToJson(quad)])), 'delete');
     this._changed(r.count);
     return this;
   }

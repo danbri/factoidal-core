@@ -1,5 +1,80 @@
 # Changelog
 
+## 0.11.0 (unreleased)
+
+No RDF, SPARQL, datatype or IRI decision is made in JavaScript any more
+(https://github.com/danbri/factoidal/issues/894; owner, 2026-10-21: "The ja
+leak fix is p0"). The engine parses, writes, escapes, compares and chooses
+datatypes; the JavaScript copies term components and calls ops.
+`tools/host-purity-lint.sh` group 3 scans the npm and hub JavaScript for RDF
+syntax and runs in `npm test`.
+
+### Breaking changes
+
+These shapes could not be kept:
+
+- The N-Quads text functions of `@factoidal/core/rdfjs` (`nquadsToQuads`,
+  `nquadsLineToQuad`, `quadsToNQuads`, `quadToNQuads`, `termToNQuads`,
+  `DatasetCore.fromNQuads`, `DatasetCore.prototype.toNQuads`) call the engine.
+  They throw until the engine is loaded: `await ready()` (new) or any other
+  `@factoidal/core` call first. `nquadsToQuads` now rejects a line the
+  N-Quads grammar rejects (before, `<http://e/a b>` was read as an IRI), and
+  the writers escape as the engine's canonical N-Triples form does (before,
+  `\b`, `\f` and other control characters were written raw).
+- A JavaScript number answered by a registered extension function becomes
+  `xsd:integer` only for an integer within ±(2^53 − 1); every other number is
+  an `xsd:double` in the XSD 1.1 canonical form (`1e21` is `"1.0E21"`, before
+  `"1e+21"^^xsd:integer`; `0.1` is `"1.0E-1"`, before `"0.1"`). `NaN`,
+  `Infinity` and `-Infinity` answer `"NaN"`, `"INF"`, `"-INF"`; before they
+  were the §17.6 error. A `bigint` answers `xsd:integer`
+  (`L4Factoidal.XSD.JsValue.jsLiteral`).
+- `queryHdt` answers a Dataset for CONSTRUCT and DESCRIBE; before it threw a
+  TypeError chosen by a regular expression over the query text.
+- `Literal` has a `direction` member (`''`, `'ltr'`, `'rtl'`), and a
+  directional language-tagged string from the engine keeps its direction and
+  its `rdf:dirLangString` datatype; `equals` compares it.
+
+### New
+
+- `isomorphic(a, b)`: dataset isomorphism by the engine
+  (`Dataset.isomorphicOutcome`, blank nodes in triple terms included).
+  `@factoidal/core/fn`'s `equals` uses it.
+- `fromQuads(quads)`: a Dataset from RDF/JS quads, sent as term components.
+- `ready()`: load the engine. `engineTables()`: the engine's format,
+  regime, query-output and pack-syntax name tables.
+- Ops (formal/lean4/Wasm/Ops/Handles.lean): `datasetQuadsJson`,
+  `datasetAddQuadsJson`, `datasetDeleteQuadsJson`, `datasetFromQuadsJson`,
+  `datasetGraphNames`, `datasetGraphAsDefault`, `datasetIsomorphic`,
+  `parseQuadsJson`, `quadsToNQuads`, `termsToNTriples`, `resolveIri`,
+  `queryForm`, `engineTables`; `datasetMatch`/`datasetMatchCount` take term
+  objects. Theorems: `TermJson.decodeTerm_encodeTerm`,
+  `TermJson.decodeQuad_encodeQuad`, `TermJson.mem_quadList_default`,
+  `TermJson.mem_quadList_named`, `TermJson.toCanonicalNQuads_eq_quadList`,
+  `TermJson.quadPage_append`, `XSD.JsValue.doubleLexical_inLexicalSpace`,
+  `XSD.JsValue.integerLexical_inLexicalSpace`,
+  `XSD.JsValue.jsLiteral_number_double`, `XSD.JsValue.jsLiteral_number_integer`.
+
+### Known costs
+
+- Iterating a Dataset of 60,000 quads takes 334 ms; on main it took 214 ms
+  (+56%). The Lean op `datasetQuadsJson` takes 235 ms in wasm, against 165 ms
+  for the N-Quads writer. Tracked by https://github.com/danbri/factoidal/issues/900,
+  with the expected-failure check `test/dataset-iterate-speed.test.mjs`.
+  `match` and `has` did not get slower.
+
+### Fixed
+
+- `graphs()` (both APIs) no longer merges an IRI graph and a blank-node graph
+  whose strings are equal.
+- `Dataset` iteration builds its quads from the engine's term objects; it no
+  longer parses N-Quads text in JavaScript.
+- The Solid client resolves a relative target against `baseIri` by RFC 3986
+  §5.2 (op `resolveIri`); before it concatenated strings.
+- `factoidal query` table cells and `factoidal inspect` graph names are the
+  engine's canonical N-Triples forms (escaped); `factoidal pack` reads its
+  suffix table from the engine and detects the syntax of a file with an
+  unknown suffix from its content.
+
 ## 0.10.0 (unreleased)
 
 ### Breaking changes

@@ -476,6 +476,23 @@ export function graphs(dataset: Dataset): Array<[iri: string, graph: Dataset]>;
  */
 export function canonicalHash(datasetOrGraph: Dataset): Promise<string>;
 
+/**
+ * Whether two datasets are isomorphic (RDF 1.1 Concepts 3.6 and 4; blank
+ * nodes inside RDF 1.2 triple terms included). The engine decides
+ * (op datasetIsomorphic); rejects when its blank-node search budget is
+ * exceeded.
+ */
+export function isomorphic(a: DataInput, b: DataInput, options?: { format?: string; baseIRI?: string }): Promise<boolean>;
+
+/** A Dataset holding RDF/JS quads; each term is sent to the engine as its components. */
+export function fromQuads(quads: Iterable<Quad>): Promise<Dataset>;
+
+/** Load the engine. Afterwards the N-Quads text functions of `@factoidal/core/rdfjs` work. */
+export function ready(): Promise<void>;
+
+/** The engine's name tables: format names, entailment regimes, query outputs, pack syntaxes. */
+export function engineTables(): Promise<Record<string, unknown>>;
+
 /** A SHACL validation-report term (see shaclValidate). */
 export interface ShaclValidateResult {
   conforms: boolean;
@@ -1329,6 +1346,10 @@ declare const _default: {
   canonicalize: typeof canonicalize;
   graphs: typeof graphs;
   canonicalHash: typeof canonicalHash;
+  isomorphic: typeof isomorphic;
+  fromQuads: typeof fromQuads;
+  ready: typeof ready;
+  engineTables: typeof engineTables;
   shaclValidate: typeof shaclValidate;
   shexValidate: typeof shexValidate;
   owlClosure: typeof owlClosure;

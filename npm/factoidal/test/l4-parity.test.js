@@ -597,13 +597,14 @@ test('queryHdt: accepts an ArrayBuffer, not just a Buffer/Uint8Array',
     assert.equal(rows[0].get('n').value, '343');
   });
 
-test('queryHdt: CONSTRUCT rejects (SELECT/ASK only over HDT)',
+test('queryHdt: CONSTRUCT answers a Dataset',
   { skip: !HAVE_HDT && 'HDT fixture not found' }, async (t) => {
     if (await skipUnlessOps(t, 'queryHdt')) return;
     const bytes = fs.readFileSync(FIXTURE_HDT);
-    await assert.rejects(
-      () => lean.queryHdt(bytes, 'CONSTRUCT { ?s ?p ?o } WHERE { ?s ?p ?o }'),
-      /SELECT\/ASK only/);
+    // The engine reports the query form; a graph result is a Dataset (issue 894 item 5).
+    const ds = await lean.queryHdt(bytes, 'CONSTRUCT { ?s ?p ?o } WHERE { ?s ?p ?o }');
+    assert.equal(ds.size, 343);
+    ds.dispose();
   });
 
 test('queryHdt: bytes that are not an HDT file reject', async (t) => {

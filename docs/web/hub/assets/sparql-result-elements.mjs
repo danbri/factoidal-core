@@ -16,7 +16,7 @@
  * customisation points.
  */
 
-const XSD_STRING = "http://www.w3.org/2001/XMLSchema#string";
+const XSD_STRING = "http://www.w3.org/2001/XMLSchema#string"; // purity-lint: allow display: the datatype column hides xsd:string
 const PALETTES = {
   sage: { ink: "#183b2c", muted: "#50675b", paper: "#f8fcf8", soft: "#e7f2e9", line: "#c7ddcd", accent: "#286846", focus: "#0e6fda" },
   ocean: { ink: "#15394b", muted: "#4b6572", paper: "#f7fbfc", soft: "#e5f1f5", line: "#c4dce5", accent: "#196a85", focus: "#075fd0" },
@@ -73,16 +73,22 @@ function element(name, text) { const e = document.createElement(name); if (text 
 function classed(name, text, className) { const e = element(name, text); e.className = className; return e; }
 function compactIri(value) { const v = String(value || ""); const i = Math.max(v.lastIndexOf("#"), v.lastIndexOf("/")); return i >= 0 && i < v.length - 1 ? v.slice(i + 1) : v; }
 function isTerm(v) { return v && typeof v === "object" && typeof v.type === "string" && "value" in v; }
-function termKind(t) { return t.type === "uri" ? "IRI" : t.type === "bnode" ? "blank node" : t.type === "literal" || t.type === "typed-literal" ? "literal" : t.type || "value"; }
+function termKind(t) { return t.type === "uri" ? "IRI" : t.type === "bnode" ? "blank node" : t.type === "literal" || t.type === "typed-literal" ? "literal" : t.type === "triple" ? "triple term" : t.type || "value"; }
 function termText(t) {
   if (!isTerm(t)) return t === undefined || t === null ? "" : String(t);
   if (t.type === "uri") return compactIri(t.value);
-  if (t.type === "bnode") return "_:" + t.value;
+  if (t.type === "bnode") return "_:" + t.value; // purity-lint: allow display label, not a serialization
+  if (t.type === "triple" && t.value && typeof t.value === "object") {
+    return `⟨${termText(t.value.subject)} ${termText(t.value.predicate)} ${termText(t.value.object)}⟩`;
+  }
   return `“${t.value}”`;
 }
 function termMeta(t) { if (!isTerm(t)) return ""; return t["xml:lang"] || t.lang || t.language || ((t.datatype && t.datatype !== XSD_STRING) ? compactIri(t.datatype) : ""); }
 function normalizeTerm(t) {
   if (isTerm(t)) return t;
+  if (t && typeof t === "object" && t.termType === "Quad") {
+    return { type: "triple", value: { subject: normalizeTerm(t.subject), predicate: normalizeTerm(t.predicate), object: normalizeTerm(t.object) } };
+  }
   if (t && typeof t === "object" && t.termType) {
     return { type: t.termType === "NamedNode" ? "uri" : t.termType === "BlankNode" ? "bnode" : "literal", value: t.value, datatype: t.datatype?.value, lang: t.language };
   }
@@ -129,7 +135,7 @@ export class FactoidalSparqlResults extends ResultBase {
     const language=term.lang || term.language || term["xml:lang"] || "";
     const datatype=term.datatype && term.datatype !== XSD_STRING ? term.datatype : "";
     if (this.state.languageTags !== "hide" || this.state.datatypes !== "hide") wrap.append(classed("span", termKind(term), "kind"));
-    if (language && this.state.languageTags !== "hide") wrap.append(classed("span", "@" + language, "meta"));
+    if (language && this.state.languageTags !== "hide") wrap.append(classed("span", "@" + language, "meta")); // purity-lint: allow display label of a language tag
     if (datatype && this.state.datatypes !== "hide") wrap.append(classed("span", compactIri(datatype), "meta"));
     return wrap;
   }
@@ -151,7 +157,7 @@ export class FactoidalSparqlResults extends ResultBase {
     if (!rawRows.length) { shell.append(classed("div", "This query returned no solution bindings.", "empty")); return; }
     const toolbar=element("div"); toolbar.className="toolbar";
     toolbar.append(this.control("View", [["table","Table"],["cards","Record cards"]], this.state.view, v=>{this.state.view=v; this.render();}));
-    toolbar.append(this.control("Language", [["","All languages"], ...languageValues.map(x=>[x,"@"+x])], this.state.lang, v=>{this.state.lang=v; this.render();}));
+    toolbar.append(this.control("Language", [["","All languages"], ...languageValues.map(x=>[x,"@"+x])], this.state.lang, v=>{this.state.lang=v; this.render();})); // purity-lint: allow display label of a language tag
     toolbar.append(this.control("Datatype", [["","All datatypes"], ...datatypeValues.map(x=>[x,compactIri(x)])], this.state.datatype, v=>{this.state.datatype=v; this.render();}));
     toolbar.append(this.control("Sort", [["","Document order"], ...vars.map(v=>["var:"+v,"?"+v]), ["language","Language tag"], ["datatype","Datatype"]], this.state.sort, v=>{this.state.sort=v;this.state.dir=1;this.render();}));
     const languageTags=element("button", this.state.languageTags === "hide" ? "Show language tags" : "Hide language tags"); languageTags.type="button"; languageTags.setAttribute("aria-pressed", String(this.state.languageTags !== "hide")); languageTags.addEventListener("click",()=>{this.state.languageTags=this.state.languageTags === "hide" ? "show":"hide";this.render();}); toolbar.append(languageTags);
