@@ -346,6 +346,10 @@ if [ "$CONFIG" = auth ] || [ "$CONFIG" = both ]; then
   BASE="http://127.0.0.1:$BASE_PORT/"
   FIXTURES="http://localhost:$FIX_PORT/"
   ID=factoidal-auth$SUFFIX; [ "$SHIM" = 1 ] && ID=factoidal-auth$SUFFIX-shim
+  # A reused TOUCHSTONE_WORK holds the previous run's log and targets file;
+  # with them in place a second run (2026-10-21, issue 922) read the old
+  # target id and could not run. Remove both before the server starts.
+  rm -f "$WORK/as.log" "$WORK/targets-auth.yaml"
   java -Dlogback.configurationFile="$WORK/as/logback.xml" -cp "$CP" TouchstAs "$AS_PORT" \
     "$WORK/targets-auth.yaml" "$ID" "$BASE" "$FIXTURES" "$BASE,${BASE}.well-known/lws-storage" \
     > "$WORK/as.log" 2>&1 & PIDS+=($!)

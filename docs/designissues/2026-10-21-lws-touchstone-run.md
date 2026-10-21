@@ -478,7 +478,7 @@ except that no access-grant test remains: `linkset-put-405-when-unsupported`
 (we support PUT on the linkset), `pagination-single-page` (applies only to a
 server that does not page a five-member container), the three moving tests
 whose preconditions exclude one another (§ Moving resources), and
-`type-search-content-location-protected` (§ Type index and type search).
+`type-search-content-location-protected` (§ Type index and type search; it applies and passes with the unstable option of § Search results resource).
 
 How each test is met (all in `formal/lean4/L4Factoidal/LWS/`):
 
@@ -525,6 +525,53 @@ pass, 0 fail, 4 xfail (out of 68); `scaling.mjs` 12 pass, 0 fail (out of
 `tests/solid/client/against-own-server.mjs` 7 pass, 0 fail (out of 7);
 `tools/host-purity-lint.sh` 35 pass, 0 fail (out of 35); `lake exe
 l4lws-probe` guarded checks 17 pass, 0 fail (out of 17).
+
+## Search results resource (issue 922, ANTICIPATORY AND UNSTABLE)
+
+Run 2026-10-21 on branch `claude/wt-lws922` (merged with the encryption at
+rest branch `claude/wt-lws921` at aea19bf7), no `--shim`, same Touchstone
+commit. Reports: `docs/test-results/lws-touchstone-2026-10-21-results/`
+(`report.md` and `earl.ttl` per configuration with the option on;
+`run.txt` and `run-default.txt` the script output).
+
+Owner, 2026-10-21: "what do we think a Content-Location results resource
+looks like? Can we draft an anticipatory impl flagged as likely unstable?"
+lws10-index defines no such resource; `L4Factoidal/LWS/SearchResults.lean`
+implements one, off by default. The design and the RFC 10008 text it follows
+are in `docs/lws-solid-conformance.md` § Search results resource.
+
+| configuration | tests | passed | failed | cantTell | inapplicable |
+|---|---:|---:|---:|---:|---:|
+| ours, `--insecure-no-auth`, default (`bash tools/lws-touchstone.sh`) | 221 | 76 | 0 | 0 | 145 |
+| ours, default authorization, default | 221 | 215 | 0 | 0 | 6 |
+| ours, `--insecure-no-auth`, `--unstable-search-results` | 221 | 76 | 0 | 0 | 145 |
+| ours, default authorization, `--unstable-search-results` | 221 | 216 | 0 | 0 | 5 |
+
+Both default runs are the same as § Access requests and grants: the option
+is off by default, and with it off every request passes to the storage as
+before (theorem `SearchResults.serverStep_off`). Both runs exit 0.
+
+With the option on, `index/manifest#type-search-content-location-protected`
+(MUST, status Proposed) applies under authorization and passes: alice's QUERY
+answer carries `Content-Location`, and bob's GET of that URL answers 404 with
+no part of her result. In the open configuration it stays inapplicable (it
+requires Authentication). The five tests still inapplicable under
+authorization are `linkset-put-405-when-unsupported`,
+`pagination-single-page` and the three moving tests whose preconditions
+exclude one another.
+
+Test text and RFC text read together. The test accepts a refusal, an empty
+answer or a filtered page for bob; this server refuses (404), because a
+results resource answers only the agent and client that made it. The test
+does not check the creator's GET; `tests/lws/authorization.mjs` does (200
+for alice, 404 for another client of alice, 404 anonymous, 410 after the
+lifetime).
+
+Script defect found on the way: with a reused `TOUCHSTONE_WORK`, the second
+`--config auth` run read the previous run's `targets-auth.yaml` and stopped
+with "unknown target 'factoidal-auth-unstable'" (exit 2). The script now
+removes `as.log` and `targets-auth.yaml` before the authorization server
+starts.
 
 ## Run details
 
