@@ -70,7 +70,7 @@ The opt-in is load-bearing: parsing is strict (issue #344), so the
 *same* text handed to plain `"turtle"` (the RDF 1.1 grammar, no
 triple terms) does not silently drop the `<<( )>>` and reifier lines
 and keep the rest — it **rejects the whole document**, with a
-`ParseError` naming the line and column where RDF 1.1 syntax stops
+`FactoidalError` naming the line and column where RDF 1.1 syntax stops
 making sense. The default deliberately never changes 1.1 behaviour, so
 1.2 syntax has to be asked for by name.
 
@@ -80,7 +80,7 @@ mode11Rejects = {
     await fn.parse(ttl, {format: "turtle"});
     return pretty({outcome: "unexpected: Mode_11 accepted this text"});
   } catch (e) {
-    return pretty({outcome: "rejected", name: e.name, line: e.line, column: e.column, message: e.message});
+    return pretty({outcome: "rejected", name: e.name, code: e.code, line: e.position.line, column: e.position.column, message: e.message});
   }
 }
 ```

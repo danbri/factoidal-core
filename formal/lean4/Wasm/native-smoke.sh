@@ -1297,7 +1297,7 @@ checkseq "store handle: open once, answer many, same rows as storeQuery" \
    and rs[5]["handles"][0]["handle"] == "s1" and rs[5]["bytes"] == rs[0]["bytes"]
    and rs[5]["handleCap"] == 8 and rs[5]["bytesCap"] == 134217728
    and rs[6] == {"ok": True}
-   and rs[7]["ok"] is False and rs[7]["error"] == "unknown store handle: s1"
+   and rs[7]["ok"] is False and rs[7]["code"] == "handle.disposed"
    and rs[8]["ok"] is True and rs[8]["handle"] == "s2" and rs[8]["artifacts"] == 1
    and rs[9]["ok"] is False and "does not retain" in rs[9]["error"]
    and rs[10] == {"ok": True}'
@@ -1371,7 +1371,7 @@ check "storeOpen wrong arity -> error" storeOpen "$TMP/store-open-arity.json" \
 args "$TMP/store-handle-unknown.json" "s999" 'ASK { ?s ?p ?o }'
 check "storeHandleQuery unknown handle -> error" storeHandleQuery \
   "$TMP/store-handle-unknown.json" \
-  'r["ok"] is False and r["error"] == "unknown store handle: s999"'
+  'r["ok"] is False and r["error"] == "unknown store handle: s999" and r["code"] == "handle.unknown"'
 
 # --- Canon family -----------------------------------------------------
 args "$TMP/canon.json" '_:b0 <http://e/p> "v" .
@@ -1602,7 +1602,7 @@ checkseq "dataset handle lifecycle (open/query/update/serialize/close)" "$TMP/ha
    and rs[4]["ok"] is True and "<http://e/x>" in rs[4]["nquads"] and "<http://e/a>" in rs[4]["nquads"]
    and rs[5]["ok"] is True and "@prefix" in rs[5]["turtle"]
    and rs[6] == {"ok": True}
-   and rs[7]["ok"] is False and rs[7]["error"] == "unknown dataset handle: h1"'
+   and rs[7]["ok"] is False and rs[7]["code"] == "handle.disposed"'
 
 # Two handles are independent: an update through h2 must not leak into
 # h1, and closing h2 must leave h1 open. Also the per-family errors:
@@ -1627,7 +1627,7 @@ checkseq "dataset handles are independent + per-family errors" "$TMP/handles-two
    and rs[3]["ok"] is True and "<http://f/" not in rs[3]["nquads"]
    and rs[4]["ok"] is False and "unknown format tag" in rs[4]["error"]
    and rs[5] == {"ok": True}
-   and rs[6]["ok"] is False and rs[6]["error"] == "unknown dataset handle: h2"
+   and rs[6]["ok"] is False and rs[6]["code"] == "handle.disposed"
    and rs[7]["ok"] is True and rs[7]["boolean"] is True'
 
 # One-shot error paths reachable without process state.
@@ -1637,7 +1637,7 @@ check "datasetOpen bad turtle -> error, no handle" datasetOpen "$TMP/h-open-bad.
 
 args "$TMP/h-query-unknown.json" "h999" 'ASK { ?s ?p ?o }'
 check "datasetQuery unknown handle -> error" datasetQuery "$TMP/h-query-unknown.json" \
-  'r["ok"] is False and r["error"] == "unknown dataset handle: h999"'
+  'r["ok"] is False and r["error"] == "unknown dataset handle: h999" and r["code"] == "handle.unknown"'
 
 args "$TMP/h-open-arity.json" "just-one-arg"
 check "datasetOpen wrong arity -> error" datasetOpen "$TMP/h-open-arity.json" \

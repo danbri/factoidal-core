@@ -562,25 +562,32 @@ def updateQuadOfJsonQuad : TermJson.Quad → Except String (Option WfIri × Trip
   | (some (.bnode _), _) =>
       .error "a quad in a graph named by a blank node cannot be added or deleted here"
 
-/-- The first `{"type":"uri","value":v}` member under `j` whose `v` is not an
-IRI (RDF 1.2 Concepts §3.2), searched to depth `fuel`. -/
-def badIriFuel : Nat → Json → Option String
+/-- The first `{"type":"uri","value":v}` member in the worklist whose `v` is
+not an IRI (RDF 1.2 Concepts §3.2), visiting at most `fuel` JSON values. One
+frame for any input: a worklist, never one frame per nesting level. -/
+def badIriLoop : Nat → List Json → Option String
   | 0, _ => none
-  | n + 1, j =>
+  | _ + 1, [] => none
+  | n + 1, j :: rest =>
       match j with
       | .object fields =>
           if j.getString? "type" == some "uri" then
             match j.getString? "value" with
-            | some v => if isIri v then none else some v
-            | none => none
-          else fields.findSome? fun kv => badIriFuel n kv.2
-      | .array items => items.findSome? (badIriFuel n)
-      | _ => none
+            | some v => if isIri v then badIriLoop n rest else some v
+            | none => badIriLoop n rest
+          else badIriLoop n (fields.map (·.2) ++ rest)
+      | .array items => badIriLoop n (items ++ rest)
+      | _ => badIriLoop n rest
+
+#guard badIriLoop 100 [Json.array [.object [("type", .string "uri"), ("value", .string "a b")]]]
+  == some "a b"
+#guard badIriLoop 100 [Json.array [.object [("type", .string "uri"), ("value", .string "http://e/a")]]]
+  == none
 
 /-- Why `x` is not a quad: an invalid IRI is named (`term.invalid-iri`), any
 other shape is `term.invalid`. -/
 def notAQuadMessage (x : Json) : String :=
-  match badIriFuel 8 x with
+  match badIriLoop 10000 [x] with
   | some v => s!"invalid IRI '{v}' in quad: {x.toString}"
   | none => s!"not a quad: {x.toString}"
 

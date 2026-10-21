@@ -33,7 +33,7 @@ test('post31: Turtle 1.2 parses to 7 quads (2 claims + reifier expansion + base 
   assert.equal(dataset.size, 7);
 });
 
-test('post31: Mode_11 (default) rejects the 1.2-only syntax with a ParseError — opt-in is load-bearing', async () => {
+test('post31: Mode_11 (default) rejects the 1.2-only syntax with a FactoidalError — opt-in is load-bearing', async () => {
   // Strict parsing (issue #344): plain "turtle" (RDF 1.1) does not
   // silently drop the triple-term/reifier lines and keep the rest --
   // it rejects the WHOLE document, with a line and column pinpointing
@@ -41,19 +41,20 @@ test('post31: Mode_11 (default) rejects the 1.2-only syntax with a ParseError �
   await assert.rejects(
     factoidal.parse(TTL, { format: 'turtle' }),
     (err) => {
-      assert.equal(err.name, 'ParseError');
+      assert.equal(err.name, 'FactoidalError');
+      assert.equal(err.code, 'parse.syntax');
       // Line 4 is `  VERSION "1.2"`. Under the RDF 1.1 Turtle grammar
       // (§ 6.5) `VERSION` can still begin a subject, as the PN_PREFIX of
       // a PNAME_NS (`PNAME_NS ::= PN_PREFIX? ':'`); the text stops being
       // the start of any Turtle 1.1 document at the space after it,
       // column 10. That position is a property of the grammar, so it is
       // the pin. (The F* parser reported column 3, the token start.)
-      assert.equal(err.line, 4);
-      assert.equal(err.column, 10);
+      assert.equal(err.position.line, 4);
+      assert.equal(err.position.column, 10);
       assert.match(err.message, /line 4, column 10/);
       // offset is a UTF-16 index into the input: slicing there starts at
       // the reported column.
-      assert.equal(TTL.slice(err.offset).split('\n')[0], ' "1.2"');
+      assert.equal(TTL.slice(err.position.offset).split('\n')[0], ' "1.2"');
       return true;
     }
   );
@@ -126,14 +127,15 @@ test('post31: dependency inference wires ttl -> mode11Rejects, ttl -> dataset ->
   }
 });
 
-test('post31 cell 2 (mode11Rejects): renders the ParseError name, line and column', async () => {
+test('post31 cell 2 (mode11Rejects): renders the FactoidalError name, line and column', async () => {
   const post = runReactivePost(cells, { fn: factoidal, pretty });
   const result = await post.value(post.names[1]);
   assert.equal(result.kind, 'table');
   assert.deepEqual(result.columns, ['key', 'value']);
   const asObject = Object.fromEntries(result.rows);
   assert.equal(asObject.outcome, 'rejected');
-  assert.equal(asObject.name, 'ParseError');
+  assert.equal(asObject.name, 'FactoidalError');
+  assert.equal(asObject.code, 'parse.syntax');
   assert.equal(asObject.line, 4);
   assert.equal(asObject.column, 10); // see the Mode_11 test above
 });

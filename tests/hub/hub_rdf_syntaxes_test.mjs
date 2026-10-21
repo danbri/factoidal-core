@@ -25,7 +25,8 @@ test('rdf-syntaxes: Turtle read, six writers, round trips', async () => {
 
 test('rdf-syntaxes: strict error position and lenient diagnostics', async () => {
   const err = await post.value('syntaxError');
-  assert.equal(err.name, 'ParseError');
+  assert.equal(err.name, 'FactoidalError');
+  assert.equal(err.code, 'parse.syntax');
   assert.equal(err.line, 2);
   const lenient = await post.value('lenient');
   assert.equal(lenient.quads, 2);

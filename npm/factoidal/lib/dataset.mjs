@@ -50,10 +50,9 @@ function checkOptions(e, who, options) {
     wire[key] = v === undefined || v === null ? null
       : (typeof v === 'object' || typeof v === 'function') ? {} : String(v);
   }
-  if (typeof e.apiCheck !== 'function') {
-    throw new FactoidalError(`${who}: the loaded engine has no op 'apiCheck'; rebuild the wasm`,
-      { code: 'op.unknown' });
-  }
+  // An engine with no apiCheck op (the F* entry of tests/engine-compare, a
+  // private comparison build) has no option tables: its ops refuse instead.
+  if (typeof e.apiCheck !== 'function') return options;
   envelopeResult(e.apiCheck(who, JSON.stringify(wire)));
   return options;
 }

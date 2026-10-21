@@ -68,8 +68,8 @@ sameAfterJsonLd = {
 
 ## A syntax error has a position
 
-Parsing is strict by default. The error is a `ParseError` with a line
-and a column.
+Parsing is strict by default. The error is a `FactoidalError` with a code,
+a position (line and column) and the grammar section it breaks.
 
 ```observable-js
 syntaxError = {
@@ -77,7 +77,7 @@ syntaxError = {
     await Factoidal.parse('@prefix ex: <http://example.org/> .\nex:a ex:b .', { format: 'turtle' });
     return 'accepted';
   } catch (e) {
-    return ({ name: e.name, line: e.line, column: e.column });
+    return ({ name: e.name, code: e.code, line: e.position.line, column: e.position.column, spec: e.spec });
   }
 }
 ```
