@@ -59,6 +59,7 @@ answers 401: a storage does not fall open (`validateToken_no_issuers`,
 `validateToken_valid_verified`).
 -/
 import L4Factoidal.LWS.Operations
+import L4Factoidal.LWS.AccessPolicy
 import L4Factoidal.Solid.Server.Methods
 import L4Factoidal.JOSE.Jwt
 import L4Factoidal.JOSE.Jws
@@ -104,6 +105,10 @@ structure AuthzConfig where
   token naming an unknown `kid` cannot make the server fetch on every
   request. -/
   refreshInterval : Nat := 60
+  /-- The access requests and grants of the storage (LWS §Access Requests
+  and Grants, `L4Factoidal.LWS.AccessPolicy`): part of the access policy
+  `decide` enforces, beside Web Access Control. -/
+  access : AccessPolicy.AccessState := {}
 
 instance : Inhabited AuthzConfig := ⟨{}⟩
 
@@ -285,6 +290,21 @@ def validateToken (V : Verifiers) (cfg : Config) (a : AuthzConfig) (now : Nat)
       | none => .refused (.untrustedIssuer c.iss)
       | some ti => validateWith V cfg a now token ti c
 
+/-- The `client_id` claim (RFC 9068 §2.2) of the request's bearer token: the
+"client identifier for an HTTP request" that a `client` constraint of an
+access grant compares (LWS §Client Constraints). Read only after
+`authenticate` accepted the same token, so the claim is signed. -/
+def tokenClient? (r : Request) : Option String :=
+  (r.header? "authorization").bind fun v =>
+    match v.splitOn " " with
+    | [_, token] =>
+        match preKey token with
+        | .error _ => none
+        | .ok (c, _) =>
+            (Base64Url.decode c.payloadB64).bind fun b =>
+              (String.fromUTF8? b).bind fun s => (parseJson? s).bind (·.getString? "client_id")
+    | _ => none
+
 /-! ## Authentication of one request -/
 
 /-- What the request's credential established. -/
@@ -375,10 +395,23 @@ def decide (V : Verifiers) (S : Store σ) (cfg : Config) (a : AuthzConfig) (now 
     | .refused rf => .respond (challenge cfg a path (some rf.errorCode))
     | .anonymous => .respond (challenge cfg a path none)
     | .authenticated s => .proceed (some s)
+  -- The access request and access grant endpoints (LWS §Access Requests and
+  -- Grants, Protocol): an authenticated agent may ask; which records it may
+  -- see, make or delete is decided by `L4Factoidal.LWS.AccessGrants`.
+  else if cfg.accessGrants && isAccessPath path then
+    match authenticate V cfg a now r with
+    | .needKeys i => .fetch i (issuerMetadataUrl i)
+    | .refused rf => .respond (challenge cfg a path (some rf.errorCode))
+    | .anonymous => .respond (challenge cfg a path none)
+    | .authenticated s => .proceed (some s)
   else
     let gate (who : Option String) : Decision :=
       let subject := authorizationSubject path
       let mode := requiredMode r.method (targetsAcl path)
+      -- An access grant permits what it lists (`AccessPolicy.grantAllows`),
+      -- beside Web Access Control.
+      let granted (method p : String) : Bool :=
+        AccessPolicy.grantAllows S st a.access.grants who (tokenClient? r) now method p
       let may (p : String) (m : L4Factoidal.Solid.Server.Mode) : Bool :=
         allowed S aclGraphOf cfg.baseIri st (authorizationSubject p)
           { webId := who, origin := r.header? "origin" } m
@@ -387,9 +420,10 @@ def decide (V : Verifiers) (S : Store σ) (cfg : Config) (a : AuthzConfig) (now 
       -- destination, evaluated before the move is applied.
       let moveOk : Bool := match movePlanOf? S cfg.baseIri cfg.moves r st with
         | none => true
-        | some plan => plan.moves.all (fun m => may m.1 (requiredMode "DELETE" (targetsAcl m.1))) &&
-            may plan.dest (requiredMode "POST" false)
-      if may path mode && moveOk then
+        | some plan => plan.moves.all (fun m => may m.1 (requiredMode "DELETE" (targetsAcl m.1)) ||
+              granted "DELETE" m.1) &&
+            (may plan.dest (requiredMode "POST" false) || granted "POST" plan.dest)
+      if (may path mode || granted r.method path) && moveOk then
         .proceed who
       else match who with
         | none => .respond (challenge cfg a path none)
