@@ -200,6 +200,26 @@ var please. Again off by default but good to show we can."):
   `lwsStep` request documents may carry `random` (16 bytes, base64); the LWS
   host sends it with every request. Decided in Lean
   (`L4Factoidal/LWS/SearchResults.lean`).
+- Off by default: Merkle hashes of the LWS storage
+  (https://github.com/danbri/factoidal/issues/919; owner, 2026-10-21: "As an
+  optional, probably default off until we settle on stronger motivating
+  usecase but good to have the fundamentals there"). With
+  `listen({ merkle: true })` or `factoidal lws-serve --merkle`: a GET or HEAD
+  of a resource carries `Repr-Digest: sha-256=:<base64>:` (RFC 9530, SHA-256
+  of the stored bytes, HACL*); a container listing carries
+  `Factoidal-Merkle-Root` and the member
+  `https://github.com/danbri/factoidal/issues/919#merkleRoot` (a Merkle digest
+  over its members and their digests); the storage description carries
+  `https://github.com/danbri/factoidal/issues/919#storageMerkleRoot`. Under
+  authorization the roots go to the storage controller only. Entity tags do
+  not change. The hashes are kept by the store on every write, delete and
+  move (only the containers above the change are recomputed) and rebuilt when
+  a storage is opened; no hash is in the snapshot. Decided in Lean
+  (`L4Factoidal/LWS/Merkle.lean`, `MerkleHttp.lean`), with theorems
+  `MkState.dig_eq_recompute` (the kept digests equal a recomputation from the
+  store) and `change_reaches_ancestor` (a change reaches every container
+  above it, with collision-freedom of SHA-256 as a stated hypothesis).
+  COST
 
 ### Performance
 

@@ -62,7 +62,7 @@ is `500`, for a failure of the host itself.
 factoidal lws-serve   DIR (--issuer IRI[,IRI…] | --auth-config FILE | --insecure-no-auth)
                           [--owner WEBID] [--root-acl FILE] [--audience IRI]
                           [--port N] [--host ADDRESS] [--base IRI] [--page-size N]
-                          [--unstable-search-results]
+                          [--unstable-search-results] [--merkle]
 factoidal solid-serve DIR (--issuer IRI[,IRI…] | --auth-config FILE | --insecure-no-auth)
                           [--port N] [--host ADDRESS] [--base IRI] [--owner WEBID]
 ```
@@ -499,6 +499,59 @@ clear, the file is 1.33 times larger, a restart 378 to 437 ms against 183 to
 clear, ratio 4m/m 5.56 against 4.81 (bound 6.0). Host test:
 `node tests/lws/encryption.mjs`, 27 pass, 0 fail, 0 skipped (out of 27).
 
+### Merkle hashes (optional) (https://github.com/danbri/factoidal/issues/919)
+
+Owner, 2026-10-21, verbatim: "After, yes. As an optional, probably default
+off until we settle on stronger motivating usecase but good to have the
+fundamentals there". The LWS drafts define no integrity mechanism; this is a
+server extension. Design record:
+`docs/designissues/2026-10-21-lws-merkle.md`.
+
+* Turn it on: config `merkle: true` (`listen({ merkle: true })`,
+  `factoidal lws-serve --merkle`, `tools/lws-touchstone.sh --merkle`). Off:
+  no field, no member, nothing computed (`MkState.hasher = none`, theorem
+  `decorate_off`).
+* What is hashed (`L4Factoidal/LWS/Merkle.lean`): a resource that is not a
+  container, SHA-256 of its bytes; a container, SHA-256 of tag 2, its member
+  count (8 bytes) and the `Storage/BlockMerkle.lean` root over the leaves
+  `digest ++ path` of its listed members in path order. The member count is
+  bound beside the root because a Bitcoin-style tree gives `[a, b, c]` and
+  `[a, b, c, c]` one root. Auxiliary resources (`.acl`, `.meta`) have digests
+  but are not members, so they change no root.
+* Hasher: `Merkle.haclHasher` (`Crypto.sha256Hacl`, the vendored HACL* code,
+  native and wasm) at run time; `pureHasher` (FIPS 180-4 in Lean) in every
+  `#guard`; the theorems hold for every hasher.
+* Maintenance: `MerkleStore S L` wraps the backend store, UNDER
+  `TypeIndex.IndexedStore` (`LwsBackend` in `MerkleHttp.lean`); its state
+  carries the invariant `MkOk` as a proof, so every state `step` reaches is
+  correct with no hook in `Operations.step`. A write recomputes the digest of
+  the written path and then of each container above it (`walk`), and stops at
+  the first container whose digest did not change. A container's digest is
+  computed from its member list, so a write costs time linear in the members
+  of each container above it.
+* What the server shows (`L4Factoidal/LWS/MerkleHttp.lean`, `decorate`):
+  `Repr-Digest: sha-256=:<base64>:` (RFC 9530) on a 200 or 206 GET or HEAD of a
+  resource with its stored media type; `Factoidal-Merkle-Root` and the listing
+  member `https://github.com/danbri/factoidal/issues/919#merkleRoot` (JSON) or
+  the same statement (Turtle) on a container; the member
+  `https://github.com/danbri/factoidal/issues/919#storageMerkleRoot` in the
+  storage description. Under authorization the roots go to the storage
+  controller only (a root is computed from resources a reader of the listing
+  may not read). Entity tags do not change in this step: an expected failure
+  in `tests/lws/merkle.mjs` names issue 919.
+* Snapshot: no hash is stored; the hashes are rebuilt when a storage is
+  opened, in one pass after one sort (`rebuild`, theorem `rebuild_ok`).
+* Theorems: `MkOk.dig_eq_recompute` and `MkState.dig_eq_recompute` (the
+  maintained digests equal a recomputation from the store), `rebuild_ok`,
+  `walk_ok`, `MkOk.upd`, `merkleStoreLaws`, `containerDigest_inj`,
+  `dataDigest_changes`, `parent_digest_changes`, `change_reaches_ancestor`
+  (a change reaches every container above it unless SHA-256 has a collision
+  among the byte strings hashed at one path in the two states; a HYPOTHESIS,
+  `BlockMerkle.NoCollision`, never an axiom), `BlockMerkle.rootWith_inj`.
+
+Tests: `L4Factoidal/LWS/MerkleTests.lean`, the checks in `MerkleHttp.lean`;
+`node tests/lws/merkle.mjs`; `tests/lws/scaling.mjs` rows "merkle".
+
 ### LWS authorization (https://github.com/danbri/factoidal/issues/886)
 
 `L4Factoidal/LWS/Authorization.lean` implements the storage-server half of
@@ -552,7 +605,8 @@ authorization server (`auth`). It passes `--page-size 4`
 (`LWS_PAGE_SIZE`), so the pagination tests apply. `TOUCHSTONE_SRC` names
 an existing clone to copy. `--unstable-search-results` starts the server
 with the anticipatory results resource (issue 922; target ids get the
-suffix `-unstable`); a default run never sets it. Delete the Maven repository after a run (the
+suffix `-unstable`); a default run never sets it. `--merkle` starts the server with the
+optional Merkle hashes (issue 919; ids get the suffix `-merkle`). Delete the Maven repository after a run (the
 script's work directory, about 260 MB). Results and every failure with its
 spec text: `docs/designissues/2026-10-21-lws-touchstone-run.md`.
 

@@ -33,6 +33,22 @@
 //     quadratic (16).
 //   Absolute: each of the three under 2 s at 4m.
 //
+// The Merkle hashes (https://github.com/danbri/factoidal/issues/919, option
+// `merkle`, off by default): a store of k, 2k, 4k data resources in ONE
+// container (default k = 500, `--merkle-base K`), the worst case for the
+// hashes, because a write recomputes the digest of every container above it
+// from its member list. One repeat is 20 updates of one member (new bytes
+// each time); the row keeps the minimum of three repeats, with the option on
+// and off (the off figure is reported, not bounded). Then the storage is
+// reopened from its snapshot with the option on (the hashes are rebuilt in
+// one pass; none is stored), minimum of three.
+//   time(4k) <= 6.0 * max(time(k), 50 ms) for the 20 updates with the option
+//     on, and for the reopen. The model is linear in the members of the
+//     container (ratio 4); a write that rebuilt every digest of the store, or
+//     a reopen that hashed each container once per member, would be
+//     quadratic (16).
+//   Absolute: the 20 updates and the reopen each under 2 s at 4k.
+//
 // Score line: "N pass, M fail (out of T)". Exit 0 pass, 1 fail, 2 setup error.
 
 import { execFileSync } from 'node:child_process'
@@ -168,12 +184,81 @@ async function indexChild (m) {
   }
 }
 
+async function merkleChild (k) {
+  const f = await import(join(PKG, 'index.mjs'))
+  const { listen } = await import(join(PKG, 'lws/server.mjs'))
+  const { writeSnapshot } = await import(join(PKG, 'lws/persist.mjs'))
+  const engine = await f.loadEngine()
+  const time = async (fn) => { const t0 = process.hrtime.bigint(); await fn(); return Number(process.hrtime.bigint() - t0) / 1e6 }
+  const row = { k }
+  for (const merkle of [true, false]) {
+    const s = await listen({ engine, port: 0, insecureNoAuth: true, onError: () => {}, merkle })
+    const o = s.origin
+    try {
+      const mk = await fetch(`${o}/items/`, { method: 'PUT', headers: { 'content-type': 'text/turtle' }, body: '' })
+      await mk.text()
+      for (let i = 0; i < k; i++) {
+        const r = await fetch(`${o}/items/`, { method: 'POST', headers: { 'content-type': 'text/plain', slug: `r${i}` }, body: `resource ${i}` })
+        await r.arrayBuffer()
+        if (r.status !== 201) throw new Error(`POST ${i} answered ${r.status}`)
+      }
+      let n = 0
+      const writes = []
+      for (let rep = 0; rep < 3; rep++) {
+        writes.push(await time(async () => {
+          for (let j = 0; j < 20; j++) {
+            const r = await fetch(`${o}/items/r${k >> 1}`, { method: 'PUT', headers: { 'content-type': 'text/plain' }, body: `update ${n++}` })
+            await r.arrayBuffer()
+            if (r.status !== 204) throw new Error(`PUT answered ${r.status}`)
+          }
+        }))
+      }
+      const head = await fetch(`${o}/items/`, { method: 'HEAD' })
+      await head.arrayBuffer()
+      const root = head.headers.get('factoidal-merkle-root')
+      if (merkle && root === null) throw new Error('no Factoidal-Merkle-Root with merkle on')
+      if (!merkle && root !== null) throw new Error('a Factoidal-Merkle-Root with merkle off')
+      row[merkle ? 'writeOn' : 'writeOff'] = Math.min(...writes)
+      if (merkle) {
+        // Reopen from the snapshot of this storage, with the option on.
+        const dir = mkdtempSync(join(tmpdir(), 'lws919-merkle-scaling-'))
+        try {
+          const storage = await s.storage()
+          const answer = engine.call('lwsSnapshot', [storage.handle])
+          writeSnapshot(dir, answer.snapshot)
+          const reopen = []
+          for (let rep = 0; rep < 3; rep++) {
+            reopen.push(await time(async () => {
+              const t = await listen({ engine, port: 0, insecureNoAuth: true, onError: () => {}, merkle: true, dir, baseIri: `${o}/` })
+              try {
+                const h = await fetch(`${t.origin}/items/`, { method: 'HEAD' })
+                await h.arrayBuffer()
+                if (h.headers.get('factoidal-merkle-root') !== root) throw new Error('the reopened root differs')
+              } finally { await t.close() }
+            }))
+          }
+          row.reopen = Math.min(...reopen)
+        } finally {
+          rmSync(dir, { recursive: true, force: true })
+        }
+      }
+    } finally {
+      await s.close()
+    }
+  }
+  process.stdout.write(JSON.stringify(row) + '\n')
+}
+
 if (opt('--child')) {
   await child(Number(opt('--child')))
   process.exit(0)
 }
 if (opt('--index-child')) {
   await indexChild(Number(opt('--index-child')))
+  process.exit(0)
+}
+if (opt('--merkle-child')) {
+  await merkleChild(Number(opt('--merkle-child')))
   process.exit(0)
 }
 
@@ -240,6 +325,32 @@ if (irows.length === 3) {
     const ratio = ic[op] / Math.max(ia[op], 50)
     check(`type index: ${label}, time 4m/m <= 6.0`, ratio <= 6.0, `ratio ${ratio.toFixed(2)}`)
     check(`type index: ${label} at ${ic.m} resources < 2000 ms`, ic[op] < 2000, `${ic[op].toFixed(1)} ms`)
+  }
+}
+// The Merkle hashes (issue 919).
+const kBase = Number(opt('--merkle-base') ?? 500)
+const mrows = []
+for (const k of [kBase, 2 * kBase, 4 * kBase]) {
+  let out
+  try {
+    out = execFileSync(process.execPath, [fileURLToPath(import.meta.url), '--merkle-child', String(k)],
+      { encoding: 'utf8', stdio: ['ignore', 'pipe', 'inherit'], timeout: 900000 })
+  } catch (e) {
+    check(`merkle at ${k} members`, false, `the child process stopped (${String(e.message).split('\n')[0]})`)
+    break
+  }
+  const r = JSON.parse(out.trim().split('\n').pop())
+  mrows.push(r)
+  console.log(`  merkle ${k} members in one container: 20 updates ${r.writeOn.toFixed(1)} ms on, ` +
+              `${r.writeOff.toFixed(1)} ms off; reopen (hashes rebuilt) ${r.reopen.toFixed(1)} ms`)
+}
+if (mrows.length === 3) {
+  const [ma, , mc] = mrows
+  for (const [op, label] of [['writeOn', '20 updates of one member with merkle on'],
+    ['reopen', 'reopen with merkle on (hashes rebuilt in one pass)']]) {
+    const ratio = mc[op] / Math.max(ma[op], 50)
+    check(`merkle: ${label}, time 4k/k <= 6.0`, ratio <= 6.0, `ratio ${ratio.toFixed(2)}`)
+    check(`merkle: ${label} at ${mc.k} members < 2000 ms`, mc[op] < 2000, `${mc[op].toFixed(1)} ms`)
   }
 }
 console.log(`lws scaling: ${pass} pass, ${fail} fail (out of ${pass + fail})`)

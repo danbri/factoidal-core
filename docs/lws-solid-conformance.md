@@ -112,6 +112,7 @@ A response is a JSON object with the same shape minus the method:
 | `searchResults` | `false` | `lwsOpen` only. ANTICIPATORY AND UNSTABLE (https://github.com/danbri/factoidal/issues/922). `true` makes a QUERY answer of the Type Search Service by an authenticated agent carry `Content-Location` naming a search results resource (`L4Factoidal/LWS/SearchResults.lean`); the storage description then carries the extension member `https://github.com/danbri/factoidal/issues/922#unstableResultsResource` on the `TypeSearchService` entry. Needs `typeIndex`. `factoidal lws-serve --unstable-search-results`. Likely to change. |
 | `searchResultsTtl` | `600` | `lwsOpen` only, with `searchResults`. Seconds a results resource answers; then 410. |
 | `searchResultsMax` | `100` | `lwsOpen` only, with `searchResults`. The most results resources kept; the oldest is removed first (then 404). |
+| `merkle` | `false` | `lwsOpen` only. Merkle hashes, an option of this server (https://github.com/danbri/factoidal/issues/919; the LWS drafts define no integrity mechanism). `true` keeps a SHA-256 digest of every resource and a Merkle digest of every container (`L4Factoidal/LWS/Merkle.lean`) and shows them (`MerkleHttp.lean`): `Repr-Digest` (RFC 9530) on a 200 or 206 GET or HEAD of a resource with its stored media type, `Factoidal-Merkle-Root` and the listing member `https://github.com/danbri/factoidal/issues/919#merkleRoot` on a container, the member `https://github.com/danbri/factoidal/issues/919#storageMerkleRoot` in the storage description; under authorization the roots to the storage controller only. Entity tags do not change. No hash is in a snapshot; they are rebuilt at open. `factoidal lws-serve --merkle`. |
 | `entropy` | absent | `lwsOpen` only. At least 16 random bytes, base64, from the host. The seed of the notification signing key (Ed25519) when the snapshot holds none, and of the run tag in activity identifiers. Without it deliveries are not signed. `npm/factoidal/lws/server.mjs` passes 32 bytes from `crypto.getRandomValues`. |
 | `storageKey` | absent | `lwsOpen` and `solidOpen`. The storage key text, 32 bytes as 64 hex digits or base64url (the hosts read it from the environment variable `FACTOIDAL_LWS_KEY`). With it, `snapshot` must be a sealed document under this key and is authenticated before use, and every snapshot is sealed with ChaCha20-Poly1305 (HACL*). A wrong key, a changed or truncated sealed document, a clear-text `snapshot` with a key and a sealed one without a key are refused (`L4Factoidal/LWS/SnapshotSeal.lean`, https://github.com/danbri/factoidal/issues/921). The LWS drafts and the Solid Protocol say nothing about encryption at rest; this is an option of this server, off by default. |
 | `rootAcl` | absent | the ACL document (Turtle) of the storage root, written when the storage is created. Web Access Control §3.2 requires the root container's ACL resource to have a representation, and under enforcement a storage cannot write its own: the request that would write it is the first request it would authorize. It is therefore a host provisioning input. |
@@ -471,6 +472,36 @@ option on (`tools/lws-touchstone.sh --unstable-search-results`); record in
 `docs/designissues/2026-10-21-lws-touchstone-run.md` § Search results
 resource.
 
+## Merkle hashes (optional, off by default)
+
+Owner, 2026-10-21: "As an optional, probably default off until we settle on
+stronger motivating usecase but good to have the fundamentals there".
+Tracking: https://github.com/danbri/factoidal/issues/919. Design record:
+`docs/designissues/2026-10-21-lws-merkle.md`. Lean:
+`L4Factoidal/LWS/Merkle.lean` (hashes, maintenance, theorems),
+`L4Factoidal/LWS/MerkleHttp.lean` (fields and members); `#guard`s in
+`L4Factoidal/LWS/MerkleTests.lean` and `MerkleHttp.lean`.
+
+| decision | value |
+|---|---|
+| resource digest | SHA-256 of the stored bytes (HACL* at run time, pure Lean FIPS 180-4 in every `#guard`) |
+| container digest | SHA-256 of tag 2, the member count (8 bytes, big-endian), and the `BlockMerkle` root over the leaves `digest ++ path` of the listed members in increasing path order |
+| members | the listing's: direct members that are not auxiliary resources (and longer than the container's path, true of every path `validTarget` admits) |
+| maintenance | in the store (`MerkleStore`, under the type index); a write recomputes the containers above it and stops at the first unchanged digest |
+| `Repr-Digest` | `sha-256=:<base64>:` on a 200 or 206 GET or HEAD of a resource answered with its stored media type and no query; the digest of the whole representation also for a range (RFC 9530 §3.1) |
+| container | field `Factoidal-Merkle-Root` (the listing and every page) and the member `…/919#merkleRoot` (JSON) or the triple `<container> <…/919#merkleRoot> "sha-256=:…:"` (Turtle) |
+| storage description | member `https://github.com/danbri/factoidal/issues/919#storageMerkleRoot`: the digest of the storage root container |
+| who sees roots | everyone with `insecureNoAuth`; under authorization the storage controller only (`acl:Control` on the root), because a root is computed from resources a reader of the listing may not read |
+| entity tags | unchanged (expected failure in `tests/lws/merkle.mjs`: a listing whose root member changed keeps its strong ETag, RFC 9110 §8.8.1) |
+| snapshot | holds no hash; the hashes are rebuilt at open in one pass |
+
+Theorems: `MkOk.dig_eq_recompute`, `MkState.dig_eq_recompute`, `rebuild_ok`,
+`walk_ok`, `MkOk.upd`, `merkleStoreLaws`, `containerDigest_inj`,
+`dataDigest_changes`, `parent_digest_changes`, `change_reaches_ancestor`,
+`decorate_off`, and in `Storage/BlockMerkle.lean` `rootWith_inj`,
+`nextLevelWith_inj`. Collision-freedom of SHA-256 is a hypothesis
+(`NoCollision`, over the byte strings hashed at one path in two states).
+
 ## LWS 1.0 Core
 
 Source: <https://w3c.github.io/lws-protocol/lws10-core/>, W3C Linked Web
@@ -643,6 +674,7 @@ SKIPS each check by name with that reason printed. A skip is never a pass.
 | `tests/lws/server.mjs` | Node, Deno | the server binds an ephemeral port; PUT creates a data resource; GET reads it back with `Last-Modified`; HEAD carries `Last-Modified` and no body; PUT updates it and `Last-Modified` moves; DELETE removes it; GET after DELETE answers 404; a PATCH whose insertion formula holds a blank node is refused with a 4xx |
 | `tests/solid/server/protocol.mjs` | Node, Deno | the storage root advertises `pim:Storage` by `Link rel=type` (§4.1); OPTIONS reports `Allow`, `Accept-Post`, `Accept-Patch`, `Accept-Put` (§4.3); PUT creates a resource and its container gains the containment triple (§5.3); POST assigns a name and reports it in `Location` (§5.4); a PUT that edits a containment triple is refused with 409 (§5.3); DELETE on the storage root is refused with 405 (§5.5); a resource advertises its `describedby` auxiliary and the auxiliary dies with its subject (§4.2); PATCH applies an N3 Patch (§5.6); a CORS preflight is answered with the allow headers (§6); the LDN inbox is advertised and accepts a notification (§7) |
 | `tests/lws/encryption.mjs` | Node | encryption at rest (https://github.com/danbri/factoidal/issues/921), for `lws-serve` and `solid-serve`: the sealed file names the key id and holds no clear text; restart with the key (hex and base64url forms); a new nonce per write; a wrong key, every one-byte change of the file, a truncated file, a shortened ciphertext, a clear-text file with a key, a sealed file without one and a key of the wrong length are each refused at open; with no key a clear-text storage behaves as before; the CLI with `FACTOIDAL_LWS_KEY` |
+| `tests/lws/merkle.mjs` | Node | the optional Merkle hashes (https://github.com/danbri/factoidal/issues/919): `Repr-Digest` against `node:crypto` SHA-256 (text, binary, range, HEAD); the container field equals its JSON member and its Turtle statement; the storage description root; a deep write, a move and a delete change the roots above them and no other; a restart rebuilds the same hashes and the snapshot holds none; off by default nothing is added; ETags equal with the option on and off; under authorization only the controller sees roots; `lws-serve --merkle`. One xfail (issue 919): a container ETag does not follow its root |
 | `tests/solid/client/against-own-server.mjs` | Node, Deno | our client at an in-process instance of our server: `discoverStorage`, `replace`, `read`, `create` with a `Location`, `delete`, that a deleted resource is gone while its POSTed sibling survives, and that every request reached the socket through the engine |
 | `tests/solid/client/against-community-server.mjs` | Node | the same five operations with the far end replaced by Community Solid Server, so a misreading our own two sides share cannot pass. Driven by `tools/solid-client-interop.sh` |
 

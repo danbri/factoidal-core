@@ -49,6 +49,12 @@ the permission of the owner. The drafts define:
   (https://github.com/danbri/factoidal/issues/921). It protects the file on
   disk only: not the memory of a running server, not the key in its
   environment, not what the server answers to clients.
+- Merkle hashes, off by default (`--merkle`): `Repr-Digest` (RFC 9530) on
+  every resource and a Merkle root per container and for the storage, kept
+  up to date by the store with a proof, roots shown to the storage
+  controller only; entity tags unchanged
+  (https://github.com/danbri/factoidal/issues/919,
+  `docs/designissues/2026-10-21-lws-merkle.md`).
 
 The same engine serves the Solid Protocol (`solid-serve`) and has a Solid
 client. The same package also parses, queries (SPARQL), validates (SHACL,

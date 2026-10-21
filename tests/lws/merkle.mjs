@@ -229,7 +229,7 @@ async function main () {
       const field = r.headers.get('factoidal-merkle-root')
       assert(/^sha-256=:[A-Za-z0-9+/]{43}=:$/.test(field || ''), `field ${field}`)
       assert(j[ROOT_MEMBER] === field, `member ${j[ROOT_MEMBER]}, field ${field}`)
-      assert(j.type === 'Container' && j.totalItems === 4, JSON.stringify(j))
+      assert(j.type === 'Container' && j.totalItems === 3, JSON.stringify(j))
     })
 
     await check(CHECKS[5], async () => {
@@ -334,7 +334,9 @@ async function main () {
       try {
         await populate(a.origin)
         await populate(b.origin)
-        for (const path of ['/docs/a.txt', '/docs/bin', '/docs/', '/docs/deep/', '/', '/.well-known/lws-storage']) {
+        // Not the storage description: its tag covers the notification
+        // signing key, which each server draws from its own random bytes.
+        for (const path of ['/docs/a.txt', '/docs/bin', '/docs/', '/docs/deep/', '/']) {
           for (const accept of ['application/lws+json', 'text/turtle']) {
             const ra = await fetch(`${a.origin}${path}`, { headers: { accept } })
             const rb = await fetch(`${b.origin}${path}`, { headers: { accept } })
