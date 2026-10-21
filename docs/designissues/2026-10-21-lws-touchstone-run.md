@@ -573,6 +573,20 @@ with "unknown target 'factoidal-auth-unstable'" (exit 2). The script now
 removes `as.log` and `targets-auth.yaml` before the authorization server
 starts.
 
+Gates on the branch (after the merge of `claude/wt-lws921`): full `lake
+build` exit 0; `tools/lean-unbuilt-modules.py --gate` 829 of 829 modules
+reached; `Wasm/native-smoke.sh` 375 pass, 0 fail (out of 375); `npm test`
+536 pass, 0 fail, 2 skipped (out of 538); `tests/lws/authorization.mjs` 29
+pass, 0 fail (out of 29); `binary-bodies.mjs` 20 pass, 0 fail (out of 20);
+`draft-binding.mjs` 69 pass, 0 fail, 4 xfail (out of 73); `encryption.mjs`
+28 pass, 0 fail (out of 28); `scaling.mjs` 12 pass, 0 fail (out of 12);
+`server.mjs` 8 pass, 0 fail (out of 8); `tests/solid/server/protocol.mjs` 12
+pass, 0 fail (out of 12); `tests/solid/server/oidc.mjs` 21 pass, 0 fail (out
+of 21); `tests/solid/client/against-own-server.mjs` 7 pass, 0 fail (out of
+7); `tools/host-purity-lint.sh` 35 pass, 0 fail (out of 35); `lake exe
+l4lws-probe` guarded checks 17 pass, 0 fail (out of 17), registry 11 proved,
+17 guarded, 0 host-verified, 5 open (out of 33).
+
 ## Run details
 
 * Host: Linux, OpenJDK 21.0.12, Maven 3.9.11, Node 22.22.0. No Docker
