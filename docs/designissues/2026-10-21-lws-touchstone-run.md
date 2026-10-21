@@ -385,6 +385,48 @@ the open run does not declare). Inapplicable in both:
   "Authorization" (allowed, 403 without create in the destination, 403
   without delete of the resource or of one resource of a moved subtree).
 
+## Type index and type search (issue 912)
+
+Run 2026-10-21 on branch `claude/wt-lws912` (the Type Index and Type Search
+services, https://github.com/danbri/factoidal/issues/912, merged with the
+moving-resources branch `claude/wt-lws914` and with `main` at 0f7e25a3),
+`bash tools/lws-touchstone.sh --config both`, no `--shim`, same Touchstone
+commit. The script exits 0. Reports:
+`docs/test-results/lws-touchstone-2026-10-21-index/` (`report.md` and
+`earl.ttl` per configuration, `run.txt` the script output).
+
+| configuration | tests | passed | failed | cantTell | inapplicable |
+|---|---:|---:|---:|---:|---:|
+| ours, `--insecure-no-auth`, direct | 221 | 75 | 0 | 0 | 146 |
+| ours, default authorization, direct | 221 | 186 | 0 | 0 | 35 |
+
+`index/manifest` (40 tests): open 0 pass, 0 fail, 40 inapplicable (every
+test requires `Authentication`, which the open configuration does not
+declare); authorization 34 pass, 0 fail, 6 inapplicable (out of 40 each).
+Inapplicable under authorization:
+
+* `type-index-lists-readable-types`, `type-index-omits-unreadable-type`,
+  `type-search-authorization-filtered` (prerequisite grants bob read access),
+  `type-search-revoked-not-shown`, `type-search-content-types-identical`
+  (a step POSTs to the AccessGrantService): access grants,
+  https://github.com/danbri/factoidal/issues/913. The rules they test are
+  checked with Web Access Control in place of a grant:
+  `L4Factoidal/LWS/SearchTests.lean` "Authorization" and
+  `tests/lws/authorization.mjs` "Type search: results, totalItems and the
+  type index ...".
+* `type-search-content-location-protected`: applies only when a search
+  answer carries `Content-Location`. lws10-index §QUERY: "this
+  specification does not define such a resource"; this server sends none.
+
+Spec and test text read together, no disagreement found between a test and
+the draft. One tension between two drafts, which the test
+`type-search-reflects-update` exercises: lws10-core §Metadata lists `type`
+as "System Managed; Read-Only", and lws10-index §Type and Relation
+Derivation says "servers SHOULD derive resource types from HTTP Link headers
+provided by the client during resource creation or modification". The
+reading used here, and the draft issue text, are in
+`docs/designissues/2026-10-21-lws-draft-inconsistencies.md` (Issue 2).
+
 ## Run details
 
 * Host: Linux, OpenJDK 21.0.12, Maven 3.9.11, Node 22.22.0. No Docker
