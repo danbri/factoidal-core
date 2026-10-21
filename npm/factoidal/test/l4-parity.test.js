@@ -116,12 +116,12 @@ test('jsonldToRdf: a remote @context is an error (no document loader)', async (t
   if (await skipUnlessOps(t, 'jsonldToRdf')) return;
   await assert.rejects(
     () => lean.jsonldToRdf('{"@context":"http://example.org/ctx","@id":"http://e/a"}'),
-    /jsonldToRdf: .*remote context/);
+    (e) => e.code === 'parse.syntax' && /remote context/.test(e.message));
 });
 
 test('jsonldToRdf: text that is not JSON-LD rejects', async (t) => {
   if (await skipUnlessOps(t, 'jsonldToRdf')) return;
-  await assert.rejects(() => lean.jsonldToRdf('not json'), /jsonldToRdf/);
+  await assert.rejects(() => lean.jsonldToRdf('not json'), (e) => e.code === 'parse.syntax');
   await assert.rejects(() => lean.jsonldToRdf(42), TypeError);
 });
 
@@ -177,7 +177,7 @@ test('rmlMap: evaluates an RML mapping graph against JSON source data', async (t
 test('rmlMap: rejects a bad sourceKind and source text that is not JSON', async (t) => {
   if (await skipUnlessOps(t, 'rmlMap')) return;
   const mapping = '<http://e/TM> a <http://w3id.org/rml/TriplesMap> .';
-  await assert.rejects(() => lean.rmlMap(mapping, '{}', 'xml'), TypeError);
+  await assert.rejects(() => lean.rmlMap(mapping, '{}', 'xml'), (e) => e.code === 'option.invalid-value');
   await assert.rejects(() => lean.rmlMap(mapping, 7, 'json'), TypeError);
   const full = `
     @prefix rml: <http://w3id.org/rml/> .
@@ -307,7 +307,7 @@ test('rifEval: accepts the DOCTYPE and entity form real RIF fixtures use', async
 
 test('rifEval: rules that do not parse reject', async (t) => {
   if (await skipUnlessOps(t, 'rifEval')) return;
-  await assert.rejects(() => lean.rifEval(RIF_DATA, '<not rif'), /rifEval/);
+  await assert.rejects(() => lean.rifEval(RIF_DATA, '<not rif'), (e) => e.code === 'reason.failed' && /RIF/.test(e.message));
   await assert.rejects(() => lean.rifEval(RIF_DATA, 7), TypeError);
 });
 
@@ -1001,7 +1001,7 @@ test('queryRaw: output formats csv, tsv, xml and table return strings', async (t
   assert.ok(table.length > 0);
 });
 
-test('queryRaw: a bad query rejects with diagnostic fields; bad options are TypeErrors', async (t) => {
+test('queryRaw: a bad query rejects with code and position; bad options are engine refusals', async (t) => {
   if (await skipUnlessOps(t, 'queryRaw')) return;
   let threw = null;
   try {
@@ -1009,11 +1009,10 @@ test('queryRaw: a bad query rejects with diagnostic fields; bad options are Type
   } catch (e) {
     threw = e;
   }
-  assert.ok(threw instanceof Error);
-  assert.ok(threw.exitCode !== 0 || threw.stderr || threw.stdout,
-    'error should carry diagnostic info');
-  await assert.rejects(() => lean.queryRaw(RAW_DATA, RAW_NAMES, { output: 'yaml' }), TypeError);
-  await assert.rejects(() => lean.queryRaw(RAW_DATA, RAW_NAMES, { entail: 'x-nope' }), TypeError);
-  await assert.rejects(() => lean.queryRaw(RAW_DATA, RAW_NAMES, { dataFormat: 'nope' }), TypeError);
+  assert.equal(threw.code, 'query.syntax');
+  assert.equal(threw.position.line, 1);
+  await assert.rejects(() => lean.queryRaw(RAW_DATA, RAW_NAMES, { output: 'yaml' }), (e) => e.code === 'option.invalid-value');
+  await assert.rejects(() => lean.queryRaw(RAW_DATA, RAW_NAMES, { entail: 'x-nope' }), (e) => e.code === 'option.invalid-value');
+  await assert.rejects(() => lean.queryRaw(RAW_DATA, RAW_NAMES, { dataFormat: 'nope' }), (e) => e.code === 'format.unknown');
   await assert.rejects(() => lean.queryRaw(1, RAW_NAMES), TypeError);
 });

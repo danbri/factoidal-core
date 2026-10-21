@@ -30,7 +30,7 @@ test('format inference only when the format is omitted, and it is reported', asy
   await assert.rejects(f.parse(TTL, { format: 'ntriples' }));
   // An inference that fails says so.
   await assert.rejects(f.parse('<http://e/a> <http://e/p> "x" <http://e/g> .'),
-    (err) => /format inferred as 'turtle12'/.test(err.message) && err.formatInferred === true);
+    (err) => err.code === 'parse.syntax' && err.format === 'turtle12' && err.formatInferred === true);
   const nq = await f.parse('<http://e/a> <http://e/p> "x" <http://e/g> .\n', { format: 'nquads' });
   assert.equal(nq.size, 1);
   nq.dispose();
@@ -67,9 +67,9 @@ test('a disposed Dataset throws a clear error; using disposes', async () => {
   ds.dispose();
   ds.dispose(); // idempotent
   assert.equal(ds.disposed, true);
-  assert.throws(() => ds.size, /disposed/);
-  await assert.rejects(ds.query('ASK {}'), /Dataset.query: the Dataset was disposed/);
-  await assert.rejects(f.query(ds, 'ASK {}'), /disposed/);
+  assert.throws(() => ds.size, (e) => e.code === 'handle.disposed' && /disposed/.test(e.message));
+  await assert.rejects(ds.query('ASK {}'), (e) => e.code === 'handle.disposed');
+  await assert.rejects(f.query(ds, 'ASK {}'), (e) => e.code === 'handle.disposed');
   const d2 = await f.parse(TTL, { format: 'turtle' });
   {
     d2[Symbol.dispose]();

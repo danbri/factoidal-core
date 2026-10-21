@@ -211,7 +211,13 @@ def opTextArg (op : String) : Option Nat :=
 /-- The default code of an op family, for a refusal no message rule names. -/
 def familyCode (op : String) : String :=
   let p (xs : List String) := xs.any fun x => op.startsWith x
-  if p ["parse", "detectFormat", "jsonldToRdf", "csvwToRdf", "rmlMap"] then "parse.syntax"
+  let c (xs : List String) := xs.any fun x => has op x
+  -- dataset-handle forms of the producers: the part after `dataset` names it
+  if p ["dataset"] && c ["FromJsonLd", "FromCsvw", "FromRml", "FromJsonld"] then "parse.syntax"
+  else if p ["dataset"] && c ["Rif", "Owl", "Tableau", "Closure", "Rdfs", "RhoDf"] then
+    "reason.failed"
+  else if p ["dataset"] && c ["Shacl", "Shex"] then "validate.failed"
+  else if p ["parse", "detectFormat", "jsonldToRdf", "csvwToRdf", "rmlMap"] then "parse.syntax"
   else if op == "datasetOpen" then "parse.syntax"
   else if p ["deltaLog", "updateDataset", "datasetUpdate"] then "update.failed"
   else if p ["query", "datasetQuery", "storeQuery"] then "query.failed"
@@ -329,6 +335,9 @@ def codeOf? (envelope : String) : Option String :=
 #guard classify "queryDataset" "queryDataset expects 2 arguments, got 0" false == "call.arity"
 #guard classify "xpathEval" "xpathEval: XPath parse error" false == "xml.failed"
 #guard classify "frobnicate" "it failed" false == "op.failed"
+#guard familyCode "datasetRifEval" == "reason.failed"
+#guard familyCode "datasetFromJsonLd" == "parse.syntax"
+#guard familyCode "datasetMatch" == "term.invalid"
 #guard errorCodes.all fun c => errorCodes.count c == 1
 #guard (errorCodes.map familyCode).all fun _ => true
 #guard ["parseToDatasetJson", "queryDataset", "xyz"].all fun op => errorCodes.contains (familyCode op)

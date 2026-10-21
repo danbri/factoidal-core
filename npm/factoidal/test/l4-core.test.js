@@ -623,10 +623,11 @@ test('dataset-handle parse error carries a line/column position', async (t) => {
   await assert.rejects(
     () => l4core.openDataset('this is not turtle', { format: 'turtle' }),
     (err) => {
-      assert.equal(err.name, 'ParseError');
-      assert.equal(err.line, 1, 'a positioned error (a line member), same as the F* engine');
-      assert.equal(typeof err.column, 'number');
-      assert.equal(typeof err.offset, 'number');
+      assert.equal(err.name, 'FactoidalError');
+      assert.equal(err.code, 'parse.syntax');
+      assert.equal(err.position.line, 1, 'a positioned error (a line member), same as the F* engine');
+      assert.equal(typeof err.position.column, 'number');
+      assert.equal(typeof err.position.offset, 'number');
       assert.equal(err.format, 'turtle');
       return true;
     });

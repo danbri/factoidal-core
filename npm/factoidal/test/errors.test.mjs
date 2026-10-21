@@ -146,25 +146,25 @@ codeTest('serialize.unsupported-rdf12', 'a triple term written as RDF 1.1 N-Trip
     'serialize.unsupported-rdf12');
 });
 codeTest('serialize.failed', 'N-Quads text the writer cannot read', async () => {
-  checkEnvelope(rawRefusal('serializeTurtle', ['<a> <b> .']), 'serialize.failed');
+  checkEnvelope(rawRefusal('serializeTurtle', ['garbage']), 'serialize.failed');
 });
 codeTest('canon.unsupported-rdf12', 'RDFC-1.0 of a triple term', async () => {
   check(await rejection(() => f.canonicalize(tt)), 'canon.unsupported-rdf12');
 });
 codeTest('canon.failed', 'canonicalizeToNQuads of text that is not N-Quads', async () => {
-  checkEnvelope(rawRefusal('canonicalizeToNQuads', ['<a> <b> .']), 'canon.failed');
+  checkEnvelope(rawRefusal('canonicalizeToNQuads', ['garbage']), 'canon.failed');
 });
 codeTest('owl.unsupported-rdf12', 'OWL 2 DL consistency of a triple term', async () => {
   check(await rejection(() => f.owlIsConsistent(tt)), 'owl.unsupported-rdf12');
 });
 codeTest('reason.failed', 'owlClosure of text that is not N-Quads', async () => {
-  checkEnvelope(rawRefusal('owlClosure', ['<a> <b> .', 'rdfs']), 'reason.failed');
+  checkEnvelope(rawRefusal('owlClosure', ['garbage', 'rdfs']), 'reason.failed');
 });
 codeTest('regime.refused', 'an x-ikl-* regime', async () => {
   check(await rejection(() => f.query(ds, 'ASK {}', { entail: 'x-ikl-test' })), 'regime.refused');
 });
 codeTest('validate.failed', 'SHACL with data that is not N-Quads', async () => {
-  checkEnvelope(rawRefusal('shaclValidate', ['<a> <b> .', '']), 'validate.failed');
+  checkEnvelope(rawRefusal('shaclValidate', ['garbage', '']), 'validate.failed');
 });
 codeTest('xml.failed', 'an XPath expression the engine cannot read', async () => {
   check(await rejection(() => f.xpathEval('<a/>', '///')), 'xml.failed');
@@ -176,7 +176,7 @@ codeTest('store.failed', 'a store manifest that is not hex', async () => {
   checkEnvelope(rawRefusal('storeManifestInspect', ['zz']), 'store.failed');
 });
 codeTest('registry.failed', 'a SERVICE endpoint whose data is not N-Quads', async () => {
-  checkEnvelope(rawRefusal('registerServiceEndpoint', ['http://e/s', '<a> <b> .']), 'registry.failed');
+  checkEnvelope(rawRefusal('registerServiceEndpoint', ['http://e/s', 'garbage']), 'registry.failed');
 });
 codeTest('handle.unknown', 'a handle the engine never issued', async () => {
   checkEnvelope(rawRefusal('datasetQuery', ['h999999999', 'ASK {}']), 'handle.unknown');

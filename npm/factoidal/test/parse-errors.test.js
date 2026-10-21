@@ -1,10 +1,10 @@
 // Strict parsing (issue #344): every function that parses text input
-// rejects with a positioned ParseError instead of silently dropping
+// rejects with a positioned FactoidalError instead of silently dropping
 // data. See README.md's "Parsing is strict by default" section and
 // lib/api.mjs's entryResult()/ParseError.
 //
 // ParseError.offset is a UTF-16 code-unit index into the input string
-// (index.d.ts), so text.slice(err.offset) starts at the error. The engine
+// (index.d.ts), so text.slice(err.position.offset) starts at the error. The engine
 // counts Unicode scalar values; lib/api.mjs converts. A character outside
 // the Basic Multilingual Plane before the error is the case that tells
 // the two units apart.
@@ -17,22 +17,25 @@ const assert = require('node:assert/strict');
 const factoidal = require('../index.js');
 
 function assertParseError(err, who) {
-  assert.equal(err.name, 'ParseError', `${who}: err.name`);
-  assert.ok(err instanceof Error, `${who}: ParseError extends Error`);
-  assert.equal(err instanceof factoidal.ParseError, true,
-    `${who}: err instanceof the exported ParseError class`);
-  assert.equal(typeof err.line, 'number', `${who}: err.line is a number`);
-  assert.equal(typeof err.column, 'number', `${who}: err.column is a number`);
-  assert.equal(typeof err.offset, 'number', `${who}: err.offset is a number`);
+  assert.equal(err.name, 'FactoidalError', `${who}: err.name`);
+  assert.ok(err instanceof Error, `${who}: FactoidalError extends Error`);
+  assert.equal(err instanceof factoidal.FactoidalError, true,
+    `${who}: err instanceof the exported FactoidalError class`);
+  assert.ok(['parse.syntax', 'term.invalid-iri', 'term.invalid-langtag', 'parse.rdf12-required'].includes(err.code),
+    `${who}: a parse code, got ${err.code}`);
+  assert.equal(typeof err.spec, 'string', `${who}: err.spec`);
+  assert.equal(typeof err.position.line, 'number', `${who}: err.position.line is a number`);
+  assert.equal(typeof err.position.column, 'number', `${who}: err.position.column is a number`);
+  assert.equal(typeof err.position.offset, 'number', `${who}: err.position.offset is a number`);
 }
 
-test('parse("this is not turtle") rejects with a positioned ParseError', async () => {
+test('parse("this is not turtle") rejects with a positioned FactoidalError', async () => {
   await assert.rejects(
     factoidal.parse('this is not turtle', { format: 'turtle' }),
     (err) => { assertParseError(err, 'parse'); return true; });
 });
 
-test('a Turtle document missing one "." rejects with a positioned ParseError', async () => {
+test('a Turtle document missing one "." rejects with a positioned FactoidalError', async () => {
   const text =
     '@prefix ex: <http://example.org/> .\n' +
     'ex:a ex:p ex:o\n' +        // missing '.' here
@@ -41,7 +44,7 @@ test('a Turtle document missing one "." rejects with a positioned ParseError', a
     factoidal.parse(text, { format: 'turtle' }),
     (err) => {
       assertParseError(err, 'missing-dot');
-      assert.equal(err.line, 3, 'the parser reports the failure on the FOLLOWING line');
+      assert.equal(err.position.line, 3, 'the parser reports the failure on the FOLLOWING line');
       return true;
     });
 });
@@ -52,19 +55,19 @@ test('a relative IRI with no baseIRI rejects with a message mentioning IRI', asy
     /IRI/i);
 });
 
-test('N-Triples syntax errors reject with a positioned ParseError', async () => {
+test('N-Triples syntax errors reject with a positioned FactoidalError', async () => {
   await assert.rejects(
     factoidal.parse('<http://x/s> <http://x/p> .', { format: 'ntriples' }),
     (err) => { assertParseError(err, 'ntriples'); return true; });
 });
 
-test('N-Quads syntax errors reject with a positioned ParseError', async () => {
+test('N-Quads syntax errors reject with a positioned FactoidalError', async () => {
   await assert.rejects(
     factoidal.parse('<http://x/s> <http://x/p> .', { format: 'nquads' }),
     (err) => { assertParseError(err, 'nquads'); return true; });
 });
 
-test('TriG syntax errors reject with a positioned ParseError', async () => {
+test('TriG syntax errors reject with a positioned FactoidalError', async () => {
   await assert.rejects(
     factoidal.parse('@prefix ex: <http://x/> . GRAPH ex:g { ex:s ex:p', { format: 'trig' }),
     (err) => { assertParseError(err, 'trig'); return true; });
@@ -79,8 +82,8 @@ test('RDF/XML syntax errors reject (a message only, no position -- issue #344)',
   await assert.rejects(
     factoidal.parse(bad, { format: 'rdfxml' }),
     (err) => {
-      assert.notEqual(err.name, 'ParseError',
-        'RDF/XML failures carry a message only, so they stay a plain Error');
+      assert.equal(err.code, 'parse.syntax');
+      assert.equal(err.position, null, 'RDF/XML failures carry no position');
       assert.match(err.message, /nodeID/);
       return true;
     });
@@ -153,12 +156,12 @@ test('offset is a UTF-16 index: a non-BMP character before the error counts 2', 
   try { await factoidal.parse(plain, { format: 'turtle' }); } catch (e) { plainErr = e; }
   assertParseError(grinErr, 'non-BMP');
   assertParseError(plainErr, 'plain');
-  assert.equal(grinErr.line, 2);
-  assert.equal(grinErr.column, plainErr.column, 'column counts Unicode scalar values on line 2');
-  assert.equal(grinErr.offset, plainErr.offset + 1, 'U+1F600 is 2 UTF-16 code units where x is 1');
-  assert.equal(grinErr.offset, utf16IndexOf(text, grinErr.line, grinErr.column),
-    'text.slice(err.offset) starts where line and column point');
-  assert.equal(text.slice(grinErr.offset), plain.slice(plainErr.offset),
+  assert.equal(grinErr.position.line, 2);
+  assert.equal(grinErr.position.column, plainErr.position.column, 'column counts Unicode scalar values on line 2');
+  assert.equal(grinErr.position.offset, plainErr.position.offset + 1, 'U+1F600 is 2 UTF-16 code units where x is 1');
+  assert.equal(grinErr.position.offset, utf16IndexOf(text, grinErr.position.line, grinErr.position.column),
+    'text.slice(err.position.offset) starts where line and column point');
+  assert.equal(text.slice(grinErr.position.offset), plain.slice(plainErr.position.offset),
     'the same text follows the error in both inputs');
 });
 
@@ -166,10 +169,10 @@ test('offset is a UTF-16 index on N-Triples and through query() and openDataset(
   const text = `<http://x/s> <http://x/p> "${GRIN}${GRIN}" .\n<http://x/s> <http://x/p> BOGUS .\n`;
   const check = (err) => {
     assertParseError(err, 'ntriples');
-    assert.equal(err.line, 2);
-    assert.equal(err.offset, utf16IndexOf(text, err.line, err.column),
-      `offset ${err.offset} is not the UTF-16 index of line ${err.line}, column ${err.column}`);
-    assert.ok(err.offset > text.indexOf('\n'), 'the offset is past line 1');
+    assert.equal(err.position.line, 2);
+    assert.equal(err.position.offset, utf16IndexOf(text, err.position.line, err.position.column),
+      `offset ${err.position.offset} is not the UTF-16 index of line ${err.position.line}, column ${err.position.column}`);
+    assert.ok(err.position.offset > text.indexOf('\n'), 'the offset is past line 1');
     return true;
   };
   await assert.rejects(factoidal.parse(text, { format: 'ntriples' }), check);

@@ -54,8 +54,9 @@ test('entail RDFS: CONSTRUCT answers a Dataset over the closure', async () => {
   assert.ok([...ds].some((q) => q.object.value === 'http://e/D'));
 });
 
-test('an unknown regime is a TypeError', async () => {
-  await assert.rejects(() => factoidal.query(TTL, ASK_D, { entail: 'x-none-such' }), TypeError);
+test('an unknown regime is option.invalid-value', async () => {
+  await assert.rejects(() => factoidal.query(TTL, ASK_D, { entail: 'x-none-such' }),
+    (e) => e instanceof factoidal.FactoidalError && e.code === 'option.invalid-value');
 });
 
 test('query() rejects x-ikl-* entail regimes, case-insensitively', async () => {

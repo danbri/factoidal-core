@@ -417,19 +417,19 @@ const X = 'http://x/';
 const XSD_INT = 'http://www.w3.org/2001/XMLSchema#integer';
 
 function assertParseError(err, who) {
-  assert.equal(err.name, 'ParseError', `${who}: err.name`);
-  assert.ok(err instanceof l4core.ParseError, `${who}: instanceof the exported ParseError`);
-  assert.equal(typeof err.line, 'number', `${who}: err.line`);
-  assert.equal(typeof err.column, 'number', `${who}: err.column`);
-  assert.equal(typeof err.offset, 'number', `${who}: err.offset`);
+  assert.equal(err.name, 'FactoidalError', `${who}: err.name`);
+  assert.ok(err instanceof l4core.FactoidalError, `${who}: instanceof the exported FactoidalError`);
+  assert.equal(typeof err.position.line, 'number', `${who}: err.position.line`);
+  assert.equal(typeof err.position.column, 'number', `${who}: err.position.column`);
+  assert.equal(typeof err.position.offset, 'number', `${who}: err.position.offset`);
 }
 
 test('l4-core parse errors carry line, column, offset and format (Turtle, TriG, N-Triples, N-Quads)', async (t) => {
   if (await skipUnlessOps(t, 'parseToDatasetJson')) return;
   await assert.rejects(l4core.parse('this is not turtle', { format: 'turtle' }),
-    (err) => { assertParseError(err, 'turtle'); assert.equal(err.line, 1); assert.equal(err.column, 5); assert.equal(err.format, 'turtle'); return true; });
+    (err) => { assertParseError(err, 'turtle'); assert.equal(err.position.line, 1); assert.equal(err.position.column, 5); assert.equal(err.format, 'turtle'); return true; });
   await assert.rejects(l4core.parse('<http://x/s> <http://x/p> .', { format: 'ntriples' }),
-    (err) => { assertParseError(err, 'ntriples'); assert.equal(err.line, 1); return true; });
+    (err) => { assertParseError(err, 'ntriples'); assert.equal(err.position.line, 1); return true; });
   await assert.rejects(l4core.parse('<http://x/s> <http://x/p> .', { format: 'nquads' }),
     (err) => { assertParseError(err, 'nquads'); return true; });
   await assert.rejects(l4core.parse('@prefix ex: <http://x/> . GRAPH ex:g { ex:s ex:p', { format: 'trig' }),
@@ -440,7 +440,7 @@ test('l4-core parse error: a Turtle statement missing its dot is reported on the
   if (await skipUnlessOps(t, 'parseToDatasetJson')) return;
   const text = '@prefix ex: <http://example.org/> .\nex:a ex:p ex:o\nex:b ex:p ex:o2 .\n';
   await assert.rejects(l4core.parse(text, { format: 'turtle' }),
-    (err) => { assertParseError(err, 'missing-dot'); assert.equal(err.line, 3); return true; });
+    (err) => { assertParseError(err, 'missing-dot'); assert.equal(err.position.line, 3); return true; });
 });
 
 test('l4-core parse error: the column counts Unicode scalar values, the line counts newlines', async (t) => {
@@ -450,12 +450,12 @@ test('l4-core parse error: the column counts Unicode scalar values, the line cou
   let a, w;
   await assert.rejects(l4core.parse(ascii, { format: 'ttl' }), (err) => { a = err; return true; });
   await assert.rejects(l4core.parse(wide, { format: 'ttl' }), (err) => { w = err; return true; });
-  assert.equal(a.line, 2);
-  assert.equal(w.line, 2);
-  assert.equal(a.column, w.column, 'non-ASCII text on a previous line does not move the column');
+  assert.equal(a.position.line, 2);
+  assert.equal(w.position.line, 2);
+  assert.equal(a.position.column, w.position.column, 'non-ASCII text on a previous line does not move the column');
   // On the same line, three two-byte characters are three columns.
   await assert.rejects(l4core.parse('ééé .', { format: 'ttl' }),
-    (err) => { assert.equal(err.line, 1); assert.ok(err.column <= 4, `column ${err.column}`); return true; });
+    (err) => { assert.equal(err.position.line, 1); assert.ok(err.position.column <= 4, `column ${err.position.column}`); return true; });
 });
 
 test('l4-core parse error: an RDF/XML failure is a message only, a plain Error', async (t) => {
@@ -463,7 +463,7 @@ test('l4-core parse error: an RDF/XML failure is a message only, a plain Error',
   const bad = '<rdf:RDF xmlns:rdf="http://www.w3.org/1999/02/22-rdf-syntax-ns#">' +
     '<rdf:Description rdf:nodeID="333-555-666" /></rdf:RDF>';
   await assert.rejects(l4core.parse(bad, { format: 'rdfxml' }),
-    (err) => { assert.notEqual(err.name, 'ParseError'); assert.match(err.message, /nodeID/); return true; });
+    (err) => { assert.equal(err.position, null); assert.match(err.message, /nodeID/); return true; });
 });
 
 test('l4-core parse error: a relative IRI with no baseIRI names the IRI', async (t) => {
@@ -520,7 +520,7 @@ test('l4-core openDataset: prefixes at open, handle prefixes in Turtle output, o
     h.dispose();
   }
   await assert.rejects(l4core.openDataset('this is not turtle', { format: 'turtle' }),
-    (err) => { assertParseError(err, 'openDataset'); assert.equal(err.line, 1); return true; });
+    (err) => { assertParseError(err, 'openDataset'); assert.equal(err.position.line, 1); return true; });
 });
 
 test('l4-core serialize({format:"turtle"}): bare literals by default, quoted with literalShorthand:false', async (t) => {

@@ -74,7 +74,7 @@ test('Store.close is idempotent and a closed store refuses queries', async () =>
   await store.close();
   await store.close();
   assert.equal(store.closed, true);
-  await assert.rejects(() => store.query(COUNT), /is closed/);
+  await assert.rejects(() => store.query(COUNT), (e) => e.code === 'handle.disposed' && /closed/.test(e.message));
 });
 
 test('listStores reports the open handles and the residency caps', async () => {

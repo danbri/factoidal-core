@@ -70,7 +70,7 @@ function missingOpError(what, e, op) {
     try {
       eng.call(op, []);
     } catch (err) {
-      if (err && err.envelope && err.envelope.code) {
+      if (err && err.envelope && err.envelope.code === 'op.unknown') {
         const out = errorFromEnvelope(err.envelope);
         if (e.profile === 'core' && Array.isArray(e.fullOnlyOps) && e.fullOnlyOps.includes(op)) {
           out.message = `${what}: ${fullEngineMessage(`the op '${op}'`)}`;

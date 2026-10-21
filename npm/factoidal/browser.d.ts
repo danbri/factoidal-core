@@ -5,6 +5,8 @@
 // system, so a path string rejects.
 
 export type {
+  FactoidalErrorCode,
+  FactoidalErrorPosition,
   NamedNode, BlankNode, Literal, Variable, DefaultGraph, Quad, Term, DataFactory,
   DataFormat, EntailRegime, Bindings, DataInput, QueryInput, ParseOptions,
   QueryOptions, SerializeOptions, StoreReader, OpenStoreOptions,
@@ -92,8 +94,6 @@ export {
   DatasetHandle,
   Store,
   FactoidalError,
-  FactoidalErrorCode,
-  FactoidalErrorPosition,
   dataFactory,
   version,
   engine,
