@@ -195,10 +195,12 @@ three of its 11 tests have preconditions this server cannot meet at once
 `move-container-refused-without-container-support` needs no `Container` in
 `appliesTo`, `move-refused-without-capability` needs no capability).
 Measured 2026-10-21 without `--shim`: open 6 pass, 0 fail, 5 inapplicable;
-authorization 7 pass, 0 fail, 4 inapplicable (out of 11 each). The two
-`move-needs-*` tests need an AccessGrantService
-(https://github.com/danbri/factoidal/issues/913); record:
-`docs/designissues/2026-10-21-lws-touchstone-run.md` § Moving resources.
+authorization 7 pass, 0 fail, 4 inapplicable (out of 11 each). With the
+AccessGrantService (https://github.com/danbri/factoidal/issues/913) the two
+`move-needs-*` tests apply and pass: authorization 9 pass, 0 fail, 3
+inapplicable (out of 12, measured 2026-10-21); record:
+`docs/designissues/2026-10-21-lws-touchstone-run.md` § Moving resources and
+§ Access requests and grants.
 
 ### Type index and type search (https://github.com/danbri/factoidal/issues/912)
 
@@ -250,8 +252,9 @@ real tokens and ACLs); `tests/lws/scaling.mjs` rows "type index" (a rare-type
 search, a whole-store search and a reopen at 500, 1,000 and 2,000 resources).
 Touchstone `index/manifest.yamlld` (40 tests), measured 2026-10-21 without
 `--shim`: authorization 34 pass, 0 fail, 6 inapplicable; open 40
-inapplicable (every test needs Authentication). Five of the six need an
-AccessGrantService (https://github.com/danbri/factoidal/issues/913); one
+inapplicable (every test needs Authentication). Five of the six needed an
+AccessGrantService; with https://github.com/danbri/factoidal/issues/913
+they pass (authorization 39 pass, 0 fail, 1 inapplicable). The last one
 needs a `Content-Location` results resource, which the draft does not
 define. Whole runs: open 75 pass, 0 fail, 146 inapplicable; authorization
 186 pass, 0 fail, 35 inapplicable (out of 221 each);
@@ -314,6 +317,13 @@ Tests: `L4Factoidal/LWS/AccessGrantsTests.lean` (`#guard`s through
 `tests/lws/draft-binding.mjs` rows "Access Requests and Grants";
 `tests/lws/authorization.mjs` rows "Access grants" (real tokens: read only,
 controller only, public, constraints, move, subscribe after revocation).
+Touchstone `core/access_grants.yamlld` (17 tests), measured 2026-10-21
+without `--shim`: authorization 17 pass, 0 fail, 0 inapplicable; open 1
+pass, 0 fail, 16 inapplicable (16 need Authentication). Whole runs: open 76
+pass, 0 fail, 145 inapplicable; authorization 215 pass, 0 fail, 6
+inapplicable (out of 221 each);
+`docs/designissues/2026-10-21-lws-touchstone-run.md` § Access requests and
+grants.
 
 ### Pagination and client links (https://github.com/danbri/factoidal/issues/887, 888)
 
