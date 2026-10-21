@@ -376,11 +376,11 @@ test('shex: ShEx validation of one focus node against one shape', async (t) => {
     }],
   });
   const verdict = await shex(
-    data, schema, 'http://example.org/alice', 'http://example.org/PersonShape');
+    data, schema, '<http://example.org/alice>', '<http://example.org/PersonShape>');
   assert.equal(verdict, true);
 
   const noMatch = await shex(
-    data, schema, 'http://example.org/nobody', 'http://example.org/PersonShape');
+    data, schema, '<http://example.org/nobody>', '<http://example.org/PersonShape>');
   assert.equal(noMatch, false, 'a focus node with no matching triples does not conform');
 });
 

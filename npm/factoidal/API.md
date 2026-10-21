@@ -316,7 +316,8 @@ is the §17.6 error:
   call.
 
 ```js
-registerExtensionFunction("http://example.org/fn#pad", () =>
+import { registerExtensionFunction } from "@factoidal/core";
+await registerExtensionFunction("http://example.org/fn#pad", () =>
   ({ value: "007", datatype: "http://www.w3.org/2001/XMLSchema#integer" }));
 // BIND(fn:pad() AS ?x) binds ?x to "007"^^xsd:integer, not "7"
 ```

@@ -19,6 +19,8 @@
 const XSD_STRING = 'http://www.w3.org/2001/XMLSchema#string'; // purity-lint: allow RDF/JS DataFactory default
 const RDF_LANGSTRING =
   'http://www.w3.org/1999/02/22-rdf-syntax-ns#langString'; // purity-lint: allow RDF/JS DataFactory default
+const RDF_DIRLANGSTRING =
+  'http://www.w3.org/1999/02/22-rdf-syntax-ns#dirLangString'; // purity-lint: allow RDF/JS DataFactory default
 
 // ---------------------------------------------------------------------
 // Terms
@@ -54,9 +56,10 @@ class Literal {
     this.value = value;
     this.language = language || '';
     // RDF/JS Data Model DataFactory.literal: no datatype argument means
-    // xsd:string, a language means rdf:langString.
+    // xsd:string, a language means rdf:langString, a language and a
+    // direction mean rdf:dirLangString.
     this.datatype = datatype ||
-      new NamedNode(language ? RDF_LANGSTRING : XSD_STRING); // purity-lint: allow RDF/JS DataFactory default
+      new NamedNode(language ? (direction ? RDF_DIRLANGSTRING : RDF_LANGSTRING) : XSD_STRING); // purity-lint: allow RDF/JS DataFactory default
     this.direction = direction || '';
     Object.freeze(this);
   }

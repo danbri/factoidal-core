@@ -93,7 +93,7 @@ sends the ShExC text you just read straight through instead.
 the package's typed function (see [`README.md`](./README.md) for the
 bindings table): the data (here N-Quads text, so `{format: "nquads"}`),
 the schema as ShExJ (JSON string) or ShExC (compact-syntax string) text,
-the focus node's IRI, and the shape's `id`. It answers the verdict as a
+the focus node and the shape label as N-Triples terms (`"<http://...>"` or `"_:b"`). It answers the verdict as a
 boolean. `fn.parse()` gets from Turtle to N-Quads text via
 `dataset.toNQuads()`.
 
@@ -187,7 +187,7 @@ HUMAN_SHAPE_SCHEMA = JSON.stringify({
 tryShexValidate = async function(dataNQuads, schemaText, focus) {
   try {
     const verdict = await fn.shexValidate(
-      dataNQuads, schemaText, focus, "http://example.org/HumanShape", { format: "nquads" });
+      dataNQuads, schemaText, focus, "<http://example.org/HumanShape>", { format: "nquads" });
     return { available: true, verdict, deferred: verdict === null };
   } catch (err) {
     return { available: false, note: err.message };
@@ -196,7 +196,7 @@ tryShexValidate = async function(dataNQuads, schemaText, focus) {
 ```
 
 ```observable-js
-return tryShexValidate(dataset.toNQuads(), HUMAN_SHAPE_SCHEMA, "http://www.wikidata.org/entity/Q42");
+return tryShexValidate(dataset.toNQuads(), HUMAN_SHAPE_SCHEMA, "<http://www.wikidata.org/entity/Q42>");
 ```
 
 `verdict: true` — `wd:Q42` has both triples the shape requires.
@@ -209,7 +209,7 @@ Same schema, same dataset, different focus node — `wd:Q5` has a label
 but no `wdt:P31` triple of its own:
 
 ```observable-js
-return tryShexValidate(dataset.toNQuads(), HUMAN_SHAPE_SCHEMA, "http://www.wikidata.org/entity/Q5");
+return tryShexValidate(dataset.toNQuads(), HUMAN_SHAPE_SCHEMA, "<http://www.wikidata.org/entity/Q5>");
 ```
 
 `verdict: false` — the `wdt:P31` triple constraint has nothing to
@@ -243,7 +243,7 @@ HUMAN_SHAPE_SHEXC = `
 ```
 
 ```observable-js
-return tryShexValidate(dataset.toNQuads(), HUMAN_SHAPE_SHEXC, "http://www.wikidata.org/entity/Q42");
+return tryShexValidate(dataset.toNQuads(), HUMAN_SHAPE_SHEXC, "<http://www.wikidata.org/entity/Q42>");
 ```
 
 `verdict: true` — same conforming node, same shape, no JSON in sight.
@@ -251,7 +251,7 @@ And the non-conforming node still comes back `false` through the exact
 same ShExC schema text:
 
 ```observable-js
-return tryShexValidate(dataset.toNQuads(), HUMAN_SHAPE_SHEXC, "http://www.wikidata.org/entity/Q5");
+return tryShexValidate(dataset.toNQuads(), HUMAN_SHAPE_SHEXC, "<http://www.wikidata.org/entity/Q5>");
 ```
 
 `verdict: false` — `wd:Q5` still has no `wdt:P31` triple of its own,

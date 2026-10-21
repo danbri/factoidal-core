@@ -195,7 +195,12 @@ def decodeLiteral (j : Json) : Option WfLiteral := do
     | none, _ => match j.getString? "datatype" with
       | none => some xsdString
       | some d => iriOf? d
-    | _, _ => (j.getString? "datatype").bind iriOf?
+    -- a directional language-tagged string with no `datatype` member is
+    -- rdf:dirLangString (RDF 1.2 Concepts 3.3), as the no-direction case is
+    -- rdf:langString
+    | _, _ => match j.getString? "datatype" with
+      | none => some rdfDirLangString
+      | some d => iriOf? d
   let l : Literal := { lexicalForm := lex, datatype := dt, langTag := lang, direction := dir }
   if h : literalWf l then some ⟨l, h⟩ else none
 
@@ -850,6 +855,9 @@ private def jsonOf (s : String) : Json := (parseJson? s).getD .null
     "{\"type\":\"literal\",\"value\":\"x\",\"xml:lang\":\"en\",\"datatype\":\"http://www.w3.org/2001/XMLSchema#string\"}")).isNone
 #guard (decodeCheckedTerm (jsonOf "{\"type\":\"uri\",\"value\":\"rel/x\"}")).isNone
 #guard (decodeCheckedTerm (jsonOf "{\"type\":\"bnode\",\"value\":\"\"}")).isNone
+#guard match decodeCheckedTerm (jsonOf "{\"type\":\"literal\",\"value\":\"a\",\"xml:lang\":\"he\",\"its:dir\":\"rtl\"}") with
+  | some (.literal l) => l.val.datatype == rdfDirLangString && l.val.direction == some .rtl
+  | _ => false
 -- unchecked decodeTerm keeps its old behaviour for stored data
 #guard (decodeTerm (jsonOf "{\"type\":\"literal\",\"value\":\"x\",\"xml:lang\":\"en_US\"}")).isSome
 

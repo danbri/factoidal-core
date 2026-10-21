@@ -119,10 +119,12 @@ test('graphs(): an IRI and a blank node with the same text are two terms', async
 
 test('match(): a string is one N-Triples term, `_:g` a blank node, `<urn:g>` an IRI', async () => {
   const ds = await parse(GDATA, { format: 'nquads' });
+  // parse() scopes blank-node labels to the Dataset; graphs() reports the label
+  const bnode = graphs(ds).find(([n]) => n.termType === 'BlankNode')[0];
   const viaIri = ds.match(null, null, null, '<urn:g>');
   assert.equal(viaIri.size, 1);
   assert.equal([...viaIri][0].object.value, '1');
-  const viaBnode = ds.match(null, null, null, '_:g');
+  const viaBnode = ds.match(null, null, null, `_:${bnode.value}`);
   assert.equal(viaBnode.size, 1);
   assert.equal([...viaBnode][0].object.value, '2');
   const lit = ds.match(null, null, '"2"', null);
@@ -135,7 +137,11 @@ test('match(): a string is one N-Triples term, `_:g` a blank node, `<urn:g>` an 
 test('shexValidate: focus `_:b` is a blank node, `<...>` an IRI, a bare IRI is refused', async () => {
   const data = '_:b <http://e/name> "B" .\n<http://e/a> <http://e/name> "A" .\n';
   const schema = 'PREFIX e: <http://e/>\ne:S { e:name LITERAL }\n';
-  assert.equal(await shexValidate(data, schema, '_:b', '<http://e/S>', { format: 'nquads' }), true);
+  const ds = await parse(data, { format: 'nquads' });
+  const b = [...ds].find((q) => q.subject.termType === 'BlankNode').subject;
+  assert.equal(await ds.validateShex(schema, { focus: `_:${b.value}`, shape: '<http://e/S>' }), true);
+  assert.equal(await ds.validateShex(schema, { focus: '_:nosuch', shape: '<http://e/S>' }), false);
+  ds.dispose();
   assert.equal(await shexValidate(data, schema, '<http://e/a>', '<http://e/S>', { format: 'nquads' }), true);
   await assert.rejects(shexValidate(data, schema, 'http://e/a', '<http://e/S>', { format: 'nquads' }));
 });
