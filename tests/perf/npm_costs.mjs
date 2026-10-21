@@ -7,16 +7,19 @@
 //   iterate      for (const q of ds) over every quad
 //   size         ds.size
 //   query-count  ds.query("SELECT (COUNT(*) AS ?c) ...")
-//   query-bound  ds.query(the statements of one subject)
-//   serialize-nquads, serialize-turtle   await ds.serialize({format})
+//   query-bound  ds.query(the statements of one subject), the first query of
+//                the Dataset; query-bound-warm the same after one ASK query
+//   serialize-nquads, serialize-trig     await ds.serialize({format})
 //   toString-nquads                      ds.toString("nquads")
 //   serve-store  one SPARQL 1.1 Protocol GET (COUNT) to serveStore over a
 //                store packed from the same input (pack time not counted)
 //   lws-put, lws-get  one PUT of the input as N-Triples, one GET of it,
 //                to the lws-serve host (lws/server.mjs, insecureNoAuth)
 //
-// Each operation runs once to warm up and then RUNS times (default 5) in one
-// Node process; the result is the median and the minimum in milliseconds.
+// Every operation except parse runs on a Dataset parsed for that run (not
+// timed), so a result the Dataset keeps is not read back from a previous
+// run. Each operation runs once to warm up and then RUNS times (default 5)
+// in one Node process; the result is the median and the minimum in milliseconds.
 // The 1-minute load average is recorded before each operation.
 //
 // Comparison: the medians are compared with the committed results
@@ -64,6 +67,19 @@ if (!existsSync(join(PKG, 'l4-assets/l4factoidal.wasm'))) {
 const f = await import(join(PKG, 'index.mjs'));
 const { listen: lwsListen } = await import(join(PKG, 'lws/server.mjs'));
 const CLI = join(PKG, 'bin/factoidal.mjs');
+
+/**
+ * Operations that do not answer today, each with its open issue
+ * (CLAUDE.md, "A stated shortfall is a failing test plus an open issue").
+ * Key `SIZE op`. While the operation fails the row is XFAIL; when it
+ * answers the comparison FAILS (UNEXPECTED PASS) until the key is removed
+ * here and the issue is updated.
+ */
+const XFAIL = {
+  // the GET after six PUTs of the same 100,000-triple resource stops the
+  // engine with out of memory (each PUT takes about 17 s)
+  '100000 lws-get': 'https://github.com/danbri/factoidal/issues/903',
+};
 const EX = 'http://example.org/';
 
 /** n quads: IRIs, plain, language-tagged and typed literals, blank nodes,
@@ -93,49 +109,74 @@ function median(xs) {
   return s.length % 2 ? s[m] : (s[m - 1] + s[m]) / 2;
 }
 
-async function timeOp(fn) {
-  await fn(); // warm-up
+// setup() (not timed) makes the argument of fn for each run, so that an
+// operation whose result the Dataset keeps (its N-Quads text, its quad
+// region) is measured on a Dataset that has not computed it yet; teardown
+// releases it.
+async function timeOp(fn, setup, teardown) {
+  try {
+    return await timeOpOrThrow(fn, setup, teardown);
+  } catch (e) {
+    return { status: 'error', error: String(e.message ?? e).slice(0, 300), load1: +loadavg()[0].toFixed(2) };
+  }
+}
+
+async function timeOpOrThrow(fn, setup = async () => undefined, teardown = () => {}) {
+  { const a = await setup(); await fn(a); teardown(a); } // warm-up
   const ms = [];
   const load = loadavg()[0];
   for (let i = 0; i < RUNS; i++) {
+    const a = await setup();
     const t0 = process.hrtime.bigint();
-    await fn();
+    await fn(a);
     ms.push(Number(process.hrtime.bigint() - t0) / 1e6);
+    teardown(a);
   }
-  return { median_ms: +median(ms).toFixed(2), min_ms: +Math.min(...ms).toFixed(2),
+  return { status: 'ok', median_ms: +median(ms).toFixed(2), min_ms: +Math.min(...ms).toFixed(2),
            all_ms: ms.map((x) => +x.toFixed(2)), load1: +load.toFixed(2) };
 }
 
-async function measureSize(n) {
+async function measureSize(n, onlyOp = null) {
   const text = genNQuads(n);
   const answers = {};
   const ops = {};
-  const want = (op) => !ONLY || ONLY.has(op);
+  const want = (op) => (onlyOp ? op === onlyOp
+    || (onlyOp === 'lws-get' && op === 'lws-put') : !ONLY || ONLY.has(op));
   const ds = await f.parse(text, { format: 'nquads' });
   answers.size = ds.size;
   const subj = `${EX}s0`;
+  // every operation but parse runs on a Dataset parsed for that run (setup)
+  const fresh = () => f.parse(text, { format: 'nquads' });
+  const drop = (d) => { if (d) d.dispose(); };
   const cases = {
-    parse: async () => { const d = await f.parse(text, { format: 'nquads' }); d.dispose(); },
-    iterate: async () => { let k = 0; for (const _q of ds) k++; answers.iterate = k; },
-    size: async () => { answers.sizeProp = ds.size; },
-    'query-count': async () => {
-      const r = await ds.query('SELECT (COUNT(*) AS ?c) WHERE { { ?s ?p ?o } UNION { GRAPH ?g { ?s ?p ?o } } }');
+    parse: [async () => { const d = await f.parse(text, { format: 'nquads' }); d.dispose(); }],
+    iterate: [async (d) => { let k = 0; for (const _q of d) k++; answers.iterate = k; }, fresh, drop],
+    size: [async (d) => { answers.sizeProp = d.size; }, fresh, drop],
+    'query-count': [async (d) => {
+      const r = await d.query('SELECT (COUNT(*) AS ?c) WHERE { { ?s ?p ?o } UNION { GRAPH ?g { ?s ?p ?o } } }');
       answers.queryCount = Number([...r][0].get('c').value);
-    },
-    'query-bound': async () => {
-      const r = await ds.query(`SELECT ?p ?o WHERE { GRAPH ?g { <${subj}> ?p ?o } }`);
+    }, fresh, drop],
+    'query-bound': [async (d) => {
+      const r = await d.query(`SELECT ?p ?o WHERE { GRAPH ?g { <${subj}> ?p ?o } }`);
       answers.queryBound = [...r].length;
-    },
-    'serialize-nquads': async () => { answers.serNq = (await ds.serialize({ format: 'nquads' })).length; },
-    'serialize-turtle': async () => {
-      answers.serTtl = (await ds.match(null, null, null, null).serialize({ format: 'trig' })).length;
-    },
-    'toString-nquads': async () => { answers.toStr = ds.toString('nquads').length; },
+    }, fresh, drop],
+    // the same query on a Dataset that has answered one query already
+    'query-bound-warm': [async (d) => {
+      const r = await d.query(`SELECT ?p ?o WHERE { GRAPH ?g { <${subj}> ?p ?o } }`);
+      answers.queryBoundWarm = [...r].length;
+    }, async () => { const d = await fresh(); await d.query('ASK { ?s ?p ?o }'); return d; }, drop],
+    'serialize-nquads': [async (d) => {
+      answers.serNq = (await d.serialize({ format: 'nquads' })).length;
+    }, fresh, drop],
+    'serialize-trig': [async (d) => {
+      answers.serTrig = (await d.serialize({ format: 'trig' })).length;
+    }, fresh, drop],
+    'toString-nquads': [async (d) => { answers.toStr = d.toString('nquads').length; }, fresh, drop],
   };
-  for (const [op, fn] of Object.entries(cases)) {
+  for (const [op, [fn, setup, teardown]] of Object.entries(cases)) {
     if (!want(op)) continue;
-    ops[op] = await timeOp(fn);
-    process.stderr.write(`[${n} ${op}] ${ops[op].median_ms} ms (min ${ops[op].min_ms}) load ${ops[op].load1}\n`);
+    ops[op] = await timeOp(fn, setup, teardown);
+    process.stderr.write(`[${n} ${op}] ${JSON.stringify(ops[op]).slice(0, 200)}\n`);
   }
   ds.dispose();
 
@@ -145,7 +186,7 @@ async function measureSize(n) {
       const src = join(dir, 'd.nq');
       writeFileSync(src, text);
       const st = join(dir, 'st');
-      execFileSync(process.execPath, [CLI, 'pack', src, join(st, 'gen-1'), '--quiet'], { stdio: 'inherit' });
+      execFileSync(process.execPath, [CLI, 'pack', src, join(st, 'gen-1'), '--layout', 'ibk5', '--quiet'], { stdio: 'inherit' });
       execFileSync(process.execPath, [CLI, 'activate', st, 'gen-1', '--quiet'], { stdio: 'inherit' });
       const s = await f.serveStore(st);
       try {
@@ -158,35 +199,62 @@ async function measureSize(n) {
           answers.serveCount = Number(j.results.bindings[0].c.value);
         });
       } finally { await s.close(); }
-      process.stderr.write(`[${n} serve-store] ${ops['serve-store'].median_ms} ms\n`);
+      process.stderr.write(`[${n} serve-store] ${JSON.stringify(ops['serve-store']).slice(0, 200)}\n`);
     }
     if (want('lws-put') || want('lws-get')) {
-      // the same statements in one graph: an LWS resource is one RDF graph
-      const nt = genNQuads(n, false);
-      const lws = await lwsListen({ engine: await f.loadEngine(), port: 0, insecureNoAuth: true });
-      const url = `${lws.origin}/data.nt`;
+      // In a child process: an engine that stops with out of memory
+      // (https://github.com/danbri/factoidal/issues/903) cannot take the
+      // engine of this process with it.
+      let child;
       try {
-        let k = 0;
-        ops['lws-put'] = await timeOp(async () => {
-          const r = await fetch(`${lws.origin}/d${k++}.nt`, {
-            method: 'PUT', headers: { 'content-type': 'application/n-triples' }, body: nt });
-          if (r.status >= 300) throw new Error(`lws PUT answered ${r.status}: ${await r.text()}`);
-          await r.arrayBuffer();
-        });
-        const put = await fetch(url, { method: 'PUT', headers: { 'content-type': 'application/n-triples' }, body: nt });
-        if (put.status >= 300) throw new Error(`lws PUT answered ${put.status}`);
-        ops['lws-get'] = await timeOp(async () => {
-          const r = await fetch(url, { headers: { accept: 'application/n-triples' } });
-          if (r.status !== 200) throw new Error(`lws GET answered ${r.status}`);
-          answers.lwsGetBytes = (await r.arrayBuffer()).byteLength;
-        });
-      } finally { await lws.close(); }
-      process.stderr.write(`[${n} lws] put ${ops['lws-put'].median_ms} ms, get ${ops['lws-get'].median_ms} ms\n`);
+        child = JSON.parse(execFileSync(process.execPath, [fileURLToPath(import.meta.url), '--lws-child', String(n)],
+          { encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'], maxBuffer: 1 << 24 }));
+      } catch (e) {
+        const out = e.stdout ? String(e.stdout) : '';
+        child = out.trim() ? JSON.parse(out) : { ops: {} };
+      }
+      for (const op of ['lws-put', 'lws-get']) {
+        ops[op] = child.ops[op] ?? { status: 'error', error: 'the child process stopped', load1: +loadavg()[0].toFixed(2) };
+        process.stderr.write(`[${n} ${op}] ${JSON.stringify(ops[op]).slice(0, 200)}\n`);
+      }
+      if (child.lwsGetBytes !== undefined) answers.lwsGetBytes = child.lwsGetBytes;
     }
   } finally {
     rmSync(dir, { recursive: true, force: true });
   }
   return { quads: n, input_bytes: Buffer.byteLength(text), answers, ops };
+}
+
+/** The LWS rows, run alone in a child process (`--lws-child N`). */
+async function lwsChild(n) {
+  // the same statements in one graph: an LWS resource is one RDF graph
+  const nt = genNQuads(n, false);
+  const res = { ops: {} };
+  const lws = await lwsListen({ engine: await f.loadEngine(), port: 0, insecureNoAuth: true,
+                                onError: () => {} });
+  const url = `${lws.origin}/data.nt`;
+  const emit = () => process.stdout.write(JSON.stringify(res) + '\n');
+  try {
+    // every run replaces the same resource, so the storage holds one copy
+    res.ops['lws-put'] = await timeOp(async () => {
+      const r = await fetch(url, {
+        method: 'PUT', headers: { 'content-type': 'application/n-triples' }, body: nt });
+      if (r.status >= 300) throw new Error(`lws PUT answered ${r.status}: ${(await r.text()).trim()}`);
+      await r.arrayBuffer();
+    });
+    res.ops['lws-get'] = await timeOp(async () => {
+      const r = await fetch(url, { headers: { accept: 'application/n-triples' } });
+      if (r.status !== 200) throw new Error(`lws GET answered ${r.status}`);
+      res.lwsGetBytes = (await r.arrayBuffer()).byteLength;
+    });
+  } finally {
+    emit();
+    await lws.close();
+  }
+}
+if (opt('--lws-child')) {
+  await lwsChild(Number(opt('--lws-child')));
+  process.exit(0);
 }
 
 const version = JSON.parse(readFileSync(join(PKG, 'package.json'), 'utf8')).version;
@@ -211,14 +279,28 @@ const prev = JSON.parse(readFileSync(RESULTS, 'utf8'));
 let fails = 0; let pass = 0;
 for (const [n, cur] of Object.entries(result.sizes)) {
   for (const [op, r] of Object.entries(cur.ops)) {
+    const xf = XFAIL[`${n} ${op}`];
+    if (r.status !== 'ok') {
+      if (xf) { pass++; console.log(`XFAIL ${n} ${op}: ${r.error} (${xf})`); }
+      else { fails++; console.log(`FAIL ${n} ${op}: ${r.error}`); }
+      continue;
+    }
+    if (xf) {
+      fails++;
+      console.log(`FAIL ${n} ${op}: UNEXPECTED PASS of the expected failure ${xf} ` +
+                  `(${r.median_ms} ms); remove the XFAIL key and update the issue`);
+      continue;
+    }
     const p = prev.sizes?.[n]?.ops?.[op];
-    if (!p) { console.log(`NEW  ${n} ${op}: ${r.median_ms} ms (no committed row)`); continue; }
+    if (!p || p.status === 'error') {
+      console.log(`NEW  ${n} ${op}: ${r.median_ms} ms (no committed time)`); continue;
+    }
     const bound = (1 + TOLERANCE) * p.median_ms + SLACK_MS;
     let v = r.median_ms;
     if (v > bound) {
       // measured once more; the minimum of the repeat decides
-      const again = await measureSize(Number(n)).then((x) => x.ops[op]);
-      v = Math.min(again.min_ms, v);
+      const again = await measureSize(Number(n), op).then((x) => x.ops[op]);
+      if (again.status === 'ok') v = Math.min(again.min_ms, v);
       r.load1 = Math.max(r.load1, again.load1);
     }
     const tag = v <= bound ? 'PASS' : (r.load1 > cpus().length ? 'NOISY' : 'FAIL');

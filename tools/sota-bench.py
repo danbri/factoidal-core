@@ -918,11 +918,73 @@ def report(path):
         print(f"- {wid} {size}, {le} against {e}: time ratio {ts}, RSS ratio {ms}")
 
 
-# Expected failures of the gate: Lean rows more than 10 times the fastest
-# reference engine (time, or memory above process start), each with its open
-# issue. The row fails the gate when it comes within the bound (UNEXPECTED
-# PASS), so the repair cannot land without the row and the issue being updated.
+# Expected failures of the gate: Lean rows over the bound of over_bound()
+# (time more than TIME_BOUND = 3 times the fastest reference engine, or memory
+# over MEM_BOUND by both memory measures), each with its open issue. Marked
+# 2026-10-21 (key result 2.2 of https://github.com/danbri/factoidal/issues/901,
+# record docs/designissues/2026-10-21-sota-remeasure.md): every row measured
+# over 2.5 times, the comment is the measured time ratio (minimum wall times).
+# A marked row fails the gate when it measures under TIME_BOUND / XPASS_MARGIN
+# (UNEXPECTED PASS), so the repair cannot land without the mark and the issue
+# being updated.
 XFAIL = {
+    ("parse-nt", "100000", "lean"): "https://github.com/danbri/factoidal/issues/904",  # 4.0
+    ("parse-nt", "100000", "lean-stream"): "https://github.com/danbri/factoidal/issues/904",  # 4.5
+    ("parse-nt", "200000", "lean"): "https://github.com/danbri/factoidal/issues/904",  # 3.2
+    ("parse-nt", "200000", "lean-stream"): "https://github.com/danbri/factoidal/issues/904",  # 3.7
+    ("parse-nt", "400000", "lean"): "https://github.com/danbri/factoidal/issues/904",  # 4.1
+    ("parse-nt", "400000", "lean-stream"): "https://github.com/danbri/factoidal/issues/904",  # 4.2
+    ("parse-nt-mixed", "100000", "lean"): "https://github.com/danbri/factoidal/issues/904",  # 3.9
+    ("parse-nt-mixed", "100000", "lean-stream"): "https://github.com/danbri/factoidal/issues/904",  # 4.4
+    ("parse-nt-mixed", "200000", "lean"): "https://github.com/danbri/factoidal/issues/904",  # 4.1
+    ("parse-nt-mixed", "200000", "lean-stream"): "https://github.com/danbri/factoidal/issues/904",  # 4.1
+    ("parse-nt-mixed", "400000", "lean"): "https://github.com/danbri/factoidal/issues/904",  # 3.9
+    ("parse-nt-mixed", "400000", "lean-stream"): "https://github.com/danbri/factoidal/issues/904",  # 4.5
+    ("parse-ttl-gene", "20000", "lean-stream"): "https://github.com/danbri/factoidal/issues/904",  # 3.0
+    ("parse-ttl-gene", "40000", "lean"): "https://github.com/danbri/factoidal/issues/904",  # 2.7
+    ("parse-ttl-gene", "40000", "lean-stream"): "https://github.com/danbri/factoidal/issues/904",  # 2.7
+    ("parse-ttl-gene", "80000", "lean"): "https://github.com/danbri/factoidal/issues/904",  # 2.7
+    ("parse-ttl-gene", "80000", "lean-stream"): "https://github.com/danbri/factoidal/issues/904",  # 2.5
+    ("parse-ttl-rich", "100000", "lean"): "https://github.com/danbri/factoidal/issues/904",  # 3.6
+    ("parse-ttl-rich", "100000", "lean-stream"): "https://github.com/danbri/factoidal/issues/904",  # 3.5
+    ("parse-ttl-rich", "200000", "lean"): "https://github.com/danbri/factoidal/issues/904",  # 3.2
+    ("parse-ttl-rich", "200000", "lean-stream"): "https://github.com/danbri/factoidal/issues/904",  # 3.3
+    ("parse-ttl-rich", "400000", "lean"): "https://github.com/danbri/factoidal/issues/904",  # 3.2
+    ("parse-ttl-rich", "400000", "lean-stream"): "https://github.com/danbri/factoidal/issues/904",  # 3.1
+    ("parse-rdfxml", "25000", "lean"): "https://github.com/danbri/factoidal/issues/905",  # 4.0
+    ("parse-rdfxml", "50000", "lean"): "https://github.com/danbri/factoidal/issues/905",  # 4.0
+    ("parse-rdfxml", "100000", "lean"): "https://github.com/danbri/factoidal/issues/905",  # 4.7
+    ("parse-rdfxml-real", "1", "lean"): "https://github.com/danbri/factoidal/issues/905",  # 3.7
+    ("sparql-bound-subject", "20000", "lean"): "https://github.com/danbri/factoidal/issues/908",  # 2.7
+    ("sparql-bound-subject", "40000", "lean"): "https://github.com/danbri/factoidal/issues/908",  # 3.7
+    ("sparql-bound-subject", "80000", "lean"): "https://github.com/danbri/factoidal/issues/908",  # 3.2
+    ("sparql-count", "40000", "lean"): "https://github.com/danbri/factoidal/issues/908",  # 3.6
+    ("sparql-count", "80000", "lean"): "https://github.com/danbri/factoidal/issues/908",  # 3.4
+    ("sparql-join", "20000", "lean"): "https://github.com/danbri/factoidal/issues/908",  # 2.8
+    ("sparql-join", "40000", "lean"): "https://github.com/danbri/factoidal/issues/908",  # 2.7
+    ("sparql-join", "80000", "lean"): "https://github.com/danbri/factoidal/issues/908",  # 3.6
+    ("sparql-optional-filter", "20000", "lean"): "https://github.com/danbri/factoidal/issues/908",  # 3.1
+    ("sparql-optional-filter", "40000", "lean"): "https://github.com/danbri/factoidal/issues/908",  # 4.0
+    ("sparql-optional-filter", "80000", "lean"): "https://github.com/danbri/factoidal/issues/908",  # 3.7
+    ("rdfc-pairs", "2000", "lean"): "https://github.com/danbri/factoidal/issues/909",  # 2.5
+    ("rdfc-pairs", "4000", "lean"): "https://github.com/danbri/factoidal/issues/909",  # 2.8
+    ("rdfc-pairs", "8000", "lean"): "https://github.com/danbri/factoidal/issues/909",  # 3.3
+    ("owl-dl-consistent", "wine", "lean"): "https://github.com/danbri/factoidal/issues/910",  # 10.8
+    ("owl-dl-consistent", "schema.org", "lean"): "https://github.com/danbri/factoidal/issues/910",  # 2.7
+    ("owl-dl-consistent", "qudt", "lean"): "https://github.com/danbri/factoidal/issues/910",  # 7.5
+    ("owl-dl-consistent", "cl-basic", "lean"): "https://github.com/danbri/factoidal/issues/910",  # 4.8
+    ("parse-jsonld", "25000", "lean"): "https://github.com/danbri/factoidal/issues/906",  # 3.3
+    ("parse-jsonld", "50000", "lean"): "https://github.com/danbri/factoidal/issues/906",  # 4.4
+    ("parse-jsonld", "100000", "lean"): "https://github.com/danbri/factoidal/issues/906",  # 3.5
+    ("write-rdfxml", "100000", "lean"): "https://github.com/danbri/factoidal/issues/907",  # 4.4
+    ("write-rdfxml", "200000", "lean"): "https://github.com/danbri/factoidal/issues/907",  # 4.9
+    ("write-rdfxml", "400000", "lean"): "https://github.com/danbri/factoidal/issues/907",  # 8.0
+    ("write-jsonld", "100000", "lean"): "https://github.com/danbri/factoidal/issues/907",  # 4.7
+    ("write-jsonld", "200000", "lean"): "https://github.com/danbri/factoidal/issues/907",  # 5.1
+    ("write-jsonld", "400000", "lean"): "https://github.com/danbri/factoidal/issues/907",  # 6.2
+    ("sparql-not-exists", "20000", "lean"): "https://github.com/danbri/factoidal/issues/908",  # 3.2
+    ("sparql-not-exists", "40000", "lean"): "https://github.com/danbri/factoidal/issues/908",  # 3.8
+    ("sparql-not-exists", "80000", "lean"): "https://github.com/danbri/factoidal/issues/908",  # 3.6
 }
 # Removed 2026-10-13: ("parse-rdfxml", "100000", "lean") for
 # https://github.com/danbri/factoidal/issues/814. With the RDF/XML repairs of
@@ -1028,7 +1090,9 @@ def check(args):
                                     f"(recorded {r['rss_mb']:.0f} MB)")
             xf = XFAIL.get((r["workload"], str(r["size"]), r["engine"]))
             ref = refs.get((r["workload"], str(r["size"])))
-            if rec["status"] == "ok" and ref:
+            # the row `start` is the process start that every other row
+            # includes; it has no bound of its own
+            if rec["status"] == "ok" and ref and r["workload"] != "start":
                 flagged, tr, mr = over_bound(rec, ref, start_rss)
                 if xf and not flagged and tr < TIME_BOUND / XPASS_MARGIN:
                     problems.append(f"UNEXPECTED PASS of the expected failure {xf}: time ratio "

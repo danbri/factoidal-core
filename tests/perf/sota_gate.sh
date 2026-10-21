@@ -1,8 +1,10 @@
 #!/usr/bin/env bash
 # tests/perf/sota_gate.sh: the regression gate of the state-of-the-art table
 # (key result 2.7 of https://github.com/danbri/factoidal/issues/768;
-# https://github.com/danbri/factoidal/issues/811; record
-# docs/designissues/2026-10-12-sota-reference.md).
+# https://github.com/danbri/factoidal/issues/811; records
+# docs/designissues/2026-10-12-sota-reference.md and, since 2026-10-21,
+# docs/designissues/2026-10-21-sota-remeasure.md, whose results file is the
+# default SOTA_RECORD).
 #
 # Re-runs every Lean row (engines `lean` and `lean-stream`) of the recorded
 # table whose recorded median wall time is at most SOTA_MAX_S seconds
@@ -12,7 +14,14 @@
 #   - takes more than (1 + SOTA_TOLERANCE) x the recorded median CPU time
 #     plus 0.05 s, or
 #   - holds more than (1 + SOTA_TOLERANCE) x the recorded median peak
-#     resident set plus 8 MB.
+#     resident set plus 8 MB, or
+#   - takes more than 3 times (SOTA_TIME_BOUND) the minimum wall time of the
+#     fastest recorded reference engine of its case, by its own minimum wall
+#     time, and carries no expected-failure mark (key result 2.2 of
+#     https://github.com/danbri/factoidal/issues/901; marks: XFAIL in
+#     tools/sota-bench.py, each naming its open issue). A marked row that
+#     measures under 2.5 times (SOTA_TIME_BOUND / SOTA_XPASS_MARGIN) fails as
+#     UNEXPECTED PASS.
 # SOTA_TOLERANCE defaults to 0.25. A failing row is measured a second time
 # before it fails. The reference engines are not run: their rows are
 # informative. CPU time is compared because the machine is shared and the
@@ -30,7 +39,7 @@
 # Exit 0: every row passes. Exit 1: a row failed. Exit 2: setup error.
 set -uo pipefail
 ROOT="$(cd "$(dirname "$0")/../.." && pwd)"
-REC="${SOTA_RECORD:-$ROOT/docs/designissues/2026-10-12-sota-reference.results.jsonl}"
+REC="${SOTA_RECORD:-$ROOT/docs/designissues/2026-10-21-sota-remeasure.results.jsonl}"
 LEAN="${SOTA_LEAN_BIN:-$ROOT/formal/lean4/.lake/build/bin}/l4factoidal"
 if [ ! -x "$LEAN" ]; then
   echo "sota gate: $LEAN missing (cd formal/lean4 && lake build l4factoidal)" >&2
