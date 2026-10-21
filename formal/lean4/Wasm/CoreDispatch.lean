@@ -136,7 +136,7 @@ def fullOnlyOpNames : List String :=
   , "storeServeKeys", "storeServeOpen", "storeServeRequest", "storeServeCommit"
   , "storeServeClose", "tdb2ServeKeys", "tdb2ServeOpen"
   , "packBegin", "packFeed", "packEndPass", "packNext", "packFinish", "packClose"
-  , "lwsOpen", "lwsStep", "lwsClose", "lwsSnapshot", "solidOpen", "solidStep", "solidClose"
+  , "lwsOpen", "lwsStep", "lwsClose", "lwsSnapshot", "lwsFetched", "solidOpen", "solidStep", "solidClose"
   , "solidSnapshot"
   , "solidClientRequest", "solidClientResponse"
   , "matrixDeterminant", "matrixScalarProduct", "matrixVectorProduct"

@@ -1689,7 +1689,8 @@ python3 - "$TMP/lws-crud.json" <<'EOF'
 import json, sys
 req = lambda **kw: json.dumps(kw)
 seq = [
-  ["lwsOpen",  [json.dumps({"baseIri": "http://example.org/", "now": 1000000000})]],
+  ["lwsOpen",  [json.dumps({"baseIri": "http://example.org/", "now": 1000000000,
+                            "insecureNoAuth": True})]],
   ["lwsStep",  ["lws1", req(method="PUT", target="/alice/card",
                             headers=[["content-type", "text/turtle"]],
                             body="<http://example.org/a> <http://example.org/b> \"v\" .")]],
@@ -1717,6 +1718,36 @@ checkseq "lwsStep drives create, read, update and delete" "$TMP/lws-crud.json" \
    and rs[2]["response"]["body"].endswith("\"v\" .")
    and rs[7]["ok"] is True
    and rs[8]["ok"] is False and "unknown LWS handle" in rs[8]["error"]'
+
+# Authorization is on unless the configuration opts out
+# (https://github.com/danbri/factoidal/issues/886): with no "auth" and no
+# "insecureNoAuth", an anonymous write answers 401 with resource_metadata,
+# the RFC 9728 document is served, a refused token names invalid_token, and
+# "auth" with "insecureNoAuth" is refused.
+python3 - "$TMP/lws-authz.json" <<'EOF'
+import json, sys
+req = lambda **kw: json.dumps(kw)
+seq = [
+  ["lwsOpen",  [json.dumps({"baseIri": "http://example.org/",
+                            "auth": {"issuers": [{"issuer": "https://as.example"}]}})]],
+  ["lwsStep",  ["lws1", req(method="PUT", target="/x", body="x")]],
+  ["lwsStep",  ["lws1", req(method="GET", target="/.well-known/oauth-protected-resource/x")]],
+  ["lwsStep",  ["lws1", req(method="PUT", target="/x", body="x",
+                            headers=[["authorization", "Bearer not.a.jws"]])]],
+  ["lwsOpen",  [json.dumps({"auth": {}, "insecureNoAuth": True})]],
+]
+json.dump(seq, open(sys.argv[1], "w"))
+EOF
+
+checkseq "lwsStep enforces authorization by default (401, RFC 9728 metadata)" "$TMP/lws-authz.json" \
+  'rs[1]["response"]["status"] == 401
+   and dict(rs[1]["response"]["headers"])["www-authenticate"]
+       == "Bearer resource_metadata=\"http://example.org/.well-known/oauth-protected-resource/x\""
+   and rs[2]["response"]["status"] == 200
+   and json.loads(rs[2]["response"]["body"])["authorization_servers"] == ["https://as.example"]
+   and rs[3]["response"]["status"] == 401
+   and "error=\"invalid_token\"" in dict(rs[3]["response"]["headers"])["www-authenticate"]
+   and rs[4]["ok"] is False'
 
 # The Solid server refines the LWS one: the storage root advertises
 # pim:Storage, a container answers containment triples, and an N3 Patch

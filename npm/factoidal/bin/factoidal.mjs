@@ -344,7 +344,9 @@ https://www.w3.org/TR/sparql11-service-description/`,
 
   'lws-serve': `factoidal lws-serve - serve Linked Web Storage 1.0 over HTTP
 
-usage: factoidal lws-serve DIR [--port N] [--host ADDRESS]
+usage: factoidal lws-serve DIR (--issuer IRI | --auth-config FILE | --insecure-no-auth)
+                         [--owner WEBID] [--root-acl FILE] [--audience IRI]
+                         [--port N] [--host ADDRESS] [--base IRI]
 
 Starts a Node HTTP server that answers every request through the engine's
 lwsStep operation.
@@ -361,9 +363,35 @@ path with a dot segment or other traversal form
   --base IRI      the absolute IRI the storage root maps to
                   (default: the bound origin)
 
+Authorization (LWS editor's draft, section Authorization; one of the three
+is required):
+  --issuer IRI          trust this authorization server; several may be
+                        given separated by commas. Its metadata is read from
+                        IRI/.well-known/lws-configuration and its keys from
+                        the jwks_uri there, when a token first needs them.
+  --auth-config FILE    the engine's "auth" configuration as JSON:
+                        {"issuers":[{"issuer":IRI,"jwks":{...}?}],
+                         "audience":IRI?, "leeway":SECONDS?,
+                         "refreshInterval":SECONDS?}
+  --insecure-no-auth    development only: no authorization at all; every
+                        request is served. Never the default.
+  --owner WEBID         the storage owner: a new storage gets a root ACL
+                        that gives this agent Read, Write and Control
+  --root-acl FILE       a Turtle root ACL for a new storage instead
+  --audience IRI        the aud value tokens must carry (default: the
+                        storage root IRI)
+
+Requests carry an access token as "Authorization: Bearer TOKEN" (RFC 6750).
+The engine verifies its JWS signature (ES256, RS256 or EdDSA, with the
+vendored HACL* code), its iss, aud, exp, nbf and iat, and then decides
+access with Web Access Control over the storage's ACL resources. A
+request without a valid token answers 401 with
+WWW-Authenticate: Bearer resource_metadata="..." (RFC 9728), and the
+metadata document is served at /.well-known/oauth-protected-resource.
+
 The server makes no protocol decision: status codes, Link relations,
-Last-Modified and the PATCH blank-node refusal are all answered by
-formal/lean4/L4Factoidal/LWS/. A WebAssembly module built before those
+Last-Modified, the PATCH blank-node refusal and every authorization
+decision are answered by formal/lean4/L4Factoidal/LWS/. A WebAssembly module built before those
 operations landed makes this command exit 3 and say so.
 
 Specification: https://w3c.github.io/lws-protocol/lws10-core/`,
@@ -475,7 +503,8 @@ const VALUE_OPTIONS = {
   update: new Set(['update', 'file']),
   compact: new Set([]),
   serve: new Set(['port', 'host', 'query-path', 'gsp-path', 'file', 'layout', 'tdb2']),
-  'lws-serve': new Set(['port', 'host', 'base']),
+  'lws-serve': new Set(['port', 'host', 'base', 'issuer', 'auth-config', 'owner', 'root-acl',
+    'audience']),
   'solid-serve': new Set(['port', 'host', 'base', 'owner']),
   'solid-client': new Set(['body', 'file', 'content-type', 'interpret'])
 }
@@ -1254,6 +1283,25 @@ async function commandServe (positional, options) {
 async function commandLwsServe (positional, options) {
   if (positional.length !== 1) throw new UsageError('lws-serve needs one DIR')
   const quiet = options.quiet === true
+  const insecure = options['insecure-no-auth'] === true
+  const issuerOption = typeof options.issuer === 'string' ? options.issuer : null
+  const authFile = typeof options['auth-config'] === 'string' ? options['auth-config'] : null
+  if (!insecure && issuerOption === null && authFile === null) {
+    throw new UsageError('lws-serve needs --issuer IRI or --auth-config FILE, ' +
+      'or --insecure-no-auth for development')
+  }
+  if (insecure && (issuerOption !== null || authFile !== null)) {
+    throw new UsageError('--insecure-no-auth cannot be combined with --issuer or --auth-config')
+  }
+  let auth
+  if (authFile !== null) {
+    auth = readJsonFile(authFile)
+  } else if (issuerOption !== null) {
+    auth = { issuers: issuerOption.split(',').filter((v) => v !== '').map((issuer) => ({ issuer })) }
+  }
+  if (auth !== undefined && typeof options.audience === 'string') {
+    auth = { ...auth, audience: options.audience }
+  }
   const { listen, LwsHostError } = await import('../lws/server.mjs')
   let running
   try {
@@ -1261,6 +1309,11 @@ async function commandLwsServe (positional, options) {
       port: servePort(options, 3000),
       host: serveHost(options),
       ...(typeof options.base === 'string' ? { baseIri: options.base } : {}),
+      ...(insecure ? { insecureNoAuth: true } : { auth }),
+      ...(typeof options.owner === 'string' ? { owner: options.owner } : {}),
+      ...(typeof options['root-acl'] === 'string'
+        ? { rootAcl: new TextDecoder('utf-8', { fatal: true }).decode(readWhole(options['root-acl'])) }
+        : {}),
       realClock: true,
       dir: positional[0]
     })
@@ -1270,7 +1323,10 @@ async function commandLwsServe (positional, options) {
     }
     throw error
   }
-  if (!quiet) err(`lws-serve: listening on ${running.origin} for ${positional[0]}`)
+  if (!quiet) {
+    err(`lws-serve: listening on ${running.origin} for ${positional[0]}`)
+    if (insecure) err('lws-serve: WARNING: --insecure-no-auth: every request is served without authorization')
+  }
   out(running.origin)
   return untilInterrupted(running, quiet)
 }

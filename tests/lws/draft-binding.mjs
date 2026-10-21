@@ -90,7 +90,8 @@ const CHECKS = [
   'Errors: a 404 is application/problem+json (RFC 9457)',
   'Paths: a dot segment or encoded traversal answers 400',
   'Persistence: a restarted server reads DIR/lws-state.json back',
-  'Persistence: a traversal target writes no file outside DIR'
+  'Persistence: a traversal target writes no file outside DIR',
+  'Authorization: an unauthenticated write answers 401 with resource_metadata'
 ]
 
 async function main () {
@@ -117,7 +118,7 @@ async function main () {
     }
   }
 
-  const running = await listen({ engine, port: 0, now: 1000 })
+  const running = await listen({ engine, port: 0, insecureNoAuth: true, now: 1000 })
   const o = running.origin
   try {
     await fetch(`${o}/docs/a.txt`, { method: 'PUT', headers: { 'content-type': 'text/plain' }, body: 'abcdefghij' }).then((r) => r.text())
@@ -236,13 +237,21 @@ async function main () {
       }
     })
 
-    await xfail('Authorization: an unauthenticated write answers 401 with resource_metadata',
-      'https://github.com/danbri/factoidal/issues/886', async () => {
-        const r = await fetch(`${o}/private`, { method: 'PUT', headers: { 'content-type': 'text/plain' }, body: 'x' })
+    // https://github.com/danbri/factoidal/issues/886: authorization is on
+    // unless the host opts out, so this server (no insecureNoAuth, one
+    // trusted issuer) refuses the write. The full validation suite is
+    // tests/lws/authorization.mjs.
+    await check(CHECKS[14], async () => {
+      const guarded = await listen({ engine, port: 0, auth: { issuers: [{ issuer: 'https://as.example' }] } })
+      try {
+        const r = await fetch(`${guarded.origin}/private`, { method: 'PUT', headers: { 'content-type': 'text/plain' }, body: 'x' })
         await r.text()
         assert(r.status === 401, `answered ${r.status}`)
         assert((r.headers.get('www-authenticate') || '').indexOf('resource_metadata') >= 0, 'no resource_metadata')
-      })
+      } finally {
+        await guarded.close()
+      }
+    })
 
     await xfail('Pagination: a container of 120 members answers with rel="first"',
       'https://github.com/danbri/factoidal/issues/887', async () => {
@@ -283,7 +292,7 @@ async function main () {
   const dir = mkdtempSync(join(tmpdir(), 'lws-draft-binding-'))
   try {
     await check(CHECKS[12], async () => {
-      const first = await listen({ engine, port: 0, now: 2000, dir })
+      const first = await listen({ engine, port: 0, insecureNoAuth: true, now: 2000, dir })
       try {
         const r = await fetch(`${first.origin}/kept/note.txt`, { method: 'PUT', headers: { 'content-type': 'text/plain' }, body: 'kept' })
         await r.text()
@@ -294,7 +303,7 @@ async function main () {
       assert(existsSync(join(dir, 'lws-state.json')), 'no lws-state.json')
       const names = readdirSync(dir)
       assert(names.length === 1 && names[0] === 'lws-state.json', `DIR holds ${names}`)
-      const second = await listen({ engine, port: 0, dir })
+      const second = await listen({ engine, port: 0, insecureNoAuth: true, dir })
       try {
         const g = await fetch(`${second.origin}/kept/note.txt`)
         const body = await g.text()
@@ -305,7 +314,7 @@ async function main () {
     })
 
     await check(CHECKS[13], async () => {
-      const s = await listen({ engine, port: 0, dir })
+      const s = await listen({ engine, port: 0, insecureNoAuth: true, dir })
       try {
         const before = readdirSync(dirname(dir)).length
         for (const t of ['/../outside', '/../../outside', '/x/../../outside']) {

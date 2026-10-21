@@ -65,6 +65,7 @@ A response is a JSON object with the same shape minus the method:
 | `lwsStep` | `[handle, requestJson]` | `{"ok":true,"response":{…}}` |
 | `lwsClose` | `[handle]` | `{"ok":true}` |
 | `lwsSnapshot` | `[handle]` | `{"ok":true,"snapshot":{"format":"lws-snapshot-1","clock":N,"entries":[…]}}` |
+| `lwsFetched` | `[handle, documentJson]` | `{"ok":true,"fetch":{"issuer":…,"url":…}}`, `{"ok":true,"installed":N}` or `{"ok":true,"refused":"…"}` |
 | `solidOpen` | `[configJson]` | `{"ok":true,"handle":"solid1","root":"/","storage":"…"}` |
 | `solidStep` | `[handle, requestJson]` | `{"ok":true,"response":{…}}` |
 | `solidClose` | `[handle]` | `{"ok":true}` |
@@ -82,6 +83,8 @@ A response is a JSON object with the same shape minus the method:
 | `agent` | absent | the WebID of the requesting agent for every request on this handle. A handle with no `agent` is an unauthenticated agent. This member is what a host uses when it has verified the credential itself; since 2026-09-06 the engine can verify a Solid-OIDC access token and its DPoP proof instead (`L4Factoidal/Solid/Server/Auth.lean`, `ServerConfig.auth`), and `agent` is what stands while `auth.enforceAuth` is false, which is the default. |
 | `enforceWac` | `false` | `solidOpen` only. With it false the Web Access Control decision is computed and reported in `WAC-Allow` but never refuses a request, which is the first slice's public storage. With it true the decision is enforced and a target with no effective ACL resource is denied, as Web Access Control §5.3 requires. |
 | `snapshot` | absent | a document from `lwsSnapshot`/`solidSnapshot`; the storage continues from it. `L4Factoidal/LWS/Snapshot.lean` refuses a snapshot with a path that has a dot segment, an empty segment, a backslash, an encoded slash or a NUL, a repeated path, or no storage root. |
+| `auth` | absent | `lwsOpen` only. The authorization configuration of `L4Factoidal/LWS/Authorization.lean`: `{"issuers":[{"issuer":IRI,"jwks":{"keys":[…]}?}],"audience":IRI?,"leeway":S?,"refreshInterval":S?}`. With neither `auth` nor `insecureNoAuth`, authorization is ENFORCED with no trusted issuer: only what the ACLs give to the public is served. |
+| `insecureNoAuth` | `false` | `lwsOpen` only. `true` is the development mode with no authorization (`factoidal lws-serve --insecure-no-auth`); then `agent` stands as before. `auth` and `insecureNoAuth` together are refused. |
 | `rootAcl` | absent | the ACL document (Turtle) of the storage root, written when the storage is created. Web Access Control §3.2 requires the root container's ACL resource to have a representation, and under enforcement a storage cannot write its own: the request that would write it is the first request it would authorize. It is therefore a host provisioning input. |
 
 `lwsStep` and `solidStep` answer `"changed": true` when the step changed the
@@ -91,8 +94,21 @@ storage (every mutation advances the clock). `factoidal lws-serve DIR` and
 back at start. No request target becomes a file name.
 
 A request document may override the clock and the agent for one step with the
-members `now` and `agent` beside `method`; this is what a host with a real
-clock and a real token verifier uses.
+members `now` and `agent` beside `method`. On an LWS handle the `agent`
+override stands only under `insecureNoAuth`; with authorization on, the agent
+is the `sub` of the access token the engine validated, and nothing else.
+
+On an LWS handle with authorization on, `lwsStep` may answer
+`{"ok":true,"fetch":{"issuer":…,"url":…}}` instead of a response: the engine
+needs the authorization server's metadata (`<issuer>/.well-known/lws-configuration`,
+RFC 8414) or its JWK Set (`jwks_uri`) before it can decide. The host fetches
+exactly that URL and calls `lwsFetched(handle, {"issuer","url","status","body","now"})`.
+The engine checks the metadata `issuer` (RFC 8414 §3.3), takes the `jwks_uri`,
+answers the next `fetch`, and installs the keys; the host then steps the same
+request again. The engine fetches an issuer's keys at most once per
+`refreshInterval` (at least one second), which is how a token under a
+rotated key is accepted and how an unknown `kid` cannot make the server
+fetch on every request.
 
 `solidClientRequest` kinds: `read`, `create`, `replace`, `patch`, `delete`,
 `discoverStorage`, `readProfile`. `argsJson` is a JSON object whose members
@@ -214,16 +230,29 @@ server does not advertise.
 | Discovery | storage description, `application/lws+cid`, `@context` array, `id`, `type`, StorageRoot service | tested | `lwsGuardStorageDescription` |
 | Discovery | MoveResource capability when `up` is modifiable | n/a (`up` is not modifiable) | none |
 | Status mappings | SHOULD use RFC 9457 problem details | tested | `lwsGuardProblemDetails` |
-| Authorization | 401 with `WWW-Authenticate` `resource_metadata`; RFC 9728 metadata; token validation | missing | https://github.com/danbri/factoidal/issues/886; draft-binding xfail |
-| Authentication | credential suites | missing on the LWS host (Solid host has Solid-OIDC) | https://github.com/danbri/factoidal/issues/886 |
+| Authorization Server Discovery | 401 MUST carry `WWW-Authenticate` with `resource_metadata` (RFC 9728 §5.1) and a `Link` to the storage (`rel` lws#storage) | tested | `AuthorizationTests` "Missing token"; authorization.mjs "Discovery"; draft-binding "Authorization" |
+| Protected Resource Metadata | RFC 9728 document; `authorization_servers` REQUIRED with at least one issuer; `resource` is the requested resource | tested (served at `/.well-known/oauth-protected-resource<path>`, RFC 9728 §3.1) | `AuthorizationTests` "The metadata document"; authorization.mjs |
+| Token Validation: Presentation | Bearer in `Authorization` (RFC 6750 §2.1) | tested (another scheme: 401 `invalid_request`) | `AuthorizationTests`; authorization.mjs "Presentation" |
+| Token Validation: signature | verify with the key from the issuer's `jwks_uri`; SHOULD cache; MUST support key rotation | tested (ES256, RS256, EdDSA over vendored HACL*; cache with refetch at most once per `refreshInterval`) | `validateToken_valid_verified`; authorization.mjs "bad signature", "key rotation" |
+| Token Validation: claims | `iss` is the expected issuer; `aud` includes the storage; `exp`, `nbf`, `iat` not in the future, with clock skew | tested | `checkClaims_valid`; `AuthorizationTests`; authorization.mjs "expired", "another audience", "untrusted issuer", "iat in the future" |
+| Token Validation: failure | 401 with `resource_metadata` and an `error` parameter | tested (`invalid_token`, `invalid_request`) | authorization.mjs |
+| Token Validation: policy | a valid token whose agent the policy does not allow is rejected | tested (403, `error="insufficient_scope"`, Web Access Control over the storage's ACL resources) | `AuthorizationTests` "Another agent"; authorization.mjs "Policy" |
+| (server choice) | authorization is on unless the deployment opts out (`--insecure-no-auth`) | tested | `decide_insecure`, `default_not_insecure`; authorization.mjs "Default", "Development mode", "CLI" |
+| Authentication | credential suites (authorization server side: token exchange, subject tokens) | n/a (storage server only; the authorization server is out of scope of a storage server) | none |
 | Notifications | NotificationService, envelopes, subscriptions | n/a, not implemented | https://github.com/danbri/factoidal/issues/890; draft-binding xfail |
 | Access Requests | AccessRequestService, AccessGrantService | n/a, not implemented | https://github.com/danbri/factoidal/issues/890 |
 | Data resource | any bytes (images, documents) | missing (bodies are UTF-8 strings) | https://github.com/danbri/factoidal/issues/889; draft-binding xfail |
 | (server choice) | request paths with dot segments or encoded traversal are refused | tested | `lwsGuardTraversalRefused`; draft-binding "Paths" |
 | (server choice) | storage persists under `DIR` | tested | `lwsGuardSnapshotRoundTrip`, `lwsGuardSnapshotRefusesTraversal`; draft-binding "Persistence" |
 
-Counts: 33 tested, 6 missing (4 open issues), 3 not applicable (out of 42
-rows).
+Counts: 40 tested, 4 missing (4 open issues), 4 not applicable (out of 48
+rows). Updated 2026-10-21 for https://github.com/danbri/factoidal/issues/886:
+the Authorization row became the eight Authorization rows above, and the
+Authentication row became not applicable. Counted with
+`sed -n '/2026-10-19 audit/,/^Counts/p' docs/lws-solid-conformance.md | grep '^| ' | tail -n +3 | awk -F'|' '{print $4}' | awk '{print $1}' | sort | uniq -c`;
+the same count of the 2026-10-20 table gives 32 tested, 6 missing, 3 not
+applicable (out of 41 rows), one tested row and one row fewer than the
+2026-10-20 count line said.
 
 ## LWS 1.0 Core
 

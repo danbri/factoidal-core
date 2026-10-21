@@ -75,7 +75,7 @@ $ npx factoidal serve --tdb2 DIR /ds               # serve a Jena TDB2 database
 $ npx factoidal pack data.ttl store/gen-1 && npx factoidal activate store gen-1
 $ npx factoidal query store 'SELECT * WHERE { ?s ?p ?o } LIMIT 5'
 $ npx factoidal query "$(npx factoidal sample-store)" 'SELECT (COUNT(*) AS ?n) WHERE { ?s ?p ?o }'
-$ npx factoidal lws-serve DIR                      # Linked Web Storage
+$ npx factoidal lws-serve DIR --issuer IRI         # Linked Web Storage
 $ npx factoidal solid-serve DIR                    # Solid Protocol
 ```
 

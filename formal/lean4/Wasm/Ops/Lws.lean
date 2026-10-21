@@ -28,6 +28,10 @@ import Std.Data.HashMap
 import Wasm.Ops.Support
 import L4Factoidal.LWS.Operations
 import L4Factoidal.LWS.Snapshot
+import L4Factoidal.LWS.Authorization
+import L4Factoidal.Crypto.P256Native
+import L4Factoidal.Crypto.RsaNative
+import L4Factoidal.Crypto.Ed25519
 
 namespace L4Wasm.Ops
 
@@ -85,29 +89,52 @@ structure OpenConfig where
   /-- A storage written by `lwsSnapshot` earlier, to continue from. Its
   paths are checked by `L4Factoidal.LWS.memStateOfJson`. -/
   snapshot : Option MemState := none
+  /-- The authorization configuration (`L4Factoidal.LWS.Authorization`).
+  The default enforces authorization with no trusted issuer; the
+  development mode is the explicit `"insecureNoAuth": true`. -/
+  authz : Authorization.AuthzConfig := {}
 deriving Inhabited
 
 def openConfigOfJson (text : String) : Except String OpenConfig :=
   if text.trim == "" then .ok {}
   else match parseJson text with
     | .error e => .error s!"config: {toString e}"
-    | .ok j =>
+    | .ok j => do
         let baseIri := (j.getString? "baseIri").getD "http://localhost/"
         let owner := j.getString? "owner"
         let agent := j.getString? "agent"
         let now := match j.field? "now" with
           | some (.number s) => (s.toNat?).getD 0
           | _ => 0
-        match j.field? "snapshot" with
-        | none | some .null =>
-            .ok { cfg := { baseIri, owner, agent }, now,
-                  rootAcl := j.getString? "rootAcl" }
-        | some sj =>
-            match memStateOfJson sj with
-            | .error e => .error e
-            | .ok m =>
-                .ok { cfg := { baseIri, owner, agent }, now,
-                      rootAcl := j.getString? "rootAcl", snapshot := some m }
+        let insecure := j.field? "insecureNoAuth" == some (.bool true)
+        let authz ← match j.field? "auth", insecure with
+          | some _, true =>
+              .error "config: \"auth\" and \"insecureNoAuth\" are exclusive"
+          | none, true => .ok { insecureNoAuth := true }
+          | none, false => .ok {}
+          | some aj, false => Authorization.authzConfigOfJson aj now
+        let snapshot ← match j.field? "snapshot" with
+          | none | some .null => .ok none
+          | some sj => (memStateOfJson sj).map some
+        -- Under authorization, a configured owner with no provisioned root
+        -- ACL gets the owner's root ACL (`Authorization.ownerRootAcl`).
+        let rootAcl ← match j.getString? "rootAcl", owner with
+          | some body, _ => .ok (some body)
+          | none, none => .ok none
+          | none, some o =>
+              if authz.insecureNoAuth then .ok none
+              else match Authorization.ownerRootAcl baseIri o with
+                | some body => .ok (some body)
+                | none => .error "config: \"owner\" and \"baseIri\" must be IRIs with no space, <, >, \", {, }, |, ^, ` or \\"
+        .ok { cfg := { baseIri, owner, agent }, now, rootAcl, snapshot, authz }
+
+/-- The JWS verifiers over the vendored HACL* primitives (P-256 ECDSA,
+RSA PKCS#1 v1.5, Ed25519): `skills/crypto-policy`. -/
+def lwsVerifiers : L4Factoidal.JOSE.Verifiers :=
+  { es256 := fun pubXY msg sig => L4Factoidal.Crypto.P256.p256VerifySha256 pubXY msg sig
+    rs256 := fun n e sig msg =>
+      L4Factoidal.JOSE.Pkcs1.rs256Verify L4Factoidal.Crypto.Rsa.rsaPublicOp n e sig msg
+    eddsa := fun pk msg sig => L4Factoidal.Crypto.Ed25519.verify pk msg sig }
 
 /-! ## The handle table -/
 
@@ -115,6 +142,7 @@ def openConfigOfJson (text : String) : Except String OpenConfig :=
 structure OpenStorage where
   cfg : Config
   mem : MemState
+  authz : Authorization.AuthzConfig := {}
 
 initialize lwsCounter : IO.Ref Nat ← IO.mkRef 0
 initialize lwsTable : IO.Ref (Std.HashMap String OpenStorage) ← IO.mkRef ∅
@@ -143,7 +171,8 @@ def lwsOpen (configJson : String) : IO String := do
       let n ← lwsCounter.modifyGet fun n => (n + 1, n + 1)
       let h := s!"lws{n}"
       lwsTable.modify (·.insert h
-        { cfg := oc.cfg, mem := oc.snapshot.getD (initialStorage oc.now oc.rootAcl) })
+        { cfg := oc.cfg, mem := oc.snapshot.getD (initialStorage oc.now oc.rootAcl),
+          authz := oc.authz })
       pure (okWith [("handle", .string h), ("root", .string rootPath)])
 
 def lwsStep (h requestJson : String) : IO String := do
@@ -159,16 +188,53 @@ def lwsStep (h requestJson : String) : IO String := do
               let mem := match now? with
                 | some t => { open_.mem with clock := t }
                 | none   => open_.mem
+              -- A per-request agent is the host's word for who is asking;
+              -- it stands only in the explicit no-auth mode.
               let cfg := match agent? with
-                | some a => { open_.cfg with agent := some a }
+                | some a => if open_.authz.insecureNoAuth then { open_.cfg with agent := some a }
+                            else open_.cfg
                 | none   => open_.cfg
-              let (resp, mem') := L4Factoidal.LWS.step MemStore cfg r mem
-              lwsTable.modify (·.insert h { open_ with mem := mem' })
-              -- Every mutation advances the clock (`StoreLaws.nowTick`), so
-              -- a changed clock is exactly "the storage changed"; a host
-              -- that persists writes `lwsSnapshot` when this is true.
-              pure (okWith [ ("response", jsonOfResponse resp)
-                           , ("changed", .bool (mem'.clock != mem.clock)) ])
+              match Authorization.authorizedStep lwsVerifiers MemStore cfg open_.authz
+                      (now?.getD mem.clock) r mem with
+              | .inl (issuer, url) =>
+                  pure (okWith [("fetch", .object [("issuer", .string issuer),
+                                                   ("url", .string url)])])
+              | .inr (resp, mem') =>
+                  lwsTable.modify (·.insert h { open_ with mem := mem' })
+                  -- Every mutation advances the clock (`StoreLaws.nowTick`),
+                  -- so a changed clock is exactly "the storage changed"; a
+                  -- host that persists writes `lwsSnapshot` when this is true.
+                  pure (okWith [ ("response", jsonOfResponse resp)
+                               , ("changed", .bool (mem'.clock != mem.clock)) ])
+
+/-- `lwsFetched(handle, {issuer, url, status, body, now})`: the host's
+answer to a `fetch` from `lwsStep`. Lean decides what the document means
+(`Authorization.installFetched`); the result names the next URL to fetch,
+or says the keys are installed and the request can be stepped again. -/
+def lwsFetched (h docJson : String) : IO String := do
+  match (← lwsTable.get)[h]? with
+  | none => pure (unknownLwsHandle h)
+  | some open_ =>
+      match parseJson docJson with
+      | .error e => pure (errJson s!"fetched: {toString e}")
+      | .ok j =>
+          match j.getString? "issuer", j.getString? "url" with
+          | some issuer, some url =>
+              let status := match j.field? "status" with
+                | some (.number s) => (s.toNat?).getD 0
+                | _ => 0
+              let now := match j.field? "now" with
+                | some (.number s) => (s.toNat?).getD open_.mem.clock
+                | _ => open_.mem.clock
+              let (authz', outcome) := Authorization.installFetched open_.authz issuer url
+                status ((j.getString? "body").getD "") now
+              lwsTable.modify (·.insert h { open_ with authz := authz' })
+              pure <| match outcome with
+                | .next u => okWith [("fetch", .object [("issuer", .string issuer),
+                                                       ("url", .string u)])]
+                | .installed n => okWith [("installed", .number (toString n))]
+                | .refused why => okWith [("refused", .string why)]
+          | _, _ => pure (errJson "fetched: members \"issuer\" and \"url\" are required")
 
 def lwsClose (h : String) : IO String := do
   let table ← lwsTable.get
@@ -186,6 +252,6 @@ def lwsSnapshot (h : String) : IO String := do
   | some open_ => pure (okWith [("snapshot", snapshotJson open_.mem)])
 
 /-- The op names this module serves. -/
-def lwsOpNames : List String := ["lwsOpen", "lwsStep", "lwsClose", "lwsSnapshot"]
+def lwsOpNames : List String := ["lwsOpen", "lwsStep", "lwsClose", "lwsSnapshot", "lwsFetched"]
 
 end L4Wasm.Ops
