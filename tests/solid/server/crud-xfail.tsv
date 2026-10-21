@@ -1,0 +1,13 @@
+# Expected failures of solid-crud-tests against `factoidal solid-serve`,
+# read by tools/solid-server-interop.sh. One row per Jest test full name
+# (exact match), tab, the open issue that tracks it. A listed test that
+# PASSES turns the run red (stale row): flip it to a real pass and close
+# or update the issue. A failing test that is not listed is a failure.
+Hello World can post a file into a folder	https://github.com/danbri/factoidal/issues/895
+Concurrency Use PATCH 10 times to add triple to the same resource succeeds 10 times	https://github.com/danbri/factoidal/issues/896
+Concurrency Use PATCH 10 times to add triple to the same resource updates the resource	https://github.com/danbri/factoidal/issues/896
+Alice's pod Get RDFa As JSON-LD MAY  Triples	https://github.com/danbri/factoidal/issues/897
+Alice's pod Get RDFa As Turtle MAY  Triples	https://github.com/danbri/factoidal/issues/897
+Notifications When overwriting plain text with plain text using PUT SECURE_WEBSOCKETS  secure websockets advertised using server-wide or resource-specific Link header	https://github.com/danbri/factoidal/issues/898
+Notifications When overwriting plain text with plain text using PUT WEBHOOKS  webhooks advertised using server-wide or resource-specific Link header	https://github.com/danbri/factoidal/issues/898
+Notifications When overwriting plain text with plain text using PUT WEBHOOKS  emits webhook notification on the resource	https://github.com/danbri/factoidal/issues/898

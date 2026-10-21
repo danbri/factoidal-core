@@ -83,11 +83,29 @@ fi
 
 # ------------------------------------------------- Community Solid Server
 
+# CONFIGURATION
+# tests/solid/client/css-public-write.json is css:config/file-root.json with
+# the allow-all authorization: every request is allowed, unauthenticated
+# writes included. With @css:config/file.json (WAC, no pod) every write of
+# our unauthenticated client answered 401 (2026-10-20, 0 pass, 5 fail).
+# The client has no Solid-OIDC login yet, so a test-only open storage is
+# what lets the CRUD requests reach CSS at all. SOLID_CSS_CONFIG overrides.
+#
+# CSS INSTALL
+# SOLID_CSS_BIN names a community-solid-server executable installed outside
+# the checkout (for example `npm install --prefix /tmp/css
+# @solid/community-server@7.2`, then /tmp/css/node_modules/.bin/community-solid-server).
+# Without it the script runs `npx --yes @solid/community-server@7.2`,
+# which downloads into the npm cache.
+CSS_CONFIG="${SOLID_CSS_CONFIG:-$ROOT/tests/solid/client/css-public-write.json}"
 mkdir -p "$SCRATCH"
 echo "solid-client-interop: starting Community Solid Server on port $PORT"
-npx --yes @solid/community-server \
-  -p "$PORT" -c @css:config/file.json -f "$SCRATCH" \
-  > "$CSS_LOG" 2>&1 &
+if [ -n "${SOLID_CSS_BIN:-}" ]; then
+  "$SOLID_CSS_BIN" -p "$PORT" -c "$CSS_CONFIG" -f "$SCRATCH" > "$CSS_LOG" 2>&1 &
+else
+  npx --yes @solid/community-server@7.2 \
+    -p "$PORT" -c "$CSS_CONFIG" -f "$SCRATCH" > "$CSS_LOG" 2>&1 &
+fi
 CSS_PID=$!
 
 ORIGIN="http://localhost:${PORT}"

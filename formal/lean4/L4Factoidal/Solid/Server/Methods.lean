@@ -84,6 +84,7 @@ import L4Factoidal.Solid.Server.N3Patch
 import L4Factoidal.Solid.Server.Cors
 import L4Factoidal.Solid.Server.Ldn
 import L4Factoidal.Syntax.TurtleSerialize
+import L4Factoidal.Solid.Server.Representation
 
 namespace L4Factoidal.Solid.Server
 
@@ -221,10 +222,41 @@ where
               let g := containerGraph S cfg.lws.baseIri st target
               let (base, st') := LWS.step S cfg.lws r st
               if base.status != 200 then (base, st') else
+              -- §5.5 for the container representation: Turtle unless the
+              -- Accept field prefers JSON-LD.
+              let (media, body) := match writeRdfSource
+                  (negotiateRdf (r.header? "accept") mediaTurtle) g with
+                | some b => (negotiateRdf (r.header? "accept") mediaTurtle, b)
+                | none => (mediaTurtle, solidTurtle g)
               ({ base with
-                 body := if r.method == "HEAD" then "" else turtleOfGraphAuto g,
+                 body := if r.method == "HEAD" then "" else body,
                  headers := base.headers.map (fun (k, v) =>
-                   if k == "content-type" then (k, "text/turtle") else (k, v)) }, st')
+                   if k == "content-type" then (k, media) else (k, v)) }, st')
+            else if isRdfSourceMedia e.contentType then
+              -- §5.5: an RDF source is served as text/turtle and as
+              -- application/ld+json, whichever the Accept field asks for.
+              let want := negotiateRdf (r.header? "accept") e.contentType
+              if want == e.contentType then
+                let (resp, st') := LWS.step S cfg.lws r st
+                ({ resp with headers := resp.headers ++ [("vary", "accept")] }, st')
+              else
+              match convertRdfSource e.contentType want
+                      (iriOfPath cfg.lws.baseIri target) e.body with
+              | some body =>
+                  -- The converted representation is a whole one: a Range
+                  -- field applies to the stored bytes, so it is not passed on.
+                  let r0 := { r with headers := r.headers.filter (fun (k, _) =>
+                                k != "range" && k != "if-range") }
+                  let (resp, st') := LWS.step S cfg.lws r0 st
+                  if resp.status != 200 then (resp, st') else
+                  ({ resp with
+                     body := if r.method == "HEAD" then "" else body,
+                     headers := (resp.headers.filter (fun (k, _) => k != "accept-ranges")).map
+                       (fun (k, v) =>
+                         if k == "content-type" then (k, want)
+                         else if k == "etag" then (k, convertedTag v want)
+                         else (k, v)) ++ [("vary", "accept")] }, st')
+              | none => LWS.step S cfg.lws r st
             else LWS.step S cfg.lws r st
         | none => LWS.step S cfg.lws r st
     | "PUT" =>
@@ -260,7 +292,7 @@ where
               let st1 := ensureAncestors S (ancestors target) st
               let e : Entry := { path := target, kind := .dataResource,
                                  contentType := "text/turtle",
-                                 body := turtleOfGraphAuto g', mtime := S.now st1 }
+                                 body := solidTurtle g', mtime := S.now st1 }
               let st2 := touchContainer S (S.tick (S.put st1 e)) target
               match existing with
               | none   => (⟨201, [("location", target),

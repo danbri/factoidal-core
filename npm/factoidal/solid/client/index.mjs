@@ -244,9 +244,13 @@ export async function createSolidClient (options = {}) {
       if (interpretKind === null) return answer
       // The record says what came back; `target` says what was asked. The
       // storage walk needs both, and this is the engine's own target
-      // echoed back, not a URL this file composed.
+      // echoed back, not a URL this file composed. `requestUri` is the URL
+      // the request went to (the `endpoint` call above): the base IRI of
+      // the representation (RFC 3986 §5.1.3), which the engine resolves
+      // relative references against.
       const interpretation = interpretationOf(
-        callResponse(interpretKind, { ...record, target: request.target }))
+        callResponse(interpretKind, { ...record, target: request.target,
+          requestUri: endpoint(request.target) }))
       answer.interpretation = interpretation
       if (interpretation.continue !== true) return answer
       state = interpretation.state === undefined ? null : interpretation.state
