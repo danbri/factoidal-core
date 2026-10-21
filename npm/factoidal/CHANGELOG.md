@@ -110,6 +110,32 @@ Linked Web Storage, three rules of the editor's draft (w3c/lws-protocol
   the destination. `listen`/`openLwsStorage` take `moves: false` to turn it
   off. Theorem `move_tree`: a move keeps the containment hierarchy a tree.
 
+Encryption at rest of the LWS and Solid storage snapshot, off by default
+(https://github.com/danbri/factoidal/issues/921; owner, 2026-10-21: "Yes env
+var please. Again off by default but good to show we can."):
+
+- When the environment variable `FACTOIDAL_LWS_KEY` holds a 32-byte key (64
+  hex digits or base64url), `lws-serve` and `solid-serve` write
+  `DIR/lws-state.json` as format `lws-snapshot-sealed-1`: format id, cipher
+  id `chacha20-poly1305`, key id (first 8 bytes of SHA-256 of the key), a
+  12-byte nonce new for every write, and the ChaCha20-Poly1305 (RFC 8439,
+  HACL*) ciphertext of the snapshot, with the header as associated data.
+  `listen`/`openLwsStorage`/`openSolidStorage` take `storageKey` (text, or
+  `null` to read no key).
+- At start the file is authenticated before use. A wrong key, a changed or
+  truncated file, a clear-text file with the variable set and a sealed file
+  without it each stop the start with a one-line message (exit 1). With the
+  variable unset, behaviour is unchanged.
+- It protects the file on disk only: not the memory of a running server, not
+  the key in its environment, not the answers to clients.
+- Decided in Lean (`L4Factoidal/LWS/SnapshotSeal.lean`), with theorems over
+  any AEAD with RFC 8439 correctness (`unsealDoc_sealDoc`,
+  `unsealDoc_authenticated`, `unsealDoc_wrongKey`, ...). `lwsSnapshot` and
+  `solidSnapshot` take an optional second argument `{"nonce":…}`.
+- Cost with a key (2026-10-21, about 1,050 resources): a write takes about
+  2.7 times as long (133 to 143 ms against 49 to 54 ms), the file is 1.33
+  times larger, a restart about 2.1 times as long.
+
 ### Breaking changes
 
 - The storage description has a second service, `NotificationService`, and

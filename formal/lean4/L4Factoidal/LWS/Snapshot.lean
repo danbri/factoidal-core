@@ -37,6 +37,10 @@ gives it back), `entryOfJson_entryJson` (an entry written by `entryJson`
 reads back as the same entry) and `memStateOfJson_snapshotJson` (a storage
 written by `snapshotJson` reads back as the same storage, under the checks
 the reader makes and the clock invariant).
+
+With a storage key (`FACTOIDAL_LWS_KEY`) the file holds this document sealed
+with ChaCha20-Poly1305: `L4Factoidal/LWS/SnapshotSeal.lean`
+(https://github.com/danbri/factoidal/issues/921).
 -/
 import L4Factoidal.LWS.Store
 import L4Factoidal.LWS.Binding
