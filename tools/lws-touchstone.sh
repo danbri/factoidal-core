@@ -489,8 +489,10 @@ if [ -s "$WORK/reports.tsv" ]; then
       const v = verdict.get(id)
       if (v !== "passed") console.log(`  ${v}: ${id}${v === "failed" ? " (in " + where.get(id).join(", ") + ")" : ""}`)
     }
-    // Tests that apply in exactly one configuration, and which.
-    const only = ids.filter((id) => verdict.get(id) === "passed" && where.get(id).length === 1)
+    // Tests that pass in exactly one configuration when that one is an
+    // alternative configuration: what each alternative adds.
+    const only = ids.filter((id) => verdict.get(id) === "passed" && where.get(id).length === 1 &&
+      /-alt-/.test(where.get(id)[0]))
     for (const id of only) console.log(`  passed only in ${where.get(id)[0]}: ${id}`)
     if (out) {
       fs.mkdirSync(out, { recursive: true })

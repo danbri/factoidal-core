@@ -201,7 +201,9 @@ Tests: `L4Factoidal/LWS/MoveTests.lean`; `tests/lws/draft-binding.mjs`, the
 three of its 11 tests have preconditions this server cannot meet at once
 (`move-keeps-identifier-content-and-links` needs `preservesIdentifier: true`,
 `move-container-refused-without-container-support` needs no `Container` in
-`appliesTo`, `move-refused-without-capability` needs no capability).
+`appliesTo`, `move-refused-without-capability` needs no capability); the
+last two apply and pass in `tools/lws-touchstone.sh --config alt-datamove`
+and `alt-nomove`.
 Measured 2026-10-21 without `--shim`: open 6 pass, 0 fail, 5 inapplicable;
 authorization 7 pass, 0 fail, 4 inapplicable (out of 11 each). With the
 AccessGrantService (https://github.com/danbri/factoidal/issues/913) the two
@@ -564,7 +566,21 @@ authorization server (`auth`). It passes `--page-size 4`
 (`LWS_PAGE_SIZE`), so the pagination tests apply. `TOUCHSTONE_SRC` names
 an existing clone to copy. `--unstable-search-results` starts the server
 with the anticipatory results resource (issue 922; target ids get the
-suffix `-unstable`); a default run never sets it. Delete the Maven repository after a run (the
+suffix `-unstable`); a default run never sets it.
+
+Five tests have preconditions that exclude one another, so no one server
+configuration applies all of them. `--config alt-nomove` (`--moves off`),
+`alt-datamove` (`--moves data`), `alt-linkset-noput` (`--no-linkset-put`)
+and `alt-onepage` (`--page-size 100 --paginate-always`) each run with
+authorization on; `--config alt` runs the four, `--config all` runs open,
+auth and the four, and then prints a union line (per test: passed in at
+least one configuration, failed in any, never applied; `union.tsv` in
+`TOUCHSTONE_OUT`). A failure in any configuration is exit 1. Measured
+2026-10-21 with `--config all --unstable-search-results`: 220 passed in at
+least one configuration, 0 failed, 1 never applied (out of 221). The one is
+`core/moving#move-keeps-identifier-content-and-links`: it needs
+`"preservesIdentifier": true`, and our identifiers are paths (not
+applicable to this design; the record quotes lws10-core Discovery). Delete the Maven repository after a run (the
 script's work directory, about 260 MB). Results and every failure with its
 spec text: `docs/designissues/2026-10-21-lws-touchstone-run.md`.
 

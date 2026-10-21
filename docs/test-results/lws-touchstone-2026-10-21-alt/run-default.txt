@@ -1,0 +1,18 @@
+factoidal-open: 76 pass, 0 fail, 0 cantTell, 145 inapplicable (out of 221)
+factoidal-open: reports in /tmp/lwsalt-ts/touchstone/runs/2026-10-21T224012Z-ae7cb3d2
+factoidal-auth: 215 pass, 0 fail, 0 cantTell, 6 inapplicable (out of 221)
+factoidal-auth: reports in /tmp/lwsalt-ts/touchstone/runs/2026-10-21T224021Z-213cdf23
+factoidal-auth: of these, 40 tests (auth/*, core/authorization_server) exercise Touchstone's reference authorization server, not our storage server; 40 passed
+per configuration (tests, passed, failed, cantTell, inapplicable):
+  factoidal-open: 221 tests, 76 passed, 0 failed, 0 cantTell, 145 inapplicable
+  factoidal-auth: 221 tests, 215 passed, 0 failed, 0 cantTell, 6 inapplicable
+union over 2 configurations (factoidal-open, factoidal-auth): 215 passed in at least one configuration, 0 failed in at least one, 0 cantTell only, 6 never applied (out of 221)
+  never applied: core/linksets#linkset-put-405-when-unsupported
+  never applied: core/moving#move-container-refused-without-container-support
+  never applied: core/moving#move-keeps-identifier-content-and-links
+  never applied: core/moving#move-refused-without-capability
+  never applied: core/pagination#pagination-single-page
+  never applied: index/manifest#type-search-content-location-protected
+union table: /tmp/lwsalt-ts-out-both/union.tsv
+lws-touchstone: every configuration ran; no test failed
+rc=0

@@ -1,0 +1,39 @@
+lws-touchstone: building Touchstone 106087234aed2aab3f6bbf0485bd64095cc00fe5 (log: /tmp/lwsalt-ts/build.log)
+factoidal-open-unstable: 76 pass, 0 fail, 0 cantTell, 145 inapplicable (out of 221)
+factoidal-open-unstable: reports in /tmp/lwsalt-ts/touchstone/runs/2026-10-21T223731Z-cbd3d177
+factoidal-auth-unstable: 216 pass, 0 fail, 0 cantTell, 5 inapplicable (out of 221)
+factoidal-auth-unstable: reports in /tmp/lwsalt-ts/touchstone/runs/2026-10-21T223750Z-5c83d947
+factoidal-auth-unstable: of these, 40 tests (auth/*, core/authorization_server) exercise Touchstone's reference authorization server, not our storage server; 40 passed
+factoidal-alt-nomove-unstable: lws-serve flags: --moves off
+factoidal-alt-nomove-unstable: 208 pass, 0 fail, 0 cantTell, 13 inapplicable (out of 221)
+factoidal-alt-nomove-unstable: reports in /tmp/lwsalt-ts/touchstone/runs/2026-10-21T223809Z-7ec94d6d
+factoidal-alt-nomove-unstable: of these, 40 tests (auth/*, core/authorization_server) exercise Touchstone's reference authorization server, not our storage server; 40 passed
+factoidal-alt-datamove-unstable: lws-serve flags: --moves data
+factoidal-alt-datamove-unstable: 215 pass, 0 fail, 0 cantTell, 6 inapplicable (out of 221)
+factoidal-alt-datamove-unstable: reports in /tmp/lwsalt-ts/touchstone/runs/2026-10-21T223834Z-90532bc3
+factoidal-alt-datamove-unstable: of these, 40 tests (auth/*, core/authorization_server) exercise Touchstone's reference authorization server, not our storage server; 40 passed
+factoidal-alt-linkset-noput-unstable: lws-serve flags: --no-linkset-put
+factoidal-alt-linkset-noput-unstable: 217 pass, 0 fail, 0 cantTell, 4 inapplicable (out of 221)
+factoidal-alt-linkset-noput-unstable: reports in /tmp/lwsalt-ts/touchstone/runs/2026-10-21T223859Z-8ae180fd
+factoidal-alt-linkset-noput-unstable: of these, 40 tests (auth/*, core/authorization_server) exercise Touchstone's reference authorization server, not our storage server; 40 passed
+factoidal-alt-onepage-unstable: lws-serve flags: --page-size 100 --paginate-always
+factoidal-alt-onepage-unstable: 212 pass, 0 fail, 0 cantTell, 9 inapplicable (out of 221)
+factoidal-alt-onepage-unstable: reports in /tmp/lwsalt-ts/touchstone/runs/2026-10-21T223925Z-cdc3b6df
+factoidal-alt-onepage-unstable: of these, 40 tests (auth/*, core/authorization_server) exercise Touchstone's reference authorization server, not our storage server; 40 passed
+per configuration (tests, passed, failed, cantTell, inapplicable):
+  factoidal-open-unstable: 221 tests, 76 passed, 0 failed, 0 cantTell, 145 inapplicable
+  factoidal-auth-unstable: 221 tests, 216 passed, 0 failed, 0 cantTell, 5 inapplicable
+  factoidal-alt-nomove-unstable: 221 tests, 208 passed, 0 failed, 0 cantTell, 13 inapplicable
+  factoidal-alt-datamove-unstable: 221 tests, 215 passed, 0 failed, 0 cantTell, 6 inapplicable
+  factoidal-alt-linkset-noput-unstable: 221 tests, 217 passed, 0 failed, 0 cantTell, 4 inapplicable
+  factoidal-alt-onepage-unstable: 221 tests, 212 passed, 0 failed, 0 cantTell, 9 inapplicable
+union over 6 configurations (factoidal-open-unstable, factoidal-auth-unstable, factoidal-alt-nomove-unstable, factoidal-alt-datamove-unstable, factoidal-alt-linkset-noput-unstable, factoidal-alt-onepage-unstable): 220 passed in at least one configuration, 0 failed in at least one, 0 cantTell only, 1 never applied (out of 221)
+  never applied: core/moving#move-keeps-identifier-content-and-links
+  passed only in factoidal-alt-linkset-noput-unstable: core/linksets#linkset-put-405-when-unsupported
+  passed only in factoidal-alt-datamove-unstable: core/moving#move-container-refused-without-container-support
+  passed only in factoidal-alt-nomove-unstable: core/moving#move-refused-without-capability
+  passed only in factoidal-alt-onepage-unstable: core/pagination#pagination-single-page
+union table: /tmp/lwsalt-ts-out-all/union.tsv
+NOTE: --unstable-search-results was on (issue 922): an anticipatory, unstable extension.
+lws-touchstone: every configuration ran; no test failed
+rc=0

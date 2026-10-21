@@ -587,6 +587,130 @@ of 21); `tests/solid/client/against-own-server.mjs` 7 pass, 0 fail (out of
 l4lws-probe` guarded checks 17 pass, 0 fail (out of 17), registry 11 proved,
 17 guarded, 0 host-verified, 5 open (out of 33).
 
+## Alternative configurations: every test one configuration can satisfy
+
+Owner, 2026-10-21: "full Touchstone conformance asap please". Run 2026-10-21
+on branch `claude/wt-lwsalt` (from `main` 5e17bb90), same Touchstone commit,
+no `--shim`. Reports: `docs/test-results/lws-touchstone-2026-10-21-alt/`
+(`report.md` and `earl.ttl` per configuration, `union.tsv` one row per
+test, `run-all.txt` and `run-default.txt` the script output).
+
+After § Search results resource, five tests were inapplicable under
+authorization. Their preconditions exclude one another, so no one server
+configuration applies all of them. The default server is not changed. Three
+server options were added, each decided in Lean configuration
+(`L4Factoidal/LWS/Operations.lean` `Config`, parsed in `Wasm/Ops/Lws.lean`)
+and exposed as an `lws-serve` flag, and `tools/lws-touchstone.sh` runs one
+more configuration per option, each with authorization on:
+
+| configuration | `lws-serve` flags | the test it makes apply | precondition (Touchstone text) |
+|---|---|---|---|
+| `alt-nomove` | `--moves off` (config `moves: false`, which existed) | `core/moving#move-refused-without-capability` | "the storage describes no MoveResource capability" |
+| `alt-datamove` | `--moves data` (`Config.moveContainers` false) | `core/moving#move-container-refused-without-container-support` | "the storage moves data resources but not containers": `appliesTo` without `Container` |
+| `alt-linkset-noput` | `--no-linkset-put` (`Config.linksetPut` false) | `core/linksets#linkset-put-405-when-unsupported` | "the linkset does not advertise PUT": `Allow` without PUT |
+| `alt-onepage` | `--page-size 100 --paginate-always` (`Config.paginateAlways`) | `core/pagination#pagination-single-page` | "the listing is paginated and holds all five members on its page": `rel="first"` and `/items/4` |
+
+What each option does, with the spec text:
+
+* `--moves data`: lws10-core `Operations/moving-resources.md`, "A server
+  that supports moving data resources but not containers MUST reject such a
+  request with an appropriate 4xx status code, such as 409 Conflict, and
+  MUST NOT include Container in the `appliesTo` property." The capability's
+  `appliesTo` is `["DataResource"]`; a change of a container's `up` link
+  answers 409 and moves nothing (`Move.movable`, used by the linkset
+  operation and by `movePlanOf?` in `Authorization.decide`).
+* `--no-linkset-put`: lws10-core `Operations/metadata.md`, "Servers MAY
+  support PUT or alternative patch formats; if supported, these MUST be
+  included in the Allow and Accept-Patch headers respectively" and
+  "Replacement (PUT): If advertised in the Allow header, a client MAY replace
+  the entire linkset. If the server does not support PUT, it MUST reject the
+  request with 405 Method Not Allowed." `Allow` is `GET, HEAD, OPTIONS,
+  PATCH`; a PUT answers 405 with that `Allow` and changes nothing
+  (`Operations.linksetAllow`, `linksetStep`).
+* `--paginate-always`: our default paginates only above the page size
+  (`Pagination.paginated`), so a page size of 5 or more gives the
+  five-member container no `rel="first"` and the test stays inapplicable; a
+  page size flag alone cannot make it apply. With the option, a listing that
+  fits on one page is one paginated page: `rel="first"` and `rel="last"`
+  ("MUST be present on paginated responses"), no `rel="next"` ("MUST be
+  omitted on the last page") and no `rel="prev"` ("MUST be omitted on the
+  first page") (`Pagination.paginatedWith`, theorems `paginatedWith_false`
+  and `pageCount_le_one`).
+
+One defect found on the way and repaired for every configuration: on a
+paginated container, `If-Match` with the `ETag` of its first page failed
+with 412, because `tagsIn` held only the unpaged listing tags while a GET of
+the container URI answers the first page with a page tag. Touchstone's
+`ifMatch: current` reads that tag before a conditional DELETE, so
+`alt-onepage` would have failed the conditional container deletes. RFC 9110
+§13.1.1 compares `If-Match` with "the current representation of the target
+resource", which is that page. `tagsIn` now also holds the first page's
+tags (`Operations.pageTag`); a stale tag still answers 412 (guards in
+`PaginationLinksTests.lean`). The default runs did not reach it: no
+conditional write there targets a container with more than 4 members.
+
+`bash tools/lws-touchstone.sh --config all --unstable-search-results`
+(exit 0):
+
+| configuration | tests | passed | failed | cantTell | inapplicable |
+|---|---:|---:|---:|---:|---:|
+| `open` (`--insecure-no-auth`) | 221 | 76 | 0 | 0 | 145 |
+| `auth` (authorization on) | 221 | 216 | 0 | 0 | 5 |
+| `alt-nomove` | 221 | 208 | 0 | 0 | 13 |
+| `alt-datamove` | 221 | 215 | 0 | 0 | 6 |
+| `alt-linkset-noput` | 221 | 217 | 0 | 0 | 4 |
+| `alt-onepage` | 221 | 212 | 0 | 0 | 9 |
+
+Union over the six configurations (out of 221 tests):
+
+| union verdict | tests |
+|---|---:|
+| passed in at least one configuration | 220 |
+| failed in any configuration | 0 |
+| cantTell only | 0 |
+| never applied | 1 |
+
+Each alternative configuration adds exactly its test, and loses only tests
+whose precondition it negates: `alt-nomove` loses the 9 `core/moving` tests
+that need a `MoveResource` capability; `alt-datamove` loses `move-container`
+and `move-container-into-itself-refused`; `alt-onepage` loses the four
+multi-page pagination tests and `index/manifest#type-search-next-page` (it
+"Applies when the server's page holds fewer than five"; at page size 100 a
+search answer of five is one page). Each authorization configuration holds
+the same 40 passes that test Touchstone's reference authorization server,
+as before (§ Rerun after fixes).
+
+The default `bash tools/lws-touchstone.sh` (`--config both`, no option) is
+unchanged: open 76 pass, 0 fail, 0 cantTell, 145 inapplicable; authorization
+215 pass, 0 fail, 0 cantTell, 6 inapplicable (out of 221 each), as in § Search
+results resource. Exit 0.
+
+### The one test that never applies: `move-keeps-identifier-content-and-links`
+
+Its precondition: "the storage's MoveResource says it preserves identifiers
+(otherwise this test does not apply)", that is `"preservesIdentifier":
+true`. lws10-core `Discovery.html`, §Storage Capabilities:
+"`preservesIdentifier` - the `preservesIdentifier` property is OPTIONAL. If
+present, its value MUST be a boolean indicating whether the storage
+preserves the identifier of a moved resource. If the property is absent,
+clients MUST NOT assume that identifiers are preserved, and MUST rely on the
+response to the update to determine the identifier of the resource."
+`Operations/moving-resources.md`: "Servers SHOULD therefore preserve the
+identifier of a moved resource [...] A server that derives identifiers from
+the containment hierarchy, and that therefore advertises
+`"preservesIdentifier": false`, cannot preserve the identifier."
+
+Our identifiers are paths, and a resource's path is its parent's path and
+its name (`L4Factoidal/LWS/Model.lean`), so this server is the second kind:
+it advertises `"preservesIdentifier": false` and answers a move with 200,
+the new linkset and `Content-Location`, as the draft requires of such a
+server. The test is not applicable to this design. Identifiers are not
+redesigned for it; that would be a change of the resource model, not a
+configuration. The SHOULD itself (preserve the identifier) is not met; its
+neighbour, 301 from the previous identifier, is the open expected failure
+of https://github.com/danbri/factoidal/issues/914 in
+`tests/lws/draft-binding.mjs`.
+
 ## Run details
 
 * Host: Linux, OpenJDK 21.0.12, Maven 3.9.11, Node 22.22.0. No Docker
