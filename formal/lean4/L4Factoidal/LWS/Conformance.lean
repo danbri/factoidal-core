@@ -163,9 +163,9 @@ def registry : List Requirement :=
 , { id := "lws-core-17"
   , section_ := "Access Requests and Grants"
   , statement := "access grant — a data object created by a storage controller, expressing an ability for an agent to perform specific actions on storage resources within certain defined constraints."
-  , module := "(none)"
-  , binding := "LWS core §Access Requests and Grants (todo)"
-  , status := .«open» "not in the first slice" }
+  , module := "L4Factoidal.LWS.AccessPolicy.grantsPermit"
+  , binding := "LWS core §Access Requests and Grants (w3c/lws-protocol 9a08ff65): the grant endpoint, enforced by Authorization.decide"
+  , status := .proved "L4Factoidal.LWS.AccessPolicy.grantsPermit_sound" }
 , { id := "lws-core-18"
   , section_ := "Terminology"
   , statement := "storage description — an LWS resource, conforming to the requirements of a W3C Controlled Identifier document [CID-1.0], that describes a storage along with its services and capabilities."
@@ -210,6 +210,38 @@ def registry : List Requirement :=
   , statement := "When a server enriches the type index from resource content, the types it surfaces MUST be treated identically to those derived from Link headers for the purposes of indexing, search, and authorization filtering."
   , module := "L4Factoidal.LWS.TypeIndex.entryFacts"
   , status := .proved "L4Factoidal.LWS.Search.ixSearch_eq_specSearch" }
+-- LWS core §Access Requests and Grants (w3c/lws-protocol 9a08ff65,
+-- https://github.com/danbri/factoidal/issues/913). `L4Factoidal.LWS.AccessGrants`.
+, { id := "lws-access-01"
+  , section_ := "Access Requests and Grants: Discovery"
+  , statement := "When such support is advertised, a service object describing an endpoint for access requests MUST have a type equal to the string AccessRequestService, and a service object describing an endpoint for access grants MUST have a type equal to the string AccessGrantService."
+  , module := "L4Factoidal.LWS.Binding.storageDescription"
+  , status := .guarded "L4Factoidal.LWS.AccessGrantsTests.lwsGuardAccessDiscovery" }
+, { id := "lws-access-02"
+  , section_ := "Access Requests and Grants: Protocol"
+  , statement := "A successful POST operation MUST respond with a Location header set to the URL of the new resource."
+  , module := "L4Factoidal.LWS.AccessGrants.accessStep"
+  , status := .guarded "L4Factoidal.LWS.AccessGrantsTests.lwsGuardAccessCreate" }
+, { id := "lws-access-03"
+  , section_ := "Access Requests and Grants: Constraints"
+  , statement := "When multiple constraint objects are present, all of them MUST be satisfied."
+  , module := "L4Factoidal.LWS.AccessPolicy.policyPermits"
+  , status := .guarded "L4Factoidal.LWS.AccessGrantsTests.lwsGuardAccessConstraints" }
+, { id := "lws-access-04"
+  , section_ := "Access Requests and Grants"
+  , statement := "When an access grant is created or revoked (deleted), it is the responsibility of the server to adjust any underlying access policy to account for the change."
+  , module := "L4Factoidal.LWS.AccessPolicy.revoke"
+  , status := .proved "L4Factoidal.LWS.AccessPolicy.grantsPermit_revoke" }
+, { id := "lws-access-05"
+  , section_ := "Access Requests and Grants: Temporal Constraints"
+  , statement := "The gteq operator defines the start of the window and the lteq operator defines the end."
+  , module := "L4Factoidal.LWS.AccessPolicy.satisfied"
+  , status := .proved "L4Factoidal.LWS.AccessPolicy.recordPermits_expired" }
+, { id := "lws-access-06"
+  , section_ := "Access Requests and Grants: Protocol"
+  , statement := "A storage controller creates an access grant by submitting a POST request to the access grant endpoint."
+  , module := "L4Factoidal.LWS.AccessGrants.accessStep"
+  , status := .proved "L4Factoidal.LWS.AccessGrants.accessStep_grant_needs_controller" }
 ]
 
 /-! ## Counting -/

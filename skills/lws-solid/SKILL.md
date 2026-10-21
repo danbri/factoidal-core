@@ -92,8 +92,7 @@ requests, ranges, `application/lws+json` listings, linksets, the
 `application/lws+cid` storage description at `/.well-known/lws-storage`,
 JSON Patch, RFC 9457 errors) is `L4Factoidal/LWS/Binding.lean`; the audit
 table is in the ledger, section "LWS editor's draft 2026-10-19 audit", and
-`node tests/lws/draft-binding.mjs` is its host suite (with an xfail for
-https://github.com/danbri/factoidal/issues/913, Access Requests and Grants).
+`node tests/lws/draft-binding.mjs` is its host suite.
 
 ### Notifications (https://github.com/danbri/factoidal/issues/890)
 
@@ -258,6 +257,63 @@ define. Whole runs: open 75 pass, 0 fail, 146 inapplicable; authorization
 186 pass, 0 fail, 35 inapplicable (out of 221 each);
 `docs/designissues/2026-10-21-lws-touchstone-run.md`, "Type index and type
 search".
+
+### Access requests and grants (https://github.com/danbri/factoidal/issues/913)
+
+`L4Factoidal/LWS/AccessPolicy.lean` (data model, Access Profile, what a grant
+permits, theorems) and `L4Factoidal/LWS/AccessGrants.lean` (the two
+endpoints, the notification of a new grant) implement core §Access Requests
+and Grants (w3c/lws-protocol 9a08ff65, `lws10-core/lws-access-requests.html`).
+The module headers quote each statement and list the server choices.
+
+* Discovery: `AccessRequestService` at `<base>.well-known/lws-access-requests/`
+  and `AccessGrantService` at `<base>.well-known/lws-access-grants/`, each
+  with `conformsTo: ["https://www.w3.org/ns/lws#AccessProfile"]`
+  (`Config.accessGrants`; the wasm handle turns it on, config
+  `accessGrants: false` turns it off).
+* Endpoints (LWS containers): GET lists (paged at `pageSize`, `Link` type
+  Container), POST (`application/lws+json`, `ld+json` or `json`; else 415)
+  answers 201 with `Location`, GET and DELETE of one member. Under
+  authorization every request needs a token (401). Any agent makes access
+  requests; only the storage controller (`acl:Control` on the root,
+  `isController`) makes and revokes grants (403). A request is visible to its
+  maker and the controller, a grant to its assignees and the controller;
+  others get 404.
+* Validation (`parseDoc`): `@context` with the LWS context, `type` with
+  `AccessGrant`/`AccessRequest`, `storage` naming THIS storage, optional
+  `inbox` URI, `access` with one or more policies (`type` with
+  `AccessPolicy`, `action` from read/modify/create/delete, `assignee` URI,
+  optional `target` {type matcher, values in this storage, not ACL or
+  `.well-known`}, optional constraints). Anything else is 400. Extra members
+  are kept.
+* Enforcement: `Authorization.decide` allows a request when Web Access
+  Control OR `AccessPolicy.grantAllows` does. `actionOf` maps the request:
+  GET/HEAD/OPTIONS read, POST create (in the container), PUT/PATCH modify (or
+  create in the parent for a missing resource), DELETE delete; `.meta` and
+  linkset writes are modify of the resource; ACL resources never. A move
+  needs delete of every moved resource and create in the destination.
+  Notification subscribe and delivery checks and the type index use the same
+  rule (`Notifications.wacCanRead`). Constraints: `dateTime`
+  (eq/gt/gteq/lt/lteq, the request clock), `format`, `type` (the kind and the
+  client type links), `client` (the token's `client_id`) with eq/isAnyOf;
+  `purpose` is accepted and never satisfied (the draft gives a request no way
+  to state one). A container grant does not reach its members.
+* Notification: a new grant gives one `Create` notification to its `inbox`
+  and to the inbox of each access request naming one of its assignees.
+  Not done: a notification to the controller for a new request (the draft
+  names no inbox): https://github.com/danbri/factoidal/issues/920, an xfail.
+* Persistence: snapshot member `access` (`stateJson`); every stored document
+  is parsed again at open (`stateOfJson`).
+* Theorems: `grantsPermit_sound`, `grantAllows_sound`, `grantAllows_acl`,
+  `satisfied_excluded`, `policyPermits_excluded`, `recordPermits_expired`,
+  `grantsPermit_revoke`, `grantsPermit_revoke_only`,
+  `accessStep_grant_needs_controller`.
+
+Tests: `L4Factoidal/LWS/AccessGrantsTests.lean` (`#guard`s through
+`AccessGrants.serverStep` under enforcement with a stub verifier);
+`tests/lws/draft-binding.mjs` rows "Access Requests and Grants";
+`tests/lws/authorization.mjs` rows "Access grants" (real tokens: read only,
+controller only, public, constraints, move, subscribe after revocation).
 
 ### Pagination and client links (https://github.com/danbri/factoidal/issues/887, 888)
 

@@ -59,6 +59,41 @@ Linked Web Storage Search and Type Index Services (`lws10-index`, w3c/lws-protoc
   what the requesting agent may read now. Theorems `ixSearch_eq_specSearch`
   and `searchAnswer_authorized`.
 
+Linked Web Storage Access Requests and Grants (LWS core §Access Requests
+and Grants, w3c/lws-protocol `9a08ff65`;
+https://github.com/danbri/factoidal/issues/913), decided in Lean
+(`L4Factoidal/LWS/AccessPolicy.lean`, `AccessGrants.lean`):
+
+- The storage description advertises an `AccessRequestService`
+  (`/.well-known/lws-access-requests/`) and an `AccessGrantService`
+  (`/.well-known/lws-access-grants/`), each with `conformsTo`
+  `https://www.w3.org/ns/lws#AccessProfile`. Both endpoints are LWS
+  containers: GET lists (paged), POST of an `application/lws+json` document
+  answers 201 with `Location`, GET and DELETE act on one member. Option
+  `accessGrants: false` of `listen`/`openLwsStorage` turns both off.
+- Any authenticated agent creates an access request; only the storage
+  controller (`acl:Control` on the storage root) creates or revokes a grant.
+  A document without `type`, `storage` (this storage), `access`, a policy
+  `type` with `AccessPolicy`, `action` (`read`, `modify`, `create`,
+  `delete`), `assignee`, or with a bad `inbox`, `target` or constraint,
+  answers 400.
+- A grant is part of the access policy beside Web Access Control: it permits
+  exactly its actions on exactly its targets (a container grant does not
+  reach the members) to its assignee (`foaf:Agent` for the public), when
+  every constraint holds: `dateTime` (`eq`, `gt`, `gteq`, `lt`, `lteq`),
+  `format` and `type` of the resource, `client` (the token's `client_id`)
+  with `eq` or `isAnyOf`; `purpose` is accepted and no request satisfies it.
+  A move needs `delete` of the resource and `create` in the destination.
+  Notification subscriptions and deliveries, and the type index answers,
+  see the same access. Theorems `grantsPermit_sound`,
+  `policyPermits_excluded`, `recordPermits_expired`, `grantsPermit_revoke`,
+  `grantAllows_acl`.
+- A new grant is announced (one `Create` notification) to its `inbox` and
+  to the inbox of each access request naming one of its assignees. Grants
+  and requests are kept in the storage snapshot (member `access`).
+- Not done: a notification to the storage controller for a new access
+  request (https://github.com/danbri/factoidal/issues/920, an xfail).
+
 Linked Web Storage, three rules of the editor's draft (w3c/lws-protocol
 `9a08ff65`, 2026-10-19), all decided in Lean:
 

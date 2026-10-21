@@ -319,4 +319,21 @@ private def bobReads (p : String) : Ctx :=
 #guard parseXsdDateTime? "not a date" == none
 #guard isUri "https://id.example/bob" && isUri "urn:x:y" && !isUri "not a uri" && !isUri "relative/path"
 
+/-! ## The registry checks (`Harness/LwsProbe`) -/
+
+def lwsGuardAccessDiscovery : Bool :=
+  (service? "AccessGrantService").isSome && (service? "AccessRequestService").isSome
+
+def lwsGuardAccessCreate : Bool :=
+  wG.resp.status == 201 && hdr wG "location" == "http://localhost/.well-known/lws-access-grants/g0" &&
+    wQ.resp.status == 201 && hdr wQ "location" == "http://localhost/.well-known/lws-access-requests/r0"
+
+def lwsGuardAccessConstraints : Bool :=
+  status wF (req "GET" "/doc.txt" asBob) == 200 && status wF (req "GET" "/c.csv" asBob) == 403 &&
+    status wK (req "GET" "/doc.txt" asBob) == 403 && status wP (req "GET" "/doc.txt" asBob) == 403
+
+#guard lwsGuardAccessDiscovery
+#guard lwsGuardAccessCreate
+#guard lwsGuardAccessConstraints
+
 end L4Factoidal.LWS.AccessGrantsTests
