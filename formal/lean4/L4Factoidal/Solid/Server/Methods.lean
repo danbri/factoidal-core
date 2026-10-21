@@ -158,14 +158,16 @@ containment triples". -/
 def bodyEditsContainment (baseIri target body : String) : Bool :=
   (graphOf (some (iriOfPath baseIri target)) body).any (fun t => t.p == ldpContains)
 
-/-- One Solid request. Total, like the LWS `step` it refines. -/
-def step (S : Store σ) (cfg : ServerConfig) (r : Request) (st : σ) :
+/-- One Solid request made by the requester `who`. Total, like the LWS
+`step` it refines. `step` calls it with the handle configuration's
+requester; `Auth.authenticatedStep` calls it with the requester that
+Solid-OIDC authentication decided. -/
+def stepAs (S : Store σ) (cfg : ServerConfig) (who : Requester) (r : Request) (st : σ) :
     Response × σ :=
   -- Solid applies N3 Patch itself and passes JSON Patch to the LWS binding,
   -- so its `Accept-Patch` names both.
   let cfg := { cfg with lws := { cfg.lws with acceptPatch := ["text/n3", mediaJsonPatch] } }
   let target := r.path
-  let who := requesterOf cfg r
   let mode := requiredMode r.method (targetsAcl target)
   let subject := authorizationSubject target
   let granted :=
@@ -308,5 +310,11 @@ where
             (resp, (auxiliaryPaths target).foldl (fun s a => S.remove s a) st')
           else (resp, st')
     | _ => LWS.step S cfg.lws r st
+
+/-- One Solid request, made by the requester the handle configuration
+names (`requesterOf`). -/
+def step (S : Store σ) (cfg : ServerConfig) (r : Request) (st : σ) :
+    Response × σ :=
+  stepAs S cfg (requesterOf cfg r) r st
 
 end L4Factoidal.Solid.Server

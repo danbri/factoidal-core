@@ -105,7 +105,10 @@ cleanup() {
 SERVER_DIR="$(mktemp -d -t solid-interop-store.XXXXXX)"
 trap cleanup EXIT
 
-node npm/factoidal/bin/factoidal.mjs solid-serve "$SERVER_DIR" --port 0 \
+# The CRUD suite writes with no credential, so its server runs in the
+# development mode with no authentication. The WAC suite gets its own
+# server below, with Solid-OIDC verification on.
+node npm/factoidal/bin/factoidal.mjs solid-serve "$SERVER_DIR" --port 0 --insecure-no-auth \
   > "$PORT_FILE" 2> "$SERVER_LOG" &
 SERVER_PID=$!
 
@@ -237,29 +240,46 @@ else
 fi
 
 # --- web-access-control-tests -------------------------------------------
-# This suite authenticates as two agents through an external OIDC issuer
-# (solidcommunity.net) before it makes a single request, and its
-# run-against-css.sh fetches login cookies from that host. Without those
-# accounts it cannot run at all. That is a stated boundary, not a skip:
-# our Solid-OIDC token verification is a host job that is not built yet
-# (design record, section 2).
+# This suite authenticates as two agents through an external Solid-OIDC
+# issuer before it makes a single request: solid-auth-fetcher's
+# getAuthFetcher(OIDC_ISSUER_x, COOKIE_x) runs the authorization-code flow
+# with a login cookie of a Node Solid Server style issuer
+# (POST /login/password). Without such an issuer and two accounts on it,
+# the suite cannot run. Our server verifies the tokens itself
+# (L4Factoidal/Solid/Server/Oidc.lean, issue 899); what is missing is the
+# issuer with accounts. Set SOLID_WAC_OIDC_ISSUER and the suite's
+# OIDC_ISSUER_/COOKIE_/WEBID_ variables for ALICE and BOB to run it.
 if [ -z "${SOLID_WAC_OIDC_ISSUER:-}" ]; then
-  echo "web-access-control-tests: not run - the suite authenticates two agents"
-  echo "  through an external OIDC issuer before its first request, and this"
-  echo "  server has no Solid-OIDC token verification yet. Set"
-  echo "  SOLID_WAC_OIDC_ISSUER and the suite's USERNAME_/PASSWORD_/WEBID_"
-  echo "  variables to run it."
+  echo "web-access-control-tests: not run - the suite needs an external"
+  echo "  Solid-OIDC issuer with two accounts and their login cookies."
+  echo "  Set SOLID_WAC_OIDC_ISSUER, OIDC_ISSUER_ALICE/BOB, COOKIE_ALICE/BOB"
+  echo "  and WEBID_ALICE/BOB to run it."
   [ "$FAILED" -eq 0 ] && FAILED=2
 elif install_suite "$WAC" "web-access-control-tests"; then
   WAC_RC=0
   WAC_REPORT="$(mktemp -t wac-results.XXXXXX)"
+  WAC_DIR="$(mktemp -d -t solid-interop-wac.XXXXXX)"
+  WAC_PORT_FILE="$(mktemp -t solid-interop-wac-port.XXXXXX)"
+  node npm/factoidal/bin/factoidal.mjs solid-serve "$WAC_DIR" --port 0 \
+    --issuer "$SOLID_WAC_OIDC_ISSUER" ${WEBID_ALICE:+--owner "$WEBID_ALICE"} \
+    > "$WAC_PORT_FILE" 2>> "$SERVER_LOG" &
+  WAC_PID=$!
+  WAC_ORIGIN=""
+  for _ in $(seq 1 50); do
+    WAC_ORIGIN="$(head -n 1 "$WAC_PORT_FILE" 2> /dev/null)"
+    if [ -n "$WAC_ORIGIN" ]; then break; fi
+    sleep 0.1
+  done
   ( cd "$WAC" && \
-    SYSTEM_UNDER_TEST="$ORIGIN" \
-    STORAGE_ROOT_ALICE="$ORIGIN/" \
+    NODE_TLS_REJECT_UNAUTHORIZED=0 \
+    SYSTEM_UNDER_TEST="$WAC_ORIGIN" \
+    STORAGE_ROOT_ALICE="$WAC_ORIGIN/" \
     INCLUDE_MAY=1 \
     npm run jest -- --json --outputFile="$WAC_REPORT" ) > /dev/null 2>&1 || WAC_RC=$?
   report "$WAC_REPORT" "web-access-control-tests" || FAILED=1
-  rm -f "$WAC_REPORT"
+  cp "$WAC_REPORT" "${WAC_REPORT_KEEP:-/dev/null}" 2>/dev/null
+  kill "$WAC_PID" 2> /dev/null || true
+  rm -rf "$WAC_REPORT" "$WAC_DIR" "$WAC_PORT_FILE"
 else
   echo "web-access-control-tests: not run - npm ci failed in this environment"
   [ "$FAILED" -eq 0 ] && FAILED=2

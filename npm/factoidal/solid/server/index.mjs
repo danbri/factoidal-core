@@ -23,6 +23,16 @@
 //   solidOpen  [configJson]            -> { ok, handle, root, storage }
 //   solidStep  [handle, requestJson]   -> { ok, response }
 //   solidClose [handle]                -> { ok }
+//   solidFetched [handle, documentJson] -> { ok, fetch? | installed? | refused? }
+//
+// Solid-OIDC (issue 899): with `auth` in the configuration the engine
+// verifies the DPoP-bound access token itself
+// (formal/lean4/L4Factoidal/Solid/Server/Oidc.lean). When it needs a
+// document it does not hold -- an issuer's OpenID configuration, its JWK
+// Set, or a WebID profile -- `solidStep` answers `{ fetch: {kind, key,
+// url} }`. This host fetches exactly that URL, hands status and body to
+// `solidFetched` unread, follows any `fetch` that answers, and steps the
+// request again. It chooses no URL and reads no document.
 //
 //   request  { method, target, headers: [[name, value]], body }
 //   response { status, headers: [[name, value]], body }
@@ -37,10 +47,9 @@
 // ephemeral port the origin is not known until the socket is bound, so
 // the storage handle is opened after binding rather than before.
 //
-// `agent` is the WebID of the requesting agent. Verifying a token is a
-// host job (WebCrypto in Node) and Web Access Control decisions are the
-// engine's; until token verification lands, a handle with no `agent`
-// is an unauthenticated agent and that is what these tests exercise.
+// `agent` is the WebID of the requesting agent. It stands only when the
+// configuration has no `auth` (or has `insecureNoAuth`); with `auth` the
+// engine decides the WebID from the credential.
 //
 // This file shares no code with `../client/index.mjs` beyond the engine
 // loader, by the design record's rule that the two conformance classes
@@ -50,7 +59,27 @@ import { loadEngine } from '../../bin/engine.mjs'
 import { readSnapshot, persistIfChanged } from '../../lws/persist.mjs'
 
 /** The ops this host needs from the engine. */
-export const SOLID_SERVER_OPS = ['solidOpen', 'solidStep', 'solidClose', 'solidSnapshot']
+export const SOLID_SERVER_OPS = ['solidOpen', 'solidStep', 'solidClose', 'solidSnapshot',
+  'solidFetched']
+
+/** The most documents one request may make this host fetch. The engine
+ *  names at most three per request (issuer metadata, key set, profile);
+ *  this bound only stops a defective module from looping the host. */
+const MAX_FETCHES = 8
+
+/** Fetch one document the engine named. Pure I/O; a network failure is
+ *  status 0, which the engine refuses like any failed fetch. */
+async function fetchDocument (url) {
+  try {
+    const answer = await fetch(url, {
+      redirect: 'error',
+      headers: { accept: 'text/turtle, application/json;q=0.9, */*;q=0.1' }
+    })
+    return { status: answer.status, body: await answer.text() }
+  } catch (error) {
+    return { status: 0, body: String(error && error.message ? error.message : error) }
+  }
+}
 
 /** An error raised by the Solid server host. `unknownOp` is set when the
  *  loaded WebAssembly module does not carry the operation at all, which
@@ -142,6 +171,12 @@ export async function openSolidStorage (options = {}) {
   if (typeof options.now === 'number') config.now = options.now
   if (typeof options.owner === 'string') config.owner = options.owner
   if (typeof options.agent === 'string') config.agent = options.agent
+  // Solid-OIDC: `auth` is passed through unread; `insecureNoAuth` is the
+  // explicit development mode.
+  if (options.auth !== undefined && options.auth !== null) config.auth = options.auth
+  if (options.insecureNoAuth === true) config.insecureNoAuth = true
+  if (typeof options.enforceWac === 'boolean') config.enforceWac = options.enforceWac
+  if (typeof options.rootAcl === 'string') config.rootAcl = options.rootAcl
   // `dir` names the storage directory. The snapshot found there, if any,
   // is the storage to continue from; the engine checks it.
   const dir = typeof options.dir === 'string' ? options.dir : null
@@ -174,11 +209,29 @@ export async function openSolidStorage (options = {}) {
      *          headers: Array<[string, string]>, body: string}} request
      * @returns {{status: number, headers: Array<[string, string]>, body: string}}
      */
-    step (request) {
+    async step (request) {
       const record = options.realClock === true
         ? { ...request, now: Math.floor(Date.now() / 1000) }
         : request
-      const envelope = engine.call('solidStep', [handle, JSON.stringify(record)])
+      let envelope = engine.call('solidStep', [handle, JSON.stringify(record)])
+      let fetches = 0
+      while (envelope !== null && typeof envelope === 'object' &&
+             envelope.fetch !== undefined && envelope.fetch !== null) {
+        let wanted = envelope.fetch
+        while (wanted !== undefined && wanted !== null) {
+          fetches += 1
+          if (fetches > MAX_FETCHES) {
+            throw new SolidServerHostError('the engine asked for more documents than one request may fetch')
+          }
+          const got = await fetchDocument(wanted.url)
+          const told = engine.call('solidFetched', [handle, JSON.stringify({
+            kind: wanted.kind, key: wanted.key, url: wanted.url, status: got.status, body: got.body,
+            ...(typeof record.now === 'number' ? { now: record.now } : {})
+          })])
+          wanted = told !== null && typeof told === 'object' ? told.fetch : null
+        }
+        envelope = engine.call('solidStep', [handle, JSON.stringify(record)])
+      }
       const answer = responseOf(envelope)
       if (dir !== null) persistIfChanged(engine, 'solidSnapshot', handle, envelope, dir)
       return answer
@@ -251,7 +304,7 @@ export async function createSolidServer (options = {}) {
     }
     let answer
     try {
-      answer = (await storage()).step(record)
+      answer = await (await storage()).step(record)
     } catch (error) {
       onError(error)
       response.writeHead(500, { 'content-type': 'text/plain' })

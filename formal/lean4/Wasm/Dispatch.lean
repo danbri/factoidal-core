@@ -330,6 +330,7 @@ def lwsSolidOpNames : List String :=
   , "solidStep"
   , "solidClose"
   , "solidSnapshot"
+  , "solidFetched"
   , "solidClientRequest"
   , "solidClientResponse" ]
 
@@ -620,6 +621,7 @@ def callIO (op : String) (argsJson : String) : IO String :=
   | "solidOpen"        => withArgs (arityIO1 op Ops.solidOpen)
   | "solidStep"        => withArgs (arityIO2 op Ops.solidStep)
   | "solidClose"       => withArgs (arityIO1 op Ops.solidClose)
+  | "solidFetched"     => withArgs (arityIO2 op Ops.solidFetched)
   | "solidClientRequest" =>
       withArgs (fun args =>
         match args with

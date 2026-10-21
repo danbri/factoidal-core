@@ -82,7 +82,7 @@ cleanup() {
 }
 trap cleanup EXIT
 
-node npm/factoidal/bin/factoidal.mjs solid-serve "$(mktemp -d)" --port 0 \
+node npm/factoidal/bin/factoidal.mjs solid-serve "$(mktemp -d)" --port 0 --insecure-no-auth \
   > "$PORT_FILE" 2> "$SERVER_LOG" &
 SERVER_PID=$!
 
