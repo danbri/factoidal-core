@@ -6,22 +6,19 @@
 // terms with spec-compliant `termType` / `value` / `language` /
 // `datatype` and `.equals()`. Self-contained — no runtime deps.
 //
-// Also provides converters between RDF/JS quads and the engine's
-// N-Quads token strings, which are the package's dataset interchange
-// handle (the Lean engine parses and serializes N-Quads; the
-// converters below only tokenize/untokenize the engine's own output —
-// full RDF parsing of user input always goes through the engine).
+// Also: the field copy between RDF/JS terms and the engine's term objects
+// (Lean L4Factoidal.RDF.TermJson), and N-Quads text in and out through
+// engine ops. This file reads and writes no RDF syntax itself: no escaping,
+// no tokenising (https://github.com/danbri/factoidal/issues/894). The text
+// functions need the engine, which lib/api.mjs installs when it loads.
 //
-// ES module (0.9.0): the same file serves Node (index.mjs, and
-// rdfjs.js for require()) and the browser (browser.js), with no build
-// step. On output, \\ \" \n \r \t (and nothing else) are escaped;
-// unescaping additionally accepts the full N-Triples ECHAR + UCHAR set
-// (\t \b \n \r \f \" \' \\ \uXXXX \UXXXXXXXX) since engine input may
-// legally contain them.
+// ES module (0.9.0): the same file serves Node (index.mjs, and rdfjs.js for
+// require()) and the browser (browser.js), with no build step.
 
-const XSD_STRING = 'http://www.w3.org/2001/XMLSchema#string';
+// RDF/JS Data Model defaults of DataFactory.literal.
+const XSD_STRING = 'http://www.w3.org/2001/XMLSchema#string'; // purity-lint: allow RDF/JS DataFactory default
 const RDF_LANGSTRING =
-  'http://www.w3.org/1999/02/22-rdf-syntax-ns#langString';
+  'http://www.w3.org/1999/02/22-rdf-syntax-ns#langString'; // purity-lint: allow RDF/JS DataFactory default
 
 // ---------------------------------------------------------------------
 // Terms
@@ -52,18 +49,22 @@ class BlankNode {
 }
 
 class Literal {
-  constructor(value, language, datatype) {
+  constructor(value, language, datatype, direction) {
     this.termType = 'Literal';
     this.value = value;
     this.language = language || '';
+    // RDF/JS Data Model DataFactory.literal: no datatype argument means
+    // xsd:string, a language means rdf:langString.
     this.datatype = datatype ||
-      new NamedNode(language ? RDF_LANGSTRING : XSD_STRING);
+      new NamedNode(language ? RDF_LANGSTRING : XSD_STRING); // purity-lint: allow RDF/JS DataFactory default
+    this.direction = direction || '';
     Object.freeze(this);
   }
   equals(other) {
     return !!other && other.termType === 'Literal' &&
       other.value === this.value &&
       other.language === this.language &&
+      (other.direction || '') === this.direction &&
       !!other.datatype && other.datatype.value === this.datatype.value;
   }
 }
@@ -139,6 +140,11 @@ const dataFactory = {
     if (typeof languageOrDatatype === 'string') {
       return new Literal(v, languageOrDatatype, null);
     }
+    // RDF/JS Data Model 1.1: {language, direction} for a directional
+    // language-tagged string.
+    if (typeof languageOrDatatype.language === 'string' && languageOrDatatype.termType === undefined) {
+      return new Literal(v, languageOrDatatype.language, null, languageOrDatatype.direction || '');
+    }
     // A NamedNode datatype.
     if (languageOrDatatype.termType === 'NamedNode') {
       if (languageOrDatatype.value === RDF_LANGSTRING) {
@@ -174,10 +180,8 @@ const dataFactory = {
         return new Literal(
           original.value,
           original.language || '',
-          original.language
-            ? null
-            : new NamedNode(
-                (original.datatype && original.datatype.value) || XSD_STRING)
+          original.datatype ? new NamedNode(original.datatype.value) : null,
+          original.direction || ''
         );
       case 'Quad':         return dataFactory.fromQuad(original);
       default:
@@ -207,31 +211,38 @@ const dataFactory = {
  * datatype}) into an RDF/JS term.
  */
 function termFromSrj(t) {
+  return termFromSrjWith(t, dataFactory);
+}
+
+function termFromSrjWith(t, f) {
   if (!t || typeof t.type !== 'string') {
     throw new TypeError('termFromSrj: not a results-JSON term');
   }
   switch (t.type) {
     case 'uri':
-      return dataFactory.namedNode(t.value);
+      return f.namedNode(t.value);
     case 'bnode':
-      return dataFactory.blankNode(t.value);
+      return f.blankNode(t.value);
     case 'literal':
     case 'typed-literal': {
       const lang = t['xml:lang'];
-      if (lang) return dataFactory.literal(t.value, lang);
-      if (t.datatype) {
-        return dataFactory.literal(t.value, dataFactory.namedNode(t.datatype));
+      if (lang) {
+        if (t['its:dir'] && f === dataFactory) {
+          return new Literal(t.value, lang,
+            t.datatype ? new NamedNode(t.datatype) : null, t['its:dir']);
+        }
+        return f.literal(t.value, lang);
       }
-      return dataFactory.literal(t.value);
+      if (t.datatype) return f.literal(t.value, f.namedNode(t.datatype));
+      return f.literal(t.value);
     }
     case 'triple': {
-      // RDF 1.2 triple term in SPARQL Results JSON:
+      // RDF 1.2 triple term:
       // {"type":"triple","value":{"subject":T,"predicate":T,"object":T}}
-      // (SPARQL_Protocol.json_term) -> an RDF/JS Quad term. Recursive:
-      // the object may itself be a triple term.
+      // -> an RDF/JS Quad term. The object may itself be a triple term.
       const v = t.value || {};
-      return dataFactory.quad(
-        termFromSrj(v.subject), termFromSrj(v.predicate), termFromSrj(v.object));
+      return f.quad(termFromSrjWith(v.subject, f), termFromSrjWith(v.predicate, f),
+        termFromSrjWith(v.object, f));
     }
     default:
       throw new TypeError(`termFromSrj: unknown term type '${t.type}'`);
@@ -239,231 +250,106 @@ function termFromSrj(t) {
 }
 
 // ---------------------------------------------------------------------
-// N-Quads token output (mirrors RDF.NQuads.Serialize.escape_char)
-// ---------------------------------------------------------------------
-
-function escapeLiteral(s) {
-  let out = '';
-  for (const ch of s) {
-    switch (ch) {
-      case '\\': out += '\\\\'; break;
-      case '"':  out += '\\"';  break;
-      case '\n': out += '\\n';  break;
-      case '\r': out += '\\r';  break;
-      case '\t': out += '\\t';  break;
-      default:   out += ch;
-    }
-  }
-  return out;
-}
-
-/** Serialize one RDF/JS term to its N-Quads token. */
-function termToNQuads(term) {
-  switch (term.termType) {
-    case 'NamedNode':
-      return '<' + term.value + '>';
-    case 'BlankNode':
-      return '_:' + term.value;
-    case 'Literal': {
-      const body = '"' + escapeLiteral(term.value) + '"';
-      if (term.language) return body + '@' + term.language;
-      if (term.datatype && term.datatype.value !== XSD_STRING) {
-        return body + '^^<' + term.datatype.value + '>';
-      }
-      return body;
-    }
-    case 'DefaultGraph':
-      return '';
-    case 'Quad':
-      // RDF 1.2 triple term -> <<( s p o )>> (matches the engine's
-      // Mode_12 N-Quads serializer, so it round-trips back through the
-      // *12 parse path).
-      return '<<( ' + termToNQuads(term.subject) + ' ' +
-        termToNQuads(term.predicate) + ' ' +
-        termToNQuads(term.object) + ' )>>';
-    default:
-      throw new TypeError(
-        `termToNQuads: cannot serialize termType '${term.termType}'`);
-  }
-}
-
-/** Serialize one RDF/JS quad to an N-Quads line (with trailing " .\n"). */
-function quadToNQuads(quad) {
-  const g = quad.graph && quad.graph.termType !== 'DefaultGraph'
-    ? ' ' + termToNQuads(quad.graph)
-    : '';
-  return termToNQuads(quad.subject) + ' ' +
-    termToNQuads(quad.predicate) + ' ' +
-    termToNQuads(quad.object) + g + ' .\n';
-}
-
-/** Serialize an iterable of quads to an N-Quads document. */
-function quadsToNQuads(quads) {
-  let out = '';
-  for (const q of quads) out += quadToNQuads(q);
-  return out;
-}
-
-// ---------------------------------------------------------------------
-// N-Quads token input.
+// RDF/JS term <-> engine term object (Lean `L4Factoidal.RDF.TermJson`).
 //
-// A line tokenizer for the engine's own N-Quads output (and canonical
-// N-Quads generally): one statement per line, terms separated by
-// whitespace, ECHAR/UCHAR escapes inside literals. This is a token
-// reader for a machine-generated regular syntax, not a general RDF
-// parser — user documents in any syntax go through the engine.
+// These functions copy fields; they read and write no RDF syntax. Every
+// N-Quads parse and write below is an engine op
+// (https://github.com/danbri/factoidal/issues/894 items 1 and 2).
 // ---------------------------------------------------------------------
 
-const UNESCAPE_MAP = {
-  't': '\t', 'b': '\b', 'n': '\n', 'r': '\r', 'f': '\f',
-  '"': '"', "'": "'", '\\': '\\',
-};
-
-function unescapeLiteral(s, lineNo) {
-  if (s.indexOf('\\') < 0) return s;
-  let out = '';
-  for (let i = 0; i < s.length; i++) {
-    const c = s[i];
-    if (c !== '\\') { out += c; continue; }
-    const e = s[++i];
-    if (e in UNESCAPE_MAP) { out += UNESCAPE_MAP[e]; continue; }
-    if (e === 'u') {
-      out += String.fromCodePoint(parseInt(s.slice(i + 1, i + 5), 16));
-      i += 4;
-      continue;
+/** The engine term object of an RDF/JS term (`TermJson.encodeTerm`'s shape). */
+function termToJson(term) {
+  if (term === null || term === undefined) return null;
+  switch (term.termType) {
+    case 'NamedNode': return { type: 'uri', value: term.value };
+    case 'BlankNode': return { type: 'bnode', value: term.value };
+    case 'Literal': {
+      const o = { type: 'literal', value: term.value };
+      if (term.datatype) o.datatype = term.datatype.value;
+      if (term.language) o['xml:lang'] = term.language;
+      if (term.direction) o['its:dir'] = term.direction;
+      return o;
     }
-    if (e === 'U') {
-      out += String.fromCodePoint(parseInt(s.slice(i + 1, i + 9), 16));
-      i += 8;
-      continue;
-    }
-    throw new SyntaxError(
-      `N-Quads line ${lineNo}: bad escape '\\${e}'`);
+    case 'Quad':
+      return { type: 'triple', value: {
+        subject: termToJson(term.subject), predicate: termToJson(term.predicate),
+        object: termToJson(term.object) } };
+    case 'DefaultGraph': return { type: 'default' };
+    default:
+      throw new TypeError(`termToJson: cannot send termType '${term.termType}' to the engine`);
   }
+}
+
+/** The engine quad array of an RDF/JS quad: [s, p, o] or [s, p, o, g]. */
+function quadToJson(quad) {
+  const out = [termToJson(quad.subject), termToJson(quad.predicate), termToJson(quad.object)];
+  if (quad.graph && quad.graph.termType !== 'DefaultGraph') out.push(termToJson(quad.graph));
   return out;
 }
 
-// Read one term starting at s[i]; returns [term, nextIndex].
-function readTerm(s, i, lineNo, factory) {
-  const c = s[i];
-  // RDF 1.2 triple term: <<( s p o )>> -> an RDF/JS Quad term
-  // (termType 'Quad'). Checked BEFORE the '<' IRI case since a triple
-  // term also opens with '<'. This reads the engine's own Mode_12
-  // N-Quads serializer output (RDF.NQuads.Serialize) into RDF/JS
-  // objects; it is not a conformance parser (that is the F* --rdf12
-  // path) — same interop role the rest of this reader plays.
-  if (c === '<' && s[i + 1] === '<' && s[i + 2] === '(') {
-    let j = skipWs(s, i + 3);
-    const [sub, a] = readTerm(s, j, lineNo, factory); j = skipWs(s, a);
-    const [pred, b] = readTerm(s, j, lineNo, factory); j = skipWs(s, b);
-    const [obj, d] = readTerm(s, j, lineNo, factory); j = skipWs(s, d);
-    if (s[j] === ')' && s[j + 1] === '>' && s[j + 2] === '>') {
-      return [factory.quad(sub, pred, obj), j + 3];
-    }
-    throw new SyntaxError(
-      `N-Quads line ${lineNo}: unterminated triple term (expected ')>>')`);
-  }
-  if (c === '<') {
-    const end = s.indexOf('>', i + 1);
-    if (end < 0) throw new SyntaxError(`N-Quads line ${lineNo}: unclosed IRI`);
-    return [factory.namedNode(s.slice(i + 1, end)), end + 1];
-  }
-  if (c === '_' && s[i + 1] === ':') {
-    let j = i + 2;
-    while (j < s.length && !/\s/.test(s[j])) j++;
-    return [factory.blankNode(s.slice(i + 2, j)), j];
-  }
-  if (c === '"') {
-    // Scan to the closing unescaped quote.
-    let j = i + 1;
-    for (;;) {
-      if (j >= s.length) {
-        throw new SyntaxError(`N-Quads line ${lineNo}: unclosed literal`);
-      }
-      if (s[j] === '\\') { j += 2; continue; }
-      if (s[j] === '"') break;
-      j++;
-    }
-    const lex = unescapeLiteral(s.slice(i + 1, j), lineNo);
-    j++; // past closing quote
-    if (s[j] === '@') {
-      let k = j + 1;
-      while (k < s.length && !/\s/.test(s[k])) k++;
-      return [factory.literal(lex, s.slice(j + 1, k)), k];
-    }
-    if (s[j] === '^' && s[j + 1] === '^' && s[j + 2] === '<') {
-      const end = s.indexOf('>', j + 3);
-      if (end < 0) {
-        throw new SyntaxError(`N-Quads line ${lineNo}: unclosed datatype IRI`);
-      }
-      return [
-        factory.literal(lex, factory.namedNode(s.slice(j + 3, end))),
-        end + 1,
-      ];
-    }
-    return [factory.literal(lex), j];
-  }
-  throw new SyntaxError(
-    `N-Quads line ${lineNo}: unexpected character '${c}' at column ${i + 1}`);
-}
-
-function skipWs(s, i) {
-  while (i < s.length && (s[i] === ' ' || s[i] === '\t')) i++;
-  return i;
-}
-
-/**
- * Tokenize one N-Quads statement line into an RDF/JS quad.
- * Returns null for blank/comment lines.
- */
-function nquadsLineToQuad(line, lineNo, factory) {
+/** The RDF/JS quad of an engine quad array. */
+function quadFromJson(arr, factory) {
   const f = factory || dataFactory;
-  let i = skipWs(line, 0);
-  if (i >= line.length || line[i] === '#') return null;
-  const terms = [];
-  while (terms.length < 4) {
-    const [term, next] = readTerm(line, i, lineNo, f);
-    terms.push(term);
-    i = skipWs(line, next);
-    if (line[i] === '.') break;
+  return f.quad(termFromSrjWith(arr[0], f), termFromSrjWith(arr[1], f),
+    termFromSrjWith(arr[2], f), arr.length > 3 ? termFromSrjWith(arr[3], f) : f.defaultGraph());
+}
+
+// The engine the text functions below call. lib/api.mjs installs it when it
+// loads the engine; until then they throw.
+let textEngine = null;
+
+/** @private lib/api.mjs: install the engine ops the text functions call. */
+function _setTextEngine(engine) { textEngine = engine; }
+
+function needEngine(who) {
+  if (!textEngine) {
+    throw new Error(
+      `${who}: N-Quads text is read and written by the engine, which is not ` +
+      'loaded yet. Await any @factoidal/core call first (for example ' +
+      '`await ready()`), or use parse() and Dataset.toString().');
   }
-  if (line[i] !== '.') {
-    throw new SyntaxError(`N-Quads line ${lineNo}: missing terminating '.'`);
-  }
-  if (terms.length < 3) {
-    throw new SyntaxError(`N-Quads line ${lineNo}: fewer than 3 terms`);
-  }
-  return f.quad(terms[0], terms[1], terms[2], terms[3] || f.defaultGraph());
+  return textEngine;
+}
+
+/** One RDF/JS term as its canonical N-Quads token (the engine writes it). */
+function termToNQuads(term) {
+  if (term && term.termType === 'DefaultGraph') return '';
+  return needEngine('termToNQuads').termTokens([termToJson(term)])[0];
+}
+
+/** One RDF/JS quad as its canonical N-Quads line (with trailing newline). */
+function quadToNQuads(quad) {
+  return needEngine('quadToNQuads').writeQuads([quadToJson(quad)]);
+}
+
+/** An iterable of RDF/JS quads as an N-Quads document, one line per quad. */
+function quadsToNQuads(quads) {
+  const arr = [];
+  for (const q of quads) arr.push(quadToJson(q));
+  return needEngine('quadsToNQuads').writeQuads(arr);
 }
 
 /**
- * Tokenize an engine-emitted N-Quads document into RDF/JS quads.
- *
- * options.blankNodePrefix — prepended to every blank-node label, used
- * by parse() to keep labels from separate parse calls distinct (blank
- * node identity is document-scoped; the prefix is bookkeeping, the
- * semantic per-document renaming lives in F*
- * RDF.Dataset.Merge.rename_dataset_bnodes).
+ * Parse an N-Quads document (RDF 1.2 grammar) into RDF/JS quads; the engine
+ * parses it and rejects any line the grammar rejects.
+ * options.blankNodePrefix: prepended to every blank-node label (keeps the
+ * labels of separate documents apart); options.factory: an RDF/JS
+ * DataFactory.
  */
 function nquadsToQuads(text, options) {
   const opts = options || {};
   const factory = opts.factory || dataFactory;
   const f = opts.blankNodePrefix
-    ? {
-        ...factory,
-        blankNode: (label) => factory.blankNode(
-          label === undefined || label === null
-            ? undefined
-            : opts.blankNodePrefix + label),
-      }
+    ? { ...factory, blankNode: (label) => factory.blankNode(opts.blankNodePrefix + label) }
     : factory;
-  const quads = [];
-  const lines = String(text).split('\n');
-  for (let n = 0; n < lines.length; n++) {
-    const q = nquadsLineToQuad(lines[n].replace(/\r$/, ''), n + 1, f);
-    if (q) quads.push(q);
-  }
-  return quads;
+  const quads = needEngine('nquadsToQuads').parseQuads(String(text));
+  return quads.map((q) => quadFromJson(q, f));
+}
+
+/** One N-Quads statement as an RDF/JS quad; null for a blank or comment line. */
+function nquadsLineToQuad(line, _lineNo, factory) {
+  const qs = nquadsToQuads(line, { factory });
+  return qs.length ? qs[0] : null;
 }
 
 // ---------------------------------------------------------------------
@@ -481,7 +367,8 @@ function termKey(t) {
   if (!t) return 'null';
   switch (t.termType) {
     case 'Literal':
-      return JSON.stringify(['Literal', t.value, t.language, t.datatype ? t.datatype.value : null]);
+      return JSON.stringify(['Literal', t.value, t.language, t.datatype ? t.datatype.value : null,
+        t.direction || '']);
     case 'DefaultGraph':
       return '["DefaultGraph"]';
     case 'Quad':
@@ -562,7 +449,7 @@ class DatasetCore {
   toArray() {
     return this._quads.slice();
   }
-  /** N-Quads text — the engine interchange handle. */
+  /** N-Quads text, written by the engine. */
   toNQuads() {
     return quadsToNQuads(this._quads);
   }
@@ -584,6 +471,12 @@ export {
   Quad,
   DatasetCore,
   termFromSrj,
+  termToJson,
+  quadToJson,
+  quadFromJson,
+  quadKey,
+  termKey,
+  _setTextEngine,
   nquadsLineToQuad,
   termToNQuads,
   quadToNQuads,

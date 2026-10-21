@@ -27,7 +27,8 @@ const engineApi = require('./index.js');
 const {
   DatasetCore,
   dataFactory,
-  quadToNQuads,
+  quadKey,
+  termKey,
   quadsToNQuads,
 } = require('./rdfjs.js');
 
@@ -132,7 +133,7 @@ function makeFnDataset(quadsIterable) {
   const out = [];
   for (const q of quadsIterable) {
     const frozen = dataFactory.fromQuad(q); // normalizes + (re)freezes
-    const key = quadToNQuads(frozen);
+    const key = quadKey(frozen); // RDF/JS Term.equals identity, no syntax
     if (seen.has(key)) continue;
     seen.add(key);
     out.push(frozen);
@@ -210,7 +211,7 @@ async function engineOf(ds) {
   if (ds._backend.engine) return ds._backend.engine;
   let eds = ENGINE_CACHE.get(ds);
   if (!eds) {
-    eds = await engineApi.openDataset({ text: quadsToNQuads(ds.toArray()), format: 'nquads' });
+    eds = await engineApi.fromQuads(ds.toArray());
     ENGINE_CACHE.set(ds, eds);
   }
   return eds;
@@ -297,8 +298,8 @@ function union(a, b) {
 /** Quads in a that are not in b. */
 function difference(a, b) {
   assertFnDataset(a, 'difference'); assertFnDataset(b, 'difference');
-  const bKeys = new Set(b.toArray().map(quadToNQuads));
-  return makeFnDataset(a.toArray().filter((q) => !bKeys.has(quadToNQuads(q))));
+  const bKeys = new Set(b.toArray().map(quadKey));
+  return makeFnDataset(a.toArray().filter((q) => !bKeys.has(quadKey(q))));
 }
 
 /** Keep quads matching quadPred(quad) => boolean. */
@@ -353,64 +354,24 @@ async function query(ds, sparql, options) {
  * per-graph closure semantics that the underlying query() does not
  * define today.
  */
-// Case-insensitive regime aliases ('rdfs', 'owl-rl', 'owlrl', 'owl_rl')
-// normalized to the engine's exact-case ENTAIL_VALUES spelling ('RDFS',
-// 'OWL-RL'); anything else (including already-correct casing, or a value
-// that names no regime) passes through unchanged, so engineApi.query's own
-// validation reports the error and this function does not guess what the
-// caller meant.
-const ENTAIL_REGIME_ALIASES = {
-  none: 'none', rdfs: 'RDFS', 'owl-rl': 'OWL-RL', owlrl: 'OWL-RL', owl_rl: 'OWL-RL',
-};
-
-function normalizeEntailRegime(regime) {
-  const key = String(regime == null ? 'none' : regime).toLowerCase();
-  return ENTAIL_REGIME_ALIASES[key] || regime;
-}
-
-// x-ikl-* is NOT IMPLEMENTED. It is not withheld by policy.
-//
-// CORRECTION 2026-08-26: an earlier version of this comment said the
-// family was withheld by owner decision, citing the direction-B ruling
-// of https://github.com/danbri/factoidal/issues/618. That ruling was
-// about the IKL-to-RDF projection, not about this regime family, and
-// attributing it here misstated a decision the owner did not make.
-//
-// The x-ikl-* family is the OWNER'S design
-// (https://github.com/danbri/factoidal/issues/581). Its Lean dispatch
-// was deleted on 2026-08-26 as collateral of the projection purge
-// (https://github.com/danbri/factoidal/issues/626), not as its target.
-// The SEMANTICS survived: Unified/ClBridge.lean's asserted_merge_sound
-// is this regime's soundness statement -- lifting asserted named-graph
-// content into the default graph -- and it carries no naming scheme.
-// Restoring the family is a dispatch branch plus flipping this guard.
-//
-// The owner's own statement of what IKL does not supply, 2026-08-26:
-// no profiles, no entailment procedures, no mapping from RDF datasets.
-// Checked the same day against the IKL GUIDE and Hayes 2009: correct.
-//
-// engineApi.query() (lib/api.js) already rejects this, but
-// normalizeEntailRegime() above passes any unrecognised string through
-// UNCHANGED before it gets there — check explicitly here too, so this
-// function's own contract states the rule rather than depending on a
-// downstream check someone could relax without noticing this call
-// site. Case-insensitive, any suffix; see test/select.test.js.
-function rejectIklRegime(regime, who) {
-  if (regime != null && /^x-ikl/i.test(String(regime))) {
-    throw new TypeError(
-      `${who}: entail '${regime}' is not implemented. The x-ikl-* ` +
-      'entailment regimes are the owner\'s design ' +
-      '(danbri/factoidal#581); the Lean engine\'s dispatch for them was ' +
-      'deleted on 2026-08-26 as collateral of the IKL-to-RDF projection ' +
-      'purge (danbri/factoidal#626). This is not a policy exclusion.');
+// The regime names, their case-insensitive aliases and the x-ikl-* refusal
+// are the engine's tables (op engineTables): no host copy
+// (https://github.com/danbri/factoidal/issues/894 item 5). A name with no
+// alias passes through unchanged and engineApi.query reports it.
+async function regimeOf(regime, who) {
+  const t = await engineApi.engineTables();
+  const r = regime == null ? 'none' : String(regime);
+  if (r.toLowerCase().startsWith('x-ikl')) {
+    throw new TypeError(t.iklRefusal.replace('WHO', who).replace('REGIME', r));
   }
+  return t.entailAliases[r.toLowerCase()] || regime;
 }
 
 async function entail(ds, regime) {
   assertFnDataset(ds, 'entail');
-  rejectIklRegime(regime, 'entail');
+  const entailRegime = await regimeOf(regime, 'entail');
   const rows = await engineApi.query((await engineOf(ds)), 'SELECT ?s ?p ?o WHERE { ?s ?p ?o }',
-    { entail: normalizeEntailRegime(regime) });
+    { entail: entailRegime });
   return makeFnDataset(
     rows.map((row) => dataFactory.quad(row.get('s'), row.get('p'), row.get('o'))));
 }
@@ -696,60 +657,34 @@ function peekHash(ds) {
   return typeof c === 'string' ? c : null;
 }
 
-function hasBlankNode(ds) {
-  for (const q of ds) {
-    if (q.subject.termType === 'BlankNode') return true;
-    if (q.object.termType === 'BlankNode') return true;
-    if (q.graph.termType === 'BlankNode') return true;
-  }
-  return false;
-}
-
 /**
- * Structural equality, cheapest-correct-path first (see the design
- * doc's cost model section for the full argument):
- *
- *  1. Different sizes -> not equal, O(1).
- *  2. Both sides already have a memoized hash -> compare those, O(1).
- *  3. Exact quad-set match (same terms, same labels) -> equal, O(n).
- *     This is sound regardless of blank nodes: identical tokens can
- *     never be a false positive.
- *  4. No blank nodes anywhere -> the step-3 negative is authoritative
- *     (ground quads have no relabeling to hide behind) -> not equal.
- *  5. Otherwise (blank nodes present, step 3 was inconclusive) ->
- *     the only sound test left is RDFC-1.0 canonical-hash equality,
- *     which is exactly the O(n log n) canonicalize() cost this module
- *     tries to avoid paying twice.
+ * Dataset isomorphism (RDF 1.1 Concepts 3.6 and 4, blank nodes inside RDF
+ * 1.2 triple terms included), decided by the engine
+ * (Dataset.isomorphicOutcome, op datasetIsomorphic). The same FnDataset is
+ * equal to itself without a call.
  */
 async function equals(a, b) {
   assertFnDataset(a, 'equals'); assertFnDataset(b, 'equals');
   if (a === b) return true;
-  if (a.size !== b.size) return false;
-  const ha = peekHash(a);
-  const hb = peekHash(b);
-  if (ha !== null && hb !== null) return ha === hb;
-  const aKeys = new Set(a.toArray().map(quadToNQuads));
-  const bTokens = b.toArray().map(quadToNQuads);
-  const exact = bTokens.length === aKeys.size &&
-    bTokens.every((t) => aKeys.has(t));
-  if (exact) return true;
-  if (!hasBlankNode(a) && !hasBlankNode(b)) return false;
-  const [h1, h2] = await Promise.all([hash(a), hash(b)]);
-  return h1 === h2;
+  return engineApi.isomorphic(await engineOf(a), await engineOf(b));
 }
 
 /**
- * Enumerate named graphs (default graph excluded), first-seen order.
- * Reuses index.js's graphs() enumeration; wraps each per-graph
- * Dataset back into an FnDataset.
+ * Enumerate named graphs (default graph excluded), first-seen order. An
+ * engine-backed dataset asks the engine (op datasetGraphNames); an array of
+ * JS quads groups by RDF/JS Term.equals identity, so an IRI and a blank node
+ * with the same string are two graphs.
  */
 function graphs(ds) {
   assertFnDataset(ds, 'graphs');
+  if (ds._backend.engine) {
+    return engineApi.graphs(ds._backend.engine).map(([name, g]) => [name, wrapEngine(g)]);
+  }
   const seen = new Map();
   for (const q of ds) {
-    if (q.graph.termType !== 'DefaultGraph' && !seen.has(q.graph.value)) seen.set(q.graph.value, q.graph);
+    if (q.graph.termType !== 'DefaultGraph' && !seen.has(termKey(q.graph))) seen.set(termKey(q.graph), q.graph);
   }
-  return [...seen].map(([iri, g]) => [iri, ds.match(null, null, null, g)]);
+  return [...seen.values()].map((g) => [g.value, ds.match(null, null, null, g)]);
 }
 
 // ---------------------------------------------------------------------

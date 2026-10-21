@@ -72,6 +72,9 @@ import Wasm.Ops.Canon
 import Wasm.Ops.FromDataset
 import L4Factoidal.RDF.Sink
 import L4Factoidal.RDF.Format
+import L4Factoidal.RDF.TermJson
+import L4Factoidal.RDF.Isomorphism
+import L4Factoidal.Syntax.IriResolve
 
 namespace L4Wasm.Ops
 
@@ -419,10 +422,30 @@ structure QuadPattern where
   bound : L4Factoidal.SPARQL.PatternBound := {}
   graph : Option (Option Subject) := none
 
+/-- A pattern whose positions are JSON term objects (`TermJson`), `null` for
+an unbound position, and `{"type":"default"}` for the default graph
+(https://github.com/danbri/factoidal/issues/894 item 1). A host builds this
+from its own term objects with no lexical decision. -/
+def quadPatternOfTerms (arr : List Json) : Option QuadPattern := do
+  match arr with
+  | [s, p, o, g] =>
+    let sB ← match s with | .null => some none | j => (TermJson.decodeSubject j).map some
+    let pB ← match p with | .null => some none | j => (TermJson.decodeIri j).map some
+    let oB ← match o with | .null => some none | j => (TermJson.decodeTerm j).map some
+    let gB ← match g with
+      | .null => some none
+      | j => if j.getString? "type" == some "default" then some (some none)
+             else (TermJson.decodeSubject j).map (fun x => some (some x))
+    pure { bound := { s := sB, p := pB, o := oB }, graph := gB }
+  | _ => none
+
 /-- Read a pattern; `none` when a token is not a term of its position. -/
 def quadPatternOf (json : String) : Option QuadPattern := do
   let j ← parseJson? json
   let arr ← match j with | .array xs => some xs | _ => none
+  if arr.any (fun x => match x with | .string _ => false | _ => true) then
+    quadPatternOfTerms arr
+  else
   let toks ← arr.mapM (fun x => match x with | .string t => some t | _ => none)
   match toks with
   | [s, p, o, g] =>
@@ -506,6 +529,273 @@ def datasetAddQuads (h nq : String) : IO String :=
 (`Dataset.deleteQuads`). -/
 def datasetDeleteQuads (h nq : String) : IO String :=
   changeHandle "datasetDeleteQuads" h nq Dataset.deleteQuads
+
+/-! ## Terms as JSON values: the RDF/JS host reads and writes no RDF syntax
+
+https://github.com/danbri/factoidal/issues/894. A host builds its term
+objects from `TermJson.encodeTerm` members and sends term objects back; the
+engine does every escape, every parse and every datatype decision. -/
+
+/-- A quad of `TermJson` in the form `Dataset.insertQuads` takes; a graph named
+by a blank node has no SPARQL Update quad form and is refused. -/
+def updateQuadOfJsonQuad : TermJson.Quad → Except String (Option WfIri × Triple)
+  | (none, t) => .ok (none, t)
+  | (some (.iri i), t) => .ok (some i, t)
+  | (some (.bnode _), _) =>
+      .error "a quad in a graph named by a blank node cannot be added or deleted here"
+
+/-- The quads of a JSON array of `TermJson` quads. -/
+def jsonQuadsOf (text : String) : Except String (List TermJson.Quad) := do
+  let j ← match parseJson? text with
+    | some j => .ok j
+    | none => .error "not a JSON document"
+  match j with
+  | .array xs =>
+      xs.mapM fun x => match TermJson.decodeQuad x with
+        | some q => .ok q
+        | none => .error s!"not a quad: {x.toString}"
+  | _ => .error "expected a JSON array of quads"
+
+/-- Optional natural-number member of an options object. -/
+private def natMember (opts : Option Json) (k : String) : Option Nat :=
+  (opts.bind (·.field? k)).bind fun
+    | .number n => n.toNat?
+    | _ => none
+
+/-- `datasetQuadsJson(handle, optsJson)` — the quads of `quadPage` as
+`TermJson` quads: `{"ok":true,"total":N,"offset":O,"quads":[…]}`. `optsJson`
+members `offset` (default 0) and `limit` (default all). The order is the line
+order of `datasetSerialize` N-Quads (`TermJson.toCanonicalNQuads_eq_quadList`). -/
+def datasetQuadsJson (h optsJson : String) : IO String :=
+  withHandleDataset h fun ds _ =>
+    let opts := if optsJson == "" then none else parseJson? optsJson
+    let qs := TermJson.Dataset.quadList ds
+    let off := (natMember opts "offset").getD 0
+    let lim := (natMember opts "limit").getD qs.length
+    let page := (qs.drop off).take lim
+    pure (okWith [("total", .number (toString qs.length)), ("offset", .number (toString off)),
+                  ("quads", .array (page.map TermJson.encodeQuad))])
+
+private def changeHandleJson (who h text : String)
+    (f : Dataset → List (Option WfIri × Triple) → Dataset) : IO String := do
+  match (← handleTable.get)[h]? with
+  | none => pure (unknownHandle h)
+  | some od =>
+    match jsonQuadsOf text >>= (·.mapM updateQuadOfJsonQuad) with
+    | .error e => pure (errJson s!"{who}: {e}")
+    | .ok qs =>
+      let ds' := f od.ds qs
+      handleTable.modify (·.insert h (openDataset ds' od.prefixes))
+      pure (okWith [("count", .number (toString (datasetQuadCount ds')))])
+
+/-- `datasetAddQuadsJson(handle, quadsJson)` — `datasetAddQuads` with the quads
+given as `TermJson` quads. -/
+def datasetAddQuadsJson (h quadsJson : String) : IO String :=
+  changeHandleJson "datasetAddQuadsJson" h quadsJson Dataset.insertQuads
+
+/-- `datasetDeleteQuadsJson(handle, quadsJson)` — `datasetDeleteQuads` with the
+quads given as `TermJson` quads. -/
+def datasetDeleteQuadsJson (h quadsJson : String) : IO String :=
+  changeHandleJson "datasetDeleteQuadsJson" h quadsJson Dataset.deleteQuads
+
+/-- The dataset of a list of quads, each quad once, the graphs in the order of
+their first quad. -/
+def datasetOfQuads (qs : List TermJson.Quad) : Dataset :=
+  let step : (Std.HashSet TermJson.Quad × List Triple × List (Subject × List Triple)) →
+      TermJson.Quad → (Std.HashSet TermJson.Quad × List Triple × List (Subject × List Triple)) :=
+    fun (seen, dflt, named) q =>
+      if seen.contains q then (seen, dflt, named)
+      else
+        let seen := seen.insert q
+        match q with
+        | (none, t) => (seen, t :: dflt, named)
+        | (some g, t) =>
+            if named.any (·.1 == g) then
+              (seen, dflt, named.map fun (n, ts) => if n == g then (n, t :: ts) else (n, ts))
+            else (seen, dflt, (g, [t]) :: named)
+  let (_, dflt, named) := qs.foldl step (∅, [], [])
+  { default := dflt.reverse,
+    named := named.reverse.map fun (n, ts) => { name := n, graph := ts.reverse } }
+
+/-- `parseQuadsJson(text, formatTag, baseIri)` — parse a document and answer its
+quads as `TermJson` quads, `{"ok":true,"quads":[…]}`, with the blank-node
+labels as written (no document scope) and nothing stored; a parse failure is
+the positioned parse-error envelope of `datasetOpen`. -/
+def parseQuadsJsonBy (extra : ExtraReader) (text formatTag baseIri : String) : IO String :=
+  match parseDocumentOutcomeBy extra text formatTag baseIri with
+  | .error f => pure (parseFailureEnvelope formatTag f)
+  | .ok o => pure (okWith [("quads", .array ((TermJson.Dataset.quadList o.ds).map TermJson.encodeQuad))])
+
+/-- `quadsToNQuads(quadsJson)` — the canonical N-Quads line of each `TermJson`
+quad, in the given order (`TermJson.quadLine`): `{"ok":true,"nquads":…}`. -/
+def quadsToNQuadsText (quadsJson : String) : IO String :=
+  match jsonQuadsOf quadsJson with
+  | .error e => pure (errJson s!"quadsToNQuads: {e}")
+  | .ok qs => pure (okWith [("nquads", .string (String.join (qs.map TermJson.quadLine)))])
+
+/-- `datasetFromQuadsJson(quadsJson)` — a new handle holding the quads. -/
+def datasetFromQuadsJson (quadsJson : String) : IO String :=
+  match jsonQuadsOf quadsJson with
+  | .error e => pure (errJson s!"datasetFromQuadsJson: {e}")
+  | .ok qs => storeNewHandle (datasetOfQuads qs)
+
+/-- `datasetGraphNames(handle)` — the names of the named graphs that hold a
+triple, as `TermJson` terms, in the order of `quadList`. An IRI and a blank
+node with the same string are two names (RDF 1.1 Concepts §4). -/
+def datasetGraphNames (h : String) : IO String :=
+  withHandleDataset h fun ds _ =>
+    let names := (ds.named.filter (!·.graph.isEmpty)).map (·.name)
+    let distinct := names.foldl (fun acc n => if acc.contains n then acc else acc ++ [n]) []
+    pure (okWith [("graphs", .array (distinct.map TermJson.subjectJson))])
+
+/-- `datasetGraphAsDefault(handle, graphJson)` — a new handle whose default
+graph is the graph `graphJson` names (`{"type":"default"}` the default graph,
+`{"type":"union"}` the triples of every graph, each once) and which has no
+named graph. -/
+def datasetGraphAsDefault (h graphJson : String) : IO String :=
+  withHandleDataset h fun ds prefixes =>
+    match parseJson? graphJson with
+    | none => pure (errJson "datasetGraphAsDefault: not a JSON term")
+    | some j =>
+      if j.getString? "type" == some "default" then
+        storeNewHandle { default := ds.default, named := [] } prefixes
+      else if j.getString? "type" == some "union" then
+        -- every quad with its graph name dropped, each triple once
+        let ts := (ds.default ++ ds.named.flatMap (·.graph)).foldl
+          (fun (seen, acc) t => if seen.contains t then (seen, acc) else (seen.insert t, t :: acc))
+          ((∅ : Std.HashSet Triple), ([] : List Triple))
+        storeNewHandle { default := ts.2.reverse, named := [] } prefixes
+      else match TermJson.decodeSubject j with
+        | none => pure (errJson "datasetGraphAsDefault: a graph name is an IRI or a blank node")
+        | some g =>
+          let ts := (ds.named.filter (·.name == g)).flatMap (·.graph)
+          storeNewHandle { default := ts, named := [] } prefixes
+
+/-- `datasetIsomorphic(handle1, handle2)` — `Dataset.isomorphicOutcome`
+(RDF 1.1 Concepts §3.6 and §4; blank nodes inside triple terms included):
+`{"ok":true,"isomorphic":B,"outcome":"equal"|"notEqual"}`. When the
+blank-node search budget is exceeded the answer is an error envelope, never
+`false`. -/
+def datasetIsomorphic (h1 h2 : String) : IO String :=
+  withHandleDataset h1 fun d1 _ =>
+  withHandleDataset h2 fun d2 _ =>
+    match Dataset.isomorphicOutcome d1 d2 with
+    | .equal => pure (okWith [("isomorphic", .bool true), ("outcome", .string "equal")])
+    | .notEqual => pure (okWith [("isomorphic", .bool false), ("outcome", .string "notEqual")])
+    | .budgetExceeded => pure (errJson
+        "datasetIsomorphic: the blank-node search budget was exceeded; no answer")
+
+/-- `termsToNTriples(termsJson)` — the canonical N-Triples form of each term of
+a JSON array of `TermJson` terms: `{"ok":true,"tokens":[…]}`. For display. -/
+def termsToNTriples (termsJson : String) : IO String :=
+  match parseJson? termsJson with
+  | some (.array xs) =>
+      match xs.mapM TermJson.decodeTerm with
+      | some ts => pure (okWith [("tokens", .array (ts.map fun t =>
+          .string (L4Factoidal.Syntax.Term.toCanonicalNTriples t)))])
+      | none => pure (errJson "termsToNTriples: an element is not a term")
+  | _ => pure (errJson "termsToNTriples: expected a JSON array of terms")
+
+/-- `resolveIri(base, reference)` — RFC 3986 §5.2 reference resolution
+(`L4Factoidal.Syntax.resolveIri`): `{"ok":true,"iri":…}`. -/
+def resolveIriOp (base ref : String) : IO String :=
+  pure (okWith [("iri", .string (L4Factoidal.Syntax.resolveIri base ref)),
+                ("referenceAbsolute", .bool (L4Factoidal.Syntax.parseIri ref).scheme.isSome)])
+
+/-- The query form of a SPARQL text, read by the SPARQL 1.2 grammar (which
+reads every SPARQL 1.1 query):
+`{"ok":true,"kind":"select"|"ask"|"construct"|"describe"}`. -/
+def queryForm (sparql : String) : IO String :=
+  match L4Factoidal.SPARQL.parseSparql sparql none .v12 with
+  | .error e => pure (errJson s!"SPARQL parse error: {fmtParseError e}")
+  | .ok q => pure (okWith [("kind", .string (match q.form with
+      | .select _ => "select" | .ask => "ask" | .construct _ => "construct"
+      | .describe _ => "describe"))])
+
+/-- A JSON object of string members. -/
+private def strMap (kvs : List (String × String)) : Json :=
+  .object (kvs.map fun (k, v) => (k, .string v))
+
+/-- The parse tag each format name selects (`datasetOpen`, `parseToDatasetJson`).
+The plain names read RDF 1.1; the names ending in `12` read RDF 1.2
+(`Mode.rdf12`). -/
+def parseFormatNames : List (String × String) :=
+  [ ("turtle", "turtle"), ("ttl", "turtle"), ("ntriples", "ntriples"), ("nt", "ntriples"),
+    ("nquads", "nquads"), ("nq", "nquads"), ("trig", "trig"), ("rdfxml", "rdfxml"),
+    ("rdf-xml", "rdfxml"), ("rdf", "rdfxml"), ("jsonld", "jsonld"), ("json-ld", "jsonld"),
+    ("turtle12", "turtle12"), ("ttl12", "turtle12"), ("ntriples12", "ntriples12"),
+    ("nt12", "ntriples12"), ("nquads12", "nquads12"), ("nq12", "nquads12"),
+    ("trig12", "trig12") ]
+
+/-- The writer tag each output format name selects (`datasetSerialize`,
+`datasetToJsonLd` for `jsonld`). -/
+def writerFormatNames : List (String × String) :=
+  [ ("nquads", "nquads"), ("nq", "nquads"), ("n-quads", "nquads"),
+    ("ntriples", "ntriples"), ("nt", "ntriples"), ("n-triples", "ntriples"),
+    ("turtle", "turtle"), ("ttl", "turtle"), ("trig", "trig"),
+    ("rdfxml", "rdfxml"), ("rdf-xml", "rdfxml"), ("rdf", "rdfxml"),
+    ("jsonld", "jsonld"), ("json-ld", "jsonld"),
+    ("rdfc", "rdfc"), ("canonical", "rdfc"), ("rdfc-1.0", "rdfc") ]
+
+/-- The `dataFormat` names `queryRaw` reads. -/
+def rawDataFormatNames : List (String × String) :=
+  [ ("turtle", "turtle"), ("ttl", "turtle"), ("ntriples", "ntriples"), ("nt", "ntriples"),
+    ("nquads", "nquads"), ("nq", "nquads"), ("trig", "trig"), ("rdfxml", "rdfxml"),
+    ("rdf-xml", "rdfxml"), ("rdf", "rdfxml") ]
+
+/-- The `entail` values `datasetQueryRaw` and `queryRaw` read, and the
+case-insensitive aliases of `@factoidal/core/fn`'s `entail()`. -/
+def entailRegimeNames : List String := ["none", "RDFS", "OWL-RL", "x-rdfscore", "x-rdfsplus"]
+
+def entailRegimeAliases : List (String × String) :=
+  [ ("none", "none"), ("rdfs", "RDFS"), ("owl-rl", "OWL-RL"), ("owlrl", "OWL-RL"),
+    ("owl_rl", "OWL-RL") ]
+
+/-- The refusal of the `x-ikl-*` regimes: not implemented
+(https://github.com/danbri/factoidal/issues/581, dispatch deleted by
+https://github.com/danbri/factoidal/issues/626). -/
+def iklRefusal (who regime : String) : String :=
+  s!"{who}: entail '{regime}' is not implemented. The x-ikl-* entailment regimes are the owner's design (danbri/factoidal#581); the Lean engine's dispatch for them was deleted on 2026-08-26 as collateral of the IKL-to-RDF projection purge (danbri/factoidal#626). This is not a policy exclusion."
+
+/-- The syntaxes the streaming packer reads, the file-name suffix of each, and
+the suffixes of syntaxes the engine reads elsewhere but the packer does not. -/
+def packSyntaxNames : List String := ["turtle", "trig", "nquads", "ntriples"]
+
+def packSuffixes : List (String × String) :=
+  [ (".ttl", "turtle"), (".turtle", "turtle"), (".trig", "trig"), (".nq", "nquads"),
+    (".nquads", "nquads"), (".nt", "ntriples"), (".ntriples", "ntriples") ]
+
+def packUnsupportedSuffixes : List (String × String) :=
+  [ (".rdf", "RDF/XML"), (".owl", "RDF/XML"), (".xml", "RDF/XML"), (".jsonld", "JSON-LD"),
+    (".json", "JSON-LD"), (".n3", "Notation3"), (".csv", "CSV"), (".tsv", "TSV"),
+    (".hdt", "HDT") ]
+
+/-- Every name table a host validates arguments against, so no host keeps its
+own copy (https://github.com/danbri/factoidal/issues/894 item 5). -/
+def engineTablesJson : Json :=
+  .object
+    [ ("parseFormats", strMap parseFormatNames)
+    , ("writerFormats", strMap writerFormatNames)
+    , ("rawDataFormats", strMap rawDataFormatNames)
+    , ("entailRegimes", .array (entailRegimeNames.map Json.string))
+    , ("entailAliases", strMap entailRegimeAliases)
+    , ("iklRefusal", .string (iklRefusal "WHO" "REGIME"))
+    , ("closureRegimes", .array (closureRegimes.map Json.string))
+    , ("queryOutputs", .array (["json", "csv", "tsv", "xml", "table", "ntriples"].map Json.string))
+    , ("packSyntaxes", .array (packSyntaxNames.map Json.string))
+    , ("packSuffixes", strMap packSuffixes)
+    , ("packUnsupportedSuffixes", strMap packUnsupportedSuffixes) ]
+
+/-- `engineTables()` — `engineTablesJson`. -/
+def engineTables : IO String :=
+  pure (okWith [("tables", engineTablesJson)])
+
+#guard (datasetOfQuads [(none, ⟨.bnode "a", ⟨"http://e/p", rfl⟩, .bnode "b"⟩),
+                        (none, ⟨.bnode "a", ⟨"http://e/p", rfl⟩, .bnode "b"⟩)]).default.length == 1
+#guard (datasetOfQuads [(some (.bnode "g"), ⟨.bnode "a", ⟨"http://e/p", rfl⟩, .bnode "b"⟩),
+                        (some (.iri ⟨"http://e/g", rfl⟩), ⟨.bnode "a", ⟨"http://e/p", rfl⟩, .bnode "b"⟩)]).named.length == 2
+#guard (quadPatternOf "[null,null,null,{\"type\":\"default\"}]").map (·.graph) == some (some none)
+#guard (quadPatternOf "[{\"type\":\"literal\",\"value\":\"x\",\"datatype\":\"http://e/d\"},null,null,null]").isNone
 
 /-! ## Build-time checks (positive and negative) -/
 

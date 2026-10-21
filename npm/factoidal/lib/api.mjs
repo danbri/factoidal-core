@@ -22,66 +22,34 @@
 // JSDoc note "entry_jsoo.ml's X" below names that lineage. The Lean op of
 // the same name serves X now (formal/lean4/Wasm/Dispatch.lean lists them).
 
-import { dataFactory, termFromSrj, quadToNQuads } from '../rdfjs.mjs';
+import { dataFactory, termFromSrj, quadToJson, _setTextEngine } from '../rdfjs.mjs';
 import { Dataset, INTERNAL, checkOptions, makeRegistry, WRITER_TAGS } from './dataset.mjs';
 import { version as packageVersion } from './version.mjs';
 import { openGeneration, readRegion, manifestKeys, hexOfBytes } from './store.mjs';
 import { fullEngineMessage } from './lean-entry.mjs';
 import { memoryDeltaLogStore } from './delta-log-hosts.mjs';
 
-const DATA_FORMAT_EXT = {
-  turtle:    'ttl',
-  ttl:       'ttl',
-  ntriples:  'nt',
-  nt:        'nt',
-  nquads:    'nq',
-  nq:        'nq',
-  trig:      'trig',
-  rdfxml:    'rdf',
-  'rdf-xml': 'rdf',
-  rdf:       'rdf',
-  jsonld:    'jsonld',
-  'json-ld': 'jsonld',
-  // RDF 1.2 opt-in: these select the engine's RDF 1.2 parsers (triple
-  // terms <<( s p o )>>, ~ reifiers, {| |} annotations, VERSION,
-  // directional literals "x"@lang--dir; Wasm/Ops/Parse.lean's
-  // `Mode.rdf12`); the plain names above stay RDF 1.1.
-  turtle12:   'ttl12',
-  ttl12:      'ttl12',
-  ntriples12: 'nt12',
-  nt12:       'nt12',
-  nquads12:   'nq12',
-  nq12:       'nq12',
-  trig12:     'trig12',
-};
+// The format names, regimes and query outputs are the engine's tables (op
+// engineTables, formal/lean4/Wasm/Ops/Handles.lean), read once per engine:
+// no host copy (https://github.com/danbri/factoidal/issues/894 item 5).
 
-// Canonical format tag for the engine's parse ops (parseToDatasetJson,
-// datasetOpen); the *12 tags select the RDF 1.2 mode.
-const DATA_FORMAT_TAG = {
-  ttl: 'turtle', nt: 'ntriples', nq: 'nquads', trig: 'trig', rdf: 'rdfxml',
-  jsonld: 'jsonld',
-  ttl12: 'turtle12', nt12: 'ntriples12', nq12: 'nquads12', trig12: 'trig12',
-};
-
-const ENTAIL_VALUES = new Set(['none', 'RDFS', 'OWL-RL', 'x-rdfscore', 'x-rdfsplus']);
-
-// queryRaw's options (op queryRaw, Wasm/Ops/QueryExtras.lean).
-const RAW_OUTPUT_FORMATS = new Set(['json', 'csv', 'tsv', 'xml', 'table', 'ntriples']);
-const RAW_DATA_FORMATS = {
-  turtle: 'turtle', ttl: 'turtle', ntriples: 'ntriples', nt: 'ntriples',
-  nquads: 'nquads', nq: 'nquads', trig: 'trig', rdfxml: 'rdfxml',
-  'rdf-xml': 'rdfxml', rdf: 'rdfxml',
-};
-
-function extForFormat(fmt) {
+// The parse tag a format name selects, from the engine's table.
+function parseTagOf(tables, fmt) {
   const key = String(fmt || 'turtle').toLowerCase();
-  if (!(key in DATA_FORMAT_EXT)) {
+  const tag = tables.parseFormats[key];
+  if (tag === undefined) {
     throw new TypeError(
-      `Unknown format '${fmt}'. Expected one of: ` +
-      Object.keys(DATA_FORMAT_EXT).join(', ')
-    );
+      `Unknown format '${fmt}'. Expected one of: ` + Object.keys(tables.parseFormats).join(', '));
   }
-  return DATA_FORMAT_EXT[key];
+  return tag;
+}
+
+// The engine's refusal of an x-ikl-* regime, or null.
+function iklRefusalOf(tables, who, regime) {
+  if (regime == null) return null;
+  const r = String(regime);
+  if (!r.toLowerCase().startsWith('x-ikl')) return null;
+  return tables.iklRefusal.replace('WHO', who).replace('REGIME', r);
 }
 
 // Where a function takes an options object, a bare string names the
@@ -114,16 +82,13 @@ function missingOpError(what, e, op) {
     'current build.');
 }
 
-// Detect the query form for result-shape dispatch. IRIs and comments
-// are blanked first so '#' inside a PREFIX IRI cannot hide the verb.
-// The engine's SPARQL parser remains the authority — this only picks
-// the output shape.
-function sniffQueryForm(sparql) {
-  const cleaned = String(sparql)
-    .replace(/<[^>]*>/g, ' ')
-    .replace(/#[^\n]*/g, ' ');
-  const m = cleaned.match(/\b(select|ask|construct|describe)\b/i);
-  return m ? m[1].toLowerCase() : 'select';
+// The query form, from the engine's SPARQL parser (op queryForm). A query
+// the parser rejects answers 'select'; the query op then reports the parse
+// error itself.
+function queryFormOf(e, sparql) {
+  if (typeof e.queryForm !== 'function') return 'select';
+  const r = JSON.parse(e.queryForm(String(sparql)));
+  return r.ok ? r.kind : 'select';
 }
 
 // Bytes for an op that reads the byte region (queryHdt, storeOpen): a
@@ -613,9 +578,19 @@ function buildApi(driver) {
   async function ctx() {
     const e = await entry();
     if (ctxCache && ctxCache.e === e) return ctxCache;
+    let tablesCache = null;
     const c = {
       e,
       registry,
+      tables() {
+        if (!tablesCache) {
+          requireEntryFn(e, 'engineTables', 'format and regime tables');
+          tablesCache = entryResult(e.engineTables(), 'engineTables').tables;
+          for (const k of Object.keys(WRITER_TAGS)) delete WRITER_TAGS[k];
+          Object.assign(WRITER_TAGS, tablesCache.writerFormats);
+        }
+        return tablesCache;
+      },
       missing: (what, op) => missingOpError(what, e, op),
       wrap(r, prefixes, extra) {
         const { ok: _ok, handle, count, prefixes: own, ...info } = r;
@@ -638,7 +613,25 @@ function buildApi(driver) {
       async closure(ds, regime) { return closureOnHandle(c, ds, regime); },
     };
     ctxCache = c;
+    installTextEngine(e);
     return c;
+  }
+
+  // rdfjs.mjs's N-Quads text functions (nquadsToQuads, quadsToNQuads,
+  // termToNQuads, DatasetCore.fromNQuads/toNQuads) call these engine ops.
+  function installTextEngine(e) {
+    if (typeof e.parseQuadsJson !== 'function') return;
+    _setTextEngine({
+      parseQuads(text) {
+        return parseResult(e.parseQuadsJson(text, 'nquads12', ''), 'nquadsToQuads', text).quads;
+      },
+      writeQuads(quadsJson) {
+        return entryResult(e.quadsToNQuads(JSON.stringify(quadsJson)), 'quadsToNQuads').nquads;
+      },
+      termTokens(termsJson) {
+        return entryResult(e.termsToNTriples(JSON.stringify(termsJson)), 'termToNQuads').tokens;
+      },
+    });
   }
 
   // The parse tag of `format`, or the engine's inference when it is omitted.
@@ -647,7 +640,7 @@ function buildApi(driver) {
       requireEntryFn(c.e, 'detectFormat', `${who} (format inference)`);
       return { tag: entryResult(c.e.detectFormat(text), who).format, inferred: true };
     }
-    return { tag: DATA_FORMAT_TAG[extForFormat(format)], inferred: false };
+    return { tag: parseTagOf(c.tables(), format), inferred: false };
   }
 
   // Open `text` as a Dataset. A parse error names the format and says
@@ -714,17 +707,11 @@ function buildApi(driver) {
   async function queryDatasetHandle(c, ds, sparql, opts) {
     if (typeof sparql !== 'string') throw new TypeError('query: sparql must be a string');
     const entail = opts.entail || 'none';
-    if (/^x-ikl/i.test(entail)) {
-      throw new TypeError(
-        `query: entail '${entail}' is not implemented. The x-ikl-* ` +
-        "entailment regimes are the owner's design " +
-        "(danbri/factoidal#581); the Lean engine's dispatch for them " +
-        'was deleted on 2026-08-26 as collateral of the IKL-to-RDF ' +
-        'projection purge (danbri/factoidal#626). This is not a ' +
-        'policy exclusion.');
-    }
-    if (!ENTAIL_VALUES.has(entail)) {
-      throw new TypeError(`query: entail must be one of ${[...ENTAIL_VALUES].join(', ')}`);
+    const tables = c.tables();
+    const ikl = iklRefusalOf(tables, 'query', entail);
+    if (ikl) throw new TypeError(ikl);
+    if (!tables.entailRegimes.includes(entail)) {
+      throw new TypeError(`query: entail must be one of ${tables.entailRegimes.join(', ')}`);
     }
     if (opts.version !== undefined && !['1.1', '1.2'].includes(String(opts.version))) {
       throw new TypeError("query: version must be '1.1' or '1.2'");
@@ -739,10 +726,10 @@ function buildApi(driver) {
           "query: entail/output and SPARQL 1.2 cannot be combined; that path reads SPARQL 1.1");
       }
       const output = opts.output || 'json';
-      if (!RAW_OUTPUT_FORMATS.has(output)) {
-        throw new TypeError(`query: output must be one of ${[...RAW_OUTPUT_FORMATS].join(', ')}`);
+      if (!tables.queryOutputs.includes(output)) {
+        throw new TypeError(`query: output must be one of ${tables.queryOutputs.join(', ')}`);
       }
-      const form = sniffQueryForm(sparql);
+      const form = queryFormOf(e, sparql);
       const graphForm = form === 'construct' || form === 'describe';
       requireEntryFn(e, 'datasetQueryRaw', `query {entail/output}`);
       if (opts.output === undefined) {
@@ -892,15 +879,11 @@ function buildApi(driver) {
     if (typeof sparql !== 'string') {
       throw new TypeError('queryHdt: sparql must be a string');
     }
-    const form = sniffQueryForm(sparql);
-    if (form === 'construct' || form === 'describe') {
-      throw new TypeError(
-        `queryHdt: ${form.toUpperCase()} is not supported over an HDT file (SELECT/ASK only)`);
-    }
     const e = await entry();
     requireEntryFn(e, 'queryHdt', 'queryHdt');
     const r = entryResult(e.queryHdt(bytesToUint8Array(hdtBytes, 'queryHdt'), sparql), 'queryHdt');
     if (r.kind === 'ask') return r.boolean;
+    if (r.kind === 'construct' || r.kind === 'describe') return (await ctx()).fromNQuads(r.nquads, {});
     return bindingsFromSrj(r.srj);
   }
 
@@ -942,9 +925,10 @@ function buildApi(driver) {
       ['format', 'version', 'prefixes', 'literalShorthand', 'useNativeTypes',
         'useRdfType', 'rdfDirection', 'inputFormat', 'baseIRI']);
     const { inputFormat, baseIRI, ...writeOpts } = opts;
-    if (writeOpts.format !== undefined && !WRITER_TAGS[String(writeOpts.format).toLowerCase()]) {
+    const writerTags = (await ctx()).tables().writerFormats;
+    if (writeOpts.format !== undefined && !writerTags[String(writeOpts.format).toLowerCase()]) {
       throw new TypeError(`serialize: unknown format '${writeOpts.format}'. Known formats: ` +
-        [...new Set(Object.values(WRITER_TAGS))].join(', '));
+        [...new Set(Object.values(writerTags))].join(', '));
     }
     return withDataset(data, { format: inputFormat, baseIRI }, 'serialize',
       (_c, ds) => ds.serialize(writeOpts));
@@ -969,20 +953,20 @@ function buildApi(driver) {
    */
   function graphs(dataset) {
     if (!(dataset instanceof Dataset)) throw new TypeError('graphs: expected a Dataset');
-    const seen = new Map();
-    for (const q of dataset) {
-      const g = q.graph;
-      if (!g || g.termType === 'DefaultGraph') continue;
-      if (!seen.has(g.value)) seen.set(g.value, g);
-    }
-    const out = [];
-    for (const [iri, gTerm] of seen) out.push([iri, dataset.match(null, null, null, gTerm)]);
-    return out;
+    dataset.size; // throws the disposed error
+    const c = dataset._ctx;
+    requireEntryFn(c.e, 'datasetGraphNames', 'graphs');
+    const names = entryResult(c.e.datasetGraphNames(dataset.handle), 'graphs').graphs;
+    return names.map((g) => {
+      const term = termFromSrj(g);
+      return [term.value, dataset.match(null, null, null, term)];
+    });
   }
 
   /**
    * RDFC-1.0 canonical N-Quads of one graph: every quad's graph name is
-   * dropped first. Text, not a digest.
+   * dropped first (op datasetGraphAsDefault with the union of the graphs).
+   * Text, not a digest.
    * @param {Dataset} datasetOrGraph
    * @returns {Promise<string>}
    */
@@ -990,9 +974,59 @@ function buildApi(driver) {
     if (!(datasetOrGraph instanceof Dataset)) {
       throw new TypeError('canonicalHash: expected a Dataset (e.g. one entry of graphs())');
     }
-    const asDefault = datasetOrGraph.toArray()
-      .map((q) => quadToNQuads(dataFactory.quad(q.subject, q.predicate, q.object))).join('');
-    return canonicalize(asDefault, { format: 'nquads' });
+    datasetOrGraph.size; // throws the disposed error
+    const c = datasetOrGraph._ctx;
+    requireEntryFn(c.e, 'datasetGraphAsDefault', 'canonicalHash');
+    const merged = c.wrap(entryResult(c.e.datasetGraphAsDefault(datasetOrGraph.handle,
+      JSON.stringify({ type: 'union' })), 'canonicalHash'), {});
+    try {
+      return merged.toString('rdfc');
+    } finally {
+      merged.dispose();
+    }
+  }
+
+  /**
+   * Whether two datasets are isomorphic (RDF 1.1 Concepts 3.6 and 4; blank
+   * nodes inside RDF 1.2 triple terms included): the engine's
+   * Dataset.isomorphicOutcome (op datasetIsomorphic). Rejects when the
+   * blank-node search budget is exceeded.
+   * @param {Dataset|string|Array} a
+   * @param {Dataset|string|Array} b
+   * @param {{format?: string, baseIRI?: string}} [options] read text arguments
+   * @returns {Promise<boolean>}
+   */
+  async function isomorphic(a, b, options) {
+    const opts = checkOptions('isomorphic', optionsOf('isomorphic', options), ['format', 'baseIRI']);
+    return withDataset(a, opts, 'isomorphic', (c, da) =>
+      withDataset(b, opts, 'isomorphic', (_c, db) => {
+        requireEntryFn(c.e, 'datasetIsomorphic', 'isomorphic');
+        return entryResult(c.e.datasetIsomorphic(da.handle, db.handle), 'isomorphic').isomorphic;
+      }));
+  }
+
+  /**
+   * A Dataset holding RDF/JS quads (op datasetFromQuadsJson). Each term is
+   * sent as its components; the engine reads no text.
+   * @param {Iterable<object>} quads
+   * @returns {Promise<Dataset>}
+   */
+  async function fromQuads(quads) {
+    const c = await ctx();
+    requireEntryFn(c.e, 'datasetFromQuadsJson', 'fromQuads');
+    const arr = [];
+    for (const q of quads) arr.push(quadToJson(q));
+    return c.wrap(entryResult(c.e.datasetFromQuadsJson(JSON.stringify(arr)), 'fromQuads'), {});
+  }
+
+  /** Load the engine; afterwards the N-Quads text functions of `@factoidal/core/rdfjs` work. */
+  async function ready() {
+    await ctx();
+  }
+
+  /** The engine's name tables (formats, regimes, query outputs, pack syntaxes). */
+  async function engineTables() {
+    return (await ctx()).tables();
   }
 
   // A wasm module older than this package can lack an op: `e[fnName]` is
@@ -1984,19 +2018,20 @@ function buildApi(driver) {
     const dataFormat = String(opts.dataFormat || 'turtle').toLowerCase();
     const entail = opts.entail || 'none';
     const output = opts.output || 'json';
-    if (!(dataFormat in RAW_DATA_FORMATS)) {
+    const tables = (await ctx()).tables();
+    if (!(dataFormat in tables.rawDataFormats)) {
       throw new TypeError(`queryRaw: unknown dataFormat '${opts.dataFormat}'`);
     }
-    if (!ENTAIL_VALUES.has(entail)) {
-      throw new TypeError(`queryRaw: entail must be one of ${[...ENTAIL_VALUES].join(', ')}`);
+    if (!tables.entailRegimes.includes(entail)) {
+      throw new TypeError(`queryRaw: entail must be one of ${tables.entailRegimes.join(', ')}`);
     }
-    if (!RAW_OUTPUT_FORMATS.has(output)) {
-      throw new TypeError(`queryRaw: output must be one of ${[...RAW_OUTPUT_FORMATS].join(', ')}`);
+    if (!tables.queryOutputs.includes(output)) {
+      throw new TypeError(`queryRaw: output must be one of ${tables.queryOutputs.join(', ')}`);
     }
     const e = await entry();
     requireEntryFn(e, 'queryRaw', 'queryRaw');
     const r = JSON.parse(e.queryRaw(dataString, queryString,
-      JSON.stringify({ dataFormat: RAW_DATA_FORMATS[dataFormat], entail, output })));
+      JSON.stringify({ dataFormat: tables.rawDataFormats[dataFormat], entail, output })));
     if (!r.ok) {
       const err = new Error('SPARQL query failed: ' + r.error);
       err.stderr = String(r.error);
@@ -2280,6 +2315,10 @@ function buildApi(driver) {
     deltaLogDestroy,
     _deltaLogCorruptLastForTest,
     queryRaw,
+    isomorphic,
+    fromQuads,
+    ready,
+    engineTables,
     Dataset,
     DatasetHandle,
     Store,
@@ -2295,6 +2334,6 @@ function buildApi(driver) {
 }
 
 export {
-  buildApi, sniffQueryForm, bindingsFromSrj, entryResult, parseResult,
+  buildApi, bindingsFromSrj, entryResult, parseResult,
   utf16OffsetOf, missingOpError, ParseError, DatasetHandle, Store,
 };

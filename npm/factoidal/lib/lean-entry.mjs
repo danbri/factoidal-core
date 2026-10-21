@@ -22,12 +22,12 @@
 // None of them makes a semantic decision: which IRIs reach the host, what
 // an absent answer means, which artifact a query reads, are decided in Lean.
 
-const XSD = 'http://www.w3.org/2001/XMLSchema#';
 
 // The two npm entries and the engine each loads (issue 713 stage 4). The
 // core engine's `ops` reflection lists what only the full engine serves
 // (`fullOnlyOps`, `fullOnlyFormats`); a call to one of those names the
 // entry that has it.
+import { termToJson } from '../rdfjs.mjs';
 export const FULL_ENTRY = '@factoidal/core';
 // The core profile is built for the hub pages only; the package ships the
 // full engine (owner, 2026-10-20).
@@ -64,22 +64,24 @@ function failEnvelope(err) {
   return JSON.stringify({ ok: false, error: String((err && err.message) || err) });
 }
 
-// One SPARQL Results JSON term object per answer, the wire form
-// Wasm/ExtHost.lean reads; '' means "no value" (the section 17.6 error).
+// One answer for Wasm/Ops/ExtFns.lean: the JavaScript value tagged with its
+// JavaScript type ({js, v}; a number as its Number::toString text), or a term
+// object. The engine chooses the datatype and the lexical form
+// (L4Factoidal.XSD.JsValue.jsLiteral, issue 894 item 3). '' means "no
+// value" (the section 17.6 error).
 function encodeExtAnswer(out) {
   if (out === null || out === undefined || out === EXT_PENDING_MARKER) return '';
-  if (typeof out === 'boolean') {
-    return JSON.stringify({ type: 'literal', value: out ? 'true' : 'false', datatype: XSD + 'boolean' });
+  switch (typeof out) {
+    case 'boolean': return JSON.stringify({ js: 'boolean', v: out });
+    case 'number': return JSON.stringify({ js: 'number', v: String(out) });
+    case 'bigint': return JSON.stringify({ js: 'bigint', v: out.toString() });
+    case 'string': return JSON.stringify({ js: 'string', v: out });
+    case 'object':
+      if (typeof out.type === 'string') return JSON.stringify(out);
+      if (typeof out.termType === 'string') return JSON.stringify(termToJson(out));
+      return '';
+    default: return '';
   }
-  if (typeof out === 'number') {
-    if (!Number.isFinite(out)) return '';
-    return Number.isInteger(out)
-      ? JSON.stringify({ type: 'literal', value: String(out), datatype: XSD + 'integer' })
-      : JSON.stringify({ type: 'literal', value: String(out), datatype: XSD + 'double' });
-  }
-  if (typeof out === 'string') return JSON.stringify({ type: 'literal', value: out });
-  if (typeof out === 'object' && typeof out.type === 'string') return JSON.stringify(out);
-  return '';
 }
 
 // The Lean module asks its host through ONE global,
