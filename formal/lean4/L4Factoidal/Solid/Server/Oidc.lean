@@ -264,7 +264,7 @@ def authenticatedStep (V : Verifiers) (S : Store σ) (cfg : ServerConfig) (oc : 
   | .refuse rf =>
       .inr (Solid.Server.withCors r
               (withChallenge (some rf.errorCode)
-                 ⟨401, [("content-type", "text/plain")], "Unauthorized"⟩), st, oc)
+                 ⟨401, [("content-type", "text/plain")], "Unauthorized", none⟩), st, oc)
   | .proceed who j =>
       let (resp, st') := stepAs S cfg who r st
       .inr ((if oc.insecureNoAuth then resp else withChallenge none resp), st',
