@@ -81,7 +81,7 @@ export function readSnapshot (dir) {
   try {
     return JSON.parse(text)
   } catch (error) {
-    throw new Error(`${file} is not JSON: ${error.message}`)
+    throw Object.assign(new Error(`${file} is not JSON: ${error.message}`), { stateFile: true })
   }
 }
 

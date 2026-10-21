@@ -1368,6 +1368,14 @@ async function commandLwsServe (positional, options) {
     if (error instanceof LwsHostError && error.unknownOp) {
       return notWired('lws-serve', error.message)
     }
+    // The engine refused to open the storage (a bad configuration, or a
+    // snapshot it could not read or authenticate, issue 921), or the state
+    // file is not JSON: the message is the whole answer.
+    if (error !== null && typeof error === 'object' &&
+        (error.envelope !== undefined || error.stateFile === true)) {
+      err(`factoidal lws-serve: ${error.envelope !== undefined ? error.envelope.error : error.message}`)
+      return EXIT_FAILURE
+    }
     throw error
   }
   if (!quiet) {
@@ -1414,6 +1422,14 @@ async function commandSolidServe (positional, options) {
   } catch (error) {
     if (error instanceof SolidServerHostError && error.unknownOp) {
       return notWired('solid-serve', error.message)
+    }
+    // The engine refused to open the storage (a bad configuration, or a
+    // snapshot it could not read or authenticate, issue 921), or the state
+    // file is not JSON: the message is the whole answer.
+    if (error !== null && typeof error === 'object' &&
+        (error.envelope !== undefined || error.stateFile === true)) {
+      err(`factoidal solid-serve: ${error.envelope !== undefined ? error.envelope.error : error.message}`)
+      return EXIT_FAILURE
     }
     throw error
   }
