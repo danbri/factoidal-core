@@ -149,7 +149,8 @@ structure OpenConfig where
   notifications : Bool := true
   /-- Does the storage let a client move a resource by changing its `up`
   link (LWS §Moving Resources, `L4Factoidal.LWS.Move`)? On unless the
-  configuration says `"moves": false`. -/
+  configuration says `"moves": false` or `"moves": "off"`
+  (`movesOfJson`). -/
   moves : Bool := true
   /-- Does the storage offer the Type Index and Type Search services
   (lws10-index, `L4Factoidal.LWS.Search`)? On unless the configuration says
@@ -185,6 +186,29 @@ structure OpenConfig where
   clear text, as before https://github.com/danbri/factoidal/issues/921. -/
   storageKey : Option ByteArray := none
 deriving Inhabited
+
+/-- The configuration member `moves`: absent, `true` or `"all"` (data
+resources and containers move), `"data"` (data resources only:
+`Config.moveContainers` false), `false` or `"off"` (no moves). The result is
+(`moves`, `moveContainers`); another value is refused. -/
+def movesOfJson : Option Json → Except String (Bool × Bool)
+  | none | some (.bool true) | some (.string "all") => .ok (true, true)
+  | some (.string "data") => .ok (true, false)
+  | some (.bool false) | some (.string "off") => .ok (false, true)
+  | some _ => .error "config: \"moves\" is true, false, \"all\", \"data\" or \"off\""
+
+#guard (movesOfJson none).toOption == some (true, true)
+#guard (movesOfJson (some (.string "data"))).toOption == some (true, false)
+#guard (movesOfJson (some (.bool false))).toOption == some (false, true)
+#guard (movesOfJson (some (.string "off"))).toOption == some (false, true)
+#guard (movesOfJson (some (.string "containers"))).toOption.isNone
+
+/-- A Boolean configuration member: `dflt` when absent, its value when a
+Boolean, refused otherwise. -/
+def boolOfJson (key : String) (dflt : Bool) : Option Json → Except String Bool
+  | none => .ok dflt
+  | some (.bool b) => .ok b
+  | some _ => .error s!"config: \"{key}\" is true or false"
 
 def openConfigOfJson (text : String) : Except String OpenConfig :=
   if text.trim == "" then .ok {}
@@ -233,7 +257,9 @@ def openConfigOfJson (text : String) : Except String OpenConfig :=
           | some (.number s) => (s.toNat?).getD 100
           | _ => 100
         let notifications := j.field? "notifications" != some (.bool false)
-        let moves := j.field? "moves" != some (.bool false)
+        let (moves, moveContainers) ← movesOfJson (j.field? "moves")
+        let linksetPut ← boolOfJson "linksetPut" true (j.field? "linksetPut")
+        let paginateAlways ← boolOfJson "paginateAlways" false (j.field? "paginateAlways")
         let typeIndex := j.field? "typeIndex" != some (.bool false)
         let accessGrants := j.field? "accessGrants" != some (.bool false)
         let searchResults := j.field? "searchResults" == some (.bool true)
@@ -273,7 +299,8 @@ def openConfigOfJson (text : String) : Except String OpenConfig :=
                 let key := (nj.getString? "signingKey").bind Base64.decode?
                 .ok (some ns, key.filter (·.size == 32))
           | none => .ok (none, none)
-        .ok { cfg := { baseIri, owner, agent, pageSize }, now, rootAcl, snapshot, authz,
+        .ok { cfg := { baseIri, owner, agent, pageSize, moveContainers, linksetPut, paginateAlways },
+              now, rootAcl, snapshot, authz,
               notifications, moves, typeIndex, accessGrants, entropy, notif, signingKey,
               searchResults, searchResultsTtl, searchResultsMax, results, storageKey, merkle }
 

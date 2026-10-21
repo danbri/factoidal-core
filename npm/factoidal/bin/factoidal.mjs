@@ -333,7 +333,8 @@ https://www.w3.org/TR/sparql11-service-description/`,
 usage: factoidal lws-serve DIR (--issuer IRI | --auth-config FILE | --insecure-no-auth)
                          [--owner WEBID] [--root-acl FILE] [--audience IRI]
                          [--port N] [--host ADDRESS] [--base IRI] [--page-size N]
-                         [--unstable-search-results] [--merkle]
+                         [--paginate-always] [--moves all|data|off]
+                         [--no-linkset-put] [--unstable-search-results] [--merkle]
 
 Starts a Node HTTP server that answers every request through the engine's
 lwsStep operation.
@@ -359,6 +360,20 @@ It protects the file on disk only (formal/lean4/L4Factoidal/LWS/SnapshotSeal.lea
                   (default: the bound origin)
   --page-size N   the engine's container page size (config member pageSize;
                   default 100, 0 turns pagination off)
+  --paginate-always
+                  present every container listing as paginated, also one
+                  that fits on one page (config member paginateAlways;
+                  default off): rel="first" and rel="last", no rel="next"
+  --moves all|data|off
+                  which resources a client may move by changing their up
+                  link (config member moves; default all): data resources
+                  and containers, data resources only (the MoveResource
+                  capability's appliesTo is [DataResource]), or none (no
+                  MoveResource capability; a change of up answers 409)
+  --no-linkset-put
+                  a linkset resource does not accept PUT (config member
+                  linksetPut false): its Allow leaves PUT out and a PUT
+                  answers 405 Method Not Allowed; PATCH still applies
   --unstable-search-results
                   ANTICIPATORY AND UNSTABLE, off by default: a QUERY answer
                   of the type search names a results resource with
@@ -540,7 +555,7 @@ const VALUE_OPTIONS = {
   compact: new Set([]),
   serve: new Set(['port', 'host', 'query-path', 'gsp-path', 'file', 'layout', 'tdb2']),
   'lws-serve': new Set(['port', 'host', 'base', 'issuer', 'auth-config', 'owner', 'root-acl',
-    'audience', 'page-size']),
+    'audience', 'page-size', 'moves']),
   'solid-serve': new Set(['port', 'host', 'base', 'owner', 'issuer', 'auth-config']),
   'solid-client': new Set(['body', 'file', 'content-type', 'interpret'])
 }
@@ -1374,6 +1389,11 @@ async function commandLwsServe (positional, options) {
       ...(options['page-size'] !== undefined ? { pageSize: pageSizeOption(options['page-size']) } : {}),
       ...(options['unstable-search-results'] === true ? { searchResults: true } : {}),
       ...(options.merkle === true ? { merkle: true } : {}),
+      // Passed unread as config members; the engine decides what they mean
+      // and refuses a value it does not know (Wasm/Ops/Lws.lean).
+      ...(options['paginate-always'] === true ? { paginateAlways: true } : {}),
+      ...(typeof options.moves === 'string' ? { moves: options.moves } : {}),
+      ...(options['no-linkset-put'] === true ? { linksetPut: false } : {}),
       ...(insecure ? { insecureNoAuth: true } : { auth }),
       ...(typeof options.owner === 'string' ? { owner: options.owner } : {}),
       ...(typeof options['root-acl'] === 'string'

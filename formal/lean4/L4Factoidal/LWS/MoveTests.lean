@@ -74,6 +74,26 @@ private def capability (c : Config) : Option Json :=
 #guard (run stA (moveTo "/src/a.txt" "http://localhost/dst/") { cfg with moves := false }).1.status == 409
 #guard exists? (run stA (moveTo "/src/a.txt" "http://localhost/dst/") { cfg with moves := false }).2 "/src/a.txt"
 
+/-! ## Data resources only (`moveContainers := false`, `lws-serve --moves data`)
+
+§Moving Resources: "A server that supports moving data resources but not
+containers MUST reject such a request with an appropriate 4xx status code,
+such as 409 Conflict, and MUST NOT include Container in the `appliesTo`
+property." Touchstone `move-container-refused-without-container-support`. -/
+
+private def dcfg : Config := { cfg with moveContainers := false }
+#guard (capability dcfg).bind (·.field? "appliesTo") == some (.array [.string "DataResource"])
+#guard (capability dcfg).bind (·.getString? "type") == some "MoveResource"
+-- A container stays: 409, and it is still in its old container.
+#guard (run stA (moveTo "/src/box/" "http://localhost/dst/") dcfg).1.status == 409
+#guard exists? (run stA (moveTo "/src/box/" "http://localhost/dst/") dcfg).2 "/src/box/inner.txt"
+#guard !exists? (run stA (moveTo "/src/box/" "http://localhost/dst/") dcfg).2 "/dst/box/"
+-- A data resource still moves.
+#guard (run stA (moveTo "/src/a.txt" "http://localhost/dst/") dcfg).1.status == 200
+-- Negative: by default the container moves (above: `capability cfg`, and
+-- `stC` below).
+#guard (run stA (moveTo "/src/box/" "http://localhost/dst/") cfg).1.status == 200
+
 /-! ## A data resource moves (§Moving Resources, "Effect on containment") -/
 
 private def mv1 : Response × MemState := run stA (moveTo "/src/a.txt" "http://localhost/dst/")
@@ -236,6 +256,15 @@ private def stY : MemState :=
   { stZ with entries := aclEntry "/src/sub/locked/" "acl:Read" ::
       (runAll stZ [putText "/src/sub/locked/d.txt" "z"]).entries }
 #guard decision (asBob (moveTo "/src/sub/" "http://localhost/in/")) == 0
+-- With data moves only, a container move request is no move plan, so
+-- authorization asks only for the linkset write (the operation then
+-- answers 409).
+#guard (movePlanOf? MemStore "http://localhost/" true false
+          (moveTo "/src/sub/" "http://localhost/in/") stZ).isNone
+#guard (movePlanOf? MemStore "http://localhost/" true true
+          (moveTo "/src/sub/" "http://localhost/in/") stZ).isSome
+#guard (movePlanOf? MemStore "http://localhost/" true false
+          (moveTo "/src/a.txt" "http://localhost/in/") stZ).isSome
 #guard (match decide stubV MemStore cfg acfg 1100
     (asBob (moveTo "/src/sub/" "http://localhost/in/")) stY with
   | .respond resp => resp.status == 403

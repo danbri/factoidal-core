@@ -90,6 +90,48 @@ def pagesOfFive : List (List String × Response) := (walk five #[] 10 "/c/").toL
         ((rtext r).splitOn "<http://example.org/c/e> a lws:DataResource").length > 1 &&
         ((rtext r).splitOn "<http://example.org/c/a> a lws:DataResource").length == 1)
 
+/-! ## `paginateAlways`: a listing that fits on one page is one paginated page
+
+Touchstone `core/pagination#pagination-single-page`: a paginated listing of
+five members on one page carries `rel="first"` and neither `rel="next"` nor
+`rel="prev"`. -/
+
+def acfg : Config := { pcfg with pageSize := 100, paginateAlways := true }
+def onePage : Response := (step MemStore acfg (req "GET" "/c/") five).1
+
+-- Positive: rel="first" and rel="last" name page 1, all five items, totalItems 5,
+-- no rel="next" and no rel="prev".
+#guard onePage.status == 200 && linkTo onePage "first" == some "/c/?page=1" &&
+  linkTo onePage "last" == some "/c/?page=1"
+#guard (linkTo onePage "next").isNone && (linkTo onePage "prev").isNone
+#guard (itemIds onePage).length == 5 && totalItems onePage == some "5"
+-- Page 2 does not exist; an empty container is one empty page.
+#guard (step MemStore acfg (req "GET" "/c/?page=2") five).1.status == 404
+#guard (let r := (step MemStore acfg (req "GET" "/") emptyStorage).1
+        r.status == 200 && linkTo r "first" == some "/?page=1" && (linkTo r "next").isNone)
+-- The page's tag is a current tag of the container: If-Match with it lets a
+-- DELETE through (Touchstone sends If-Match with the tag of a GET), and a
+-- stale tag still gives 412.
+#guard (match hdr onePage "etag" with
+        | some t => (step MemStore acfg (req "DELETE" "/c/" [("if-match", t), ("depth", "infinity")]) five).1.status == 204
+        | none => false)
+#guard (step MemStore acfg (req "DELETE" "/c/" [("if-match", "\"0-stale\""), ("depth", "infinity")]) five).1.status == 412
+-- Negative: without the option the same listing is not paginated.
+#guard (linkTo (step MemStore { acfg with paginateAlways := false } (req "GET" "/c/") five).1 "first").isNone
+-- Negative: page size 0 turns pagination off even with the option.
+#guard (linkTo (step MemStore { acfg with pageSize := 0 } (req "GET" "/c/") five).1 "first").isNone
+-- Above the page size the option changes nothing: three pages of two.
+#guard (walk five #[] 10 "/c/").toList.map (·.1.length) ==
+  ((let ac : Config := { pcfg with paginateAlways := true }
+    let rec go (acc : List Nat) : Nat → String → List Nat
+      | 0, _ => acc.reverse
+      | f + 1, t =>
+          let r := (step MemStore ac (req "GET" t) five).1
+          match linkTo r "next" with
+          | some n => go ((itemIds r).length :: acc) f n
+          | none => ((itemIds r).length :: acc).reverse
+    go [] 10 "/c/"))
+
 /-! ## Client-managed links and `Prefer: set-linkset` -/
 
 def lws (r : Request) (st : MemState) : Response × MemState := step MemStore Tests.cfg r st
@@ -184,6 +226,25 @@ def hasLicence (st : MemState) : Bool :=
 #guard (let (resp, st) := lws (req "PUT" "/lic.txt?linkset" [("content-type", "application/linkset+json"),
           ("if-match", "\"nope\"")] "{\"linkset\":[{\"anchor\":\"http://example.org/lic.txt\"}]}") withLicence
         resp.status == 412 && hasLicence st)
+-- `linksetPut := false` (LWS §Metadata: "If the server does not support PUT,
+-- it MUST reject the request with 405 Method Not Allowed"): Allow leaves PUT
+-- out, a PUT answers 405 with Allow and changes nothing, PATCH still works.
+def noPut : Config := { Tests.cfg with linksetPut := false }
+#guard (let r := (step MemStore noPut (req "GET" "/lic.txt?linkset") withLicence).1
+        hdr r "allow" == some "GET, HEAD, OPTIONS, PATCH")
+#guard (let (resp, st) := step MemStore noPut (req "PUT" "/lic.txt?linkset"
+          [("content-type", "application/linkset+json")]
+          "{\"linkset\":[{\"anchor\":\"http://example.org/lic.txt\"}]}") withLicence
+        resp.status == 405 && hdr resp "allow" == some "GET, HEAD, OPTIONS, PATCH" && hasLicence st)
+#guard (step MemStore noPut (req "OPTIONS" "/lic.txt?linkset") withLicence).1.headers.lookup "allow" ==
+  some "GET, HEAD, OPTIONS, PATCH"
+#guard (step MemStore noPut (req "PATCH" "/lic.txt?linkset" [("content-type", "application/json-patch+json")]
+          "[{\"op\":\"add\",\"path\":\"/linkset/0/author\",\"value\":[{\"href\":\"https://example.org/me\"}]}]")
+          withLicence).1.status == 204
+-- Negative: by default Allow names PUT, and the same PUT is not 405.
+#guard hdr (lws (req "GET" "/lic.txt?linkset") withLicence).1 "allow" == some "GET, HEAD, OPTIONS, PATCH, PUT"
+#guard (lws (req "PUT" "/lic.txt?linkset" [("content-type", "application/linkset+json")]
+          "{\"linkset\":[{\"anchor\":\"http://example.org/lic.txt\"}]}") withLicence).1.status == 204
 -- The client links survive the snapshot round trip.
 #guard (match memStateOfJson (snapshotJson withLicence) with
         | .ok st => hasLicence st

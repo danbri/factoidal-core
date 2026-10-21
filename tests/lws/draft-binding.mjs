@@ -143,8 +143,59 @@ const CHECKS = [
   'Access Requests and Grants: an access request answers 201 and reads back as an AccessRequest; DELETE cancels it',
   'Access Requests and Grants: a grant with an inbox, and a grant answering an access request with an inbox, are announced there',
   'Access Requests and Grants: DELETE revokes a grant (204, then 404)',
-  'Access Requests and Grants: grants and requests survive a restart'
+  'Access Requests and Grants: grants and requests survive a restart',
+  'CLI: lws-serve --moves data describes MoveResource for DataResource only, refuses a container move with 409 and moves a data resource',
+  'CLI: lws-serve --moves off describes no MoveResource and refuses a move with 409; --moves with another value does not start',
+  'CLI: lws-serve --no-linkset-put leaves PUT out of the linkset Allow and answers a linkset PUT with 405 and Allow; the default allows PUT',
+  'CLI: lws-serve --paginate-always lists five members as one page with rel="first" and rel="last" and no rel="next" or rel="prev"; the default does not paginate them'
 ]
+const CLI_MOVES_DATA = CHECKS[CHECKS.length - 4]
+const CLI_MOVES_OFF = CHECKS[CHECKS.length - 3]
+const CLI_NO_LINKSET_PUT = CHECKS[CHECKS.length - 2]
+const CLI_PAGINATE_ALWAYS = CHECKS[CHECKS.length - 1]
+
+/** Start `factoidal lws-serve` with `flags` on an ephemeral port and a new
+ *  directory, run `body(origin)`, then stop it. A start that fails rejects
+ *  with the exit code and the error output. */
+async function withLwsCli (flags, body) {
+  const cliDir = mkdtempSync(join(tmpdir(), 'lws-cli-'))
+  const cli = fileURLToPath(new URL('../../npm/factoidal/bin/factoidal.mjs', import.meta.url))
+  const child = spawn(process.execPath, [cli, 'lws-serve', cliDir, '--insecure-no-auth',
+    '--port', '0', ...flags], { stdio: ['ignore', 'pipe', 'pipe'] })
+  let errText = ''
+  child.stderr.on('data', (c) => { errText += c })
+  try {
+    const origin = await new Promise((resolve, reject) => {
+      let out = ''
+      const timer = setTimeout(() => reject(new Error('lws-serve did not print its origin')), 60000)
+      child.stdout.on('data', (c) => {
+        out += c
+        const m = /^(http:\/\/\S+)$/m.exec(out)
+        if (m !== null) { clearTimeout(timer); resolve(m[1]) }
+      })
+      child.on('exit', (code) => { clearTimeout(timer); reject(new Error(`lws-serve exited ${code}: ${errText.trim()}`)) })
+    })
+    return await body(origin)
+  } finally {
+    child.kill()
+    rmSync(cliDir, { recursive: true, force: true })
+  }
+}
+
+/** A JSON Patch request that points the up link of `target` at `dest`. */
+function moveUp (origin, target, dest) {
+  return fetch(`${origin}${target}?linkset`, {
+    method: 'PATCH',
+    headers: { 'content-type': 'application/json-patch+json' },
+    body: JSON.stringify([{ op: 'replace', path: '/linkset/0/up/0/href', value: `${origin}${dest}` }])
+  })
+}
+
+/** The MoveResource capability of the storage description, or undefined. */
+async function moveCapabilityAt (origin) {
+  const d = await (await fetch(`${origin}/.well-known/lws-storage`, { headers: { accept: 'application/lws+cid' } })).json()
+  return (d.capability || []).find((c) => c.type === 'MoveResource')
+}
 
 /** A local webhook receiver: records every POST and answers with the
  *  scripted statuses (the last one repeats), 202 by default. */
@@ -1456,6 +1507,121 @@ async function main () {
       child.kill()
       rmSync(cliDir, { recursive: true, force: true })
     }
+  })
+
+  // Server configurations for the Touchstone alternative runs
+  // (tools/lws-touchstone.sh --config alt-*). Each option is decided in
+  // L4Factoidal/LWS/ (Config.moveContainers, linksetPut, paginateAlways);
+  // these checks show that the flag reaches the engine and the wire.
+  const putText = (origin, path, text) =>
+    fetch(`${origin}${path}`, { method: 'PUT', headers: { 'content-type': 'text/plain' }, body: text }).then((r) => r.text())
+  const putDir = (origin, path) =>
+    fetch(`${origin}${path}`, { method: 'PUT', headers: { 'content-type': 'text/turtle' }, body: '' }).then((r) => r.text())
+  await check(CLI_MOVES_DATA, async () => {
+    await withLwsCli(['--moves', 'data'], async (origin) => {
+      const cap = await moveCapabilityAt(origin)
+      assert(cap !== undefined && JSON.stringify(cap.appliesTo) === '["DataResource"]', JSON.stringify(cap))
+      await putDir(origin, '/dst/')
+      await putText(origin, '/box/inner.txt', 'stays')
+      await putText(origin, '/a.txt', 'moves')
+      const refused = await moveUp(origin, '/box/', '/dst/')
+      const problem = await refused.json()
+      assert(refused.status === 409, `container move answered ${refused.status} ${JSON.stringify(problem)}`)
+      const still = await fetch(`${origin}/box/inner.txt`)
+      assert(still.status === 200 && (await still.text()) === 'stays', `inner after refusal ${still.status}`)
+      const moved = await moveUp(origin, '/a.txt', '/dst/')
+      await moved.text()
+      assert(moved.status === 200 && moved.headers.get('content-location') === '/dst/a.txt?linkset',
+        `data move answered ${moved.status} ${moved.headers.get('content-location')}`)
+    })
+    // Negative: by default containers move too.
+    await withLwsCli([], async (origin) => {
+      const cap = await moveCapabilityAt(origin)
+      assert(cap !== undefined && JSON.stringify(cap.appliesTo) === '["DataResource","Container"]', JSON.stringify(cap))
+      await putDir(origin, '/dst/')
+      await putText(origin, '/box/inner.txt', 'goes')
+      const r = await moveUp(origin, '/box/', '/dst/')
+      await r.text()
+      assert(r.status === 200, `default container move answered ${r.status}`)
+    })
+  })
+  await check(CLI_MOVES_OFF, async () => {
+    await withLwsCli(['--moves', 'off'], async (origin) => {
+      assert(await moveCapabilityAt(origin) === undefined, 'a MoveResource capability is described')
+      await putDir(origin, '/dst/')
+      await putText(origin, '/a.txt', 'stays')
+      const r = await moveUp(origin, '/a.txt', '/dst/')
+      await r.text()
+      assert(r.status === 409, `move answered ${r.status}`)
+      const g = await fetch(`${origin}/a.txt`)
+      await g.text()
+      assert(g.status === 200 && linkTarget(g.headers.get('link'), 'up') === '/', `after refusal ${g.status} ${g.headers.get('link')}`)
+    })
+    let refusedStart = null
+    try {
+      await withLwsCli(['--moves', 'sideways'], async () => null)
+    } catch (error) {
+      refusedStart = String(error.message)
+    }
+    assert(refusedStart !== null && refusedStart.indexOf('"moves"') >= 0, `--moves sideways: ${refusedStart}`)
+  })
+  await check(CLI_NO_LINKSET_PUT, async () => {
+    const linksetDoc = (origin) => JSON.stringify({ linkset: [{ anchor: `${origin}/a.txt`, license: [{ href: 'https://creativecommons.org/licenses/by/4.0/' }] }] })
+    await withLwsCli(['--no-linkset-put'], async (origin) => {
+      await putText(origin, '/a.txt', 'x')
+      const g = await fetch(`${origin}/a.txt?linkset`)
+      await g.text()
+      assert(!/\bPUT\b/.test(g.headers.get('allow') || 'PUT'), `Allow: ${g.headers.get('allow')}`)
+      const r = await fetch(`${origin}/a.txt?linkset`, {
+        method: 'PUT', headers: { 'content-type': 'application/linkset+json' }, body: linksetDoc(origin)
+      })
+      await r.text()
+      assert(r.status === 405 && r.headers.get('allow') === 'GET, HEAD, OPTIONS, PATCH',
+        `PUT answered ${r.status}, Allow: ${r.headers.get('allow')}`)
+      const p = await fetch(`${origin}/a.txt?linkset`, {
+        method: 'PATCH',
+        headers: { 'content-type': 'application/json-patch+json' },
+        body: JSON.stringify([{ op: 'add', path: '/linkset/0/license', value: [{ href: 'https://creativecommons.org/licenses/by/4.0/' }] }])
+      })
+      await p.text()
+      assert(p.status === 204, `PATCH answered ${p.status}`)
+    })
+    await withLwsCli([], async (origin) => {
+      await putText(origin, '/a.txt', 'x')
+      const g = await fetch(`${origin}/a.txt?linkset`)
+      await g.text()
+      assert(/\bPUT\b/.test(g.headers.get('allow') || ''), `default Allow: ${g.headers.get('allow')}`)
+      const r = await fetch(`${origin}/a.txt?linkset`, {
+        method: 'PUT', headers: { 'content-type': 'application/linkset+json' }, body: linksetDoc(origin)
+      })
+      await r.text()
+      assert(r.status === 204, `default PUT answered ${r.status}`)
+    })
+  })
+  await check(CLI_PAGINATE_ALWAYS, async () => {
+    const fill = async (origin) => {
+      for (const n of ['m1', 'm2', 'm3', 'm4', 'm5']) await putText(origin, `/p/${n}`, n)
+    }
+    await withLwsCli(['--paginate-always'], async (origin) => {
+      await fill(origin)
+      const r = await fetch(`${origin}/p/`, { headers: { accept: 'application/lws+json' } })
+      const j = await r.json()
+      const link = r.headers.get('link')
+      assert(linkTarget(link, 'first') === '/p/?page=1' && linkTarget(link, 'last') === '/p/?page=1', `Link: ${link}`)
+      assert(linkTarget(link, 'next') === null && linkTarget(link, 'prev') === null, `Link: ${link}`)
+      assert(j.items.length === 5 && j.totalItems === 5, `${j.items.length} items, totalItems ${j.totalItems}`)
+      // The page's ETag is a current tag of the container: a conditional
+      // DELETE with it goes through.
+      const d = await fetch(`${origin}/p/`, { method: 'DELETE', headers: { 'if-match': r.headers.get('etag'), depth: 'infinity' } })
+      await d.text()
+      assert(d.status === 204, `DELETE with the page ETag answered ${d.status}`)
+    })
+    await withLwsCli([], async (origin) => {
+      await fill(origin)
+      const r = await fetch(`${origin}/p/`, { headers: { accept: 'application/lws+json' } })
+      await r.text()
+      assert(linkTarget(r.headers.get('link'), 'first') === null, `default Link: ${r.headers.get('link')}`)
+    })
   })
 
   // Durable storage under DIR.

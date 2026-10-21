@@ -432,7 +432,7 @@ def decide (V : Verifiers) (S : Store σ) (cfg : Config) (a : AuthzConfig) (now 
       -- LWS §Moving Resources: a move needs the delete of every moved
       -- resource (the whole subtree of a container) and a create in the
       -- destination, evaluated before the move is applied.
-      let moveOk : Bool := match movePlanOf? S cfg.baseIri cfg.moves r st with
+      let moveOk : Bool := match movePlanOf? S cfg.baseIri cfg.moves cfg.moveContainers r st with
         | none => true
         | some plan => plan.moves.all (fun m => may m.1 (requiredMode "DELETE" (targetsAcl m.1)) ||
               granted "DELETE" m.1) &&
