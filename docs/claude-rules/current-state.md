@@ -172,6 +172,13 @@ current headline numbers, all measured on the shipped tree:
   block is unreadable (undeclared `test:` prefix). Local tight-case
   suite: `RDF12_TESTS_BASE=tests/local w3c_runner --rdf12entail
   rdf12-semantics-tight` — 9 pass, 0 fail (out of 9).
+  **Re-measured 2026-10-21 against the current upstream manifest (29
+  active tests; `annotation`, `annotation-unfolded` and `literal-type`
+  are no longer in it, and upstream disabled `opaque-iri`):** Lean
+  `lake exe l4rdf-semantics` 29 pass, 0 fail (out of 29); F\*
+  `bin/linux-x86_64/w3c_runner --rdf12entail` 28 pass, 1 fail (out of
+  29), failing `opaque-dir-language-string` ("Should entail but
+  doesn't"). The 2026-09-07 figures above are superseded.
   Still open: RML-star mapping generation, and browser/npm-API +
   dashboard wiring (JS `parse`/`query` still 1.1-only).
 - Dispositions table landed in the completeness ledger (day-closure
