@@ -20,7 +20,7 @@
 #     time, and carries no expected-failure mark (key result 2.2 of
 #     https://github.com/danbri/factoidal/issues/901; marks: XFAIL in
 #     tools/sota-bench.py, each naming its open issue). A marked row that
-#     measures under 2.5 times (SOTA_TIME_BOUND / SOTA_XPASS_MARGIN) fails as
+#     measures under 2.2 times (SOTA_TIME_BOUND / SOTA_XPASS_MARGIN) fails as
 #     UNEXPECTED PASS.
 # SOTA_TOLERANCE defaults to 0.25. A failing row is measured a second time
 # before it fails. The reference engines are not run: their rows are

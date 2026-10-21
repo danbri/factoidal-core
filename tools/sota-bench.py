@@ -923,7 +923,7 @@ def report(path):
 # over MEM_BOUND by both memory measures), each with its open issue. Marked
 # 2026-10-21 (key result 2.2 of https://github.com/danbri/factoidal/issues/901,
 # record docs/designissues/2026-10-21-sota-remeasure.md): every row measured
-# over 2.5 times, the comment is the measured time ratio (minimum wall times).
+# over 2.2 times, the comment is the measured time ratio (minimum wall times).
 # A marked row fails the gate when it measures under TIME_BOUND / XPASS_MARGIN
 # (UNEXPECTED PASS), so the repair cannot land without the mark and the issue
 # being updated.
@@ -940,6 +940,7 @@ XFAIL = {
     ("parse-nt-mixed", "200000", "lean-stream"): "https://github.com/danbri/factoidal/issues/904",  # 4.1
     ("parse-nt-mixed", "400000", "lean"): "https://github.com/danbri/factoidal/issues/904",  # 3.9
     ("parse-nt-mixed", "400000", "lean-stream"): "https://github.com/danbri/factoidal/issues/904",  # 4.5
+    ("parse-ttl-gene", "20000", "lean"): "https://github.com/danbri/factoidal/issues/904",  # 2.5
     ("parse-ttl-gene", "20000", "lean-stream"): "https://github.com/danbri/factoidal/issues/904",  # 3.0
     ("parse-ttl-gene", "40000", "lean"): "https://github.com/danbri/factoidal/issues/904",  # 2.7
     ("parse-ttl-gene", "40000", "lean-stream"): "https://github.com/danbri/factoidal/issues/904",  # 2.7
@@ -958,6 +959,7 @@ XFAIL = {
     ("sparql-bound-subject", "20000", "lean"): "https://github.com/danbri/factoidal/issues/908",  # 2.7
     ("sparql-bound-subject", "40000", "lean"): "https://github.com/danbri/factoidal/issues/908",  # 3.7
     ("sparql-bound-subject", "80000", "lean"): "https://github.com/danbri/factoidal/issues/908",  # 3.2
+    ("sparql-count", "20000", "lean"): "https://github.com/danbri/factoidal/issues/908",  # 2.5
     ("sparql-count", "40000", "lean"): "https://github.com/danbri/factoidal/issues/908",  # 3.6
     ("sparql-count", "80000", "lean"): "https://github.com/danbri/factoidal/issues/908",  # 3.4
     ("sparql-join", "20000", "lean"): "https://github.com/danbri/factoidal/issues/908",  # 2.8
@@ -1016,12 +1018,14 @@ XFAIL = {
 # The time ratio is taken between minimum wall times (the least of the runs of
 # a case) where both rows have one: on a shared machine the load average adds
 # to the median more than to the minimum. An expected failure reports
-# UNEXPECTED PASS only below TIME_BOUND / XPASS_MARGIN (2.5 by default), so
-# that a row measured at 2.9 and at 3.1 on two runs does not turn the gate
-# red each time; a row without a mark fails above TIME_BOUND.
+# UNEXPECTED PASS only below TIME_BOUND / XPASS_MARGIN (2.2 by default), and
+# every row recorded over 2.2 carries a mark: a row measured at 2.5 and at 3.0
+# on two quiet runs (sparql-count 20,000, 2026-10-21) then does not turn the
+# gate red; a row without a mark fails above TIME_BOUND. The recorded rows
+# leave a gap between 2.04 and 2.49 where no row sits.
 TIME_BOUND = float(os.environ.get("SOTA_TIME_BOUND", "3"))
 MEM_BOUND = float(os.environ.get("SOTA_MEM_BOUND", "10"))
-XPASS_MARGIN = float(os.environ.get("SOTA_XPASS_MARGIN", "1.2"))
+XPASS_MARGIN = float(os.environ.get("SOTA_XPASS_MARGIN", "1.35"))
 
 
 def wall_of(r):
