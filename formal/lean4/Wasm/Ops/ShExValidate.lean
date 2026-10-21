@@ -29,6 +29,7 @@ import L4Factoidal.Syntax.NQuadsFast
 import L4Factoidal.ShEx.FromJson
 import L4Factoidal.ShEx.Compact
 import L4Factoidal.ShEx.Satisfies
+import L4Factoidal.RDF.TermJson
 
 namespace L4Wasm.Ops
 
@@ -36,11 +37,19 @@ open L4Factoidal.RDF
 open L4Factoidal.Syntax
 open L4Factoidal.JSON
 
-/-- A focus node or shape label given as an IRI or `_:label`. -/
-private def nodeOfText (s : String) : Option Term :=
-  if s.startsWith "_:" then
-    if s.length > 2 then some (.bnode (String.ofList (s.toList.drop 2))) else none
-  else if h : isIri s then some (.iri ⟨s, h⟩) else none
+/-- A focus node or shape label, written in N-Triples term syntax (`<IRI>` or
+`_:label`) and read by the one term-string reader
+(`TermJson.readSubjectString`). A bare IRI with no angle brackets is refused:
+https://github.com/danbri/factoidal/issues/894. -/
+def nodeOfText (s : String) : Option Term :=
+  (L4Factoidal.RDF.TermJson.readSubjectString s).map fun
+    | .iri i => .iri i
+    | .bnode b => .bnode b
+
+#guard nodeOfText "_:x" == some (.bnode "x")
+#guard (nodeOfText "<http://e/x>").isSome
+#guard nodeOfText "http://e/x" == none
+#guard nodeOfText "_:" == none
 
 /-- The schema text, read as ShExJ or ShExC by its first non-whitespace
 character. -/
@@ -62,12 +71,13 @@ def shexValidateParsed (ds : Dataset) (schemaText focus shape : String) : String
   | .error e => errJson s!"shexValidate(schema): {e}"
   | .ok sch =>
   match nodeOfText focus with
-  | none => errJson s!"shexValidate: the focus '{focus}' is not an IRI or _:label"
+  | none => errJson s!"shexValidate: the focus '{focus}' is not an N-Triples IRI <...> or blank node _:label"
   | some n =>
-    let verdict :=
-      if shape.isEmpty then L4Factoidal.ShEx.validateStart sch ds.default n
-      else L4Factoidal.ShEx.validateNode sch ds.default shape n
-    okWith [("verdict", .bool verdict)]
+      if shape.isEmpty then okWith [("verdict", .bool (L4Factoidal.ShEx.validateStart sch ds.default n))]
+      else match nodeOfText shape with
+        | some (.iri i) => okWith [("verdict", .bool (L4Factoidal.ShEx.validateNode sch ds.default i.val n))]
+        | some (.bnode b) => okWith [("verdict", .bool (L4Factoidal.ShEx.validateNode sch ds.default ("_:" ++ b) n))]
+        | _ => errJson s!"shexValidate: the shape '{shape}' is not an N-Triples IRI <...> or blank node _:label"
 
 /-- `shexValidate(dataNquads, schemaText, focus, shape)`. -/
 def shexValidate (dataNq schemaText focus shape : String) : String :=
@@ -92,11 +102,14 @@ private def vShExJ : String :=
   "\"nodeKind\":\"literal\"}}}}]}"
 
 -- ShEx: alice has a literal name, dave has none; both schema syntaxes agree.
-#guard shexValidate sxData vShExJ "http://e/alice" "http://e/S" == "{\"ok\":true,\"verdict\":true}"
-#guard shexValidate sxData vShExJ "http://e/dave" "http://e/S" == "{\"ok\":true,\"verdict\":false}"
-#guard shexValidate sxData vShExC "http://e/alice" "http://e/S" == "{\"ok\":true,\"verdict\":true}"
-#guard shexValidate sxData vShExC "http://e/dave" "http://e/S" == "{\"ok\":true,\"verdict\":false}"
-#guard (shexValidate sxData vShExC "not an iri" "http://e/S").startsWith "{\"ok\":false"
-#guard (shexValidate sxData "{ not json" "http://e/alice" "http://e/S").startsWith "{\"ok\":false"
+#guard shexValidate sxData vShExJ "<http://e/alice>" "<http://e/S>" == "{\"ok\":true,\"verdict\":true}"
+#guard shexValidate sxData vShExJ "<http://e/dave>" "<http://e/S>" == "{\"ok\":true,\"verdict\":false}"
+#guard shexValidate sxData vShExC "<http://e/alice>" "<http://e/S>" == "{\"ok\":true,\"verdict\":true}"
+#guard shexValidate sxData vShExC "<http://e/dave>" "<http://e/S>" == "{\"ok\":true,\"verdict\":false}"
+#guard (shexValidate sxData vShExC "not an iri" "<http://e/S>").startsWith "{\"ok\":false"
+-- a bare IRI is refused: the one term-string reader takes N-Triples syntax
+#guard (shexValidate sxData vShExC "http://e/alice" "<http://e/S>").startsWith "{\"ok\":false"
+#guard (shexValidate sxData vShExC "<http://e/alice>" "http://e/S").startsWith "{\"ok\":false"
+#guard (shexValidate sxData "{ not json" "<http://e/alice>" "<http://e/S>").startsWith "{\"ok\":false"
 
 end L4Wasm.Ops

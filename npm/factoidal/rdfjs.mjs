@@ -19,6 +19,8 @@
 const XSD_STRING = 'http://www.w3.org/2001/XMLSchema#string'; // purity-lint: allow RDF/JS DataFactory default
 const RDF_LANGSTRING =
   'http://www.w3.org/1999/02/22-rdf-syntax-ns#langString'; // purity-lint: allow RDF/JS DataFactory default
+const RDF_DIRLANGSTRING =
+  'http://www.w3.org/1999/02/22-rdf-syntax-ns#dirLangString'; // purity-lint: allow RDF/JS DataFactory default
 
 // ---------------------------------------------------------------------
 // Terms
@@ -54,9 +56,10 @@ class Literal {
     this.value = value;
     this.language = language || '';
     // RDF/JS Data Model DataFactory.literal: no datatype argument means
-    // xsd:string, a language means rdf:langString.
+    // xsd:string, a language means rdf:langString, a language and a
+    // direction mean rdf:dirLangString.
     this.datatype = datatype ||
-      new NamedNode(language ? RDF_LANGSTRING : XSD_STRING); // purity-lint: allow RDF/JS DataFactory default
+      new NamedNode(language ? (direction ? RDF_DIRLANGSTRING : RDF_LANGSTRING) : XSD_STRING); // purity-lint: allow RDF/JS DataFactory default
     this.direction = direction || '';
     Object.freeze(this);
   }
@@ -260,6 +263,10 @@ function termFromSrjWith(t, f) {
 /** The engine term object of an RDF/JS term (`TermJson.encodeTerm`'s shape). */
 function termToJson(term) {
   if (term === null || term === undefined) return null;
+  // A term given as text is one RDF 1.2 N-Triples term (`<IRI>`, `_:label`,
+  // a literal, `<<( s p o )>>`). The engine reads it
+  // (L4Factoidal.RDF.TermJson.readTermString); this file copies the text.
+  if (typeof term === 'string') return { type: 'nt', value: term };
   switch (term.termType) {
     case 'NamedNode': return { type: 'uri', value: term.value };
     case 'BlankNode': return { type: 'bnode', value: term.value };
@@ -278,6 +285,26 @@ function termToJson(term) {
     default:
       throw new TypeError(`termToJson: cannot send termType '${term.termType}' to the engine`);
   }
+}
+
+/**
+ * The engine term object of a term an application supplies, for example an
+ * extension function's answer: an RDF/JS term (duck-typed on termType), an
+ * engine term object ({type, value, ...}), or a plain object
+ * {value, datatype} or {value, language, direction?}. The components are
+ * copied as given; the engine checks them (TermJson.decodeCheckedTerm) and
+ * keeps the lexical form and the datatype IRI unchanged.
+ */
+function appTermToJson(out) {
+  if (typeof out.termType === 'string') return termToJson(out);
+  if (typeof out.type === 'string') return out;
+  const o = { type: 'literal', value: out.value };
+  if (out.datatype !== undefined && out.datatype !== null) {
+    o.datatype = typeof out.datatype === 'string' ? out.datatype : out.datatype.value;
+  }
+  if (out.language !== undefined && out.language !== null && out.language !== '') o['xml:lang'] = out.language;
+  if (out.direction !== undefined && out.direction !== null && out.direction !== '') o['its:dir'] = out.direction;
+  return o;
 }
 
 /** The engine quad array of an RDF/JS quad: [s, p, o] or [s, p, o, g]. */
@@ -474,6 +501,7 @@ export {
   DatasetCore,
   termFromSrj,
   termToJson,
+  appTermToJson,
   quadToJson,
   quadFromJson,
   quadKey,

@@ -43,6 +43,12 @@ RDF 1.2 input uses `turtle12`, `ntriples12`, `nquads12` or `trig12`.
 - Servers: SPARQL 1.1 Protocol and Graph Store (Fuseki-compatible paths,
   Jena TDB2 read only), Linked Web Storage 1.0, Solid
 - A persisted store with a delta log for updates (early stage)
+- Terms: a JavaScript extension function can answer with an exact term
+  (`{value: "007", datatype: XSD + "integer"}`, an RDF/JS term, a triple
+  term); the engine keeps the lexical form and the datatype IRI as given.
+  A term given as a string is one N-Triples term everywhere (`<http://…>`
+  is an IRI, `_:b` a blank node). See API.md, "Custom extension functions" and
+  "Terms given as strings".
 - RDF/JS DataFactory and DatasetCore (`/rdfjs`), a functional API (`/fn`)
 
 Formats (generated from `formats()`):

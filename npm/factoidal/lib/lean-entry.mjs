@@ -27,7 +27,7 @@
 // core engine's `ops` reflection lists what only the full engine serves
 // (`fullOnlyOps`, `fullOnlyFormats`); a call to one of those names the
 // entry that has it.
-import { termToJson } from '../rdfjs.mjs';
+import { appTermToJson, termToJson } from '../rdfjs.mjs';
 export const FULL_ENTRY = '@factoidal/core';
 // The core profile is built for the hub pages only; the package ships the
 // full engine (owner, 2026-10-20).
@@ -77,9 +77,7 @@ function encodeExtAnswer(out) {
     case 'bigint': return JSON.stringify({ js: 'bigint', v: out.toString() });
     case 'string': return JSON.stringify({ js: 'string', v: out });
     case 'object':
-      if (typeof out.type === 'string') return JSON.stringify(out);
-      if (typeof out.termType === 'string') return JSON.stringify(termToJson(out));
-      return '';
+      try { return JSON.stringify(appTermToJson(out)); } catch (_error) { return ''; }
     default: return '';
   }
 }

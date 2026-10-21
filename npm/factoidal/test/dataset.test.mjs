@@ -58,7 +58,7 @@ test('Dataset methods: query, update in place, closure, validate, clone', async 
   assert.equal(v.conforms, true);
   assert.ok(v.report instanceof f.Dataset);
   assert.equal(await ds.validateShex('PREFIX ex: <http://example.org/>\nstart = @<S>\n<S> { ex:name . }',
-    { focus: 'http://example.org/bob' }), true);
+    { focus: '<http://example.org/bob>' }), true);
   for (const d of [ds, copy, c, onto, closed, v.report]) d.dispose();
 });
 

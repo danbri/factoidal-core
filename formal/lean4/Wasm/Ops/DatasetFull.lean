@@ -83,7 +83,7 @@ so a host sends term components only
 def shexNodeArg (s : String) : String :=
   if s.startsWith "{" then
     match (parseJson? s).bind TermJson.decodeSubject with
-    | some (.iri i) => i.val
+    | some (.iri i) => "<" ++ i.val ++ ">"
     | some (.bnode b) => "_:" ++ b
     | none => s
   else s

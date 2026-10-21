@@ -376,11 +376,11 @@ test('shex: ShEx validation of one focus node against one shape', async (t) => {
     }],
   });
   const verdict = await shex(
-    data, schema, 'http://example.org/alice', 'http://example.org/PersonShape');
+    data, schema, '<http://example.org/alice>', '<http://example.org/PersonShape>');
   assert.equal(verdict, true);
 
   const noMatch = await shex(
-    data, schema, 'http://example.org/nobody', 'http://example.org/PersonShape');
+    data, schema, '<http://example.org/nobody>', '<http://example.org/PersonShape>');
   assert.equal(noMatch, false, 'a focus node with no matching triples does not conform');
 });
 
@@ -504,8 +504,9 @@ test('interop: graphs() enumerates named graphs as FnDatasets', async () => {
     { format: 'trig' });
   const gs = graphs(ds);
   assert.equal(gs.length, 1);
-  const [iri, g1] = gs[0];
-  assert.equal(iri, 'http://x/g1');
+  const [name, g1] = gs[0];
+  assert.equal(name.termType, 'NamedNode');
+  assert.equal(name.value, 'http://x/g1');
   assert.ok(g1 instanceof FnDataset);
   assert.equal(g1.size, 1);
 });

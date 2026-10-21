@@ -37,7 +37,7 @@
 /** How many evaluation rounds an async resolution may take. */
 export const EXT_MAX_ROUNDS = 25
 
-import { termToJson } from '../rdfjs.mjs'
+import { appTermToJson } from '../rdfjs.mjs'
 
 const extFunctions = new Map()
 const extRegistered = new Set()
@@ -61,9 +61,7 @@ function encodeAnswer (out) {
     case 'bigint': return JSON.stringify({ js: 'bigint', v: out.toString() })
     case 'string': return JSON.stringify({ js: 'string', v: out })
     case 'object':
-      if (typeof out.type === 'string') return JSON.stringify(out)
-      if (typeof out.termType === 'string') return JSON.stringify(termToJson(out))
-      return ''
+      try { return JSON.stringify(appTermToJson(out)) } catch (_error) { return '' }
     default: return ''
   }
 }

@@ -111,7 +111,7 @@ test('post06: shexValidate accepts RDF/JS terms for focus/shape too', async () =
     }],
   });
   const verdict = await factoidal.shexValidate(
-    dataset, schema, 'http://example.org/alice', 'http://example.org/PersonShape');
+    dataset, schema, '<http://example.org/alice>', '<http://example.org/PersonShape>');
   assert.equal(verdict, true);
 });
 
@@ -131,6 +131,6 @@ test('post06: shexValidate dispatches ShExC text (no leading "{") straight to Pa
     }
   `;
   const verdict = await factoidal.shexValidate(
-    dataset, shexc, 'http://example.org/alice', 'http://example.org/PersonShape');
+    dataset, shexc, '<http://example.org/alice>', '<http://example.org/PersonShape>');
   assert.equal(verdict, true);
 });

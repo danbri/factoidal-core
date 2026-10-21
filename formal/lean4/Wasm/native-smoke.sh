@@ -2904,14 +2904,14 @@ check "shaclValidate: bad data -> error" shaclValidate "$TMP/shacl-bad.json" 'r[
 SHEXC='PREFIX e: <http://e/>
 e:S { e:name LITERAL }
 '
-args "$TMP/shex-yes.json" "$SHDATA" "$SHEXC" "http://e/alice" "http://e/S"
+args "$TMP/shex-yes.json" "$SHDATA" "$SHEXC" "<http://e/alice>" "<http://e/S>"
 check "shexValidate ShExC: alice conforms" shexValidate "$TMP/shex-yes.json" \
   'r == {"ok": True, "verdict": True}'
-args "$TMP/shex-no.json" "$SHDATA" "$SHEXC" "http://e/dave" "http://e/S"
+args "$TMP/shex-no.json" "$SHDATA" "$SHEXC" "<http://e/dave>" "<http://e/S>"
 check "shexValidate ShExC: dave does not" shexValidate "$TMP/shex-no.json" \
   'r == {"ok": True, "verdict": False}'
 SHEXJ='{"type":"Schema","shapes":[{"type":"ShapeDecl","id":"http://e/S","shapeExpr":{"type":"Shape","expression":{"type":"TripleConstraint","predicate":"http://e/name","valueExpr":{"type":"NodeConstraint","nodeKind":"literal"}}}}]}'
-args "$TMP/shexj.json" "$SHDATA" "$SHEXJ" "http://e/alice" "http://e/S"
+args "$TMP/shexj.json" "$SHDATA" "$SHEXJ" "<http://e/alice>" "<http://e/S>"
 check "shexValidate ShExJ: alice conforms" shexValidate "$TMP/shexj.json" \
   'r == {"ok": True, "verdict": True}'
 args "$TMP/shex-arity.json" "$SHDATA" "$SHEXC"

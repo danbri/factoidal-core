@@ -290,15 +290,68 @@ const rows = await query(ds, `
                     FILTER(fn:isAdult(?a)) }`);
 ```
 
-Return a JS primitive (`boolean`/`number`/`string`), an SRJ-style term
-object (`{type:'uri'|'literal'|'bnode', value, datatype?, 'xml:lang'?}`), or
-a Promise of either; `null`/`undefined`/a thrown error is the §17.6 error.
+Return one of these, or a Promise of one; `null`/`undefined`/a thrown error
+is the §17.6 error:
+
+- A JS primitive (`boolean`/`number`/`bigint`/`string`). The engine chooses
+  the datatype and the lexical form (`L4Factoidal.XSD.JsValue.jsLiteral`):
+  `7` is `"7"^^xsd:integer`, `1e21` is `"1.0E21"^^xsd:double`, a string is an
+  `xsd:string` literal (`'_:x'` too: it is never a blank node).
+- An exact term, when the application chooses the datatype IRI and the
+  lexical form. The engine keeps both as given and does not canonicalise
+  (RDF 1.1 Concepts §3.3: an ill-typed literal is still a literal):
+  - an RDF/JS term, duck-typed on `termType`: `Literal` (`value` and
+    `datatype`, or `language` and optional `direction`), `NamedNode`,
+    `BlankNode`, or a `Quad` (an RDF 1.2 triple term);
+  - a plain object `{value, datatype}` (`datatype` an IRI string or a
+    NamedNode) or `{value, language, direction?}`;
+  - an engine term object (`{type:'uri'|'literal'|'bnode'|'triple', value,
+    datatype?, 'xml:lang'?, 'its:dir'?}`).
+
+  JavaScript only copies the components. The engine checks what RDF
+  requires and nothing more: every IRI (datatype IRIs too) is absolute, a
+  language tag is well-formed BCP 47, a direction is `ltr` or `rtl`, and a
+  `datatype` given with a language tag is `rdf:langString` (no direction) or
+  `rdf:dirLangString`. A term that fails a check is the §17.6 error for that
+  call.
+
+```js
+import { registerExtensionFunction } from "@factoidal/core";
+await registerExtensionFunction("http://example.org/fn#pad", () =>
+  ({ value: "007", datatype: "http://www.w3.org/2001/XMLSchema#integer" }));
+// BIND(fn:pad() AS ?x) binds ?x to "007"^^xsd:integer, not "7"
+```
+
+There is no registration option for a number policy: an application that
+wants a different datatype or lexical form for a number returns the exact
+term.
 Async functions run over the synchronous engine through a bounded,
 memoised re-evaluation loop: within one query every call with the same
 arguments sees one stable answer. The registry is the engine's, so a
 registered function also reaches dataset handles and store queries. Every
 call crosses into JavaScript, so a function in a FILTER runs once per row.
 Design: [`docs/designissues/2026-09-04-lean-extension-functions.md`](../../docs/designissues/2026-09-04-lean-extension-functions.md).
+
+## Terms given as strings
+
+Every API that takes an RDF term as a string reads it as one RDF 1.2
+N-Triples term, with the engine's one term-string reader
+(`L4Factoidal.RDF.TermJson.readTermString`): `<http://e/x>` is an IRI,
+`_:x` a blank node, `"7"^^<http://www.w3.org/2001/XMLSchema#integer>` a
+literal, `<<( <s> <p> <o> )>>` a triple term. The IRI must be absolute. A
+string that is not one such term is an error. This holds for `Dataset.match`
+and `has` (each position takes a term or a string), the ShEx `focus` and
+`shape`, and the engine ops that take term objects (`{type:'nt', value}`).
+
+Breaking changes in 0.10.0:
+
+- `shexValidate` / `Dataset.validateShex`: `focus` and `shape` strings are
+  N-Triples terms. Write `'<http://example.org/alice>'`, not
+  `'http://example.org/alice'`; an RDF/JS term still works.
+- `graphs(dataset)` answers `[name, Dataset]` pairs where `name` is a
+  `NamedNode` or a `BlankNode`. It answered the bare `value` string, so the
+  graph IRI `urn:g` and an RDF/JS blank node with the label `urn:g` gave the
+  same string.
 
 ## Datasets
 
@@ -1010,7 +1063,7 @@ const { conforms, report } = await validate(ds, await parse(shapesTtl)); // SHAC
 | `serialize` | `(data, {format, version?, prefixes?, literalShorthand?, useNativeTypes?, useRdfType?, rdfDirection?, inputFormat?, baseIRI?}) => string` | `nquads`, `ntriples` (refuses a named graph), `turtle`, `trig`, `rdfxml`, `jsonld`, `rdfc`; see "Datasets" |
 | `formats` | `() => [{name, read11, read12, write11, write12, engine}]` | the engine's list |
 | `canonicalize` | `(data, {format?, baseIRI?}) => string` | RDFC-1.0 canonical N-Quads |
-| `graphs` | `(Dataset) => Array<[iri, Dataset]>` | named graphs, default graph excluded |
+| `graphs` | `(Dataset) => Array<[NamedNode \| BlankNode, Dataset]>` | named graphs, default graph excluded |
 | `canonicalHash` | `(Dataset) => string` | RDFC-1.0 canonical N-Quads of one graph |
 | `queryRaw` | `(dataText, sparql, {dataFormat?, entail?, output?}) => object \| string` | one call, serialized answer: `json` (parsed), `csv`, `tsv`, `xml`, `table`, `ntriples` |
 | `queryHdt` | `(hdtBytes, sparql) => Bindings[] \| boolean` | SELECT/ASK over an HDT file's bytes |
@@ -1018,7 +1071,7 @@ const { conforms, report } = await validate(ds, await parse(shapesTtl)); // SHAC
 | `registerExtensionFunction`, `unregisterExtensionFunction`, `clearExtensionFunctions` | see above | SPARQL 1.1 §17.6 |
 | `registerServiceEndpoint`, `clearServiceEndpoints` | `(iri, data)` | `SERVICE <iri>` answers from this snapshot |
 | `shaclValidate` | `(data, shapes) => {conforms, report: Dataset}` | SHACL Core, SHACL-SPARQL, SHACL 1.2 node expressions |
-| `shexValidate` | `(data, schemaText, focus, shape?) => boolean` | ShExJ when the text starts with `{`, else ShExC; no `shape` = the schema's START |
+| `shexValidate` | `(data, schemaText, focus, shape?) => boolean` | ShExJ when the text starts with `{`, else ShExC; no `shape` = the schema's START; `focus`/`shape` are RDF/JS terms or N-Triples term strings (`'<http://…>'`, `'_:b'`) |
 | `owlClosure` | `(data, 'RDFS' \| 'OWL-RL') => Dataset` | input + derived triples, default graph |
 | `coreRdfsClosure`/`rhoDfClosure`, `rdfsPlusClosure` | `(data) => Dataset` | ρdf closure, RDFS-Plus closure |
 | `coreRdfsCheck`/`rhoDfFragmentCheck` | `(data) => {ok, fragment}` | ρdf fragment check |
