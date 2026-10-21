@@ -75,6 +75,19 @@ Linked Web Storage, three rules of the editor's draft (w3c/lws-protocol
   snapshot. The host makes the requests the engine names and reports each
   status to the new op `lwsDelivered`; `listen`/`openLwsStorage` take
   `notifications: false` to turn it off.
+- Moving resources (§Moving Resources;
+  https://github.com/danbri/factoidal/issues/914). The storage description
+  describes a `MoveResource` capability (`appliesTo` DataResource and
+  Container, `preservesIdentifier` false). A JSON Patch (or PUT) of a
+  resource's linkset that changes its `up` link moves it to that container,
+  with its descendants when it is a container, in one step: the answer is
+  200 with the new linkset and `Content-Location`, both containers get a new
+  ETag, and a subscriber hears one `Move` activity (`origin`, `target`). A
+  destination that is missing or not a container, a cycle, the storage
+  root, a name already taken, another storage or a removed `up` link is
+  409. The agent needs the delete of every moved resource and the create in
+  the destination. `listen`/`openLwsStorage` take `moves: false` to turn it
+  off. Theorem `move_tree`: a move keeps the containment hierarchy a tree.
 
 ### Breaking changes
 

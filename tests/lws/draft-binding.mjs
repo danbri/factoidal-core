@@ -122,7 +122,12 @@ const CHECKS = [
   'Conditional requests: If-Unmodified-Since before the last modification answers 412 for GET, PUT and DELETE (issue 911, F5)',
   'Conditional requests: If-Modified-Since is compared as an HTTP-date in all three formats (issue 911, F5)',
   'CLI: lws-serve --page-size N passes the page size to the engine',
-  'Create: five POSTs to one container in one second create five resources (issue 911, F6)'
+  'Create: five POSTs to one container in one second create five resources (issue 911, F6)',
+  'Moving Resources: the storage description describes MoveResource for DataResource and Container, preservesIdentifier false',
+  'Moving Resources: a JSON Patch of the up link moves a data resource (200, Content-Location, both listings, both container ETags)',
+  'Moving Resources: a container moves with its descendants',
+  'Moving Resources: a move to a missing container, to a data resource, into itself or a descendant, or without an up link answers 409 and moves nothing',
+  'Moving Resources: a subscriber to the old container receives one Move activity with origin and target'
 ]
 
 /** A local webhook receiver: records every POST and answers with the
@@ -584,6 +589,105 @@ async function main () {
       }
     })
 
+    // LWS 1.0 core §Moving Resources
+    // (https://github.com/danbri/factoidal/issues/914). Decided by
+    // formal/lean4/L4Factoidal/LWS/Move.lean.
+    const movePatch = (target, dest, ifMatch) => fetch(`${target}?linkset`, {
+      method: 'PATCH',
+      headers: { 'content-type': 'application/json-patch+json', ...(ifMatch ? { 'if-match': ifMatch } : {}) },
+      body: JSON.stringify([{ op: 'replace', path: '/linkset/0/up/0/href', value: dest }])
+    })
+    const ids = async (container) => {
+      const r = await fetch(container, { headers: { accept: 'application/lws+json' } })
+      return (await r.json()).items.map((i) => i.id)
+    }
+    await check(CHECKS[43], async () => {
+      const d = await (await fetch(`${o}/.well-known/lws-storage`, { headers: { accept: 'application/lws+cid' } })).json()
+      const cap = (d.capability || []).find((c) => c.type === 'MoveResource')
+      assert(cap !== undefined, JSON.stringify(d))
+      assert(JSON.stringify(cap.appliesTo) === '["DataResource","Container"]' && cap.preservesIdentifier === false,
+        JSON.stringify(cap))
+    })
+    for (const t of ['/mv/src/', '/mv/dst/']) {
+      await fetch(`${o}${t}`, { method: 'PUT', headers: { 'content-type': 'text/turtle' }, body: '' }).then((r) => r.text())
+    }
+    await fetch(`${o}/mv/src/a.txt`, { method: 'PUT', headers: { 'content-type': 'text/plain' }, body: 'a resource on the move' }).then((r) => r.text())
+    await check(CHECKS[44], async () => {
+      const tagOf = async (c) => {
+        const r = await fetch(c, { headers: { accept: 'application/lws+json' } })
+        await r.text()
+        return r.headers.get('etag')
+      }
+      const srcTag = await tagOf(`${o}/mv/src/`)
+      const dstTag = await tagOf(`${o}/mv/dst/`)
+      const ls = await fetch(`${o}/mv/src/a.txt?linkset`)
+      const doc = await ls.json()
+      assert(doc.linkset[0].up[0].href === `${o}/mv/src/`, JSON.stringify(doc))
+      const r = await movePatch(`${o}/mv/src/a.txt`, `${o}/mv/dst/`, ls.headers.get('etag'))
+      const moved = await r.json()
+      assert(r.status === 200, `move answered ${r.status} ${JSON.stringify(moved)}`)
+      assert(r.headers.get('content-location') === '/mv/dst/a.txt?linkset', r.headers.get('content-location'))
+      assert(moved.linkset[0].anchor === `${o}/mv/dst/a.txt` && moved.linkset[0].up[0].href === `${o}/mv/dst/`,
+        JSON.stringify(moved))
+      const g = await fetch(`${o}/mv/dst/a.txt`)
+      assert(g.status === 200 && (await g.text()) === 'a resource on the move', `GET new ${g.status}`)
+      assert(linkTarget(g.headers.get('link'), 'up') === '/mv/dst/', g.headers.get('link'))
+      const old = await fetch(`${o}/mv/src/a.txt`)
+      await old.text()
+      assert(old.status === 404, `GET old ${old.status}`)
+      assert(JSON.stringify(await ids(`${o}/mv/dst/`)) === JSON.stringify([`${o}/mv/dst/a.txt`]), 'destination listing')
+      assert((await ids(`${o}/mv/src/`)).length === 0, 'source listing')
+      assert(await tagOf(`${o}/mv/src/`) !== srcTag && await tagOf(`${o}/mv/dst/`) !== dstTag, 'a container ETag did not change')
+    })
+    await check(CHECKS[45], async () => {
+      await fetch(`${o}/mv/src/box/inner.txt`, { method: 'PUT', headers: { 'content-type': 'text/plain' }, body: 'carried along' }).then((r) => r.text())
+      const r = await movePatch(`${o}/mv/src/box/`, `${o}/mv/dst/`)
+      await r.text()
+      assert(r.status === 200, `move answered ${r.status}`)
+      assert((await ids(`${o}/mv/dst/`)).includes(`${o}/mv/dst/box/`), 'destination listing')
+      assert(JSON.stringify(await ids(`${o}/mv/dst/box/`)) === JSON.stringify([`${o}/mv/dst/box/inner.txt`]), 'moved container listing')
+      const g = await fetch(`${o}/mv/dst/box/inner.txt`)
+      assert(g.status === 200 && (await g.text()) === 'carried along', `GET inner ${g.status}`)
+      assert((await ids(`${o}/mv/src/`)).length === 0, 'source listing')
+    })
+    await check(CHECKS[46], async () => {
+      await fetch(`${o}/mv/dst/box/deeper/`, { method: 'PUT', headers: { 'content-type': 'text/turtle' }, body: '' }).then((r) => r.text())
+      await fetch(`${o}/mv/plain.txt`, { method: 'PUT', headers: { 'content-type': 'text/plain' }, body: 'no container' }).then((r) => r.text())
+      const tries = [
+        [`${o}/mv/dst/a.txt`, `${o}/mv/nowhere/`],
+        [`${o}/mv/dst/a.txt`, `${o}/mv/plain.txt`],
+        [`${o}/mv/dst/box/`, `${o}/mv/dst/box/`],
+        [`${o}/mv/dst/box/`, `${o}/mv/dst/box/deeper/`]
+      ]
+      for (const [t, d] of tries) {
+        const r = await movePatch(t, d)
+        const j = await r.json()
+        assert(r.status === 409 && r.headers.get('content-type') === 'application/problem+json',
+          `${t} to ${d} answered ${r.status} ${JSON.stringify(j)}`)
+      }
+      const rm = await fetch(`${o}/mv/dst/a.txt?linkset`, {
+        method: 'PATCH',
+        headers: { 'content-type': 'application/json-patch+json' },
+        body: JSON.stringify([{ op: 'remove', path: '/linkset/0/up' }])
+      })
+      await rm.text()
+      assert(rm.status === 409, `removing up answered ${rm.status}`)
+      const g = await fetch(`${o}/mv/dst/a.txt`)
+      await g.text()
+      assert(g.status === 200 && linkTarget(g.headers.get('link'), 'up') === '/mv/dst/', 'the resource moved')
+      assert((await ids(`${o}/mv/dst/box/`)).includes(`${o}/mv/dst/box/deeper/`), 'the container moved')
+    })
+    // LWS §Moving Resources: "Such a server SHOULD respond to subsequent
+    // requests on the previous identifiers of the resource and of its
+    // auxiliary resources with 301 Moved Permanently". Not implemented;
+    // the xfail turns the run red when it starts to pass.
+    await xfail('Moving Resources: a request to the previous identifier of a moved resource answers 301 with Location',
+      'https://github.com/danbri/factoidal/issues/914', async () => {
+        const r = await fetch(`${o}/mv/src/a.txt`, { redirect: 'manual' })
+        await r.text()
+        assert(r.status === 301 && r.headers.get('location') !== null, `answered ${r.status}`)
+      })
+
     // LWS 1.0 core §Notifications and the webhook notification suite
     // (https://github.com/danbri/factoidal/issues/890). Decided by
     // formal/lean4/L4Factoidal/LWS/Notifications.lean.
@@ -728,6 +832,53 @@ async function main () {
         assert(state.active === false, JSON.stringify(state))
         receiver.respond([202])
       })
+
+      await check(CHECKS[47], async () => {
+        await fetch(`${o}/mvn/src/`, { method: 'PUT', headers: { 'content-type': 'text/turtle' }, body: '' }).then((r) => r.text())
+        await fetch(`${o}/mvn/dst/`, { method: 'PUT', headers: { 'content-type': 'text/turtle' }, body: '' }).then((r) => r.text())
+        await fetch(`${o}/mvn/src/m.txt`, { method: 'PUT', headers: { 'content-type': 'text/plain' }, body: 'm' }).then((r) => r.text())
+        receiver.respond([202])
+        const s = await subscribe({ '@context': ctx, type: 'WebhookSubscription', topic: [`${o}/mvn/src/`], inbox: `${receiver.origin}/hook/move` })
+        await s.text()
+        assert(s.status === 201, `subscribe answered ${s.status}`)
+        const r = await movePatch(`${o}/mvn/src/m.txt`, `${o}/mvn/dst/`)
+        await r.text()
+        assert(r.status === 200, `move answered ${r.status}`)
+        await settle()
+        const acts = received(receiver, '/hook/move')
+        assert(acts.length === 1, JSON.stringify(acts))
+        const a = acts[0]
+        assert(a.type.includes('Move') && a.origin === `${o}/mvn/src/` && a.target === `${o}/mvn/dst/` &&
+          a.object.id === `${o}/mvn/dst/m.txt` && a.object.type.includes('DataResource'), JSON.stringify(a))
+      })
+
+      // https://github.com/danbri/factoidal/issues/915: an inbox that names
+      // this server through another host name is not detected, and
+      // deliveries are not rate limited. Each xfail turns the run red when
+      // it starts to pass.
+      await xfail('Notifications: an inbox that names this server by another host name (localhost) is refused with 400',
+        'https://github.com/danbri/factoidal/issues/915', async () => {
+          const port = new URL(o).port
+          const r = await subscribe({ '@context': ctx, type: 'WebhookSubscription', topic: [`${o}/loop/`], inbox: `http://localhost:${port}/loop/` })
+          const j = await r.json()
+          // Cancel at once, so that a subscription made here cannot loop.
+          if (typeof j.subscription === 'string') await fetch(j.subscription, { method: 'DELETE' }).then((x) => x.text())
+          assert(r.status === 400, `answered ${r.status}`)
+        })
+      await xfail('Notifications: deliveries to one inbox are rate limited (30 changes in one burst give fewer than 30 POSTs)',
+        'https://github.com/danbri/factoidal/issues/915', async () => {
+          const s = await (await subscribe({ '@context': ctx, type: 'WebhookSubscription', topic: [`${o}/burst/`], inbox: `${receiver.origin}/hook/burst` })).json()
+          try {
+            for (let i = 0; i < 30; i += 1) {
+              await fetch(`${o}/burst/r${i}.txt`, { method: 'PUT', headers: { 'content-type': 'text/plain' }, body: `${i}` }).then((x) => x.text())
+            }
+            await settle()
+            const posts = receiver.got.filter((x) => x.path === '/hook/burst').length
+            assert(posts < 30, `${posts} POSTs for 30 changes`)
+          } finally {
+            await fetch(s.subscription, { method: 'DELETE' }).then((x) => x.text())
+          }
+        })
 
       // LWS §Access Requests and Grants is not implemented; the xfail turns
       // the run red when it starts to pass.
