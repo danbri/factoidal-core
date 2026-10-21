@@ -158,16 +158,36 @@ What makes each one exit 2 today:
 | `solid-client-interop.sh` | the module carries no Solid client ops; also refuses to start the ~250 MB Community Solid Server download below 2 GB free |
 | `solid-conformance-harness.sh` | no Docker daemon, or no `SOLID_HARNESS_ENV` credentials file |
 
-Measured 2026-10-20 (fixtures symlinked from the main checkout; `mktemp`
-templates and the CSS 7.2 config name repaired that day):
-`solid-server-interop.sh` exits 1 — solid-crud-tests 2 pass, 6 fail (out of
-8), the same six with the wasm before and after the LWS draft binding
-(storage root parsed as N3 fails, the four RDFa/JSON-LD/Turtle conversion
-cases, POST into a folder); web-access-control-tests not run (external
-OIDC). `solid-client-interop.sh` exits 1 — Community Solid Server 7.2 with
-`@css:config/file.json` answers 401 to every unauthenticated write (0 pass,
-5 fail, out of 5). `solid-conformance-harness.sh` exits 2 — no Docker
-daemon. Tracking: https://github.com/danbri/factoidal/issues/892.
+Measured 2026-10-21 (https://github.com/danbri/factoidal/issues/892):
+
+* `solid-server-interop.sh`: solid-crud-tests 27 pass, 0 fail, 8 expected
+  fail, 41 skipped (out of 76); web-access-control-tests not run (external
+  OIDC), so the script exits 2. Before the repairs of that day the same
+  run gave 20 pass, 15 fail. The expected failures are the rows of
+  `tests/solid/server/crud-xfail.tsv`, each with its open issue
+  (895: the test POSTs to a missing container, §5.3 requires 404; 896: the
+  test's N3 Patch is not N3; 897: no RDFa reader, a MAY; 898: no
+  notification channels). A listed test that passes turns the run red.
+  The 41 skips: 32 websockets-pubsub checks (`SKIP_WPS`), 8 behind the
+  suite's own `describe.only`, 1 `describe.skip`.
+* The earlier figure "2 pass, 6 fail (out of 8)" counted one of nine test
+  files: the other seven failed to LOAD, because the suite's notification
+  client reads `/tls/server.key` (present only in its Docker image) unless
+  `SKIP_WPS` is set. The script now sets it and counts a test file that
+  does not load as a failure. Check the denominator against the suite's
+  file list before quoting a score.
+* The script copies each suite to a temporary directory before `npm ci`
+  (`SOLID_INTEROP_FIXTURES` names another fixture checkout,
+  `SOLID_INTEROP_WORK` keeps the installed copy between runs), so no
+  `node_modules` is written into a checkout.
+* `solid-client-interop.sh`: 10 pass, 0 fail, 0 skipped (out of 10) against
+  Community Solid Server 7.2 with `tests/solid/client/css-public-write.json`
+  (file-root with allow-all authorization: TEST ONLY). With
+  `@css:config/file.json` every unauthenticated write answered 401.
+  `SOLID_CSS_BIN` runs a CSS installed outside the checkout instead of
+  `npx`.
+* `solid-conformance-harness.sh`: not run — the Docker client is installed
+  but no daemon runs.
 
 `tests/solid/client/against-own-server.mjs` puts our client and our
 server on two ends of one socket, so a shared misreading of the

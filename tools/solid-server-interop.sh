@@ -151,25 +151,59 @@ install_suite() { # directory, label
   return 0
 }
 
-# Read one Jest --json report and print its labelled score.
-report() { # json path, label
-  local path="$1" label="$2"
+# Read one Jest --json report and print its labelled score. An optional
+# third argument names an expected-failure TSV (full test name, tab, issue
+# URL): a listed test that fails is counted apart as an expected failure; a
+# listed test that passes, or a listed name the report does not hold, makes
+# the run fail (stale row), so the issue cannot be forgotten.
+report() { # json path, label, [xfail tsv]
+  local path="$1" label="$2" xfail="${3:-}"
   node -e '
     const fs = require("node:fs")
-    const [path, label] = process.argv.slice(1)
+    const [path, label, xfailPath] = process.argv.slice(1)
     let report
     try { report = JSON.parse(fs.readFileSync(path, "utf8")) } catch (error) {
       console.log(`${label}: no report was written (${error.message})`)
       process.exitCode = 1
       process.exit()
     }
-    const pass = report.numPassedTests || 0
-    const fail = report.numFailedTests || 0
-    const skip = (report.numPendingTests || 0) + (report.numTodoTests || 0)
-    const total = pass + fail + skip
-    console.log(`${label}: ${pass} pass, ${fail} fail, ${skip} skipped (out of ${total})`)
-    if (fail > 0) process.exitCode = 1
-  ' "$path" "$label"
+    const xfail = new Map()
+    if (xfailPath) {
+      for (const line of fs.readFileSync(xfailPath, "utf8").split("\n")) {
+        if (line === "" || line.startsWith("#")) continue
+        const [name, issue] = line.split("\t")
+        xfail.set(name, issue)
+      }
+    }
+    let pass = 0, fail = 0, skip = 0, expected = 0
+    const stale = [], seen = new Set(), unexpected = []
+    for (const file of report.testResults || []) {
+      if ((file.assertionResults || []).length === 0 && file.status === "failed") {
+        fail += 1
+        unexpected.push(`${file.name}: the test file did not load`)
+      }
+      for (const a of file.assertionResults || []) {
+        seen.add(a.fullName)
+        const listed = xfail.has(a.fullName)
+        if (a.status === "passed") {
+          pass += 1
+          if (listed) stale.push(`${a.fullName} passes; its row names ${xfail.get(a.fullName)}`)
+        } else if (a.status === "failed") {
+          if (listed) expected += 1
+          else { fail += 1; unexpected.push(a.fullName) }
+        } else skip += 1
+      }
+    }
+    for (const name of xfail.keys()) {
+      if (!seen.has(name)) stale.push(`${name} is not in the report`)
+    }
+    const total = pass + fail + skip + expected
+    for (const name of unexpected) console.log(`  FAIL ${name}`)
+    for (const row of stale) console.log(`  STALE ${row}`)
+    console.log(`${label}: ${pass} pass, ${fail} fail, ${expected} expected fail, ` +
+      `${skip} skipped (out of ${total})`)
+    if (fail > 0 || stale.length > 0) process.exitCode = 1
+  ' "$path" "$label" "$xfail"
 }
 
 # --- solid-crud-tests ---------------------------------------------------
@@ -195,7 +229,7 @@ if install_suite "$CRUD" "solid-crud-tests"; then
     SKIP_WPS="${SKIP_WPS-1}" \
     ./node_modules/.bin/jest test/surface/ --json --outputFile="$CRUD_REPORT" ) \
     > /dev/null 2>&1 || CRUD_RC=$?
-  report "$CRUD_REPORT" "solid-crud-tests" || FAILED=1
+  report "$CRUD_REPORT" "solid-crud-tests" "$ROOT/tests/solid/server/crud-xfail.tsv" || FAILED=1
   cp "$CRUD_REPORT" "${CRUD_REPORT_KEEP:-/dev/null}" 2>/dev/null; rm -f "$CRUD_REPORT"
 else
   echo "solid-crud-tests: not run - npm ci failed in this environment"
