@@ -73,7 +73,7 @@ import Wasm.Ops.FromDataset
 import L4Factoidal.RDF.Sink
 import L4Factoidal.RDF.Format
 import L4Factoidal.RDF.TermJson
-import L4Factoidal.RDF.QuadsBin
+import L4Factoidal.RDF.QuadsBinTheorems
 import L4Factoidal.RDF.Isomorphism
 import L4Factoidal.Syntax.IriResolve
 

@@ -144,7 +144,7 @@ def fullOnlyOpNames : List String :=
   , "mathmlEval", "xformsRecalc", "rifEval"
   , "tableauMaterialise", "tableauDlInconsistent", "queryHdt", "shexValidate"
   , "datasetFromCsvw", "datasetFromRml", "datasetFromJsonLd", "datasetToJsonLd"
-  , "datasetShexValidate", "datasetRifEval"
+  , "datasetShexValidate", "datasetRifEval", "datasetQuadsBin"
   , "storeOpen", "storeHandleQuery", "storeHandleList", "storeHandleClose"
   , "storeServeKeys", "storeServeOpen", "storeServeRequest", "storeServeCommit"
   , "storeServeClose", "tdb2ServeKeys", "tdb2ServeOpen"

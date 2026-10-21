@@ -21,17 +21,15 @@ Layout (`binSpec`), every number a u32 little-endian:
       first three an index into the terms, the graph 0 for the default
       graph and 1 + an index for a named graph.
 
-Theorems:
-* `compactFast_sound`: the table and indices of `TermJson.compactFast` read
-  back as exactly the quads (so the run-time check of
-  `TermJson.compactCertified` is not needed, and `compactCertified_eq` says it
-  always succeeds);
-* `decodeBin_binSpec`: the bytes of `binSpec` read back (`decodeBin`) as the
-  table and indices they were written from;
-* `binFast_toList`: the `ByteArray` writer `binFast` writes the bytes of
-  `binSpec`;
-* `decodeBin_quadsBin`: together, `decodeBin` and `TermJson.decodeCompactArr`
-  read the region of `quadsBin qs` back as `qs`.
+Theorems (in `L4Factoidal/RDF/QuadsBinTheorems.lean`), so no run-time check
+is needed (the JSON form `TermJson.compactCertified` checks at run time):
+* `decodeBin_binSpec` (`QuadsBinTheorems`): the bytes of `binSpec` read back
+  (`decodeBin`) as the table and indices they were written from;
+* `quadsBin_binSpec`: the one-pass `ByteArray` writer `quadsBin` writes the
+  bytes of `binSpec` for a table and index lists that read back as the quads
+  (`TermJson.decodeCompactArr`);
+* `decodeBin_quadsBin`: together, the region of `quadsBin qs` reads back as
+  exactly `qs`.
 -/
 import L4Factoidal.RDF.TermJson
 import L4Factoidal.Storage.TermCodecTheorems
@@ -60,12 +58,30 @@ def ixSpec : List Nat → Option (List UInt8)
       else none
   | _ => none
 
-def binSpec (tbl : Array Term) (ixs : List (List Nat)) : Option (List UInt8) := do
+/-- The bytes of the terms, one after another. -/
+def serTerms : List Term → Option (List UInt8)
+  | [] => some []
+  | t :: ts =>
+      match serializeDeltaTerm? t, serTerms ts with
+      | some a, some r => some (a ++ r)
+      | _, _ => none
+
+/-- The bytes of the index lists, one after another. -/
+def serIxs : List (List Nat) → Option (List UInt8)
+  | [] => some []
+  | ix :: r =>
+      match ixSpec ix, serIxs r with
+      | some a, some b => some (a ++ b)
+      | _, _ => none
+
+/-- **The layout.** -/
+def binSpec (tbl : Array Term) (ixs : List (List Nat)) : Option (List UInt8) :=
   if tbl.size < two32 ∧ ixs.length < two32 then
-    let ts ← tbl.toList.mapM serializeDeltaTerm?
-    let qs ← ixs.mapM ixSpec
-    some (magic ++ writeU32LE (UInt32.ofNat tbl.size) ++ writeU32LE (UInt32.ofNat ixs.length) ++
-      ts.flatten ++ qs.flatten)
+    match serTerms tbl.toList, serIxs ixs with
+    | some ts, some qs =>
+        some (magic ++ writeU32LE (UInt32.ofNat tbl.size) ++ writeU32LE (UInt32.ofNat ixs.length) ++
+          ts ++ qs)
+    | _, _ => none
   else none
 
 /-! ## The reader of the specification -/
