@@ -106,6 +106,7 @@ A response is a JSON object with the same shape minus the method:
 | `auth` (`solidOpen`) | absent | Solid-OIDC with DPoP (`L4Factoidal/Solid/Server/Oidc.lean`, https://github.com/danbri/factoidal/issues/899): `{"issuers":[{"issuer":IRI,"jwks":{…}?}],"leeway":S?,"iatWindow":S?,"refreshInterval":S?,"checkProfileIssuer":B?}`. Turns `enforceWac` on unless the configuration sets it. `solidStep` may then answer `{"fetch":{"kind":"issuer"\|"profile","key":…,"url":…}}`: the host fetches that URL, passes `{kind,key,url,status,body,now?}` to `solidFetched`, follows any `fetch` in the answer, and steps the request again. With neither `auth` nor `insecureNoAuth` authentication is off; `factoidal solid-serve` refuses to start in that state. |
 | `auth` (`lwsOpen`) | absent | `lwsOpen` only. The authorization configuration of `L4Factoidal/LWS/Authorization.lean`: `{"issuers":[{"issuer":IRI,"jwks":{"keys":[…]}?}],"audience":IRI?,"leeway":S?,"refreshInterval":S?}`. With neither `auth` nor `insecureNoAuth`, authorization is ENFORCED with no trusted issuer: only what the ACLs give to the public is served. |
 | `insecureNoAuth` | `false` | `lwsOpen` and `solidOpen`. `true` is the development mode with no authorization (`factoidal lws-serve --insecure-no-auth`); then `agent` stands as before. `auth` and `insecureNoAuth` together are refused. |
+| `moves` | `true` | `lwsOpen` only. `false` turns moving resources off: no `MoveResource` capability, and a change of an `up` link is refused with 409 (`L4Factoidal/LWS/Move.lean`). |
 | `notifications` | `true` | `lwsOpen` only. `false` turns LWS notifications off: no `NotificationService` in the storage description and no subscription endpoint (`L4Factoidal/LWS/Notifications.lean`). |
 | `entropy` | absent | `lwsOpen` only. At least 16 random bytes, base64, from the host. The seed of the notification signing key (Ed25519) when the snapshot holds none, and of the run tag in activity identifiers. Without it deliveries are not signed. `npm/factoidal/lws/server.mjs` passes 32 bytes from `crypto.getRandomValues`. |
 | `rootAcl` | absent | the ACL document (Turtle) of the storage root, written when the storage is created. Web Access Control §3.2 requires the root container's ACL resource to have a representation, and under enforcement a storage cannot write its own: the request that would write it is the first request it would authorize. It is therefore a host provisioning input. |
@@ -267,7 +268,16 @@ server does not advertise.
 | Metadata | 412 on failed precondition for linkset PUT/PATCH | tested (If-Match) | `linksetStep` |
 | Discovery | `lws#storage` link on every GET/HEAD | tested | `lwsGuardLwsLinks` |
 | Discovery | storage description, `application/lws+cid`, `@context` array, `id`, `type`, StorageRoot service | tested | `lwsGuardStorageDescription` |
-| Discovery | MoveResource capability when `up` is modifiable | n/a (`up` is not modifiable) | none |
+| Discovery | MoveResource capability when `up` is modifiable; `appliesTo` a set of strings, `preservesIdentifier` a boolean | tested (`appliesTo` DataResource and Container, `preservesIdentifier` false; config `moves: false` turns it off) | `MoveTests` "Discovery"; draft-binding "Moving Resources: the storage description" |
+| Moving Resources | a change of the `up` link by JSON Patch on the linkset moves the resource; MUST describe `MoveResource`; without it MUST refuse with 4xx | tested (PUT of the linkset too; without the capability 409) | `MoveTests`; draft-binding "Moving Resources" (https://github.com/danbri/factoidal/issues/914) |
+| Moving Resources | MUST atomically remove from the former parent's `items` and add to the destination's; MUST update the ETag of both containers | tested (one function from store to store; both containers stamped; theorems `move_unmoved`, `move_moved`, `move_vacated`) | `MoveTests`; draft-binding "moves a data resource" |
+| Moving Resources | destination MUST be an existing container; MUST reject removal of `up` | tested (409) | `MoveTests` "Refusals"; draft-binding "answers 409" |
+| Moving Resources | containment integrity: a container MUST NOT move into itself or a descendant | tested (409; theorem `move_tree` with `tree_acyclic`) | `MoveTests`; draft-binding |
+| Moving Resources | content and user-defined metadata unaffected; links the client may not modify preserved; auxiliary resources stay bound | tested (theorem `move_moved`; ACL and description resources move with their primary resource) | `MoveTests` "Client links travel" |
+| Moving Resources | a server that does not preserve identifiers MUST answer 200 with the updated linkset (new `anchor`) and `Content-Location` | tested | `MoveTests`; draft-binding |
+| Moving Resources | SHOULD answer the previous identifiers with 301 and `Location` | missing | https://github.com/danbri/factoidal/issues/914; draft-binding xfail |
+| Moving Resources | containers MAY move (descendants with them), indicated by `Container` in `appliesTo` | tested | `MoveTests` "A container moves"; draft-binding "a container moves" |
+| Moving Resources | MUST NOT move unless the agent may delete the resource (the whole subtree for a container) and create in the destination | tested (Web Access Control: Write, or Control for an ACL resource, on every moved resource; Append on the destination) | `MoveTests` "Authorization" |
 | Status mappings | SHOULD use RFC 9457 problem details | tested | `lwsGuardProblemDetails` |
 | Authorization Server Discovery | 401 MUST carry `WWW-Authenticate` with `resource_metadata` (RFC 9728 §5.1) and a `Link` to the storage (`rel` lws#storage) | tested (the link names the storage's canonical URI, the storage description `id`, as every other response does, and the default token audience is the same IRI: https://github.com/danbri/factoidal/issues/911 F4) | `AuthorizationTests` "Missing token", `storageIri` guards; authorization.mjs "Discovery"; draft-binding "Authorization" |
 | Protected Resource Metadata | RFC 9728 document; `authorization_servers` REQUIRED with at least one issuer; `resource` is the requested resource | tested (served at `/.well-known/oauth-protected-resource<path>`, RFC 9728 §3.1) | `AuthorizationTests` "The metadata document"; authorization.mjs |
@@ -282,7 +292,7 @@ server does not advertise.
 | Envelope Properties | `type` Notification, `storage`, `activity` (object or array) | tested | `NotificationsTests` "Deliveries"; draft-binding "Create, Update and Delete" |
 | Activity Properties | `id`, `type` array, `object` with `id` and `type` array (`Container`, `DataResource`), `published` RFC 3339; `target` on Create, `origin` on Delete | tested (`id` a `urn:uuid`) | `NotificationsTests`; draft-binding |
 | Activity Types | MUST support Create, Update, Delete | tested (type decided from the store before and after the step, theorem `classify_sound`) | `NotificationsTests`; draft-binding |
-| Activity Types | Move, for a server that moves resources between containers | n/a (`up` is not modifiable; moving resources is https://github.com/danbri/factoidal/issues/914) | none |
+| Activity Types | Move, for a server that moves resources between containers (`origin`, `target`, `object` after the move); SHOULD be one Move, not Delete and Create | tested (one Move per move, theorem `mem_changesOf_sound`) | `MoveTests` "The Move notification"; draft-binding "one Move activity" |
 | Batching | MAY combine activities in one envelope | tested (one envelope per subscription per request) | `NotificationsTests` "Recursive scope and batching" |
 | Subscriptions | authenticated POST, body `application/lws+json`; `type` one of the advertised types; `topic` an array of URIs | tested (401 with no token, 415 for another media type, 400 for a missing or unadvertised `type` or a missing `topic`) | `NotificationsTests` "Negative requests"; draft-binding; authorization.mjs "anonymous" |
 | Subscription Scope | a container subscription is recursive; a data resource subscription covers only itself | tested | `NotificationsTests`; draft-binding "a change outside the topic" |
@@ -300,7 +310,12 @@ server does not advertise.
 | (server choice) | request paths with dot segments or encoded traversal are refused | tested | `lwsGuardTraversalRefused`; draft-binding "Paths" |
 | (server choice) | storage persists under `DIR` | tested | `lwsGuardSnapshotRoundTrip`, `lwsGuardSnapshotRefusesTraversal`; draft-binding "Persistence" |
 
-Counts: 60 tested, 1 missing, 3 not applicable (out of 64 rows). The rows
+Counts: 70 tested, 2 missing, 1 not applicable (out of 73 rows). Updated
+2026-10-21 for https://github.com/danbri/factoidal/issues/914: the Discovery
+`MoveResource` row and the Move activity row became tested, and nine rows of
+§Moving Resources were added (eight tested; the 301 SHOULD is missing, with
+an xfail). The count line before this update said 60 tested, 1 missing,
+3 not applicable (out of 64 rows). The rows
 Read (ETag, conditional requests), Content Negotiation, Create (container,
 identity hint) and Authorization Server Discovery were made exact on
 2026-10-21 for the defects the Touchstone harness found
@@ -340,7 +355,7 @@ Score, from `lake exe l4lws-probe`:
 
 ```
 guarded checks: 10 pass, 0 fail (out of 10)
-registry: 2 proved, 10 guarded, 0 host-verified, 6 open (out of 18)
+registry: 3 proved, 10 guarded, 0 host-verified, 6 open (out of 19)
 ```
 
 Table generated by `lake exe l4lws-probe -- --markdown`.
@@ -365,6 +380,7 @@ Table generated by `lake exe l4lws-probe -- --markdown`.
 | `lws-core-16` | Notifications | notification — a message describing an event that has occurred on a resource. | `L4Factoidal.LWS.Notifications` | guarded | lwsGuardNotificationsDelivered |
 | `lws-core-17` | Access Requests and Grants | access grant — a data object created by a storage controller, expressing an ability for an agent to perform specific actions on storage resources within certain defined constraints. | `(none)` | open | not in the first slice |
 | `lws-core-18` | Terminology | storage description — an LWS resource, conforming to the requirements of a W3C Controlled Identifier document [CID-1.0], that describes a storage along with its services and capabilities. | `L4Factoidal.LWS.Discovery.storageDescriptionPath` | open | the link is advertised; the description document does not yet conform to CID 1.0 |
+| `lws-core-19` | Moving Resources | On a successful update, the server MUST atomically remove the resource from the items list of its former parent container and add it to the items list of the destination container. | `L4Factoidal.LWS.Move.move` | proved | L4Factoidal.LWS.move_tree |
 
 ## Solid Protocol
 

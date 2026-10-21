@@ -640,9 +640,19 @@ fragment carries a digest of the key, so a new key gets a new identifier. -/
 def notificationKeyId (baseIri x : String) : String :=
   storageIdOf baseIri ++ "#notification-key-" ++ hex8 (fnv1a32 x.toUTF8)
 
+/-- The `MoveResource` capability (§Storage Capabilities; moves are decided
+by `L4Factoidal.LWS.Move`): data resources and containers move, and a moved
+resource gets a new identifier. -/
+def moveCapability : Json :=
+  .object [ ("type", .string "MoveResource")
+          , ("appliesTo", .array [.string "DataResource", .string "Container"])
+          , ("preservesIdentifier", .bool false) ]
+
 /-- The storage description (§Discovery, "Storage Description Resource"),
-serialised as `application/lws+cid`. No `MoveResource` capability is
-described: this server does not let a client change an `up` link.
+serialised as `application/lws+cid`. With `move`, it describes the
+`MoveResource` capability; without it, none, and a change of an `up` link
+is refused (§Moving Resources: "A server that does not allow it MUST reject
+the request [...] and MUST NOT describe a `MoveResource` capability").
 
 With `notify`, the description also carries the `NotificationService` of
 LWS §Notification Discovery ("A storage that supports notifications MUST
@@ -660,7 +670,7 @@ these services MUST advertise it with a service object in the service array
 of its storage description resource" and "Each service object MUST include a
 serviceEndpoint property"). -/
 def storageDescription (baseIri : String) (notify : Bool := false)
-    (keyX : Option String := none) (typeIndex : Bool := false) : String :=
+    (keyX : Option String := none) (move : Bool := false) (typeIndex : Bool := false) : String :=
   let sid := storageIdOf baseIri
   let keyMembers : List (String × Json) :=
     match notify, keyX with
@@ -692,6 +702,7 @@ def storageDescription (baseIri : String) (notify : Bool := false)
     [ ("@context", .array [.string cidContext, .string lwsProfile])
     , ("id", .string sid)
     , ("type", .string "Storage") ] ++ keyMembers ++
+    (if move then [("capability", .array [moveCapability])] else []) ++
     [ ("service", .array ([ .object
         [ ("type", .string "StorageRoot")
         , ("serviceEndpoint", .string (iriOfPath baseIri rootPath)) ] ] ++ notifService ++

@@ -398,6 +398,7 @@ theorem indexedStoreLaws (S : Store σ) (L : StoreLaws S) : StoreLaws (IndexedSt
   pathsLookup := fun s p => L.pathsLookup s.base p
   nowTick := fun s => L.nowTick s.base
   lookupTick := fun s p => L.lookupTick s.base p
+  lookupPath := fun s p e h => L.lookupPath s.base p e h
 
 /-- The invariant of every indexed state, in terms of the indexed store. -/
 theorem IxState.mem_iff {S : Store σ} (L : StoreLaws S) (st : IxState S) (f : Fact) (p : String) :

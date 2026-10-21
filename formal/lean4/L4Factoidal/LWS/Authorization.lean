@@ -389,8 +389,17 @@ def decide (V : Verifiers) (S : Store σ) (cfg : Config) (a : AuthzConfig) (now 
     let gate (who : Option String) : Decision :=
       let subject := authorizationSubject path
       let mode := requiredMode r.method (targetsAcl path)
-      if allowed S aclGraphOf cfg.baseIri st subject
-          { webId := who, origin := r.header? "origin" } mode then
+      let may (p : String) (m : L4Factoidal.Solid.Server.Mode) : Bool :=
+        allowed S aclGraphOf cfg.baseIri st (authorizationSubject p)
+          { webId := who, origin := r.header? "origin" } m
+      -- LWS §Moving Resources: a move needs the delete of every moved
+      -- resource (the whole subtree of a container) and a create in the
+      -- destination, evaluated before the move is applied.
+      let moveOk : Bool := match movePlanOf? S cfg.baseIri cfg.moves r st with
+        | none => true
+        | some plan => plan.moves.all (fun m => may m.1 (requiredMode "DELETE" (targetsAcl m.1))) &&
+            may plan.dest (requiredMode "POST" false)
+      if may path mode && moveOk then
         .proceed who
       else match who with
         | none => .respond (challenge cfg a path none)
