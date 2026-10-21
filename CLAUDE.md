@@ -757,6 +757,30 @@ https://github.com/danbri/factoidal/issues/912 (type index and search),
 https://github.com/danbri/factoidal/issues/913 (access grants),
 https://github.com/danbri/factoidal/issues/914 (moving resources).
 
+### LWS extras: Merkle, encryption at rest, confidential computing, search results (owner, 2026-10-21)
+
+> "1. After, yes. As an optional, probably default off until we settle on
+> stronger motivating usecase but good to have the fundamentals there and I
+> believe we have Merkel in the codebase somewhere already.
+> 2. Yes env var please. Again off by default but good to show we can.
+> 3. Research note for now.
+> Also what do we think a Content-Locatioon results resource looks like? Can
+> we draft an anticipatory impl flagged as likely unstable?"
+
+- Merkle trees (https://github.com/danbri/factoidal/issues/919): after
+  access grants (https://github.com/danbri/factoidal/issues/913) land. An
+  option, off by default. Build on `L4Factoidal/Storage/BlockMerkle.lean`
+  (hash as a parameter; pure Lean SHA-256 as the specification instance).
+- Encryption at rest of the LWS storage: key from an environment variable,
+  off by default. Crypto per `skills/crypto-policy`.
+- Confidential computing (SEV-SNP, TDX, Nitro, SGX, TPM measured boot): a
+  research note only.
+- Type search `Content-Location` results resource: an anticipatory
+  implementation, off by default and marked unstable in code, docs and the
+  storage description, because lws10-index defines no such resource and only
+  says a server that exposes one "MUST subject it to the same authorization
+  filtering on every access and MUST prevent its reuse across clients".
+
 ## Reading owner steers: prioritization is not prohibition
 
 The owner usually steers this project from a phone, between other
