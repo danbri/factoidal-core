@@ -13,6 +13,18 @@ syntax and runs in `npm test`.
 
 These shapes could not be kept:
 
+- `shexValidate` and `Dataset.validateShex`: a focus or shape given as a
+  string is read as one RDF 1.2 N-Triples term (`'<http://…>'` or `'_:b'`);
+  a bare IRI string is refused. Every API that takes a term as a string
+  now reads it through one engine reader (`TermJson.readTermString`), so
+  `_:x` is always a blank node and `<…>` always an IRI.
+- `graphs()` returns `[NamedNode|BlankNode, Dataset]` pairs, not
+  `[string, Dataset]`, so an IRI graph and a blank-node graph with the same
+  text are never confused.
+- A literal with a language and a direction has datatype
+  `rdf:dirLangString` (RDF 1.2 Concepts; RDF/JS Data Model); before, the
+  RDF/JS default gave `rdf:langString`.
+
 - `factoidal lws-serve` and `@factoidal/core/lws` enforce storage-server
   authorization from the LWS editor's draft (401 with
   `WWW-Authenticate: Bearer resource_metadata`, the RFC 9728 metadata
@@ -63,6 +75,18 @@ These shapes could not be kept:
   `TermJson.quadPage_append`, `XSD.JsValue.doubleLexical_inLexicalSpace`,
   `XSD.JsValue.integerLexical_inLexicalSpace`,
   `XSD.JsValue.jsLiteral_number_double`, `XSD.JsValue.jsLiteral_number_integer`.
+
+### Added
+
+- An extension function may answer an exact term: an RDF/JS term
+  (Literal, NamedNode, BlankNode, or a Quad as an RDF 1.2 triple term), or
+  `{value, datatype}`, or `{value, language, direction?}`. The lexical form
+  and the datatype IRI are kept as given, ill-typed literals included (RDF
+  1.1 Concepts §3.3). The engine checks only what RDF requires: absolute
+  IRIs, a well-formed BCP 47 language tag, direction `ltr` or `rtl`; a term
+  that fails is the §17.6 error for that call. A plain JS number still gets
+  its datatype from `jsLiteral`. Theorem `TermJson.extAnswerJson_encodeTerm`:
+  an app-supplied term is the answer, unchanged.
 
 ### Performance
 
