@@ -2127,3 +2127,36 @@ the merge took another 40 minutes, and `main` moved again.
    the full set at 75 minutes under load average 35.
 4. Before every push: `git fetch origin main` and
    `git merge-base --is-ancestor origin/main HEAD` (CLAUDE.md).
+
+## Hazard #45 — a worktree whose `.lake` is a symlink to another checkout's cache (2026-10-21)
+
+**What happened.** An agent for https://github.com/danbri/factoidal/issues/912
+saved disk by making `formal/lean4/.lake` in its worktree a symlink to the main
+checkout's `.lake`. It changed `L4Factoidal/LWS/Binding.lean`
+(`storageDescription` got a fourth argument) and built. At the same time the
+main checkout ran its landing gates on other sources. Lake keeps one trace and
+one set of IR and C files per module in a cache, so the two source trees wrote
+over each other's outputs. `lake build` in the main checkout still exited 0.
+The wasm link then failed: `wasm-ld: undefined symbol
+...clientLinksOfDoc_spec__3` and "function signature mismatch:
+L4Factoidal_LWS_storageDescription, (i32, i32, i32) in Operations.o, (i32,
+i32, i32, i32) in Binding.o". With the old wasm still installed, the LWS suites
+then ran new tests against old code: draft-binding 34 pass, 9 fail and
+authorization 12 pass, 9 fail.
+
+**Cost.** One full gate run (about 40 minutes) and a delayed landing of
+https://github.com/danbri/factoidal/issues/911. The push was blocked only
+because `/tmp/land-p0.sh` had been changed the same day to exit 1 when any gate
+fails; the version before it reported `EXIT 0` with a failing npm suite.
+
+**Rules.**
+1. Never symlink `.lake` (or `.lake/build`) to another checkout. A worktree
+   either copies the cache (`cp -a`, about 2 GB) or builds its own. If disk is
+   too low for a copy, wait for a worktree to be removed; do not share.
+2. Subagent prompts say this in words: "never symlink `.lake` to another
+   checkout".
+3. Repair: remove the symlink, delete the main cache's outputs for the modules
+   the other tree changed (`find .lake/build -path '*L4Factoidal/LWS*' -type f
+   -delete` was enough here), and run the gates again.
+4. A gate script exits non-zero when any gate fails. Read the exit code, not
+   the last line.
