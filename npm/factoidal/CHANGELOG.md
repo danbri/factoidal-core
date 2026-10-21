@@ -38,6 +38,27 @@ generated from the engine's list.
 - `@factoidal/core/fn` `entail()` with an `x-ikl-*` regime rejects with code
   `regime.refused` and the message names `query`, the function that refuses.
 
+Linked Web Storage Search and Type Index Services (`lws10-index`, w3c/lws-protocol
+`9a08ff65`; https://github.com/danbri/factoidal/issues/912), decided in Lean
+(`L4Factoidal/LWS/TypeIndex.lean`, `Search.lean`):
+
+- The storage description advertises a `TypeIndexService`
+  (`GET /.well-known/lws-type-index`, a paged `TypeIndex`) and a
+  `TypeSearchService` (`QUERY /.well-known/lws-type-search` with an
+  `application/lws-query+json` filter in conjunctive normal form over `type`
+  and indexed relations such as `describedby`; a paged ContainerPage).
+  Option `typeIndex: false` of `listen`/`openLwsStorage` turns both off.
+- Types come from the native class, from `Link: <T>; rel="type"` on POST and
+  on `Prefer: set-linkset` PUT and PATCH, and from `rdf:type` in Turtle
+  content up to 1 MiB. Such a `type` link was refused with 409 before; it is
+  now a declared type and appears in the linkset document. A `type` link
+  that names an LWS or LDP class is still refused with 409. A PUT or PATCH
+  that applies `Prefer: set-linkset` answers `Preference-Applied: set-linkset`.
+- The index is kept by the store on every write and rebuilt in one pass when
+  a snapshot is opened. Answers, `totalItems` and the type index hold only
+  what the requesting agent may read now. Theorems `ixSearch_eq_specSearch`
+  and `searchAnswer_authorized`.
+
 Linked Web Storage, three rules of the editor's draft (w3c/lws-protocol
 `9a08ff65`, 2026-10-19), all decided in Lean:
 

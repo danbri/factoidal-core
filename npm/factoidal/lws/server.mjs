@@ -228,6 +228,9 @@ export async function openLwsStorage (options = {}) {
   // Notifications are on unless the caller turns them off; the engine
   // decides everything else about them.
   if (options.notifications === false) config.notifications = false
+  // The Type Index and Type Search services are on unless the caller turns
+  // them off (L4Factoidal/LWS/Search.lean).
+  if (options.typeIndex === false) config.typeIndex = false
   // Moves (a change of the up link, L4Factoidal/LWS/Move.lean) are on
   // unless the caller turns them off.
   if (options.moves === false) config.moves = false

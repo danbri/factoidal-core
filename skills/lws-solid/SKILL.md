@@ -201,6 +201,59 @@ authorization 7 pass, 0 fail, 4 inapplicable (out of 11 each). The two
 (https://github.com/danbri/factoidal/issues/913); record:
 `docs/designissues/2026-10-21-lws-touchstone-run.md` § Moving resources.
 
+### Type index and type search (https://github.com/danbri/factoidal/issues/912)
+
+`L4Factoidal/LWS/TypeIndex.lean` and `L4Factoidal/LWS/Search.lean` implement
+the LWS Search and Type Index Services draft (`lws10-index`, w3c/lws-protocol
+9a08ff65; the module headers quote each section they decide).
+
+* The index lives in the STORE. `IndexedStore S L` wraps any lawful `Store`:
+  every `put` and `remove` updates the facts of the one path it touches, and
+  the state `IxState` carries the proof `IndexOk` that the index describes
+  the store. So every create, update, delete, recursive delete, linkset
+  change and move (`Move.lean` uses `put`/`remove`) is indexed with no hook
+  in `Operations.step`, and a later change to `step` cannot make the index
+  stale. `StoreLaws.lookupTick` (shared with `Move.lean`) is what lets
+  `tick` keep the proof.
+* Facts of a resource (`entryFacts`): its native class (`lws:Container` or
+  `lws:DataResource`), its declared `type` links, its client links with a
+  relation not in `structuralRels` (for example `describedby`), and the
+  `rdf:type` objects of the resource in `text/turtle` content up to 1 MiB.
+  ACL and `.meta` resources have none.
+* Declared types: a `Link: <T>; rel="type"` whose target is not an LWS or LDP
+  class (`Linkset.declaredType`) is a client link, kept on POST, on a
+  `Prefer: set-linkset` PUT or PATCH (which now answer
+  `Preference-Applied: set-linkset`) and in the linkset document's `type`
+  member after the server's class link. A `type` link naming a native class
+  still answers 409. Core §Metadata calls `type` "System Managed"; the index
+  draft says types SHOULD come from client Link headers; this reading keeps
+  both (the record is in the Linkset module header).
+* Services: `GET <base>.well-known/lws-type-index` (TypeIndex, paged by
+  `?page=N`) and `QUERY <base>.well-known/lws-type-search` with
+  `application/lws-query+json` (ContainerPage, paged by GET of
+  `?q=<base64url filter>&page=N`). `Cache-Control: private`,
+  `Vary: accept, authorization`, `Accept-Query`. Errors 400, 415, 406, 422
+  (more than 64 IRIs), 404 for an unrecognized page reference.
+* Authorization: `Authorization.decide` lets any client ask (anonymous gets
+  what the public may read; a refused token is 401); the answer is filtered
+  by Web Access Control read access over the current state on every request.
+* Theorems: `ixSearch_eq_specSearch` (the index answer is the same list as
+  filtering every path of the store), `searchAnswer_eq_spec`,
+  `searchAnswer_authorized`, `searchPagePaths_authorized`,
+  `visibleTypes_eq_specTypes`, `search_after_step`, `serverStep_index_safe`,
+  `rebuildEntries_ok` (one-pass rebuild when a snapshot is opened),
+  `indexedStoreLaws`.
+* Config: `typeIndex` (default on; `false` turns it off), `listen({ typeIndex: false })`.
+
+Tests: `L4Factoidal/LWS/SearchTests.lean`; `tests/lws/draft-binding.mjs` rows
+"Type index" and "Type search"; `tests/lws/authorization.mjs` (filtering with
+real tokens and ACLs); `tests/lws/scaling.mjs` rows "type index" (a rare-type
+search, a whole-store search and a reopen at 500, 1,000 and 2,000 resources).
+Touchstone `index/manifest.yamlld` (40 tests) needs Authentication, so every
+test is inapplicable in the open configuration; under authorization the tests
+that grant bob access need an AccessGrantService
+(https://github.com/danbri/factoidal/issues/913).
+
 ### Pagination and client links (https://github.com/danbri/factoidal/issues/887, 888)
 
 * `L4Factoidal/LWS/Pagination.lean`: the listing order (increasing path,
@@ -436,8 +489,8 @@ specification passes it. That is what
 Not in the first slice, recorded so nobody assumes it: Solid-OIDC token
 issuance, Access Control Policy, Solid Notifications channels on the Solid
 server (the LWS server has the webhook suite, above),
-persistence into Shardborough, and the LWS `authn-openid`, `authn-saml`,
-`authn-ssi` and `searchindex` drafts.
+persistence into Shardborough, and the LWS `authn-openid`, `authn-saml`
+and `authn-ssi` drafts.
 
 **Authentication is decided in Lean.** The JOSE layer
 (`L4Factoidal/JOSE/`) verifies ES256, RS256 and EdDSA through the vendored
