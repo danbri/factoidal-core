@@ -53,7 +53,11 @@ the specification says it answers.
 * `nowTick` — `tick` advances the clock by one, so two writes inside one
   request never carry the same `Last-Modified`. A host with a real clock
   resets the clock before each request, so across requests it can repeat
-  (https://github.com/danbri/factoidal/issues/911). -/
+  (https://github.com/danbri/factoidal/issues/911).
+* `lookupTick` — advancing the clock changes no resource. The type index
+  (`L4Factoidal.LWS.TypeIndex`) needs it: its invariant is stated over
+  `lookup`, and `tick` must not move it
+  (https://github.com/danbri/factoidal/issues/912). -/
 structure StoreLaws {σ : Type} (S : Store σ) : Prop where
   lookupPutSame   : ∀ s e, S.lookup (S.put s e) e.path = some e
   lookupPutOther  : ∀ s e p, p ≠ e.path → S.lookup (S.put s e) p = S.lookup s p
@@ -61,6 +65,7 @@ structure StoreLaws {σ : Type} (S : Store σ) : Prop where
   lookupRemoveOther : ∀ s p q, q ≠ p → S.lookup (S.remove s p) q = S.lookup s q
   pathsLookup     : ∀ s p, (S.paths s).contains p = (S.lookup s p).isSome
   nowTick         : ∀ s, S.now (S.tick s) = S.now s + 1
+  lookupTick      : ∀ s p, S.lookup (S.tick s) p = S.lookup s p
 
 /-! ## The reference in-memory instance -/
 
@@ -168,5 +173,6 @@ theorem memStoreLaws : StoreLaws MemStore where
   lookupRemoveOther := fun s p q h => memLookup_memRemove_other s p q h
   pathsLookup := memPaths_memLookup
   nowTick := fun _ => rfl
+  lookupTick := fun _ _ => rfl
 
 end L4Factoidal.LWS

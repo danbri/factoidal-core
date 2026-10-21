@@ -122,6 +122,11 @@ structure Config where
   /-- The base64url Ed25519 public key that signs webhook deliveries, when
   the storage signs them (`storageDescription`). -/
   notificationKeyX : Option String := none
+  /-- Does the storage offer the Type Index and Type Search services
+  (lws10-index, `L4Factoidal.LWS.Search`)? The draft: "A storage MAY support
+  the Type Index Service, the Type Search Service, or both." Off by default;
+  the wasm handle turns it on. -/
+  typeIndex : Bool := false
 deriving Repr, Inhabited
 
 /-! ## Helpers over the store -/
@@ -464,7 +469,7 @@ def linksetStep (S : Store σ) (cfg : Config) (r : Request) (st : σ)
 /-- The storage description resource (LWS §Discovery). -/
 def storageStep (cfg : Config) (r : Request) : Response :=
   let allow := "GET, HEAD, OPTIONS"
-  let doc := storageDescription cfg.baseIri cfg.notifications cfg.notificationKeyX
+  let doc := storageDescription cfg.baseIri cfg.notifications cfg.notificationKeyX cfg.typeIndex
   match r.method with
   | "GET" | "HEAD" =>
       -- The tag is a digest of the document, so a new signing key or a
@@ -480,6 +485,12 @@ def storageStep (cfg : Config) (r : Request) : Response :=
 /-- Does the request carry `Prefer: set-linkset` (LWS §Update Resource)? -/
 def preferred (r : Request) : Bool :=
   ((r.header? "prefer").map preferSetLinkset).getD false
+
+/-- RFC 7240 §3 `Preference-Applied`: a PUT or PATCH that applied
+`Prefer: set-linkset` says so (lws10-index §Type and Relation Derivation reads
+types from the `Link` headers of such an update). -/
+def preferenceApplied (r : Request) : List (String × String) :=
+  if preferred r then [("preference-applied", "set-linkset")] else []
 
 /-- A read of a paginated container (LWS §LWS Media Type, Pagination). The
 request target without a query, or with `page=1`, names the first page;
@@ -612,9 +623,10 @@ def stepPath (S : Store σ) (cfg : Config) (r : Request) (st : σ) : Response ×
                                  body := r.content, mtime := S.now st, links }
               let st' := touchContainer S (S.tick (S.put st e)) target
               let tag := tagIn S cfg st' e (if e.kind.isContainer then mediaLwsJson else ct)
+              let hs := writtenHeaders cfg e tag ++ preferenceApplied r
               match existing with
-              | none   => (⟨201, ("location", target) :: writtenHeaders cfg e tag, "", none⟩, st')
-              | some _ => (⟨204, writtenHeaders cfg e tag, "", none⟩, st')
+              | none   => (⟨201, ("location", target) :: hs, "", none⟩, st')
+              | some _ => (⟨204, hs, "", none⟩, st')
   | "POST" =>
       match existing with
       | none => (problem 404 "the target container does not exist" target, st)
@@ -682,8 +694,8 @@ def stepPath (S : Store σ) (cfg : Config) (r : Request) (st : σ) : Response ×
                                   let e' : Entry := { e with body := textBytes (toStringCompact d'),
                                                              mtime := S.now st, links }
                                   let st' := touchContainer S (S.tick (S.put st e')) target
-                                  (⟨204, writtenHeaders cfg e' (etagFor e' e'.contentType), "",
-                                    none⟩, st')
+                                  (⟨204, writtenHeaders cfg e' (etagFor e' e'.contentType) ++
+                                    preferenceApplied r, "", none⟩, st')
   | "DELETE" =>
       if isRoot then
         (problem 405 "the storage root cannot be deleted" target (allowHdr .storageRoot), st)

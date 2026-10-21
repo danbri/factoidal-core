@@ -46,6 +46,20 @@ Server choices, each stated once:
   `anchor`. A malformed `Link` field or link is refused with 400.
 * A link with an `anchor` parameter is refused with 400: the linkset of a
   resource has one link context, the resource (RFC 8288 §3.2).
+* A `type` link that names a class other than the server's own
+  (`nativeTypeTargets`) is a DECLARED type, a client link. The LWS Search
+  and Type Index draft (lws10-index, §Type and Relation Derivation, w3c/
+  lws-protocol 9a08ff65) says "servers SHOULD derive resource types from
+  HTTP Link headers provided by the client during resource creation or
+  modification, combined with the server's intrinsic knowledge of the
+  resource's state (such as native LWS classes like
+  https://www.w3.org/ns/lws#Container)". The core's "System Managed" row
+  names `type`; this server reads that row as the link to the LWS class,
+  which stays server-managed (409 when a client changes it), and keeps the
+  other `type` links a client sends on POST, on a `Prefer: set-linkset`
+  PUT or PATCH, and in a linkset document. The two drafts do not say how
+  they fit together; this is the reading, stated once
+  (https://github.com/danbri/factoidal/issues/912).
 -/
 import L4Factoidal.LWS.Binding
 
@@ -65,6 +79,26 @@ def serverManagedRels : List String :=
 /-- Is a relation server-managed? Registered relation types compare without
 case (RFC 8288 §2.1.1). -/
 def serverManaged (rel : String) : Bool := serverManagedRels.contains rel.toLower
+
+/-- The classes a `type` link names to choose the interaction model of a new
+resource: the LWS classes (§Create Resource) and the LDP types Solid clients
+send. They are the server's own classes, so a `type` link that names one is
+never a declared type. -/
+def nativeTypeTargets : List String :=
+  [ lwsContainerType, lwsDataResourceType
+  , "http://www.w3.org/ns/ldp#BasicContainer", "http://www.w3.org/ns/ldp#Container"
+  , "http://www.w3.org/ns/ldp#Resource", "http://www.w3.org/ns/ldp#RDFSource"
+  , "http://www.w3.org/ns/ldp#NonRDFSource" ]
+
+/-- A declared type: a `type` link that names a class other than the
+server's own (lws10-index §Type and Relation Derivation). -/
+def declaredType (l : Link) : Bool :=
+  l.rel.toLower == "type" && !nativeTypeTargets.contains l.target
+
+/-- A declared type is stored with the relation in lower case, so the
+linkset document groups it with the server's `type` link. -/
+def normalizeDeclared (l : Link) : Link :=
+  if declaredType l then { l with rel := "type" } else l
 
 /-! ## Syntax checks (RFC 8288, RFC 3986, RFC 9110) -/
 
@@ -200,13 +234,15 @@ def clientLinksOf (field : Option String) : Except (Nat × String) (List Link) :
           match ls.find? (fun l => !linkValid l) with
           | some l => .error (400, s!"the link to {l.target} with rel {l.rel} is not well formed")
           | none =>
-              match ls.find? (fun l => serverManaged l.rel) with
+              match ls.find? (fun l => serverManaged l.rel && !declaredType l) with
               | some l => .error (409, s!"the relation {l.rel} is server-managed")
-              | none => .ok ls
+              | none => .ok (ls.map normalizeDeclared)
 
 /-- The client links of a POST: the well-formed links with a relation the
-client may set. A server-managed relation is not stored (§Create Resource:
-it "MUST NOT be overridden"). A malformed field is refused with 400. -/
+client may set, and the declared types. A server-managed relation is not
+stored (§Create Resource: it "MUST NOT be overridden"); a `type` link that
+names an LWS or LDP class is the interaction-model hint and is not stored
+either. A malformed field is refused with 400. -/
 def postLinksOf (field : Option String) : Except (Nat × String) (List Link) :=
   match field with
   | none => .ok []
@@ -216,7 +252,8 @@ def postLinksOf (field : Option String) : Except (Nat × String) (List Link) :=
       | .ok ls =>
           match ls.find? (fun l => !linkValid l) with
           | some l => .error (400, s!"the link to {l.target} with rel {l.rel} is not well formed")
-          | none => .ok (ls.filter (fun l => !serverManaged l.rel))
+          | none => .ok ((ls.filter (fun l => !serverManaged l.rel || declaredType l)).map
+                          normalizeDeclared)
 
 /-- A partial update (PATCH with `Prefer: set-linkset`): the new links are
 added to the old ones, and a link already present is not repeated. -/
@@ -245,9 +282,13 @@ def serverLinkGroups (baseIri path : String) (kind : ResourceKind) : List (Strin
 
 /-- The `application/linkset+json` document of a resource: one link
 context, anchored at the resource; the server-managed links, then the client
-links. -/
+links. The declared types follow the server's `type` link in the one `type`
+member. -/
 def linksetDoc (baseIri path : String) (kind : ResourceKind) (client : List Link) : Json :=
-  let groups := serverLinkGroups baseIri path kind ++ groupByRel client
+  let declared := client.filter (·.rel == "type")
+  let groups := (serverLinkGroups baseIri path kind).map (fun (r, ls) =>
+      if r == "type" then (r, ls ++ declared) else (r, ls)) ++
+    groupByRel (client.filter (·.rel != "type"))
   .object [ ("linkset", .array [ .object (
     ("anchor", .string (iriOfPath baseIri path)) ::
     groups.map (fun (r, ls) => (r, .array (ls.map targetObject)))) ]) ]
@@ -285,14 +326,24 @@ def clientLinksOfDoc (baseIri path : String) (kind : ResourceKind) (keepAbsent :
   if ctx.getString? "anchor" != some (iriOfPath baseIri path) then
     throw (409, "the link context must be anchored at the resource")
   let server := serverLinkGroups baseIri path kind
+  let mut out : Array Link := #[]
   for (r, ls) in server do
     match fields.lookup r with
     | none => if !keepAbsent then throw (409, s!"the server-managed relation {r} was removed")
     | some (.array ts) =>
         let got ← ts.mapM (linkOfTarget r)
-        if got != ls then throw (409, s!"the relation {r} is server-managed")
+        if r == "type" then
+          -- The server's class link stays; every other target is a declared
+          -- type (lws10-index §Type and Relation Derivation).
+          if !(ls.all got.contains) then throw (409, s!"the relation {r} is server-managed")
+          for l in got do
+            if !ls.contains l then
+              if !declaredType l then throw (409, s!"the relation {r} is server-managed")
+              if !linkValid l then
+                throw (400, s!"the link to {l.target} with rel {r} is not well formed")
+              out := out.push l
+        else if got != ls then throw (409, s!"the relation {r} is server-managed")
     | some _ => throw (400, s!"the relation {r} does not have an array of targets")
-  let mut out : Array Link := #[]
   for (r, v) in fields do
     if r == "anchor" || server.any (·.1 == r) then continue
     if serverManaged r then throw (409, s!"the relation {r} is server-managed")
@@ -329,9 +380,18 @@ private def lic : Link :=
 #guard !serverManaged "license" && !serverManaged "title" && !serverManaged "creator" &&
   !serverManaged "author" && !serverManaged "https://example.org/rel"
 -- The protection rule: every server-managed relation is refused, in any case.
-#guard serverManagedRels.all (fun r =>
+-- `type` is refused when it names a class of the server; another target is a
+-- declared type (lws10-index, issue 912), so that relation is checked below.
+#guard (serverManagedRels.filter (· != "type")).all (fun r =>
   match clientLinksOf (some ("<https://example.org/x>; rel=\"" ++ r ++ "\"")) with
   | .error (409, _) => true | _ => false)
+#guard nativeTypeTargets.all (fun t =>
+  match clientLinksOf (some ("<" ++ t ++ ">; rel=\"type\"")) with
+  | .error (409, _) => true | _ => false)
+#guard clientLinksOf (some "<https://schema.org/Person>; rel=\"type\"") ==
+  .ok [{ target := "https://schema.org/Person", rel := "type" }]
+#guard postLinksOf (some "<https://www.w3.org/ns/lws#Container>; rel=\"type\", <https://schema.org/Event>; rel=\"type\"") ==
+  .ok [{ target := "https://schema.org/Event", rel := "type" }]
 #guard (clientLinksOf (some "<x>; rel=\"TYPE\"")).toOption.isNone
 #guard clientLinksOf (some "<https://example.org/me>; rel=\"author\"") ==
   .ok [{ target := "https://example.org/me", rel := "author" }]
@@ -359,6 +419,18 @@ private def base : String := "http://example.org/"
     (.object [("linkset", .array [.object [("anchor", .string "http://example.org/d.txt")]])])) == .ok []
 #guard (match clientLinksOfDoc base "/d.txt" .dataResource false
     (.object [("linkset", .array [.object [("anchor", .string "http://example.org/d.txt")]])]) with
+    | .error (409, _) => true | _ => false)
+-- A declared type rides in the `type` member after the server's class link,
+-- and reads back as a client link; dropping the class link is refused.
+#guard clientLinksOfDoc base "/d.txt" .dataResource false
+    (linksetDoc base "/d.txt" .dataResource [{ target := "https://schema.org/Person", rel := "type" }, lic]) ==
+  .ok [{ target := "https://schema.org/Person", rel := "type" }, lic]
+#guard (match clientLinksOfDoc base "/d.txt" .dataResource false
+    (.object [("linkset", .array [.object [("anchor", .string "http://example.org/d.txt"),
+      ("up", .array [.object [("href", .string "http://example.org/")]]),
+      ("type", .array [.object [("href", .string "https://schema.org/Person")]]),
+      ("https://www.w3.org/ns/lws#storage",
+        .array [.object [("href", .string "http://example.org/.well-known/lws-storage")]])]])]) with
     | .error (409, _) => true | _ => false)
 -- Another anchor is refused.
 #guard (match clientLinksOfDoc base "/d.txt" .dataResource true
