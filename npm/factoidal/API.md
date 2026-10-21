@@ -945,7 +945,7 @@ await running.close()
 From the command:
 
 ```
-factoidal lws-serve   DIR [--port N] [--base IRI]
+factoidal lws-serve   DIR (--issuer IRI | --auth-config FILE | --insecure-no-auth) [--owner WEBID] [--port N] [--base IRI]
 factoidal solid-serve DIR [--port N] [--base IRI] [--owner WEBID]
 factoidal solid-client <get|put|post|delete|discover> URL [--file PATH]
 ```

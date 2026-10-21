@@ -90,6 +90,17 @@ private def goodTok : String := tok (claimsWith issuerA "http://localhost/" alic
 #guard validateToken stubV cfg acfg 1010
     (tok (claimsWith issuerA "http://localhost/" alice 1300 1000) (kid := "k2")) ==
   .refused .noKey
+-- refreshInterval 0 still never fetches twice in one instant
+#guard validateToken stubV cfg
+    { issuers := [{ issuer := issuerA, keys := [key1], fetchedAt := some 1100 }],
+      refreshInterval := 0 } 1100
+    (tok (claimsWith issuerA "http://localhost/" alice 1300 1000) (sig := "evil")) ==
+  .refused .badSignature
+#guard validateToken stubV cfg
+    { issuers := [{ issuer := issuerA, keys := [key1], fetchedAt := some 1100 }],
+      refreshInterval := 0 } 1101
+    (tok (claimsWith issuerA "http://localhost/" alice 1300 1000) (sig := "evil")) ==
+  .needKeys issuerA
 -- iat in the future
 #guard validateToken stubV cfg acfg 1100
     (tok (claimsWith issuerA "http://localhost/" alice 1300 1200)) ==

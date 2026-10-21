@@ -211,7 +211,10 @@ def candidateKeys (kid : Option String) (ks : List KeyEntry) : List Jwk :=
 def mayFetch (a : AuthzConfig) (now : Nat) (i : TrustedIssuer) : Bool :=
   match i.fetchedAt with
   | none => true
-  | some t => decide (t + a.refreshInterval ≤ now)
+  -- At least one second: within one instant a fetch is never repeated,
+  -- so one request makes at most one metadata and one key-set fetch per
+  -- issuer, whatever the configured interval.
+  | some t => decide (t + max 1 a.refreshInterval ≤ now)
 
 /-- The claims checks, once the signature has verified: issuer,
 audience, `exp`, `nbf` (`Jwt.validate`), then `iat` not in the future. -/

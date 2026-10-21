@@ -55,7 +55,9 @@ is `500`, for a failure of the host itself.
 ## Run the servers
 
 ```
-factoidal lws-serve   DIR [--port N] [--host ADDRESS] [--base IRI]
+factoidal lws-serve   DIR (--issuer IRI[,IRI…] | --auth-config FILE | --insecure-no-auth)
+                          [--owner WEBID] [--root-acl FILE] [--audience IRI]
+                          [--port N] [--host ADDRESS] [--base IRI]
 factoidal solid-serve DIR [--port N] [--host ADDRESS] [--base IRI] [--owner WEBID]
 ```
 
@@ -87,6 +89,40 @@ JSON Patch, RFC 9457 errors) is `L4Factoidal/LWS/Binding.lean`; the audit
 table is in the ledger, section "LWS editor's draft 2026-10-19 audit", and
 `node tests/lws/draft-binding.mjs` is its host suite (with xfails for
 https://github.com/danbri/factoidal/issues/886 to 890).
+
+### LWS authorization (https://github.com/danbri/factoidal/issues/886)
+
+`L4Factoidal/LWS/Authorization.lean` implements the storage-server half of
+the draft's "Authorization" section (w3c/lws-protocol 9a08ff65):
+
+* A request without a valid token gets 401, `WWW-Authenticate: Bearer
+  resource_metadata="<origin>/.well-known/oauth-protected-resource<path>"`
+  (plus `error="invalid_token"` or `"invalid_request"` when a credential
+  was presented and refused) and `Link: <storage>; rel="…lws#storage"`.
+* `GET /.well-known/oauth-protected-resource<path>` is the RFC 9728
+  document: `resource`, `authorization_servers`, `bearer_methods_supported`.
+* `Authorization: Bearer <JWT>` (RFC 6750). The engine verifies the JWS
+  under the trusted issuer's keys (ES256, RS256, EdDSA through the vendored
+  HACL\* code), then `iss`, `aud` contains the storage IRI, `exp`, `nbf`,
+  and `iat` not in the future, each with `leeway` (60 s).
+* Access is Web Access Control over the storage's `.acl` resources, with
+  the token's `sub` as the agent: allowed, 403 `insufficient_scope` for an
+  authenticated agent, or 401 for an anonymous one.
+* Keys: the engine answers `{"fetch":{issuer,url}}` from `lwsStep`; the host
+  fetches `<issuer>/.well-known/lws-configuration`, passes it to
+  `lwsFetched`, fetches the `jwks_uri` it names, passes that too, and steps
+  again. At most one key fetch per issuer per `refreshInterval` (default
+  60 s, minimum 1 s); that is the key-rotation path.
+* Default is enforcement. `--insecure-no-auth` (`insecureNoAuth: true`) is
+  the only way to serve without it, and the CLI refuses to start with none
+  of `--issuer`, `--auth-config`, `--insecure-no-auth`. `--owner WEBID`
+  gives a new storage a root ACL with Read, Write and Control for the owner.
+* The LWS draft defines no DPoP binding, so the LWS host takes Bearer only.
+
+Test: `node tests/lws/authorization.mjs` runs a local authorization server
+(RFC 8414 metadata and a JWK Set, ES256 keys from `node:crypto`) and checks
+the positive and negative cases; `L4Factoidal/LWS/AuthorizationTests.lean`
+holds the `#guard`s with a stub verifier.
 
 From JavaScript:
 
@@ -154,7 +190,7 @@ What makes each one exit 2 today:
 
 | script | why it does not run |
 | --- | --- |
-| `solid-server-interop.sh` | the module carries no Solid server ops; and `web-access-control-tests` logs in through an external Solid-OIDC issuer before its first request |
+| `solid-server-interop.sh` | `web-access-control-tests` logs in through an external Solid-OIDC issuer (a Community Solid Server account with username and password) before its first request, and `solid-serve` does not verify Solid-OIDC tokens yet |
 | `solid-client-interop.sh` | the module carries no Solid client ops; also refuses to start the ~250 MB Community Solid Server download below 2 GB free |
 | `solid-conformance-harness.sh` | no Docker daemon, or no `SOLID_HARNESS_ENV` credentials file |
 
@@ -182,15 +218,15 @@ issuance, Access Control Policy, Solid Notifications channels,
 persistence into Shardborough, and the LWS `authn-openid`, `authn-saml`,
 `authn-ssi` and `searchindex` drafts.
 
-**Authentication is a boundary, not a gap in the engine.** Solid-OIDC
-needs RS256 or ES256 JWT verification and DPoP proofs; HACL\* gives
-SHA-256 and Ed25519 and neither RSA nor P-256 is vendored. Token
-verification is therefore a host realisation (WebCrypto in Node) behind
-one Lean-declared interface, and it is listed in the ledger as
-`hostVerified`. Web Access Control decisions stay pure Lean over the
-agent the host verified. The first slice serves public resources and
-unauthenticated writes to a test-only storage, which is why both
-access-control suites cannot run yet.
+**Authentication is decided in Lean.** The JOSE layer
+(`L4Factoidal/JOSE/`) verifies ES256, RS256 and EdDSA through the vendored
+HACL\* P-256, RSA and Ed25519 code (`L4Factoidal/Crypto/*Native.lean`), in
+the native build and in the wasm module. The LWS host uses it for Bearer
+access tokens (above). The Solid server has the Solid-OIDC decision with
+DPoP (`Solid/Server/Auth.lean`), but `Solid.Server.step` still takes the
+agent from `requesterOf` (the handle configuration) and does not call
+`authenticatedRequester`, and no Solid host fetches identity-provider keys;
+that is why `web-access-control-tests` cannot run against `solid-serve`.
 
 ## Adding a rule
 

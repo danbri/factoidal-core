@@ -4,6 +4,16 @@
 
 ### Breaking changes
 
+- `factoidal lws-serve` and `@factoidal/core/lws` enforce storage-server
+  authorization from the LWS editor's draft (401 with
+  `WWW-Authenticate: Bearer resource_metadata`, the RFC 9728 metadata
+  document, Bearer JWT access tokens checked for signature, `iss`, `aud`,
+  `exp`, `nbf` and `iat`, then Web Access Control). `lws-serve` needs
+  `--issuer IRI`, `--auth-config FILE` or, for development only,
+  `--insecure-no-auth`; `listen()` with neither `auth` nor
+  `insecureNoAuth` serves only what the ACLs give to the public. New op
+  `lwsFetched`. https://github.com/danbri/factoidal/issues/886
+
 One wasm carries every capability (owner, 2026-10-20: "all this stuff goes
 into a single mod we call Factoidal/core and a dingle wasm"):
 

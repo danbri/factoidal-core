@@ -173,7 +173,7 @@ async function main () {
   // A fixed `now` keeps the engine's deterministic clock, so
   // `Last-Modified` is decided by the engine's own one-second step and
   // not by how fast this machine runs.
-  const running = await listen({ engine, port: 0, now: 1000 })
+  const running = await listen({ engine, port: 0, insecureNoAuth: true, now: 1000 })
   try {
     await check(CHECKS[0], () => {
       assert(typeof running.port === 'number' && running.port > 0,
