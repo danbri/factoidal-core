@@ -117,12 +117,24 @@ def hasLicence (st : MemState) : Bool :=
 -- A PUT with the preference and no Link field replaces them with none.
 #guard !hasLicence (lws (req "PUT" "/lic.txt" (plain ++ [("prefer", "set-linkset")]) "y") withLicence).2
 -- The protection rule: a server-managed relation is refused with 409 and
--- nothing is written.
-#guard serverManagedRels.all (fun rel =>
+-- nothing is written. For `type` that holds when the link names a class of
+-- the server; another target is a declared type (lws10-index §Type and
+-- Relation Derivation, https://github.com/danbri/factoidal/issues/912).
+#guard (serverManagedRels.filter (· != "type")).all (fun rel =>
   let (resp, st) := lws (req "PUT" "/lic.txt" (plain ++ [("prefer", "set-linkset"),
     ("link", "<https://example.org/x>; rel=\"" ++ rel ++ "\"")]) "z") withLicence
   resp.status == 409 && hdr resp "content-type" == some "application/problem+json" &&
   (lws (req "GET" "/lic.txt") st).1.content == "x".toUTF8 && hasLicence st)
+#guard nativeTypeTargets.all (fun t =>
+  let (resp, st) := lws (req "PUT" "/lic.txt" (plain ++ [("prefer", "set-linkset"),
+    ("link", "<" ++ t ++ ">; rel=\"type\"")]) "z") withLicence
+  resp.status == 409 && (lws (req "GET" "/lic.txt") st).1.content == "x".toUTF8 && hasLicence st)
+-- A declared type replaces the client links, and the PUT says it applied the preference.
+#guard
+  let (resp, st) := lws (req "PUT" "/lic.txt" (plain ++ [("prefer", "set-linkset"),
+    ("link", "<https://example.org/x>; rel=\"type\"")]) "z") withLicence
+  (resp.status == 204 || resp.status == 200) && hdr resp "preference-applied" == some "set-linkset" &&
+  !hasLicence st
 -- A malformed link is refused with 400.
 #guard (lws (req "PUT" "/lic.txt" (plain ++ [("prefer", "set-linkset"),
   ("link", "<a b>; rel=\"license\"")]) "z") withLicence).1.status == 400
