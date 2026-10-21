@@ -249,10 +249,15 @@ Tests: `L4Factoidal/LWS/SearchTests.lean`; `tests/lws/draft-binding.mjs` rows
 "Type index" and "Type search"; `tests/lws/authorization.mjs` (filtering with
 real tokens and ACLs); `tests/lws/scaling.mjs` rows "type index" (a rare-type
 search, a whole-store search and a reopen at 500, 1,000 and 2,000 resources).
-Touchstone `index/manifest.yamlld` (40 tests) needs Authentication, so every
-test is inapplicable in the open configuration; under authorization the tests
-that grant bob access need an AccessGrantService
-(https://github.com/danbri/factoidal/issues/913).
+Touchstone `index/manifest.yamlld` (40 tests), measured 2026-10-21 without
+`--shim`: authorization 34 pass, 0 fail, 6 inapplicable; open 40
+inapplicable (every test needs Authentication). Five of the six need an
+AccessGrantService (https://github.com/danbri/factoidal/issues/913); one
+needs a `Content-Location` results resource, which the draft does not
+define. Whole runs: open 75 pass, 0 fail, 146 inapplicable; authorization
+186 pass, 0 fail, 35 inapplicable (out of 221 each);
+`docs/designissues/2026-10-21-lws-touchstone-run.md`, "Type index and type
+search".
 
 ### Pagination and client links (https://github.com/danbri/factoidal/issues/887, 888)
 
