@@ -757,6 +757,12 @@ https://github.com/danbri/factoidal/issues/626). -/
 def iklRefusal (who regime : String) : String :=
   s!"{who}: entail '{regime}' is not implemented. The x-ikl-* entailment regimes are the owner's design (danbri/factoidal#581); the Lean engine's dispatch for them was deleted on 2026-08-26 as collateral of the IKL-to-RDF projection purge (danbri/factoidal#626). This is not a policy exclusion."
 
+/-- The case-insensitive names of `datasetClosure`'s regimes. -/
+def closureRegimeAliases : List (String × String) :=
+  [ ("rdfs", "rdfs"), ("owl-rl", "owl-rl"), ("owlrl", "owl-rl"), ("owl_rl", "owl-rl"),
+    ("rho-df", "rho-df"), ("rhodf", "rho-df"), ("core-rdfs", "rho-df"),
+    ("rdfs-plus", "rdfs-plus"), ("rdfsplus", "rdfs-plus") ]
+
 /-- The syntaxes the streaming packer reads, the file-name suffix of each, and
 the suffixes of syntaxes the engine reads elsewhere but the packer does not. -/
 def packSyntaxNames : List String := ["turtle", "trig", "nquads", "ntriples"]
@@ -779,8 +785,11 @@ def engineTablesJson : Json :=
     , ("rawDataFormats", strMap rawDataFormatNames)
     , ("entailRegimes", .array (entailRegimeNames.map Json.string))
     , ("entailAliases", strMap entailRegimeAliases)
-    , ("iklRefusal", .string (iklRefusal "WHO" "REGIME"))
+    -- a regime name with one of these prefixes (compared without case) is
+    -- refused with the message, WHO and REGIME filled in by the host
+    , ("refusedRegimePrefixes", .object [("x-ikl", .string (iklRefusal "WHO" "REGIME"))])
     , ("closureRegimes", .array (closureRegimes.map Json.string))
+    , ("closureAliases", strMap closureRegimeAliases)
     , ("queryOutputs", .array (["json", "csv", "tsv", "xml", "table", "ntriples"].map Json.string))
     , ("packSyntaxes", .array (packSyntaxNames.map Json.string))
     , ("packSuffixes", strMap packSuffixes)

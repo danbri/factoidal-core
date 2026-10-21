@@ -361,8 +361,10 @@ async function query(ds, sparql, options) {
 async function regimeOf(regime, who) {
   const t = await engineApi.engineTables();
   const r = regime == null ? 'none' : String(regime);
-  if (r.toLowerCase().startsWith('x-ikl')) {
-    throw new TypeError(t.iklRefusal.replace('WHO', who).replace('REGIME', r));
+  for (const [prefix, message] of Object.entries(t.refusedRegimePrefixes)) {
+    if (r.toLowerCase().startsWith(prefix)) {
+      throw new TypeError(message.replace('WHO', who).replace('REGIME', r));
+    }
   }
   return t.entailAliases[r.toLowerCase()] || regime;
 }

@@ -76,11 +76,23 @@ def datasetToJsonLd (h optsJson : String) : IO String :=
     if v11 && !ds.isRdf11 then pure (errJson (rdf11WriterRefusal "JSON-LD"))
     else pure (jsonldFromRdfParsed ds optsJson)
 
+/-- A focus or shape argument: the text form `shexValidate` reads (an IRI or
+`_:label`), or a `TermJson` term object, which is written in that form here
+so a host sends term components only
+(https://github.com/danbri/factoidal/issues/894). -/
+def shexNodeArg (s : String) : String :=
+  if s.startsWith "{" then
+    match (parseJson? s).bind TermJson.decodeSubject with
+    | some (.iri i) => i.val
+    | some (.bnode b) => "_:" ++ b
+    | none => s
+  else s
+
 /-- `datasetShexValidate(handle, schema, focus, shape)` — `shexValidate` over
 the stored dataset. -/
 def datasetShexValidate (h schemaText focus shape : String) : IO String :=
   withReadDataset "shexValidate(data)" h fun ds =>
-    pure (shexValidateParsed ds schemaText focus shape)
+    pure (shexValidateParsed ds schemaText (shexNodeArg focus) (shexNodeArg shape))
 
 /-- `datasetRifEval(rifXml, handle)` — `rifEval` over the stored dataset; the
 saturated graph is stored under a new handle. -/

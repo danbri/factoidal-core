@@ -1,9 +1,13 @@
-// Unit tests for the RDF/JS data model + N-Quads token converters.
-// Pure JavaScript — no engine bundle involved.
+// Unit tests for the RDF/JS data model, and for the N-Quads text functions
+// of rdfjs.mjs, which call the engine (https://github.com/danbri/factoidal/issues/894):
+// the engine is loaded once before the tests.
 
 'use strict';
 
 const test = require('node:test');
+const { before } = require('node:test');
+
+before(async () => { await require('../index.js').ready(); });
 const assert = require('node:assert/strict');
 
 const {
@@ -102,7 +106,7 @@ test('termFromSrj covers uri/bnode/literal shapes', () => {
     df.namedNode('http://www.w3.org/2001/XMLSchema#integer'))));
 });
 
-test('termToNQuads tokens match the F* serializer rules', () => {
+test('termToNQuads: the engine writes the canonical N-Triples token', () => {
   assert.equal(termToNQuads(df.namedNode('http://x/a')), '<http://x/a>');
   assert.equal(termToNQuads(df.blankNode('b0')), '_:b0');
   assert.equal(termToNQuads(df.literal('hi')), '"hi"');
@@ -111,7 +115,7 @@ test('termToNQuads tokens match the F* serializer rules', () => {
     termToNQuads(df.literal('1',
       df.namedNode('http://www.w3.org/2001/XMLSchema#integer'))),
     '"1"^^<http://www.w3.org/2001/XMLSchema#integer>');
-  // Escapes: exactly \\ \" \n \r \t (mirrors RDF.NQuads.Serialize).
+  // Escapes are the engine's canonical N-Triples form (Term.toCanonicalNTriples).
   assert.equal(
     termToNQuads(df.literal('a"b\\c\nd\re\tf')),
     '"a\\"b\\\\c\\nd\\re\\tf"');

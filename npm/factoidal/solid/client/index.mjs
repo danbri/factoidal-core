@@ -158,17 +158,29 @@ export async function createSolidClient (options = {}) {
   const maxSteps = typeof options.maxSteps === 'number' ? options.maxSteps : 16
   const baseIri = typeof options.baseIri === 'string' ? options.baseIri : null
 
-  /** Where to send a request whose target the engine wrote as a path.
-   *  This is address resolution, not IRI construction: the engine's
-   *  target is used verbatim when it is already absolute. */
+  /** Where to send a request whose target the engine wrote. The engine
+   *  resolves the target against baseIri (RFC 3986 section 5.2, op
+   *  resolveIri) and says whether it was already absolute
+   *  (https://github.com/danbri/factoidal/issues/894 item 5). */
   function endpoint (target) {
-    if (/^[a-zA-Z][a-zA-Z0-9+.-]*:/.test(target)) return target
+    let r
+    try {
+      r = engine.call('resolveIri', [baseIri === null ? '' : baseIri, String(target)])
+    } catch (error) {
+      if (isUnknownOp(error)) {
+        throw new SolidClientHostError(
+          'the loaded l4factoidal WebAssembly module does not carry the ' +
+          'resolveIri operation; rebuild it with formal/lean4/Wasm/build-wasm.sh')
+      }
+      throw error
+    }
+    if (r.referenceAbsolute) return String(target)
     if (baseIri === null) {
       throw new SolidClientHostError(
-        `the engine answered the path "${target}" and this client has no ` +
-        'baseIri to send it to; pass baseIri to createSolidClient')
+        `the engine answered the relative reference "${target}" and this client has no ` +
+        'baseIri to resolve it against; pass baseIri to createSolidClient')
     }
-    return baseIri.replace(/\/$/, '') + target
+    return r.iri
   }
 
   function callRequest (kind, args) {

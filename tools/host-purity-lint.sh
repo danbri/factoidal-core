@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # host-purity-lint.sh — a host carries bytes and makes no decision the
-# specification reserves for the engine (CLAUDE.md iron rule 7). Two groups
-# of host files, two rules, one method.
+# specification reserves for the engine (CLAUDE.md iron rule 7). Three groups
+# of host files, three rules, one method (group 3 is at the end).
 #
 # GROUP 1, the LWS, Solid and SPARQL endpoint hosts: no PROTOCOL decision. This lint fails
 # when one of those files contains
@@ -90,6 +90,74 @@ store_allow="s/'manifest\.sbm[12]'//g"
 
 for f in "${protocol_files[@]}"; do scan "$f" "$protocol_pattern" "$protocol_allow"; done
 for f in "${store_files[@]}"; do scan "$f" "$store_pattern" "$store_allow"; done
+
+# GROUP 3, the RDF/JS, dataset, CLI and hub JavaScript: no RDF SYNTAX, DATATYPE
+# or IRI decision (https://github.com/danbri/factoidal/issues/894; CLAUDE.md
+# anti-pattern 36). The engine parses, writes, escapes, chooses datatypes and
+# resolves IRIs; these files copy term components and call ops. This lint
+# fails when one of those files (comments stripped) contains
+#
+#   * an N-Triples / N-Quads string escape written as a JS string literal
+#     ('\\n', '\\t', '\\"', '\\u', ...): JS escaping RDF text;
+#   * an XSD or RDF namespace IRI (XMLSchema#, 22-rdf-syntax-ns#) or an
+#     `xsd:` name: JS choosing or testing a datatype;
+#   * blank-node label syntax ('_:') or IRI token syntax ('<' + ... + '>',
+#     `<${...}>`, indexOf('>')): JS reading or writing an RDF term token;
+#   * a literal suffix ('@' + lang, '^^'), or triple-term syntax '<<(';
+#   * an RDF file-name suffix table ('.ttl', '.nq', '.trig', ...);
+#   * a regular expression over SPARQL keywords (select|ask|construct) or
+#     over IRI schemes ([a-zA-Z][a-zA-Z0-9+.-]*:).
+#
+# A line that ends with `// purity-lint: allow <reason>` is not scanned. The
+# reasons in use: the RDF/JS DataFactory defaults (rdfjs.mjs; the RDF/JS
+# Data Model fixes them) and display-only labels in the hub assets.
+rdf_files=(
+  "$root/npm/factoidal/rdfjs.mjs"
+  "$root/npm/factoidal/fn.js"
+  "$root/npm/factoidal/solid/client/index.mjs"
+)
+for f in "$root"/npm/factoidal/lib/*.mjs "$root"/npm/factoidal/bin/*.mjs \
+         "$root"/docs/web/hub/assets/*.mjs; do
+  rdf_files+=("$f")
+done
+
+rdf_patterns=$(mktemp)
+trap 'rm -f "$rdf_patterns"' EXIT
+cat > "$rdf_patterns" <<'PATTERNS'
+['"`]\\\\[nrtbf"'\\]['"`]
+['"`]\\\\[uU]
+XMLSchema#
+22-rdf-syntax-ns#
+['"`]xsd:
+['"`]_:
+`_:\$\{
+['"`]<['"`] *\+
+\+ *['"`]>['"`]
+`<\$\{[^}]*\}>`
+indexOf\(['"]>['"]
+['"`]@['"`] *\+
+\^\^
+<<\(
+['"`]\.(ttl|turtle|nt|ntriples|nq|nquads|trig|rdf|owl|jsonld|n3)['"`]
+\(select\|ask\|construct
+\[a-zA-Z\]\[a-zA-Z0-9\+\.-\]\*:
+PATTERNS
+
+scan_rdf () {
+  local f="$1"
+  total=$((total + 1))
+  if [ ! -f "$f" ]; then echo "MISSING $f"; fail=1; return; fi
+  local hits
+  hits=$(grep -v 'purity-lint: allow' "$f" | sed -E 's#(^|[^:])//.*$#\1#' | perl -0pe 's#/\*.*?\*/##gs' \
+    | grep -n -E -f "$rdf_patterns" || true)
+  if [ -n "$hits" ]; then
+    echo "FAIL $f"; echo "$hits" | sed 's/^/     /'; fail=1
+  else
+    echo "ok   $f"
+  fi
+}
+
+for f in "${rdf_files[@]}"; do scan_rdf "$f"; done
 
 if [ "$fail" -eq 0 ]; then
   echo "host-purity-lint: $total pass, 0 fail (out of $total)"

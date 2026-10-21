@@ -22,7 +22,7 @@
 // JSDoc note "entry_jsoo.ml's X" below names that lineage. The Lean op of
 // the same name serves X now (formal/lean4/Wasm/Dispatch.lean lists them).
 
-import { dataFactory, termFromSrj, quadToJson, _setTextEngine } from '../rdfjs.mjs';
+import { dataFactory, termFromSrj, termToJson, quadToJson, _setTextEngine } from '../rdfjs.mjs';
 import { Dataset, INTERNAL, checkOptions, makeRegistry, WRITER_TAGS } from './dataset.mjs';
 import { version as packageVersion } from './version.mjs';
 import { openGeneration, readRegion, manifestKeys, hexOfBytes } from './store.mjs';
@@ -44,12 +44,14 @@ function parseTagOf(tables, fmt) {
   return tag;
 }
 
-// The engine's refusal of an x-ikl-* regime, or null.
+// The engine's refusal of a regime name (table refusedRegimePrefixes), or null.
 function iklRefusalOf(tables, who, regime) {
   if (regime == null) return null;
   const r = String(regime);
-  if (!r.toLowerCase().startsWith('x-ikl')) return null;
-  return tables.iklRefusal.replace('WHO', who).replace('REGIME', r);
+  for (const [prefix, message] of Object.entries(tables.refusedRegimePrefixes)) {
+    if (r.toLowerCase().startsWith(prefix)) return message.replace('WHO', who).replace('REGIME', r);
+  }
+  return null;
 }
 
 // Where a function takes an options object, a bare string names the
@@ -557,8 +559,9 @@ function buildApi(driver) {
   function shexTermToString(t, who) {
     if (typeof t === 'string') return t;
     if (t && typeof t.termType === 'string') {
-      if (t.termType === 'BlankNode') return `_:${t.value}`;
-      if (t.termType === 'NamedNode') return t.value;
+      if (t.termType === 'BlankNode' || t.termType === 'NamedNode') {
+        return JSON.stringify(termToJson(t)); // the engine writes the node
+      }
       throw new TypeError(`${who}: expected an IRI or blank node term`);
     }
     throw new TypeError(`${who}: expected a string or an RDF/JS term`);
@@ -778,14 +781,8 @@ function buildApi(driver) {
       c.e.datasetShexValidate(ds.handle, schema, focusStr, shapeStr), 'shexValidate').verdict;
   }
 
-  const CLOSURE_REGIMES = {
-    rdfs: 'rdfs', 'owl-rl': 'owl-rl', owlrl: 'owl-rl', owl_rl: 'owl-rl',
-    'rho-df': 'rho-df', rhodf: 'rho-df', 'core-rdfs': 'rho-df',
-    'rdfs-plus': 'rdfs-plus', rdfsplus: 'rdfs-plus',
-  };
-
   async function closureOnHandle(c, ds, regime) {
-    const r0 = CLOSURE_REGIMES[String(regime || '').toLowerCase()];
+    const r0 = c.tables().closureAliases[String(regime || '').toLowerCase()];
     if (!r0) {
       throw new TypeError(
         `closure: regime must be one of rdfs, owl-rl, rho-df, rdfs-plus (got '${regime}')`);
@@ -1085,7 +1082,8 @@ function buildApi(driver) {
    */
   async function owlClosure(data, mode, options) {
     const m = String(mode || '').toLowerCase();
-    if (!['rdfs', 'owl-rl', 'owlrl', 'owl_rl'].includes(m)) {
+    const aliases = (await ctx()).tables().closureAliases;
+    if (!['rdfs', 'owl-rl'].includes(aliases[m])) {
       throw new TypeError(`owlClosure: mode must be 'RDFS' or 'OWL-RL' (got '${mode}')`);
     }
     return closure(data, m, options);

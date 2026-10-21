@@ -20,7 +20,7 @@
 // `--format turtle` all print documents the engine produced.
 
 import {
-  StoreHostError, atomicReplace, listGeneration, makeDirectory, readWhole,
+  StoreHostError, atomicReplace, listGeneration, makeDirectory, readChunk, readWhole,
   runtime
 } from '../store-host/index.mjs'
 import { fileUrlToPath, joinPath } from '../store-host/paths.mjs'
@@ -46,23 +46,9 @@ const EXIT_NOT_WIRED = 3
 const FEED_PROGRESS = 65536
 
 const PACK_LAYOUTS = ['ibk3', 'ibk4', 'ibk5']
-const PACK_SYNTAXES = ['turtle', 'trig', 'nquads', 'ntriples']
-const PACK_SUFFIXES = [
-  ['.ttl', 'turtle'], ['.turtle', 'turtle'],
-  ['.trig', 'trig'],
-  ['.nq', 'nquads'], ['.nquads', 'nquads'],
-  ['.nt', 'ntriples'], ['.ntriples', 'ntriples']
-]
-
-// Suffixes the engine parses elsewhere but the packer's streaming fold does
-// not read. Naming them is better than "cannot tell the syntax from its
-// name", which sends the reader looking for a --syntax value that does not
-// exist.
-const PACK_UNSUPPORTED_SUFFIXES = [
-  ['.rdf', 'RDF/XML'], ['.owl', 'RDF/XML'], ['.xml', 'RDF/XML'],
-  ['.jsonld', 'JSON-LD'], ['.json', 'JSON-LD'], ['.n3', 'Notation3'],
-  ['.csv', 'CSV'], ['.tsv', 'TSV'], ['.hdt', 'HDT']
-]
+// The syntaxes the packer reads and the file-name suffixes of each are the
+// engine's tables (op engineTables: packSyntaxes, packSuffixes,
+// packUnsupportedSuffixes), https://github.com/danbri/factoidal/issues/894.
 
 /** The parent of a path, and its last component. The `activate` hint
  *  printed after a pack needs both; neither is a format decision. */
@@ -605,31 +591,28 @@ async function commandVersion (options) {
 /**
  * One graph name as the manifest reports it. `{"kind":"default"}` is the
  * default graph; the operation marks it that way so a host never has to
- * recognise a reserved IRI.
+ * recognise a reserved IRI. The engine writes the N-Triples form of a name
+ * (op termsToNTriples).
  */
-function graphLabel (graph) {
-  if (graph.kind === 'default') return 'default'
-  if (graph.kind === 'iri') return `<${graph.value}>`
-  if (graph.kind === 'bnode') return `_:${graph.value}`
-  return JSON.stringify(graph)
+function graphLabels (engine, graphs) {
+  const terms = graphs.filter((g) => g.kind !== 'default')
+    .map((g) => ({ type: g.kind === 'iri' ? 'uri' : 'bnode', value: g.value }))
+  const tokens = terms.length === 0 ? [] : engine.call('termsToNTriples', [JSON.stringify(terms)]).tokens
+  let k = 0
+  return graphs.map((g) => (g.kind === 'default' ? 'default' : tokens[k++]))
 }
 
 /**
- * One SPARQL Query Results JSON term as a table cell. This is a display,
- * not a serialization: `--format json` prints the engine's own document
- * and `--format nquads` prints the engine's own N-Triples.
+ * The SPARQL Query Results JSON terms of a table, as display cells: the
+ * engine writes each term's canonical N-Triples form (op termsToNTriples).
+ * `--format json` prints the engine's own document.
  */
-function cellOfTerm (term) {
-  if (term === undefined || term === null) return ''
-  if (term.type === 'uri') return `<${term.value}>`
-  if (term.type === 'bnode') return `_:${term.value}`
-  if (term.type === 'literal') {
-    const lang = term['xml:lang']
-    if (typeof lang === 'string' && lang.length > 0) return `"${term.value}"@${lang}`
-    if (typeof term.datatype === 'string') return `"${term.value}"^^<${term.datatype}>`
-    return `"${term.value}"`
-  }
-  return JSON.stringify(term)
+function cellsOfRows (engine, rows) {
+  const terms = []
+  for (const row of rows) for (const t of row) if (t !== undefined && t !== null) terms.push(t)
+  const tokens = terms.length === 0 ? [] : engine.call('termsToNTriples', [JSON.stringify(terms)]).tokens
+  let k = 0
+  return rows.map((row) => row.map((t) => (t === undefined || t === null ? '' : tokens[k++])))
 }
 
 function plural (count, noun) {
@@ -705,7 +688,7 @@ async function commandInspect (positional, options) {
       String(entry.rows),
       String(entry.bytes),
       entry.blockKind,
-      entry.graphs.length === 0 ? '-' : entry.graphs.map(graphLabel).join(' '),
+      entry.graphs.length === 0 ? '-' : graphLabels(engine, entry.graphs).join(' '),
       entry.predicate
     ].concat(zoned
       ? [String((entry.blobRefs ?? []).length), zoneCell(entry.subjectZone)]
@@ -881,7 +864,7 @@ function renderQueryResult (engine, result, format, limit, quiet) {
       return EXIT_FAILURE
     }
     const shown = limit === null ? bindings : bindings.slice(0, limit)
-    printTable(vars, shown.map((row) => vars.map((name) => cellOfTerm(row[name]))))
+    printTable(vars, cellsOfRows(engine, shown.map((row) => vars.map((name) => row[name]))))
     if (shown.length < bindings.length) {
       err(`showing ${shown.length} of ${bindings.length} rows (--limit ${limit})`)
     } else if (!quiet) {
@@ -920,50 +903,48 @@ function renderQueryResult (engine, result, format, limit, quiet) {
   return EXIT_FAILURE
 }
 
-/** The syntax tag for an input, from --syntax or from the file name. The
- *  engine is what actually decides how to read the bytes; this only picks
- *  which of its parsers to name. */
-function packSyntax (input, options) {
+/** The first `length` bytes of a file, as text, for content detection. */
+function readHead (path, length) {
+  return new TextDecoder('utf-8', { fatal: false }).decode(readChunk(path, 0, length))
+}
+
+/** The syntax tag for an input: --syntax when given, else the engine's
+ *  suffix table (op engineTables), else the engine's content detection
+ *  (op detectFormat) on the first 64 KiB of the file. */
+function packSyntax (engine, input, options) {
+  const tables = engine.call('engineTables', []).tables
+  const syntaxes = tables.packSyntaxes
   if (typeof options.syntax === 'string') {
     const syntax = options.syntax.toLowerCase()
-    if (PACK_SYNTAXES.indexOf(syntax) >= 0) return syntax
-    throw new UsageError(`--syntax ${options.syntax} is not one of ${PACK_SYNTAXES.join(', ')}`)
+    if (syntaxes.indexOf(syntax) >= 0) return syntax
+    throw new UsageError(`--syntax ${options.syntax} is not one of ${syntaxes.join(', ')}`)
   }
   const lower = input.toLowerCase()
-  for (const [suffix, syntax] of PACK_SUFFIXES) {
+  for (const [suffix, syntax] of Object.entries(tables.packSuffixes)) {
     if (lower.endsWith(suffix)) return syntax
   }
-  for (const [suffix, name] of PACK_UNSUPPORTED_SUFFIXES) {
+  for (const [suffix, name] of Object.entries(tables.packUnsupportedSuffixes)) {
     if (lower.endsWith(suffix)) {
       throw new UsageError(
         `pack does not read ${name}. The packer's streaming fold reads ` +
-        `${PACK_SYNTAXES.join(', ')} only. Convert the file first, for ` +
+        `${syntaxes.join(', ')} only. Convert the file first, for ` +
         "example with: factoidal parse FILE --out nquads")
     }
   }
+  let head = ''
+  try {
+    head = readHead(input, 65536)
+  } catch (_error) {
+    head = ''
+  }
+  if (head !== '') {
+    const tag = engine.call('detectFormat', [head]).format
+    const syntax = tag.replace(/12$/, '')
+    if (syntaxes.indexOf(syntax) >= 0) return syntax
+  }
   throw new UsageError(
-    `cannot tell the syntax of ${input} from its name; give --syntax ` +
-    `(${PACK_SYNTAXES.join(', ')})`)
-}
-
-/**
- * The base IRI relative IRIs in the source resolve against.
- *
- * The native packer uses `file://<input>`, so this matches it by default
- * and byte-identical output needs no flag. `--base` overrides it, and
- * `--base ''` asks for no base, which turns a relative IRI into a parse
- * error rather than a silently different term.
- */
-function packBase (input, options) {
-  if (typeof options.base === 'string') return options.base
-  const absolute = input.startsWith('/') ? input : joinPath(currentDirectory(), input)
-  return 'file://' + absolute
-}
-
-/** The process's working directory, on Node and on Deno. */
-function currentDirectory () {
-  if (isDeno) return globalThis.Deno.cwd()
-  return process.cwd()
+    `cannot tell the syntax of ${input} from its name or its content; give --syntax ` +
+    `(${syntaxes.join(', ')})`)
 }
 
 function packLayout (options) {
@@ -976,7 +957,7 @@ function packLayout (options) {
 async function commandPack (positional, options) {
   if (positional.length !== 2) throw new UsageError('pack needs INPUT and OUTPUT')
   const [input, output] = positional
-  const syntax = packSyntax(input, options)
+  const syntax = packSyntax(await loadEngine(), input, options)
   const layout = packLayout(options)
   // The pack fold needs a bigger call stack than either runtime gives by
   // default (https://github.com/danbri/factoidal/issues/649). Under Node
