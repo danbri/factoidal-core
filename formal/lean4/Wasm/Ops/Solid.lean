@@ -204,11 +204,11 @@ def solidClientResponse (kind responseJson : String) : String :=
             , ("describedby", optJson f.describedBy)
             , ("inbox", optJson f.inbox) ])]
       | "containment" =>
-          let g := aclGraphOf body
-          let members := g.filterMap (fun t =>
-            if t.p == ldpContains then
-              match t.o with | .iri i => some i.val | _ => none
-            else none)
+          -- The base of the listing is the request URI (`requestUri`),
+          -- or the target when that is already absolute.
+          let base := (j.getString? "requestUri").orElse (fun _ =>
+            (j.getString? "target").filter (fun t => (t.splitOn "://").length > 1))
+          let members := containmentMembers base resp
           okWith [("interpretation", .object
             [ ("contains", stringsJson members)
             , ("count", .number (toString members.length)) ])]

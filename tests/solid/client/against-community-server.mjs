@@ -55,7 +55,12 @@ const CHECKS = [
   'replace writes a data resource',
   'read reads it back',
   'create posts into a container and reports the assigned name',
-  'delete removes the resource'
+  'delete removes the resource',
+  'discoverStorage names the storage root of CSS (Solid §4.1)',
+  'patch applies an N3 Patch (Solid §5.3.1)',
+  'read with the containment interpretation lists the member (Solid §4.2)',
+  'create with a Slug gets a name that ends with the slug (RFC 9110 / LDP §5.2.3.10)',
+  'replace with If-None-Match: * on an existing resource is refused with 412 (RFC 9110 §13.1.2)'
 ]
 
 const TURTLE = 'text/turtle'
@@ -125,6 +130,50 @@ async function main (base) {
       .filter((pair) => String(pair[0]).toLowerCase() === 'location')
     assert(location.length === 1,
       `create reported ${location.length} Location headers, expected one`)
+  })
+
+  const second = `${container}two`
+  await check(CHECKS[5], async () => {
+    const answer = await client.discoverStorage(second)
+    assert(answer.interpretation !== null, 'discoverStorage returned no interpretation')
+    const storage = answer.interpretation.storage
+    assert(storage === new URL('/', base).href || storage === '/',
+      `the storage is ${JSON.stringify(storage)}, expected the root of ${base}`)
+  })
+
+  await check(CHECKS[6], async () => {
+    const patch = '@prefix solid: <http://www.w3.org/ns/solid/terms#>.\n' +
+      '_:p a solid:InsertDeletePatch; solid:inserts { <#it> <http://www.w3.org/2000/01/rdf-schema#comment> "patched" . }.\n'
+    const answer = await client.patch(target, patch, 'text/n3')
+    const status = statusOf(answer)
+    assert(status >= 200 && status < 300, `patch answered ${status}, expected a 2xx`)
+    const after = await client.read(target)
+    assert(after.response.body.indexOf('patched') >= 0,
+      `read after patch did not show the inserted triple: ${after.response.body.slice(0, 160)}`)
+  })
+
+  await check(CHECKS[7], async () => {
+    const answer = await client.run('read', { target: container }, { interpret: 'containment' })
+    assert(statusOf(answer) === 200, `read of the container answered ${statusOf(answer)}`)
+    assert(answer.interpretation !== null, 'the containment interpretation was null')
+    const text = JSON.stringify(answer.interpretation)
+    assert(text.indexOf(`${container}one`) >= 0,
+      `the containment interpretation does not list ${container}one: ${text.slice(0, 200)}`)
+  })
+
+  await check(CHECKS[8], async () => {
+    const answer = await client.create(container, NOTE, TURTLE, { slug: 'named' })
+    assert(statusOf(answer) === 201, `create answered ${statusOf(answer)}, expected 201`)
+    const location = answer.response.headers
+      .filter((pair) => String(pair[0]).toLowerCase() === 'location')
+      .map((pair) => pair[1])
+    assert(location.length === 1 && /named[^/]*$/.test(location[0]),
+      `the Location is ${JSON.stringify(location)}, expected a name from the slug`)
+  })
+
+  await check(CHECKS[9], async () => {
+    const answer = await client.replace(target, NOTE, TURTLE, { ifNoneMatchStar: true })
+    assert(statusOf(answer) === 412, `replace answered ${statusOf(answer)}, expected 412`)
   })
 
   await check(CHECKS[4], async () => {
