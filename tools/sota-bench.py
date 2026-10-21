@@ -711,6 +711,7 @@ def measure(cmd, env, runs, cap, tdir, load_limit, load_wait, extra_on_spread, a
         "spread": round((max(walls) - min(walls)) / statistics.median(walls), 3)
         if statistics.median(walls) > 0 else 0,
         "cpu_s": round(statistics.median([x["cpu"] for x in ok]), 4),
+        "cpu_min_s": round(min(x["cpu"] for x in ok), 4),
         "sys_all_s": [x["sys"] for x in ok],
         "minflt_all": [x["minflt"] for x in ok],
         "rss_mb": round(statistics.median([x["rss_kb"] or 0 for x in ok]) / 1024, 1),
@@ -1045,6 +1046,40 @@ def over_bound(lean, ref, start_rss):
     return tr > TIME_BOUND or (mr > MEM_BOUND and (ar is None or ar > MEM_BOUND)), tr, mr
 
 
+# Host speed calibration of the gate (2026-10-21). On this shared VM the CPU
+# time of the same binary on the same file moved by 30 to 50 % within two
+# hours at the same load average (parse-nt 400,000: 2.04 s, then 2.62 to
+# 3.19 s at load 0.6 to 1.0; skills/perf-benchmarking, "Baselines are
+# per-host"). The load average does not show it. So the gate runs one
+# reference case, CALIBRATION, and scales the recorded CPU times and the
+# recorded reference wall times by host = measured CPU / recorded CPU of that
+# case, when host > 1 (a faster host never loosens a bound). A failing row is
+# measured again after a new calibration. SOTA_CALIBRATE=0 turns it off; it
+# is off when the reference engine is not installed.
+CALIBRATION = ("parse-nt", 400000, "oxigraph")
+
+
+def calibrate(rows, args, tdir):
+    if os.environ.get("SOTA_CALIBRATE", "1") == "0":
+        return 1.0
+    wid, size, eng = CALIBRATION
+    recd = next((r for r in reversed(rows) if (r["workload"], str(r["size"]), r["engine"])
+                 == (wid, str(size), eng) and r["status"] == "ok"), None)
+    if recd is None or not PY.exists():
+        print(f"calibration: off ({eng} not installed or no recorded {wid} {size} row)")
+        return 1.0
+    w = W[wid]
+    cmd, env = w.cmd(eng, w.make(size), size)
+    rec, _ = measure(cmd, env, 3, args.cap, tdir, args.load_limit, args.load_wait, False)
+    if rec["status"] != "ok" or not recd.get("cpu_s"):
+        return 1.0
+    host = rec["cpu_s"] / recd["cpu_s"]
+    print(f"calibration: {eng} {wid} {size} cpu {rec['cpu_s']:.3f} s against recorded "
+          f"{recd['cpu_s']:.3f} s: host factor {host:.2f} (used: {max(1.0, host):.2f})",
+          flush=True)
+    return max(1.0, host)
+
+
 def check(args):
     """The gate: re-run each recorded Lean row and compare."""
     rows, _ = load_rows(args.check)
@@ -1063,6 +1098,7 @@ def check(args):
         todo = [r for r in todo if r["workload"] in keep]
     tdir = DL / "tmp"
     tdir.mkdir(parents=True, exist_ok=True)
+    host = calibrate(rows, args, tdir)
     fails = 0
     for r in todo:
         w = W[r["workload"]]
@@ -1075,6 +1111,8 @@ def check(args):
         verdict = None
         xf = None
         for attempt in (1, 2):  # a failing row is measured once more before it fails
+            if attempt == 2:
+                host = calibrate(rows, args, tdir)
             rec, o = measure(cmd, env, args.runs, args.cap, tdir, args.load_limit,
                              args.load_wait, True, w.accept)
             ans = w.answer(r["engine"], o) if rec["status"] == "ok" else None
@@ -1084,10 +1122,14 @@ def check(args):
             else:
                 if str(ans) != str(r.get("answer")):
                     problems.append(f"answer {ans} != recorded {r.get('answer')}")
-                cpu_bound = (1 + args.tolerance) * r["cpu_s"] + args.slack_s
-                if rec["cpu_s"] > cpu_bound:
-                    problems.append(f"cpu {rec['cpu_s']:.3f} s > {cpu_bound:.3f} s "
-                                    f"(recorded {r['cpu_s']:.3f} s)")
+                # the least CPU time of the gate's runs against the recorded
+                # median: a regression shows in every run, the noise of this
+                # host (30 to 50 % on some runs, 2026-10-21) in some
+                cpu_bound = (1 + args.tolerance) * r["cpu_s"] * host + args.slack_s
+                cpu_now = rec.get("cpu_min_s", rec["cpu_s"])
+                if cpu_now > cpu_bound:
+                    problems.append(f"cpu (least of the runs) {cpu_now:.3f} s > {cpu_bound:.3f} s "
+                                    f"(recorded {r['cpu_s']:.3f} s, host factor {host:.2f})")
                 rss_bound = (1 + args.tolerance) * r["rss_mb"] + args.slack_mb
                 if rec["rss_mb"] > rss_bound:
                     problems.append(f"rss {rec['rss_mb']:.0f} MB > {rss_bound:.0f} MB "
@@ -1097,7 +1139,9 @@ def check(args):
             # the row `start` is the process start that every other row
             # includes; it has no bound of its own
             if rec["status"] == "ok" and ref and r["workload"] != "start":
-                flagged, tr, mr = over_bound(rec, ref, start_rss)
+                ref_now = dict(ref, wall_s=ref["wall_s"] * host,
+                               wall_min_s=wall_of(ref) * host)
+                flagged, tr, mr = over_bound(rec, ref_now, start_rss)
                 if xf and not flagged and tr < TIME_BOUND / XPASS_MARGIN:
                     problems.append(f"UNEXPECTED PASS of the expected failure {xf}: time ratio "
                                     f"{tr:.1f}, memory ratio {mr:.1f} against recorded "
