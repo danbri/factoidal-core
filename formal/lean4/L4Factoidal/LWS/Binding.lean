@@ -91,6 +91,24 @@ def subscriptionsPath : String := "/.well-known/lws-subscriptions/"
 /-- Is the path the subscription endpoint or one subscription below it? -/
 def isSubscriptionPath (p : String) : Bool := p.startsWith subscriptionsPath
 
+/-- The access request endpoint (LWS §Access Requests and Grants, a server
+choice): the `serviceEndpoint` of the `AccessRequestService`, an LWS
+container whose members are access requests.
+https://github.com/danbri/factoidal/issues/913 -/
+def accessRequestsPath : String := "/.well-known/lws-access-requests/"
+
+/-- The access grant endpoint (a server choice): the `serviceEndpoint` of
+the `AccessGrantService`, an LWS container whose members are access grants. -/
+def accessGrantsPath : String := "/.well-known/lws-access-grants/"
+
+/-- Is the path one of the two access endpoints, or a member below one? -/
+def isAccessPath (p : String) : Bool :=
+  p.startsWith accessRequestsPath || p.startsWith accessGrantsPath
+
+/-- The access profile of LWS §Access Profile: "identified with the URL:
+https://www.w3.org/ns/lws#AccessProfile". -/
+def lwsAccessProfile : String := "https://www.w3.org/ns/lws#AccessProfile"
+
 /-- The subscription type of the webhook notification suite (LWS 1.0
 Notification Suite: Webhooks, §Subscription Type Identifier: "A Webhook
 subscription MUST use the WebhookSubscription string"). -/
@@ -646,7 +664,7 @@ verification method referenced from `authentication`, as the webhook
 suite's §Webhook Authentication requires of "A server that supports HTTP
 Message Signatures". -/
 def storageDescription (baseIri : String) (notify : Bool := false)
-    (keyX : Option String := none) (move : Bool := false) : String :=
+    (keyX : Option String := none) (move : Bool := false) (access : Bool := false) : String :=
   let sid := storageIdOf baseIri
   let keyMembers : List (String × Json) :=
     match notify, keyX with
@@ -667,6 +685,22 @@ def storageDescription (baseIri : String) (notify : Bool := false)
         , ("serviceEndpoint", .string (iriOfPath baseIri subscriptionsPath))
         , ("subscriptionType", .array [.string webhookSubscriptionType]) ] ]
     else []
+  -- LWS §Access Requests and Grants, Discovery: "a service object
+  -- describing an endpoint for access requests MUST have a type equal to
+  -- the string AccessRequestService, and a service object describing an
+  -- endpoint for access grants MUST have a type equal to the string
+  -- AccessGrantService. A service object SHOULD include a conformsTo
+  -- property whose value is a collection of one or more URIs identifying
+  -- the access profiles supported at that endpoint."
+  let accessServices : List Json :=
+    if access then
+      [ .object [ ("type", .string "AccessRequestService")
+                , ("serviceEndpoint", .string (iriOfPath baseIri accessRequestsPath))
+                , ("conformsTo", .array [.string lwsAccessProfile]) ]
+      , .object [ ("type", .string "AccessGrantService")
+                , ("serviceEndpoint", .string (iriOfPath baseIri accessGrantsPath))
+                , ("conformsTo", .array [.string lwsAccessProfile]) ] ]
+    else []
   toStringCompact (.object (
     [ ("@context", .array [.string cidContext, .string lwsProfile])
     , ("id", .string sid)
@@ -674,7 +708,8 @@ def storageDescription (baseIri : String) (notify : Bool := false)
     (if move then [("capability", .array [moveCapability])] else []) ++
     [ ("service", .array ([ .object
         [ ("type", .string "StorageRoot")
-        , ("serviceEndpoint", .string (iriOfPath baseIri rootPath)) ] ] ++ notifService)) ]))
+        , ("serviceEndpoint", .string (iriOfPath baseIri rootPath)) ] ] ++ notifService ++
+        accessServices)) ]))
 
 /-! ## JSON Patch (RFC 6902) -/
 

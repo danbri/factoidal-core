@@ -127,6 +127,11 @@ structure Config where
   link (LWS §Moving Resources, `L4Factoidal.LWS.Move`)? Off by default; the
   wasm handle turns it on. -/
   moves : Bool := false
+  /-- Does the storage offer access requests and access grants (LWS
+  §Access Requests and Grants, `L4Factoidal.LWS.AccessGrants`)? The draft:
+  "A storage MAY advertise support for access requests and access grants".
+  Off by default; the wasm handle turns it on. -/
+  accessGrants : Bool := false
 deriving Repr, Inhabited
 
 /-! ## Helpers over the store -/
@@ -494,6 +499,7 @@ def linksetStep (S : Store σ) (cfg : Config) (r : Request) (st : σ)
 def storageStep (cfg : Config) (r : Request) : Response :=
   let allow := "GET, HEAD, OPTIONS"
   let doc := storageDescription cfg.baseIri cfg.notifications cfg.notificationKeyX cfg.moves
+    cfg.accessGrants
   match r.method with
   | "GET" | "HEAD" =>
       -- The tag is a digest of the document, so a new signing key or a
