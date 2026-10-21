@@ -994,8 +994,8 @@ async function main () {
         const opt = await fetch(`${so}/.well-known/lws-type-search`, { method: 'OPTIONS' })
         await opt.text()
         assert(opt.headers.get('accept-query') === 'application/lws-query+json' && /QUERY/.test(opt.headers.get('allow')), 'OPTIONS')
-        const noCt = await fetch(`${so}/.well-known/lws-type-search`, { method: 'QUERY', body: '{"type":[]}' })
-        await noCt.text()
+        // fetch adds text/plain to a string body, so this one goes out raw.
+        const noCt = await rawRequest(so, 'QUERY', '/.well-known/lws-type-search', {}, '{"type":[]}')
         assert(noCt.status === 400, `no Content-Type: ${noCt.status}`)
         const other = await search('{}', { 'content-type': 'application/x-touchstone-query' })
         await other.text()
