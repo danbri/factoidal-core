@@ -504,8 +504,9 @@ test('interop: graphs() enumerates named graphs as FnDatasets', async () => {
     { format: 'trig' });
   const gs = graphs(ds);
   assert.equal(gs.length, 1);
-  const [iri, g1] = gs[0];
-  assert.equal(iri, 'http://x/g1');
+  const [name, g1] = gs[0];
+  assert.equal(name.termType, 'NamedNode');
+  assert.equal(name.value, 'http://x/g1');
   assert.ok(g1 instanceof FnDataset);
   assert.equal(g1.size, 1);
 });

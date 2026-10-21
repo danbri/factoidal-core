@@ -462,7 +462,7 @@ export function canonicalize(
  * `graph` is the same Dataset filtered to that one graph name (what
  * `dataset.match(null, null, null, graphTerm)` would return).
  */
-export function graphs(dataset: Dataset): Array<[iri: string, graph: Dataset]>;
+export function graphs(dataset: Dataset): Array<[name: NamedNode | BlankNode, graph: Dataset]>;
 
 /**
  * RDFC-1.0 canonical form of a single graph -- the graph-scoped

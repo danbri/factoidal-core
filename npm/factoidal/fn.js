@@ -686,7 +686,7 @@ function graphs(ds) {
   for (const q of ds) {
     if (q.graph.termType !== 'DefaultGraph' && !seen.has(termKey(q.graph))) seen.set(termKey(q.graph), q.graph);
   }
-  return [...seen.values()].map((g) => [g.value, ds.match(null, null, null, g)]);
+  return [...seen.values()].map((g) => [g, ds.match(null, null, null, g)]);
 }
 
 // ---------------------------------------------------------------------

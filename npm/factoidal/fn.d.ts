@@ -306,7 +306,7 @@ export function hash(ds: FnDataset): Promise<string>;
 export function equals(a: FnDataset, b: FnDataset): Promise<boolean>;
 
 /** Enumerate named graphs (default graph excluded), first-seen order. */
-export function graphs(ds: FnDataset): Array<[iri: string, graph: FnDataset]>;
+export function graphs(ds: FnDataset): Array<[name: NamedNode | BlankNode, graph: FnDataset]>;
 
 /** A minimal mutable box holding one dataflow input value. */
 export interface Cell<T> {

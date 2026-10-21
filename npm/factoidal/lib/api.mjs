@@ -552,12 +552,12 @@ function buildApi(driver) {
     return out;
   }
 
-  // A ShEx focus/shape-label argument is either a raw string (an IRI,
-  // or "_:label" for a blank node -- the entry ABI's own convention)
-  // or an RDF/JS term (NamedNode/BlankNode); accepting both lets a
-  // caller pass a term straight out of a query() binding.
+  // A ShEx focus/shape-label argument is a string in N-Triples term syntax
+  // ("<http://...>" or "_:label"), which the engine reads with its one
+  // term-string reader, or an RDF/JS term (NamedNode/BlankNode); accepting
+  // both lets a caller pass a term straight out of a query() binding.
   function shexTermToString(t, who) {
-    if (typeof t === 'string') return t;
+    if (typeof t === 'string') return JSON.stringify(termToJson(t));
     if (t && typeof t.termType === 'string') {
       if (t.termType === 'BlankNode' || t.termType === 'NamedNode') {
         return JSON.stringify(termToJson(t)); // the engine writes the node
@@ -946,7 +946,7 @@ function buildApi(driver) {
    * The named graphs of a Dataset, each as a Dataset (default graph
    * excluded, first-seen order).
    * @param {Dataset} dataset
-   * @returns {Array<[iri: string, graph: Dataset]>}
+   * @returns {Array<[name: NamedNode|BlankNode, graph: Dataset]>}
    */
   function graphs(dataset) {
     if (!(dataset instanceof Dataset)) throw new TypeError('graphs: expected a Dataset');
@@ -956,7 +956,7 @@ function buildApi(driver) {
     const names = entryResult(c.e.datasetGraphNames(dataset.handle), 'graphs').graphs;
     return names.map((g) => {
       const term = termFromSrj(g);
-      return [term.value, dataset.match(null, null, null, term)];
+      return [term, dataset.match(null, null, null, term)];
     });
   }
 

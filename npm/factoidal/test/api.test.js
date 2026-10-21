@@ -246,9 +246,9 @@ test('graphs: enumerates named graphs from a parsed TriG document', async () => 
     { format: 'trig' });
   const gs = graphs(ds);
   assert.equal(gs.length, 2, 'default graph is excluded');
-  const names = gs.map(([iri]) => iri).sort();
+  const names = gs.map(([name]) => name.value).sort();
   assert.deepEqual(names, ['http://x/g1', 'http://x/g2']);
-  const g1 = gs.find(([iri]) => iri === 'http://x/g1')[1];
+  const g1 = gs.find(([name]) => name.termType === 'NamedNode' && name.value === 'http://x/g1')[1];
   assert.ok(g1 instanceof Dataset);
   assert.equal(g1.size, 1);
   assert.equal([...g1][0].object.value, 'one');
@@ -376,7 +376,7 @@ test('shexValidate: ShEx validation of one focus node against one shape',
       }],
     });
     const verdict = await shexValidate(
-      TTL, schema, 'http://example.org/alice', 'http://example.org/PersonShape');
+      TTL, schema, '<http://example.org/alice>', '<http://example.org/PersonShape>');
     assert.equal(verdict, true);
 
     // Also accepts RDF/JS terms for focus/shape.

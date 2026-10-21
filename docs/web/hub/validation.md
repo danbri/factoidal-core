@@ -82,7 +82,7 @@ ex:Person { foaf:name xsd:string ; foaf:age xsd:integer ? ; foaf:knows @ex:Perso
 shexResults = {
   const out = {};
   for (const who of ['alice', 'bob', 'carol']) {
-    out[who] = await people.validateShex(shex, { focus: `http://example.org/${who}`, shape: 'http://example.org/Person' });
+    out[who] = await people.validateShex(shex, { focus: `<http://example.org/${who}>`, shape: '<http://example.org/Person>' });
   }
   return out;
 }
