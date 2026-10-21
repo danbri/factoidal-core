@@ -206,6 +206,9 @@ function contentBytes (request) {
  * @param {string} [options.owner] the WebID the storage advertises
  * @param {string} [options.agent] the WebID of the requesting agent
  * @param {number} [options.pageSize] the container pagination threshold and page size (default 100; 0 turns pagination off)
+ * @param {boolean} [options.paginateAlways] present every container listing as paginated (default false)
+ * @param {boolean|string} [options.moves] which resources move: true or "all", "data", false or "off" (default all)
+ * @param {boolean} [options.linksetPut] does a linkset accept PUT (default true)
  * @param {boolean} [options.realClock] stamp each request with this host's clock
  * @param {string|null} [options.storageKey] the storage key text (64 hex digits or base64url);
  *   default the environment variable FACTOIDAL_LWS_KEY; `null` reads no key
@@ -238,6 +241,15 @@ export async function openLwsStorage (options = {}) {
   // Moves (a change of the up link, L4Factoidal/LWS/Move.lean) are on
   // unless the caller turns them off.
   if (options.moves === false) config.moves = false
+  // `moves` may also be "all", "data" or "off", passed unread; the engine
+  // decides what each means and refuses another value (Wasm/Ops/Lws.lean).
+  if (typeof options.moves === 'string') config.moves = options.moves
+  // A linkset resource accepts PUT unless the caller turns it off
+  // (L4Factoidal/LWS/Operations.lean, linksetStep).
+  if (options.linksetPut === false) config.linksetPut = false
+  // Every container listing paginated, also one that fits on one page
+  // (L4Factoidal/LWS/Pagination.lean, paginatedWith). Off unless turned on.
+  if (options.paginateAlways === true) config.paginateAlways = true
   // Access requests and grants are on unless the caller turns them off
   // (L4Factoidal/LWS/AccessGrants.lean).
   if (options.accessGrants === false) config.accessGrants = false

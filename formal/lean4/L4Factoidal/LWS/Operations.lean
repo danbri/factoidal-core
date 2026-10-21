@@ -132,6 +132,28 @@ structure Config where
   link (LWS §Moving Resources, `L4Factoidal.LWS.Move`)? Off by default; the
   wasm handle turns it on. -/
   moves : Bool := false
+  /-- With `moves`: does the storage move containers as well as data
+  resources (LWS §Moving Resources: "Servers MAY support changing the `up`
+  link of a container, and MUST indicate that they do so by including
+  Container in the `appliesTo` property")? On by default; configuration
+  `"moves": "data"` turns it off, and then the capability's `appliesTo` is
+  `[DataResource]` and a change of a container's `up` link answers 409
+  (`Move.movable`). -/
+  moveContainers : Bool := true
+  /-- Does a linkset resource accept PUT (LWS §Metadata: "Servers MAY support
+  PUT [...]; if supported, these MUST be included in the Allow [...]
+  headers" and "Replacement (PUT): If advertised in the Allow header, a
+  client MAY replace the entire linkset. If the server does not support PUT,
+  it MUST reject the request with 405 Method Not Allowed")? On by default;
+  configuration `"linksetPut": false` turns it off: `Allow` then leaves PUT
+  out and a PUT answers 405 with `Allow`. -/
+  linksetPut : Bool := true
+  /-- Is every container listing paginated, also one that fits on one page
+  (`Pagination.paginatedWith`)? Off by default: a listing is paginated only
+  above `pageSize` members. Configuration `"paginateAlways": true` turns it
+  on; then a listing of at most `pageSize` members is one page with
+  `rel="first"` and `rel="last"` and no `rel="next"` or `rel="prev"`. -/
+  paginateAlways : Bool := false
   /-- Does the storage offer access requests and access grants (LWS
   §Access Requests and Grants, `L4Factoidal.LWS.AccessGrants`)? The draft:
   "A storage MAY advertise support for access requests and access grants".
@@ -397,10 +419,35 @@ def tagIn (S : Store σ) (cfg : Config) (st : σ) (e : Entry) (media : String) :
     containerTag e media (containerBody media cfg.baseIri e.path (listedMembers S st e.path))
   else etagFor e media
 
+/-- Is the listing of container `c` paginated under this configuration? -/
+def listingPaginated (S : Store σ) (cfg : Config) (st : σ) (c : String) : Bool :=
+  paginatedWith cfg.paginateAlways (orderedMemberPaths S st c).length cfg.pageSize
+
+/-- The entity tag of page `n` of the listing of container `e` in `media`:
+the container's tag, the page number and the FNV-1a digest of the page's
+representation (`pagedRead`). -/
+def pageTag (S : Store σ) (cfg : Config) (st : σ) (e : Entry) (media : String) (n : Nat) :
+    String :=
+  let total := (orderedMemberPaths S st e.path).length
+  let body := containerBody media cfg.baseIri e.path (pageItems S st e.path cfg.pageSize n)
+    (some total)
+  let base := etagFor e media
+  String.ofList (base.toList.dropLast) ++ "-p" ++ toString n ++ "-" ++
+    hex8 (fnv1a32 body.toUTF8) ++ "\""
+
 /-- Every current tag of `e`: one for a data resource, one per media type for
-a container. These are what `If-Match` and `If-None-Match` compare with. -/
+a container. These are what `If-Match` and `If-None-Match` compare with.
+For a paginated container, a GET of its own URI selects its first page
+(`pagedRead`), so the first page's tags are current tags too (RFC 9110
+§8.8.3: an entity tag is "an opaque validator for differentiating between
+multiple representations of the same resource"; §13.1.1 compares If-Match
+with "the current representation of the target resource"). -/
 def tagsIn (S : Store σ) (cfg : Config) (st : σ) (e : Entry) : List String :=
-  if e.kind.isContainer then containerMedia.map (tagIn S cfg st e) else [etagFor e e.contentType]
+  if e.kind.isContainer then
+    containerMedia.map (tagIn S cfg st e) ++
+      (if listingPaginated S cfg st e.path then containerMedia.map (fun m => pageTag S cfg st e m 1)
+       else [])
+  else [etagFor e e.contentType]
 
 /-- The preconditions of a request on an existing resource or on none. -/
 def preconditionsOn (S : Store σ) (cfg : Config) (st : σ) (r : Request)
@@ -412,6 +459,15 @@ def preconditionsOn (S : Store σ) (cfg : Config) (st : σ) (r : Request)
 of the document, so a change to the client links changes the tag. -/
 def linksetTag (e : Entry) (docText : String) : String :=
   "\"" ++ toString e.mtime ++ "-ls-" ++ hex8 (fnv1a32 docText.toUTF8) ++ "\""
+
+/-- The `Allow` value of a linkset resource. LWS §Metadata: "Servers MAY
+support PUT [...]; if supported, these MUST be included in the Allow [...]
+headers". -/
+def linksetAllow (put : Bool) : String :=
+  if put then "GET, HEAD, OPTIONS, PATCH, PUT" else "GET, HEAD, OPTIONS, PATCH"
+
+#guard linksetAllow true == "GET, HEAD, OPTIONS, PATCH, PUT"
+#guard !((linksetAllow false).splitOn ", ").contains "PUT"
 
 /-- The linkset resource of `path` (LWS §Metadata). Its document holds the
 server-managed links and the resource's client links
@@ -438,7 +494,7 @@ def linksetStep (S : Store σ) (cfg : Config) (r : Request) (st : σ)
       let doc := linksetDoc cfg.baseIri path e.kind e.links
       let docText := toStringCompact doc
       let tag := linksetTag e docText
-      let allow := "GET, HEAD, OPTIONS, PATCH, PUT"
+      let allow := linksetAllow cfg.linksetPut
       let hs : List (String × String) :=
         [ ("content-type", mediaLinkset), ("etag", tag)
         , ("last-modified", httpDate e.mtime), ("allow", allow)
@@ -464,6 +520,9 @@ def linksetStep (S : Store σ) (cfg : Config) (r : Request) (st : σ)
         | .removed => (problem 409 "a resource other than the storage root keeps an up link" target, st)
         | .refused status msg => (problem status msg target, st)
         | .moveTo dest =>
+            if !movable cfg.moves cfg.moveContainers e.kind then
+              (problem 409 "this storage moves data resources only; a container keeps its up link" target, st)
+            else
             match clientLinksOfDoc cfg.baseIri path e.kind keepAbsent (withServerUp cfg.baseIri path d) with
             | .error (status, msg) => (problem status msg target, st)
             | .ok ls =>
@@ -501,21 +560,23 @@ def linksetStep (S : Store σ) (cfg : Config) (r : Request) (st : σ)
                 | .error msg => (problem 409 msg target, st)
                 | .ok d' => readDoc false d'
       | "PUT" =>
-          if ct != some mediaLinkset then
+          if !cfg.linksetPut then
+            (problem 405 "this storage does not support PUT on a linkset; it accepts GET, HEAD, OPTIONS and PATCH"
+              target [("allow", allow)], st)
+          else if ct != some mediaLinkset then
             (problem 415 "a linkset is replaced with application/linkset+json" target, st)
           else if (r.header? "if-match").isSome && !tagListed "if-match" then
             (problem 412 "If-Match did not match the linkset" target, st)
           else match parseJson ((String.fromUTF8? r.content).getD "") with
             | .error _ => (problem 400 "the linkset document is not JSON" target, st)
             | .ok d => readDoc true d
-      | _ => (problem 405 "a linkset accepts GET, HEAD, OPTIONS, PATCH and PUT"
-                target [("allow", allow)], st)
+      | _ => (problem 405 ("a linkset accepts " ++ allow) target [("allow", allow)], st)
 
 /-- The storage description resource (LWS §Discovery). -/
 def storageStep (cfg : Config) (r : Request) : Response :=
   let allow := "GET, HEAD, OPTIONS"
   let doc := storageDescription cfg.baseIri cfg.notifications cfg.notificationKeyX cfg.moves
-    cfg.typeIndex cfg.accessGrants (cfg.typeIndex && cfg.searchResults)
+    cfg.typeIndex cfg.accessGrants (cfg.typeIndex && cfg.searchResults) cfg.moveContainers
   match r.method with
   | "GET" | "HEAD" =>
       -- The tag is a digest of the document, so a new signing key or a
@@ -569,9 +630,7 @@ def pagedRead (S : Store σ) (cfg : Config) (r : Request) (st : σ) (e : Entry)
       else
         let items := pageItems S st target k n
         let body := containerBody media cfg.baseIri target items (some total)
-        let base := etagFor e media
-        let tag := String.ofList (base.toList.dropLast) ++ "-p" ++ toString n ++ "-" ++
-          hex8 (fnv1a32 body.toUTF8) ++ "\""
+        let tag := pageTag S cfg st e media n
         match preconditionFailure r (S.now st) true (some tag) (some e.mtime)
                 (some (httpDate e.mtime)) [tag] with
         | some resp => (resp, st)
@@ -603,7 +662,7 @@ def stepPath (S : Store σ) (cfg : Config) (r : Request) (st : σ) : Response ×
       | some e =>
           let media := if e.kind.isContainer then chooseContainerMedia (r.header? "accept")
                        else e.contentType
-          if e.kind.isContainer && paginated (orderedMemberPaths S st target).length cfg.pageSize then
+          if e.kind.isContainer && listingPaginated S cfg st target then
             pagedRead S cfg r st e media isRoot
           else
           let tag := tagIn S cfg st e media

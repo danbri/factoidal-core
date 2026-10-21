@@ -194,6 +194,30 @@ def pageAt (xs : List α) (k i : Nat) : List α :=
 Below the threshold the full listing is returned with no pagination links. -/
 def paginated (n k : Nat) : Bool := k != 0 && n > k
 
+/-- Is the listing paginated, when the storage may present every listing as
+paginated (`always`, configuration member `paginateAlways`)? The draft lets
+a server paginate at "a server-determined threshold", and a paginated
+response carries `rel="first"` ("MUST be present on paginated responses").
+With `always`, a listing that fits on one page is one paginated page: it is
+both the first and the last, so it carries `rel="first"` and `rel="last"`
+and neither `rel="next"` ("MUST be omitted on the last page") nor
+`rel="prev"` ("MUST be omitted on the first page"). A page size of 0 still
+turns pagination off. -/
+def paginatedWith (always : Bool) (n k : Nat) : Bool := k != 0 && (always || n > k)
+
+/-- Without `always`, nothing changes. -/
+theorem paginatedWith_false (n k : Nat) : paginatedWith false n k = paginated n k := by
+  simp [paginatedWith, paginated]
+
+/-- A paginated listing that fits on one page has one page. -/
+theorem pageCount_le_one {n k : Nat} (hk : k ≠ 0) (hn : n ≤ k) : pageCount n k = 1 := by
+  unfold pageCount
+  simp only [hk, if_false]
+  have : (n + k - 1) / k ≤ 1 := by
+    have h2 : (n + k - 1) / k < 2 := (Nat.div_lt_iff_lt_mul (Nat.pos_of_ne_zero hk)).2 (by omega)
+    omega
+  exact Nat.max_eq_left this
+
 theorem pages_take (xs : List α) (k n : Nat) (hk : k ≠ 0) :
     (List.range n).flatMap (pageAt xs k) = xs.take (n * k) := by
   induction n with
@@ -254,6 +278,11 @@ def pageQuery (n : Nat) : String := "page=" ++ toString n
 #guard pageCount 0 100 == 1
 #guard pageCount 5 0 == 1
 #guard paginated 120 100 && !paginated 100 100 && !paginated 120 0
+-- `paginateAlways`: a listing of five at page size 100 is one paginated page;
+-- without it, it is not paginated; page size 0 is never paginated.
+#guard paginatedWith true 5 100 && paginatedWith true 0 100 && pageCount 5 100 == 1
+#guard !paginatedWith false 5 100 && !paginatedWith true 5 0
+#guard paginatedWith false 120 100 && paginatedWith true 120 100
 #guard pageAt [1, 2, 3, 4, 5] 2 2 == [5]
 #guard (List.range (pageCount 5 2)).flatMap (pageAt [1, 2, 3, 4, 5] 2) == [1, 2, 3, 4, 5]
 

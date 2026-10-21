@@ -687,12 +687,18 @@ def notificationKeyId (baseIri x : String) : String :=
   storageIdOf baseIri ++ "#notification-key-" ++ hex8 (fnv1a32 x.toUTF8)
 
 /-- The `MoveResource` capability (§Storage Capabilities; moves are decided
-by `L4Factoidal.LWS.Move`): data resources and containers move, and a moved
-resource gets a new identifier. -/
-def moveCapability : Json :=
+by `L4Factoidal.LWS.Move`): data resources move, and containers too when
+`containers` holds (§Moving Resources: a server that does not move
+containers "MUST NOT include Container in the `appliesTo` property"); a
+moved resource gets a new identifier. -/
+def moveCapability (containers : Bool := true) : Json :=
   .object [ ("type", .string "MoveResource")
-          , ("appliesTo", .array [.string "DataResource", .string "Container"])
+          , ("appliesTo", .array ([.string "DataResource"] ++
+              (if containers then [.string "Container"] else [])))
           , ("preservesIdentifier", .bool false) ]
+
+#guard (moveCapability true).field? "appliesTo" == some (.array [.string "DataResource", .string "Container"])
+#guard (moveCapability false).field? "appliesTo" == some (.array [.string "DataResource"])
 
 /-- The storage description (§Discovery, "Storage Description Resource"),
 serialised as `application/lws+cid`. With `move`, it describes the
@@ -717,7 +723,7 @@ of its storage description resource" and "Each service object MUST include a
 serviceEndpoint property"). -/
 def storageDescription (baseIri : String) (notify : Bool := false)
     (keyX : Option String := none) (move : Bool := false) (typeIndex : Bool := false)
-    (access : Bool := false) (results : Bool := false) : String :=
+    (access : Bool := false) (results : Bool := false) (moveContainers : Bool := true) : String :=
   let sid := storageIdOf baseIri
   let keyMembers : List (String × Json) :=
     match notify, keyX with
@@ -773,7 +779,7 @@ def storageDescription (baseIri : String) (notify : Bool := false)
     [ ("@context", .array [.string cidContext, .string lwsProfile])
     , ("id", .string sid)
     , ("type", .string "Storage") ] ++ keyMembers ++
-    (if move then [("capability", .array [moveCapability])] else []) ++
+    (if move then [("capability", .array [moveCapability moveContainers])] else []) ++
     [ ("service", .array ([ .object
         [ ("type", .string "StorageRoot")
         , ("serviceEndpoint", .string (iriOfPath baseIri rootPath)) ] ] ++ notifService ++

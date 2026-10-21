@@ -54,7 +54,14 @@ w3c/lws-protocol commit 9a08ff65a6670cc5d308ed5e531032f23af30fcc
   - "Servers MAY support changing the `up` link of a container, and MUST
     indicate that they do so by including Container in the `appliesTo`
     property [...] When a container is moved, its descendants move with
-    it". This server moves containers with their descendants.
+    it". This server moves containers with their descendants, unless its
+    configuration says data resources only (`Config.moveContainers`
+    false, `lws-serve --moves data`). Then the capability's `appliesTo` is
+    `[DataResource]` and a change of a container's `up` link answers 409:
+    "A server that supports moving data resources but not containers MUST
+    reject such a request with an appropriate 4xx status code, such as 409
+    Conflict, and MUST NOT include Container in the `appliesTo` property."
+    `movable`.
   - "A server MUST NOT apply a change to an `up` link unless the requesting
     agent is authorized both to perform the delete resource operation on
     the resource being moved and to perform the create resource operation
@@ -612,6 +619,23 @@ theorem move_tree (hS : StoreLaws S) {pre post : σ} {src dest : String} {plan :
 
 end Theorems
 
+/-! ## Which resources move -/
+
+/-- Does a storage move a resource of kind `k`? `moves`: it moves resources
+at all (it describes a `MoveResource` capability); `containers`: the
+capability's `appliesTo` holds `Container` as well as `DataResource`.
+§Storage Capabilities: "If the property is absent, the capability applies to
+data resources only"; §Moving Resources: "A server that supports moving data
+resources but not containers MUST reject such a request with an appropriate
+4xx status code". -/
+def movable (moves containers : Bool) (k : ResourceKind) : Bool :=
+  moves && (containers || !k.isContainer)
+
+#guard movable true true .container && movable true true .dataResource
+#guard movable true false .dataResource && !movable true false .container
+#guard !movable true false .storageRoot
+#guard !movable false true .dataResource && !movable false true .container
+
 /-! ## The request: which `up` a linkset document asks for -/
 
 /-- What a patched or replaced linkset document asks of the `up` link. -/
@@ -683,14 +707,15 @@ def requestedLinkset? (r : Request) (doc : Json) : Option (Bool × Json) :=
 a PATCH or PUT of the linkset of a resource whose `up` link changes. Used
 by `Authorization.decide`, which must evaluate the authorization of a move
 before the move is applied. -/
-def movePlanOf? (S : Store σ) (baseIri : String) (moves : Bool) (r : Request) (st : σ) :
-    Option MovePlan :=
+def movePlanOf? (S : Store σ) (baseIri : String) (moves containers : Bool) (r : Request)
+    (st : σ) : Option MovePlan :=
   let (path, query0) := splitTarget r.path
   let query := if r.queryStr != "" then r.queryStr else query0
   if !moves || query != linksetQuery || !validTarget path then none else
   match S.lookup st path with
   | none => none
   | some e =>
+      if !movable moves containers e.kind then none else
       match requestedLinkset? r (linksetDoc baseIri path e.kind e.links) with
       | none => none
       | some (keepAbsent, d) =>
