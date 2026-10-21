@@ -88,7 +88,33 @@ requests, ranges, `application/lws+json` listings, linksets, the
 JSON Patch, RFC 9457 errors) is `L4Factoidal/LWS/Binding.lean`; the audit
 table is in the ledger, section "LWS editor's draft 2026-10-19 audit", and
 `node tests/lws/draft-binding.mjs` is its host suite (with xfails for
-https://github.com/danbri/factoidal/issues/886 to 890).
+https://github.com/danbri/factoidal/issues/887, 888 and 890).
+
+### Bodies are bytes (https://github.com/danbri/factoidal/issues/889)
+
+`LWS.Entry.body` is a `ByteArray`. The hosts call `lwsStep` and `solidStep`
+through `callBlobIO` (the `l4_call_blob_io` entry): request content in the
+IN region, response content in the OUT region, no encoding; the string entry
+`l4_call` carries `body` (text) or `bodyBase64` (RFC 4648 §4). A host never
+reads a body as text. Rules, all in Lean:
+
+* A data resource is stored and returned byte for byte; `Content-Range`,
+  `size` in listings and `schema:size` count bytes.
+* `Range` is a byte range at any offset, also inside a UTF-8 sequence: 206
+  with `Content-Range`, 416 with `bytes */len` (`rangeBytes`; theorem
+  `range_selection_exact` in `Binding.lean`).
+* The ETag of a data resource is its clock and the FNV-1a digest of its
+  bytes (`etagFor`).
+* Content whose media type is read as text (`rdfTextMedia`: Turtle,
+  N-Triples, N-Quads, TriG, JSON-LD, N3, JSON Patch) and whose bytes are not
+  UTF-8 gets 400 and is not stored (`rdfContentRefused`).
+* The snapshot is format `lws-snapshot-2`, bodies as `bodyBase64`; format 1
+  is still read (`Snapshot.lean`, theorems `Base64.decode_encode` and
+  `entryOfJson_entryJson`).
+
+Test: `node tests/lws/binary-bodies.mjs` (both servers: a PNG-like body with
+NUL and 0xFF, every byte range of a small body, restart persistence, a
+format-1 snapshot, invalid UTF-8 as Turtle).
 
 ### LWS authorization (https://github.com/danbri/factoidal/issues/886)
 

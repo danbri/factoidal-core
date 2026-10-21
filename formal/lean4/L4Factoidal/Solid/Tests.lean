@@ -36,11 +36,14 @@ def cfg : ServerConfig :=
 
 def emptyStorage : MemState :=
   { entries := [{ path := "/", kind := .storageRoot, contentType := "text/turtle",
-                  body := "", mtime := 0 }], clock := 1 }
+                  body := ByteArray.empty, mtime := 0 }], clock := 1 }
 
 def req (method target : String) (headers : List (String × String) := [])
     (body : String := "") : Request :=
   { method, path := target, queryStr := "", headers, body }
+
+/-- The content of a response read as UTF-8 text. -/
+def rtext (r : Response) : String := (String.fromUTF8? r.content).getD ""
 
 def run (c : ServerConfig) (r : Request) (st : MemState) : Response × MemState :=
   Server.step MemStore c r st
@@ -126,7 +129,7 @@ def solidGuardContainment : Bool :=
   let (resp, _) := run cfg (req "GET" "/alice/") populated
   -- The response body is read back through the Turtle parser, so the check
   -- covers the serialisation as well as the containment relation.
-  let served := aclGraphOf resp.body
+  let served := aclGraphOf (rtext resp)
   let contains := served.filter (fun t => t.p == ldpContains)
   resp.status == 200 && hdr resp "content-type" == some "text/turtle" &&
   contains.length == 2 &&
@@ -269,8 +272,8 @@ def solidGuardN3PatchApplies : Bool :=
   | none => false
   | some e =>
       resp.status == 204 &&
-      (e.body.splitOn "Alex").length > 1 && (e.body.splitOn "Claudia").length == 1 &&
-      (e.body.splitOn "Garcia").length > 1
+      (e.text.splitOn "Alex").length > 1 && (e.text.splitOn "Claudia").length == 1 &&
+      (e.text.splitOn "Garcia").length > 1
 
 /-- "Servers MUST indicate support of N3 Patch by listing text/n3 as a field
 value of the Accept-Patch header field." -/
@@ -358,12 +361,12 @@ def solidGuardN3PatchRelativeIri : Bool :=
   | none => false
   | some e =>
       resp.status == 204 &&
-      (e.body.splitOn "added").length > 1 &&
-      (e.body.splitOn "one").length > 1 &&
+      (e.text.splitOn "added").length > 1 &&
+      (e.text.splitOn "one").length > 1 &&
       -- The fragment resolved against the target, not against nothing. The
       -- stored body is read back through the Turtle parser, because the
       -- serialiser writes the IRI with a prefix.
-      (graphOf none e.body).all (fun t =>
+      (graphOf none e.text).all (fun t =>
         t.s == Subject.iri ⟨"http://example.org/notes/three#it", by rfl⟩)
 
 /-- A PATCH body that is not `text/n3` is refused. -/
@@ -833,13 +836,13 @@ def solidGuardTurtleAsJsonLd : Bool :=
   hdr resp "content-type" == some "application/ld+json" &&
   has resp "vary" "accept" &&
   (match hdr resp "etag" with | some t => (t.splitOn "-jsonld").length == 2 | none => false) &&
-  (readRdfSource mediaJsonLd "http://example.org/alice/card" resp.body).map (·.length) == some 1
+  (readRdfSource mediaJsonLd "http://example.org/alice/card" (rtext resp)).map (·.length) == some 1
 
 /-- Asked for as Turtle, the same resource answers its stored bytes. -/
 def solidGuardTurtleAsTurtle : Bool :=
   let (resp, _) := run cfg (req "GET" "/alice/card" acceptTurtle) populated
   resp.status == 200 && hdr resp "content-type" == some "text/turtle" &&
-  (resp.body.splitOn "Alice").length == 2 && !(resp.body.startsWith "[")
+  ((rtext resp).splitOn "Alice").length == 2 && !((rtext resp).startsWith "[")
 
 /-- A JSON-LD resource asked for as Turtle answers Turtle with its triples. -/
 def solidGuardJsonLdAsTurtle : Bool :=
@@ -849,25 +852,25 @@ def solidGuardJsonLdAsTurtle : Bool :=
   let (resp, _) := run cfg (req "GET" "/alice/shop.json" acceptTurtle) st
   let (plain, _) := run cfg (req "GET" "/alice/shop.json") st
   resp.status == 200 && hdr resp "content-type" == some "text/turtle" &&
-  (readRdfSource mediaTurtle "http://example.org/alice/shop.json" resp.body).map (·.length) == some 1 &&
+  (readRdfSource mediaTurtle "http://example.org/alice/shop.json" (rtext resp)).map (·.length) == some 1 &&
   -- With no Accept field the stored JSON-LD is answered.
-  hdr plain "content-type" == some "application/ld+json" && plain.body.startsWith "{"
+  hdr plain "content-type" == some "application/ld+json" && (rtext plain).startsWith "{"
 
 /-- A container listed as JSON-LD; and its Turtle listing writes a dotted
 member IRI in full, so a Notation3 reader does not read a path. -/
 def solidGuardContainerNegotiated : Bool :=
   let (j, _) := run cfg (req "GET" "/alice/" acceptJsonLd) populated
   let (t, _) := run cfg (req "GET" "/alice/" acceptTurtle) populated
-  hdr j "content-type" == some "application/ld+json" && j.body.startsWith "[" &&
+  hdr j "content-type" == some "application/ld+json" && (rtext j).startsWith "[" &&
   hdr t "content-type" == some "text/turtle" &&
-  (t.body.splitOn "<http://example.org/alice/card>").length ≥ 2 &&
-  (t.body.splitOn "ns1:").length == 1
+  ((rtext t).splitOn "<http://example.org/alice/card>").length ≥ 2 &&
+  ((rtext t).splitOn "ns1:").length == 1
 
 /-- Negative: a non-RDF resource is never converted. -/
 def solidGuardPlainNotConverted : Bool :=
   let st := (runAll cfg [req "PUT" "/alice/hello.txt" [("content-type", "text/plain")] "hi"] populated).2
   let (resp, _) := run cfg (req "GET" "/alice/hello.txt" acceptJsonLd) st
-  hdr resp "content-type" == some "text/plain" && resp.body == "hi"
+  hdr resp "content-type" == some "text/plain" && (rtext resp) == "hi"
 
 #guard solidGuardTurtleAsJsonLd
 #guard solidGuardTurtleAsTurtle

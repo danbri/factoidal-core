@@ -133,7 +133,12 @@ def targetsAcl (p : String) : Bool := p.endsWith ".acl"
 
 /-! ## Reading a request -/
 
-def hasContent (r : Request) : Bool := r.body != ""
+def hasContent (r : Request) : Bool := r.content.size != 0
+
+/-- The content of a request read as UTF-8 text, or `""` when it is not
+UTF-8. Only Turtle and N3 readers use it; `LWS.step` refuses an RDF write
+whose bytes are not UTF-8 before anything is stored. -/
+def contentText (r : Request) : String := (String.fromUTF8? r.content).getD ""
 
 def contentTypeOf (r : Request) : Option String :=
   (r.header? "content-type").map (fun ct => (ct.splitOn ";").headD ct)
@@ -146,7 +151,7 @@ def requesterOf (cfg : ServerConfig) (r : Request) : Requester :=
 /-! ## Refusals -/
 
 def refuse (status : Nat) (msg : String) : Response :=
-  ⟨status, [("content-type", "text/plain")], msg⟩
+  ⟨status, [("content-type", "text/plain")], msg, none⟩
 
 /-! ## The step function -/
 
@@ -178,7 +183,7 @@ def step (S : Store σ) (cfg : ServerConfig) (r : Request) (st : σ) :
     (withCors r resp, st)
   else
     match slashRedirect? S st target with
-    | some other => (withCors r ⟨301, [("location", other)], ""⟩, st)
+    | some other => (withCors r ⟨301, [("location", other)], "", none⟩, st)
     | none =>
         let (resp, st') := solidStep S cfg r st target
         let resp := withInboxLink cfg r.path resp
@@ -209,7 +214,7 @@ where
         match S.lookup st (aclPathOf owner) with
         | none => "user=\"\",public=\"\""
         | some e =>
-            wacAllow (aclGraphOf e.body) (iriOfPath cfg.lws.baseIri target)
+            wacAllow (aclGraphOf e.text) (iriOfPath cfg.lws.baseIri target)
                      (iriOfPath cfg.lws.baseIri owner) inherited who
   /-- Everything after the access decision and the redirect. -/
   solidStep (S : Store σ) (cfg : ServerConfig) (r : Request) (st : σ)
@@ -228,8 +233,7 @@ where
                   (negotiateRdf (r.header? "accept") mediaTurtle) g with
                 | some b => (negotiateRdf (r.header? "accept") mediaTurtle, b)
                 | none => (mediaTurtle, solidTurtle g)
-              ({ base with
-                 body := if r.method == "HEAD" then "" else body,
+              ({ base.withText (if r.method == "HEAD" then "" else body) with
                  headers := base.headers.map (fun (k, v) =>
                    if k == "content-type" then (k, media) else (k, v)) }, st')
             else if isRdfSourceMedia e.contentType then
@@ -241,7 +245,7 @@ where
                 ({ resp with headers := resp.headers ++ [("vary", "accept")] }, st')
               else
               match convertRdfSource e.contentType want
-                      (iriOfPath cfg.lws.baseIri target) e.body with
+                      (iriOfPath cfg.lws.baseIri target) e.text with
               | some body =>
                   -- The converted representation is a whole one: a Range
                   -- field applies to the stored bytes, so it is not passed on.
@@ -249,8 +253,7 @@ where
                                 k != "range" && k != "if-range") }
                   let (resp, st') := LWS.step S cfg.lws r0 st
                   if resp.status != 200 then (resp, st') else
-                  ({ resp with
-                     body := if r.method == "HEAD" then "" else body,
+                  ({ resp.withText (if r.method == "HEAD" then "" else body) with
                      headers := (resp.headers.filter (fun (k, _) => k != "accept-ranges")).map
                        (fun (k, v) =>
                          if k == "content-type" then (k, want)
@@ -263,7 +266,7 @@ where
         if hasContent r && (r.header? "content-type").isNone then
           (refuse 400 "PUT with content requires a Content-Type header field", st)
         else if pathIsContainer target &&
-                bodyEditsContainment cfg.lws.baseIri target r.body then
+                bodyEditsContainment cfg.lws.baseIri target (contentText r) then
           (refuse 409 "a container's containment triples cannot be edited", st)
         else LWS.step S cfg.lws r st
     | "POST" =>
@@ -284,24 +287,27 @@ where
           let existing := S.lookup st target
           let targetIri := iriOfPath cfg.lws.baseIri target
           let current := match existing with
-            | some e => graphOf (some targetIri) e.body
+            | some e => graphOf (some targetIri) e.text
             | none   => []
-          match applyN3Patch r.body current (some targetIri) with
+          match rdfContentRefused "text/n3" r.content target with
+          | some resp => (resp, st)
+          | none =>
+          match applyN3Patch (contentText r) current (some targetIri) with
           | .error e => (refuse e.status e.message, st)
           | .ok g' =>
               let st1 := ensureAncestors S (ancestors target) st
               let e : Entry := { path := target, kind := .dataResource,
                                  contentType := "text/turtle",
-                                 body := solidTurtle g', mtime := S.now st1 }
+                                 body := textBytes (solidTurtle g'), mtime := S.now st1 }
               let st2 := touchContainer S (S.tick (S.put st1 e)) target
               match existing with
               | none   => (⟨201, [("location", target),
-                                  ("last-modified", httpDate e.mtime)], ""⟩, st2)
-              | some _ => (⟨204, [("last-modified", httpDate e.mtime)], ""⟩, st2)
+                                  ("last-modified", httpDate e.mtime)], "", none⟩, st2)
+              | some _ => (⟨204, [("last-modified", httpDate e.mtime)], "", none⟩, st2)
     | "DELETE" =>
         if target == rootPath || target == aclPathOf rootPath then
           (⟨405, [("allow", String.intercalate ", "
-                    (allowFor .storageRoot (target == rootPath)))], ""⟩, st)
+                    (allowFor .storageRoot (target == rootPath)))], "", none⟩, st)
         else
           let (resp, st') := LWS.step S cfg.lws r st
           if resp.status == 204 then

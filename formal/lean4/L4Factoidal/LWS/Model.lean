@@ -187,15 +187,33 @@ def auxiliaryRel : ResourceKind → Option String
 clock: the operations take the current time from the state, and the state
 takes it from the host. That is what keeps `step` a total function.
 
-`contentType` is the media type of `body`. A resource whose representation
-is not text is held by the host, which gives the engine the metadata; this
-first slice carries a UTF-8 string. -/
+`contentType` is the media type of `body`. `body` is the representation
+data as bytes (RFC 9110 §8.1: "representation data"), because a data
+resource is "a document, image, or structured information" and an image is
+not a UTF-8 string. A non-RDF resource is stored and returned byte for byte;
+an RDF resource is read from these bytes as UTF-8 (`Entry.text`), and a write
+whose bytes are not UTF-8 is refused before it is stored
+(`Operations.rdfContentRefused`). https://github.com/danbri/factoidal/issues/889 -/
 structure Entry where
   path        : String
   kind        : ResourceKind
   contentType : String
-  body        : String
+  body        : ByteArray
   mtime       : Nat
-deriving Repr, Inhabited
+deriving Inhabited
+
+instance : Repr Entry where
+  reprPrec e _ :=
+    "{ path := " ++ repr e.path ++ ", kind := " ++ repr e.kind ++
+    ", contentType := " ++ repr e.contentType ++ ", body := " ++ repr e.body.toList ++
+    ", mtime := " ++ repr e.mtime ++ " }"
+
+/-- The representation data of an entry read as UTF-8 text, or `""` when the
+bytes are not UTF-8. Only the readers of RDF and ACL documents use it; an RDF
+resource whose bytes are not UTF-8 is never stored (`Operations`). -/
+def Entry.text (e : Entry) : String := (String.fromUTF8? e.body).getD ""
+
+/-- The UTF-8 bytes of a text body. -/
+def textBytes (s : String) : ByteArray := s.toUTF8
 
 end L4Factoidal.LWS

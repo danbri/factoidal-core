@@ -33,8 +33,9 @@ host or the engine failed rather than answered.
 | `lwsFetched` | `[handle, documentJson]` | `{ ok, fetch? , installed?, refused? }` |
 
 ```
-request  { method, target, headers: [[name, value]], body }
-response { status, headers: [[name, value]], body }
+request  { method, target, headers: [[name, value]] } + the content as bytes
+response { status, headers: [[name, value]], bodyBytes } + the content as bytes
+(through callBlobIO; https://github.com/danbri/factoidal/issues/889)
 ```
 
 `headers` is a list of pairs, not an object: HTTP allows a field name to
@@ -130,6 +131,7 @@ in the engine handle, so nothing is read from it or written to it yet
 ```
 node tests/lws/server.mjs
 node tests/lws/draft-binding.mjs
+node tests/lws/binary-bodies.mjs
 node tests/lws/authorization.mjs
 deno run --allow-read --allow-net --allow-write --allow-env tests/lws/server.mjs
 ```

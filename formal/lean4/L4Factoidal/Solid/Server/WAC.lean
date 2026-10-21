@@ -303,7 +303,7 @@ def allowed (S : Store σ) (parseAcl : String → List Triple)
       match S.lookup st (aclPathOf owner) with
       | none => false
       | some e =>
-          decideAccess (parseAcl e.body) (iriOfPath baseIri target)
+          decideAccess (parseAcl e.text) (iriOfPath baseIri target)
                  (iriOfPath baseIri owner) inherited who required
 
 end L4Factoidal.Solid.Server

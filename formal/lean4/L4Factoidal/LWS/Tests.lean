@@ -30,11 +30,14 @@ def cfg : Config := { baseIri := "http://example.org/", owner := some "http://ex
 /-- A storage holding only its root, at clock 0. -/
 def emptyStorage : MemState :=
   { entries := [{ path := "/", kind := .storageRoot, contentType := "text/turtle",
-                  body := "", mtime := 0 }], clock := 1 }
+                  body := ByteArray.empty, mtime := 0 }], clock := 1 }
 
 def req (method target : String) (headers : List (String × String) := [])
     (body : String := "") : Request :=
   { method, path := target, queryStr := "", headers, body }
+
+/-- The content of a response read as UTF-8 text. -/
+def rtext (r : Response) : String := (String.fromUTF8? r.content).getD ""
 
 def run (r : Request) (st : MemState) : Response × MemState :=
   step MemStore cfg r st
@@ -156,8 +159,8 @@ def lwsGuardCreateReadUpdateDelete : Bool :=
     , req "DELETE" "/alice/card"                -- delete
     , req "GET" "/alice/card" ] emptyStorage    -- gone
   (rs.map (·.status)) == [201, 200, 204, 200, 204, 404] &&
-  (rs[1]?.map (·.body)) == some "one" &&
-  (rs[3]?.map (·.body)) == some "two" &&
+  (rs[1]?.map rtext) == some "one" &&
+  (rs[3]?.map rtext) == some "two" &&
   (memLookup st "/alice/card").isNone
 
 #guard lwsGuardCreateReadUpdateDelete
@@ -239,8 +242,8 @@ def lwsGuardIfMatch : Bool :=
   let tag := (hdr (run (req "GET" "/a") st).1 "etag").getD ""
   let (bad, st1) := run (req "PUT" "/a" (("if-match", "\"nope\"") :: turtle) "y") st
   let (good, st2) := run (req "PUT" "/a" (("if-match", tag) :: turtle) "z") st
-  bad.status == 412 && (memLookup st1 "/a").map (·.body) == some "x" &&
-  good.status == 204 && (memLookup st2 "/a").map (·.body) == some "z"
+  bad.status == 412 && (memLookup st1 "/a").map (·.text) == some "x" &&
+  good.status == 204 && (memLookup st2 "/a").map (·.text) == some "z"
 #guard lwsGuardIfMatch
 -- If-Match on an absent resource fails; If-None-Match: * on an absent one writes.
 #guard (run (req "PUT" "/b" (("if-match", "*") :: turtle) "y") emptyStorage).1.status == 412
@@ -268,8 +271,8 @@ def lwsGuardRange : Bool :=
   let (r1, _) := run (req "GET" "/t" [("range", "bytes=2-4")]) st
   let (r2, _) := run (req "GET" "/t" [("range", "bytes=-3")]) st
   let (r3, _) := run (req "GET" "/t" [("range", "bytes=7-")]) st
-  r1.status == 206 && r1.body == "cde" && hdr r1 "content-range" == some "bytes 2-4/10" &&
-  r2.body == "hij" && r3.body == "hij" && hdr r1 "accept-ranges" == some "bytes"
+  r1.status == 206 && rtext r1 == "cde" && hdr r1 "content-range" == some "bytes 2-4/10" &&
+  rtext r2 == "hij" && rtext r3 == "hij" && hdr r1 "accept-ranges" == some "bytes"
 #guard lwsGuardRange
 -- Unsatisfiable: 416 with `bytes */len`; a syntax this server ignores: 200.
 #guard
@@ -349,7 +352,7 @@ def lwsGuardPostCreates : Bool :=
 #guard
   let (resp, st) := run (req "POST" "/alice/" (("slug", "card") :: turtle) "new") populated
   hdr resp "location" != some "/alice/card" &&
-  (memLookup st "/alice/card").map (·.body) == some "a"
+  (memLookup st "/alice/card").map (·.text) == some "a"
 -- A Slug with a slash is not used as a path.
 #guard
   let (resp, _) := run (req "POST" "/alice/" (("slug", "../x") :: turtle) "new") populated
@@ -372,14 +375,14 @@ def lwsGuardJsonPatch : Bool :=
   let patch := "[{\"op\":\"replace\",\"path\":\"/a\",\"value\":5},{\"op\":\"add\",\"path\":\"/b/-\",\"value\":3},{\"op\":\"test\",\"path\":\"/b/0\",\"value\":1}]"
   let (resp, st') := run (req "PATCH" "/d.json" [("content-type", "application/json-patch+json")] patch) st
   resp.status == 204 &&
-  (memLookup st' "/d.json").map (·.body) == some "{\"a\":5,\"b\":[1,2,3]}"
+  (memLookup st' "/d.json").map (·.text) == some "{\"a\":5,\"b\":[1,2,3]}"
 #guard lwsGuardJsonPatch
 -- A failing `test` leaves the resource unchanged and answers 409.
 #guard
   let (_, st) := run (req "PUT" "/d.json" json "{\"a\":1}") emptyStorage
   let patch := "[{\"op\":\"remove\",\"path\":\"/a\"},{\"op\":\"test\",\"path\":\"/z\",\"value\":1}]"
   let (resp, st') := run (req "PATCH" "/d.json" [("content-type", "application/json-patch+json")] patch) st
-  resp.status == 409 && (memLookup st' "/d.json").map (·.body) == some "{\"a\":1}"
+  resp.status == 409 && (memLookup st' "/d.json").map (·.text) == some "{\"a\":1}"
 -- Another patch format is 415 with `Accept-Patch`.
 #guard
   let (_, st) := run (req "PUT" "/d.json" json "{}") emptyStorage
@@ -453,8 +456,8 @@ def lwsGuardSnapshotRoundTrip : Bool :=
       match memStateOfJson j with
       | .error _ => false
       | .ok m =>
-          (m.entries.map (fun e => (e.path, e.body, e.mtime, e.contentType))) ==
-            (populated.entries.map (fun e => (e.path, e.body, e.mtime, e.contentType))) &&
+          (m.entries.map (fun e => (e.path, e.body.toList, e.mtime, e.contentType))) ==
+            (populated.entries.map (fun e => (e.path, e.body.toList, e.mtime, e.contentType))) &&
           m.entries.all (fun e => decide (e.mtime < m.clock))
 #guard lwsGuardSnapshotRoundTrip
 
@@ -463,15 +466,116 @@ def lwsGuardSnapshotRefusesTraversal : Bool :=
   let bad (p : String) : Json :=
     .object [ ("format", .string snapshotFormat), ("clock", .number "5")
             , ("entries", .array [ entryJson { path := "/", kind := .storageRoot,
-                                               contentType := "text/turtle", body := "", mtime := 0 }
+                                               contentType := "text/turtle", body := ByteArray.empty, mtime := 0 }
                                  , entryJson { path := p, kind := .dataResource,
-                                               contentType := "text/plain", body := "x", mtime := 1 } ]) ]
+                                               contentType := "text/plain", body := textBytes "x", mtime := 1 } ]) ]
   (match memStateOfJson (bad "/../../etc/passwd") with | .error _ => true | .ok _ => false) &&
   (match memStateOfJson (bad "/a/%2e%2e/b") with | .error _ => true | .ok _ => false) &&
   (match memStateOfJson (bad "/ok") with | .ok _ => true | .error _ => false) &&
   (match memStateOfJson (.object [("format", .string snapshotFormat), ("entries", .array [])]) with
    | .error _ => true | .ok _ => false)
 #guard lwsGuardSnapshotRefusesTraversal
+
+/-! ## Bodies are bytes (https://github.com/danbri/factoidal/issues/889) -/
+
+/-- A request whose content is the given bytes. -/
+def reqBytes (method target : String) (headers : List (String × String)) (b : ByteArray) :
+    Request :=
+  { method, path := target, queryStr := "", headers, bytes := some b }
+
+def pngLike : ByteArray := ⟨#[0x89, 0x50, 0x4e, 0x47, 0x00, 0xff, 0x80, 0xfe, 0x00, 0x01]⟩
+
+def octet : List (String × String) := [("content-type", "application/octet-stream")]
+
+/-- PUT then GET of a body that is not UTF-8 answers the same bytes, and
+the listing's `size` is the byte count. -/
+def lwsGuardBinaryRoundTrip : Bool :=
+  let (put, st) := run (reqBytes "PUT" "/b.png" [("content-type", "image/png")] pngLike) emptyStorage
+  let (get, _) := run (req "GET" "/b.png") st
+  let (head, _) := run (req "HEAD" "/b.png") st
+  put.status == 201 && get.status == 200 && get.content.toList == pngLike.toList &&
+  head.status == 200 && head.content.size == 0 &&
+  (memLookup st "/b.png").map (·.body.toList) == some pngLike.toList
+#guard lwsGuardBinaryRoundTrip
+
+/-- Every byte range of the binary body answers 206 with exactly that slice. -/
+def lwsGuardEveryRange : Bool :=
+  let st := (run (reqBytes "PUT" "/b.png" octet pngLike) emptyStorage).2
+  let n := pngLike.size
+  (List.range n).all fun a => (List.range n).all fun b =>
+    if a ≤ b then
+      let (r, _) := run (req "GET" "/b.png" [("range", s!"bytes={a}-{b}")]) st
+      r.status == 206 && r.content.toList == (pngLike.toList.drop a).take (b + 1 - a) &&
+      hdr r "content-range" == some s!"bytes {a}-{b}/{n}"
+    else true
+#guard lwsGuardEveryRange
+
+/-- A range that ends inside a two-byte UTF-8 sequence answers 206 with the
+one byte asked for (before issue 889 it answered the whole 200). -/
+def lwsGuardRangeInsideSequence : Bool :=
+  let st := (run (req "PUT" "/e.txt" [("content-type", "text/plain")] "é!") emptyStorage).2
+  let (r, _) := run (req "GET" "/e.txt" [("range", "bytes=0-0")]) st
+  let (s, _) := run (req "GET" "/e.txt" [("range", "bytes=1-1")]) st
+  r.status == 206 && r.content.toList == [0xc3] && s.status == 206 && s.content.toList == [0xa9]
+#guard lwsGuardRangeInsideSequence
+
+/-- Negative: a range past the end is 416 with `bytes */len`. -/
+#guard
+  let st := (run (reqBytes "PUT" "/b.png" octet pngLike) emptyStorage).2
+  let (r, _) := run (req "GET" "/b.png" [("range", "bytes=10-12")]) st
+  r.status == 416 && hdr r "content-range" == some "bytes */10"
+
+/-- Content declared as Turtle whose bytes are not UTF-8 is refused with 400
+and not stored; the same bytes as `application/octet-stream` are stored. -/
+def lwsGuardInvalidUtf8Turtle : Bool :=
+  let bad : ByteArray := ⟨#[0x3c, 0x61, 0x3e, 0xff, 0x2e]⟩
+  let (r, st) := run (reqBytes "PUT" "/x.ttl" turtle bad) emptyStorage
+  let (p, st2) := run (reqBytes "POST" "/" turtle bad) emptyStorage
+  let (ok, st3) := run (reqBytes "PUT" "/x.bin" octet bad) emptyStorage
+  r.status == 400 && (memLookup st "/x.ttl").isNone &&
+  p.status == 400 && st2.entries.length == emptyStorage.entries.length &&
+  ok.status == 201 && (memLookup st3 "/x.bin").map (·.body.toList) == some bad.toList
+#guard lwsGuardInvalidUtf8Turtle
+
+/-- The entity tag is computed on the bytes: two bodies with the same clock
+and different bytes get different tags. -/
+#guard
+  let e1 : Entry := { path := "/a", kind := .dataResource, contentType := "x", body := ⟨#[1]⟩, mtime := 3 }
+  let e2 : Entry := { e1 with body := ⟨#[2]⟩ }
+  etagFor e1 "x" != etagFor e2 "x" && etagFor e1 "x" == etagFor e1 "x"
+
+/-- Base64 of RFC 4648 §10, and its refusals. -/
+#guard Base64.encode (textBytes "") == ""
+#guard Base64.encode (textBytes "f") == "Zg=="
+#guard Base64.encode (textBytes "fo") == "Zm8="
+#guard Base64.encode (textBytes "foo") == "Zm9v"
+#guard Base64.encode (textBytes "foobar") == "Zm9vYmFy"
+#guard (Base64.decode? "Zm9vYmFy").map (·.toList) == some (textBytes "foobar").toList
+#guard (Base64.decode? "AP+A/w==").map (·.toList) == some [0, 255, 128, 255]
+#guard (Base64.decode? "Zg=").isNone
+#guard (Base64.decode? "Z!==").isNone
+#guard (Base64.decode? "Zg==Zg==").isNone
+
+/-- A binary storage survives the snapshot, and a format-1 snapshot reads. -/
+def lwsGuardBinarySnapshot : Bool :=
+  let st := (run (reqBytes "PUT" "/b.png" octet pngLike) emptyStorage).2
+  let v1 : Json :=
+    .object [ ("format", .string snapshotFormatV1), ("clock", .number "5")
+            , ("entries", .array [ .object [ ("path", .string "/"), ("kind", .string "storageRoot")
+                                           , ("contentType", .string "text/turtle"), ("body", .string "")
+                                           , ("mtime", .number "0") ]
+                                 , .object [ ("path", .string "/n"), ("kind", .string "dataResource")
+                                           , ("contentType", .string "text/plain"), ("body", .string "é")
+                                           , ("mtime", .number "1") ] ]) ]
+  (match memStateOfJson (snapshotJson st) with
+   | .ok m => (memLookup m "/b.png").map (·.body.toList) == some pngLike.toList
+   | .error _ => false) &&
+  (match memStateOfJson v1 with
+   | .ok m => (memLookup m "/n").map (·.body.toList) == some [0xc3, 0xa9]
+   | .error _ => false) &&
+  (match memStateOfJson (.object [("format", .string "lws-snapshot-9"), ("entries", .array [])]) with
+   | .error _ => true | .ok _ => false)
+#guard lwsGuardBinarySnapshot
 
 /-! ## The registry's own arithmetic -/
 

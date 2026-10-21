@@ -135,7 +135,7 @@ def problem (status : Nat) (detail target : String)
      , ("title", .string (reasonPhrase status))
      , ("status", .number (toString status))
      , ("detail", .string detail)
-     , ("instance", .string target) ])⟩
+     , ("instance", .string target) ]), none⟩
 
 /-! ## Dates -/
 
@@ -178,9 +178,29 @@ def mediaTagSuffix (media : String) : String :=
   else if media == "application/ld+json" then "-jsonld"
   else "-x"
 
-/-- The tag of one representation of an entry. -/
+/-- FNV-1a, 32 bits, over a byte region: the offset basis 2166136261 and the
+prime 16777619 of the FNV specification (draft-eastlake-fnv). A content
+digest for entity tags, not a cryptographic one. -/
+def fnv1a32 (b : ByteArray) : Nat :=
+  b.foldl (fun h x => ((h ^^^ x.toNat) * 16777619) % 4294967296) 2166136261
+
+private def hexDigit (n : Nat) : Char :=
+  if n < 10 then Char.ofNat (48 + n) else Char.ofNat (87 + n)
+
+/-- Eight lower-case hexadecimal digits of a 32-bit value. -/
+def hex8 (n : Nat) : String :=
+  String.ofList ((List.range 8).reverse.map (fun i => hexDigit (n / 16 ^ i % 16)))
+
+/-- The tag of one representation of an entry.
+
+A data resource's tag is its modification clock and the FNV-1a digest of its
+bytes, so the tag is computed on the representation data that RFC 9110
+§8.8.3 says a strong validator changes with
+(https://github.com/danbri/factoidal/issues/889). A container has one tag
+per media type (`mediaTagSuffix`). -/
 def etagFor (e : Entry) (media : String) : String :=
-  "\"" ++ toString e.mtime ++ (if e.kind.isContainer then mediaTagSuffix media else "") ++ "\""
+  "\"" ++ toString e.mtime ++
+    (if e.kind.isContainer then mediaTagSuffix media else "-" ++ hex8 (fnv1a32 e.body)) ++ "\""
 
 /-- The container media types this binding serves, server preference first. -/
 def containerMedia : List String := [mediaLwsJson, "application/ld+json", "text/turtle"]
@@ -227,7 +247,7 @@ def preconditionFailure (r : Request) (e : Option Entry) (tag : Option String)
   let safe := r.method == "GET" || r.method == "HEAD"
   let notModified : Response :=
     ⟨304, (match tag with | some t => [("etag", t)] | none => []) ++
-          (match lastModified with | some d => [("last-modified", d)] | none => []), ""⟩
+          (match lastModified with | some d => [("last-modified", d)] | none => []), "", none⟩
   match r.header? "if-match" with
   | some v =>
       if !ifMatchHolds v e then
@@ -281,13 +301,79 @@ def parseRange (v : String) (len : Nat) : Option (Option (Nat × Nat)) :=
             | some last => if last < first then none else some (some (first, min last (len - 1)))
   | _ => none
 
-/-- The partial response for a satisfiable byte range of `body`, or nothing
-when the range would cut a UTF-8 sequence. The ABI carries bodies as
-strings, so a cut sequence cannot be transported; the server then sends the
-full representation, which RFC 9110 §14.2 permits. -/
-def rangeBody (body : String) (first last : Nat) : Option String :=
-  let bytes := body.toUTF8
-  String.fromUTF8? (bytes.extract first (last + 1))
+/-- The bytes of the inclusive byte range `first`-`last` of `body`
+(RFC 9110 §14.1.2: "byte offsets ... are inclusive"). The range is a range
+of BYTES of the representation data, so it may begin or end inside a UTF-8
+sequence; that is what a client resuming a download asks for
+(https://github.com/danbri/factoidal/issues/889). -/
+def rangeBytes (body : ByteArray) (first last : Nat) : ByteArray :=
+  body.extract first (last + 1)
+
+/-- `rangeBytes` is the slice: the bytes at offsets `first` through `last`
+of `body`, in order. -/
+theorem rangeBytes_toList (body : ByteArray) (first last : Nat) :
+    (rangeBytes body first last).data.toList =
+      (body.data.toList.drop first).take (last + 1 - first) := by
+  simp [rangeBytes, ByteArray.data_extract, Array.toList_extract, List.extract]
+
+theorem rangeBytes_size (body : ByteArray) (first last : Nat) (h : last < body.size) :
+    (rangeBytes body first last).size = last + 1 - first := by
+  simp [rangeBytes, ByteArray.size_extract]; omega
+
+/-- A satisfiable range that `parseRange` answers lies inside the
+representation: `first ≤ last < len` (RFC 9110 §14.1.1, a satisfiable
+range). -/
+theorem parseRange_bounds {v : String} {len a b : Nat}
+    (h : parseRange v len = some (some (a, b))) : a ≤ b ∧ b < len := by
+  unfold parseRange at h
+  simp only at h
+  repeat' split at h
+  all_goals (simp only [reduceCtorEq, Option.some.injEq, Prod.mk.injEq] at h)
+  all_goals (simp only [Bool.or_eq_true, beq_iff_eq, not_or] at *; omega)
+
+/-- Range selection returns exactly the requested slice: when the `Range`
+field `v` names the satisfiable range `a`-`b` of `body`, the content of the
+206 has `b - a + 1` bytes and they are the bytes of `body` at offsets `a`
+through `b`. `Operations.stepPath` answers `rangeBytes e.body a b` for that
+case. -/
+theorem range_selection_exact {v : String} {body : ByteArray} {a b : Nat}
+    (h : parseRange v body.size = some (some (a, b))) :
+    a ≤ b ∧ b < body.size ∧
+    (rangeBytes body a b).size = b + 1 - a ∧
+    (rangeBytes body a b).data.toList = (body.data.toList.drop a).take (b + 1 - a) := by
+  have hb := parseRange_bounds h
+  exact ⟨hb.1, hb.2, rangeBytes_size body a b hb.2, rangeBytes_toList body a b⟩
+
+/-! ## RDF content is UTF-8 -/
+
+/-- The media types whose content this storage reads as RDF text. Each one's
+specification fixes the encoding as UTF-8: RDF 1.1 Turtle §2 "The encoding
+for Turtle is always UTF-8", N-Triples §2 and N-Quads §2 "the encoding is
+always UTF-8", TriG §2 the same as Turtle, JSON-LD 1.1 §C (application/ld+json
+is JSON, and RFC 8259 §8.1 "JSON text exchanged between systems ... MUST be
+encoded using UTF-8"), and Notation3 ("N3 files are always UTF-8"). The
+storage stores every other media type byte for byte. -/
+def rdfTextMedia : List String :=
+  [ "text/turtle", "application/n-triples", "application/n-quads", "application/trig"
+  , "application/ld+json", "text/n3", mediaJsonPatch ]
+
+/-- The media type of a `Content-Type` field value, without parameters and
+in lower case. -/
+def baseMedia (ct : String) : String := (((ct.splitOn ";").headD ct).trim).toLower
+
+/-- Is content of this `Content-Type` read as UTF-8 text by the storage? -/
+def isRdfTextMedia (ct : String) : Bool := rdfTextMedia.contains (baseMedia ct)
+
+/-- The 400 for content declared as an RDF text media type whose bytes are not
+UTF-8. RFC 9110 §15.5.1: "400 (Bad Request) ... the server cannot or will
+not process the request due to something that is perceived to be a client
+error (e.g., malformed request syntax ...)". The media type is supported, so
+the refusal is not 415; the content is malformed for it, so it is 400. -/
+def rdfContentRefused (ct : String) (content : ByteArray) (target : String) :
+    Option Response :=
+  if isRdfTextMedia ct && (String.fromUTF8? content).isNone then
+    some (problem 400 ("the content is not UTF-8, which " ++ baseMedia ct ++ " requires") target)
+  else none
 
 /-! ## Links -/
 
@@ -311,7 +397,7 @@ def itemJson (baseIri : String) (e : Entry) : Json :=
     , ("type", .string (if e.kind.isContainer then "Container" else "DataResource")) ] ++
     (if e.kind.isContainer then [] else
       [ ("format", .string e.contentType)
-      , ("size", .number (toString e.body.utf8ByteSize)) ]) ++
+      , ("size", .number (toString e.body.size)) ]) ++
     [ ("modified", .string (isoDateTime e.mtime)) ])
 
 /-- The `application/lws+json` representation of a container. -/
@@ -348,7 +434,7 @@ def containerTurtle (baseIri path : String) (items : List Entry) : String :=
     ttlIri (iriOfPath baseIri e.path) ++
     (if e.kind.isContainer then " a lws:Container ;\n"
      else " a lws:DataResource ;\n  dcterms:format " ++ ttlString e.contentType ++
-       " ;\n  schema:size \"" ++ toString e.body.utf8ByteSize ++ "\"^^xsd:long ;\n") ++
+       " ;\n  schema:size \"" ++ toString e.body.size ++ "\"^^xsd:long ;\n") ++
     "  dcterms:modified \"" ++ isoDateTime e.mtime ++ "\"^^xsd:dateTime .\n"
   header ++ self ++ String.join (items.map item)
 

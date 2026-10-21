@@ -66,7 +66,7 @@ answer a POST to it with 201 and a `Location`, and a container that does not
 exist answers 404 (Solid Protocol §5.3). -/
 def inboxEntry (now : Nat) : Entry :=
   { path := inboxPath, kind := .container, contentType := "text/turtle",
-    body := "", mtime := now }
+    body := ByteArray.empty, mtime := now }
 
 /-- Is this a notification POST to the inbox? -/
 def isNotificationPost (r : Request) : Bool :=

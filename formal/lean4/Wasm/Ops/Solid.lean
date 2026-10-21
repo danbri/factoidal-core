@@ -84,15 +84,18 @@ def solidOpen (configJson : String) : IO String := do
                    , ("root", .string rootPath)
                    , ("storage", .string cfg.lws.baseIri) ])
 
-def solidStep (h requestJson : String) : IO String := do
+/-- One Solid step; `blob` and the out region as `lwsStepWith`. -/
+def solidStepWith (h requestJson : String) (blob : Option ByteArray) :
+    IO (String × ByteArray) := do
+  let noBytes (s : String) : String × ByteArray := (s, ByteArray.empty)
   match (← solidTable.get)[h]? with
-  | none => pure (unknownSolidHandle h)
+  | none => pure (noBytes (unknownSolidHandle h))
   | some open_ =>
       match parseJson requestJson with
-      | .error e => pure (errJson s!"request: {toString e}")
+      | .error e => pure (noBytes (errJson s!"request: {toString e}"))
       | .ok j =>
-          match requestOfJson j with
-          | .error e => pure (errJson e)
+          match requestOfJson j blob with
+          | .error e => pure (noBytes (errJson e))
           | .ok (r, now?, agent?) => do
               let mem := match now? with
                 | some t => { open_.mem with clock := t }
@@ -103,8 +106,13 @@ def solidStep (h requestJson : String) : IO String := do
                 | none   => open_.cfg
               let (resp, mem') := L4Factoidal.Solid.Server.step MemStore cfg r mem
               solidTable.modify (·.insert h { open_ with mem := mem' })
-              pure (okWith [ ("response", jsonOfResponse resp)
-                           , ("changed", .bool (mem'.clock != mem.clock)) ])
+              pure (okWith [ ("response", jsonOfResponse resp blob.isSome)
+                           , ("changed", .bool (mem'.clock != mem.clock)) ],
+                    if blob.isSome then resp.content else ByteArray.empty)
+
+/-- `solidStep(handle, requestJson)` through the string entry. -/
+def solidStep (h requestJson : String) : IO String := do
+  return (← solidStepWith h requestJson none).1
 
 /-- `solidSnapshot(handle)`: the durable form of the storage, as
 `lwsSnapshot`. -/
