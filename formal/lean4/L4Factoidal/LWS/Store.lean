@@ -55,8 +55,10 @@ the specification says it answers.
   resets the clock before each request, so across requests it can repeat
   (https://github.com/danbri/factoidal/issues/911).
 * `lookupTick` — advancing the clock changes no resource. The move theorems
-  of `L4Factoidal.LWS.Move` need it: a move stamps the two containers and
-  advances the clock between the stamps.
+  of `L4Factoidal.LWS.Move` need it (a move stamps the two containers and
+  advances the clock between the stamps), and so does the type index
+  (`L4Factoidal.LWS.TypeIndex`), whose invariant is stated over `lookup`
+  (https://github.com/danbri/factoidal/issues/912).
 * `lookupPath` — an entry is found at its own path. -/
 structure StoreLaws {σ : Type} (S : Store σ) : Prop where
   lookupPutSame   : ∀ s e, S.lookup (S.put s e) e.path = some e

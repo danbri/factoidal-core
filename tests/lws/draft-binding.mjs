@@ -127,7 +127,15 @@ const CHECKS = [
   'Moving Resources: a JSON Patch of the up link moves a data resource (200, Content-Location, both listings, both container ETags)',
   'Moving Resources: a container moves with its descendants',
   'Moving Resources: a move to a missing container, to a data resource, into itself or a descendant, or without an up link answers 409 and moves nothing',
-  'Moving Resources: a subscriber to the old container receives one Move activity with origin and target'
+  'Moving Resources: a subscriber to the old container receives one Move activity with origin and target',
+  'Type index: the storage description advertises TypeIndexService and TypeSearchService with their endpoints',
+  'Type search: QUERY finds a type from a Link header and from Turtle content; AND, OR and the native classes',
+  'Type search: a describedby link is an indexed relation; an unindexed relation and up give the same empty answer',
+  'Type search: Cache-Control private, Vary, Accept-Query; OPTIONS; 400 without Content-Type, 415, 406, 400, 422',
+  'Type search: rel="next" pages through the answer with GET; an altered page link answers 404',
+  'Type index: GET lists the types in application/lws+json, paged, with Cache-Control private',
+  'Type search: a set-linkset update, a delete and a move are reflected in the next search',
+  'Type search: the index is rebuilt from DIR/lws-state.json after a restart'
 ]
 
 /** A local webhook receiver: records every POST and answers with the
@@ -458,8 +466,11 @@ async function main () {
     })
 
     await check(CHECKS[21], async () => {
+      // A `type` link is server-managed when it names a class of the server;
+      // another target is a declared type (lws10-index, issue 912).
       for (const rel of ['type', 'up', 'linkset', 'items', 'https://www.w3.org/ns/lws#storage']) {
-        const r = await fetch(`${o}/lic.txt`, { method: 'PUT', headers: { 'content-type': 'text/plain', prefer: 'set-linkset', link: `<https://example.org/x>; rel="${rel}"` }, body: 'changed' })
+        const target = rel === 'type' ? 'https://www.w3.org/ns/lws#Container' : 'https://example.org/x'
+        const r = await fetch(`${o}/lic.txt`, { method: 'PUT', headers: { 'content-type': 'text/plain', prefer: 'set-linkset', link: `<${target}>; rel="${rel}"` }, body: 'changed' })
         const j = await r.json()
         assert(r.status === 409 && j.status === 409, `rel ${rel} answered ${r.status}`)
       }
@@ -898,6 +909,198 @@ async function main () {
   // second on every request, so two changes in one second carry one
   // Last-Modified. The sequence is repeated until both reads fall in the
   // same second, so the check exercises that case.
+  // LWS Search and Type Index Services (lws10-index), issue 912.
+  {
+    const s = await listen({ engine, port: 0, insecureNoAuth: true, pageSize: 2 })
+    const so = s.origin
+    const SP = 'https://schema.org/Person'
+    const SE = 'https://schema.org/Event'
+    const search = (filter, headers = {}) => fetch(`${so}/.well-known/lws-type-search`, {
+      method: 'QUERY', headers: { 'content-type': 'application/lws-query+json', ...headers },
+      body: typeof filter === 'string' ? filter : JSON.stringify(filter)
+    })
+    const allIds = async (filter) => {
+      const out = []
+      let r = await search(filter)
+      for (let i = 0; i < 20; i++) {
+        const j = await r.json()
+        assert(r.status === 200, `search answered ${r.status} ${JSON.stringify(j)}`)
+        out.push(...j.items.map((x) => x.id))
+        const next = linkTarget(r.headers.get('link'), 'next')
+        if (next === null) break
+        r = await fetch(next)
+      }
+      return out
+    }
+    const post = async (slug, contentType, body, link) => {
+      const headers = { 'content-type': contentType, slug }
+      if (link) headers.link = link
+      const r = await fetch(`${so}/c/`, { method: 'POST', headers, body })
+      await r.text()
+      assert(r.status === 201, `POST ${slug} answered ${r.status}`)
+    }
+    try {
+      const c = await fetch(`${so}/`, { method: 'POST', headers: { slug: 'c', link: '<https://www.w3.org/ns/lws#Container>; rel="type"' } })
+      await c.text()
+      await post('a', 'text/plain', 'typed by its Link header', `<${SP}>; rel="type"`)
+      await post('b', 'text/turtle', `<> a <${SE}> .`)
+      await post('p', 'text/turtle', '<> a <http://xmlns.com/foaf/0.1/Person> .', `<${SP}>; rel="type", <https://ex.org/shape>; rel="describedby"`)
+
+      await check('Type index: the storage description advertises TypeIndexService and TypeSearchService with their endpoints', async () => {
+        const d = await (await fetch(`${so}/.well-known/lws-storage`, { headers: { accept: 'application/lws+cid' } })).json()
+        const ti = d.service.find((x) => x.type === 'TypeIndexService')
+        const ts = d.service.find((x) => x.type === 'TypeSearchService')
+        assert(ti && ti.serviceEndpoint === `${so}/.well-known/lws-type-index`, JSON.stringify(d.service))
+        assert(ts && ts.serviceEndpoint === `${so}/.well-known/lws-type-search`, JSON.stringify(d.service))
+        // Negative: a storage opened with typeIndex: false advertises neither.
+        const off = await listen({ engine, port: 0, insecureNoAuth: true, typeIndex: false })
+        try {
+          const d2 = await (await fetch(`${off.origin}/.well-known/lws-storage`)).json()
+          assert(!d2.service.some((x) => /^Type(Index|Search)Service$/.test(x.type)), JSON.stringify(d2.service))
+        } finally {
+          await off.close()
+        }
+      })
+
+      await check('Type search: QUERY finds a type from a Link header and from Turtle content; AND, OR and the native classes', async () => {
+        const eq = (a, b, what) => assert(JSON.stringify(a) === JSON.stringify(b), `${what}: ${JSON.stringify(a)}`)
+        eq(await allIds({ type: [SP] }), [`${so}/c/a`, `${so}/c/p`], 'Person')
+        eq(await allIds({ type: [SE] }), [`${so}/c/b`], 'Event from content')
+        eq(await allIds({ type: [[SE, 'http://xmlns.com/foaf/0.1/Person']] }), [`${so}/c/b`, `${so}/c/p`], 'OR')
+        eq(await allIds({ type: [SP, 'http://xmlns.com/foaf/0.1/Person'] }), [`${so}/c/p`], 'AND')
+        eq(await allIds({ type: [SP, 'https://www.w3.org/ns/lws#Container'] }), [], 'Person AND Container')
+        eq(await allIds({ type: ['https://www.w3.org/ns/lws#Container'] }), [`${so}/`, `${so}/c/`], 'Container')
+        const r = await search({ type: [SP] })
+        const j = await r.json()
+        assert(j.type === 'ContainerPage' && j.totalItems === 2, JSON.stringify(j))
+        assert(j.items[0].type.includes('DataResource') && j.items[0].type.includes(SP), JSON.stringify(j.items[0]))
+      })
+
+      await check('Type search: a describedby link is an indexed relation; an unindexed relation and up give the same empty answer', async () => {
+        const hit = await allIds({ type: [SP], describedby: ['https://ex.org/shape'] })
+        assert(JSON.stringify(hit) === JSON.stringify([`${so}/c/p`]), JSON.stringify(hit))
+        const a = await (await search({ type: [SP], 'urn:x:unindexed': ['urn:x:x'] })).text()
+        const b = await (await search({ type: [SP], describedby: ['urn:x:none'] })).text()
+        const u = await (await search({ type: [SP], up: [`${so}/c/`] })).text()
+        assert(a === b && b === u && JSON.parse(a).items.length === 0, `${a} | ${b} | ${u}`)
+      })
+
+      await check('Type search: Cache-Control private, Vary, Accept-Query; OPTIONS; 400 without Content-Type, 415, 406, 400, 422', async () => {
+        const r = await search({ type: [SP] })
+        await r.text()
+        assert(r.headers.get('cache-control') === 'private', `Cache-Control ${r.headers.get('cache-control')}`)
+        assert(/accept/.test(r.headers.get('vary') || ''), `Vary ${r.headers.get('vary')}`)
+        assert(r.headers.get('accept-query') === 'application/lws-query+json', `Accept-Query ${r.headers.get('accept-query')}`)
+        const opt = await fetch(`${so}/.well-known/lws-type-search`, { method: 'OPTIONS' })
+        await opt.text()
+        assert(opt.headers.get('accept-query') === 'application/lws-query+json' && /QUERY/.test(opt.headers.get('allow')), 'OPTIONS')
+        // fetch adds text/plain to a string body, so this one goes out raw.
+        const noCt = await rawRequest(so, 'QUERY', '/.well-known/lws-type-search', {}, '{"type":[]}')
+        assert(noCt.status === 400, `no Content-Type: ${noCt.status}`)
+        const other = await search('{}', { 'content-type': 'application/x-touchstone-query' })
+        await other.text()
+        assert(other.status === 415 && /lws-query/.test(other.headers.get('accept-query') || ''), `415: ${other.status}`)
+        const na = await search('{}', { accept: 'image/png' })
+        await na.text()
+        assert(na.status === 406, `406: ${na.status}`)
+        const ld = await search('{}', { accept: 'application/ld+json' })
+        await ld.text()
+        assert(ld.status === 200 && ld.headers.get('content-type') === 'application/ld+json', `ld+json: ${ld.status}`)
+        for (const bad of ['{"type": ["urn:x:a"', '{"type":"urn:x:a"}', '{"type":[42]}', '{"type":[[]]}', '{"type":["Person"]}']) {
+          const x = await search(bad)
+          await x.text()
+          assert(x.status === 400, `${bad} answered ${x.status}`)
+        }
+        const many = await search({ type: Array.from({ length: 65 }, (_, i) => `urn:x:${i}`) })
+        await many.text()
+        assert(many.status === 422, `65 IRIs answered ${many.status}`)
+      })
+
+      await check('Type search: rel="next" pages through the answer with GET; an altered page link answers 404', async () => {
+        const r = await search({})
+        const j = await r.json()
+        assert(j.items.length === 2 && j.totalItems === 5, JSON.stringify(j))
+        const next = linkTarget(r.headers.get('link'), 'next')
+        const first = linkTarget(r.headers.get('link'), 'first')
+        assert(next !== null && first !== null, r.headers.get('link'))
+        const p2 = await fetch(next, { headers: { accept: 'application/lws+json' } })
+        const j2 = await p2.json()
+        assert(p2.status === 200 && j2.type === 'ContainerPage', JSON.stringify(j2))
+        assert(!j2.items.some((x) => x.id === j.items[0].id), 'page 2 repeats page 1')
+        const all = await allIds({})
+        assert(JSON.stringify(all) === JSON.stringify([`${so}/`, `${so}/c/`, `${so}/c/a`, `${so}/c/b`, `${so}/c/p`]), JSON.stringify(all))
+        const altered = await fetch(`${first}-touchstone-unrecognized`)
+        await altered.text()
+        assert(altered.status === 404 || altered.status === 410, `altered page link answered ${altered.status}`)
+      })
+
+      await check('Type index: GET lists the types in application/lws+json, paged, with Cache-Control private', async () => {
+        const types = []
+        let r = await fetch(`${so}/.well-known/lws-type-index`)
+        assert(r.headers.get('content-type') === 'application/lws+json' && r.headers.get('cache-control') === 'private', 'headers')
+        for (let i = 0; i < 10; i++) {
+          const j = await r.json()
+          assert(j.type === 'TypeIndex', JSON.stringify(j))
+          types.push(...j.items.map((x) => x.id))
+          const next = linkTarget(r.headers.get('link'), 'next')
+          if (next === null) break
+          r = await fetch(next)
+        }
+        for (const t of [SP, SE, 'http://xmlns.com/foaf/0.1/Person', 'https://www.w3.org/ns/lws#Container', 'https://www.w3.org/ns/lws#DataResource']) {
+          assert(types.includes(t), `${t} missing from ${JSON.stringify(types)}`)
+        }
+        assert(types.length === 5, JSON.stringify(types))
+      })
+
+      await check('Type search: a set-linkset update, a delete and a move are reflected in the next search', async () => {
+        const u = await fetch(`${so}/c/a`, { method: 'PUT', headers: { 'content-type': 'text/plain', prefer: 'set-linkset', link: `<${SE}>; rel="type"` }, body: 'an event now' })
+        await u.text()
+        assert(u.headers.get('preference-applied') === 'set-linkset', `Preference-Applied ${u.headers.get('preference-applied')}`)
+        assert(JSON.stringify(await allIds({ type: [SP] })) === JSON.stringify([`${so}/c/p`]), 'Person after the update')
+        assert(JSON.stringify(await allIds({ type: [SE] })) === JSON.stringify([`${so}/c/a`, `${so}/c/b`]), 'Event after the update')
+        const d = await fetch(`${so}/c/b`, { method: 'DELETE' })
+        await d.text()
+        assert(JSON.stringify(await allIds({ type: [SE] })) === JSON.stringify([`${so}/c/a`]), 'Event after the delete')
+        const mk = await fetch(`${so}/d/x.txt`, { method: 'PUT', headers: { 'content-type': 'text/plain' }, body: 'x' })
+        await mk.text()
+        const mv = await fetch(`${so}/c/a?linkset`, { method: 'PATCH', headers: { 'content-type': 'application/json-patch+json' }, body: JSON.stringify([{ op: 'replace', path: '/linkset/0/up/0/href', value: `${so}/d/` }]) })
+        await mv.text()
+        assert(mv.status === 200, `move answered ${mv.status}`)
+        assert(JSON.stringify(await allIds({ type: [SE] })) === JSON.stringify([`${so}/d/a`]), 'Event after the move')
+      })
+    } finally {
+      await s.close()
+    }
+
+    await check('Type search: the index is rebuilt from DIR/lws-state.json after a restart', async () => {
+      const idir = mkdtempSync(join(tmpdir(), 'lws912-index-'))
+      try {
+        const first = await listen({ engine, port: 0, insecureNoAuth: true, dir: idir })
+        const fo = first.origin
+        try {
+          const r = await fetch(`${fo}/kept/a.ttl`, { method: 'PUT', headers: { 'content-type': 'text/turtle', link: '<https://schema.org/Thing>; rel="type"' }, body: '<> a <https://schema.org/Event> .' })
+          await r.text()
+          const l = await fetch(`${fo}/kept/a.ttl`, { method: 'PUT', headers: { 'content-type': 'text/turtle', prefer: 'set-linkset', link: '<https://schema.org/Thing>; rel="type"' }, body: '<> a <https://schema.org/Event> .' })
+          await l.text()
+        } finally {
+          await first.close()
+        }
+        const second = await listen({ engine, port: 0, insecureNoAuth: true, dir: idir, baseIri: `${fo}/` })
+        try {
+          for (const t of ['https://schema.org/Thing', 'https://schema.org/Event']) {
+            const r = await fetch(`${second.origin}/.well-known/lws-type-search`, { method: 'QUERY', headers: { 'content-type': 'application/lws-query+json' }, body: JSON.stringify({ type: [t] }) })
+            const j = await r.json()
+            assert(j.items.length === 1 && j.items[0].id === `${fo}/kept/a.ttl`, `${t}: ${JSON.stringify(j)}`)
+          }
+        } finally {
+          await second.close()
+        }
+      } finally {
+        rmSync(idir, { recursive: true, force: true })
+      }
+    })
+  }
+
   await check(CHECKS[37], async () => {
     const rc = await listen({ engine, port: 0, insecureNoAuth: true, realClock: true })
     try {

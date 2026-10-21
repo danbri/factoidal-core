@@ -108,6 +108,7 @@ A response is a JSON object with the same shape minus the method:
 | `insecureNoAuth` | `false` | `lwsOpen` and `solidOpen`. `true` is the development mode with no authorization (`factoidal lws-serve --insecure-no-auth`); then `agent` stands as before. `auth` and `insecureNoAuth` together are refused. |
 | `moves` | `true` | `lwsOpen` only. `false` turns moving resources off: no `MoveResource` capability, and a change of an `up` link is refused with 409 (`L4Factoidal/LWS/Move.lean`). |
 | `notifications` | `true` | `lwsOpen` only. `false` turns LWS notifications off: no `NotificationService` in the storage description and no subscription endpoint (`L4Factoidal/LWS/Notifications.lean`). |
+| `typeIndex` | `true` | `lwsOpen` only. `false` turns the Type Index and Type Search services off: no `TypeIndexService` or `TypeSearchService` in the storage description, and their endpoints are ordinary storage paths (`L4Factoidal/LWS/Search.lean`). |
 | `entropy` | absent | `lwsOpen` only. At least 16 random bytes, base64, from the host. The seed of the notification signing key (Ed25519) when the snapshot holds none, and of the run tag in activity identifiers. Without it deliveries are not signed. `npm/factoidal/lws/server.mjs` passes 32 bytes from `crypto.getRandomValues`. |
 | `rootAcl` | absent | the ACL document (Turtle) of the storage root, written when the storage is created. Web Access Control §3.2 requires the root container's ACL resource to have a representation, and under enforcement a storage cannot write its own: the request that would write it is the first request it would authorize. It is therefore a host provisioning input. |
 
@@ -341,6 +342,50 @@ rows of later tables too. The count line before this update said 40 tested,
 4 missing, 4 not applicable; the same table counted with the command above
 gives 41 tested, 3 missing, 4 not applicable (out of 48 rows).
 
+## LWS Search and Type Index Services (lws10-index)
+
+Source: "LWS Search and Type Index Services", W3C Linked Web Storage Working
+Group editor's draft, "an unofficial proposal", w3c/lws-protocol commit
+`9a08ff65` (`lws10-index/index.html`; the implementations page names it
+`lws10-searchindex`). Tracking: https://github.com/danbri/factoidal/issues/912.
+Lean: `L4Factoidal/LWS/TypeIndex.lean` (the index the store keeps),
+`L4Factoidal/LWS/Search.lean` (the two services); `#guard`s in
+`L4Factoidal/LWS/SearchTests.lean`; host checks in
+`tests/lws/draft-binding.mjs` (rows "Type index", "Type search"),
+`tests/lws/authorization.mjs` (row "Type search: results, totalItems and the
+type index ...") and `tests/lws/scaling.mjs` (rows "type index: ...").
+
+Endpoints (a server choice): Type Index Service
+`<base>.well-known/lws-type-index`, Type Search Service
+`<base>.well-known/lws-type-search`.
+
+| section | requirement | status | test |
+|---|---|---|---|
+| Discovery | a storage that supports a service MUST advertise it with a service object of type `TypeIndexService` / `TypeSearchService`, with a `serviceEndpoint` | tested | `lwsGuardIndexDiscovery`; draft-binding "Type index: the storage description advertises ..." |
+| Discovery | the set of indexed relations is not enumerated | tested (no response names it) | `SearchTests` "unindexed relation" guards |
+| Type and Relation Derivation | types SHOULD be derived from client `Link` headers on creation or modification and from the server's native classes | tested: `rel="type"` on POST, on PUT or PATCH with `Prefer: set-linkset`, and in the linkset document; the native class of the kind | `SearchTests` §Type derivation; draft-binding "Type search: QUERY finds a type from a Link header ..." |
+| Type and Relation Derivation | MAY derive types from content; content types MUST be treated identically | tested: `rdf:type` of the resource in `text/turtle` content up to 1 MiB, the same fact shape as a link (theorem `ixSearch_eq_specSearch` covers both) | `SearchTests` `/c/b`; draft-binding "Type search: QUERY finds ... from Turtle content" |
+| Type and Relation Derivation | a write SHOULD be reflected within a bounded interval | tested: at once, the index is updated inside every `put` and `remove` of the store (`IndexedStore`); create, update, delete, recursive delete and move | `SearchTests` §Changes; draft-binding "Type search: a set-linkset update, a delete and a move ..." |
+| GET [TypeIndexService] | a paginated `TypeIndex` in `application/lws+json`, page URIs in `Link` headers, the types the client may see | tested (theorem `visibleTypes_eq_specTypes`) | `SearchTests` type index guards; draft-binding "Type index: GET lists the types ..." |
+| QUERY [TypeSearchService] | Content-Type MUST be present; `application/lws-query+json` MUST be supported; `@` members MUST be ignored | tested | `SearchTests` errors; draft-binding "Type search: Cache-Control private, ..." |
+| QUERY | SHOULD advertise `Accept-Query` (OPTIONS) | tested | `SearchTests` OPTIONS guard |
+| QUERY | CNF semantics of `type`: AND across elements, OR inside a nested array; an absent or empty key is no constraint; the native classes are ordinary types | tested (theorem `ixSearch_eq_specSearch`: the index answer is the filter `selects` over every path of the store) | `lwsGuardTypeSearch` |
+| QUERY | MUST NOT extend the grammar; a type that matches nothing is not an error; duplicate groups MUST be ignored; an empty group MUST be 400 | tested | `SearchTests` |
+| QUERY | indexed relations with the same CNF semantics; an unindexed relation and an unmatched target MUST be indistinguishable; structural or protocol relations MUST NOT be indexed | tested (`structuralRels`; the two answers are byte-identical) | `SearchTests`; draft-binding "Type search: a describedby link is an indexed relation ..." |
+| QUERY | 200 with an `application/lws+json` ContainerPage by default; another format MAY be honoured; 406 when none is acceptable | tested (`application/ld+json` also) | `SearchTests`; draft-binding |
+| QUERY | each item MUST carry `id` and `type` | tested (`type`: the native class name, then the declared types) | `SearchTests` item guard |
+| QUERY | the result set is paginated, page URIs in `Link` headers | tested (the page URI carries the filter, base64url; each page is computed and authorized again) | `SearchTests` §Pagination; draft-binding "Type search: rel=next ..." |
+| QUERY | a `Content-Location` results resource MUST be authorization-filtered on every access | n/a (no such resource is exposed; the draft defines none) | — |
+| Errors | 400 for a body that is not well-formed, `type` not an array, an element that is neither a string nor a non-empty array of strings, a value that is not an IRI (RFC 3987); 415 with `Accept-Query`; 400 without Content-Type; 406; 422 above the limit, never narrowed (64 IRIs); 404 for an unrecognized page reference | tested | `lwsGuardSearchErrors`; draft-binding "Type search: Cache-Control private, ..." |
+| Errors | a server that negotiates on Accept MUST list Accept in Vary | tested (`Vary: accept, authorization` on every answer) | `SearchTests` |
+| Security and Authorization | MUST enforce authorization; unauthorized entries MUST be omitted; no type or resource disclosed without authorization | tested (theorems `searchAnswer_authorized`, `searchPagePaths_authorized`, `visibleTypes_eq_specTypes`) | `lwsGuardSearchAuthorized`; authorization.mjs "Type search: results, totalItems ..." |
+| Security and Authorization | counts over the client-specific view | tested (`totalItems` is the length of the filtered answer) | `SearchTests`; authorization.mjs |
+| Security and Authorization | current access on every request; revocation takes effect at once | tested (Web Access Control over the state the request is served from) | `SearchTests` revocation guard; authorization.mjs |
+| Security and Authorization | MUST mark responses against reuse across clients and vary on the credential | tested (`Cache-Control: private`, `Vary: accept, authorization`) | `SearchTests`; draft-binding |
+| Security and Authorization | a search is safe | proved (`serverStep_index_safe`: the state is returned unchanged) | `SearchTests` "A search changes nothing" |
+
+Counts: 21 tested, 0 missing, 1 not applicable (out of 22 rows).
+
 ## LWS 1.0 Core
 
 Source: <https://w3c.github.io/lws-protocol/lws10-core/>, W3C Linked Web
@@ -354,8 +399,8 @@ Solid Protocol's binding is used and the row says so.
 Score, from `lake exe l4lws-probe`:
 
 ```
-guarded checks: 10 pass, 0 fail (out of 10)
-registry: 3 proved, 10 guarded, 0 host-verified, 6 open (out of 19)
+guarded checks: 14 pass, 0 fail (out of 14)
+registry: 5 proved, 14 guarded, 0 host-verified, 6 open (out of 25)
 ```
 
 Table generated by `lake exe l4lws-probe -- --markdown`.
@@ -381,6 +426,12 @@ Table generated by `lake exe l4lws-probe -- --markdown`.
 | `lws-core-17` | Access Requests and Grants | access grant — a data object created by a storage controller, expressing an ability for an agent to perform specific actions on storage resources within certain defined constraints. | `(none)` | open | not in the first slice |
 | `lws-core-18` | Terminology | storage description — an LWS resource, conforming to the requirements of a W3C Controlled Identifier document [CID-1.0], that describes a storage along with its services and capabilities. | `L4Factoidal.LWS.Discovery.storageDescriptionPath` | open | the link is advertised; the description document does not yet conform to CID 1.0 |
 | `lws-core-19` | Moving Resources | On a successful update, the server MUST atomically remove the resource from the items list of its former parent container and add it to the items list of the destination container. | `L4Factoidal.LWS.Move.move` | proved | L4Factoidal.LWS.move_tree |
+| `lws-index-01` | lws10-index: Discovery | A storage that supports one of these services MUST advertise it with a service object in the service array of its storage description resource: the entry for the Type Index Service MUST have a type equal to TypeIndexService, and the entry for the Type Search Service MUST have a type equal to TypeSearchService. | `L4Factoidal.LWS.Binding.storageDescription` | guarded | L4Factoidal.LWS.SearchTests.lwsGuardIndexDiscovery |
+| `lws-index-02` | lws10-index: QUERY [TypeSearchService] | The type key is the mandatory baseline and MUST be supported by every server that implements the TypeSearchService. | `L4Factoidal.LWS.Search.searchStep` | guarded | L4Factoidal.LWS.SearchTests.lwsGuardTypeSearch |
+| `lws-index-03` | lws10-index: Errors | A request body that is not well-formed application/lws-query+json, or whose type is not an array, or any of whose elements is neither a string nor a non-empty array of strings, MUST be rejected with 400 (Bad Request). | `L4Factoidal.LWS.Search.parseFilter` | guarded | L4Factoidal.LWS.SearchTests.lwsGuardSearchErrors |
+| `lws-index-04` | lws10-index: Security and Authorization | Unauthorized entries MUST be omitted entirely. | `L4Factoidal.LWS.Search.searchAnswer` | proved | L4Factoidal.LWS.Search.searchAnswer_authorized |
+| `lws-index-05` | lws10-index: Security and Authorization | A server MAY maintain a derived index for performance, but it MUST apply current authorization as a filter over that index on every request. | `L4Factoidal.LWS.Search.serverStep` | guarded | L4Factoidal.LWS.SearchTests.lwsGuardSearchAuthorized |
+| `lws-index-06` | lws10-index: Type and Relation Derivation | When a server enriches the type index from resource content, the types it surfaces MUST be treated identically to those derived from Link headers for the purposes of indexing, search, and authorization filtering. | `L4Factoidal.LWS.TypeIndex.entryFacts` | proved | L4Factoidal.LWS.Search.ixSearch_eq_specSearch |
 
 ## Solid Protocol
 

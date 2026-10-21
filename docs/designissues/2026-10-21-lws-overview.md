@@ -37,6 +37,10 @@ the permission of the owner. The drafts define:
   `--insecure-no-auth` for development);
 - webhook notifications with RFC 9421 signatures, retry, and a read check at
   delivery time;
+- the Type Index and Type Search services (`lws10-index`): types from
+  `Link rel="type"`, the native class and Turtle content, a QUERY filter in
+  conjunctive normal form over types and indexed relations, answers filtered
+  by the requester's read access (https://github.com/danbri/factoidal/issues/912);
 - persistence in `DIR/lws-state.json`.
 
 The same engine serves the Solid Protocol (`solid-serve`) and has a Solid
@@ -63,8 +67,6 @@ ShEx) and reasons over RDF.
 
 ## What is missing
 
-- Type index and type search, 40 Touchstone tests:
-  https://github.com/danbri/factoidal/issues/912 (in progress).
 - Access requests and grants, 17 tests, and 10 more tests that need them:
   https://github.com/danbri/factoidal/issues/913.
 - Moving resources, 11 tests: https://github.com/danbri/factoidal/issues/914

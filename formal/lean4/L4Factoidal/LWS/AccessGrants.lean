@@ -285,11 +285,14 @@ def announce (baseIri : String) (signer : Option Signer) (now : Nat) (acc : Acce
    pend.map (deliveryOf signer now))
 
 /-- One request to a storage with access requests and grants: the access
-endpoints here, everything else through `Notifications.serverStep`. The
-answer carries the new access state (to keep in `AuthzConfig.access`). -/
-def serverStep (V : JOSE.Verifiers) (S : Store σ) (cfg : Config)
+endpoints here, everything else through `next` (the notification layer,
+or the index services above it). The answer carries the new access state
+(to keep in `AuthzConfig.access`). -/
+def serverStepWith (V : JOSE.Verifiers) (S : Store σ) (cfg : Config)
     (a : Authorization.AuthzConfig) (signer : Option Signer) (now : Nat) (r : Request)
-    (st : σ) (ns : NotifState) :
+    (st : σ) (ns : NotifState)
+    (next : Request → σ → NotifState →
+      Sum (String × String) (Response × σ × NotifState × List Delivery)) :
     Sum (String × String) (Response × σ × NotifState × AccessState × List Delivery) :=
   let (path, _) := splitTarget r.path
   if cfg.accessGrants && isAccessPath path && validTarget path then
@@ -304,9 +307,17 @@ def serverStep (V : JOSE.Verifiers) (S : Store σ) (cfg : Config)
             let (ns', ds) := announce cfg.baseIri signer now acc' g ns
             .inr (resp, st, ns', acc', ds)
   else
-    match Notifications.serverStep V S cfg a signer now r st ns with
+    match next r st ns with
     | .inl x => .inl x
     | .inr (resp, st', ns', ds) => .inr (resp, st', ns', a.access, ds)
+
+/-- `serverStepWith` over the notification layer. -/
+def serverStep (V : JOSE.Verifiers) (S : Store σ) (cfg : Config)
+    (a : Authorization.AuthzConfig) (signer : Option Signer) (now : Nat) (r : Request)
+    (st : σ) (ns : NotifState) :
+    Sum (String × String) (Response × σ × NotifState × AccessState × List Delivery) :=
+  serverStepWith V S cfg a signer now r st ns
+    (fun r st ns => Notifications.serverStep V S cfg a signer now r st ns)
 
 /-! ## Theorems -/
 

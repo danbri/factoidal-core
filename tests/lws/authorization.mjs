@@ -71,7 +71,8 @@ const CHECKS = [
   'Notifications: a subscriber hears of an update it may read and never of a member it may not read',
   'Discovery: the 401 lws#storage link, the storage description id and every other lws#storage link name one IRI',
   'Validation: a token for the storage root container (not the storage) answers 401 invalid_token'
-]
+,
+  'Type search: results, totalItems and the type index hold only what the agent may read; anonymous and revoked access see nothing (issue 912)']
 
 /** A local webhook receiver that records every POST and answers 202. */
 async function startReceiver () {
@@ -388,6 +389,57 @@ async function main () {
         assert(ids.some((a) => a.type.includes('Update') && a.object.id === `${o}/box/visible.txt`),
           JSON.stringify(ids))
         assert(!ids.some((a) => a.object.id === secret), `bob heard of ${secret}`)
+      })
+
+      await check(CHECKS[CHECKS.length - 1], async () => {
+        const run = randomUUID()
+        const A = `https://ex.org/t/${run}#A`
+        const B = `https://ex.org/t/${run}#B`
+        const typed = async (path, type) => {
+          const r = await fetch(`${o}${path}`, { method: 'PUT', headers: { 'content-type': 'text/plain', prefer: 'set-linkset', link: `<${type}>; rel="type"`, ...bearer(aliceT) }, body: 'x' })
+          await r.text()
+          assert(r.status === 201 || r.status === 204, `PUT ${path} answered ${r.status}`)
+        }
+        await typed('/idx/a.txt', A)
+        await typed('/idx/b.txt', B)
+        await write('/idx/a.txt.acl', acl('/idx/a.txt', false), 'text/turtle')
+        const search = async (token, type) => {
+          const r = await fetch(`${o}/.well-known/lws-type-search`, {
+            method: 'QUERY',
+            headers: { 'content-type': 'application/lws-query+json', ...(token ? bearer(token) : {}) },
+            body: JSON.stringify({ type: [[A, B]] })
+          })
+          const j = await r.json()
+          assert(r.status === 200, `search answered ${r.status} ${JSON.stringify(j)}`)
+          return j
+        }
+        const types = async (token) => {
+          const r = await fetch(`${o}/.well-known/lws-type-index`, { headers: token ? bearer(token) : {} })
+          const j = await r.json()
+          assert(r.status === 200 && r.headers.get('cache-control') === 'private', `type index answered ${r.status}`)
+          return j.items.map((x) => x.id)
+        }
+        const forAlice = await search(aliceT)
+        assert(JSON.stringify(forAlice.items.map((x) => x.id)) === JSON.stringify([`${o}/idx/a.txt`, `${o}/idx/b.txt`]), JSON.stringify(forAlice))
+        const forBob = await search(bobT)
+        assert(JSON.stringify(forBob.items.map((x) => x.id)) === JSON.stringify([`${o}/idx/a.txt`]), JSON.stringify(forBob))
+        assert(forBob.totalItems === 1, `bob's totalItems ${forBob.totalItems}`)
+        const bobTypes = await types(bobT)
+        assert(bobTypes.includes(A) && !bobTypes.includes(B), JSON.stringify(bobTypes))
+        const aliceTypes = await types(aliceT)
+        assert(aliceTypes.includes(A) && aliceTypes.includes(B), JSON.stringify(aliceTypes))
+        const anon = await search(null)
+        assert(anon.items.length === 0 && anon.totalItems === 0, JSON.stringify(anon))
+        const bad = await fetch(`${o}/.well-known/lws-type-search`, { method: 'QUERY', headers: { 'content-type': 'application/lws-query+json', authorization: 'Bearer not.a.token' }, body: '{}' })
+        await bad.text()
+        assert(bad.status === 401, `a refused token answered ${bad.status}`)
+        // Revocation takes effect on the next request.
+        const del = await fetch(`${o}/idx/a.txt.acl`, { method: 'DELETE', headers: bearer(aliceT) })
+        await del.text()
+        assert(del.status === 204, `deleting the ACL answered ${del.status}`)
+        const after = await search(bobT)
+        assert(after.items.length === 0 && after.totalItems === 0, JSON.stringify(after))
+        assert(!(await types(bobT)).includes(A), 'the type index still lists A for bob')
       })
     } finally {
       await receiver.close()

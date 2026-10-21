@@ -109,6 +109,22 @@ def isAccessPath (p : String) : Bool :=
 https://www.w3.org/ns/lws#AccessProfile". -/
 def lwsAccessProfile : String := "https://www.w3.org/ns/lws#AccessProfile"
 
+/-- The endpoint of the Type Index Service (lws10-index §Discovery: "the
+entry for the Type Index Service MUST have a type equal to TypeIndexService"
+and "Each service object MUST include a serviceEndpoint property"). The path
+is a server choice. https://github.com/danbri/factoidal/issues/912 -/
+def typeIndexPath : String := "/.well-known/lws-type-index"
+
+/-- The endpoint of the Type Search Service (a server choice). -/
+def typeSearchPath : String := "/.well-known/lws-type-search"
+
+/-- Is the path one of the two index service endpoints? -/
+def isIndexServicePath (p : String) : Bool := p == typeIndexPath || p == typeSearchPath
+
+/-- The baseline filter format of the Type Search Service (lws10-index
+§IANA Considerations). -/
+def mediaLwsQuery : String := "application/lws-query+json"
+
 /-- The subscription type of the webhook notification suite (LWS 1.0
 Notification Suite: Webhooks, §Subscription Type Identifier: "A Webhook
 subscription MUST use the WebhookSubscription string"). -/
@@ -160,9 +176,11 @@ def reasonPhrase : Nat → String
   | 405 => "Method Not Allowed"
   | 406 => "Not Acceptable"
   | 409 => "Conflict"
+  | 410 => "Gone"
   | 412 => "Precondition Failed"
   | 415 => "Unsupported Media Type"
   | 416 => "Range Not Satisfiable"
+  | 422 => "Unprocessable Content"
   | _ => "Error"
 
 /-- An error response with an RFC 9457 `application/problem+json` body. -/
@@ -662,9 +680,16 @@ and a `subscriptionType` array). With `keyX`, the base64url Ed25519 public
 key that signs webhook deliveries, it carries that key as a `JsonWebKey`
 verification method referenced from `authentication`, as the webhook
 suite's §Webhook Authentication requires of "A server that supports HTTP
-Message Signatures". -/
+Message Signatures".
+
+With `typeIndex`, the description also carries a `TypeIndexService` and a
+`TypeSearchService` (lws10-index §Discovery: "A storage that supports one of
+these services MUST advertise it with a service object in the service array
+of its storage description resource" and "Each service object MUST include a
+serviceEndpoint property"). -/
 def storageDescription (baseIri : String) (notify : Bool := false)
-    (keyX : Option String := none) (move : Bool := false) (access : Bool := false) : String :=
+    (keyX : Option String := none) (move : Bool := false) (typeIndex : Bool := false)
+    (access : Bool := false) : String :=
   let sid := storageIdOf baseIri
   let keyMembers : List (String × Json) :=
     match notify, keyX with
@@ -684,6 +709,13 @@ def storageDescription (baseIri : String) (notify : Bool := false)
         [ ("type", .string "NotificationService")
         , ("serviceEndpoint", .string (iriOfPath baseIri subscriptionsPath))
         , ("subscriptionType", .array [.string webhookSubscriptionType]) ] ]
+    else []
+  let indexServices : List Json :=
+    if typeIndex then
+      [ .object [ ("type", .string "TypeIndexService")
+                , ("serviceEndpoint", .string (iriOfPath baseIri typeIndexPath)) ]
+      , .object [ ("type", .string "TypeSearchService")
+                , ("serviceEndpoint", .string (iriOfPath baseIri typeSearchPath)) ] ]
     else []
   -- LWS §Access Requests and Grants, Discovery: "a service object
   -- describing an endpoint for access requests MUST have a type equal to
@@ -709,7 +741,7 @@ def storageDescription (baseIri : String) (notify : Bool := false)
     [ ("service", .array ([ .object
         [ ("type", .string "StorageRoot")
         , ("serviceEndpoint", .string (iriOfPath baseIri rootPath)) ] ] ++ notifService ++
-        accessServices)) ]))
+        indexServices ++ accessServices)) ]))
 
 /-! ## JSON Patch (RFC 6902) -/
 

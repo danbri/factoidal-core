@@ -404,6 +404,16 @@ def decide (V : Verifiers) (S : Store σ) (cfg : Config) (a : AuthzConfig) (now 
     | .refused rf => .respond (challenge cfg a path (some rf.errorCode))
     | .anonymous => .respond (challenge cfg a path none)
     | .authenticated s => .proceed (some s)
+  -- The Type Index and Type Search services (lws10-index §Security and
+  -- Authorization): every client may ask, and the answer holds only what
+  -- that client may read (`L4Factoidal.LWS.Search`). An anonymous request
+  -- is answered with what the public may read; a refused credential is 401.
+  else if cfg.typeIndex && isIndexServicePath path then
+    match authenticate V cfg a now r with
+    | .needKeys i => .fetch i (issuerMetadataUrl i)
+    | .refused rf => .respond (challenge cfg a path (some rf.errorCode))
+    | .anonymous => .proceed none
+    | .authenticated s => .proceed (some s)
   else
     let gate (who : Option String) : Decision :=
       let subject := authorizationSubject path
