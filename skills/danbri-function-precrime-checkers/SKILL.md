@@ -1460,3 +1460,13 @@ Rules from this repair:
   two bytes of a character), an error on the next line (its offset counts the long line), an unterminated string
   inside the long line, a last line with no line break, and CR LF. The offset after a long carry is where a
   reversed carry would go wrong.
+
+## A ratio over one small sample fails under load (2026-10-21)
+
+`tests/lws/scaling.mjs` measured the type-index reopen once per size. At the
+smallest size one reopen took about 45 ms, and one landing gate run, with
+other builds on the machine, put the 4m/m ratio over its bound of 6.0. Three
+runs alone gave 4.2 to 5.0. Rule: every time in a ratio assertion is the
+minimum of at least three repeats of the same work, and the smallest size is
+large enough that one repeat takes tens of milliseconds. Do not raise the bound
+to make a noisy check pass.

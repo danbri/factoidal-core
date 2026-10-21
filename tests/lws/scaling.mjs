@@ -139,18 +139,26 @@ async function indexChild (m) {
       if (rareCount !== 10) throw new Error(`the rare type matched ${rareCount}, expected 10`)
       if (allCount !== m + 2) throw new Error(`the whole store has ${allCount} resources, expected ${m + 2}`)
       await first.close()
+      // Minimum of three reopens, as for the other rows: at m = 500 one
+      // reopen takes about 45 ms, and on 2026-10-21 one sample under
+      // machine load put the 4m/m ratio over its bound of 6.0 while three
+      // runs alone gave 4.2 to 5.0. A reopen and a search write nothing,
+      // so the repeats measure the same work.
       let reopenCount = -1
-      const reopenMs = await time(async () => {
-        const second = await listen({ engine, port: 0, insecureNoAuth: true, onError: () => {}, dir, baseIri: `${o}/` })
-        try {
-          const r = await search(second.origin, { type: [`${EX}Rare`] })
-          reopenCount = (await r.json()).totalItems
-        } finally {
-          await second.close()
-        }
-      })
-      if (reopenCount !== 10) throw new Error(`after reopening the rare type matched ${reopenCount}`)
-      process.stdout.write(JSON.stringify({ m, rare: Math.min(...rareMs), all: Math.min(...allMs), reopen: reopenMs }) + '\n')
+      const reopenMs = []
+      for (let k = 0; k < 3; k++) {
+        reopenMs.push(await time(async () => {
+          const second = await listen({ engine, port: 0, insecureNoAuth: true, onError: () => {}, dir, baseIri: `${o}/` })
+          try {
+            const r = await search(second.origin, { type: [`${EX}Rare`] })
+            reopenCount = (await r.json()).totalItems
+          } finally {
+            await second.close()
+          }
+        }))
+        if (reopenCount !== 10) throw new Error(`after reopening the rare type matched ${reopenCount}`)
+      }
+      process.stdout.write(JSON.stringify({ m, rare: Math.min(...rareMs), all: Math.min(...allMs), reopen: Math.min(...reopenMs) }) + '\n')
     } catch (e) {
       await first.close().catch(() => {})
       throw e
