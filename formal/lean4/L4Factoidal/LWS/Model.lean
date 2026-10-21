@@ -200,13 +200,18 @@ structure Entry where
   contentType : String
   body        : ByteArray
   mtime       : Nat
+  /-- The client-managed links of the resource (LWS §Metadata, "Core
+  Metadata" and "User-Defined"), in the order the client gave them. The
+  server-managed links are derived from the path and the kind, and are never
+  stored here (`L4Factoidal.LWS.Linkset`). -/
+  links       : List Link := []
 deriving Inhabited
 
 instance : Repr Entry where
   reprPrec e _ :=
     "{ path := " ++ repr e.path ++ ", kind := " ++ repr e.kind ++
     ", contentType := " ++ repr e.contentType ++ ", body := " ++ repr e.body.toList ++
-    ", mtime := " ++ repr e.mtime ++ " }"
+    ", mtime := " ++ repr e.mtime ++ ", links := " ++ repr e.links ++ " }"
 
 /-- The representation data of an entry read as UTF-8 text, or `""` when the
 bytes are not UTF-8. Only the readers of RDF and ACL documents use it; an RDF

@@ -402,9 +402,12 @@ def lwsGuardLinkset : Bool :=
   (resp.body.splitOn "\"up\"").length > 1 &&
   (run (req "GET" "/alice/card?linkset") gone).1.status == 404
 #guard lwsGuardLinkset
--- PUT on a linkset is 405; a PATCH that changes a server-managed link is 409;
+-- PUT on a linkset replaces it (https://github.com/danbri/factoidal/issues/888;
+-- until 2026-10-21 PUT was 405): a document with no "linkset" array is 400,
+-- another media type 415. A PATCH that changes a server-managed link is 409;
 -- a PATCH that only tests is 204.
-#guard (run (req "PUT" "/alice/card?linkset" [("content-type", "application/linkset+json")] "{}") populated).1.status == 405
+#guard (run (req "PUT" "/alice/card?linkset" [("content-type", "application/linkset+json")] "{}") populated).1.status == 400
+#guard (run (req "PUT" "/alice/card?linkset" turtle "{}") populated).1.status == 415
 #guard (run (req "PATCH" "/alice/card?linkset" [("content-type", "application/json-patch+json")]
           "[{\"op\":\"remove\",\"path\":\"/linkset/0/up\"}]") populated).1.status == 409
 #guard (run (req "PATCH" "/alice/card?linkset" [("content-type", "application/json-patch+json")]

@@ -38,7 +38,7 @@
 // region, with no encoding and no decoding here. This host never reads a
 // body as text.
 //
-// The config members are `baseIri`, `now`, `owner`, `agent`, `rootAcl`,
+// The config members are `baseIri`, `now`, `owner`, `agent`, `pageSize`, `rootAcl`,
 // `auth` and `insecureNoAuth`, all optional. `target` is a path within the storage, so this host passes
 // Node's `request.url` through unchanged and never composes an absolute
 // IRI: `baseIri` tells the engine what the root maps to.
@@ -169,7 +169,7 @@ function contentBytes (request) {
  * Open one LWS storage on the engine and return the handle plus the two
  * calls a host makes against it.
  *
- * The config members are the ABI's own: `baseIri`, `now`, `owner`,
+ * The config members are the ABI's own: `baseIri`, `now`, `owner`, `pageSize`,
  * `agent`. Nothing else is sent.
  *
  * @param {object} options
@@ -177,6 +177,7 @@ function contentBytes (request) {
  * @param {number} [options.now] the engine clock, seconds since the epoch
  * @param {string} [options.owner] the WebID the storage advertises
  * @param {string} [options.agent] the WebID of the requesting agent
+ * @param {number} [options.pageSize] the container pagination threshold and page size (default 100; 0 turns pagination off)
  * @param {boolean} [options.realClock] stamp each request with this host's clock
  * @param {object} [options.engine] an engine handle to reuse
  * @returns {Promise<{step: Function, close: Function, handle: string, engine: object}>}
@@ -188,6 +189,9 @@ export async function openLwsStorage (options = {}) {
   if (typeof options.now === 'number') config.now = options.now
   if (typeof options.owner === 'string') config.owner = options.owner
   if (typeof options.agent === 'string') config.agent = options.agent
+  // The pagination threshold and page size of container listings; the
+  // engine decides what it means (L4Factoidal/LWS/Pagination.lean).
+  if (typeof options.pageSize === 'number') config.pageSize = options.pageSize
   // Authorization (L4Factoidal/LWS/Authorization.lean). `auth` is passed
   // through unread; `insecureNoAuth` is the explicit development mode.
   // With neither, the engine enforces authorization with no trusted

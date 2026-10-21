@@ -159,7 +159,11 @@ def openConfigOfJson (text : String) : Except String OpenConfig :=
               else match Authorization.ownerRootAcl baseIri o with
                 | some body => .ok (some body)
                 | none => .error "config: \"owner\" and \"baseIri\" must be IRIs with no space, <, >, \", {, }, |, ^, ` or \\"
-        .ok { cfg := { baseIri, owner, agent }, now, rootAcl, snapshot, authz }
+        -- The pagination threshold and page size (LWS §Pagination); default 100.
+        let pageSize := match j.field? "pageSize" with
+          | some (.number s) => (s.toNat?).getD 100
+          | _ => 100
+        .ok { cfg := { baseIri, owner, agent, pageSize }, now, rootAcl, snapshot, authz }
 
 /-- The JWS verifiers over the vendored HACL* primitives (P-256 ECDSA,
 RSA PKCS#1 v1.5, Ed25519): `skills/crypto-policy`. -/
