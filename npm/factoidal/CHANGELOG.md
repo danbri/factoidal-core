@@ -234,7 +234,10 @@ var please. Again off by default but good to show we can."):
   `MkState.dig_eq_recompute` (the kept digests equal a recomputation from the
   store) and `change_reaches_ancestor` (a change reaches every container
   above it, with collision-freedom of SHA-256 as a stated hypothesis).
-  COST
+  Cost (2026-10-21, wasm in Node): a write into a container of 2,000 members
+  takes about 6.3 ms with the option on against 0.9 ms off (linear in the
+  members of each container above the write); a reopen of 2,000 resources
+  with the hashes rebuilt takes 246 ms.
 
 ### Performance
 

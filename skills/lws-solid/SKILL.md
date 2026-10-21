@@ -564,7 +564,11 @@ server extension. Design record:
   `BlockMerkle.NoCollision`, never an axiom), `BlockMerkle.rootWith_inj`.
 
 Tests: `L4Factoidal/LWS/MerkleTests.lean`, the checks in `MerkleHttp.lean`;
-`node tests/lws/merkle.mjs`; `tests/lws/scaling.mjs` rows "merkle".
+`node tests/lws/merkle.mjs` (18 pass, 0 fail, 1 xfail, 0 skipped (out of 19),
+2026-10-21); `tests/lws/scaling.mjs` rows "merkle". Cost, measured
+2026-10-21: one write into a container of 2,000 members takes about 6.3 ms on
+against 0.9 ms off (linear in the members of each container above the
+write); a reopen of 2,000 resources with the hashes rebuilt, 246 ms.
 
 ### LWS authorization (https://github.com/danbri/factoidal/issues/886)
 

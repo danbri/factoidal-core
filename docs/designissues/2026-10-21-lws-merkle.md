@@ -79,7 +79,33 @@ gives only `propext`, `Classical.choice`, `Quot.sound`.
 
 ## Tests and measurements
 
-MEASUREMENTS
+* `#guard`s: `L4Factoidal/LWS/MerkleTests.lean` (FIPS 180-4 vectors; a deep
+  write changes the digests of the resource and of every container above it
+  and of no sibling; create, delete, move; an auxiliary resource changes no
+  root; `recompute` and `rebuild` agree with the maintained digests; off keeps
+  no data) and the checks at the end of `MerkleHttp.lean` (`Repr-Digest` of
+  "hello", off adds nothing, no digest for another media type, a query, a
+  write or a 404; roots only for a visible requester).
+* `node tests/lws/merkle.mjs`, 2026-10-21: 18 pass, 0 fail, 1 xfail,
+  0 skipped (out of 19). The xfail is the ETag shortfall above.
+* `node tests/lws/scaling.mjs`, 2026-10-21 (wasm in Node, 4 vCPUs, another
+  wasm build running on the machine): 16 pass, 0 fail (out of 16). The Merkle
+  rows, one container of k members, 20 updates of one member per repeat,
+  minimum of three repeats:
+
+  | k | 20 updates, merkle on | 20 updates, merkle off | reopen, merkle on (hashes rebuilt) |
+  |---|---|---|---|
+  | 500 | 45.6 ms | 15.8 ms | 39.6 ms |
+  | 1,000 | 55.9 ms | 15.4 ms | 101.2 ms |
+  | 2,000 | 125.9 ms | 17.7 ms | 245.6 ms |
+
+  Ratios 4k/k (bound 6.0; linear 4, quadratic 16): updates 2.52, reopen
+  4.91. One write into a container of 2,000 members costs about 6.3 ms with
+  the option on against 0.9 ms off: the extra cost is linear in the members
+  of the container (about 3 microseconds per member per write), because the
+  container's digest is recomputed from its member list (a sort, one leaf
+  hash per member, one node hash per pair). A write to a resource in a small
+  container costs a few hashes per level above it.
 
 ## What remains of issue 919's seven use cases
 
