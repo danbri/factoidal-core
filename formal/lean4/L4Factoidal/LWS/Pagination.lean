@@ -179,6 +179,41 @@ theorem orderPaths_nodup (ps : List String) : (orderPaths ps).Nodup :=
 theorem mem_orderPaths {p : String} {ps : List String} : p ∈ orderPaths ps ↔ p ∈ ps := by
   simp [orderPaths, mem_dedupSorted, (List.mergeSort_perm ps _).mem_iff]
 
+/-- Two lists in strictly increasing order with the same members are equal. -/
+theorem sorted_eq_of_mem_iff : ∀ {l1 l2 : List String}, l1.Pairwise (· < ·) →
+    l2.Pairwise (· < ·) → (∀ x, x ∈ l1 ↔ x ∈ l2) → l1 = l2
+  | [], [], _, _, _ => rfl
+  | [], b :: _, _, _, h => absurd ((h b).mpr (List.mem_cons_self ..)) (List.not_mem_nil)
+  | a :: _, [], _, _, h => absurd ((h a).mp (List.mem_cons_self ..)) (List.not_mem_nil)
+  | a :: t1, b :: t2, h1, h2, h => by
+      have p1 := List.pairwise_cons.mp h1
+      have p2 := List.pairwise_cons.mp h2
+      have hab : a = b := by
+        rcases List.mem_cons.mp ((h a).mp (List.mem_cons_self ..)) with hab | hat
+        · exact hab
+        · rcases List.mem_cons.mp ((h b).mpr (List.mem_cons_self ..)) with hba | hbt
+          · exact hba.symm
+          · exact absurd (p1.1 b hbt) (String.lt_asymm (p2.1 a hat))
+      subst hab
+      congr 1
+      apply sorted_eq_of_mem_iff p1.2 p2.2
+      intro x
+      constructor
+      · intro hx
+        rcases List.mem_cons.mp ((h x).mp (List.mem_cons_of_mem _ hx)) with hxa | hxt
+        · subst hxa; exact absurd (p1.1 _ hx) (String.lt_irrefl _)
+        · exact hxt
+      · intro hx
+        rcases List.mem_cons.mp ((h x).mpr (List.mem_cons_of_mem _ hx)) with hxa | hxt
+        · subst hxa; exact absurd (p2.1 _ hx) (String.lt_irrefl _)
+        · exact hxt
+
+/-- `orderPaths` depends only on the members of its argument. -/
+theorem orderPaths_ext {l1 l2 : List String} (h : ∀ x, x ∈ l1 ↔ x ∈ l2) :
+    orderPaths l1 = orderPaths l2 :=
+  sorted_eq_of_mem_iff (orderPaths_sorted _) (orderPaths_sorted _)
+    (fun x => by rw [mem_orderPaths, mem_orderPaths]; exact h x)
+
 /-! ## Pages -/
 
 /-- The number of pages of a listing of `n` members at page size `k`. A page

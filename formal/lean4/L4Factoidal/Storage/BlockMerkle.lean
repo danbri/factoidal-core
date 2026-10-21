@@ -71,6 +71,28 @@ def nextLevelWith (h : Hasher) : List Digest → List Digest
   | [x] => [nodeWith h x x]
   | left :: right :: rest => nodeWith h left right :: nextLevelWith h rest
 
+/-- `nextLevelWith` as a loop: one array push per pair, no stack frame per
+pair. A container of the LWS Merkle hashes (`L4Factoidal.LWS.Merkle`) can
+hold any number of members, and `nextLevelWith` took one frame for every two
+(https://github.com/danbri/factoidal/issues/919). -/
+def nextLevelGo (h : Hasher) : List Digest → Array Digest → List Digest
+  | [], acc => acc.toList
+  | [x], acc => (acc.push (nodeWith h x x)).toList
+  | left :: right :: rest, acc => nextLevelGo h rest (acc.push (nodeWith h left right))
+
+theorem nextLevelGo_eq (h : Hasher) : ∀ (xs : List Digest) (acc : Array Digest),
+    nextLevelGo h xs acc = acc.toList ++ nextLevelWith h xs
+  | [], acc => by simp [nextLevelGo, nextLevelWith]
+  | [x], acc => by simp [nextLevelGo, nextLevelWith]
+  | l :: r :: rest, acc => by
+      simp [nextLevelGo, nextLevelWith, nextLevelGo_eq h rest]
+
+def nextLevelWithTR (h : Hasher) (xs : List Digest) : List Digest := nextLevelGo h xs #[]
+
+@[csimp] theorem nextLevelWith_eq_nextLevelWithTR : @nextLevelWith = @nextLevelWithTR := by
+  funext h xs
+  simp [nextLevelWithTR, nextLevelGo_eq]
+
 private def rootFuelWith (h : Hasher) : Nat → List Digest → Digest
   | 0, _ => ByteArray.empty
   | _ + 1, [] => ByteArray.empty
@@ -251,6 +273,184 @@ theorem Tree.leafCount_ofLeavesWith (h : Hasher) (leaves : List Digest) :
   cases leaves with
   | nil => simp [Tree.leafCount, Tree.ofLeavesWith, Tree.ofLevels, levelsFuel]
   | cons x xs => simp [Tree.leafCount, Tree.ofLeavesWith, Tree.ofLevels, levelsFuel]
+
+/-! ## Binding: equal roots of equal-length leaf lists give a collision or equal lists
+
+The hash is a parameter, so the property is stated with the hash's
+collision-freedom as a HYPOTHESIS, never an axiom. A global injectivity of a
+hash with a fixed output size cannot be satisfied (there are more inputs than
+outputs), so a theorem that assumed it would prove nothing. The hypothesis
+here is restricted to the byte strings the two computations hash
+(`NoCollision h xs ys`: no input in `xs` and input in `ys` that differ have
+the same digest), which is a finite set for any two concrete trees. Together
+with a fixed output size (`(h.digest x).size = 32`, which `sha256_size` gives
+for `pureHasher`) it says: two leaf lists of the same length with the same
+root are equal, or SHA-256 has a collision among the inputs listed.
+
+The theorems are about leaf lists of the SAME length. A Bitcoin-style tree
+repeats an unpaired last digest, so `[a, b, c]` and `[a, b, c, c]` have the
+same root with no collision; a caller that commits lists of different
+lengths binds the length beside the root (`L4Factoidal.LWS.Merkle` does). -/
+
+/-- No two different byte strings, one from `xs` and one from `ys`, have the
+same digest under `h`. -/
+def NoCollision (h : Hasher) (xs ys : List ByteArray) : Prop :=
+  ∀ x ∈ xs, ∀ y ∈ ys, h.digest x = h.digest y → x = y
+
+theorem NoCollision.mono {h : Hasher} {xs ys xs' ys' : List ByteArray}
+    (hc : NoCollision h xs ys) (hx : ∀ x ∈ xs', x ∈ xs) (hy : ∀ y ∈ ys', y ∈ ys) :
+    NoCollision h xs' ys' :=
+  fun x hxm y hym he => hc x (hx x hxm) y (hy y hym) he
+
+/-- The byte string a node hashes: tag 1, then the two digests. -/
+def nodeInput (left right : Digest) : ByteArray :=
+  concat (ByteArray.mk #[1]) (concat left right)
+
+/-- The byte string a leaf hashes: tag 0, then the chunk. -/
+def leafInput (chunk : ByteArray) : ByteArray := concat (ByteArray.mk #[0]) chunk
+
+theorem nodeWith_eq (h : Hasher) (l r : Digest) : nodeWith h l r = h.digest (nodeInput l r) := rfl
+
+theorem leafWith_eq (h : Hasher) (c : ByteArray) : leafWith h c = h.digest (leafInput c) := rfl
+
+/-- `a ++ b = c ++ d` with `a` and `c` of the same size splits into `a = c`
+and `b = d`. -/
+theorem bytes_append_cancel {a b c d : ByteArray} (he : a ++ b = c ++ d)
+    (hs : a.size = c.size) : a = c ∧ b = d := by
+  have hl := congrArg (fun x : ByteArray => x.data.toList) he
+  simp only [ByteArray.toList_data_append] at hl
+  have hlen : a.data.toList.length = c.data.toList.length := by
+    simpa [Array.length_toList, ByteArray.size_data] using hs
+  obtain ⟨h1, h2⟩ := List.append_inj hl hlen
+  exact ⟨ByteArray.ext (Array.toList_inj.mp h1), ByteArray.ext (Array.toList_inj.mp h2)⟩
+
+theorem nodeInput_inj {a b c d : Digest} (hs : a.size = c.size)
+    (he : nodeInput a b = nodeInput c d) : a = c ∧ b = d := by
+  unfold nodeInput at he
+  simp only [concat] at he
+  have h1 := (bytes_append_cancel he rfl).2
+  exact bytes_append_cancel h1 hs
+
+theorem leafInput_inj {a b : ByteArray} (he : leafInput a = leafInput b) : a = b := by
+  unfold leafInput at he
+  simp only [concat] at he
+  exact (bytes_append_cancel he rfl).2
+
+/-- The byte strings `nextLevelWith` hashes for one level, in order. -/
+def levelInputs : List Digest → List ByteArray
+  | [] => []
+  | [x] => [nodeInput x x]
+  | l :: r :: rest => nodeInput l r :: levelInputs rest
+
+/-- The byte strings `rootWith` hashes, level by level (the leaf digests are
+given, so their inputs are not here). -/
+def rootInputsFuel (h : Hasher) : Nat → List Digest → List ByteArray
+  | 0, _ => []
+  | _ + 1, [] => []
+  | _ + 1, [_] => []
+  | fuel + 1, x :: y :: rest =>
+      levelInputs (x :: y :: rest) ++ rootInputsFuel h fuel (nextLevelWith h (x :: y :: rest))
+
+def rootInputsWith (h : Hasher) (leaves : List Digest) : List ByteArray :=
+  rootInputsFuel h leaves.length leaves
+
+theorem nextLevelWith_length (h : Hasher) : ∀ (xs : List Digest),
+    (nextLevelWith h xs).length = (xs.length + 1) / 2
+  | [] => rfl
+  | [_] => by simp [nextLevelWith]
+  | _ :: _ :: rest => by
+      simp only [nextLevelWith, List.length_cons, nextLevelWith_length h rest]
+      omega
+
+/-- Every digest of a level above the leaves is an output of `h`. -/
+theorem mem_nextLevelWith (h : Hasher) : ∀ (xs : List Digest) (z : Digest),
+    z ∈ nextLevelWith h xs → ∃ b, z = h.digest b
+  | [], _, hz => by simp [nextLevelWith] at hz
+  | [x], _, hz => by
+      simp only [nextLevelWith, List.mem_singleton] at hz
+      exact ⟨_, hz⟩
+  | l :: r :: rest, z, hz => by
+      simp only [nextLevelWith, List.mem_cons] at hz
+      rcases hz with hz | hz
+      · exact ⟨_, hz⟩
+      · exact mem_nextLevelWith h rest z hz
+
+/-- **One level binds its digests.** Two levels of the same length whose next
+levels are equal are equal, unless two node inputs collide. -/
+theorem nextLevelWith_inj (h : Hasher) : ∀ (xs ys : List Digest),
+    xs.length = ys.length → (∀ x ∈ xs, x.size = 32) → (∀ y ∈ ys, y.size = 32) →
+    NoCollision h (levelInputs xs) (levelInputs ys) →
+    nextLevelWith h xs = nextLevelWith h ys → xs = ys
+  | [], [], _, _, _, _, _ => rfl
+  | [x], [y], _, hx, hy, hc, he => by
+      simp only [nextLevelWith, List.cons.injEq, and_true, nodeWith_eq] at he
+      have hi := hc _ (by simp [levelInputs]) _ (by simp [levelInputs]) he
+      have := (nodeInput_inj (by rw [hx x (by simp), hy y (by simp)]) hi).1
+      rw [this]
+  | l :: r :: rest, l' :: r' :: rest', hlen, hx, hy, hc, he => by
+      simp only [nextLevelWith, List.cons.injEq, nodeWith_eq] at he
+      have hi := hc _ (by simp [levelInputs]) _ (by simp [levelInputs]) he.1
+      have hl := nodeInput_inj (by rw [hx l (by simp), hy l' (by simp)]) hi
+      have ht := nextLevelWith_inj h rest rest'
+        (by simp only [List.length_cons] at hlen; omega)
+        (fun x hm => hx x (by simp [hm])) (fun y hm => hy y (by simp [hm]))
+        (hc.mono (fun x hm => by simp [levelInputs, hm]) (fun y hm => by simp [levelInputs, hm]))
+        he.2
+      rw [hl.1, hl.2, ht]
+  | [], _ :: _, hlen, _, _, _, _ => by simp at hlen
+  | _ :: _, [], hlen, _, _, _, _ => by simp at hlen
+  | [_], _ :: _ :: _, hlen, _, _, _, _ => by simp at hlen
+  | _ :: _ :: _, [_], hlen, _, _, _, _ => by simp at hlen
+
+theorem rootFuelWith_inj (h : Hasher) (hfix : ∀ b, (h.digest b).size = 32) :
+    ∀ (fuel : Nat) (xs ys : List Digest), xs.length = ys.length → xs.length ≤ fuel →
+    (∀ x ∈ xs, x.size = 32) → (∀ y ∈ ys, y.size = 32) →
+    NoCollision h (rootInputsFuel h fuel xs) (rootInputsFuel h fuel ys) →
+    rootFuelWith h fuel xs = rootFuelWith h fuel ys → xs = ys
+  | 0, xs, ys, hlen, hf, _, _, _, _ => by
+      have h0 : xs.length = 0 := by omega
+      have h0' : ys.length = 0 := by omega
+      rw [List.length_eq_zero_iff.mp h0, List.length_eq_zero_iff.mp h0']
+  | _ + 1, [], [], _, _, _, _, _, _ => rfl
+  | _ + 1, [x], [y], _, _, _, _, _, he => by
+      simp only [rootFuelWith] at he
+      rw [he]
+  | fuel + 1, x :: y :: rest, x' :: y' :: rest', hlen, hf, hx, hy, hc, he => by
+      simp only [rootFuelWith] at he
+      have hc' := hc
+      simp only [rootInputsFuel] at hc'
+      have hnl : (nextLevelWith h (x :: y :: rest)).length =
+          (nextLevelWith h (x' :: y' :: rest')).length := by
+        rw [nextLevelWith_length, nextLevelWith_length, hlen]
+      have hnf : (nextLevelWith h (x :: y :: rest)).length ≤ fuel := by
+        rw [nextLevelWith_length]
+        simp only [List.length_cons] at hf ⊢
+        omega
+      have hup := rootFuelWith_inj h hfix fuel _ _ hnl hnf
+        (fun z hz => by obtain ⟨b, rfl⟩ := mem_nextLevelWith h _ z hz; exact hfix b)
+        (fun z hz => by obtain ⟨b, rfl⟩ := mem_nextLevelWith h _ z hz; exact hfix b)
+        (hc'.mono (fun z hz => List.mem_append_right _ hz) (fun z hz => List.mem_append_right _ hz))
+        he
+      exact nextLevelWith_inj h _ _ hlen hx hy
+        (hc'.mono (fun z hz => List.mem_append_left _ hz) (fun z hz => List.mem_append_left _ hz))
+        hup
+  | _ + 1, [], _ :: _, hlen, _, _, _, _, _ => by simp at hlen
+  | _ + 1, _ :: _, [], hlen, _, _, _, _, _ => by simp at hlen
+  | _ + 1, [_], _ :: _ :: _, hlen, _, _, _, _, _ => by simp at hlen
+  | _ + 1, _ :: _ :: _, [_], hlen, _, _, _, _, _ => by simp at hlen
+
+/-- **The root binds the leaves.** Two leaf lists of the same length whose
+leaves are digests of `h` (32 bytes) and whose roots are equal are equal,
+unless two of the inputs the two trees hash collide. -/
+theorem rootWith_inj (h : Hasher) (hfix : ∀ b, (h.digest b).size = 32)
+    {xs ys : List Digest} (hlen : xs.length = ys.length)
+    (hx : ∀ x ∈ xs, x.size = 32) (hy : ∀ y ∈ ys, y.size = 32)
+    (hc : NoCollision h (rootInputsWith h xs) (rootInputsWith h ys))
+    (he : rootWith h xs = rootWith h ys) : xs = ys := by
+  unfold rootWith at he
+  unfold rootInputsWith at hc
+  rw [← hlen] at he hc
+  exact rootFuelWith_inj h hfix xs.length xs ys hlen (Nat.le_refl _) hx hy hc he
 
 /-! ## The pure instance
 
