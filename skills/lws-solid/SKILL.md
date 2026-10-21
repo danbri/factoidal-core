@@ -144,8 +144,53 @@ Tests: `L4Factoidal/LWS/NotificationsTests.lean` (`#guard`s through
 against the published key); `tests/lws/authorization.mjs` rows
 "Notifications" (401, 403, delivery-time filtering with real tokens and
 ACLs). Not done: rate limiting and inbox verification (the drafts only
-suggest them), Move (this server does not move resources), and the Solid
-server's channels (https://github.com/danbri/factoidal/issues/898).
+suggest them), and a loop through another host name of this server
+(https://github.com/danbri/factoidal/issues/915, two xfails in
+`tests/lws/draft-binding.mjs`), and the Solid server's channels
+(https://github.com/danbri/factoidal/issues/898).
+
+### Moving resources (https://github.com/danbri/factoidal/issues/914)
+
+`L4Factoidal/LWS/Move.lean` implements the core draft's "Moving Resources"
+(w3c/lws-protocol 9a08ff65). The module header quotes each statement.
+
+* Discovery: the storage description has `capability: [{type: MoveResource,
+  appliesTo: [DataResource, Container], preservesIdentifier: false}]`
+  (`Config.moves`; the wasm handle turns it on, config `moves: false` turns
+  it off, and then a change of `up` is 409).
+* Request: a JSON Patch (or PUT) of `<path>?linkset` that changes the `up`
+  target (`requestedUp`). The target is an IRI below `baseIri` or a
+  path-absolute reference. Answer: 200, the new linkset (new `anchor`),
+  `Content-Location: <new path>?linkset`, because identifiers are paths and
+  a moved resource gets a new one (destination path and old name).
+* Effect (`move`): one function from store to store. Every moved path
+  (`movedPath`: the resource, the descendants of a container, the `.acl` and
+  `.meta` of a data resource) is removed and written at its new path; the
+  former parent and the destination are stamped, so both ETags change.
+* Refusals, all 409 (404 when the resource is missing): destination missing
+  or not a container, the container itself or a descendant, the storage
+  root, an auxiliary resource, a name already taken in the destination,
+  another storage, a removed `up`, two `up` targets.
+* Authorization (`Authorization.decide`, `movePlanOf?`): Write on every
+  moved resource (Control for an ACL resource) and Append on the
+  destination, before the move.
+* Notifications: one `Move` activity (`origin` the former parent, `target`
+  the destination, `object` the new identifier), heard by a subscription
+  whose scope holds the old or the new path (`moveChange?`, `changeInScope`).
+* Theorems: `move_tree` (a containment tree stays a tree), `tree_acyclic`,
+  `parentOf_unique`, `tree_parent`, `move_unmoved`, `move_moved`,
+  `move_vacated`. Two path facts are checked at run time, not proved for
+  every string (`moveChecks`); a failed check is a 409 with the store
+  unchanged.
+* Not done: 301 from the previous identifiers (a SHOULD; xfail naming
+  https://github.com/danbri/factoidal/issues/914).
+
+Tests: `L4Factoidal/LWS/MoveTests.lean`; `tests/lws/draft-binding.mjs`, the
+"Moving Resources" rows. Touchstone: `definitions/lws10/core/moving.yamlld`;
+three of its 11 tests have preconditions this server cannot meet at once
+(`move-keeps-identifier-content-and-links` needs `preservesIdentifier: true`,
+`move-container-refused-without-container-support` needs no `Container` in
+`appliesTo`, `move-refused-without-capability` needs no capability).
 
 ### Pagination and client links (https://github.com/danbri/factoidal/issues/887, 888)
 
