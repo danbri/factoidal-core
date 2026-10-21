@@ -166,7 +166,8 @@ reads one chunk of the source from the IN region and builds no OUT region;
 because both are served by the one entry which carries a region in either
 direction. -/
 def blobIoOpNames : List String :=
-  [ "blobEcho", "packFeed", "packNext", "storeServeRequest", "storeServeCommit" ]
+  [ "blobEcho", "packFeed", "packNext", "storeServeRequest", "storeServeCommit" ] ++
+  Ops.lwsBlobIoOpNames
 
 /-- Largest out region `blobEcho` builds: 67,108,864 bytes. A count above
 this is refused by name rather than made into an allocation the module
@@ -713,6 +714,22 @@ def callBlobIO (op : String) (argsJson : String) (blob : ByteArray) :
       | .ok [a, b, c]   => Ops.storeServeCommit a b c
       | .ok args        => pure (errJson s!"storeServeCommit expects 3 arguments, got {args.length}",
                                  ByteArray.empty)
+  -- LWS and Solid resource bodies are bytes
+  -- (https://github.com/danbri/factoidal/issues/889): the IN region is the
+  -- request content and the OUT region is the response content, with no
+  -- encoding, as `blobIoOpNames` above explains.
+  | "lwsStep" =>
+      match decodeArgs argsJson with
+      | .error e   => pure (errJson e, ByteArray.empty)
+      | .ok [a, b] => Ops.lwsStepWith a b (some blob)
+      | .ok args   => pure (errJson s!"lwsStep expects 2 arguments, got {args.length}",
+                            ByteArray.empty)
+  | "solidStep" =>
+      match decodeArgs argsJson with
+      | .error e   => pure (errJson e, ByteArray.empty)
+      | .ok [a, b] => Ops.solidStepWith a b (some blob)
+      | .ok args   => pure (errJson s!"solidStep expects 2 arguments, got {args.length}",
+                            ByteArray.empty)
   | "storeOpen" =>
       match decodeArgs argsJson with
       | .error e   => pure (errJson e, ByteArray.empty)

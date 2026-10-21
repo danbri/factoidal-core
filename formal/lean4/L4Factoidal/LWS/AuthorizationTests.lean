@@ -143,12 +143,12 @@ private def pubAclBody : String :=
 
 private def st : MemState :=
   { entries :=
-      [ { path := "/", kind := .storageRoot, contentType := "text/turtle", body := "", mtime := 1 }
+      [ { path := "/", kind := .storageRoot, contentType := "text/turtle", body := ByteArray.empty, mtime := 1 }
       , { path := "/.acl", kind := .metadataResource, contentType := "text/turtle",
-          body := aclBody, mtime := 1 }
+          body := textBytes aclBody, mtime := 1 }
       , { path := "/pub.acl", kind := .metadataResource, contentType := "text/turtle",
-          body := pubAclBody, mtime := 1 }
-      , { path := "/pub", kind := .dataResource, contentType := "text/plain", body := "hi",
+          body := textBytes pubAclBody, mtime := 1 }
+      , { path := "/pub", kind := .dataResource, contentType := "text/plain", body := textBytes "hi",
           mtime := 1 } ]
     clock := 2 }
 
@@ -235,9 +235,9 @@ private def proceeds (d : Decision) (who : Option String) : Bool :=
 
 private def ownerSt : MemState :=
   { entries :=
-      [ { path := "/", kind := .storageRoot, contentType := "text/turtle", body := "", mtime := 1 }
+      [ { path := "/", kind := .storageRoot, contentType := "text/turtle", body := ByteArray.empty, mtime := 1 }
       , { path := "/.acl", kind := .metadataResource, contentType := "text/turtle",
-          body := (ownerRootAcl "http://localhost/" alice).getD "", mtime := 1 } ]
+          body := textBytes ((ownerRootAcl "http://localhost/" alice).getD ""), mtime := 1 } ]
     clock := 2 }
 
 #guard proceeds (decide stubV MemStore cfg acfg 1100 (req "PUT" "/a/b" (bearer goodTok)) ownerSt)

@@ -91,7 +91,8 @@ const CHECKS = [
   'Paths: a dot segment or encoded traversal answers 400',
   'Persistence: a restarted server reads DIR/lws-state.json back',
   'Persistence: a traversal target writes no file outside DIR',
-  'Authorization: an unauthenticated write answers 401 with resource_metadata'
+  'Authorization: an unauthenticated write answers 401 with resource_metadata',
+  'Data resources: a non-UTF-8 body round-trips byte for byte'
 ]
 
 async function main () {
@@ -271,8 +272,9 @@ async function main () {
         assert(body.indexOf('creativecommons.org/licenses/by/4.0') >= 0, body)
       })
 
-    await xfail('Data resources: a non-UTF-8 body round-trips byte for byte',
-      'https://github.com/danbri/factoidal/issues/889', async () => {
+    // https://github.com/danbri/factoidal/issues/889, repaired: bodies are
+    // bytes end to end. The full byte suite is tests/lws/binary-bodies.mjs.
+    await check(CHECKS[15], async () => {
         const bytes = new Uint8Array([0xff, 0x00, 0x80, 0xfe])
         await fetch(`${o}/bin`, { method: 'PUT', headers: { 'content-type': 'application/octet-stream' }, body: bytes }).then((r) => r.arrayBuffer())
         const g = new Uint8Array(await (await fetch(`${o}/bin`)).arrayBuffer())

@@ -332,7 +332,7 @@ def decide (V : Verifiers) (S : Store σ) (cfg : Config) (a : AuthzConfig) (now 
     if r.method == "GET" || r.method == "HEAD" then
       .respond ⟨200, [("content-type", "application/json")],
         if r.method == "HEAD" then "" else
-          metadataDocument a (resourceOfMetadataPath cfg.baseIri path)⟩
+          metadataDocument a (resourceOfMetadataPath cfg.baseIri path), none⟩
     else .respond (problem 405 "the metadata document is read only" path
         [("allow", "GET, HEAD")])
   -- The storage description is what a client reads to validate the

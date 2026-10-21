@@ -133,7 +133,7 @@ function handleOf (envelope) {
   return null
 }
 
-function responseOf (envelope) {
+function responseOf (envelope, bytes) {
   if (envelope === null || typeof envelope !== 'object') {
     throw new SolidServerHostError('solidStep answered with no envelope')
   }
@@ -147,8 +147,17 @@ function responseOf (envelope) {
   return {
     status: record.status,
     headers: Array.isArray(record.headers) ? record.headers : [],
-    body: typeof record.body === 'string' ? record.body : ''
+    body: bytes instanceof Uint8Array ? bytes : new Uint8Array(0)
   }
+}
+
+/** The request content as bytes: a byte array is passed as it is, and a
+ *  string (a JavaScript caller's convenience) as its UTF-8 bytes. Bodies
+ *  are bytes end to end (https://github.com/danbri/factoidal/issues/889). */
+function contentBytes (request) {
+  if (request.body instanceof Uint8Array) return request.body
+  if (typeof request.body === 'string') return new TextEncoder().encode(request.body)
+  return new Uint8Array(0)
 }
 
 /**
@@ -206,14 +215,19 @@ export async function openSolidStorage (options = {}) {
     /**
      * One protocol step.
      * @param {{method: string, target: string,
-     *          headers: Array<[string, string]>, body: string}} request
-     * @returns {{status: number, headers: Array<[string, string]>, body: string}}
+     *          headers: Array<[string, string]>, body: Uint8Array|string}} request
+     * @returns {{status: number, headers: Array<[string, string]>, body: Uint8Array}}
      */
     async step (request) {
+      const content = contentBytes(request)
+      const { body: _body, ...fields } = request
       const record = options.realClock === true
-        ? { ...request, now: Math.floor(Date.now() / 1000) }
-        : request
-      let envelope = engine.call('solidStep', [handle, JSON.stringify(record)])
+        ? { ...fields, now: Math.floor(Date.now() / 1000) }
+        : fields
+      // The byte-region entry: request content in, response content out.
+      const callStep = () =>
+        engine.callBlobIO('solidStep', [handle, JSON.stringify(record)], content)
+      let { envelope, bytes } = callStep()
       let fetches = 0
       while (envelope !== null && typeof envelope === 'object' &&
              envelope.fetch !== undefined && envelope.fetch !== null) {
@@ -230,9 +244,9 @@ export async function openSolidStorage (options = {}) {
           })])
           wanted = told !== null && typeof told === 'object' ? told.fetch : null
         }
-        envelope = engine.call('solidStep', [handle, JSON.stringify(record)])
+        ({ envelope, bytes } = callStep())
       }
-      const answer = responseOf(envelope)
+      const answer = responseOf(envelope, bytes)
       if (dir !== null) persistIfChanged(engine, 'solidSnapshot', handle, envelope, dir)
       return answer
     },
@@ -247,7 +261,7 @@ function readBody (request) {
     const chunks = []
     request.on('data', (chunk) => chunks.push(chunk))
     request.on('error', reject)
-    request.on('end', () => resolve(Buffer.concat(chunks).toString('utf8')))
+    request.on('end', () => resolve(new Uint8Array(Buffer.concat(chunks))))
   })
 }
 

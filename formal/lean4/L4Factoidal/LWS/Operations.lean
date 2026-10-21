@@ -130,7 +130,7 @@ def ensureAncestors (S : Store σ) : List String → σ → σ
             let kind := if a == rootPath then ResourceKind.storageRoot else .container
             S.tick (S.put st
               { path := a, kind, contentType := "text/turtle",
-                body := "", mtime := S.now st })
+                body := ByteArray.empty, mtime := S.now st })
       ensureAncestors S rest st
 
 /-- Touch a container so its `Last-Modified` reflects a change to its
@@ -237,9 +237,9 @@ def linksetStep (S : Store σ) (cfg : Config) (r : Request) (st : σ)
         ((r.header? h).map (fun v => (parseTagList v).any (fun t => t == tag || t == "*"))).getD false
       match r.method with
       | "GET" | "HEAD" =>
-          if tagListed "if-none-match" then (⟨304, [("etag", tag)], ""⟩, st)
-          else (⟨200, hs, if r.method == "HEAD" then "" else toStringCompact doc⟩, st)
-      | "OPTIONS" => (⟨204, [("allow", allow), ("accept-patch", mediaJsonPatch)], ""⟩, st)
+          if tagListed "if-none-match" then (⟨304, [("etag", tag)], "", none⟩, st)
+          else (⟨200, hs, if r.method == "HEAD" then "" else toStringCompact doc, none⟩, st)
+      | "OPTIONS" => (⟨204, [("allow", allow), ("accept-patch", mediaJsonPatch)], "", none⟩, st)
       | "PATCH" =>
           let ct := (r.header? "content-type").map (fun c => ((c.splitOn ";").headD c).trim)
           if ct != some mediaJsonPatch then
@@ -247,13 +247,13 @@ def linksetStep (S : Store σ) (cfg : Config) (r : Request) (st : σ)
               [("accept-patch", mediaJsonPatch)], st)
           else if (r.header? "if-match").isSome && !tagListed "if-match" then
             (problem 412 "If-Match did not match the linkset" (linksetTargetOf path), st)
-          else match parseJson r.body with
+          else match parseJson ((String.fromUTF8? r.content).getD "") with
             | .error _ => (problem 400 "the patch document is not JSON" (linksetTargetOf path), st)
             | .ok p =>
                 match applyJsonPatch p doc with
                 | .error msg => (problem 409 msg (linksetTargetOf path), st)
                 | .ok d' =>
-                    if decide (d' = doc) then (⟨204, [("etag", tag)], ""⟩, st)
+                    if decide (d' = doc) then (⟨204, [("etag", tag)], "", none⟩, st)
                     else (problem 409 "every link of this linkset is server-managed"
                             (linksetTargetOf path), st)
       | _ => (problem 405 "a linkset accepts GET, HEAD, OPTIONS and PATCH"
@@ -268,8 +268,8 @@ def storageStep (cfg : Config) (r : Request) : Response :=
             , ("etag", "\"storage\"")
             , ("link", renderLinks [{ target := iriOfPath cfg.baseIri storagePath,
                                       rel := lwsStorageRel }]) ],
-       if r.method == "HEAD" then "" else storageDescription cfg.baseIri⟩
-  | "OPTIONS" => ⟨204, [("allow", allow)], ""⟩
+       if r.method == "HEAD" then "" else storageDescription cfg.baseIri, none⟩
+  | "OPTIONS" => ⟨204, [("allow", allow)], "", none⟩
   | _ => problem 405 "the storage description is server-managed" storagePath [("allow", allow)]
 
 /-- One operation on a storage path. See `step`. -/
@@ -297,27 +297,25 @@ def stepPath (S : Store σ) (cfg : Config) (r : Request) (st : σ) : Response ×
                 let hs := setHeader base "content-type" (containerContentType media) ++
                   [("vary", "accept")]
                 (⟨200, hs, if r.method == "HEAD" then ""
-                           else containerBody media cfg.baseIri target items⟩, st)
+                           else containerBody media cfg.baseIri target items, none⟩, st)
               else
                 let hs := base ++ [("accept-ranges", "bytes")]
-                let len := e.body.utf8ByteSize
+                let len := e.body.size
                 let rangeHdr : Option String :=
                   if r.method != "GET" then none
                   else match r.header? "if-range" with
                     | some ir => if ir.trim == tag then r.header? "range" else none
                     | none => r.header? "range"
                 match rangeHdr.bind (fun v => parseRange v len) with
-                | none => (⟨200, hs, if r.method == "HEAD" then "" else e.body⟩, st)
+                | none =>
+                    (⟨200, hs, "", some (if r.method == "HEAD" then ByteArray.empty else e.body)⟩, st)
                 | some none =>
                     (problem 416 "the range is not satisfiable" target
                       [("content-range", "bytes */" ++ toString len)], st)
                 | some (some (a, b)) =>
-                    match rangeBody e.body a b with
-                    | some part =>
-                        (⟨206, hs ++ [("content-range",
-                            "bytes " ++ toString a ++ "-" ++ toString b ++ "/" ++ toString len)],
-                          part⟩, st)
-                    | none => (⟨200, hs, e.body⟩, st)
+                    (⟨206, hs ++ [("content-range",
+                        "bytes " ++ toString a ++ "-" ++ toString b ++ "/" ++ toString len)],
+                      "", some (rangeBytes e.body a b)⟩, st)
   | "OPTIONS" =>
       let kind := (match existing with
                    | some e => e.kind
@@ -325,7 +323,7 @@ def stepPath (S : Store σ) (cfg : Config) (r : Request) (st : σ) : Response ×
       (⟨204, [ ("allow", String.intercalate ", " (allowFor kind isRoot))
              , ("accept-patch", String.intercalate ", " cfg.acceptPatch)
              , ("accept-put", "text/turtle")
-             , ("accept-post", "text/turtle") ], ""⟩, st)
+             , ("accept-post", "text/turtle") ], "", none⟩, st)
   | "PUT" =>
       match r.header? "content-type" with
       | none => (problem 400 "PUT with content requires a Content-Type header field" target, st)
@@ -334,16 +332,19 @@ def stepPath (S : Store σ) (cfg : Config) (r : Request) (st : σ) : Response ×
                   (existing.map (fun e => etagFor e e.contentType)) none with
           | some resp => (resp, st)
           | none =>
+          match rdfContentRefused ct r.content target with
+          | some resp => (resp, st)
+          | none =>
               let st := ensureAncestors S (ancestors target) st
               let kind := if pathIsContainer target then
                             (if isRoot then ResourceKind.storageRoot else .container)
                           else .dataResource
               let e : Entry := { path := target, kind, contentType := ct,
-                                 body := r.body, mtime := S.now st }
+                                 body := r.content, mtime := S.now st }
               let st' := touchContainer S (S.tick (S.put st e)) target
               match existing with
-              | none   => (⟨201, ("location", target) :: writtenHeaders cfg e, ""⟩, st')
-              | some _ => (⟨204, writtenHeaders cfg e, ""⟩, st')
+              | none   => (⟨201, ("location", target) :: writtenHeaders cfg e, "", none⟩, st')
+              | some _ => (⟨204, writtenHeaders cfg e, "", none⟩, st')
   | "POST" =>
       match existing with
       | none => (problem 404 "the target container does not exist" target, st)
@@ -356,15 +357,18 @@ def stepPath (S : Store σ) (cfg : Config) (r : Request) (st : σ) : Response ×
             | none => (problem 400 "POST with content requires a Content-Type header field"
                         target, st)
             | some ct =>
+                match rdfContentRefused ct r.content target with
+                | some resp => (resp, st)
+                | none =>
                 let linkHdr := (r.header? "link").getD ""
                 let asContainer := (linkHdr.splitOn "ldp#BasicContainer").length > 1 ||
                                    (linkHdr.splitOn lwsContainerType).length > 1
                 let childPath := childPathFor S st target (r.header? "slug") asContainer
                 let kind := if asContainer then ResourceKind.container else .dataResource
                 let e : Entry := { path := childPath, kind, contentType := ct,
-                                   body := r.body, mtime := S.now st }
+                                   body := r.content, mtime := S.now st }
                 let st' := touchContainer S (S.tick (S.put st e)) childPath
-                (⟨201, ("location", childPath) :: writtenHeaders cfg e, ""⟩, st')
+                (⟨201, ("location", childPath) :: writtenHeaders cfg e, "", none⟩, st')
   | "PATCH" =>
       let ct := (r.header? "content-type").map (fun c => ((c.splitOn ";").headD c).trim)
       match ct with
@@ -381,20 +385,21 @@ def stepPath (S : Store σ) (cfg : Config) (r : Request) (st : σ) : Response ×
                 else match preconditionFailure r existing (some (etagFor e e.contentType)) none with
                   | some resp => (resp, st)
                   | none =>
-                      match parseJson r.body with
-                      | .error _ => (problem 400 "the patch document is not JSON" target, st)
-                      | .ok p =>
-                          match parseJson e.body with
+                      match (String.fromUTF8? r.content).map parseJson with
+                      | none => (problem 400 "the patch document is not UTF-8" target, st)
+                      | some (.error _) => (problem 400 "the patch document is not JSON" target, st)
+                      | some (.ok p) =>
+                          match parseJson e.text with
                           | .error _ =>
                               (problem 409 "the resource is not a JSON document" target, st)
                           | .ok d =>
                               match applyJsonPatch p d with
                               | .error msg => (problem 409 msg target, st)
                               | .ok d' =>
-                                  let e' : Entry := { e with body := toStringCompact d',
+                                  let e' : Entry := { e with body := textBytes (toStringCompact d'),
                                                              mtime := S.now st }
                                   let st' := touchContainer S (S.tick (S.put st e')) target
-                                  (⟨204, writtenHeaders cfg e', ""⟩, st')
+                                  (⟨204, writtenHeaders cfg e', "", none⟩, st')
   | "DELETE" =>
       if isRoot then
         (problem 405 "the storage root cannot be deleted" target (allowHdr .storageRoot), st)
@@ -413,7 +418,7 @@ def stepPath (S : Store σ) (cfg : Config) (r : Request) (st : σ) : Response ×
                                                                      pathIsContainer target)
                   let st1 := descendants.foldl (fun s p => S.remove s p) st
                   let st' := touchContainer S (S.tick (S.remove st1 target)) target
-                  (⟨204, [], ""⟩, st')
+                  (⟨204, [], "", none⟩, st')
   | _ =>
       let kind := (match existing with
                    | some e => e.kind

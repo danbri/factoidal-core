@@ -41,10 +41,33 @@ open L4Factoidal.HTTP (Request Response)
 
 /-! ## Reading the JSON contract -/
 
+/-- The content of a request document as bytes, or `none` for text in
+`body`. See `requestOfJson`. -/
+def requestBytes (j : Json) (blob : Option ByteArray) : Except String (Option ByteArray) :=
+  match blob, j.getString? "bodyBase64" with
+  | some b, none =>
+      if (j.field? "body").isSome then
+        .error "request: a request with a byte region carries no \"body\" member"
+      else .ok (some b)
+  | some _, some _ =>
+      .error "request: a request with a byte region carries no \"bodyBase64\" member"
+  | none, some t =>
+      match Base64.decode? t with
+      | some b => .ok (some b)
+      | none => .error "request: member \"bodyBase64\" is not base64"
+  | none, none => .ok none
+
 /-- Decode a request document: `{method, target, headers, body}`, with the
 optional `now` and `agent` overrides. Header names are lower-cased on the
-way in, which is what `HTTP.Request.header?` expects. -/
-def requestOfJson (j : Json) : Except String (Request × Option Nat × Option String) := do
+way in, which is what `HTTP.Request.header?` expects.
+
+The content is bytes (https://github.com/danbri/factoidal/issues/889):
+`blob`, when the request came through the byte-region entry
+(`L4Wasm.callBlobIO`), IS the content, and the document must then carry no
+`body` or `bodyBase64`; otherwise `bodyBase64` (RFC 4648 §4) carries content
+that is not UTF-8, and `body` carries text. -/
+def requestOfJson (j : Json) (blob : Option ByteArray := none) :
+    Except String (Request × Option Nat × Option String) := do
   let method ← match j.getString? "method" with
     | some m => .ok m
     | none   => .error "request: member \"method\" is required"
@@ -59,19 +82,29 @@ def requestOfJson (j : Json) : Except String (Request × Option Nat × Option St
         | .array [.string n, .string v] => some (n.toLower, v)
         | _ => none)
   let body := (j.getString? "body").getD ""
+  let bytes ← requestBytes j blob
   let now : Option Nat :=
     match j.field? "now" with
     | some (.number s) => s.toNat?
     | _ => none
   let agent := j.getString? "agent"
-  .ok ({ method, path := target, queryStr := "", headers, body }, now, agent)
+  .ok ({ method, path := target, queryStr := "", headers, body, bytes }, now, agent)
 
-/-- Encode a response document: `{status, headers, body}`. -/
-def jsonOfResponse (r : Response) : Json :=
-  .object [ ("status", .number (toString r.status))
-          , ("headers", .array (r.headers.map (fun (n, v) =>
-              Json.array [.string n, .string v])))
-          , ("body", .string r.body) ]
+/-- Encode a response document: `{status, headers, body}`.
+
+With `blobOut := true` (the byte-region entry) the content leaves as the out
+region and the document carries `bodyBytes`, its length. Otherwise content
+that is UTF-8 is the string `body`, and content that is not is `bodyBase64`
+(RFC 4648 §4), so no byte is altered on the way out. -/
+def jsonOfResponse (r : Response) (blobOut : Bool := false) : Json :=
+  let content := r.content
+  .object ([ ("status", .number (toString r.status))
+           , ("headers", .array (r.headers.map (fun (n, v) =>
+               Json.array [.string n, .string v]))) ] ++
+    (if blobOut then [("bodyBytes", .number (toString content.size))]
+     else match String.fromUTF8? content with
+       | some t => [("body", .string t)]
+       | none => [("bodyBase64", .string (Base64.encode content))]))
 
 /-- Decode the handle configuration. Every member is optional. -/
 structure OpenConfig where
@@ -156,12 +189,12 @@ handle is one storage. -/
 def initialStorage (now : Nat) (rootAcl : Option String := none) : MemState :=
   { entries :=
       { path := rootPath, kind := .storageRoot,
-        contentType := "text/turtle", body := "", mtime := now } ::
+        contentType := "text/turtle", body := ByteArray.empty, mtime := now } ::
       (match rootAcl with
        | none => []
        | some body =>
            [{ path := aclPathOf rootPath, kind := .metadataResource,
-              contentType := "text/turtle", body, mtime := now }])
+              contentType := "text/turtle", body := textBytes body, mtime := now }])
   , clock := now + 1 }
 
 def lwsOpen (configJson : String) : IO String := do
@@ -175,15 +208,21 @@ def lwsOpen (configJson : String) : IO String := do
           authz := oc.authz })
       pure (okWith [("handle", .string h), ("root", .string rootPath)])
 
-def lwsStep (h requestJson : String) : IO String := do
+/-- One LWS step. `blob` is the content when the request came through the
+byte-region entry; the answer is then the envelope and the response content
+as the out region (`jsonOfResponse … true`). -/
+def lwsStepWith (h requestJson : String) (blob : Option ByteArray) :
+    IO (String × ByteArray) := do
+  let blobOut := blob.isSome
+  let noBytes (s : String) : String × ByteArray := (s, ByteArray.empty)
   match (← lwsTable.get)[h]? with
-  | none => pure (unknownLwsHandle h)
+  | none => pure (noBytes (unknownLwsHandle h))
   | some open_ =>
       match parseJson requestJson with
-      | .error e => pure (errJson s!"request: {toString e}")
+      | .error e => pure (noBytes (errJson s!"request: {toString e}"))
       | .ok j =>
-          match requestOfJson j with
-          | .error e => pure (errJson e)
+          match requestOfJson j blob with
+          | .error e => pure (noBytes (errJson e))
           | .ok (r, now?, agent?) => do
               let mem := match now? with
                 | some t => { open_.mem with clock := t }
@@ -197,15 +236,21 @@ def lwsStep (h requestJson : String) : IO String := do
               match Authorization.authorizedStep lwsVerifiers MemStore cfg open_.authz
                       (now?.getD mem.clock) r mem with
               | .inl (issuer, url) =>
-                  pure (okWith [("fetch", .object [("issuer", .string issuer),
-                                                   ("url", .string url)])])
+                  pure (noBytes (okWith [("fetch", .object [("issuer", .string issuer),
+                                                   ("url", .string url)])]))
               | .inr (resp, mem') =>
                   lwsTable.modify (·.insert h { open_ with mem := mem' })
                   -- Every mutation advances the clock (`StoreLaws.nowTick`),
                   -- so a changed clock is exactly "the storage changed"; a
                   -- host that persists writes `lwsSnapshot` when this is true.
-                  pure (okWith [ ("response", jsonOfResponse resp)
-                               , ("changed", .bool (mem'.clock != mem.clock)) ])
+                  pure (okWith [ ("response", jsonOfResponse resp blobOut)
+                               , ("changed", .bool (mem'.clock != mem.clock)) ],
+                        if blobOut then resp.content else ByteArray.empty)
+
+/-- `lwsStep(handle, requestJson)` through the string entry: the content
+travels in the document (`body` or `bodyBase64`). -/
+def lwsStep (h requestJson : String) : IO String := do
+  return (← lwsStepWith h requestJson none).1
 
 /-- `lwsFetched(handle, {issuer, url, status, body, now})`: the host's
 answer to a `fetch` from `lwsStep`. Lean decides what the document means
@@ -253,5 +298,9 @@ def lwsSnapshot (h : String) : IO String := do
 
 /-- The op names this module serves. -/
 def lwsOpNames : List String := ["lwsOpen", "lwsStep", "lwsClose", "lwsSnapshot", "lwsFetched"]
+
+/-- The LWS and Solid ops that also take and give a byte region: the
+request content in, the response content out. -/
+def lwsBlobIoOpNames : List String := ["lwsStep", "solidStep"]
 
 end L4Wasm.Ops

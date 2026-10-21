@@ -43,9 +43,27 @@ A request is a JSON object:
   `/`. A path that ends with `/` names a container (Solid Protocol §3.1).
 * `headers` — an array of two-element arrays. Names are compared case
   insensitively; the engine lower-cases them on the way in.
-* `body` — a UTF-8 string. Binary bodies are not carried by this ABI yet; a
-  host with binary content stores it outside the engine and gives the engine
-  the metadata.
+* `body` — the content as text, through the string entry (`l4_call`).
+* `bodyBase64` — the content in the base64 encoding of RFC 4648 §4, through
+  the string entry, for content that is not UTF-8.
+
+**Bodies are bytes** (https://github.com/danbri/factoidal/issues/889). The
+hosts call `lwsStep` and `solidStep` through the byte-region entry
+`l4_call_blob_io` (`callBlobIO(op, args, bytes)` in `l4factoidal.js`): the IN
+region is the request content and the OUT region is the response content.
+The request document then carries no `body` or `bodyBase64` (the engine
+refuses one), and the response document carries `bodyBytes`, the length of
+the OUT region, in place of `body`. Through the string entry `l4_call` the
+response carries `body` when the content is UTF-8 and `bodyBase64` when it is
+not, so neither entry alters a byte.
+
+Why the byte region and not base64 in the document: the module's rule for
+bytes (`skills/lean4-wasm-export`, "Moving BYTES, not text" and "Moving bytes
+OUT") is one contiguous region copied once into a Lean `ByteArray`, with no
+encoding; base64 costs a third more bytes and a character walk each way,
+and was refused for byte transport by the owner on 2026-09-03. The region is
+copied on entry and on exit, so Lean never holds a host pointer and the host
+may free its buffer when the call returns.
 
 Every member is optional except `method` and `target`.
 
@@ -64,7 +82,7 @@ A response is a JSON object with the same shape minus the method:
 | `lwsOpen` | `[configJson]` | `{"ok":true,"handle":"lws1","root":"/"}` |
 | `lwsStep` | `[handle, requestJson]` | `{"ok":true,"response":{…}}` |
 | `lwsClose` | `[handle]` | `{"ok":true}` |
-| `lwsSnapshot` | `[handle]` | `{"ok":true,"snapshot":{"format":"lws-snapshot-1","clock":N,"entries":[…]}}` |
+| `lwsSnapshot` | `[handle]` | `{"ok":true,"snapshot":{"format":"lws-snapshot-2","clock":N,"entries":[…]}}`; each entry's body is `bodyBase64`. A `lws-snapshot-1` document (body as the string `body`) is still read. |
 | `lwsFetched` | `[handle, documentJson]` | `{"ok":true,"fetch":{"issuer":…,"url":…}}`, `{"ok":true,"installed":N}` or `{"ok":true,"refused":"…"}` |
 | `solidOpen` | `[configJson]` | `{"ok":true,"handle":"solid1","root":"/","storage":"…"}` |
 | `solidStep` | `[handle, requestJson]` | `{"ok":true,"response":{…}}` |
@@ -204,7 +222,7 @@ server does not advertise.
 | Read | 200 with the stored media type | tested | `lwsGuardCreateReadUpdateDelete` |
 | Read | MUST include `ETag` on GET/HEAD (also §Metadata) | tested | `lwsGuardEtagOnRead`; draft-binding "Read: GET carries ETag" |
 | Read | Last-Modified on GET and HEAD (CG delta) | tested | `lwsGuardLastModifiedOnGet/Head`; server.mjs |
-| Read | MUST support range requests | tested (single range; a range that cuts UTF-8 gets 200, https://github.com/danbri/factoidal/issues/889) | `lwsGuardRange`; draft-binding "Read: a byte Range" |
+| Read | MUST support range requests | tested (single byte range at any offset, 206 with `Content-Range`, 416 with `bytes */len`; theorem `range_selection_exact`) | `lwsGuardRange`, `lwsGuardEveryRange`, `lwsGuardRangeInsideSequence`; draft-binding "Read: a byte Range"; `tests/lws/binary-bodies.mjs` |
 | Read | SHOULD support conditional requests; 304 | tested (ETag; If-Modified-Since by exact date) | `lwsGuardNotModified` |
 | Read | MUST support HEAD with the same headers | tested | `lwsGuardEtagOnRead`, `lwsGuardLastModifiedOnHead` |
 | Read | Link `linkset`, `up`, `type` on every response | tested | `lwsGuardLwsLinks` |
@@ -246,7 +264,7 @@ server does not advertise.
 | Authentication | credential suites (authorization server side: token exchange, subject tokens) | n/a (storage server only; the authorization server is out of scope of a storage server) | none |
 | Notifications | NotificationService, envelopes, subscriptions | n/a, not implemented | https://github.com/danbri/factoidal/issues/890; draft-binding xfail |
 | Access Requests | AccessRequestService, AccessGrantService | n/a, not implemented | https://github.com/danbri/factoidal/issues/890 |
-| Data resource | any bytes (images, documents) | missing (bodies are UTF-8 strings) | https://github.com/danbri/factoidal/issues/889; draft-binding xfail |
+| Data resource | any bytes (images, documents) | tested: stored and returned byte for byte; RDF media types are read as UTF-8 and content that is not UTF-8 gets 400 | `lwsGuardBinaryRoundTrip`, `lwsGuardInvalidUtf8Turtle`; draft-binding "Data resources: a non-UTF-8 body round-trips byte for byte"; `tests/lws/binary-bodies.mjs` (https://github.com/danbri/factoidal/issues/889) |
 | (server choice) | request paths with dot segments or encoded traversal are refused | tested | `lwsGuardTraversalRefused`; draft-binding "Paths" |
 | (server choice) | storage persists under `DIR` | tested | `lwsGuardSnapshotRoundTrip`, `lwsGuardSnapshotRefusesTraversal`; draft-binding "Persistence" |
 

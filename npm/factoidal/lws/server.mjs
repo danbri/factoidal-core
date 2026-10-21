@@ -29,8 +29,14 @@
 // `{ issuer, url, status, body, now }` to `lwsFetched`, follows any
 // further `fetch` it names, and steps the request again.
 //
-//   request  { method, target, headers: [[name, value]], body }
-//   response { status, headers: [[name, value]], body }
+//   request  { method, target, headers: [[name, value]] } + content bytes
+//   response { status, headers: [[name, value]], bodyBytes } + content bytes
+//
+// Bodies are BYTES (https://github.com/danbri/factoidal/issues/889). The
+// step goes through the engine's byte-region entry, `callBlobIO`: the
+// request content is the IN region and the response content is the OUT
+// region, with no encoding and no decoding here. This host never reads a
+// body as text.
 //
 // The config members are `baseIri`, `now`, `owner`, `agent`, `rootAcl`,
 // `auth` and `insecureNoAuth`, all optional. `target` is a path within the storage, so this host passes
@@ -136,7 +142,7 @@ function handleOf (envelope) {
   return null
 }
 
-function responseOf (envelope) {
+function responseOf (envelope, bytes) {
   if (envelope === null || typeof envelope !== 'object') {
     throw new LwsHostError('lwsStep answered with no envelope')
   }
@@ -147,8 +153,16 @@ function responseOf (envelope) {
     throw new LwsHostError('lwsStep answered with no status in its response record')
   }
   const headers = Array.isArray(record.headers) ? record.headers : []
-  const body = typeof record.body === 'string' ? record.body : ''
+  const body = bytes instanceof Uint8Array ? bytes : new Uint8Array(0)
   return { status: record.status, headers, body }
+}
+
+/** The request content as bytes: a byte array is passed as it is, and a
+ *  string (a JavaScript caller's convenience) as its UTF-8 bytes. */
+function contentBytes (request) {
+  if (request.body instanceof Uint8Array) return request.body
+  if (typeof request.body === 'string') return new TextEncoder().encode(request.body)
+  return new Uint8Array(0)
 }
 
 /**
@@ -209,14 +223,18 @@ export async function openLwsStorage (options = {}) {
     /**
      * One protocol step.
      * @param {{method: string, target: string,
-     *          headers: Array<[string, string]>, body: string}} request
-     * @returns {{status: number, headers: Array<[string, string]>, body: string}}
+     *          headers: Array<[string, string]>, body: Uint8Array|string}} request
+     * @returns {{status: number, headers: Array<[string, string]>, body: Uint8Array}}
      */
     async step (request) {
+      const content = contentBytes(request)
+      const { body: _body, ...fields } = request
       const record = options.realClock === true
-        ? { ...request, now: Math.floor(Date.now() / 1000) }
-        : request
-      let envelope = engine.call('lwsStep', [handle, JSON.stringify(record)])
+        ? { ...fields, now: Math.floor(Date.now() / 1000) }
+        : fields
+      const callStep = () => engine.callBlobIO('lwsStep', [handle, JSON.stringify(record)], content)
+      let answered = callStep()
+      let envelope = answered.envelope
       // The engine may answer "fetch this document first" (an issuer's
       // metadata or key set). The host fetches exactly what it is told,
       // hands the bytes back, and steps the request again.
@@ -236,9 +254,10 @@ export async function openLwsStorage (options = {}) {
           })])
           wanted = told !== null && typeof told === 'object' ? told.fetch : null
         }
-        envelope = engine.call('lwsStep', [handle, JSON.stringify(record)])
+        answered = callStep()
+        envelope = answered.envelope
       }
-      const answer = responseOf(envelope)
+      const answer = responseOf(envelope, answered.bytes)
       if (dir !== null) persistIfChanged(engine, 'lwsSnapshot', handle, envelope, dir)
       return answer
     },
@@ -248,13 +267,13 @@ export async function openLwsStorage (options = {}) {
   }
 }
 
-/** Read a Node request body as one UTF-8 string. */
+/** Read a Node request body as its bytes. */
 function readBody (request) {
   return new Promise((resolve, reject) => {
     const chunks = []
     request.on('data', (chunk) => chunks.push(chunk))
     request.on('error', reject)
-    request.on('end', () => resolve(Buffer.concat(chunks).toString('utf8')))
+    request.on('end', () => resolve(new Uint8Array(Buffer.concat(chunks))))
   })
 }
 
