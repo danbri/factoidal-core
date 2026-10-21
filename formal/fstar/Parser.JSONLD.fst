@@ -676,8 +676,59 @@ type rdf_direction_mode =
 // The "_jld_anon" prefix keeps generated labels visually distinct from
 // document-supplied "_:..." labels; a malicious document could still
 // collide with it, which Phase 2 can guard by namespacing document labels.
-let jld_fresh_bnode (ctr:nat) : (bnode_id & nat) =
-  (String.concat "" ["_jld_anon"; string_of_int ctr], ctr + 1)
+//
+// 2026-10-21: the prefix [pfx] is chosen from the document
+// (jld_generated_prefix below), so a generated label never equals a label
+// the document writes (issue https://github.com/danbri/factoidal/issues/840;
+// JSON-LD 1.1 API section 8.2 requires a new blank node identifier). Same
+// rule as the Lean generatedPrefix and freshBnode (commit 6d91beb3).
+let jld_fresh_bnode (pfx:string) (ctr:nat) : (bnode_id & nat) =
+  (String.concat "" [pfx; string_of_int ctr], ctr + 1)
+
+// The number of consecutive '_' bytes of [s] from byte [pos].
+let rec jld_underscore_run (s:string) (pos:nat) (n:nat) (fuel:nat) : Tot nat (decreases fuel) =
+  if fuel = 0 then n
+  else if pos < fs_byte_length s && jbyte_at s pos = 0x5F
+  then jld_underscore_run s (pos + 1) (n + 1) (fuel - 1)
+  else n
+
+// How many underscores the generated prefix needs after "_jld_anon" so that
+// it does not begin the label that the string [s] writes: 0 when [s] is not
+// "_:" followed by a label that begins with "_jld_anon"; otherwise one more
+// than the number of underscores that follow those 11 bytes (Lean anonNeed).
+let jld_anon_need (s:string) : nat =
+  let n = fs_byte_length s in
+  if n >= 11 && fs_byte_sub s 0 11 = "_:_jld_anon"
+  then jld_underscore_run s 11 0 n + 1
+  else 0
+
+// The largest jld_anon_need over every key and every string value of a JSON
+// tree and [m] (Lean maxNeed).
+let rec jld_max_need (v:json_val) (m:nat) : Tot nat (decreases v) =
+  match v with
+  | JString s -> let k = jld_anon_need s in if k > m then k else m
+  | JArray xs -> jld_max_need_items xs m
+  | JObject fs -> jld_max_need_fields fs m
+  | _ -> m
+and jld_max_need_items (xs:list json_val) (m:nat) : Tot nat (decreases xs) =
+  match xs with
+  | [] -> m
+  | x :: rest -> jld_max_need_items rest (jld_max_need x m)
+and jld_max_need_fields (fs:list (string & json_val)) (m:nat) : Tot nat (decreases fs) =
+  match fs with
+  | [] -> m
+  | (k, v) :: rest ->
+    let kn = jld_anon_need k in
+    let m1 = if kn > m then kn else m in
+    jld_max_need_fields rest (jld_max_need v m1)
+
+let rec jld_underscores (k:nat) : Tot string (decreases k) =
+  if k = 0 then "" else String.concat "" ["_"; jld_underscores (k - 1)]
+
+// "_jld_anon" followed by the fewest underscores for which no key and no
+// string value of [root] is "_:" and a label that begins with the prefix.
+let jld_generated_prefix (root:json_val) : string =
+  String.concat "" ["_jld_anon"; jld_underscores (jld_max_need root 0)]
 
 // True when s begins with the two bytes "_:" (blank-node identifier).
 let jld_is_bnode_label (s:string) : bool =
@@ -985,9 +1036,9 @@ let jld_graph_name_of_subject (s:subject) : iri =
 // other case returns Some rdf_term with acc/ctr untouched — see
 // jld_value_object_to_term above), which is why it needs its own
 // (acc, ctr)-threading function rather than folding into that one.
-let jld_compound_literal_term (lex:string) (lang:option string) (dir:string) (ctr:nat) (acc:list triple)
+let jld_compound_literal_term (pfx:string) (lex:string) (lang:option string) (dir:string) (ctr:nat) (acc:list triple)
   : (rdf_term & list triple & nat) =
-  let (b, ctr1) = jld_fresh_bnode ctr in
+  let (b, ctr1) = jld_fresh_bnode pfx ctr in
   let bsubj = S_BNode b in
   let value_lit : wf_literal = { lexical_form = lex; datatype = xsd_string; lang_tag = None; direction = None } in
   let dir_lit : wf_literal = { lexical_form = dir; datatype = xsd_string; lang_tag = None; direction = None } in
@@ -1010,19 +1061,19 @@ let jld_compound_literal_term (lex:string) (lang:option string) (dir:string) (ct
 // @direction under RDM_Drop/RDM_I18nDatatype, an @type value object,
 // etc.) is unaffected and goes through the ordinary single-term path
 // unchanged.
-let jld_value_object_step (rdir:rdf_direction_mode) (obj:json_val) (ctr:nat) (acc:list triple)
+let jld_value_object_step (rdir:rdf_direction_mode) (pfx:string) (obj:json_val) (ctr:nat) (acc:list triple)
   : (option rdf_term & list triple & nat) =
   match rdir, json_get_string "@direction" obj, json_get_string "@type" obj, json_get_field "@value" obj with
   | RDM_CompoundLiteral, Some dir, None, Some (JString lex) ->
     let lang = json_get_string "@language" obj in
-    let (t, acc1, ctr1) = jld_compound_literal_term lex lang dir ctr acc in
+    let (t, acc1, ctr1) = jld_compound_literal_term pfx lex lang dir ctr acc in
     (Some t, acc1, ctr1)
   | _ -> (jld_value_object_to_term rdir obj, acc, ctr)
 
 // A property value in expanded form: value object, list object, node
 // object, or node reference. Returns the term to link to (None when the
 // entry is non-conforming and must be dropped) plus updated acc/named/counter.
-let rec jld_expand_value (rdir:rdf_direction_mode) (v:json_val) (ctr:nat) (acc:list triple) (named:list named_graph) (fuel:nat)
+let rec jld_expand_value (rdir:rdf_direction_mode) (pfx:string) (v:json_val) (ctr:nat) (acc:list triple) (named:list named_graph) (fuel:nat)
   : Tot (option rdf_term & list triple & list named_graph & nat) (decreases fuel) =
   if fuel = 0 then (None, acc, named, ctr)
   else
@@ -1030,15 +1081,15 @@ let rec jld_expand_value (rdir:rdf_direction_mode) (v:json_val) (ctr:nat) (acc:l
     | JObject _ ->
       (match json_get_field "@value" v with
        | Some _ ->
-         let (t, acc1, ctr1) = jld_value_object_step rdir v ctr acc in
+         let (t, acc1, ctr1) = jld_value_object_step rdir pfx v ctr acc in
          (t, acc1, named, ctr1)
        | None ->
          (match json_get_field "@list" v with
           | Some lst ->
-            let (t, acc1, named1, ctr1) = jld_expand_list rdir (jld_as_array lst) ctr acc named (fuel - 1) in
+            let (t, acc1, named1, ctr1) = jld_expand_list rdir pfx (jld_as_array lst) ctr acc named (fuel - 1) in
             (Some t, acc1, named1, ctr1)
           | None ->
-            let (osubj, acc1, named1, ctr1) = jld_expand_node rdir v ctr acc named (fuel - 1) in
+            let (osubj, acc1, named1, ctr1) = jld_expand_node rdir pfx v ctr acc named (fuel - 1) in
             (match osubj with
              | Some subj -> (Some (subject_to_term subj), acc1, named1, ctr1)
              | None -> (None, acc1, named1, ctr1))))
@@ -1059,16 +1110,16 @@ let rec jld_expand_value (rdir:rdf_direction_mode) (v:json_val) (ctr:nat) (acc:l
 // straight to the next item), which under-counts cells and, for a
 // single-item list, wrongly collapses the property object straight to
 // rdf:nil instead of to a one-cell "gap" list.
-and jld_expand_list (rdir:rdf_direction_mode) (items:list json_val) (ctr:nat) (acc:list triple) (named:list named_graph) (fuel:nat)
+and jld_expand_list (rdir:rdf_direction_mode) (pfx:string) (items:list json_val) (ctr:nat) (acc:list triple) (named:list named_graph) (fuel:nat)
   : Tot (rdf_term & list triple & list named_graph & nat) (decreases fuel) =
   if fuel = 0 then (T_IRI rdf_nil_iri, acc, named, ctr)
   else
     match items with
     | [] -> (T_IRI rdf_nil_iri, acc, named, ctr)
     | item :: rest ->
-      let (oterm, acc1, named1, ctr1) = jld_expand_value rdir item ctr acc named (fuel - 1) in
-      let (cell, ctr2) = jld_fresh_bnode ctr1 in
-      let (rest_term, acc2, named2, ctr3) = jld_expand_list rdir rest ctr2 acc1 named1 (fuel - 1) in
+      let (oterm, acc1, named1, ctr1) = jld_expand_value rdir pfx item ctr acc named (fuel - 1) in
+      let (cell, ctr2) = jld_fresh_bnode pfx ctr1 in
+      let (rest_term, acc2, named2, ctr3) = jld_expand_list rdir pfx rest ctr2 acc1 named1 (fuel - 1) in
       let cell_subj = S_BNode cell in
       let acc3 = { s = cell_subj; p = rdf_rest_iri; o = rest_term } :: acc2 in
       let acc4 = (match oterm with
@@ -1087,7 +1138,7 @@ and jld_expand_list (rdir:rdf_direction_mode) (items:list json_val) (ctr:nat) (a
 // member of this same node object still describes the graph-name
 // resource in the ENCLOSING graph (`acc`), same as the top-level
 // "@graph" wrapper always did.
-and jld_expand_node (rdir:rdf_direction_mode) (v:json_val) (ctr:nat) (acc:list triple) (named:list named_graph) (fuel:nat)
+and jld_expand_node (rdir:rdf_direction_mode) (pfx:string) (v:json_val) (ctr:nat) (acc:list triple) (named:list named_graph) (fuel:nat)
   : Tot (option subject & list triple & list named_graph & nat) (decreases fuel) =
   if fuel = 0 then (None, acc, named, ctr)
   else
@@ -1098,19 +1149,19 @@ and jld_expand_node (rdir:rdf_direction_mode) (v:json_val) (ctr:nat) (acc:list t
          | Some (JString id_str) -> (jld_id_to_subject id_str, ctr)
          | Some _ -> (None, ctr)
          | None ->
-           let (b, ctr') = jld_fresh_bnode ctr in
+           let (b, ctr') = jld_fresh_bnode pfx ctr in
            (Some (S_BNode b), ctr')) in
       (match subj_opt with
        | None -> (None, acc, named, ctr1)
        | Some subj ->
          (match json_get_field "@graph" v with
           | Some g ->
-            let (gtris, named1, ctr2) = jld_expand_graph_nodes rdir (jld_as_array g) ctr1 [] named (fuel - 1) in
+            let (gtris, named1, ctr2) = jld_expand_graph_nodes rdir pfx (jld_as_array g) ctr1 [] named (fuel - 1) in
             let ng = { ng_name = jld_graph_name_of_subject subj; ng_graph = gtris } in
-            let (acc1, named2, ctr3) = jld_expand_fields rdir subj fields ctr2 acc (ng :: named1) (fuel - 1) in
+            let (acc1, named2, ctr3) = jld_expand_fields rdir pfx subj fields ctr2 acc (ng :: named1) (fuel - 1) in
             (Some subj, acc1, named2, ctr3)
           | None ->
-            let (acc1, named1, ctr2) = jld_expand_fields rdir subj fields ctr1 acc named (fuel - 1) in
+            let (acc1, named1, ctr2) = jld_expand_fields rdir pfx subj fields ctr1 acc named (fuel - 1) in
             (Some subj, acc1, named1, ctr2)))
     | _ -> (None, acc, named, ctr)
 
@@ -1120,7 +1171,7 @@ and jld_expand_node (rdir:rdf_direction_mode) (v:json_val) (ctr:nat) (acc:list t
 // called, so it is harmless for the keyword-skip branch below to see it
 // again; other keywords are skipped (@id was consumed by jld_expand_node);
 // IRI keys emit property triples; non-IRI (relative) keys are dropped.
-and jld_expand_fields (rdir:rdf_direction_mode) (subj:subject) (fields:list (string & json_val))
+and jld_expand_fields (rdir:rdf_direction_mode) (pfx:string) (subj:subject) (fields:list (string & json_val))
                       (ctr:nat) (acc:list triple) (named:list named_graph) (fuel:nat)
   : Tot (list triple & list named_graph & nat) (decreases fuel) =
   if fuel = 0 then (acc, named, ctr)
@@ -1130,7 +1181,7 @@ and jld_expand_fields (rdir:rdf_direction_mode) (subj:subject) (fields:list (str
     | (key, value) :: rest ->
       let (acc1, named1, ctr1) =
         if key = "@type" then (jld_type_prepend subj value acc, named, ctr)
-        else if key = "@reverse" then jld_expand_reverse_map rdir subj value ctr acc named (fuel - 1)
+        else if key = "@reverse" then jld_expand_reverse_map rdir pfx subj value ctr acc named (fuel - 1)
         else if key = "@included" then
           // PHASE 5: each entry is a full node object (produced by
           // JSONLD.Expand exactly like "@graph"'s contents — see that
@@ -1138,26 +1189,26 @@ and jld_expand_fields (rdir:rdf_direction_mode) (subj:subject) (fields:list (str
           // no linking triple to `subj` — jld_expand_graph_nodes already
           // does exactly this (expand every node, threading acc), we
           // just don't route the result into a fresh named graph.
-          jld_expand_graph_nodes rdir (jld_as_array value) ctr acc named (fuel - 1)
+          jld_expand_graph_nodes rdir pfx (jld_as_array value) ctr acc named (fuel - 1)
         else if jld_is_keyword key then (acc, named, ctr)
         else if jld_predicate_iri_wf key then
-          jld_expand_property rdir subj key (jld_as_array value) ctr acc named (fuel - 1)
+          jld_expand_property rdir pfx subj key (jld_as_array value) ctr acc named (fuel - 1)
         else (acc, named, ctr) in
-      jld_expand_fields rdir subj rest ctr1 acc1 named1 (fuel - 1)
+      jld_expand_fields rdir pfx subj rest ctr1 acc1 named1 (fuel - 1)
 
 // A node object's "@reverse" member: {predIri: [items...], ...} (an
 // EXPANDED-form-only shape produced by JSONLD.Expand — see that module's
 // banner). Each predIri key must already be an absolute IRI (Expand only
 // ever produces one via expand_iri); a malformed key is dropped.
-and jld_expand_reverse_map (rdir:rdf_direction_mode) (subj:subject) (v:json_val) (ctr:nat) (acc:list triple) (named:list named_graph) (fuel:nat)
+and jld_expand_reverse_map (rdir:rdf_direction_mode) (pfx:string) (subj:subject) (v:json_val) (ctr:nat) (acc:list triple) (named:list named_graph) (fuel:nat)
   : Tot (list triple & list named_graph & nat) (decreases fuel) =
   if fuel = 0 then (acc, named, ctr)
   else
     match v with
-    | JObject entries -> jld_expand_reverse_entries rdir subj entries ctr acc named (fuel - 1)
+    | JObject entries -> jld_expand_reverse_entries rdir pfx subj entries ctr acc named (fuel - 1)
     | _ -> (acc, named, ctr)
 
-and jld_expand_reverse_entries (rdir:rdf_direction_mode) (subj:subject) (entries:list (string & json_val))
+and jld_expand_reverse_entries (rdir:rdf_direction_mode) (pfx:string) (subj:subject) (entries:list (string & json_val))
                                (ctr:nat) (acc:list triple) (named:list named_graph) (fuel:nat)
   : Tot (list triple & list named_graph & nat) (decreases fuel) =
   if fuel = 0 then (acc, named, ctr)
@@ -1167,9 +1218,9 @@ and jld_expand_reverse_entries (rdir:rdf_direction_mode) (subj:subject) (entries
     | (prop, value) :: rest ->
       let (acc1, named1, ctr1) =
         if jld_predicate_iri_wf prop
-        then jld_expand_reverse_prop rdir subj prop (jld_as_array value) ctr acc named (fuel - 1)
+        then jld_expand_reverse_prop rdir pfx subj prop (jld_as_array value) ctr acc named (fuel - 1)
         else (acc, named, ctr) in
-      jld_expand_reverse_entries rdir subj rest ctr1 acc1 named1 (fuel - 1)
+      jld_expand_reverse_entries rdir pfx subj rest ctr1 acc1 named1 (fuel - 1)
 
 // One reverse predicate's array of item values: each item expands as a
 // node reference / node object exactly like an ordinary property value
@@ -1177,7 +1228,7 @@ and jld_expand_reverse_entries (rdir:rdf_direction_mode) (subj:subject) (entries
 // and is silently dropped, same non-conforming-input leniency as
 // elsewhere); the emitted triple points FROM the item TO the enclosing
 // node (the direction swap that makes it a "reverse" property).
-and jld_expand_reverse_prop (rdir:rdf_direction_mode) (subj:subject) (prop:wf_iri) (vals:list json_val)
+and jld_expand_reverse_prop (rdir:rdf_direction_mode) (pfx:string) (subj:subject) (prop:wf_iri) (vals:list json_val)
                             (ctr:nat) (acc:list triple) (named:list named_graph) (fuel:nat)
   : Tot (list triple & list named_graph & nat) (decreases fuel) =
   if fuel = 0 then (acc, named, ctr)
@@ -1185,15 +1236,15 @@ and jld_expand_reverse_prop (rdir:rdf_direction_mode) (subj:subject) (prop:wf_ir
     match vals with
     | [] -> (acc, named, ctr)
     | v :: rest ->
-      let (osubj, acc1, named1, ctr1) = jld_expand_node rdir v ctr acc named (fuel - 1) in
+      let (osubj, acc1, named1, ctr1) = jld_expand_node rdir pfx v ctr acc named (fuel - 1) in
       let acc2 =
         (match osubj with
          | Some vsubj -> { s = vsubj; p = prop; o = subject_to_term subj } :: acc1
          | None -> acc1) in
-      jld_expand_reverse_prop rdir subj prop rest ctr1 acc2 named1 (fuel - 1)
+      jld_expand_reverse_prop rdir pfx subj prop rest ctr1 acc2 named1 (fuel - 1)
 
 // The array of values of one property.
-and jld_expand_property (rdir:rdf_direction_mode) (subj:subject) (prop:wf_iri) (vals:list json_val)
+and jld_expand_property (rdir:rdf_direction_mode) (pfx:string) (subj:subject) (prop:wf_iri) (vals:list json_val)
                         (ctr:nat) (acc:list triple) (named:list named_graph) (fuel:nat)
   : Tot (list triple & list named_graph & nat) (decreases fuel) =
   if fuel = 0 then (acc, named, ctr)
@@ -1201,12 +1252,12 @@ and jld_expand_property (rdir:rdf_direction_mode) (subj:subject) (prop:wf_iri) (
     match vals with
     | [] -> (acc, named, ctr)
     | v :: rest ->
-      let (oterm, acc1, named1, ctr1) = jld_expand_value rdir v ctr acc named (fuel - 1) in
+      let (oterm, acc1, named1, ctr1) = jld_expand_value rdir pfx v ctr acc named (fuel - 1) in
       let acc2 =
         (match oterm with
          | Some t -> { s = subj; p = prop; o = t } :: acc1
          | None -> acc1) in
-      jld_expand_property rdir subj prop rest ctr1 acc2 named1 (fuel - 1)
+      jld_expand_property rdir pfx subj prop rest ctr1 acc2 named1 (fuel - 1)
 
 // Expand every node object inside a @graph array. PHASE 4: threads
 // `named` too, since one of these nodes may itself carry a further
@@ -1214,15 +1265,15 @@ and jld_expand_property (rdir:rdf_direction_mode) (subj:subject) (prop:wf_iri) (
 // mutual-recursion group as jld_expand_node itself now that jld_expand_node
 // calls it directly (its own "@graph"-member branch, PHASE 4), not just
 // jld_expand_top.
-and jld_expand_graph_nodes (rdir:rdf_direction_mode) (nodes:list json_val) (ctr:nat) (acc:list triple) (named:list named_graph) (fuel:nat)
+and jld_expand_graph_nodes (rdir:rdf_direction_mode) (pfx:string) (nodes:list json_val) (ctr:nat) (acc:list triple) (named:list named_graph) (fuel:nat)
   : Tot (list triple & list named_graph & nat) (decreases fuel) =
   if fuel = 0 then (acc, named, ctr)
   else
     match nodes with
     | [] -> (acc, named, ctr)
     | n :: rest ->
-      let (_, acc1, named1, ctr1) = jld_expand_node rdir n ctr acc named (fuel - 1) in
-      jld_expand_graph_nodes rdir rest ctr1 acc1 named1 (fuel - 1)
+      let (_, acc1, named1, ctr1) = jld_expand_node rdir pfx n ctr acc named (fuel - 1) in
+      jld_expand_graph_nodes rdir pfx rest ctr1 acc1 named1 (fuel - 1)
 
 // ================================================================
 // Top level: default graph + named graphs
@@ -1230,7 +1281,7 @@ and jld_expand_graph_nodes (rdir:rdf_direction_mode) (nodes:list json_val) (ctr:
 
 // One top-level array entry. dflt and the per-named-graph triple lists
 // are reversed accumulators; named collects named graphs in reverse.
-let jld_expand_top (rdir:rdf_direction_mode) (v:json_val) (dflt:list triple) (named:list named_graph)
+let jld_expand_top (rdir:rdf_direction_mode) (pfx:string) (v:json_val) (dflt:list triple) (named:list named_graph)
                    (ctr:nat) (fuel:nat)
   : (list triple & list named_graph & nat) =
   match v with
@@ -1242,23 +1293,23 @@ let jld_expand_top (rdir:rdf_direction_mode) (v:json_val) (dflt:list triple) (na
           | Some (JString id_str) -> (jld_id_to_subject id_str, ctr)
           | Some _ -> (None, ctr)
           | None ->
-            let (b, ctr') = jld_fresh_bnode ctr in
+            let (b, ctr') = jld_fresh_bnode pfx ctr in
             (Some (S_BNode b), ctr')) in
        (match subj_opt with
         | None -> (dflt, named, ctr1)
         | Some gsubj ->
-          let (gtris, named1, ctr2) = jld_expand_graph_nodes rdir (jld_as_array g) ctr1 [] named fuel in
+          let (gtris, named1, ctr2) = jld_expand_graph_nodes rdir pfx (jld_as_array g) ctr1 [] named fuel in
           // Non-keyword members of the container node describe the
           // graph-name resource in the DEFAULT graph.
-          let (dflt1, named2, ctr3) = jld_expand_fields rdir gsubj fields ctr2 dflt named1 fuel in
+          let (dflt1, named2, ctr3) = jld_expand_fields rdir pfx gsubj fields ctr2 dflt named1 fuel in
           let ng = { ng_name = jld_graph_name_of_subject gsubj; ng_graph = gtris } in
           (dflt1, ng :: named2, ctr3))
      | None ->
-       let (_, dflt1, named1, ctr1) = jld_expand_node rdir v ctr dflt named fuel in
+       let (_, dflt1, named1, ctr1) = jld_expand_node rdir pfx v ctr dflt named fuel in
        (dflt1, named1, ctr1))
   | _ -> (dflt, named, ctr)
 
-let rec jld_expand_tops (rdir:rdf_direction_mode) (vs:list json_val) (dflt:list triple) (named:list named_graph)
+let rec jld_expand_tops (rdir:rdf_direction_mode) (pfx:string) (vs:list json_val) (dflt:list triple) (named:list named_graph)
                         (ctr:nat) (fuel:nat)
   : Tot (list triple & list named_graph & nat) (decreases fuel) =
   if fuel = 0 then (dflt, named, ctr)
@@ -1266,8 +1317,8 @@ let rec jld_expand_tops (rdir:rdf_direction_mode) (vs:list json_val) (dflt:list 
     match vs with
     | [] -> (dflt, named, ctr)
     | v :: rest ->
-      let (d1, n1, c1) = jld_expand_top rdir v dflt named ctr fuel in
-      jld_expand_tops rdir rest d1 n1 c1 (fuel - 1)
+      let (d1, n1, c1) = jld_expand_top rdir pfx v dflt named ctr fuel in
+      jld_expand_tops rdir pfx rest d1 n1 c1 (fuel - 1)
 
 // Is @graph the only key of an object? (Then it is the document wrapper
 // and its contents belong to the default graph.)
@@ -1284,9 +1335,10 @@ let rec jld_only_graph_keys (fields:list (string & json_val)) : Tot bool (decrea
 // None when the top level is not an array or object.
 let jld_dataset_of_json (rdir:rdf_direction_mode) (root:json_val) : option rdf_dataset =
   let fuel = json_size root + 1 in
+  let pfx = jld_generated_prefix root in
   match root with
   | JArray tops ->
-    let (d, n, _) = jld_expand_tops rdir tops [] [] 0 fuel in
+    let (d, n, _) = jld_expand_tops rdir pfx tops [] [] 0 fuel in
     Some (dataset_finalise { ds_default = d; ds_named = List.Tot.rev n })
   | JObject fields ->
     let tops =
@@ -1295,7 +1347,7 @@ let jld_dataset_of_json (rdir:rdf_direction_mode) (root:json_val) : option rdf_d
          | Some g -> jld_as_array g
          | None -> [root])
       else [root] in
-    let (d, n, _) = jld_expand_tops rdir tops [] [] 0 fuel in
+    let (d, n, _) = jld_expand_tops rdir pfx tops [] [] 0 fuel in
     Some (dataset_finalise { ds_default = d; ds_named = List.Tot.rev n })
   | _ -> None
 
