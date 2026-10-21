@@ -54,6 +54,14 @@ These shapes could not be kept:
   `XSD.JsValue.integerLexical_inLexicalSpace`,
   `XSD.JsValue.jsLiteral_number_double`, `XSD.JsValue.jsLiteral_number_integer`.
 
+### Known costs
+
+- Iterating a Dataset of 60,000 quads takes 334 ms; on main it took 214 ms
+  (+56%). The Lean op `datasetQuadsJson` takes 235 ms in wasm, against 165 ms
+  for the N-Quads writer. Tracked by https://github.com/danbri/factoidal/issues/900,
+  with the expected-failure check `test/dataset-iterate-speed.test.mjs`.
+  `match` and `has` did not get slower.
+
 ### Fixed
 
 - `graphs()` (both APIs) no longer merges an IRI graph and a blank-node graph

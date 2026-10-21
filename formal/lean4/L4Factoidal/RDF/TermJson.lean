@@ -132,6 +132,7 @@ def decodeTermFuel : Nat → Json → Option Term
     | some "uri" => ((j.getString? "value").bind iriOf?).map .iri
     | some "bnode" => (j.getString? "value").map .bnode
     | some "literal" => (decodeLiteral j).map .literal
+    | some "typed-literal" => (decodeLiteral j).map .literal
     | some "triple" => do
         let v ← j.field? "value"
         let s ← (v.field? "subject").bind decodeSubject
@@ -640,5 +641,19 @@ private def exIri : WfIri := ⟨"http://e/a", rfl⟩
           ("predicate", iriJson exIri), ("object", iriJson exIri)])])).isNone
 #guard (decodeQuad (.array [iriJson exIri, bnodeJson "b", iriJson exIri])).isNone
 #guard (decodeQuad (.array [bnodeJson "b", iriJson exIri, bnodeJson "c", bnodeJson "g"])).isSome
+
+#guard (decodeTerm (.object [("type", .string "literal"), ("value", .string "x")])).isSome
+#guard (decodeTerm (.object [("type", .string "typed-literal"), ("value", .string "1"),
+          ("datatype", .string "http://www.w3.org/2001/XMLSchema#integer")])).isSome
+#print axioms decodeTerm_encodeTerm
+#print axioms decodeQuad_encodeQuad
+#print axioms mem_quadList_default
+#print axioms mem_quadList_named
+#print axioms toCanonicalNQuads_eq_quadList
+#print axioms quadPage_append
+#print axioms decodeCompact_compactSpec
+#print axioms compactCertified_sound
+#print axioms decodeCompactArr_eq
+#print axioms termText_eq
 
 end L4Factoidal.RDF.TermJson
