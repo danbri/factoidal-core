@@ -109,6 +109,9 @@ A response is a JSON object with the same shape minus the method:
 | `moves` | `true` | `lwsOpen` only. `false` turns moving resources off: no `MoveResource` capability, and a change of an `up` link is refused with 409 (`L4Factoidal/LWS/Move.lean`). |
 | `notifications` | `true` | `lwsOpen` only. `false` turns LWS notifications off: no `NotificationService` in the storage description and no subscription endpoint (`L4Factoidal/LWS/Notifications.lean`). |
 | `typeIndex` | `true` | `lwsOpen` only. `false` turns the Type Index and Type Search services off: no `TypeIndexService` or `TypeSearchService` in the storage description, and their endpoints are ordinary storage paths (`L4Factoidal/LWS/Search.lean`). |
+| `searchResults` | `false` | `lwsOpen` only. ANTICIPATORY AND UNSTABLE (https://github.com/danbri/factoidal/issues/922). `true` makes a QUERY answer of the Type Search Service by an authenticated agent carry `Content-Location` naming a search results resource (`L4Factoidal/LWS/SearchResults.lean`); the storage description then carries the extension member `https://github.com/danbri/factoidal/issues/922#unstableResultsResource` on the `TypeSearchService` entry. Needs `typeIndex`. `factoidal lws-serve --unstable-search-results`. Likely to change. |
+| `searchResultsTtl` | `600` | `lwsOpen` only, with `searchResults`. Seconds a results resource answers; then 410. |
+| `searchResultsMax` | `100` | `lwsOpen` only, with `searchResults`. The most results resources kept; the oldest is removed first (then 404). |
 | `entropy` | absent | `lwsOpen` only. At least 16 random bytes, base64, from the host. The seed of the notification signing key (Ed25519) when the snapshot holds none, and of the run tag in activity identifiers. Without it deliveries are not signed. `npm/factoidal/lws/server.mjs` passes 32 bytes from `crypto.getRandomValues`. |
 | `rootAcl` | absent | the ACL document (Turtle) of the storage root, written when the storage is created. Web Access Control §3.2 requires the root container's ACL resource to have a representation, and under enforcement a storage cannot write its own: the request that would write it is the first request it would authorize. It is therefore a host provisioning input. |
 
@@ -132,7 +135,17 @@ to whom, the body, the signature, whether to retry and when a subscription
 is deactivated.
 
 A request document may override the clock and the agent for one step with the
-members `now` and `agent` beside `method`. On an LWS handle the `agent`
+members `now` and `agent` beside `method`. An LWS request document may also
+carry `random`: at least 16 random bytes, base64, from the host's random
+source. The engine uses them only to name a search results resource (the
+base64url form of the first 16 bytes) when `searchResults` is on; without
+them no results resource is made. `npm/factoidal/lws/server.mjs` passes 16
+bytes from `crypto.getRandomValues` with every request. When `searchResults`
+is on and a record exists, the snapshot carries one more member,
+`searchResults` (format `lws-search-results-unstable-1`: each record's `id`,
+`filter`, `agent`, `client`, `created`, `expires` and `paths`), which
+`lwsOpen` reads back and checks; a QUERY that makes a record answers
+`"changed": true`. On an LWS handle the `agent`
 override stands only under `insecureNoAuth`; with authorization on, the agent
 is the `sub` of the access token the engine validated, and nothing else.
 
@@ -388,16 +401,74 @@ Endpoints (a server choice): Type Index Service
 | QUERY | 200 with an `application/lws+json` ContainerPage by default; another format MAY be honoured; 406 when none is acceptable | tested (`application/ld+json` also) | `SearchTests`; draft-binding |
 | QUERY | each item MUST carry `id` and `type` | tested (`type`: the native class name, then the declared types) | `SearchTests` item guard |
 | QUERY | the result set is paginated, page URIs in `Link` headers | tested (the page URI carries the filter, base64url; each page is computed and authorized again) | `SearchTests` §Pagination; draft-binding "Type search: rel=next ..." |
-| QUERY | a `Content-Location` results resource MUST be authorization-filtered on every access | n/a (no such resource is exposed; the draft defines none) | — |
+| QUERY | a `Content-Location` results resource MUST be authorization-filtered on every access and MUST NOT be reused across clients | tested, OFF BY DEFAULT and UNSTABLE (option `searchResults`, https://github.com/danbri/factoidal/issues/922; see below). Theorems `resultsAnswer_authorized`, `resultsAnswer_sublist_query`, `resultsGet_creator_only` | `SearchResultsTests` (`lwsGuardResultsFiltered`, `lwsGuardResultsNotReused`); draft-binding "Type search results (unstable, issue 922): ..."; authorization.mjs "Type search results resource (unstable, issue 922): ..." |
 | Errors | 400 for a body that is not well-formed, `type` not an array, an element that is neither a string nor a non-empty array of strings, a value that is not an IRI (RFC 3987); 415 with `Accept-Query`; 400 without Content-Type; 406; 422 above the limit, never narrowed (64 IRIs); 404 for an unrecognized page reference | tested | `lwsGuardSearchErrors`; draft-binding "Type search: Cache-Control private, ..." |
 | Errors | a server that negotiates on Accept MUST list Accept in Vary | tested (`Vary: accept, authorization` on every answer) | `SearchTests` |
 | Security and Authorization | MUST enforce authorization; unauthorized entries MUST be omitted; no type or resource disclosed without authorization | tested (theorems `searchAnswer_authorized`, `searchPagePaths_authorized`, `visibleTypes_eq_specTypes`) | `lwsGuardSearchAuthorized`; authorization.mjs "Type search: results, totalItems ..." |
 | Security and Authorization | counts over the client-specific view | tested (`totalItems` is the length of the filtered answer) | `SearchTests`; authorization.mjs |
 | Security and Authorization | current access on every request; revocation takes effect at once | tested (Web Access Control over the state the request is served from) | `SearchTests` revocation guard; authorization.mjs |
 | Security and Authorization | MUST mark responses against reuse across clients and vary on the credential | tested (`Cache-Control: private`, `Vary: accept, authorization`) | `SearchTests`; draft-binding |
-| Security and Authorization | a search is safe | proved (`serverStep_index_safe`: the state is returned unchanged) | `SearchTests` "A search changes nothing" |
+| Security and Authorization | a search is safe | proved (`serverStep_index_safe`: the state is returned unchanged). With `searchResults` on, a QUERY adds a results record and changes no resource of the storage (`SearchResults.serverStep` returns no store) | `SearchTests` "A search changes nothing" |
 
-Counts: 21 tested, 0 missing, 1 not applicable (out of 22 rows).
+Counts: 22 tested, 0 missing, 0 not applicable (out of 22 rows). The
+`Content-Location` row is tested only with the option on; by default no such
+resource is exposed.
+
+### Search results resource (ANTICIPATORY AND UNSTABLE, off by default)
+
+Owner, 2026-10-21: "what do we think a Content-Location results resource
+looks like? Can we draft an anticipatory impl flagged as likely unstable?"
+Tracking: https://github.com/danbri/factoidal/issues/922. Lean:
+`L4Factoidal/LWS/SearchResults.lean`; `#guard`s in
+`L4Factoidal/LWS/SearchResultsTests.lean`. lws10-index defines no such
+resource; everything in this section is likely to change.
+
+RFC 10008 (June 2026), the text this design follows:
+
+* §2.3: "A successful response (2xx, Section 15.3 of [HTTP]) can include a
+  Content-Location header field containing an identifier for a resource
+  corresponding to the results of the operation [...] This represents a
+  claim from the server that a client can send a GET request for the
+  indicated URI to retrieve the results of the query operation just
+  performed. The indicated resource might be temporary."
+* §2.4: a URI in Location "represents a claim that a client can send a GET
+  request to the indicated URI to repeat the query operation just performed
+  without resending the query content."
+* §4: "If a server creates a temporary resource to represent the results of
+  a QUERY request [...] that URI SHOULD be chosen such that it does not
+  include any sensitive portions of the original request content."
+
+So the RFC changed the design proposed in issue 922. The issue proposed a
+GET that re-runs the filter; RFC 10008 gives that to the Location resource
+(the equivalent resource). The Content-Location resource holds the results
+of the QUERY just performed. As built:
+
+| decision | value |
+|---|---|
+| when | QUERY by an authenticated agent, answer 200, option on, 16 random bytes from the host; never for an anonymous QUERY |
+| name | `<base>.well-known/lws-type-search/results/<id>`, `<id>` the base64url form of 16 random bytes (128 bits); nothing of the filter is in the URI |
+| record | filter, agent (token `sub`), client (token `client_id`), created, expires, the result paths of the QUERY |
+| GET, HEAD | the recorded paths that a QUERY with the same filter and the same agent's current read access answers now, paged as the search (`?page=N`), `Cache-Control: private`, `Vary: accept, authorization`. A resource made after the QUERY is never listed; a deleted, retyped or no longer readable one disappears |
+| other agent, other client, anonymous, unknown name | 404 (one answer for all) |
+| after `searchResultsTtl` (600 s) | 410 for the creator, 404 for everyone else |
+| more than `searchResultsMax` (100) records | the oldest is removed (then 404) |
+| other methods | 405, `Allow: GET, HEAD, OPTIONS` |
+| Location | not sent: the search's page URIs (`?q=<filter>&page=N`) already repeat the query by GET |
+| discovery | extension member `https://github.com/danbri/factoidal/issues/922#unstableResultsResource` (a string saying it is unstable) on the `TypeSearchService` entry, only when on |
+
+Theorems: `resultsAnswer_sublist_query` (the answer is a sublist of the
+answer a QUERY with the same filter and the same read access gets on the same
+state), `resultsAnswer_authorized`, `resultsAnswer_recorded`,
+`resultsPage_mem_query`, `resultsAnswer_eq_spec`, `findFor_creator`,
+`resultsGet_creator_only` (any answer other than 404 comes from a record of
+this agent and this client), `resultsGet_anonymous`, `create_anonymous`,
+`create_owner`, `insertBounded_length_le`, `insertBounded_mem`,
+`serverStep_off` (option off: every request passes to the storage as before).
+
+Touchstone: `type-search-content-location-protected` applies only with the
+option on (`tools/lws-touchstone.sh --unstable-search-results`); record in
+`docs/designissues/2026-10-21-lws-touchstone-run.md` § Search results
+resource.
 
 ## LWS 1.0 Core
 
@@ -413,7 +484,7 @@ Score, from `lake exe l4lws-probe`:
 
 ```
 guarded checks: 17 pass, 0 fail (out of 17)
-registry: 9 proved, 17 guarded, 0 host-verified, 5 open (out of 31)
+registry: 11 proved, 17 guarded, 0 host-verified, 5 open (out of 33)
 ```
 
 Table generated by `lake exe l4lws-probe -- --markdown`.
@@ -445,6 +516,8 @@ Table generated by `lake exe l4lws-probe -- --markdown`.
 | `lws-index-04` | lws10-index: Security and Authorization | Unauthorized entries MUST be omitted entirely. | `L4Factoidal.LWS.Search.searchAnswer` | proved | L4Factoidal.LWS.Search.searchAnswer_authorized |
 | `lws-index-05` | lws10-index: Security and Authorization | A server MAY maintain a derived index for performance, but it MUST apply current authorization as a filter over that index on every request. | `L4Factoidal.LWS.Search.serverStep` | guarded | L4Factoidal.LWS.SearchTests.lwsGuardSearchAuthorized |
 | `lws-index-06` | lws10-index: Type and Relation Derivation | When a server enriches the type index from resource content, the types it surfaces MUST be treated identically to those derived from Link headers for the purposes of indexing, search, and authorization filtering. | `L4Factoidal.LWS.TypeIndex.entryFacts` | proved | L4Factoidal.LWS.Search.ixSearch_eq_specSearch |
+| `lws-index-07` | lws10-index: QUERY (a results resource; ANTICIPATORY AND UNSTABLE, off by default, issue 922) | this specification does not define such a resource; a server that nonetheless exposes one MUST subject it to the same authorization filtering on every access [...] | `L4Factoidal.LWS.SearchResults.resultsAnswer` | proved | L4Factoidal.LWS.SearchResults.resultsAnswer_authorized |
+| `lws-index-08` | lws10-index: QUERY (a results resource; ANTICIPATORY AND UNSTABLE, off by default, issue 922) | a server that nonetheless exposes one [...] MUST prevent its reuse across clients. | `L4Factoidal.LWS.SearchResults.resultsGet` | proved | L4Factoidal.LWS.SearchResults.resultsGet_creator_only |
 | `lws-access-01` | Access Requests and Grants: Discovery | When such support is advertised, a service object describing an endpoint for access requests MUST have a type equal to the string AccessRequestService, and a service object describing an endpoint for access grants MUST have a type equal to the string AccessGrantService. | `L4Factoidal.LWS.Binding.storageDescription` | guarded | L4Factoidal.LWS.AccessGrantsTests.lwsGuardAccessDiscovery |
 | `lws-access-02` | Access Requests and Grants: Protocol | A successful POST operation MUST respond with a Location header set to the URL of the new resource. | `L4Factoidal.LWS.AccessGrants.accessStep` | guarded | L4Factoidal.LWS.AccessGrantsTests.lwsGuardAccessCreate |
 | `lws-access-03` | Access Requests and Grants: Constraints | When multiple constraint objects are present, all of them MUST be satisfied. | `L4Factoidal.LWS.AccessPolicy.policyPermits` | guarded | L4Factoidal.LWS.AccessGrantsTests.lwsGuardAccessConstraints |

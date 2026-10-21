@@ -244,6 +244,8 @@ export async function openLwsStorage (options = {}) {
   // Content-Location. Off unless the caller turns it on
   // (L4Factoidal/LWS/SearchResults.lean decides everything about it).
   if (options.searchResults === true) config.searchResults = true
+  if (typeof options.searchResultsTtl === 'number') config.searchResultsTtl = options.searchResultsTtl
+  if (typeof options.searchResultsMax === 'number') config.searchResultsMax = options.searchResultsMax
   config.entropy = entropyBase64()
   // `dir` names the storage directory. The snapshot found there, if any,
   // is the storage to continue from; the engine checks it.

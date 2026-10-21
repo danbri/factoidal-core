@@ -77,6 +77,7 @@ const CHECKS = [
   'Access grants: dateTime, format, type and client constraints must all hold',
   'Access grants: a move needs delete of the resource and create in the destination',
   'Access grants: a read grant lets bob subscribe; after the revocation a subscription is refused',
+  'Type search results resource (unstable, issue 922): alice reads her results; bob, another client and an anonymous request get 404 and none of her results; 410 after the lifetime',
   'Type search: results, totalItems and the type index hold only what the agent may read; anonymous and revoked access see nothing (issue 912)']
 
 /** A local webhook receiver that records every POST and answers 202. */
@@ -626,6 +627,75 @@ async function main () {
       { encoding: 'utf8', timeout: 60000 })
     assert(r.status !== 0, `exit ${r.status}`)
     assert((r.stderr || '').indexOf('--insecure-no-auth') >= 0, `stderr: ${r.stderr}`)
+  })
+
+  // ANTICIPATORY AND UNSTABLE (https://github.com/danbri/factoidal/issues/922):
+  // the type search results resource named by Content-Location, with real
+  // tokens. lws10-index: "a server that nonetheless exposes one MUST subject
+  // it to the same authorization filtering on every access and MUST prevent
+  // its reuse across clients."
+  await check(CHECKS[CHECKS.length - 2], async () => {
+    const rs = await listen({
+      engine,
+      port: 0,
+      owner: ALICE,
+      realClock: true,
+      searchResults: true,
+      searchResultsTtl: 2,
+      auth: { issuers: [{ issuer: issuer.origin }], refreshInterval: 0 }
+    })
+    try {
+      const ro = rs.origin
+      const raud = `${ro}/.well-known/lws-storage`
+      const bearer = (t) => ({ authorization: `Bearer ${t}` })
+      // The key the issuer publishes now (an earlier check rotates it).
+      const signing = { key: issuer.keys[issuer.keys.length - 1] }
+      const aliceT = issuer.token(claims(issuer.origin, raud, ALICE), signing)
+      const aliceOtherClient = issuer.token({ ...claims(issuer.origin, raud, ALICE), client_id: 'https://other-app.example/id' }, signing)
+      const bobT = issuer.token(claims(issuer.origin, raud, BOB), signing)
+      const T = `https://ex.org/t/${randomUUID()}#Secret`
+      const w = await fetch(`${ro}/private/secret.txt`, { method: 'PUT', headers: { 'content-type': 'text/plain', prefer: 'set-linkset', link: `<${T}>; rel="type"`, ...bearer(aliceT) }, body: 'secret' })
+      const wt = await w.text()
+      assert(w.status === 201, `PUT answered ${w.status} ${w.headers.get('www-authenticate')} ${wt}`)
+      const query = (headers) => fetch(`${ro}/.well-known/lws-type-search`, {
+        method: 'QUERY', headers: { 'content-type': 'application/lws-query+json', ...headers }, body: JSON.stringify({ type: [T] })
+      })
+      const q = await query(bearer(aliceT))
+      const qj = await q.json()
+      assert(q.status === 200 && qj.items.length === 1, `alice's QUERY answered ${q.status} ${JSON.stringify(qj)}`)
+      const results = q.headers.get('content-location')
+      assert(results !== null, 'no Content-Location')
+      // alice, with the same client: her results.
+      const mine = await fetch(results, { headers: bearer(aliceT) })
+      const mj = await mine.json()
+      assert(mine.status === 200 && mj.items.length === 1 && mj.items[0].id === `${ro}/private/secret.txt`, `alice's GET answered ${mine.status} ${JSON.stringify(mj)}`)
+      // bob: 404, and nothing of alice's result reaches him.
+      const his = await fetch(results, { headers: bearer(bobT) })
+      const hb = await his.text()
+      assert(his.status === 404, `bob's GET answered ${his.status}`)
+      assert(hb.indexOf('#Secret') < 0 && hb.indexOf('secret.txt') < 0, `bob saw ${hb}`)
+      // alice through another client, and an anonymous request: 404.
+      const other = await fetch(results, { headers: bearer(aliceOtherClient) })
+      await other.text()
+      assert(other.status === 404, `alice through another client answered ${other.status}`)
+      const anon = await fetch(results)
+      await anon.text()
+      assert(anon.status === 404, `an anonymous GET answered ${anon.status}`)
+      // An anonymous QUERY names no results resource.
+      const aq = await query({})
+      await aq.text()
+      assert(aq.status === 200 && aq.headers.get('content-location') === null, `anonymous QUERY: ${aq.status} ${aq.headers.get('content-location')}`)
+      // After searchResultsTtl (2 s here): 410 for alice, still 404 for bob.
+      await new Promise((resolve) => setTimeout(resolve, 3100))
+      const late = await fetch(results, { headers: bearer(aliceT) })
+      await late.text()
+      assert(late.status === 410, `alice's GET after the lifetime answered ${late.status}`)
+      const lateBob = await fetch(results, { headers: bearer(bobT) })
+      await lateBob.text()
+      assert(lateBob.status === 404, `bob's GET after the lifetime answered ${lateBob.status}`)
+    } finally {
+      await rs.close()
+    }
   })
 
   await issuer.close()
