@@ -1,5 +1,5 @@
 // Pins every code sample in
-// docs/web/hub/02-asking-questions-sparql.md.
+// docs/web/historical-fstar-notebooks/02-asking-questions-sparql.md.
 
 import { NPM_FACTOIDAL_INDEX, extractObservableCells, runObservableCell, runReactivePost, pretty } from './_helpers.mjs';
 

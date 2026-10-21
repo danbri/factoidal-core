@@ -1,5 +1,5 @@
 // Pins every code sample in
-// docs/web/hub/32-this-answer-is-a-theorem.md.
+// docs/web/historical-fstar-notebooks/32-this-answer-is-a-theorem.md.
 //
 // The page's cells call the certified rho-df API landed for G3:
 // fn.coreRdfsCheck (the decidable fragment hypothesis of the
@@ -107,7 +107,7 @@ test('post32: BROWSER-SURFACE PARITY — every fn.* name the page calls is on th
   // hub.njk's hubHelpers, so each name must be a member of browser.js's
   // API object (or a hub helper).
   const { readFileSync } = await import('node:fs');
-  const page = readFileSync(new URL('../../docs/web/hub/' + POST_FILE, import.meta.url), 'utf8');
+  const page = readFileSync(new URL('../../docs/web/historical-fstar-notebooks/' + POST_FILE, import.meta.url), 'utf8');
   const hub = readFileSync(new URL('../../docs/_includes/hub.njk', import.meta.url), 'utf8');
   const browser = await import(new URL('../../npm/factoidal/browser.js', import.meta.url).href);
   const names = [...new Set([...page.matchAll(/\bfn\.([A-Za-z_][A-Za-z0-9_]*)\s*\(/g)].map(m => m[1]))];

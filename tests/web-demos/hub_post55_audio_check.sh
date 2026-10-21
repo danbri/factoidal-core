@@ -2,7 +2,7 @@
 # tests/web-demos/hub_post55_audio_check.sh
 #
 # Headless-Chromium check for hub post 55's audio cell
-# (docs/web/hub/55-valis-a-drum-machine-in-rdf.md, danbri/factoidal#687):
+# (docs/web/historical-fstar-notebooks/55-valis-a-drum-machine-in-rdf.md, danbri/factoidal#687):
 # builds the site offline with the vendored Eleventy, serves it under
 # /factoidal/, and drives headless Chromium -- launched with
 # --autoplay-policy=no-user-gesture-required, since a synthetic click()
@@ -88,7 +88,7 @@ if [ "$BUILD_RC" -ne 0 ]; then
   fi
 fi
 
-PAGE="$SITE_DIR/web/hub/55-valis-a-drum-machine-in-rdf/index.html"
+PAGE="$SITE_DIR/web/historical-fstar-notebooks/55-valis-a-drum-machine-in-rdf/index.html"
 [ -f "$PAGE" ] || { echo "ENV MISSING: $PAGE was not produced by the build." >&2; exit 2; }
 
 echo "== Serving $SITE_DIR under /factoidal/ and driving headless Chromium =="
@@ -101,7 +101,7 @@ PORT="${HUB_POST55_AUDIO_CHECK_PORT:-8956}"
 HTTP_PID=$!
 
 for _ in $(seq 1 50); do
-  curl -sS -o /dev/null "http://127.0.0.1:$PORT/factoidal/web/hub/55-valis-a-drum-machine-in-rdf/" 2>/dev/null && break
+  curl -sS -o /dev/null "http://127.0.0.1:$PORT/factoidal/web/historical-fstar-notebooks/55-valis-a-drum-machine-in-rdf/" 2>/dev/null && break
   sleep 0.2
 done
 
@@ -111,7 +111,7 @@ cat >"$DRIVER_PATH" <<'DRIVER_EOF'
 // a temp file by the shell script (not meant to be run standalone).
 const { chromium } = await import(process.env.PLAYWRIGHT_IMPORT_SPEC);
 const PORT = process.env.HUB_POST55_PORT_RESOLVED;
-const URL_ = `http://127.0.0.1:${PORT}/factoidal/web/hub/55-valis-a-drum-machine-in-rdf/`;
+const URL_ = `http://127.0.0.1:${PORT}/factoidal/web/historical-fstar-notebooks/55-valis-a-drum-machine-in-rdf/`;
 
 let failures = 0;
 function check(label, ok) {

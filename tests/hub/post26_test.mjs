@@ -1,4 +1,4 @@
-// Pins docs/web/hub/26-reactive-cells-declare-once-use-everywhere.md.
+// Pins docs/web/historical-fstar-notebooks/26-reactive-cells-declare-once-use-everywhere.md.
 //
 // Unlike the other post tests (which run each cell standalone via
 // runObservableCell), this post's whole point is CROSS-CELL reference:

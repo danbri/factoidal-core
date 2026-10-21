@@ -1,5 +1,5 @@
 // Pins every live cell in
-// docs/web/hub/21-geosparql-geometry-and-topology.md.
+// docs/web/historical-fstar-notebooks/21-geosparql-geometry-and-topology.md.
 //
 // The post's cells call the typed `fn` adapter only (fn.parse /
 // fn.query) -- geof: functions are ordinary SPARQL expressions, so a
@@ -26,7 +26,7 @@
 // asserted here -- that's tests/web-demos/hub_post21_geo_check.sh
 // (headless Chromium, both the strict page and its live-mode twin).
 
-import { NPM_FACTOIDAL_INDEX, extractObservableCells, runObservableCell, runReactivePost, pretty, HUB_POST_DIR } from './_helpers.mjs';
+import { NPM_FACTOIDAL_INDEX, extractObservableCells, runObservableCell, runReactivePost, pretty, HUB_POST_DIR, HUB_PAGE_DIR } from './_helpers.mjs';
 
 import test from 'node:test';
 import assert from 'node:assert/strict';
@@ -41,7 +41,7 @@ const POST_FILE = '21-geosparql-geometry-and-topology.md';
 // read once, from the same files docs/.eleventy.js passthrough-copies
 // to the built site, so the Node stub below serves byte-identical
 // content to what the browser would fetch.
-const GEO_DIR = path.join(HUB_POST_DIR, 'assets', 'geo');
+const GEO_DIR = path.join(HUB_PAGE_DIR, 'assets', 'geo');
 const BOROUGHS_GEOJSON = JSON.parse(fs.readFileSync(path.join(GEO_DIR, 'london-boroughs.geojson'), 'utf8'));
 const THAMES_GEOJSON = JSON.parse(fs.readFileSync(path.join(GEO_DIR, 'thames.geojson'), 'utf8'));
 
@@ -91,7 +91,7 @@ test('post21 cell 2 (geof:sfWithin): the two inside pairs, ordered', async () =>
 // Mirrors the map cell's own inline `geomToWkt`/`ringToWkt`/
 // `polygonCoordsToWkt` -- see the header comment above for why this is
 // a duplicate rather than a shared import. Keep in sync by hand with
-// the copy in docs/web/hub/21-geosparql-geometry-and-topology.md if
+// the copy in docs/web/historical-fstar-notebooks/21-geosparql-geometry-and-topology.md if
 // either changes.
 function ringToWkt(ring) {
   return '(' + ring.map(([lon, lat]) => lon + ' ' + lat).join(', ') + ')';

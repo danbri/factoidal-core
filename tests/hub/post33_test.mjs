@@ -1,5 +1,5 @@
 // Pins every live cell in
-// docs/web/hub/33-correlated-federation-lateral-service.md.
+// docs/web/historical-fstar-notebooks/33-correlated-federation-lateral-service.md.
 //
 // node:test against the committed npm/factoidal typed API (the same
 // external contract docs/_includes/hub.njk's `fn` adapter mirrors).

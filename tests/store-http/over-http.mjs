@@ -63,7 +63,7 @@ async function refuses (name, run, expectedCode) {
 }
 
 // The nine shapes of the skosdex cookbook, written for this store's one
-// default graph. The notebook (docs/web/hub/54-skosdex-over-r2.md) carries
+// default graph. The notebook (docs/web/historical-fstar-notebooks/54-skosdex-over-r2.md) carries
 // the same nine; the R2 generation carries named graphs, so the same
 // shapes take a GRAPH wrapper there.
 export const SHAPES = [

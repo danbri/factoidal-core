@@ -6,7 +6,7 @@ import { readFileSync } from 'node:fs';
 import { extractObservableCells } from './_helpers.mjs';
 
 const POST_FILE = '51-query-shardborough-blocks-in-browser.md';
-const POST_PATH = new URL(`../../docs/web/hub/${POST_FILE}`, import.meta.url);
+const POST_PATH = new URL(`../../docs/web/historical-fstar-notebooks/${POST_FILE}`, import.meta.url);
 const ASSET_DIR = new URL('../../docs/web/hub/assets/blocks/shardborough-three-way/', import.meta.url);
 const L4_LOADER = new URL('../../docs/web/hub/assets/l4/l4factoidal.js', import.meta.url);
 const { loadL4 } = await import(L4_LOADER.href);

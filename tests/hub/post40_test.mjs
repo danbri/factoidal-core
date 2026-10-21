@@ -1,4 +1,4 @@
-// Pins every live cell in docs/web/hub/40-a-dataset-that-stays-open.md.
+// Pins every live cell in docs/web/historical-fstar-notebooks/40-a-dataset-that-stays-open.md.
 //
 // Post 40 is the working-session page for the Lean 4 engine's
 // dataset-handle graph API (issue #585): one fn.l4Parse call opens a

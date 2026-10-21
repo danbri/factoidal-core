@@ -124,7 +124,7 @@ Dedicated headless-Chromium checks for the GeoSPARQL post's Leaflet
 choropleth map (task #105) — the assertions the two broader hub
 harnesses above don't make. Builds the site, serves it under
 `/factoidal/`, and drives Playwright over BOTH the strict page
-(`web/hub/21-geosparql-geometry-and-topology/`) and its auto-generated
+(`web/historical-fstar-notebooks/21-geosparql-geometry-and-topology/`) and its auto-generated
 live-mode twin (`web/hub-live/21-.../`, produced by
 `docs/web/hub-live.11ty.js`).
 

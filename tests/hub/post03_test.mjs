@@ -1,5 +1,5 @@
 // Pins every code sample in
-// docs/web/hub/03-schemas-that-infer-rdfs-owl.md.
+// docs/web/historical-fstar-notebooks/03-schemas-that-infer-rdfs-owl.md.
 
 import { NPM_FACTOIDAL_INDEX, extractObservableCells, runReactivePost } from './_helpers.mjs';
 

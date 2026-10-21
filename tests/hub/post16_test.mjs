@@ -1,4 +1,4 @@
-// Pins the live cell in docs/web/hub/16-the-verified-in-fstar-story.md.
+// Pins the live cell in docs/web/historical-fstar-notebooks/16-the-verified-in-fstar-story.md.
 //
 // node:test, requiring the committed npm/factoidal bundles (no F*
 // toolchain needed) — mirrors npm/factoidal/test's own harness style.
@@ -76,7 +76,7 @@ test('post16: the standing Iron Rule #11 qualifier is quoted verbatim from CLAUD
     /the qualifier "([^"]*optimization\s+layers being migrated back to F\\\*[^"]*)"/);
   assert.ok(claudeMdMatch, 'CLAUDE.md must still contain the quoted Iron Rule #11 qualifier');
 
-  const postPath = path.join(__dirname, '..', '..', 'docs', 'web', 'hub', POST_FILE);
+  const postPath = path.join(__dirname, '..', '..', 'docs', 'web', 'historical-fstar-notebooks', POST_FILE);
   const post = fs.readFileSync(postPath, 'utf8');
   const postMatch = post.match(
     /> (parser and algebra spec[\s\S]*?fstar-purity-unwind\.md\))/);

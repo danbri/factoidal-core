@@ -1,4 +1,4 @@
-// Pins docs/web/hub/27-transforming-and-checking-xml.md.
+// Pins docs/web/historical-fstar-notebooks/27-transforming-and-checking-xml.md.
 //
 // The post's cells call `fn.xsltTransform`/`fn.schematronValidate` --
 // typed methods now, the same shape `fn.xmlWellformed`/`fn.xpathEval`

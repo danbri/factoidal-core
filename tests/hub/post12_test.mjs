@@ -1,4 +1,4 @@
-// Pins every code sample in docs/web/hub/12-the-api-tour.md.
+// Pins every code sample in docs/web/historical-fstar-notebooks/12-the-api-tour.md.
 
 import { createRequire } from 'node:module';
 import { NPM_FACTOIDAL_INDEX, extractObservableCells, runObservableCell } from './_helpers.mjs';

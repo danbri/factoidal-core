@@ -1,4 +1,4 @@
-// Pins every live cell in docs/web/hub/36-lean-in-the-browser.md.
+// Pins every live cell in docs/web/historical-fstar-notebooks/36-lean-in-the-browser.md.
 //
 // What is different about this post's harness: the page runs TWO
 // engines. `fn.parse` / `fn.query` are the F*-derived engine (the npm

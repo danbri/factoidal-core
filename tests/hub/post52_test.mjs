@@ -1,4 +1,4 @@
-// Pins docs/web/hub/52-persisted-store-on-your-laptop.md: the recorded
+// Pins docs/web/historical-fstar-notebooks/52-persisted-store-on-your-laptop.md: the recorded
 // milestone numbers of 2026-09-02 and the claims the prose makes about
 // what backs them. The page renders recorded numbers; nothing runs live,
 // so this test checks the data cell, the rendering cell and the prose.
@@ -10,7 +10,7 @@ import { readFileSync } from 'node:fs';
 import { extractObservableCells, runReactivePost } from './_helpers.mjs';
 
 const POST_FILE = '52-persisted-store-on-your-laptop.md';
-const POST_PATH = new URL(`../../docs/web/hub/${POST_FILE}`, import.meta.url);
+const POST_PATH = new URL(`../../docs/web/historical-fstar-notebooks/${POST_FILE}`, import.meta.url);
 const cells = extractObservableCells(POST_FILE);
 
 test('post52: two cells, data then rendering', () => {

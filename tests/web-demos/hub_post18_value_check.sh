@@ -82,7 +82,7 @@ if [ "$BUILD_RC" -ne 0 ]; then
   fi
 fi
 
-PAGE="$SITE_DIR/web/hub/18-the-durable-log-live/index.html"
+PAGE="$SITE_DIR/web/historical-fstar-notebooks/18-the-durable-log-live/index.html"
 [ -f "$PAGE" ] || { echo "FAIL: $PAGE was not produced." >&2; exit 1; }
 
 echo "== Serving $SITE_DIR under /factoidal/ and driving headless Chromium =="
@@ -95,7 +95,7 @@ PORT="${HUB_POST18_CHECK_PORT:-8942}"
 HTTP_PID=$!
 
 for _ in $(seq 1 50); do
-  curl -sS -o /dev/null "http://127.0.0.1:$PORT/factoidal/web/hub/18-the-durable-log-live/" 2>/dev/null && break
+  curl -sS -o /dev/null "http://127.0.0.1:$PORT/factoidal/web/historical-fstar-notebooks/18-the-durable-log-live/" 2>/dev/null && break
   sleep 0.2
 done
 
@@ -103,7 +103,7 @@ DRIVER_PATH="$WORKDIR/driver.mjs"
 cat >"$DRIVER_PATH" <<'DRIVER_EOF'
 const { chromium } = await import(process.env.PLAYWRIGHT_IMPORT_SPEC);
 const PORT = process.env.HUB_POST18_PORT_RESOLVED;
-const URL_18 = `http://127.0.0.1:${PORT}/factoidal/web/hub/18-the-durable-log-live/`;
+const URL_18 = `http://127.0.0.1:${PORT}/factoidal/web/historical-fstar-notebooks/18-the-durable-log-live/`;
 const LOG = 'factoidal-hub-post18-lifecycle';
 
 let failures = 0;

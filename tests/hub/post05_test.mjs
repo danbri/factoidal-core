@@ -1,4 +1,4 @@
-// Pins every code sample in docs/web/hub/05-shapes-that-validate-shacl.md.
+// Pins every code sample in docs/web/historical-fstar-notebooks/05-shapes-that-validate-shacl.md.
 
 import { NPM_FACTOIDAL_INDEX, extractObservableCells, runReactivePost } from './_helpers.mjs';
 

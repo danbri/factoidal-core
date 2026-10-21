@@ -1,5 +1,5 @@
 // Pins every live cell in
-// docs/web/hub/41-a-walkthrough-of-the-ikl-guide.md.
+// docs/web/historical-fstar-notebooks/41-a-walkthrough-of-the-ikl-guide.md.
 //
 // Post 41 parses and translates worked examples taken directly from Pat
 // Hayes and Chris Menzel's IKL GUIDE

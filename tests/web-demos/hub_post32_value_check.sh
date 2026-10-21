@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # tests/web-demos/hub_post32_value_check.sh
 #
-# Headless-Chromium VALUE checks for docs/web/hub/32-this-answer-is-a-
+# Headless-Chromium VALUE checks for docs/web/historical-fstar-notebooks/32-this-answer-is-a-
 # theorem.md (the certified rho-df closure post). Sibling to
 # hub_browser_all.sh (every post, pageerror/rejected-cell detection
 # only) and hub_post21_geo_check.sh (post 21's map structure) -- this
@@ -22,7 +22,7 @@
 # `false` where the prose promises `true`. Only a value assertion
 # catches that class.
 #
-# Checks (strict page web/hub/32-this-answer-is-a-theorem/ only):
+# Checks (strict page web/historical-fstar-notebooks/32-this-answer-is-a-theorem/ only):
 #   1. Zero pageerror events; zero rejected (.observable-cell-error)
 #      cells.
 #   2. Step 1: some cell output contains `"fragment": true` (the
@@ -105,7 +105,7 @@ if [ "$BUILD_RC" -ne 0 ]; then
   fi
 fi
 
-PAGE="$SITE_DIR/web/hub/32-this-answer-is-a-theorem/index.html"
+PAGE="$SITE_DIR/web/historical-fstar-notebooks/32-this-answer-is-a-theorem/index.html"
 [ -f "$PAGE" ] || { echo "FAIL: $PAGE was not produced." >&2; exit 1; }
 
 echo "== Serving $SITE_DIR under /factoidal/ and driving headless Chromium =="
@@ -118,7 +118,7 @@ PORT="${HUB_POST32_VALUE_CHECK_PORT:-8942}"
 HTTP_PID=$!
 
 for _ in $(seq 1 50); do
-  curl -sS -o /dev/null "http://127.0.0.1:$PORT/factoidal/web/hub/32-this-answer-is-a-theorem/" 2>/dev/null && break
+  curl -sS -o /dev/null "http://127.0.0.1:$PORT/factoidal/web/historical-fstar-notebooks/32-this-answer-is-a-theorem/" 2>/dev/null && break
   sleep 0.2
 done
 
@@ -139,7 +139,7 @@ const page = await browser.newPage();
 const pageErrors = [];
 page.on('pageerror', (err) => pageErrors.push(err.message));
 
-await page.goto(`${BASE}/web/hub/32-this-answer-is-a-theorem/`, { waitUntil: 'networkidle', timeout: 30000 });
+await page.goto(`${BASE}/web/historical-fstar-notebooks/32-this-answer-is-a-theorem/`, { waitUntil: 'networkidle', timeout: 30000 });
 
 // The perf cell runs TWO closures over a 60-class chain through the js
 // bundle -- give the cells a generous settle window before asserting.

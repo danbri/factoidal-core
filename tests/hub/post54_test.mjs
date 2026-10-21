@@ -1,4 +1,4 @@
-// Pins docs/web/hub/54-skosdex-over-r2.md.
+// Pins docs/web/historical-fstar-notebooks/54-skosdex-over-r2.md.
 //
 // The page has one interactive cell, so its cell source is not executed
 // here (there is no DOM). What IS executed is the nine SPARQL shapes the
@@ -22,7 +22,7 @@ import { startMockBucket } from '../store-http/mock-bucket.mjs';
 import { openStoreOverHttp } from '../../npm/factoidal/store-http/index.mjs';
 
 const POST_FILE = '54-skosdex-over-r2.md';
-const POST_PATH = new URL(`../../docs/web/hub/${POST_FILE}`, import.meta.url);
+const POST_PATH = new URL(`../../docs/web/historical-fstar-notebooks/${POST_FILE}`, import.meta.url);
 const SAMPLE = new URL('../../npm/factoidal/test/fixtures/sample-store', import.meta.url).pathname;
 const HUB_NJK = new URL('../../docs/_includes/hub.njk', import.meta.url);
 const ELEVENTY = new URL('../../docs/.eleventy.js', import.meta.url);

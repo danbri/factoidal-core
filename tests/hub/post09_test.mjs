@@ -1,4 +1,4 @@
-// Pins every code sample in docs/web/hub/09-mapping-tables-to-triples-rml.md.
+// Pins every code sample in docs/web/historical-fstar-notebooks/09-mapping-tables-to-triples-rml.md.
 //
 // Fixtures are copied verbatim from the vendored W3C-community RML test
 // suites: third_party/testing/rml-modules/rml-core/test-cases/RMLTC0002a-JSON/

@@ -1,4 +1,4 @@
-// Pins every code sample in docs/web/hub/10-rules-rif-core.md.
+// Pins every code sample in docs/web/historical-fstar-notebooks/10-rules-rif-core.md.
 //
 // This post's cells call `Factoidal.rifEval(...)` -- the raw ABI
 // npm/factoidal/browser.js exposes -- rather than the `fn` typed

@@ -1,4 +1,4 @@
-// Pins every code sample in docs/web/hub/06-shapes-the-other-dialect-shex.md.
+// Pins every code sample in docs/web/historical-fstar-notebooks/06-shapes-the-other-dialect-shex.md.
 
 import { NPM_FACTOIDAL_INDEX, extractObservableCells, runReactivePost } from './_helpers.mjs';
 

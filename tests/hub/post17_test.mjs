@@ -1,4 +1,4 @@
-// Pins the live cells in docs/web/hub/17-mutating-and-serving-data.md.
+// Pins the live cells in docs/web/historical-fstar-notebooks/17-mutating-and-serving-data.md.
 //
 // node:test, requiring the committed npm/factoidal bundles (no F*
 // toolchain needed). Both live cells go through the typed `fn` adapter

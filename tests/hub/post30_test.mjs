@@ -1,4 +1,4 @@
-// Pins docs/web/hub/30-owl-reasoning-tableau.md.
+// Pins docs/web/historical-fstar-notebooks/30-owl-reasoning-tableau.md.
 //
 // The cells call the typed `fn` methods (tableauMaterialise /
 // tableauDlInconsistent / owlIsConsistent / owlEntails) and reference

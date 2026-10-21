@@ -1,4 +1,4 @@
-// Pins every live cell in docs/web/hub/55-valis-a-drum-machine-in-rdf.md.
+// Pins every live cell in docs/web/historical-fstar-notebooks/55-valis-a-drum-machine-in-rdf.md.
 //
 // The post fetches two vendored Valis Turtle files (third_party/valis/)
 // relative to a `valisBase` cell that, in the browser, resolves from

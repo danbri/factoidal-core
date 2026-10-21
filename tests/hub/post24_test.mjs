@@ -1,4 +1,4 @@
-// Pins every live cell in docs/web/hub/24-hdt-header-dictionary-triples.md.
+// Pins every live cell in docs/web/historical-fstar-notebooks/24-hdt-header-dictionary-triples.md.
 //
 // The post's three cells fetch the in-repo RML-Core HDT fixture and
 // hand its bytes to `fn.queryHdt(bytes, sparql)`, which encapsulates

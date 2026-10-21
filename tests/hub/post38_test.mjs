@@ -1,4 +1,4 @@
-// Pins every live cell in docs/web/hub/38-one-triple-at-a-time.md.
+// Pins every live cell in docs/web/historical-fstar-notebooks/38-one-triple-at-a-time.md.
 //
 // Post 38 is post 36's successor: where 36 stopped at BGP evaluation
 // over term objects, 38 drives the DISPATCH ABI (formal/lean4/Wasm/

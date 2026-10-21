@@ -1,4 +1,4 @@
-// Pins every live cell in docs/web/hub/42-cottas-a-store-at-scale.md.
+// Pins every live cell in docs/web/historical-fstar-notebooks/42-cottas-a-store-at-scale.md.
 //
 // `fn === factoidal`, the real npm/factoidal typed API (same shape the
 // browser adapter in docs/_includes/hub.njk exposes: parse/query/
@@ -25,7 +25,7 @@
 import fs from 'node:fs';
 import path from 'node:path';
 
-import { NPM_FACTOIDAL_INDEX, HUB_POST_DIR, extractObservableCells, runReactivePost, pretty } from './_helpers.mjs';
+import { NPM_FACTOIDAL_INDEX, HUB_POST_DIR, HUB_PAGE_DIR, extractObservableCells, runReactivePost, pretty } from './_helpers.mjs';
 import * as Corpus from '../../docs/web/hub/assets/data/gen-cottas-corpus.mjs';
 
 import test, { after } from 'node:test';
@@ -37,7 +37,7 @@ const factoidal = npmEntry.default;
 // Node entry exports the same loader.
 const fn = { ...factoidal, loadL4: npmEntry.loadEngine };
 const POST_FILE = '42-cottas-a-store-at-scale.md';
-const FIXTURE_PATH = path.join(HUB_POST_DIR, 'assets', 'data', 'cottas-corpus.trig');
+const FIXTURE_PATH = path.join(HUB_PAGE_DIR, 'assets', 'data', 'cottas-corpus.trig');
 
 const cells = extractObservableCells(POST_FILE);
 
