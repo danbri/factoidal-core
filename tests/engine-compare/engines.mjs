@@ -20,8 +20,17 @@ function loadFstarEntry() {
   if (!abi || typeof abi.queryDataset !== 'function') {
     throw new Error(`${path} registers no factoidalNpmEntry with a queryDataset op`);
   }
+  // The npm layer reads its format and regime name tables from the engine
+  // (op engineTables, issue 894). The F* bundle predates that op; both
+  // engines use the same names, so the F* side is given the Lean engine's
+  // tables (test adapter only, never part of the package).
+  if (typeof abi.engineTables !== 'function') {
+    abi.engineTables = () => LEAN_TABLES;
+  }
   return abi;
 }
+
+const LEAN_TABLES = JSON.stringify((await lean.loadEngine()).call('engineTables', []));
 
 export const fstar = buildApi({ engineName: 'fstar-npm-entry', loadEntry: loadFstarEntry });
 

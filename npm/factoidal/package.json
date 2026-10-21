@@ -1,6 +1,6 @@
 {
   "name": "@factoidal/core",
-  "version": "0.10.0",
+  "version": "0.11.0",
   "description": "RDF parsing and writing (Turtle, TriG, N-Triples, N-Quads, RDF/XML, JSON-LD), SPARQL 1.1 and 1.2, RDFS and OWL reasoning, SHACL and ShEx validation, CSVW and RML mapping, RDFC-1.0, and SPARQL, LWS and Solid servers, for Node, Deno and browsers.",
   "keywords": [
     "sparql",

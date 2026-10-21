@@ -1,6 +1,6 @@
 # Changelog
 
-## 0.11.0 (unreleased)
+## 0.11.0 — 2026-10-21
 
 No RDF, SPARQL, datatype or IRI decision is made in JavaScript any more
 (https://github.com/danbri/factoidal/issues/894; owner, 2026-10-21: "The ja
@@ -12,6 +12,16 @@ syntax and runs in `npm test`.
 ### Breaking changes
 
 These shapes could not be kept:
+
+- `factoidal lws-serve` and `@factoidal/core/lws` enforce storage-server
+  authorization from the LWS editor's draft (401 with
+  `WWW-Authenticate: Bearer resource_metadata`, the RFC 9728 metadata
+  document, Bearer JWT access tokens checked for signature, `iss`, `aud`,
+  `exp`, `nbf` and `iat`, then Web Access Control). `lws-serve` needs
+  `--issuer IRI`, `--auth-config FILE` or, for development only,
+  `--insecure-no-auth`; `listen()` with neither `auth` nor
+  `insecureNoAuth` serves only what the ACLs give to the public. New op
+  `lwsFetched`. https://github.com/danbri/factoidal/issues/886
 
 - The N-Quads text functions of `@factoidal/core/rdfjs` (`nquadsToQuads`,
   `nquadsLineToQuad`, `quadsToNQuads`, `quadToNQuads`, `termToNQuads`,
@@ -75,19 +85,9 @@ These shapes could not be kept:
   suffix table from the engine and detects the syntax of a file with an
   unknown suffix from its content.
 
-## 0.10.0 (unreleased)
+## 0.10.0 — 2026-10-21
 
 ### Breaking changes
-
-- `factoidal lws-serve` and `@factoidal/core/lws` enforce storage-server
-  authorization from the LWS editor's draft (401 with
-  `WWW-Authenticate: Bearer resource_metadata`, the RFC 9728 metadata
-  document, Bearer JWT access tokens checked for signature, `iss`, `aud`,
-  `exp`, `nbf` and `iat`, then Web Access Control). `lws-serve` needs
-  `--issuer IRI`, `--auth-config FILE` or, for development only,
-  `--insecure-no-auth`; `listen()` with neither `auth` nor
-  `insecureNoAuth` serves only what the ACLs give to the public. New op
-  `lwsFetched`. https://github.com/danbri/factoidal/issues/886
 
 One wasm carries every capability (owner, 2026-10-20: "all this stuff goes
 into a single mod we call Factoidal/core and a dingle wasm"):
