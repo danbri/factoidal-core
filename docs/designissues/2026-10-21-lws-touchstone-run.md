@@ -685,6 +685,21 @@ unchanged: open 76 pass, 0 fail, 0 cantTell, 145 inapplicable; authorization
 215 pass, 0 fail, 0 cantTell, 6 inapplicable (out of 221 each), as in § Search
 results resource. Exit 0.
 
+Gates on the branch (`origin/main` had not moved from 5e17bb90): full `lake
+build` exit 0 (1796 jobs); `tools/lean-unbuilt-modules.py --gate` 829 of 829
+modules reached; `Wasm/native-smoke.sh` 375 pass, 0 fail (out of 375); `npm
+test` 536 pass, 0 fail, 2 skipped (out of 538; a first run under load average
+23 failed the timing test `dataset-iterate-speed`, which passed alone twice
+and in the full rerun); `tests/lws/server.mjs` 8 pass, 0 fail (out of 8);
+`authorization.mjs` 29 pass, 0 fail (out of 29); `binary-bodies.mjs` 20
+pass, 0 fail (out of 20); `draft-binding.mjs` 73 pass, 0 fail, 4 xfail (out
+of 77; 4 new host checks for the three options); `encryption.mjs` 28 pass, 0
+fail (out of 28); `scaling.mjs` 12 pass, 0 fail (out of 12);
+`tests/solid/server/protocol.mjs` 12 pass, 0 fail (out of 12);
+`tests/solid/server/oidc.mjs` 21 pass, 0 fail (out of 21);
+`tests/solid/client/against-own-server.mjs` 7 pass, 0 fail (out of 7);
+`tools/host-purity-lint.sh` 35 pass, 0 fail (out of 35).
+
 ### The one test that never applies: `move-keeps-identifier-content-and-links`
 
 Its precondition: "the storage's MoveResource says it preserves identifiers
