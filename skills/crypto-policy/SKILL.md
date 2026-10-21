@@ -203,6 +203,12 @@ cannot reach an extern).
 Design record for the last four:
 [`docs/designissues/2026-09-07-crypto-primitives.md`](../../docs/designissues/2026-09-07-crypto-primitives.md).
 
+Consumers of `ChaChaPoly` besides HPKE: the sealed LWS storage snapshot
+(`L4Factoidal/LWS/SnapshotSeal.lean`, encryption at rest under
+`FACTOIDAL_LWS_KEY`, https://github.com/danbri/factoidal/issues/921). It adds
+no primitive: its theorems take the AEAD as a parameter, and its run-time
+vector check is section `lws-snapshot-seal` of `l4crypto-probe`.
+
 No Lean theorem relates an extern to a pure Lean specification yet
 (https://github.com/danbri/factoidal/issues/777, expected-failure case NX-1).
 Options, sources and the recommended order:

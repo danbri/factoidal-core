@@ -619,10 +619,20 @@ def callIOUncoded (op : String) (argsJson : String) : IO String :=
   | "lwsOpen"          => withArgs (arityIO1 op Ops.lwsOpen)
   | "lwsStep"          => withArgs (arityIO2 op Ops.lwsStep)
   | "lwsClose"         => withArgs (arityIO1 op Ops.lwsClose)
-  | "lwsSnapshot"      => withArgs (arityIO1 op Ops.lwsSnapshot)
+  -- `lwsSnapshot` and `solidSnapshot` take an optional second argument,
+  -- `{"nonce":"<base64>"}`, for a storage sealed under a key (issue 921).
+  | "lwsSnapshot"      => withArgs (fun args =>
+      match args with
+      | [a] => Ops.lwsSnapshot a
+      | [a, b] => Ops.lwsSnapshot a b
+      | args => pure (errJson s!"lwsSnapshot expects 1 or 2 arguments, got {args.length}"))
   | "lwsFetched"       => withArgs (arityIO2 op Ops.lwsFetched)
   | "lwsDelivered"     => withArgs (arityIO2 op Ops.lwsDelivered)
-  | "solidSnapshot"    => withArgs (arityIO1 op Ops.solidSnapshot)
+  | "solidSnapshot"    => withArgs (fun args =>
+      match args with
+      | [a] => Ops.solidSnapshot a
+      | [a, b] => Ops.solidSnapshot a b
+      | args => pure (errJson s!"solidSnapshot expects 1 or 2 arguments, got {args.length}"))
   | "solidOpen"        => withArgs (arityIO1 op Ops.solidOpen)
   | "solidStep"        => withArgs (arityIO2 op Ops.solidStep)
   | "solidClose"       => withArgs (arityIO1 op Ops.solidClose)

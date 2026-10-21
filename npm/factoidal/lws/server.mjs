@@ -73,7 +73,7 @@
 // produced and this code keeps working unchanged.
 
 import { loadEngine } from '../bin/engine.mjs'
-import { readSnapshot, persistIfChanged } from './persist.mjs'
+import { readSnapshot, persistIfChanged, storageKeyText } from './persist.mjs'
 
 /** The ops this host needs from the engine. */
 export const LWS_OPS = ['lwsOpen', 'lwsStep', 'lwsClose', 'lwsSnapshot', 'lwsFetched', 'lwsDelivered']
@@ -207,6 +207,8 @@ function contentBytes (request) {
  * @param {string} [options.agent] the WebID of the requesting agent
  * @param {number} [options.pageSize] the container pagination threshold and page size (default 100; 0 turns pagination off)
  * @param {boolean} [options.realClock] stamp each request with this host's clock
+ * @param {string|null} [options.storageKey] the storage key text (64 hex digits or base64url);
+ *   default the environment variable FACTOIDAL_LWS_KEY; `null` reads no key
  * @param {object} [options.engine] an engine handle to reuse
  * @returns {Promise<{step: Function, close: Function, handle: string, engine: object}>}
  */
@@ -247,6 +249,11 @@ export async function openLwsStorage (options = {}) {
   if (typeof options.searchResultsTtl === 'number') config.searchResultsTtl = options.searchResultsTtl
   if (typeof options.searchResultsMax === 'number') config.searchResultsMax = options.searchResultsMax
   config.entropy = entropyBase64()
+  // Encryption at rest (issue 921): the key text from `storageKey` or the
+  // environment variable FACTOIDAL_LWS_KEY, passed unread. The engine checks
+  // it, refuses a file that does not match it, and seals every snapshot.
+  const storageKey = storageKeyText(options.storageKey)
+  if (storageKey !== undefined) config.storageKey = storageKey
   // `dir` names the storage directory. The snapshot found there, if any,
   // is the storage to continue from; the engine checks it.
   const dir = typeof options.dir === 'string' ? options.dir : null

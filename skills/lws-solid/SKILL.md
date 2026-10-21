@@ -83,6 +83,8 @@ Operating manual, scores and measurements:
 after every step whose envelope says `"changed": true` the host writes
 `lwsSnapshot`/`solidSnapshot` to `DIR/lws-state.json` (temporary file,
 fsync, rename: `npm/factoidal/lws/persist.mjs`) and reads it back at start.
+With `FACTOIDAL_LWS_KEY` set the file is sealed (section "Encryption at
+rest" below).
 `L4Factoidal/LWS/Snapshot.lean` decides the format and refuses traversal
 paths; request paths with dot segments or encoded traversal get 400
 (`validTarget`). Persisting into the Shardborough store is a later step.
@@ -399,6 +401,63 @@ it equals the `Nat` reference (`fnv1a32_eq_spec`).
 Test: `node tests/lws/binary-bodies.mjs` (both servers: a PNG-like body with
 NUL and 0xFF, every byte range of a small body, restart persistence, a
 format-1 snapshot, invalid UTF-8 as Turtle).
+
+### Encryption at rest (https://github.com/danbri/factoidal/issues/921)
+
+Owner, 2026-10-21, verbatim: "Yes env var please. Again off by default but
+good to show we can." The LWS drafts say nothing about encryption at rest.
+
+* Turn it on: set `FACTOIDAL_LWS_KEY` to a 32-byte key, as 64 hex digits or
+  43 characters of base64url (`openssl rand -hex 32`). Both `lws-serve` and
+  `solid-serve` read it (`npm/factoidal/lws/persist.mjs`,
+  `storageKeyText`); `listen({ storageKey })` takes the text directly, and
+  `storageKey: null` reads no key. With the variable unset nothing changes.
+* Format `lws-snapshot-sealed-1` (`L4Factoidal/LWS/SnapshotSeal.lean`):
+  `{"format","cipher":"chacha20-poly1305","keyId","nonce","ciphertext"}`.
+  `keyId` is the first 8 bytes of SHA-256 of the key (hex); `nonce` is 12
+  bytes from the host's random source, new for every write (the host passes
+  `{"nonce":…}` as the second argument of `lwsSnapshot`/`solidSnapshot`);
+  the plaintext is the clear-text snapshot document; the four header fields
+  are the AEAD's associated data.
+* Cipher: ChaCha20-Poly1305 (RFC 8439) from HACL* through
+  `Crypto/ChaChaPoly.lean`, in the native build and in the wasm module. It is
+  the only AEAD the tree has: `skills/crypto-policy` forbids a cipher of our
+  own, and the pinned HACL* has no portable AES-GCM (issue 677).
+* Open (`Seal.openSnapshot`, from `openConfigOfJson`): the key text is
+  checked first (other lengths refused); then a wrong key (key id differs), a
+  changed format or cipher, base64 that is not canonical, and a tag that does
+  not authenticate are each refused with their own message, and so are a
+  clear-text file with a key and a sealed file without one. The CLI prints
+  the message on one line and exits 1. A file that is not JSON (for example
+  truncated) is refused by the host.
+* Theorems (over any AEAD with RFC 8439 correctness; the HACL* binding is
+  opaque): `unsealDoc_sealDoc`, `unsealDoc_format`, `unsealDoc_cipher`,
+  `unsealDoc_keyId`, `unsealDoc_wrongKey`, `unsealDoc_authenticated`,
+  `openSnapshot_clear`, `openSnapshot_clear_with_key`,
+  `openSnapshot_sealed_without_key`, `checkingModel_correct` (the hypothesis
+  is satisfiable). That a changed nonce or ciphertext fails is the AEAD's
+  authentication property, checked at run time: `lake exe l4crypto-probe`
+  section `lws-snapshot-seal` (every one-character change and every
+  truncation of a sealed document refused) and `node tests/lws/encryption.mjs`.
+
+Threat model, in plain words. The key protects the snapshot FILE on disk:
+a copy of `DIR` (a stolen disk, a backup, another user of the machine) cannot
+be read without the key, and a changed byte stops the server from starting.
+It does not protect the storage in the memory of a running server, the key in
+the server's environment (anyone who can read the process environment or the
+shell history has it), the answers the server gives to clients, or the size
+and the write times of the file. It does not replace authorization. A lost
+key loses the storage. To encrypt an existing clear-text storage, or to
+change the key, copy its resources into a new storage started with the new
+key. With random 96-bit nonces, one key is good for about 2^32 writes.
+
+Cost, measured 2026-10-21 (wasm in Node, about 1,050 small resources): a
+PUT that writes the snapshot takes 133 to 143 ms sealed against 49 to 54 ms
+clear, the file is 1.33 times larger, a restart 378 to 437 ms against 183 to
+190 ms. `node tests/lws/scaling.mjs` with the variable set: 12 pass, 0 fail
+(out of 12); its reopen at 2,000 resources is 439 ms sealed against 241 ms
+clear, ratio 4m/m 5.56 against 4.81 (bound 6.0). Host test:
+`node tests/lws/encryption.mjs`, 27 pass, 0 fail, 0 skipped (out of 27).
 
 ### LWS authorization (https://github.com/danbri/factoidal/issues/886)
 

@@ -11,7 +11,16 @@
 //   DIR/lws-state.json      the snapshot, replaced atomically
 //
 // No request target ever becomes a file name here, so a request cannot
-// address a file outside DIR. The write is: a temporary file in DIR,
+// address a file outside DIR.
+//
+// ENCRYPTION AT REST (https://github.com/danbri/factoidal/issues/921)
+// This file also reads the environment variable FACTOIDAL_LWS_KEY and
+// draws 12 random bytes for every write. Both go to the engine unread: the
+// key text as the open configuration's `storageKey`, the bytes as the
+// `nonce` of the snapshot call. The engine decides everything else
+// (`L4Factoidal/LWS/SnapshotSeal.lean`): whether the key is valid, whether
+// the file in DIR is sealed, whether it authenticates, and the bytes of
+// the sealed document. This file never inspects the document it writes. The write is: a temporary file in DIR,
 // fsync, rename over the state file, fsync of DIR. A crash leaves the old
 // snapshot or the new one, never a torn one.
 
@@ -19,6 +28,41 @@ import { closeSync, fsyncSync, mkdirSync, openSync, readFileSync, renameSync, wr
 import { join, resolve } from 'node:path'
 
 export const STATE_FILE = 'lws-state.json'
+
+/** The environment variable that holds the storage key. */
+export const STORAGE_KEY_VARIABLE = 'FACTOIDAL_LWS_KEY'
+
+/**
+ * The text of the storage key: `explicit` when the caller gave a string,
+ * none when the caller gave `null`, and otherwise the environment variable
+ * (Node `process.env`, or `Deno.env` when only Deno's API is present). An
+ * empty value is no key. The engine checks the text.
+ */
+export function storageKeyText (explicit) {
+  if (typeof explicit === 'string') return explicit
+  if (explicit === null) return undefined
+  let value
+  try {
+    if (globalThis.process !== undefined && globalThis.process.env !== undefined) {
+      value = globalThis.process.env[STORAGE_KEY_VARIABLE]
+    } else if (globalThis.Deno !== undefined) {
+      value = globalThis.Deno.env.get(STORAGE_KEY_VARIABLE)
+    }
+  } catch (_error) {
+    value = undefined
+  }
+  return typeof value === 'string' && value !== '' ? value : undefined
+}
+
+/** 12 bytes from the platform's random source, base64: the nonce of one
+ *  snapshot write. Pure I/O. */
+function nonceBase64 () {
+  const bytes = new Uint8Array(12)
+  globalThis.crypto.getRandomValues(bytes)
+  let text = ''
+  for (const b of bytes) text += String.fromCharCode(b)
+  return btoa(text)
+}
 
 /** The absolute path of the state file of a storage directory. */
 export function stateFileOf (dir) {
@@ -37,7 +81,7 @@ export function readSnapshot (dir) {
   try {
     return JSON.parse(text)
   } catch (error) {
-    throw new Error(`${file} is not JSON: ${error.message}`)
+    throw Object.assign(new Error(`${file} is not JSON: ${error.message}`), { stateFile: true })
   }
 }
 
@@ -65,12 +109,13 @@ export function writeSnapshot (dir, snapshot) {
 
 /**
  * After one step: when the engine says the storage changed, ask it for
- * the snapshot (`snapshotOp`) and write it.
+ * the snapshot (`snapshotOp`) and write it. The call carries a fresh random
+ * nonce; the engine uses it when the storage is sealed under a key.
  */
 export function persistIfChanged (engine, snapshotOp, handle, envelope, dir) {
   if (typeof dir !== 'string' || envelope === null || typeof envelope !== 'object') return
   if (envelope.changed !== true) return
-  const answer = engine.call(snapshotOp, [handle])
+  const answer = engine.call(snapshotOp, [handle, JSON.stringify({ nonce: nonceBase64() })])
   if (answer === null || typeof answer !== 'object' || answer.snapshot === undefined) {
     throw new Error(`${snapshotOp} answered with no snapshot`)
   }

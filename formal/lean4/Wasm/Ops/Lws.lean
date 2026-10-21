@@ -39,6 +39,7 @@ import Std.Data.HashMap
 import Wasm.Ops.Support
 import L4Factoidal.LWS.Operations
 import L4Factoidal.LWS.Snapshot
+import L4Factoidal.LWS.SnapshotSeal
 import L4Factoidal.LWS.Authorization
 import L4Factoidal.LWS.Notifications
 import L4Factoidal.LWS.Search
@@ -173,6 +174,11 @@ structure OpenConfig where
   searchResultsMax : Nat := 100
   /-- The search results records of a snapshot written earlier. -/
   results : Option SearchResults.ResultsState := none
+  /-- The 32-byte storage key (configuration member `storageKey`, which the
+  host fills from the environment variable `FACTOIDAL_LWS_KEY`). With a key
+  the snapshot is sealed (`L4Factoidal.LWS.SnapshotSeal`); with none it is
+  clear text, as before https://github.com/danbri/factoidal/issues/921. -/
+  storageKey : Option ByteArray := none
 deriving Inhabited
 
 def openConfigOfJson (text : String) : Except String OpenConfig :=
@@ -193,8 +199,19 @@ def openConfigOfJson (text : String) : Except String OpenConfig :=
           | none, true => .ok { insecureNoAuth := true }
           | none, false => .ok {}
           | some aj, false => Authorization.authzConfigOfJson aj now
-        let snapshot ← match j.field? "snapshot" with
-          | none | some .null => .ok none
+        -- Encryption at rest (issue 921): the key is checked first, then
+        -- the document the host read is opened and authenticated before any
+        -- of it is used (`Seal.openSnapshot`). With no key and a clear-text
+        -- document, `snapDoc` is that document unchanged.
+        let storageKey ← match j.getString? "storageKey" with
+          | none => .ok none
+          | some t => (Seal.parseStorageKey t).map some
+        let snapDoc ← Seal.openSnapshot Seal.hacl storageKey
+          (match j.field? "snapshot" with
+           | none | some .null => none
+           | some sj => some sj)
+        let snapshot ← match snapDoc with
+          | none => .ok none
           | some sj => (memStateOfJson sj).map some
         -- Under authorization, a configured owner with no provisioned root
         -- ACL gets the owner's root ACL (`Authorization.ownerRootAcl`).
@@ -220,14 +237,14 @@ def openConfigOfJson (text : String) : Except String OpenConfig :=
           | _ => d
         let searchResultsTtl := natOr "searchResultsTtl" 600
         let searchResultsMax := natOr "searchResultsMax" 100
-        let results ← match j.field? "snapshot" with
+        let results ← match snapDoc with
           | some sj => match sj.field? "searchResults" with
             | none | some .null => .ok none
             | some rj => (SearchResults.stateOfJson rj).map some
           | none => .ok none
         -- The access requests and grants of a snapshot written earlier, read
         -- again as documents (`AccessPolicy.stateOfJson`), into the policy.
-        let access ← match j.field? "snapshot" with
+        let access ← match snapDoc with
           | some sj => match sj.field? "access" with
             | none | some .null => .ok {}
             | some aj =>
@@ -242,7 +259,7 @@ def openConfigOfJson (text : String) : Except String OpenConfig :=
             | some b => if b.size ≥ 16 then .ok (some b)
                         else .error "config: \"entropy\" holds fewer than 16 bytes"
             | none => .error "config: \"entropy\" is not base64"
-        let (notif, signingKey) ← match j.field? "snapshot" with
+        let (notif, signingKey) ← match snapDoc with
           | some sj => match sj.field? "notifications" with
             | none | some .null => .ok (none, none)
             | some nj => do
@@ -252,7 +269,7 @@ def openConfigOfJson (text : String) : Except String OpenConfig :=
           | none => .ok (none, none)
         .ok { cfg := { baseIri, owner, agent, pageSize }, now, rootAcl, snapshot, authz,
               notifications, moves, typeIndex, accessGrants, entropy, notif, signingKey,
-              searchResults, searchResultsTtl, searchResultsMax, results }
+              searchResults, searchResultsTtl, searchResultsMax, results, storageKey }
 
 /-- The JWS verifiers over the vendored HACL* primitives (P-256 ECDSA,
 RSA PKCS#1 v1.5, Ed25519): `skills/crypto-policy`. -/
@@ -274,6 +291,8 @@ structure OpenStorage where
   signingKey : Option ByteArray := none
   /-- The search results records (ANTICIPATORY AND UNSTABLE, issue 922). -/
   results : SearchResults.ResultsState := {}
+  /-- The storage key: `lwsSnapshot` seals the snapshot under it. -/
+  storageKey : Option ByteArray := none
 
 /-- The signer of a storage: Ed25519 (RFC 8032) through the vendored HACL*
 code, under the verification method its storage description publishes. -/
@@ -333,7 +352,8 @@ def lwsOpen (configJson : String) : IO String := do
           -- (`TypeIndex.rebuildEntries`), then kept by the store.
           mem := IxState.ofMem oc.cfg.baseIri
             (oc.snapshot.getD (initialStorage oc.now oc.rootAcl)),
-          authz := oc.authz, notif, signingKey, results := oc.results.getD {} })
+          authz := oc.authz, notif, signingKey, results := oc.results.getD {},
+          storageKey := oc.storageKey })
       pure (okWith [("handle", .string h), ("root", .string rootPath)])
 
 /-- A delivery request as the host receives it: POST `body` to `url` with
@@ -474,9 +494,32 @@ def lwsClose (h : String) : IO String := do
   else
     pure (unknownLwsHandle h)
 
-/-- `lwsSnapshot(handle)` -> `{"ok":true,"snapshot":{…}}`, the durable form
-of the storage (`L4Factoidal.LWS.Snapshot`). -/
-def lwsSnapshot (h : String) : IO String := do
+/-- The answer of `lwsSnapshot` and `solidSnapshot`: the snapshot document,
+sealed under the storage key when the handle has one
+(`Seal.sealSnapshot`). `optsJson` is the host's optional second argument,
+`{"nonce":"<base64>"}`: 12 bytes from the host's random source, new for
+every write. With no key the nonce is not used and the document is the
+clear-text snapshot, as before. -/
+def snapshotAnswer (key? : Option ByteArray) (optsJson : String) (doc : Json) : String :=
+  let nonce? : Except String (Option ByteArray) :=
+    if optsJson.trimAscii.toString == "" then .ok none
+    else match parseJson optsJson with
+      | .error e => .error s!"snapshot options: {toString e}"
+      | .ok oj => match oj.getString? "nonce" with
+        | none => .ok none
+        | some t => match Base64.decode? t with
+          | some b => .ok (some b)
+          | none => .error "snapshot options: \"nonce\" is not base64"
+  match nonce? with
+  | .error e => errJson e
+  | .ok n => match Seal.sealSnapshot Seal.hacl key? n doc with
+    | .ok d => okWith [("snapshot", d)]
+    | .error e => errJson e
+
+/-- `lwsSnapshot(handle[, optionsJson])` -> `{"ok":true,"snapshot":{…}}`, the
+durable form of the storage (`L4Factoidal.LWS.Snapshot`), sealed when the
+handle has a storage key (`snapshotAnswer`). -/
+def lwsSnapshot (h : String) (optsJson : String := "") : IO String := do
   match (← lwsTable.get)[h]? with
   | none => pure (unknownLwsHandle h)
   | some open_ =>
@@ -494,7 +537,7 @@ def lwsSnapshot (h : String) : IO String := do
         | .object fs => Json.object (fs ++ [("notifications", notif),
             ("access", AccessPolicy.stateJson open_.cfg.baseIri open_.authz.access)] ++ results)
         | other => other
-      pure (okWith [("snapshot", snap)])
+      pure (snapshotAnswer open_.storageKey optsJson snap)
 
 /-- The op names this module serves. -/
 def lwsOpNames : List String :=

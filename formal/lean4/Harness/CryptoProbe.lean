@@ -54,6 +54,18 @@ Sections, each one score line:
 
   7. `aes-gcm` — NOT RUN, and reported as such. See below.
 
+  8. `lws-snapshot-seal` — the sealed LWS snapshot of
+     `L4Factoidal/LWS/SnapshotSeal.lean`
+     (https://github.com/danbri/factoidal/issues/921) with the real
+     ChaCha20-Poly1305, under the RFC 8439 §2.8.2 key and nonce: the round
+     trip; a wrong key; every one-character change of the sealed document's
+     JSON text and every truncation of it must fail to open (a change that
+     breaks the JSON counts as refused, because the host refuses a file that
+     is not JSON); a clear-text document with a key and a sealed one without
+     must both be refused. This is the run-time half of the property
+     "any change to the header or ciphertext makes open fail", which is the
+     AEAD's authentication property and so is not a Lean theorem.
+
 ## Section 7: the AES-GCM gap
 
 OMEMO 0.8 uses AES-128-GCM, so AES-GCM was in scope for this work and is
@@ -83,6 +95,7 @@ import L4Factoidal.Crypto.Hkdf
 import L4Factoidal.Crypto.X25519
 import L4Factoidal.Crypto.Hpke
 import L4Factoidal.JSON.Parser
+import L4Factoidal.LWS.SnapshotSeal
 
 namespace CryptoProbe
 
@@ -630,6 +643,82 @@ def runHpke : IO Tally := do
 
 /-! ## Section 7: the AES-GCM gap -/
 
+/-! ## Section 8: the sealed LWS snapshot (issue 921) -/
+
+/-- A clear-text snapshot document of format 2, as `snapshotJson` writes. -/
+def lwsClearDoc : Json :=
+  .object [ ("format", .string "lws-snapshot-2"), ("clock", .number "3")
+          , ("entries", .array [.object [ ("path", .string "/"), ("kind", .string "storageRoot")
+                                        , ("contentType", .string "text/turtle")
+                                        , ("bodyBase64", .string "PHM+IDxwPiA8bz4gLgo=")
+                                        , ("mtime", .number "1") ]]) ]
+
+/-- Open the text of a stored file as the host and the engine do: the host
+refuses text that is not JSON; the engine opens the document. -/
+def lwsOpenText (key? : Option ByteArray) (text : String) : Except String (Option Json) :=
+  match parseJson text with
+  | .error e => .error s!"not JSON: {toString e}"
+  | .ok j => L4Factoidal.LWS.Seal.openSnapshot L4Factoidal.LWS.Seal.hacl key? (some j)
+
+def refused (e : Except String (Option Json)) : Bool := match e with
+  | .error _ => true
+  | .ok _ => false
+
+/-- One-character change at `i`: the low bit of an ASCII character flipped
+(the sealed document is ASCII). -/
+def lwsChangeAt (t : String) (i : Nat) : String :=
+  String.ofList (t.toList.mapIdx (fun j c =>
+    if j == i then Char.ofNat (c.toNat ^^^ 1) else c))
+
+def runLwsSeal : IO Tally := do
+  let t ← IO.mkRef ({} : Tally)
+  IO.println "-- lws-snapshot-seal"
+  let key := rfc8439Key
+  match L4Factoidal.LWS.Seal.sealSnapshot L4Factoidal.LWS.Seal.hacl (some key)
+      (some rfc8439Nonce) lwsClearDoc with
+  | .error e => check t "seal the snapshot" false e
+  | .ok d =>
+      let text := Json.toString d
+      check t "sealed document is ASCII" (text.toList.all (fun c => c.toNat < 128))
+      check t "sealed document names format, cipher and key id"
+        (d.getString? "format" == some "lws-snapshot-sealed-1" &&
+         d.getString? "cipher" == some "chacha20-poly1305" &&
+         d.getString? "keyId" == some "82d86408530b765e")
+      check t "plaintext is not in the sealed document"
+        ((text.splitOn "storageRoot").length == 1 && (text.splitOn "PHM+").length == 1)
+      check t "round trip: open (seal doc) = doc"
+        (match lwsOpenText (some key) text with
+         | .ok (some inner) => Json.toString inner == Json.toString lwsClearDoc
+         | _ => false)
+      check t "a wrong key is refused" (refused (lwsOpenText (some (flipBit key 0)) text))
+      check t "a sealed file without a key is refused" (refused (lwsOpenText none text))
+      check t "a clear-text file with a key is refused"
+        (refused (lwsOpenText (some key) (Json.toString lwsClearDoc)))
+      check t "a clear-text file without a key opens unchanged"
+        (match lwsOpenText none (Json.toString lwsClearDoc) with
+         | .ok (some j) => Json.toString j == Json.toString lwsClearDoc
+         | _ => false)
+      let n := text.length
+      let changed := (List.range n).filter (fun i => refused (lwsOpenText (some key) (lwsChangeAt text i)))
+      check t s!"every one-character change of the sealed document is refused ({changed.length} of {n})"
+        (changed.length == n)
+      let cuts := (List.range n).filter (fun k =>
+        refused (lwsOpenText (some key) (String.ofList (text.toList.take k))))
+      check t s!"every truncation of the sealed document is refused ({cuts.length} of {n})"
+        (cuts.length == n)
+      -- A nonce change that stays canonical base64 of 12 bytes reaches the
+      -- AEAD, which must refuse it.
+      let d2 := match d with
+        | .object fs => Json.object (fs.map (fun (k, v) =>
+            if k == "nonce" then (k, .string (L4Factoidal.LWS.Base64.encode (flipBit rfc8439Nonce 0)))
+            else (k, v)))
+        | other => other
+      check t "a changed nonce is refused by the AEAD"
+        (match lwsOpenText (some key) (Json.toString d2) with
+         | .error e => (e.splitOn "authentication failed").length > 1
+         | .ok _ => false)
+  t.get
+
 def runAesGcm (path : System.FilePath) : IO Tally := do
   let t ← IO.mkRef ({} : Tally)
   IO.println "-- aes-gcm"
@@ -676,6 +765,7 @@ def main (_args : List String) : IO UInt32 := do
   let t5 ← runX25519File (wp / "x25519_test.json") "wycheproof-x25519"
   let t6 ← runHpke
   let t7 ← runAesGcm (wp / "aes_gcm_test.json")
+  let t8 ← runLwsSeal
   IO.println "\n========================================"
   IO.println (scoreLine "rfc8439" t1)
   IO.println (scoreLine "wycheproof-chacha20-poly1305" t2)
@@ -684,7 +774,8 @@ def main (_args : List String) : IO UInt32 := do
   IO.println (scoreLine "wycheproof-x25519" t5)
   IO.println (scoreLine "rfc9180-a2" t6)
   IO.println (scoreLine "aes-gcm" t7)
-  let ts := [t1, t2, t3, t4, t5, t6, t7]
+  IO.println (scoreLine "lws-snapshot-seal" t8)
+  let ts := [t1, t2, t3, t4, t5, t6, t7, t8]
   let total : Tally :=
     { pass := (ts.map Tally.pass).foldl (· + ·) 0,
       fail := (ts.map Tally.fail).foldl (· + ·) 0,

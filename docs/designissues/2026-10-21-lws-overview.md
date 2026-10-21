@@ -41,7 +41,14 @@ the permission of the owner. The drafts define:
   `Link rel="type"`, the native class and Turtle content, a QUERY filter in
   conjunctive normal form over types and indexed relations, answers filtered
   by the requester's read access (https://github.com/danbri/factoidal/issues/912);
-- persistence in `DIR/lws-state.json`.
+- persistence in `DIR/lws-state.json`;
+- encryption at rest of that file, off by default: with `FACTOIDAL_LWS_KEY`
+  set to a 32-byte key, the file is sealed with ChaCha20-Poly1305 (HACL*)
+  under a new random nonce for every write and authenticated at start; a
+  wrong key or a changed file stops the start
+  (https://github.com/danbri/factoidal/issues/921). It protects the file on
+  disk only: not the memory of a running server, not the key in its
+  environment, not what the server answers to clients.
 
 The same engine serves the Solid Protocol (`solid-serve`) and has a Solid
 client. The same package also parses, queries (SPARQL), validates (SHACL,
@@ -63,6 +70,18 @@ ShEx) and reasons over RDF.
   progress.
 - Cost is linear in body size: a PUT of 100,000 triples takes 85 ms, a GET
   40 ms (https://github.com/danbri/factoidal/issues/903).
+- The sealed snapshot has theorems over any AEAD with RFC 8439 correctness
+  (open inverts seal; a changed format, cipher or key id, or a wrong key, is
+  refused; a plaintext comes back only through the AEAD's authentication);
+  every one-character change of a sealed file is refused at run time with the
+  real cipher (`L4Factoidal/LWS/SnapshotSeal.lean`, `l4crypto-probe`,
+  `tests/lws/encryption.mjs`). Cost, measured 2026-10-21 (wasm in Node, a storage of about 1,050 small
+  resources, 100 PUTs, two runs): a PUT that writes the snapshot takes 133 to
+  143 ms sealed against 49 to 54 ms clear; the file is 1.33 times larger
+  (658,069 against 493,434 bytes); a restart takes 378 to 437 ms against 183
+  to 190 ms. `node tests/lws/scaling.mjs` with the variable set: 12 pass, 0
+  fail (out of 12); reopen at 2,000 resources 439 ms sealed against 241 ms
+  clear, ratio 4m/m 5.56 against 4.81 (bound 6.0).
 - One WebAssembly module in Node; the same package for every function.
 
 ## What is missing
