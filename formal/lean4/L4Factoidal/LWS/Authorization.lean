@@ -339,6 +339,17 @@ def decide (V : Verifiers) (S : Store σ) (cfg : Config) (a : AuthzConfig) (now 
   -- discovered values before it has a token ("Discovery Validation by a
   -- Client"), so it is public.
   else if path == storagePath then .proceed none
+  -- The subscription endpoint (LWS §Subscriptions: "a subscriber creates a
+  -- subscription by sending an authenticated POST request to the
+  -- serviceEndpoint"). It needs an authenticated agent; which topics that
+  -- agent may subscribe to, and which subscriptions it may see, are
+  -- decided by `L4Factoidal.LWS.Notifications` against the access policy.
+  else if cfg.notifications && isSubscriptionPath path then
+    match authenticate V cfg a now r with
+    | .needKeys i => .fetch i (issuerMetadataUrl i)
+    | .refused rf => .respond (challenge cfg path (some rf.errorCode))
+    | .anonymous => .respond (challenge cfg path none)
+    | .authenticated s => .proceed (some s)
   else
     let gate (who : Option String) : Decision :=
       let subject := authorizationSubject path

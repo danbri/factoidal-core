@@ -89,7 +89,63 @@ requests, ranges, `application/lws+json` listings, linksets, the
 JSON Patch, RFC 9457 errors) is `L4Factoidal/LWS/Binding.lean`; the audit
 table is in the ledger, section "LWS editor's draft 2026-10-19 audit", and
 `node tests/lws/draft-binding.mjs` is its host suite (with an xfail for
-https://github.com/danbri/factoidal/issues/890, notifications).
+https://github.com/danbri/factoidal/issues/913, Access Requests and Grants).
+
+### Notifications (https://github.com/danbri/factoidal/issues/890)
+
+`L4Factoidal/LWS/Notifications.lean` implements the core draft's
+"Notifications" section and the webhook notification suite
+(`lws10-notifications-webhook`, both at w3c/lws-protocol 9a08ff65). The module
+header quotes each section it decides.
+
+* Discovery: the storage description's `service` array holds a
+  `NotificationService` with `serviceEndpoint`
+  `<base>/.well-known/lws-subscriptions/` and `subscriptionType`
+  `["WebhookSubscription"]` (`Config.notifications`; the wasm handle turns it
+  on, config `notifications: false` turns it off). With a signing key the
+  description also has a `JsonWebKey` (Ed25519) `verificationMethod`
+  referenced from `authentication`; the key id is
+  `<base>/.well-known/lws-storage#notification-key-<digest>`.
+* Subscribe: an authenticated POST (`application/lws+json`) with `type`
+  `WebhookSubscription`, `topic` (IRIs in this storage), `inbox` (`http` or
+  `https`) and optional `expires` (RFC 3339, in the future). 201 with
+  `Location`, `type`, `subscription`. 400 for a missing or unadvertised
+  `type`, a missing `topic` or `inbox`, a bad `expires`; 415 for another
+  media type; 401 with no token (`Authorization.decide`); 403 when the agent
+  cannot read EVERY topic (Web Access Control, `wacCanRead`).
+* Manage: GET on the endpoint lists the agent's own subscriptions as an LWS
+  container (paged at `pageSize`); GET on a subscription gives its state
+  (`active` false when expired or deactivated); DELETE cancels it. Another
+  agent's subscription answers 404.
+* Changes: `serverStep` runs `step`, then `changesOf` names the paths the
+  request may have changed and `classify` decides Create, Update or Delete
+  from the store before and after (theorem `classify_sound`). Auxiliary
+  resources give no activity; a linkset change is an Update. With no
+  subscription nothing is computed.
+* Routing: a subscription hears of a change in its scope (a container topic
+  is recursive) when it is live and its agent may read the resource after
+  the step (Create, Update) or before it (Delete) (`eligible`, theorem
+  `routed_authorized`). One envelope per subscription per request; an
+  `activity` array when there is more than one. No `actor`.
+* Delivery: `lwsStep` answers `deliveries: [{id, url, headers, body}]`; the
+  host POSTs each one exactly as given and reports the status (0 for no
+  answer) to `lwsDelivered`, which answers `retry: {delivery, after}` (seconds)
+  or nothing. Retry for 0, 408, 425, 429, 5xx, at most 3 attempts (waits 1 s,
+  2 s); 410 deactivates at once; 3 failed deliveries in a row deactivate.
+* Signing: RFC 9421 over `@method`, `@scheme`, `@authority`, `@path`,
+  `content-type`, `content-digest` (RFC 9530 `sha-256`), `created`, `keyid`,
+  `alg="ed25519"`, with the vendored HACL* Ed25519. The key is derived from
+  `entropy` that the host passes to `lwsOpen` (32 random bytes) and kept in
+  the snapshot with the subscriptions (member `notifications`).
+
+Tests: `L4Factoidal/LWS/NotificationsTests.lean` (`#guard`s through
+`serverStep`, positive and negative); `tests/lws/draft-binding.mjs` rows
+"Notifications" (a local receiver; signatures verified with `node:crypto`
+against the published key); `tests/lws/authorization.mjs` rows
+"Notifications" (401, 403, delivery-time filtering with real tokens and
+ACLs). Not done: rate limiting and inbox verification (the drafts only
+suggest them), Move (this server does not move resources), and the Solid
+server's channels (https://github.com/danbri/factoidal/issues/898).
 
 ### Pagination and client links (https://github.com/danbri/factoidal/issues/887, 888)
 
@@ -298,7 +354,8 @@ specification passes it. That is what
 ## What is stubbed, and what is a stated boundary
 
 Not in the first slice, recorded so nobody assumes it: Solid-OIDC token
-issuance, Access Control Policy, Solid Notifications channels,
+issuance, Access Control Policy, Solid Notifications channels on the Solid
+server (the LWS server has the webhook suite, above),
 persistence into Shardborough, and the LWS `authn-openid`, `authn-saml`,
 `authn-ssi` and `searchindex` drafts.
 

@@ -80,10 +80,11 @@ A response is a JSON object with the same shape minus the method:
 | op | arguments | answer |
 |---|---|---|
 | `lwsOpen` | `[configJson]` | `{"ok":true,"handle":"lws1","root":"/"}` |
-| `lwsStep` | `[handle, requestJson]` | `{"ok":true,"response":{…}}` |
+| `lwsStep` | `[handle, requestJson]` | `{"ok":true,"response":{…},"changed":B}`, with `"deliveries":[{"id","url","headers":[[n,v],…],"body"},…]` when the step causes notifications |
 | `lwsClose` | `[handle]` | `{"ok":true}` |
 | `lwsSnapshot` | `[handle]` | `{"ok":true,"snapshot":{"format":"lws-snapshot-2","clock":N,"entries":[…]}}`; each entry's body is `bodyBase64`. A `lws-snapshot-1` document (body as the string `body`) is still read. |
 | `lwsFetched` | `[handle, documentJson]` | `{"ok":true,"fetch":{"issuer":…,"url":…}}`, `{"ok":true,"installed":N}` or `{"ok":true,"refused":"…"}` |
+| `lwsDelivered` | `[handle, {"id","status","now"?}]` | `{"ok":true,"changed":B}`, with `"retry":{"delivery":{…},"after":SECONDS}` when the engine wants the delivery made again |
 | `solidOpen` | `[configJson]` | `{"ok":true,"handle":"solid1","root":"/","storage":"…"}` |
 | `solidStep` | `[handle, requestJson]` | `{"ok":true,"response":{…}}` |
 | `solidClose` | `[handle]` | `{"ok":true}` |
@@ -105,13 +106,28 @@ A response is a JSON object with the same shape minus the method:
 | `auth` (`solidOpen`) | absent | Solid-OIDC with DPoP (`L4Factoidal/Solid/Server/Oidc.lean`, https://github.com/danbri/factoidal/issues/899): `{"issuers":[{"issuer":IRI,"jwks":{…}?}],"leeway":S?,"iatWindow":S?,"refreshInterval":S?,"checkProfileIssuer":B?}`. Turns `enforceWac` on unless the configuration sets it. `solidStep` may then answer `{"fetch":{"kind":"issuer"\|"profile","key":…,"url":…}}`: the host fetches that URL, passes `{kind,key,url,status,body,now?}` to `solidFetched`, follows any `fetch` in the answer, and steps the request again. With neither `auth` nor `insecureNoAuth` authentication is off; `factoidal solid-serve` refuses to start in that state. |
 | `auth` (`lwsOpen`) | absent | `lwsOpen` only. The authorization configuration of `L4Factoidal/LWS/Authorization.lean`: `{"issuers":[{"issuer":IRI,"jwks":{"keys":[…]}?}],"audience":IRI?,"leeway":S?,"refreshInterval":S?}`. With neither `auth` nor `insecureNoAuth`, authorization is ENFORCED with no trusted issuer: only what the ACLs give to the public is served. |
 | `insecureNoAuth` | `false` | `lwsOpen` and `solidOpen`. `true` is the development mode with no authorization (`factoidal lws-serve --insecure-no-auth`); then `agent` stands as before. `auth` and `insecureNoAuth` together are refused. |
+| `notifications` | `true` | `lwsOpen` only. `false` turns LWS notifications off: no `NotificationService` in the storage description and no subscription endpoint (`L4Factoidal/LWS/Notifications.lean`). |
+| `entropy` | absent | `lwsOpen` only. At least 16 random bytes, base64, from the host. The seed of the notification signing key (Ed25519) when the snapshot holds none, and of the run tag in activity identifiers. Without it deliveries are not signed. `npm/factoidal/lws/server.mjs` passes 32 bytes from `crypto.getRandomValues`. |
 | `rootAcl` | absent | the ACL document (Turtle) of the storage root, written when the storage is created. Web Access Control §3.2 requires the root container's ACL resource to have a representation, and under enforcement a storage cannot write its own: the request that would write it is the first request it would authorize. It is therefore a host provisioning input. |
 
 `lwsStep` and `solidStep` answer `"changed": true` when the step changed the
 storage (every mutation advances the clock). `factoidal lws-serve DIR` and
 `solid-serve DIR` then write the snapshot to `DIR/lws-state.json`
 (temporary file, fsync, rename; `npm/factoidal/lws/persist.mjs`) and read it
-back at start. No request target becomes a file name.
+back at start. No request target becomes a file name. The LWS snapshot also
+carries a member `notifications` (the subscriptions, the counter and the
+signing key), which `lwsOpen` reads back; a subscription change answers
+`"changed": true` as well.
+
+When an LWS step causes notifications (https://github.com/danbri/factoidal/issues/890),
+`lwsStep` answers `deliveries`: each one is an HTTP request the engine
+decided to make. The host POSTs `body` to `url` with exactly the header
+pairs given, and reports the answer's status (0 when none came) with
+`lwsDelivered(handle, {"id","status","now"?})`. When that answers `retry`,
+the host waits `after` seconds and makes the request in `delivery`, which
+carries a new signature. The engine decides which changes are announced,
+to whom, the body, the signature, whether to retry and when a subscription
+is deactivated.
 
 A request document may override the clock and the agent for one step with the
 members `now` and `agent` beside `method`. On an LWS handle the `agent`
@@ -262,19 +278,41 @@ server does not advertise.
 | Token Validation: policy | a valid token whose agent the policy does not allow is rejected | tested (403, `error="insufficient_scope"`, Web Access Control over the storage's ACL resources) | `AuthorizationTests` "Another agent"; authorization.mjs "Policy" |
 | (server choice) | authorization is on unless the deployment opts out (`--insecure-no-auth`) | tested | `decide_insecure`, `default_not_insecure`; authorization.mjs "Default", "Development mode", "CLI" |
 | Authentication | credential suites (authorization server side: token exchange, subject tokens) | n/a (storage server only; the authorization server is out of scope of a storage server) | none |
-| Notifications | NotificationService, envelopes, subscriptions | n/a, not implemented | https://github.com/danbri/factoidal/issues/890; draft-binding xfail |
-| Access Requests | AccessRequestService, AccessGrantService | n/a, not implemented | https://github.com/danbri/factoidal/issues/890 |
+| Notification Discovery | MUST advertise a `NotificationService` with `serviceEndpoint` and a `subscriptionType` array | tested | `NotificationsTests` "Discovery"; draft-binding "Notifications: the storage description" |
+| Envelope Properties | `type` Notification, `storage`, `activity` (object or array) | tested | `NotificationsTests` "Deliveries"; draft-binding "Create, Update and Delete" |
+| Activity Properties | `id`, `type` array, `object` with `id` and `type` array (`Container`, `DataResource`), `published` RFC 3339; `target` on Create, `origin` on Delete | tested (`id` a `urn:uuid`) | `NotificationsTests`; draft-binding |
+| Activity Types | MUST support Create, Update, Delete | tested (type decided from the store before and after the step, theorem `classify_sound`) | `NotificationsTests`; draft-binding |
+| Activity Types | Move, for a server that moves resources between containers | n/a (`up` is not modifiable; moving resources is https://github.com/danbri/factoidal/issues/914) | none |
+| Batching | MAY combine activities in one envelope | tested (one envelope per subscription per request) | `NotificationsTests` "Recursive scope and batching" |
+| Subscriptions | authenticated POST, body `application/lws+json`; `type` one of the advertised types; `topic` an array of URIs | tested (401 with no token, 415 for another media type, 400 for a missing or unadvertised `type` or a missing `topic`) | `NotificationsTests` "Negative requests"; draft-binding; authorization.mjs "anonymous" |
+| Subscription Scope | a container subscription is recursive; a data resource subscription covers only itself | tested | `NotificationsTests`; draft-binding "a change outside the topic" |
+| Subscription Authorization | MUST reject a subscription when the agent cannot read every topic | tested (403, Web Access Control) | `NotificationsTests` "Subscribe-time authorization"; authorization.mjs |
+| Subscription Authorization | MUST NOT deliver about a resource the subscriber cannot read at the time of the event; stop for revoked access; SHOULD NOT end the whole subscription | tested (store after the step for Create and Update, before it for Delete; theorem `routed_authorized`) | `NotificationsTests` "Delivery-time authorization"; authorization.mjs "never of a member it may not read" |
+| Subscription Response | `application/lws+json` with `type` and `subscription` | tested (201 with `Location`) | `NotificationsTests`; draft-binding |
+| Privacy | `actor` SHOULD be omitted by default | tested (always omitted) | `NotificationsTests`; draft-binding |
+| Webhook: Creating a Subscription | `type` WebhookSubscription; `inbox` REQUIRED; `expires` OPTIONAL; response `type`, `subscription`, `expires` | tested (`expires` must be a future RFC 3339 date-time, echoed) | `NotificationsTests` |
+| Webhook: Authentication | SHOULD sign with RFC 9421; the key in the storage description as a `verificationMethod` referenced from `authentication` | tested (Ed25519, HACL*) | draft-binding "HTTP Message Signature verifies under the published key" |
+| Webhook: Signature Requirements | covers `@method`, `@scheme`, `@authority`, `@path`, `content-type`, `content-digest` (RFC 9530); `created` and `keyid` | tested | `NotificationsTests` "Signatures"; draft-binding |
+| Webhook: Subscription Management | the endpoint lists the subscriber's subscriptions as an LWS container (SHOULD page); GET and DELETE on each | tested (paged at `pageSize`; another agent's subscription is 404) | `NotificationsTests` "Subscription management"; draft-binding; authorization.mjs |
+| Webhook: Notification Delivery | POST to the inbox, body `application/lws+json`; MAY retry; MAY deactivate after repeated failures | tested (3 attempts for no answer, 408, 425, 429, 5xx; 410 or 3 failed deliveries deactivate) | `NotificationsTests` "Delivery outcomes"; draft-binding "503 is tried again" |
+| Access Requests | AccessRequestService, AccessGrantService | missing | https://github.com/danbri/factoidal/issues/913; draft-binding xfail |
 | Data resource | any bytes (images, documents) | tested: stored and returned byte for byte; RDF media types are read as UTF-8 and content that is not UTF-8 gets 400 | `lwsGuardBinaryRoundTrip`, `lwsGuardInvalidUtf8Turtle`; draft-binding "Data resources: a non-UTF-8 body round-trips byte for byte"; `tests/lws/binary-bodies.mjs` (https://github.com/danbri/factoidal/issues/889) |
 | (server choice) | request paths with dot segments or encoded traversal are refused | tested | `lwsGuardTraversalRefused`; draft-binding "Paths" |
 | (server choice) | storage persists under `DIR` | tested | `lwsGuardSnapshotRoundTrip`, `lwsGuardSnapshotRefusesTraversal`; draft-binding "Persistence" |
 
-Counts: 44 tested, 0 missing, 4 not applicable (out of 48 rows). Updated
+Counts: 60 tested, 1 missing, 3 not applicable (out of 64 rows). Updated
+2026-10-21 for https://github.com/danbri/factoidal/issues/890: the
+Notifications row became 17 rows of the core "Notifications" section and the
+webhook notification suite (`lws10-notifications-webhook`), 16 tested and 1
+not applicable (Move); the Access Requests row is now counted as missing,
+with an xfail, because it is a feature this server does not have, not a
+conditional rule. The count line before this update said 44 tested, 0
+missing, 4 not applicable (out of 48 rows). Updated earlier on
 2026-10-21 for https://github.com/danbri/factoidal/issues/887 and
 https://github.com/danbri/factoidal/issues/888: the Pagination, Create
 `Link` and `Prefer: set-linkset` rows became tested, and the linkset PUT row
 now states the draft's condition ("If advertised in the Allow header").
-Notifications stays not applicable, with
-https://github.com/danbri/factoidal/issues/890 and its xfail. Counted with
+Counted with
 `awk '/^## LWS editor.s draft 2026-10-19 audit/{f=1} /^Counts:/{f=0} f' docs/lws-solid-conformance.md | grep '^| ' | tail -n +3 | awk -F'|' '{print $4}' | awk '{print $1}' | sort | uniq -c`
 ("tested" and "tested:" are both tested; "n/a" and "n/a," are both not
 applicable). The command given here before (`sed -n '/2026-10-19 audit/,/^Counts/p'`)
@@ -296,8 +334,8 @@ Solid Protocol's binding is used and the row says so.
 Score, from `lake exe l4lws-probe`:
 
 ```
-guarded checks: 9 pass, 0 fail (out of 9)
-registry: 2 proved, 9 guarded, 0 host-verified, 7 open (out of 18)
+guarded checks: 10 pass, 0 fail (out of 10)
+registry: 2 proved, 10 guarded, 0 host-verified, 6 open (out of 18)
 ```
 
 Table generated by `lake exe l4lws-probe -- --markdown`.
@@ -319,7 +357,7 @@ Table generated by `lake exe l4lws-probe -- --markdown`.
 | `lws-core-13` | Resource Access | not permitted | `L4Factoidal.Solid.Server.WAC` | guarded | solidGuardWacDenies |
 | `lws-core-14` | Resource Access | unknown requester | `L4Factoidal.Solid.Server.Auth` | guarded | solidGuardSolidOidcDpop |
 | `lws-core-15` | Authentication | LWS makes use of user authentication as defined in specifications for OpenID Connect, SAML 2.0, and self-signed controlled identifiers (CIDs), for example. | `L4Factoidal.Solid.Server.Auth` | guarded | solidGuardSolidOidcDpop |
-| `lws-core-16` | Notifications | notification — a message describing an event that has occurred on a resource. | `(none)` | open | not in the first slice |
+| `lws-core-16` | Notifications | notification — a message describing an event that has occurred on a resource. | `L4Factoidal.LWS.Notifications` | guarded | lwsGuardNotificationsDelivered |
 | `lws-core-17` | Access Requests and Grants | access grant — a data object created by a storage controller, expressing an ability for an agent to perform specific actions on storage resources within certain defined constraints. | `(none)` | open | not in the first slice |
 | `lws-core-18` | Terminology | storage description — an LWS resource, conforming to the requirements of a W3C Controlled Identifier document [CID-1.0], that describes a storage along with its services and capabilities. | `L4Factoidal.LWS.Discovery.storageDescriptionPath` | open | the link is advertised; the description document does not yet conform to CID 1.0 |
 

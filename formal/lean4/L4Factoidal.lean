@@ -745,6 +745,8 @@ import L4Factoidal.LWS.Tests
 import L4Factoidal.LWS.PaginationLinksTests
 import L4Factoidal.LWS.Authorization
 import L4Factoidal.LWS.AuthorizationTests
+import L4Factoidal.LWS.Notifications
+import L4Factoidal.LWS.NotificationsTests
 import L4Factoidal.Solid.Tests
 
 -- XMPP / GC3 (https://github.com/danbri/factoidal/ ... xmpp/DESIGN.md

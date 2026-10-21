@@ -109,6 +109,13 @@ structure Config where
   container with more members than this is listed in pages of this many
   members; 0 turns pagination off. -/
   pageSize : Nat := 100
+  /-- Does the storage offer notifications (LWS §Notifications,
+  `L4Factoidal.LWS.Notifications`)? The draft: "A storage MAY support
+  notifications." Off by default; the wasm handle turns it on. -/
+  notifications : Bool := false
+  /-- The base64url Ed25519 public key that signs webhook deliveries, when
+  the storage signs them (`storageDescription`). -/
+  notificationKeyX : Option String := none
 deriving Repr, Inhabited
 
 /-! ## Helpers over the store -/
@@ -353,13 +360,16 @@ def linksetStep (S : Store σ) (cfg : Config) (r : Request) (st : σ)
 /-- The storage description resource (LWS §Discovery). -/
 def storageStep (cfg : Config) (r : Request) : Response :=
   let allow := "GET, HEAD, OPTIONS"
+  let doc := storageDescription cfg.baseIri cfg.notifications cfg.notificationKeyX
   match r.method with
   | "GET" | "HEAD" =>
+      -- The tag is a digest of the document, so a new signing key or a
+      -- change of advertised services gives a new tag.
       ⟨200, [ ("content-type", mediaLwsCid), ("allow", allow)
-            , ("etag", "\"storage\"")
+            , ("etag", "\"storage-" ++ hex8 (fnv1a32 doc.toUTF8) ++ "\"")
             , ("link", renderLinks [{ target := iriOfPath cfg.baseIri storagePath,
                                       rel := lwsStorageRel }]) ],
-       if r.method == "HEAD" then "" else storageDescription cfg.baseIri, none⟩
+       if r.method == "HEAD" then "" else doc, none⟩
   | "OPTIONS" => ⟨204, [("allow", allow)], "", none⟩
   | _ => problem 405 "the storage description is server-managed" storagePath [("allow", allow)]
 
