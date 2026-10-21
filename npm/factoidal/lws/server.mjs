@@ -48,9 +48,10 @@
 // produced and this code keeps working unchanged.
 
 import { loadEngine } from '../bin/engine.mjs'
+import { readSnapshot, persistIfChanged } from './persist.mjs'
 
 /** The ops this host needs from the engine. */
-export const LWS_OPS = ['lwsOpen', 'lwsStep', 'lwsClose']
+export const LWS_OPS = ['lwsOpen', 'lwsStep', 'lwsClose', 'lwsSnapshot']
 
 /** An error raised by the LWS host, as opposed to one the engine
  *  reported. `unknownOp` is set when the loaded WebAssembly module does
@@ -146,6 +147,13 @@ export async function openLwsStorage (options = {}) {
   if (typeof options.now === 'number') config.now = options.now
   if (typeof options.owner === 'string') config.owner = options.owner
   if (typeof options.agent === 'string') config.agent = options.agent
+  // `dir` names the storage directory. The snapshot found there, if any,
+  // is the storage to continue from; the engine checks it.
+  const dir = typeof options.dir === 'string' ? options.dir : null
+  if (dir !== null) {
+    const snapshot = readSnapshot(dir)
+    if (snapshot !== null) config.snapshot = snapshot
+  }
   let opened
   try {
     opened = engine.call('lwsOpen', [JSON.stringify(config)])
@@ -174,7 +182,10 @@ export async function openLwsStorage (options = {}) {
       const record = options.realClock === true
         ? { ...request, now: Math.floor(Date.now() / 1000) }
         : request
-      return responseOf(engine.call('lwsStep', [handle, JSON.stringify(record)]))
+      const envelope = engine.call('lwsStep', [handle, JSON.stringify(record)])
+      const answer = responseOf(envelope)
+      if (dir !== null) persistIfChanged(engine, 'lwsSnapshot', handle, envelope, dir)
+      return answer
     },
     close () {
       try { engine.call('lwsClose', [handle]) } catch (_error) { /* already gone */ }

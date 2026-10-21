@@ -27,6 +27,7 @@ what a host with a real clock does.
 import Std.Data.HashMap
 import Wasm.Ops.Support
 import L4Factoidal.LWS.Operations
+import L4Factoidal.LWS.Snapshot
 
 namespace L4Wasm.Ops
 
@@ -81,6 +82,9 @@ structure OpenConfig where
   root ACL is the first request the root ACL would authorize — so it is a
   PROVISIONING input, given by the host when the storage is created. -/
   rootAcl : Option String := none
+  /-- A storage written by `lwsSnapshot` earlier, to continue from. Its
+  paths are checked by `L4Factoidal.LWS.memStateOfJson`. -/
+  snapshot : Option MemState := none
 deriving Inhabited
 
 def openConfigOfJson (text : String) : Except String OpenConfig :=
@@ -94,8 +98,16 @@ def openConfigOfJson (text : String) : Except String OpenConfig :=
         let now := match j.field? "now" with
           | some (.number s) => (s.toNat?).getD 0
           | _ => 0
-        .ok { cfg := { baseIri, owner, agent }, now,
-              rootAcl := j.getString? "rootAcl" }
+        match j.field? "snapshot" with
+        | none | some .null =>
+            .ok { cfg := { baseIri, owner, agent }, now,
+                  rootAcl := j.getString? "rootAcl" }
+        | some sj =>
+            match memStateOfJson sj with
+            | .error e => .error e
+            | .ok m =>
+                .ok { cfg := { baseIri, owner, agent }, now,
+                      rootAcl := j.getString? "rootAcl", snapshot := some m }
 
 /-! ## The handle table -/
 
@@ -131,7 +143,7 @@ def lwsOpen (configJson : String) : IO String := do
       let n ← lwsCounter.modifyGet fun n => (n + 1, n + 1)
       let h := s!"lws{n}"
       lwsTable.modify (·.insert h
-        { cfg := oc.cfg, mem := initialStorage oc.now oc.rootAcl })
+        { cfg := oc.cfg, mem := oc.snapshot.getD (initialStorage oc.now oc.rootAcl) })
       pure (okWith [("handle", .string h), ("root", .string rootPath)])
 
 def lwsStep (h requestJson : String) : IO String := do
@@ -152,7 +164,11 @@ def lwsStep (h requestJson : String) : IO String := do
                 | none   => open_.cfg
               let (resp, mem') := L4Factoidal.LWS.step MemStore cfg r mem
               lwsTable.modify (·.insert h { open_ with mem := mem' })
-              pure (okWith [("response", jsonOfResponse resp)])
+              -- Every mutation advances the clock (`StoreLaws.nowTick`), so
+              -- a changed clock is exactly "the storage changed"; a host
+              -- that persists writes `lwsSnapshot` when this is true.
+              pure (okWith [ ("response", jsonOfResponse resp)
+                           , ("changed", .bool (mem'.clock != mem.clock)) ])
 
 def lwsClose (h : String) : IO String := do
   let table ← lwsTable.get
@@ -162,7 +178,14 @@ def lwsClose (h : String) : IO String := do
   else
     pure (unknownLwsHandle h)
 
+/-- `lwsSnapshot(handle)` -> `{"ok":true,"snapshot":{…}}`, the durable form
+of the storage (`L4Factoidal.LWS.Snapshot`). -/
+def lwsSnapshot (h : String) : IO String := do
+  match (← lwsTable.get)[h]? with
+  | none => pure (unknownLwsHandle h)
+  | some open_ => pure (okWith [("snapshot", snapshotJson open_.mem)])
+
 /-- The op names this module serves. -/
-def lwsOpNames : List String := ["lwsOpen", "lwsStep", "lwsClose"]
+def lwsOpNames : List String := ["lwsOpen", "lwsStep", "lwsClose", "lwsSnapshot"]
 
 end L4Wasm.Ops

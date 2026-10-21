@@ -72,9 +72,21 @@ Operating manual, scores and measurements:
 § Serving. `--base` sets
 `baseIri`, defaulting to the bound origin.
 
-`DIR` names the storage directory and **is not read or written yet**: the
-first slice keeps the resource tree in the engine handle (design record,
-section 2). Persisting it into the Shardborough store is a later step.
+`DIR` names the storage directory. The engine handle holds the storage;
+after every step whose envelope says `"changed": true` the host writes
+`lwsSnapshot`/`solidSnapshot` to `DIR/lws-state.json` (temporary file,
+fsync, rename: `npm/factoidal/lws/persist.mjs`) and reads it back at start.
+`L4Factoidal/LWS/Snapshot.lean` decides the format and refuses traversal
+paths; request paths with dot segments or encoded traversal get 400
+(`validTarget`). Persisting into the Shardborough store is a later step.
+
+The LWS binding of the 2026-10-19 editor's draft (ETag, conditional
+requests, ranges, `application/lws+json` listings, linksets, the
+`application/lws+cid` storage description at `/.well-known/lws-storage`,
+JSON Patch, RFC 9457 errors) is `L4Factoidal/LWS/Binding.lean`; the audit
+table is in the ledger, section "LWS editor's draft 2026-10-19 audit", and
+`node tests/lws/draft-binding.mjs` is its host suite (with xfails for
+https://github.com/danbri/factoidal/issues/886 to 890).
 
 From JavaScript:
 
@@ -145,6 +157,17 @@ What makes each one exit 2 today:
 | `solid-server-interop.sh` | the module carries no Solid server ops; and `web-access-control-tests` logs in through an external Solid-OIDC issuer before its first request |
 | `solid-client-interop.sh` | the module carries no Solid client ops; also refuses to start the ~250 MB Community Solid Server download below 2 GB free |
 | `solid-conformance-harness.sh` | no Docker daemon, or no `SOLID_HARNESS_ENV` credentials file |
+
+Measured 2026-10-20 (fixtures symlinked from the main checkout; `mktemp`
+templates and the CSS 7.2 config name repaired that day):
+`solid-server-interop.sh` exits 1 — solid-crud-tests 2 pass, 6 fail (out of
+8), the same six with the wasm before and after the LWS draft binding
+(storage root parsed as N3 fails, the four RDFa/JSON-LD/Turtle conversion
+cases, POST into a folder); web-access-control-tests not run (external
+OIDC). `solid-client-interop.sh` exits 1 — Community Solid Server 7.2 with
+`@css:config/file.json` answers 401 to every unauthenticated write (0 pass,
+5 fail, out of 5). `solid-conformance-harness.sh` exits 2 — no Docker
+daemon. Tracking: https://github.com/danbri/factoidal/issues/892.
 
 `tests/solid/client/against-own-server.mjs` puts our client and our
 server on two ends of one socket, so a shared misreading of the

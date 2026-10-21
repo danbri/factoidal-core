@@ -57,7 +57,7 @@ def unknownSolidHandle (h : String) : String :=
 /-- `enforceWac` is read from the configuration, defaulting to false — the
 first slice serves public resources (see `L4Factoidal/Solid/README.md`). -/
 def serverConfigOfJson (text : String) :
-    Except String (ServerConfig × Nat × Option String) :=
+    Except String (ServerConfig × Nat × Option String × Option MemState) :=
   match openConfigOfJson text with
   | .error e => .error e
   | .ok oc =>
@@ -66,19 +66,19 @@ def serverConfigOfJson (text : String) :
         else match parseJson text with
           | .ok j => (j.getBool? "enforceWac").getD false
           | .error _ => false
-      .ok ({ lws := oc.cfg, enforceWac := enforce }, oc.now, oc.rootAcl)
+      .ok ({ lws := oc.cfg, enforceWac := enforce }, oc.now, oc.rootAcl, oc.snapshot)
 
 def solidOpen (configJson : String) : IO String := do
   match serverConfigOfJson configJson with
   | .error e => pure (errJson e)
-  | .ok (cfg, now, rootAcl) =>
+  | .ok (cfg, now, rootAcl, snapshot) =>
       let n ← solidCounter.modifyGet fun n => (n + 1, n + 1)
       let h := s!"solid{n}"
       -- The storage root advertises an LDN inbox (Solid Protocol §6, LDN
       -- §3.1), so the storage has to hold one: a Receiver answers a POST to
       -- its inbox with 201, and a container with no representation answers
       -- 404 (Solid Protocol §5.3).
-      let mem := memPut (initialStorage now rootAcl) (inboxEntry now)
+      let mem := snapshot.getD (memPut (initialStorage now rootAcl) (inboxEntry now))
       solidTable.modify (·.insert h { cfg, mem })
       pure (okWith [ ("handle", .string h)
                    , ("root", .string rootPath)
@@ -103,7 +103,15 @@ def solidStep (h requestJson : String) : IO String := do
                 | none   => open_.cfg
               let (resp, mem') := L4Factoidal.Solid.Server.step MemStore cfg r mem
               solidTable.modify (·.insert h { open_ with mem := mem' })
-              pure (okWith [("response", jsonOfResponse resp)])
+              pure (okWith [ ("response", jsonOfResponse resp)
+                           , ("changed", .bool (mem'.clock != mem.clock)) ])
+
+/-- `solidSnapshot(handle)`: the durable form of the storage, as
+`lwsSnapshot`. -/
+def solidSnapshot (h : String) : IO String := do
+  match (← solidTable.get)[h]? with
+  | none => pure (unknownSolidHandle h)
+  | some open_ => pure (okWith [("snapshot", snapshotJson open_.mem)])
 
 def solidClose (h : String) : IO String := do
   let table ← solidTable.get

@@ -64,9 +64,11 @@ A response is a JSON object with the same shape minus the method:
 | `lwsOpen` | `[configJson]` | `{"ok":true,"handle":"lws1","root":"/"}` |
 | `lwsStep` | `[handle, requestJson]` | `{"ok":true,"response":{…}}` |
 | `lwsClose` | `[handle]` | `{"ok":true}` |
+| `lwsSnapshot` | `[handle]` | `{"ok":true,"snapshot":{"format":"lws-snapshot-1","clock":N,"entries":[…]}}` |
 | `solidOpen` | `[configJson]` | `{"ok":true,"handle":"solid1","root":"/","storage":"…"}` |
 | `solidStep` | `[handle, requestJson]` | `{"ok":true,"response":{…}}` |
 | `solidClose` | `[handle]` | `{"ok":true}` |
+| `solidSnapshot` | `[handle]` | as `lwsSnapshot` |
 | `solidClientRequest` | `[kind, argsJson]` | `{"ok":true,"request":{…}}` |
 | `solidClientResponse` | `[kind, responseJson]` | `{"ok":true,"interpretation":{…}}` |
 
@@ -79,7 +81,14 @@ A response is a JSON object with the same shape minus the method:
 | `owner` | absent | the WebID the storage advertises through `Link: rel="http://www.w3.org/ns/solid/terms#owner"`. |
 | `agent` | absent | the WebID of the requesting agent for every request on this handle. A handle with no `agent` is an unauthenticated agent. This member is what a host uses when it has verified the credential itself; since 2026-09-06 the engine can verify a Solid-OIDC access token and its DPoP proof instead (`L4Factoidal/Solid/Server/Auth.lean`, `ServerConfig.auth`), and `agent` is what stands while `auth.enforceAuth` is false, which is the default. |
 | `enforceWac` | `false` | `solidOpen` only. With it false the Web Access Control decision is computed and reported in `WAC-Allow` but never refuses a request, which is the first slice's public storage. With it true the decision is enforced and a target with no effective ACL resource is denied, as Web Access Control §5.3 requires. |
+| `snapshot` | absent | a document from `lwsSnapshot`/`solidSnapshot`; the storage continues from it. `L4Factoidal/LWS/Snapshot.lean` refuses a snapshot with a path that has a dot segment, an empty segment, a backslash, an encoded slash or a NUL, a repeated path, or no storage root. |
 | `rootAcl` | absent | the ACL document (Turtle) of the storage root, written when the storage is created. Web Access Control §3.2 requires the root container's ACL resource to have a representation, and under enforcement a storage cannot write its own: the request that would write it is the first request it would authorize. It is therefore a host provisioning input. |
+
+`lwsStep` and `solidStep` answer `"changed": true` when the step changed the
+storage (every mutation advances the clock). `factoidal lws-serve DIR` and
+`solid-serve DIR` then write the snapshot to `DIR/lws-state.json`
+(temporary file, fsync, rename; `npm/factoidal/lws/persist.mjs`) and read it
+back at start. No request target becomes a file name.
 
 A request document may override the clock and the agent for one step with the
 members `now` and `agent` beside `method`; this is what a host with a real
@@ -149,6 +158,72 @@ document that is not JSON, an unknown client kind — answers
 `{"ok":false,"error":"…"}`. A request the protocol REFUSES is not an error:
 it answers `{"ok":true,"response":{"status":405,…}}`, because the status code
 is the protocol's own answer.
+
+## LWS editor's draft 2026-10-19 audit
+
+Read 2026-10-20: <https://w3c.github.io/lws-protocol/lws10-core/>, source
+w3c/lws-protocol commit `9a08ff65a6670cc5d308ed5e531032f23af30fcc`
+(2026-10-19). The draft now has an HTTP binding (Operations, Metadata,
+Container Representation, LWS Media Type, Discovery, Authorization,
+Notifications, Access Requests). The registry below this section was read
+2026-09-06, when those sections were empty; it is older than the draft. The
+draft has 256 sentences with MUST, SHOULD, REQUIRED or SHALL; this table
+groups the server requirements by rule. Client-only rules, authorization
+server rules and examples are left out.
+
+Status: **tested** = implemented with a `#guard` in
+`formal/lean4/L4Factoidal/LWS/Tests.lean` and a host check in
+`tests/lws/draft-binding.mjs` or `tests/lws/server.mjs`; **missing** = an
+open issue and an xfail host check; **n/a** = conditional on a feature this
+server does not advertise.
+
+| section | requirement | status | test |
+|---|---|---|---|
+| Operations | the four operations create, read, update, delete | tested | `lwsGuardCreateReadUpdateDelete`; server.mjs CRUD |
+| Read | 200 with the stored media type | tested | `lwsGuardCreateReadUpdateDelete` |
+| Read | MUST include `ETag` on GET/HEAD (also §Metadata) | tested | `lwsGuardEtagOnRead`; draft-binding "Read: GET carries ETag" |
+| Read | Last-Modified on GET and HEAD (CG delta) | tested | `lwsGuardLastModifiedOnGet/Head`; server.mjs |
+| Read | MUST support range requests | tested (single range; a range that cuts UTF-8 gets 200, https://github.com/danbri/factoidal/issues/889) | `lwsGuardRange`; draft-binding "Read: a byte Range" |
+| Read | SHOULD support conditional requests; 304 | tested (ETag; If-Modified-Since by exact date) | `lwsGuardNotModified` |
+| Read | MUST support HEAD with the same headers | tested | `lwsGuardEtagOnRead`, `lwsGuardLastModifiedOnHead` |
+| Read | Link `linkset`, `up`, `type` on every response | tested | `lwsGuardLwsLinks` |
+| Containment | MUST `rel="up"` on non-root GET/HEAD | tested | `lwsGuardLwsLinks` |
+| Containment | integrity on create and delete; no orphans; no cycles | tested | `lwsGuardContainerEnumerates`, `lwsGuardRecursiveDelete`; PUT creates ancestors |
+| Container Representation | `id`, `type`, `totalItems`, `items` (empty array when empty); item `id`, `type`, `format` (MUST for data), `size`, `modified` | tested | `lwsGuardContainerListing`; draft-binding |
+| Container Membership | listing includes all readable members | tested (no access control on LWS host) | `lwsGuardContainerListing` |
+| LWS Media Type | container MUST support `application/lws+json` | tested | `lwsGuardContainerListing` |
+| Content Negotiation | profile media types RDF-isomorphic to lws+json; `Content-Type` with profile; SHOULD `Vary: Accept` | tested (Turtle, JSON-LD) | `lwsGuardContainerTurtle` |
+| Pagination | SHOULD paginate; `first`/`next` links | missing | https://github.com/danbri/factoidal/issues/887; draft-binding xfail |
+| Create | POST to container, 201 + `Location`; `Link` up, linkset, type | tested | `lwsGuardPostCreates` |
+| Create | container via `Link rel="type"` lws:Container | tested | `lwsGuardPostCreates` |
+| Create | identity hint used, unique | tested | Slug guards in `Tests.lean` |
+| Create | 404 when the target container does not exist | tested | POST guards |
+| Create | client `Link` headers as user metadata; server metadata not overridable | missing (ignored; server metadata kept) | https://github.com/danbri/factoidal/issues/888 |
+| Update | PUT replaces; 412 on failed `If-Match` | tested | `lwsGuardIfMatch` |
+| Update | MUST minimally support JSON Patch | tested | `lwsGuardJsonPatch` |
+| Update | `Prefer: set-linkset` MUST interpret `Link` headers | missing | https://github.com/danbri/factoidal/issues/888 |
+| Delete | 204; atomically removes from parent; 409 non-empty | tested | `lwsGuardCreateReadUpdateDelete`, `lwsGuardRecursiveDelete` |
+| Delete | `Depth: infinity` recursive (MAY) | tested | `lwsGuardRecursiveDelete` |
+| Delete | linkset removed with the resource | tested | `lwsGuardLinkset` |
+| Metadata | linkset resource per resource, RFC 9264, `application/linkset+json` | tested | `lwsGuardLinkset` |
+| Metadata | `Allow` lists GET and PATCH; `Accept-Patch: application/json-patch+json` | tested | `lwsGuardLinkset` |
+| Metadata | PATCH on linkset with JSON Patch; preserve links the client may not modify | tested (all links server-managed: change gives 409, test-only patch gives 204) | `lwsGuardLinkset` |
+| Metadata | PUT on linkset unsupported gives 405 | tested | `lwsGuardLinkset` |
+| Metadata | 412 on failed precondition for linkset PUT/PATCH | tested (If-Match) | `linksetStep` |
+| Discovery | `lws#storage` link on every GET/HEAD | tested | `lwsGuardLwsLinks` |
+| Discovery | storage description, `application/lws+cid`, `@context` array, `id`, `type`, StorageRoot service | tested | `lwsGuardStorageDescription` |
+| Discovery | MoveResource capability when `up` is modifiable | n/a (`up` is not modifiable) | none |
+| Status mappings | SHOULD use RFC 9457 problem details | tested | `lwsGuardProblemDetails` |
+| Authorization | 401 with `WWW-Authenticate` `resource_metadata`; RFC 9728 metadata; token validation | missing | https://github.com/danbri/factoidal/issues/886; draft-binding xfail |
+| Authentication | credential suites | missing on the LWS host (Solid host has Solid-OIDC) | https://github.com/danbri/factoidal/issues/886 |
+| Notifications | NotificationService, envelopes, subscriptions | n/a, not implemented | https://github.com/danbri/factoidal/issues/890; draft-binding xfail |
+| Access Requests | AccessRequestService, AccessGrantService | n/a, not implemented | https://github.com/danbri/factoidal/issues/890 |
+| Data resource | any bytes (images, documents) | missing (bodies are UTF-8 strings) | https://github.com/danbri/factoidal/issues/889; draft-binding xfail |
+| (server choice) | request paths with dot segments or encoded traversal are refused | tested | `lwsGuardTraversalRefused`; draft-binding "Paths" |
+| (server choice) | storage persists under `DIR` | tested | `lwsGuardSnapshotRoundTrip`, `lwsGuardSnapshotRefusesTraversal`; draft-binding "Persistence" |
+
+Counts: 33 tested, 6 missing (4 open issues), 3 not applicable (out of 42
+rows).
 
 ## LWS 1.0 Core
 

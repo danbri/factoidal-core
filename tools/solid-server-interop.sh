@@ -77,8 +77,8 @@ fi
 
 # ------------------------------------------------------------- the server
 
-PORT_FILE="$(mktemp -t solid-interop-port)"
-SERVER_LOG="$(mktemp -t solid-interop-log)"
+PORT_FILE="$(mktemp -t solid-interop-port.XXXXXX)"
+SERVER_LOG="$(mktemp -t solid-interop-log.XXXXXX)"
 SERVER_PID=""
 
 cleanup() {
@@ -135,7 +135,7 @@ report() { # json path, label
     try { report = JSON.parse(fs.readFileSync(path, "utf8")) } catch (error) {
       console.log(`${label}: no report was written (${error.message})`)
       process.exitCode = 1
-      return
+      process.exit()
     }
     const pass = report.numPassedTests || 0
     const fail = report.numFailedTests || 0
@@ -154,7 +154,7 @@ if install_suite "$CRUD" "solid-crud-tests"; then
   # The suite's own run-against-css.sh writes this profile first.
   curl -s -X PUT "$ALICE_WEBID_DOC" -H 'Content-Type: text/turtle' \
     -d "<$ALICE_WEBID> <http://www.w3.org/ns/pim/space#storage> </>." > /dev/null || true
-  CRUD_REPORT="$(mktemp -t crud-results)"
+  CRUD_REPORT="$(mktemp -t crud-results.XXXXXX)"
   ( cd "$CRUD" && \
     SERVER_ROOT="$ORIGIN" \
     ALICE_WEBID_DOC="$ALICE_WEBID_DOC" \
@@ -163,7 +163,7 @@ if install_suite "$CRUD" "solid-crud-tests"; then
     ./node_modules/.bin/jest test/surface/ --json --outputFile="$CRUD_REPORT" ) \
     > /dev/null 2>&1 || CRUD_RC=$?
   report "$CRUD_REPORT" "solid-crud-tests" || FAILED=1
-  rm -f "$CRUD_REPORT"
+  cp "$CRUD_REPORT" "${CRUD_REPORT_KEEP:-/dev/null}" 2>/dev/null; rm -f "$CRUD_REPORT"
 else
   echo "solid-crud-tests: not run - npm ci failed in this environment"
   FAILED=2
@@ -185,7 +185,7 @@ if [ -z "${SOLID_WAC_OIDC_ISSUER:-}" ]; then
   [ "$FAILED" -eq 0 ] && FAILED=2
 elif install_suite "$WAC" "web-access-control-tests"; then
   WAC_RC=0
-  WAC_REPORT="$(mktemp -t wac-results)"
+  WAC_REPORT="$(mktemp -t wac-results.XXXXXX)"
   ( cd "$WAC" && \
     SYSTEM_UNDER_TEST="$ORIGIN" \
     STORAGE_ROOT_ALICE="$ORIGIN/" \

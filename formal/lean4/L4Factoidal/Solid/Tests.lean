@@ -177,10 +177,10 @@ header fields." -/
 def solidGuardAcceptHeaders : Bool :=
   let (container, _) := run cfg (req "GET" "/alice/") populated
   let (resource, _) := run cfg (req "GET" "/alice/card") populated
-  hdr container "accept-patch" == some "text/n3" &&
+  hdr container "accept-patch" == some "text/n3, application/json-patch+json" &&
   hdr container "accept-post" == some "text/turtle" &&
   hdr container "accept-put" == some "text/turtle" &&
-  hdr resource "accept-patch" == some "text/n3" &&
+  hdr resource "accept-patch" == some "text/n3, application/json-patch+json" &&
   hdr resource "accept-put" == some "text/turtle"
 
 #guard solidGuardAllowHeader
@@ -275,7 +275,7 @@ def solidGuardN3PatchApplies : Bool :=
 /-- "Servers MUST indicate support of N3 Patch by listing text/n3 as a field
 value of the Accept-Patch header field." -/
 def solidGuardN3PatchAcceptPatch : Bool :=
-  hdr (run cfg (req "GET" "/alice/card") populated).1 "accept-patch" == some "text/n3"
+  hdr (run cfg (req "GET" "/alice/card") populated).1 "accept-patch" == some "text/n3, application/json-patch+json"
 
 /-- "The ?insertions and ?deletions formulae MUST NOT contain blank nodes."
 "Servers MUST respond with a 422 status code if a patch document does not
