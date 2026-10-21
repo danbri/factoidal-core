@@ -11,6 +11,11 @@ it, close it.
   lwsDelivered(handle, {id, status, now?})
     -> {"ok":true,"changed":B,"retry"?:{"delivery":{…},"after":SECONDS}}
 
+A request document may carry `random` (base64, at least 16 bytes from the
+host's random source): the name of an ANTICIPATORY AND UNSTABLE search
+results resource, when the configuration says `"searchResults": true`
+(`L4Factoidal.LWS.SearchResults`, issue 922).
+
 `lwsStep` also answers `"deliveries":[{id,url,headers,body},…]` when the
 step causes notifications (`L4Factoidal.LWS.Notifications`): the host POSTs
 each one exactly as given and reports the status to `lwsDelivered`.
@@ -38,6 +43,7 @@ import L4Factoidal.LWS.Authorization
 import L4Factoidal.LWS.Notifications
 import L4Factoidal.LWS.Search
 import L4Factoidal.LWS.AccessGrants
+import L4Factoidal.LWS.SearchResults
 import L4Factoidal.JOSE.Base64Url
 import L4Factoidal.Crypto.P256Native
 import L4Factoidal.Crypto.RsaNative
@@ -158,6 +164,15 @@ structure OpenConfig where
   /-- The subscriptions and the signing key of a snapshot written earlier. -/
   notif : Option Notifications.NotifState := none
   signingKey : Option ByteArray := none
+  /-- ANTICIPATORY AND UNSTABLE (issue 922): does a QUERY answer of the type
+  search name a search results resource with `Content-Location`? Off unless
+  the configuration says `"searchResults": true`; `searchResultsTtl` and
+  `searchResultsMax` set its lifetime and the number kept. -/
+  searchResults : Bool := false
+  searchResultsTtl : Nat := 600
+  searchResultsMax : Nat := 100
+  /-- The search results records of a snapshot written earlier. -/
+  results : Option SearchResults.ResultsState := none
 deriving Inhabited
 
 def openConfigOfJson (text : String) : Except String OpenConfig :=
@@ -199,6 +214,17 @@ def openConfigOfJson (text : String) : Except String OpenConfig :=
         let moves := j.field? "moves" != some (.bool false)
         let typeIndex := j.field? "typeIndex" != some (.bool false)
         let accessGrants := j.field? "accessGrants" != some (.bool false)
+        let searchResults := j.field? "searchResults" == some (.bool true)
+        let natOr (k : String) (d : Nat) : Nat := match j.field? k with
+          | some (.number s) => (s.toNat?).getD d
+          | _ => d
+        let searchResultsTtl := natOr "searchResultsTtl" 600
+        let searchResultsMax := natOr "searchResultsMax" 100
+        let results ← match j.field? "snapshot" with
+          | some sj => match sj.field? "searchResults" with
+            | none | some .null => .ok none
+            | some rj => (SearchResults.stateOfJson rj).map some
+          | none => .ok none
         -- The access requests and grants of a snapshot written earlier, read
         -- again as documents (`AccessPolicy.stateOfJson`), into the policy.
         let access ← match j.field? "snapshot" with
@@ -225,7 +251,8 @@ def openConfigOfJson (text : String) : Except String OpenConfig :=
                 .ok (some ns, key.filter (·.size == 32))
           | none => .ok (none, none)
         .ok { cfg := { baseIri, owner, agent, pageSize }, now, rootAcl, snapshot, authz,
-              notifications, moves, typeIndex, accessGrants, entropy, notif, signingKey }
+              notifications, moves, typeIndex, accessGrants, entropy, notif, signingKey,
+              searchResults, searchResultsTtl, searchResultsMax, results }
 
 /-- The JWS verifiers over the vendored HACL* primitives (P-256 ECDSA,
 RSA PKCS#1 v1.5, Ed25519): `skills/crypto-policy`. -/
@@ -245,6 +272,8 @@ structure OpenStorage where
   notif : Notifications.NotifState := {}
   /-- The 32-byte Ed25519 secret key that signs webhook deliveries. -/
   signingKey : Option ByteArray := none
+  /-- The search results records (ANTICIPATORY AND UNSTABLE, issue 922). -/
+  results : SearchResults.ResultsState := {}
 
 /-- The signer of a storage: Ed25519 (RFC 8032) through the vendored HACL*
 code, under the verification method its storage description publishes. -/
@@ -296,12 +325,15 @@ def lwsOpen (configJson : String) : IO String := do
       lwsTable.modify (·.insert h
         { cfg := { oc.cfg with notifications := oc.notifications, notificationKeyX := keyX,
                                 moves := oc.moves, typeIndex := oc.typeIndex,
-                                accessGrants := oc.accessGrants },
+                                accessGrants := oc.accessGrants,
+                                searchResults := oc.searchResults,
+                                searchResultsTtl := oc.searchResultsTtl,
+                                searchResultsMax := oc.searchResultsMax },
           -- The type index is built from the entries in one pass
           -- (`TypeIndex.rebuildEntries`), then kept by the store.
           mem := IxState.ofMem oc.cfg.baseIri
             (oc.snapshot.getD (initialStorage oc.now oc.rootAcl)),
-          authz := oc.authz, notif, signingKey })
+          authz := oc.authz, notif, signingKey, results := oc.results.getD {} })
       pure (okWith [("handle", .string h), ("root", .string rootPath)])
 
 /-- A delivery request as the host receives it: POST `body` to `url` with
@@ -337,6 +369,19 @@ def lwsStepWith (h requestJson : String) (blob : Option ByteArray) :
                             else open_.cfg
                 | none   => open_.cfg
               let now := now?.getD mem.base.clock
+              -- Random bytes from the host for a search results name.
+              let rand : Option ByteArray := (j.getString? "random").bind Base64.decode?
+              match SearchResults.serverStep lwsVerifiers MemStore memStoreLaws cfg open_.authz now
+                  rand r mem open_.results with
+              | .fetch issuer url =>
+                  pure (noBytes (okWith [("fetch", .object [("issuer", .string issuer),
+                                                   ("url", .string url)])]))
+              | .handled resp rs' =>
+                  lwsTable.modify (·.insert h { open_ with results := rs' })
+                  pure (okWith [ ("response", jsonOfResponse resp blobOut)
+                               , ("changed", .bool (rs'.revision != open_.results.revision)) ],
+                        if blobOut then resp.content else ByteArray.empty)
+              | .pass =>
               match AccessGrants.serverStepWith lwsVerifiers (IndexedStore MemStore memStoreLaws)
                       cfg open_.authz open_.signer now r mem open_.notif
                       (fun r st ns => Search.serverStep lwsVerifiers MemStore memStoreLaws cfg
@@ -440,9 +485,14 @@ def lwsSnapshot (h : String) : IO String := do
       let notif : Json := match Notifications.notifStateJson open_.notif, open_.signingKey with
         | .object fs, some sk => .object (fs ++ [("signingKey", .string (Base64.encode sk))])
         | other, _ => other
+      -- The search results records (ANTICIPATORY AND UNSTABLE, issue 922)
+      -- ride as one more member, only when there is one.
+      let results : List (String × Json) :=
+        if open_.results.records.isEmpty then []
+        else [("searchResults", SearchResults.stateJson open_.results)]
       let snap := match snapshotJson open_.mem.base with
         | .object fs => Json.object (fs ++ [("notifications", notif),
-            ("access", AccessPolicy.stateJson open_.cfg.baseIri open_.authz.access)])
+            ("access", AccessPolicy.stateJson open_.cfg.baseIri open_.authz.access)] ++ results)
         | other => other
       pure (okWith [("snapshot", snap)])
 

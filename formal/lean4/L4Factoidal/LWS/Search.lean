@@ -64,7 +64,9 @@ decides, verbatim, with the definition that decides each:
   model" — `searchPage`; the page URIs carry the filter (`filterToken`), so a
   page is computed again, and authorized again, on every request.
 * Content-Location: "this specification does not define such a resource";
-  this server sends none.
+  by default this server sends none. With `Config.searchResults` on, an
+  ANTICIPATORY AND UNSTABLE results resource is named
+  (`L4Factoidal.LWS.SearchResults`, https://github.com/danbri/factoidal/issues/922).
 
 §Errors
 * not well-formed body, `type` not an array, an element "neither a string
@@ -621,21 +623,29 @@ def serviceHeaders (b media : String) (links : List Link) : List (String × Stri
 
 /-! ## The two services -/
 
-/-- A page of the answer to a filter. -/
-def searchPage (S : Store σ) (cfg : Config) (canRead : String → Bool) (st : IxState S)
-    (gs : Filter) (n : Nat) (media method target : String) : Response :=
+/-- Page `n` (from 1) of the answer `ps` as a ContainerPage, with the page
+URIs `link m` in `Link` and `extra` header fields after the service fields. -/
+def answerPage (S : Store σ) (cfg : Config) (st : IxState S) (ps : List String) (n : Nat)
+    (media method target : String) (link : Nat → String) (extra : List (String × String)) :
+    Response :=
   let b := cfg.baseIri
-  let ps := searchAnswer st.ix gs canRead
   let count := pageCount ps.length cfg.pageSize
   if n == 0 || n > count then problem 404 "the search has no such page" target
   else
-    let page := searchPagePaths st.ix gs canRead cfg.pageSize n
+    let page := pageAt ps cfg.pageSize (n - 1)
     let items := page.filterMap (fun p =>
       (S.lookup st.base p).map (fun e => resultItem b e (st.ix.byPath.getD p [])))
-    let token := filterToken gs
-    let link (m : Nat) : String := searchIri b ++ "?q=" ++ token ++ "&" ++ pageQuery m
-    ⟨200, serviceHeaders b media (pageLinks link n count) ++ [("accept-query", mediaLwsQuery)],
+    ⟨200, serviceHeaders b media (pageLinks link n count) ++ extra,
      if method == "HEAD" then "" else searchPageJson items ps.length, none⟩
+
+/-- A page of the answer to a filter: `answerPage` of `searchAnswer`, whose
+page `n` is `searchPagePaths`. -/
+def searchPage (S : Store σ) (cfg : Config) (canRead : String → Bool) (st : IxState S)
+    (gs : Filter) (n : Nat) (media method target : String) : Response :=
+  let token := filterToken gs
+  answerPage S cfg st (searchAnswer st.ix gs canRead) n media method target
+    (fun m => searchIri cfg.baseIri ++ "?q=" ++ token ++ "&" ++ pageQuery m)
+    [("accept-query", mediaLwsQuery)]
 
 /-- The search reference of a page URI: `q=<token>&page=N`. -/
 def searchRef? (query : String) : Option (Filter × Nat) :=

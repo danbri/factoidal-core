@@ -137,6 +137,17 @@ structure Config where
   "A storage MAY advertise support for access requests and access grants".
   Off by default; the wasm handle turns it on. -/
   accessGrants : Bool := false
+  /-- ANTICIPATORY AND UNSTABLE (https://github.com/danbri/factoidal/issues/922).
+  Does a QUERY answer of the Type Search Service carry `Content-Location`
+  naming a search results resource (RFC 10008 §2.3,
+  `L4Factoidal.LWS.SearchResults`)? lws10-index defines no such resource. Off
+  by default; config `searchResults: true` turns it on. Needs `typeIndex`. -/
+  searchResults : Bool := false
+  /-- Seconds a search results resource answers before it is gone (410). -/
+  searchResultsTtl : Nat := 600
+  /-- The most search results resources the storage keeps; the oldest is
+  removed first. -/
+  searchResultsMax : Nat := 100
 deriving Repr, Inhabited
 
 /-! ## Helpers over the store -/
@@ -504,7 +515,7 @@ def linksetStep (S : Store σ) (cfg : Config) (r : Request) (st : σ)
 def storageStep (cfg : Config) (r : Request) : Response :=
   let allow := "GET, HEAD, OPTIONS"
   let doc := storageDescription cfg.baseIri cfg.notifications cfg.notificationKeyX cfg.moves
-    cfg.typeIndex cfg.accessGrants
+    cfg.typeIndex cfg.accessGrants (cfg.typeIndex && cfg.searchResults)
   match r.method with
   | "GET" | "HEAD" =>
       -- The tag is a digest of the document, so a new signing key or a

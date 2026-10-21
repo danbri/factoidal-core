@@ -762,7 +762,7 @@ def lwsGuardPostSameSecondUnique : Bool :=
 
 /-! ## The registry's own arithmetic -/
 
-#guard Conformance.registry.length == 31
+#guard Conformance.registry.length == 33
 #guard (Conformance.registry.map (·.id)).eraseDups.length == Conformance.registry.length
 
 end L4Factoidal.LWS.Tests

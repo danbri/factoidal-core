@@ -752,6 +752,8 @@ import L4Factoidal.LWS.MoveTests
 import L4Factoidal.LWS.TypeIndex
 import L4Factoidal.LWS.Search
 import L4Factoidal.LWS.SearchTests
+import L4Factoidal.LWS.SearchResults
+import L4Factoidal.LWS.SearchResultsTests
 import L4Factoidal.LWS.AccessPolicy
 import L4Factoidal.LWS.AccessGrants
 import L4Factoidal.LWS.AccessGrantsTests

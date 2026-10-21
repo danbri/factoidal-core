@@ -14,6 +14,7 @@ import L4Factoidal.LWS.Tests
 import L4Factoidal.Solid.Tests
 import L4Factoidal.LWS.NotificationsTests
 import L4Factoidal.LWS.SearchTests
+import L4Factoidal.LWS.SearchResultsTests
 import L4Factoidal.LWS.AccessGrantsTests
 
 open L4Factoidal.LWS
