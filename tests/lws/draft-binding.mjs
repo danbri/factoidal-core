@@ -19,6 +19,8 @@ import { mkdtempSync, readdirSync, rmSync, existsSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join, dirname } from 'node:path'
 import http from 'node:http'
+import { spawn } from 'node:child_process'
+import { fileURLToPath } from 'node:url'
 
 let passed = 0
 let failed = 0
@@ -101,7 +103,16 @@ const CHECKS = [
   'Metadata: a server-managed rel with Prefer: set-linkset answers 409 and writes nothing',
   'Metadata: a malformed Link answers 400; a Link without Prefer is not stored',
   'Metadata: PATCH on the linkset adds a client link; changing a server link answers 409',
-  'Persistence: client links survive a restart'
+  'Persistence: client links survive a restart',
+  'Create: POST with no content and no Content-Type creates a container (issue 911, F1)',
+  'Create: POST with no content, no Content-Type and no type link creates an empty data resource; content without Content-Type is 400 (issue 911, F1)',
+  'LWS Profile: the Turtle form uses http://schema.org/size, as the lws+json context does (issue 911, F2)',
+  'Read: a container ETag changes when a member is deleted in the same second (issue 911, F3)',
+  'Authorization: the 401 lws#storage link names the storage description id (issue 911, F4)',
+  'Conditional requests: If-Unmodified-Since before the last modification answers 412 for GET, PUT and DELETE (issue 911, F5)',
+  'Conditional requests: If-Modified-Since is compared as an HTTP-date in all three formats (issue 911, F5)',
+  'CLI: lws-serve --page-size N passes the page size to the engine',
+  'Create: five POSTs to one container in one second create five resources (issue 911, F6)'
 ]
 
 /** The target of the link with relation `rel` in a Link field value. */
@@ -406,6 +417,87 @@ async function main () {
         assert(g.length === 4 && g.every((b, i) => b === bytes[i]), `got ${Array.from(g)}`)
       })
 
+    // https://github.com/danbri/factoidal/issues/911: the five defects the
+    // Touchstone harness found. The decisions are in Operations.lean,
+    // Binding.lean, HttpDate.lean and Authorization.lean.
+    await check(CHECKS[25], async () => {
+      const r = await rawRequest(o, 'POST', '/', {
+        link: '<https://www.w3.org/ns/lws#Container>; rel="type"', 'content-length': '0'
+      })
+      assert(r.status === 201, `POST answered ${r.status}: ${r.body}`)
+      const loc = r.headers.location || ''
+      assert(loc.endsWith('/'), `Location ${loc}`)
+      const g = await fetch(new URL(loc, o), { headers: { accept: 'application/lws+json' } })
+      const j = await g.json()
+      assert(g.status === 200 && j.type === 'Container' && j.totalItems === 0, JSON.stringify(j))
+    })
+
+    await check(CHECKS[26], async () => {
+      const r = await rawRequest(o, 'POST', '/docs/', { slug: 'empty', 'content-length': '0' })
+      assert(r.status === 201, `POST answered ${r.status}: ${r.body}`)
+      const g = await fetch(`${o}/docs/empty`)
+      const body = await g.arrayBuffer()
+      assert(g.status === 200 && body.byteLength === 0 &&
+        g.headers.get('content-type') === 'application/octet-stream',
+        `${g.status} ${g.headers.get('content-type')} ${body.byteLength} bytes`)
+      const bad = await rawRequest(o, 'POST', '/docs/', { 'content-length': '1' }, 'x')
+      assert(bad.status === 400, `content without Content-Type answered ${bad.status}`)
+    })
+
+    await check(CHECKS[27], async () => {
+      const r = await fetch(`${o}/docs/`, { headers: { accept: 'text/turtle' } })
+      const body = await r.text()
+      assert(body.indexOf('@prefix schema: <http://schema.org/> .') >= 0, body.slice(0, 300))
+      assert(body.indexOf('https://schema.org/') < 0, 'https://schema.org/ in the Turtle form')
+      assert(/schema:size "10"\^\^xsd:long/.test(body), body)
+      // A contained container: no dcterms:modified (the context defines
+      // `modified` for a DataResource only), as in the lws+json RDF.
+      assert(/\/> a lws:Container \.$/m.test(body), `no contained container line: ${body}`)
+    })
+
+    const epoch = 'Thu, 01 Jan 1970 00:00:00 GMT'
+    await check(CHECKS[30], async () => {
+      await fetch(`${o}/ius.txt`, { method: 'PUT', headers: { 'content-type': 'text/plain' }, body: 'kept' }).then((r) => r.text())
+      const g = await fetch(`${o}/ius.txt`, { headers: { 'if-unmodified-since': epoch } })
+      await g.text()
+      assert(g.status === 412, `GET answered ${g.status}`)
+      const lm = (await fetch(`${o}/ius.txt`, { method: 'HEAD' })).headers.get('last-modified')
+      const ok = await fetch(`${o}/ius.txt`, { headers: { 'if-unmodified-since': lm } })
+      assert(ok.status === 200 && (await ok.text()) === 'kept', `GET with the Last-Modified date answered ${ok.status}`)
+      const p = await fetch(`${o}/ius.txt`, { method: 'PUT', headers: { 'content-type': 'text/plain', 'if-unmodified-since': epoch }, body: 'lost' })
+      await p.text()
+      assert(p.status === 412, `PUT answered ${p.status}`)
+      const d = await fetch(`${o}/ius.txt`, { method: 'DELETE', headers: { 'if-unmodified-since': epoch } })
+      await d.text()
+      assert(d.status === 412, `DELETE answered ${d.status}`)
+      const after = await fetch(`${o}/ius.txt`)
+      assert(after.status === 200 && (await after.text()) === 'kept', 'the resource was changed')
+    })
+
+    await check(CHECKS[31], async () => {
+      const lm = (await fetch(`${o}/ius.txt`, { method: 'HEAD' })).headers.get('last-modified')
+      const t = Date.parse(lm)
+      const later = new Date(t + 86400000)
+      const days = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday']
+      const months = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec']
+      const p2 = (n) => String(n).padStart(2, '0')
+      const hms = `${p2(later.getUTCHours())}:${p2(later.getUTCMinutes())}:${p2(later.getUTCSeconds())}`
+      const rfc850 = `${days[later.getUTCDay()]}, ${p2(later.getUTCDate())}-${months[later.getUTCMonth()]}-` +
+        `${p2(later.getUTCFullYear() % 100)} ${hms} GMT`
+      const asctime = `${days[later.getUTCDay()].slice(0, 3)} ${months[later.getUTCMonth()]} ` +
+        `${String(later.getUTCDate()).padStart(2, ' ')} ${hms} ${later.getUTCFullYear()}`
+      for (const v of [later.toUTCString(), rfc850, asctime]) {
+        const r = await fetch(`${o}/ius.txt`, { headers: { 'if-modified-since': v } })
+        await r.text()
+        assert(r.status === 304, `If-Modified-Since ${v} answered ${r.status}`)
+      }
+      for (const v of [epoch, 'not a date']) {
+        const r = await fetch(`${o}/ius.txt`, { headers: { 'if-modified-since': v } })
+        await r.text()
+        assert(r.status === 200, `If-Modified-Since ${v} answered ${r.status}`)
+      }
+    })
+
     await xfail('Notifications: the storage description advertises a NotificationService',
       'https://github.com/danbri/factoidal/issues/890', async () => {
         const d = await (await fetch(`${o}/.well-known/lws-storage`)).json()
@@ -414,6 +506,112 @@ async function main () {
   } finally {
     await running.close()
   }
+
+  // F3 needs the host's real clock: it sets the engine clock to the current
+  // second on every request, so two changes in one second carry one
+  // Last-Modified. The sequence is repeated until both reads fall in the
+  // same second, so the check exercises that case.
+  await check(CHECKS[28], async () => {
+    const rc = await listen({ engine, port: 0, insecureNoAuth: true, realClock: true })
+    try {
+      let tried = 0
+      for (;;) {
+        tried += 1
+        // The Touchstone sequence: a container, a member made by POST, a
+        // read, the member's DELETE, a read.
+        const c = `/same${tried}/`
+        await fetch(`${rc.origin}${c}`, { method: 'PUT', headers: { 'content-type': 'text/turtle' }, body: '' }).then((r) => r.text())
+        const p = await fetch(`${rc.origin}${c}`, { method: 'POST', headers: { 'content-type': 'text/plain', slug: 'x' }, body: 'x' })
+        await p.text()
+        assert(p.status === 201, `POST answered ${p.status}`)
+        const g1 = await fetch(`${rc.origin}${c}`)
+        await g1.text()
+        const d = await fetch(new URL(p.headers.get('location'), rc.origin), { method: 'DELETE' })
+        await d.text()
+        const g2 = await fetch(`${rc.origin}${c}`)
+        const j = await g2.json()
+        assert(d.status === 204 && j.totalItems === 0, `DELETE ${d.status}, totalItems ${j.totalItems}`)
+        if (g1.headers.get('last-modified') !== g2.headers.get('last-modified')) {
+          assert(tried < 10, 'no two reads in one second after 10 tries')
+          continue
+        }
+        const t1 = g1.headers.get('etag')
+        assert(t1 !== g2.headers.get('etag'), `same ETag ${t1} before and after the DELETE`)
+        const nm = await fetch(`${rc.origin}${c}`, { headers: { 'if-none-match': t1 } })
+        await nm.text()
+        assert(nm.status === 200, `If-None-Match with the old tag answered ${nm.status}`)
+        break
+      }
+    } finally {
+      await rc.close()
+    }
+  })
+
+  await check(CHECKS[33], async () => {
+    const rc = await listen({ engine, port: 0, insecureNoAuth: true, realClock: true })
+    try {
+      await fetch(`${rc.origin}/five/`, { method: 'PUT', headers: { 'content-type': 'text/turtle' }, body: '' }).then((r) => r.text())
+      const posts = await Promise.all(['1', '2', '3', '4', '5'].map((n) =>
+        fetch(`${rc.origin}/five/`, { method: 'POST', headers: { 'content-type': 'text/plain' }, body: n })
+          .then(async (r) => { await r.text(); return r })))
+      const locs = posts.map((r) => r.headers.get('location'))
+      assert(posts.every((r) => r.status === 201), `statuses ${posts.map((r) => r.status)}`)
+      assert(new Set(locs).size === 5, `locations ${locs}`)
+      const bodies = await Promise.all(locs.map((l) => fetch(new URL(l, rc.origin)).then((r) => r.text())))
+      assert(JSON.stringify([...bodies].sort()) === '["1","2","3","4","5"]', `bodies ${bodies}`)
+      const j = await (await fetch(`${rc.origin}/five/`, { headers: { accept: 'application/lws+json' } })).json()
+      assert(j.totalItems === 5, `totalItems ${j.totalItems}`)
+    } finally {
+      await rc.close()
+    }
+  })
+
+  await check(CHECKS[29], async () => {
+    const guarded = await listen({ engine, port: 0, auth: { issuers: [{ issuer: 'https://as.example' }] } })
+    try {
+      const r = await fetch(`${guarded.origin}/private`)
+      await r.text()
+      assert(r.status === 401, `answered ${r.status}`)
+      const link = linkTarget(r.headers.get('link'), 'https://www.w3.org/ns/lws#storage')
+      const d = await fetch(`${guarded.origin}/.well-known/lws-storage`)
+      const desc = await d.json()
+      const descLink = linkTarget(d.headers.get('link'), 'https://www.w3.org/ns/lws#storage')
+      assert(link === desc.id && new URL(descLink, guarded.origin).href === desc.id,
+        `401 link ${link}, description id ${desc.id}, description link ${descLink}`)
+    } finally {
+      await guarded.close()
+    }
+  })
+
+  await check(CHECKS[32], async () => {
+    const cliDir = mkdtempSync(join(tmpdir(), 'lws-page-size-'))
+    const cli = fileURLToPath(new URL('../../npm/factoidal/bin/factoidal.mjs', import.meta.url))
+    const child = spawn(process.execPath, [cli, 'lws-serve', cliDir, '--insecure-no-auth',
+      '--port', '0', '--page-size', '2'], { stdio: ['ignore', 'pipe', 'pipe'] })
+    try {
+      const origin = await new Promise((resolve, reject) => {
+        let out = ''
+        const timer = setTimeout(() => reject(new Error('lws-serve did not print its origin')), 60000)
+        child.stdout.on('data', (c) => {
+          out += c
+          const m = /^(http:\/\/\S+)$/m.exec(out)
+          if (m !== null) { clearTimeout(timer); resolve(m[1]) }
+        })
+        child.on('exit', (code) => { clearTimeout(timer); reject(new Error(`lws-serve exited ${code}`)) })
+      })
+      for (const n of ['m1', 'm2', 'm3']) {
+        await fetch(`${origin}/p/${n}`, { method: 'PUT', headers: { 'content-type': 'text/plain' }, body: n }).then((r) => r.text())
+      }
+      const r = await fetch(`${origin}/p/`, { headers: { accept: 'application/lws+json' } })
+      const j = await r.json()
+      const link = r.headers.get('link')
+      assert(linkTarget(link, 'next') === '/p/?page=2' && linkTarget(link, 'last') === '/p/?page=2', `Link: ${link}`)
+      assert(j.items.length === 2 && j.totalItems === 3, `${j.items.length} items, totalItems ${j.totalItems}`)
+    } finally {
+      child.kill()
+      rmSync(cliDir, { recursive: true, force: true })
+    }
+  })
 
   // Durable storage under DIR.
   const dir = mkdtempSync(join(tmpdir(), 'lws-draft-binding-'))

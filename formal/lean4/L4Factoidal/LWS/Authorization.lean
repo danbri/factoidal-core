@@ -94,8 +94,9 @@ structure AuthzConfig where
   deployment opts in (`--insecure-no-auth`). -/
   insecureNoAuth : Bool := false
   issuers : List TrustedIssuer := []
-  /-- The storage IRI tokens must name in `aud`. `none`: the storage root
-  IRI (`Config.baseIri`). -/
+  /-- The storage IRI tokens must name in `aud`. `none`: the canonical URI
+  of the storage, the storage description `<baseIri>.well-known/lws-storage`
+  (`storageIri`). -/
   audience : Option String := none
   /-- Allowed clock skew, seconds. -/
   leeway : Nat := 60
@@ -136,9 +137,32 @@ def resourceOfMetadataPath (baseIri path : String) : String :=
   let rest := (path.drop wellKnownPrm.length).toString
   o ++ (if rest == "" then "/" else rest)
 
-/-- The storage IRI: the audience a token must name. -/
+/-- The storage IRI: the audience a token must name, and the target of the
+`lws#storage` link of a 401.
+
+lws10-core `Discovery.html`: the storage description's "`id` ... MUST be the
+canonical URI of the storage", "Requests for the storage URI MUST return a
+document that conforms to the storage description resource data model", and
+"All responses to GET and HEAD requests targeting storage resources MUST
+include a Link header whose target is the canonical URI of the storage".
+So the storage URI is the URI of the storage description
+(`iriOfPath baseIri storagePath`); the storage root container (`baseIri`) is
+a different resource, the `serviceEndpoint` of the `StorageRoot` service.
+`Authorization.html`: the 401 "MUST also include a Link header identifying
+the storage that contains the requested resource ... A client supplies this
+URI as the resource parameter when requesting an access token", and the
+token's `aud` "MUST include the URI supplied by the client in the resource
+parameter, which is the URI of a storage". The 401 link, the default
+audience and every other response's `lws#storage` link are therefore one
+IRI (https://github.com/danbri/factoidal/issues/911, F4). `audience`
+overrides it for a deployment whose storage has another canonical URI.
+
+The protected resource metadata `resource` is NOT this IRI:
+`Authorization.html`, "The resource value in a protected resource metadata
+document identifies the requested resource, not the storage that contains
+it" (`resourceOfMetadataPath`). -/
 def storageIri (cfg : Config) (a : AuthzConfig) : String :=
-  a.audience.getD cfg.baseIri
+  a.audience.getD (iriOfPath cfg.baseIri storagePath)
 
 /-- The RFC 9728 §2 document. -/
 def metadataDocument (a : AuthzConfig) (resource : String) : String :=
@@ -293,13 +317,14 @@ def authenticate (V : Verifiers) (cfg : Config) (a : AuthzConfig) (now : Nat)
 /-- The 401 of "Authorization Server Discovery". RFC 6750 §3.1: with no
 credential the challenge carries no error code; with a refused one it
 carries the code. -/
-def challenge (cfg : Config) (target : String) (err : Option String) : Response :=
+def challenge (cfg : Config) (a : AuthzConfig) (target : String) (err : Option String) :
+    Response :=
   let resource := iriOfPath cfg.baseIri target
   let params := "Bearer resource_metadata=\"" ++ metadataUrl resource ++ "\"" ++
     (match err with | none => "" | some e => ", error=\"" ++ e ++ "\"")
   problem 401 "an access token is required" target
     [ ("www-authenticate", params)
-    , ("link", renderLinks [{ target := cfg.baseIri, rel := lwsStorageRel }]) ]
+    , ("link", renderLinks [{ target := storageIri cfg a, rel := lwsStorageRel }]) ]
 
 /-- The answer when a valid token's agent is not allowed the operation:
 RFC 6750 §3.1 `insufficient_scope` is 403. -/
@@ -347,11 +372,11 @@ def decide (V : Verifiers) (S : Store σ) (cfg : Config) (a : AuthzConfig) (now 
           { webId := who, origin := r.header? "origin" } mode then
         .proceed who
       else match who with
-        | none => .respond (challenge cfg path none)
+        | none => .respond (challenge cfg a path none)
         | some _ => .respond (forbidden cfg path)
     match authenticate V cfg a now r with
     | .needKeys i => .fetch i (issuerMetadataUrl i)
-    | .refused rf => .respond (challenge cfg path (some rf.errorCode))
+    | .refused rf => .respond (challenge cfg a path (some rf.errorCode))
     | .anonymous => gate none
     | .authenticated s => gate (some s)
 

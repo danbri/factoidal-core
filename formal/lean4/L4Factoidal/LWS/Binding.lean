@@ -41,14 +41,19 @@ Server choices the draft leaves to the server, each stated once:
   server-managed.
 * The storage description is at `/.well-known/lws-storage`. The draft only
   requires that the `lws#storage` link targets it.
-* An entity tag is the resource's modification clock in quotes. The clock
-  is strictly increasing over mutations (`StoreLaws.nowTick`), so two
-  versions of one resource never share a tag. A container has one
-  representation per media type, and each gets its own tag suffix, because
-  RFC 9110 §8.8.3 requires a strong tag to change when the representation
-  data changes.
+* An entity tag is the resource's modification clock and the FNV-1a
+  digest of the representation data: the bytes of a data resource
+  (`etagFor`), the listing of a container in the negotiated media type
+  (`containerTag`). RFC 9110 §8.8.1: a strong validator "changes value
+  whenever a change occurs to the representation data that would be
+  observable in the content of a 200 (OK) response to GET". The clock alone
+  does not do that: a host with a real clock sets it to the current second
+  on every request, so two changes in one second gave one tag
+  (https://github.com/danbri/factoidal/issues/911, F3). A container has one
+  representation per media type, and each gets its own tag suffix.
 -/
 import L4Factoidal.LWS.Discovery
+import L4Factoidal.LWS.HttpDate
 import L4Factoidal.JSON.Serialize
 import L4Factoidal.JSON.Parser
 import L4Factoidal.HTTP.Server
@@ -71,6 +76,7 @@ def mediaLwsCid : String := "application/lws+cid"
 def mediaLinkset : String := "application/linkset+json"
 def mediaJsonPatch : String := "application/json-patch+json"
 def mediaProblem : String := "application/problem+json"
+def mediaOctetStream : String := "application/octet-stream"
 
 /-- The path of the storage description resource (a server choice). -/
 def storagePath : String := "/.well-known/lws-storage"
@@ -145,21 +151,6 @@ private def pad4 (n : Nat) : String :=
   else if n < 100 then "00" ++ toString n
   else if n < 1000 then "0" ++ toString n
   else toString n
-
-/-- Days since 1970-01-01 to a civil date; the same era algorithm as
-`Operations.civilFromDays`, repeated here because this module sits below
-`Operations`. -/
-def civilOfDays (days : Nat) : Nat × Nat × Nat :=
-  let z := days + 719468
-  let era := z / 146097
-  let doe := z - era * 146097
-  let yoe := (doe - doe / 1460 + doe / 36524 - doe / 146096) / 365
-  let y := yoe + era * 400
-  let doy := doe - (365 * yoe + yoe / 4 - yoe / 100)
-  let mp := (5 * doy + 2) / 153
-  let d := doy - (153 * mp + 2) / 5 + 1
-  let m := if mp < 10 then mp + 3 else mp - 9
-  (if m ≤ 2 then y + 1 else y, m, d)
 
 /-- An ISO 8601 / XML Schema `dateTime` in UTC from seconds since the Unix
 epoch. `isoDateTime 0 = "1970-01-01T00:00:00Z"`. -/
@@ -244,24 +235,28 @@ private def hexDigit (n : Nat) : Char :=
 def hex8 (n : Nat) : String :=
   String.ofList ((List.range 8).reverse.map (fun i => hexDigit (n / 16 ^ i % 16)))
 
-/-- The tag of one representation of an entry.
-
-A data resource's tag is its modification clock and the FNV-1a digest of its
-bytes, so the tag is computed on the representation data that RFC 9110
+/-- The tag of a data resource: its modification clock and the FNV-1a digest
+of its bytes, so the tag is computed on the representation data that RFC 9110
 §8.8.3 says a strong validator changes with
-(https://github.com/danbri/factoidal/issues/889). A container has one tag
-per media type (`mediaTagSuffix`). -/
+(https://github.com/danbri/factoidal/issues/889).
+
+For a container this is only the prefix of a tag (the clock and the media
+suffix); the tag a container sends is `containerTag`, which adds the digest
+of the listing. -/
 def etagFor (e : Entry) (media : String) : String :=
   "\"" ++ toString e.mtime ++
     (if e.kind.isContainer then mediaTagSuffix media else "-" ++ hex8 (fnv1a32 e.body)) ++ "\""
 
+/-- The tag of one representation of a container: its clock, the media
+suffix, and the FNV-1a digest of `body`, the representation in that media
+type. The listing changes when a member is added, removed or changed (its
+`size`, `format` or `modified`), so the tag changes with it, also when the
+clock does not (https://github.com/danbri/factoidal/issues/911, F3). -/
+def containerTag (e : Entry) (media body : String) : String :=
+  "\"" ++ toString e.mtime ++ mediaTagSuffix media ++ "-" ++ hex8 (fnv1a32 body.toUTF8) ++ "\""
+
 /-- The container media types this binding serves, server preference first. -/
 def containerMedia : List String := [mediaLwsJson, "application/ld+json", "text/turtle"]
-
-/-- Every current tag of an entry: one for a data resource, one per
-representation for a container. -/
-def currentTags (e : Entry) : List String :=
-  if e.kind.isContainer then containerMedia.map (etagFor e) else [etagFor e e.contentType]
 
 private def trimSp (s : String) : String :=
   String.ofList (((s.toList.dropWhile (· == ' ')).reverse.dropWhile (· == ' ')).reverse)
@@ -274,53 +269,93 @@ private def stripWeak (t : String) : String :=
   if t.startsWith "W/" then String.ofList (t.toList.drop 2) else t
 
 /-- RFC 9110 §13.1.1: `If-Match` uses the strong comparison; `*` matches any
-current representation. -/
-def ifMatchHolds (v : String) (e : Option Entry) (tags : Option (List String) := none) : Bool :=
-  match e with
-  | none => false
-  | some e =>
-      let ts := parseTagList v
-      ts.contains "*" || ts.any (fun t => !t.startsWith "W/" && (tags.getD (currentTags e)).contains t)
+current representation. `tags` are the current tags of the selected
+resource; `present` says whether it has a current representation. -/
+def ifMatchHolds (v : String) (present : Bool) (tags : List String) : Bool :=
+  if !present then false
+  else
+    let ts := parseTagList v
+    ts.contains "*" || ts.any (fun t => !t.startsWith "W/" && tags.contains t)
 
 /-- RFC 9110 §13.1.2: `If-None-Match` uses the weak comparison. The
 condition HOLDS when no listed tag matches. -/
-def ifNoneMatchHolds (v : String) (e : Option Entry) (tags : Option (List String) := none) : Bool :=
-  match e with
-  | none => true
-  | some e =>
-      let ts := parseTagList v
-      !(ts.contains "*" || ts.any (fun t => (tags.getD (currentTags e)).contains (stripWeak t)))
+def ifNoneMatchHolds (v : String) (present : Bool) (tags : List String) : Bool :=
+  if !present then true
+  else
+    let ts := parseTagList v
+    !(ts.contains "*" || ts.any (fun t => tags.contains (stripWeak t)))
+
+/-- RFC 9110 §13.1.4, If-Unmodified-Since: "If the selected representation's
+last modification date is earlier than or equal to the date provided in the
+field value, the condition is true." A value that is not an HTTP-date is
+ignored ("A recipient MUST ignore the If-Unmodified-Since header field if
+the received field value is not a valid HTTP-date"), and so is the field
+when the resource has no modification date. `none`: ignored. -/
+def ifUnmodifiedSinceHolds (now : Nat) (v : String) (lastModified : Option Nat) : Option Bool :=
+  match lastModified, parseHttpDate now v with
+  | some lm, some d => some (decide ((lm : Int) ≤ d))
+  | _, _ => none
+
+/-- RFC 9110 §13.1.3, If-Modified-Since: "If the selected representation's
+last modification date is earlier or equal to the date provided in the
+field value, the condition is false." A value that is not an HTTP-date is
+ignored. `none`: ignored. -/
+def ifModifiedSinceHolds (now : Nat) (v : String) (lastModified : Option Nat) : Option Bool :=
+  match lastModified, parseHttpDate now v with
+  | some lm, some d => some (!decide ((lm : Int) ≤ d))
+  | _, _ => none
 
 /-- Evaluate the preconditions of a request in the order of RFC 9110
-§13.2.2, returning the response that ends the request when one fails.
-`If-Modified-Since` is evaluated only for an exact match with the
-`Last-Modified` the server sends, which is the date a client echoes.
-`tags`, when given, are the current tags of the selected representation in
-place of `currentTags` (one page of a paginated container has its own
-tag). -/
-def preconditionFailure (r : Request) (e : Option Entry) (tag : Option String)
-    (lastModified : Option String) (tags : Option (List String) := none) : Option Response :=
+§13.2.2, returning the response that ends the request when one fails:
+
+1. `If-Match` (§13.1.1): 412 when false.
+2. Without `If-Match`, `If-Unmodified-Since` (§13.1.4), for every method:
+   412 when false. "An origin server that evaluates an If-Unmodified-Since
+   condition MUST NOT perform the requested method if the condition
+   evaluates to false."
+3. `If-None-Match` (§13.1.2): 304 for GET and HEAD, 412 otherwise.
+4. Without `If-None-Match`, for GET and HEAD, `If-Modified-Since`
+   (§13.1.3): 304 when false.
+
+The dates are compared as instants (`parseHttpDate`), in any of the three
+HTTP-date formats. `tags` are the current tags of the selected resource
+(one page of a paginated container has its own tag); `lastModified` is its
+modification time in seconds since the epoch, and `lastModifiedText` the
+`Last-Modified` value a 304 repeats; `now` reads a two-digit rfc850 year. -/
+def preconditionFailure (r : Request) (now : Nat) (present : Bool) (tag : Option String)
+    (lastModified : Option Nat) (lastModifiedText : Option String) (tags : List String) :
+    Option Response :=
   let safe := r.method == "GET" || r.method == "HEAD"
   let notModified : Response :=
     ⟨304, (match tag with | some t => [("etag", t)] | none => []) ++
-          (match lastModified with | some d => [("last-modified", d)] | none => []), "", none⟩
-  match r.header? "if-match" with
-  | some v =>
-      if !ifMatchHolds v e tags then
-        some (problem 412 "If-Match did not match a current representation" r.path)
-      else none
-  | none => none
+          (match lastModifiedText with | some d => [("last-modified", d)] | none => []),
+     "", none⟩
+  (match r.header? "if-match" with
+   | some v =>
+       if !ifMatchHolds v present tags then
+         some (problem 412 "If-Match did not match a current representation" r.path)
+       else none
+   | none =>
+       match r.header? "if-unmodified-since" with
+       | some v =>
+           if ifUnmodifiedSinceHolds now v lastModified == some false then
+             some (problem 412 "the resource was modified after the If-Unmodified-Since date"
+               r.path)
+           else none
+       | none => none)
   |>.orElse fun _ =>
   match r.header? "if-none-match" with
   | some v =>
-      if ifNoneMatchHolds v e tags then none
+      if ifNoneMatchHolds v present tags then none
       else if safe then some notModified
       else some (problem 412 "If-None-Match matched a current representation" r.path)
   | none =>
       if safe then
-        match r.header? "if-modified-since", lastModified with
-        | some ims, some lm => if trimSp ims == lm then some notModified else none
-        | _, _ => none
+        match r.header? "if-modified-since" with
+        | some v =>
+            if ifModifiedSinceHolds now v lastModified == some false then some notModified
+            else none
+        | none => none
       else none
 
 /-! ## Range requests (RFC 9110 §14) -/
@@ -477,12 +512,42 @@ private def ttlString (s : String) : String :=
 private def ttlIri (s : String) : String := "<" ++ s ++ ">"
 
 /-- The Turtle representation in the LWS profile: the same RDF the
-`application/lws+json` representation encodes. -/
+`application/lws+json` representation encodes. lws10-core
+`lws-media-type.md` §LWS Profile: "it MUST be RDF isomorphic to the
+`application/lws+json` representation".
+
+`schema:` is `http://schema.org/`, the namespace the `application/lws+json`
+context `https://www.w3.org/ns/lws/v1` gives `size`
+(https://github.com/danbri/factoidal/issues/911, F2). The W3C LWS WG
+documents disagree (w3c/lws-protocol 9a08ff65):
+
+* `lws10-core/container-representation.md` (the Turtle and N-Triples tabs
+  of the container example) and `lws10-core/Operations/read-resource.md`
+  use `http://schema.org/`; the 2026-07-14 vocabulary snapshot
+  `lws10-vocab/SNAPSHOTS/DNOTE-lws10-vocab-20260714/vocabulary.jsonld`
+  maps `schema` to `http://schema.org/`; Touchstone's copy of the context
+  maps `size` to `http://schema.org/size`.
+* `lws10-vocab/vocabulary.yml` (the current vocabulary source) declares
+  the prefix `schema: https://schema.org/`.
+
+The context URL answers 404 today. This module follows the core draft, the
+document whose media type is under test, and the context the draft's JSON
+form refers to; the conflict is for the WG to settle.
+
+A contained CONTAINER gets no `dcterms:modified` here, although its JSON item
+has `modified` (§Contained Resource Description: "SHOULD include ...
+`modified`"). The vocabulary gives `dcterms:modified` (and `format`, `size`)
+the domain `lws:DataResource` (`lws10-vocab/vocabulary.yml`), so the context
+defines the term `modified` only in the type-scoped context of
+`DataResource`, and a `Container` item's `modified` maps to no triple. The
+Turtle form must give the same RDF (Touchstone,
+`core/containers#container-lws-profile-turtle`: 10 quads against 9 while
+this line was written; https://github.com/danbri/factoidal/issues/911). -/
 def containerTurtle (baseIri path : String) (items : List Entry) (total : Option Nat := none) : String :=
   let header :=
     "@prefix lws: <https://www.w3.org/ns/lws#> .\n" ++
     "@prefix dcterms: <http://purl.org/dc/terms/> .\n" ++
-    "@prefix schema: <https://schema.org/> .\n" ++
+    "@prefix schema: <http://schema.org/> .\n" ++
     "@prefix xsd: <http://www.w3.org/2001/XMLSchema#> .\n\n"
   let self := ttlIri (iriOfPath baseIri path) ++ " a lws:Container ;\n  lws:totalItems " ++
     toString (total.getD items.length) ++
@@ -491,10 +556,10 @@ def containerTurtle (baseIri path : String) (items : List Entry) (total : Option
        String.intercalate ", " (items.map (fun e => ttlIri (iriOfPath baseIri e.path))) ++ " .\n")
   let item (e : Entry) : String :=
     ttlIri (iriOfPath baseIri e.path) ++
-    (if e.kind.isContainer then " a lws:Container ;\n"
+    (if e.kind.isContainer then " a lws:Container .\n"
      else " a lws:DataResource ;\n  dcterms:format " ++ ttlString e.contentType ++
-       " ;\n  schema:size \"" ++ toString e.body.size ++ "\"^^xsd:long ;\n") ++
-    "  dcterms:modified \"" ++ isoDateTime e.mtime ++ "\"^^xsd:dateTime .\n"
+       " ;\n  schema:size \"" ++ toString e.body.size ++ "\"^^xsd:long ;\n" ++
+       "  dcterms:modified \"" ++ isoDateTime e.mtime ++ "\"^^xsd:dateTime .\n")
   header ++ self ++ String.join (items.map item)
 
 /-- The `Content-Type` value of a container representation in a media type. -/

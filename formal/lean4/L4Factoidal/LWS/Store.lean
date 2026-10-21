@@ -50,8 +50,10 @@ the specification says it answers.
   deletes its auxiliaries and nothing besides.
 * `pathsLookup` — `paths` enumerates exactly the paths that resolve, which
   is what a container enumerating its members reads.
-* `nowTick` — the clock is strictly increasing, so two writes in one request
-  sequence never carry the same `Last-Modified`. -/
+* `nowTick` — `tick` advances the clock by one, so two writes inside one
+  request never carry the same `Last-Modified`. A host with a real clock
+  resets the clock before each request, so across requests it can repeat
+  (https://github.com/danbri/factoidal/issues/911). -/
 structure StoreLaws {σ : Type} (S : Store σ) : Prop where
   lookupPutSame   : ∀ s e, S.lookup (S.put s e) e.path = some e
   lookupPutOther  : ∀ s e p, p ≠ e.path → S.lookup (S.put s e) p = S.lookup s p

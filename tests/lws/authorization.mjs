@@ -64,7 +64,9 @@ const CHECKS = [
   'Discovery: the storage description is readable with no token',
   'Default: with no auth configuration an anonymous write answers 401',
   'Development mode: insecureNoAuth must be asked for, and then writes need no token',
-  'CLI: factoidal lws-serve with no authorization option refuses to start'
+  'CLI: factoidal lws-serve with no authorization option refuses to start',
+  'Discovery: the 401 lws#storage link, the storage description id and every other lws#storage link name one IRI',
+  'Validation: a token for the storage root container (not the storage) answers 401 invalid_token'
 ]
 
 function b64url (bytes) {
@@ -163,7 +165,10 @@ async function main () {
     auth: { issuers: [{ issuer: issuer.origin }], refreshInterval: 0 }
   })
   const o = running.origin
-  const aud = `${o}/`
+  // The storage IRI is the storage description's id
+  // (https://github.com/danbri/factoidal/issues/911, F4); the token audience
+  // and the 401 lws#storage link name it.
+  const aud = `${o}/.well-known/lws-storage`
   const bearer = (t) => ({ authorization: `Bearer ${t}` })
   const put = (path, headers = {}) => fetch(`${o}${path}`, {
     method: 'PUT', headers: { 'content-type': 'text/plain', ...headers }, body: 'x'
@@ -253,6 +258,30 @@ async function main () {
       await r.text()
       assert(r.status === 200, `answered ${r.status}`)
     })
+
+    await check(CHECKS[15], async () => {
+      const storageLink = (link) => {
+        const m = /<([^>]+)>; rel="https:\/\/www\.w3\.org\/ns\/lws#storage"/.exec(link || '')
+        return m === null ? null : new URL(m[1], `${o}/`).href
+      }
+      const r401 = await fetch(`${o}/private/a.txt`)
+      await r401.text()
+      assert(r401.status === 401, `anonymous GET answered ${r401.status}`)
+      const d = await fetch(`${o}/.well-known/lws-storage`)
+      const desc = await d.json()
+      // The key published after the rotation check above.
+      const t = issuer.token(claims(issuer.origin, aud, ALICE), { key: issuer.keys[issuer.keys.length - 1] })
+      const g = await fetch(`${o}/private/a.txt`, { headers: bearer(t) })
+      await g.text()
+      assert(g.status === 200, `owner GET answered ${g.status}`)
+      const iris = [storageLink(r401.headers.get('link')), desc.id,
+        storageLink(d.headers.get('link')), storageLink(g.headers.get('link'))]
+      assert(iris.every((i) => i === aud), `storage IRIs ${JSON.stringify(iris)}, expected ${aud}`)
+    })
+
+    await check(CHECKS[16], () => refusedWith(
+      issuer.token(claims(issuer.origin, `${o}/`, ALICE), { key: issuer.keys[issuer.keys.length - 1] }),
+      'invalid_token'))
   } finally {
     await running.close()
   }

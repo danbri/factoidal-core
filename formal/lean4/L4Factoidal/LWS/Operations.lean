@@ -31,9 +31,15 @@ binding, the rows are the difference.
 
 Nothing here reads a clock, a socket or a file. The time comes from the
 store's `now`, which the host sets; every mutation stamps `Last-Modified`
-from it and then calls `tick`, so a sequence of writes has strictly
-increasing modification times and the server-assigned names of POST are
-distinct without a separate counter.
+from it and then calls `tick`. Within ONE request the clock increases. A
+host with a real clock sets it to the current second before EVERY request
+(`Wasm/Ops/Lws.lean`), so across requests in one second it repeats. No
+rule here may depend on the clock being new: entity tags carry a digest of
+the representation (`tagIn`), and POST names are made unique by a search
+(`childPathFor`, theorem `childPathFor_fresh`). Until 2026-10-21 this
+paragraph said the clock made POST names distinct; under a real clock it
+did not, and a POST replaced another resource
+(https://github.com/danbri/factoidal/issues/911, F3 and F6).
 -/
 import L4Factoidal.LWS.Store
 import L4Factoidal.LWS.Discovery
@@ -185,16 +191,41 @@ def readHeaders (cfg : Config) (e : Entry) (isRoot : Bool) : List (String × Str
 "The server MUST include `Link` headers for key server-managed metadata,
 including a link to the parent container (`rel="up"`), and a link to the
 created resource's dedicated linkset resource". -/
-def writtenHeaders (cfg : Config) (e : Entry) : List (String × String) :=
+def writtenHeaders (cfg : Config) (e : Entry) (tag : String) : List (String × String) :=
   [ ("last-modified", httpDate e.mtime)
-  , ("etag", etagFor e (if e.kind.isContainer then mediaLwsJson else e.contentType))
+  , ("etag", tag)
   , ("link", renderLinks (lwsLinks cfg.baseIri e.path e.kind)) ]
+
+/-- The media type a write stores when the request names none.
+
+RFC 9110 §8.3: "A sender that generates a message containing content SHOULD
+generate a Content-Type header field in that message". A message with no
+content needs none, and the LWS draft's own example of creating a container
+(lws10-core `Operations/create-resource.md`) is a POST with
+`Content-Length: 0`, the container type link and no `Content-Type`
+(https://github.com/danbri/factoidal/issues/911, F1). Such a write stores an
+empty container as `text/turtle` (as `ensureAncestors` does) and an empty
+data resource as `application/octet-stream` (RFC 9110 §8.3: "the recipient
+MAY either assume a media type of "application/octet-stream" ... or examine
+the data"). Content without a `Content-Type` is still refused with 400
+(`none`): Solid Protocol §2.1, "Server MUST reject PUT, POST, and PATCH
+requests that contain content but lack the Content-Type header field, with
+a status code of 400." -/
+def writeMediaType (r : Request) (asContainer : Bool) : Option String :=
+  match r.header? "content-type" with
+  | some ct => some ct
+  | none =>
+      if r.content.size == 0 then some (if asContainer then "text/turtle" else mediaOctetStream)
+      else none
 
 /-! ## The step function -/
 
-/-- The name a POST assigns. The store's clock is strictly increasing over
-mutations (`StoreLaws.nowTick`), so two POSTs to one container never collide
-and no counter is needed beside the clock. -/
+/-- The name a POST assigns when the request gives no usable hint: `res`
+and the clock. Two POSTs can get the same clock value, because a host with a
+real clock sets the clock to the current second on every request
+(`Wasm/Ops/Lws.lean`), so the name is only a first candidate:
+`childPathFor` makes it unique (https://github.com/danbri/factoidal/issues/911,
+F6). -/
 def assignedName (S : Store σ) (st : σ) : String := "res" ++ toString (S.now st)
 
 /-- Is a `Slug` usable as one path segment? -/
@@ -202,20 +233,73 @@ def slugUsable (s : String) : Bool :=
   s != "" && s != "." && s != ".." &&
   !(s.any (fun c => c == '/' || c == '?' || c == '#' || c == '%' || c == '\\' || c.toNat < 32))
 
+/-- The `i`-th candidate for a name: the name itself, then `name-1`,
+`name-2`, and so on. -/
+def nameCandidate (name : String) (i : Nat) : String :=
+  if i == 0 then name else name ++ "-" ++ toString i
+
+/-- The first candidate from the `i`-th on that is not `taken`, trying at
+most `fuel` of them. One loop step per candidate (structural recursion on
+the fuel, a tail call). -/
+def freeName (taken : String → Bool) (name : String) : Nat → Nat → Option String
+  | 0, _ => none
+  | fuel + 1, i =>
+      if taken (nameCandidate name i) then freeName taken name fuel (i + 1)
+      else some (nameCandidate name i)
+
+/-- A name `freeName` answers is not taken. -/
+theorem freeName_free (taken : String → Bool) (name : String) :
+    ∀ (fuel i : Nat) (n : String), freeName taken name fuel i = some n → taken n = false := by
+  intro fuel
+  induction fuel with
+  | zero => intro i n h; simp [freeName] at h
+  | succ k ih =>
+      intro i n h
+      unfold freeName at h
+      by_cases ht : taken (nameCandidate name i) = true
+      · simp only [ht, if_true] at h
+        exact ih (i + 1) n h
+      · simp only [ht, Bool.false_eq_true, if_false, Option.some.injEq] at h
+        rw [← h]
+        simpa using ht
+
 /-- The path of a new child of `target`. LWS §Create Resource: "If an
 identity hint was provided, the server attempts to incorporate it while
-ensuring uniqueness and validity within the container." A clash with an
-existing data resource or container of the same name gets the clock as a
-suffix; the clock is strictly increasing, so the suffixed name is new. -/
+ensuring uniqueness and validity within the container." The first name not
+held by a data resource or a container is used: the hint (or `res` and the
+clock), then the same with `-1`, `-2`, ... Up to one more candidate than
+the store has paths is tried; each taken candidate is held by a different
+path, so one of them is free. `none` (never reached) answers 409.
+
+Until 2026-10-21 a clash got the clock as its one suffix, on the
+assumption that the clock never repeats; under a host's real clock three
+POSTs in one second gave the third the second's name, and the third POST
+REPLACED the second resource (Touchstone, five POSTs in one second: two
+members, https://github.com/danbri/factoidal/issues/911, F6). Theorem
+`childPathFor_fresh`: the path is free. -/
 def childPathFor (S : Store σ) (st : σ) (target : String) (hint : Option String)
-    (asContainer : Bool) : String :=
+    (asContainer : Bool) : Option String :=
   let name := match hint with
     | some s => if slugUsable s then s else assignedName S st
     | none => assignedName S st
   let taken (n : String) : Bool :=
     (S.lookup st (target ++ n)).isSome || (S.lookup st (target ++ n ++ "/")).isSome
-  let name := if taken name then name ++ "-" ++ toString (S.now st) else name
-  target ++ name ++ (if asContainer then "/" else "")
+  (freeName taken name ((S.paths st).length + 1) 0).map
+    (fun n => target ++ n ++ (if asContainer then "/" else ""))
+
+/-- A POST never replaces a resource: the path `childPathFor` assigns holds
+nothing in the store. -/
+theorem childPathFor_fresh (S : Store σ) (st : σ) (target : String) (hint : Option String)
+    (asContainer : Bool) (p : String)
+    (h : childPathFor S st target hint asContainer = some p) : S.lookup st p = none := by
+  unfold childPathFor at h
+  simp only [Option.map_eq_some_iff] at h
+  obtain ⟨n, hn, rfl⟩ := h
+  have hfree := freeName_free _ _ _ _ _ hn
+  simp only [Bool.or_eq_false_iff, Option.isSome_eq_false_iff, Option.isNone_iff_eq_none] at hfree
+  cases asContainer
+  · simpa using hfree.1
+  · simpa using hfree.2
 
 /-- Is the resource at `p` one a container listing shows (it exists and is
 not an auxiliary resource)? -/
@@ -270,6 +354,26 @@ theorem pageItems_concat (S : Store σ) (st : σ) (c : String) (k : Nat) :
   unfold pageItems listedMembers memberPageCount
   simp only [Nat.add_sub_cancel]
   rw [← List.filterMap_flatMap, pages_concat]
+
+/-- The entity tag of `e` in `media`: for a data resource `etagFor`; for a
+container `containerTag` over its listing in that media type, so the tag
+changes whenever the listing does (https://github.com/danbri/factoidal/issues/911,
+F3). -/
+def tagIn (S : Store σ) (cfg : Config) (st : σ) (e : Entry) (media : String) : String :=
+  if e.kind.isContainer then
+    containerTag e media (containerBody media cfg.baseIri e.path (listedMembers S st e.path))
+  else etagFor e media
+
+/-- Every current tag of `e`: one for a data resource, one per media type for
+a container. These are what `If-Match` and `If-None-Match` compare with. -/
+def tagsIn (S : Store σ) (cfg : Config) (st : σ) (e : Entry) : List String :=
+  if e.kind.isContainer then containerMedia.map (tagIn S cfg st e) else [etagFor e e.contentType]
+
+/-- The preconditions of a request on an existing resource or on none. -/
+def preconditionsOn (S : Store σ) (cfg : Config) (st : σ) (r : Request)
+    (existing : Option Entry) : Option Response :=
+  preconditionFailure r (S.now st) existing.isSome none (existing.map (·.mtime)) none
+    ((existing.map (tagsIn S cfg st)).getD [])
 
 /-- The entity tag of a linkset: the resource's clock and the FNV-1a digest
 of the document, so a change to the client links changes the tag. -/
@@ -401,7 +505,8 @@ def pagedRead (S : Store σ) (cfg : Config) (r : Request) (st : σ) (e : Entry)
         let base := etagFor e media
         let tag := String.ofList (base.toList.dropLast) ++ "-p" ++ toString n ++ "-" ++
           hex8 (fnv1a32 body.toUTF8) ++ "\""
-        match preconditionFailure r (some e) (some tag) (some (httpDate e.mtime)) (some [tag]) with
+        match preconditionFailure r (S.now st) true (some tag) (some e.mtime)
+                (some (httpDate e.mtime)) [tag] with
         | some resp => (resp, st)
         | none =>
             let pageLink (rel : String) (m : Nat) : Link :=
@@ -434,9 +539,10 @@ def stepPath (S : Store σ) (cfg : Config) (r : Request) (st : σ) : Response ×
           if e.kind.isContainer && paginated (orderedMemberPaths S st target).length cfg.pageSize then
             pagedRead S cfg r st e media isRoot
           else
-          let tag := etagFor e media
+          let tag := tagIn S cfg st e media
           let lm := httpDate e.mtime
-          match preconditionFailure r existing (some tag) (some lm) with
+          match preconditionFailure r (S.now st) true (some tag) (some e.mtime) (some lm)
+                  (tagsIn S cfg st e) with
           | some resp => (resp, st)
           | none =>
               let base := readHeaders cfg e isRoot ++ [("etag", tag)]
@@ -473,11 +579,10 @@ def stepPath (S : Store σ) (cfg : Config) (r : Request) (st : σ) : Response ×
              , ("accept-put", "text/turtle")
              , ("accept-post", "text/turtle") ], "", none⟩, st)
   | "PUT" =>
-      match r.header? "content-type" with
+      match writeMediaType r (pathIsContainer target) with
       | none => (problem 400 "PUT with content requires a Content-Type header field" target, st)
       | some ct =>
-          match preconditionFailure r existing
-                  (existing.map (fun e => etagFor e e.contentType)) none with
+          match preconditionsOn S cfg st r existing with
           | some resp => (resp, st)
           | none =>
           match rdfContentRefused ct r.content target with
@@ -496,9 +601,10 @@ def stepPath (S : Store σ) (cfg : Config) (r : Request) (st : σ) : Response ×
               let e : Entry := { path := target, kind, contentType := ct,
                                  body := r.content, mtime := S.now st, links }
               let st' := touchContainer S (S.tick (S.put st e)) target
+              let tag := tagIn S cfg st' e (if e.kind.isContainer then mediaLwsJson else ct)
               match existing with
-              | none   => (⟨201, ("location", target) :: writtenHeaders cfg e, "", none⟩, st')
-              | some _ => (⟨204, writtenHeaders cfg e, "", none⟩, st')
+              | none   => (⟨201, ("location", target) :: writtenHeaders cfg e tag, "", none⟩, st')
+              | some _ => (⟨204, writtenHeaders cfg e tag, "", none⟩, st')
   | "POST" =>
       match existing with
       | none => (problem 404 "the target container does not exist" target, st)
@@ -507,25 +613,28 @@ def stepPath (S : Store σ) (cfg : Config) (r : Request) (st : σ) : Response ×
             (problem 405 "POST creates resources in a container" target
               (allowHdr parentEntry.kind), st)
           else
-            match r.header? "content-type" with
+            let linkHdr := (r.header? "link").getD ""
+            let asContainer := (linkHdr.splitOn "ldp#BasicContainer").length > 1 ||
+                               (linkHdr.splitOn lwsContainerType).length > 1
+            match writeMediaType r asContainer with
             | none => (problem 400 "POST with content requires a Content-Type header field"
                         target, st)
             | some ct =>
                 match rdfContentRefused ct r.content target with
                 | some resp => (resp, st)
                 | none =>
-                let linkHdr := (r.header? "link").getD ""
-                let asContainer := (linkHdr.splitOn "ldp#BasicContainer").length > 1 ||
-                                   (linkHdr.splitOn lwsContainerType).length > 1
                 match postLinksOf (r.header? "link") with
                 | .error (status, msg) => (problem status msg target, st)
                 | .ok links =>
-                let childPath := childPathFor S st target (r.header? "slug") asContainer
+                match childPathFor S st target (r.header? "slug") asContainer with
+                | none => (problem 409 "the container has no free name for a new resource" target, st)
+                | some childPath =>
                 let kind := if asContainer then ResourceKind.container else .dataResource
                 let e : Entry := { path := childPath, kind, contentType := ct,
                                    body := r.content, mtime := S.now st, links }
                 let st' := touchContainer S (S.tick (S.put st e)) childPath
-                (⟨201, ("location", childPath) :: writtenHeaders cfg e, "", none⟩, st')
+                let tag := tagIn S cfg st' e (if asContainer then mediaLwsJson else ct)
+                (⟨201, ("location", childPath) :: writtenHeaders cfg e tag, "", none⟩, st')
   | "PATCH" =>
       let ct := (r.header? "content-type").map (fun c => ((c.splitOn ";").headD c).trim)
       match ct with
@@ -539,7 +648,7 @@ def stepPath (S : Store σ) (cfg : Config) (r : Request) (st : σ) : Response ×
             | some e =>
                 if e.kind.isContainer then
                   (problem 409 "a container representation is server-managed" target, st)
-                else match preconditionFailure r existing (some (etagFor e e.contentType)) none with
+                else match preconditionsOn S cfg st r existing with
                   | some resp => (resp, st)
                   | none =>
                       match (String.fromUTF8? r.content).map parseJson with
@@ -563,7 +672,8 @@ def stepPath (S : Store σ) (cfg : Config) (r : Request) (st : σ) : Response ×
                                   let e' : Entry := { e with body := textBytes (toStringCompact d'),
                                                              mtime := S.now st, links }
                                   let st' := touchContainer S (S.tick (S.put st e')) target
-                                  (⟨204, writtenHeaders cfg e', "", none⟩, st')
+                                  (⟨204, writtenHeaders cfg e' (etagFor e' e'.contentType), "",
+                                    none⟩, st')
   | "DELETE" =>
       if isRoot then
         (problem 405 "the storage root cannot be deleted" target (allowHdr .storageRoot), st)
@@ -571,7 +681,7 @@ def stepPath (S : Store σ) (cfg : Config) (r : Request) (st : σ) : Response ×
         match existing with
         | none => (problem 404 "no resource at this path" target, st)
         | some e =>
-            match preconditionFailure r existing (some (etagFor e e.contentType)) none with
+            match preconditionsOn S cfg st r existing with
             | some resp => (resp, st)
             | none =>
                 let recursive := ((r.header? "depth").map (fun d => d.trim.toLower)) == some "infinity"

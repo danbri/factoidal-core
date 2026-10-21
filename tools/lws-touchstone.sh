@@ -41,6 +41,11 @@
 #                    earl.ttl to (default: none)
 #   MVN              Maven command (default: mvn on PATH, else /opt/maven/bin/mvn,
 #                    else the Touchstone wrapper ./mvnw)
+#   LWS_PAGE_SIZE    the server's container page size, passed as
+#                    `lws-serve --page-size` (default 4). Touchstone's
+#                    pagination tests page a container of five members and
+#                    apply only when the server splits it into pages; at the
+#                    server default (100) they are inapplicable.
 #
 # NEEDS: git, JDK 21+, Maven (or network for ./mvnw), Node 22+, and the
 # Lean wasm module of npm/factoidal with the lws ops (as committed).
@@ -231,7 +236,8 @@ wait_for () {
 # start_server NAME DIR PORT BASE ARGS...
 start_server () {
   local name="$1" dir="$2" port="$3" base="$4"; shift 4
-  node "$SERVE" lws-serve "$dir" --port "$port" --host 127.0.0.1 --base "$base" "$@" \
+  node "$SERVE" lws-serve "$dir" --port "$port" --host 127.0.0.1 --base "$base" \
+    --page-size "${LWS_PAGE_SIZE:-4}" "$@" \
     > "$WORK/$name-server.log" 2>&1 &
   PIDS+=($!)
   wait_for "$WORK/$name-server.log" '^http://' 60 || {
