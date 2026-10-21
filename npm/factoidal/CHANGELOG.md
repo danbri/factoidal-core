@@ -183,6 +183,24 @@ var please. Again off by default but good to show we can."):
 - PUT on a linkset resource replaces the client links. Before, it answered
   405.
 
+### Unstable
+
+- ANTICIPATORY AND UNSTABLE, off by default: a type search results resource
+  (https://github.com/danbri/factoidal/issues/922). With
+  `listen({ searchResults: true })` or `factoidal lws-serve
+  --unstable-search-results`, a QUERY answer of the Type Search Service by an
+  authenticated agent carries `Content-Location` naming
+  `/.well-known/lws-type-search/results/<id>` (RFC 10008 section 2.3).
+  lws10-index defines no such resource; its path, lifetime, snapshot member
+  and behaviour are likely to change. A GET by the same agent and client lists
+  the QUERY's results that a new QUERY would still answer (paged, filtered by
+  current read access); anyone else gets 404; after `searchResultsTtl`
+  (600 s) 410. The storage description marks it with the extension member
+  `https://github.com/danbri/factoidal/issues/922#unstableResultsResource`.
+  `lwsStep` request documents may carry `random` (16 bytes, base64); the LWS
+  host sends it with every request. Decided in Lean
+  (`L4Factoidal/LWS/SearchResults.lean`).
+
 ### Performance
 
 - LWS and Solid PUT and GET of a large body

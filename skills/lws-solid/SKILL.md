@@ -62,6 +62,7 @@ is `500`, for a failure of the host itself.
 factoidal lws-serve   DIR (--issuer IRI[,IRI…] | --auth-config FILE | --insecure-no-auth)
                           [--owner WEBID] [--root-acl FILE] [--audience IRI]
                           [--port N] [--host ADDRESS] [--base IRI] [--page-size N]
+                          [--unstable-search-results]
 factoidal solid-serve DIR (--issuer IRI[,IRI…] | --auth-config FILE | --insecure-no-auth)
                           [--port N] [--host ADDRESS] [--base IRI] [--owner WEBID]
 ```
@@ -258,10 +259,49 @@ inapplicable (every test needs Authentication). Five of the six needed an
 AccessGrantService; with https://github.com/danbri/factoidal/issues/913
 they pass (authorization 39 pass, 0 fail, 1 inapplicable). The last one
 needs a `Content-Location` results resource, which the draft does not
-define. Whole runs: open 75 pass, 0 fail, 146 inapplicable; authorization
+define; it applies with the unstable option below. Whole runs: open 75 pass, 0 fail, 146 inapplicable; authorization
 186 pass, 0 fail, 35 inapplicable (out of 221 each);
 `docs/designissues/2026-10-21-lws-touchstone-run.md`, "Type index and type
 search".
+
+### Search results resource: ANTICIPATORY AND UNSTABLE, off by default (https://github.com/danbri/factoidal/issues/922)
+
+`L4Factoidal/LWS/SearchResults.lean`. lws10-index defines no such resource;
+it only says a server that exposes one "MUST subject it to the same
+authorization filtering on every access and MUST prevent its reuse across
+clients". Everything here is likely to change.
+
+* On: config `searchResults: true` (`listen({ searchResults: true })`,
+  `lws-serve --unstable-search-results`, `tools/lws-touchstone.sh
+  --unstable-search-results`). Off: the step is `.pass` (theorem
+  `serverStep_off`) and no extension member is advertised.
+* RFC 10008 §2.3 makes the Content-Location resource "the results of the
+  query operation just performed"; §2.4 gives a re-run to Location. So the
+  record keeps the QUERY's result paths, and a GET lists those that a QUERY
+  with the same filter and the agent's current read access answers now (a
+  later resource never appears; a deleted, retyped or unreadable one
+  disappears). Theorem `resultsAnswer_sublist_query`.
+* Name `<base>.well-known/lws-type-search/results/<id>`, `<id>` the base64url
+  of 16 random bytes that the host passes as request member `random`
+  (`server.mjs` sends 16 bytes from `crypto.getRandomValues` with every
+  request). An anonymous QUERY, or one with no `random`, names nothing.
+* Only the creating agent with the same token `client_id`: everyone else
+  gets 404, the creator gets 410 after `searchResultsTtl` (600 s). At most
+  `searchResultsMax` (100) records; the oldest is removed first. Theorems
+  `resultsGet_creator_only`, `resultsGet_anonymous`, `insertBounded_length_le`.
+* Discovery: extension member
+  `https://github.com/danbri/factoidal/issues/922#unstableResultsResource`
+  on the `TypeSearchService` entry. Snapshot member `searchResults` (format
+  `lws-search-results-unstable-1`), sealed with the rest of the snapshot
+  under a storage key (issue 921).
+
+Tests: `L4Factoidal/LWS/SearchResultsTests.lean`; `tests/lws/draft-binding.mjs`
+rows "Type search results (unstable, issue 922)"; `tests/lws/authorization.mjs`
+row "Type search results resource (unstable, issue 922)" (bob cannot read
+alice's results URL; alice can; another client and an anonymous request get
+404; 410 after the lifetime); `tests/lws/encryption.mjs` (sealed and kept
+across a restart). Touchstone `type-search-content-location-protected`:
+`docs/designissues/2026-10-21-lws-touchstone-run.md` § Search results resource.
 
 ### Access requests and grants (https://github.com/danbri/factoidal/issues/913)
 
@@ -510,7 +550,9 @@ and runs its 221 LWS tests against `lws-serve`, with `--insecure-no-auth`
 (`open`) and with authorization through Touchstone's reference
 authorization server (`auth`). It passes `--page-size 4`
 (`LWS_PAGE_SIZE`), so the pagination tests apply. `TOUCHSTONE_SRC` names
-an existing clone to copy. Delete the Maven repository after a run (the
+an existing clone to copy. `--unstable-search-results` starts the server
+with the anticipatory results resource (issue 922; target ids get the
+suffix `-unstable`); a default run never sets it. Delete the Maven repository after a run (the
 script's work directory, about 260 MB). Results and every failure with its
 spec text: `docs/designissues/2026-10-21-lws-touchstone-run.md`.
 

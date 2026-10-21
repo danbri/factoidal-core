@@ -118,6 +118,10 @@ const CHECK_NAMES = [
   'with no key, a clear-text storage behaves as before'
 ]
 
+// ANTICIPATORY AND UNSTABLE (https://github.com/danbri/factoidal/issues/922):
+// the search results records ride in the snapshot, so they are sealed too.
+const RESULTS_CHECK = 'lws-serve: with a key, search results records (unstable, issue 922) are sealed and survive a restart'
+
 const CLI_CHECKS = [
   'CLI lws-serve with FACTOIDAL_LWS_KEY writes a sealed snapshot and reopens it',
   'CLI lws-serve with a wrong FACTOIDAL_LWS_KEY exits 1 with the message',
@@ -346,6 +350,46 @@ async function runCli () {
   })
 }
 
+async function runResults (engine) {
+  const { listen } = await import('../../npm/factoidal/lws/server.mjs')
+  const dir = mkdtempSync(join(tmpdir(), 'lws922-sealed-'))
+  const AGENT = 'https://alice.example/sealed-agent#me'
+  const TYPE = `https://ex.org/${SECRET_TEXT}#T`
+  const options = { engine, port: 0, now: 1000, insecureNoAuth: true, agent: AGENT, searchResults: true, dir, storageKey: KEY_HEX }
+  try {
+    await check(RESULTS_CHECK, async () => {
+      let path = null
+      let origin = null
+      const s = await listen(options)
+      try {
+        origin = s.origin
+        const w = await request(s.origin, 'PUT', '/r/a', { 'content-type': 'text/plain', prefer: 'set-linkset', link: `<${TYPE}>; rel="type"` }, 'x')
+        assert(w.status === 201, `PUT answered ${w.status}`)
+        const q = await fetch(`${s.origin}/.well-known/lws-type-search`, { method: 'QUERY', headers: { 'content-type': 'application/lws-query+json' }, body: JSON.stringify({ type: [TYPE] }) })
+        await q.text()
+        const loc = q.headers.get('content-location')
+        assert(q.status === 200 && loc !== null, `QUERY answered ${q.status}, Content-Location ${loc}`)
+        path = new URL(loc).pathname
+      } finally {
+        await s.close()
+      }
+      const text = readFileSync(join(dir, 'lws-state.json'), 'utf8')
+      assert(text.indexOf('searchResults') < 0 && text.indexOf(AGENT) < 0 && text.indexOf(path.split('/').pop()) < 0,
+        'the sealed file shows the results record in clear text')
+      const t = await listen({ ...options, baseIri: `${origin}/` })
+      try {
+        const g = await fetch(`${t.origin}${path}`)
+        const j = await g.json()
+        assert(g.status === 200 && j.items.length === 1 && j.items[0].id === `${origin}/r/a`, `after the restart GET answered ${g.status} ${JSON.stringify(j)}`)
+      } finally {
+        await t.close()
+      }
+    })
+  } finally {
+    rmSync(dir, { recursive: true, force: true })
+  }
+}
+
 async function main () {
   const { loadEngine } = await import('../../npm/factoidal/bin/engine.mjs')
   let engine
@@ -366,9 +410,11 @@ async function main () {
   if (!sealing) {
     for (const s of SERVERS) for (const n of CHECK_NAMES) skip(`${s.label}: ${n}`, 'the module does not read storageKey (rebuild the wasm)')
     for (const n of CLI_CHECKS) skip(n, 'the module does not read storageKey (rebuild the wasm)')
+    skip(RESULTS_CHECK, 'the module does not read storageKey (rebuild the wasm)')
     return
   }
   for (const s of SERVERS) await runServer(s, engine)
+  await runResults(engine)
   await runCli()
 }
 
