@@ -52,6 +52,9 @@ structure OpenSolid where
   the configuration named neither `auth` nor `insecureNoAuth`, and the
   requester is the handle configuration's agent, as before issue 899. -/
   oidc : Option Oidc.OidcConfig := none
+  /-- The storage key (issue 921): `solidSnapshot` seals the snapshot under
+  it, exactly as `lwsSnapshot` does. -/
+  storageKey : Option ByteArray := none
 
 initialize solidCounter : IO.Ref Nat ← IO.mkRef 0
 initialize solidTable : IO.Ref (Std.HashMap String OpenSolid) ← IO.mkRef ∅
@@ -63,7 +66,7 @@ def unknownSolidHandle (h : String) : String :=
 first slice serves public resources (see `L4Factoidal/Solid/README.md`). -/
 def serverConfigOfJson (text : String) :
     Except String (ServerConfig × Nat × Option String × Option MemState ×
-      Option Oidc.OidcConfig) :=
+      Option Oidc.OidcConfig × Option ByteArray) :=
   match openConfigOfJson text with
   | .error e => .error e
   | .ok oc =>
@@ -93,12 +96,13 @@ def serverConfigOfJson (text : String) :
           let enforce := match j? with
             | some j => (j.getBool? "enforceWac").getD wacDefault
             | none => false
-          .ok ({ lws := oc.cfg, enforceWac := enforce }, oc.now, oc.rootAcl, oc.snapshot, oidc)
+          .ok ({ lws := oc.cfg, enforceWac := enforce }, oc.now, oc.rootAcl, oc.snapshot, oidc,
+               oc.storageKey)
 
 def solidOpen (configJson : String) : IO String := do
   match serverConfigOfJson configJson with
   | .error e => pure (errJson e)
-  | .ok (cfg, now, rootAcl, snapshot, oidc) =>
+  | .ok (cfg, now, rootAcl, snapshot, oidc, storageKey) =>
       let n ← solidCounter.modifyGet fun n => (n + 1, n + 1)
       let h := s!"solid{n}"
       -- The storage root advertises an LDN inbox (Solid Protocol §6, LDN
@@ -106,7 +110,7 @@ def solidOpen (configJson : String) : IO String := do
       -- its inbox with 201, and a container with no representation answers
       -- 404 (Solid Protocol §5.3).
       let mem := snapshot.getD (memPut (initialStorage now rootAcl) (inboxEntry now))
-      solidTable.modify (·.insert h { cfg, mem, oidc })
+      solidTable.modify (·.insert h { cfg, mem, oidc, storageKey })
       pure (okWith [ ("handle", .string h)
                    , ("root", .string rootPath)
                    , ("storage", .string cfg.lws.baseIri) ])
@@ -196,12 +200,12 @@ def solidFetched (h docJson : String) : IO String := do
                     | .refused why => okWith [("refused", .string why)]
               | _, _, _ => pure (errJson "fetched: members \"kind\", \"key\" and \"url\" are required")
 
-/-- `solidSnapshot(handle)`: the durable form of the storage, as
-`lwsSnapshot`. -/
-def solidSnapshot (h : String) : IO String := do
+/-- `solidSnapshot(handle[, optionsJson])`: the durable form of the storage,
+as `lwsSnapshot`, sealed when the handle has a storage key. -/
+def solidSnapshot (h : String) (optsJson : String := "") : IO String := do
   match (← solidTable.get)[h]? with
   | none => pure (unknownSolidHandle h)
-  | some open_ => pure (okWith [("snapshot", snapshotJson open_.mem)])
+  | some open_ => pure (snapshotAnswer open_.storageKey optsJson (snapshotJson open_.mem))
 
 def solidClose (h : String) : IO String := do
   let table ← solidTable.get

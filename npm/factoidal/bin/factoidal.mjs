@@ -344,6 +344,14 @@ start. The engine decides the snapshot format and refuses a snapshot
 path with a dot segment or other traversal form
 (formal/lean4/L4Factoidal/LWS/Snapshot.lean).
 
+Encryption at rest (off by default): when the environment variable
+FACTOIDAL_LWS_KEY holds a 32-byte key (64 hex digits, or 43 characters of
+base64url), the snapshot is sealed with ChaCha20-Poly1305 (HACL*) under a
+new random nonce for every write, and authenticated when the storage is
+opened. A wrong key, a changed or truncated file, a clear-text file with the
+variable set, or a sealed file without it stops the start with a message.
+It protects the file on disk only (formal/lean4/L4Factoidal/LWS/SnapshotSeal.lean).
+
   --port N        the port to bind; 0 takes an ephemeral one (default 3000)
   --host ADDRESS  the address to bind (default 127.0.0.1)
   --base IRI      the absolute IRI the storage root maps to
@@ -399,6 +407,14 @@ changed it (temporary file, fsync, rename), and read back on the next
 start. The engine decides the snapshot format and refuses a snapshot
 path with a dot segment or other traversal form
 (formal/lean4/L4Factoidal/LWS/Snapshot.lean).
+
+Encryption at rest (off by default): when the environment variable
+FACTOIDAL_LWS_KEY holds a 32-byte key (64 hex digits, or 43 characters of
+base64url), the snapshot is sealed with ChaCha20-Poly1305 (HACL*) under a
+new random nonce for every write, and authenticated when the storage is
+opened. A wrong key, a changed or truncated file, a clear-text file with the
+variable set, or a sealed file without it stops the start with a message.
+It protects the file on disk only (formal/lean4/L4Factoidal/LWS/SnapshotSeal.lean).
 
   --port N        the port to bind; 0 takes an ephemeral one (default 3000)
   --host ADDRESS  the address to bind (default 127.0.0.1)

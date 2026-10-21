@@ -56,7 +56,7 @@
 // stay distinct.
 
 import { loadEngine } from '../../bin/engine.mjs'
-import { readSnapshot, persistIfChanged } from '../../lws/persist.mjs'
+import { readSnapshot, persistIfChanged, storageKeyText } from '../../lws/persist.mjs'
 
 /** The ops this host needs from the engine. */
 export const SOLID_SERVER_OPS = ['solidOpen', 'solidStep', 'solidClose', 'solidSnapshot',
@@ -169,6 +169,8 @@ function contentBytes (request) {
  * @param {string} [options.owner] the WebID the storage advertises
  * @param {string} [options.agent] the WebID of the requesting agent
  * @param {boolean} [options.realClock] stamp each request with this host's clock
+ * @param {string|null} [options.storageKey] the storage key text (64 hex digits or base64url);
+ *   default the environment variable FACTOIDAL_LWS_KEY; `null` reads no key
  * @param {object} [options.engine] an engine handle to reuse
  * @returns {Promise<{step: Function, close: Function, handle: string,
  *                    engine: object}>}
@@ -186,6 +188,10 @@ export async function openSolidStorage (options = {}) {
   if (options.insecureNoAuth === true) config.insecureNoAuth = true
   if (typeof options.enforceWac === 'boolean') config.enforceWac = options.enforceWac
   if (typeof options.rootAcl === 'string') config.rootAcl = options.rootAcl
+  // Encryption at rest (issue 921), as the LWS host: the key text from
+  // `storageKey` or FACTOIDAL_LWS_KEY, passed unread; the engine decides.
+  const storageKey = storageKeyText(options.storageKey)
+  if (storageKey !== undefined) config.storageKey = storageKey
   // `dir` names the storage directory. The snapshot found there, if any,
   // is the storage to continue from; the engine checks it.
   const dir = typeof options.dir === 'string' ? options.dir : null
