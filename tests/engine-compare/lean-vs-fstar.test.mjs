@@ -9,11 +9,12 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { lean, fstar, rowMultiset } from './engines.mjs';
+import { lean, fstar, fstarRawEngine, rowMultiset } from './engines.mjs';
 // The npm package dropped matrix* and sigmoid* in 0.10.0 (owner, 2026-10-20);
 // the Lean ops stay and are reached through the hub's marshalling helper.
 import { demoMathsFor } from '../../docs/web/hub/assets/demo-maths.mjs';
 const leanMaths = demoMathsFor(() => lean.loadEngine());
+const fstarMaths = demoMathsFor(async () => fstarRawEngine());
 
 const REPO = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..', '..');
 
@@ -37,7 +38,13 @@ test('same join, same row multiset', async () => {
 
 test('same RDFC-1.0 canonical N-Quads for a graph with blank nodes', async () => {
   const ttl = '@prefix : <http://x/> . :a :p [ :q "v" ; :r [ :s 1 ] ] . _:z :p :a .';
-  assert.equal(await lean.canonicalize(ttl), await fstar.canonicalize(ttl));
+  // Both engines canonicalize the same N-Quads text through their own
+  // canonicalizeToNQuads op (the F* entry has no Dataset rdfc writer).
+  const nq = (await lean.parse(ttl, { format: 'turtle' })).toString('nquads');
+  const leanOut = (await lean.loadEngine()).call('canonicalizeToNQuads', [nq]);
+  const fstarOut = fstarRawEngine().call('canonicalizeToNQuads', [nq]);
+  assert.equal(leanOut.ok, true, JSON.stringify(leanOut));
+  assert.equal(leanOut.nquads, fstarOut.nquads);
 });
 
 // DESCRIBE: the Lean engine answers the Concise Bounded Description; the F*
@@ -74,14 +81,14 @@ test('matrix functions: same results on the same inputs', async () => {
   const matrices = [[[1, 2], [3, 4]], [[1, 2, 3], [4, 5, 6]], [[[1, 2], 0], [0, [1, 2]]],
     [[2, 0, 1], [1, 3, 2], [1, 1, 1]], [[1, [1, 0]], [3, 4]], [[1, 2], [3]], []];
   for (const m of matrices) {
-    assert.deepEqual(await leanMaths.matrixDeterminant(m), await fstar.matrixDeterminant(m),
+    assert.deepEqual(await leanMaths.matrixDeterminant(m), await fstarMaths.matrixDeterminant(m),
       `matrixDeterminant ${JSON.stringify(m)}`);
   }
   const pairs = [[[1, 2, 3], [4, 5, 6]], [[1, 0, 0], [0, 1, 0]], [[1, 2], [3, 4]], [[1, 2, 3], [4, 5]],
     [[[1, 2], 1], [2, [1, 3]]], [[1, [1, 0]], [2, 3]]];
   for (const [a, b] of pairs) {
     for (const fn of ['matrixScalarProduct', 'matrixVectorProduct', 'matrixOuterProduct']) {
-      assert.deepEqual(await leanMaths[fn](a, b), await fstar[fn](a, b), `${fn} ${JSON.stringify([a, b])}`);
+      assert.deepEqual(await leanMaths[fn](a, b), await fstarMaths[fn](a, b), `${fn} ${JSON.stringify([a, b])}`);
     }
   }
 });
@@ -92,10 +99,10 @@ test('sigmoidPoints and sigmoidFormulaMathml: identical digits and markup', asyn
     { k: '2.5', x0: '-1.25', l: '3', xmin: '-4', xmax: '4', n: 16 },
     { k: '0.5', x0: '3', l: '1', xmin: '0', xmax: '10', n: 10 },
   ]) {
-    assert.deepEqual(await leanMaths.sigmoidPoints(params), await fstar.sigmoidPoints(params),
+    assert.deepEqual(await leanMaths.sigmoidPoints(params), await fstarMaths.sigmoidPoints(params),
       JSON.stringify(params));
   }
-  assert.equal(await leanMaths.sigmoidFormulaMathml(), await fstar.sigmoidFormulaMathml());
+  assert.equal(await leanMaths.sigmoidFormulaMathml(), await fstarMaths.sigmoidFormulaMathml());
 });
 
 // ------------------------------------------------------------ VCDM 2.0

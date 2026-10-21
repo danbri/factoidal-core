@@ -24,6 +24,19 @@ function loadFstarEntry() {
 }
 
 export const fstar = buildApi({ engineName: 'fstar-npm-entry', loadEntry: loadFstarEntry });
+
+/** The F* entry as a raw `call(op, args)` engine, for ops the npm API no
+ *  longer wraps (matrix*, sigmoid*: dropped from the package in 0.10.0). */
+export function fstarRawEngine() {
+  const abi = loadFstarEntry();
+  return {
+    call(op, args) {
+      if (typeof abi[op] !== 'function') throw new Error(`F* entry has no op ${op}`);
+      const r = abi[op](...args);
+      return typeof r === 'string' ? JSON.parse(r) : r;
+    },
+  };
+}
 export { lean };
 
 /** One binding row (Map<string, Term>) as a stable string. */
