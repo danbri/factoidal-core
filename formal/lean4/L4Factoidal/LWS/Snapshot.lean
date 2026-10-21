@@ -40,7 +40,6 @@ the reader makes and the clock invariant).
 -/
 import L4Factoidal.LWS.Store
 import L4Factoidal.LWS.Binding
-import Std.Data.String.ToNat
 
 namespace L4Factoidal.LWS.Base64
 
@@ -251,9 +250,60 @@ def snapshotJson (s : MemState) : Json :=
           , ("clock", .number (toString s.clock))
           , ("entries", .array (s.entries.map entryJson)) ]
 
+/-! ## Decimal numerals
+
+The clock and the modification times are JSON numbers. `decimal?` reads the
+digits `toString` writes (a loop with an accumulator), and `decimal_repr` is
+its round trip. A sign, a fraction or an exponent is refused. -/
+
+/-- Decimal digits to a number, a loop with an accumulator. -/
+def decAcc : List Char → Nat → Option Nat
+  | [], acc => some acc
+  | c :: cs, acc => if c.isDigit then decAcc cs (acc * 10 + (c.toNat - 48)) else none
+
+def decimal? (s : String) : Option Nat :=
+  if s.toList.isEmpty then none else decAcc s.toList 0
+
+theorem decAcc_append (l1 l2 : List Char) (acc : Nat) :
+    decAcc (l1 ++ l2) acc = (decAcc l1 acc).bind (decAcc l2) := by
+  induction l1 generalizing acc with
+  | nil => simp [decAcc]
+  | cons c cs ih =>
+      simp only [List.cons_append, decAcc]
+      split <;> simp [ih]
+
+theorem decAcc_repr (n : Nat) : ∀ acc, decAcc n.repr.toList acc = some (acc * 10 ^ n.repr.length + n) := by
+  induction n using Nat.strongRecOn with
+  | _ n ih =>
+    intro acc
+    by_cases h : n < 10
+    · rw [Nat.repr_of_lt h]
+      have hd : (Nat.digitChar n).isDigit = true := by simp [Nat.isDigit_digitChar, h]
+      simp [decAcc, hd, Nat.toNat_digitChar_sub_48_of_lt_ten h]
+    · have h10 : 10 ≤ n := by omega
+      have hm : n % 10 < 10 := Nat.mod_lt _ (by decide)
+      have h1 : (n % 10).repr.length = 1 := by
+        rw [Nat.repr_of_lt hm]; simp
+      rw [Nat.repr_eq_repr_append_repr h10, String.toList_append, decAcc_append,
+        ih (n / 10) (by omega) acc, Option.bind_some, ih (n % 10) (by omega),
+        String.length_append, h1]
+      congr 1
+      have hdm := Nat.div_add_mod n 10
+      rw [Nat.pow_one, Nat.pow_succ, Nat.add_mul, Nat.mul_assoc]
+      omega
+
+theorem decimal_repr (n : Nat) : decimal? n.repr = some n := by
+  have hne : n.repr.toList.isEmpty = false := by
+    cases h : n.repr.toList with
+    | nil => exact absurd (String.toList_eq_nil_iff.mp h) Nat.repr_ne_empty
+    | cons _ _ => rfl
+  simp only [decimal?, hne]
+  rw [decAcc_repr]; simp
+
+
 private def natField (j : Json) (k : String) : Option Nat :=
   match j.field? k with
-  | some (.number n) => n.toNat?
+  | some (.number n) => decimal? n
   | _ => none
 
 /-- The body of a snapshot entry: `bodyBase64` in format 2, the UTF-8
@@ -305,7 +355,7 @@ theorem entryOfJson_entryJson (e : Entry) (h : validTarget e.path = true) :
     entryOfJson (entryJson e) = .ok e := by
   obtain ⟨path, kind, ct, body, mtime⟩ := e
   simp_all [entryOfJson, entryJson, entryBodyOfJson, natField, Json.getString?, Json.field?,
-    Json.asString?, ResourceKind.ofName?_name, Base64.decode_encode, Nat.toNat?_repr]
+    Json.asString?, ResourceKind.ofName?_name, Base64.decode_encode, decimal_repr]
   simp [bind, Except.bind, h]
 
 theorem mapM_entryOfJson (es : List Entry) (h : ∀ e ∈ es, validTarget e.path = true) :
@@ -333,7 +383,7 @@ theorem memStateOfJson_snapshotJson (s : MemState)
   simp only [List.any_eq_true, Bool.and_eq_true, beq_iff_eq] at hroot
   obtain ⟨r, hr, hrp, hrk⟩ := hroot
   simp [memStateOfJson, snapshotJson, Json.getString?, Json.field?, Json.getArray?, Json.asString?,
-    Json.asArray?, natField, snapshotFormat, snapshotFormatV1, hm, Nat.toNat?_repr, bind,
+    Json.asArray?, natField, snapshotFormat, snapshotFormatV1, hm, decimal_repr, bind,
     Except.bind]
   have hnot : ¬ (∀ (x : Entry), x ∈ s.entries → x.path = rootPath →
       ¬x.kind = ResourceKind.storageRoot) := fun hall => hall r hr hrp hrk

@@ -1719,6 +1719,42 @@ checkseq "lwsStep drives create, read, update and delete" "$TMP/lws-crud.json" \
    and rs[7]["ok"] is True
    and rs[8]["ok"] is False and "unknown LWS handle" in rs[8]["error"]'
 
+# Bodies are bytes (https://github.com/danbri/factoidal/issues/889). Through
+# the string entry a body that is not UTF-8 travels as `bodyBase64` both
+# ways; a byte range may end inside a UTF-8 sequence; Turtle whose bytes are
+# not UTF-8 is refused with 400.
+python3 - "$TMP/lws-bytes.json" <<'EOF'
+import json, sys, base64
+req = lambda **kw: json.dumps(kw)
+b64 = lambda b: base64.b64encode(b).decode()
+png = bytes([0x89, 0x50, 0x4e, 0x47, 0x00, 0xff, 0x80, 0xfe])
+seq = [
+  ["lwsOpen",  [json.dumps({"now": 1000, "insecureNoAuth": True})]],
+  ["lwsStep",  ["lws1", req(method="PUT", target="/a.png",
+                            headers=[["content-type", "image/png"]], bodyBase64=b64(png))]],
+  ["lwsStep",  ["lws1", req(method="GET", target="/a.png")]],
+  ["lwsStep",  ["lws1", req(method="GET", target="/a.png", headers=[["range", "bytes=4-6"]])]],
+  ["lwsStep",  ["lws1", req(method="PUT", target="/e.txt",
+                            headers=[["content-type", "text/plain"]], body="é")]],
+  ["lwsStep",  ["lws1", req(method="GET", target="/e.txt", headers=[["range", "bytes=0-0"]])]],
+  ["lwsStep",  ["lws1", req(method="PUT", target="/x.ttl",
+                            headers=[["content-type", "text/turtle"]], bodyBase64=b64(b"<a> \xff ."))]],
+  ["lwsSnapshot", ["lws1"]],
+]
+json.dump(seq, open(sys.argv[1], "w"))
+EOF
+
+checkseq "lwsStep carries bodies as bytes (bodyBase64, byte ranges, 400 on non-UTF-8 Turtle)" "$TMP/lws-bytes.json" \
+  'rs[1]["response"]["status"] == 201
+   and rs[2]["response"]["bodyBase64"] == "iVBORwD/gP4="
+   and rs[3]["response"]["status"] == 206
+   and rs[3]["response"]["bodyBase64"] == "AP+A"
+   and dict(rs[3]["response"]["headers"])["content-range"] == "bytes 4-6/8"
+   and rs[5]["response"]["status"] == 206 and rs[5]["response"]["bodyBase64"] == "ww=="
+   and rs[6]["response"]["status"] == 400
+   and rs[7]["snapshot"]["format"] == "lws-snapshot-2"
+   and [e["bodyBase64"] for e in rs[7]["snapshot"]["entries"] if e["path"] == "/a.png"] == ["iVBORwD/gP4="]'
+
 # Authorization is on unless the configuration opts out
 # (https://github.com/danbri/factoidal/issues/886): with no "auth" and no
 # "insecureNoAuth", an anonymous write answers 401 with resource_metadata,
@@ -2981,7 +3017,8 @@ check "ops reflection (incl. handle ops via callIO)" ops "$TMP/empty.json" \
             "storeServeCommit","storeServeClose",
             "tdb2ServeKeys","tdb2ServeOpen"]) <= set(r["ops"])
    and r["blobIoOps"] == ["blobEcho","packFeed","packNext",
-                          "storeServeRequest","storeServeCommit"]'
+                          "storeServeRequest","storeServeCommit",
+                          "lwsStep","solidStep"]'
 
 check "unknown op -> error" definitelyNotAnOp "$TMP/empty.json" \
   'r["ok"] is False and "unknown op" in r["error"]'
