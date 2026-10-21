@@ -736,6 +736,29 @@ Rules:
   that either reader accepts is accepted, and a text that both refuse gets the RDF
   1.1 error (`L4Factoidal/RDF/DatasetNormalize.lean`).
 
+## Defective test data (owner rule, 2026-10-21)
+
+Owner, verbatim: "Dont list bad tests as our failing".
+
+A test whose upstream data is defective is not a failure of this engine and
+is not an expected failure. Defective means one of: the test contradicts an
+approved test of the same suite under any rule that is not specific to the
+value; the expected output contradicts the normative text; or the test entry
+cannot be read (for example an undeclared prefix). Rules:
+
+- Report it apart, after the total: "N pass, M fail (out of T); K excluded
+  (defective test data)". It is not in pass, fail or T.
+- Each case prints `EXCLUDED <id>: defective test data, <issue URL>`. The
+  issue is open and gives the evidence (the conflicting test, the spec
+  section).
+- The guard stays: if the case passes, the run fails, so the exclusion
+  cannot outlive a corrected test.
+- Use it only with evidence. An engine shortfall stays an expected failure
+  (next section). Calling an engine defect "bad test data" is a false score.
+
+Model: `formal/lean4/Harness/CsvwValidateRun.lean`, test308,
+https://github.com/danbri/factoidal/issues/700.
+
 ## Expected failures (owner rule, 2026-09-07)
 
 A stated shortfall is a failing test plus an open issue; prose alone is not a

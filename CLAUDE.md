@@ -715,6 +715,18 @@ record of a shortfall. First instance: PRECIS for XMPP JIDs,
 <https://github.com/danbri/factoidal/issues/676>, with the `xfail` cases in `npm/factoidal/test/xmpp.test.mjs`.
 Conventions per test kind: `skills/test-suites/SKILL.md` § Expected failures.
 
+### Defective W3C test data is not our failure (owner, 2026-10-21)
+
+> "Dont list bad tests as our failing"
+
+A test with defective upstream data is reported apart, after the total, as
+"K excluded (defective test data)", with an open issue that gives the
+evidence. It is not in pass, fail or the total, and it is not an expected
+failure. The run still fails if the case passes. An engine shortfall is never
+put in this category. Rules: `skills/test-suites/SKILL.md` § Defective test
+data. First case: CSVW validation test308,
+https://github.com/danbri/factoidal/issues/700.
+
 ## Reading owner steers: prioritization is not prohibition
 
 The owner usually steers this project from a phone, between other

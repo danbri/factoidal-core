@@ -248,8 +248,11 @@ def runOne (dir : String) (e : VEntry) : IO (Option (Bool × List String)) := do
       let findings := structural ++ dataFindings
       return some (passes findings, (findings.filter (·.severity == .error)).map (·.message))
 
-/-- Cases that fail today for a recorded reason, each with the open issue
-that tracks it. Counted as `expected-fail`; one that passes fails the run.
+/-- Cases whose W3C test data is defective, each with the open issue that
+records the defect. They are NOT failures of this engine: they are reported
+as `excluded (defective test data)`, outside pass, fail and the total
+(owner, 2026-10-21: "Dont list bad tests as our failing"). One that passes
+fails the run, so the exclusion cannot outlive a corrected test.
 
 * test308 (`rdft:Proposed`) expects an ERROR for an unknown absolute datatype
   IRI. Metadata Vocabulary §5.7 with §4 makes it a WARNING, as the approved
@@ -304,7 +307,7 @@ def main (args : List String) : IO UInt32 := do
               IO.println s!"FAIL {e.id} ({bucket}): unexpected pass: remove it from expectedFailures and close {(xf.map (·.2)).getD ""}"
               xpass := e.id :: xpass
             else if !ok && xf.isSome then
-              IO.println s!"XFAIL {e.id} ({bucket}): expected failure, {(xf.map (·.2)).getD ""}"
+              IO.println s!"EXCLUDED {e.id} ({bucket}): defective test data, {(xf.map (·.2)).getD ""}"
               xfail := xfail + 1
             else if ok then
               IO.println s!"PASS {e.id} ({bucket})"
@@ -326,11 +329,13 @@ def main (args : List String) : IO UInt32 := do
       IO.println (Harness.Score.line "csvw-validation positive" posScore)
       IO.println (Harness.Score.line "csvw-validation warning" warnScore)
       IO.println (Harness.Score.line "csvw-validation negative" negScore)
-      -- Expected failures are counted apart: never as passes, never in
-      -- `fail`. Skill test-suites, section "Expected failures".
+      -- Defective test data is reported apart: never as a pass, never in
+      -- `fail`, never in the total. Skill test-suites, section
+      -- "Defective test data".
       IO.println (s!"csvw-validation: {total3.pass} pass, {total3.fail + xpass.length} fail, " ++
-        s!"{xfail} expected-fail, {total3.skip} skip, {total3.unsupported} unsupported " ++
-        s!"(out of {total3.total + xfail + xpass.length})")
+        s!"{total3.skip} skip, {total3.unsupported} unsupported " ++
+        s!"(out of {total3.total + xpass.length}); " ++
+        s!"{xfail} excluded (defective test data)")
       IO.println (Harness.Diag.line "csvw-validation" ({} : Harness.Diag))
       IO.println ""
       IO.println "A PositiveValidationTest / WarningValidationTest passes iff the"
