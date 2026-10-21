@@ -64,13 +64,17 @@ These shapes could not be kept:
   `XSD.JsValue.integerLexical_inLexicalSpace`,
   `XSD.JsValue.jsLiteral_number_double`, `XSD.JsValue.jsLiteral_number_integer`.
 
-### Known costs
+### Performance
 
-- Iterating a Dataset of 60,000 quads takes 334 ms; on main it took 214 ms
-  (+56%). The Lean op `datasetQuadsJson` takes 235 ms in wasm, against 165 ms
-  for the N-Quads writer. Tracked by https://github.com/danbri/factoidal/issues/900,
-  with the expected-failure check `test/dataset-iterate-speed.test.mjs`.
-  `match` and `has` did not get slower.
+- Dataset iteration reads the quads from the engine as one byte region (op
+  `datasetQuadsBin`: a term table in the delta-log v2 term codec and four
+  u32 indices per quad), decoded in JavaScript with `DataView` and
+  `TextDecoder`. 60,000 quads: 178–205 ms under load, against 214–280 ms in
+  0.10.0 and about the time of the N-Quads writer op in the same run.
+  Theorems `decodeBin_quadsBin` and `quadsBin_binSpec`
+  (`formal/lean4/L4Factoidal/RDF/QuadsBinTheorems.lean`) prove the region
+  reads back as exactly the dataset's quads, so no run-time check is made.
+  https://github.com/danbri/factoidal/issues/900
 
 ### Fixed
 
