@@ -107,6 +107,18 @@ gives only `propext`, `Classical.choice`, `Quot.sound`.
   hash per member, one node hash per pair). A write to a resource in a small
   container costs a few hashes per level above it.
 
+* Touchstone (`tools/lws-touchstone.sh`, pinned commit 10608723, 2026-10-21,
+  after the merge of the alternative configurations):
+  `--config both`: open 76 pass, 0 fail, 145 inapplicable; authorization 215
+  pass, 0 fail, 6 inapplicable (out of 221 each), unchanged by this work.
+  `--config both --merkle`: the same totals (76 and 215 pass, 0 fail).
+  `--config all --unstable-search-results`: 220 passed in at least one
+  configuration, 0 failed, 1 never applied (out of 221).
+* Other gates on the same build: `lake build` exit 0;
+  `tools/lean-unbuilt-modules.py --gate` exit 0 (832 of 832 modules reached);
+  `Wasm/native-smoke.sh` 375 pass, 0 fail (out of 375); `npm test` 536 pass,
+  0 fail, 2 skipped (out of 538); host-purity-lint 35 pass, 0 fail (out of 35).
+
 ## What remains of issue 919's seven use cases
 
 | use case | status after this step |
