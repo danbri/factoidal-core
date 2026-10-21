@@ -1,0 +1,7 @@
+factoidal-open: 70 pass, 0 fail, 0 cantTell, 151 inapplicable (out of 221)
+factoidal-open: reports in /tmp/lws911-touchstone/touchstone/runs/2026-10-21T163614Z-fa11baf7
+factoidal-auth: 146 pass, 0 fail, 0 cantTell, 75 inapplicable (out of 221)
+factoidal-auth: reports in /tmp/lws911-touchstone/touchstone/runs/2026-10-21T163623Z-26eccfe9
+factoidal-auth: of these, 40 tests (auth/*, core/authorization_server) exercise Touchstone's reference authorization server, not our storage server; 40 passed
+lws-touchstone: every configuration ran; no test failed
+exit=0

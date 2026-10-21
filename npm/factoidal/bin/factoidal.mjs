@@ -332,7 +332,7 @@ https://www.w3.org/TR/sparql11-service-description/`,
 
 usage: factoidal lws-serve DIR (--issuer IRI | --auth-config FILE | --insecure-no-auth)
                          [--owner WEBID] [--root-acl FILE] [--audience IRI]
-                         [--port N] [--host ADDRESS] [--base IRI]
+                         [--port N] [--host ADDRESS] [--base IRI] [--page-size N]
 
 Starts a Node HTTP server that answers every request through the engine's
 lwsStep operation.
@@ -348,6 +348,8 @@ path with a dot segment or other traversal form
   --host ADDRESS  the address to bind (default 127.0.0.1)
   --base IRI      the absolute IRI the storage root maps to
                   (default: the bound origin)
+  --page-size N   the engine's container page size (config member pageSize;
+                  default 100, 0 turns pagination off)
 
 Authorization (LWS editor's draft, section Authorization; one of the three
 is required):
@@ -365,7 +367,8 @@ is required):
                         that gives this agent Read, Write and Control
   --root-acl FILE       a Turtle root ACL for a new storage instead
   --audience IRI        the aud value tokens must carry (default: the
-                        storage root IRI)
+                        storage IRI, BASE.well-known/lws-storage, which
+                        every lws#storage link names)
 
 Requests carry an access token as "Authorization: Bearer TOKEN" (RFC 6750).
 The engine verifies its JWS signature (ES256, RS256 or EdDSA, with the
@@ -505,7 +508,7 @@ const VALUE_OPTIONS = {
   compact: new Set([]),
   serve: new Set(['port', 'host', 'query-path', 'gsp-path', 'file', 'layout', 'tdb2']),
   'lws-serve': new Set(['port', 'host', 'base', 'issuer', 'auth-config', 'owner', 'root-acl',
-    'audience']),
+    'audience', 'page-size']),
   'solid-serve': new Set(['port', 'host', 'base', 'owner', 'issuer', 'auth-config']),
   'solid-client': new Set(['body', 'file', 'content-type', 'interpret'])
 }
@@ -1198,6 +1201,16 @@ function servePort (options, fallback) {
   return port
 }
 
+// --page-size N: a CLI number, passed unchanged as the engine config member
+// `pageSize`; what a page holds is decided in L4Factoidal/LWS/Pagination.lean.
+function pageSizeOption (value) {
+  const n = Number(value)
+  if (!Number.isInteger(n) || n < 0) {
+    throw new UsageError(`--page-size must be a non-negative integer, not "${value}"`)
+  }
+  return n
+}
+
 function serveHost (options) {
   if (options.host === undefined) return '127.0.0.1'
   if (typeof options.host !== 'string' || options.host.length === 0) {
@@ -1326,6 +1339,7 @@ async function commandLwsServe (positional, options) {
       port: servePort(options, 3000),
       host: serveHost(options),
       ...(typeof options.base === 'string' ? { baseIri: options.base } : {}),
+      ...(options['page-size'] !== undefined ? { pageSize: pageSizeOption(options['page-size']) } : {}),
       ...(insecure ? { insecureNoAuth: true } : { auth }),
       ...(typeof options.owner === 'string' ? { owner: options.owner } : {}),
       ...(typeof options['root-acl'] === 'string'

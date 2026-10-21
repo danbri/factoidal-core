@@ -113,6 +113,58 @@ Linked Web Storage, three rules of the editor's draft (w3c/lws-protocol
   Peak memory of the 100,000-triple PUT and GET fell from 2,640 MiB to
   288 MiB. Scaling check: `node tests/lws/scaling.mjs`.
 
+### Fixed
+
+Seven defects of `lws-serve` that the Touchstone LWS conformance harness found
+(https://github.com/danbri/factoidal/issues/911; record:
+`docs/designissues/2026-10-21-lws-touchstone-run.md`). All are decided in
+Lean (`formal/lean4/L4Factoidal/LWS/`):
+
+- A POST or PUT with no content and no `Content-Type` is accepted
+  (`Operations.writeMediaType`). Before, it answered 400, so the draft's own
+  container-creation example (`POST`, `Content-Length: 0`, the
+  `lws#Container` type link) failed. An empty data resource made this way
+  has type `application/octet-stream`. Content without `Content-Type` still
+  answers 400.
+- The Turtle form of a container uses `http://schema.org/size`, as the
+  `application/lws+json` context and the core draft's examples do. Before,
+  it used `https://schema.org/size`, so the two forms were not RDF
+  isomorphic. The WG's `lws10-vocab/vocabulary.yml` declares
+  `https://schema.org/`; the conflict is recorded in `Binding.containerTurtle`.
+- A container's `ETag` carries the FNV-1a digest of its listing in the
+  negotiated media type (`Binding.containerTag`). Before, it was the
+  container's clock only, and a host with a real clock sets the clock to
+  the current second, so two changes in one second gave one strong tag.
+  `Last-Modified` is unchanged.
+- The `lws#storage` link of a 401 and the default token audience are the
+  storage description IRI `<base>.well-known/lws-storage`, the IRI every
+  other response links and the description's `id` (`Authorization.storageIri`).
+  Before, both were the storage root `<base>`.
+- `If-Unmodified-Since` is evaluated for every method (412 when the resource
+  changed after the date), and `If-Modified-Since` and `If-Unmodified-Since`
+  are compared as instants in all three HTTP-date formats of RFC 9110
+  §5.6.7 (`HttpDate.parseHttpDate`; theorem `unixOfCivil_civilOfUnix`).
+  Before, `If-Unmodified-Since` was ignored and `If-Modified-Since` matched
+  only the exact `Last-Modified` text.
+- A POST names its new resource with the first free name of the hint (or
+  `res<clock>`), `-1`, `-2`, ... (`Operations.childPathFor`, theorem
+  `childPathFor_fresh`). Before, a clash got the clock as its one suffix,
+  and under a real clock the third POST to one container in one second
+  REPLACED the second resource.
+- The Turtle form of a container gives a contained container no
+  `dcterms:modified`: the `application/lws+json` context defines
+  `modified` for a DataResource only, so the JSON item's `modified` of a
+  container is no triple, and the two forms must be RDF isomorphic.
+- `factoidal lws-serve --page-size N` passes `N` to the engine's
+  `pageSize`.
+- Result: Touchstone (221 tests) runs with no failure, open 70 pass, 0
+  fail, 151 inapplicable; with authorization 146 pass, 0 fail, 75
+  inapplicable.
+
+Breaking: an LWS access token must name the storage description IRI in
+`aud` (or the `--audience` given). A token for the storage root IRI is now
+refused with 401 `invalid_token`.
+
 ## 0.11.0 — 2026-10-21
 
 No RDF, SPARQL, datatype or IRI decision is made in JavaScript any more

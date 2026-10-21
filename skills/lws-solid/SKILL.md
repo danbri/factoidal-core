@@ -57,7 +57,7 @@ is `500`, for a failure of the host itself.
 ```
 factoidal lws-serve   DIR (--issuer IRI[,IRI…] | --auth-config FILE | --insecure-no-auth)
                           [--owner WEBID] [--root-acl FILE] [--audience IRI]
-                          [--port N] [--host ADDRESS] [--base IRI]
+                          [--port N] [--host ADDRESS] [--base IRI] [--page-size N]
 factoidal solid-serve DIR (--issuer IRI[,IRI…] | --auth-config FILE | --insecure-no-auth)
                           [--port N] [--host ADDRESS] [--base IRI] [--owner WEBID]
 ```
@@ -235,7 +235,19 @@ reads a body as text. Rules, all in Lean:
   with `Content-Range`, 416 with `bytes */len` (`rangeBytes`; theorem
   `range_selection_exact` in `Binding.lean`).
 * The ETag of a data resource is its clock and the FNV-1a digest of its
-  bytes (`etagFor`).
+  bytes (`etagFor`). The ETag of a container is its clock, the media suffix
+  and the FNV-1a digest of its listing in that media type (`containerTag`,
+  `Operations.tagIn`): a host with a real clock sets the clock to the
+  current second, so a tag from the clock alone did not change for two
+  changes in one second (https://github.com/danbri/factoidal/issues/911).
+* A POST takes the first free name of the hint (or `res<clock>`), `-1`,
+  `-2`, ... (`childPathFor`, theorem `childPathFor_fresh`). Never derive
+  uniqueness from the clock: under a real clock it repeats within a second,
+  and until 2026-10-21 the third POST in one second replaced the second
+  resource (issue 911, F6).
+* `If-Modified-Since` and `If-Unmodified-Since` are compared as instants,
+  in the three HTTP-date formats (`L4Factoidal/LWS/HttpDate.lean`, theorem
+  `unixOfCivil_civilOfUnix`); `If-Unmodified-Since` applies to every method.
 * Content whose media type is read as text (`rdfTextMedia`: Turtle,
   N-Triples, N-Quads, TriG, JSON-LD, N3, JSON Patch) and whose bytes are not
   UTF-8 gets 400 and is not stored (`rdfContentRefused`).
@@ -268,7 +280,9 @@ the draft's "Authorization" section (w3c/lws-protocol 9a08ff65):
   document: `resource`, `authorization_servers`, `bearer_methods_supported`.
 * `Authorization: Bearer <JWT>` (RFC 6750). The engine verifies the JWS
   under the trusted issuer's keys (ES256, RS256, EdDSA through the vendored
-  HACL\* code), then `iss`, `aud` contains the storage IRI, `exp`, `nbf`,
+  HACL\* code), then `iss`, `aud` contains the storage IRI (the storage
+  description `<base>.well-known/lws-storage`, the IRI of every
+  `lws#storage` link and of the 401's link; `storageIri`), `exp`, `nbf`,
   and `iat` not in the future, each with `leeway` (60 s).
 * Access is Web Access Control over the storage's `.acl` resources, with
   the token's `sub` as the agent: allowed, 403 `insufficient_scope` for an
@@ -295,6 +309,18 @@ From JavaScript:
 import { listen } from '@factoidal/core/lws'
 import { listen as solidListen } from '@factoidal/core/solid/server'
 ```
+
+## Third-party conformance: Touchstone
+
+`bash tools/lws-touchstone.sh [--config open|auth|both]` builds Touchstone
+(https://github.com/ebremer/touchstone, pinned commit; JDK 21 and Maven)
+and runs its 221 LWS tests against `lws-serve`, with `--insecure-no-auth`
+(`open`) and with authorization through Touchstone's reference
+authorization server (`auth`). It passes `--page-size 4`
+(`LWS_PAGE_SIZE`), so the pagination tests apply. `TOUCHSTONE_SRC` names
+an existing clone to copy. Delete the Maven repository after a run (the
+script's work directory, about 260 MB). Results and every failure with its
+spec text: `docs/designissues/2026-10-21-lws-touchstone-run.md`.
 
 ## Run the client
 

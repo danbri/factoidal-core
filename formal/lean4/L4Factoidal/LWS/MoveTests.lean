@@ -184,7 +184,7 @@ private def b64 (s : String) : String := Base64Url.encodeUtf8 s
 private def tokFor (sub : String) : String :=
   b64 "{\"alg\":\"ES256\",\"typ\":\"at+jwt\",\"kid\":\"k1\"}" ++ "." ++
   b64 ("{\"iss\":\"https://as.example\",\"sub\":\"" ++ sub ++
-    "\",\"aud\":\"http://localhost/\",\"exp\":1300,\"iat\":1000}") ++ "." ++
+    "\",\"aud\":\"http://localhost/.well-known/lws-storage\",\"exp\":1300,\"iat\":1000}") ++ "." ++
   Base64Url.encode "good".toUTF8
 
 private def acl (c : String) (modes : String) : String :=

@@ -580,6 +580,186 @@ def lwsGuardBinarySnapshot : Bool :=
    | .error _ => true | .ok _ => false)
 #guard lwsGuardBinarySnapshot
 
+/-! ## Touchstone defects (https://github.com/danbri/factoidal/issues/911) -/
+
+/-- One request with the store clock set to `t` first, as a host with a real
+clock does on every request (`Wasm/Ops/Lws.lean`, request member `now`). -/
+def runAt (t : Nat) (r : Request) (st : MemState) : Response × MemState :=
+  run r { st with clock := t }
+
+def lwsContainerLink : List (String × String) :=
+  [("link", "<https://www.w3.org/ns/lws#Container>; rel=\"type\"")]
+
+/-- F1. lws10-core `Operations/create-resource.md`: the container-creation
+example is a POST with `Content-Length: 0`, the type link and no
+`Content-Type`. RFC 9110 §8.3 asks for `Content-Type` only on a message with
+content. Such a POST creates the container; one with no content and no type
+link creates an empty data resource. -/
+def lwsGuardPostWithoutContent : Bool :=
+  let (c, st1) := run (req "POST" "/" lwsContainerLink) emptyStorage
+  let (d, st2) := run (req "POST" "/" [("slug", "empty")]) emptyStorage
+  let cPath := (hdr c "location").getD ""
+  c.status == 201 && cPath.endsWith "/" &&
+  (memLookup st1 cPath).map (fun e => (e.kind.isContainer, e.contentType)) ==
+    some (true, "text/turtle") &&
+  (run (req "GET" cPath) st1).1.status == 200 &&
+  d.status == 201 && hdr d "location" == some "/empty" &&
+  (memLookup st2 "/empty").map (fun e => (e.kind.isContainer, e.contentType, e.body.size)) ==
+    some (false, "application/octet-stream", 0)
+#guard lwsGuardPostWithoutContent
+-- Content without a Content-Type is still refused (Solid Protocol §2.1),
+-- for POST and for PUT, and nothing is stored.
+#guard
+  let (p, st) := run (req "POST" "/" [] "x") emptyStorage
+  p.status == 400 && st.entries.length == emptyStorage.entries.length
+#guard
+  let (p, st) := run (req "PUT" "/x" [] "x") emptyStorage
+  p.status == 400 && (memLookup st "/x").isNone
+-- A PUT with no content and no Content-Type creates the container it names.
+#guard
+  let (p, st) := run (req "PUT" "/e/" []) emptyStorage
+  p.status == 201 && (memLookup st "/e/").map (·.kind.isContainer) == some true
+
+/-- F2. lws10-core `lws-media-type.md` §LWS Profile: the Turtle form "MUST be
+RDF isomorphic to the `application/lws+json` representation", whose context
+gives `size` the IRI `http://schema.org/size`. -/
+def lwsGuardTurtleSchemaNamespace : Bool :=
+  let (_, st) := run (req "PUT" "/c/x" [("content-type", "text/plain")] "fourteen bytes") emptyStorage
+  let (t, _) := run (req "GET" "/c/" [("accept", "text/turtle")]) st
+  (t.body.splitOn "@prefix schema: <http://schema.org/> .").length == 2 &&
+  (t.body.splitOn "schema:size \"14\"^^xsd:long").length == 2 &&
+  (match parseTurtle t.body none .rdf11 with
+   | .ok g => g.length > 4
+   | .error _ => false)
+#guard lwsGuardTurtleSchemaNamespace
+#guard ((run (req "GET" "/alice/" [("accept", "text/turtle")]) populated).1.body.splitOn
+  "https://schema.org/").length == 1
+
+/-- F3. RFC 9110 §8.8.1: a strong validator "changes value whenever a change
+occurs to the representation data that would be observable in the content
+of a 200 (OK) response to GET". With the clock held at one second, as a host
+with a real clock holds it, a member's DELETE still changes the container's
+tag, and a tag read before the change no longer matches. -/
+def lwsGuardContainerTagSameSecond : Bool :=
+  let t := 1792595514
+  let (_, st0) := runAt (t - 10) (req "PUT" "/c/" turtle "") emptyStorage
+  let (_, st) := runAt t (req "POST" "/c/" [("content-type", "text/plain"), ("slug", "x")] "x") st0
+  let (g1, _) := runAt t (req "GET" "/c/") st
+  let tag1 := (hdr g1 "etag").getD ""
+  let (dl, st2) := runAt t (req "DELETE" "/c/x") st
+  let (g2, _) := runAt t (req "GET" "/c/") st2
+  let (n, _) := runAt t (req "GET" "/c/" [("if-none-match", tag1)]) st2
+  let (pm, _) := runAt t (req "PUT" "/c/" (("if-match", tag1) :: turtle) "") st2
+  dl.status == 204 && hdr g1 "last-modified" == hdr g2 "last-modified" &&
+  tag1 != "" && hdr g2 "etag" != some tag1 && n.status == 200 && pm.status == 412
+#guard lwsGuardContainerTagSameSecond
+-- An unchanged container keeps its tag, and that tag matches.
+#guard
+  let t := 1792595514
+  let (_, st) := runAt t (req "PUT" "/c/x" [("content-type", "text/plain")] "x") emptyStorage
+  let (g1, _) := runAt t (req "GET" "/c/") st
+  let (g2, _) := runAt t (req "GET" "/c/") st
+  let tag := (hdr g1 "etag").getD ""
+  tag != "" && hdr g2 "etag" == some tag &&
+  (runAt t (req "GET" "/c/" [("if-none-match", tag)]) st).1.status == 304
+-- Adding a member in the same second changes the tag too.
+#guard
+  let t := 1792595514
+  let (_, st0) := runAt (t - 10) (req "PUT" "/c/" turtle "") emptyStorage
+  let (_, st) := runAt t (req "POST" "/c/" [("content-type", "text/plain"), ("slug", "a")] "a") st0
+  let (g1, _) := runAt t (req "GET" "/c/") st
+  let (_, st2) := runAt t (req "POST" "/c/" [("content-type", "text/plain"), ("slug", "b")] "b") st
+  let (g2, _) := runAt t (req "GET" "/c/") st2
+  hdr g1 "last-modified" == hdr g2 "last-modified" && hdr g1 "etag" != hdr g2 "etag"
+
+/-- F5. RFC 9110 §13.1.4: "An origin server that evaluates an
+If-Unmodified-Since condition MUST NOT perform the requested method if the
+condition evaluates to false", for every method; §13.1.3 compares
+If-Modified-Since as a date. -/
+def lwsGuardIfUnmodifiedSince : Bool :=
+  let t := 1792595513
+  let (_, st) := runAt t (req "PUT" "/a" [("content-type", "text/plain")] "x") emptyStorage
+  let (g, _) := runAt t (req "GET" "/a") st
+  let lm := (hdr g "last-modified").getD ""
+  let epoch := "Thu, 01 Jan 1970 00:00:00 GMT"
+  let (g412, _) := runAt t (req "GET" "/a" [("if-unmodified-since", epoch)]) st
+  let (gOk, _) := runAt t (req "GET" "/a" [("if-unmodified-since", lm)]) st
+  let (put412, stP) := runAt t (req "PUT" "/a" [("content-type", "text/plain"),
+                                                ("if-unmodified-since", epoch)] "y") st
+  let (del412, stD) := runAt t (req "DELETE" "/a" [("if-unmodified-since", epoch)]) st
+  let (delOk, stD2) := runAt t (req "DELETE" "/a"
+    [("if-unmodified-since", "Sunday, 25-Oct-26 00:00:00 GMT")]) st
+  lm == "Wed, 21 Oct 2026 15:11:53 GMT" &&
+  g412.status == 412 && gOk.status == 200 &&
+  put412.status == 412 && (memLookup stP "/a").map (·.text) == some "x" &&
+  del412.status == 412 && (memLookup stD "/a").isSome &&
+  delOk.status == 204 && (memLookup stD2 "/a").isNone
+#guard lwsGuardIfUnmodifiedSince
+-- Ignored: a value that is not an HTTP-date, and the field beside If-Match
+-- (§13.2.2: If-Unmodified-Since is evaluated only without If-Match).
+#guard
+  let t := 1792595513
+  let (_, st) := runAt t (req "PUT" "/a" [("content-type", "text/plain")] "x") emptyStorage
+  let tag := (hdr (runAt t (req "GET" "/a") st).1 "etag").getD ""
+  (runAt t (req "GET" "/a" [("if-unmodified-since", "yesterday")]) st).1.status == 200 &&
+  (runAt t (req "GET" "/a" [("if-match", tag),
+    ("if-unmodified-since", "Thu, 01 Jan 1970 00:00:00 GMT")]) st).1.status == 200
+-- If-Modified-Since compares instants in all three formats: a later date in
+-- the obsolete forms gives 304, an earlier one 200, a bad one 200.
+#guard
+  let t := 1792595513
+  let (_, st) := runAt t (req "PUT" "/a" [("content-type", "text/plain")] "x") emptyStorage
+  (runAt t (req "GET" "/a" [("if-modified-since", "Thursday, 22-Oct-26 00:00:00 GMT")]) st).1.status
+    == 304 &&
+  (runAt t (req "GET" "/a" [("if-modified-since", "Thu Oct 22 00:00:00 2026")]) st).1.status
+    == 304 &&
+  (runAt t (req "GET" "/a" [("if-modified-since", "Tue, 20 Oct 2026 00:00:00 GMT")]) st).1.status
+    == 200 &&
+  (runAt t (req "GET" "/a" [("if-modified-since", "2026-10-22")]) st).1.status == 200
+-- The dates the server formats parse back to the same instant.
+#guard [0, 1, 86399, 86400, 951782400, 1000000000, 1792595513, 4102444800].all
+  (fun t => parseHttpDate 0 (httpDate t) == some (Int.ofNat t))
+
+/-- F6. LWS §Create Resource: the server assigns the name "while ensuring
+uniqueness and validity within the container". Five POSTs in one second (the
+clock held, as a host with a real clock holds it) create five resources;
+none replaces another (theorem `childPathFor_fresh`). -/
+def lwsGuardPostSameSecondUnique : Bool :=
+  let t := 1792595514
+  let (_, st0) := runAt (t - 10) (req "PUT" "/c/" turtle "") emptyStorage
+  let post (n : String) (s : MemState) := runAt t (req "POST" "/c/" [("content-type", "text/plain")] n) s
+  let (r1, s1) := post "1" st0
+  let (r2, s2) := post "2" s1
+  let (r3, s3) := post "3" s2
+  let (r4, s4) := post "4" s3
+  let (r5, s5) := post "5" s4
+  let locs := [r1, r2, r3, r4, r5].filterMap (hdr · "location")
+  let (g, _) := runAt t (req "GET" "/c/" [("accept", "application/lws+json")]) s5
+  [r1, r2, r3, r4, r5].all (·.status == 201) && locs.length == 5 &&
+  locs.eraseDups.length == 5 &&
+  (locs.map (fun l => (memLookup s5 l).map (·.text))) ==
+    [some "1", some "2", some "3", some "4", some "5"] &&
+  (g.body.splitOn "\"totalItems\":5").length == 2
+#guard lwsGuardPostSameSecondUnique
+-- The same with a Slug that is taken: `card`, then `card-1`, `card-2`.
+#guard
+  let (r1, s1) := run (req "POST" "/alice/" (("slug", "card") :: turtle) "n1") populated
+  let (r2, s2) := run (req "POST" "/alice/" (("slug", "card") :: turtle) "n2") s1
+  hdr r1 "location" == some "/alice/card-1" && hdr r2 "location" == some "/alice/card-2" &&
+  (memLookup s2 "/alice/card").map (·.text) == some "a"
+#guard freeName (fun n => n == "a" || n == "a-1") "a" 3 0 == some "a-2"
+#guard freeName (fun _ => true) "a" 3 0 == none
+
+-- F2, second part: a contained container has no `dcterms:modified` in the
+-- Turtle form, because the context maps `modified` only for a DataResource;
+-- a contained data resource has it.
+#guard
+  let (_, st) := run (req "PUT" "/c/inner/" turtle "") emptyStorage
+  let (_, st) := run (req "PUT" "/c/d" [("content-type", "text/plain")] "d") st
+  let (t, _) := run (req "GET" "/c/" [("accept", "text/turtle")]) st
+  (t.body.splitOn "<http://example.org/c/inner/> a lws:Container .\n").length == 2 &&
+  (t.body.splitOn "dcterms:modified").length == 2
+
 /-! ## The registry's own arithmetic -/
 
 #guard Conformance.registry.length == 19

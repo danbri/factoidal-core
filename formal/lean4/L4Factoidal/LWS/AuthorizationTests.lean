@@ -45,7 +45,7 @@ private def claimsWith (iss aud sub : String) (exp iat : Nat) (extra : String :=
   "\",\"client_id\":\"https://app.example/id\",\"jti\":\"j1\",\"exp\":" ++ toString exp ++
   ",\"iat\":" ++ toString iat ++ extra ++ "}"
 
-private def goodTok : String := tok (claimsWith issuerA "http://localhost/" alice 1300 1000)
+private def goodTok : String := tok (claimsWith issuerA "http://localhost/.well-known/lws-storage" alice 1300 1000)
 
 /-! ## RFC 9728 §3.1 metadata URL -/
 
@@ -65,6 +65,15 @@ private def goodTok : String := tok (claimsWith issuerA "http://localhost/" alic
 #guard validateToken stubV cfg acfg 1400 goodTok == .refused (.claims .expired)
 -- within the skew allowance it is still valid
 #guard validateToken stubV cfg acfg 1350 goodTok == .valid alice issuerA
+-- The storage IRI is the storage description's id, the same IRI every other
+-- response links as lws#storage (https://github.com/danbri/factoidal/issues/911, F4).
+#guard storageIri cfg acfg == "http://localhost/.well-known/lws-storage"
+#guard storageIri cfg acfg == iriOfPath cfg.baseIri storagePath
+#guard storageIri cfg { acfg with audience := some "https://s.example/" } == "https://s.example/"
+-- A token for the storage root container, a different resource, is refused.
+#guard validateToken stubV cfg acfg 1100
+    (tok (claimsWith issuerA "http://localhost/" alice 1300 1000)) ==
+  .refused (.claims .audienceMismatch)
 -- wrong audience
 #guard validateToken stubV cfg acfg 1100
     (tok (claimsWith issuerA "http://other.example/" alice 1300 1000)) ==
@@ -72,47 +81,47 @@ private def goodTok : String := tok (claimsWith issuerA "http://localhost/" alic
 -- audience as an array that includes the storage
 #guard validateToken stubV cfg acfg 1100
     (tok ("{\"iss\":\"https://as.example\",\"sub\":\"" ++ alice ++
-      "\",\"aud\":[\"x\",\"http://localhost/\"],\"exp\":1300,\"iat\":1000}")) ==
+      "\",\"aud\":[\"x\",\"http://localhost/.well-known/lws-storage\"],\"exp\":1300,\"iat\":1000}")) ==
   .valid alice issuerA
 -- untrusted issuer
 #guard validateToken stubV cfg acfg 1100
-    (tok (claimsWith "https://evil.example" "http://localhost/" alice 1300 1000)) ==
+    (tok (claimsWith "https://evil.example" "http://localhost/.well-known/lws-storage" alice 1300 1000)) ==
   .refused (.untrustedIssuer (some "https://evil.example"))
 -- bad signature, keys fetched recently: refused
 #guard validateToken stubV cfg acfg 1010
-    (tok (claimsWith issuerA "http://localhost/" alice 1300 1000) (sig := "evil")) ==
+    (tok (claimsWith issuerA "http://localhost/.well-known/lws-storage" alice 1300 1000) (sig := "evil")) ==
   .refused .badSignature
 -- bad signature, refresh interval passed: fetch the keys again (rotation)
 #guard validateToken stubV cfg acfg 1100
-    (tok (claimsWith issuerA "http://localhost/" alice 1300 1000) (sig := "evil")) ==
+    (tok (claimsWith issuerA "http://localhost/.well-known/lws-storage" alice 1300 1000) (sig := "evil")) ==
   .needKeys issuerA
 -- unknown kid, keys fetched recently: refused
 #guard validateToken stubV cfg acfg 1010
-    (tok (claimsWith issuerA "http://localhost/" alice 1300 1000) (kid := "k2")) ==
+    (tok (claimsWith issuerA "http://localhost/.well-known/lws-storage" alice 1300 1000) (kid := "k2")) ==
   .refused .noKey
 -- refreshInterval 0 still never fetches twice in one instant
 #guard validateToken stubV cfg
     { issuers := [{ issuer := issuerA, keys := [key1], fetchedAt := some 1100 }],
       refreshInterval := 0 } 1100
-    (tok (claimsWith issuerA "http://localhost/" alice 1300 1000) (sig := "evil")) ==
+    (tok (claimsWith issuerA "http://localhost/.well-known/lws-storage" alice 1300 1000) (sig := "evil")) ==
   .refused .badSignature
 #guard validateToken stubV cfg
     { issuers := [{ issuer := issuerA, keys := [key1], fetchedAt := some 1100 }],
       refreshInterval := 0 } 1101
-    (tok (claimsWith issuerA "http://localhost/" alice 1300 1000) (sig := "evil")) ==
+    (tok (claimsWith issuerA "http://localhost/.well-known/lws-storage" alice 1300 1000) (sig := "evil")) ==
   .needKeys issuerA
 -- iat in the future
 #guard validateToken stubV cfg acfg 1100
-    (tok (claimsWith issuerA "http://localhost/" alice 1300 1200)) ==
+    (tok (claimsWith issuerA "http://localhost/.well-known/lws-storage" alice 1300 1200)) ==
   .refused .issuedInFuture
 -- nbf in the future
 #guard validateToken stubV cfg acfg 1100
-    (tok (claimsWith issuerA "http://localhost/" alice 1300 1000 ",\"nbf\":1250")) ==
+    (tok (claimsWith issuerA "http://localhost/.well-known/lws-storage" alice 1300 1000 ",\"nbf\":1250")) ==
   .refused (.claims .notYetValid)
 -- iat absent
 #guard validateToken stubV cfg acfg 1100
     (tok ("{\"iss\":\"https://as.example\",\"sub\":\"" ++ alice ++
-      "\",\"aud\":\"http://localhost/\",\"exp\":1300}")) ==
+      "\",\"aud\":\"http://localhost/.well-known/lws-storage\",\"exp\":1300}")) ==
   .refused .issuedAtMissing
 -- not a JWS
 #guard validateToken stubV cfg acfg 1100 "abc" == .refused .notJws
@@ -177,7 +186,7 @@ private def proceeds (d : Decision) (who : Option String) : Bool :=
 #guard headerOf (decide stubV MemStore cfg acfg 1100 (req "PUT" "/private") st) "www-authenticate"
   == "Bearer resource_metadata=\"http://localhost/.well-known/oauth-protected-resource/private\""
 #guard headerOf (decide stubV MemStore cfg acfg 1100 (req "PUT" "/private") st) "link"
-  == "<http://localhost/>; rel=\"https://www.w3.org/ns/lws#storage\""
+  == "<http://localhost/.well-known/lws-storage>; rel=\"https://www.w3.org/ns/lws#storage\""
 -- Public read granted by the ACL, no token.
 #guard proceeds (decide stubV MemStore cfg acfg 1100 (req "GET" "/pub") st) none
 -- Owner with a valid token may write.
@@ -189,18 +198,18 @@ private def proceeds (d : Decision) (who : Option String) : Bool :=
   "Bearer resource_metadata=\"http://localhost/.well-known/oauth-protected-resource/private\", error=\"invalid_token\""
 -- Another agent with a valid token: 403 insufficient_scope.
 #guard statusOf (decide stubV MemStore cfg acfg 1100
-  (req "PUT" "/private" (bearer (tok (claimsWith issuerA "http://localhost/" bob 1300 1000)))) st)
+  (req "PUT" "/private" (bearer (tok (claimsWith issuerA "http://localhost/.well-known/lws-storage" bob 1300 1000)))) st)
   == 403
 -- Another agent may still read the public resource but not write it.
 #guard proceeds (decide stubV MemStore cfg acfg 1100
-  (req "GET" "/pub" (bearer (tok (claimsWith issuerA "http://localhost/" bob 1300 1000)))) st)
+  (req "GET" "/pub" (bearer (tok (claimsWith issuerA "http://localhost/.well-known/lws-storage" bob 1300 1000)))) st)
   (some bob)
 #guard statusOf (decide stubV MemStore cfg acfg 1100
-  (req "PUT" "/pub" (bearer (tok (claimsWith issuerA "http://localhost/" bob 1300 1000)))) st)
+  (req "PUT" "/pub" (bearer (tok (claimsWith issuerA "http://localhost/.well-known/lws-storage" bob 1300 1000)))) st)
   == 403
 -- Writing the ACL needs acl:Control; bob has none.
 #guard statusOf (decide stubV MemStore cfg acfg 1100
-  (req "PUT" "/.acl" (bearer (tok (claimsWith issuerA "http://localhost/" bob 1300 1000)))) st)
+  (req "PUT" "/.acl" (bearer (tok (claimsWith issuerA "http://localhost/.well-known/lws-storage" bob 1300 1000)))) st)
   == 403
 -- A non-Bearer scheme: invalid_request.
 #guard headerOf (decide stubV MemStore cfg acfg 1100
@@ -244,7 +253,7 @@ private def ownerSt : MemState :=
   (some alice)
 #guard statusOf (decide stubV MemStore cfg acfg 1100 (req "GET" "/a/b") ownerSt) == 401
 #guard statusOf (decide stubV MemStore cfg acfg 1100
-  (req "GET" "/a/b" (bearer (tok (claimsWith issuerA "http://localhost/" bob 1300 1000)))) ownerSt)
+  (req "GET" "/a/b" (bearer (tok (claimsWith issuerA "http://localhost/.well-known/lws-storage" bob 1300 1000)))) ownerSt)
   == 403
 #guard ownerRootAcl "http://localhost/" "https://id.example/x> <y" == none
 
