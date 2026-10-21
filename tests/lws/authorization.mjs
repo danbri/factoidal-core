@@ -65,9 +65,35 @@ const CHECKS = [
   'Default: with no auth configuration an anonymous write answers 401',
   'Development mode: insecureNoAuth must be asked for, and then writes need no token',
   'CLI: factoidal lws-serve with no authorization option refuses to start',
+  'Notifications: an anonymous subscription request answers 401 with resource_metadata',
+  'Notifications: a subscription naming a resource the agent cannot read answers 403',
+  'Notifications: an agent may subscribe to what it can read, and not to that plus a private container',
+  'Notifications: a subscriber hears of an update it may read and never of a member it may not read',
   'Discovery: the 401 lws#storage link, the storage description id and every other lws#storage link name one IRI',
   'Validation: a token for the storage root container (not the storage) answers 401 invalid_token'
 ]
+
+/** A local webhook receiver that records every POST and answers 202. */
+async function startReceiver () {
+  const got = []
+  const server = http.createServer((req, res) => {
+    const chunks = []
+    req.on('data', (c) => chunks.push(c))
+    req.on('end', () => {
+      let body = null
+      try { body = JSON.parse(Buffer.concat(chunks).toString('utf8')) } catch (_error) { body = null }
+      got.push({ path: req.url, body })
+      res.statusCode = 202
+      res.end()
+    })
+  })
+  await new Promise((resolve) => server.listen(0, '127.0.0.1', resolve))
+  return {
+    origin: `http://127.0.0.1:${server.address().port}`,
+    got,
+    close () { return new Promise((resolve) => server.close(resolve)) }
+  }
+}
 
 function b64url (bytes) {
   return Buffer.from(bytes).toString('base64url')
@@ -259,7 +285,7 @@ async function main () {
       assert(r.status === 200, `answered ${r.status}`)
     })
 
-    await check(CHECKS[15], async () => {
+    await check(CHECKS[19], async () => {
       const storageLink = (link) => {
         const m = /<([^>]+)>; rel="https:\/\/www\.w3\.org\/ns\/lws#storage"/.exec(link || '')
         return m === null ? null : new URL(m[1], `${o}/`).href
@@ -279,9 +305,93 @@ async function main () {
       assert(iris.every((i) => i === aud), `storage IRIs ${JSON.stringify(iris)}, expected ${aud}`)
     })
 
-    await check(CHECKS[16], () => refusedWith(
+    await check(CHECKS[20], () => refusedWith(
       issuer.token(claims(issuer.origin, `${o}/`, ALICE), { key: issuer.keys[issuer.keys.length - 1] }),
       'invalid_token'))
+
+    // LWS §Subscription Authorization (https://github.com/danbri/factoidal/issues/890),
+    // decided by formal/lean4/L4Factoidal/LWS/Notifications.lean with Web
+    // Access Control over the storage's ACL resources.
+    const receiver = await startReceiver()
+    try {
+      // The key-rotation check above left only the newest key published.
+      const current = { key: issuer.keys[issuer.keys.length - 1] }
+      const aliceT = issuer.token(claims(issuer.origin, aud, ALICE), current)
+      const bobT = issuer.token(claims(issuer.origin, aud, BOB), current)
+      const endpoint = `${o}/.well-known/lws-subscriptions/`
+      const subscribe = (token, topic, hook) => fetch(endpoint, {
+        method: 'POST',
+        headers: { 'content-type': 'application/lws+json', ...(token ? bearer(token) : {}) },
+        body: JSON.stringify({ type: 'WebhookSubscription', topic, inbox: `${receiver.origin}/hook/${hook}` })
+      })
+      const write = async (path, body, contentType = 'text/plain', method = 'PUT') => {
+        const r = await fetch(`${o}${path}`, { method, headers: { 'content-type': contentType, ...bearer(aliceT) }, body })
+        await r.text()
+        assert(r.status === 201 || r.status === 204, `${method} ${path} answered ${r.status}`)
+        return r
+      }
+      const acl = (target, bobDefault) => '@prefix acl: <http://www.w3.org/ns/auth/acl#> .\n' +
+        `<${o}${target}.acl#owner> a acl:Authorization ; acl:agent <${ALICE}> ; acl:accessTo <${o}${target}> ;` +
+        (target.endsWith('/') ? ` acl:default <${o}${target}> ;` : '') +
+        ' acl:mode acl:Read, acl:Write, acl:Control .\n' +
+        `<${o}${target}.acl#bob> a acl:Authorization ; acl:agent <${BOB}> ; acl:accessTo <${o}${target}> ;` +
+        (bobDefault ? ` acl:default <${o}${target}> ;` : '') + ' acl:mode acl:Read .\n'
+
+      await check(CHECKS[15], async () => {
+        const r = await subscribe(null, [`${o}/private/a.txt`], 'anon')
+        await r.text()
+        assert(r.status === 401, `answered ${r.status}`)
+        assert((r.headers.get('www-authenticate') || '').indexOf('resource_metadata=') >= 0,
+          `WWW-Authenticate: ${r.headers.get('www-authenticate')}`)
+      })
+
+      await check(CHECKS[16], async () => {
+        const r = await subscribe(bobT, [`${o}/private/a.txt`], 'bob1')
+        await r.text()
+        assert(r.status === 403, `answered ${r.status}`)
+      })
+
+      await check(CHECKS[17], async () => {
+        await write('/shared/doc.txt', 'bob may read this')
+        await write('/shared/doc.txt.acl', acl('/shared/doc.txt', false), 'text/turtle')
+        const ok = await subscribe(bobT, [`${o}/shared/doc.txt`], 'bob2')
+        const j = await ok.json()
+        assert(ok.status === 201 && typeof j.subscription === 'string', `answered ${ok.status} ${JSON.stringify(j)}`)
+        const both = await subscribe(bobT, [`${o}/shared/doc.txt`, `${o}/private/`], 'bob3')
+        await both.text()
+        assert(both.status === 403, `with a private container: ${both.status}`)
+        // Negative: bob cannot see alice's subscriptions, nor alice bob's.
+        const mine = await (await fetch(endpoint, { headers: bearer(aliceT) })).json()
+        assert(!mine.items.some((i) => i.id === j.subscription), JSON.stringify(mine))
+        const other = await fetch(j.subscription, { headers: bearer(aliceT) })
+        await other.text()
+        assert(other.status === 404, `alice reading bob's subscription answered ${other.status}`)
+      })
+
+      await check(CHECKS[18], async () => {
+        await write('/box/', '', 'text/turtle')
+        await write('/box/.acl', acl('/box/', false), 'text/turtle')
+        await write('/box/visible.txt', 'bob may read this')
+        await write('/box/visible.txt.acl', acl('/box/visible.txt', false), 'text/turtle')
+        const r = await subscribe(bobT, [`${o}/box/`], 'box')
+        await r.text()
+        assert(r.status === 201, `bob subscribing to the box answered ${r.status}`)
+        const created = await write('/box/', 'not for bob', 'text/plain', 'POST')
+        const secret = new URL(created.headers.get('location'), `${o}/`).href
+        const peek = await fetch(secret, { headers: bearer(bobT) })
+        await peek.text()
+        assert(peek.status === 403, `bob reading the new member answered ${peek.status}`)
+        await write('/box/visible.txt', 'bob may read this, updated')
+        await (await running.storage()).settled()
+        const ids = receiver.got.filter((d) => d.path === '/hook/box').flatMap((d) =>
+          Array.isArray(d.body.activity) ? d.body.activity : [d.body.activity])
+        assert(ids.some((a) => a.type.includes('Update') && a.object.id === `${o}/box/visible.txt`),
+          JSON.stringify(ids))
+        assert(!ids.some((a) => a.object.id === secret), `bob heard of ${secret}`)
+      })
+    } finally {
+      await receiver.close()
+    }
   } finally {
     await running.close()
   }

@@ -253,8 +253,10 @@ audience, two audiences, wrong issuer, corrupted signature, unknown key,
 
 ## Rerun after fixes
 
-Rerun 2026-10-21 on branch `claude/wt-lws911`, after the repairs of
-https://github.com/danbri/factoidal/issues/911, with
+Rerun 2026-10-21 on branch `claude/wt-lws911` (the repairs of
+https://github.com/danbri/factoidal/issues/911, merged with `main` at
+6ef53014, which adds the notifications of
+https://github.com/danbri/factoidal/issues/890), with
 `bash tools/lws-touchstone.sh --config both` (no `--shim`), Touchstone at
 the same pinned commit 106087234aed2aab3f6bbf0485bd64095cc00fe5. The
 script now starts `lws-serve` with `--page-size 4` (`LWS_PAGE_SIZE`), so
@@ -264,14 +266,16 @@ the pagination tests apply. Reports:
 
 | configuration | tests | passed | failed | cantTell | inapplicable | MUST failures |
 |---|---:|---:|---:|---:|---:|---:|
-| ours, `--insecure-no-auth`, direct | 221 | 65 | 0 | 0 | 156 | 0 |
-| ours, default authorization, direct | 221 | 125 | 0 | 0 | 96 | 0 |
+| ours, `--insecure-no-auth`, direct | 221 | 70 | 0 | 0 | 151 | 0 |
+| ours, default authorization, direct | 221 | 146 | 0 | 0 | 75 | 0 |
 
 The script exits 0. Touchstone's report says CONFORMANT for both. In the
 authorization row, 40 passes test Touchstone's reference authorization
 server (`core/authorization_server` 9, `auth/cid` 22, `auth/oidc` 6,
 `auth/saml` 3), as before; the tests that send requests to our storage
-server are 85 pass, 0 fail.
+server are 106 pass, 0 fail. The same branch before the merge (no
+notifications) gave open 65 pass, 0 fail, 156 inapplicable and
+authorization 125 pass, 0 fail, 96 inapplicable (out of 221 each).
 
 What changed, per failure (all in `formal/lean4/L4Factoidal/LWS/`):
 
@@ -281,7 +285,7 @@ What changed, per failure (all in `formal/lean4/L4Factoidal/LWS/`):
 | F2, `https://schema.org/size` | `Binding.containerTurtle`: `schema:` is `http://schema.org/`. The comment names `lws10-core/container-representation.md`, `lws10-core/Operations/read-resource.md`, the 2026-07-14 vocabulary snapshot and `lws10-vocab/vocabulary.yml` (which says `https://`). | `lwsGuardTurtleSchemaNamespace` and a negative | draft-binding "LWS Profile" |
 | F3, container ETag in one second | `Binding.containerTag`, `Operations.tagIn`/`tagsIn`: the clock, the media suffix and the FNV-1a digest of the listing. `Last-Modified` unchanged. | `lwsGuardContainerTagSameSecond`, two more | draft-binding "Read: a container ETag changes ... same second" |
 | F4, two storage IRIs | `Authorization.storageIri` defaults to the storage description IRI `<base>.well-known/lws-storage`; the 401 `Link` uses it. The protected resource metadata `resource` stays the requested resource: `Authorization.html`, "The resource value in a protected resource metadata document identifies the requested resource, not the storage that contains it". | `storageIri` guards; a token for `<base>` is refused | authorization.mjs (2 new); draft-binding "Authorization: the 401 lws#storage link" |
-| F5, If-Unmodified-Since | `HttpDate.lean` (new): civil dates both ways and `parseHttpDate` for IMF-fixdate, rfc850-date and asctime-date; `Binding.preconditionFailure` evaluates If-Unmodified-Since for every method and If-Modified-Since as an instant, in the order of RFC 9110 §13.2.2. Theorems `daysFromCivil_civilOfDays` and `unixOfCivil_civilOfUnix`: every `Last-Modified` the server formats parses back to its instant. | `lwsGuardIfUnmodifiedSince`, three more; 23 guards in `HttpDate.lean` | draft-binding "Conditional requests" (2) |
+| F5, If-Unmodified-Since | `HttpDate.lean` (new): civil dates both ways and `parseHttpDate` for IMF-fixdate, rfc850-date and asctime-date; `Binding.preconditionFailure` evaluates If-Unmodified-Since for every method and If-Modified-Since as an instant, in the order of RFC 9110 §13.2.2. Theorems `eraDaysOfCivil_civilOfDays` and `unixOfCivil_civilOfUnix`: every `Last-Modified` the server formats parses back to its instant. | `lwsGuardIfUnmodifiedSince`, three more; 23 guards in `HttpDate.lean` | draft-binding "Conditional requests" (2) |
 
 The first rerun after F1 to F5 gave open 60 pass, 1 fail, 160
 inapplicable and authorization 120 pass, 1 fail, 100 inapplicable (out of
@@ -314,25 +318,31 @@ Remaining failures: none in either configuration.
 
 Inapplicable tests (inapplicable is not a pass and not a fail):
 
-* default authorization, 96: index services (40), access grants (17),
-  notifications (15 core, 11 webhook;
-  https://github.com/danbri/factoidal/issues/890), moving resources (11:
-  we describe no `MoveResource` capability), `linkset-put-405-when-unsupported`
-  (1: we support PUT on the linkset), `pagination-single-page` (1: it
-  applies only to a server that does NOT split a five-member container,
-  and the four multi-page tests apply only to one that does).
-* open, 156: the same 96, plus 60 tests that need the `Authentication`
-  capability (`core/storage_authorization` 19, `core/authorization_server`
-  9, `auth/*` 31, `core/discovery` 1).
+* default authorization, 75: index services (40), access grants (17),
+  moving resources (11: we describe no `MoveResource` capability),
+  notifications (4 core, 1 webhook: each first grants bob read access
+  through an AccessGrantService, which we do not offer,
+  https://github.com/danbri/factoidal/issues/913),
+  `linkset-put-405-when-unsupported` (1: we support PUT on the linkset),
+  `pagination-single-page` (1: it applies only to a server that does NOT
+  split a five-member container, and the four multi-page tests apply only
+  to one that does).
+* open, 151: the same 70 without the notification five, plus 81 tests
+  whose target capabilities the open configuration does not declare:
+  `Authentication` (`core/storage_authorization` 19,
+  `core/authorization_server` 9, `auth/*` 31, `core/discovery` 1) and
+  `ReachableFixtures` or `Authentication` (notifications, 10 core and 11
+  webhook).
 
-Gates on the branch: full `lake build` exit 0 (1770 jobs);
-`tools/lean-unbuilt-modules.py --gate` 815 of 815 modules reached;
-`Wasm/native-smoke.sh` 374 pass, 0 fail (out of 374); `npm test` 536
+Gates on the merged branch: full `lake build` exit 0 (1774 jobs);
+`tools/lean-unbuilt-modules.py --gate` 817 of 817 modules reached;
+`Wasm/native-smoke.sh` 375 pass, 0 fail (out of 375); `npm test` 536
 pass, 0 fail, 2 skipped (out of 538); `tests/lws/server.mjs` 8 pass,
-0 fail (out of 8); `authorization.mjs` 17 pass, 0 fail (out of 17);
-`binary-bodies.mjs` 20 pass, 0 fail (out of 20); `draft-binding.mjs` 34
-pass, 0 fail, 1 xfail (out of 35); `scaling.mjs` 6 pass, 0 fail (out of
-6); `tests/solid/server/protocol.mjs` 12 pass, 0 fail (out of 12);
+0 fail (out of 8); `authorization.mjs` 21 pass, 0 fail (out of 21);
+`binary-bodies.mjs` 20 pass, 0 fail (out of 20); `draft-binding.mjs` 43
+pass, 0 fail, 1 xfail (out of 44; the xfail is
+https://github.com/danbri/factoidal/issues/913); `scaling.mjs` 6 pass,
+0 fail (out of 6); `tests/solid/server/protocol.mjs` 12 pass, 0 fail (out of 12);
 `tests/solid/client/against-own-server.mjs` 7 pass, 0 fail (out of 7);
 `tests/solid/server/oidc.mjs` 21 pass, 0 fail (out of 21);
 `tools/solid-server-interop.sh` solid-crud-tests 27 pass, 0 fail, 8

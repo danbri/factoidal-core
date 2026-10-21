@@ -8,6 +8,12 @@ it, close it.
     -> {"ok":true,"response":{"status":N,"headers":[[n,v],…],"body":"…"}}
   lwsClose(handle)
     -> {"ok":true}
+  lwsDelivered(handle, {id, status, now?})
+    -> {"ok":true,"changed":B,"retry"?:{"delivery":{…},"after":SECONDS}}
+
+`lwsStep` also answers `"deliveries":[{id,url,headers,body},…]` when the
+step causes notifications (`L4Factoidal.LWS.Notifications`): the host POSTs
+each one exactly as given and reports the status to `lwsDelivered`.
 
 The JSON contract is `docs/lws-solid-conformance.md` § "wasm ABI"; the Node
 hosts under `npm/factoidal/lws/` code against that section.
@@ -29,6 +35,8 @@ import Wasm.Ops.Support
 import L4Factoidal.LWS.Operations
 import L4Factoidal.LWS.Snapshot
 import L4Factoidal.LWS.Authorization
+import L4Factoidal.LWS.Notifications
+import L4Factoidal.JOSE.Base64Url
 import L4Factoidal.Crypto.P256Native
 import L4Factoidal.Crypto.RsaNative
 import L4Factoidal.Crypto.Ed25519
@@ -126,6 +134,16 @@ structure OpenConfig where
   The default enforces authorization with no trusted issuer; the
   development mode is the explicit `"insecureNoAuth": true`. -/
   authz : Authorization.AuthzConfig := {}
+  /-- Does the storage offer notifications (LWS §Notifications)? On unless
+  the configuration says `"notifications": false`. -/
+  notifications : Bool := true
+  /-- Random bytes from the host (`entropy`, base64), read once at open:
+  the seed of the notification signing key when the snapshot holds none,
+  and of the run tag of activity identifiers. -/
+  entropy : Option ByteArray := none
+  /-- The subscriptions and the signing key of a snapshot written earlier. -/
+  notif : Option Notifications.NotifState := none
+  signingKey : Option ByteArray := none
 deriving Inhabited
 
 def openConfigOfJson (text : String) : Except String OpenConfig :=
@@ -163,7 +181,23 @@ def openConfigOfJson (text : String) : Except String OpenConfig :=
         let pageSize := match j.field? "pageSize" with
           | some (.number s) => (s.toNat?).getD 100
           | _ => 100
-        .ok { cfg := { baseIri, owner, agent, pageSize }, now, rootAcl, snapshot, authz }
+        let notifications := j.field? "notifications" != some (.bool false)
+        let entropy ← match j.getString? "entropy" with
+          | none => .ok none
+          | some t => match Base64.decode? t with
+            | some b => if b.size ≥ 16 then .ok (some b)
+                        else .error "config: \"entropy\" holds fewer than 16 bytes"
+            | none => .error "config: \"entropy\" is not base64"
+        let (notif, signingKey) ← match j.field? "snapshot" with
+          | some sj => match sj.field? "notifications" with
+            | none | some .null => .ok (none, none)
+            | some nj => do
+                let ns ← Notifications.notifStateOfJson nj
+                let key := (nj.getString? "signingKey").bind Base64.decode?
+                .ok (some ns, key.filter (·.size == 32))
+          | none => .ok (none, none)
+        .ok { cfg := { baseIri, owner, agent, pageSize }, now, rootAcl, snapshot, authz,
+              notifications, entropy, notif, signingKey }
 
 /-- The JWS verifiers over the vendored HACL* primitives (P-256 ECDSA,
 RSA PKCS#1 v1.5, Ed25519): `skills/crypto-policy`. -/
@@ -180,6 +214,18 @@ structure OpenStorage where
   cfg : Config
   mem : MemState
   authz : Authorization.AuthzConfig := {}
+  notif : Notifications.NotifState := {}
+  /-- The 32-byte Ed25519 secret key that signs webhook deliveries. -/
+  signingKey : Option ByteArray := none
+
+/-- The signer of a storage: Ed25519 (RFC 8032) through the vendored HACL*
+code, under the verification method its storage description publishes. -/
+def OpenStorage.signer (o : OpenStorage) : Option Notifications.Signer :=
+  match o.signingKey, o.cfg.notificationKeyX with
+  | some sk, some x =>
+      some { keyId := notificationKeyId o.cfg.baseIri x
+             sign := fun m => L4Factoidal.Crypto.Ed25519.sign sk m }
+  | _, _ => none
 
 initialize lwsCounter : IO.Ref Nat ← IO.mkRef 0
 initialize lwsTable : IO.Ref (Std.HashMap String OpenStorage) ← IO.mkRef ∅
@@ -207,10 +253,30 @@ def lwsOpen (configJson : String) : IO String := do
   | .ok oc =>
       let n ← lwsCounter.modifyGet fun n => (n + 1, n + 1)
       let h := s!"lws{n}"
+      let seeded (tag : String) : Option ByteArray :=
+        oc.entropy.map (fun e => L4Factoidal.Crypto.sha256 (tag.toUTF8 ++ e))
+      -- The signing key: the snapshot's, or one derived from the host's
+      -- entropy; with neither, deliveries are not signed (a SHOULD).
+      let signingKey := if oc.notifications then
+          oc.signingKey.orElse (fun _ => seeded "lws-notification-signing-key:") else none
+      let keyX := signingKey.bind (fun sk =>
+        let pk := L4Factoidal.Crypto.Ed25519.secretToPublic sk
+        if pk.size == 32 then some (L4Factoidal.JOSE.Base64Url.encode pk) else none)
+      let run := ((seeded "lws-activity-run:").map (fun d =>
+        L4Factoidal.Crypto.bytesToHex (d.extract 0 8))).getD ""
+      let notif := { (oc.notif.getD {}) with run }
       lwsTable.modify (·.insert h
-        { cfg := oc.cfg, mem := oc.snapshot.getD (initialStorage oc.now oc.rootAcl),
-          authz := oc.authz })
+        { cfg := { oc.cfg with notifications := oc.notifications, notificationKeyX := keyX },
+          mem := oc.snapshot.getD (initialStorage oc.now oc.rootAcl),
+          authz := oc.authz, notif, signingKey })
       pure (okWith [("handle", .string h), ("root", .string rootPath)])
+
+/-- A delivery request as the host receives it: POST `body` to `url` with
+exactly `headers`. -/
+def deliveryJson (d : Notifications.Delivery) : Json :=
+  .object [ ("id", .string d.id), ("url", .string d.url)
+          , ("headers", .array (d.headers.map (fun (n, v) => Json.array [.string n, .string v])))
+          , ("body", .string d.body) ]
 
 /-- One LWS step. `blob` is the content when the request came through the
 byte-region entry; the answer is then the envelope and the response content
@@ -237,19 +303,50 @@ def lwsStepWith (h requestJson : String) (blob : Option ByteArray) :
                 | some a => if open_.authz.insecureNoAuth then { open_.cfg with agent := some a }
                             else open_.cfg
                 | none   => open_.cfg
-              match Authorization.authorizedStep lwsVerifiers MemStore cfg open_.authz
-                      (now?.getD mem.clock) r mem with
+              match Notifications.serverStep lwsVerifiers MemStore cfg open_.authz
+                      open_.signer (now?.getD mem.clock) r mem open_.notif with
               | .inl (issuer, url) =>
                   pure (noBytes (okWith [("fetch", .object [("issuer", .string issuer),
                                                    ("url", .string url)])]))
-              | .inr (resp, mem') =>
-                  lwsTable.modify (·.insert h { open_ with mem := mem' })
+              | .inr (resp, mem', notif', ds) =>
+                  lwsTable.modify (·.insert h { open_ with mem := mem', notif := notif' })
                   -- Every mutation advances the clock (`StoreLaws.nowTick`),
                   -- so a changed clock is exactly "the storage changed"; a
-                  -- host that persists writes `lwsSnapshot` when this is true.
-                  pure (okWith [ ("response", jsonOfResponse resp blobOut)
-                               , ("changed", .bool (mem'.clock != mem.clock)) ],
+                  -- subscription change advances the notification revision.
+                  -- A host that persists writes `lwsSnapshot` when this is true.
+                  let changed := mem'.clock != mem.clock || notif'.revision != open_.notif.revision
+                  pure (okWith ([ ("response", jsonOfResponse resp blobOut)
+                                , ("changed", .bool changed) ] ++
+                                (if ds.isEmpty then []
+                                 else [("deliveries", .array (ds.map deliveryJson))])),
                         if blobOut then resp.content else ByteArray.empty)
+
+/-- `lwsDelivered(handle, {id, status, now})`: the host's report of one
+delivery attempt (status 0 when no answer came). Lean decides what it
+means (`Notifications.deliveryResult`): done, a retry after some seconds,
+or a failure that may deactivate the subscription. -/
+def lwsDelivered (h docJson : String) : IO String := do
+  match (← lwsTable.get)[h]? with
+  | none => pure (unknownLwsHandle h)
+  | some open_ =>
+      match parseJson docJson with
+      | .error e => pure (errJson s!"delivered: {toString e}")
+      | .ok j =>
+          match j.getString? "id" with
+          | none => pure (errJson "delivered: member \"id\" is required")
+          | some id =>
+              let num (k : String) (d : Nat) : Nat := match j.field? k with
+                | some (.number s) => (s.toNat?).getD d
+                | _ => d
+              let status := num "status" 0
+              let now := num "now" open_.mem.clock
+              let (ns', retry) := Notifications.deliveryResult open_.signer now id status open_.notif
+              lwsTable.modify (·.insert h { open_ with notif := ns' })
+              pure (okWith ([("changed", .bool (ns'.revision != open_.notif.revision))] ++
+                (match retry with
+                 | some (d, after) => [("retry", .object [ ("delivery", deliveryJson d)
+                                                        , ("after", .number (toString after)) ])]
+                 | none => [])))
 
 /-- `lwsStep(handle, requestJson)` through the string entry: the content
 travels in the document (`body` or `bodyBase64`). -/
@@ -298,10 +395,20 @@ of the storage (`L4Factoidal.LWS.Snapshot`). -/
 def lwsSnapshot (h : String) : IO String := do
   match (← lwsTable.get)[h]? with
   | none => pure (unknownLwsHandle h)
-  | some open_ => pure (okWith [("snapshot", snapshotJson open_.mem)])
+  | some open_ =>
+      -- The notification state rides in the snapshot as one more member,
+      -- which `memStateOfJson` does not read.
+      let notif : Json := match Notifications.notifStateJson open_.notif, open_.signingKey with
+        | .object fs, some sk => .object (fs ++ [("signingKey", .string (Base64.encode sk))])
+        | other, _ => other
+      let snap := match snapshotJson open_.mem with
+        | .object fs => Json.object (fs ++ [("notifications", notif)])
+        | other => other
+      pure (okWith [("snapshot", snap)])
 
 /-- The op names this module serves. -/
-def lwsOpNames : List String := ["lwsOpen", "lwsStep", "lwsClose", "lwsSnapshot", "lwsFetched"]
+def lwsOpNames : List String :=
+  ["lwsOpen", "lwsStep", "lwsClose", "lwsSnapshot", "lwsFetched", "lwsDelivered"]
 
 /-- The LWS and Solid ops that also take and give a byte region: the
 request content in, the response content out. -/

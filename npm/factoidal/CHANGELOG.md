@@ -38,8 +38,8 @@ generated from the engine's list.
 - `@factoidal/core/fn` `entail()` with an `x-ikl-*` regime rejects with code
   `regime.refused` and the message names `query`, the function that refuses.
 
-Linked Web Storage, two rules of the editor's draft (w3c/lws-protocol
-`9a08ff65`, 2026-10-19), both decided in Lean:
+Linked Web Storage, three rules of the editor's draft (w3c/lws-protocol
+`9a08ff65`, 2026-10-19), all decided in Lean:
 
 - Container pagination (§LWS Media Type, Pagination;
   https://github.com/danbri/factoidal/issues/887). A container with more
@@ -56,9 +56,31 @@ Linked Web Storage, two rules of the editor's draft (w3c/lws-protocol
   Server-managed relations (`linkset`, `type`, `format`, `size`, `modified`,
   `up`, `items`, `lws#storage`) answer 409; a malformed link answers 400.
   Client links are kept in the storage snapshot.
+- Notifications (§Notifications and the webhook notification suite
+  `lws10-notifications-webhook`;
+  https://github.com/danbri/factoidal/issues/890). The storage description
+  advertises a `NotificationService` (`subscriptionType`
+  `["WebhookSubscription"]`, endpoint `/.well-known/lws-subscriptions/`) and
+  an Ed25519 `JsonWebKey` verification method. An authenticated POST of a
+  `WebhookSubscription` (`topic`, `inbox`, optional `expires`) answers 201;
+  each topic must be readable by the agent (403 otherwise). Every successful
+  write gives Activity Streams 2.0 `Create` (with `target`), `Update` or
+  `Delete` (with `origin`) activities, sent only to subscribers who may read
+  the resource at that time, as an `application/lws+json` POST to the inbox,
+  signed with HTTP Message Signatures (RFC 9421) and `Content-Digest`
+  (RFC 9530). The endpoint lists the agent's subscriptions; GET and DELETE
+  manage one. A delivery answered 5xx, 408, 425, 429 or not at all is tried
+  up to three times; 410 or three failed deliveries deactivate the
+  subscription. Subscriptions and the signing key are kept in the storage
+  snapshot. The host makes the requests the engine names and reports each
+  status to the new op `lwsDelivered`; `listen`/`openLwsStorage` take
+  `notifications: false` to turn it off.
 
 ### Breaking changes
 
+- The storage description has a second service, `NotificationService`, and
+  `verificationMethod` and `authentication` members; its `ETag` is a digest
+  of the document.
 - A container listing is in increasing path order. Before, it was in the
   order of the store (newest write first).
 - A container with more than 100 members returns only its first 100 members
@@ -122,8 +144,8 @@ Lean (`formal/lean4/L4Factoidal/LWS/`):
   container is no triple, and the two forms must be RDF isomorphic.
 - `factoidal lws-serve --page-size N` passes `N` to the engine's
   `pageSize`.
-- Result: Touchstone (221 tests) runs with no failure, open 65 pass, 0
-  fail, 156 inapplicable; with authorization 125 pass, 0 fail, 96
+- Result: Touchstone (221 tests) runs with no failure, open 70 pass, 0
+  fail, 151 inapplicable; with authorization 146 pass, 0 fail, 75
   inapplicable.
 
 Breaking: an LWS access token must name the storage description IRI in

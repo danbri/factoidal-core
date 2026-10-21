@@ -12,6 +12,7 @@ Usage: `lake exe l4lws-probe`
 -/
 import L4Factoidal.LWS.Tests
 import L4Factoidal.Solid.Tests
+import L4Factoidal.LWS.NotificationsTests
 
 open L4Factoidal.LWS
 open L4Factoidal.LWS.Conformance
@@ -36,7 +37,8 @@ def checks : List (String × Bool) :=
     -- appeal to OpenID Connect, are decided by the Solid-OIDC layer
     -- (L4Factoidal/Solid/Server/Auth.lean); the check lives there.
   , ("lws-core-14", L4Factoidal.Solid.Tests.solidGuardSolidOidcDpop)
-  , ("lws-core-15", L4Factoidal.Solid.Tests.solidGuardSolidOidcDpop) ]
+  , ("lws-core-15", L4Factoidal.Solid.Tests.solidGuardSolidOidcDpop)
+  , ("lws-core-16", L4Factoidal.LWS.NotificationsTests.lwsGuardNotificationsDelivered) ]
 
 def check? (id : String) : Option Bool :=
   (checks.find? (fun (rid, _) => rid == id)).map (·.2)

@@ -21,6 +21,7 @@ import { join, dirname } from 'node:path'
 import http from 'node:http'
 import { spawn } from 'node:child_process'
 import { fileURLToPath } from 'node:url'
+import { createHash, createPublicKey, verify as verifySignature } from 'node:crypto'
 
 let passed = 0
 let failed = 0
@@ -104,6 +105,15 @@ const CHECKS = [
   'Metadata: a malformed Link answers 400; a Link without Prefer is not stored',
   'Metadata: PATCH on the linkset adds a client link; changing a server link answers 409',
   'Persistence: client links survive a restart',
+  'Notifications: the storage description advertises a NotificationService (WebhookSubscription) and a signing key',
+  'Notifications: a WebhookSubscription POST answers 201 with type and subscription, and the endpoint lists it',
+  'Notifications: a request without type, with an unadvertised type, or without topic answers 400',
+  'Notifications: Create, Update and Delete arrive with object id and type, target and origin, and no actor',
+  'Notifications: a delivery is an application/lws+json POST whose HTTP Message Signature verifies under the published key',
+  'Notifications: a change outside the topic, or to a sibling of a data resource topic, is not delivered',
+  'Notifications: DELETE of the subscription answers 204, then GET answers 404, and nothing more arrives',
+  'Notifications: a delivery answered 503 is tried again; deliveries answered 410 deactivate the subscription',
+  'Notifications: subscriptions survive a restart',
   'Create: POST with no content and no Content-Type creates a container (issue 911, F1)',
   'Create: POST with no content, no Content-Type and no type link creates an empty data resource; content without Content-Type is 400 (issue 911, F1)',
   'LWS Profile: the Turtle form uses http://schema.org/size, as the lws+json context does (issue 911, F2)',
@@ -114,6 +124,82 @@ const CHECKS = [
   'CLI: lws-serve --page-size N passes the page size to the engine',
   'Create: five POSTs to one container in one second create five resources (issue 911, F6)'
 ]
+
+/** A local webhook receiver: records every POST and answers with the
+ *  scripted statuses (the last one repeats), 202 by default. */
+async function startReceiver () {
+  const got = []
+  let script = [202]
+  const server = http.createServer((req, res) => {
+    const chunks = []
+    req.on('data', (c) => chunks.push(c))
+    req.on('end', () => {
+      const status = script.length > 1 ? script.shift() : script[0]
+      const text = Buffer.concat(chunks).toString('utf8')
+      let body = null
+      try { body = JSON.parse(text) } catch (_error) { body = text }
+      got.push({ method: req.method, path: req.url, headers: req.headers, text, body, status })
+      res.statusCode = status
+      res.end()
+    })
+  })
+  await new Promise((resolve) => server.listen(0, '127.0.0.1', resolve))
+  const origin = `http://127.0.0.1:${server.address().port}`
+  return {
+    origin,
+    got,
+    respond (list) { script = list.slice() },
+    close () { return new Promise((resolve) => server.close(resolve)) }
+  }
+}
+
+/** The activities of a recorded delivery, as an array. */
+function activitiesOf (delivery) {
+  const a = delivery.body && delivery.body.activity
+  if (Array.isArray(a)) return a
+  return a ? [a] : []
+}
+
+/** Every activity received at `path` on the receiver. */
+function received (receiver, path) {
+  return receiver.got.filter((d) => d.path === path).flatMap(activitiesOf)
+}
+
+/** RFC 9421: rebuild the signature base of a delivery to `url` and verify
+ *  it with the verification method the storage description publishes. */
+function verifyDelivery (delivery, url, description) {
+  const input = delivery.headers['signature-input'] || ''
+  const sigHeader = delivery.headers.signature || ''
+  const m = /^sig1=(\(([^)]*)\)(.*))$/.exec(input)
+  if (m === null) throw new Error(`Signature-Input ${input}`)
+  const components = m[2].split(' ').map((c) => c.replace(/"/g, ''))
+  const params = m[3]
+  const keyid = /;keyid="([^"]+)"/.exec(params)[1]
+  const created = /;created=(\d+)/.exec(params)
+  if (created === null) throw new Error('no created parameter')
+  const u = new URL(url)
+  const values = {
+    '@method': 'POST',
+    '@scheme': u.protocol.replace(':', ''),
+    '@authority': u.host,
+    '@path': u.pathname || '/'
+  }
+  const lines = components.map((c) => `"${c}": ${c.startsWith('@') ? values[c] : delivery.headers[c]}`)
+  lines.push(`"@signature-params": ${m[1]}`)
+  const base = Buffer.from(lines.join('\n'))
+  const vm = (description.verificationMethod || []).find((v) => v.id === keyid)
+  if (vm === undefined) throw new Error(`keyid ${keyid} is not a published verification method`)
+  if (!(description.authentication || []).includes(keyid)) throw new Error('key not referenced from authentication')
+  if (keyid.split('#')[0] !== description.id) throw new Error(`keyid ${keyid} is not under ${description.id}`)
+  const key = createPublicKey({ key: vm.publicKeyJwk, format: 'jwk' })
+  const sig = Buffer.from(/^sig1=:([^:]+):$/.exec(sigHeader)[1], 'base64')
+  const digest = 'sha-256=:' + createHash('sha256').update(delivery.text).digest('base64') + ':'
+  return {
+    components,
+    digestOk: delivery.headers['content-digest'] === digest,
+    verified: verifySignature(null, base, key, sig)
+  }
+}
 
 /** The target of the link with relation `rel` in a Link field value. */
 function linkTarget (field, rel) {
@@ -420,7 +506,7 @@ async function main () {
     // https://github.com/danbri/factoidal/issues/911: the five defects the
     // Touchstone harness found. The decisions are in Operations.lean,
     // Binding.lean, HttpDate.lean and Authorization.lean.
-    await check(CHECKS[25], async () => {
+    await check(CHECKS[34], async () => {
       const r = await rawRequest(o, 'POST', '/', {
         link: '<https://www.w3.org/ns/lws#Container>; rel="type"', 'content-length': '0'
       })
@@ -432,7 +518,7 @@ async function main () {
       assert(g.status === 200 && j.type === 'Container' && j.totalItems === 0, JSON.stringify(j))
     })
 
-    await check(CHECKS[26], async () => {
+    await check(CHECKS[35], async () => {
       const r = await rawRequest(o, 'POST', '/docs/', { slug: 'empty', 'content-length': '0' })
       assert(r.status === 201, `POST answered ${r.status}: ${r.body}`)
       const g = await fetch(`${o}/docs/empty`)
@@ -444,7 +530,7 @@ async function main () {
       assert(bad.status === 400, `content without Content-Type answered ${bad.status}`)
     })
 
-    await check(CHECKS[27], async () => {
+    await check(CHECKS[36], async () => {
       const r = await fetch(`${o}/docs/`, { headers: { accept: 'text/turtle' } })
       const body = await r.text()
       assert(body.indexOf('@prefix schema: <http://schema.org/> .') >= 0, body.slice(0, 300))
@@ -456,7 +542,7 @@ async function main () {
     })
 
     const epoch = 'Thu, 01 Jan 1970 00:00:00 GMT'
-    await check(CHECKS[30], async () => {
+    await check(CHECKS[39], async () => {
       await fetch(`${o}/ius.txt`, { method: 'PUT', headers: { 'content-type': 'text/plain' }, body: 'kept' }).then((r) => r.text())
       const g = await fetch(`${o}/ius.txt`, { headers: { 'if-unmodified-since': epoch } })
       await g.text()
@@ -474,7 +560,7 @@ async function main () {
       assert(after.status === 200 && (await after.text()) === 'kept', 'the resource was changed')
     })
 
-    await check(CHECKS[31], async () => {
+    await check(CHECKS[40], async () => {
       const lm = (await fetch(`${o}/ius.txt`, { method: 'HEAD' })).headers.get('last-modified')
       const t = Date.parse(lm)
       const later = new Date(t + 86400000)
@@ -498,11 +584,161 @@ async function main () {
       }
     })
 
-    await xfail('Notifications: the storage description advertises a NotificationService',
-      'https://github.com/danbri/factoidal/issues/890', async () => {
-        const d = await (await fetch(`${o}/.well-known/lws-storage`)).json()
-        assert(d.service.some((s) => s.type === 'NotificationService'), JSON.stringify(d.service))
+    // LWS 1.0 core §Notifications and the webhook notification suite
+    // (https://github.com/danbri/factoidal/issues/890). Decided by
+    // formal/lean4/L4Factoidal/LWS/Notifications.lean.
+    const receiver = await startReceiver()
+    const settle = async () => { await (await running.storage()).settled() }
+    try {
+      let description = null
+      let endpoint = null
+      await check(CHECKS[25], async () => {
+        const r = await fetch(`${o}/.well-known/lws-storage`, { headers: { accept: 'application/lws+cid' } })
+        description = await r.json()
+        const svc = description.service.find((s) => s.type === 'NotificationService')
+        assert(svc !== undefined, JSON.stringify(description.service))
+        assert(typeof svc.serviceEndpoint === 'string' && Array.isArray(svc.subscriptionType) &&
+          svc.subscriptionType.includes('WebhookSubscription'), JSON.stringify(svc))
+        endpoint = new URL(svc.serviceEndpoint, `${o}/`).href
+        const vm = description.verificationMethod && description.verificationMethod[0]
+        assert(vm && vm.type === 'JsonWebKey' && vm.publicKeyJwk.crv === 'Ed25519' &&
+          description.authentication.includes(vm.id), JSON.stringify(description))
       })
+
+      const subscribe = (body, contentType = 'application/lws+json') => fetch(endpoint, {
+        method: 'POST', headers: { 'content-type': contentType }, body: JSON.stringify(body)
+      })
+      const ctx = ['https://www.w3.org/ns/lws/v1']
+      await fetch(`${o}/watched/`, { method: 'PUT', headers: { 'content-type': 'text/turtle' }, body: '' }).then((r) => r.text())
+      await fetch(`${o}/watched/old.txt`, { method: 'PUT', headers: { 'content-type': 'text/plain' }, body: 'old' }).then((r) => r.text())
+      let subscription = null
+      await check(CHECKS[26], async () => {
+        const r = await subscribe({ '@context': ctx, type: 'WebhookSubscription', topic: [`${o}/watched/`], inbox: `${receiver.origin}/hook/a` })
+        const j = await r.json()
+        assert(r.status === 201, `answered ${r.status} ${JSON.stringify(j)}`)
+        assert(r.headers.get('content-type') === 'application/lws+json', r.headers.get('content-type'))
+        assert(j.type === 'WebhookSubscription' && typeof j.subscription === 'string', JSON.stringify(j))
+        subscription = j.subscription
+        const l = await fetch(endpoint, { headers: { accept: 'application/lws+json' } })
+        const listing = await l.json()
+        assert(listing.type === 'Container' && listing.items.some((i) => i.id === subscription), JSON.stringify(listing))
+        const g = await fetch(subscription)
+        const state = await g.json()
+        assert(g.status === 200 && state.active === true && state.inbox === `${receiver.origin}/hook/a`, JSON.stringify(state))
+      })
+
+      await check(CHECKS[27], async () => {
+        const bad = [
+          { '@context': ctx, topic: [`${o}/watched/`], inbox: `${receiver.origin}/hook/x` },
+          { '@context': ctx, type: 'TouchstoneUnadvertisedSubscription', topic: [`${o}/watched/`], inbox: `${receiver.origin}/hook/x` },
+          { '@context': ctx, type: 'WebhookSubscription', inbox: `${receiver.origin}/hook/x` }
+        ]
+        for (const b of bad) {
+          const r = await subscribe(b)
+          const j = await r.json()
+          assert(r.status === 400, `${JSON.stringify(b)} answered ${r.status}`)
+          assert(r.headers.get('content-type') === 'application/problem+json', JSON.stringify(j))
+        }
+      })
+
+      await check(CHECKS[28], async () => {
+        const c = await fetch(`${o}/watched/`, { method: 'POST', headers: { 'content-type': 'text/plain', slug: 'new.txt' }, body: 'new' })
+        await c.text()
+        const created = new URL(c.headers.get('location'), `${o}/`).href
+        await fetch(`${o}/watched/old.txt`, { method: 'PUT', headers: { 'content-type': 'text/plain' }, body: 'old, changed' }).then((r) => r.text())
+        await fetch(`${o}/watched/old.txt`, { method: 'DELETE' }).then((r) => r.text())
+        await settle()
+        const acts = received(receiver, '/hook/a')
+        const find = (type, id) => acts.find((a) => a.type.includes(type) && a.object.id === id)
+        const cr = find('Create', created)
+        const up = find('Update', `${o}/watched/old.txt`)
+        const de = find('Delete', `${o}/watched/old.txt`)
+        assert(cr && up && de, JSON.stringify(acts))
+        assert(cr.target === `${o}/watched/` && de.origin === `${o}/watched/`, JSON.stringify([cr, de]))
+        assert(cr.object.type.includes('DataResource') && Array.isArray(cr.type), JSON.stringify(cr))
+        assert(acts.every((a) => a.actor === undefined && typeof a.id === 'string' &&
+          /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}Z$/.test(a.published)), JSON.stringify(acts))
+        const envelope = receiver.got.find((d) => d.path === '/hook/a').body
+        assert(envelope.type === 'Notification' && envelope.storage === `${o}/.well-known/lws-storage`, JSON.stringify(envelope))
+      })
+
+      await check(CHECKS[29], async () => {
+        const d = receiver.got.find((x) => x.path === '/hook/a')
+        assert(d.method === 'POST' && d.headers['content-type'] === 'application/lws+json', JSON.stringify(d.headers))
+        const v = verifyDelivery(d, `${receiver.origin}/hook/a`, description)
+        for (const c of ['@method', '@scheme', '@authority', '@path', 'content-type', 'content-digest']) {
+          assert(v.components.includes(c), `not covered: ${c}`)
+        }
+        assert(v.digestOk, 'Content-Digest does not match the body')
+        assert(v.verified, 'the signature does not verify under the published key')
+        // Negative: a changed body does not verify.
+        const forged = { ...d, text: d.text + ' ', headers: { ...d.headers } }
+        assert(!verifyDelivery(forged, `${receiver.origin}/hook/a`, description).digestOk, 'a changed body kept its digest')
+        const moved = verifyDelivery(d, `${receiver.origin}/hook/elsewhere`, description)
+        assert(!moved.verified, 'the signature verified for another path')
+      })
+
+      await check(CHECKS[30], async () => {
+        const r = await subscribe({ '@context': ctx, type: 'WebhookSubscription', topic: [`${o}/watched/one.txt`], inbox: `${receiver.origin}/hook/b` })
+        await r.text()
+        assert(r.status === 201, `answered ${r.status}`)
+        const before = receiver.got.length
+        await fetch(`${o}/elsewhere.txt`, { method: 'PUT', headers: { 'content-type': 'text/plain' }, body: 'x' }).then((x) => x.text())
+        await fetch(`${o}/watched/sibling.txt`, { method: 'PUT', headers: { 'content-type': 'text/plain' }, body: 'x' }).then((x) => x.text())
+        await settle()
+        assert(received(receiver, '/hook/b').length === 0, JSON.stringify(received(receiver, '/hook/b')))
+        const ids = receiver.got.slice(before).flatMap(activitiesOf).map((a) => a.object.id)
+        assert(!ids.includes(`${o}/elsewhere.txt`), JSON.stringify(ids))
+        await fetch(`${o}/watched/one.txt`, { method: 'PUT', headers: { 'content-type': 'text/plain' }, body: 'x' }).then((x) => x.text())
+        await settle()
+        assert(received(receiver, '/hook/b').map((a) => a.object.id).join() === `${o}/watched/one.txt`,
+          JSON.stringify(received(receiver, '/hook/b')))
+      })
+
+      await check(CHECKS[31], async () => {
+        const d = await fetch(subscription, { method: 'DELETE' })
+        await d.text()
+        assert(d.status === 204, `DELETE answered ${d.status}`)
+        const g = await fetch(subscription)
+        await g.text()
+        assert(g.status === 404, `GET after DELETE answered ${g.status}`)
+        const before = received(receiver, '/hook/a').length
+        await fetch(`${o}/watched/after.txt`, { method: 'PUT', headers: { 'content-type': 'text/plain' }, body: 'x' }).then((x) => x.text())
+        await settle()
+        assert(received(receiver, '/hook/a').length === before, 'a cancelled subscription still delivers')
+      })
+
+      await check(CHECKS[32], async () => {
+        receiver.respond([503, 202])
+        const r = await subscribe({ '@context': ctx, type: 'WebhookSubscription', topic: [`${o}/retry.txt`], inbox: `${receiver.origin}/hook/c` })
+        await r.text()
+        await fetch(`${o}/retry.txt`, { method: 'PUT', headers: { 'content-type': 'text/plain' }, body: 'x' }).then((x) => x.text())
+        await settle()
+        const tries = receiver.got.filter((x) => x.path === '/hook/c').map((x) => x.status)
+        assert(tries.join() === '503,202', `statuses ${tries}`)
+        receiver.respond([410])
+        const s2 = await (await subscribe({ '@context': ctx, type: 'WebhookSubscription', topic: [`${o}/gone.txt`], inbox: `${receiver.origin}/hook/d` })).json()
+        for (const n of [1, 2]) {
+          await fetch(`${o}/gone.txt`, { method: 'PUT', headers: { 'content-type': 'text/plain' }, body: `v${n}` }).then((x) => x.text())
+          await settle()
+        }
+        const gone = receiver.got.filter((x) => x.path === '/hook/d')
+        assert(gone.length === 1 && gone[0].status === 410, `deliveries to a 410 hook: ${gone.length}`)
+        const state = await (await fetch(s2.subscription)).json()
+        assert(state.active === false, JSON.stringify(state))
+        receiver.respond([202])
+      })
+
+      // LWS §Access Requests and Grants is not implemented; the xfail turns
+      // the run red when it starts to pass.
+      await xfail('Access Requests: the storage description advertises an AccessGrantService',
+        'https://github.com/danbri/factoidal/issues/913', async () => {
+          const d = await (await fetch(`${o}/.well-known/lws-storage`)).json()
+          assert(d.service.some((s) => s.type === 'AccessGrantService'), JSON.stringify(d.service))
+        })
+    } finally {
+      await receiver.close()
+    }
   } finally {
     await running.close()
   }
@@ -511,7 +747,7 @@ async function main () {
   // second on every request, so two changes in one second carry one
   // Last-Modified. The sequence is repeated until both reads fall in the
   // same second, so the check exercises that case.
-  await check(CHECKS[28], async () => {
+  await check(CHECKS[37], async () => {
     const rc = await listen({ engine, port: 0, insecureNoAuth: true, realClock: true })
     try {
       let tried = 0
@@ -547,7 +783,7 @@ async function main () {
     }
   })
 
-  await check(CHECKS[33], async () => {
+  await check(CHECKS[42], async () => {
     const rc = await listen({ engine, port: 0, insecureNoAuth: true, realClock: true })
     try {
       await fetch(`${rc.origin}/five/`, { method: 'PUT', headers: { 'content-type': 'text/turtle' }, body: '' }).then((r) => r.text())
@@ -566,7 +802,7 @@ async function main () {
     }
   })
 
-  await check(CHECKS[29], async () => {
+  await check(CHECKS[38], async () => {
     const guarded = await listen({ engine, port: 0, auth: { issuers: [{ issuer: 'https://as.example' }] } })
     try {
       const r = await fetch(`${guarded.origin}/private`)
@@ -583,7 +819,7 @@ async function main () {
     }
   })
 
-  await check(CHECKS[32], async () => {
+  await check(CHECKS[41], async () => {
     const cliDir = mkdtempSync(join(tmpdir(), 'lws-page-size-'))
     const cli = fileURLToPath(new URL('../../npm/factoidal/bin/factoidal.mjs', import.meta.url))
     const child = spawn(process.execPath, [cli, 'lws-serve', cliDir, '--insecure-no-auth',
@@ -653,6 +889,40 @@ async function main () {
         assert(ls.linkset[0].license && ls.linkset[0].license[0].href === 'https://creativecommons.org/licenses/by/4.0/', JSON.stringify(ls))
       } finally {
         await second.close()
+      }
+    })
+
+    await check(CHECKS[33], async () => {
+      const receiver = await startReceiver()
+      try {
+        const first = await listen({ engine, port: 0, insecureNoAuth: true, now: 4000, dir })
+        let subscription
+        let keyX
+        try {
+          const d = await (await fetch(`${first.origin}/.well-known/lws-storage`)).json()
+          keyX = d.verificationMethod[0].publicKeyJwk.x
+          const r = await fetch(`${first.origin}/.well-known/lws-subscriptions/`, {
+            method: 'POST',
+            headers: { 'content-type': 'application/lws+json' },
+            body: JSON.stringify({ type: 'WebhookSubscription', topic: [`${first.origin}/kept/`], inbox: `${receiver.origin}/hook/p` })
+          })
+          subscription = (await r.json()).subscription
+          assert(r.status === 201, `subscribe answered ${r.status}`)
+        } finally {
+          await first.close()
+        }
+        const second = await listen({ engine, port: 0, insecureNoAuth: true, dir, baseIri: `${first.origin}/` })
+        try {
+          const g = await fetch(`${second.origin}${new URL(subscription).pathname}`)
+          await g.text()
+          assert(g.status === 200, `the subscription after a restart answered ${g.status}`)
+          const d = await (await fetch(`${second.origin}/.well-known/lws-storage`)).json()
+          assert(d.verificationMethod[0].publicKeyJwk.x === keyX, 'the signing key changed on restart')
+        } finally {
+          await second.close()
+        }
+      } finally {
+        await receiver.close()
       }
     })
 

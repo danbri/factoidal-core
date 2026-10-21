@@ -1,19 +1,19 @@
 # Touchstone conformance report
 
-**CONFORMANT**: only MUST tests decide conformance (definitions/EXECUTION.md section 9), and 0 failed or ended cantTell. SHOULD and MAY failures are advisory: 0. Inapplicable MUST tests are coverage this run did not have: 136.
+**CONFORMANT**: only MUST tests decide conformance (definitions/EXECUTION.md section 9), and 0 failed or ended cantTell. SHOULD and MAY failures are advisory: 0. Inapplicable MUST tests are coverage this run did not have: 131.
 
 | | |
 |---|---|
 | target | factoidal-open |
-| base URL | `http://127.0.0.1:34033/` |
-| run | `5b05311f` |
-| started | 2026-10-21T16:23:46.750860844Z |
+| base URL | `http://127.0.0.1:33123/` |
+| run | `fa11baf7` |
+| started | 2026-10-21T16:36:14.056065272Z |
 
 ## Results
 
 | passed | failed | cantTell | inapplicable |
 |---:|---:|---:|---:|
-| 65 | 0 | 0 | 156 |
+| 70 | 0 | 0 | 151 |
 
 ## Requirement coverage by level
 
@@ -29,77 +29,77 @@
 
 | test | level | outcome | duration |
 |---|---|---|---:|
-| `core/discovery#discovery-get-links-storageDescription` | MUST | passed | 191 ms |
-| `core/discovery#discovery-link-storage-on-data-resource` | MUST | passed | 228 ms |
-| `core/discovery#discovery-storage-description` | MUST | passed | 155 ms |
-| `core/discovery#discovery-storage-description-default-media-type` | MUST | passed | 167 ms |
-| `core/discovery#discovery-unauthorized-response-headers` | MUST | inapplicable | 1 ms |
-| `core/discovery#discovery-storage-root-is-container` | MUST | passed | 240 ms |
-| `core/discovery#discovery-storage-description-ids-are-uris` | MUST | passed | 156 ms |
-| `core/containers#getContainer` | MUST | passed | 147 ms |
-| `core/containers#createContainer` | MUST | passed | 523 ms |
-| `core/containers#createContainer-type-link` | SHOULD | passed | 154 ms |
-| `core/containers#getContainer-containmentIntegrity` | MUST | passed | 233 ms |
-| `core/containers#container-total-items-accurate` | SHOULD | passed | 370 ms |
-| `core/containers#contained-resource-type-values` | MUST | passed | 307 ms |
-| `core/containers#contained-resource-format` | MUST | passed | 350 ms |
-| `core/containers#contained-resource-size-modified` | SHOULD | passed | 338 ms |
-| `core/containers#container-conneg` | MUST | passed | 403 ms |
-| `core/containers#container-conneg-vary` | SHOULD | passed | 493 ms |
-| `core/containers#container-conneg-weighted` | MUST | passed | 156 ms |
-| `core/containers#container-head-parity` | MUST | passed | 240 ms |
-| `core/containers#delete-empty-container` | MUST | passed | 377 ms |
-| `core/containers#delete-non-empty-container-409` | MUST | passed | 396 ms |
-| `core/containers#delete-container-recursive` | MAY | passed | 401 ms |
-| `core/containers#delete-container-recursive-deep` | MAY | passed | 394 ms |
-| `core/containers#containment-hierarchy-consistent` | MUST | passed | 334 ms |
-| `core/containers#container-lws-profile-ld-json` | MUST | passed | 495 ms |
-| `core/containers#container-lws-profile-turtle` | MUST | passed | 469 ms |
-| `core/data_resources#createDataResource` | MUST | passed | 226 ms |
-| `core/data_resources#createDataResource-type-link` | SHOULD | passed | 177 ms |
-| `core/data_resources#create-post-twice-distinct` | SHOULD | passed | 236 ms |
-| `core/data_resources#create-in-missing-container-rejected` | MUST | passed | 185 ms |
-| `core/data_resources#create-in-missing-container-404` | SHOULD | passed | 139 ms |
-| `core/data_resources#create-server-managed-links-protected` | MUST | passed | 168 ms |
-| `core/data_resources#readDataResource` | MUST | passed | 213 ms |
-| `core/data_resources#data-resource-head-parity` | MUST | passed | 185 ms |
-| `core/data_resources#data-resource-range-request` | MUST | passed | 196 ms |
-| `core/data_resources#data-resource-range-unsatisfiable` | SHOULD | passed | 176 ms |
-| `core/data_resources#data-resource-accept-ranges` | MAY | passed | 140 ms |
-| `core/data_resources#updateDataResource` | MUST | passed | 263 ms |
-| `core/data_resources#patch-json-patch-baseline` | MUST | passed | 208 ms |
-| `core/data_resources#patch-json-patch-atomic` | MUST | passed | 169 ms |
-| `core/data_resources#deleteDataResource` | MUST | passed | 328 ms |
-| `core/data_resources#post-to-non-container-405` | SHOULD | passed | 231 ms |
-| `core/data_resources#error-problem-details` | SHOULD | passed | 153 ms |
-| `core/conditional_requests#conditional-get-304` | SHOULD | passed | 205 ms |
-| `core/conditional_requests#conditional-get-container-304` | SHOULD | passed | 258 ms |
-| `core/conditional_requests#conditional-get-stale-validator-200` | MUST | passed | 280 ms |
-| `core/conditional_requests#conditional-put-stale-if-match-412` | MUST | passed | 291 ms |
-| `core/conditional_requests#conditional-delete-stale-if-match-412` | SHOULD | passed | 248 ms |
-| `core/conditional_requests#update-changes-strong-etag` | MUST | passed | 215 ms |
-| `core/conditional_requests#delete-updates-parent-strong-etag` | MUST | passed | 270 ms |
-| `core/conditional_requests#conditional-get-if-modified-since-304` | SHOULD | passed | 220 ms |
-| `core/conditional_requests#conditional-get-if-unmodified-since-412` | SHOULD | passed | 211 ms |
-| `core/linksets#getLinkset` | MUST | passed | 218 ms |
-| `core/linksets#linkset-advertises-patch` | MUST | passed | 195 ms |
-| `core/linksets#linkset-conditional-412` | MUST | passed | 177 ms |
-| `core/linksets#linkset-put-405-when-unsupported` | MUST | inapplicable | 214 ms |
-| `core/linksets#linkset-removed-with-resource` | MUST | passed | 245 ms |
+| `core/discovery#discovery-get-links-storageDescription` | MUST | passed | 124 ms |
+| `core/discovery#discovery-link-storage-on-data-resource` | MUST | passed | 209 ms |
+| `core/discovery#discovery-storage-description` | MUST | passed | 110 ms |
+| `core/discovery#discovery-storage-description-default-media-type` | MUST | passed | 93 ms |
+| `core/discovery#discovery-unauthorized-response-headers` | MUST | inapplicable | 6 ms |
+| `core/discovery#discovery-storage-root-is-container` | MUST | passed | 387 ms |
+| `core/discovery#discovery-storage-description-ids-are-uris` | MUST | passed | 111 ms |
+| `core/containers#getContainer` | MUST | passed | 112 ms |
+| `core/containers#createContainer` | MUST | passed | 130 ms |
+| `core/containers#createContainer-type-link` | SHOULD | passed | 155 ms |
+| `core/containers#getContainer-containmentIntegrity` | MUST | passed | 229 ms |
+| `core/containers#container-total-items-accurate` | SHOULD | passed | 406 ms |
+| `core/containers#contained-resource-type-values` | MUST | passed | 357 ms |
+| `core/containers#contained-resource-format` | MUST | passed | 361 ms |
+| `core/containers#contained-resource-size-modified` | SHOULD | passed | 382 ms |
+| `core/containers#container-conneg` | MUST | passed | 398 ms |
+| `core/containers#container-conneg-vary` | SHOULD | passed | 137 ms |
+| `core/containers#container-conneg-weighted` | MUST | passed | 61 ms |
+| `core/containers#container-head-parity` | MUST | passed | 98 ms |
+| `core/containers#delete-empty-container` | MUST | passed | 258 ms |
+| `core/containers#delete-non-empty-container-409` | MUST | passed | 599 ms |
+| `core/containers#delete-container-recursive` | MAY | passed | 297 ms |
+| `core/containers#delete-container-recursive-deep` | MAY | passed | 437 ms |
+| `core/containers#containment-hierarchy-consistent` | MUST | passed | 364 ms |
+| `core/containers#container-lws-profile-ld-json` | MUST | passed | 437 ms |
+| `core/containers#container-lws-profile-turtle` | MUST | passed | 389 ms |
+| `core/data_resources#createDataResource` | MUST | passed | 221 ms |
+| `core/data_resources#createDataResource-type-link` | SHOULD | passed | 178 ms |
+| `core/data_resources#create-post-twice-distinct` | SHOULD | passed | 256 ms |
+| `core/data_resources#create-in-missing-container-rejected` | MUST | passed | 252 ms |
+| `core/data_resources#create-in-missing-container-404` | SHOULD | passed | 190 ms |
+| `core/data_resources#create-server-managed-links-protected` | MUST | passed | 176 ms |
+| `core/data_resources#readDataResource` | MUST | passed | 173 ms |
+| `core/data_resources#data-resource-head-parity` | MUST | passed | 140 ms |
+| `core/data_resources#data-resource-range-request` | MUST | passed | 228 ms |
+| `core/data_resources#data-resource-range-unsatisfiable` | SHOULD | passed | 138 ms |
+| `core/data_resources#data-resource-accept-ranges` | MAY | passed | 220 ms |
+| `core/data_resources#updateDataResource` | MUST | passed | 222 ms |
+| `core/data_resources#patch-json-patch-baseline` | MUST | passed | 290 ms |
+| `core/data_resources#patch-json-patch-atomic` | MUST | passed | 143 ms |
+| `core/data_resources#deleteDataResource` | MUST | passed | 393 ms |
+| `core/data_resources#post-to-non-container-405` | SHOULD | passed | 183 ms |
+| `core/data_resources#error-problem-details` | SHOULD | passed | 103 ms |
+| `core/conditional_requests#conditional-get-304` | SHOULD | passed | 172 ms |
+| `core/conditional_requests#conditional-get-container-304` | SHOULD | passed | 181 ms |
+| `core/conditional_requests#conditional-get-stale-validator-200` | MUST | passed | 272 ms |
+| `core/conditional_requests#conditional-put-stale-if-match-412` | MUST | passed | 267 ms |
+| `core/conditional_requests#conditional-delete-stale-if-match-412` | SHOULD | passed | 262 ms |
+| `core/conditional_requests#update-changes-strong-etag` | MUST | passed | 294 ms |
+| `core/conditional_requests#delete-updates-parent-strong-etag` | MUST | passed | 234 ms |
+| `core/conditional_requests#conditional-get-if-modified-since-304` | SHOULD | passed | 260 ms |
+| `core/conditional_requests#conditional-get-if-unmodified-since-412` | SHOULD | passed | 358 ms |
+| `core/linksets#getLinkset` | MUST | passed | 259 ms |
+| `core/linksets#linkset-advertises-patch` | MUST | passed | 213 ms |
+| `core/linksets#linkset-conditional-412` | MUST | passed | 208 ms |
+| `core/linksets#linkset-put-405-when-unsupported` | MUST | inapplicable | 218 ms |
+| `core/linksets#linkset-removed-with-resource` | MUST | passed | 319 ms |
 | `core/linksets#linkset-ready-at-create` | MUST | passed | 162 ms |
-| `core/linksets#linkset-up-not-redirected` | MUST | passed | 237 ms |
-| `core/linksets#linkset-patch-stays-linkset` | MUST | passed | 235 ms |
-| `core/linksets#linkset-patch-json-patch` | SHOULD | passed | 267 ms |
-| `core/linksets#linkset-patch-preserves-server-links` | MUST | passed | 187 ms |
-| `core/moving#discovery-move-capability` | MUST | inapplicable | 71 ms |
-| `core/moving#move-data-resource` | MUST | inapplicable | 184 ms |
-| `core/moving#move-updates-container-etags` | MUST | inapplicable | 142 ms |
-| `core/moving#move-keeps-identifier-content-and-links` | MUST | inapplicable | 164 ms |
-| `core/moving#move-invalid-destination-refused` | MUST | inapplicable | 182 ms |
-| `core/moving#move-container` | MUST | inapplicable | 205 ms |
-| `core/moving#move-container-into-itself-refused` | MUST | inapplicable | 124 ms |
-| `core/moving#move-container-refused-without-container-support` | MUST | inapplicable | 119 ms |
-| `core/moving#move-refused-without-capability` | MUST | passed | 231 ms |
+| `core/linksets#linkset-up-not-redirected` | MUST | passed | 233 ms |
+| `core/linksets#linkset-patch-stays-linkset` | MUST | passed | 231 ms |
+| `core/linksets#linkset-patch-json-patch` | SHOULD | passed | 200 ms |
+| `core/linksets#linkset-patch-preserves-server-links` | MUST | passed | 194 ms |
+| `core/moving#discovery-move-capability` | MUST | inapplicable | 95 ms |
+| `core/moving#move-data-resource` | MUST | inapplicable | 175 ms |
+| `core/moving#move-updates-container-etags` | MUST | inapplicable | 176 ms |
+| `core/moving#move-keeps-identifier-content-and-links` | MUST | inapplicable | 148 ms |
+| `core/moving#move-invalid-destination-refused` | MUST | inapplicable | 151 ms |
+| `core/moving#move-container` | MUST | inapplicable | 210 ms |
+| `core/moving#move-container-into-itself-refused` | MUST | inapplicable | 275 ms |
+| `core/moving#move-container-refused-without-container-support` | MUST | inapplicable | 184 ms |
+| `core/moving#move-refused-without-capability` | MUST | passed | 289 ms |
 | `core/moving#move-needs-create-in-destination` | MUST | inapplicable | 0 ms |
 | `core/moving#move-needs-delete-of-resource` | MUST | inapplicable | 0 ms |
 | `core/moving#move-notification` | MUST | inapplicable | 0 ms |
@@ -114,7 +114,7 @@
 | `core/storage_authorization#authz-non-owner-read-rejected` | MUST | inapplicable | 0 ms |
 | `core/storage_authorization#authz-non-owner-write-rejected` | MUST | inapplicable | 0 ms |
 | `core/storage_authorization#authz-non-owner-delete-rejected` | MUST | inapplicable | 0 ms |
-| `core/storage_authorization#authz-expired-token-rejected` | MUST | inapplicable | 0 ms |
+| `core/storage_authorization#authz-expired-token-rejected` | MUST | inapplicable | 1 ms |
 | `core/storage_authorization#authz-token-bad-signature-rejected` | MUST | inapplicable | 0 ms |
 | `core/storage_authorization#authz-token-alg-none-rejected` | MUST | inapplicable | 0 ms |
 | `core/storage_authorization#authz-token-unknown-key-rejected` | MUST | inapplicable | 0 ms |
@@ -122,7 +122,7 @@
 | `core/storage_authorization#authz-token-wrong-issuer-rejected` | MUST | inapplicable | 0 ms |
 | `core/storage_authorization#authz-token-not-yet-valid-rejected` | MUST | inapplicable | 0 ms |
 | `core/storage_authorization#authz-token-issued-in-future-rejected` | MUST | inapplicable | 0 ms |
-| `core/authorization_server#authz-server-metadata-well-known` | MUST | inapplicable | 10 ms |
+| `core/authorization_server#authz-server-metadata-well-known` | MUST | inapplicable | 0 ms |
 | `core/authorization_server#authz-metadata-subject-token-types` | SHOULD | inapplicable | 0 ms |
 | `core/authorization_server#authz-metadata-subject-token-types-are-uris` | MUST | inapplicable | 0 ms |
 | `core/authorization_server#authz-metadata-subject-identifier-types` | SHOULD | inapplicable | 0 ms |
@@ -131,10 +131,10 @@
 | `core/authorization_server#authz-token-exchange-missing-resource` | MUST | inapplicable | 0 ms |
 | `core/authorization_server#authz-token-exchange-missing-subject-token` | MUST | inapplicable | 0 ms |
 | `core/authorization_server#authz-issued-token-accepted-by-storage` | MUST | inapplicable | 0 ms |
-| `core/access_grants#access-grant-endpoint-is-container` | MUST | inapplicable | 62 ms |
+| `core/access_grants#access-grant-endpoint-is-container` | MUST | inapplicable | 66 ms |
 | `core/access_grants#access-grant-create` | MUST | inapplicable | 0 ms |
 | `core/access_grants#access-grant-revoke` | SHOULD | inapplicable | 0 ms |
-| `core/access_grants#getContainer-public-read` | MUST | inapplicable | 0 ms |
+| `core/access_grants#getContainer-public-read` | MUST | inapplicable | 1 ms |
 | `core/access_grants#readDataResource-public-read` | MUST | inapplicable | 0 ms |
 | `core/access_grants#access-grant-authenticated-agent` | MUST | inapplicable | 0 ms |
 | `core/access_grants#access-grant-extra-properties-accepted` | MAY | inapplicable | 0 ms |
@@ -148,11 +148,11 @@
 | `core/access_grants#access-grant-constraint-type` | MUST | inapplicable | 0 ms |
 | `core/access_grants#access-grant-constraint-client` | MUST | inapplicable | 0 ms |
 | `core/access_grants#container-listing-filtered-metadata` | MAY | inapplicable | 0 ms |
-| `core/notifications#notification-service-advertised` | MUST | inapplicable | 169 ms |
-| `core/notifications#subscription-create` | MUST | inapplicable | 95 ms |
-| `core/notifications#subscription-missing-type-refused` | MUST | inapplicable | 89 ms |
-| `core/notifications#subscription-unadvertised-type-refused` | MUST | inapplicable | 109 ms |
-| `core/notifications#subscription-missing-topic-refused` | MUST | inapplicable | 104 ms |
+| `core/notifications#notification-service-advertised` | MUST | passed | 179 ms |
+| `core/notifications#subscription-create` | MUST | passed | 152 ms |
+| `core/notifications#subscription-missing-type-refused` | MUST | passed | 150 ms |
+| `core/notifications#subscription-unadvertised-type-refused` | MUST | passed | 134 ms |
+| `core/notifications#subscription-missing-topic-refused` | MUST | passed | 148 ms |
 | `core/notifications#subscription-unreadable-topic-refused` | MUST | inapplicable | 0 ms |
 | `core/notifications#subscription-after-revocation-refused` | MUST | inapplicable | 0 ms |
 | `core/notifications#notification-delivered-create` | MUST | inapplicable | 0 ms |
@@ -163,11 +163,11 @@
 | `core/notifications#notification-actor-omitted` | SHOULD | inapplicable | 0 ms |
 | `core/notifications#notification-delivered-in-subcontainer` | MUST | inapplicable | 0 ms |
 | `core/notifications#notification-scope-data-resource-only` | MUST | inapplicable | 0 ms |
-| `core/pagination#pagination-first-page` | MUST | passed | 170 ms |
-| `core/pagination#pagination-next-page` | MUST | passed | 183 ms |
-| `core/pagination#pagination-single-page` | MUST | inapplicable | 158 ms |
-| `core/pagination#pagination-last-page` | MUST | passed | 156 ms |
-| `core/pagination#pagination-totalitems-all-pages` | SHOULD | passed | 164 ms |
+| `core/pagination#pagination-first-page` | MUST | passed | 235 ms |
+| `core/pagination#pagination-next-page` | MUST | passed | 208 ms |
+| `core/pagination#pagination-single-page` | MUST | inapplicable | 183 ms |
+| `core/pagination#pagination-last-page` | MUST | passed | 189 ms |
+| `core/pagination#pagination-totalitems-all-pages` | SHOULD | passed | 189 ms |
 | `auth/oidc/manifest#authn-oidc-valid-id-token` | MUST | inapplicable | 0 ms |
 | `auth/oidc/manifest#authn-oidc-expired-id-token` | MUST | inapplicable | 0 ms |
 | `auth/oidc/manifest#authn-oidc-alg-none` | MUST | inapplicable | 0 ms |
@@ -200,7 +200,7 @@
 | `auth/saml/manifest#authn-saml-invalid-signature` | MUST | inapplicable | 0 ms |
 | `auth/saml/manifest#authn-saml-unsigned` | MUST | inapplicable | 0 ms |
 | `notifications/webhook/manifest#webhook-subscription-response` | MUST | inapplicable | 0 ms |
-| `notifications/webhook/manifest#webhook-subscription-expires-supported` | MUST | inapplicable | 2 ms |
+| `notifications/webhook/manifest#webhook-subscription-expires-supported` | MUST | inapplicable | 0 ms |
 | `notifications/webhook/manifest#webhook-subscription-listed` | MUST | inapplicable | 0 ms |
 | `notifications/webhook/manifest#webhook-subscription-get-delete` | MUST | inapplicable | 0 ms |
 | `notifications/webhook/manifest#webhook-delivery-lws-json` | MUST | inapplicable | 0 ms |
@@ -232,7 +232,7 @@
 | `index/manifest#type-search-accept-query-advertised` | SHOULD | inapplicable | 0 ms |
 | `index/manifest#type-search-not-acceptable` | MUST | inapplicable | 0 ms |
 | `index/manifest#type-search-unindexed-relation` | MUST | inapplicable | 0 ms |
-| `index/manifest#type-search-structural-relation-not-indexed` | MUST | inapplicable | 1 ms |
+| `index/manifest#type-search-structural-relation-not-indexed` | MUST | inapplicable | 0 ms |
 | `index/manifest#type-search-authorization-filtered` | MUST | inapplicable | 0 ms |
 | `index/manifest#type-search-revoked-not-shown` | MUST | inapplicable | 0 ms |
 | `index/manifest#type-search-not-shared` | MUST | inapplicable | 0 ms |
@@ -256,125 +256,125 @@
 **`core/discovery#discovery-unauthorized-response-headers`** — inapplicable
 
 ```
-core/discovery#discovery-unauthorized-response-headers - inapplicable [MUST] (1 ms)
+core/discovery#discovery-unauthorized-response-headers - inapplicable [MUST] (6 ms)
   inapplicable: the target does not declare Authentication
 ```
 
 **`core/linksets#linkset-put-405-when-unsupported`** — inapplicable
 
 ```
-core/linksets#linkset-put-405-when-unsupported - inapplicable [MUST] (214 ms)
+core/linksets#linkset-put-405-when-unsupported - inapplicable [MUST] (218 ms)
   inapplicable: precondition 'the linkset does not advertise PUT (otherwise this test does not apply)' does not hold: header Allow matches expected matches /(?i)^(?!.*\bPUT\b)/, got GET, HEAD, OPTIONS, PATCH, PUT
   step 'the linkset does not advertise PUT (otherwise this test does not apply)':
     FAILED header Allow matches
       expected: matches /(?i)^(?!.*\bPUT\b)/
       actual:   GET, HEAD, OPTIONS, PATCH, PUT
-    exchange: GET http://127.0.0.1:34033/touchstone-run-5b05311f/linkset-put-405-when-unsupported/res1792599827?linkset -> 200
-    response body: {"linkset":[{"anchor":"http://127.0.0.1:34033/touchstone-run-5b05311f/linkset-put-405-when-unsupported/res1792599827","up":[{"href":"http://127.0.0.1:34033/touchstone-run-5b05311f/linkset-put-405-when-unsupported/"}],"type":[{"href":"https://www.w3.org/ns/lws#DataResource"}],"https://www.w3.org/ns/lws#storage":[{"href":"http://127.0.0.1:34033/.well-known/lws-storage"}]}]}
+    exchange: GET http://127.0.0.1:33123/touchstone-run-fa11baf7/linkset-put-405-when-unsupported/res1792600574?linkset -> 200
+    response body: {"linkset":[{"anchor":"http://127.0.0.1:33123/touchstone-run-fa11baf7/linkset-put-405-when-unsupported/res1792600574","up":[{"href":"http://127.0.0.1:33123/touchstone-run-fa11baf7/linkset-put-405-when-unsupported/"}],"type":[{"href":"https://www.w3.org/ns/lws#DataResource"}],"https://www.w3.org/ns/lws#storage":[{"href":"http://127.0.0.1:33123/.well-known/lws-storage"}]}]}
 ```
 
 **`core/moving#discovery-move-capability`** — inapplicable
 
 ```
-core/moving#discovery-move-capability - inapplicable [MUST] (71 ms)
+core/moving#discovery-move-capability - inapplicable [MUST] (95 ms)
   inapplicable: precondition 'the storage describes a MoveResource capability (otherwise this test does not apply)' does not hold: json /capability selects a value expected a value at /capability, got nothing
   step 'the storage describes a MoveResource capability (otherwise this test does not apply)':
     FAILED json /capability selects a value
       expected: a value at /capability
       actual:   nothing
-    exchange: GET http://127.0.0.1:34033/.well-known/lws-storage -> 200
-    response body: {"@context":["https://www.w3.org/ns/cid/v1","https://www.w3.org/ns/lws/v1"],"id":"http://127.0.0.1:34033/.well-known/lws-storage","type":"Storage","service":[{"type":"StorageRoot","serviceEndpoint":"http://127.0.0.1:34033/"}]}
+    exchange: GET http://127.0.0.1:33123/.well-known/lws-storage -> 200
+    response body: {"@context":["https://www.w3.org/ns/cid/v1","https://www.w3.org/ns/lws/v1"],"id":"http://127.0.0.1:33123/.well-known/lws-storage","type":"Storage","verificationMethod":[{"id":"http://127.0.0.1:33123/.well-known/lws-storage#notification-key-ad467765","type":"JsonWebKey","controller":"http://127.0.0.1:33123/.well-known/lws-storage","publicKeyJwk":{"kty":"OKP","crv":"Ed25519","x":"fJGKtRYW19UqquWZRyJJM2wqyPGo3gfv4BTTSnCYtJo"}}],"authentication":["http://127.0.0.1:33123/.well-known/lws-storage#notification-key-ad467765"],"service":[{"type":"StorageRoot","serviceEndpoint":"http://127.0.0.1:33123/"},{"type":"NotificationService","serviceEndpoint":"http://127.0.0.1:33123/.well-known/lws-subscriptions/","subscriptionType":["WebhookSubscription"]}]}
 ```
 
 **`core/moving#move-data-resource`** — inapplicable
 
 ```
-core/moving#move-data-resource - inapplicable [MUST] (184 ms)
+core/moving#move-data-resource - inapplicable [MUST] (175 ms)
   inapplicable: precondition 'the storage describes a MoveResource capability (otherwise this test does not apply)' does not hold: json /capability selects a value expected a value at /capability, got nothing
   step 'the storage describes a MoveResource capability (otherwise this test does not apply)':
     FAILED json /capability selects a value
       expected: a value at /capability
       actual:   nothing
-    exchange: GET http://127.0.0.1:34033/.well-known/lws-storage -> 200
-    response body: {"@context":["https://www.w3.org/ns/cid/v1","https://www.w3.org/ns/lws/v1"],"id":"http://127.0.0.1:34033/.well-known/lws-storage","type":"Storage","service":[{"type":"StorageRoot","serviceEndpoint":"http://127.0.0.1:34033/"}]}
+    exchange: GET http://127.0.0.1:33123/.well-known/lws-storage -> 200
+    response body: {"@context":["https://www.w3.org/ns/cid/v1","https://www.w3.org/ns/lws/v1"],"id":"http://127.0.0.1:33123/.well-known/lws-storage","type":"Storage","verificationMethod":[{"id":"http://127.0.0.1:33123/.well-known/lws-storage#notification-key-ad467765","type":"JsonWebKey","controller":"http://127.0.0.1:33123/.well-known/lws-storage","publicKeyJwk":{"kty":"OKP","crv":"Ed25519","x":"fJGKtRYW19UqquWZRyJJM2wqyPGo3gfv4BTTSnCYtJo"}}],"authentication":["http://127.0.0.1:33123/.well-known/lws-storage#notification-key-ad467765"],"service":[{"type":"StorageRoot","serviceEndpoint":"http://127.0.0.1:33123/"},{"type":"NotificationService","serviceEndpoint":"http://127.0.0.1:33123/.well-known/lws-subscriptions/","subscriptionType":["WebhookSubscription"]}]}
 ```
 
 **`core/moving#move-updates-container-etags`** — inapplicable
 
 ```
-core/moving#move-updates-container-etags - inapplicable [MUST] (142 ms)
+core/moving#move-updates-container-etags - inapplicable [MUST] (176 ms)
   inapplicable: precondition 'the storage describes a MoveResource capability (otherwise this test does not apply)' does not hold: json /capability selects a value expected a value at /capability, got nothing
   step 'the storage describes a MoveResource capability (otherwise this test does not apply)':
     FAILED json /capability selects a value
       expected: a value at /capability
       actual:   nothing
-    exchange: GET http://127.0.0.1:34033/.well-known/lws-storage -> 200
-    response body: {"@context":["https://www.w3.org/ns/cid/v1","https://www.w3.org/ns/lws/v1"],"id":"http://127.0.0.1:34033/.well-known/lws-storage","type":"Storage","service":[{"type":"StorageRoot","serviceEndpoint":"http://127.0.0.1:34033/"}]}
+    exchange: GET http://127.0.0.1:33123/.well-known/lws-storage -> 200
+    response body: {"@context":["https://www.w3.org/ns/cid/v1","https://www.w3.org/ns/lws/v1"],"id":"http://127.0.0.1:33123/.well-known/lws-storage","type":"Storage","verificationMethod":[{"id":"http://127.0.0.1:33123/.well-known/lws-storage#notification-key-ad467765","type":"JsonWebKey","controller":"http://127.0.0.1:33123/.well-known/lws-storage","publicKeyJwk":{"kty":"OKP","crv":"Ed25519","x":"fJGKtRYW19UqquWZRyJJM2wqyPGo3gfv4BTTSnCYtJo"}}],"authentication":["http://127.0.0.1:33123/.well-known/lws-storage#notification-key-ad467765"],"service":[{"type":"StorageRoot","serviceEndpoint":"http://127.0.0.1:33123/"},{"type":"NotificationService","serviceEndpoint":"http://127.0.0.1:33123/.well-known/lws-subscriptions/","subscriptionType":["WebhookSubscription"]}]}
 ```
 
 **`core/moving#move-keeps-identifier-content-and-links`** — inapplicable
 
 ```
-core/moving#move-keeps-identifier-content-and-links - inapplicable [MUST] (164 ms)
+core/moving#move-keeps-identifier-content-and-links - inapplicable [MUST] (148 ms)
   inapplicable: precondition 'the storage's MoveResource says it preserves identifiers (otherwise this test does not apply)' does not hold: json /capability selects a value expected a value at /capability, got nothing
   step 'the storage's MoveResource says it preserves identifiers (otherwise this test does not apply)':
     FAILED json /capability selects a value
       expected: a value at /capability
       actual:   nothing
-    exchange: GET http://127.0.0.1:34033/.well-known/lws-storage -> 200
-    response body: {"@context":["https://www.w3.org/ns/cid/v1","https://www.w3.org/ns/lws/v1"],"id":"http://127.0.0.1:34033/.well-known/lws-storage","type":"Storage","service":[{"type":"StorageRoot","serviceEndpoint":"http://127.0.0.1:34033/"}]}
+    exchange: GET http://127.0.0.1:33123/.well-known/lws-storage -> 200
+    response body: {"@context":["https://www.w3.org/ns/cid/v1","https://www.w3.org/ns/lws/v1"],"id":"http://127.0.0.1:33123/.well-known/lws-storage","type":"Storage","verificationMethod":[{"id":"http://127.0.0.1:33123/.well-known/lws-storage#notification-key-ad467765","type":"JsonWebKey","controller":"http://127.0.0.1:33123/.well-known/lws-storage","publicKeyJwk":{"kty":"OKP","crv":"Ed25519","x":"fJGKtRYW19UqquWZRyJJM2wqyPGo3gfv4BTTSnCYtJo"}}],"authentication":["http://127.0.0.1:33123/.well-known/lws-storage#notification-key-ad467765"],"service":[{"type":"StorageRoot","serviceEndpoint":"http://127.0.0.1:33123/"},{"type":"NotificationService","serviceEndpoint":"http://127.0.0.1:33123/.well-known/lws-subscriptions/","subscriptionType":["WebhookSubscription"]}]}
 ```
 
 **`core/moving#move-invalid-destination-refused`** — inapplicable
 
 ```
-core/moving#move-invalid-destination-refused - inapplicable [MUST] (182 ms)
+core/moving#move-invalid-destination-refused - inapplicable [MUST] (151 ms)
   inapplicable: precondition 'the storage describes a MoveResource capability (otherwise this test does not apply)' does not hold: json /capability selects a value expected a value at /capability, got nothing
   step 'the storage describes a MoveResource capability (otherwise this test does not apply)':
     FAILED json /capability selects a value
       expected: a value at /capability
       actual:   nothing
-    exchange: GET http://127.0.0.1:34033/.well-known/lws-storage -> 200
-    response body: {"@context":["https://www.w3.org/ns/cid/v1","https://www.w3.org/ns/lws/v1"],"id":"http://127.0.0.1:34033/.well-known/lws-storage","type":"Storage","service":[{"type":"StorageRoot","serviceEndpoint":"http://127.0.0.1:34033/"}]}
+    exchange: GET http://127.0.0.1:33123/.well-known/lws-storage -> 200
+    response body: {"@context":["https://www.w3.org/ns/cid/v1","https://www.w3.org/ns/lws/v1"],"id":"http://127.0.0.1:33123/.well-known/lws-storage","type":"Storage","verificationMethod":[{"id":"http://127.0.0.1:33123/.well-known/lws-storage#notification-key-ad467765","type":"JsonWebKey","controller":"http://127.0.0.1:33123/.well-known/lws-storage","publicKeyJwk":{"kty":"OKP","crv":"Ed25519","x":"fJGKtRYW19UqquWZRyJJM2wqyPGo3gfv4BTTSnCYtJo"}}],"authentication":["http://127.0.0.1:33123/.well-known/lws-storage#notification-key-ad467765"],"service":[{"type":"StorageRoot","serviceEndpoint":"http://127.0.0.1:33123/"},{"type":"NotificationService","serviceEndpoint":"http://127.0.0.1:33123/.well-known/lws-subscriptions/","subscriptionType":["WebhookSubscription"]}]}
 ```
 
 **`core/moving#move-container`** — inapplicable
 
 ```
-core/moving#move-container - inapplicable [MUST] (205 ms)
+core/moving#move-container - inapplicable [MUST] (210 ms)
   inapplicable: precondition 'the storage moves containers (otherwise this test does not apply)' does not hold: json /capability selects a value expected a value at /capability, got nothing
   step 'the storage moves containers (otherwise this test does not apply)':
     FAILED json /capability selects a value
       expected: a value at /capability
       actual:   nothing
-    exchange: GET http://127.0.0.1:34033/.well-known/lws-storage -> 200
-    response body: {"@context":["https://www.w3.org/ns/cid/v1","https://www.w3.org/ns/lws/v1"],"id":"http://127.0.0.1:34033/.well-known/lws-storage","type":"Storage","service":[{"type":"StorageRoot","serviceEndpoint":"http://127.0.0.1:34033/"}]}
+    exchange: GET http://127.0.0.1:33123/.well-known/lws-storage -> 200
+    response body: {"@context":["https://www.w3.org/ns/cid/v1","https://www.w3.org/ns/lws/v1"],"id":"http://127.0.0.1:33123/.well-known/lws-storage","type":"Storage","verificationMethod":[{"id":"http://127.0.0.1:33123/.well-known/lws-storage#notification-key-ad467765","type":"JsonWebKey","controller":"http://127.0.0.1:33123/.well-known/lws-storage","publicKeyJwk":{"kty":"OKP","crv":"Ed25519","x":"fJGKtRYW19UqquWZRyJJM2wqyPGo3gfv4BTTSnCYtJo"}}],"authentication":["http://127.0.0.1:33123/.well-known/lws-storage#notification-key-ad467765"],"service":[{"type":"StorageRoot","serviceEndpoint":"http://127.0.0.1:33123/"},{"type":"NotificationService","serviceEndpoint":"http://127.0.0.1:33123/.well-known/lws-subscriptions/","subscriptionType":["WebhookSubscription"]}]}
 ```
 
 **`core/moving#move-container-into-itself-refused`** — inapplicable
 
 ```
-core/moving#move-container-into-itself-refused - inapplicable [MUST] (124 ms)
+core/moving#move-container-into-itself-refused - inapplicable [MUST] (275 ms)
   inapplicable: precondition 'the storage moves containers (otherwise this test does not apply)' does not hold: json /capability selects a value expected a value at /capability, got nothing
   step 'the storage moves containers (otherwise this test does not apply)':
     FAILED json /capability selects a value
       expected: a value at /capability
       actual:   nothing
-    exchange: GET http://127.0.0.1:34033/.well-known/lws-storage -> 200
-    response body: {"@context":["https://www.w3.org/ns/cid/v1","https://www.w3.org/ns/lws/v1"],"id":"http://127.0.0.1:34033/.well-known/lws-storage","type":"Storage","service":[{"type":"StorageRoot","serviceEndpoint":"http://127.0.0.1:34033/"}]}
+    exchange: GET http://127.0.0.1:33123/.well-known/lws-storage -> 200
+    response body: {"@context":["https://www.w3.org/ns/cid/v1","https://www.w3.org/ns/lws/v1"],"id":"http://127.0.0.1:33123/.well-known/lws-storage","type":"Storage","verificationMethod":[{"id":"http://127.0.0.1:33123/.well-known/lws-storage#notification-key-ad467765","type":"JsonWebKey","controller":"http://127.0.0.1:33123/.well-known/lws-storage","publicKeyJwk":{"kty":"OKP","crv":"Ed25519","x":"fJGKtRYW19UqquWZRyJJM2wqyPGo3gfv4BTTSnCYtJo"}}],"authentication":["http://127.0.0.1:33123/.well-known/lws-storage#notification-key-ad467765"],"service":[{"type":"StorageRoot","serviceEndpoint":"http://127.0.0.1:33123/"},{"type":"NotificationService","serviceEndpoint":"http://127.0.0.1:33123/.well-known/lws-subscriptions/","subscriptionType":["WebhookSubscription"]}]}
 ```
 
 **`core/moving#move-container-refused-without-container-support`** — inapplicable
 
 ```
-core/moving#move-container-refused-without-container-support - inapplicable [MUST] (119 ms)
+core/moving#move-container-refused-without-container-support - inapplicable [MUST] (184 ms)
   inapplicable: precondition 'the storage moves data resources but not containers (otherwise this test does not apply)' does not hold: json /capability selects a value expected a value at /capability, got nothing
   step 'the storage moves data resources but not containers (otherwise this test does not apply)':
     FAILED json /capability selects a value
       expected: a value at /capability
       actual:   nothing
-    exchange: GET http://127.0.0.1:34033/.well-known/lws-storage -> 200
-    response body: {"@context":["https://www.w3.org/ns/cid/v1","https://www.w3.org/ns/lws/v1"],"id":"http://127.0.0.1:34033/.well-known/lws-storage","type":"Storage","service":[{"type":"StorageRoot","serviceEndpoint":"http://127.0.0.1:34033/"}]}
+    exchange: GET http://127.0.0.1:33123/.well-known/lws-storage -> 200
+    response body: {"@context":["https://www.w3.org/ns/cid/v1","https://www.w3.org/ns/lws/v1"],"id":"http://127.0.0.1:33123/.well-known/lws-storage","type":"Storage","verificationMethod":[{"id":"http://127.0.0.1:33123/.well-known/lws-storage#notification-key-ad467765","type":"JsonWebKey","controller":"http://127.0.0.1:33123/.well-known/lws-storage","publicKeyJwk":{"kty":"OKP","crv":"Ed25519","x":"fJGKtRYW19UqquWZRyJJM2wqyPGo3gfv4BTTSnCYtJo"}}],"authentication":["http://127.0.0.1:33123/.well-known/lws-storage#notification-key-ad467765"],"service":[{"type":"StorageRoot","serviceEndpoint":"http://127.0.0.1:33123/"},{"type":"NotificationService","serviceEndpoint":"http://127.0.0.1:33123/.well-known/lws-subscriptions/","subscriptionType":["WebhookSubscription"]}]}
 ```
 
 **`core/moving#move-needs-create-in-destination`** — inapplicable
@@ -478,7 +478,7 @@ core/storage_authorization#authz-non-owner-delete-rejected - inapplicable [MUST]
 **`core/storage_authorization#authz-expired-token-rejected`** — inapplicable
 
 ```
-core/storage_authorization#authz-expired-token-rejected - inapplicable [MUST]
+core/storage_authorization#authz-expired-token-rejected - inapplicable [MUST] (1 ms)
   inapplicable: the target does not declare Authentication
 ```
 
@@ -534,7 +534,7 @@ core/storage_authorization#authz-token-issued-in-future-rejected - inapplicable 
 **`core/authorization_server#authz-server-metadata-well-known`** — inapplicable
 
 ```
-core/authorization_server#authz-server-metadata-well-known - inapplicable [MUST] (10 ms)
+core/authorization_server#authz-server-metadata-well-known - inapplicable [MUST]
   inapplicable: the target does not declare Authentication
 ```
 
@@ -597,10 +597,10 @@ core/authorization_server#authz-issued-token-accepted-by-storage - inapplicable 
 **`core/access_grants#access-grant-endpoint-is-container`** — inapplicable
 
 ```
-core/access_grants#access-grant-endpoint-is-container - inapplicable [MUST] (62 ms)
-  inapplicable: step 'The access grant endpoint is an LWS container': the storage description at http://127.0.0.1:34033/.well-known/lws-storage advertises no AccessGrantService
+core/access_grants#access-grant-endpoint-is-container - inapplicable [MUST] (66 ms)
+  inapplicable: step 'The access grant endpoint is an LWS container': the storage description at http://127.0.0.1:33123/.well-known/lws-storage advertises no AccessGrantService
   step 'The access grant endpoint is an LWS container':
-    error: cannot build the request: the storage description at http://127.0.0.1:34033/.well-known/lws-storage advertises no AccessGrantService
+    error: cannot build the request: the storage description at http://127.0.0.1:33123/.well-known/lws-storage advertises no AccessGrantService
 ```
 
 **`core/access_grants#access-grant-create`** — inapplicable
@@ -620,7 +620,7 @@ core/access_grants#access-grant-revoke - inapplicable [SHOULD]
 **`core/access_grants#getContainer-public-read`** — inapplicable
 
 ```
-core/access_grants#getContainer-public-read - inapplicable [MUST]
+core/access_grants#getContainer-public-read - inapplicable [MUST] (1 ms)
   inapplicable: the target does not declare Authentication
 ```
 
@@ -715,71 +715,6 @@ core/access_grants#container-listing-filtered-metadata - inapplicable [MAY]
   inapplicable: the target does not declare Authentication
 ```
 
-**`core/notifications#notification-service-advertised`** — inapplicable
-
-```
-core/notifications#notification-service-advertised - inapplicable [MUST] (169 ms)
-  inapplicable: precondition 'the storage advertises notifications (otherwise this test does not apply)' does not hold: json /service some expected some element satisfies [{"pointer":"/type","hasValue":"NotificationService"}], got [{"type":"StorageRoot","serviceEndpoint":"http://127.0.0.1:34033/"}]
-  step 'the storage advertises notifications (otherwise this test does not apply)':
-    FAILED json /service some
-      expected: some element satisfies [{"pointer":"/type","hasValue":"NotificationService"}]
-      actual:   [{"type":"StorageRoot","serviceEndpoint":"http://127.0.0.1:34033/"}]
-    exchange: GET http://127.0.0.1:34033/.well-known/lws-storage -> 200
-    response body: {"@context":["https://www.w3.org/ns/cid/v1","https://www.w3.org/ns/lws/v1"],"id":"http://127.0.0.1:34033/.well-known/lws-storage","type":"Storage","service":[{"type":"StorageRoot","serviceEndpoint":"http://127.0.0.1:34033/"}]}
-```
-
-**`core/notifications#subscription-create`** — inapplicable
-
-```
-core/notifications#subscription-create - inapplicable [MUST] (95 ms)
-  inapplicable: precondition 'the storage offers webhook subscriptions (otherwise this test does not apply)' does not hold: json /service some expected some element satisfies [{"pointer":"/type","hasValue":"NotificationService"},{"pointer":"/subscriptionType","hasValue":"WebhookSubscription"}], got [{"type":"StorageRoot","serviceEndpoint":"http://127.0.0.1:34033/"}]
-  step 'the storage offers webhook subscriptions (otherwise this test does not apply)':
-    FAILED json /service some
-      expected: some element satisfies [{"pointer":"/type","hasValue":"NotificationService"},{"pointer":"/subscriptionType","hasValue":"WebhookSubscription"}]
-      actual:   [{"type":"StorageRoot","serviceEndpoint":"http://127.0.0.1:34033/"}]
-    exchange: GET http://127.0.0.1:34033/.well-known/lws-storage -> 200
-    response body: {"@context":["https://www.w3.org/ns/cid/v1","https://www.w3.org/ns/lws/v1"],"id":"http://127.0.0.1:34033/.well-known/lws-storage","type":"Storage","service":[{"type":"StorageRoot","serviceEndpoint":"http://127.0.0.1:34033/"}]}
-```
-
-**`core/notifications#subscription-missing-type-refused`** — inapplicable
-
-```
-core/notifications#subscription-missing-type-refused - inapplicable [MUST] (89 ms)
-  inapplicable: precondition 'the storage offers webhook subscriptions (otherwise this test does not apply)' does not hold: json /service some expected some element satisfies [{"pointer":"/type","hasValue":"NotificationService"},{"pointer":"/subscriptionType","hasValue":"WebhookSubscription"}], got [{"type":"StorageRoot","serviceEndpoint":"http://127.0.0.1:34033/"}]
-  step 'the storage offers webhook subscriptions (otherwise this test does not apply)':
-    FAILED json /service some
-      expected: some element satisfies [{"pointer":"/type","hasValue":"NotificationService"},{"pointer":"/subscriptionType","hasValue":"WebhookSubscription"}]
-      actual:   [{"type":"StorageRoot","serviceEndpoint":"http://127.0.0.1:34033/"}]
-    exchange: GET http://127.0.0.1:34033/.well-known/lws-storage -> 200
-    response body: {"@context":["https://www.w3.org/ns/cid/v1","https://www.w3.org/ns/lws/v1"],"id":"http://127.0.0.1:34033/.well-known/lws-storage","type":"Storage","service":[{"type":"StorageRoot","serviceEndpoint":"http://127.0.0.1:34033/"}]}
-```
-
-**`core/notifications#subscription-unadvertised-type-refused`** — inapplicable
-
-```
-core/notifications#subscription-unadvertised-type-refused - inapplicable [MUST] (109 ms)
-  inapplicable: precondition 'the storage offers webhook subscriptions (otherwise this test does not apply)' does not hold: json /service some expected some element satisfies [{"pointer":"/type","hasValue":"NotificationService"},{"pointer":"/subscriptionType","hasValue":"WebhookSubscription"}], got [{"type":"StorageRoot","serviceEndpoint":"http://127.0.0.1:34033/"}]
-  step 'the storage offers webhook subscriptions (otherwise this test does not apply)':
-    FAILED json /service some
-      expected: some element satisfies [{"pointer":"/type","hasValue":"NotificationService"},{"pointer":"/subscriptionType","hasValue":"WebhookSubscription"}]
-      actual:   [{"type":"StorageRoot","serviceEndpoint":"http://127.0.0.1:34033/"}]
-    exchange: GET http://127.0.0.1:34033/.well-known/lws-storage -> 200
-    response body: {"@context":["https://www.w3.org/ns/cid/v1","https://www.w3.org/ns/lws/v1"],"id":"http://127.0.0.1:34033/.well-known/lws-storage","type":"Storage","service":[{"type":"StorageRoot","serviceEndpoint":"http://127.0.0.1:34033/"}]}
-```
-
-**`core/notifications#subscription-missing-topic-refused`** — inapplicable
-
-```
-core/notifications#subscription-missing-topic-refused - inapplicable [MUST] (104 ms)
-  inapplicable: precondition 'the storage offers webhook subscriptions (otherwise this test does not apply)' does not hold: json /service some expected some element satisfies [{"pointer":"/type","hasValue":"NotificationService"},{"pointer":"/subscriptionType","hasValue":"WebhookSubscription"}], got [{"type":"StorageRoot","serviceEndpoint":"http://127.0.0.1:34033/"}]
-  step 'the storage offers webhook subscriptions (otherwise this test does not apply)':
-    FAILED json /service some
-      expected: some element satisfies [{"pointer":"/type","hasValue":"NotificationService"},{"pointer":"/subscriptionType","hasValue":"WebhookSubscription"}]
-      actual:   [{"type":"StorageRoot","serviceEndpoint":"http://127.0.0.1:34033/"}]
-    exchange: GET http://127.0.0.1:34033/.well-known/lws-storage -> 200
-    response body: {"@context":["https://www.w3.org/ns/cid/v1","https://www.w3.org/ns/lws/v1"],"id":"http://127.0.0.1:34033/.well-known/lws-storage","type":"Storage","service":[{"type":"StorageRoot","serviceEndpoint":"http://127.0.0.1:34033/"}]}
-```
-
 **`core/notifications#subscription-unreadable-topic-refused`** — inapplicable
 
 ```
@@ -853,14 +788,14 @@ core/notifications#notification-scope-data-resource-only - inapplicable [MUST]
 **`core/pagination#pagination-single-page`** — inapplicable
 
 ```
-core/pagination#pagination-single-page - inapplicable [MUST] (158 ms)
+core/pagination#pagination-single-page - inapplicable [MUST] (183 ms)
   inapplicable: precondition 'the listing is paginated and holds all five members on its page (otherwise this test does not apply)' does not hold: json /items/4 selects a value expected a value at /items/4, got nothing
   step 'the listing is paginated and holds all five members on its page (otherwise this test does not apply)':
     FAILED json /items/4 selects a value
       expected: a value at /items/4
       actual:   nothing
-    exchange: GET http://127.0.0.1:34033/touchstone-run-5b05311f/pagination-single-page/paged/ -> 200
-    response body: {"@context":"https://www.w3.org/ns/lws/v1","id":"http://127.0.0.1:34033/touchstone-run-5b05311f/pagination-single-page/paged/","type":"Container","totalItems":5,"items":[{"id":"http://127.0.0.1:34033/touchstone-run-5b05311f/pagination-single-page/paged/res1792599828","type":"DataResource","format":"text/plain","size":8,"modified":"2026-10-21T16:23:48Z"},{"id":"http://127.0.0.1:34033/touchstone-run-5b05311f/pagination-single-page/paged/res1792599828-1","type":"DataResource","format":"text/plain","size":8,"modified":"2026-10-21T16:23:48Z"},{"id":"http://127.0.0.1:34033/touchstone-run-5b05311f/pagination-single-page/paged/res1792599828-2","type":"DataResource","format":"text/plain","size":8,"modified":"2026-10-21T16:23:48Z"},{"id":"http://127.0.0.1:34033/touchstone-run-5b05311f/pagination-single-page/paged/res1792599828-3","type":"DataResource","format":"text/plain","size":8,"modified":"2026-10-21T16:23:48Z"}]}
+    exchange: GET http://127.0.0.1:33123/touchstone-run-fa11baf7/pagination-single-page/paged/ -> 200
+    response body: {"@context":"https://www.w3.org/ns/lws/v1","id":"http://127.0.0.1:33123/touchstone-run-fa11baf7/pagination-single-page/paged/","type":"Container","totalItems":5,"items":[{"id":"http://127.0.0.1:33123/touchstone-run-fa11baf7/pagination-single-page/paged/res1792600575","type":"DataResource","format":"text/plain","size":8,"modified":"2026-10-21T16:36:15Z"},{"id":"http://127.0.0.1:33123/touchstone-run-fa11baf7/pagination-single-page/paged/res1792600575-1","type":"DataResource","format":"text/plain","size":8,"modified":"2026-10-21T16:36:15Z"},{"id":"http://127.0.0.1:33123/touchstone-run-fa11baf7/pagination-single-page/paged/res1792600575-2","type":"DataResource","format":"text/plain","size":8,"modified":"2026-10-21T16:36:15Z"},{"id":"http://127.0.0.1:33123/touchstone-run-fa11baf7/pagination-single-page/paged/res1792600575-3","type":"DataResource","format":"text/plain","size":8,"modified":"2026-10-21T16:36:15Z"}]}
 ```
 
 **`auth/oidc/manifest#authn-oidc-valid-id-token`** — inapplicable
@@ -1090,7 +1025,7 @@ notifications/webhook/manifest#webhook-subscription-response - inapplicable [MUS
 **`notifications/webhook/manifest#webhook-subscription-expires-supported`** — inapplicable
 
 ```
-notifications/webhook/manifest#webhook-subscription-expires-supported - inapplicable [MUST] (2 ms)
+notifications/webhook/manifest#webhook-subscription-expires-supported - inapplicable [MUST]
   inapplicable: the target does not declare ReachableFixtures
 ```
 
@@ -1314,7 +1249,7 @@ index/manifest#type-search-unindexed-relation - inapplicable [MUST]
 **`index/manifest#type-search-structural-relation-not-indexed`** — inapplicable
 
 ```
-index/manifest#type-search-structural-relation-not-indexed - inapplicable [MUST] (1 ms)
+index/manifest#type-search-structural-relation-not-indexed - inapplicable [MUST]
   inapplicable: the target does not declare Authentication
 ```
 
@@ -1614,10 +1549,10 @@ index/manifest#type-search-content-location-protected - inapplicable [MUST]
 | [`notification-envelope-activity`](https://www.w3.org/TR/lws10-core/#envelope-properties) | MUST | INAPPLICABLE | 1 |
 | [`notification-envelope-storage`](https://www.w3.org/TR/lws10-core/#envelope-properties) | MUST | INAPPLICABLE | 1 |
 | [`notification-envelope-type`](https://www.w3.org/TR/lws10-core/#envelope-properties) | MUST | INAPPLICABLE | 1 |
-| [`notification-suite-subscription-type-identifier`](https://www.w3.org/TR/lws10-core/#notification-subscription-type-identifier) | MUST | INAPPLICABLE | 1 |
-| [`notifications-advertise-notificationservice`](https://www.w3.org/TR/lws10-core/#notification-discovery) | MUST | INAPPLICABLE | 1 |
+| [`notification-suite-subscription-type-identifier`](https://www.w3.org/TR/lws10-core/#notification-subscription-type-identifier) | MUST | PASS | 1 |
+| [`notifications-advertise-notificationservice`](https://www.w3.org/TR/lws10-core/#notification-discovery) | MUST | PASS | 1 |
 | [`notificationservice-additional-properties`](https://www.w3.org/TR/lws10-core/#notification-discovery) | MAY | UNCOVERED | 0 |
-| [`notificationservice-endpoint-and-subscription-types`](https://www.w3.org/TR/lws10-core/#notification-discovery) | MUST | INAPPLICABLE | 1 |
+| [`notificationservice-endpoint-and-subscription-types`](https://www.w3.org/TR/lws10-core/#notification-discovery) | MUST | PASS | 1 |
 | [`operations-core-four-atomic`](https://www.w3.org/TR/lws10-core/#operations) | MUST | UNCOVERED | 0 |
 | [`pagination-200-totalitems-all-pages`](https://www.w3.org/TR/lws10-core/#requesting-pages) | MUST | PASS | 3 |
 | [`pagination-first-page-flow`](https://www.w3.org/TR/lws10-core/#requesting-pages) | MAY | PASS | 1 |
@@ -1670,14 +1605,14 @@ index/manifest#type-search-content-location-protected - inapplicable [MUST]
 | [`subscription-authorization-on-create`](https://www.w3.org/TR/lws10-core/#subscription-authorization) | MUST | INAPPLICABLE | 2 |
 | [`subscription-authorization-on-delivery`](https://www.w3.org/TR/lws10-core/#subscription-authorization) | MUST | INAPPLICABLE | 2 |
 | [`subscription-authorization-revoked`](https://www.w3.org/TR/lws10-core/#subscription-authorization) | MUST | INAPPLICABLE | 1 |
-| [`subscription-create-post-lws-json`](https://www.w3.org/TR/lws10-core/#subscriptions) | MUST | INAPPLICABLE | 1 |
-| [`subscription-request-additional-fields`](https://www.w3.org/TR/lws10-core/#subscription-request) | MAY | INAPPLICABLE | 1 |
-| [`subscription-request-required-fields`](https://www.w3.org/TR/lws10-core/#subscription-request) | MUST | INAPPLICABLE | 3 |
-| [`subscription-request-topic`](https://www.w3.org/TR/lws10-core/#subscription-request) | MUST | INAPPLICABLE | 2 |
-| [`subscription-request-type`](https://www.w3.org/TR/lws10-core/#subscription-request) | MUST | INAPPLICABLE | 3 |
-| [`subscription-response-lws-json`](https://www.w3.org/TR/lws10-core/#subscription-response) | MUST | INAPPLICABLE | 1 |
-| [`subscription-response-subscription-url`](https://www.w3.org/TR/lws10-core/#subscription-response) | MUST | INAPPLICABLE | 1 |
-| [`subscription-response-type`](https://www.w3.org/TR/lws10-core/#subscription-response) | MUST | INAPPLICABLE | 1 |
+| [`subscription-create-post-lws-json`](https://www.w3.org/TR/lws10-core/#subscriptions) | MUST | PASS | 1 |
+| [`subscription-request-additional-fields`](https://www.w3.org/TR/lws10-core/#subscription-request) | MAY | PASS | 1 |
+| [`subscription-request-required-fields`](https://www.w3.org/TR/lws10-core/#subscription-request) | MUST | PASS | 3 |
+| [`subscription-request-topic`](https://www.w3.org/TR/lws10-core/#subscription-request) | MUST | PASS | 2 |
+| [`subscription-request-type`](https://www.w3.org/TR/lws10-core/#subscription-request) | MUST | PASS | 3 |
+| [`subscription-response-lws-json`](https://www.w3.org/TR/lws10-core/#subscription-response) | MUST | PASS | 1 |
+| [`subscription-response-subscription-url`](https://www.w3.org/TR/lws10-core/#subscription-response) | MUST | PASS | 1 |
+| [`subscription-response-type`](https://www.w3.org/TR/lws10-core/#subscription-response) | MUST | PASS | 1 |
 | [`update-content-vs-metadata-prefer-set-linkset`](https://www.w3.org/TR/lws10-core/#update-resource) | MUST | PASS | 1 |
 | [`uri-independent-of-hierarchy`](https://www.w3.org/TR/lws10-core/#resource-identification-0) | SHOULD | PASS | 1 |
 | [`accept-query-advertised`](https://w3c.github.io/lws-protocol/lws10-index/#type-search-query) | SHOULD | INAPPLICABLE | 1 |

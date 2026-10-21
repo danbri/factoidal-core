@@ -329,6 +329,7 @@ def lwsSolidOpNames : List String :=
   , "lwsClose"
   , "lwsSnapshot"
   , "lwsFetched"
+  , "lwsDelivered"
   , "solidOpen"
   , "solidStep"
   , "solidClose"
@@ -620,6 +621,7 @@ def callIOUncoded (op : String) (argsJson : String) : IO String :=
   | "lwsClose"         => withArgs (arityIO1 op Ops.lwsClose)
   | "lwsSnapshot"      => withArgs (arityIO1 op Ops.lwsSnapshot)
   | "lwsFetched"       => withArgs (arityIO2 op Ops.lwsFetched)
+  | "lwsDelivered"     => withArgs (arityIO2 op Ops.lwsDelivered)
   | "solidSnapshot"    => withArgs (arityIO1 op Ops.solidSnapshot)
   | "solidOpen"        => withArgs (arityIO1 op Ops.solidOpen)
   | "solidStep"        => withArgs (arityIO2 op Ops.solidStep)

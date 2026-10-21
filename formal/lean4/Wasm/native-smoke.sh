@@ -1755,6 +1755,45 @@ checkseq "lwsStep carries bodies as bytes (bodyBase64, byte ranges, 400 on non-U
    and rs[7]["snapshot"]["format"] == "lws-snapshot-2"
    and [e["bodyBase64"] for e in rs[7]["snapshot"]["entries"] if e["path"] == "/a.png"] == ["iVBORwD/gP4="]'
 
+# Notifications (https://github.com/danbri/factoidal/issues/890): the storage
+# description advertises a NotificationService and an Ed25519 key; a
+# subscription's change answers a signed delivery; lwsDelivered asks for a
+# retry after a 503 and for nothing after a 202; the snapshot keeps the
+# subscription.
+python3 - "$TMP/lws-notify.json" <<'EOF'
+import json, sys, base64
+req = lambda **kw: json.dumps(kw)
+seq = [
+  ["lwsOpen",  [json.dumps({"now": 1000, "insecureNoAuth": True,
+                            "entropy": base64.b64encode(bytes(range(32))).decode()})]],
+  ["lwsStep",  ["lws1", req(method="GET", target="/.well-known/lws-storage")]],
+  ["lwsStep",  ["lws1", req(method="POST", target="/.well-known/lws-subscriptions/",
+                            headers=[["content-type", "application/lws+json"]],
+                            body=json.dumps({"type": "WebhookSubscription",
+                                             "topic": ["http://localhost/w/"],
+                                             "inbox": "http://hook.example/in"}))]],
+  ["lwsStep",  ["lws1", req(method="PUT", target="/w/a.txt",
+                            headers=[["content-type", "text/plain"]], body="a")]],
+  ["lwsDelivered", ["lws1", json.dumps({"id": "d3", "status": 503})]],
+  ["lwsDelivered", ["lws1", json.dumps({"id": "d3", "status": 202})]],
+  ["lwsSnapshot", ["lws1"]],
+]
+json.dump(seq, open(sys.argv[1], "w"))
+EOF
+
+checkseq "lwsStep delivers signed notifications; lwsDelivered decides retries" "$TMP/lws-notify.json" \
+  'any(s["type"] == "NotificationService" for s in json.loads(rs[1]["response"]["body"])["service"])
+   and json.loads(rs[1]["response"]["body"])["verificationMethod"][0]["publicKeyJwk"]["crv"] == "Ed25519"
+   and rs[2]["response"]["status"] == 201
+   and rs[3]["response"]["status"] == 201
+   and rs[3]["deliveries"][0]["id"] == "d3"
+   and rs[3]["deliveries"][0]["url"] == "http://hook.example/in"
+   and [a["type"] for a in json.loads(rs[3]["deliveries"][0]["body"])["activity"]] == [["Create"], ["Create"]]
+   and "signature" in dict(rs[3]["deliveries"][0]["headers"])
+   and rs[4]["retry"]["after"] == 1 and rs[4]["retry"]["delivery"]["id"] == "d3"
+   and "retry" not in rs[5]
+   and len(rs[6]["snapshot"]["notifications"]["subscriptions"]) == 1'
+
 # Authorization is on unless the configuration opts out
 # (https://github.com/danbri/factoidal/issues/886): with no "auth" and no
 # "insecureNoAuth", an anonymous write answers 401 with resource_metadata,

@@ -27,10 +27,11 @@ host or the engine failed rather than answered.
 | op | arguments | answer |
 | --- | --- | --- |
 | `lwsOpen` | `[configJson]` | `{ ok, handle, root }` |
-| `lwsStep` | `[handle, requestJson]` | `{ ok, response }` |
+| `lwsStep` | `[handle, requestJson]` | `{ ok, response, changed, deliveries? }` |
 | `lwsClose` | `[handle]` | `{ ok }` |
 | `lwsSnapshot` | `[handle]` | `{ ok, snapshot }` |
 | `lwsFetched` | `[handle, documentJson]` | `{ ok, fetch? , installed?, refused? }` |
+| `lwsDelivered` | `[handle, reportJson]` | `{ ok, changed, retry? }` |
 
 ```
 request  { method, target, headers: [[name, value]] } + the content as bytes
@@ -48,7 +49,9 @@ storage root maps to), `now` (the engine clock in seconds, which advances
 by one second per mutation so a write sequence has increasing
 `Last-Modified` values with no real clock), `owner`, `agent`, `pageSize`
 (the container pagination threshold and page size, default 100, 0 for no
-pagination), `rootAcl`, `auth` and `insecureNoAuth` (below). A request
+pagination), `rootAcl`, `auth` and `insecureNoAuth` (below),
+`notifications` (default true) and `entropy` (random bytes, base64, which
+this host makes for every open). A request
 may carry `now` and `agent` of its own to override the handle's for one
 step; `listen({realClock: true})` is how a server with a real clock feeds
 one in, and a test leaves it off to keep the engine's deterministic
@@ -112,6 +115,26 @@ Both are decided in Lean; this host passes the fields through.
   `lws#storage` are server-managed: a request that sets or changes one gets
   409. A malformed link gets 400. Without `Prefer: set-linkset`, a `Link`
   field on PUT and PATCH is not stored.
+
+## Notifications
+
+LWS notifications and the webhook notification suite
+(https://github.com/danbri/factoidal/issues/890) are decided by
+`formal/lean4/L4Factoidal/LWS/Notifications.lean`. They are on unless
+`notifications: false` is passed.
+
+* The storage description at `/.well-known/lws-storage` names the
+  `NotificationService`: endpoint `/.well-known/lws-subscriptions/`, type
+  `WebhookSubscription`, and the Ed25519 key that signs deliveries.
+* A client POSTs `{"type":"WebhookSubscription","topic":[IRI…],"inbox":URL}`
+  (`application/lws+json`, with a token when authorization is on) and gets
+  201 with the subscription URL. GET on the endpoint lists the agent's
+  subscriptions; GET and DELETE manage one.
+* After a write, `lwsStep` names the deliveries: `{ id, url, headers, body }`.
+  This host POSTs each one exactly as given, after the response, and reports
+  the status to `lwsDelivered`; when the engine answers `retry`, it waits
+  `after` seconds and sends the delivery it names. `storage().settled()`
+  resolves when no delivery is in flight.
 
 ## Use
 

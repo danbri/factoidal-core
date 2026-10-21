@@ -29,8 +29,8 @@ case sensitive"). The day name is checked against the list of names, not
 against the date: §5.6.7 asks a recipient to be robust in parsing.
 
 `civilOfDays` is the era algorithm (H. Hinnant, "chrono-Compatible Low-Level
-Date Algorithms"), and `daysFromCivil` is its inverse. Theorem
-`daysFromCivil_civilOfDays` proves the inverse for every day count, and
+Date Algorithms"), and `eraDaysOfCivil` is its inverse. Theorem
+`eraDaysOfCivil_civilOfDays` proves the inverse for every day count, and
 `unixOfCivil_civilOfUnix` lifts it to seconds: the seconds a parsed date
 names are exactly the seconds whose `Last-Modified` the server formatted, so
 comparing a validator a client echoes with a resource's modification time is
@@ -58,7 +58,7 @@ def civilOfDays (days : Nat) : Nat × Nat × Nat :=
 
 /-- Days from 0000-03-01 to a civil year, month and day: the inverse of
 `civilOfDays`, shifted by the 719468 days from 0000-03-01 to 1970-01-01. -/
-def daysFromCivil (y m d : Nat) : Nat :=
+def eraDaysOfCivil (y m d : Nat) : Nat :=
   let y' := if m ≤ 2 then y - 1 else y
   let era := y' / 400
   let yoe := y' - era * 400
@@ -81,11 +81,11 @@ theorem civil_doe_bounds (doe : Nat) (h : doe < 146097) :
   refine ⟨h1, ?_⟩
   rcases hc with hc | hc | hc | hc | hc <;> rcases hy with hy | hy | hy | hy <;> omega
 
-/-- `daysFromCivil` inverts `civilOfDays`: every day count since 1970-01-01
+/-- `eraDaysOfCivil` inverts `civilOfDays`: every day count since 1970-01-01
 comes back, shifted to 0000-03-01. -/
-theorem daysFromCivil_civilOfDays (n : Nat) :
-    daysFromCivil (civilOfDays n).1 (civilOfDays n).2.1 (civilOfDays n).2.2 = n + 719468 := by
-  unfold civilOfDays daysFromCivil
+theorem eraDaysOfCivil_civilOfDays (n : Nat) :
+    eraDaysOfCivil (civilOfDays n).1 (civilOfDays n).2.1 (civilOfDays n).2.2 = n + 719468 := by
+  unfold civilOfDays eraDaysOfCivil
   simp only
   generalize hz : n + 719468 = z
   generalize hera : z / 146097 = era
@@ -122,7 +122,7 @@ theorem daysFromCivil_civilOfDays (n : Nat) :
 /-- Seconds since the Unix epoch of a civil date and a time of day. A date
 before 1970 gives a negative number. -/
 def unixOfCivil (y m d secOfDay : Nat) : Int :=
-  ((daysFromCivil y m d : Int) - 719468) * 86400 + (secOfDay : Int)
+  ((eraDaysOfCivil y m d : Int) - 719468) * 86400 + (secOfDay : Int)
 
 /-- The civil date and the time of day of an instant: what `Last-Modified`
 formats. -/
@@ -135,7 +135,7 @@ and time of day of `t` name exactly `t` seconds. -/
 theorem unixOfCivil_civilOfUnix (t : Nat) :
     unixOfCivil (civilOfUnix t).1 (civilOfUnix t).2.1 (civilOfUnix t).2.2.1
       (civilOfUnix t).2.2.2 = t := by
-  have h := daysFromCivil_civilOfDays (t / 86400)
+  have h := eraDaysOfCivil_civilOfDays (t / 86400)
   unfold civilOfUnix unixOfCivil
   simp only
   rw [h]

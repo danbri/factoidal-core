@@ -22,6 +22,18 @@
 //   lwsStep  [handle, requestJson]   -> { ok, response }
 //   lwsClose [handle]                -> { ok }
 //   lwsFetched [handle, documentJson] -> { ok, fetch? | installed? | refused? }
+//   lwsDelivered [handle, reportJson] -> { ok, changed, retry? }
+//
+// NOTIFICATIONS (https://github.com/danbri/factoidal/issues/890)
+// `lwsStep` may carry `deliveries: [{ id, url, headers, body }]`: HTTP
+// requests the engine decided to make (LWS notifications, webhook suite).
+// This host POSTs each one exactly as given, after the response to the
+// request that caused it, and reports the status it got (0 when no answer
+// came) to `lwsDelivered`. When the engine answers `retry`, this host
+// waits the number of seconds it names and makes that request. Which
+// changes are announced, to whom, with which body and signature, whether
+// to retry and when a subscription ends are all decided by
+// `formal/lean4/L4Factoidal/LWS/Notifications.lean`.
 //
 // `lwsStep` may answer `{ ok, fetch: { issuer, url } }` instead of a
 // response: the engine needs an authorization server's metadata or key
@@ -64,7 +76,21 @@ import { loadEngine } from '../bin/engine.mjs'
 import { readSnapshot, persistIfChanged } from './persist.mjs'
 
 /** The ops this host needs from the engine. */
-export const LWS_OPS = ['lwsOpen', 'lwsStep', 'lwsClose', 'lwsSnapshot', 'lwsFetched']
+export const LWS_OPS = ['lwsOpen', 'lwsStep', 'lwsClose', 'lwsSnapshot', 'lwsFetched', 'lwsDelivered']
+
+/** How long this host waits for the answer to one delivery request before
+ *  it reports "no answer" (status 0) to the engine. */
+const DELIVERY_TIMEOUT_MS = 10000
+
+/** Random bytes for the engine (`entropy`): the seed of the signing key of
+ *  a new storage and of the identifiers of one run. Pure I/O. */
+function entropyBase64 () {
+  const bytes = new Uint8Array(32)
+  globalThis.crypto.getRandomValues(bytes)
+  let text = ''
+  for (const b of bytes) text += String.fromCharCode(b)
+  return btoa(text)
+}
 
 /** The most documents one request may make this host fetch before the
  *  engine has answered it. The engine names at most two per issuer (its
@@ -199,6 +225,10 @@ export async function openLwsStorage (options = {}) {
   if (options.auth !== undefined && options.auth !== null) config.auth = options.auth
   if (options.insecureNoAuth === true) config.insecureNoAuth = true
   if (typeof options.rootAcl === 'string') config.rootAcl = options.rootAcl
+  // Notifications are on unless the caller turns them off; the engine
+  // decides everything else about them.
+  if (options.notifications === false) config.notifications = false
+  config.entropy = entropyBase64()
   // `dir` names the storage directory. The snapshot found there, if any,
   // is the storage to continue from; the engine checks it.
   const dir = typeof options.dir === 'string' ? options.dir : null
@@ -221,6 +251,51 @@ export async function openLwsStorage (options = {}) {
   if (handle === null) {
     throw new LwsHostError('lwsOpen answered with no handle')
   }
+
+  // Deliveries in flight, so a caller (a test, a shutdown) can wait.
+  const inFlight = new Set()
+  let closed = false
+  const clockNow = () => (options.realClock === true ? { now: Math.floor(Date.now() / 1000) } : {})
+
+  /** Make one delivery request the engine named, report the status, and
+   *  follow the engine's answer. */
+  function deliver (delivery) {
+    const job = (async () => {
+      let status = 0
+      try {
+        const answer = await fetch(delivery.url, {
+          method: 'POST',
+          headers: Array.isArray(delivery.headers) ? delivery.headers : [],
+          body: delivery.body,
+          redirect: 'manual',
+          signal: AbortSignal.timeout(DELIVERY_TIMEOUT_MS)
+        })
+        status = answer.status
+        await answer.arrayBuffer()
+      } catch (_error) {
+        status = 0
+      }
+      if (closed) return
+      const told = engine.call('lwsDelivered', [handle, JSON.stringify({
+        id: delivery.id, status, ...clockNow()
+      })])
+      if (dir !== null) persistIfChanged(engine, 'lwsSnapshot', handle, told, dir)
+      const retry = told !== null && typeof told === 'object' ? told.retry : null
+      if (retry !== undefined && retry !== null && typeof retry.after === 'number') {
+        await new Promise((resolve) => {
+          const timer = setTimeout(resolve, retry.after * 1000)
+          if (timer && typeof timer.unref === 'function') timer.unref()
+        })
+        if (!closed) deliver(retry.delivery)
+      }
+    })()
+    inFlight.add(job)
+    // A failure here is a failure of this host or of the engine call, not a
+    // protocol answer; it is reported and the delivery is dropped.
+    job.catch((error) => { console.error(`lws-serve: delivery: ${error && error.message ? error.message : error}`) })
+      .finally(() => inFlight.delete(job))
+  }
+
   return {
     engine,
     handle,
@@ -263,9 +338,20 @@ export async function openLwsStorage (options = {}) {
       }
       const answer = responseOf(envelope, answered.bytes)
       if (dir !== null) persistIfChanged(engine, 'lwsSnapshot', handle, envelope, dir)
+      if (Array.isArray(envelope.deliveries)) {
+        // After this step's answer is ready; the engine's state already
+        // records them as pending.
+        for (const delivery of envelope.deliveries) setTimeout(() => deliver(delivery), 0)
+      }
       return answer
     },
+    /** Resolves when no delivery request is in flight. */
+    async settled () {
+      await new Promise((resolve) => setTimeout(resolve, 0))
+      while (inFlight.size > 0) await Promise.allSettled([...inFlight])
+    },
     close () {
+      closed = true
       try { engine.call('lwsClose', [handle]) } catch (_error) { /* already gone */ }
     }
   }

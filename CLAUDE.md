@@ -737,6 +737,26 @@ scores, report the Lean 4 engine only, and do not open F\* failures as work.
 It does not decide the general F\* direction, which the owner left open on
 2026-10-21 ("I don't need to decide now").
 
+### LWS: Touchstone is the conformance target (owner, 2026-10-21)
+
+> "ok work with touchstone to make our stuff State of the Art compliant!!!"
+
+Touchstone (https://github.com/ebremer/touchstone, the LWS conformance
+harness of another implementer, 221 tests, results for six servers at
+https://ebremer.com/lws/conformance) is the external measure for LWS. Our own
+tests (`tests/lws/*.mjs`, the `#guard`s) check our reading of the draft;
+Touchstone checks it against another reading. Target: `tools/lws-touchstone.sh`
+exits 0 in both configurations (open and authorization on), with 0 failed and
+no test inapplicable for a feature we could implement, which is the level of
+the best servers on that page (lws-drupal: 210 passed, 0 failed, 11
+inapplicable). A test is called defective only with the spec text quoted, and
+then it is reported to the Touchstone author, not worked around. First run,
+2026-10-21: 0 tests ran (https://github.com/danbri/factoidal/issues/911).
+Features to add: https://github.com/danbri/factoidal/issues/890 (notifications),
+https://github.com/danbri/factoidal/issues/912 (type index and search),
+https://github.com/danbri/factoidal/issues/913 (access grants),
+https://github.com/danbri/factoidal/issues/914 (moving resources).
+
 ## Reading owner steers: prioritization is not prohibition
 
 The owner usually steers this project from a phone, between other

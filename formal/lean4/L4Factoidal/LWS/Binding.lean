@@ -81,6 +81,21 @@ def mediaOctetStream : String := "application/octet-stream"
 /-- The path of the storage description resource (a server choice). -/
 def storagePath : String := "/.well-known/lws-storage"
 
+/-- The subscription endpoint of the notification service (a server
+choice): the `serviceEndpoint` of the `NotificationService` the storage
+description advertises (LWS §Notification Discovery), and, by the webhook
+notification suite's §Subscription Management, the container that lists a
+subscriber's subscriptions. Each subscription is a member path below it. -/
+def subscriptionsPath : String := "/.well-known/lws-subscriptions/"
+
+/-- Is the path the subscription endpoint or one subscription below it? -/
+def isSubscriptionPath (p : String) : Bool := p.startsWith subscriptionsPath
+
+/-- The subscription type of the webhook notification suite (LWS 1.0
+Notification Suite: Webhooks, §Subscription Type Identifier: "A Webhook
+subscription MUST use the WebhookSubscription string"). -/
+def webhookSubscriptionType : String := "WebhookSubscription"
+
 /-- The query that names the linkset resource of a path (a server choice). -/
 def linksetQuery : String := "linkset"
 
@@ -594,17 +609,61 @@ def linksetJson (baseIri path : String) (kind : ResourceKind) : Json :=
     [ rel "type" [if kind.isContainer then lwsContainerType else lwsDataResourceType]
     , rel lwsStorageRel [iriOfPath baseIri storagePath] ]) ]) ]
 
+/-- The identifier of the storage: the storage description IRI. It is the
+target of every `lws#storage` link, the `id` of the description, and the
+`storage` member of a notification envelope. -/
+def storageIdOf (baseIri : String) : String := iriOfPath baseIri storagePath
+
+/-- The verification method identifier of the notification signing key
+whose public key is the base64url string `x`. The webhook suite
+(§Signature Verification) requires a `keyid` that "MUST be a URL with a
+fragment component" whose fragment-free part is the storage identifier; the
+fragment carries a digest of the key, so a new key gets a new identifier. -/
+def notificationKeyId (baseIri x : String) : String :=
+  storageIdOf baseIri ++ "#notification-key-" ++ hex8 (fnv1a32 x.toUTF8)
+
 /-- The storage description (§Discovery, "Storage Description Resource"),
 serialised as `application/lws+cid`. No `MoveResource` capability is
-described: this server does not let a client change an `up` link. -/
-def storageDescription (baseIri : String) : String :=
-  toStringCompact (.object
+described: this server does not let a client change an `up` link.
+
+With `notify`, the description also carries the `NotificationService` of
+LWS §Notification Discovery ("A storage that supports notifications MUST
+advertise a service object in the service array of its storage description
+resource with type equal to NotificationService", with a `serviceEndpoint`
+and a `subscriptionType` array). With `keyX`, the base64url Ed25519 public
+key that signs webhook deliveries, it carries that key as a `JsonWebKey`
+verification method referenced from `authentication`, as the webhook
+suite's §Webhook Authentication requires of "A server that supports HTTP
+Message Signatures". -/
+def storageDescription (baseIri : String) (notify : Bool := false)
+    (keyX : Option String := none) : String :=
+  let sid := storageIdOf baseIri
+  let keyMembers : List (String × Json) :=
+    match notify, keyX with
+    | true, some x =>
+        let kid := notificationKeyId baseIri x
+        [ ("verificationMethod", .array [ .object
+            [ ("id", .string kid)
+            , ("type", .string "JsonWebKey")
+            , ("controller", .string sid)
+            , ("publicKeyJwk", .object
+                [ ("kty", .string "OKP"), ("crv", .string "Ed25519"), ("x", .string x) ]) ] ])
+        , ("authentication", .array [.string kid]) ]
+    | _, _ => []
+  let notifService : List Json :=
+    if notify then
+      [ .object
+        [ ("type", .string "NotificationService")
+        , ("serviceEndpoint", .string (iriOfPath baseIri subscriptionsPath))
+        , ("subscriptionType", .array [.string webhookSubscriptionType]) ] ]
+    else []
+  toStringCompact (.object (
     [ ("@context", .array [.string cidContext, .string lwsProfile])
-    , ("id", .string (iriOfPath baseIri storagePath))
-    , ("type", .string "Storage")
-    , ("service", .array [ .object
+    , ("id", .string sid)
+    , ("type", .string "Storage") ] ++ keyMembers ++
+    [ ("service", .array ([ .object
         [ ("type", .string "StorageRoot")
-        , ("serviceEndpoint", .string (iriOfPath baseIri rootPath)) ] ]) ])
+        , ("serviceEndpoint", .string (iriOfPath baseIri rootPath)) ] ] ++ notifService)) ]))
 
 /-! ## JSON Patch (RFC 6902) -/
 
