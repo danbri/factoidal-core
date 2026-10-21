@@ -978,6 +978,16 @@ rule #17").
     as proved for issue 799 stage 1, had never been built; two OWL and RDF
     theorem files from 2026-09-07 were in the same state. All three build;
     they are now imported from a root.)
+36. A purity lint that scans only the server hosts says nothing about the
+    rest of the JS. RDF, SPARQL, datatype and IRI decisions in any npm or
+    hub `.mjs`/`.js` file are iron-rule-7 violations. (2026-10-21 audit:
+    `tools/host-purity-lint.sh` passed 10 of 10 while `rdfjs.mjs` carried
+    its own N-Quads parser and writer, `fn.js` its own isomorphism check,
+    and `bin/ext.mjs` chose `xsd:integer` for `1e21`; each gave a wrong
+    answer. Owner, verbatim: "The ja leak fix is p0 yop urgent. Get that
+    shit into lean 4 and proven asap. We can't undermine whole project this
+    way!" Fix and lint extension:
+    https://github.com/danbri/factoidal/issues/894.)
 
 ## Skills (operational details, on-demand)
 
