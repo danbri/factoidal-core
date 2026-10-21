@@ -138,6 +138,7 @@ def fullOnlyOpNames : List String :=
   , "packBegin", "packFeed", "packEndPass", "packNext", "packFinish", "packClose"
   , "lwsOpen", "lwsStep", "lwsClose", "lwsSnapshot", "lwsFetched", "solidOpen", "solidStep", "solidClose"
   , "solidSnapshot"
+  , "solidFetched"
   , "solidClientRequest", "solidClientResponse"
   , "matrixDeterminant", "matrixScalarProduct", "matrixVectorProduct"
   , "matrixOuterProduct", "sigmoidPoints", "sigmoidFormulaMathml"

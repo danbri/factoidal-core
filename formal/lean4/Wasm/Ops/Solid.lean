@@ -29,6 +29,7 @@ either engine through one code path.
 import Std.Data.HashMap
 import Wasm.Ops.Lws
 import L4Factoidal.Solid.Server.Methods
+import L4Factoidal.Solid.Server.Oidc
 import L4Factoidal.Solid.Client.Requests
 import L4Factoidal.Solid.Client.Responses
 import L4Factoidal.Solid.Client.Profile
@@ -47,6 +48,10 @@ open L4Factoidal.HTTP (Request Response)
 structure OpenSolid where
   cfg : ServerConfig
   mem : MemState
+  /-- Solid-OIDC authentication (`L4Factoidal.Solid.Server.Oidc`). `none`:
+  the configuration named neither `auth` nor `insecureNoAuth`, and the
+  requester is the handle configuration's agent, as before issue 899. -/
+  oidc : Option Oidc.OidcConfig := none
 
 initialize solidCounter : IO.Ref Nat ← IO.mkRef 0
 initialize solidTable : IO.Ref (Std.HashMap String OpenSolid) ← IO.mkRef ∅
@@ -57,21 +62,43 @@ def unknownSolidHandle (h : String) : String :=
 /-- `enforceWac` is read from the configuration, defaulting to false — the
 first slice serves public resources (see `L4Factoidal/Solid/README.md`). -/
 def serverConfigOfJson (text : String) :
-    Except String (ServerConfig × Nat × Option String × Option MemState) :=
+    Except String (ServerConfig × Nat × Option String × Option MemState ×
+      Option Oidc.OidcConfig) :=
   match openConfigOfJson text with
   | .error e => .error e
   | .ok oc =>
-      let enforce :=
-        if text.trim == "" then false
+      let j? : Option Json :=
+        if text.trim == "" then none
         else match parseJson text with
-          | .ok j => (j.getBool? "enforceWac").getD false
-          | .error _ => false
-      .ok ({ lws := oc.cfg, enforceWac := enforce }, oc.now, oc.rootAcl, oc.snapshot)
+          | .ok j => some j
+          | .error _ => none
+      -- `auth` turns Solid-OIDC on (and Web Access Control with it, unless
+      -- the configuration says otherwise); `insecureNoAuth` is the
+      -- explicit development mode. `openConfigOfJson` has already refused
+      -- the two together.
+      let oidc : Except String (Option Oidc.OidcConfig) :=
+        match j? with
+        | none => .ok none
+        | some j =>
+            match j.field? "auth" with
+            | some aj => (Oidc.oidcConfigOfJson aj oc.now).map some
+            | none => if oc.authz.insecureNoAuth then .ok (some { insecureNoAuth := true })
+                      else .ok none
+      match oidc with
+      | .error e => .error e
+      | .ok oidc =>
+          let wacDefault := match oidc with
+            | some o => !o.insecureNoAuth
+            | none => false
+          let enforce := match j? with
+            | some j => (j.getBool? "enforceWac").getD wacDefault
+            | none => false
+          .ok ({ lws := oc.cfg, enforceWac := enforce }, oc.now, oc.rootAcl, oc.snapshot, oidc)
 
 def solidOpen (configJson : String) : IO String := do
   match serverConfigOfJson configJson with
   | .error e => pure (errJson e)
-  | .ok (cfg, now, rootAcl, snapshot) =>
+  | .ok (cfg, now, rootAcl, snapshot, oidc) =>
       let n ← solidCounter.modifyGet fun n => (n + 1, n + 1)
       let h := s!"solid{n}"
       -- The storage root advertises an LDN inbox (Solid Protocol §6, LDN
@@ -79,7 +106,7 @@ def solidOpen (configJson : String) : IO String := do
       -- its inbox with 201, and a container with no representation answers
       -- 404 (Solid Protocol §5.3).
       let mem := snapshot.getD (memPut (initialStorage now rootAcl) (inboxEntry now))
-      solidTable.modify (·.insert h { cfg, mem })
+      solidTable.modify (·.insert h { cfg, mem, oidc })
       pure (okWith [ ("handle", .string h)
                    , ("root", .string rootPath)
                    , ("storage", .string cfg.lws.baseIri) ])
@@ -97,14 +124,67 @@ def solidStep (h requestJson : String) : IO String := do
               let mem := match now? with
                 | some t => { open_.mem with clock := t }
                 | none   => open_.mem
+              -- A per-request agent is the host's word for who is asking;
+              -- it stands only when authentication is off.
+              let agentStands := match open_.oidc with
+                | none => true
+                | some o => o.insecureNoAuth
               let cfg := match agent? with
-                | some a => { open_.cfg with
-                              lws := { open_.cfg.lws with agent := some a } }
+                | some a => if agentStands then { open_.cfg with
+                              lws := { open_.cfg.lws with agent := some a } } else open_.cfg
                 | none   => open_.cfg
-              let (resp, mem') := L4Factoidal.Solid.Server.step MemStore cfg r mem
-              solidTable.modify (·.insert h { open_ with mem := mem' })
-              pure (okWith [ ("response", jsonOfResponse resp)
-                           , ("changed", .bool (mem'.clock != mem.clock)) ])
+              match open_.oidc with
+              | none =>
+                  let (resp, mem') := L4Factoidal.Solid.Server.step MemStore cfg r mem
+                  solidTable.modify (·.insert h { open_ with mem := mem' })
+                  pure (okWith [ ("response", jsonOfResponse resp)
+                               , ("changed", .bool (mem'.clock != mem.clock)) ])
+              | some o =>
+                  match Oidc.authenticatedStep lwsVerifiers MemStore cfg o
+                          (now?.getD mem.clock) r mem with
+                  | .inl (k, key, url) =>
+                      pure (okWith [("fetch", .object [("kind", .string k.name),
+                        ("key", .string key), ("url", .string url)])])
+                  | .inr (resp, mem', o') =>
+                      solidTable.modify (·.insert h { open_ with mem := mem', oidc := some o' })
+                      pure (okWith [ ("response", jsonOfResponse resp)
+                                   , ("changed", .bool (mem'.clock != mem.clock)) ])
+
+/-- `solidFetched(handle, {kind, key, url, status, body, now})`: the host's
+answer to a `fetch` from `solidStep`. Lean decides what the document means
+(`Oidc.installFetched`); the result names the next URL to fetch, or says
+the document was installed and the request can be stepped again. -/
+def solidFetched (h docJson : String) : IO String := do
+  match (← solidTable.get)[h]? with
+  | none => pure (unknownSolidHandle h)
+  | some open_ =>
+      match open_.oidc with
+      | none => pure (errJson "solidFetched: this storage does not authenticate")
+      | some o =>
+          match parseJson docJson with
+          | .error e => pure (errJson s!"fetched: {toString e}")
+          | .ok j =>
+              let kind? : Option Oidc.FetchKind := match j.getString? "kind" with
+                | some "issuer" => some .issuer
+                | some "profile" => some .profile
+                | _ => none
+              match kind?, j.getString? "key", j.getString? "url" with
+              | some kind, some key, some url =>
+                  let status := match j.field? "status" with
+                    | some (.number s) => (s.toNat?).getD 0
+                    | _ => 0
+                  let now := match j.field? "now" with
+                    | some (.number s) => (s.toNat?).getD open_.mem.clock
+                    | _ => open_.mem.clock
+                  let (o', outcome) := Oidc.installFetched o kind key url status
+                    ((j.getString? "body").getD "") now
+                  solidTable.modify (·.insert h { open_ with oidc := some o' })
+                  pure <| match outcome with
+                    | .next u => okWith [("fetch", .object [("kind", .string kind.name),
+                        ("key", .string key), ("url", .string u)])]
+                    | .installed n => okWith [("installed", .number (toString n))]
+                    | .refused why => okWith [("refused", .string why)]
+              | _, _, _ => pure (errJson "fetched: members \"kind\", \"key\" and \"url\" are required")
 
 /-- `solidSnapshot(handle)`: the durable form of the storage, as
 `lwsSnapshot`. -/
@@ -236,6 +316,7 @@ def solidClientResponse (kind responseJson : String) : String :=
 
 /-- The op names this module serves. -/
 def solidOpNames : List String :=
-  ["solidOpen", "solidStep", "solidClose", "solidClientRequest", "solidClientResponse"]
+  ["solidOpen", "solidStep", "solidClose", "solidFetched", "solidClientRequest",
+   "solidClientResponse"]
 
 end L4Wasm.Ops
