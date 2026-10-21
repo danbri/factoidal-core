@@ -727,6 +727,16 @@ put in this category. Rules: `skills/test-suites/SKILL.md` § Defective test
 data. First case: CSVW validation test308,
 https://github.com/danbri/factoidal/issues/700.
 
+### Test failures and scores: Lean 4 only (owner, 2026-10-21)
+
+> "No focus on lean4 here. F* out of scope"
+
+Said in reply to a report that put an F\* RDF 1.2 Semantics failure beside
+the Lean scores. Read it as: when you report or work on test failures and
+scores, report the Lean 4 engine only, and do not open F\* failures as work.
+It does not decide the general F\* direction, which the owner left open on
+2026-10-21 ("I don't need to decide now").
+
 ## Reading owner steers: prioritization is not prohibition
 
 The owner usually steers this project from a phone, between other
