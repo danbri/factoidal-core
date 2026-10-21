@@ -231,6 +231,9 @@ QUERIES = {
     "join": WDT + "SELECT ?s ?o1 ?o2 WHERE { ?s wdt:P688 ?o1 . ?s wdt:P1057 ?o2 }\n",
     "optional-filter": WDT + ("SELECT ?s ?o1 ?o2 WHERE {\n  ?s wdt:P1057 ?o1 .\n"
                               "  OPTIONAL { ?s wdt:P688 ?o2 }\n  FILTER(isIRI(?o1))\n}\n"),
+    # added 2026-10-21: the indexed FILTER NOT EXISTS of issue 881
+    "not-exists": WDT + ("SELECT ?s ?o1 WHERE {\n  ?s wdt:P1057 ?o1 .\n"
+                         "  FILTER NOT EXISTS { ?s wdt:P688 ?o2 }\n}\n"),
 }
 
 
@@ -289,7 +292,10 @@ SPO_QUERY = "SELECT ?s ?p ?o WHERE { ?s ?p ?o }\n"
 # engines: a command per (workload kind, engine); answer extraction
 # ---------------------------------------------------------------------------
 JENA_SYNTAX = {"ntriples": "N-Triples", "turtle": "Turtle", "rdfxml": "RDF/XML",
-               "nquads": "N-Quads"}
+               "nquads": "N-Quads", "jsonld": "JSON-LD"}
+# riot --output names: "RDF/XML" is the plain writer (one rdf:Description per
+# statement), the form Lean and Oxigraph write; "jsonld" is JSON-LD 1.1.
+JENA_OUTPUT = {"rdfxml": "RDF/XML", "jsonld": "jsonld"}
 
 
 def cmd_parse(engine, path, fmt):
@@ -307,6 +313,18 @@ def cmd_parse(engine, path, fmt):
     if engine == "jena":
         return [str(JENA / "riot"), f"--syntax={JENA_SYNTAX[fmt]}", "--output=nquads",
                 str(path)], java_env()
+    return None, None
+
+
+def cmd_write(engine, path, fmt, out):
+    """Read FILE (fmt) and write it in the syntax `out` (a writer row)."""
+    if engine == "lean":
+        return [str(LEAN), "parse", str(path), "--format", fmt, "--out", out], None
+    if engine == "oxigraph":
+        return [str(PY), str(OXI_DRIVER), "convert", str(path), fmt, out], None
+    if engine == "jena":
+        return [str(JENA / "riot"), f"--syntax={JENA_SYNTAX[fmt]}",
+                f"--output={JENA_OUTPUT[out]}", str(path)], java_env()
     return None, None
 
 
@@ -477,6 +495,27 @@ add(Workload("parse-rdfxml-real", "parse",
              [1], lambda n: ROOT / "third_party/ontologies/cl-basic/cl-basic.owl",
              ["lean", "oxigraph", "jena"],
              lambda e, p, n: cmd_parse(e, p, "rdfxml"), lambda e, o: ans_lines(o), unit="file"))
+add(Workload("parse-jsonld", "parse",
+             "JSON-LD, one node object per subject (3 statements each, one shared hub node), "
+             "to N-Quads",
+             [25000, 50000, 100000], lambda n: blf.gen_jsonld("hub", n),
+             ["lean", "oxigraph", "jena"],
+             lambda e, p, n: cmd_parse(e, p, "jsonld"), lambda e, o: ans_lines(o), unit="nodes"))
+# Writer rows (added 2026-10-21): the RDF/XML writer of issue 845 and the
+# JSON-LD writer (fromRdf) of issue 712. The documents differ between engines
+# (prefixes, member order, nesting), so the answers are not compared.
+add(Workload("write-rdfxml", "write",
+             "N-Triples (mixed terms) read and written as RDF/XML",
+             [100000, 200000, 400000], lambda n: blf.gen_mixed_nt(n, False),
+             ["lean", "oxigraph", "jena"],
+             lambda e, p, n: cmd_write(e, p, "ntriples", "rdfxml"), lambda e, o: None,
+             compare=False))
+add(Workload("write-jsonld", "write",
+             "N-Triples (mixed terms) read and written as JSON-LD",
+             [100000, 200000, 400000], lambda n: blf.gen_mixed_nt(n, False),
+             ["lean", "oxigraph", "jena"],
+             lambda e, p, n: cmd_write(e, p, "ntriples", "jsonld"), lambda e, o: None,
+             compare=False))
 add(Workload("count-nt", "parse-count", "N-Triples, full IRIs, count only (no output)",
              [100000, 200000, 400000], blf.gen_nt, ["lean", "lean-stream", "npm", "jena"],
              lambda e, p, n: cmd_count(e, p, "ntriples"),
@@ -490,7 +529,8 @@ add(Workload("count-ttl-gene", "parse-count", "Turtle, gene.ttl slices, count on
 for qid, desc in (("bound-subject", "SELECT ?p ?o with a bound subject"),
                   ("count", "SELECT (COUNT(*) AS ?c), full scan"),
                   ("join", "two-pattern join on ?s (wdt:P688, wdt:P1057)"),
-                  ("optional-filter", "wdt:P1057, OPTIONAL wdt:P688, FILTER(isIRI(?o1))")):
+                  ("optional-filter", "wdt:P1057, OPTIONAL wdt:P688, FILTER(isIRI(?o1))"),
+                  ("not-exists", "wdt:P1057, FILTER NOT EXISTS { wdt:P688 }")):
     add(Workload(f"sparql-{qid}", "sparql",
                  f"load gene.ttl slice into memory, {desc}; all solutions as TSV",
                  [20000, 40000, 80000], blf.gene_slice, ["lean", "oxigraph", "jena"],
@@ -671,6 +711,7 @@ def measure(cmd, env, runs, cap, tdir, load_limit, load_wait, extra_on_spread, a
         "spread": round((max(walls) - min(walls)) / statistics.median(walls), 3)
         if statistics.median(walls) > 0 else 0,
         "cpu_s": round(statistics.median([x["cpu"] for x in ok]), 4),
+        "cpu_min_s": round(min(x["cpu"] for x in ok), 4),
         "sys_all_s": [x["sys"] for x in ok],
         "minflt_all": [x["minflt"] for x in ok],
         "rss_mb": round(statistics.median([x["rss_kb"] or 0 for x in ok]) / 1024, 1),
@@ -759,7 +800,8 @@ def fmt_t(r):
         return "—"
     if r["status"] != "ok":
         return f"{r['status']} ({r.get('wall_s')} s)"
-    return f"{r['wall_s']:.3f} s ±{100 * r['spread']:.0f}%"
+    mn = f", min {r['wall_min_s']:.3f}" if r.get("wall_min_s") is not None else ""
+    return f"{r['wall_s']:.3f} s ±{100 * r['spread']:.0f}%{mn}"
 
 
 def fmt_m(r):
@@ -813,9 +855,9 @@ def report(path):
                       f"{ans if ans is not None else '—'}{mark} | "
                       f"{min(load) if load else '—'} to {max(load) if load else '—'} |")
     print("\n### Lean against the fastest reference engine\n")
-    print("Ratio = Lean / reference (time: median wall time; CPU: median user plus system "
+    print("Ratio = Lean / reference (time: minimum wall time of the runs of each case; CPU: median user plus system "
           "time; memory: median peak resident set). Above 1, Lean is slower or larger. "
-          "The fastest reference is the one with the least median wall time.\n")
+          "The fastest reference is the one with the least minimum wall time.\n")
     print("RSS above start: each engine's peak resident set minus the peak resident set "
           "of its own process start (row `start`); a reference that holds less than 1 MB "
           "above its start counts as 1 MB.\n")
@@ -838,7 +880,7 @@ def report(path):
             refs = [r for e, r in cell.items() if e not in LEAN_ENGINES and r["status"] == "ok"]
             if not refs:
                 continue
-            ref = min(refs, key=lambda r: r["wall_s"])
+            ref = min(refs, key=wall_of)
             for le in LEAN_ENGINES:
                 lr = cell.get(le)
                 if lr is None:
@@ -848,38 +890,104 @@ def report(path):
                 if lr["status"] == "ok":
                     if ref.get("cpu_s"):
                         crs = fmt_r(lr['cpu_s'] / ref['cpu_s'])
-                    tr = lr["wall_s"] / ref["wall_s"] if ref["wall_s"] > 0 else None
+                    tr = wall_of(lr) / wall_of(ref) if wall_of(ref) > 0 else None
                     mr = lr["rss_mb"] / ref["rss_mb"] if ref.get("rss_mb") else None
                     la, ra = above(le, lr.get("rss_mb")), above(ref["engine"], ref.get("rss_mb"))
                     if la is not None and ra is not None:
                         ar = la / max(ra, 1.0)  # a reference under 1 MB above start counts as 1 MB
                     trs = fmt_r(tr)
                     mrs = fmt_r(mr)
-                    # memory counts only when the ratio above process start is also over 10
-                    if (tr or 0) > 10 or ((mr or 0) > 10 and (ar is None or ar > 10)):
+                    # the gate's rule (over_bound): time over TIME_BOUND, or memory over
+                    # MEM_BOUND by both memory measures
+                    if (tr or 0) > TIME_BOUND or ((mr or 0) > MEM_BOUND
+                                                  and (ar is None or ar > MEM_BOUND)):
                         flagged.append((wid, size, le, ref["engine"], tr, mr))
                 else:
                     trs = f"> {lr.get('wall_s', 0) / ref['wall_s']:.0f} ({lr['status']})"
                     mrs = "—"
                     flagged.append((wid, size, le, ref["engine"], None, None))
                 ars = fmt_r(ar)
-                print(f"| {wid} | {size} | {ref['engine']} | {ref['wall_s']:.3f} s, "
+                print(f"| {wid} | {size} | {ref['engine']} | min {wall_of(ref):.3f} s, "
                       f"{fmt_m(ref)} | {le} | {fmt_t(lr)}, {fmt_m(lr)} | {trs} | {crs} | {mrs} | "
                       f"{ars} |")
-    print("\n### Rows over 10 (lean variant against the fastest reference)\n")
-    print("A row is listed when the time ratio is over 10, or when the RSS ratio and the "
-          "RSS-above-start ratio are both over 10.\n")
+    print("\n### Rows over the gate's bound (lean variant against the fastest reference)\n")
+    print(f"A row is listed when the time ratio is over {TIME_BOUND:g}, or when the RSS ratio "
+          f"and the RSS-above-start ratio are both over {MEM_BOUND:g}.\n")
     for wid, size, le, e, t, m in flagged:
         ts = f"{t:.1f}" if t is not None else "not finished"
         ms = f"{m:.1f}" if m is not None else "—"
         print(f"- {wid} {size}, {le} against {e}: time ratio {ts}, RSS ratio {ms}")
 
 
-# Expected failures of the gate: Lean rows more than 10 times the fastest
-# reference engine (time, or memory above process start), each with its open
-# issue. The row fails the gate when it comes within the bound (UNEXPECTED
-# PASS), so the repair cannot land without the row and the issue being updated.
+# Expected failures of the gate: Lean rows over the bound of over_bound()
+# (time more than TIME_BOUND = 3 times the fastest reference engine, or memory
+# over MEM_BOUND by both memory measures), each with its open issue. Marked
+# 2026-10-21 (key result 2.2 of https://github.com/danbri/factoidal/issues/901,
+# record docs/designissues/2026-10-21-sota-remeasure.md): every row measured
+# over 2.2 times, the comment is the measured time ratio (minimum wall times).
+# A marked row fails the gate when it measures under TIME_BOUND / XPASS_MARGIN
+# (UNEXPECTED PASS), so the repair cannot land without the mark and the issue
+# being updated.
 XFAIL = {
+    ("parse-nt", "100000", "lean"): "https://github.com/danbri/factoidal/issues/904",  # 4.0
+    ("parse-nt", "100000", "lean-stream"): "https://github.com/danbri/factoidal/issues/904",  # 4.5
+    ("parse-nt", "200000", "lean"): "https://github.com/danbri/factoidal/issues/904",  # 3.2
+    ("parse-nt", "200000", "lean-stream"): "https://github.com/danbri/factoidal/issues/904",  # 3.7
+    ("parse-nt", "400000", "lean"): "https://github.com/danbri/factoidal/issues/904",  # 4.1
+    ("parse-nt", "400000", "lean-stream"): "https://github.com/danbri/factoidal/issues/904",  # 4.2
+    ("parse-nt-mixed", "100000", "lean"): "https://github.com/danbri/factoidal/issues/904",  # 3.9
+    ("parse-nt-mixed", "100000", "lean-stream"): "https://github.com/danbri/factoidal/issues/904",  # 4.4
+    ("parse-nt-mixed", "200000", "lean"): "https://github.com/danbri/factoidal/issues/904",  # 4.1
+    ("parse-nt-mixed", "200000", "lean-stream"): "https://github.com/danbri/factoidal/issues/904",  # 4.1
+    ("parse-nt-mixed", "400000", "lean"): "https://github.com/danbri/factoidal/issues/904",  # 3.9
+    ("parse-nt-mixed", "400000", "lean-stream"): "https://github.com/danbri/factoidal/issues/904",  # 4.5
+    ("parse-ttl-gene", "20000", "lean"): "https://github.com/danbri/factoidal/issues/904",  # 2.5
+    ("parse-ttl-gene", "20000", "lean-stream"): "https://github.com/danbri/factoidal/issues/904",  # 3.0
+    ("parse-ttl-gene", "40000", "lean"): "https://github.com/danbri/factoidal/issues/904",  # 2.7
+    ("parse-ttl-gene", "40000", "lean-stream"): "https://github.com/danbri/factoidal/issues/904",  # 2.7
+    ("parse-ttl-gene", "80000", "lean"): "https://github.com/danbri/factoidal/issues/904",  # 2.7
+    ("parse-ttl-gene", "80000", "lean-stream"): "https://github.com/danbri/factoidal/issues/904",  # 2.5
+    ("parse-ttl-rich", "100000", "lean"): "https://github.com/danbri/factoidal/issues/904",  # 3.6
+    ("parse-ttl-rich", "100000", "lean-stream"): "https://github.com/danbri/factoidal/issues/904",  # 3.5
+    ("parse-ttl-rich", "200000", "lean"): "https://github.com/danbri/factoidal/issues/904",  # 3.2
+    ("parse-ttl-rich", "200000", "lean-stream"): "https://github.com/danbri/factoidal/issues/904",  # 3.3
+    ("parse-ttl-rich", "400000", "lean"): "https://github.com/danbri/factoidal/issues/904",  # 3.2
+    ("parse-ttl-rich", "400000", "lean-stream"): "https://github.com/danbri/factoidal/issues/904",  # 3.1
+    ("parse-rdfxml", "25000", "lean"): "https://github.com/danbri/factoidal/issues/905",  # 4.0
+    ("parse-rdfxml", "50000", "lean"): "https://github.com/danbri/factoidal/issues/905",  # 4.0
+    ("parse-rdfxml", "100000", "lean"): "https://github.com/danbri/factoidal/issues/905",  # 4.7
+    ("parse-rdfxml-real", "1", "lean"): "https://github.com/danbri/factoidal/issues/905",  # 3.7
+    ("sparql-bound-subject", "20000", "lean"): "https://github.com/danbri/factoidal/issues/908",  # 2.7
+    ("sparql-bound-subject", "40000", "lean"): "https://github.com/danbri/factoidal/issues/908",  # 3.7
+    ("sparql-bound-subject", "80000", "lean"): "https://github.com/danbri/factoidal/issues/908",  # 3.2
+    ("sparql-count", "20000", "lean"): "https://github.com/danbri/factoidal/issues/908",  # 2.5
+    ("sparql-count", "40000", "lean"): "https://github.com/danbri/factoidal/issues/908",  # 3.6
+    ("sparql-count", "80000", "lean"): "https://github.com/danbri/factoidal/issues/908",  # 3.4
+    ("sparql-join", "20000", "lean"): "https://github.com/danbri/factoidal/issues/908",  # 2.8
+    ("sparql-join", "40000", "lean"): "https://github.com/danbri/factoidal/issues/908",  # 2.7
+    ("sparql-join", "80000", "lean"): "https://github.com/danbri/factoidal/issues/908",  # 3.6
+    ("sparql-optional-filter", "20000", "lean"): "https://github.com/danbri/factoidal/issues/908",  # 3.1
+    ("sparql-optional-filter", "40000", "lean"): "https://github.com/danbri/factoidal/issues/908",  # 4.0
+    ("sparql-optional-filter", "80000", "lean"): "https://github.com/danbri/factoidal/issues/908",  # 3.7
+    ("rdfc-pairs", "2000", "lean"): "https://github.com/danbri/factoidal/issues/909",  # 2.5
+    ("rdfc-pairs", "4000", "lean"): "https://github.com/danbri/factoidal/issues/909",  # 2.8
+    ("rdfc-pairs", "8000", "lean"): "https://github.com/danbri/factoidal/issues/909",  # 3.3
+    ("owl-dl-consistent", "wine", "lean"): "https://github.com/danbri/factoidal/issues/910",  # 10.8
+    ("owl-dl-consistent", "schema.org", "lean"): "https://github.com/danbri/factoidal/issues/910",  # 2.7
+    ("owl-dl-consistent", "qudt", "lean"): "https://github.com/danbri/factoidal/issues/910",  # 7.5
+    ("owl-dl-consistent", "cl-basic", "lean"): "https://github.com/danbri/factoidal/issues/910",  # 4.8
+    ("parse-jsonld", "25000", "lean"): "https://github.com/danbri/factoidal/issues/906",  # 3.3
+    ("parse-jsonld", "50000", "lean"): "https://github.com/danbri/factoidal/issues/906",  # 4.4
+    ("parse-jsonld", "100000", "lean"): "https://github.com/danbri/factoidal/issues/906",  # 3.5
+    ("write-rdfxml", "100000", "lean"): "https://github.com/danbri/factoidal/issues/907",  # 4.4
+    ("write-rdfxml", "200000", "lean"): "https://github.com/danbri/factoidal/issues/907",  # 4.9
+    ("write-rdfxml", "400000", "lean"): "https://github.com/danbri/factoidal/issues/907",  # 8.0
+    ("write-jsonld", "100000", "lean"): "https://github.com/danbri/factoidal/issues/907",  # 4.7
+    ("write-jsonld", "200000", "lean"): "https://github.com/danbri/factoidal/issues/907",  # 5.1
+    ("write-jsonld", "400000", "lean"): "https://github.com/danbri/factoidal/issues/907",  # 6.2
+    ("sparql-not-exists", "20000", "lean"): "https://github.com/danbri/factoidal/issues/908",  # 3.2
+    ("sparql-not-exists", "40000", "lean"): "https://github.com/danbri/factoidal/issues/908",  # 3.8
+    ("sparql-not-exists", "80000", "lean"): "https://github.com/danbri/factoidal/issues/908",  # 3.6
 }
 # Removed 2026-10-13: ("parse-rdfxml", "100000", "lean") for
 # https://github.com/danbri/factoidal/issues/814. With the RDF/XML repairs of
@@ -900,18 +1008,76 @@ XFAIL = {
 # docs/designissues/2026-10-10-owl-real-ontologies.md § 11).
 
 
-def over_ten(lean, ref, start_rss):
-    """The report's rule: time ratio over 10, or memory ratio and memory above
-    process start ratio both over 10 (a reference under 1 MB above its start
-    counts as 1 MB)."""
-    tr = lean["wall_s"] / ref["wall_s"] if ref["wall_s"] > 0 else 0
+# Key result 2.2 of https://github.com/danbri/factoidal/issues/901: every
+# gated Lean row within TIME_BOUND times the wall time of the fastest
+# reference engine of its case, or an expected failure naming an open issue.
+# Memory keeps the rule of 2026-10-12: a row is over when its peak resident
+# set is more than MEM_BOUND times the reference's AND more than MEM_BOUND
+# times the reference's memory above process start (a reference under 1 MB
+# above its start counts as 1 MB).
+#
+# The time ratio is taken between minimum wall times (the least of the runs of
+# a case) where both rows have one: on a shared machine the load average adds
+# to the median more than to the minimum. An expected failure reports
+# UNEXPECTED PASS only below TIME_BOUND / XPASS_MARGIN (2.2 by default), and
+# every row recorded over 2.2 carries a mark: a row measured at 2.5 and at 3.0
+# on two quiet runs (sparql-count 20,000, 2026-10-21) then does not turn the
+# gate red; a row without a mark fails above TIME_BOUND. The recorded rows
+# leave a gap between 2.04 and 2.49 where no row sits.
+TIME_BOUND = float(os.environ.get("SOTA_TIME_BOUND", "3"))
+MEM_BOUND = float(os.environ.get("SOTA_MEM_BOUND", "10"))
+XPASS_MARGIN = float(os.environ.get("SOTA_XPASS_MARGIN", "1.35"))
+
+
+def wall_of(r):
+    return r.get("wall_min_s") or r["wall_s"]
+
+
+def over_bound(lean, ref, start_rss):
+    """True when the Lean row is over TIME_BOUND in time, or over MEM_BOUND
+    in memory by both memory measures; also the two ratios."""
+    tr = wall_of(lean) / wall_of(ref) if wall_of(ref) > 0 else 0
     mr = lean["rss_mb"] / ref["rss_mb"] if ref.get("rss_mb") else 0
     lb = start_rss.get("lean")
     rb = start_rss.get({"jena-owl-micro": "jena"}.get(ref["engine"], ref["engine"]))
     ar = None
     if lb is not None and rb is not None:
         ar = (lean["rss_mb"] - lb) / max(ref["rss_mb"] - rb, 1.0)
-    return tr > 10 or (mr > 10 and (ar is None or ar > 10)), tr, mr
+    return tr > TIME_BOUND or (mr > MEM_BOUND and (ar is None or ar > MEM_BOUND)), tr, mr
+
+
+# Host speed calibration of the gate (2026-10-21). On this shared VM the CPU
+# time of the same binary on the same file moved by 30 to 50 % within two
+# hours at the same load average (parse-nt 400,000: 2.04 s, then 2.62 to
+# 3.19 s at load 0.6 to 1.0; skills/perf-benchmarking, "Baselines are
+# per-host"). The load average does not show it. So the gate runs one
+# reference case, CALIBRATION, and scales the recorded CPU times and the
+# recorded reference wall times by host = measured CPU / recorded CPU of that
+# case, when host > 1 (a faster host never loosens a bound). A failing row is
+# measured again after a new calibration. SOTA_CALIBRATE=0 turns it off; it
+# is off when the reference engine is not installed.
+CALIBRATION = ("parse-nt", 400000, "oxigraph")
+
+
+def calibrate(rows, args, tdir):
+    if os.environ.get("SOTA_CALIBRATE", "1") == "0":
+        return 1.0
+    wid, size, eng = CALIBRATION
+    recd = next((r for r in reversed(rows) if (r["workload"], str(r["size"]), r["engine"])
+                 == (wid, str(size), eng) and r["status"] == "ok"), None)
+    if recd is None or not PY.exists():
+        print(f"calibration: off ({eng} not installed or no recorded {wid} {size} row)")
+        return 1.0
+    w = W[wid]
+    cmd, env = w.cmd(eng, w.make(size), size)
+    rec, _ = measure(cmd, env, 3, args.cap, tdir, args.load_limit, args.load_wait, False)
+    if rec["status"] != "ok" or not recd.get("cpu_s"):
+        return 1.0
+    host = rec["cpu_s"] / recd["cpu_s"]
+    print(f"calibration: {eng} {wid} {size} cpu {rec['cpu_s']:.3f} s against recorded "
+          f"{recd['cpu_s']:.3f} s: host factor {host:.2f} (used: {max(1.0, host):.2f})",
+          flush=True)
+    return max(1.0, host)
 
 
 def check(args):
@@ -921,7 +1087,7 @@ def check(args):
     for r in rows:
         if r["engine"] not in LEAN_ENGINES and r["status"] == "ok":
             k = (r["workload"], str(r["size"]))
-            if k not in refs or r["wall_s"] < refs[k]["wall_s"]:
+            if k not in refs or wall_of(r) < wall_of(refs[k]):
                 refs[k] = r
     start_rss = {r["engine"]: r["rss_mb"] for r in rows
                  if r["workload"] == "start" and r["status"] == "ok"}
@@ -932,6 +1098,7 @@ def check(args):
         todo = [r for r in todo if r["workload"] in keep]
     tdir = DL / "tmp"
     tdir.mkdir(parents=True, exist_ok=True)
+    host = calibrate(rows, args, tdir)
     fails = 0
     for r in todo:
         w = W[r["workload"]]
@@ -944,6 +1111,8 @@ def check(args):
         verdict = None
         xf = None
         for attempt in (1, 2):  # a failing row is measured once more before it fails
+            if attempt == 2:
+                host = calibrate(rows, args, tdir)
             rec, o = measure(cmd, env, args.runs, args.cap, tdir, args.load_limit,
                              args.load_wait, True, w.accept)
             ans = w.answer(r["engine"], o) if rec["status"] == "ok" else None
@@ -953,22 +1122,34 @@ def check(args):
             else:
                 if str(ans) != str(r.get("answer")):
                     problems.append(f"answer {ans} != recorded {r.get('answer')}")
-                cpu_bound = (1 + args.tolerance) * r["cpu_s"] + args.slack_s
-                if rec["cpu_s"] > cpu_bound:
-                    problems.append(f"cpu {rec['cpu_s']:.3f} s > {cpu_bound:.3f} s "
-                                    f"(recorded {r['cpu_s']:.3f} s)")
+                # the least CPU time of the gate's runs against the recorded
+                # median: a regression shows in every run, the noise of this
+                # host (30 to 50 % on some runs, 2026-10-21) in some
+                cpu_bound = (1 + args.tolerance) * r["cpu_s"] * host + args.slack_s
+                cpu_now = rec.get("cpu_min_s", rec["cpu_s"])
+                if cpu_now > cpu_bound:
+                    problems.append(f"cpu (least of the runs) {cpu_now:.3f} s > {cpu_bound:.3f} s "
+                                    f"(recorded {r['cpu_s']:.3f} s, host factor {host:.2f})")
                 rss_bound = (1 + args.tolerance) * r["rss_mb"] + args.slack_mb
                 if rec["rss_mb"] > rss_bound:
                     problems.append(f"rss {rec['rss_mb']:.0f} MB > {rss_bound:.0f} MB "
                                     f"(recorded {r['rss_mb']:.0f} MB)")
             xf = XFAIL.get((r["workload"], str(r["size"]), r["engine"]))
             ref = refs.get((r["workload"], str(r["size"])))
-            if xf and rec["status"] == "ok" and ref:
-                flagged, tr, mr = over_ten(rec, ref, start_rss)
-                if not flagged:
+            # the row `start` is the process start that every other row
+            # includes; it has no bound of its own
+            if rec["status"] == "ok" and ref and r["workload"] != "start":
+                ref_now = dict(ref, wall_s=ref["wall_s"] * host,
+                               wall_min_s=wall_of(ref) * host)
+                flagged, tr, mr = over_bound(rec, ref_now, start_rss)
+                if xf and not flagged and tr < TIME_BOUND / XPASS_MARGIN:
                     problems.append(f"UNEXPECTED PASS of the expected failure {xf}: time ratio "
                                     f"{tr:.1f}, memory ratio {mr:.1f} against recorded "
                                     f"{ref['engine']}; update the row and the issue")
+                elif flagged and not xf:
+                    problems.append(f"time ratio {tr:.1f} (bound {TIME_BOUND:g}), memory ratio "
+                                    f"{mr:.1f} against recorded {ref['engine']}, and no "
+                                    f"expected-failure mark")
             verdict = problems
             if not problems:
                 break

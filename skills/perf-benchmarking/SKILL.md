@@ -304,6 +304,24 @@ vendored. `tests/perf/sota_gate.sh` re-runs the Lean rows against the recorded
 JSON lines (CPU time and peak resident set, 25 %) and carries the expected
 failures of the rows over 10.
 
+Since 2026-10-21 (key results 2.1 to 2.3 of
+https://github.com/danbri/factoidal/issues/901; record
+[`docs/designissues/2026-10-21-sota-remeasure.md`](../../docs/designissues/2026-10-21-sota-remeasure.md)):
+the gate reads `2026-10-21-sota-remeasure.results.jsonl` and also fails a
+Lean row over 3 times the fastest reference by MINIMUM wall time unless it
+carries an `XFAIL` mark naming an open issue; a marked row under 2.2 times
+fails as UNEXPECTED PASS, and every row recorded over 2.2 is marked (the 2.2
+to 3 band absorbs load noise: `sparql-count` 20,000 measured 2.5 and 3.0 on
+two quiet runs). The CPU-time and memory baselines of a selected row are the
+largest session medians. New
+workloads: `parse-jsonld`, `write-rdfxml`, `write-jsonld`,
+`sparql-not-exists`. Set `SOTA_DL` per checkout. The npm API costs (parse,
+iterate, query, serialise, `serveStore` and LWS requests) are
+`tests/perf/npm_costs.mjs` against `docs/test-results/npm-costs.json`
+(fails on a 20 % regression; `NPM_COSTS_TOLERANCE`, `NPM_COSTS_NO_FAIL`).
+A results row is the minimum over sessions: run the noisy rows again at low
+load and append; the selected rows go last in the file (last wins).
+
 Traps met while building it (2026-10-13):
 
 - **The Lean command line ends its output with an empty line.** Counting

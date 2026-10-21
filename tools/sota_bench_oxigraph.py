@@ -11,11 +11,12 @@ measures them alone.
   parse FILE FORMAT [BASE]   parse, write N-Quads (one line per quad read)
   query FILE FORMAT QUERY.rq load into an in-memory Store, run the query,
                              write the solutions as SPARQL TSV
+  convert FILE FORMAT OUT    parse, write in the syntax OUT (writer rows)
   canonicalize FILE          RDFC-1.0 of an N-Quads file; the canonical
                              N-Quads, sorted in code point order
   start                      import pyoxigraph and exit
 
-FORMAT: ntriples | nquads | turtle | trig | rdfxml.
+FORMAT: ntriples | nquads | turtle | trig | rdfxml | jsonld.
 pyoxigraph is not vendored; tools/sota-bench.py installs it into a venv
 under its download directory.
 """
@@ -30,6 +31,7 @@ FORMATS = {
     "turtle": ox.RdfFormat.TURTLE,
     "trig": ox.RdfFormat.TRIG,
     "rdfxml": ox.RdfFormat.RDF_XML,
+    "jsonld": ox.RdfFormat.JSON_LD,
 }
 
 
@@ -42,6 +44,11 @@ def main(argv):
         base = argv[4] if len(argv) > 4 else None
         ox.serialize(ox.parse(path=path, format=fmt, base_iri=base),
                      sys.stdout.buffer, ox.RdfFormat.N_QUADS)
+        return 0
+    if verb == "convert":
+        # read FILE in FORMAT, write it in OUT (a writer row)
+        path, fmt, out = argv[2], FORMATS[argv[3]], FORMATS[argv[4]]
+        ox.serialize(ox.parse(path=path, format=fmt), sys.stdout.buffer, out)
         return 0
     if verb == "query":
         path, fmt = argv[2], FORMATS[argv[3]]
