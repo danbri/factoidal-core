@@ -13,6 +13,7 @@ Usage: `lake exe l4lws-probe`
 import L4Factoidal.LWS.Tests
 import L4Factoidal.Solid.Tests
 import L4Factoidal.LWS.NotificationsTests
+import L4Factoidal.LWS.SearchTests
 
 open L4Factoidal.LWS
 open L4Factoidal.LWS.Conformance
@@ -38,7 +39,11 @@ def checks : List (String × Bool) :=
     -- (L4Factoidal/Solid/Server/Auth.lean); the check lives there.
   , ("lws-core-14", L4Factoidal.Solid.Tests.solidGuardSolidOidcDpop)
   , ("lws-core-15", L4Factoidal.Solid.Tests.solidGuardSolidOidcDpop)
-  , ("lws-core-16", L4Factoidal.LWS.NotificationsTests.lwsGuardNotificationsDelivered) ]
+  , ("lws-core-16", L4Factoidal.LWS.NotificationsTests.lwsGuardNotificationsDelivered)
+  , ("lws-index-01", L4Factoidal.LWS.SearchTests.lwsGuardIndexDiscovery)
+  , ("lws-index-02", L4Factoidal.LWS.SearchTests.lwsGuardTypeSearch)
+  , ("lws-index-03", L4Factoidal.LWS.SearchTests.lwsGuardSearchErrors)
+  , ("lws-index-05", L4Factoidal.LWS.SearchTests.lwsGuardSearchAuthorized) ]
 
 def check? (id : String) : Option Bool :=
   (checks.find? (fun (rid, _) => rid == id)).map (·.2)

@@ -178,6 +178,38 @@ def registry : List Requirement :=
   , module := "L4Factoidal.LWS.Move.move"
   , binding := "LWS core §Moving Resources (w3c/lws-protocol 9a08ff65): JSON Patch of the up link in the linkset resource"
   , status := .proved "L4Factoidal.LWS.move_tree" }
+-- LWS Search and Type Index Services (lws10-index, w3c/lws-protocol 9a08ff65,
+-- https://github.com/danbri/factoidal/issues/912). `L4Factoidal.LWS.Search`.
+, { id := "lws-index-01"
+  , section_ := "lws10-index: Discovery"
+  , statement := "A storage that supports one of these services MUST advertise it with a service object in the service array of its storage description resource: the entry for the Type Index Service MUST have a type equal to TypeIndexService, and the entry for the Type Search Service MUST have a type equal to TypeSearchService."
+  , module := "L4Factoidal.LWS.Binding.storageDescription"
+  , status := .guarded "L4Factoidal.LWS.SearchTests.lwsGuardIndexDiscovery" }
+, { id := "lws-index-02"
+  , section_ := "lws10-index: QUERY [TypeSearchService]"
+  , statement := "The type key is the mandatory baseline and MUST be supported by every server that implements the TypeSearchService."
+  , module := "L4Factoidal.LWS.Search.searchStep"
+  , status := .guarded "L4Factoidal.LWS.SearchTests.lwsGuardTypeSearch" }
+, { id := "lws-index-03"
+  , section_ := "lws10-index: Errors"
+  , statement := "A request body that is not well-formed application/lws-query+json, or whose type is not an array, or any of whose elements is neither a string nor a non-empty array of strings, MUST be rejected with 400 (Bad Request)."
+  , module := "L4Factoidal.LWS.Search.parseFilter"
+  , status := .guarded "L4Factoidal.LWS.SearchTests.lwsGuardSearchErrors" }
+, { id := "lws-index-04"
+  , section_ := "lws10-index: Security and Authorization"
+  , statement := "Unauthorized entries MUST be omitted entirely."
+  , module := "L4Factoidal.LWS.Search.searchAnswer"
+  , status := .proved "L4Factoidal.LWS.Search.searchAnswer_authorized" }
+, { id := "lws-index-05"
+  , section_ := "lws10-index: Security and Authorization"
+  , statement := "A server MAY maintain a derived index for performance, but it MUST apply current authorization as a filter over that index on every request."
+  , module := "L4Factoidal.LWS.Search.serverStep"
+  , status := .guarded "L4Factoidal.LWS.SearchTests.lwsGuardSearchAuthorized" }
+, { id := "lws-index-06"
+  , section_ := "lws10-index: Type and Relation Derivation"
+  , statement := "When a server enriches the type index from resource content, the types it surfaces MUST be treated identically to those derived from Link headers for the purposes of indexing, search, and authorization filtering."
+  , module := "L4Factoidal.LWS.TypeIndex.entryFacts"
+  , status := .proved "L4Factoidal.LWS.Search.ixSearch_eq_specSearch" }
 ]
 
 /-! ## Counting -/

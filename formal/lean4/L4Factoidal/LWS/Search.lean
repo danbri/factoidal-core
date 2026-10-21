@@ -143,7 +143,7 @@ def filterHolds (gs : Filter) (fs : List Fact) : Bool := gs.all (groupHolds fs)
 path? It must be a container or data resource whose facts satisfy every
 group. -/
 def selects (b : String) (gs : Filter) : Option Entry → Bool
-  | some e => !e.kind.isAuxiliary && filterHolds gs (entryFacts b e)
+  | some e => indexable e && filterHolds gs (entryFacts b e)
   | none => false
 
 /-- The specified answer: every path of the store the filter selects, in
@@ -294,15 +294,15 @@ theorem mem_groupCandidates {b : String} {look : String → Option Entry} {ix : 
 /-- `selects` in two parts: a container or data resource, and the groups. -/
 theorem selects_iff (b : String) (gs : Filter) (o : Option Entry) :
     selects b gs o = true ↔
-      (∃ e, o = some e ∧ e.kind.isAuxiliary = false) ∧ filterHolds gs (factsAt b o) = true := by
+      (∃ e, o = some e ∧ indexable e = true) ∧ filterHolds gs (factsAt b o) = true := by
   cases o with
   | none => simp [selects]
   | some e =>
-      cases ha : e.kind.isAuxiliary <;> simp [selects, factsAt, ha]
+      cases ha : indexable e <;> simp [selects, factsAt, ha]
 
 /-- A group that holds names a fact, so the path holds a resource. -/
 theorem some_of_groupHolds {b : String} {o : Option Entry} {g : Group}
-    (h : groupHolds (factsAt b o) g = true) : ∃ e, o = some e ∧ e.kind.isAuxiliary = false := by
+    (h : groupHolds (factsAt b o) g = true) : ∃ e, o = some e ∧ indexable e = true := by
   unfold groupHolds at h
   simp only [List.any_eq_true] at h
   obtain ⟨t, _, hc⟩ := h

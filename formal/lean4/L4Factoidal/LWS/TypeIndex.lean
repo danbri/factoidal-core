@@ -72,12 +72,15 @@ Server choices, each stated once:
   relation type in lower case, an extension relation (a URI) exactly.
 * Auxiliary resources (ACL and metadata resources, linksets) have no facts:
   the services describe "the resources within a storage", and their objects
-  are containers and data resources.
+  are containers and data resources. A resource is auxiliary by its kind or
+  by its path (`Move.auxiliaryPath`: an ACL written with PUT is stored with
+  the kind of a data resource).
 -/
 import Std.Data.HashMap
 import Std.Data.HashSet
 import L4Factoidal.LWS.Store
 import L4Factoidal.LWS.Linkset
+import L4Factoidal.LWS.Move
 import L4Factoidal.Syntax.TurtleChunkFold
 import L4Factoidal.Syntax.IriResolve
 
@@ -161,11 +164,15 @@ def contentTypes (resIri : String) (e : Entry) : List String :=
             then some o.val else none
         | _, _ => none)
 
+/-- Is a stored resource one the services describe: a container or data
+resource, not an auxiliary resource by kind or by path? -/
+def indexable (e : Entry) : Bool := !e.kind.isAuxiliary && !auxiliaryPath e.path
+
 /-- The facts of one stored resource: its native class first, then its
 declared types and indexed relations from its links, then the types its
 content states. An auxiliary resource has none. -/
 def entryFacts (baseIri : String) (e : Entry) : List Fact :=
-  if e.kind.isAuxiliary then []
+  if !indexable e then []
   else
     let resIri := iriOfPath baseIri e.path
     ((typeRel, classOf e.kind) :: e.links.filterMap (linkFact resIri)) ++
@@ -176,24 +183,24 @@ def factsAt (baseIri : String) : Option Entry → List Fact
   | some e => entryFacts baseIri e
   | none => []
 
-theorem entryFacts_aux {b : String} {e : Entry} (h : e.kind.isAuxiliary = true) :
+theorem entryFacts_aux {b : String} {e : Entry} (h : indexable e = false) :
     entryFacts b e = [] := by
   simp [entryFacts, h]
 
-theorem class_mem_entryFacts {b : String} {e : Entry} (h : e.kind.isAuxiliary = false) :
+theorem class_mem_entryFacts {b : String} {e : Entry} (h : indexable e = true) :
     (typeRel, classOf e.kind) ∈ entryFacts b e := by
   simp [entryFacts, h]
 
-/-- A path with a fact holds a resource that is not auxiliary. -/
+/-- A path with a fact holds a resource the services describe. -/
 theorem some_of_mem_factsAt {b : String} {o : Option Entry} {f : Fact}
-    (h : f ∈ factsAt b o) : ∃ e, o = some e ∧ e.kind.isAuxiliary = false := by
+    (h : f ∈ factsAt b o) : ∃ e, o = some e ∧ indexable e = true := by
   cases o with
   | none => simp [factsAt] at h
   | some e =>
       refine ⟨e, rfl, ?_⟩
-      cases ha : e.kind.isAuxiliary
-      · rfl
+      cases ha : indexable e
       · simp [factsAt, entryFacts_aux ha] at h
+      · rfl
 
 theorem classOf_mem_nativeClasses (k : ResourceKind) : classOf k ∈ nativeClasses := by
   unfold classOf nativeClasses
@@ -459,6 +466,8 @@ private def person : Entry :=
   , ("describedby", "http://example.org/p#shape"), (typeRel, "https://schema.org/Event") ]
 -- An auxiliary resource has no facts; a container has its class.
 #guard entryFacts base { person with kind := .metadataResource } == []
+#guard entryFacts base { person with path := "/p.acl" } == []
+#guard entryFacts base { person with path := "/p.meta" } == []
 #guard entryFacts base { person with path := "/c/", kind := .container, links := [] } ==
   [(typeRel, lwsContainerType)]
 -- A type link naming a native class gives no fact; registered relations
