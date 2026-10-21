@@ -350,6 +350,41 @@ expected fail, 41 skipped (out of 76), web-access-control-tests not run
 (exit 2, external OIDC, as before); `tools/host-purity-lint.sh` 35 pass,
 0 fail (out of 35).
 
+## Moving resources (issue 914)
+
+Run 2026-10-21 on branch `claude/wt-lws914` (moving resources,
+https://github.com/danbri/factoidal/issues/914, merged with the issue 911
+branch at a5daa19c), `bash tools/lws-touchstone.sh --config both`, no
+`--shim`, same Touchstone commit. The script exits 0.
+
+| configuration | tests | passed | failed | cantTell | inapplicable |
+|---|---:|---:|---:|---:|---:|
+| ours, `--insecure-no-auth`, direct | 221 | 75 | 0 | 0 | 146 |
+| ours, default authorization, direct | 221 | 152 | 0 | 0 | 69 |
+
+`core/moving` (11 tests): open 6 pass, 0 fail, 5 inapplicable;
+authorization 7 pass, 0 fail, 4 inapplicable (out of 11 each). Passed:
+`discovery-move-capability`, `move-data-resource`,
+`move-updates-container-etags`, `move-invalid-destination-refused`,
+`move-container`, `move-container-into-itself-refused`, and in the
+authorization run `move-notification` (it needs `ReachableFixtures`, which
+the open run does not declare). Inapplicable in both:
+
+* three tests whose preconditions exclude one another, so no one server
+  applies all three: `move-keeps-identifier-content-and-links` needs
+  `preservesIdentifier: true` (our identifiers are paths, so a moved
+  resource gets a new one and we say `false`);
+  `move-container-refused-without-container-support` needs a capability
+  WITHOUT `Container` in `appliesTo` (we move containers);
+  `move-refused-without-capability` needs NO capability.
+* `move-needs-create-in-destination` and `move-needs-delete-of-resource`:
+  their prerequisites grant bob access through an AccessGrantService
+  (https://github.com/danbri/factoidal/issues/913), and Touchstone's `env`
+  provisioning adapter cannot grant access out of band. The rule they test
+  is in `Authorization.decide` and is checked by `MoveTests.lean`
+  "Authorization" (allowed, 403 without create in the destination, 403
+  without delete of the resource or of one resource of a moved subtree).
+
 ## Run details
 
 * Host: Linux, OpenJDK 21.0.12, Maven 3.9.11, Node 22.22.0. No Docker

@@ -191,6 +191,11 @@ three of its 11 tests have preconditions this server cannot meet at once
 (`move-keeps-identifier-content-and-links` needs `preservesIdentifier: true`,
 `move-container-refused-without-container-support` needs no `Container` in
 `appliesTo`, `move-refused-without-capability` needs no capability).
+Measured 2026-10-21 without `--shim`: open 6 pass, 0 fail, 5 inapplicable;
+authorization 7 pass, 0 fail, 4 inapplicable (out of 11 each). The two
+`move-needs-*` tests need an AccessGrantService
+(https://github.com/danbri/factoidal/issues/913); record:
+`docs/designissues/2026-10-21-lws-touchstone-run.md` § Moving resources.
 
 ### Pagination and client links (https://github.com/danbri/factoidal/issues/887, 888)
 
