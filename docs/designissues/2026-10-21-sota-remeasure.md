@@ -231,7 +231,16 @@ repeat decides. A failing row whose load average was above the CPU count is
 reported NOISY and does not fail. Override for a noisy machine:
 `NPM_COSTS_TOLERANCE=0.5`, or `NPM_COSTS_NO_FAIL=1` to report without
 failing (write the reason in the commit message). An operation in `XFAIL`
-fails when it answers (UNEXPECTED PASS). Per release: run with `--write`
+fails when it answers (UNEXPECTED PASS). From `npm/factoidal`: `npm run
+test:costs`. Comparison run of 14:02 UTC (load 4.0 falling to 1.1): 24 pass,
+0 fail (out of 24), `100000 lws-get` XFAIL. With `NPM_COSTS_TOLERANCE=-0.9`
+the script fails (exit status 1), so it can fail.
+
+Gates of this branch: `tests/perf/sota_gate.sh` 94 pass, 0 fail (out of 94)
+(section 7); `npm test` in `npm/factoidal` 493 pass, 0 fail, 2 skipped (out
+of 495), with `third_party/testing/vc` and `csvw` linked read only from the
+main checkout for the run (esbuild not installed; the TDB2 row looks for
+Jena under `/tmp/sota-dl`). Per release: run with `--write`
 after the release build and commit the JSON with the release; the next
 release is compared with it.
 

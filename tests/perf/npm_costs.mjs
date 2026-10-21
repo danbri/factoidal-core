@@ -186,8 +186,8 @@ async function measureSize(n, onlyOp = null) {
       const src = join(dir, 'd.nq');
       writeFileSync(src, text);
       const st = join(dir, 'st');
-      execFileSync(process.execPath, [CLI, 'pack', src, join(st, 'gen-1'), '--layout', 'ibk5', '--quiet'], { stdio: 'inherit' });
-      execFileSync(process.execPath, [CLI, 'activate', st, 'gen-1', '--quiet'], { stdio: 'inherit' });
+      execFileSync(process.execPath, [CLI, 'pack', src, join(st, 'gen-1'), '--layout', 'ibk5', '--quiet'], { stdio: 'ignore' });
+      execFileSync(process.execPath, [CLI, 'activate', st, 'gen-1', '--quiet'], { stdio: 'ignore' });
       const s = await f.serveStore(st);
       try {
         const q = 'SELECT (COUNT(*) AS ?c) WHERE { GRAPH ?g { ?s ?p ?o } }';
