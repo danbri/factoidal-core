@@ -20,6 +20,7 @@
 //                              would; false when the log is empty
 //
 // No Node built-ins: the browser imports this file as it is.
+import { hostError } from './errors.mjs';
 
 const DELTA_STORE = 'deltaBatches';
 
@@ -65,7 +66,7 @@ export function memoryDeltaLogStore() {
 function indexedDbFactory() {
   const factory = globalThis.indexedDB;
   if (!factory) {
-    throw new Error('deltaLog: this runtime has no indexedDB; the browser entry keeps the log in IndexedDB');
+    throw hostError('deltaLog: this runtime has no indexedDB; the browser entry keeps the log in IndexedDB');
   }
   return factory;
 }
@@ -80,23 +81,23 @@ function idbOpen(dbName) {
       }
     };
     req.onsuccess = () => resolve(req.result);
-    req.onerror = () => reject(req.error || new Error('indexedDB.open failed'));
-    req.onblocked = () => reject(new Error('indexedDB.open blocked (another tab holds an open connection at an older version)'));
+    req.onerror = () => reject(hostError('indexedDB.open failed', req.error));
+    req.onblocked = () => reject(hostError('indexedDB.open blocked (another tab holds an open connection at an older version)'));
   });
 }
 
 function requestDone(req) {
   return new Promise((resolve, reject) => {
     req.onsuccess = () => resolve(req.result);
-    req.onerror = () => reject(req.error || new Error('IndexedDB request failed'));
+    req.onerror = () => reject(hostError('IndexedDB request failed', req.error));
   });
 }
 
 function transactionDone(tx) {
   return new Promise((resolve, reject) => {
     tx.oncomplete = () => resolve();
-    tx.onerror = () => reject(tx.error || new Error('IndexedDB transaction failed'));
-    tx.onabort = () => reject(tx.error || new Error('IndexedDB transaction aborted'));
+    tx.onerror = () => reject(hostError('IndexedDB transaction failed', tx.error));
+    tx.onabort = () => reject(hostError('IndexedDB transaction aborted', tx.error));
   });
 }
 
@@ -164,8 +165,8 @@ export function indexedDbDeltaLogStore() {
       await new Promise((resolve, reject) => {
         const req = indexedDbFactory().deleteDatabase(name);
         req.onsuccess = () => resolve();
-        req.onerror = () => reject(req.error || new Error('indexedDB.deleteDatabase failed'));
-        req.onblocked = () => reject(new Error('indexedDB.deleteDatabase blocked (another open connection)'));
+        req.onerror = () => reject(hostError('indexedDB.deleteDatabase failed', req.error));
+        req.onblocked = () => reject(hostError('indexedDB.deleteDatabase blocked (another open connection)'));
       });
     },
     async corruptLast(name) {

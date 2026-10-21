@@ -15,6 +15,8 @@
 // ES module (0.9.0): the same file serves Node (index.mjs, and rdfjs.js for
 // require()) and the browser (browser.js), with no build step.
 
+import { FactoidalError } from './lib/errors.mjs';
+
 // RDF/JS Data Model defaults of DataFactory.literal.
 const XSD_STRING = 'http://www.w3.org/2001/XMLSchema#string'; // purity-lint: allow RDF/JS DataFactory default
 const RDF_LANGSTRING =
@@ -330,10 +332,10 @@ function _setTextEngine(engine) { textEngine = engine; }
 
 function needEngine(who) {
   if (!textEngine) {
-    throw new Error(
+    throw new FactoidalError(
       `${who}: N-Quads text is read and written by the engine, which is not ` +
       'loaded yet. Await any @factoidal/core call first (for example ' +
-      '`await ready()`), or use parse() and Dataset.toString().');
+      '`await ready()`), or use parse() and Dataset.toString().', { code: 'op.unknown' });
   }
   return textEngine;
 }

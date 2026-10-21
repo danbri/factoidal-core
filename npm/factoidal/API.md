@@ -83,28 +83,51 @@ module instance as the ES import, so `instanceof Dataset` holds across both.
 ### Parsing is strict
 
 A syntax error, an undeclared prefix, or a relative IRI with no `baseIRI`
-in effect rejects the whole parse with a `ParseError`:
+in effect rejects the whole parse with a `FactoidalError` (see "Errors"
+below):
 
 ```js
-import { parse, ParseError } from "@factoidal/core";
+import { parse, FactoidalError } from "@factoidal/core";
 
 const text = '<http://x/s> <http://x/p> "😀" .\nBOGUS .\n';
 try {
   await parse(text, { format: "ntriples" });
 } catch (err) {
-  if (err instanceof ParseError) {
-    console.log(err.line, err.column);   // 2 6
-    console.log(text.slice(err.offset)); // " .\n": the error is here
+  if (err instanceof FactoidalError) {
+    console.log(err.code);                        // parse.syntax
+    console.log(err.position.line, err.position.column); // 2 6
+    console.log(text.slice(err.position.offset)); // " .\n": the error is here
+    console.log(err.spec); // https://www.w3.org/TR/rdf12-n-triples/#n-triples-grammar
   }
 }
 ```
 
 `line` is 1-based; `column` is 1-based and counts Unicode scalar values;
 `offset` is a **UTF-16 code-unit index into the input string**, so
-`text.slice(err.offset)` starts at the error even when a character outside
-the Basic Multilingual Plane precedes it. RDF/XML and JSON-LD failures carry
-a message only. Pass `{ baseIRI: "https://example.org/doc" }` to resolve
+`text.slice(err.position.offset)` starts at the error even when a character
+outside the Basic Multilingual Plane precedes it; `byteOffset` is the same
+position in UTF-8 bytes. RDF/XML and JSON-LD failures have `position: null`.
+Pass `{ baseIRI: "https://example.org/doc" }` to resolve
 relative IRIs.
+
+### Errors
+
+Every function rejects (or throws) with `FactoidalError`. A `TypeError` is
+thrown only when an argument has the wrong JavaScript type. The engine
+decides the fields (`formal/lean4/Wasm/Ops/ErrorModel.lean`); the
+JavaScript copies them:
+
+| field | value |
+|---|---|
+| `code` | a stable code; the table is in README "Errors" and in `engineTables().errorCodes` |
+| `position` | `{line, column, offset, byteOffset}` for a parse, query or update error, else `null` |
+| `spec` | the URL of the specification section of the condition, or `null` |
+| `cause` | the underlying error of a `host.io` failure |
+| `format`, `formatInferred` | for a parse failure of text: the syntax read, and whether it was inferred |
+
+The message is the engine's text. A query or an update that does not parse
+has a `position` into the query text. A method of a disposed `Dataset`
+rejects with `handle.disposed`.
 
 ### Lenient parsing
 
@@ -127,7 +150,7 @@ console.log(text.slice(d.offset));    // " .\n<http://x/c> ...": the error is he
 ```
 
 Each diagnostic has `message`, `line`, `column` and `offset` (the same
-conventions as `ParseError`) and a stable `class`: `undefined-prefix`,
+conventions as `FactoidalError.position`) and a stable `class`: `undefined-prefix`,
 `relative-iri`, `bad-iri`, `bad-escape`, `unterminated-string`,
 `bad-literal`, `bad-blank-node`, `bad-prefixed-name`, `bad-directive`,
 `bad-graph-name`, `rdf12-syntax`, `unclosed-group`, `nesting-limit`,
@@ -405,8 +428,8 @@ garbage collected without `dispose()` is released by a
 the engine's list with read and write support per RDF version. The functional
 `update(data, text)` answers a NEW Dataset and leaves a Dataset argument
 unchanged. Text input takes `{format}`; with no format the engine infers one
-and reports it. Every function throws a `TypeError` for an unknown option
-key. `DatasetHandle` is a deprecated alias of `Dataset` and goes in 0.11.0.
+and reports it. An unknown option key rejects with a `FactoidalError` of
+code `option.unknown`; the engine checks the keys (op `apiCheck`). `DatasetHandle` is a deprecated alias of `Dataset` and goes in 0.11.0.
 
 ## The persisted store
 
@@ -1055,7 +1078,7 @@ const { conforms, report } = await validate(ds, await parse(shapesTtl)); // SHAC
 
 | Function | Signature (informal) | Notes |
 |---|---|---|
-| `parse` | `(text, {format?, baseIRI?, lenient?, maxErrors?}) => Dataset` | `turtle`, `ntriples`, `nquads`, `trig`, `rdfxml`, `jsonld`, and `turtle12`, `ntriples12`, `nquads12`, `trig12`; no format: inferred and reported. One call is one document. Strict: a syntax error rejects with `ParseError`. `dataset.prefixes` is the declared map |
+| `parse` | `(text, {format?, baseIRI?, lenient?, maxErrors?}) => Dataset` | `turtle`, `ntriples`, `nquads`, `trig`, `rdfxml`, `jsonld`, and `turtle12`, `ntriples12`, `nquads12`, `trig12`; no format: inferred and reported. One call is one document. Strict: a syntax error rejects with a `FactoidalError` (`parse.syntax`). `dataset.prefixes` is the declared map |
 | `query` | `(data, sparql, {format?, baseIRI?, entail?, sparql12?, version?, output?}) => Bindings[] \| boolean \| Dataset \| string` | SELECT → `Map<var, Term>[]`; ASK → boolean; CONSTRUCT and DESCRIBE → Dataset; with `output` the results document (`json`, `xml`, `csv`, `tsv`, `table`, `ntriples`). `data` is a Dataset, a string, `{text, format}`, or an array of those |
 | `update` | `(data, sparqlUpdate, {format?, baseIRI?}) => Dataset` | answers a NEW Dataset; `dataset.update()` changes one in place |
 | `openDataset` | `(data, {format?, baseIRI?}) => Dataset` | a Dataset argument is cloned |
@@ -1089,7 +1112,7 @@ const { conforms, report } = await validate(ds, await parse(shapesTtl)); // SHAC
 | `vcCheckCredential`, `vcCheckCredentialSubject`, `vcCheckNoDataLoss`, `vcCheckRelatedResourceDigests`, `didKeyResolve` | | VCDM 2.0 checks; `did:key` (Ed25519) resolution |
 | `capabilities` | `() => {…}` | which ops the loaded wasm serves |
 | `loadEngine` | `() => engine` | the low-level handle, `call(op, args)`, for ops this layer does not wrap |
-| `Dataset`, `Store`, `ParseError`, `dataFactory`, `version`, `engine` | | `engine` is `'lean4-wasm'`; `DatasetHandle` is a deprecated alias of `Dataset` |
+| `Dataset`, `Store`, `FactoidalError`, `dataFactory`, `version`, `engine` | | `engine` is `'lean4-wasm'`; `DatasetHandle` is a deprecated alias of `Dataset` |
 
 `./l4` and `./l4-core` are aliases of the main entry in 0.9.x and go in
 0.10.0.
@@ -1101,7 +1124,7 @@ From the parity runs of issue 713
 section 6). No answer below was found wrong against a specification on
 either engine; where one engine did less, the row says so.
 
-- `ParseError.offset` is a UTF-16 index (0.8: UTF-8 bytes).
+- A parse error's `position.offset` is a UTF-16 index (0.8: UTF-8 bytes).
 - DESCRIBE answers the Concise Bounded Description (0.8: the empty graph,
   [issue 702](https://github.com/danbri/factoidal/issues/702)).
 - `shexValidate` answers a boolean (0.8: `null` outside its decidable

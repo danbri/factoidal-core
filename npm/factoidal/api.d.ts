@@ -45,8 +45,8 @@ export const Dataset: typeof import('./index').Dataset;
 export const DatasetHandle: typeof import('./index').DatasetHandle;
 export const Store: typeof import('./index').Store;
 export const dataFactory: import('./index').DataFactory;
-/** Position-carrying parse failure; see index.d.ts's ParseError. */
-export const ParseError: typeof import('./index').ParseError;
+/** The one error class; see index.d.ts's FactoidalError. */
+export const FactoidalError: typeof import('./index').FactoidalError;
 /** Package version string, e.g. '0.9.0'. */
 export const version: string;
 

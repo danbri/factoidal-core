@@ -111,6 +111,8 @@ def errorCodeTable : List ErrorCodeInfo :=
       "The options object has a key the function does not take."⟩
   , ⟨"option.invalid-value", none,
       "An option or mode argument has a value outside its table."⟩
+  , ⟨"option.conflict", none,
+      "Two options were given that cannot be combined."⟩
   , ⟨"capacity.exceeded", none,
       "The input is above a fixed size limit of the engine."⟩
   , ⟨"call.arity", none,

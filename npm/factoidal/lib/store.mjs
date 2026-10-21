@@ -17,6 +17,7 @@
 // `factoidal` command.
 
 import { requireChildName } from '../store-host/paths.mjs';
+import { hostError } from './errors.mjs';
 
 /** The manifest file names a generation directory can carry, in the order
  *  the native tools try them. */
@@ -44,10 +45,8 @@ export async function openGeneration(reader, generation) {
     try {
       pointer = await readBytes(reader, 'CURRENT');
     } catch (cause) {
-      const err = new Error(
-        `openStore: the collection root has no readable CURRENT pointer (${cause && cause.message})`);
-      err.cause = cause;
-      throw err;
+      throw hostError(
+        `openStore: the collection root has no readable CURRENT pointer (${cause && cause.message})`, cause);
     }
     // CURRENT holds a UTF-8 generation name (docs/shardborough-storage-spec.md
     // section 6.4); trailing ASCII whitespace is tolerated, as in
@@ -67,7 +66,7 @@ export async function openGeneration(reader, generation) {
     }
     return { generation: name, manifestName, manifest, activated: generation == null };
   }
-  throw new Error(`openStore: generation '${name}' has none of ${MANIFEST_NAMES.join(', ')}`);
+  throw hostError(`openStore: generation '${name}' has none of ${MANIFEST_NAMES.join(', ')}`);
 }
 
 /** Read the named artifacts of one generation into one region, with a

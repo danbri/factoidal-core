@@ -28,30 +28,20 @@ import { version as packageVersion } from './version.mjs';
 import { openGeneration, readRegion, manifestKeys, hexOfBytes } from './store.mjs';
 import { fullEngineMessage } from './lean-entry.mjs';
 import { memoryDeltaLogStore } from './delta-log-hosts.mjs';
+import { FactoidalError, errorFromEnvelope, envelopeResult } from './errors.mjs';
 
 // The format names, regimes and query outputs are the engine's tables (op
 // engineTables, formal/lean4/Wasm/Ops/Handles.lean), read once per engine:
 // no host copy (https://github.com/danbri/factoidal/issues/894 item 5).
 
 // The parse tag a format name selects, from the engine's table.
-function parseTagOf(tables, fmt) {
+// A name outside the table is refused by the engine (op apiCheck,
+// code format.unknown).
+function parseTagOf(e, tables, fmt, who) {
   const key = String(fmt || 'turtle').toLowerCase();
   const tag = tables.parseFormats[key];
-  if (tag === undefined) {
-    throw new TypeError(
-      `Unknown format '${fmt}'. Expected one of: ` + Object.keys(tables.parseFormats).join(', '));
-  }
+  if (tag === undefined) checkOptions(e, who || 'parse', { format: String(fmt) });
   return tag;
-}
-
-// The engine's refusal of a regime name (table refusedRegimePrefixes), or null.
-function iklRefusalOf(tables, who, regime) {
-  if (regime == null) return null;
-  const r = String(regime);
-  for (const [prefix, message] of Object.entries(tables.refusedRegimePrefixes)) {
-    if (r.toLowerCase().startsWith(prefix)) return message.replace('WHO', who).replace('REGIME', r);
-  }
-  return null;
 }
 
 // Where a function takes an options object, a bare string names the
@@ -72,16 +62,28 @@ function optionsOf(fn, options) {
 // package, or a dispatch table that does not serve it). When the entry is
 // the core engine and the op is one only the full engine serves, the error
 // names the entry that has it (issue 713 stage 4).
+// The engine's own answer to the op is the error (code op.unknown); an entry
+// with no engine handle to ask gets the same code.
 function missingOpError(what, e, op) {
-  if (e && e.profile === 'core' && op && Array.isArray(e.fullOnlyOps) &&
-      e.fullOnlyOps.includes(op)) {
-    return new Error(`${what}: ${fullEngineMessage(`the op '${op}'`)}`);
+  const eng = e && e.engine;
+  if (eng && typeof eng.call === 'function' && op) {
+    try {
+      eng.call(op, []);
+    } catch (err) {
+      if (err && err.envelope && err.envelope.code) {
+        const out = errorFromEnvelope(err.envelope);
+        if (e.profile === 'core' && Array.isArray(e.fullOnlyOps) && e.fullOnlyOps.includes(op)) {
+          out.message = `${what}: ${fullEngineMessage(`the op '${op}'`)}`;
+        }
+        return out;
+      }
+    }
   }
-  return new Error(
+  return new FactoidalError(
     `${what}: the loaded Lean wasm module has no dispatch op for this ` +
     'operation. The module is older than this package; rebuild it with ' +
     'formal/lean4/Wasm/build-wasm.sh, or point FACTOIDAL_L4_ASSETS at a ' +
-    'current build.');
+    'current build.', { code: 'op.unknown' });
 }
 
 // The query form, from the engine's SPARQL parser (op queryForm). A query
@@ -124,85 +126,23 @@ function bindingsFromSrj(srj) {
 }
 
 // ---------------------------------------------------------------------
-// Strict parsing (issue #344) -- ParseError, and the shared envelope
-// unwrapper every engine call routes through.
+// The envelope unwrapper every engine call routes through. A refusal is a
+// FactoidalError (lib/errors.mjs) whose code, spec section and position the
+// engine decided (formal/lean4/Wasm/Ops/ErrorModel.lean).
 // ---------------------------------------------------------------------
 
-/**
- * A parse failure that carries a position: `line`/`column`/`offset`
- * when the failing engine call reported one (a parseToDatasetJson or
- * datasetOpen error over Turtle, TriG, N-Triples or N-Quads), else
- * `undefined`. RDF/XML and JSON-LD failures, and any non-parse engine
- * error, stay plain Error -- entryResult() below decides which one to
- * throw.
- *
- * Units: `line` and `column` are 1-based; `column` counts Unicode scalar
- * values, as the engine reports it. `offset` is a UTF-16 code-unit index
- * into the input JavaScript string, so `text.slice(err.offset)` starts
- * at the error. The engine counts Unicode scalar values;
- * utf16OffsetOf() below converts.
- */
-class ParseError extends Error {
-  constructor(message, info) {
-    super(message);
-    this.name = 'ParseError';
-    const i = info || {};
-    this.line = i.line;
-    this.column = i.column;
-    this.offset = i.offset;
-    this.format = i.format;
-    if (typeof Error.captureStackTrace === 'function') {
-      Error.captureStackTrace(this, ParseError);
-    }
-  }
+function entryResult(jsonText, _what, text) {
+  return envelopeResult(jsonText, text);
 }
 
-// Unwrap one dispatch-op JSON envelope ({"ok":true,...} |
-// {"ok":false,"error":...}). A `line` or `offset` member on the error
-// envelope means the failing call was a parse (Turtle/TriG/N-Triples/
-// N-Quads carry a position; RDF/XML and JSON-LD carry a message only)
-// -- throw ParseError so a caller can branch on position without
-// string-matching the message. Every other failure stays a plain
-// Error, as before. Pure (no per-driver state), so every buildApi()
-// instance and DatasetHandle share this one function.
-function entryResult(jsonText, what) {
-  const r = JSON.parse(jsonText);
-  if (!r.ok) {
-    if (r.line !== undefined || r.offset !== undefined) {
-      throw new ParseError(`${what}: ${r.error}`, {
-        line: r.line, column: r.column, offset: r.offset, format: r.format,
-      });
-    }
-    throw new Error(`${what}: ${r.error}`);
-  }
-  return r;
-}
-
-// The Lean engine reports a parse error's `offset` as a count of Unicode
-// scalar values from the start of the input. A JavaScript string is
-// indexed in UTF-16 code units, where a character outside the Basic
-// Multilingual Plane (U+10000 and above) takes two. This converts the
-// engine's count into the UTF-16 index of the same position. A count past
-// the end of the text gives text.length. Iterating a string with for..of
-// yields one element per code point (a lone surrogate is one element, and
-// the engine reads it as one replacement character), so both sides count
-// the same units.
-function utf16OffsetOf(text, scalarOffset) {
-  if (typeof text !== 'string' || !Number.isInteger(scalarOffset) || scalarOffset < 0) {
-    return scalarOffset;
-  }
-  let units = 0;
-  let scalars = 0;
-  for (const ch of text) {
-    if (scalars >= scalarOffset) break;
-    units += ch.length;
-    scalars += 1;
-  }
-  return units;
+// entryResult() for an op that read `text`: the position's offset becomes a
+// UTF-16 index into `text`.
+function parseResult(jsonText, what, text) {
+  return entryResult(jsonText, what, text);
 }
 
 // The lenient parse's diagnostics (https://github.com/danbri/factoidal/issues/716)
-// with each `offset` converted as utf16OffsetOf() converts a ParseError's, so
+// with each `offset` converted to a UTF-16 index as a FactoidalError's, so
 // `text.slice(d.offset)` starts at the error. `line` and `column` are kept as
 // the engine reports them. One pass over `text` for all diagnostics: the
 // offsets are visited in increasing order, whatever order the list has.
@@ -228,19 +168,6 @@ function utf16Diagnostics(text, diagnostics) {
   }
   for (; k < order.length; k += 1) units.set(order[k][1], unitsSoFar);
   return diagnostics.map((d, i) => (units.has(i) ? { ...d, offset: units.get(i) } : d));
-}
-
-// entryResult() for an op that parsed `text`: a positioned ParseError gets
-// its offset converted to a UTF-16 index into `text`.
-function parseResult(jsonText, what, text) {
-  try {
-    return entryResult(jsonText, what);
-  } catch (err) {
-    if (err instanceof ParseError && typeof err.offset === 'number') {
-      err.offset = utf16OffsetOf(text, err.offset);
-    }
-    throw err;
-  }
 }
 
 // DatasetHandle: the name of the engine-resident dataset class before
@@ -289,7 +216,8 @@ class Store {
   get closed() { return this._closed; }
 
   _assertOpen(who) {
-    if (this._closed) throw new Error(`Store.${who}: store handle '${this.handle}' is closed`);
+    // The engine answers handle.disposed for a closed store handle.
+    if (this._closed) entryResult(this._e.storeHandleClose(this.handle), `Store.${who}`);
   }
 
   /**
@@ -300,7 +228,7 @@ class Store {
   async query(sparql) {
     this._assertOpen('query');
     if (typeof sparql !== 'string') throw new TypeError('Store.query: sparql must be a string');
-    const run = () => entryResult(this._e.storeHandleQuery(this.handle, sparql), 'Store.query');
+    const run = () => entryResult(this._e.storeHandleQuery(this.handle, sparql), 'Store.query', sparql);
     const r = this._withExtensionRounds ? await this._withExtensionRounds(run) : run();
     if (r.kind === 'ask') return r.boolean;
     if (r.kind === 'construct' || r.kind === 'describe') {
@@ -351,16 +279,24 @@ function buildApi(driver) {
       entryPromise = Promise.resolve()
         .then(() => driver.loadEntry())
         .then((e) => {
-          if (!e) throw new Error('factoidal: the engine loader returned no entry object');
+          if (!e) throw new FactoidalError('factoidal: the engine loader returned no entry object', { code: 'host.io' });
           return e;
         })
-        .catch((err) => { entryPromise = undefined; throw err; });
+        .catch((err) => {
+          entryPromise = undefined;
+          throw err instanceof FactoidalError ? err
+            : new FactoidalError(`factoidal: the engine did not load: ${err && err.message}`,
+              { code: 'host.io', cause: err });
+        });
     }
     return entryPromise;
   }
 
-  // entryResult() is now module-level (see above ParseError) -- pure,
-  // shared by every buildApi() instance and by DatasetHandle.
+  // The options object of a public function, checked by the engine (op
+  // apiCheck): unknown keys, format names, regimes, outputs and versions.
+  async function checkedOptions(who, options) {
+    return checkOptions(await entry(), who, options);
+  }
 
 
   // ---------------------------------------------------------------
@@ -492,7 +428,7 @@ function buildApi(driver) {
     if (typeof e.registerServiceEndpoint !== 'function') {
       throw missingOpError('registerServiceEndpoint');
     }
-    const opts = checkOptions('registerServiceEndpoint', optionsOf('registerServiceEndpoint', options), ['format', 'baseIRI']);
+    const opts = await checkedOptions('registerServiceEndpoint', optionsOf('registerServiceEndpoint', options));
     const nq = await nquadsOf(data, opts, 'registerServiceEndpoint');
     return entryResult(e.registerServiceEndpoint(iri, nq),
       'registerServiceEndpoint');
@@ -516,9 +452,9 @@ function buildApi(driver) {
       const result = runOnce();
       if (extPending.length === 0) return result;
       if (round >= EXT_MAX_ROUNDS) {
-        throw new Error(
+        throw new FactoidalError(
           'extension functions: async resolution did not converge ' +
-          `within ${EXT_MAX_ROUNDS} evaluation rounds`);
+          `within ${EXT_MAX_ROUNDS} evaluation rounds`, { code: 'capacity.exceeded' });
       }
       const pend = extPending;
       extPending = [];
@@ -588,7 +524,9 @@ function buildApi(driver) {
       tables() {
         if (!tablesCache) {
           requireEntryFn(e, 'engineTables', 'format and regime tables');
-          tablesCache = entryResult(e.engineTables(), 'engineTables').tables;
+          const t = entryResult(e.engineTables(), 'engineTables');
+          tablesCache = { ...t.tables, errorCodes: t.errorCodes || [],
+            errorModelExemptOps: t.errorModelExemptOps || [] };
           for (const k of Object.keys(WRITER_TAGS)) delete WRITER_TAGS[k];
           Object.assign(WRITER_TAGS, tablesCache.writerFormats);
         }
@@ -643,7 +581,7 @@ function buildApi(driver) {
       requireEntryFn(c.e, 'detectFormat', `${who} (format inference)`);
       return { tag: entryResult(c.e.detectFormat(text), who).format, inferred: true };
     }
-    return { tag: parseTagOf(c.tables(), format), inferred: false };
+    return { tag: parseTagOf(c.e, c.tables(), format, who), inferred: false };
   }
 
   // Open `text` as a Dataset. A parse error names the format and says
@@ -655,11 +593,10 @@ function buildApi(driver) {
     try {
       r = parseResult(c.e.datasetOpen(text, tag, baseIRI || ''), who, text);
     } catch (err) {
-      if (inferred) {
-        err.message += ` (format inferred as '${tag}' because none was given; pass {format} to choose)`;
-        err.formatInferred = true;
+      if (err instanceof FactoidalError) {
+        err.formatInferred = inferred;
+        err.format = err.format || tag;
       }
-      err.format = err.format || tag;
       throw err;
     }
     return c.wrap(r, undefined, { format: tag, formatInferred: inferred });
@@ -709,43 +646,29 @@ function buildApi(driver) {
 
   async function queryDatasetHandle(c, ds, sparql, opts) {
     if (typeof sparql !== 'string') throw new TypeError('query: sparql must be a string');
+    // The options were checked by the engine (op apiCheck, as 'query' or
+    // 'Dataset.query'): regime, version, output and their combination.
     const entail = opts.entail || 'none';
-    const tables = c.tables();
-    const ikl = iklRefusalOf(tables, 'query', entail);
-    if (ikl) throw new TypeError(ikl);
-    if (!tables.entailRegimes.includes(entail)) {
-      throw new TypeError(`query: entail must be one of ${tables.entailRegimes.join(', ')}`);
-    }
-    if (opts.version !== undefined && !['1.1', '1.2'].includes(String(opts.version))) {
-      throw new TypeError("query: version must be '1.1' or '1.2'");
-    }
     const sparql12 = opts.sparql12 === true || String(opts.version || '') === '1.2';
     const e = c.e;
     if (entail !== 'none' || opts.output !== undefined) {
       // queryRaw over the stored dataset: an entailment regime, or a
       // results format (SPARQL 1.1 Query Results JSON, XML, CSV, TSV).
-      if (sparql12) {
-        throw new TypeError(
-          "query: entail/output and SPARQL 1.2 cannot be combined; that path reads SPARQL 1.1");
-      }
       const output = opts.output || 'json';
-      if (!tables.queryOutputs.includes(output)) {
-        throw new TypeError(`query: output must be one of ${tables.queryOutputs.join(', ')}`);
-      }
       const form = queryFormOf(e, sparql);
       const graphForm = form === 'construct' || form === 'describe';
       requireEntryFn(e, 'datasetQueryRaw', `query {entail/output}`);
       if (opts.output === undefined) {
         // An entailment regime with the default answer shape.
         const r = entryResult(e.datasetQueryRaw(ds.handle, sparql, JSON.stringify({
-          entail, output: graphForm ? 'ntriples' : 'json' })), 'query');
+          entail, output: graphForm ? 'ntriples' : 'json' })), 'query', sparql);
         if (graphForm) return c.fromNQuads(r.text, ds.prefixes);
         const srj = JSON.parse(r.text);
         if (typeof srj.boolean === 'boolean') return srj.boolean;
         return bindingsFromSrj(srj);
       }
       const r = entryResult(e.datasetQueryRaw(ds.handle, sparql,
-        JSON.stringify({ entail, output })), 'query');
+        JSON.stringify({ entail, output })), 'query', sparql);
       return output === 'json' && !graphForm ? JSON.parse(r.text) : r.text;
     }
     const fn = sparql12 ? e.datasetQuery12 : e.datasetQuery;
@@ -753,7 +676,7 @@ function buildApi(driver) {
       throw missingOpError(`query (datasetQuery${sparql12 ? '12' : ''})`, e,
         sparql12 ? 'datasetQuery12' : 'datasetQuery');
     }
-    const r = await withExtensionRounds(() => entryResult(fn(ds.handle, sparql), 'query'));
+    const r = await withExtensionRounds(() => entryResult(fn(ds.handle, sparql), 'query', sparql));
     if (r.kind === 'ask') return r.boolean;
     if (r.kind === 'construct' || r.kind === 'describe') {
       return c.fromNQuads(r.nquads, ds.prefixes);
@@ -783,10 +706,7 @@ function buildApi(driver) {
 
   async function closureOnHandle(c, ds, regime) {
     const r0 = c.tables().closureAliases[String(regime || '').toLowerCase()];
-    if (!r0) {
-      throw new TypeError(
-        `closure: regime must be one of rdfs, owl-rl, rho-df, rdfs-plus (got '${regime}')`);
-    }
+    if (!r0) checkOptions(c.e, 'Dataset.closure', { regime: String(regime == null ? '' : regime) });
     requireEntryFn(c.e, 'datasetClosure', 'closure');
     const r = entryResult(c.e.datasetClosure(ds.handle, r0), 'closure');
     return c.wrap(r, ds.prefixes);
@@ -797,7 +717,7 @@ function buildApi(driver) {
 
   /**
    * Parse one RDF document into a Dataset. Strict by default: a syntax
-   * error rejects with a ParseError (`line`/`column`/`offset` for Turtle,
+   * error rejects with a FactoidalError (`code`, `position`, `spec`; for Turtle,
    * TriG, N-Triples and N-Quads). `{lenient:true}` skips each bad statement
    * of Turtle, TriG, N-Triples and N-Quads and lists one diagnostic per
    * skipped statement in `dataset.diagnostics`
@@ -811,8 +731,7 @@ function buildApi(driver) {
    */
   async function parse(text, options) {
     if (typeof text !== 'string') throw new TypeError('parse: text must be a string');
-    const opts = checkOptions('parse', optionsOf('parse', options),
-      ['format', 'baseIRI', 'lenient', 'maxErrors']);
+    const opts = await checkedOptions('parse', optionsOf('parse', options));
     const c = await ctx();
     if (opts.lenient) {
       const { tag, inferred } = formatTagOf(c, text, opts.format, 'parse');
@@ -840,7 +759,7 @@ function buildApi(driver) {
    * @returns {Promise<Dataset>}
    */
   async function openDataset(data, options) {
-    const opts = checkOptions('openDataset', optionsOf('openDataset', options), ['format', 'baseIRI']);
+    const opts = await checkedOptions('openDataset', optionsOf('openDataset', options));
     const c = await ctx();
     if (data instanceof Dataset) return data.clone();
     return datasetOf(c, data, opts, 'openDataset').ds;
@@ -860,8 +779,7 @@ function buildApi(driver) {
    */
   async function query(data, sparql, options) {
     if (typeof sparql !== 'string') throw new TypeError('query: sparql must be a string');
-    const opts = checkOptions('query', optionsOf('query', options),
-      ['format', 'baseIRI', 'entail', 'sparql12', 'version', 'output']);
+    const opts = await checkedOptions('query', optionsOf('query', options));
     return withDataset(data, opts, 'query', (c, ds) => queryDatasetHandle(c, ds, sparql, opts));
   }
 
@@ -894,7 +812,7 @@ function buildApi(driver) {
    */
   async function update(data, updateText, options) {
     if (typeof updateText !== 'string') throw new TypeError('update: updateText must be a string');
-    const opts = checkOptions('update', optionsOf('update', options), ['format', 'baseIRI']);
+    const opts = await checkedOptions('update', optionsOf('update', options));
     const c = await ctx();
     const { ds, temp } = datasetOf(c, data, opts, 'update');
     const out = temp ? ds : ds.clone();
@@ -918,15 +836,8 @@ function buildApi(driver) {
    * @returns {Promise<string>}
    */
   async function serialize(data, options) {
-    const opts = checkOptions('serialize', optionsOf('serialize', options),
-      ['format', 'version', 'prefixes', 'literalShorthand', 'useNativeTypes',
-        'useRdfType', 'rdfDirection', 'inputFormat', 'baseIRI']);
+    const opts = await checkedOptions('serialize', optionsOf('serialize', options));
     const { inputFormat, baseIRI, ...writeOpts } = opts;
-    const writerTags = (await ctx()).tables().writerFormats;
-    if (writeOpts.format !== undefined && !writerTags[String(writeOpts.format).toLowerCase()]) {
-      throw new TypeError(`serialize: unknown format '${writeOpts.format}'. Known formats: ` +
-        [...new Set(Object.values(writerTags))].join(', '));
-    }
     return withDataset(data, { format: inputFormat, baseIRI }, 'serialize',
       (_c, ds) => ds.serialize(writeOpts));
   }
@@ -938,7 +849,7 @@ function buildApi(driver) {
    * @returns {Promise<string>}
    */
   async function canonicalize(data, options) {
-    const opts = checkOptions('canonicalize', optionsOf('canonicalize', options), ['format', 'baseIRI']);
+    const opts = await checkedOptions('canonicalize', optionsOf('canonicalize', options));
     return withDataset(data, opts, 'canonicalize', (_c, ds) => ds.toString('rdfc'));
   }
 
@@ -994,7 +905,7 @@ function buildApi(driver) {
    * @returns {Promise<boolean>}
    */
   async function isomorphic(a, b, options) {
-    const opts = checkOptions('isomorphic', optionsOf('isomorphic', options), ['format', 'baseIRI']);
+    const opts = await checkedOptions('isomorphic', optionsOf('isomorphic', options));
     return withDataset(a, opts, 'isomorphic', (c, da) =>
       withDataset(b, opts, 'isomorphic', (_c, db) => {
         requireEntryFn(c.e, 'datasetIsomorphic', 'isomorphic');
@@ -1040,7 +951,7 @@ function buildApi(driver) {
    * @returns {Promise<{conforms: boolean, report: Dataset}>}
    */
   async function shaclValidate(data, shapes, options) {
-    const opts = checkOptions('shaclValidate', optionsOf('shaclValidate', options), ['format', 'baseIRI']);
+    const opts = await checkedOptions('shaclValidate', optionsOf('shaclValidate', options));
     return withDataset(data, opts, 'shaclValidate(data)', (c, ds) => shaclOnHandle(c, ds, shapes, opts));
   }
 
@@ -1056,7 +967,7 @@ function buildApi(driver) {
    * @returns {Promise<boolean>}
    */
   async function shexValidate(data, schema, focus, shape, options) {
-    const opts = checkOptions('shexValidate', optionsOf('shexValidate', options), ['format', 'baseIRI']);
+    const opts = await checkedOptions('shexValidate', optionsOf('shexValidate', options));
     if (typeof schema !== 'string') throw new TypeError('shexValidate: schema must be a string');
     return withDataset(data, opts, 'shexValidate(data)', (c, ds) => shexOnHandle(c, ds, schema, focus, shape));
   }
@@ -1069,7 +980,7 @@ function buildApi(driver) {
    * @returns {Promise<Dataset>}
    */
   async function closure(data, regime, options) {
-    const opts = checkOptions('closure', optionsOf('closure', options), ['format', 'baseIRI']);
+    const opts = await checkedOptions('closure', optionsOf('closure', options));
     return withDataset(data, opts, 'closure', (c, ds) => closureOnHandle(c, ds, regime));
   }
 
@@ -1082,10 +993,8 @@ function buildApi(driver) {
    */
   async function owlClosure(data, mode, options) {
     const m = String(mode || '').toLowerCase();
-    const aliases = (await ctx()).tables().closureAliases;
-    if (!['rdfs', 'owl-rl'].includes(aliases[m])) {
-      throw new TypeError(`owlClosure: mode must be 'RDFS' or 'OWL-RL' (got '${mode}')`);
-    }
+    // The engine checks the mode against its regime table (op apiCheck).
+    await checkedOptions('owlClosure', { mode: String(mode == null ? '' : mode) });
     return closure(data, m, options);
   }
 
@@ -1109,7 +1018,7 @@ function buildApi(driver) {
    * @returns {Promise<{ok: boolean, fragment: boolean}>}
    */
   async function coreRdfsCheck(data, options) {
-    const opts = checkOptions('coreRdfsCheck', optionsOf('coreRdfsCheck', options), ['format', 'baseIRI']);
+    const opts = await checkedOptions('coreRdfsCheck', optionsOf('coreRdfsCheck', options));
     const nq = await nquadsOf(data, opts, 'coreRdfsCheck(data)');
     const e = await entry();
     requireEntryFn(e, 'rhoDfFragmentCheck', 'core-RDFS fragment check');
@@ -1137,7 +1046,7 @@ function buildApi(driver) {
    * @returns {Promise<{dataset: Dataset, addedCount: number, budgetHit?: boolean}>}
    */
   async function tableauMaterialise(data, options) {
-    const opts = checkOptions('tableauMaterialise', optionsOf('tableauMaterialise', options), ['format', 'baseIRI']);
+    const opts = await checkedOptions('tableauMaterialise', optionsOf('tableauMaterialise', options));
     const nq = await nquadsOf(data, opts, 'tableauMaterialise(data)');
     const c = await ctx();
     requireEntryFn(c.e, 'tableauMaterialise', 'OWL tableau materialisation');
@@ -1157,7 +1066,7 @@ function buildApi(driver) {
    * @returns {Promise<{inconsistent: boolean, rlAlone: boolean}>}
    */
   async function tableauDlInconsistent(data, options) {
-    const opts = checkOptions('tableauDlInconsistent', optionsOf('tableauDlInconsistent', options), ['format', 'baseIRI']);
+    const opts = await checkedOptions('tableauDlInconsistent', optionsOf('tableauDlInconsistent', options));
     const nq = await nquadsOf(data, opts, 'tableauDlInconsistent(data)');
     const e = await entry();
     requireEntryFn(e, 'tableauDlInconsistent', 'OWL tableau DL inconsistency check');
@@ -1173,7 +1082,7 @@ function buildApi(driver) {
    * @returns {Promise<{consistent: boolean|null, reason?: string}>}
    */
   async function owlIsConsistent(data, options) {
-    const opts = checkOptions('owlIsConsistent', optionsOf('owlIsConsistent', options), ['format', 'baseIRI', 'fuel']);
+    const opts = await checkedOptions('owlIsConsistent', optionsOf('owlIsConsistent', options));
     const nq = await nquadsOf(data, opts, 'owlIsConsistent(data)');
     const e = await entry();
     requireEntryFn(e, 'owlIsConsistent', 'OWL DL consistency check');
@@ -1193,7 +1102,7 @@ function buildApi(driver) {
    * @returns {Promise<{entailed: boolean|null, via: 'closure'|'refutation', reason?: string}>}
    */
   async function owlEntails(premise, conclusion, options) {
-    const opts = checkOptions('owlEntails', optionsOf('owlEntails', options), ['format', 'baseIRI', 'fuel']);
+    const opts = await checkedOptions('owlEntails', optionsOf('owlEntails', options));
     const premiseNq = await nquadsOf(premise, opts, 'owlEntails(premise)');
     const conclusionNq = await nquadsOf(conclusion, opts, 'owlEntails(conclusion)');
     const e = await entry();
@@ -1217,8 +1126,8 @@ function buildApi(driver) {
   async function rmlMap(mapping, sourceData, sourceKind, options) {
     if (typeof sourceData !== 'string') throw new TypeError('rmlMap: sourceData must be a string');
     const kind = String(sourceKind || '').toLowerCase();
-    if (kind !== 'json' && kind !== 'csv') throw new TypeError("rmlMap: sourceKind must be 'json' or 'csv'");
-    const opts = checkOptions('rmlMap', optionsOf('rmlMap', options), ['format', 'baseIRI']);
+    await checkedOptions('rmlMap', { sourceKind: kind });
+    const opts = await checkedOptions('rmlMap', optionsOf('rmlMap', options));
     return withDataset(mapping, opts, 'rmlMap(mapping)', (c, ds) => {
       requireEntryFn(c.e, 'datasetFromRml', 'RML mapping evaluation');
       return c.wrap(entryResult(c.e.datasetFromRml(ds.handle, sourceData, kind), 'rmlMap'), {});
@@ -1238,7 +1147,7 @@ function buildApi(driver) {
     if (typeof csvText !== 'string') throw new TypeError('csvwToRdf: csvText must be a string');
     const meta = metadataJson == null ? '' : metadataJson;
     if (typeof meta !== 'string') throw new TypeError('csvwToRdf: metadataJson must be a string');
-    const opts = checkOptions('csvwToRdf', options, ['mode', 'base', 'url']);
+    const opts = await checkedOptions('csvwToRdf', options);
     const c = await ctx();
     requireEntryFn(c.e, 'datasetFromCsvw', 'CSVW csv2rdf conversion');
     const optionsJson = JSON.stringify({
@@ -1259,7 +1168,7 @@ function buildApi(driver) {
    */
   async function jsonldToRdf(jsonldText, options) {
     if (typeof jsonldText !== 'string') throw new TypeError('jsonldToRdf: jsonldText must be a string');
-    const opts = checkOptions('jsonldToRdf', options, ['base', 'rdfDirection', 'expandContext', 'processingMode']);
+    const opts = await checkedOptions('jsonldToRdf', options);
     const c = await ctx();
     requireEntryFn(c.e, 'datasetFromJsonLd', 'jsonldToRdf');
     const optionsJson = JSON.stringify({
@@ -1282,7 +1191,7 @@ function buildApi(driver) {
    */
   async function rifEval(data, rifRulesXml, options) {
     if (typeof rifRulesXml !== 'string') throw new TypeError('rifEval: rifRulesXml must be a string');
-    const opts = checkOptions('rifEval', optionsOf('rifEval', options), ['format', 'baseIRI']);
+    const opts = await checkedOptions('rifEval', optionsOf('rifEval', options));
     return withDataset(data, opts, 'rifEval(data)', (c, ds) => {
       requireEntryFn(c.e, 'datasetRifEval', 'RIF Core evaluation');
       return c.wrap(entryResult(c.e.datasetRifEval(rifRulesXml, ds.handle), 'rifEval'), ds.prefixes);
@@ -1298,8 +1207,7 @@ function buildApi(driver) {
    * @returns {Promise<any>}
    */
   async function jsonldFromRdf(data, options) {
-    const opts = checkOptions('jsonldFromRdf', optionsOf('jsonldFromRdf', options),
-      ['useNativeTypes', 'useRdfType', 'rdfDirection', 'format', 'baseIRI']);
+    const opts = await checkedOptions('jsonldFromRdf', optionsOf('jsonldFromRdf', options));
     const { format, baseIRI, ...w } = opts;
     return withDataset(data, { format, baseIRI }, 'jsonldFromRdf(data)',
       (_c, ds) => JSON.parse(ds.toString({ format: 'jsonld', ...w })));
@@ -2012,29 +1920,16 @@ function buildApi(driver) {
     if (typeof queryString !== 'string') {
       throw new TypeError('queryRaw: queryString must be a string');
     }
-    const opts = checkOptions('queryRaw', options, ['dataFormat', 'entail', 'output']);
+    const opts = await checkedOptions('queryRaw', options);
     const dataFormat = String(opts.dataFormat || 'turtle').toLowerCase();
     const entail = opts.entail || 'none';
     const output = opts.output || 'json';
     const tables = (await ctx()).tables();
-    if (!(dataFormat in tables.rawDataFormats)) {
-      throw new TypeError(`queryRaw: unknown dataFormat '${opts.dataFormat}'`);
-    }
-    if (!tables.entailRegimes.includes(entail)) {
-      throw new TypeError(`queryRaw: entail must be one of ${tables.entailRegimes.join(', ')}`);
-    }
-    if (!tables.queryOutputs.includes(output)) {
-      throw new TypeError(`queryRaw: output must be one of ${tables.queryOutputs.join(', ')}`);
-    }
     const e = await entry();
     requireEntryFn(e, 'queryRaw', 'queryRaw');
-    const r = JSON.parse(e.queryRaw(dataString, queryString,
-      JSON.stringify({ dataFormat: tables.rawDataFormats[dataFormat], entail, output })));
-    if (!r.ok) {
-      const err = new Error('SPARQL query failed: ' + r.error);
-      err.stderr = String(r.error);
-      throw err;
-    }
+    const r = entryResult(e.queryRaw(dataString, queryString,
+      JSON.stringify({ dataFormat: tables.rawDataFormats[dataFormat], entail, output })),
+    'queryRaw', queryString);
     return output === 'json' ? JSON.parse(r.text) : r.text;
   }
 
@@ -2320,7 +2215,7 @@ function buildApi(driver) {
     Dataset,
     DatasetHandle,
     Store,
-    ParseError,
+    FactoidalError,
     dataFactory,
     // Metadata (issue #682): the same two fields on every driver's
     // typed surface, so a caller can log/report which package version
@@ -2333,5 +2228,5 @@ function buildApi(driver) {
 
 export {
   buildApi, bindingsFromSrj, entryResult, parseResult,
-  utf16OffsetOf, missingOpError, ParseError, DatasetHandle, Store,
+  missingOpError, FactoidalError, DatasetHandle, Store,
 };

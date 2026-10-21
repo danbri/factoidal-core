@@ -1,5 +1,43 @@
 # Changelog
 
+## 0.12.0 (unreleased)
+
+One error model for the whole package
+(https://github.com/danbri/factoidal/issues/882 item 4,
+https://github.com/danbri/factoidal/issues/901 KR 3.1). Every op error
+envelope of the engine carries a stable `code`, the input `position` where
+the input defines one, and the `spec` section where one applies; the engine
+decides all three (`formal/lean4/Wasm/Ops/ErrorModel.lean`). The package
+copies them into one class, `FactoidalError`. The README "Errors" table is
+generated from the engine's list.
+
+### Breaking changes
+
+- `ParseError` is removed. Every function rejects with `FactoidalError`
+  (`code`, `position`, `spec`, `cause`); a parse error has
+  `code: 'parse.syntax'` (or `parse.rdf12-required`, `term.invalid-iri`,
+  `term.invalid-langtag`) and `err.position.{line, column, offset}` in place
+  of `err.line`, `err.column`, `err.offset`. `position.byteOffset` is new.
+- Error messages are the engine's text, with no `<function>: l4factoidal:`
+  prefix. A parse with an inferred format no longer appends "(format inferred
+  as ...)" to the message; `err.formatInferred` and `err.format` say it.
+- An unknown option key, an unknown format name, an `entail`, `output`,
+  `version`, `owlClosure` mode, `rmlMap` source kind or `Dataset.closure`
+  regime outside the engine's tables, and options that cannot be combined
+  were a `TypeError`; each is now a `FactoidalError` (`option.unknown`,
+  `format.unknown`, `option.invalid-value`, `regime.refused`,
+  `option.conflict`) decided by the new engine op `apiCheck`. A `TypeError`
+  stays only for an argument of the wrong JavaScript type.
+- A method of a disposed `Dataset` was a `TypeError`; it is now the engine's
+  `FactoidalError` with code `handle.disposed`. A closed `Store` is the same.
+- `queryRaw` rejected with an `Error` whose message began "SPARQL query
+  failed:" and which had `stderr`; it now rejects with the engine's
+  `FactoidalError` (`query.syntax` with a position, or `query.failed`).
+- File-system and IndexedDB failures (`openStore`, the delta log) are
+  `FactoidalError` with code `host.io` and the original error as `cause`.
+- `@factoidal/core/fn` `entail()` with an `x-ikl-*` regime rejects with code
+  `regime.refused` and the message names `query`, the function that refuses.
+
 ## 0.11.0 — 2026-10-21
 
 No RDF, SPARQL, datatype or IRI decision is made in JavaScript any more

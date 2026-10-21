@@ -28,6 +28,7 @@
 // (`fullOnlyOps`, `fullOnlyFormats`); a call to one of those names the
 // entry that has it.
 import { appTermToJson, termToJson } from '../rdfjs.mjs';
+import { errorFromEnvelope } from './errors.mjs';
 export const FULL_ENTRY = '@factoidal/core';
 // The core profile is built for the hub pages only; the package ships the
 // full engine (owner, 2026-10-20).
@@ -53,15 +54,13 @@ function okEnvelope(extra) {
 }
 
 // An engine refusal arrives as an Error whose `.envelope` is the whole
-// {"ok":false,...} document (the loader keeps it, so a parse failure's
-// line, column, offset and format reach lib/api.mjs's ParseError). The
-// message stays the loader's own, "l4factoidal: <error>".
+// {"ok":false,...} document: the engine's message, code, spec section and
+// position pass to lib/errors.mjs unchanged. Any other throw (the wasm
+// trapped, the loader failed) is code op.failed.
 function failEnvelope(err) {
   const env = err && err.envelope;
-  if (env && typeof env === 'object' && env.ok === false) {
-    return JSON.stringify({ ...env, error: String(err.message) });
-  }
-  return JSON.stringify({ ok: false, error: String((err && err.message) || err) });
+  if (env && typeof env === 'object' && env.ok === false) return JSON.stringify(env);
+  return JSON.stringify({ ok: false, code: 'op.failed', error: String((err && err.message) || err) });
 }
 
 // One answer for Wasm/Ops/ExtFns.lean: the JavaScript value tagged with its
@@ -158,7 +157,7 @@ export function entryFromEngine(eng) {
     entry[op] = (...args) => {
       if (formatChecked && entry.fullOnlyFormats.includes(String(args[1] ?? '').toLowerCase())) {
         return JSON.stringify({
-          ok: false, servedBy: 'full',
+          ok: false, servedBy: 'full', code: 'op.unknown',
           error: fullEngineMessage(`the format '${args[1]}'`),
         });
       }
@@ -204,8 +203,14 @@ export function entryFromEngine(eng) {
   // this method answers {envelope, bytes} and throws on a refusal.
   const blobIoOps = Array.isArray(reflection.blobIoOps) ? reflection.blobIoOps : [];
   if (typeof eng.callBlobIO === 'function' && blobIoOps.includes('datasetQuadsBin')) {
-    entry.datasetQuadsBin = (handle, optsJson) =>
-      eng.callBlobIO('datasetQuadsBin', [String(handle), String(optsJson ?? '')], new Uint8Array(0));
+    entry.datasetQuadsBin = (handle, optsJson) => {
+      try {
+        return eng.callBlobIO('datasetQuadsBin', [String(handle), String(optsJson ?? '')], new Uint8Array(0));
+      } catch (err) {
+        if (err && err.envelope) throw errorFromEnvelope(err.envelope);
+        throw err;
+      }
+    };
   } else {
     delete entry.datasetQuadsBin;
   }

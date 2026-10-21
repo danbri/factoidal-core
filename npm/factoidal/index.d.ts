@@ -84,27 +84,85 @@ export interface DataFactory {
 export const dataFactory: DataFactory;
 
 /**
- * A parse failure that carries a position (issue #344): `line`/
- * `column`/`offset` are set when the failing engine call reported one
- * (Turtle, TriG, N-Triples, N-Quads); `undefined` for an RDF/XML or
- * JSON-LD failure, or any non-parse engine error, which stay a plain
- * `Error`. `name` is `'ParseError'`.
+ * The stable error codes. The engine decides the code of every refusal
+ * (formal/lean4/Wasm/Ops/ErrorModel.lean); `engineTables().errorCodes` lists
+ * each with its specification section and summary, and the README table
+ * "Errors" is generated from that list. `host.io` is a failure of
+ * the host (file system, IndexedDB), not of the engine.
  */
-export class ParseError extends Error {
-  readonly name: 'ParseError';
-  /** 1-based line of the error. */
-  readonly line?: number;
-  /** 1-based column of the error, counted in Unicode scalar values. */
-  readonly column?: number;
+export type FactoidalErrorCode =
+  | 'parse.syntax'
+  | 'parse.rdf12-required'
+  | 'term.invalid-iri'
+  | 'term.invalid-langtag'
+  | 'term.invalid'
+  | 'query.syntax'
+  | 'query.failed'
+  | 'update.syntax'
+  | 'update.failed'
+  | 'format.unknown'
+  | 'serialize.unsupported-rdf12'
+  | 'serialize.failed'
+  | 'canon.unsupported-rdf12'
+  | 'canon.failed'
+  | 'owl.unsupported-rdf12'
+  | 'reason.failed'
+  | 'regime.refused'
+  | 'validate.failed'
+  | 'xml.failed'
+  | 'crypto.failed'
+  | 'store.failed'
+  | 'registry.failed'
+  | 'handle.unknown'
+  | 'handle.disposed'
+  | 'option.unknown'
+  | 'option.invalid-value'
+  | 'option.conflict'
+  | 'capacity.exceeded'
+  | 'call.arity'
+  | 'call.arguments'
+  | 'op.unknown'
+  | 'op.failed'
+  | 'host.io';
+
+/** Where in the input a FactoidalError happened. */
+export interface FactoidalErrorPosition {
+  /** 1-based line. */
+  line: number;
+  /** 1-based column, counted in Unicode scalar values. */
+  column: number;
   /**
-   * The position of the error as a UTF-16 code-unit index into the input
-   * JavaScript string: `text.slice(err.offset)` starts at the error. A
-   * character outside the Basic Multilingual Plane (U+10000 and above)
-   * counts 2, as in every JavaScript string index. (The engine reports a
-   * count of Unicode scalar values; the wrapper converts.)
+   * A UTF-16 code-unit index into the input JavaScript string:
+   * `text.slice(err.position.offset)` starts at the error.
    */
-  readonly offset?: number;
+  offset: number;
+  /** The same position as a count of UTF-8 bytes from the start of the input. */
+  byteOffset: number;
+}
+
+/**
+ * The one error class of the package. Every function rejects (or throws)
+ * with it; a `TypeError` is thrown only when an argument has the wrong
+ * JavaScript type. The engine decides `code`, `spec` and `position`.
+ */
+export class FactoidalError extends Error {
+  constructor(message: string, info?: {
+    code?: FactoidalErrorCode; position?: FactoidalErrorPosition | null;
+    spec?: string | null; cause?: unknown; format?: string; formatInferred?: boolean;
+  });
+  readonly name: 'FactoidalError';
+  /** The stable machine code. */
+  readonly code: FactoidalErrorCode;
+  /** Where the input defines a position (a parse, a query, an update), else null. */
+  readonly position: FactoidalErrorPosition | null;
+  /** The URL of the specification section that defines the condition, else null. */
+  readonly spec: string | null;
+  /** The underlying error, when there is one (host.io). */
+  readonly cause?: unknown;
+  /** For a parse failure of text: the syntax it was read as. */
   readonly format?: string;
+  /** For a parse failure of text: true when the syntax was inferred. */
+  readonly formatInferred?: boolean;
 }
 
 /** One recoverable-parse diagnostic from a `{lenient:true}` parse() call. */
@@ -112,7 +170,7 @@ export interface ParseDiagnostic {
   message: string;
   /**
    * The position of the error as a UTF-16 code-unit index into the input
-   * JavaScript string, as ParseError.offset: `text.slice(d.offset)` starts
+   * JavaScript string, as FactoidalError.position.offset: `text.slice(d.offset)` starts
    * at the error.
    */
   offset: number;
@@ -302,7 +360,7 @@ export interface ParseOptions {
    * entry per skipped statement. RDF/XML and JSON-LD parse strictly. A
    * document with no error gives the strict result and no diagnostics.
    * Default: false (strict; a syntax error, an undeclared prefix, or an
-   * unresolvable relative IRI rejects the whole parse with a ParseError).
+   * unresolvable relative IRI rejects the whole parse with a FactoidalError).
    */
   lenient?: boolean;
   /**
@@ -323,7 +381,7 @@ export interface QueryOptions extends DatasetQueryOptions {
  * order is sorted (canonical N-Quads order), not document order;
  * anonymous blank-node labels (`_anonN`) DO reflect document order.
  * See README.md's "Blank nodes, labels and statement order". Strict
- * by default (issue #344): a syntax error rejects with a ParseError
+ * by default (issue #344): a syntax error rejects with a FactoidalError
  * (`line`/`column`/`offset` for Turtle/TriG/N-Triples/N-Quads; a
  * message only for RDF/XML and JSON-LD). `options.lenient` recovers
  * instead; see ParseOptions.
@@ -1403,7 +1461,7 @@ declare const _default: {
   Dataset: typeof Dataset;
   DatasetHandle: typeof DatasetHandle;
   Store: typeof Store;
-  ParseError: typeof ParseError;
+  FactoidalError: typeof FactoidalError;
   dataFactory: DataFactory;
   queryRaw: typeof queryRaw;
   version: string;

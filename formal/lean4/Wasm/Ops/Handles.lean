@@ -897,7 +897,8 @@ def engineTables : IO String :=
   let codes := errorCodeTable.map fun c =>
     Json.object ([("code", Json.string c.code), ("summary", .string c.summary)]
       ++ (match c.spec with | some u => [("spec", Json.string u)] | none => []))
-  pure (okWith [("tables", engineTablesJson), ("errorCodes", .array codes)])
+  pure (okWith [("tables", engineTablesJson), ("errorCodes", .array codes),
+                ("errorModelExemptOps", .array (uncodedOps.map Json.string))])
 
 /-! ## Argument values of the public API (https://github.com/danbri/factoidal/issues/882 item 4)
 
@@ -951,6 +952,7 @@ def apiOptionTable : List (String × List (String × OptionDomain)) :=
   , ("Dataset.query", [("sparql12", .any), ("version", .version), ("entail", .entail),
                        ("output", .output)])
   , ("Dataset.update", [])
+  , ("Dataset.closure", [("regime", .oneOf ["rdfs", "owl-rl", "rho-df", "rdfs-plus"])])
   , ("Dataset.validateShacl", parseOpts)
   , ("Dataset.validateShex", [("focus", .any), ("shape", .any)])
   , ("Dataset.serialize", serializeOpts)
@@ -991,9 +993,39 @@ def optionValueRefusal (who key value : String) : OptionDomain → Option String
       else some (errCoded "option.invalid-value"
         s!"{who}: {key} must be one of {", ".intercalate values} (got '{value}')")
 
+/-- Options that cannot be combined, given the string values of `fields`. -/
+def optionConflict (who : String) (fields : List (String × Json)) : Option String :=
+  let str (k : String) : Option String := match fields.lookup k with
+    | some (.string v) => some v
+    | _ => none
+  -- a key the caller set to `undefined` arrives as `null`: not given
+  let present (k : String) : Bool := match fields.lookup k with
+    | some .null | none => false
+    | some _ => true
+  if ["query", "Dataset.query"].contains who then
+    let rdf12 := str "sparql12" == some "true" || str "version" == some "1.2"
+    let rawPath := present "output" || (match str "entail" with
+      | some e => e != "none" | none => false)
+    if rdf12 && rawPath then
+      some (errCoded "option.conflict"
+        s!"{who}: entail/output and SPARQL 1.2 cannot be combined; that path reads SPARQL 1.1")
+    else none
+  else if ["serialize", "Dataset.serialize", "Dataset.toString"].contains who then
+    let tag := ((str "format").getD "nquads").toLower
+    let writer := (writerFormatNames.lookup tag).getD tag
+    if writer != "turtle" && (present "prefixes" || present "literalShorthand") then
+      some (errCoded "option.conflict"
+        s!"{who}: 'prefixes' and 'literalShorthand' apply to format 'turtle' only")
+    else if writer != "jsonld" &&
+        (present "useNativeTypes" || present "useRdfType" || present "rdfDirection") then
+      some (errCoded "option.conflict"
+        s!"{who}: useNativeTypes, useRdfType, rdfDirection apply to format 'jsonld' only")
+    else none
+  else none
+
 /-- `apiCheck(who, optionsJson)`: `optionsJson` is the options object the
 function was given, each value a string (its JavaScript `String` form) or
-`null` (an object or array value). Answers `{"ok":true}`, or the first refusal
+`{}` (an object, array or function value), or `null` (`undefined`). Answers `{"ok":true}`, or the first refusal
 in key order: `option.unknown`, `format.unknown`, `option.invalid-value` or
 `regime.refused`. -/
 def apiCheck (who optionsJson : String) : String :=
@@ -1010,7 +1042,9 @@ def apiCheck (who optionsJson : String) : String :=
                 match v with
                 | .string value => optionValueRefusal who k value dom
                 | _ => none
-          refusal.getD (okWith [])
+          match refusal with
+          | some r => r
+          | none => (optionConflict who fields).getD (okWith [])
       | _ => errCoded "call.arguments" "apiCheck: optionsJson must be a JSON object"
 
 #guard codeOf? (apiCheck "parse" "{\"bogus\":\"1\"}") == some "option.unknown"
@@ -1024,6 +1058,10 @@ def apiCheck (who optionsJson : String) : String :=
 #guard codeOf? (apiCheck "owlClosure" "{\"mode\":\"owlrl\"}") == none
 #guard codeOf? (apiCheck "owlClosure" "{\"mode\":\"rho-df\"}") == some "option.invalid-value"
 #guard codeOf? (apiCheck "Dataset.update" "{\"x\":null}") == some "option.unknown"
+#guard codeOf? (apiCheck "query" "{\"version\":\"1.2\",\"output\":\"csv\"}") == some "option.conflict"
+#guard codeOf? (apiCheck "Dataset.serialize" "{\"format\":\"nt\",\"prefixes\":{}}") == some "option.conflict"
+#guard codeOf? (apiCheck "Dataset.serialize" "{\"format\":\"ttl\",\"prefixes\":{}}") == none
+#guard codeOf? (apiCheck "Dataset.serialize" "{\"format\":\"nt\",\"prefixes\":null}") == none
 
 #guard (datasetOfQuads [(none, ⟨.bnode "a", ⟨"http://e/p", rfl⟩, .bnode "b"⟩),
                         (none, ⟨.bnode "a", ⟨"http://e/p", rfl⟩, .bnode "b"⟩)]).default.length == 1

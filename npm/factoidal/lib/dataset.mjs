@@ -13,9 +13,10 @@
 // Lifetime: dispose() (or `using ds = ...`, Symbol.dispose) releases the
 // engine copy. A Dataset that is garbage collected without dispose() is
 // released by a FinalizationRegistry callback. Every method of a disposed
-// Dataset throws a TypeError that names the method.
+// Dataset throws the engine's FactoidalError, code handle.disposed.
 
 import { dataFactory, quadFromJson, quadToJson, termToJson, termFromSrj, Literal, NamedNode } from '../rdfjs.mjs';
+import { FactoidalError, envelopeResult } from './errors.mjs';
 
 const INTERNAL = Symbol('factoidal.Dataset.internal');
 
@@ -28,29 +29,38 @@ const WRITER_TAGS = {};
 
 const VERSIONS = { '1.1': '11', '1.2': '12' };
 
-/** Throw a TypeError when `options` has a key outside `allowed`. */
-function checkOptions(who, options, allowed) {
+/**
+ * The options object of public function `who`, checked by the engine (op
+ * apiCheck, formal/lean4/Wasm/Ops/Handles.lean): every key one the function
+ * takes, every format, regime, output and version in the engine's tables, and
+ * no two options that cannot be combined. A value that is not an object is a
+ * TypeError (a wrong JavaScript type); every other refusal is the engine's
+ * FactoidalError.
+ */
+function checkOptions(e, who, options) {
   if (options == null) return {};
   if (typeof options !== 'object' || Array.isArray(options)) {
     throw new TypeError(`${who}: options must be an object, got ${Array.isArray(options) ? 'array' : typeof options}`);
   }
+  // Each value as the engine reads it: a primitive as its String form, an
+  // object, array or function as {}, undefined as null.
+  const wire = {};
   for (const key of Object.keys(options)) {
-    if (!allowed.includes(key)) {
-      throw new TypeError(
-        `${who}: unknown option '${key}'. Known options: ${allowed.join(', ') || '(none)'}`);
-    }
+    const v = options[key];
+    wire[key] = v === undefined || v === null ? null
+      : (typeof v === 'object' || typeof v === 'function') ? {} : String(v);
   }
+  if (typeof e.apiCheck !== 'function') {
+    throw new FactoidalError(`${who}: the loaded engine has no op 'apiCheck'; rebuild the wasm`,
+      { code: 'op.unknown' });
+  }
+  envelopeResult(e.apiCheck(who, JSON.stringify(wire)));
   return options;
 }
 
-function envelope(jsonText, what) {
-  const r = JSON.parse(jsonText);
-  if (!r.ok) throw new Error(`${what}: ${r.error}`);
-  return r;
+function envelope(jsonText, _what, text) {
+  return envelopeResult(jsonText, text);
 }
-
-const SERIALIZE_OPTIONS = ['format', 'version', 'prefixes', 'literalShorthand',
-  'useNativeTypes', 'useRdfType', 'rdfDirection'];
 
 // The quads of the compact answer of datasetQuadsJson: each distinct term is
 // built once and shared (TermJson.compactCertified).
@@ -74,7 +84,7 @@ const DIRECTION = ['', 'ltr', 'rtl'];
 function quadsFromRegion(bytes, out) {
   const v = new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength);
   if (bytes.length < 12 || v.getUint32(0, true) !== 0x31425146) {
-    throw new Error('iterate: the engine answered no datasetQuadsBin region');
+    throw new FactoidalError('iterate: the engine answered no datasetQuadsBin region', { code: 'op.failed' });
   }
   const nTerms = v.getUint32(4, true);
   const nQuads = v.getUint32(8, true);
@@ -112,7 +122,7 @@ function quadsFromRegion(bytes, out) {
         const pr = term();
         return dataFactory.quad(s, pr, term());
       }
-      default: throw new Error('iterate: a term tag outside the DLOG version 2 codec');
+      default: throw new FactoidalError('iterate: a term tag outside the DLOG version 2 codec', { code: 'op.failed' });
     }
   };
   const ts = new Array(nTerms);
@@ -172,9 +182,11 @@ class Dataset {
    */
   get info() { return this._info; }
 
+  // A disposed Dataset: the engine answers handle.disposed for its handle.
   _open(who) {
     if (this._disposed) {
-      throw new TypeError(`Dataset.${who}: the Dataset was disposed (handle '${this._handle}')`);
+      envelopeResult(this._ctx.e.datasetClose(this._handle));
+      throw new FactoidalError(`Dataset.${who}: the Dataset was disposed`, { code: 'handle.disposed' });
     }
   }
 
@@ -196,7 +208,7 @@ class Dataset {
   async query(sparql, options) {
     this._open('query');
     return this._ctx.queryHandle(this, sparql,
-      checkOptions('Dataset.query', options, ['sparql12', 'version', 'entail', 'output']));
+      checkOptions(this._ctx.e, 'Dataset.query', options));
   }
 
   /**
@@ -207,11 +219,11 @@ class Dataset {
    */
   async update(updateText, options) {
     this._open('update');
-    checkOptions('Dataset.update', options, []);
+    checkOptions(this._ctx.e, 'Dataset.update', options);
     if (typeof updateText !== 'string') {
       throw new TypeError('Dataset.update: updateText must be a string');
     }
-    const r = envelope(this._ctx.e.datasetUpdate(this._handle, updateText), 'update');
+    const r = envelope(this._ctx.e.datasetUpdate(this._handle, updateText), 'update', updateText);
     this._changed(r.count);
     return this;
   }
@@ -225,7 +237,7 @@ class Dataset {
   async validateShacl(shapes, options) {
     this._open('validateShacl');
     return this._ctx.shacl(this, shapes,
-      checkOptions('Dataset.validateShacl', options, ['format', 'baseIRI']));
+      checkOptions(this._ctx.e, 'Dataset.validateShacl', options));
   }
 
   /**
@@ -237,7 +249,7 @@ class Dataset {
   async validateShex(schema, options) {
     this._open('validateShex');
     return this._ctx.shex(this, schema,
-      checkOptions('Dataset.validateShex', options, ['focus', 'shape']));
+      checkOptions(this._ctx.e, 'Dataset.validateShex', options));
   }
 
   /**
@@ -267,8 +279,8 @@ class Dataset {
    */
   async serialize(options) {
     this._open('serialize');
-    if (typeof options === 'string') return this._write({ format: options });
-    return this._write(checkOptions('Dataset.serialize', options, SERIALIZE_OPTIONS));
+    const opts = typeof options === 'string' ? { format: options } : options;
+    return this._write(checkOptions(this._ctx.e, 'Dataset.serialize', opts));
   }
 
   /**
@@ -278,34 +290,18 @@ class Dataset {
    */
   toString(formatOrOptions) {
     this._open('toString');
-    const opts = typeof formatOrOptions === 'string'
-      ? { format: formatOrOptions }
-      : checkOptions('Dataset.toString', formatOrOptions, SERIALIZE_OPTIONS);
-    return this._write(opts);
+    const opts = typeof formatOrOptions === 'string' ? { format: formatOrOptions } : formatOrOptions;
+    return this._write(checkOptions(this._ctx.e, 'Dataset.toString', opts));
   }
 
   _write(opts) {
     const e = this._ctx.e;
     const name = String(opts.format || 'nquads').toLowerCase();
     const writerTags = this._ctx.tables().writerFormats;
+    // The engine checked the format, the version and the option
+    // combination (op apiCheck) before this.
     const tag = writerTags[name];
-    if (!tag) {
-      throw new TypeError(
-        `Dataset.serialize: unknown format '${opts.format}'. Known formats: ` +
-        [...new Set(Object.values(writerTags))].join(', '));
-    }
-    let suffix = '';
-    if (opts.version !== undefined) {
-      suffix = VERSIONS[String(opts.version)];
-      if (!suffix) throw new TypeError("Dataset.serialize: version must be '1.1' or '1.2'");
-    }
-    if (tag !== 'turtle' && (opts.prefixes !== undefined || opts.literalShorthand !== undefined)) {
-      throw new TypeError("Dataset.serialize: 'prefixes' and 'literalShorthand' apply to format 'turtle' only");
-    }
-    const jsonldKeys = ['useNativeTypes', 'useRdfType', 'rdfDirection'];
-    if (tag !== 'jsonld' && jsonldKeys.some((k) => opts[k] !== undefined)) {
-      throw new TypeError(`Dataset.serialize: ${jsonldKeys.join(', ')} apply to format 'jsonld' only`);
-    }
+    const suffix = opts.version !== undefined ? VERSIONS[String(opts.version)] : '';
     if (tag === 'jsonld') {
       if (typeof e.datasetToJsonLd !== 'function') throw this._ctx.missing('serialize {format:jsonld}', 'datasetToJsonLd');
       const r = envelope(e.datasetToJsonLd(this._handle, JSON.stringify({

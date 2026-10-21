@@ -252,7 +252,7 @@ function builder() {
   let finished = false;
   return {
     addChunk(chunk) {
-      if (finished) throw new Error('builder: addChunk() called after finish()');
+      if (finished) throw new engineApi.FactoidalError('builder: addChunk() called after finish()', { code: 'op.failed' });
       if (chunk && typeof chunk.termType === 'string') {
         pending.push(chunk); // a single Quad
       } else {
@@ -260,7 +260,7 @@ function builder() {
       }
     },
     finish() {
-      if (finished) throw new Error('builder: finish() already called');
+      if (finished) throw new engineApi.FactoidalError('builder: finish() already called', { code: 'op.failed' });
       finished = true;
       const result = makeFnDataset(pending);
       pending = null; // release; no further mutation is possible anyway
@@ -354,24 +354,20 @@ async function query(ds, sparql, options) {
  * per-graph closure semantics that the underlying query() does not
  * define today.
  */
-// The regime names, their case-insensitive aliases and the x-ikl-* refusal
-// are the engine's tables (op engineTables): no host copy
+// The regime names and their case-insensitive aliases are the engine's tables
+// (op engineTables): no host copy
 // (https://github.com/danbri/factoidal/issues/894 item 5). A name with no
-// alias passes through unchanged and engineApi.query reports it.
-async function regimeOf(regime, who) {
+// alias passes through unchanged and engineApi.query refuses it with the
+// engine's code (regime.refused for x-ikl-*, option.invalid-value otherwise).
+async function regimeOf(regime) {
   const t = await engineApi.engineTables();
   const r = regime == null ? 'none' : String(regime);
-  for (const [prefix, message] of Object.entries(t.refusedRegimePrefixes)) {
-    if (r.toLowerCase().startsWith(prefix)) {
-      throw new TypeError(message.replace('WHO', who).replace('REGIME', r));
-    }
-  }
   return t.entailAliases[r.toLowerCase()] || regime;
 }
 
 async function entail(ds, regime) {
   assertFnDataset(ds, 'entail');
-  const entailRegime = await regimeOf(regime, 'entail');
+  const entailRegime = await regimeOf(regime);
   const rows = await engineApi.query((await engineOf(ds)), 'SELECT ?s ?p ?o WHERE { ?s ?p ?o }',
     { entail: entailRegime });
   return makeFnDataset(
