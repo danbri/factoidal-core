@@ -65,6 +65,14 @@ theorem dedupFromTR_eq (prev : String) (acc : Array String) (l : List String) :
       · simp [dedupFromTR, dedupFrom, h, ih]
       · simp [dedupFromTR, dedupFrom, h, ih]
 
+/-- `dedupFrom` runs as the loop `dedupFromTR`. -/
+def dedupFromLoop (prev : String) (l : List String) : List String :=
+  (dedupFromTR prev #[] l).toList
+
+@[csimp] theorem dedupFrom_eq_TR : @dedupFrom = @dedupFromLoop := by
+  funext prev l
+  simp [dedupFromLoop, dedupFromTR_eq]
+
 /-- The loop form of `dedupSorted`. -/
 def dedupSortedTR : List String → List String
   | [] => []

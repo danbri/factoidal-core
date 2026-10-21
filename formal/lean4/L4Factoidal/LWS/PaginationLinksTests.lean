@@ -41,16 +41,19 @@ def totalItems (resp : Response) : Option String :=
   | .ok (.object fs) => match fs.lookup "totalItems" with | some (.number n) => some n | _ => none
   | _ => none
 
-/-- Follow `rel="next"` from the container, at most `fuel` pages. -/
-def walk (st : MemState) : Nat → String → List (List String × Response)
-  | 0, _ => []
+/-- Follow `rel="next"` from the container, at most `fuel` pages (a loop
+with an accumulator). -/
+def walk (st : MemState) (acc : Array (List String × Response)) :
+    Nat → String → Array (List String × Response)
+  | 0, _ => acc
   | fuel + 1, target =>
       let (resp, _) := prun (req "GET" target) st
-      (itemIds resp, resp) :: match linkTo resp "next" with
-        | some t => walk st fuel t
-        | none => []
+      let acc := acc.push (itemIds resp, resp)
+      match linkTo resp "next" with
+      | some t => walk st acc fuel t
+      | none => acc
 
-def pagesOfFive : List (List String × Response) := walk five 10 "/c/"
+def pagesOfFive : List (List String × Response) := (walk five #[] 10 "/c/").toList
 
 -- Concatenating the pages gives every member once, in path order.
 #guard (pagesOfFive.map (·.1)).flatten ==

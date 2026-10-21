@@ -322,6 +322,12 @@ private def lic : Link :=
 #guard !preferSetLinkset "return=minimal" && !preferSetLinkset "set-linksets"
 #guard relTypeValid "license" && relTypeValid "https://example.org/rel" && relTypeValid "a.b-c"
 #guard !relTypeValid "License" && !relTypeValid "" && !relTypeValid "1x" && !relTypeValid "a b"
+-- The relations of the draft's "System Managed" row, `up` and `items`, and
+-- `lws#storage` are server-managed; a core or user-defined one is not.
+#guard ["linkset", "type", "format", "size", "modified", "up", "items",
+        "https://www.w3.org/ns/lws#storage", "TYPE"].all serverManaged
+#guard !serverManaged "license" && !serverManaged "title" && !serverManaged "creator" &&
+  !serverManaged "author" && !serverManaged "https://example.org/rel"
 -- The protection rule: every server-managed relation is refused, in any case.
 #guard serverManagedRels.all (fun r =>
   match clientLinksOf (some ("<https://example.org/x>; rel=\"" ++ r ++ "\"")) with
