@@ -70,8 +70,13 @@ const CHECKS = [
   'Notifications: an agent may subscribe to what it can read, and not to that plus a private container',
   'Notifications: a subscriber hears of an update it may read and never of a member it may not read',
   'Discovery: the 401 lws#storage link, the storage description id and every other lws#storage link name one IRI',
-  'Validation: a token for the storage root container (not the storage) answers 401 invalid_token'
-,
+  'Validation: a token for the storage root container (not the storage) answers 401 invalid_token',
+  'Access grants: a read grant lets bob read and nothing more; revoking it ends the access',
+  'Access grants: only the storage controller creates or revokes a grant; the endpoint needs a token',
+  'Access grants: a foaf:Agent grant makes a resource public until it is revoked',
+  'Access grants: dateTime, format, type and client constraints must all hold',
+  'Access grants: a move needs delete of the resource and create in the destination',
+  'Access grants: a read grant lets bob subscribe; after the revocation a subscription is refused',
   'Type search: results, totalItems and the type index hold only what the agent may read; anonymous and revoked access see nothing (issue 912)']
 
 /** A local webhook receiver that records every POST and answers 202. */
@@ -440,6 +445,144 @@ async function main () {
         const after = await search(bobT)
         assert(after.items.length === 0 && after.totalItems === 0, JSON.stringify(after))
         assert(!(await types(bobT)).includes(A), 'the type index still lists A for bob')
+      })
+
+      // LWS §Access Requests and Grants (https://github.com/danbri/factoidal/issues/913),
+      // decided by formal/lean4/L4Factoidal/LWS/AccessPolicy.lean (what a
+      // grant permits), AccessGrants.lean (the endpoints) and
+      // Authorization.decide (enforcement beside Web Access Control).
+      const grantsUrl = `${o}/.well-known/lws-access-grants/`
+      const grantDoc = (assignee, actions, targets, policy = {}) => ({
+        '@context': ['https://www.w3.org/ns/lws/v1'],
+        type: ['AccessGrant'],
+        storage: aud,
+        access: [Object.assign({
+          type: ['AccessPolicy'], action: actions, assignee,
+          target: { type: 'StorageResource', value: targets.map((t) => `${o}${t}`) }
+        }, policy)]
+      })
+      const grantAs = async (token, doc) => {
+        const r = await fetch(grantsUrl, {
+          method: 'POST', headers: { 'content-type': 'application/lws+json', ...(token ? bearer(token) : {}) },
+          body: JSON.stringify(doc)
+        })
+        await r.text()
+        return r
+      }
+      const grant = async (doc) => {
+        const r = await grantAs(aliceT, doc)
+        assert(r.status === 201, `the grant answered ${r.status}`)
+        return new URL(r.headers.get('location'), grantsUrl).href
+      }
+      const revoke = async (url) => {
+        const r = await fetch(url, { method: 'DELETE', headers: bearer(aliceT) })
+        await r.text()
+        assert(r.status === 204, `revoking answered ${r.status}`)
+      }
+      const statusOf = async (path, token, init = {}) => {
+        const r = await fetch(`${o}${path}`, { ...init, headers: { ...(init.headers || {}), ...(token ? bearer(token) : {}) } })
+        await r.text()
+        return r.status
+      }
+      await write('/granted/', '', 'text/turtle')
+      await write('/granted/doc.txt', 'for bob')
+      await write('/granted/c.csv', 'a,b', 'text/csv')
+      await write('/granted/dest/', '', 'text/turtle')
+      await write('/granted/m.txt', 'moved')
+
+      await check('Access grants: a read grant lets bob read and nothing more; revoking it ends the access', async () => {
+        assert(await statusOf('/granted/doc.txt', bobT) === 403, 'bob read before the grant')
+        const g = await grant(grantDoc(BOB, ['read'], ['/granted/doc.txt']))
+        assert(await statusOf('/granted/doc.txt', bobT) === 200, 'bob cannot read with the grant')
+        const put = await statusOf('/granted/doc.txt', bobT, { method: 'PUT', headers: { 'content-type': 'text/plain' }, body: 'bob' })
+        assert(put === 403, `bob PUT answered ${put}`)
+        assert(await statusOf('/granted/c.csv', bobT) === 403, 'the grant reached another resource')
+        assert(await statusOf('/granted/', bobT) === 403, 'the grant reached the container')
+        assert(await statusOf('/granted/doc.txt', null) === 401, 'the grant reached the anonymous agent')
+        await revoke(g)
+        assert(await statusOf('/granted/doc.txt', bobT) === 403, 'bob still reads after the revocation')
+      })
+
+      await check('Access grants: only the storage controller creates or revokes a grant; the endpoint needs a token', async () => {
+        const r = await grantAs(bobT, grantDoc(BOB, ['read'], ['/granted/doc.txt']))
+        assert(r.status === 403, `bob's grant answered ${r.status}`)
+        const a = await grantAs(null, grantDoc(BOB, ['read'], ['/granted/doc.txt']))
+        assert(a.status === 401, `an anonymous grant answered ${a.status}`)
+        assert(await statusOf('/granted/doc.txt', bobT) === 403, 'a refused grant took effect')
+        const g = await grant(grantDoc(BOB, ['read'], ['/granted/doc.txt']))
+        const d = await statusOf(new URL(g).pathname, bobT, { method: 'DELETE' })
+        assert(d === 403, `bob revoking answered ${d}`)
+        assert(await statusOf(new URL(g).pathname, bobT) === 200, 'bob cannot read the grant that names him')
+        await revoke(g)
+      })
+
+      await check('Access grants: a foaf:Agent grant makes a resource public until it is revoked', async () => {
+        const g = await grant(grantDoc('http://xmlns.com/foaf/0.1/Agent', ['read'], ['/granted/doc.txt']))
+        assert(await statusOf('/granted/doc.txt', null) === 200, 'anonymous read refused')
+        await revoke(g)
+        assert(await statusOf('/granted/doc.txt', null) === 401, 'anonymous read after the revocation')
+      })
+
+      await check('Access grants: dateTime, format, type and client constraints must all hold', async () => {
+        const constrained = async (targets, constraint) => grant(grantDoc(BOB, ['read'], targets, { constraint }))
+        const closed = await constrained(['/granted/doc.txt'], [
+          { leftOperand: 'dateTime', operator: 'gteq', rightOperand: '2000-01-01T00:00:00Z' },
+          { leftOperand: 'dateTime', operator: 'lteq', rightOperand: '2000-01-02T00:00:00Z' }])
+        assert(await statusOf('/granted/doc.txt', bobT) === 403, 'a closed window permitted')
+        await revoke(closed)
+        const open = await constrained(['/granted/doc.txt'], [
+          { leftOperand: 'dateTime', operator: 'gteq', rightOperand: '2000-01-01T00:00:00Z' },
+          { leftOperand: 'dateTime', operator: 'lteq', rightOperand: '2999-12-31T23:59:59Z' }])
+        assert(await statusOf('/granted/doc.txt', bobT) === 200, 'an open window refused')
+        await revoke(open)
+        const format = await constrained(['/granted/doc.txt', '/granted/c.csv'], [
+          { leftOperand: 'format', operator: 'isAnyOf', rightOperand: ['text/plain', 'application/json'] }])
+        assert(await statusOf('/granted/doc.txt', bobT) === 200 && await statusOf('/granted/c.csv', bobT) === 403, 'format')
+        await revoke(format)
+        const type = await constrained(['/granted/', '/granted/doc.txt'], [
+          { leftOperand: 'type', operator: 'eq', rightOperand: 'https://www.w3.org/ns/lws#DataResource' }])
+        assert(await statusOf('/granted/doc.txt', bobT) === 200 && await statusOf('/granted/', bobT) === 403, 'type')
+        await revoke(type)
+        const other = await constrained(['/granted/doc.txt'], [
+          { leftOperand: 'client', operator: 'eq', rightOperand: 'urn:x:not-this-client' }])
+        assert(await statusOf('/granted/doc.txt', bobT) === 403, 'another client was permitted')
+        await revoke(other)
+        const mine = await constrained(['/granted/doc.txt'], [
+          { leftOperand: 'client', operator: 'eq', rightOperand: 'https://app.example/id' }])
+        assert(await statusOf('/granted/doc.txt', bobT) === 200, 'the token client_id was refused')
+        await revoke(mine)
+      })
+
+      await check('Access grants: a move needs delete of the resource and create in the destination', async () => {
+        const move = () => statusOf('/granted/m.txt?linkset', bobT, {
+          method: 'PATCH',
+          headers: { 'content-type': 'application/json-patch+json' },
+          body: JSON.stringify([{ op: 'replace', path: '/linkset/0/up/0/href', value: `${o}/granted/dest/` }])
+        })
+        const g1 = await grant(grantDoc(BOB, ['read', 'modify', 'delete'], ['/granted/m.txt']))
+        const g2 = await grant(grantDoc(BOB, ['read'], ['/granted/dest/']))
+        assert(await move() === 403, 'moved without create in the destination')
+        await revoke(g1)
+        await revoke(g2)
+        const g3 = await grant(grantDoc(BOB, ['read', 'modify'], ['/granted/m.txt']))
+        const g4 = await grant(grantDoc(BOB, ['read', 'create'], ['/granted/dest/']))
+        assert(await move() === 403, 'moved without delete of the resource')
+        const g5 = await grant(grantDoc(BOB, ['delete'], ['/granted/m.txt']))
+        const s = await move()
+        assert(s === 200, `the move with all three answered ${s}`)
+        for (const g of [g3, g4, g5]) await revoke(g)
+      })
+
+      await check('Access grants: a read grant lets bob subscribe; after the revocation a subscription is refused', async () => {
+        const g = await grant(grantDoc(BOB, ['read'], ['/granted/doc.txt']))
+        const ok = await subscribe(bobT, [`${o}/granted/doc.txt`], 'grant')
+        const j = await ok.json()
+        assert(ok.status === 201, `subscribe with the grant answered ${ok.status}`)
+        await fetch(j.subscription, { method: 'DELETE', headers: bearer(bobT) }).then((x) => x.text())
+        await revoke(g)
+        const no = await subscribe(bobT, [`${o}/granted/doc.txt`], 'grant')
+        await no.text()
+        assert(no.status === 403, `subscribe after the revocation answered ${no.status}`)
       })
     } finally {
       await receiver.close()
