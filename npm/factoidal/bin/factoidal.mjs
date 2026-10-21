@@ -398,7 +398,8 @@ Specification: https://w3c.github.io/lws-protocol/lws10-core/`,
 
   'solid-serve': `factoidal solid-serve - serve the Solid Protocol over HTTP
 
-usage: factoidal solid-serve DIR [--port N] [--host ADDRESS]
+usage: factoidal solid-serve DIR (--issuer IRI | --auth-config FILE | --insecure-no-auth)
+                           [--owner WEBID] [--port N] [--host ADDRESS] [--base IRI]
 
 Starts a Node HTTP server that answers every request through the engine's
 solidStep operation.
@@ -414,7 +415,21 @@ path with a dot segment or other traversal form
   --host ADDRESS  the address to bind (default 127.0.0.1)
   --base IRI      the absolute IRI the storage root maps to
                   (default: the bound origin)
-  --owner WEBID   the WebID the storage advertises as its owner
+  --owner WEBID   the WebID the storage advertises as its owner; under
+                  authentication it gets acl:Read, acl:Write and
+                  acl:Control on the root (Web Access Control §3.2)
+  --issuer IRI    trust this Solid-OIDC issuer (comma separated for more).
+                  The engine verifies each DPoP-bound access token
+                  (Solid-OIDC §8, §9.3; RFC 9449): signature under the
+                  issuer's keys found by OpenID Connect Discovery, aud
+                  "solid", webid, exp, cnf.jkt bound to the DPoP key,
+                  htm, htu, iat and a jti replay cache, and that the
+                  WebID profile lists the issuer (solid:oidcIssuer).
+  --auth-config FILE  the same as JSON: {"issuers":[{"issuer":IRI,
+                  "jwks":{...}?}], "leeway"?, "iatWindow"?,
+                  "refreshInterval"?, "checkProfileIssuer"?}
+  --insecure-no-auth  development only: no authentication; Web Access
+                  Control is not enforced
 
 The server makes no protocol decision. Storage discovery, containment
 triples, slash semantics, the Allow and Accept-* headers, the PUT/POST/
@@ -505,7 +520,7 @@ const VALUE_OPTIONS = {
   serve: new Set(['port', 'host', 'query-path', 'gsp-path', 'file', 'layout', 'tdb2']),
   'lws-serve': new Set(['port', 'host', 'base', 'issuer', 'auth-config', 'owner', 'root-acl',
     'audience']),
-  'solid-serve': new Set(['port', 'host', 'base', 'owner']),
+  'solid-serve': new Set(['port', 'host', 'base', 'owner', 'issuer', 'auth-config']),
   'solid-client': new Set(['body', 'file', 'content-type', 'interpret'])
 }
 
@@ -1334,6 +1349,24 @@ async function commandLwsServe (positional, options) {
 async function commandSolidServe (positional, options) {
   if (positional.length !== 1) throw new UsageError('solid-serve needs one DIR')
   const quiet = options.quiet === true
+  // The same rule as lws-serve: no start without a trusted issuer unless
+  // the development mode is asked for by name.
+  const insecure = options['insecure-no-auth'] === true
+  const issuerOption = typeof options.issuer === 'string' ? options.issuer : null
+  const authFile = typeof options['auth-config'] === 'string' ? options['auth-config'] : null
+  if (!insecure && issuerOption === null && authFile === null) {
+    throw new UsageError('solid-serve needs --issuer IRI or --auth-config FILE, ' +
+      'or --insecure-no-auth for development')
+  }
+  if (insecure && (issuerOption !== null || authFile !== null)) {
+    throw new UsageError('--insecure-no-auth cannot be combined with --issuer or --auth-config')
+  }
+  let auth
+  if (authFile !== null) {
+    auth = readJsonFile(authFile)
+  } else if (issuerOption !== null) {
+    auth = { issuers: issuerOption.split(',').filter((v) => v !== '').map((issuer) => ({ issuer })) }
+  }
   const { listen, SolidServerHostError } = await import('../solid/server/index.mjs')
   let running
   try {
@@ -1341,6 +1374,7 @@ async function commandSolidServe (positional, options) {
       port: servePort(options, 3000),
       host: serveHost(options),
       ...(typeof options.base === 'string' ? { baseIri: options.base } : {}),
+      ...(insecure ? { insecureNoAuth: true } : { auth }),
       ...(typeof options.owner === 'string' ? { owner: options.owner } : {}),
       realClock: true,
       dir: positional[0]
@@ -1351,7 +1385,10 @@ async function commandSolidServe (positional, options) {
     }
     throw error
   }
-  if (!quiet) err(`solid-serve: listening on ${running.origin} for ${positional[0]}`)
+  if (!quiet) {
+    err(`solid-serve: listening on ${running.origin} for ${positional[0]}`)
+    if (insecure) err('solid-serve: WARNING: --insecure-no-auth: every request is served without authentication')
+  }
   out(running.origin)
   return untilInterrupted(running, quiet)
 }
