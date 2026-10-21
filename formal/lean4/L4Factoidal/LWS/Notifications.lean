@@ -37,10 +37,21 @@ Sources, read 2026-10-21 at w3c/lws-protocol commit
   ("Used with Delete and Move"). `activityJson`, `envelopeJson`.
 * Activity Types. "A server MUST support the following Activity Streams
   2.0 activity types": Create (with `target`), Update, Delete (with
-  `origin`). Move is required only of "A server that allows clients to
-  move resources between containers"; this server does not
-  (`storageDescription` describes no `MoveResource`), so it emits no Move.
-  `classify` derives the type from the store before and after the step.
+  `origin`). `classify` derives the type from the store before and after
+  the step. "A server that allows clients to move resources between
+  containers, as described in Moving Resources, MUST support the following
+  activity type: Move — a resource was moved from one container to
+  another. The origin field indicates the container from which the resource
+  was removed, and the target field indicates the container into which it
+  was added. The object field describes the resource as it exists after
+  the move." and, from §Moving Resources, "A server that advertises support
+  for moving resources and emits notifications SHOULD describe a successful
+  move with a single Move activity [...] rather than with a separate Delete
+  and Create activity." `moveChange?` (https://github.com/danbri/factoidal/issues/914):
+  a move (`L4Factoidal.LWS.Move`) gives ONE Move activity about the moved
+  resource at its new identifier; the descendants of a moved container
+  give none. A subscription hears it when its scope holds the old or the
+  new identifier, and its agent may read the resource after the move.
 * Batching. "A server MAY combine multiple activities into a single
   notification envelope": one envelope per subscription per request, with
   an array when one request changed more than one resource in its scope.
@@ -198,11 +209,14 @@ def parseRfc3339? (s : String) : Option Nat := do
 
 /-! ## Changes: what a step did to the store -/
 
-/-- The three activity types LWS §Activity Types requires. -/
+/-- The activity types LWS §Activity Types requires: Create, Update,
+Delete, and Move for a server that moves resources. A Move carries the
+path the resource was moved from. -/
 inductive ChangeType where
   | create
   | update
   | delete
+  | move (origin : String)
 deriving DecidableEq, Repr, Inhabited
 
 /-- The Activity Streams 2.0 activity type name. -/
@@ -210,6 +224,7 @@ def ChangeType.name : ChangeType → String
   | .create => "Create"
   | .update => "Update"
   | .delete => "Delete"
+  | .move _ => "Move"
 
 /-- One change to one resource. -/
 structure Change where
@@ -269,9 +284,67 @@ def candidatePaths (S : Store σ) (r : Request) (resp : Response) (pre : σ) : L
          else []) ++ [path]
     | _ => []
 
-/-- The changes one step made, in the order the request made them. -/
+/-- Is the request a successful one on a linkset resource? -/
+def moveCandidate (r : Request) (resp : Response) : Bool :=
+  let (_, query0) := splitTarget r.path
+  let query := if r.queryStr != "" then r.queryStr else query0
+  isSuccess resp && query == linksetQuery
+
+/-- A Move from `path` to `q` when the stores before and after say so. -/
+def moveAt (S : Store σ) (pre post : σ) (path q : String) : Option Change :=
+  match S.lookup pre path, S.lookup post path, S.lookup pre q, S.lookup post q with
+  | some _, none, none, some e =>
+      if e.kind.isAuxiliary then none else some ⟨.move path, q, e.kind⟩
+  | _, _, _, _ => none
+
+/-- The Move of a step, when it moved a resource (LWS §Moving Resources):
+a successful request on a linkset resource whose response names the new
+linkset with `Content-Location` (`Operations.linksetStep`), where the old
+path resolved before the step and not after it, and the new path did not
+resolve before and does after. -/
+def moveChange? (S : Store σ) (r : Request) (resp : Response) (pre post : σ) : Option Change :=
+  if !moveCandidate r resp then none else
+  (resp.headers.lookup "content-location").bind (fun cl =>
+    moveAt S pre post (splitTarget r.path).1 (splitTarget cl).1)
+
+/-- The changes one step made, in the order the request made them. A move
+is one Move. -/
 def changesOf (S : Store σ) (r : Request) (resp : Response) (pre post : σ) : List Change :=
-  (candidatePaths S r resp pre).filterMap (classify S pre post)
+  match moveChange? S r resp pre post with
+  | some c => [c]
+  | none => (candidatePaths S r resp pre).filterMap (classify S pre post)
+
+/-- A Move names a path that resolved before the step and not after it,
+and a new path that did not resolve before the step and does after it. -/
+theorem moveChange_sound {S : Store σ} {r : Request} {resp : Response} {pre post : σ}
+    {c : Change} (h : moveChange? S r resp pre post = some c) :
+    c.kind.isAuxiliary = false ∧ ∃ o, c.type = .move o ∧
+      (S.lookup pre o).isSome ∧ S.lookup post o = none ∧
+      S.lookup pre c.path = none ∧ (S.lookup post c.path).isSome := by
+  unfold moveChange? at h
+  split at h
+  · simp at h
+  obtain ⟨cl, _, hc⟩ := Option.bind_eq_some_iff.mp h
+  unfold moveAt at hc
+  cases h1 : S.lookup pre (splitTarget r.path).1 <;> cases h2 : S.lookup post (splitTarget r.path).1 <;>
+    cases h3 : S.lookup pre (splitTarget cl).1 <;> cases h4 : S.lookup post (splitTarget cl).1 <;>
+    simp only [h1, h2, h3, h4] at hc <;> try (simp at hc; done)
+  rename_i a e
+  split at hc
+  · simp at hc
+  · rename_i hk
+    simp only [Option.some.injEq] at hc
+    subst hc
+    exact ⟨by simpa using hk, _, rfl, by simp [h1], h2, h3, by simp [h4]⟩
+
+/-- `classify` gives Create, Delete or Update, never Move. -/
+theorem classify_type {S : Store σ} {pre post : σ} {p : String} {c : Change}
+    (h : classify S pre post p = some c) :
+    c.type = .create ∨ c.type = .delete ∨ c.type = .update := by
+  unfold classify at h
+  split at h
+  · simp at h
+  all_goals (split at h <;> simp at h <;> subst h <;> simp)
 
 /-- **The activity type agrees with the store.** A Create names a path that
 did not resolve before the step and resolves after it; a Delete one that
@@ -316,17 +389,31 @@ theorem mem_changesOf_sound {S : Store σ} {r : Request} {resp : Response} {pre 
     c.kind.isAuxiliary = false ∧
     (c.type = .create → S.lookup pre c.path = none ∧ (S.lookup post c.path).isSome) ∧
     (c.type = .delete → (S.lookup pre c.path).isSome ∧ S.lookup post c.path = none) ∧
-    (c.type = .update → (S.lookup pre c.path).isSome ∧ (S.lookup post c.path).isSome) := by
+    (c.type = .update → (S.lookup pre c.path).isSome ∧ (S.lookup post c.path).isSome) ∧
+    (∀ o, c.type = .move o → (S.lookup pre o).isSome ∧ S.lookup post o = none ∧
+      S.lookup pre c.path = none ∧ (S.lookup post c.path).isSome) := by
   unfold changesOf at h
-  obtain ⟨p, _, hp⟩ := List.mem_filterMap.mp h
-  have hs := classify_sound hp
-  rw [hs.1]
-  exact hs.2
+  split at h
+  · rename_i c' hm
+    simp only [List.mem_singleton] at h
+    subst h
+    obtain ⟨hk, o, ho, h1, h2, h3, h4⟩ := moveChange_sound hm
+    refine ⟨hk, fun hc => ?_, fun hc => ?_, fun hc => ?_, fun o' ho' => ?_⟩
+    · rw [ho] at hc; cases hc
+    · rw [ho] at hc; cases hc
+    · rw [ho] at hc; cases hc
+    · rw [ho] at ho'; cases ho'; exact ⟨h1, h2, h3, h4⟩
+  · obtain ⟨p, _, hp⟩ := List.mem_filterMap.mp h
+    have hs := classify_sound hp
+    rw [hs.1]
+    refine ⟨hs.2.1, hs.2.2.1, hs.2.2.2.1, hs.2.2.2.2, ?_⟩
+    intro o ho
+    rcases classify_type hp with h | h | h <;> rw [h] at ho <;> cases ho
 
 /-- A failed request changes nothing that is reported. -/
 theorem changesOf_failure {S : Store σ} {r : Request} {resp : Response} {pre post : σ}
     (h : isSuccess resp = false) : changesOf S r resp pre post = [] := by
-  simp [changesOf, candidatePaths, h]
+  simp [changesOf, moveChange?, moveCandidate, candidatePaths, h]
 
 /-- A PATCH or a POST reports at most one change. -/
 theorem changesOf_single {S : Store σ} {r : Request} {resp : Response} {pre post : σ}
@@ -339,7 +426,10 @@ theorem changesOf_single {S : Store σ} {r : Request} {resp : Response} {pre pos
       simp only [h]
       repeat' split
       all_goals simp
-  exact Nat.le_trans (List.length_filterMap_le _ _) hc
+  unfold changesOf
+  split
+  · simp
+  · exact Nat.le_trans (List.length_filterMap_le _ _) hc
 
 /-! ## Activities and envelopes (LWS §Notification Data Model) -/
 
@@ -381,6 +471,10 @@ def activityJson (baseIri id published : String) (c : Change) : Json :=
     (match c.type, parent? c.path with
      | .create, some p => [("target", .string (iriOfPath baseIri p))]
      | .delete, some p => [("origin", .string (iriOfPath baseIri p))]
+     | .move o, some p =>
+         (match parent? o with
+          | some q => [("origin", .string (iriOfPath baseIri q))]
+          | none => []) ++ [("target", .string (iriOfPath baseIri p))]
      | _, _ => []) ++
     [ ("published", .string published) ])
 
@@ -535,12 +629,20 @@ def deliveryOf (signer : Option Signer) (now : Nat) (p : Pending) : Delivery :=
 
 /-! ## Routing changes to subscribers -/
 
+/-- Is change `c` in the scope of subscription `s`? A Move is when the
+scope holds its old or its new path. -/
+def changeInScope (s : Subscription) (c : Change) : Bool :=
+  inScope s c.path || (match c.type with
+    | .move o => inScope s o
+    | _ => false)
+
 /-- May subscription `s` hear of change `c`? It is live, the change is in
 its scope, and its agent may read the resource "at the time the event
-occurs": after the step for Create and Update, before it for Delete. -/
+occurs": after the step for Create, Update and Move, before it for
+Delete. -/
 def eligible (canRead : Option String → σ → String → Bool) (pre post : σ) (now : Nat)
     (s : Subscription) (c : Change) : Bool :=
-  live now s && inScope s c.path &&
+  live now s && changeInScope s c &&
     canRead s.owner (if c.type = .delete then pre else post) c.path
 
 /-- Each subscription with the activities it may hear of, in change order;
@@ -561,7 +663,7 @@ theorem routed_authorized {α : Type} {canRead : Option String → σ → String
     {pre post : σ} {now : Nat} {subs : List Subscription} {cs : List (Change × α)}
     {s : Subscription} {mine : List (Change × α)} {x : Change × α}
     (hs : (s, mine) ∈ routed canRead pre post now subs cs) (hx : x ∈ mine) :
-    live now s = true ∧ inScope s x.1.path = true ∧
+    live now s = true ∧ changeInScope s x.1 = true ∧
     canRead s.owner (if x.1.type = .delete then pre else post) x.1.path = true ∧
     s ∈ subs ∧ x ∈ cs := by
   unfold routed at hs

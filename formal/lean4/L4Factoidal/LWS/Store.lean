@@ -51,7 +51,11 @@ the specification says it answers.
 * `pathsLookup` — `paths` enumerates exactly the paths that resolve, which
   is what a container enumerating its members reads.
 * `nowTick` — the clock is strictly increasing, so two writes in one request
-  sequence never carry the same `Last-Modified`. -/
+  sequence never carry the same `Last-Modified`.
+* `lookupTick` — advancing the clock changes no resource. The move theorems
+  of `L4Factoidal.LWS.Move` need it: a move stamps the two containers and
+  advances the clock between the stamps.
+* `lookupPath` — an entry is found at its own path. -/
 structure StoreLaws {σ : Type} (S : Store σ) : Prop where
   lookupPutSame   : ∀ s e, S.lookup (S.put s e) e.path = some e
   lookupPutOther  : ∀ s e p, p ≠ e.path → S.lookup (S.put s e) p = S.lookup s p
@@ -59,6 +63,8 @@ structure StoreLaws {σ : Type} (S : Store σ) : Prop where
   lookupRemoveOther : ∀ s p q, q ≠ p → S.lookup (S.remove s p) q = S.lookup s q
   pathsLookup     : ∀ s p, (S.paths s).contains p = (S.lookup s p).isSome
   nowTick         : ∀ s, S.now (S.tick s) = S.now s + 1
+  lookupTick      : ∀ s p, S.lookup (S.tick s) p = S.lookup s p
+  lookupPath      : ∀ s p e, S.lookup s p = some e → e.path = p
 
 /-! ## The reference in-memory instance -/
 
@@ -159,6 +165,12 @@ theorem memPaths_memLookup (s : MemState) (p : String) :
         simp only [List.map_cons, List.contains_cons, h3, Bool.false_or,
                    List.find?_cons, h2, ih]
 
+/-- `memLookup` finds an entry at its own path. -/
+theorem memLookup_path (s : MemState) (p : String) (e : Entry) (h : memLookup s p = some e) :
+    e.path = p := by
+  have := List.find?_some h
+  simpa using this
+
 theorem memStoreLaws : StoreLaws MemStore where
   lookupPutSame := memLookup_memPut_same
   lookupPutOther := fun s e p h => memLookup_memPut_other s e p h
@@ -166,5 +178,7 @@ theorem memStoreLaws : StoreLaws MemStore where
   lookupRemoveOther := fun s p q h => memLookup_memRemove_other s p q h
   pathsLookup := memPaths_memLookup
   nowTick := fun _ => rfl
+  lookupTick := fun _ _ => rfl
+  lookupPath := memLookup_path
 
 end L4Factoidal.LWS

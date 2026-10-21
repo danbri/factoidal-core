@@ -228,6 +228,9 @@ export async function openLwsStorage (options = {}) {
   // Notifications are on unless the caller turns them off; the engine
   // decides everything else about them.
   if (options.notifications === false) config.notifications = false
+  // Moves (a change of the up link, L4Factoidal/LWS/Move.lean) are on
+  // unless the caller turns them off.
+  if (options.moves === false) config.moves = false
   config.entropy = entropyBase64()
   // `dir` names the storage directory. The snapshot found there, if any,
   // is the storage to continue from; the engine checks it.

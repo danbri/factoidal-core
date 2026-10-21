@@ -582,7 +582,7 @@ def lwsGuardBinarySnapshot : Bool :=
 
 /-! ## The registry's own arithmetic -/
 
-#guard Conformance.registry.length == 18
+#guard Conformance.registry.length == 19
 #guard (Conformance.registry.map (·.id)).eraseDups.length == Conformance.registry.length
 
 end L4Factoidal.LWS.Tests

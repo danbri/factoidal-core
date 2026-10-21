@@ -172,6 +172,12 @@ def registry : List Requirement :=
   , module := "L4Factoidal.LWS.Discovery.storageDescriptionPath"
   , binding := "LWS core §Discovery (todo); the storageDescription link relation from Solid Protocol v0.11.0 §4.1"
   , status := .«open» "the link is advertised; the description document does not yet conform to CID 1.0" }
+, { id := "lws-core-19"
+  , section_ := "Moving Resources"
+  , statement := "On a successful update, the server MUST atomically remove the resource from the items list of its former parent container and add it to the items list of the destination container."
+  , module := "L4Factoidal.LWS.Move.move"
+  , binding := "LWS core §Moving Resources (w3c/lws-protocol 9a08ff65): JSON Patch of the up link in the linkset resource"
+  , status := .proved "L4Factoidal.LWS.move_tree" }
 ]
 
 /-! ## Counting -/

@@ -137,6 +137,10 @@ structure OpenConfig where
   /-- Does the storage offer notifications (LWS §Notifications)? On unless
   the configuration says `"notifications": false`. -/
   notifications : Bool := true
+  /-- Does the storage let a client move a resource by changing its `up`
+  link (LWS §Moving Resources, `L4Factoidal.LWS.Move`)? On unless the
+  configuration says `"moves": false`. -/
+  moves : Bool := true
   /-- Random bytes from the host (`entropy`, base64), read once at open:
   the seed of the notification signing key when the snapshot holds none,
   and of the run tag of activity identifiers. -/
@@ -182,6 +186,7 @@ def openConfigOfJson (text : String) : Except String OpenConfig :=
           | some (.number s) => (s.toNat?).getD 100
           | _ => 100
         let notifications := j.field? "notifications" != some (.bool false)
+        let moves := j.field? "moves" != some (.bool false)
         let entropy ← match j.getString? "entropy" with
           | none => .ok none
           | some t => match Base64.decode? t with
@@ -197,7 +202,7 @@ def openConfigOfJson (text : String) : Except String OpenConfig :=
                 .ok (some ns, key.filter (·.size == 32))
           | none => .ok (none, none)
         .ok { cfg := { baseIri, owner, agent, pageSize }, now, rootAcl, snapshot, authz,
-              notifications, entropy, notif, signingKey }
+              notifications, moves, entropy, notif, signingKey }
 
 /-- The JWS verifiers over the vendored HACL* primitives (P-256 ECDSA,
 RSA PKCS#1 v1.5, Ed25519): `skills/crypto-policy`. -/
@@ -266,7 +271,8 @@ def lwsOpen (configJson : String) : IO String := do
         L4Factoidal.Crypto.bytesToHex (d.extract 0 8))).getD ""
       let notif := { (oc.notif.getD {}) with run }
       lwsTable.modify (·.insert h
-        { cfg := { oc.cfg with notifications := oc.notifications, notificationKeyX := keyX },
+        { cfg := { oc.cfg with notifications := oc.notifications, notificationKeyX := keyX,
+                                moves := oc.moves },
           mem := oc.snapshot.getD (initialStorage oc.now oc.rootAcl),
           authz := oc.authz, notif, signingKey })
       pure (okWith [("handle", .string h), ("root", .string rootPath)])

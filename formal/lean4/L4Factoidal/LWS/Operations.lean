@@ -40,6 +40,7 @@ import L4Factoidal.LWS.Discovery
 import L4Factoidal.LWS.Binding
 import L4Factoidal.LWS.Linkset
 import L4Factoidal.LWS.Pagination
+import L4Factoidal.LWS.Move
 import L4Factoidal.HTTP.Server
 
 namespace L4Factoidal.LWS
@@ -116,6 +117,10 @@ structure Config where
   /-- The base64url Ed25519 public key that signs webhook deliveries, when
   the storage signs them (`storageDescription`). -/
   notificationKeyX : Option String := none
+  /-- Does the storage let a client move a resource by changing its `up`
+  link (LWS §Moving Resources, `L4Factoidal.LWS.Move`)? Off by default; the
+  wasm handle turns it on. -/
+  moves : Bool := false
 deriving Repr, Inhabited
 
 /-! ## Helpers over the store -/
@@ -326,9 +331,33 @@ def linksetStep (S : Store σ) (cfg : Config) (r : Request) (st : σ)
           let tag' := linksetTag e' (toStringCompact (linksetDoc cfg.baseIri path e.kind ls))
           (⟨204, [("etag", tag')], "", none⟩, S.tick (S.put st e'))
       let readDoc (keepAbsent : Bool) (d : Json) : Response × σ :=
-        match clientLinksOfDoc cfg.baseIri path e.kind keepAbsent d with
-        | .error (status, msg) => (problem status msg target, st)
-        | .ok ls => store ls
+        match (if cfg.moves then requestedUp cfg.baseIri path keepAbsent d else .unchanged) with
+        | .unchanged =>
+            match clientLinksOfDoc cfg.baseIri path e.kind keepAbsent d with
+            | .error (status, msg) => (problem status msg target, st)
+            | .ok ls => store ls
+        | .removed => (problem 409 "a resource other than the storage root keeps an up link" target, st)
+        | .refused status msg => (problem status msg target, st)
+        | .moveTo dest =>
+            match clientLinksOfDoc cfg.baseIri path e.kind keepAbsent (withServerUp cfg.baseIri path d) with
+            | .error (status, msg) => (problem status msg target, st)
+            | .ok ls =>
+                -- LWS §Moving Resources: one move, with the new client links
+                -- kept on the moved resource; 200 with the new linkset and
+                -- its identifier, since this server does not preserve it.
+                let st0 := if ls == e.links then st else S.put st { e with links := ls }
+                match move S st0 path dest with
+                | .error (status, msg) => (problem status msg target, st)
+                | .ok (plan, st') =>
+                    let doc' := linksetDoc cfg.baseIri plan.dst e.kind ls
+                    let text' := toStringCompact doc'
+                    let tag' := match S.lookup st' plan.dst with
+                      | some e' => linksetTag e' text'
+                      | none => tag
+                    (⟨200, [ ("content-type", mediaLinkset), ("etag", tag')
+                           , ("content-location", linksetTargetOf plan.dst)
+                           , ("link", renderLinks (lwsLinks cfg.baseIri plan.dst e.kind)) ],
+                      text', none⟩, st')
       match r.method with
       | "GET" | "HEAD" =>
           if tagListed "if-none-match" then (⟨304, [("etag", tag)], "", none⟩, st)
@@ -360,7 +389,7 @@ def linksetStep (S : Store σ) (cfg : Config) (r : Request) (st : σ)
 /-- The storage description resource (LWS §Discovery). -/
 def storageStep (cfg : Config) (r : Request) : Response :=
   let allow := "GET, HEAD, OPTIONS"
-  let doc := storageDescription cfg.baseIri cfg.notifications cfg.notificationKeyX
+  let doc := storageDescription cfg.baseIri cfg.notifications cfg.notificationKeyX cfg.moves
   match r.method with
   | "GET" | "HEAD" =>
       -- The tag is a digest of the document, so a new signing key or a
