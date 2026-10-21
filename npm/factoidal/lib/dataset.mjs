@@ -15,7 +15,7 @@
 // released by a FinalizationRegistry callback. Every method of a disposed
 // Dataset throws a TypeError that names the method.
 
-import { quadFromJson, quadToJson, termToJson, termFromSrj } from '../rdfjs.mjs';
+import { dataFactory, quadFromJson, quadToJson, termToJson, termFromSrj } from '../rdfjs.mjs';
 
 const INTERNAL = Symbol('factoidal.Dataset.internal');
 
@@ -51,6 +51,15 @@ function envelope(jsonText, what) {
 
 const SERIALIZE_OPTIONS = ['format', 'version', 'prefixes', 'literalShorthand',
   'useNativeTypes', 'useRdfType', 'rdfDirection'];
+
+// The quads of the compact answer of datasetQuadsJson: each distinct term is
+// built once and shared (TermJson.compactCertified).
+function quadsFromCompact(terms, ixs) {
+  const ts = terms.map(termFromSrj);
+  const dg = dataFactory.defaultGraph();
+  return ixs.map((ix) => dataFactory.quad(ts[ix[0]], ts[ix[1]], ts[ix[2]],
+    ix.length > 3 ? ts[ix[3]] : dg));
+}
 
 class Dataset {
   /** @private Datasets come from parse(), csvwToRdf() and the other producers. */
@@ -276,8 +285,8 @@ class Dataset {
   *[Symbol.iterator]() {
     this._open('iterate');
     if (!this._quads) {
-      const r = envelope(this._ctx.e.datasetQuadsJson(this._handle, ''), 'iterate');
-      this._quads = Object.freeze(r.quads.map((q) => quadFromJson(q)));
+      const r = envelope(this._ctx.e.datasetQuadsJson(this._handle, '{"compact":true}'), 'iterate');
+      this._quads = Object.freeze(r.ixs ? quadsFromCompact(r.terms, r.ixs) : r.quads.map((q) => quadFromJson(q)));
     }
     yield* this._quads;
   }

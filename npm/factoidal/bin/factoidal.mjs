@@ -947,6 +947,27 @@ function packSyntax (engine, input, options) {
     `(${syntaxes.join(', ')})`)
 }
 
+
+/**
+ * The base IRI relative IRIs in the source resolve against.
+ *
+ * The native packer uses `file://<input>`, so this matches it by default
+ * and byte-identical output needs no flag. `--base` overrides it, and
+ * `--base ''` asks for no base, which turns a relative IRI into a parse
+ * error rather than a silently different term.
+ */
+function packBase (input, options) {
+  if (typeof options.base === 'string') return options.base
+  const absolute = input.startsWith('/') ? input : joinPath(currentDirectory(), input)
+  return 'file://' + absolute
+}
+
+/** The process's working directory, on Node and on Deno. */
+function currentDirectory () {
+  if (isDeno) return globalThis.Deno.cwd()
+  return process.cwd()
+}
+
 function packLayout (options) {
   if (typeof options.layout !== 'string') return 'ibk3'
   const layout = options.layout.toLowerCase()

@@ -57,7 +57,7 @@ function encodeAnswer (out) {
   if (out === null || out === undefined) return ''
   switch (typeof out) {
     case 'boolean': return JSON.stringify({ js: 'boolean', v: out })
-    case 'number': return JSON.stringify({ js: 'number', v: String(out) })
+    case 'number': return JSON.stringify({ js: 'number', v: Object.is(out, -0) ? '-0' : String(out) })
     case 'bigint': return JSON.stringify({ js: 'bigint', v: out.toString() })
     case 'string': return JSON.stringify({ js: 'string', v: out })
     case 'object':

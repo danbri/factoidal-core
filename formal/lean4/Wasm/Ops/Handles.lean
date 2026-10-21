@@ -544,16 +544,30 @@ def updateQuadOfJsonQuad : TermJson.Quad → Except String (Option WfIri × Trip
   | (some (.bnode _), _) =>
       .error "a quad in a graph named by a blank node cannot be added or deleted here"
 
+/-- Decode each quad, one frame for any number of quads. -/
+def jsonQuadsLoop : List Json → Array TermJson.Quad → Except String (List TermJson.Quad)
+  | [], acc => .ok acc.toList
+  | x :: r, acc =>
+      match TermJson.decodeQuad x with
+      | some q => jsonQuadsLoop r (acc.push q)
+      | none => .error s!"not a quad: {x.toString}"
+
+/-- Each quad as an Update quad, one frame for any number of quads. -/
+def updateQuadsLoop : List TermJson.Quad → Array (Option WfIri × Triple) →
+    Except String (List (Option WfIri × Triple))
+  | [], acc => .ok acc.toList
+  | q :: r, acc =>
+      match updateQuadOfJsonQuad q with
+      | .ok u => updateQuadsLoop r (acc.push u)
+      | .error e => .error e
+
 /-- The quads of a JSON array of `TermJson` quads. -/
 def jsonQuadsOf (text : String) : Except String (List TermJson.Quad) := do
   let j ← match parseJson? text with
     | some j => .ok j
     | none => .error "not a JSON document"
   match j with
-  | .array xs =>
-      xs.mapM fun x => match TermJson.decodeQuad x with
-        | some q => .ok q
-        | none => .error s!"not a quad: {x.toString}"
+  | .array xs => jsonQuadsLoop xs #[]
   | _ => .error "expected a JSON array of quads"
 
 /-- Optional natural-number member of an options object. -/
@@ -564,7 +578,10 @@ private def natMember (opts : Option Json) (k : String) : Option Nat :=
 
 /-- `datasetQuadsJson(handle, optsJson)` — the quads of `quadPage` as
 `TermJson` quads: `{"ok":true,"total":N,"offset":O,"quads":[…]}`. `optsJson`
-members `offset` (default 0) and `limit` (default all). The order is the line
+members `offset` (default 0), `limit` (default all) and `compact`: with
+`"compact":true` the answer is `"terms":[…]` (each distinct term once) and
+`"ixs":[[i,…],…]` (each quad as indices into `terms`, subject, predicate,
+object, graph), certified by `TermJson.compactCertified`. The order is the line
 order of `datasetSerialize` N-Quads (`TermJson.toCanonicalNQuads_eq_quadList`). -/
 def datasetQuadsJson (h optsJson : String) : IO String :=
   withHandleDataset h fun ds _ =>
@@ -573,15 +590,27 @@ def datasetQuadsJson (h optsJson : String) : IO String :=
     let off := (natMember opts "offset").getD 0
     let lim := (natMember opts "limit").getD qs.length
     let page := (qs.drop off).take lim
-    pure (okWith [("total", .number (toString qs.length)), ("offset", .number (toString off)),
-                  ("quads", .array (page.map TermJson.encodeQuad))])
+    let compact := ((opts.bind (·.field? "compact")).map fun | .bool b => b | _ => false).getD false
+    let head := [("total", Json.number (toString qs.length)), ("offset", .number (toString off))]
+    match (if compact then TermJson.compactCertified page else none) with
+    | some (tbl, ixs) =>
+        -- `TermJson.compactCertified_sound`: the indices read back as `page`;
+        -- each term is the text of `encodeTerm` (`TermJson.termText_eq`)
+        let termsText := tbl.foldl (fun (acc : String) t =>
+          (if acc.isEmpty then acc else acc ++ ",") ++ TermJson.termText t) ""
+        let ixText := ixs.foldl (fun (acc : String) ix =>
+          (if acc.isEmpty then acc else acc ++ ",") ++ "[" ++
+            (ix.foldl (fun (a : String) i => (if a.isEmpty then a else a ++ ",") ++ toString i) "") ++ "]") ""
+        pure ("{\"ok\":true,\"total\":" ++ toString qs.length ++ ",\"offset\":" ++ toString off ++
+          ",\"terms\":[" ++ termsText ++ "],\"ixs\":[" ++ ixText ++ "]}")
+    | none => pure (okWith (head ++ [("quads", .array (page.map TermJson.encodeQuad))]))
 
 private def changeHandleJson (who h text : String)
     (f : Dataset → List (Option WfIri × Triple) → Dataset) : IO String := do
   match (← handleTable.get)[h]? with
   | none => pure (unknownHandle h)
   | some od =>
-    match jsonQuadsOf text >>= (·.mapM updateQuadOfJsonQuad) with
+    match jsonQuadsOf text >>= (updateQuadsLoop · #[]) with
     | .error e => pure (errJson s!"{who}: {e}")
     | .ok qs =>
       let ds' := f od.ds qs

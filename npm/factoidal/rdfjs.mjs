@@ -332,6 +332,8 @@ function quadsToNQuads(quads) {
 /**
  * Parse an N-Quads document (RDF 1.2 grammar) into RDF/JS quads; the engine
  * parses it and rejects any line the grammar rejects.
+ * The quads come in the engine's order: the default graph, then each named
+ * graph in the order of its first quad.
  * options.blankNodePrefix: prepended to every blank-node label (keeps the
  * labels of separate documents apart); options.factory: an RDF/JS
  * DataFactory.
