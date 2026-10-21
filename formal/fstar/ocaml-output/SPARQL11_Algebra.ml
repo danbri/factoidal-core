@@ -4616,6 +4616,22 @@ let strip_leading_plus (s : Prims.string) : Prims.string=
          else s)
     | [] -> s
   else s
+let is_integer_lexical (s : Prims.string) : Prims.bool=
+  let cs = FStar_String.list_of_string s in
+  let digits =
+    match cs with
+    | c::rest ->
+        if
+          (c = (FStar_Char.char_of_int (Prims.of_int (43)))) ||
+            (c = (FStar_Char.char_of_int (Prims.of_int (45))))
+        then rest
+        else cs
+    | [] -> [] in
+  (Prims.uu___is_Cons digits) &&
+    (FStar_List_Tot_Base.for_all
+       (fun c ->
+          ((FStar_Char.int_of_char c) >= (Prims.of_int (48))) &&
+            ((FStar_Char.int_of_char c) <= (Prims.of_int (57)))) digits)
 let eval_xsd_cast (v : eval_result) (target_type : Prims.string)
   (full_iri : Prims.string) : eval_result=
   let get_lex =
@@ -4641,6 +4657,21 @@ let eval_xsd_cast (v : eval_result) (target_type : Prims.string)
       then
         (match v with
          | ER_Bool b -> ER_Num (if b then Prims.int_one else Prims.int_zero)
+         | ER_Num n -> ER_Num n
+         | ER_Term (RDF_Term.T_Literal uu___) ->
+             if is_integer_lexical lex
+             then
+               (match parse_int_string lex with
+                | FStar_Pervasives_Native.Some n -> ER_Num n
+                | FStar_Pervasives_Native.None -> ER_Error)
+             else ER_Error
+         | ER_Term (RDF_Term.T_IRI uu___) ->
+             if is_integer_lexical lex
+             then
+               (match parse_int_string lex with
+                | FStar_Pervasives_Native.Some n -> ER_Num n
+                | FStar_Pervasives_Native.None -> ER_Error)
+             else ER_Error
          | uu___ ->
              (match parse_int_string lex with
               | FStar_Pervasives_Native.Some n -> ER_Num n
@@ -5199,9 +5230,12 @@ let rec eval_expr_with_base
   | E_Bound v ->
       ER_Bool (FStar_Pervasives_Native.uu___is_Some (sm_lookup v mu))
   | E_If (cond, then_e, else_e) ->
-      if ebv (eval_expr_with_base base cond mu)
-      then eval_expr_with_base base then_e mu
-      else eval_expr_with_base base else_e mu
+      (match ebv_checked (eval_expr_with_base base cond mu) with
+       | FStar_Pervasives_Native.Some true ->
+           eval_expr_with_base base then_e mu
+       | FStar_Pervasives_Native.Some false ->
+           eval_expr_with_base base else_e mu
+       | FStar_Pervasives_Native.None -> ER_Error)
   | E_Coalesce es -> eval_coalesce_with_base base es mu
   | E_In (ev, es) ->
       let v = eval_expr_with_base base ev mu in
@@ -7057,15 +7091,29 @@ let eval_select_item_group_row
        | FStar_Pervasives_Native.Some t ->
            FStar_Pervasives_Native.Some (v, t)
        | FStar_Pervasives_Native.None -> FStar_Pervasives_Native.None)
+let rec grouped_select_items_acc
+  (base : RDF_Term.wf_iri FStar_Pervasives_Native.option)
+  (items : select_item Prims.list) (g : group)
+  (row : RDF_Graph_Executable.solution_mapping)
+  (acc : (var_name * RDF_Term.rdf_term) Prims.list) :
+  (var_name * RDF_Term.rdf_term) Prims.list=
+  match items with
+  | [] -> FStar_List_Tot_Base.rev acc
+  | item::rest ->
+      (match eval_select_item_group_row base item g
+               (FStar_List_Tot_Base.append acc row)
+       with
+       | FStar_Pervasives_Native.Some b ->
+           grouped_select_items_acc base rest g row (b :: acc)
+       | FStar_Pervasives_Native.None ->
+           grouped_select_items_acc base rest g row acc)
 let grouped_select_row
   (base : RDF_Term.wf_iri FStar_Pervasives_Native.option)
   (items : select_item Prims.list) (g : group)
   (ov : RDF_Graph_Executable.solution_mapping) :
   RDF_Graph_Executable.solution_mapping=
   let row = group_row_base g ov in
-  let own =
-    list_filter_map (fun item -> eval_select_item_group_row base item g row)
-      items in
+  let own = grouped_select_items_acc base items g row [] in
   let item_vars = select_item_vars items in
   FStar_List_Tot_Base.append own
     (FStar_List_Tot_Base.filter
@@ -7711,11 +7759,21 @@ let eval_ask_query (q : query) (g : RDF_Graph.rdf_graph)
             | [] -> false
             | uu___1 -> true)
        | uu___1 -> false)
+let template_label_part (template_label : Prims.string) : Prims.string=
+  let cs = FStar_String.list_of_string template_label in
+  match cs with
+  | c1::c2::rest ->
+      if
+        ((FStar_Char.int_of_char c1) = (Prims.of_int (95))) &&
+          ((FStar_Char.int_of_char c2) = (Prims.of_int (58)))
+      then Prims.strcat "g_" (FStar_String.string_of_list rest)
+      else Prims.strcat "_" template_label
+  | uu___ -> Prims.strcat "_" template_label
 let fresh_bnode_for (sol_ix : Prims.nat) (template_label : Prims.string) :
   RDF_Term.bnode_id=
   Prims.strcat "tpl_"
     (Prims.strcat (Prims.string_of_int sol_ix)
-       (Prims.strcat "_" template_label))
+       (template_label_part template_label))
 let construct_subject (ps : pattern_subject)
   (mu : RDF_Graph_Executable.solution_mapping) (sol_ix : Prims.nat) :
   RDF_Term.subject FStar_Pervasives_Native.option=
