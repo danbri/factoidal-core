@@ -88,8 +88,37 @@ requests, ranges, `application/lws+json` listings, linksets, the
 `application/lws+cid` storage description at `/.well-known/lws-storage`,
 JSON Patch, RFC 9457 errors) is `L4Factoidal/LWS/Binding.lean`; the audit
 table is in the ledger, section "LWS editor's draft 2026-10-19 audit", and
-`node tests/lws/draft-binding.mjs` is its host suite (with xfails for
-https://github.com/danbri/factoidal/issues/887, 888 and 890).
+`node tests/lws/draft-binding.mjs` is its host suite (with an xfail for
+https://github.com/danbri/factoidal/issues/890, notifications).
+
+### Pagination and client links (https://github.com/danbri/factoidal/issues/887, 888)
+
+* `L4Factoidal/LWS/Pagination.lean`: the listing order (increasing path,
+  `String` order, each path once: `orderPaths`, theorems `orderPaths_sorted`,
+  `orderPaths_nodup`, `mem_orderPaths`) and the pages (`pageAt`,
+  `pageCount`, theorem `pages_concat`). `Operations.pagedRead` serves a
+  container with more than `Config.pageSize` members (default 100; config
+  member `pageSize`, 0 turns it off): page URIs `C?page=N`, `Link` `first`,
+  `last`, `next` (not on the last page), `prev` (not on the first), 404 for
+  a page that does not exist, `totalItems` over the full membership, an
+  `ETag` per page led by the container's clock. Theorem `pageItems_concat`
+  in `Operations.lean`: for an unchanged container, pages 1 to
+  `memberPageCount` concatenate to `listedMembers`. The draft says nothing
+  about change between page requests; the record of that choice is the
+  module header.
+* `L4Factoidal/LWS/Linkset.lean`: `Entry.links` holds the client links.
+  `Link` with `Prefer: set-linkset` replaces them on PUT and adds to them on
+  PATCH; `Link` on POST sets them (server-managed relations dropped); the
+  linkset resource accepts JSON Patch and PUT of `application/linkset+json`.
+  `serverManagedRels` (`linkset`, `type`, `format`, `size`, `modified`, `up`,
+  `items`, `lws#storage`) answer 409; a malformed link (RFC 8288 relation
+  syntax, URI-reference target, token attribute names, no `anchor`) answers
+  400. A linkset change advances the store clock (so the host persists it)
+  but not the resource's `Last-Modified` or `ETag`. The snapshot keeps the
+  links (`entryOfJson_entryJson` covers them).
+* Build-time checks through `step`: `L4Factoidal/LWS/PaginationLinksTests.lean`.
+  Host checks: `tests/lws/draft-binding.mjs`, the "Pagination" and
+  "Metadata" rows.
 
 ### Bodies are bytes (https://github.com/danbri/factoidal/issues/889)
 

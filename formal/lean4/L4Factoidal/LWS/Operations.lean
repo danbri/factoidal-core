@@ -38,6 +38,8 @@ distinct without a separate counter.
 import L4Factoidal.LWS.Store
 import L4Factoidal.LWS.Discovery
 import L4Factoidal.LWS.Binding
+import L4Factoidal.LWS.Linkset
+import L4Factoidal.LWS.Pagination
 import L4Factoidal.HTTP.Server
 
 namespace L4Factoidal.LWS
@@ -102,6 +104,11 @@ structure Config where
   binding of this module applies `application/json-patch+json`; the Solid
   layer adds `text/n3`, which it applies itself. -/
   acceptPatch : List String := [mediaJsonPatch]
+  /-- The pagination threshold and page size of container listings (LWS
+  §LWS Media Type, Pagination: "a server-determined threshold"). A
+  container with more members than this is listed in pages of this many
+  members; 0 turns pagination off. -/
+  pageSize : Nat := 100
 deriving Repr, Inhabited
 
 /-! ## Helpers over the store -/
@@ -210,23 +217,91 @@ def childPathFor (S : Store σ) (st : σ) (target : String) (hint : Option Strin
   let name := if taken name then name ++ "-" ++ toString (S.now st) else name
   target ++ name ++ (if asContainer then "/" else "")
 
-/-- The resources a container lists: its direct members, auxiliary
-resources excluded. -/
-def listedMembers (S : Store σ) (st : σ) (c : String) : List Entry :=
-  (containedPaths S st c).filterMap (S.lookup st) |>.filter (fun e => !e.kind.isAuxiliary)
+/-- Is the resource at `p` one a container listing shows (it exists and is
+not an auxiliary resource)? -/
+def listable (S : Store σ) (st : σ) (p : String) : Bool :=
+  match S.lookup st p with
+  | some e => !e.kind.isAuxiliary
+  | none => false
 
-/-- The linkset resource of `path` (LWS §Metadata). The links are all
-server-managed here, so a PATCH that would change them is refused, which
-§Metadata permits: "Servers MAY restrict modifications to specific links
-... Servers MUST preserve the links a client is not permitted to modify". -/
+/-- The paths a container lists, in listing order: its direct members,
+auxiliary resources excluded, in increasing path order, each path once
+(`orderPaths`). -/
+def orderedMemberPaths (S : Store σ) (st : σ) (c : String) : List String :=
+  (orderPaths (containedPaths S st c)).filter (listable S st)
+
+/-- The resources a container lists, in listing order. -/
+def listedMembers (S : Store σ) (st : σ) (c : String) : List Entry :=
+  (orderedMemberPaths S st c).filterMap (S.lookup st)
+
+/-- The resources on page `n` (from 1) of a container listing at page size
+`k`. -/
+def pageItems (S : Store σ) (st : σ) (c : String) (k n : Nat) : List Entry :=
+  (pageAt (orderedMemberPaths S st c) k (n - 1)).filterMap (S.lookup st)
+
+/-- The number of pages of a container listing at page size `k`. -/
+def memberPageCount (S : Store σ) (st : σ) (c : String) (k : Nat) : Nat :=
+  pageCount (orderedMemberPaths S st c).length k
+
+/-- Each member path of the listing occurs once, and the listing is in
+strictly increasing path order. -/
+theorem orderedMemberPaths_sorted (S : Store σ) (st : σ) (c : String) :
+    List.Pairwise (· < ·) (orderedMemberPaths S st c) :=
+  (orderPaths_sorted _).filter _
+
+theorem orderedMemberPaths_nodup (S : Store σ) (st : σ) (c : String) :
+    (orderedMemberPaths S st c).Nodup :=
+  (orderPaths_nodup _).filter _
+
+/-- The listing holds exactly the container's direct members that resolve
+to a non-auxiliary resource. With `StoreLaws.pathsLookup`, every path that
+resolves is enumerated, so no member is missing. -/
+theorem mem_orderedMemberPaths (S : Store σ) (st : σ) (c p : String) :
+    p ∈ orderedMemberPaths S st c ↔
+      p ∈ S.paths st ∧ contains c p = true ∧ listable S st p = true := by
+  simp [orderedMemberPaths, mem_orderPaths, containedPaths, and_assoc]
+
+/-- Pagination is exact: for a container that does not change between the
+requests, concatenating the items of pages 1 to `memberPageCount` gives
+exactly the listing, each member once, in listing order. -/
+theorem pageItems_concat (S : Store σ) (st : σ) (c : String) (k : Nat) :
+    (List.range (memberPageCount S st c k)).flatMap (fun i => pageItems S st c k (i + 1)) =
+      listedMembers S st c := by
+  unfold pageItems listedMembers memberPageCount
+  simp only [Nat.add_sub_cancel]
+  rw [← List.filterMap_flatMap, pages_concat]
+
+/-- The entity tag of a linkset: the resource's clock and the FNV-1a digest
+of the document, so a change to the client links changes the tag. -/
+def linksetTag (e : Entry) (docText : String) : String :=
+  "\"" ++ toString e.mtime ++ "-ls-" ++ hex8 (fnv1a32 docText.toUTF8) ++ "\""
+
+/-- The linkset resource of `path` (LWS §Metadata). Its document holds the
+server-managed links and the resource's client links
+(`L4Factoidal.LWS.Linkset`).
+
+* GET, HEAD — 200 with `application/linkset+json`, or 304.
+* PATCH — JSON Patch (RFC 6902), "the primary mechanism for metadata
+  management". The patched document must keep every server-managed link as
+  it is ("Servers MUST preserve the links a client is not permitted to
+  modify"); a change to one is refused with 409; every other relation
+  becomes the resource's client links, each checked (400 when malformed).
+* PUT — a full `application/linkset+json` replacement ("If advertised in
+  the Allow header, a client MAY replace the entire linkset"). The
+  server-managed relations may be left out, and are kept; when present they
+  must be unchanged (409).
+* A linkset change does not change the resource's content, its
+  modification time or its entity tag; it advances the store clock, so the
+  host persists it. -/
 def linksetStep (S : Store σ) (cfg : Config) (r : Request) (st : σ)
     (path : String) : Response × σ :=
   match S.lookup st path with
   | none => (problem 404 "no resource has this linkset" (linksetTargetOf path), st)
   | some e =>
-      let doc := linksetJson cfg.baseIri path e.kind
-      let tag := "\"" ++ toString e.mtime ++ "-ls\""
-      let allow := "GET, HEAD, OPTIONS, PATCH"
+      let doc := linksetDoc cfg.baseIri path e.kind e.links
+      let docText := toStringCompact doc
+      let tag := linksetTag e docText
+      let allow := "GET, HEAD, OPTIONS, PATCH, PUT"
       let hs : List (String × String) :=
         [ ("content-type", mediaLinkset), ("etag", tag)
         , ("last-modified", httpDate e.mtime), ("allow", allow)
@@ -235,29 +310,45 @@ def linksetStep (S : Store σ) (cfg : Config) (r : Request) (st : σ)
                                   rel := lwsStorageRel }]) ]
       let tagListed (h : String) : Bool :=
         ((r.header? h).map (fun v => (parseTagList v).any (fun t => t == tag || t == "*"))).getD false
+      let target := linksetTargetOf path
+      let ct := (r.header? "content-type").map baseMedia
+      let store (ls : List Link) : Response × σ :=
+        if ls == e.links then (⟨204, [("etag", tag)], "", none⟩, st)
+        else
+          let e' := { e with links := ls }
+          let tag' := linksetTag e' (toStringCompact (linksetDoc cfg.baseIri path e.kind ls))
+          (⟨204, [("etag", tag')], "", none⟩, S.tick (S.put st e'))
+      let readDoc (keepAbsent : Bool) (d : Json) : Response × σ :=
+        match clientLinksOfDoc cfg.baseIri path e.kind keepAbsent d with
+        | .error (status, msg) => (problem status msg target, st)
+        | .ok ls => store ls
       match r.method with
       | "GET" | "HEAD" =>
           if tagListed "if-none-match" then (⟨304, [("etag", tag)], "", none⟩, st)
-          else (⟨200, hs, if r.method == "HEAD" then "" else toStringCompact doc, none⟩, st)
+          else (⟨200, hs, if r.method == "HEAD" then "" else docText, none⟩, st)
       | "OPTIONS" => (⟨204, [("allow", allow), ("accept-patch", mediaJsonPatch)], "", none⟩, st)
       | "PATCH" =>
-          let ct := (r.header? "content-type").map (fun c => ((c.splitOn ";").headD c).trim)
           if ct != some mediaJsonPatch then
-            (problem 415 "a linkset accepts application/json-patch+json" (linksetTargetOf path)
+            (problem 415 "a linkset accepts application/json-patch+json" target
               [("accept-patch", mediaJsonPatch)], st)
           else if (r.header? "if-match").isSome && !tagListed "if-match" then
-            (problem 412 "If-Match did not match the linkset" (linksetTargetOf path), st)
+            (problem 412 "If-Match did not match the linkset" target, st)
           else match parseJson ((String.fromUTF8? r.content).getD "") with
-            | .error _ => (problem 400 "the patch document is not JSON" (linksetTargetOf path), st)
+            | .error _ => (problem 400 "the patch document is not JSON" target, st)
             | .ok p =>
                 match applyJsonPatch p doc with
-                | .error msg => (problem 409 msg (linksetTargetOf path), st)
-                | .ok d' =>
-                    if decide (d' = doc) then (⟨204, [("etag", tag)], "", none⟩, st)
-                    else (problem 409 "every link of this linkset is server-managed"
-                            (linksetTargetOf path), st)
-      | _ => (problem 405 "a linkset accepts GET, HEAD, OPTIONS and PATCH"
-                (linksetTargetOf path) [("allow", allow)], st)
+                | .error msg => (problem 409 msg target, st)
+                | .ok d' => readDoc false d'
+      | "PUT" =>
+          if ct != some mediaLinkset then
+            (problem 415 "a linkset is replaced with application/linkset+json" target, st)
+          else if (r.header? "if-match").isSome && !tagListed "if-match" then
+            (problem 412 "If-Match did not match the linkset" target, st)
+          else match parseJson ((String.fromUTF8? r.content).getD "") with
+            | .error _ => (problem 400 "the linkset document is not JSON" target, st)
+            | .ok d => readDoc true d
+      | _ => (problem 405 "a linkset accepts GET, HEAD, OPTIONS, PATCH and PUT"
+                target [("allow", allow)], st)
 
 /-- The storage description resource (LWS §Discovery). -/
 def storageStep (cfg : Config) (r : Request) : Response :=
@@ -271,6 +362,60 @@ def storageStep (cfg : Config) (r : Request) : Response :=
        if r.method == "HEAD" then "" else storageDescription cfg.baseIri, none⟩
   | "OPTIONS" => ⟨204, [("allow", allow)], "", none⟩
   | _ => problem 405 "the storage description is server-managed" storagePath [("allow", allow)]
+
+/-- Does the request carry `Prefer: set-linkset` (LWS §Update Resource)? -/
+def preferred (r : Request) : Bool :=
+  ((r.header? "prefer").map preferSetLinkset).getD false
+
+/-- A read of a paginated container (LWS §LWS Media Type, Pagination). The
+request target without a query, or with `page=1`, names the first page;
+`page=N` names page N. Each page answers 200 with `rel="first"` and
+`rel="last"`, `rel="next"` on every page but the last, and `rel="prev"` on
+every page but the first. `totalItems` counts the full membership. A page
+number above the last page answers 404.
+
+Each page has its own entity tag: the container's tag, the page number and
+the FNV-1a digest of the page's representation. The container's clock
+leads the tag and advances with every change to its membership, so a client
+that reads two pages with different leading clocks knows that the container
+changed between the requests. -/
+def pagedRead (S : Store σ) (cfg : Config) (r : Request) (st : σ) (e : Entry)
+    (media : String) (isRoot : Bool) : Response × σ :=
+  let target := r.path
+  let k := cfg.pageSize
+  let total := (orderedMemberPaths S st target).length
+  let count := pageCount total k
+  let pageNo : Option Nat :=
+    if r.queryStr == "" then some 1
+    else match pageOfQuery? r.queryStr with
+      | some n => some n
+      | none => if r.queryStr.startsWith "page=" then none else some 1
+  match pageNo with
+  | none => (problem 404 "no page of this container has this name" target, st)
+  | some n =>
+      if n == 0 || n > count then
+        (problem 404 "the container has no such page" target, st)
+      else
+        let items := pageItems S st target k n
+        let body := containerBody media cfg.baseIri target items (some total)
+        let base := etagFor e media
+        let tag := String.ofList (base.toList.dropLast) ++ "-p" ++ toString n ++ "-" ++
+          hex8 (fnv1a32 body.toUTF8) ++ "\""
+        match preconditionFailure r (some e) (some tag) (some (httpDate e.mtime)) (some [tag]) with
+        | some resp => (resp, st)
+        | none =>
+            let pageLink (rel : String) (m : Nat) : Link :=
+              { target := target ++ "?" ++ pageQuery m, rel }
+            let pageLinks : List Link :=
+              [pageLink "first" 1, pageLink "last" count] ++
+              (if n < count then [pageLink "next" (n + 1)] else []) ++
+              (if n > 1 then [pageLink "prev" (n - 1)] else [])
+            let hs0 := readHeaders cfg e isRoot
+            let linkV := ((hs0.lookup "link").getD "")
+            let hs := setHeader (setHeader hs0 "content-type" (containerContentType media))
+                        "link" (linkV ++ ", " ++ renderLinks pageLinks) ++
+                      [("etag", tag), ("vary", "accept")]
+            (⟨200, hs, if r.method == "HEAD" then "" else body, none⟩, st)
 
 /-- One operation on a storage path. See `step`. -/
 def stepPath (S : Store σ) (cfg : Config) (r : Request) (st : σ) : Response × σ :=
@@ -286,6 +431,9 @@ def stepPath (S : Store σ) (cfg : Config) (r : Request) (st : σ) : Response ×
       | some e =>
           let media := if e.kind.isContainer then chooseContainerMedia (r.header? "accept")
                        else e.contentType
+          if e.kind.isContainer && paginated (orderedMemberPaths S st target).length cfg.pageSize then
+            pagedRead S cfg r st e media isRoot
+          else
           let tag := etagFor e media
           let lm := httpDate e.mtime
           match preconditionFailure r existing (some tag) (some lm) with
@@ -335,12 +483,18 @@ def stepPath (S : Store σ) (cfg : Config) (r : Request) (st : σ) : Response ×
           match rdfContentRefused ct r.content target with
           | some resp => (resp, st)
           | none =>
+          let linksR : Except (Nat × String) (List Link) :=
+            if preferred r then clientLinksOf (r.header? "link")
+            else .ok ((existing.map (·.links)).getD [])
+          match linksR with
+          | .error (status, msg) => (problem status msg target, st)
+          | .ok links =>
               let st := ensureAncestors S (ancestors target) st
               let kind := if pathIsContainer target then
                             (if isRoot then ResourceKind.storageRoot else .container)
                           else .dataResource
               let e : Entry := { path := target, kind, contentType := ct,
-                                 body := r.content, mtime := S.now st }
+                                 body := r.content, mtime := S.now st, links }
               let st' := touchContainer S (S.tick (S.put st e)) target
               match existing with
               | none   => (⟨201, ("location", target) :: writtenHeaders cfg e, "", none⟩, st')
@@ -363,10 +517,13 @@ def stepPath (S : Store σ) (cfg : Config) (r : Request) (st : σ) : Response ×
                 let linkHdr := (r.header? "link").getD ""
                 let asContainer := (linkHdr.splitOn "ldp#BasicContainer").length > 1 ||
                                    (linkHdr.splitOn lwsContainerType).length > 1
+                match postLinksOf (r.header? "link") with
+                | .error (status, msg) => (problem status msg target, st)
+                | .ok links =>
                 let childPath := childPathFor S st target (r.header? "slug") asContainer
                 let kind := if asContainer then ResourceKind.container else .dataResource
                 let e : Entry := { path := childPath, kind, contentType := ct,
-                                   body := r.content, mtime := S.now st }
+                                   body := r.content, mtime := S.now st, links }
                 let st' := touchContainer S (S.tick (S.put st e)) childPath
                 (⟨201, ("location", childPath) :: writtenHeaders cfg e, "", none⟩, st')
   | "PATCH" =>
@@ -396,8 +553,15 @@ def stepPath (S : Store σ) (cfg : Config) (r : Request) (st : σ) : Response ×
                               match applyJsonPatch p d with
                               | .error msg => (problem 409 msg target, st)
                               | .ok d' =>
+                                  let linksR : Except (Nat × String) (List Link) :=
+                                    if preferred r then
+                                      (clientLinksOf (r.header? "link")).map (mergeLinks e.links)
+                                    else .ok e.links
+                                  match linksR with
+                                  | .error (status, msg) => (problem status msg target, st)
+                                  | .ok links =>
                                   let e' : Entry := { e with body := textBytes (toStringCompact d'),
-                                                             mtime := S.now st }
+                                                             mtime := S.now st, links }
                                   let st' := touchContainer S (S.tick (S.put st e')) target
                                   (⟨204, writtenHeaders cfg e', "", none⟩, st')
   | "DELETE" =>

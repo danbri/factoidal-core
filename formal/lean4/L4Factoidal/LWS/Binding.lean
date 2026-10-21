@@ -222,42 +222,45 @@ private def stripWeak (t : String) : String :=
 
 /-- RFC 9110 §13.1.1: `If-Match` uses the strong comparison; `*` matches any
 current representation. -/
-def ifMatchHolds (v : String) (e : Option Entry) : Bool :=
+def ifMatchHolds (v : String) (e : Option Entry) (tags : Option (List String) := none) : Bool :=
   match e with
   | none => false
   | some e =>
       let ts := parseTagList v
-      ts.contains "*" || ts.any (fun t => !t.startsWith "W/" && (currentTags e).contains t)
+      ts.contains "*" || ts.any (fun t => !t.startsWith "W/" && (tags.getD (currentTags e)).contains t)
 
 /-- RFC 9110 §13.1.2: `If-None-Match` uses the weak comparison. The
 condition HOLDS when no listed tag matches. -/
-def ifNoneMatchHolds (v : String) (e : Option Entry) : Bool :=
+def ifNoneMatchHolds (v : String) (e : Option Entry) (tags : Option (List String) := none) : Bool :=
   match e with
   | none => true
   | some e =>
       let ts := parseTagList v
-      !(ts.contains "*" || ts.any (fun t => (currentTags e).contains (stripWeak t)))
+      !(ts.contains "*" || ts.any (fun t => (tags.getD (currentTags e)).contains (stripWeak t)))
 
 /-- Evaluate the preconditions of a request in the order of RFC 9110
 §13.2.2, returning the response that ends the request when one fails.
 `If-Modified-Since` is evaluated only for an exact match with the
-`Last-Modified` the server sends, which is the date a client echoes. -/
+`Last-Modified` the server sends, which is the date a client echoes.
+`tags`, when given, are the current tags of the selected representation in
+place of `currentTags` (one page of a paginated container has its own
+tag). -/
 def preconditionFailure (r : Request) (e : Option Entry) (tag : Option String)
-    (lastModified : Option String) : Option Response :=
+    (lastModified : Option String) (tags : Option (List String) := none) : Option Response :=
   let safe := r.method == "GET" || r.method == "HEAD"
   let notModified : Response :=
     ⟨304, (match tag with | some t => [("etag", t)] | none => []) ++
           (match lastModified with | some d => [("last-modified", d)] | none => []), "", none⟩
   match r.header? "if-match" with
   | some v =>
-      if !ifMatchHolds v e then
+      if !ifMatchHolds v e tags then
         some (problem 412 "If-Match did not match a current representation" r.path)
       else none
   | none => none
   |>.orElse fun _ =>
   match r.header? "if-none-match" with
   | some v =>
-      if ifNoneMatchHolds v e then none
+      if ifNoneMatchHolds v e tags then none
       else if safe then some notModified
       else some (problem 412 "If-None-Match matched a current representation" r.path)
   | none =>
@@ -400,13 +403,16 @@ def itemJson (baseIri : String) (e : Entry) : Json :=
       , ("size", .number (toString e.body.size)) ]) ++
     [ ("modified", .string (isoDateTime e.mtime)) ])
 
-/-- The `application/lws+json` representation of a container. -/
-def containerJson (baseIri path : String) (items : List Entry) : String :=
+/-- The `application/lws+json` representation of a container. `total` is
+the size of the full membership when `items` is one page of it (§LWS Media
+Type, Pagination: "`totalItems` properties reflect the full membership,
+while `items` contains only the resources on the current page"). -/
+def containerJson (baseIri path : String) (items : List Entry) (total : Option Nat := none) : String :=
   toStringCompact (.object
     [ ("@context", .string lwsProfile)
     , ("id", .string (iriOfPath baseIri path))
     , ("type", .string "Container")
-    , ("totalItems", .number (toString items.length))
+    , ("totalItems", .number (toString (total.getD items.length)))
     , ("items", .array (items.map (itemJson baseIri))) ])
 
 private def ttlString (s : String) : String :=
@@ -419,14 +425,14 @@ private def ttlIri (s : String) : String := "<" ++ s ++ ">"
 
 /-- The Turtle representation in the LWS profile: the same RDF the
 `application/lws+json` representation encodes. -/
-def containerTurtle (baseIri path : String) (items : List Entry) : String :=
+def containerTurtle (baseIri path : String) (items : List Entry) (total : Option Nat := none) : String :=
   let header :=
     "@prefix lws: <https://www.w3.org/ns/lws#> .\n" ++
     "@prefix dcterms: <http://purl.org/dc/terms/> .\n" ++
     "@prefix schema: <https://schema.org/> .\n" ++
     "@prefix xsd: <http://www.w3.org/2001/XMLSchema#> .\n\n"
   let self := ttlIri (iriOfPath baseIri path) ++ " a lws:Container ;\n  lws:totalItems " ++
-    toString items.length ++
+    toString (total.getD items.length) ++
     (if items.isEmpty then " .\n"
      else " ;\n  lws:items " ++
        String.intercalate ", " (items.map (fun e => ttlIri (iriOfPath baseIri e.path))) ++ " .\n")
@@ -444,9 +450,10 @@ def containerContentType (media : String) : String :=
   else media ++ "; profile=\"" ++ lwsProfile ++ "\""
 
 /-- The container representation in a negotiated media type. -/
-def containerBody (media baseIri path : String) (items : List Entry) : String :=
-  if media == "text/turtle" then containerTurtle baseIri path items
-  else containerJson baseIri path items
+def containerBody (media baseIri path : String) (items : List Entry) (total : Option Nat := none) :
+    String :=
+  if media == "text/turtle" then containerTurtle baseIri path items total
+  else containerJson baseIri path items total
 
 /-- Choose a container media type from `Accept`. The draft: "Servers MUST
 honor requests for `application/lws+json` on containers". A request whose

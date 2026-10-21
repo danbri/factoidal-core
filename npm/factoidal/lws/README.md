@@ -46,8 +46,9 @@ unchanged and this host composes no IRI.
 `configJson` members, all optional: `baseIri` (the absolute IRI the
 storage root maps to), `now` (the engine clock in seconds, which advances
 by one second per mutation so a write sequence has increasing
-`Last-Modified` values with no real clock), `owner`, `agent`, `rootAcl`,
-`auth` and `insecureNoAuth` (below). A request
+`Last-Modified` values with no real clock), `owner`, `agent`, `pageSize`
+(the container pagination threshold and page size, default 100, 0 for no
+pagination), `rootAcl`, `auth` and `insecureNoAuth` (below). A request
 may carry `now` and `agent` of its own to override the handle's for one
 step; `listen({realClock: true})` is how a server with a real clock feeds
 one in, and a test leaves it off to keep the engine's deterministic
@@ -86,6 +87,31 @@ const running = await listen({
   the keys inline instead.
 * `insecureNoAuth: true` serves every request with no authorization. It is
   for development only, and must be asked for.
+
+## Pagination and client links
+
+Both are decided in Lean; this host passes the fields through.
+
+* A container with more than `pageSize` members (default 100) is listed in
+  pages (LWS §LWS Media Type, Pagination;
+  https://github.com/danbri/factoidal/issues/887). Each page answers 200
+  with the `Link` relations `first` and `last`, `next` on every page but the
+  last, and `prev` on every page but the first; the page URIs are
+  `CONTAINER?page=N`. `totalItems` counts the full membership. The members
+  are in increasing path order, each once; the theorem `pageItems_concat` in
+  `L4Factoidal/LWS/Operations.lean` states that the pages of an unchanged
+  container concatenate to the full listing. Each page has its own `ETag`,
+  which starts with the container's clock; the clock changes when the
+  membership changes.
+* A client sets its own links (`license`, `author`, any extension relation)
+  with `Link` and `Prefer: set-linkset` on PUT (replace) or PATCH (add),
+  with `Link` on POST, or through the linkset resource `PATH?linkset` with
+  JSON Patch or a PUT of `application/linkset+json` (LWS §Metadata, §Update
+  Resource; https://github.com/danbri/factoidal/issues/888). The relations
+  `linkset`, `type`, `format`, `size`, `modified`, `up`, `items` and
+  `lws#storage` are server-managed: a request that sets or changes one gets
+  409. A malformed link gets 400. Without `Prefer: set-linkset`, a `Link`
+  field on PUT and PATCH is not stored.
 
 ## Use
 

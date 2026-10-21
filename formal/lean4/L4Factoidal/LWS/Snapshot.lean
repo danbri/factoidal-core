@@ -238,11 +238,63 @@ def ResourceKind.ofName? : String → Option ResourceKind
   | "linksetResource" => some .linksetResource
   | _ => none
 
+/-- A client-managed link: `href`, `rel`, and its target attributes. -/
+def linkJson (l : Link) : Json :=
+  .object [ ("href", .string l.target), ("rel", .string l.rel)
+          , ("attrs", .object (l.attrs.map (fun (k, v) => (k, .string v)))) ]
+
+def attrsOfJson (fs : List (String × Json)) : Option (List (String × String)) :=
+  fs.mapM (fun (k, v) => v.asString?.map (fun s => (k, s)))
+
+def linkOfJson (j : Json) : Option Link := do
+  let target ← j.getString? "href"
+  let rel ← j.getString? "rel"
+  let attrs ← match j.field? "attrs" with
+    | some (.object fs) => attrsOfJson fs
+    | _ => none
+  some { target, rel, attrs }
+
+/-- The client links of a snapshot entry. An absent member (every entry of a
+snapshot written before client links existed) is no links. -/
+def linksOfJson (path : String) (j : Json) : Except String (List Link) :=
+  match j.field? "links" with
+  | none => .ok []
+  | some (.array xs) =>
+      match xs.mapM linkOfJson with
+      | some ls => .ok ls
+      | none => .error s!"snapshot: entry {path} has a malformed link"
+  | some _ => .error s!"snapshot: entry {path} has a links member that is not an array"
+
+theorem attrsOfJson_map (as : List (String × String)) :
+    attrsOfJson (as.map (fun (k, v) => (k, Json.string v))) = some as := by
+  induction as with
+  | nil => rfl
+  | cons a t ih =>
+      obtain ⟨k, v⟩ := a
+      unfold attrsOfJson at ih ⊢
+      rw [List.map_cons, List.mapM_cons, ih]
+      rfl
+
+theorem linkOfJson_linkJson (l : Link) : linkOfJson (linkJson l) = some l := by
+  obtain ⟨t, r, as⟩ := l
+  simp [linkOfJson, linkJson, Json.getString?, Json.field?, Json.asString?, attrsOfJson_map]
+
+theorem mapM_linkOfJson (ls : List Link) : (ls.map linkJson).mapM linkOfJson = some ls := by
+  induction ls with
+  | nil => rfl
+  | cons l t ih => simp [List.mapM_cons, linkOfJson_linkJson, ih]
+
+theorem mapM_linkOfJson_comp (ls : List Link) : ls.mapM (linkOfJson ∘ linkJson) = some ls := by
+  induction ls with
+  | nil => rfl
+  | cons l t ih => simp [List.mapM_cons, linkOfJson_linkJson, ih]
+
 def entryJson (e : Entry) : Json :=
-  .object [ ("path", .string e.path), ("kind", .string e.kind.name)
+  .object ([ ("path", .string e.path), ("kind", .string e.kind.name)
           , ("contentType", .string e.contentType)
           , ("bodyBase64", .string (Base64.encode e.body))
-          , ("mtime", .number (toString e.mtime)) ]
+          , ("mtime", .number (toString e.mtime)) ] ++
+          (if e.links.isEmpty then [] else [("links", .array (e.links.map linkJson))]))
 
 /-- The snapshot document of a state. Entries keep the state's order. -/
 def snapshotJson (s : MemState) : Json :=
@@ -325,7 +377,8 @@ def entryOfJson (j : Json) (v1 : Bool := false) : Except String Entry := do
   let contentType := (j.getString? "contentType").getD "application/octet-stream"
   let body ← entryBodyOfJson v1 path j
   let mtime := (natField j "mtime").getD 0
-  .ok { path, kind, contentType, body, mtime }
+  let links ← linksOfJson path j
+  .ok { path, kind, contentType, body, mtime, links }
 
 /-- Read a snapshot document back. The clock is raised above every stored
 modification time, so the next write still stamps a strictly larger time. -/
@@ -349,14 +402,22 @@ theorem ResourceKind.ofName?_name (k : ResourceKind) : ResourceKind.ofName? k.na
   cases k <;> rfl
 
 /-- An entry written by `entryJson` reads back as the same entry: path,
-kind, media type, every byte of the body, and the modification time. The
+kind, media type, every byte of the body, the modification time and the
+client links. The
 hypothesis is the path check `entryOfJson` makes on every entry. -/
 theorem entryOfJson_entryJson (e : Entry) (h : validTarget e.path = true) :
     entryOfJson (entryJson e) = .ok e := by
-  obtain ⟨path, kind, ct, body, mtime⟩ := e
-  simp_all [entryOfJson, entryJson, entryBodyOfJson, natField, Json.getString?, Json.field?,
-    Json.asString?, ResourceKind.ofName?_name, Base64.decode_encode, decimal_repr]
-  simp [bind, Except.bind, h]
+  obtain ⟨path, kind, ct, body, mtime, links⟩ := e
+  cases links with
+  | nil =>
+      simp_all [entryOfJson, entryJson, entryBodyOfJson, natField, Json.getString?, Json.field?,
+        Json.asString?, ResourceKind.ofName?_name, Base64.decode_encode, decimal_repr, linksOfJson]
+      simp [bind, Except.bind, h]
+  | cons l t =>
+      simp_all [entryOfJson, entryJson, entryBodyOfJson, natField, Json.getString?, Json.field?,
+        Json.asString?, ResourceKind.ofName?_name, Base64.decode_encode, decimal_repr, linksOfJson,
+        mapM_linkOfJson_comp, linkOfJson_linkJson]
+      simp [bind, Except.bind, h]
 
 theorem mapM_entryOfJson (es : List Entry) (h : ∀ e ∈ es, validTarget e.path = true) :
     (es.map entryJson).mapM (entryOfJson · false) = .ok es := by

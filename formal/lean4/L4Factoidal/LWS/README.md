@@ -37,6 +37,9 @@ own binding, those rows are the difference.
 | `Store.lean` | `Store σ`, a structure of pure operations over an abstract state; `StoreLaws`, what a backend must satisfy; `MemStore`, the reference instance, with `memStoreLaws` proving it does. |
 | `Discovery.lean` | the RFC 8288 links a storage advertises: `type`, `acl`, `describedby`, `storageDescription`, `owner`. |
 | `Operations.lean` | `step : Store σ → Config → Request → σ → Response × σ` — create, read, update, delete, `Last-Modified`, `Allow`, `Accept-*`, and the HTTP-date conversion. |
+| `Pagination.lean` | container pagination: the listing order (increasing path, each path once), pages, page names `page=N`; theorems `orderPaths_sorted`, `orderPaths_nodup`, `pages_concat` (https://github.com/danbri/factoidal/issues/887). `Operations.pageItems_concat` applies them to `step`'s listing. |
+| `Linkset.lean` | client-managed links: the `Link` request field parser, `Prefer: set-linkset`, the server-managed relations (409), link validation (400), and the linkset document read and written (https://github.com/danbri/factoidal/issues/888). |
+| `PaginationLinksTests.lean` | `#guard`s of both through `step`, positive and negative. |
 | `Patch.lean` | the `?conditions` / `?insertions` / `?deletions` formula patch, its constraints, and `applyPatch`. Matching is `SPARQL.evalBgp` and instantiation is `SPARQL.instantiateTemplate` — no second matcher. |
 | `Conformance.lean` | the registry: id, section, verbatim statement, module, binding, status. |
 | `Tests.lean` | one `#guard` per `guarded` row, and the theorems the `proved` rows name. |

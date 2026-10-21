@@ -232,22 +232,22 @@ server does not advertise.
 | Container Membership | listing includes all readable members | tested (no access control on LWS host) | `lwsGuardContainerListing` |
 | LWS Media Type | container MUST support `application/lws+json` | tested | `lwsGuardContainerListing` |
 | Content Negotiation | profile media types RDF-isomorphic to lws+json; `Content-Type` with profile; SHOULD `Vary: Accept` | tested (Turtle, JSON-LD) | `lwsGuardContainerTurtle` |
-| Pagination | SHOULD paginate; `first`/`next` links | missing | https://github.com/danbri/factoidal/issues/887; draft-binding xfail |
+| Pagination | SHOULD paginate; `first` (MUST), `next` (MUST, not on the last page), `prev` (not on the first page), `last`; 200; `totalItems` over the full membership | tested (threshold and page size `pageSize`, default 100; increasing path order, each member once; an `ETag` per page; theorem `pageItems_concat`) | `PaginationLinksTests`; draft-binding "Pagination" (https://github.com/danbri/factoidal/issues/887) |
 | Create | POST to container, 201 + `Location`; `Link` up, linkset, type | tested | `lwsGuardPostCreates` |
 | Create | container via `Link rel="type"` lws:Container | tested | `lwsGuardPostCreates` |
 | Create | identity hint used, unique | tested | Slug guards in `Tests.lean` |
 | Create | 404 when the target container does not exist | tested | POST guards |
-| Create | client `Link` headers as user metadata; server metadata not overridable | missing (ignored; server metadata kept) | https://github.com/danbri/factoidal/issues/888 |
+| Create | client `Link` headers as user metadata; server metadata not overridable | tested (client links stored; server-managed relations not stored) | `PaginationLinksTests` "POST stores the client links" (https://github.com/danbri/factoidal/issues/888) |
 | Update | PUT replaces; 412 on failed `If-Match` | tested | `lwsGuardIfMatch` |
 | Update | MUST minimally support JSON Patch | tested | `lwsGuardJsonPatch` |
-| Update | `Prefer: set-linkset` MUST interpret `Link` headers | missing | https://github.com/danbri/factoidal/issues/888 |
+| Update | `Prefer: set-linkset` MUST interpret `Link` headers (replacement for PUT, partial update for PATCH) | tested (server-managed relation 409, malformed link 400) | `PaginationLinksTests`; draft-binding "Metadata" (https://github.com/danbri/factoidal/issues/888) |
 | Delete | 204; atomically removes from parent; 409 non-empty | tested | `lwsGuardCreateReadUpdateDelete`, `lwsGuardRecursiveDelete` |
 | Delete | `Depth: infinity` recursive (MAY) | tested | `lwsGuardRecursiveDelete` |
 | Delete | linkset removed with the resource | tested | `lwsGuardLinkset` |
 | Metadata | linkset resource per resource, RFC 9264, `application/linkset+json` | tested | `lwsGuardLinkset` |
 | Metadata | `Allow` lists GET and PATCH; `Accept-Patch: application/json-patch+json` | tested | `lwsGuardLinkset` |
-| Metadata | PATCH on linkset with JSON Patch; preserve links the client may not modify | tested (all links server-managed: change gives 409, test-only patch gives 204) | `lwsGuardLinkset` |
-| Metadata | PUT on linkset unsupported gives 405 | tested | `lwsGuardLinkset` |
+| Metadata | PATCH on linkset with JSON Patch; preserve links the client may not modify | tested (client links added or removed; a change to a server-managed link gives 409) | `lwsGuardLinkset`, `PaginationLinksTests`; draft-binding "Metadata: PATCH on the linkset" |
+| Metadata | PUT on linkset: if advertised in `Allow`, replaces the linkset (otherwise 405) | tested (advertised; server-managed relations kept, a change to one gives 409) | `lwsGuardLinkset`, `PaginationLinksTests` |
 | Metadata | 412 on failed precondition for linkset PUT/PATCH | tested (If-Match) | `linksetStep` |
 | Discovery | `lws#storage` link on every GET/HEAD | tested | `lwsGuardLwsLinks` |
 | Discovery | storage description, `application/lws+cid`, `@context` array, `id`, `type`, StorageRoot service | tested | `lwsGuardStorageDescription` |
@@ -268,14 +268,20 @@ server does not advertise.
 | (server choice) | request paths with dot segments or encoded traversal are refused | tested | `lwsGuardTraversalRefused`; draft-binding "Paths" |
 | (server choice) | storage persists under `DIR` | tested | `lwsGuardSnapshotRoundTrip`, `lwsGuardSnapshotRefusesTraversal`; draft-binding "Persistence" |
 
-Counts: 40 tested, 4 missing (4 open issues), 4 not applicable (out of 48
-rows). Updated 2026-10-21 for https://github.com/danbri/factoidal/issues/886:
-the Authorization row became the eight Authorization rows above, and the
-Authentication row became not applicable. Counted with
-`sed -n '/2026-10-19 audit/,/^Counts/p' docs/lws-solid-conformance.md | grep '^| ' | tail -n +3 | awk -F'|' '{print $4}' | awk '{print $1}' | sort | uniq -c`;
-the same count of the 2026-10-20 table gives 32 tested, 6 missing, 3 not
-applicable (out of 41 rows), one tested row and one row fewer than the
-2026-10-20 count line said.
+Counts: 44 tested, 0 missing, 4 not applicable (out of 48 rows). Updated
+2026-10-21 for https://github.com/danbri/factoidal/issues/887 and
+https://github.com/danbri/factoidal/issues/888: the Pagination, Create
+`Link` and `Prefer: set-linkset` rows became tested, and the linkset PUT row
+now states the draft's condition ("If advertised in the Allow header").
+Notifications stays not applicable, with
+https://github.com/danbri/factoidal/issues/890 and its xfail. Counted with
+`awk '/^## LWS editor.s draft 2026-10-19 audit/{f=1} /^Counts:/{f=0} f' docs/lws-solid-conformance.md | grep '^| ' | tail -n +3 | awk -F'|' '{print $4}' | awk '{print $1}' | sort | uniq -c`
+("tested" and "tested:" are both tested; "n/a" and "n/a," are both not
+applicable). The command given here before (`sed -n '/2026-10-19 audit/,/^Counts/p'`)
+starts its range again at its own text after the count line, so it counted
+rows of later tables too. The count line before this update said 40 tested,
+4 missing, 4 not applicable; the same table counted with the command above
+gives 41 tested, 3 missing, 4 not applicable (out of 48 rows).
 
 ## LWS 1.0 Core
 

@@ -92,8 +92,25 @@ const CHECKS = [
   'Persistence: a restarted server reads DIR/lws-state.json back',
   'Persistence: a traversal target writes no file outside DIR',
   'Authorization: an unauthenticated write answers 401 with resource_metadata',
-  'Data resources: a non-UTF-8 body round-trips byte for byte'
+  'Data resources: a non-UTF-8 body round-trips byte for byte',
+  'Pagination: a container of 120 members answers with rel="first", rel="next" and no rel="prev"',
+  'Pagination: following rel="next" lists every member once, in path order, totalItems 120',
+  'Pagination: each page has its own ETag, If-None-Match answers 304, a missing page answers 404',
+  'Pagination: a container at the threshold (100 members) is not paginated',
+  'Metadata: PUT with Prefer: set-linkset stores the client Link in the linkset',
+  'Metadata: a server-managed rel with Prefer: set-linkset answers 409 and writes nothing',
+  'Metadata: a malformed Link answers 400; a Link without Prefer is not stored',
+  'Metadata: PATCH on the linkset adds a client link; changing a server link answers 409',
+  'Persistence: client links survive a restart'
 ]
+
+/** The target of the link with relation `rel` in a Link field value. */
+function linkTarget (field, rel) {
+  for (const part of (field || '').split(', ')) {
+    if (part.indexOf(`; rel="${rel}"`) >= 0) return part.slice(1, part.indexOf('>'))
+  }
+  return null
+}
 
 async function main () {
   const { loadEngine } = await import('../../npm/factoidal/bin/engine.mjs')
@@ -254,23 +271,131 @@ async function main () {
       }
     })
 
-    await xfail('Pagination: a container of 120 members answers with rel="first"',
-      'https://github.com/danbri/factoidal/issues/887', async () => {
-        for (let i = 0; i < 120; i++) {
-          await fetch(`${o}/many/r${i}`, { method: 'PUT', headers: { 'content-type': 'text/plain' }, body: 'x' }).then((r) => r.text())
-        }
-        const r = await fetch(`${o}/many/`, { headers: { accept: 'application/lws+json' } })
-        await r.text()
-        assert((r.headers.get('link') || '').indexOf('rel="first"') >= 0, 'no rel="first"')
-      })
+    // https://github.com/danbri/factoidal/issues/887: pagination
+    // (L4Factoidal/LWS/Pagination.lean; default page size 100). The members
+    // are written in an order that is not the path order.
+    const names = Array.from({ length: 120 }, (_, i) => `r${String((i * 37) % 120).padStart(3, '0')}`)
+    for (const n of names) {
+      await fetch(`${o}/many/${n}`, { method: 'PUT', headers: { 'content-type': 'text/plain' }, body: n }).then((r) => r.text())
+    }
+    const lj = { accept: 'application/lws+json' }
 
-    await xfail('Metadata: PUT with Prefer: set-linkset stores the client Link in the linkset',
-      'https://github.com/danbri/factoidal/issues/888', async () => {
-        await fetch(`${o}/lic.txt`, { method: 'PUT', headers: { 'content-type': 'text/plain', prefer: 'set-linkset', link: '<https://creativecommons.org/licenses/by/4.0/>; rel="license"' }, body: 'x' }).then((r) => r.text())
-        const ls = await fetch(`${o}/lic.txt?linkset`)
-        const body = await ls.text()
-        assert(body.indexOf('creativecommons.org/licenses/by/4.0') >= 0, body)
+    await check(CHECKS[16], async () => {
+      const r = await fetch(`${o}/many/`, { headers: lj })
+      const j = await r.json()
+      const link = r.headers.get('link')
+      assert(r.status === 200, `answered ${r.status}`)
+      assert(linkTarget(link, 'first') === '/many/?page=1', `first: ${link}`)
+      assert(linkTarget(link, 'next') === '/many/?page=2', `next: ${link}`)
+      assert(linkTarget(link, 'last') === '/many/?page=2', `last: ${link}`)
+      assert(linkTarget(link, 'prev') === null, `prev on the first page: ${link}`)
+      assert(j.items.length === 100 && j.totalItems === 120, `${j.items.length} items, totalItems ${j.totalItems}`)
+    })
+
+    await check(CHECKS[17], async () => {
+      const seen = []
+      let target = '/many/'
+      let pages = 0
+      let last = null
+      while (target !== null && pages < 10) {
+        const r = await fetch(`${o}${target}`, { headers: lj })
+        const j = await r.json()
+        assert(j.totalItems === 120, `totalItems ${j.totalItems}`)
+        for (const it of j.items) seen.push(it.id)
+        last = r.headers.get('link')
+        target = linkTarget(last, 'next')
+        pages += 1
+      }
+      assert(pages === 2, `${pages} pages`)
+      assert(linkTarget(last, 'prev') === '/many/?page=1', `prev on the last page: ${last}`)
+      const expected = [...names].sort().map((n) => `${o}/many/${n}`)
+      assert(JSON.stringify(seen) === JSON.stringify(expected), `listing differs: ${seen.slice(0, 3)}...`)
+    })
+
+    await check(CHECKS[18], async () => {
+      const p1 = await fetch(`${o}/many/?page=1`, { headers: lj })
+      await p1.text()
+      const p2 = await fetch(`${o}/many/?page=2`, { headers: lj })
+      await p2.text()
+      const t1 = p1.headers.get('etag')
+      const t2 = p2.headers.get('etag')
+      assert(t1 && t2 && t1 !== t2, `tags ${t1} ${t2}`)
+      const nm = await fetch(`${o}/many/?page=2`, { headers: { ...lj, 'if-none-match': t2 } })
+      await nm.text()
+      assert(nm.status === 304, `If-None-Match answered ${nm.status}`)
+      const other = await fetch(`${o}/many/?page=2`, { headers: { ...lj, 'if-none-match': t1 } })
+      await other.text()
+      assert(other.status === 200, `another page's tag answered ${other.status}`)
+      const missing = await fetch(`${o}/many/?page=3`, { headers: lj })
+      await missing.text()
+      assert(missing.status === 404, `page 3 answered ${missing.status}`)
+    })
+
+    await check(CHECKS[19], async () => {
+      for (let i = 0; i < 100; i++) {
+        await fetch(`${o}/hundred/r${i}`, { method: 'PUT', headers: { 'content-type': 'text/plain' }, body: 'x' }).then((r) => r.text())
+      }
+      const r = await fetch(`${o}/hundred/`, { headers: lj })
+      const j = await r.json()
+      assert(linkTarget(r.headers.get('link'), 'first') === null, 'rel="first" at the threshold')
+      assert(j.items.length === 100 && j.totalItems === 100, `${j.items.length} items`)
+    })
+
+    // https://github.com/danbri/factoidal/issues/888: client-managed links
+    // (L4Factoidal/LWS/Linkset.lean).
+    const lic = '<https://creativecommons.org/licenses/by/4.0/>; rel="license"'
+    const linksetOf = async (p) => (await fetch(`${o}${p}?linkset`)).json()
+
+    await check(CHECKS[20], async () => {
+      const r = await fetch(`${o}/lic.txt`, { method: 'PUT', headers: { 'content-type': 'text/plain', prefer: 'set-linkset', link: lic }, body: 'x' })
+      await r.text()
+      assert(r.status === 201, `PUT answered ${r.status}`)
+      const ls = (await linksetOf('/lic.txt')).linkset[0]
+      assert(ls.license && ls.license[0].href === 'https://creativecommons.org/licenses/by/4.0/', JSON.stringify(ls))
+      assert(ls.type && ls.type[0].href === 'https://www.w3.org/ns/lws#DataResource', 'server type link lost')
+    })
+
+    await check(CHECKS[21], async () => {
+      for (const rel of ['type', 'up', 'linkset', 'items', 'https://www.w3.org/ns/lws#storage']) {
+        const r = await fetch(`${o}/lic.txt`, { method: 'PUT', headers: { 'content-type': 'text/plain', prefer: 'set-linkset', link: `<https://example.org/x>; rel="${rel}"` }, body: 'changed' })
+        const j = await r.json()
+        assert(r.status === 409 && j.status === 409, `rel ${rel} answered ${r.status}`)
+      }
+      const g = await fetch(`${o}/lic.txt`)
+      assert((await g.text()) === 'x', 'the content was written')
+      const ls = (await linksetOf('/lic.txt')).linkset[0]
+      assert(ls.license && ls.type[0].href === 'https://www.w3.org/ns/lws#DataResource', JSON.stringify(ls))
+    })
+
+    await check(CHECKS[22], async () => {
+      const bad = await fetch(`${o}/lic.txt`, { method: 'PUT', headers: { 'content-type': 'text/plain', prefer: 'set-linkset', link: '<https://example.org/x>; rel="Not A Rel"' }, body: 'y' })
+      await bad.text()
+      assert(bad.status === 400, `a malformed rel answered ${bad.status}`)
+      const plain = await fetch(`${o}/plain.txt`, { method: 'PUT', headers: { 'content-type': 'text/plain', link: lic }, body: 'y' })
+      await plain.text()
+      assert(plain.status === 201, `PUT answered ${plain.status}`)
+      const ls = (await linksetOf('/plain.txt')).linkset[0]
+      assert(ls.license === undefined, JSON.stringify(ls))
+    })
+
+    await check(CHECKS[23], async () => {
+      const add = await fetch(`${o}/lic.txt?linkset`, {
+        method: 'PATCH',
+        headers: { 'content-type': 'application/json-patch+json' },
+        body: JSON.stringify([{ op: 'add', path: '/linkset/0/author', value: [{ href: 'https://example.org/me' }] }])
       })
+      await add.text()
+      assert(add.status === 204, `add answered ${add.status}`)
+      const ls = (await linksetOf('/lic.txt')).linkset[0]
+      assert(ls.author && ls.author[0].href === 'https://example.org/me' && ls.license, JSON.stringify(ls))
+      const change = await fetch(`${o}/lic.txt?linkset`, {
+        method: 'PATCH',
+        headers: { 'content-type': 'application/json-patch+json' },
+        body: JSON.stringify([{ op: 'replace', path: '/linkset/0/type/0/href', value: 'https://www.w3.org/ns/lws#Container' }])
+      })
+      await change.text()
+      assert(change.status === 409, `changing type answered ${change.status}`)
+    })
 
     // https://github.com/danbri/factoidal/issues/889, repaired: bodies are
     // bytes end to end. The full byte suite is tests/lws/binary-bodies.mjs.
@@ -310,6 +435,24 @@ async function main () {
         const g = await fetch(`${second.origin}/kept/note.txt`)
         const body = await g.text()
         assert(g.status === 200 && body === 'kept', `after restart: ${g.status} ${body}`)
+      } finally {
+        await second.close()
+      }
+    })
+
+    await check(CHECKS[24], async () => {
+      const first = await listen({ engine, port: 0, insecureNoAuth: true, now: 3000, dir })
+      try {
+        const r = await fetch(`${first.origin}/kept/lic.txt`, { method: 'PUT', headers: { 'content-type': 'text/plain', prefer: 'set-linkset', link: '<https://creativecommons.org/licenses/by/4.0/>; rel="license"' }, body: 'x' })
+        await r.text()
+        assert(r.status === 201, `PUT answered ${r.status}`)
+      } finally {
+        await first.close()
+      }
+      const second = await listen({ engine, port: 0, insecureNoAuth: true, dir })
+      try {
+        const ls = await (await fetch(`${second.origin}/kept/lic.txt?linkset`)).json()
+        assert(ls.linkset[0].license && ls.linkset[0].license[0].href === 'https://creativecommons.org/licenses/by/4.0/', JSON.stringify(ls))
       } finally {
         await second.close()
       }
