@@ -65,7 +65,7 @@ The data model, the access profile and what a grant permits are
   create a resource).
 * Not done: "Access Request creation: When a new access request is
   submitted, the storage controller SHOULD be notified." The draft names no
-  inbox for the controller. https://github.com/danbri/factoidal/issues/916,
+  inbox for the controller. https://github.com/danbri/factoidal/issues/920,
   an expected failure in `tests/lws/draft-binding.mjs`.
 -/
 import L4Factoidal.LWS.Notifications

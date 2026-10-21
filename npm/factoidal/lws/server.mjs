@@ -234,6 +234,9 @@ export async function openLwsStorage (options = {}) {
   // Moves (a change of the up link, L4Factoidal/LWS/Move.lean) are on
   // unless the caller turns them off.
   if (options.moves === false) config.moves = false
+  // Access requests and grants are on unless the caller turns them off
+  // (L4Factoidal/LWS/AccessGrants.lean).
+  if (options.accessGrants === false) config.accessGrants = false
   config.entropy = entropyBase64()
   // `dir` names the storage directory. The snapshot found there, if any,
   // is the storage to continue from; the engine checks it.
