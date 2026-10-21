@@ -125,6 +125,18 @@ let restore_scope (parent : rdfxml_state) (child : rdfxml_state) : rdfxml_state 
                 has_error = child.has_error }
 
 
+(* The scope of a property element closes with it: XML 1.0 section 2.12
+   limits xml:lang to the element that specifies it and its content, and
+   the same holds for xml:base, namespace declarations, its:dir and
+   rdf:version. So the next sibling property element sees the node
+   element's scope. rdf:li numbering (li_counter) counts across the sibling
+   property elements of one node element, so it flows on, as do the fields
+   restore_scope threads. Issue https://github.com/danbri/factoidal/issues/329;
+   same rule as the Lean closePropertyScope (commit 12132041, issue 841). *)
+let close_property_scope (parent : rdfxml_state) (child : rdfxml_state) : rdfxml_state =
+  { restore_scope parent child with li_counter = child.li_counter }
+
+
 (* ================================================================ *)
 (* Namespace handling and QName resolution                           *)
 (* ================================================================ *)
@@ -971,7 +983,7 @@ and process_property_children (st : rdfxml_state) (subj : subject) (children : l
       | XElement _ _ _ ->
         let result1 = process_property_element st subj child (fuel - 1) in
         let acc' = List.Tot.rev_acc result1.pr_triples acc in
-        process_property_children result1.pr_state subj rest (fuel - 1) acc'
+        process_property_children (close_property_scope st result1.pr_state) subj rest (fuel - 1) acc'
       | _ ->
         (* Skip text, comments, CDATA at this level *)
         process_property_children st subj rest (fuel - 1) acc

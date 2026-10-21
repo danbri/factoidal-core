@@ -3706,6 +3706,16 @@ let strip_leading_plus (s : string) : string =
     | [] -> s
   else s
 
+// The lexical space of xsd:integer: an optional sign and one or more digits.
+let is_integer_lexical (s : string) : bool =
+  let cs = String.list_of_string s in
+  let digits = match cs with
+    | c :: rest -> if c = FStar.Char.char_of_int 43 || c = FStar.Char.char_of_int 45 then rest else cs
+    | [] -> [] in
+  Cons? digits &&
+  List.Tot.for_all (fun (c : FStar.Char.char) ->
+    FStar.Char.int_of_char c >= 48 && FStar.Char.int_of_char c <= 57) digits
+
 let eval_xsd_cast (v : eval_result) (target_type : string) (full_iri : string) : eval_result =
   let get_lex = match v with
     | ER_Num n -> Some (string_of_int n)
@@ -3724,8 +3734,20 @@ let eval_xsd_cast (v : eval_result) (target_type : string) (full_iri : string) :
               else strip_leading_plus lex0 in
     if target_type = "integer" then
       // Boolean -> integer: true=1, false=0
+      // XPath F&O 19.1 (SPARQL 1.1 section 17.5): a number truncates
+      // toward zero; a string must be in the lexical space of xsd:integer
+      // ([+-]?[0-9]+), else the cast is an error (W3C cast/cast-int: "1.5"
+      // gives no value; issue https://github.com/danbri/factoidal/issues/736).
+      // Same rule as the Lean castInteger.
       (match v with
        | ER_Bool b -> ER_Num (if b then 1 else 0)
+       | ER_Num n -> ER_Num n
+       | ER_Term (T_Literal _) | ER_Term (T_IRI _) ->
+         if is_integer_lexical lex then
+           (match parse_int_string lex with
+            | Some n -> ER_Num n
+            | None -> ER_Error)
+         else ER_Error
        | _ ->
          match parse_int_string lex with
          | Some n -> ER_Num n
@@ -4173,8 +4195,14 @@ let rec eval_expr_with_base (base : option wf_iri) (e : expr) (mu : solution_map
 
   (* Conditional *)
   | E_If cond then_e else_e ->
-    if ebv (eval_expr_with_base base cond mu) then eval_expr_with_base base then_e mu
-    else eval_expr_with_base base else_e mu
+    // SPARQL 1.1 section 17.4.1.2: "If evaluating the first argument raises
+    // an error, then an error is raised for the evaluation of the IF
+    // expression" (W3C functions/if02; issue
+    // https://github.com/danbri/factoidal/issues/736). Lean: evalExpr .ifE.
+    (match ebv_checked (eval_expr_with_base base cond mu) with
+     | Some true -> eval_expr_with_base base then_e mu
+     | Some false -> eval_expr_with_base base else_e mu
+     | None -> ER_Error)
   | E_Coalesce es -> eval_coalesce_with_base base es mu
   | E_In ev es ->
     let v = eval_expr_with_base base ev mu in
@@ -6872,8 +6900,26 @@ let eval_ask_query (q : query) (g : rdf_graph) (ds : rdf_dataset) : bool =
 (* Give each solution-index / template-bnode pair a unique id, e.g.
    `tpl_7_b1`. Simple string concat; blank-node identity is only
    required to be consistent within one solution. *)
+//
+// RDF 1.1 N-Triples [141s] BLANK_NODE_LABEL has no ':'. The parser names a
+// blank node it makes for a collection or `[ ]` "_:bnode_<n>" (the colon
+// keeps it apart from a label the query wrote), so the label part maps a
+// generated "_:X" to "g_X" and a written label L to "_L": the output labels
+// are tpl_<n>_L and tpl_<n>g_X. The map is injective, so the labels stay
+// distinct per solution and per template blank node (SPARQL 1.1 section
+// 16.2.1). Issue https://github.com/danbri/factoidal/issues/740; same rule as
+// the Lean templateLabelPart (commit ee7c20da).
+let template_label_part (template_label : string) : string =
+  let cs = String.list_of_string template_label in
+  match cs with
+  | c1 :: c2 :: rest ->
+    if FStar.Char.int_of_char c1 = 95 && FStar.Char.int_of_char c2 = 58
+    then strcat "g_" (String.string_of_list rest)
+    else strcat "_" template_label
+  | _ -> strcat "_" template_label
+
 let fresh_bnode_for (sol_ix : nat) (template_label : string) : bnode_id =
-  strcat "tpl_" (strcat (string_of_int sol_ix) (strcat "_" template_label))
+  strcat "tpl_" (strcat (string_of_int sol_ix) (template_label_part template_label))
 
 let construct_subject (ps : pattern_subject) (mu : solution_mapping) (sol_ix : nat)
   : option subject =

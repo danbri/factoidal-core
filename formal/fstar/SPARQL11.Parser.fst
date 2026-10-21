@@ -361,6 +361,15 @@ let rec read_hex_digits (n : nat) (cs : list FStar.Char.char) (acc : nat)
         then read_hex_digits (n - 1) rest (acc `op_Multiply` 16 + hex_value c)
         else None
 
+(* A numeric escape whose value is a surrogate (U+D800 to U+DFFF) or above
+   U+10FFFF is not decoded: its backslash stays in the IRI text, and an IRI
+   that holds a backslash is not an IRIREF, so the query is rejected.
+   SPARQL 1.2 section 19.2: "A numeric escape sequence MUST NOT produce a
+   code point value in the range U+D800 to U+DFFF" (W3C sparql12
+   surrogate-esc-05-bad). Same rule as the Lean processIriEscapesRec. *)
+let iri_escape_keeps_backslash (cp : nat) : bool =
+  (cp >= 0xD800 && cp <= 0xDFFF) || cp >= 0x110000
+
 (* Walk the codepoint list of an IRI string, expanding \uXXXX and
    \UXXXXXXXX escapes into UTF-8 byte sequences. Tail-rec via reversed
    accumulator; final List.Tot.rev at the top-level wrapper. *)
@@ -377,6 +386,9 @@ let rec process_iri_escapes_rec
           if code2 = 0x75 (* 'u' *) then begin
             match read_hex_digits 4 rest2 0 with
             | Some (cp, after) ->
+              if iri_escape_keeps_backslash cp then
+                process_iri_escapes_rec rest1 (c1 :: acc)
+              else
               let bs = String.list_of_string (utf8_of_codepoint cp) in
               process_iri_escapes_rec after (FStar.List.Tot.rev_acc bs acc)
             | None ->
@@ -385,6 +397,9 @@ let rec process_iri_escapes_rec
           else if code2 = 0x55 (* 'U' *) then begin
             match read_hex_digits 8 rest2 0 with
             | Some (cp, after) ->
+              if iri_escape_keeps_backslash cp then
+                process_iri_escapes_rec rest1 (c1 :: acc)
+              else
               let bs = String.list_of_string (utf8_of_codepoint cp) in
               process_iri_escapes_rec after (FStar.List.Tot.rev_acc bs acc)
             | None ->
@@ -421,6 +436,9 @@ let process_iri_escapes (s : string) : Tot string =
    PN_LOCAL_ESC/IRI-escape processing downstream sees them unchanged),
    so this is a naming alias, not new logic, to keep the call site at
    `tokenize_12` self-documenting. *)
+//
+// No longer called (2026-10-21): SPARQL 1.2 section 19.2 decodes escapes per
+// token; see `tokenize_12`. Kept as the record of the SPARQL 1.1 reading.
 let process_codepoint_escapes (s : string) : Tot string =
   process_iri_escapes s
 
@@ -1171,15 +1189,19 @@ let tokenize (input : string) : list token =
   tokenize_loop false input 0 [] (fs_byte_length input + 1)
 
 // SPARQL 1.2 tokenizer — additionally emits Tok_TT_OPEN / Tok_TT_CLOSE
-// and the triple-term builtin keywords. Also decodes SPARQL 1.2
-// codepoint escapes (\uXXXX / \UXXXXXXXX) as a preprocessing pass over
-// the raw query text before tokenizing — see `process_codepoint_escapes`.
-// The fuel bound is computed directly from the DECODED text's own byte
-// length (fs_byte_length decoded + 1), so it stays valid regardless of
-// how escape decoding changes byte length relative to `input`.
+// and the triple-term builtin keywords.
+//
+// Changed 2026-10-21 (Lean commit fc9bc69a, W3C rdf-tests ec2ba15): SPARQL
+// 1.2 section 19.2 allows numeric escapes in IRIs and strings only, and
+// processes them per token, scanning "the sequence of Unicode code points
+// matching the relevant grammar production" once, left to right. So the
+// whole-text pass is gone: an escaped quotation mark inside a string does
+// not close it (codepoint-esc-08), an escaped backslash does not start a
+// second escape (codepoint-esc-09), a query spelled with escapes is not a
+// query (codepoint-esc-01-bad), and an escape in a local name is an error
+// (codepoint-esc-03-bad). SPARQL 1.1 mode (`tokenize`) is unchanged.
 let tokenize_12 (input : string) : list token =
-  let decoded = process_codepoint_escapes input in
-  tokenize_loop true decoded 0 [] (fs_byte_length decoded + 1)
+  tokenize_loop true input 0 [] (fs_byte_length input + 1)
 
 (** ====================================================================== **)
 (** Part 5: Parser Combinators                                              **)
@@ -1490,6 +1512,17 @@ let rec ggp_labeled_bnodes (g : group_graph_pattern) : Tot (list string) (decrea
 let fresh_bnode_id (ts : token_stream) : string =
   "_:bnode_" ^ string_of_int (List.Tot.length ts)
 
+// The blank node of `[ ]` or `[ predicateObjectList ]`, named from the token
+// after '[' (a ']' or a verb, a position no other generated name uses). A
+// collection cell takes fresh_bnode_id at its first item's token, so in
+// `( [ :r ?o ] )` the cell and the `[ ]` were the same node and the cell was
+// its own rdf:first. SPARQL 1.1 section 4.1.4: each collection cell and each
+// `[ ]` is a new blank node (W3C syntax-forms-01;
+// https://github.com/danbri/factoidal/issues/747). Same rule as the Lean
+// bracketBnodeId (commit ee7c20da).
+let bracket_bnode_id (ts : token_stream) : string =
+  fresh_bnode_id (parse_advance ts)
+
 let parse_signed_numeric_literal_pt (sign:string) (ts:token_stream)
   : parse_result pattern_term =
   match parse_peek ts with
@@ -1506,6 +1539,60 @@ let parse_signed_numeric_literal_pt (sign:string) (ts:token_stream)
      | Some lit -> ParseOk (PT_Literal lit) (parse_advance ts)
      | None -> ParseErr "invalid double literal")
   | _ -> ParseErr "expected signed numeric literal"
+
+// The FILTERs at the top of a group (the GP_Filter wrappers that
+// parse_ggp_body puts around the group's pattern) and the pattern inside.
+let rec split_group_filters (g : group_graph_pattern)
+  : Tot (group_graph_pattern & list expr) (decreases g) =
+  match g with
+  | GP_Filter e inner ->
+    let (p, es) = split_group_filters inner in (p, e :: es)
+  | _ -> (g, [])
+
+// The conjunction of a list of FILTER expressions; true for none. A
+// solution passes all the FILTERs exactly when the effective boolean value
+// of the conjunction is true (section 17.2: && is false or an error unless
+// both operands are true).
+let rec conj_filters (es : list expr) : Tot expr (decreases es) =
+  match es with
+  | [] -> E_BoolLit true
+  | [e] -> e
+  | e :: rest -> E_And e (conj_filters rest)
+
+// The variables a GROUP BY clause names: a bare variable, or the target of
+// (expr AS var). None for no GROUP BY.
+let group_named_vars (gb : option (list group_condition)) : list var_name =
+  match gb with
+  | None -> []
+  | Some gcs ->
+    List.Tot.concatMap (fun (gc : group_condition) ->
+      match gc with
+      | GC_Var v -> [v]
+      | GC_Expr _ (Some v) -> [v]
+      | _ -> []) gcs
+
+// Section 11.4, left to right: true when some item uses, outside an
+// aggregate, a variable that is not in [in_scope]; each (expr AS v) adds v
+// for the items after it.
+let rec projection_has_ungrouped (in_scope : list var_name) (items : list select_item)
+  : Tot bool (decreases items) =
+  match items with
+  | [] -> false
+  | SI_Var v :: rest ->
+    not (List.Tot.mem v in_scope) || projection_has_ungrouped in_scope rest
+  | SI_Expr e v :: rest ->
+    expr_has_ungrouped_var (fun x -> List.Tot.mem x in_scope) e ||
+    projection_has_ungrouped (v :: in_scope) rest
+
+// Section 18.2.4.4: true when the target of some (expr AS var) is in VS'
+// ([in_vs]) or is a projection variable of an earlier item ([pv]).
+let rec projection_alias_clash (in_vs : var_name -> bool) (pv : list var_name)
+  (items : list select_item) : Tot bool (decreases items) =
+  match items with
+  | [] -> false
+  | SI_Var v :: rest -> projection_alias_clash in_vs (v :: pv) rest
+  | SI_Expr _ v :: rest ->
+    in_vs v || List.Tot.mem v pv || projection_alias_clash in_vs (v :: pv) rest
 
 let ggp_join (a b : group_graph_pattern) : group_graph_pattern =
   match a with GP_Empty -> b | _ -> match b with GP_Empty -> a | _ -> GP_Join a b
@@ -2448,9 +2535,16 @@ and parse_ggp_body (pm : prefix_map) (fuel : nat) (acc : group_graph_pattern)
     (match parse_group_graph_pattern pm (fuel-1) (parse_advance ts) with
      | ParseErr m -> ParseErr m
      | ParseOk g ts' ->
-       let acc' = match acc with
-         | GP_Empty -> GP_LeftJoin GP_Empty g (E_BoolLit true)
-         | _ -> GP_LeftJoin acc g (E_BoolLit true) in
+       // SPARQL 1.1 section 18.2.2.5: the FILTERs of the OPTIONAL group are
+       // the LeftJoin condition, evaluated on the merged solution
+       // (section 18.5), so a variable bound by the left side is in scope.
+       // The group's FILTERs are the GP_Filter wrappers at its top
+       // (parse_ggp_body wraps them last); a nested group of the form
+       // { { P FILTER F } } is kept apart by the Tok_LBRACE arm below.
+       // Issue https://github.com/danbri/factoidal/issues/815.
+       let (inner, conds) = split_group_filters g in
+       let cond = conj_filters conds in
+       let acc' = GP_LeftJoin acc inner cond in
        let ts' = match parse_peek ts' with Tok_DOT -> parse_advance ts' | _ -> ts' in
        parse_ggp_body pm (fuel-1) acc' filters true ts')
   | Tok_MINUS_KW ->
@@ -2574,7 +2668,14 @@ and parse_ggp_body (pm : prefix_map) (fuel : nat) (acc : group_graph_pattern)
        if local_string_overlaps (ggp_labeled_bnodes acc) (ggp_labeled_bnodes g) then
          ParseErr "blank node label reused across nested group scope"
        else
-         let acc' = match acc with GP_Empty -> g | _ -> GP_Join acc g in
+         // A nested group that ends in its own FILTERs stays a separate
+         // operand (Join(Z, Filter(F, P)), section 18.2.2.6), so that an
+         // enclosing OPTIONAL does not read its FILTERs as the LeftJoin
+         // condition (issue 815).
+         let acc' = match acc, g with
+           | GP_Empty, GP_Filter _ _ -> GP_Join GP_Empty g
+           | GP_Empty, _ -> g
+           | _, _ -> GP_Join acc g in
          let ts' = match parse_peek ts' with Tok_DOT -> parse_advance ts' | _ -> ts' in
          parse_ggp_body pm (fuel-1) acc' filters true ts')
   | _ ->
@@ -2952,7 +3053,8 @@ and parse_subject_with_extras (pm : prefix_map) (fuel : nat) (ts : token_stream)
     // supply a pred-obj list).
     // [ predObjList ] = blank node with its own pred-objs — already
     // a complete triple collection; outer pred-obj is OPTIONAL.
-    let bnode_id = fresh_bnode_id ts in
+    // Named from the token after '[' (bracket_bnode_id), issue 747.
+    let bnode_id = bracket_bnode_id ts in
     let ts' = parse_advance ts in
     (match parse_peek ts' with
      | Tok_RBRACKET -> ParseOk (PS_BNode bnode_id, GP_Empty, false) (parse_advance ts')
@@ -3205,7 +3307,8 @@ and parse_object_with_extras (pm : prefix_map) (fuel : nat) (ts : token_stream)
   | Tok_A -> ParseOk (PT_IRI rdf_type_iri_str, GP_Empty) (parse_advance ts)
   | Tok_LBRACKET ->
     // Blank node property list: [ pred obj ; ... ]
-    let bnode_id = fresh_bnode_id ts in
+    // Named from the token after '[' (bracket_bnode_id), issue 747.
+    let bnode_id = bracket_bnode_id ts in
     let ts' = parse_advance ts in
     (match parse_peek ts' with
      | Tok_RBRACKET ->
@@ -3754,57 +3857,40 @@ and parse_select_body (pm : prefix_map) (fuel : nat) (base : option wf_iri) (ts 
             | ParseErr m -> ParseErr m
             | ParseOk vals ts7 ->
             let values_vars = trailing_values_vars vals in
+            let grouping_level = Some? gb || select_has_aggregates sel in
             // SELECT * with GROUP BY is not allowed per SPARQL 1.1
             if Select_All? sel && Some? gb then
               ParseErr "SELECT * not allowed with GROUP BY"
-            // Check ungrouped variables in SELECT projection. A variable that
-            // the trailing VALUES clause binds is in scope after grouping
-            // (SPARQL 1.1 18.2.4.3 joins it after Group and before the SELECT
-            // expressions; W3C syntax-query group-by-values-scope-01 and -02).
-            else if Some? gb && (
-              let gcs = Some?.v gb in
-              let is_grouped (v : var_name) : bool =
-                List.Tot.mem v values_vars ||
-                not (List.Tot.for_all (fun (gc : group_condition) ->
-                  match gc with
-                  | GC_Var gv -> not (streq gv v)
-                  | GC_Expr _ (Some gv) -> not (streq gv v)
-                  | _ -> true) gcs) in
+            // Section 11.4 (Aggregate Projection Restrictions), checked left
+            // to right over the SELECT clause of a grouping query level:
+            // every variable an item uses outside an aggregate is a named
+            // GROUP BY variable, a variable of the trailing VALUES clause
+            // (section 18.2.4.3 joins it after Group and before the SELECT
+            // expressions; W3C syntax-query group-by-values-scope-01 and
+            // -02), or "introduced by an earlier SELECT expression in the
+            // same SELECT clause" (W3C sparql12 select-variable-reuse).
+            // Ported 2026-10-21 from the Lean projectionHasUngrouped
+            // (commit fc9bc69a).
+            else if grouping_level && (
               match sel with
               | Select_Vars items ->
-                not (List.Tot.for_all (fun (item : select_item) ->
-                  match item with
-                  | SI_Var v -> is_grouped v
-                  | SI_Expr e _ -> not (expr_has_ungrouped_var is_grouped e)
-                  ) items)
+                projection_has_ungrouped (group_named_vars gb @ values_vars) items
               | _ -> false) then
               ParseErr "SELECT projects ungrouped variable"
-            // Implicit GROUP BY: if any select item uses an aggregate
-            // but no GROUP BY is present, non-aggregate expressions with vars are ungrouped
-            else if None? gb && (
-              match sel with
-              | Select_Vars items ->
-                let has_agg = not (List.Tot.for_all (fun (item : select_item) ->
-                  match item with
-                  | SI_Expr (E_Aggregate _ _ _) _ -> false
-                  | _ -> true) items) in
-                let has_ungrouped = not (List.Tot.for_all (fun (item : select_item) ->
-                  match item with
-                  | SI_Var v -> List.Tot.mem v values_vars
-                  | SI_Expr e _ -> not (expr_has_ungrouped_var (fun v -> List.Tot.mem v values_vars) e)
-                  ) items) in
-                has_agg && has_ungrouped
-              | _ -> false) then
-              ParseErr "SELECT projects ungrouped variable"
-            // Check: (expr AS ?v) must not alias a variable already in scope
-            // from WHERE or from the trailing VALUES clause (W3C syntax-query
-            // group-by-values-scope-03).
+            // Section 18.2.4.4 (1.2: 18.3.4.4): for each (expr AS var), "var
+            // must not appear in VS' nor in PV". VS' is the named GROUP BY
+            // variables at a grouping level and the WHERE variables
+            // otherwise, plus the VALUES variables (group-by-values-scope-03);
+            // PV holds the projection variables of the earlier items (W3C
+            // sparql12 group-by-scope-1, -bad-1, -bad-2, -bad-3). Ported from
+            // the Lean projectionAliasClash (commit fc9bc69a).
             else if (match sel with
               | Select_Vars items ->
-                not (List.Tot.for_all (fun (item : select_item) ->
-                  match item with
-                  | SI_Expr _ v -> not (ggp_has_var v pattern) && not (List.Tot.mem v values_vars)
-                  | _ -> true) items)
+                projection_alias_clash
+                  (fun v -> List.Tot.mem v values_vars ||
+                            (if grouping_level then List.Tot.mem v (group_named_vars gb)
+                             else ggp_has_var v pattern))
+                  [] items
               | _ -> false) then
               ParseErr "SELECT expression aliases variable already in scope"
             else
