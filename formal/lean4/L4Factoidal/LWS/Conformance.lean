@@ -210,6 +210,16 @@ def registry : List Requirement :=
   , statement := "When a server enriches the type index from resource content, the types it surfaces MUST be treated identically to those derived from Link headers for the purposes of indexing, search, and authorization filtering."
   , module := "L4Factoidal.LWS.TypeIndex.entryFacts"
   , status := .proved "L4Factoidal.LWS.Search.ixSearch_eq_specSearch" }
+, { id := "lws-index-07"
+  , section_ := "lws10-index: QUERY (a results resource; ANTICIPATORY AND UNSTABLE, off by default, issue 922)"
+  , statement := "this specification does not define such a resource; a server that nonetheless exposes one MUST subject it to the same authorization filtering on every access [...]"
+  , module := "L4Factoidal.LWS.SearchResults.resultsAnswer"
+  , status := .proved "L4Factoidal.LWS.SearchResults.resultsAnswer_authorized" }
+, { id := "lws-index-08"
+  , section_ := "lws10-index: QUERY (a results resource; ANTICIPATORY AND UNSTABLE, off by default, issue 922)"
+  , statement := "a server that nonetheless exposes one [...] MUST prevent its reuse across clients."
+  , module := "L4Factoidal.LWS.SearchResults.resultsGet"
+  , status := .proved "L4Factoidal.LWS.SearchResults.resultsGet_creator_only" }
 -- LWS core §Access Requests and Grants (w3c/lws-protocol 9a08ff65,
 -- https://github.com/danbri/factoidal/issues/913). `L4Factoidal.LWS.AccessGrants`.
 , { id := "lws-access-01"

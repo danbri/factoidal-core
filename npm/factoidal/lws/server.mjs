@@ -82,10 +82,12 @@ export const LWS_OPS = ['lwsOpen', 'lwsStep', 'lwsClose', 'lwsSnapshot', 'lwsFet
  *  it reports "no answer" (status 0) to the engine. */
 const DELIVERY_TIMEOUT_MS = 10000
 
-/** Random bytes for the engine (`entropy`): the seed of the signing key of
- *  a new storage and of the identifiers of one run. Pure I/O. */
-function entropyBase64 () {
-  const bytes = new Uint8Array(32)
+/** Random bytes for the engine, base64: `entropy` at open (32 bytes, the
+ *  seed of the signing key of a new storage and of the identifiers of one
+ *  run) and `random` with each request (16 bytes, the name of a search
+ *  results resource when the engine makes one). Pure I/O. */
+function entropyBase64 (size = 32) {
+  const bytes = new Uint8Array(size)
   globalThis.crypto.getRandomValues(bytes)
   let text = ''
   for (const b of bytes) text += String.fromCharCode(b)
@@ -239,6 +241,13 @@ export async function openLwsStorage (options = {}) {
   // Access requests and grants are on unless the caller turns them off
   // (L4Factoidal/LWS/AccessGrants.lean).
   if (options.accessGrants === false) config.accessGrants = false
+  // ANTICIPATORY AND UNSTABLE (https://github.com/danbri/factoidal/issues/922):
+  // a QUERY answer of the type search names a results resource with
+  // Content-Location. Off unless the caller turns it on
+  // (L4Factoidal/LWS/SearchResults.lean decides everything about it).
+  if (options.searchResults === true) config.searchResults = true
+  if (typeof options.searchResultsTtl === 'number') config.searchResultsTtl = options.searchResultsTtl
+  if (typeof options.searchResultsMax === 'number') config.searchResultsMax = options.searchResultsMax
   config.entropy = entropyBase64()
   // Encryption at rest (issue 921): the key text from `storageKey` or the
   // environment variable FACTOIDAL_LWS_KEY, passed unread. The engine checks
@@ -324,9 +333,12 @@ export async function openLwsStorage (options = {}) {
     async step (request) {
       const content = contentBytes(request)
       const { body: _body, ...fields } = request
+      // Random bytes with every request; the engine uses them only to name
+      // a search results resource (issue 922), and only when that is on.
+      const stamped = { ...fields, random: entropyBase64(16) }
       const record = options.realClock === true
-        ? { ...fields, now: Math.floor(Date.now() / 1000) }
-        : fields
+        ? { ...stamped, now: Math.floor(Date.now() / 1000) }
+        : stamped
       const callStep = () => engine.callBlobIO('lwsStep', [handle, JSON.stringify(record)], content)
       let answered = callStep()
       let envelope = answered.envelope

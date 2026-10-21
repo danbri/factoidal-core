@@ -121,6 +121,34 @@ def typeSearchPath : String := "/.well-known/lws-type-search"
 /-- Is the path one of the two index service endpoints? -/
 def isIndexServicePath (p : String) : Bool := p == typeIndexPath || p == typeSearchPath
 
+/-- ANTICIPATORY AND UNSTABLE (https://github.com/danbri/factoidal/issues/922):
+the prefix of the search results resources a QUERY answer names with
+`Content-Location` when `Config.searchResults` is on
+(`L4Factoidal.LWS.SearchResults`). lws10-index defines no such resource; the
+path is a server choice and is likely to change. -/
+def searchResultsPrefix : String := typeSearchPath ++ "/results/"
+
+/-- The path of the search results resource with this identifier. -/
+def searchResultsPath (id : String) : String := searchResultsPrefix ++ id
+
+/-- The identifier a search results path names (the text after the prefix). -/
+def searchResultsIdOf (p : String) : String :=
+  String.ofList (p.toList.drop searchResultsPrefix.length)
+
+/-- Is the path a search results resource: the prefix, then an identifier of
+base64url characters (RFC 4648 §5) only? -/
+def isSearchResultsPath (p : String) : Bool :=
+  p.startsWith searchResultsPrefix &&
+    (searchResultsIdOf p != "" &&
+     (searchResultsIdOf p).all (fun c => c.isAlphanum || c == '-' || c == '_'))
+
+/-- The extension member of the `TypeSearchService` entry of the storage
+description when the search results resources are on. It is a full IRI, so
+it is no LWS term, and it says what it is: anticipatory, unstable, not
+defined by lws10-index. -/
+def unstableResultsMember : String :=
+  "https://github.com/danbri/factoidal/issues/922#unstableResultsResource"
+
 /-- The baseline filter format of the Type Search Service (lws10-index
 §IANA Considerations). -/
 def mediaLwsQuery : String := "application/lws-query+json"
@@ -689,7 +717,7 @@ of its storage description resource" and "Each service object MUST include a
 serviceEndpoint property"). -/
 def storageDescription (baseIri : String) (notify : Bool := false)
     (keyX : Option String := none) (move : Bool := false) (typeIndex : Bool := false)
-    (access : Bool := false) : String :=
+    (access : Bool := false) (results : Bool := false) : String :=
   let sid := storageIdOf baseIri
   let keyMembers : List (String × Json) :=
     match notify, keyX with
@@ -714,8 +742,16 @@ def storageDescription (baseIri : String) (notify : Bool := false)
     if typeIndex then
       [ .object [ ("type", .string "TypeIndexService")
                 , ("serviceEndpoint", .string (iriOfPath baseIri typeIndexPath)) ]
-      , .object [ ("type", .string "TypeSearchService")
-                , ("serviceEndpoint", .string (iriOfPath baseIri typeSearchPath)) ] ]
+      , .object ([ ("type", .string "TypeSearchService")
+                 , ("serviceEndpoint", .string (iriOfPath baseIri typeSearchPath)) ] ++
+          -- ANTICIPATORY AND UNSTABLE (issue 922): an extension member, not
+          -- a service type, so a client that knows only lws10-index sees the
+          -- standard TypeSearchService entry.
+          (if results then
+            [ (unstableResultsMember, .string ("anticipatory and unstable: a QUERY answer " ++
+                "carries Content-Location (RFC 10008 section 2.3) naming a results " ++
+                "resource that lws10-index does not define; likely to change")) ]
+           else [])) ]
     else []
   -- LWS §Access Requests and Grants, Discovery: "a service object
   -- describing an endpoint for access requests MUST have a type equal to

@@ -408,7 +408,11 @@ def decide (V : Verifiers) (S : Store σ) (cfg : Config) (a : AuthzConfig) (now 
   -- Authorization): every client may ask, and the answer holds only what
   -- that client may read (`L4Factoidal.LWS.Search`). An anonymous request
   -- is answered with what the public may read; a refused credential is 401.
-  else if cfg.typeIndex && isIndexServicePath path then
+  -- The same holds for the ANTICIPATORY search results resources (issue
+  -- 922, `L4Factoidal.LWS.SearchResults`), only when they are on: which
+  -- agent and client a results resource answers is decided there.
+  else if cfg.typeIndex && (isIndexServicePath path ||
+      (cfg.searchResults && isSearchResultsPath path)) then
     match authenticate V cfg a now r with
     | .needKeys i => .fetch i (issuerMetadataUrl i)
     | .refused rf => .respond (challenge cfg a path (some rf.errorCode))

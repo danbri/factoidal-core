@@ -333,6 +333,7 @@ https://www.w3.org/TR/sparql11-service-description/`,
 usage: factoidal lws-serve DIR (--issuer IRI | --auth-config FILE | --insecure-no-auth)
                          [--owner WEBID] [--root-acl FILE] [--audience IRI]
                          [--port N] [--host ADDRESS] [--base IRI] [--page-size N]
+                         [--unstable-search-results]
 
 Starts a Node HTTP server that answers every request through the engine's
 lwsStep operation.
@@ -358,6 +359,12 @@ It protects the file on disk only (formal/lean4/L4Factoidal/LWS/SnapshotSeal.lea
                   (default: the bound origin)
   --page-size N   the engine's container page size (config member pageSize;
                   default 100, 0 turns pagination off)
+  --unstable-search-results
+                  ANTICIPATORY AND UNSTABLE, off by default: a QUERY answer
+                  of the type search names a results resource with
+                  Content-Location (RFC 10008 section 2.3). lws10-index
+                  defines no such resource; this is likely to change.
+                  https://github.com/danbri/factoidal/issues/922
 
 Authorization (LWS editor's draft, section Authorization; one of the three
 is required):
@@ -1356,6 +1363,7 @@ async function commandLwsServe (positional, options) {
       host: serveHost(options),
       ...(typeof options.base === 'string' ? { baseIri: options.base } : {}),
       ...(options['page-size'] !== undefined ? { pageSize: pageSizeOption(options['page-size']) } : {}),
+      ...(options['unstable-search-results'] === true ? { searchResults: true } : {}),
       ...(insecure ? { insecureNoAuth: true } : { auth }),
       ...(typeof options.owner === 'string' ? { owner: options.owner } : {}),
       ...(typeof options['root-acl'] === 'string'

@@ -12,6 +12,7 @@
 #
 # USAGE
 #   bash tools/lws-touchstone.sh [--config open|auth|both] [--shim]
+#                                [--unstable-search-results]
 #
 #   --config open  our server with --insecure-no-auth
 #   --config auth  our server with authorization on (the default of
@@ -30,6 +31,13 @@
 #                  400, so Touchstone could not create its run root and ran
 #                  no test. The shim lets the other tests run. A score made
 #                  with --shim is not a conformance score.
+#   --unstable-search-results
+#                  start the server with `lws-serve --unstable-search-results`:
+#                  the ANTICIPATORY AND UNSTABLE search results resource that a
+#                  type search QUERY answer names with Content-Location
+#                  (https://github.com/danbri/factoidal/issues/922; lws10-index
+#                  defines no such resource). Off by default; the target ids
+#                  get the suffix "-unstable". A default run never sets it.
 #
 # ENVIRONMENT
 #   TOUCHSTONE_SRC   an existing Touchstone clone to copy (it is not changed);
@@ -73,11 +81,14 @@ fi
 
 CONFIG=both
 SHIM=0
+UNSTABLE=()
+SUFFIX=""
 while [ $# -gt 0 ]; do
   case "$1" in
     --config) CONFIG="${2:-}"; shift 2 ;;
     --shim) SHIM=1; shift ;;
-    -h|--help) sed -n '2,60p' "$0"; exit 0 ;;
+    --unstable-search-results) UNSTABLE=(--unstable-search-results); SUFFIX="-unstable"; shift ;;
+    -h|--help) sed -n '2,70p' "$0"; exit 0 ;;
     *) echo "lws-touchstone: unknown argument $1" >&2; exit 2 ;;
   esac
 done
@@ -237,7 +248,7 @@ wait_for () {
 start_server () {
   local name="$1" dir="$2" port="$3" base="$4"; shift 4
   node "$SERVE" lws-serve "$dir" --port "$port" --host 127.0.0.1 --base "$base" \
-    --page-size "${LWS_PAGE_SIZE:-4}" "$@" \
+    --page-size "${LWS_PAGE_SIZE:-4}" ${UNSTABLE[@]+"${UNSTABLE[@]}"} "$@" \
     > "$WORK/$name-server.log" 2>&1 &
   PIDS+=($!)
   wait_for "$WORK/$name-server.log" '^http://' 60 || {
@@ -306,7 +317,7 @@ if [ "$CONFIG" = open ] || [ "$CONFIG" = both ]; then
       node "$WORK/shim.mjs" "$BASE_PORT" "$P" > "$WORK/open-shim.log" 2>&1 & PIDS+=($!)
       wait_for "$WORK/open-shim.log" '^shim:' 30 || cannot_run "the shim did not start"
     fi
-    ID=factoidal-open; [ "$SHIM" = 1 ] && ID=factoidal-open-shim
+    ID=factoidal-open$SUFFIX; [ "$SHIM" = 1 ] && ID=factoidal-open$SUFFIX-shim
     printf 'targets:\n  %s:\n    baseUrl: %s\n    adapter: env\n    capabilities: []\n    properties: {}\n' \
       "$ID" "$BASE" > "$WORK/targets-open.yaml"
     run_suite "$ID" "$WORK/targets-open.yaml"
@@ -334,7 +345,11 @@ if [ "$CONFIG" = auth ] || [ "$CONFIG" = both ]; then
   if [ "$SHIM" = 1 ]; then BASE_PORT="$(free_port)"; fi
   BASE="http://127.0.0.1:$BASE_PORT/"
   FIXTURES="http://localhost:$FIX_PORT/"
-  ID=factoidal-auth; [ "$SHIM" = 1 ] && ID=factoidal-auth-shim
+  ID=factoidal-auth$SUFFIX; [ "$SHIM" = 1 ] && ID=factoidal-auth$SUFFIX-shim
+  # A reused TOUCHSTONE_WORK holds the previous run's log and targets file;
+  # with them in place a second run (2026-10-21, issue 922) read the old
+  # target id and could not run. Remove both before the server starts.
+  rm -f "$WORK/as.log" "$WORK/targets-auth.yaml"
   java -Dlogback.configurationFile="$WORK/as/logback.xml" -cp "$CP" TouchstAs "$AS_PORT" \
     "$WORK/targets-auth.yaml" "$ID" "$BASE" "$FIXTURES" "$BASE,${BASE}.well-known/lws-storage" \
     > "$WORK/as.log" 2>&1 & PIDS+=($!)
@@ -353,6 +368,7 @@ if [ "$CONFIG" = auth ] || [ "$CONFIG" = both ]; then
 fi
 
 [ "$SHIM" = 1 ] && echo "NOTE: --shim was on; these are diagnostic numbers, not conformance scores."
+[ -n "$SUFFIX" ] && echo "NOTE: --unstable-search-results was on (issue 922): an anticipatory, unstable extension."
 case "$WORST" in
   0) echo "lws-touchstone: every configuration ran; no test failed" ;;
   1) echo "lws-touchstone: FAIL" ;;

@@ -1228,6 +1228,134 @@ async function main () {
     })
   }
 
+  // ANTICIPATORY AND UNSTABLE: the type search results resource named by
+  // Content-Location (RFC 10008 section 2.3), off by default.
+  // https://github.com/danbri/factoidal/issues/922. Decided by
+  // formal/lean4/L4Factoidal/LWS/SearchResults.lean.
+  {
+    const ALICE922 = 'https://alice.example/#me'
+    const SP = 'https://schema.org/Person'
+    const R922 = 'https://github.com/danbri/factoidal/issues/922#unstableResultsResource'
+    const query = (origin, filter) => fetch(`${origin}/.well-known/lws-type-search`, {
+      method: 'QUERY', headers: { 'content-type': 'application/lws-query+json' }, body: JSON.stringify(filter)
+    })
+    const typedPut = async (origin, path) => {
+      const r = await fetch(`${origin}${path}`, { method: 'PUT', headers: { 'content-type': 'text/plain', prefer: 'set-linkset', link: `<${SP}>; rel="type"` }, body: 'x' })
+      await r.text()
+      assert(r.status === 201 || r.status === 204, `PUT ${path} answered ${r.status}`)
+    }
+    const searchEntry = async (origin) => {
+      const d = await (await fetch(`${origin}/.well-known/lws-storage`, { headers: { accept: 'application/lws+cid' } })).json()
+      return d.service.find((x) => x.type === 'TypeSearchService')
+    }
+
+    await check('Type search results (unstable, issue 922): off by default, a QUERY answer carries no Content-Location and the storage description no extension member', async () => {
+      const off = await listen({ engine, port: 0, insecureNoAuth: true, agent: ALICE922 })
+      try {
+        await typedPut(off.origin, '/p/a')
+        const r = await query(off.origin, { type: [SP] })
+        await r.text()
+        assert(r.status === 200, `QUERY answered ${r.status}`)
+        assert(r.headers.get('content-location') === null, `Content-Location ${r.headers.get('content-location')}`)
+        const ts = await searchEntry(off.origin)
+        assert(ts && !(R922 in ts), JSON.stringify(ts))
+      } finally {
+        await off.close()
+      }
+    })
+
+    const rdir = mkdtempSync(join(tmpdir(), 'lws922-results-'))
+    const on = await listen({ engine, port: 0, insecureNoAuth: true, agent: ALICE922, now: 1000, pageSize: 1, searchResults: true, searchResultsTtl: 20, dir: rdir })
+    const ro = on.origin
+    let results = null
+    try {
+      await typedPut(ro, '/p/a')
+      await typedPut(ro, '/p/b')
+
+      await check('Type search results (unstable, issue 922): with the option on, a QUERY answer names a results resource with Content-Location and the storage description marks it as an unstable extension', async () => {
+        const r = await query(ro, { type: [SP] })
+        const j = await r.json()
+        assert(r.status === 200 && j.totalItems === 2, `QUERY answered ${r.status} ${JSON.stringify(j)}`)
+        results = r.headers.get('content-location')
+        assert(results !== null && results.startsWith(`${ro}/.well-known/lws-type-search/results/`), `Content-Location ${results}`)
+        // 16 random bytes, base64url: 22 characters.
+        assert(/\/results\/[A-Za-z0-9_-]{22}$/.test(results), results)
+        const again = await query(ro, { type: [SP] })
+        await again.text()
+        assert(again.headers.get('content-location') !== results, 'two QUERY answers named one results resource')
+        const ts = await searchEntry(ro)
+        assert(ts && typeof ts[R922] === 'string' && /unstable/.test(ts[R922]), JSON.stringify(ts))
+      })
+
+      await check('Type search results (unstable, issue 922): GET pages the results of that QUERY; a resource made later is not listed, a deleted one disappears; DELETE answers 405', async () => {
+        assert(results !== null, 'no results resource')
+        const page1 = await fetch(results)
+        const j1 = await page1.json()
+        assert(page1.status === 200 && page1.headers.get('cache-control') === 'private', `GET answered ${page1.status}`)
+        assert(j1.type === 'ContainerPage' && j1.totalItems === 2 && j1.items[0].id === `${ro}/p/a`, JSON.stringify(j1))
+        const next = linkTarget(page1.headers.get('link'), 'next')
+        assert(next === `${results}?page=2`, `next ${next}`)
+        const j2 = await (await fetch(next)).json()
+        assert(j2.items.length === 1 && j2.items[0].id === `${ro}/p/b`, JSON.stringify(j2))
+        await typedPut(ro, '/p/c')
+        const fresh = await (await query(ro, { type: [SP] })).json()
+        assert(fresh.totalItems === 3, `a new QUERY found ${fresh.totalItems}`)
+        const j3 = await (await fetch(results)).json()
+        assert(j3.totalItems === 2, `the results resource lists ${j3.totalItems} after a new resource`)
+        const d = await fetch(`${ro}/p/b`, { method: 'DELETE' })
+        await d.text()
+        const j4 = await (await fetch(results)).json()
+        assert(j4.totalItems === 1 && j4.items[0].id === `${ro}/p/a`, JSON.stringify(j4))
+        const del = await fetch(results, { method: 'DELETE' })
+        await del.text()
+        assert(del.status === 405, `DELETE answered ${del.status}`)
+      })
+
+      await check('Type search results (unstable, issue 922): an anonymous QUERY names no results resource, and an unknown name answers 404', async () => {
+        const anon = await listen({ engine, port: 0, insecureNoAuth: true, searchResults: true })
+        try {
+          await typedPut(anon.origin, '/p/a')
+          const r = await query(anon.origin, { type: [SP] })
+          await r.text()
+          assert(r.status === 200 && r.headers.get('content-location') === null, `Content-Location ${r.headers.get('content-location')}`)
+        } finally {
+          await anon.close()
+        }
+        const u = await fetch(`${ro}/.well-known/lws-type-search/results/AAAAAAAAAAAAAAAAAAAAAA`)
+        await u.text()
+        assert(u.status === 404, `an unknown name answered ${u.status}`)
+      })
+    } finally {
+      await on.close()
+    }
+
+    await check('Type search results (unstable, issue 922): the records survive a restart (snapshot member searchResults), and a results resource answers 410 after searchResultsTtl', async () => {
+      assert(results !== null, 'no results resource')
+      const again = await listen({ engine, port: 0, insecureNoAuth: true, agent: ALICE922, pageSize: 1, searchResults: true, searchResultsTtl: 20, dir: rdir, baseIri: `${ro}/` })
+      try {
+        const path = new URL(results).pathname
+        const r = await fetch(`${again.origin}${path}`)
+        const j = await r.json()
+        assert(r.status === 200 && j.totalItems === 1, `after the restart GET answered ${r.status} ${JSON.stringify(j)}`)
+        // The engine clock advances with each change; write until the
+        // lifetime (20 s of engine clock) has passed.
+        let status = 200
+        let writes = 0
+        while (status === 200 && writes < 40) {
+          writes += 1
+          await typedPut(again.origin, `/q/${writes}`)
+          const later = await fetch(`${again.origin}${path}`)
+          await later.text()
+          status = later.status
+        }
+        assert(status === 410 && writes > 1, `after ${writes} writes GET answered ${status}`)
+      } finally {
+        await again.close()
+        rmSync(rdir, { recursive: true, force: true })
+      }
+    })
+  }
+
   await check(CHECKS[37], async () => {
     const rc = await listen({ engine, port: 0, insecureNoAuth: true, realClock: true })
     try {
