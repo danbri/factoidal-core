@@ -760,6 +760,19 @@ def geoRestricted? (arts : List RetainedArtifact)
 def unknownStoreHandle (h : String) : String :=
   errJson s!"unknown store handle: {h}"
 
+/-- `handle.disposed` for a store handle this engine issued and closed,
+else the unknown-handle error. -/
+def missingStoreHandle (h : String) : IO String := do
+  let issued ← storeHandleCounter.get
+  let isIssued := h.startsWith "s" &&
+    match (String.ofList (h.toList.drop 1)).toNat? with
+    | some n => 1 ≤ n && n ≤ issued
+    | none => false
+  if isIssued then
+    pure (errCoded "handle.disposed"
+      s!"store handle {h} was closed; a closed handle cannot be used again")
+  else pure (unknownStoreHandle h)
+
 private def retainedFor (store : OpenStore) (keys : List String) :
     List RetainedArtifact :=
   store.artifacts.filter fun art => keys.contains art.key
@@ -780,7 +793,7 @@ def storeHandleQuery (h sparql : String) : IO String := do
   let extIris ← extSnapshot
   let now ← nowDateTime
   match (← storeHandleTable.get)[h]? with
-  | none => pure (unknownStoreHandle h)
+  | none => missingStoreHandle h
   | some store =>
     let outcome : Except String String := do
       let query ← parseQuery "storeHandleQuery" sparql
@@ -853,7 +866,7 @@ def storeHandleClose (h : String) : IO String := do
     storeHandleTable.set (table.erase h)
     pure (okWith [])
   else
-    pure (unknownStoreHandle h)
+    missingStoreHandle h
 
 /-! ## Cap tests
 

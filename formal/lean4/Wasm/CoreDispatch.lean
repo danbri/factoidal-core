@@ -116,6 +116,7 @@ def coreIOOpNames : List String :=
   , "resolveIri"
   , "queryForm"
   , "engineTables"
+  , "apiCheck"
   , "parseQuadsJson"
   , "quadsToNQuads"
   , "extRegister"
@@ -333,6 +334,7 @@ def callIOArgsBy (extra : ExtraReader) (op : String) (args : List String) :
   | "resolveIri" => some (arityIO2 op Ops.resolveIriOp args)
   | "queryForm" => some (arityIO1 op Ops.queryForm args)
   | "engineTables" => some (arityIO0 op Ops.engineTables args)
+  | "apiCheck" => some (arityIO2 op (fun a b => pure (Ops.apiCheck a b)) args)
   | "parseQuadsJson" => some (arityIO3 op (Ops.parseQuadsJsonBy extra) args)
   | "quadsToNQuads" => some (arityIO1 op Ops.quadsToNQuadsText args)
   -- Each document parsed through the IO entry gets its own blank-node scope
@@ -369,7 +371,7 @@ def opsReflectionFor (names : List String) : String :=
     , ("fullOnlyFormats", .array (jsonLdFormatTags.map Json.string)) ]).toString
 
 /-- The pure entry of the core engine (`l4_call` in `Wasm/CoreExports.lean`). -/
-def call (op : String) (argsJson : String) : String :=
+def callUncoded (op : String) (argsJson : String) : String :=
   match decodeArgs argsJson with
   | .error e => errJson e
   | .ok args =>
@@ -381,7 +383,7 @@ def call (op : String) (argsJson : String) : String :=
 
 /-- The IO entry of the core engine (`l4_call_io`), which the wire entry of
 the shim (`l4_call_c`) serves. -/
-def callIO (op : String) (argsJson : String) : IO String :=
+def callIOUncoded (op : String) (argsJson : String) : IO String :=
   match decodeArgs argsJson with
   | .error e => pure (errJson e)
   | .ok args =>
@@ -389,11 +391,25 @@ def callIO (op : String) (argsJson : String) : IO String :=
     else
       match callIOArgsBy coreExtraReader op args with
       | some r => r
-      | none => pure (call op argsJson)
+      | none => pure (callUncoded op argsJson)
 
 /-- The byte-region entry (`l4_call_blob`). The core engine has no op that
 reads a byte region, so the region is not read and every op answers as
 through `call`. -/
+private def argsForCode (argsJson : String) : List String :=
+  match decodeArgs argsJson with
+  | .ok args => args
+  | .error _ => []
+
+/-- `callUncoded` with the error model of `Wasm/Ops/ErrorModel.lean`. -/
+def call (op : String) (argsJson : String) : String :=
+  attachCode op (argsForCode argsJson) (callUncoded op argsJson)
+
+/-- `callIOUncoded` with the error model of `Wasm/Ops/ErrorModel.lean`. -/
+def callIO (op : String) (argsJson : String) : IO String := do
+  pure (attachCode op (argsForCode argsJson) (← callIOUncoded op argsJson))
+
+/-- The byte-region entry (`l4_call_blob`). -/
 def callBlob (op : String) (argsJson : String) (_blob : ByteArray) : String :=
   call op argsJson
 
@@ -419,7 +435,7 @@ private def ntDoc : String := "<http://e/a> <http://e/p> \"v\" .\n"
          "{\"ok\":true"
 #guard has (call "xpathEval" "[\"<a/>\",\"/a\"]") "\"servedBy\":\"full\""
 #guard has (call "jsonldToRdf" "[\"{}\",\"\"]") "\"servedBy\":\"full\""
-#guard (call "noSuchOp" "[]") == "{\"ok\":false,\"error\":\"unknown op 'noSuchOp'\"}"
+#guard (call "noSuchOp" "[]") == "{\"ok\":false,\"error\":\"unknown op 'noSuchOp'\",\"code\":\"op.unknown\"}"
 -- JSON-LD is refused by name; Turtle is read.
 #guard has (call "parseToDatasetJson" "[\"{}\",\"jsonld\",\"\"]") "not in the core engine"
 #guard (parseToDatasetJsonBy coreExtraReader ntDoc "turtle" "").startsWith "{\"ok\":true,\"count\":1"

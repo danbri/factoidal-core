@@ -256,6 +256,7 @@ def handleOpNames : List String :=
   , "resolveIri"
   , "queryForm"
   , "engineTables"
+  , "apiCheck"
   , "parseQuadsJson"
   , "quadsToNQuads"
   , "datasetFromCsvw"
@@ -427,7 +428,7 @@ has one), and an empty string means none. A text that is not a dateTime lexical
 form is an error envelope (`Core.nowArg`,
 https://github.com/danbri/factoidal/issues/748). `callIO` reads the clock once
 per execution instead (https://github.com/danbri/factoidal/issues/743). -/
-def call (op : String) (argsJson : String) : String :=
+def callUncoded (op : String) (argsJson : String) : String :=
   match decodeArgs argsJson with
   | .error e => errJson e
   | .ok args =>
@@ -496,7 +497,7 @@ after their other arguments (`storeQuery` fourth, `queryHdt` second), and an
 empty string means none (https://github.com/danbri/factoidal/issues/748). The
 IO entry `callBlobIO` reads the clock once per query and serves both ops with it
 (https://github.com/danbri/factoidal/issues/743). -/
-def callBlob (op : String) (argsJson : String) (blob : ByteArray) : String :=
+def callBlobUncoded (op : String) (argsJson : String) (blob : ByteArray) : String :=
   match op with
   | "storeQuery" =>
       match decodeArgs argsJson with
@@ -511,7 +512,7 @@ def callBlob (op : String) (argsJson : String) (blob : ByteArray) : String :=
       match decodeArgs argsJson with
       | .error e => errJson e
       | .ok args => Core.arity1Now op (fun a n => queryHdt a blob n) args
-  | _ => call op argsJson
+  | _ => callUncoded op argsJson
 
 private def arityIO1 (op : String) (f : String → IO String) :
     List String → IO String
@@ -541,7 +542,7 @@ execution, so `NOW()` is bound (SPARQL 1.1 §17.4.5.1,
 https://github.com/danbri/factoidal/issues/743). They take no `now` argument:
 the instant is an argument of the pure entries `call` and `callBlob` only
 (https://github.com/danbri/factoidal/issues/748). -/
-def callIO (op : String) (argsJson : String) : IO String :=
+def callIOUncoded (op : String) (argsJson : String) : IO String :=
   let withArgs (k : List String → IO String) : IO String :=
     match decodeArgs argsJson with
     | .error e  => pure (errJson e)
@@ -640,7 +641,7 @@ def callIO (op : String) (argsJson : String) : IO String :=
         | [] => Ops.storeHandleList
         | args => pure (errJson s!"storeHandleList expects 0 arguments, got {args.length}"))
   | "ops"              => pure opsReflectionIO
-  | _                  => pure (call op argsJson)
+  | _                  => pure (callUncoded op argsJson)
 
 /-- The dispatch entry the `l4_call_blob_io` C export serves: the string
 arguments of `callIO`, ONE byte region in, and ONE byte region out.
@@ -650,7 +651,7 @@ exactly as it does today with an EMPTY out region — the blob-in ops of
 `blobOpNames` still read their region through `callBlob`, and everything else
 goes to `callIO` — so a host may route every call through this entry without
 changing any envelope. -/
-def callBlobIO (op : String) (argsJson : String) (blob : ByteArray) :
+def callBlobIOUncoded (op : String) (argsJson : String) (blob : ByteArray) :
     IO (String × ByteArray) :=
   match op with
   | "blobEcho" =>
@@ -746,10 +747,41 @@ def callBlobIO (op : String) (argsJson : String) (blob : ByteArray) :
                             ByteArray.empty)
   | _ =>
       if blobOpNames.contains op then
-        pure (callBlob op argsJson blob, ByteArray.empty)
+        pure (callBlobUncoded op argsJson blob, ByteArray.empty)
       else do
-        let envelope ← callIO op argsJson
+        let envelope ← callIOUncoded op argsJson
         pure (envelope, ByteArray.empty)
+
+/-! ## The four entries, with the error model
+
+Each entry is its `…Uncoded` form with `attachCode` applied to the answer
+(`Wasm/Ops/ErrorModel.lean`): every error envelope leaves the engine with a
+declared `code`, the `spec` section of that code where one applies, and the
+`position` of a parse failure (https://github.com/danbri/factoidal/issues/882
+item 4). -/
+
+private def argsForCode (argsJson : String) : List String :=
+  match decodeArgs argsJson with
+  | .ok args => args
+  | .error _ => []
+
+/-- The pure entry (`l4_call`). -/
+def call (op : String) (argsJson : String) : String :=
+  attachCode op (argsForCode argsJson) (callUncoded op argsJson)
+
+/-- The byte-region entry (`l4_call_blob`). -/
+def callBlob (op : String) (argsJson : String) (blob : ByteArray) : String :=
+  attachCode op (argsForCode argsJson) (callBlobUncoded op argsJson blob)
+
+/-- The IO entry (`l4_call_io`, the wire entry and the native CLI). -/
+def callIO (op : String) (argsJson : String) : IO String := do
+  pure (attachCode op (argsForCode argsJson) (← callIOUncoded op argsJson))
+
+/-- The byte-region-in-and-out entry (`l4_call_blob_io`). -/
+def callBlobIO (op : String) (argsJson : String) (blob : ByteArray) :
+    IO (String × ByteArray) := do
+  let (envelope, out) ← callBlobIOUncoded op argsJson blob
+  pure (attachCode op (argsForCode argsJson) envelope, out)
 
 /-- Decode a `callseq` document — a JSON array of `[op, [arg, …]]`
 pairs — into each op paired with its args RE-SERIALISED as the JSON

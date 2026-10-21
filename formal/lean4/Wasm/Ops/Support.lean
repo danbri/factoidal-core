@@ -20,6 +20,7 @@ import L4Factoidal.JSON.Parser
 import L4Factoidal.JSON.Serialize
 import L4Factoidal.RDF.Graph
 import L4Factoidal.Syntax.Lexing
+import Wasm.Ops.ErrorModel
 
 namespace L4Wasm.Ops
 

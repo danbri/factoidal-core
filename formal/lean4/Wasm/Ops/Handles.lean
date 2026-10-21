@@ -115,11 +115,28 @@ initialize handleTable : IO.Ref (Std.HashMap String OpenDataset) ← IO.mkRef �
 def unknownHandle (h : String) : String :=
   errJson s!"unknown dataset handle: {h}"
 
+/-- True when `h` is `<pfx><n>` with `1 ≤ n ≤ issued`: an id this engine
+handed out. -/
+def handleWasIssued (pfx : String) (issued : Nat) (h : String) : Bool :=
+  h.startsWith pfx &&
+    match (String.ofList (h.toList.drop pfx.length)).toNat? with
+    | some n => 1 ≤ n && n ≤ issued
+    | none => false
+
+/-- The error for a handle that is not open: `handle.disposed` when this
+engine issued it and it was closed since, else the unknown-handle error
+(`handle.unknown`). Handle ids are never reused. -/
+def missingHandle (h : String) : IO String := do
+  if handleWasIssued "h" (← handleCounter.get) h then
+    pure (errCoded "handle.disposed"
+      s!"dataset handle {h} was disposed; a closed handle cannot be used again")
+  else pure (unknownHandle h)
+
 /-- Look `h` up and run `f` on the stored dataset; unknown handles get
 the shared error envelope. -/
 private def withHandle (h : String) (f : OpenDataset → IO String) : IO String := do
   match (← handleTable.get)[h]? with
-  | none    => pure (unknownHandle h)
+  | none    => missingHandle h
   | some od => f od
 
 /-- `datasetOpen(text, formatTag, baseIri)` — parse once, index once,
@@ -301,7 +318,7 @@ def datasetClose (h : String) : IO String := do
     handleTable.set (table.erase h)
     pure (okWith [])
   else
-    pure (unknownHandle h)
+    missingHandle h
 
 /-! ## Ops that keep the data in the store (issue 882 item 1) -/
 
@@ -323,7 +340,7 @@ def lookupHandleDataset (h : String) : IO (Option (Dataset × List (String × St
 def withHandleDataset (h : String) (f : Dataset → List (String × String) → IO String) :
     IO String := do
   match ← lookupHandleDataset h with
-  | none => pure (unknownHandle h)
+  | none => missingHandle h
   | some (ds, prefixes) => f ds prefixes
 
 /-- `datasetClone(handle)` — a new handle holding the same dataset and
@@ -479,7 +496,7 @@ def matchDataset (od : OpenDataset) (pat : QuadPattern) : Dataset :=
 def datasetMatch (h patternJson : String) : IO String := do
   let tbl ← handleTable.get
   match tbl[h]? with
-  | none => pure (unknownHandle h)
+  | none => missingHandle h
   | some od =>
     match quadPatternOf patternJson with
     | none => pure (errJson s!"datasetMatch: not a quad pattern: {patternJson}")
@@ -490,7 +507,7 @@ number of matching quads, with no new handle. -/
 def datasetMatchCount (h patternJson : String) : IO String := do
   let tbl ← handleTable.get
   match tbl[h]? with
-  | none => pure (unknownHandle h)
+  | none => missingHandle h
   | some od =>
     match quadPatternOf patternJson with
     | none => pure (errJson s!"datasetMatchCount: not a quad pattern: {patternJson}")
@@ -511,7 +528,7 @@ private def changeHandle (who h nq : String)
     (f : Dataset → List (Option WfIri × Triple) → Dataset) : IO String := do
   let tbl ← handleTable.get
   match tbl[h]? with
-  | none => pure (unknownHandle h)
+  | none => missingHandle h
   | some od =>
     match updateQuadsOf nq with
     | .error e => pure (errJson s!"{who}: {e}")
@@ -545,13 +562,35 @@ def updateQuadOfJsonQuad : TermJson.Quad → Except String (Option WfIri × Trip
   | (some (.bnode _), _) =>
       .error "a quad in a graph named by a blank node cannot be added or deleted here"
 
+/-- The first `{"type":"uri","value":v}` member under `j` whose `v` is not an
+IRI (RDF 1.2 Concepts §3.2), searched to depth `fuel`. -/
+def badIriFuel : Nat → Json → Option String
+  | 0, _ => none
+  | n + 1, j =>
+      match j with
+      | .object fields =>
+          if j.getString? "type" == some "uri" then
+            match j.getString? "value" with
+            | some v => if isIri v then none else some v
+            | none => none
+          else fields.findSome? fun kv => badIriFuel n kv.2
+      | .array items => items.findSome? (badIriFuel n)
+      | _ => none
+
+/-- Why `x` is not a quad: an invalid IRI is named (`term.invalid-iri`), any
+other shape is `term.invalid`. -/
+def notAQuadMessage (x : Json) : String :=
+  match badIriFuel 8 x with
+  | some v => s!"invalid IRI '{v}' in quad: {x.toString}"
+  | none => s!"not a quad: {x.toString}"
+
 /-- Decode each quad, one frame for any number of quads. -/
 def jsonQuadsLoop : List Json → Array TermJson.Quad → Except String (List TermJson.Quad)
   | [], acc => .ok acc.toList
   | x :: r, acc =>
       match TermJson.decodeQuad x with
       | some q => jsonQuadsLoop r (acc.push q)
-      | none => .error s!"not a quad: {x.toString}"
+      | none => .error (notAQuadMessage x)
 
 /-- Each quad as an Update quad, one frame for any number of quads. -/
 def updateQuadsLoop : List TermJson.Quad → Array (Option WfIri × Triple) →
@@ -617,7 +656,7 @@ in the line order of `datasetSerialize` N-Quads. A page the region cannot hold
 https://github.com/danbri/factoidal/issues/900 -/
 def datasetQuadsBin (h optsJson : String) : IO (String × ByteArray) := do
   match ← lookupHandleDataset h with
-  | none => pure (unknownHandle h, ByteArray.empty)
+  | none => do pure (← missingHandle h, ByteArray.empty)
   | some (ds, _) =>
     let opts := if optsJson == "" then none else parseJson? optsJson
     let qs := TermJson.Dataset.quadList ds
@@ -635,7 +674,7 @@ def datasetQuadsBin (h optsJson : String) : IO (String × ByteArray) := do
 private def changeHandleJson (who h text : String)
     (f : Dataset → List (Option WfIri × Triple) → Dataset) : IO String := do
   match (← handleTable.get)[h]? with
-  | none => pure (unknownHandle h)
+  | none => missingHandle h
   | some od =>
     match jsonQuadsOf text >>= (updateQuadsLoop · #[]) with
     | .error e => pure (errJson s!"{who}: {e}")
@@ -851,9 +890,140 @@ def engineTablesJson : Json :=
     , ("packSuffixes", strMap packSuffixes)
     , ("packUnsupportedSuffixes", strMap packUnsupportedSuffixes) ]
 
-/-- `engineTables()` — `engineTablesJson`. -/
+/-- `engineTables()` — `engineTablesJson`, plus `errorCodes`: each declared
+error code with its specification section and summary
+(`Wasm/Ops/ErrorModel.lean`). -/
 def engineTables : IO String :=
-  pure (okWith [("tables", engineTablesJson)])
+  let codes := errorCodeTable.map fun c =>
+    Json.object ([("code", Json.string c.code), ("summary", .string c.summary)]
+      ++ (match c.spec with | some u => [("spec", Json.string u)] | none => []))
+  pure (okWith [("tables", engineTablesJson), ("errorCodes", .array codes)])
+
+/-! ## Argument values of the public API (https://github.com/danbri/factoidal/issues/882 item 4)
+
+The host sends the name of a public function and the options object it was
+given; the engine decides whether every key is one the function takes and
+whether every enumerated value is in its table. A host keeps no copy of either
+list. -/
+
+/-- The value domain of an option. -/
+inductive OptionDomain where
+  | any
+  | parseFormat
+  | writerFormat
+  | rawFormat
+  | entail
+  | output
+  | version
+  | oneOf (values : List String)
+
+private def parseOpts : List (String × OptionDomain) :=
+  [("format", .parseFormat), ("baseIRI", .any)]
+
+private def serializeOpts : List (String × OptionDomain) :=
+  [ ("format", .writerFormat), ("version", .version), ("prefixes", .any)
+  , ("literalShorthand", .any), ("useNativeTypes", .any), ("useRdfType", .any)
+  , ("rdfDirection", .any) ]
+
+/-- The options each public function takes, with their value domains. A
+positional mode argument is checked as the option of its name (`mode`,
+`sourceKind`). -/
+def apiOptionTable : List (String × List (String × OptionDomain)) :=
+  [ ("parse", parseOpts ++ [("lenient", .any), ("maxErrors", .any)])
+  , ("openDataset", parseOpts), ("registerServiceEndpoint", parseOpts)
+  , ("update", parseOpts), ("canonicalize", parseOpts), ("isomorphic", parseOpts)
+  , ("shaclValidate", parseOpts), ("shexValidate", parseOpts), ("closure", parseOpts)
+  , ("coreRdfsCheck", parseOpts), ("tableauMaterialise", parseOpts)
+  , ("tableauDlInconsistent", parseOpts), ("rifEval", parseOpts)
+  , ("rmlMap", parseOpts ++ [("sourceKind", .oneOf ["json", "csv"])])
+  , ("owlClosure", parseOpts ++ [("mode", .oneOf ["rdfs", "owl-rl"])])
+  , ("owlIsConsistent", parseOpts ++ [("fuel", .any)])
+  , ("owlEntails", parseOpts ++ [("fuel", .any)])
+  , ("query", parseOpts ++ [("entail", .entail), ("sparql12", .any), ("version", .version),
+                            ("output", .output)])
+  , ("serialize", serializeOpts ++ [("inputFormat", .parseFormat), ("baseIRI", .any)])
+  , ("csvwToRdf", [("mode", .any), ("base", .any), ("url", .any)])
+  , ("jsonldToRdf", [("base", .any), ("rdfDirection", .any), ("expandContext", .any),
+                     ("processingMode", .any)])
+  , ("jsonldFromRdf", [("useNativeTypes", .any), ("useRdfType", .any),
+                       ("rdfDirection", .any)] ++ parseOpts)
+  , ("queryRaw", [("dataFormat", .rawFormat), ("entail", .entail), ("output", .output)])
+  , ("Dataset.query", [("sparql12", .any), ("version", .version), ("entail", .entail),
+                       ("output", .output)])
+  , ("Dataset.update", [])
+  , ("Dataset.validateShacl", parseOpts)
+  , ("Dataset.validateShex", [("focus", .any), ("shape", .any)])
+  , ("Dataset.serialize", serializeOpts)
+  , ("Dataset.toString", serializeOpts) ]
+
+private def queryOutputNames : List String := ["json", "csv", "tsv", "xml", "table", "ntriples"]
+
+/-- The refusal of `value` for option `key` of `who`, or `none`. -/
+def optionValueRefusal (who key value : String) : OptionDomain → Option String
+  | .any => none
+  | .parseFormat =>
+      if (parseFormatNames.lookup value.toLower).isSome then none
+      else some (errCoded "format.unknown"
+        s!"{who}: unknown format '{value}'. Expected one of: {", ".intercalate (parseFormatNames.map (·.1))}")
+  | .writerFormat =>
+      if (writerFormatNames.lookup value.toLower).isSome then none
+      else some (errCoded "format.unknown"
+        s!"{who}: unknown format '{value}'. Known formats: {", ".intercalate (writerFormatNames.map (·.2)).eraseDups}")
+  | .rawFormat =>
+      if (rawDataFormatNames.lookup value.toLower).isSome then none
+      else some (errCoded "format.unknown"
+        s!"{who}: unknown dataFormat '{value}'. Expected one of: {", ".intercalate (rawDataFormatNames.map (·.1))}")
+  | .entail =>
+      if value.toLower.startsWith "x-ikl" then some (errCoded "regime.refused" (iklRefusal who value))
+      else if entailRegimeNames.contains value then none
+      else some (errCoded "option.invalid-value"
+        s!"{who}: {key} must be one of {", ".intercalate entailRegimeNames} (got '{value}')")
+  | .output =>
+      if queryOutputNames.contains value then none
+      else some (errCoded "option.invalid-value"
+        s!"{who}: {key} must be one of {", ".intercalate queryOutputNames} (got '{value}')")
+  | .version =>
+      if value == "1.1" || value == "1.2" then none
+      else some (errCoded "option.invalid-value" s!"{who}: {key} must be '1.1' or '1.2' (got '{value}')")
+  | .oneOf values =>
+      let v := (closureRegimeAliases.lookup value.toLower).getD value.toLower
+      if values.contains v then none
+      else some (errCoded "option.invalid-value"
+        s!"{who}: {key} must be one of {", ".intercalate values} (got '{value}')")
+
+/-- `apiCheck(who, optionsJson)`: `optionsJson` is the options object the
+function was given, each value a string (its JavaScript `String` form) or
+`null` (an object or array value). Answers `{"ok":true}`, or the first refusal
+in key order: `option.unknown`, `format.unknown`, `option.invalid-value` or
+`regime.refused`. -/
+def apiCheck (who optionsJson : String) : String :=
+  match apiOptionTable.lookup who with
+  | none => errCoded "option.unknown" s!"apiCheck: no option table for '{who}'"
+  | some allowed =>
+      match parseJson? optionsJson with
+      | some (.object fields) =>
+          let refusal := fields.findSome? fun (k, v) =>
+            match allowed.lookup k with
+            | none => some (errCoded "option.unknown"
+                s!"{who}: unknown option '{k}'. Known options: {if allowed.isEmpty then "(none)" else ", ".intercalate (allowed.map (·.1))}")
+            | some dom =>
+                match v with
+                | .string value => optionValueRefusal who k value dom
+                | _ => none
+          refusal.getD (okWith [])
+      | _ => errCoded "call.arguments" "apiCheck: optionsJson must be a JSON object"
+
+#guard codeOf? (apiCheck "parse" "{\"bogus\":\"1\"}") == some "option.unknown"
+#guard codeOf? (apiCheck "parse" "{\"format\":\"bogus\"}") == some "format.unknown"
+#guard codeOf? (apiCheck "parse" "{\"format\":\"TTL\"}") == none
+#guard codeOf? (apiCheck "serialize" "{\"format\":\"rdfc\"}") == none
+#guard codeOf? (apiCheck "serialize" "{\"format\":\"ttl12\"}") == some "format.unknown"
+#guard codeOf? (apiCheck "query" "{\"entail\":\"x-ikl-foo\"}") == some "regime.refused"
+#guard codeOf? (apiCheck "query" "{\"entail\":\"RDFS\",\"output\":\"csv\"}") == none
+#guard codeOf? (apiCheck "query" "{\"output\":\"pdf\"}") == some "option.invalid-value"
+#guard codeOf? (apiCheck "owlClosure" "{\"mode\":\"owlrl\"}") == none
+#guard codeOf? (apiCheck "owlClosure" "{\"mode\":\"rho-df\"}") == some "option.invalid-value"
+#guard codeOf? (apiCheck "Dataset.update" "{\"x\":null}") == some "option.unknown"
 
 #guard (datasetOfQuads [(none, ⟨.bnode "a", ⟨"http://e/p", rfl⟩, .bnode "b"⟩),
                         (none, ⟨.bnode "a", ⟨"http://e/p", rfl⟩, .bnode "b"⟩)]).default.length == 1
