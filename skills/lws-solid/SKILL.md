@@ -62,7 +62,8 @@ is `500`, for a failure of the host itself.
 factoidal lws-serve   DIR (--issuer IRI[,IRI…] | --auth-config FILE | --insecure-no-auth)
                           [--owner WEBID] [--root-acl FILE] [--audience IRI]
                           [--port N] [--host ADDRESS] [--base IRI] [--page-size N]
-                          [--unstable-search-results]
+                          [--paginate-always] [--moves all|data|off]
+                          [--no-linkset-put] [--unstable-search-results]
 factoidal solid-serve DIR (--issuer IRI[,IRI…] | --auth-config FILE | --insecure-no-auth)
                           [--port N] [--host ADDRESS] [--base IRI] [--owner WEBID]
 ```
@@ -162,8 +163,12 @@ suggest them), and a loop through another host name of this server
 
 * Discovery: the storage description has `capability: [{type: MoveResource,
   appliesTo: [DataResource, Container], preservesIdentifier: false}]`
-  (`Config.moves`; the wasm handle turns it on, config `moves: false` turns
-  it off, and then a change of `up` is 409).
+  (`Config.moves`; the wasm handle turns it on, config `moves: false` or
+  `"off"` (`lws-serve --moves off`) turns it off, and then a change of `up`
+  is 409). Config `moves: "data"` (`--moves data`, `Config.moveContainers`
+  false) moves data resources only: `appliesTo: [DataResource]`, and a
+  change of a container's `up` is 409 (`Move.movable`, also used by
+  `movePlanOf?`). Another `moves` value stops the start.
 * Request: a JSON Patch (or PUT) of `<path>?linkset` that changes the `up`
   target (`requestedUp`). The target is an IRI below `baseIri` or a
   path-absolute reference. Answer: 200, the new linkset (new `anchor`),
@@ -381,11 +386,18 @@ grants.
   in `Operations.lean`: for an unchanged container, pages 1 to
   `memberPageCount` concatenate to `listedMembers`. The draft says nothing
   about change between page requests; the record of that choice is the
-  module header.
+  module header. Config `paginateAlways` (`lws-serve --paginate-always`,
+  `Pagination.paginatedWith`) paginates every listing: one that fits is one
+  page with `first` and `last` and no `next` or `prev`. A paginated
+  container's first-page tags are current tags for `If-Match`
+  (`Operations.tagsIn`, `pageTag`), because GET of the container URI answers
+  that page.
 * `L4Factoidal/LWS/Linkset.lean`: `Entry.links` holds the client links.
   `Link` with `Prefer: set-linkset` replaces them on PUT and adds to them on
   PATCH; `Link` on POST sets them (server-managed relations dropped); the
-  linkset resource accepts JSON Patch and PUT of `application/linkset+json`.
+  linkset resource accepts JSON Patch and PUT of `application/linkset+json`
+  (config `linksetPut: false`, `lws-serve --no-linkset-put`: `Allow` without
+  PUT and a PUT answers 405 with `Allow`; `Operations.linksetAllow`).
   `serverManagedRels` (`linkset`, `type`, `format`, `size`, `modified`, `up`,
   `items`, `lws#storage`) answer 409; a malformed link (RFC 8288 relation
   syntax, URI-reference target, token attribute names, no `anchor`) answers

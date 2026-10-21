@@ -144,6 +144,21 @@ Linked Web Storage, three rules of the editor's draft (w3c/lws-protocol
   409. The agent needs the delete of every moved resource and the create in
   the destination. `listen`/`openLwsStorage` take `moves: false` to turn it
   off. Theorem `move_tree`: a move keeps the containment hierarchy a tree.
+- Three server options, each off by default and decided in Lean
+  configuration, so that every Touchstone test that one of our
+  configurations can satisfy runs (`tools/lws-touchstone.sh --config all`):
+  `lws-serve --moves all|data|off` (`moves: "data"` describes `appliesTo`
+  `[DataResource]` and answers a change of a container's `up` link with 409;
+  `"off"` describes no `MoveResource`), `--no-linkset-put` (`linksetPut:
+  false`: a linkset's `Allow` leaves out PUT and a PUT answers 405 with
+  `Allow`, as lws10-core §Metadata requires when PUT is not advertised) and
+  `--paginate-always` (`paginateAlways: true`: a container listing that fits
+  on one page is still one paginated page, with `rel="first"` and
+  `rel="last"` and no `rel="next"` or `rel="prev"`). An unknown `moves`
+  value stops the start.
+- Fixed: on a paginated container, `If-Match` with the `ETag` of its first
+  page (which a GET of the container URI answers) failed with 412; the
+  first page's tags are now current tags of the container.
 
 Encryption at rest of the LWS and Solid storage snapshot, off by default
 (https://github.com/danbri/factoidal/issues/921; owner, 2026-10-21: "Yes env

@@ -24,6 +24,30 @@
 #                  authorization server, not ours; the summary prints them
 #                  separately.
 #   --config both  both (default)
+#
+#   Alternative configurations. Each runs with authorization on, as
+#   `auth`, plus server flags that make one or more Touchstone tests apply
+#   which no single configuration can apply together with the others (their
+#   preconditions exclude one another). The default server is not changed.
+#   --config alt-nomove        lws-serve --moves off: no MoveResource
+#                              capability (core/moving
+#                              move-refused-without-capability)
+#   --config alt-datamove      lws-serve --moves data: appliesTo
+#                              [DataResource] (core/moving
+#                              move-container-refused-without-container-support)
+#   --config alt-linkset-noput lws-serve --no-linkset-put: Allow without PUT
+#                              (core/linksets linkset-put-405-when-unsupported)
+#   --config alt-onepage       lws-serve --page-size 100 --paginate-always:
+#                              five members on one paginated page
+#                              (core/pagination pagination-single-page)
+#   --config alt               the four alternative configurations
+#   --config all               open, auth and the four alternative
+#                              configurations, then a union line: for each
+#                              test, whether it passed in at least one
+#                              configuration, failed in any, or never
+#                              applied. A failure in any configuration makes
+#                              the script exit 1.
+#   A union line is printed whenever more than one configuration ran.
 #   --shim         DIAGNOSTIC ONLY. Put a proxy in front of our server that
 #                  adds "Content-Type: application/octet-stream" to a POST
 #                  with no content and no Content-Type, and changes nothing
@@ -46,7 +70,9 @@
 #                    deleted at exit unless TOUCHSTONE_KEEP=1)
 #   TOUCHSTONE_M2    Maven local repository (default: $TOUCHSTONE_WORK/m2)
 #   TOUCHSTONE_OUT   directory to copy each run's report.md, report.json and
-#                    earl.ttl to (default: none)
+#                    earl.ttl to, and to write union.tsv (one row per test:
+#                    the union verdict and the outcome in each
+#                    configuration) when more than one ran (default: none)
 #   MVN              Maven command (default: mvn on PATH, else /opt/maven/bin/mvn,
 #                    else the Touchstone wrapper ./mvnw)
 #   LWS_PAGE_SIZE    the server's container page size, passed as
@@ -88,11 +114,33 @@ while [ $# -gt 0 ]; do
     --config) CONFIG="${2:-}"; shift 2 ;;
     --shim) SHIM=1; shift ;;
     --unstable-search-results) UNSTABLE=(--unstable-search-results); SUFFIX="-unstable"; shift ;;
-    -h|--help) sed -n '2,70p' "$0"; exit 0 ;;
+    -h|--help) sed -n '2,95p' "$0"; exit 0 ;;
     *) echo "lws-touchstone: unknown argument $1" >&2; exit 2 ;;
   esac
 done
-case "$CONFIG" in open|auth|both) ;; *) echo "lws-touchstone: --config open|auth|both" >&2; exit 2 ;; esac
+
+# The alternative configurations: name, then the extra lws-serve flags.
+alt_flags () {
+  case "$1" in
+    alt-nomove) echo "--moves off" ;;
+    alt-datamove) echo "--moves data" ;;
+    alt-linkset-noput) echo "--no-linkset-put" ;;
+    alt-onepage) echo "--page-size 100 --paginate-always" ;;
+    *) return 1 ;;
+  esac
+}
+ALL_ALTS="alt-nomove alt-datamove alt-linkset-noput alt-onepage"
+RUN_OPEN=0; RUN_AUTH=0; ALTS=""
+case "$CONFIG" in
+  open) RUN_OPEN=1 ;;
+  auth) RUN_AUTH=1 ;;
+  both) RUN_OPEN=1; RUN_AUTH=1 ;;
+  alt) ALTS="$ALL_ALTS" ;;
+  all) RUN_OPEN=1; RUN_AUTH=1; ALTS="$ALL_ALTS" ;;
+  alt-*) alt_flags "$CONFIG" >/dev/null || { echo "lws-touchstone: unknown configuration $CONFIG" >&2; exit 2; }
+         ALTS="$CONFIG" ;;
+  *) echo "lws-touchstone: --config open|auth|both|alt|all|$(echo "$ALL_ALTS" | tr ' ' '|')" >&2; exit 2 ;;
+esac
 
 cannot_run () { echo "lws-touchstone: CANNOT RUN: $*" >&2; exit 2; }
 
@@ -278,6 +326,7 @@ run_suite () {
       cp "$TS/$reports/report.md" "$TS/$reports/report.json" "$TS/$reports/earl.ttl" "$TOUCHSTONE_OUT/$id/"
     fi
     if [ -f "$TS/$reports/report.json" ]; then
+      printf '%s\t%s\n' "$id" "$TS/$reports/report.json" >> "$WORK/reports.tsv"
       node -e '
         const t = JSON.parse(require("fs").readFileSync(process.argv[1], "utf8")).tests
         const as = t.filter((x) => /^(auth\/|core\/authorization_server#)/.test(x.id) && x.outcome !== "inapplicable")
@@ -305,9 +354,18 @@ run_suite () {
   esac
 }
 
+
+# stop_pids PID...: stop the processes of one configuration after its run.
+stop_pids () {
+  for p in "$@"; do kill "$p" 2>/dev/null; wait "$p" 2>/dev/null; done
+}
+
+rm -f "$WORK/reports.tsv"
+RAN=""
+
 # ---------------------------------------------------------------- open
 
-if [ "$CONFIG" = open ] || [ "$CONFIG" = both ]; then
+if [ "$RUN_OPEN" = 1 ]; then
   P="$(free_port)"; BASE_PORT="$P"
   if [ "$SHIM" = 1 ]; then BASE_PORT="$(free_port)"; fi
   BASE="http://127.0.0.1:$BASE_PORT/"
@@ -321,14 +379,17 @@ if [ "$CONFIG" = open ] || [ "$CONFIG" = both ]; then
     printf 'targets:\n  %s:\n    baseUrl: %s\n    adapter: env\n    capabilities: []\n    properties: {}\n' \
       "$ID" "$BASE" > "$WORK/targets-open.yaml"
     run_suite "$ID" "$WORK/targets-open.yaml"
+    RAN="$RAN $ID"
   else
     echo "factoidal-open: CANNOT RUN: lws-serve did not start" >&2; note 2
   fi
 fi
 
-# ---------------------------------------------------------------- auth
+# ---------------------------------------------------------------- authorization on
 
-if [ "$CONFIG" = auth ] || [ "$CONFIG" = both ]; then
+AUTH_READY=0
+prepare_auth () {
+  [ "$AUTH_READY" = 1 ] && return 0
   CP_FILE="$WORK/fixtures.cp"
   if [ ! -s "$CP_FILE" ]; then
     CP_RC=0
@@ -340,31 +401,109 @@ if [ "$CONFIG" = auth ] || [ "$CONFIG" = both ]; then
   CP="$WORK/as:$FIXJAR:$(cat "$CP_FILE")"
   JC_RC=0; javac -cp "$CP" -d "$WORK/as" "$WORK/as/TouchstAs.java" > "$WORK/javac.log" 2>&1 || JC_RC=$?
   [ "$JC_RC" = 0 ] || cannot_run "cannot compile the authorization server launcher (see $WORK/javac.log)"
+  AUTH_READY=1
+}
 
+# run_authorized NAME ID LWS-SERVE-FLAGS...: start Touchstone's reference
+# authorization server and our server with authorization on (see --config
+# auth above) plus the given flags, and run the suite as target ID.
+run_authorized () {
+  local name="$1" id="$2"; shift 2
+  prepare_auth
   AS_PORT="$(free_port)"; FIX_PORT="$(free_port)"; P="$(free_port)"; BASE_PORT="$P"
   if [ "$SHIM" = 1 ]; then BASE_PORT="$(free_port)"; fi
   BASE="http://127.0.0.1:$BASE_PORT/"
   FIXTURES="http://localhost:$FIX_PORT/"
-  ID=factoidal-auth$SUFFIX; [ "$SHIM" = 1 ] && ID=factoidal-auth$SUFFIX-shim
+  local before=${#PIDS[@]}
   # A reused TOUCHSTONE_WORK holds the previous run's log and targets file;
   # with them in place a second run (2026-10-21, issue 922) read the old
   # target id and could not run. Remove both before the server starts.
-  rm -f "$WORK/as.log" "$WORK/targets-auth.yaml"
+  rm -f "$WORK/as-$name.log" "$WORK/targets-$name.yaml"
   java -Dlogback.configurationFile="$WORK/as/logback.xml" -cp "$CP" TouchstAs "$AS_PORT" \
-    "$WORK/targets-auth.yaml" "$ID" "$BASE" "$FIXTURES" "$BASE,${BASE}.well-known/lws-storage" \
-    > "$WORK/as.log" 2>&1 & PIDS+=($!)
-  wait_for "$WORK/as.log" '^issuer ' 60 || { cat "$WORK/as.log" >&2; cannot_run "the reference authorization server did not start"; }
-  rm -rf "$WORK/auth-store"; mkdir -p "$WORK/auth-store"
-  if start_server auth "$WORK/auth-store" "$P" "$BASE" \
-       --issuer "http://localhost:$AS_PORT" --owner "${FIXTURES}agents/alice"; then
+    "$WORK/targets-$name.yaml" "$id" "$BASE" "$FIXTURES" "$BASE,${BASE}.well-known/lws-storage" \
+    > "$WORK/as-$name.log" 2>&1 & PIDS+=($!)
+  wait_for "$WORK/as-$name.log" '^issuer ' 60 || { cat "$WORK/as-$name.log" >&2; cannot_run "the reference authorization server did not start"; }
+  rm -rf "$WORK/$name-store"; mkdir -p "$WORK/$name-store"
+  if start_server "$name" "$WORK/$name-store" "$P" "$BASE" \
+       --issuer "http://localhost:$AS_PORT" --owner "${FIXTURES}agents/alice" "$@"; then
     if [ "$SHIM" = 1 ]; then
-      node "$WORK/shim.mjs" "$BASE_PORT" "$P" > "$WORK/auth-shim.log" 2>&1 & PIDS+=($!)
-      wait_for "$WORK/auth-shim.log" '^shim:' 30 || cannot_run "the shim did not start"
+      node "$WORK/shim.mjs" "$BASE_PORT" "$P" > "$WORK/$name-shim.log" 2>&1 & PIDS+=($!)
+      wait_for "$WORK/$name-shim.log" '^shim:' 30 || cannot_run "the shim did not start"
     fi
-    run_suite "$ID" "$WORK/targets-auth.yaml"
+    run_suite "$id" "$WORK/targets-$name.yaml"
+    RAN="$RAN $id"
   else
-    echo "$ID: CANNOT RUN: lws-serve did not start" >&2; note 2
+    echo "$id: CANNOT RUN: lws-serve did not start" >&2; note 2
   fi
+  stop_pids "${PIDS[@]:$before}"
+}
+
+if [ "$RUN_AUTH" = 1 ]; then
+  ID=factoidal-auth$SUFFIX; [ "$SHIM" = 1 ] && ID=factoidal-auth$SUFFIX-shim
+  run_authorized auth "$ID"
+fi
+
+for ALT in $ALTS; do
+  ID=factoidal-$ALT$SUFFIX; [ "$SHIM" = 1 ] && ID=factoidal-$ALT$SUFFIX-shim
+  # shellcheck disable=SC2046  # the flags are words by design
+  echo "$ID: lws-serve flags: $(alt_flags "$ALT")"
+  run_authorized "$ALT" "$ID" $(alt_flags "$ALT")
+done
+
+# ---------------------------------------------------------------- per configuration and union
+
+if [ -s "$WORK/reports.tsv" ]; then
+  node -e '
+    const fs = require("fs")
+    const rows = fs.readFileSync(process.argv[1], "utf8").trim().split("\n").map((l) => l.split("\t"))
+    const out = process.argv[2]
+    const runs = rows.map(([id, path]) => ({ id, tests: JSON.parse(fs.readFileSync(path, "utf8")).tests }))
+    console.log("per configuration (tests, passed, failed, cantTell, inapplicable):")
+    for (const r of runs) {
+      const n = (o) => r.tests.filter((x) => x.outcome === o).length
+      console.log(`  ${r.id}: ${r.tests.length} tests, ${n("passed")} passed, ${n("failed")} failed, ` +
+        `${n("cantTell")} cantTell, ${n("inapplicable")} inapplicable`)
+    }
+    if (runs.length < 2) process.exit(0)
+    // For each test: failed in any configuration; else passed in at least
+    // one; else cantTell in at least one; else never applied.
+    const ids = [...new Set(runs.flatMap((r) => r.tests.map((x) => x.id)))].sort()
+    const verdict = new Map()
+    const where = new Map()
+    for (const id of ids) {
+      const got = runs.map((r) => [r.id, (r.tests.find((x) => x.id === id) || { outcome: "absent" }).outcome])
+      const has = (o) => got.filter(([, v]) => v === o).map(([c]) => c)
+      let v
+      if (has("failed").length) v = "failed"
+      else if (has("passed").length) v = "passed"
+      else if (has("cantTell").length) v = "cantTell"
+      else v = "never applied"
+      verdict.set(id, v)
+      where.set(id, v === "failed" ? has("failed") : v === "passed" ? has("passed") : has(v === "cantTell" ? "cantTell" : "inapplicable"))
+    }
+    const count = (v) => ids.filter((id) => verdict.get(id) === v).length
+    console.log(`union over ${runs.length} configurations (${runs.map((r) => r.id).join(", ")}): ` +
+      `${count("passed")} passed in at least one configuration, ${count("failed")} failed in at least one, ` +
+      `${count("cantTell")} cantTell only, ${count("never applied")} never applied (out of ${ids.length})`)
+    for (const id of ids) {
+      const v = verdict.get(id)
+      if (v !== "passed") console.log(`  ${v}: ${id}${v === "failed" ? " (in " + where.get(id).join(", ") + ")" : ""}`)
+    }
+    // Tests that apply in exactly one configuration, and which.
+    const only = ids.filter((id) => verdict.get(id) === "passed" && where.get(id).length === 1)
+    for (const id of only) console.log(`  passed only in ${where.get(id)[0]}: ${id}`)
+    if (out) {
+      fs.mkdirSync(out, { recursive: true })
+      const lines = ["test\tunion\t" + runs.map((r) => r.id).join("\t")]
+      for (const id of ids) {
+        lines.push([id, verdict.get(id), ...runs.map((r) => (r.tests.find((x) => x.id === id) || { outcome: "absent" }).outcome)].join("\t"))
+      }
+      fs.writeFileSync(out + "/union.tsv", lines.join("\n") + "\n")
+      console.log(`union table: ${out}/union.tsv`)
+    }
+  ' "$WORK/reports.tsv" "${TOUCHSTONE_OUT:-}"
+  U_RC=$?
+  [ "$U_RC" = 0 ] || { echo "lws-touchstone: the union could not be computed (exit $U_RC)" >&2; note 2; }
 fi
 
 [ "$SHIM" = 1 ] && echo "NOTE: --shim was on; these are diagnostic numbers, not conformance scores."
