@@ -741,6 +741,8 @@ import L4Factoidal.Unified.RifEmbed
 -- carry one `#guard` per `guarded` row of each conformance registry, so
 -- importing them here makes every one of those checks a build gate.
 import L4Factoidal.LWS.Tests
+import L4Factoidal.LWS.Authorization
+import L4Factoidal.LWS.AuthorizationTests
 import L4Factoidal.Solid.Tests
 
 -- XMPP / GC3 (https://github.com/danbri/factoidal/ ... xmpp/DESIGN.md

@@ -21,12 +21,19 @@
 //   lwsOpen  [configJson]            -> { ok, handle, root }
 //   lwsStep  [handle, requestJson]   -> { ok, response }
 //   lwsClose [handle]                -> { ok }
+//   lwsFetched [handle, documentJson] -> { ok, fetch? | installed? | refused? }
+//
+// `lwsStep` may answer `{ ok, fetch: { issuer, url } }` instead of a
+// response: the engine needs an authorization server's metadata or key
+// set before it can decide. This host fetches that URL, passes
+// `{ issuer, url, status, body, now }` to `lwsFetched`, follows any
+// further `fetch` it names, and steps the request again.
 //
 //   request  { method, target, headers: [[name, value]], body }
 //   response { status, headers: [[name, value]], body }
 //
-// The config members are `baseIri`, `now`, `owner` and `agent`, all
-// optional. `target` is a path within the storage, so this host passes
+// The config members are `baseIri`, `now`, `owner`, `agent`, `rootAcl`,
+// `auth` and `insecureNoAuth`, all optional. `target` is a path within the storage, so this host passes
 // Node's `request.url` through unchanged and never composes an absolute
 // IRI: `baseIri` tells the engine what the root maps to.
 //
@@ -51,7 +58,27 @@ import { loadEngine } from '../bin/engine.mjs'
 import { readSnapshot, persistIfChanged } from './persist.mjs'
 
 /** The ops this host needs from the engine. */
-export const LWS_OPS = ['lwsOpen', 'lwsStep', 'lwsClose', 'lwsSnapshot']
+export const LWS_OPS = ['lwsOpen', 'lwsStep', 'lwsClose', 'lwsSnapshot', 'lwsFetched']
+
+/** The most documents one request may make this host fetch before the
+ *  engine has answered it. The engine names at most two per issuer (its
+ *  metadata, then its key set); this bound only stops a defective module
+ *  from looping the host. */
+const MAX_FETCHES = 8
+
+/**
+ * Fetch one document the engine named, for `lwsFetched`. Pure I/O: the
+ * engine decides what the bytes mean. A network failure is reported as
+ * status 0, which the engine refuses like any other failed fetch.
+ */
+async function fetchDocument (url) {
+  try {
+    const answer = await fetch(url, { redirect: 'error' })
+    return { status: answer.status, body: await answer.text() }
+  } catch (error) {
+    return { status: 0, body: String(error && error.message ? error.message : error) }
+  }
+}
 
 /** An error raised by the LWS host, as opposed to one the engine
  *  reported. `unknownOp` is set when the loaded WebAssembly module does
@@ -147,6 +174,13 @@ export async function openLwsStorage (options = {}) {
   if (typeof options.now === 'number') config.now = options.now
   if (typeof options.owner === 'string') config.owner = options.owner
   if (typeof options.agent === 'string') config.agent = options.agent
+  // Authorization (L4Factoidal/LWS/Authorization.lean). `auth` is passed
+  // through unread; `insecureNoAuth` is the explicit development mode.
+  // With neither, the engine enforces authorization with no trusted
+  // issuer.
+  if (options.auth !== undefined && options.auth !== null) config.auth = options.auth
+  if (options.insecureNoAuth === true) config.insecureNoAuth = true
+  if (typeof options.rootAcl === 'string') config.rootAcl = options.rootAcl
   // `dir` names the storage directory. The snapshot found there, if any,
   // is the storage to continue from; the engine checks it.
   const dir = typeof options.dir === 'string' ? options.dir : null
@@ -178,11 +212,32 @@ export async function openLwsStorage (options = {}) {
      *          headers: Array<[string, string]>, body: string}} request
      * @returns {{status: number, headers: Array<[string, string]>, body: string}}
      */
-    step (request) {
+    async step (request) {
       const record = options.realClock === true
         ? { ...request, now: Math.floor(Date.now() / 1000) }
         : request
-      const envelope = engine.call('lwsStep', [handle, JSON.stringify(record)])
+      let envelope = engine.call('lwsStep', [handle, JSON.stringify(record)])
+      // The engine may answer "fetch this document first" (an issuer's
+      // metadata or key set). The host fetches exactly what it is told,
+      // hands the bytes back, and steps the request again.
+      let fetches = 0
+      while (envelope !== null && typeof envelope === 'object' &&
+             envelope.fetch !== undefined && envelope.fetch !== null) {
+        let wanted = envelope.fetch
+        while (wanted !== undefined && wanted !== null) {
+          fetches += 1
+          if (fetches > MAX_FETCHES) {
+            throw new LwsHostError('the engine asked for more documents than one request may fetch')
+          }
+          const got = await fetchDocument(wanted.url)
+          const told = engine.call('lwsFetched', [handle, JSON.stringify({
+            issuer: wanted.issuer, url: wanted.url, status: got.status, body: got.body,
+            ...(typeof record.now === 'number' ? { now: record.now } : {})
+          })])
+          wanted = told !== null && typeof told === 'object' ? told.fetch : null
+        }
+        envelope = engine.call('lwsStep', [handle, JSON.stringify(record)])
+      }
       const answer = responseOf(envelope)
       if (dir !== null) persistIfChanged(engine, 'lwsSnapshot', handle, envelope, dir)
       return answer
@@ -261,7 +316,7 @@ export async function createLwsServer (options = {}) {
     }
     let answer
     try {
-      answer = (await storage()).step(record)
+      answer = await (await storage()).step(record)
     } catch (error) {
       // A failure of this host or of the engine, not a protocol answer.
       // The engine's own words are kept; nothing is invented.
