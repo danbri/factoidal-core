@@ -58,7 +58,8 @@ is `500`, for a failure of the host itself.
 factoidal lws-serve   DIR (--issuer IRI[,IRI…] | --auth-config FILE | --insecure-no-auth)
                           [--owner WEBID] [--root-acl FILE] [--audience IRI]
                           [--port N] [--host ADDRESS] [--base IRI]
-factoidal solid-serve DIR [--port N] [--host ADDRESS] [--base IRI] [--owner WEBID]
+factoidal solid-serve DIR (--issuer IRI[,IRI…] | --auth-config FILE | --insecure-no-auth)
+                          [--port N] [--host ADDRESS] [--base IRI] [--owner WEBID]
 ```
 
 `--port 0` takes an ephemeral port and the command prints the origin it
@@ -190,7 +191,7 @@ What makes each one exit 2 today:
 
 | script | why it does not run |
 | --- | --- |
-| `solid-server-interop.sh` | `web-access-control-tests` logs in through an external Solid-OIDC issuer (a Community Solid Server account with username and password) before its first request, and `solid-serve` does not verify Solid-OIDC tokens yet |
+| `solid-server-interop.sh` | `web-access-control-tests` logs in through an external Solid-OIDC issuer before its first request: `solid-auth-fetcher` posts a login cookie of a Node Solid Server style issuer (`POST /login/password`) to `/authorize` and expects a redirect with a code. `solid-serve` verifies the tokens (issue 899); what is missing is that issuer with two accounts. Community Solid Server 7 has no `/login/password` and its `/authorize` asks for consent, so it cannot stand in (measured 2026-10-21, see below) |
 | `solid-client-interop.sh` | the module carries no Solid client ops; also refuses to start the ~250 MB Community Solid Server download below 2 GB free |
 | `solid-conformance-harness.sh` | no Docker daemon, or no `SOLID_HARNESS_ENV` credentials file |
 
@@ -243,10 +244,18 @@ persistence into Shardborough, and the LWS `authn-openid`, `authn-saml`,
 HACL\* P-256, RSA and Ed25519 code (`L4Factoidal/Crypto/*Native.lean`), in
 the native build and in the wasm module. The LWS host uses it for Bearer
 access tokens (above). The Solid server has the Solid-OIDC decision with
-DPoP (`Solid/Server/Auth.lean`), but `Solid.Server.step` still takes the
-agent from `requesterOf` (the handle configuration) and does not call
-`authenticatedRequester`, and no Solid host fetches identity-provider keys;
-that is why `web-access-control-tests` cannot run against `solid-serve`.
+DPoP (`Solid/Server/Auth.lean`), and `Solid/Server/Oidc.lean` wires it
+into the server (https://github.com/danbri/factoidal/issues/899):
+`Oidc.authenticatedStep` decides the requester and calls `Methods.stepAs`.
+It keeps the trusted issuers' keys, found by OpenID Connect Discovery
+(`/.well-known/openid-configuration`, issuer identity check of §4.3, then
+`jwks_uri`); checks `aud` contains `solid`, the `webid` claim, `exp`,
+`cnf.jkt` against the DPoP key, the proof's `htm`, `htu`, `iat`, `ath` and
+signature, and a `jti` replay cache; and checks that the WebID profile
+lists the issuer with `solid:oidcIssuer` (Solid-OIDC §8.1.1, §6.1). A
+refused credential answers 401 with `WWW-Authenticate: DPoP algs=…,
+error=…` (RFC 9449 §7.1). The host fetches only the URLs a `fetch` answer
+names. Host test: `node tests/solid/server/oidc.mjs`.
 
 ## Adding a rule
 
