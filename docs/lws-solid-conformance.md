@@ -97,7 +97,7 @@ A response is a JSON object with the same shape minus the method:
 | member | default | meaning |
 |---|---|---|
 | `baseIri` | `"http://localhost/"` | the absolute IRI the storage root maps to. A request target `/a/b` denotes `baseIri` + `a/b`. |
-| `now` | `0` | the clock, in seconds since the Unix epoch. Every mutation stamps `Last-Modified` from it and then advances it by one second, so a sequence of writes has a strictly increasing modification time with no call to a real clock. |
+| `now` | `0` | the clock, in seconds since the Unix epoch. Every mutation stamps `Last-Modified` from it and then advances it by one second, so the writes of one request have increasing modification times with no call to a real clock. A host with a real clock sets it on every request, so across requests in one second it repeats; entity tags and POST names do not depend on it (https://github.com/danbri/factoidal/issues/911). |
 | `owner` | absent | the WebID the storage advertises through `Link: rel="http://www.w3.org/ns/solid/terms#owner"`. |
 | `agent` | absent | the WebID of the requesting agent for every request on this handle. A handle with no `agent` is an unauthenticated agent. It stands only when authentication is off: for `lwsOpen` with `insecureNoAuth`, for `solidOpen` with `insecureNoAuth` or with neither `auth` nor `insecureNoAuth`. |
 | `enforceWac` | `false` | `solidOpen` only. With it false the Web Access Control decision is computed and reported in `WAC-Allow` but never refuses a request, which is the first slice's public storage. With it true the decision is enforced and a target with no effective ACL resource is denied, as Web Access Control §5.3 requires. |
@@ -220,10 +220,10 @@ server does not advertise.
 |---|---|---|---|
 | Operations | the four operations create, read, update, delete | tested | `lwsGuardCreateReadUpdateDelete`; server.mjs CRUD |
 | Read | 200 with the stored media type | tested | `lwsGuardCreateReadUpdateDelete` |
-| Read | MUST include `ETag` on GET/HEAD (also §Metadata) | tested | `lwsGuardEtagOnRead`; draft-binding "Read: GET carries ETag" |
+| Read | MUST include `ETag` on GET/HEAD (also §Metadata); a strong tag changes whenever the representation does (RFC 9110 §8.8.1) | tested (clock and FNV-1a digest of the bytes of a data resource, of the listing of a container, so two changes in one second give two tags: https://github.com/danbri/factoidal/issues/911 F3) | `lwsGuardEtagOnRead`, `lwsGuardContainerTagSameSecond`; draft-binding "Read: GET carries ETag", "Read: a container ETag changes when a member is deleted in the same second" |
 | Read | Last-Modified on GET and HEAD (CG delta) | tested | `lwsGuardLastModifiedOnGet/Head`; server.mjs |
 | Read | MUST support range requests | tested (single byte range at any offset, 206 with `Content-Range`, 416 with `bytes */len`; theorem `range_selection_exact`) | `lwsGuardRange`, `lwsGuardEveryRange`, `lwsGuardRangeInsideSequence`; draft-binding "Read: a byte Range"; `tests/lws/binary-bodies.mjs` |
-| Read | SHOULD support conditional requests; 304 | tested (ETag; If-Modified-Since by exact date) | `lwsGuardNotModified` |
+| Read | SHOULD support conditional requests; 304 | tested (ETag; If-Modified-Since and If-Unmodified-Since compared as HTTP-dates in the three RFC 9110 §5.6.7 formats, If-Unmodified-Since for every method with 412, in the order of RFC 9110 §13.2.2; theorem `unixOfCivil_civilOfUnix`: https://github.com/danbri/factoidal/issues/911 F5) | `lwsGuardNotModified`, `lwsGuardIfUnmodifiedSince`, `HttpDate.lean` guards; draft-binding "Conditional requests" |
 | Read | MUST support HEAD with the same headers | tested | `lwsGuardEtagOnRead`, `lwsGuardLastModifiedOnHead` |
 | Read | Link `linkset`, `up`, `type` on every response | tested | `lwsGuardLwsLinks` |
 | Containment | MUST `rel="up"` on non-root GET/HEAD | tested | `lwsGuardLwsLinks` |
@@ -231,11 +231,11 @@ server does not advertise.
 | Container Representation | `id`, `type`, `totalItems`, `items` (empty array when empty); item `id`, `type`, `format` (MUST for data), `size`, `modified` | tested | `lwsGuardContainerListing`; draft-binding |
 | Container Membership | listing includes all readable members | tested (no access control on LWS host) | `lwsGuardContainerListing` |
 | LWS Media Type | container MUST support `application/lws+json` | tested | `lwsGuardContainerListing` |
-| Content Negotiation | profile media types RDF-isomorphic to lws+json; `Content-Type` with profile; SHOULD `Vary: Accept` | tested (Turtle, JSON-LD) | `lwsGuardContainerTurtle` |
+| Content Negotiation | profile media types RDF-isomorphic to lws+json; `Content-Type` with profile; SHOULD `Vary: Accept` | tested (Turtle, JSON-LD; `size` is `http://schema.org/size`, as the core draft's examples and the context give it; `lws10-vocab/vocabulary.yml` says `https://schema.org/`; a contained container has no `dcterms:modified`, because the context defines `modified` for a DataResource only: https://github.com/danbri/factoidal/issues/911 F2) | `lwsGuardContainerTurtle`, `lwsGuardTurtleSchemaNamespace`; draft-binding "LWS Profile" |
 | Pagination | SHOULD paginate; `first` (MUST), `next` (MUST, not on the last page), `prev` (not on the first page), `last`; 200; `totalItems` over the full membership | tested (threshold and page size `pageSize`, default 100; increasing path order, each member once; an `ETag` per page; theorem `pageItems_concat`) | `PaginationLinksTests`; draft-binding "Pagination" (https://github.com/danbri/factoidal/issues/887) |
 | Create | POST to container, 201 + `Location`; `Link` up, linkset, type | tested | `lwsGuardPostCreates` |
-| Create | container via `Link rel="type"` lws:Container | tested | `lwsGuardPostCreates` |
-| Create | identity hint used, unique | tested | Slug guards in `Tests.lean` |
+| Create | container via `Link rel="type"` lws:Container | tested (also with no content and no `Content-Type`, the draft's own example: https://github.com/danbri/factoidal/issues/911 F1) | `lwsGuardPostCreates`, `lwsGuardPostWithoutContent`; draft-binding "Create: POST with no content" |
+| Create | identity hint used, unique | tested (the first free name of `hint`, `hint-1`, `hint-2`, ...; theorem `childPathFor_fresh`: a POST never replaces a resource, also for POSTs in one second under a real clock: https://github.com/danbri/factoidal/issues/911 F6) | Slug guards in `Tests.lean`, `lwsGuardPostSameSecondUnique`; draft-binding "Create: five POSTs to one container in one second" |
 | Create | 404 when the target container does not exist | tested | POST guards |
 | Create | client `Link` headers as user metadata; server metadata not overridable | tested (client links stored; server-managed relations not stored) | `PaginationLinksTests` "POST stores the client links" (https://github.com/danbri/factoidal/issues/888) |
 | Update | PUT replaces; 412 on failed `If-Match` | tested | `lwsGuardIfMatch` |
@@ -253,7 +253,7 @@ server does not advertise.
 | Discovery | storage description, `application/lws+cid`, `@context` array, `id`, `type`, StorageRoot service | tested | `lwsGuardStorageDescription` |
 | Discovery | MoveResource capability when `up` is modifiable | n/a (`up` is not modifiable) | none |
 | Status mappings | SHOULD use RFC 9457 problem details | tested | `lwsGuardProblemDetails` |
-| Authorization Server Discovery | 401 MUST carry `WWW-Authenticate` with `resource_metadata` (RFC 9728 §5.1) and a `Link` to the storage (`rel` lws#storage) | tested | `AuthorizationTests` "Missing token"; authorization.mjs "Discovery"; draft-binding "Authorization" |
+| Authorization Server Discovery | 401 MUST carry `WWW-Authenticate` with `resource_metadata` (RFC 9728 §5.1) and a `Link` to the storage (`rel` lws#storage) | tested (the link names the storage's canonical URI, the storage description `id`, as every other response does, and the default token audience is the same IRI: https://github.com/danbri/factoidal/issues/911 F4) | `AuthorizationTests` "Missing token", `storageIri` guards; authorization.mjs "Discovery"; draft-binding "Authorization" |
 | Protected Resource Metadata | RFC 9728 document; `authorization_servers` REQUIRED with at least one issuer; `resource` is the requested resource | tested (served at `/.well-known/oauth-protected-resource<path>`, RFC 9728 §3.1) | `AuthorizationTests` "The metadata document"; authorization.mjs |
 | Token Validation: Presentation | Bearer in `Authorization` (RFC 6750 §2.1) | tested (another scheme: 401 `invalid_request`) | `AuthorizationTests`; authorization.mjs "Presentation" |
 | Token Validation: signature | verify with the key from the issuer's `jwks_uri`; SHOULD cache; MUST support key rotation | tested (ES256, RS256, EdDSA over vendored HACL*; cache with refetch at most once per `refreshInterval`) | `validateToken_valid_verified`; authorization.mjs "bad signature", "key rotation" |
@@ -268,8 +268,13 @@ server does not advertise.
 | (server choice) | request paths with dot segments or encoded traversal are refused | tested | `lwsGuardTraversalRefused`; draft-binding "Paths" |
 | (server choice) | storage persists under `DIR` | tested | `lwsGuardSnapshotRoundTrip`, `lwsGuardSnapshotRefusesTraversal`; draft-binding "Persistence" |
 
-Counts: 44 tested, 0 missing, 4 not applicable (out of 48 rows). Updated
-2026-10-21 for https://github.com/danbri/factoidal/issues/887 and
+Counts: 44 tested, 0 missing, 4 not applicable (out of 48 rows). The rows
+Read (ETag, conditional requests), Content Negotiation, Create (container,
+identity hint) and Authorization Server Discovery were made exact on 2026-10-21 for the
+five defects the Touchstone harness found
+(https://github.com/danbri/factoidal/issues/911,
+`docs/designissues/2026-10-21-lws-touchstone-run.md`); the counts did not
+change. Updated 2026-10-21 for https://github.com/danbri/factoidal/issues/887 and
 https://github.com/danbri/factoidal/issues/888: the Pagination, Create
 `Link` and `Prefer: set-linkset` rows became tested, and the linkset PUT row
 now states the draft's condition ("If advertised in the Allow header").
