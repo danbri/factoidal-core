@@ -32,12 +32,27 @@ if [ -z "$ROOT" ]; then
 fi
 cd "$ROOT"
 
-CRUD="$ROOT/third_party/testing/solid-crud-tests"
-WAC="$ROOT/third_party/testing/web-access-control-tests"
+# SOLID_INTEROP_FIXTURES names another directory holding the two suites
+# (for a worktree whose submodules are empty). The fixtures are only READ:
+# each suite is copied to a temporary directory and `npm ci` runs in the
+# copy, so no node_modules ever lands in a checkout (2026-10-20 an earlier
+# run installed node_modules into the main checkout's fixture).
+FIXTURES="${SOLID_INTEROP_FIXTURES:-$ROOT/third_party/testing}"
+CRUD_SRC="$FIXTURES/solid-crud-tests"
+WAC_SRC="$FIXTURES/web-access-control-tests"
+# SOLID_INTEROP_WORK names a directory to keep the installed copies in
+# between runs (outside the checkout); without it they are deleted at exit.
+if [ -n "${SOLID_INTEROP_WORK:-}" ]; then
+  SUITE_COPIES="$SOLID_INTEROP_WORK"; KEEP_COPIES=1
+else
+  SUITE_COPIES="$(mktemp -d -t solid-interop-suites.XXXXXX)"; KEEP_COPIES=0
+fi
+CRUD="$SUITE_COPIES/solid-crud-tests"
+WAC="$SUITE_COPIES/web-access-control-tests"
 
 # ---------------------------------------------------------------- inputs
 
-if [ ! -f "$CRUD/package.json" ] || [ ! -f "$WAC/package.json" ]; then
+if [ ! -f "$CRUD_SRC/package.json" ] || [ ! -f "$WAC_SRC/package.json" ]; then
   echo "solid-server-interop: the interop submodules are not populated." >&2
   echo "  run tools/ensure-test-env.sh (needs network)." >&2
   exit 2
@@ -84,10 +99,13 @@ SERVER_PID=""
 cleanup() {
   if [ -n "$SERVER_PID" ]; then kill "$SERVER_PID" 2> /dev/null || true; fi
   rm -f "$PORT_FILE" "$SERVER_LOG"
+  if [ "$KEEP_COPIES" -eq 0 ]; then rm -rf "$SUITE_COPIES"; fi
+  rm -rf "${SERVER_DIR:-}"
 }
+SERVER_DIR="$(mktemp -d -t solid-interop-store.XXXXXX)"
 trap cleanup EXIT
 
-node npm/factoidal/bin/factoidal.mjs solid-serve "$(mktemp -d)" --port 0 \
+node npm/factoidal/bin/factoidal.mjs solid-serve "$SERVER_DIR" --port 0 \
   > "$PORT_FILE" 2> "$SERVER_LOG" &
 SERVER_PID=$!
 
@@ -111,10 +129,18 @@ echo "solid-server-interop: our Solid server is at $ORIGIN"
 FAILED=0
 
 install_suite() { # directory, label
-  local dir="$1" label="$2" rc=0
+  local dir="$1" label="$2" rc=0 src
+  case "$label" in
+    solid-crud-tests) src="$CRUD_SRC" ;;
+    *) src="$WAC_SRC" ;;
+  esac
+  # Copy without any node_modules the source may carry, so the install
+  # is reproducible and never writes into the fixture.
+  mkdir -p "$dir"
   if [ -d "$dir/node_modules" ]; then
     return 0
   fi
+  tar -C "$src" --exclude=node_modules --exclude=.git -cf - . | tar -C "$dir" -xf -
   echo "solid-server-interop: installing $label dependencies"
   ( cd "$dir" && npm ci --no-audit --no-fund ) > "$dir/.npm-install.log" 2>&1 || rc=$?
   if [ "$rc" -ne 0 ]; then
@@ -155,11 +181,18 @@ if install_suite "$CRUD" "solid-crud-tests"; then
   curl -s -X PUT "$ALICE_WEBID_DOC" -H 'Content-Type: text/turtle' \
     -d "<$ALICE_WEBID> <http://www.w3.org/ns/pim/space#storage> </>." > /dev/null || true
   CRUD_REPORT="$(mktemp -t crud-results.XXXXXX)"
+  # SKIP_WPS: the suite's notification client reads a TLS key pair from
+  # /tls (provided only by its Docker image) at module load; without
+  # SKIP_WPS seven of its nine test files fail to load, and the score
+  # covered 8 tests instead of the full surface (2026-10-21). Solid
+  # Notifications channels are outside the first slice (SKILL.md), so the
+  # notification checks are disabled, not counted as passes.
   ( cd "$CRUD" && \
     SERVER_ROOT="$ORIGIN" \
     ALICE_WEBID_DOC="$ALICE_WEBID_DOC" \
     ALICE_WEBID="$ALICE_WEBID" \
     INCLUDE_MAY=1 \
+    SKIP_WPS="${SKIP_WPS-1}" \
     ./node_modules/.bin/jest test/surface/ --json --outputFile="$CRUD_REPORT" ) \
     > /dev/null 2>&1 || CRUD_RC=$?
   report "$CRUD_REPORT" "solid-crud-tests" || FAILED=1

@@ -449,7 +449,8 @@ the Vary header field value." -/
 def solidGuardCorsHeaders : Bool :=
   let (resp, _) := run cfg (req "GET" "/alice/card" [("origin", "https://app.example")]) populated
   hdr resp "access-control-allow-origin" == some "https://app.example" &&
-  hdr resp "vary" == some "Origin" &&
+  has resp "vary" "Origin" &&
+  (resp.headers.filter (fun (k, _) => k == "vary")).length == 1 &&
   has resp "access-control-expose-headers" "WAC-Allow" &&
   has resp "access-control-expose-headers" "Link"
 
@@ -814,6 +815,65 @@ def solidGuardClientLinkFieldShapes : Bool :=
 #guard solidGuardClientStorageWalkSteps
 #guard solidGuardClientWacAllowParsing
 #guard solidGuardClientProfile
+
+/-! ## §5.5 — RDF sources in text/turtle and application/ld+json
+
+"When a server creates an RDF source on HTTP PUT, POST, or PATCH requests,
+the server MUST satisfy GET requests on this resource when the Accept header
+field requests text/turtle or application/ld+json." -/
+
+def acceptJsonLd : List (String × String) := [("accept", "application/ld+json")]
+def acceptTurtle : List (String × String) := [("accept", "text/turtle")]
+
+/-- A Turtle resource asked for as JSON-LD answers JSON-LD with the same
+triple, a tag of its own, and `Vary: accept`. -/
+def solidGuardTurtleAsJsonLd : Bool :=
+  let (resp, _) := run cfg (req "GET" "/alice/card" acceptJsonLd) populated
+  resp.status == 200 &&
+  hdr resp "content-type" == some "application/ld+json" &&
+  has resp "vary" "accept" &&
+  (match hdr resp "etag" with | some t => (t.splitOn "-jsonld").length == 2 | none => false) &&
+  (readRdfSource mediaJsonLd "http://example.org/alice/card" resp.body).map (·.length) == some 1
+
+/-- Asked for as Turtle, the same resource answers its stored bytes. -/
+def solidGuardTurtleAsTurtle : Bool :=
+  let (resp, _) := run cfg (req "GET" "/alice/card" acceptTurtle) populated
+  resp.status == 200 && hdr resp "content-type" == some "text/turtle" &&
+  (resp.body.splitOn "Alice").length == 2 && !(resp.body.startsWith "[")
+
+/-- A JSON-LD resource asked for as Turtle answers Turtle with its triples. -/
+def solidGuardJsonLdAsTurtle : Bool :=
+  let st := (runAll cfg [req "PUT" "/alice/shop.json" [("content-type", "application/ld+json")]
+      "{\"@context\":{\"name\":\"http://store.example.com/name\"},\"@id\":\"http://store.example.com/\",\"name\":\"Links Bike Shop\"}"]
+      populated).2
+  let (resp, _) := run cfg (req "GET" "/alice/shop.json" acceptTurtle) st
+  let (plain, _) := run cfg (req "GET" "/alice/shop.json") st
+  resp.status == 200 && hdr resp "content-type" == some "text/turtle" &&
+  (readRdfSource mediaTurtle "http://example.org/alice/shop.json" resp.body).map (·.length) == some 1 &&
+  -- With no Accept field the stored JSON-LD is answered.
+  hdr plain "content-type" == some "application/ld+json" && plain.body.startsWith "{"
+
+/-- A container listed as JSON-LD; and its Turtle listing writes a dotted
+member IRI in full, so a Notation3 reader does not read a path. -/
+def solidGuardContainerNegotiated : Bool :=
+  let (j, _) := run cfg (req "GET" "/alice/" acceptJsonLd) populated
+  let (t, _) := run cfg (req "GET" "/alice/" acceptTurtle) populated
+  hdr j "content-type" == some "application/ld+json" && j.body.startsWith "[" &&
+  hdr t "content-type" == some "text/turtle" &&
+  (t.body.splitOn "<http://example.org/alice/card>").length ≥ 2 &&
+  (t.body.splitOn "ns1:").length == 1
+
+/-- Negative: a non-RDF resource is never converted. -/
+def solidGuardPlainNotConverted : Bool :=
+  let st := (runAll cfg [req "PUT" "/alice/hello.txt" [("content-type", "text/plain")] "hi"] populated).2
+  let (resp, _) := run cfg (req "GET" "/alice/hello.txt" acceptJsonLd) st
+  hdr resp "content-type" == some "text/plain" && resp.body == "hi"
+
+#guard solidGuardTurtleAsJsonLd
+#guard solidGuardTurtleAsTurtle
+#guard solidGuardJsonLdAsTurtle
+#guard solidGuardContainerNegotiated
+#guard solidGuardPlainNotConverted
 
 /-! ## The registry's own arithmetic -/
 
