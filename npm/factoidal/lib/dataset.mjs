@@ -79,11 +79,18 @@ function quadsFromRegion(bytes, out) {
   const nTerms = v.getUint32(4, true);
   const nQuads = v.getUint32(8, true);
   let p = 12;
+  // UTF-8 bytes to a string; a short run of bytes below 0x80 (one UTF-16
+  // unit each) is copied without a TextDecoder call.
   const str = () => {
     const n = v.getUint32(p, true);
-    const s = UTF8.decode(bytes.subarray(p + 4, p + 4 + n));
-    p += 4 + n;
-    return s;
+    const a = p + 4;
+    p = a + n;
+    if (n <= 64) {
+      let i = a;
+      while (i < p && bytes[i] < 0x80) i++;
+      if (i === p) return String.fromCharCode.apply(null, bytes.subarray(a, p));
+    }
+    return UTF8.decode(bytes.subarray(a, p));
   };
   const datatypes = new Map();
   const term = () => {
@@ -119,9 +126,9 @@ function quadsFromRegion(bytes, out) {
   return nQuads;
 }
 
-// Quads per datasetQuadsBin call while iterating: an iteration that stops
-// early reads one page, not the whole dataset.
-const PAGE = 16384;
+// Quads of the first datasetQuadsBin call while iterating: an iteration that
+// stops early reads this many; the rest come in one more call.
+const FIRST_PAGE = 4096;
 
 class Dataset {
   /** @private Datasets come from parse(), csvwToRdf() and the other producers. */
@@ -349,15 +356,17 @@ class Dataset {
     if (this._quads) { yield* this._quads; return; }
     const e = this._ctx.e;
     if (typeof e.datasetQuadsBin !== 'function') { yield* this._allQuads(); return; }
-    // One page of the engine's region at a time (op datasetQuadsBin); the
-    // pages are kept, and the whole list is cached when the last one is read.
+    // The engine's region (op datasetQuadsBin) in two calls, a first page and
+    // the rest; the whole list is cached when the rest is read.
     const acc = [];
-    for (let offset = 0; ; offset += PAGE) {
-      const r = e.datasetQuadsBin(this._handle, `{"offset":${offset},"limit":${PAGE}}`);
+    const first = e.datasetQuadsBin(this._handle, `{"offset":0,"limit":${FIRST_PAGE}}`);
+    quadsFromRegion(first.bytes, acc);
+    for (let i = 0; i < acc.length; i++) yield acc[i];
+    if (acc.length < first.envelope.total) {
+      const rest = e.datasetQuadsBin(this._handle, `{"offset":${acc.length}}`);
       const from = acc.length;
-      const n = quadsFromRegion(r.bytes, acc);
+      quadsFromRegion(rest.bytes, acc);
       for (let i = from; i < acc.length; i++) yield acc[i];
-      if (n < PAGE || offset + n >= r.envelope.total) break;
     }
     if (!this._quads) this._quads = Object.freeze(acc);
   }

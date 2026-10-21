@@ -3017,7 +3017,7 @@ check "ops reflection (incl. handle ops via callIO)" ops "$TMP/empty.json" \
             "storeServeCommit","storeServeClose",
             "tdb2ServeKeys","tdb2ServeOpen"]) <= set(r["ops"])
    and r["blobIoOps"] == ["blobEcho","packFeed","packNext",
-                          "storeServeRequest","storeServeCommit",
+                          "storeServeRequest","storeServeCommit","datasetQuadsBin",
                           "lwsStep","solidStep"]'
 
 check "unknown op -> error" definitelyNotAnOp "$TMP/empty.json" \

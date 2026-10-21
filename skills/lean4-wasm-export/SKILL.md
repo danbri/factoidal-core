@@ -481,10 +481,16 @@ with `slice` before releasing it — never a subarray view, because
 `ALLOW_MEMORY_GROWTH` replaces the heap buffer wholesale.
 
 `L4Wasm.blobIoOpNames` lists the ops that build an out region; the `ops`
-reflection reports it as `blobIoOps`. Today it holds only `blobEcho`, a self
+reflection reports it as `blobIoOps` (a host must look there, not in `ops`,
+for an op that answers a region). It holds `blobEcho`, a self
 test whose byte `i` is `(i * 7 + 3) mod 256` — the gate is
 `tests/store-host/blob-io.mjs`, on Node and on Deno, with a 1,000,000-byte
-case that catches truncation.
+case that catches truncation — the pack and store-serve ops, the LWS and
+Solid step ops, and `datasetQuadsBin` (Dataset iteration as one region,
+`L4Factoidal/RDF/QuadsBin.lean`, record
+`docs/designissues/2026-10-21-dataset-iteration-region.md`: 1.8 times
+faster than the JSON string it replaced, issue
+https://github.com/danbri/factoidal/issues/900).
 
 Ownership, in full:
 

@@ -1465,3 +1465,5 @@ L4Factoidal_RDF_TermJson_fieldsDepth  # (b) members of one JSON object of one te
 L4Factoidal_RDF_TermJson_itemsDepth  # (b) items of one JSON array of one quad (at most four)
 L4Factoidal_XSD_JsValue_natLex  # (c) frames = decimal digits of one exponent or one integer value of a JS answer (logarithmic in the value)
 L4Factoidal_XSD_JsValue_dropZerosN  # (c) characters of one JS Number::toString text (at most 25 digits)
+L4Factoidal_RDF_QuadsBin_serIxs  # (s) the bytes of the index lists in the layout binSpec, the specification of QuadsBinTheorems.quadsBin_binSpec (https://github.com/danbri/factoidal/issues/900); only QuadsBin.c names it; the executed path is the loop QuadsBin.binLoop
+L4Factoidal_RDF_QuadsBin_serTerms  # (s) the bytes of the term table in the layout binSpec, the specification of QuadsBinTheorems.quadsBin_binSpec (https://github.com/danbri/factoidal/issues/900); only QuadsBin.c names it; the executed path is the loop QuadsBin.binLoop
