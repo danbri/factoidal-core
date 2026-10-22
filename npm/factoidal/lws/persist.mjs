@@ -155,7 +155,9 @@ export function persistIfChanged (engine, snapshotOp, handle, envelope, dir) {
 // part of the file only performs what the engine names:
 //
 //   * reads: the engine names files (paths relative to DIR); each is read
-//     whole, or reported absent;
+//     whole, or reported absent. At start (`lwsLoad`) and before a step that
+//     needs the bytes of a resource (a `read` answer of `lwsStep`, given to
+//     `lwsRead`, stage 2 of issue 918);
 //   * a plan of file operations, in order, with their bytes in one region:
 //       write  {path, temp, offset, length}  parent directory, temp file,
 //                                            fsync, rename, fsync directory
@@ -295,6 +297,20 @@ export function loadFiles (engine, handle, opened, dir) {
     want = envelope.load
   }
   throw new Error('lwsLoad asked for more reads than one start may make')
+}
+
+/**
+ * Before one step of a storage kept in files (stage 2): read the body files
+ * the engine named in a `read` answer and give them to `lwsRead`. The engine
+ * checks each one (seal, length, digests); a refusal is thrown as its error.
+ */
+export function readStepBodies (engine, handle, names, dir) {
+  const { files, region } = readNamedFiles(dir, Array.isArray(names) ? names : [])
+  const answered = engine.callBlobIO('lwsRead', [handle, JSON.stringify({ files })], region)
+  const envelope = answered.envelope
+  if (envelope === null || typeof envelope !== 'object' || envelope.ok !== true) {
+    throw new Error(`lwsRead: ${envelope !== null && typeof envelope === 'object' ? envelope.error : 'no answer'}`)
+  }
 }
 
 /**

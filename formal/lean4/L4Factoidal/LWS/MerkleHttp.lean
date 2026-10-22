@@ -50,28 +50,40 @@ open L4Factoidal.LWS.Merkle
 
 /-! ## The store the LWS handles run -/
 
-/-- The bottom of the store an LWS handle runs: the reference store, with the
+/-- The bottom of the store an LWS handle runs: the tree store
+(`TreeStore`, a lookup and a write in a logarithm of the size), with the
 paths each write touches recorded for the journal of a storage kept in files
 (`L4Factoidal.LWS.Journal`, https://github.com/danbri/factoidal/issues/918).
-Lookups, the paths and the clock are the reference store's. -/
-abbrev LwsBase : Store (Journal.JState MemStore) := Journal.JournalStore MemStore memStoreLaws
+Lookups, the paths and the clock are the tree store's. -/
+abbrev LwsBase : Store (Journal.JState TreeStore) := Journal.JournalStore TreeStore treeStoreLaws
 
-theorem lwsBaseLaws : StoreLaws LwsBase := Journal.journalStoreLaws MemStore memStoreLaws
+theorem lwsBaseLaws : StoreLaws LwsBase := Journal.journalStoreLaws TreeStore treeStoreLaws
 
-/-- The backend of an LWS handle: the recording reference store with the
-Merkle hashes (off unless the handle turns them on). The type index sits on
-top (`IndexedStore LwsBackend lwsBackendLaws`). -/
+/-- The backend of an LWS handle: the recording tree store with the Merkle
+hashes (off unless the handle turns them on). The type index sits on top
+(`IndexedStore LwsBackend lwsBackendLaws`). -/
 abbrev LwsBackend : Store (MkState LwsBase) := MerkleStore LwsBase lwsBaseLaws
 
 theorem lwsBackendLaws : StoreLaws LwsBackend := merkleStoreLaws LwsBase lwsBaseLaws
+
+/-- The lookups of the recording tree store of a reference state are the
+reference state's. -/
+theorem lwsBase_lookup_ofMem (m : MemState) :
+    LwsBase.lookup (Journal.JState.fresh TreeStore (TreeState.ofMem m)) = memLookup m :=
+  funext (treeLookup_ofMem m)
 
 /-- The Merkle state of a reference state with nothing recorded, built from
 its entries in one pass; `none` leaves the option off. -/
 def MkState.ofJ (hasher : Option Storage.BlockMerkle.Hasher) (m : MemState) : MkState LwsBase :=
   match hasher with
-  | none => { base := Journal.JState.fresh MemStore m, hasher := none, data := {}, ok := trivial }
-  | some h => { base := Journal.JState.fresh MemStore m, hasher := some h,
-                data := Merkle.rebuild h m.entries, ok := Merkle.rebuild_ok h m.entries }
+  | none => { base := Journal.JState.fresh TreeStore (TreeState.ofMem m), hasher := none,
+              data := {}, ok := trivial }
+  | some h => { base := Journal.JState.fresh TreeStore (TreeState.ofMem m), hasher := some h,
+                data := Merkle.rebuild h m.entries
+                ok := by
+                  show Merkle.MkOk h (LwsBase.lookup _) _
+                  rw [lwsBase_lookup_ofMem]
+                  exact Merkle.rebuild_ok h m.entries }
 
 /-- An indexed state of the LWS backend, built from the entries of a
 reference state: the type index and (when `hasher` is given) the Merkle data,
@@ -80,12 +92,15 @@ def IxState.ofMerkle (b : String) (hasher : Option Storage.BlockMerkle.Hasher) (
     IxState LwsBackend :=
   { base := MkState.ofJ hasher m, baseIri := b, ix := rebuildEntries b m.entries
     ok := by
-      show IndexOk b (fun p => memLookup (MkState.ofJ hasher m).base.base p) _
-      cases hasher <;> exact rebuildEntries_ok b m.entries }
+      show IndexOk b (fun p => treeLookup (MkState.ofJ hasher m).base.base p) _
+      have : (fun p => treeLookup (MkState.ofJ hasher m).base.base p) = memLookup m := by
+        funext p; cases hasher <;> exact treeLookup_ofMem m p
+      rw [this]
+      exact rebuildEntries_ok b m.entries }
 
 /-- Set the clock of an indexed LWS state; no resource changes. -/
 def IxState.withClockM (s : IxState LwsBackend) (t : Nat) : IxState LwsBackend :=
-  let js : Journal.JState MemStore :=
+  let js : Journal.JState TreeStore :=
     { s.base.base with base := { s.base.base.base with clock := t }, ok := s.base.base.ok }
   let mk : MkState LwsBase := { s.base with base := js, ok := s.base.ok }
   { s with base := mk, ok := s.ok }
@@ -95,11 +110,11 @@ them is written (`Journal.JState.reset`); no resource changes. -/
 def IxState.resetJournal (s : IxState LwsBackend) : IxState LwsBackend :=
   { s with base := { s.base with base := s.base.base.reset, ok := s.base.ok }, ok := s.ok }
 
-/-- The reference state under an LWS state. -/
-def IxState.mem (s : IxState LwsBackend) : MemState := s.base.base.base
+/-- The tree state under an LWS state. -/
+def IxState.mem (s : IxState LwsBackend) : TreeState := s.base.base.base
 
 /-- The recording state under an LWS state. -/
-def IxState.journal (s : IxState LwsBackend) : Journal.JState MemStore := s.base.base
+def IxState.journal (s : IxState LwsBackend) : Journal.JState TreeStore := s.base.base
 
 namespace Merkle
 

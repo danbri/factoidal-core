@@ -17,9 +17,14 @@
 //     its last record, and each start gives the state before that record;
 //     the complete record gives the state after it; a write after a torn
 //     start survives the next restart;
+//   * stage 2 (bodies out of memory): a start reads no body file (`lwsLoad`
+//     is ready after the control files), also with the Merkle option once
+//     the SHA-256 digests are recorded; after a restart a range, a JSON
+//     Patch and a type search answer from the body files;
 //   * encryption at rest (FACTOIDAL_LWS_KEY, the `storageKey` option): body
 //     files, journal and metadata hold no clear text; a restart with the key
-//     works; a wrong key, no key, and a changed body byte refuse to start;
+//     works; a wrong key and no key refuse to start; a changed body byte
+//     refuses the first read of that body (500, the engine's message);
 //   * migration from an existing lws-state.json (clear and sealed): the
 //     snapshot is renamed to lws-state.json.migrated and every resource reads
 //     back with its entity tag;
@@ -37,6 +42,7 @@ import http from 'node:http'
 
 const ROOT = fileURLToPath(new URL('../../', import.meta.url))
 const CLI = join(ROOT, 'npm/factoidal/bin/factoidal.mjs')
+let readNamedFiles = null
 
 let passed = 0
 let failed = 0
@@ -178,6 +184,52 @@ async function runFiles (engine, listen) {
         // A restart compacts: the journal is empty after it.
         assert(readFileSync(join(dir, 'lws-journal')).length === 0, 'the journal is not empty after a restart')
       })
+      await check('a start reads no body file: lwsLoad is ready after the control files', async () => {
+        const reads = startReads(engine, dir, {})
+        assert(reads.rounds === 1, `the start asked for ${reads.rounds - 1} more read rounds: ${reads.names.join(', ')}`)
+        assert(!reads.names.some((n) => n.startsWith('bodies/')), `the start read ${reads.names.join(', ')}`)
+      })
+      await check('with the Merkle option a start reads each body once to record its SHA-256, then none', async () => {
+        const first = startReads(engine, dir, { merkle: true })
+        assert(first.names.filter((n) => n.startsWith('bodies/')).length === 3, `the first start read ${first.names.join(', ')}`)
+        const s = await open(dir, { merkle: true })
+        let digest
+        try {
+          const r = await request(s.origin, 'GET', '/notes/a.txt')
+          digest = r.headers['repr-digest']
+          assert(r.status === 200 && typeof digest === 'string', `GET answered ${r.status}, Repr-Digest ${digest}`)
+        } finally { await s.close() }
+        const again = startReads(engine, dir, { merkle: true })
+        assert(!again.names.some((n) => n.startsWith('bodies/')), `the second start read ${again.names.join(', ')}`)
+        const t = await open(dir, { merkle: true })
+        try {
+          const r = await request(t.origin, 'GET', '/notes/a.txt')
+          assert(r.headers['repr-digest'] === digest, 'Repr-Digest changed across the restart')
+        } finally { await t.close() }
+      })
+      await check('after a restart a range, a JSON Patch and a type search answer from the body files', async () => {
+        const s = await open(dir)
+        try {
+          let r = await request(s.origin, 'PUT', '/j.json', { 'content-type': 'application/json' }, '{"a":1,"b":"long enough"}')
+          assert(r.status === 201, `PUT answered ${r.status}`)
+          r = await request(s.origin, 'PUT', '/doc.ttl', { 'content-type': 'text/turtle' }, '<> a <http://example.org/Doc> .\n')
+          assert(r.status === 201, `PUT answered ${r.status}`)
+        } finally { await s.close() }
+        const t = await open(dir)
+        try {
+          let r = await request(t.origin, 'GET', '/j.json', { range: 'bytes=0-5' })
+          assert(r.status === 206 && r.bytes.toString() === '{"a":1', `range answered ${r.status} ${r.bytes}`)
+          r = await request(t.origin, 'PATCH', '/j.json', { 'content-type': 'application/json-patch+json' },
+            '[{"op":"replace","path":"/a","value":2}]')
+          assert(r.status === 204, `PATCH answered ${r.status}`)
+          r = await request(t.origin, 'GET', '/j.json')
+          assert(JSON.parse(r.bytes.toString()).a === 2, `after PATCH: ${r.bytes}`)
+          r = await request(t.origin, 'QUERY', '/.well-known/lws-type-search', { 'content-type': 'application/lws-query+json' },
+            JSON.stringify({ type: ['http://example.org/Doc'] }))
+          const found = JSON.parse(r.bytes.toString())
+          assert(r.status === 200 && found.totalItems === 1, `type search answered ${r.status} ${r.bytes}`)
+        } finally { await t.close() }
+      })
     } finally { rmSync(dir, { recursive: true, force: true }) }
   }
 
@@ -284,7 +336,7 @@ async function runFiles (engine, listen) {
           assert(r.status === 200 && r.bytes.toString() === SECRET, `GET answered ${r.status}`)
         } finally { await u.close() }
       })
-      await check('a wrong key, no key, and a changed body byte each refuse to start', async () => {
+      await check('a wrong key and no key refuse to start; a changed body byte refuses the first read of that body', async () => {
         await refuses(() => open(dir, { storageKey: OTHER_HEX }), 'wrong key')
         await refuses(() => open(dir, { storageKey: null }), 'encrypted')
         const f = bodyFiles(dir)[0]
@@ -292,11 +344,24 @@ async function runFiles (engine, listen) {
         const changed = Buffer.from(b)
         changed[changed.length - 1] ^= 1
         writeFileSync(join(dir, f), changed)
+        const DATA = ['/notes/a.txt', '/notes/b.bin', '/notes/c.ttl', '/notes/d.txt']
         try {
-          await refuses(() => open(dir, { storageKey: KEY_HEX }), 'authentication failed')
+          // Stage 2: the start reads no body, so it starts; the read of the
+          // changed body is refused by the engine (the AEAD fails).
+          const errors = []
+          const s = await open(dir, { storageKey: KEY_HEX, onError: (e) => errors.push(String(e && e.message)) })
+          try {
+            const statuses = []
+            for (const p of DATA) statuses.push((await request(s.origin, 'GET', p)).status)
+            assert(statuses.filter((x) => x === 500).length === 1, `statuses ${statuses.join(', ')}`)
+            assert(statuses.filter((x) => x === 200).length === 3, `statuses ${statuses.join(', ')}`)
+            assert(errors.some((m) => m.indexOf('authentication failed') >= 0), `errors: ${errors.join(' | ')}`)
+          } finally { await s.close() }
         } finally { writeFileSync(join(dir, f), b) }
         const ok = await open(dir, { storageKey: KEY_HEX })
-        await ok.close()
+        try {
+          for (const p of DATA) assert((await request(ok.origin, 'GET', p)).status === 200, `${p} after the repair`)
+        } finally { await ok.close() }
       })
     } finally { rmSync(dir, { recursive: true, force: true }) }
   }
@@ -380,11 +445,37 @@ async function runCli () {
   } finally { rmSync(dir, { recursive: true, force: true }) }
 }
 
-const ALL = 11
+/**
+ * The files a start of DIR reads: `lwsOpen`, then `lwsLoad` until ready, as
+ * `persist.mjs` does, without performing the plan (DIR is not changed).
+ */
+function startReads (engine, dir, extra) {
+  const opened = engine.call('lwsOpen', [JSON.stringify({ insecureNoAuth: true, storage: 'files', baseIri: BASE, now: 1000, ...extra })])
+  const names = []
+  let want = opened.load
+  let rounds = 0
+  try {
+    for (;;) {
+      rounds += 1
+      const read = Array.isArray(want.read) ? want.read : []
+      names.push(...read)
+      const { files, region } = readNamedFiles(dir, read)
+      const answered = engine.callBlobIO('lwsLoad', [opened.handle, JSON.stringify({ files, seed: randomBytes(32).toString('base64') })], region)
+      if (answered.envelope.ready === true || rounds > 4) break
+      want = answered.envelope.load
+    }
+  } finally {
+    try { engine.call('lwsClose', [opened.handle]) } catch (_error) { /* not open */ }
+  }
+  return { names, rounds }
+}
+
+const ALL = 14
 
 async function main () {
   const { loadEngine } = await import('../../npm/factoidal/bin/engine.mjs')
   const { listen } = await import('../../npm/factoidal/lws/server.mjs')
+  readNamedFiles = (await import('../../npm/factoidal/lws/persist.mjs')).readNamedFiles
   let engine
   try {
     engine = await loadEngine()

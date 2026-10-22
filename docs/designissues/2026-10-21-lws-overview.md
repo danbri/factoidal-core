@@ -45,7 +45,9 @@ the permission of the owner. The drafts define:
   default), one file per resource body and a journal of metadata changes, so
   the cost of a write does not grow with the size of the storage; a torn last
   journal record is ignored at start, and an existing `lws-state.json` is
-  migrated (https://github.com/danbri/factoidal/issues/918, stage 1;
+  migrated; the bodies are not held in memory (an entry keeps their length,
+  digests and types), and a step reads the body files it needs through the
+  host (https://github.com/danbri/factoidal/issues/918, stages 1 and 2;
   `docs/designissues/2026-10-22-lws-storage-on-disk.md`);
 - encryption at rest of that file, off by default: with `FACTOIDAL_LWS_KEY`
   set to a 32-byte key, the file is sealed with ChaCha20-Poly1305 (HACL*)
@@ -114,11 +116,14 @@ ShEx) and reasons over RDF.
   hardening of https://github.com/danbri/factoidal/issues/915, a delivery
   rate limit and the refusal of an inbox that names this server, landed on
   2026-10-22; the drafts define no endpoint verification procedure.)
-- Storage: the whole state is held in memory, so a storage is limited by
-  memory. With `--storage files` a write no longer rewrites the whole storage
-  (stage 1 of https://github.com/danbri/factoidal/issues/918); stage 2 (bodies
-  out of memory and read on GET, the metadata in an on-disk index) is open. A
-  storage on Shardborough is not started.
+- Storage: with `--storage files` a write no longer rewrites the whole
+  storage, the bodies stay in their body files and are read for the step that
+  needs them, a start reads no body, and one step costs a logarithm of the
+  store (stages 1 and 2 of https://github.com/danbri/factoidal/issues/918).
+  The metadata of every resource is still in memory and read whole at start;
+  a container listing still lists every path; `solid-serve` keeps the
+  snapshot (an expected failure naming issue 918). A storage on Shardborough
+  is not started.
 - No authorization server of our own; the storage trusts an external one.
 - Not on the public results page (https://ebremer.com/lws/conformance); owner
   decision 2026-10-21: "Not yet". No users outside the project.

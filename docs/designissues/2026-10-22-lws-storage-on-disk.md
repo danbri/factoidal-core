@@ -1,6 +1,7 @@
-# LWS storage on disk, stage 1: one file per body and a journal (2026-10-22)
+# LWS storage on disk: one file per body and a journal (stage 1), bodies out of memory (stage 2) (2026-10-22)
 
-Issue: https://github.com/danbri/factoidal/issues/918 (stage 1 only).
+Issue: https://github.com/danbri/factoidal/issues/918 (stages 1 and 2; stage 2
+is the section "Stage 2" at the end).
 Skill: `skills/lws-solid/SKILL.md`. Overview: `docs/designissues/2026-10-21-lws-overview.md`.
 
 ## Problem
@@ -175,7 +176,8 @@ done again. A snapshot is never written in files mode.
 - `replay_record`, `replay_jstate`, `replay_records`: replaying the records
   written by a sequence of steps gives, at every path, the metadata of the
   store after the steps.
-- `persist_replay`, `assignBodies_refs`: the operations `persist` writes are
+- `persist_replay`, `assignBodies_refs` (stage 1; stage 2 replaced both by
+  `bodiesOut_journal` and a new `persist_replay`): the operations `persist` writes are
   `js.record` under the new body references, and a body reference changes only
   at a touched path, so `replay_jstate` applies to the records it writes.
 - `recordOfJson_recordJson`, `fileMetaOfJson_fileMetaJson`,
@@ -244,7 +246,7 @@ the work directory hold `lws-files.json`, `lws-journal` and `bodies/`, and one
 of them (the authorization store, 179 body files, a journal of 932,881 bytes)
 reopened with its journal compacted.
 
-## What stage 2 must do
+## What stage 2 had to do (the list written with stage 1)
 
 1. Bodies out of memory: `Entry` carries the size and the digests (FNV-1a for
    the entity tag, SHA-256 when Merkle is on) instead of the bytes, and a step
@@ -258,3 +260,183 @@ reopened with its journal compacted.
 3. A start that reads no body, and the expected failure in
    `tests/lws/scaling.mjs` (peak RSS of a start) turned into an assertion.
 4. The same for `solid-serve`, which keeps the snapshot.
+
+## Stage 2 (landed 2026-10-22)
+
+Items 1 and 3 are done, item 2 is done for the step and partly for the start
+(see "What is left"), item 4 is an expected failure.
+
+### Bodies out of memory
+
+`Entry` has one more field, `stub : Option BodyStub`
+(`L4Factoidal/LWS/Model.lean`). A stub holds the body file number, the
+length, FNV-1a 32 of the bytes, the SHA-256 when the Merkle option is on, and
+the `rdf:type` objects of a Turtle body with the IRI they were read against.
+An entry with a stub has no bytes in memory, except:
+
+- for one step that needs them (`Entry.hydrated`: the body holds the bytes of
+  the file), and
+- ACL resources (paths that end in `.acl`, `Bodies.keepsBytes`): every access
+  decision reads the effective ACL resource (`Solid.Server.allowed`), so they
+  keep their bytes; they also have a body file and a stub.
+
+Every function that reads a fact of the bytes reads it through an accessor:
+`Entry.size` (listings, search results, ranges), `Entry.fnv` (`etagFor`),
+`Merkle.leafDigest` (the Merkle leaf: `.recorded d` for a stub with a 32-byte
+SHA-256, else the hash of the bytes), `TypeIndex.contentTypes` (the stub's
+types when they were read against the same IRI, else the bytes again: after
+a move). `Bodies.dehydrate` makes the stub from these same functions, so the
+entry with its stub answers what the entry with its bytes answers. Theorems
+(`L4Factoidal/LWS/Bodies.lean`): `size_dehydrate`, `fnv_dehydrate`,
+`etagFor_dehydrate`, `itemJson_dehydrate`, `entryFacts_dehydrate`,
+`leafDigest_dehydrate` (a 32-byte leaf), and for putting bytes back in for a
+step, `entryFacts_withBody` and `leafDigest_withBody`.
+
+`IxState.stubAt` (the bytes go to their body file) and `IxState.withBodyAt`
+(the bytes come back for a step, or leave again) replace one entry under the
+type index and the Merkle store and do not record the path in the journal.
+They build the invariants of the new state from the theorems above:
+`IndexOk.congr` (`TypeIndex.lean`: the same facts at every path keep the
+index), `Merkle.MkOk.congr_key` (the same kind and leaf at every path keep the
+hashes), `Journal.JState.replaceAt` with `replaceAt_prior` (the state at the
+last persist gets the same entry unless the path is recorded). A replacement
+that the theorems do not cover (a leaf that is not 32 bytes; a stub whose
+types were read against another IRI) is not made.
+
+### The read protocol
+
+`Bodies.bodiesNeeded` names the body files a step reads before it runs:
+
+| request | body file read first |
+|---|---|
+| GET of a data resource | the resource (body or range) |
+| PATCH of a data resource | the resource (JSON Patch) |
+| PUT of a data resource, when a subscription exists | the resource (`Notifications.sameBytes` compares the bytes before and after) |
+| PUT or PATCH of a linkset, with moves and the type index on | every Turtle resource at and below the path (a move reads their types again against the new IRI) |
+
+`lwsStep` then answers `{"ok":true,"read":[PATH,...]}`; the host reads those
+files and passes them to the new op `lwsRead`; `Files.readBodies` opens each
+one under the storage key (the file's own name is in the associated data),
+checks the length, the FNV-1a digest and, when recorded and the option is
+on, the SHA-256, and puts the bytes in; the host steps the same request
+again. After the step, `Files.unhydrate` drops the bytes of every path the
+step did not change; `Files.persist` drops the others. A GET of an entry whose
+bytes were not read answers 500 (`Operations.stepPath`), so no response can
+carry bytes that are not the resource's. A HEAD reads no body.
+
+A body file changed on disk is found when it is read, not at start: the read
+answers an error and the request 500 (`tests/lws/storage-files.mjs`). Stage 1
+checked every body at start.
+
+### Persist
+
+`Files.bodiesOut` takes the touched paths in the order of the last writes:
+an entry written by the step (bytes, no stub) gets a new body file and its
+stub; an entry that has a stub (a move, a change of links or time, bytes read
+for the step) gets its stub made again with the same body file; a removed
+path gives up its body file. The same bytes as at the last persist keep their
+body file only when they were read for the step; otherwise a new file is
+written and the old one removed (stage 1 compared the bytes in memory). A
+body file is unused, and removed after the record, when a touched path had it
+before and no touched path has it after (a move keeps it). The journal record
+is `s1.journal.record projE`: the metadata of each touched entry with its
+stub. Theorems: `bodiesOut_journal`, `persist_replay` (the record, replayed
+onto the metadata at the last persist, gives the metadata after the step).
+The handle keeps no table of body files any more (stage 1: `refs`); the stubs
+are the table.
+
+### A start that reads no body
+
+A metadata record carries the stub's facts: `sha256` (base64) and `types`
+with `typesIri` (format `lws-files-1`, members added; a stage 1 file reads,
+and its first start records the missing facts). `Files.needsRead` names a body
+file at start only for an ACL resource, for a record with no SHA-256 when the
+Merkle option is on, and for a Turtle record whose types were read under
+another base IRI. Those entries get a stub made from their bytes; then the
+start writes a new metadata file, so the next start reads none
+(`tests/lws/storage-files.mjs`: "with the Merkle option a start reads each
+body once to record its SHA-256, then none"). `projE_toEntry`: a record read
+back as an entry with its stub gives the same record.
+
+### The step in a logarithm of the store
+
+The list store (`MemStore`) found and replaced an entry by a walk over a list.
+The LWS handles now run `TreeStore` (`Store.lean`): a `Std.TreeMap` keyed by
+path, with a proof that every entry is stored under its own path. Theorems:
+`treeStoreLaws` (every law of `StoreLaws`), `treeLookup_ofMem`,
+`lwsBase_lookup_ofMem`. `MemStore` and `memStoreLaws` stay as the reference
+instance. The type index keeps its tables in `Std.TreeMap` and `Std.TreeSet`
+(`TypeIndex.lean`): a step holds the state from before it (the notification
+comparison), so a table that a write updates is shared at that moment, and a
+shared hash set is copied whole by an insert; a tree copies one path. Two more
+linear costs went: a POST computed the bound of its name search from the
+number of paths in the store (now `nameTries`, 2^30), and a DELETE of a data
+resource listed every path (now only for a container).
+
+`paths` of the tree store are in path order (the list store: newest first).
+No response depends on it: listings and search results are put in path order.
+The order of the activities of a recursive DELETE in one notification, and
+the order of the entries in a snapshot and in `lws-files.json`, are now path
+order.
+
+### Measured (2026-10-22, this VM, wasm in Node)
+
+The engine's step and persist, no file I/O (`tests/lws/scaling.mjs`, row
+"engine step and persist", a fresh engine per size, minimum of three repeats
+of 60 PUTs):
+
+| resources | stage 1 (step only) | stage 2 (step and persist) |
+| ---: | ---: | ---: |
+| 1,000 | 0.21 ms | 0.304 ms |
+| 2,000 | | 0.267 ms |
+| 4,000 | 0.56 ms | 0.278 ms |
+| 16,000 | 2.8 to 3.7 ms | 0.285 ms |
+
+The step alone in memory (`lwsStep` of a PUT, before and after the tree
+store and the persistent index): 0.128, 0.444, 2.191 ms at 1,000, 4,000,
+16,000 resources before; 0.118, 0.070, 0.070 ms after; a GET 0.071, 0.088,
+0.221 ms before and 0.058 ms at 16,000 after.
+
+One PUT through the HTTP host with `--storage files` (median of five repeats
+of 20 PUTs; fsync of the body file and the journal is most of it): 5.75,
+4.65, 4.39, 4.46 ms at 1,000, 2,000, 4,000, 16,000 resources (stage 1: 2.70,
+2.40, 2.89 ms at 1,000 to 4,000 with the minimum of three; the machine was
+under more load on 2026-10-22 afternoon). Snapshot mode: 78.0, 159.7,
+278.3 ms.
+
+Peak RSS of a start and one GET of a storage of 16 KiB resources:
+
+| resources | bodies | stage 1 | stage 2 |
+| ---: | ---: | ---: | ---: |
+| 1,000 | 15.6 MiB | 258 MiB | 230.3 MiB |
+| 2,000 | 31.3 MiB | | 229.6 MiB |
+| 4,000 | 62.5 MiB | 515 MiB | 210.5 MiB |
+
+The assertion is growth(s to 4s) <= 16 MiB; it measured -19.9 MiB (noise of
+the wasm heap). About 200 MiB is Node with the engine loaded.
+
+`lws scaling`: 21 pass, 0 fail (out of 21), 288 s. Host suites, each with and
+without `FACTOIDAL_LWS_STORAGE=files`: storage-files 14 pass, 0 fail (out of
+14); server 8 pass (out of 8); draft-binding 81 pass (out of 81);
+authorization 29 pass (out of 29); binary-bodies 20 pass (out of 20);
+encryption 28 pass (out of 28); merkle 18 pass, 1 xfail (out of 19); Solid
+protocol 12 pass, 1 xfail (out of 13); Solid OIDC 21 pass (out of 21); Solid
+client 7 pass (out of 7); 0 fail in each.
+
+### What is left
+
+- `solid-serve` keeps the snapshot: an expected failure in
+  `tests/solid/server/protocol.mjs` names
+  https://github.com/danbri/factoidal/issues/918.
+- The metadata of every resource is still in memory (a few hundred bytes per
+  resource: the entry, its stub, the index facts); a start reads all of
+  `lws-files.json`. An on-disk index keyed by path (a start in time
+  independent of the number of resources) is not done.
+- A container listing filters every path of the store (`containedPaths`),
+  and a recursive DELETE and a move list every path: linear in the store.
+  The tree store keeps paths in order, so a range of keys would do; the
+  `Store` interface has no range operation yet.
+- The Merkle data (`MkData`) are hash maps; with the option on, a write to a
+  state that the step still holds copies them (linear in the store).
+- A PUT of the same bytes writes a new body file unless the old bytes were
+  read for the step.

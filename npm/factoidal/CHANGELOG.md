@@ -1,45 +1,30 @@
 # Changelog
 
-## 0.12.0 — 2026-10-22
+## 0.13.0 (unreleased)
 
-One error model for the whole package
-(https://github.com/danbri/factoidal/issues/882 item 4,
-https://github.com/danbri/factoidal/issues/901 KR 3.1). Every op error
-envelope of the engine carries a stable `code`, the input `position` where
-the input defines one, and the `spec` section where one applies; the engine
-decides all three (`formal/lean4/Wasm/Ops/ErrorModel.lean`). The package
-copies them into one class, `FactoidalError`. The README "Errors" table is
-generated from the engine's list.
+Linked Web Storage kept in files, stage 2 (https://github.com/danbri/factoidal/issues/918;
+design record `docs/designissues/2026-10-22-lws-storage-on-disk.md`):
 
-### Breaking changes
-
-- `DatasetHandle`, the name of `Dataset` before 0.10.0, is removed. Use
-  `Dataset`.
-
-- `ParseError` is removed. Every function rejects with `FactoidalError`
-  (`code`, `position`, `spec`, `cause`); a parse error has
-  `code: 'parse.syntax'` (or `parse.rdf12-required`, `term.invalid-iri`,
-  `term.invalid-langtag`) and `err.position.{line, column, offset}` in place
-  of `err.line`, `err.column`, `err.offset`. `position.byteOffset` is new.
-- Error messages are the engine's text, with no `<function>: l4factoidal:`
-  prefix. A parse with an inferred format no longer appends "(format inferred
-  as ...)" to the message; `err.formatInferred` and `err.format` say it.
-- An unknown option key, an unknown format name, an `entail`, `output`,
-  `version`, `owlClosure` mode, `rmlMap` source kind or `Dataset.closure`
-  regime outside the engine's tables, and options that cannot be combined
-  were a `TypeError`; each is now a `FactoidalError` (`option.unknown`,
-  `format.unknown`, `option.invalid-value`, `regime.refused`,
-  `option.conflict`) decided by the new engine op `apiCheck`. A `TypeError`
-  stays only for an argument of the wrong JavaScript type.
-- A method of a disposed `Dataset` was a `TypeError`; it is now the engine's
-  `FactoidalError` with code `handle.disposed`. A closed `Store` is the same.
-- `queryRaw` rejected with an `Error` whose message began "SPARQL query
-  failed:" and which had `stderr`; it now rejects with the engine's
-  `FactoidalError` (`query.syntax` with a position, or `query.failed`).
-- File-system and IndexedDB failures (`openStore`, the delta log) are
-  `FactoidalError` with code `host.io` and the original error as `cause`.
-- `@factoidal/core/fn` `entail()` with an `x-ikl-*` regime rejects with code
-  `regime.refused` and the message names `query`, the function that refuses.
+- Stage 2 (`L4Factoidal/LWS/Bodies.lean`): with `--storage files` the bodies
+  stay in their body files. An entry keeps its length, its FNV-1a and SHA-256
+  digests and the types of a Turtle body, and no bytes (ACL resources keep
+  theirs). A step that needs bytes (GET body or range, JSON Patch, a PUT a
+  subscription may hear of, a move of a Turtle resource) answers
+  `read: [PATH, ...]`; the host reads those files and gives them to the new op
+  `lwsRead` (byte-region entry only), which checks them, and steps again. A
+  start reads no body file unless the metadata lacks a fact; the peak RSS of a
+  start and one GET of 1,000 and 4,000 resources of 16 KiB is 230 and 211 MiB
+  (stage 1: 258 and 515 MiB). A changed body file is refused when it is read
+  (the request answers 500), no longer at start.
+- The LWS handles run a tree store (`TreeStore`, theorem `treeStoreLaws`) and
+  a type index in persistent trees: the engine's step and persist of a PUT
+  take 0.30, 0.27, 0.28 and 0.29 ms in a storage of 1,000, 2,000, 4,000 and
+  16,000 resources (stage 1: 0.21 ms at 1,000, about 3 ms at 16,000). A POST
+  no longer lists every path; a DELETE lists paths only for a container.
+- The order of the entries of a snapshot and of `lws-files.json`, and of the
+  activities of a recursive DELETE in one notification, is path order (was
+  newest first). `lwsSnapshot` of a storage kept in files is refused.
+- `solid-serve` keeps the snapshot: an expected failure naming issue 918.
 
 An authorization server as a component (https://github.com/danbri/factoidal/issues/916;
 design record `docs/designissues/2026-10-22-authorization-server.md`; skill
@@ -82,6 +67,47 @@ design record `docs/designissues/2026-10-22-authorization-server.md`; skill
   core/authorization_server 9 pass, 0 fail (out of 9), auth/oidc 6 pass,
   0 fail (out of 6), auth/cid 22 pass, 0 fail (out of 22), auth/saml 3
   inapplicable (issue 926).
+
+## 0.12.0 — 2026-10-22
+
+One error model for the whole package
+(https://github.com/danbri/factoidal/issues/882 item 4,
+https://github.com/danbri/factoidal/issues/901 KR 3.1). Every op error
+envelope of the engine carries a stable `code`, the input `position` where
+the input defines one, and the `spec` section where one applies; the engine
+decides all three (`formal/lean4/Wasm/Ops/ErrorModel.lean`). The package
+copies them into one class, `FactoidalError`. The README "Errors" table is
+generated from the engine's list.
+
+### Breaking changes
+
+- `DatasetHandle`, the name of `Dataset` before 0.10.0, is removed. Use
+  `Dataset`.
+
+- `ParseError` is removed. Every function rejects with `FactoidalError`
+  (`code`, `position`, `spec`, `cause`); a parse error has
+  `code: 'parse.syntax'` (or `parse.rdf12-required`, `term.invalid-iri`,
+  `term.invalid-langtag`) and `err.position.{line, column, offset}` in place
+  of `err.line`, `err.column`, `err.offset`. `position.byteOffset` is new.
+- Error messages are the engine's text, with no `<function>: l4factoidal:`
+  prefix. A parse with an inferred format no longer appends "(format inferred
+  as ...)" to the message; `err.formatInferred` and `err.format` say it.
+- An unknown option key, an unknown format name, an `entail`, `output`,
+  `version`, `owlClosure` mode, `rmlMap` source kind or `Dataset.closure`
+  regime outside the engine's tables, and options that cannot be combined
+  were a `TypeError`; each is now a `FactoidalError` (`option.unknown`,
+  `format.unknown`, `option.invalid-value`, `regime.refused`,
+  `option.conflict`) decided by the new engine op `apiCheck`. A `TypeError`
+  stays only for an argument of the wrong JavaScript type.
+- A method of a disposed `Dataset` was a `TypeError`; it is now the engine's
+  `FactoidalError` with code `handle.disposed`. A closed `Store` is the same.
+- `queryRaw` rejected with an `Error` whose message began "SPARQL query
+  failed:" and which had `stderr`; it now rejects with the engine's
+  `FactoidalError` (`query.syntax` with a position, or `query.failed`).
+- File-system and IndexedDB failures (`openStore`, the delta log) are
+  `FactoidalError` with code `host.io` and the original error as `cause`.
+- `@factoidal/core/fn` `entail()` with an `x-ikl-*` regime rejects with code
+  `regime.refused` and the message names `query`, the function that refuses.
 
 Linked Web Storage kept in files, stage 1 (https://github.com/danbri/factoidal/issues/918;
 design record `docs/designissues/2026-10-22-lws-storage-on-disk.md`), decided in

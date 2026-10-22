@@ -96,6 +96,7 @@ const shim = isDeno
 let passed = 0
 let failed = 0
 let skipped = 0
+let xfailed = 0
 const failures = []
 
 async function check (name, body) {
@@ -377,6 +378,24 @@ async function main () {
   } finally {
     await running.close()
   }
+  // EXPECTED FAILURE, https://github.com/danbri/factoidal/issues/918: a
+  // Solid storage is not kept in files yet. `solid-serve DIR` writes the
+  // whole snapshot after each change; `lwsOpen` with `storage: "files"`
+  // answers `load` (the files to read), `solidOpen` does not. When it does,
+  // this row fails as an unexpected pass and becomes an assertion.
+  const opened = engine.call('solidOpen', [JSON.stringify({ storage: 'files', insecureNoAuth: true })])
+  const filesMode = opened !== null && typeof opened === 'object' && opened.load !== undefined
+  if (filesMode) {
+    failed += 1
+    failures.push('UNEXPECTED PASS (issue 918): solidOpen keeps a storage in files; make this row an assertion')
+    console.log('  FAIL solid-serve --storage files (issue 918): unexpected pass')
+  } else {
+    xfailed += 1
+    console.log('  xfail solid-serve keeps its storage in files (https://github.com/danbri/factoidal/issues/918)')
+  }
+  if (opened !== null && typeof opened === 'object' && typeof opened.handle === 'string') {
+    try { engine.call('solidClose', [opened.handle]) } catch (_error) { /* not open */ }
+  }
 }
 
 await main()
@@ -384,9 +403,9 @@ await main()
 // ------------------------------------------------------------ reporting
 
 for (const failure of failures) console.log(`  FAIL ${failure}`)
-const total = passed + failed + skipped
+const total = passed + failed + skipped + xfailed
 console.log(`solid-server ${shim.runtimeName}: ${passed} pass, ${failed} fail, ` +
-  `${skipped} skipped (out of ${total})`)
+  `${skipped} skipped, ${xfailed} xfail (out of ${total})`)
 
 let exitCode = failed === 0 ? 0 : 1
 

@@ -21,6 +21,12 @@ member `resolved: [{host, addresses}]`; Lean decides what they mean
 wait for a rate-limit window (`Notifications.nextWake`), and the host calls
 `lwsFlush` after that many seconds.
 
+A storage kept in files (`"storage": "files"`, issue 918) starts with
+`lwsLoad` and writes with `lwsPersist`. Stage 2: `lwsStep` may answer
+`{"ok":true,"read":[PATH,…]}`, the body files the step needs
+(`Bodies.bodiesNeeded`); the host passes them to `lwsRead`
+(`Files.readBodies` checks them) and steps the same request again.
+
 A request document may carry `random` (base64, at least 16 bytes from the
 host's random source): the name of an ANTICIPATORY AND UNSTABLE search
 results resource, when the configuration says `"searchResults": true`
@@ -406,6 +412,13 @@ structure OpenStorage where
   /-- A storage kept in files (issue 918): what the handle knows of its
   files. `none` for the snapshot mode. -/
   files : Option Files.FilesState := none
+  /-- A storage kept in files (issue 918, stage 2): the paths whose body
+  files were read for the step in flight (`lwsRead`); their bytes leave
+  memory after the step (`Files.unhydrate`). -/
+  hydrated : List String := []
+  /-- The body files the last `lwsStep` answer named (`read`), with the
+  paths and stubs they belong to (`Bodies.bodiesNeeded`). -/
+  reads : List (String × BodyStub) := []
 
 /-- The signer of a storage: Ed25519 (RFC 8032) through the vendored HACL*
 code, under the verification method its storage description publishes. -/
@@ -468,14 +481,19 @@ def buildStorage (oc : OpenConfig) (ms : MemState) : OpenStorage :=
 state with the signing key, the access state, and the search results and the
 redirect table when there are any. The snapshot (`lwsSnapshot`) and the
 metadata file of a storage kept in files carry the same members. -/
-def sideMembers (o : OpenStorage) : List (String × Json) :=
-  let notif : Json := match Notifications.notifStateJson o.notif, o.signingKey with
+def sideMembersOf (baseIri : String) (notifState : Notifications.NotifState)
+    (signingKey : Option ByteArray) (authz : Authorization.AuthzConfig)
+    (results : SearchResults.ResultsState) (moved : List (String × String)) : List (String × Json) :=
+  let notif : Json := match Notifications.notifStateJson notifState, signingKey with
     | .object fs, some sk => .object (fs ++ [("signingKey", .string (Base64.encode sk))])
     | other, _ => other
-  [("notifications", notif), ("access", AccessPolicy.stateJson o.cfg.baseIri o.authz.access)] ++
-  (if o.results.records.isEmpty then []
-   else [("searchResults", SearchResults.stateJson o.results)]) ++
-  (if o.moved.isEmpty then [] else [("moved", MoveRedirect.stateJson o.moved)])
+  [("notifications", notif), ("access", AccessPolicy.stateJson baseIri authz.access)] ++
+  (if results.records.isEmpty then []
+   else [("searchResults", SearchResults.stateJson results)]) ++
+  (if moved.isEmpty then [] else [("moved", MoveRedirect.stateJson moved)])
+
+def sideMembers (o : OpenStorage) : List (String × Json) :=
+  sideMembersOf o.cfg.baseIri o.notif o.signingKey o.authz o.results o.moved
 
 /-- A storage kept in files while its files are read (issue 918). -/
 inductive LoadPhase where
@@ -538,19 +556,29 @@ def seedOf (j : Json) : Except String ByteArray :=
 def planAnswer (extra : List (String × Json)) (pl : Files.Plan) : String × ByteArray :=
   (okWith (extra ++ [("plan", pl.json), ("bytes", .number (toString pl.bytes.size))]), pl.bytes)
 
+/-- The Merkle hasher of a configuration: HACL* SHA-256 when the option is on. -/
+def hasherOf (oc : OpenConfig) : Option L4Factoidal.Storage.BlockMerkle.Hasher :=
+  if oc.merkle then some Merkle.haclHasher else none
+
 /-- Install a storage kept in files, read from `ms` and its other state, and
-answer the plan of the start (`Files.startPlan`). -/
+answer the plan of the start (`Files.startPlan`). The storage is built from
+the entries the plan gives: every body in its body file, only the stubs in
+memory (issue 918, stage 2). -/
 def finishLoad (h : String) (oc : OpenConfig) (seed : ByteArray) (ms : MemState) (side : SideState)
-    (c? : Option Files.Control) (hadSnapshot : Bool) : IO (String × ByteArray) := do
+    (c? : Option Files.Control) (hadSnapshot : Bool) (refreshed : Bool := false) :
+    IO (String × ByteArray) := do
   let oc := { oc with moved := side.moved, results := side.results, notif := side.notif,
                       signingKey := side.signingKey, authz := { oc.authz with access := side.access } }
-  let o := buildStorage oc ms
-  match Files.startPlan Seal.hacl oc.storageKey seed ms (sideMembers o) c? hadSnapshot with
+  -- The other state as `buildStorage` makes it (the signing key, the run
+  -- tag), from a storage with no entries: the members read no resource.
+  let o0 := buildStorage oc { entries := [], clock := ms.clock }
+  match Files.startPlan Seal.hacl oc.storageKey seed oc.cfg.baseIri (hasherOf oc) ms (sideMembers o0)
+      c? hadSnapshot refreshed with
   | .error e =>
       lwsLoading.modify (·.erase h)
       pure (errJson e, ByteArray.empty)
-  | .ok (fs, pl) =>
-      lwsTable.modify (·.insert h { o with files := some fs })
+  | .ok (fs, pl, ms') =>
+      lwsTable.modify (·.insert h { buildStorage oc ms' with files := some fs })
       lwsLoading.modify (·.erase h)
       pure (planAnswer [("ready", .bool true), ("handle", .string h), ("root", .string rootPath)] pl)
 
@@ -597,14 +625,16 @@ def lwsLoad (h docJson : String) (blob : ByteArray) : IO (String × ByteArray) :
               | .error e => fail e
               | .ok (ms, side) => finishLoad h oc seed ms side none true
           | .ok (.files c) =>
-              let names := Files.bodiesToRead c
+              -- Stage 2: only the body files whose facts the metadata lacks
+              -- (`Files.needsRead`); usually none.
+              let names := Files.bodiesToRead cfgBase oc.merkle c
               if names.isEmpty then
-                match Files.entriesOf Seal.hacl oc.storageKey c {} with
+                match Files.entriesOf Seal.hacl oc.storageKey cfgBase (hasherOf oc) c {} with
                 | .error e => fail e
-                | .ok ms =>
+                | .ok (ms, refreshed) =>
                     match sideOfDoc cfgBase oc.authz oc.redirectsMax ms (.object c.side) with
                     | .error e => fail e
-                    | .ok side => finishLoad h oc seed ms side (some c) false
+                    | .ok side => finishLoad h oc seed ms side (some c) false refreshed
               else
                 lwsLoading.modify (·.insert h { ld with phase := .bodies c })
                 pure (noBytes (okWith [("load", .object [("read", readJson names)])]))
@@ -613,12 +643,12 @@ def lwsLoad (h docJson : String) (blob : ByteArray) : IO (String × ByteArray) :
             files.fold (fun m k v => match v with
               | some b => m.insert k b
               | none => m) {}
-          match Files.entriesOf Seal.hacl oc.storageKey c bodies with
+          match Files.entriesOf Seal.hacl oc.storageKey cfgBase (hasherOf oc) c bodies with
           | .error e => fail e
-          | .ok ms =>
+          | .ok (ms, refreshed) =>
               match sideOfDoc cfgBase oc.authz oc.redirectsMax ms (.object c.side) with
               | .error e => fail e
-              | .ok side => finishLoad h oc seed ms side (some c) false
+              | .ok side => finishLoad h oc seed ms side (some c) false refreshed
 
 /-- `lwsPersist(handle, {seed})`: the write plan of the changes since the last
 persist of a storage kept in files (`Files.persist`): `plan`, its bytes in the
@@ -637,20 +667,23 @@ def lwsPersist (h optsJson : String) : IO (String × ByteArray) := do
   -- branch is alive during the call).
   match ← lwsTable.modifyGet (fun t => (t[h]?, t.erase h)) with
   | none => pure (noBytes (unknownLwsHandle h))
-  | some ⟨cfg, mem, authz, notif, signingKey, results, storageKey, moved, files⟩ =>
-      let o' : OpenStorage := ⟨cfg, mem, authz, notif, signingKey, results, storageKey, moved, none⟩
+  | some ⟨cfg, mem, authz, notif, signingKey, results, storageKey, moved, files, hydrated, reads⟩ =>
       match files with
       | none =>
-          lwsTable.modify (·.insert h o')
+          lwsTable.modify (·.insert h
+            ⟨cfg, mem, authz, notif, signingKey, results, storageKey, moved, none, hydrated, reads⟩)
           pure (noBytes (errJson "lwsPersist: this storage is not kept in files (\"storage\": \"files\")"))
       | some fs =>
-          match Files.persist Seal.hacl storageKey seed fs mem.journal (sideMembers o') mem.mem.clock with
+          let side := sideMembersOf cfg.baseIri notif signingKey authz results moved
+          -- `mem` is used once, so the persist updates it in place where it can.
+          match Files.persist Seal.hacl storageKey seed fs mem side with
           | .error e =>
               -- Fail-stop: the handle is closed, and the files hold the
               -- storage as of the last persist (as after a crash).
               pure (noBytes (errJson s!"{e}; the storage is closed"))
-          | .ok (fs', pl) =>
-              lwsTable.modify (·.insert h { o' with files := some fs', mem := mem.resetJournal })
+          | .ok (fs', pl, mem') =>
+              lwsTable.modify (·.insert h
+                ⟨cfg, mem', authz, notif, signingKey, results, storageKey, moved, some fs', hydrated, reads⟩)
               pure (planAnswer [] pl)
 
 /-- A delivery request as the host receives it: POST `body` to `url` with
@@ -696,6 +729,15 @@ def lwsStepWith (h requestJson : String) (blob : Option ByteArray) :
               let mem := match now? with
                 | some t => open_.mem.withClockM t
                 | none   => open_.mem
+              -- A storage kept in files (issue 918, stage 2): the body files
+              -- this step reads are named first; the host reads them, passes
+              -- them to `lwsRead`, and steps the same request again.
+              let need := if open_.files.isSome then
+                  Bodies.bodiesNeeded open_.cfg (open_.cfg.notifications && !open_.notif.subs.isEmpty) r mem
+                else []
+              if !need.isEmpty then
+                lwsTable.modify (·.insert h { open_ with reads := need })
+                return noBytes (okWith [("read", .array (need.map (fun x => .string (Files.bodyName x.2.file))))])
               -- A per-request agent is the host's word for who is asking;
               -- it stands only in the explicit no-auth mode.
               let cfg := match agent? with
@@ -752,9 +794,13 @@ def lwsStepWith (h requestJson : String) (blob : Option ByteArray) :
                   -- A snapshot storage keeps no journal: forget the touched
                   -- paths now. A storage kept in files forgets them in
                   -- `lwsPersist`, after it wrote their record.
-                  let memK := if open_.files.isSome then mem' else mem'.resetJournal
+                  -- The bytes read for the step leave memory again at every
+                  -- path the step did not change (`Files.unhydrate`).
+                  let memK := if open_.files.isSome then Files.unhydrate mem' open_.hydrated
+                    else mem'.resetJournal
                   let stored : OpenStorage :=
-                    { open_ with mem := memK, notif := notif', authz := authz', moved := moved' }
+                    { open_ with mem := memK, notif := notif', authz := authz', moved := moved',
+                                 hydrated := [], reads := [] }
                   lwsTable.modify (·.insert h stored)
                   -- Every mutation advances the clock (`StoreLaws.nowTick`),
                   -- so a changed clock is exactly "the storage changed"; a
@@ -851,6 +897,30 @@ def lwsFetched (h docJson : String) : IO String := do
                 | .refused why => okWith [("refused", .string why)]
           | _, _ => pure (errJson "fetched: members \"issuer\" and \"url\" are required")
 
+/-- `lwsRead(handle, {files: [{path, present, length}]})` with the bytes of
+the files in the byte region: the body files the last `lwsStep` answer named
+(`read`). Lean checks each one (`Files.readBodies`: the seal, the length, the
+FNV-1a digest, the SHA-256 when recorded) and puts the bytes into their
+entries for the next step of the same request. A file that is missing or does
+not match answers an error; the storage is unchanged. -/
+def lwsRead (h docJson : String) (blob : ByteArray) : IO (String × ByteArray) := do
+  let noBytes (s : String) : String × ByteArray := (s, ByteArray.empty)
+  match (← lwsTable.get)[h]? with
+  | none => pure (noBytes (unknownLwsHandle h))
+  | some open_ =>
+      match parseJson docJson with
+      | .error e => pure (noBytes (errJson s!"read: {toString e}"))
+      | .ok j =>
+          match loadedFiles j blob with
+          | .error e => pure (noBytes (errJson e))
+          | .ok files =>
+              match Files.readBodies Seal.hacl open_.storageKey open_.mem open_.reads files with
+              | .error e => pure (noBytes (errJson e))
+              | .ok (mem', done) =>
+                  lwsTable.modify (·.insert h
+                    { open_ with mem := mem', hydrated := done ++ open_.hydrated, reads := [] })
+                  pure (noBytes (okWith [("read", .number (toString done.length))]))
+
 def lwsClose (h : String) : IO String := do
   let table ← lwsTable.get
   if table.contains h then
@@ -888,9 +958,12 @@ def lwsSnapshot (h : String) (optsJson : String := "") : IO String := do
   match (← lwsTable.get)[h]? with
   | none => pure (unknownLwsHandle h)
   | some open_ =>
+      if open_.files.isSome then
+        pure (errJson "lwsSnapshot: this storage is kept in files (\"storage\": \"files\"); its bodies are in the body files, not in memory")
+      else
       -- The other state rides in the snapshot as more members, which
       -- `memStateOfJson` does not read (`sideMembers`).
-      let snap := match snapshotJson open_.mem.mem with
+      let snap := match snapshotJson open_.mem.mem.toMem with
         | .object fs => Json.object (fs ++ sideMembers open_)
         | other => other
       pure (snapshotAnswer open_.storageKey optsJson snap)
@@ -898,10 +971,10 @@ def lwsSnapshot (h : String) (optsJson : String := "") : IO String := do
 /-- The op names this module serves. -/
 def lwsOpNames : List String :=
   ["lwsOpen", "lwsStep", "lwsClose", "lwsSnapshot", "lwsFetched", "lwsDelivered", "lwsFlush",
-   "lwsLoad", "lwsPersist"]
+   "lwsLoad", "lwsPersist", "lwsRead"]
 
 /-- The LWS and Solid ops that also take and give a byte region: the
 request content in, the response content out. -/
-def lwsBlobIoOpNames : List String := ["lwsStep", "solidStep", "lwsLoad", "lwsPersist"]
+def lwsBlobIoOpNames : List String := ["lwsStep", "solidStep", "lwsLoad", "lwsPersist", "lwsRead"]
 
 end L4Wasm.Ops

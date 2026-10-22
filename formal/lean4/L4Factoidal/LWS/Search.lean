@@ -277,16 +277,16 @@ theorem groupMember_eq {b : String} {look : String → Option Entry} {ix : Index
   constructor
   · rintro ⟨t, ht, hc⟩
     exact ⟨t, ht, (contains_iff_mem_facts _ _).mpr
-      ((h.mem_iff (g.1, t) p).mp (HashSet.mem_iff_contains.mpr hc))⟩
+      ((h.mem_iff (g.1, t) p).mp (TreeSet.mem_iff_contains.mpr hc))⟩
   · rintro ⟨t, ht, hc⟩
-    exact ⟨t, ht, HashSet.mem_iff_contains.mp
+    exact ⟨t, ht, TreeSet.mem_iff_contains.mp
       ((h.mem_iff (g.1, t) p).mpr ((contains_iff_mem_facts _ _).mp hc))⟩
 
 theorem mem_groupCandidates {b : String} {look : String → Option Entry} {ix : IndexData}
     (h : IndexOk b look ix) (p : String) (g : Group) :
     p ∈ groupCandidates ix g ↔ groupHolds (factsAt b (look p)) g = true := by
   unfold groupCandidates groupHolds
-  simp only [List.mem_flatMap, HashSet.mem_toList, List.any_eq_true]
+  simp only [List.mem_flatMap, TreeSet.mem_toList, List.any_eq_true]
   constructor
   · rintro ⟨t, ht, hp⟩
     exact ⟨t, ht, (contains_iff_mem_facts _ _).mpr ((h.mem_iff (g.1, t) p).mp hp)⟩
@@ -443,7 +443,7 @@ theorem mem_typesOf (fs : List Fact) (t : String) : t ∈ typesOf fs ↔ (typeRe
 /-- The types the agent may see: those borne by at least one resource it may
 read, in increasing order. One pass over the index's facts. -/
 def visibleTypes (ix : IndexData) (canRead : String → Bool) : List String :=
-  orderPaths (ix.byFact.fold (fun acc f ps =>
+  orderPaths (ix.byFact.foldl (fun acc f ps =>
     if f.1 == typeRel && ps.toList.any canRead then f.2 :: acc else acc) [])
 
 /-- The specified type index: the types of every resource the agent may read. -/
@@ -491,22 +491,22 @@ theorem visibleTypes_eq_specTypes (S : Store σ) (L : StoreLaws S) (st : IxState
   unfold visibleTypes specTypes
   apply orderPaths_ext
   intro t
-  rw [HashMap.fold_eq_foldl_toList]
-  have key := mem_foldl_collect (β := HashSet String)
+  rw [TreeMap.foldl_eq_foldl_toList]
+  have key := mem_foldl_collect (β := TreeSet String)
     (fun b => b.1.1 == typeRel && b.2.toList.any canRead) (fun b => b.1.2)
     st.ix.byFact.toList [] t
   rw [key]
   simp only [List.not_mem_nil, false_or, List.mem_flatMap]
   constructor
   · rintro ⟨⟨f, ps⟩, hmem, hP, hg⟩
-    simp only [Bool.and_eq_true, beq_iff_eq, List.any_eq_true, HashSet.mem_toList] at hP
+    simp only [Bool.and_eq_true, beq_iff_eq, List.any_eq_true, TreeSet.mem_toList] at hP
     obtain ⟨hf1, p, hp, hcr⟩ := hP
-    have hget := HashMap.mem_toList_iff_getElem?_eq_some.mp hmem
+    have hget := TreeMap.mem_toList_iff_getElem?_eq_some.mp hmem
     have hf : f = (typeRel, t) := by cases f; simp_all
     subst hf
     have hpo : p ∈ st.ix.pathsOf (typeRel, t) := by
       unfold IndexData.pathsOf
-      rw [HashMap.getD_eq_getD_getElem?, hget]
+      rw [TreeMap.getD_eq_getD_getElem?, hget]
       exact hp
     have hfact := (st.ok.mem_iff _ p).mp hpo
     obtain ⟨e, he, _⟩ := some_of_mem_factsAt hfact
@@ -522,14 +522,14 @@ theorem visibleTypes_eq_specTypes (S : Store σ) (L : StoreLaws S) (st : IxState
       have hfact := (mem_typesOf _ _).mp hp
       have hpo := (st.ok.mem_iff _ p).mpr hfact
       unfold IndexData.pathsOf at hpo
-      rw [HashMap.getD_eq_getD_getElem?] at hpo
+      rw [TreeMap.getD_eq_getD_getElem?] at hpo
       cases hget : st.ix.byFact[(typeRel, t)]? with
       | none => rw [hget] at hpo; simp at hpo
       | some ps =>
           rw [hget] at hpo
-          refine ⟨((typeRel, t), ps), HashMap.mem_toList_iff_getElem?_eq_some.mpr hget, ?_, rfl⟩
+          refine ⟨((typeRel, t), ps), TreeMap.mem_toList_iff_getElem?_eq_some.mpr hget, ?_, rfl⟩
           simp only [Option.getD_some] at hpo
-          simp only [Bool.and_eq_true, beq_iff_eq, List.any_eq_true, HashSet.mem_toList, true_and]
+          simp only [Bool.and_eq_true, beq_iff_eq, List.any_eq_true, TreeSet.mem_toList, true_and]
           exact ⟨p, hpo, hcr⟩
     · simp at hp
 
@@ -558,7 +558,7 @@ def resultItem (b : String) (e : Entry) (facts : List Fact) : Json :=
     , ("type", .array (.string (if e.kind.isContainer then "Container" else "DataResource") ::
         declared.map Json.string)) ] ++
     (if e.kind.isContainer then []
-     else [("format", .string e.contentType), ("size", .number (toString e.body.size))]) ++
+     else [("format", .string e.contentType), ("size", .number (toString e.size))]) ++
     [("modified", .string (isoDateTime e.mtime))])
 
 /-- A ContainerPage of results. It names no container (§QUERY: "the response

@@ -97,7 +97,7 @@ paths; request paths with dot segments or encoded traversal get 400
 `lws-serve --storage files` keeps `DIR` as one file per body and a journal
 instead (section "Storage on disk" below).
 
-### Storage on disk, stage 1 (https://github.com/danbri/factoidal/issues/918)
+### Storage on disk, stages 1 and 2 (https://github.com/danbri/factoidal/issues/918)
 
 Design record: `docs/designissues/2026-10-22-lws-storage-on-disk.md`. Off by
 default: config `storage: "files"` (`listen({ storage: 'files' })`,
@@ -138,29 +138,52 @@ the variable: it tests the sealed snapshot file.
 * Migration: a start that finds only `lws-state.json` writes every body file,
   `lws-files.json` and an empty journal, then renames the snapshot to
   `lws-state.json.migrated`.
-* In memory in stage 1: everything, as in the snapshot mode (bodies included).
-  Stage 2 (bodies read on GET, the metadata in an on-disk index, a start that
-  reads no body) is the rest of issue 918.
+* Stage 2 (`L4Factoidal/LWS/Bodies.lean`): an entry with bytes holds a
+  `BodyStub` (body file number, length, FNV-1a, SHA-256 with `merkle`, the
+  types of a Turtle body) and no bytes in memory; ACL resources keep their
+  bytes (every access decision reads them). A step that needs bytes (GET body
+  or range, JSON Patch, a PUT a subscription may hear of, a move of a Turtle
+  resource) makes `lwsStep` answer `read: [PATH, ...]`; the host passes the
+  files to `lwsRead` (`Files.readBodies` checks seal, length, FNV-1a,
+  SHA-256) and steps again; the bytes leave memory after the step. A start
+  reads no body file unless the metadata lacks a fact (`Files.needsRead`).
+  A changed body file is found when it is read (the request answers 500),
+  not at start.
+* The LWS handles run `TreeStore` (`Std.TreeMap` keyed by path,
+  `treeStoreLaws`) and a type index in `Std.TreeMap`/`Std.TreeSet`: one step
+  costs a logarithm of the store (a hash set shared with the state before the
+  step was copied whole on every insert). Still linear: a container listing,
+  a recursive DELETE and a move list every path; the Merkle data are hash
+  maps.
 * Theorems: `journalStoreLaws`, `replay_record`, `replay_jstate`,
   `replay_records` (replaying the records of a sequence of steps gives the
-  metadata of the store after them), `persist_replay`, `assignBodies_refs`,
-  `decodeFrames_encodeFrames`, `decodeFrames_torn` (a journal whose last frame
-  is cut at any byte reads back as the frames before it), `fileMetaOfJson_fileMetaJson`,
-  `recordOfJson_recordJson`, `openBin_sealBin`, `openBin_keyId`. Not proved:
-  `parseJson` inverts `Json.toString` (as for the snapshot).
+  metadata of the store after them), `persist_replay`, `bodiesOut_journal`,
+  `projE_toEntry`, `decodeFrames_encodeFrames`, `decodeFrames_torn` (a journal
+  whose last frame is cut at any byte reads back as the frames before it),
+  `fileMetaOfJson_fileMetaJson`, `recordOfJson_recordJson`, `openBin_sealBin`,
+  `openBin_keyId`; stage 2: `treeStoreLaws`, `etagFor_dehydrate`,
+  `itemJson_dehydrate`, `entryFacts_dehydrate`, `leafDigest_dehydrate`,
+  `entryFacts_withBody`, `leafDigest_withBody`, `IndexOk.congr`,
+  `MkOk.congr_key`, `JState.replaceAt_prior`, `stubAt_journal`,
+  `recordedDigest_changes`. Not proved: `parseJson` inverts `Json.toString`
+  (as for the snapshot).
+* `solid-serve` keeps the snapshot: an expected failure in
+  `tests/solid/server/protocol.mjs` names issue 918.
 
 Tests: `L4Factoidal/LWS/FileLayoutTests.lean` (`#guard`s that play the host on
 a table of files: round trips clear and sealed, every step compacting, a
 journal cut at every byte of its last record, a changed or missing body file,
 a wrong key, a record out of order, migration); `node tests/lws/storage-files.mjs`
-(11 pass, 0 fail, 0 skipped (out of 11), 2026-10-22); `tests/lws/scaling.mjs`
-rows "storage". Measured 2026-10-22: a PUT into a storage of 1,000, 2,000 and
-4,000 resources 2.70, 2.40, 2.89 ms with files (ratio 1.07, bound 1.5) against
-42.6, 83.9, 170.4 ms with the snapshot; the peak RSS of a start grows with the
-storage (258 MiB at 1,000 resources of 16 KiB, 515 MiB at 4,000), an expected
-failure naming issue 918 until stage 2. The step itself is still linear in
-the store (0.21 ms at 1,000 resources, about 3 ms at 16,000: the list store and
-the copies of shared index state). Touchstone with `--storage files`: the same
+(14 pass, 0 fail, 0 skipped (out of 14), 2026-10-22, stage 2); `tests/lws/scaling.mjs`
+rows "storage". Measured 2026-10-22 after stage 2: the engine's step and
+persist 0.304, 0.267, 0.278, 0.285 ms at 1,000, 2,000, 4,000, 16,000
+resources (stage 1: 0.21 ms at 1,000, about 3 ms at 16,000); a PUT through
+the host (fsync most of it) 5.75, 4.65, 4.39, 4.46 ms; the peak RSS of a start
+and one GET of 1,000, 2,000, 4,000 resources of 16 KiB 230.3, 229.6,
+210.5 MiB (stage 1: 258 MiB at 1,000, 515 MiB at 4,000), asserted: growth
+<= 16 MiB from s to 4s. `lws scaling`: 21 pass, 0 fail (out of 21). The
+median of five repeats is used for the host PUT row: fsync varies both ways
+and one minimum of three read a ratio of 1.72. Touchstone with `--storage files`: the same
 totals as the default (open 76 pass, authorization 215 pass, 0 fail; `--config
 all --unstable-search-results` 220 passed, 0 failed, 1 never applied, out of
 221). Every LWS suite also passes with `FACTOIDAL_LWS_STORAGE=files`.

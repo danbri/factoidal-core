@@ -344,13 +344,20 @@ theorem freeName_free (taken : String → Bool) (name : String) :
         rw [← h]
         simpa using ht
 
+/-- The most names `childPathFor` tries: 2^30, a small number on every
+target (a wasm32 small `Nat` holds 2^31 - 1). -/
+def nameTries : Nat := 1073741824
+
 /-- The path of a new child of `target`. LWS §Create Resource: "If an
 identity hint was provided, the server attempts to incorporate it while
 ensuring uniqueness and validity within the container." The first name not
 held by a data resource or a container is used: the hint (or `res` and the
-clock), then the same with `-1`, `-2`, ... Up to one more candidate than
-the store has paths is tried; each taken candidate is held by a different
-path, so one of them is free. `none` (never reached) answers 409.
+clock), then the same with `-1`, `-2`, ... Each taken candidate is held by
+a different path, so a free one comes after at most as many tries as the
+store has paths; the loop stops after `nameTries` (2^30) tries. `none` (never
+reached for a store of fewer paths) answers 409. Until 2026-10-22 the bound
+was the number of paths plus one, and computing it listed every path of the
+store on every POST (https://github.com/danbri/factoidal/issues/918, stage 2).
 
 Until 2026-10-21 a clash got the clock as its one suffix, on the
 assumption that the clock never repeats; under a host's real clock three
@@ -365,7 +372,7 @@ def childPathFor (S : Store σ) (st : σ) (target : String) (hint : Option Strin
     | none => assignedName S st
   let taken (n : String) : Bool :=
     (S.lookup st (target ++ n)).isSome || (S.lookup st (target ++ n ++ "/")).isSome
-  (freeName taken name ((S.paths st).length + 1) 0).map
+  (freeName taken name nameTries 0).map
     (fun n => target ++ n ++ (if asContainer then "/" else ""))
 
 /-- A POST never replaces a resource: the path `childPathFor` assigns holds
@@ -704,9 +711,14 @@ def stepPath (S : Store σ) (cfg : Config) (r : Request) (st : σ) : Response ×
                   [("vary", "accept")]
                 (⟨200, hs, if r.method == "HEAD" then ""
                            else containerBody media cfg.baseIri target items, none⟩, st)
+              else if r.method == "GET" && !e.hydrated then
+                -- A storage kept in files reads the body file before the step
+                -- (`Bodies.bodiesNeeded`); a host that did not is refused here,
+                -- so no response carries bytes that are not the resource's.
+                (problem 500 "the body file of this resource was not read for this request" target, st)
               else
                 let hs := base ++ [("accept-ranges", "bytes")]
-                let len := e.body.size
+                let len := e.size
                 let rangeHdr : Option String :=
                   if r.method != "GET" then none
                   else match r.header? "if-range" with
@@ -804,6 +816,9 @@ def stepPath (S : Store σ) (cfg : Config) (r : Request) (st : σ) : Response ×
                 else match preconditionsOn S cfg st r existing with
                   | some resp => (resp, st)
                   | none =>
+                      if !e.hydrated then
+                        (problem 500 "the body file of this resource was not read for this request" target, st)
+                      else
                       match (String.fromUTF8? r.content).map parseJson with
                       | none => (problem 400 "the patch document is not UTF-8" target, st)
                       | some (.error _) => (problem 400 "the patch document is not JSON" target, st)
@@ -823,7 +838,7 @@ def stepPath (S : Store σ) (cfg : Config) (r : Request) (st : σ) : Response ×
                                   | .error (status, msg) => (problem status msg target, st)
                                   | .ok links =>
                                   let e' : Entry := { e with body := textBytes (toStringCompact d'),
-                                                             mtime := S.now st, links }
+                                                             mtime := S.now st, links, stub := none }
                                   let st' := touchContainer S (S.tick (S.put st e')) target
                                   (⟨204, writtenHeaders cfg e' (etagFor e' e'.contentType) ++
                                     preferenceApplied r, "", none⟩, st')
@@ -841,8 +856,11 @@ def stepPath (S : Store σ) (cfg : Config) (r : Request) (st : σ) : Response ×
                 if e.kind.isContainer && !(containedPaths S st target).isEmpty && !recursive then
                   (problem 409 "the container is not empty" target, st)
                 else
-                  let descendants := (S.paths st).filter (fun p => p != target && p.startsWith target &&
-                                                                     pathIsContainer target)
+                  -- Only a container has descendants; the paths of the store
+                  -- are listed only then.
+                  let descendants := if pathIsContainer target then
+                      (S.paths st).filter (fun p => p != target && p.startsWith target)
+                    else []
                   let st1 := descendants.foldl (fun s p => S.remove s p) st
                   let st' := touchContainer S (S.tick (S.remove st1 target)) target
                   (⟨204, [], "", none⟩, st')

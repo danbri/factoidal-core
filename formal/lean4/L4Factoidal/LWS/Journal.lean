@@ -75,6 +75,33 @@ def JournalStore (S : Store σ) (L : StoreLaws S) : Store (JState S) where
     { base := S.tick s.base, prior := s.prior, touched := s.touched
       ok := fun p hp => by rw [L.lookupTick]; exact s.ok p hp }
 
+/-- Replace the entry at `e.path` without recording the path: the entry
+stands for the same resource (its bytes moved to a body file, or read back
+from one, https://github.com/danbri/factoidal/issues/918 stage 2). The state
+at the last persist gets the same entry when the path is not recorded, so no
+other path differs from it; a recorded path keeps its value there. -/
+def JState.replaceAt {S : Store σ} (L : StoreLaws S) (js : JState S) (e : Entry) : JState S :=
+  { base := S.put js.base e
+    prior := if e.path ∈ js.touched then js.prior else S.put js.prior e
+    touched := js.touched
+    ok := fun p hp => by
+      by_cases hpe : p = e.path
+      · subst hpe
+        rw [if_neg hp, L.lookupPutSame, L.lookupPutSame]
+      · rw [L.lookupPutOther _ _ _ hpe]
+        split
+        · exact js.ok p hp
+        · rw [L.lookupPutOther _ _ _ hpe]; exact js.ok p hp }
+
+/-- A replacement at a recorded path leaves the state at the last persist as
+it was. -/
+theorem JState.replaceAt_prior {S : Store σ} (L : StoreLaws S) (js : JState S) (e : Entry)
+    (h : e.path ∈ js.touched) : (js.replaceAt L e).prior = js.prior := by
+  simp [JState.replaceAt, h]
+
+theorem JState.replaceAt_touched {S : Store σ} (L : StoreLaws S) (js : JState S) (e : Entry) :
+    (js.replaceAt L e).touched = js.touched := rfl
+
 /-- The recording store satisfies every law of the backend. -/
 theorem journalStoreLaws (S : Store σ) (L : StoreLaws S) : StoreLaws (JournalStore S L) where
   lookupPutSame := fun s e => L.lookupPutSame s.base e

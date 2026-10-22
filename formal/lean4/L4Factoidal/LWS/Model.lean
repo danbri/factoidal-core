@@ -181,6 +181,34 @@ def auxiliaryRel : ResourceKind → Option String
 
 /-! ## The stored form of a resource -/
 
+/-- Where the bytes of a resource are when a storage kept in files does not
+hold them in memory (https://github.com/danbri/factoidal/issues/918, stage 2),
+and the facts the server derives from the bytes, recorded when the body file
+was written. Every function that needs one of these facts reads it here
+(`Entry.size`, `Entry.fnv`, `Merkle.leafDigest`, `TypeIndex.contentTypes`), so
+an entry with a stub answers what the entry with its bytes answers. Only a
+step that needs the bytes themselves (a GET body or range, a JSON Patch, the
+notification comparison, a move of a Turtle resource) reads the body file
+first; the host reads it and the bytes are put in `Entry.body` for that step
+(`Entry.hydrated`).
+
+* `file`: the body file number (`Files.bodyName`).
+* `size`: the length of the bytes.
+* `fnv`: FNV-1a 32 of the bytes (`Binding.fnv1a32`, the entity tag).
+* `sha`: SHA-256 of the bytes, when the Merkle option was on (the Merkle
+  leaf and `Repr-Digest`).
+* `types`, `typesIri`: the `rdf:type` objects that the Turtle bytes state of
+  the resource (`TypeIndex.contentTypes`), read with the IRI `typesIri` as
+  the base and the subject. -/
+structure BodyStub where
+  file : Nat
+  size : Nat
+  fnv : Nat
+  sha : Option ByteArray := none
+  types : List String := []
+  typesIri : String := ""
+deriving Inhabited
+
 /-- One resource as a storage holds it.
 
 `mtime` is seconds since the Unix epoch. It is a FIELD, not a call into a
@@ -205,13 +233,39 @@ structure Entry where
   server-managed links are derived from the path and the kind, and are never
   stored here (`L4Factoidal.LWS.Linkset`). -/
   links       : List Link := []
+  /-- With a storage kept in files: the body file of the bytes and the facts
+  derived from them (`BodyStub`). `body` is then empty, or holds the bytes of
+  the file for one step (`Entry.hydrated`). `none` everywhere else. -/
+  stub        : Option BodyStub := none
 deriving Inhabited
 
 instance : Repr Entry where
   reprPrec e _ :=
     "{ path := " ++ repr e.path ++ ", kind := " ++ repr e.kind ++
     ", contentType := " ++ repr e.contentType ++ ", body := " ++ repr e.body.toList ++
-    ", mtime := " ++ repr e.mtime ++ ", links := " ++ repr e.links ++ " }"
+    ", mtime := " ++ repr e.mtime ++ ", links := " ++ repr e.links ++
+    ", stub := " ++ repr (e.stub.map (·.file)) ++ " }"
+
+/-- The length of the representation data: the recorded length when the
+bytes are in a body file, else the length of `body`. -/
+def Entry.size (e : Entry) : Nat :=
+  match e.stub with
+  | some s => s.size
+  | none => e.body.size
+
+/-- Does `body` hold the bytes of the resource: always without a stub, and
+with one when the body file was read for this step. -/
+def Entry.hydrated (e : Entry) : Bool :=
+  match e.stub with
+  | some s => e.body.size == s.size
+  | none => true
+
+theorem Entry.size_of_hydrated (e : Entry) (h : e.hydrated = true) : e.size = e.body.size := by
+  unfold Entry.hydrated at h
+  unfold Entry.size
+  cases hs : e.stub with
+  | none => rfl
+  | some s => rw [hs] at h; simp at h; exact h.symm
 
 /-- The representation data of an entry read as UTF-8 text, or `""` when the
 bytes are not UTF-8. Only the readers of RDF and ACL documents use it; an RDF

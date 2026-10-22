@@ -310,6 +310,13 @@ theorem fnv1a32_eq_spec (b : ByteArray) : fnv1a32 b = fnv1a32Spec b := by
 private def hexDigit (n : Nat) : Char :=
   if n < 10 then Char.ofNat (48 + n) else Char.ofNat (87 + n)
 
+/-- FNV-1a 32 of the representation data: the recorded digest when the
+bytes are in a body file (`BodyStub.fnv`), else the digest of `body`. -/
+def Entry.fnv (e : Entry) : Nat :=
+  match e.stub with
+  | some s => s.fnv
+  | none => fnv1a32 e.body
+
 /-- Eight lower-case hexadecimal digits of a 32-bit value. -/
 def hex8 (n : Nat) : String :=
   String.ofList ((List.range 8).reverse.map (fun i => hexDigit (n / 16 ^ i % 16)))
@@ -324,7 +331,7 @@ suffix); the tag a container sends is `containerTag`, which adds the digest
 of the listing. -/
 def etagFor (e : Entry) (media : String) : String :=
   "\"" ++ toString e.mtime ++
-    (if e.kind.isContainer then mediaTagSuffix media else "-" ++ hex8 (fnv1a32 e.body)) ++ "\""
+    (if e.kind.isContainer then mediaTagSuffix media else "-" ++ hex8 e.fnv) ++ "\""
 
 /-- The tag of one representation of a container: its clock, the media
 suffix, and the FNV-1a digest of `body`, the representation in that media
@@ -567,7 +574,7 @@ def itemJson (baseIri : String) (e : Entry) : Json :=
     , ("type", .string (if e.kind.isContainer then "Container" else "DataResource")) ] ++
     (if e.kind.isContainer then [] else
       [ ("format", .string e.contentType)
-      , ("size", .number (toString e.body.size)) ]) ++
+      , ("size", .number (toString e.size)) ]) ++
     [ ("modified", .string (isoDateTime e.mtime)) ])
 
 /-- The `application/lws+json` representation of a container. `total` is
@@ -637,7 +644,7 @@ def containerTurtle (baseIri path : String) (items : List Entry) (total : Option
     ttlIri (iriOfPath baseIri e.path) ++
     (if e.kind.isContainer then " a lws:Container .\n"
      else " a lws:DataResource ;\n  dcterms:format " ++ ttlString e.contentType ++
-       " ;\n  schema:size \"" ++ toString e.body.size ++ "\"^^xsd:long ;\n" ++
+       " ;\n  schema:size \"" ++ toString e.size ++ "\"^^xsd:long ;\n" ++
        "  dcterms:modified \"" ++ isoDateTime e.mtime ++ "\"^^xsd:dateTime .\n")
   header ++ self ++ String.join (items.map item)
 
