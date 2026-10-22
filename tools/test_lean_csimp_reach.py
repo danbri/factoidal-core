@@ -24,7 +24,7 @@ apart, and a pass failed the run); it is a plain assertion now.  Without a build
 real cases are NOT RUN and the exit code is 2; `--synthetic-only` says so on purpose.
 The real cases also require `Harness.Qlvr` (the namespace is `QlvrTool`),
 which is outside the library and l4wasm import closures. Build its Lean
-artifacts with `lake build L4Factoidal l4wasm +Harness.Qlvr` from formal/lean4.
+artifacts with `lake build L4Factoidal l4wasm +Harness.Qlvr +Harness.CryptoProbe` from formal/lean4.
 
 Exit code: 0 all run cases pass, 1 a case failed, 2 the real build was not found.
 """
@@ -633,7 +633,7 @@ def _():
 
 # ---------------------------------------------------------------- real build
 
-REQUIRED_REAL_MODULES = ("L4Factoidal.CsimpReachFixture", "Harness.Qlvr")
+REQUIRED_REAL_MODULES = ("L4Factoidal.CsimpReachFixture", "Harness.Qlvr", "Harness.CryptoProbe")
 
 
 def missing_real_artifacts(ir_dir):
@@ -645,13 +645,12 @@ def missing_real_artifacts(ir_dir):
 def _():
     with tempfile.TemporaryDirectory() as tmp:
         assert missing_real_artifacts(tmp) == list(REQUIRED_REAL_MODULES)
-        for module in REQUIRED_REAL_MODULES:
+        for index, module in enumerate(REQUIRED_REAL_MODULES):
             path = os.path.join(tmp, *module.split(".")) + ".c"
             os.makedirs(os.path.dirname(path), exist_ok=True)
             with open(path, "w") as fh:
                 fh.write("// prerequisite presence control\n")
-            if module == "L4Factoidal.CsimpReachFixture":
-                assert missing_real_artifacts(tmp) == ["Harness.Qlvr"]
+            assert missing_real_artifacts(tmp) == list(REQUIRED_REAL_MODULES[index + 1:])
         assert missing_real_artifacts(tmp) == []
 
 
@@ -836,7 +835,7 @@ def main():
     elif missing := missing_real_artifacts(IR):
         not_run = True
         print("NOT RUN: missing emitted C for %s at %s -- run "
-              "`lake build L4Factoidal l4wasm +Harness.Qlvr` in formal/lean4, "
+              "`lake build L4Factoidal l4wasm +Harness.Qlvr +Harness.CryptoProbe` in formal/lean4, "
               "or pass --synthetic-only" % (", ".join(missing), IR))
     else:
         real_cases()

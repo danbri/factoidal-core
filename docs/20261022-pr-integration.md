@@ -208,3 +208,11 @@ in the earlier PR2+PR3 build log. Their presence in the
 build log is not a conformance result; the public API replay checks the
 exposed paths, not every runtime symbol. Preserve these warnings with the
 artifact evidence rather than describing the build as warning-free.
+
+The clean CI run at `1a2299588` exposed a further missing prerequisite:
+`Harness.CryptoProbe` contains the only csimp theorem outside the library and
+Wasm source families. Its cached C had masked the missing CI build locally.
+CI now builds that module explicitly too; the self-test prerequisite check
+names it. No audit finding or theorem requirement was disabled. The failed
+run passed the full build, hygiene and all 13 recursion controls, then failed
+2 of the 34 compiler-replacement controls on the absent emitted C symbol.
