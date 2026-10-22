@@ -76,7 +76,7 @@ it does not authorize publishing, messaging, or changes outside the task.
 - Check the caller's specification edition before choosing a shared profile.
   When admitting legacy character tables, test positive and complement classes
   at non-ASCII boundaries. Check sorted/disjoint preconditions before interval
-  complement: the XSD name table's unsorted union made both `\\c` and `\\C`
+  complement: the XSD name table's unsorted union made both `\c` and `\C`
   accept U+00B7. Correct union membership does not prove correct complement.
   Report additional exclusions as lost coverage, even when failures stay zero.
   See [regex profile and interval preconditions](../../docs/designissues/2026-10-22-regex-profiles-and-range-invariants.md).

@@ -138,11 +138,11 @@ repair and passed after it, alongside the existing import controls.
 
 XSD now scores 16,135 passes, zero failures and 10,222 exclusions. It scores
 2,820 fewer cases than the baseline; an independent fixture inventory ties
-those cases to the refused `\\d` category escape. The previous parser handled
+those cases to the refused `\d` category escape. The previous parser handled
 ASCII digits only. The initial integration also accidentally routed the XSD
 1.1 caller through a 1.0 admission profile. Correct routing recovered 255
 cases without widening the 1.0 profile. New complement controls then exposed
-unsorted name ranges: both `\\c` and `\\C` accepted U+00B7. Normalization fixes
+unsorted name ranges: both `\c` and `\C` accepted U+00B7. Normalization fixes
 that caller precondition. The public SHACL regression fails on the old Wasm;
 its passing run on the final artifact remains required.
 

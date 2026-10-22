@@ -241,7 +241,7 @@ Membership in a union of intervals can tolerate unsorted input; a complement
 algorithm may require sorted, disjoint intervals. Normalize or prove that
 invariant before calling it. New character-class admission must test both
 positive and complement classes with non-ASCII boundary witnesses. The
-integration exposed `\\c` and `\\C` both accepting U+00B7 because the name
+integration exposed `\c` and `\C` both accepting U+00B7 because the name
 table appended extra intervals out of order. A correct membership result did
 not establish correctness of its complement.
 

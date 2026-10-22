@@ -18,7 +18,7 @@ The separate conservative XSD 1.0 profile remains unchanged.
 The integration initially selected the 1.0 profile for the existing 1.1
 caller. Correcting that choice recovered 255 scored fixture cases. It did
 not justify admitting every escape handled by the legacy parser: that parser
-uses ASCII digits for `\\d` and ECMAScript word characters for `\\w`, while
+uses ASCII digits for `\d` and ECMAScript word characters for `\w`, while
 XSD specifies Unicode categories. Those escapes remain unsupported in this
 profile. The remaining 2,820 fewer scored XSD cases are recorded as reduced
 coverage, not passes or repaired conformance.
@@ -28,7 +28,7 @@ coverage, not passes or repaired conformance.
 The XML NameChar table appends extra ranges to NameStartChar. Membership in
 that union can be correct regardless of interval order. `complementRanges`
 requires sorted, disjoint intervals. Supplying the appended table directly
-made both `\\c` and `\\C` accept U+00B7, the middle-dot character.
+made both `\c` and `\C` accept U+00B7, the middle-dot character.
 
 The repair normalizes the table at the complement call. Controls check name
 classes and their complements, non-ASCII witnesses, edition separation and
