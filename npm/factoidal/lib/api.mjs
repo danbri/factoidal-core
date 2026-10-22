@@ -170,10 +170,6 @@ function utf16Diagnostics(text, diagnostics) {
   return diagnostics.map((d, i) => (units.has(i) ? { ...d, offset: units.get(i) } : d));
 }
 
-// DatasetHandle: the name of the engine-resident dataset class before
-// 0.10.0. Deprecated alias of Dataset, kept for 0.10.x only.
-const DatasetHandle = Dataset;
-
 // ---------------------------------------------------------------------
 // The Lean persisted store (Shardborough generations: IBK3, IBK4, IBK5
 // blocks with their index sidecars; skills/shardborough-storage). A
@@ -2213,7 +2209,6 @@ function buildApi(driver) {
     ready,
     engineTables,
     Dataset,
-    DatasetHandle,
     Store,
     FactoidalError,
     dataFactory,
@@ -2228,5 +2223,5 @@ function buildApi(driver) {
 
 export {
   buildApi, bindingsFromSrj, entryResult, parseResult,
-  missingOpError, FactoidalError, DatasetHandle, Store,
+  missingOpError, FactoidalError, Store,
 };

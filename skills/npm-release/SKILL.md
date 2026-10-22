@@ -182,6 +182,10 @@ Bumping the package version is a manual edit of `version` in
 `npm/factoidal/lib/version.mjs` (the browser cannot import JSON;
 `test/dts-drift.test.js` checks the two agree), plus a `CHANGELOG.md`
 entry.
+Check the lock file too: `node -e "const d=require('./npm/factoidal/package-lock.json');console.log(d.version,d.packages[''].version)"`
+must print the new version twice. No test checks it: 0.11.0 was published
+with `package-lock.json` still at 0.10.0, found and corrected at the 0.12.0
+bump (2026-10-22).
 
 ## How publishing works
 

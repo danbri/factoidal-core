@@ -137,7 +137,6 @@ export const didKeyResolve = api.didKeyResolve;
 // Types, probes and metadata
 export const capabilities = api.capabilities;
 export const Dataset = api.Dataset;
-export const DatasetHandle = api.DatasetHandle;
 export const Store = api.Store;
 export const FactoidalError = api.FactoidalError;
 export const dataFactory = api.dataFactory;

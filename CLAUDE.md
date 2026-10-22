@@ -781,6 +781,22 @@ https://github.com/danbri/factoidal/issues/914 (moving resources).
   says a server that exposes one "MUST subject it to the same authorization
   filtering on every access and MUST prevent its reuse across clients".
 
+### Order after LWS storage stage 2 (owner, 2026-10-22)
+
+> "Approved. Do auth server (as a component other servers might use too).
+> Then LWS client. Then also the XMPP-related work items in the conversation
+> quoted here"
+
+1. Finish LWS storage on disk stage 2 (https://github.com/danbri/factoidal/issues/918).
+2. An authorization server as a component that other servers can use, not
+   only `lws-serve` (https://github.com/danbri/factoidal/issues/916).
+3. An LWS client (https://github.com/danbri/factoidal/issues/917).
+4. The three items from the glitchcan-minigam foafos report of 2026-10-21
+   (`magpie/miniapps/lws/README.md` there): CORS headers in the LWS HTTP
+   binding; XMPP over WebSocket (RFC 7395) in `l4xmpp-serve`; LWS
+   notifications sent as XMPP messages. Issues are linked from
+   https://github.com/danbri/factoidal/issues/901.
+
 ## Reading owner steers: prioritization is not prohibition
 
 The owner usually steers this project from a phone, between other
