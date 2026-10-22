@@ -87,6 +87,16 @@ test('parse.syntax: position offset is UTF-16, byteOffset UTF-8', async () => {
   assert.equal(text.slice(err.position.offset), '.');
   assert.equal(err.position.byteOffset, new TextEncoder().encode(text.slice(0, err.position.offset)).length);
 });
+test('parse.syntax: missing RDF object is not an invalid IRI', async () => {
+  const text = '<urn:s> <urn:p> .';
+  for (const format of ['ntriples', 'ntriples12', 'nquads', 'nquads12']) {
+    const err = await rejection(() => f.parse(text, { format }));
+    const spec = format.startsWith('nquads')
+      ? 'https://www.w3.org/TR/rdf12-n-quads/#sec-grammar' : NT_GRAMMAR;
+    check(err, 'parse.syntax', spec, { line: 1, column: 17, offset: 16, byteOffset: 16 });
+    assert.equal(err.format, format);
+  }
+});
 test('parse.syntax: RDF/XML has the RDF/XML grammar and no position', async () => {
   const err = await rejection(() => f.parse('<rdf:RDF', 'rdfxml'));
   check(err, 'parse.syntax', 'https://www.w3.org/TR/rdf12-xml/#section-Infoset-Grammar', null);

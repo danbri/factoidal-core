@@ -243,7 +243,10 @@ def classify (op msg : String) (positioned : Bool) : String :=
   if has msg "requires RDF 1.2 mode" || has msg "requires mode .rdf12" then
     "parse.rdf12-required"
   else if positioned then
-    if has msg "IRIREF" || has msg "relative IRI" || has msg "invalid IRI" then "term.invalid-iri"
+    -- This parser message lists allowed alternatives. Mentioning IRIREF here
+    -- does not mean an IRI was present or invalid.
+    if msg.startsWith "expected object (" then "parse.syntax"
+    else if has msg "IRIREF" || has msg "relative IRI" || has msg "invalid IRI" then "term.invalid-iri"
     else if has msg "language tag" || has msg "LANGTAG" then "term.invalid-langtag"
     else "parse.syntax"
   else if msg.startsWith "unknown op '" || has msg "is not in the core engine" then "op.unknown"
@@ -326,6 +329,10 @@ def codeOf? (envelope : String) : Option String :=
 #guard classify "parseToDatasetJson" "triple term <<( )>> requires RDF 1.2 mode" true
   == "parse.rdf12-required"
 #guard classify "parseToDatasetJson" "expected prefixed name" true == "parse.syntax"
+#guard classify "parseToDatasetJson" "expected object (IRIREF, BLANK_NODE_LABEL, or literal)" true
+  == "parse.syntax"
+#guard classify "parseToDatasetJson" "expected object (IRIREF, BLANK_NODE_LABEL, literal, or triple term)" true
+  == "parse.syntax"
 #guard classify "parseToDatasetJson" "invalid character in IRIREF" true == "term.invalid-iri"
 #guard classify "parseToDatasetJson" "language tag must start with a letter" true
   == "term.invalid-langtag"
