@@ -18,6 +18,8 @@ on:
       - 'tools/check-owl-public-boundary.py'
       - 'tools/check-owl-public-artifact.mjs'
       - 'tools/test-owl-public-artifact.mjs'
+      - 'tools/lean-*'
+      - 'tools/test_lean_*'
       - 'third_party/testing/owl/**'
       - '.github/workflows/verify-lean4.yml'
   workflow_dispatch: {}
@@ -75,6 +77,16 @@ jobs:
         working-directory: ${{ github.workspace }}
         run: python3 tools/lean-hygiene-audit.py --build-log "$RUNNER_TEMP/lake-build.log"
 
+      - name: Compiled recursion and replacement audit controls
+        run: |
+          python3 tools/test_lean_tail_recursion_audit.py
+          python3 tools/test_lean_csimp_reach.py
+
+      - name: Gate compiled recursion and compiler replacement reach
+        run: |
+          python3 tools/lean-tail-recursion-audit.py --gate --json "$RUNNER_TEMP/lean-tail-recursion.json"
+          python3 tools/lean-csimp-reach.py --gate --json "$RUNNER_TEMP/lean-csimp-reach.json"
+
       # These gates cover the restricted proved reader and generated-name
       # separation and restricted consistency source adapter. They do not
       # certify legacy entailment or an untested npm artifact.
@@ -99,6 +111,8 @@ jobs:
             ${{ runner.temp }}/owl-reader-contracts.json
             ${{ runner.temp }}/atomic-direct-w3c.json
             ${{ runner.temp }}/owl-public-boundary.json
+            ${{ runner.temp }}/lean-tail-recursion.json
+            ${{ runner.temp }}/lean-csimp-reach.json
           if-no-files-found: warn
           retention-days: 30
 
