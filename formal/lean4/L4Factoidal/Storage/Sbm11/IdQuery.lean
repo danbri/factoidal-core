@@ -1489,6 +1489,65 @@ def scanListM {m : Type → Type} [Monad m] {σ : Type} (st : Store m) (spec : S
     (scanBlockM st spec fill f metas sortVar ox)
   return (s.acc, s.stats)
 
+/-! ## A count from the PRM1 entries (https://github.com/danbri/factoidal/issues/932)
+
+A COUNT with no FILTER, no GROUP BY and no delta overlay needs only the number
+of rows the scan keeps. For most blocks the PRM1 entry gives that number
+(`metaStep`): 0 when the block is not selected or a check fails on a column
+that is constant over the block; all its rows when every row carries the key
+prefix (`fullFor`), every check is on a constant column, and the scan has no
+repeated variable and no named-graph test. `metaCountM` adds those numbers in
+one loop over the entries (`metaSplitGo`) and scans only the other blocks,
+with `scanBlockM` and a count as the accumulator (`countAdd`).
+`MetaCountTheorems.metaCountM_eq_scan`: over an admitted permutation in memory
+with no overlay, the count is the length of the tuple list of the scan
+(`ScanFoldTheorems.scanFoldM_tuples`). -/
+
+/-- A check fails for every row of the block: its column is constant over
+    the block with another value. -/
+def checkFails (b : BlockMeta) (ck : Nat × UInt64) : Bool :=
+  match colConst? b ck.1 with
+  | some y => y != ck.2.toNat
+  | none => false
+
+/-- The rows of the block that the scan keeps, when the PRM1 entry gives it;
+    `none` when the block must be read. -/
+def metaStep (spec : ScanSpec) (b : BlockMeta) : Option Nat :=
+  if !selects b spec.key || spec.checks.any (checkFails b) then some 0
+  else if fullFor b spec.key && spec.checks.all (fun ck => (colConst? b ck.1).isSome) &&
+      spec.eqs.isEmpty && !spec.named then some b.rows
+  else none
+
+/-- Over the entries `i, i + 1, ...`: the sum of `metaStep` of the blocks it
+    gives, and the positions of the other blocks, in order (a tail call with
+    fuel). -/
+def metaSplitGo (spec : ScanSpec) (metas : Array BlockMeta) : Nat → Nat → Nat → Array Nat → Nat × Array Nat
+  | 0, _, n, rest => (n, rest)
+  | f + 1, i, n, rest =>
+    if i < metas.size then
+      match metaStep spec metas[i]! with
+      | some r => metaSplitGo spec metas f (i + 1) (n + r) rest
+      | none => metaSplitGo spec metas f (i + 1) n (rest.push i)
+    else (n, rest)
+
+/-- The count accumulator of a scan: the rows of each chunk. -/
+@[inline] def countAdd {m : Type → Type} [Monad m] (acc : Nat) (ch : Chunk) : ExceptT String m (Nat × Bool) :=
+  pure (acc + ch.table.rows, true)
+
+/-- The number of rows the scan of `spec` keeps, the number of blocks decided
+    by their PRM1 entries, and the statistics of the scan of the others. The
+    caller uses it only when the overlay of the permutation is empty. -/
+def metaCountM {m : Type → Type} [Monad m] (st : Store m) (spec : ScanSpec) :
+    ExceptT String m (Nat × Nat × ScanStats) := do
+  let sel ← st.blocksForRange spec.perm spec.key
+  let total ← st.blockCount spec.perm
+  let (n, rest) := metaSplitGo spec sel sel.size 0 0 #[]
+  let ox := ovCtx (st.ovl spec.perm) spec.key
+  let s ← forIn rest.toList
+    ({ acc := n, stats := { blocksTotal := total }, insPos := 0, stopped := false } : ScanState Nat)
+    (scanBlockM st spec false countAdd sel (sortVarOf spec) ox)
+  return (s.acc, sel.size - rest.size, s.stats)
+
 /-- `scanTableM`, or the store's `scanTable` when it sets one (stage 1). -/
 def scanTableOf {m : Type → Type} [Monad m] (st : Store m) (spec : ScanSpec) :
     ExceptT String m (Table × ScanStats) :=
@@ -2899,8 +2958,15 @@ def runPlanM {m : Type → Type} [Monad m] (st : Store m) (plan : Plan) (emit : 
       -- aggregate block by block
       let t := pats[0]!
       let spec := mkSpec t (permFor t none) need
+      -- issue 932: no FILTER, no GROUP BY, no overlay: the PRM1 entries give
+      -- the count of the blocks they decide (`metaCountM`)
+      let metaOk := fs.isEmpty && plan.groupVars.isEmpty && (st.ovl spec.perm).isEmpty
       -- stage 1b: one group map per block range, added in range order
-      let (groups, s, how) ← match par, ← divideFor? st par spec 0 with
+      let (groups, s, how) ← if metaOk then do
+          let (n, decided, s) ← metaCountM st spec
+          let g : Groups := if n == 0 then {} else ({} : Groups).add [] n
+          pure (g, s, s!" from PRM1 entries ({decided} blocks decided by their entries)")
+        else match par, ← divideFor? st par spec 0 with
         | some p, some (metas, ox, chunks, _) => do
           let total ← st.blockCount spec.perm
           let (g, s) ← p.fold (fun v X => countPartM v spec fs plan.groupVars metas ox X) chunks

@@ -1,0 +1,3 @@
+# COUNT(*) of the all-variable pattern: the default graph only (issue 932;
+# the PRM1 entries give the count of the blocks whose graph column is constant)
+SELECT (COUNT(*) AS ?n) WHERE { ?s ?p ?o }

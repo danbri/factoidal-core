@@ -1,0 +1,3 @@
+# COUNT(*) with a repeated variable: no block is decided by its PRM1 entry
+# (issue 932), every block is read
+SELECT (COUNT(*) AS ?n) WHERE { ?x ?p ?x }
