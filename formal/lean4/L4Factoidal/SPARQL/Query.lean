@@ -774,10 +774,12 @@ only against the groups in its own bucket, and is appended to every group
 that matches, exactly as `addToGroups` does; a row that matches none starts a
 new group at the end. The bucket never hides a match
 (`keysEqual_keyBucket`, from `erEqual_erBucket`). `groupSolutions` stays as
-the specification. The agreement of the two is checked by `#guard`s below on
-tied, interleaved, cross-type numeric, error-keyed and literal-keyed groups,
-by byte comparison of the SPARQL 1.1 suite, and by comparing query output with
-the specification build on real data; it is NOT proved. -/
+the specification. The two are equal: `groupSolutionsFast_eq` in
+`L4Factoidal.SPARQL.GroupFastTheorems` proves
+`groupSolutionsFast env conds omega = groupSolutions env conds omega` for every
+input, without assuming that `keysEqual` is transitive. The `#guard`s below on
+tied, interleaved, cross-type numeric, error-keyed and literal-keyed groups
+stay as tests. -/
 
 /-- A coarse key that is constant on the equivalence classes of `erEqual`: two
 evaluated values with different keys are never order-equal, so a group can only

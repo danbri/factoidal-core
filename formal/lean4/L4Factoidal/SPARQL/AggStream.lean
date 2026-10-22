@@ -33,9 +33,10 @@ in the same order, so the theorems here say that its result IS
 
 That a table of ids, grouped by the id path, gives the groups of
 `groupWhere` on the decoded rows, with the same representative rows and the
-same sequence of values in each group (lemma L5k of the end-to-end record). Like
-`groupSolutionsFast` against `groupSolutions`, it is checked by the gate
-queries of `tests/sbm11/gate` and by the W3C census, and is NOT proved.
+same sequence of values in each group (lemma L5k of the end-to-end record). It
+is checked by the gate queries of `tests/sbm11/gate` and by the W3C census, and
+is NOT proved. (The agreement of `groupSolutionsFast` with `groupSolutions` is
+proved: `groupSolutionsFast_eq` in `L4Factoidal.SPARQL.GroupFastTheorems`.)
 
 No `sorry`, no user `axiom`, no `native_decide`, no `partial`.
 -/
