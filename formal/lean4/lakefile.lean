@@ -472,6 +472,10 @@ extern_lib libl4exthost pkg := do
 -- specification-only, per the spec/pragmatics split in PORT_NOTES.md.
 @[default_target] lean_exe «l4rdfxml-probe» where root := `Harness.RdfXmlProbe
 
+-- The RDF/XML chunk fold of the source layer against the whole-document
+-- reader (https://github.com/danbri/factoidal/issues/838).
+@[default_target] lean_exe «l4rdfxml-chunk-diff» where root := `Harness.RdfXmlChunkDiff
+
 -- Reader-level probe over the vendored W3C csvw corpus. Named a
 -- PROBE, not a conformance runner, because it measures whether the
 -- dialect reader reads each .csv cleanly -- not whether the

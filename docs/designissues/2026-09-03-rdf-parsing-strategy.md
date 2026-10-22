@@ -471,7 +471,7 @@ one reader:
 | N-Quads | `StrictFeed.LineFeed` with `quadReader` | one chunk and one partial line |
 | Turtle | `TurtleChunkFold` (section 2.2) | one chunk and one unfinished statement |
 | TriG | `TriGChunkFold` (section 3e) | one chunk and one unfinished unit |
-| RDF/XML | `Reader.whole`: keeps the chunks, parses their join at the end | the document (https://github.com/danbri/factoidal/issues/838) |
+| RDF/XML | `RdfXmlChunkFold` (section 3k, since 2026-10-22): one child of `rdf:RDF` at a time; the whole document under the fall-back rule | one chunk and one item (https://github.com/danbri/factoidal/issues/838) |
 | JSON-LD | `Reader.whole` with the parser that `SourceJsonLd.lean` supplies | the document (https://github.com/danbri/factoidal/issues/839) |
 
 JSON-LD stays out of the core wasm: `Source.Extra.jsonld` holds the parser, and
@@ -584,8 +584,9 @@ nesting depth of a triple term. No document that parsed before is refused now.
 The scaling row `sbm11-pack-nt-vs-nq` (N-Triples text takes at most 2.0 times the
 CPU time of N-Quads text) is the gate.
 
-**Costs open.** RDF/XML and JSON-LD hold the document (issues 838 and 839, rows
-`sbm11-pack-rdfxml-memory` and `sbm11-pack-jsonld-memory`). The JSON-LD reader
+**Costs open.** JSON-LD holds the document (issue 839, row
+`sbm11-pack-jsonld-memory`). RDF/XML held it until 2026-10-22 (issue 838,
+section 3k). The JSON-LD reader
 uses native stack in proportion to the number of elements: documents of 25,000
 to 100,000 elements overflow a stack of 512 KB, and parse under the 1 GB stack
 of a native process (https://github.com/danbri/factoidal/issues/844, row
@@ -2535,6 +2536,121 @@ twins; `lenS` `(s)`, a specification nothing at run time calls);
 pass, 0 fail, 7 expected-fail (out of 79); `tests/stack/run.sh --canary` with the
 rebuilt wasm module: 173 pass, 0 fail (out of 173); `npm test` in `npm/factoidal`:
 443 pass, 0 fail, 2 skipped (out of 445).
+
+### 3k. RDF/XML read in chunks (2026-10-22)
+
+Issue: https://github.com/danbri/factoidal/issues/838 (OKR batch 3 KR 2.1,
+https://github.com/danbri/factoidal/issues/875). Module:
+`formal/lean4/L4Factoidal/Syntax/RdfXmlChunkFold.lean`.
+
+**Before.** The source layer read RDF/XML with `Reader.whole`: it kept every
+chunk, joined them at the end and gave the text to `RdfXml.parseRdfXml`, which
+reads the text into one `Array Char` (8 bytes for each character) and walks the
+children of `rdf:RDF` as it reads them (section 3c.3). `l4sbm11-pack SOURCE.rdf`
+held 11.3 to 14.5 bytes of peak resident memory for each source byte.
+
+**The fold.** Three phases.
+
+1. Prologue. The characters are kept until the start tag of the document
+   element is complete. `scanProlog` finds that point: it skips the XML
+   declaration, comments and processing instructions, and the `[28]
+   doctypedecl` with its internal subset (brackets counted outside literals,
+   comments and processing instructions). The scan starts again from the
+   first item it did not finish, so a chunk is not scanned twice. The prefix
+   is read with `XML.documentPrologue`, then the start-tag productions in the
+   order `XML.parseElement` calls them, then `RdfXml.rdfStart`. This gives the
+   entity table, the usable attribute-list declarations, and the parser state
+   after the attributes of `rdf:RDF` (namespace scope, `xml:base`,
+   `xml:lang`, `its:dir`, `rdf:version`).
+2. Children. A scanner with one state for each kind of markup (`Scan`: text,
+   after `<`, comment, CDATA section, processing instruction, start tag with
+   its quote, end tag) and a depth count finds the end of each top-level item
+   of the content of `rdf:RDF`. The item's characters (line ends of XML 1.0
+   section 2.11 applied; an item never ends between a carriage return and a
+   line feed) go to `XML.parseChildren` with the document's entity table and
+   attribute declarations, and each element it gives goes to
+   `RdfXml.nodeElement`, with the state the previous child left (the blank-node
+   counter, the `rdf:ID` set and the first error are document-scoped and pass
+   from child to child). The triples go to the consumer in document order. The
+   fuel of an item is its length plus 2.
+3. End. The end tag of `rdf:RDF` and the text after it are kept and checked at
+   the end: the name matches, then `XML.documentEpilog`.
+
+**Fall-back rule.** The whole document goes to `RdfXml.parseRdfXml`, as before,
+when at the end of the prologue: the prologue or the root start tag does not
+parse by the functions above, or the text ends first; the document element is
+not `rdf:RDF` ([7.2.2] doc) or is an empty-element tag; the document declares
+XML 1.1; the DTD declares a general entity that is external or whose
+replacement text holds `<` or `&` (a markup entity at the top level expands into
+children, and a chain of references can expand beyond the fuel of one item);
+the prologue holds more than 8 Mi characters. A namespace entity such as
+`<!ENTITY owl "http://www.w3.org/2002/07/owl#">`, common in OWL files, does not
+make the document fall back.
+
+**Errors.** A document refused by one reader is refused by the other (measured
+below), but the message can differ: an RDF/XML error in an early child is
+reported before an XML error in a later child, and a position counts the
+characters before the item that failed.
+
+**Theorems** (`RdfXmlChunkFold.lean`, `SourceTheorems.lean`; `#print axioms`:
+`propext`, `Classical.choice`, `Quot.sound`):
+
+- `foldlM_inv`: in the prologue and fall-back phases the state holds exactly the
+  joined chunks and the starting accumulator (no quad was given out).
+- `readAll_eq_whole_of_notStreamed`: when the fold ends in either phase, it gives
+  the whole-document reader's result for the joined chunks.
+- `Source.rdfxml_readAll_of_notStreamed`: the same through `Source.Reader`, as
+  `parseDocument .rdfxml`.
+
+Not proved: in the children phase, the fold gives the quads of the
+whole-document reader. The proof needs a locality theorem for the XML parser
+(the parse of an item reads only the item's characters, with positions shifted)
+and the fuel independence of `nodeElement` above the depth of an item. Open
+issue: https://github.com/danbri/factoidal/issues/936; expected failure: row
+RX-1 of `tests/known-defects/run.sh`.
+
+**Measured equality.** `tools/rdfxml-chunk-differential.sh` runs
+`l4rdfxml-chunk-diff` (`Harness/RdfXmlChunkDiff.lean`) over every `.rdf`,
+`.owl` and `.rdfxml` file under `third_party/testing` (the XML conformance
+suite excluded) and `third_party/ontologies`, with no base and with
+`http://example.org/dir/doc.rdf`, in chunks of 1, 7, 64 and 65,536 characters
+(1 and 7 for files under 400,000 characters): 308 files; 2432 agree (1908
+accepted by both with the same triples in the same order, 524 refused by both),
+0 differ (out of 2432 cases), 2026-10-22. The `#guard`s of the module cut test
+documents at every position (comments with `>`, a `>` in an attribute value,
+CDATA with `]]`, `parseType="Literal"` and `"Collection"`, CR LF, a DTD with a
+comment holding `'` and `[`, namespace entities, a markup entity and a node
+element as document element (both fall back), and nine refused documents).
+
+**Memory** (`l4sbm11-pack SOURCE.rdf OUT --workers 1 --run-terms 20000
+--sort-rows 50000`, peak resident set, statements of about 460 source bytes):
+
+| Statements | Source bytes | Before (parent commit) | After |
+| ---: | ---: | ---: | ---: |
+| 5,000 | 2,302,910 | 60 MB | 42 MB |
+| 20,000 | 9,237,910 | 150 MB | 59 MB |
+| 25,000 | 11,552,910 | 178 MB | 62 MB |
+| 100,000 | 46,277,910 | 608 MB | 80 MB |
+| 200,000 | 92,777,910 | — | 76 MB |
+
+Row `sbm11-pack-rdfxml-memory` of `tests/stack/lean_scaling.sh` now measures
+25,000, 50,000 and 100,000 statements, the sizes of the Turtle row: 0.51 bytes
+of peak RSS per source byte (bound 0.75), 12.7 before. At 5,000 to 20,000
+statements the packer's own runs (below the run of 20,000 terms) grow with the
+input: the Turtle source gives 2.54 there with the same packer, and RDF/XML
+3.57. The row leaves the expected-failure table.
+
+**Time.** The same command: 2.08 s against 2.33 s at 25,000 statements, 8.11 s
+against 7.61 s at 100,000 (one run each, load 3 to 4). At 5,000 statements the
+fold took 0.56 s against 0.33 s.
+
+**Not changed.** `l4factoidal parse FILE --format rdfxml`, `Source.parseDocument`
+and the W3C runners call `RdfXml.parseRdfXml` on the whole text, as before; only
+`Source.Reader` (the packers, `l4sbm11 canon`, `l4sbm11-dict-pack`) reads in
+chunks. W3C suites, before and after: `l4w3c` RDF 1.1 1041 pass, 0 fail (out of
+1041), of which RDF/XML 166 pass, 0 fail (out of 166); RDF 1.2 1358 pass, 0
+fail (out of 1358), of which RDF/XML 31 pass, 0 fail (out of 31); the RDF/XML
+probe 132, 41 and 132 pass, 0 fail.
 
 ## 4. Rules that follow
 
