@@ -1,0 +1,19 @@
+{
+  "command": [
+    "python3",
+    "tools/lean-tail-recursion-audit.py",
+    "--gate",
+    "--json",
+    "../logs/integration-final-tail-repaired-report.json"
+  ],
+  "cwd": "/Users/danbri/working/sandbox/october/tpac/codex-npm-review/integrate-core",
+  "node": "v22.22.2",
+  "source": "0891f9de2f74287f307f9e1c66d97171a96f5f41",
+  "nodeBin": "/opt/homebrew/Cellar/node@22/22.22.2_2/bin",
+  "npmCache": "/private/tmp/factoidal-public-pack-cache",
+  "started": "2026-10-22T18:37:38.642Z",
+  "elapsedMs": 162676,
+  "exit": 0,
+  "signal": null,
+  "error": null
+}

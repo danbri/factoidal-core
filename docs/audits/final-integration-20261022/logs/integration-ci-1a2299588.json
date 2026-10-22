@@ -1,0 +1,17 @@
+{
+  "command": [
+    "gh",
+    "api",
+    "repos/danbri/factoidal-core/actions/jobs/120014091222/logs"
+  ],
+  "cwd": "/Users/danbri/working/sandbox/october/tpac/codex-npm-review",
+  "node": "v22.22.2",
+  "source": null,
+  "nodeBin": "/opt/homebrew/Cellar/node@22/22.22.2_2/bin",
+  "npmCache": "/private/tmp/factoidal-public-pack-cache",
+  "started": "2026-10-22T18:56:35.564Z",
+  "elapsedMs": 1469,
+  "exit": 0,
+  "signal": null,
+  "error": null
+}

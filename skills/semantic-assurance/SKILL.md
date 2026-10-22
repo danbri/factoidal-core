@@ -98,7 +98,11 @@ node tools/npm-semantic-gate.mjs --package /absolute/path/to/unpacked/package --
 
 Inspect all counts and uncovered obligations. Zero discovery, missing
 artifacts and timeouts are failures, never green skips. Do not fold XFAIL
-into correctness passes. The finite gate does not replace external suites.
+into correctness passes. Some Node harnesses implement XFAIL as an ordinary
+passing test: inspect individual case names and diagnostics, not just the TAP
+footer. Report those separately (the 2026-10-22 npm replay had 588 runner
+passes, comprising 571 ordinary passes and 17 expected-failure checks).
+The finite gate does not replace external suites.
 When updating the gate, verify that it rejects a missing package and a
 known defective artifact; enforce synchronous Wasm deadlines out of process.
 

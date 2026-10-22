@@ -1,0 +1,20 @@
+{
+  "command": [
+    "python3",
+    "-m",
+    "unittest",
+    "discover",
+    "-s",
+    "tests/assurance",
+    "-p",
+    "test_*.py",
+    "-v"
+  ],
+  "cwd": "/Users/danbri/working/sandbox/october/tpac/codex-npm-review/integrate-core",
+  "node": "v22.22.2",
+  "started": "2026-10-22T17:37:40.654Z",
+  "elapsedMs": 4264,
+  "exit": 0,
+  "signal": null,
+  "error": null
+}

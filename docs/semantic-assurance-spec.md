@@ -296,6 +296,9 @@ discovered, pass, fail, error, timeout and skipped counts separately.
 
 **GATE-2.** Expected failures remain defects. They may be useful in a
 development suite but cannot count as verified behavior in release claims.
+If a harness reports an expected failure as a passing test, the assurance
+report must separate it from ordinary passes rather than copy its footer
+unqualified.
 An unimplemented gate obligation remains open even if the implemented subset
 passes. Missing browser/network permissions are environment limitations;
 they do not establish either product success or product failure.

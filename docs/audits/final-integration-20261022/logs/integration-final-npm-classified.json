@@ -1,0 +1,32 @@
+{
+  "logSha256": "87680477dc981ed36e7188b40b1298a621689da180467d6f486b268b73b4457c",
+  "runnerCounts": {
+    "tests": 589,
+    "pass": 588,
+    "fail": 0,
+    "skipped": 1,
+    "cancelled": 0,
+    "todo": 0
+  },
+  "ordinaryPasses": 571,
+  "expectedFailureChecks": 17,
+  "expectedFailureCases": [
+    "ok 69 - xfail: RDF/JS Stream: Dataset is a Source (match answers a Stream) (https://github.com/danbri/factoidal/issues/884)",
+    "ok 70 - xfail: RDF/JS Stream: Dataset is a Sink (import) (https://github.com/danbri/factoidal/issues/884)",
+    "ok 71 - xfail: RDF/JS Stream: a parser and a serializer stream (https://github.com/danbri/factoidal/issues/884)",
+    "ok 237 - xfail: rdfxml writes an RDF 1.2 triple term (https://github.com/danbri/factoidal/issues/883)",
+    "ok 239 - xfail: jsonld writes an RDF 1.2 triple term (https://github.com/danbri/factoidal/issues/883)",
+    "ok 245 - xfail: serialize writes hdt (https://github.com/danbri/factoidal/issues/883)",
+    "ok 246 - xfail: serialize writes n3 (https://github.com/danbri/factoidal/issues/883)",
+    "ok 247 - xfail: serialize writes rdfa (https://github.com/danbri/factoidal/issues/883)",
+    "ok 248 - xfail: csv2json (CSVW JSON output) is an npm function (https://github.com/danbri/factoidal/issues/883)",
+    "ok 258 - xfail: GSP GET in JSON-LD (https://github.com/danbri/factoidal/issues/830)",
+    "ok 270 - xfail: geof:distance in metres between two CRS84 points (geodesic, about 262 km) (https://github.com/danbri/factoidal/issues/772)",
+    "ok 472 - xfail: canonicalizeToNQuads gives canonical labels to blank nodes inside a triple term (https://github.com/danbri/factoidal/issues/873)",
+    "ok 473 - xfail: owlIsConsistent decides a graph with a triple term (https://github.com/danbri/factoidal/issues/873)",
+    "ok 474 - xfail: owlEntails decides a premise with a triple term (https://github.com/danbri/factoidal/issues/873)",
+    "ok 501 - xfail: serialize turtle: no unused @prefix xsd: when shorthand elides every typed literal (https://github.com/danbri/factoidal/issues/691)",
+    "ok 571 - xfail: parseJid rejects a localpart with a PRECIS-disallowed codepoint (U+00A0 NO-BREAK SPACE, RFC 8265 \u00a73.3) (https://github.com/danbri/factoidal/issues/676)",
+    "ok 572 - xfail: parseJid normalizes a non-NFC localpart (RFC 8265 \u00a73.3 normalization rule) (https://github.com/danbri/factoidal/issues/676)"
+  ]
+}

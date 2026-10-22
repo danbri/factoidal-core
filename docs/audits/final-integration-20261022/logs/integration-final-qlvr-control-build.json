@@ -1,0 +1,17 @@
+{
+  "command": [
+    "lake",
+    "build",
+    "+Harness.Qlvr"
+  ],
+  "cwd": "/Users/danbri/working/sandbox/october/tpac/codex-npm-review/integrate-core/formal/lean4",
+  "node": "v22.22.2",
+  "source": "1a22995880503495d651476751ee9968c46fae34",
+  "nodeBin": "/opt/homebrew/Cellar/node@22/22.22.2_2/bin",
+  "npmCache": "/private/tmp/factoidal-public-pack-cache",
+  "started": "2026-10-22T18:38:06.402Z",
+  "elapsedMs": 80479,
+  "exit": 0,
+  "signal": null,
+  "error": null
+}
