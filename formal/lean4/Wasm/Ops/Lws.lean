@@ -533,7 +533,7 @@ def lwsStepWith (h requestJson : String) (blob : Option ByteArray) :
                   let authz' := { open_.authz with access := access' }
                   let moved' := MoveRedirect.after S cfg.redirectsMax plan? resp.status mem' open_.moved
                   -- Merkle fields and members (issue 919); unchanged when off.
-                  let resp := Merkle.decorate MemStore cfg mem'.base
+                  let resp := Merkle.decorate LwsBase cfg mem'.base
                     (fun _ => Merkle.rootsVisible lwsVerifiers (IndexedStore LwsBackend lwsBackendLaws)
                       cfg authz' now r mem') r resp
                   let stored : OpenStorage :=
