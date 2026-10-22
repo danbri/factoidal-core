@@ -42,10 +42,10 @@ def startFrom (key? : Option ByteArray) (m : Vfs) : Except String MemState := do
   | .migrate _ => .error "migrate"
 
 /-- The entries of a state, compared by every field. -/
-def view (ms : MemState) : List (String × String × String × List UInt8 × Nat × Nat) :=
+def view (ms : TreeState) : List (String × String × String × List UInt8 × Nat × Nat) :=
   ms.entries.map (fun e => (e.path, e.kind.name, e.contentType, e.body.toList, e.mtime, e.links.length))
 
-def S : Store (JState MemStore) := JournalStore MemStore memStoreLaws
+def S : Store (JState TreeStore) := JournalStore TreeStore treeStoreLaws
 
 def seed : ByteArray := "0123456789abcdef0123456789abcdef".toUTF8
 def key : ByteArray := ⟨(List.replicate 32 (7 : UInt8)).toArray⟩
@@ -62,31 +62,31 @@ def ms0 : MemState := { entries := [root], clock := 2 }
 
 /-- A start from nothing, then a sequence of steps, each one persisted.
 Returns the table of files, the files state and the store state. -/
-def run (key? : Option ByteArray) (steps : List (JState MemStore → JState MemStore))
-    (floor : FilesState → FilesState := id) : Except String (Vfs × FilesState × JState MemStore) := do
+def run (key? : Option ByteArray) (steps : List (JState TreeStore → JState TreeStore))
+    (floor : FilesState → FilesState := id) : Except String (Vfs × FilesState × JState TreeStore) := do
   let (fs0, pl0) ← startPlan Seal.checkingModel key? seed ms0 [] none false
   let m0 := applyPlan {} pl0
   steps.foldlM (fun (m, fs, js) step => do
       let js' := step js
       let (fs', pl) ← persist Seal.checkingModel key? seed (floor fs) js' [] (S.now js')
       .ok (applyPlan m pl, fs', js'.reset))
-    (m0, fs0, JState.fresh MemStore ms0)
+    (m0, fs0, JState.fresh TreeStore (TreeState.ofMem ms0))
 
-def put (e : Entry) : JState MemStore → JState MemStore := fun js => S.tick (S.put js { e with mtime := S.now js })
-def del (p : String) : JState MemStore → JState MemStore := fun js => S.tick (S.remove js p)
+def put (e : Entry) : JState TreeStore → JState TreeStore := fun js => S.tick (S.put js { e with mtime := S.now js })
+def del (p : String) : JState TreeStore → JState TreeStore := fun js => S.tick (S.remove js p)
 
-def steps1 : List (JState MemStore → JState MemStore) :=
+def steps1 : List (JState TreeStore → JState TreeStore) :=
   [ put (ctr "/c/" 3), put (dat "/c/a" "alpha" 4), put (dat "/c/b" "beta" 5),
     put (dat "/c/a" "alpha two" 6), del "/c/b", put (dat "/x" "" 8),
     fun js => S.tick (S.put (S.put js { dat "/c/d" "d1" 0 with mtime := S.now js }) { dat "/c/d" "d2" 0 with mtime := S.now js }) ]
 
 /-- Did a run read back as the store it wrote? -/
-def roundTrips (key? : Option ByteArray) (steps : List (JState MemStore → JState MemStore))
+def roundTrips (key? : Option ByteArray) (steps : List (JState TreeStore → JState TreeStore))
     (floor : FilesState → FilesState := id) : Bool :=
   match run key? steps floor with
   | .error _ => false
   | .ok (m, _, js) => match startFrom key? m with
-    | .ok ms => view ms == view js.base && ms.clock == js.base.clock
+    | .ok ms => view (TreeState.ofMem ms) == view js.base && ms.clock == js.base.clock
     | .error _ => false
 
 /-! ## Names, frames -/
@@ -185,7 +185,7 @@ def cut (k : Nat) : Vfs :=
   m1.insert journalPath (j.extract 0 (j.size - lastLen + k))
 
 /-- The state before the last step of steps1, as the journal says it. -/
-def before : Option MemState := match run none (steps1.dropLast) with
+def before : Option TreeState := match run none (steps1.dropLast) with
   | .ok (_, _, js) => some js.base
   | .error _ => none
 
@@ -196,7 +196,7 @@ def before : Option MemState := match run none (steps1.dropLast) with
   let (ps, _) := decodeFrames L4Factoidal.Crypto.sha256 j
   let lastLen := (frame L4Factoidal.Crypto.sha256 (ps.getLast?.getD ByteArray.empty)).size
   (List.range lastLen).all (fun k => match startFrom none (cut k), before with
-    | .ok ms, some b => view ms == view b
+    | .ok ms, some b => view (TreeState.ofMem ms) == view b
     | _, _ => false)
 
 /-! ## Refusals at start -/
@@ -234,7 +234,7 @@ def before : Option MemState := match run none (steps1.dropLast) with
           let m2 := applyPlan m1 pl
           (m2.getD journalPath (ByteArray.mk #[1])).size == 0 &&
           (match startFrom none m2 with
-           | .ok ms2 => view ms2 == view ms
+           | .ok ms2 => view (TreeState.ofMem ms2) == view (TreeState.ofMem ms)
            | .error _ => false)
       | .error _ => false
     | .error _ => false
@@ -247,7 +247,7 @@ def before : Option MemState := match run none (steps1.dropLast) with
       let m := applyPlan (({} : Vfs).insert snapshotPath "{}".toUTF8) pl
       m[snapshotPath]?.isNone && m[migratedPath]?.isSome &&
       (match startFrom none m with
-       | .ok ms2 => view ms2 == view ms
+       | .ok ms2 => view (TreeState.ofMem ms2) == view (TreeState.ofMem ms)
        | .error _ => false)
   | .error _ => false
 -- Both files present after a crash between the metadata write and the

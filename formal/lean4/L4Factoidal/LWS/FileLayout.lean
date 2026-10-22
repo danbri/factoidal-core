@@ -557,14 +557,14 @@ Order of the plan: the new body files; then the journal record (appended), or
 the compaction (a new `lws-files.json`, then an empty journal); then the
 removal of the body files the record makes unused. -/
 def persist (A : Seal.Aead) (key? : Option ByteArray) (seed : ByteArray) (fs : FilesState)
-    (js : JState MemStore) (side : List (String × Json)) (clock : Nat) :
+    (js : JState TreeStore) (side : List (String × Json)) (clock : Nat) :
     Except String (FilesState × Plan) := do
   let paths := lastTouch js.touched
   -- Take the reference table out of `fs` first, so it is not shared while
   -- `assignBodies` updates it (it is updated in place).
   let refs0 := fs.refs
   let fs := { fs with refs := {} }
-  let (refs', next', ni, pl, dead) ← assignBodies A key? seed (memLookup js.base) (memLookup js.prior)
+  let (refs', next', ni, pl, dead) ← assignBodies A key? seed (treeLookup js.base) (treeLookup js.prior)
     paths (refs0, fs.nextBody, 0, {}, [])
   let ops := js.record (projWith refs')
   let sideText := Json.toString (.object side)
@@ -618,13 +618,13 @@ metadata of the store at the last persist, gives the metadata of the store
 now, with the new body references. `assignBodies` is the first step of
 `persist`, and the record's operations are `js.record (projWith refs')`. -/
 theorem persist_replay (A : Seal.Aead) (key? : Option ByteArray) (seed : ByteArray)
-    (js : JState MemStore) (refs : Std.HashMap String FileRef) (n i : Nat) (pl : Plan)
+    (js : JState TreeStore) (refs : Std.HashMap String FileRef) (n i : Nat) (pl : Plan)
     (d : List Nat) (r : Std.HashMap String FileRef × Nat × Nat × Plan × List Nat)
-    (h : assignBodies A key? seed (memLookup js.base) (memLookup js.prior) (lastTouch js.touched)
+    (h : assignBodies A key? seed (treeLookup js.base) (treeLookup js.prior) (lastTouch js.touched)
       (refs, n, i, pl, d) = .ok r)
-    (m : Std.HashMap String FileMeta) (hm : Represents MemStore (projWith refs) m js.prior) :
-    Represents MemStore (projWith r.1) (applyOps m (js.record (projWith r.1))) js.base := by
-  apply replay_jstate MemStore js m hm
+    (m : Std.HashMap String FileMeta) (hm : Represents TreeStore (projWith refs) m js.prior) :
+    Represents TreeStore (projWith r.1) (applyOps m (js.record (projWith r.1))) js.base := by
+  apply replay_jstate TreeStore js m hm
   intro p hp
   have hr := assignBodies_refs A key? seed _ _ _ _ r h p (fun h' => hp (mem_of_mem_lastTouch h'))
   funext e

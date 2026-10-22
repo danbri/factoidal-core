@@ -78,6 +78,8 @@ Server choices, each stated once:
 -/
 import Std.Data.HashMap
 import Std.Data.HashSet
+import Std.Data.TreeMap
+import Std.Data.TreeSet
 import L4Factoidal.LWS.Store
 import L4Factoidal.LWS.Linkset
 import L4Factoidal.LWS.Move
@@ -206,25 +208,46 @@ theorem classOf_mem_nativeClasses (k : ResourceKind) : classOf k ∈ nativeClass
   unfold classOf nativeClasses
   split <;> simp
 
-/-! ## The index -/
+/-! ## The index
+
+The two tables are persistent search trees (`Std.TreeMap`, `Std.TreeSet`).
+A step keeps the state before it alive while it writes (`Notifications`
+compares the store before and after a step), so a table that a write
+updates is shared at that moment. A shared hash set is copied whole by an
+insert: the set of the native class `DataResource` holds every data
+resource, so until 2026-10-22 one PUT copied a table of the size of the
+storage (https://github.com/danbri/factoidal/issues/918, stage 2). A tree
+copies one path of a logarithm of the size. -/
+
+/-- The order of facts: by relation, then by target. -/
+def factCmp : Fact → Fact → Ordering := compareLex (compareOn (·.1)) (compareOn (·.2))
+
+instance : Std.TransCmp factCmp := inferInstanceAs (Std.TransCmp (compareLex _ _))
+
+instance : Std.LawfulEqCmp factCmp where
+  compare_self {a} := (Std.ReflCmp.compare_self :
+    compareLex (compareOn (fun x : Fact => x.1)) (compareOn (fun x : Fact => x.2)) a a = .eq)
+  eq_of_compare {a b} h := by
+    simp only [factCmp, compareLex_eq_eq, compareOn] at h
+    exact Prod.ext (Std.LawfulEqCmp.eq_of_compare h.1) (Std.LawfulEqCmp.eq_of_compare h.2)
+
+abbrev FactSets := TreeMap Fact (TreeSet String) factCmp
 
 /-- The derived index: the facts of every path, and for every fact the set
 of paths that have it. -/
 structure IndexData where
-  byPath : HashMap String (List Fact) := {}
-  byFact : HashMap Fact (HashSet String) := {}
+  byPath : TreeMap String (List Fact) := {}
+  byFact : FactSets := {}
 
 instance : Inhabited IndexData := ⟨{}⟩
 
 /-- Remove `p` from the set of each fact in `fs`. One loop step per fact. -/
-def detachAll (m : HashMap Fact (HashSet String)) (p : String) :
-    List Fact → HashMap Fact (HashSet String)
+def detachAll (m : FactSets) (p : String) : List Fact → FactSets
   | [] => m
   | f :: fs => detachAll (m.insert f ((m.getD f ∅).erase p)) p fs
 
 /-- Add `p` to the set of each fact in `fs`. One loop step per fact. -/
-def attachAll (m : HashMap Fact (HashSet String)) (p : String) :
-    List Fact → HashMap Fact (HashSet String)
+def attachAll (m : FactSets) (p : String) : List Fact → FactSets
   | [] => m
   | f :: fs => attachAll (m.insert f ((m.getD f ∅).insert p)) p fs
 
@@ -234,56 +257,56 @@ def IndexData.set (ix : IndexData) (p : String) (fs : List Fact) : IndexData :=
     byFact := attachAll (detachAll ix.byFact p (ix.byPath.getD p [])) p fs }
 
 /-- The paths that have fact `f`. -/
-def IndexData.pathsOf (ix : IndexData) (f : Fact) : HashSet String := ix.byFact.getD f ∅
+def IndexData.pathsOf (ix : IndexData) (f : Fact) : TreeSet String := ix.byFact.getD f ∅
 
-theorem mem_detachAll (m : HashMap Fact (HashSet String)) (p q : String) (f : Fact)
+theorem factCmp_eq_iff {f g : Fact} : factCmp f g = .eq ↔ f = g := Std.LawfulEqCmp.compare_eq_iff_eq
+
+theorem strCmp_eq_iff {a b : String} : compare a b = .eq ↔ a = b := Std.LawfulEqCmp.compare_eq_iff_eq
+
+theorem mem_detachAll (m : FactSets) (p q : String) (f : Fact)
     (fs : List Fact) :
     q ∈ (detachAll m p fs).getD f ∅ ↔ q ∈ m.getD f ∅ ∧ (f ∈ fs → q ≠ p) := by
   induction fs generalizing m with
   | nil => simp [detachAll]
   | cons g gs ih =>
       simp only [detachAll]
-      rw [ih, HashMap.getD_insert]
+      rw [ih, TreeMap.getD_insert]
       by_cases h : g = f
       · subst h
-        simp only [beq_self_eq_true, if_true, HashSet.mem_erase, List.mem_cons, true_or,
-          forall_const]
+        rw [if_pos Std.ReflCmp.compare_self, TreeSet.mem_erase]
+        simp only [List.mem_cons, eq_self_iff_true, true_or, forall_const]
         constructor
         · rintro ⟨⟨hpq, hq⟩, _⟩
-          refine ⟨hq, ?_⟩
-          intro hqp
-          subst hqp
-          simp at hpq
+          exact ⟨hq, fun hqp => hpq (strCmp_eq_iff.mpr hqp.symm)⟩
         · rintro ⟨hq, hne⟩
-          refine ⟨⟨?_, hq⟩, fun _ => hne⟩
-          simpa [beq_eq_false_iff_ne] using fun h' => hne h'.symm
-      · have hb : (g == f) = false := by simpa [beq_eq_false_iff_ne] using h
+          exact ⟨⟨fun h' => hne (strCmp_eq_iff.mp h').symm, hq⟩, fun _ => hne⟩
+      · have hb : factCmp g f ≠ .eq := fun hc => h (factCmp_eq_iff.mp hc)
         have hfg : f ≠ g := fun h' => h h'.symm
-        simp only [hb, Bool.false_eq_true, if_false, List.mem_cons, hfg, false_or]
+        simp only [hb, if_false, List.mem_cons, hfg, false_or]
 
-theorem mem_attachAll (m : HashMap Fact (HashSet String)) (p q : String) (f : Fact)
+theorem mem_attachAll (m : FactSets) (p q : String) (f : Fact)
     (fs : List Fact) :
     q ∈ (attachAll m p fs).getD f ∅ ↔ q ∈ m.getD f ∅ ∨ (f ∈ fs ∧ q = p) := by
   induction fs generalizing m with
   | nil => simp [attachAll]
   | cons g gs ih =>
       simp only [attachAll]
-      rw [ih, HashMap.getD_insert]
+      rw [ih, TreeMap.getD_insert]
       by_cases h : g = f
       · subst h
-        simp only [beq_self_eq_true, if_true, HashSet.mem_insert, List.mem_cons, true_or,
-          true_and, beq_iff_eq]
+        rw [if_pos Std.ReflCmp.compare_self, TreeSet.mem_insert]
+        simp only [List.mem_cons, eq_self_iff_true, true_or, true_and]
         constructor
-        · rintro ((hpq | hq) | ⟨_, hqp⟩)
-          · exact Or.inr hpq.symm
+        · rintro ((hpq | hq) | hqp)
+          · exact Or.inr (strCmp_eq_iff.mp hpq).symm
           · exact Or.inl hq
-          · exact Or.inr hqp
+          · first | exact Or.inr hqp | exact Or.inr hqp.2
         · rintro (hq | hqp)
           · exact Or.inl (Or.inr hq)
-          · exact Or.inl (Or.inl hqp.symm)
-      · have hb : (g == f) = false := by simpa [beq_eq_false_iff_ne] using h
+          · exact Or.inl (Or.inl (strCmp_eq_iff.mpr hqp.symm))
+      · have hb : factCmp g f ≠ .eq := fun hc => h (factCmp_eq_iff.mp hc)
         have hfg : f ≠ g := fun h' => h h'.symm
-        simp only [hb, Bool.false_eq_true, if_false, List.mem_cons, hfg, false_or]
+        simp only [hb, if_false, List.mem_cons, hfg, false_or]
 
 /-- The invariant: the index describes the resources `look` resolves.
 `byPath` holds the facts of every path, and a path is in the set of a fact
@@ -304,19 +327,29 @@ theorem IndexOk.empty (b : String) : IndexOk b (fun _ => none) {} where
   byPath := by intro p; simp [factsAt]
   byFact := by intro f p; simp
 
+/-- Two stores whose resources have the same facts at every path are
+described by the same index. A storage that keeps the bytes of a resource in
+a body file and its facts in the metadata (`Entry.stub`) changes the
+entries, not their facts. -/
+theorem IndexOk.congr {b : String} {look look' : String → Option Entry} {ix : IndexData}
+    (h : IndexOk b look ix) (hf : ∀ p, factsAt b (look' p) = factsAt b (look p)) :
+    IndexOk b look' ix where
+  byPath := fun p => by rw [h.byPath, hf]
+  byFact := h.byFact
+
 theorem getD_byPath_set (ix : IndexData) (p q : String) (fs : List Fact) :
     (ix.set p fs).byPath.getD q [] = if p = q then fs else ix.byPath.getD q [] := by
   unfold IndexData.set
   by_cases he : fs.isEmpty = true
-  · simp only [he, if_true, HashMap.getD_erase]
+  · simp only [he, if_true, TreeMap.getD_erase]
     have : fs = [] := List.isEmpty_iff.mp he
     by_cases hpq : p = q
     · simp [hpq, this]
-    · simp [hpq]
-  · simp only [he, Bool.false_eq_true, if_false, HashMap.getD_insert]
+    · simp [hpq, strCmp_eq_iff]
+  · simp only [he, Bool.false_eq_true, if_false, TreeMap.getD_insert]
     by_cases hpq : p = q
     · simp [hpq]
-    · simp [hpq]
+    · simp [hpq, strCmp_eq_iff]
 
 /-- **Replacing the facts of one path keeps the invariant.** If `look'`
 differs from `look` only at `p`, setting the facts of `p` to those of

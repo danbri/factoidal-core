@@ -890,7 +890,7 @@ def lwsSnapshot (h : String) (optsJson : String := "") : IO String := do
   | some open_ =>
       -- The other state rides in the snapshot as more members, which
       -- `memStateOfJson` does not read (`sideMembers`).
-      let snap := match snapshotJson open_.mem.mem with
+      let snap := match snapshotJson open_.mem.mem.toMem with
         | .object fs => Json.object (fs ++ sideMembers open_)
         | other => other
       pure (snapshotAnswer open_.storageKey optsJson snap)
