@@ -1771,7 +1771,8 @@ seq = [
                             headers=[["content-type", "application/lws+json"]],
                             body=json.dumps({"type": "WebhookSubscription",
                                              "topic": ["http://localhost/w/"],
-                                             "inbox": "http://hook.example/in"}))]],
+                                             "inbox": "http://hook.example/in"}),
+                            resolved=[{"host": "hook.example", "addresses": ["192.0.2.7"]}])]],
   ["lwsStep",  ["lws1", req(method="PUT", target="/w/a.txt",
                             headers=[["content-type", "text/plain"]], body="a")]],
   ["lwsDelivered", ["lws1", json.dumps({"id": "d3", "status": 503})]],
@@ -1793,6 +1794,64 @@ checkseq "lwsStep delivers signed notifications; lwsDelivered decides retries" "
    and rs[4]["retry"]["after"] == 1 and rs[4]["retry"]["delivery"]["id"] == "d3"
    and "retry" not in rs[5]
    and len(rs[6]["snapshot"]["notifications"]["subscriptions"]) == 1'
+
+# Issues 914, 915 and 920: an inbox host name is resolved by the host first
+# (resolve), an inbox that names this server is 400, a delivery over the
+# rate limit waits (wake) and lwsFlush sends it, a previous identifier of a
+# moved resource answers 301, the snapshot keeps the redirect table, and the
+# controller inbox hears of a new access request.
+python3 - "$TMP/lws-harden.json" <<'EOF'
+import json, sys, base64
+req = lambda **kw: json.dumps(kw)
+base = "http://127.0.0.1:3000/"
+sub = lambda inbox, topic="w/": json.dumps({"type": "WebhookSubscription", "topic": [base + topic], "inbox": inbox})
+lj = [["content-type", "application/lws+json"]]
+seq = [
+  ["lwsOpen",  [json.dumps({"now": 1000, "insecureNoAuth": True, "baseIri": base,
+                            "deliveryLimit": 1, "deliveryWindow": 60,
+                            "listen": {"address": "127.0.0.1", "port": 3000, "addresses": []},
+                            "controllerInbox": "http://192.0.2.9/ctl",
+                            "entropy": base64.b64encode(bytes(range(32))).decode()})]],
+  ["lwsStep",  ["lws1", req(method="POST", target="/.well-known/lws-subscriptions/", headers=lj,
+                            body=sub("http://localhost:3000/loop/"))]],
+  ["lwsStep",  ["lws1", req(method="POST", target="/.well-known/lws-subscriptions/", headers=lj,
+                            body=sub("http://localhost:3000/loop/"),
+                            resolved=[{"host": "localhost", "addresses": ["127.0.0.1"]}])]],
+  ["lwsStep",  ["lws1", req(method="POST", target="/.well-known/lws-subscriptions/", headers=lj,
+                            body=sub("http://192.0.2.7/in"))]],
+  ["lwsStep",  ["lws1", req(method="PUT", target="/w/a.txt", headers=[["content-type", "text/plain"]], body="a")]],
+  ["lwsStep",  ["lws1", req(method="PUT", target="/w/b.txt", headers=[["content-type", "text/plain"]], body="b")]],
+  ["lwsFlush", ["lws1", json.dumps({"now": 2000})]],
+  ["lwsStep",  ["lws1", req(method="PUT", target="/src/m.txt", headers=[["content-type", "text/plain"]], body="m")]],
+  ["lwsStep",  ["lws1", req(method="PUT", target="/dst/", headers=[["content-type", "text/turtle"]], body="")]],
+  ["lwsStep",  ["lws1", req(method="PATCH", target="/src/m.txt?linkset",
+                            headers=[["content-type", "application/json-patch+json"]],
+                            body=json.dumps([{"op": "replace", "path": "/linkset/0/up/0/href", "value": base + "dst/"}]))]],
+  ["lwsStep",  ["lws1", req(method="GET", target="/src/m.txt")]],
+  ["lwsSnapshot", ["lws1"]],
+  ["lwsStep",  ["lws1", req(method="POST", target="/.well-known/lws-access-requests/", headers=lj,
+                            body=json.dumps({"@context": ["https://www.w3.org/ns/lws/v1"], "type": ["AccessRequest"],
+                                             "storage": base + ".well-known/lws-storage",
+                                             "access": [{"type": ["AccessPolicy"], "action": ["read"],
+                                                         "assignee": "https://id.example/bob",
+                                                         "target": {"type": "StorageResource", "value": [base + "w/a.txt"]}}]}))]],
+]
+json.dump(seq, open(sys.argv[1], "w"))
+EOF
+
+checkseq "LWS: resolve, inbox loop 400, rate limit with wake and lwsFlush, 301 after a move, controller inbox (issues 914, 915, 920)" "$TMP/lws-harden.json" \
+  'rs[1]["resolve"]["host"] == "localhost"
+   and rs[2]["response"]["status"] == 400
+   and rs[3]["response"]["status"] == 201
+   and len(rs[4]["deliveries"]) == 1
+   and "deliveries" not in rs[5] and rs[5]["wake"] >= 1
+   and len(rs[6]["deliveries"]) == 1 and rs[6]["deliveries"][0]["url"] == "http://192.0.2.7/in"
+   and rs[9]["response"]["status"] == 200
+   and rs[10]["response"]["status"] == 301
+   and dict(rs[10]["response"]["headers"])["location"] == "http://127.0.0.1:3000/dst/m.txt"
+   and ["/src/m.txt", "/dst/m.txt"] in rs[11]["snapshot"]["moved"]
+   and rs[12]["response"]["status"] == 201
+   and [d["url"] for d in rs[12]["deliveries"]] == ["http://192.0.2.9/ctl"]'
 
 # Authorization is on unless the configuration opts out
 # (https://github.com/danbri/factoidal/issues/886): with no "auth" and no

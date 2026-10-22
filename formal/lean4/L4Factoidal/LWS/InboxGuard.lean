@@ -12,12 +12,14 @@ procedure for either; what follows is this server's choice.
 ## What is refused, and why
 
 A delivery is a POST that this server makes to the inbox. When the inbox is
-this server, the POST is a request to this server: to a container it can
-create a resource, whose Create is delivered again. `Notifications`
-already refuses an inbox that is a container IRI below `baseIri`. This
-module refuses every inbox whose authority is this server under another
-name: another host name, an IP address, or `localhost`. The decision
-(`loops`) compares the inbox authority with:
+this server, the POST is a request to this server: to a container it
+creates a resource, whose Create is delivered again (to a data resource it
+answers 405, to a missing path 404, and creates nothing). `Notifications`
+refused an inbox that is a container IRI below `baseIri`; with this module
+it refuses the same container under every other name of this server:
+another host name, an IP address, or `localhost` (`readSubRequest`). The
+decision whether an inbox names this server (`loops`) compares the inbox
+authority with:
 
 * the authority of `baseIri` (host and port, the port by the scheme when it
   is absent);

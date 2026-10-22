@@ -135,16 +135,23 @@ private def refused (body : String) (ct : String := "application/lws+json") : Na
 -- An inbox that is a container of this storage would make a loop: refused.
 #guard refused "{\"type\":\"WebhookSubscription\",\"topic\":[\"http://localhost/docs/\"],\"inbox\":\"http://localhost/docs/\"}" == (400, 0)
 #guard refused "{\"type\":\"WebhookSubscription\",\"topic\":[\"http://localhost/docs/\"],\"inbox\":\"http://localhost/\"}" == (400, 0)
--- Any inbox at this server's authority is refused (issue 915,
--- `InboxGuard.loops`), also one that is not a container.
-#guard refused "{\"type\":\"WebhookSubscription\",\"topic\":[\"http://localhost/docs/\"],\"inbox\":\"http://localhost/.well-known/lws-storage\"}" == (400, 0)
--- This server under another name: `localhost` at another spelling, a loopback
--- address, IPv6 loopback, all at port 80 (the base IRI's).
-#guard refused "{\"type\":\"WebhookSubscription\",\"topic\":[\"http://localhost/docs/\"],\"inbox\":\"http://LOCALHOST:80/in\"}" == (400, 0)
-#guard refused "{\"type\":\"WebhookSubscription\",\"topic\":[\"http://localhost/docs/\"],\"inbox\":\"http://127.0.0.1/in\"}" == (400, 0)
-#guard refused "{\"type\":\"WebhookSubscription\",\"topic\":[\"http://localhost/docs/\"],\"inbox\":\"http://[::1]/in\"}" == (400, 0)
--- Negative: another port of this machine is another server.
-#guard refused "{\"type\":\"WebhookSubscription\",\"topic\":[\"http://localhost/docs/\"],\"inbox\":\"http://127.0.0.1:8080/in\"}" == (201, 1)
+-- The storage description is not a container: accepted (a delivery to it is
+-- refused with 405 and creates nothing).
+#guard refused "{\"type\":\"WebhookSubscription\",\"topic\":[\"http://localhost/docs/\"],\"inbox\":\"http://localhost/.well-known/lws-storage\"}" == (201, 1)
+-- A container of this storage under another name of this server (issue 915,
+-- `InboxGuard.loops`): `localhost` in another spelling, a loopback address,
+-- IPv6 loopback, all at port 80 (the base IRI's).
+#guard refused "{\"type\":\"WebhookSubscription\",\"topic\":[\"http://localhost/docs/\"],\"inbox\":\"http://LOCALHOST:80/docs/\"}" == (400, 0)
+#guard refused "{\"type\":\"WebhookSubscription\",\"topic\":[\"http://localhost/docs/\"],\"inbox\":\"http://127.0.0.1/in/\"}" == (400, 0)
+#guard refused "{\"type\":\"WebhookSubscription\",\"topic\":[\"http://localhost/docs/\"],\"inbox\":\"http://[::1]/\"}" == (400, 0)
+-- Negative: another port of this machine is another server; a data resource
+-- path of this server under another name creates nothing.
+#guard refused "{\"type\":\"WebhookSubscription\",\"topic\":[\"http://localhost/docs/\"],\"inbox\":\"http://127.0.0.1:8080/in/\"}" == (201, 1)
+#guard refused "{\"type\":\"WebhookSubscription\",\"topic\":[\"http://localhost/docs/\"],\"inbox\":\"http://127.0.0.1/.well-known/lws-storage\"}" == (201, 1)
+-- What a POST to a data resource or to a missing path of this server does:
+-- 405 and 404, nothing created.
+#guard (run1 w1 (req "POST" "/docs/a.txt" [("content-type", "application/lws+json")] "{}")).resp.status == 405
+#guard (run1 w1 (req "POST" "/nowhere.txt" [("content-type", "application/lws+json")] "{}")).resp.status == 404
 #guard refused subBody "text/plain" == (415, 0)
 
 -- `expires` far in the future is accepted and echoed.

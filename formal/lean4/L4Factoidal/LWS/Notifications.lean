@@ -127,11 +127,14 @@ subscription is deactivated are all decided here.
   or metadata was modified").
 * The inbox must be an `http` or `https` URL, and not a container of this
   storage (a delivery POSTed there would create a resource, whose Create
-  would be delivered again), and not this server under another host name, IP
-  address or `localhost` (`InboxGuard.loops`, 400;
+  would be delivered again), also when the inbox names this server under
+  another host name, an IP address or `localhost` (`InboxGuard.loops`, 400;
   https://github.com/danbri/factoidal/issues/915). For an inbox host that is
   a name, the engine asks the host to resolve it first (`resolveNeeded?`, the
-  `resolve` answer of the wasm ABI).
+  `resolve` answer of the wasm ABI). Another path of this server is accepted:
+  a POST there creates nothing (405 for a data resource, 404 for a missing
+  path), and Touchstone's notification tests subscribe with the storage
+  description as the inbox (`inbox: "${storage}"`).
 * The webhook suite, "Security Considerations": "Subscription Abuse: Rate
   limiting and endpoint verification are suggested to prevent abuse of the
   subscription mechanism." Rate limiting (issue 915): at most
@@ -145,9 +148,9 @@ subscription is deactivated are all decided here.
   providing an array of activity objects as the value of the activity
   property"): at the subscription's next change, or when the host calls
   `lwsFlush` after the seconds the engine named (`nextWake`, `flush`).
-  Endpoint verification: the drafts describe no procedure for it (no
-  verification request, no challenge, no expected answer), so this server
-  makes none.
+  Endpoint verification: the drafts define no procedure for it (no
+  verification request, no challenge, no expected answer), so there is no
+  behaviour to implement.
 -/
 import L4Factoidal.LWS.Authorization
 import L4Factoidal.LWS.Snapshot
@@ -945,10 +948,13 @@ def readSubRequest (baseIri : String) (now : Nat) (body : ByteArray)
     let p := String.ofList (p.toList.takeWhile (fun (c : Char) => c != '#'))
     if pathIsContainer p && !isSubscriptionPath p then
       .error (400, "inbox is a container of this storage: a delivery would create a resource and so another notification")
-  -- This server under another host name, IP address or `localhost`
-  -- (`InboxGuard.loops`, issue 915).
-  if loops inbox then
-    .error (400, "inbox names this server (its host, one of its addresses or localhost, at its port): a delivery would be a request to this server")
+  -- The same container under another name of this server: another host
+  -- name, an IP address or `localhost` at its port (`InboxGuard.loops`,
+  -- issue 915).
+  if loops inbox && (match urlParts? inbox with
+      | some (_, _, ip) => pathIsContainer ip && !isSubscriptionPath ip
+      | none => false) then
+    .error (400, "inbox is a container of this storage under another name of this server (a host name, an address or localhost at its port): a delivery would create a resource and so another notification")
   let (expires, expiresAt) ← match j.field? "expires" with
     | none | some .null => .ok (none, none)
     | some (.string e) =>
