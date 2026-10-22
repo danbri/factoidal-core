@@ -84,11 +84,11 @@
 // produced and this code keeps working unchanged.
 
 import { loadEngine } from '../bin/engine.mjs'
-import { readSnapshot, persistIfChanged, storageKeyText, storageModeText, loadFiles, persistFilesIfChanged } from './persist.mjs'
+import { readSnapshot, persistIfChanged, storageKeyText, storageModeText, loadFiles, persistFilesIfChanged, readStepBodies } from './persist.mjs'
 
 /** The ops this host needs from the engine. */
 export const LWS_OPS = ['lwsOpen', 'lwsStep', 'lwsClose', 'lwsSnapshot', 'lwsFetched', 'lwsDelivered',
-  'lwsLoad', 'lwsPersist']
+  'lwsLoad', 'lwsPersist', 'lwsRead']
 
 /** How long this host waits for the answer to one delivery request before
  *  it reports "no answer" (status 0) to the engine. */
@@ -460,7 +460,23 @@ export async function openLwsStorage (options = {}) {
       // The engine may ask for the addresses of a host name first
       // (`resolve`); this host resolves it and steps the request again.
       let resolves = 0
-      const callStep = () => engine.callBlobIO('lwsStep', [handle, JSON.stringify(record)], content)
+      // A storage kept in files (https://github.com/danbri/factoidal/issues/918,
+      // stage 2) may answer `read: [NAME, ...]` first: the body files the step
+      // needs. This host reads exactly those files, passes them to `lwsRead`
+      // (the engine checks them), and steps the same request again.
+      const callStep = () => {
+        let got = engine.callBlobIO('lwsStep', [handle, JSON.stringify(record)], content)
+        let reads = 0
+        while (got.envelope !== null && typeof got.envelope === 'object' && Array.isArray(got.envelope.read)) {
+          reads += 1
+          if (reads > 2 || dir === null) {
+            throw new LwsHostError('the engine asked for body files this host cannot read')
+          }
+          readStepBodies(engine, handle, got.envelope.read, dir)
+          got = engine.callBlobIO('lwsStep', [handle, JSON.stringify(record)], content)
+        }
+        return got
+      }
       let answered = callStep()
       let envelope = answered.envelope
       while (envelope !== null && typeof envelope === 'object' &&
