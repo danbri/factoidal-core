@@ -14,8 +14,10 @@ main: apply its changes while preserving main's newer XML, numeric, RIF,
 SPARQL, Authz and LWS work. A wholesale source replacement is not acceptable.
 PR2 head `25bdeaf597bc9f91acd6a980861fb0d20eaf5927` applied as `65b2471`,
 `87fd052`, `87af61c`; the worknote-index conflict retained both sets of notes.
-PR3 head `87d1009df1842a64669530e3d1f1875e2b2c8e22` is being reconciled
-separately, with its dispatch and CLI additions kept alongside Authz/LWS.
+PR3 head `87d1009df1842a64669530e3d1f1875e2b2c8e22` was reconciled as
+`7501907`, with dispatch and CLI additions kept alongside Authz/LWS.
+`6b2c847` adds the reviewed host lifecycle repairs and evidence described in
+[the XMPP integration note](20261022-xmpp-pr3-integration.md).
 Original branches and dirty audit worktrees are preserved.
 
 PR1's [independent review and raw evidence](audits/pr1-review-20261022/README.md)
@@ -50,7 +52,8 @@ restricted checked reader. Reconcile them explicitly:
 Add two tests to preserve the distinction: consistency checks an admitted
 contradiction at compatibility fuel 0/1/20000; entailment at fuel 0 reports
 budget exhaustion, separately from incomplete search. Native producer probes
-confirmed these diagnostics. Public rebuilt-artifact execution remains pending.
+confirmed these diagnostics. The rebuilt PR2+PR3 artifact passed all 17
+public OWL regression tests and all 20 packaged producer-gate cases.
 Do not change the old failed logs: they show how these expectations arose.
 
 The consistency producer can return a checked inconsistency or unknown; it
@@ -58,9 +61,48 @@ cannot certify satisfiability. Its fixed 64-round certificate search and
 syntax restriction are compatibility limits. The old entailment path does
 not acquire a soundness proof from the new consistency theorem.
 
+The full npm run found two further obsolete expectations in `l4-core.test.js`:
+a satisfiable subclass example expected `true` without a model certificate,
+and a non-entailment example expected `false` without a countermodel. They
+now require explicit unknown/incomplete-search. The existential example
+also requires unsupported-syntax at both budgets. These are refusal-contract
+tests; the underlying satisfiability/non-entailment decision gaps remain.
+
+## PR2+PR3 artifact validation, before PR1 and latest main
+
+[Raw evidence and hashes](audits/pr23-integration-20261022/manifest.json)
+identify source `6b2c847e9ad5dc0e44f181bdee690eb6e3fbb53f`, Node 22.22.2,
+Lean 4.33.1 and the normal Wasm build. Full Wasm SHA-256 is
+`64ec60e2c52ab0f8c871e2147d553dad1a9326185fb90f282bb1615fbf280fd9`.
+The npm tarball SHA-256 is
+`0a7b3dfeefefe57c47dfd08994fc44080c5a86982f7afc02c84886c5f60d9366`.
+These identify local test artifacts, not an npm publication.
+
+- OWL/XMPP public regression run: 30 passed, including real TCP sessions.
+- Independent `@xmpp/client` interoperability: 7 passed.
+- Extracted tarball OWL producer gate: 20 passed.
+- Full npm suite: 579 total, 575 passed, 3 failed, 1 skipped. The skip needs
+  an external Jena installation. The original failed log is retained.
+- Repaired test files: 41 passed. Besides the two OWL expectations above,
+  the packaging test compared `/var/...` with canonical `/private/var/...`
+  on macOS after successful extracted-package parse/query/store operations.
+  It now checks exact real-file equality. It also accepts both npm pack JSON
+  output shapes. The same packaging test passed under Node 26/npm as well.
+
+The first redirected TCP test run was denied local socket access by the
+execution environment; its log remains alongside the successful direct run.
+This is not classified as an engine conformance failure.
+
+Native comparison baselines on PR2+PR3 source `eef88c3` are retained with
+fixture inventories and binary hashes: XSD datatypes 18,955 passed, 0 failed,
+7,402 excluded (26,357 instance tests accounted for); schema-structure tests
+were inventoried but not validated. RIF: 45 passed, 0 failed, 0 undecided,
+0 unread, 1 existing local override, including all 6 import-rejection cases.
+Runner exit status alone is insufficient: their printed counts were checked.
+
 ## Acceptance and evidence still required
 
-Reconcile PR1 and PR3, inspect their commits, then build the combined library
+Finish reconciling PR1, inspect its commits, then build the combined library
 and Wasm with the normal build script. Run native suites with failure,
 unknown, missing-fixture and comparator counts separately; run public OWL,
 XMPP real TCP/interop, npm, hub and relevant newer-main host tests on that

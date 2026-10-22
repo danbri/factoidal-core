@@ -1,0 +1,148 @@
+TAP version 13
+# Subtest: OWL consistency rejects sameAs and differentFrom
+ok 1 - OWL consistency rejects sameAs and differentFrom
+  ---
+  duration_ms: 1159.53725
+  type: 'test'
+  ...
+# Subtest: OWL consistency rejects reversed differentFrom
+ok 2 - OWL consistency rejects reversed differentFrom
+  ---
+  duration_ms: 1.328875
+  type: 'test'
+  ...
+# Subtest: OWL consistency rejects self differentFrom
+ok 3 - OWL consistency rejects self differentFrom
+  ---
+  duration_ms: 0.983375
+  type: 'test'
+  ...
+# Subtest: OWL consistency rejects transitive sameAs and differentFrom
+ok 4 - OWL consistency rejects transitive sameAs and differentFrom
+  ---
+  duration_ms: 1.025167
+  type: 'test'
+  ...
+# Subtest: OWL consistency does not claim a model for sameAs alone
+ok 5 - OWL consistency does not claim a model for sameAs alone
+  ---
+  duration_ms: 1.811042
+  type: 'test'
+  ...
+# Subtest: OWL consistency does not claim a model for differentFrom alone
+ok 6 - OWL consistency does not claim a model for differentFrom alone
+  ---
+  duration_ms: 0.781834
+  type: 'test'
+  ...
+# Subtest: OWL consistency does not claim a model for ordinary class membership
+ok 7 - OWL consistency does not claim a model for ordinary class membership
+  ---
+  duration_ms: 1.06775
+  type: 'test'
+  ...
+# Subtest: OWL consistency refuses negative property assertions outside its checked fragment
+ok 8 - OWL consistency refuses negative property assertions outside its checked fragment
+  ---
+  duration_ms: 2.125375
+  type: 'test'
+  ...
+# Subtest: OWL entailment still returns a closure consequence
+ok 9 - OWL entailment still returns a closure consequence
+  ---
+  duration_ms: 41.964583
+  type: 'test'
+  ...
+# Subtest: OWL entailment does not turn a quiescent search into a countermodel
+ok 10 - OWL entailment does not turn a quiescent search into a countermodel
+  ---
+  duration_ms: 59.717375
+  type: 'test'
+  ...
+# Subtest: OWL entailment does not claim a countermodel for an unproved data assertion
+ok 11 - OWL entailment does not claim a countermodel for an unproved data assertion
+  ---
+  duration_ms: 6.680833
+  type: 'test'
+  ...
+# Subtest: OWL consistency refuses an unsupported restriction before search budgeting
+ok 12 - OWL consistency refuses an unsupported restriction before search budgeting
+  ---
+  duration_ms: 2.1445
+  type: 'test'
+  ...
+# Subtest: OWL consistency compatibility fuel does not disable its fixed certificate checker
+ok 13 - OWL consistency compatibility fuel does not disable its fixed certificate checker
+  ---
+  duration_ms: 2.0995
+  type: 'test'
+  ...
+# Subtest: OWL entailment budget exhaustion remains distinct from incomplete search
+ok 14 - OWL entailment budget exhaustion remains distinct from incomplete search
+  ---
+  duration_ms: 21.425542
+  type: 'test'
+  ...
+# Subtest: OWL consistency refuses disjoint-class syntax without applying RDF punning substitution
+ok 15 - OWL consistency refuses disjoint-class syntax without applying RDF punning substitution
+  ---
+  duration_ms: 19.926042
+  type: 'test'
+  ...
+# Subtest: OWL entailment does not substitute sameAs into a punned class name
+ok 16 - OWL entailment does not substitute sameAs into a punned class name
+  ---
+  duration_ms: 2.321416
+  type: 'test'
+  ...
+# Subtest: OWL punning across premise and conclusion is indeterminate
+ok 17 - OWL punning across premise and conclusion is indeterminate
+  ---
+  duration_ms: 0.727167
+  type: 'test'
+  ...
+# Subtest: xmpp-serve: engine reports actual UTF-8 residual bytes despite a reply
+ok 18 - xmpp-serve: engine reports actual UTF-8 residual bytes despite a reply
+  ---
+  duration_ms: 35.607042
+  type: 'test'
+  ...
+# Subtest: xmpp-serve: a full session over a TCP socket, through wasm
+not ok 19 - xmpp-serve: a full session over a TCP socket, through wasm
+  ---
+  duration_ms: 178.019166
+  type: 'test'
+  location: '/Users/danbri/working/sandbox/october/tpac/codex-npm-review/integrate-core/npm/factoidal/test/xmpp-serve.test.mjs:124:1'
+  failureType: 'testCodeFailure'
+  error: 'listen EPERM: operation not permitted 127.0.0.1'
+  code: 'EPERM'
+  stack: |-
+    Server.setupListenHandle [as _listen2] (node:net:1918:21)
+    listenInCluster (node:net:1997:12)
+    node:net:2206:7
+    process.processTicksAndRejections (node:internal/process/task_queues:89:21)
+  ...
+# Subtest: xmpp-serve: rosters persisted by one run are loaded by the next
+not ok 20 - xmpp-serve: rosters persisted by one run are loaded by the next
+  ---
+  duration_ms: 24.963208
+  type: 'test'
+  location: '/Users/danbri/working/sandbox/october/tpac/codex-npm-review/integrate-core/npm/factoidal/test/xmpp-serve.test.mjs:292:1'
+  failureType: 'testCodeFailure'
+  error: 'listen EPERM: operation not permitted 127.0.0.1'
+  code: 'EPERM'
+  stack: |-
+    Server.setupListenHandle [as _listen2] (node:net:1918:21)
+    listenInCluster (node:net:1997:12)
+    node:net:2206:7
+    process.processTicksAndRejections (node:internal/process/task_queues:89:21)
+  ...
+1..20
+# tests 20
+# suites 0
+# pass 18
+# fail 2
+# cancelled 0
+# skipped 0
+# todo 0
+# duration_ms 1817.017208

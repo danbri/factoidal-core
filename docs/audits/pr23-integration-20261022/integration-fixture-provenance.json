@@ -1,0 +1,50 @@
+[
+  {
+    "repo": "w3c/rdf-tests",
+    "commit": "ec2ba15e0a001431af0e56376572812fd5dd1dbc",
+    "archive_sha256": "06a1c4c5372647030aa64d71f01557496778b561ace21a17a0aa2c1aee72727c",
+    "path": "integrate-core/third_party/testing/w3c",
+    "license_files": [
+      {
+        "path": "LICENSE.md",
+        "sha256": "7fa36904d5d6d32848307af7b22d416b708aaa0b98f5c719b26adb5ed3594b2a"
+      }
+    ]
+  },
+  {
+    "repo": "w3c/json-ld-api",
+    "commit": "92f07705a0c0ac27aa9bc6fe1322dcc9fad0114d",
+    "archive_sha256": "b31d1336b23d020a2ff812e741782d4aa871c617aae02fafa15b86cee7e7360b",
+    "path": "integrate-core/third_party/testing/json-ld",
+    "license_files": [
+      {
+        "path": "LICENSE.md",
+        "sha256": "232da9c6c2b9f7e19e5d85cc7cf43760d80b7c4174406ac6404fa2c1b51d531b"
+      }
+    ]
+  },
+  {
+    "repo": "w3c/vc-data-model-2.0-test-suite",
+    "commit": "3e2be634137e2504f0fb77e969da7d32c15a9051",
+    "archive_sha256": "79105e94d6b7b52b044959da455c74513f6575b26421129cecfafc599b6fdc5f",
+    "path": "integrate-core/third_party/testing/vc",
+    "license_files": [
+      {
+        "path": "LICENSE.md",
+        "sha256": "581396f3de0f298ca781969545357aece4ccf45f6645de2105b04b3d3adfcdf6"
+      }
+    ]
+  },
+  {
+    "repo": "w3c/did-test-suite",
+    "commit": "6e45c27cca410e868f55d0260dcbb311e73e70bd",
+    "archive_sha256": "095867a9041f4250fa465c0911fcb7190659ba3d191165670ead943bf25a9269",
+    "path": "integrate-core/third_party/testing/did",
+    "license_files": [
+      {
+        "path": "LICENSE.md",
+        "sha256": "7a3ad7d36b8855bc301276279769da4aff648ea5d7b92f3f023c0823ee948764"
+      }
+    ]
+  }
+]
