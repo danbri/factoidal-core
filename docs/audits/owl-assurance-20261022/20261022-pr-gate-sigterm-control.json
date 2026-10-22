@@ -1,0 +1,11 @@
+{
+  "scope": "Synthetic child timeout robustness control; no Lean/Wasm build or engine execution",
+  "node": "/opt/homebrew/opt/node@22/bin/node",
+  "innerTimeoutMs": 100,
+  "outerSafetyTimeoutSeconds": 2,
+  "outerSafetyKillRequired": true,
+  "exitCode": -9,
+  "elapsedSeconds": 2.003,
+  "stdout": "",
+  "stderr": ""
+}

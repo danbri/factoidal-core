@@ -1,0 +1,1153 @@
+{
+  "schemaVersion": 1,
+  "gate": "selected-npm-semantic-regressions",
+  "startedAt": "2026-10-22T13:01:51.430Z",
+  "nodeVersion": "v26.7.0",
+  "packageDirectory": "/Users/danbri/working/sandbox/october/tpac/codex-npm-review/artifacts/owl-pr-error-fixed/package",
+  "reportPath": "/Users/danbri/working/sandbox/october/tpac/codex-npm-review/logs/pr-npm-semantic-final.json",
+  "limits": {
+    "caseMs": 10000,
+    "wholeExecutionMs": 120000,
+    "mechanism": "parent process kills isolated synchronous-wasm workers with SIGKILL"
+  },
+  "scope": {
+    "allSuitesConformance": false,
+    "completeAuditCoverage": false,
+    "unimplementedObligations": [
+      {
+        "finding": "R07",
+        "obligation": "Resource budgets for public operations and adversarial inputs."
+      },
+      {
+        "finding": "R11",
+        "obligation": "CSVW external tables and metadata interoperability."
+      },
+      {
+        "finding": "R12",
+        "obligation": "Published TypeScript declaration and implementation agreement."
+      },
+      {
+        "finding": "R13",
+        "obligation": "RML source/iterator and logical-table interoperability."
+      }
+    ],
+    "notes": [
+      "Self-contained product regressions only; no external corpus or network.",
+      "R04 variable SERVICE is a product interoperability obligation, not a normative W3C claim.",
+      "R10 quiescent search expects null until a model certificate is checked; future certificate support must revise this test with evidence.",
+      "Runner timeouts bound execution; they do not implement or certify R07 engine resource budgets."
+    ]
+  },
+  "artifacts": {
+    "package.json": {
+      "path": "/Users/danbri/working/sandbox/october/tpac/codex-npm-review/artifacts/owl-pr-error-fixed/package/package.json",
+      "bytes": 3456,
+      "sha256": "eb88b52e09700945da2e89d16e92a4add5b9e42b813671c083605f58c9d33419"
+    },
+    "index.mjs": {
+      "path": "/Users/danbri/working/sandbox/october/tpac/codex-npm-review/artifacts/owl-pr-error-fixed/package/index.mjs",
+      "bytes": 7787,
+      "sha256": "2b0d418485b2753469a269819566a0c79565483b6c1508d5236e4cb808c29089"
+    },
+    "l4-assets/l4factoidal.js": {
+      "path": "/Users/danbri/working/sandbox/october/tpac/codex-npm-review/artifacts/owl-pr-error-fixed/package/l4-assets/l4factoidal.js",
+      "bytes": 13460,
+      "sha256": "16b23eca134e72c1f452631440833cd69742a34b4332560f3874bfdbe3b83b83"
+    },
+    "l4-assets/l4factoidal.mjs": {
+      "path": "/Users/danbri/working/sandbox/october/tpac/codex-npm-review/artifacts/owl-pr-error-fixed/package/l4-assets/l4factoidal.mjs",
+      "bytes": 64391,
+      "sha256": "bd75f97074f452ce8b9c9e6e2e0f5c056b0f0ed49fcda92a9acb9a6d79dce94d"
+    },
+    "l4-assets/l4factoidal.wasm": {
+      "path": "/Users/danbri/working/sandbox/october/tpac/codex-npm-review/artifacts/owl-pr-error-fixed/package/l4-assets/l4factoidal.wasm",
+      "bytes": 13436531,
+      "sha256": "29f45ff783544cd0895e953bab9d1cf896133a8ae9c541457ec12d0fe43f4db0"
+    }
+  },
+  "engineMetadata": {
+    "status": "pass",
+    "observed": {
+      "engine": "lean4-wasm",
+      "packageApiVersion": "0.12.0",
+      "engineVersion": "l4factoidal-wasm 0.2.0 (dispatch: RDF parse/serialize, SPARQL query+update, RDFS/OWL-RL closures, RDFC-1.0, CL/IKL)",
+      "abiVersion": "1",
+      "opCount": 161,
+      "requiredOps": [
+        "datasetOpen",
+        "datasetQuery",
+        "datasetQueryRaw",
+        "datasetQuery12",
+        "datasetUpdate",
+        "registerServiceEndpoint",
+        "clearServiceEndpoints",
+        "owlIsConsistent",
+        "owlEntails",
+        "xsltTransform",
+        "solidOpen",
+        "solidStep",
+        "solidClose"
+      ]
+    },
+    "elapsedMs": 203
+  },
+  "fatalErrors": [],
+  "rows": [
+    {
+      "id": "R02.duplicate-default.turtle",
+      "category": "rdf-term-identity",
+      "expected": {
+        "size": 1,
+        "iterated": 1,
+        "count": "1"
+      },
+      "status": "fail",
+      "observed": {
+        "size": 2,
+        "iterated": 2,
+        "objects": [
+          {
+            "termType": "Literal",
+            "value": "x",
+            "datatype": "http://www.w3.org/2001/XMLSchema#string",
+            "language": ""
+          },
+          {
+            "termType": "Literal",
+            "value": "x",
+            "datatype": "http://www.w3.org/2001/XMLSchema#string",
+            "language": ""
+          }
+        ],
+        "count": "2"
+      },
+      "error": {
+        "name": "AssertionError",
+        "message": "Dataset.size\n\n2 !== 1\n",
+        "stack": "AssertionError [ERR_ASSERTION]: Dataset.size\n\n2 !== 1\n\n    at cardinality (file:///Users/danbri/working/sandbox/october/tpac/codex-npm-review/pr-core/tools/npm-semantic-gate.mjs:47:10)\n    at async Object.run (file:///Users/danbri/working/sandbox/october/tpac/codex-npm-review/pr-core/tools/npm-semantic-gate.mjs:66:13)\n    at async worker (file:///Users/danbri/working/sandbox/october/tpac/codex-npm-review/pr-core/tools/npm-semantic-gate.mjs:310:12)\n    at async file:///Users/danbri/working/sandbox/october/tpac/codex-npm-review/pr-core/tools/npm-semantic-gate.mjs:511:20"
+      },
+      "elapsedMs": 229
+    },
+    {
+      "id": "R02.duplicate-default.ntriples",
+      "category": "rdf-term-identity",
+      "expected": {
+        "size": 1,
+        "iterated": 1,
+        "count": "1"
+      },
+      "status": "fail",
+      "observed": {
+        "size": 2,
+        "iterated": 2,
+        "objects": [
+          {
+            "termType": "Literal",
+            "value": "x",
+            "datatype": "http://www.w3.org/2001/XMLSchema#string",
+            "language": ""
+          },
+          {
+            "termType": "Literal",
+            "value": "x",
+            "datatype": "http://www.w3.org/2001/XMLSchema#string",
+            "language": ""
+          }
+        ],
+        "count": "2"
+      },
+      "error": {
+        "name": "AssertionError",
+        "message": "Dataset.size\n\n2 !== 1\n",
+        "stack": "AssertionError [ERR_ASSERTION]: Dataset.size\n\n2 !== 1\n\n    at cardinality (file:///Users/danbri/working/sandbox/october/tpac/codex-npm-review/pr-core/tools/npm-semantic-gate.mjs:47:10)\n    at async Object.run (file:///Users/danbri/working/sandbox/october/tpac/codex-npm-review/pr-core/tools/npm-semantic-gate.mjs:66:13)\n    at async worker (file:///Users/danbri/working/sandbox/october/tpac/codex-npm-review/pr-core/tools/npm-semantic-gate.mjs:310:12)\n    at async file:///Users/danbri/working/sandbox/october/tpac/codex-npm-review/pr-core/tools/npm-semantic-gate.mjs:511:20"
+      },
+      "elapsedMs": 214
+    },
+    {
+      "id": "R02.duplicate-default.nquads",
+      "category": "rdf-term-identity",
+      "expected": {
+        "size": 1,
+        "iterated": 1,
+        "count": "1"
+      },
+      "status": "pass",
+      "observed": {
+        "size": 1,
+        "iterated": 1,
+        "objects": [
+          {
+            "termType": "Literal",
+            "value": "x",
+            "datatype": "http://www.w3.org/2001/XMLSchema#string",
+            "language": ""
+          }
+        ],
+        "count": "1"
+      },
+      "elapsedMs": 221
+    },
+    {
+      "id": "R02.duplicate-default.jsonld",
+      "category": "rdf-term-identity",
+      "expected": {
+        "size": 1,
+        "iterated": 1,
+        "count": "1"
+      },
+      "status": "fail",
+      "observed": {
+        "size": 2,
+        "iterated": 2,
+        "objects": [
+          {
+            "termType": "Literal",
+            "value": "x",
+            "datatype": "http://www.w3.org/2001/XMLSchema#string",
+            "language": ""
+          },
+          {
+            "termType": "Literal",
+            "value": "x",
+            "datatype": "http://www.w3.org/2001/XMLSchema#string",
+            "language": ""
+          }
+        ],
+        "count": "2"
+      },
+      "error": {
+        "name": "AssertionError",
+        "message": "Dataset.size\n\n2 !== 1\n",
+        "stack": "AssertionError [ERR_ASSERTION]: Dataset.size\n\n2 !== 1\n\n    at cardinality (file:///Users/danbri/working/sandbox/october/tpac/codex-npm-review/pr-core/tools/npm-semantic-gate.mjs:47:10)\n    at async Object.run (file:///Users/danbri/working/sandbox/october/tpac/codex-npm-review/pr-core/tools/npm-semantic-gate.mjs:66:13)\n    at async worker (file:///Users/danbri/working/sandbox/october/tpac/codex-npm-review/pr-core/tools/npm-semantic-gate.mjs:310:12)\n    at async file:///Users/danbri/working/sandbox/october/tpac/codex-npm-review/pr-core/tools/npm-semantic-gate.mjs:511:20"
+      },
+      "elapsedMs": 219
+    },
+    {
+      "id": "R02.duplicate-default.rdfxml",
+      "category": "rdf-term-identity",
+      "expected": {
+        "size": 1,
+        "iterated": 1,
+        "count": "1"
+      },
+      "status": "fail",
+      "observed": {
+        "size": 2,
+        "iterated": 2,
+        "objects": [
+          {
+            "termType": "Literal",
+            "value": "x",
+            "datatype": "http://www.w3.org/2001/XMLSchema#string",
+            "language": ""
+          },
+          {
+            "termType": "Literal",
+            "value": "x",
+            "datatype": "http://www.w3.org/2001/XMLSchema#string",
+            "language": ""
+          }
+        ],
+        "count": "2"
+      },
+      "error": {
+        "name": "AssertionError",
+        "message": "Dataset.size\n\n2 !== 1\n",
+        "stack": "AssertionError [ERR_ASSERTION]: Dataset.size\n\n2 !== 1\n\n    at cardinality (file:///Users/danbri/working/sandbox/october/tpac/codex-npm-review/pr-core/tools/npm-semantic-gate.mjs:47:10)\n    at async Object.run (file:///Users/danbri/working/sandbox/october/tpac/codex-npm-review/pr-core/tools/npm-semantic-gate.mjs:66:13)\n    at async worker (file:///Users/danbri/working/sandbox/october/tpac/codex-npm-review/pr-core/tools/npm-semantic-gate.mjs:310:12)\n    at async file:///Users/danbri/working/sandbox/october/tpac/codex-npm-review/pr-core/tools/npm-semantic-gate.mjs:511:20"
+      },
+      "elapsedMs": 242
+    },
+    {
+      "id": "R02.one-named-graph",
+      "category": "rdf-term-identity",
+      "expected": {
+        "size": 1,
+        "iterated": 1,
+        "count": "1",
+        "defaultCount": "0"
+      },
+      "status": "pass",
+      "observed": {
+        "size": 1,
+        "iterated": 1,
+        "objects": [
+          {
+            "termType": "Literal",
+            "value": "x",
+            "datatype": "http://www.w3.org/2001/XMLSchema#string",
+            "language": ""
+          }
+        ],
+        "count": "1",
+        "defaultCount": "0"
+      },
+      "elapsedMs": 228
+    },
+    {
+      "id": "R02.distinct-named-graphs",
+      "category": "rdf-term-identity",
+      "expected": {
+        "size": 2,
+        "iterated": 2,
+        "count": "2",
+        "defaultCount": "0"
+      },
+      "status": "pass",
+      "observed": {
+        "size": 2,
+        "iterated": 2,
+        "objects": [
+          {
+            "termType": "Literal",
+            "value": "x",
+            "datatype": "http://www.w3.org/2001/XMLSchema#string",
+            "language": ""
+          },
+          {
+            "termType": "Literal",
+            "value": "x",
+            "datatype": "http://www.w3.org/2001/XMLSchema#string",
+            "language": ""
+          }
+        ],
+        "count": "2",
+        "defaultCount": "0"
+      },
+      "elapsedMs": 268
+    },
+    {
+      "id": "R02.identical-iri.turtle",
+      "category": "rdf-term-identity",
+      "expected": {
+        "size": 1,
+        "iterated": 1,
+        "count": "1"
+      },
+      "status": "fail",
+      "observed": {
+        "size": 2,
+        "iterated": 2,
+        "objects": [
+          {
+            "termType": "NamedNode",
+            "value": "urn:o"
+          },
+          {
+            "termType": "NamedNode",
+            "value": "urn:o"
+          }
+        ],
+        "count": "2"
+      },
+      "error": {
+        "name": "AssertionError",
+        "message": "Dataset.size\n\n2 !== 1\n",
+        "stack": "AssertionError [ERR_ASSERTION]: Dataset.size\n\n2 !== 1\n\n    at cardinality (file:///Users/danbri/working/sandbox/october/tpac/codex-npm-review/pr-core/tools/npm-semantic-gate.mjs:47:10)\n    at async Object.run (file:///Users/danbri/working/sandbox/october/tpac/codex-npm-review/pr-core/tools/npm-semantic-gate.mjs:93:11)\n    at async worker (file:///Users/danbri/working/sandbox/october/tpac/codex-npm-review/pr-core/tools/npm-semantic-gate.mjs:310:12)\n    at async file:///Users/danbri/working/sandbox/october/tpac/codex-npm-review/pr-core/tools/npm-semantic-gate.mjs:511:20"
+      },
+      "elapsedMs": 216
+    },
+    {
+      "id": "R02.identical-iri.nquads-roundtrip",
+      "category": "rdf-term-identity",
+      "expected": {
+        "size": 1,
+        "iterated": 1,
+        "count": "1"
+      },
+      "status": "pass",
+      "observed": {
+        "size": 1,
+        "iterated": 1,
+        "objects": [
+          {
+            "termType": "NamedNode",
+            "value": "urn:o"
+          }
+        ],
+        "count": "1"
+      },
+      "elapsedMs": 216
+    },
+    {
+      "id": "R02.numeric-lexical.turtle",
+      "category": "rdf-term-identity",
+      "expected": {
+        "size": 2,
+        "iterated": 2,
+        "count": "2"
+      },
+      "status": "pass",
+      "observed": {
+        "size": 2,
+        "iterated": 2,
+        "objects": [
+          {
+            "termType": "Literal",
+            "value": "1",
+            "datatype": "http://www.w3.org/2001/XMLSchema#integer",
+            "language": ""
+          },
+          {
+            "termType": "Literal",
+            "value": "01",
+            "datatype": "http://www.w3.org/2001/XMLSchema#integer",
+            "language": ""
+          }
+        ],
+        "count": "2"
+      },
+      "elapsedMs": 215
+    },
+    {
+      "id": "R02.numeric-lexical.nquads-roundtrip",
+      "category": "rdf-term-identity",
+      "expected": {
+        "size": 2,
+        "iterated": 2,
+        "count": "2"
+      },
+      "status": "pass",
+      "observed": {
+        "size": 2,
+        "iterated": 2,
+        "objects": [
+          {
+            "termType": "Literal",
+            "value": "1",
+            "datatype": "http://www.w3.org/2001/XMLSchema#integer",
+            "language": ""
+          },
+          {
+            "termType": "Literal",
+            "value": "01",
+            "datatype": "http://www.w3.org/2001/XMLSchema#integer",
+            "language": ""
+          }
+        ],
+        "count": "2"
+      },
+      "elapsedMs": 228
+    },
+    {
+      "id": "R02.different-datatype.turtle",
+      "category": "rdf-term-identity",
+      "expected": {
+        "size": 2,
+        "iterated": 2,
+        "count": "2"
+      },
+      "status": "pass",
+      "observed": {
+        "size": 2,
+        "iterated": 2,
+        "objects": [
+          {
+            "termType": "Literal",
+            "value": "1",
+            "datatype": "http://www.w3.org/2001/XMLSchema#string",
+            "language": ""
+          },
+          {
+            "termType": "Literal",
+            "value": "1",
+            "datatype": "http://www.w3.org/2001/XMLSchema#integer",
+            "language": ""
+          }
+        ],
+        "count": "2"
+      },
+      "elapsedMs": 232
+    },
+    {
+      "id": "R02.different-datatype.nquads-roundtrip",
+      "category": "rdf-term-identity",
+      "expected": {
+        "size": 2,
+        "iterated": 2,
+        "count": "2"
+      },
+      "status": "pass",
+      "observed": {
+        "size": 2,
+        "iterated": 2,
+        "objects": [
+          {
+            "termType": "Literal",
+            "value": "1",
+            "datatype": "http://www.w3.org/2001/XMLSchema#string",
+            "language": ""
+          },
+          {
+            "termType": "Literal",
+            "value": "1",
+            "datatype": "http://www.w3.org/2001/XMLSchema#integer",
+            "language": ""
+          }
+        ],
+        "count": "2"
+      },
+      "elapsedMs": 208
+    },
+    {
+      "id": "R02.different-language.turtle",
+      "category": "rdf-term-identity",
+      "expected": {
+        "size": 2,
+        "iterated": 2,
+        "count": "2"
+      },
+      "status": "pass",
+      "observed": {
+        "size": 2,
+        "iterated": 2,
+        "objects": [
+          {
+            "termType": "Literal",
+            "value": "x",
+            "datatype": "http://www.w3.org/1999/02/22-rdf-syntax-ns#langString",
+            "language": "en"
+          },
+          {
+            "termType": "Literal",
+            "value": "x",
+            "datatype": "http://www.w3.org/1999/02/22-rdf-syntax-ns#langString",
+            "language": "fr"
+          }
+        ],
+        "count": "2"
+      },
+      "elapsedMs": 201
+    },
+    {
+      "id": "R02.different-language.nquads-roundtrip",
+      "category": "rdf-term-identity",
+      "expected": {
+        "size": 2,
+        "iterated": 2,
+        "count": "2"
+      },
+      "status": "pass",
+      "observed": {
+        "size": 2,
+        "iterated": 2,
+        "objects": [
+          {
+            "termType": "Literal",
+            "value": "x",
+            "datatype": "http://www.w3.org/1999/02/22-rdf-syntax-ns#langString",
+            "language": "en"
+          },
+          {
+            "termType": "Literal",
+            "value": "x",
+            "datatype": "http://www.w3.org/1999/02/22-rdf-syntax-ns#langString",
+            "language": "fr"
+          }
+        ],
+        "count": "2"
+      },
+      "elapsedMs": 200
+    },
+    {
+      "id": "R14.xmlliteral-lexical.nquads",
+      "category": "rdf-term-identity",
+      "expected": {
+        "size": 2,
+        "iterated": 2,
+        "count": "2"
+      },
+      "status": "fail",
+      "observed": {
+        "size": 1,
+        "iterated": 1,
+        "objects": [
+          {
+            "termType": "Literal",
+            "value": "<x a='1' b='2'/>",
+            "datatype": "http://www.w3.org/1999/02/22-rdf-syntax-ns#XMLLiteral",
+            "language": ""
+          }
+        ],
+        "count": "1"
+      },
+      "error": {
+        "name": "AssertionError",
+        "message": "Dataset.size\n\n1 !== 2\n",
+        "stack": "AssertionError [ERR_ASSERTION]: Dataset.size\n\n1 !== 2\n\n    at cardinality (file:///Users/danbri/working/sandbox/october/tpac/codex-npm-review/pr-core/tools/npm-semantic-gate.mjs:47:10)\n    at async Object.run (file:///Users/danbri/working/sandbox/october/tpac/codex-npm-review/pr-core/tools/npm-semantic-gate.mjs:101:11)\n    at async worker (file:///Users/danbri/working/sandbox/october/tpac/codex-npm-review/pr-core/tools/npm-semantic-gate.mjs:310:12)\n    at async file:///Users/danbri/working/sandbox/october/tpac/codex-npm-review/pr-core/tools/npm-semantic-gate.mjs:511:20"
+      },
+      "elapsedMs": 199
+    },
+    {
+      "id": "R03.registered.ordinary",
+      "category": "query-execution-environment",
+      "expected": {
+        "name": "Alice",
+        "inferredLocalTypeRequired": false
+      },
+      "status": "pass",
+      "observed": {
+        "answer": [
+          [
+            [
+              "name",
+              "Alice"
+            ]
+          ]
+        ]
+      },
+      "elapsedMs": 195
+    },
+    {
+      "id": "R03.missing.ordinary",
+      "category": "query-execution-environment",
+      "expected": {
+        "rejects": "SERVICE endpoint unavailable"
+      },
+      "status": "pass",
+      "observed": {
+        "error": "SERVICE <https://service-options.example/sparql/missing> failed: no endpoint is available for this IRI (SPARQL 1.1 Federated Query §2.3: without SILENT, the query fails)"
+      },
+      "elapsedMs": 190
+    },
+    {
+      "id": "R03.cleared.ordinary",
+      "category": "query-execution-environment",
+      "expected": {
+        "rejects": "SERVICE endpoint unavailable"
+      },
+      "status": "pass",
+      "observed": {
+        "answer": [
+          [
+            [
+              "name",
+              "Alice"
+            ]
+          ]
+        ],
+        "error": "SERVICE <https://service-options.example/sparql> failed: no endpoint is available for this IRI (SPARQL 1.1 Federated Query §2.3: without SILENT, the query fails)"
+      },
+      "elapsedMs": 221
+    },
+    {
+      "id": "R03.registered.json",
+      "category": "query-execution-environment",
+      "expected": {
+        "name": "Alice",
+        "inferredLocalTypeRequired": false
+      },
+      "status": "error",
+      "observed": {},
+      "error": {
+        "name": "FactoidalError",
+        "message": "SERVICE <https://service-options.example/sparql> failed: no endpoint is available for this IRI (SPARQL 1.1 Federated Query §2.3: without SILENT, the query fails)",
+        "stack": "FactoidalError: SERVICE <https://service-options.example/sparql> failed: no endpoint is available for this IRI (SPARQL 1.1 Federated Query §2.3: without SILENT, the query fails)\n    at errorFromEnvelope (file:///Users/danbri/working/sandbox/october/tpac/codex-npm-review/artifacts/owl-pr-error-fixed/package/lib/errors.mjs:79:10)\n    at envelopeResult (file:///Users/danbri/working/sandbox/october/tpac/codex-npm-review/artifacts/owl-pr-error-fixed/package/lib/errors.mjs:90:20)\n    at entryResult (file:///Users/danbri/working/sandbox/october/tpac/codex-npm-review/artifacts/owl-pr-error-fixed/package/lib/api.mjs:135:10)\n    at queryDatasetHandle (file:///Users/danbri/working/sandbox/october/tpac/codex-npm-review/artifacts/owl-pr-error-fixed/package/lib/api.mjs:666:17)\n    at file:///Users/danbri/working/sandbox/october/tpac/codex-npm-review/artifacts/owl-pr-error-fixed/package/lib/api.mjs:779:56\n    at withDataset (file:///Users/danbri/working/sandbox/october/tpac/codex-npm-review/artifacts/owl-pr-error-fixed/package/lib/api.mjs:632:20)\n    at async Object.run (file:///Users/danbri/working/sandbox/october/tpac/codex-npm-review/pr-core/tools/npm-semantic-gate.mjs:141:48)\n    at async worker (file:///Users/danbri/working/sandbox/october/tpac/codex-npm-review/pr-core/tools/npm-semantic-gate.mjs:310:12)\n    at async file:///Users/danbri/working/sandbox/october/tpac/codex-npm-review/pr-core/tools/npm-semantic-gate.mjs:511:20"
+      },
+      "elapsedMs": 217
+    },
+    {
+      "id": "R03.missing.json",
+      "category": "query-execution-environment",
+      "expected": {
+        "rejects": "SERVICE endpoint unavailable"
+      },
+      "status": "pass",
+      "observed": {
+        "error": "SERVICE <https://service-options.example/sparql/missing> failed: no endpoint is available for this IRI (SPARQL 1.1 Federated Query §2.3: without SILENT, the query fails)"
+      },
+      "elapsedMs": 216
+    },
+    {
+      "id": "R03.cleared.json",
+      "category": "query-execution-environment",
+      "expected": {
+        "rejects": "SERVICE endpoint unavailable"
+      },
+      "status": "pass",
+      "observed": {
+        "answer": [
+          [
+            [
+              "name",
+              "Alice"
+            ]
+          ]
+        ],
+        "error": "SERVICE <https://service-options.example/sparql> failed: no endpoint is available for this IRI (SPARQL 1.1 Federated Query §2.3: without SILENT, the query fails)"
+      },
+      "elapsedMs": 226
+    },
+    {
+      "id": "R03.registered.csv",
+      "category": "query-execution-environment",
+      "expected": {
+        "name": "Alice",
+        "inferredLocalTypeRequired": false
+      },
+      "status": "error",
+      "observed": {},
+      "error": {
+        "name": "FactoidalError",
+        "message": "SERVICE <https://service-options.example/sparql> failed: no endpoint is available for this IRI (SPARQL 1.1 Federated Query §2.3: without SILENT, the query fails)",
+        "stack": "FactoidalError: SERVICE <https://service-options.example/sparql> failed: no endpoint is available for this IRI (SPARQL 1.1 Federated Query §2.3: without SILENT, the query fails)\n    at errorFromEnvelope (file:///Users/danbri/working/sandbox/october/tpac/codex-npm-review/artifacts/owl-pr-error-fixed/package/lib/errors.mjs:79:10)\n    at envelopeResult (file:///Users/danbri/working/sandbox/october/tpac/codex-npm-review/artifacts/owl-pr-error-fixed/package/lib/errors.mjs:90:20)\n    at entryResult (file:///Users/danbri/working/sandbox/october/tpac/codex-npm-review/artifacts/owl-pr-error-fixed/package/lib/api.mjs:135:10)\n    at queryDatasetHandle (file:///Users/danbri/working/sandbox/october/tpac/codex-npm-review/artifacts/owl-pr-error-fixed/package/lib/api.mjs:666:17)\n    at file:///Users/danbri/working/sandbox/october/tpac/codex-npm-review/artifacts/owl-pr-error-fixed/package/lib/api.mjs:779:56\n    at withDataset (file:///Users/danbri/working/sandbox/october/tpac/codex-npm-review/artifacts/owl-pr-error-fixed/package/lib/api.mjs:632:20)\n    at async Object.run (file:///Users/danbri/working/sandbox/october/tpac/codex-npm-review/pr-core/tools/npm-semantic-gate.mjs:141:48)\n    at async worker (file:///Users/danbri/working/sandbox/october/tpac/codex-npm-review/pr-core/tools/npm-semantic-gate.mjs:310:12)\n    at async file:///Users/danbri/working/sandbox/october/tpac/codex-npm-review/pr-core/tools/npm-semantic-gate.mjs:511:20"
+      },
+      "elapsedMs": 223
+    },
+    {
+      "id": "R03.missing.csv",
+      "category": "query-execution-environment",
+      "expected": {
+        "rejects": "SERVICE endpoint unavailable"
+      },
+      "status": "pass",
+      "observed": {
+        "error": "SERVICE <https://service-options.example/sparql/missing> failed: no endpoint is available for this IRI (SPARQL 1.1 Federated Query §2.3: without SILENT, the query fails)"
+      },
+      "elapsedMs": 223
+    },
+    {
+      "id": "R03.cleared.csv",
+      "category": "query-execution-environment",
+      "expected": {
+        "rejects": "SERVICE endpoint unavailable"
+      },
+      "status": "pass",
+      "observed": {
+        "answer": [
+          [
+            [
+              "name",
+              "Alice"
+            ]
+          ]
+        ],
+        "error": "SERVICE <https://service-options.example/sparql> failed: no endpoint is available for this IRI (SPARQL 1.1 Federated Query §2.3: without SILENT, the query fails)"
+      },
+      "elapsedMs": 233
+    },
+    {
+      "id": "R03.registered.rdfs",
+      "category": "query-execution-environment",
+      "expected": {
+        "name": "Alice",
+        "inferredLocalTypeRequired": true
+      },
+      "status": "error",
+      "observed": {},
+      "error": {
+        "name": "FactoidalError",
+        "message": "SERVICE <https://service-options.example/sparql> failed: no endpoint is available for this IRI (SPARQL 1.1 Federated Query §2.3: without SILENT, the query fails)",
+        "stack": "FactoidalError: SERVICE <https://service-options.example/sparql> failed: no endpoint is available for this IRI (SPARQL 1.1 Federated Query §2.3: without SILENT, the query fails)\n    at errorFromEnvelope (file:///Users/danbri/working/sandbox/october/tpac/codex-npm-review/artifacts/owl-pr-error-fixed/package/lib/errors.mjs:79:10)\n    at envelopeResult (file:///Users/danbri/working/sandbox/october/tpac/codex-npm-review/artifacts/owl-pr-error-fixed/package/lib/errors.mjs:90:20)\n    at entryResult (file:///Users/danbri/working/sandbox/october/tpac/codex-npm-review/artifacts/owl-pr-error-fixed/package/lib/api.mjs:135:10)\n    at queryDatasetHandle (file:///Users/danbri/working/sandbox/october/tpac/codex-npm-review/artifacts/owl-pr-error-fixed/package/lib/api.mjs:659:19)\n    at file:///Users/danbri/working/sandbox/october/tpac/codex-npm-review/artifacts/owl-pr-error-fixed/package/lib/api.mjs:779:56\n    at withDataset (file:///Users/danbri/working/sandbox/october/tpac/codex-npm-review/artifacts/owl-pr-error-fixed/package/lib/api.mjs:632:20)\n    at async Object.run (file:///Users/danbri/working/sandbox/october/tpac/codex-npm-review/pr-core/tools/npm-semantic-gate.mjs:141:48)\n    at async worker (file:///Users/danbri/working/sandbox/october/tpac/codex-npm-review/pr-core/tools/npm-semantic-gate.mjs:310:12)\n    at async file:///Users/danbri/working/sandbox/october/tpac/codex-npm-review/pr-core/tools/npm-semantic-gate.mjs:511:20"
+      },
+      "elapsedMs": 236
+    },
+    {
+      "id": "R03.missing.rdfs",
+      "category": "query-execution-environment",
+      "expected": {
+        "rejects": "SERVICE endpoint unavailable"
+      },
+      "status": "pass",
+      "observed": {
+        "error": "SERVICE <https://service-options.example/sparql/missing> failed: no endpoint is available for this IRI (SPARQL 1.1 Federated Query §2.3: without SILENT, the query fails)"
+      },
+      "elapsedMs": 228
+    },
+    {
+      "id": "R03.cleared.rdfs",
+      "category": "query-execution-environment",
+      "expected": {
+        "rejects": "SERVICE endpoint unavailable"
+      },
+      "status": "pass",
+      "observed": {
+        "answer": [
+          [
+            [
+              "name",
+              "Alice"
+            ]
+          ]
+        ],
+        "error": "SERVICE <https://service-options.example/sparql> failed: no endpoint is available for this IRI (SPARQL 1.1 Federated Query §2.3: without SILENT, the query fails)"
+      },
+      "elapsedMs": 236
+    },
+    {
+      "id": "R03.registered.rdfs-json",
+      "category": "query-execution-environment",
+      "expected": {
+        "name": "Alice",
+        "inferredLocalTypeRequired": true
+      },
+      "status": "error",
+      "observed": {},
+      "error": {
+        "name": "FactoidalError",
+        "message": "SERVICE <https://service-options.example/sparql> failed: no endpoint is available for this IRI (SPARQL 1.1 Federated Query §2.3: without SILENT, the query fails)",
+        "stack": "FactoidalError: SERVICE <https://service-options.example/sparql> failed: no endpoint is available for this IRI (SPARQL 1.1 Federated Query §2.3: without SILENT, the query fails)\n    at errorFromEnvelope (file:///Users/danbri/working/sandbox/october/tpac/codex-npm-review/artifacts/owl-pr-error-fixed/package/lib/errors.mjs:79:10)\n    at envelopeResult (file:///Users/danbri/working/sandbox/october/tpac/codex-npm-review/artifacts/owl-pr-error-fixed/package/lib/errors.mjs:90:20)\n    at entryResult (file:///Users/danbri/working/sandbox/october/tpac/codex-npm-review/artifacts/owl-pr-error-fixed/package/lib/api.mjs:135:10)\n    at queryDatasetHandle (file:///Users/danbri/working/sandbox/october/tpac/codex-npm-review/artifacts/owl-pr-error-fixed/package/lib/api.mjs:666:17)\n    at file:///Users/danbri/working/sandbox/october/tpac/codex-npm-review/artifacts/owl-pr-error-fixed/package/lib/api.mjs:779:56\n    at withDataset (file:///Users/danbri/working/sandbox/october/tpac/codex-npm-review/artifacts/owl-pr-error-fixed/package/lib/api.mjs:632:20)\n    at async Object.run (file:///Users/danbri/working/sandbox/october/tpac/codex-npm-review/pr-core/tools/npm-semantic-gate.mjs:141:48)\n    at async worker (file:///Users/danbri/working/sandbox/october/tpac/codex-npm-review/pr-core/tools/npm-semantic-gate.mjs:310:12)\n    at async file:///Users/danbri/working/sandbox/october/tpac/codex-npm-review/pr-core/tools/npm-semantic-gate.mjs:511:20"
+      },
+      "elapsedMs": 228
+    },
+    {
+      "id": "R03.missing.rdfs-json",
+      "category": "query-execution-environment",
+      "expected": {
+        "rejects": "SERVICE endpoint unavailable"
+      },
+      "status": "pass",
+      "observed": {
+        "error": "SERVICE <https://service-options.example/sparql/missing> failed: no endpoint is available for this IRI (SPARQL 1.1 Federated Query §2.3: without SILENT, the query fails)"
+      },
+      "elapsedMs": 227
+    },
+    {
+      "id": "R03.cleared.rdfs-json",
+      "category": "query-execution-environment",
+      "expected": {
+        "rejects": "SERVICE endpoint unavailable"
+      },
+      "status": "pass",
+      "observed": {
+        "answer": [
+          [
+            [
+              "name",
+              "Alice"
+            ]
+          ]
+        ],
+        "error": "SERVICE <https://service-options.example/sparql> failed: no endpoint is available for this IRI (SPARQL 1.1 Federated Query §2.3: without SILENT, the query fails)"
+      },
+      "elapsedMs": 235
+    },
+    {
+      "id": "R03.registered.rdfs-csv",
+      "category": "query-execution-environment",
+      "expected": {
+        "name": "Alice",
+        "inferredLocalTypeRequired": true
+      },
+      "status": "error",
+      "observed": {},
+      "error": {
+        "name": "FactoidalError",
+        "message": "SERVICE <https://service-options.example/sparql> failed: no endpoint is available for this IRI (SPARQL 1.1 Federated Query §2.3: without SILENT, the query fails)",
+        "stack": "FactoidalError: SERVICE <https://service-options.example/sparql> failed: no endpoint is available for this IRI (SPARQL 1.1 Federated Query §2.3: without SILENT, the query fails)\n    at errorFromEnvelope (file:///Users/danbri/working/sandbox/october/tpac/codex-npm-review/artifacts/owl-pr-error-fixed/package/lib/errors.mjs:79:10)\n    at envelopeResult (file:///Users/danbri/working/sandbox/october/tpac/codex-npm-review/artifacts/owl-pr-error-fixed/package/lib/errors.mjs:90:20)\n    at entryResult (file:///Users/danbri/working/sandbox/october/tpac/codex-npm-review/artifacts/owl-pr-error-fixed/package/lib/api.mjs:135:10)\n    at queryDatasetHandle (file:///Users/danbri/working/sandbox/october/tpac/codex-npm-review/artifacts/owl-pr-error-fixed/package/lib/api.mjs:666:17)\n    at file:///Users/danbri/working/sandbox/october/tpac/codex-npm-review/artifacts/owl-pr-error-fixed/package/lib/api.mjs:779:56\n    at withDataset (file:///Users/danbri/working/sandbox/october/tpac/codex-npm-review/artifacts/owl-pr-error-fixed/package/lib/api.mjs:632:20)\n    at async Object.run (file:///Users/danbri/working/sandbox/october/tpac/codex-npm-review/pr-core/tools/npm-semantic-gate.mjs:141:48)\n    at async worker (file:///Users/danbri/working/sandbox/october/tpac/codex-npm-review/pr-core/tools/npm-semantic-gate.mjs:310:12)\n    at async file:///Users/danbri/working/sandbox/october/tpac/codex-npm-review/pr-core/tools/npm-semantic-gate.mjs:511:20"
+      },
+      "elapsedMs": 229
+    },
+    {
+      "id": "R03.missing.rdfs-csv",
+      "category": "query-execution-environment",
+      "expected": {
+        "rejects": "SERVICE endpoint unavailable"
+      },
+      "status": "pass",
+      "observed": {
+        "error": "SERVICE <https://service-options.example/sparql/missing> failed: no endpoint is available for this IRI (SPARQL 1.1 Federated Query §2.3: without SILENT, the query fails)"
+      },
+      "elapsedMs": 228
+    },
+    {
+      "id": "R03.cleared.rdfs-csv",
+      "category": "query-execution-environment",
+      "expected": {
+        "rejects": "SERVICE endpoint unavailable"
+      },
+      "status": "pass",
+      "observed": {
+        "answer": [
+          [
+            [
+              "name",
+              "Alice"
+            ]
+          ]
+        ],
+        "error": "SERVICE <https://service-options.example/sparql> failed: no endpoint is available for this IRI (SPARQL 1.1 Federated Query §2.3: without SILENT, the query fails)"
+      },
+      "elapsedMs": 233
+    },
+    {
+      "id": "R04.variable-service",
+      "category": "product-interoperability",
+      "expected": {
+        "values": [
+          "x"
+        ]
+      },
+      "status": "fail",
+      "observed": {
+        "values": []
+      },
+      "error": {
+        "name": "AssertionError",
+        "message": "Expected values to be strictly deep-equal:\n+ actual - expected\n\n+ []\n- [\n-   'x'\n- ]\n",
+        "stack": "AssertionError [ERR_ASSERTION]: Expected values to be strictly deep-equal:\n+ actual - expected\n\n+ []\n- [\n-   'x'\n- ]\n\n    at Object.run (file:///Users/danbri/working/sandbox/october/tpac/codex-npm-review/pr-core/tools/npm-semantic-gate.mjs:159:14)\n    at async worker (file:///Users/danbri/working/sandbox/october/tpac/codex-npm-review/pr-core/tools/npm-semantic-gate.mjs:310:12)\n    at async file:///Users/danbri/working/sandbox/october/tpac/codex-npm-review/pr-core/tools/npm-semantic-gate.mjs:511:20"
+      },
+      "elapsedMs": 199
+    },
+    {
+      "id": "R08.shared-blank-in-triple-term",
+      "category": "rdf12-term-identity",
+      "expected": {
+        "sameBlankNode": true
+      },
+      "status": "fail",
+      "observed": {
+        "outerBlank": "d0_b",
+        "innerBlank": "b",
+        "sameBlankNode": false
+      },
+      "error": {
+        "name": "AssertionError",
+        "message": "Expected values to be strictly equal:\n\nfalse !== true\n",
+        "stack": "AssertionError [ERR_ASSERTION]: Expected values to be strictly equal:\n\nfalse !== true\n\n    at Object.run (file:///Users/danbri/working/sandbox/october/tpac/codex-npm-review/pr-core/tools/npm-semantic-gate.mjs:171:14)\n    at async worker (file:///Users/danbri/working/sandbox/october/tpac/codex-npm-review/pr-core/tools/npm-semantic-gate.mjs:310:12)\n    at async file:///Users/danbri/working/sandbox/october/tpac/codex-npm-review/pr-core/tools/npm-semantic-gate.mjs:511:20"
+      },
+      "elapsedMs": 204
+    },
+    {
+      "id": "R09.sparql12-construct",
+      "category": "public-api-version-routing",
+      "expected": {
+        "size": 1,
+        "tripleTerm": true
+      },
+      "status": "error",
+      "observed": {},
+      "error": {
+        "name": "FactoidalError",
+        "message": "invalid character in IRIREF at line 1, column 18",
+        "stack": "FactoidalError: invalid character in IRIREF at line 1, column 18\n    at errorFromEnvelope (file:///Users/danbri/working/sandbox/october/tpac/codex-npm-review/artifacts/owl-pr-error-fixed/package/lib/errors.mjs:79:10)\n    at envelopeResult (file:///Users/danbri/working/sandbox/october/tpac/codex-npm-review/artifacts/owl-pr-error-fixed/package/lib/errors.mjs:90:20)\n    at entryResult (file:///Users/danbri/working/sandbox/october/tpac/codex-npm-review/artifacts/owl-pr-error-fixed/package/lib/api.mjs:135:10)\n    at Object.fromNQuads (file:///Users/danbri/working/sandbox/october/tpac/codex-npm-review/artifacts/owl-pr-error-fixed/package/lib/api.mjs:539:19)\n    at queryDatasetHandle (file:///Users/danbri/working/sandbox/october/tpac/codex-npm-review/artifacts/owl-pr-error-fixed/package/lib/api.mjs:678:16)"
+      },
+      "elapsedMs": 191
+    },
+    {
+      "id": "R09.sparql12-insert",
+      "category": "public-api-version-routing",
+      "expected": {
+        "size": 1,
+        "tripleTerm": true
+      },
+      "status": "error",
+      "observed": {},
+      "error": {
+        "name": "FactoidalError",
+        "message": "Dataset.update: unknown option 'sparql12'. Known options: (none)",
+        "stack": "FactoidalError: Dataset.update: unknown option 'sparql12'. Known options: (none)\n    at errorFromEnvelope (file:///Users/danbri/working/sandbox/october/tpac/codex-npm-review/artifacts/owl-pr-error-fixed/package/lib/errors.mjs:79:10)\n    at envelopeResult (file:///Users/danbri/working/sandbox/october/tpac/codex-npm-review/artifacts/owl-pr-error-fixed/package/lib/errors.mjs:90:20)\n    at checkOptions (file:///Users/danbri/working/sandbox/october/tpac/codex-npm-review/artifacts/owl-pr-error-fixed/package/lib/dataset.mjs:56:3)\n    at Dataset.update (file:///Users/danbri/working/sandbox/october/tpac/codex-npm-review/artifacts/owl-pr-error-fixed/package/lib/dataset.mjs:221:5)\n    at Object.run (file:///Users/danbri/working/sandbox/october/tpac/codex-npm-review/pr-core/tools/npm-semantic-gate.mjs:180:25)\n    at async worker (file:///Users/danbri/working/sandbox/october/tpac/codex-npm-review/pr-core/tools/npm-semantic-gate.mjs:310:12)\n    at async file:///Users/danbri/working/sandbox/october/tpac/codex-npm-review/pr-core/tools/npm-semantic-gate.mjs:511:20"
+      },
+      "elapsedMs": 179
+    },
+    {
+      "id": "R10.same-and-different",
+      "category": "owl-verdict-soundness",
+      "expected": {
+        "consistent": false
+      },
+      "status": "pass",
+      "observed": {
+        "answer": {
+          "consistent": false,
+          "reason": "a checked certificate proves a contradiction in the admitted atomic OWL fragment"
+        }
+      },
+      "elapsedMs": 186
+    },
+    {
+      "id": "R10.same-only",
+      "category": "owl-verdict-soundness",
+      "expected": {
+        "consistentIsNotFalse": true
+      },
+      "status": "pass",
+      "observed": {
+        "answer": {
+          "consistent": null,
+          "reason": "incomplete-search: the bounded certificate checker did not establish a contradiction; no model is certified (indeterminate)"
+        }
+      },
+      "elapsedMs": 183
+    },
+    {
+      "id": "R10.different-only",
+      "category": "owl-verdict-soundness",
+      "expected": {
+        "consistentIsNotFalse": true
+      },
+      "status": "pass",
+      "observed": {
+        "answer": {
+          "consistent": null,
+          "reason": "incomplete-search: the bounded certificate checker did not establish a contradiction; no model is certified (indeterminate)"
+        }
+      },
+      "elapsedMs": 186
+    },
+    {
+      "id": "R10.quiescence-is-not-verified-model",
+      "category": "owl-assurance-policy",
+      "expected": {
+        "consistent": null
+      },
+      "status": "pass",
+      "observed": {
+        "answer": {
+          "consistent": null,
+          "reason": "incomplete-search: the bounded certificate checker did not establish a contradiction; no model is certified (indeterminate)"
+        }
+      },
+      "elapsedMs": 180
+    },
+    {
+      "id": "R10.truncated-search",
+      "category": "owl-verdict-soundness",
+      "expected": {
+        "consistent": null
+      },
+      "status": "pass",
+      "observed": {
+        "answer": {
+          "consistent": null,
+          "reason": "unsupported-syntax: the whole default graph is outside the admitted atomic OWL fragment (indeterminate)"
+        }
+      },
+      "elapsedMs": 187
+    },
+    {
+      "id": "R10.unsupported-negation",
+      "category": "owl-verdict-soundness",
+      "expected": {
+        "entailed": null
+      },
+      "status": "pass",
+      "observed": {
+        "answer": {
+          "entailed": null,
+          "via": "refutation",
+          "reason": "incomplete-search: a negated conclusion was not refuted, but the search does not certify a countermodel (indeterminate)"
+        }
+      },
+      "elapsedMs": 196
+    },
+    {
+      "id": "R10.direct.annotation-property-domain",
+      "category": "owl-regime",
+      "expected": {
+        "semanticRegime": "OWL 2 Direct Semantics",
+        "consistentIsNotFalse": true
+      },
+      "status": "pass",
+      "observed": {
+        "answer": {
+          "consistent": null,
+          "reason": "incomplete-search: the bounded certificate checker did not establish a contradiction; no model is certified (indeterminate)"
+        }
+      },
+      "elapsedMs": 191
+    },
+    {
+      "id": "R10.direct.class-individual-punning",
+      "category": "owl-regime",
+      "expected": {
+        "semanticRegime": "OWL 2 Direct Semantics",
+        "consistentIsNotFalse": true
+      },
+      "status": "pass",
+      "observed": {
+        "answer": {
+          "consistent": null,
+          "reason": "unsupported-syntax: the whole default graph is outside the admitted atomic OWL fragment (indeterminate)"
+        }
+      },
+      "elapsedMs": 192
+    },
+    {
+      "id": "R05.xslt-attribute-set",
+      "category": "xslt-behavior",
+      "expected": {
+        "color": "black"
+      },
+      "status": "fail",
+      "observed": {
+        "xml": "<out/>"
+      },
+      "error": {
+        "name": "AssertionError",
+        "message": "The input did not match the regular expression /color=[\"']black[\"']/. Input:\n\n'<out/>'\n",
+        "stack": "AssertionError [ERR_ASSERTION]: The input did not match the regular expression /color=[\"']black[\"']/. Input:\n\n'<out/>'\n\n    at Object.run (file:///Users/danbri/working/sandbox/october/tpac/codex-npm-review/pr-core/tools/npm-semantic-gate.mjs:239:12)\n    at async worker (file:///Users/danbri/working/sandbox/october/tpac/codex-npm-review/pr-core/tools/npm-semantic-gate.mjs:310:12)\n    at async file:///Users/danbri/working/sandbox/october/tpac/codex-npm-review/pr-core/tools/npm-semantic-gate.mjs:511:20"
+      },
+      "elapsedMs": 191
+    },
+    {
+      "id": "R06.solid-anonymous-put.default",
+      "category": "secure-library-default",
+      "expected": {
+        "status": 401
+      },
+      "status": "fail",
+      "observed": {
+        "status": 201
+      },
+      "error": {
+        "name": "AssertionError",
+        "message": "Expected values to be strictly equal:\n\n201 !== 401\n",
+        "stack": "AssertionError [ERR_ASSERTION]: Expected values to be strictly equal:\n\n201 !== 401\n\n    at Object.run (file:///Users/danbri/working/sandbox/october/tpac/codex-npm-review/pr-core/tools/npm-semantic-gate.mjs:248:16)\n    at async worker (file:///Users/danbri/working/sandbox/october/tpac/codex-npm-review/pr-core/tools/npm-semantic-gate.mjs:310:12)\n    at async file:///Users/danbri/working/sandbox/october/tpac/codex-npm-review/pr-core/tools/npm-semantic-gate.mjs:511:20"
+      },
+      "elapsedMs": 191
+    },
+    {
+      "id": "R06.solid-anonymous-put.explicit-secure",
+      "category": "secure-library-default",
+      "expected": {
+        "status": 401
+      },
+      "status": "fail",
+      "observed": {
+        "status": 201
+      },
+      "error": {
+        "name": "AssertionError",
+        "message": "Expected values to be strictly equal:\n\n201 !== 401\n",
+        "stack": "AssertionError [ERR_ASSERTION]: Expected values to be strictly equal:\n\n201 !== 401\n\n    at Object.run (file:///Users/danbri/working/sandbox/october/tpac/codex-npm-review/pr-core/tools/npm-semantic-gate.mjs:248:16)\n    at async worker (file:///Users/danbri/working/sandbox/october/tpac/codex-npm-review/pr-core/tools/npm-semantic-gate.mjs:310:12)\n    at async file:///Users/danbri/working/sandbox/october/tpac/codex-npm-review/pr-core/tools/npm-semantic-gate.mjs:511:20"
+      },
+      "elapsedMs": 193
+    },
+    {
+      "id": "R01.reject-nonexistent-package",
+      "category": "gate-control",
+      "expected": {
+        "exitCode": 1,
+        "reportErrors": true
+      },
+      "status": "pass",
+      "observed": {
+        "exitCode": 1,
+        "counts": {
+          "discovered": 50,
+          "pass": 0,
+          "fail": 0,
+          "error": 50,
+          "timeout": 0,
+          "skipped": 0
+        }
+      },
+      "elapsedMs": 83
+    }
+  ],
+  "package": {
+    "name": "@factoidal/core",
+    "version": "0.12.0"
+  },
+  "counts": {
+    "discovered": 50,
+    "pass": 32,
+    "fail": 11,
+    "error": 7,
+    "timeout": 0,
+    "skipped": 0
+  },
+  "selectedRegressionsPassed": false,
+  "elapsedMs": 10714,
+  "finishedAt": "2026-10-22T13:02:02.143Z"
+}

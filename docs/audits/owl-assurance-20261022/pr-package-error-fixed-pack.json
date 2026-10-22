@@ -1,0 +1,311 @@
+[
+  {
+    "id": "@factoidal/core@0.12.0",
+    "name": "@factoidal/core",
+    "version": "0.12.0",
+    "size": 2936648,
+    "unpackedSize": 14238810,
+    "shasum": "7f78a974aa6e01b8f942f8ed9b7fdf445d024918",
+    "integrity": "sha512-M2RLQWgDcYqfNmdslgcDDt3Z9LxyZfWU4bHp9phQKHJsSSU1nQd0g52QcFHooffXKvDHVhJ3moZgxPJGbuiJ0g==",
+    "filename": "factoidal-core-0.12.0.tgz",
+    "files": [
+      {
+        "path": "CHANGELOG.md",
+        "size": 97232,
+        "mode": 420
+      },
+      {
+        "path": "LICENSE",
+        "size": 11299,
+        "mode": 420
+      },
+      {
+        "path": "NOTICE",
+        "size": 438,
+        "mode": 420
+      },
+      {
+        "path": "README.md",
+        "size": 12425,
+        "mode": 420
+      },
+      {
+        "path": "api.d.ts",
+        "size": 1878,
+        "mode": 420
+      },
+      {
+        "path": "api.js",
+        "size": 116,
+        "mode": 420
+      },
+      {
+        "path": "api.mjs",
+        "size": 2277,
+        "mode": 420
+      },
+      {
+        "path": "bin/engine.mjs",
+        "size": 5332,
+        "mode": 420
+      },
+      {
+        "path": "bin/ext.mjs",
+        "size": 6796,
+        "mode": 420
+      },
+      {
+        "path": "bin/factoidal.mjs",
+        "size": 72471,
+        "mode": 493
+      },
+      {
+        "path": "bin/pack-host.mjs",
+        "size": 14089,
+        "mode": 420
+      },
+      {
+        "path": "bin/pack-worker.mjs",
+        "size": 1287,
+        "mode": 420
+      },
+      {
+        "path": "bin/pack.mjs",
+        "size": 8946,
+        "mode": 420
+      },
+      {
+        "path": "bin/serve-worker.mjs",
+        "size": 1126,
+        "mode": 420
+      },
+      {
+        "path": "bin/serve.mjs",
+        "size": 16183,
+        "mode": 420
+      },
+      {
+        "path": "bin/store-worker-host.mjs",
+        "size": 14754,
+        "mode": 420
+      },
+      {
+        "path": "bin/store-worker.mjs",
+        "size": 3893,
+        "mode": 420
+      },
+      {
+        "path": "bin/store.mjs",
+        "size": 16190,
+        "mode": 420
+      },
+      {
+        "path": "browser.d.ts",
+        "size": 3460,
+        "mode": 420
+      },
+      {
+        "path": "browser.js",
+        "size": 7074,
+        "mode": 420
+      },
+      {
+        "path": "docs/fuseki-replacement.md",
+        "size": 6832,
+        "mode": 420
+      },
+      {
+        "path": "fn.d.ts",
+        "size": 15063,
+        "mode": 420
+      },
+      {
+        "path": "fn.js",
+        "size": 31780,
+        "mode": 420
+      },
+      {
+        "path": "index.d.ts",
+        "size": 55661,
+        "mode": 420
+      },
+      {
+        "path": "index.js",
+        "size": 279,
+        "mode": 420
+      },
+      {
+        "path": "index.mjs",
+        "size": 7787,
+        "mode": 420
+      },
+      {
+        "path": "l4-assets/l4factoidal.js",
+        "size": 13460,
+        "mode": 420
+      },
+      {
+        "path": "l4-assets/l4factoidal.mjs",
+        "size": 64391,
+        "mode": 420
+      },
+      {
+        "path": "l4-assets/l4factoidal.wasm",
+        "size": 13436531,
+        "mode": 493
+      },
+      {
+        "path": "l4-assets/package.json",
+        "size": 502,
+        "mode": 420
+      },
+      {
+        "path": "l4-assets/version.json",
+        "size": 1112,
+        "mode": 420
+      },
+      {
+        "path": "lib/api.mjs",
+        "size": 97715,
+        "mode": 420
+      },
+      {
+        "path": "lib/browser-engine.mjs",
+        "size": 2787,
+        "mode": 420
+      },
+      {
+        "path": "lib/dataset.mjs",
+        "size": 18636,
+        "mode": 420
+      },
+      {
+        "path": "lib/delta-log-hosts.mjs",
+        "size": 6962,
+        "mode": 420
+      },
+      {
+        "path": "lib/errors.mjs",
+        "size": 3769,
+        "mode": 420
+      },
+      {
+        "path": "lib/lean-entry.mjs",
+        "size": 9166,
+        "mode": 420
+      },
+      {
+        "path": "lib/pure.mjs",
+        "size": 3697,
+        "mode": 420
+      },
+      {
+        "path": "lib/store.mjs",
+        "size": 4560,
+        "mode": 420
+      },
+      {
+        "path": "lib/version.mjs",
+        "size": 265,
+        "mode": 420
+      },
+      {
+        "path": "lws/persist.mjs",
+        "size": 12700,
+        "mode": 420
+      },
+      {
+        "path": "lws/README.md",
+        "size": 9625,
+        "mode": 420
+      },
+      {
+        "path": "lws/server.mjs",
+        "size": 31310,
+        "mode": 420
+      },
+      {
+        "path": "package.json",
+        "size": 3456,
+        "mode": 420
+      },
+      {
+        "path": "rdfjs.js",
+        "size": 346,
+        "mode": 420
+      },
+      {
+        "path": "rdfjs.mjs",
+        "size": 18289,
+        "mode": 420
+      },
+      {
+        "path": "sample-store.d.ts",
+        "size": 495,
+        "mode": 420
+      },
+      {
+        "path": "sample-store.mjs",
+        "size": 2098,
+        "mode": 420
+      },
+      {
+        "path": "solid/client/index.mjs",
+        "size": 12205,
+        "mode": 420
+      },
+      {
+        "path": "solid/client/README.md",
+        "size": 4193,
+        "mode": 420
+      },
+      {
+        "path": "solid/server/index.mjs",
+        "size": 15903,
+        "mode": 420
+      },
+      {
+        "path": "solid/server/README.md",
+        "size": 3727,
+        "mode": 420
+      },
+      {
+        "path": "store-host/deno.mjs",
+        "size": 7780,
+        "mode": 420
+      },
+      {
+        "path": "store-host/errors.mjs",
+        "size": 1931,
+        "mode": 420
+      },
+      {
+        "path": "store-host/index.mjs",
+        "size": 10375,
+        "mode": 420
+      },
+      {
+        "path": "store-host/node.mjs",
+        "size": 8148,
+        "mode": 420
+      },
+      {
+        "path": "store-host/paths.mjs",
+        "size": 2628,
+        "mode": 420
+      },
+      {
+        "path": "xmpp/index.mjs",
+        "size": 10157,
+        "mode": 420
+      },
+      {
+        "path": "xmpp/README.md",
+        "size": 5223,
+        "mode": 420
+      }
+    ],
+    "entryCount": 59,
+    "bundled": []
+  }
+]

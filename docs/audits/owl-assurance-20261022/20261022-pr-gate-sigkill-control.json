@@ -1,0 +1,11 @@
+{
+  "scope": "Synthetic timeout setting control; no engine or Lean execution",
+  "killSignal": "SIGKILL",
+  "innerTimeoutMs": 100,
+  "outerSafetyTimeoutSeconds": 2,
+  "outerSafetyKillRequired": false,
+  "exitCode": 0,
+  "elapsedSeconds": 0.208,
+  "stdout": "{\"error\":\"ETIMEDOUT\",\"status\":null,\"signal\":\"SIGKILL\"}\n",
+  "stderr": ""
+}

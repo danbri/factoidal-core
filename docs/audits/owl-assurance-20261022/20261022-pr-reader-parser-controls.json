@@ -1,0 +1,35 @@
+{
+  "scope": "Synthetic acceptance report parser controls only; no Lean fixture or end-to-end gate executed",
+  "source": "/Users/danbri/working/sandbox/october/tpac/codex-npm-review/repair-core/tools/check-owl-reader-contracts.py",
+  "sourceSha256": "3b13ea58a7a5151b0c436307614025322974b1a5cc2380aa67081b8502bf6750",
+  "controls": [
+    {
+      "id": "synthetic-valid-control",
+      "expectedAccepted": true,
+      "actualAccepted": true,
+      "satisfied": true,
+      "error": null
+    },
+    {
+      "id": "missing-required-expected-null",
+      "expectedAccepted": false,
+      "actualAccepted": true,
+      "satisfied": false,
+      "error": null
+    },
+    {
+      "id": "duplicate-conflicting-passed-key",
+      "expectedAccepted": false,
+      "actualAccepted": true,
+      "satisfied": false,
+      "error": null
+    },
+    {
+      "id": "extra-case-field",
+      "expectedAccepted": false,
+      "actualAccepted": true,
+      "satisfied": false,
+      "error": null
+    }
+  ]
+}

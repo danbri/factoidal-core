@@ -139,3 +139,18 @@ not OWL conformance evidence.
 The next implementation should extend admitted coverage without reintroducing
 an unchecked fallback, then connect entailment's source semantics, goal
 reduction and public result through a corresponding proof chain.
+
+## Final pre-push refresh
+
+Main advanced to `5a40d08` during this work. The three commits rebased without
+conflicts. The final source integration passes a fresh full-library build
+(840 jobs), hygiene audit (1,617 axiom outputs), reader gate (45 cases/seven
+mutations) and public gate (20 cases/three mutations). Added evidence:
+`pr-core-rebased-library.log`, `pr-core-rebased-hygiene.log`,
+`pr-rebased-reader.json` and `pr-rebased-public.json`.
+
+The packed-artifact results above remain measurements of the earlier draft
+on `dfecea9`. They are not relabelled as a build of the final rebased head.
+The later upstream changes include RDF/XML source handling and storage/planner
+work; CI must rebuild and test the final committed revision. This limitation
+is stated in the draft PR along with the broader failing tests.
