@@ -630,7 +630,7 @@ reader is in `SourceJsonLd.lean`.
 | N-Triples, N-Quads | one line for each quad | one quad |
 | Turtle | `bodyPush`: one statement for each subject, `;` between predicates, `,` between objects | the triples of one subject |
 | TriG | the same statements inside a block; a new block opens each time the graph of the next quad is not the open graph | the triples of one subject and the open graph name |
-| RDF/XML, JSON-LD | the library writers take a whole graph or dataset | the dataset |
+| RDF/XML, JSON-LD | until 2026-10-22: the library writers take a whole graph or dataset. Since then: one subject at a time (section 3l) | until 2026-10-22 the dataset; since then the quads of one subject |
 
 **TriG blocks in SPO order.** The export reads the SPO permutation. A graph
 whose subjects interleave with the subjects of other graphs is written in several
@@ -1326,7 +1326,8 @@ resident set is 624 MB in both.
 
 **Costs open.** The RDF/XML and JSON-LD writers keep the dataset
 (https://github.com/danbri/factoidal/issues/846 and
-https://github.com/danbri/factoidal/issues/847) and take time quadratic in the
+https://github.com/danbri/factoidal/issues/847; since 2026-10-22 the stream
+writers keep one subject, section 3l) and take time quadratic in the
 dataset (https://github.com/danbri/factoidal/issues/845 and
 https://github.com/danbri/factoidal/issues/712). The JSON-LD writer uses native
 stack in proportion to the number of elements: one node with 20,000 references
@@ -2651,6 +2652,100 @@ chunks. W3C suites, before and after: `l4w3c` RDF 1.1 1041 pass, 0 fail (out of
 1041), of which RDF/XML 166 pass, 0 fail (out of 166); RDF 1.2 1358 pass, 0
 fail (out of 1358), of which RDF/XML 31 pass, 0 fail (out of 31); the RDF/XML
 probe 132, 41 and 132 pass, 0 fail.
+
+### 3l. RDF/XML and JSON-LD written one subject at a time (2026-10-22)
+
+Issues: https://github.com/danbri/factoidal/issues/846 (RDF/XML) and
+https://github.com/danbri/factoidal/issues/847 (JSON-LD); OKR batch 3 KR 2.4
+(https://github.com/danbri/factoidal/issues/875).
+
+**Before.** The stream writer of the serialiser layer (`Sink.Writer`) had no
+stream form for RDF/XML and JSON-LD: `Writer.whole` kept every quad and called the
+library writer (`graphToRdfXml`, `fromRdf`) at the end. `l4sbm11 export` of
+100,000 statements held 212 MB (RDF/XML) and 175 MB (JSON-LD) of peak RSS; the
+slope from 25,000 to 100,000 statements was 4.38 and 2.94 bytes of peak RSS per
+output byte (the Turtle writer: 0.38).
+
+**RDF/XML.** `RdfXmlWrite.graphToRdfXml` writes one `rdf:Description` for each
+subject group (`subjectGroups`: the subjects in the order of their first triple,
+each with its triples in graph order). It is now `graphToRdfXmlWith
+(predicateNamespaces g) g`, assembled from `headerOf`, `descriptionText` and
+`footer`; its text is unchanged (a `#guard` pins the text of a three-triple graph,
+and the export of 25,000 statements is byte-identical before and after). The
+stream form (`rxPush`, `rxFinish`) keeps the key of the open subject and its
+triples, and writes the description when a triple of another subject arrives. The
+start tag of `rdf:RDF` declares the namespaces of all the predicates, so the
+stream needs the namespace table first (`Options.rdfxmlNamespaces`). The table
+(`namespacesOf`) depends only on the order in which the predicates first appear.
+`l4sbm11 export` reads the predicate ids of the quads it keeps from the SPO
+permutation before it writes (`predicateIdsInOrder`: the id columns, no term
+decoded; a second read of the blocks) and decodes only the distinct ids.
+
+Theorems (`L4Factoidal/RDF/Runs.lean`, `L4Factoidal/Syntax/RdfXmlWrite.lean`,
+`L4Factoidal/RDF/Sink.lean`; axioms `propext`, `Classical.choice`, `Quot.sound`):
+
+| Theorem | Statement |
+| --- | --- |
+| `Runs.runs_flatten`, `Runs.mem_runs` | the runs of a list by a key (`Runs.runsFrom`, the state a by-subject writer keeps) are a partition of the list into non-empty runs of one key each |
+| `RdfXmlWrite.rxRun_eq` | the stream writes the descriptions of the runs |
+| `RdfXmlWrite.subjectGroups_eq_runs` | when no two runs have the same subject (`Contiguous`, which the SPO order of a store gives), the runs are `subjectGroups` |
+| `RdfXmlWrite.streamRdfXml_eq`, `streamRdfXml_eq_graphToRdfXml` | for a contiguous graph the stream writes the text of `graphToRdfXmlWith` with the same table, and with the graph's own table the text of `graphToRdfXml` |
+| `Sink.runList_rdfxml_eq` | the same for `Sink.Writer` (the functions `l4sbm11 export` calls), over the triples of the default graph |
+
+When a subject's triples are not consecutive, the stream writes a second
+`rdf:Description` for that subject, which is the same graph (a `#guard` reads it
+back isomorphic).
+
+**JSON-LD.** Text equality with `fromRdf` is not possible in one pass: `fromRdf`
+sorts the node objects by `@id` and turns a chain of `rdf:first`/`rdf:rest` blank
+nodes that are referenced once into `@list` (JSON-LD 1.1 API sections 8.5 and 8.7),
+and both need the whole dataset. The stream writes a flattened document in expanded
+form instead: a JSON array with, for each run of one subject's quads, a node object
+for the default graph and a graph object `{"@id": g, "@graph": [node]}` for each
+named graph, in the order the graphs first appear among the subject's quads, and
+`{"@id": g, "@graph": []}` for a named graph with no triple (`Writer.declare`). The
+node object is the one `fromRdf` builds from the subject's triples of that graph
+(`SinkJsonLd.subjectNode`: `buildNodemap`, `nodeToJson`; `rdf:type` to `@type`), in
+RFC 8785 form. JSON-LD node map generation (JSON-LD 1.1 API section 7.2) merges the
+node objects of one `@id` and the graph objects of one name, so the document is the
+same dataset; a list is written as its `rdf:first` and `rdf:rest` triples.
+`Sink.runList_jsonld_eq` proves that the stream writes `[`, the elements of all the
+runs (`Runs.runs quadKey`) separated by commas, and `]`. The read-back is checked,
+not proved (https://github.com/danbri/factoidal/issues/943; expected-failure row
+`jsonLdStream_readBack` in `Harness/ProofObligations.lean`): `#guard`s in `SinkJsonLd.lean` (a type, a language string, a list, two
+named graphs, one with a blank node name, a subject in three graphs, a graph name
+that is also a subject, a named graph with no triple) and
+`tests/sbm11/export_roundtrip.sh` (D1, D2, D3, the empty generation, and the
+interleaved named graphs of `multi`). The Lean JSON-LD reader gives one
+`NamedGraph` entry for each graph object, so a reader of the stream's document
+gets one entry for each subject of a graph; the packer takes quads and does not see
+the entries. For a dataset with no list, whose subjects' `@id` order is the
+dictionary order, the text is `fromRdf`'s: the export of 25,000 statements is
+byte-identical before and after.
+
+`serializeDataset` (`l4source-convert`, `l4factoidal parse --out`) still calls
+`fromRdf` and `graphToRdfXml`.
+
+**After** (`tests/stack/lean_scaling.py`, rows `sbm11-export-rdfxml-memory` and
+`sbm11-export-jsonld-memory`, moved to 25,000, 50,000 and 100,000 statements, the
+sizes of the other export rows, and out of the expected-failure table): RDF/XML 36,
+36, 36 MB, a slope of 0.00 bytes of peak RSS per output byte; JSON-LD 36, 36, 37 MB,
+0.01 (0.36 in a second run). At 2,000 to 8,000 statements, the old sizes of the
+rows, both writers give 3.7, because the dictionary page window of the export (256
+pages) still grows with the input there. Time of the export of 25,000 statements:
+RDF/XML 0.79 s (0.96 s before, with the second read of the blocks), JSON-LD 0.51 s
+(0.50 s).
+
+**Gates** (2026-10-22, exit codes 0): `lake build` (1,826 jobs); `tests/sbm11/run.sh`
+3,098 pass, 0 fail, 29 expected-fail (out of 3,127); `tests/sbm11/export_roundtrip.sh`
+54 pass, 0 fail (out of 54; JSON-LD added to the `multi` named-graph case);
+`tests/stack/lean_scaling.py --only` the two export rows, `parse-nt-memory`,
+`parse-ttl-memory`, `parse-rdfxml-memory`, `rdfxml-write`, `rdfxml-write-stack`,
+`jsonld-write`, `jsonld-write-rest-cycle`: 9 pass, 0 fail (out of 9);
+`tests/known-defects/run.sh` 23 XFAIL, 0 XPASS; `tools/lean-tail-recursion-audit.py`,
+`tools/lean-unbuilt-modules.py`, `tools/lean-csimp-reach.py` with `--gate`.
+`runsFrom` and `elemsOf` are specifications that no executed function calls, on
+`tools/lean-tail-recursion-allow.txt` as (s).
 
 ## 4. Rules that follow
 

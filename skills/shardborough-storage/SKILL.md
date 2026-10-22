@@ -1191,7 +1191,8 @@ peak RSS goes to standard error.
 | N-Triples, N-Quads | one line for each quad | one quad |
 | Turtle | one statement for each subject; SPO order gives the triples of a subject in one run | the triples of one subject |
 | TriG | the Turtle statements inside a block `GRAPH <name> { ... }` (`{ ... }` for the default graph). The writer closes the block and opens a new block each time the graph of the next quad is not the open graph | the triples of one subject and the name of the open graph |
-| RDF/XML, JSON-LD | the library writers (`graphToRdfXml`, `fromRdf`) take a whole graph or dataset, so the writer keeps the quads and writes at the end | the dataset: https://github.com/danbri/factoidal/issues/846 and https://github.com/danbri/factoidal/issues/847 |
+| RDF/XML | one `rdf:Description` for each subject, written when the next subject starts. The start tag declares the namespaces of all the predicates, so the export first reads the predicate ids of the quads it keeps (id columns only) and gives their table to the writer. The text is the text of `graphToRdfXml` (`Sink.runList_rdfxml_eq`) | the triples of one subject (https://github.com/danbri/factoidal/issues/846) |
+| JSON-LD | a flattened document in expanded form: for each subject, one node object for the default graph and one graph object `{"@id": g, "@graph": [node]}` for each named graph, in RFC 8785 form; `{"@id": g, "@graph": []}` for a named graph with no triple. No `@list` and no sort by `@id` (both need the whole dataset); a reader's node map merges the objects of one `@id` | the quads of one subject (https://github.com/danbri/factoidal/issues/847) |
 
 The SPO order visits the subjects in dictionary order. A graph whose subjects
 interleave with those of other graphs gets several TriG blocks. A TriG reader
