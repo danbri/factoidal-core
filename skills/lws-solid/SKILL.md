@@ -682,7 +682,10 @@ auth and the four, and then prints a union line (per test: passed in at
 least one configuration, failed in any, never applied; `union.tsv` in
 `TOUCHSTONE_OUT`). A failure in any configuration is exit 1. Measured
 2026-10-21 with `--config all --unstable-search-results`: 220 passed in at
-least one configuration, 0 failed, 1 never applied (out of 221). The one is
+least one configuration, 0 failed, 1 never applied (out of 221); the same on
+2026-10-22 after issues 914, 915 and 920. Touchstone subscribes with
+`inbox: "${storage}"` (the storage description), so an inbox check must not
+refuse a non-container path of this server. The one is
 `core/moving#move-keeps-identifier-content-and-links`: it needs
 `"preservesIdentifier": true`, and our identifiers are paths (not
 applicable to this design; the record quotes lws10-core Discovery). Delete the Maven repository after a run (the

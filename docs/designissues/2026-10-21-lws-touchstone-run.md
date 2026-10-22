@@ -726,6 +726,46 @@ neighbour, 301 from the previous identifier, is done since 2026-10-22
 (`L4Factoidal/LWS/MoveRedirect.lean`,
 https://github.com/danbri/factoidal/issues/914).
 
+## Moves, notification hardening, controller inbox (issues 914, 915, 920), 2026-10-22
+
+Three SHOULD-level items, all in Lean: 301 at the previous identifiers of a
+moved resource (`L4Factoidal/LWS/MoveRedirect.lean`,
+https://github.com/danbri/factoidal/issues/914); a webhook inbox that is a
+container of this storage under another name of this server is refused, and
+deliveries are rate limited per subscription with the rest batched
+(`InboxGuard.lean`, `Notifications.lean`,
+https://github.com/danbri/factoidal/issues/915); a configured controller
+inbox hears of each new access request (`AccessGrants.lean`,
+https://github.com/danbri/factoidal/issues/920). No Touchstone test covers
+any of the three.
+
+One design point came from Touchstone. The first form of the inbox check
+refused every inbox at this server's authority. Nine tests of
+`core/notifications.yamlld` subscribe with `inbox: "${storage}"` (the storage
+description) and expect 2xx. A POST to a data resource of this server answers
+405 and creates nothing, so only a container path can loop; the check now
+refuses a container path under every name of this server, the same rule that
+held under the base IRI before.
+
+Totals, measured 2026-10-22: `--config both` open 76 pass, 0 fail, 145
+inapplicable; authorization 215 pass, 0 fail, 6 inapplicable (out of 221
+each). `--config all --unstable-search-results`: union 220 passed in at least
+one configuration, 0 failed, 1 never applied (out of 221;
+`core/moving#move-keeps-identifier-content-and-links`). Unchanged from
+before the change.
+
+Gates on the branch: full `lake build` exit 0 (1807 jobs);
+`tools/lean-unbuilt-modules.py --gate` 835 of 835 modules reached;
+`Wasm/native-smoke.sh` 376 pass, 0 fail (out of 376); `npm test` 536 pass, 0
+fail, 2 skipped (out of 538); `draft-binding.mjs` 81 pass, 0 fail, 0 xfail
+(out of 81); `authorization.mjs` 29 pass, 0 fail (out of 29);
+`binary-bodies.mjs` 20 pass, 0 fail (out of 20); `encryption.mjs` 28 pass, 0
+fail (out of 28); `merkle.mjs` 18 pass, 0 fail, 1 xfail (out of 19);
+`scaling.mjs` 16 pass, 0 fail (out of 16); `server.mjs` 8 pass, 0 fail (out
+of 8); Solid `protocol.mjs` 12 pass, 0 fail (out of 12); `oidc.mjs` 21 pass, 0
+fail (out of 21); `against-own-server.mjs` 7 pass, 0 fail (out of 7);
+`tools/host-purity-lint.sh` 35 pass, 0 fail (out of 35).
+
 ## Run details
 
 * Host: Linux, OpenJDK 21.0.12, Maven 3.9.11, Node 22.22.0. No Docker
