@@ -3,18 +3,6 @@
 # open issue"). Read by tests/lws/client/touchstone-session.mjs: a listed rule
 # that passes turns the run red, so the row is removed when the gap closes.
 # rule<TAB>issue<TAB>why
-# CID self-issued credentials need ES256 signing (three @[extern] wrappers to
-# the vendored HACL* P-256 code, added for the authorization server).
-client-cid-token-type-jwt	https://github.com/danbri/factoidal/issues/916	no ES256 signing yet: no self-issued credential
-client-cid-credential-signed	https://github.com/danbri/factoidal/issues/916	no ES256 signing yet: no self-issued credential
-client-cid-subject-claim	https://github.com/danbri/factoidal/issues/916	no ES256 signing yet: no self-issued credential
-client-cid-issuer-claim	https://github.com/danbri/factoidal/issues/916	no ES256 signing yet: no self-issued credential
-client-cid-client-id-claim	https://github.com/danbri/factoidal/issues/916	no ES256 signing yet: no self-issued credential
-client-cid-identifiers-agree	https://github.com/danbri/factoidal/issues/916	no ES256 signing yet: no self-issued credential
-client-cid-audience-includes-as	https://github.com/danbri/factoidal/issues/916	no ES256 signing yet: no self-issued credential
-client-cid-audience-restricted	https://github.com/danbri/factoidal/issues/916	no ES256 signing yet: no self-issued credential
-client-cid-expiry-claim	https://github.com/danbri/factoidal/issues/916	no ES256 signing yet: no self-issued credential
-client-cid-issued-at-claim	https://github.com/danbri/factoidal/issues/916	no ES256 signing yet: no self-issued credential
 # OpenID sign-in (authorization code flow with PKCE) is not built; the client
 # exchanges an ID Token it is given, but has no way to obtain one.
 client-oidc-token-type-id-token	https://github.com/danbri/factoidal/issues/917	no OpenID sign-in (code flow with PKCE); issue to open

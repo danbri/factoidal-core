@@ -138,6 +138,8 @@ export async function lwsClientOpsAvailable (engine) {
  * @param {string} [options.subjectToken] the authentication credential to
  *   exchange for access tokens (RFC 8693 subject_token)
  * @param {string} [options.subjectTokenType] its token type URI
+ * @param {object} [options.selfIssued] `{ subject, keyId, jwk }`: a P-256 key
+ *   to sign self-issued credentials with, instead of a subject token
  * @param {object} [options.session] a session from an earlier client
  * @param {number} [options.maxSteps] the loop cap of one operation
  * @returns {Promise<object>} the client
@@ -152,6 +154,9 @@ export async function createLwsClient (options = {}) {
     : {}
   if (typeof options.subjectToken === 'string') session.subjectToken = options.subjectToken
   if (typeof options.subjectTokenType === 'string') session.subjectTokenType = options.subjectTokenType
+  // `{ subject, keyId, jwk }`: a P-256 key the engine signs self-issued
+  // credentials with (lws10-authn-ssi-cid), passed through unread.
+  if (options.selfIssued !== undefined) session.selfIssued = options.selfIssued
 
   function call (op, args) {
     try {
@@ -182,7 +187,17 @@ export async function createLwsClient (options = {}) {
     const headers = []
     reply.headers.forEach((value, name) => { headers.push([name, value]) })
     const bytes = new Uint8Array(await reply.arrayBuffer())
-    return { status: reply.status, headers, bodyBase64: base64OfBytes(bytes) }
+    // The host's clock and random source, which the engine cannot reach: the
+    // iat, exp, nonce and jti of a self-issued credential.
+    const random = new Uint8Array(48)
+    globalThis.crypto.getRandomValues(random)
+    return {
+      status: reply.status,
+      headers,
+      bodyBase64: base64OfBytes(bytes),
+      now: Math.floor(Date.now() / 1000),
+      randomBase64: base64OfBytes(random)
+    }
   }
 
   /**

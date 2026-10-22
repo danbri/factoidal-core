@@ -207,6 +207,16 @@ async function main () {
       steps.push('fail  the root listing has no first entry')
     }
     await step('read a resource after the lab refuses the token once', () => client.read(notes))
+
+    // A second client with no subject token: it signs a self-issued
+    // credential (lws10-authn-ssi-cid) with alice's key from the session
+    // page, and exchanges it at the session's authorization server.
+    const cred = await (await fetch(`${api}/credentials/alice`, { headers: key })).json()
+    const cidClient = await createLwsClient({
+      engine,
+      selfIssued: { subject: session.identities.alice.webid, keyId: cred.verificationMethod, jwk: cred.privateKeyJwk }
+    })
+    await step('read with a self-issued credential', () => cidClient.read(notes))
   } finally {
     await receiver.close()
   }

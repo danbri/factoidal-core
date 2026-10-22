@@ -25,10 +25,19 @@ open L4Factoidal.LWS.Client
 
 /-- A verifier for the scripts: a signature is good when its bytes are
 `good`. The real verifiers are HACL* (`Wasm.Ops.lwsVerifiers`). -/
-def Vt : L4Factoidal.JOSE.Verifiers :=
-  { es256 := fun _ _ sig => sig.data == "good".toUTF8.data
-    rs256 := fun _ _ _ _ => false
-    eddsa := fun _ _ sig => sig.data == "good".toUTF8.data }
+def Vt : L4Factoidal.Authz.Crypto :=
+  { verifiers :=
+      { es256 := fun _ _ sig => sig.data == "good".toUTF8.data
+        rs256 := fun _ _ _ _ => false
+        eddsa := fun _ _ sig => sig.data == "good".toUTF8.data }
+    -- A stand-in signer: 64 copies of the nonce's first byte, or a refusal
+    -- for a key of the wrong length.
+    es256Sign := fun sk _ nonce =>
+      if sk.size == 32 then some (ByteArray.mk (Array.replicate 64 (nonce.get! 0))) else none
+    es256Public := fun _ => none
+    eddsaSign := fun _ _ => ByteArray.empty
+    eddsaPublic := fun _ => none
+    p256Decompress := fun _ => none }
 
 def rsp (status : Nat) (headers : List (String × String) := []) (body : String := "") : Resp :=
   { status, headers, body := body.toUTF8 }
@@ -278,6 +287,32 @@ def expired := script { kind := "read", url := B ++ "a" }
 #guard (sentAt expired.1 0).header? "authorization" == some "Bearer AT1"
 #guard (sentAt expired.1 5).header? "authorization" == some "Bearer AT2"
 #guard isDone expired.2
+
+-- A self-issued credential (lws10-authn-ssi-cid): no subject token, a key; the
+-- token request carries a three-part JWT of type jwt for the authorization
+-- server, signed with the nonce from the host's random bytes.
+def cidKey : SelfIssued :=
+  { subject := "https://id.example/alice", keyId := "https://id.example/alice#k1"
+    privateKey := ByteArray.mk (Array.replicate 32 1) }
+def cidSes : Session := { selfIssued := some cidKey }
+def asMetaR : Resp := { asMeta with now := 1000, random := ByteArray.mk (Array.replicate 48 9) }
+def cid := script { kind := "read", url := B ++ "a" }
+  [ challenge "https://s.example/.well-known/oauth-protected-resource/a" "https://s.example/st"
+  , prm "https://s.example/a", descRoot "https://s.example/", asMetaR, tokenResp, rsp 200 ] cidSes
+def cidToken : String := ((formPairs (sentAt cid.1 4).body).lookup "subject_token").getD ""
+#guard (formPairs (sentAt cid.1 4).body).lookup "subject_token_type" == some jwtTokenType
+#guard (cidToken.splitOn ".").length == 3
+#guard isDone cid.2
+-- The claims: iss, sub and client_id the agent, aud the authorization server, iat and exp.
+#guard ((L4Factoidal.JOSE.Base64Url.decode ((cidToken.splitOn ".").getD 1 "")).bind String.fromUTF8?) ==
+  some ("{\"iss\":\"https://id.example/alice\",\"sub\":\"https://id.example/alice\"," ++
+    "\"client_id\":\"https://id.example/alice\",\"aud\":[\"https://as.example/t\"],\"iat\":1000," ++
+    "\"exp\":1300,\"jti\":\"09090909090909090909090909090909\"}")
+-- Without random bytes from the host there is no nonce: no token request.
+#guard failCode (script { kind := "read", url := B ++ "a" }
+  [ challenge "https://s.example/.well-known/oauth-protected-resource/a" "https://s.example/st"
+  , prm "https://s.example/a", descRoot "https://s.example/", asMeta ] cidSes).2 == "credential"
+#guard (sessionOfJson (sessionJson cidSes)).selfIssued.map (·.privateKey.data) == some (Array.replicate 32 1)
 
 /-! ### Verifying a notification (lws10-notifications-webhook §5.2) -/
 

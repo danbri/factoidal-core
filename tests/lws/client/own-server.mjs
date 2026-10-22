@@ -21,6 +21,11 @@ import http from 'node:http'
 import { generateKeyPairSync, sign, randomUUID } from 'node:crypto'
 import { spawn } from 'node:child_process'
 import { fileURLToPath } from 'node:url'
+import { createServer as createNetServer } from 'node:net'
+import { mkdtempSync, rmSync } from 'node:fs'
+import { tmpdir } from 'node:os'
+import { join } from 'node:path'
+import { keyPair, didKeyOf } from '../../authz/fixtures.mjs'
 
 let passed = 0
 let failed = 0
@@ -73,7 +78,8 @@ const CHECKS = [
   'Authorization: a 401 leads to the three checks, one token exchange for the storage, and the request with Bearer',
   'Authorization: a 401 whose storage puts its root on another origin gives no token request',
   'Authorization: a refused token is dropped and exchanged again',
-  'Authorization: with no subject token the 401 is the result'
+  'Authorization: with no subject token the 401 is the result',
+  'Authorization (lws10-authn-ssi-cid): a self-issued did:key credential, signed by the engine, exchanged at factoidal authz-serve'
 ]
 
 function b64url (bytes) { return Buffer.from(bytes).toString('base64url') }
@@ -484,7 +490,71 @@ async function main () {
   }
 }
 
+/** A free loopback port. */
+function freePort () {
+  return new Promise((resolve) => {
+    const s = createNetServer().listen(0, '127.0.0.1', () => { const p = s.address().port; s.close(() => resolve(p)) })
+  })
+}
+
+/** Start `factoidal authz-serve` and wait for the origin it prints. */
+function startAuthz (dir, resource) {
+  const cli = fileURLToPath(new URL('../../../npm/factoidal/bin/factoidal.mjs', import.meta.url))
+  const child = spawn(process.execPath, [cli, 'authz-serve', dir, '--port', '0', '--resource', resource, '--quiet'],
+    { stdio: ['ignore', 'pipe', 'pipe'] })
+  return new Promise((resolve, reject) => {
+    let out = ''
+    const timer = setTimeout(() => reject(new Error(`authz-serve printed no origin: ${out}`)), 60000)
+    child.stdout.on('data', (c) => {
+      out += c
+      const m = /(http:\/\/[^\s]+)/.exec(out)
+      if (m) { clearTimeout(timer); resolve({ child, origin: m[1].replace(/\/$/, '') }) }
+    })
+    child.on('exit', (code) => { clearTimeout(timer); reject(new Error(`authz-serve exited ${code}: ${out}`)) })
+  })
+}
+
+/** The CID check: our client signs a self-issued credential (ES256, HACL*
+ *  in the engine) for a did:key agent and exchanges it at authz-serve. */
+async function cidCheck () {
+  const { loadEngine } = await import('../../../npm/factoidal/bin/engine.mjs')
+  const { listen } = await import('../../../npm/factoidal/lws/server.mjs')
+  const { createLwsClient } = await import('../../../npm/factoidal/lws/client.mjs')
+  const engine = await loadEngine()
+  const port = await freePort()
+  const base = `http://127.0.0.1:${port}/`
+  const storage = `${base}.well-known/lws-storage`
+  const agent = keyPair('ES256')
+  const did = didKeyOf(agent)
+  const dir = mkdtempSync(join(tmpdir(), 'lws-client-authz-'))
+  let authz = null
+  let lws = null
+  try {
+    authz = await startAuthz(join(dir, 'authz'), storage)
+    lws = await listen({ engine, port, owner: did, realClock: true,
+      auth: { issuers: [{ issuer: authz.origin }], refreshInterval: 0 } })
+    const rec = recording()
+    const c = await createLwsClient({ engine, fetch: rec.wire,
+      selfIssued: { subject: did, keyId: did.slice(8), jwk: agent.privateKey.export({ format: 'jwk' }) } })
+    const made = await c.create(base, { slug: 'cid.txt', mediaType: 'text/plain', body: 'self-issued' })
+    const back = await c.read(made.location)
+    assert(back.body === 'self-issued', `read ${back.body}`)
+    const tokenRequests = rec.log.filter((x) => x.method === 'POST' && x.url.startsWith(authz.origin))
+    assert(tokenRequests.length === 1, `${tokenRequests.length} token requests`)
+  } finally {
+    if (lws !== null) await lws.close()
+    if (authz !== null) {
+      authz.child.kill('SIGTERM')
+      await new Promise((resolve) => authz.child.on('close', resolve))
+    }
+    rmSync(dir, { recursive: true, force: true })
+  }
+}
+
 await main()
+if (passed + failed + skipped < CHECKS.length) {
+  await check(CHECKS[CHECKS.length - 1], cidCheck)
+}
 
 for (const failure of failures) console.log(`  FAIL ${failure}`)
 const total = passed + failed + skipped

@@ -6,7 +6,7 @@ Design record: `docs/designissues/2026-10-22-lws-client.md` (the
 requirements table there names, for each client statement of the drafts,
 the definition below that decides it).
 
-    step : Verifiers → ClientState → Event → ClientState × Action
+    step : Authz.Crypto → ClientState → Event → ClientState × Action
 
 The caller states an operation (`Op`). `step` names the next HTTP request
 (`Action.fetch`), reads each answer (`Event.response`), and ends with
@@ -89,6 +89,7 @@ the ordinary flows never reach the refusal.
 -/
 import L4Factoidal.LWS.Client.Wire
 import L4Factoidal.JOSE.Jws
+import L4Factoidal.Authz.Keys
 import L4Factoidal.Crypto.SHA2
 
 namespace L4Factoidal.LWS.Client
@@ -211,25 +212,58 @@ structure TokenEntry where
   root : String
   token : String
 
-/-- What a client keeps between operations: its tokens and the subject
-token (an authentication credential) it exchanges for them. -/
+/-- A key the client signs its own credentials with (lws10-authn-ssi-cid,
+"Self-issued credentials"): the agent's identifier, the verification method
+that names the key, and the P-256 private key (`d` of a JWK, RFC 7518
+§6.2.2.1). -/
+structure SelfIssued where
+  subject : String
+  keyId : String
+  privateKey : ByteArray
+
+/-- What a client keeps between operations: its tokens, and the credential it
+exchanges for them: a subject token it was given, or a key it signs its own
+credential with. -/
 structure Session where
   tokens : List TokenEntry := []
   subjectToken : String := ""
   subjectTokenType : String := ""
+  selfIssued : Option SelfIssued := none
+
+def selfIssuedJson (k : SelfIssued) : Json :=
+  .object [ ("subject", .string k.subject), ("keyId", .string k.keyId)
+          , ("jwk", .object [ ("kty", .string "EC"), ("crv", .string "P-256")
+                            , ("d", .string (L4Factoidal.JOSE.Base64Url.encode k.privateKey)) ]) ]
+
+/-- `{subject, keyId, jwk}`; the key is the `d` member of a P-256 JWK. -/
+def selfIssuedOfJson (j : Json) : Option SelfIssued := do
+  let subject ← j.getString? "subject"
+  let keyId ← j.getString? "keyId"
+  let jwk ← j.field? "jwk"
+  if jwk.getString? "crv" != some "P-256" then none else
+  let d ← (jwk.getString? "d").bind L4Factoidal.JOSE.Base64Url.decode
+  if d.size != 32 then none else
+  pure { subject, keyId, privateKey := d }
 
 def sessionJson (s : Session) : Json :=
-  .object [ ("tokens", .array (s.tokens.map (fun t => .object
+  .object ([ ("tokens", .array (s.tokens.map (fun t => .object
               [("storage", .string t.storage), ("root", .string t.root), ("token", .string t.token)])))
           , ("subjectToken", .string s.subjectToken)
-          , ("subjectTokenType", .string s.subjectTokenType) ]
+          , ("subjectTokenType", .string s.subjectTokenType) ] ++
+    (match s.selfIssued with
+     | some k => [("selfIssued", selfIssuedJson k)]
+     | none => []))
 
 def sessionOfJson (j : Json) : Session :=
   { tokens := ((j.getArray? "tokens").getD []).filterMap (fun t =>
       match t.getString? "storage", t.getString? "root", t.getString? "token" with
       | some s, some r, some k => some { storage := s, root := r, token := k }
       | _, _, _ => none)
-    subjectToken := jStr j "subjectToken", subjectTokenType := jStr j "subjectTokenType" }
+    subjectToken := jStr j "subjectToken", subjectTokenType := jStr j "subjectTokenType"
+    selfIssued := (j.field? "selfIssued").bind selfIssuedOfJson }
+
+/-- Does the session hold a credential to exchange? -/
+def Session.hasCredential (s : Session) : Bool := s.subjectToken != "" || s.selfIssued.isSome
 
 /-! ## The validation record of lws10-core §Discovery Validation by a Client -/
 
@@ -653,7 +687,7 @@ def verifyStart (s : ClientState) : ClientState × Action :=
         else sendPublic s .inboxDesc (getReq storage mediaLwsCid)
 
 /-- The end of the verification, with the storage description read. -/
-def verifyFinish (V : L4Factoidal.JOSE.Verifiers) (s : ClientState) (r : Resp) :
+def verifyFinish (V : L4Factoidal.Authz.Crypto) (s : ClientState) (r : Resp) :
     ClientState × Action :=
   let op := s.op
   if r.status != 200 then reject s ("the storage description answered " ++ toString r.status) else
@@ -683,8 +717,8 @@ def verifyFinish (V : L4Factoidal.JOSE.Verifiers) (s : ClientState) (r : Resp) :
         | some base =>
           let alg := sigParam? params "alg"
           let ok := match jwk with
-            | .ec x y => (alg.isNone || alg == some "ecdsa-p256-sha256") && V.es256 (x ++ y) base.toUTF8 sig
-            | .okp x => (alg.isNone || alg == some "ed25519") && V.eddsa x base.toUTF8 sig
+            | .ec x y => (alg.isNone || alg == some "ecdsa-p256-sha256") && V.verifiers.es256 (x ++ y) base.toUTF8 sig
+            | .okp x => (alg.isNone || alg == some "ed25519") && V.verifiers.eddsa x base.toUTF8 sig
             | _ => false
           if ok then accept s else reject s "the signature does not verify"
   | _, _ => reject s "the notification is not signed"
@@ -731,13 +765,49 @@ def onPage (s : ClientState) (r : Resp) : ClientState × Action :=
 
 /-! ## The authorization flow (lws10-core §Authorization) -/
 
+def jwtTokenType : String := "urn:ietf:params:oauth:token-type:jwt"
+
+private def hexOf (b : ByteArray) : String :=
+  b.foldl (fun acc x =>
+    let h := fun (n : Nat) => if n < 10 then Char.ofNat (48 + n) else Char.ofNat (87 + n)
+    (acc.push (h (x.toNat / 16))).push (h (x.toNat % 16))) ""
+
+/-- A self-issued credential (lws10-authn-ssi-cid): an ES256 JWT whose `iss`,
+`sub` and `client_id` are the agent's identifier, whose `aud` is the
+authorization server the storage's metadata names, with `iat`, `exp` (five
+minutes) and `jti`, and whose header `kid` names the verification method.
+`now` and `random` (at least 48 bytes: 32 for the ECDSA nonce, 16 for `jti`)
+come from the host with the response that led here. `none` when the key
+does not sign. -/
+def selfIssuedJwt (C : L4Factoidal.Authz.Crypto) (k : SelfIssued) (audience : String)
+    (now : Nat) (random : ByteArray) : Option String :=
+  if random.size < 48 then none else
+  let header := Json.object [("alg", .string "ES256"), ("typ", .string "JWT"), ("kid", .string k.keyId)]
+  let claims := Json.object
+    [ ("iss", .string k.subject), ("sub", .string k.subject), ("client_id", .string k.subject)
+    , ("aud", .array [.string audience]), ("iat", natJson now), ("exp", natJson (now + 300))
+    , ("jti", .string (hexOf (random.extract 32 48))) ]
+  let input := L4Factoidal.JOSE.Base64Url.encode (toStringCompact header).toUTF8 ++ "." ++
+    L4Factoidal.JOSE.Base64Url.encode (toStringCompact claims).toUTF8
+  (C.es256Sign k.privateKey input.toUTF8 (random.extract 0 32)).map (fun sig =>
+    input ++ "." ++ L4Factoidal.JOSE.Base64Url.encode sig)
+
+/-- The subject token and its type: the token the caller gave, or a
+self-issued credential for the authorization server `audience`. -/
+def subjectFor (C : L4Factoidal.Authz.Crypto) (ses : Session) (audience : String) (now : Nat)
+    (random : ByteArray) : Option (String × String) :=
+  if ses.subjectToken != "" then some (ses.subjectToken, ses.subjectTokenType) else
+  match ses.selfIssued with
+  | some k => (selfIssuedJwt C k audience now random).map (fun t => (t, jwtTokenType))
+  | none => none
+
 /-- The token request (lws10-core §Token Exchange, RFC 8693 §2.1). -/
-def tokenRequest (c : AuthCtx) (ses : Session) : Req :=
+def tokenRequest (c : AuthCtx) (subject : String × String) : Req :=
   { method := "POST", url := c.tokenEndpoint
     headers := [("Content-Type", mediaForm), ("Accept", mediaJson)]
     body := (formBody [ ("grant_type", tokenExchangeGrant), ("resource", c.storage)
-                      , ("subject_token", ses.subjectToken)
-                      , ("subject_token_type", ses.subjectTokenType) ]).toUTF8 }
+                      , ("subject_token", subject.1)
+                      , ("subject_token_type", subject.2) ]).toUTF8 }
 
 /-- Is a request a token exchange request? -/
 def isTokenExchange (r : Req) : Bool :=
@@ -752,7 +822,7 @@ def on401 (s : ClientState) (r : Resp) : ClientState × Action :=
   | none => statusFail s r
   | some sent =>
     let challenge := (r.header? "www-authenticate").getD ""
-    if s.session.subjectToken == "" then
+    if !s.session.hasCredential then
       failWith s "unauthorized" (respSummary r)
     else if s.exchanges == 0 then
       failWith s "unauthorized" ([("reason", .string "the storage refused the token it was given")] ++ respSummary r)
@@ -774,7 +844,8 @@ def on401 (s : ClientState) (r : Resp) : ClientState × Action :=
         ([("reason", .string "the 401 has no resource_metadata or no storage link")] ++ respSummary r)
 
 /-- The next request of the flow, after each answer. -/
-def authStep (s : ClientState) (c : AuthCtx) (r : Resp) : ClientState × Action :=
+def authStep (C : L4Factoidal.Authz.Crypto) (s : ClientState) (c : AuthCtx) (r : Resp) :
+    ClientState × Action :=
   if !r.ok then
     failWith s "authorization" ([("phase", .string s.phase.name)] ++ respSummary r)
   else
@@ -820,7 +891,9 @@ def authStep (s : ClientState) (c : AuthCtx) (r : Resp) : ClientState × Action 
       | none => failWith s "authorization" [("phase", .string "authAsMeta"), ("reason", .string "no token_endpoint")]
       | some te =>
         let c := { c with tokenEndpoint := resolve (asMetadataUrl c.asIssuer) te }
-        sendPublic { s with auth := some c } .authToken (tokenRequest c s.session)
+        match subjectFor C s.session c.asIssuer r.now r.random with
+        | none => failWith s "credential" [("reason", .string "the self-issued credential could not be signed")]
+        | some subject => sendPublic { s with auth := some c } .authToken (tokenRequest c subject)
   | .authToken =>
     match r.json? with
     | none => failWith s "authorization" [("phase", .string "authToken"), ("reason", .string "not JSON")]
@@ -1001,7 +1074,7 @@ def onMain (s : ClientState) (r : Resp) : ClientState × Action :=
 
 /-- The answer to a request of the operation (not of the authorization
 flow). -/
-def onResponse (V : L4Factoidal.JOSE.Verifiers) (s : ClientState) (r : Resp) : ClientState × Action :=
+def onResponse (V : L4Factoidal.Authz.Crypto) (s : ClientState) (r : Resp) : ClientState × Action :=
   let op := s.op
   let base := sentUrl s
   match s.phase with
@@ -1048,7 +1121,7 @@ def onResponse (V : L4Factoidal.JOSE.Verifiers) (s : ClientState) (r : Resp) : C
 /-! ## The step function -/
 
 /-- The step before `enforce`. -/
-def core (V : L4Factoidal.JOSE.Verifiers) (s : ClientState) (e : Event) : ClientState × Action :=
+def core (V : L4Factoidal.Authz.Crypto) (s : ClientState) (e : Event) : ClientState × Action :=
   if s.phase == .finished then finish s (.fail (errJ "finished")) else
   if s.fuel == 0 then failWith s "stepLimit" else
   let s := { s with fuel := s.fuel - 1 }
@@ -1067,7 +1140,7 @@ def core (V : L4Factoidal.JOSE.Verifiers) (s : ClientState) (e : Event) : Client
     if s.phase == .init then failWith s "internal" [("reason", .string "a response before start")] else
     if isAuthPhase s.phase then
       match s.auth with
-      | some c => authStep s c r
+      | some c => authStep V s c r
       | none => failWith s "internal" [("reason", .string "no validation record")]
     else if r.status == 401 && s.phase != .inboxDesc then on401 s r
     else onResponse V s r
@@ -1108,11 +1181,11 @@ def enforce (s : ClientState) (e : Event) (out : ClientState × Action) : Client
   | _ => out
 
 /-- One step of the client. -/
-def step (V : L4Factoidal.JOSE.Verifiers) (s : ClientState) (e : Event) : ClientState × Action :=
+def step (V : L4Factoidal.Authz.Crypto) (s : ClientState) (e : Event) : ClientState × Action :=
   enforce s e (core V s e)
 
 /-- The first step of an operation. -/
-def start (V : L4Factoidal.JOSE.Verifiers) (op : Op) (ses : Session) : ClientState × Action :=
+def start (V : L4Factoidal.Authz.Crypto) (op : Op) (ses : Session) : ClientState × Action :=
   step V { op := op.normalize, session := ses } .start
 
 /-! ## JSON form of the state, events and actions (the wasm ABI) -/

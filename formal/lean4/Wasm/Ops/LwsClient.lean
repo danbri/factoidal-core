@@ -17,7 +17,8 @@ The ops are stateless: the state is the JSON document `state`, which the
 host passes back unread with the next event. `session` (the access tokens
 and the subject token) goes from the `done` or `fail` of one operation to
 the start of the next. Every decision is `L4Factoidal.LWS.Client.step`;
-the signatures of notifications are verified with HACL* (`lwsVerifiers`).
+the signatures of notifications are verified, and self-issued credentials
+signed, with HACL* (`Authz.hacl`).
 Bodies are base64 (RFC 4648 §4) in both directions on the string entry.
 
 The contract is `docs/lws-solid-conformance.md` § "wasm ABI"; the host is
@@ -52,7 +53,7 @@ def lwsClientStart (opText sessionText : String) : String :=
         | .error _ => .error "lwsClientStart: the session is not JSON"
       match ses with
       | .error e => errJson e
-      | .ok ses => clientEnvelope (start lwsVerifiers op ses)
+      | .ok ses => clientEnvelope (start L4Factoidal.Authz.hacl op ses)
 
 /-- `lwsClientStep(stateJson, eventJson)`: give the answer to the request
 the last action named. -/
@@ -61,7 +62,7 @@ def lwsClientStep (stateText eventText : String) : String :=
   | .ok sj, .ok ej =>
     match stateOfJson sj with
     | .error e => errJson s!"lwsClientStep: {e}"
-    | .ok s => clientEnvelope (step lwsVerifiers s (eventOfJson ej))
+    | .ok s => clientEnvelope (step L4Factoidal.Authz.hacl s (eventOfJson ej))
   | .error _, _ => errJson "lwsClientStep: the state is not JSON"
   | _, .error _ => errJson "lwsClientStep: the event is not JSON"
 

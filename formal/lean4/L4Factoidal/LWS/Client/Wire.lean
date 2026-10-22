@@ -45,6 +45,11 @@ structure Resp where
   status : Nat
   headers : List (String × String) := []
   body : ByteArray := ByteArray.empty
+  /-- The host's clock when the response arrived, seconds since the Unix
+  epoch (`iat` and `exp` of a self-issued credential). -/
+  now : Nat := 0
+  /-- Random bytes from the host's random source (an ECDSA nonce, a `jti`). -/
+  random : ByteArray := ByteArray.empty
 
 /-- The header fields of a request other than `Authorization`. Two requests
 that differ only in the access token they carry are the same request
@@ -260,7 +265,9 @@ def reqOfJson (j : Json) : Req :=
 
 /-- A response as the host gives it: `{status, headers, bodyBase64 | body}`. -/
 def respOfJson (j : Json) : Resp :=
-  { status := jNat j "status", headers := jHeaders j "headers", body := jBody j }
+  { status := jNat j "status", headers := jHeaders j "headers", body := jBody j
+    now := jNat j "now"
+    random := ((j.getString? "randomBase64").bind Base64.decode?).getD ByteArray.empty }
 
 def respJson (r : Resp) : Json :=
   .object [ ("status", natJson r.status), ("headers", headersJson r.headers)

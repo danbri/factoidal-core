@@ -179,7 +179,7 @@ private theorem enforce_fetch {s : ClientState} {e : Event} {s' : ClientState} {
             simp [a, b] at h2
 
 /-- A write of an operation that asked for a precondition carries it. -/
-theorem step_write_precondition (V : L4Factoidal.JOSE.Verifiers) (s : ClientState) (e : Event)
+theorem step_write_precondition (V : L4Factoidal.Authz.Crypto) (s : ClientState) (e : Event)
     (r : Req) (h : (step V s e).2 = .fetch r) (hw : wantsPrecondition s.op = true)
     (hr : isWrite r = true) : carriesPrecondition s.op r = true := by
   unfold step at h
@@ -192,7 +192,7 @@ theorem step_write_precondition (V : L4Factoidal.JOSE.Verifiers) (s : ClientStat
 
 /-- A token exchange request is emitted only with a validation record whose
 three checks hold, for the storage of that record. -/
-theorem step_no_token_request_without_validation (V : L4Factoidal.JOSE.Verifiers)
+theorem step_no_token_request_without_validation (V : L4Factoidal.Authz.Crypto)
     (s : ClientState) (e : Event) (r : Req) (h : (step V s e).2 = .fetch r)
     (ht : isTokenExchange r = true) :
     ∃ c, (step V s e).1.auth = some c ∧ Validated c ∧ tokenResource? r = some c.storage := by
@@ -213,7 +213,7 @@ theorem step_no_token_request_without_validation (V : L4Factoidal.JOSE.Verifiers
     exact ⟨c, rfl, (validated_iff c).mp hb.1, hb.2⟩
 
 /-- After a POST answered 5xx, the next action is not the same POST. -/
-theorem step_no_blind_create_retry (V : L4Factoidal.JOSE.Verifiers) (s : ClientState)
+theorem step_no_blind_create_retry (V : L4Factoidal.Authz.Crypto) (s : ClientState)
     (prev : Req) (resp : Resp) (r : Req) (hs : s.sent = some prev) (hp : prev.method = "POST")
     (h5 : 500 ≤ resp.status) (h : (step V s (.response resp)).2 = .fetch r) :
     prev.same r = false := by
@@ -228,7 +228,7 @@ theorem step_no_blind_create_retry (V : L4Factoidal.JOSE.Verifiers) (s : ClientS
 
 /-- After a POST whose answer was lost, the next action is not the same
 POST. -/
-theorem step_no_retry_after_lost_post (V : L4Factoidal.JOSE.Verifiers) (s : ClientState)
+theorem step_no_retry_after_lost_post (V : L4Factoidal.Authz.Crypto) (s : ClientState)
     (prev : Req) (msg : String) (r : Req) (hs : s.sent = some prev) (hp : prev.method = "POST")
     (h : (step V s (.transportError msg)).2 = .fetch r) : prev.same r = false := by
   unfold step at h
@@ -241,7 +241,7 @@ theorem step_no_retry_after_lost_post (V : L4Factoidal.JOSE.Verifiers) (s : Clie
   · simp [hsame] at h3
 
 /-- After a 405 or a 415, the next action is not the same request. -/
-theorem step_no_repeat_after_refusal (V : L4Factoidal.JOSE.Verifiers) (s : ClientState)
+theorem step_no_repeat_after_refusal (V : L4Factoidal.Authz.Crypto) (s : ClientState)
     (prev : Req) (resp : Resp) (r : Req) (hs : s.sent = some prev)
     (hst : resp.status = 405 ∨ resp.status = 415)
     (h : (step V s (.response resp)).2 = .fetch r) : prev.same r = false := by
