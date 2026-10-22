@@ -122,7 +122,7 @@
 #                or blank nodes inside as a constant, the triple functions,
 #                joins, GROUP BY, ORDER BY over triple terms), ref-* on
 #                path=reference (a variable or a blank node inside a
-#                triple-term pattern, a triple term as subject, BIND, EXISTS);
+#                triple-term pattern, a triple term as subject, EXISTS);
 #                --reference-render byte-identical to the key printer; the
 #                ids-* queries again on blocks of 2 rows with --sip always and
 #                --threads 4; `dump` equal to `l4factoidal parse --format

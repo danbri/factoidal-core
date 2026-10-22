@@ -969,6 +969,27 @@ across the store's graphs, as in the reference. Theorems (`IdDatasetTheorems`,
 lemma L5n): `lookup_decode`, `from_default_decode`, `from_named_decode`,
 `mergedRows_eq`. Gates: 23 `ids-from-*` and 1 `ref-from-*` queries.
 
+BIND on ids (2026-10-23, https://github.com/danbri/factoidal/issues/953;
+record: section 20 of the stage 4 record). A chain `Extend(... Extend(P, v1,
+e1) ..., vk, ek)` outside GRAPH runs on `path=ids` when the WHERE clause has
+no OPTIONAL, `P` is a group of the id fragment with no VALUES, UNION or BIND
+inside (it may have no triple pattern), and each expression is EXISTS-free
+with no aggregate and no `UUID()`, `STRUUID()` or `BNODE()` (their value
+depends on the row index, which the id path does not keep in the reference's
+order) (`IdQuery.flattenBinds`). The block is evaluated by itself
+(`evalBindsM`): `P` on ids, then per row `IdQuery.refBinder` (the binder the
+reference lowers a top-level BIND to) on the decoded terms of the variables
+the expression reads, once per distinct tuple of their ids; a value gets the
+store's id or a query-local id (tag 15, `termIdM`), an error leaves the
+variable unbound (`extendM`). The block's rows are joined with the other rows
+after the VALUES and UNION blocks. A FILTER of the top group that reads a
+variable of a BIND block runs after every join (`Plan.lateFilters`); a FILTER
+in an inner group that reads one is refused (bind10 shape). `l4sbm11 update`
+redirects the block patterns under `WITH`. Theorems (`IdBindTheorems`, lemma
+L5o): `lower_bind`, `refBinder_active`, `extend_decode`, `bind_decode`. Gates:
+18 `ids-bind-*` and 6 `ref-bind-*` queries; `gate/ref-bind.rq` is now
+`ids-bind-str.rq` and `gate12/ref-tt-bind.rq` is now `ids-tt-bind.rq`.
+
 Sideways information passing (2026-10-13,
 https://github.com/danbri/factoidal/issues/809; record: section 11 of the
 stage 4 record). The right scan of a join (merge or hash), and the first scan

@@ -1,0 +1,3 @@
+PREFIX ex: <http://ex.org/>
+# A FILTER in an inner group reads the BIND variable (bind10 shape).
+SELECT ?s ?v ?z WHERE { BIND(10 AS ?z) { ?s ex:score ?v FILTER(?v = ?z) } }
