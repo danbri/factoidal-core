@@ -641,3 +641,63 @@ Remaining costs (profiles above):
   commit and of the page-cache and piece commits before the rebase (3,112
   pass, 0 fail, 29 expected-fail; 605 executed, 605 matched, 0 differed) and
   not again after it; the three `tools/lean-*.py --gate` audits exit 0.
+
+## Stage 1d: peak RSS of the divided streamed path (2026-10-22)
+
+Issue https://github.com/danbri/factoidal/issues/799, key result in
+https://github.com/danbri/factoidal/issues/875: peak RSS at 4 threads at most
+2 times the RSS at 1 thread.
+
+Cause. The streamed path (`IdQuery.streamPartM`) cut the scan into ranges of
+at most 16 blocks. olympics q21 selects 34 blocks, so the ranges were 4 of 9
+blocks: as many ranges as tasks. `Harness/Sbm11Query.parFold` already folds
+the results in range order and starts the next task when one is folded, but
+with 4 ranges and a window of 4 tasks every range was running or finished
+before the first was written, so all 137,026 rows (about 23 MB rendered) were
+held at once.
+
+Repair (`IdQuery.streamRangeBlocks` = 1). A range of the streamed path is one
+block. There are then more ranges than tasks, and `parFold` holds at most
+`threads` running or finished ranges (the parent writes range k and frees it
+before the task for range k + threads starts). The order of the answer does
+not change: `parFold` folds in range order. Values tried (q21 at 4 threads,
+single runs, 7 repeats): 2 blocks 69 MB, 1 block 63 MB, 4 blocks 83 MB, 16
+blocks 105 MB.
+
+Theorems (`ParallelMergeTheorems`; `#print axioms`: `propext`,
+`Classical.choice`, `Quot.sound` or a subset; no hypothesis states a
+conclusion):
+
+- `stream_divided_eq_single` (stage 1b) holds for every range size `c`.
+- `stream_one_block_ranges_eq_single`: its instance `c = 1`.
+- `stream_incremental_eq`: stepping over the ranges one prefix at a time, in
+  range order, equals stepping over all of them.
+
+Tested, not proved (as in stage 1b): that `parFold` frees each range before
+the next starts, and the `Table`/`ByteArray` steps: `tests/sbm11/threads.sh`.
+
+Measurement. `tests/sbm11/bench-threads.sh`, olympics, `--verify none`, 6
+rounds (round 1 dropped), 7 runs per process, median over rounds of the
+warm median; RSS is the largest VmHWM. Machine shared with other work.
+
+| Query | threads | before ms | after ms | before RSS MB | after RSS MB |
+| --- | ---: | ---: | ---: | ---: | ---: |
+| q19 | 1 | 44.9 | 42.1 | 58 | 58 |
+| q19 | 4 | 28.6 | 24.7 | 108 | 93 |
+| q21 | 1 | 107.5 | 129.6 | 42 | 42 |
+| q21 | 4 | 57.9 | 51.6 | 107 | 67 |
+
+RSS ratio 4 to 1 thread: q19 1.86 to 1.60, q21 2.55 to 1.60. Both within 2.
+The 1-thread binary is the same code before and after (the change applies to
+divided scans only); the q21 1-thread time differences (107.5 and 129.6 ms)
+are machine noise, and the 4-thread times did not get worse.
+
+
+Gates (exit codes read): `lake build` exit 0 (1,869 jobs);
+`tests/sbm11/threads.sh` exit 0 (all answers identical, 1, 2, 4, 8 threads);
+`tests/sbm11/run.sh` exit 0 (3,112 pass, 0 fail, 29 expected-fail, out of
+3,141); `SBM11_THREADS=4 tests/sbm11/census.sh` exit 0 (605 executed, 605
+matched the reference engine, 0 differed); `tools/lean-tail-recursion-audit.py
+--gate`, `tools/lean-unbuilt-modules.py --gate`,
+`tools/lean-registry-audit.py --gate`, `tools/lean-csimp-reach.py --gate` exit
+0; `tools/lean-hygiene-audit.py` (no `--gate` option) clean; no `sorry` added.
