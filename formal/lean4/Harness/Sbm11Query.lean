@@ -335,12 +335,35 @@ def Session.gdvFetch (ss : Session) (off len : Nat) : IO ByteArray := do
     | none => throw (IO.userError s!"GDV1: chunk {c} refused")
   return out
 
+/-- The default of `SBM11_PAGES`, the most dictionary pages a cache holds. A
+    page is about 4.5 KB (olympics q19 needs between 4,096 and 8,192 pages). At
+    2,048 pages, the former default, q19 and q21 loaded pages again on every
+    run, and q19 took 97 ms against 36 ms with no limit (issue 799, KR 1.2). -/
+def defaultPages : Nat := 8192
+
+/-- The class of pages that a full cache drops: pages whose
+    number has the same remainder modulo 16 as the page being inserted. -/
+def evictClasses : Nat := 16
+
+/-- Insert page `pg` in a page map that holds at most `lim` entries. When the
+    map is full, the entries whose number is in the same class modulo
+    `evictClasses` as `pg` are dropped (about one sixteenth), and the whole map
+    if that does not make room. The earlier rule emptied the whole map when it
+    was full: a scan whose pages are a few more than the limit (olympics q19
+    and q21: between 4,096 and 8,192 pages against 2,048) then loaded every page again on
+    every run (q19: 97 ms against 36 ms with no limit; issue 799, KR 1.2). -/
+def insertPageBounded {α : Type} (m : Std.HashMap Nat α) (lim pg : Nat) (v : α) : Std.HashMap Nat α :=
+  if m.size < lim then m.insert pg v
+  else
+    let m' := m.filter fun k _ => k % evictClasses != pg % evictClasses
+    (if m'.size < lim then m' else {}).insert pg v
+
 /-- The keys of dictionary page `pg`, packed: one byte array holding the keys
     one after the other and the start of each key (and the end of the last).
     One object per page: a cache of 64 separate key arrays per page left the
     heap fragmented (q19: peak RSS 98 MB against 31 MB with a cache of 64
     pages, and slower, each new huge page being cleared on first touch). The
-    cache holds at most `SBM11_PAGES` pages (default 2,048) and is emptied
+    cache holds at most `SBM11_PAGES` pages (default 8,192) and is emptied
     when full. -/
 def Session.loadPage (ss : Session) (pg : Nat) : IO (ByteArray × Array Nat) := do
   let ks ← ok s!"GDV1 page {pg}" (← (Dict.pageM ss.gdxFetch ss.gdvFetch pg).run)
@@ -354,27 +377,32 @@ def Session.loadPage (ss : Session) (pg : Nat) : IO (ByteArray × Array Nat) := 
   return (packed, offs)
 
 /-- Put page `pg` in the page cache `c`, emptied first when it holds
-    `SBM11_PAGES` pages (default 2,048; 0: no cache). -/
+    `SBM11_PAGES` pages (default 8,192; 0: no cache). -/
 def cachePage (c : IO.Ref (Std.HashMap Nat (ByteArray × Array Nat))) (pg : Nat)
     (ks : ByteArray × Array Nat) : IO Unit := do
-  let lim := ((← IO.getEnv "SBM11_PAGES").bind String.toNat?).getD 2048
+  let lim := ((← IO.getEnv "SBM11_PAGES").bind String.toNat?).getD defaultPages
   if lim > 0 then
-    c.modify fun m => (if m.size ≥ lim then {} else m).insert pg ks
+    c.modify fun m => insertPageBounded m lim pg ks
 
 /-- Put page `pg` in a task view's own cache (issue 799, stage 1b): emptied
-    first when it holds `SBM11_TASK_PAGES` pages (default 1,024), and never
+    first when it holds `SBM11_TASK_PAGES` pages (default 256), and never
     more than `SBM11_PAGES`. A task's cache holds copies of pages that
     `taskPages` also holds. Olympics q19 at 4 threads, 7 runs per process
     (2026-10-13): 2,048 pages per task, 74 ms and 156 MB peak RSS; 1,024, 54
     ms and 125 MB; 256, 84 ms and 106 MB (36 MB at 1 thread, 47 MB at 4
-    threads with no page cache at all). A block of 4,096 rows can need more
-    pages than a small cache holds, and its prefetched pages then empty it. -/
+    threads with no page cache at all). Those figures were taken with
+    `SBM11_PAGES` at the former default of 2,048, where the shared level
+    thrashed; with the default of 8,192 (KR 1.2, 2026-10-22, 4 threads, load
+    average 2 to 3): 1,024 pages per task, peak RSS 147 MB (q19) and 125 MB
+    (q21); 256, 98 to 108 MB and 105 to 108 MB; 0, 97 MB and 102 MB but 3 to 9
+    times slower (every page loaded again). A block of 4,096 rows can need more
+    pages than a small cache holds, and its prefetched pages then drop others. -/
 def cacheTaskPage (c : IO.Ref (Std.HashMap Nat (ByteArray × Array Nat))) (pg : Nat)
     (ks : ByteArray × Array Nat) : IO Unit := do
-  let all := ((← IO.getEnv "SBM11_PAGES").bind String.toNat?).getD 2048
-  let lim := min all (((← IO.getEnv "SBM11_TASK_PAGES").bind String.toNat?).getD 1024)
+  let all := ((← IO.getEnv "SBM11_PAGES").bind String.toNat?).getD defaultPages
+  let lim := min all (((← IO.getEnv "SBM11_TASK_PAGES").bind String.toNat?).getD 256)
   if lim > 0 then
-    c.modify fun m => (if m.size ≥ lim then {} else m).insert pg ks
+    c.modify fun m => insertPageBounded m lim pg ks
 
 /-- A copy of a page made by the calling thread. A page in `taskPages` is
     reachable from every task, so taking and releasing a reference to it is an
@@ -386,9 +414,13 @@ def copyPage (ks : ByteArray × Array Nat) : ByteArray × Array Nat :=
 /-- Put an entry in `taskPages` (call under `dictLock`), emptied first when
     it holds `SBM11_PAGES` entries. -/
 def Session.putTaskPage (ss : Session) (pg : Nat) (e : TaskPage) : IO Unit := do
-  let lim := ((← IO.getEnv "SBM11_PAGES").bind String.toNat?).getD 2048
+  let lim := ((← IO.getEnv "SBM11_PAGES").bind String.toNat?).getD defaultPages
   if lim > 0 then
-    ss.taskPages.modify fun m => (if m.size ≥ lim then {} else m).insert pg e
+    ss.taskPages.modify fun m =>
+      if m.size < lim then m.insert pg e
+      else
+        let m' := m.filter fun k _ => k % evictClasses != pg % evictClasses
+        (if m'.size < lim then m' else {}).insert pg e
 
 /-- A task view (issue 799, stage 1b) on a miss in its own cache: the page in
     `taskPages`, else this task loads it. Under `none` the load runs outside
