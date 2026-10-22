@@ -941,6 +941,12 @@ theorem selectPost_aggPlan {q : Query} {p : AggPlan} (h : aggPlan? q = some p)
   rw [groupOmegaRow_pre env active p.items (itemSpecs_simple hs) g,
     itemAggs_eq_streamAgg env g hs]
 
+#print axioms addScaled_eq
+#print axioms cmpScaled_eq
+#print axioms cmpSummary_of
+#print axioms stepNum_ofScaled
+#print axioms stepKeep_some
+#print axioms best_stream
 #print axioms evalAggregate_stream
 #print axioms evalAggregate_star
 #print axioms evalSelectItemsGroup_pre

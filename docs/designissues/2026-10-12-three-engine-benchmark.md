@@ -978,3 +978,70 @@ Gates on this change (exit codes 0): `lake build` (837 jobs);
 reference engine (438 on the id path); `tests/planner/sbm11_gate.sh` 8 pass,
 0 fail (out of 8 accepted); `tools/lean-tail-recursion-audit.py`,
 `tools/lean-unbuilt-modules.py` and `tools/lean-csimp-reach.py` with `--gate`.
+
+### 11.14 d19, grouped aggregates on ids: four candidates of issue 862 (2026-10-22)
+
+https://github.com/danbri/factoidal/issues/862 (OKR batch 3 KR 1.1,
+https://github.com/danbri/factoidal/issues/875). Query d19 groups 326,365 join
+rows into 730 groups and takes COUNT, MAX and AVG. Profile before (`perf record
+-e cpu-clock --call-graph dwarf,16384`, 10 runs in one process): `IdAgg.aggregateM`
+69 percent. Removing the argument-column work (lookup, decode and steps) from the
+loop left 123 ms of about 330, so aggregation was about 200 ms; decoding the 48,815
+distinct argument ids was 20 to 30 ms of that.
+
+Changes, in the order of the issue (`Storage/Sbm11/IdAgg.lean`, `SPARQL/AggStream.lean`):
+
+1. One `UInt64` key for a single GROUP BY column (no `List UInt64` per row), and one
+   summary lookup per row and argument column (MAX and AVG of one column shared one
+   lookup each). 446 to 370 ms (one round).
+2. MIN and MAX keep the `Summary` of the best value and compare numeric readings
+   with `cmpScaled` (equal scales compare mantissas). Theorem `cmpSummary_of`:
+   on the summaries of two values, `cmpSummary` equals `sparqlOrder` of their
+   `numericView`s. `best_stream` and `stepKeep_some` are restated over `Summary`.
+   `cmpScaled_eq`: `cmpScaled a b = Scaled.cmp a b`.
+3. SUM and AVG state holds mantissa and scale (no `Scaled` per step). `addScaled_eq`
+   and `stepNum_ofScaled`: the in-place step equals `Scaled.add` of the operand's
+   reading. `num_stream` and `evalAggregate_stream` keep their statements over
+   `AggAcc.ofScaled`. All new theorems depend on propext, Classical.choice and
+   Quot.sound only.
+4. Not in the issue: the id hash. `Std.HashMap` takes the bucket from the low bits of
+   the hash and the hash of a `UInt64` is the number. `Id64` hashes `id * C`
+   with the high half folded onto the low half; keys are not boxed. 15 to 30 ms in 3
+   of 3 interleaved rounds. Multiplication alone (no fold) showed no gain. The group
+   and argument columns are read from a held `ByteArray` (3 of 3 rounds not slower;
+   gain within the noise).
+
+Tried and removed (no gain beyond the noise, so not kept): `getD` against `get?`;
+a flat open-addressing id table in a `ByteArray` (slower than `Std.HashMap` at
+first because of `2 ^ bits` per lookup, then equal); a pure tail-recursive row loop
+with pauses for decoding; flat numeric fields in `Summary`; a pre-sized cache.
+Removing the group lookup altogether saved 45 ms, but that run also kept all rows in
+one group, so the saving is not the cost of the hash alone.
+
+Measurement: `l4sbm11 query /home/user/bench-data/sbm11/dbpedia --file
+tools/bench/three-engines/queries/dbpedia/d19-group-aggregates.rq --verify none
+--repeat 7`, execution median in one process, 3 interleaved rounds, "before" built
+from `origin/main` at `0a7fab49`. Load average 1.0 to 3.2 (another session was
+building); one build gave 285 to 342 ms in different rounds, so differences under
+about 20 ms are not resolved.
+
+| | before | after | QLever 1 CPU (11.10) |
+| --- | ---: | ---: | ---: |
+| warm median, round 1 / 2 / 3 (ms) | 451 / 423 / 518 | 302 / 301 / 334 | 103 |
+| warm median of rounds (ms) | 451 | 302 | 103 |
+| peak RSS, one run (VmHWM, kB) | 53,796 | 53,736 | |
+
+Answers are byte-identical to the answer of `0a7fab49` (and to `--no-agg-ids`:
+`tests/sbm11/agg_ids.sh`). The acceptance of 300 ms is not reached
+on every round (302, 301 and 334 ms), so `xfail-d19-warm-300ms` stays an expected failure.
+QLever 1 CPU (103 ms) is not reached: ratio 2.9 from 4.4. Remaining cost: the join
+and scan (about 120 ms: `deltaRangeGoF`, `mergeJoin`), the 48,815 dictionary decodes
+(20 to 30 ms), and per-row hash lookups, accumulator updates and frees (about 150 ms).
+Peak RSS is 53.7 MB, above the 52 MB of the task; the base build is 53.8 MB.
+
+Gates: `lake build` (1868 jobs); `tests/sbm11/agg_ids.sh` 28 pass, 0 fail, 9 expected-fail
+(out of 37); `tests/sbm11/run.sh` 3,112 pass, 0 fail, 29 expected-fail (out of 3,141);
+`SBM11_THREADS=4 tests/sbm11/census.sh` 605 executed, 605 matched the reference engine
+(438 on the id path); `tools/lean-unbuilt-modules.py`, `lean-tail-recursion-audit.py`,
+`lean-registry-audit.py` and `lean-csimp-reach.py` with `--gate` exit 0;
+`lean-hygiene-audit.py` clean (no sorry, axiom or native_decide added).

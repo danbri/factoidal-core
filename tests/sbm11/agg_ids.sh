@@ -40,7 +40,7 @@
 #             tests/sbm11/agg-dbpedia (630,000 date literals, 730 to 180,000
 #             groups, MIN and MAX of IRIs, two group keys) on ids and with
 #             `--no-agg-ids`, byte-identical; and one expected failure,
-#             "d19 warm time at most 300 ms" (about 500 ms today), which names
+#             "d19 warm time at most 300 ms" (about 300 to 330 ms after the changes of docs/designissues/2026-10-12-three-engine-benchmark.md section 11.14), which names
 #             https://github.com/danbri/factoidal/issues/862.
 #
 # Usage: tests/sbm11/agg_ids.sh. Environment: L4_BIN_DIR (the built binaries).
@@ -173,7 +173,7 @@ if [ -d "$DBP" ] && [ -f "$ROOT/tools/bench/three-engines/queries/dbpedia/d19-gr
   elif ! cmp -s "$TMP/d19.a.out" "$TMP/d19.b.out"; then record dbpedia d19 1 "the answers differ in bytes"
   else record dbpedia d19 0 "$(grep -o 'aggregated on ids into [0-9]* groups' "$TMP/d19.a.err"); byte-identical to --no-agg-ids ($(wc -c <"$TMP/d19.a.out") bytes)"; fi
   # https://github.com/danbri/factoidal/issues/862: d19 warm time (the execution median of 5
-  # runs in one process) at most 300 ms; about 500 ms today, so the case fails as expected
+  # runs in one process) at most 300 ms; about 300 to 330 ms after section 11.14 of the benchmark record, so the case still fails as expected
   ISSUE862="${AGG_IDS_ISSUE_862:-https://github.com/danbri/factoidal/issues/862}"
   warm="$(timeout 600 "$BIN/l4sbm11" query "$DBP" --file "$ROOT/tools/bench/three-engines/queries/dbpedia/d19-group-aggregates.rq" --verify none --repeat 5 2>&1 >/dev/null | sed -n 's/.*execution ms median \([0-9]*\)\..*/\1/p')"
   if [ -z "$warm" ]; then record dbpedia d19-warm 1 "no warm time in the output"
