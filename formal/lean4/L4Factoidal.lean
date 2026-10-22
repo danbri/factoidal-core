@@ -768,6 +768,10 @@ import L4Factoidal.LWS.MerkleHttp
 import L4Factoidal.LWS.Journal
 import L4Factoidal.LWS.FileLayout
 import L4Factoidal.LWS.FileLayoutTests
+import L4Factoidal.LWS.Client.Wire
+import L4Factoidal.LWS.Client.Machine
+import L4Factoidal.LWS.Client.Theorems
+import L4Factoidal.LWS.Client.Tests
 import L4Factoidal.Solid.Tests
 
 -- XMPP / GC3 (https://github.com/danbri/factoidal/ ... xmpp/DESIGN.md
