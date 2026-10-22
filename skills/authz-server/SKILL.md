@@ -29,6 +29,7 @@ verbatim: "Do auth server (as a component other servers might use too)."
 factoidal authz-serve DIR --resource IRI[,IRI...] [--issuer IRI] [--port N] [--host ADDRESS]
                           [--alg ES256|EdDSA] [--token-lifetime SECONDS] [--rotate-after SECONDS]
                           [--allow-http] [--allow-private-fetch]
+                          [--cors-origin ORIGIN]... [--no-cors]
 factoidal authz-keys DIR [--private]
 ```
 
@@ -82,6 +83,13 @@ const as = await listen({ dir: 'as-dir', port: 4000, resources: ['http://127.0.0
 * Keys: `DIR/authz-keys.json`, mode 0600, sealed with `FACTOIDAL_LWS_KEY`
   (as the LWS snapshot). `--rotate-after` makes a new key; the old one stays
   published for lifetime + leeway.
+* CORS (https://github.com/danbri/factoidal/issues/923): `stepCors` answers a
+  preflight 204 before `step` (no key rotation) and adds the fields of
+  `L4Factoidal/HTTP/Cors.lean` to every other answer, with `corsProfile`
+  (methods `GET, HEAD, OPTIONS, POST`; exposed `Allow, WWW-Authenticate`; no
+  credentials). Default: echo a valid `Origin`; `--cors-origin ORIGIN`
+  (repeatable) or `--no-cors`; config member `cors`. Theorems
+  `stepCors_preflight`, `stepCors_off`. Host check: `tests/lws/cors.mjs`.
 
 ## Theorems, and what they rest on
 
