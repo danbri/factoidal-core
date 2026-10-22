@@ -2884,6 +2884,17 @@ theorem FKind.fresh_eq (f : FKind) : f.fresh = f := by
 def OvCtx.fresh (ox : OvCtx) (key : Array UInt64) : OvCtx :=
   if ox.on then ox else ovCtx {} key
 
+/-- The most blocks in one range of the divided streamed path. The parent
+    writes the ranges in order, so a range that finishes early waits in memory
+    with its rendered pieces until the earlier ranges are written. With
+    ranges of at most this many blocks there are more ranges than tasks, and
+    `Par.fold` (window = threads) holds at most `threads` finished or running
+    ranges: the bytes held are bounded by `threads * streamRangeBlocks`
+    blocks of output, not by the whole scan (olympics q21 at 4 threads:
+    4 ranges of 9 blocks, all held, 23 MB of rendered rows; issue 799,
+    stage 1d). -/
+def streamRangeBlocks : Nat := 1
+
 /-- Rows per rendered piece of the divided streamed path. A piece is made by
     a task and freed by the parent after it is written; a buffer of a whole
     block (about 500 KB for olympics q21) was a large allocation of the task
@@ -3011,7 +3022,7 @@ def runPlanM {m : Type → Type} [Monad m] (st : Store m) (plan : Plan) (emit : 
     else
       -- stage 1b: divided when OFFSET + LIMIT is above the estimate (the single
       -- scan then reads every selected block)
-      match par, (← divideFor? st par spec 16).filter (fun d => plan.offset + lim > d.2.2.2) with
+      match par, (← divideFor? st par spec streamRangeBlocks).filter (fun d => plan.offset + lim > d.2.2.2) with
       | some p, some (metas, ox, chunks, est) =>
         let total ← st.blockCount spec.perm
         let ((_, emitted), s) ← p.fold
