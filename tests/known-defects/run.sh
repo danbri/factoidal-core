@@ -1113,6 +1113,33 @@ else
 fi
 
 # ---------------------------------------------------------------------
+# JS-2 (https://github.com/danbri/factoidal/issues/947) -- the whole-document
+# JSON-LD reader does not expand a top-level array when no base is given, so a
+# node object's own @context is ignored (ToRdf.hasInlineContext is false for an
+# array). JSON-LD 1.1 Expansion Algorithm expands each array item and processes
+# an item's @context. Expected quad: <http://example.org/a> foaf:name "Alice".
+# XFAIL while the parse gives no quad; XPASS when it gives the quad (retire the
+# row, close issue 947, update section 3n of the parsing-strategy record).
+# ---------------------------------------------------------------------
+JS2_TITLE="JSON-LD top-level array ignores a node object's @context"
+if [ ! -x "$L4_BIN" ]; then
+  record JS-2 947 "$JS2_TITLE" ERROR "no l4factoidal at ${L4_BIN} (tools/fetch-builds.sh --set native)"
+else
+  printf '%s\n' '[{"@context":{"name":"http://xmlns.com/foaf/0.1/name"},"@id":"http://example.org/a","name":"Alice"}]' > "${WORKDIR}/js2.jsonld"
+  printf '%s\n' '{"@context":{"name":"http://xmlns.com/foaf/0.1/name"},"@id":"http://example.org/a","name":"Alice"}' > "${WORKDIR}/js2-obj.jsonld"
+  JS2_WANT='<http://example.org/a> <http://xmlns.com/foaf/0.1/name> "Alice" .'
+  JS2_OBJ=$(timeout 60 "$L4_BIN" parse "${WORKDIR}/js2-obj.jsonld" --format jsonld --out nquads 2>/dev/null)
+  JS2_ARR=$(timeout 60 "$L4_BIN" parse "${WORKDIR}/js2.jsonld" --format jsonld --out nquads 2>/dev/null)
+  if [ "$JS2_OBJ" != "$JS2_WANT" ]; then
+    record JS-2 947 "$JS2_TITLE" ERROR "oracle (same node as a top-level object) did not give the expected quad"
+  elif [ "$JS2_ARR" = "$JS2_WANT" ]; then
+    record JS-2 947 "$JS2_TITLE" XPASS "the array form now gives the expected quad"
+  else
+    record JS-2 947 "$JS2_TITLE" XFAIL "array form gives ${#JS2_ARR} bytes of N-Quads, expected the foaf:name quad"
+  fi
+fi
+
+# ---------------------------------------------------------------------
 # SR-1 (https://github.com/danbri/factoidal/issues/944) -- the Turtle and TriG
 # split read (several readers, one for each byte range between the dot
 # boundaries that formal/lean4/L4Factoidal/Syntax/TurtleSplitScan.lean finds;

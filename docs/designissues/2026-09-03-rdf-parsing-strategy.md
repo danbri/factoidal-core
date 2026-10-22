@@ -2908,10 +2908,14 @@ Documents read whole: a top-level object that is a single node, an object with
 **Order.** A document with named graphs gives the same quads as a multiset,
 not in the same order: the whole reader gives the default graph first, then the
 named graphs, the item reader gives each node object's default graph and named
-graphs in turn. Without named graphs the list is the same. N.B. the whole
-reader does not expand a top-level array that has no base: a node's own
-`@context` is then ignored (`hasInlineContext` is false for an array); the item
-reader does the same, to give the same quads.
+graphs in turn. Without named graphs the list is the same. Defect: the whole
+reader does not expand a top-level array that has no base, so a node's own
+`@context` is ignored (`hasInlineContext` is false for an array). JSON-LD 1.1
+Expansion Algorithm expands each array item and processes its `@context`, so
+the quads are wrong. The item reader copies the behaviour, to give the same
+quads as the whole reader; a repair changes both. Open issue:
+https://github.com/danbri/factoidal/issues/947; expected failure: row JS-2 of
+`tests/known-defects/run.sh`.
 
 **Theorems** (`RDF/SourceTheorems.lean`; `#print axioms`: `propext`,
 `Classical.choice`, `Quot.sound`):
