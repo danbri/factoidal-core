@@ -141,7 +141,7 @@ async function main () {
 
   const issuer = await startIssuer()
   const page0 = await startPageServer()
-  const storage = await listen({ engine, port: 0, auth: { issuers: [{ issuer: issuer.origin }] }, owner: ALICE })
+  const storage = await listen({ engine, port: 0, auth: { issuers: [{ issuer: issuer.origin }] }, owner: ALICE, realClock: true })
   const closed = await listen({ engine, port: 0, insecureNoAuth: true, cors: false })
   const listed = await listen({ engine, port: 0, insecureNoAuth: true, cors: ['https://danbri.github.io'] })
   try {

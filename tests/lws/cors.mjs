@@ -313,7 +313,7 @@ async function main () {
 
   // Authorization on: the owner's root ACL, a local issuer.
   const issuer = await startIssuer()
-  const guarded = await listen({ engine, port: 0, auth: { issuers: [{ issuer: issuer.origin }] }, owner: ALICE })
+  const guarded = await listen({ engine, port: 0, auth: { issuers: [{ issuer: issuer.origin }] }, owner: ALICE, realClock: true })
   const g = guarded.origin
   const aliceT = issuer.token(`${g}/.well-known/lws-storage`, ALICE)
   try {
