@@ -63,6 +63,7 @@ import Wasm.Ops.Lws
 import Wasm.Ops.Solid
 import Wasm.Ops.Toan
 import Wasm.Ops.Xmpp
+import Wasm.Ops.XmppSession
 import Wasm.Ops.Crypto
 import Wasm.Ops.Formats
 import Wasm.Ops.Reasoning
@@ -342,6 +343,11 @@ def lwsSolidOpNames : List String :=
   , "solidClientRequest"
   , "solidClientResponse" ]
 
+/-- The XMPP server-handle op names (`Wasm/Ops/XmppSession.lean`), served
+ONLY by `callIO`: a server and its sessions live in handle tables the pure
+`call` cannot reach. The stateless `xmpp*` parsers stay in `opNames`. -/
+def xmppSessionOpNamesList : List String := Ops.xmppSessionOpNames
+
 /-- The format, transform and reasoning op names of
 `Wasm/Ops/Formats.lean`, `Wasm/Ops/Reasoning.lean` and
 `Wasm/Ops/QueryExtras.lean`: the operations of the F* npm entry that the
@@ -417,7 +423,7 @@ private def opsReflection : String := opsReflectionFor (opNames ++ formatOpNames
 def opsReflectionIO : String :=
   opsReflectionFor
     (opNames ++ handleOpNames ++ storeHandleOpNames ++ storeServeOpNames ++ packOpNames
-       ++ extOpNames ++ lwsSolidOpNames
+       ++ extOpNames ++ lwsSolidOpNames ++ xmppSessionOpNamesList
        ++ formatOpNames ++ serviceOpNames
        ++ query12OpNames)
 
@@ -656,6 +662,15 @@ def callIOUncoded (op : String) (argsJson : String) : IO String :=
         match args with
         | [a, b] => pure (Ops.solidClientResponse a b)
         | args => pure (errJson s!"solidClientResponse expects 2 arguments, got {args.length}"))
+  -- The XMPP server as handles (`Wasm/Ops/XmppSession.lean`).
+  | "xmppOpen"           => withArgs (arityIO1 op Ops.xmppOpen)
+  | "xmppClose"          => withArgs (arityIO1 op Ops.xmppClose)
+  | "xmppSessionOpen"    => withArgs (arityIO2 op Ops.xmppSessionOpen)
+  | "xmppSessionFeed"    => withArgs (arityIO2 op Ops.xmppSessionFeed)
+  | "xmppSessionDeliver" => withArgs (arityIO2 op Ops.xmppSessionDeliver)
+  | "xmppSessionClose"   => withArgs (arityIO1 op Ops.xmppSessionClose)
+  | "xmppRosterGet"      => withArgs (arityIO2 op Ops.xmppRosterGet)
+  | "xmppRosterSet"      => withArgs (arityIO3 op Ops.xmppRosterSet)
   | "storeHandleList" =>
       withArgs (fun args =>
         match args with
