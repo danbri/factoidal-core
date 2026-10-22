@@ -73,6 +73,12 @@ it does not authorize publishing, messaging, or changes outside the task.
   the profile returns a wrong decided answer. Include repeated and grouped
   zero-width assertions, and keep refusals separate from matches and failures.
   Do not use the production comparison layer as its sole test oracle.
+- Check the caller's specification edition before choosing a shared profile.
+  When admitting legacy character tables, test positive and complement classes
+  at non-ASCII boundaries. Check sorted/disjoint preconditions before interval
+  complement: the XSD name table's unsorted union made both `\\c` and `\\C`
+  accept U+00B7. Correct union membership does not prove correct complement.
+  Report additional exclusions as lost coverage, even when failures stay zero.
 - When reconciling stale tests with a narrowed API, retain the normative
   expectation and original failures. Label an unsupported known contradiction
   as a decision-coverage gap even when its explicit-refusal contract test

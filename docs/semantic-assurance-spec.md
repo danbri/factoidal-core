@@ -231,6 +231,20 @@ such as repeated-anchor idempotence; a production comparator cannot be its
 own sole oracle. A host implementation is a valid oracle only for the same
 dated semantic contract and admitted scope.
 
+**PROFILE-2.** Preserve the caller's specification edition when selecting a
+shared profile. XSD 1.1 name escapes must not accidentally use an XSD 1.0
+admission policy. Record recovered and excluded test counts separately;
+zero failures with additional exclusions is not unchanged coverage.
+
+**RANGES-1.** Establish the representation preconditions of each operation.
+Membership in a union of intervals can tolerate unsorted input; a complement
+algorithm may require sorted, disjoint intervals. Normalize or prove that
+invariant before calling it. New character-class admission must test both
+positive and complement classes with non-ASCII boundary witnesses. The
+integration exposed `\\c` and `\\C` both accepting U+00B7 because the name
+table appended extra intervals out of order. A correct membership result did
+not establish correctness of its complement.
+
 **QA-RECONCILE-1.** When a public contract narrows, record each changed test
 expectation and the lost decision coverage. A test for an explicit unknown
 is an API-contract test; it is not a conformance pass for the unresolved
