@@ -720,6 +720,11 @@ the draft's "Authorization" section (w3c/lws-protocol 9a08ff65):
   gives a new storage a root ACL with Read, Write and Control for the owner.
 * The LWS draft defines no DPoP binding, so the LWS host takes Bearer only.
 
+An authorization server for these tokens is its own component, `factoidal
+authz-serve` (https://github.com/danbri/factoidal/issues/916): start it with
+`--resource <base>.well-known/lws-storage` and give lws-serve `--issuer
+<its issuer>`. Operating manual: [`skills/authz-server/SKILL.md`](../authz-server/SKILL.md).
+
 Test: `node tests/lws/authorization.mjs` runs a local authorization server
 (RFC 8414 metadata and a JWK Set, ES256 keys from `node:crypto`) and checks
 the positive and negative cases; `L4Factoidal/LWS/AuthorizationTests.lean`
@@ -742,7 +747,9 @@ authorization server (`auth`). It passes `--page-size 4`
 (`LWS_PAGE_SIZE`), so the pagination tests apply. `TOUCHSTONE_SRC` names
 an existing clone to copy. `--unstable-search-results` starts the server
 with the anticipatory results resource (issue 922; target ids get the
-suffix `-unstable`); a default run never sets it. `--merkle` starts the server with the
+suffix `-unstable`); a default run never sets it. `--authz factoidal` runs the
+authorization-on configurations with OUR `authz-serve` in place of the reference
+authorization server (ids get the suffix `-fas`; `skills/authz-server`). `--merkle` starts the server with the
 optional Merkle hashes (issue 919; ids get the suffix `-merkle`).
 
 Five tests have preconditions that exclude one another, so no one server
@@ -867,10 +874,14 @@ specification passes it. That is what
 ## What is stubbed, and what is a stated boundary
 
 Not in the first slice, recorded so nobody assumes it: Solid-OIDC token
-issuance, Access Control Policy, Solid Notifications channels on the Solid
+issuance (the LWS authorization server, `authz-serve`, issues LWS access
+tokens, which solid-serve does not accept yet:
+https://github.com/danbri/factoidal/issues/928), Access Control Policy, Solid Notifications channels on the Solid
 server (the LWS server has the webhook suite, above),
-persistence into Shardborough, and the LWS `authn-openid`, `authn-saml`
-and `authn-ssi` drafts.
+and persistence into Shardborough. The LWS `authn-openid` and `authn-ssi`
+drafts are implemented by the authorization server (`skills/authz-server`);
+`authn-saml` is not (no XML Signature verifier:
+https://github.com/danbri/factoidal/issues/926).
 
 **Authentication is decided in Lean.** The JOSE layer
 (`L4Factoidal/JOSE/`) verifies ES256, RS256 and EdDSA through the vendored

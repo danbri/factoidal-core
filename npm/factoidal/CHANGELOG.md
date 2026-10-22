@@ -41,6 +41,48 @@ generated from the engine's list.
 - `@factoidal/core/fn` `entail()` with an `x-ikl-*` regime rejects with code
   `regime.refused` and the message names `query`, the function that refuses.
 
+An authorization server as a component (https://github.com/danbri/factoidal/issues/916;
+design record `docs/designissues/2026-10-22-authorization-server.md`; skill
+`skills/authz-server/SKILL.md`), decided in Lean (`L4Factoidal/Authz/`):
+
+- `factoidal authz-serve DIR --resource IRI[,IRI...]` and
+  `import { listen } from '@factoidal/core/authz'`: RFC 8414 metadata at
+  `/.well-known/lws-configuration` (and `/.well-known/oauth-authorization-server`),
+  a JWK Set, and an RFC 8693 token endpoint that exchanges a subject token for
+  an RFC 9068 access token whose `aud` is exactly the requested resource
+  (lws10-core "Authorization"). `lws-serve --issuer <its issuer>` accepts its
+  tokens with no other setting. `factoidal authz-keys DIR` prints the JWK Set.
+- Subject tokens: OpenID Connect ID tokens (lws10-authn-openid) and
+  self-issued JWTs for https and did:key subjects (lws10-authn-ssi-cid; P-256
+  and Ed25519 did:keys). SAML 2.0 is refused and not advertised: there is no
+  XML Signature verifier (https://github.com/danbri/factoidal/issues/926).
+  solid-serve does not accept these tokens yet
+  (https://github.com/danbri/factoidal/issues/928).
+- Documents the server fetches for a subject token: `https` only (`--allow-http`
+  for tests), never from a loopback, link-local or private address
+  (`--allow-private-fetch` for tests), from the address the engine checked,
+  with no redirect.
+- Keys: ES256 by default (`--alg EdDSA`), signed by HACL\* through three new
+  P-256 externs (sign, secret-to-public, point decompression; RFC 6979 and
+  Wycheproof vectors in `lake exe l4crypto-probe`); `kid` is the RFC 7638
+  thumbprint; `--rotate-after` rotates and keeps the old key published until
+  its tokens expire; `DIR/authz-keys.json` (mode 0600) is sealed under
+  `FACTOIDAL_LWS_KEY` when it is set.
+- New ops `authzOpen`, `authzStep`, `authzFetched`, `authzKeys`, `authzRotate`,
+  `authzClose`.
+- Theorems: `issueToken_verifies_published` and `issueToken_audience_exact`
+  hold because of a run-time check of every issued token (the proof that
+  removes the check: https://github.com/danbri/factoidal/issues/927);
+  `exchange_refused_no_token` (a subject token that fails validation never
+  yields an access token), `cid_valid_verified`, `didKey_valid_verified`,
+  `oidc_valid_named_provider`, `chooseAddress_refuses_private` and others.
+- Touchstone with this server in place of its reference one
+  (`tools/lws-touchstone.sh --config auth --authz factoidal`, 2026-10-22):
+  212 passed, 0 failed, 9 inapplicable (out of 221); of these
+  core/authorization_server 9 pass, 0 fail (out of 9), auth/oidc 6 pass,
+  0 fail (out of 6), auth/cid 22 pass, 0 fail (out of 22), auth/saml 3
+  inapplicable (issue 926).
+
 Linked Web Storage kept in files, stage 1 (https://github.com/danbri/factoidal/issues/918;
 design record `docs/designissues/2026-10-22-lws-storage-on-disk.md`), decided in
 Lean (`L4Factoidal/LWS/Journal.lean`, `FileLayout.lean`):

@@ -61,6 +61,15 @@ the permission of the owner. The drafts define:
   (https://github.com/danbri/factoidal/issues/919,
   `docs/designissues/2026-10-21-lws-merkle.md`).
 
+- an authorization server as its own component, `factoidal authz-serve`
+  (https://github.com/danbri/factoidal/issues/916): RFC 8414 metadata, a JWK
+  Set and RFC 8693 token exchange for OpenID Connect ID tokens and
+  self-issued credentials of https and did:key subjects; `lws-serve --issuer`
+  points at it. With it in place of Touchstone's reference server: 212
+  passed, 0 failed, 9 inapplicable (out of 221), the 3 SAML tests among the
+  inapplicable (no XML Signature verifier,
+  https://github.com/danbri/factoidal/issues/926).
+
 The same engine serves the Solid Protocol (`solid-serve`) and has a Solid
 client. The same package also parses, queries (SPARQL), validates (SHACL,
 ShEx) and reasons over RDF.
