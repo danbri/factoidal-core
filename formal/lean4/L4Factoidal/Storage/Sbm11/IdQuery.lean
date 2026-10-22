@@ -917,6 +917,11 @@ structure Store (m : Type → Type) where
       driver (`Harness/Sbm11Query.lean`) sets it when `--threads` is above 1;
       it must return the table of `scanTableM` (`ParallelScanTheorems`). -/
   scanTable : Option (ScanSpec → ExceptT String m (Table × ScanStats)) := none
+  /-- issue 799, KR 1.2: a replacement for `scanSipTableM` (the scan with
+      candidates), used by `scanForJoinM`. `none` is the single-thread path.
+      The parallel driver sets it when `--threads` is above 1; it must return
+      the table and the statistics of `scanSipTableM`. -/
+  scanSipTable : Option (ScanSpec → Array UInt64 → ExceptT String m (Table × ScanStats)) := none
   /-- issue 809: the right scan of a merge join takes the left values of the
       join variable as candidates when `k × left rows < estimate` for
       `sipFactor = some k` (`sipRule`; 16 by default, 0 whenever the shape
@@ -1710,6 +1715,27 @@ def scanSipTableM {m : Type → Type} [Monad m] (st : Store m) (spec : ScanSpec)
                         rows := 0, sortVar := sortVarOf spec }
   scanFoldSipM st spec cands init fun acc ch => pure (acc.append ch.table, true)
 
+/-- `scanSipTableM`, or the store's `scanSipTable` when it sets one. -/
+def scanSipTableOf {m : Type → Type} [Monad m] (st : Store m) (spec : ScanSpec) (cands : Array UInt64) :
+    ExceptT String m (Table × ScanStats) :=
+  match st.scanSipTable with
+  | some f => f spec cands
+  | none => scanSipTableM st spec cands
+
+/-- The loop of `scanFoldSipM` over the selected-block positions `sel`
+    (positions in `metas`), from the state `init`, with no delta overlay
+    (`ox.on = false`): the parallel scan with candidates
+    (`Harness/Sbm11Query.lean`, issue 799, KR 1.2) runs one such loop per
+    block range, as `scanListM` does for a scan without candidates, and
+    appends the tables in range order. -/
+def scanListSipM {m : Type → Type} [Monad m] {σ : Type} (st : Store m) (spec : ScanSpec)
+    (cands : Array UInt64) (init : σ) (f : σ → Chunk → ExceptT String m (σ × Bool))
+    (metas : Array BlockMeta) (sortVar : Option String) (ox : OvCtx) (sel : List Nat) :
+    ExceptT String m (σ × ScanStats) := do
+  let s ← forIn sel { acc := init, stats := {}, insPos := 0, stopped := false }
+    (scanBlockSipM st spec cands f metas sortVar ox)
+  return (s.acc, s.stats)
+
 /-- The rule that selects sideways information passing for a scan, with
     the store's factor `k` (`Store.sipFactor`, 16 by default): the left input
     has fewer than `1/k` of the rows the PRM1 entries give for the scan
@@ -1781,7 +1807,7 @@ def scanForJoinM {m : Type → Type} [Monad m] (st : Store m) (spec : ScanSpec) 
     if left.vars.contains v && sipRule st.sipFactor left.rows estimate then
       match sipCands left v with
       | some cands =>
-        let (t, s0) ← scanSipTableM st spec cands
+        let (t, s0) ← scanSipTableOf st spec cands
         let s := s0.withSip
         return (t, s, s!"; sideways ?{v}: {cands.size} candidates, blocks skipped {s.sipSkipped}, key values tested {s.keysTested} (on words in {s.sipWordBlocks} blocks), rows gathered {s.rowsGathered}")
       | none => pure ()

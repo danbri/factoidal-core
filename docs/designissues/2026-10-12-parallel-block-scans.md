@@ -553,3 +553,91 @@ apply) and was initialised with `git submodule update --init --depth 1`;
 `tools/fetch-builds.sh --set native` and `--set web` installed the release
 of source commit `e3c3aa013871` (the F\* binaries for `known-defects`);
 `L4FACTOIDAL_BIN` named this worktree's Lean build.
+
+## Stage 1c: OKR batch 3 KR 1.2 (2026-10-22)
+
+Issue https://github.com/danbri/factoidal/issues/799, key result in
+https://github.com/danbri/factoidal/issues/875. Target: 4-thread over
+1-thread ratio at most 0.4 for DBpedia d10 and d17 and olympics q21, q19, q07;
+peak RSS at 4 threads at most 2 times the 1-thread RSS.
+
+Method: `tests/sbm11/bench-threads.sh`, 6 rounds (round 1 dropped), 7 runs per
+process, median of medians. Machine: 4 vCPU, shared with another agent's
+builds and audits; the 1-minute load average was 1.6 to 5.5 during the runs.
+Ratios of runs under that load are not reliable to better than about 0.1.
+Profiles: `/usr/lib/linux-tools-6.8.0-146/perf record -e cpu-clock
+--call-graph dwarf` and `-e page-faults -c 1`.
+
+| Query | 1 thread before / after (ms) | 4 threads before / after (ms) | 4/1 before | 4/1 after | RSS MB 1 / 4 threads after |
+| --- | ---: | ---: | ---: | ---: | ---: |
+| d10 | 32.4 / 10.6 | 16.8 / 6.7 | 0.52 | 0.63 | 26 / 49 |
+| d17 | 0.37 / 0.39 | 0.41 / 0.39 | 1.11 | 1.01 | 22 / 22 |
+| q21 | 209.8 / 114.2 | 81.5 / 42.3 | 0.39 | 0.37 | 43 / 104 |
+| q19 | 109.5 / 37.4 | 69.1 / 26.1 | 0.63 | 0.70 | 59 / 108 |
+| q07 | 10.4 / 6.5 | 7.5 / 6.5 | 0.72 | 0.99 | 26 / 39 |
+
+d17 is not a scan query any more: commit `ddcd9e54` answers it from the PRM1
+entries (0.4 ms at every thread count, no block read), so its ratio is not
+a measure of the scan. q21 meets 0.4. The other ratios got worse because the
+1-thread time fell more than the 4-thread time: absolute times fell by 2.5
+to 3.5 times at 4 threads for d10, q19 and q21, and q07 at 1 thread by 1.6
+times (part of that is the upstream commit `885ec1d1`). q19 and q21 RSS
+ratios: 1.84 and 2.44, not within 2.
+
+What landed:
+
+1. `countChunk` (d10): the end of a run of equal keys is found with one word
+   read per row (`runEnd`, `Codec.Zstd.word64U`); the key list is built once
+   per run. `countChunkRef` is the first version. d10 at 1 thread 32.4 to
+   10.8 ms. Tested, not proved: `l4scanfold-test` compares the two on 108
+   generated chunks (`tests/sbm11/run.sh` part (x)).
+2. Frame decoders with `Prim.Bytes.pushU64LE`: `FrameWords.decodeWordsF`,
+   `decodeWordsRangeF`, proved equal to the spec decoders
+   (`decodeWordsF_eq`, `decodeWordsRangeF_eq`); `colAll_slice` and
+   `colRange_slice` rewrite with them. `put64` was eight `lean_byte_array_push`
+   calls (18 percent of d10). The extern cannot run in the build-time
+   interpreter, so the two scan `#guard`s of `ScanFoldTests` became the
+   compiled program `l4scanfold-test`.
+3. Divided streamed path: each 512-row piece buffer is sized from the bytes
+   per row of the previous piece. The 64 bytes per row reserved before made
+   a piece copy itself to larger buffers; those copies were 43 percent of the
+   698 page faults of q21 at 4 threads. q21 RSS at 4 threads 150 to 104 MB.
+4. Dictionary page cache: default 8,192 pages (was 2,048; q19 needs between
+   4,096 and 8,192), a full cache drops one sixteenth instead of everything,
+   256 pages per task (was 1,024). q19 at 1 thread 100 to 37 ms. The
+   comparison "before" at the old default includes that thrash, so the ratios
+   of q19 and q21 moved against the target because the 1-thread time fell.
+5. Scans with candidates are divided into block ranges
+   (`scanSipTableParM`, `scanListSipM`, `Store.scanSipTable`), with
+   `ParallelSipTheorems.parallel_sip_acc_eq` (list form, no hypothesis states
+   the conclusion; the `Table` and `IO` steps are tested by
+   `tests/sbm11/threads.sh`). Tasks use the pool (no `.dedicated`): q07 at
+   4 threads 5.9 to 5.2 ms in single runs. It gave no measured gain over the
+   undivided scan under the machine load (q07 ratio 0.99, 8 threads 0.83).
+
+Remaining costs (profiles above):
+
+- Per-query parallel overhead of CPU time: at 4 threads CPU time is 1.4 to
+  1.5 times the 1-thread CPU time for q07 (2.8 s against 1.9 s for 300 runs)
+  and 1.3 to 1.5 for d10. The sources seen: first-touch faults of 2 MB huge
+  pages in each worker's mimalloc heap (`clear_page_erms`, 15 percent of d10
+  at 4 threads against 3 percent at 1; 27 faults per run, 1 `madvise` purge
+  per run; with `MIMALLOC_PURGE_DELAY=-1` the faults fall from 2,973 to 468
+  per 100 runs), and atomic reference counts of shared values. Lean's
+  semantics do not need them; the allocator setting is a process option, not
+  a Lean program change, and was not made.
+- d10 and q07 are 6 ms queries; with 1-thread times of 10.6 and 6.5 ms and
+  task start and merge costs of the order of 0.3 ms per task, a ratio of 0.4
+  needs a persistent worker heap (the faults above) that this work did not
+  build.
+- Peak RSS of divided streamed scans: the rows of all ranges are held until
+  the parent writes them (q21: 137,026 rows, about 23 MB), plus the shared
+  page level and per-thread heaps (`MIMALLOC_ARENA_EAGER_COMMIT=0` halves RSS
+  of d10 at 4 threads). The 2 times limit is not met for q19 or q21.
+- Gates for the rebased tree: `lake build` exit 0; `tests/sbm11/threads.sh`
+  exit 0 (all answers identical, including the new default-limit and
+  2,048-page sections); `tests/sbm11/run.sh` and
+  `SBM11_THREADS=4 tests/sbm11/census.sh` were run on the tree of the first
+  commit and of the page-cache and piece commits before the rebase (3,112
+  pass, 0 fail, 29 expected-fail; 605 executed, 605 matched, 0 differed) and
+  not again after it; the three `tools/lean-*.py --gate` audits exit 0.
