@@ -2777,11 +2777,11 @@ def divideFor? {m : Type → Type} [Monad m] (st : Store m) (par : Option (Par m
     `renderRowsM` writes for a row after the first), into a new buffer; and
     the end offset of each row in it. -/
 def renderRowsEndsM {m : Type → Type} [Monad m] (st : Store m) (reference : Bool) (t : Table)
-    (vars : Array String) (lo hi : Nat) : ExceptT String m (ByteArray × Array Nat) := do
+    (vars : Array String) (lo hi : Nat) (rowBytes : Nat := 64) : ExceptT String m (ByteArray × Array Nat) := do
   let names := nameBytes vars
   let cols : Array (Nat × Nat) := (List.range vars.size).toArray.filterMap fun k =>
     (t.idx vars[k]!).map fun c => (k, c)
-  let mut out := ByteArray.emptyWithCapacity (64 * (hi - lo))
+  let mut out := ByteArray.emptyWithCapacity (rowBytes * (hi - lo))
   let mut ends : Array Nat := Array.mkEmpty (hi - lo)
   for i in [lo:hi] do
     out := out.push 44
@@ -2879,17 +2879,26 @@ def streamPartM {m : Type → Type} [Monad m] (st : Store m) (spec : ScanSpec) (
   let fs := fs.map FKind.fresh
   let ox := ox.fresh spec.key
   let memos0 : Array Memo := fs.map fun _ => {}
-  let ((_, pieces, _), s) ← scanListM st spec true (memos0, (#[] : Array (ByteArray × Array Nat)), (0 : Nat))
-      (fun (memos, pieces, n) ch => do
+  -- `rowBytes`: the capacity per row of the next piece, from the pieces so
+  -- far (their bytes per row, one eighth more). A piece that outgrows its
+  -- buffer is copied to a larger one, and the copies were the largest source of
+  -- page faults and of peak memory of the divided path (olympics q21 at 4
+  -- threads, issue 799, KR 1.2).
+  let ((_, pieces, _, _), s) ← scanListM st spec true (memos0, (#[] : Array (ByteArray × Array Nat)), (0 : Nat), (64 * (vars.size + 1) : Nat))
+      (fun (memos, pieces, n, rowBytes) ch => do
         let (tab, memos) ← applyFilters st fs memos ch.table
         let take := min (cap - n) tab.rows
-        if take == 0 then return ((memos, pieces, n), n < cap)
+        if take == 0 then return ((memos, pieces, n, rowBytes), n < cap)
         if let some f := st.prefetch then f tab take
         let mut pieces := pieces
+        let mut rowBytes := rowBytes
         for k in [0:(take + pieceRows - 1) / pieceRows] do
           let lo := k * pieceRows
-          pieces := pieces.push (← renderRowsEndsM st reference tab vars lo (min take (lo + pieceRows)))
-        pure ((memos, pieces, n + take), n + take < cap))
+          let hi := min take (lo + pieceRows)
+          let piece ← renderRowsEndsM st reference tab vars lo hi rowBytes
+          if hi > lo then rowBytes := (piece.1.size / (hi - lo)) * 9 / 8 + 16
+          pieces := pieces.push piece
+        pure ((memos, pieces, n + take, rowBytes), n + take < cap))
       metas (sortVarOf spec) ox X
   return (pieces, s)
 
