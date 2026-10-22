@@ -86,6 +86,12 @@ and test first. Bring runtime dependencies and proofs into this repository
 together; a successful build or measurement in the older `factoidal`
 checkout is not validation of this checkout.
 
+Owner, 2026-10-11: **"then continue working towards shockingly good perf, ie. SOTA".**
+Performance parity is an intermediate target. Continue towards state-of-the-art
+performance with Lean 4 implementations, tests written first, exact complete
+answers, and separate measurements against leading databases. Synthetic wins
+do not establish this goal.
+
 Owner, 2026-10-10: **"if using /Users/danbri/working/factoidal/formal/lean4
 make sure git is up to date with remote changes".** Fetch before reuse and
 check ancestry and relevant source differences. Use a non-destructive

@@ -54,7 +54,10 @@ def State.add [BEq η] [Hashable η] (state : State κ η β)
     | some index =>
         ⟨groups.modify index (fun group => { group with solutions := row :: group.solutions }), positions⟩
     | none =>
-        ⟨groups.push ⟨key, [row]⟩, positions.insert encoded groups.size⟩
+        -- Read the old size before push, so native evaluation need not keep
+        -- an extra array reference alive while growing a new group.
+        let positions := positions.insert encoded groups.size
+        ⟨groups.push ⟨key, [row]⟩, positions⟩
 
 def hashFrom [BEq η] [Hashable η] (same : κ → κ → Bool) (encode : κ → Option η)
     (key : α → κ) (value : α → β) : List α → State κ η β → List (Group κ β)

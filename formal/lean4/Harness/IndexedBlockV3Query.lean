@@ -205,7 +205,7 @@ private def finishObjectSubjectSelect (query : Query) (entries : List Entry)
         "ibk3-sri2-tli1-oli2-object-subject-direct-select-distinct-subject")
     | none => (query, objectSubjectSolutions subjectVar objectVar drivers targets,
         "ibk3-sri2-tli1-oli2-object-subject-direct-select")
-  let rows := selectPost emptyEnv emptyEnv.activeGraph executionQuery inputRows
+  let rows := HashGrouping.selectPostFast emptyEnv emptyEnv.activeGraph executionQuery inputRows
   printDiagnostic s!"l4block-id-v3-query shards={entries.length} open-mode={mode}({predicates.length}) delta=base logical-read-bytes={counters.requestedBytes} fetched-bytes={counters.fetchedBytes}"
   printDiagnostic s!"l4block-id-v3-query sse={query.toSse}"
   printRows query rows
@@ -219,7 +219,7 @@ private def finishObjectSubjectSelect (query : Query) (entries : List Entry)
 private def finishSubjectTripleSelect (query : Query) (entries : List Entry)
     (predicates : List WfIri) (subjectVar driverVar leftVar rightVar : VarName)
     (drivers lefts rights : List Triple) (counters : Counters) : QueryIO UInt32 := do
-  let rows := selectPost emptyEnv emptyEnv.activeGraph query
+  let rows := HashGrouping.selectPostFast emptyEnv emptyEnv.activeGraph query
     (subjectTripleSolutions subjectVar driverVar leftVar rightVar drivers lefts rights)
   printDiagnostic s!"l4block-id-v3-query shards={entries.length} open-mode=ibk3-sri2-tli1-subject-triple-direct-select({predicates.length}) delta=base logical-read-bytes={counters.requestedBytes} fetched-bytes={counters.fetchedBytes}"
   printDiagnostic s!"l4block-id-v3-query sse={query.toSse}"

@@ -22,7 +22,9 @@ The [varied-workload follow-up](docs/20261011-shardborough-relational-workloads.
 now checks nine full answers through 1.57 million triples. It fixes nested
 aggregate evaluation and adds proved cached planner counts. Chain joins
 approach QLever's timings, while grouping and selective queries expose large
-remaining gaps. Industry parity remains open.
+remaining gaps. The subsequent [proved hash grouping](docs/20261011-shardborough-hash-grouping.md)
+reduces the large grouped-count query from 5.81 seconds to 148 ms, a 39-fold
+improvement with exact ordered answers. Parity and SOTA remain open.
 Historical suite counts and deployment links below are not a fresh test run
 of this checkout.
 

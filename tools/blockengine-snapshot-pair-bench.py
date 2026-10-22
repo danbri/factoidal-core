@@ -55,6 +55,7 @@ def main():
     artifacts = D.collection_hashes(collection, **collection_limits)
     hashes = {mode: D.sha256(path) for mode, path in binaries.items()}
     directory.mkdir(parents=True, exist_ok=True)
+    clock = B.ClockWindow()
     report = {
         "benchmark": "shardborough-snapshot-pair-v1", "all_checks_passed": False,
         "timestamp_utc": datetime.now(timezone.utc).isoformat(),
@@ -138,6 +139,11 @@ def main():
             except (OSError, ValueError, subprocess.SubprocessError) as error:
                 report["all_checks_passed"] = False
                 report.setdefault("shutdown_errors", {})[mode] = str(error)
+        try:
+            report["clock_check"] = clock.check()
+        except ValueError as error:
+            report["all_checks_passed"] = False
+            report["clock_error"] = str(error)
         report["cpu_after"] = B.cpu_snapshot()
         save()
     print(f"report={directory / 'report.json'} all_checks_passed={report['all_checks_passed']}")

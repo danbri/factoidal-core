@@ -71,6 +71,7 @@ No `sorry`, no user `axiom`, no `native_decide`.
 import L4Factoidal.SPARQL.StoreFastPath
 import L4Factoidal.SPARQL.IndexedEvalRefinement
 import L4Factoidal.SPARQL.IndexedExists
+import L4Factoidal.SPARQL.HashGrouping
 
 namespace L4Factoidal.SPARQL.StoreDataset
 
@@ -501,7 +502,7 @@ def evalSelectBackendOnGraph (env : EvalEnv) (q : Query) (gb : GraphBackend)
           | none =>
               match q.form with
               | .select _ =>
-                  some (selectPost env env.activeGraph q (evalPatternBackend env dsb q.pattern gb))
+                  some (HashGrouping.selectPostFast env env.activeGraph q (evalPatternBackend env dsb q.pattern gb))
               | _ => none
 
 /-- SELECT against the whole dataset. The GROUP BY ?g fast path is the

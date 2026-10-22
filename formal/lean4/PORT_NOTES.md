@@ -14202,6 +14202,56 @@ See `docs/20261011-shardborough-relational-workloads.md` and its JSON record
 for exact answers, native and competitor configurations, scaling, preparation
 and RSS boundaries, proof scope and remaining work. Industry parity remains open.
 
+### 2026-10-11 — Stable hash grouping and protected timing windows
+
+`SPARQL.StableGrouping` now accumulates first-appearance groups in an array
+addressed by a hash map, with reversed rows during accumulation and one final
+reversal. `State.Valid` certifies both group coverage and address soundness.
+`fast_eq` proves the complete ordered groups and rows equal reference insertion
+under an exact partial encoder. Unsupported keys need no equivalence-relation
+premise: the fallback retains even multiple-group updates under a non-transitive
+Boolean relation. Generated native C consumes the state and updates its array;
+reading the old size before push avoids an extra live array reference.
+
+`SPARQL.HashGrouping.atom_exact` and `key_exact` establish that the admitted
+SPARQL ordering keys satisfy that contract. IRIs, blank nodes, Booleans,
+unbound values and raw literal datatype/lexical/language fields are supported;
+numeric expression results and triple terms use the exact fallback. Grouping
+ordering equality differs from `Term.joinKey`. `groupSolutionsFast_eq` and
+`selectPostFast_eq` prove full grouping and SELECT post-phase equality for
+all environments, queries, active graphs and input sequences. The backend and
+two native direct disk finishers call the wrapper. Reference evaluation,
+subquery lowering and implicit grouping retain their prior code. Only standard
+Lean axioms are used. F* lineage is `SPARQL11.Algebra.fst`'s `eval_group_key`,
+`keys_equal`, `add_to_groups` and `group_by`; the hash algorithm and refinements
+are new Lean work, without an inherited F* proof claim.
+
+Eleven generic guards, seventeen SPARQL key/group guards, sixty modifier cases,
+a fallback guard and fifteen independent native answers accompany the change.
+The complete build passes 747 jobs, W3C reference/harness tests remain 631/631,
+and native snapshot, Unicode/control escaping and IBK3/4/5 JSON checks pass.
+The reference Query source is unchanged during this increment.
+
+The host power audit found sleep inside initial large paired and QLever runs.
+Their complete answers remain valid, but their timings are excluded. A first
+Virtuoso attempt returns HTTP 500 during sleep/wake and remains invalid.
+Three Python snapshot benchmark drivers now reject more than one second of
+wall/uptime divergence across their whole run. Six test-first guards and two
+actual-driver injected-suspend checks establish rejection. Protected reruns use
+an owned `caffeinate -i` command, without changing global power settings.
+
+The protected five-sample local pair at 1,570,231 triples reduces grouped COUNT
+from 5.808 seconds to 147.812 ms, 39.3-fold, with exact answers and close control
+medians. Protected competitor grouping remains slower than QLever (153.114
+versus 4.448 ms) and Virtuoso (148.948 versus 8.749 ms). All nine complete varied
+answers match each competitor; the successful complete Virtuoso retry has a
+separate power-log audit and a protected grouping rerun. Preparation, RSS after
+readiness, parallelism and transports remain distinct. These synthetic results
+do not establish parity or SOTA. See `docs/20261011-shardborough-hash-grouping.md`
+and its JSON record for raw samples, hashes, proof boundaries, clock readings,
+failed/interrupted trials and remaining selective-query/allocation gaps.
+
+
 ## XML namespace consumer integration (2026-10-21)
 
 This is a Lean-only integration repair, not a claim that the corresponding F*

@@ -154,6 +154,9 @@ import L4Factoidal.SPARQL.OrderedSubjectTheorems
 import L4Factoidal.SPARQL.MetadataCountTests
 import L4Factoidal.SPARQL.MetadataCountTheorems
 import L4Factoidal.SPARQL.StringOrderTests
+import L4Factoidal.SPARQL.StableGroupingTests
+import L4Factoidal.SPARQL.StableGroupingTheorems
+import L4Factoidal.SPARQL.HashGroupingTests
 import L4Factoidal.SPARQL.AggregateExpressionTests
 import L4Factoidal.SPARQL.AggregateExpressionTheorems
 import L4Factoidal.SPARQL.SelectSliceTests

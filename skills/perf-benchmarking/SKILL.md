@@ -133,6 +133,27 @@ line with its size directory. Preserve parse-failed prototype samples as
 discarded evidence, not timings of the corrected query, and exclude profiled
 or build-contended samples explicitly before calculating medians.
 
+The subsequent 2026-10-11 stable hash-grouping change has a universal
+complete-group and SELECT post-phase refinement. Its local large pair reduces
+grouped count from 5.808 seconds to 147.812 ms. Keep this 39-fold local result
+separate from competitor reruns and from the still-open SOTA goal. The initial
+5,334-triple timing pilot ran during heavy Chrome GPU CPU use; retain its
+exact answers but exclude its timings. The later profiles are diagnostics,
+not latency samples. Native key semantics follow ordering equality, with
+exact numeric-expression/triple-term fallback; do not substitute join keys.
+Reference evaluator/subquery call sites retain their prior grouping code.
+The host power log later exposed sleep during the first large pair and QLever
+windows, even though their uptime-based sample medians looked plausible.
+Exclude their timings, retain their exact answers and use the protected reruns.
+The three snapshot benchmark drivers now reject more than one second of
+wall/uptime divergence across the whole window. Six test-first clock guards
+and two real-driver injected-suspend checks cover rejection. On macOS run
+the owned benchmark under `caffeinate -i`; this changes no global power setting.
+Keep a whole-window clock check: macOS uptime excludes system sleep, so a
+query-only uptime deadline can miss a pause. A clock adjustment also rejects
+the window conservatively. The guard does not establish a quiet CPU host.
+See `docs/20261011-shardborough-hash-grouping.md` and its JSON record.
+
 ### Turtle/parser throughput — `formal/fstar/bench-turtle-metrics.sh`
 
 Generates four fixtures in `/tmp/factoidal-metrics` (`prefixed-1000`,

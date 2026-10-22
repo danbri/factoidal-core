@@ -23,6 +23,30 @@ D = importlib.util.module_from_spec(SPEC)
 SPEC.loader.exec_module(D)
 
 
+class ClockWindow:
+    """Reject >1 second wall/uptime divergence, including macOS suspend.
+
+    perf_counter excludes system sleep on macOS. Its elapsed values alone
+    can hide a long pause while a competitor's query timeout keeps running.
+    Clock steps also invalidate this conservative window check.
+    """
+    def __init__(self, wall=None, uptime=None):
+        self.wall = wall or time.time_ns
+        self.uptime = uptime or time.perf_counter_ns
+        self.start_wall = self.wall()
+        self.start_uptime = self.uptime()
+
+    def check(self):
+        wall_elapsed = self.wall() - self.start_wall
+        uptime_elapsed = self.uptime() - self.start_uptime
+        skew = wall_elapsed - uptime_elapsed
+        if abs(skew) > 1_000_000_000 or wall_elapsed < 0 or uptime_elapsed < 0:
+            raise ValueError(f"clock discontinuity: wall={wall_elapsed} ns "
+                             f"uptime={uptime_elapsed} ns skew={skew} ns")
+        return {"wall_elapsed_ns": wall_elapsed, "uptime_elapsed_ns": uptime_elapsed,
+                "clock_skew_ns": skew, "tolerance_ns": 1_000_000_000}
+
+
 class Process:
     def __init__(self, command, log, timeout):
         self.log = log.open("wb")
@@ -98,6 +122,7 @@ def main():
     binaries = {name: D.BIN / name for name in ("l4block-id-v3-query", "l4block-snapshot-session")}
     hashes = {name: D.sha256(path) for name, path in binaries.items()}
     artifacts = D.collection_hashes(collection)
+    clock = ClockWindow()
     report = {
         "benchmark": "shardborough-pinned-snapshot-v1", "all_checks_passed": False,
         "timestamp_utc": datetime.now(timezone.utc).isoformat(),
@@ -183,6 +208,11 @@ def main():
             except (OSError, ValueError, subprocess.SubprocessError) as error:
                 report["all_checks_passed"] = False
                 report["shutdown_error"] = str(error)
+        try:
+            report["clock_check"] = clock.check()
+        except ValueError as error:
+            report["all_checks_passed"] = False
+            report["clock_error"] = str(error)
         report["cpu_after"] = cpu_snapshot()
         save()
     print(f"report={directory / 'report.json'} all_checks_passed={report['all_checks_passed']}")

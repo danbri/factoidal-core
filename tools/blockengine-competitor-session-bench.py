@@ -145,6 +145,7 @@ def main():
     hashes = {label: D.sha256(path) for label, path in
               (("native", native), ("loader", loader), ("server", server_binary))}
     artifacts = D.collection_hashes(collection, **collection_limits)
+    clock = B.ClockWindow()
     report = {
         "benchmark": "shardborough-competitor-sessions-v1", "measurement_valid": False,
         "all_answers_exact": True, "engine": args.engine,
@@ -315,6 +316,11 @@ def main():
                 server.wait()
         if log:
             log.close()
+        try:
+            report["clock_check"] = clock.check()
+        except ValueError as error:
+            report["measurement_valid"] = False
+            report["clock_error"] = str(error)
         report["cpu_after"] = B.cpu_snapshot()
         save()
     print(f"report={directory / 'report.json'} measurement_valid={report['measurement_valid']}")
