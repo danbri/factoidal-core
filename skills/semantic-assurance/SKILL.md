@@ -62,6 +62,23 @@ it does not authorize publishing, messaging, or changes outside the task.
   against its coverage proof, separately from decision coverage tests.
 - Output formatting must preserve SERVICE/extension/clock inputs. A native
   harness's validation does not establish validation in the public API.
+- Preserve source datatype distinctions needed by later operations. A
+  value-space projection can be correct for equality and wrong for casting.
+  Pin zero yearMonthDuration (`P0Y` and `P0M` to `P0M`) against zero generic
+  duration and dayTimeDuration (to `PT0S`), including derived string targets.
+  A target-membership theorem cannot distinguish two different valid strings;
+  require a separate source-to-result conversion proposition and caller tests.
+- Test profile admission against an independent reference for the same dated
+  contract. An inherited engine defect becomes an admitted-profile defect if
+  the profile returns a wrong decided answer. Include repeated and grouped
+  zero-width assertions, and keep refusals separate from matches and failures.
+  Do not use the production comparison layer as its sole test oracle.
+- When reconciling stale tests with a narrowed API, retain the normative
+  expectation and original failures. Label an unsupported known contradiction
+  as a decision-coverage gap even when its explicit-refusal contract test
+  passes. Record the reason for each changed expectation in the worknote.
+  See [the PR integration record](../../docs/20261022-pr-integration.md) and
+  [preserved independent review](../../docs/audits/pr1-review-20261022/REVIEW-PR-1.md).
 
 ## Before reporting a repair or release
 

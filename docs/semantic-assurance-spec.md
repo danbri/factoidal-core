@@ -207,6 +207,41 @@ adds a proved bridge for an explicit atomic fragment and removes the
 legacy generated-name collision. It does not discharge the general
 reader, preprocessing, entailment or public-adapter obligations.
 
+## 3a. Shared semantics and specification adequacy
+
+**CONVERSION-1.** Preserve source datatype information whenever the specified
+operation depends on it. A value-space projection sufficient for equality
+need not suffice for casting. For the dated F&O 2007 conversion contract,
+zero yearMonthDuration casts to string `P0M`, including from lexical `P0Y`;
+zero dayTimeDuration and generic duration cast to `PT0S`. State and test
+the source-to-result relation, including derived string targets and callers.
+Returning the original lexical form is not a canonicalization proof.
+
+**CONVERSION-2.** Target membership proves only that a result inhabits the
+target datatype. It does not prove the required conversion: both the wrong
+and correct duration strings are valid strings. State which independent
+specification predicate the theorem connects to the actual producer; retain
+separate membership, conversion, caller and artifact obligations.
+
+**PROFILE-1.** A restricted profile must either implement admitted constructs
+correctly or refuse them explicitly. Test the admission boundary as well as
+the underlying engine. Repeated or grouped zero-width assertions must not
+become consuming characters. Keep independent reference vectors and laws
+such as repeated-anchor idempotence; a production comparator cannot be its
+own sole oracle. A host implementation is a valid oracle only for the same
+dated semantic contract and admitted scope.
+
+**QA-RECONCILE-1.** When a public contract narrows, record each changed test
+expectation and the lost decision coverage. A test for an explicit unknown
+is an API-contract test; it is not a conformance pass for the unresolved
+semantic question. Retain the earlier failed evidence and specification
+expectation. A known contradiction rejected as unsupported remains a
+reasoning capability gap.
+
+These requirements follow the [PR1 independent review](audits/pr1-review-20261022/REVIEW-PR-1.md)
+and [integration record](20261022-pr-integration.md). They do not assert that
+the full shared semantics or every caller has been proved adequate.
+
 ## 4. API transport, validation and refusal
 
 **API-1.** Options that choose output format must preserve the evaluation

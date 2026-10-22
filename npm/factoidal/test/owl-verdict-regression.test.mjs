@@ -35,13 +35,18 @@ for (const [name, input] of [
   });
 }
 
-test('OWL consistency catches a negative object property assertion', async () => {
+// This ontology is inconsistent. Negative property assertions are outside the
+// checked reader, so refusal is an API-contract pass, not a conformance pass.
+// The missing inconsistency verdict remains a recorded capability gap.
+test('OWL consistency refuses negative property assertions outside its checked fragment', async () => {
   const input = `<urn:a> <urn:p> <urn:b> .\n` +
     `_:n <${RDF}type> <${OWL}NegativePropertyAssertion> .\n` +
     `_:n <${OWL}sourceIndividual> <urn:a> .\n` +
     `_:n <${OWL}assertionProperty> <urn:p> .\n` +
     `_:n <${OWL}targetIndividual> <urn:b> .\n`;
-  assert.equal((await owlIsConsistent(input, options)).consistent, false);
+  const answer = await owlIsConsistent(input, options);
+  assert.equal(answer.consistent, null);
+  assert.match(answer.reason, /^unsupported-syntax:/);
 });
 
 test('OWL entailment still returns a closure consequence', async () => {
@@ -61,21 +66,39 @@ test('OWL entailment does not turn a quiescent search into a countermodel', asyn
   assert.match(answer.reason, /incomplete-search/);
 });
 
-test('OWL entailment reports an unsupported negation as indeterminate', async () => {
+test('OWL entailment does not claim a countermodel for an unproved data assertion', async () => {
   const answer = await owlEntails('', '<urn:a> <urn:p> "value" .', options);
   assert.equal(answer.entailed, null);
-  assert.equal(answer.via, 'closure');
-  assert.match(answer.reason, /unsupported-conclusion/);
+  assert.equal(answer.via, 'refutation');
+  assert.match(answer.reason, /^incomplete-search:/);
 });
 
-test('OWL budget exhaustion remains distinct from incomplete search', async () => {
+test('OWL consistency refuses an unsupported restriction before search budgeting', async () => {
   const premise = `<urn:i> <${RDF}type> <urn:A> .\n` +
     `<urn:A> <${RDFS}subClassOf> _:r .\n` +
     `_:r <${OWL}onProperty> <urn:p> .\n` +
     `_:r <${OWL}someValuesFrom> <urn:A> .\n`;
   const answer = await owlIsConsistent(premise, { ...options, fuel: 1 });
   assert.equal(answer.consistent, null);
-  assert.match(answer.reason, /budget-out.*fuel 1 /);
+  assert.match(answer.reason, /^unsupported-syntax:/);
+  assert.doesNotMatch(answer.reason, /budget-out/);
+});
+
+test('OWL consistency compatibility fuel does not disable its fixed certificate checker', async () => {
+  const input = same('a', 'b') + different('a', 'b');
+  for (const fuel of [0, 1, 20000]) {
+    const answer = await owlIsConsistent(input, { ...options, fuel });
+    assert.equal(answer.consistent, false);
+    assert.match(answer.reason, /checked certificate/);
+  }
+});
+
+test('OWL entailment budget exhaustion remains distinct from incomplete search', async () => {
+  const answer = await owlEntails('', `<urn:a> <${RDF}type> <urn:C> .`,
+    { ...options, fuel: 0 });
+  assert.equal(answer.entailed, null);
+  assert.equal(answer.via, 'refutation');
+  assert.match(answer.reason, /^budget-out:.*fuel 0 /);
 });
 
 // C and D name both classes and individuals. Their individual denotations
@@ -88,10 +111,10 @@ const punning = `<urn:C> <${RDF}type> <${OWL}Class> .\n` +
   `<urn:x> <${RDF}type> <${OWL}NamedIndividual> .\n` +
   `<urn:x> <${RDF}type> <urn:C> .\n`;
 
-test('OWL Direct Semantics punning is indeterminate before RDF closure', async () => {
+test('OWL consistency refuses disjoint-class syntax without applying RDF punning substitution', async () => {
   const answer = await owlIsConsistent(punning, options);
   assert.equal(answer.consistent, null);
-  assert.match(answer.reason, /unsupported-punning/);
+  assert.match(answer.reason, /^unsupported-syntax:/);
 });
 
 test('OWL entailment does not substitute sameAs into a punned class name', async () => {
