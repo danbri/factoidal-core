@@ -414,6 +414,7 @@ import L4Factoidal.Storage.Sbm11.UpdateOverlayTheorems
 import L4Factoidal.Storage.Sbm11.ScanFoldTests
 import L4Factoidal.Storage.Sbm11.ScanFoldTheorems
 import L4Factoidal.Storage.Sbm11.SipScanTheorems
+import L4Factoidal.Storage.Sbm11.WindowTheorems
 import L4Factoidal.Storage.Sbm11.ParallelScanTheorems
 import L4Factoidal.Storage.Sbm11.ParallelMergeTheorems
 import L4Factoidal.Storage.Sbm11.PermSet
@@ -772,6 +773,13 @@ import L4Factoidal.LWS.Client.Wire
 import L4Factoidal.LWS.Client.Machine
 import L4Factoidal.LWS.Client.Theorems
 import L4Factoidal.LWS.Client.Tests
+-- The authorization server component (https://github.com/danbri/factoidal/issues/916).
+import L4Factoidal.Authz.Keys
+import L4Factoidal.Authz.Fetch
+import L4Factoidal.Authz.SubjectToken
+import L4Factoidal.Authz.Server
+import L4Factoidal.Authz.Theorems
+import L4Factoidal.Authz.Tests
 import L4Factoidal.Solid.Tests
 
 -- XMPP / GC3 (https://github.com/danbri/factoidal/ ... xmpp/DESIGN.md

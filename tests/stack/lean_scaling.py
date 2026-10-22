@@ -98,14 +98,27 @@ repaired (docs/designissues/2026-10-10-lean-vs-fstar-performance.md):
                    the packer spills its runs to disk at 20,000 terms and the readers
                    keep no source text). A reader that keeps the source (1 byte per
                    byte for the text alone, 24 for a character list) fails the row.
-  sbm11-pack-rdfxml-memory, sbm11-pack-jsonld-memory
-                   the same slope over RDF/XML and JSON-LD at 5,000, 10,000 and
-                   20,000 statements (2 MB to 8 MB). Expected failures:
-                   https://github.com/danbri/factoidal/issues/838 and
-                   https://github.com/danbri/factoidal/issues/839. Both readers
-                   take the whole document before they parse it
-                   (`Source.Reader.whole`): measured 2026-10-14 in three runs, 11.3 to
-                   14.5 bytes of peak RSS per source byte for both syntaxes.
+  sbm11-pack-rdfxml-memory
+                   the same slope over RDF/XML at 25,000, 50,000 and 100,000
+                   statements (11.6 MB to 46.3 MB). The reader reads one child of
+                   rdf:RDF at a time (`Syntax/RdfXmlChunkFold.lean`,
+                   https://github.com/danbri/factoidal/issues/838); measured
+                   2026-10-22: 61.9 MB, 69.0 MB, 80.1 MB, a slope of 0.54 (and
+                   75.8 MB at 200,000 statements, 92.8 MB). Until 2026-10-22 the
+                   reader kept the whole document (`Source.Reader.whole`): 11.3 to
+                   14.5 bytes of peak RSS per source byte, an expected failure at
+                   5,000 to 20,000 statements. The row was moved to 25,000, the size
+                   of the Turtle row, because below the packer's run of 20,000 terms
+                   the packer's own runs grow with the input: at 5,000, 10,000 and
+                   20,000 statements the Turtle source gives 2.54 and the RDF/XML
+                   source 3.57 bytes per source byte with the same packer.
+  sbm11-pack-jsonld-memory
+                   the same slope over JSON-LD at 5,000, 10,000 and 20,000
+                   statements (2 MB to 8 MB). Expected failure:
+                   https://github.com/danbri/factoidal/issues/839. The reader takes
+                   the whole document before it parses it (`Source.Reader.whole`):
+                   measured 2026-10-14 in three runs, 11.3 to 14.5 bytes of peak RSS
+                   per source byte.
   sbm11-export-nq-memory, sbm11-export-ttl-memory, sbm11-export-trig-memory
                    peak resident memory of `l4sbm11 export` per byte of output, measured
                    at x, 2x and 4x (25,000, 50,000 and 100,000 statements of about 400
@@ -572,7 +585,6 @@ ROW_BOUND = {"owlrl-closure-chain": 20.0, "termwire-page-decode": 6.0}
 # leaves this table in the commit that repairs it.
 XFAIL: dict[str, str] = {
     "query-memory-fstar": "https://github.com/danbri/factoidal/issues/729",
-    "sbm11-pack-rdfxml-memory": "https://github.com/danbri/factoidal/issues/838",
     "sbm11-pack-jsonld-memory": "https://github.com/danbri/factoidal/issues/839",
     "iso-noniso-search": "https://github.com/danbri/factoidal/issues/877",
     "sbm11-pack-ttl-workers": "https://github.com/danbri/factoidal/issues/842",
@@ -1140,7 +1152,11 @@ def pack_memory_row(rid):
 # Measured 2026-10-14 (peak RSS through the wrapper, MB): Turtle 75 to 78 at n and 71 to
 # 85 at 4n (slope -0.13 to 0.28); TriG 75 to 79 at n and 71 to 83 at 4n (-0.14 to 0.21);
 # RDF/XML 51 to 58, 78 to 90 and 147 at 5,000, 10,000 and 20,000 statements (13.4 to
-# 14.5); JSON-LD 56 to 58, 78 to 88 and 129 to 140 (11.3 to 13.5). Each value is
+# 14.5) while the reader kept the document; JSON-LD 56 to 58, 78 to 88 and 129 to 140
+# (11.3 to 13.5). Measured 2026-10-22 with the RDF/XML chunk fold (issue 838): 62, 69 and
+# 80 at 25,000, 50,000 and 100,000 statements (0.54). The RDF/XML row starts at 25,000,
+# as the Turtle row does: below the run of 20,000 terms the packer's own runs grow with
+# the input (Turtle 2.54 and RDF/XML 3.57 at 5,000 to 20,000 statements). Each value is
 # (statements at x, fixture maker, file extension, bound).
 SBM11_PACK_BIN = Path(os.environ.get("L4_SBM11_PACK_BIN", BIN.parent / "l4sbm11-pack"))
 SBM11_PACK_ARGS = ["--workers", "1", "--run-terms", "20000", "--sort-rows", "50000"]
@@ -1182,7 +1198,7 @@ def sbm11_jsonld(n: int) -> str:
 SBM11_PACK_MEMORY_ROWS = {
     "sbm11-pack-ttl-memory": (25000, sbm11_ttl, "ttl", 0.75),
     "sbm11-pack-trig-memory": (25000, sbm11_trig, "trig", 0.75),
-    "sbm11-pack-rdfxml-memory": (5000, sbm11_rdfxml, "rdf", 0.75),
+    "sbm11-pack-rdfxml-memory": (25000, sbm11_rdfxml, "rdf", 0.75),
     "sbm11-pack-jsonld-memory": (5000, sbm11_jsonld, "jsonld", 0.75),
 }
 

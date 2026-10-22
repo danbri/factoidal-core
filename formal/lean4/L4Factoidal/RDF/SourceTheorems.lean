@@ -5,10 +5,14 @@ document in chunks.
 `Source.Reader` reads a document chunk by chunk, and `Source.parseDocument`
 reads the joined text at once. This file states the relations between them.
 
-* `whole_readAll`, `rdfxml_readAll`, `jsonld_readAll`: the whole readers
-  (RDF/XML, JSON-LD) give `parseDocument` of the joined text, folded through
-  the consumer, for EVERY list of chunks. The reader keeps the chunks and
-  parses their join, so the statement does not depend on the cuts.
+* `whole_readAll`, `jsonld_readAll`: the whole reader (JSON-LD) gives
+  `parseDocument` of the joined text, folded through the consumer, for EVERY
+  list of chunks. The reader keeps the chunks and parses their join, so the
+  statement does not depend on the cuts.
+* `rdfxml_readAll_of_notStreamed`: the RDF/XML chunk fold, when it ends in its
+  prologue or fall-back phase, gives `parseDocument` of the joined text. In
+  the children phase the equality is measured, not proved (row RX-1 of
+  `tests/known-defects/run.sh`, https://github.com/danbri/factoidal/issues/936).
 * `nquads11_readAll_eq_batch`: the N-Quads reader in RDF 1.1 mode, when it
   succeeds, gives the line walk of the joined text. It is
   `StrictFeed.LineFeed.run_quad11_eq_batch`, which is
@@ -72,14 +76,44 @@ theorem whole_readAll {α : Type} (step : Step α) (parse : DocParser) (mode : M
   rw [whole_foldlM]
   simp [Reader.finish, Reader.finishD]
 
-/-- RDF/XML: the reader that `init` gives reads `parseDocument` of the joined
-chunks, for every list of chunks. -/
-theorem rdfxml_readAll {α : Type} (extra : Extra) (mode : Mode) (base : Option String)
-    (bnodePrefix : String) (acc : α) (step : Step α) (chunks : List String) :
+/-- RDF/XML, the fall-back: when the chunk fold (`RdfXmlChunkFold`) ends in
+its prologue or fall-back phase, the reader that `init` gives reads
+`parseDocument` of the joined chunks. When it reads item by item the equality
+is measured (`l4rdfxml-chunk-diff`) and not proved: row RX-1 of
+`tests/known-defects/run.sh`, https://github.com/danbri/factoidal/issues/936. -/
+theorem rdfxml_readAll_of_notStreamed {α : Type} (extra : Extra) (mode : Mode)
+    (base : Option String) (bnodePrefix : String) (acc : α) (step : Step α)
+    (chunks : List String) (s : RdfXmlChunkFold.State α)
+    (hf : chunks.foldlM (fun (s : RdfXmlChunkFold.State α) c => s.feed (fun a t => step a t none) c)
+      (RdfXmlChunkFold.State.init base acc) = .ok s)
+    (hn : s.notStreamed = true) :
     ∃ r, Reader.init extra .rdfxml mode base bnodePrefix acc = .ok r ∧
       r.readAll step chunks =
-        (parseDocument extra .rdfxml mode base (String.join chunks)).map (foldDataset step acc) :=
-  ⟨.whole rdfXmlParser mode base acc [], rfl, whole_readAll step rdfXmlParser mode base acc chunks⟩
+        (parseDocument extra .rdfxml mode base (String.join chunks)).map (foldDataset step acc) := by
+  refine ⟨.rdfxml (RdfXmlChunkFold.State.init base acc), rfl, ?_⟩
+  have hfeed : ∀ (cs : List String) (st : RdfXmlChunkFold.State α),
+      cs.foldlM (fun (r : Reader α) c => r.feed step c) (Reader.rdfxml st) =
+        (cs.foldlM (fun (s : RdfXmlChunkFold.State α) c => s.feed (fun a t => step a t none) c) st).map
+          Reader.rdfxml := by
+    intro cs
+    induction cs with
+    | nil => intro st; rfl
+    | cons c rest ih =>
+      intro st
+      rw [List.foldlM_cons, List.foldlM_cons]
+      simp only [Reader.feed, Reader.feedD]
+      cases h : st.feed (fun a t => step a t none) c with
+      | error e => rfl
+      | ok s1 => exact ih s1
+  have hw := RdfXmlChunkFold.readAll_eq_whole_of_notStreamed (fun a t => step a t none) base acc
+    chunks s hf hn
+  simp only [RdfXmlChunkFold.readAll, hf] at hw
+  simp only [Reader.readAll, hfeed, hf, Except.map, Reader.finish, Reader.finishD]
+  rw [hw]
+  simp only [RdfXmlChunkFold.readWhole, parseDocument, rdfXmlParser]
+  cases RdfXml.parseRdfXml (String.join chunks) base with
+  | error e => rfl
+  | ok g => rfl
 
 /-- JSON-LD: when the caller linked a parser, the reader that `init` gives reads
 `parseDocument` of the joined chunks, for every list of chunks. -/
@@ -196,7 +230,7 @@ theorem prepass_chunks (chunks : List String) :
 
 #print axioms whole_foldlM
 #print axioms whole_readAll
-#print axioms rdfxml_readAll
+#print axioms rdfxml_readAll_of_notStreamed
 #print axioms jsonld_readAll
 #print axioms nquads_foldlM
 #print axioms nquads_readAll_eq_run

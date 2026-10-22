@@ -237,6 +237,7 @@ extern_lib libl4exthost pkg := do
              `Wasm.Ops.Lws,
              `Wasm.Ops.Solid,
              `Wasm.Ops.LwsClient,
+             `Wasm.Ops.Authz,
              `Wasm.Ops.Toan,
              `Wasm.Ops.Xmpp,
              `Wasm.Ops.Crypto,
@@ -472,6 +473,10 @@ extern_lib libl4exthost pkg := do
 -- Turtle parser. Separate from the library so the library stays
 -- specification-only, per the spec/pragmatics split in PORT_NOTES.md.
 @[default_target] lean_exe «l4rdfxml-probe» where root := `Harness.RdfXmlProbe
+
+-- The RDF/XML chunk fold of the source layer against the whole-document
+-- reader (https://github.com/danbri/factoidal/issues/838).
+@[default_target] lean_exe «l4rdfxml-chunk-diff» where root := `Harness.RdfXmlChunkDiff
 
 -- Reader-level probe over the vendored W3C csvw corpus. Named a
 -- PROBE, not a conformance runner, because it measures whether the

@@ -62,6 +62,7 @@ import Wasm.Ops.ExtFns
 import Wasm.Ops.Lws
 import Wasm.Ops.Solid
 import Wasm.Ops.LwsClient
+import Wasm.Ops.Authz
 import Wasm.Ops.Toan
 import Wasm.Ops.Xmpp
 import Wasm.Ops.Crypto
@@ -420,7 +421,7 @@ private def opsReflection : String := opsReflectionFor (opNames ++ formatOpNames
 def opsReflectionIO : String :=
   opsReflectionFor
     (opNames ++ handleOpNames ++ storeHandleOpNames ++ storeServeOpNames ++ packOpNames
-       ++ extOpNames ++ lwsSolidOpNames
+       ++ extOpNames ++ lwsSolidOpNames ++ Ops.authzOpNames
        ++ formatOpNames ++ serviceOpNames
        ++ query12OpNames)
 
@@ -623,6 +624,17 @@ def callIOUncoded (op : String) (argsJson : String) : IO String :=
   -- (https://github.com/danbri/factoidal/issues/659). `lwsOpen`,
   -- `solidOpen`, `solidClientRequest` and `solidClientResponse` take their
   -- arguments as strings and answer one envelope, like every other op.
+  -- The authorization server component (https://github.com/danbri/factoidal/issues/916).
+  | "authzOpen"        => withArgs (arityIO1 op Ops.authzOpen)
+  | "authzStep"        => withArgs (arityIO2 op Ops.authzStep)
+  | "authzFetched"     => withArgs (arityIO2 op Ops.authzFetched)
+  | "authzKeys"        => withArgs (fun args =>
+      match args with
+      | [a] => Ops.authzKeys a ""
+      | [a, b] => Ops.authzKeys a b
+      | args => pure (errJson s!"authzKeys expects 1 or 2 arguments, got {args.length}"))
+  | "authzRotate"      => withArgs (arityIO2 op Ops.authzRotate)
+  | "authzClose"       => withArgs (arityIO1 op Ops.authzClose)
   | "lwsOpen"          => withArgs (arityIO1 op Ops.lwsOpen)
   | "lwsStep"          => withArgs (arityIO2 op Ops.lwsStep)
   | "lwsClose"         => withArgs (arityIO1 op Ops.lwsClose)

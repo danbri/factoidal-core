@@ -86,6 +86,20 @@ expected-fail (out of 88). Open: the `Exec.run` driver over IO calls
 (https://github.com/danbri/factoidal/issues/933, xfail `exec-driver-io`).
 Record section 12.
 
+KR 4.2 (batch 3) landed 2026-10-22: run-time adaptation in `Exec.lean`.
+Admission: `searchAdmitted` keeps the members of `search` whose estimated
+calls and tuples are within every call and row quota (`CostModel.rowsPerCall`
+is the source's statistic; without it the estimate uses the fanout, and a
+plan can be refused). `Receive` enforces the row quota and updates an
+observed-cost record and a cache of call results; the new action `Hit`
+answers a known call from the cache. On a switch the driver ranks the
+alternatives by `adaptScore` (measured rows per call, measured latency per
+location, known calls, remaining quotas). Proved: I1 and I2 (calls and
+rows) for the new machine, `reachable_cache_hit` (a cache hit gives the
+rows of `Plan.exec`). `l4planner-test`: 77 pass, 0 fail, 16 expected-fail
+(out of 93). Open: admission with no statistic refuses a plan within its
+quota (https://github.com/danbri/factoidal/issues/937). Record section 13.
+
 When you add an IO source kind: give its calls as `Calls m`, keep a pure
 `graphSource` (or other) implementation as the specification, and add a
 differential test that each call equals it (the `CallsDenote` hypothesis).
@@ -97,6 +111,10 @@ is closed by `sorryAx`. It is not a Lake dependency. Do not add it
 without the owner's decision; if it is added, keep it out of the
 `L4Factoidal` library and the wasm roots, set `veil.smt.trust false`, and
 gate each theorem on `#print axioms`.
+
+When you write a planner test that must leave a plan at run time, give
+the source a statistic that is too low (`rowsPerCall`): without one the
+estimate of the fanout refuses the plan at admission and there is no run.
 
 When you change `Exec.lean`: a new action is a new disjunct of `Next`, a
 new case of `next_inv` and of `next_measure_lt`, and a new branch of the

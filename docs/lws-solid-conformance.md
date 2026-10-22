@@ -333,6 +333,47 @@ document that is not JSON, an unknown client kind — answers
 it answers `{"ok":true,"response":{"status":405,…}}`, because the status code
 is the protocol's own answer.
 
+## Authorization server (https://github.com/danbri/factoidal/issues/916)
+
+`factoidal authz-serve` is a separate component: an OAuth 2.0 authorization
+server for LWS storages and any resource server that reads RFC 8414 metadata.
+Design record: `docs/designissues/2026-10-22-authorization-server.md`; skill:
+`skills/authz-server/SKILL.md`; Lean: `formal/lean4/L4Factoidal/Authz/`.
+
+### wasm ABI (Wasm/Ops/Authz.lean)
+
+| op | arguments | answer |
+| --- | --- | --- |
+| `authzOpen` | config JSON: `issuer`, `resources`, `alg`, `tokenLifetime`, `leeway`, `rotateAfter`, `allowHttp`, `allowPrivateFetch`, `docTtl`, `now`, `entropy` (base64, 64 bytes), `keys` (the key file), `storageKey` | `{ok, handle, issuer, kid, changed}` |
+| `authzStep` | handle, request JSON: `method`, `target`, `headers`, `body`, `now`, `random` (base64, 112 bytes) | `{ok, response, changed}`, `{ok, resolve: {host}, changed}` or `{ok, fetch: {url, accept, address}, changed}` |
+| `authzFetched` | handle, `{url, status, body, now}` or `{host, addresses, now}` | `{ok}` |
+| `authzKeys` | handle, `{nonce?, private?}` | `{ok, keys}` (the key file document, sealed with a storage key) or `{ok, jwks}` (private keys, for a test harness) |
+| `authzRotate` | handle, `{now, random}` | `{ok, changed, kid}` |
+| `authzClose` | handle | `{ok}` |
+
+`changed: true`: the keys changed and the host writes `authzKeys` to
+`DIR/authz-keys.json`. After `resolve` or `fetch` the host passes the answer
+to `authzFetched` and steps the same request again.
+
+### lws10-core "Authorization", the authorization server's statements
+
+| statement | status | where |
+| --- | --- | --- |
+| "An authorization server MUST provide a metadata resource [...] as described in [RFC8414]. This metadata resource MUST be available at a URL with the path /.well-known/lws-configuration." | implemented | `Server.metadataJson`, `step` |
+| "An authorization server SHOULD advertise the subject tokens that it supports" | implemented (`jwt`, `id_token`) | `metadataJson` |
+| "An authorization server SHOULD advertise the subject identifier types that it supports" | implemented (`https`, `did:key`) | `metadataJson` |
+| "The authorization server's token endpoint MUST support the urn:ietf:params:oauth:grant-type:token-exchange grant type" | implemented | `readTokenRequest` |
+| "The resource parameter is REQUIRED" | implemented (`invalid_request`) | `readTokenRequest` |
+| "The authorization server MUST reject any request in which the resource parameter identifies an unknown or untrusted storage." | implemented (`invalid_target`) | `tokenRequest`, theorem `tokenOutcome_issued` |
+| "The subject_token parameter is REQUIRED." | implemented | `readTokenRequest` |
+| "Before returning an access token to the client, the authorization server MUST successfully validate all presented tokens." | implemented; theorem `exchange_refused_no_token` | `validateSubject` |
+| "the authorization server response MUST conform to Section 5.1 from the OAuth 2.0 Authorization Framework [RFC6749]. The resulting access token MUST conform to [...] [RFC9068]." | implemented | `successResponse`, `issueToken` |
+| `sub`, `iss`, `client_id`, `aud`, `exp`, `iat`, `jti` REQUIRED; `aud` "MUST include the URI supplied by the client in the resource parameter" | implemented; theorem `issueToken_audience_exact` (by the run-time check, https://github.com/danbri/factoidal/issues/927) | `issueToken` |
+| "All invalid or unauthorized requests MUST result in an error response as described in Section 5.2" | implemented | `errorResponse` |
+| lws10-authn-openid "Authentication Credential Validation" | implemented | `oidcKey`, theorem `oidc_valid_named_provider` |
+| lws10-authn-ssi-cid "Authentication Credential Validation" (https and DID subjects) | implemented | `cidKey`, `didKeyJwk?`, theorems `cid_valid_verified`, `cidKey_method`, `didKey_valid_verified` |
+| lws10-authn-saml "Authentication Credential Validation" | NOT implemented: no XML Signature verifier; expected failure | https://github.com/danbri/factoidal/issues/926 |
+
 ## LWS editor's draft 2026-10-19 audit
 
 Read 2026-10-20: <https://w3c.github.io/lws-protocol/lws10-core/>, source

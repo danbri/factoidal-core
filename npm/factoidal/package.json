@@ -91,6 +91,9 @@
     "./lws/client": {
       "default": "./lws/client.mjs"
     },
+    "./authz": {
+      "default": "./authz/server.mjs"
+    },
     "./solid/server": {
       "default": "./solid/server/index.mjs"
     },
@@ -120,6 +123,7 @@
     "lib/",
     "bin/",
     "lws/",
+    "authz/",
     "solid/",
     "store-host/",
     "xmpp/",

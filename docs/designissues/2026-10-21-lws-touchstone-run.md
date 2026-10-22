@@ -251,6 +251,30 @@ refused as the storage-authorization tests expect: `core/storage_authorization`
 audience, two audiences, wrong issuer, corrupted signature, unknown key,
 `alg: none`, the 401 challenge, owner and non-owner).
 
+## Our authorization server in place of the reference one (issue 916, 2026-10-22)
+
+`tools/lws-touchstone.sh --authz factoidal` (default `touchstone`, which is
+unchanged) starts `factoidal authz-serve` instead of Touchstone's
+`RefAuthorizationServer`: resources `BASE` and `BASE.well-known/lws-storage`,
+`--allow-http --allow-private-fetch` (the fixture host is
+`http://localhost`), and gives the harness our current private ES256 key as
+`as.signingKey` (`factoidal authz-keys DIR --private`). Capabilities
+`Authentication`, `HarnessIssuedTokens`, `ReachableFixtures`; no `SamlTrust`
+and no SAML key, because our server accepts no SAML assertion (no XML
+Signature verifier, https://github.com/danbri/factoidal/issues/926). So the
+storage tests mint tokens as before (ES256 with our key), and the tests of
+`core/authorization_server` and `auth/*` reach OUR metadata, JWK Set and
+token endpoint.
+
+Result, `--config auth --authz factoidal`, 2026-10-22 (target
+`factoidal-auth-fas`): 212 passed, 0 failed, 0 cantTell, 9 inapplicable
+(out of 221). Per group, our authorization server: core/authorization_server
+9 pass, 0 fail (out of 9); auth/oidc 6 pass, 0 fail (out of 6); auth/cid
+22 pass, 0 fail (out of 22); auth/saml 0 pass, 0 fail, 3 inapplicable (out
+of 3). The 6 other inapplicable tests are the ones the alternative
+configurations and the unstable option apply (sections below). With the
+reference server the same configuration passes the 3 SAML tests too (215).
+
 ## Rerun after fixes
 
 Rerun 2026-10-21 on branch `claude/wt-lws911` (the repairs of

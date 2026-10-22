@@ -33,13 +33,16 @@ at the edge chooses a format by name (`RdfFormat`, `formatOfLabel`,
 | N-Triples, N-Quads | `StrictFeed.LineFeed` (line walk) | one chunk and one partial line |
 | Turtle | `TurtleChunkFold` | one chunk and one unfinished statement |
 | TriG | `TriGChunkFold` | one chunk and one unfinished unit |
-| RDF/XML, JSON-LD | `whole` | the document: the chunks are kept, joined and parsed at the end |
+| RDF/XML | `RdfXmlChunkFold` | one chunk and one child of `rdf:RDF`; the document when the fall-back rule applies |
+| JSON-LD | `whole` | the document: the chunks are kept, joined and parsed at the end |
 
-RDF/XML and JSON-LD read the whole document. The XML and the JSON parsers
-build a tree over the whole text; the dataset they give is held with the
-document. The issues are
-https://github.com/danbri/factoidal/issues/838 (RDF/XML) and
-https://github.com/danbri/factoidal/issues/839 (JSON-LD).
+JSON-LD reads the whole document: the JSON parser builds a tree over the
+whole text (https://github.com/danbri/factoidal/issues/839). RDF/XML reads
+one child of `rdf:RDF` at a time (`Syntax/RdfXmlChunkFold.lean`,
+https://github.com/danbri/factoidal/issues/838); a document that the fold
+cannot read item by item (its document element is not `rdf:RDF`, it declares
+XML 1.1 or a markup entity, and the other cases of the fall-back rule in that
+module) is read whole, by the same parser as before.
 
 ## Generated blank-node labels
 
@@ -60,8 +63,11 @@ cannot equal a generated one (https://github.com/danbri/factoidal/issues/840).
 
 ## What is proved and what is measured
 
-`SourceTheorems.lean`. The whole readers (RDF/XML, JSON-LD) give
-`parseDocument` of the joined chunks for every split. The N-Quads reader gives
+`SourceTheorems.lean`. The whole reader (JSON-LD) gives `parseDocument` of
+the joined chunks for every split. The RDF/XML reader gives it when the fold
+falls back (`rdfxml_readAll_of_notStreamed`); when it reads item by item the
+equality is measured, not proved (row RX-1 of `tests/known-defects/run.sh`,
+https://github.com/danbri/factoidal/issues/936). The N-Quads reader gives
 the batch fold of the joined chunks in RDF 1.1 mode, from
 `NQuadsFold.streamConsume11_eq_batch` through `StrictFeed.LineFeed`. Five
 statements are not proved. Each has an open issue and an expected-failure row
@@ -94,6 +100,7 @@ import L4Factoidal.Syntax.TurtleChunkFold
 import L4Factoidal.Syntax.TriG
 import L4Factoidal.Syntax.TriGChunkFold
 import L4Factoidal.Syntax.RdfXml
+import L4Factoidal.Syntax.RdfXmlChunkFold
 
 namespace L4Factoidal.RDF.Source
 
@@ -108,11 +115,12 @@ abbrev RdfVersion := Mode
 
 /-! ## What a format does -/
 
-/-- RDF/XML and JSON-LD are read whole: the reader keeps the chunks and parses
-    the joined text at the end. -/
+/-- JSON-LD is read whole: the reader keeps the chunks and parses the joined
+    text at the end. RDF/XML is read one child of `rdf:RDF` at a time, and
+    whole only under the fall-back rule of `RdfXmlChunkFold`. -/
 def readsWhole : RdfFormat → Bool
-  | .rdfxml | .jsonld => true
-  | .nt | .turtle | .nquads | .trig => false
+  | .jsonld => true
+  | .nt | .turtle | .nquads | .trig | .rdfxml => false
 
 /-- A line start is a statement boundary: N-Triples and N-Quads. A source in
     one of these can be cut at line starts into byte ranges that are read
@@ -248,7 +256,9 @@ inductive Reader (α : Type) where
   | ntriples (mode : Mode) (s : StrictFeed.LineFeed α)
   | turtle (f : TurtleChunkFoldState α)
   | trig (f : TriGChunkFoldState α)
-  /-- RDF/XML, JSON-LD: the chunks, newest first, and the parser that reads
+  /-- RDF/XML: one child of `rdf:RDF` at a time (`RdfXmlChunkFold`). -/
+  | rdfxml (f : RdfXmlChunkFold.State α)
+  /-- JSON-LD (and any whole parser): the chunks, newest first, and the parser that reads
       their join. -/
   | whole (parse : DocParser) (mode : Mode) (base : Option String) (acc : α) (bufRev : List String)
 
@@ -263,7 +273,7 @@ def Reader.init {α : Type} (extra : Extra) (fmt : RdfFormat) (mode : Mode)
   | .nt => .ok (.ntriples mode { acc })
   | .turtle => .ok (.turtle (TurtleChunkFoldState.init bnodePrefix (fun a _ => a) acc base mode))
   | .trig => .ok (.trig (TriGChunkFoldState.init bnodePrefix acc base mode))
-  | .rdfxml => .ok (.whole rdfXmlParser mode base acc [])
+  | .rdfxml => .ok (.rdfxml (RdfXmlChunkFold.State.init base acc))
   | .jsonld =>
       match extra.jsonld with
       | some parse => .ok (.whole parse mode base acc [])
@@ -279,6 +289,7 @@ def Reader.feedD {α : Type} (step : Step α) (decl : Decl α) : Reader α → S
       (StrictFeed.LineFeed.feed (tripleReader mode) step s text.toList).map (.ntriples mode)
   | .turtle f, text => (f.feed (turtleStep step) text).map .turtle
   | .trig f, text => (f.feed (trigStepD step decl) text).map .trig
+  | .rdfxml f, text => (f.feed (fun a t => step a t none) text).map .rdfxml
   | .whole parse mode base acc bufRev, text => .ok (.whole parse mode base acc (text :: bufRev))
 
 /-- `feedD` without declarations. -/
@@ -293,6 +304,7 @@ def Reader.finishD {α : Type} (step : Step α) (decl : Decl α) : Reader α →
   | .ntriples mode s => StrictFeed.LineFeed.finish (tripleReader mode) step s
   | .turtle f => f.finish (turtleStep step)
   | .trig f => f.finish (trigStepD step decl)
+  | .rdfxml f => f.finish (fun a t => step a t none)
   | .whole parse mode base acc bufRev =>
       (parse mode base (String.join bufRev.reverse)).map (foldDatasetD step decl acc)
 
@@ -306,6 +318,7 @@ def Reader.acc {α : Type} : Reader α → α
   | .ntriples _ s => s.acc
   | .turtle f => f.acc
   | .trig f => f.acc
+  | .rdfxml f => f.acc
   | .whole _ _ _ acc _ => acc
 
 /-- Take the accumulator out, give it to `f`, and put the first result back;
@@ -325,6 +338,9 @@ def Reader.withAcc {α β : Type} (f : α → α × β) : Reader α → Reader �
   | .trig ⟨state, acc, pos, block, scanner⟩ =>
       let (acc, b) := f acc
       (.trig ⟨state, acc, pos, block, scanner⟩, b)
+  | .rdfxml fs =>
+      let (fs, b) := fs.withAcc f
+      (.rdfxml fs, b)
   | .whole parse mode base acc bufRev =>
       let (acc, b) := f acc
       (.whole parse mode base acc bufRev, b)
@@ -445,7 +461,7 @@ def Prepass.finish (p : Prepass) : Except String String :=
 
 /-! ## Build-time checks -/
 
-#guard readsWhole .rdfxml && readsWhole .jsonld
+#guard readsWhole .jsonld && !readsWhole .rdfxml
 #guard !readsWhole .turtle && !readsWhole .trig && !readsWhole .nt && !readsWhole .nquads
 #guard splitsAtLines .nt && splitsAtLines .nquads
 #guard !splitsAtLines .turtle && !splitsAtLines .trig && !splitsAtLines .rdfxml && !splitsAtLines .jsonld

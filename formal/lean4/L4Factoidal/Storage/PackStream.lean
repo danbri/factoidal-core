@@ -709,6 +709,13 @@ def publishQuadBlocks (h : Hasher) (format : PackFormat) (scope : String) :
           linesRev := s!"{ordinal}\t{predicate.val}\t{name}\t{block.rows.size}\t{bytes.size}\t{bytesToHex artifact.sha256}\t{name}.merkle\t{graphSet.length}\t{graphSetText graphSet}\t{literalIndexName}\t{geoIndexName}" :: state.linesRev }
         outRev rest
 
+/-- The refusal for a source that declares a named graph with no triple. IBK4
+    and IBK5 have no graph list, so they would lose the graph without a
+    message (https://github.com/danbri/factoidal/issues/880, owner decision of
+    2026-10-22: refuse). SBM11 stores such a graph. -/
+def emptyGraphRefusal : String :=
+  "refused: IBK4 and IBK5 store no named graph without a triple (https://github.com/danbri/factoidal/issues/880); use SBM11"
+
 /-- Every IBK4 block of one source. The blank-node scope is the SOURCE
     file's SHA-256, the same digest the manifest commits as its source
     identity: specification section 2.4.1 admits a content digest only under
@@ -729,6 +736,7 @@ def quadArtifacts (h : Hasher) (format : PackFormat) (source : RdfFormat)
     (extra : L4Factoidal.RDF.Source.Extra) (prepass : SourcePrepass) (text : String)
     (baseIri : Option String) : Except String QuadPack := do
   let dataset ← parseSource extra format source text baseIri
+  if dataset.named.any (fun ng => ng.graph.isEmpty) then .error emptyGraphRefusal else
   let (packed, artifacts) ←
     publishQuadBlocks h format (bytesToHex prepass.sourceIdentity) {}
       [] (L4Factoidal.Storage.PredicateQuadBlocks.runsOfDataset dataset)
@@ -803,6 +811,17 @@ structure QuadPub where
     List L4Factoidal.Storage.IndexedBlockWireV4.QuadRow) := []
   /-- The distinct named graphs seen. Only its size is reported. -/
   graphs : Std.HashMap L4Factoidal.RDF.GraphRef Unit := ∅
+  /-- The named graphs the document declares, with or without a triple
+      (`RDF.Source.Decl`). -/
+  declared : Std.HashMap L4Factoidal.RDF.GraphRef Unit := ∅
+
+/-- Record a declared graph name (the `RDF.Source.Decl` consumer). -/
+def declareQuadPub (state : QuadPub) (name : L4Factoidal.RDF.GraphRef) : QuadPub :=
+  { state with declared := state.declared.insert name () }
+
+/-- Whether every declared graph holds a triple. -/
+def QuadPub.allGraphsHaveTriples (state : QuadPub) : Bool :=
+  state.declared.fold (fun ok name _ => ok && state.graphs.contains name) true
 
 /-- The consumer of the source layer (`Source.Step`). One quad enters its
     predicate's open run; whatever the cut rule closes is held for the next
@@ -810,7 +829,8 @@ structure QuadPub where
 def addQuadPub (state : QuadPub) (triple : L4Factoidal.RDF.Triple)
     (graph : Option L4Factoidal.RDF.Subject) : QuadPub :=
   let (pub, made) := L4Factoidal.Storage.PredicateQuadBlocks.pubAdd state.pub (graph, triple)
-  { pub := pub
+  { state with
+    pub := pub
     readyRev := made.reverse ++ state.readyRev
     graphs := match graph with
       | none => state.graphs
@@ -886,7 +906,7 @@ def quadIngestInit (h : Hasher) (format : PackFormat) (source : RdfFormat)
     also every open run of at least `minBatchRows` rows. -/
 def quadIngestFeed (state : QuadIngestState) (bytes : ByteArray) :
     Except String (QuadIngestState × List Artifact) :=
-  match state.stream.feed addQuadPub bytes with
+  match state.stream.feedD addQuadPub declareQuadPub bytes with
   | .error failure => .error (failureMessage state.source failure)
   | .ok fed => do
       let since := state.bytesSinceBatch + bytes.size
@@ -912,9 +932,10 @@ def quadIngestFinish (state : QuadIngestState) : Except String QuadPack :=
       if state.digest.finishWith state.blocks != state.expected then
         .error "l4block-shard-pack input changed between pre-pass and parse pass"
       else
-        match reader.finish addQuadPub with
+        match reader.finishD addQuadPub declareQuadPub with
         | .error e => .error (failureMessage state.source (.parse e))
         | .ok acc =>
+          if !acc.allGraphsHaveTriples then .error emptyGraphRefusal else
             let runs := acc.readyRev.reverse ++
               (L4Factoidal.Storage.PredicateQuadBlocks.pubFlush acc.pub 0).2
             match publishQuadBlocks state.hasher state.format state.scope state.packed []

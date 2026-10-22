@@ -26,13 +26,20 @@ def Exactness.isApprox : Exactness → Bool
   | .exact       => false
   | .approximate => true
 
-/-- An abstract cost model: cost per call, cost per returned row, and
-optional quotas. Units are left to the source kind. -/
+/-- An abstract cost model: cost per call, cost per returned row,
+optional quotas, and an optional statistic. Units are left to the source
+kind. `callQuota` bounds the calls of the source in one run; `rowQuota`
+bounds the tuples that the source returns in one run (the driver
+`Planner.Exec` enforces both). `rowsPerCall` is an estimate of the tuples
+one call returns (a statistic of the source, as in a service
+description); without it the estimate of `Planner.Search` uses its
+`fanout`. -/
 structure CostModel where
   perCall : Nat
   perRow : Nat
   callQuota : Option Nat := none
   rowQuota : Option Nat := none
+  rowsPerCall : Option Nat := none
   deriving DecidableEq, Repr
 
 /-- A tuple of the capability's relation, one term per position. -/
