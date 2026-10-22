@@ -45,6 +45,12 @@ Actions:
 * `Finish`: after the last access, apply the requirement's filters and
   projection; the status becomes `done`.
 * `Stop`: give up; the status becomes `stopped` and there is no output.
+* `Probe` (OKR batch 3, KR 4.3): a count of the tuples of one call of a
+  source that offers a probe (`CostModel.probeCost`); one call counted
+  within the call quota; no plan, row, output or cache changes
+  (`probe_frame`). The driver `runProbed` makes a probe only when its
+  expected saving is more than its cost (`wantProbe`, section
+  "Probes before the choice of a plan" below).
 
 Invariants (`Inv`), proved for every reachable state:
 
@@ -104,6 +110,14 @@ structure Config where
   /-- The estimate's rows for each new variable when a source has no
   statistic and no measurement (`Planner.Search.statModel`). -/
   fanout : Nat := 10
+  /-- The number of probes allowed in one run (KR 4.3). -/
+  maxProbes : Nat := 4
+  /-- The model of the probe decision (KR 4.3): the possible results of a
+  probe (tuples per call), each with the same weight. -/
+  scenarios : List Nat := [1, 10, 100, 1000]
+  /-- The model's cost of a run that has no admitted plan, or whose plan
+  meets a quota (it stops, or leaves the plan). -/
+  refuseCost : Nat := 1000000
   deriving Repr
 
 /-- The phase of the call for the head pending row. -/
@@ -125,6 +139,13 @@ structure CacheEntry where
   src : Nat
   inp : InputBinding
   tuples : List Tuple
+
+/-- A probe that was made (KR 4.3): the source (catalog index), the input
+binding of the probed call, and the number of tuples that call returns. -/
+structure ProbeEntry where
+  src : Nat
+  inp : InputBinding
+  count : Nat
 
 /-- The empty solution mapping, unmarked: the row a plan starts from. -/
 def row0 : Row := { binding := [], approx := false }
@@ -158,6 +179,8 @@ structure State where
   cache : List CacheEntry
   /-- Rows of a plan answered from the cache, with no call. -/
   hits : Nat
+  /-- The probes made so far (KR 4.3). -/
+  probes : List ProbeEntry
 
 /-- The call quota of the source allows one more call after `n` calls. -/
 def quotaOk (s : Source) (n : Nat) : Bool :=
@@ -208,6 +231,7 @@ def initState (rw : Rewriting) (alts : List Rewriting) : State where
   latency := fun _ => 0
   cache := []
   hits := 0
+  probes := []
 
 /-! ## Init, the actions and Next -/
 
@@ -278,10 +302,25 @@ def Finish (req : Requirement) (st st' : State) : Prop :=
 def Stop (st st' : State) : Prop :=
   st.status = .running ∧ st' = { st with status := .stopped }
 
+/-- A probe (OKR batch 3, KR 4.3): a count of the tuples that one call of
+source `i` with input `inp` returns. It is a call: it is enabled only
+within the source's call quota and counts one call. It returns a number,
+not tuples of the relation, so the row quota is not used. It changes no
+plan, row, output or cache: only `calls` and the probe record. At most
+`Config.maxProbes` probes in a run. The driver decides by the expected
+saving (`wantProbe`); this action allows any probe. -/
+def Probe (cat : Catalog) (cfg : Config) (st st' : State) : Prop :=
+  st.status = .running ∧ st.phase = .idle ∧ st.probes.length < cfg.maxProbes ∧
+  ∃ i s inp c, cat[i]? = some s ∧ s.cap.cost.probeCost = some c ∧
+    quotaOk s (st.calls i) = true ∧
+    st' = { st with calls := bump st.calls i,
+                    probes := ⟨i, inp, (s.sem.impl inp).length⟩ :: st.probes }
+
 /-- The next-state relation: the disjunction of the actions. -/
 def Next (cat : Catalog) (req : Requirement) (cfg : Config) (st st' : State) : Prop :=
   Call cat st st' ∨ Receive cat st st' ∨ Fail st st' ∨ Retry cat cfg st st' ∨
-  Advance st st' ∨ Adapt st st' ∨ Finish req st st' ∨ Stop st st' ∨ Hit cat st st'
+  Advance st st' ∨ Adapt st st' ∨ Finish req st st' ∨ Stop st st' ∨ Hit cat st st' ∨
+  Probe cat cfg st st'
 
 /-- The states that a trace from `Init` by `Next` reaches. -/
 inductive Reachable (cat : Catalog) (req : Requirement) (cfg : Config) (fam : List Rewriting) :
@@ -322,6 +361,9 @@ structure Inv (cat : Catalog) (req : Requirement) (cfg : Config) (fam : List Rew
   inflight : InflightOk cat st
   /-- Every cache entry is the answer of the call it records. -/
   cacheOk : ∀ e ∈ st.cache, ∃ s, cat[e.src]? = some s ∧ e.tuples = s.sem.impl e.inp
+  /-- Every probe record is the count of the call it records. -/
+  probesOk : ∀ p ∈ st.probes, ∃ s, cat[p.src]? = some s ∧ p.count = (s.sem.impl p.inp).length
+  probes_le : st.probes.length ≤ cfg.maxProbes
 
 /-! ## Lemmas about the plan -/
 
@@ -387,6 +429,8 @@ theorem init_inv {cat : Catalog} {req : Requirement} {cfg : Config} {fam : List 
     quota := fun _ _ _ _ _ => Nat.zero_le _
     rowQuota := fun _ _ _ _ _ => Nat.zero_le _
     cacheOk := by intro e he; cases he
+    probesOk := by intro p hp; cases hp
+    probes_le := Nat.zero_le _
     retries_le := Nat.zero_le _
     inflight := by intro h; exact absurd rfl h }
 
@@ -423,6 +467,8 @@ theorem call_inv {cat : Catalog} {req : Requirement} {cfg : Config} {fam : List 
     quota := quota_bump hi.quota hs hok
     rowQuota := hi.rowQuota
     cacheOk := hi.cacheOk
+    probesOk := hi.probesOk
+    probes_le := hi.probes_le
     retries_le := hi.retries_le
     inflight := fun _ => ⟨x, rest, a, s, inp, hpend, hstep, hs, hinp⟩ }
 
@@ -503,6 +549,8 @@ theorem receive_inv {cat : Catalog} {req : Requirement} {cfg : Config} {fam : Li
       rcases List.mem_cons.mp he with rfl | he
       · exact ⟨s, hs, rfl⟩
       · exact hi.cacheOk e he
+    probesOk := hi.probesOk
+    probes_le := hi.probes_le
     retries_le := Nat.zero_le _
     inflight := by intro h; exact absurd rfl h }
 
@@ -521,6 +569,8 @@ theorem hit_inv {cat : Catalog} {req : Requirement} {cfg : Config} {fam : List R
     quota := hi.quota
     rowQuota := hi.rowQuota
     cacheOk := hi.cacheOk
+    probesOk := hi.probesOk
+    probes_le := hi.probes_le
     retries_le := hi.retries_le
     inflight := by intro h; exact absurd hidle h }
 
@@ -537,6 +587,8 @@ theorem fail_inv {cat : Catalog} {req : Requirement} {cfg : Config} {fam : List 
     quota := hi.quota
     rowQuota := hi.rowQuota
     cacheOk := hi.cacheOk
+    probesOk := hi.probesOk
+    probes_le := hi.probes_le
     retries_le := hi.retries_le
     inflight := fun _ => hi.inflight (by rw [hw]; exact fun h => Phase.noConfusion h) }
 
@@ -553,6 +605,8 @@ theorem retry_inv {cat : Catalog} {req : Requirement} {cfg : Config} {fam : List
     quota := quota_bump hi.quota hs hok
     rowQuota := hi.rowQuota
     cacheOk := hi.cacheOk
+    probesOk := hi.probesOk
+    probes_le := hi.probes_le
     retries_le := hr
     inflight := fun _ => hi.inflight (by rw [hf]; exact fun h => Phase.noConfusion h) }
 
@@ -574,6 +628,8 @@ theorem advance_inv {cat : Catalog} {req : Requirement} {cfg : Config} {fam : Li
     quota := hi.quota
     rowQuota := hi.rowQuota
     cacheOk := hi.cacheOk
+    probesOk := hi.probesOk
+    probes_le := hi.probes_le
     retries_le := hi.retries_le
     inflight := by intro h; exact absurd hidle h }
   refine ⟨[], ?_, ?_, ?_⟩
@@ -596,6 +652,8 @@ theorem adapt_inv {cat : Catalog} {req : Requirement} {cfg : Config} {fam : List
     quota := hi.quota
     rowQuota := hi.rowQuota
     cacheOk := hi.cacheOk
+    probesOk := hi.probesOk
+    probes_le := hi.probes_le
     retries_le := Nat.zero_le _
     inflight := by intro h; exact absurd rfl h }
   refine ⟨[], ?_, ?_, ?_⟩
@@ -620,6 +678,8 @@ theorem finish_inv {cat : Catalog} {req : Requirement} {cfg : Config} {fam : Lis
     quota := hi.quota
     rowQuota := hi.rowQuota
     cacheOk := hi.cacheOk
+    probesOk := hi.probesOk
+    probes_le := hi.probes_le
     retries_le := hi.retries_le
     inflight := hi.inflight }
   intro _
@@ -640,14 +700,50 @@ theorem stop_inv {cat : Catalog} {req : Requirement} {cfg : Config} {fam : List 
     quota := hi.quota
     rowQuota := hi.rowQuota
     cacheOk := hi.cacheOk
+    probesOk := hi.probesOk
+    probes_le := hi.probes_le
     retries_le := hi.retries_le
     inflight := hi.inflight }
+
+/-- A probe keeps the invariant: it counts one call within the quota and
+records the count of the call. -/
+theorem probe_inv {cat : Catalog} {req : Requirement} {cfg : Config} {fam : List Rewriting}
+    {st st' : State} (hi : Inv cat req cfg fam st) (h : Probe cat cfg st st') :
+    Inv cat req cfg fam st' := by
+  obtain ⟨_, _, hlt, i, s, inp, c, hs, _, hok, rfl⟩ := h
+  exact {
+    plan_mem := hi.plan_mem
+    alts_sub := hi.alts_sub
+    frontier := hi.frontier
+    output_done := hi.output_done
+    output_nil := hi.output_nil
+    quota := quota_bump hi.quota hs hok
+    rowQuota := hi.rowQuota
+    cacheOk := hi.cacheOk
+    probesOk := by
+      intro p hp
+      rcases List.mem_cons.mp hp with rfl | hp
+      · exact ⟨s, hs, rfl⟩
+      · exact hi.probesOk p hp
+    probes_le := by show st.probes.length + 1 ≤ cfg.maxProbes; omega
+    retries_le := hi.retries_le
+    inflight := hi.inflight }
+
+/-- A probe changes no answer: the plan, the alternatives, the step, the
+pending rows, the rows of the current access, the phase, the output, the
+status and the cache are those of the state before it. -/
+theorem probe_frame {cat : Catalog} {cfg : Config} {st st' : State} (h : Probe cat cfg st st') :
+    st'.plan = st.plan ∧ st'.alts = st.alts ∧ st'.step = st.step ∧ st'.pending = st.pending ∧
+    st'.next = st.next ∧ st'.phase = st.phase ∧ st'.output = st.output ∧
+    st'.status = st.status ∧ st'.cache = st.cache ∧ st'.rows = st.rows := by
+  obtain ⟨_, _, _, _, _, _, _, _, _, _, rfl⟩ := h
+  exact ⟨rfl, rfl, rfl, rfl, rfl, rfl, rfl, rfl, rfl, rfl⟩
 
 /-- `Next` keeps the invariant. -/
 theorem next_inv {cat : Catalog} {req : Requirement} {cfg : Config} {fam : List Rewriting}
     {st st' : State} (hi : Inv cat req cfg fam st) (h : Next cat req cfg st st') :
     Inv cat req cfg fam st' := by
-  rcases h with h | h | h | h | h | h | h | h | h
+  rcases h with h | h | h | h | h | h | h | h | h | h
   · exact call_inv hi h
   · exact receive_inv hi h
   · exact fail_inv hi h
@@ -657,6 +753,7 @@ theorem next_inv {cat : Catalog} {req : Requirement} {cfg : Config} {fam : List 
   · exact finish_inv hi h
   · exact stop_inv hi h
   · exact hit_inv hi h
+  · exact probe_inv hi h
 
 /-- Every reachable state satisfies the invariant (induction on traces). -/
 theorem reachable_inv {cat : Catalog} {req : Requirement} {cfg : Config} {fam : List Rewriting}
@@ -694,6 +791,14 @@ theorem reachable_rowQuota {cat : Catalog} {req : Requirement} {cfg : Config}
     {fam : List Rewriting} {st : State} (h : Reachable cat req cfg fam st) :
     ∀ i s q, cat[i]? = some s → s.cap.cost.rowQuota = some q → st.rows i ≤ q :=
   (reachable_inv h).rowQuota
+
+/-- Every probe record of a reachable state is the count of the probed
+call, and a run makes at most `Config.maxProbes` probes. -/
+theorem reachable_probes {cat : Catalog} {req : Requirement} {cfg : Config}
+    {fam : List Rewriting} {st : State} (h : Reachable cat req cfg fam st) :
+    (∀ p ∈ st.probes, ∃ s, cat[p.src]? = some s ∧ p.count = (s.sem.impl p.inp).length) ∧
+    st.probes.length ≤ cfg.maxProbes :=
+  ⟨(reachable_inv h).probesOk, (reachable_inv h).probes_le⟩
 
 /-- Every cache entry of a reachable state is the call's result: the
 tuples of the source's implementation for the recorded input. -/
@@ -745,11 +850,11 @@ def phaseRank : Phase → Nat
   | .waiting => 1
   | .failed  => 0
 
-/-- The measure, compared lexicographically: running before terminal,
-the alternatives left, the accesses left, the pending rows, the retries
-left, the phase. -/
+/-- The measure, compared lexicographically: running before terminal
+(times the probes left plus one), the alternatives left, the accesses
+left, the pending rows, the retries left, the phase. -/
 def measure (cfg : Config) (st : State) : Nat × Nat × Nat × Nat × Nat × Nat :=
-  (statusRank st.status, st.alts.length, st.plan.steps.length - st.step, st.pending.length,
+  (statusRank st.status * (cfg.maxProbes - st.probes.length + 1), st.alts.length, st.plan.steps.length - st.step, st.pending.length,
    cfg.maxRetries - st.retries, phaseRank st.phase)
 
 /-- The lexicographic order on the measure (the `WellFoundedRelation` of
@@ -760,7 +865,7 @@ abbrev MeasureLt (m m' : Nat × Nat × Nat × Nat × Nat × Nat) : Prop :=
 
 theorem next_measure_lt {cat : Catalog} {req : Requirement} {cfg : Config} {st st' : State}
     (h : Next cat req cfg st st') : MeasureLt (measure cfg st') (measure cfg st) := by
-  rcases h with h | h | h | h | h | h | h | h | h
+  rcases h with h | h | h | h | h | h | h | h | h | h
   · -- Call: the phase goes from idle to waiting
     obtain ⟨_, hidle, -, -, -, -, -, -, -, -, -, -, rfl⟩ := h
     simp only [measure, hidle]
@@ -794,16 +899,20 @@ theorem next_measure_lt {cat : Catalog} {req : Requirement} {cfg : Config} {st s
   · -- Finish: the status leaves running
     obtain ⟨hrun, _, _, rfl⟩ := h
     simp only [measure, hrun]
-    exact Prod.Lex.left _ _ (by simp [statusRank])
+    exact Prod.Lex.left _ _ (by simp only [statusRank]; omega)
   · -- Stop: the status leaves running
     obtain ⟨hrun, rfl⟩ := h
     simp only [measure, hrun]
-    exact Prod.Lex.left _ _ (by simp [statusRank])
+    exact Prod.Lex.left _ _ (by simp only [statusRank]; omega)
   · -- Hit: one pending row less
     obtain ⟨_, _, x, rest, a, -, -, -, hpend, -, -, -, -, -, -, rfl⟩ := h
     simp only [measure, hpend]
     exact Prod.Lex.right _ (Prod.Lex.right _ (Prod.Lex.right _ (Prod.Lex.left _ _
       (by simp))))
+  · -- Probe: one probe less
+    obtain ⟨hrun, _, hlt, -, -, -, -, -, -, -, rfl⟩ := h
+    simp only [measure, hrun]
+    exact Prod.Lex.left _ _ (by simp only [statusRank, List.length_cons]; omega)
 
 /-- The relation "one step of `Next` back" is well-founded: the state
 machine has no infinite trace. -/
@@ -848,8 +957,13 @@ def locLatency (cat : Catalog) (st : State) (loc : String) : Option Nat :=
     | none => acc) (0, 0)
   if acc.2 = 0 then none else some (acc.1 / acc.2)
 
+/-- The count of the latest probe of source `i`, if any (KR 4.3). -/
+def probeCount (st : State) (i : Nat) : Option Nat :=
+  (st.probes.find? (fun p => decide (p.src = i))).map (·.count)
+
 /-- The estimate model of the run so far: the measured tuples per call of
-a source that has answered (its statistic, or the fanout, otherwise); the
+a source that has answered (its probe count, its statistic, or the
+fanout, otherwise); the
 measured latency of the source's location as the cost of a call (its
 `perCall` before any answer there); and, for an access whose inputs are
 all constants, the tuple count of its call when that call is in the
@@ -857,7 +971,10 @@ cache (it makes no call), and otherwise one call (the later rows are
 cache hits). -/
 def obsModel (cat : Catalog) (cfg : Config) (st : State) : EstModel where
   rowsPerCall := fun i s nv =>
-    if st.answered i = 0 then s.cap.cost.rowsPerCall.getD (cfg.fanout ^ nv)
+    if st.answered i = 0 then
+      match probeCount st i with
+      | some n => n
+      | none => s.cap.cost.rowsPerCall.getD (cfg.fanout ^ nv)
     else ceilDiv (st.rows i) (st.answered i)
   callCost := fun _ s => (locLatency cat st s.cap.location).getD s.cap.cost.perCall
   known := fun a =>
@@ -869,12 +986,18 @@ def obsModel (cat : Catalog) (cfg : Config) (st : State) : EstModel where
       | some inp => (cacheFind st.cache a.src inp).map (·.tuples.length)
   cacheScans := true
 
-/-- The score of an alternative: first 0 when its estimated use, added to
-the calls and tuples already used, is within every quota, and 1 when it
-is not; then its estimated cost. -/
+/-- The score of a plan under the estimate model `em`, with `c0` calls
+and `r0` tuples already used: first 0 when its estimated use, added to
+them, is within every quota, and 1 when it is not; then its estimated
+cost. -/
+def scoreWith (cat : Catalog) (em : EstModel) (c0 r0 : Nat → Nat) (rw : Rewriting) : Nat × Nat :=
+  let us := estUse cat em rw.steps
+  (if withinQuotas cat us c0 r0 then 0 else 1, totalCost us)
+
+/-- The score of an alternative: `scoreWith` under the model of the run
+so far and the calls and tuples already used. -/
 def adaptScore (cat : Catalog) (cfg : Config) (st : State) (rw : Rewriting) : Nat × Nat :=
-  let us := estUse cat (obsModel cat cfg st) rw.steps
-  (if withinQuotas cat us st.calls st.rows then 0 else 1, totalCost us)
+  scoreWith cat (obsModel cat cfg st) st.calls st.rows rw
 
 def scoreLt (p q : Nat × Nat) : Bool :=
   decide (p.1 < q.1) || (decide (p.1 = q.1) && decide (p.2 < q.2))
@@ -1028,9 +1151,9 @@ theorem stepIdle_next {cat : Catalog} {req : Requirement} {cfg : Config} {st : S
             split
             · rename_i e he
               obtain ⟨hmem, hsrc, hinpe⟩ := cacheFind_some he
-              exact Or.inr (Or.inr (Or.inr (Or.inr (Or.inr (Or.inr (Or.inr (Or.inr
+              exact Or.inr (Or.inr (Or.inr (Or.inr (Or.inr (Or.inr (Or.inr (Or.inr (Or.inl
                 ⟨hrun, hidle, x, rest, a, s, inp, e, hpend, hstep, hs, hinp, hmem, hsrc, hinpe,
-                 rfl⟩)))))))
+                 rfl⟩))))))))
             · split
               · rename_i hq
                 exact Or.inl ⟨hrun, hidle, x, rest, a, s, inp, hpend, hstep, hs, hinp, hq, rfl⟩
@@ -1196,6 +1319,303 @@ theorem run_spec {cat : Catalog} {req : Requirement} {k : Nat} {cfg : Config}
   · intro hd
     obtain ⟨hmem, hout⟩ := reachable_output hr hd
     simp only [family, List.mem_map] at hmem
+    obtain ⟨r, hr', hrw⟩ := hmem
+    exact ⟨r, hr', by rw [hout, hrw]⟩
+
+/-! ## Probes before the choice of a plan (OKR batch 3, KR 4.3)
+
+Owner rule (CLAUDE.md, capability planner): probing and discovery are
+costed work; do a step only when the expected saving is more than its
+cost. A probe here is a count of the tuples that one call of a source
+returns (`Probe`; `CostModel.probeCost`), made before the driver chooses
+the plan it starts with.
+
+Candidates (`probeCands`): an access of a plan of the family whose inputs
+are all constants (`inputs?` over the empty mapping), of a source that
+offers a probe and has no statistic (`rowsPerCall = none`). The count of
+such a call is the source's tuples per call for the estimate.
+
+The model of the decision (`wantProbe`), for a candidate source `i` with
+probe cost `c`, in state `st`, over the plans `st.plan :: st.alts`:
+
+* `em0 := obsModel cat cfg st`, the estimate before the probe;
+  `emWith em0 i v` is `em0` with `v` tuples per call for source `i`.
+* The result of the probe is one of `cfg.scenarios`, each with the same
+  weight (a uniform prior).
+* `planCost em c0 r0 rw`: the estimated cost of `rw` under `em` when its
+  estimated use, added to the calls `c0` and tuples `r0` already used, is
+  within every quota; `cfg.refuseCost` otherwise (the run must stop or
+  leave the plan).
+* Without the probe the driver takes `chosen em0 st.calls st.rows` (the
+  plan of least `scoreWith`, when it is within the quotas; none
+  otherwise). Its cost in scenario `v`: `costWithout v` is `planCost
+  (emWith em0 i v) st.calls st.rows` of that plan, or `refuseCost` when
+  there is none.
+* With the probe the driver takes the best plan for the result:
+  `costWith v` is `bestCost (emWith em0 i v) (bump st.calls i) st.rows`,
+  the least `planCost` over the plans (`refuseCost` when none is within
+  the quotas), with the probe's own call counted.
+* Expected saving: the mean of `costWithout v - costWith v` over the
+  scenarios. The probe is made when it is more than `c`; in whole
+  numbers, when `c * |scenarios| + Σ costWith < Σ costWithout`
+  (`wantProbe_iff`, `wantProbe_iff_saving`).
+
+The decision is myopic: each candidate is decided in turn against the
+state after the probes before it. After the probes, `chooseStart` takes
+the plan of least `scoreWith` under the model with the probe counts
+(`obsModel`); when no plan is within the quotas the run stops. The
+driver's probes and its choice are `Next` steps (`Probe`, `Adapt`,
+`Stop`), so I1 and I2 hold for the run (`runProbed_spec`): a probe never
+takes a run past a call quota, and it changes no answer (`probe_frame`).
+-/
+
+/-- The model `em` with `v` tuples per call for source `i`. -/
+def emWith (em : EstModel) (i v : Nat) : EstModel :=
+  { em with rowsPerCall := fun j s nv => if j = i then v else em.rowsPerCall j s nv }
+
+/-- The model cost of plan `rw`: its estimated cost when its estimated use,
+added to `c0` calls and `r0` tuples, is within every quota;
+`cfg.refuseCost` otherwise. -/
+def planCost (cat : Catalog) (cfg : Config) (em : EstModel) (c0 r0 : Nat → Nat)
+    (rw : Rewriting) : Nat :=
+  let us := estUse cat em rw.steps
+  if withinQuotas cat us c0 r0 then totalCost us else cfg.refuseCost
+
+/-- The least model cost over the plans; `cfg.refuseCost` when no plan is
+within the quotas. A loop. -/
+def bestCost (cat : Catalog) (cfg : Config) (em : EstModel) (c0 r0 : Nat → Nat)
+    (plans : List Rewriting) : Nat :=
+  plans.foldl (fun m rw => min m (planCost cat cfg em c0 r0 rw)) cfg.refuseCost
+
+/-- The plan the driver takes under `em`: the first plan of least
+`scoreWith`, when it is within the quotas. -/
+def chosen (cat : Catalog) (em : EstModel) (c0 r0 : Nat → Nat) (plans : List Rewriting) :
+    Option Rewriting :=
+  match pickMin (scoreWith cat em c0 r0) plans with
+  | some rw => if withinQuotas cat (estUse cat em rw.steps) c0 r0 then some rw else none
+  | none => none
+
+/-- The cost in scenario `v` (source `i` answers `v` tuples per call) of
+the plan the driver takes without the probe. -/
+def costWithout (cat : Catalog) (cfg : Config) (st : State) (i v : Nat) : Nat :=
+  let em0 := obsModel cat cfg st
+  match chosen cat em0 st.calls st.rows (st.plan :: st.alts) with
+  | none => cfg.refuseCost
+  | some rw => planCost cat cfg (emWith em0 i v) st.calls st.rows rw
+
+/-- The cost in scenario `v` of the best plan for that result, with the
+probe's call counted. -/
+def costWith (cat : Catalog) (cfg : Config) (st : State) (i v : Nat) : Nat :=
+  bestCost cat cfg (emWith (obsModel cat cfg st) i v) (bump st.calls i) st.rows
+    (st.plan :: st.alts)
+
+def sumWithout (cat : Catalog) (cfg : Config) (st : State) (i : Nat) : Nat :=
+  cfg.scenarios.foldl (fun n v => n + costWithout cat cfg st i v) 0
+
+def sumWith (cat : Catalog) (cfg : Config) (st : State) (i : Nat) : Nat :=
+  cfg.scenarios.foldl (fun n v => n + costWith cat cfg st i v) 0
+
+/-- The expected saving of a probe of source `i`, times the number of
+scenarios (whole numbers; 0 when the probe saves nothing). -/
+def expSaving (cat : Catalog) (cfg : Config) (st : State) (i : Nat) : Nat :=
+  sumWithout cat cfg st i - sumWith cat cfg st i
+
+/-- The decision: probe source `i` at cost `c` when the expected saving is
+more than the cost. -/
+def wantProbe (cat : Catalog) (cfg : Config) (st : State) (i c : Nat) : Bool :=
+  decide (c * cfg.scenarios.length + sumWith cat cfg st i < sumWithout cat cfg st i)
+
+/-- The decision is the stated comparison: the cost of the probe, times
+the number of scenarios, added to the summed cost with the probe, is less
+than the summed cost without it. -/
+theorem wantProbe_iff {cat : Catalog} {cfg : Config} {st : State} {i c : Nat} :
+    wantProbe cat cfg st i c = true ↔
+      c * cfg.scenarios.length + sumWith cat cfg st i < sumWithout cat cfg st i := by
+  simp [wantProbe]
+
+/-- The same comparison as expected saving against cost: the probe is
+made when `c * |scenarios| < expSaving`, the mean saving being more than
+`c`. -/
+theorem wantProbe_iff_saving {cat : Catalog} {cfg : Config} {st : State} {i c : Nat} :
+    wantProbe cat cfg st i c = true ↔ c * cfg.scenarios.length < expSaving cat cfg st i := by
+  rw [wantProbe_iff, expSaving]
+  omega
+
+/-- With no scenario the model gives no saving: no probe. -/
+theorem wantProbe_no_scenarios {cat : Catalog} {cfg : Config} {st : State} {i c : Nat}
+    (h : cfg.scenarios = []) : wantProbe cat cfg st i c = false := by
+  simp [wantProbe, sumWith, sumWithout, h]
+
+/-- The probe candidates of a family: (source, input) for each access
+whose inputs are all constants, of a source that offers a probe and has
+no statistic. -/
+def probeCands (cat : Catalog) (plans : List Rewriting) : List (Nat × InputBinding) :=
+  ((plans.flatMap (·.steps)).filterMap (fun a =>
+    match cat[a.src]? with
+    | some s =>
+      if s.cap.cost.probeCost.isSome && s.cap.cost.rowsPerCall.isNone then
+        (a.inputs? s.cap []).map (fun inp => (a.src, inp))
+      else none
+    | none => none)).eraseDups
+
+/-- Decide one candidate and, if the decision is yes and the guards of
+`Probe` hold (running, idle, a probe left, no earlier probe of the
+source, a call left in the quota), make the probe. -/
+def probeStep (cat : Catalog) (cfg : Config) (st : State) (cand : Nat × InputBinding) : State :=
+  match cat[cand.1]? with
+  | none => st
+  | some s =>
+    match s.cap.cost.probeCost with
+    | none => st
+    | some c =>
+      if decide (st.status = .running) && decide (st.phase = .idle) &&
+          decide (st.probes.length < cfg.maxProbes) && (probeCount st cand.1).isNone &&
+          quotaOk s (st.calls cand.1) && wantProbe cat cfg st cand.1 c then
+        { st with calls := bump st.calls cand.1,
+                  probes := ⟨cand.1, cand.2, (s.sem.impl cand.2).length⟩ :: st.probes }
+      else st
+
+/-- A step of `probeStep` leaves the state as it is, or it is a `Probe`
+step whose decision `wantProbe` is yes. -/
+theorem probeStep_cases {cat : Catalog} {cfg : Config} {st : State} {cand : Nat × InputBinding} :
+    probeStep cat cfg st cand = st ∨
+      ∃ s c, cat[cand.1]? = some s ∧ s.cap.cost.probeCost = some c ∧
+        wantProbe cat cfg st cand.1 c = true ∧ Probe cat cfg st (probeStep cat cfg st cand) := by
+  unfold probeStep
+  split
+  · exact Or.inl rfl
+  · rename_i s hs
+    split
+    · exact Or.inl rfl
+    · rename_i c hc
+      split
+      · rename_i hok
+        simp only [Bool.and_eq_true, decide_eq_true_eq] at hok
+        obtain ⟨⟨⟨⟨⟨hrun, hidle⟩, hlt⟩, _⟩, hq⟩, hw⟩ := hok
+        exact Or.inr ⟨s, c, hs, hc, hw, hrun, hidle, hlt, cand.1, s, cand.2, c, hs, hc, hq, rfl⟩
+      · exact Or.inl rfl
+
+/-- Decide and make the probes of a candidate list, in order. A loop. -/
+def probeAll (cat : Catalog) (cfg : Config) (st : State) (cands : List (Nat × InputBinding)) :
+    State :=
+  cands.foldl (probeStep cat cfg) st
+
+theorem probeAll_reachable {cat : Catalog} {req : Requirement} {cfg : Config}
+    {fam : List Rewriting} :
+    ∀ (cands : List (Nat × InputBinding)) (st : State), Reachable cat req cfg fam st →
+      Reachable cat req cfg fam (probeAll cat cfg st cands)
+  | [], _, h => h
+  | cand :: cands, st, h => by
+    show Reachable cat req cfg fam (probeAll cat cfg (probeStep cat cfg st cand) cands)
+    apply probeAll_reachable cands
+    rcases probeStep_cases (st := st) (cand := cand) with he | ⟨_, _, _, _, _, hp⟩
+    · rw [he]; exact h
+    · exact Reachable.step h (Or.inr (Or.inr (Or.inr (Or.inr (Or.inr (Or.inr (Or.inr
+        (Or.inr (Or.inr hp)))))))))
+
+/-- The choice of the plan to start with, after the probes: the plan of
+least `scoreWith` under the model with the probe counts; stop when no
+plan is within the quotas. -/
+def chooseStart (cat : Catalog) (cfg : Config) (st : State) : State :=
+  if st.status = .running then
+    match chosen cat (obsModel cat cfg st) st.calls st.rows (st.plan :: st.alts) with
+    | none => { st with status := .stopped }
+    | some rw =>
+      if rw ∈ st.alts then
+        { st with plan := rw, alts := st.alts.erase rw, step := 0, pending := [row0], next := [],
+                  phase := .idle, retries := 0, switches := st.switches + 1 }
+      else st
+  else st
+
+theorem chooseStart_reachable {cat : Catalog} {req : Requirement} {cfg : Config}
+    {fam : List Rewriting} {st : State} (h : Reachable cat req cfg fam st) :
+    Reachable cat req cfg fam (chooseStart cat cfg st) := by
+  unfold chooseStart
+  split
+  · rename_i hrun
+    split
+    · exact Reachable.step h (Or.inr (Or.inr (Or.inr (Or.inr (Or.inr (Or.inr (Or.inr
+        (Or.inl ⟨hrun, rfl⟩))))))))
+    · split
+      · rename_i rw _ hmem
+        exact Reachable.step h (Or.inr (Or.inr (Or.inr (Or.inr (Or.inr (Or.inl
+          ⟨hrun, rw, hmem, rfl⟩))))))
+      · exact h
+  · exact h
+
+/-- The structural plan family (`search`), as rewritings. -/
+def structFamily (cat : Catalog) (req : Requirement) (k : Nat) (fanout : Nat := 10) :
+    List Rewriting :=
+  (search cat req k fanout).map (·.rewriting)
+
+theorem structFamily_check {cat : Catalog} {req : Requirement} {k fanout : Nat} :
+    ∀ rw ∈ structFamily cat req k fanout, rw.check cat req = true := by
+  intro rw hrw
+  simp only [structFamily, List.mem_map] at hrw
+  obtain ⟨r, hr, rfl⟩ := hrw
+  exact search_check hr
+
+/-- Run with probes: start from the structural family, decide and make
+the probes (`probeAll`), choose the plan to start with (`chooseStart`),
+then run the driver (`runFrom`). `none` when the family is empty. -/
+def runProbed (cat : Catalog) (req : Requirement) (k : Nat) (cfg : Config) (faults : Faults)
+    (lat : Latency := noLatency) : Option State :=
+  match structFamily cat req k cfg.fanout with
+  | [] => none
+  | rw :: alts =>
+    let st0 := initState rw alts
+    some (runFrom cat req cfg faults lat
+      (chooseStart cat cfg (probeAll cat cfg st0 (probeCands cat (rw :: alts)))))
+
+theorem runProbed_reachable {cat : Catalog} {req : Requirement} {k : Nat} {cfg : Config}
+    {faults : Faults} {lat : Latency} {st : State}
+    (h : runProbed cat req k cfg faults lat = some st) :
+    Reachable cat req cfg (structFamily cat req k cfg.fanout) st := by
+  unfold runProbed at h
+  split at h
+  · cases h
+  · rename_i rw alts hfam
+    cases h
+    exact runFrom_reachable _ (chooseStart_reachable (probeAll_reachable _ _
+      (Reachable.init ⟨rw, alts, hfam, rfl⟩)))
+
+theorem runProbed_final {cat : Catalog} {req : Requirement} {k : Nat} {cfg : Config}
+    {faults : Faults} {lat : Latency} {st : State}
+    (h : runProbed cat req k cfg faults lat = some st) : st.status ≠ .running := by
+  unfold runProbed at h
+  split at h
+  · cases h
+  · cases h; exact runFrom_final _
+
+/-- The results for a run with probes: it ends `done` or `stopped`; no
+call quota and no row quota is exceeded, probes counted (I2); no unmarked
+output row is outside the requirement's answers (I1); every probe record
+is the count of its call, and there are at most `maxProbes`; and a `done`
+output is the run of a member of the family of `search`. -/
+theorem runProbed_spec {cat : Catalog} {req : Requirement} {k : Nat} {cfg : Config}
+    {faults : Faults} {lat : Latency} {st : State} (hsound : ExactSourcesSound cat)
+    (h : runProbed cat req k cfg faults lat = some st) :
+    (st.status = .done ∨ st.status = .stopped) ∧
+    (∀ i s q, cat[i]? = some s → s.cap.cost.callQuota = some q → st.calls i ≤ q) ∧
+    (∀ i s q, cat[i]? = some s → s.cap.cost.rowQuota = some q → st.rows i ≤ q) ∧
+    (∀ x ∈ st.output, x.approx = false →
+      ∃ ρ ∈ req.answers (declaredGraph cat), SolEquiv x.binding ρ) ∧
+    (∀ p ∈ st.probes, ∃ s, cat[p.src]? = some s ∧ p.count = (s.sem.impl p.inp).length) ∧
+    st.probes.length ≤ cfg.maxProbes ∧
+    (st.status = .done → ∃ r ∈ search cat req k cfg.fanout,
+      st.output = (r.rewriting.toPlan req).run cat) := by
+  have hr := runProbed_reachable h
+  have hfinal := runProbed_final h
+  refine ⟨?_, reachable_quota hr, reachable_rowQuota hr,
+    reachable_sound hsound structFamily_check hr, (reachable_probes hr).1,
+    (reachable_probes hr).2, ?_⟩
+  · cases hs : st.status with
+    | running => exact absurd hs hfinal
+    | done => exact Or.inl rfl
+    | stopped => exact Or.inr rfl
+  · intro hd
+    obtain ⟨hmem, hout⟩ := reachable_output hr hd
+    simp only [structFamily, List.mem_map] at hmem
     obtain ⟨r, hr', hrw⟩ := hmem
     exact ⟨r, hr', by rw [hout, hrw]⟩
 

@@ -136,5 +136,19 @@ def rwGoodPlan : Plan := rwGood.toPlan reqNames
 #print axioms runFrom_reachable
 #print axioms runFrom_final
 #print axioms run_spec
+-- KR 4.3: probes
+#print axioms probe_inv
+#print axioms probe_frame
+#print axioms reachable_probes
+#print axioms wantProbe_iff
+#print axioms wantProbe_iff_saving
+#print axioms wantProbe_no_scenarios
+#print axioms probeStep_cases
+#print axioms probeAll_reachable
+#print axioms chooseStart_reachable
+#print axioms structFamily_check
+#print axioms runProbed_reachable
+#print axioms runProbed_final
+#print axioms runProbed_spec
 
 end L4Factoidal.Planner.ExecTests
