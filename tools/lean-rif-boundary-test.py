@@ -41,13 +41,50 @@ def document(body="", imported=False):
 
 
 class BoundaryTests(unittest.TestCase):
-    def run_binary(self, binary, args, cwd):
+    def run_binary(self, binary, args, cwd, expected_returncode=0):
         path = BIN / binary
         self.assertTrue(path.is_file(), f"Build native harness first: {path}")
         result = subprocess.run([str(path), *map(str, args)], cwd=cwd,
                                 capture_output=True, text=True, timeout=60)
-        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
-        return result.stdout
+        self.assertEqual(result.returncode, expected_returncode, result.stdout + result.stderr)
+        return result.stdout + result.stderr
+
+    def test_native_decided_failure_exit(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            case = root / "PositiveEntailmentTest" / "failure"
+            case.mkdir(parents=True)
+            (case / "failure-premise.rifps").write_text("Document(Group())")
+            (case / "failure-conclusion.rifps").write_text("<urn:s>[<urn:p> -> <urn:o>]")
+            output = self.run_binary("l4rif", [root, "--verbose"], root, 1)
+            self.assertIn("FAIL PositiveEntailmentTest/failure: not entailed", output)
+            self.assertIn("DECIDED: 0 pass, 1 fail", output)
+            self.assertIn("NOT READ: 0 cases", output)
+
+    def test_native_empty_inventory_exit(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            output = self.run_binary("l4rif", [root], root, 1)
+            self.assertIn("DECIDED: 0 pass, 0 fail", output)
+            self.assertIn("empty inventory; no cases were scored or classified", output)
+
+    def test_native_stale_override_exit(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            corpus = root / "corpus"
+            case = corpus / "PositiveEntailmentTest" / "stale"
+            case.mkdir(parents=True)
+            fact = "<urn:s>[<urn:p> -> <urn:o>]"
+            (case / "stale-premise.rifps").write_text(f"Document(Group({fact}))")
+            (case / "stale-conclusion.rifps").write_text(fact)
+            overrides = root / "tests/local-overrides/rif"
+            overrides.mkdir(parents=True)
+            (overrides / "stale.override").write_text(
+                "test: stale\ndisposition: local-override\n---\nSynthetic runner control.\n"
+            )
+            output = self.run_binary("l4rif", [corpus, "--verbose"], root, 1)
+            self.assertIn("DECIDED: 1 pass, 0 fail", output)
+            self.assertIn("STALE OVERRIDE stale:", output)
 
     def test_native_declared_imports(self):
         with tempfile.TemporaryDirectory() as tmp:

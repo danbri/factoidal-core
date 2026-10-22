@@ -155,3 +155,34 @@ a day interval, whereas dateTime represents a point. They
 explain the changed decisions without establishing whole-fixture defect
 classification or replacing the original suite. The original inputs remain
 untouched; no newly unknown case is scored as a pass.
+
+## Native runner gating follow-up
+
+The first source commit `aeb5c4494` retained main's RIF CLI exit-zero gap.
+Native replay of the unchanged 46-case suite confirmed **42 pass, one fail,
+three unknown, zero unread**, yet exit zero. The CLI now exits one for a
+decided failure, stale override or empty inventory. The fixed native replay
+returns one with **byte-identical output and unchanged counts**. Unknown
+results remain separate classifications. This is a reporting correction,
+not an inference change or a claim that the suite is green.
+
+Three durable controls all failed against the original binary for the
+expected zero-versus-one exit mismatch, then passed against the corrected
+binary. The existing seven-case declared-import control also passes: four
+selected unittest methods in total. Commands: `lake build l4rif`, then
+`python3 tools/lean-rif-boundary-test.py` with the three
+`test_native_*_exit` methods and `test_native_declared_imports`. These focused
+checks do not claim the SPARQL native boundary methods were replayed.
+
+The independent pinned XSD replay is **15,880 pass, zero fail, 10,477
+excluded**, compared with main's 18,955 pass and 7,402 excluded. Newly refused
+patterns account for 3,075 fewer scored cases (3,180 unreadable-pattern
+exclusions versus 105). This is a material coverage decrease, not equivalent
+green coverage; pattern-admission analysis and finite logs follow separately.
+The original pinned fixture and its inputs were not modified.
+
+The PR1-only frozen full build was intentionally interrupted at 856/969
+after source handoff, with no proof errors in that run. It is not counted
+as a full-build pass. The parent performs the final combined PR1–3 source
+gate. Native runner build completed 158 jobs; CLI-only rebuild completed
+151 jobs. No Wasm build was run in this worktree.

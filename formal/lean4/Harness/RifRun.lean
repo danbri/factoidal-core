@@ -411,4 +411,7 @@ def main (args : List String) : IO UInt32 := do
   IO.println "An UNDECIDED case is counted apart, never as a pass and never as a"
   IO.println "failure: a closure computed without a rule is not the closure, and"
   IO.println "reading `does not entail` off it would be a guess."
-  return 0
+  let inventory := t.pass + t.fail + t.undecided + t.notRead + t.skipped + t.overridden
+  if inventory == 0 then
+    IO.eprintln "rif runner: empty inventory; no cases were scored or classified"
+  return if t.fail > 0 || !t.staleOverrides.isEmpty || inventory == 0 then 1 else 0
