@@ -307,10 +307,6 @@ def xcases : List XCase := [
   { id := "search-outside-constant", issue := issue801,
     what := "an access with a required input that no requirement pattern names (a key constant)",
     test := fun _ => !(search [keyed] reqAllTriples 1).isEmpty },
-  { id := "quota-in-admission", issue := issue801,
-    what := "cost model used for admission: no plan in the family exceeds a call quota",
-    test := fun _ => (search [knows, peopleQuota] reqChain 2).all
-      (fun r => withinQuota [knows, peopleQuota] r.rewriting) },
   { id := "named-graph-requirement", issue := issue801,
     what := "named graphs: a requirement with GRAPH <g> { ... }",
     test := fun _ => (reqOfSparql sparqlGraph).isSome },
@@ -390,11 +386,90 @@ def execChecks (cat : Catalog) (req : Requirement) (k : Nat) (cfg : Config) (fau
       else []
     (some st, f1 ++ f2 ++ f3)
 
+/-- A source with the statistic `rowsPerCall := some n`. -/
+def withStat (s : Source) (n : Nat) : Source :=
+  { s with cap := { s.cap with cost := { s.cap.cost with rowsPerCall := some n } } }
+
+/-- `knows` with a statistic that is too low: it declares 1 tuple per
+call and answers 3. A plan that the estimate admits can meet a quota at
+run time. -/
+def knowsLow : Source := withStat knows 1
+
+/-- `knows` with its true statistic (3 tuples). -/
+def knowsTrue : Source := withStat knows 3
+
+/-- A scan with a row quota of 1 that declares 1 tuple per call and
+answers 3. -/
+def knowsRowQ1 : Source :=
+  mkSrc "knows-sparql-rowquota1" 2 [] { perCall := 200, perRow := 1, rowQuota := some 1, rowsPerCall := some 1 }
+    [tmpl pKnows] [[alice, bob], [bob, carol], [carol, dave]]
+
+/-- Another `knows` scan, more expensive, with no quota. -/
+def knowsB : Source :=
+  mkSrc "knows-sparql-b" 2 [] { perCall := 300, perRow := 1, rowsPerCall := some 1 }
+    [tmpl pKnows] [[alice, bob], [bob, carol], [carol, dave]]
+
+/-- Two people know `carol`: the lookup of `carol` is a cache hit the
+second time. -/
+def knowsDup : Source :=
+  mkSrc "knows-dup" 2 [] { perCall := 200, perRow := 1 } [tmpl pKnows]
+    [[alice, carol], [bob, carol]]
+
+/-! Measured rows: 20 people known by `alice`. The scan declares 1 tuple
+per call and answers 20. -/
+
+def pers (i : Nat) : Term := ex ("p" ++ toString i)
+
+def bigKnowsExt : List Tuple := (List.range 20).map (fun i => [alice, pers i])
+def bigNamesExt : List Tuple := (List.range 20).map (fun i => [pers i, lit ("P" ++ toString i)])
+
+def knowsBig : Source :=
+  mkSrc "knows-big" 2 [] { perCall := 200, perRow := 1, rowsPerCall := some 1 } [tmpl pKnows] bigKnowsExt
+def lookupBigQ : Source :=
+  mkSrc "names-lookup-quota2" 2 [0] { perCall := 50, perRow := 1, callQuota := some 2 } [tmpl pName] bigNamesExt
+def lookupBig : Source :=
+  mkSrc "names-lookup" 2 [0] { perCall := 60, perRow := 1 } [tmpl pName] bigNamesExt
+def scanBig : Source :=
+  mkSrc "names-scan-big" 2 [] { perCall := 500, perRow := 1, rowsPerCall := some 20 } [tmpl pName] bigNamesExt
+
+/-- Static order: the quota lookup, the other lookup, the scan. -/
+def catRows : Catalog := [knowsBig, lookupBigQ, lookupBig, scanBig]
+
+/-! Measured latency: three lookups of the same relation; the quota
+lookup and lookup B are at location `host-b`, lookup C at `host-c`. -/
+
+def mkLookupAt (name loc : String) (cost : CostModel) : Source :=
+  let s := mkSrc name 2 [0] cost [tmpl pName] namesExt
+  { s with cap := { s.cap with location := loc } }
+
+def catLat : Catalog :=
+  [knowsLow,
+   mkLookupAt "names-q" "host-b" { perCall := 10, perRow := 1, callQuota := some 1 },
+   mkLookupAt "names-b" "host-b" { perCall := 20, perRow := 1 },
+   mkLookupAt "names-c" "host-c" { perCall := 60, perRow := 1 }]
+
+/-- Every call at `host-b` (sources 1 and 2) takes 1000 units. -/
+def slowHostB : Latency := fun i _ => if i == 1 || i == 2 then 1000 else 0
+
+def usesSrc (st : State) (i : Nat) : Bool := st.plan.steps.any (·.src == i)
+
 def execCases : List (String × List String) :=
-  let catQ := [knows, peopleQuota]
-  let catA := [knows, peopleQuota, namesScan]
+  let catQ := [knowsLow, peopleQuota]
+  let catA := [knowsLow, peopleQuota, namesScan]
   let catF := [knows, people, namesScan]
   [
+  -- Admission (KR 4.2): with no statistic the estimate is 100 calls of the
+  -- lookup, over its quota of 1; `search` keeps the plan (structural
+  -- family), `searchAdmitted` drops it; with a quota of 1000 it is
+  -- admitted.
+  ("quota-in-admission",
+    (if (search [knows, peopleQuota] reqChain 2).isEmpty then ["no structural plan"] else []) ++
+    (if (searchAdmitted [knows, peopleQuota] reqChain 2).all
+          (fun r => withinQuota [knows, peopleQuota] r.rewriting) &&
+        (searchAdmitted [knows, peopleQuota] reqChain 2).isEmpty
+     then [] else ["a plan over the call quota is admitted"]) ++
+    (if (searchAdmitted [knows, people] reqChain 2).isEmpty then ["the plan within quota is not admitted"] else []) ++
+    (if (run [knows, peopleQuota] reqChain 2 {} noFaults).isNone then [] else ["a run without an admitted plan"])),
   -- The static first plan needs 3 calls of a source with a call quota of 1,
   -- and the family has no other plan: the run stops within the quota.
   ("exec-quota-stops",
@@ -437,17 +512,91 @@ def execCases : List (String × List String) :=
       | none => []),
   -- An approximate source: every output row is marked.
   ("exec-approximate-marked",
-    let (st?, errs) := execChecks [knows, ageLlm] reqAge 2 {} noFaults .done (exact := false)
+    let (st?, errs) := execChecks [knowsTrue, ageLlm] reqAge 2 {} noFaults .done (exact := false)
     errs ++ match st? with
       | some st => if !st.output.isEmpty && st.output.all (·.approx) then [] else ["a row is not marked"]
       | none => []),
   -- Exact before approximate: the run uses the exact source and gives the
   -- reference answers, unmarked.
   ("exec-exact-before-approximate",
-    (execChecks [knows, ageLlm, ageDb] reqAge 2 {} noFaults .done).2),
+    (execChecks [knowsTrue, ageLlm, ageDb] reqAge 2 {} noFaults .done).2),
   -- Not answerable: no plan family, no run.
   ("exec-not-answerable",
-    if (run [byName] reqXName 3 {} noFaults).isNone then [] else ["a run without a plan family"])
+    if (run [byName] reqXName 3 {} noFaults).isNone then [] else ["a run without a plan family"]),
+  -- KR 4.2. Row quota at run time: the scan answers 3 tuples, over its
+  -- row quota of 1, and the family has no other plan: the run stops with
+  -- no output and no tuple counted.
+  ("exec-row-quota",
+    let req : Requirement := { bgp := [tp (sv "x") pKnows (v "y")], projection := ["x", "y"] }
+    let (st?, errs) := execChecks [knowsRowQ1] req 1 {} noFaults .stopped
+    errs ++ match st? with
+      | some st => (if st.output.length ≤ 1 then [] else ["more than 1 row"]) ++
+          (if st.rows 0 ≤ 1 then [] else [s!"{st.rows 0} tuples counted, row quota 1"])
+      | none => []),
+  -- The same row quota with another scan in the family: the run switches
+  -- and gives the reference answers.
+  ("exec-row-quota-adaptation",
+    let c := [knowsRowQ1, knowsB, people]
+    let (st?, errs) := execChecks c reqChain 2 {} noFaults .done
+    errs ++ match st? with
+      | some st => (if st.switches == 1 then [] else [s!"{st.switches} switches, want 1"]) ++
+          (if usesSrc st 1 then [] else ["the final plan does not use the other scan"]) ++
+          (if st.rows 0 == 0 then [] else ["tuples over the row quota were counted"])
+      | none => []),
+  -- After a switch, a call whose answer is known is not made again: the
+  -- `knows` scan is called once, and the new plan's first access is a
+  -- cache hit.
+  ("exec-reuse-after-adaptation",
+    let (st?, errs) := execChecks catA reqChain 2 {} noFaults .done
+    errs ++ match st? with
+      | some st => (if st.switches ≥ 1 then [] else ["no switch"]) ++
+          (if st.calls 0 == 1 then [] else [s!"calls {callList catA st}, want 1 call of the scan"]) ++
+          (if st.hits ≥ 1 then [] else ["no cache hit"])
+      | none => []),
+  -- Two rows need the lookup of the same person: one call, one hit.
+  ("exec-cache-duplicate-input",
+    let c := [knowsDup, people]
+    let (st?, errs) := execChecks c reqChain 2 {} noFaults .done
+    errs ++ match st? with
+      | some st => (if st.calls 1 == 1 && st.hits == 1 then [] else
+            [s!"calls {callList c st}, {st.hits} hits; want 1 call of the lookup and 1 hit"])
+      | none => []),
+  -- Measured rows choose the next plan. The scan declares 1 tuple and
+  -- answers 20; the quota lookup is left after 2 calls. In family order
+  -- the next plan is the other lookup (20 calls); from the measured 20
+  -- tuples the driver takes a plan with the name scan (1 call).
+  ("exec-adapt-measured-rows",
+    let fam := family catRows reqChain 2
+    let (st?, errs) := execChecks catRows reqChain 2 {} noFaults .done
+    (match fam with
+     | _ :: next :: _ => if next.steps.any (·.src == 2) then [] else
+         ["the second admitted plan does not use the other lookup (the control of this case)"]
+     | _ => ["fewer than 2 admitted plans"]) ++
+    errs ++ match st? with
+      | some st => (if st.switches == 1 then [] else [s!"{st.switches} switches, want 1"]) ++
+          (if usesSrc st 3 then [] else ["the final plan does not use the name scan"]) ++
+          (if st.calls 0 == 1 && st.calls 2 == 0 && st.calls 3 == 1 then [] else
+            [s!"calls {callList catRows st}, want [1, 2, 0, 1]"])
+      | none => []),
+  -- Measured latency chooses the next plan. Calls at `host-b` take 1000
+  -- units; lookup B (static cost 20) is at `host-b`, lookup C (60) is not.
+  -- With no latency the driver takes lookup B; with `slowHostB`, lookup C.
+  ("exec-adapt-measured-latency",
+    let (st0?, errs0) := execChecks catLat reqChain 2 {} noFaults .done
+    let (st?, errs) := match run catLat reqChain 2 {} noFaults slowHostB with
+      | none => (none, ["no run"])
+      | some st => (some st,
+          (if st.status == Status.done then [] else [s!"status {statusName st.status}"]) ++
+          (if callsWithinQuota catLat st then [] else ["a call quota is exceeded"]) ++
+          (if sameMultiset (outRows reqChain st) (refRows catLat reqChain) then [] else ["output differs from the reference"]))
+    errs0 ++ errs ++
+    (match st0? with
+     | some st => if usesSrc st 2 then [] else ["with no latency the final plan does not use lookup B"]
+     | none => []) ++
+    (match st? with
+     | some st => (if usesSrc st 3 then [] else ["with host-b slow the final plan does not use lookup C"]) ++
+         (if st.latency 1 == 1000 then [] else [s!"latency of the quota lookup {st.latency 1}, want 1000"])
+     | none => []))
   ]
 
 /-- For each answerable case of KR 2.2: with no faults, the run ends
@@ -459,7 +608,8 @@ def execEqualsPlanRun : Nat × List String :=
     match c.req with
     | none => (n, errs)
     | some req =>
-      match (search c.cat req c.k).head?, run c.cat req c.k {} noFaults with
+      match (searchAdmitted c.cat req c.k).head?, run c.cat req c.k {} noFaults with
+      | none, none => (n, errs)
       | some r, some st =>
         if !withinQuota c.cat r.rewriting then (n, errs) else
         let want := canon req.projection (((r.rewriting.toPlan req).run c.cat).map Row.binding)
@@ -467,23 +617,16 @@ def execEqualsPlanRun : Nat × List String :=
         else (n + 1, errs ++ [s!"{c.id}: status {statusName st.status}, {st.output.length} rows, want {want.length}"])
       | _, _ => (n + 1, errs ++ [s!"{c.id}: no plan or no run"])) (0, [])
 
-/-- Expected failures of KR 2.4 (issue 801). -/
-def execXcases : List XCase :=
-  let knowsRowQ1 : Source :=
-    mkSrc "knows-sparql-rowquota1" 2 [] { perCall := 200, perRow := 1, rowQuota := some 1 } [tmpl pKnows]
-      [[alice, bob], [bob, carol], [carol, dave]]
-  [
-  { id := "exec-row-quota", issue := issue801,
-    what := "row quota enforced at run time: a scan with a row quota of 1 that answers 3 rows gives at most 1 row or stops",
+/-- Expected failures of the execution cases (`admission-without-statistic`,
+KR 4.2). `exec-row-quota` and
+`exec-reuse-after-adaptation` (KR 2.4) are assertions in `execCases` since
+KR 4.2 (https://github.com/danbri/factoidal/issues/875). -/
+def execXcases : List XCase := [
+  { id := "admission-without-statistic", issue := "https://github.com/danbri/factoidal/issues/937",
+    what := "admission with no statistic: the scan answers 3 tuples, so the LLM lookup (call quota 10) needs 3 calls, but the estimate (fanout 10) refuses the plan",
     test := fun _ =>
-      match run [knowsRowQ1] { bgp := [tp (sv "x") pKnows (v "y")], projection := ["x", "y"] } 1 {} noFaults with
-      | some st => st.status == .stopped || st.output.length ≤ 1
-      | none => false },
-  { id := "exec-reuse-after-adaptation", issue := issue801,
-    what := "after a switch, a call whose answer is known is not made again (the knows scan is called once)",
-    test := fun _ =>
-      match run [knows, peopleQuota, namesScan] reqChain 2 {} noFaults with
-      | some st => st.calls 0 == 1
+      match run [knows, ageLlm] reqAge 2 {} noFaults with
+      | some st => st.status == Status.done
       | none => false }
   ]
 

@@ -28,8 +28,13 @@ Actions:
   (`Access.inputs?` gives a value) and the call quota of the source is
   not exhausted (`quotaOk`). It counts the call.
 * `Receive`: the call answers with the tuples of the source's
-  implementation; the rows they give (exactly as `Plan.exec` gives them
-  for the access) are added to `next`.
+  implementation, when they are within the source's row quota
+  (`rowQuotaOk`); the rows they give (exactly as `Plan.exec` gives them
+  for the access) are added to `next`. The observed-cost record
+  (`answered`, `rows`, `latency`) and the cache of call results are
+  updated.
+* `Hit` (OKR batch 3, KR 4.2): the head pending row's call is in the
+  cache; its rows are added to `next` with no call.
 * `Fail`: the call fails (an action of the environment).
 * `Retry`: call again after a failure, at most `Config.maxRetries` times
   for one row, and only within the quota. It counts the call.
@@ -46,7 +51,11 @@ Invariants (`Inv`), proved for every reachable state:
 * (I1) `reachable_sound`: no unmarked output row is outside the
   requirement's answers over the declared graph of the catalog (reuses
   `rewriting_sound`).
-* (I2) `reachable_quota`: no source's call count exceeds its call quota.
+* (I2) `reachable_quota`: no source's call count exceeds its call quota;
+  `reachable_rowQuota`: no source returns more tuples than its row quota.
+* `reachable_cache`, `reachable_cache_hit`: every cache entry is the
+  call's result (the implementation's tuples for the recorded input), so
+  the rows of a cache hit are the rows `Plan.exec` gives for the access.
 * `reachable_output`: when the status is `done`, the output IS the run
   (`Plan.run`) of the current plan, as a list, and that plan is a member
   of the admitted family. So the machine loses no answer of the plan it
@@ -56,27 +65,32 @@ Invariants (`Inv`), proved for every reachable state:
 Termination: every action decreases the measure `measure` in the
 lexicographic order (`next_measure_lt`), so `Next` has no infinite
 chain (`next_wf`). The executable driver `runFrom` (a deterministic
-choice among the enabled actions, with a fault schedule for the
-environment) makes one step of `Next` per iteration (`stepExec_next`),
+choice among the enabled actions, with a fault schedule and a latency
+schedule for the environment) makes one step of `Next` per iteration
+(`stepExec_next`); when it must leave a plan it takes the alternative of
+least `adaptScore` (measured rows per call, measured latency per
+location, known calls, and the remaining quotas),
 is defined by well-founded recursion on that measure, and ends with the
 status `done` or `stopped` (`runFrom_final`). `run_spec` collects the
-results for a run over the family that `search` returns.
+results for a run over the admitted family (`searchAdmitted`: the members
+of `search` whose estimated calls and tuples are within the quotas).
 
 Hypotheses (anti-pattern 29): `ExactSourcesSound` (each exact source
 returns only tuples of its declared extension) and the rewriting check
 of each family member (`search_check` discharges it for the search's
 family). Neither mentions the output or the requirement's answers.
 
-Limits: the row quota (`CostModel.rowQuota`) is not enforced; after an
-adaptation the new plan makes again the calls whose answers are already
-known; capability implementations are pure functions. Each is an
-expected-failure case of `lake exe l4planner-test` naming
-https://github.com/danbri/factoidal/issues/801.
+Limits: capability implementations are pure functions here
+(https://github.com/danbri/factoidal/issues/933, expected-failure case
+`exec-driver-io` of `lake exe l4planner-test`). The cache is a list
+searched from the front. No theorem is about the costs or about the
+choice of the alternative: any member of the family keeps `Inv`.
 
 Recursion: `runFrom` is a tail call (a loop in the compiled code). No
 `partial`.
 -/
 import L4Factoidal.Planner.Search
+import L4Factoidal.Planner.ExecM
 
 namespace L4Factoidal.Planner.Exec
 
@@ -87,6 +101,9 @@ open L4Factoidal.RDF L4Factoidal.SPARQL L4Factoidal.Planner
 structure Config where
   /-- The number of retries allowed for one call after a failure. -/
   maxRetries : Nat := 1
+  /-- The estimate's rows for each new variable when a source has no
+  statistic and no measurement (`Planner.Search.statModel`). -/
+  fanout : Nat := 10
   deriving Repr
 
 /-- The phase of the call for the head pending row. -/
@@ -101,6 +118,13 @@ inductive Status where
   | done
   | stopped
   deriving DecidableEq, Repr
+
+/-- A call whose answer is known: the source (catalog index), the input
+binding, and the tuples the call returned. -/
+structure CacheEntry where
+  src : Nat
+  inp : InputBinding
+  tuples : List Tuple
 
 /-- The empty solution mapping, unmarked: the row a plan starts from. -/
 def row0 : Row := { binding := [], approx := false }
@@ -124,6 +148,16 @@ structure State where
   status : Status
   /-- The number of adaptations (plan switches). -/
   switches : Nat
+  /-- The observed-cost record, by catalog index: calls answered, tuples
+  received (the count for the row quota), and the sum of the latencies of
+  the answered calls. Each `Receive` updates it. -/
+  answered : Nat → Nat
+  rows : Nat → Nat
+  latency : Nat → Nat
+  /-- The answers of the calls made so far. -/
+  cache : List CacheEntry
+  /-- Rows of a plan answered from the cache, with no call. -/
+  hits : Nat
 
 /-- The call quota of the source allows one more call after `n` calls. -/
 def quotaOk (s : Source) (n : Nat) : Bool :=
@@ -131,9 +165,23 @@ def quotaOk (s : Source) (n : Nat) : Bool :=
   | some q => decide (n < q)
   | none   => true
 
+/-- The row quota of the source allows `m` more tuples after `n`. -/
+def rowQuotaOk (s : Source) (n m : Nat) : Bool :=
+  match s.cap.cost.rowQuota with
+  | some q => decide (n + m ≤ q)
+  | none   => true
+
 /-- Count one more call of source `i`. -/
 def bump (f : Nat → Nat) (i : Nat) : Nat → Nat :=
   fun j => if j = i then f j + 1 else f j
+
+/-- Add `n` to the count of source `i`. -/
+def addAt (f : Nat → Nat) (i n : Nat) : Nat → Nat :=
+  fun j => if j = i then f j + n else f j
+
+/-- The cache entry of a call of source `i` with input `inp`. -/
+def cacheFind (cache : List CacheEntry) (i : Nat) (inp : InputBinding) : Option CacheEntry :=
+  cache.find? (fun e => decide (e.src = i) && decide (e.inp = inp))
 
 def finalRow (req : Requirement) (x : Row) : Row :=
   { binding := projectBinding req.projection x.binding, approx := x.approx }
@@ -155,6 +203,11 @@ def initState (rw : Rewriting) (alts : List Rewriting) : State where
   output := []
   status := .running
   switches := 0
+  answered := fun _ => 0
+  rows := fun _ => 0
+  latency := fun _ => 0
+  cache := []
+  hits := 0
 
 /-! ## Init, the actions and Next -/
 
@@ -170,11 +223,32 @@ def Call (cat : Catalog) (st st' : State) : Prop :=
     quotaOk s (st.calls a.src) = true ∧
     st' = { st with phase := .waiting, calls := bump st.calls a.src }
 
+/-- The call answers with the tuples of the source's implementation, if
+they are within the row quota. The rows they give (`accessRows`, the
+access case of `Plan.exec`) are added to `next`; the observed-cost record
+and the cache are updated; `lat` is the call's latency (the environment
+chooses it). -/
 def Receive (cat : Catalog) (st st' : State) : Prop :=
   st.status = .running ∧ st.phase = .waiting ∧
-  ∃ x rest a, st.pending = x :: rest ∧ st.plan.steps[st.step]? = some a ∧
+  ∃ x rest a s inp lat, st.pending = x :: rest ∧ st.plan.steps[st.step]? = some a ∧
+    cat[a.src]? = some s ∧ a.inputs? s.cap x.binding = some inp ∧
+    rowQuotaOk s (st.rows a.src) (s.sem.impl inp).length = true ∧
     st' = { st with phase := .idle, pending := rest,
-                    next := st.next ++ (Plan.access a).exec cat x, retries := 0 }
+                    next := st.next ++ accessRows s a x (s.sem.impl inp), retries := 0,
+                    answered := bump st.answered a.src,
+                    rows := addAt st.rows a.src (s.sem.impl inp).length,
+                    latency := addAt st.latency a.src lat,
+                    cache := ⟨a.src, inp, s.sem.impl inp⟩ :: st.cache }
+
+/-- The head pending row's call is in the cache: its rows are added to
+`next` with no call. -/
+def Hit (cat : Catalog) (st st' : State) : Prop :=
+  st.status = .running ∧ st.phase = .idle ∧
+  ∃ x rest a s inp e, st.pending = x :: rest ∧ st.plan.steps[st.step]? = some a ∧
+    cat[a.src]? = some s ∧ a.inputs? s.cap x.binding = some inp ∧
+    e ∈ st.cache ∧ e.src = a.src ∧ e.inp = inp ∧
+    st' = { st with pending := rest, next := st.next ++ accessRows s a x e.tuples,
+                    hits := st.hits + 1 }
 
 def Fail (st st' : State) : Prop :=
   st.status = .running ∧ st.phase = .waiting ∧ st' = { st with phase := .failed }
@@ -207,7 +281,7 @@ def Stop (st st' : State) : Prop :=
 /-- The next-state relation: the disjunction of the actions. -/
 def Next (cat : Catalog) (req : Requirement) (cfg : Config) (st st' : State) : Prop :=
   Call cat st st' ∨ Receive cat st st' ∨ Fail st st' ∨ Retry cat cfg st st' ∨
-  Advance st st' ∨ Adapt st st' ∨ Finish req st st' ∨ Stop st st'
+  Advance st st' ∨ Adapt st st' ∨ Finish req st st' ∨ Stop st st' ∨ Hit cat st st'
 
 /-- The states that a trace from `Init` by `Next` reaches. -/
 inductive Reachable (cat : Catalog) (req : Requirement) (cfg : Config) (fam : List Rewriting) :
@@ -243,8 +317,11 @@ structure Inv (cat : Catalog) (req : Requirement) (cfg : Config) (fam : List Rew
   output_done : st.status = .done → st.output = (st.plan.toPlan req).run cat
   output_nil : st.status ≠ .done → st.output = []
   quota : ∀ i s q, cat[i]? = some s → s.cap.cost.callQuota = some q → st.calls i ≤ q
+  rowQuota : ∀ i s q, cat[i]? = some s → s.cap.cost.rowQuota = some q → st.rows i ≤ q
   retries_le : st.retries ≤ cfg.maxRetries
   inflight : InflightOk cat st
+  /-- Every cache entry is the answer of the call it records. -/
+  cacheOk : ∀ e ∈ st.cache, ∃ s, cat[e.src]? = some s ∧ e.tuples = s.sem.impl e.inp
 
 /-! ## Lemmas about the plan -/
 
@@ -308,6 +385,8 @@ theorem init_inv {cat : Catalog} {req : Requirement} {cfg : Config} {fam : List 
     output_done := by intro h; cases h
     output_nil := fun _ => rfl
     quota := fun _ _ _ _ _ => Nat.zero_le _
+    rowQuota := fun _ _ _ _ _ => Nat.zero_le _
+    cacheOk := by intro e he; cases he
     retries_le := Nat.zero_le _
     inflight := by intro h; exact absurd rfl h }
 
@@ -342,36 +421,108 @@ theorem call_inv {cat : Catalog} {req : Requirement} {cfg : Config} {fam : List 
     output_done := hi.output_done
     output_nil := hi.output_nil
     quota := quota_bump hi.quota hs hok
+    rowQuota := hi.rowQuota
+    cacheOk := hi.cacheOk
     retries_le := hi.retries_le
     inflight := fun _ => ⟨x, rest, a, s, inp, hpend, hstep, hs, hinp⟩ }
 
-theorem receive_inv {cat : Catalog} {req : Requirement} {cfg : Config} {fam : List Rewriting}
-    {st st' : State} (hi : Inv cat req cfg fam st) (h : Receive cat st st') :
-    Inv cat req cfg fam st' := by
-  obtain ⟨hrun, _, x, rest, a, hpend, hstep, rfl⟩ := h
-  obtain ⟨P, hP, hnext, _⟩ := hi.frontier
+theorem rowQuota_add {cat : Catalog} {rows : Nat → Nat} {i0 n : Nat} {s0 : Source}
+    (hq : ∀ i s q, cat[i]? = some s → s.cap.cost.rowQuota = some q → rows i ≤ q)
+    (hs0 : cat[i0]? = some s0) (hok : rowQuotaOk s0 (rows i0) n = true) :
+    ∀ i s q, cat[i]? = some s → s.cap.cost.rowQuota = some q → addAt rows i0 n i ≤ q := by
+  intro i s q hs hcq
+  unfold addAt
+  by_cases hi : i = i0
+  · subst hi
+    rw [hs0] at hs
+    cases hs
+    simp only [if_true]
+    unfold rowQuotaOk at hok
+    rw [hcq] at hok
+    exact of_decide_eq_true hok
+  · simp only [hi, if_false]
+    exact hq i s q hs hcq
+
+/-- The access case of `Plan.exec` is `accessRows` over the source's
+implementation. -/
+theorem exec_access_of {cat : Catalog} {a : Access} {s : Source} {inp : InputBinding} {x : Row}
+    (hs : cat[a.src]? = some s) (hinp : a.inputs? s.cap x.binding = some inp) :
+    (Plan.access a).exec cat x = accessRows s a x (s.sem.impl inp) := by
+  rw [exec_access_eq]
+  simp only [hs, hinp]
+
+/-- A cache entry for the call of access `a` on row `x` gives the rows
+that `Plan.exec` gives for that access and row. -/
+theorem cache_rows_eq {cat : Catalog} {cache : List CacheEntry}
+    (hc : ∀ e ∈ cache, ∃ s, cat[e.src]? = some s ∧ e.tuples = s.sem.impl e.inp)
+    {e : CacheEntry} {a : Access} {s : Source} {inp : InputBinding} {x : Row}
+    (he : e ∈ cache) (hsrc : e.src = a.src) (hinpe : e.inp = inp)
+    (hs : cat[a.src]? = some s) (hinp : a.inputs? s.cap x.binding = some inp) :
+    accessRows s a x e.tuples = (Plan.access a).exec cat x := by
+  obtain ⟨s', hs', ht⟩ := hc e he
+  rw [hsrc, hs] at hs'
+  cases hs'
+  rw [ht, hinpe, exec_access_of hs hinp]
+
+/-- `Receive` and `Hit` add to `next` the rows of the access for the head
+pending row. -/
+theorem frontier_pop {cat : Catalog} {st : State} {x : Row} {rest : List Row} {a : Access}
+    (hf : Frontier cat st) (hpend : st.pending = x :: rest) (hstep : st.plan.steps[st.step]? = some a)
+    (rows : List Row) (hrows : rows = (Plan.access a).exec cat x) :
+    Frontier cat { st with pending := rest, next := st.next ++ rows } := by
+  obtain ⟨P, hP, hnext, _⟩ := hf
   have hn := hnext a hstep
-  refine {
-    plan_mem := hi.plan_mem
-    alts_sub := hi.alts_sub
-    frontier := ?_
-    output_done := hi.output_done
-    output_nil := hi.output_nil
-    quota := hi.quota
-    retries_le := Nat.zero_le _
-    inflight := by intro h; exact absurd rfl h }
   refine ⟨P ++ [x], ?_, ?_, ?_⟩
   · show (chainPlan (st.plan.steps.take st.step)).run cat = (P ++ [x]) ++ rest
     rw [hP, hpend]; simp
   · intro a' ha'
-    show st.next ++ (Plan.access a).exec cat x = _
+    show st.next ++ rows = _
     have haa : a' = a := by
       have : (some a' : Option Access) = some a := ha'.symm.trans hstep
       exact Option.some.inj this
     subst haa
-    rw [hn]; simp
+    rw [hn, hrows]; simp
   · intro hnone
     exact absurd (hnone.symm.trans hstep) (by simp)
+
+theorem receive_inv {cat : Catalog} {req : Requirement} {cfg : Config} {fam : List Rewriting}
+    {st st' : State} (hi : Inv cat req cfg fam st) (h : Receive cat st st') :
+    Inv cat req cfg fam st' := by
+  obtain ⟨hrun, _, x, rest, a, s, inp, lat, hpend, hstep, hs, hinp, hrq, rfl⟩ := h
+  have hfr := frontier_pop hi.frontier hpend hstep _ (exec_access_of hs hinp).symm
+  exact {
+    plan_mem := hi.plan_mem
+    alts_sub := hi.alts_sub
+    frontier := hfr
+    output_done := hi.output_done
+    output_nil := hi.output_nil
+    quota := hi.quota
+    rowQuota := rowQuota_add hi.rowQuota hs hrq
+    cacheOk := by
+      intro e he
+      rcases List.mem_cons.mp he with rfl | he
+      · exact ⟨s, hs, rfl⟩
+      · exact hi.cacheOk e he
+    retries_le := Nat.zero_le _
+    inflight := by intro h; exact absurd rfl h }
+
+theorem hit_inv {cat : Catalog} {req : Requirement} {cfg : Config} {fam : List Rewriting}
+    {st st' : State} (hi : Inv cat req cfg fam st) (h : Hit cat st st') :
+    Inv cat req cfg fam st' := by
+  obtain ⟨_, hidle, x, rest, a, s, inp, e, hpend, hstep, hs, hinp, he, hsrc, hinpe, rfl⟩ := h
+  have hfr := frontier_pop hi.frontier hpend hstep _
+    (cache_rows_eq hi.cacheOk he hsrc hinpe hs hinp)
+  exact {
+    plan_mem := hi.plan_mem
+    alts_sub := hi.alts_sub
+    frontier := hfr
+    output_done := hi.output_done
+    output_nil := hi.output_nil
+    quota := hi.quota
+    rowQuota := hi.rowQuota
+    cacheOk := hi.cacheOk
+    retries_le := hi.retries_le
+    inflight := by intro h; exact absurd hidle h }
 
 theorem fail_inv {cat : Catalog} {req : Requirement} {cfg : Config} {fam : List Rewriting}
     {st st' : State} (hi : Inv cat req cfg fam st) (h : Fail st st') :
@@ -384,6 +535,8 @@ theorem fail_inv {cat : Catalog} {req : Requirement} {cfg : Config} {fam : List 
     output_done := hi.output_done
     output_nil := hi.output_nil
     quota := hi.quota
+    rowQuota := hi.rowQuota
+    cacheOk := hi.cacheOk
     retries_le := hi.retries_le
     inflight := fun _ => hi.inflight (by rw [hw]; exact fun h => Phase.noConfusion h) }
 
@@ -398,6 +551,8 @@ theorem retry_inv {cat : Catalog} {req : Requirement} {cfg : Config} {fam : List
     output_done := hi.output_done
     output_nil := hi.output_nil
     quota := quota_bump hi.quota hs hok
+    rowQuota := hi.rowQuota
+    cacheOk := hi.cacheOk
     retries_le := hr
     inflight := fun _ => hi.inflight (by rw [hf]; exact fun h => Phase.noConfusion h) }
 
@@ -417,6 +572,8 @@ theorem advance_inv {cat : Catalog} {req : Requirement} {cfg : Config} {fam : Li
     output_done := hi.output_done
     output_nil := hi.output_nil
     quota := hi.quota
+    rowQuota := hi.rowQuota
+    cacheOk := hi.cacheOk
     retries_le := hi.retries_le
     inflight := by intro h; exact absurd hidle h }
   refine ⟨[], ?_, ?_, ?_⟩
@@ -437,6 +594,8 @@ theorem adapt_inv {cat : Catalog} {req : Requirement} {cfg : Config} {fam : List
     output_done := fun h => absurd h hnd
     output_nil := fun _ => hi.output_nil hnd
     quota := hi.quota
+    rowQuota := hi.rowQuota
+    cacheOk := hi.cacheOk
     retries_le := Nat.zero_le _
     inflight := by intro h; exact absurd rfl h }
   refine ⟨[], ?_, ?_, ?_⟩
@@ -459,6 +618,8 @@ theorem finish_inv {cat : Catalog} {req : Requirement} {cfg : Config} {fam : Lis
     output_done := ?_
     output_nil := fun h => absurd rfl h
     quota := hi.quota
+    rowQuota := hi.rowQuota
+    cacheOk := hi.cacheOk
     retries_le := hi.retries_le
     inflight := hi.inflight }
   intro _
@@ -477,6 +638,8 @@ theorem stop_inv {cat : Catalog} {req : Requirement} {cfg : Config} {fam : List 
     output_done := fun h => Status.noConfusion h
     output_nil := fun _ => hi.output_nil hnd
     quota := hi.quota
+    rowQuota := hi.rowQuota
+    cacheOk := hi.cacheOk
     retries_le := hi.retries_le
     inflight := hi.inflight }
 
@@ -484,7 +647,7 @@ theorem stop_inv {cat : Catalog} {req : Requirement} {cfg : Config} {fam : List 
 theorem next_inv {cat : Catalog} {req : Requirement} {cfg : Config} {fam : List Rewriting}
     {st st' : State} (hi : Inv cat req cfg fam st) (h : Next cat req cfg st st') :
     Inv cat req cfg fam st' := by
-  rcases h with h | h | h | h | h | h | h | h
+  rcases h with h | h | h | h | h | h | h | h | h
   · exact call_inv hi h
   · exact receive_inv hi h
   · exact fail_inv hi h
@@ -493,6 +656,7 @@ theorem next_inv {cat : Catalog} {req : Requirement} {cfg : Config} {fam : List 
   · exact adapt_inv hi h
   · exact finish_inv hi h
   · exact stop_inv hi h
+  · exact hit_inv hi h
 
 /-- Every reachable state satisfies the invariant (induction on traces). -/
 theorem reachable_inv {cat : Catalog} {req : Requirement} {cfg : Config} {fam : List Rewriting}
@@ -524,6 +688,30 @@ theorem reachable_quota {cat : Catalog} {req : Requirement} {cfg : Config}
     {fam : List Rewriting} {st : State} (h : Reachable cat req cfg fam st) :
     ∀ i s q, cat[i]? = some s → s.cap.cost.callQuota = some q → st.calls i ≤ q :=
   (reachable_inv h).quota
+
+/-- (I2, rows) No source returns more tuples than its row quota. -/
+theorem reachable_rowQuota {cat : Catalog} {req : Requirement} {cfg : Config}
+    {fam : List Rewriting} {st : State} (h : Reachable cat req cfg fam st) :
+    ∀ i s q, cat[i]? = some s → s.cap.cost.rowQuota = some q → st.rows i ≤ q :=
+  (reachable_inv h).rowQuota
+
+/-- Every cache entry of a reachable state is the call's result: the
+tuples of the source's implementation for the recorded input. -/
+theorem reachable_cache {cat : Catalog} {req : Requirement} {cfg : Config}
+    {fam : List Rewriting} {st : State} (h : Reachable cat req cfg fam st) :
+    ∀ e ∈ st.cache, ∃ s, cat[e.src]? = some s ∧ e.tuples = s.sem.impl e.inp :=
+  (reachable_inv h).cacheOk
+
+/-- The cache never changes an answer: in a reachable state, the rows
+that a cache entry gives for access `a` on row `x` are the rows that
+`Plan.exec` gives (the rows of the call). -/
+theorem reachable_cache_hit {cat : Catalog} {req : Requirement} {cfg : Config}
+    {fam : List Rewriting} {st : State} (h : Reachable cat req cfg fam st)
+    {e : CacheEntry} {a : Access} {s : Source} {inp : InputBinding} {x : Row}
+    (he : e ∈ st.cache) (hsrc : e.src = a.src) (hinpe : e.inp = inp)
+    (hs : cat[a.src]? = some s) (hinp : a.inputs? s.cap x.binding = some inp) :
+    accessRows s a x e.tuples = (Plan.access a).exec cat x :=
+  cache_rows_eq (reachable_cache h) he hsrc hinpe hs hinp
 
 /-- When the status is `done`, the output is the run of the current plan,
 and the current plan is a member of the family. -/
@@ -572,14 +760,14 @@ abbrev MeasureLt (m m' : Nat × Nat × Nat × Nat × Nat × Nat) : Prop :=
 
 theorem next_measure_lt {cat : Catalog} {req : Requirement} {cfg : Config} {st st' : State}
     (h : Next cat req cfg st st') : MeasureLt (measure cfg st') (measure cfg st) := by
-  rcases h with h | h | h | h | h | h | h | h
+  rcases h with h | h | h | h | h | h | h | h | h
   · -- Call: the phase goes from idle to waiting
     obtain ⟨_, hidle, -, -, -, -, -, -, -, -, -, -, rfl⟩ := h
     simp only [measure, hidle]
     exact Prod.Lex.right _ (Prod.Lex.right _ (Prod.Lex.right _ (Prod.Lex.right _
       (Prod.Lex.right _ (by simp [phaseRank])))))
   · -- Receive: one pending row less
-    obtain ⟨_, _, x, rest, a, hpend, -, rfl⟩ := h
+    obtain ⟨_, _, x, rest, a, -, -, -, hpend, -, -, -, -, rfl⟩ := h
     simp only [measure, hpend]
     exact Prod.Lex.right _ (Prod.Lex.right _ (Prod.Lex.right _ (Prod.Lex.left _ _
       (by simp))))
@@ -611,6 +799,11 @@ theorem next_measure_lt {cat : Catalog} {req : Requirement} {cfg : Config} {st s
     obtain ⟨hrun, rfl⟩ := h
     simp only [measure, hrun]
     exact Prod.Lex.left _ _ (by simp [statusRank])
+  · -- Hit: one pending row less
+    obtain ⟨_, _, x, rest, a, -, -, -, hpend, -, -, -, -, -, -, rfl⟩ := h
+    simp only [measure, hpend]
+    exact Prod.Lex.right _ (Prod.Lex.right _ (Prod.Lex.right _ (Prod.Lex.left _ _
+      (by simp))))
 
 /-- The relation "one step of `Next` back" is well-founded: the state
 machine has no infinite trace. -/
@@ -623,45 +816,161 @@ theorem next_wf (cat : Catalog) (req : Requirement) (cfg : Config) :
 
 A deterministic choice among the enabled actions. The environment's
 failures come from a fault schedule: `faults i n` is `true` when call
-number `n` (counted from 1) of source `i` fails. When the current call
-cannot be made (an input is unbound, the quota is exhausted, the
-retries are used up), the driver switches to the first alternative, or
-stops when none is left. -/
+number `n` (counted from 1) of source `i` fails; its latencies from
+`lat i n`. When the head pending row's call is in the cache, the driver
+takes `Hit` (no call). When the current call cannot be made (an input is
+unbound, the call quota is exhausted, the retries are used up) or its
+answer is over the row quota, the driver switches to the alternative of
+least score (`adaptScore`, from the observed-cost record), or stops when
+none is left. -/
 
 abbrev Faults := Nat → Nat → Bool
 
 def noFaults : Faults := fun _ _ => false
 
-def adaptOrStop (st : State) : State :=
-  match st.alts with
-  | rw :: _ =>
+/-- The latency of call `n` of source `i`, in the units of
+`CostModel.perCall`. -/
+abbrev Latency := Nat → Nat → Nat
+
+def noLatency : Latency := fun _ _ => 0
+
+/-! ### The choice of the next alternative from measured costs -/
+
+def ceilDiv (a b : Nat) : Nat := (a + b - 1) / b
+
+/-- The measured latency per answered call at a location: over every
+source of the catalog with that location. `none` before the first answer
+there. -/
+def locLatency (cat : Catalog) (st : State) (loc : String) : Option Nat :=
+  let acc := (List.range cat.length).foldl (fun (acc : Nat × Nat) i =>
+    match cat[i]? with
+    | some s => if s.cap.location = loc then (acc.1 + st.latency i, acc.2 + st.answered i) else acc
+    | none => acc) (0, 0)
+  if acc.2 = 0 then none else some (acc.1 / acc.2)
+
+/-- The estimate model of the run so far: the measured tuples per call of
+a source that has answered (its statistic, or the fanout, otherwise); the
+measured latency of the source's location as the cost of a call (its
+`perCall` before any answer there); and, for an access whose inputs are
+all constants, the tuple count of its call when that call is in the
+cache (it makes no call), and otherwise one call (the later rows are
+cache hits). -/
+def obsModel (cat : Catalog) (cfg : Config) (st : State) : EstModel where
+  rowsPerCall := fun i s nv =>
+    if st.answered i = 0 then s.cap.cost.rowsPerCall.getD (cfg.fanout ^ nv)
+    else ceilDiv (st.rows i) (st.answered i)
+  callCost := fun _ s => (locLatency cat st s.cap.location).getD s.cap.cost.perCall
+  known := fun a =>
+    match cat[a.src]? with
+    | none => none
+    | some s =>
+      match a.inputs? s.cap [] with
+      | none => none
+      | some inp => (cacheFind st.cache a.src inp).map (·.tuples.length)
+  cacheScans := true
+
+/-- The score of an alternative: first 0 when its estimated use, added to
+the calls and tuples already used, is within every quota, and 1 when it
+is not; then its estimated cost. -/
+def adaptScore (cat : Catalog) (cfg : Config) (st : State) (rw : Rewriting) : Nat × Nat :=
+  let us := estUse cat (obsModel cat cfg st) rw.steps
+  (if withinQuotas cat us st.calls st.rows then 0 else 1, totalCost us)
+
+def scoreLt (p q : Nat × Nat) : Bool :=
+  decide (p.1 < q.1) || (decide (p.1 = q.1) && decide (p.2 < q.2))
+
+def pickMinGo (f : Rewriting → Nat × Nat) : Rewriting → List Rewriting → Rewriting
+  | b, [] => b
+  | b, x :: xs => pickMinGo f (if scoreLt (f x) (f b) then x else b) xs
+
+/-- The first alternative of least score; `none` for no alternative. A
+loop. -/
+def pickMin (f : Rewriting → Nat × Nat) : List Rewriting → Option Rewriting
+  | [] => none
+  | x :: xs => some (pickMinGo f x xs)
+
+theorem pickMinGo_mem (f : Rewriting → Nat × Nat) :
+    ∀ (b : Rewriting) (l : List Rewriting), pickMinGo f b l ∈ b :: l
+  | b, [] => List.mem_cons_self
+  | b, x :: xs => by
+    show pickMinGo f (if scoreLt (f x) (f b) then x else b) xs ∈ b :: x :: xs
+    rcases List.mem_cons.mp (pickMinGo_mem f (if scoreLt (f x) (f b) then x else b) xs) with h | h
+    · rw [h]
+      split
+      · exact List.mem_cons_of_mem _ List.mem_cons_self
+      · exact List.mem_cons_self
+    · exact List.mem_cons_of_mem _ (List.mem_cons_of_mem _ h)
+
+theorem pickMin_mem {f : Rewriting → Nat × Nat} {l : List Rewriting} {rw : Rewriting}
+    (h : pickMin f l = some rw) : rw ∈ l := by
+  cases l with
+  | nil => cases h
+  | cons x xs =>
+    simp only [pickMin, Option.some.injEq] at h
+    rw [← h]
+    exact pickMinGo_mem f x xs
+
+theorem cacheFind_some {cache : List CacheEntry} {i : Nat} {inp : InputBinding} {e : CacheEntry}
+    (h : cacheFind cache i inp = some e) : e ∈ cache ∧ e.src = i ∧ e.inp = inp := by
+  unfold cacheFind at h
+  have hp := List.find?_some h
+  simp only [Bool.and_eq_true, decide_eq_true_eq] at hp
+  exact ⟨List.mem_of_find?_eq_some h, hp.1, hp.2⟩
+
+/-! ### The steps -/
+
+def adaptOrStop (cat : Catalog) (cfg : Config) (st : State) : State :=
+  match pickMin (adaptScore cat cfg st) st.alts with
+  | some rw =>
     { st with plan := rw, alts := st.alts.erase rw, step := 0, pending := [row0], next := [],
               phase := .idle, retries := 0, switches := st.switches + 1 }
-  | [] => { st with status := .stopped }
+  | none => { st with status := .stopped }
 
-def stepIdle (cat : Catalog) (req : Requirement) (st : State) : State :=
+def stepIdle (cat : Catalog) (req : Requirement) (cfg : Config) (st : State) : State :=
   if st.plan.steps.length ≤ st.step then
     { st with output := finalRows req st.pending, status := .done }
   else
     match st.pending with
     | [] => { st with step := st.step + 1, pending := st.next, next := [] }
-    | x :: _ =>
+    | x :: rest =>
       match st.plan.steps[st.step]? with
-      | none => adaptOrStop st
+      | none => adaptOrStop cat cfg st
       | some a =>
         match cat[a.src]? with
-        | none => adaptOrStop st
+        | none => adaptOrStop cat cfg st
         | some s =>
-          if (a.inputs? s.cap x.binding).isSome && quotaOk s (st.calls a.src) then
-            { st with phase := .waiting, calls := bump st.calls a.src }
-          else adaptOrStop st
+          match a.inputs? s.cap x.binding with
+          | none => adaptOrStop cat cfg st
+          | some inp =>
+            match cacheFind st.cache a.src inp with
+            | some e =>
+              { st with pending := rest, next := st.next ++ accessRows s a x e.tuples,
+                        hits := st.hits + 1 }
+            | none =>
+              if quotaOk s (st.calls a.src) then
+                { st with phase := .waiting, calls := bump st.calls a.src }
+              else adaptOrStop cat cfg st
 
-def stepWaiting (cat : Catalog) (faults : Faults) (st : State) : State :=
+def stepWaiting (cat : Catalog) (cfg : Config) (faults : Faults) (lat : Latency) (st : State) :
+    State :=
   match st.pending, st.plan.steps[st.step]? with
   | x :: rest, some a =>
     if faults a.src (st.calls a.src) then { st with phase := .failed }
-    else { st with phase := .idle, pending := rest,
-                   next := st.next ++ (Plan.access a).exec cat x, retries := 0 }
+    else
+      match cat[a.src]? with
+      | none => { st with phase := .failed }
+      | some s =>
+        match a.inputs? s.cap x.binding with
+        | none => { st with phase := .failed }
+        | some inp =>
+          if rowQuotaOk s (st.rows a.src) (s.sem.impl inp).length then
+            { st with phase := .idle, pending := rest,
+                      next := st.next ++ accessRows s a x (s.sem.impl inp), retries := 0,
+                      answered := bump st.answered a.src,
+                      rows := addAt st.rows a.src (s.sem.impl inp).length,
+                      latency := addAt st.latency a.src (lat a.src (st.calls a.src)),
+                      cache := ⟨a.src, inp, s.sem.impl inp⟩ :: st.cache }
+          else adaptOrStop cat cfg st
   | _, _ => { st with phase := .failed }
 
 def stepFailed (cat : Catalog) (cfg : Config) (st : State) : State :=
@@ -671,33 +980,33 @@ def stepFailed (cat : Catalog) (cfg : Config) (st : State) : State :=
     | some s =>
       if decide (st.retries < cfg.maxRetries) && quotaOk s (st.calls a.src) then
         { st with phase := .waiting, retries := st.retries + 1, calls := bump st.calls a.src }
-      else adaptOrStop st
-    | none => adaptOrStop st
-  | _, _ => adaptOrStop st
+      else adaptOrStop cat cfg st
+    | none => adaptOrStop cat cfg st
+  | _, _ => adaptOrStop cat cfg st
 
 /-- One step of the driver; `none` when the status is not `running`. -/
-def stepExec (cat : Catalog) (req : Requirement) (cfg : Config) (faults : Faults)
+def stepExec (cat : Catalog) (req : Requirement) (cfg : Config) (faults : Faults) (lat : Latency)
     (st : State) : Option State :=
   match st.status with
   | .running =>
     match st.phase with
-    | .idle    => some (stepIdle cat req st)
-    | .waiting => some (stepWaiting cat faults st)
+    | .idle    => some (stepIdle cat req cfg st)
+    | .waiting => some (stepWaiting cat cfg faults lat st)
     | .failed  => some (stepFailed cat cfg st)
   | _ => none
 
 theorem adaptOrStop_next {cat : Catalog} {req : Requirement} {cfg : Config} {st : State}
-    (hrun : st.status = .running) : Next cat req cfg st (adaptOrStop st) := by
+    (hrun : st.status = .running) : Next cat req cfg st (adaptOrStop cat cfg st) := by
   unfold adaptOrStop
   split
-  · rename_i rw rest halts
+  · rename_i rw hpick
     exact Or.inr (Or.inr (Or.inr (Or.inr (Or.inr (Or.inl
-      ⟨hrun, rw, by rw [halts]; exact List.mem_cons_self, by rw [halts]⟩)))))
-  · exact Or.inr (Or.inr (Or.inr (Or.inr (Or.inr (Or.inr (Or.inr ⟨hrun, rfl⟩))))))
+      ⟨hrun, rw, pickMin_mem hpick, rfl⟩)))))
+  · exact Or.inr (Or.inr (Or.inr (Or.inr (Or.inr (Or.inr (Or.inr (Or.inl ⟨hrun, rfl⟩)))))))
 
 theorem stepIdle_next {cat : Catalog} {req : Requirement} {cfg : Config} {st : State}
     (hrun : st.status = .running) (hidle : st.phase = .idle) :
-    Next cat req cfg st (stepIdle cat req st) := by
+    Next cat req cfg st (stepIdle cat req cfg st) := by
   unfold stepIdle
   split
   · rename_i hle
@@ -714,21 +1023,38 @@ theorem stepIdle_next {cat : Catalog} {req : Requirement} {cfg : Config} {st : S
         · exact adaptOrStop_next hrun
         · rename_i s hs
           split
-          · rename_i hok
-            simp only [Bool.and_eq_true, Option.isSome_iff_exists] at hok
-            obtain ⟨⟨inp, hinp⟩, hq⟩ := hok
-            exact Or.inl ⟨hrun, hidle, x, rest, a, s, inp, hpend, hstep, hs, hinp, hq, rfl⟩
           · exact adaptOrStop_next hrun
+          · rename_i inp hinp
+            split
+            · rename_i e he
+              obtain ⟨hmem, hsrc, hinpe⟩ := cacheFind_some he
+              exact Or.inr (Or.inr (Or.inr (Or.inr (Or.inr (Or.inr (Or.inr (Or.inr
+                ⟨hrun, hidle, x, rest, a, s, inp, e, hpend, hstep, hs, hinp, hmem, hsrc, hinpe,
+                 rfl⟩)))))))
+            · split
+              · rename_i hq
+                exact Or.inl ⟨hrun, hidle, x, rest, a, s, inp, hpend, hstep, hs, hinp, hq, rfl⟩
+              · exact adaptOrStop_next hrun
 
 theorem stepWaiting_next {cat : Catalog} {req : Requirement} {cfg : Config} {faults : Faults}
-    {st : State} (hrun : st.status = .running) (hw : st.phase = .waiting) :
-    Next cat req cfg st (stepWaiting cat faults st) := by
+    {lat : Latency} {st : State} (hrun : st.status = .running) (hw : st.phase = .waiting) :
+    Next cat req cfg st (stepWaiting cat cfg faults lat st) := by
   unfold stepWaiting
   split
   · rename_i x rest a hpend hstep
     split
     · exact Or.inr (Or.inr (Or.inl ⟨hrun, hw, rfl⟩))
-    · exact Or.inr (Or.inl ⟨hrun, hw, x, rest, a, hpend, hstep, rfl⟩)
+    · split
+      · exact Or.inr (Or.inr (Or.inl ⟨hrun, hw, rfl⟩))
+      · rename_i s hs
+        split
+        · exact Or.inr (Or.inr (Or.inl ⟨hrun, hw, rfl⟩))
+        · rename_i inp hinp
+          split
+          · rename_i hrq
+            exact Or.inr (Or.inl ⟨hrun, hw, x, rest, a, s, inp, lat a.src (st.calls a.src),
+              hpend, hstep, hs, hinp, hrq, rfl⟩)
+          · exact adaptOrStop_next hrun
   · exact Or.inr (Or.inr (Or.inl ⟨hrun, hw, rfl⟩))
 
 theorem stepFailed_next {cat : Catalog} {req : Requirement} {cfg : Config} {st : State}
@@ -750,7 +1076,7 @@ theorem stepFailed_next {cat : Catalog} {req : Requirement} {cfg : Config} {st :
 
 /-- Each step of the driver is a step of `Next`. -/
 theorem stepExec_next {cat : Catalog} {req : Requirement} {cfg : Config} {faults : Faults}
-    {st st' : State} (h : stepExec cat req cfg faults st = some st') :
+    {lat : Latency} {st st' : State} (h : stepExec cat req cfg faults lat st = some st') :
     Next cat req cfg st st' := by
   unfold stepExec at h
   split at h
@@ -763,23 +1089,25 @@ theorem stepExec_next {cat : Catalog} {req : Requirement} {cfg : Config} {faults
 
 /-- The driver stops only when the status is not `running`. -/
 theorem stepExec_none {cat : Catalog} {req : Requirement} {cfg : Config} {faults : Faults}
-    {st : State} (h : stepExec cat req cfg faults st = none) : st.status ≠ .running := by
+    {lat : Latency} {st : State} (h : stepExec cat req cfg faults lat st = none) :
+    st.status ≠ .running := by
   intro hrun
   cases hp : st.phase <;> simp [stepExec, hrun, hp] at h
 
 /-- Run the driver until no action is chosen. A tail call; it terminates
 because every step decreases `measure` (`next_measure_lt`). -/
-def runFrom (cat : Catalog) (req : Requirement) (cfg : Config) (faults : Faults)
+def runFrom (cat : Catalog) (req : Requirement) (cfg : Config) (faults : Faults) (lat : Latency)
     (st : State) : State :=
-  match _hs : stepExec cat req cfg faults st with
+  match _hs : stepExec cat req cfg faults lat st with
   | none => st
-  | some st' => runFrom cat req cfg faults st'
+  | some st' => runFrom cat req cfg faults lat st'
 termination_by measure cfg st
 decreasing_by exact next_measure_lt (stepExec_next _hs)
 
 theorem runFrom_reachable {cat : Catalog} {req : Requirement} {cfg : Config} {faults : Faults}
-    {fam : List Rewriting} :
-    ∀ st, Reachable cat req cfg fam st → Reachable cat req cfg fam (runFrom cat req cfg faults st) := by
+    {lat : Latency} {fam : List Rewriting} :
+    ∀ st, Reachable cat req cfg fam st →
+      Reachable cat req cfg fam (runFrom cat req cfg faults lat st) := by
   intro st
   induction st using (invImage (measure cfg) (inferInstance :
       WellFoundedRelation (Nat × Nat × Nat × Nat × Nat × Nat))).wf.induction with
@@ -792,8 +1120,9 @@ theorem runFrom_reachable {cat : Catalog} {req : Requirement} {cfg : Config} {fa
       exact ih st' (next_measure_lt (stepExec_next h)) (Reachable.step hr (stepExec_next h))
 
 /-- The driver ends with the status `done` or `stopped`. -/
-theorem runFrom_final {cat : Catalog} {req : Requirement} {cfg : Config} {faults : Faults} :
-    ∀ st, (runFrom cat req cfg faults st).status ≠ .running := by
+theorem runFrom_final {cat : Catalog} {req : Requirement} {cfg : Config} {faults : Faults}
+    {lat : Latency} :
+    ∀ st, (runFrom cat req cfg faults lat st).status ≠ .running := by
   intro st
   induction st using (invImage (measure cfg) (inferInstance :
       WellFoundedRelation (Nat × Nat × Nat × Nat × Nat × Nat))).wf.induction with
@@ -804,30 +1133,31 @@ theorem runFrom_final {cat : Catalog} {req : Requirement} {cfg : Config} {faults
     · rename_i st' h
       exact ih st' (next_measure_lt (stepExec_next h))
 
-/-! ## A run over the search's plan family -/
+/-! ## A run over the admitted plan family -/
 
-/-- The plan family of the structural planner, as rewritings. -/
-def family (cat : Catalog) (req : Requirement) (k : Nat) : List Rewriting :=
-  (search cat req k).map (·.rewriting)
+/-- The admitted plan family (`searchAdmitted`), as rewritings. -/
+def family (cat : Catalog) (req : Requirement) (k : Nat) (fanout : Nat := 10) : List Rewriting :=
+  (searchAdmitted cat req k fanout).map (·.rewriting)
 
-theorem family_check {cat : Catalog} {req : Requirement} {k : Nat} :
-    ∀ rw ∈ family cat req k, rw.check cat req = true := by
+theorem family_check {cat : Catalog} {req : Requirement} {k fanout : Nat} :
+    ∀ rw ∈ family cat req k fanout, rw.check cat req = true := by
   intro rw hrw
   simp only [family, List.mem_map] at hrw
   obtain ⟨r, hr, rfl⟩ := hrw
-  exact search_check hr
+  exact search_check (searchAdmitted_mem hr).1
 
-/-- Run the family of `search cat req k`; `none` when it is empty (the
-requirement is not answerable with at most `k` accesses). -/
-def run (cat : Catalog) (req : Requirement) (k : Nat) (cfg : Config) (faults : Faults) :
-    Option State :=
-  match family cat req k with
+/-- Run the admitted family of `search cat req k`; `none` when it is
+empty (not answerable with at most `k` accesses within the estimated
+quotas). -/
+def run (cat : Catalog) (req : Requirement) (k : Nat) (cfg : Config) (faults : Faults)
+    (lat : Latency := noLatency) : Option State :=
+  match family cat req k cfg.fanout with
   | [] => none
-  | rw :: alts => some (runFrom cat req cfg faults (initState rw alts))
+  | rw :: alts => some (runFrom cat req cfg faults lat (initState rw alts))
 
 theorem run_reachable {cat : Catalog} {req : Requirement} {k : Nat} {cfg : Config}
-    {faults : Faults} {st : State} (h : run cat req k cfg faults = some st) :
-    Reachable cat req cfg (family cat req k) st := by
+    {faults : Faults} {lat : Latency} {st : State} (h : run cat req k cfg faults lat = some st) :
+    Reachable cat req cfg (family cat req k cfg.fanout) st := by
   unfold run at h
   split at h
   · cases h
@@ -835,25 +1165,30 @@ theorem run_reachable {cat : Catalog} {req : Requirement} {k : Nat} {cfg : Confi
     cases h
     exact runFrom_reachable _ (Reachable.init ⟨rw, alts, hfam, rfl⟩)
 
-/-- The results for a run of the driver over the search's family: it ends
-`done` or `stopped`; no call quota is exceeded (I2); no unmarked output
-row is outside the requirement's answers (I1); and a `done` output is
-the run of a member of the family. -/
+/-- The results for a run of the driver over the admitted family: it ends
+`done` or `stopped`; no call quota and no row quota is exceeded (I2); no
+unmarked output row is outside the requirement's answers (I1); every
+cache entry is the call's result; and a `done` output is the run of an
+admitted member of the family of `search`. -/
 theorem run_spec {cat : Catalog} {req : Requirement} {k : Nat} {cfg : Config}
-    {faults : Faults} {st : State} (hsound : ExactSourcesSound cat)
-    (h : run cat req k cfg faults = some st) :
+    {faults : Faults} {lat : Latency} {st : State} (hsound : ExactSourcesSound cat)
+    (h : run cat req k cfg faults lat = some st) :
     (st.status = .done ∨ st.status = .stopped) ∧
     (∀ i s q, cat[i]? = some s → s.cap.cost.callQuota = some q → st.calls i ≤ q) ∧
+    (∀ i s q, cat[i]? = some s → s.cap.cost.rowQuota = some q → st.rows i ≤ q) ∧
     (∀ x ∈ st.output, x.approx = false →
       ∃ ρ ∈ req.answers (declaredGraph cat), SolEquiv x.binding ρ) ∧
-    (st.status = .done → ∃ r ∈ search cat req k, st.output = (r.rewriting.toPlan req).run cat) := by
+    (∀ e ∈ st.cache, ∃ s, cat[e.src]? = some s ∧ e.tuples = s.sem.impl e.inp) ∧
+    (st.status = .done → ∃ r ∈ searchAdmitted cat req k cfg.fanout,
+      st.output = (r.rewriting.toPlan req).run cat) := by
   have hr := run_reachable h
   have hfinal : st.status ≠ .running := by
     unfold run at h
     split at h
     · cases h
     · cases h; exact runFrom_final _
-  refine ⟨?_, reachable_quota hr, reachable_sound hsound family_check hr, ?_⟩
+  refine ⟨?_, reachable_quota hr, reachable_rowQuota hr, reachable_sound hsound family_check hr,
+    reachable_cache hr, ?_⟩
   · cases hs : st.status with
     | running => exact absurd hs hfinal
     | done => exact Or.inl rfl
