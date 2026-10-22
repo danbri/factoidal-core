@@ -28,6 +28,7 @@ replay theorems of `L4Factoidal.LWS.Journal` cover the records `persist`
 writes: the operations of a record ARE `js.record (projWith refs')`.
 -/
 import L4Factoidal.LWS.Journal
+import L4Factoidal.LWS.Bodies
 import L4Factoidal.LWS.Snapshot
 import L4Factoidal.LWS.SnapshotSeal
 import L4Factoidal.Crypto.SHA2
@@ -70,13 +71,19 @@ def bodyTemp (id : Nat) : String := bodyName id ++ ".tmp"
 /-! ## The metadata of one resource -/
 
 /-- Where the bytes of a resource are: a body number (none for no bytes),
-their length and their FNV-1a 32 digest (`Binding.fnv1a32`), which a start
-checks against the file. -/
+their length and their FNV-1a 32 digest (`Binding.fnv1a32`), and the facts a
+start needs without reading the body file (stage 2): the SHA-256 when the
+Merkle option was on, and the content types of a Turtle body with the IRI
+they were read against. With a body number it is the stub of the entry
+(`BodyStub`, `refOfStub`, `FileRef.stub?`). -/
 structure FileRef where
   file : Option Nat := none
   size : Nat := 0
   fnv : Nat := 0
-deriving DecidableEq, Repr, Inhabited
+  sha : Option ByteArray := none
+  types : List String := []
+  typesIri : String := ""
+deriving DecidableEq, Inhabited
 
 /-- An entry without its bytes, and where the bytes are. -/
 structure FileMeta where
@@ -86,18 +93,50 @@ structure FileMeta where
   mtime : Nat
   links : List Link := []
   ref : FileRef := {}
-deriving DecidableEq, Repr, Inhabited
+deriving DecidableEq, Inhabited
 
 def metaOf (e : Entry) (r : FileRef) : FileMeta :=
   { path := e.path, kind := e.kind, contentType := e.contentType, mtime := e.mtime,
     links := e.links, ref := r }
 
-def FileMeta.toEntry (m : FileMeta) (body : ByteArray) : Entry :=
-  { path := m.path, kind := m.kind, contentType := m.contentType, body, mtime := m.mtime,
-    links := m.links }
+/-- The reference of a stub. -/
+def refOfStub (s : BodyStub) : FileRef :=
+  { file := some s.file, size := s.size, fnv := s.fnv, sha := s.sha, types := s.types
+    typesIri := s.typesIri }
 
 /-- The reference of a body that is not in a file (no bytes). -/
 def emptyRef : FileRef := { file := none, size := 0, fnv := fnv1a32 ByteArray.empty }
+
+/-- The reference of an entry: its stub, or no bytes. In a storage kept in
+files every entry with bytes has a stub after its step (`Files.persist`). -/
+def refOf (e : Entry) : FileRef :=
+  match e.stub with
+  | some s => refOfStub s
+  | none => emptyRef
+
+/-- The value function of the replay theorems: the metadata of an entry with
+the reference its stub gives. -/
+def projE : String → Entry → FileMeta := fun _ e => metaOf e (refOf e)
+
+/-- The stub a reference names, when it names a body file. -/
+def FileRef.stub? (r : FileRef) : Option BodyStub :=
+  r.file.map (fun n => { file := n, size := r.size, fnv := r.fnv, sha := r.sha, types := r.types
+                         typesIri := r.typesIri })
+
+/-- The entry of a metadata record, with no bytes in memory: its stub names
+the body file. -/
+def FileMeta.toEntry (m : FileMeta) : Entry :=
+  { path := m.path, kind := m.kind, contentType := m.contentType, body := ByteArray.empty,
+    mtime := m.mtime, links := m.links, stub := m.ref.stub? }
+
+/-- A record with a body file reads back as itself through its entry, so a
+start that reads no body keeps every record as written. -/
+theorem projE_toEntry (m : FileMeta) (h : m.ref.file.isSome = true) :
+    projE m.path m.toEntry = m := by
+  obtain ⟨path, kind, ct, mtime, links, ⟨file, size, fnv, sha, types, typesIri⟩⟩ := m
+  cases file with
+  | none => simp at h
+  | some n => simp [projE, metaOf, refOf, FileMeta.toEntry, FileRef.stub?, refOfStub]
 
 def numJson (n : Nat) : Json := .number (toString n)
 
@@ -118,10 +157,28 @@ def fileMetaJson (m : FileMeta) : Json :=
            (match m.ref.file with
             | some n => [("body", numJson n)]
             | none => []) ++
+           (match m.ref.sha with
+            | some d => [("sha256", .string (Base64.encode d))]
+            | none => []) ++
+           (if m.ref.typesIri == "" then [] else [("typesIri", .string m.ref.typesIri)]) ++
+           (if m.ref.types.isEmpty then [] else [("types", .array (m.ref.types.map .string))]) ++
            (if m.links.isEmpty then [] else [("links", .array (m.links.map linkJson))]))
 
 def reqNat (what : String) (j : Json) (k : String) : Except String Nat :=
   (natField? j k).elim (.error s!"{what}: member \"{k}\" is not a number") .ok
+
+def strsOf? (xs : List Json) : Option (List String) := xs.mapM Json.asString?
+
+theorem strsOf_map (ts : List String) : strsOf? (ts.map .string) = some ts := by
+  induction ts with
+  | nil => rfl
+  | cons t rest ih =>
+      unfold strsOf? at ih ⊢
+      simp [List.mapM_cons, Json.asString?, ih]
+
+theorem strsOf_cons_map (t : String) (ts : List String) :
+    strsOf? (Json.string t :: ts.map .string) = some (t :: ts) := by
+  rw [← List.map_cons]; exact strsOf_map (t :: ts)
 
 def fileMetaOfJson (j : Json) : Except String FileMeta := do
   let path ← (j.getString? "path").elim (.error "files: an entry has no path") .ok
@@ -138,18 +195,37 @@ def fileMetaOfJson (j : Json) : Except String FileMeta := do
     | some b => match natOf? b with
       | some n => .ok (some n)
       | none => .error s!"files: entry {path} has a body that is not a number"
+  let sha ← match j.field? "sha256" with
+    | none => .ok none
+    | some (.string t) => match Base64.decode? t with
+      | some d => .ok (some d)
+      | none => .error s!"files: entry {path} has a sha256 that is not base64"
+    | some _ => .error s!"files: entry {path} has a sha256 that is not a string"
+  let typesIri := (j.getString? "typesIri").getD ""
+  let types ← match j.field? "types" with
+    | none => .ok []
+    | some (.array xs) => (strsOf? xs).elim (.error s!"files: entry {path} has types that are not strings") .ok
+    | some _ => .error s!"files: entry {path} has types that are not a list"
   let links ← linksOfJson path j
-  .ok { path, kind, contentType, mtime, links, ref := { file, size, fnv } }
+  .ok { path, kind, contentType, mtime, links, ref := { file, size, fnv, sha, types, typesIri } }
 
 /-- A metadata entry written by `fileMetaJson` reads back as itself. The
 hypothesis is the path check the reader makes. -/
 theorem fileMetaOfJson_fileMetaJson (m : FileMeta) (h : validTarget m.path = true) :
     fileMetaOfJson (fileMetaJson m) = .ok m := by
-  obtain ⟨path, kind, ct, mtime, links, ⟨file, size, fnv⟩⟩ := m
-  cases file <;> cases links <;>
-    simp_all [fileMetaOfJson, fileMetaJson, reqNat, natField?, numJson,
-      Json.getString?, Json.field?, Json.asString?, ResourceKind.ofName?_name, linksOfJson,
-      mapM_linkOfJson_comp, linkOfJson_linkJson, bind, Except.bind, natOf?, decimal_repr]
+  obtain ⟨path, kind, ct, mtime, links, ⟨file, size, fnv, sha, types, typesIri⟩⟩ := m
+  by_cases hti : typesIri = ""
+  · subst hti
+    cases file <;> cases sha <;> cases types <;> cases links <;>
+      simp_all [fileMetaOfJson, fileMetaJson, reqNat, natField?, numJson,
+        Json.getString?, Json.field?, Json.asString?, ResourceKind.ofName?_name, linksOfJson,
+        mapM_linkOfJson_comp, linkOfJson_linkJson, bind, Except.bind, natOf?, decimal_repr,
+        Base64.decode_encode, strsOf_cons_map]
+  · cases file <;> cases sha <;> cases types <;> cases links <;>
+      simp_all [fileMetaOfJson, fileMetaJson, reqNat, natField?, numJson,
+        Json.getString?, Json.field?, Json.asString?, ResourceKind.ofName?_name, linksOfJson,
+        mapM_linkOfJson_comp, linkOfJson_linkJson, bind, Except.bind, natOf?, decimal_repr,
+        Base64.decode_encode, strsOf_cons_map]
 
 /-! ## Journal records -/
 
@@ -473,21 +549,15 @@ def Plan.json (pl : Plan) : Json := .array (pl.ops.toList.map FileOp.json)
 
 /-- What the handle keeps about its files, besides the store: the number of
 the last journal record, the next body number, the sizes that decide a
-compaction, where each resource's bytes are, and the other state and the
-clock as last written. -/
+compaction, and the other state and the clock as last written. Where each
+resource's bytes are is in its entry (`Entry.stub`). -/
 structure FilesState where
   seq : Nat := 0
   nextBody : Nat := 0
   journalBytes : Nat := 0
   metaBytes : Nat := 0
-  refs : Std.HashMap String FileRef := {}
   side : String := ""
   clock : Nat := 0
-
-/-- The value function of the replay theorems: the metadata of an entry,
-with the body reference the table names for its path. -/
-def projWith (refs : Std.HashMap String FileRef) : String → Entry → FileMeta :=
-  fun p e => metaOf e (refs.getD p emptyRef)
 
 /-- The journal may grow to this many bytes, or to the size of the last
 metadata file if that is larger, before a step compacts it. -/
@@ -515,120 +585,160 @@ def metaBytes (A : Seal.Aead) (key? : Option ByteArray) (nonce : ByteArray) (d :
   (Seal.sealSnapshot A key? (some nonce) (metaJson d)).map (fun j => (Json.toString j).toUTF8)
 
 /-- The metadata of every entry of the store, in its order. -/
-def entriesMeta (refs : Std.HashMap String FileRef) (es : List Entry) : List FileMeta :=
-  es.map (fun e => projWith refs e.path e)
+def entriesMeta (es : List Entry) : List FileMeta :=
+  es.map (fun e => projE e.path e)
 
-/-- The new body references of the touched paths, the body writes, and the
-body numbers that become unused. A body whose bytes did not change since the
-last persist keeps its file. -/
-def assignBodies (A : Seal.Aead) (key? : Option ByteArray) (seed : ByteArray)
-    (look prior : String → Option Entry) :
-    List String → Std.HashMap String FileRef × Nat × Nat × Plan × List Nat →
-      Except String (Std.HashMap String FileRef × Nat × Nat × Plan × List Nat)
+/-- The bytes of the touched paths go to body files, one path at a time in
+the order of the last writes. `prior` is the store at the last persist.
+
+* No entry (removed): its body file, if any, may become unused.
+* An entry with a stub (a move, a change of its links or time, or bytes read
+  for the step): the stub is made again at its path, with the same body file
+  (`IxState.stubAt`), and the bytes leave memory.
+* An entry with bytes and no stub (written by the step): the same bytes as
+  at the last persist, read for the step, keep that body file; other bytes
+  get a new body file, written by the plan. Then the entry gets its stub.
+* No bytes: no body file.
+
+Returns the state, the next body number, the next nonce index, the plan of
+the body writes, the body files the touched paths had and the body files
+they have now. -/
+def bodiesOut (A : Seal.Aead) (key? : Option ByteArray) (seed : ByteArray)
+    (prior : String → Option Entry) :
+    List String → IxState LwsBackend × Nat × Nat × Plan × List Nat × List Nat →
+      Except String (IxState LwsBackend × Nat × Nat × Plan × List Nat × List Nat)
   | [], acc => .ok acc
-  | p :: ps, (refs, next, ni, pl, dead) =>
-      let old := refs[p]?
-      let deadOld : List Nat := match old with
-        | some { file := some n, .. } => [n]
-        | _ => []
-      match look p with
-      | none => assignBodies A key? seed look prior ps (refs.erase p, next, ni, pl, deadOld ++ dead)
+  | p :: ps, (s, next, ni, pl, olds, news) =>
+      let olds := match (prior p).bind (·.stub) with
+        | some st => st.file :: olds
+        | none => olds
+      match LwsBackend.lookup s.base p with
+      | none => bodiesOut A key? seed prior ps (s, next, ni, pl, olds, news)
       | some e =>
-          if e.body.size == 0 then
-            assignBodies A key? seed look prior ps (refs.insert p emptyRef, next, ni, pl, deadOld ++ dead)
-          else
-            let same := match old, prior p with
-              | some r, some pe => r.file.isSome && pe.body == e.body
-              | _, _ => false
-            if same then assignBodies A key? seed look prior ps (refs, next, ni, pl, dead)
-            else match protect A key? seed ni (bodyName next) e.body with
-              | .error err => .error err
-              | .ok bytes =>
-                  let r : FileRef := { file := some next, size := e.body.size, fnv := fnv1a32 e.body }
-                  assignBodies A key? seed look prior ps
-                    (refs.insert p r, next + 1, ni + 1, pl.write (bodyName next) (bodyTemp next) bytes,
-                     deadOld ++ dead)
+          match e.stub with
+          | some st =>
+              bodiesOut A key? seed prior ps (s.stubAt p st.file, next, ni, pl, olds, st.file :: news)
+          | none =>
+              if e.body.size == 0 then bodiesOut A key? seed prior ps (s, next, ni, pl, olds, news)
+              else
+                let kept : Option Nat := match prior p with
+                  | some pe => match pe.stub with
+                    | some pst => if pe.hydrated && pe.body == e.body then some pst.file else none
+                    | none => none
+                  | none => none
+                match kept with
+                | some n => bodiesOut A key? seed prior ps (s.stubAt p n, next, ni, pl, olds, n :: news)
+                | none =>
+                    match protect A key? seed ni (bodyName next) e.body with
+                    | .error err => .error err
+                    | .ok bytes =>
+                        bodiesOut A key? seed prior ps
+                          (s.stubAt p next, next + 1, ni + 1,
+                           pl.write (bodyName next) (bodyTemp next) bytes, olds, next :: news)
 
-/-- The write plan of one persist. `js` is the recording state of the store
-(the touched paths and the state at the last persist), `side` the other state
-now, `clock` the store clock now.
+/-- The write plan of one persist, and the state after it: every touched
+entry has its stub, no body of a data resource is in memory, and the journal
+records nothing. `side` is the other state now.
 
 Order of the plan: the new body files; then the journal record (appended), or
 the compaction (a new `lws-files.json`, then an empty journal); then the
 removal of the body files the record makes unused. -/
 def persist (A : Seal.Aead) (key? : Option ByteArray) (seed : ByteArray) (fs : FilesState)
-    (js : JState TreeStore) (side : List (String × Json)) (clock : Nat) :
-    Except String (FilesState × Plan) := do
+    (s : IxState LwsBackend) (side : List (String × Json)) :
+    Except String (FilesState × Plan × IxState LwsBackend) := do
+  let js := s.journal
   let paths := lastTouch js.touched
-  -- Take the reference table out of `fs` first, so it is not shared while
-  -- `assignBodies` updates it (it is updated in place).
-  let refs0 := fs.refs
-  let fs := { fs with refs := {} }
-  let (refs', next', ni, pl, dead) ← assignBodies A key? seed (treeLookup js.base) (treeLookup js.prior)
-    paths (refs0, fs.nextBody, 0, {}, [])
-  let ops := js.record (projWith refs')
+  let (s1, next', ni, pl, olds, news) ← bodiesOut A key? seed (treeLookup js.prior) paths
+    (s, fs.nextBody, 0, {}, [], [])
+  let dead := (olds.filter (fun n => !news.contains n)).eraseDups
+  let ops := s1.journal.record projE
+  let clock := s1.mem.clock
   let sideText := Json.toString (.object side)
   let sideChanged := sideText != fs.side
   if ops.isEmpty && !sideChanged && dead.isEmpty && clock == fs.clock then
-    .ok ({ fs with refs := refs', nextBody := next' }, pl)
+    .ok ({ fs with nextBody := next' }, pl, s1.resetJournal)
   else
   let r : Record := { seq := fs.seq + 1, clock, nextBody := next', ops,
                       side := if sideChanged then some (.object side) else none, dead }
   let payload ← protect A key? seed ni journalPath (Json.toString (recordJson r)).toUTF8
   if payload.size ≥ 4294967296 then .error "files: a journal record is larger than 4 GiB" else
   let fr := frame L4Factoidal.Crypto.sha256 payload
-  let fs' : FilesState := { fs with seq := r.seq, nextBody := next', refs := refs', side := sideText, clock }
+  let fs' : FilesState := { fs with seq := r.seq, nextBody := next', side := sideText, clock }
   if fs.journalBytes + fr.size > max journalFloor fs.metaBytes then
     let d : MetaDoc := { seq := r.seq, clock, nextBody := next',
-                         entries := entriesMeta refs' js.base.entries, side, pending := dead }
+                         entries := entriesMeta s1.mem.entries, side, pending := dead }
     let mb ← metaBytes A key? (nonceAt seed (ni + 1)) d
     let pl := (pl.write metaPath metaTemp mb).write journalPath journalTemp ByteArray.empty
     let pl := dead.foldl (fun pl n => pl.remove (bodyName n)) pl
-    .ok ({ fs' with journalBytes := 0, metaBytes := mb.size }, pl)
+    .ok ({ fs' with journalBytes := 0, metaBytes := mb.size }, pl, s1.resetJournal)
   else
     let pl := pl.append journalPath fr
     let pl := dead.foldl (fun pl n => pl.remove (bodyName n)) pl
-    .ok ({ fs' with journalBytes := fs.journalBytes + fr.size }, pl)
+    .ok ({ fs' with journalBytes := fs.journalBytes + fr.size }, pl, s1.resetJournal)
 
-/-- `assignBodies` changes the body reference of a path only when it is one
-of the paths it was given. -/
-theorem assignBodies_refs (A : Seal.Aead) (key? : Option ByteArray) (seed : ByteArray)
-    (look prior : String → Option Entry) (ps : List String) :
-    ∀ (acc r : Std.HashMap String FileRef × Nat × Nat × Plan × List Nat),
-      assignBodies A key? seed look prior ps acc = .ok r →
-      ∀ q, q ∉ ps → r.1[q]? = acc.1[q]? := by
+/-- `bodiesOut`, given recorded paths only, changes neither the state at the
+last persist nor the recorded paths. -/
+theorem bodiesOut_journal (A : Seal.Aead) (key? : Option ByteArray) (seed : ByteArray)
+    (prior : String → Option Entry) (ps : List String) :
+    ∀ (acc r : IxState LwsBackend × Nat × Nat × Plan × List Nat × List Nat),
+      (∀ p ∈ ps, p ∈ acc.1.journal.touched) →
+      bodiesOut A key? seed prior ps acc = .ok r →
+      r.1.journal.prior = acc.1.journal.prior ∧ r.1.journal.touched = acc.1.journal.touched := by
   induction ps with
-  | nil => intro acc r h q _; simp [assignBodies] at h; rw [h]
+  | nil => intro acc r _ h; simp [bodiesOut] at h; subst h; exact ⟨rfl, rfl⟩
   | cons p rest ih =>
-      intro acc r h q hq
-      obtain ⟨refs, next, ni, pl, dead⟩ := acc
-      have hqr : q ∉ rest := fun h' => hq (List.mem_cons_of_mem _ h')
-      have hpq : (p == q) = false := by
-        simp; exact fun h' => hq (h' ▸ List.mem_cons_self)
-      unfold assignBodies at h
+      intro acc r hin h
+      obtain ⟨s, next, ni, pl, olds, news⟩ := acc
+      have hp : p ∈ s.journal.touched := hin p List.mem_cons_self
+      have hrest : ∀ q ∈ rest, q ∈ s.journal.touched := fun q hq => hin q (List.mem_cons_of_mem _ hq)
+      -- One step through `stubAt` keeps both, so the rest applies.
+      have step : ∀ (n : Nat) (acc' : IxState LwsBackend × Nat × Nat × Plan × List Nat × List Nat),
+          acc'.1 = s.stubAt p n →
+          bodiesOut A key? seed prior rest acc' = .ok r →
+          r.1.journal.prior = s.journal.prior ∧ r.1.journal.touched = s.journal.touched := by
+        intro n acc' h1 h2
+        have hs := Bodies.stubAt_journal s p n hp
+        rw [← h1] at hs
+        have := ih acc' r (fun q hq => by rw [hs.2]; exact hrest q hq) h2
+        rw [this.1, this.2, hs.1, hs.2]; exact ⟨rfl, rfl⟩
+      have same : ∀ (acc' : IxState LwsBackend × Nat × Nat × Plan × List Nat × List Nat),
+          acc'.1 = s →
+          bodiesOut A key? seed prior rest acc' = .ok r →
+          r.1.journal.prior = s.journal.prior ∧ r.1.journal.touched = s.journal.touched := by
+        intro acc' h1 h2
+        have := ih acc' r (fun q hq => by rw [h1]; exact hrest q hq) h2
+        rw [this.1, this.2, h1]; exact ⟨rfl, rfl⟩
+      unfold bodiesOut at h
       simp only at h
-      repeat' split at h
-      all_goals first
-        | (rw [ih _ r h q hqr]; simp [Std.HashMap.getElem?_insert, Std.HashMap.getElem?_erase, hpq])
-        | exact ih _ r h q hqr
-        | simp at h
+      split at h
+      · exact same _ rfl h
+      · split at h
+        · exact step _ _ rfl h
+        · split at h
+          · exact same _ rfl h
+          · split at h
+            · exact step _ _ rfl h
+            · split at h
+              · cases h
+              · exact step _ _ rfl h
 
-/-- The record a persist writes, replayed onto a table that holds the
-metadata of the store at the last persist, gives the metadata of the store
-now, with the new body references. `assignBodies` is the first step of
-`persist`, and the record's operations are `js.record (projWith refs')`. -/
+/-- **The record a persist writes replays to the metadata of the store.** A
+table that holds the metadata of the store at the last persist (under
+`projE`, the metadata with each entry's stub), with the record of the step
+applied (`s1.journal.record projE`, the operations `persist` writes), holds
+the metadata of the store after the step, every touched entry with its new
+stub. -/
 theorem persist_replay (A : Seal.Aead) (key? : Option ByteArray) (seed : ByteArray)
-    (js : JState TreeStore) (refs : Std.HashMap String FileRef) (n i : Nat) (pl : Plan)
-    (d : List Nat) (r : Std.HashMap String FileRef × Nat × Nat × Plan × List Nat)
-    (h : assignBodies A key? seed (treeLookup js.base) (treeLookup js.prior) (lastTouch js.touched)
-      (refs, n, i, pl, d) = .ok r)
-    (m : Std.HashMap String FileMeta) (hm : Represents TreeStore (projWith refs) m js.prior) :
-    Represents TreeStore (projWith r.1) (applyOps m (js.record (projWith r.1))) js.base := by
-  apply replay_jstate TreeStore js m hm
-  intro p hp
-  have hr := assignBodies_refs A key? seed _ _ _ _ r h p (fun h' => hp (mem_of_mem_lastTouch h'))
-  funext e
-  simp only [projWith, Std.HashMap.getD_eq_getD_getElem?, hr]
+    (fs : FilesState) (s : IxState LwsBackend)
+    (r : IxState LwsBackend × Nat × Nat × Plan × List Nat × List Nat)
+    (h : bodiesOut A key? seed (treeLookup s.journal.prior) (lastTouch s.journal.touched)
+      (s, fs.nextBody, 0, {}, [], []) = .ok r)
+    (m : Std.HashMap String FileMeta) (hm : Represents TreeStore projE m s.journal.prior) :
+    Represents TreeStore projE (applyOps m (r.1.journal.record projE)) r.1.journal.base := by
+  have hj := bodiesOut_journal A key? seed (treeLookup s.journal.prior) (lastTouch s.journal.touched)
+    (s, fs.nextBody, 0, {}, [], []) r (fun p hp => mem_of_mem_lastTouch hp) h
+  apply replay_jstate TreeStore r.1.journal m (by rw [hj.1]; exact hm)
+  intro _ _; rfl
 
 /-! ## The start
 
@@ -728,81 +838,137 @@ def readControl (A : Seal.Aead) (key? : Option ByteArray) (meta? journal? state?
                     journalHad := jb.size > 0, renameSnapshot := state?.isSome,
                     metaSize := mb.size })
 
-/-- The body files a start reads. -/
-def bodiesToRead (c : Control) : List String :=
-  c.metas.filterMap (fun m => m.ref.file.map bodyName)
+/-- Must a start read the body file of this record? Only for an ACL resource
+(its bytes stay in memory, `Bodies.keepsBytes`), when the Merkle option is on
+and the record has no SHA-256 (the storage was written with the option off),
+and when the content types of a Turtle body were read against another IRI
+(the storage was written under another base IRI). Every other record becomes
+an entry with a stub and no bytes in memory. -/
+def needsRead (b : String) (merkle : Bool) (m : FileMeta) : Bool :=
+  m.ref.file.isSome &&
+    (Bodies.keepsBytes m.path || (merkle && m.ref.sha.isNone) ||
+      !(contentSkipped m.toEntry || m.ref.typesIri == iriOfPath b m.path))
 
-/-- Build the reference state from the metadata and the bytes of the body
-files (`files` maps a body file name to its bytes, as read). The length and
-the FNV-1a digest of every body are checked; the clock is raised above every
-modification time, as `memStateOfJson` does. -/
-def entriesOf (A : Seal.Aead) (key? : Option ByteArray) (c : Control)
-    (files : Std.HashMap String ByteArray) : Except String MemState := do
-  let entries ← c.metas.mapM (fun m => do
-    match m.ref.file with
-    | none =>
-        if m.ref.size != 0 then .error s!"files: entry {m.path} has {m.ref.size} bytes and no body file" else
-        .ok (m.toEntry ByteArray.empty)
-    | some n =>
-        let name := bodyName n
-        let raw ← (files[name]?).elim (.error s!"files: body file {name} of {m.path} is missing") .ok
-        let body ← unprotect A key? name raw
-        if body.size != m.ref.size then
-          .error s!"files: body file {name} of {m.path} has {body.size} bytes, the metadata says {m.ref.size}" else
-        if fnv1a32 body != m.ref.fnv then
-          .error s!"files: body file {name} of {m.path} does not match its digest" else
-        .ok (m.toEntry body))
+/-- The body files a start reads (`needsRead`). -/
+def bodiesToRead (b : String) (merkle : Bool) (c : Control) : List String :=
+  c.metas.filterMap (fun m => if needsRead b merkle m then m.ref.file.map bodyName else none)
+
+/-- Check the bytes of a body file against what its stub records: the
+length, the FNV-1a digest, and the SHA-256 when one is recorded and the
+Merkle option gives a hasher. -/
+def checkBody (hasher : Option Bodies.Hasher) (name path : String) (size fnv : Nat)
+    (sha : Option ByteArray) (body : ByteArray) : Except String Unit :=
+  if body.size != size then
+    .error s!"files: body file {name} of {path} has {body.size} bytes, the metadata says {size}" else
+  if fnv1a32 body != fnv then
+    .error s!"files: body file {name} of {path} does not match its digest" else
+  match hasher, sha with
+  | some h, some d =>
+      if h.digest body != d then .error s!"files: body file {name} of {path} does not match its SHA-256"
+      else .ok ()
+  | _, _ => .ok ()
+
+/-- Build the reference state from the metadata (stage 2: without the bytes).
+A record becomes an entry with its stub and no bytes in memory; the body
+files that `needsRead` names (`files` maps a name to its bytes, as read) are
+checked (`checkBody`), and their entries get a stub made from the bytes
+(`Bodies.dehydrate`). The second value says whether a stub changed, so the
+start writes a new metadata file and the next start reads no body. The clock
+is raised above every modification time, as `memStateOfJson` does. -/
+def entriesOf (A : Seal.Aead) (key? : Option ByteArray) (b : String) (hasher : Option Bodies.Hasher)
+    (c : Control) (files : Std.HashMap String ByteArray) : Except String (MemState × Bool) := do
+  let (rev, refreshed) ← c.metas.foldlM (fun (acc : List Entry × Bool) m => do
+      match m.ref.file with
+      | none =>
+          if m.ref.size != 0 then
+            .error s!"files: entry {m.path} has {m.ref.size} bytes and no body file" else
+          .ok (m.toEntry :: acc.1, acc.2)
+      | some n =>
+          if !needsRead b hasher.isSome m then .ok (m.toEntry :: acc.1, acc.2) else
+          let name := bodyName n
+          let raw ← (files[name]?).elim (.error s!"files: body file {name} of {m.path} is missing") .ok
+          let body ← unprotect A key? name raw
+          checkBody hasher name m.path m.ref.size m.ref.fnv m.ref.sha body
+          let e := Bodies.dehydrate b hasher n { m.toEntry with body, stub := none }
+          .ok (e :: acc.1, acc.2 || refOf e != m.ref))
+    ([], false)
+  let entries := rev.reverse
   if !(entries.any (fun e => e.path == rootPath && e.kind == .storageRoot)) then
     .error "files: no storage root" else
   let maxM := entries.foldl (fun m e => max m e.mtime) 0
-  .ok { entries, clock := max c.clock (maxM + 1) }
+  .ok ({ entries, clock := max c.clock (maxM + 1) }, refreshed)
 
-/-- The body references of a reference state read from files. -/
-def refsOf (c : Control) : Std.HashMap String FileRef :=
-  c.metas.foldl (fun m x => m.insert x.path x.ref) {}
+/-- The plan of a start, the files state after it, and the reference state
+the storage serves (every entry with bytes has its stub; only ACL resources
+keep their bytes in memory).
 
-/-- The plan of a start, and the files state after it.
-
-* From files: when the journal had bytes, a body file is to be removed, or
-  `lws-state.json` is still there, write a new `lws-files.json` (with the
-  removals as `pendingRemoves`) and an empty journal, remove, and rename the
-  snapshot.
+* From files: when the journal had bytes, a body file is to be removed,
+  `lws-state.json` is still there, or a stub was made again from its bytes
+  (`refreshed`), write a new `lws-files.json` (with the removals as
+  `pendingRemoves`) and an empty journal, remove, and rename the snapshot.
 * From a snapshot (`migrate`) or for a new storage: write every body file
   (numbers from 0), `lws-files.json` (record 0), an empty journal; rename the
   snapshot when there was one. -/
-def startPlan (A : Seal.Aead) (key? : Option ByteArray) (seed : ByteArray) (ms : MemState)
-    (side : List (String × Json)) (c? : Option Control) (hadSnapshot : Bool) :
-    Except String (FilesState × Plan) := do
+def startPlan (A : Seal.Aead) (key? : Option ByteArray) (seed : ByteArray) (b : String)
+    (hasher : Option Bodies.Hasher) (ms : MemState) (side : List (String × Json))
+    (c? : Option Control) (hadSnapshot : Bool) (refreshed : Bool := false) :
+    Except String (FilesState × Plan × MemState) := do
   let sideText := Json.toString (.object side)
   match c? with
   | some c =>
-      let refs := refsOf c
-      let needs := c.journalHad || !c.dead.isEmpty || c.renameSnapshot
+      let needs := c.journalHad || !c.dead.isEmpty || c.renameSnapshot || refreshed
       let base : FilesState := { seq := c.seq, nextBody := c.nextBody, journalBytes := 0,
-                                 metaBytes := c.metaSize, refs, side := sideText, clock := ms.clock }
-      if !needs then .ok (base, {}) else
+                                 metaBytes := c.metaSize, side := sideText, clock := ms.clock }
+      if !needs then .ok (base, {}, ms) else
       let d : MetaDoc := { seq := c.seq, clock := ms.clock, nextBody := c.nextBody,
-                           entries := entriesMeta refs ms.entries, side, pending := c.dead }
+                           entries := entriesMeta ms.entries, side, pending := c.dead }
       let mb ← metaBytes A key? (nonceAt seed 0) d
       let pl := ({} : Plan).write metaPath metaTemp mb |>.write journalPath journalTemp ByteArray.empty
       let pl := c.dead.foldl (fun pl n => pl.remove (bodyName n)) pl
       let pl := if c.renameSnapshot then pl.rename snapshotPath migratedPath else pl
-      .ok ({ base with metaBytes := mb.size }, pl)
+      .ok ({ base with metaBytes := mb.size }, pl, ms)
   | none =>
-      -- Every body gets a file, numbered in the order of the entries.
-      let (refs, next, ni, pl) ← ms.entries.foldlM (fun (refs, next, ni, pl) (e : Entry) => do
-          if e.body.size == 0 then .ok (refs.insert e.path emptyRef, next, ni, pl)
+      -- Every body gets a file, numbered in the order of the entries, and
+      -- the entry gets its stub.
+      let (rev, next, ni, pl) ← ms.entries.foldlM (fun (acc : List Entry × Nat × Nat × Plan) (e : Entry) => do
+          let (rev, next, ni, pl) := acc
+          if e.body.size == 0 then .ok (e :: rev, next, ni, pl)
           else
             let bytes ← protect A key? seed ni (bodyName next) e.body
-            .ok (refs.insert e.path { file := some next, size := e.body.size, fnv := fnv1a32 e.body },
-                 next + 1, ni + 1, pl.write (bodyName next) (bodyTemp next) bytes))
-        (({} : Std.HashMap String FileRef), 0, 0, ({} : Plan))
+            .ok (Bodies.dehydrate b hasher next e :: rev, next + 1, ni + 1,
+                 pl.write (bodyName next) (bodyTemp next) bytes))
+        ([], 0, 0, ({} : Plan))
+      let ms' : MemState := { entries := rev.reverse, clock := ms.clock }
       let d : MetaDoc := { seq := 0, clock := ms.clock, nextBody := next,
-                           entries := entriesMeta refs ms.entries, side }
+                           entries := entriesMeta ms'.entries, side }
       let mb ← metaBytes A key? (nonceAt seed ni) d
       let pl := (pl.write metaPath metaTemp mb).write journalPath journalTemp ByteArray.empty
       let pl := if hadSnapshot then pl.rename snapshotPath migratedPath else pl
-      .ok ({ seq := 0, nextBody := next, journalBytes := 0, metaBytes := mb.size, refs,
-             side := sideText, clock := ms.clock }, pl)
+      .ok ({ seq := 0, nextBody := next, journalBytes := 0, metaBytes := mb.size,
+             side := sideText, clock := ms.clock }, pl, ms')
+
+/-! ## The bodies of one step -/
+
+/-- Put the bytes of the body files a step needs (`Bodies.bodiesNeeded`) into
+their entries, after checking each one: the seal under the storage key
+(the file's own name in the associated data), then `checkBody`. `files` maps
+a body file name to its bytes as read (`none`: absent). Returns the state and
+the paths whose bytes are now in memory. -/
+def readBodies (A : Seal.Aead) (key? : Option ByteArray) (s : IxState LwsBackend)
+    (need : List (String × BodyStub)) (files : Std.HashMap String (Option ByteArray)) :
+    Except String (IxState LwsBackend × List String) :=
+  need.foldlM (fun (acc : IxState LwsBackend × List String) (x : String × BodyStub) => do
+      let (p, st) := x
+      let name := bodyName st.file
+      let raw ← ((files[name]?).join).elim (.error s!"files: body file {name} of {p} is missing") .ok
+      let body ← unprotect A key? name raw
+      checkBody acc.1.base.hasher name p st.size st.fnv st.sha body
+      .ok (acc.1.withBodyAt p body, p :: acc.2))
+    (s, [])
+
+/-- After a step: the bytes read for it leave memory again, at every path the
+step did not change (a changed path loses them in `persist`). -/
+def unhydrate (s : IxState LwsBackend) (ps : List String) : IxState LwsBackend :=
+  ps.foldl (fun s p => if p ∈ s.journal.touched then s else s.withBodyAt p ByteArray.empty) s
 
 end L4Factoidal.LWS.Files

@@ -148,23 +148,37 @@ def linkFact (resIri : String) (l : Link) : Option Fact :=
 /-- The largest body whose types are read from its content. -/
 def contentTypeLimit : Nat := 1048576
 
+/-- The IRI objects of the `rdf:type` triples whose subject is `resIri` in
+Turtle bytes read with `resIri` as the base. Bytes that do not parse give
+none. -/
+def parsedTypes (resIri : String) (body : ByteArray) : List String :=
+  match Syntax.parseTurtleText ((String.fromUTF8? body).getD "") (some resIri) with
+  | .error _ => []
+  | .ok g => g.filterMap (fun t =>
+      match t.s, t.o with
+      | .iri s, .iri o =>
+          if s.val == resIri && t.p.val == rdfTypeIri && !nativeTypeTargets.contains o.val
+          then some o.val else none
+      | _, _ => none)
+
+/-- Is the content of a resource never read for types: a container, another
+media type than Turtle, or more than `contentTypeLimit` bytes? -/
+def contentSkipped (e : Entry) : Bool :=
+  e.kind.isContainer || baseMedia e.contentType != "text/turtle" || e.size > contentTypeLimit
+
 /-- The types the Turtle content of a data resource states of the resource
 itself: the IRI objects of its `rdf:type` triples whose subject is the
 resource's IRI, the body read with that IRI as its base. A body that does
 not parse, a body above `contentTypeLimit` bytes and any other media type
-give none. -/
+give none. A resource whose bytes are in a body file (`Entry.stub`) gives
+the types recorded when the file was written, when they were read against
+the same IRI; after a move to another IRI they are read again from the bytes
+(https://github.com/danbri/factoidal/issues/918, stage 2). -/
 def contentTypes (resIri : String) (e : Entry) : List String :=
-  if e.kind.isContainer || baseMedia e.contentType != "text/turtle" ||
-     e.body.size > contentTypeLimit then []
-  else
-    match Syntax.parseTurtleText e.text (some resIri) with
-    | .error _ => []
-    | .ok g => g.filterMap (fun t =>
-        match t.s, t.o with
-        | .iri s, .iri o =>
-            if s.val == resIri && t.p.val == rdfTypeIri && !nativeTypeTargets.contains o.val
-            then some o.val else none
-        | _, _ => none)
+  if contentSkipped e then []
+  else match e.stub with
+    | some s => if s.typesIri == resIri then s.types else parsedTypes resIri e.body
+    | none => parsedTypes resIri e.body
 
 /-- Is a stored resource one the services describe: a container or data
 resource, not an auxiliary resource by kind or by path? -/

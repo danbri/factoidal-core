@@ -408,10 +408,14 @@ theorem ResourceKind.ofName?_name (k : ResourceKind) : ResourceKind.ofName? k.na
 /-- An entry written by `entryJson` reads back as the same entry: path,
 kind, media type, every byte of the body, the modification time and the
 client links. The
-hypothesis is the path check `entryOfJson` makes on every entry. -/
-theorem entryOfJson_entryJson (e : Entry) (h : validTarget e.path = true) :
+hypotheses are the path check `entryOfJson` makes on every entry, and that
+the bytes are in the entry (no `stub`: a storage kept in files writes no
+snapshot, https://github.com/danbri/factoidal/issues/918). -/
+theorem entryOfJson_entryJson (e : Entry) (h : validTarget e.path = true) (hs : e.stub = none) :
     entryOfJson (entryJson e) = .ok e := by
-  obtain ⟨path, kind, ct, body, mtime, links⟩ := e
+  obtain ⟨path, kind, ct, body, mtime, links, stub⟩ := e
+  simp only at hs
+  subst hs
   cases links with
   | nil =>
       simp_all [entryOfJson, entryJson, entryBodyOfJson, natField, Json.getString?, Json.field?,
@@ -423,13 +427,14 @@ theorem entryOfJson_entryJson (e : Entry) (h : validTarget e.path = true) :
         mapM_linkOfJson_comp, linkOfJson_linkJson]
       simp [bind, Except.bind, h]
 
-theorem mapM_entryOfJson (es : List Entry) (h : ∀ e ∈ es, validTarget e.path = true) :
+theorem mapM_entryOfJson (es : List Entry) (h : ∀ e ∈ es, validTarget e.path = true)
+    (hs : ∀ e ∈ es, e.stub = none) :
     (es.map entryJson).mapM (entryOfJson · false) = .ok es := by
   induction es with
   | nil => rfl
   | cons e rest ih =>
-      have he := entryOfJson_entryJson e (h e (by simp))
-      have hr := ih (fun x hx => h x (by simp [hx]))
+      have he := entryOfJson_entryJson e (h e (by simp)) (hs e (by simp))
+      have hr := ih (fun x hx => h x (by simp [hx])) (fun x hx => hs x (by simp [hx]))
       simp only [List.map_cons, List.mapM_cons, he, hr]
       rfl
 
@@ -440,11 +445,12 @@ root, no repeated path) and the clock invariant the operations keep (the
 clock is above every modification time, `StoreLaws.nowTick`). -/
 theorem memStateOfJson_snapshotJson (s : MemState)
     (hv : ∀ e ∈ s.entries, validTarget e.path = true)
+    (hs : ∀ e ∈ s.entries, e.stub = none)
     (hroot : s.entries.any (fun e => e.path == rootPath && e.kind == .storageRoot) = true)
     (hdup : (s.entries.map (·.path)).eraseDups.length = (s.entries.map (·.path)).length)
     (hclock : s.entries.foldl (fun m e => max m e.mtime) 0 + 1 ≤ s.clock) :
     memStateOfJson (snapshotJson s) = .ok s := by
-  have hm := mapM_entryOfJson s.entries hv
+  have hm := mapM_entryOfJson s.entries hv hs
   simp only [List.any_eq_true, Bool.and_eq_true, beq_iff_eq] at hroot
   obtain ⟨r, hr, hrp, hrk⟩ := hroot
   simp [memStateOfJson, snapshotJson, Json.getString?, Json.field?, Json.getArray?, Json.asString?,

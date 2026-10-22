@@ -169,23 +169,59 @@ def containerDigest (h : Hasher) (ms : List (String × Digest)) : Digest :=
   h.digest (containerInput h ms)
 
 /-- What a node's digest is computed from: the representation bytes of a
-resource, or the members of a container with their digests. -/
+resource, the SHA-256 recorded for bytes kept in a body file
+(`BodyStub.sha`, https://github.com/danbri/factoidal/issues/918 stage 2), or
+the members of a container with their digests. -/
 inductive Input where
   | data (bytes : ByteArray)
+  | recorded (d : Digest)
   | container (members : List (String × Digest))
   deriving DecidableEq
 
 def Input.digest (h : Hasher) : Input → Digest
   | .data b => h.digest b
+  | .recorded d => d
   | .container ms => containerDigest h ms
 
 /-- Every byte string `h` hashes to compute the digest of an input from its
-members' digests. -/
+members' digests. A recorded digest hashes nothing now: it was computed when
+the body file was written, and it is checked against the file when the file
+is read. -/
 def Input.hashed (h : Hasher) : Input → List ByteArray
   | .data b => [b]
+  | .recorded _ => []
   | .container ms =>
       containerInput h ms :: ms.map (fun m => leafInput (memberBytes m.1 m.2)) ++
         rootInputsWith h (ms.map (memberLeaf h))
+
+/-- The input of a resource that is not a container: the SHA-256 recorded in
+its stub when its bytes are in a body file and the digest has 32 bytes, else
+its bytes. -/
+def dataInput (e : Entry) : Input :=
+  match e.stub with
+  | some s => match s.sha with
+    | some d => if d.size = 32 then .recorded d else .data e.body
+    | none => .data e.body
+  | none => .data e.body
+
+/-- The Merkle leaf of a resource that is not a container. -/
+def leafDigest (h : Hasher) (e : Entry) : Digest := (dataInput e).digest h
+
+/-- A resource with no stub is hashed from its bytes. -/
+theorem dataInput_of_stub_none {e : Entry} (h : e.stub = none) : dataInput e = .data e.body := by
+  simp [dataInput, h]
+
+/-- The digest of a data input has the size of the hasher's output. -/
+theorem dataInput_digest_size {h : Hasher} (hfix : ∀ b, (h.digest b).size = 32) (e : Entry) :
+    ((dataInput e).digest h).size = 32 := by
+  unfold dataInput
+  split
+  · split
+    · split
+      · rename_i hd; simp [Input.digest]; exact hd
+      · simp [Input.digest, hfix]
+    · simp [Input.digest, hfix]
+  · simp [Input.digest, hfix]
 
 /-! ## The maintained data -/
 
@@ -214,12 +250,12 @@ def localD (h : Hasher) (look : String → Option Entry) (k : Kids) (dig : Digs)
   | none => none
   | some e =>
       some (if e.kind.isContainer then containerDigest h (memberPairs k dig p)
-            else h.digest e.body)
+            else (dataInput e).digest h)
 
 /-- The input of a node, from the store and the maintained data. -/
 def inputAt (look : String → Option Entry) (d : MkData) (p : String) : Option Input :=
   (look p).map fun e =>
-    if e.kind.isContainer then .container (memberPairs d.kids d.dig p) else .data e.body
+    if e.kind.isContainer then .container (memberPairs d.kids d.dig p) else dataInput e
 
 theorem localD_eq_input (h : Hasher) (look : String → Option Entry) (d : MkData) (p : String) :
     localD h look d.kids d.dig p = (inputAt look d p).map (Input.digest h) := by
@@ -454,6 +490,34 @@ theorem MkOk.upd {h : Hasher} {look look' : String → Option Entry} {d : MkData
 theorem MkOk.congr_look {h : Hasher} {look look' : String → Option Entry} {d : MkData}
     (hok : MkOk h look d) (he : look' = look) : MkOk h look' d := he ▸ hok
 
+/-- What the hashes read of a resource: its kind and its leaf. -/
+def mkKey (h : Hasher) (e : Entry) : ResourceKind × Digest := (e.kind, leafDigest h e)
+
+theorem listableAt_congr_key {h : Hasher} {look look' : String → Option Entry}
+    (hk : ∀ q, (look' q).map (mkKey h) = (look q).map (mkKey h)) (q : String) :
+    listableAt look' q = listableAt look q := by
+  have := hk q
+  unfold listableAt
+  cases h1 : look' q <;> cases h2 : look q <;> rw [h1, h2] at this <;> simp_all [mkKey]
+
+theorem localD_congr_key {h : Hasher} {look look' : String → Option Entry}
+    (hk : ∀ q, (look' q).map (mkKey h) = (look q).map (mkKey h)) (k : Kids) (dig : Digs)
+    (p : String) : localD h look' k dig p = localD h look k dig p := by
+  have := hk p
+  unfold localD
+  cases h1 : look' p <;> cases h2 : look p <;> rw [h1, h2] at this <;>
+    simp_all [mkKey, leafDigest]
+
+/-- **Entries that agree in kind and leaf keep the invariant.** A storage that
+moves the bytes of a resource to a body file and keeps its SHA-256
+(`BodyStub.sha`), or reads them back for one step, changes the entries, not
+what the hashes read of them. -/
+theorem MkOk.congr_key {h : Hasher} {look look' : String → Option Entry} {d : MkData}
+    (hok : MkOk h look d) (hk : ∀ q, (look' q).map (mkKey h) = (look q).map (mkKey h)) :
+    MkOk h look' d where
+  kids := fun c q => by rw [listableAt_congr_key hk]; exact hok.kids c q
+  dig := fun p => by rw [localD_congr_key hk]; exact hok.dig p
+
 /-! ## The store that maintains the hashes -/
 
 /-- The invariant of a state: nothing when the option is off. -/
@@ -590,7 +654,7 @@ def specFuel (h : Hasher) (S : Store σ) (st : σ) : Nat → String → Option D
           some (if e.kind.isContainer then
                   containerDigest h ((specMembers S st p).map
                     fun q => (q, (specFuel h S st n q).getD ByteArray.empty))
-                else h.digest e.body)
+                else (dataInput e).digest h)
 
 /-- The length of the longest stored path. -/
 def maxLen (ps : List String) : Nat := ps.foldl (fun m p => max m p.length) 0
@@ -957,18 +1021,22 @@ theorem containerDigest_inj (h : Hasher) (hfix : ∀ b, (h.digest b).size = 32)
       (fun x hx => by simp only [Input.hashed]; exact List.mem_cons_of_mem _ (List.mem_append_left _ hx)))
     hleaves
 
-/-- Every maintained digest is a digest of `h`. -/
+/-- With no body kept in a file (no stub), every maintained digest is a
+digest of `h`. -/
 theorem MkOk.dig_output {h : Hasher} {look : String → Option Entry} {d : MkData}
-    (hok : MkOk h look d) {q : String} {v : Digest} (hv : d.dig[q]? = some v) :
+    (hok : MkOk h look d) (hns : ∀ q e, look q = some e → e.stub = none)
+    {q : String} {v : Digest} (hv : d.dig[q]? = some v) :
     ∃ b, v = h.digest b := by
   rw [hok.dig q] at hv
   unfold localD at hv
   split at hv
   · cases hv
-  · simp only [Option.some.injEq] at hv
+  · rename_i e he
+    simp only [Option.some.injEq] at hv
     split at hv
     · exact ⟨_, hv.symm⟩
-    · exact ⟨_, hv.symm⟩
+    · rw [dataInput_of_stub_none (hns q e he)] at hv
+      exact ⟨_, hv.symm⟩
 
 /-- The digest of a member as its container reads it is a 32-byte digest of
 `h`. -/
@@ -985,7 +1053,9 @@ theorem MkOk.member_size {h : Hasher} (hfix : ∀ b, (h.digest b).size = 32)
   simp only
   rw [HashMap.getD_eq_getD_getElem?, hd]
   simp only [Option.getD_some]
-  split <;> exact hfix _
+  split
+  · exact hfix _
+  · exact dataInput_digest_size hfix e
 
 /-- The byte strings `h` hashes for the node at `p`. -/
 def hashedAt (h : Hasher) (look : String → Option Entry) (d : MkData) (p : String) :
@@ -995,19 +1065,39 @@ def hashedAt (h : Hasher) (look : String → Option Entry) (d : MkData) (p : Str
   | none => []
 
 /-- **A changed resource body gives a changed digest**, unless the two bodies
-collide. -/
+collide. Both resources are hashed from their bytes (`dataInput`; for two
+recorded digests see `recordedDigest_changes`). -/
 theorem dataDigest_changes (h : Hasher) {look look' : String → Option Entry}
     {d d' : MkData} (hok : MkOk h look d) (hok' : MkOk h look' d') {p : String} {e e' : Entry}
     (he : look p = some e) (he' : look' p = some e')
     (hk : e.kind.isContainer = false) (hk' : e'.kind.isContainer = false)
+    (hs : dataInput e = .data e.body) (hs' : dataInput e' = .data e'.body)
     (hb : e.body ≠ e'.body) (hc : NoCollision h [e.body] [e'.body]) :
     d.dig[p]? ≠ d'.dig[p]? := by
   rw [hok.dig p, hok'.dig p]
   unfold localD
   rw [he, he']
-  simp only [hk, hk', Bool.false_eq_true, if_false, ne_eq, Option.some.injEq]
+  simp only [hk, hk', Bool.false_eq_true, if_false, ne_eq, Option.some.injEq, hs, hs',
+    Input.digest]
   intro heq
   exact hb (hc _ (by simp) _ (by simp) heq)
+
+/-- **Two different recorded digests give two different digests.** A
+resource whose bytes are in a body file is hashed by the SHA-256 recorded
+when the file was written (`BodyStub.sha`). -/
+theorem recordedDigest_changes (h : Hasher) {look look' : String → Option Entry}
+    {d d' : MkData} (hok : MkOk h look d) (hok' : MkOk h look' d') {p : String} {e e' : Entry}
+    (he : look p = some e) (he' : look' p = some e')
+    (hk : e.kind.isContainer = false) (hk' : e'.kind.isContainer = false)
+    {r r' : Digest} (hs : dataInput e = .recorded r) (hs' : dataInput e' = .recorded r')
+    (hb : r ≠ r') :
+    d.dig[p]? ≠ d'.dig[p]? := by
+  rw [hok.dig p, hok'.dig p]
+  unfold localD
+  rw [he, he']
+  simp only [hk, hk', Bool.false_eq_true, if_false, ne_eq, Option.some.injEq, hs, hs',
+    Input.digest]
+  exact hb
 
 /-- **One level up.** If the digest of `x` differs between two states and
 `x` is a member of its container `c` in at least one of them, and `c` is a

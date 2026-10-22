@@ -252,6 +252,19 @@ structure Change where
   kind : ResourceKind
 deriving DecidableEq, Repr, Inhabited
 
+/-- Do two versions of a resource hold the same bytes? Two versions whose
+bytes are in the same body file do (a body file is written once and never
+changed, https://github.com/danbri/factoidal/issues/918). Otherwise the
+bytes are compared; a version whose bytes are in a body file that was not
+read for this step (`Entry.hydrated` false) counts as different. A storage
+kept in files reads the body file of the target of a PUT or PATCH before the
+step when a subscription may hear of the change
+(`Bodies.bodiesNeeded`), so the comparison then sees the bytes. -/
+def sameBytes (a b : Entry) : Bool :=
+  match a.stub, b.stub with
+  | some s, some t => s.file == t.file || (a.hydrated && b.hydrated && a.body.data == b.body.data)
+  | _, _ => a.hydrated && b.hydrated && a.body.data == b.body.data
+
 /-- Did a stored resource change between two versions: its modification
 time, its client links, its media type or its bytes? The time alone is not
 enough: a host with a real clock sets the store's clock from the request,
@@ -260,7 +273,7 @@ so two writes within one second carry the same time (measured 2026-10-21:
 changes the client links and keeps the time. -/
 def entryChanged (a b : Entry) : Bool :=
   a.mtime != b.mtime || a.links != b.links || a.contentType != b.contentType ||
-    a.body.data != b.body.data
+    !sameBytes a b
 
 variable {σ : Type}
 

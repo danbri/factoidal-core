@@ -558,7 +558,7 @@ def resultItem (b : String) (e : Entry) (facts : List Fact) : Json :=
     , ("type", .array (.string (if e.kind.isContainer then "Container" else "DataResource") ::
         declared.map Json.string)) ] ++
     (if e.kind.isContainer then []
-     else [("format", .string e.contentType), ("size", .number (toString e.body.size))]) ++
+     else [("format", .string e.contentType), ("size", .number (toString e.size))]) ++
     [("modified", .string (isoDateTime e.mtime))])
 
 /-- A ContainerPage of results. It names no container (§QUERY: "the response

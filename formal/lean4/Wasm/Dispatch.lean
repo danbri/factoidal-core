@@ -333,6 +333,7 @@ def lwsSolidOpNames : List String :=
   , "lwsFlush"
   , "lwsLoad"
   , "lwsPersist"
+  , "lwsRead"
   , "solidOpen"
   , "solidStep"
   , "solidClose"
@@ -634,7 +635,7 @@ def callIOUncoded (op : String) (argsJson : String) : IO String :=
   | "lwsFlush"         => withArgs (arityIO2 op Ops.lwsFlush)
   -- A storage kept in files (https://github.com/danbri/factoidal/issues/918):
   -- both carry file bytes, in and out.
-  | "lwsLoad" | "lwsPersist" =>
+  | "lwsLoad" | "lwsPersist" | "lwsRead" =>
       pure (errJson s!"{op} carries file bytes; call it through l4_call_blob_io")
   | "solidSnapshot"    => withArgs (fun args =>
       match args with
@@ -768,6 +769,14 @@ def callBlobIOUncoded (op : String) (argsJson : String) (blob : ByteArray) :
       | .error e   => pure (errJson e, ByteArray.empty)
       | .ok [a, b] => Ops.lwsPersist a b
       | .ok args   => pure (errJson s!"lwsPersist expects 2 arguments, got {args.length}",
+                            ByteArray.empty)
+  -- Stage 2 (issue 918): `lwsRead` takes the bytes of the body files a
+  -- step named (`read`, IN region).
+  | "lwsRead" =>
+      match decodeArgs argsJson with
+      | .error e   => pure (errJson e, ByteArray.empty)
+      | .ok [a, b] => Ops.lwsRead a b blob
+      | .ok args   => pure (errJson s!"lwsRead expects 2 arguments, got {args.length}",
                             ByteArray.empty)
   | "solidStep" =>
       match decodeArgs argsJson with
