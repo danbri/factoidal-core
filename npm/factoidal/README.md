@@ -35,7 +35,8 @@ RDF 1.2 input uses `turtle12`, `ntriples12`, `nquads12` or `trig12`.
 - Syntaxes: N-Triples, N-Quads, Turtle, TriG, RDF/XML, JSON-LD; RDF 1.1 and 1.2
 - SPARQL 1.1 and 1.2 query and update; GeoSPARQL functions, text search,
   JavaScript extension functions, SERVICE
-- Reasoning: RDFS, OWL 2 RL closure, OWL 2 DL consistency and entailment, RIF Core
+- Reasoning: RDFS, OWL 2 RL closure, restricted checked OWL consistency,
+  experimental OWL entailment, RIF Core
 - Validation: SHACL, ShEx, JSON Schema, Schematron
 - Mapping: CSVW, RML, JSON-LD
 - Canonicalization: RDFC-1.0; Verifiable Credentials Data Integrity (eddsa-rdfc-2022), did:key
@@ -147,6 +148,17 @@ $ npx factoidal solid-serve DIR                    # Solid Protocol
 ## Test results
 
 Official test suites, pass / fail / total, 2026-10-09 [B] unless marked.
+
+The OWL DL rows below are historical measurements of the legacy harness;
+they do not measure the current `owlIsConsistent` API. That API now checks
+only an admitted atomic fragment of the default graph. It returns `false`
+for a checked contradiction and `null` for unsupported input or an incomplete
+check; it never returns `true`. Restrictions, negative property assertions,
+imports and equivalentClass are unsupported, and `fuel` does not change its
+fixed 64-round checker bound. `owlEntails` still uses a separate legacy path
+whose positive verdicts do not have this source-to-verdict proof. See the
+[OWL API contract](https://github.com/danbri/factoidal-core/blob/main/npm/factoidal/API.md)
+and the [assurance record](https://github.com/danbri/factoidal-core/blob/main/docs/20261022-owl-pr-reconciliation.md).
 
 | Suite | Result |
 |---|---|

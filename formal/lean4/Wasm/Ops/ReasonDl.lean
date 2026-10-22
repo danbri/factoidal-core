@@ -1,6 +1,6 @@
 /-
-Wasm.Ops.ReasonDl — owlIsConsistent / owlEntails: OWL DL reasoning by
-refutation over the OWL 2 RL closure.
+Wasm.Ops.ReasonDl — checked atomic OWL consistency and legacy OWL entailment.
+Consistency reads the original default graph; entailment still uses RL closure.
 
 Envelopes match `bin/npm-entry/entry_jsoo.ml`:
 
@@ -20,6 +20,7 @@ Targeted imports only — never the L4Factoidal umbrella (see
 `Wasm/Abi.lean`'s import note).
 -/
 import Wasm.Ops.Support
+import Wasm.Ops.ReasonDlCertified
 import L4Factoidal.Syntax.NQuadsFast
 import L4Factoidal.OWL.RLClosure
 -- The `@[csimp]` theorem that makes `OWL.RL.closureFix` compile to the
@@ -27,6 +28,7 @@ import L4Factoidal.OWL.RLClosure
 import L4Factoidal.OWL.RLClosureIndexed
 import L4Factoidal.OWL.Refute
 import L4Factoidal.OWL.NegationGoals
+import L4Factoidal.OWL.DirectProfile
 import Wasm.Ops.FromDataset
 import L4Factoidal.RDF.Rdf11Terms
 
@@ -36,20 +38,17 @@ open L4Factoidal.RDF
 open L4Factoidal.Syntax
 open L4Factoidal.JSON
 
-/-! ## OWL DL reasoning by refutation (issue 586)
+/-! ## Separate consistency and entailment assurance
 
-The chain is the F* npm entry's, engine for engine: the OWL-RL
-closure of the default graph, then the three-valued clash-detecting
-tableau (`L4Factoidal.OWL.Refute.tableauConsistent`, mirroring
-`Tableau_Refute.tableau_consistent`). The Lean closure is this
-tree's standard `OWL.RL.closureFix` (the same one `owlClosure`'s
-"OWL-RL" mode serves; the F* entry reaches the equivalent rows
-through `owl_rl_closure_with_reflexivity`, fuel 100 — same
-architecture, no layering here). The `none` verdict is reported as
-`null` with a budget-out reason, never a silent `false`.
-No reasoning logic lives here: closure, refuter and `negationGoals`
-are all `L4Factoidal` library code; these ops only parse, dispatch
-and shape the JSON verdict. -/
+Consistency uses the restricted AtomicDirect reader and actual certificate
+checker through ReasonDlCertified. Unsupported syntax returns unknown with
+no unchecked fallback. This is an explicit capability reduction in the local
+repair; general OWL reasoning and positive model construction are unfinished.
+
+Entailment below still uses the legacy RL/refuter route. Its punning refusal
+is limited and is not a Direct Semantics soundness proof. Consistency's new
+proof must not be presented as certifying that separate operation.
+Record: `docs/20261021-owl-public-boundary.md`. -/
 
 /-- The refutation budget: `optsJson` is `""` or `{"fuel":"<nat>"}`
 (fuel a decimal STRING — a large budget can exceed JS's safe-integer
@@ -80,26 +79,25 @@ def owlDlRdf12Refusal (op : String) : String :=
   ++ "Semantics define no rule for these terms "
   ++ "(https://github.com/danbri/factoidal/issues/873)"
 
-/-- `owlIsConsistent(nquads, optsJson)`. `reason` is a plumbing-level
-description of the verdict source (there is no clash-trace string in
-the refuter); present on the false/null verdicts, omitted on true. -/
-def owlIsConsistentParsed (ds : Dataset) (optsJson : String) : String :=
-  if !ds.isRdf11 then errJson (owlDlRdf12Refusal "owlIsConsistent") else
-    let closure := L4Factoidal.OWL.RL.closureFix ds.default
-    let fuel := owlRefuteFuelOfOpts optsJson
-    match L4Factoidal.OWL.Refute.tableauConsistent closure fuel with
-    | some false =>
-        okWith [("consistent", .bool false),
-                ("reason", .string
-                  ("the clash-detecting tableau derived a contradiction "
-                   ++ "on every branch of the OWL-RL closure"))]
-    | some true => okWith [("consistent", .bool true)]
-    | none =>
-        okWith [("consistent", .null),
-                ("reason", .string
-                  (s!"budget-out: tableau refutation fuel {fuel} exhausted "
-                   ++ "before every branch closed (indeterminate, not "
-                   ++ "inconsistent); raise it via opts.fuel"))]
+def owlDlPunningReason : String :=
+  "unsupported-punning: a class or property IRI is also used as an individual; "
+  ++ "the RDF-based closure does not preserve OWL Direct Semantics punning "
+  ++ "(indeterminate)"
+
+/-- Checked consistency over the original default graph. Unsupported syntax
+and rejected certificates return null. The compatibility options argument
+is retained; fuel does not change the fixed certificate-checker bound. -/
+def owlIsConsistentParsed (ds : Dataset) (_optsJson : String) : String :=
+  (owlConsistencyJson ds).toString
+
+/-- The actual string producer serializes a JSON object whose definitive
+field satisfies the original-default-graph contract. JSON serialization and
+external parsing remain separate artifact-test boundaries. -/
+theorem owlIsConsistentParsed_certified (ds : Dataset) (optsJson : String) :
+    ∃ response : Json,
+      owlIsConsistentParsed ds optsJson = response.toString ∧
+      L4Factoidal.OWL.AtomicDirect.Meaning ds.default (response.getBool? "consistent") := by
+  exact ⟨owlConsistencyJson ds, rfl, owlConsistencyJson_sound ds⟩
 
 /-- `owlIsConsistent(nquads, optsJson)`. -/
 def owlIsConsistent (nq optsJson : String) : String :=
@@ -107,15 +105,31 @@ def owlIsConsistent (nq optsJson : String) : String :=
   | .error e => errJson (fmtParseError e)
   | .ok ds => owlIsConsistentParsed ds optsJson
 
+/-- Conditional on the actual parser returning ds, the text entry point
+serializes a justified verdict about ds.default. This is not a theorem
+that the parser implements the complete N-Quads standard. -/
+theorem owlIsConsistent_certified (nq optsJson : String) (ds : Dataset)
+    (parsed : parseNQuadsFast nq .rdf12 = .ok ds) :
+    ∃ response : Json,
+      owlIsConsistent nq optsJson = response.toString ∧
+      L4Factoidal.OWL.AtomicDirect.Meaning ds.default (response.getBool? "consistent") := by
+  simpa only [owlIsConsistent, parsed] using owlIsConsistentParsed_certified ds optsJson
+
+#print axioms owlIsConsistentParsed_certified
+#print axioms owlIsConsistent_certified
+
 /-- `owlEntails(premiseNquads, conclusionNquads, optsJson)`. The two
-verified paths of the F* entry: `via:"closure"` when every conclusion
+positive paths: `via:"closure"` when every conclusion
 triple is exactly (engine triple equality) in the OWL-RL closure of
 the premise; `via:"refutation"` when the negated conclusion
-(`negationGoals`) is refuted on every goal. A satisfiable goal is a
-countermodel (`entailed:false`); an indeterminate goal with no
-countermodel is `null`. -/
+(`negationGoals`) is refuted on every goal. Without a checked countermodel,
+absence from the closure and quiescent search both answer `null`. -/
 def owlEntailsParsed (dsP dsC : Dataset) (optsJson : String) : String :=
   if !(dsP.isRdf11 && dsC.isRdf11) then errJson (owlDlRdf12Refusal "owlEntails") else
+  if L4Factoidal.OWL.DirectProfile.hasUnsupportedPunning (dsP.default ++ dsC.default) then
+    okWith [("entailed", .null), ("via", .string "closure"),
+            ("reason", .string owlDlPunningReason)]
+  else
       let gc := dsC.default
       let closure := L4Factoidal.OWL.RL.closureFix dsP.default
       let fuel := owlRefuteFuelOfOpts optsJson
@@ -124,21 +138,22 @@ def owlEntailsParsed (dsP dsC : Dataset) (optsJson : String) : String :=
       else
         match L4Factoidal.OWL.Refute.negationGoals gc with
         | none =>
-            okWith [("entailed", .bool false), ("via", .string "closure"),
+            okWith [("entailed", .null), ("via", .string "closure"),
                     ("reason", .string
-                      ("not in the OWL-RL closure, and the conclusion form "
-                       ++ "cannot be soundly negated for refutation"))]
+                      ("unsupported-conclusion: not in the OWL-RL closure, "
+                       ++ "and the conclusion form cannot be soundly negated "
+                       ++ "for refutation (indeterminate)"))]
         | some goals =>
           let results := goals.map (fun neg =>
             L4Factoidal.OWL.Refute.tableauConsistent (closure ++ neg) fuel)
           if results.all (· == some false) then
             okWith [("entailed", .bool true), ("via", .string "refutation")]
           else if results.any (· == some true) then
-            okWith [("entailed", .bool false), ("via", .string "refutation"),
+            okWith [("entailed", .null), ("via", .string "refutation"),
                     ("reason", .string
-                      ("a model satisfying the premise and the negated "
-                       ++ "conclusion was constructed (conclusion not "
-                       ++ "entailed)"))]
+                      ("incomplete-search: a negated conclusion was not "
+                       ++ "refuted, but the search does not certify a "
+                       ++ "countermodel (indeterminate)"))]
           else
             okWith [("entailed", .null), ("via", .string "refutation"),
                     ("reason", .string
@@ -188,6 +203,42 @@ theorem owlEntailsOf_eq (dsP dsC : Dataset) (optsJson : String) :
 #guard owlIsConsistent "<http://example.com/a> <http://example.com/says> <<( <http://example.com/s> <http://www.w3.org/1999/02/22-rdf-syntax-ns#type> <http://example.com/C> )>> .\n<http://example.com/C> <http://www.w3.org/2000/01/rdf-schema#subClassOf> <http://example.com/D> .\n<http://example.com/x> <http://www.w3.org/1999/02/22-rdf-syntax-ns#type> <http://example.com/C> .\n" "" == errJson (owlDlRdf12Refusal "owlIsConsistent")
 #guard owlEntails "<http://example.com/a> <http://example.com/says> <<( _:b1 <http://example.com/p> <http://example.com/o> )>> .\n" "<http://example.com/a> <http://example.com/says> <<( _:b1 <http://example.com/p> <http://example.com/o> )>> .\n" "" == errJson (owlDlRdf12Refusal "owlEntails")
 #guard (owlIsConsistent "<http://example.com/x> <http://www.w3.org/1999/02/22-rdf-syntax-ns#type> <http://example.com/C> .\n" "").startsWith
-  "{\"ok\":true,\"consistent\":true"
+  "{\"ok\":true,\"consistent\":null"
+
+/-! ### Public verdict regressions (npm 0.11.0 audit R10)
+These are executable examples, not universal Direct Semantics proofs. -/
+
+private def sameNq (a b : String) : String :=
+  s!"<urn:{a}> <http://www.w3.org/2002/07/owl#sameAs> <urn:{b}> .\n"
+
+private def differentNq (a b : String) : String :=
+  s!"<urn:{a}> <http://www.w3.org/2002/07/owl#differentFrom> <urn:{b}> .\n"
+
+#guard (owlIsConsistent (sameNq "a" "b" ++ differentNq "a" "b") "").startsWith
+  "{\"ok\":true,\"consistent\":false"
+#guard (owlIsConsistent (sameNq "a" "b" ++ differentNq "b" "a") "").startsWith
+  "{\"ok\":true,\"consistent\":false"
+#guard (owlIsConsistent (differentNq "a" "a") "").startsWith
+  "{\"ok\":true,\"consistent\":false"
+#guard (owlIsConsistent (sameNq "a" "b" ++ sameNq "b" "c" ++ differentNq "a" "c") "").startsWith
+  "{\"ok\":true,\"consistent\":false"
+#guard (owlIsConsistent (sameNq "a" "b") "").startsWith
+  "{\"ok\":true,\"consistent\":null"
+#guard (owlIsConsistent (differentNq "a" "b") "").startsWith
+  "{\"ok\":true,\"consistent\":null"
+
+private def punningNq : String :=
+  "<urn:C> <http://www.w3.org/1999/02/22-rdf-syntax-ns#type> <http://www.w3.org/2002/07/owl#Class> .\n" ++
+  "<urn:D> <http://www.w3.org/1999/02/22-rdf-syntax-ns#type> <http://www.w3.org/2002/07/owl#Class> .\n" ++
+  sameNq "C" "D" ++
+  "<urn:C> <http://www.w3.org/2002/07/owl#disjointWith> <urn:D> .\n" ++
+  "<urn:x> <http://www.w3.org/1999/02/22-rdf-syntax-ns#type> <urn:C> .\n"
+
+#guard (owlIsConsistent punningNq "").startsWith
+  "{\"ok\":true,\"consistent\":null"
+#guard (owlEntails punningNq "<urn:x> <http://www.w3.org/1999/02/22-rdf-syntax-ns#type> <urn:D> .\n" "").startsWith
+  "{\"ok\":true,\"entailed\":null"
+#guard (owlEntails "" "<urn:a> <urn:p> \"value\" .\n" "").startsWith
+  "{\"ok\":true,\"entailed\":null"
 
 end L4Wasm.Ops
