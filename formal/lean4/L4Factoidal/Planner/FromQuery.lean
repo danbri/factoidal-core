@@ -48,6 +48,27 @@ def queryPatternBgp? : QueryPattern → Option Bgp
     | _, _ => none
   | _ => none
 
+/-- SPARQL 1.1 Query §4.1.4 and §18.3: a blank node in a basic graph
+pattern behaves as a variable that is not projected. The planner's
+accesses treat a pattern constant as a key value, so `ofQuery?` renames
+each blank node `_:b` to the variable `_:b`. No SPARQL variable name can
+contain `:`, so the new name captures no query variable. Until 2026-10-22
+the blank node was kept as a constant, and a plan looked it up as a key:
+`tests/sbm11/gate/ids-bnode.rq` gave 0 rows where `l4sbm11 query` gives 1
+(found by `tests/planner/sbm11_gate.sh`). -/
+def bnodeVar (b : BNodeId) : VarName := "_:" ++ b
+
+def ptBnodeToVar : PatternTerm → PatternTerm
+  | .bnode b => .var (bnodeVar b)
+  | t => t
+
+def psBnodeToVar : PatternSubject → PatternSubject
+  | .bnode b => .var (bnodeVar b)
+  | t => t
+
+def tpBnodeToVar (tp : TriplePattern) : TriplePattern :=
+  { s := psBnodeToVar tp.s, p := ptBnodeToVar tp.p, o := ptBnodeToVar tp.o }
+
 /-- The projected variables; `none` for a `SELECT (expr AS ?v)` item.
 Tail call with an accumulator. -/
 def selectVarsGo : List SelectItem → List VarName → Option (List VarName)
@@ -60,9 +81,10 @@ def Requirement.ofQuery? (q : Query) : Option Requirement :=
   if !q.pattern.mentionsFulltext && q.dataset.isEmpty && q.groupBy.isNone && q.having.isEmpty && q.postValues.isNone &&
       m.orderBy.isNone && !m.distinct && !m.reduced && m.offset.isNone && m.limit.isNone then
     match q.form, queryPatternBgp? q.pattern with
-    | .select .all, some b => some { bgp := b, projection := (bgpVars b).eraseDups }
+    | .select .all, some b =>
+      some { bgp := b.map tpBnodeToVar, projection := (bgpVars b).eraseDups }
     | .select (.vars items), some b =>
-      (selectVarsGo items []).map (fun vs => { bgp := b, projection := vs })
+      (selectVarsGo items []).map (fun vs => { bgp := b.map tpBnodeToVar, projection := vs })
     | _, _ => none
   else none
 

@@ -414,6 +414,7 @@ import L4Factoidal.Storage.Sbm11.UpdateOverlayTheorems
 import L4Factoidal.Storage.Sbm11.ScanFoldTests
 import L4Factoidal.Storage.Sbm11.ScanFoldTheorems
 import L4Factoidal.Storage.Sbm11.SipScanTheorems
+import L4Factoidal.Storage.Sbm11.WindowTheorems
 import L4Factoidal.Storage.Sbm11.ParallelScanTheorems
 import L4Factoidal.Storage.Sbm11.ParallelMergeTheorems
 import L4Factoidal.Storage.Sbm11.PermSet
@@ -810,6 +811,7 @@ import L4Factoidal.Planner.Kinds.Mcp
 import L4Factoidal.Planner.Kinds.Tests
 import L4Factoidal.Planner.Exec
 import L4Factoidal.Planner.ExecTests
+import L4Factoidal.Planner.ExecM
 import L4Factoidal.TailRecursionTwins
 import L4Factoidal.CsimpReachFixture
 import L4Factoidal.OWL.ComprehensionTheorems

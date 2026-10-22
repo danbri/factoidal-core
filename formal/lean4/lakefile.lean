@@ -212,7 +212,7 @@ extern_lib libl4exthost pkg := do
     `Harness.IndexedBlockV3Materialize, `Harness.JsonLdScale, `Harness.LenientRun, `Harness.QlvrKernel,
     `Harness.Sbm11Gen, `Harness.RunHeap, `Harness.Sbm11Query, `Harness.Sbm11Delta, `Harness.Sbm11Update, `Harness.Sbm11PackLib, `Harness.Sbm11Compact, `Harness.Sbm11PermCheck,
     `Harness.Sbm11Export,
-    `Harness.PlannerCheck, `Harness.PlannerKinds,
+    `Harness.PlannerCheck, `Harness.PlannerKinds, `Harness.PlannerSbm11IO,
     `Harness.ProofObligations]
 
 -- The WebAssembly export surface: the JSON string-in / string-out ABI
@@ -472,6 +472,10 @@ extern_lib libl4exthost pkg := do
 -- Turtle parser. Separate from the library so the library stays
 -- specification-only, per the spec/pragmatics split in PORT_NOTES.md.
 @[default_target] lean_exe «l4rdfxml-probe» where root := `Harness.RdfXmlProbe
+
+-- The RDF/XML chunk fold of the source layer against the whole-document
+-- reader (https://github.com/danbri/factoidal/issues/838).
+@[default_target] lean_exe «l4rdfxml-chunk-diff» where root := `Harness.RdfXmlChunkDiff
 
 -- Reader-level probe over the vendored W3C csvw corpus. Named a
 -- PROBE, not a conformance runner, because it measures whether the

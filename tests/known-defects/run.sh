@@ -1059,6 +1059,34 @@ sk_probe SK-1 "stream writer = batch writer for N-Triples and N-Quads unproved" 
 sk_probe SK-2 "stream writer text reads back for Turtle and TriG unproved" writer_turtle_readback
 
 # ---------------------------------------------------------------------
+# RX-1 (https://github.com/danbri/factoidal/issues/936) -- the RDF/XML chunk
+# fold of the source layer (formal/lean4/L4Factoidal/Syntax/RdfXmlChunkFold.lean,
+# https://github.com/danbri/factoidal/issues/838) reads each child of rdf:RDF
+# from its own character array. Its fall-back phases are proved equal to the
+# whole-document reader (readAll_eq_whole_of_notStreamed); the children phase
+# is measured only (l4rdfxml-chunk-diff: 2432 agree, 0 differ (out of 2432) on
+# 2026-10-22). Like SF-1 to SF-4, this probe reads the SOURCE: XFAIL while no
+# theorem named rdfxml_chunk_readAll_eq_whole exists under formal/lean4. When
+# one lands, the row reads XPASS: retire it, close issue 936 and update
+# docs/designissues/2026-09-03-rdf-parsing-strategy.md section 3k in the same
+# commit.
+# ---------------------------------------------------------------------
+RX_SRC="${LEAN_SRC}/L4Factoidal/Syntax/RdfXmlChunkFold.lean"
+if [ ! -f "$RX_SRC" ]; then
+  record RX-1 936 "RDF/XML chunk fold = whole-document reader unproved" ERROR "${RX_SRC#"$ROOT"/} not found"
+elif ! grep -qE '^def Body\.flush ' "$RX_SRC"; then
+  record RX-1 936 "RDF/XML chunk fold = whole-document reader unproved" ERROR \
+    "probe drifted: Body.flush is no longer defined in ${RX_SRC#"$ROOT"/}"
+elif grep -rqE "^[[:space:]]*(@\[[^]]*\][[:space:]]*)?(private[[:space:]]+)?(theorem|lemma)[[:space:]]+([A-Za-z0-9_.]*\.)?rdfxml_chunk_readAll_eq_whole\b" \
+      "${LEAN_SRC}" --include='*.lean'; then
+  record RX-1 936 "RDF/XML chunk fold = whole-document reader unproved" XPASS \
+    "a theorem named rdfxml_chunk_readAll_eq_whole now exists"
+else
+  record RX-1 936 "RDF/XML chunk fold = whole-document reader unproved" XFAIL \
+    "no rdfxml_chunk_readAll_eq_whole theorem in formal/lean4 (agreement is measured by l4rdfxml-chunk-diff only)"
+fi
+
+# ---------------------------------------------------------------------
 # Summary + JSON
 # ---------------------------------------------------------------------
 TOTAL=$((XFAIL + XPASS + ERRORS))

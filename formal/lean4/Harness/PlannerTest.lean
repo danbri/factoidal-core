@@ -550,4 +550,11 @@ def main : IO UInt32 := do
 
 end PlannerTest
 
-def main : IO UInt32 := PlannerTest.main
+def main (args : List String) : IO UInt32 :=
+  match args with
+  | ["sbm11-query", gen, rq] => PlannerSbm11IO.runQuery gen rq false
+  | ["sbm11-query", gen, rq, "--check-pure"] => PlannerSbm11IO.runQuery gen rq true
+  | [] => PlannerTest.main
+  | _ => do
+    IO.eprintln "usage: l4planner-test [sbm11-query GEN QUERY.rq [--check-pure]]"
+    return 2

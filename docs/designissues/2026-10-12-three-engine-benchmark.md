@@ -768,3 +768,52 @@ separate script, gave an execution time of 546 ms and a wall time of 567 ms
 https://github.com/danbri/factoidal/issues/862 (the grouped pass 69 percent,
 the scans 17 percent, the merge join 12 percent). The warm RSS of the engines
 is the server's after the warm rounds, not the load.
+
+### 11.11 d13 with the STRSTARTS window (2026-10-22)
+
+https://github.com/danbri/factoidal/issues/929 (OKR batch 3 KR 1.1,
+https://github.com/danbri/factoidal/issues/875). Cause before the change:
+the one-pattern streamed path took PSO (rows sorted on the subject after
+the predicate) and tested the object id of all 3,368,646 foaf:name rows (823
+blocks, 9,362,714 bytes). The STRSTARTS conjunct already gave the dictionary
+rank ranges of the keys with the needle as prefix (`FKind.strRange`).
+
+Change (`formal/lean4/L4Factoidal/Storage/Sbm11/IdQuery.lean`): when a
+`strRange` conjunct tests a variable of the single pattern, the planner takes
+the permutation sorted on that variable after the bound positions
+(`windowPref`: POS for d13), and the scan does not read a selected block
+whose PRM1 first and last rows bound the object ids inside the ids that the
+rank test rejects (`windowSkip`, `windowStore`; only without a delta
+overlay). The FILTER still runs on every row read. `--explain` gives
+`FILTER window on the scan column: K of N selected blocks not read`.
+Theorems (`Storage/Sbm11/WindowTheorems.lean`, axioms propext,
+Classical.choice, Quot.sound only): `strRangeFast?_of_span`,
+`windowSkip_row`, and `scanFoldM_window` (the scan over the window store and
+the full scan give equal tuple lists after the removal of the tuples that
+the rank test rejects).
+
+Measurement: `l4sbm11 query /home/user/bench-data/sbm11/dbpedia --file
+tools/bench/three-engines/queries/dbpedia/d13-filter-strstarts.rq --verify
+none --repeat 7 --explain`, execution median of 7 runs in one process, 3
+interleaved rounds; "before" is the `l4sbm11` of the main checkout (built
+2026-10-18), "after" the build of this change. 1-minute load average 1.03
+to 1.04 in all rounds. Answers of all 6 runs equal to
+`/home/user/bench-data/answers/dbpedia/d13-filter-strstarts.sbm11-none.json`
+(2 rows).
+
+| | before | after | QLever 1 CPU warm (11.8) | QLever default warm (11.8) |
+| --- | ---: | ---: | ---: | ---: |
+| warm, round 1 / 2 / 3 (ms) | 498.2 / 433.2 / 431.8 | 1.95 / 2.49 / 1.91 | | |
+| warm, median of rounds (ms) | 433.2 | 1.95 | 26.45 | 26.60 |
+| blocks read of selected | 823 of 823 | 2 of 2 (821 not read) | | |
+| block bytes read | 9,362,714 | 29,822 | | |
+| peak RSS (VmHWM, kB) | 23,780 to 24,048 | 21,768 to 21,812 | 66 MB (server) | 137 MB (server) |
+
+SBM11 is in-process; the QLever times include HTTP and JSON (about 2 to 3
+ms for a small answer). The "before" median here (433.2 ms) is above the
+328.9 ms of section 11.9 (other binary and day); the ratio to QLever 1 CPU
+goes from 12.4 to 0.07. The other queries of KR 1.1 have their own issues:
+d14 https://github.com/danbri/factoidal/issues/930, d12
+https://github.com/danbri/factoidal/issues/931, d17
+https://github.com/danbri/factoidal/issues/932, d19
+https://github.com/danbri/factoidal/issues/862.

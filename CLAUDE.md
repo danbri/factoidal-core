@@ -527,6 +527,17 @@ Lean functionality and gates land. Port functionality, not files.
   https://github.com/danbri/factoidal/issues/769): owner, 2026-10-13,
   verbatim: "Kr 1.3 store". It belongs to the store session.
 
+### OKR batch 3 approved; IBK refuses empty graphs (owner, 2026-10-22)
+
+> "Batch 3 / Work on Batch 3 progress. Issue 880: refusal."
+
+- Batch 3 (https://github.com/danbri/factoidal/issues/875) is approved.
+- https://github.com/danbri/factoidal/issues/880: the IBK4 and IBK5 stores
+  refuse a request whose result needs a named graph with no triple (CREATE
+  GRAPH, a TriG graph block with no triple), with a message that names the
+  rule. They do not get the SBM11 graph list. IBK stays a read oracle until
+  SBM11 stage 7.
+
 ### Issue 566 — the hex layer. RULED, do not ask again.
 
 > "Yeah DO NOT PORT THAT TERRIBLE HEX CRAP!!!"

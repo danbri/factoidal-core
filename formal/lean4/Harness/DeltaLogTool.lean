@@ -13,6 +13,7 @@ import L4Factoidal.SPARQL.UpdateParser
 import L4Factoidal.SPARQL.UpdateDelta
 import L4Factoidal.Storage.DeltaLog
 import L4Factoidal.Storage.DeltaLogBytesTheorems
+import L4Factoidal.Storage.ShardManifest
 import Harness.PosixRangeIO
 import Harness.GenerationPointer
 import Harness.CompactedEpoch
@@ -54,6 +55,37 @@ private def hasInsertBnode : List UpdateOp → Bool
       (collectQuads none quads).any (fun q => q.2.hasBnode) || hasInsertBnode rest
   | _ :: rest => hasInsertBnode rest
 
+/-- The operations IBK4 and IBK5 refuse: CREATE GRAPH adds a named graph with no
+    triple, and CLEAR of a named graph leaves one. The store has no graph list,
+    so the graph would vanish from `GRAPH ?g { }` after the log was applied
+    (https://github.com/danbri/factoidal/issues/880, owner decision of
+    2026-10-22: refuse). A DELETE that removes the last triple of a graph is
+    not detected here: that needs the composed base-plus-delta view. -/
+private def emptiesNamedGraph : UpdateOp → Bool
+  | .create _ _ => true
+  | .clear _ (.graph _) => true
+  | _ => false
+
+private def graphRefusal : String :=
+  "l4block-delta-log refused: IBK4 and IBK5 store no named graph without a triple (https://github.com/danbri/factoidal/issues/880); CREATE GRAPH and CLEAR of a named graph are refused; use SBM11"
+
+/-- Whether the generation directory holds an IBK4 or IBK5 collection (quad
+    blocks). Their query path, `l4block-quad-query`, does not replay the log, so a
+    committed update would be silently invisible
+    (https://github.com/danbri/factoidal/issues/935, owner decision of
+    2026-10-22: refuse). IBK3 replays the log and keeps taking updates. -/
+private def isQuadIbk (directory : System.FilePath) : IO Bool := do
+  let path := directory / "manifest.sbm2"
+  if !(← path.pathExists) then return false
+  match L4Factoidal.Storage.ShardManifest.decode? (← IO.FS.readBinFile path) with
+  | some manifest =>
+      return L4Factoidal.Storage.ShardManifest.isIbk4Layout manifest.layout ||
+        L4Factoidal.Storage.ShardManifest.isIbk5Layout manifest.layout
+  | none => return false
+
+private def quadIbkRefusal : String :=
+  "l4block-delta-log refused: the IBK4 and IBK5 query paths do not replay the delta log, so no update is accepted on these stores (https://github.com/danbri/factoidal/issues/935); use SBM11 or IBK3"
+
 private def commitUpdate (path : System.FilePath) (epoch : Nat) (update : Update) : Nat → IO UInt32
   | 0 => do
       IO.eprintln "l4block-delta-log failed: concurrent writers prevented a stable append after 3 retries"
@@ -78,13 +110,19 @@ private def commitUpdate (path : System.FilePath) (epoch : Nat) (update : Update
 
 private def appendUpdate (directory : System.FilePath) (updateText : String) : IO UInt32 := do
   let directory ← resolveStoreDirectory directory
+  if ← isQuadIbk directory then
+    IO.eprintln quadIbkRefusal
+    return 1
   let baseEpoch ← CompactedEpoch.read? directory
   let epoch := nextWriteEpoch baseEpoch
   let path := logPath directory
   match parseSparqlUpdate updateText with
   | .error error => IO.eprintln s!"l4block-delta-log update parse error at {error.pos}: {error.msg}"; pure 1
   | .ok update =>
-      if hasInsertBnode update.ops then
+      if update.ops.any emptiesNamedGraph then
+        IO.eprintln graphRefusal
+        pure 1
+      else if hasInsertBnode update.ops then
         IO.eprintln "l4block-delta-log rejected: INSERT DATA blank nodes await composed-store freshness allocation"
         pure 1
       else commitUpdate path epoch update 3

@@ -675,6 +675,16 @@ else
   done
   if [ "$sw" -gt 0 ] && [ "$skipped" -gt 0 ]; then record sip gate-coverage 0 "scans with candidates and skipped blocks both seen"
   else record sip gate-coverage 1 "scans with candidates $sw, blocks skipped $skipped: expected both above 0"; fi
+  # (l1b) issue 929: ids-strstarts-window (answer checked above) scans POS
+  # and does not read the blocks whose object ids the STRSTARTS rank test
+  # rejects
+  w="$(grep -o 'FILTER window on the scan column: [0-9]* of [0-9]*' "$L/ids-strstarts-window.err")"
+  if ! grep -q 'streamed: pos key 1' "$L/ids-strstarts-window.err"; then
+    record window gate-strstarts 1 "not a POS scan: $(grep -o 'streamed: [a-z]* key [0-9]*' "$L/ids-strstarts-window.err")"
+  else case "$w" in
+    ""|*": 0 of "*) record window gate-strstarts 1 "no block skipped: '$w'" ;;
+    *) record window gate-strstarts 0 "$w (blocks of 2 rows, POS)" ;;
+  esac; fi
 fi
 # (l2) olympics: q01 to q21 and tests/sbm11/sip/*.rq with --sip off, auto (the
 # default) and always, equal as multisets (a hash join may change the row

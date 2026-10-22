@@ -242,10 +242,10 @@ also PUBLISH during the ingest pass, so peak memory is bounded by the
 operator's `--batch-bytes` (default 268,435,456 source bytes) rather than by
 the source
 (`docs/designissues/2026-09-05-pack-publication-every-batch.md`). TriG joined
-them on 2026-10-14 (https://github.com/danbri/factoidal/issues/769). RDF/XML and
-JSON-LD read the whole document
-(https://github.com/danbri/factoidal/issues/838,
-https://github.com/danbri/factoidal/issues/839). Measured on skosdex N-Quads
+them on 2026-10-14 (https://github.com/danbri/factoidal/issues/769), and RDF/XML
+on 2026-10-22 (one child of `rdf:RDF` at a time,
+https://github.com/danbri/factoidal/issues/838). JSON-LD reads the whole document
+(https://github.com/danbri/factoidal/issues/839). Measured on skosdex N-Quads
 prefixes, 2026-09-05: peak footprint 222,955,392 bytes for 52,428,626 of
 source, 328,272,128 for 104,857,577, 331,581,824 for 209,715,187 and
 472,746,624 for 1,543,478,120 — a 2.12x rise over a 29.4x source, against
@@ -293,8 +293,9 @@ What does NOT work yet:
   the 472,746,624-byte peak. A manifest written incrementally is the next
   step. (The BLOCKS themselves are no longer held: the IBK4 path publishes
   them during the ingest pass, and the streamed grammars — N-Quads, Turtle,
-  N-Triples, TriG — no longer buffer the source either. Only RDF/XML and
-  JSON-LD do.)
+  N-Triples, TriG, RDF/XML — no longer buffer the source either. Only
+  JSON-LD does, and RDF/XML under the fall-back rule of
+  `Syntax/RdfXmlChunkFold.lean`.)
 - **No compaction and no delta log.** There is no compacted SBM7 layout label.
 
 ### Querying an IBK4 generation
@@ -1133,7 +1134,7 @@ section 3f.
 | N-Quads | `.nq` `.nquads` | line stream | K byte ranges, K workers |
 | Turtle | `.ttl` `.turtle` | chunk fold, after a pre-pass over the source | one worker |
 | TriG | `.trig` | chunk fold, after a pre-pass over the source | one worker |
-| RDF/XML | `.rdf` `.xml` `.owl` `.rdfxml` | whole document | one worker |
+| RDF/XML | `.rdf` `.xml` `.owl` `.rdfxml` | chunk fold: one child of `rdf:RDF` at a time (`RdfXmlChunkFold`); the whole document under the fall-back rule below | one worker |
 | JSON-LD | `.jsonld` `.json-ld` | whole document | one worker |
 
 `l4sbm11-pack` and `l4sbm11 canon` read RDF 1.2 syntax, which includes RDF 1.1
@@ -1142,6 +1143,25 @@ extension. An unknown extension is an error that asks for `--format`: these two
 commands have no default syntax. `l4block-shard-pack` keeps its older rule (an
 unknown extension is Turtle) and reads RDF 1.1 for `ibk4` and RDF 1.2 for `ibk5`.
 The `ibk2` and `ibk3` layouts read Turtle only.
+
+**RDF/XML in chunks (2026-10-22,
+https://github.com/danbri/factoidal/issues/838).** `Syntax/RdfXmlChunkFold.lean`
+keeps the characters until the start tag of the document element is complete,
+reads the prologue and that start tag with the XML parser's functions, then scans
+the content of `rdf:RDF` for the end of each top-level item (element, comment,
+processing instruction, CDATA section, text run), parses that item alone with
+`XML.parseChildren` and the document's entity table, and gives each element to
+`RdfXml.nodeElement` with the state the previous child left. The pack holds one
+chunk and one item. Fall-back rule (the whole document goes to
+`RdfXml.parseRdfXml`, as before): the prologue or the root start tag does not
+parse that way or the text ends first; the document element is not `rdf:RDF`, or
+is empty; XML 1.1; a general entity that is external or whose replacement text
+holds `<` or `&`; a prologue of more than 8 Mi characters. Error messages can
+differ from the whole reader's (another error can come first); acceptance and
+the triples are measured equal: `tools/rdfxml-chunk-differential.sh` (308 files,
+2432 agree, 0 differ (out of 2432) on 2026-10-22). Row
+`sbm11-pack-rdfxml-memory`: 0.51 bytes of peak RSS per source byte at 25,000 to
+100,000 statements (12.7 before, measured with the binary of the parent commit).
 
 **Blank nodes.** A blank node label is local to one document (RDF 1.1 Concepts,
 section 3.4). The reader keeps the blank nodes of one document apart: a label
@@ -1300,8 +1320,11 @@ scanner read the braces of the annotation as graph block braces. The scanner now
 `Classical.choice` and `Quot.sound`; `tools/lean-unbuilt-modules.py --gate`
 passes):
 
-- `whole_readAll`, `rdfxml_readAll`, `jsonld_readAll`: a whole reader gives
-  `parseDocument` of the joined chunks, for every list of chunks.
+- `whole_readAll`, `jsonld_readAll`: a whole reader gives `parseDocument` of
+  the joined chunks, for every list of chunks.
+- `rdfxml_readAll_of_notStreamed` (with `RdfXmlChunkFold.foldlM_inv` and
+  `readAll_eq_whole_of_notStreamed`): the RDF/XML chunk fold, when it ends in
+  its prologue or fall-back phase, gives `parseDocument` of the joined chunks.
 - `nquads_readAll_eq_run`, `nquads11_readAll_eq_batch`,
   `nquads11_readAll_eq_parseNQuadsFast`: the N-Quads reader in RDF 1.1 mode gives
   the line walk of the joined text. They use
@@ -1318,7 +1341,7 @@ expected failure.
 | --- | --- | --- |
 | Turtle chunk walk, N-Triples chunk boundary, N-Quads in RDF 1.2 mode, UTF-8 decoding in chunks: equality with the batch result is not proved | https://github.com/danbri/factoidal/issues/826 | `tests/known-defects/run.sh` rows SF-1 to SF-4 |
 | TriG chunk walk against `parseTriG`; block order differs on a source whose graphs interleave | https://github.com/danbri/factoidal/issues/836 | `tests/trig-pack/order_xfail.sh` |
-| RDF/XML is read whole | https://github.com/danbri/factoidal/issues/838 | row `sbm11-pack-rdfxml-memory` |
+| RDF/XML chunk fold, children phase: equality with the whole-document reader is measured (`tools/rdfxml-chunk-differential.sh`), not proved | https://github.com/danbri/factoidal/issues/936 | `tests/known-defects/run.sh` row RX-1 |
 | JSON-LD is read whole | https://github.com/danbri/factoidal/issues/839 | row `sbm11-pack-jsonld-memory` |
 | The Lean JSON-LD writer (`fromRdf` node list) takes time quadratic in the number of triples | https://github.com/danbri/factoidal/issues/712 | row `jsonld-write` |
 | Turtle and TriG phase 1 runs in one worker | https://github.com/danbri/factoidal/issues/842 | rows `sbm11-pack-ttl-workers`, `sbm11-pack-trig-workers` |
@@ -1590,11 +1613,16 @@ producers of RDF quads, and a file is one producer.
 - `l4factoidal query` loses these graphs:
   https://github.com/danbri/factoidal/issues/876 (expected failure in
   `tests/sbm11/named_graphs.sh`).
-- The IBK4 and IBK5 stores lose a graph with no triple without a message
-  (2 of the 6 graphs of `d5.trig`; `CREATE GRAPH` committed and not visible):
-  https://github.com/danbri/factoidal/issues/880, 3 expected failures. The
-  choice (refuse, or port GNL1) waits for the owner; the coordinator
-  recommends refusal, as IBK is a read oracle until stage 7.
+- The IBK4 and IBK5 stores REFUSE a graph with no triple (owner decision,
+  2026-10-22, https://github.com/danbri/factoidal/issues/880): the pack of a
+  source that declares one (2 of the 6 graphs of `d5.trig`), `CREATE GRAPH`
+  and `CLEAR GRAPH` in `l4block-delta-log` exit 1 with a message that names the
+  rule, and the log is unchanged. `l4block-delta-log --update` refuses EVERY
+  update on an IBK4 or IBK5 collection (exit 1, no file changed): their query
+  path `l4block-quad-query` does not replay the log
+  (https://github.com/danbri/factoidal/issues/935; this also covers a DELETE
+  that empties a graph, https://github.com/danbri/factoidal/issues/934). IBK3
+  updates still commit and `l4block-id-v3-query` replays them. Use SBM11 for such data.
 - The replay of a log of NEW terms costs 37 to 42 microseconds of CPU for
   each entry, against 15 to 18 for dictionary terms. Cause: overlay ids are
   `14 * 2^60 + n`, above 2^63, so a Lean `Nat` holds them as GMP numbers, and
