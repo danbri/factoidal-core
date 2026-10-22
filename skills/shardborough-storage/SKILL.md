@@ -1595,7 +1595,7 @@ producers of RDF quads, and a file is one producer.
   source that declares one (2 of the 6 graphs of `d5.trig`), `CREATE GRAPH`
   and `CLEAR GRAPH` in `l4block-delta-log` exit 1 with a message that names the
   rule, and the log is unchanged. A DELETE that empties a graph is not
-  detected. Use SBM11 for such data.
+  detected (https://github.com/danbri/factoidal/issues/934, expected failure). Use SBM11 for such data.
 - The replay of a log of NEW terms costs 37 to 42 microseconds of CPU for
   each entry, against 15 to 18 for dictionary terms. Cause: overlay ids are
   `14 * 2^60 + n`, above 2^63, so a Lean `Nat` holds them as GMP numbers, and

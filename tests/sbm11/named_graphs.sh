@@ -274,6 +274,16 @@ if [ "$ibk_ok" = 0 ]; then
       else record "ibk5-refuses: $upd" 1 "exit $rc, log before $before after $after: $(tail -1 "$c.upd.log" | cut -c1-160)"; fi
     done
   else record ibk5-delta-log 1 "no activated ibk5 collection"; fi
+  # shortfall: a DELETE DATA of the last triple of a named graph is committed, not refused
+  # (https://github.com/danbri/factoidal/issues/934)
+  d="$TMP/ibk5-del"; mkdir -p "$d"
+  printf '%s\n' '@prefix ex: <http://example.org/> .' 'ex:g1 { ex:a ex:p ex:b . }' >"$TMP/one.trig"
+  if timeout 120 "$BIN/l4block-shard-pack" "$TMP/one.trig" "$d/gen-1" ibk5 >"$d.pack.log" 2>&1 \
+      && timeout 120 "$BIN/l4block-shard-activate" "$d" gen-1 >"$d.act.log" 2>&1; then
+    rc=0; timeout 120 "$BIN/l4block-delta-log" "$d" --update 'DELETE DATA { GRAPH <http://example.org/g1> { <http://example.org/a> <http://example.org/p> <http://example.org/b> } }' >"$d.upd.log" 2>&1 || rc=$?
+    if [ "$rc" -ne 0 ] && grep -qF "$RULE" "$d.upd.log"; then xfail xfail-ibk5-delete-last-triple https://github.com/danbri/factoidal/issues/934 1 "the DELETE of the last triple of ex:g1 is refused"
+    else xfail xfail-ibk5-delete-last-triple https://github.com/danbri/factoidal/issues/934 0 "DELETE DATA of the only triple of ex:g1: exit $rc, committed, not refused"; fi
+  else record ibk5-delete-setup 1 "pack or activation failed: $(tail -n 1 "$d.pack.log" | cut -c1-160)"; fi
 fi
 
 echo "named graphs: $PASS pass, $FAIL fail, $XFAIL expected-fail (out of $((PASS + FAIL + XFAIL)))"
