@@ -79,6 +79,7 @@ it does not authorize publishing, messaging, or changes outside the task.
   complement: the XSD name table's unsorted union made both `\\c` and `\\C`
   accept U+00B7. Correct union membership does not prove correct complement.
   Report additional exclusions as lost coverage, even when failures stay zero.
+  See [regex profile and interval preconditions](../../docs/designissues/2026-10-22-regex-profiles-and-range-invariants.md).
 - When reconciling stale tests with a narrowed API, retain the normative
   expectation and original failures. Label an unsupported known contradiction
   as a decision-coverage gap even when its explicit-refusal contract test

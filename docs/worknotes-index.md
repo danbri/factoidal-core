@@ -115,3 +115,4 @@ worknote, kept as the record of a decision or a measurement),
 | 2026-10-22 | [Core PRs 1–3 integration](20261022-pr-integration.md) | see file history | current: reconciliation, independent review evidence and combined validation |
 | 2026-10-22 | [XMPP PR3 integration: host lifecycle and persistence](20261022-xmpp-pr3-integration.md) | same commit | current: integration checks and limits |
 | 2026-10-22 | [PR1 standards reuse reconciled with main](20261022-pr1-main-reconciliation.md) | see file history | integration record: per-family reconciliation, source-aware zero duration cast, main functionality preserved, validation and explicit limits |
+| 2026-10-22 | [Regex profiles and interval preconditions](designissues/2026-10-22-regex-profiles-and-range-invariants.md) | same commit | current: edition selection, complement invariant, preserved regressions and CI controls |
