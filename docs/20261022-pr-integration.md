@@ -184,3 +184,27 @@ temporary repository did not contain the compiler-replacement audit now
 invoked by the production gate. This is a test-fixture dependency failure,
 not a Lean proof failure. The failed CI log is preserved. The setup must be
 repaired and the complete CI rerun before acceptance.
+
+The repair is in `1a2299588`. Temporary fixtures now run the real companion
+compiler-replacement audit with a positive control. A new stale-caller case
+fails if that audit is bypassed. The 13 recursion controls pass, and the
+bypass mutation is rejected. CI also builds `Harness.Qlvr`, which the existing
+real compiler-replacement assertions inspect. Production gate decisions and
+those assertions are unchanged. [Repair evidence](audits/ci-recursion-controls-20261022/README.md)
+includes the original failure and mutation result.
+
+The final local `lake build L4Factoidal l4wasm` passed 979 jobs on runtime
+source `4bc80d56d` (26 minutes 27 seconds). Later commits change documentation,
+evidence, audit self-tests and CI setup only. The final hygiene audit passed;
+recursion and compiler-replacement reach gates passed. A separate 68-job
+`+Harness.Qlvr` build supplies the real audit control. All 34 compiler-replacement
+audit self-tests then passed, with zero failures and zero not-run cases.
+Final CI is running at
+`1a2299588`; its result and the Wasm replay will be recorded below.
+
+The Wasm linker reports signature mismatches for Lean runtime
+`lean_io_create_tempfile` and `lean_io_create_tempdir`. The same warnings occur
+in the earlier PR2+PR3 build log. Their presence in the
+build log is not a conformance result; the public API replay checks the
+exposed paths, not every runtime symbol. Preserve these warnings with the
+artifact evidence rather than describing the build as warning-free.
