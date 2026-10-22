@@ -32,7 +32,7 @@ positions that no requirement pattern names, inclusion dependencies
 in admission, the execution state machine, named graphs, `RowFilter` from
 a SPARQL `Expr`.
 
-KR 2.3 landed 2026-10-12: six source kinds, each described from its
+KR 2.3 landed 2026-10-12: six source kinds (eight since KR 4.4), each described from its
 description document by a `describe` function in
 `formal/lean4/L4Factoidal/Planner/Kinds/` (record section 10): `sbm11`
 (the manifest and a PSO predicate probe; one capability per permutation
@@ -112,7 +112,28 @@ a quota costs `Config.refuseCost`), then `chooseStart` takes the plan of
 least score under the probe counts, or stops. Proved: `wantProbe_iff`,
 `probe_inv`, `reachable_probes`, `runProbed_spec` (I1, I2 with probes).
 Issue 937 closed: with a probe the plan is admitted. `l4planner-test`:
-91 pass, 0 fail, 15 expected-fail (out of 106). Record section 14.
+91 pass, 0 fail, 15 expected-fail (out of 106). Record section 14. Open:
+probes of lookups and of latency or service descriptions
+(https://github.com/danbri/factoidal/issues/938; xfail cases
+`probe-lookup-sample`, `probe-latency-statistic`).
+
+KR 4.4 (batch 3) landed 2026-10-22: eight source kinds. `webmcp`
+(`Kinds/WebMcp.lean`, WebMCP Draft Community Group Report of 20 October
+2026): the tool without `execute`, its origin, and the RDF mapping beside
+it (a WebIDL dictionary drops unknown members); location
+`browser:<origin>`; only `readOnlyHint: true` and not `consequentialHint`
+tools are sources. `llm` (`Kinds/Llm.lean`): model, prompt with one slot,
+mapping of the JSON answer, `CostModel.latency`, optional
+`Capability.confidence` (thousandths); always `approximate`, a document
+stating `exact` is refused. Proved (`Planner/Exactness.lean`):
+`runUsed_exact_iff` (a row is unmarked iff every source it used is exact),
+`run_exact_only_if`, `rewriting_run_approx` (a rewriting's row is marked iff
+`Rewriting.approx`). `l4planner-test`: 106 pass, 0 fail, 18 expected-fail
+(out of 124). Record section 15.
+
+When you add a source whose answers a model makes: mark it `approximate`
+in `describe`, never from the caller; test a mixed plan whose answer is
+marked and a control on the same catalog that the exact sources answer.
 
 When you write a probe test: state the expected decision and give a
 control (the same catalog with no probe operation, a statistic, or a

@@ -37,7 +37,9 @@ description); without it the estimate of `Planner.Search` uses its
 tuples of one call (a SPARQL `COUNT`, a `HEAD` with a count, a REST
 endpoint's total), in the units of `perCall`; `none` when the source has
 no such operation. The driver `Planner.Exec` makes a probe only when its
-expected saving is more than this cost (OKR batch 3, KR 4.3). -/
+expected saving is more than this cost (OKR batch 3, KR 4.3). `latency`
+is the declared latency of one call in milliseconds (an LLM-backed
+operation states it; OKR batch 3, KR 4.4); `none` when not declared. -/
 structure CostModel where
   perCall : Nat
   perRow : Nat
@@ -45,6 +47,7 @@ structure CostModel where
   rowQuota : Option Nat := none
   rowsPerCall : Option Nat := none
   probeCost : Option Nat := none
+  latency : Option Nat := none
   deriving DecidableEq, Repr
 
 /-- A tuple of the capability's relation, one term per position. -/
@@ -62,6 +65,11 @@ structure Capability where
   location : String
   cost : CostModel
   exactness : Exactness
+  /-- The declared confidence of an `approximate` capability's answers, in
+  thousandths (0 to 1000); `none` when not declared (OKR batch 3, KR 4.4).
+  It is information for the caller: the marker of a row does not depend on
+  it, and an `exact` capability has no confidence. -/
+  confidence : Option Nat := none
   deriving DecidableEq, Repr
 
 /-- The output positions: every position that is not a required input. -/

@@ -1329,6 +1329,7 @@ L4Factoidal_Storage_Sbm11_PrmRange_searchM  # (c) binary search over the PRM1 en
 # recursion follows the plan nesting. Rows and tuples go through List.flatMap,
 # List.filterMap and List.filter (csimp tail-recursive in core).
 L4Factoidal_Planner_Plan_exec  # (b) nesting of the plan tree (one level per plan operator), not the number of rows
+L4Factoidal_Planner_Plan_execUsed  # (b) nesting of the plan tree, as Plan.exec; the rows of a join go through core List.flatMap and List.map (issue 875, KR 4.4)
 L4Factoidal_Planner_Plan_execM  # (b) nesting of the plan tree, as Plan.exec; the rows of a join go through core List.mapM (the cycle the audit sees); l4planner-test case execm-io-large-join runs a 1,000,000-row join in ExceptT String IO (issue 875)
 L4Factoidal_Planner_Plan_inputFailure  # (b) nesting of the plan tree, as Plan.exec
 L4Factoidal_Planner_Plan_wfBound  # (b) nesting of the plan tree, as Plan.exec
