@@ -9,6 +9,14 @@ status: published
 tests: tests/hub/post30_test.mjs
 ---
 
+> Historical behavior notice, 22 October 2026: the original examples and
+> explanation below are retained as an archive. The current checked
+> `owlIsConsistent` reader returns unknown/unsupported-syntax for the three
+> clash examples and the satisfiable control. It no longer claims a model
+> from completed search. Their tests check refusal, not OWL decision coverage.
+> See the [current inference page](../../hub/inference/) and
+> [integration record](https://github.com/danbri/factoidal-core/pull/4).
+
 [Post 3](./03-schemas-that-infer-rdfs-owl.md) derived new triples by
 Datalog closure: a fixed set of rules fired forward over the asserted
 triples until nothing new appeared. That is OWL 2 **RL** — fast,

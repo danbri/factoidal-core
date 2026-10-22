@@ -186,7 +186,23 @@
       "path": "integration-pr23-pack-node26.log",
       "sha256": "14aac2d439183a99c44165399ca92337ac229e9a2bd2d3f1c85c3928239b00be",
       "bytes": 212
+    },
+    {
+      "path": "integration-pr23-hub.log",
+      "sha256": "bbaeaa28d13decc7676d97d80457a07474c020de4c21401a5efd8071938e1196",
+      "bytes": 123747
+    },
+    {
+      "path": "integration-pr23-historical-owl.log",
+      "sha256": "2cab6e419c2b8199deef698970e434257afcc3cbded9399b2c6a45e3c834a5db",
+      "bytes": 12682
+    },
+    {
+      "path": "integration-pr23-hub-owl-repaired.log",
+      "sha256": "d564f390d43bdc5b305252db69d68c4fcf7ba94e7119da2a94d221747f39765a",
+      "bytes": 9089
     }
   ],
-  "interpretation": "Original full npm result: 579 total, 575 pass, 3 fail, 1 skipped (external Jena missing). Focused repaired tests: 41 pass. Public-tests.log is a sandbox-restricted failed run; direct.log is the successful rerun. These are not final all-PR integration results."
+  "interpretation": "Original full npm result: 579 total, 575 pass, 3 fail, 1 skipped (external Jena missing). Focused repaired tests: 41 pass. Public-tests.log is a sandbox-restricted failed run; direct.log is the successful rerun. These are not final all-PR integration results.",
+  "hub_interpretation": "Full historical+live hub run timed out after 397 reported cases; not a complete suite result. Before repair: nine obsolete OWL verdict assertions, two missing RML fixtures, one pre-split provenance assertion. Focused repaired OWL files: 31 test-runner passes, including one preexisting RDF1.2 expected-failure case."
 }

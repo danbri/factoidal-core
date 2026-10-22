@@ -1,7 +1,8 @@
 # Integrate core PRs 1–3 on current main
 
-Status: integration in progress, 22 October 2026. No remote merge or npm
-release is claimed by this record. The user authorized integration of
+Status: integration in progress, 22 October 2026.
+[Draft integration PR4](https://github.com/danbri/factoidal-core/pull/4) is open.
+No remote merge or npm release is claimed by this record. The user authorized integration of
 [PR1](https://github.com/danbri/factoidal-core/pull/1),
 [PR2](https://github.com/danbri/factoidal-core/pull/2) and
 [PR3](https://github.com/danbri/factoidal-core/pull/3) onto current main.
@@ -18,7 +19,9 @@ PR3 head `87d1009df1842a64669530e3d1f1875e2b2c8e22` was reconciled as
 `7501907`, with dispatch and CLI additions kept alongside Authz/LWS.
 `6b2c847` adds the reviewed host lifecycle repairs and evidence described in
 [the XMPP integration note](20261022-xmpp-pr3-integration.md).
-Original branches and dirty audit worktrees are preserved.
+Original branches and dirty audit worktrees are preserved. Main `d36c993c`
+was merged as `96ac91dc` after PR2+PR3 artifact validation; the later combined
+source requires its own build and tests.
 
 PR1's [independent review and raw evidence](audits/pr1-review-20261022/README.md)
 are retained unchanged. The introduced zero yearMonthDuration string-cast
@@ -99,6 +102,14 @@ fixture inventories and binary hashes: XSD datatypes 18,955 passed, 0 failed,
 were inventoried but not validated. RIF: 45 passed, 0 failed, 0 undecided,
 0 unread, 1 existing local override, including all 6 import-rejection cases.
 Runner exit status alone is insufficient: their printed counts were checked.
+
+The live hub inference page also advertised obsolete positive consistency
+verdicts. Its two pipeline examples both return unsupported-syntax; the
+second is still semantically inconsistent. The page and tests now state
+that distinction. Archived posts 30 and 40 retain their original examples
+and prose with dated behavior notices; eight old verdict assertions become
+explicit refusal-contract assertions. This does not count their OWL cases
+as solved. The historical test run before correction records 18 pass/8 fail.
 
 ## Acceptance and evidence still required
 
