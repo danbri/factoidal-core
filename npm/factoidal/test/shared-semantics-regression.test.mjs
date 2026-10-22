@@ -61,3 +61,16 @@ test('shared semantics: public RIF refuses unresolved imports', async () => {
   await assert.rejects(Factoidal.rifEval('', rules, { format: 'nquads' }),
     /unsupported-syntax.*imports require a resolver/);
 });
+
+test('shared semantics: SHACL name-class complement excludes middle dot', async () => {
+  // U+00B7 is an XML NameChar. Its positive class and complement must
+  // disagree; the old unsorted interval complement accepted it in both.
+  for (const [escape, expected] of [['c', true], ['C', false]]) {
+    const shapes = `@prefix sh: <http://www.w3.org/ns/shacl#> .
+      <urn:shape> a sh:NodeShape; sh:targetNode <urn:s>;
+        sh:property [ sh:path <urn:p>; sh:pattern ${JSON.stringify('\\' + escape)} ].`;
+    const result = await Factoidal.shaclValidate('<urn:s> <urn:p> "·" .', shapes,
+      { format: 'turtle' });
+    assert.equal(result.conforms, expected, `XML name escape \\${escape}`);
+  }
+});
