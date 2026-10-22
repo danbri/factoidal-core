@@ -23,7 +23,7 @@ decoder.
 
 No `sorry`, no user `axiom`, no `native_decide`, no `partial`.
 -/
-import L4Factoidal.Storage.Sbm11.Sip
+import L4Factoidal.Storage.Sbm11.SipFastTheorems
 import L4Factoidal.Storage.Sbm11.FrameRangeTheorems
 import L4Factoidal.Storage.Sbm11.BlockAtTheorems
 
@@ -503,6 +503,7 @@ theorem findWords_spec (b : ByteArray) (n i lo hi : Nat) (cands : Array UInt64) 
   by_cases hd : (i < b.size && b.get! i == tagDelta) = true
   · rw [if_pos hd]
     simp only [Bool.and_eq_true, decide_eq_true_eq, beq_iff_eq] at hd
+    rw [deltaFindStart_eq b lo hi cands i p hd.1]
     obtain ⟨a, j', ha, hws, hsz, hlt⟩ := decodeWords_delta b n i ws j hd.1 hd.2 h
     obtain ⟨a', j2, ha', hpre⟩ := FrameWords.deltaAtGo_prefix b hi (n - hi) 0 (i + 1) #[] a j'
       (by rw [show hi + (n - hi) = n by omega]; exact ha)
@@ -695,6 +696,7 @@ theorem gatherWords_spec (b : ByteArray) (n i : Nat) (pos : Array Nat) (ws : Byt
   by_cases hd : (i < b.size && b.get! i == tagDelta) = true
   · rw [if_pos hd]
     simp only [Bool.and_eq_true, decide_eq_true_eq, beq_iff_eq] at hd
+    rw [deltaGatherStart_eq b pos i hd.1]
     obtain ⟨a, j', ha, hws, hsz, hv⟩ := decodeWords_delta b n i ws j hd.1 hd.2 h
     obtain ⟨out', h1, h2⟩ := deltaGatherGo_eq b pos 1 (fun t => a[t]!) hinc n 0 0 (i + 1) 0
       (ByteArray.emptyWithCapacity (8 * pos.size)) a j' (by decide) (by omega) ha

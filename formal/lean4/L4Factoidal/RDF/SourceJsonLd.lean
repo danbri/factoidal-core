@@ -22,8 +22,12 @@ while `l4jsonld-probe` passes them. They are the rows of
 `tests/sbm11/w3c_roundtrip_xfail.tsv`; the work is tracked in
 https://github.com/danbri/factoidal/issues/848.
 
-JSON-LD is read whole (`Source.readsWhole`):
-https://github.com/danbri/factoidal/issues/839.
+JSON-LD is read one top-level node object at a time when `Source.Prepass`
+finds the document in streaming form (`Syntax/JsonLdChunkFold.lean`,
+https://github.com/danbri/factoidal/issues/839), and whole otherwise.
+`jsonLdOps` is the item reader: it expands the node object with the shared
+context and converts it with the counter of the blank nodes so far, the two
+steps `JSONLD.parseJsonLd` takes for the whole document.
 -/
 import L4Factoidal.RDF.Source
 import L4Factoidal.JSONLD.ToRdf
@@ -39,8 +43,45 @@ def jsonLdParser : DocParser := fun _mode base text =>
   | .ok ds => .ok ds
   | .error e => .error ⟨s!"invalid or unsupported JSON-LD ({e.code})", 0⟩
 
-/-- The readers a native tool links: JSON-LD. -/
-def withJsonLd : Extra := { jsonld := some jsonLdParser }
+open L4Factoidal.JSONLD L4Factoidal.JSON in
+/-- The item reader. `begin mode base ctx` mirrors the branch of
+    `parseJsonLd`: a document with an inline `@context` or a base is expanded
+    first, and one with neither goes to `datasetOfJsonAt` as written. A node
+    object is expanded in a document of its own, `{"@context":C,"@graph":[node]}`
+    (shape B) or `[node]` (shape A), so the expansion is the one the whole
+    document gives that node (the `@graph` of the object, free-floating
+    values dropped). The generated prefix is `generatedPrefix` of a document
+    that has no label beginning with `_jld_anon`, which `Prepass` checked. -/
+def jsonLdOps : JsonLdChunkFold.Ops where
+  notJson := ⟨"invalid or unsupported JSON-LD (notJsonLd)", 0⟩
+  begin := fun _ base ctx =>
+    let fail (e : JsonLdError) : ParseError := ⟨s!"invalid or unsupported JSON-LD ({e.code})", 0⟩
+    let acSeed : ActiveContext :=
+      { cur := { emptyContextCore with base := base, mode10 := false }, prev := [] }
+    let pfx := JsonLdChunkFold.streamPrefix
+    let convert (ctr : Nat) (root : Json) : Except ParseError (Dataset × Nat) :=
+      match datasetOfJsonAt .drop pfx ctr root with
+      | some r => .ok r
+      | none => .error (fail .notJsonLd)
+    let viaExpand (wrap : Json → Json) : Except ParseError JsonLdChunkFold.ItemFn :=
+      .ok fun ctr item =>
+        match expand Loader.none acSeed (wrap item) with
+        | .error e => .error (fail e)
+        | .ok expanded => convert ctr expanded
+    match ctx with
+    | some c =>
+      let wrap : Json → Json := fun item =>
+        .object [("@context", c), ("@graph", .array [item])]
+      -- the context is processed once now, so that its error is the first
+      match expand Loader.none acSeed (wrap (.array [])) with
+      | .error e => .error (fail e)
+      | .ok _ => viaExpand wrap
+    | none =>
+      if base.isSome then viaExpand (fun item => .array [item])
+      else .ok fun ctr item => convert ctr (.array [item])
+
+/-- The readers a native tool links: JSON-LD, whole and item by item. -/
+def withJsonLd : Extra := { jsonld := some jsonLdParser, jsonldStream := some jsonLdOps }
 
 /-! ## Build-time checks -/
 
@@ -62,6 +103,25 @@ private def jlDoc : String :=
           | .ok r =>
             (r.readAll (fun a t g => (t, g) :: a)
               [String.ofList (cs.take cut), String.ofList (cs.drop cut)]).toOption == want)
+
+-- The item reader: a document in streaming form, read in two chunks at every cut,
+-- gives the quads of the whole reader, in the same order (blank nodes included).
+private def streamDoc : String :=
+  "{\"@context\":{\"e\":\"http://e/\"},\"@graph\":[{\"@id\":\"e:a\",\"e:p\":{\"e:q\":\"x\"}},{\"e:p\":[{\"e:q\":1},{\"@id\":\"e:b\"}]},{\"@id\":\"e:c\",\"e:r\":\"s,]\\\"}\"}]}"
+
+#guard (let pfx := (Prepass.forFormat .jsonld |>.feed streamDoc.toUTF8).toOption.bind (·.finish.toOption)
+        let want := (parseDocument withJsonLd .jsonld .rdf11 none streamDoc).toOption.map
+                      (foldDataset (fun (a : List (Triple × Option Subject)) t g => (t, g) :: a) [])
+        let cs := streamDoc.toList
+        pfx == some "_jld_anon" && want.isSome && (List.range (cs.length + 1)).all fun cut =>
+          match Reader.init withJsonLd .jsonld .rdf11 none "_jld_anon" ([] : List (Triple × Option Subject)) with
+          | .error _ => false
+          | .ok r =>
+            (r.readAll (fun a t g => (t, g) :: a)
+              [String.ofList (cs.take cut), String.ofList (cs.drop cut)]).toOption == want)
+
+-- A document not in streaming form (an object with other members) falls back.
+#guard ((Prepass.forFormat .jsonld |>.feed jlDoc.toUTF8).toOption.bind (·.finish.toOption)) == some ""
 
 -- A document that is not JSON is refused with the JSON-LD error code.
 #guard (match parseDocument withJsonLd .jsonld .rdf11 none "{" with

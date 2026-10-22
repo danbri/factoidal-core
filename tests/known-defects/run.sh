@@ -1087,6 +1087,88 @@ else
 fi
 
 # ---------------------------------------------------------------------
+# JS-1 (https://github.com/danbri/factoidal/issues/946) -- the JSON-LD item
+# reader of the source layer (formal/lean4/L4Factoidal/Syntax/JsonLdChunkFold.lean,
+# https://github.com/danbri/factoidal/issues/839) reads one top-level node
+# object at a time. Its fall-back is proved equal to the whole-document reader
+# (Source.jsonld_readAll_of_notStreamed); the item reading is measured only
+# (l4jsonld-chunk-diff: 68,812 agree, 0 differ (out of 68,812) on 2026-10-22).
+# XFAIL while no theorem named jsonld_chunk_readAll_eq_whole exists under
+# formal/lean4. When one lands, the row reads XPASS: retire it, close issue 946
+# and update docs/designissues/2026-09-03-rdf-parsing-strategy.md section 3n in
+# the same commit.
+# ---------------------------------------------------------------------
+JS_SRC="${LEAN_SRC}/L4Factoidal/Syntax/JsonLdChunkFold.lean"
+JS_TITLE="JSON-LD item reader = whole-document reader unproved"
+if [ ! -f "$JS_SRC" ]; then
+  record JS-1 946 "$JS_TITLE" ERROR "${JS_SRC#"$ROOT"/} not found"
+elif ! grep -qE '^def State\.endItem ' "$JS_SRC"; then
+  record JS-1 946 "$JS_TITLE" ERROR "probe drifted: State.endItem is no longer defined in ${JS_SRC#"$ROOT"/}"
+elif grep -rqE "^[[:space:]]*(@\[[^]]*\][[:space:]]*)?(private[[:space:]]+)?(theorem|lemma)[[:space:]]+([A-Za-z0-9_.]*\.)?jsonld_chunk_readAll_eq_whole\b" \
+      "${LEAN_SRC}" --include='*.lean'; then
+  record JS-1 946 "$JS_TITLE" XPASS "a theorem named jsonld_chunk_readAll_eq_whole now exists"
+else
+  record JS-1 946 "$JS_TITLE" XFAIL \
+    "no jsonld_chunk_readAll_eq_whole theorem in formal/lean4 (agreement is measured by l4jsonld-chunk-diff only)"
+fi
+
+# ---------------------------------------------------------------------
+# JS-2 (https://github.com/danbri/factoidal/issues/947) -- the whole-document
+# JSON-LD reader does not expand a top-level array when no base is given, so a
+# node object's own @context is ignored (ToRdf.hasInlineContext is false for an
+# array). JSON-LD 1.1 Expansion Algorithm expands each array item and processes
+# an item's @context. Expected quad: <http://example.org/a> foaf:name "Alice".
+# XFAIL while the parse gives no quad; XPASS when it gives the quad (retire the
+# row, close issue 947, update section 3n of the parsing-strategy record).
+# ---------------------------------------------------------------------
+JS2_TITLE="JSON-LD top-level array ignores a node object's @context"
+if [ ! -x "$L4_BIN" ]; then
+  record JS-2 947 "$JS2_TITLE" ERROR "no l4factoidal at ${L4_BIN} (tools/fetch-builds.sh --set native)"
+else
+  printf '%s\n' '[{"@context":{"name":"http://xmlns.com/foaf/0.1/name"},"@id":"http://example.org/a","name":"Alice"}]' > "${WORKDIR}/js2.jsonld"
+  printf '%s\n' '{"@context":{"name":"http://xmlns.com/foaf/0.1/name"},"@id":"http://example.org/a","name":"Alice"}' > "${WORKDIR}/js2-obj.jsonld"
+  JS2_WANT='<http://example.org/a> <http://xmlns.com/foaf/0.1/name> "Alice" .'
+  JS2_OBJ=$(timeout 60 "$L4_BIN" parse "${WORKDIR}/js2-obj.jsonld" --format jsonld --out nquads 2>/dev/null)
+  JS2_ARR=$(timeout 60 "$L4_BIN" parse "${WORKDIR}/js2.jsonld" --format jsonld --out nquads 2>/dev/null)
+  if [ "$JS2_OBJ" != "$JS2_WANT" ]; then
+    record JS-2 947 "$JS2_TITLE" ERROR "oracle (same node as a top-level object) did not give the expected quad"
+  elif [ "$JS2_ARR" = "$JS2_WANT" ]; then
+    record JS-2 947 "$JS2_TITLE" XPASS "the array form now gives the expected quad"
+  else
+    record JS-2 947 "$JS2_TITLE" XFAIL "array form gives ${#JS2_ARR} bytes of N-Quads, expected the foaf:name quad"
+  fi
+fi
+
+# ---------------------------------------------------------------------
+# SR-1 (https://github.com/danbri/factoidal/issues/944) -- the Turtle and TriG
+# split read (several readers, one for each byte range between the dot
+# boundaries that formal/lean4/L4Factoidal/Syntax/TurtleSplitScan.lean finds;
+# `Source.Reader.resume`; https://github.com/danbri/factoidal/issues/842) has
+# no theorem that its quads equal the single reader's, blank-node labels
+# included. It is measured only
+# (tools/split-read-differential.sh: 17,962 agree, 0 differ (out of 17,962)
+# over the W3C Turtle and TriG files and the tests/sbm11/syntax fixtures on
+# 2026-10-22). Like SF-1 to SF-4, this
+# probe reads the SOURCE: XFAIL while no theorem named splitRead_eq_single
+# exists under formal/lean4. When one lands, the row reads XPASS: retire it,
+# close issue 944 and update docs/designissues/2026-09-03-rdf-parsing-
+# strategy.md section 3m in the same commit.
+# ---------------------------------------------------------------------
+SR_SRC="${LEAN_SRC}/L4Factoidal/Syntax/TurtleSplitScan.lean"
+SR_TITLE="Turtle/TriG split read = single reader unproved"
+if [ ! -f "$SR_SRC" ]; then
+  record SR-1 944 "$SR_TITLE" ERROR "${SR_SRC#"$ROOT"/} not found"
+elif ! grep -qE '^def Cold\.handle ' "$SR_SRC"; then
+  record SR-1 944 "$SR_TITLE" ERROR "probe drifted: Cold.handle is no longer defined in ${SR_SRC#"$ROOT"/}"
+elif grep -rqE "^[[:space:]]*(@\[[^]]*\][[:space:]]*)?(private[[:space:]]+)?(theorem|lemma)[[:space:]]+([A-Za-z0-9_.]*\.)?splitRead_eq_single\b" \
+      "${LEAN_SRC}" --include='*.lean'; then
+  record SR-1 944 "$SR_TITLE" XPASS "a theorem named splitRead_eq_single now exists"
+else
+  record SR-1 944 "$SR_TITLE" XFAIL \
+    "no splitRead_eq_single theorem in formal/lean4 (agreement is measured by tools/split-read-differential.sh only)"
+fi
+
+# ---------------------------------------------------------------------
 # Summary + JSON
 # ---------------------------------------------------------------------
 TOTAL=$((XFAIL + XPASS + ERRORS))

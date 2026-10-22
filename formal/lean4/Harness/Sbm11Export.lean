@@ -26,9 +26,20 @@ N-Quads and N-Triples write one line for each quad. Turtle writes the
 triples of a subject as one statement and TriG does the same inside a block that
 it closes when the graph of the next quad changes (a graph that the SPO order
 interleaves with others gets several blocks; TriG accepts that). Both keep one
-statement, not the dataset. RDF/XML and JSON-LD keep the quads and write at the
-end (https://github.com/danbri/factoidal/issues/846 and
-https://github.com/danbri/factoidal/issues/847).
+statement, not the dataset. RDF/XML and JSON-LD keep the quads of one subject:
+RDF/XML writes one `rdf:Description` for each subject
+(https://github.com/danbri/factoidal/issues/846) and JSON-LD a flattened
+document with one node object for each subject and graph
+(https://github.com/danbri/factoidal/issues/847; `L4Factoidal/RDF/SinkJsonLd.lean`).
+
+RDF/XML declares the namespaces of all the predicates in the start tag of
+`rdf:RDF`. Before it writes, the export reads the predicate ids of the quads it
+keeps, in SPO order (`predicateIdsInOrder`: the id columns only, one id for each
+distinct predicate), decodes those ids, and gives their namespace table
+(`Sink.rdfxmlTableOfPredicates`) to the writer. The table depends only on the order in
+which the predicates first appear, so it is the table `graphToRdfXml` derives from
+the whole graph, and the text is that writer's text (`Sink.runList_rdfxml_eq`). This
+pass reads the blocks a second time.
 
 Graphs. N-Triples, Turtle and RDF/XML have no graph name. When the generation
 has a named graph (its graph list GNL1, or a quad in a named graph for a
@@ -138,6 +149,24 @@ def Keep.keeps : Keep → Nat → Bool
   | .defaultOnly, gid => gid == 0
   | .graph id, gid => gid == id
 
+/-- The distinct predicate ids of the quads that `keep` keeps, in the order they
+    first appear in the SPO permutation. Reads the id columns only. -/
+def predicateIdsInOrder (g : Gen) (keep : Keep) : IO (Array Nat) := do
+  let src ← permSrc g 2
+  let mut seen : Std.HashSet Nat := {}
+  let mut out : Array Nat := #[]
+  for i in [0:src.metas.size] do
+    let c ← readBlock g src i
+    for j in [0:c.size] do
+      if !keep.keeps c.g[j]! then continue
+      let p := c.c1[j]!
+      if !seen.contains p then
+        seen := seen.insert p
+        out := out.push p
+    let m := src.metas[i]!
+    dropChunkRange g src.cache src.prbRef m.offset m.size
+  pure out
+
 /-- The dictionary pages the export keeps (64 terms each). The SPO order visits
     the subjects in dictionary order and the objects in any order, so the cache
     is a window, not the dictionary. -/
@@ -174,7 +203,20 @@ def runExport (dir : String) (v : Verify) (o : Opts) : IO UInt32 := do
       let name ← ok "export" (L4Factoidal.Syntax.Term.toNTriples .rdf12 (← termOfId g cache gid))
       throw (IO.userError s!"the generation has named graphs (the first graph is {name}), and {formatName fmt} has no graph name; choose with --graph default, --graph all or --graph IRI")
   let table : L4Factoidal.Syntax.PrefixTable := o.prefixes.map fun (l, iri) => (iri, l ++ ":")
-  let (w0, header) ← okw (Sink.Writer.init Sink.withJsonLd fmt { version := .rdf12, graphs := choice, prefixes := table })
+  -- RDF/XML: the namespace table of the kept predicates, before the first triple
+  let rdfxmlTable ← match fmt with
+    | .rdfxml => do
+      let ids ← predicateIdsInOrder g keep
+      let cache ← IO.mkRef ({} : Std.HashMap Nat (Array ByteArray))
+      let mut preds : Array WfIri := #[]
+      for pid in ids do
+        match ← termOfIdLimit g cache pageLimit true pid with
+        | .iri i => preds := preds.push i
+        | _ => throw (IO.userError "the store holds a predicate that is not an IRI")
+      pure (some (Sink.rdfxmlTableOfPredicates preds.toList))
+    | _ => pure none
+  let (w0, header) ← okw (Sink.Writer.init Sink.withJsonLd fmt
+    { version := .rdf12, graphs := choice, prefixes := table, rdfxmlNamespaces := rdfxmlTable })
   -- the output: standard output, or a temporary file renamed at the end
   let pid ← IO.Process.getPID
   let tmp := o.out.map fun p => s!"{p}.tmp-{pid}"
@@ -233,7 +275,7 @@ def runExport (dir : String) (v : Verify) (o : Opts) : IO UInt32 := do
         noTriple := noTriple + 1
         if w.statesEmptyGraph then
           let name ← term2subject "graph name" (← termOfIdLimit g cache pageLimit true gid)
-          let (w', text) := w.declare name
+          let (w', text) ← okw (w.declare name)
           w := w'
           buf := buf ++ text
         else if namedOk && firstLeftOut.isNone then firstLeftOut := some gid

@@ -76,9 +76,11 @@ generation has one, decodes (`GraphList.decodeAt`), each of its ids is a
 dictionary id of an IRI or a blank node, and the graph of every quad is in it; the four permutations have the
 manifest's row count and the same quad digest (sum and xor of a 64-bit hash
 of each quad); and the exact check that they hold the same quads: the rows of
-POS, SPO and OSP re-keyed to PSO rows, bucketed on disk by groups of PSO
-blocks, each bucket sorted and compared with its group (`Sbm11PermCheck`;
-the check is proved to give equal quad multisets, `PermSet.perms_same`).
+POS, SPO and OSP re-keyed to PSO rows, cut into segments (one per predicate
+for POS, the whole permutation for SPO and OSP), each segment sorted (in
+memory, or as compressed sorted runs on disk that are merged) and compared
+row by row with PSO (`Sbm11PermCheck`; the check is proved to give equal
+quad multisets, `PermSet.perms_same`).
 
 Exit 1 on any error or failed check. Timings, bytes and VmHWM go to stderr.
 -/
@@ -404,14 +406,18 @@ def verifyGenIn (dir tmp : String) : IO Nat := do
   -- the permutations: digests, and the buckets of the exact check (lemma
   -- L3b, `Sbm11PermCheck`, `PermSet.perms_same`)
   let groupRows ← Harness.Sbm11PermCheck.groupRowsOf
-  let plan := Harness.Sbm11PermCheck.planGroups (((g.perms[0]?).map (·.metas)).getD #[]) groupRows
-  let nb := plan.rows.size
-  let flush := Harness.Sbm11PermCheck.flushBytes nb
-  Harness.Sbm11PermCheck.createBuckets tmp nb
-  let mut bufs : Array ByteArray := Array.replicate (3 * nb) ByteArray.empty
-  let mut counts : Array Nat := Array.replicate (3 * nb) 0
+  let maxSpills ← Harness.Sbm11PermCheck.maxSpillsOf
+  let disk ← IO.mkRef ({} : Harness.Sbm11PermCheck.Disk)
+  let mut exactFails := 0
+  let mut segments := 0
+  let mut runs := 0
+  let mut tExact := 0
+  -- the permutations whose segments are still being compared in the background
+  let mut open_ : Array Harness.Sbm11PermCheck.St := #[]
   let mut digests : Array Digest2 := #[]
   for ps in g.perms do
+    let mut st : Harness.Sbm11PermCheck.St := { perm := ps.perm, limit := groupRows, dir := tmp, maxSpills }
+    let pso? := g.perms[0]?
     let name := permNamesArr[ps.perm]!
     let hdr ← verifiedRead g ps.prbPath ps.prbRef ps.leaves ps.cache 0 prbHeaderBytes
     if hdr.data.toList != prbHeader ps.perm then
@@ -445,9 +451,13 @@ def verifyGenIn (dir tmp : String) : IO Nat := do
             fails := fails + 1
           d := d.add (quadDigest s p o gg)
           if ps.perm != 0 then
-            let q := PermSet.rekey ps.perm (c.row j)
-            (bufs, counts) ← Harness.Sbm11PermCheck.addRow tmp nb flush bufs counts ps.perm
-              (PermSet.bucketOf plan.bounds q) q
+            if let some pso := pso? then
+              -- `PermSet.rekeyCols_eq`: this is `PermSet.rekey ps.perm (c.row j)`
+              st ← st.add g pso disk (PermSet.rekeyCols ps.perm c.c0[j]! c.c1[j]! c.c2[j]! c.g[j]!)
+    if ps.perm != 0 then
+      if let some pso := pso? then
+        st ← st.close g pso disk
+        open_ := open_.push st
     if d.rows != m.quads then
       fails := fails + 1; IO.eprintln s!"FAIL {name}: {d.rows} rows, the manifest says {m.quads}"
     digests := digests.push d
@@ -459,20 +469,23 @@ def verifyGenIn (dir tmp : String) : IO Nat := do
         fails := fails + 1; IO.eprintln s!"FAIL: {permNamesArr[i]!} holds other quads than pso (digest)"
   let t3 ← IO.monoNanosNow
   IO.eprintln s!"sbm11-verify: permutations: failures={fails} ms={ms t2 t3}"
-  -- the exact check: each bucket sorted and compared with its PSO group
-  Harness.Sbm11PermCheck.flushAll tmp nb bufs
-  bufs := #[]
-  let mut exactFails := 0
-  if fails == 0 then
-    for p in [1:4] do
-      for j in [0:nb] do
-        if exactFails == 0 then
-          if let some e ← Harness.Sbm11PermCheck.compareBucket g plan tmp counts p j then
-            exactFails := exactFails + 1
-            IO.eprintln s!"FAIL: {e}"
+  -- the exact check ran with the permutation pass (segments compared as they
+  -- end, in background tasks): wait for it
+  if let some pso := g.perms[0]? then
+    let te ← IO.monoNanosNow
+    for st in open_ do
+      let w ← st.finish pso
+      segments := segments + w.segments
+      runs := runs + st.runsWritten + w.merged
+      if let some e := w.fail then
+        exactFails := exactFails + 1
+        IO.eprintln s!"FAIL: {e}"
+    tExact := tExact + ((← IO.monoNanosNow) - te)
+  open_ := #[]
   fails := fails + exactFails
   let t4 ← IO.monoNanosNow
-  IO.eprintln s!"sbm11-verify: exact permutation check: buckets={nb} group-rows={groupRows} digest={if digestOn then "on" else "off"} failures={exactFails} ms={ms t3 t4}"
+  let dk ← disk.get
+  IO.eprintln s!"sbm11-verify: exact permutation check: segments={segments} runs={runs} group-rows={groupRows} digest={if digestOn then "on" else "off"} failures={exactFails} ms-waiting-at-end={tExact.toFloat / 1000000.0} temp-written-bytes={dk.written} temp-peak-bytes={dk.peak}"
   let t3 := t4
   IO.eprintln s!"sbm11-verify: failures={fails} total-ms={ms t0 t3} read-bytes={← g.readBytes.get} peak-rss={← vmHWM}"
   pure fails

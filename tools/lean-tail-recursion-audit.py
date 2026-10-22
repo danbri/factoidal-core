@@ -116,7 +116,7 @@ WHAT THIS TOOL MISSED, AND WHY (keep this list; each entry cost a defect)
     fixture for each defect in this list.
 """
 
-import argparse, fnmatch, json, os, re, sys
+import argparse, fnmatch, json, os, re, subprocess, sys
 from collections import defaultdict
 
 REPO = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
@@ -1139,6 +1139,20 @@ def main(argv=None):
         print()
         print("GATE PASS: every recursive declaration of class %s is listed in %s"
               % ("/".join(GATED), os.path.relpath(allow_path, REPO)))
+        # KR 3.3 (https://github.com/danbri/factoidal/issues/871): CI runs only this
+        # gate, so the csimp reach check runs here too and its exit code is ours.
+        cmd = [sys.executable, os.path.join(REPO, "tools", "lean-csimp-reach.py"), "--gate"]
+        if args.ir_dir:
+            cmd += ["--ir-dir", args.ir_dir]
+        if args.lean_dir:
+            cmd += ["--lean-dir", args.lean_dir]
+        print()
+        print("Running tools/lean-csimp-reach.py --gate")
+        sys.stdout.flush()
+        rc = subprocess.call(cmd)
+        if rc != 0:
+            print("GATE FAIL: tools/lean-csimp-reach.py --gate exited %d" % rc)
+            return 1
     return 0
 
 

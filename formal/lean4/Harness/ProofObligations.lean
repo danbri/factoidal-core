@@ -25,6 +25,7 @@ or wasm build imports it.
 import Lean
 import L4Factoidal.RDFS.SemiNaiveTheorems
 import L4Factoidal.OWL.RLSemiNaiveTheorems
+import L4Factoidal.RDF.SinkJsonLd
 
 namespace Harness.ProofObligations
 
@@ -53,7 +54,15 @@ def obligations : List Obligation :=
         "header, L4Factoidal/OWL/RLTheorems.lean header items 2 and 3)"
       issue := "https://github.com/danbri/factoidal/issues/756"
       onProof := "drop the saturation and ListFuelAdequate hypotheses from " ++
-        "indexedClosureSN_complete and mem_indexedClosureSN_iff (issue 756, item 4 for OWL RL)" } ]
+        "indexedClosureSN_complete and mem_indexedClosureSN_iff (issue 756, item 4 for OWL RL)" },
+    { name := `L4Factoidal.RDF.Sink.jsonLdStream_readBack
+      statement := "the flattened JSON-LD document of the stream writer (Writer.jsonld with " ++
+        "jsonLdStream), read by JSONLD.parseJsonLd, has the quads the writer got, up to blank " ++
+        "node labels (L4Factoidal/RDF/SinkJsonLd.lean header; checked by #guards and " ++
+        "tests/sbm11/export_roundtrip.sh only)"
+      issue := "https://github.com/danbri/factoidal/issues/943"
+      onProof := "remove the 'checked, not proved' sentences from SinkJsonLd.lean, Sink.lean " ++
+        "and the parsing-strategy record section 3m" } ]
 
 run_cmd do
   let env ← getEnv

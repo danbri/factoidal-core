@@ -84,12 +84,13 @@
 #                SBM11_DELTA_OLYMPICS=0 leaves (i) out (printed, not counted).
 #   (j) exact    the exact permutation check of activation (lemma L3b,
 #                Harness/Sbm11PermCheck.lean, PermSet.perms_same): the gate
-#                fixture is admitted with groups of 1, 3 and 1,000,000 PSO rows
-#                (SBM11_VERIFY_GROUP_ROWS); a copy whose POS files come from a
+#                fixture is admitted with segment limits of 1, 3 and 1,000,000
+#                rows (SBM11_VERIFY_GROUP_ROWS; 1 and 3 write sorted runs to
+#                disk and merge them); a copy whose POS files come from a
 #                pack of the fixture with one quad changed (same dictionary, same
 #                row count, another quad set; resealed) is refused by the exact
 #                check with the digest comparison off (SBM11_VERIFY_DIGEST=0)
-#                and by the digest with it on; no bucket directory is left.
+#                and by the digest with it on; no run directory is left.
 #   (k) scaling  tests/sbm11/phase2_scaling.sh: packer phase 2 (the k-way
 #                merge of the term runs) on synthetic sources of 1, 2 and 4
 #                million lines (244 to 836 term runs; median of 3 runs each,
@@ -237,6 +238,9 @@
 #                with no triple nor a graph named by a blank node, https://github.com/danbri/factoidal/issues/876;
 #                the IBK4 and IBK5 stores lose a graph with no triple, https://github.com/danbri/factoidal/issues/880). Its
 #                counts are added to this run's.
+#   (w) permdisk tests/sbm11/perm_check_disk.sh: the temporary disk of the exact
+#                permutation check (part (j)) is at most half the generation (issue 810), also when
+#                it writes runs; more than a thousand runs are merged.
 #   (g) tamper   a copy of the generation with one byte changed in a block
 #                frame of spo.prb1 (manifest and sidecars kept): `scan` and
 #                `query` must be refused under merkle (and by default, the
@@ -685,6 +689,53 @@ else
     ""|*": 0 of "*) record window gate-strstarts 1 "no block skipped: '$w'" ;;
     *) record window gate-strstarts 0 "$w (blocks of 2 rows, POS)" ;;
   esac; fi
+  # (l1c) issue 930: ids-sip-date-filter (answer checked above, the shape of
+  # DBpedia d14) passes candidates into the ex:when scan, whose join column
+  # is a delta frame decoded by the word loop (Sip.deltaFindGoW)
+  wl="$(grep -o 'key values tested [0-9]* (on words in [0-9]* blocks)' "$L/ids-sip-date-filter.err" | head -1)"
+  case "$wl" in
+    ""|*"in 0 blocks"*) record sip gate-word-loop 1 "no block decoded on words: '$wl'" ;;
+    *) record sip gate-word-loop 0 "$wl (blocks of 2 rows)" ;;
+  esac
+  # (l1c) issue 932: a COUNT with no FILTER, no GROUP BY and no overlay takes
+  # the rows of the blocks its PRM1 entry decides from the entry. Fixture of 32
+  # default-graph triples packed in blocks of 10 rows: per permutation three
+  # full blocks of 10 rows with a constant graph frame and one block of 2
+  # rows (graph frame not provably constant: read). Equal to the reference
+  # engine; the all-variable count decides at least one block and reads one;
+  # the first four take the PRM1 count.
+  M="$L/meta"
+  mkdir -p "$M"
+  mrc=0
+  "$BIN/l4sbm11-pack" "$HERE/gate/count-meta.nq" "$M/col/gen" --workers 1 --block-rows 10 >"$M/pack.log" 2>&1 || mrc=$?
+  [ "$mrc" -eq 0 ] && { "$BIN/l4sbm11" activate "$M/col" gen >"$M/act.log" 2>&1 || mrc=$?; }
+  if [ "$mrc" -ne 0 ]; then record meta-count pack 1 "exit $mrc"
+  else
+    bad=""; mk=0; mline=""
+    for q in 'SELECT (COUNT(*) AS ?n) WHERE { ?s ?p ?o }' \
+             'SELECT (COUNT(*) AS ?n) WHERE { ?s <http://example.org/p2> ?o }' \
+             'SELECT (COUNT(*) AS ?n) WHERE { ?s <http://example.org/p4> ?o }' \
+             'SELECT (COUNT(?o) AS ?n) WHERE { <http://example.org/s1> ?p ?o }' \
+             'SELECT (COUNT(*) AS ?n) WHERE { ?s <http://example.org/p9> ?o }'; do
+      mk=$((mk + 1))
+      printf '%s\n' "$q" >"$M/q.rq"
+      qrc=0
+      timeout 120 "$BIN/l4sbm11" query "$M/col" --file "$M/q.rq" --explain >"$M/got.$mk" 2>"$M/err.$mk" || qrc=$?
+      rrc=0
+      timeout 120 "$BIN/l4factoidal" query "$HERE/gate/count-meta.nq" --format nquads --query "$M/q.rq" >"$M/want.$mk" 2>/dev/null || rrc=$?
+      v="$(python3 -I "$HERE/compare_answers.py" "$M/got.$mk" "$M/want.$mk" "$rrc")"
+      case "$qrc:$v" in 0:equal*) ;; *) bad="$bad [$q]($qrc $v)" ;; esac
+      # the last query names a predicate with no id: its pattern is empty
+      # before any scan
+      [ "$mk" -eq 5 ] || grep -q 'from PRM1 entries' "$M/err.$mk" || bad="$bad [$q](no PRM1 count)"
+      [ "$mk" -eq 1 ] && mline="$(grep -o 'from PRM1 entries ([0-9]* blocks decided by their entries)[^;]*; blocks [0-9]* read' "$M/err.$mk")"
+    done
+    if [ -n "$bad" ]; then record meta-count queries 1 "failed:$bad"
+    else case "$mline" in
+      *"(0 blocks"*|*"blocks 0 read"|"") record meta-count queries 1 "count of all: expected decided and read blocks: '$mline'" ;;
+      *) record meta-count queries 0 "5 COUNT queries equal to the reference engine; count of all: $mline" ;;
+    esac; fi
+  fi
 fi
 # (l2) olympics: q01 to q21 and tests/sbm11/sip/*.rq with --sip off, auto (the
 # default) and always, equal as multisets (a hash join may change the row
@@ -731,8 +782,8 @@ else
     for gr in 1 3 1000000; do
       vrc=0
       SBM11_VERIFY_GROUP_ROWS=$gr "$BIN/l4sbm11" verify "$J/a" >"$J/va-$gr.log" 2>&1 || vrc=$?
-      if [ "$vrc" -eq 0 ] && grep -q "exact permutation check: buckets=[0-9]* group-rows=$gr digest=on failures=0" "$J/va-$gr.log"; then
-        record exact "admitted-group-rows-$gr" 0 "$(grep -o 'buckets=[0-9]*' "$J/va-$gr.log")"
+      if [ "$vrc" -eq 0 ] && grep -q "exact permutation check: segments=[0-9]* runs=[0-9]* group-rows=$gr digest=on failures=0" "$J/va-$gr.log"; then
+        record exact "admitted-group-rows-$gr" 0 "$(grep -o 'segments=[0-9]* runs=[0-9]*' "$J/va-$gr.log")"
       else record exact "admitted-group-rows-$gr" 1 "exit $vrc: $(grep 'FAIL\|exact' "$J/va-$gr.log" | head -2 | tr '\n' ' ')"; fi
     done
     # A with the POS files of B: same row count, same ids, another quad set
@@ -742,7 +793,7 @@ else
     for gr in 1 1000000; do
       vrc=0
       SBM11_VERIFY_DIGEST=0 SBM11_VERIFY_GROUP_ROWS=$gr "$BIN/l4sbm11" verify "$J/t" >"$J/vt-$gr.log" 2>&1 || vrc=$?
-      if [ "$vrc" -ne 0 ] && grep -q "FAIL: pos .*\(other quads than pso\|rows in bucket\)" "$J/vt-$gr.log" \
+      if [ "$vrc" -ne 0 ] && grep -q "FAIL: pos holds other quads than pso" "$J/vt-$gr.log" \
           && grep -q "digest=off failures=1" "$J/vt-$gr.log"; then
         record exact "refused-digest-off-$gr" 0 "$(grep -o 'FAIL: pos.*' "$J/vt-$gr.log" | head -1)"
       else record exact "refused-digest-off-$gr" 1 "exit $vrc: $(grep 'FAIL\|exact' "$J/vt-$gr.log" | head -2 | tr '\n' ' ')"; fi
@@ -752,9 +803,9 @@ else
     if [ "$vrc" -ne 0 ] && grep -q "holds other quads than pso (digest)" "$J/vt-d.log"; then
       record exact refused-digest-on 0 "the digest refuses it too"
     else record exact refused-digest-on 1 "exit $vrc"; fi
-    # no bucket directory is left next to the generation
+    # no run directory is left next to the generation
     left="$(ls -d "$J"/*.verify-* 2>/dev/null | wc -l)"
-    if [ "$left" = 0 ]; then record exact temp-removed 0 "no bucket directory left"
+    if [ "$left" = 0 ]; then record exact temp-removed 0 "no run directory left"
     else record exact temp-removed 1 "$left left"; fi
   fi
 fi
@@ -1062,6 +1113,18 @@ add_script_counts quad-source quad_source.sh "quad source"
 
 echo "=== (v) every named graph on the query paths and the export (issues 855 and 856)"
 add_script_counts graphs named_graphs.sh "named graphs"
+
+echo "=== (w) the temporary disk of the exact permutation check (issue 810)"
+add_script_counts permdisk perm_check_disk.sh "perm check disk"
+
+echo "=== (x) the compiled scan differential and the counting reference (issue 799, KR 1.2)"
+# The scan decodes frames with FrameWords.decodeWordsF, which reaches the extern
+# Prim.Bytes.pushU64LE; the build-time interpreter cannot run it, so the old-scan
+# comparison of ScanFoldTests and the countChunk comparison run here.
+if [ -x "$BIN/l4scanfold-test" ]; then
+  rc=0; out="$("$BIN/l4scanfold-test" 2>&1)" || rc=$?
+  record scanfold l4scanfold-test "$rc" "$out"
+else record scanfold l4scanfold-test 1 "missing $BIN/l4scanfold-test (lake build l4scanfold-test)"; fi
 
 echo
 echo "sbm11 stages 4 and 5: $PASS pass, $FAIL fail, $XFAILS expected-fail (out of $((PASS + FAIL + XFAILS)))"

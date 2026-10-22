@@ -300,11 +300,16 @@ def sampleOverlays : List PermOverlay :=
    { del := #[⟨1, 1, 1, 0⟩, ⟨4, 3, 1, 7⟩] }, { cleared := #[5] },
    { ins := #[⟨2, 2, 2, 2⟩, ⟨6, 1, 1, 0⟩], del := #[⟨5, 1, 3, 0⟩], cleared := #[7] }]
 
-#guard sampleOverlays.all fun ov => sampleSpecs.all fun spec => [true, false].all fun fill =>
+/-- The old and the new scan agree on every sample (overlay, spec, `fill`,
+    stop). Run by `Harness/ScanFoldTest.lean`, not by a `#guard`: the scan decodes
+    its frames with `FrameWords.decodeWordsF`, which reaches the extern
+    `Prim.Bytes.pushU64LE`, and the interpreter cannot run an extern
+    declaration (issue 799, KR 1.2). -/
+def scanDifferential : Bool := sampleOverlays.all fun ov => sampleSpecs.all fun spec => [true, false].all fun fill =>
   [100, 1, 2].all fun stopAt => sameRun (runNew ov spec fill stopAt) (runOld ov spec fill stopAt)
 
 -- the comparison sees the data: every block is a chunk, every row is out
-#guard match runNew {} (sampleSpecs[0]!) true 100 with
+def scanSeesData : Bool := match runNew {} (sampleSpecs[0]!) true 100 with
   | .ok (chs, st) => chs.length == 11 && st[5]! == sampleRows.length
   | .error _ => false
 

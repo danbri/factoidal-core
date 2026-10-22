@@ -244,8 +244,9 @@ the source
 (`docs/designissues/2026-09-05-pack-publication-every-batch.md`). TriG joined
 them on 2026-10-14 (https://github.com/danbri/factoidal/issues/769), and RDF/XML
 on 2026-10-22 (one child of `rdf:RDF` at a time,
-https://github.com/danbri/factoidal/issues/838). JSON-LD reads the whole document
-(https://github.com/danbri/factoidal/issues/839). Measured on skosdex N-Quads
+https://github.com/danbri/factoidal/issues/838), and JSON-LD on 2026-10-22 (one top-level
+node object at a time, when `Prepass` finds the document in streaming form,
+https://github.com/danbri/factoidal/issues/839). Measured on skosdex N-Quads
 prefixes, 2026-09-05: peak footprint 222,955,392 bytes for 52,428,626 of
 source, 328,272,128 for 104,857,577, 331,581,824 for 209,715,187 and
 472,746,624 for 1,543,478,120 — a 2.12x rise over a 29.4x source, against
@@ -293,9 +294,9 @@ What does NOT work yet:
   the 472,746,624-byte peak. A manifest written incrementally is the next
   step. (The BLOCKS themselves are no longer held: the IBK4 path publishes
   them during the ingest pass, and the streamed grammars — N-Quads, Turtle,
-  N-Triples, TriG, RDF/XML — no longer buffer the source either. Only
-  JSON-LD does, and RDF/XML under the fall-back rule of
-  `Syntax/RdfXmlChunkFold.lean`.)
+  N-Triples, TriG, RDF/XML, JSON-LD — no longer buffer the source either,
+  except under the fall-back rules of `Syntax/RdfXmlChunkFold.lean` and
+  `Syntax/JsonLdChunkFold.lean`.)
 - **No compaction and no delta log.** There is no compacted SBM7 layout label.
 
 ### Querying an IBK4 generation
@@ -1052,14 +1053,22 @@ Activation's exact permutation check and the scan theorem (2026-10-12,
 https://github.com/danbri/factoidal/issues/776; record: sections 9 and 10 of
 [`docs/designissues/2026-10-12-sbm11-end-to-end-theorem.md`](../../docs/designissues/2026-10-12-sbm11-end-to-end-theorem.md)).
 `l4sbm11 verify` and `activate` now also check exactly that POS, SPO and OSP
-hold the quads of PSO (`Harness/Sbm11PermCheck.lean`): the rows are re-keyed
-to PSO rows, written to bucket files by groups of PSO blocks
-(`SBM11_VERIFY_GROUP_ROWS`, default 262,144) in `GEN.verify-PID` next to
-the generation, and each bucket is sorted and compared with its group;
-stderr prints `exact permutation check: buckets=... failures=...`. The check
-is proved to give equal quad multisets (`PermSet.perms_same`, lemma L3b).
-Cost on olympics: activation 6.4 to 7.4 s before, 13.8 to 15.4 s after;
-peak RSS 88 to 111 MB; 171 MB of bucket files written and read.
+hold the quads of PSO (`Harness/Sbm11PermCheck.lean`). Since 2026-10-22
+(https://github.com/danbri/factoidal/issues/810) the rows are re-keyed to PSO
+rows and cut into segments: one per predicate for POS (POS and PSO both
+start with the predicate), the whole permutation for SPO and OSP. Each
+segment is sorted and compared row by row with the next PSO rows; a segment
+above `SBM11_VERIFY_GROUP_ROWS` rows (default 131,072) is written as sorted
+runs (compressed with the column encoder of the packer) in `GEN.verify-PID`
+and merged. Sorting and comparing run in background tasks
+(`SBM11_VERIFY_SPILLS`, default 6 runs sorted at once), in segment order.
+stderr prints `exact permutation check: segments=... runs=... failures=...
+temp-written-bytes=... temp-peak-bytes=...`. The check is proved to give
+equal quad multisets (`PermSet.perms_same`, lemma L3b). Measured: olympics
+temporary peak 4.2 MB for a 34.8 MB generation (the bucket method of
+2026-10-12 wrote 171 MB); DBpedia 173 MB for 568 MB. Gate:
+`tests/sbm11/perm_check_disk.sh` (peak at most half the generation), run
+as part (w) of `tests/sbm11/run.sh`.
 `SBM11_VERIFY_DIGEST=0` turns the digest comparison off (test support).
 The scan (`IdQuery.scanFoldM`) is a `forIn` over `blocksFor` with the body
 `scanBlockM` and pure per-block functions; `ScanFoldTheorems.scanFoldM_tuples`
@@ -1132,10 +1141,10 @@ section 3f.
 | --- | --- | --- | --- |
 | N-Triples | `.nt` `.ntriples` | line stream; strict: a graph name is an error | K byte ranges cut at line starts, K workers |
 | N-Quads | `.nq` `.nquads` | line stream | K byte ranges, K workers |
-| Turtle | `.ttl` `.turtle` | chunk fold, after a pre-pass over the source | one worker |
-| TriG | `.trig` | chunk fold, after a pre-pass over the source | one worker |
+| Turtle | `.ttl` `.turtle` | chunk fold | K byte ranges cut at dot boundaries found by one read of the bytes (`SplitScan`), K workers |
+| TriG | `.trig` | chunk fold | K byte ranges cut at dot boundaries, at the top level or inside a graph block, K workers |
 | RDF/XML | `.rdf` `.xml` `.owl` `.rdfxml` | chunk fold: one child of `rdf:RDF` at a time (`RdfXmlChunkFold`); the whole document under the fall-back rule below | one worker |
-| JSON-LD | `.jsonld` `.json-ld` | whole document | one worker |
+| JSON-LD | `.jsonld` `.json-ld` | chunk fold: one top-level node object at a time (`JsonLdChunkFold`), for an array or `{"@context":C,"@graph":[...]}`; the whole document otherwise | one worker |
 
 `l4sbm11-pack` and `l4sbm11 canon` read RDF 1.2 syntax, which includes RDF 1.1
 syntax for these grammars. The format comes from `--format` or from the
@@ -1162,6 +1171,20 @@ the triples are measured equal: `tools/rdfxml-chunk-differential.sh` (308 files,
 2432 agree, 0 differ (out of 2432) on 2026-10-22). Row
 `sbm11-pack-rdfxml-memory`: 0.51 bytes of peak RSS per source byte at 25,000 to
 100,000 statements (12.7 before, measured with the binary of the parent commit).
+
+**Turtle and TriG in K workers (2026-10-22,
+https://github.com/danbri/factoidal/issues/842).** `Syntax/TurtleSplitScan.lean`
+reads the bytes once and gives dot boundaries near `size * k / K` and the units
+that can hold a directive; the reader of each range after the first reads those
+units with a step that keeps nothing (`Source.Reader.resume`), enters the TriG
+graph block of its start, and starts its blank-node counter at the count the
+scan made before the split (`[` and collection items), so the generation is the
+same bytes for every K. A range that ends with another counter than the scan
+counted makes the pack read the source again as one range
+(`Sbm11Pack.withSplitRetry`). A source with `<<`, `~` or `{|` is one range. The
+pack prints `split-scan-ms=`. Phase 1 at 880,000 quads: Turtle 11.3 to 13.2 s with 1
+worker, 2.7 to 2.9 s with 4; TriG 11.8 to 12.8 s and 2.9 to 3.6 s. Record:
+section 3m of `docs/designissues/2026-09-03-rdf-parsing-strategy.md`.
 
 **Blank nodes.** A blank node label is local to one document (RDF 1.1 Concepts,
 section 3.4). The reader keeps the blank nodes of one document apart: a label
@@ -1191,7 +1214,8 @@ peak RSS goes to standard error.
 | N-Triples, N-Quads | one line for each quad | one quad |
 | Turtle | one statement for each subject; SPO order gives the triples of a subject in one run | the triples of one subject |
 | TriG | the Turtle statements inside a block `GRAPH <name> { ... }` (`{ ... }` for the default graph). The writer closes the block and opens a new block each time the graph of the next quad is not the open graph | the triples of one subject and the name of the open graph |
-| RDF/XML, JSON-LD | the library writers (`graphToRdfXml`, `fromRdf`) take a whole graph or dataset, so the writer keeps the quads and writes at the end | the dataset: https://github.com/danbri/factoidal/issues/846 and https://github.com/danbri/factoidal/issues/847 |
+| RDF/XML | one `rdf:Description` for each subject, written when the next subject starts. The start tag declares the namespaces of all the predicates, so the export first reads the predicate ids of the quads it keeps (id columns only) and gives their table to the writer. The text is the text of `graphToRdfXml` (`Sink.runList_rdfxml_eq`) | the triples of one subject (https://github.com/danbri/factoidal/issues/846) |
+| JSON-LD | a flattened document in expanded form: for each subject, one node object for the default graph and one graph object `{"@id": g, "@graph": [node]}` for each named graph, in RFC 8785 form; `{"@id": g, "@graph": []}` for a named graph with no triple. No `@list` and no sort by `@id` (both need the whole dataset); a reader's node map merges the objects of one `@id` | the quads of one subject (https://github.com/danbri/factoidal/issues/847) |
 
 The SPO order visits the subjects in dictionary order. A graph whose subjects
 interleave with those of other graphs gets several TriG blocks. A TriG reader
@@ -1344,7 +1368,7 @@ expected failure.
 | RDF/XML chunk fold, children phase: equality with the whole-document reader is measured (`tools/rdfxml-chunk-differential.sh`), not proved | https://github.com/danbri/factoidal/issues/936 | `tests/known-defects/run.sh` row RX-1 |
 | JSON-LD is read whole | https://github.com/danbri/factoidal/issues/839 | row `sbm11-pack-jsonld-memory` |
 | The Lean JSON-LD writer (`fromRdf` node list) takes time quadratic in the number of triples | https://github.com/danbri/factoidal/issues/712 | row `jsonld-write` |
-| Turtle and TriG phase 1 runs in one worker | https://github.com/danbri/factoidal/issues/842 | rows `sbm11-pack-ttl-workers`, `sbm11-pack-trig-workers` |
+| Turtle and TriG read by K workers: equality with the single reader (after a renaming of the generated blank-node labels) is measured (`tools/split-read-differential.sh`), not proved | https://github.com/danbri/factoidal/issues/944 | `tests/known-defects/run.sh` row SR-1 |
 | The JSON-LD reader of the source layer takes no document loader and no processing option (18 toRdf tests) | https://github.com/danbri/factoidal/issues/848 | `w3c_roundtrip_xfail.tsv`, 18 rows |
 | No theorem relates the stream writers (`Sink.Writer`) to the batch writers | https://github.com/danbri/factoidal/issues/852 | `tests/known-defects/run.sh`, rows `SK-1`, `SK-2` |
 | The RDF/XML export holds the whole graph | https://github.com/danbri/factoidal/issues/846 | row `sbm11-export-rdfxml-memory` |

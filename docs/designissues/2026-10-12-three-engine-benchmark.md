@@ -817,3 +817,164 @@ d14 https://github.com/danbri/factoidal/issues/930, d12
 https://github.com/danbri/factoidal/issues/931, d17
 https://github.com/danbri/factoidal/issues/932, d19
 https://github.com/danbri/factoidal/issues/862.
+
+### 11.12 d14 with the delta loops on machine words (2026-10-22)
+
+https://github.com/danbri/factoidal/issues/930 (OKR batch 3 KR 1.1,
+https://github.com/danbri/factoidal/issues/875). Target: d14 warm at most
+QLever 1 CPU warm (6.09 ms, section 11.8). Target not met; result 12.4 ms.
+
+Plan (unchanged by this work): POS scan of `dbo:birthPlace dbr:Edinburgh`
+(1,083 subjects), then the PSO scan of `dbo:birthDate` with the 1,083
+subjects as candidates (sideways information passing, section 11.9): 145 of
+154 selected blocks read, 593,920 join-key values tested, 953 rows gathered,
+merge join, then the FILTER on 953 rows (54 rows out).
+
+Cause, from `perf record -e cpu-clock --call-graph dwarf` of `l4sbm11 query
+... --repeat 60` (perf of linux-tools 6.8.0-146): 62 percent of the samples
+were in the two delta loops of `Storage/Sbm11/Sip.lean`, `deltaGatherGo`
+(the object column up to the last found row of each block, 36 percent) and
+`deltaFindGo` (the subject column, 26 percent), plus 8 percent in
+`advGo` (the candidate pointer). The loops kept the byte position, row
+number, fuel, previous value and varint accumulator as `Nat`; a term id is
+near `2 ^ 61`, so the test `prev + z / 2 < two64` compared with a number
+above the scalar range on every row (`lean_nat_big_lt`). A second cost was
+allocation: the compiled `cands[q]!` on an `Array UInt64` boxes a `UInt64`
+default, one `malloc` and one `free` per row (24 percent of the samples in
+an intermediate build, before the guarded reads below).
+
+Change (`formal/lean4/L4Factoidal/Storage/Sbm11/Sip.lean`):
+
+- `deltaFindGoW`, `deltaGatherGoW`: the same loops with the byte position
+  as `USize` (`ByteArray.uget`), the previous value and the accumulator as
+  `UInt64`, no fuel (`termination_by b.size - i`). While the accumulator is
+  below `2 ^ 57`, the word operations give the `Nat` results; above it the
+  loop continues as the `Nat` loop from the same state. `deltaFindStart`
+  and `deltaGatherStart` use them when the frame bytes are fewer than
+  `2 ^ 31` (so that a `USize` position is exact on wasm32 too), else the
+  `Nat` loops.
+- `probeFast` (the candidate pointer with its frequent case first, no
+  call) and `candAt` (the candidate test with a guarded read, no boxed
+  default).
+- `--explain`: the sideways text gives `key values tested N (on words in K
+  blocks)`; d14: `(on words in 145 blocks)`.
+
+Theorems (`Storage/Sbm11/SipFastTheorems.lean`; `#print axioms`: propext,
+Classical.choice, Quot.sound; `candAt_eq` propext only): `candAt_eq`,
+`probeFast_eq`, `deltaFindGoW_eq` and `deltaGatherGoW_eq` (each word loop
+equals its `Nat` loop from the same state with the fuel `b.size - i + 3`),
+`deltaFindStart_eq` and `deltaGatherStart_eq` (the starts equal the `Nat`
+loops with the fuel the callers gave before). `SipTheorems.findWords_spec`
+and `gatherWords_spec` now go through the two start theorems, so the scan
+theorems of `SipScanTheorems` hold of the changed scan unchanged (the scan
+returns the same tuples).
+
+Measurement: `l4sbm11 query /home/user/bench-data/sbm11/dbpedia --file
+tools/bench/three-engines/queries/dbpedia/d14-filter-date.rq --verify none
+--repeat 7 --explain`, execution median of 7 runs in one process, 3
+interleaved rounds; "before" is the build of commit aba9a13a, "after" the
+build of this change. 1-minute load average 3.96 in all rounds (other
+sessions on the machine). Answers of all 6 runs equal to
+`/home/user/bench-data/answers/dbpedia/d14-filter-date.sbm11-none.json`
+(54 rows).
+
+| | before | after | QLever 1 CPU warm (11.8) | QLever default warm (11.8) |
+| --- | ---: | ---: | ---: | ---: |
+| warm, round 1 / 2 / 3 (ms) | 22.56 / 22.87 / 22.07 | 12.07 / 13.43 / 12.41 | | |
+| warm, median of rounds (ms) | 22.56 | 12.41 | 6.09 | 6.09 |
+| peak RSS (VmHWM, kB) | 25,828 to 26,164 | 26,088 to 26,240 | | |
+
+The QLever times include HTTP and JSON (about 2 to 3 ms for a small
+answer). The ratio to QLever 1 CPU goes from 3.7 to 2.0.
+
+Remaining cost (profile of the "after" build, inclusive samples):
+`deltaGatherGoW` 36 percent, `deltaFindGoW` 28 percent, the FILTER
+(`applyFilters`) 18 percent, of which `Session.termOf` 13 percent (the
+dictionary key of each of the 953 dates decoded to a `Term`, 7 percent in
+`decodeTyped?`), `readFrames` 6 percent, the POS scan 3 percent.
+
+- The two loops are now tight (about 15 instructions per byte, no call, no
+  allocation). Their remaining cost is one varint per row: the length of
+  each varint of the object column (random literal ranks) varies, and the
+  branch on the continuation bit is not predictable. Removing it needs a
+  different frame codec for unsorted columns (a wire format change) or a
+  branch-free decoder of several bytes at a time with its own proof.
+- In the find loop, a third of the samples are the reads of `cands[p]`
+  (an `Array UInt64` holds boxed words: two dependent loads per row).
+  Keeping the current candidate value in the loop state removes them.
+- The FILTER decodes the date of every joined row to a `Term` before the
+  comparison (about 2 microseconds per row).
+
+### 11.13 d17, COUNT(*) from the PRM1 entries (2026-10-22)
+
+https://github.com/danbri/factoidal/issues/932 (OKR batch 3 KR 1.1,
+https://github.com/danbri/factoidal/issues/875). Query d17 is `SELECT
+(COUNT(*) AS ?n) WHERE { ?s ?p ?o }`. Cause before the change: the counted
+path (`scanFoldM` with `countStepM`) ran `scanBlockM` on each of the 5,941
+PSO blocks. For 5,940 of them the PRM1 entry already decides the count (the
+graph frame is a constant frame of graph 0, so the default-graph check holds
+for every row and no frame is read), but each block still made a plan, a
+chunk, a scan state and a group-map update. A profile (`perf record -e
+cpu-clock --call-graph dwarf,16384`, 50 runs in one process) put `mi_free`,
+`mi_malloc_small`, `scanBlockM`, `readFrames`, `countChunk` and
+`chunkOfCols` at the top; no time was in block decoding.
+
+Change (`formal/lean4/L4Factoidal/Storage/Sbm11/IdQuery.lean`): a COUNT with
+no FILTER, no GROUP BY and an empty delta overlay goes to `metaCountM`. One
+loop over the selected PRM1 entries (`metaSplitGo`) adds `metaStep` of each
+block: 0 when the block is not selected or a check fails on a column that is
+constant over the block (`checkFails`); all its rows when every row carries
+the key prefix (`fullFor`), every check is on a constant column, and the
+scan has no repeated variable and no named-graph test. The other blocks go
+through `scanBlockM` with a count as the accumulator (`countAdd`). The
+default graph is still a check on the graph column, so `?s ?p ?o` counts the
+default graph only, as SPARQL 1.1 section 13 requires; a block whose graph
+frame is not provably constant is read. `--explain` gives `counted while
+streaming from PRM1 entries (K blocks decided by their entries)`.
+
+Theorems (`Storage/Sbm11/MetaCountTheorems.lean`, axioms propext,
+Classical.choice, Quot.sound only): `metaStep_sound` (on an admitted block,
+the number `metaStep` gives is the number of output tuples of the block),
+`forIn_count`, `metaSplitGo_sum`, and `metaCountM_eq_scan` (over a store in
+memory of an admitted permutation with no overlay, `metaCountM` gives the
+length of the tuple list of `ScanFoldTheorems.scanFoldM_tuples`, the rows
+that carry the key prefix and pass the checks, the named-graph test and the
+repeated-variable tests).
+
+Gate: `tests/sbm11/run.sh` part (l1c) packs `tests/sbm11/gate/count-meta.nq`
+(32 default-graph triples) in blocks of 10 rows and runs five COUNT queries
+against the reference engine; the count of all must decide some blocks and
+read some. Three gate queries (`ids-count-all`, `ids-count-repeat-var`,
+`ids-count-graph-var`) run in parts (d) and (l1) on the gate fixture, which
+has named graphs.
+
+Measurement: `l4sbm11 query /home/user/bench-data/sbm11/dbpedia --file
+tools/bench/three-engines/queries/dbpedia/d17-count-all.rq --verify none
+--repeat 7 --explain`, execution median of 7 runs in one process, 3
+interleaved rounds; "before" is `l4sbm11` built from `origin/main` at
+`0383de52`, "after" the build of this change. 1-minute load average 2.56 to
+2.70 in all rounds (another session was building on the machine). The
+answers of all 6 runs are byte-identical to
+`/home/user/bench-data/answers/dbpedia/d17-count-all.sbm11-none.json`
+(23,269,559).
+
+| | before | after | QLever 1 CPU warm (11.8) | QLever default warm (11.8) |
+| --- | ---: | ---: | ---: | ---: |
+| warm, round 1 / 2 / 3 (ms) | 3.897 / 3.416 / 3.890 | 0.433 / 0.456 / 0.437 | | |
+| warm, median of rounds (ms) | 3.890 | 0.437 | 1.79 | 1.91 |
+| blocks counted from the PRM1 entry | 0 of 5,941 | 5,940 of 5,941 | | |
+| blocks read | 1 (9 bytes) | 1 (9 bytes) | | |
+| rows through a chunk | 23,269,559 | 3 | | |
+| peak RSS (VmHWM, kB) | 21,700 to 22,332 | 21,736 to 22,292 | | |
+
+SBM11 is in-process; the QLever times include HTTP and JSON. The ratio to
+QLever 1 CPU goes from 2.2 to 0.24. Both builds
+read the whole PSO PRM1 file (550,132 bytes from file); the remaining time is
+that read and the decoding of 5,941 entries.
+
+Gates on this change (exit codes 0): `lake build` (837 jobs);
+`tests/sbm11/run.sh` 3,101 pass, 0 fail, 29 expected-fail (out of 3,130);
+`SBM11_THREADS=4 tests/sbm11/census.sh` 605 executed, 605 matched the
+reference engine (438 on the id path); `tests/planner/sbm11_gate.sh` 8 pass,
+0 fail (out of 8 accepted); `tools/lean-tail-recursion-audit.py`,
+`tools/lean-unbuilt-modules.py` and `tools/lean-csimp-reach.py` with `--gate`.

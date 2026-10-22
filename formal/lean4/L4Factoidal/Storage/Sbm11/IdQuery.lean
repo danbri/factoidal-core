@@ -120,7 +120,7 @@ open L4Factoidal.RDF
 open L4Factoidal.SPARQL (Expr CompOp QueryPattern QueryForm SelectClause SelectItem GroupCondition
   OrderCondition PatternTerm PatternSubject AggregateFn TriplePattern EvalEnv EvalResult Binding)
 open L4Factoidal.Qlvr (Table gather joinVars sharedCols mergeJoin hashJoin mergeSortBy)
-open L4Factoidal.Codec.Zstd (word64)
+open L4Factoidal.Codec.Zstd (word64 word64U)
 open L4Factoidal.Storage.Sbm11.Block (BlockMeta Row)
 
 /-- Bound on the nodes of a WHERE tree or FILTER expression. -/
@@ -848,6 +848,9 @@ structure ScanStats where
   /-- a scan with candidates: rows whose other needed columns were decoded
       (the rows whose join key is a candidate) -/
   rowsGathered : Nat := 0
+  /-- a scan with candidates: blocks read whose join column is a delta frame
+      decoded by the word loop (`Sip.deltaFindGoW`, issue 930) -/
+  sipWordBlocks : Nat := 0
   /-- rows decoded: of a full scan the rows of its table (`rowsOut`), of a
       scan with candidates the rows gathered (`ScanStats.full`,
       `ScanStats.withSip`, set once per scan by the planner) -/
@@ -859,7 +862,8 @@ def ScanStats.add (a b : ScanStats) : ScanStats :=
     blocksTotal := a.blocksTotal + b.blocksTotal, framesRead := a.framesRead + b.framesRead,
     bytesRead := a.bytesRead + b.bytesRead, rowsOut := a.rowsOut + b.rowsOut,
     sipSkipped := a.sipSkipped + b.sipSkipped, keysTested := a.keysTested + b.keysTested,
-    rowsGathered := a.rowsGathered + b.rowsGathered, rowsDecoded := a.rowsDecoded + b.rowsDecoded }
+    rowsGathered := a.rowsGathered + b.rowsGathered, sipWordBlocks := a.sipWordBlocks + b.sipWordBlocks,
+    rowsDecoded := a.rowsDecoded + b.rowsDecoded }
 
 /-- The rows decoded by one full scan: the rows of its table. -/
 def ScanStats.full (s : ScanStats) : ScanStats := { s with rowsDecoded := s.rowsOut }
@@ -1088,7 +1092,7 @@ def readFrames {m : Type → Type} [Monad m] (st : Store m) (perm : Nat) (b : Bl
     must end at its PRM1 length. -/
 def colAll (b : BlockMeta) (bytes : ByteArray) (starts : Array Nat) (c : Nat) : Except String ByteArray :=
   let lens : Array Nat := #[b.len0, b.len1, b.len2, b.len3]
-  match L4Factoidal.Storage.Sbm11.FrameWords.decodeWords bytes b.rows starts[c]! with
+  match L4Factoidal.Storage.Sbm11.FrameWords.decodeWordsF bytes b.rows starts[c]! with
   | some (ws, j) =>
     if j != starts[c]! + lens[c]! || ws.size != 8 * b.rows then
       .error s!"block at {b.offset}: frame {c} does not end at its length"
@@ -1099,7 +1103,7 @@ def colAll (b : BlockMeta) (bytes : ByteArray) (starts : Array Nat) (c : Nat) : 
     the frame is read only up to row `hi - 1`). -/
 def colRange (b : BlockMeta) (bytes : ByteArray) (starts : Array Nat) (c lo hi : Nat) :
     Except String ByteArray :=
-  match L4Factoidal.Storage.Sbm11.FrameWords.decodeWordsRange bytes b.rows starts[c]! lo hi with
+  match L4Factoidal.Storage.Sbm11.FrameWords.decodeWordsRangeF bytes b.rows starts[c]! lo hi with
   | some ws => .ok ws
   | none => .error s!"block at {b.offset}: frame {c} does not decode"
 
@@ -1485,6 +1489,65 @@ def scanListM {m : Type → Type} [Monad m] {σ : Type} (st : Store m) (spec : S
     (scanBlockM st spec fill f metas sortVar ox)
   return (s.acc, s.stats)
 
+/-! ## A count from the PRM1 entries (https://github.com/danbri/factoidal/issues/932)
+
+A COUNT with no FILTER, no GROUP BY and no delta overlay needs only the number
+of rows the scan keeps. For most blocks the PRM1 entry gives that number
+(`metaStep`): 0 when the block is not selected or a check fails on a column
+that is constant over the block; all its rows when every row carries the key
+prefix (`fullFor`), every check is on a constant column, and the scan has no
+repeated variable and no named-graph test. `metaCountM` adds those numbers in
+one loop over the entries (`metaSplitGo`) and scans only the other blocks,
+with `scanBlockM` and a count as the accumulator (`countAdd`).
+`MetaCountTheorems.metaCountM_eq_scan`: over an admitted permutation in memory
+with no overlay, the count is the length of the tuple list of the scan
+(`ScanFoldTheorems.scanFoldM_tuples`). -/
+
+/-- A check fails for every row of the block: its column is constant over
+    the block with another value. -/
+def checkFails (b : BlockMeta) (ck : Nat × UInt64) : Bool :=
+  match colConst? b ck.1 with
+  | some y => y != ck.2.toNat
+  | none => false
+
+/-- The rows of the block that the scan keeps, when the PRM1 entry gives it;
+    `none` when the block must be read. -/
+def metaStep (spec : ScanSpec) (b : BlockMeta) : Option Nat :=
+  if !selects b spec.key || spec.checks.any (checkFails b) then some 0
+  else if fullFor b spec.key && spec.checks.all (fun ck => (colConst? b ck.1).isSome) &&
+      spec.eqs.isEmpty && !spec.named then some b.rows
+  else none
+
+/-- Over the entries `i, i + 1, ...`: the sum of `metaStep` of the blocks it
+    gives, and the positions of the other blocks, in order (a tail call with
+    fuel). -/
+def metaSplitGo (spec : ScanSpec) (metas : Array BlockMeta) : Nat → Nat → Nat → Array Nat → Nat × Array Nat
+  | 0, _, n, rest => (n, rest)
+  | f + 1, i, n, rest =>
+    if i < metas.size then
+      match metaStep spec metas[i]! with
+      | some r => metaSplitGo spec metas f (i + 1) (n + r) rest
+      | none => metaSplitGo spec metas f (i + 1) n (rest.push i)
+    else (n, rest)
+
+/-- The count accumulator of a scan: the rows of each chunk. -/
+@[inline] def countAdd {m : Type → Type} [Monad m] (acc : Nat) (ch : Chunk) : ExceptT String m (Nat × Bool) :=
+  pure (acc + ch.table.rows, true)
+
+/-- The number of rows the scan of `spec` keeps, the number of blocks decided
+    by their PRM1 entries, and the statistics of the scan of the others. The
+    caller uses it only when the overlay of the permutation is empty. -/
+def metaCountM {m : Type → Type} [Monad m] (st : Store m) (spec : ScanSpec) :
+    ExceptT String m (Nat × Nat × ScanStats) := do
+  let sel ← st.blocksForRange spec.perm spec.key
+  let total ← st.blockCount spec.perm
+  let (n, rest) := metaSplitGo spec sel sel.size 0 0 #[]
+  let ox := ovCtx (st.ovl spec.perm) spec.key
+  let s ← forIn rest.toList
+    ({ acc := n, stats := { blocksTotal := total }, insPos := 0, stopped := false } : ScanState Nat)
+    (scanBlockM st spec false countAdd sel (sortVarOf spec) ox)
+  return (s.acc, sel.size - rest.size, s.stats)
+
 /-- `scanTableM`, or the store's `scanTable` when it sets one (stage 1). -/
 def scanTableOf {m : Type → Type} [Monad m] (st : Store m) (spec : ScanSpec) :
     ExceptT String m (Table × ScanStats) :=
@@ -1610,8 +1673,11 @@ def scanBlockSipM {m : Type → Type} [Monad m] {σ : Type} (st : Store m) (spec
   let stats := { stats with blocksRead := stats.blocksRead + 1, framesRead := stats.framesRead + (need.filter id).size,
                             bytesRead := stats.bytesRead + nbytes }
   let (chunk, tested, found) ← ofExceptM (sipChunk spec cands sortVar b bp constOut need bytes starts p)
+  let jcs := starts[jc]!
+  let word := bytes.size < Sip.smallBytes && jcs < bytes.size && bytes.get! jcs == Column.tagDelta
   let stats := { stats with rowsOut := stats.rowsOut + chunk.table.rows, keysTested := stats.keysTested + tested,
-                            rowsGathered := stats.rowsGathered + found }
+                            rowsGathered := stats.rowsGathered + found,
+                            sipWordBlocks := stats.sipWordBlocks + (if word then 1 else 0) }
   let (acc', more) ← f s.acc chunk
   return stepOf s acc' stats s.insPos more
 
@@ -1717,7 +1783,7 @@ def scanForJoinM {m : Type → Type} [Monad m] (st : Store m) (spec : ScanSpec) 
       | some cands =>
         let (t, s0) ← scanSipTableM st spec cands
         let s := s0.withSip
-        return (t, s, s!"; sideways ?{v}: {cands.size} candidates, blocks skipped {s.sipSkipped}, key values tested {s.keysTested}, rows gathered {s.rowsGathered}")
+        return (t, s, s!"; sideways ?{v}: {cands.size} candidates, blocks skipped {s.sipSkipped}, key values tested {s.keysTested} (on words in {s.sipWordBlocks} blocks), rows gathered {s.rowsGathered}")
       | none => pure ()
   | none => pure ()
   let (t, s) ← scanTableOf st spec
@@ -2178,8 +2244,33 @@ def Groups.add (g : Groups) (k : List UInt64) (n : Nat) : Groups :=
   | some c => { g with counts := g.counts.insert k (c + n) }
   | none => { counts := g.counts.insert k n, keys := g.keys.push k }
 
+/-- Rows `e` and `i` agree on every column of `vcols` (a loop, no closure per
+    row; `Array.all` with a lambda took a quarter of d10's time). -/
+@[inline] def sameKeyRows (t : Table) (vcols : Array Nat) (e i : Nat) : Bool := Id.run do
+  for c in vcols do
+    if t.at c e != t.at c i then return false
+  return true
+
+/-- The first row after `i` (at most `t.rows`) whose key differs from row
+    `i` on the columns `vcols`. One column (the common case, a GROUP BY on
+    one variable): the column and the word of row `i` are read once, and each
+    row costs one word read (`Codec.Zstd.word64U`, equal to `word64`:
+    `word64U_eq`). -/
+def runEnd (t : Table) (vcols : Array Nat) (i : Nat) : Nat := Id.run do
+  let mut e := i + 1
+  if vcols.size == 1 then
+    let col := t.cols[vcols[0]!]!
+    let x := word64U col (8 * i).toUInt64
+    for _ in [0:t.rows] do
+      if e < t.rows && word64U col (8 * e).toUInt64 == x then e := e + 1 else break
+  else
+    for _ in [0:t.rows] do
+      if e < t.rows && sameKeyRows t vcols e i then e := e + 1 else break
+  return e
+
 /-- Count the rows of a chunk per group key. A group column that is constant
-    over the chunk counts the chunk at once. -/
+    over the chunk counts the chunk at once. The key list is built once per run
+    of equal keys (`runEnd`); `countChunkRef` builds one per row. -/
 def countChunk (groupVars : Array String) (ch : Chunk) (g : Groups) : Groups := Id.run do
   let t := ch.table
   if t.rows == 0 then return g
@@ -2188,7 +2279,30 @@ def countChunk (groupVars : Array String) (ch : Chunk) (g : Groups) : Groups := 
   if consts.all Option.isSome then
     return g.add (consts.map (·.getD 0)).toList t.rows
   let mut g := g
-  -- runs of equal keys
+  let keyAt (i : Nat) : List UInt64 :=
+    (List.range gc.size).map fun k => match consts[k]! with
+      | some x => x
+      | none => t.at gc[k]! i
+  let vcols : Array Nat := (List.range gc.size).foldl
+    (fun a k => if (consts[k]!).isSome then a else a.push gc[k]!) #[]
+  let mut i := 0
+  for _ in [0:t.rows] do
+    if i ≥ t.rows then break
+    let e := runEnd t vcols i
+    g := g.add (keyAt i) (e - i)
+    i := e
+  return g
+
+/-- The reference of `countChunk`: the first version, one key list per row.
+    `Harness/ScanFoldTest.lean` compares the two. -/
+def countChunkRef (groupVars : Array String) (ch : Chunk) (g : Groups) : Groups := Id.run do
+  let t := ch.table
+  if t.rows == 0 then return g
+  let gc := groupVars.map fun v => (t.idx v).getD 0
+  let consts := gc.map fun c => ch.consts.getD c none
+  if consts.all Option.isSome then
+    return g.add (consts.map (·.getD 0)).toList t.rows
+  let mut g := g
   let keyAt (i : Nat) : List UInt64 :=
     (List.range gc.size).map fun k => match consts[k]! with
       | some x => x
@@ -2892,8 +3006,15 @@ def runPlanM {m : Type → Type} [Monad m] (st : Store m) (plan : Plan) (emit : 
       -- aggregate block by block
       let t := pats[0]!
       let spec := mkSpec t (permFor t none) need
+      -- issue 932: no FILTER, no GROUP BY, no overlay: the PRM1 entries give
+      -- the count of the blocks they decide (`metaCountM`)
+      let metaOk := fs.isEmpty && plan.groupVars.isEmpty && (st.ovl spec.perm).isEmpty
       -- stage 1b: one group map per block range, added in range order
-      let (groups, s, how) ← match par, ← divideFor? st par spec 0 with
+      let (groups, s, how) ← if metaOk then do
+          let (n, decided, s) ← metaCountM st spec
+          let g : Groups := if n == 0 then {} else ({} : Groups).add [] n
+          pure (g, s, s!" from PRM1 entries ({decided} blocks decided by their entries)")
+        else match par, ← divideFor? st par spec 0 with
         | some p, some (metas, ox, chunks, _) => do
           let total ← st.blockCount spec.perm
           let (g, s) ← p.fold (fun v X => countPartM v spec fs plan.groupVars metas ox X) chunks

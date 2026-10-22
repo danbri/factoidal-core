@@ -392,6 +392,7 @@ import L4Factoidal.Storage.Sbm11.OptJoin
 import L4Factoidal.Storage.Sbm11.OptJoinTheorems
 import L4Factoidal.Storage.Sbm11.SemiJoinTheorems
 import L4Factoidal.Storage.Sbm11.Sip
+import L4Factoidal.Storage.Sbm11.SipFastTheorems
 import L4Factoidal.Storage.Sbm11.SipTheorems
 import L4Factoidal.Storage.Sbm11.IdQuery
 import L4Factoidal.Storage.Sbm11.IdQueryTests
@@ -417,6 +418,7 @@ import L4Factoidal.Storage.Sbm11.ScanFoldTests
 import L4Factoidal.Storage.Sbm11.ScanFoldTheorems
 import L4Factoidal.Storage.Sbm11.SipScanTheorems
 import L4Factoidal.Storage.Sbm11.WindowTheorems
+import L4Factoidal.Storage.Sbm11.MetaCountTheorems
 import L4Factoidal.Storage.Sbm11.ParallelScanTheorems
 import L4Factoidal.Storage.Sbm11.ParallelMergeTheorems
 import L4Factoidal.Storage.Sbm11.PermSet
@@ -819,6 +821,9 @@ import L4Factoidal.Planner.Kinds.Tests
 import L4Factoidal.Planner.Exec
 import L4Factoidal.Planner.ExecTests
 import L4Factoidal.Planner.ExecM
+import L4Factoidal.Planner.Exactness
+import L4Factoidal.Planner.Kinds.WebMcp
+import L4Factoidal.Planner.Kinds.Llm
 import L4Factoidal.TailRecursionTwins
 import L4Factoidal.CsimpReachFixture
 import L4Factoidal.OWL.ComprehensionTheorems

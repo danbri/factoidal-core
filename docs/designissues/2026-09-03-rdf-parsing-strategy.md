@@ -472,7 +472,7 @@ one reader:
 | Turtle | `TurtleChunkFold` (section 2.2) | one chunk and one unfinished statement |
 | TriG | `TriGChunkFold` (section 3e) | one chunk and one unfinished unit |
 | RDF/XML | `RdfXmlChunkFold` (section 3k, since 2026-10-22): one child of `rdf:RDF` at a time; the whole document under the fall-back rule | one chunk and one item (https://github.com/danbri/factoidal/issues/838) |
-| JSON-LD | `Reader.whole` with the parser that `SourceJsonLd.lean` supplies | the document (https://github.com/danbri/factoidal/issues/839) |
+| JSON-LD | `JsonLdChunkFold` (section 3n, since 2026-10-22): one top-level node object at a time; `Reader.whole` with the parser that `SourceJsonLd.lean` supplies under the fall-back rule | one chunk and one node object (https://github.com/danbri/factoidal/issues/839) |
 
 JSON-LD stays out of the core wasm: `Source.Extra.jsonld` holds the parser, and
 a tool that reads JSON-LD passes `Source.withJsonLd`.
@@ -584,9 +584,9 @@ nesting depth of a triple term. No document that parsed before is refused now.
 The scaling row `sbm11-pack-nt-vs-nq` (N-Triples text takes at most 2.0 times the
 CPU time of N-Quads text) is the gate.
 
-**Costs open.** JSON-LD holds the document (issue 839, row
-`sbm11-pack-jsonld-memory`). RDF/XML held it until 2026-10-22 (issue 838,
-section 3k). The JSON-LD reader
+**Costs open.** JSON-LD held the document until 2026-10-22 (issue 839, section
+3n) and holds it only under the fall-back rule of section 3n. RDF/XML held it
+until 2026-10-22 (issue 838, section 3k). The JSON-LD reader
 uses native stack in proportion to the number of elements: documents of 25,000
 to 100,000 elements overflow a stack of 512 KB, and parse under the 1 GB stack
 of a native process (https://github.com/danbri/factoidal/issues/844, row
@@ -594,9 +594,10 @@ of a native process (https://github.com/danbri/factoidal/issues/844, row
 512 KB stack: the canary of `tests/stack/run.sh` packs 600,001 N-Triples
 statements (57.8 MB; `sbm11-perm`: 103 pass, 0 fail out of 103 on 2026-10-14),
 and generated sources of Turtle (40 MB), TriG (40 MB) and RDF/XML (11 MB) pack
-in an ad hoc run with `LEAN_STACK_SIZE_KB=512`. Turtle and TriG
-phase 1 runs in one worker, whatever `--workers` says (https://github.com/danbri/factoidal/issues/842, rows
-`sbm11-pack-ttl-workers` and `sbm11-pack-trig-workers`). The Lean RDF/XML and
+in an ad hoc run with `LEAN_STACK_SIZE_KB=512`. Until 2026-10-22 Turtle and
+TriG phase 1 ran in one worker, whatever `--workers` said; since then it reads
+K byte ranges cut at dot boundaries (section 3m,
+https://github.com/danbri/factoidal/issues/842). The Lean RDF/XML and
 JSON-LD writers take time quadratic in the dataset: `l4source-convert` writes
 8.3 MB of N-Triples text in 22 s (RDF/XML) and 44 s (JSON-LD), and 4 times the data takes 15 and
 24 times as long (https://github.com/danbri/factoidal/issues/845 and
@@ -630,7 +631,7 @@ reader is in `SourceJsonLd.lean`.
 | N-Triples, N-Quads | one line for each quad | one quad |
 | Turtle | `bodyPush`: one statement for each subject, `;` between predicates, `,` between objects | the triples of one subject |
 | TriG | the same statements inside a block; a new block opens each time the graph of the next quad is not the open graph | the triples of one subject and the open graph name |
-| RDF/XML, JSON-LD | the library writers take a whole graph or dataset | the dataset |
+| RDF/XML, JSON-LD | until 2026-10-22: the library writers take a whole graph or dataset. Since then: one subject at a time (section 3l) | until 2026-10-22 the dataset; since then the quads of one subject |
 
 **TriG blocks in SPO order.** The export reads the SPO permutation. A graph
 whose subjects interleave with the subjects of other graphs is written in several
@@ -1326,7 +1327,8 @@ resident set is 624 MB in both.
 
 **Costs open.** The RDF/XML and JSON-LD writers keep the dataset
 (https://github.com/danbri/factoidal/issues/846 and
-https://github.com/danbri/factoidal/issues/847) and take time quadratic in the
+https://github.com/danbri/factoidal/issues/847; since 2026-10-22 the stream
+writers keep one subject, section 3l) and take time quadratic in the
 dataset (https://github.com/danbri/factoidal/issues/845 and
 https://github.com/danbri/factoidal/issues/712). The JSON-LD writer uses native
 stack in proportion to the number of elements: one node with 20,000 references
@@ -2651,6 +2653,316 @@ chunks. W3C suites, before and after: `l4w3c` RDF 1.1 1041 pass, 0 fail (out of
 1041), of which RDF/XML 166 pass, 0 fail (out of 166); RDF 1.2 1358 pass, 0
 fail (out of 1358), of which RDF/XML 31 pass, 0 fail (out of 31); the RDF/XML
 probe 132, 41 and 132 pass, 0 fail.
+
+### 3l. RDF/XML and JSON-LD written one subject at a time (2026-10-22)
+
+Issues: https://github.com/danbri/factoidal/issues/846 (RDF/XML) and
+https://github.com/danbri/factoidal/issues/847 (JSON-LD); OKR batch 3 KR 2.4
+(https://github.com/danbri/factoidal/issues/875).
+
+**Before.** The stream writer of the serialiser layer (`Sink.Writer`) had no
+stream form for RDF/XML and JSON-LD: `Writer.whole` kept every quad and called the
+library writer (`graphToRdfXml`, `fromRdf`) at the end. `l4sbm11 export` of
+100,000 statements held 212 MB (RDF/XML) and 175 MB (JSON-LD) of peak RSS; the
+slope from 25,000 to 100,000 statements was 4.38 and 2.94 bytes of peak RSS per
+output byte (the Turtle writer: 0.38).
+
+**RDF/XML.** `RdfXmlWrite.graphToRdfXml` writes one `rdf:Description` for each
+subject group (`subjectGroups`: the subjects in the order of their first triple,
+each with its triples in graph order). It is now `graphToRdfXmlWith
+(predicateNamespaces g) g`, assembled from `headerOf`, `descriptionText` and
+`footer`; its text is unchanged (a `#guard` pins the text of a three-triple graph,
+and the export of 25,000 statements is byte-identical before and after). The
+stream form (`rxPush`, `rxFinish`) keeps the key of the open subject and its
+triples, and writes the description when a triple of another subject arrives. The
+start tag of `rdf:RDF` declares the namespaces of all the predicates, so the
+stream needs the namespace table first (`Options.rdfxmlNamespaces`). The table
+(`namespacesOf`) depends only on the order in which the predicates first appear.
+`l4sbm11 export` reads the predicate ids of the quads it keeps from the SPO
+permutation before it writes (`predicateIdsInOrder`: the id columns, no term
+decoded; a second read of the blocks) and decodes only the distinct ids.
+
+Theorems (`L4Factoidal/RDF/Runs.lean`, `L4Factoidal/Syntax/RdfXmlWrite.lean`,
+`L4Factoidal/RDF/Sink.lean`; axioms `propext`, `Classical.choice`, `Quot.sound`):
+
+| Theorem | Statement |
+| --- | --- |
+| `Runs.runs_flatten`, `Runs.mem_runs` | the runs of a list by a key (`Runs.runsFrom`, the state a by-subject writer keeps) are a partition of the list into non-empty runs of one key each |
+| `RdfXmlWrite.rxRun_eq` | the stream writes the descriptions of the runs |
+| `RdfXmlWrite.subjectGroups_eq_runs` | when no two runs have the same subject (`Contiguous`, which the SPO order of a store gives), the runs are `subjectGroups` |
+| `RdfXmlWrite.streamRdfXml_eq`, `streamRdfXml_eq_graphToRdfXml` | for a contiguous graph the stream writes the text of `graphToRdfXmlWith` with the same table, and with the graph's own table the text of `graphToRdfXml` |
+| `Sink.runList_rdfxml_eq` | the same for `Sink.Writer` (the functions `l4sbm11 export` calls), over the triples of the default graph |
+
+When a subject's triples are not consecutive, the stream writes a second
+`rdf:Description` for that subject, which is the same graph (a `#guard` reads it
+back isomorphic).
+
+**JSON-LD.** Text equality with `fromRdf` is not possible in one pass: `fromRdf`
+sorts the node objects by `@id` and turns a chain of `rdf:first`/`rdf:rest` blank
+nodes that are referenced once into `@list` (JSON-LD 1.1 API sections 8.5 and 8.7),
+and both need the whole dataset. The stream writes a flattened document in expanded
+form instead: a JSON array with, for each run of one subject's quads, a node object
+for the default graph and a graph object `{"@id": g, "@graph": [node]}` for each
+named graph, in the order the graphs first appear among the subject's quads, and
+`{"@id": g, "@graph": []}` for a named graph with no triple (`Writer.declare`). The
+node object is the one `fromRdf` builds from the subject's triples of that graph
+(`SinkJsonLd.subjectNode`: `buildNodemap`, `nodeToJson`; `rdf:type` to `@type`), in
+RFC 8785 form. JSON-LD node map generation (JSON-LD 1.1 API section 7.2) merges the
+node objects of one `@id` and the graph objects of one name, so the document is the
+same dataset; a list is written as its `rdf:first` and `rdf:rest` triples.
+`Sink.runList_jsonld_eq` proves that the stream writes `[`, the elements of all the
+runs (`Runs.runs quadKey`) separated by commas, and `]`. The read-back is checked,
+not proved (https://github.com/danbri/factoidal/issues/943; expected-failure row
+`jsonLdStream_readBack` in `Harness/ProofObligations.lean`): `#guard`s in `SinkJsonLd.lean` (a type, a language string, a list, two
+named graphs, one with a blank node name, a subject in three graphs, a graph name
+that is also a subject, a named graph with no triple) and
+`tests/sbm11/export_roundtrip.sh` (D1, D2, D3, the empty generation, and the
+interleaved named graphs of `multi`). The Lean JSON-LD reader gives one
+`NamedGraph` entry for each graph object, so a reader of the stream's document
+gets one entry for each subject of a graph; the packer takes quads and does not see
+the entries. For a dataset with no list, whose subjects' `@id` order is the
+dictionary order, the text is `fromRdf`'s: the export of 25,000 statements is
+byte-identical before and after.
+
+`serializeDataset` (`l4source-convert`, `l4factoidal parse --out`) still calls
+`fromRdf` and `graphToRdfXml`.
+
+**After** (`tests/stack/lean_scaling.py`, rows `sbm11-export-rdfxml-memory` and
+`sbm11-export-jsonld-memory`, moved to 25,000, 50,000 and 100,000 statements, the
+sizes of the other export rows, and out of the expected-failure table): RDF/XML 36,
+36, 36 MB, a slope of 0.00 bytes of peak RSS per output byte; JSON-LD 36, 36, 37 MB,
+0.01 (0.36 in a second run). At 2,000 to 8,000 statements, the old sizes of the
+rows, both writers give 3.7, because the dictionary page window of the export (256
+pages) still grows with the input there. Time of the export of 25,000 statements:
+RDF/XML 0.79 s (0.96 s before, with the second read of the blocks), JSON-LD 0.51 s
+(0.50 s).
+
+**Gates** (2026-10-22, exit codes 0): `lake build` (1,826 jobs); `tests/sbm11/run.sh`
+3,098 pass, 0 fail, 29 expected-fail (out of 3,127); `tests/sbm11/export_roundtrip.sh`
+54 pass, 0 fail (out of 54; JSON-LD added to the `multi` named-graph case);
+`tests/stack/lean_scaling.py --only` the two export rows, `parse-nt-memory`,
+`parse-ttl-memory`, `parse-rdfxml-memory`, `rdfxml-write`, `rdfxml-write-stack`,
+`jsonld-write`, `jsonld-write-rest-cycle`: 9 pass, 0 fail (out of 9);
+`tests/known-defects/run.sh` 23 XFAIL, 0 XPASS; `tools/lean-tail-recursion-audit.py`,
+`tools/lean-unbuilt-modules.py`, `tools/lean-csimp-reach.py` with `--gate`.
+`runsFrom` and `elemsOf` are specifications that no executed function calls, on
+`tools/lean-tail-recursion-allow.txt` as (s).
+
+### 3m. Turtle and TriG read by several workers (2026-10-22)
+
+Issue: https://github.com/danbri/factoidal/issues/842 (OKR batch 3 KR 2.3,
+https://github.com/danbri/factoidal/issues/875). Modules:
+`formal/lean4/L4Factoidal/Syntax/TurtleSplitScan.lean` (`SplitScan`),
+`TurtleChunkFoldState.resume` and `finishCount`, `TriGChunkFoldState.resume`
+and `finishOpenCount`, `Source.Reader.resume` and `finishRangeCountD`; the
+packers `Sbm11Pack.planStatementRanges` and `withSplitRetry`
+(`Harness/Sbm11PackLib.lean`, also used by `Harness/Sbm11DictPack.lean`).
+
+**Before.** `planRanges` gave one byte range for Turtle and TriG, and the pack
+printed `workers=1` whatever `--workers` said. Phase 1 of a pack of 880,000
+quads (`tests/sbm11/syntax/gen_multi.py`, 110,000 subjects; 39.0 MB of Turtle,
+40.8 MB of TriG), `--workers 4`, 4 CPUs, 2026-10-22: Turtle 9.8 to 12.2 s, TriG
+12.1 to 13.6 s, the same as with `--workers 1`.
+
+**What a reader keeps from the text before a statement.** At a dot boundary (a
+`.` in the normal lexical mode followed by white space or `#`) the scanner of
+the chunk reader (`StatementScan`, `TriGScan`) starts again from its initial
+state. The reader keeps only its `TurtleState` (prefixes, base, generated
+blank-node counter and prefix, RDF version) and, in TriG, the graph block it is
+in. So a reader that starts at a dot boundary with the same prefixes, base and
+block reads the rest of the text as the single reader does.
+
+**The split read.** One read of the bytes (`SplitScan.State`) copies the lexical
+modes of the two scanners and gives: the dot boundaries nearest after the
+targets `size * k / K` (at bracket and annotation depth 0; inside a TriG
+graph block only when its header has no `[`, `(` or directive); the byte ranges
+of the candidates that can hold a directive (first bytes `@`, `PREFIX`, `BASE`,
+`VERSION` in any case, or a `.` followed at once by `@` or a keyword letter; a
+false positive costs one more unit to read again); the longest run of `_`
+(the generated-label prefix, so `Source.Prepass` is not run); and whether the
+text has `<<` (then the source is one range, as the scanners' IRIREF mode can
+differ from the grammar's inside a triple term). The reader of range `i > 0`
+reads the directive units before its start with a step that keeps nothing
+(`Reader.resume`), enters the graph block of its start (`readBlockHeader` on the
+header bytes), and ends with `finishRangeD`, which accepts a TriG range that
+ends inside a block. A label the document writes (`_:b`) is kept as written in
+every range, so it is one blank node across ranges, as the label is scoped to
+the document.
+
+**The generated labels.** A label the reader mints is the document's prefix
+and a counter (`TurtleState.freshBnode`). The scan also counts the blank nodes
+the reader mints: one for each `[` (`[]`, a property list, a `[]` graph label)
+and one for each item of a collection (its cell); an item starts at a byte
+that is not white space, `#`, `,`, `;`, `)`, `]`, `@` or `^`, when no item is
+open, and the term after `^^` belongs to the item before it. Each split
+carries the count before it (`Split.counter`). The reader of a range sets its
+counter to that count after the directive units, and uses the document's
+prefix, so it mints the labels of the single reader. A source with `~` or `{|`
+(RDF 1.2 reifiers and annotations, which also mint) is one range; so is one
+with `<<`. The count is checked: a range that ends at a split must end with
+the count of that split (`finishRangeCountD`); otherwise the pack throws
+`split-count-mismatch`, removes its temporary files and reads the source again
+as one range (`withSplitRetry`). So a wrong count costs time and never a
+wrong label. With this, the generation is the same bytes for every K, the
+manifest included (checked on `d3.ttl`, `d3.trig` and `bnode_collide.trig`
+at K = 1 and K = 4, and by the `dict-pack` and `via-dataset` rows of
+`tests/sbm11/syntax_independence.sh` and `tests/sbm11/quad_source.sh`).
+
+A first version gave range `i` its own label prefix instead
+(`pfx ++ "w" ++ i ++ "_"`): the dataset was the same up to blank-node
+renaming, but the bytes differed with K, and 7 cases of `tests/sbm11/run.sh`
+failed (the `l4sbm11-dict-pack` dictionary and the `--via-dataset` generation
+of the fixtures with `[]` and collections differ from the pack's). That
+version was replaced before it landed.
+
+**Speed of the split read.** A first version kept the whole scanner state in
+one structure with arrays and updated it at every byte: 7.6 s for 39 MB
+(about 190 ns per byte), so phase 1 at 4 workers took 9.9 s. With the scalar
+state alone (`Hot`, events handled with `Cold`): 2.4 s; the compiled loop still
+built a new `Hot` at every byte (676 `lean_alloc_ctor` sites in the C). With
+`fastRun` (a loop with scalar arguments only, which reads name bytes, white
+space, IRIREFs and short strings without allocating): 0.26 s for 39 MB of
+Turtle and 0.25 s for 40.8 MB of TriG (about 6.5 ns per byte).
+
+**After.** Phase 1, the same sources, 4 CPUs, another session using two to
+three of them (load 2.2 to 2.6), two runs each, 2026-10-22, the version that
+lands:
+
+| Source | `--workers 1` | `--workers 4` (split read) | ratio |
+| --- | --- | --- | --- |
+| Turtle, 39.0 MB, 880,000 quads | 11,288 to 13,211 ms | 2,679 to 2,877 ms (149 to 169 ms) | 0.20 to 0.25 |
+| TriG, 40.8 MB, 880,000 quads | 11,822 to 12,797 ms | 2,886 to 3,563 ms (188 to 262 ms) | 0.23 to 0.30 |
+
+The `--workers 4` time includes the split read. Rows `sbm11-pack-ttl-workers`
+and `sbm11-pack-trig-workers` of `tests/stack/lean_scaling.py` (50,000
+subjects, least of 3 runs, bound 0.4) leave the expected-failure table. They
+need idle CPUs: at 20,000 subjects the ratio moved from 0.33 to 0.55 between
+runs with the load of other processes, and at 50,000 subjects with another
+process on 3 to 4 CPUs (load 4.5) the TriG row read 0.59 while the Turtle row
+read 0.22.
+
+**Not proved; measured.** No theorem states that the ranges' quads are the
+single reader's (https://github.com/danbri/factoidal/issues/944, row SR-1 of
+`tests/known-defects/run.sh`). `tools/split-read-differential.sh`
+(`l4split-diff`) reads each file with every split alone (at most 120 per file)
+and with the plans for 2, 3, 4 and 8 workers, as the packer does (counters
+included), and compares the quads and graph declarations in order, blank-node
+labels included; a range whose counter check fails is counted apart as a
+count mismatch. 2026-10-22, over the W3C Turtle and TriG files
+(`third_party/testing/w3c`), the `tests/sbm11/syntax` fixtures and the
+`gen_multi.py` sources of 1,500 subjects: 1,619 files (201 with `<<`, `~` or
+`{|`, not split); 17,962 agree (16,843 accepted by both, 1,119 refused by both),
+0 differ (out of 17,962 cases, 17,040 with at least one split); 0 count
+mismatches.
+### 3n. JSON-LD read one node object at a time (2026-10-22)
+
+Issue: https://github.com/danbri/factoidal/issues/839 (OKR batch 3 KR 2.2,
+https://github.com/danbri/factoidal/issues/875). Module:
+`formal/lean4/L4Factoidal/Syntax/JsonLdChunkFold.lean`; the item function is
+`jsonLdOps` in `RDF/SourceJsonLd.lean`; `ToRdf.datasetOfJsonAt` is the walk of
+`datasetOfJson` started at a given blank-node counter and prefix
+(`datasetOfJson_eq_at`).
+
+**Before.** `Reader.whole` kept the chunks, joined them and gave the text to
+`JSONLD.parseJsonLd`: the text, the JSON tree, the expanded tree and the dataset
+were live together. `l4sbm11-pack SOURCE.jsonld` held 11.3 to 13.5 bytes of
+peak resident memory for each source byte.
+
+**The document forms.** The streaming document form of "Streaming JSON-LD"
+(W3C Working Group Note, 7 May 2020, https://www.w3.org/TR/json-ld11-streaming/)
+puts `@context` first in a node object. The item reader takes two shapes:
+(A) a top-level array, `[node, node, ...]`; (B) an object with exactly the
+members `@context` and `@graph`, in this order, `@graph` an array, and nothing
+after the closing brace. For each node object it builds the document of that
+node (`[node]`, or `{"@context":C,"@graph":[node]}`), expands it with the
+processing the whole reader uses for the document (`expand` when the document
+has an inline `@context` or a base, nothing otherwise: the same branch as
+`parseJsonLd`), and walks it with `datasetOfJsonAt`. The quads go to the
+consumer at once and the node object's text is dropped. The context of shape B
+is processed once at its end, for its error, and again with each node (the
+cost is the context's size for each node).
+
+**Blank-node labels.** `datasetOfJson` threads one counter through the
+top-level objects and mints `_jld_anon` + counter (section 3h). The item reader
+threads the same counter from one node object to the next, so the labels are
+those of the whole reader. The prefix of the whole reader depends on the whole
+document (`generatedPrefix`: one more underscore than any written label
+`_:_jld_anon_...` needs). The item reader needs it before the first node
+object, so `Source.Prepass` reads the document once first (as for Turtle) and
+the answer goes to `Reader.init` as the generated-prefix argument.
+
+**Fall-back rule.** `Prepass.forFormat .jsonld` runs a `Probe`: a scan of the
+document structure (`Scan`, a state for each place in shapes A and B, string and
+escape state, bracket depth) and a matcher for the nine characters `_jld_anon`
+in the unescaped JSON strings (keys and values). The document is read item by
+item when the scan ends in an accepting state and no string mentions
+`_jld_anon`; then the prefix argument is `_jld_anon`. Otherwise the argument is
+empty and `Reader.init` builds `Reader.whole`, the reader of before. The test
+for the mention is stronger than `generatedPrefix` makes, so a document that
+mentions `_jld_anon` only in a dropped context definition is read whole. A
+caller that gives another prefix (Turtle's, or none) gets the whole reader.
+Documents read whole: a top-level object that is a single node, an object with
+`@graph` before `@context`, with a member after `@graph`, or without
+`@context`, a top-level scalar, and any document that is not JSON.
+
+**Order.** A document with named graphs gives the same quads as a multiset,
+not in the same order: the whole reader gives the default graph first, then the
+named graphs, the item reader gives each node object's default graph and named
+graphs in turn. Without named graphs the list is the same. Defect: the whole
+reader does not expand a top-level array that has no base, so a node's own
+`@context` is ignored (`hasInlineContext` is false for an array). JSON-LD 1.1
+Expansion Algorithm expands each array item and processes its `@context`, so
+the quads are wrong. The item reader copies the behaviour, to give the same
+quads as the whole reader; a repair changes both. Open issue:
+https://github.com/danbri/factoidal/issues/947; expected failure: row JS-2 of
+`tests/known-defects/run.sh`.
+
+**Theorems** (`RDF/SourceTheorems.lean`; `#print axioms`: `propext`,
+`Classical.choice`, `Quot.sound`):
+
+- `jsonld_readAll_of_notStreamed`: when the generated-prefix argument is not
+  `_jld_anon`, the reader gives `parseDocument` of the joined chunks, for every
+  list of chunks.
+- `jsonld_readAll`: the same when the item reader is not linked.
+- `JSONLD.datasetOfJson_eq_at`: `datasetOfJson` is `datasetOfJsonAt` at the
+  document's prefix and counter 0.
+
+Not proved: when the reader reads item by item, it gives the quads of the whole
+reader. Open issue: https://github.com/danbri/factoidal/issues/946; expected
+failure: row JS-1 of `tests/known-defects/run.sh`.
+
+**Measured equality.** `tools/jsonld-chunk-differential.sh` runs
+`l4jsonld-chunk-diff` (`Harness/JsonLdChunkDiff.lean`) over every `.jsonld`
+file under `third_party/testing/json-ld` and `tests/sbm11/syntax`. Each file
+is read as it is and in three wrappings (`[` file `]`; `{"@context":{},"@graph":[`
+file `]}`; the same with the file twice), with no base and with
+`http://example.org/dir/doc.jsonld`, in chunks of 1, 7, 64 and 65,536
+characters (1 and 7 for texts under 100,000 characters): 2,152 files; 68,812
+agree (65,928 accepted by both, 2,884 refused by both), 0 differ (out of
+68,812 cases); 56,888 of the cases were read item by item, 55,840 of them
+accepted, 2026-10-22. The `#guard`s of `SourceJsonLd.lean` cut a document in
+streaming form at every position.
+
+**Memory** (`l4sbm11-pack SOURCE.jsonld OUT --workers 1 --run-terms 20000
+--sort-rows 50000`, peak resident set, shape B, one statement of about 400
+source bytes in each node object):
+
+| Statements | Source bytes | Peak RSS |
+| ---: | ---: | ---: |
+| 25,000 | 10,102,833 | 49 MB |
+| 50,000 | 20,227,833 | 62 to 70 MB |
+| 100,000 | 40,477,833 | 69 to 90 MB |
+| 200,000 | 81,177,833 | 84 MB |
+| 300,000 | 121,000,000 (about) | 88 MB |
+
+Row `sbm11-pack-jsonld-memory` of `tests/stack/lean_scaling.py` now measures
+50,000, 100,000 and 200,000 statements: 0.37 bytes of peak RSS per source byte
+(bound 0.75), against 11.3 to 13.5 before at 5,000 statements. The packer's
+runs grow up to about 100,000 statements and are flat above, so the row starts
+at 50,000 (at 25,000 the slope reads 0.9 because the first point is below the
+plateau). The row leaves the expected-failure table. A document that falls back
+is read whole and holds the memory it held before.
+
 
 ## 4. Rules that follow
 

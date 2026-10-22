@@ -307,6 +307,8 @@ extern_lib libl4exthost pkg := do
 -- differential test of the `@[extern c inline]` store against its Lean reference.
 -- tests/prim/run.sh runs it natively and as wasm32 under node.
 @[default_target] lean_exe «l4prim-test» where root := `Harness.PrimBytesTest
+-- The scan-versus-old-scan differential of Storage/Sbm11/ScanFoldTests (needs compiled code).
+@[default_target] lean_exe «l4scanfold-test» where root := `Harness.ScanFoldTest
 -- Capability-aware planner, KR 2.2 (https://github.com/danbri/factoidal/issues/801):
 -- the structural planner's test set, with its expected-failure bucket.
 @[default_target] lean_exe «l4planner-test» where root := `Harness.PlannerTest
@@ -478,6 +480,9 @@ extern_lib libl4exthost pkg := do
 -- The RDF/XML chunk fold of the source layer against the whole-document
 -- reader (https://github.com/danbri/factoidal/issues/838).
 @[default_target] lean_exe «l4rdfxml-chunk-diff» where root := `Harness.RdfXmlChunkDiff
+@[default_target] lean_exe «l4jsonld-chunk-diff» where root := `Harness.JsonLdChunkDiff
+-- A Turtle or TriG document read by several range readers against the single reader (issue 842).
+@[default_target] lean_exe «l4split-diff» where root := `Harness.SplitReadDiff
 
 -- Reader-level probe over the vendored W3C csvw corpus. Named a
 -- PROBE, not a conformance runner, because it measures whether the

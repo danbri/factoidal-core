@@ -1,0 +1,2 @@
+# COUNT(*) over the named graphs: the named-graph test is row by row (issue 932)
+SELECT (COUNT(*) AS ?n) WHERE { GRAPH ?g { ?s ?p ?o } }

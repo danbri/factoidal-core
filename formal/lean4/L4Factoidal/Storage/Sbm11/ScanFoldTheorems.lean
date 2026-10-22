@@ -574,6 +574,7 @@ variable {b : BlockMeta} {cols : Cols} {need : Array Bool} {bytes : ByteArray} {
 theorem colAll_slice (hsl : SliceOk b cols need bytes starts) (hsz : ∀ c, c < 4 → (colv cols c).size = b.rows)
     (c : Nat) (hc : c < 4) (hn : need[c]! = true) : colAll b bytes starts c = .ok (words (colv cols c)) := by
   unfold colAll
+  rw [FrameWords.decodeWordsF_eq]
   rw [hsl c hc hn]
   simp only [lens_getElem b c hc, words_size', hsz c hc, bne_self_eq_false, Bool.or_false]
   rfl
@@ -582,7 +583,7 @@ theorem colRange_slice (hsl : SliceOk b cols need bytes starts) (hrows : b.rows 
     (c : Nat) (hc : c < 4) (hn : need[c]! = true) (lo hi : Nat) (h1 : lo ≤ hi) (h2 : hi ≤ b.rows) :
     colRange b bytes starts c lo hi = .ok ((words (colv cols c)).extract (8 * lo) (8 * hi)) := by
   unfold colRange
-  rw [FrameWords.decodeWordsRange_eq _ _ _ _ _ _ _ hrows h1 h2 (hsl c hc hn)]
+  rw [FrameWords.decodeWordsRangeF_eq, FrameWords.decodeWordsRange_eq _ _ _ _ _ _ _ hrows h1 h2 (hsl c hc hn)]
 
 theorem colsAllGo_slice (hsl : SliceOk b cols need bytes starts) (hsz : ∀ c, c < 4 → (colv cols c).size = b.rows) :
     ∀ k c0 (acc : Array ByteArray), c0 + k ≤ 4 → (∀ c, c0 ≤ c → c < c0 + k → need[c]! = true) →

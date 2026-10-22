@@ -88,6 +88,41 @@ def parseTurtleChunksFold (bnodePrefix : String) (step : α → List RDF.Triple 
   | .error error => .error error
   | .ok state => state.finish step
 
+/-! ## Starting inside a document
+
+A reader of one byte range of a document starts at a dot boundary
+(`SplitScan.Split`) with the prefixes and the base in force there. It gets
+them by reading the directive units before that place (`SplitScan.Unit`)
+with a step that keeps nothing; the accumulator is not changed. Its scanner
+and position then start again, as the scanner of the single reader does at
+a dot boundary (https://github.com/danbri/factoidal/issues/842). -/
+
+/-- Read `prelude` for its directives only, then start the scanner and the
+    position again. -/
+def TurtleChunkFoldState.resume (state : TurtleChunkFoldState α) (prelude : String)
+    (counter : Option Nat := none) : Except ParseError (TurtleChunkFoldState α) :=
+  let keep : α → List RDF.Triple → α := fun a _ => a
+  match state.feed keep prelude with
+  | .error error => .error error
+  | .ok st =>
+    let rest := st.scanner.remainder.toList
+    match consumeText keep (rest.length + 2) st.turtle st.acc st.pos rest with
+    | .error error => .error error
+    | .ok (turtle, acc, _) =>
+      let turtle := match counter with
+        | some c => { turtle with bnodeCounter := c }
+        | none => turtle
+      .ok { turtle, acc, pos := 0, scanner := StatementScan.init }
+
+/-- `finish`, and the generated blank-node counter at the end: a reader of a
+    range checks it against the count of `SplitScan` at the next split. -/
+def TurtleChunkFoldState.finishCount (step : α → List RDF.Triple → α) (state : TurtleChunkFoldState α) :
+    Except ParseError (α × Nat) :=
+  match consumeText step (state.scanner.remainder.toList.length + 2)
+      state.turtle state.acc state.pos state.scanner.remainder.toList with
+  | .error error => .error error
+  | .ok (turtle, acc, _) => .ok (acc, turtle.bnodeCounter)
+
 /-! ## The whole document as a `String`, one statement candidate at a time
 
 `parseTurtle` turns the whole document into a `List Char` before it reads the

@@ -131,12 +131,19 @@ repaired (docs/designissues/2026-10-10-lean-vs-fstar-performance.md):
                    and a 64 KiB output buffer (https://github.com/danbri/factoidal/issues/837
                    item 6). A writer that keeps the quads (1 to 3 bytes per output byte) fails.
   sbm11-export-rdfxml-memory, sbm11-export-jsonld-memory
-                   the same slope for RDF/XML and JSON-LD at 2,000, 4,000 and 8,000 statements
-                   (0.9 MB to 3.6 MB). Expected failures:
-                   https://github.com/danbri/factoidal/issues/846 and
-                   https://github.com/danbri/factoidal/issues/847. Both library writers take
-                   the whole graph or dataset (`graphToRdfXml`, `fromRdf`), so
-                   `Sink.Writer.whole` keeps the quads until the end.
+                   the same slope for RDF/XML and JSON-LD at 25,000, 50,000 and 100,000
+                   statements (11 MB to 47 MB of output). The writers keep one subject's
+                   quads: RDF/XML one `rdf:Description` for each subject, with the
+                   namespace table read from the store first
+                   (https://github.com/danbri/factoidal/issues/846), JSON-LD a flattened
+                   document with one node object for each subject and graph
+                   (https://github.com/danbri/factoidal/issues/847). Measured 2026-10-22
+                   before (the writers kept the dataset): RDF/XML 64, 109, 212 MB, 4.38
+                   bytes of peak RSS per output byte; JSON-LD 81, 111, 175 MB, 2.94. After:
+                   RDF/XML 36, 36, 36 MB, 0.00; JSON-LD 36, 36, 47 MB, 0.36 (Turtle in the
+                   same run: 0.38). Until 2026-10-22 the rows ran at 2,000 to 8,000
+                   statements, where the dictionary page window (256 pages) still grows
+                   with the input: 3.7 bytes per output byte with either writer.
   sbm11-dump-time, sbm11-export-nq-time
                    CPU time of `l4sbm11 dump` and of `l4sbm11 export --format nquads`
                    (both with `--verify merkle`, the default for a generation that no
@@ -246,13 +253,12 @@ repaired (docs/designissues/2026-10-10-lean-vs-fstar-performance.md):
                    N-Quads (4 workers, 2026-10-14), 272 ms after `lineFuel`
   sbm11-pack-ttl-workers, sbm11-pack-trig-workers
                    `l4sbm11-pack --workers 4` reads a Turtle or a TriG source with more
-                   than one worker (the pack prints `workers=K`). Expected failures:
-                   https://github.com/danbri/factoidal/issues/842. N-Triples and N-Quads are cut into byte
-                   ranges at line starts; Turtle and TriG are read by one worker, so
-                   phase 1 of the pack takes 2.8 to 3.2 times as long per quad (Turtle)
-                   and 3.6 to 6.6 times (TriG) as the same quads as N-Quads text, and
-                   8.0 to 9.2 times as long per source byte (880,000 quads, 4 workers
-                   requested, 4 CPUs, 2026-10-14)
+                   than one worker (the pack prints `workers=K`), and its phase 1 takes
+                   at most 0.4 times the phase 1 of `--workers 1`
+                   (https://github.com/danbri/factoidal/issues/842). Until 2026-10-22
+                   Turtle and TriG were read by one worker: phase 1 took 2.8 to 3.2
+                   times as long per quad (Turtle) and 3.6 to 6.6 times (TriG) as the
+                   same quads as N-Quads text (880,000 quads, 4 CPUs, 2026-10-14)
   query-memory     peak resident memory of `query` COUNT(*) per input byte, from
                    x to 4x paragraphs of gene.ttl: at most 32 bytes
                    (https://github.com/danbri/factoidal/issues/729; 36.6 before
@@ -585,12 +591,7 @@ ROW_BOUND = {"owlrl-closure-chain": 20.0, "termwire-page-decode": 6.0}
 # leaves this table in the commit that repairs it.
 XFAIL: dict[str, str] = {
     "query-memory-fstar": "https://github.com/danbri/factoidal/issues/729",
-    "sbm11-pack-jsonld-memory": "https://github.com/danbri/factoidal/issues/839",
     "iso-noniso-search": "https://github.com/danbri/factoidal/issues/877",
-    "sbm11-pack-ttl-workers": "https://github.com/danbri/factoidal/issues/842",
-    "sbm11-pack-trig-workers": "https://github.com/danbri/factoidal/issues/842",
-    "sbm11-export-rdfxml-memory": "https://github.com/danbri/factoidal/issues/846",
-    "sbm11-export-jsonld-memory": "https://github.com/danbri/factoidal/issues/847",
     "sbm11-replay-insert-time": "https://github.com/danbri/factoidal/issues/879",
     "ntriples-long-line-memory": "https://github.com/danbri/factoidal/issues/874",
     "nquads-long-line-memory": "https://github.com/danbri/factoidal/issues/874",
@@ -1191,15 +1192,18 @@ def sbm11_rdfxml(n: int) -> str:
 
 
 def sbm11_jsonld(n: int) -> str:
-    return "[" + ",\n".join(
-        f'{{"@id":"{EX}s{i}","{EX}p":"{sbm11_payload(i)}"}}' for i in range(n)) + "]\n"
+    # The streaming document form (W3C Streaming JSON-LD, 7 May 2020): the
+    # context first, then one node object per statement, each with @id first.
+    # The pack reads it one node object at a time (Syntax/JsonLdChunkFold.lean).
+    return (f'{{"@context":{{"ex":"{EX}"}},"@graph":[\n' + ",\n".join(
+        f'{{"@id":"ex:s{i}","ex:p":"{sbm11_payload(i)}"}}' for i in range(n)) + "]}\n")
 
 
 SBM11_PACK_MEMORY_ROWS = {
     "sbm11-pack-ttl-memory": (25000, sbm11_ttl, "ttl", 0.75),
     "sbm11-pack-trig-memory": (25000, sbm11_trig, "trig", 0.75),
     "sbm11-pack-rdfxml-memory": (25000, sbm11_rdfxml, "rdf", 0.75),
-    "sbm11-pack-jsonld-memory": (5000, sbm11_jsonld, "jsonld", 0.75),
+    "sbm11-pack-jsonld-memory": (50000, sbm11_jsonld, "jsonld", 0.75),
 }
 
 
@@ -1248,17 +1252,16 @@ def sbm11_pack_memory_row(rid):
 #
 # as the pack rows do. The packing is not measured. A writer that keeps the quads
 # adds the payload strings (about 1 byte per output byte) and the quads themselves, and
-# fails the bound of 0.75. RDF/XML and JSON-LD are written whole by the library
-# (issues 846 and 847): expected failures at 2,000, 4,000 and 8,000 statements, sizes at
-# which the quadratic RDF/XML writer (issue 845) still finishes in seconds.
+# fails the bound of 0.75. RDF/XML and JSON-LD keep one subject's quads (issues 846 and
+# 847); they run at the sizes of the other rows, above the dictionary page window.
 # Each value is (statements at x, fixture maker, source extension, export format,
 # bound).
 SBM11_EXPORT_MEMORY_ROWS = {
     "sbm11-export-nq-memory": (25000, sbm11_ttl, "ttl", "nquads", 0.75),
     "sbm11-export-ttl-memory": (25000, sbm11_ttl, "ttl", "turtle", 0.75),
     "sbm11-export-trig-memory": (25000, sbm11_trig, "trig", "trig", 0.75),
-    "sbm11-export-rdfxml-memory": (2000, sbm11_ttl, "ttl", "rdfxml", 0.75),
-    "sbm11-export-jsonld-memory": (2000, sbm11_ttl, "ttl", "jsonld", 0.75),
+    "sbm11-export-rdfxml-memory": (25000, sbm11_ttl, "ttl", "rdfxml", 0.75),
+    "sbm11-export-jsonld-memory": (25000, sbm11_ttl, "ttl", "jsonld", 0.75),
 }
 _EXPORT_GENS: dict = {}
 
@@ -1832,15 +1835,27 @@ def sbm11_pack_ratio_row(rid, runs):
                 f"{cpu[0] / max(cpu[1], 1e-9):.2f} (bound {SBM11_PACK_RATIO})")
 
 
-# Phase 1 of `l4sbm11-pack` cuts an N-Triples or N-Quads source into K byte
-# ranges at line starts and reads them in K workers. A Turtle or TriG statement
-# can start anywhere and depends on the prefixes, the base and the blank node
-# scope of the text before it, so `Source.planRanges` gives one range and the
-# pack prints `workers=1` whatever --workers says. The rows below pack a
-# generated dataset of 1,500 subjects (tests/sbm11/syntax/gen_multi.py) with
-# --workers 4 and require more than one worker.
+# Phase 1 of `l4sbm11-pack` cuts the source into K byte ranges and reads them
+# in K workers: N-Triples and N-Quads at line starts, Turtle and TriG at dot
+# boundaries found by one read of the bytes (`Syntax/TurtleSplitScan.lean`,
+# https://github.com/danbri/factoidal/issues/842). Until 2026-10-22 a Turtle or
+# TriG source was one range and the pack printed `workers=1` whatever --workers
+# said. The rows below pack a generated dataset (tests/sbm11/syntax/gen_multi.py,
+# SBM11_WORKERS_SUBJECTS subjects, 8 quads each) with --workers 1 and with
+# --workers 4 and require that the second reads more than one range and that its
+# phase 1 (`phase1-ms`, which includes the split read) takes at most
+# SBM11_WORKERS_RATIO of the first (the least of SBM11_WORKERS_RUNS runs each).
+# 2026-10-22, 110,000 subjects, 4 CPUs, another session running: Turtle 10.6 to
+# 13.2 s with 1 worker, 2.5 to 4.1 s with 4; TriG 11.7 to 13.0 s and 2.9 to 4.5 s.
+# At 20,000 subjects the fixed costs of a pack and the load of other processes
+# moved the ratio from 0.33 to 0.55 between runs; 50,000 subjects (17.7 MB of
+# Turtle) is the size of the rows. The ratio needs 4 idle CPUs: with another
+# process using 3 to 4 of them (load 4.5) the TriG row read 0.59.
 SBM11_WORKERS_ROWS = {"sbm11-pack-ttl-workers": "multi.ttl",
                       "sbm11-pack-trig-workers": "multi.trig"}
+SBM11_WORKERS_SUBJECTS = 50000
+SBM11_WORKERS_RATIO = 0.4
+SBM11_WORKERS_RUNS = 3
 GEN_MULTI = ROOT / "tests/sbm11/syntax/gen_multi.py"
 
 
@@ -1849,25 +1864,35 @@ def sbm11_workers_row(rid):
     import shutil
     name = SBM11_WORKERS_ROWS[rid]
     sbm11_need_pack_bin()
-    n = 1500
+    n = SBM11_WORKERS_SUBJECTS
     d = FIX / f"sbm11-multi-{n}"
     p = d / name
     if not p.exists():
         d.mkdir(parents=True, exist_ok=True)
         subprocess.run([sys.executable, str(GEN_MULTI), str(d), str(n)], check=True, timeout=CAP)
     out = FIX / f"{rid}-out"
-    shutil.rmtree(out, ignore_errors=True)
-    r = subprocess.run([str(SBM11_PACK_BIN), str(p), str(out), "--workers", "4"],
-                       stdout=subprocess.PIPE, stderr=subprocess.STDOUT, timeout=CAP)
-    shutil.rmtree(out, ignore_errors=True)
-    text = r.stdout.decode("utf-8", "replace")
-    if r.returncode != 0:
-        raise MeasurementError(f"{rid}: {name}: exit {r.returncode}: {text[-200:]}")
-    m = re.search(r"\bsource=\S+ format=\S+ source-bytes=\d+ workers=(\d+)", text)
-    if not m:
-        raise MeasurementError(f"{rid}: {name}: the pack printed no summary line with workers=")
-    workers = int(m.group(1))
-    return workers > 1, f"{name}: 4 workers requested, the pack read the source with {workers}"
+    best = {}
+    for k in (1, 4):
+        for _ in range(SBM11_WORKERS_RUNS):
+            shutil.rmtree(out, ignore_errors=True)
+            r = subprocess.run([str(SBM11_PACK_BIN), str(p), str(out), "--workers", str(k)],
+                               stdout=subprocess.PIPE, stderr=subprocess.STDOUT, timeout=CAP)
+            shutil.rmtree(out, ignore_errors=True)
+            text = r.stdout.decode("utf-8", "replace")
+            if r.returncode != 0:
+                raise MeasurementError(f"{rid}: {name}: exit {r.returncode}: {text[-200:]}")
+            m = re.search(r"\bsource=\S+ format=\S+ source-bytes=\d+ workers=(\d+)", text)
+            t = re.search(r"\bphase1-ms=(\d+)", text)
+            if not m or not t:
+                raise MeasurementError(f"{rid}: {name}: the pack printed no workers= or phase1-ms=")
+            w, ms = int(m.group(1)), int(t.group(1))
+            if k in best and best[k][0] != w:
+                raise MeasurementError(f"{rid}: {name}: workers= changed between runs")
+            best[k] = (w, min(ms, best[k][1]) if k in best else ms)
+    (w1, t1), (w4, t4) = best[1], best[4]
+    ok = w4 > 1 and t4 <= SBM11_WORKERS_RATIO * max(t1, 1)
+    return ok, (f"{name} ({p.stat().st_size} bytes): workers=1 phase 1 {t1} ms; 4 requested, "
+                f"workers={w4} phase 1 {t4} ms: ratio {t4 / max(t1, 1):.2f} (bound {SBM11_WORKERS_RATIO})")
 
 
 SBM11_LOG_MEMORY_ROWS = {"sbm11-update-memory": sbm11_update_memory_row,
