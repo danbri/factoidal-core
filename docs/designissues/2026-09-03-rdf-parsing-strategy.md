@@ -594,9 +594,10 @@ of a native process (https://github.com/danbri/factoidal/issues/844, row
 512 KB stack: the canary of `tests/stack/run.sh` packs 600,001 N-Triples
 statements (57.8 MB; `sbm11-perm`: 103 pass, 0 fail out of 103 on 2026-10-14),
 and generated sources of Turtle (40 MB), TriG (40 MB) and RDF/XML (11 MB) pack
-in an ad hoc run with `LEAN_STACK_SIZE_KB=512`. Turtle and TriG
-phase 1 runs in one worker, whatever `--workers` says (https://github.com/danbri/factoidal/issues/842, rows
-`sbm11-pack-ttl-workers` and `sbm11-pack-trig-workers`). The Lean RDF/XML and
+in an ad hoc run with `LEAN_STACK_SIZE_KB=512`. Until 2026-10-22 Turtle and
+TriG phase 1 ran in one worker, whatever `--workers` said; since then it reads
+K byte ranges cut at dot boundaries (section 3m,
+https://github.com/danbri/factoidal/issues/842). The Lean RDF/XML and
 JSON-LD writers take time quadratic in the dataset: `l4source-convert` writes
 8.3 MB of N-Triples text in 22 s (RDF/XML) and 44 s (JSON-LD), and 4 times the data takes 15 and
 24 times as long (https://github.com/danbri/factoidal/issues/845 and
@@ -2746,6 +2747,113 @@ RDF/XML 0.79 s (0.96 s before, with the second read of the blocks), JSON-LD 0.51
 `tools/lean-unbuilt-modules.py`, `tools/lean-csimp-reach.py` with `--gate`.
 `runsFrom` and `elemsOf` are specifications that no executed function calls, on
 `tools/lean-tail-recursion-allow.txt` as (s).
+
+### 3m. Turtle and TriG read by several workers (2026-10-22)
+
+Issue: https://github.com/danbri/factoidal/issues/842 (OKR batch 3 KR 2.3,
+https://github.com/danbri/factoidal/issues/875). Modules:
+`formal/lean4/L4Factoidal/Syntax/TurtleSplitScan.lean` (`SplitScan`),
+`TurtleChunkFoldState.resume` and `finishCount`, `TriGChunkFoldState.resume`
+and `finishOpenCount`, `Source.Reader.resume` and `finishRangeCountD`; the
+packers `Sbm11Pack.planStatementRanges` and `withSplitRetry`
+(`Harness/Sbm11PackLib.lean`, also used by `Harness/Sbm11DictPack.lean`).
+
+**Before.** `planRanges` gave one byte range for Turtle and TriG, and the pack
+printed `workers=1` whatever `--workers` said. Phase 1 of a pack of 880,000
+quads (`tests/sbm11/syntax/gen_multi.py`, 110,000 subjects; 39.0 MB of Turtle,
+40.8 MB of TriG), `--workers 4`, 4 CPUs, 2026-10-22: Turtle 9.8 to 12.2 s, TriG
+12.1 to 13.6 s, the same as with `--workers 1`.
+
+**What a reader keeps from the text before a statement.** At a dot boundary (a
+`.` in the normal lexical mode followed by white space or `#`) the scanner of
+the chunk reader (`StatementScan`, `TriGScan`) starts again from its initial
+state. The reader keeps only its `TurtleState` (prefixes, base, generated
+blank-node counter and prefix, RDF version) and, in TriG, the graph block it is
+in. So a reader that starts at a dot boundary with the same prefixes, base and
+block reads the rest of the text as the single reader does.
+
+**The split read.** One read of the bytes (`SplitScan.State`) copies the lexical
+modes of the two scanners and gives: the dot boundaries nearest after the
+targets `size * k / K` (at bracket and annotation depth 0; inside a TriG
+graph block only when its header has no `[`, `(` or directive); the byte ranges
+of the candidates that can hold a directive (first bytes `@`, `PREFIX`, `BASE`,
+`VERSION` in any case, or a `.` followed at once by `@` or a keyword letter; a
+false positive costs one more unit to read again); the longest run of `_`
+(the generated-label prefix, so `Source.Prepass` is not run); and whether the
+text has `<<` (then the source is one range, as the scanners' IRIREF mode can
+differ from the grammar's inside a triple term). The reader of range `i > 0`
+reads the directive units before its start with a step that keeps nothing
+(`Reader.resume`), enters the graph block of its start (`readBlockHeader` on the
+header bytes), and ends with `finishRangeD`, which accepts a TriG range that
+ends inside a block. A label the document writes (`_:b`) is kept as written in
+every range, so it is one blank node across ranges, as the label is scoped to
+the document.
+
+**The generated labels.** A label the reader mints is the document's prefix
+and a counter (`TurtleState.freshBnode`). The scan also counts the blank nodes
+the reader mints: one for each `[` (`[]`, a property list, a `[]` graph label)
+and one for each item of a collection (its cell); an item starts at a byte
+that is not white space, `#`, `,`, `;`, `)`, `]`, `@` or `^`, when no item is
+open, and the term after `^^` belongs to the item before it. Each split
+carries the count before it (`Split.counter`). The reader of a range sets its
+counter to that count after the directive units, and uses the document's
+prefix, so it mints the labels of the single reader. A source with `~` or `{|`
+(RDF 1.2 reifiers and annotations, which also mint) is one range; so is one
+with `<<`. The count is checked: a range that ends at a split must end with
+the count of that split (`finishRangeCountD`); otherwise the pack throws
+`split-count-mismatch`, removes its temporary files and reads the source again
+as one range (`withSplitRetry`). So a wrong count costs time and never a
+wrong label. With this, the generation is the same bytes for every K, the
+manifest included (checked on `d3.ttl`, `d3.trig` and `bnode_collide.trig`
+at K = 1 and K = 4, and by the `dict-pack` and `via-dataset` rows of
+`tests/sbm11/syntax_independence.sh` and `tests/sbm11/quad_source.sh`).
+
+A first version gave range `i` its own label prefix instead
+(`pfx ++ "w" ++ i ++ "_"`): the dataset was the same up to blank-node
+renaming, but the bytes differed with K, and 7 cases of `tests/sbm11/run.sh`
+failed (the `l4sbm11-dict-pack` dictionary and the `--via-dataset` generation
+of the fixtures with `[]` and collections differ from the pack's). That
+version was replaced before it landed.
+
+**Speed of the split read.** A first version kept the whole scanner state in
+one structure with arrays and updated it at every byte: 7.6 s for 39 MB
+(about 190 ns per byte), so phase 1 at 4 workers took 9.9 s. With the scalar
+state alone (`Hot`, events handled with `Cold`): 2.4 s; the compiled loop still
+built a new `Hot` at every byte (676 `lean_alloc_ctor` sites in the C). With
+`fastRun` (a loop with scalar arguments only, which reads name bytes, white
+space, IRIREFs and short strings without allocating): 0.26 s for 39 MB of
+Turtle and 0.25 s for 40.8 MB of TriG (about 6.5 ns per byte).
+
+**After.** Phase 1, the same sources, 4 CPUs, another session using two to
+three of them (load 2.2 to 2.6), two runs each, 2026-10-22, the version that
+lands:
+
+| Source | `--workers 1` | `--workers 4` (split read) | ratio |
+| --- | --- | --- | --- |
+| Turtle, 39.0 MB, 880,000 quads | 11,288 to 13,211 ms | 2,679 to 2,877 ms (149 to 169 ms) | 0.20 to 0.25 |
+| TriG, 40.8 MB, 880,000 quads | 11,822 to 12,797 ms | 2,886 to 3,563 ms (188 to 262 ms) | 0.23 to 0.30 |
+
+The `--workers 4` time includes the split read. Rows `sbm11-pack-ttl-workers`
+and `sbm11-pack-trig-workers` of `tests/stack/lean_scaling.py` (50,000
+subjects, least of 3 runs, bound 0.4) leave the expected-failure table. They
+need idle CPUs: at 20,000 subjects the ratio moved from 0.33 to 0.55 between
+runs with the load of other processes, and at 50,000 subjects with another
+process on 3 to 4 CPUs (load 4.5) the TriG row read 0.59 while the Turtle row
+read 0.22.
+
+**Not proved; measured.** No theorem states that the ranges' quads are the
+single reader's (https://github.com/danbri/factoidal/issues/944, row SR-1 of
+`tests/known-defects/run.sh`). `tools/split-read-differential.sh`
+(`l4split-diff`) reads each file with every split alone (at most 120 per file)
+and with the plans for 2, 3, 4 and 8 workers, as the packer does (counters
+included), and compares the quads and graph declarations in order, blank-node
+labels included; a range whose counter check fails is counted apart as a
+count mismatch. 2026-10-22, over the W3C Turtle and TriG files
+(`third_party/testing/w3c`), the `tests/sbm11/syntax` fixtures and the
+`gen_multi.py` sources of 1,500 subjects: 1,619 files (201 with `<<`, `~` or
+`{|`, not split); 17,962 agree (16,843 accepted by both, 1,119 refused by both),
+0 differ (out of 17,962 cases, 17,040 with at least one split); 0 count
+mismatches.
 
 ## 4. Rules that follow
 

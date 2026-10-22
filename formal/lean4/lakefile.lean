@@ -477,6 +477,8 @@ extern_lib libl4exthost pkg := do
 -- The RDF/XML chunk fold of the source layer against the whole-document
 -- reader (https://github.com/danbri/factoidal/issues/838).
 @[default_target] lean_exe «l4rdfxml-chunk-diff» where root := `Harness.RdfXmlChunkDiff
+-- A Turtle or TriG document read by several range readers against the single reader (issue 842).
+@[default_target] lean_exe «l4split-diff» where root := `Harness.SplitReadDiff
 
 -- Reader-level probe over the vendored W3C csvw corpus. Named a
 -- PROBE, not a conformance runner, because it measures whether the

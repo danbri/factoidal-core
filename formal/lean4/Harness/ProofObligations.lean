@@ -62,7 +62,7 @@ def obligations : List Obligation :=
         "tests/sbm11/export_roundtrip.sh only)"
       issue := "https://github.com/danbri/factoidal/issues/943"
       onProof := "remove the 'checked, not proved' sentences from SinkJsonLd.lean, Sink.lean " ++
-        "and the parsing-strategy record section 3l" } ]
+        "and the parsing-strategy record section 3m" } ]
 
 run_cmd do
   let env ← getEnv

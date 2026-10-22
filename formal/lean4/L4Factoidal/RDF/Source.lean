@@ -101,6 +101,7 @@ import L4Factoidal.Syntax.TriG
 import L4Factoidal.Syntax.TriGChunkFold
 import L4Factoidal.Syntax.RdfXml
 import L4Factoidal.Syntax.RdfXmlChunkFold
+import L4Factoidal.Syntax.TurtleSplitScan
 
 namespace L4Factoidal.RDF.Source
 
@@ -425,6 +426,73 @@ def ByteReader.acc {α : Type} (r : ByteReader α) : α := r.reader.acc
 /-- Replace the accumulator. -/
 def ByteReader.setAcc {α : Type} (r : ByteReader α) (a : α) : ByteReader α :=
   (r.withAcc (fun _ => (a, ()))).1
+
+/-! ## Several readers over one document
+
+N-Triples and N-Quads are cut at line starts (`splitsAtLines`). Turtle and
+TriG are cut at dot boundaries that `Syntax.SplitScan` finds in one read of
+the bytes (https://github.com/danbri/factoidal/issues/842). The reader of the
+range after a split starts with `Reader.resume`: it reads the directive
+units before the split for their prefixes and base, keeping nothing, sets
+the generated blank-node counter to the count of the scan at the split, and,
+in TriG, enters the graph block the split is in. A range that ends at a
+split ends with `finishRangeCountD`, which accepts a TriG range that ends
+inside a graph block and gives the counter at the end.
+
+Blank nodes. A label the document writes (`_:b`) is kept as written by every
+reader, so the same label in two ranges is the same blank node, as in the
+single reader (a label is scoped to the document). A generated label is the
+prefix of the document and the counter (`TurtleState.freshBnode`). Every
+range uses the prefix of the document, and starts with the counter the scan
+counted before its start (`SplitScan.Split.counter`); the caller checks that
+the counter at the end of each range equals the count at the next split.
+When all checks hold, the ranges mint the labels of the single reader; a
+caller whose check fails reads the document as one range. The quads of all
+the ranges, in range order, are the quads of the single reader; this is
+measured by `l4split-diff`, not proved
+(https://github.com/danbri/factoidal/issues/944). -/
+
+/-- Whether a syntax is cut at statement boundaries found by
+    `Syntax.SplitScan`. -/
+def splitsAtStatements : RdfFormat → Bool
+  | .turtle | .trig => true
+  | _ => false
+
+/-- Start a reader inside its document: read `prelude` (the directive units
+    before the start, `SplitScan.Plan.directives`) for its directives only,
+    set the generated blank-node counter to `counter`, and in TriG enter the
+    graph block named by `header`. A reader of another syntax takes an empty
+    prelude, no header and no counter only. -/
+def Reader.resume {α : Type} (r : Reader α) (prelude : String) (header : Option String)
+    (counter : Option Nat := none) : Except ParseError (Reader α) :=
+  match r with
+  | .turtle f =>
+      match header with
+      | some _ => .error ⟨"a Turtle reader has no graph block", 0⟩
+      | none => (f.resume prelude counter).map .turtle
+  | .trig f => (f.resume prelude header counter).map .trig
+  | r => if prelude.isEmpty && header.isNone && counter.isNone then .ok r
+         else .error ⟨"only a Turtle or TriG reader starts inside a document", 0⟩
+
+/-- `finishD` for a range that ends at a split: a TriG range can end inside a
+    graph block. Gives the generated blank-node counter at the end (`none` for
+    a syntax other than Turtle and TriG). -/
+def Reader.finishRangeCountD {α : Type} (step : Step α) (decl : Decl α) :
+    Reader α → Except ParseError (α × Option Nat)
+  | .turtle f => (f.finishCount (turtleStep step)).map fun (a, c) => (a, some c)
+  | .trig f => (f.finishOpenCount (trigStepD step decl)).map fun (a, c) => (a, some c)
+  | r => (r.finishD step decl).map fun a => (a, none)
+
+def ByteReader.resume {α : Type} (r : ByteReader α) (prelude : String) (header : Option String)
+    (counter : Option Nat := none) : Except ParseError (ByteReader α) :=
+  (r.reader.resume prelude header counter).map fun reader => { r with reader }
+
+/-- `Reader.finishRangeCountD` through the byte layer. -/
+def ByteReader.finishRangeCountD {α : Type} (step : Step α) (decl : Decl α) (r : ByteReader α) :
+    Except Failure (α × Option Nat) :=
+  match r.endBytes with
+  | .error f => .error f
+  | .ok reader => (reader.finishRangeCountD step decl).mapError .parse
 
 /-! ## The pre-pass for generated blank-node labels -/
 
