@@ -73,6 +73,23 @@ is an assertion now. Open, each with an expected-failure case naming
 https://github.com/danbri/factoidal/issues/801: row quotas at run time,
 reuse of call results after a switch.
 
+KR 4.1 (batch 3, https://github.com/danbri/factoidal/issues/875) landed
+2026-10-22: `Plan.execM` (`Planner/ExecM.lean`) runs a plan in a monad and
+calls each source at run time; `execM_eq_exec` / `runM_sound`: when every
+call returns `pure` of the pure implementation (`CallsDenote`), the result is
+`pure` of `Plan.exec`, so `rewriting_sound` applies. SBM11 calls are keyed
+id-path scans (`Harness/PlannerSbm11IO.lean`, `l4planner-test sbm11-query GEN
+Q.rq [--check-pure]`); `tests/planner/sbm11_gate.sh` compares with `l4sbm11
+query` (8 pass, 0 fail, out of 8 accepted gate queries). Query blank nodes are
+variables now (`ofQuery?`). `l4planner-test`: 70 pass, 0 fail, 18
+expected-fail (out of 88). Open: the `Exec.run` driver over IO calls
+(https://github.com/danbri/factoidal/issues/933, xfail `exec-driver-io`).
+Record section 12.
+
+When you add an IO source kind: give its calls as `Calls m`, keep a pure
+`graphSource` (or other) implementation as the specification, and add a
+differential test that each call equals it (the `CallsDenote` hypothesis).
+
 Veil (rule 7) was evaluated for KR 2.4 (record section 11): Veil `main`
 needs Lean v4.32.0 (this tree: v4.33.1; no v4.33 branch of Veil,
 lean-smt or Loom), and with its default `veil.smt.trust true` an SMT goal

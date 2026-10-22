@@ -8,6 +8,7 @@ failure.
 -/
 import L4Factoidal.Planner.Exec
 import L4Factoidal.Planner.Tests
+import L4Factoidal.Planner.ExecM
 
 namespace L4Factoidal.Planner.ExecTests
 
@@ -58,7 +59,33 @@ def catQ1 : Catalog := [peopleQ1, knows, age]
   | some st => st.status == .done && !st.output.isEmpty && st.output.all (·.approx)
   | none => false)
 
+/-! ## KR 4.1: the plan run through a monad (`Planner/ExecM.lean`)
+
+Calls in `StateM Nat` count themselves, so the run is seen to make each
+call when the plan reaches it; the rows are those of `Plan.run`. -/
+
+def countingCalls (c : Catalog) : Calls (StateM Nat) :=
+  fun i inp => do
+    modify (· + 1)
+    pure (match c[i]? with | some s => s.sem.impl inp | none => [])
+
+def rwGoodPlan : Plan := rwGood.toPlan reqNames
+
+-- One call of `knows`, then one call of `people` per `knows` row (2).
+#guard ((rwGoodPlan.runM cat (countingCalls cat)).run 0).2 == 3
+#guard canon reqNames.projection (((rwGoodPlan.runM cat (countingCalls cat)).run 0).1.map Row.binding) ==
+  canon reqNames.projection ((rwGoodPlan.run cat).map Row.binding)
+-- In `Id`, `pureCalls` gives `Plan.run` (`runM_eq_run`, `pureCalls_denote`).
+#guard canon reqNames.projection ((rwGoodPlan.runM (m := Id) cat (pureCalls cat)).map Row.binding) ==
+  canon reqNames.projection ((rwGoodPlan.run cat).map Row.binding)
+
 /-! ## Axiom audit -/
+
+#print axioms flatMapRowsM_pure
+#print axioms execM_eq_exec
+#print axioms runM_eq_run
+#print axioms runM_sound
+#print axioms pureCalls_denote
 
 #print axioms init_inv
 #print axioms next_inv
