@@ -11,6 +11,16 @@ Design decision (owner-approved 2026-08-22):
 
 ## What exists
 
+For stateful transport adapters, test the host's lifecycle independently of
+the protocol engine, then replay through the rebuilt Wasm artifact. An empty
+`send`/`route` answer says nothing about input consumption: export the actual
+residual buffer size from Lean and require it in the host. Exercise exceptional
+feed cleanup, startup failures, package subpath imports, concurrent persistence
+and shutdown with outstanding IO. The 2026-10-22 XMPP integration found leaks,
+incorrect buffer accounting and overlapping roster writes that the happy-path
+TCP suite did not test. Evidence and limits:
+[XMPP PR3 integration](../../docs/20261022-xmpp-pr3-integration.md).
+
 | Path | Role |
 |---|---|
 | `formal/lean4/Wasm/Abi.lean` | JSON string-in / string-out ABI + a phase-1 JSON reader/writer shim |

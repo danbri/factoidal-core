@@ -87,7 +87,7 @@ process per connection behind socat) serves; the wasm session ops are
 |---|---|---|
 | `xmppOpen` | `[configJson]` | `{ ok, handle, domain, accounts }` |
 | `xmppSessionOpen` | `[server, optionsJson]` | `{ ok, handle }` — `streamId` and `nonce` are required and come from the host's random source |
-| `xmppSessionFeed` | `[session, text]` | `{ ok, send: [...], route: [{to, text}], presence: [...], rostersSaved: [...], close, stage, bare, full }` |
+| `xmppSessionFeed` | `[session, text]` | `{ ok, send: [...], route: [{to, text}], presence: [...], rostersSaved: [...], close, stage, bare, full, bufferedBytes }` |
 | `xmppSessionDeliver` | `[session, text]` | `{ ok, delivered, send }` — `delivered:false` for an unbound session; nothing is lost |
 | `xmppSessionClose` | `[session]` | `{ ok, send }` |
 | `xmppRosterGet` / `xmppRosterSet` | `[server, bare]` / `[server, bare, encoded]` | the roster in the engine's own on-disk encoding |
@@ -101,6 +101,21 @@ by any process is delivered to that account's bound session and
 unlinked. That last one is how a program that is not an XMPP client (a
 web application, say) hands a user a message: write a file.
 
+Roster snapshots are written in order through temporary-file replacement.
+`await running.close()` waits for queued writes and rejects if persistence
+failed. This protects against overlapping writes within one host; it does
+not coordinate concurrent processes or promise recovery after a power loss.
+The spool file is removed when the engine accepts delivery, before any
+remote acknowledgement. Stanzas queued for offline accounts in this Node
+host are held in memory and disappear on process exit.
+
+`maxBuffered` (default 1 MiB) limits the engine's residual UTF-8 input after
+each feed, reported by `bufferedBytes`. A decoder can separately hold up to
+three bytes of an incomplete UTF-8 sequence. This is not a bound on complete
+stanza size, output queues, offline queues, connection count or idle time.
+The host requires this field; an older engine without it closes the affected
+connection with an error. Rebuild the host and engine together.
+
 What it speaks: RFC 6120 stream negotiation, stream errors, SASL PLAIN
 and SCRAM-SHA-256, resource binding; RFC 6121 roster, presence
 subscription and broadcast, message delivery with the server-stamped
@@ -109,10 +124,19 @@ Not: STARTTLS, server-to-server federation, MUC/MIX/GC3 rooms, PRECIS.
 Known limitation shared with the native harness: one SCRAM salt per
 server (`saltB64` in the config), not one per account.
 
+The shared engine currently reduces routed destinations to bare JIDs and
+the Node host delivers to every bound resource. It does not implement full
+resource-selection/priority semantics. Binding alone permits delivery; this
+is not a complete presence-availability policy. The plaintext test listener
+also offers SASL PLAIN and has no transport confidentiality. Supplying only
+one of `cert`/`key` is rejected; supplying both selects direct TLS.
+
 Tests: `node --test test/xmpp-serve.test.mjs` drives the host over real
 TCP sockets, including an independent SCRAM-SHA-256 computed with
 `node:crypto`; `tools/xmpp-interop.sh wasm` drives it with
 `@xmpp/client`, a third-party implementation.
+`node --test test/xmpp-host.test.mjs` separately checks IO cleanup and
+persistence with a mock engine; passing it makes no protocol-conformance claim.
 
 ## What this does not cover yet, on purpose
 

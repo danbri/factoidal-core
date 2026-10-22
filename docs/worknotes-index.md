@@ -114,3 +114,4 @@ worknote, kept as the record of a decision or a measurement),
 | 2026-10-22 | [OWL PR reconciliation](20261022-owl-pr-reconciliation.md) | see file history | current: checked producer, gate QA and explicit release blockers |
 
 | 2026-10-22 | [Core PRs 1–3 integration](20261022-pr-integration.md) | see file history | current: reconciliation, independent review evidence and combined validation |
+| 2026-10-22 | [XMPP PR3 integration: host lifecycle and persistence](20261022-xmpp-pr3-integration.md) | same commit | current: integration checks and limits |

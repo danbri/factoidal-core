@@ -107,6 +107,20 @@ async function bound (port, user, pw, resource) {
   return { client: c, jid }
 }
 
+test('xmpp-serve: engine reports actual UTF-8 residual bytes despite a reply', { skip: available ? false : skipReason }, async () => {
+  const server = await serverModule.openXmppServer({ domain: DOMAIN })
+  try {
+    const session = server.openSession()
+    const suffix = "<auth a='é"
+    const answer = session.feed(streamOpen() + suffix)
+    assert.ok(answer.send.length > 0, 'header must produce a reply')
+    assert.equal(answer.bufferedBytes, Buffer.byteLength(suffix))
+    assert.equal(session.feed('').bufferedBytes, Buffer.byteLength(suffix))
+    assert.equal(session.feed("'/>").bufferedBytes, 0)
+    session.close()
+  } finally { server.close() }
+})
+
 test('xmpp-serve: a full session over a TCP socket, through wasm', { skip: available ? false : skipReason }, async (t) => {
   const dir = await mkdtemp(join(tmpdir(), 'l4xmpp-wasm-'))
   await writeFile(join(dir, 'accounts'), ACCOUNTS)

@@ -36,7 +36,7 @@
 
 import { randomBytes } from 'node:crypto'
 import { StringDecoder } from 'node:string_decoder'
-import { mkdir, readFile, writeFile, readdir, unlink } from 'node:fs/promises'
+import { mkdir, readFile, writeFile, readdir, unlink, rename } from 'node:fs/promises'
 import { join } from 'node:path'
 import { loadEngine } from '../bin/engine.mjs'
 
@@ -222,8 +222,9 @@ async function readAccountsFile (path) {
  * @param {string|Buffer} [options.cert] PEM certificate chain for direct TLS
  * @param {string|Buffer} [options.key] PEM private key for direct TLS
  * @param {number} [options.pollMs] spool poll interval (default 250; 0 disables)
- * @param {number} [options.maxBuffered] bytes a connection may hold without
- *   completing a unit before the socket is closed (default 1 MiB)
+ * @param {number} [options.maxBuffered] residual UTF-8 bytes held by the engine
+ *   after a feed before the socket is closed (default 1 MiB); the decoder
+ *   may separately hold up to three bytes of an incomplete UTF-8 sequence
  * @param {Function} [options.onError]
  * @param {Function} [options.onLog]
  * @returns {Promise<{server: object, xmpp: object, close: Function, sessions: Function}>}
@@ -236,6 +237,12 @@ export async function createXmppServer (options = {}) {
   const dir = typeof options.dir === 'string' ? options.dir : null
   const pollMs = typeof options.pollMs === 'number' ? options.pollMs : 250
   const maxBuffered = typeof options.maxBuffered === 'number' ? options.maxBuffered : 1024 * 1024
+  if (!Number.isSafeInteger(maxBuffered) || maxBuffered < 0) {
+    throw new XmppHostError('maxBuffered must be a nonnegative safe integer')
+  }
+  if ((options.cert !== undefined) !== (options.key !== undefined)) {
+    throw new XmppHostError('direct TLS requires both cert and key')
+  }
 
   const serverOptions = { ...options }
   if (dir !== null && !Array.isArray(options.accounts) && typeof options.accountsText !== 'string') {
@@ -247,22 +254,30 @@ export async function createXmppServer (options = {}) {
   const xmpp = await openXmppServer(serverOptions)
 
   // Rosters the previous run persisted.
-  if (dir !== null) {
-    await mkdir(join(dir, 'roster'), { recursive: true })
-    await mkdir(join(dir, 'spool'), { recursive: true })
-    for (const name of await readdir(join(dir, 'roster'))) {
-      if (!name.endsWith('.tsv')) continue
-      const bare = decodeURIComponent(name.slice(0, -4))
-      try {
-        xmpp.setRoster(bare, await readFile(join(dir, 'roster', name), 'utf8'))
-      } catch (error) {
-        onError(new XmppHostError(`roster ${name}: ${error.message}`))
+  try {
+    if (dir !== null) {
+      await mkdir(join(dir, 'roster'), { recursive: true })
+      await mkdir(join(dir, 'spool'), { recursive: true })
+      for (const name of await readdir(join(dir, 'roster'))) {
+        if (!name.endsWith('.tsv')) continue
+        try {
+          const bare = decodeURIComponent(name.slice(0, -4))
+          xmpp.setRoster(bare, await readFile(join(dir, 'roster', name), 'utf8'))
+        } catch (error) {
+          onError(new XmppHostError(`roster ${name}: ${error.message}`))
+        }
       }
     }
+  } catch (error) {
+    xmpp.close()
+    throw error
   }
 
   /** Every live connection: socket, engine session, and the last `bare`/`full` the engine reported. */
   const connections = new Set()
+  // Raw transports also include TLS peers that have not reached the secure
+  // connection callback and therefore have no engine session yet.
+  const transports = new Set()
   /** bare JID → stanzas routed to it while no session was bound. */
   const pending = new Map()
 
@@ -303,14 +318,31 @@ export async function createXmppServer (options = {}) {
     for (const text of queue) routeStanza(c.bare, text)
   }
 
-  async function persistRosters (bares) {
+  let rosterWrites = Promise.resolve()
+  let persistenceError = null
+  function persistRosters (bares) {
     if (dir === null) return
     for (const bare of bares) {
       try {
+        // Capture the engine's bytes at this feed, before another feed can
+        // change the roster. Serialize writes; replace each file atomically.
         const { encoded } = xmpp.roster(bare)
-        await writeFile(join(dir, 'roster', pathSafe(bare) + '.tsv'), encoded)
+        rosterWrites = rosterWrites.then(async () => {
+          const path = join(dir, 'roster', pathSafe(bare) + '.tsv')
+          const temporary = path + '.' + randomToken() + '.tmp'
+          try {
+            await writeFile(temporary, encoded, { flag: 'wx' })
+            await rename(temporary, path)
+          } finally {
+            await unlink(temporary).catch(() => {})
+          }
+        }).catch(error => {
+          persistenceError = new XmppHostError(`persisting roster of ${bare}: ${error.message}`)
+          onError(persistenceError)
+        })
       } catch (error) {
-        onError(new XmppHostError(`persisting roster of ${bare}: ${error.message}`))
+        persistenceError = new XmppHostError(`reading roster of ${bare}: ${error.message}`)
+        onError(persistenceError)
       }
     }
   }
@@ -358,33 +390,33 @@ export async function createXmppServer (options = {}) {
       bare: null,
       full: null,
       closing: false,
-      decoder: new StringDecoder('utf8'),
-      buffered: 0
+      decoder: new StringDecoder('utf8')
     }
     connections.add(c)
     onLog(`connection from ${socket.remoteAddress}:${socket.remotePort}`)
     socket.on('data', (chunk) => {
-      if (!connections.has(c)) return
+      if (!connections.has(c) || c.closing) return
       const text = c.decoder.write(chunk)
       if (text.length === 0) return
       let answer
       try {
         answer = session.feed(text)
+        if (!Number.isSafeInteger(answer.bufferedBytes) || answer.bufferedBytes < 0) {
+          throw new XmppHostError('xmppSessionFeed lacks a valid bufferedBytes result; rebuild the engine')
+        }
       } catch (error) {
         onError(error)
         socket.destroy()
-        connections.delete(c)
+        endSession(c)
         return
       }
       // A transport limit, not a protocol one: a client that sends this
       // much without completing a unit is cut off.
-      c.buffered = answer.send.length > 0 || answer.route.length > 0 ? 0 : c.buffered + chunk.length
       perform(c, answer)
-      if (c.buffered > maxBuffered) {
+      if (answer.bufferedBytes > maxBuffered) {
         onError(new XmppHostError(`connection exceeded ${maxBuffered} buffered bytes`))
         socket.destroy()
-        connections.delete(c)
-        try { session.close() } catch (_error) { /* gone */ }
+        endSession(c)
       }
     })
     socket.on('end', () => endSession(c))
@@ -396,19 +428,29 @@ export async function createXmppServer (options = {}) {
   }
 
   let server
-  if (useTls) {
-    const tls = await import('node:tls')
-    server = tls.createServer({ cert: options.cert, key: options.key }, onConnection)
-  } else {
-    const net = await import('node:net')
-    server = net.createServer(onConnection)
+  try {
+    if (useTls) {
+      const tls = await import('node:tls')
+      server = tls.createServer({ cert: options.cert, key: options.key }, onConnection)
+    } else {
+      const net = await import('node:net')
+      server = net.createServer(onConnection)
+    }
+  } catch (error) {
+    xmpp.close()
+    throw error
   }
+  server.on('connection', socket => {
+    transports.add(socket)
+    socket.once('close', () => transports.delete(socket))
+  })
 
   // The harness's mailbox: `<dir>/spool/<bare jid>/<name>` holds one
   // stanza's bytes for that account. Polled for every bound session,
   // delivered in name order, unlinked once the engine accepted it.
   let poller = null
   let polling = false
+  let pollTask = Promise.resolve()
   async function pollSpool () {
     if (polling || dir === null) return
     polling = true
@@ -440,10 +482,13 @@ export async function createXmppServer (options = {}) {
     }
   }
   if (dir !== null && pollMs > 0) {
-    poller = setInterval(() => { pollSpool().catch(onError) }, pollMs)
+    poller = setInterval(() => {
+      if (!polling) pollTask = pollSpool().catch(onError)
+    }, pollMs)
     if (typeof poller.unref === 'function') poller.unref()
   }
 
+  let closePromise = null
   return {
     server,
     xmpp,
@@ -456,17 +501,24 @@ export async function createXmppServer (options = {}) {
       return new Map(pending)
     },
     close () {
-      return new Promise((resolve) => {
+      if (closePromise !== null) return closePromise
+      closePromise = (async () => {
         if (poller !== null) clearInterval(poller)
         for (const c of Array.from(connections)) {
           endSession(c)
           c.socket.destroy()
         }
-        server.close(() => {
+        for (const socket of transports) socket.destroy()
+        try {
+          await new Promise(resolve => server.close(resolve))
+          await pollTask
+          await rosterWrites
+          if (persistenceError !== null) throw persistenceError
+        } finally {
           xmpp.close()
-          resolve()
-        })
-      })
+        }
+      })()
+      return closePromise
     }
   }
 }
@@ -488,7 +540,7 @@ export async function listen (options = {}) {
       created.server.listen(port, host, resolve)
     })
   } catch (error) {
-    created.xmpp.close()
+    await created.close()
     throw error
   }
   const bound = created.server.address()

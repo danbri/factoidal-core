@@ -11,7 +11,7 @@ socket read, perform what it answers.
     -> {"ok":true,"send":[…],"route":[{"to":bare,"text":…},…],
         "presence":[{"bare","full","available"},…],
         "rostersSaved":[bare,…],"close":bool,
-        "stage":"…","bare":s|null,"full":s|null}
+        "stage":"…","bare":s|null,"full":s|null,"bufferedBytes":N}
   xmppSessionDeliver(sessionHandle, text)
     -> {"ok":true,"delivered":bool,"send":[…]}
   xmppSessionClose(sessionHandle)
@@ -247,6 +247,9 @@ private def jsonOfCollected (os : XmppOpenSession) (c : XmppCollected) : List (S
   , ("rostersSaved", .array (c.rostersSaved.map .string))
   , ("close", .bool c.close)
   , ("stage", .string (stageName os.session.stage))
+  -- The carrier applies its transport limit to the actual residual buffer,
+  -- independently of whether a complete unit happened to produce output.
+  , ("bufferedBytes", .number (toString os.buffer.utf8ByteSize))
   , ("bare", jsonOfOptString os.session.bareJid)
   , ("full", jsonOfOptString os.session.fullJid) ]
 
