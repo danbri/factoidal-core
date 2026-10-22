@@ -421,6 +421,9 @@ import L4Factoidal.Storage.Sbm11.ScanFoldTheorems
 import L4Factoidal.Storage.Sbm11.SipScanTheorems
 import L4Factoidal.Storage.Sbm11.WindowTheorems
 import L4Factoidal.Storage.Sbm11.MetaCountTheorems
+import L4Factoidal.Storage.Sbm11.TypedCmp
+import L4Factoidal.Storage.Sbm11.TypedCmpTheorems
+import L4Factoidal.Storage.Sbm11.TypedCmpFilterTheorems
 import L4Factoidal.Storage.Sbm11.ParallelScanTheorems
 import L4Factoidal.Storage.Sbm11.ParallelSipTheorems
 import L4Factoidal.Storage.Sbm11.ParallelMergeTheorems
