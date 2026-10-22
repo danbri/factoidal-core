@@ -53,13 +53,19 @@
 // (https://github.com/danbri/factoidal/issues/918, `--storage files`): a
 // storage of s, 2s, 4s data resources (default s = 1,000, `--storage-base S`),
 // and 16s with `--storage files`, opened from DIR in each mode; 20 PUTs of new
-// small resources per repeat, the minimum of three repeats, per PUT; peak RSS
-// of the child reported.
+// small resources per repeat, the median of five repeats, per PUT (fsync
+// dominates and varies both ways; see `storageChild`); peak RSS of the child
+// reported.
 //   time(4s) <= 1.5 * time(s) and time(16s) <= 1.5 * time(s) with
 //     `--storage files`. The model is constant: one body file and one journal
 //     record per write, and a step in a logarithm of the store (stage 2: the
 //     tree store and the persistent type index). The snapshot mode, which
 //     writes the whole storage, gives about 4 and is reported, not bounded.
+//   The engine's own cost of one write in files mode (`lwsStep` and
+//     `lwsPersist`, no file I/O), s, 2s, 4s, 16s resources:
+//     step(4s) <= 1.5 * step(s) and step(16s) <= 1.5 * step(s). Stage 1 was
+//     linear (0.21 ms at 1,000 resources, about 3 ms at 16,000: a list store
+//     and copies of shared hash sets of the type index).
 //   Peak RSS of a start and one GET of a storage kept in files with s, 2s,
 //     4s resources of 16 KiB: rss(4s) - rss(s) <= 16 MiB (the bodies grow by
 //     48 MiB; stage 2 reads no body at start and keeps none in memory).
@@ -303,7 +309,7 @@ async function storageChild (s, mode) {
     const reps = []
     let k = 0
     try {
-      for (let rep = 0; rep < 3; rep++) {
+      for (let rep = 0; rep < 5; rep++) {
         reps.push(await time(async () => {
           for (let j = 0; j < 20; j++) {
             const r = await fetch(`${server.origin}/items/new${k++}`, { method: 'PUT', headers: { 'content-type': 'text/plain' }, body: `new ${k}` })
@@ -313,7 +319,14 @@ async function storageChild (s, mode) {
         }) / 20)
       }
     } finally { await server.close() }
-    process.stdout.write(JSON.stringify({ s, mode, put: Math.min(...reps), rss: process.resourceUsage().maxRSS * 1024 }) + '\n')
+    // The MEDIAN of five repeats. In files mode the fsync of the body file
+    // and of the journal is about 90 percent of a PUT (the engine's step and
+    // persist are 0.3 ms of about 5 ms, measured 2026-10-22), and fsync time
+    // varies between processes in both directions: the minimum of three gave
+    // 3.37 ms at 1,000 resources in one run and 4.7 to 4.8 ms in four others,
+    // so the 4s/s ratio read 1.72 in that run and 1.06 to 1.24 otherwise.
+    reps.sort((a, b) => a - b)
+    process.stdout.write(JSON.stringify({ s, mode, put: reps[2], rss: process.resourceUsage().maxRSS * 1024 }) + '\n')
   } finally {
     rmSync(dir, { recursive: true, force: true })
   }
@@ -348,6 +361,50 @@ async function storageMemChild (s, dir, phase) {
   process.stdout.write(JSON.stringify({ s, phase, rss: process.resourceUsage().maxRSS * 1024 }) + '\n')
 }
 
+// The engine's own cost of one write of a storage kept in files (issue 918,
+// stage 2), with no file I/O: `lwsStep` and then `lwsPersist` (the write plan
+// is made, not performed), in a fresh engine per size. A storage of s data
+// resources is built by POSTs (each one persisted), then one repeat is 60
+// PUTs of new small resources; the row keeps the minimum of three repeats,
+// after one repeat that is not counted (the first calls of a fresh engine).
+async function stepChild (s) {
+  const f = await import(join(PKG, 'index.mjs'))
+  const engine = await f.loadEngine()
+  const { randomBytes } = await import('node:crypto')
+  const seed = () => randomBytes(32).toString('base64')
+  const enc = new TextEncoder()
+  const opened = engine.call('lwsOpen', [JSON.stringify({ insecureNoAuth: true, baseIri: EX, storage: 'files' })])
+  const h = opened.handle
+  const ld = engine.callBlobIO('lwsLoad', [h, JSON.stringify({ files: opened.load.read.map((p) => ({ path: p, present: false })), seed: seed() })], new Uint8Array(0))
+  if (ld.envelope.ready !== true) throw new Error('lwsLoad was not ready')
+  const write = (req, body) => {
+    const a = engine.callBlobIO('lwsStep', [h, JSON.stringify(req)], enc.encode(body))
+    engine.callBlobIO('lwsPersist', [h, JSON.stringify({ seed: seed() })], new Uint8Array(0))
+    return a.envelope.response.status
+  }
+  write({ method: 'PUT', target: '/items/', headers: [['content-type', 'text/turtle']] }, '')
+  for (let i = 0; i < s; i++) {
+    const st = write({ method: 'POST', target: '/items/', headers: [['content-type', 'text/plain'], ['slug', `r${i}`]] }, `resource ${i} `.repeat(20))
+    if (st !== 201) throw new Error(`POST ${i} answered ${st}`)
+  }
+  const reps = []
+  let k = 0
+  for (let rep = 0; rep < 4; rep++) {
+    const t0 = process.hrtime.bigint()
+    for (let j = 0; j < 60; j++) {
+      const st = write({ method: 'PUT', target: `/items/new${k++}`, headers: [['content-type', 'text/plain']] }, `new ${k}`)
+      if (st !== 201) throw new Error(`PUT answered ${st}`)
+    }
+    if (rep > 0) reps.push(Number(process.hrtime.bigint() - t0) / 1e6 / 60)
+  }
+  engine.call('lwsClose', [h])
+  process.stdout.write(JSON.stringify({ s, step: Math.min(...reps), rss: process.resourceUsage().maxRSS * 1024 }) + '\n')
+}
+
+if (opt('--step-child')) {
+  await stepChild(Number(opt('--step-child')))
+  process.exit(0)
+}
 if (opt('--merkle-child')) {
   await merkleChild(Number(opt('--merkle-child')))
   process.exit(0)
@@ -478,6 +535,27 @@ if (srows.files.length === 4) {
   check(`storage files: PUT time 4s/s <= 1.5 (s = ${sBase}, flat in the storage size)`, ratio <= 1.5, `ratio ${ratio.toFixed(2)}`)
   const ratio16 = fd.put / fa.put
   check(`storage files: PUT time 16s/s <= 1.5 (s = ${sBase})`, ratio16 <= 1.5, `ratio ${ratio16.toFixed(2)}`)
+}
+// The engine's step and persist with no file I/O (`stepChild`): s, 2s, 4s,
+// 16s resources, each in a fresh engine.
+const steprows = []
+for (const s of [sBase, 2 * sBase, 4 * sBase, 16 * sBase]) {
+  let out
+  try {
+    out = execFileSync(process.execPath, [fileURLToPath(import.meta.url), '--step-child', String(s)],
+      { encoding: 'utf8', stdio: ['ignore', 'pipe', 'inherit'], timeout: 900000 })
+  } catch (e) {
+    check(`storage files step at ${s} resources`, false, `the child process stopped (${String(e.message).split('\n')[0]})`)
+    break
+  }
+  const r = JSON.parse(out.trim().split('\n').pop())
+  steprows.push(r)
+  console.log(`  storage files, engine step and persist, ${s} resources: ${r.step.toFixed(3)} ms`)
+}
+if (steprows.length === 4) {
+  const [ea, , ec, ed] = steprows
+  check(`storage files: engine step and persist 4s/s <= 1.5 (s = ${sBase})`, ec.step / ea.step <= 1.5, `ratio ${(ec.step / ea.step).toFixed(2)}`)
+  check(`storage files: engine step and persist 16s/s <= 1.5 (s = ${sBase})`, ed.step / ea.step <= 1.5, `ratio ${(ed.step / ea.step).toFixed(2)}`)
 }
 if (srows.snapshot.length === 3) {
   const [sa, , sc] = srows.snapshot
