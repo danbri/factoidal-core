@@ -13,6 +13,7 @@
 # USAGE
 #   bash tools/lws-touchstone.sh [--config open|auth|both] [--shim]
 #                                [--unstable-search-results] [--merkle]
+#                                [--storage snapshot|files]
 #
 #   --config open  our server with --insecure-no-auth
 #   --config auth  our server with authorization on (the default of
@@ -66,6 +67,12 @@
 #                  Merkle hashes (https://github.com/danbri/factoidal/issues/919;
 #                  Repr-Digest, container roots). Off by default; the target
 #                  ids get the suffix "-merkle". A default run never sets it.
+#   --storage files
+#                  start the server with `lws-serve --storage files`: the
+#                  storage kept in one file per body and a journal
+#                  (https://github.com/danbri/factoidal/issues/918). The
+#                  target ids get the suffix "-files". `--storage snapshot`
+#                  (the server default) adds nothing.
 #
 # ENVIRONMENT
 #   TOUCHSTONE_SRC   an existing Touchstone clone to copy (it is not changed);
@@ -113,6 +120,7 @@ CONFIG=both
 SHIM=0
 UNSTABLE=()
 MERKLE=()
+STORAGE=()
 SUFFIX=""
 while [ $# -gt 0 ]; do
   case "$1" in
@@ -120,6 +128,12 @@ while [ $# -gt 0 ]; do
     --shim) SHIM=1; shift ;;
     --unstable-search-results) UNSTABLE=(--unstable-search-results); SUFFIX="$SUFFIX-unstable"; shift ;;
     --merkle) MERKLE=(--merkle); SUFFIX="$SUFFIX-merkle"; shift ;;
+    --storage)
+      case "${2:-}" in
+        snapshot) shift 2 ;;
+        files) STORAGE=(--storage files); SUFFIX="$SUFFIX-files"; shift 2 ;;
+        *) echo "lws-touchstone: --storage is snapshot or files" >&2; exit 2 ;;
+      esac ;;
     -h|--help) sed -n '2,100p' "$0"; exit 0 ;;
     *) echo "lws-touchstone: unknown argument $1" >&2; exit 2 ;;
   esac
@@ -302,7 +316,8 @@ wait_for () {
 start_server () {
   local name="$1" dir="$2" port="$3" base="$4"; shift 4
   node "$SERVE" lws-serve "$dir" --port "$port" --host 127.0.0.1 --base "$base" \
-    --page-size "${LWS_PAGE_SIZE:-4}" ${UNSTABLE[@]+"${UNSTABLE[@]}"} ${MERKLE[@]+"${MERKLE[@]}"} "$@" \
+    --page-size "${LWS_PAGE_SIZE:-4}" ${UNSTABLE[@]+"${UNSTABLE[@]}"} ${MERKLE[@]+"${MERKLE[@]}"} \
+    ${STORAGE[@]+"${STORAGE[@]}"} "$@" \
     > "$WORK/$name-server.log" 2>&1 &
   PIDS+=($!)
   wait_for "$WORK/$name-server.log" '^http://' 60 || {
@@ -517,6 +532,7 @@ fi
 [ "$SHIM" = 1 ] && echo "NOTE: --shim was on; these are diagnostic numbers, not conformance scores."
 [ ${#UNSTABLE[@]} -gt 0 ] && echo "NOTE: --unstable-search-results was on (issue 922): an anticipatory, unstable extension."
 [ ${#MERKLE[@]} -gt 0 ] && echo "NOTE: --merkle was on (issue 919): Merkle hashes, an optional extension."
+[ ${#STORAGE[@]} -gt 0 ] && echo "NOTE: --storage files was on (issue 918): the storage kept in files."
 case "$WORST" in
   0) echo "lws-touchstone: every configuration ran; no test failed" ;;
   1) echo "lws-touchstone: FAIL" ;;

@@ -84,10 +84,11 @@
 // produced and this code keeps working unchanged.
 
 import { loadEngine } from '../bin/engine.mjs'
-import { readSnapshot, persistIfChanged, storageKeyText } from './persist.mjs'
+import { readSnapshot, persistIfChanged, storageKeyText, loadFiles, persistFilesIfChanged } from './persist.mjs'
 
 /** The ops this host needs from the engine. */
-export const LWS_OPS = ['lwsOpen', 'lwsStep', 'lwsClose', 'lwsSnapshot', 'lwsFetched', 'lwsDelivered']
+export const LWS_OPS = ['lwsOpen', 'lwsStep', 'lwsClose', 'lwsSnapshot', 'lwsFetched', 'lwsDelivered',
+  'lwsLoad', 'lwsPersist']
 
 /** How long this host waits for the answer to one delivery request before
  *  it reports "no answer" (status 0) to the engine. */
@@ -249,6 +250,8 @@ function contentBytes (request) {
  * @param {boolean} [options.realClock] stamp each request with this host's clock
  * @param {string|null} [options.storageKey] the storage key text (64 hex digits or base64url);
  *   default the environment variable FACTOIDAL_LWS_KEY; `null` reads no key
+ * @param {string} [options.storage] where DIR keeps the storage: "snapshot" (default, one
+ *   file) or "files" (one file per body and a journal, issue 918); passed unread
  * @param {object} [options.engine] an engine handle to reuse
  * @returns {Promise<{step: Function, close: Function, handle: string, engine: object}>}
  */
@@ -316,10 +319,15 @@ export async function openLwsStorage (options = {}) {
   // it, refuses a file that does not match it, and seals every snapshot.
   const storageKey = storageKeyText(options.storageKey)
   if (storageKey !== undefined) config.storageKey = storageKey
+  // Where the storage is kept (https://github.com/danbri/factoidal/issues/918):
+  // `storage` is passed unread; the engine refuses a value it does not know.
+  // With "files" the engine names the files to read (`load`) and gives the
+  // plan of every write (`lwsPersist`), and this host reads no snapshot.
+  if (typeof options.storage === 'string') config.storage = options.storage
   // `dir` names the storage directory. The snapshot found there, if any,
   // is the storage to continue from; the engine checks it.
   const dir = typeof options.dir === 'string' ? options.dir : null
-  if (dir !== null) {
+  if (dir !== null && options.storage !== 'files') {
     const snapshot = readSnapshot(dir)
     if (snapshot !== null) config.snapshot = snapshot
   }
@@ -337,6 +345,22 @@ export async function openLwsStorage (options = {}) {
   const handle = handleOf(opened)
   if (handle === null) {
     throw new LwsHostError('lwsOpen answered with no handle')
+  }
+  // A storage kept in files: read the files the engine names until it is
+  // ready, and perform the plan of the start. Without a DIR, there are no
+  // files: the engine is told none is present.
+  const filesMode = opened !== null && typeof opened === 'object' &&
+    opened.load !== undefined && opened.load !== null
+  if (filesMode) {
+    if (dir === null) throw new LwsHostError('a storage kept in files needs a storage directory (dir)')
+    loadFiles(engine, handle, opened, dir)
+  }
+  /** After a call whose envelope may say `changed`: write what the engine
+   *  gives (the snapshot, or the plan of a storage kept in files). */
+  const persist = (envelope) => {
+    if (dir === null) return
+    if (filesMode) persistFilesIfChanged(engine, handle, envelope, dir)
+    else persistIfChanged(engine, 'lwsSnapshot', handle, envelope, dir)
   }
 
   // Deliveries in flight, so a caller (a test, a shutdown) can wait.
@@ -369,7 +393,7 @@ export async function openLwsStorage (options = {}) {
       const told = engine.call('lwsDelivered', [handle, JSON.stringify({
         id: delivery.id, status, ...clockNow()
       })])
-      if (dir !== null) persistIfChanged(engine, 'lwsSnapshot', handle, told, dir)
+      persist(told)
       const retry = told !== null && typeof told === 'object' ? told.retry : null
       if (retry !== undefined && retry !== null && typeof retry.after === 'number') {
         await new Promise((resolve) => {
@@ -399,7 +423,7 @@ export async function openLwsStorage (options = {}) {
       if (closed) return
       try {
         const told = engine.call('lwsFlush', [handle, JSON.stringify(clockNow())])
-        if (dir !== null) persistIfChanged(engine, 'lwsSnapshot', handle, told, dir)
+        persist(told)
         if (told !== null && typeof told === 'object') {
           if (Array.isArray(told.deliveries)) for (const delivery of told.deliveries) deliver(delivery)
           if (typeof told.wake === 'number') scheduleFlush(told.wake)
@@ -470,7 +494,7 @@ export async function openLwsStorage (options = {}) {
         envelope = answered.envelope
       }
       const answer = responseOf(envelope, answered.bytes)
-      if (dir !== null) persistIfChanged(engine, 'lwsSnapshot', handle, envelope, dir)
+      persist(envelope)
       if (Array.isArray(envelope.deliveries)) {
         // After this step's answer is ready; the engine's state already
         // records them as pending.
