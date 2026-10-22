@@ -3180,14 +3180,14 @@ inductive PostAnswer where
     the same within the spread, so the rows are decoded in table order. -/
 def decodeRowsM {m : Type → Type} [Monad m] (st : Store m) (t : Table) :
     ExceptT String m L4Factoidal.SPARQL.SolutionSeq := do
-  let mut memo : IdAgg.Cache UInt64 Term := {}
+  let mut memo : IdAgg.Cache IdAgg.Id64 Term := {}
   let mut out : Array Binding := Array.mkEmpty t.rows
   for i in [0:t.rows] do
     let mut mu : Array (String × Term) := Array.mkEmpty t.vars.size
     for c in [0:t.vars.size] do
       let x := t.at c i
       if x != OptJoin.unbound then
-        let (tm, memo') ← memo.getM st.termOf x
+        let (tm, memo') ← memo.getM (fun k => st.termOf k.val) (IdAgg.Id64.ofU x)
         memo := memo'
         mu := mu.push (t.vars[c]!, tm)
     out := out.push mu.toList
