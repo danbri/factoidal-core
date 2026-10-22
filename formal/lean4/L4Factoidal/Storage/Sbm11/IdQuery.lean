@@ -848,6 +848,9 @@ structure ScanStats where
   /-- a scan with candidates: rows whose other needed columns were decoded
       (the rows whose join key is a candidate) -/
   rowsGathered : Nat := 0
+  /-- a scan with candidates: blocks read whose join column is a delta frame
+      decoded by the word loop (`Sip.deltaFindGoW`, issue 930) -/
+  sipWordBlocks : Nat := 0
   /-- rows decoded: of a full scan the rows of its table (`rowsOut`), of a
       scan with candidates the rows gathered (`ScanStats.full`,
       `ScanStats.withSip`, set once per scan by the planner) -/
@@ -859,7 +862,8 @@ def ScanStats.add (a b : ScanStats) : ScanStats :=
     blocksTotal := a.blocksTotal + b.blocksTotal, framesRead := a.framesRead + b.framesRead,
     bytesRead := a.bytesRead + b.bytesRead, rowsOut := a.rowsOut + b.rowsOut,
     sipSkipped := a.sipSkipped + b.sipSkipped, keysTested := a.keysTested + b.keysTested,
-    rowsGathered := a.rowsGathered + b.rowsGathered, rowsDecoded := a.rowsDecoded + b.rowsDecoded }
+    rowsGathered := a.rowsGathered + b.rowsGathered, sipWordBlocks := a.sipWordBlocks + b.sipWordBlocks,
+    rowsDecoded := a.rowsDecoded + b.rowsDecoded }
 
 /-- The rows decoded by one full scan: the rows of its table. -/
 def ScanStats.full (s : ScanStats) : ScanStats := { s with rowsDecoded := s.rowsOut }
@@ -1610,8 +1614,11 @@ def scanBlockSipM {m : Type → Type} [Monad m] {σ : Type} (st : Store m) (spec
   let stats := { stats with blocksRead := stats.blocksRead + 1, framesRead := stats.framesRead + (need.filter id).size,
                             bytesRead := stats.bytesRead + nbytes }
   let (chunk, tested, found) ← ofExceptM (sipChunk spec cands sortVar b bp constOut need bytes starts p)
+  let jcs := starts[jc]!
+  let word := bytes.size < Sip.smallBytes && jcs < bytes.size && bytes.get! jcs == Column.tagDelta
   let stats := { stats with rowsOut := stats.rowsOut + chunk.table.rows, keysTested := stats.keysTested + tested,
-                            rowsGathered := stats.rowsGathered + found }
+                            rowsGathered := stats.rowsGathered + found,
+                            sipWordBlocks := stats.sipWordBlocks + (if word then 1 else 0) }
   let (acc', more) ← f s.acc chunk
   return stepOf s acc' stats s.insPos more
 
@@ -1717,7 +1724,7 @@ def scanForJoinM {m : Type → Type} [Monad m] (st : Store m) (spec : ScanSpec) 
       | some cands =>
         let (t, s0) ← scanSipTableM st spec cands
         let s := s0.withSip
-        return (t, s, s!"; sideways ?{v}: {cands.size} candidates, blocks skipped {s.sipSkipped}, key values tested {s.keysTested}, rows gathered {s.rowsGathered}")
+        return (t, s, s!"; sideways ?{v}: {cands.size} candidates, blocks skipped {s.sipSkipped}, key values tested {s.keysTested} (on words in {s.sipWordBlocks} blocks), rows gathered {s.rowsGathered}")
       | none => pure ()
   | none => pure ()
   let (t, s) ← scanTableOf st spec
