@@ -591,7 +591,6 @@ exit 1.
 | xfail case | Open item | What the case asserts |
 |---|---|---|
 | `triple-form-in-mixed-catalog` | Source content constraints. A triple-form capability covers every triple pattern. In a catalog with other kinds, a plan that reads a pattern from a source that holds none of its triples is sound and gives fewer answers. The mixed cases use predicate-form capabilities only (`partitioned`). | with triple-form capabilities in a mixed catalog, every plan of the family gives the reference answers |
-| `sbm11-io-at-call-time` | `CapSemantics.impl` is a pure function, so a plan over SBM11 reads rows that were decoded before the run. An IO implementation (the disk-resident id path at call time) is open. | `Plan.exec` reads PRB1 bytes during the run |
 | `facadex-json` | Façade-X mapping of JSON (and of XML and other formats) | `describe` accepts a `.json` location |
 | `rest-two-path-parameters` | A REST operation with two required inputs | `describe` accepts it |
 | `mcp-two-required-inputs` | An MCP tool with two required inputs | `describe` accepts it |
@@ -740,9 +739,96 @@ exit 1.
 | `exec-row-quota` | `CostModel.rowQuota` is not enforced at run time | a scan with a row quota of 1 that answers 3 rows gives at most 1 row, or the run stops |
 | `exec-reuse-after-adaptation` | After a switch the new plan makes again the calls whose answers are known (no cache of call results) | in the `runtime-quota-adaptation` run the scan is called once |
 | `quota-in-admission` (section 9) | Quotas are not used for admission, so the first plan can be one that the run must leave | no plan in the family exceeds a call quota |
-| `sbm11-io-at-call-time` (section 10) | Capability implementations are pure functions; calls through IO are not modelled | `Plan.exec` reads SBM11 bytes during the run |
+| `exec-driver-io` (section 12, https://github.com/danbri/factoidal/issues/933) | The driver `Exec.run` takes tuples from `Source.sem.impl` and failures from a fault schedule | `Exec.run` makes its calls through IO; a call error is a `Fail` step |
 
 Other limits, with no case yet: the driver takes the alternatives in
 family order, without measurements (the runtime planner of section 3 is
 batch 3); there is no fairness condition and no temporal property beyond
 termination (the assume-guarantee composition of skill rule 10).
+
+## 12. KR 4.1: plans executed through IO
+
+Landed 2026-10-22 for OKR batch 3, KR 4.1
+(https://github.com/danbri/factoidal/issues/875). The case
+`sbm11-io-at-call-time` (sections 10 and 11) is an assertion now.
+
+### Definitions (`formal/lean4/L4Factoidal/Planner/ExecM.lean`)
+
+| Name | Meaning |
+|---|---|
+| `Calls m` | `Nat → InputBinding → m (List Tuple)`: a call of catalog source `i` with an input binding, in monad `m` |
+| `accessRows` | the rows of one access for the tuples a call returned; the access case of `Plan.exec` is `accessRows` over `s.sem.impl inp` (`exec_access_eq`, by `rfl`) |
+| `Plan.execM`, `Plan.runM` | the plan run in `m`: each access calls `call`; joins run the right side once per left row (`flatMapRowsM`: core `List.mapM`, then `flatten`), then filters, projections, unions as in `Plan.exec`. The catalog gives the capability, the mapping and the tuple check; `sem` is not read. |
+| `CallsDenote cat call` | every call of source `i` returns `pure (s.sem.impl inp)` for the catalog's source `i` |
+| `pureCalls` | the calls that answer from the catalog's implementations |
+
+`Plan.exec` stays the specification.
+
+### Theorems
+
+| Theorem | Statement |
+|---|---|
+| `execM_eq_exec` | In a lawful monad, `CallsDenote cat call → p.execM cat call r = pure (p.exec cat r)`, for every plan `p` and row `r` (induction on the plan) |
+| `runM_eq_run` | the same for `runM` and `run` |
+| `runM_sound` | with `CallsDenote`, `ExactSourcesSound` and `IsRewriting`: `runM` returns `pure (p.run cat)` and `SoundFor cat req p` (`rewriting_sound`) |
+| `flatMapRowsM_pure` | the monadic `flatMap` returns `pure (xs.flatMap g)` when each `f x = pure (g x)` |
+| `pureCalls_denote` | `pureCalls` satisfies `CallsDenote` |
+
+The hypothesis `CallsDenote` is about one call of one source; the
+conclusion is about every plan (hazard 29 checked: no premise contains the
+conclusion). `#print axioms` for each: `propext`, `Classical.choice`,
+`Quot.sound` at most (`Planner/ExecTests.lean`). `#guard`s there run the
+KR 2.1 plan in `StateM Nat` (calls counted: 1 of `knows`, 2 of `people`;
+rows equal to `Plan.run`) and in `Id` with `pureCalls`.
+
+For `IO` the hypothesis is not a theorem: a call reads file bytes. It is
+tested.
+
+### SBM11 through IO (`formal/lean4/Harness/PlannerSbm11IO.lean`)
+
+`idPathCalls ss m ds` gives the calls of a catalog made from the SBM11
+capabilities `ds`, in `ExceptT String IO`. A call is the keyed scan of the
+capability's permutation (key: the input values in the permutation's column
+order, through `Session.idOf`; a value with no id gives no tuple), keeps the
+default-graph rows (graph id 0), and returns them as tuples of the
+capability's mapping. `runIO` runs a plan with these calls and reports the
+PRB1 bytes read during the run (`Session.frameBytes`).
+
+`l4planner-test sbm11-query GEN QUERY.rq [--check-pure]`: the query to a
+requirement (`Requirement.ofQuery?`; exit 3 when refused or when there is no
+plan), the triple-form catalog of the generation (no predicate probe, so no
+bytes are read before the run), the first plan of `search`, the IO run,
+SPARQL Results JSON on standard output. Literal constants of the BGP get
+the store's language-tag folding (`normalizeTerm`), so a constant equals
+the term the id path returns. Without `--check-pure` the catalog's `sem` is
+the graph source over the empty graph: `search` and `execM` do not read it,
+and the generation is not materialised. With `--check-pure` it is the
+default graph read by a full SPO scan, and the run fails when the IO rows
+differ from `Plan.run`.
+
+Fix found by the gate: `Requirement.ofQuery?` kept a query blank node as a
+constant, and a plan used it as a key (`ids-bnode.rq`: 0 rows; `l4sbm11
+query`: 3). It now renames `_:b` to the variable `_:b` (SPARQL 1.1 Query
+§4.1.4; no SPARQL variable name contains `:`), not projected by `SELECT *`.
+
+### Tests
+
+| Test | What it checks |
+|---|---|
+| `sbm11-io-at-call-time` (`l4planner-test`, `Harness/PlannerKinds.lean`) | the hypothesis of `execM_eq_exec` for the 16 capabilities of the test generation and every sampled input (34 calls: IO tuples equal the pure implementation); for 4 requirements, every plan of the family (15 plans) run through IO reads PRB1 bytes during the run and gives the rows of `Plan.run` (multisets) |
+| `execm-io-large-join` (`l4planner-test`) | `Plan.execM` in `ExceptT String IO` over a join whose left side gives 1,000,000 rows completes with every row (stack use; `execM` is in `tools/lean-tail-recursion-allow.txt` as plan-tree nesting) |
+| `tests/planner/sbm11_gate.sh` | `tests/sbm11/gate/gate.nq` packed and activated; each `tests/sbm11/gate/*.rq` the planner accepts run through IO with `--check-pure`, PRB1 bytes read during the run, answer equal to `l4sbm11 query` (`tests/sbm11/compare_answers.py`) |
+
+Result 2026-10-22: planner: 70 pass, 0 fail, 18 expected-fail (out of 88);
+planner-sbm11-gate: 8 pass, 0 fail (out of 8 accepted); 105 not accepted.
+The gate queries that are not accepted use FILTER (`rowfilter-from-expr`),
+GRAPH (`named-graph-requirement`), modifiers, aggregates, OPTIONAL or other
+forms outside `ofQuery?` (section 9).
+
+### Open, with expected-failure cases
+
+| xfail case | Open item | Issue |
+|---|---|---|
+| `exec-driver-io` | The driver `Exec.run` (section 11) takes tuples from `Source.sem.impl` and failures from a fault schedule; a driver whose `Call`, `Receive` and `Fail` steps are IO calls is open | https://github.com/danbri/factoidal/issues/933 |
+| `rowfilter-from-expr` (section 9) | FILTER is not accepted, so most gate queries are not run by the planner | https://github.com/danbri/factoidal/issues/801 |
+

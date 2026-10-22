@@ -28,6 +28,7 @@ and turn the run red when they pass (`PlannerCheck.XCase`).
 import Harness.PlannerCheck
 import Harness.Sbm11Query
 import Harness.Sbm11PackLib
+import Harness.PlannerSbm11IO
 import L4Factoidal.Planner.Kinds.Sbm11
 import L4Factoidal.Planner.Kinds.Memory
 import L4Factoidal.Planner.Kinds.Sparql
@@ -610,17 +611,62 @@ def run : IO Counts := do
       c ← c.record kc.base.id (runKCase kc)
     for x in xcases b do
       c ← c.recordX x (x.test ())
-    -- SBM11 through IO at call time: today a plan reads the decoded rows.
-    let before ← ss.frameBytes.get
-    let sbmCat := b.sbmCat (partitioned b.sbm)
-    let r : Requirement := { bgp := [tp (sv "x") pKnows (v "y")], projection := ["x", "y"] }
-    let n := match (search sbmCat r 1).head? with
-      | some p => ((p.rewriting.toPlan r).run sbmCat).length
-      | none => 0
-    let after ← ss.frameBytes.get
-    c ← c.recordX { id := "sbm11-io-at-call-time", issue := issue801,
-                    what := s!"Plan.exec reads an SBM11 generation through the id path at call time ({n} rows from decoded rows)",
-                    test := fun _ => false } (after > before)
+    -- SBM11 through IO at call time (KR 4.1, issue 875): every plan of the
+    -- family of each requirement run with `Plan.runM` over the id-path calls
+    -- reads PRB1 bytes during the run and gives the rows of the pure run.
+    -- First the hypothesis of `execM_eq_exec` for every catalog source and
+    -- sampled input: the IO call returns the pure implementation's tuples.
+    let ioReqs : List (String × Requirement) :=
+      [("knows", { bgp := [tp (sv "x") pKnows (v "y")], projection := ["x", "y"] }),
+       ("alice-knows-knows", { bgp := [tp (si (ex "alice")) pKnows (v "y"), tp (sv "y") pKnows (v "z")],
+                               projection := ["y", "z"] }),
+       ("knows-carol", { bgp := [tp (sv "x") pKnows (oi (ex "carol"))], projection := ["x"] }),
+       ("manages-knows", { bgp := [tp (sv "x") pManages (v "y"), tp (sv "y") pKnows (v "z")],
+                           projection := ["x", "z"] })]
+    let sbmDs := partitioned b.sbm
+    let sbmCat := b.sbmCat sbmDs
+    let mut ioErrs : List String := []
+    let mut ioCalls := 0
+    for ((d, src), i) in (sbmDs.zip sbmCat).zipIdx do
+      for inp in inputCombos d.partition rows d.cap.inputs do
+        ioCalls := ioCalls + 1
+        match ← (PlannerSbm11IO.idPathCalls ss m sbmDs i inp).run with
+        | .ok tups =>
+          if !sameTuples tups (src.sem.impl inp) then
+            ioErrs := ioErrs ++ [s!"call {d.cap.name} {repr inp} differs from the pure implementation"]
+        | .error e => ioErrs := ioErrs ++ [s!"call {d.cap.name}: {e}"]
+    let mut plans := 0
+    for (name, r) in ioReqs do
+      let fam := search sbmCat r r.bgp.length
+      if fam.isEmpty then ioErrs := ioErrs ++ [s!"{name}: no plan"]
+      for rk in fam do
+        plans := plans + 1
+        let p := rk.rewriting.toPlan r
+        let (ioRows, bytes) ← PlannerSbm11IO.runIO ss m sbmDs sbmCat p
+        if bytes == 0 then ioErrs := ioErrs ++ [s!"{name}: no PRB1 bytes read during the run"]
+        if !PlannerSbm11IO.sameMultiset (PlannerSbm11IO.canonRows r.projection ioRows)
+            (PlannerSbm11IO.canonRows r.projection (p.run sbmCat)) then
+          ioErrs := ioErrs ++ [s!"{name}: IO run differs from the pure run"]
+    c ← c.record s!"sbm11-io-at-call-time ({ioCalls} calls, {plans} plans)" (ioErrs.take 5)
+    -- Stack use of `Plan.execM` in `ExceptT String IO` over a join whose
+    -- left side gives 1,000,000 rows (the rows go through `List.mapM`): the
+    -- run completes and gives every row.
+    let bigN := 1000000
+    let bigExt : List Tuple := (List.range bigN).map (fun i => [ex s!"s{i}", ex "o"])
+    let bigSrc : Source := { cap := { name := "big", arity := 2, inputs := [], location := "test",
+                                      cost := { perCall := 1, perRow := 1 }, exactness := .exact },
+                             mapping := graphMapping (some pKnows),
+                             sem := { ext := bigExt, impl := fun _ => bigExt } }
+    let bigPlan : Plan := .join (.access { src := 0, args := [.var "x", .var "y"] }) .unit
+    let bigErrs : List String ← match ← (bigPlan.runM [bigSrc] (pureCalls (m := ExceptT String IO) [bigSrc])).run with
+      | .ok rows => pure (if rows.length == bigN then [] else [s!"{rows.length} rows, want {bigN}"])
+      | .error e => pure [e]
+    c ← c.record s!"execm-io-large-join ({bigN} rows)" bigErrs
+    -- The execution state machine driver (`Exec.run`) still takes tuples from
+    -- `Source.sem.impl` and failures from a fault schedule.
+    c ← c.recordX { id := "exec-driver-io", issue := "https://github.com/danbri/factoidal/issues/933",
+                    what := "Exec.run makes its Call/Receive/Fail steps through IO calls (a call error is a Fail)",
+                    test := fun _ => false } false
     pure c
   finally
     IO.FS.removeDirAll tmp
