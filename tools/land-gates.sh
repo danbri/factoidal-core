@@ -6,6 +6,10 @@
 # and restores the three stamp files. Run Touchstone after it:
 #   bash tools/lws-touchstone.sh --config both
 #   bash tools/lws-touchstone.sh --config all --unstable-search-results
+# The wasm step holds /tmp/factoidal-wasm-build.lock (flock), so wasm builds of
+# several worktrees run one at a time; the 3000 s limit starts when the lock is
+# taken. On 2026-10-22 three parallel wasm builds at load 24 made one run hit
+# the limit (exit 124) and test the old wasm.
 # Never run it while another build writes the same formal/lean4/.lake
 # (hazard 45 in skills/workflow-gotchas-debugging).
 export PATH="$HOME/.elan/bin:$PATH"
@@ -17,7 +21,7 @@ cd $R/formal/lean4 && { RC=0; timeout 3000 lake build > "${LAND_LOG_DIR:-/tmp}"/
 cd $R && { RC=0; python3 tools/lean-unbuilt-modules.py --gate > "${LAND_LOG_DIR:-/tmp}"/lp0-unbuilt.log 2>&1 || RC=$?; gate unbuilt $RC; }
 cd $R && { RC=0; python3 tools/lean-tail-recursion-audit.py --gate > "${LAND_LOG_DIR:-/tmp}"/lp0-tail.log 2>&1 || RC=$?; gate tail-recursion $RC; }
 source /opt/emsdk/emsdk_env.sh >/dev/null 2>&1
-cd $R/formal/lean4 && { RC=0; L4_WASM_WORK="${LAND_LOG_DIR:-/tmp}"/lp0-wasm timeout 3000 bash Wasm/build-wasm.sh "${LAND_LOG_DIR:-/tmp}"/lp0-wasm > "${LAND_LOG_DIR:-/tmp}"/lp0-wasm.log 2>&1 || RC=$?; gate wasm $RC; }
+cd $R/formal/lean4 && { RC=0; L4_WASM_WORK="${LAND_LOG_DIR:-/tmp}"/lp0-wasm flock /tmp/factoidal-wasm-build.lock timeout 3000 bash Wasm/build-wasm.sh "${LAND_LOG_DIR:-/tmp}"/lp0-wasm > "${LAND_LOG_DIR:-/tmp}"/lp0-wasm.log 2>&1 || RC=$?; gate wasm $RC; }
 cd $R && for x in l4factoidal.wasm l4factoidal.mjs; do cp docs/web/hub/assets/l4/$x npm/factoidal/l4-assets/; done
 git -C $R checkout docs/web/hub/assets/l4/l4factoidal.js npm/factoidal/l4-assets/version.json npm/factoidal-lean/version.json
 rm -rf "${LAND_LOG_DIR:-/tmp}"/lp0-wasm
