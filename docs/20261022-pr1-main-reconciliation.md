@@ -239,3 +239,25 @@ commands/binary hashes. Its readable manifest verifies **73 files,
 2,103,283 bytes**, SHA256
 `6e11095895cd1356ba91e9e75fcdf0d58f01d176af737ccd6b2d7d8004c18a20`. Captured files were verified for hashes, sizes, missing and
 unexpected files. External suites, binaries and caches are excluded.
+
+## Final native replay after tail refinements
+
+Reviewed refinement `84cb4ddc7` was applied locally as `37746b673`; the
+parent's equivalent integration is `4bc80d56d`. Six changed source files
+match the reviewed refinement exactly, and the four XSD repair files are
+unchanged. The warm native build passes 160 jobs with `LEAN_NUM_THREADS=2`.
+
+Both fixture replays have **byte-identical output** to the pre-tail runs:
+RIF **42 pass, one fail, three unknown, zero unread**, exit one; XSD
+**16,135 pass, zero fail, 10,222 excluded**, exit zero (2,925 pattern
+exclusions). All four selected CLI controls pass. This validates the actual
+native targets after the proved compiler replacements; it does not turn
+unknown/excluded cases into passes or establish complete conformance.
+
+[Separate tail-final evidence](audits/pr1-tail-final-20261022/README.md)
+contains commands, source comparisons, new binary hashes, output and
+validation. Its manifest verifies **12 files, 44,824 bytes**, SHA256
+`c3aa97fbe431a5776423e98f4920c94a42dcd74974f98b83ba1210e166f5e0e2`. The original 73-file capture was reverified and left unchanged.
+The initial wrong-directory setup error is retained distinctly from the
+successful build. No semantic source edits, additional suites or Wasm build
+were performed in this replay; final combined gates remain with the parent.

@@ -1,0 +1,18 @@
+{
+  "source_commit": "37746b6733ded80931c7c96662197b5fc68df209",
+  "argv": [
+    "python3",
+    "tools/lean-rif-boundary-test.py",
+    "BoundaryTests.test_native_decided_failure_exit",
+    "BoundaryTests.test_native_empty_inventory_exit",
+    "BoundaryTests.test_native_stale_override_exit",
+    "BoundaryTests.test_native_declared_imports"
+  ],
+  "cwd": "/Users/danbri/working/sandbox/october/tpac/codex-npm-review/integrate-pr1",
+  "binary_sha256": "db3ea04f636cad71b8910f20aae901c91aae3234cb4af5466cb726b921b86db7",
+  "exit_code": 0,
+  "elapsed_seconds": 1.783,
+  "captured_utc": "2026-10-22T18:14:19.492244+00:00",
+  "selected_methods": 4,
+  "passed": true
+}

@@ -1,0 +1,20 @@
+{
+  "source_commit": "37746b6733ded80931c7c96662197b5fc68df209",
+  "argv": [
+    "/Users/danbri/working/sandbox/october/tpac/codex-npm-review/integrate-pr1/formal/lean4/.lake/build/bin/l4rif",
+    "/Users/danbri/working/sandbox/october/tpac/codex-npm-review/integrate-pr1/third_party/testing/rif-core-suite/Core_v1.22/Approved",
+    "--verbose"
+  ],
+  "cwd": "/Users/danbri/working/sandbox/october/tpac/codex-npm-review/integrate-pr1",
+  "binary_sha256": "db3ea04f636cad71b8910f20aae901c91aae3234cb4af5466cb726b921b86db7",
+  "fixture": "unmodified W3C RIF Core_v1.22 Approved; same46cases",
+  "exit_code": 1,
+  "elapsed_seconds": 1.32,
+  "captured_utc": "2026-10-22T18:14:17.704550+00:00",
+  "summary": [
+    "rif-core DECIDED: 42 pass, 1 fail (out of 43 decided)",
+    "UNDECIDED: 3 cases \u2014 a built-in outside this port's slice",
+    "NOT READ: 0 cases"
+  ],
+  "output_equals_pre_tail": true
+}
