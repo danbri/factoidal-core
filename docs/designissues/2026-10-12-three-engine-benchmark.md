@@ -978,3 +978,27 @@ Gates on this change (exit codes 0): `lake build` (837 jobs);
 reference engine (438 on the id path); `tests/planner/sbm11_gate.sh` 8 pass,
 0 fail (out of 8 accepted); `tools/lean-tail-recursion-audit.py`,
 `tools/lean-unbuilt-modules.py` and `tools/lean-csimp-reach.py` with `--gate`.
+
+### 11.14 d12 re-measured after the d14 word loops (2026-10-22)
+
+https://github.com/danbri/factoidal/issues/931 (OKR batch 3 KR 1.1,
+https://github.com/danbri/factoidal/issues/875). Target: d12 warm at most
+QLever 1 CPU warm (10.10 ms, section 11.8). Target met with no code change.
+
+The 13 ms of section 11.8 was measured before the d14 delta word loops
+(section 11.12, commit a407748f). On `origin/main` at `0a7fab49`, `l4sbm11
+query /home/user/bench-data/sbm11/dbpedia --file
+tools/bench/three-engines/queries/dbpedia/d12-filter-numeric.rq --verify
+none --repeat 7 --explain`, execution median of 7 runs in one process, 3
+rounds: 7.55 / 7.09 / 7.83 ms (median of rounds 7.55 ms). 1-minute load
+average 3.4 to 3.7 (other sessions on the machine). Answers of all 3 runs
+byte-identical to
+`/home/user/bench-data/answers/dbpedia/d12-filter-numeric.sbm11-none.json`
+(69 rows). Peak RSS (VmHWM) 23,868 to 24,124 kB.
+
+Plan unchanged: POS scan of `dbo:country dbr:Norway` (5,520 rows), then the
+PSO scan of `dbo:populationTotal` with 5,520 candidates (80 of 80 selected
+blocks read, 327,277 key values tested on words, 708 rows gathered), merge
+join, FILTER on 708 rows. The ratio to QLever 1 CPU is 0.75. An id window on
+the filter column was not built: the filter variable is on the candidate
+scan, whose key values tested are the cost, and the target is met.
