@@ -13,15 +13,18 @@
 #             that path. This case shows that the check below can see a
 #             conjunct that does not go to the reference evaluator.
 #   typed     the shape of DBpedia d14 (tests/sbm11/gate/ids-sip-date-filter.rq,
-#             `FILTER(?d < "2021-01-01"^^xsd:date)`) is an expected failure:
-#             on main the conjunct goes to the reference evaluator, because the
-#             key-byte comparison of typed literals was left out (it compared
-#             lexical forms; `<`, `<=`, `>`, `>=` compare in the XSD value
-#             space, Fn.Comparison.termCompare). The case "the typed-date FILTER
-#             is decided on key bytes" fails today and names issue 948. The run
-#             fails when it passes, so that the case is changed to an assertion
-#             and the issue is closed. The answer is also compared with
-#             `--reference` (a real assertion, compare_answers.py: the same solutions).
+#             `FILTER(?d < "2021-01-01"^^xsd:date)`) is decided on the key bytes
+#             (`FKind.dateCmp`, DateKey.dateCmpKey?, issue 948: the XSD
+#             value-space order for keys `YYYY-MM-DD`, theorem
+#             DateKeyTheorems.dateCmpKey_termCompare), and its answer equals
+#             `--reference` (compare_answers.py: the same solutions).
+#   admit     a fixture of this script with dates inside and outside the
+#             admitted set (timezones, a negative year, a five-digit year,
+#             year 0000, a day that does not exist, an ill-typed form, a
+#             dateTime, another datatype). For admitted constants the conjunct
+#             runs on key bytes; for a constant outside the set (a timezone, a
+#             negative or five-digit year) and for `=` it goes to the reference
+#             evaluator. Every answer equals `--reference`.
 #
 # Usage: tests/sbm11/filter_keys.sh. Environment: L4_BIN_DIR (the built binaries).
 # Prints "filter keys: N pass, M fail, K expected-fail (out of T)"; exit 1 when
@@ -94,9 +97,61 @@ else
   esac
   if [ ! -s "$TMP/typed.kinds" ]; then record typed typed-date-filter-on-key-bytes 1 "no 'FILTER conjuncts on ids' line in --explain"
   elif grep -q 'key bytes' "$TMP/typed.kinds" && ! grep -q 'reference' "$TMP/typed.kinds"; then
-    xfail typed xfail-typed-date-filter-on-key-bytes "$ISSUE" 1 "$(sed 's/^plan: //' "$TMP/typed.kinds" | cut -c1-90)"
+    record typed typed-date-filter-on-key-bytes 0 "$(sed 's/^plan: //' "$TMP/typed.kinds" | cut -c1-90)"
   else
-    xfail typed xfail-typed-date-filter-on-key-bytes "$ISSUE" 0 "$(sed 's/^plan: //' "$TMP/typed.kinds" | cut -c1-90)"
+    record typed typed-date-filter-on-key-bytes 1 "$(sed 's/^plan: //' "$TMP/typed.kinds" | cut -c1-90)"
   fi
 fi
+
+# admit: dates inside and outside the admitted set of DateKey.dateParts?
+D="$TMP/dates"
+XD='<http://www.w3.org/2001/XMLSchema#date>'
+{
+  i=0
+  for lex in 2020-01-01 1800-01-01 1799-12-31 2000-02-29 0001-01-01 1800-01-01Z 1799-12-31+14:00 \
+      1800-01-01-14:00 -0044-03-15 12020-01-01 0000-01-01 2001-02-29 abc 1800-1-1; do
+    i=$((i + 1))
+    printf '<http://ex.org/d%s> <http://ex.org/when> "%s"^^%s .\n' "$i" "$lex" "$XD"
+  done
+  printf '<http://ex.org/t1> <http://ex.org/when> "1799-01-01T00:00:00"^^<http://www.w3.org/2001/XMLSchema#dateTime> .\n'
+  printf '<http://ex.org/t2> <http://ex.org/when> "1799-06-01"^^<http://ex.org/dt> .\n'
+  printf '<http://ex.org/t3> <http://ex.org/when> "1799-06-01" .\n'
+} >"$TMP/dates.nq"
+rc=0
+"$BIN/l4sbm11-pack" "$TMP/dates.nq" "$D/gen" --workers 1 >"$TMP/dpack.log" 2>&1 || rc=$?
+[ "$rc" -eq 0 ] && { "$BIN/l4sbm11" activate "$D" gen >"$TMP/dact.log" 2>&1 || rc=$?; }
+if [ "$rc" -ne 0 ]; then record admit pack-activate 1 "exit $rc"; finish; fi
+
+# admit_case <name> <filter> <expected path: keys|reference>
+admit_case() {
+  local name="$1" filt="$2" want="$3" rq="$TMP/a-$1.rq" r1=0 r2=0
+  printf 'PREFIX ex: <http://ex.org/>\nPREFIX xsd: <http://www.w3.org/2001/XMLSchema#>\nSELECT ?s ?d WHERE { ?s ex:when ?d FILTER(%s) }\n' "$filt" >"$rq"
+  timeout 120 "$BIN/l4sbm11" query "$D" --file "$rq" --explain >"$TMP/a-$name.out" 2>"$TMP/a-$name.err" || r1=$?
+  timeout 120 "$BIN/l4sbm11" query "$D" --file "$rq" --reference >"$TMP/a-$name.ref" 2>"$TMP/a-$name.referr" || r2=$?
+  if [ "$r1" -ne 0 ] || [ "$r2" -ne 0 ]; then record admit "$name" 1 "exit (ids $r1, --reference $r2)"; return; fi
+  local kinds cmpl
+  kinds="$(grep 'plan: FILTER conjuncts on ids:' "$TMP/a-$name.err" | sed 's/^plan: //')"
+  cmpl="$(python3 "$HERE/compare_answers.py" "$TMP/a-$name.out" "$TMP/a-$name.ref" 0 2>&1 | head -1)"
+  case "$cmpl" in equal*) ;; *) record admit "$name" 1 "against --reference: $cmpl"; return ;; esac
+  case "$want" in
+    keys) if printf '%s' "$kinds" | grep -q 'key bytes' && ! printf '%s' "$kinds" | grep -q 'reference'; then
+            record admit "$name" 0 "$(python3 -c 'import json,sys; print(len(json.load(open(sys.argv[1]))["results"]["bindings"]))' "$TMP/a-$name.out") rows; key bytes; $cmpl"
+          else record admit "$name" 1 "expected key bytes: $kinds"; fi ;;
+    reference) if printf '%s' "$kinds" | grep -q 'reference'; then
+            record admit "$name" 0 "$(python3 -c 'import json,sys; print(len(json.load(open(sys.argv[1]))["results"]["bindings"]))' "$TMP/a-$name.out") rows; reference; $cmpl"
+          else record admit "$name" 1 "expected the reference evaluator: $kinds"; fi ;;
+  esac
+}
+admit_case lt-admitted '?d < "1800-01-01"^^xsd:date' keys
+admit_case gt-admitted '?d > "1800-01-01"^^xsd:date' keys
+admit_case le-leapday '?d <= "2000-02-29"^^xsd:date' keys
+admit_case ge-swap '"1800-01-01"^^xsd:date >= ?d' keys
+admit_case lt-swap-first-year '"0001-01-01"^^xsd:date < ?d' keys
+admit_case const-timezone '?d < "1800-01-01Z"^^xsd:date' reference
+admit_case const-timezone-plus '?d >= "1799-12-31+14:00"^^xsd:date' reference
+admit_case const-negative-year '?d > "-0044-03-15"^^xsd:date' reference
+admit_case const-five-digit-year '?d < "12020-01-01"^^xsd:date' reference
+admit_case const-invalid-day '?d < "2001-02-29"^^xsd:date' reference
+admit_case const-datetime '?d < "1800-01-01T00:00:00"^^xsd:dateTime' reference
+admit_case eq-not-relational '?d = "1800-01-01"^^xsd:date' reference
 finish

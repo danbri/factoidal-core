@@ -108,6 +108,7 @@ import L4Factoidal.Storage.Sbm11.Overlay
 import L4Factoidal.Storage.Sbm11.OptJoin
 import L4Factoidal.Storage.Sbm11.IdAgg
 import L4Factoidal.Storage.Sbm11.Sip
+import L4Factoidal.Storage.Sbm11.DateKey
 import L4Factoidal.Storage.Sbm11.ParallelScan
 import L4Factoidal.SPARQL.Query
 import L4Factoidal.SPARQL.ResultsJson
@@ -1941,6 +1942,15 @@ inductive FKind where
       is in one of `ranges` (the keys `[c] ++ needle ...` for c = 3, 4); any
       other id goes to the reference evaluator -/
   | strRange (v : String) (ranges : Array (Nat × Nat)) (classLo classHi : Nat) (e : Expr)
+  /-- `?v OP c` or `c OP ?v` (`swap`) with `OP` one of `<`, `<=`, `>`, `>=`
+      (`op`) and `c` an `xsd:date` constant that `DateKey.dateConst?` admits
+      (issue 948, d14): a dictionary literal (tag 3) whose key is `pre` and an
+      admitted lexical form `YYYY-MM-DD` is decided on the key bytes by
+      `DateKey.dateCmpKey?`, without a `Term`
+      (`DateKeyTheorems.dateCmpKey_termCompare`: the XSD value-space order of
+      `Fn.Comparison.termCompare`); any other id goes to the reference
+      evaluator on `e` -/
+  | dateCmp (v : String) (op : Fn.Comparison.Op) (swap : Bool) (pre : ByteArray) (kc : Nat) (e : Expr)
   /-- the reference evaluator on the terms of `vars`, memoised by their ids -/
   | general (e : Expr) (vars : Array String)
   /-- issue 823: an EXISTS-free FILTER conjunct outside `backendLocal`, or
@@ -1963,6 +1973,7 @@ def FKind.explainName : FKind → String
   | .idEqVar v w => s!"sameTerm(?{v}, ?{w}) on ids"
   | .str _ v _ _ => s!"string test of ?{v} on key bytes"
   | .strRange v _ _ _ _ => s!"STRSTARTS of ?{v} on key ranks"
+  | .dateCmp v _ _ _ _ _ => s!"xsd:date order of ?{v} on key bytes (YYYY-MM-DD keys; other keys decoded)"
   | .general _ vs => s!"reference evaluator on the decoded terms of {varsText vs}"
   | .residual _ _ vs => s!"residual: reference evaluator on the decoded terms of {varsText vs}"
 
@@ -1993,8 +2004,23 @@ def simpleNeedle? : Expr → Option String
       some l.val.lexicalForm else none
   | _ => none
 
+/-- The `dateCmp` conjunct of a relational comparison of a variable with an
+    admitted `xsd:date` constant (either order). -/
+def dateCmpOf? (e : Expr) : Option FKind :=
+  match e with
+  | .compare op (.var v) (.lit c) =>
+    match DateKey.relOp? op, DateKey.dateConst? c with
+    | some o, some (pre, kc) => some (.dateCmp v o false pre kc e)
+    | _, _ => none
+  | .compare op (.lit c) (.var v) =>
+    match DateKey.relOp? op, DateKey.dateConst? c with
+    | some o, some (pre, kc) => some (.dateCmp v o true pre kc e)
+    | _, _ => none
+  | _ => none
+
 /-- Classify a conjunct; constants are looked up. -/
 def compileFilter {m : Type → Type} [Monad m] (st : Store m) (e : Expr) : ExceptT String m FKind := do
+  if let some k := dateCmpOf? e then return k
   let general : ExceptT String m FKind := do
     let some vs := exprVars e | throw "a FILTER expression outside the fragment"
     pure (.general e vs)
@@ -2135,6 +2161,28 @@ def applyFilters {m : Type → Type} [Monad m] (st : Store m) (fs : Array FKind)
           if !keep[i]! then continue
           let x := t.at col i
           let r ← match strRangeFast? ranges classLo classHi x with
+            | some r => pure r
+            | none => match memo.get? [x] with
+              | some r => pure r
+              | none => do
+                let r := refFilter e [(v, ← st.termOf x)]
+                memo := memo.insert [x] r
+                pure r
+          if !r then keep := keep.set! i false
+        memos := memos.set! fi (if memo.size > 65536 then {} else memo)
+    | .dateCmp v op swap pre kc e =>
+      match t.idx v with
+      | none => keep := Array.replicate t.rows false
+      | some col =>
+        let mut memo := memos[fi]!
+        for i in [0:t.rows] do
+          if !keep[i]! then continue
+          let x := t.at col i
+          let fast : Option Bool ← if tagOf x == 3 then do
+              let (buf, a, b) ← st.keySlice x
+              pure (DateKey.dateCmpKey? op swap pre kc buf a b)
+            else pure none
+          let r ← match fast with
             | some r => pure r
             | none => match memo.get? [x] with
               | some r => pure r
@@ -2662,6 +2710,7 @@ def fkVars (fs : Array FKind) : Array String :=
     | .idEqVar v w => (a.push v).push w
     | .str _ v _ _ => a.push v
     | .strRange v _ _ _ _ => a.push v
+    | .dateCmp v _ _ _ _ _ => a.push v
     | .general _ vs => a ++ vs
     | .residual _ _ vs => a ++ vs) #[]
 
@@ -2882,6 +2931,7 @@ def FKind.fresh : FKind → FKind
   | .idEqVar v w => .idEqVar (v ++ "") (w ++ "")
   | .str k v needle e => .str k (v ++ "") (needle.extract 0 needle.size) e
   | .strRange v ranges lo hi e => .strRange (v ++ "") (ranges.map fun p => (p.1 + 0, p.2 + 0)) lo hi e
+  | .dateCmp v op swap pre kc e => .dateCmp (v ++ "") op swap (pre.extract 0 pre.size) (kc + 0) e
   | .general e vs => .general e (vs.map (· ++ ""))
   | .residual env e vs => .residual env e (vs.map (· ++ ""))
 
@@ -2895,6 +2945,7 @@ theorem FKind.fresh_eq (f : FKind) : f.fresh = f := by
     congr 1
     conv => rhs; rw [← Array.map_id ranges]
     rfl
+  | dateCmp v op swap pre kc e => simp [FKind.fresh, ByteArray.extract_zero_size]
   | general e vs => simp [FKind.fresh]
   | residual env e vs => simp [FKind.fresh]
 

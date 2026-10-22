@@ -424,6 +424,9 @@ import L4Factoidal.Storage.Sbm11.ScanFoldTheorems
 import L4Factoidal.Storage.Sbm11.SipScanTheorems
 import L4Factoidal.Storage.Sbm11.WindowTheorems
 import L4Factoidal.Storage.Sbm11.MetaCountTheorems
+import L4Factoidal.Storage.Sbm11.DateKey
+import L4Factoidal.Storage.Sbm11.DateKeyTheorems
+import L4Factoidal.Storage.Sbm11.DateKeyFilterTheorems
 import L4Factoidal.Storage.Sbm11.ParallelScanTheorems
 import L4Factoidal.Storage.Sbm11.ParallelSipTheorems
 import L4Factoidal.Storage.Sbm11.ParallelMergeTheorems

@@ -1417,3 +1417,107 @@ Gates: `lake build` (1868 jobs); `tests/sbm11/agg_ids.sh` 28 pass, 0 fail, 9 exp
 (438 on the id path); `tools/lean-unbuilt-modules.py`, `lean-tail-recursion-audit.py`,
 `lean-registry-audit.py` and `lean-csimp-reach.py` with `--gate` exit 0;
 `lean-hygiene-audit.py` clean (no sorry, axiom or native_decide added).
+
+### 11.19 d14, the `xsd:date` FILTER on key bytes in the XSD value space (2026-10-22)
+
+https://github.com/danbri/factoidal/issues/948 and the d14 target of
+https://github.com/danbri/factoidal/issues/930 (OKR batch 3 KR 1.1). Target:
+d14 warm within 10 percent of QLever 1 CPU warm (6.09 ms, section 11.8), that
+is at most 6.70 ms. Target met: median of rounds 6.03 ms (`--repeat 41`) and
+6.32 ms (`--repeat 7`); before 11.23 ms and 12.30 ms.
+
+Cause. Section 11.15 decided the FILTER on key bytes by the code point order of
+the lexical forms. Commit f1f78d98 moved `<`, `<=`, `>`, `>=` to the XSD value
+space (`Fn.Comparison.termCompare`), the theorem of 11.15 stopped holding, and
+4ff10b87 removed the change. On `main` each of the 953 joined rows decoded its
+date to a `Term` and the reference evaluator parsed both lexical forms
+(about 6 microseconds per row, half of the query time).
+
+The admitted set (`Storage/Sbm11/DateKey.lean`, `dateParts?`): a lexical form
+of exactly ten bytes `YYYY-MM-DD`, ASCII digits, year 0001 to 9999, month 1 to
+12, a day that exists in that month (`XSD.daysInMonth`), no timezone. For two
+such forms the XSD 1.0 order is the order of `year * 512 + month * 32 + day`.
+The set excludes, and the key path gives `none` for (the reference evaluator
+answers): a timezone (the +-14:00 window can make the pair incomparable), a
+negative year and a year of five or more digits (the code point order is
+wrong there: `"12020-01-01" < "1800-01-01"` by code points), year 0000 (not in
+XSD 1.0), a day that does not exist, any other length or byte, another
+datatype. A constant outside the set gives no key-byte conjunct at all
+(`dateConst?`); `=` and `!=` are not compiled to it (they compare `xsd:date`
+literals by lexical form in `Expr.valueCompare`).
+
+Change: `FKind.dateCmp` (`IdQuery.dateCmpOf?`, `applyFilters`) runs
+`DateKey.dateCmpKey?` on the key slice of each tag 3 id: prefix test, the ten
+bytes through `dateParts?`, one comparison of two numbers. `--explain` prints
+`xsd:date order of ?d on key bytes (YYYY-MM-DD keys; other keys decoded)`.
+
+Theorems (`Storage/Sbm11/DateKeyTheorems.lean`,
+`DateKeyFilterTheorems.lean`; `#print axioms`: propext, Classical.choice,
+Quot.sound; no `sorry`, no `native_decide`):
+
+- `mono`: on valid dates with year at least 1, `XSD.daysFromCivil` is strictly
+  increasing in the order key (`same_year`: 144 month pairs by `omega` on the
+  Euclidean form `civ`; `first_mono`: induction over the years between).
+- `dateParts?_parse`: `XSD.parseDateTimeFor .xsd10 .date` of an admitted form
+  is the value with that year, month and day and no timezone, through the
+  XSD 1.0 year adapter (`padYear_digits`, with the core `Nat.toDigits`
+  lemmas).
+- `calendarOrder_admitted`: `Fn.Comparison.calendarOrder .date` of two admitted
+  forms is `some (compare k1 k2)`.
+- `dateCmpKey_termCompare`: when `dateCmpKey? op swap pre kc buf a e = some r`,
+  `dateConst? c = some (pre, kc)` and `decodeKey?` reads the key as `t`, then
+  `termCompare t (.literal c) op` (`swap`: `termCompare (.literal c) t op`) is
+  `some r`. No premise states a comparison result.
+- `dateCmp_fast_eq_ref`: for a conjunct that `dateCmpOf?` built, the answer is
+  `refFilter e [(v, t)]`, the reference FILTER value.
+
+Tests: `IdQueryTests` `#guard`s run the compiled conjunct on 3 admitted and 6
+refused constants, 4 operators and both orders against `refFilter` on stored
+dates inside and outside the set (168 keys decided, so the test is not
+vacuous); keys with a timezone, a negative, five-digit or zero year and a day
+that does not exist are not decided; two cases where the code point order and
+the value order differ. `tests/sbm11/filter_keys.sh`:
+`xfail-typed-date-filter-on-key-bytes` is now the assertion
+`typed-date-filter-on-key-bytes`, and 12 cases on a fixture of 17 dates
+(5 on key bytes, 7 by the reference evaluator: constants with a timezone, a
+negative or five-digit year, a day that does not exist, a `dateTime`, and `=`)
+each equal `--reference`: filter keys 15 pass, 0 fail (out of 15). Gate
+queries `ids-filter-date-swap.rq`, `ids-filter-date-ne.rq`,
+`ids-filter-date-datetime.rq` run in part (d) of `tests/sbm11/run.sh`.
+
+Measurement: `l4sbm11 query /home/user/bench-data/sbm11/dbpedia --file
+tools/bench/three-engines/queries/dbpedia/d14-filter-date.rq --verify none
+--repeat N`, execution median of N runs in one process, 5 interleaved rounds
+for each N; "before" is `l4sbm11` of `origin/main` at `18bd7edb`, "after" the
+build of this change. 1-minute load average 0.8 to 1.4. All 20 answers
+byte-identical to
+`/home/user/bench-data/answers/dbpedia/d14-filter-date.sbm11-none.json`
+(54 rows).
+
+| | before | after | QLever 1 CPU warm (11.8) |
+| --- | ---: | ---: | ---: |
+| warm, rounds 1 to 5, `--repeat 7` (ms) | 11.40 / 12.25 / 12.31 / 12.30 / 12.95 | 6.03 / 9.34 / 6.18 / 6.32 / 6.35 | |
+| warm, median of rounds, `--repeat 7` (ms) | 12.30 | 6.32 | 6.09 |
+| warm, rounds 1 to 5, `--repeat 41` (ms) | 11.40 / 11.85 / 10.91 / 11.11 / 11.23 | 6.22 / 5.89 / 6.20 / 6.03 / 6.03 | |
+| warm, median of rounds, `--repeat 41` (ms) | 11.23 | 6.03 | 6.09 |
+| minimum over the runs (ms) | 10.70 | 5.64 | |
+| peak RSS (VmHWM, kB) | 24,888 to 26,904 | 26,320 to 26,816 | |
+
+The QLever times include HTTP and JSON (about 2 to 3 ms for a small answer).
+The ratio to QLever 1 CPU goes from 1.8 to 0.99 (`--repeat 41`) and 1.04
+(`--repeat 7`).
+
+Where the time goes now (`perf record -e cpu-clock --call-graph
+dwarf,16384`, 60 runs, inclusive samples): `deltaGatherGoY` 35 percent,
+`deltaFindGoY` 28 percent (the sideways scan, section 11.16), block reads
+(`pread`) 10 percent, the FILTER 10 percent (of which `Session.keySlice`, the
+dictionary page of each id, 5 percent, and `dateCmpKey?` 4 percent),
+`readFrames` 7 percent, constant lookups 4 percent.
+
+Gates (exit codes 0): `lake build` (1981 jobs); `tests/sbm11/run.sh` with
+`FACTOIDAL_TESTING_ROOT=third_party/testing` 3,130 pass, 0 fail, 29
+expected-fail (out of 3,159); `SBM11_THREADS=4 tests/sbm11/census.sh` 605
+executed, 605 matched the reference engine (438 on the id path);
+`tools/lean-unbuilt-modules.py --gate` (937 of 937 modules reached),
+`tools/lean-tail-recursion-audit.py --gate`, `tools/lean-csimp-reach.py
+--gate`; `tools/lean-hygiene-audit.py` clean.
