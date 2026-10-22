@@ -978,3 +978,117 @@ Gates on this change (exit codes 0): `lake build` (837 jobs);
 reference engine (438 on the id path); `tests/planner/sbm11_gate.sh` 8 pass,
 0 fail (out of 8 accepted); `tools/lean-tail-recursion-audit.py`,
 `tools/lean-unbuilt-modules.py` and `tools/lean-csimp-reach.py` with `--gate`.
+
+### 11.15 d14, candidate in the loop state and the date compare on key bytes (2026-10-22)
+
+https://github.com/danbri/factoidal/issues/930 (OKR batch 3 KR 1.1,
+https://github.com/danbri/factoidal/issues/875). Continues 11.12. Target:
+d14 warm at most QLever 1 CPU warm (6.09 ms, section 11.8). Target not met;
+result 9.7 ms (before 12.0 ms).
+
+Three changes, cheapest first. Each has a theorem that it equals the loop or
+the evaluator it replaces.
+
+1. Find loop, current candidate in the loop state
+   (`Storage/Sbm11/Sip.lean`, `deltaFindGoC`). `deltaFindGoW` read `cands[p]`
+   and `cands[p - 1]` for every row; an `Array UInt64` holds boxed words.
+   `deltaFindGoC` carries `c = cAt cands p` and `lc = lAt cands p` as
+   `UInt64` loop variables. When `isFast` holds (`p < cands.size`, `c` is not
+   below the value, `lc` is below it or `p = 0`), the pointer stays and no
+   array is read. Otherwise the pointer is `probeFrom` and `c`, `lc` are read
+   for it. Theorems (`SipFastTheorems.lean`): `candAt_cAt`,
+   `probeFast_isFast`, `deltaFindGoC_eq` (equals `deltaFindGoW` from the
+   same state when `c`, `lc` are the guarded reads at `p`); `deltaFindStart_eq`
+   holds unchanged for the changed start.
+2. Gather loop, next wanted row in the loop state (`deltaGatherGoK`): the
+   test `idx == pos[k]!` compares with a loop variable `nk = posAt pos k`;
+   `pos` is read once per found row. Theorems: `posAt_eq`,
+   `deltaGatherGoK_eq` (equals `deltaGatherGoW`); `deltaGatherStart_eq`
+   holds unchanged.
+3. FILTER on key bytes (`Storage/Sbm11/TypedCmp.lean`, new `FKind.typedCmp`).
+   For `?v OP c` or `c OP ?v` with `c` a typed literal that has no value for
+   the operators (`typedConstOk`: no language tag, datatype not `xsd:string`,
+   not numeric, not derived from `xsd:integer`, not `xsd:boolean`, no `0x00`
+   in the datatype), `Expr.valueCompare` compares two literals of that
+   datatype by the code point order of the lexical forms. `typedCmpKey?`
+   reads that order off the dictionary key `[5] ++ datatype ++ [0] ++
+   lexical form` of a tag 3 id (`Store.keySlice`, no copy): it checks the
+   prefix, decodes the lexical form with `String.fromUTF8?` and applies the
+   operator. A key it does not decide (another datatype or class, a lexical
+   form that is not UTF-8, an inline id) gives `none` and goes to the
+   reference path with the memo, as before. Theorems:
+   `TypedCmpTheorems.typedCmpKey?_some` (what an answer says about the key
+   bytes), `typedCmpKey_sound` (a key that `decodeKey?` reads as the term
+   `t` and that `typedCmpKey?` decides: `ebvOrFalse (Expr.evalIn {} [(v, t)]
+   e) = r`, for both operand orders and all six operators),
+   `TypedCmpFilterTheorems.typedCmpOf?_spec` and `typedCmp_fast_eq_ref` (the
+   compiled conjunct: `refFilter e [(v, t)] = r`). The theorems state the
+   relation between `Store.keySlice` and `Store.termOf` as `decodeKey?` of
+   the key range, which is how `Session.termOf` is defined
+   (`TermKeyFast.decodeKeySlice?_eq`); the abstract `Store` does not carry
+   that as a field, the same as for the `.str` conjunct. The rule applies to
+   every datatype that `typedConstOk` admits (so also `xsd:dateTime`), not
+   only to `xsd:date`.
+
+`#print axioms` of every theorem above: propext, Classical.choice,
+Quot.sound, except `candAt_cAt` and `posAt_eq` (propext only) and
+`deltaGatherGoK_eq` (propext, Quot.sound).
+No `sorry`, no `native_decide`, no `partial`. Tests:
+`IdQueryTests` `#guard`s run `typedCmpKey?` on 5 admitted constants (two
+dates, a dateTime, a gYear, an unknown datatype) and 2 refused ones, against
+the stored samples, all six operators and both orders, against `refFilter`,
+and check that at least 10 keys are decided (not vacuous), that a key with
+a lexical form that is not UTF-8 is not decided, and which constants
+`typedCmpOf?` accepts. New gate queries `tests/sbm11/gate/ids-filter-typed-swap.rq`,
+`ids-filter-typed-datetime.rq`, `ids-filter-typed-ne.rq`, and the existing
+`ids-sip-date-filter.rq`, run in `tests/sbm11/run.sh` against the reference
+engine.
+
+Measurement: `l4sbm11 query /home/user/bench-data/sbm11/dbpedia --file
+tools/bench/three-engines/queries/dbpedia/d14-filter-date.rq --verify none
+--repeat 7 --explain`, execution median of 7 runs in one process, 3
+interleaved rounds; "before" is the build of `origin/main` at `0a7fab49`,
+"after" the build of this change. 1-minute load average 2.2 to 2.5 in all
+rounds (other sessions on the machine, 4 cores). Answers of both builds
+byte-identical to
+`/home/user/bench-data/answers/dbpedia/d14-filter-date.sbm11-none.json`
+(54 rows).
+
+| | before | after | QLever 1 CPU warm (11.8) | QLever default warm (11.8) |
+| --- | ---: | ---: | ---: | ---: |
+| warm, round 1 / 2 / 3 (ms) | 12.02 / 11.67 / 15.75 | 10.20 / 9.72 / 9.32 | | |
+| warm, median of rounds (ms) | 12.02 | 9.72 | 6.09 | 6.09 |
+| peak RSS (VmHWM, kB) | 26,372 to 26,492 | 26,372 to 26,488 | | |
+
+Contribution of each change, from a second series (`taskset -c 2`,
+`--repeat 41`, 3 interleaved rounds, medians per round, median of rounds):
+before 11.63; find loop only 11.04; find loop and FILTER 9.69; all three
+9.20 ms. The gather change is within the spread of the rounds (8.66 to
+10.00). The QLever times include HTTP and JSON (about 2 to 3 ms for a small
+answer). The ratio to QLever 1 CPU goes from 2.0 to 1.6.
+
+Remaining cost (`perf record -e cpu-clock --call-graph dwarf,16384` of the
+"after" build, inclusive samples): `deltaGatherGoK` 45 percent,
+`deltaFindGoC` 31 percent, pread of blocks 7 percent, the FILTER
+(`applyFilters`) 5 percent (before: 18 percent), of which `typedCmpKey?` 1.7
+percent and `Session.keySlice` 2.8 percent; `readFrames` 5 percent.
+
+- The two loops are 76 percent. Per row they spend a state machine step per
+  byte (bounds check, accumulator test, `k` or `idx` test, byte test). The
+  length of each varint of the object column (random literal ranks) varies
+  and the branch on the continuation bit is not predictable. What would
+  remove it: a decoder of several bytes at a time (read 8 bytes, find the
+  terminating byte with a mask and a count of trailing zeros, gather the
+  7-bit groups) with its own equality proof against the byte loop, or a
+  different frame codec for unsorted columns (a wire format change). Neither
+  is done here.
+- The FILTER is no longer a cost that matters. A prefix test with
+  `ByteArray.extract` allocates 42 bytes per row; it is 1.7 percent of the
+  samples, so a loop-based prefix test is not worth its proof.
+
+Gates on this change (exit codes 0): `lake build` (1872 jobs);
+`tests/sbm11/run.sh` 3,115 pass, 0 fail, 29 expected-fail (out of 3,144);
+`SBM11_THREADS=4 tests/sbm11/census.sh` 605 executed, 605 matched the
+reference engine (438 on the id path); `tools/lean-tail-recursion-audit.py`,
+`tools/lean-unbuilt-modules.py` and `tools/lean-csimp-reach.py` with `--gate`;
+`tools/lean-hygiene-audit.py` clean.

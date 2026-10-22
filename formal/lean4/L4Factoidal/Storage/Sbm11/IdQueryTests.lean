@@ -247,6 +247,72 @@ def argRefused : Except String Arg → Bool
 -- every other object is `argOfTerm`
 #guard argTerm? (argOfObject (pIri "http://ex.org/b")) == iri? "http://ex.org/b"
 
+/-! ## `typedCmp`: a typed literal compared with a constant on the key bytes
+(issue 930, d14) -/
+
+/-- Stored terms for the typed comparison: the samples and dates, date
+    times and a literal of an unknown datatype whose lexical form is not UTF-8
+    is built below as a raw key. -/
+def typedSamples : List Term :=
+  samples ++ ([lit? "2020-01-01" (xsdT "date") none, lit? "2021-06-30" (xsdT "date") none,
+    lit? "1500-04-23" (xsdT "date") none, lit? "2020-01-01T10:00:00" (xsdT "dateTime") none,
+    lit? "2020-01-01" "http://ex.org/dt" none, lit? "" (xsdT "date") none,
+    lit? "é" (xsdT "date") none, lit? "2020-01-01" (xsdT "gYear") none]).filterMap id
+
+/-- Constants for the typed comparison; the last two are refused by
+    `typedConstOk` (numeric datatype; language tag). -/
+def typedConsts : List WfLiteral :=
+  (([lit? "2020-06-01" (xsdT "date") none, lit? "1800-01-01" (xsdT "date") none,
+    lit? "2020-01-01T10:00:00" (xsdT "dateTime") none, lit? "x" "http://ex.org/dt" none,
+    lit? "2020-01-01" (xsdT "gYear") none,
+    lit? "72" (xsdT "integer") none, lit? "Alice" rdfLangString.val (some "en")]).filterMap id).filterMap fun t =>
+      match t with | .literal l => some l | _ => none
+
+def typedExpr (op : CompOp) (swap : Bool) (c : WfLiteral) : Expr :=
+  if swap then .compare op (.lit c) (.var "v") else .compare op (.var "v") (.lit c)
+
+def allOps : List CompOp := [.eq, .ne, .lt, .gt, .le, .ge]
+
+/- Wherever `typedCmpKey?` answers on a stored key, the answer is the
+   reference evaluator's (the theorem is `TypedCmpTheorems.typedCmpKey_sound`;
+   this runs it on the samples). -/
+#guard typedConsts.all fun c =>
+  !L4Factoidal.Storage.Sbm11.TypedCmp.typedConstOk c || typedSamples.all fun t =>
+    match L4Factoidal.Storage.Sbm11.termKeyBytes? t with
+    | none => true
+    | some key => allOps.all fun op => [false, true].all fun swap =>
+        match L4Factoidal.Storage.Sbm11.TypedCmp.typedCmpKey? op swap
+            (L4Factoidal.Storage.Sbm11.TypedCmp.typedPre c) c.val.lexicalForm key 0 key.size with
+        | some r => r == refFilter (typedExpr op swap c) (mu t)
+        | none => true
+
+/- The test decides keys (it is not vacuous): 5 admitted constants, the
+   stored dates and date times, 6 operators, 2 orders. -/
+#guard (typedConsts.filter L4Factoidal.Storage.Sbm11.TypedCmp.typedConstOk).length == 5
+#guard ((typedConsts.filter L4Factoidal.Storage.Sbm11.TypedCmp.typedConstOk).foldl (fun n c =>
+    n + (typedSamples.filter fun t =>
+      match L4Factoidal.Storage.Sbm11.termKeyBytes? t with
+      | some key => (L4Factoidal.Storage.Sbm11.TypedCmp.typedCmpKey? .lt false
+          (L4Factoidal.Storage.Sbm11.TypedCmp.typedPre c) c.val.lexicalForm key 0 key.size).isSome
+      | none => false).length) 0) ≥ 10
+
+/- A key whose lexical form is not UTF-8 is not decided (the reference path
+   answers), and neither is a key of another datatype. -/
+#guard (match typedConsts.head? with
+  | some c =>
+    let pre := L4Factoidal.Storage.Sbm11.TypedCmp.typedPre c
+    let bad := pre ++ ByteArray.mk #[0xFF]
+    (L4Factoidal.Storage.Sbm11.TypedCmp.typedCmpKey? .lt false pre c.val.lexicalForm bad 0 bad.size).isNone &&
+    (L4Factoidal.Storage.Sbm11.TypedCmp.typedCmpKey? .lt false pre c.val.lexicalForm
+      (ByteArray.mk #[5, 1, 2]) 0 3).isNone
+  | none => false)
+
+/- The d14 conjunct compiles to `typedCmp` (either order); a numeric or
+   language-tagged constant does not. -/
+#guard typedConsts.all fun c =>
+  (typedCmpOf? (typedExpr .lt false c)).isSome == L4Factoidal.Storage.Sbm11.TypedCmp.typedConstOk c &&
+  (typedCmpOf? (typedExpr .ge true c)).isSome == L4Factoidal.Storage.Sbm11.TypedCmp.typedConstOk c
+
 #print axioms ebvOrFalse_evalIn_and
 
 end L4Factoidal.Storage.Sbm11.IdQueryTests
