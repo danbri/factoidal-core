@@ -25,6 +25,19 @@
 #                  authorization server, not ours; the summary prints them
 #                  separately.
 #   --config both  both (default)
+#   --authz touchstone|factoidal
+#                  which authorization server the authorization-on
+#                  configurations use (default touchstone, unchanged).
+#                  factoidal: OUR `factoidal authz-serve`
+#                  (https://github.com/danbri/factoidal/issues/916), started
+#                  with --allow-http and --allow-private-fetch because the
+#                  harness fixtures are http://localhost. The harness gets our
+#                  current private key as as.signingKey (`factoidal authz-keys
+#                  DIR --private`), so its storage tests mint tokens as with the
+#                  reference server, and the tests of core/authorization_server
+#                  and auth/* exercise OUR token endpoint. No SamlTrust: SAML is
+#                  not accepted (https://github.com/danbri/factoidal/issues/926).
+#                  Target ids get the suffix "-fas".
 #
 #   Alternative configurations. Each runs with authorization on, as
 #   `auth`, plus server flags that make one or more Touchstone tests apply
@@ -122,9 +135,16 @@ UNSTABLE=()
 MERKLE=()
 STORAGE=()
 SUFFIX=""
+AUTHZ=touchstone
 while [ $# -gt 0 ]; do
   case "$1" in
     --config) CONFIG="${2:-}"; shift 2 ;;
+    --authz)
+      case "${2:-}" in
+        touchstone) AUTHZ=touchstone; shift 2 ;;
+        factoidal) AUTHZ=factoidal; shift 2 ;;
+        *) echo "lws-touchstone: --authz is touchstone or factoidal" >&2; exit 2 ;;
+      esac ;;
     --shim) SHIM=1; shift ;;
     --unstable-search-results) UNSTABLE=(--unstable-search-results); SUFFIX="$SUFFIX-unstable"; shift ;;
     --merkle) MERKLE=(--merkle); SUFFIX="$SUFFIX-merkle"; shift ;;
@@ -351,10 +371,21 @@ run_suite () {
       node -e '
         const t = JSON.parse(require("fs").readFileSync(process.argv[1], "utf8")).tests
         const as = t.filter((x) => /^(auth\/|core\/authorization_server#)/.test(x.id) && x.outcome !== "inapplicable")
+        const whose = process.argv[3] === "factoidal" ? "OUR authorization server (factoidal authz-serve)"
+          : "Touchstone\x27s reference authorization server, not our storage server"
         if (as.length) console.log(process.argv[2] + ": of these, " + as.length +
-          " tests (auth/*, core/authorization_server) exercise Touchstone\x27s reference authorization server," +
-          " not our storage server; " + as.filter((x) => x.outcome === "passed").length + " passed")
-      ' "$TS/$reports/report.json" "$id"
+          " tests (auth/*, core/authorization_server) exercise " + whose + "; " +
+          as.filter((x) => x.outcome === "passed").length + " passed, " +
+          as.filter((x) => x.outcome === "failed").length + " failed")
+        const all = t.filter((x) => /^(auth\/|core\/authorization_server#)/.test(x.id))
+        if (process.argv[3] === "factoidal") {
+          for (const g of ["core/authorization_server#", "auth/oidc", "auth/cid", "auth/saml"]) {
+            const xs = all.filter((x) => x.id.startsWith(g))
+            const n = (o) => xs.filter((x) => x.outcome === o).length
+            console.log(`  ${g.replace(/#$/, "")}: ${n("passed")} pass, ${n("failed")} fail, ${n("cantTell")} cantTell, ${n("inapplicable")} inapplicable (out of ${xs.length})`)
+          }
+        }
+      ' "$TS/$reports/report.json" "$id" "$AUTHZ"
     fi
   fi
   case "$rc" in
@@ -425,12 +456,33 @@ prepare_auth () {
   AUTH_READY=1
 }
 
+# start_factoidal_authz NAME ID PORT FIXTURES BASE: start OUR authorization
+# server (see --authz above) and write the target registry for the run.
+start_factoidal_authz () {
+  local name="$1" id="$2" port="$3" fixtures="$4" base="$5"
+  local adir="$WORK/$name-authz"
+  rm -rf "$adir"; mkdir -p "$adir"
+  rm -f "$WORK/as-$name.log" "$WORK/targets-$name.yaml"
+  FACTOIDAL_LWS_KEY= node "$SERVE" authz-serve "$adir" --port "$port" --host 127.0.0.1 \
+    --issuer "http://127.0.0.1:$port" --resource "$base,${base}.well-known/lws-storage" \
+    --allow-http --allow-private-fetch > "$WORK/as-$name.log" 2>&1 &
+  PIDS+=($!)
+  wait_for "$WORK/as-$name.log" '^http://' 60 || { cat "$WORK/as-$name.log" >&2; cannot_run "authz-serve did not start"; }
+  local jwk
+  jwk="$(FACTOIDAL_LWS_KEY= node "$SERVE" authz-keys "$adir" --private | node -e '
+    let t = ""; process.stdin.on("data", (c) => { t += c }); process.stdin.on("end", () => {
+      const ks = JSON.parse(t).keys; process.stdout.write(JSON.stringify(ks[0])) })')"
+  [ -n "$jwk" ] || cannot_run "authz-keys printed no key"
+  printf 'targets:\n  %s:\n    baseUrl: %s\n    adapter: env\n    capabilities: [Authentication, HarnessIssuedTokens, ReachableFixtures]\n    properties:\n      webid.alice: %s\n      webid.bob: %s\n      fixtures.baseUrl: %s\n      as.signingKey: %s\n' \
+    "$id" "$base" "'${fixtures}agents/alice'" "'${fixtures}agents/bob'" "'$fixtures'" "'$jwk'" > "$WORK/targets-$name.yaml"
+}
+
 # run_authorized NAME ID LWS-SERVE-FLAGS...: start Touchstone's reference
 # authorization server and our server with authorization on (see --config
 # auth above) plus the given flags, and run the suite as target ID.
 run_authorized () {
   local name="$1" id="$2"; shift 2
-  prepare_auth
+  [ "$AUTHZ" = touchstone ] && prepare_auth
   AS_PORT="$(free_port)"; FIX_PORT="$(free_port)"; P="$(free_port)"; BASE_PORT="$P"
   if [ "$SHIM" = 1 ]; then BASE_PORT="$(free_port)"; fi
   BASE="http://127.0.0.1:$BASE_PORT/"
@@ -439,14 +491,20 @@ run_authorized () {
   # A reused TOUCHSTONE_WORK holds the previous run's log and targets file;
   # with them in place a second run (2026-10-21, issue 922) read the old
   # target id and could not run. Remove both before the server starts.
+  if [ "$AUTHZ" = factoidal ]; then
+    start_factoidal_authz "$name" "$id" "$AS_PORT" "$FIXTURES" "$BASE"
+    ISSUER="http://127.0.0.1:$AS_PORT"
+  else
   rm -f "$WORK/as-$name.log" "$WORK/targets-$name.yaml"
   java -Dlogback.configurationFile="$WORK/as/logback.xml" -cp "$CP" TouchstAs "$AS_PORT" \
     "$WORK/targets-$name.yaml" "$id" "$BASE" "$FIXTURES" "$BASE,${BASE}.well-known/lws-storage" \
     > "$WORK/as-$name.log" 2>&1 & PIDS+=($!)
   wait_for "$WORK/as-$name.log" '^issuer ' 60 || { cat "$WORK/as-$name.log" >&2; cannot_run "the reference authorization server did not start"; }
+    ISSUER="http://localhost:$AS_PORT"
+  fi
   rm -rf "$WORK/$name-store"; mkdir -p "$WORK/$name-store"
   if start_server "$name" "$WORK/$name-store" "$P" "$BASE" \
-       --issuer "http://localhost:$AS_PORT" --owner "${FIXTURES}agents/alice" "$@"; then
+       --issuer "$ISSUER" --owner "${FIXTURES}agents/alice" "$@"; then
     if [ "$SHIM" = 1 ]; then
       node "$WORK/shim.mjs" "$BASE_PORT" "$P" > "$WORK/$name-shim.log" 2>&1 & PIDS+=($!)
       wait_for "$WORK/$name-shim.log" '^shim:' 30 || cannot_run "the shim did not start"
@@ -459,6 +517,7 @@ run_authorized () {
   stop_pids "${PIDS[@]:$before}"
 }
 
+[ "$AUTHZ" = factoidal ] && SUFFIX="$SUFFIX-fas"
 if [ "$RUN_AUTH" = 1 ]; then
   ID=factoidal-auth$SUFFIX; [ "$SHIM" = 1 ] && ID=factoidal-auth$SUFFIX-shim
   run_authorized auth "$ID"
