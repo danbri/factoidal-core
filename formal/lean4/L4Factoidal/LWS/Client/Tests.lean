@@ -298,6 +298,9 @@ def verdict (a : Action) : Option Bool := (doneJson a).getBool? "accept"
 #guard verdict (script (nop "https://s.example/st" "good") []).2 == some false
 -- A body altered after signing: the digest does not match.
 #guard verdict (script (nop "https://s.example/st#k1" "good" "sha-256=:AAAA:") []).2 == some false
+-- The inbox URL as subscribed: the receiver's base and the request target.
+#guard inboxUrl { kind := "verifyNotification", url := "http://in.example/", requestTarget := "/inbox/1" } ==
+  "http://in.example/inbox/1"
 -- A document that names another id.
 #guard verdict (script (nop "https://s.example/st/fake#k1" "good") [sdesc "https://s.example/st"]).2 == some false
 

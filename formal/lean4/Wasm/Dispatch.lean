@@ -61,6 +61,7 @@ import Wasm.Ops.Pack
 import Wasm.Ops.ExtFns
 import Wasm.Ops.Lws
 import Wasm.Ops.Solid
+import Wasm.Ops.LwsClient
 import Wasm.Ops.Toan
 import Wasm.Ops.Xmpp
 import Wasm.Ops.Crypto
@@ -340,7 +341,9 @@ def lwsSolidOpNames : List String :=
   , "solidSnapshot"
   , "solidFetched"
   , "solidClientRequest"
-  , "solidClientResponse" ]
+  , "solidClientResponse"
+  , "lwsClientStart"
+  , "lwsClientStep" ]
 
 /-- The format, transform and reasoning op names of
 `Wasm/Ops/Formats.lean`, `Wasm/Ops/Reasoning.lean` and
@@ -656,6 +659,19 @@ def callIOUncoded (op : String) (argsJson : String) : IO String :=
         match args with
         | [a, b] => pure (Ops.solidClientResponse a b)
         | args => pure (errJson s!"solidClientResponse expects 2 arguments, got {args.length}"))
+  -- The LWS client (https://github.com/danbri/factoidal/issues/917): stateless,
+  -- the state is the JSON document the host passes back.
+  | "lwsClientStart" =>
+      withArgs (fun args =>
+        match args with
+        | [a] => pure (Ops.lwsClientStart a "")
+        | [a, b] => pure (Ops.lwsClientStart a b)
+        | args => pure (errJson s!"lwsClientStart expects 1 or 2 arguments, got {args.length}"))
+  | "lwsClientStep" =>
+      withArgs (fun args =>
+        match args with
+        | [a, b] => pure (Ops.lwsClientStep a b)
+        | args => pure (errJson s!"lwsClientStep expects 2 arguments, got {args.length}"))
   | "storeHandleList" =>
       withArgs (fun args =>
         match args with

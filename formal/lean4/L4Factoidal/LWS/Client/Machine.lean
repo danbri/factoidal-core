@@ -152,6 +152,9 @@ structure Op where
   /-- `verifyNotification`: the method and the header fields received. -/
   method : String := ""
   headers : List (String × String) := []
+  /-- `verifyNotification`: the request target received; the inbox URL as
+  subscribed is `url` resolved with it (RFC 3986 §5.2). Empty: `url` itself. -/
+  requestTarget : String := ""
 
 /-- The precondition a kind takes when the caller names none: the current
 entity tag for the writes that replace or patch (lws10-core §Update
@@ -177,7 +180,8 @@ def opJson (op : Op) : Json :=
     , ("inbox", .string op.inbox), ("actions", strsJson op.actions)
     , ("assignee", .string op.assignee), ("targets", strsJson op.targets)
     , ("constraint", op.constraint), ("destination", .string op.destination)
-    , ("method", .string op.method), ("headers", headersJson op.headers) ]
+    , ("method", .string op.method), ("headers", headersJson op.headers)
+    , ("requestTarget", .string op.requestTarget) ]
 
 /-- Read an operation document. `kind` is required. -/
 def opOfJson (j : Json) : Except String Op := do
@@ -195,7 +199,8 @@ def opOfJson (j : Json) : Except String Op := do
       , topics := jStrs j "topics", inbox := jStr j "inbox", actions := jStrs j "actions"
       , assignee := jStr j "assignee", targets := jStrs j "targets"
       , constraint := jAny j "constraint", destination := jStr j "destination"
-      , method := jStr j "method", headers := jHeaders j "headers" }
+      , method := jStr j "method", headers := jHeaders j "headers"
+      , requestTarget := jStr j "requestTarget" }
 
 /-! ## Session: tokens kept between operations -/
 
@@ -611,6 +616,11 @@ def inboxBase (method inbox : String) (hs : List (String × String)) (params : S
   pure (String.join ((comps.zip vals).map (fun (c, v) => "\"" ++ c ++ "\": " ++ v ++ "\n")) ++
     "\"@signature-params\": " ++ params)
 
+/-- The inbox URL as subscribed: `url`, resolved with the request target
+received when there is one. -/
+def inboxUrl (op : Op) : String :=
+  if op.requestTarget == "" then op.url else resolve op.url op.requestTarget
+
 /-- The RFC 9530 `Content-Digest` of a body, SHA-256. -/
 def digestOf (body : ByteArray) : String :=
   "sha-256=:" ++ Base64.encode (L4Factoidal.Crypto.sha256 body) ++ ":"
@@ -668,7 +678,7 @@ def verifyFinish (V : L4Factoidal.JOSE.Verifiers) (s : ClientState) (r : Resp) :
       match vm.bind (fun m => m.field? "publicKeyJwk") |>.bind L4Factoidal.JOSE.parsePublicJwk? with
       | none => reject s ("no verification method " ++ keyid)
       | some jwk =>
-        match inboxBase op.method op.url op.headers params with
+        match inboxBase op.method (inboxUrl op) op.headers params with
         | none => reject s "a covered component is missing"
         | some base =>
           let alg := sigParam? params "alg"
@@ -820,7 +830,10 @@ def authStep (s : ClientState) (c : AuthCtx) (r : Resp) : ClientState × Action 
         let ses : Session := { s.session with tokens := entry :: kept }
         let s := { s with session := ses, auth := none }
         match s.pending with
-        | some p => send { s with pending := none } s.pendingPhase p
+        -- The new token goes with the request that was refused: check 3
+        -- found its origin to be the storage root's.
+        | some p => sendPublic { s with pending := none } s.pendingPhase
+            { p with headers := p.headers ++ [("Authorization", "Bearer " ++ tok)] }
         | none => failWith s "internal" [("reason", .string "no pending request")]
   | _ => failWith s "internal" [("reason", .string "not an authorization phase")]
 
@@ -869,6 +882,7 @@ specific patch formats unless they are advertised"). -/
 def linksetWrite (s : ClientState) : ClientState × Action :=
   let op := s.op
   let pre := preconditionHeaders op s.etag
+  if op.precondition == "ifMatchCurrent" && s.etag == "" then failWith s "noEtag" else
   if op.kind == "move" then
     if !s.acceptPatch.contains mediaJsonPatch then
       failWith s "notAdvertised" [("acceptPatch", strsJson s.acceptPatch)]

@@ -88,6 +88,9 @@
     "./lws": {
       "default": "./lws/server.mjs"
     },
+    "./lws/client": {
+      "default": "./lws/client.mjs"
+    },
     "./solid/server": {
       "default": "./solid/server/index.mjs"
     },

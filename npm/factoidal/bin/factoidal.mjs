@@ -101,6 +101,7 @@ commands:
   lws-serve DIR               serve Linked Web Storage 1.0 over HTTP
   solid-serve DIR             serve the Solid Protocol over HTTP
   solid-client OP URL         run one Solid client operation
+  lws-client OP URL           run one Linked Web Storage client operation
 
 global options:
   -h, --help                  print this text, or a command's own help
@@ -539,7 +540,50 @@ kind names are accepted directly as well.
   --interpret KIND  one of storage, containment, auxiliaries, profile,
                     wacAllow, used when the engine names none
 
-Specification: https://solidproject.org/TR/protocol`
+Specification: https://solidproject.org/TR/protocol`,
+
+  'lws-client': `factoidal lws-client - run one Linked Web Storage client operation
+
+usage: factoidal lws-client <op> URL [options]
+
+Every request is chosen and built by the engine (lwsClientStart,
+lwsClientStep; formal/lean4/L4Factoidal/LWS/Client/): the authorization
+flow with its discovery checks, preconditions, retries, paging and linksets.
+This command supplies a socket and prints the engine's result as JSON. It
+exits 1 when the operation fails, and prints the failure document.
+
+operations:
+  discover URL        read the storage description of the storage of URL
+  read URL | head URL | getAccess URL
+  create CONTAINER    --body/--file, --content-type, --slug, --container,
+                      --type IRI, --link VALUE
+  update URL          --body/--file, --content-type, --link VALUE
+  patch URL           --body/--file (JSON Patch unless --content-type)
+  delete URL          --recursive
+  readLinkset URL | updateLinkset URL (--body/--file, --content-type)
+  move URL            --destination CONTAINER
+  list CONTAINER      every page, following rel="next"
+  typeIndex URL | search URL --query JSON
+  subscribe URL       --inbox URL [--topic URL]
+  unsubscribe URL | revokeAccess URL
+  requestAccess URL | grantAccess URL
+                      --action A[,A] --assignee URI [--target URL[,URL]]
+                      [--inbox URL]
+
+preconditions (update, patch, delete, updateLinkset, move):
+  --if-match TAG | --if-match-current | --if-none-match-star |
+  --if-unmodified-since DATE | --no-precondition
+  (default: --if-match-current for update, patch, updateLinkset and move)
+  --retry-412 N       read the tag again and resend, at most N times
+
+authorization:
+  --subject-token-file FILE   the credential to exchange (RFC 8693)
+  --subject-token-type URI    its type, for example
+                              urn:ietf:params:oauth:token-type:saml2
+  --access-token TOKEN        a token to present to the storage of URL
+                              (with --storage IRI and --root URL)
+
+Draft: https://w3c.github.io/lws-protocol/lws10-core/`
 }
 
 // ------------------------------------------------------------- arguments
@@ -600,7 +644,11 @@ const VALUE_OPTIONS = {
     'audience', 'page-size', 'moves', 'controller-inbox', 'delivery-limit', 'delivery-window',
     'redirects-max', 'storage']),
   'solid-serve': new Set(['port', 'host', 'base', 'owner', 'issuer', 'auth-config']),
-  'solid-client': new Set(['body', 'file', 'content-type', 'interpret'])
+  'solid-client': new Set(['body', 'file', 'content-type', 'interpret']),
+  'lws-client': new Set(['body', 'file', 'content-type', 'slug', 'type', 'link', 'if-match',
+    'if-unmodified-since', 'retry-412', 'destination', 'query', 'topic', 'action', 'assignee',
+    'target', 'subject-token-file', 'subject-token-type', 'access-token', 'storage', 'root',
+    'inbox'])
 }
 
 // ------------------------------------------------------------- commands
@@ -1587,6 +1635,75 @@ async function commandSolidClient (positional, options) {
   return EXIT_OK
 }
 
+// `factoidal lws-client`: the caller's options become the members of one
+// operation document; the engine decides everything else.
+async function commandLwsClient (positional, options) {
+  if (positional.length !== 2) {
+    throw new UsageError('lws-client needs an operation and a URL')
+  }
+  const [kind, url] = positional
+  const { createLwsClient, LwsClientError, LWS_CLIENT_KINDS } = await import('../lws/client.mjs')
+  if (!LWS_CLIENT_KINDS.includes(kind) || kind === 'verifyNotification') {
+    throw new UsageError(`unknown operation "${kind}"; one of ` +
+      LWS_CLIENT_KINDS.filter((k) => k !== 'verifyNotification').join(', '))
+  }
+  const list = (v) => String(v).split(',').filter((x) => x !== '')
+  const op = { kind, url }
+  if (typeof options.file === 'string') op.body = readWhole(options.file)
+  else if (typeof options.body === 'string') op.body = options.body
+  if (typeof options['content-type'] === 'string') op.mediaType = options['content-type']
+  if (typeof options.slug === 'string') op.slug = options.slug
+  if (options.container === true) op.container = true
+  if (options.recursive === true) op.recursive = true
+  if (typeof options.type === 'string') op.types = list(options.type)
+  if (typeof options.link === 'string') op.links = [options.link]
+  if (typeof options['if-match'] === 'string') { op.precondition = 'ifMatch'; op.tag = options['if-match'] }
+  if (options['if-match-current'] === true) op.precondition = 'ifMatchCurrent'
+  if (options['if-none-match-star'] === true) op.precondition = 'ifNoneMatchStar'
+  if (typeof options['if-unmodified-since'] === 'string') {
+    op.precondition = 'ifUnmodifiedSince'; op.tag = options['if-unmodified-since']
+  }
+  if (options['no-precondition'] === true) op.precondition = 'none'
+  if (typeof options['retry-412'] === 'string') op.retry412 = Number(options['retry-412'])
+  if (typeof options.destination === 'string') op.destination = options.destination
+  if (typeof options.query === 'string') op.query = JSON.parse(options.query)
+  if (typeof options.topic === 'string') op.topics = list(options.topic)
+  if (typeof options.inbox === 'string') op.inbox = options.inbox
+  if (typeof options.action === 'string') op.actions = list(options.action)
+  if (typeof options.assignee === 'string') op.assignee = options.assignee
+  if (typeof options.target === 'string') op.targets = list(options.target)
+  const clientOptions = {}
+  if (typeof options['subject-token-file'] === 'string') {
+    clientOptions.subjectToken = new TextDecoder('utf-8', { fatal: true })
+      .decode(readWhole(options['subject-token-file'])).trim()
+  }
+  if (typeof options['subject-token-type'] === 'string') {
+    clientOptions.subjectTokenType = options['subject-token-type']
+  }
+  if (typeof options['access-token'] === 'string') {
+    if (typeof options.storage !== 'string' || typeof options.root !== 'string') {
+      throw new UsageError('--access-token needs --storage IRI and --root URL')
+    }
+    clientOptions.session = {
+      tokens: [{ storage: options.storage, root: options.root, token: options['access-token'] }]
+    }
+  }
+  let answer
+  try {
+    const client = await createLwsClient(clientOptions)
+    answer = await client.run(op)
+  } catch (error) {
+    if (error instanceof LwsClientError) {
+      if (error.unknownOp) return notWired('lws-client', error.message)
+      out(JSON.stringify({ fail: error.detail }, null, 2))
+      return EXIT_FAILURE
+    }
+    throw error
+  }
+  out(JSON.stringify(answer, null, 2))
+  return EXIT_OK
+}
+
 const COMMANDS = {
   version: (positional, options) => commandVersion(options),
   'sample-store': (positional, options) => commandSampleStore(positional, options),
@@ -1599,7 +1716,8 @@ const COMMANDS = {
   serve: commandServe,
   'lws-serve': commandLwsServe,
   'solid-serve': commandSolidServe,
-  'solid-client': commandSolidClient
+  'solid-client': commandSolidClient,
+  'lws-client': commandLwsClient
 }
 
 // ----------------------------------------------------------------- main
