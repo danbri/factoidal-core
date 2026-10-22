@@ -76,6 +76,22 @@ with SHA-256; the caller passes the signing input, never a digest.
     There is no "unknown" answer and no success-by-default path.
   * `p256ValidatePublicKey pubXY`: `true` when `pubXY` is 64 bytes and
     the point is on the curve and is not the point at infinity.
+  * `p256SignSha256 sk msg nonce` (added for the authorization server,
+    https://github.com/danbri/factoidal/issues/916): HACL*
+    `Hacl_P256_ecdsa_sign_p256_sha2`. 64 bytes `r || s`, or EMPTY when `sk`
+    or `nonce` is not 32 bytes or HACL* refuses it (outside `[1, n-1]`).
+    The nonce comes from the host's random source; this tree derives no
+    nonce (no RFC 6979 code here: that would be signature logic).
+  * `p256SecretToPublic sk`: HACL* `Hacl_P256_dh_initiator`, the raw
+    64-byte `x || y`, or EMPTY for an invalid private key.
+  * `p256CompressedToRaw pk`: HACL* `Hacl_P256_compressed_to_raw`, the raw
+    64-byte `x || y` of a 33-byte SEC 1 compressed point, or EMPTY when the
+    prefix is not 0x02/0x03 or the point is not on the curve.
+
+The run-time checks of the three: `lake exe l4crypto-probe`, sections
+`p256-sign-rfc6979` (RFC 6979 A.2.5), `p256-secret-to-public` (RFC 6979
+A.2.5 and the Wycheproof `ecdh_secp256r1_webcrypto_test.json` keys) and
+`p256-compressed` (Wycheproof `ecdh_secp256r1_ecpoint_test.json`).
 -/
 
 namespace L4Factoidal.Crypto.P256
@@ -96,5 +112,36 @@ opaque p256VerifySha256 (pubXY : @& ByteArray) (msg : @& ByteArray)
 the curve, or the point at infinity. -/
 @[extern "l4_hacl_p256_validate_public_key"]
 opaque p256ValidatePublicKey (pubXY : @& ByteArray) : Bool
+
+/-- ECDSA-P256-SHA256 signing via HACL* `Hacl_P256_ecdsa_sign_p256_sha2`:
+the 64-byte JWS `r || s`, or the EMPTY array on any refusal. -/
+@[extern "l4_hacl_p256_sign_sha256"]
+opaque p256SignSha256Raw (sk : @& ByteArray) (msg : @& ByteArray)
+    (nonce : @& ByteArray) : ByteArray
+
+/-- The raw `x || y` public key of a private key via HACL*
+`Hacl_P256_dh_initiator`, or the EMPTY array. -/
+@[extern "l4_hacl_p256_secret_to_public"]
+opaque p256SecretToPublicRaw (sk : @& ByteArray) : ByteArray
+
+/-- SEC 1 point decompression via HACL* `Hacl_P256_compressed_to_raw`, or
+the EMPTY array. -/
+@[extern "l4_hacl_p256_compressed_to_raw"]
+opaque p256CompressedToRawRaw (pk : @& ByteArray) : ByteArray
+
+/-- `p256SignSha256Raw` with its refusal as `none`. -/
+def p256SignSha256 (sk msg nonce : ByteArray) : Option ByteArray :=
+  let s := p256SignSha256Raw sk msg nonce
+  if s.size == 64 then some s else none
+
+/-- `p256SecretToPublicRaw` with its refusal as `none`. -/
+def p256SecretToPublic (sk : ByteArray) : Option ByteArray :=
+  let p := p256SecretToPublicRaw sk
+  if p.size == 64 then some p else none
+
+/-- `p256CompressedToRawRaw` with its refusal as `none`. -/
+def p256CompressedToRaw (pk : ByteArray) : Option ByteArray :=
+  let p := p256CompressedToRawRaw pk
+  if p.size == 64 then some p else none
 
 end L4Factoidal.Crypto.P256
