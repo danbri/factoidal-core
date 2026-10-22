@@ -2,7 +2,7 @@ name: Verify Lean 4 corpus
 
 # The Lean tree contains executable semantics, proof modules, and build-time
 # #guard tests.  A focused executable build is not a substitute for checking
-# the whole package: this workflow makes `lake build L4Factoidal` a required,
+# the whole package: this workflow builds `L4Factoidal` and `l4wasm` as a
 # visible repository gate.
 on:
   push:
@@ -51,7 +51,9 @@ jobs:
         shell: bash
         run: |
           set -o pipefail
-          lake build L4Factoidal 2>&1 | tee "$RUNNER_TEMP/lake-build.log"
+          # l4wasm owns public producer guards (including CSVW/RIF refusal).
+          # They are not in the L4Factoidal library's import closure.
+          lake build L4Factoidal l4wasm 2>&1 | tee "$RUNNER_TEMP/lake-build.log"
 
       # `lake build` alone is NOT the soundness gate, and it was the whole
       # gate until 2026-09-03. A `sorry` fails the build, because Lean emits
