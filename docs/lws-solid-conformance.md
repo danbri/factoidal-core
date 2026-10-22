@@ -86,6 +86,8 @@ A response is a JSON object with the same shape minus the method:
 | `lwsFetched` | `[handle, documentJson]` | `{"ok":true,"fetch":{"issuer":…,"url":…}}`, `{"ok":true,"installed":N}` or `{"ok":true,"refused":"…"}` |
 | `lwsDelivered` | `[handle, {"id","status","now"?}]` | `{"ok":true,"changed":B}`, with `"retry":{"delivery":{…},"after":SECONDS}` when the engine wants the delivery made again |
 | `lwsFlush` | `[handle, {"now"?}]` | `{"ok":true,"changed":B}`, with `"deliveries":[…]` for the waiting activities whose window has ended (one batched envelope per subscription) and `"wake":SECONDS` when more wait (https://github.com/danbri/factoidal/issues/915) |
+| `lwsLoad` | `[handle, {"files":[{"path","present","length"?}],"seed"}]` + the bytes of the present files, one after the other, as the IN region (`l4_call_blob_io` only) | `{"ok":true,"load":{"read":[PATH,…]}}` (read these files next) or `{"ok":true,"ready":true,"handle","root","plan":[…],"bytes":N}` with the plan's bytes as the OUT region; the handle serves steps after `ready`. An error ends the start. Only for `"storage": "files"` (https://github.com/danbri/factoidal/issues/918). |
+| `lwsPersist` | `[handle, {"seed"}]` (`l4_call_blob_io` only) | `{"ok":true,"plan":[…],"bytes":N}`, the plan's bytes as the OUT region: the writes of the changes since the last persist. Only for `"storage": "files"`. |
 | `solidOpen` | `[configJson]` | `{"ok":true,"handle":"solid1","root":"/","storage":"…"}` |
 | `solidStep` | `[handle, requestJson]` | `{"ok":true,"response":{…}}` |
 | `solidClose` | `[handle]` | `{"ok":true}` |
@@ -121,7 +123,19 @@ A response is a JSON object with the same shape minus the method:
 | `deliveryWindow` | `60` | `lwsOpen` only. The length of that window, in seconds. `factoidal lws-serve --delivery-window S`. |
 | `listen` | absent | `lwsOpen` only. What the host bound: `{"address":IP,"port":N,"addresses":[IP,…]}` (the bound address, its port, the addresses of the machine's interfaces). Data for `L4Factoidal/LWS/InboxGuard.lean`, which refuses a webhook inbox that names this server (issue 915). `npm/factoidal/lws/server.mjs` `listen()` passes it. |
 | `controllerInbox` | absent | `lwsOpen` only. The storage controller's inbox, an `http` or `https` URL (another value stops the start): each new access request is announced there with a `Create` notification (`AccessGrants.announceRequest`, https://github.com/danbri/factoidal/issues/920). The LWS draft names no such inbox; this is a server choice. `factoidal lws-serve --controller-inbox URL`. |
+| `storage` | `"snapshot"` | `lwsOpen` only. Where `DIR` keeps the storage (https://github.com/danbri/factoidal/issues/918, design record `docs/designissues/2026-10-22-lws-storage-on-disk.md`): `"snapshot"`, the one document of `lwsSnapshot`; or `"files"` (`L4Factoidal/LWS/FileLayout.lean`): one file per body version under `bodies/`, a journal `lws-journal`, a metadata file `lws-files.json`. With `"files"`, `lwsOpen` answers `load: {read: [PATH, …]}` and the config must carry no `snapshot`; the host reads the named files and passes them to `lwsLoad` until it answers `ready`, performs the start's `plan`, and after each answer with `"changed": true` calls `lwsPersist` and performs its plan before it answers the request. Another value is refused. `factoidal lws-serve --storage files`. |
 | `rootAcl` | absent | the ACL document (Turtle) of the storage root, written when the storage is created. Web Access Control §3.2 requires the root container's ACL resource to have a representation, and under enforcement a storage cannot write its own: the request that would write it is the first request it would authorize. It is therefore a host provisioning input. |
+
+A plan (`lwsLoad`, `lwsPersist`) is a list of file operations, performed in
+order, paths relative to `DIR` (`Files.FileOp`): `{"op":"write","path","temp","offset","length"}`
+(create the parent directory when missing, write the bytes to `temp`, fsync,
+rename to `path`, fsync the directory), `{"op":"append","path","offset","length"}`
+(append, fsync), `{"op":"remove","path"}` (a missing file is no error) and
+`{"op":"rename","from","to"}` (a missing file is no error). `offset` and
+`length` name bytes of the OUT region. `seed` is at least 16 random bytes
+(base64) from the host for every call; the engine derives the nonces of a
+storage key from it. The host makes no other file decision
+(`npm/factoidal/lws/persist.mjs`).
 
 `lwsStep` and `solidStep` answer `"changed": true` when the step changed the
 storage (every mutation advances the clock). `factoidal lws-serve DIR` and

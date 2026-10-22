@@ -138,6 +138,31 @@ theorem mem_lastTouch {touched : List String} {p : String} (h : p ∈ touched) :
   rw [List.mem_reverse]
   exact mem_dedupGo touched {} [] p (fun q hq => by simp at hq) (.inl h)
 
+theorem mem_of_mem_dedupGo (l : List String) (seen : Std.HashSet String) (acc : List String)
+    (p : String) : p ∈ dedupGo l seen acc → p ∈ l ∨ p ∈ acc := by
+  induction l generalizing seen acc with
+  | nil => intro h; simp [dedupGo] at h; exact .inr h
+  | cons q t ih =>
+      intro h
+      unfold dedupGo at h
+      split at h
+      · rcases ih seen acc h with h | h
+        · exact .inl (List.mem_cons_of_mem _ h)
+        · exact .inr h
+      · rcases ih (seen.insert q) (q :: acc) h with h | h
+        · exact .inl (List.mem_cons_of_mem _ h)
+        · rcases List.mem_cons.mp h with h | h
+          · subst h; exact .inl List.mem_cons_self
+          · exact .inr h
+
+theorem mem_of_mem_lastTouch {touched : List String} {p : String} (h : p ∈ lastTouch touched) :
+    p ∈ touched := by
+  unfold lastTouch at h
+  rw [List.mem_reverse] at h
+  rcases mem_of_mem_dedupGo touched {} [] p h with h | h
+  · exact h
+  · simp at h
+
 #guard lastTouch ["/a", "/b", "/a", "/c", "/b"] == ["/c", "/b", "/a"]
 #guard lastTouch [] == []
 

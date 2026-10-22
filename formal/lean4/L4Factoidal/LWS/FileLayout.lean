@@ -284,6 +284,44 @@ def metaOfJson (j : Json) : Except String MetaDoc := do
     | some _ => .error "files: bad pendingRemoves"
   .ok { seq, clock, nextBody, entries, side, pending }
 
+theorem mapM_fileMetaOfJson (ms : List FileMeta) (h : ∀ m ∈ ms, validTarget m.path = true) :
+    (ms.map fileMetaJson).mapM fileMetaOfJson = .ok ms := by
+  induction ms with
+  | nil => rfl
+  | cons m rest ih =>
+      have hm := fileMetaOfJson_fileMetaJson m (h m (by simp))
+      have hr := ih (fun x hx => h x (by simp [hx]))
+      simp only [List.map_cons, List.mapM_cons, hm, hr]
+      rfl
+
+theorem find_side_none (side : List (String × Json)) (k : String)
+    (h : ∀ kv ∈ side, kv.1 ≠ k) : side.find? (fun kv => kv.1 == k) = none := by
+  rw [List.find?_eq_none]
+  intro kv hkv
+  simp [h kv hkv]
+
+/-- The metadata file written by `metaJson` reads back with the same record
+number, clock, next body number, entries (in order) and pending removals.
+The hypotheses are the path check of the reader and that no member of the
+other state is named `pendingRemoves`; the other state is read by the
+functions that read the snapshot's members. -/
+theorem metaOfJson_metaJson (d : MetaDoc) (hv : ∀ m ∈ d.entries, validTarget m.path = true)
+    (hs : ∀ kv ∈ d.side, kv.1 ≠ "pendingRemoves") :
+    (metaOfJson (metaJson d)).map (fun d' => (d'.seq, d'.clock, d'.nextBody, d'.entries, d'.pending)) =
+      .ok (d.seq, d.clock, d.nextBody, d.entries, d.pending) := by
+  obtain ⟨seq, clock, nextBody, entries, side, pending⟩ := d
+  have he := mapM_fileMetaOfJson entries hv
+  have hp := find_side_none side "pendingRemoves" hs
+  cases pending with
+  | nil =>
+      simp [metaOfJson, metaJson, reqNat, natField?, natOf_numJson, Json.getString?, Json.getArray?,
+        Json.field?, Json.asString?, Json.asArray?, bind, Except.bind, he, hp, metaFormat,
+        List.find?_append, Except.map]
+  | cons n t =>
+      simp [metaOfJson, metaJson, reqNat, natField?, natOf_numJson, Json.getString?, Json.getArray?,
+        Json.field?, Json.asString?, Json.asArray?, bind, Except.bind, he, hp, metaFormat,
+        List.find?_append, natsOf_cons_map, Except.map]
+
 /-! ## The binary seal of body files and journal payloads
 
 `"LWE1"`, the key id (the first 8 bytes of SHA-256 of the key), the 12-byte
@@ -548,12 +586,45 @@ def persist (A : Seal.Aead) (key? : Option ByteArray) (seed : ByteArray) (fs : F
     let pl := dead.foldl (fun pl n => pl.remove (bodyName n)) pl
     .ok ({ fs' with journalBytes := fs.journalBytes + fr.size }, pl)
 
-/-- The operations `persist` writes into its record are exactly the record of
-the recording state under the new body references, so `Journal.replay_jstate`
-applies to them. -/
-theorem persist_ops_record (refs : Std.HashMap String FileRef) (js : JState MemStore) :
-    js.record (projWith refs) = recordOf MemStore (projWith refs) js.base (lastTouch js.touched) :=
-  rfl
+/-- `assignBodies` changes the body reference of a path only when it is one
+of the paths it was given. -/
+theorem assignBodies_refs (A : Seal.Aead) (key? : Option ByteArray) (seed : ByteArray)
+    (look prior : String → Option Entry) (ps : List String) :
+    ∀ (acc r : Std.HashMap String FileRef × Nat × Nat × Plan × List Nat),
+      assignBodies A key? seed look prior ps acc = .ok r →
+      ∀ q, q ∉ ps → r.1[q]? = acc.1[q]? := by
+  induction ps with
+  | nil => intro acc r h q _; simp [assignBodies] at h; rw [h]
+  | cons p rest ih =>
+      intro acc r h q hq
+      obtain ⟨refs, next, ni, pl, dead⟩ := acc
+      have hqr : q ∉ rest := fun h' => hq (List.mem_cons_of_mem _ h')
+      have hpq : (p == q) = false := by
+        simp; exact fun h' => hq (h' ▸ List.mem_cons_self)
+      unfold assignBodies at h
+      simp only at h
+      repeat' split at h
+      all_goals first
+        | (rw [ih _ r h q hqr]; simp [Std.HashMap.getElem?_insert, Std.HashMap.getElem?_erase, hpq])
+        | exact ih _ r h q hqr
+        | simp at h
+
+/-- The record a persist writes, replayed onto a table that holds the
+metadata of the store at the last persist, gives the metadata of the store
+now, with the new body references. `assignBodies` is the first step of
+`persist`, and the record's operations are `js.record (projWith refs')`. -/
+theorem persist_replay (A : Seal.Aead) (key? : Option ByteArray) (seed : ByteArray)
+    (js : JState MemStore) (refs : Std.HashMap String FileRef) (n i : Nat) (pl : Plan)
+    (d : List Nat) (r : Std.HashMap String FileRef × Nat × Nat × Plan × List Nat)
+    (h : assignBodies A key? seed (memLookup js.base) (memLookup js.prior) (lastTouch js.touched)
+      (refs, n, i, pl, d) = .ok r)
+    (m : Std.HashMap String FileMeta) (hm : Represents MemStore (projWith refs) m js.prior) :
+    Represents MemStore (projWith r.1) (applyOps m (js.record (projWith r.1))) js.base := by
+  apply replay_jstate MemStore js m hm
+  intro p hp
+  have hr := assignBodies_refs A key? seed _ _ _ _ r h p (fun h' => hp (mem_of_mem_lastTouch h'))
+  funext e
+  simp only [projWith, Std.HashMap.getD_eq_getD_getElem?, hr]
 
 /-! ## The start
 

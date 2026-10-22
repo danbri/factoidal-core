@@ -172,10 +172,17 @@ done again. A snapshot is never written in files mode.
   (`JournalStore`, under the Merkle store and the type index) satisfies
   `StoreLaws`; its state carries a proof that every path not recorded has the
   value it had at the last persist.
-- `replay_record`, `replay_records`: replaying the records written by a
-  sequence of steps gives, at every path, the metadata of the store after the
-  steps.
-- `recordOfJson_recordJson`, `metaOfJson_metaJson`: the JSON forms read back.
+- `replay_record`, `replay_jstate`, `replay_records`: replaying the records
+  written by a sequence of steps gives, at every path, the metadata of the
+  store after the steps.
+- `persist_replay`, `assignBodies_refs`: the operations `persist` writes are
+  `js.record` under the new body references, and a body reference changes only
+  at a touched path, so `replay_jstate` applies to the records it writes.
+- `recordOfJson_recordJson`, `fileMetaOfJson_fileMetaJson`,
+  `metaOfJson_metaJson`: the JSON forms of a record, of one resource's
+  metadata, and of the metadata file (record number, clock, next body number,
+  entries in order, pending removals) read back. The other state in the
+  metadata file is read by the same functions as the snapshot's members.
 - `decodeFrames_encodeFrames`, `decodeFrames_torn`: frames read back; a journal
   whose last frame is cut at any byte reads back as the records before it.
 - `openBin_sealBin`, `openBin_keyId`: as for the snapshot seal, over any AEAD

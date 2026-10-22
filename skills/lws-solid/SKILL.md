@@ -66,6 +66,7 @@ factoidal lws-serve   DIR (--issuer IRI[,IRI…] | --auth-config FILE | --insecu
                           [--no-linkset-put] [--unstable-search-results] [--merkle]
                           [--controller-inbox URL] [--delivery-limit N]
                           [--delivery-window SECONDS] [--redirects-max N]
+                          [--storage snapshot|files]
 factoidal solid-serve DIR (--issuer IRI[,IRI…] | --auth-config FILE | --insecure-no-auth)
                           [--port N] [--host ADDRESS] [--base IRI] [--owner WEBID]
 ```
@@ -92,6 +93,61 @@ rest" below).
 `L4Factoidal/LWS/Snapshot.lean` decides the format and refuses traversal
 paths; request paths with dot segments or encoded traversal get 400
 (`validTarget`). Persisting into the Shardborough store is a later step.
+`lws-serve --storage files` keeps `DIR` as one file per body and a journal
+instead (section "Storage on disk" below).
+
+### Storage on disk, stage 1 (https://github.com/danbri/factoidal/issues/918)
+
+Design record: `docs/designissues/2026-10-22-lws-storage-on-disk.md`. Off by
+default: config `storage: "files"` (`listen({ storage: 'files' })`,
+`lws-serve --storage files`, `tools/lws-touchstone.sh --storage files`).
+
+* Layout (`L4Factoidal/LWS/FileLayout.lean`): `lws-files.json` (metadata of
+  every resource and the other state, format `lws-files-1`), `lws-journal`
+  (one framed record per step that changed the storage), `bodies/XX/N` (one
+  file per body VERSION, numbered; the name holds no part of the path). A new
+  body gets a new number; the old file is removed after the record is on disk.
+* Journal frame (`L4Factoidal/LWS/Journal.lean`): `LWJ1`, payload length
+  (4 bytes), SHA-256 of the payload, the payload. A frame is valid only when
+  complete and its digest matches; replay stops at the first that is not. When
+  the journal would pass max(1 MiB, the size of `lws-files.json`) a step writes
+  a new metadata file and an empty journal (compaction). A start with records
+  compacts too.
+* What the store records: `JournalStore` sits under the Merkle store and the
+  type index (`LwsBackend` in `MerkleHttp.lean`) and records the path of every
+  `put` and `remove`, with a proof (`JState.ok`) that no other path changed
+  since the last persist. A snapshot handle forgets them after every step.
+* Host contract (`npm/factoidal/lws/persist.mjs`): `lwsOpen` answers `load:
+  {read: [...]}`; the host reads those files (relative to DIR), calls `lwsLoad`
+  with the bytes until it answers `ready`, then performs its `plan`. After a
+  step with `changed: true` it calls `lwsPersist` and performs that plan before
+  it answers. Plan operations: `write` (temp, fsync, rename, fsync of the
+  directory), `append` (fsync), `remove`, `rename`. The host makes no other
+  decision; the file is in group 2 of `tools/host-purity-lint.sh`.
+* Encryption at rest: `lws-files.json` sealed as the snapshot is
+  (`Seal.sealSnapshot`); every body file and journal payload sealed with the
+  binary format `LWE1` (`Files.sealBin`), the file's own name (or
+  `lws-journal`) in the associated data, so a body file moved to another name
+  does not open. Nonces from the host's `seed` per call.
+* Migration: a start that finds only `lws-state.json` writes every body file,
+  `lws-files.json` and an empty journal, then renames the snapshot to
+  `lws-state.json.migrated`.
+* In memory in stage 1: everything, as in the snapshot mode (bodies included).
+  Stage 2 (bodies read on GET, the metadata in an on-disk index, a start that
+  reads no body) is the rest of issue 918.
+* Theorems: `journalStoreLaws`, `replay_record`, `replay_jstate`,
+  `replay_records` (replaying the records of a sequence of steps gives the
+  metadata of the store after them), `persist_replay`, `assignBodies_refs`,
+  `decodeFrames_encodeFrames`, `decodeFrames_torn` (a journal whose last frame
+  is cut at any byte reads back as the frames before it), `fileMetaOfJson_fileMetaJson`,
+  `recordOfJson_recordJson`, `openBin_sealBin`, `openBin_keyId`. Not proved:
+  `parseJson` inverts `Json.toString` (as for the snapshot).
+
+Tests: `L4Factoidal/LWS/FileLayoutTests.lean` (`#guard`s that play the host on
+a table of files: round trips clear and sealed, every step compacting, a
+journal cut at every byte of its last record, a changed or missing body file,
+a wrong key, a record out of order, migration); `node tests/lws/storage-files.mjs`;
+`tests/lws/scaling.mjs` rows "storage".
 
 The LWS binding of the 2026-10-19 editor's draft (ETag, conditional
 requests, ranges, `application/lws+json` listings, linksets, the

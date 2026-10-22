@@ -314,8 +314,41 @@ async function storageChild (s, mode) {
   }
 }
 
+// The memory of a storage kept in files (issue 918 stage 2, an EXPECTED
+// FAILURE today): phase `fill` writes s resources of 16 KiB into DIR with
+// `storage: "files"`; phase `open` (a new process) opens DIR and reads one
+// resource, and reports its peak resident set. Stage 1 reads every body into
+// memory at start, so the peak grows with the storage.
+async function storageMemChild (s, dir, phase) {
+  const f = await import(join(PKG, 'index.mjs'))
+  const { listen } = await import(join(PKG, 'lws/server.mjs'))
+  const engine = await f.loadEngine()
+  const server = await listen({ engine, port: 0, insecureNoAuth: true, onError: () => {}, dir, storage: 'files' })
+  try {
+    if (phase === 'fill') {
+      const mk = await fetch(`${server.origin}/items/`, { method: 'PUT', headers: { 'content-type': 'text/turtle' }, body: '' })
+      await mk.text()
+      const body = 'x'.repeat(16384)
+      for (let i = 0; i < s; i++) {
+        const r = await fetch(`${server.origin}/items/`, { method: 'POST', headers: { 'content-type': 'text/plain', slug: `r${i}` }, body })
+        await r.arrayBuffer()
+        if (r.status !== 201) throw new Error(`POST ${i} answered ${r.status}`)
+      }
+    } else {
+      const r = await fetch(`${server.origin}/items/r0`)
+      await r.arrayBuffer()
+      if (r.status !== 200) throw new Error(`GET answered ${r.status}`)
+    }
+  } finally { await server.close() }
+  process.stdout.write(JSON.stringify({ s, phase, rss: process.resourceUsage().maxRSS * 1024 }) + '\n')
+}
+
 if (opt('--merkle-child')) {
   await merkleChild(Number(opt('--merkle-child')))
+  process.exit(0)
+}
+if (opt('--storage-mem-child')) {
+  await storageMemChild(Number(opt('--storage-mem-child')), opt('--dir'), opt('--phase'))
   process.exit(0)
 }
 if (opt('--storage-child')) {
@@ -442,5 +475,42 @@ if (srows.snapshot.length === 3) {
   // Reported, not bounded: the snapshot mode writes the whole storage.
   console.log(`  storage snapshot: PUT time 4s/s ${(sc.put / sa.put).toFixed(2)} (reported; the snapshot is linear in the storage)`)
 }
-console.log(`lws scaling: ${pass} pass, ${fail} fail (out of ${pass + fail})`)
+// EXPECTED FAILURE, https://github.com/danbri/factoidal/issues/918 stage 2:
+// the peak memory of a start must not grow with the storage. Stage 1 holds
+// every body in memory, so 4s resources of 16 KiB take about 48 MiB more
+// than s. When stage 2 lands this row passes, the run turns red as an
+// unexpected pass, and the row becomes an assertion.
+let xfail = 0
+{
+  const mrowsS = []
+  for (const s of [sBase, 4 * sBase]) {
+    const dir = mkdtempSync(join(tmpdir(), 'lws918-storage-mem-'))
+    try {
+      for (const phase of ['fill', 'open']) {
+        const out = execFileSync(process.execPath, [fileURLToPath(import.meta.url), '--storage-mem-child', String(s), '--dir', dir, '--phase', phase],
+          { encoding: 'utf8', stdio: ['ignore', 'pipe', 'inherit'], timeout: 900000 })
+        if (phase === 'open') mrowsS.push(JSON.parse(out.trim().split('\n').pop()))
+      }
+    } catch (e) {
+      check(`storage files memory at ${s} resources`, false, `the child process stopped (${String(e.message).split('\n')[0]})`)
+    } finally {
+      rmSync(dir, { recursive: true, force: true })
+    }
+  }
+  if (mrowsS.length === 2) {
+    const [ma, mc] = mrowsS
+    const growth = mc.rss - ma.rss
+    console.log(`  storage files: start and one GET, ${ma.s} resources of 16 KiB: peak RSS ${(ma.rss / 1048576).toFixed(1)} MiB; ` +
+                `${mc.s}: ${(mc.rss / 1048576).toFixed(1)} MiB`)
+    const ok = growth <= 8 * 1048576
+    if (ok) {
+      fail++
+      console.log(`  FAIL  UNEXPECTED PASS (issue 918 stage 2): peak RSS of a start grows ${(growth / 1048576).toFixed(1)} MiB <= 8 MiB from s to 4s; make this row an assertion`)
+    } else {
+      xfail++
+      console.log(`  xfail storage files: peak RSS of a start does not grow with the storage (issue 918 stage 2; growth ${(growth / 1048576).toFixed(1)} MiB, bound 8 MiB)`)
+    }
+  }
+}
+console.log(`lws scaling: ${pass} pass, ${fail} fail, ${xfail} xfail (out of ${pass + fail + xfail})`)
 process.exit(fail ? 1 : 0)
