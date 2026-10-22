@@ -236,6 +236,7 @@ extern_lib libl4exthost pkg := do
              `Wasm.Ops.Pack,
              `Wasm.Ops.Lws,
              `Wasm.Ops.Solid,
+             `Wasm.Ops.Authz,
              `Wasm.Ops.Toan,
              `Wasm.Ops.Xmpp,
              `Wasm.Ops.Crypto,

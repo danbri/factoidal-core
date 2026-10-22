@@ -267,7 +267,8 @@ def classify (op msg : String) (positioned : Bool) : String :=
 /-- Ops whose envelopes this model leaves as they are (HTTP status model). -/
 def uncodedOps : List String :=
   [ "lwsOpen", "lwsStep", "lwsClose", "lwsSnapshot", "lwsFetched", "lwsDelivered", "lwsFlush", "lwsLoad", "lwsPersist", "solidOpen", "solidStep",
-    "solidClose", "solidSnapshot", "solidFetched", "solidClientRequest", "solidClientResponse" ]
+    "solidClose", "solidSnapshot", "solidFetched", "solidClientRequest", "solidClientResponse",
+    "authzOpen", "authzStep", "authzFetched", "authzKeys", "authzRotate", "authzClose" ]
 
 private def isErrorEnvelope (s : String) : Bool := s.startsWith "{\"ok\":false"
 
