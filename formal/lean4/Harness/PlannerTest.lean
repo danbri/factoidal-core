@@ -621,7 +621,9 @@ def execEqualsPlanRun : Nat × List String :=
 `exec-reuse-after-adaptation` (KR 2.4) are assertions in `execCases` since
 KR 4.2, and `admission-without-statistic` (KR 4.2,
 https://github.com/danbri/factoidal/issues/937) is an assertion in
-`probeCases` since KR 4.3 (https://github.com/danbri/factoidal/issues/875). -/
+`probeCases` since KR 4.3 (https://github.com/danbri/factoidal/issues/875).
+The open probe items of KR 4.3 are `probeXcases` below
+(https://github.com/danbri/factoidal/issues/938). -/
 def execXcases : List XCase := []
 
 /-! ## KR 4.3: probes (`Exec.runProbed`)
@@ -814,6 +816,30 @@ def probeCases : List (String × List String) := [
       (if np ≥ 1 then [] else ["no case made a probe"]))
   ]
 
+def issue938 : String := "https://github.com/danbri/factoidal/issues/938"
+
+/-- The state after the probes of a run with probes, before the start plan
+is chosen and before any call is answered. -/
+def afterProbes (cat : Catalog) (req : Requirement) (k : Nat) (cfg : Config) : Option State :=
+  match structFamily cat req k cfg.fanout with
+  | [] => none
+  | rw :: alts => some (probeAll cat cfg (initState rw alts) (probeCands cat (rw :: alts)))
+
+/-- Expected failures of KR 4.3 (https://github.com/danbri/factoidal/issues/938):
+probes of lookups, and probes of statistics other than the tuple count. -/
+def probeXcases : List XCase := [
+  { id := "probe-lookup-sample", issue := issue938,
+    what := "a lookup (an input bound by an earlier step) with a probe is a probe candidate (a probe with a sample input)",
+    test := fun _ =>
+      let cat := [knowsTrue, withProbe ageLlm 1]
+      (probeCands cat (structFamily cat reqAge 2)).any (fun c => c.1 == 1) },
+  { id := "probe-latency-statistic", issue := issue938,
+    what := "a probe measures the latency of its source: after the probes, before any answered call, the probed source's observed latency is known",
+    test := fun _ =>
+      match afterProbes [knowsP, ageLlm] reqAge 2 {} with
+      | some st => !st.probes.isEmpty && st.probes.all (fun p => st.latency p.src > 0)
+      | none => false } ]
+
 end ExecCases
 
 def main : IO UInt32 := do
@@ -868,7 +894,7 @@ def main : IO UInt32 := do
       IO.println s!"FAIL {id}: {errs}"
   let (nPr, npPr, _) := probeAnswersUnchanged
   IO.println s!"  probe-answers-unchanged: {nPr} cases, {npPr} with a probe"
-  for x in execXcases do
+  for x in execXcases ++ probeXcases do
     if x.test () then
       xpass := xpass + 1
       IO.println s!"XPASS {x.id}: {x.what} now holds; flip to an assertion and update {x.issue}"

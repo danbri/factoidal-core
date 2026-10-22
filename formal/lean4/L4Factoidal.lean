@@ -818,6 +818,9 @@ import L4Factoidal.Planner.Kinds.Tests
 import L4Factoidal.Planner.Exec
 import L4Factoidal.Planner.ExecTests
 import L4Factoidal.Planner.ExecM
+import L4Factoidal.Planner.Exactness
+import L4Factoidal.Planner.Kinds.WebMcp
+import L4Factoidal.Planner.Kinds.Llm
 import L4Factoidal.TailRecursionTwins
 import L4Factoidal.CsimpReachFixture
 import L4Factoidal.OWL.ComprehensionTheorems

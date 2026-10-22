@@ -11,6 +11,9 @@ import L4Factoidal.Planner.Kinds.Sparql
 import L4Factoidal.Planner.Kinds.FacadeX
 import L4Factoidal.Planner.Kinds.Rest
 import L4Factoidal.Planner.Kinds.Mcp
+import L4Factoidal.Planner.Kinds.WebMcp
+import L4Factoidal.Planner.Kinds.Llm
+import L4Factoidal.Planner.Exactness
 
 namespace L4Factoidal.Planner.Kinds.Tests
 
@@ -52,6 +55,17 @@ def b : Term := .iri ⟨"http://example.org/b", rfl⟩
 #guard (JsonTerms.numberTerm? "12").isSome && (JsonTerms.numberTerm? "1.5").isSome &&
   (JsonTerms.numberTerm? "1e3").isSome
 
+-- LLM confidence in thousandths (KR 4.4).
+#guard Llm.thousandths? "0.8" == some 800 && Llm.thousandths? "0.85" == some 850 &&
+  Llm.thousandths? "1" == some 1000 && Llm.thousandths? "1.0" == some 1000 &&
+  Llm.thousandths? "0" == some 0 && Llm.thousandths? "1.5" == none &&
+  Llm.thousandths? "0.8125" == none && Llm.thousandths? "8e-1" == none
+
+-- WebMCP: a tool that is not read-only is refused (KR 4.4).
+#guard (WebMcp.describe "{\"origin\": \"https://a.example\", \"tool\": {\"name\": \"t\", \"description\": \"d\",
+  \"inputSchema\": {\"required\": [\"id\"]}}, \"org.factoidal/rdf\": {\"subject\": \"id\",
+  \"subjectTemplate\": \"http://example.org/{id}\", \"predicates\": {\"v\": \"http://example.org/v\"}}}").toBool == false
+
 /-! ## Axiom audit -/
 
 #print axioms lookupImpl_sound
@@ -59,5 +73,12 @@ def b : Term := .iri ⟨"http://example.org/b", rfl⟩
 #print axioms graphSource_triples
 #print axioms graphSource_sound
 #print axioms graphSource_complete
+-- KR 4.4: exactness of answers (`Planner/Exactness.lean`)
+#print axioms execUsed_rows
+#print axioms execUsed_approx
+#print axioms runUsed_exact_iff
+#print axioms run_exact_only_if
+#print axioms rewriting_used
+#print axioms rewriting_run_approx
 
 end L4Factoidal.Planner.Kinds.Tests

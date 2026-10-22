@@ -90,13 +90,14 @@ def natField? (j : Json) (k : String) : Option Nat :=
   | some (.number n) => n.toNat?
   | _ => none
 
-/-- A cost model from an object `{ perCall, perRow, callQuota }`. -/
+/-- A cost model from an object `{ perCall, perRow, callQuota, latencyMs }`. -/
 def readCost (j : Option Json) (dflt : CostModel) : CostModel :=
   match j with
   | none => dflt
   | some c => { perCall := (natField? c "perCall").getD dflt.perCall,
                 perRow := (natField? c "perRow").getD dflt.perRow,
-                callQuota := (natField? c "callQuota").orElse (fun _ => dflt.callQuota) }
+                callQuota := (natField? c "callQuota").orElse (fun _ => dflt.callQuota),
+                latency := (natField? c "latencyMs").orElse (fun _ => dflt.latency) }
 
 /-- The capabilities of one call that returns an object: one predicate
 form per mapped property, the subject (tuple position 0) required. -/
