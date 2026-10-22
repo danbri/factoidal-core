@@ -11,7 +11,7 @@ information passing on machine words equal their `Nat` loops
   same state, with the fuel `b.size - i + 3`, when the bytes are fewer than
   `Sip.smallBytes`.
 * `deltaGatherGoW_eq`: the same for `Sip.deltaGatherGo`.
-* `deltaFindStart_eq`, `deltaGatherStart_eq`: the starts that `findWords`
+* `deltaFindStartNat_eq`, `deltaGatherStartNat_eq`: the starts that `findWords`
   and `gatherWords` call equal the `Nat` loops with the fuel those used
   before (`b.size - i + 2` from byte `i + 1`), so `SipTheorems.findWords_spec`
   and `gatherWords_spec` hold of the word loops.
@@ -250,6 +250,114 @@ theorem deltaFindGoW_eq (b : ByteArray) (lo hi : Nat) (cands : Array UInt64) (hb
       · have hle : ¬ (z.toNat + 1) / 2 ≤ prev.toNat := fun h => hok (hsb.1.mpr h)
         rw [if_neg hok, if_neg hle]
 
+/-! ## The find loop with the candidate in the loop state -/
+
+theorem candAt_cAt (cands : Array UInt64) (q : Nat) (w : UInt64) :
+    candAt cands q w = (q < cands.size && cAt cands q == w) := by
+  unfold candAt cAt
+  by_cases h : q < cands.size <;> simp [h]
+
+/-- With the invariants, `probeFast` is the pointer itself when `isFast`
+    holds and `probeFrom` otherwise. -/
+theorem probeFast_isFast (cands : Array UInt64) (w : UInt64) (p : Nat) (c lc : UInt64)
+    (hc : c = cAt cands p) (hlc : lc = lAt cands p) :
+    probeFast cands w p = if isFast cands w p c lc then p else probeFrom cands w p := by
+  subst hc hlc
+  unfold probeFast isFast cAt lAt
+  by_cases h : p < cands.size
+  · rw [dif_pos h]
+    by_cases hp : p = 0
+    · subst hp
+      simp [h]
+    · have h1 : p - 1 < cands.size := by omega
+      simp [h, hp, h1]
+  · rw [dif_neg h]
+    simp [h]
+
+theorem deltaFindGoC_eq (b : ByteArray) (lo hi : Nat) (cands : Array UInt64) :
+    ∀ n (i : USize) idx prev acc p (c lc : UInt64) pos out, b.size - i.toNat ≤ n →
+      c = cAt cands p → lc = lAt cands p →
+      deltaFindGoC b lo hi cands idx prev i acc p c lc pos out =
+        deltaFindGoW b lo hi cands idx prev i acc p pos out := by
+  intro n
+  induction n with
+  | zero =>
+    intro i idx prev acc p c lc pos out hn hc hlc
+    rw [deltaFindGoC, deltaFindGoW]
+    have h1 : ¬ i < b.usize := fun h => by
+      have := L4Factoidal.Prim.Bytes.usize_lt_size h; omega
+    simp only [h1, dite_false]
+  | succ n ih =>
+    intro i idx prev acc p c lc pos out hn hc hlc
+    rw [deltaFindGoC, deltaFindGoW]
+    by_cases hidx : idx ≥ hi
+    · rw [if_pos hidx, if_pos hidx]
+    rw [if_neg hidx, if_neg hidx]
+    by_cases hiu : i < b.usize
+    case neg => rw [dif_neg hiu, dif_neg hiu]
+    rw [dif_pos hiu, dif_pos hiu]
+    have hib := L4Factoidal.Prim.Bytes.usize_lt_size hiu
+    have hs := L4Factoidal.Prim.Bytes.usize_succ_toNat hiu
+    have hn' : b.size - (i + 1).toNat ≤ n := by omega
+    by_cases hacc : acc < accCap
+    case neg => rw [if_neg hacc, if_neg hacc]
+    rw [if_pos hacc, if_pos hacc]
+    generalize b.uget i _ = x
+    by_cases hx : x < 128
+    case neg =>
+      rw [if_neg hx, if_neg hx]
+      exact ih (i + 1) idx prev _ p c lc pos out hn' hc hlc
+    rw [if_pos hx, if_pos hx]
+    generalize acc * 128 + x.toUInt64 = z
+    subst hc hlc
+    cases he : (z % 2 == 0)
+    · simp only [he, Bool.false_eq_true, if_false]
+      by_cases hok : z / 2 + 1 ≤ prev
+      · simp only [hok, if_true]
+        by_cases hlo : idx ≥ lo
+        · simp only [hlo, if_true]
+          rw [probeFast_isFast cands _ p _ _ rfl rfl, candAt_cAt]
+          by_cases hf : isFast cands (prev - (z / 2 + 1)) p (cAt cands p) (lAt cands p) = true
+          · simp only [hf, if_true]
+            by_cases hcond : (decide (p < cands.size) && cAt cands p == prev - (z / 2 + 1)) = true
+            · simp only [hcond, if_true]
+              exact ih _ _ _ _ _ _ _ _ _ hn' rfl rfl
+            · simp only [hcond]
+              exact ih _ _ _ _ _ _ _ _ _ hn' rfl rfl
+          · simp only [hf, Bool.false_eq_true, if_false]
+            generalize probeFrom cands (prev - (z / 2 + 1)) p = q
+            by_cases hcond : (decide (q < cands.size) && cAt cands q == prev - (z / 2 + 1)) = true
+            · simp only [hcond, if_true]
+              exact ih _ _ _ _ _ _ _ _ _ hn' rfl rfl
+            · simp only [hcond]
+              exact ih _ _ _ _ _ _ _ _ _ hn' rfl rfl
+        · simp only [hlo, if_false]
+          exact ih _ _ _ _ _ _ _ _ _ hn' rfl rfl
+      · simp [hok]
+    · simp only [he, if_true]
+      by_cases hok : prev ≤ prev + z / 2
+      · simp only [hok, if_true]
+        by_cases hlo : idx ≥ lo
+        · simp only [hlo, if_true]
+          rw [probeFast_isFast cands _ p _ _ rfl rfl, candAt_cAt]
+          by_cases hf : isFast cands (prev + z / 2) p (cAt cands p) (lAt cands p) = true
+          · simp only [hf, if_true]
+            by_cases hcond : (decide (p < cands.size) && cAt cands p == prev + z / 2) = true
+            · simp only [hcond, if_true]
+              exact ih _ _ _ _ _ _ _ _ _ hn' rfl rfl
+            · simp only [hcond]
+              exact ih _ _ _ _ _ _ _ _ _ hn' rfl rfl
+          · simp only [hf, Bool.false_eq_true, if_false]
+            generalize probeFrom cands (prev + z / 2) p = q
+            by_cases hcond : (decide (q < cands.size) && cAt cands q == prev + z / 2) = true
+            · simp only [hcond, if_true]
+              exact ih _ _ _ _ _ _ _ _ _ hn' rfl rfl
+            · simp only [hcond]
+              exact ih _ _ _ _ _ _ _ _ _ hn' rfl rfl
+        · simp only [hlo, if_false]
+          exact ih _ _ _ _ _ _ _ _ _ hn' rfl rfl
+      · simp [hok]
+
 /-! ## The gather loop -/
 
 /-- **The gather loop on words** equals the `Nat` gather loop from the same
@@ -331,6 +439,77 @@ theorem deltaGatherGoW_eq (b : ByteArray) (pos : Array Nat) (hb : b.size < small
       · have hle : ¬ (z.toNat + 1) / 2 ≤ prev.toNat := fun h => hok (hsb.1.mpr h)
         rw [if_neg hok, if_neg hle]
 
+/-! ## The gather loop with the next wanted row in the loop state -/
+
+theorem posAt_eq (pos : Array Nat) (k : Nat) : posAt pos k = pos[k]! := by
+  unfold posAt
+  by_cases h : k < pos.size
+  · simp [h]
+  · rw [dif_neg h]
+    simp [getElem!_neg pos k h]
+
+theorem deltaGatherGoK_eq (b : ByteArray) (pos : Array Nat) :
+    ∀ n (i : USize) idx prev acc k nk out, b.size - i.toNat ≤ n → nk = posAt pos k →
+      deltaGatherGoK b pos idx prev i acc k nk out = deltaGatherGoW b pos idx prev i acc k out := by
+  intro n
+  induction n with
+  | zero =>
+    intro i idx prev acc k nk out hn hnk
+    rw [deltaGatherGoK, deltaGatherGoW]
+    have h1 : ¬ i < b.usize := fun h => by
+      have := L4Factoidal.Prim.Bytes.usize_lt_size h; omega
+    simp only [h1, dite_false]
+  | succ n ih =>
+    intro i idx prev acc k nk out hn hnk
+    rw [deltaGatherGoK, deltaGatherGoW]
+    by_cases hk : k ≥ pos.size
+    · rw [if_pos hk, if_pos hk]
+    rw [if_neg hk, if_neg hk]
+    by_cases hiu : i < b.usize
+    case neg => rw [dif_neg hiu, dif_neg hiu]
+    rw [dif_pos hiu, dif_pos hiu]
+    have hib := L4Factoidal.Prim.Bytes.usize_lt_size hiu
+    have hs := L4Factoidal.Prim.Bytes.usize_succ_toNat hiu
+    have hn' : b.size - (i + 1).toNat ≤ n := by omega
+    by_cases hacc : acc < accCap
+    case neg => rw [if_neg hacc, if_neg hacc]
+    rw [if_pos hacc, if_pos hacc]
+    generalize b.uget i _ = x
+    by_cases hx : x < 128
+    case neg =>
+      rw [if_neg hx, if_neg hx]
+      exact ih (i + 1) idx prev _ k nk out hn' hnk
+    rw [if_pos hx, if_pos hx]
+    generalize acc * 128 + x.toUInt64 = z
+    have hnk' : nk = pos[k]! := by rw [hnk, posAt_eq]
+    cases he : (z % 2 == 0)
+    · simp only [he, Bool.false_eq_true, if_false]
+      by_cases hok : z / 2 + 1 ≤ prev
+      · simp only [hok, if_true]
+        by_cases hidx : idx = nk
+        · have hb : (idx == pos[k]!) = true := by rw [← hnk']; simpa using hidx
+          have ha : (idx == nk) = true := by simpa using hidx
+          simp only [ha, hb, if_true]
+          exact ih _ _ _ _ _ _ _ hn' rfl
+        · have hb : (idx == pos[k]!) = false := by rw [← hnk']; simpa using hidx
+          have ha : (idx == nk) = false := by simpa using hidx
+          simp only [ha, hb, Bool.false_eq_true, if_false]
+          exact ih _ _ _ _ _ _ _ hn' hnk
+      · simp [hok]
+    · simp only [he, if_true]
+      by_cases hok : prev ≤ prev + z / 2
+      · simp only [hok, if_true]
+        by_cases hidx : idx = nk
+        · have hb : (idx == pos[k]!) = true := by rw [← hnk']; simpa using hidx
+          have ha : (idx == nk) = true := by simpa using hidx
+          simp only [ha, hb, if_true]
+          exact ih _ _ _ _ _ _ _ hn' rfl
+        · have hb : (idx == pos[k]!) = false := by rw [← hnk']; simpa using hidx
+          have ha : (idx == nk) = false := by simpa using hidx
+          simp only [ha, hb, Bool.false_eq_true, if_false]
+          exact ih _ _ _ _ _ _ _ hn' hnk
+      · simp [hok]
+
 /-! ## The starts -/
 
 theorem toUSize_succ (b : ByteArray) (i : Nat) (hb : b.size < smallBytes) (hi : i < b.size) :
@@ -344,25 +523,27 @@ theorem toUSize_succ (b : ByteArray) (i : Nat) (hb : b.size < smallBytes) (hi : 
 
 /-- The start that `findWords` calls equals the `Nat` find loop with the
     fuel it had before the word loop. -/
-theorem deltaFindStart_eq (b : ByteArray) (lo hi : Nat) (cands : Array UInt64) (i p : Nat) (hi' : i < b.size) :
-    deltaFindStart b lo hi cands i p = deltaFindGo b lo hi cands (b.size - i + 2) 0 0 (i + 1) 0 p #[] .empty := by
-  unfold deltaFindStart
+theorem deltaFindStartNat_eq (b : ByteArray) (lo hi : Nat) (cands : Array UInt64) (i p : Nat) (hi' : i < b.size) :
+    deltaFindStartNat b lo hi cands i p = deltaFindGo b lo hi cands (b.size - i + 2) 0 0 (i + 1) 0 p #[] .empty := by
+  unfold deltaFindStartNat
   split
   · rename_i hb
-    rw [deltaFindGoW_eq b lo hi cands hb _ (i + 1).toUSize 0 0 0 p #[] .empty rfl, toUSize_succ b i hb hi']
+    rw [deltaFindGoC_eq b lo hi cands _ (i + 1).toUSize 0 0 0 p _ _ #[] .empty (Nat.le_refl _) rfl rfl,
+      deltaFindGoW_eq b lo hi cands hb _ (i + 1).toUSize 0 0 0 p #[] .empty rfl, toUSize_succ b i hb hi']
     congr 1
     omega
   · rfl
 
 /-- The start that `gatherWords` calls equals the `Nat` gather loop with
     the fuel it had before the word loop. -/
-theorem deltaGatherStart_eq (b : ByteArray) (pos : Array Nat) (i : Nat) (hi' : i < b.size) :
-    deltaGatherStart b pos i =
+theorem deltaGatherStartNat_eq (b : ByteArray) (pos : Array Nat) (i : Nat) (hi' : i < b.size) :
+    deltaGatherStartNat b pos i =
       deltaGatherGo b pos (b.size - i + 2) 0 0 (i + 1) 0 0 (ByteArray.emptyWithCapacity (8 * pos.size)) := by
-  unfold deltaGatherStart
+  unfold deltaGatherStartNat
   split
   · rename_i hb
-    rw [deltaGatherGoW_eq b pos hb _ (i + 1).toUSize 0 0 0 0 _ rfl, toUSize_succ b i hb hi']
+    rw [deltaGatherGoK_eq b pos _ (i + 1).toUSize 0 0 0 0 _ _ (Nat.le_refl _) rfl,
+      deltaGatherGoW_eq b pos hb _ (i + 1).toUSize 0 0 0 0 _ rfl, toUSize_succ b i hb hi']
     congr 1
     omega
   · rfl
@@ -370,8 +551,13 @@ theorem deltaGatherStart_eq (b : ByteArray) (pos : Array Nat) (i : Nat) (hi' : i
 #print axioms candAt_eq
 #print axioms probeFast_eq
 #print axioms deltaFindGoW_eq
+#print axioms candAt_cAt
+#print axioms probeFast_isFast
+#print axioms deltaFindGoC_eq
 #print axioms deltaGatherGoW_eq
-#print axioms deltaFindStart_eq
-#print axioms deltaGatherStart_eq
+#print axioms posAt_eq
+#print axioms deltaGatherGoK_eq
+#print axioms deltaFindStartNat_eq
+#print axioms deltaGatherStartNat_eq
 
 end L4Factoidal.Storage.Sbm11.Sip

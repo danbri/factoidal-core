@@ -55,6 +55,43 @@ open L4Factoidal.SPARQL
 open L4Factoidal.SPARQL.AggStream
 open L4Factoidal.Qlvr (Table)
 
+/-! ## A term id as a hash key -/
+
+/-- A term id as a hash-map key. `Std.HashMap` takes the bucket from the low bits
+of the hash, and the hash of a `UInt64` is the number itself: the ids of one
+dictionary (a tag in the top bits, an index below it) that differ in their middle
+bits share buckets. `Id64` hashes the id times a 64-bit odd constant (a
+bijection of `UInt64`) with its high half folded onto its low half, so that every
+bit of the id reaches the low bits. On d19 the lookups of the group key and of the
+argument id were 15 percent of the time before and the change took 15 to 30 ms
+off the warm time (interleaved runs, benchmark record, issue 862). Equality is
+equality of ids. `Id64` is `UInt64` (no allocation per key); `ofU` and `val` are
+the identity. -/
+def Id64 : Type := UInt64
+
+namespace Id64
+
+/-- The key of an id (no allocation: `Id64` is `UInt64`). -/
+@[inline] def ofU (x : UInt64) : Id64 := x
+
+/-- The id of a key. -/
+@[inline] def val (k : Id64) : UInt64 := k
+
+end Id64
+
+instance : BEq Id64 := inferInstanceAs (BEq UInt64)
+
+instance : LawfulBEq Id64 := inferInstanceAs (LawfulBEq UInt64)
+
+instance : Hashable Id64 := ⟨fun k => let h := k.val * 0x9E3779B97F4A7C15; h ^^^ (h >>> 32)⟩
+
+instance : LawfulHashable Id64 where
+  hash_eq := by
+    intro a b h
+    have e : a = b := eq_of_beq h
+    subst e
+    simp
+
 /-! ## A cache of a function's values -/
 
 /-- The values of a function at the keys asked so far. -/
@@ -141,7 +178,51 @@ theorem getPure_list [LawfulBEq α] [LawfulHashable α] (f : α → β) :
     · simp [getPureList, h1, e1]
     · simpa [getPureList] using e2
 
+/-- A value of the function stored at its own key keeps the cache valid: the
+summary table of pass 2 of `aggregateM` is filled one id at a time by `insert`
+of the function's value, in the order the misses occur. -/
+theorem insert_valid [LawfulBEq α] [LawfulHashable α] (f : α → β) (c : Cache α β)
+    (hv : Valid f c) (k : α) : Valid f { c with map := c.map.insert k (f k) } := by
+  intro k' v' h'
+  simp only [Std.HashMap.get?_insert] at h'
+  split at h'
+  · rename_i hk
+    obtain rfl := Option.some.inj h'
+    have : k = k' := eq_of_beq (by simpa using hk)
+    subst this
+    rfl
+  · exact hv k' v' h'
+
+/-- On a valid cache a hit returns the function's value. Together with
+`insert_valid` this is the equality that lets pass 2 of `aggregateM` stop at an
+id it has not seen, decode it, and resume at the same row: whichever way an id
+is met (hit, or miss then insert) the step reads `f k`, so the steps equal those
+of a pass that recomputes `f k` at every row. -/
+theorem hit_eq (f : α → β) (c : Cache α β) (hv : Valid f c) (k : α) (v : β)
+    (h : c.map.get? k = some v) : v = f k := hv k v h
+
+/-- Filling a cache with the values at a list of keys, in any order and with
+repeats, leaves it valid. -/
+theorem fill_valid [LawfulBEq α] [LawfulHashable α] (f : α → β) :
+    ∀ (ks : List α) (c : Cache α β), Valid f c →
+      Valid f (ks.foldl (fun c k => { c with map := c.map.insert k (f k) }) c)
+  | [], _, hv => hv
+  | k :: ks, c, hv => fill_valid f ks _ (insert_valid f c hv k)
+
 end Cache
+
+/-- The summary of the value of an id, for a pure decoder `termOf`: what the table
+of pass 2 holds at that id. -/
+def sumOf (termOf : UInt64 → Term) (k : Id64) : Summary := Summary.of (varView (termOf k.val))
+
+/-- The summary table of `aggregateM` over a pure decoder is valid for `sumOf`:
+every entry is the summary of the decoded value of its id, so a step with a cached
+summary is the step with a recomputed one. -/
+theorem sums_fill_valid (termOf : UInt64 → Term) (ks : List Id64) :
+    Cache.Valid (sumOf termOf)
+      (ks.foldl (fun c k => { c with map := c.map.insert k (sumOf termOf k) })
+        ({} : Cache Id64 Summary)) :=
+  Cache.fill_valid _ ks _ (Cache.valid_empty _)
 
 /-! ## Group keys and columns -/
 
@@ -193,17 +274,120 @@ structure Result where
 the variables in column order, an unbound one left out. Each id is decoded once:
 `terms` holds the terms decoded so far. -/
 def rowBinding {m : Type → Type} [Monad m] (termOf : UInt64 → ExceptT String m Term)
-    (t : Table) (i : Nat) (terms : Cache UInt64 Term) :
-    ExceptT String m (Binding × Cache UInt64 Term) := do
+    (t : Table) (i : Nat) (terms : Cache Id64 Term) :
+    ExceptT String m (Binding × Cache Id64 Term) := do
   let mut mu : Array (String × Term) := Array.mkEmpty t.vars.size
   let mut terms := terms
   for c in [0:t.vars.size] do
     let x := t.at c i
     if x != L4Factoidal.Storage.Sbm11.OptJoin.unbound then
-      let (tm, terms') ← terms.getM termOf x
+      let (tm, terms') ← terms.getM (fun k => termOf k.val) (Id64.ofU x)
       terms := terms'
       mu := mu.push (t.vars[c]!, tm)
   return (mu.toList, terms)
+
+/-- The group of each row and the first row of each group. -/
+structure Groups where
+  gids : Array Nat
+  first : Array (Option Nat)
+
+/-- Pass 1 of `aggregateM`: rows are numbered by the order of first appearance of
+their group key (the id of the one group column, else the list of ids). Pure. -/
+def assignGroups (t : Table) (gcols : Array Nat) (gd : ByteArray) : Groups := Id.run do
+  let mut first : Array (Option Nat) := #[]
+  let mut gids : Array Nat := Array.mkEmpty t.rows
+  if gcols.size == 1 then
+    let mut index1 : Std.HashMap Id64 Nat := {}
+    for i in [0:t.rows] do
+      let key := L4Factoidal.Codec.Zstd.word64 gd (8 * i)
+      match index1.get? (Id64.ofU key) with
+      | some g => gids := gids.push g
+      | none =>
+        let g := first.size
+        index1 := index1.insert (Id64.ofU key) g
+        first := first.push (some i)
+        gids := gids.push g
+  else
+    let mut index : Std.HashMap (List UInt64) Nat := {}
+    for i in [0:t.rows] do
+      let key := gcols.toList.map fun c => t.at c i
+      match index.get? key with
+      | some g => gids := gids.push g
+      | none =>
+        let g := first.size
+        index := index.insert key g
+        first := first.push (some i)
+        gids := gids.push g
+  return { gids, first }
+
+/-- What a run of pass 2 returns: the row to resume at, the accumulators, and the
+id of an aggregate argument that is not yet in the summary table (row `i` is then
+not stepped at all). -/
+structure StepOut where
+  i : Nat
+  accs : Array AggAcc
+  miss : Option UInt64
+
+/-- The steps of the specs `ks` of the group `gi` on one value. -/
+@[inline] def stepKs (fns : Array AggregateFn) (n gi : Nat) (ks : Array Nat) (s : Summary)
+    (accs : Array AggAcc) : Array AggAcc :=
+  ks.foldl (init := accs) fun accs k => accs.modify (gi * n + k) fun a => AggAcc.step fns[k]! a s
+
+/-- The steps of the specs that read no value, on row `i` of group `gi`. -/
+@[inline] def stepSimple (t : Table) (n : Nat) (argCols : Array ArgCol) (simple : Array Nat)
+    (i gi : Nat) (accs : Array AggAcc) : Array AggAcc :=
+  simple.foldl (init := accs) fun accs k =>
+    match argCols[k]! with
+    | .col c =>
+      -- COUNT of a variable: a bound variable is never the type error, no decoding
+      if t.at c i != L4Factoidal.Storage.Sbm11.OptJoin.unbound then
+        accs.modify (gi * n + k) AggAcc.stepCount
+      else accs
+    | _ => accs.modify (gi * n + k) AggAcc.stepCount
+
+/-- The first aggregate argument of row `i` that is bound and absent from `sums`. -/
+@[inline] def firstMiss (t : Table) (byCol : Array (Nat × Array Nat))
+    (sums : Std.HashMap Id64 Summary) (i : Nat) : Option UInt64 :=
+  byCol.findSome? fun e =>
+    let x := t.at e.1 i
+    if x != L4Factoidal.Storage.Sbm11.OptJoin.unbound && !(sums.contains (Id64.ofU x)) then some x
+    else none
+
+/-- Pass 2 of `aggregateM` from row `i`: the steps of every accumulator, in row
+order, with no decoding and no monad (a tail call with fuel). Stops at the first
+row whose argument id is bound and absent from `sums`, before it changes any
+accumulator. -/
+def stepRows (t : Table) (n : Nat) (fns : Array AggregateFn) (argCols : Array ArgCol)
+    (simple : Array Nat) (byCol : Array (Nat × Array Nat)) (ad : ByteArray)
+    (gids : Array Nat) (implicit : Bool) (sums : Std.HashMap Id64 Summary) :
+    Nat → Nat → Array AggAcc → StepOut
+  | 0, i, accs => { i, accs, miss := none }
+  | f + 1, i, accs =>
+    if i < t.rows then
+      let gi := if implicit then 0 else gids[i]!
+      if byCol.size == 1 then
+        let x := L4Factoidal.Codec.Zstd.word64 ad (8 * i)
+        if x != L4Factoidal.Storage.Sbm11.OptJoin.unbound then
+          match sums.get? (Id64.ofU x) with
+          | none => { i, accs, miss := some x }
+          | some s =>
+            stepRows t n fns argCols simple byCol ad gids implicit sums f (i + 1)
+              (stepSimple t n argCols simple i gi (stepKs fns n gi byCol[0]!.2 s accs))
+        else
+          stepRows t n fns argCols simple byCol ad gids implicit sums f (i + 1)
+            (stepSimple t n argCols simple i gi accs)
+      else
+        match firstMiss t byCol sums i with
+        | some x => { i, accs, miss := some x }
+        | none =>
+          let accs := byCol.foldl (init := accs) fun accs e =>
+            let x := t.at e.1 i
+            if x != L4Factoidal.Storage.Sbm11.OptJoin.unbound then
+              stepKs fns n gi e.2 (sums.getD (Id64.ofU x) default) accs
+            else accs
+          stepRows t n fns argCols simple byCol ad gids implicit sums f (i + 1)
+            (stepSimple t n argCols simple i gi accs)
+    else { i, accs, miss := none }
 
 /-- Group the rows of `t` and aggregate; `none` when the plan does not apply to
 this table (a group column that is missing, unbound somewhere, or holds an id
@@ -221,46 +405,47 @@ def aggregateM {m : Type → Type} [Monad m] (termOf : UInt64 → ExceptT String
     let n := specs.size
     let argCols : Array ArgCol := specs.map fun sp => argColOf t sp.2
     let inits : Array AggAcc := specs.map fun sp => AggAcc.init sp.1
-    -- groups: the first row of each (`none`: the empty group of an implicit
-    -- grouping over no rows), the accumulators, group-major
-    let mut first : Array (Option Nat) :=
-      if p.implicit then #[if t.rows > 0 then some 0 else none] else #[]
-    let mut accs : Array AggAcc := if p.implicit then inits else #[]
-    let mut index : Std.HashMap (List UInt64) Nat := {}
-    let mut terms : Cache UInt64 Term := {}
-    let mut sums : Cache UInt64 Summary := {}
-    for i in [0:t.rows] do
-      let mut gi := 0
-      if !p.implicit then
-        let key := gcols.toList.map fun c => t.at c i
-        match index.get? key with
-        | some g => gi := g
-        | none =>
-          gi := first.size
-          index := index.insert key gi
-          first := first.push (some i)
-          accs := accs ++ inits
-      for k in [0:n] do
-        match argCols[k]! with
-        | .star => accs := accs.modify (gi * n + k) AggAcc.stepCount
-        | .absent => pure ()
-        | .col c =>
-          let x := t.at c i
-          if x != L4Factoidal.Storage.Sbm11.OptJoin.unbound then
-            let fn := specs[k]!.1
-            if fn == .count then
-              -- a bound variable is never the type error: no decoding
-              accs := accs.modify (gi * n + k) AggAcc.stepCount
-            else
-              let s ← match sums.map.get? x with
-                | some s => pure s
-                | none => do
-                  let (tm, terms') ← terms.getM termOf x
-                  terms := terms'
-                  let s := Summary.of (varView tm)
-                  sums := { sums with map := sums.map.insert x s }
-                  pure s
-              accs := accs.modify (gi * n + k) fun a => AggAcc.step fn a s
+    -- the specs that read no value (COUNT star, COUNT of a variable, an absent
+    -- variable) and, for the others, the distinct argument columns with the
+    -- specs that read each: one summary lookup per row and column
+    let mut simple : Array Nat := #[]
+    let mut byCol : Array (Nat × Array Nat) := #[]
+    for k in [0:n] do
+      match argCols[k]! with
+      | .star => simple := simple.push k
+      | .absent => pure ()
+      | .col c =>
+        if specs[k]!.1 == .count then simple := simple.push k
+        else
+          match byCol.findIdx? (fun e => e.1 == c) with
+          | some j => byCol := byCol.modify j fun e => (e.1, e.2.push k)
+          | none => byCol := byCol.push (c, #[k])
+    -- pass 1 (pure): the group of each row, and the first row of each group
+    -- (`none`: the empty group of an implicit grouping over no rows)
+    let gd : ByteArray := if gcols.size == 1 then t.cols[gcols[0]!]! else ByteArray.empty
+    let grp : Groups :=
+      if p.implicit then
+        { gids := #[], first := #[if t.rows > 0 then some 0 else none] }
+      else assignGroups t gcols gd
+    let first := grp.first
+    let mut accs : Array AggAcc := Array.mkEmpty (first.size * n)
+    for _ in [0:first.size] do
+      accs := accs ++ inits
+    -- pass 2 (pure, resumed after each id to decode): the accumulator steps
+    let ad : ByteArray := if byCol.size == 1 then t.cols[byCol[0]!.1]! else ByteArray.empty
+    let mut terms : Cache Id64 Term := {}
+    let mut sums : Cache Id64 Summary := {}
+    let mut start := 0
+    for _ in [0:t.rows + 1] do
+      let o := stepRows t n (specs.map (·.1)) argCols simple byCol ad grp.gids p.implicit sums.map (t.rows - start + 1) start accs
+      accs := o.accs
+      start := o.i
+      match o.miss with
+      | none => break
+      | some x =>
+        -- an argument id is decoded here once and kept as its summary only
+        let tm ← termOf x
+        sums := { sums with map := sums.map.insert (Id64.ofU x) (Summary.of (varView tm)) }
     let mut reps : Array Binding := Array.mkEmpty first.size
     let mut vals : Array (Array EvalResult) := Array.mkEmpty first.size
     let mut repValues := 0
@@ -277,12 +462,19 @@ def aggregateM {m : Type → Type} [Monad m] (termOf : UInt64 → ExceptT String
       for k in [0:n] do
         row := row.push (AggAcc.finish specs[k]!.1 accs[g * n + k]!)
       vals := vals.push row
-    return some { reps, vals, decoded := terms.map.size, repValues }
+    -- the distinct ids decoded: the argument ids, and the ids of the representative
+    -- rows that are not argument ids
+    let decoded := terms.map.fold (fun c k _ => if sums.map.contains k then c else c + 1) sums.map.size
+    return some { reps, vals, decoded, repValues }
 
 #print axioms Cache.getM_id
 #print axioms Cache.valid_empty
 #print axioms Cache.getPure_fst
 #print axioms Cache.getPure_valid
 #print axioms Cache.getPure_list
+#print axioms Cache.insert_valid
+#print axioms Cache.hit_eq
+#print axioms Cache.fill_valid
+#print axioms sums_fill_valid
 
 end L4Factoidal.Storage.Sbm11.IdAgg

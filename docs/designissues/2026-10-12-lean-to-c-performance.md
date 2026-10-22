@@ -1001,7 +1001,7 @@ native, 20 runs, load average 3.4 to 4.1 (not comparable with section 7):
 `usize-cpush-in` 1.6 ms, `usize-cpush-filt` 1.4 to 1.5 ms, C 0.84 to 0.91 ms
 (median).
 
-### Remaining cost: 2.11 times C, above the target 2
+### Remaining cost after step C: 2.11 times C (step D below removes it), above the target 2
 
 Per matching row, `filterBP` runs: loop test and increment 4, key compare 2,
 and for each of the two output columns one 8-byte load, the exclusivity test
@@ -1023,6 +1023,50 @@ pointer increment for each column.
   both columns from one scan with one exclusivity test for each. Not done;
   not opened as an issue because 2.11 is within the "some Lean overhead may be
   unavoidable" statement; the owner may open one.
+
+### Step D: reserve once, push without tests (2026-10-22)
+
+Requested by the coordinator after the 2.11 result. New in
+`Prim/Bytes.lean`:
+
+- `reserveU64 b k` (`@[extern c inline]`; reference `reserveU64Ref`, the
+  identity): `b` made exclusive with room for `k` more 8-byte values (a copy
+  with the capacity when shared or too small).
+- `pushU64LEUnchecked b x` (`@[extern c inline]`; reference
+  `pushU64LEUncheckedRef`): append with no exclusivity test and no capacity
+  test.
+- Theorems `reserveU64_eq_ref`, `pushU64LEUnchecked_eq_ref`,
+  `foldl_unchecked_eq_checked`: reserve, then at most `k` unchecked pushes,
+  equals the same pushes with the checked `pushU64LE` (`#print axioms`:
+  `propext` only; `reserveU64_eq_ref`: none).
+- TRUSTED, not proved: the C precondition. Exclusivity and capacity are
+  run-time properties that Lean's logic does not see, so the Lean theorems
+  hold for the reference bodies and say nothing about a misuse of the C. The
+  precondition (array from `reserveU64`, at most `k` pushes since, no second
+  reference) is checked by the differential cases `runReserveCase` of
+  `Harness/PrimBytesTest.lean` (exclusive and shared inputs; capacity below,
+  at and above the need; `k` from 0 to 100): native 25,760 pass, 0 fail (out
+  of 25,760), wasm32 25,760 pass, 0 fail (out of 25,760). A shared original
+  must stay unchanged after the reserve and the pushes.
+- Use: variant `usize-cpush-res` reserves the A and B filter outputs once
+  (`n` rows; at most `n` pushes since `m <= i <= n`) and runs
+  `filterAIn`/`filterBIn` with `pushAtU`. The merge loop is not changed (its
+  output row count is not bounded by an input count that the loop knows).
+
+| Variant | total | merge loop | `filterBP` | ratio to C (7.8) |
+| --- | ---: | ---: | ---: | ---: |
+| `usize-cpush-in` | 21.6 | 8.2 | 12.4 | 2.77 |
+| `usize-cpush-filt` | 16.5 | 8.1 | 7.8 | 2.11 |
+| `usize-cpush-res` | 13.2 | 8.1 | 4.6 | 1.69 |
+
+`filterBP`: 17 instructions per B row (29 before). Target of at most 2 times
+C (15.6 million) is met.
+
+Wall time, native, 3 rounds of 30 runs, load average 3 to 4 (median ms, min
+ms): `usize-cpush-in` 1.54 to 1.61; `usize-cpush-filt` 1.42 to 1.83;
+`usize-cpush-res` 1.37 to 1.92; C 0.91 to 1.21. The three Lean variants are
+within the noise of each other: the instruction cut of 20 percent does not show
+in wall time on this loaded machine, so the time claim is not made.
 
 ### Gates for this change
 

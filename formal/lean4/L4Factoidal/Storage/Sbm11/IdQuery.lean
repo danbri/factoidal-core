@@ -917,6 +917,11 @@ structure Store (m : Type → Type) where
       driver (`Harness/Sbm11Query.lean`) sets it when `--threads` is above 1;
       it must return the table of `scanTableM` (`ParallelScanTheorems`). -/
   scanTable : Option (ScanSpec → ExceptT String m (Table × ScanStats)) := none
+  /-- issue 799, KR 1.2: a replacement for `scanSipTableM` (the scan with
+      candidates), used by `scanForJoinM`. `none` is the single-thread path.
+      The parallel driver sets it when `--threads` is above 1; it must return
+      the table and the statistics of `scanSipTableM`. -/
+  scanSipTable : Option (ScanSpec → Array UInt64 → ExceptT String m (Table × ScanStats)) := none
   /-- issue 809: the right scan of a merge join takes the left values of the
       join variable as candidates when `k × left rows < estimate` for
       `sipFactor = some k` (`sipRule`; 16 by default, 0 whenever the shape
@@ -1710,6 +1715,27 @@ def scanSipTableM {m : Type → Type} [Monad m] (st : Store m) (spec : ScanSpec)
                         rows := 0, sortVar := sortVarOf spec }
   scanFoldSipM st spec cands init fun acc ch => pure (acc.append ch.table, true)
 
+/-- `scanSipTableM`, or the store's `scanSipTable` when it sets one. -/
+def scanSipTableOf {m : Type → Type} [Monad m] (st : Store m) (spec : ScanSpec) (cands : Array UInt64) :
+    ExceptT String m (Table × ScanStats) :=
+  match st.scanSipTable with
+  | some f => f spec cands
+  | none => scanSipTableM st spec cands
+
+/-- The loop of `scanFoldSipM` over the selected-block positions `sel`
+    (positions in `metas`), from the state `init`, with no delta overlay
+    (`ox.on = false`): the parallel scan with candidates
+    (`Harness/Sbm11Query.lean`, issue 799, KR 1.2) runs one such loop per
+    block range, as `scanListM` does for a scan without candidates, and
+    appends the tables in range order. -/
+def scanListSipM {m : Type → Type} [Monad m] {σ : Type} (st : Store m) (spec : ScanSpec)
+    (cands : Array UInt64) (init : σ) (f : σ → Chunk → ExceptT String m (σ × Bool))
+    (metas : Array BlockMeta) (sortVar : Option String) (ox : OvCtx) (sel : List Nat) :
+    ExceptT String m (σ × ScanStats) := do
+  let s ← forIn sel { acc := init, stats := {}, insPos := 0, stopped := false }
+    (scanBlockSipM st spec cands f metas sortVar ox)
+  return (s.acc, s.stats)
+
 /-- The rule that selects sideways information passing for a scan, with
     the store's factor `k` (`Store.sipFactor`, 16 by default): the left input
     has fewer than `1/k` of the rows the PRM1 entries give for the scan
@@ -1781,7 +1807,7 @@ def scanForJoinM {m : Type → Type} [Monad m] (st : Store m) (spec : ScanSpec) 
     if left.vars.contains v && sipRule st.sipFactor left.rows estimate then
       match sipCands left v with
       | some cands =>
-        let (t, s0) ← scanSipTableM st spec cands
+        let (t, s0) ← scanSipTableOf st spec cands
         let s := s0.withSip
         return (t, s, s!"; sideways ?{v}: {cands.size} candidates, blocks skipped {s.sipSkipped}, key values tested {s.keysTested} (on words in {s.sipWordBlocks} blocks), rows gathered {s.rowsGathered}")
       | none => pure ()
@@ -2858,6 +2884,17 @@ theorem FKind.fresh_eq (f : FKind) : f.fresh = f := by
 def OvCtx.fresh (ox : OvCtx) (key : Array UInt64) : OvCtx :=
   if ox.on then ox else ovCtx {} key
 
+/-- The most blocks in one range of the divided streamed path. The parent
+    writes the ranges in order, so a range that finishes early waits in memory
+    with its rendered pieces until the earlier ranges are written. With
+    ranges of at most this many blocks there are more ranges than tasks, and
+    `Par.fold` (window = threads) holds at most `threads` finished or running
+    ranges: the bytes held are bounded by `threads * streamRangeBlocks`
+    blocks of output, not by the whole scan (olympics q21 at 4 threads:
+    4 ranges of 9 blocks, all held, 23 MB of rendered rows; issue 799,
+    stage 1d). -/
+def streamRangeBlocks : Nat := 1
+
 /-- Rows per rendered piece of the divided streamed path. A piece is made by
     a task and freed by the parent after it is written; a buffer of a whole
     block (about 500 KB for olympics q21) was a large allocation of the task
@@ -2985,7 +3022,7 @@ def runPlanM {m : Type → Type} [Monad m] (st : Store m) (plan : Plan) (emit : 
     else
       -- stage 1b: divided when OFFSET + LIMIT is above the estimate (the single
       -- scan then reads every selected block)
-      match par, (← divideFor? st par spec 16).filter (fun d => plan.offset + lim > d.2.2.2) with
+      match par, (← divideFor? st par spec streamRangeBlocks).filter (fun d => plan.offset + lim > d.2.2.2) with
       | some p, some (metas, ox, chunks, est) =>
         let total ← st.blockCount spec.perm
         let ((_, emitted), s) ← p.fold
@@ -3143,14 +3180,14 @@ inductive PostAnswer where
     the same within the spread, so the rows are decoded in table order. -/
 def decodeRowsM {m : Type → Type} [Monad m] (st : Store m) (t : Table) :
     ExceptT String m L4Factoidal.SPARQL.SolutionSeq := do
-  let mut memo : IdAgg.Cache UInt64 Term := {}
+  let mut memo : IdAgg.Cache IdAgg.Id64 Term := {}
   let mut out : Array Binding := Array.mkEmpty t.rows
   for i in [0:t.rows] do
     let mut mu : Array (String × Term) := Array.mkEmpty t.vars.size
     for c in [0:t.vars.size] do
       let x := t.at c i
       if x != OptJoin.unbound then
-        let (tm, memo') ← memo.getM st.termOf x
+        let (tm, memo') ← memo.getM (fun k => st.termOf k.val) (IdAgg.Id64.ofU x)
         memo := memo'
         mu := mu.push (t.vars[c]!, tm)
     out := out.push mu.toList
