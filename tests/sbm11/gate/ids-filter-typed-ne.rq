@@ -1,4 +1,0 @@
-# Issue 930: != on a date constant (applyCompOp .ne on the lexical order).
-PREFIX ex: <http://ex.org/>
-PREFIX xsd: <http://www.w3.org/2001/XMLSchema#>
-SELECT ?s ?d WHERE { ?s ex:when ?d FILTER(?d != "2020-01-01"^^xsd:date) }

@@ -1029,30 +1029,18 @@ the evaluator it replaces.
    `pos` is read once per found row. Theorems: `posAt_eq`,
    `deltaGatherGoK_eq` (equals `deltaGatherGoW`); `deltaGatherStart_eq`
    holds unchanged.
-3. FILTER on key bytes (`Storage/Sbm11/TypedCmp.lean`, new `FKind.typedCmp`).
-   For `?v OP c` or `c OP ?v` with `c` a typed literal that has no value for
-   the operators (`typedConstOk`: no language tag, datatype not `xsd:string`,
-   not numeric, not derived from `xsd:integer`, not `xsd:boolean`, no `0x00`
-   in the datatype), `Expr.valueCompare` compares two literals of that
-   datatype by the code point order of the lexical forms. `typedCmpKey?`
-   reads that order off the dictionary key `[5] ++ datatype ++ [0] ++
-   lexical form` of a tag 3 id (`Store.keySlice`, no copy): it checks the
-   prefix, decodes the lexical form with `String.fromUTF8?` and applies the
-   operator. A key it does not decide (another datatype or class, a lexical
-   form that is not UTF-8, an inline id) gives `none` and goes to the
-   reference path with the memo, as before. Theorems:
-   `TypedCmpTheorems.typedCmpKey?_some` (what an answer says about the key
-   bytes), `typedCmpKey_sound` (a key that `decodeKey?` reads as the term
-   `t` and that `typedCmpKey?` decides: `ebvOrFalse (Expr.evalIn {} [(v, t)]
-   e) = r`, for both operand orders and all six operators),
-   `TypedCmpFilterTheorems.typedCmpOf?_spec` and `typedCmp_fast_eq_ref` (the
-   compiled conjunct: `refFilter e [(v, t)] = r`). The theorems state the
-   relation between `Store.keySlice` and `Store.termOf` as `decodeKey?` of
-   the key range, which is how `Session.termOf` is defined
-   (`TermKeyFast.decodeKeySlice?_eq`); the abstract `Store` does not carry
-   that as a field, the same as for the `.str` conjunct. The rule applies to
-   every datatype that `typedConstOk` admits (so also `xsd:dateTime`), not
-   only to `xsd:date`.
+3. FILTER on key bytes (`Storage/Sbm11/TypedCmp.lean`, `FKind.typedCmp`):
+   NOT LANDED on `main` (2026-10-22). It compared two literals of one typed
+   datatype by the code point order of their lexical forms, which was
+   `Expr.valueCompare` before commit f1f78d98. On `main` the operators `<`,
+   `<=`, `>` and `>=` go through `relationalCompare`, that is
+   `Fn.Comparison.termCompare` (the XSD value space), so for `xsd:date` and
+   `xsd:dateTime` the lexical order is not the reference order, and the
+   soundness theorem `typedCmpKey_sound` no longer holds. The code and its
+   theorems are dropped from the landing; the branch
+   `batch3/kr11-d14c` keeps them. The 9.7 ms result below includes this
+   change and is not reproduced on `main`. Tracking:
+   https://github.com/danbri/factoidal/issues/948.
 
 `#print axioms` of every theorem above: propext, Classical.choice,
 Quot.sound, except `candAt_cAt` and `posAt_eq` (propext only) and

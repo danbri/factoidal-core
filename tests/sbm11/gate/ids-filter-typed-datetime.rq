@@ -1,6 +1,0 @@
-# Issue 930: a dateTime constant. The two xsd:date literals have another
-# datatype, so their keys do not carry the constant's prefix and the reference
-# evaluator answers (a type error, removed); s3 is decided on its key bytes.
-PREFIX ex: <http://ex.org/>
-PREFIX xsd: <http://www.w3.org/2001/XMLSchema#>
-SELECT ?s ?d WHERE { ?s ex:when ?d FILTER(?d <= "2020-01-01T10:00:00"^^xsd:dateTime) }

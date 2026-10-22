@@ -1,6 +1,0 @@
-# Issue 930: the constant on the left of the comparison. The FILTER is decided
-# on the dictionary key bytes of the xsd:date literals (TypedCmp); s3's
-# xsd:dateTime is a type error and is removed.
-PREFIX ex: <http://ex.org/>
-PREFIX xsd: <http://www.w3.org/2001/XMLSchema#>
-SELECT ?s ?d WHERE { ?s ex:when ?d FILTER("2020-06-01"^^xsd:date >= ?d) }

@@ -108,7 +108,6 @@ import L4Factoidal.Storage.Sbm11.Overlay
 import L4Factoidal.Storage.Sbm11.OptJoin
 import L4Factoidal.Storage.Sbm11.IdAgg
 import L4Factoidal.Storage.Sbm11.Sip
-import L4Factoidal.Storage.Sbm11.TypedCmp
 import L4Factoidal.Storage.Sbm11.ParallelScan
 import L4Factoidal.SPARQL.Query
 import L4Factoidal.SPARQL.ResultsJson
@@ -1942,13 +1941,6 @@ inductive FKind where
       is in one of `ranges` (the keys `[c] ++ needle ...` for c = 3, 4); any
       other id goes to the reference evaluator -/
   | strRange (v : String) (ranges : Array (Nat × Nat)) (classLo classHi : Nat) (e : Expr)
-  /-- `?v OP c` or `c OP ?v` (`swap`) with `c` a typed literal that
-      `TypedCmp.typedConstOk` admits (issue 930, d14: an `xsd:date`): a
-      dictionary literal (tag 3) whose key is `pre ++ lexical form` is decided
-      on the key bytes by `TypedCmp.typedCmpKey?`, without a `Term`
-      (`TypedCmpTheorems.typedCmpKey_sound`); any other id goes to the
-      reference evaluator on `e` -/
-  | typedCmp (v : String) (op : CompOp) (swap : Bool) (pre : ByteArray) (cLex : String) (e : Expr)
   /-- the reference evaluator on the terms of `vars`, memoised by their ids -/
   | general (e : Expr) (vars : Array String)
   /-- issue 823: an EXISTS-free FILTER conjunct outside `backendLocal`, or
@@ -1982,23 +1974,8 @@ def simpleNeedle? : Expr → Option String
       some l.val.lexicalForm else none
   | _ => none
 
-/-- The `typedCmp` conjunct of a comparison of a variable with an admitted
-    typed literal constant (either order). -/
-def typedCmpOf? (e : Expr) : Option FKind :=
-  match e with
-  | .compare op (.var v) (.lit c) =>
-    if TypedCmp.typedConstOk c then
-      some (.typedCmp v op false (TypedCmp.typedPre c) c.val.lexicalForm e)
-    else none
-  | .compare op (.lit c) (.var v) =>
-    if TypedCmp.typedConstOk c then
-      some (.typedCmp v op true (TypedCmp.typedPre c) c.val.lexicalForm e)
-    else none
-  | _ => none
-
 /-- Classify a conjunct; constants are looked up. -/
 def compileFilter {m : Type → Type} [Monad m] (st : Store m) (e : Expr) : ExceptT String m FKind := do
-  if let some k := typedCmpOf? e then return k
   let general : ExceptT String m FKind := do
     let some vs := exprVars e | throw "a FILTER expression outside the fragment"
     pure (.general e vs)
@@ -2139,28 +2116,6 @@ def applyFilters {m : Type → Type} [Monad m] (st : Store m) (fs : Array FKind)
           if !keep[i]! then continue
           let x := t.at col i
           let r ← match strRangeFast? ranges classLo classHi x with
-            | some r => pure r
-            | none => match memo.get? [x] with
-              | some r => pure r
-              | none => do
-                let r := refFilter e [(v, ← st.termOf x)]
-                memo := memo.insert [x] r
-                pure r
-          if !r then keep := keep.set! i false
-        memos := memos.set! fi (if memo.size > 65536 then {} else memo)
-    | .typedCmp v op swap pre cLex e =>
-      match t.idx v with
-      | none => keep := Array.replicate t.rows false
-      | some col =>
-        let mut memo := memos[fi]!
-        for i in [0:t.rows] do
-          if !keep[i]! then continue
-          let x := t.at col i
-          let fast : Option Bool ← if tagOf x == 3 then do
-              let (buf, a, b) ← st.keySlice x
-              pure (TypedCmp.typedCmpKey? op swap pre cLex buf a b)
-            else pure none
-          let r ← match fast with
             | some r => pure r
             | none => match memo.get? [x] with
               | some r => pure r
@@ -2688,7 +2643,6 @@ def fkVars (fs : Array FKind) : Array String :=
     | .idEqVar v w => (a.push v).push w
     | .str _ v _ _ => a.push v
     | .strRange v _ _ _ _ => a.push v
-    | .typedCmp v _ _ _ _ _ => a.push v
     | .general _ vs => a ++ vs
     | .residual _ _ vs => a ++ vs) #[]
 
@@ -2909,8 +2863,6 @@ def FKind.fresh : FKind → FKind
   | .idEqVar v w => .idEqVar (v ++ "") (w ++ "")
   | .str k v needle e => .str k (v ++ "") (needle.extract 0 needle.size) e
   | .strRange v ranges lo hi e => .strRange (v ++ "") (ranges.map fun p => (p.1 + 0, p.2 + 0)) lo hi e
-  | .typedCmp v op swap pre cLex e =>
-    .typedCmp (v ++ "") op swap (pre.extract 0 pre.size) (cLex ++ "") e
   | .general e vs => .general e (vs.map (· ++ ""))
   | .residual env e vs => .residual env e (vs.map (· ++ ""))
 
@@ -2924,7 +2876,6 @@ theorem FKind.fresh_eq (f : FKind) : f.fresh = f := by
     congr 1
     conv => rhs; rw [← Array.map_id ranges]
     rfl
-  | typedCmp v op swap pre cLex e => simp [FKind.fresh, ByteArray.extract_zero_size]
   | general e vs => simp [FKind.fresh]
   | residual env e vs => simp [FKind.fresh]
 
