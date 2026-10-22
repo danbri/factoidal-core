@@ -429,7 +429,7 @@ the engine's list with read and write support per RDF version. The functional
 `update(data, text)` answers a NEW Dataset and leaves a Dataset argument
 unchanged. Text input takes `{format}`; with no format the engine infers one
 and reports it. An unknown option key rejects with a `FactoidalError` of
-code `option.unknown`; the engine checks the keys (op `apiCheck`). `DatasetHandle` is a deprecated alias of `Dataset` and goes in 0.11.0.
+code `option.unknown`; the engine checks the keys (op `apiCheck`).
 
 ## The persisted store
 
@@ -1112,7 +1112,7 @@ const { conforms, report } = await validate(ds, await parse(shapesTtl)); // SHAC
 | `vcCheckCredential`, `vcCheckCredentialSubject`, `vcCheckNoDataLoss`, `vcCheckRelatedResourceDigests`, `didKeyResolve` | | VCDM 2.0 checks; `did:key` (Ed25519) resolution |
 | `capabilities` | `() => {…}` | which ops the loaded wasm serves |
 | `loadEngine` | `() => engine` | the low-level handle, `call(op, args)`, for ops this layer does not wrap |
-| `Dataset`, `Store`, `FactoidalError`, `dataFactory`, `version`, `engine` | | `engine` is `'lean4-wasm'`; `DatasetHandle` is a deprecated alias of `Dataset` |
+| `Dataset`, `Store`, `FactoidalError`, `dataFactory`, `version`, `engine` | | `engine` is `'lean4-wasm'` |
 
 `./l4` and `./l4-core` are aliases of the main entry in 0.9.x and go in
 0.10.0.

@@ -91,7 +91,6 @@ export {
   didKeyResolve,
   capabilities,
   Dataset,
-  DatasetHandle,
   Store,
   FactoidalError,
   dataFactory,

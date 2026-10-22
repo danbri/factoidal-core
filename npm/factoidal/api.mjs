@@ -18,7 +18,7 @@
 //
 // openStore() here takes a reader function only: there is no file system.
 
-import { buildApi, FactoidalError, DatasetHandle, Store } from './lib/api.mjs';
+import { buildApi, FactoidalError, Store } from './lib/api.mjs';
 import { entryFromEngine } from './lib/lean-entry.mjs';
 import { dataFactory } from './rdfjs.mjs';
 import { Dataset } from './lib/dataset.mjs';
@@ -52,5 +52,5 @@ export function createApi(engine, options) {
   });
 }
 
-export { buildApi, entryFromEngine, FactoidalError, DatasetHandle, Store, Dataset, dataFactory, version };
+export { buildApi, entryFromEngine, FactoidalError, Store, Dataset, dataFactory, version };
 export default createApi;

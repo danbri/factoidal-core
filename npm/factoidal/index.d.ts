@@ -280,8 +280,6 @@ export class Dataset implements Iterable<Quad> {
   [Symbol.dispose](): void;
 }
 
-/** @deprecated The name of Dataset before 0.10.0; removed in 0.11.0. */
-export const DatasetHandle: typeof Dataset;
 
 export type ClosureRegime = 'rdfs' | 'owl-rl' | 'rho-df' | 'rdfs-plus';
 
@@ -395,7 +393,7 @@ export function parse(text: string, options?: ParseOptions | DataFormat): Promis
  * Concise Bounded Description of each resource named). A `SERVICE <iri>`
  * whose IRI no registerServiceEndpoint() call named answers no
  * solutions even without SILENT
- * (https://github.com/danbri/factoidal/issues/717). `data` may be a DatasetHandle
+ * (https://github.com/danbri/factoidal/issues/717). `data` may be a Dataset
  * from openDataset(), in which case this routes to `data.query()` and
  * `options.entail` must be 'none' or omitted (a handle carries no
  * entailment-closure step).
@@ -505,7 +503,7 @@ export function serialize(
 /**
  * RDFC-1.0 dataset canonicalization: canonical blank-node labels plus
  * sorted canonical N-Quads. Two isomorphic inputs canonicalize to the
- * same string. `data` may be a DatasetHandle, in which case this
+ * same string. `data` may be a Dataset, in which case this
  * routes to `data.canonicalize()` (options are ignored for a handle).
  */
 export function canonicalize(
@@ -1315,7 +1313,7 @@ export function capabilities(): Promise<{
   entailment: boolean;
   /** queryHdt() (op queryHdt) is served. */
   hdt: boolean;
-  /** query()'s `sparql12` and DatasetHandle.query's (queryDataset12, datasetQuery12). */
+  /** query()'s `sparql12` and Dataset.query's (queryDataset12, datasetQuery12). */
   sparql12: boolean;
   /** openStore() and the Store methods (storeOpen, storeHandleQuery). */
   store: boolean;
@@ -1325,7 +1323,7 @@ export function capabilities(): Promise<{
   profile: 'full' | string;
   /** The dispatch ABI version string of the loaded wasm module. */
   abiVersion: string;
-  /** openDataset()/DatasetHandle (datasetOpen/Query/Update/Serialize/Close) are present. */
+  /** openDataset()/Dataset (datasetOpen/Query/Update/Serialize/Close) are present. */
   datasetHandles: boolean;
   /** parse()'s `{lenient:true}` (parseDocument) is present. */
   parseDiagnostics: boolean;
@@ -1459,7 +1457,6 @@ declare const _default: {
   vcCheckRelatedResourceDigests: typeof vcCheckRelatedResourceDigests;
   capabilities: typeof capabilities;
   Dataset: typeof Dataset;
-  DatasetHandle: typeof DatasetHandle;
   Store: typeof Store;
   FactoidalError: typeof FactoidalError;
   dataFactory: DataFactory;

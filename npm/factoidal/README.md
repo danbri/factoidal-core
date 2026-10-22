@@ -153,10 +153,11 @@ Official test suites, pass / fail / total, 2026-10-09 [B] unless marked.
 | SPARQL 1.1 Query, Update, Protocol | 631 / 0 / 631 |
 | SPARQL 1.2 | 254 / 0 / 254 |
 | SPARQL Protocol, Graph Store, Service Description against `serve` | 50 / 0 / 50 [P] |
+| Linked Web Storage 1.0, Touchstone (another implementer's harness), `lws-serve` | 215 / 0 / 221 (6 not applicable) [L] |
 | RDF 1.1 N-Triples, N-Quads, Turtle, TriG, RDF/XML | 992 / 0 / 992 |
 | RDF 1.2 syntax suites | all pass |
 | RDF 1.1 Semantics | 39 / 0 / 39 |
-| RDF 1.2 Semantics | 40 / 7 / 47 |
+| RDF 1.2 Semantics | 29 / 0 / 29 [S] |
 | JSON-LD 1.1 toRdf, expand, flatten | 910 / 0 / 910 |
 | JSON-LD 1.1 compact, fromRdf | 298 / 0 / 300 (2 not run) |
 | JSON-LD 1.1 Framing | 29 / 63 / 92 |
@@ -167,7 +168,7 @@ Official test suites, pass / fail / total, 2026-10-09 [B] unless marked.
 | SHACL 1.0 Core, SHACL-SPARQL | 120 / 0 / 120 |
 | SHACL 1.2 Core | 103 / 30 / 133 |
 | ShEx 2 validation, ShExC | 1624 / 0 / 1624 |
-| CSVW | 821 / 1 / 822 |
+| CSVW | 821 / 0 / 821 (1 defective W3C test excluded) [C] |
 | RIF Core | 43 / 0 / 46 (3 undecided) |
 | RML Core | 60 / 0 / 76 (16 not attempted) |
 | XML 1.0 (xmlconf) | 1861 / 0 (516 not run) |
@@ -180,10 +181,13 @@ Official test suites, pass / fail / total, 2026-10-09 [B] unless marked.
 [B] https://github.com/danbri/factoidal-core/blob/03e2e6deee8146ce7e6fdc3f8f34b8245af5ab54/docs/designissues/2026-10-09-lean-conformance-baseline.md
 [P] https://github.com/danbri/factoidal-core/blob/9a4045f1572a032b53ccb867f8395fe0c8d97bb9/docs/designissues/2026-10-10-store-serve.md
 [X] https://github.com/danbri/factoidal-core/blob/cb871c2de8354362ae6226eb57fb6c549624ea1a/docs/designissues/2026-10-10-xml-profile-widened.md
+[L] 2026-10-22, https://github.com/danbri/factoidal-core/blob/2b9d2e39af53be31ed92463b58d3e132e65c4fe4/docs/designissues/2026-10-21-lws-touchstone-run.md (with server options, 220 of 221 pass in at least one configuration)
+[S] 2026-10-21, the current W3C manifest (29 active tests), https://github.com/danbri/factoidal-core/blob/2b9d2e39af53be31ed92463b58d3e132e65c4fe4/docs/claude-rules/current-state.md
+[C] 2026-10-21, validation test308, https://github.com/danbri/factoidal/issues/700
 
 ## Limits
 
-- Size: 2.5 MB packed, 12.4 MB unpacked; one 11.7 MB wasm module.
+- Size: 2.9 MB packed, 14.0 MB unpacked; one 13.2 MB wasm module.
 - `factoidal update` and `compact` exit 3; updates work through `serve`
   (https://github.com/danbri/factoidal/issues/641).
 - Fuseki: read-only administration API, one dataset per process, no

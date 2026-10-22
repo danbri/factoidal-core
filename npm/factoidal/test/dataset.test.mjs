@@ -124,8 +124,8 @@ test('query results formats', async () => {
   ds.dispose();
 });
 
-test('DatasetHandle is a deprecated alias of Dataset', () => {
-  assert.equal(f.DatasetHandle, f.Dataset);
+test('DatasetHandle, the pre-0.10.0 alias of Dataset, is removed in 0.12.0', () => {
+  assert.equal(f.DatasetHandle, undefined);
 });
 
 test('RDF/JS DatasetCore: size, add, delete, has, match, iteration', async () => {

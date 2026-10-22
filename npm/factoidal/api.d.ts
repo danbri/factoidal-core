@@ -42,7 +42,6 @@ export function buildApi(driver: {
 export function entryFromEngine(engine: object): Record<string, unknown>;
 
 export const Dataset: typeof import('./index').Dataset;
-export const DatasetHandle: typeof import('./index').DatasetHandle;
 export const Store: typeof import('./index').Store;
 export const dataFactory: import('./index').DataFactory;
 /** The one error class; see index.d.ts's FactoidalError. */

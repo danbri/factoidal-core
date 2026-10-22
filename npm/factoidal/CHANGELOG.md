@@ -1,6 +1,6 @@
 # Changelog
 
-## 0.12.0 (unreleased)
+## 0.12.0 — 2026-10-22
 
 One error model for the whole package
 (https://github.com/danbri/factoidal/issues/882 item 4,
@@ -12,6 +12,9 @@ copies them into one class, `FactoidalError`. The README "Errors" table is
 generated from the engine's list.
 
 ### Breaking changes
+
+- `DatasetHandle`, the name of `Dataset` before 0.10.0, is removed. Use
+  `Dataset`.
 
 - `ParseError` is removed. Every function rejects with `FactoidalError`
   (`code`, `position`, `spec`, `cause`); a parse error has
