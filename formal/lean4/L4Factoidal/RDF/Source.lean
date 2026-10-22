@@ -100,6 +100,7 @@ import L4Factoidal.Syntax.NQuadsFast
 import L4Factoidal.Syntax.NQuadsFold
 import L4Factoidal.Syntax.NTriples
 import L4Factoidal.Syntax.StrictFeed
+import L4Factoidal.Syntax.StrictFeedText
 import L4Factoidal.Syntax.Turtle
 import L4Factoidal.Syntax.TurtleChunkFold
 import L4Factoidal.Syntax.TriG
@@ -262,8 +263,8 @@ def trigStep {α : Type} (step : Step α) (acc : α) (g : Option Subject) (ts : 
     `tripleReader` (the reader of `parseNTriples`) reads none, so a statement
     that names a graph is an N-Triples error. -/
 inductive Reader (α : Type) where
-  | nquads (mode : Mode) (s : StrictFeed.LineFeed α)
-  | ntriples (mode : Mode) (s : StrictFeed.LineFeed α)
+  | nquads (mode : Mode) (s : StrictFeedText.TextFeed α)
+  | ntriples (mode : Mode) (s : StrictFeedText.TextFeed α)
   | turtle (f : TurtleChunkFoldState α)
   | trig (f : TriGChunkFoldState α)
   /-- RDF/XML: one child of `rdf:RDF` at a time (`RdfXmlChunkFold`). -/
@@ -303,9 +304,9 @@ def Reader.init {α : Type} (extra : Extra) (fmt : RdfFormat) (mode : Mode)
     graph block). A parse error is returned at once. -/
 def Reader.feedD {α : Type} (step : Step α) (decl : Decl α) : Reader α → String → Except ParseError (Reader α)
   | .nquads mode s, text =>
-      (StrictFeed.LineFeed.feed (quadReader mode) step s text.toList).map (.nquads mode)
+      (StrictFeedText.TextFeed.feed true mode step s text).map (.nquads mode)
   | .ntriples mode s, text =>
-      (StrictFeed.LineFeed.feed (tripleReader mode) step s text.toList).map (.ntriples mode)
+      (StrictFeedText.TextFeed.feed false mode step s text).map (.ntriples mode)
   | .turtle f, text => (f.feed (turtleStep step) text).map .turtle
   | .trig f, text => (f.feed (trigStepD step decl) text).map .trig
   | .rdfxml f, text => (f.feed (fun a t => step a t none) text).map .rdfxml
@@ -320,8 +321,8 @@ def Reader.feed {α : Type} (step : Step α) (r : Reader α) (text : String) : E
     reader parses the joined chunks and declares each named graph of the
     dataset. -/
 def Reader.finishD {α : Type} (step : Step α) (decl : Decl α) : Reader α → Except ParseError α
-  | .nquads mode s => StrictFeed.LineFeed.finish (quadReader mode) step s
-  | .ntriples mode s => StrictFeed.LineFeed.finish (tripleReader mode) step s
+  | .nquads mode s => StrictFeedText.TextFeed.finish true mode step s
+  | .ntriples mode s => StrictFeedText.TextFeed.finish false mode step s
   | .turtle f => f.finish (turtleStep step)
   | .trig f => f.finish (trigStepD step decl)
   | .rdfxml f => f.finish (fun a t => step a t none)
@@ -348,12 +349,12 @@ def Reader.acc {α : Type} : Reader α → α
     by a match, so `f` holds the only reference and can update it in place. A
     streaming caller drains finished work this way after every chunk. -/
 def Reader.withAcc {α β : Type} (f : α → α × β) : Reader α → Reader α × β
-  | .nquads mode ⟨acc, carryRev, pos⟩ =>
+  | .nquads mode ⟨acc, carryText, pos⟩ =>
       let (acc, b) := f acc
-      (.nquads mode ⟨acc, carryRev, pos⟩, b)
-  | .ntriples mode ⟨acc, carryRev, pos⟩ =>
+      (.nquads mode ⟨acc, carryText, pos⟩, b)
+  | .ntriples mode ⟨acc, carryText, pos⟩ =>
       let (acc, b) := f acc
-      (.ntriples mode ⟨acc, carryRev, pos⟩, b)
+      (.ntriples mode ⟨acc, carryText, pos⟩, b)
   | .turtle ⟨state, acc, pos, scanner⟩ =>
       let (acc, b) := f acc
       (.turtle ⟨state, acc, pos, scanner⟩, b)

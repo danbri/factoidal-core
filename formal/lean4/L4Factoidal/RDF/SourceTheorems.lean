@@ -45,6 +45,7 @@ open L4Factoidal.RDF
 open L4Factoidal.Syntax
 open L4Factoidal.Syntax.NQuadsStreaming
 open L4Factoidal.Syntax.StrictFeed
+open L4Factoidal.Syntax.StrictFeedText
 
 /-! ## The whole readers -/
 
@@ -151,24 +152,29 @@ theorem jsonld_readAll {α : Type} (extra : Extra) (parse : DocParser)
 
 /-! ## N-Quads, RDF 1.1 -/
 
-theorem feed_nquads {α : Type} (step : Step α) (mode : Mode) (s : LineFeed α) (text : String) :
+theorem feed_nquads {α : Type} (step : Step α) (mode : Mode) (s : TextFeed α) (text : String) :
     (Reader.nquads mode s).feed step text =
-      (LineFeed.feed (quadReader mode) step s text.toList).map (Reader.nquads mode) := rfl
+      (LineFeed.feed (quadReader mode) step s.toLF text.toList).map
+        (fun lf => Reader.nquads mode (TextFeed.ofLF lf)) := by
+  simp only [Reader.feed, Reader.feedD, TextFeed.feed_eq, modeReader, if_true]
+  cases LineFeed.feed (quadReader mode) step s.toLF text.toList <;> rfl
 
 /-- The chunks of a document as the line walk takes them. -/
 theorem nquads_foldlM {α : Type} (step : Step α) (mode : Mode) :
-    ∀ (chunks : List String) (s : LineFeed α),
+    ∀ (chunks : List String) (s : TextFeed α),
       chunks.foldlM (fun r c => r.feed step c) (Reader.nquads mode s) =
-        ((chunks.map String.toList).foldlM (LineFeed.feed (quadReader mode) step) s).map
-          (Reader.nquads mode)
-  | [], s => rfl
+        ((chunks.map String.toList).foldlM (LineFeed.feed (quadReader mode) step) s.toLF).map
+          (fun lf => Reader.nquads mode (TextFeed.ofLF lf))
+  | [], s => by
+      simp only [List.foldlM_nil, List.map_nil, pure, Except.pure, Except.map, TextFeed.ofLF_toLF]
   | c :: rest, s => by
       rw [List.foldlM_cons, feed_nquads, List.map_cons, List.foldlM_cons]
-      cases hf : LineFeed.feed (quadReader mode) step s c.toList with
+      cases hf : LineFeed.feed (quadReader mode) step s.toLF c.toList with
       | error e => rfl
       | ok s1 =>
           show List.foldlM _ _ rest = _
-          exact nquads_foldlM step mode rest s1
+          rw [nquads_foldlM step mode rest (TextFeed.ofLF s1), TextFeed.toLF_ofLF]
+          rfl
 
 /-- The N-Quads reader is `LineFeed.run` on the character lists of the chunks. -/
 theorem nquads_readAll_eq_run {α : Type} (step : Step α) (mode : Mode) (init : α)
@@ -177,9 +183,15 @@ theorem nquads_readAll_eq_run {α : Type} (step : Step α) (mode : Mode) (init :
       LineFeed.run (quadReader mode) step init (chunks.map String.toList) := by
   simp only [Reader.readAll, LineFeed.run]
   rw [nquads_foldlM]
+  have h0 : (TextFeed.toLF ({ acc := init } : TextFeed α)) = { acc := init } := by
+    simp [TextFeed.toLF]
+  rw [h0]
   cases (chunks.map String.toList).foldlM (LineFeed.feed (quadReader mode) step) { acc := init } with
   | error e => rfl
-  | ok s => rfl
+  | ok s =>
+      simp only [Except.map, Reader.finish, Reader.finishD]
+      rw [TextFeed.finish_eq, TextFeed.toLF_ofLF]
+      simp [modeReader]
 
 /-- The characters of the chunks are the characters of their join. -/
 theorem flatten_toList_eq_join (chunks : List String) :
