@@ -594,6 +594,11 @@ XFAIL: dict[str, str] = {
     "query-memory-fstar": "https://github.com/danbri/factoidal/issues/729",
     "iso-noniso-search": "https://github.com/danbri/factoidal/issues/877",
     "sbm11-replay-insert-time": "https://github.com/danbri/factoidal/issues/879",
+    "ntriples-long-line-uescape-memory": "https://github.com/danbri/factoidal/issues/949",
+    "ntriples-long-line-bnode-dot-memory": "https://github.com/danbri/factoidal/issues/949",
+    "ntriples12-long-line-memory": "https://github.com/danbri/factoidal/issues/949",
+    "nquads12-long-line-memory": "https://github.com/danbri/factoidal/issues/949",
+    "ntriples-lenient-long-line-memory": "https://github.com/danbri/factoidal/issues/949",
 }
 # A run longer than this is not repeated: the minimum of several runs only
 # removes timer and load noise, which is small against a run this long.
@@ -1051,6 +1056,16 @@ PARSE_MEMORY_ROWS = {
     # `StrictFeedText` reads it as a `String` at a cursor: 3.7 (8 MB: 58 MB). Bound 8.
     "ntriples-long-line-memory": (2000000, lambda n: long_line_nt(n), ["--format", "ntriples"], 8.0),
     "nquads-long-line-memory": (2000000, lambda n: long_line_nq(n), ["--format", "nquads"], 8.0),
+    # https://github.com/danbri/factoidal/issues/949: the native reader declines this form.
+    "ntriples-long-line-uescape-memory": (2000000, lambda n: long_line_nt_u(n), ["--format", "ntriples"], 8.0),
+    # https://github.com/danbri/factoidal/issues/949: the native reader declines this form.
+    "ntriples-long-line-bnode-dot-memory": (2000000, lambda n: long_line_nt_b(n), ["--format", "ntriples"], 8.0),
+    # https://github.com/danbri/factoidal/issues/949: the native reader declines this form.
+    "ntriples12-long-line-memory": (2000000, lambda n: long_line_nt(n), ["--format", "nt12"], 8.0),
+    # https://github.com/danbri/factoidal/issues/949: the native reader declines this form.
+    "nquads12-long-line-memory": (2000000, lambda n: long_line_nq(n), ["--format", "nq12"], 8.0),
+    # https://github.com/danbri/factoidal/issues/949: the native reader declines this form.
+    "ntriples-lenient-long-line-memory": (2000000, lambda n: long_line_nt(n), ["--format", "ntriples", "--lenient"], 8.0),
 }
 
 
@@ -2049,6 +2064,22 @@ def long_line_nt(n: int) -> Path:
     def text():
         return '<urn:s> <urn:p> "' + "a" * (n - 21) + '" .\n'
     return fixture(f"long-line-{n}.nt", text)
+
+
+def long_line_nt_u(n: int) -> Path:
+    """One N-Triples line of n bytes with its line break: a literal of n - 30 bytes ending in a
+    `\\u0041` escape (issue 949)."""
+    def text():
+        return '<urn:s> <urn:p> "' + "a" * (n - 30) + '\\u0041" .\n'
+    return fixture(f"long-line-u-{n}.nt", text)
+
+
+def long_line_nt_b(n: int) -> Path:
+    """One N-Triples line of n bytes with its line break: a blank node label of n - 26 bytes that
+    ends in a dot (issue 949)."""
+    def text():
+        return '<urn:s> <urn:p> _:' + "a" * (n - 26) + '.\n'
+    return fixture(f"long-line-b-{n}.nt", text)
 
 
 def long_line_nq(n: int) -> Path:

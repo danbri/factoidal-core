@@ -1963,8 +1963,11 @@ N-Triples 0.135, 0.247, 0.519 s before and 0.052, 0.089, 0.181 s after; N-Quads 
 count: 2.7 s before, 2.0 s after. `#guard`s in `StrictFeedText.lean` compare the text walk with the list walk on
 documents cut in pieces of 1 to 4096 characters, accepted and refused, in both modes.
 
-Open: a long line with `\u` escapes, a trailing-dot blank node label, RDF 1.2 or the lenient walk still costs the
-list; `tests/stack` has no row for those.
+Open, tracked by https://github.com/danbri/factoidal/issues/949 with five expected-failure rows in
+`tests/stack/lean_scaling.py` (bound 8, peak resident set per input byte, 2026-10-22): literal ending in a `\u` escape
+37.9 (`ntriples-long-line-uescape-memory`); blank node label ending in a dot 46.3
+(`ntriples-long-line-bnode-dot-memory`); RDF 1.2 N-Triples 40.9 (`ntriples12-long-line-memory`); RDF 1.2 N-Quads 40.9
+(`nquads12-long-line-memory`); lenient walk 33.7 (`ntriples-lenient-long-line-memory`).
 
 ## 3c. RDF/XML: where the time and the memory went, and the repair (2026-10-13)
 
