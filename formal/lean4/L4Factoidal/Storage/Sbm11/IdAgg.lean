@@ -226,41 +226,67 @@ def aggregateM {m : Type → Type} [Monad m] (termOf : UInt64 → ExceptT String
     let mut first : Array (Option Nat) :=
       if p.implicit then #[if t.rows > 0 then some 0 else none] else #[]
     let mut accs : Array AggAcc := if p.implicit then inits else #[]
+    -- the specs that read no value (COUNT star, COUNT of a variable, an absent
+    -- variable) and, for the others, the distinct argument columns with the
+    -- specs that read each: one summary lookup per row and column
+    let mut simple : Array Nat := #[]
+    let mut byCol : Array (Nat × Array Nat) := #[]
+    for k in [0:n] do
+      match argCols[k]! with
+      | .star => simple := simple.push k
+      | .absent => pure ()
+      | .col c =>
+        if specs[k]!.1 == .count then simple := simple.push k
+        else
+          match byCol.findIdx? (fun e => e.1 == c) with
+          | some j => byCol := byCol.modify j fun e => (e.1, e.2.push k)
+          | none => byCol := byCol.push (c, #[k])
+    let mut index1 : Std.HashMap UInt64 Nat := {}
     let mut index : Std.HashMap (List UInt64) Nat := {}
     let mut terms : Cache UInt64 Term := {}
     let mut sums : Cache UInt64 Summary := {}
     for i in [0:t.rows] do
       let mut gi := 0
       if !p.implicit then
-        let key := gcols.toList.map fun c => t.at c i
-        match index.get? key with
-        | some g => gi := g
-        | none =>
-          gi := first.size
-          index := index.insert key gi
-          first := first.push (some i)
-          accs := accs ++ inits
-      for k in [0:n] do
+        if gcols.size == 1 then
+          -- one group column: the id is the key
+          let key := t.at gcols[0]! i
+          match index1.get? key with
+          | some g => gi := g
+          | none =>
+            gi := first.size
+            index1 := index1.insert key gi
+            first := first.push (some i)
+            accs := accs ++ inits
+        else
+          let key := gcols.toList.map fun c => t.at c i
+          match index.get? key with
+          | some g => gi := g
+          | none =>
+            gi := first.size
+            index := index.insert key gi
+            first := first.push (some i)
+            accs := accs ++ inits
+      for k in simple do
         match argCols[k]! with
-        | .star => accs := accs.modify (gi * n + k) AggAcc.stepCount
-        | .absent => pure ()
         | .col c =>
-          let x := t.at c i
-          if x != L4Factoidal.Storage.Sbm11.OptJoin.unbound then
-            let fn := specs[k]!.1
-            if fn == .count then
-              -- a bound variable is never the type error: no decoding
-              accs := accs.modify (gi * n + k) AggAcc.stepCount
-            else
-              let s ← match sums.map.get? x with
-                | some s => pure s
-                | none => do
-                  let (tm, terms') ← terms.getM termOf x
-                  terms := terms'
-                  let s := Summary.of (varView tm)
-                  sums := { sums with map := sums.map.insert x s }
-                  pure s
-              accs := accs.modify (gi * n + k) fun a => AggAcc.step fn a s
+          -- COUNT of a variable: a bound variable is never the type error, no decoding
+          if t.at c i != L4Factoidal.Storage.Sbm11.OptJoin.unbound then
+            accs := accs.modify (gi * n + k) AggAcc.stepCount
+        | _ => accs := accs.modify (gi * n + k) AggAcc.stepCount
+      for e in byCol do
+        let x := t.at e.1 i
+        if x != L4Factoidal.Storage.Sbm11.OptJoin.unbound then
+          let s ← match sums.map.get? x with
+            | some s => pure s
+            | none => do
+              let (tm, terms') ← terms.getM termOf x
+              terms := terms'
+              let s := Summary.of (varView tm)
+              sums := { sums with map := sums.map.insert x s }
+              pure s
+          for k in e.2 do
+            accs := accs.modify (gi * n + k) fun a => AggAcc.step specs[k]!.1 a s
     let mut reps : Array Binding := Array.mkEmpty first.size
     let mut vals : Array (Array EvalResult) := Array.mkEmpty first.size
     let mut repValues := 0
