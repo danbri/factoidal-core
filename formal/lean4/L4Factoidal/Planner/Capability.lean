@@ -33,13 +33,18 @@ bounds the tuples that the source returns in one run (the driver
 `Planner.Exec` enforces both). `rowsPerCall` is an estimate of the tuples
 one call returns (a statistic of the source, as in a service
 description); without it the estimate of `Planner.Search` uses its
-`fanout`. -/
+`fanout`. `probeCost` is the cost of a probe of the source: a count of the
+tuples of one call (a SPARQL `COUNT`, a `HEAD` with a count, a REST
+endpoint's total), in the units of `perCall`; `none` when the source has
+no such operation. The driver `Planner.Exec` makes a probe only when its
+expected saving is more than this cost (OKR batch 3, KR 4.3). -/
 structure CostModel where
   perCall : Nat
   perRow : Nat
   callQuota : Option Nat := none
   rowQuota : Option Nat := none
   rowsPerCall : Option Nat := none
+  probeCost : Option Nat := none
   deriving DecidableEq, Repr
 
 /-- A tuple of the capability's relation, one term per position. -/

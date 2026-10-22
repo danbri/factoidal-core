@@ -925,7 +925,8 @@ accepted (one gate query more than in section 12).
 
 ### Open
 
-- Admission with no statistic refuses a plan within its quota
+- Admission with no statistic refuses a plan within its quota (closed by
+  the probes of section 14)
   (https://github.com/danbri/factoidal/issues/937, xfail
   `admission-without-statistic`).
 - The driver over IO calls (https://github.com/danbri/factoidal/issues/933,
@@ -933,3 +934,110 @@ accepted (one gate query more than in section 12).
   observed-cost record are in the pure state, so an IO driver can keep them.
 - No theorem about costs or about the choice of the alternative; the
   invariants hold for any choice inside the family.
+
+## 14. KR 4.3: probes as costed work
+
+Landed 2026-10-22 for OKR batch 3, KR 4.3
+(https://github.com/danbri/factoidal/issues/875). Owner rule (skill rule
+6): "Probing and discovery are costed work: do a step only when the
+expected saving is more than its cost." Issue
+https://github.com/danbri/factoidal/issues/937 (section 13) is closed by
+this landing: the probe gives the statistic that admission lacked.
+
+### The probe
+
+`CostModel.probeCost : Option Nat` (`Planner/Capability.lean`): the cost
+of a count of the tuples that one call of the source returns (a SPARQL
+`COUNT`, a count field of a REST answer), in the units of `perCall`;
+`none` when the source has no such operation. The tenth action of the
+state machine (`Planner/Exec.lean`):
+
+| Action | Guard | Effect |
+|---|---|---|
+| `Probe` | running, phase `idle`, fewer than `Config.maxProbes` probes, the source offers a probe, `quotaOk` for one more call | `calls` of the source + 1; record `⟨src, inp, (s.sem.impl inp).length⟩` in `probes`. No tuple of the relation is returned, so the row quota is not used. |
+
+The measure's first component is `statusRank * (maxProbes - probes + 1)`,
+so a probe decreases it and the other actions keep it. `obsModel` takes
+a probe count as the tuples per call of a source that has not answered
+yet, before its statistic and the fanout.
+
+### The decision model (`wantProbe`)
+
+Candidates (`probeCands`): an access of a plan of the family whose inputs
+are all constants, of a source with a probe and no statistic. For
+candidate source `i`, probe cost `c`, state `st`, plans `st.plan ::
+st.alts`, `em0 = obsModel st`, and `emWith em0 i v` (`em0` with `v` tuples
+per call for `i`):
+
+- Prior: the probe result is one of `Config.scenarios` (default `[1, 10,
+  100, 1000]`), each with the same weight.
+- `planCost em c0 r0 rw`: the estimated cost, when the estimated use plus
+  `c0` calls and `r0` tuples is within every quota; `Config.refuseCost`
+  (default 1,000,000) otherwise: the run must stop or leave the plan.
+- Without the probe: the driver takes `chosen em0` (least `scoreWith`,
+  when within the quotas). `costWithout v` is its `planCost` under
+  `emWith em0 i v`, or `refuseCost` when no plan is admitted.
+- With the probe: `costWith v` is the least `planCost` over the plans
+  under `emWith em0 i v`, with the probe's call counted (`bump st.calls
+  i`).
+- Probe when `c * |scenarios| + Σ costWith < Σ costWithout`, that is,
+  when the mean saving is more than `c` (`expSaving`, in whole numbers).
+
+The decision is myopic: candidates are decided in order, each against the
+state after the probes before it. `chooseStart` then takes the plan of
+least `scoreWith` under the model with the probe counts; with no plan
+within the quotas the run stops (`Stop`). `runProbed` = structural family
+→ `probeAll` → `chooseStart` → `runFrom`. `run` (section 13) is unchanged.
+
+Limits of the model: the statistic is per source (one count stands for
+every constant-only call of the source); only constant-only accesses are
+candidates (a lookup's count depends on the row); the prior is fixed in
+`Config`, not learnt; the cost of leaving a plan is `refuseCost`, an upper
+bound. The initial choice by `chooseStart` counts as a switch.
+
+### Theorems
+
+| Theorem | Statement |
+|---|---|
+| `probe_inv`, `reachable_probes` | `Probe` keeps `Inv` (new fields `probesOk`, `probes_le`): I2 for calls (a probe is counted, within the quota) and rows; each probe record is the count of its call; at most `maxProbes` probes |
+| `probe_frame` | a probe leaves the plan, alternatives, step, pending rows, `next`, phase, output, status, cache and tuple counts unchanged |
+| `wantProbe_iff`, `wantProbe_iff_saving` | the decision is `c * |scenarios| + Σ costWith < Σ costWithout`, equivalently `c * |scenarios| < expSaving` |
+| `wantProbe_no_scenarios` | with no scenario there is no probe |
+| `probeStep_cases` | a driver probe step leaves the state, or is a `Probe` step whose `wantProbe` is true |
+| `probeAll_reachable`, `chooseStart_reachable`, `runProbed_reachable`, `runProbed_final` | the driver with probes takes `Next` steps and ends `done` or `stopped` |
+| `runProbed_spec` | I1, I2 (calls and tuples), the probe records, and a `done` output is the `Plan.run` of a member of `search` |
+
+Hazard 29: the hypotheses are reachability, a `Probe` step, and
+`ExactSourcesSound`; none states the conclusion. `wantProbe_iff` is the
+definition unfolded: it states which comparison the decision is, as the KR
+asks. `#print axioms` for each: `propext`, `Classical.choice`,
+`Quot.sound` (`Planner/ExecTests.lean`).
+
+### Tests (`lake exe l4planner-test`)
+
+| Case | Expected decision | Checks |
+|---|---|---|
+| `admission-without-statistic` (was xfail, issue 937) | probe | `[knows + probe 1, LLM lookup]`: sums 4,000,000 without, 2,022,411 with; count 3; done; calls [2, 3]; rows marked |
+| `probe-no-capability` (control) | no probe | the same with no probe operation: stopped, no call; `run` has no admitted plan |
+| `probe-statistic-known` (control) | no probe | the scan has a statistic: not a candidate; done |
+| `probe-too-expensive` | no probe | probe cost 1,000,000: stopped |
+| `probe-cost-threshold` | probe / no probe | cost `E/4 - 1`: probe; cost `ceil(E/4)`: no probe (`E` = 1,977,589) |
+| `probe-no-saving` | no probe | one plan, within its quota in every scenario: `E` = 0; done |
+| `probe-changes-choice` | probe | `[knows + probe, name lookup, name scan]`: the estimate takes the scan; count 3, the run takes the lookup; done |
+| `probe-changes-choice-control` | no probe | the same with cost `ceil(E/4)` (`E` = 99,729): done with the name scan |
+| `probe-quota-last-call` | no probe | the scan's call quota 1: the probe would leave no call; stopped, no call |
+| `probe-call-quota-counted` | probe | call quota 2 = probe + scan; done |
+| `probe-max-probes-zero` | no probe | `maxProbes := 0`: stopped |
+| `probe-no-scenarios` | no probe | `scenarios := []`: stopped |
+| `probe-lookup-not-candidate` | no probe | a lookup with a probe is not a candidate; done |
+| `probe-answers-unchanged` | — | the 18 answerable KR 2.2 cases, every source with a probe of cost 1 (5 make a probe): a `done` output is the run of its plan, equals the reference (mode `equal`, exact), and equals the run with no probe allowed |
+
+Result 2026-10-22: planner: 91 pass, 0 fail, 15 expected-fail (out of
+106). `tests/planner/sbm11_gate.sh`: unchanged (`run` is unchanged).
+
+### Open
+
+- Probes of lookups (a sample input) and of other statistics (latency, a
+  `HEAD` request, a service description fetch) are not modelled.
+- The driver over IO calls (https://github.com/danbri/factoidal/issues/933,
+  xfail `exec-driver-io`) makes no probe through IO yet.
