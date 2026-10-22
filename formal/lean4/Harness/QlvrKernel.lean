@@ -721,6 +721,9 @@ the loads of the loop (`mergeFlatP`; `mergeFlatIn_eq`). -/
     position is not used. -/
 @[inline] def pushAt (b : ByteArray) (_ : USize) (x : UInt64) : ByteArray := pushU64LE b x
 
+/-- Push without tests; used only on arrays returned by `reserveU64` (record section 9, step D). -/
+@[inline] def pushAtU (b : ByteArray) (_ : USize) (x : UInt64) : ByteArray := pushU64LEUnchecked b x
+
 /-- A new empty buffer of capacity at least `n` (`n + tag`). Distinct tags
     keep the compiler from making equal calls one shared object: it does so
     for equal pure expressions (seen in the generated C: the four
@@ -766,6 +769,18 @@ def runUsizeCPushIn (x : Input) : Nat × UInt64 :=
   let (ai, na) := filterAU pushAt x.a0 x.a1 x.a2 x.kA0 x.kA1 nA 0 0 (newBuf (8 * x.nA) 1)
   let (bi, ba, nb) := filterBU pushAt x.b0 x.b1 x.b2 x.kB0 nB 0 0
     (newBuf (8 * x.nB) 2) (newBuf (8 * x.nB) 3)
+  let (oi, oa, n) := mergeFlatIn pushAt ai na bi ba nb (na + nb + 1)
+    (newBuf (8 * x.nB) 4) (newBuf (8 * x.nB) 5)
+  (n.toNat, sumLoopU oi oa n 0 0)
+
+/-- `usize-cpush-filt` with the output buffers of the B filter reserved once:
+    `n` rows of 8 bytes, at most `n` pushes (`m <= i <= n`), then no test per push. -/
+def runUsizeCPushRes (x : Input) : Nat × UInt64 :=
+  let nA := x.nA.toUSize
+  let nB := x.nB.toUSize
+  let (ai, na) := filterAIn pushAtU x.a0 x.a1 x.a2 x.kA0 x.kA1 nA (reserveU64 (newBuf (8 * x.nA) 1) nA)
+  let (bi, ba, nb) := filterBIn pushAtU x.b0 x.b1 x.b2 x.kB0 nB
+    (reserveU64 (newBuf (8 * x.nB) 2) nB) (reserveU64 (newBuf (8 * x.nB) 3) nB)
   let (oi, oa, n) := mergeFlatIn pushAt ai na bi ba nb (na + nb + 1)
     (newBuf (8 * x.nB) 4) (newBuf (8 * x.nB) 5)
   (n.toNat, sumLoopU oi oa n 0 0)
@@ -949,7 +964,8 @@ tools/lean-wasm-exe.sh: its import closure has no FFI). -/
     | 9 => runUsizeCPush x
     | 10 => runUsizeCPushFlat x
     | 11 => runUsizeCPushIn x
-    | _ => runUsizeCPushFilt x)
+    | 12 => runUsizeCPushFilt x
+    | _ => runUsizeCPushRes x)
 
 def medianNat (xs : Array Nat) : Nat :=
   let s := mergeSortBy xs (· ≤ ·)
@@ -966,7 +982,7 @@ def runKernel (data : ByteArray) (iters : Nat) : IO UInt32 := do
   let fx := FInput.ofInput x
   let ux := UInput.ofInput x
   let names := #["current", "bytes-push", "bytes-set", "floats", "production", "native", "usize", "usize-cstore",
-    "usize-cstore-flat", "usize-cpush", "usize-cpush-flat", "usize-cpush-in", "usize-cpush-filt"]
+    "usize-cstore-flat", "usize-cpush", "usize-cpush-flat", "usize-cpush-in", "usize-cpush-filt", "usize-cpush-res"]
   let mut sums : Array (Nat × UInt64) := #[]
   for impl in [0:names.size] do
     let mut ts : Array Nat := #[]

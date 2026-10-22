@@ -514,6 +514,57 @@ def pushU64LE (b : ByteArray) (x : UInt64) : ByteArray := pushU64LERef b x
 
 theorem pushU64LE_eq_ref (b : ByteArray) (x : UInt64) : pushU64LE b x = pushU64LERef b x := rfl
 
+/-! ### Reserve once, then push without tests (record section 9, step D)
+
+`reserveU64 b k` returns `b` made exclusive with room for `k` more 8-byte
+values (a copy with the capacity when `b` is shared or too small; `b` itself
+otherwise). The contents do not change, so its Lean meaning is the identity
+(`reserveU64Ref`). `pushU64LEUnchecked b x` appends like `pushU64LE` but the C
+has NO exclusivity test and NO capacity test. TRUSTED PRECONDITION of the C,
+not provable in Lean (exclusivity and capacity are run-time properties that
+the Lean logic does not see): `b` is the array that `reserveU64` returned, or
+the result of a `pushU64LEUnchecked` on such an array, and at most `k` pushes
+have been made since the reserve with no other reference to the array taken.
+A caller that cannot show this uses `pushU64LE`. The Lean statements
+(`pushU64LEUnchecked_eq_ref`, `foldl_unchecked_eq_checked`) say that under the
+precondition the unchecked form computes the checked form; the precondition
+itself is checked by the differential test `Harness/PrimBytesTest.lean`
+(shared, exclusive, too small and exact-capacity inputs) and by the kernel
+loops that use it. -/
+
+/-- Pure reference of `reserveU64`: the identity. Executable, NOT an extern. -/
+@[inline] def reserveU64Ref (b : ByteArray) (_k : USize) : ByteArray := b
+
+/-- Make `b` exclusive with room for `k` more 8-byte values. -/
+@[extern c inline "({ lean_object* _l4ra = #1; size_t _l4rk = #2; if (!(lean_is_exclusive(_l4ra) && lean_sarray_capacity(_l4ra) - lean_sarray_size(_l4ra) >= _l4rk * 8 && _l4rk <= ((size_t)-1) / 16)) { if (_l4rk > ((size_t)-1) / 16) lean_internal_panic_out_of_memory(); size_t _l4rs = lean_sarray_size(_l4ra); lean_object* _l4rr = lean_alloc_sarray(1, _l4rs, _l4rs + _l4rk * 8); __builtin_memcpy(lean_sarray_cptr(_l4rr), lean_sarray_cptr(_l4ra), _l4rs); lean_dec(_l4ra); _l4ra = _l4rr; } _l4ra; })"]
+def reserveU64 (b : ByteArray) (k : USize) : ByteArray := reserveU64Ref b k
+
+theorem reserveU64_eq_ref (b : ByteArray) (k : USize) : reserveU64 b k = reserveU64Ref b k := rfl
+
+/-- The pure reference of `pushU64LEUnchecked`: `pushU64LERef`. -/
+@[inline] def pushU64LEUncheckedRef (b : ByteArray) (x : UInt64) : ByteArray := pushU64LERef b x
+
+/-- Append the 8 little-endian bytes of `x`; no test (see the precondition
+    above). -/
+@[extern c inline "({ lean_object* _l4ua = #1; uint64_t _l4ux = #2; size_t _l4us = lean_sarray_size(_l4ua); uint8_t* _l4uq = lean_sarray_cptr(_l4ua) + _l4us; if (__BYTE_ORDER__ == __ORDER_LITTLE_ENDIAN__) { __builtin_memcpy(_l4uq, &_l4ux, 8); } else { _l4uq[0] = (uint8_t)_l4ux; _l4uq[1] = (uint8_t)(_l4ux >> 8); _l4uq[2] = (uint8_t)(_l4ux >> 16); _l4uq[3] = (uint8_t)(_l4ux >> 24); _l4uq[4] = (uint8_t)(_l4ux >> 32); _l4uq[5] = (uint8_t)(_l4ux >> 40); _l4uq[6] = (uint8_t)(_l4ux >> 48); _l4uq[7] = (uint8_t)(_l4ux >> 56); } lean_to_sarray(_l4ua)->m_size = _l4us + 8; _l4ua; })"]
+def pushU64LEUnchecked (b : ByteArray) (x : UInt64) : ByteArray := pushU64LEUncheckedRef b x
+
+theorem pushU64LEUnchecked_eq_ref (b : ByteArray) (x : UInt64) :
+    pushU64LEUnchecked b x = pushU64LE b x := rfl
+
+/-- Reserve once, then push each value of `xs` (at most `k` of them) without
+    tests: the same array as pushing each with the checked `pushU64LE`. -/
+theorem foldl_unchecked_eq_checked (b : ByteArray) (k : USize) (xs : List UInt64)
+    (_h : xs.length ≤ k.toNat) :
+    xs.foldl pushU64LEUnchecked (reserveU64 b k) = xs.foldl pushU64LE b := by
+  have : ∀ (c : ByteArray) (ys : List UInt64),
+      ys.foldl pushU64LEUnchecked c = ys.foldl pushU64LE c := by
+    intro c ys
+    induction ys generalizing c with
+    | nil => rfl
+    | cons y ys ih => exact ih _
+  rw [this]; rfl
+
 /-- The bytes of `pushU64LE b x`: the bytes of `b`, then those of `x`. -/
 theorem data_pushU64LE (b : ByteArray) (x : UInt64) : (pushU64LE b x).data = b.data ++ u64Bytes x := by
   simp only [pushU64LE, pushU64LERef, ByteArray.push, u64Bytes]
