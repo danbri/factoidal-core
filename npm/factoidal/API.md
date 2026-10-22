@@ -1100,7 +1100,7 @@ const { conforms, report } = await validate(ds, await parse(shapesTtl)); // SHAC
 | `coreRdfsCheck`/`rhoDfFragmentCheck` | `(data) => {ok, fragment}` | ρdf fragment check |
 | `tableauMaterialise` | `(data) => {dataset, addedCount, budgetHit}` | class-expression memberships; `budgetHit` true when the work budget ran out |
 | `tableauDlInconsistent` | `(data) => {inconsistent, rlAlone}` | OWL DL clash after RL closure + materialisation |
-| `owlIsConsistent`, `owlEntails` | `(data, {fuel?})`, `(premise, conclusion, {fuel?})` | three-valued: `true`, `false`, `null` (budget out, with `reason`) |
+| `owlIsConsistent`, `owlEntails` | `(data, {fuel?})`, `(premise, conclusion, {fuel?})` | contradiction/entailment search; indeterminate results use `null` and an explicit `reason` (see below) |
 | `rmlMap` | `(mapping, sourceText, 'json' \| 'csv') => Dataset` | one logical source |
 | `csvwToRdf` | `(csvText, metadataJson?, {mode?, base?, url?}) => Dataset` | CSV on the Web csv2rdf |
 | `jsonldToRdf`, `jsonldFromRdf` | | JSON-LD 1.1 to and from RDF; a remote `@context` is not fetched |
@@ -1113,6 +1113,37 @@ const { conforms, report } = await validate(ds, await parse(shapesTtl)); // SHAC
 | `capabilities` | `() => {…}` | which ops the loaded wasm serves |
 | `loadEngine` | `() => engine` | the low-level handle, `call(op, args)`, for ops this layer does not wrap |
 | `Dataset`, `Store`, `FactoidalError`, `dataFactory`, `version`, `engine` | | `engine` is `'lean4-wasm'` |
+
+`owlIsConsistent` checks the original default graph in a restricted atomic
+OWL fragment. It reports `false` only after a certificate checks against
+that graph's translated ontology. It returns `null` for unsupported syntax
+(`unsupported-syntax`) or when the bounded checker finds no contradiction
+(`incomplete-search`). It does not construct a model and never returns
+`true`. Named graphs do not supply axioms or declarations to the default
+graph. The existing whole-dataset RDF 1.2 term refusal still applies.
+
+Supported logical forms are named atomic subclass/class assertions,
+Thing/Nothing and named-individual sameAs/differentFrom. The reader also
+admits the declarations, ontology headers and limited annotations described
+in `docs/20261021-owl-reader-preservation.md`. Restrictions, object/data
+property axioms, imports and equivalentClass are unsupported. This is a
+material reduction in definitive answers from the earlier unchecked search.
+The compatibility `fuel` option does not change the current consistency
+checker: it uses a fixed 64-round saturation bound and no tableau search.
+A failed check is not a consistency decision.
+
+`owlEntails` remains on the separate legacy closure/refutation path. Its
+positive results do not gain the consistency path's proof guarantee.
+It reports `true` for closure/refutation results and `null` for unsupported
+conclusions, incomplete search, budget exhaustion or detected punning.
+Its limited punning check is not a general Direct Semantics proof; reader,
+preprocessing and negated-goal soundness remain unfinished for this operation.
+Treat `null` as unresolved, not as the opposite Boolean.
+
+This changes the 0.11.0 verdict contract: earlier versions reported a
+quiescent search as a model or countermodel. Consumers must handle `null`
+even when increasing the fuel does not change the answer. See
+[OWL verdict repair and assurance gaps](../../docs/20261021-owl-public-verdict-repair.md).
 
 `./l4` and `./l4-core` are aliases of the main entry in 0.9.x and go in
 0.10.0.

@@ -12,6 +12,13 @@ on:
   pull_request:
     paths:
       - 'formal/lean4/**'
+      - 'tests/assurance/**'
+      - 'tools/check-owl-reader-contracts.py'
+      - 'tools/check-atomic-direct-corpus.py'
+      - 'tools/check-owl-public-boundary.py'
+      - 'tools/check-owl-public-artifact.mjs'
+      - 'tools/test-owl-public-artifact.mjs'
+      - 'third_party/testing/owl/**'
       - '.github/workflows/verify-lean4.yml'
   workflow_dispatch: {}
 
@@ -65,6 +72,33 @@ jobs:
       - name: Escape-hatch audit (sorry / axiom / native_decide / unsafe / partial def)
         working-directory: ${{ github.workspace }}
         run: python3 tools/lean-hygiene-audit.py --build-log "$RUNNER_TEMP/lake-build.log"
+
+      # These gates cover the restricted proved reader and generated-name
+      # separation and restricted consistency source adapter. They do not
+      # certify legacy entailment or an untested npm artifact.
+      - name: OWL gate parser and resource-failure controls
+        run: python3 -m unittest discover -s tests/assurance -p 'test_*.py' -v
+
+      - name: OWL reader contracts, model witnesses, and proof mutations
+        run: python3 tools/check-owl-reader-contracts.py --json "$RUNNER_TEMP/owl-reader-contracts.json"
+
+      - name: Measure the restricted reader on the W3C OWL catalog
+        run: python3 tools/check-atomic-direct-corpus.py --json "$RUNNER_TEMP/atomic-direct-w3c.json"
+
+      - name: OWL consistency public producer and proof bypass controls
+        run: python3 tools/check-owl-public-boundary.py --json "$RUNNER_TEMP/owl-public-boundary.json"
+
+      - name: Preserve OWL assurance evidence even after failure
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: owl-reader-assurance
+          path: |
+            ${{ runner.temp }}/owl-reader-contracts.json
+            ${{ runner.temp }}/atomic-direct-w3c.json
+            ${{ runner.temp }}/owl-public-boundary.json
+          if-no-files-found: warn
+          retention-days: 30
 
       # The two HACL* @[extern] families cannot be checked by a #guard: an
       # extern does not evaluate in the Lean interpreter that #guard runs in.

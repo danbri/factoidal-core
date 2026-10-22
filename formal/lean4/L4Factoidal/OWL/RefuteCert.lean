@@ -21,6 +21,7 @@ Three parts, none of them trusted:
 -/
 import L4Factoidal.OWL.Refute
 import L4Factoidal.OWL.DirectCert
+import L4Factoidal.OWL.CertNames
 
 namespace L4Factoidal.OWL.Refute
 
@@ -104,26 +105,29 @@ def datatypesOf (st : Store) : List WfIri :=
     | .iri d => some d
     | .bnode _ => none)).eraseDups
 
+/-- A source class name, encoded so it cannot alias a generated class.
+    `CertNames.decode_encode` and `encode_injective` prove the separation
+    for every string, without a reserved-IRI assumption. -/
+def sourceAtom (s : String) : String := CertNames.encode (.source s)
+
 /-- `DataMinCardinality(n DP)` and `DataMaxCardinality(n DP)` (Table 4)
     read as class NAMES. `Concept` has one sort, so a data property
     cannot be a role of it; an unqualified data cardinality restriction
     is a class all the same, and naming it keeps the reading inside the
-    object domain. The names are in a `urn:` namespace no corpus
-    ontology uses. The arithmetic between them is given back by the
-    bridge axioms of `dataBridgeAxioms`. -/
-def dataMinAtom (n : Nat) (p : String) : String := s!"urn:factoidal:owl-cert:data-min:{n}:{p}"
-def dataMaxAtom (n : Nat) (p : String) : String := s!"urn:factoidal:owl-cert:data-max:{n}:{p}"
+    object domain. Tagged encodings keep these names disjoint from all
+    encoded source names. The arithmetic between them is given back by
+    the bridge axioms of `dataBridgeAxioms`. -/
+def dataMinAtom (n : Nat) (p : String) : String := CertNames.encode (.dataMin n p)
+def dataMaxAtom (n : Nat) (p : String) : String := CertNames.encode (.dataMax n p)
 
 /-- `ObjectOneOf(a₁ … aₙ)` (Table 4) read as a class NAME `N`, with the
     assertions `aᵢ : N` added by the reader (`nominalAssertions`). The
-    reading is a weakening: from any model of the ontology with the
-    nominal, setting `(N)^C := {(a₁)^I … (aₙ)^I}` gives a model of the
-    ontology with the name, so an ontology with the name that has no
-    model is one whose original had none. `Concept` has no nominal
-    constructor; this keeps every certificate inside it. -/
-def nominalPrefix : String := "urn:factoidal:owl-cert:one-of:"
-
-def nominalAtom (ms : List Ind) : String := nominalPrefix ++ " ".intercalate ms
+    intended model extension assigns `(N)^C := {(a₁)^I … (aₙ)^I}` while
+    preserving every encoded source class. Tagged names prove the required
+    disjointness; the complete reader-to-source model-extension theorem
+    remains obligation O1. `Concept` has no nominal constructor; this
+    representation keeps the certificate inside its fragment. -/
+def nominalAtom (ms : List Ind) : String := CertNames.encode (.nominal ms)
 
 mutual
 
@@ -135,7 +139,7 @@ def toConcept (sig : Sig) : ClassExpr → Option Concept
       if c == owlThing then some .top
       else if c == owlNothing then some .bot
       else if isReservedIri c || sig.datatype c then none
-      else some (.atom c.val)
+      else some (.atom (sourceAtom c.val))
   | .someOf p c => if sig.obj p then (toConcept sig c).map (.ex p.val) else none
   | .allOf p c => if sig.obj p then (toConcept sig c).map (.all p.val) else none
   | .intersection cs => (toConceptList sig cs).map foldConj
@@ -197,22 +201,22 @@ def conceptAtoms : Concept → List String
   | _ => []
 
 /-- The arithmetic between the data cardinality names of `dataMinAtom`
-    and `dataMaxAtom`, for every name the ontology uses. Each axiom holds
-    in every interpretation, because a set has at least `n` elements or
-    at most `n - 1`, and not both:
+    and `dataMaxAtom`, for every name the ontology uses. These axioms hold
+    when generated atoms have their intended data-cardinality extensions,
+    not under an arbitrary interpretation of `Concept.atom`: a set has at
+    least `n` elements or at most `n - 1`, and not both. Constructing that
+    source-model extension for the complete reader remains obligation O1:
     `¬(≥ n P) ⊑ ≤ n-1 P`, `¬(≤ m P) ⊑ ≥ m+1 P`, and `≥ n P ⊑ ¬(≤ m P)`
     for `m < n`. -/
 def dataBridgeAxioms (names : List String) : List (Concept × Concept) :=
-  let minPre := "urn:factoidal:owl-cert:data-min:"
-  let maxPre := "urn:factoidal:owl-cert:data-max:"
-  let parse (pre : String) (a : String) : Option (Nat × String) :=
-    if a.startsWith pre then
-      match (String.mk (a.toList.drop pre.length)).splitOn ":" with
-      | n :: rest => n.toNat?.map (fun k => (k, String.intercalate ":" rest))
-      | [] => none
-    else none
-  let mins0 : List (Nat × String) := names.filterMap (parse minPre)
-  let maxs0 : List (Nat × String) := names.filterMap (parse maxPre)
+  let mins0 : List (Nat × String) := names.filterMap (fun a =>
+    match CertNames.decode a with
+    | some (.dataMin n p) => some (n, p)
+    | _ => none)
+  let maxs0 : List (Nat × String) := names.filterMap (fun a =>
+    match CertNames.decode a with
+    | some (.dataMax n p) => some (n, p)
+    | _ => none)
   let mins : List (Nat × String) :=
     (mins0 ++ maxs0.map (fun (q : Nat × String) => (q.1 + 1, q.2))).eraseDups
   let maxs : List (Nat × String) :=
@@ -357,7 +361,7 @@ def readOntology (g : Graph) : DlOntology := Id.run do
             if !parts.isEmpty && parts.all Option.isSome then
               let ps := parts.filterMap id
               let u := foldDisj ps
-              tbox := (.atom c.val, u) :: (u, .atom c.val) :: tbox
+              tbox := (.atom (sourceAtom c.val), u) :: (u, .atom (sourceAtom c.val)) :: tbox
               for x in ps do
                 for y in ps do
                   if x != y then tbox := (x, .neg y) :: tbox
@@ -373,8 +377,8 @@ def readOntology (g : Graph) : DlOntology := Id.run do
     if !isReservedIri c && !dts.contains c then
       match ceS (.iri c) with
       | some e =>
-          if e != .atom c.val then
-            tbox := (.atom c.val, e) :: (e, .atom c.val) :: tbox
+          if e != .atom (sourceAtom c.val) then
+            tbox := (.atom (sourceAtom c.val), e) :: (e, .atom (sourceAtom c.val)) :: tbox
       | none => pure ()
   let trans := ((st.withPredObj rdfType (.iri owlTransitiveProperty)).filterMap (fun t =>
       match t.s with
@@ -387,9 +391,11 @@ def readOntology (g : Graph) : DlOntology := Id.run do
   tbox := tbox.reverse ++ dataBridgeAxioms names
   -- Every member of a nominal read as a name is in that name.
   for a in names do
-    if a.startsWith nominalPrefix then
-      for m in (String.mk (a.toList.drop nominalPrefix.length)).splitOn " " do
-        abox := .inst m (.atom a) :: abox
+    match CertNames.decode a with
+    | some (.nominal members) =>
+        for m in members do
+          abox := .inst m (.atom a) :: abox
+    | _ => pure ()
   return { tbox := dedupHash tbox, rbox := ⟨subRole.reverse.eraseDups, trans⟩,
            abox := dedupHash abox.reverse, inv := dedupHash inv.reverse,
            same := dedupHash same.reverse }
@@ -743,6 +749,71 @@ def certify (g : Graph) (budget : Nat) : CertOutcome :=
   | _ => .notRefuted
 
 end L4Factoidal.OWL.Refute
+
+namespace L4Factoidal.OWL.Refute.CertNameChecks
+
+open L4Factoidal.RDF L4Factoidal.OWL L4Factoidal.OWL.RL
+
+private def userNominal : WfIri := ⟨"urn:factoidal:owl-cert:one-of:urn:a", rfl⟩
+private def userMin : WfIri := ⟨"urn:factoidal:owl-cert:data-min:1:urn:p:+;", rfl⟩
+private def userMax : WfIri := ⟨"urn:factoidal:owl-cert:data-max:0:urn:p:+;", rfl⟩
+private def member : WfIri := ⟨"urn:member", rfl⟩
+private def other : WfIri := ⟨"urn:other", rfl⟩
+
+private def emptySourceClass (c : WfIri) : Graph :=
+  [⟨.iri c, rdfType, .iri owlClass⟩, ⟨.iri c, rdfsSubClassOf, .iri owlNothing⟩]
+
+-- All former generated families can be ordinary source IRIs. The reader
+-- must neither invent members nor add data-cardinality bridge axioms.
+#guard [userNominal, userMin, userMax].all (fun c =>
+  let o := readOntology (emptySourceClass c)
+  o.abox.isEmpty && o.tbox.length == 1 && !checkCert o .close)
+
+-- The two source classes may share an individual even though their spelling
+-- resembles incompatible generated data-cardinality constraints.
+#guard !checkCert (readOntology
+  [⟨.iri member, rdfType, .iri userMin⟩,
+   ⟨.iri member, rdfType, .iri userMax⟩]) .close
+
+-- Encoding an already encoded-looking source value still yields a source.
+#guard [nominalAtom ["a b", "a", "b", ";+:"],
+        dataMinAtom 1 "urn:p:+;", dataMaxAtom 0 "urn:p:+;"].all (fun s =>
+  CertNames.decode (sourceAtom s) == some (.source s) &&
+  (dataBridgeAxioms [sourceAtom s]).isEmpty)
+
+-- Genuine generated cardinalities retain their bridges, including property
+-- delimiters. A different property or a compatible bound must stay open.
+private def cardinalityOntology (lower upper : Nat) (p q : String) : DlOntology :=
+  { tbox := dataBridgeAxioms [dataMinAtom lower p, dataMaxAtom upper q],
+    abox := [.inst "a" (.atom (dataMinAtom lower p)),
+             .inst "a" (.atom (dataMaxAtom upper q))] }
+
+#guard checkCert (cardinalityOntology 1 0 "urn:p:+;" "urn:p:+;") .close
+#guard !checkCert (cardinalityOntology 1 0 "urn:p:+;" "urn:p:;+") .close
+#guard !checkCert (cardinalityOntology 1 1 "urn:p:+;" "urn:p:+;") .close
+
+-- Nominal members are recovered exactly, not split at embedded delimiters.
+private def nominalWithDelimiters : Graph :=
+  [⟨.iri member, rdfType, .bnode "nominal"⟩,
+   ⟨.bnode "nominal", owlOneOf, .bnode "list"⟩,
+   ⟨.bnode "list", rdfFirst, .bnode "a b;+"⟩,
+   ⟨.bnode "list", rdfRest, .iri rdfNil⟩]
+
+#guard (readOntology nominalWithDelimiters).abox.contains
+  (.inst "_:a b;+" (.atom (nominalAtom ["_:a b;+"])))
+#guard !(readOntology nominalWithDelimiters).abox.contains
+  (.inst "_:a" (.atom (nominalAtom ["_:a b;+"])))
+
+-- Individual identity is unchanged by class-name encoding.
+private def equalityGraph : Graph :=
+  [⟨.iri member, owlSameAs, .iri other⟩,
+   ⟨.iri member, owlDifferentFrom, .iri other⟩]
+
+#guard checkCert (readOntology equalityGraph) .close
+#guard !checkCert (readOntology (equalityGraph.take 1)) .close
+#guard !checkCert (readOntology (equalityGraph.drop 1)) .close
+
+end L4Factoidal.OWL.Refute.CertNameChecks
 
 namespace L4Factoidal.OWL.Refute
 

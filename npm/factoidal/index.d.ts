@@ -680,11 +680,16 @@ export function tableauDlInconsistent(
 ): Promise<{ inconsistent: boolean; rlAlone: boolean }>;
 
 /**
- * OWL DL consistency verdict via the clash-detecting tableau
- * (L4Factoidal/OWL/Refute.lean) over the OWL RL closure.
- * Default graph only. `consistent` is three-valued: `false` (a clash on
- * every branch), `true` (a model built), or `null` -- a budget-out, with
- * `reason` naming the fuel cap (never a silent false).
+ * Checked consistency for the original default graph in a restricted
+ * atomic OWL fragment (named subclass/class assertions, Thing/Nothing,
+ * sameAs/differentFrom and limited declarations/annotations).
+ * false requires an accepted certificate; null means unsupported-syntax
+ * or incomplete-search. No model producer exists, so true is not returned.
+ * Named graphs do not contribute axioms. RDF 1.2 terms are refused.
+ * This narrows earlier unchecked coverage: restrictions, object/data
+ * property axioms, imports and equivalentClass are unsupported.
+ * fuel is retained for compatibility but does not change this fixed
+ * 64-round certificate check. This is not complete OWL DL support.
  */
 export function owlIsConsistent(
   data: DataInput,
@@ -694,8 +699,13 @@ export function owlIsConsistent(
 /**
  * OWL entailment check: does `premise` entail `conclusion`? Two paths: `via: "closure"` (the conclusion is in the OWL-RL
  * closure of the premise) or `via: "refutation"` (the negated
- * conclusion is refuted on every goal). Default graph only. `entailed` is `true`, `false`, or `null`
- * (a refutation budget-out, with `reason` naming the cap).
+ * conclusion is refuted on every goal). Default graph only. The current
+ * implementation returns `true` for those positive results and `null`
+ * when it cannot establish entailment. `reason` distinguishes budget-out,
+ * incomplete-search, unsupported-conclusion and unsupported-punning.
+ * No checked countermodel constructor exists, so it never returns `false`.
+ * The punning refusal is limited; full OWL DL recognition and universal
+ * Direct Semantics soundness are not established by this API.
  */
 export function owlEntails(
   premise: DataInput,
