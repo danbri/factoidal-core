@@ -116,6 +116,42 @@ as solved. The historical test run before correction records 18 pass/8 fail.
 
 ## Acceptance and evidence still required
 
+The first combined `lake build L4Factoidal l4wasm` passed 978 jobs on
+`86ca44f4b`. Its hygiene audit read 1,793 axiom reports and found no prohibited
+escape hatch; the existing 163 partial definitions remain. CI independently
+passed the same build, hygiene, reader/public proof gates and W3C measurement.
+Its final native probe passed 119 crypto/credential checks but failed because
+the VC fixture directory was empty. The workflow now fetches that pinned
+submodule; no assertion was weakened.
+
+The W3C OWL catalog measurement selected 266 units: 246 executed (232
+unsupported and 14 supported-but-unknown), and 20 lacked RDF/XML serialization.
+It made no definitive decision on that catalog. “No wrong verdict observed”
+therefore supplies no positive decision-coverage claim. The separate reader
+and public contract gates passed 45/20 cases and rejected 7/3 proof mutations.
+
+[PR1 native evidence](audits/pr1-integration-20261022/manifest.json) records
+RIF 42 pass, 1 fail, 3 unknown, 0 unread; the fixed runner now exits 1.
+The original output and exit 0 remain archived. Three new exit controls cover
+decided failures, empty inventory and stale overrides; they failed before the
+repair and passed after it, alongside the existing import controls.
+
+XSD now scores 16,135 passes, zero failures and 10,222 exclusions. It scores
+2,820 fewer cases than the baseline; an independent fixture inventory ties
+those cases to the refused `\\d` category escape. The previous parser handled
+ASCII digits only. The initial integration also accidentally routed the XSD
+1.1 caller through a 1.0 admission profile. Correct routing recovered 255
+cases without widening the 1.0 profile. New complement controls then exposed
+unsorted name ranges: both `\\c` and `\\C` accepted U+00B7. Normalization fixes
+that caller precondition. The public SHACL regression fails on the old Wasm;
+its passing run on the final artifact remains required.
+
+The recursion audit initially failed on 17 unclassified declarations. The
+compiled-rewrite reach audit passed. Finite refinement repairs and explicit
+nesting-only classifications are being checked before the final build.
+Main `0a7fab490` was merged as `19ea4dd4f` without conflicts; its three changes
+concern storage buffer capacity, native query handling and thread tests.
+
 All three source changes are combined in PR4. Finish the combined library
 and Wasm builds with the normal build script. Run native suites with failure,
 unknown, missing-fixture and comparator counts separately; run public OWL,
