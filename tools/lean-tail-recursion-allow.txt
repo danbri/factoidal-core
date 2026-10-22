@@ -1128,180 +1128,180 @@ L4Factoidal_SPARQL_pTtExpr  # (b) SPARQL parser; fuel decreases at each call; de
 L4Factoidal_SPARQL_pTtExprComponent  # (b) SPARQL parser; fuel decreases at each call; depth is the nesting of the query text (groups, sub-selects, parenthesised expressions, property path groups, triple terms); the loops over lists and operators are tail calls
 L4Factoidal_SPARQL_pTtPatComponent  # (b) SPARQL parser; fuel decreases at each call; depth is the nesting of the query text (groups, sub-selects, parenthesised expressions, property path groups, triple terms); the loops over lists and operators are tail calls
 L4Factoidal_SPARQL_sseQuery  # (b) SPARQL parser; fuel decreases at each call; depth is the nesting of the query text (groups, sub-selects, parenthesised expressions, property path groups, triple terms); the loops over lists and operators are tail calls
-L4Factoidal_SPARQL_sseSelectItem  # UNTRIAGED https://github.com/danbri/factoidal/issues/753 length, cycle of 6, L4Factoidal/SPARQL/Parser.lean:3136
-L4Factoidal_SPARQL_Expr_backendLocalList  # UNTRIAGED https://github.com/danbri/factoidal/issues/753 length, cycle of 2, L4Factoidal/SPARQL/Query.lean:310
-L4Factoidal_SPARQL_Expr_existsFreeList  # UNTRIAGED https://github.com/danbri/factoidal/issues/753 length, cycle of 2, L4Factoidal/SPARQL/Query.lean:374
-L4Factoidal_SPARQL_Expr_rewriteBnodesOpt  # UNTRIAGED https://github.com/danbri/factoidal/issues/753 depth, cycle of 10, L4Factoidal/SPARQL/Query.lean:1503
-L4Factoidal_SPARQL_QueryForm_rewriteBnodes  # UNTRIAGED https://github.com/danbri/factoidal/issues/753 depth, cycle of 10, L4Factoidal/SPARQL/Query.lean:1530
-L4Factoidal_SPARQL_Query_rewriteBnodes  # UNTRIAGED https://github.com/danbri/factoidal/issues/753 depth, cycle of 10, L4Factoidal/SPARQL/Query.lean:1513
-L4Factoidal_SPARQL_SelectClause_rewriteBnodes  # UNTRIAGED https://github.com/danbri/factoidal/issues/753 depth, cycle of 10, L4Factoidal/SPARQL/Query.lean:1536
-L4Factoidal_SPARQL_compareOnCondition  # UNTRIAGED https://github.com/danbri/factoidal/issues/753 length, cycle of 19, L4Factoidal/SPARQL/Query.lean:1842
-L4Factoidal_SPARQL_compareOnConditions  # UNTRIAGED https://github.com/danbri/factoidal/issues/753 length, cycle of 19, L4Factoidal/SPARQL/Query.lean:1854
-L4Factoidal_SPARQL_evalSelectItemGroup  # UNTRIAGED https://github.com/danbri/factoidal/issues/753 length, cycle of 19, L4Factoidal/SPARQL/Query.lean:1880
-L4Factoidal_SPARQL_evalSelectItemsRowFrom  # UNTRIAGED https://github.com/danbri/factoidal/issues/753 length, cycle of 19, L4Factoidal/SPARQL/Query.lean:1912
-L4Factoidal_SPARQL_havingSatisfies  # UNTRIAGED https://github.com/danbri/factoidal/issues/753 length, cycle of 19, L4Factoidal/SPARQL/Query.lean:1867
-L4Factoidal_SPARQL_selectPost  # UNTRIAGED https://github.com/danbri/factoidal/issues/753 length, cycle of 19, L4Factoidal/SPARQL/Query.lean:1924
-L4Factoidal_SPARQL_subSelectAssignableVars  # UNTRIAGED https://github.com/danbri/factoidal/issues/753 length, cycle of 2, L4Factoidal/SPARQL/Query.lean:1233
-L4Factoidal_SPARQL_substituteExistentialsOpt  # UNTRIAGED https://github.com/danbri/factoidal/issues/753 length, cycle of 19, L4Factoidal/SPARQL/Query.lean:1800
-L4Factoidal_SPARQL_StoreBackend_capsOfBackend  # UNTRIAGED https://github.com/danbri/factoidal/issues/753 depth, cycle of 2, L4Factoidal/SPARQL/StoreBackend.lean:134
-L4Factoidal_SPARQL_StorePlan_evalBgpConcatMapAcc  # UNTRIAGED https://github.com/danbri/factoidal/issues/753 length, cycle of 2, L4Factoidal/SPARQL/StorePlan.lean:147
-L4Factoidal_SPARQL_StorePlan_evalBgpFromMuFuel  # UNTRIAGED https://github.com/danbri/factoidal/issues/753 length, cycle of 2, L4Factoidal/SPARQL/StorePlan.lean:154
-L4Factoidal_Schematron_textOf  # UNTRIAGED https://github.com/danbri/factoidal/issues/753 length, cycle of 2, L4Factoidal/Schematron/FromXml.lean:58
-L4Factoidal_ShEx_Compact_parseGroupTripleExpr  # UNTRIAGED https://github.com/danbri/factoidal/issues/753 length, cycle of 14, L4Factoidal/ShEx/Compact.lean:1311
-L4Factoidal_ShEx_Compact_parseGroupTripleExpr_go  # UNTRIAGED https://github.com/danbri/factoidal/issues/753 length, cycle of 14, L4Factoidal/ShEx/Compact.lean:1313
-L4Factoidal_ShEx_Compact_parseShapeAnd  # UNTRIAGED https://github.com/danbri/factoidal/issues/753 length, cycle of 14, L4Factoidal/ShEx/Compact.lean:1142
-L4Factoidal_ShEx_Compact_parseShapeAnd_go  # UNTRIAGED https://github.com/danbri/factoidal/issues/753 length, cycle of 14, L4Factoidal/ShEx/Compact.lean:1144
-L4Factoidal_ShEx_Compact_parseShapeAtom  # UNTRIAGED https://github.com/danbri/factoidal/issues/753 length, cycle of 14, L4Factoidal/ShEx/Compact.lean:1169
-L4Factoidal_ShEx_Compact_parseShapeDefinition  # UNTRIAGED https://github.com/danbri/factoidal/issues/753 length, cycle of 14, L4Factoidal/ShEx/Compact.lean:1221
-L4Factoidal_ShEx_Compact_parseShapeExpr  # UNTRIAGED https://github.com/danbri/factoidal/issues/753 length, cycle of 14, L4Factoidal/ShEx/Compact.lean:1124
-L4Factoidal_ShEx_Compact_parseShapeExpr_go  # UNTRIAGED https://github.com/danbri/factoidal/issues/753 length, cycle of 14, L4Factoidal/ShEx/Compact.lean:1126
-L4Factoidal_ShEx_Compact_parseShapeOrRef  # UNTRIAGED https://github.com/danbri/factoidal/issues/753 length, cycle of 14, L4Factoidal/ShEx/Compact.lean:1204
-L4Factoidal_ShEx_Compact_parseTripleConstraint  # UNTRIAGED https://github.com/danbri/factoidal/issues/753 length, cycle of 14, L4Factoidal/ShEx/Compact.lean:1387
-L4Factoidal_ShEx_Compact_parseTripleExpr  # UNTRIAGED https://github.com/danbri/factoidal/issues/753 length, cycle of 14, L4Factoidal/ShEx/Compact.lean:1289
-L4Factoidal_ShEx_Compact_parseTripleExpr_go  # UNTRIAGED https://github.com/danbri/factoidal/issues/753 length, cycle of 14, L4Factoidal/ShEx/Compact.lean:1291
-L4Factoidal_ShEx_tripleExprOf  # UNTRIAGED https://github.com/danbri/factoidal/issues/753 depth, cycle of 4, L4Factoidal/ShEx/FromJson.lean:194
-L4Factoidal_ShEx_chainResidueOk  # UNTRIAGED https://github.com/danbri/factoidal/issues/753 length, cycle of 2, L4Factoidal/ShEx/Satisfies.lean:305
-L4Factoidal_ShEx_directExtends  # UNTRIAGED https://github.com/danbri/factoidal/issues/753 length, cycle of 2, L4Factoidal/ShEx/Satisfies.lean:252
-L4Factoidal_ShEx_findTeInShapeExpr  # UNTRIAGED https://github.com/danbri/factoidal/issues/753 length, cycle of 4, L4Factoidal/ShEx/Satisfies.lean:82
-L4Factoidal_ShEx_findTeInShapeExprList  # UNTRIAGED https://github.com/danbri/factoidal/issues/753 length, cycle of 4, L4Factoidal/ShEx/Satisfies.lean:95
-L4Factoidal_ShEx_findTeInTripleExpr  # UNTRIAGED https://github.com/danbri/factoidal/issues/753 length, cycle of 4, L4Factoidal/ShEx/Satisfies.lean:103
-L4Factoidal_ShEx_findTeInTripleExprList  # UNTRIAGED https://github.com/danbri/factoidal/issues/753 length, cycle of 4, L4Factoidal/ShEx/Satisfies.lean:119
-L4Factoidal_ShEx_flattenSE  # UNTRIAGED https://github.com/danbri/factoidal/issues/753 length, cycle of 3, L4Factoidal/ShEx/Satisfies.lean:198
-L4Factoidal_ShEx_reachesLabel  # UNTRIAGED https://github.com/danbri/factoidal/issues/753 length, cycle of 2, L4Factoidal/ShEx/Satisfies.lean:258
-L4Factoidal_ShEx_satisfiesExtends  # UNTRIAGED https://github.com/danbri/factoidal/issues/753 length, cycle of 10, L4Factoidal/ShEx/Satisfies.lean:394
-L4Factoidal_ShEx_satisfiesLabel  # UNTRIAGED https://github.com/danbri/factoidal/issues/753 length, cycle of 10, L4Factoidal/ShEx/Satisfies.lean:378
-L4Factoidal_ShEx_groupEq  # UNTRIAGED https://github.com/danbri/factoidal/issues/753 depth, cycle of 8, L4Factoidal/ShEx/SchemaEq.lean:63
-L4Factoidal_ShEx_shapeEq  # UNTRIAGED https://github.com/danbri/factoidal/issues/753 depth, cycle of 8, L4Factoidal/ShEx/SchemaEq.lean:47
-L4Factoidal_ShEx_shapeExprEq  # UNTRIAGED https://github.com/danbri/factoidal/issues/753 depth, cycle of 8, L4Factoidal/ShEx/SchemaEq.lean:32
-L4Factoidal_ShEx_shapeExprListEq  # UNTRIAGED https://github.com/danbri/factoidal/issues/753 length, cycle of 8, L4Factoidal/ShEx/SchemaEq.lean:42
-L4Factoidal_ShEx_tripleConstraintEq  # UNTRIAGED https://github.com/danbri/factoidal/issues/753 depth, cycle of 8, L4Factoidal/ShEx/SchemaEq.lean:72
-L4Factoidal_ShEx_tripleExprEq  # UNTRIAGED https://github.com/danbri/factoidal/issues/753 depth, cycle of 8, L4Factoidal/ShEx/SchemaEq.lean:56
-L4Factoidal_ShEx_tripleExprListEq  # UNTRIAGED https://github.com/danbri/factoidal/issues/753 length, cycle of 8, L4Factoidal/ShEx/SchemaEq.lean:67
-L4Factoidal_ShEx_tripleExprOptEq  # UNTRIAGED https://github.com/danbri/factoidal/issues/753 depth, cycle of 8, L4Factoidal/ShEx/SchemaEq.lean:51
-L4Factoidal_ShEx_arcSatisfiesAll  # UNTRIAGED https://github.com/danbri/factoidal/issues/753 length, cycle of 3, L4Factoidal/ShEx/Shapes.lean:84
-L4Factoidal_ShEx_arcSatisfiesAny  # UNTRIAGED https://github.com/danbri/factoidal/issues/753 length, cycle of 3, L4Factoidal/ShEx/Shapes.lean:89
-L4Factoidal_ShEx_matchStates  # UNTRIAGED https://github.com/danbri/factoidal/issues/753 length, cycle of 6, L4Factoidal/ShEx/Shapes.lean:197
-L4Factoidal_ShEx_mentionedPredicates  # UNTRIAGED https://github.com/danbri/factoidal/issues/753 length, cycle of 2, L4Factoidal/ShEx/Shapes.lean:49
-L4Factoidal_ShEx_tripleConstraintsWith  # UNTRIAGED https://github.com/danbri/factoidal/issues/753 length, cycle of 2, L4Factoidal/ShEx/Shapes.lean:228
-L4Factoidal_ShEx_Structure_groupWalk  # UNTRIAGED https://github.com/danbri/factoidal/issues/753 length, cycle of 9, L4Factoidal/ShEx/Structure.lean:163
-L4Factoidal_ShEx_Structure_seOptWalk  # UNTRIAGED https://github.com/danbri/factoidal/issues/753 length, cycle of 9, L4Factoidal/ShEx/Structure.lean:159
-L4Factoidal_ShEx_Structure_seWalk  # UNTRIAGED https://github.com/danbri/factoidal/issues/753 length, cycle of 9, L4Factoidal/ShEx/Structure.lean:116
-L4Factoidal_ShEx_Structure_shapeWalk  # UNTRIAGED https://github.com/danbri/factoidal/issues/753 length, cycle of 9, L4Factoidal/ShEx/Structure.lean:134
-L4Factoidal_ShEx_Structure_tcWalk  # UNTRIAGED https://github.com/danbri/factoidal/issues/753 length, cycle of 9, L4Factoidal/ShEx/Structure.lean:150
-L4Factoidal_ShEx_Structure_teOptWalk  # UNTRIAGED https://github.com/danbri/factoidal/issues/753 length, cycle of 9, L4Factoidal/ShEx/Structure.lean:140
-L4Factoidal_ShEx_Structure_teWalk  # UNTRIAGED https://github.com/danbri/factoidal/issues/753 length, cycle of 9, L4Factoidal/ShEx/Structure.lean:144
-L4Factoidal_Storage_GenerationVerify_retiredLiteralSidecar?  # UNTRIAGED https://github.com/danbri/factoidal/issues/753 length, cycle of 2, L4Factoidal/Storage/GenerationVerify.lean:158
-L4Factoidal_Storage_GenerationVerify_verifyBlobArtifacts  # UNTRIAGED https://github.com/danbri/factoidal/issues/753 length, cycle of 2, L4Factoidal/Storage/GenerationVerify.lean:424
-L4Factoidal_Storage_GenerationVerify_verifyFullEntries  # UNTRIAGED https://github.com/danbri/factoidal/issues/753 length, cycle of 6, L4Factoidal/Storage/GenerationVerify.lean:105
-L4Factoidal_Storage_GenerationVerify_verifyIbk3Entries  # UNTRIAGED https://github.com/danbri/factoidal/issues/753 length, cycle of 2, L4Factoidal/Storage/GenerationVerify.lean:540
-L4Factoidal_Storage_GenerationVerify_verifyIndexSidecars  # UNTRIAGED https://github.com/danbri/factoidal/issues/753 length, cycle of 2, L4Factoidal/Storage/GenerationVerify.lean:351
-L4Factoidal_Storage_GenerationVerify_verifyQuadEntries  # UNTRIAGED https://github.com/danbri/factoidal/issues/753 length, cycle of 2, L4Factoidal/Storage/GenerationVerify.lean:390
-L4Factoidal_Storage_GenerationVerify_verifyQuadV5Entries  # UNTRIAGED https://github.com/danbri/factoidal/issues/753 length, cycle of 2, L4Factoidal/Storage/GenerationVerify.lean:512
-L4Factoidal_Syntax_RdfXml_nodeElement  # UNTRIAGED https://github.com/danbri/factoidal/issues/753 length, cycle of 5, L4Factoidal/Syntax/RdfXml.lean:732
-L4Factoidal_Syntax_RdfXml_propertyElt  # UNTRIAGED https://github.com/danbri/factoidal/issues/753 length, cycle of 5, L4Factoidal/Syntax/RdfXml.lean:789
-L4Factoidal_Syntax_RdfXml_propertyEltBody  # UNTRIAGED https://github.com/danbri/factoidal/issues/753 length, cycle of 5, L4Factoidal/Syntax/RdfXml.lean:833
-L4Factoidal_Syntax_RdfXml_propertyEltList  # UNTRIAGED https://github.com/danbri/factoidal/issues/753 length, cycle of 5, L4Factoidal/Syntax/RdfXml.lean:777
+L4Factoidal_SPARQL_sseSelectItem  # (b) SPARQL parser; fuel decreases at each call; depth is the nesting of the query text (groups, sub-selects, parenthesised expressions, property path groups, triple terms); the loops over lists and operators are tail calls
+L4Factoidal_SPARQL_Expr_backendLocalList  # (b) SPARQL query algebra or evaluation; depth is the nesting of the query (expressions, patterns, sub-selects); list steps are tail calls (&& and || unfold to if)
+L4Factoidal_SPARQL_Expr_existsFreeList  # (b) SPARQL query algebra or evaluation; depth is the nesting of the query (expressions, patterns, sub-selects); list steps are tail calls (&& and || unfold to if)
+L4Factoidal_SPARQL_Expr_rewriteBnodesOpt  # (b) SPARQL query algebra or evaluation; depth is the nesting of the query (expressions, patterns, sub-selects); list steps are tail calls (&& and || unfold to if)
+L4Factoidal_SPARQL_QueryForm_rewriteBnodes  # (b) SPARQL query algebra or evaluation; depth is the nesting of the query (expressions, patterns, sub-selects); list steps are tail calls (&& and || unfold to if)
+L4Factoidal_SPARQL_Query_rewriteBnodes  # (b) SPARQL query algebra or evaluation; depth is the nesting of the query (expressions, patterns, sub-selects); list steps are tail calls (&& and || unfold to if)
+L4Factoidal_SPARQL_SelectClause_rewriteBnodes  # (b) SPARQL query algebra or evaluation; depth is the nesting of the query (expressions, patterns, sub-selects); list steps are tail calls (&& and || unfold to if)
+L4Factoidal_SPARQL_compareOnCondition  # (b) SPARQL query algebra or evaluation; depth is the nesting of the query (expressions, patterns, sub-selects); list steps are tail calls (&& and || unfold to if)
+L4Factoidal_SPARQL_compareOnConditions  # (b) SPARQL query algebra or evaluation; depth is the nesting of the query (expressions, patterns, sub-selects); list steps are tail calls (&& and || unfold to if)
+L4Factoidal_SPARQL_evalSelectItemGroup  # (b) SPARQL query algebra or evaluation; depth is the nesting of the query (expressions, patterns, sub-selects); list steps are tail calls (&& and || unfold to if)
+L4Factoidal_SPARQL_evalSelectItemsRowFrom  # (b) SPARQL query algebra or evaluation; depth is the nesting of the query (expressions, patterns, sub-selects); list steps are tail calls (&& and || unfold to if)
+L4Factoidal_SPARQL_havingSatisfies  # (b) SPARQL query algebra or evaluation; depth is the nesting of the query (expressions, patterns, sub-selects); list steps are tail calls (&& and || unfold to if)
+L4Factoidal_SPARQL_selectPost  # (b) SPARQL query algebra or evaluation; depth is the nesting of the query (expressions, patterns, sub-selects); list steps are tail calls (&& and || unfold to if)
+L4Factoidal_SPARQL_subSelectAssignableVars  # (b) SPARQL query algebra or evaluation; depth is the nesting of the query (expressions, patterns, sub-selects); list steps are tail calls (&& and || unfold to if)
+L4Factoidal_SPARQL_substituteExistentialsOpt  # (b) SPARQL query algebra or evaluation; depth is the nesting of the query (expressions, patterns, sub-selects); list steps are tail calls (&& and || unfold to if)
+L4Factoidal_SPARQL_StoreBackend_capsOfBackend  # (b) depth is the nesting of union backends
+L4Factoidal_SPARQL_StorePlan_evalBgpConcatMapAcc  # (b) depth is the number of triple patterns of one basic graph pattern (query size, not data size); the loop over solutions is an accumulator tail call
+L4Factoidal_SPARQL_StorePlan_evalBgpFromMuFuel  # (b) depth is the number of triple patterns of one basic graph pattern (query size, not data size); the loop over solutions is an accumulator tail call
+L4Factoidal_Schematron_textOf  # (b) nesting of one Schematron XML document; children visited by List.foldl
+L4Factoidal_ShEx_Compact_parseGroupTripleExpr  # (b) ShExC reader; depth is the nesting of shape expressions and triple expressions (parentheses); the loops over operands are tail calls
+L4Factoidal_ShEx_Compact_parseGroupTripleExpr_go  # (b) ShExC reader; depth is the nesting of shape expressions and triple expressions (parentheses); the loops over operands are tail calls
+L4Factoidal_ShEx_Compact_parseShapeAnd  # (b) ShExC reader; depth is the nesting of shape expressions and triple expressions (parentheses); the loops over operands are tail calls
+L4Factoidal_ShEx_Compact_parseShapeAnd_go  # (b) ShExC reader; depth is the nesting of shape expressions and triple expressions (parentheses); the loops over operands are tail calls
+L4Factoidal_ShEx_Compact_parseShapeAtom  # (b) ShExC reader; depth is the nesting of shape expressions and triple expressions (parentheses); the loops over operands are tail calls
+L4Factoidal_ShEx_Compact_parseShapeDefinition  # (b) ShExC reader; depth is the nesting of shape expressions and triple expressions (parentheses); the loops over operands are tail calls
+L4Factoidal_ShEx_Compact_parseShapeExpr  # (b) ShExC reader; depth is the nesting of shape expressions and triple expressions (parentheses); the loops over operands are tail calls
+L4Factoidal_ShEx_Compact_parseShapeExpr_go  # (b) ShExC reader; depth is the nesting of shape expressions and triple expressions (parentheses); the loops over operands are tail calls
+L4Factoidal_ShEx_Compact_parseShapeOrRef  # (b) ShExC reader; depth is the nesting of shape expressions and triple expressions (parentheses); the loops over operands are tail calls
+L4Factoidal_ShEx_Compact_parseTripleConstraint  # (b) ShExC reader; depth is the nesting of shape expressions and triple expressions (parentheses); the loops over operands are tail calls
+L4Factoidal_ShEx_Compact_parseTripleExpr  # (b) ShExC reader; depth is the nesting of shape expressions and triple expressions (parentheses); the loops over operands are tail calls
+L4Factoidal_ShEx_Compact_parseTripleExpr_go  # (b) ShExC reader; depth is the nesting of shape expressions and triple expressions (parentheses); the loops over operands are tail calls
+L4Factoidal_ShEx_tripleExprOf  # (b) nesting of one ShEx schema (shape expressions, triple expressions, extends chains); list steps are tail calls or List.flatMap
+L4Factoidal_ShEx_chainResidueOk  # (b) nesting of one ShEx schema (shape expressions, triple expressions, extends chains); list steps are tail calls or List.flatMap
+L4Factoidal_ShEx_directExtends  # (b) nesting of one ShEx schema (shape expressions, triple expressions, extends chains); list steps are tail calls or List.flatMap
+L4Factoidal_ShEx_findTeInShapeExpr  # (b) nesting of one ShEx schema (shape expressions, triple expressions, extends chains); list steps are tail calls or List.flatMap
+L4Factoidal_ShEx_findTeInShapeExprList  # (b) nesting of one ShEx schema (shape expressions, triple expressions, extends chains); list steps are tail calls or List.flatMap
+L4Factoidal_ShEx_findTeInTripleExpr  # (b) nesting of one ShEx schema (shape expressions, triple expressions, extends chains); list steps are tail calls or List.flatMap
+L4Factoidal_ShEx_findTeInTripleExprList  # (b) nesting of one ShEx schema (shape expressions, triple expressions, extends chains); list steps are tail calls or List.flatMap
+L4Factoidal_ShEx_flattenSE  # (b) nesting of one ShEx schema (shape expressions, triple expressions, extends chains); list steps are tail calls or List.flatMap
+L4Factoidal_ShEx_reachesLabel  # (b) nesting of one ShEx schema (shape expressions, triple expressions, extends chains); list steps are tail calls or List.flatMap
+L4Factoidal_ShEx_satisfiesExtends  # (a) PENDING https://github.com/danbri/factoidal/issues/941 the visited list stops cycles, so the depth is the longest chain of (shape, node) pairs followed through the data graph, which is data-proportional; conversion: explicit work stack
+L4Factoidal_ShEx_satisfiesLabel  # (a) PENDING https://github.com/danbri/factoidal/issues/941 the visited list stops cycles, so the depth is the longest chain of (shape, node) pairs followed through the data graph, which is data-proportional; conversion: explicit work stack
+L4Factoidal_ShEx_groupEq  # (b) nesting of one ShEx schema (shape expressions, triple expressions, extends chains); list steps are tail calls or List.flatMap
+L4Factoidal_ShEx_shapeEq  # (b) nesting of one ShEx schema (shape expressions, triple expressions, extends chains); list steps are tail calls or List.flatMap
+L4Factoidal_ShEx_shapeExprEq  # (b) nesting of one ShEx schema (shape expressions, triple expressions, extends chains); list steps are tail calls or List.flatMap
+L4Factoidal_ShEx_shapeExprListEq  # (b) nesting of one ShEx schema (shape expressions, triple expressions, extends chains); list steps are tail calls or List.flatMap
+L4Factoidal_ShEx_tripleConstraintEq  # (b) nesting of one ShEx schema (shape expressions, triple expressions, extends chains); list steps are tail calls or List.flatMap
+L4Factoidal_ShEx_tripleExprEq  # (b) nesting of one ShEx schema (shape expressions, triple expressions, extends chains); list steps are tail calls or List.flatMap
+L4Factoidal_ShEx_tripleExprListEq  # (b) nesting of one ShEx schema (shape expressions, triple expressions, extends chains); list steps are tail calls or List.flatMap
+L4Factoidal_ShEx_tripleExprOptEq  # (b) nesting of one ShEx schema (shape expressions, triple expressions, extends chains); list steps are tail calls or List.flatMap
+L4Factoidal_ShEx_arcSatisfiesAll  # (b) nesting of one ShEx schema (shape expressions, triple expressions, extends chains); list steps are tail calls or List.flatMap
+L4Factoidal_ShEx_arcSatisfiesAny  # (b) nesting of one ShEx schema (shape expressions, triple expressions, extends chains); list steps are tail calls or List.flatMap
+L4Factoidal_ShEx_matchStates  # (b) nesting of one ShEx schema (shape expressions, triple expressions, extends chains); list steps are tail calls or List.flatMap
+L4Factoidal_ShEx_mentionedPredicates  # (b) nesting of one ShEx schema (shape expressions, triple expressions, extends chains); list steps are tail calls or List.flatMap
+L4Factoidal_ShEx_tripleConstraintsWith  # (b) nesting of one ShEx schema (shape expressions, triple expressions, extends chains); list steps are tail calls or List.flatMap
+L4Factoidal_ShEx_Structure_groupWalk  # (b) nesting of one ShEx schema; walkers visit operand lists by List.all or List.foldl
+L4Factoidal_ShEx_Structure_seOptWalk  # (b) nesting of one ShEx schema; walkers visit operand lists by List.all or List.foldl
+L4Factoidal_ShEx_Structure_seWalk  # (b) nesting of one ShEx schema; walkers visit operand lists by List.all or List.foldl
+L4Factoidal_ShEx_Structure_shapeWalk  # (b) nesting of one ShEx schema; walkers visit operand lists by List.all or List.foldl
+L4Factoidal_ShEx_Structure_tcWalk  # (b) nesting of one ShEx schema; walkers visit operand lists by List.all or List.foldl
+L4Factoidal_ShEx_Structure_teOptWalk  # (b) nesting of one ShEx schema; walkers visit operand lists by List.all or List.foldl
+L4Factoidal_ShEx_Structure_teWalk  # (b) nesting of one ShEx schema; walkers visit operand lists by List.all or List.foldl
+L4Factoidal_Storage_GenerationVerify_retiredLiteralSidecar?  # (a) PENDING https://github.com/danbri/factoidal/issues/941 the loop over manifest entries (one per block of the generation) recurses inside a `do` block of a generic Monad; one stack frame per entry unless the code generator specialises the monad; conversion: a forIn loop over the entries
+L4Factoidal_Storage_GenerationVerify_verifyBlobArtifacts  # (a) PENDING https://github.com/danbri/factoidal/issues/941 the loop over manifest entries (one per block of the generation) recurses inside a `do` block of a generic Monad; one stack frame per entry unless the code generator specialises the monad; conversion: a forIn loop over the entries
+L4Factoidal_Storage_GenerationVerify_verifyFullEntries  # (a) PENDING https://github.com/danbri/factoidal/issues/941 the loop over manifest entries (one per block of the generation) recurses inside a `do` block of a generic Monad; one stack frame per entry unless the code generator specialises the monad; conversion: a forIn loop over the entries
+L4Factoidal_Storage_GenerationVerify_verifyIbk3Entries  # (a) PENDING https://github.com/danbri/factoidal/issues/941 the loop over manifest entries (one per block of the generation) recurses inside a `do` block of a generic Monad; one stack frame per entry unless the code generator specialises the monad; conversion: a forIn loop over the entries
+L4Factoidal_Storage_GenerationVerify_verifyIndexSidecars  # (a) PENDING https://github.com/danbri/factoidal/issues/941 the loop over manifest entries (one per block of the generation) recurses inside a `do` block of a generic Monad; one stack frame per entry unless the code generator specialises the monad; conversion: a forIn loop over the entries
+L4Factoidal_Storage_GenerationVerify_verifyQuadEntries  # (a) PENDING https://github.com/danbri/factoidal/issues/941 the loop over manifest entries (one per block of the generation) recurses inside a `do` block of a generic Monad; one stack frame per entry unless the code generator specialises the monad; conversion: a forIn loop over the entries
+L4Factoidal_Storage_GenerationVerify_verifyQuadV5Entries  # (a) PENDING https://github.com/danbri/factoidal/issues/941 the loop over manifest entries (one per block of the generation) recurses inside a `do` block of a generic Monad; one stack frame per entry unless the code generator specialises the monad; conversion: a forIn loop over the entries
+L4Factoidal_Syntax_RdfXml_nodeElement  # (b) RDF/XML reader; fuel decreases at each call; depth is the nesting of XML elements; the loop over children is an accumulator tail call
+L4Factoidal_Syntax_RdfXml_propertyElt  # (b) RDF/XML reader; fuel decreases at each call; depth is the nesting of XML elements; the loop over children is an accumulator tail call
+L4Factoidal_Syntax_RdfXml_propertyEltBody  # (b) RDF/XML reader; fuel decreases at each call; depth is the nesting of XML elements; the loop over children is an accumulator tail call
+L4Factoidal_Syntax_RdfXml_propertyEltList  # (b) RDF/XML reader; fuel decreases at each call; depth is the nesting of XML elements; the loop over children is an accumulator tail call
 L4Factoidal_Syntax_readCollection  # (b) one frame per NESTING level of ( ) (2,695 levels ran at 512 KB, docs/designissues/2026-09-03-rdf-parsing-strategy.md); the elements after the first are read by the loop readCollectionCells, issue 678
 L4Factoidal_Syntax_readObject  # (b) one frame per NESTING level of [ ] and ( ) in an object (1,501 levels of [ ] and 2,695 of ( ) ran at 512 KB, docs/designissues/2026-09-03-rdf-parsing-strategy.md); objects of one list, groups of one statement and elements of one collection are loops, issues 678 and 754
-L4Factoidal_Syntax_readReifiedTriple  # UNTRIAGED https://github.com/danbri/factoidal/issues/753 length, cycle of 3, L4Factoidal/Syntax/Turtle.lean:1162
-L4Factoidal_Syntax_readRtObject  # UNTRIAGED https://github.com/danbri/factoidal/issues/753 length, cycle of 3, L4Factoidal/Syntax/Turtle.lean:1118
-L4Factoidal_Syntax_readRtSubject  # UNTRIAGED https://github.com/danbri/factoidal/issues/753 length, cycle of 3, L4Factoidal/Syntax/Turtle.lean:1085
-L4Factoidal_Testing_noAdjacentCharData  # UNTRIAGED https://github.com/danbri/factoidal/issues/753 length, cycle of 2, L4Factoidal/Testing/Enumerate.lean:177
-L4Factoidal_Testing_nodes  # UNTRIAGED https://github.com/danbri/factoidal/issues/753 length, cycle of 5, L4Factoidal/Testing/Enumerate.lean:116
-L4Factoidal_Testing_genPattern  # UNTRIAGED https://github.com/danbri/factoidal/issues/753 depth, cycle of 5, L4Factoidal/Testing/Gen.lean:253
-L4Factoidal_Testing_listOf  # UNTRIAGED https://github.com/danbri/factoidal/issues/753 length, cycle of 2, L4Factoidal/Testing/Gen.lean:90
-L4Factoidal_Unified_matchBody  # UNTRIAGED https://github.com/danbri/factoidal/issues/753 length, cycle of 2, L4Factoidal/Unified/Datalog.lean:392
-L4Factoidal_Unified_rifCollect  # UNTRIAGED https://github.com/danbri/factoidal/issues/753 length, cycle of 2, L4Factoidal/Unified/RifEmbed.lean:214
-L4Factoidal_XML_Canonical_canonNode  # UNTRIAGED https://github.com/danbri/factoidal/issues/753 length, cycle of 2, L4Factoidal/XML/Canonical.lean:161
-L4Factoidal_XML_Canonical_canonNodesAcc  # UNTRIAGED https://github.com/danbri/factoidal/issues/753 length, cycle of 2, L4Factoidal/XML/Canonical.lean:175
-L4Factoidal_XML_Canonical_dropComments  # UNTRIAGED https://github.com/danbri/factoidal/issues/753 length, cycle of 2, L4Factoidal/XML/Canonical.lean:219
-L4Factoidal_XML_Canonical_dropCommentsListAcc  # UNTRIAGED https://github.com/danbri/factoidal/issues/753 length, cycle of 2, L4Factoidal/XML/Canonical.lean:225
-L4Factoidal_XML_Node_decEq  # UNTRIAGED https://github.com/danbri/factoidal/issues/753 length, cycle of 2, L4Factoidal/XML/Document.lean:262
-L4Factoidal_XML_Node_textContent  # UNTRIAGED https://github.com/danbri/factoidal/issues/753 length, cycle of 2, L4Factoidal/XML/Document.lean:640
-L4Factoidal_XML_checkChildren  # UNTRIAGED https://github.com/danbri/factoidal/issues/753 length, cycle of 2, L4Factoidal/XML/Namespaces.lean:246
-L4Factoidal_XML_checkElement  # UNTRIAGED https://github.com/danbri/factoidal/issues/753 length, cycle of 2, L4Factoidal/XML/Namespaces.lean:228
-L4Factoidal_XML_cpListGo  # UNTRIAGED https://github.com/danbri/factoidal/issues/753 length, cycle of 3, L4Factoidal/XML/Parser.lean:1601
-L4Factoidal_XML_parseChoiceOrSeq  # UNTRIAGED https://github.com/danbri/factoidal/issues/753 length, cycle of 3, L4Factoidal/XML/Parser.lean:1623
-L4Factoidal_XML_parseCp  # UNTRIAGED https://github.com/danbri/factoidal/issues/753 length, cycle of 3, L4Factoidal/XML/Parser.lean:1585
-L4Factoidal_XML_Node_serialize  # UNTRIAGED https://github.com/danbri/factoidal/issues/753 length, cycle of 2, L4Factoidal/XML/Theorems.lean:228
-L4Factoidal_XML_Node_wellFormed  # UNTRIAGED https://github.com/danbri/factoidal/issues/753 length, cycle of 2, L4Factoidal/XML/Theorems.lean:97
-L4Factoidal_XML_Node_wellFormedList  # UNTRIAGED https://github.com/danbri/factoidal/issues/753 length, cycle of 2, L4Factoidal/XML/Theorems.lean:119
-L4Factoidal_XML_CP_beq  # UNTRIAGED https://github.com/danbri/factoidal/issues/753 depth, cycle of 2, L4Factoidal/XML/Validity.lean:69
-L4Factoidal_XML_CP_beqList  # UNTRIAGED https://github.com/danbri/factoidal/issues/753 length, cycle of 2, L4Factoidal/XML/Validity.lean:80
-L4Factoidal_XML_CP_nullable  # UNTRIAGED https://github.com/danbri/factoidal/issues/753 depth, cycle of 3, L4Factoidal/XML/Validity.lean:90
-L4Factoidal_XML_CP_nullableAll  # UNTRIAGED https://github.com/danbri/factoidal/issues/753 length, cycle of 3, L4Factoidal/XML/Validity.lean:100
-L4Factoidal_XML_CP_nullableAny  # UNTRIAGED https://github.com/danbri/factoidal/issues/753 length, cycle of 3, L4Factoidal/XML/Validity.lean:104
-L4Factoidal_XML_parseCP  # UNTRIAGED https://github.com/danbri/factoidal/issues/753 length, cycle of 3, L4Factoidal/XML/Validity.lean:193
-L4Factoidal_XML_parseGroup  # UNTRIAGED https://github.com/danbri/factoidal/issues/753 length, cycle of 3, L4Factoidal/XML/Validity.lean:209
-L4Factoidal_XML_parseItems  # UNTRIAGED https://github.com/danbri/factoidal/issues/753 length, cycle of 3, L4Factoidal/XML/Validity.lean:230
-L4Factoidal_XML_validateChildrenAcc  # UNTRIAGED https://github.com/danbri/factoidal/issues/753 length, cycle of 2, L4Factoidal/XML/Validity.lean:574
-L4Factoidal_XML_validateElement  # UNTRIAGED https://github.com/danbri/factoidal/issues/753 length, cycle of 2, L4Factoidal/XML/Validity.lean:560
-L4Factoidal_XML_Node_attributePairs  # UNTRIAGED https://github.com/danbri/factoidal/issues/753 length, cycle of 2, L4Factoidal/XML/XmlAttributes.lean:275
-L4Factoidal_XML_Node_attributePairsListAcc  # UNTRIAGED https://github.com/danbri/factoidal/issues/753 length, cycle of 2, L4Factoidal/XML/XmlAttributes.lean:282
-L4Factoidal_XMPP_Wire_render  # UNTRIAGED https://github.com/danbri/factoidal/issues/753 length, cycle of 2, L4Factoidal/XMPP/Wire.lean:53
-L4Factoidal_XPath_Full_descendantsOf  # UNTRIAGED https://github.com/danbri/factoidal/issues/753 length, cycle of 2, L4Factoidal/XPath/Data.lean:251
-L4Factoidal_XPath_Full_nodeText  # UNTRIAGED https://github.com/danbri/factoidal/issues/753 length, cycle of 2, L4Factoidal/XPath/Data.lean:177
-L4Factoidal_XPath_Full_applyPreds  # UNTRIAGED https://github.com/danbri/factoidal/issues/753 length, cycle of 10, L4Factoidal/XPath/Eval.lean:426
-L4Factoidal_XPath_Full_evalCall  # UNTRIAGED https://github.com/danbri/factoidal/issues/753 length, cycle of 10, L4Factoidal/XPath/Eval.lean:489
-L4Factoidal_XPath_Full_evalStep  # UNTRIAGED https://github.com/danbri/factoidal/issues/753 length, cycle of 10, L4Factoidal/XPath/Eval.lean:420
-L4Factoidal_XPath_Full_evalSteps  # UNTRIAGED https://github.com/danbri/factoidal/issues/753 length, cycle of 10, L4Factoidal/XPath/Eval.lean:414
-L4Factoidal_XPath_Full_pAddTail  # UNTRIAGED https://github.com/danbri/factoidal/issues/753 length, cycle of 21, L4Factoidal/XPath/Expr.lean:320
-L4Factoidal_XPath_Full_pAdditive  # UNTRIAGED https://github.com/danbri/factoidal/issues/753 length, cycle of 21, L4Factoidal/XPath/Expr.lean:315
-L4Factoidal_XPath_Full_pAnd  # UNTRIAGED https://github.com/danbri/factoidal/issues/753 length, cycle of 21, L4Factoidal/XPath/Expr.lean:286
-L4Factoidal_XPath_Full_pAndTail  # UNTRIAGED https://github.com/danbri/factoidal/issues/753 length, cycle of 21, L4Factoidal/XPath/Expr.lean:291
-L4Factoidal_XPath_Full_pArgs  # UNTRIAGED https://github.com/danbri/factoidal/issues/753 length, cycle of 21, L4Factoidal/XPath/Expr.lean:424
-L4Factoidal_XPath_Full_pArgsTail  # UNTRIAGED https://github.com/danbri/factoidal/issues/753 length, cycle of 21, L4Factoidal/XPath/Expr.lean:431
-L4Factoidal_XPath_Full_pEqTail  # UNTRIAGED https://github.com/danbri/factoidal/issues/753 length, cycle of 21, L4Factoidal/XPath/Expr.lean:304
-L4Factoidal_XPath_Full_pEquality  # UNTRIAGED https://github.com/danbri/factoidal/issues/753 length, cycle of 21, L4Factoidal/XPath/Expr.lean:299
-L4Factoidal_XPath_Full_pFilterStart  # UNTRIAGED https://github.com/danbri/factoidal/issues/753 length, cycle of 21, L4Factoidal/XPath/Expr.lean:397
-L4Factoidal_XPath_Full_pMulTail  # UNTRIAGED https://github.com/danbri/factoidal/issues/753 length, cycle of 21, L4Factoidal/XPath/Expr.lean:335
-L4Factoidal_XPath_Full_pMultiplicative  # UNTRIAGED https://github.com/danbri/factoidal/issues/753 length, cycle of 21, L4Factoidal/XPath/Expr.lean:330
-L4Factoidal_XPath_Full_pOr  # UNTRIAGED https://github.com/danbri/factoidal/issues/753 length, cycle of 21, L4Factoidal/XPath/Expr.lean:273
-L4Factoidal_XPath_Full_pOrTail  # UNTRIAGED https://github.com/danbri/factoidal/issues/753 length, cycle of 21, L4Factoidal/XPath/Expr.lean:278
-L4Factoidal_XPath_Full_pPath  # UNTRIAGED https://github.com/danbri/factoidal/issues/753 length, cycle of 21, L4Factoidal/XPath/Expr.lean:363
-L4Factoidal_XPath_Full_pRelTail  # UNTRIAGED https://github.com/danbri/factoidal/issues/753 length, cycle of 21, L4Factoidal/XPath/Expr.lean:445
-L4Factoidal_XPath_Full_pRelative  # UNTRIAGED https://github.com/danbri/factoidal/issues/753 length, cycle of 21, L4Factoidal/XPath/Expr.lean:440
-L4Factoidal_XPath_Full_pStep  # UNTRIAGED https://github.com/danbri/factoidal/issues/753 length, cycle of 21, L4Factoidal/XPath/Expr.lean:457
-L4Factoidal_XPath_Full_pUnion  # UNTRIAGED https://github.com/danbri/factoidal/issues/753 length, cycle of 21, L4Factoidal/XPath/Expr.lean:350
-L4Factoidal_XPath_Full_pUnionTail  # UNTRIAGED https://github.com/danbri/factoidal/issues/753 length, cycle of 21, L4Factoidal/XPath/Expr.lean:355
-L4Factoidal_XPath_allPaths  # UNTRIAGED https://github.com/danbri/factoidal/issues/753 length, cycle of 2, L4Factoidal/XPath/Mini.lean:87
-L4Factoidal_XPath_evalPath  # UNTRIAGED https://github.com/danbri/factoidal/issues/753 length, cycle of 2, L4Factoidal/XPath/Mini.lean:435
-L4Factoidal_XPath_pArgs  # UNTRIAGED https://github.com/danbri/factoidal/issues/753 length, cycle of 5, L4Factoidal/XPath/Mini.lean:288
-L4Factoidal_XPath_pCmp  # UNTRIAGED https://github.com/danbri/factoidal/issues/753 length, cycle of 5, L4Factoidal/XPath/Mini.lean:271
-L4Factoidal_XPath_pPrimary  # UNTRIAGED https://github.com/danbri/factoidal/issues/753 length, cycle of 5, L4Factoidal/XPath/Mini.lean:303
-L4Factoidal_XPath_stringValue  # UNTRIAGED https://github.com/danbri/factoidal/issues/753 length, cycle of 2, L4Factoidal/XPath/Mini.lean:397
-L4Factoidal_XSD_Val_beq  # UNTRIAGED https://github.com/danbri/factoidal/issues/753 depth, cycle of 2, L4Factoidal/XSD/Datatypes.lean:348
-L4Factoidal_XSD_Val_beqList  # UNTRIAGED https://github.com/danbri/factoidal/issues/753 length, cycle of 2, L4Factoidal/XSD/Datatypes.lean:361
-L4Factoidal_XSD_canonicalMapFuel  # UNTRIAGED https://github.com/danbri/factoidal/issues/753 length, cycle of 2, L4Factoidal/XSD/Datatypes.lean:1247
-L4Factoidal_XSD_lexicalMapFuel  # UNTRIAGED https://github.com/danbri/factoidal/issues/753 length, cycle of 2, L4Factoidal/XSD/Datatypes.lean:1061
-L4Factoidal_XSD_ciNode  # UNTRIAGED https://github.com/danbri/factoidal/issues/753 length, cycle of 2, L4Factoidal/XSD/SchemaReader.lean:352
-L4Factoidal_XSD_ciNodesAcc  # UNTRIAGED https://github.com/danbri/factoidal/issues/753 length, cycle of 2, L4Factoidal/XSD/SchemaReader.lean:361
-L4Factoidal_XSD_hasAssertionFuel  # UNTRIAGED https://github.com/danbri/factoidal/issues/753 depth, cycle of 2, L4Factoidal/XSD/SimpleType.lean:257
-L4Factoidal_XSD_valueOfFuel  # UNTRIAGED https://github.com/danbri/factoidal/issues/753 length, cycle of 5, L4Factoidal/XSD/SimpleType.lean:202
-L4Factoidal_XSLT_applyTo  # UNTRIAGED https://github.com/danbri/factoidal/issues/753 length, cycle of 11, L4Factoidal/XSLT/Transform.lean:1023
-L4Factoidal_XSLT_bindCalled  # UNTRIAGED https://github.com/danbri/factoidal/issues/753 length, cycle of 5, L4Factoidal/XSLT/Transform.lean:1207
-L4Factoidal_XSLT_bindParams  # UNTRIAGED https://github.com/danbri/factoidal/issues/753 length, cycle of 11, L4Factoidal/XSLT/Transform.lean:1048
-L4Factoidal_XSLT_bindUnknown  # UNTRIAGED https://github.com/danbri/factoidal/issues/753 length, cycle of 5, L4Factoidal/XSLT/Transform.lean:1186
-L4Factoidal_XSLT_calledOne  # UNTRIAGED https://github.com/danbri/factoidal/issues/753 length, cycle of 5, L4Factoidal/XSLT/Transform.lean:1195
-L4Factoidal_XSLT_copyNode  # UNTRIAGED https://github.com/danbri/factoidal/issues/753 length, cycle of 2, L4Factoidal/XSLT/Transform.lean:637
-L4Factoidal_XSLT_evalBinding  # UNTRIAGED https://github.com/danbri/factoidal/issues/753 length, cycle of 11, L4Factoidal/XSLT/Transform.lean:1061
-L4Factoidal_XSLT_instOne  # UNTRIAGED https://github.com/danbri/factoidal/issues/753 length, cycle of 11, L4Factoidal/XSLT/Transform.lean:878
-L4Factoidal_XSLT_instOne_pick  # UNTRIAGED https://github.com/danbri/factoidal/issues/753 length, cycle of 11, L4Factoidal/XSLT/Transform.lean:909
-L4Factoidal_XSLT_readBody  # UNTRIAGED https://github.com/danbri/factoidal/issues/753 length, cycle of 6, L4Factoidal/XSLT/Transform.lean:261
-L4Factoidal_XSLT_readOne  # UNTRIAGED https://github.com/danbri/factoidal/issues/753 length, cycle of 6, L4Factoidal/XSLT/Transform.lean:295
-L4Factoidal_XSLT_readStylesheetWith  # UNTRIAGED https://github.com/danbri/factoidal/issues/753 length, cycle of 2, L4Factoidal/XSLT/Transform.lean:430
-L4Factoidal_XSLT_rnodeText  # UNTRIAGED https://github.com/danbri/factoidal/issues/753 length, cycle of 2, L4Factoidal/XSLT/Transform.lean:1121
-L4Factoidal_XSLT_rnodeToNode  # UNTRIAGED https://github.com/danbri/factoidal/issues/753 length, cycle of 2, L4Factoidal/XSLT/Transform.lean:838
-L4Factoidal_XSLT_serializeNode  # UNTRIAGED https://github.com/danbri/factoidal/issues/753 length, cycle of 2, L4Factoidal/XSLT/Transform.lean:596
-L4Factoidal_XSLT_stripNsDecls  # UNTRIAGED https://github.com/danbri/factoidal/issues/753 depth, cycle of 2, L4Factoidal/XSLT/Transform.lean:646
-L4Factoidal_XSLT_stripWsIn  # UNTRIAGED https://github.com/danbri/factoidal/issues/753 length, cycle of 2, L4Factoidal/XSLT/Transform.lean:1139
-L4Factoidal_XSLT_unknownOne  # UNTRIAGED https://github.com/danbri/factoidal/issues/753 length, cycle of 5, L4Factoidal/XSLT/Transform.lean:1174
-L4Wasm_Json_pArr  # UNTRIAGED https://github.com/danbri/factoidal/issues/753 length, cycle of 3, Wasm/Abi.lean:205
-L4Wasm_Json_pObj  # UNTRIAGED https://github.com/danbri/factoidal/issues/753 length, cycle of 3, Wasm/Abi.lean:216
-L4Wasm_Json_pValue  # UNTRIAGED https://github.com/danbri/factoidal/issues/753 length, cycle of 3, Wasm/Abi.lean:185
-L4Wasm_Json_render  # UNTRIAGED https://github.com/danbri/factoidal/issues/753 length, cycle of 3, Wasm/Abi.lean:106
-L4Wasm_decodeSubject  # UNTRIAGED https://github.com/danbri/factoidal/issues/753 length, cycle of 3, Wasm/Abi.lean:331
-L4Wasm_termIriString  # UNTRIAGED https://github.com/danbri/factoidal/issues/753 length, cycle of 3, Wasm/Abi.lean:340
+L4Factoidal_Syntax_readReifiedTriple  # (b) Turtle reified-triple reader; fuel decreases at each call and runs out with 'reified-triple nesting too deep'; depth is the nesting of << >>
+L4Factoidal_Syntax_readRtObject  # (b) Turtle reified-triple reader; fuel decreases at each call and runs out with 'reified-triple nesting too deep'; depth is the nesting of << >>
+L4Factoidal_Syntax_readRtSubject  # (b) Turtle reified-triple reader; fuel decreases at each call and runs out with 'reified-triple nesting too deep'; depth is the nesting of << >>
+L4Factoidal_Testing_noAdjacentCharData  # (c) test generator or enumerator; the depth argument is a small constant chosen by the test (at most 5)
+L4Factoidal_Testing_nodes  # (c) test generator or enumerator; the depth argument is a small constant chosen by the test (at most 5)
+L4Factoidal_Testing_genPattern  # (c) test generator or enumerator; the depth argument is a small constant chosen by the test (at most 5)
+L4Factoidal_Testing_listOf  # (c) test generator or enumerator; the depth argument is a small constant chosen by the test (at most 5)
+L4Factoidal_Unified_matchBody  # (b) depth is the number of body atoms or conjuncts of one rule (rule size, not data size)
+L4Factoidal_Unified_rifCollect  # (b) depth is the number of body atoms or conjuncts of one rule (rule size, not data size)
+L4Factoidal_XML_Canonical_canonNode  # (b) nesting of one XML document; the loop over children is an accumulator tail call
+L4Factoidal_XML_Canonical_canonNodesAcc  # (b) nesting of one XML document; the loop over children is an accumulator tail call
+L4Factoidal_XML_Canonical_dropComments  # (b) nesting of one XML document; the loop over children is an accumulator tail call
+L4Factoidal_XML_Canonical_dropCommentsListAcc  # (b) nesting of one XML document; the loop over children is an accumulator tail call
+L4Factoidal_XML_Node_decEq  # (a) PENDING https://github.com/danbri/factoidal/issues/939 Decidable equality recurses over the children list (decEqList) with the result matched afterwards: one frame per child of an element; conversion: a Bool comparison loop with a soundness lemma, or an accumulator
+L4Factoidal_XML_Node_textContent  # (a) PENDING https://github.com/danbri/factoidal/issues/939 textContentList concatenates `text ++ rest`: one frame per child of an element; conversion: accumulator loop over the children
+L4Factoidal_XML_checkChildren  # (b) nesting of one XML document; the loop over children is a tail call (&& unfolds to if)
+L4Factoidal_XML_checkElement  # (b) nesting of one XML document; the loop over children is a tail call (&& unfolds to if)
+L4Factoidal_XML_cpListGo  # (b) DTD content-model reader; fuel decreases at each call; depth is the parenthesis nesting of the content model
+L4Factoidal_XML_parseChoiceOrSeq  # (b) DTD content-model reader; fuel decreases at each call; depth is the parenthesis nesting of the content model
+L4Factoidal_XML_parseCp  # (b) DTD content-model reader; fuel decreases at each call; depth is the parenthesis nesting of the content model
+L4Factoidal_XML_Node_serialize  # (a) PENDING https://github.com/danbri/factoidal/issues/939 serializeList concatenates `serialize n ++ rest`: one frame per child of an element; conversion: accumulator loop with a lemma tying it to the specification
+L4Factoidal_XML_Node_wellFormed  # (b) nesting of one XML document or DTD content model; list steps are tail calls or accumulator loops
+L4Factoidal_XML_Node_wellFormedList  # (b) nesting of one XML document or DTD content model; list steps are tail calls or accumulator loops
+L4Factoidal_XML_CP_beq  # (b) nesting of one XML document or DTD content model; list steps are tail calls or accumulator loops
+L4Factoidal_XML_CP_beqList  # (b) nesting of one XML document or DTD content model; list steps are tail calls or accumulator loops
+L4Factoidal_XML_CP_nullable  # (b) nesting of one XML document or DTD content model; list steps are tail calls or accumulator loops
+L4Factoidal_XML_CP_nullableAll  # (b) nesting of one XML document or DTD content model; list steps are tail calls or accumulator loops
+L4Factoidal_XML_CP_nullableAny  # (b) nesting of one XML document or DTD content model; list steps are tail calls or accumulator loops
+L4Factoidal_XML_parseCP  # (b) nesting of one XML document or DTD content model; list steps are tail calls or accumulator loops
+L4Factoidal_XML_parseGroup  # (b) nesting of one XML document or DTD content model; list steps are tail calls or accumulator loops
+L4Factoidal_XML_parseItems  # (b) nesting of one XML document or DTD content model; list steps are tail calls or accumulator loops
+L4Factoidal_XML_validateChildrenAcc  # (b) nesting of one XML document or DTD content model; list steps are tail calls or accumulator loops
+L4Factoidal_XML_validateElement  # (b) nesting of one XML document or DTD content model; list steps are tail calls or accumulator loops
+L4Factoidal_XML_Node_attributePairs  # (b) nesting of one XML document or DTD content model; list steps are tail calls or accumulator loops
+L4Factoidal_XML_Node_attributePairsListAcc  # (b) nesting of one XML document or DTD content model; list steps are tail calls or accumulator loops
+L4Factoidal_XMPP_Wire_render  # (a) PENDING https://github.com/danbri/factoidal/issues/939 renderList concatenates `render n ++ rest`: one frame per child of a stanza element; conversion: accumulator loop
+L4Factoidal_XPath_Full_descendantsOf  # (b) nesting of one XML document or the number of location steps of one XPath expression; nodes visited by List.flatMap, List.foldlM or List.map
+L4Factoidal_XPath_Full_nodeText  # (b) nesting of one XML document or the number of location steps of one XPath expression; nodes visited by List.flatMap, List.foldlM or List.map
+L4Factoidal_XPath_Full_applyPreds  # (b) nesting of one XML document or the number of location steps of one XPath expression; nodes visited by List.flatMap, List.foldlM or List.map
+L4Factoidal_XPath_Full_evalCall  # (b) nesting of one XML document or the number of location steps of one XPath expression; nodes visited by List.flatMap, List.foldlM or List.map
+L4Factoidal_XPath_Full_evalStep  # (b) nesting of one XML document or the number of location steps of one XPath expression; nodes visited by List.flatMap, List.foldlM or List.map
+L4Factoidal_XPath_Full_evalSteps  # (b) nesting of one XML document or the number of location steps of one XPath expression; nodes visited by List.flatMap, List.foldlM or List.map
+L4Factoidal_XPath_Full_pAddTail  # (b) XPath 1.0 expression reader; depth is the nesting of parentheses, predicates and function arguments; the loops over operators are tail calls
+L4Factoidal_XPath_Full_pAdditive  # (b) XPath 1.0 expression reader; depth is the nesting of parentheses, predicates and function arguments; the loops over operators are tail calls
+L4Factoidal_XPath_Full_pAnd  # (b) XPath 1.0 expression reader; depth is the nesting of parentheses, predicates and function arguments; the loops over operators are tail calls
+L4Factoidal_XPath_Full_pAndTail  # (b) XPath 1.0 expression reader; depth is the nesting of parentheses, predicates and function arguments; the loops over operators are tail calls
+L4Factoidal_XPath_Full_pArgs  # (b) XPath 1.0 expression reader; depth is the nesting of parentheses, predicates and function arguments; the loops over operators are tail calls
+L4Factoidal_XPath_Full_pArgsTail  # (b) XPath 1.0 expression reader; depth is the nesting of parentheses, predicates and function arguments; the loops over operators are tail calls
+L4Factoidal_XPath_Full_pEqTail  # (b) XPath 1.0 expression reader; depth is the nesting of parentheses, predicates and function arguments; the loops over operators are tail calls
+L4Factoidal_XPath_Full_pEquality  # (b) XPath 1.0 expression reader; depth is the nesting of parentheses, predicates and function arguments; the loops over operators are tail calls
+L4Factoidal_XPath_Full_pFilterStart  # (b) XPath 1.0 expression reader; depth is the nesting of parentheses, predicates and function arguments; the loops over operators are tail calls
+L4Factoidal_XPath_Full_pMulTail  # (b) XPath 1.0 expression reader; depth is the nesting of parentheses, predicates and function arguments; the loops over operators are tail calls
+L4Factoidal_XPath_Full_pMultiplicative  # (b) XPath 1.0 expression reader; depth is the nesting of parentheses, predicates and function arguments; the loops over operators are tail calls
+L4Factoidal_XPath_Full_pOr  # (b) XPath 1.0 expression reader; depth is the nesting of parentheses, predicates and function arguments; the loops over operators are tail calls
+L4Factoidal_XPath_Full_pOrTail  # (b) XPath 1.0 expression reader; depth is the nesting of parentheses, predicates and function arguments; the loops over operators are tail calls
+L4Factoidal_XPath_Full_pPath  # (b) XPath 1.0 expression reader; depth is the nesting of parentheses, predicates and function arguments; the loops over operators are tail calls
+L4Factoidal_XPath_Full_pRelTail  # (b) XPath 1.0 expression reader; depth is the nesting of parentheses, predicates and function arguments; the loops over operators are tail calls
+L4Factoidal_XPath_Full_pRelative  # (b) XPath 1.0 expression reader; depth is the nesting of parentheses, predicates and function arguments; the loops over operators are tail calls
+L4Factoidal_XPath_Full_pStep  # (b) XPath 1.0 expression reader; depth is the nesting of parentheses, predicates and function arguments; the loops over operators are tail calls
+L4Factoidal_XPath_Full_pUnion  # (b) XPath 1.0 expression reader; depth is the nesting of parentheses, predicates and function arguments; the loops over operators are tail calls
+L4Factoidal_XPath_Full_pUnionTail  # (b) XPath 1.0 expression reader; depth is the nesting of parentheses, predicates and function arguments; the loops over operators are tail calls
+L4Factoidal_XPath_allPaths  # (a) PENDING https://github.com/danbri/factoidal/issues/939 allPathsChildren appends `(p :: paths) ++ rest`: one frame per sibling element; conversion: accumulator loop
+L4Factoidal_XPath_evalPath  # (b) XPath expression: number of location steps or nesting of parentheses; nodes visited by List.flatMap
+L4Factoidal_XPath_pArgs  # (b) XPath expression: number of location steps or nesting of parentheses; nodes visited by List.flatMap
+L4Factoidal_XPath_pCmp  # (b) XPath expression: number of location steps or nesting of parentheses; nodes visited by List.flatMap
+L4Factoidal_XPath_pPrimary  # (b) XPath expression: number of location steps or nesting of parentheses; nodes visited by List.flatMap
+L4Factoidal_XPath_stringValue  # (a) PENDING https://github.com/danbri/factoidal/issues/939 stringValueChildren concatenates `value c ++ rest`: one frame per child of an element; conversion: accumulator loop
+L4Factoidal_XSD_Val_beq  # (b) nesting of one XSD simple type or value (list and union types, assertion facets); fuel decreases at each call; list steps are tail calls
+L4Factoidal_XSD_Val_beqList  # (b) nesting of one XSD simple type or value (list and union types, assertion facets); fuel decreases at each call; list steps are tail calls
+L4Factoidal_XSD_canonicalMapFuel  # (b) nesting of one XSD simple type or value (list and union types, assertion facets); fuel decreases at each call; list steps are tail calls
+L4Factoidal_XSD_lexicalMapFuel  # (b) nesting of one XSD simple type or value (list and union types, assertion facets); fuel decreases at each call; list steps are tail calls
+L4Factoidal_XSD_ciNode  # (b) nesting of one XSD simple type or value (list and union types, assertion facets); fuel decreases at each call; list steps are tail calls
+L4Factoidal_XSD_ciNodesAcc  # (b) nesting of one XSD simple type or value (list and union types, assertion facets); fuel decreases at each call; list steps are tail calls
+L4Factoidal_XSD_hasAssertionFuel  # (b) nesting of one XSD simple type or value (list and union types, assertion facets); fuel decreases at each call; list steps are tail calls
+L4Factoidal_XSD_valueOfFuel  # (b) nesting of one XSD simple type or value (list and union types, assertion facets); fuel decreases at each call; list steps are tail calls
+L4Factoidal_XSLT_applyTo  # (b) XSLT 1.0 reader or processor; depth is the nesting of instructions and of apply-templates recursion over the source tree; fuel decreases at each call; children visited by List.map or List.foldlM
+L4Factoidal_XSLT_bindCalled  # (b) XSLT 1.0 reader or processor; depth is the nesting of instructions and of apply-templates recursion over the source tree; fuel decreases at each call; children visited by List.map or List.foldlM
+L4Factoidal_XSLT_bindParams  # (b) XSLT 1.0 reader or processor; depth is the nesting of instructions and of apply-templates recursion over the source tree; fuel decreases at each call; children visited by List.map or List.foldlM
+L4Factoidal_XSLT_bindUnknown  # (b) XSLT 1.0 reader or processor; depth is the nesting of instructions and of apply-templates recursion over the source tree; fuel decreases at each call; children visited by List.map or List.foldlM
+L4Factoidal_XSLT_calledOne  # (b) XSLT 1.0 reader or processor; depth is the nesting of instructions and of apply-templates recursion over the source tree; fuel decreases at each call; children visited by List.map or List.foldlM
+L4Factoidal_XSLT_copyNode  # (b) XSLT 1.0 reader or processor; depth is the nesting of instructions and of apply-templates recursion over the source tree; fuel decreases at each call; children visited by List.map or List.foldlM
+L4Factoidal_XSLT_evalBinding  # (b) XSLT 1.0 reader or processor; depth is the nesting of instructions and of apply-templates recursion over the source tree; fuel decreases at each call; children visited by List.map or List.foldlM
+L4Factoidal_XSLT_instOne  # (b) XSLT 1.0 reader or processor; depth is the nesting of instructions and of apply-templates recursion over the source tree; fuel decreases at each call; children visited by List.map or List.foldlM
+L4Factoidal_XSLT_instOne_pick  # (b) XSLT 1.0 reader or processor; depth is the nesting of instructions and of apply-templates recursion over the source tree; fuel decreases at each call; children visited by List.map or List.foldlM
+L4Factoidal_XSLT_readBody  # (b) XSLT 1.0 reader or processor; depth is the nesting of instructions and of apply-templates recursion over the source tree; fuel decreases at each call; children visited by List.map or List.foldlM
+L4Factoidal_XSLT_readOne  # (b) XSLT 1.0 reader or processor; depth is the nesting of instructions and of apply-templates recursion over the source tree; fuel decreases at each call; children visited by List.map or List.foldlM
+L4Factoidal_XSLT_readStylesheetWith  # (b) XSLT 1.0 reader or processor; depth is the nesting of instructions and of apply-templates recursion over the source tree; fuel decreases at each call; children visited by List.map or List.foldlM
+L4Factoidal_XSLT_rnodeText  # (b) XSLT 1.0 reader or processor; depth is the nesting of instructions and of apply-templates recursion over the source tree; fuel decreases at each call; children visited by List.map or List.foldlM
+L4Factoidal_XSLT_rnodeToNode  # (b) XSLT 1.0 reader or processor; depth is the nesting of instructions and of apply-templates recursion over the source tree; fuel decreases at each call; children visited by List.map or List.foldlM
+L4Factoidal_XSLT_serializeNode  # (b) XSLT 1.0 reader or processor; depth is the nesting of instructions and of apply-templates recursion over the source tree; fuel decreases at each call; children visited by List.map or List.foldlM
+L4Factoidal_XSLT_stripNsDecls  # (b) XSLT 1.0 reader or processor; depth is the nesting of instructions and of apply-templates recursion over the source tree; fuel decreases at each call; children visited by List.map or List.foldlM
+L4Factoidal_XSLT_stripWsIn  # (b) XSLT 1.0 reader or processor; depth is the nesting of instructions and of apply-templates recursion over the source tree; fuel decreases at each call; children visited by List.map or List.foldlM
+L4Factoidal_XSLT_unknownOne  # (b) XSLT 1.0 reader or processor; depth is the nesting of instructions and of apply-templates recursion over the source tree; fuel decreases at each call; children visited by List.map or List.foldlM
+L4Wasm_Json_pArr  # (b) host JSON reader; fuel decreases at each call; depth is the nesting of the JSON text; the loop over items or members is a tail call
+L4Wasm_Json_pObj  # (b) host JSON reader; fuel decreases at each call; depth is the nesting of the JSON text; the loop over items or members is a tail call
+L4Wasm_Json_pValue  # (b) host JSON reader; fuel decreases at each call; depth is the nesting of the JSON text; the loop over items or members is a tail call
+L4Wasm_Json_render  # (a) PENDING https://github.com/danbri/factoidal/issues/939 renderArr and renderObj concatenate `render x ++ "," ++ rest`: one frame per array item or object member of a value written to the host; conversion: accumulator loop
+L4Wasm_decodeSubject  # (b) depth is the nesting of triple terms in one wire term; fuel decreases at each call
+L4Wasm_termIriString  # (b) depth is the nesting of triple terms in one wire term; fuel decreases at each call
 L4Factoidal_Syntax_readCollectionCells  # (b) the readObject cycle recurses once per NESTING level of collections and [ ] (2,695 levels ran at 512 KB since issue 754; 2,890 before it, docs/designissues/2026-09-03-rdf-parsing-strategy.md); the elements of one collection are a loop (goto _start), issue 678
 #
 # --- Added 2026-10-11 after commit 4bfa8b49 and the 2026-10-10 SPARQL merge ---
