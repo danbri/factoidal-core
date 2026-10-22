@@ -23,7 +23,7 @@ decoder.
 
 No `sorry`, no user `axiom`, no `native_decide`, no `partial`.
 -/
-import L4Factoidal.Storage.Sbm11.SipFastTheorems
+import L4Factoidal.Storage.Sbm11.SipWordTheorems
 import L4Factoidal.Storage.Sbm11.FrameRangeTheorems
 import L4Factoidal.Storage.Sbm11.BlockAtTheorems
 
