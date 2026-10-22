@@ -261,7 +261,13 @@ def runOneJson (dir : String) (e : JEntry) (dump : Bool := false) : IO JsonOutco
   match missing with
   | some u => return ⟨e.action, "skip", "table file not found: " ++ u⟩
   | none => pure ()
-  let got := convertJson mbase ctx group e.minimal pairs
+  let converted := convertJson mbase ctx group e.minimal pairs
+  for issue in converted.issues do
+    if issue.kind == .warning then
+      IO.println s!"WARNING {e.id} {issue.table} row {issue.row} column {issue.column}: {issue.message}"
+  let some got := converted.value?
+    | return ⟨e.action, "unsupported", String.intercalate "; "
+        ((converted.issues.filter (·.kind == .unsupported)).map (·.message))⟩
   match parseJson? expectedSrc with
   | none => return ⟨e.action, "skip", "expected .json did not parse"⟩
   | some want =>
@@ -299,6 +305,7 @@ def main (args : List String) : IO UInt32 := do
       let mut pass := 0
       let mut fail := 0
       let mut skip := 0
+      let mut unsupported := 0
       let mut overStrict := 0
       let mut negPass := 0
       let mut negFail := 0
@@ -342,14 +349,17 @@ def main (args : List String) : IO UInt32 := do
         else if o.status == "fail" then
           fail := fail + 1
           IO.println s!"FAIL {e.id} ({e.action} vs {e.result}): {o.detail}"
+        else if o.status == "unsupported" then
+          unsupported := unsupported + 1
+          IO.println s!"UNSUPPORTED {e.id}: {o.detail}"
         else
           skip := skip + 1
           IO.println s!"skip {e.id}: {o.detail}"
-      let attempted := pass + fail + skip
+      let attempted := pass + fail + skip + unsupported
       IO.println ""
-      IO.println s!"csv2json POSITIVE: {pass} pass, {fail} fail, {skip} skip (out of {attempted} attempted)"
+      IO.println s!"csv2json POSITIVE: {pass} pass, {fail} fail, {skip} skip, {unsupported} unsupported (out of {attempted} attempted)"
       IO.println s!"csv2json NEGATIVE (validator must reject): {negPass} pass, {negFail} fail, {negSkip} skip (out of {negPass + negFail + negSkip})"
-      IO.println s!"csv2json TOTAL: {pass + negPass} pass, {fail + negFail} fail, {skip + negSkip} skip (out of {total} manifest entries)"
+      IO.println s!"csv2json TOTAL: {pass + negPass} pass, {fail + negFail} fail, {skip + negSkip} skip, {unsupported} unsupported (out of {total} manifest entries)"
       IO.println s!"VALIDATOR CROSS-CHECK: {overStrict} positive tests whose metadata the validator wrongly rejects"
       IO.println ""
       IO.println "Comparison is STRUCTURAL: object members are a set, array items"

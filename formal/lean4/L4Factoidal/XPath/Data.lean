@@ -34,7 +34,7 @@ NEGATIVE marker, so ordinary lexicographic comparison of the address
 puts them where the specification does, and no separate ordering rule
 is needed.
 -/
-import L4Factoidal.XML.Document
+import L4Factoidal.XML.NamespaceView
 
 /-!
 The namespace is `L4Factoidal.XPath.Full`, beside `XPath.Mini`'s
@@ -67,6 +67,10 @@ deriving Repr, DecidableEq, Inhabited
 structure Loc where
   path : List Nat
   slot : Option (Bool × Nat) := none
+  /-- External-document provenance. Main-document addresses retain `none`.
+      This tree model identifies equal document values; URI identity is not
+      represented. Retaining the tree prevents cross-document scope lookup. -/
+  owner : Option (List Node) := none
 deriving Repr, DecidableEq, Inhabited
 
 /-- The address as a list of integers, in DOCUMENT ORDER under plain
@@ -167,6 +171,18 @@ def Item.stringValue : Item → String
   | .attr _ a   => a.value
   | .ns   _ _ u => u
 
+/-- Resolve an item's owning tree; document nodes already carry theirs. -/
+def Item.document (fallback : List Node) : Item → List Node
+  | .doc kids => kids
+  | it => it.loc.owner.getD fallback
+
+/-- Preserve provenance when a document() selection leaves its evaluation context. -/
+def Item.withOwner (owner : List Node) : Item → Item
+  | .tree l n => .tree { l with owner := some owner } n
+  | .attr l a => .attr { l with owner := some owner } a
+  | .ns l p u => .ns { l with owner := some owner } p u
+  | it => it
+
 /-! ## Navigation -/
 
 /-- The children of a tree node, as nodes. Attributes are NOT
@@ -207,7 +223,7 @@ def itemAt (d : Doc) (l : Loc) : Option Item :=
 def childrenOf : Item → List Item
   | .doc kids => (kids.zipIdx).map (fun (n, i) => .tree { path := [i] } n)
   | .tree l n => ((kidsOf n).zipIdx).map (fun (c, i) =>
-      .tree { path := l.path ++ [i] } c)
+      .tree { l with path := l.path ++ [i] } c)
   | _ => []
 
 /-- The parent of an item. An attribute's and a namespace node's
@@ -217,12 +233,12 @@ def childrenOf : Item → List Item
 def parentOf (d : Doc) (it : Item) : Option Item :=
   match it with
   | .doc _ => none
-  | .attr l _ | .ns l _ _ => itemAt d { path := l.path }
+  | .attr l _ | .ns l _ _ => itemAt (it.document d) { l with slot := none }
   | .tree l _ =>
       match l.path with
       | []  => none
-      | [_] => some (.doc d)
-      | p   => itemAt d { path := p.dropLast }
+      | [_] => some (.doc (it.document d))
+      | p   => itemAt (it.document d) { l with path := p.dropLast }
 
 /-- Every descendant of an item, in document order. -/
 partial def descendantsOf (it : Item) : List Item :=
@@ -241,34 +257,25 @@ def attributesOf (it : Item) : List Item :=
   | .tree l n =>
       ((attrsOfNode n).zipIdx).filterMap (fun (a, i) =>
         if isNsDecl a then none
-        else some (.attr { path := l.path, slot := some (true, i) } a))
+        else some (.attr { l with slot := some (true, i) } a))
   | _ => []
 
-/-- The namespace nodes IN SCOPE on an element: every declaration on
+/- The namespace nodes IN SCOPE on an element: every declaration on
     it or on an ancestor, nearer declarations winning, plus the
     implicit `xml` binding §5.4 requires on every element. A prefix
     undeclared by `xmlns:p=""` contributes no node. -/
+/-- XPath's `Doc` has no XML declaration. The 1.1 scope operation supports
+both namespace versions; document readers must validate their declared version
+before evaluation. XPath retains node addresses and namespace-node identity. -/
+def namespaceScope (d : Doc) (path : List Nat) : Option NsScope :=
+  scopeAtPath "1.1" d path
+
 def namespacesOf (d : Doc) (it : Item) : List Item :=
   match it with
   | .tree l (.element _ _ _) =>
-      let chain : List (List Nat) :=
-        (List.range (l.path.length + 1)).map (fun k => l.path.take k)
-      let decls : List (String × String) :=
-        chain.flatMap (fun p =>
-          match nodeAt d p with
-          | some n => (attrsOfNode n).filterMap (fun a =>
-              if a.name == "xmlns" then some ("", a.value)
-              else if a.name.startsWith "xmlns:" then
-                some (String.ofList (a.name.toList.drop 6), a.value)
-              else none)
-          | none => [])
-      -- Nearer declarations are LATER in `chain`, so folding forward
-      -- with replacement makes the nearest win.
-      let merged := decls.foldl (fun acc (p, u) =>
-        (acc.filter (fun (q, _) => q != p)) ++ [(p, u)])
-        [("xml", "http://www.w3.org/XML/1998/namespace")]
-      ((merged.filter (fun (_, u) => u != "")).zipIdx).map (fun ((p, u), i) =>
-        .ns { path := l.path, slot := some (false, i) } p u)
+      let bindings := ((namespaceScope (it.document d) l.path).map visibleBindings).getD []
+      (bindings.zipIdx).map (fun ((p, u), i) =>
+        .ns { l with slot := some (false, i) } p u)
   | _ => []
 
 /-! ## The thirteen axes -/
@@ -280,9 +287,8 @@ def namespacesOf (d : Doc) (it : Item) : List Item :=
 def normalize (xs : List Item) : List Item :=
   let sorted := xs.toArray.qsort (fun a b => keyCmp a.loc.key b.loc.key == .lt) |>.toList
   sorted.foldl (fun acc x =>
-    match acc.reverse.head? with
-    | some y => if y.loc == x.loc then acc else acc ++ [x]
-    | none   => [x]) []
+    if acc.any (fun y => y.loc == x.loc && y.document [] == x.document [])
+    then acc else acc ++ [x]) []
 
 /-- The ancestors of an item, nearest first (reverse document order,
     which is the axis's own order). -/
@@ -303,7 +309,8 @@ def allItems (d : Doc) : List Item :=
     nodes. -/
 def followingOf (d : Doc) (it : Item) : List Item :=
   let k := it.loc.key
-  ((allItems d).filter (fun x =>
+  ((allItems (it.document d)).map (fun x =>
+    match it.loc.owner with | some owner => x.withOwner owner | none => x) |>.filter (fun x =>
     keyCmp x.loc.key k == .gt && x.kind != .attribute && x.kind != .namespace)).filter
     (fun x => !((descendantsOf it).any (fun y => y.loc == x.loc)))
 
@@ -312,13 +319,15 @@ def followingOf (d : Doc) (it : Item) : List Item :=
 def precedingOf (d : Doc) (it : Item) : List Item :=
   let k := it.loc.key
   let anc := (ancestorsOf d it).map (fun a => a.loc)
-  ((allItems d).filter (fun x =>
+  ((allItems (it.document d)).map (fun x =>
+    match it.loc.owner with | some owner => x.withOwner owner | none => x) |>.filter (fun x =>
     keyCmp x.loc.key k == .lt && x.kind != .attribute && x.kind != .namespace)).filter
     (fun x => !(anc.contains x.loc))
 
 def siblingsOf (d : Doc) (it : Item) : List Item :=
   match parentOf d it with
-  | some p => childrenOf p
+  | some p => (childrenOf p).map (fun x =>
+      match it.loc.owner with | some owner => x.withOwner owner | none => x)
   | none   => []
 
 def precedingSiblingsOf (d : Doc) (it : Item) : List Item :=

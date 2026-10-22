@@ -51,6 +51,7 @@ definitions below differ from the F* in SHAPE, not in value:
 
 Every function is total; decoders return `Option`.
 -/
+import L4Factoidal.Encoding.Hex
 import L4Factoidal.Crypto.SHA2
 
 namespace L4Factoidal.VC.Multibase
@@ -62,12 +63,7 @@ abbrev Bytes := List UInt8
 /-! ## Hex ↔ bytes (lowercase out; either case in) -/
 
 /-- Value of one hex digit, either case. Port of `hex_digit_val`. -/
-def hexDigitVal? (c : Char) : Option Nat :=
-  let x := c.toNat
-  if 0x30 ≤ x ∧ x ≤ 0x39 then some (x - 0x30)
-  else if 0x61 ≤ x ∧ x ≤ 0x66 then some (x - 0x61 + 10)
-  else if 0x41 ≤ x ∧ x ≤ 0x46 then some (x - 0x41 + 10)
-  else none
+def hexDigitVal? (c : Char) : Option Nat := Encoding.Hex.digitValue c
 
 /-- Lowercase hex digit of a value below 16 (`'0'` otherwise, to stay
 total — callers pass `n / 16` and `n % 16` of a byte). -/

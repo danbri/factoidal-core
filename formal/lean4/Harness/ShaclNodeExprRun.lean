@@ -135,7 +135,7 @@ def includesOf (dir : String) (g : Graph) : List String :=
 
 partial def collectManifests (path : String) : IO (List String) := do
   match ← readOpt path with
-  | none => return []
+  | none => return [path]  -- Keep missing includes so runFile reports failure.
   | some text =>
       match L4Factoidal.Syntax.parseTurtle text (some ("file://" ++ path)) .rdf12 with
       | .error _ => return [path]
@@ -147,13 +147,18 @@ partial def collectManifests (path : String) : IO (List String) := do
 
 def runFile (path : String) : IO Score := do
   match ← readOpt path with
-  | none => return {}
+  | none =>
+      IO.println s!"  MISSING {path}"
+      return { fail := 1 }
   | some text =>
       match L4Factoidal.Syntax.parseTurtle text (some ("file://" ++ path)) .rdf12 with
       | .error e =>
           IO.println s!"  UNPARSED {path}: {e.msg} at {e.pos}"
           return { fail := 1 }
       | .ok g =>
+          if (validateSubjects g).isEmpty && (evalSubjects g).isEmpty then
+            IO.println s!"  EMPTY {path}: no recognized test entries"
+            return { fail := 1 }
           let mut score : Score := {}
           for _ in validateSubjects g do
             score := score.bump (.unsupported "sht:Validate — a validation test, run by l4shacl")

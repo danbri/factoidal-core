@@ -80,11 +80,9 @@ def muNums : Binding :=
 #guard (Expr.compare .eq (.var "a") (.var "d")).eval muNums == .bool true
 -- ...but they are different TERMS, so sameTerm on the terms is false.
 #guard (Expr.sameTerm (.lit (litInt "1")) (.lit (litInt "01"))).eval [] == .bool false
--- A literal written directly in the expression is NOT promoted (the F*
--- `E_Literal` arm returns the term as-is), so `=` on two typed literals
--- compares them by datatype + lexical form. Recorded here because it is
--- a real fidelity edge, not an accident.
-#guard (Expr.compare .eq (.lit (litInt "1")) (.lit (litInt "01"))).eval [] == .bool false
+-- Value comparison converts both operands, whether they came from variable
+-- lookup, a literal expression or a constructor. RDF identity stays lexical.
+#guard (Expr.compare .eq (.lit (litInt "1")) (.lit (litInt "01"))).eval [] == .bool true
 
 -- Two literals of DIFFERENT, unknown datatypes are a type error under
 -- `<` — the open-world rule. Under `=` on the same datatype but
@@ -122,7 +120,7 @@ def errE : Expr := .var "unbound"
 #guard (Expr.arith .mul (.numericLit 2) (.numericLit 3)).eval [] == .num 6
 -- integer ÷ integer is an xsd:DECIMAL, never an integer (§17.4.1).
 #guard (Expr.arith .div (.numericLit 1) (.numericLit 2)).eval [] == .dec "0.5"
--- Division by zero is a type error, in every numeric type.
+-- Integer/decimal division by zero is an error; floating division has IEEE results.
 #guard (Expr.arith .div (.numericLit 1) (.numericLit 0)).eval [] == .error
 #guard (Expr.arith .div (.numericLit 1) (.decimalLit "0.0")).eval [] == .error
 -- Decimal addition is exact in the scaled model.
@@ -141,7 +139,8 @@ def errE : Expr := .var "unbound"
 #guard (Expr.floor (.decimalLit "-1.5")).eval [] == .dec "-2"
 #guard (Expr.ceil (.decimalLit "1.5")).eval [] == .dec "2"
 #guard (Expr.round (.decimalLit "1.5")).eval [] == .dec "2"
-#guard (Expr.round (.decimalLit "-1.5")).eval [] == .dec "-2"
+-- F&O §6.4.4: ties go toward positive infinity, including negatives.
+#guard (Expr.round (.decimalLit "-1.5")).eval [] == .dec "-1"
 #guard (Expr.round (.decimalLit "1.4")).eval [] == .dec "1"
 
 /-! ### §17.4.2 node tests and accessors -/
@@ -409,18 +408,15 @@ open L4Factoidal.Tests
     (.compare .gt (.var "a") (.numericLit 18))
     (.bgp qNameAge)).eval g).length == 0
 
--- FINDING, shared with the F* source: STRDT builds a TERM, and terms
--- are not promoted (only a variable lookup promotes), so
--- `STRDT(STR(?a), xsd:integer) > 18` is still a type error and drops
--- every row. Recorded as behaviour, not asserted as correct — SPARQL
--- 1.1 §17.1's operand mapping would compare these numerically.
-#guard ((GraphPattern.filterExpr
+-- STRDT returns an RDF term; the numeric operator converts its value.
+-- This was an explicit recorded bug before conversion moved to operators.
+#guard (((GraphPattern.filterExpr
     (.compare .gt (.strDt (.str (.var "a")) (.iri xsdInteger)) (.numericLit 18))
-    (.bgp qNameAge)).eval g).length == 0
+    (.bgp qNameAge)).eval g).map (fun row => row.lookup "n"))
+  == [some (Term.literal (litStr "Alice"))]
 
--- With xsd:integer ages IN THE DATA, the variable lookup promotes and
--- the numeric filter works end to end: Alice (30) survives, Bob (7)
--- does not.
+-- Typed data follows the same operator conversion: Alice (30) survives,
+-- Bob (7) does not. Variable lookup itself retains the original term.
 def gTyped : Graph :=
   [{ s := alice, p := exName, o := .literal (litStr "Alice") },
    { s := alice, p := exAge,  o := .literal (litInt "30") },
@@ -556,10 +552,17 @@ def xsdFn (t : String) (e : Expr) (h : isIri (xsdNamespace ++ t) := by rfl) : Ex
 #guard (xsdFn "string" (.decimalLit "1.0")).eval [] == erString "1"
 #guard (xsdFn "string" (.doubleLit "1E0")).eval [] == erString "1"
 #guard (xsdFn "string" (.boolLit false)).eval [] == erString "false"
--- Any other XSD datatype builds a typed literal; a blank node or an
--- unbound variable is a type error; the arity is one.
+-- dateTime uses the shared lexical decision and rejects unsupported source types.
 #guard (xsdFn "dateTime" (.lit (litStr "2002-10-10T17:00:00Z"))).eval []
   == .term (.literal (mkTypedLiteral "2002-10-10T17:00:00Z" xsdDateTime))
+#guard (xsdFn "dateTime" (.lit (litStr "not-a-date"))).eval [] == .error
+#guard (xsdFn "dateTime" (.lit (litStr "2001-02-29T00:00:00Z"))).eval [] == .error
+#guard (xsdFn "dateTime" (.lit (litStr "+2002-10-10T17:00:00Z"))).eval [] == .error
+#guard (xsdFn "dateTime" (.lit (litLang "2002-10-10T17:00:00Z" "en"))).eval [] == .error
+#guard (xsdFn "dateTime" (.numericLit 13)).eval [] == .error
+#guard (xsdFn "dateTime" (.iri (iriE "2002-10-10T17:00:00Z"))).eval [] == .error
+#guard (xsdFn "dateTime" (.lit (mkTypedLiteral "12345-01-01T00:00:00" xsdDateTime))).eval []
+  == .term (.literal (mkTypedLiteral "12345-01-01T00:00:00" xsdDateTime))
 #guard (xsdFn "integer" errE).eval [] == .error
 #guard (Expr.functionCall (iriE "http://www.w3.org/2001/XMLSchema#integer")
           [.numericLit 1, .numericLit 2]).eval [] == .error

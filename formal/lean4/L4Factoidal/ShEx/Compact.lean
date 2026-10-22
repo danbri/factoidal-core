@@ -36,6 +36,7 @@ constraints with `^` inverse, the Turtle `a` shorthand, cardinality
 `*` `+` `?` `{m,n}` `{m,}`; node constraints with a node kind, a
 datatype, a value set, and the numeric and string facets.
 -/
+import L4Factoidal.Encoding.Hex
 import L4Factoidal.ShEx.Schema
 import L4Factoidal.Syntax.IriResolve
 
@@ -154,11 +155,7 @@ partial def scanPnPrefix (s : Chars) (i : Nat) : String × Nat :=
 
 /-! ### String escapes -/
 
-def hexVal (c : Char) : Option Nat :=
-  if c.isDigit then some (c.toNat - '0'.toNat)
-  else if 'a' ≤ c && c ≤ 'f' then some (c.toNat - 'a'.toNat + 10)
-  else if 'A' ≤ c && c ≤ 'F' then some (c.toNat - 'A'.toNat + 10)
-  else none
+def hexVal (c : Char) : Option Nat := Encoding.Hex.digitValue c
 
 def hexRun (s : Chars) (i n : Nat) : Option Nat :=
   (List.range n).foldl (fun acc k =>

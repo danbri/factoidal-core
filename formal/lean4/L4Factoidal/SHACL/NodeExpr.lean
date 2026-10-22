@@ -277,29 +277,6 @@ def sparqlCallOf (g : Graph) (es : Subject) : Option (String × Term) :=
   | tr :: _ => (sparqlLocalName tr.p).map (fun ln => (ln, tr.o))
   | [] => none
 
-/-- A triple-term subject is an IRI or a blank node, never a nested
-    triple term, so this needs no recursion. -/
-def subjToExpr : Subject → Expr
-  | .iri i => .iri i
-  | .bnode _ => .lit (mkTypedLiteral "" xsdString)
-
-/-- Wrap a computed value as a constant expression, promoting numeric
-    and boolean literals so the arithmetic builtins see numbers rather
-    than opaque literals. -/
-def termToExpr : Term → Expr
-  | .iri i => .iri i
-  | .literal l =>
-      if l.val.datatype == xsdInteger then
-        match parseIntString l.val.lexicalForm with
-        | some n => .numericLit n
-        | none => .lit l
-      else if l.val.datatype == xsdDecimal then .decimalLit l.val.lexicalForm
-      else if l.val.datatype == xsdDouble then .doubleLit l.val.lexicalForm
-      else if l.val.datatype == xsdBoolean then .boolLit (l.val.lexicalForm == "true")
-      else .lit l
-  | .tripleTerm s p o => .tripleTerm (subjToExpr s) (.iri p) (termToExpr o)
-  | .bnode _ => .lit (mkTypedLiteral "" xsdString)
-
 /-- `none` for a name or arity this does not bridge. -/
 def sparqlFnExpr (ln : String) (args : List Expr) : Option Expr :=
   match ln, args with
@@ -312,6 +289,7 @@ def sparqlFnExpr (ln : String) (args : List Expr) : Option Expr :=
   | "ucase", [a] => some (.uCase a)
   | "lcase", [a] => some (.lCase a)
   | "lang", [a] => some (.lang a)
+  | "langMatches", [a, b] => some (.functionCall langMatchesIri [a, b])
   | "langdir", [a] => some (.langDir a)
   | "hasLang", [a] => some (.hasLang a)
   | "hasLang", [a, _] => some (.hasLang a)
@@ -395,52 +373,36 @@ def canonDecimal (t : Term) : Term :=
 def neUuidIri : WfIri :=
   ⟨"urn:uuid:00000000-0000-0000-0000-000000000000", by simp [isIri, String.isEmpty]⟩
 
-def afterChar (c : Char) : List Char → List Char
-  | [] => []
-  | x :: r => if x == c then r else afterChar c r
-
-def takeWhileLc (p : Char → Bool) : List Char → List Char
-  | [] => []
-  | c :: r => if p c then c :: takeWhileLc p r else []
-
-/-- The seconds field of `…THH:MM:SS[.fff][tz]`, keeping its two-digit
-    form: the shnex-sparql fixture expects the lexical `"00"`, not the
-    canonical decimal `"0"`. -/
-def extractSecondsField (s : String) : String :=
-  match takeWhileLc Char.isDigit (afterChar ':' (afterChar ':' (afterChar 'T' s.toList))) with
-  | [] => "0"
-  | secs => String.ofList secs
-
-/-- RFC 4647 basic-range match: `*` matches any non-empty tag;
-    otherwise the tag equals the range or extends it at a `-`
-    boundary. -/
-def langMatchesNe (tag range : String) : Bool :=
-  if range == "*" then tag.length > 0
-  else tag == range || tag.startsWith (range ++ "-")
-
-/-- Evaluate a bridged builtin. A few are handled here rather than
-    through the expression AST, because the AST cannot represent their
-    argument or result (a blank node, a computed UUID) or because they
-    inspect the raw arguments (`BOUND`). -/
+/-- Evaluate a bridged builtin using bound RDF terms as arguments. This
+    shares SPARQL's value/identity boundary for literals, blank nodes and
+    triple terms. Generator and BOUND adapters remain explicit below;
+    seconds retains only a result-formatting policy, after SPARQL evaluation. -/
 def sparqlApply (ln : String) (argvals : List Term) : List Term :=
   match ln, argvals with
-  | "isBlank", [t] => [mkBoolLit (match t with | .bnode _ => true | _ => false)]
   | "bnode", _ => [.bnode "ne_bnode0"]
   | "uuid", _ => [.iri neUuidIri]
   | "struuid", _ =>
       [.literal (mkTypedLiteral "00000000-0000-0000-0000-000000000000" xsdString)]
-  | "langMatches", [a, b] => [mkBoolLit (langMatchesNe (termRender a) (termRender b))]
-  | "seconds", [.literal l] =>
-      [.literal (mkTypedLiteral (extractSecondsField l.val.lexicalForm) xsdDecimal)]
   -- BOUND: the argument contributed a value exactly when `argvals` is
   -- non-empty, since an argument evaluating to `[]` is dropped.
   | "bound", _ => [mkBoolLit !argvals.isEmpty]
   | _, _ =>
-      match sparqlFnExpr ln (argvals.map termToExpr) with
+      let bindings : Binding := argvals.zipIdx.map fun (t, i) => ("__arg" ++ toString i, t)
+      match sparqlFnExpr ln (bindings.map (fun entry => .var entry.1)) with
       | some e =>
-          match (Expr.eval Binding.empty e).toTerm? with
-          | some t => [canonDecimal t]
-          | none => []
+          match Expr.eval bindings e with
+          | .term t => [t]
+          | .dec s =>
+              if ln == "seconds" then
+                -- Keep the node-expression result's two-digit seconds spelling.
+                -- XSD formats the validated value, including all fractional digits.
+                match XSD.parseDecimalLex s with
+                | some d => [.literal (mkTypedLiteral (XSD.canonicalSeconds d) xsdDecimal)]
+                | none => []
+              else [canonDecimal (.literal (mkTypedLiteral s xsdDecimal))]
+          | computed => match computed.toTerm? with
+              | some t => [canonDecimal t]
+              | none => []
       | none => []
 
 /-! ## The evaluator -/

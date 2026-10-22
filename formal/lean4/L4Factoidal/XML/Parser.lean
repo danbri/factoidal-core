@@ -1090,11 +1090,22 @@ def skipDefaultDecl (s : Chars) (pos gt : Nat) : Nat :=
     else if c == '"' || c == '\'' then skipQuotedTo s (pos + 1) gt c gt
     else pos
 
-/-- Iterate over the `[53] AttDef`s of one ATTLIST for element `elem`,
-collecting the pairs whose `[54] AttType` is exactly `ID` — not `IDREF`
-or `IDREFS`. Port of F* `scan_attdefs`. -/
+/-- DTD information needed by nonvalidating consumers. -/
+structure DtdInfo where
+  ids : List (String × String) := []
+  types : List ((String × String) × Bool) := []
+  notations : List String := []
+deriving Inhabited
+
+/-- XML 1.0 §3.3: the first declaration of an attribute is binding. -/
+def DtdInfo.addAttribute (d : DtdInfo) (elem attr typ : String) : DtdInfo :=
+  if d.types.any (fun (key, _) => key == (elem, attr)) then d
+  else { d with types := d.types ++ [((elem, attr), typ != "CDATA")],
+                ids := if typ == "ID" then d.ids ++ [(elem, attr)] else d.ids }
+
+/-- Scan already syntax-checked AttDefs, retaining tokenization and ID types. -/
 def scanAttDefs (s : Chars) (pos gt : Nat) (elem : String)
-    (acc : List (String × String)) : Nat → List (String × String)
+    (acc : DtdInfo) : Nat → DtdInfo
   | 0 => acc
   | fuel + 1 =>
     let pos := skipWsTo s pos gt gt
@@ -1105,27 +1116,24 @@ def scanAttDefs (s : Chars) (pos gt : Nat) (elem : String)
       | .ok attr p2 =>
         let p2 := skipWsTo s p2 gt gt
         if p2 < gt && charAt s p2 == '(' then
-          -- [59] Enumeration — never ID.
           let p3 := skipParensTo s p2 gt 0 gt
           let p4 := skipDefaultDecl s (skipWsTo s p3 gt gt) gt
-          scanAttDefs s p4 gt elem acc fuel
+          scanAttDefs s p4 gt elem (acc.addAttribute elem attr "enumeration") fuel
         else
           match parseName s p2 with
           | .err _ _ => acc
           | .ok typ p3 =>
-            let (p3b, isId) :=
+            let p3b :=
               if typ == "NOTATION" then
                 let pn := skipWsTo s p3 gt gt
-                if pn < gt && charAt s pn == '(' then (skipParensTo s pn gt 0 gt, false)
-                else (p3, false)
-              else (p3, typ == "ID")
+                if pn < gt && charAt s pn == '(' then skipParensTo s pn gt 0 gt
+                else p3
+              else p3
             let p4 := skipDefaultDecl s (skipWsTo s p3b gt gt) gt
-            scanAttDefs s p4 gt elem (if isId then (elem, attr) :: acc else acc) fuel
+            scanAttDefs s p4 gt elem (acc.addAttribute elem attr typ) fuel
 
-/-- Scan a `<!ATTLIST … >` region `[pos, gt)`; `pos` is just after the
-`<!ATTLIST` keyword. Port of F* `scan_attlist_ids`. -/
-def scanAttlistIds (s : Chars) (pos gt : Nat) (acc : List (String × String)) :
-    List (String × String) :=
+/-- Scan the attribute declarations in a parsed ATTLIST region. -/
+def scanAttlistInfo (s : Chars) (pos gt : Nat) (acc : DtdInfo) : DtdInfo :=
   match parseName s (skipWsTo s pos gt gt) with
   | .err _ _ => acc
   | .ok elem p1 => scanAttDefs s p1 gt elem acc gt
@@ -1740,8 +1748,8 @@ def skipIgnoreSect (s : Chars) (pos depth : Nat) : Nat → PResult Unit
     reaches the parser at all. -/
 def parseSubset (resolve : Resolver) (endKind : SubsetEnd)
     (s : Chars) (pos : Nat) (ents : EntityTable) (pes : EntityTable)
-    (ids : List (String × String)) :
-    Nat → PResult (EntityTable × EntityTable × List (String × String))
+    (ids : DtdInfo) :
+    Nat → PResult (EntityTable × EntityTable × DtdInfo)
   | 0 => .err "declaration subset too long" pos
   | fuel + 1 =>
     if pos ≥ s.size then
@@ -1805,12 +1813,17 @@ def parseSubset (resolve : Resolver) (endKind : SubsetEnd)
             -- The ID-typed attributes are read out of the region the
             -- declaration occupies; that scan never changes the
             -- verdict, only which names are known to be IDs.
-            let ids' := scanAttlistIds s (pos + "<!ATTLIST".length) pos' ids
+            let ids' := scanAttlistInfo s (pos + "<!ATTLIST".length) pos' ids
             parseSubset resolve endKind s pos' ents pes ids' fuel
         else if peekLit "<!NOTATION" s pos then
           match parseNotationDecl s pos with
           | .err m p => .err m p
-          | .ok _ pos' => parseSubset resolve endKind s pos' ents pes ids fuel
+          | .ok _ pos' =>
+              match parseName s (skipSpace s (pos + "<!NOTATION".length)) with
+              | .err m p => .err m p
+              | .ok name _ =>
+                  parseSubset resolve endKind s pos' ents pes
+                    { ids with notations := ids.notations ++ [name] } fuel
         else if peekLit "<![" s pos then
           -- `[61] conditionalSect` is an EXTERNAL-subset production.
           -- An `<![INCLUDE[` or `<![IGNORE[` in the internal subset is
@@ -1935,11 +1948,11 @@ def parseDoctype (resolve : Resolver) (s : Chars) (pos : Nat) : PResult Doctype 
           -- over a later one of the same name (§4.2).
           let p4 := skipSpace s p3'
           match (if p4 < s.size && charAt s p4 == '[' then
-                   match parseSubset resolve .bracket s (p4 + 1) [] [] [] (s.size + 1) with
+                   match parseSubset resolve .bracket s (p4 + 1) [] [] {} (s.size + 1) with
                    | .err m p => PResult.err m p
                    | .ok r p5 => PResult.ok r p5
-                 else PResult.ok (([], [], []) :
-                        EntityTable × EntityTable × List (String × String)) p4) with
+                 else PResult.ok (([], [], {}) :
+                        EntityTable × EntityTable × DtdInfo) p4) with
           | .err m p => .err m p
           | .ok (ents, pes, ids) p5 =>
             -- ...then the EXTERNAL subset, if the DOCTYPE names one
@@ -1959,8 +1972,8 @@ def parseDoctype (resolve : Resolver) (s : Chars) (pos : Nat) : PResult Doctype 
             | .ok (ents, _, ids) _ =>
               let p6 := skipSpace s p5
               if p6 < s.size && charAt s p6 == '>' then
-                .ok { rootName := rootName, entities := ents, idAttrs := ids,
-                      systemId := sysId } (p6 + 1)
+                .ok { rootName := rootName, entities := ents, idAttrs := ids.ids,
+                      systemId := sysId, attributeTypes := ids.types, notationNames := ids.notations } (p6 + 1)
               else .err "DOCTYPE: expected '>' after the document type declaration" p6
 
 /-! ## `[27] Misc` — the prolog and epilog
@@ -2015,6 +2028,24 @@ def skipBom : List Char → List Char
 
 /-! ## `[1] document` -/
 
+/-- XML 1.0 §3.3.3 final step for a declared non-CDATA attribute.
+Only #x20 is collapsed: a tab from a character reference must survive. -/
+def collapseAttributeSpaces (s : String) : String :=
+  String.intercalate " " ((s.splitOn " ").filter (· != ""))
+
+mutual
+def normalizeDeclaredAttributes (types : List ((String × String) × Bool)) : Node → Node
+  | .element tag attrs kids =>
+      .element tag (attrs.map (fun a =>
+        if ((types.find? (fun (key, _) => key == (tag, a.name))).map (·.2)).getD false
+        then { a with value := collapseAttributeSpaces a.value } else a))
+        (normalizeDeclaredChildren types kids)
+  | n => n
+def normalizeDeclaredChildren (types : List ((String × String) × Bool)) : List Node → List Node
+  | [] => []
+  | n :: ns => normalizeDeclaredAttributes types n :: normalizeDeclaredChildren types ns
+end
+
 /-- Parse a whole XML document.
 
 `[1] document ::= prolog element Misc*`. Returns the infoset the F*
@@ -2066,7 +2097,9 @@ def parseXMLWith (resolve : Resolver) (input : String) : Except XmlError Documen
                      position := pos5 }
           else
             .ok { decl := decl, doctype := doctype,
-                  prolog := pre1 ++ pre2, root := root, epilog := post }
+                  prolog := pre1 ++ pre2,
+                  root := normalizeDeclaredAttributes ((doctype.map (·.attributeTypes)).getD []) root,
+                  epilog := post }
 
 /-- The document decision with NO external resource read — the
 behaviour every caller had before `parseXMLWith` existed, written out

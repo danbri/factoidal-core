@@ -166,12 +166,11 @@ def erNumericLexical : EvalResult → String
   | .term (.literal l) => l.val.lexicalForm
   | _                  => ""
 
-/-- Ordering on the numeric fragment. §15.1 leaves the position of
-operands with no defined `<` undefined and requires only CONSISTENCY,
-so "a value that parses sorts before one that does not; two
-unparseable values compare lexically" is conformant — and it is what
-the F* source settled on (its own note records that the earlier
-"unparseable means tie" rule was NOT transitive). -/
+/-- Legacy numeric ordering inherited from F*. Values accepted by the
+    scaled parser precede rejected values; rejected pairs compare lexically.
+    IEEE rounding, infinities and NaN still need integration with the shared
+    value model. §15.1's freedom for undefined pairs does not establish that
+    this entire ordering is conformant. -/
 def sparqlOrderNumeric (a b : EvalResult) : Int :=
   match numericCompare a b with
   | some cmp => cmp
@@ -183,7 +182,7 @@ def sparqlOrderNumeric (a b : EvalResult) : Int :=
 
 /-- §15.1 ordering of two evaluated values: `-1`, `0`, `1` (port of
 `sparql_order`). -/
-def sparqlOrder (a b : EvalResult) : Int :=
+def sparqlOrderValues (a b : EvalResult) : Int :=
   let ra := erRank a
   let rb := erRank b
   if ra < rb then -1
@@ -199,8 +198,28 @@ def sparqlOrder (a b : EvalResult) : Int :=
     | .term t1, .term t2 => termOrder t1 t2
     | _, _ => 0
 
-/-- Order-equality of two evaluated values (port of `er_equal`). -/
-def erEqual (a b : EvalResult) : Bool := sparqlOrder a b == 0
+/-- ORDER BY and MIN/MAX compare datatype values but leave the original
+    results intact. Grouping uses RDF term identity separately. -/
+def sparqlOrder (a b : EvalResult) : Int :=
+  sparqlOrderValues a.promoteLiteral b.promoteLiteral
+
+/-- SPARQL §18.5 grouping compares RDF term keys. Failed/unbound keys
+    form one group; numeric value equality does not erase lexical spelling. -/
+def groupTermEqual (a b : Option Term) : Bool :=
+  match a, b with
+  | none, none => true
+  | some x, some y => x.sameTerm y
+  | _, _ => false
+
+/-- Grouping equality shares the RDF term view used by projection. -/
+def erEqual (a b : EvalResult) : Bool := groupTermEqual a.toTerm? b.toTerm?
+
+/-- Aggregate DISTINCT compares RDF terms; error results are filtered by
+    its caller. Lexically different integers remain distinct. -/
+def erTermEqual (a b : EvalResult) : Bool :=
+  match a.toTerm?, b.toTerm? with
+  | some x, some y => x.sameTerm y
+  | _, _ => false
 
 /-! ## The query AST — SPARQL 1.1 §18.2.4
 
@@ -695,48 +714,26 @@ errors, §18.5.1.1). -/
 def filterNonError (vals : List EvalResult) : List EvalResult :=
   vals.filter (fun v => v != .error)
 
-/-- Deduplicate values under the §15.1 ordering, keeping the first
-occurrence — what `COUNT(DISTINCT ?x)` and friends need (port of
-`dedup_er`). -/
+/-- Aggregate DISTINCT removes repeated RDF terms, keeping their first
+occurrence. This is separate from the value equality used for grouping. -/
 def dedupErAcc : List EvalResult → List EvalResult → List EvalResult
   | [],       acc => acc.reverse
   | v :: rest, acc =>
-      if acc.any (fun x => erEqual v x) then dedupErAcc rest acc
+      if acc.any (fun x => erTermEqual v x) then dedupErAcc rest acc
       else dedupErAcc rest (v :: acc)
 
 def dedupEr (vals : List EvalResult) : List EvalResult := dedupErAcc vals []
 
-/-- Running sum over the numeric values, carrying the promoted type
-and the count of numeric operands (port of `sum_numeric_acc`). -/
-def sumNumericAcc : List EvalResult → Scaled → NumKind → Nat →
-    (Scaled × NumKind × Nat)
-  | [],       acc, k, c => (acc, k, c)
-  | v :: rest, acc, k, c =>
-      match v.toNumeric? with
-      | some (s, vk) => sumNumericAcc rest (acc.add s) (promoteKind k vk) (c + 1)
-      | none         => sumNumericAcc rest acc k c
-
-/-- §18.5.1.4 SUM. The sum of no values is `0` (the spec's stated
-identity). -/
+/-- SPARQL 1.1 §18.5.1.3: fold op:numeric-add from the right, with integer
+    zero as identity. Validation, promotion and rounding belong to arithmetic. -/
 def sumNumeric (vals : List EvalResult) : EvalResult :=
-  let (s, k, c) := sumNumericAcc vals ⟨0, 0⟩ .int 0
-  if c == 0 then .num 0 else formatNumericResult s k
+  vals.foldr (evalArithmetic .add) (.num 0)
 
-/-- §18.5.1.5 AVG. The result is never an integer: an average of
-integers is an `xsd:decimal`. Division carries ten extra fraction
-digits, as in the F* source. -/
+/-- SPARQL 1.1 §18.5.1.4: AVG is SUM / count, including arithmetic's result
+    type and rounding. Empty input is the specified integer zero. -/
 def avgNumeric (vals : List EvalResult) : EvalResult :=
-  let (s, k, c) := sumNumericAcc vals ⟨0, 0⟩ .int 0
-  if c == 0 then .num 0
-  else
-    let resultKind := match k with | .int => NumKind.dec | other => other
-    let extra : Nat := 10
-    let extended := s.mantissa * pow10 extra
-    let divided := intDivT extended (Int.ofNat c)
-    let resultScale := s.scale + extra
-    match resultKind with
-    | .dbl => .dbl (formatAsDouble divided resultScale)
-    | _    => .dec (stripTrailingDecimalZeros (formatScaledValue divided resultScale))
+  if vals.isEmpty then .num 0
+  else evalArithmetic .div (sumNumeric vals) (.num (Int.ofNat vals.length))
 
 /-- §18.5.1.6 MIN by the §15.1 ordering; MIN of nothing is an error. -/
 def findMin (vals : List EvalResult) : EvalResult :=
@@ -780,12 +777,11 @@ def evalAggregate (env : EvalEnv) (fn : AggregateFn) (distinct : Bool)
   | .sum =>
       let vals := filterNonError (evalOverGroup env e g)
       let vals := if distinct then dedupEr vals else vals
-      -- §18.5.1.4: a non-numeric operand makes the whole sum an error.
-      if vals.any (fun v => v.toNumeric?.isNone) then .error else sumNumeric vals
+      sumNumeric vals
   | .avg =>
       let vals := filterNonError (evalOverGroup env e g)
       let vals := if distinct then dedupEr vals else vals
-      if vals.any (fun v => v.toNumeric?.isNone) then .error else avgNumeric vals
+      avgNumeric vals
   | .min =>
       let vals := filterNonError (evalOverGroup env e g)
       findMin (if distinct then dedupEr vals else vals)

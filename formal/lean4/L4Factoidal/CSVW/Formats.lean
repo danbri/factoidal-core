@@ -5,22 +5,20 @@ L4Factoidal.CSVW.Formats — cell value formats, ported from
 Spec: tabular-metadata §5.11.3 (`format` on a datatype) plus the
 tabular-data-model §6.4 parsing rules.
 
-SCOPE OF THIS SLICE, stated rather than implied: boolean formats,
-numeric formats (group/decimal separators, percent and per-mille
-scaling, pattern-implied grouping) and DATE/TIME patterns. The
-regex-valued duration `format` facet is NOT here — it needs the XSD
-regex engine — so a duration format returns `noFormat`, which the
-caller treats as "keep the cell as written" rather than as a
-rejection. That is the conservative direction: a format we cannot
-read must never reject a value it might have accepted.
+Implemented: boolean, numeric, date/time and regex formats. Duration and
+other regex-valued formats use the shared flag-free ECMA profile. Definite
+malformed delimiter errors are ignored with warnings; unimplemented semantics
+remain `unsupported` through RDF/JSON conversion. This is not a complete ECMA
+parser: other malformed patterns may still be reported as unsupported.
 -/
-import L4Factoidal.Regex.XPath
+import L4Factoidal.Regex.Profiles
+import L4Factoidal.XSD.Lexical
 
 namespace L4Factoidal.CSVW
 
 /-- The result of applying a format to a cell.
 
-    Three outcomes, not two: `noFormat` means "no format applied,
+    `unsupported` records an implementation gap; `noFormat` means "no format applied,
     use the cell as-is", which is DIFFERENT from `invalid` ("a format
     was applied and the cell failed it"). Collapsing them would turn
     an unported format into a validation failure. -/
@@ -28,6 +26,7 @@ inductive FmtOutcome where
   | valid    (lexical : String)
   | invalid
   | noFormat
+  | unsupported (reason : String)
 deriving Repr, DecidableEq, Inhabited
 
 private def isDigit (c : Char) : Bool := '0' ≤ c && c ≤ '9'
@@ -296,43 +295,14 @@ value does not support — the failure a triple count cannot see.
 
 /-- Compare two decimal numerals EXACTLY, without going through a
     float. Returns `none` if either is not a decimal numeral. -/
-def decimalCompare (a b : String) : Option Ordering :=
-  let split := fun (s : String) =>
-    let neg := s.startsWith "-"
-    let body := if neg || s.startsWith "+" then String.ofList (s.toList.drop 1) else s
-    match splitFirst '.' body.toList with
-    | some (i, f) => (neg, String.ofList i, String.ofList f)
-    | none        => (neg, body, "")
-  let (an, ai, af) := split a
-  let (bn, bi, bf) := split b
-  if !(ai ++ af).toList.all isDigit || !(bi ++ bf).toList.all isDigit then none
-  else if (ai ++ af) == "" || (bi ++ bf) == "" then none
-  else
-    -- Pad both to a common shape so a plain string comparison is a
-    -- numeric one.
-    let iw := Nat.max ai.length bi.length
-    let fw := Nat.max af.length bf.length
-    let padL := fun (s : String) => String.ofList (List.replicate (iw - s.length) '0') ++ s
-    let padR := fun (s : String) => s ++ String.ofList (List.replicate (fw - s.length) '0')
-    let ka := padL ai ++ padR af
-    let kb := padL bi ++ padR bf
-    let magnitude := compare ka kb
-    -- `-0` and `0` are the SAME value. Reading the sign first made
-    -- `"-0"^^xsd:nonNegativeInteger` fall below the type's lower
-    -- bound and leave its lexical space (ShEx `nonNegativeInteger-n0`).
-    let aZero := ka.toList.all (· == '0')
-    let bZero := kb.toList.all (· == '0')
-    some (
-      if aZero && bZero then .eq
-      else if an && !bn then .lt
-      else if !an && bn then .gt
-      else if an && bn then magnitude.swap
-      else magnitude)
+def decimalCompare (a b : String) : Option Ordering := do
+  let x ← XSD.parseDecimalLex a
+  let y ← XSD.parseDecimalLex b
+  some (XSD.Dec.cmp x y)
 
 /-- Ordering for a facet comparison: numeric where both sides are
-    decimal numerals, plain lexicographic otherwise — which is the
-    right thing for the canonical XSD date and time forms, since they
-    are fixed-width and big-endian by construction. -/
+    decimal numerals, plain lexicographic otherwise. Date/time facet ordering is
+    handled separately by `satisfiesFacetsFor` using shared XSD values. -/
 def facetCompare (a b : String) : Ordering :=
   match decimalCompare a b with
   | some o => o
@@ -356,23 +326,30 @@ deriving Repr, Inhabited
     counts decoded BYTES: `base64Binary` with `length: 19` describes
     the nineteen bytes of "Send reinforcements", whose base64 text is
     twenty-eight characters, and `hexBinary` with `length: 2` describes
-    two bytes written as four hex digits (test195). -/
-def facetLength (base : String) (lex : String) : Int :=
-  if base == "hexBinary" then (lex.length + 1) / 2
-  else if base == "base64Binary" then
-    -- 4 base64 characters carry 3 bytes, less one per `=` of padding.
-    let pad := (lex.toList.filter (· == '=')).length
-    (lex.length / 4) * 3 - pad
-  else lex.length
+    two bytes written as four hex digits (test195). `none` means an
+    invalid binary lexical, not a zero-length value. -/
+def facetLength (base : String) (lex : String) : Option Nat :=
+  if base == "hexBinary" then (XSD.parseHexBinaryLex lex).map List.length
+  else if base == "base64Binary" || base == "binary" then
+    (XSD.parseBase64Lex lex).map List.length
+  else some lex.length
 
 /-- Does the (already normalised) lexical form satisfy every stated
     constraint? -/
 def satisfiesFacetsFor (base : String) (f : Facets) (lex : String) : Bool :=
-  let len : Int := facetLength base lex
-  let ge := fun (b : String) => (facetCompare lex b) != .lt
-  let le := fun (b : String) => (facetCompare lex b) != .gt
-  let gt := fun (b : String) => (facetCompare lex b) == .gt
-  let lt := fun (b : String) => (facetCompare lex b) == .lt
+  (facetLength base lex).any fun size =>
+  let len : Int := size
+  let cmp := fun (b : String) =>
+    if isDateBase base then do
+      let kind ← (XSD.builtinOfName? (if base == "datetime" then "dateTime" else base)).bind XSD.dtKindOf?
+      let x ← XSD.parseDateTimeFor .xsd11 kind lex
+      let y ← XSD.parseDateTimeFor .xsd11 kind b
+      XSD.dtCompare x y
+    else some (facetCompare lex b)
+  let ge := fun b => (cmp b).any (· != .lt)
+  let le := fun b => (cmp b).any (· != .gt)
+  let gt := fun b => cmp b == some .gt
+  let lt := fun b => cmp b == some .lt
   (f.length.all (· == len)) &&
   (f.minLength.all (· ≤ len)) &&
   (f.maxLength.all (len ≤ ·)) &&
@@ -386,101 +363,11 @@ def satisfiesFacets (f : Facets) (lex : String) : Bool :=
 
 /-- One `nnU` component of a duration: digits, an optional fractional
     part, and a unit letter legal in this half of the value. -/
-private def durationStep (inTime : Bool) (cs : List Char)
-    : Option (List Char) :=
-  let digits := cs.takeWhile isDigit
-  if digits.isEmpty then none
-  else
-    let after := cs.dropWhile isDigit
-    let after := match after with
-      | '.' :: t => if (t.takeWhile isDigit).isEmpty then after else t.dropWhile isDigit
-      | t        => t
-    match after with
-    | u :: t =>
-        let ok := if inTime then u == 'H' || u == 'M' || u == 'S'
-                  else u == 'Y' || u == 'M' || u == 'D'
-        if ok then some t else none
-    | [] => none
+def isDurationLexical (s : String) : Bool := (XSD.parseDurationLex s).isSome
 
-/-- Walk a duration body. `fuel` is the remaining character count, so
-    the bound is exact; every step consumes at least one character. -/
-private def durationWalk : Nat → List Char → Bool → Nat → Bool
-  | 0,        _,       _,      n => n > 0
-  | _ + 1,    [],      _,      n => n > 0
-  | fuel + 1, c :: tl, inTime, n =>
-      if c == 'T' then
-        if inTime || tl.isEmpty then false else durationWalk fuel tl true n
-      else
-        match durationStep inTime (c :: tl) with
-        | some rest => durationWalk fuel rest inTime (n + 1)
-        | none      => false
-
-/-- `xsd:duration` and its two restrictions: `-?PnYnMnDTnHnMnS` with at
-    least one component present, and `T` present only when a time
-    component follows. -/
-def isDurationLexical (s : String) : Bool :=
-  let cs := (if s.startsWith "-" then s.toList.drop 1 else s.toList)
-  match cs with
-  | 'P' :: rest => durationWalk (rest.length + 1) rest false 0
-  | _           => false
-
-/-! ### XSD lexical spaces for the numeric bases
-
-A numeric column validates its cells even with NO `format`: `3.2` is
-not an `xsd:integer` and `123.456E7` is not an `xsd:decimal`, whatever
-the metadata says about grouping. Before this the numeric path
-returned `noFormat` whenever no pattern, `groupChar` or `decimalChar`
-was stated, so nothing was checked and every such cell got its base's
-datatype — asserting that `NaN` is a decimal (measured 2026-08-22,
-tests 161 and 163–167). -/
-
-private def stripSign (s : String) : String :=
-  if s.startsWith "-" || s.startsWith "+" then String.ofList (s.toList.drop 1) else s
-
-def isIntegerLexical (s : String) : Bool :=
-  let core := stripSign s
-  core != "" && core.toList.all isDigit
-
-def isDecimalLexical (s : String) : Bool :=
-  let core := stripSign s
-  let parts := core.splitOn "."
-  core != "" && parts.length ≤ 2 &&
-  parts.all (fun p => p.toList.all isDigit) && parts.any (fun p => p != "")
-
-/-- `xsd:double` / `xsd:float`: a decimal mantissa with an optional
-    exponent, or one of the three special values. -/
-def isDoubleLexical (s : String) : Bool :=
-  if s == "NaN" || s == "INF" || s == "-INF" || s == "+INF" then true
-  else
-    match splitFirst 'e' s.toList, splitFirst 'E' s.toList with
-    | some (m, e), _ =>
-        isDecimalLexical (String.ofList m) && isIntegerLexical (String.ofList e)
-    | none, some (m, e) =>
-        isDecimalLexical (String.ofList m) && isIntegerLexical (String.ofList e)
-    | none, none => isDecimalLexical s
-
-/-- The inclusive range of an integer base, where XSD bounds one.
-    `none` means unbounded on that side.
-
-    A range is part of the LEXICAL SPACE decision here, not a separate
-    facet: `1234` is not an `xsd:byte` at all, and emitting it with
-    that datatype asserts a value the type does not contain
-    (test172). -/
-def integerBounds (base : String) : Option String × Option String :=
-  match base with
-  | "byte"               => (some "-128", some "127")
-  | "unsignedByte"       => (some "0", some "255")
-  | "short"              => (some "-32768", some "32767")
-  | "unsignedShort"      => (some "0", some "65535")
-  | "int"                => (some "-2147483648", some "2147483647")
-  | "unsignedInt"        => (some "0", some "4294967295")
-  | "long"               => (some "-9223372036854775808", some "9223372036854775807")
-  | "unsignedLong"       => (some "0", some "18446744073709551615")
-  | "nonNegativeInteger" => (some "0", none)
-  | "positiveInteger"    => (some "1", none)
-  | "nonPositiveInteger" => (none, some "0")
-  | "negativeInteger"    => (none, some "-1")
-  | _                    => (none, none)
+def isIntegerLexical (s : String) : Bool := (XSD.parseIntegerLex s).isSome
+def isDecimalLexical (s : String) : Bool := (XSD.parseDecimalLex s).isSome
+def isDoubleLexical (s : String) : Bool := (XSD.parseLexical s).isSome
 
 /-- The lexical form a `double` / `float` value carries in the RDF
     output: the same digits, with the exponent marker written `e`.
@@ -503,15 +390,7 @@ def normalizeDoubleLexical (s : String) : String :=
 
 /-- Which lexical space a numeric base uses. -/
 def isXsdNumericLexical (base : String) (s : String) : Bool :=
-  if base == "decimal" then isDecimalLexical s
-  else if base == "double" || base == "float" || base == "number" then
-    isDoubleLexical s
-  else if !isIntegerLexical s then false
-  else
-    let (lo, hi) := integerBounds base
-    (lo.all (fun b => decimalCompare s b != some .lt)) &&
-    (hi.all (fun b => decimalCompare s b != some .gt))
-
+  (XSD.validLexicalFor .xsd11 (if base == "number" then "double" else base) s).getD false
 
 /-- Apply a numeric format: strip grouping characters, normalise the
     decimal character to `.`, apply percent / per-mille scaling, and
@@ -766,51 +645,42 @@ def parseDate (base : String) (fmt : String) (v : String) : FmtOutcome :=
   match matchDatePattern (pat.length + 1) pat v.toList {} with
   | none   => .invalid
   | some p => match canonicalDate base p with
-    | some lex => .valid lex
+    | some lex =>
+        let name := if base == "datetime" then "dateTime" else base
+        if (XSD.validLexicalFor .xsd11 name lex).getD false then .valid lex else .invalid
     | none     => .invalid
-
-/-- The CANONICAL patterns for a date/time base — what a column with no
-    `format` must already be written in. The timezone is optional, so
-    each base offers its patterns with and without one.
-
-    Without this a date column with no format accepted any text at all
-    and stamped `xsd:date` on it. -/
-def canonicalDatePatterns (base : String) : List String :=
-  let withTz := fun (p : String) => [p, p ++ "XXX", p ++ "X"]
-  -- A canonical `xsd:dateTime` may carry ANY number of fractional
-  -- second digits. `matchDatePattern` reads an `S` run as an EXACT
-  -- digit count, deliberately (CSVW test247 requires `HH:mm:ss.S` to
-  -- reject `15:02:37.143`), so the no-format canonical form offers
-  -- one pattern per width instead. With only `.S` on offer,
-  -- `"2012-01-02T12:34:56.78Z"` was not a `dateTime` at all.
-  let fracRuns : List String :=
-    (List.range 9).map (fun n => String.ofList (List.replicate (n + 1) 'S'))
-  match base with
-  | "date"       => withTz "yyyy-MM-dd"
-  | "dateTime" | "datetime" | "dateTimeStamp" =>
-      withTz "yyyy-MM-ddTHH:mm:ss" ++ fracRuns.flatMap (fun f =>
-        withTz ("yyyy-MM-ddTHH:mm:ss." ++ f))
-  | "time"       => withTz "HH:mm:ss" ++ fracRuns.flatMap (fun f =>
-        withTz ("HH:mm:ss." ++ f))
-  | "gYear"      => withTz "yyyy"
-  | "gYearMonth" => withTz "yyyy-MM"
-  | "gMonth"     => withTz "--MM"
-  | "gMonthDay"  => withTz "--MM-dd"
-  | "gDay"       => withTz "---dd"
-  | _            => []
 
 /-- A date/time cell with NO format: it must already be in the
     canonical XSD lexical form. -/
 def parseCanonicalDate (base : String) (v : String) : FmtOutcome :=
-  match (canonicalDatePatterns base).findSome? (fun p =>
-      match parseDate base p v with
-      | .valid lex => some lex
-      | _          => none) with
-  | some lex => .valid lex
-  | none     => .invalid
+  let name := if base == "datetime" then "dateTime" else base
+  if (XSD.validLexicalFor .xsd11 name v).getD false then .valid v else .invalid
 
-/-- Top-level dispatch, mirroring the F* module's. A DURATION format
-    returns `noFormat` in this slice — see the module header. -/
+/-- Whether CSVW uses a regex format for this base (§§6.4.5–6.4.6). -/
+def usesRegexFormat (base : String) : Bool :=
+  base != "boolean" && !isNumericBase base && !isDateBase base
+
+/-- Known malformed delimiters trigger CSVW's warning-and-ignore rule. Other
+    parse refusals remain unsupported, since this is not a complete ECMA parser. -/
+def regexFormatWarning (base : String) (fmt : Option String) : Option String :=
+  if !usesRegexFormat base then none
+  else fmt.bind fun p =>
+    if Regex.Ecma.definitelyMalformed p then
+      some "malformed regex format ignored (delimiter, trailing escape or leading quantifier)"
+    else none
+
+def applyRegexFormat (fmt : Option String) (txt : String) : FmtOutcome :=
+  match fmt with
+  | none => .noFormat
+  | some p =>
+      if (regexFormatWarning "string" fmt).isSome then .noFormat
+      else match Regex.Profiles.matchWith .ecma2020 p "" txt with
+        | .ok true => .valid txt
+        | .ok false => .invalid
+        | .error (.unsupported why) | .error (.invalid why) => .unsupported why
+
+/-- Top-level dispatch. Regex formats share the explicit ECMA profile;
+    duration values additionally pass the XSD 1.1 subtype lexical check. -/
 def formatConvert (baseName : String) (formatStr pattern groupChar decimalChar : Option String)
     (txt : String) : FmtOutcome :=
   if baseName == "boolean" then parseBool formatStr txt
@@ -829,29 +699,10 @@ def formatConvert (baseName : String) (formatStr pattern groupChar decimalChar :
     | some f => parseDate baseName f txt
     | none   => parseCanonicalDate baseName txt
   else if isDurationBase baseName then
-    -- The `format` facet on a duration is a REGULAR EXPRESSION
-    -- (tabular-metadata §5.11.3: "the datatype format annotation
-    -- provides a regular expression for the string values"), matched
-    -- the way `fn:matches` matches — a search, with `^` and `$` as
-    -- anchors. The tree HAS that engine, so the format is now
-    -- CHECKED rather than treated as unknowable.
-    --
-    -- Before this the format branch returned `.invalid` outright, on
-    -- the ground that satisfaction could not be shown. That was the
-    -- right call while there was no engine, and it was still wrong
-    -- about nine rows of test193, whose formats every cell matches.
-    -- Refusing to decide and deciding NO are the same output here —
-    -- a plain literal — which is exactly why the shortcut survived:
-    -- the count was right and the datatype was missing.
-    --
-    -- The lexical space is checked as well as the format. A cell must
-    -- BE a duration and match the pattern; test194 states
-    -- `"format": "^.$"`, which no duration matches, and expects every
-    -- cell plain.
-    if !isDurationLexical txt then .invalid
-    else match formatStr with
-      | none   => .valid txt
-      | some f => if L4Factoidal.Regex.regexMatch txt f "" then .valid txt else .invalid
-  else .noFormat
+    if !(XSD.validLexicalFor .xsd11 baseName txt).getD false then .invalid
+    else match applyRegexFormat formatStr txt with
+      | .noFormat => .valid txt
+      | result => result
+  else applyRegexFormat formatStr txt
 
 end L4Factoidal.CSVW

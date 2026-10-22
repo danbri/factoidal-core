@@ -24,18 +24,17 @@ A `<cn>` this module cannot read yields `none`, which the evaluator
 reports as an undefined value rather than a zero.
 -/
 import L4Factoidal.MathML.Core
-import L4Factoidal.XML.Parser
+import L4Factoidal.XML.NamespaceView
 
 namespace L4Factoidal.MathML
 
 open L4Factoidal.XML
 
-/-- Strip a namespace prefix: `m:apply` and `apply` name the same
-    element once the prefix is resolved, and the corpus uses both. -/
-def localName (tag : String) : String :=
-  match tag.splitOn ":" with
-  | [_, l]   => l
-  | _        => tag
+/-- Helpers consume the namespace-resolved vocabulary projection, not raw XML.
+Foreign names retain their namespace marker and must never be prefix-stripped. -/
+def localName (tag : String) : String := tag
+
+def mathmlNamespace : String := "http://www.w3.org/1998/Math/MathML"
 
 /-- The element children of a node, in order. Text between elements is
     dropped here — in Content markup it is either whitespace or the
@@ -162,8 +161,8 @@ partial def exprOf (n : Node) : Option Expr :=
 
 /-- Parse a Content MathML document and read its expression. -/
 def parseMathML (src : String) : Option Expr :=
-  match parseXML src with
+  match parseNamespaceView src with
   | .error _ => none
-  | .ok doc  => exprOf doc.root
+  | .ok view => exprOf (view.forVocabulary mathmlNamespace)
 
 end L4Factoidal.MathML

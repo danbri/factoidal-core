@@ -149,6 +149,7 @@ shape and what is and is not claimed.
 -/
 import L4Factoidal.RDF.Graph
 import L4Factoidal.RDF.Datatypes
+import L4Factoidal.XSD.ValueSpaceTheorems
 import L4Factoidal.OWL.Vocabulary
 
 namespace L4Factoidal.OWL.RL
@@ -395,26 +396,42 @@ def drivesXsdAxioms (t : Triple) : Bool :=
   datatypePositionPredicates.contains t.p &&
   (match t.o with | .iri i => iriInXsdNs i | _ => false)
 
-/-- The shape of the assumption the XSD tables carry: the value space
-of `sub` is inside the value space of `sup`, as `RDF/Datatypes.lean`'s
-modelled datatype map decides it. Stated over the modelled map so it is
-a real, checkable claim rather than a placeholder; the tower edges over
-datatypes that map does not model are assumed, and named as assumed. -/
+/-- Containment for literals with an established source value, not merely
+    a source datatype label. Malformed lexical forms denote no value in that
+    source space. Unmodelled tower edges remain assumptions. -/
 def XsdValueSpaceSubset (sub sup : WfIri) : Prop :=
-  ∀ l : Literal, l.datatype = sub → RDF.valueInSpace l sup = true
+  ∀ l : Literal, l.datatype = sub → RDF.valueInSpace l sub = true →
+    RDF.valueInSpace l sup = true
 
-/-- The one tower edge the Lean datatype map models, discharged.
-`RDF/Datatypes.lean`'s `valueInSpace` knows `int ⊂ integer ⊂ decimal`
-and nothing else, so this is the whole of what can be proved here
-rather than assumed. -/
+/-- The modelled integer-to-decimal edge, with source membership explicit. -/
 theorem xsdIntegerDecimal_subset : XsdValueSpaceSubset xsdInteger xsdDecimal := by
-  intro l h
-  simp [RDF.valueInSpace, h]
+  intro l h hm
+  simp only [RDF.valueInSpace, h] at hm ⊢
+  change (XSD.lexicalValueInBuiltin .xsd11 .integer l.lexicalForm .integer).getD false = true at hm
+  change (XSD.lexicalValueInBuiltin .xsd11 .integer l.lexicalForm .decimal).getD false = true
+  rw [XSD.lexicalValueInBuiltin, XSD.checked_integer_value] at hm ⊢
+  cases hp : XSD.parseIntegerLex l.lexicalForm with
+  | none => simp [hp] at hm
+  | some i => simp only [Option.map_some, Option.bind_some,
+      XSD.decimal_value_membership, Option.getD_some]
 
-/-- The second modelled edge: `xsd:int ⊂ xsd:integer`. -/
+/-- The modelled int-to-integer edge, with source membership explicit. -/
 theorem xsdIntInteger_subset : XsdValueSpaceSubset RDF.xsdInt xsdInteger := by
-  intro l h
-  simp [RDF.valueInSpace, h]
+  intro l h hm
+  simp only [RDF.valueInSpace, h] at hm ⊢
+  change (XSD.lexicalValueInBuiltin .xsd11 .int l.lexicalForm .int).getD false = true at hm
+  change (XSD.lexicalValueInBuiltin .xsd11 .int l.lexicalForm .integer).getD false = true
+  rw [XSD.lexicalValueInBuiltin, XSD.checked_int_value] at hm ⊢
+  cases hp : XSD.parseIntegerLex l.lexicalForm with
+  | none => simp [hp] at hm
+  | some i =>
+      by_cases hb : XSD.inIntBounds .int i = true
+      · simp only [Option.bind_some, hb, ↓reduceIte]
+        rfl
+      · simp [hp, hb] at hm
+
+#print axioms xsdIntegerDecimal_subset
+#print axioms xsdIntInteger_subset
 
 /-! ### Comprehension witnesses
 

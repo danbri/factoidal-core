@@ -18,12 +18,12 @@ returning `unknown` for the rest, is what keeps the score honest as
 the list grows.
 -/
 import L4Factoidal.RIF.Syntax
-import L4Factoidal.CSVW.Formats
+import L4Factoidal.XSD.ValueSpace
+import L4Factoidal.Fn.Arithmetic
+import L4Factoidal.Fn.Comparison
+import L4Factoidal.Fn.Cast
 
 namespace L4Factoidal.RIF
-
-open L4Factoidal.CSVW (isXsdNumericLexical isDecimalLexical isIntegerLexical
-  isDoubleLexical isDurationLexical decimalCompare parseCanonicalDate FmtOutcome)
 
 inductive Ans where
   | yes | no | unknown
@@ -43,95 +43,160 @@ def builtinName (iri : String) : Option String :=
 def xsdLocal (dt : String) : Option String :=
   if dt.startsWith xsdNs then some (String.ofList (dt.toList.drop xsdNs.length)) else none
 
-/-- Is a lexical form in the lexical space of an XSD datatype? The
-    string-like types accept everything, the numeric ones go through
-    `CSVW.Formats`, and a type this module does not model gives
-    `none`. -/
+/-- RIF-DTB Second Edition §2.2.1 references XSD 1.1. This adapter uses
+    the shared lexical decision; unknown datatype names remain undecided.
+    As in the shared API, callers supply lexical forms without XML whitespace
+    preprocessing. This does not implement value-space membership or casts. -/
 def inLexicalSpace (base lex : String) : Option Bool :=
-  if ["string", "normalizedString", "token", "language", "Name", "NCName",
-      "NMTOKEN", "anyURI"].contains base then some true
-  else if base == "boolean" then
-    some (lex == "true" || lex == "false" || lex == "0" || lex == "1")
-  else if base == "hexBinary" then
-    some (lex.toList.length % 2 == 0 &&
-          lex.toList.all (fun c => c.isDigit || ('a' ≤ c && c ≤ 'f') || ('A' ≤ c && c ≤ 'F')))
-  else if base == "base64Binary" then none
-  else if ["integer", "int", "long", "short", "byte", "decimal", "double", "float",
-           "nonNegativeInteger", "nonPositiveInteger", "negativeInteger",
-           "positiveInteger", "unsignedByte", "unsignedShort", "unsignedInt",
-           "unsignedLong"].contains base then
-    some (isXsdNumericLexical base lex)
-  else if ["date", "dateTime", "time", "dateTimeStamp"].contains base then
-    some (match parseCanonicalDate base lex with | .valid _ => true | _ => false)
-  else if ["duration", "dayTimeDuration", "yearMonthDuration"].contains base then
-    some (isDurationLexical lex &&
-          (if base == "dayTimeDuration" then !(lex.toList.contains 'Y')
-           else if base == "yearMonthDuration" then
-             !(lex.toList.contains 'T') && !(lex.toList.contains 'D')
-           else true))
-  else none
+  XSD.validLexicalFor .xsd11 base lex
 
-/-- The PRIMITIVE family an XSD type belongs to. RIF-DTB asks whether
-    a constant is in the VALUE SPACE of a type, not whether its
-    datatype IRI is that type — `"1"^^xs:integer` IS a literal of
-    `xs:decimal`, and `xs:integer` is a restriction of it. Types in
-    different families never overlap: `xs:double`'s value space is
-    disjoint from `xs:decimal`'s, and treating them as one would make
-    `pred:is-literal-double("1"^^xs:integer)` true.
-
-    Comparing IRIs instead of families made 24 of the corpus's
-    built-in assertions false, and the rule they guarded never
-    fired. -/
+/-- Compatibility view of primitive families from the shared hierarchy.
+    Numeric operations and datatype guards consume parsed values below. -/
 def xsdFamily (b : String) : Option String :=
-  if ["decimal", "integer", "long", "int", "short", "byte",
-      "nonNegativeInteger", "nonPositiveInteger", "negativeInteger",
-      "positiveInteger", "unsignedLong", "unsignedInt", "unsignedShort",
-      "unsignedByte"].contains b then some "decimal"
-  else if ["string", "normalizedString", "token", "language", "Name",
-           "NCName", "NMTOKEN"].contains b then some "string"
-  else if ["duration", "dayTimeDuration", "yearMonthDuration"].contains b
-    then some "duration"
-  else if ["dateTime", "dateTimeStamp"].contains b then some "dateTime"
-  else some b
+  ((XSD.builtinOfName? b).bind (·.primitive)).map (·.localName)
 
-/-- Is this constant a literal of the named XSD type? RIF-DTB's
-    `pred:is-literal-T` family. -/
-def isLiteralOf (base : String) (g : GTerm) : Ans :=
-  match g with
-  | .const lex sp =>
-      if base == "PlainLiteral" then
-        (if sp == rdfNs ++ "PlainLiteral" then .yes else .no)
-      else if base == "XMLLiteral" then
-        (if sp == rdfNs ++ "XMLLiteral" then .yes else .no)
-      else if sp == rdfNs ++ "PlainLiteral" then
-        -- RIF-DTB: a plain literal with an EMPTY language tag is in
-        -- the value space of `xs:string`. The corpus asks
-        -- `pred:is-literal-string("Hello world@"^^rdf:PlainLiteral)`
-        -- and expects yes.
-        (if xsdFamily base == some "string" && lex.endsWith "@" then .yes else .no)
-      else match xsdLocal sp with
-        | none => .no
-        | some cb =>
-            if xsdFamily cb != xsdFamily base then .no
-            else match inLexicalSpace base lex with
-              | some b => if b then .yes else .no
-              | none   => .unknown
-  | _ => .no
+/-- Membership for a parsed XSD value. PlainLiteral includes the string
+    value space; XMLLiteral is disjoint from these XSD spaces. -/
+def xsdValueMembership (base : String) (v : XSD.Val) : Option Bool :=
+  if base == "PlainLiteral" then
+    some (match v with | .str .string _ => true | _ => false)
+  else if base == "XMLLiteral" then some false
+  else (XSD.builtinOfName? base).bind (fun b => XSD.valueInBuiltin b v)
 
-/-- The numeric value of a constant, as an exact decimal lexical form,
-    when its datatype is numeric. -/
-def numericLex (g : GTerm) : Option String :=
-  match g with
+private def guardAnswer (negative : Bool) : Option Bool → Ans
+  | none => .unknown
+  | some member => if member != negative then .yes else .no
+
+/-- Decoded values used by RIF datatype guards and identity. Empty-language
+    PlainLiteral maps to an XSD string; tagged values retain their text and
+    lowercase tag. Full BCP 47 validation remains a caller precondition. -/
+inductive LiteralValue where
+  | xsd (value : XSD.Val)
+  | tagged (text language : String)
+deriving Repr
+
+def literalValue? : GTerm → Option LiteralValue
   | .const lex sp =>
-      match xsdLocal sp with
-      | some b =>
-          if ["integer", "int", "long", "short", "byte", "decimal", "double", "float",
-              "nonNegativeInteger", "nonPositiveInteger", "negativeInteger",
-              "positiveInteger", "unsignedByte", "unsignedShort", "unsignedInt",
-              "unsignedLong"].contains b && isXsdNumericLexical b lex
-          then some (L4Factoidal.CSVW.resolveExponent lex) else none
-      | none => none
+      if sp == rdfNs ++ "PlainLiteral" then
+        match (lex.splitOn "@").reverse with
+        | tag :: textParts =>
+            if textParts.isEmpty then none
+            else
+              let text := String.intercalate "@" textParts.reverse
+              if tag.isEmpty then some (.xsd (.str .string text))
+              else some (.tagged text tag.toLower)
+        | [] => none
+      else do
+        let cb ← xsdLocal sp
+        let source ← XSD.builtinOfName? cb
+        let value ← XSD.checkedLexicalValue .xsd11 source lex
+        some (.xsd value)
   | _ => none
+
+def LiteralValue.identical : LiteralValue → LiteralValue → Bool
+  | .xsd a, .xsd b => XSD.valIdentical a b
+  | .tagged a al, .tagged b bl => a == b && al == bl
+  | _, _ => false
+
+def LiteralValue.membership (base : String) : LiteralValue → Option Bool
+  | .xsd v => xsdValueMembership base v
+  | .tagged _ _ => some (base == "PlainLiteral")
+
+/-- RIF-DTB §4.1.1.1 tests distinct VALUES, with both arguments in DTS.
+    Lists are outside DTS. Unknown/invalid source mappings and XMLLiteral
+    canonical identity remain undecided; raw lexical inequality is no proof. -/
+def literalNotIdentical (a b : GTerm) : Ans :=
+  match a, b with
+  | .list _, _ | _, .list _ => .no
+  | _, _ =>
+      match literalValue? a, literalValue? b with
+      | some x, some y => if x.identical y then .no else .yes
+      | _, _ => .unknown
+
+/-- RIF-DTB §§4.2–4.3: positive guards test values; negative guards additionally
+    require membership in DTS. Lists are outside DTS. IRI/local constants and
+    uninterpreted applications have no fixed datatype interpretation here, so
+    both polarities remain unknown (RIF-BLD §3.2).
+
+    As before, rdf:XMLLiteral and language-tagged rdf:PlainLiteral inputs assume
+    well-formed constants; XML canonical lexical validation and complete BCP 47
+    validation are not implemented here. XSD source validity IS checked. -/
+def literalGuard (negative : Bool) (base : String) (g : GTerm) : Ans :=
+  let knownTarget := base == "PlainLiteral" || base == "XMLLiteral" ||
+    ((XSD.builtinOfName? base).any XSD.valueMembershipSupported)
+  if !knownTarget then .unknown
+  else match g with
+  | .list _ => .no
+  | .fapp .. => .unknown
+  | .const lex sp =>
+      if sp == rdfNs ++ "XMLLiteral" then
+        guardAnswer negative (some (base == "XMLLiteral"))
+      else guardAnswer negative ((literalValue? (.const lex sp)).bind (LiteralValue.membership base))
+
+/-- RIF-DTB positive datatype guard. -/
+def isLiteralOf (base : String) (g : GTerm) : Ans := literalGuard false base g
+
+/-- RIF-DTB negative datatype guard, restricted to the datatype domain. -/
+def isLiteralNotOf (base : String) (g : GTerm) : Ans := literalGuard true base g
+
+/-- RIF-DTB §4.5: decode and validate through the common XSD value adapter.
+    Integer-derived bounds and IEEE rounding apply before operations. -/
+def numericValue? (g : GTerm) : Option XSD.Val := do
+  match ← literalValue? g with
+  | .xsd (.dec d) => some (.dec d)
+  | .xsd (.flt f) => some (.flt f)
+  | .xsd (.dbl f) => some (.dbl f)
+  | _ => none
+
+/-- Compatibility lexical view of the decoded numeric value. IEEE inputs
+    reflect their rounded value, not the original decimal spelling. -/
+def numericLex (g : GTerm) : Option String := do
+  match ← numericValue? g with
+  | .dec d => some d.canonical
+  | .flt f | .dbl f =>
+      let lex := XSD.canonicalFval f
+      some (((XSD.decimalOrScientific lex).map XSD.Dec.canonical).getD lex)
+  | _ => none
+
+/-- Result typing is separate from value validation (RIF-DTB §4.5.1). -/
+def integerOperand (g : GTerm) : Bool := match g with
+  | .const _ sp => (XSD.builtinOfIri? sp).any (fun b => (XSD.intBounds b).isSome)
+  | _ => false
+
+/-- Serialize numeric results using the shared XSD formatter. -/
+def numericResult (integer : Bool) : XSD.Val → Option GTerm
+  | .dec d => if integer then (d.toInt?).map (fun n => gLit (toString n) (xsdNs ++ "integer"))
+              else some (gLit d.canonical (xsdNs ++ "decimal"))
+  | .flt f => some (gLit (XSD.canonicalFval f) (xsdNs ++ "float"))
+  | .dbl f => some (gLit (XSD.canonicalFval f) (xsdNs ++ "double"))
+  | _ => none
+
+/-- Decimal division policy: at least 16 significant digits, truncating.
+    Extra fractional places preserve small results; integers are unbounded.
+    This is the implementation precision permitted by F&O §6.2. -/
+def divisionPlaces (a b : XSD.Dec) : Nat :=
+  max 16 ((17 : Int) + (toString b.mantissa.natAbs).length + a.scale
+    - (toString a.mantissa.natAbs).length - b.scale).toNat
+
+/-- RIF-DTB §4.5.1: the same IEEE arithmetic as SPARQL, with exact decimal
+    addition/subtraction/multiplication and explicit decimal division precision. -/
+def numericArithmetic (op : Fn.Arithmetic.Op) (a b : GTerm) : Option GTerm := do
+  let x ← numericValue? a
+  let y ← numericValue? b
+  let v ← match x, y with
+    | .dec p, .dec q => (Fn.Arithmetic.decimal (divisionPlaces p q) op p q).map XSD.Val.dec
+    | _, _ => Fn.Arithmetic.floating op x y
+  numericResult (op != .div && integerOperand a && integerOperand b) v
+
+/-- RIF-DTB §4.5.1: truncating integer division, including decimal/IEEE inputs. -/
+def numericIntegerDivide (a b : GTerm) : Option GTerm := do
+  let q ← Fn.Arithmetic.integerDivide (← numericValue? a) (← numericValue? b)
+  some (gLit (toString q) (xsdNs ++ "integer"))
+
+/-- RIF-DTB §4.5.1: shared F&O remainder and result typing. -/
+def numericMod (a b : GTerm) : Option GTerm := do
+  let v ← Fn.Arithmetic.modulo (← numericValue? a) (← numericValue? b)
+  numericResult (integerOperand a && integerOperand b) v
 
 def isStringy (g : GTerm) : Option String :=
   match g with
@@ -146,50 +211,36 @@ def boolValue (g : GTerm) : Option Bool :=
   match g with
   | .const lex sp =>
       if sp != xsdNs ++ "boolean" then none
-      else if lex == "true" || lex == "1" then some true
-      else if lex == "false" || lex == "0" then some false
-      else none
+      else XSD.parseBooleanLex lex
   | _ => none
 
-private def cmpNum (a b : GTerm) (ok : Ordering → Bool) : Ans :=
-  match numericLex a, numericLex b with
-  | some x, some y => (match decimalCompare x y with
-                       | some o => if ok o then .yes else .no
-                       | none   => .unknown)
-  | _, _ => .unknown
+/-- RIF-DTB §4.5.2: F&O comparison, including NaN and mixed numeric promotion. -/
+def cmpNum (a b : GTerm) (op : Fn.Comparison.Op) : Ans :=
+  match (do Fn.Comparison.numericCompare (← numericValue? a) (← numericValue? b) op) with
+  | some true => .yes
+  | some false => .no
+  | none => .unknown
 
-/-- Sum, difference, product of two exact decimals, as a lexical
-    form. Kept exact: RIF numbers are `xs:integer` and `xs:decimal`
-    here, and a float would make `func:numeric-add` approximate on
-    values the corpus compares for equality. -/
-def addDec (a b : String) : Option String :=
-  match a.toInt?, b.toInt? with
-  | some x, some y => some (toString (x + y))
-  | _, _ => none
+/-- Compatibility decimal helpers now share F&O arithmetic. -/
+def decimalLexArithmetic (op : Fn.Arithmetic.Op) (a b : String) : Option String := do
+  let x ← XSD.parseDecimalLex a
+  let y ← XSD.parseDecimalLex b
+  (Fn.Arithmetic.decimal (divisionPlaces x y) op x y).map XSD.Dec.canonical
 
-def subDec (a b : String) : Option String :=
-  match a.toInt?, b.toInt? with
-  | some x, some y => some (toString (x - y))
-  | _, _ => none
-
-def mulDec (a b : String) : Option String :=
-  match a.toInt?, b.toInt? with
-  | some x, some y => some (toString (x * y))
-  | _, _ => none
+def addDec := decimalLexArithmetic .add
+def subDec := decimalLexArithmetic .sub
+def mulDec := decimalLexArithmetic .mul
 
 /-- A built-in PREDICATE. -/
 def evalPred (name : String) (args : List GTerm) : Ans :=
   match name, args with
-  | "literal-not-identical", [a, b] =>
-      (match a, b with
-       | .const l1 s1, .const l2 s2 => if l1 == l2 && s1 == s2 then .no else .yes
-       | _, _ => .unknown)
-  | "numeric-equal", [a, b] => cmpNum a b (· == .eq)
-  | "numeric-not-equal", [a, b] => cmpNum a b (· != .eq)
-  | "numeric-less-than", [a, b] => cmpNum a b (· == .lt)
-  | "numeric-greater-than", [a, b] => cmpNum a b (· == .gt)
-  | "numeric-less-than-or-equal", [a, b] => cmpNum a b (· != .gt)
-  | "numeric-greater-than-or-equal", [a, b] => cmpNum a b (· != .lt)
+  | "literal-not-identical", [a, b] => literalNotIdentical a b
+  | "numeric-equal", [a, b] => cmpNum a b .eq
+  | "numeric-not-equal", [a, b] => cmpNum a b .ne
+  | "numeric-less-than", [a, b] => cmpNum a b .lt
+  | "numeric-greater-than", [a, b] => cmpNum a b .gt
+  | "numeric-less-than-or-equal", [a, b] => cmpNum a b .le
+  | "numeric-greater-than-or-equal", [a, b] => cmpNum a b .ge
   | "boolean-equal", [a, b] =>
       (match boolValue a, boolValue b with
        | some x, some y => if x == y then .yes else .no
@@ -225,45 +276,31 @@ def evalPred (name : String) (args : List GTerm) : Ans :=
        | _, _ => .unknown)
   | _, [a] =>
       if name.startsWith "is-literal-not-" then
-        (match isLiteralOf (String.ofList (name.toList.drop 15)) a with
-         | .yes => .no | .no => .yes | .unknown => .unknown)
+        isLiteralNotOf (String.ofList (name.toList.drop 15)) a
       else if name.startsWith "is-literal-" then
         isLiteralOf (String.ofList (name.toList.drop 11)) a
       else .unknown
   | _, _ => .unknown
 
+/-- RIF-DTB §4.4.1: validate the source, convert its value, then check target
+    facets. Empty-tag PlainLiteral shares the string value space. -/
+def castXsd (target : String) (g : GTerm) : Option GTerm := do
+  let b ← XSD.builtinOfName? target
+  let .xsd source ← literalValue? g | none
+  let result ← Fn.Cast.cast .xsd11 b source
+  some (gLit (Fn.Cast.lexical .xsd11 b result) (xsdNs ++ target))
+
 /-- A built-in FUNCTION. `none` means this module does not decide it,
     which the caller must not read as "no value". -/
 def evalFunc (name : String) (args : List GTerm) : Option GTerm :=
   match name, args with
-  | "numeric-add", [a, b] =>
-      (match numericLex a, numericLex b with
-       | some x, some y => (addDec x y).map (fun r => gLit r (xsdNs ++ "integer"))
-       | _, _ => none)
-  | "numeric-subtract", [a, b] =>
-      (match numericLex a, numericLex b with
-       | some x, some y => (subDec x y).map (fun r => gLit r (xsdNs ++ "integer"))
-       | _, _ => none)
-  | "numeric-multiply", [a, b] =>
-      (match numericLex a, numericLex b with
-       | some x, some y => (mulDec x y).map (fun r => gLit r (xsdNs ++ "integer"))
-       | _, _ => none)
-  | "numeric-integer-divide", [a, b] =>
-      (match numericLex a, numericLex b with
-       | some x, some y =>
-           (match x.toInt?, y.toInt? with
-            | some p, some q => if q == 0 then none
-                                else some (gLit (toString (p / q)) (xsdNs ++ "integer"))
-            | _, _ => none)
-       | _, _ => none)
-  | "numeric-integer-mod", [a, b] =>
-      (match numericLex a, numericLex b with
-       | some x, some y =>
-           (match x.toInt?, y.toInt? with
-            | some p, some q => if q == 0 then none
-                                else some (gLit (toString (p % q)) (xsdNs ++ "integer"))
-            | _, _ => none)
-       | _, _ => none)
+  | "numeric-add", [a, b] => numericArithmetic .add a b
+  | "numeric-subtract", [a, b] => numericArithmetic .sub a b
+  | "numeric-multiply", [a, b] => numericArithmetic .mul a b
+  | "numeric-divide", [a, b] => numericArithmetic .div a b
+  | "numeric-integer-divide", [a, b] => numericIntegerDivide a b
+  -- The native suite uses the historical integer-mod spelling.
+  | "numeric-mod", [a, b] | "numeric-integer-mod", [a, b] => numericMod a b
   | "string-length", [a] =>
       (isStringy a).map (fun s => gLit (toString s.toList.length) (xsdNs ++ "integer"))
   | "upper-case", [a] => (isStringy a).map (fun s => gStr s.toUpper)
@@ -305,10 +342,7 @@ def evalFunc (name : String) (args : List GTerm) : Option GTerm :=
       if name.startsWith "cast-" then
         let base := String.ofList (name.toList.drop 5)
         (match args with
-         | [.const lex _] =>
-             (match inLexicalSpace base lex with
-              | some true => some (gLit lex (xsdNs ++ base))
-              | _         => none)
+         | [g] => castXsd base g
          | _ => none)
       else none
 

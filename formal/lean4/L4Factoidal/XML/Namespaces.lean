@@ -55,6 +55,7 @@ nothing about plain XML 1.0 well-formedness, which is `parseXML`'s job
 and must be established first.
 -/
 import L4Factoidal.XML.Parser
+import L4Factoidal.XML.Wellformedness
 
 namespace L4Factoidal.XML
 
@@ -81,7 +82,8 @@ def findColons : List Char → Nat → List Nat
 /-- Split a raw `[5] Name` against
 `[7] QName ::= PrefixedName | UnprefixedName`.
 
-A Name is a QName iff it carries at most one colon and that colon is
+A Name is a QName iff its components are NCNames and it carries at most
+one colon, with that colon
 neither the first nor the last character (either would leave an empty
 `[8] Prefix` or an empty `[10] LocalPart`). Any other colon pattern is
 `malformed` — a violation of the NAMESPACE layer only, never of XML 1.0
@@ -89,10 +91,14 @@ itself. Port of F* `split_qname`. -/
 def splitQName (str : String) : QNameSplit :=
   let cs := str.toList
   match findColons cs 0 with
-  | [] => .simple str
+  | [] => if isValidNCName str then .simple str else .malformed
   | [i] =>
     if i == 0 || i + 1 ≥ cs.length then .malformed
-    else .prefixed (String.ofList (cs.take i)) (String.ofList (cs.drop (i + 1)))
+    else
+      let prefix_ := String.ofList (cs.take i)
+      let localPart := String.ofList (cs.drop (i + 1))
+      if isValidNCName prefix_ && isValidNCName localPart then .prefixed prefix_ localPart
+      else .malformed
   | _ => .malformed
 
 /-! ## Namespace scope
@@ -225,6 +231,7 @@ def checkElement (version : String) (scope : NsScope) : Node → Bool
         attrsPrefixesBound newScope attrs &&
         attrsUniqueExpanded newScope attrs &&
         checkChildren version newScope children
+  | .pi target _ => isValidNCName target
   | _ => true
 
 /-- `checkElement` over a child list. Port of F* `check_children`. -/
@@ -250,7 +257,12 @@ declared version out of its `[23] XMLDecl` and defaulting to `"1.0"`
 when there is none — the `version` argument the F* entry point requires
 the caller to supply. -/
 def Document.namespaceWellFormed (d : Document) : Bool :=
-  isNamespaceWellFormed ((d.decl.map (·.version)).getD "1.0") d.root
+  let version := (d.decl.map (·.version)).getD "1.0"
+  checkChildren version initialScope d.prolog &&
+  isNamespaceWellFormed version d.root &&
+  checkChildren version initialScope d.epilog &&
+  ((d.doctype.map (fun dt => dt.entities.all (fun e => isValidNCName e.1) &&
+    dt.notationNames.all isValidNCName)).getD true)
 
 /-- Parse `input` and then decide namespace well-formedness on top of
 plain XML 1.0 well-formedness. `false` when the document is not

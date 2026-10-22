@@ -318,7 +318,11 @@ partial def readOne (ctx : List (String × String)) (excl : List String)
           -- dropping it let the element inherit the enclosing default
           -- namespace, which is a DIFFERENT element name (namespace-4501).
           let decls := c2.filter (fun (p, u) =>
-            u != xsltNS && p != "xml" && !(excl2.contains p))
+            p != "xml" &&
+            ((p == prefixOf t) || avts.any (fun (name, _) => prefixOf name != "" && prefixOf name == p) ||
+             (u != xsltNS && !(excl2.contains p))))
+          let decls := if prefixOf t == "" && !(decls.any (fun (p, _) => p == ""))
+            then decls ++ [("", "")] else decls
           [.lre t avts decls (readBody c2 excl2 kids)]
       | some "text" =>
           [.textN (String.join ((kidsOf n).map (fun c =>
@@ -633,7 +637,7 @@ def copyItem (d : Doc) (it : Item) : List RNode :=
   | .tree _ n  =>
       match n with
       | .element t a ks =>
-          let inherited := (namespacesOf d it).filterMap (fun x =>
+          let inherited := (namespacesOf (it.document d) it).filterMap (fun x =>
             match x with
             | .ns _ p u =>
                 if p == "xml" then none
@@ -642,7 +646,10 @@ def copyItem (d : Doc) (it : Item) : List RNode :=
                   if a.any (fun b => b.name == nm) then none
                   else some ({ name := nm, value := u } : Attribute)
             | _ => none)
-          [.elem t (inherited ++ a) (ks.map copyNode)]
+          let attrs := inherited ++ a
+          let attrs := if prefixOf t == "" && !(attrs.any (fun a => a.name == "xmlns"))
+            then attrs ++ [{ name := "xmlns", value := "" }] else attrs
+          [.elem t attrs (ks.map copyNode)]
       | other => [copyNode other]
 
 /-! ## The runtime -/
@@ -670,9 +677,12 @@ def tmplOf (i : Nat) (t : Tmpl) : Template :=
 def selectTemplate (rt : Rt) (mode : String) (it : Item) : Option Tmpl :=
   let cands := (rt.st.templates.zipIdx).filter (fun (t, i) =>
     t.mode == mode && t.pat != "" &&
-    (match rt.locs[i]? with
-     | some (some ls) => ls.contains it.loc
-     | _              => false))
+    (let locs := match it.loc.owner with
+       | none => (rt.locs[i]?).join
+       | some d => patternLocs d t.nsctx t.pat
+     match locs with
+     | some ls => ls.contains { it.loc with owner := none }
+     | none => false))
   (cands.foldl (fun acc (t, i) =>
     match acc with
     | none          => some (t, i)
@@ -897,13 +907,15 @@ partial def instOne (rt : Rt) (fuel : Nat) (vars : List (String × Value))
           | .element t _ _ => do
               let kids ← inst rt fuel vars nsctx it pos size body
               let (extra, ks) := splitContent kids
-              let inherited := (namespacesOf rt.doc it).filterMap (fun x =>
+              let inherited := (namespacesOf (it.document rt.doc) it).filterMap (fun x =>
                 match x with
                 | .ns _ p u =>
                     if p == "xml" then none
                     else some ({ name := if p == "" then "xmlns" else "xmlns:" ++ p,
                                  value := u } : Attribute)
                 | _ => none)
+              let inherited := if prefixOf t == "" && !(inherited.any (fun a => a.name == "xmlns"))
+                then inherited ++ [{ name := "xmlns", value := "" }] else inherited
               some [.elem t (inherited ++ extra) ks]
           | other => some [copyNode other]
   | .forEach sel sorts body => do
@@ -993,9 +1005,12 @@ partial def evalBinding (rt : Rt) (fuel : Nat) (vars : List (String × Value))
 partial def evalIn (rt : Rt) (vars : List (String × Value))
     (nsctx : List (String × String)) (it : Item) (pos size : Nat) (e : String)
     : Option Value :=
-  evalText { doc := rt.doc, item := it, pos := pos, size := size,
-             vars := rt.globals ++ vars, nsctx := nsctx, self? := rt.self?,
-             docs := rt.docs } e
+  do
+    let expr ← parseExpr e
+    -- `transform` checked the real XML versions before entering the runtime.
+    evalExpr { doc := it.document rt.doc, item := it, pos := pos, size := size,
+               vars := rt.globals ++ vars, nsctx := nsctx, self? := rt.self?,
+               docs := rt.docs } expr
 
 /-- Expand an attribute value template. -/
 partial def expandAvt (rt : Rt) (vars : List (String × Value))
@@ -1156,7 +1171,12 @@ def isStylesheetRoot (root : Node) : Bool :=
 def transform (style : Document) (src : Document)
     (docs : List (String × Doc) := [])
     (imports : List (String × Node) := []) : Outcome :=
-  if !isStylesheetRoot style.root then
+  if !style.namespaceWellFormed || !src.namespaceWellFormed then
+    .refused "stylesheet or source is not namespace-well-formed XML"
+  else if !(docs.all (fun (_, d) => checkChildren "1.0" initialScope d)) ||
+          !(imports.all (fun (_, n) => isNamespaceWellFormed "1.0" n)) then
+    .refused "external document or imported stylesheet is not namespace-well-formed XML 1.0"
+  else if !isStylesheetRoot style.root then
     .refused "the stylesheet root is not xsl:stylesheet or xsl:transform"
   else
     let st := readStylesheetWith imports 8 0 style.root

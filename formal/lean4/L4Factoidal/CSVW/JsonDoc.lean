@@ -221,11 +221,15 @@ def rowJsonOf (tableUrl : String) (r : RowInput) : Json :=
 
 /-- The whole csv2json document, both modes. -/
 def convertJson (base : String) (ctx : Ctx) (g : TableGroup) (minimal : Bool)
-    (tables : List (TableDesc × Table)) : Json :=
+    (tables : List (TableDesc × Table)) : ConversionResult Json :=
   let per := tables.map (fun (t, tbl) =>
     let tableUrl := L4Factoidal.Syntax.resolveIri base t.url
     (t, tableUrl, tableRowInputs base ctx g t tbl))
-  if minimal then
+  let warnings := tables.flatMap fun (t, tbl) =>
+    if t.suppress == some true then [] else tableRegexWarnings base ctx g t tbl
+  let issues := warnings ++ per.flatMap (fun (t, tableUrl, rows) =>
+    if t.suppress == some true then [] else tableConversionIssues tableUrl rows)
+  let output := if minimal then
     .array (per.flatMap (fun (t, tableUrl, rows) =>
       if t.suppress == some true then []
       else rows.flatMap (describesOf tableUrl)))
@@ -255,5 +259,6 @@ def convertJson (base : String) (ctx : Ctx) (g : TableGroup) (minimal : Bool)
         ++ commonMembers t.common ++ notePairs
         ++ [("row", .array (rows.map (rowJsonOf tableUrl)))]))))]
       ++ commonMembers g.common)
+  finishConversion output issues
 
 end L4Factoidal.CSVW

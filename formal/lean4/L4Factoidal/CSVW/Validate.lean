@@ -309,6 +309,14 @@ def checkDatatypeObject (v : Json) : List Finding :=
 
 /-! ## Structure -/
 
+/-- Malformed regex metadata warns even when there are no non-null cells. -/
+def checkRegexFormat (v : Json) : List Finding :=
+  match field? "datatype" v with
+  | some d =>
+      (regexFormatWarning ((stringField? "base" d).getD "string")
+        (stringField? "format" d)).toList.map warn
+  | none => []
+
 def columnKeywords : List String :=
   ["name", "titles", "virtual", "suppressOutput", "aboutUrl", "datatype",
    "default", "lang", "null", "ordered", "propertyUrl", "required",
@@ -317,7 +325,7 @@ def columnKeywords : List String :=
 /-- A column object. -/
 def checkColumn (v : Json) : List Finding :=
   checkId "column" v ++ checkType "Column" v ++ checkTitles v ++ checkDatatype v
-    ++ checkDatatypeObject v ++ checkCommonProps columnKeywords v
+    ++ checkDatatypeObject v ++ checkRegexFormat v ++ checkCommonProps columnKeywords v
 
 /-- A foreign key: only `columnReference` and `reference` are allowed,
     and the reference itself takes only `resource` / `schemaReference`
@@ -376,7 +384,7 @@ def checkSchema (v : Json) : List Finding :=
   let orderFindings :=
     if (virtuals.zip (virtuals.drop 1)).any (fun (a, b) => a && !b)
     then [err "a virtual column precedes a non-virtual one"] else []
-  checkId "schema" v ++ checkType "Schema" v ++ cols.flatMap checkColumn
+  checkId "schema" v ++ checkType "Schema" v ++ checkRegexFormat v ++ cols.flatMap checkColumn
     ++ dupFindings ++ orderFindings
     -- `foreignKeys` given as a non-array, or holding a non-object
     -- member, is a WARNING and the offending value is ignored — the
@@ -406,7 +414,7 @@ def checkTable (v : Json) : List Finding :=
     | some (.string _) => []
     | some _           => [err "table url must be a string"]
     | none             => [err "a table must have a url"]
-  checkId "table" v ++ checkType "Table" v ++ urlFindings
+  checkId "table" v ++ checkType "Table" v ++ checkRegexFormat v ++ urlFindings
     ++ (match field? "tableSchema" v with
         | some s => checkSchema s
         | none   => [])
@@ -488,7 +496,7 @@ def checkTableGroup (v : Json) : List Finding :=
           | _         => [err "tables must hold table objects"])
     | some _ => [err "tables must be an array"]
     | none   => [err "a table group must have tables"]
-  checkId "table group" v ++ checkType "TableGroup" v ++ tablesFindings
+  checkId "table group" v ++ checkType "TableGroup" v ++ checkRegexFormat v ++ tablesFindings
     ++ checkForeignKeyTargets v
     ++ (match field? "dialect" v with
         | some d => checkId "dialect" d ++ checkType "Dialect" d

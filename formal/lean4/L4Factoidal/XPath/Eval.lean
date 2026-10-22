@@ -113,20 +113,18 @@ def Value.toBool (v : Value) : Bool :=
     a document declares `xmlns=`, which is the shape of a bug that
     only appears on real-world input. -/
 def expandedName (d : Doc) (it : Item) : String × String :=
-  let q := it.qname
-  let pfx := prefixOf q
-  let loc := localOf q
+  let resolved := do
+    let scope ← namespaceScope (it.document d) it.loc.path
+    match it.kind with
+    | .attribute => resolveAttributeName scope it.qname
+    | .element => resolveElementName scope it.qname
+    | _ => none
   match it.kind with
-  | .attribute =>
-      if pfx == "" then ("", loc)
-      else
-        let owner := itemAt d { path := it.loc.path }
-        let nss := (owner.map (namespacesOf d)).getD []
-        (((nss.find? (fun n => n.qname == pfx)).map (fun n => n.stringValue)).getD "", loc)
-  | .element | .pi =>
-      let nss := namespacesOf d it
-      (((nss.find? (fun n => n.qname == pfx)).map (fun n => n.stringValue)).getD "", loc)
-  | _ => ("", loc)
+  | .pi => ("", it.qname) -- PI targets are names, not namespace QNames.
+  | .namespace => ("", it.qname)
+  | _ => match resolved with
+    | some n => (n.namespace_.getD "", n.localPart)
+    | none => ("", "")
 
 /-- Expand a name written in an EXPRESSION. An unprefixed name has no
     namespace — XPath 1.0 §2.3 says so explicitly, and it is the one
@@ -373,7 +371,12 @@ partial def evalExpr (c : Ctx) : Expr → Option Value
                 let d2 := match ns with
                   | [.doc kids] => kids
                   | _           => c.doc
-                evalSteps { c with doc := d2 } ns steps
+                let result ← evalSteps { c with doc := d2 } ns steps
+                match result with
+                | .nodes items =>
+                    if d2 == c.doc then some result
+                    else some (.nodes (items.map (·.withOwner d2)))
+                | _ => some result
           | _ => none
 
 /-- A step list applied to a node-set: each step maps every node of
@@ -386,8 +389,12 @@ partial def evalSteps (c : Ctx) (base : List Item) : List Step → Option Value
       evalSteps c (normalize out) rest
 
 partial def evalStep (c : Ctx) (it : Item) (s : Step) : Option (List Item) :=
-  applyPreds c ((axisItems c.doc s.ax it).filter (matchesTest c.doc c.nsctx s.ax s.test))
-    s.preds
+  let d := it.document c.doc
+  let items := (axisItems d s.ax it).map (fun x =>
+    match it.loc.owner with
+    | some owner => x.withOwner owner
+    | none => if d == c.doc then x else x.withOwner d)
+  applyPreds { c with doc := d } (items.filter (matchesTest d c.nsctx s.ax s.test)) s.preds
 
 /-- Apply a predicate list to a node list, in the list's own order. -/
 partial def applyPreds (c : Ctx) (cands : List Item) (preds : List Expr)
@@ -395,7 +402,7 @@ partial def applyPreds (c : Ctx) (cands : List Item) (preds : List Expr)
   preds.foldlM (fun (cur : List Item) (p : Expr) =>
     let n := cur.length
     (cur.zipIdx).foldlM (fun (acc : List Item) (x : Item × Nat) => do
-      let v ← evalExpr { c with item := x.1, pos := x.2 + 1, size := n } p
+      let v ← evalExpr { c with doc := x.1.document c.doc, item := x.1, pos := x.2 + 1, size := n } p
       -- §3.3: a NUMERIC predicate is a POSITION test; anything else
       -- is a boolean. `[1]` selects one node, `[@a]` selects many —
       -- reading the number as a boolean would keep every node.
@@ -538,12 +545,21 @@ partial def evalCall (c : Ctx) (f : String) (args : List Expr) : Option Value :=
 
 end
 
-/-- Evaluate a parsed expression. -/
-def eval (c : Ctx) (e : Expr) : Option Value := evalExpr c e
+/-- Raw tree entry points use Namespaces 1.0: this type carries no XML version.
+Callers requiring 1.1 should validate a Document before using the low-level engine. -/
+def Ctx.namespaceWellFormed (c : Ctx) : Bool :=
+  checkChildren "1.0" initialScope c.doc &&
+  checkChildren "1.0" initialScope (c.item.document c.doc) &&
+  (c.self?.map (checkChildren "1.0" initialScope)).getD true &&
+  c.docs.all (fun (_, d) => checkChildren "1.0" initialScope d)
+
+/-- Evaluate a parsed expression, checking supplied trees first. -/
+def eval (c : Ctx) (e : Expr) : Option Value :=
+  if c.namespaceWellFormed then evalExpr { c with doc := c.item.document c.doc } e else none
 
 /-- Parse and evaluate. -/
 def evalText (c : Ctx) (s : String) : Option Value := do
   let e ← parseExpr s
-  evalExpr c e
+  eval c e
 
 end L4Factoidal.XPath.Full

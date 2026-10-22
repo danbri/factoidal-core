@@ -28,15 +28,16 @@ to any caller-supplied map.
 
 * **Numbers** (`xsd:integer`, `xsd:int`, `xsd:decimal`): a lexical form
   is normalised to `(mantissa : Int, scale : Nat)` with no trailing
-  zeros in the fraction (`NumVal.normalize`), so `"010"`, `"10"` and
+  zeros in the fraction (`XSD.Dec.norm`), so `"010"`, `"10"` and
   `"10.0"` all normalise to `(10, 0)` — RDF 1.1 Semantics §7's "the
   value of the literal". `xsd:int` is `xsd:integer` restricted to
   [-2147483648, 2147483647] (XSD 1.1 §3.4.17). The value space of
   `xsd:int` is inside `xsd:integer`'s, which is inside `xsd:decimal`'s
   (XSD 1.1 §3.4: "the ·value space· of integer is the infinite set ...
-  a subset of decimal"); `valueInSpace` knows that chain and nothing
-  else — every other pair of modelled datatypes has disjoint value
-  spaces (§7: "datatypes ... with disjoint value spaces").
+  a subset of decimal"). `valueInSpace` delegates to `XSD.ValueSpace`,
+  including individual decimal values in the integer/int spaces;
+  every other pair of modelled datatypes has disjoint value spaces
+  (§7: "datatypes ... with disjoint value spaces").
 * **Strings**: `xsd:string` values are the lexical forms;
   `rdf:langString` values are (string, lowercased tag) pairs (RDF 1.1
   Concepts §3.3: "the value space of language tags is always in lower
@@ -55,6 +56,7 @@ No `sorry`, no `axiom`, no `native_decide`, no `partial`.
 -/
 import L4Factoidal.RDF.Core
 import L4Factoidal.XML.Parser
+import L4Factoidal.XSD.ValueSpace
 
 namespace L4Factoidal.RDF
 
@@ -79,55 +81,17 @@ structure NumVal where
   scale    : Nat
   deriving DecidableEq, Repr
 
-/-- Strip trailing zeros from the fraction. -/
-def NumVal.normalize : NumVal → Nat → NumVal
-  | v, 0 => v
-  | v, fuel + 1 =>
-      if v.scale > 0 && v.mantissa % 10 == 0
-      then NumVal.normalize ⟨v.mantissa / 10, v.scale - 1⟩ fuel
-      else v
-
-def digitsToNat (cs : List Char) : Nat :=
-  cs.foldl (fun acc c => acc * 10 + (c.toNat - '0'.toNat)) 0
-
 /-- XSD `integer` lexical space (§3.4.13): `[+-]? [0-9]+`, nothing
 else — no whitespace, no exponent, no point. -/
-def parseIntegerLexical (s : String) : Option Int :=
-  let cs := s.toList
-  let (neg, digits) :=
-    match cs with
-    | '-' :: rest => (true, rest)
-    | '+' :: rest => (false, rest)
-    | _           => (false, cs)
-  if digits.isEmpty || !digits.all Char.isDigit then none
-  else
-    let n : Int := digitsToNat digits
-    some (if neg then -n else n)
+def parseIntegerLexical (s : String) : Option Int := XSD.parseIntegerLex s
 
 /-- XSD `decimal` lexical space (§3.3.3): `[+-]? ([0-9]+ ('.' [0-9]*)? |
 '.' [0-9]+)`. Returns the normalised value. -/
 def parseDecimalLexical (s : String) : Option NumVal :=
-  let cs := s.toList
-  let (neg, body) :=
-    match cs with
-    | '-' :: rest => (true, rest)
-    | '+' :: rest => (false, rest)
-    | _           => (false, cs)
-  let intPart := body.takeWhile (fun c => c != '.')
-  let rest := body.drop intPart.length
-  let fracPart := match rest with | '.' :: f => some f | [] => some [] | _ => none
-  match fracPart with
-  | none => none
-  | some frac =>
-    if !intPart.all Char.isDigit || !frac.all Char.isDigit then none
-    else if intPart.isEmpty && frac.isEmpty then none
-    else
-      let m : Int := digitsToNat (intPart ++ frac)
-      let v : NumVal := ⟨if neg then -m else m, frac.length⟩
-      some (v.normalize (frac.length + 1))
+  (XSD.parseDecimalLex s).map (fun d => ⟨d.mantissa, d.scale⟩)
 
 /-- XSD `int` bounds (§3.4.17). -/
-def intInRange (i : Int) : Bool := -2147483648 ≤ i && i ≤ 2147483647
+def intInRange (i : Int) : Bool := XSD.inIntBounds .int i
 
 /-- The numeric value of a literal of a modelled numeric datatype;
 `none` when the lexical form is not in the datatype's lexical space or
@@ -188,13 +152,16 @@ def literalValueEq (D : List WfIri) (l1 l2 : Literal) : Bool :=
     | some a, some b => a == b
     | _, _ => false))
 
-/-- Is the value of the (well-formed, recognised) literal `l` a member
-of the value space of the recognised datatype `c`? Same datatype: yes.
-Otherwise only along the XSD numeric chain int ⊂ integer ⊂ decimal;
-every other pair of modelled datatypes is disjoint. -/
+/-- Membership for the modelled datatype map. Numeric values use the shared
+XSD service, including decimal values that are integral and fit `int`.
+Recognition by the caller's datatype map remains the caller's responsibility. -/
 def valueInSpace (l : Literal) (c : WfIri) : Bool :=
-  l.datatype == c ||
-  (c == xsdDecimal && (l.datatype == xsdInteger || l.datatype == xsdInt)) ||
-  (c == xsdInteger && l.datatype == xsdInt)
+  if isNumericDatatype l.datatype && isNumericDatatype c then
+    let source := if l.datatype == xsdInt then XSD.Builtin.int
+      else if l.datatype == xsdInteger then .integer else .decimal
+    let target := if c == xsdInt then XSD.Builtin.int
+      else if c == xsdInteger then .integer else .decimal
+    (XSD.lexicalValueInBuiltin .xsd11 source l.lexicalForm target).getD false
+  else l.datatype == c
 
 end L4Factoidal.RDF

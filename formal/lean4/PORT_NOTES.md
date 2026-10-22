@@ -14201,3 +14201,880 @@ file/capture/loader bounds, with all per-run settings and failed trials retained
 See `docs/20261011-shardborough-relational-workloads.md` and its JSON record
 for exact answers, native and competitor configurations, scaling, preparation
 and RSS boundaries, proof scope and remaining work. Industry parity remains open.
+
+## XML namespace consumer integration (2026-10-21)
+
+This is a Lean-only integration repair, not a claim that the corresponding F*
+readers have changed. `XML/NamespaceView.lean` is a new total adapter over the
+existing parser, namespace validator and name resolver. It builds expanded names
+and a per-vocabulary internal view for `SPARQL/ResultsXml`, `MathML/FromXml` and
+`Schematron/FromXml`. The internal projection is not serializable XML. These
+readers no longer treat prefix removal as namespace resolution.
+
+`XPath/Data.namespaceScope` uses shared `scopeAtPath`, declarations and visible
+bindings. `XPath/Eval.expandedName` uses shared element/attribute resolution;
+XPath expression-name default namespace rules remain separate. `XSLT.transform`
+checks main source and stylesheet namespace well-formedness. External documents
+and imported raw nodes still require caller validation. `Syntax/RdfXml` retains
+its existing direct use of `XML.Namespaces`.
+
+`XML.Namespaces.splitQName` now reuses `XML.Wellformedness.isValidNCName` for
+both QName components. Namespace checks also cover PI targets in the prolog,
+root subtree and epilog, and recorded internal general-entity names. Plain XML
+parsing remains unchanged. Namespace declarations with DTD-driven non-CDATA
+normalization and notation names remain gaps in the retained DTD substrate.
+
+Assurance: no new user axioms, `sorry`, `native_decide`, `partial` definitions,
+FFI or opaque realizations. The new traversal and projection are total;
+`#print axioms namespaceView` reports only `propext`, `Classical.choice`,
+`Quot.sound`, and the projection reports only `propext`, `Quot.sound`.
+There is no new general specification-equivalence theorem. Negative SRX tests
+failed on the old reader and pass on the new one. New tests are imported by the
+existing XML, MathML and SPARQL result test modules; Schematron and XPath also
+have consumer regressions.
+
+Measured: scalar MathML 56/56 pass after correcting missing namespace declarations
+in 55 project-authored fixtures (expected values unchanged); Schematron 8/8 pass.
+XSLT subset: 84 pass, 3 fail, 1 refusal out of 88, identical to an isolated
+baseline using the original XPath Data/Eval and XSLT Transform modules.
+A one-off manifest-driven check of the vendored eduni namespace 1.0, 1.1 and
+errata manifests scored 52 pass, 2 fail / 54 UTF-8 required-verdict cases;
+3 optional-error and 2 non-UTF8 cases excluded. Failures are ns10/012.xml
+(DTD attribute-type normalization) and ns10/044.xml (notation name not retained).
+These are not counted as passes. See `docs/w3c-survey.md` for contract ownership,
+implementation dependencies and follow-up work.
+
+Final validation for this change: full `lake build` passed (853 jobs);
+`git diff --check` passed. Native corpus runners reproduced the counts above.
+
+## 2026-10-21 — Shared standards semantics follow-through
+
+Continues the namespace integration above. See `docs/w3c-survey.md`, section
+“Shared semantics OKRs”, for normative editions, the dependency map, remaining
+consumer policies and the full verification record.
+
+- XML parser retains first-declaration attribute tokenization flags and notation
+  names. Non-CDATA space collapse precedes namespace resolution, preserving tabs
+  from character references; namespace notation checks stay outside plain XML.
+  The new `Harness.NamespaceRun` / `l4xml-namespaces` reads the actual eduni
+  manifests: 54 pass, 0 fail, 3 optional, 2 non-UTF8, 0 errors.
+- XPath public entry points check supplied raw document collections; XSLT checks
+  external docs/imports. Raw trees use Namespaces 1.0 because they lack XML
+  declarations. External node locations retain their owning tree across
+  selections, variables and copying. XSLT retains required literal-result
+  bindings and emits default-namespace resets for unqualified copies. Document
+  URI identity and general dynamic-attribute namespace fixup remain limitations.
+- `XSD.Lexical` provides explicit 1.0/1.1 adapters over `XSD.Datatypes`:
+  astronomical internal years, exact decimal seconds, date validation and
+  partial order. SPARQL date components, SHACL comparisons, CSVW dates/numeric
+  checks and ShEx lexical checks share it. RDF numeric parsing delegates to XSD.
+  ShEx no longer imports/calls CSVW. OWL's millisecond interval adapter refuses
+  sub-millisecond values instead of conflating distinct instants by truncation.
+- `Regex.Profiles` separates XSD whole-string matching, XPath substring matching
+  and a conservative ECMA subset. JSON Schema propagates unsupported pattern
+  applicability; XSD SimpleType reports unsupported patterns through its existing
+  unreadable-pattern mechanism. SPARQL retains q/iq as an explicit XPath 3.0
+  extension to its normative XPath 2.0 profile. REPLACE and several other
+  boolean pattern consumers still use the historical engine, explicitly listed
+  in the survey rather than claimed migrated.
+
+Tests: the DTD and XSLT regressions failed before their fixes. Cross-consumer
+`XSD.InteropTests` and `Regex.ProfileTests` are library-root imports. The latter
+also caught an overbroad class-subtraction detector on UUID patterns, now fixed
+with a regression guard. New shared definitions are total; no user axiom,
+`sorry`, `native_decide` or FFI was added. Axiom audits show only standard Lean
+foundations. The RDF integer theorem proves delegation, not spec completeness.
+Existing partial XPath/XSLT definitions remain an assurance boundary.
+
+Validation: full `lake build` 864 jobs; CSVW RDF and JSON 270/270 each, ShEx
+1182/1182, SHACL Core full reports 98/98, JSON Schema vendored draft-07 770/770,
+SPARQL functions 75/75 and regex 21/21, RDF rdf-mt 39/39. The SPARQL expr-builtin
+suite is 17/24 with seven identical failures against the isolated original
+SPARQL module. XSLT remains 84 pass / 3 lexical-order failures / 1 missing-doc
+refusal; expanded-name trees/content agree in those three comparisons. Broader
+plain XML remains 1840 pass / 22 fail in 1862 scored cases. These failures are
+reported, not folded into passing coverage. Pinned missing test corpora were
+fetched into /tmp; repository submodule pins were not changed.
+
+## 2026-10-21 — Redundancy audit and second shared-semantics pass
+
+Destination integration/refactoring, not a new upstream F* port:
+
+- `Encoding.Hex.digitValue` replaces independent ASCII digit decoders behind
+  the existing JSON, Syntax, ShExC, HTTP, XSD and VC adapter names. Its module
+  has no imports. JSON/XSD/VC/Syntax/ShExC delegation equations are `rfl`;
+  printed JSON/VC axiom lists are empty. Independent alphabet guards and
+  XSD/VC byte/case regressions test the finite executable boundary.
+- SHACL's supported datatype set is explicit, while XSD owns integer bounds
+  and lexical mappings. RDF `intInRange` uses the same bounds. Removed the
+  unused RDF decimal normalizer/digit accumulator. XForms numeric MIPs and
+  SPARQL cast lexical checks use XSD parsing; their historical `+INF` policy
+  difference remains explicit and tested. XSD reuses XML whitespace.
+- ShEx hex/base64 lexical decisions and fractionDigits use shared XSD code.
+  Base64 now has a decision instead of `none`. ShEx totalDigits' zero
+  convention and unchecked string-derived types remain open contract work.
+- CSVW binary lengths use decoded octets, including the `binary` alias;
+  `facetLength : Option Nat` refuses invalid encodings. This fixes malformed
+  padding and odd hex being accepted, and whitespace-dependent length errors.
+- `XSD.InteropTests` adds integer subtype endpoint checks across SHACL/ShEx/
+  CSVW, numeric policy comparisons with XForms/SPARQL, binary validity and
+  whitespace guards. Concrete checks use `#guard`, not kernel parser reduction.
+- `tools/lean-reuse-audit.py` records same-name cross-family candidates and
+  selected direct imports, with scanner regressions. It does not prove semantic
+  duplication or infer normative references. `docs/w3c-survey.md` records the
+  measured inventory, shared-owner edges and remaining integration queue.
+
+No new `sorry`, user axioms, `partial`, `native_decide` or FFI. Existing proof
+and conformance boundaries are unchanged; removing duplication does not imply
+full implementation of the cited standards. Verification is recorded below.
+
+The native cast suite found a further missing shared dependency: dateTime
+constructors previously wrapped any lexical text. `SPARQL.castDateTime` now
+checks supported source types and the shared XSD 1.0 date parser. New negative
+guards were run red before the repair; the full build and native rerun include
+this final change. Other constructor fallback semantics remain a coverage gap.
+
+The VC probe initially reported missing context files (44 pass/17 fail). With
+five context bodies fetched into a temporary fixture root, the unchanged probe
+passes 58/58. Source IRIs and SHA-256 hashes are recorded in `docs/w3c-survey.md`;
+the checkout's missing context provisioning remains explicit. No crypto code or
+trust boundary changed in this work.
+
+Final verification: untargeted `lake build` **867 jobs**; audit-scanner tests
+3/3; CSVW RDF and JSON 270/270 each; ShEx 1182/1182; SHACL Core full reports
+98/98; JSON Schema draft-07 770/770; SPARQL functions 75/75, regex 21/21,
+casts **7/7** (was 6/7); RDF rdf-mt 39/39; VC 58/58 with the recorded temporary
+contexts. Full build log `/tmp/factoidal-reuse-build-cast.log`; corpus commands,
+fixture pins/hashes and logs are in the survey. Historical expr-builtin and
+broader XML/XSLT failures are not claimed fixed by this pass.
+
+
+### RDF identity / SPARQL–SHACL conversion reuse (2026-10-22)
+
+- New `RDF.TermIdentity` separates lexical RDF term identity from the existing
+  XML-canonical `Term.eqb`. It folds language-tag case and preserves RDF 1.2
+  direction and nested triple-term identity. Existing storage/join equality
+  and its key proofs are not migrated by this pass.
+- SPARQL variable lookup and noncanonical integer expression parsing preserve
+  RDF terms. Arithmetic, comparison, numeric functions, casts and ordering opt
+  into value conversion. `sameTerm`, GROUP BY and aggregate DISTINCT share the
+  RDF identity helper, with explicit error-key policy for grouping. MIN/MAX
+  compare values but return original terms. Numeric EBV uses XSD lexical values.
+- SHACL pre-binding no longer duplicates SPARQL numeric/boolean promotion.
+  `termToExpr_evalIn_eq_literal` and `substVarExpr_var_evalIn` prove agreement
+  with raw-term variable lookup. New `IdentityTests.lookup_preserves_term`
+  covers arbitrary terms; concrete parser/consumer regressions use `#guard`.
+- Existing hash grouping is integrated with the corrected grouping relation.
+  Its encoder uses the common optional term view, includes direction, and
+  normalizes language-tag case. Numeric results now encode their projected
+  terms; triple terms retain fallback. Exact-encoder, fast/reference grouping
+  and full select-post agreement proofs remain kernel checked.
+- Expression/refinement lemmas no longer assert blank-node equality errors,
+  unconditional numeric-literal reflexivity or different-datatype errors for
+  promoted numeric operands. EBV table agreement shares the XSD parser and
+  does not independently verify parsing. Two authored expression guards pinned
+  known bugs and were corrected; upstream expected results were unchanged.
+
+F* correspondence: this deliberately repairs the original `literal_promote`
+placement, SHACL `term_to_expr_opt` behaviour and order-based `er_equal` grouping
+policy; it is not an unchanged behavioural port of those routines. No new
+`sorry`, user axioms, `native_decide`, partial definitions or FFI were added.
+
+Verification: untargeted `lake build` **870 jobs**; SPARQL 1.1/1.2 **885/885**;
+SPARQL 1.0 **215 pass / 67 fail**, versus **207 / 75** before this pass, with
+no new failure names; included expr-builtin **24/24**, versus **17/24**;
+SHACL Core **98/98**, SHACL SPARQL **22/22**, using full reports. Ten of the
+remaining SPARQL 1.0 failures concern unsupported `.rdf` expected-result files.
+Four audit-scanner regressions pass. `docs/w3c-survey.md` records commands,
+logs, shared dependencies, proof scope and the remaining reuse queue. These
+are finite corpus measurements, not complete standards conformance.
+
+
+### SHACL RDF identity and node-expression reuse (2026-10-22)
+
+- `SHACL.Shapes` now imports `RDF.TermIdentity`; `subjectsOf`, `dedupTerms`
+  and `termMem` preserve literal lexical spelling. Core membership/equality/
+  disjointness constraints, paths, targets and node-expression set operations
+  inherit this fix. Declarative relations and `termMem_iff` use the same relation;
+  the existing validator equivalence/soundness proofs compile. F* correspondence
+  deliberately diverges from the legacy XML-canonical `eqb` behaviour here.
+- Removed `NodeExpr.termToExpr`/`subjToExpr`: SPARQL builtin arguments are fresh
+  bound variables, so blank nodes and nested triples remain actual RDF terms,
+  and SPARQL owns numeric/boolean promotion. Original term results bypass
+  computed-decimal formatting. The `isBlank` special case is no longer needed.
+- Added 27 `SHACL.IdentityTests` guards, imported by the default library,
+  covering identity distinctions, parsed path/cardinality validation and
+  node-expression bridging. Distinguishing tests were measured red first.
+- Rules/node-expression native runners now reject missing, unreadable and
+  empty leaf manifests; missing node-expression includes cannot disappear.
+  Three native regressions in `tools/lean-shacl-harness-test.py` failed against
+  old binaries and pass after rebuilding. Rules accepts a fixture directory;
+  node expressions accepts a manifest. A zero-test run is not conformance evidence.
+
+No new proof axioms, `sorry`, `native_decide`, partial definitions or FFI.
+The pre-existing partial manifest walker remains a harness boundary. Full build
+**871 jobs**; Core full reports **98/98**; SHACL-SPARQL **22/22**; node expressions
+**140 pass, 0 fail, 2 unsupported / 142** (unchanged baseline); rules **88/88**;
+native harness regressions **3/3**, scanner regressions **4/4**. Commands,
+fixture pin and logs are in the new `docs/w3c-survey.md` section. Remaining gaps
+include SHACL `termLe`'s value-comparison policy, node-expression special adapters,
+and legacy equality in ShEx/joins/storage. No complete conformance claim.
+
+
+### Shared relational operand mapping (2026-10-22)
+
+- New `Fn.Comparison` bridges RDF literals to XSD 1.0 values for the SPARQL
+  relational table. It handles decimal/integer-derived values, float/double
+  promotion through the existing IEEE model, string/boolean order, dateTime
+  and the existing xsd:date extension. Errors remain `none`; NaN comparisons
+  return false. Mixed timezone comparisons use the existing XSD partial order;
+  unresolved windows still need an implicit-timezone context to decide.
+- SHACL range and property-pair comparisons now share that adapter, replacing
+  `literalToScaled`, `bothDateTimes`, the independent property lexical fallback
+  and `termLt || eqb`. `numericCmpLe`/`numericCmpLt` retain compatibility names,
+  but now cover string/boolean comparisons too. `dtCmp` is a thin shared view.
+- SPARQL `< <= > >=` uses the same adapter over original/projected RDF terms.
+  `= !=`, arithmetic and ORDER BY remain on historical paths: their IEEE and
+  computed-float typing integration is explicitly unfinished, not inferred from
+  the relational repair. The XSD binary32 rounding profile is also inherited.
+- 37 guards and three universal SHACL/SPARQL agreement theorems in
+  `SHACL.ComparisonTests`; distinguishing guards were run red first. The existing
+  string-range guard that incorrectly expected an error was updated. Native
+  expected results were not edited. Full proof build has no new trust debt.
+
+Verification: untargeted `lake build` **874 jobs**; SPARQL 1.1/1.2 **885/885**;
+SPARQL 1.0 **215 pass / 67 fail**, unchanged baseline/failure names; SHACL Core
+**98/98**, SPARQL **22/22**, node expressions **140 pass / 2 unsupported**, rules
+**88/88**; fixture-error regressions **3/3**, scanner regressions **4/4**.
+An intermediate run exposed four mixed-timezone cases and the date extension;
+both were fixed and all final runs include the repair. The standards survey
+records commands, fixtures, logs, normative links and explicit limitations.
+This deliberately improves the F* comparison-helper correspondence rather than
+preserving its lexical/term-equality conflation. No full conformance claim.
+
+
+### Shared numeric equality and lexical adapters (2026-10-22)
+
+- `Fn.Comparison.numericCompare` now covers `eq`/`ne`, including NaN, signed
+  zeros and infinities. SPARQL expression equality and numeric objects within
+  triple-term equality use XSD parsed values and the common promotion rules.
+  Bound floats keep their source datatype through comparison; integer-derived
+  operands are validated with XSD bounds. The existing IEEE rounding profile
+  remains the trust/coverage boundary, including binary32 via binary64.
+- `numericEquality` retains the RDFterm-equal boundary: numeric answers take
+  precedence, but identical ill-typed raw RDF literals remain equal after value
+  lookup fails. Different ill-typed literals remain errors. The first native
+  run caught an over-restrictive version in `open-eq-07`; it was repaired before
+  final verification. NaN cannot take this fallback because it has a value.
+- `parseIntString`, `parseToScaled` and `parseDoubleToScaled` now delegate to
+  `XSD.parseIntegerLex`, `parseDecimalLex` and `decimalOrScientific`. Deleted
+  the local digit accumulator and decimal/exponent parser bodies. Malformed
+  `-`, `1.x`, `1.-2` and `1e-` are rejected; valid plus signs and `.5` work.
+  Scaled arithmetic/casts/order retain their policy but share lexical validation.
+- New `Fn.ComparisonTheorems` proves decimal/non-NaN floating reflexivity;
+  SPARQL refinement proofs now use XSD values. A separate theorem pins the
+  identical ill-typed RDF literal fallback. `SPARQL.NumericTests` adds 32 guards
+  to the default build. Initial authored expectations for two identical
+  ill-typed cases were corrected against the RDFterm-equal contract.
+- Extended the reuse scanner's numeric identifier inventory. It still reports
+  374 runtime modules and 55 cross-family name groups: different helper names
+  concealed this duplication. Comments on the legacy `numericCompare` and
+  `sparqlOrderNumeric` now state their actual unresolved IEEE ordering limits.
+
+F* correspondence: deliberate semantic repairs to `parse_int_string`,
+`parse_to_scaled`, `parse_double_to_scaled`, numeric equality and
+`literal_value_eq_numeric`; not an unchanged behavioural port. `Scaled`
+arithmetic, float result typing, numeric EBV/type tests, nonnumeric equality
+and ORDER BY/MIN/MAX still need integration. No new `sorry`, user axioms,
+`native_decide`, partial definitions or FFI. New proof audits contain only
+Lean's standard foundations.
+
+Final verification: untargeted `lake build` **876 jobs**; SPARQL 1.1/1.2
+**885/885**; SPARQL 1.0 **215 pass / 67 fail**, unchanged failure names;
+SHACL Core **98/98**, SPARQL **22/22**, node expressions **140 pass / 2 unsupported**,
+rules **88/88**; fixture-error regressions **3/3**, scanner regressions **4/4**.
+The standards survey records the map, source links, fixtures, final logs and
+remaining work. These are finite corpus measurements, not full conformance.
+
+
+### Numeric Boolean conversion and type-test reuse (2026-10-22)
+
+- New `Fn.Numeric` owns numeric datatype classification, XSD 1.0 lexical-value
+  parsing (including integer-derived bounds) and numeric-to-Boolean conversion.
+  `Fn.Comparison` keeps compatibility aliases for its input helpers rather than
+  copied bodies. SPARQL EBV, numeric equality inputs, `isNumeric` and Boolean
+  casts share the new layer. Boolean EBV delegates lexical parsing to XSD too.
+- `isNumeric` now requires a valid value, accepts derived integer types and
+  rejects malformed/out-of-range literals. Numeric EBV observes the rounded
+  value, including float/double underflow. NaN and signed zero yield false;
+  infinities yield true. SHACL's existing SPARQL bridge inherits this behaviour.
+- Boolean casts dispatch before generic literal promotion so source floats
+  retain their type. Numeric casting shares EBV conversion; string casting
+  applies XSD whitespace collapse. Language-tagged and unknown-datatype literals
+  are rejected instead of being treated as strings. Other casts remain on
+  their prior paths, and computed-float arithmetic is still unfinished.
+- Four `SPARQL.NumericBooleanTheorems` prove cast/EBV integration for all
+  decimal/double strings, numeric RDF literal agreement under explicit type
+  premises, and shared validity lookup in `isNumeric`. They share the XSD parser
+  and do not independently prove its correctness. Added 40 numeric Boolean
+  guards and three actual SHACL bridge guards; 17 distinguishing cases failed
+  before the repair. All are in the default library build.
+- Source documentation now states the edition limitation: the evaluator uses
+  SPARQL 1.2's malformed-EBV error policy with XSD 1.0 numeric lexical values.
+  SPARQL 1.1 requires false for malformed numeric/Boolean EBV. Full selectable
+  edition semantics remain work; passing both corpora does not remove that gap.
+
+F* correspondence: deliberate repairs to `is_numeric_datatype`, the
+`fn_isNumeric`/`ebv_checked` behaviour and Boolean constructor dispatch;
+not unchanged behavioural ports. No new `sorry`, user axioms, `native_decide`,
+partial definitions or FFI. New proof audits use only Lean's standard foundations.
+Inherited IEEE binary32 rounding and XPath numeric-model integration remain open.
+
+Final verification: untargeted `lake build` **880 jobs**; SPARQL 1.1/1.2
+**885/885**; SPARQL 1.0 **215 pass / 67 fail**, same failure names as baseline;
+SHACL Core **98/98**, SPARQL **22/22**, node expressions **140 pass / 2 unsupported**,
+rules **88/88**; fixture-error regressions **3/3**, scanner regressions **4/4**.
+Audit: **375 runtime modules / 55 cross-family helper-name groups**. The standards
+survey records source links, the updated dependency map, fixtures and logs.
+
+
+### IEEE binary arithmetic and aggregate integration (2026-10-22)
+
+- New `Fn.Arithmetic` implements floating `+ - * /` on canonical XSD values.
+  Finite calculations use exact integer ratios and `XSD.roundRational`, with
+  one binary32/64 result rounding; explicit branches handle NaN, infinity and
+  signed zero. Operand promotion moved into `Fn.Numeric` and is shared with
+  comparison. The input decimal-to-float rounding profile remains inherited.
+- `SPARQL.evalArithmetic` validates original operands and preserves float versus
+  double result types. Integer-derived types use XSD bounds. Decimal operations
+  retain the old scaled representation and bounded division policy. Floating
+  results use XSD's exact round-tripping expansion; shortest formatting is open.
+- Deleted `Query.sumNumericAcc` and AVG's separate arithmetic/type code. SUM
+  now follows the specified right fold with integer zero; AVG uses SUM/count
+  through ordinary arithmetic. Nonnumeric helper inputs propagate errors.
+  Existing aggregate expression-error filtering and DISTINCT are unchanged.
+- Seven shared special-value/type theorems and three SPARQL integration
+  theorems pass kernel checking. Added 39 expression/aggregate guards and
+  62 finite oracle vectors from CPython double operations / binary32 packing.
+  Nineteen binary and eight aggregate guards distinguished the old paths.
+  The vectors are finite observations, not a universal IEEE rounding proof.
+- Corrected the harness's same-datatype numeric value leniency to compare IEEE
+  values instead of scaled decimal spellings. This fixed two apparent SUM/AVG
+  regressions involving equivalent double spellings. Five harness guards pin
+  equivalent spellings, adjacent values, type mismatches and invalid lexicals;
+  the distinguishing guard failed first. Expected result files were unchanged.
+  The harness shares XSD semantics and is not an independent numeric oracle.
+- The reuse audit now supports `--include-harness`; its regression proves the
+  explicit scope and test exclusion. Library-only count: 376 runtime modules /
+  55 name groups; expanded count: 430 modules / 60 groups. This closes a concrete
+  audit blind spot rather than claiming name matching finds all semantic copies.
+
+F* correspondence: repairs to the original numeric binary arithmetic,
+`sum_numeric_acc`/AVG and harness `numeric_literal_equal` behaviour. No new
+`sorry`, user axioms, `native_decide`, partial definitions or FFI. Proof audits
+contain only Lean's standard foundations. Unary numeric functions, decimal
+precision, other casts, ORDER BY/MIN/MAX and XPath numeric integration remain open.
+
+Final verification: untargeted `lake build` **886 jobs**; SPARQL 1.1/1.2
+**885/885**; SPARQL 1.0 **219 pass / 63 fail**, versus **215 / 67**, with no new
+failure names. All four mixed-number binary operator tests now pass. SHACL Core
+**98/98**, SPARQL **22/22**, node expressions **140 pass / 2 unsupported**, rules
+**88/88**; fixture-error regressions **3/3**, scanner regressions **5/5**. The
+standards survey records maps, sources, fixtures, final logs and limitations.
+
+
+### Shared unary numerics and XPath integral rounding (2026-10-22)
+
+- New `Fn.Rounding` supplies exact rational floor, ceiling and nearest-integer
+  rounding with ties toward positive infinity. `XPath.Number` and the new
+  `Fn.NumericUnary` call it; the former retains its inherited exact-decimal
+  representation and cannot distinguish signed zero or model binary64 rounding.
+  Its header now records that gap explicitly.
+- `Fn.NumericUnary` handles F&O 2007 §§6.2.7–8 / 6.4 on XSD values and reuses
+  `Fn.Arithmetic` for binary magnitude, negation and result rounding. SPARQL's
+  unary plus/minus, ABS, ROUND, CEIL and FLOOR validate through `numericValue?`
+  and return the primitive numeric type. Derived integer bounds are checked;
+  computed results may exceed the input derived type's bounds. Float results
+  remain float; NaN/infinities/signed zero have explicit behavior.
+- Deleted `splitDecimal`, `allZeros`, `lexFloor`, `lexCeil`, `lexRound` and the
+  six expression dispatch implementations. `numericResult` projects shared XSD
+  values for both unary and floating binary arithmetic. SHACL node expressions
+  receive the fixes through their existing bound-term SPARQL bridge.
+- Added 39 SPARQL guards (30 of the initial 34 distinguished the old path),
+  five SHACL bridge guards, and 120 finite oracle bit observations generated
+  using CPython exact Decimal conversion and integral rounding. Corrected the
+  authored ROUND(-1.5) expectation from -2 to -1; vendored expected files remain
+  unchanged. Oracle observations do not constitute a universal IEEE proof.
+- Ten public theorems prove integer/halfway rounding laws, ceiling/floor duality,
+  special-value/type behavior and agreement of the two exact-decimal adapters
+  for arbitrary mantissas/scales. No full XPath/IEEE equivalence is asserted.
+- Reuse scanning now inventories the rounding/unary paths and shared modules.
+  Expanded scope: 432 runtime modules / 63 candidate name groups. The name filter
+  also broadened, so comparison with the prior 60 is not a redundancy metric.
+
+F* correspondence: deliberate repairs to `int_floor`, `int_ceil`, `int_round`,
+unary lexical sign manipulation and numeric type promotion; XPath's finite
+rounding is factored through the common primitive. No new `sorry`, user axioms,
+`native_decide`, partial definitions or FFI. Kernel audits contain only standard
+Lean foundations. ORDER BY/MIN/MAX, other casts, date accessors, complete XPath
+binary64 integration, decimal precision and inherited binary32 parsing remain open.
+
+Final verification: untargeted `lake build` **893 jobs**; SPARQL 1.1/1.2
+**885/885**; SPARQL 1.0 **221 pass / 61 fail**, versus **219 / 63**, no new failure
+names. Unary Plus/Minus with various datatype now pass. SHACL Core **98/98**,
+SPARQL **22/22**, node expressions **140 pass / 2 unsupported**, rules **88/88**;
+XSLT **84 pass / 3 fail / 1 refused**, matching the earlier totals; Schematron
+**8/8**. Fixture-error regressions **3/3**, scanner **5/5**. The standards survey
+records the new ASCII dependency map, sources, exact evidence, logs and next
+reuse targets. Final build: `/tmp/factoidal-unary-build-final.log`.
+
+
+### SHACL seconds and language-match integration (2026-10-22)
+
+- Source inspection confirmed SPARQL date accessors already delegate to
+  edition-aware XSD values. Corrected the standards survey's inaccurate claim
+  that they still extracted fields lexically.
+- Removed SHACL's `extractSecondsField` and its private-purpose `afterChar` /
+  `takeWhileLc` helpers. `seconds` now uses the ordinary bound-term SPARQL
+  expression bridge, preserving exact fractions and rejecting malformed dates,
+  wrong datatypes and invalid XSD 1.0 year/timezone values. The two-digit result
+  spelling remains an explicit projection policy using `XSD.canonicalSeconds`
+  after evaluation; the harness and upstream expected terms remain unchanged.
+- Removed SHACL's case-sensitive `langMatchesNe`. Node expressions delegate to
+  SPARQL; SPARQL's `fnLangMatches` now aliases `Fn.String.langMatchesBasic`.
+  New `EvalResult.simpleLiteral?` checks the simple-string argument contract,
+  replacing implicit numeric, IRI and language-tagged literal rendering in
+  SPARQL's language-match dispatch.
+- Added 22 date-accessor and 13 language-bridge guards. Twelve date guards and
+  six language guards failed against the old implementations. These check both
+  accepted values and errors, not just output cardinalities. No new axioms,
+  `sorry`, `native_decide`, partial definitions or FFI; existing proof modules
+  pass the full build. These authored cases are not universal correctness proofs.
+- The reuse scan inventories the removed bypass identifiers and their shared
+  replacements: 432 runtime modules / 63 candidate groups. Counts alone do not
+  measure semantic duplication. REGEX/REPLACE's broad argument conversion is
+  the next observed consumer for the simple-literal adapter.
+
+F* correspondence: deliberate repairs to the node-expression seconds scanner,
+local language filtering and SPARQL language-match argument coercion; not an
+unchanged behavioral port. Shared date semantics stay on the existing XSD 1.0
+profile. Numeric casts/order and complete XPath binary64 integration remain open.
+
+Verification: full untargeted `lake build` **896 jobs**; SPARQL 1.1/1.2
+**885/885**, SPARQL 1.0 **221 pass / 61 fail** with unchanged failure records;
+SHACL Core **98/98**, SPARQL **22/22**, node expressions **140 pass / 2 unsupported**,
+rules **88/88**; fixture-error regressions **3/3**, scanner **5/5**. Build log:
+`/tmp/factoidal-bridge-build.log`; details and native logs in `docs/w3c-survey.md`.
+
+
+### Regex argument, profile and literal-replacement integration (2026-10-22)
+
+- SPARQL REGEX/REPLACE now share `simpleLiteral?` for pattern, replacement and
+  flag arguments. `Regex.Profiles.compileSearch` centralizes the former matching
+  checks; `replaceSparql` uses them too, removing replacement's profile bypass.
+  Unsupported escape/Unicode semantics remain explicit errors, not implemented
+  features. Existing XSD facet and ECMA matching policies are unchanged.
+- REPLACE passes RDF 1.2 base direction into `erStringPreserve` alongside language
+  and datatype. Its new optional argument retains existing behavior for callers
+  that have not yet been migrated; this is not a claim of complete string metadata
+  handling.
+- `Regex.Compiled.literalReplacement` records q mode. `quoteReplacement` encodes
+  literal dollars and backslashes for the existing template expander; q also
+  disables multiline handling and ignores s/x. This fixes the prior inconsistency
+  in which only patterns were quoted. SPARQL 1.1/1.2 regex references are now
+  distinguished in the profile comment; selectable edition semantics remain open.
+- Added 30 regression guards (11 initial boundary failures, four later q failures)
+  and three universal kernel-checked quote-encoding laws: template validity,
+  absence of capture references and exact literal expansion. Proof audits use
+  only standard Lean foundations. No new user axioms, `sorry`, `native_decide`,
+  partial definitions or FFI. No full regex correctness claim is made.
+- Follow-up probes confirm replacement still drops anchors and selects the
+  longest alternative instead of respecting ordered alternatives. `^a` and `a$`
+  each replace both a's in `aba`; `(a)|(ab)` selects `ab` in `ab`. These failures
+  are absent from the measured green corpora and remain the next priority.
+  Evidence: `/tmp/factoidal-regex-followup.log`.
+
+F* correspondence: repairs to regex argument coercion and q replacement handling,
+plus shared dialect policy and directional result metadata. The inherited
+replacement anchor/selection algorithm has not yet been corrected.
+
+Verification: full untargeted `lake build` **898 jobs**; SPARQL 1.1/1.2 **885/885**;
+SPARQL 1.0 **221 pass / 61 fail**, unchanged failure records; SHACL Core **98/98**,
+SPARQL **22/22**, node expressions **140 pass / 2 unsupported**, rules **88/88**;
+JSON Schema draft-07 **770/770**, no undetermined cases; fixture-error tests **3/3**,
+scanner **5/5**. Build log `/tmp/factoidal-regex-boundary-build.log`; the standards
+survey records maps, sources, other logs and assurance limits.
+
+
+### Shared regex replacement selection and derivative pruning (2026-10-22)
+
+- Repaired the anchor/alternative failures observed in the preceding pass.
+  `CRe` now retains zero-width anchors and greedy/reluctant quantifiers. Its
+  total continuation-based matcher returns the selected span and captures
+  together, respects ordered alternatives with continuation backtracking,
+  and gives later repetitions precedence in capture lookup. Anchor checks use
+  original codepoint positions and LF-only multiline boundaries.
+- Removed `longestEnd`, `pickCaps` and the independent replacement regex field.
+  Compiled replacement requires a capturing tree; it no longer silently falls
+  back to a capture-free path. Legacy `regexReplace` delegates through public
+  compile/replace, retaining unchanged input on errors. Legacy `regexMatch`
+  retains its separate F* matching policy; caller migration is still open.
+- Reused `Exec.anchoredPrefix` / `Exec.acceptsNorm` on an assertion-erased
+  language derived from the capturing tree to reject impossible starts before
+  ordered search. The derivative filter does not choose match spans. Two
+  128-character ambiguous-prefix cases pin short-circuiting and rejection of
+  impossible prefixes before a later valid match; they do not prove a general
+  complexity bound, fuel adequacy or assertion-erasure soundness.
+- Added 43 authored guards (20 of the initial 37 failed before repair), 200
+  static CPython oracle vectors restricted to shared ASCII semantics, and four
+  generic anchor/alternative laws whose only axiom dependency is `propext`.
+  Includes SHACL and legacy-adapter integration guards. No new user axioms,
+  `sorry`, `native_decide`, partial definitions or FFI. Full matcher and parser
+  correctness remain unproved; Unicode and multi-digit capture references
+  remain incomplete.
+- The reuse inventory includes the new derivative reuse identifiers and
+  confirms no remaining `longestEnd` / `pickCaps` mentions. Still 432 runtime
+  modules / 63 candidate name groups; those counts do not measure semantic
+  clones or eliminated implementation paths.
+
+F* correspondence: deliberate repairs to the inherited replacement selection,
+anchors, reluctant quantifiers and repeated captures. The compatibility adapter
+also inherits public pattern/template error checks. This is not an unchanged
+behavioral port of F* replacement.
+
+Verification: full untargeted `lake build` **901 jobs**; SPARQL 1.1/1.2 **885/885**;
+SPARQL 1.0 **221 pass / 61 fail**, identical failure records; SHACL Core **98/98**,
+SPARQL **22/22**, node expressions **140 pass / 2 unsupported**, rules **88/88**;
+JSON Schema draft-07 **770/770**, no undetermined cases; fixture-error tests **3/3**,
+scanner **5/5**. Build log `/tmp/factoidal-replace-selection-build-final.log`;
+`docs/w3c-survey.md` records the ASCII reuse map, sources and remaining work.
+
+
+### ECMA regex whitespace frontend and remaining consumer mismatch (2026-10-22)
+
+- Added `Regex.Ecma.lower`, used only by the flag-free ECMA profile. It expands
+  whitespace/complement escapes and vertical tab, and gives dot ECMA's four
+  excluded line terminators. The 25-character whitespace set includes Unicode
+  space separators and BOM; it excludes NEL, Mongolian vowel separator and
+  zero-width space. Escaping and class context are retained, with escaped
+  boundary duplicates preventing source hyphens from binding generated ranges.
+  Parsing and derivative execution remain shared. XPath/XSD behavior is unchanged.
+- JSON Schema pattern matching and property applicability inherit the new
+  frontend. Removed the ECMA blanket refusal of U+2028/U+2029 input, now handled
+  by dot/whitespace semantics. Flags, astral UTF-16 behavior, source Unicode
+  escapes and lookaround remain unsupported; this is not a complete ECMA parser.
+- Added 24 authored guards (16 fail against the previous profile) and 504 static
+  independent Node v22.22.2 observations over 14 patterns / 36 codepoints.
+  Includes negative classes, class-escape hyphen boundaries and actual JSON
+  Schema patternProperties/additionalProperties behavior. No new user axioms,
+  `sorry`, `native_decide`, partial definitions or FFI; lowering correctness is
+  tested on this finite corpus, not universally proved.
+- Corrected stale CSVW source comments and the standards map: CSVW duration
+  and other regex formats normatively use ECMAScript. Duration still calls
+  legacy XPath matching and other regex formats are ignored. Conversion needs
+  warning/unsupported propagation before a sound migration; it is still open.
+  ShEx's separate F&O 3.1 consumer migration remains open too.
+- Reuse audit: 433 runtime modules / 63 candidate name groups, including the
+  new frontend and explicit remaining legacy consumers. Name groups remain
+  leads for investigation, not semantic-clone counts.
+
+F* correspondence: an explicit ECMA frontend over the inherited mixed-dialect
+parser; JSON Schema gains the semantics above. No CSVW/ShEx runtime migration
+is claimed. Verification: full `lake build` **905 jobs**; JSON Schema draft-07
+**770/770**, no undetermined cases; SPARQL 1.1/1.2 **885/885**; SPARQL 1.0
+**221 pass / 61 fail**, identical failure records; scanner **5/5**. Build log:
+`/tmp/factoidal-ecma-build.log`; remaining logs and sources in `docs/w3c-survey.md`.
+
+
+### CSVW regex, duration subtype and conversion diagnostics integration (2026-10-22)
+
+- CSVW duration and other regex formats now share `applyRegexFormat` and the
+  ECMA profile. Removed the legacy XPath matching call; string and structured
+  string formats no longer disappear as `noFormat`. Duration lexical checks
+  use `XSD.validLexicalFor .xsd11` with the actual subtype, removing acceptance
+  of year components in dayTimeDuration and day components in yearMonthDuration.
+- Added limited definite-malformation detection to `Regex.Ecma`: unbalanced
+  delimiters, trailing escapes and leading quantifiers. CSVW warns and ignores
+  these formats. Other parser refusals are unsupported, since the shared parser
+  cannot yet classify every valid/invalid ECMA construct. This is not full ECMA
+  or full CSVW malformed-format handling.
+- `CSVW.Diagnostics` carries warnings, invalid cell values and unsupported
+  semantics separately. `prepareLexical` now returns `PreparedLexical`;
+  `convert` / `convertJson` return `ConversionResult` with optional completed
+  output and retained issues. Both outputs share collection and completion
+  policy. Unsupported semantics withhold output; invalid values retain string
+  conversion. In-tree callers have been migrated to the changed API.
+- Regex warnings are emitted once per effective column, even with no non-null
+  cells; metadata validation checks them at inherited-property levels. Cell
+  issues include table URL, source row and column. Both native runners report
+  warnings and an explicit unsupported count, never scoring unsupported as a
+  pass, ordinary mismatch or missing fixture.
+- Added 39 guards (10 of the initial 12 fail before repair), a native test of
+  four fixtures through each runner, and two generic kernel-checked completion
+  laws (`propext` only). No new user axioms, `sorry`, `native_decide`, partial
+  definitions or FFI. Parser correctness and diagnostic completeness remain open.
+- Audit: 434 runtime modules / 63 candidate name groups. RIF's remaining
+  CSVW-helper dependency and local duration checks are recorded as another
+  shared-XSD integration target; ShEx's regex migration remains open.
+
+F* correspondence: deliberate repairs to the regex dialect and previously
+ignored string formats, plus subtype validation and an expanded result API.
+Warnings/unsupported outcomes are now explicit instead of being discarded by
+the inherited Boolean conversion path.
+
+Verification: full untargeted `lake build` **909 jobs**; CSVW RDF and JSON
+**270/270 each**, no failures/skips/unsupported results or over-strict metadata
+rejections; JSON Schema **770/770**, no undetermined results; native diagnostic
+regression **1/1 with two runner subcases**; scanner **5/5**. The formerly silent
+upstream test153 now emits a malformed-format warning. Build log:
+`/tmp/factoidal-csvw-regex-build.log`; other evidence is in `docs/w3c-survey.md`.
+
+
+### RIF shared XSD lexical integration (2026-10-22)
+
+- Removed the `CSVW.Formats` import and local lexical/type-family decisions
+  from `RIF.Builtins`. The lexical adapter now uses `XSD.validLexicalFor .xsd11`,
+  matching RIF-DTB Second Edition's normative XSD edition. Primitive families
+  use XSD's hierarchy; Boolean parsing and exact decimal normalization/comparison
+  use shared XSD helpers. Unknown datatype names remain undecided.
+- Fixes month components accepted as dayTimeDuration and invalid language/name
+  forms accepted as valid. Base64 lexical decisions and string-to-base64 checks
+  now use the existing shared decoder. Integer bounds, +INF, year zero and
+  dateTimeStamp timezone behavior are explicitly tested. No XML whitespace
+  preprocessing or general value-aware cast implementation is introduced.
+- Added 33 guards (12 of the first 27 fail before repair) and two universal
+  adapter laws using only standard Lean foundations. No new user axioms,
+  `sorry`, `native_decide`, partial definitions or FFI. These establish reuse
+  agreement, not full RIF or XSD parser correctness.
+- Follow-up probes still demonstrate value/lexical confusion for decimal 1.0
+  as an integer and zero-month durations as dayTimeDuration. A negative string
+  guard also incorrectly succeeds on a rif:iri. The survey records these exact
+  observed next failures, plus incomplete casts and binary numeric semantics.
+
+F* correspondence: deliberate lexical-validation repairs and removal of an
+accidental CSVW dependency. Finite numeric lexemes now use shared canonical
+decimal spelling; existing integer-only arithmetic and unrounded floating
+comparison limitations remain open.
+
+Verification: full untargeted `lake build` **911 jobs**; RIF Core **25 pass /
+2 fail / 12 undecided** (previously **24 / 2 / 13**), identical two failures;
+one unread case and six unattempted import-rejection cases remain. The upstream
+binary built-in case passes in isolation. SPARQL 1.1/1.2 **885/885**; scanner
+**5/5**, inventory 434 runtime modules / 63 candidate groups. Build log:
+`/tmp/factoidal-rif-xsd-build.log`; survey has the other logs and sources.
+
+### Shared XSD value membership for RIF/RDF and OWL containment (2026-10-22)
+
+- Added `XSD/ValueSpace.lean`: parsed-value membership and checked source
+  mapping, using existing exact decimals, integer bounds, duration components,
+  calendar fields and string restrictions. This is distinct from lexical
+  recognition, casting and datatype-name inheritance. Unsupported context/list/
+  universal/provisional datatype cases remain explicit `none`.
+- RIF guards now use this service, fixing integral decimals, duration overlap,
+  string restrictions and empty-language PlainLiteral mapping. Negative guards
+  require the datatype domain: lists fail both polarities; uninterpreted terms
+  and invalid XSD source constants remain unknown. Language-tagged PlainLiteral
+  and XMLLiteral well-formedness assumptions are still explicit limitations.
+- RDF's existing numeric datatype map uses the same service. An integral
+  decimal in an integer range no longer causes a false inconsistency; actual
+  fractional clashes and recognition boundaries are regression-tested.
+- Full-build integration exposed OWL's unconditional datatype-containment
+  premise. `XsdValueSpaceSubset` now requires source value membership, and the
+  two modelled containment proofs use shared checked-mapping lemmas. This is a
+  correction to the statement as well as its proof, not just a tactic repair.
+- Added 53 guards (14 of the initial 20 failed before repair), including an
+  11-input cross-consumer agreement check and RDF range-clash integration.
+  Six new universal laws plus the two repaired OWL laws are kernel-checked;
+  their dependencies are only `propext`, `Classical.choice`, `Quot.sound`.
+  No new user axioms, `sorry`, `native_decide`, partial definitions or FFI.
+  Full semantic correctness remains unproved.
+
+F* correspondence: deliberate repairs to inherited lexical/nominal membership
+checks and unrestricted guard negation. The new common service has two runtime
+consumers; the OWL proof premise is deliberately tightened. RIF literal identity,
+value-aware casts, general decimal arithmetic and IEEE comparison remain open;
+follow-up probes and normative sources are recorded in `docs/w3c-survey.md`.
+
+Verification: full untargeted `lake build` **916 jobs**; RDF rdf-mt **39/39**;
+SPARQL 1.1/1.2 **885/885**; RIF Core unchanged at **25 pass / 2 fail /
+12 undecided**, identical failure records, one unread and six unattempted
+import-rejection cases. Scanner **5/5**; inventory 435 runtime modules /
+63 candidate groups. Evidence: `/tmp/factoidal-value-guards-build.log`,
+`/tmp/factoidal-value-guards-{rif,rdf,sparql,proofs,owl}.log` and the survey.
+
+### RIF value identity and XSD identity/enumeration separation (2026-10-22)
+
+- RIF datatype guards and literal non-identity now share `literalValue?`.
+  XSD constants use checked lexical-to-value mapping and `XSD.valIdentical`;
+  PlainLiteral empty tags become strings, nonempty tags are lowercased. Lists
+  are outside DTS. Unresolved/invalid values and XMLLiteral canonical identity
+  remain unknown. Complete BCP 47 validation remains a precondition/gap.
+- Corrected shared XSD date/time identity to preserve all seven properties,
+  including timezone offset, while normalizing decimal seconds. A previous
+  test conflating timeline equality with identity was corrected against XSD 1.1.
+- Added `valEqualOrIdentical` for enumeration and migrated all three atomic,
+  list and union enumeration paths. It accepts equal instants with distinct
+  offsets, both floating zeros, and NaN identity. Shared identity and enumeration
+  relations now recurse through list values and singleton/atomic correspondence.
+  Primitive spaces remain distinct; this is not numeric promotion or RDF term
+  identity. QName namespace-context limitations remain explicit.
+- Added 51 guards, including three rule-engine verdicts, plus five generic
+  kernel-checked laws split between `RIF/IdentityTheorems.lean` and
+  `XSD/IdentityTheorems.lean`. Dependencies are standard Lean foundations only:
+  `propext`, `Classical.choice`, `Quot.sound`. No new user axioms, proof
+  placeholders, native_decide, partial definitions or FFI. Complete semantic
+  correctness is not claimed.
+
+F* correspondence: deliberate repairs to lexical-pair non-identity and to the
+shared date identity/enumeration policy. Existing RIF syntax comments describing
+the built-in as pair comparison were corrected. Ordinary engine equality and
+matching still use syntactic terms; probes confirm the remaining value-equality
+failure and an empty-tag PlainLiteral RDF reverse-mapping defect. See the survey
+for exact observations and normative references.
+
+Verification: full untargeted `lake build` **919 jobs**; RDF/SPARQL manifests
+**924/924**; RIF Core unchanged at **25 pass / 2 fail / 12 undecided**, identical
+failure records, one unread and six unattempted import-rejection cases. Scanner
+**5/5**, inventory 435 runtime modules / 63 candidate groups. Evidence:
+`/tmp/factoidal-rif-identity-{build,rif,wide,proofs,followup}.log`. XSD coverage here
+is through executable library guards, not a complete upstream XSD suite run.
+
+### RIF matching reuse and shared RDF mapping (2026-10-22)
+
+- Added total `RIF/Matching.lean`: ground matching consumes the shared decoded
+  literal values and identity relation, recurses through lists/function arguments
+  and retains undecided mappings. Different free symbols mean an operational
+  mismatch in the current engine, not a universal disequality assertion.
+- `Engine.extend`, `matchTm` and ordinary equality share that decision. `extend`
+  now returns `(Option Subst × Bool)` to preserve blocked comparisons. Equality
+  binds either side from a ground term; nested list/function patterns bind
+  variables. Unsupported equality-producing/external-predicate heads now mark
+  the closure incomplete. General equality-head reasoning remains unsupported.
+- Extracted `RIF/RdfMapping.lean` from saturation and removed the native runner's
+  duplicate conversion definitions. Saturation re-exports the existing names.
+  PlainLiteral reverse mapping reuses `literalValue?`, emitting RDF strings for
+  empty language tags and lowercased nonempty tags. Direction metadata and full
+  import diagnostics remain explicitly observed gaps, not silently claimed fixed.
+- Added 43 guards (all 10 initial guards failed before repair), including joins,
+  equality bindings, unknown propagation, RDF round trips and saturation output.
+  Three generic laws are kernel-checked with only standard Lean foundations.
+  No new user axioms, proof placeholders, native_decide, partial definitions or
+  FFI. Existing partial engine functions remain; engine adequacy is not proved.
+
+F* correspondence: deliberate repairs to syntactic datatype matching and
+empty-language PlainLiteral conversion, consolidation of the harness/library
+mapping, and retention of unresolved equality information. One remaining native
+failure was traced to a malformed fixture prefix plus silently discarded import
+parse errors; the fixture was not altered. See the survey for exact evidence.
+
+Verification: full untargeted `lake build` **925 jobs**; RDF/SPARQL **924/924**;
+RIF Core **25 pass / 2 fail / 12 undecided**, one unread and six unattempted
+import-rejection cases. Scanner **5/5**; inventory 437 runtime modules /
+63 candidate groups. Logs: `/tmp/factoidal-rif-matching-{build,rif,wide,proofs}.log`.
+
+### RIF import/completeness boundary reuse (2026-10-22)
+
+- Added `Harness/RifImport.lean`, shared by native RIF and SPARQL/RIF. It loads
+  only declared local imports, reports missing/read/parse errors and passes the
+  import URL as parser base. Turtle parser state replaces textual prefix
+  scanning; RDF/XML conclusion prefixes reuse XML namespace scope operations.
+  Prefix inheritance remains a native test-suite convention.
+- `RIF.RdfMapping.gOfTerm` rejects direction-bearing literals; graph support
+  checks also reject triple terms. Both consumers report unsupported mappings
+  instead of silently losing facts or direction.
+- `Saturate.saturateGraph` now returns `Result` with a diagnostic partial graph
+  and blocked/capped/unsupported-input/unsupported-output flags. Query consumers
+  use `completeGraph?`; `saturateWithProgram` returns `Option Result`. All in-tree
+  callers, including `Unified.RifEmbed`, were migrated. Positional atoms have no
+  RDF projection by design. This gate expresses implementation completeness,
+  not a proof of full RIF semantics.
+- Added 21 guards, three generic laws and `tools/lean-rif-boundary-test.py` (eight
+  native tests, 14 synthetic fixtures). No new user axioms, sorry, native_decide,
+  partial definitions or FFI. Laws use only standard Lean foundations.
+- Extended the reuse scanner to report harness-to-harness imports and verified
+  both loader consumers. Import-profile materialization remains unchanged;
+  native OWL-profile refusal and the SPARQL harness's existing RL approximation
+  are still distinct limitations.
+
+F* correspondence: deliberate repairs to swallowed import/parse errors,
+direction loss and discarded saturation flags. The result API intentionally
+changes from a graph to a completeness-bearing result. Local fixture resolution
+is shared; no network import resolver or complete import-profile checker is
+claimed.
+
+Verification: full untargeted `lake build` **929 jobs**; native regressions
+**8/8**; RDF/SPARQL **924/924**; RIF Core **25 pass / 1 fail / 13 undecided**, one
+unread and six unattempted import-rejection cases. The former constant-equivalence
+failure is now undecided after correct import-base resolution exposes its unknown
+datatype. The fixture is unchanged; this is not a new conformance pass.
+`EBusiness_Contract` remains failing. Scanner **5/5**, inventory **438 runtime
+modules / 63 candidate groups**. Logs: `/tmp/factoidal-rif-boundary-{build,native,rif,wide}.log`;
+audit: `/tmp/factoidal-rif-boundary-audit.json`. See `docs/w3c-survey.md` for scope
+and the updated reuse map.
+
+### Shared RIF/F&O numeric operations (2026-10-22)
+
+- RIF arithmetic/comparison now uses decoded XSD values. `numericValue?` shares
+  the existing checked datatype adapter; comparisons delegate to `Fn.Comparison`
+  and arithmetic to `Fn.Arithmetic`. Removed integer-only decimal operations and
+  unrounded IEEE lexical comparisons. Compatibility decimal helpers now use the
+  shared implementation; `numericLex` reflects parsed/rounded values.
+- Extended `Fn.Arithmetic` with exact decimal add/subtract/multiply, explicit
+  precision decimal division, truncating integer division and signed remainder.
+  IEEE idiv rounds division before integer conversion; remainder uses an exact
+  truncating quotient. Special-value branches preserve F&O's separate contracts.
+- SPARQL's decimal arithmetic path uses the same helper, preserving its existing
+  division precision and output spelling. Integer-only SPARQL arithmetic remains
+  unchanged. RIF division uses magnitude-sensitive precision of at least 16
+  significant digits. Native `numeric-integer-mod` remains a compatibility alias
+  for standard `numeric-mod`.
+- Added 49 RIF guards (all ten initial regression guards failed before repair),
+  two guards over 24 independent quotient/remainder vectors, and four generic
+  laws. Standard Lean foundations only; no new user axioms, sorry, native_decide,
+  partial definitions or FFI. Tests measure selected cases; the laws do not prove
+  full numeric semantics or engine adequacy.
+
+F* correspondence: deliberate repairs to integer-only arithmetic and Euclidean
+division/remainder; consolidation with existing Lean XSD/F&O parsing, promotion,
+comparison and IEEE arithmetic. No F* migration or parity claim. RIF casts remain
+lexical-only and are the next verified gap; import-profile and wider datatype
+limitations remain documented in the standards survey.
+
+Verification: full untargeted `lake build` **932 jobs**, RDF/SPARQL **924/924**,
+native boundary regressions **8/8**. RIF Core **26 pass / 1 fail / 12 undecided**,
+one unread and six unattempted import-rejection cases; `Builtins_Numeric` newly
+passes. Scanner **5/5**, inventory **438 runtime modules / 64 candidate groups**.
+The new name candidate is the intentionally separate RIF/SPARQL `numericResult`
+output adapters. Logs: `/tmp/factoidal-rif-numeric-{red,target,proofs,format,build,rif,wide,native}.log`;
+audit: `/tmp/factoidal-rif-numeric-audit.json`. The full build caught and the
+adapter repair preserved SPARQL's existing `3.0` decimal-result spelling.
+
+
+### Shared RIF/SPARQL value casts (2026-10-22)
+
+- Added total `Fn/Cast.lean`, sharing checked XSD values, numeric conversion,
+  target membership, binary conversion, duration and calendar projection.
+  RIF constructors decode their source value before conversion; SPARQL's four
+  numeric constructors preserve source float precision before literal promotion.
+- Numeric-to-integer truncates toward zero with target bounds; Boolean numeric
+  conversions preserve value semantics. Finite IEEE-to-decimal is exact.
+  Caller edition and output-spelling policies remain explicit. Legacy SPARQL
+  floating spellings are retained only after value-identity validation.
+- Added 54 RIF guards (all ten initial regressions failed before repair),
+  19 SPARQL guards and four generic laws. Only standard Lean foundations;
+  no new user axioms, sorry, native_decide, partial definitions or FFI.
+- QName/NOTATION, list/universal/precisionDecimal targets and dynamic-context
+  time-to-dateTime remain unsupported. SPARQL string/calendar migration,
+  subnormal narrowing and minimal floating-string coverage need further work.
+
+F* correspondence: deliberate repair of lexical-only RIF casts and consolidation
+of SPARQL numeric conversion with shared Lean XSD/F&O values. No F* parity or
+complete conversion-correctness proof is claimed.
+
+Verification in the original working checkout: full `lake build` **937 jobs**;
+RDF/SPARQL **924/924**; native RIF boundary regressions **8/8**. RIF **26 pass /
+1 fail / 12 undecided**, one unread and six unattempted import-rejection cases.
+Scanner **5/5**, original-checkout inventory **439 runtime modules / 64 candidate
+groups**, including both cast consumers. See `docs/w3c-survey.md` for sources and
+logs, and `docs/20261022-standards-reuse-review.md` for the draft PR scope and
+separate mainline integration boundary.

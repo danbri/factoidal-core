@@ -19,6 +19,8 @@ vendored corpus files from disk.
 import L4Factoidal.XML.Theorems
 import L4Factoidal.XML.Wellformedness
 
+import L4Factoidal.XML.NamespaceViewTests
+
 namespace L4Factoidal.XML.Tests
 
 open L4Factoidal.XML

@@ -303,8 +303,9 @@ exactly `ID` (the substrate for XPath's `id()`).
 
 NOT recorded and NOT acted on: the external subset (never loaded — no
 external resource is read), `[45] elementdecl`, `[52] AttlistDecl`
-enforcement, `[82] NotationDecl`, parameter entities, and conditional
-sections. They are skipped structurally. -/
+enforcement and default attributes. Attribute type flags and notation names
+are retained for normalization and namespace checking. External subsets and
+parameter entities can be supplied through the parser resolver. -/
 structure Doctype where
   /-- The document type name — `[28]`'s `Name`. -/
   rootName : String
@@ -320,6 +321,11 @@ structure Doctype where
   is the caller's decision, and reading it needs I/O this module does
   not do. -/
   systemId : Option String := none
+  /-- First declared attribute type: `true` means non-CDATA, requiring
+      XML 1.0 §3.3.3 space collapse. Keys are raw element/attribute names. -/
+  attributeTypes : List ((String × String) × Bool) := []
+  /-- Notation names retained for Namespaces in XML §7 NCName checks. -/
+  notationNames : List String := []
 deriving DecidableEq, Repr, Inhabited
 
 /-- `[1] document ::= prolog element Misc*`.

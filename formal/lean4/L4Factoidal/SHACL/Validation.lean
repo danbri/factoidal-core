@@ -46,12 +46,14 @@ No `sorry`, no `axiom`, no `native_decide`, no `partial`.
 -/
 import L4Factoidal.SHACL.Shapes
 import L4Factoidal.SPARQL.Expr
+import L4Factoidal.XSD.Lexical
+import L4Factoidal.Fn.Comparison
 import L4Factoidal.Regex.XPath
 
 namespace L4Factoidal.SHACL
 
 open L4Factoidal.RDF
-open L4Factoidal.SPARQL (Scaled parseToScaled parseDoubleToScaled parseIntString)
+open L4Factoidal.SPARQL (parseIntString)
 
 /-! ## §3.6 validation results -/
 
@@ -96,194 +98,41 @@ datatype has the same IRI and, for the datatypes supported by SPARQL
 1.1, is not an ill-typed literal". Conservative: a datatype not listed
 is never flagged, so this only ADDS the violations the spec requires. -/
 
-def isAsciiDigit (c : Char) : Bool := c.isDigit
+def isIntegerLexical (lex : String) : Bool := (XSD.parseIntegerLex lex).isSome
+def isDecimalLexical (lex : String) : Bool := (XSD.parseDecimalLex lex).isSome
+def isFloatLexical (lex : String) : Bool := (XSD.lexicalFor .xsd10 .float lex).isSome
 
-/-- `[+-]? digit+`. -/
-def isSignedDigitsChars : List Char → Bool
-  | [] => false
-  | c :: rest =>
-    let digits := if c == '+' || c == '-' then rest else c :: rest
-    !digits.isEmpty && digits.all isAsciiDigit
+/-! ### xsd:dateTime ordering — shared exact values, SPARQL policy -/
 
-/-- `[+-]? (digit | '.')+` with at most one point and at least one digit. -/
-def isDecimalLexicalChars : List Char → Bool
-  | [] => false
-  | c :: rest =>
-    let body := if c == '+' || c == '-' then rest else c :: rest
-    !body.isEmpty && body.all (fun ch => isAsciiDigit ch || ch == '.') &&
-    (body.filter (fun ch => ch == '.')).length ≤ 1 && body.any isAsciiDigit
-
-def isIntegerLexical (lex : String) : Bool := isSignedDigitsChars lex.toList
-def isDecimalLexical (lex : String) : Bool := isDecimalLexicalChars lex.toList
-
-/-- Split at the first `e` / `E`. -/
-def splitAtE : List Char → List Char × Option (List Char)
-  | [] => ([], none)
-  | c :: rest =>
-    if c == 'e' || c == 'E' then ([], some rest)
-    else
-      let (before, after) := splitAtE rest
-      (c :: before, after)
-
-/-- xsd:float / xsd:double lexical space: `NaN`, `INF`, `-INF`, or a
-decimal mantissa with an optional signed-integer exponent. -/
-def isFloatLexical (lex : String) : Bool :=
-  if lex == "NaN" || lex == "INF" || lex == "-INF" then true
-  else
-    let (mantissa, expOpt) := splitAtE lex.toList
-    isDecimalLexicalChars mantissa &&
-    (match expOpt with | none => true | some e => isSignedDigitsChars e)
-
-def stripLeadingPlus (lex : String) : String :=
-  if lex.startsWith "+" then String.ofList (lex.toList.drop 1) else lex
-
-/-- Well-formed integer lexical form whose value lies in `[lo, hi]`
-(`none` = unbounded). -/
-def intLexicalInRange (lex : String) (lo hi : Option Int) : Bool :=
-  isIntegerLexical lex &&
-  (match parseIntString (stripLeadingPlus lex) with
-   | some n => (match lo with | some l => l ≤ n | none => true) &&
-               (match hi with | some h => n ≤ h | none => true)
-   | none => true)
-
-/-! ### xsd:dateTime ordering
-
-`YYYY-MM-DDTHH:MM:SS(.fraction)?(Z|+HH:MM|-HH:MM)?` to a millisecond
-position on the proleptic Gregorian timeline plus a has-timezone flag.
-Two values compare only when both or neither carry a timezone (XML
-Schema's partial order leaves the mixed case indeterminate) —
-core/node/minInclusive-002/003. -/
-
-def daysFromCivil (y m d : Int) : Int :=
-  let y' := if m ≤ 2 then y - 1 else y
-  let era := (if y' ≥ 0 then y' else y' - 399) / 400
-  let yoe := y' - era * 400
-  let mp := (m + 9) % 12
-  let doy := (153 * mp + 2) / 5 + d - 1
-  let doe := yoe * 365 + yoe / 4 - yoe / 100 + doy
-  era * 146097 + doe - 719468
-
-/-- The codepoints `[from, from+len)` of a string as a string. -/
-def substr (s : String) (start len : Nat) : String :=
-  String.ofList ((s.toList.drop start).take len)
-
-/-- The `(.fraction)?(Z|±HH:MM)?` tail: (fraction ms, tz offset seconds, has tz). -/
-def dtParseTail (tail : String) : Option (Int × Int × Bool) :=
-  let cs := tail.toList
-  let (fracMs, tzStart) : Option Int × Nat :=
-    match cs with
-    | '.' :: rest =>
-      let digits := rest.takeWhile isAsciiDigit
-      if digits.isEmpty then (none, 0)
-      else
-        let digLen := min digits.length 3
-        match parseIntString (String.ofList (digits.take digLen)) with
-        | some f =>
-          let ms := if digLen == 1 then f * 100 else if digLen == 2 then f * 10 else f
-          (some ms, 1 + digits.length)
-        | none => (none, 0)
-    | _ => (some 0, 0)
-  match fracMs with
-  | none => none
-  | some fms =>
-    let rest := cs.drop tzStart
-    match rest with
-    | [] => some (fms, 0, false)
-    | ['Z'] => some (fms, 0, true)
-    | sign :: _ =>
-      if rest.length == 6 && (sign == '+' || sign == '-') then
-        match parseIntString (String.ofList ((rest.drop 1).take 2)),
-              parseIntString (String.ofList ((rest.drop 4).take 2)) with
-        | some th, some tm =>
-          let off := th * 3600 + tm * 60
-          some (fms, if sign == '-' then 0 - off else off, true)
-        | _, _ => none
-      else none
-
-def dtParseMs (s : String) : Option (Int × Bool) :=
-  if s.length < 19 then none
-  else
-    match parseIntString (substr s 0 4), parseIntString (substr s 5 2),
-          parseIntString (substr s 8 2), parseIntString (substr s 11 2),
-          parseIntString (substr s 14 2), parseIntString (substr s 17 2) with
-    | some y, some mo, some d, some h, some mi, some se =>
-      match dtParseTail (String.ofList (s.toList.drop 19)) with
-      | some (fms, tzoff, hasTz) =>
-        let days := daysFromCivil y mo d
-        let secs := days * 86400 + h * 3600 + mi * 60 + se - tzoff
-        some (secs * 1000 + fms, hasTz)
-      | none => none
-    | _, _, _, _, _, _ => none
-
+/-- Compatibility view of the shared dateTime order; no implicit timezone. -/
 def dtCmp (a b : String) : Option Int :=
-  match dtParseMs a, dtParseMs b with
-  | some (ma, tza), some (mb, tzb) =>
-    if tza == tzb then some (if ma < mb then -1 else if ma > mb then 1 else 0) else none
-  | _, _ => none
+  (Fn.Comparison.dateTimeOrder a b).map (fun o => match o with | .lt => -1 | .eq => 0 | .gt => 1)
 
-/-- The XSD ill-formed-literal test for the datatypes the F* knows. -/
+/-- SHACL §4.1.2's supported datatype policy. Bounds and lexical mappings
+    belong to XSD; this list deliberately preserves the existing coverage. -/
+def checkedDatatype (b : XSD.Builtin) : Bool :=
+  (XSD.intBounds b).isSome || b == .boolean || b == .decimal ||
+  b == .float || b == .double || b == .dateTime
+
+/-- The XSD ill-formed-literal test for the datatypes the F* knows.
+    Unknown and unsupported IRIs retain the consumer's historical policy. -/
 def literalIllFormed (dt : WfIri) (lex : String) : Bool :=
-  if dt == xsdBoolean then !(lex == "true" || lex == "false" || lex == "1" || lex == "0")
-  else if dt == xsdInteger then !isIntegerLexical lex
-  else if dt == xsdDecimal then !isDecimalLexical lex
-  else if dt == xsdLong then !intLexicalInRange lex (some (-9223372036854775808)) (some 9223372036854775807)
-  else if dt == xsdInt then !intLexicalInRange lex (some (-2147483648)) (some 2147483647)
-  else if dt == xsdShort then !intLexicalInRange lex (some (-32768)) (some 32767)
-  else if dt == xsdByte then !intLexicalInRange lex (some (-128)) (some 127)
-  else if dt == xsdUnsignedLong then !intLexicalInRange lex (some 0) (some 18446744073709551615)
-  else if dt == xsdUnsignedInt then !intLexicalInRange lex (some 0) (some 4294967295)
-  else if dt == xsdUnsignedShort then !intLexicalInRange lex (some 0) (some 65535)
-  else if dt == xsdUnsignedByte then !intLexicalInRange lex (some 0) (some 255)
-  else if dt == xsdNonNegativeInteger then !intLexicalInRange lex (some 0) none
-  else if dt == xsdPositiveInteger then !intLexicalInRange lex (some 1) none
-  else if dt == xsdNonPositiveInteger then !intLexicalInRange lex none (some 0)
-  else if dt == xsdNegativeInteger then !intLexicalInRange lex none (some (-1))
-  else if dt == xsdDateTime then (dtParseMs lex).isNone
-  else if dt == xsdFloat || dt == xsdDouble then !isFloatLexical lex
-  else false
+  match XSD.builtinOfIri? dt.val with
+  | some b => checkedDatatype b && (XSD.lexicalFor .xsd10 b lex).isNone
+  | none => false
 
-/-! ## §4.3 value-range comparison (port of `numeric_cmp_le` / `_lt`) -/
+/-! ## §§4.3/4.5 — shared SPARQL relational comparisons -/
 
-/-- A numeric literal as a scaled integer: doubles through the
-E-notation-aware parser FIRST (anti-pattern #8), integers and decimals
-through the plain one; every other datatype has no numeric value. -/
-def literalToScaled (l : Literal) : Option Scaled :=
-  if l.datatype == xsdDouble then parseDoubleToScaled l.lexicalForm
-  else if l.datatype == xsdInteger || l.datatype == xsdDecimal then parseToScaled l.lexicalForm
-  else none
+/-- Historical API name; SHACL bounds allow every supported SPARQL
+    relational literal type, including strings and booleans. -/
+def numericCmpLe (a b : Literal) : Option Bool := Fn.Comparison.literalCompare a b .le
 
-def bothDateTimes (a b : Literal) : Bool :=
-  a.datatype == xsdDateTime && b.datatype == xsdDateTime
+def numericCmpLt (a b : Literal) : Option Bool := Fn.Comparison.literalCompare a b .lt
 
-/-- `a ≤ b` when both are comparable (numeric-numeric, or both
-dateTime with the same timezone presence); `none` otherwise. -/
-def numericCmpLe (a b : Literal) : Option Bool :=
-  if bothDateTimes a b then (dtCmp a.lexicalForm b.lexicalForm).map (· ≤ 0)
-  else match literalToScaled a, literalToScaled b with
-    | some sa, some sb => some (sa.cmp sb ≤ 0)
-    | _, _ => none
+/-- SHACL §4.5 reports both false and incomparable pairs as violations. -/
+def termLt (a b : Term) : Bool := Fn.Comparison.termCompare a b .lt == some true
 
-def numericCmpLt (a b : Literal) : Option Bool :=
-  if bothDateTimes a b then (dtCmp a.lexicalForm b.lexicalForm).map (· < 0)
-  else match literalToScaled a, literalToScaled b with
-    | some sa, some sb => some (sa.cmp sb < 0)
-    | _, _ => none
-
-/-- §4.5.3 sh:lessThan's "less than": numeric comparison when both are
-numeric, lexical comparison when both have the SAME datatype, and not
-less-than across incompatible datatypes (core/property/lessThan-002:
-an integer against a string must violate). -/
-def termLt (a b : Term) : Bool :=
-  match a, b with
-  | .literal la, .literal lb =>
-    match literalToScaled la.val, literalToScaled lb.val with
-    | some sa, some sb => sa.cmp sb < 0
-    | _, _ =>
-      if la.val.datatype == lb.val.datatype
-      then decide (la.val.lexicalForm < lb.val.lexicalForm) else false
-  | _, _ => false
-
-def termLe (a b : Term) : Bool := termLt a b || a.eqb b
+def termLe (a b : Term) : Bool := Fn.Comparison.termCompare a b .le == some true
 
 /-! ## §4.4.3 sh:pattern — the Lean regex engine (`Regex/XPath.lean`) -/
 
@@ -770,7 +619,7 @@ def ValueSatisfies (g : Graph) (cc : Constraint) (v : Term) : Prop :=
   | .datatype dt => ∃ l, v = .literal l ∧ l.val.datatype = dt ∧
       literalIllFormed dt l.val.lexicalForm = false
   | .nodeKind nk => NodeKindOk nk v
-  | .inSet items => ∃ u ∈ items, Term.eqb u v = true
+  | .inSet items => ∃ u ∈ items, Term.sameTerm u v = true
   | .pattern re flags => ∃ lex, termLexical v = some lex ∧ regexMatch lex re flags = true
   | .minLength n => ∃ lex, termLexical v = some lex ∧ n ≤ lex.length
   | .maxLength n => ∃ lex, termLexical v = some lex ∧ lex.length ≤ n
@@ -793,12 +642,12 @@ def FocusSatisfies (g : Graph) (sg : List Shape) (focus : Term) (s : Shape)
   match cc with
   | .minCount n => n ≤ values.length
   | .maxCount n => values.length ≤ n
-  | .hasValue t => ∃ u ∈ values, Term.eqb u t = true
+  | .hasValue t => ∃ u ∈ values, Term.sameTerm u t = true
   | .uniqueLang b => b = true → duplicatedLangTags values = []
   | .equals p =>
-    (∀ v ∈ values, ∃ u ∈ evalPath g focus p, Term.eqb u v = true) ∧
-    (∀ o ∈ evalPath g focus p, ∃ u ∈ values, Term.eqb u o = true)
-  | .disjoint p => ∀ v ∈ values, ¬ ∃ u ∈ evalPath g focus p, Term.eqb u v = true
+    (∀ v ∈ values, ∃ u ∈ evalPath g focus p, Term.sameTerm u v = true) ∧
+    (∀ o ∈ evalPath g focus p, ∃ u ∈ values, Term.sameTerm u o = true)
+  | .disjoint p => ∀ v ∈ values, ¬ ∃ u ∈ evalPath g focus p, Term.sameTerm u v = true
   | .lessThan p => ∀ v ∈ values, ∀ w ∈ evalPath g focus p, termLt v w = true
   | .lessThanOrEquals p => ∀ v ∈ values, ∀ w ∈ evalPath g focus p, termLe v w = true
   | .closed ignored => ∀ subj, focus.toSubject? = some subj →

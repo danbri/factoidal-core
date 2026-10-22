@@ -297,7 +297,13 @@ def runOne (dir : String) (e : Entry) (dump : Bool := false) : IO TestOutcome :=
   match missing with
   | some u => return ⟨e.action, "skip", "table file not found: " ++ u⟩
   | none => pure ()
-  let got := convert mbase ctx group e.minimal pairs
+  let converted := convert mbase ctx group e.minimal pairs
+  for issue in converted.issues do
+    if issue.kind == .warning then
+      IO.println s!"WARNING {e.id} {issue.table} row {issue.row} column {issue.column}: {issue.message}"
+  let some got := converted.value?
+    | return ⟨e.action, "unsupported", String.intercalate "; "
+        ((converted.issues.filter (·.kind == .unsupported)).map (·.message))⟩
   match parseTurtle expectedSrc (some expectedBase) with
   | .error _ => return ⟨e.action, "skip", "expected .ttl did not parse"⟩
   | .ok want =>
@@ -343,6 +349,7 @@ def main (args : List String) : IO UInt32 := do
       let mut pass := 0
       let mut fail := 0
       let mut skip := 0
+      let mut unsupported := 0
       let mut budget := 0
       let mut overStrict := 0
       let mut negPass := 0
@@ -393,14 +400,17 @@ def main (args : List String) : IO UInt32 := do
         else if o.status == "budget" then
           budget := budget + 1
           IO.println s!"BUDGET {e.id} ({e.action}, {mode} mode): {o.detail}"
+        else if o.status == "unsupported" then
+          unsupported := unsupported + 1
+          IO.println s!"UNSUPPORTED {e.id}: {o.detail}"
         else
           skip := skip + 1
           IO.println s!"skip {e.id}: {o.detail}"
-      let attempted := pass + fail + budget + skip
+      let attempted := pass + fail + budget + skip + unsupported
       IO.println ""
-      IO.println s!"csv2rdf POSITIVE: {pass} pass, {fail} fail, {budget} comparison-gave-up, {skip} skip (out of {attempted} attempted)"
+      IO.println s!"csv2rdf POSITIVE: {pass} pass, {fail} fail, {budget} comparison-gave-up, {skip} skip, {unsupported} unsupported (out of {attempted} attempted)"
       IO.println s!"csv2rdf NEGATIVE (validator must reject): {negPass} pass, {negFail} fail, {negSkip} skip (out of {negPass + negFail + negSkip})"
-      IO.println s!"csv2rdf TOTAL: {pass + negPass} pass, {fail + negFail} fail, {budget} comparison-gave-up, {skip + negSkip} skip (out of {total} manifest entries)"
+      IO.println s!"csv2rdf TOTAL: {pass + negPass} pass, {fail + negFail} fail, {budget} comparison-gave-up, {skip + negSkip} skip, {unsupported} unsupported (out of {total} manifest entries)"
       IO.println s!"VALIDATOR CROSS-CHECK: {overStrict} positive tests whose metadata the validator wrongly rejects"
       IO.println ""
       IO.println "Comparison is by GRAPH ISOMORPHISM against the suite's own"

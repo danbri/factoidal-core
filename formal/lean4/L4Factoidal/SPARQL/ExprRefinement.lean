@@ -31,6 +31,7 @@ No `sorry`, no user `axiom`, no `native_decide`.
 -/
 import L4Factoidal.SPARQL.Expr
 import L4Factoidal.SPARQL.ExprTheorems
+import L4Factoidal.Fn.ComparisonTheorems
 
 namespace L4Factoidal.SPARQL.ExprRefinement
 
@@ -40,30 +41,28 @@ open L4Factoidal.SPARQL
 /-! ## §17.2.2 — an independent transcription of the EBV table
 
 Written from the specification text, over the vocabulary constants,
-without reading the engine's `ebv` match arms. `none` is the table's
+without reading the engine's `ebv` match arms. Numeric and Boolean rows share
+XSD lexical-value adapters; independence here covers the operand table, not a
+second implementation of XSD parsing. `none` is the table's
 "type error" row. The String row is the un-language-tagged case only,
 so `rdf:langString` and `rdf:dirLangString` fall to "any other
 argument". -/
 def ebvSpec : EvalResult → Option Bool
   | .bool b => some b
   | .num n  => some (n ≠ 0)
-  | .dec s  => some (s ≠ "0" && s ≠ "0.0" && s ≠ "")
-  | .dbl s  => some (s ≠ "0" && s ≠ "0.0" && s ≠ "NaN" && s ≠ "")
+  | .dec s  => numericLexicalEbv xsdDecimal s
+  | .dbl s  => numericLexicalEbv xsdDouble s
   | .term (.literal l) =>
       if l.val.datatype == xsdBoolean then
         -- SPARQL 1.2 §17.2: valid boolean lexical forms only
         -- (XSD 1.1 §3.3.2). SPARQL 1.1 additionally sent an
         -- ill-formed boolean to `false`; 1.2 removed that row, so it
         -- falls to "any other argument" — a type error.
-        match l.val.lexicalForm with
-        | "true" | "1" => some true
-        | "false" | "0" => some false
-        | _ => none
+        XSD.parseBooleanLex l.val.lexicalForm
       else if l.val.datatype == xsdString then
         some (l.val.lexicalForm.length > 0)
       else if isNumericDatatype l.val.datatype then
-        some (l.val.lexicalForm ≠ "0" && l.val.lexicalForm ≠ "0.0" &&
-              l.val.lexicalForm ≠ "")
+        numericLexicalEbv l.val.datatype l.val.lexicalForm
       else none
   | .term (.iri _) => none
   | .term (.bnode _) => none
@@ -96,8 +95,8 @@ engine agrees, and the FILTER fold reports `false`. -/
 theorem ebvSpec_langString (lex tag : String) :
     ebvSpec (.term (.literal (Literal.langString lex tag))) = none ∧
     ebv (.term (.literal (Literal.langString lex tag))) = none ∧
-    ebvOrFalse (.term (.literal (Literal.langString lex tag))) = false :=
-  ⟨rfl, rfl, rfl⟩
+    ebvOrFalse (.term (.literal (Literal.langString lex tag))) = false := by
+  simp [ebvSpec_agrees, ebv_langString, ebvOrFalse]
 
 /-- A plain `xsd:string` literal does have an effective Boolean value:
 the String row of the table is reached only without a tag. -/
@@ -266,11 +265,13 @@ theorem strCompare_beq_zero (a b : String) : (strCompare a b == 0) = (a == b) :=
 theorem eq_num_matches_spec (a b : Int) :
     valueCompare (.num a) (.num b) .eq = some (eqSpecNum a b) ∧
     valueCompare (.num a) (.num b) .ne = some (!eqSpecNum a b) := by
-  have hz : Scaled.cmp ⟨a, 0⟩ ⟨b, 0⟩ = intCompare a b := by
-    simp [Scaled.cmp, pow10_zero]
+  have hc : (compare a b == Ordering.eq) = (a == b) := by
+    apply Bool.eq_iff_iff.mpr
+    simp only [beq_iff_eq, Int.compare_eq_eq]
   constructor <;>
-    simp [valueCompare, numericCompare, EvalResult.toNumeric?, hz,
-          applyCompOp, eqSpecNum, intCompare_beq_zero, bne]
+    simp [valueCompare, EvalResult.isNumericOperand, numericEquality, numericValueCompare, EvalResult.numericValue?,
+      Fn.Comparison.numericCompare, XSD.Dec.cmp, XSD.Dec.ofInt, Fn.Comparison.Op.apply,
+      eqSpecNum, bne, hc]
 
 theorem eq_plain_string_matches_spec (l1 l2 : WfLiteral)
     (h1 : l1.val.datatype = xsdString) (h2 : l2.val.datatype = xsdString)
@@ -279,48 +280,63 @@ theorem eq_plain_string_matches_spec (l1 l2 : WfLiteral)
         = some (eqSpecPlainString l1 l2) ∧
     valueCompare (.term (.literal l1)) (.term (.literal l2)) .ne
         = some (!eqSpecPlainString l1 l2) := by
+  have d1 := noDirection_of_noTag l1 t1
+  have d2 := noDirection_of_noTag l2 t2
+  have n1 : Fn.Comparison.numericDatatype l1.val.datatype = false := by
+    rw [h1]; exact Fn.Comparison.numericDatatype_string
+  have n2 : Fn.Comparison.numericDatatype l2.val.datatype = false := by
+    rw [h2]; exact Fn.Comparison.numericDatatype_string
+  simp only [valueCompare, EvalResult.isNumericOperand, n1, n2,
+    Bool.false_or, Bool.false_eq_true, if_false]
   constructor <;>
-    simp [valueCompare, h1, h2, t1, t2, applyCompOp, eqSpecPlainString,
+    simp [EvalResult.promoteLiteral, literalPromote, h1, h2, t1, t2, d1, d2,
+          langTagOptionEq, xsdString, xsdInteger, xsdDecimal, xsdDouble, xsdFloat, xsdBoolean,
+          applyCompOp, eqSpecPlainString,
           strCompare_beq_zero, bne]
 
-/-- Same-kind decimal reflexivity. The scaled-value parse is a total
-function of the lexical form, so calling it twice on one string returns
-one value; no knowledge of what it computes is needed. -/
-theorem eq_dec_reflexive (s : String) (h : (parseToScaled s).isSome) :
+/-- Valid decimal values are reflexive under the shared F&O comparison. -/
+theorem eq_dec_reflexive (s : String) (h : (XSD.parseDecimalLex s).isSome) :
     valueCompare (.dec s) (.dec s) .eq = some true := by
-  cases hp : parseToScaled s with
+  cases hp : XSD.parseDecimalLex s with
   | none => rw [hp] at h; exact absurd h (by simp)
   | some v =>
-      simp [valueCompare, numericCompare, EvalResult.toNumeric?, hp,
-            applyCompOp, Scaled.cmp_refl]
+      simp [valueCompare, EvalResult.isNumericOperand, numericEquality, numericValueCompare,
+        EvalResult.numericValue?, hp, Fn.Comparison.numericCompare_dec_refl]
 
-theorem eq_dbl_reflexive (s : String) (h : (parseDoubleToScaled s).isSome) :
+/-- Double reflexivity requires a valid parsed value other than NaN.
+    Infinity and either signed zero satisfy this premise. -/
+theorem eq_dbl_reflexive (s : String) (f : XSD.Fval)
+    (h : XSD.lexicalFor .xsd10 .double s = some (.dbl f))
+    (hn : f.cls ≠ .nan) :
     valueCompare (.dbl s) (.dbl s) .eq = some true := by
-  cases hp : parseDoubleToScaled s with
-  | none => rw [hp] at h; exact absurd h (by simp)
-  | some v =>
-      simp [valueCompare, numericCompare, EvalResult.toNumeric?, hp,
-            applyCompOp, Scaled.cmp_refl]
+  simp [valueCompare, EvalResult.isNumericOperand, numericEquality, numericValueCompare,
+    EvalResult.numericValue?, h, Fn.Comparison.numericCompare_dbl_refl f hn]
 
-/-- Two literals of DIFFERENT datatypes are a type error under `=`, not
-a `false`. This is what keeps `=` open-world on datatypes the engine
-does not know. -/
+/-- Different datatypes remain a type error in the unpromoted literal
+fallback. Numeric literals are deliberately excluded: integer and decimal
+values can compare equal despite having different datatype IRIs. -/
 theorem eq_literal_different_datatype_typeerror (l1 l2 : WfLiteral)
+    (p1 : literalPromote l1 = .term (.literal l1))
+    (p2 : literalPromote l2 = .term (.literal l2))
+    (n1 : Fn.Comparison.numericDatatype l1.val.datatype = false)
+    (n2 : Fn.Comparison.numericDatatype l2.val.datatype = false)
     (h : l1.val.datatype ≠ l2.val.datatype) :
     valueCompare (.term (.literal l1)) (.term (.literal l2)) .eq = none := by
-  have hne : (l1.val.datatype == l2.val.datatype) = false :=
-    beq_eq_false_iff_ne.mpr h
-  simp [valueCompare, hne]
+  have hne : (l1.val.datatype == l2.val.datatype) = false := beq_eq_false_iff_ne.mpr h
+  simp [valueCompare, EvalResult.isNumericOperand, n1, n2, EvalResult.promoteLiteral, p1, p2, hne]
 
-/-- Two literals of the SAME datatype with DIFFERENT language tags are
-unequal — a definite `false`, not a type error, because RDF term
-identity already tells them apart. -/
+/-- Unequal language tags after case normalization make unpromoted literals
+unequal. A difference only in letter case does not satisfy this premise. -/
 theorem eq_literal_same_datatype_diff_lang (l1 l2 : WfLiteral)
+    (p1 : literalPromote l1 = .term (.literal l1))
+    (p2 : literalPromote l2 = .term (.literal l2))
+    (n2 : Fn.Comparison.numericDatatype l2.val.datatype = false)
     (hd : l1.val.datatype = l2.val.datatype)
-    (ht : l1.val.langTag ≠ l2.val.langTag) :
+    (ht : langTagOptionEq l1.val.langTag l2.val.langTag = false) :
     valueCompare (.term (.literal l1)) (.term (.literal l2)) .eq = some false ∧
     valueCompare (.term (.literal l1)) (.term (.literal l2)) .ne = some true := by
-  constructor <;> simp [valueCompare, hd, ht]
+  constructor <;> simp [valueCompare, EvalResult.isNumericOperand, n2,
+    EvalResult.promoteLiteral, p1, p2, hd, ht]
 
 /-- The expression-level corollary: the `.compare .eq` arm over two
 integer-denoting sub-expressions computes the transcribed spec. -/

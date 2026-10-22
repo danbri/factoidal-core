@@ -35,6 +35,7 @@ No `sorry`, no `axiom`, no `native_decide`, no `partial`.
 -/
 import L4Factoidal.SHACL.Vocabulary
 import L4Factoidal.RDF.Graph
+import L4Factoidal.RDF.TermIdentity
 
 namespace L4Factoidal.SHACL
 
@@ -239,19 +240,19 @@ def objectsOfTerm (g : Graph) (t : Term) (p : WfIri) : List Term :=
 
 /-- Every subject of a `(·, p, o)` triple, as terms. -/
 def subjectsOf (g : Graph) (p : WfIri) (o : Term) : List Term :=
-  (g.filter (fun t => t.p == p && t.o.eqb o)).map (fun t => t.s.toTerm)
+  (g.filter (fun t => t.p == p && t.o.sameTerm o)).map (fun t => t.s.toTerm)
 
 /-- The distinct subjects of a graph, in first-appearance order. -/
 def distinctSubjects (g : Graph) : List Subject :=
   g.foldl (fun acc t => if acc.contains t.s then acc else acc ++ [t.s]) []
 
-/-- Deduplicate terms under the engine equality `Term.eqb`, keeping
-first occurrences (F* `dedup_terms`). -/
+/-- SHACL §§2.1.3, 2.3.1: sets of RDF nodes use term identity,
+    preserving XMLLiteral spelling. Keep first occurrences. -/
 def dedupTerms (l : List Term) : List Term :=
-  l.foldl (fun acc t => if acc.any (fun u => u.eqb t) then acc else acc ++ [t]) []
+  l.foldl (fun acc t => if acc.any (fun u => u.sameTerm t) then acc else acc ++ [t]) []
 
-/-- Does `t` occur in `l` under `Term.eqb`? -/
-def termMem (t : Term) (l : List Term) : Bool := l.any (fun u => u.eqb t)
+/-- SHACL §§4.5, 4.8: RDF node membership, without datatype value conversion. -/
+def termMem (t : Term) (l : List Term) : Bool := l.any (fun u => u.sameTerm t)
 
 /-- Walk an RDF collection (rdf:first / rdf:rest chain ending in
 rdf:nil) from `head`. Fuel-bounded by the graph size (F*

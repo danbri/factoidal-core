@@ -43,6 +43,7 @@ Three rules this module keeps:
 
 No `sorry`, no `axiom`, no `native_decide`, no `partial`.
 -/
+import Harness.RifImport
 import Harness.Manifest
 import Harness.Compare
 import Harness.ProtocolRun
@@ -343,34 +344,16 @@ def rifXmlPreprocess (raw : String) : String :=
       | [] => raw
   | [] => raw
 
-/-- Load one resolved import file by extension (`.rdf` RDF/XML,
-otherwise Turtle) and close it under the profile its `Import` names —
-the F* `materialise_import_graph` dispatch. -/
-def rifLoadImport (path : String) (profile : Option String) : IO Graph := do
-  let some text ← readOpt path | return []
-  let g := if path.endsWith ".rdf"
-           then (L4Factoidal.Syntax.RdfXml.parseRdfXml text (some ("file://" ++ path))).toOption.getD []
-           else (parseTurtle text (some ("file://" ++ path))).toOption.getD []
+/-- Apply the runner's existing import-profile materialization policy after
+    successful shared parsing. The OWL branch is the existing RL approximation. -/
+def rifMaterialiseImport (g : Graph) (profile : Option String) : Graph :=
   let entNs := "http://www.w3.org/ns/entailment/"
-  return (match profile with
-    | some p =>
-        if p == entNs ++ "RDF" || p == entNs ++ "RDFS" then
-          L4Factoidal.RDFS.closureFix g
-        else if (p.splitOn "OWL").length > 1 then
-          L4Factoidal.OWL.RL.closureFix g
-        else g
-    | none => g)
-
-/-- Resolve one `Import` location URL to a local file in `dir`:
-basename, tried bare, then `.rdf`, then `.ttl`. -/
-def rifResolveImport (dir url : String) : IO (Option String) := do
-  let bn := (url.splitOn "/").getLast?.getD url
-  let candidates :=
-    if bn.endsWith ".rdf" || bn.endsWith ".ttl" then [bn]
-    else [bn ++ ".rdf", bn ++ ".ttl", bn]
-  let found ← candidates.findM? (fun c =>
-    System.FilePath.pathExists (System.FilePath.mk (dir ++ "/" ++ c)))
-  return found.map (fun c => dir ++ "/" ++ c)
+  match profile with
+  | some p =>
+      if p == entNs ++ "RDF" || p == entNs ++ "RDFS" then L4Factoidal.RDFS.closureFix g
+      else if (p.splitOn "OWL").length > 1 then L4Factoidal.OWL.RL.closureFix g
+      else g
+  | none => g
 
 /-- The RIF regime's dataset: premise rules + imports + saturation.
 `.error` carries the outcome when the premise cannot be used. -/
@@ -388,12 +371,14 @@ def rifSaturateDataset (tc : TestCase) (ds : Dataset) :
     | return .error (.fail "RIF-XML premise did not parse")
   let mut imported : Graph := []
   for (url, profile) in doc.imports do
-    match ← rifResolveImport dir url with
-    | some path => imported := imported ++ (← rifLoadImport path profile)
-    | none => pure ()
+    match ← RifImport.load dir url with
+    | .ok loaded => imported := imported ++ rifMaterialiseImport loaded.graph profile
+    | .error why => return .error (.unsupported why)
   let merged := ds.default ++ imported
   let saturated := L4Factoidal.RIF.Saturate.saturateGraph "rules" doc.rules merged
-  return .ok { ds with default := saturated }
+  match saturated.completeGraph? with
+  | some graph => return .ok { ds with default := graph }
+  | none => return .error (.unsupported saturated.diagnostic)
 
 /-- One `QueryEvaluationTest` / `CSVResultFormatTest`. `mode` is the
 suite's RDF version; a `.rdf12` suite parses its queries with the

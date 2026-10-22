@@ -68,9 +68,9 @@ private def hushed : TableDesc := { url := "s.csv", suppress := some true }
 -- link from the group. csv2json honoured this and csv2rdf did not, so
 -- test034 emitted 105 triples where 60 were expected.
 #guard (convert (suite ++ "m.json") {} { tables := [hushed] } false
-          [(hushed, twoRows)]).length == 1     -- the TableGroup type triple alone
+          [(hushed, twoRows)]).value?.map List.length == some 1
 #guard (convert (suite ++ "m.json") {} { tables := [hushed] } true
-          [(hushed, twoRows)]) == []
+          [(hushed, twoRows)]).value? == some []
 
 -- `@id` makes the table node an IRI; absent, it is a blank node.
 #guard tableNodeOf (suite ++ "m.json") 0 plainTable == Subject.bnode "table0"

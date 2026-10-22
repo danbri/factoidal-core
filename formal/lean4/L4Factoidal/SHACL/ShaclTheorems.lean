@@ -442,7 +442,7 @@ theorem simpleValueCheck_iff' (g : Graph) (cc : Constraint) (v : Term) :
 /-! ## The per-focus-node components decide their specification -/
 
 theorem termMem_iff (t : Term) (l : List Term) :
-    termMem t l = true ↔ ∃ u ∈ l, Term.eqb u t = true := by
+    termMem t l = true ↔ ∃ u ∈ l, Term.sameTerm u t = true := by
   simp [termMem, List.any_eq_true]
 
 theorem evalAggregateNonRec_eq_nil_iff (g : Graph) (sg : List Shape) (focus : Term) (s : Shape)

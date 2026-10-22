@@ -62,6 +62,7 @@ fuel produces `"JSON nesting too deep"`, matching the F* module's
 error text and its safety net (not a real practical limit at this fuel
 bound: nesting depth cannot exceed the number of input characters).
 -/
+import L4Factoidal.Encoding.Hex
 import L4Factoidal.JSON.Value
 
 namespace L4Factoidal.JSON
@@ -149,11 +150,7 @@ def matchKeyword (cs : Chars) (pos : Nat) (kw : List Char) : Bool :=
 
 /-- Hex digit value, or `none` for a non-hex-digit character. Port of
 `json_hex_val`. -/
-def hexVal (c : Char) : Option Nat :=
-  if '0' ≤ c && c ≤ '9' then some (c.toNat - '0'.toNat)
-  else if 'A' ≤ c && c ≤ 'F' then some (c.toNat - 'A'.toNat + 10)
-  else if 'a' ≤ c && c ≤ 'f' then some (c.toNat - 'a'.toNat + 10)
-  else none
+def hexVal (c : Char) : Option Nat := Encoding.Hex.digitValue c
 
 /-- Read exactly four hex digits starting at `pos`; `none` if any of
 the four is missing or not a hex digit. Port of `json_read_hex4`. -/

@@ -51,6 +51,7 @@ Existing destination consumers can still use their earlier lexical maps.
 
 No `sorry`, no `axiom`, no `native_decide`, no `partial`.
 -/
+import L4Factoidal.Encoding.Hex
 import L4Factoidal.XSD.IEEE754
 import L4Factoidal.Regex.XSDPattern
 import L4Factoidal.Regex.Exec
@@ -214,8 +215,7 @@ def Builtin.whiteSpace : Builtin → WhiteSpace
   | .normalizedString => .replace
   | _ => .collapse
 
-def isXmlSpace (c : Char) : Bool :=
-  c == ' ' || c == '\t' || c == '\n' || c == '\r'
+def isXmlSpace (c : Char) : Bool := XML.isXmlSpace c
 
 /-- §4.3.6 `replace`: every tab, line feed and carriage return becomes
 a space. -/
@@ -454,11 +454,7 @@ def parseBooleanLex (s : String) : Option Bool :=
 
 /-! ## §3.3.15 `hexBinary` -/
 
-def hexVal? (c : Char) : Option Nat :=
-  if '0' ≤ c && c ≤ '9' then some (c.toNat - 48)
-  else if 'a' ≤ c && c ≤ 'f' then some (c.toNat - 87)
-  else if 'A' ≤ c && c ≤ 'F' then some (c.toNat - 55)
-  else none
+def hexVal? (c : Char) : Option Nat := Encoding.Hex.digitValue c
 
 def hexBytes : List Char → Option (List Nat)
   | [] => some []
@@ -691,7 +687,7 @@ def daysInMonth (y : Int) (m : Nat) : Nat :=
 /-- `yearFrag` (§3.3.7.1): an optional minus, then four or more digits
 with no leading zero unless the year is exactly four digits. Year 0000
 IS in the XSD 1.1 lexical space (it denotes 1 BCE); XSD 1.0 excluded
-it, and `strict10Year` below is where that difference lives. -/
+it; `XSD.Lexical.parseDateTimeFor` supplies the explicit edition adapter. -/
 def parseYearFrag (cs : List Char) : Option (Int × List Char) :=
   let (neg, rest) := match cs with
     | '-' :: r => (true, r)
@@ -1015,21 +1011,50 @@ def valCompare : Val → Val → Option Ordering
   | .bool a, .bool b => some (compare a b)
   | _, _ => none
 
-/-- Value identity (§2.1: the ·identity· relation), which is what
-`enumeration` (§4.3.5) tests. It is finer than the order: `-0` and
-`+0` are distinct float values and NaN IS identical to NaN, while the
-order calls the first pair equal and the second incomparable. -/
+/-- Identity in the seven-property model retains the timezone offset.
+    Equal instants with different offsets are not identical (XSD 1.1 §3.3.7).
+    Decimal seconds are compared by value, independent of representation. -/
+def dtIdentical (a b : DTValue) : Bool :=
+  a.year == b.year && a.month == b.month && a.day == b.day &&
+  a.hour == b.hour && a.minute == b.minute &&
+  a.second.map Dec.norm == b.second.map Dec.norm && a.tz == b.tz
+
+mutual
+/-- Value identity (§2.2.1). Unlike equality, it distinguishes signed floating
+    zeros and date/time timezone offsets; NaN is identical to itself.
+    Lists use item identity; singleton lists share their item's identity
+    (§2.4.1.2). QName identity still requires caller-supplied namespace context. -/
 def valIdentical : Val → Val → Bool
+  | .seq xs, .seq ys => valsIdentical xs ys
+  | .seq [x], y => valIdentical x y
+  | x, .seq [y] => valIdentical x y
   | .flt a, .flt b => a == b
   | .dbl a, .dbl b => a == b
   | .dec a, .dec b => Dec.norm a == Dec.norm b
-  | .dt k1 a, .dt k2 b =>
-      k1 == k2 &&
-      (match a.tz, b.tz with
-       | some _, some _ | none, none => Dec.cmp (timeOnTimeline a) (timeOnTimeline b) == .eq
-       | _, _ => false)
+  | .dt k1 a, .dt k2 b => k1 == k2 && dtIdentical a b
   | .dur a, .dur b => a.months == b.months && Dec.cmp a.seconds b.seconds == .eq
   | a, b => a == b
+
+def valsIdentical : List Val → List Val → Bool
+  | [], [] => true
+  | x :: xs, y :: ys => valIdentical x y && valsIdentical xs ys
+  | _, _ => false
+end
+
+mutual
+/-- Enumeration uses equal OR identical (§4.3.5.4), including both signed
+    zeros, NaN, equal instants with distinct offsets and list item values. -/
+def valEqualOrIdentical : Val → Val → Bool
+  | .seq xs, .seq ys => valsEqualOrIdentical xs ys
+  | .seq [x], y => valEqualOrIdentical x y
+  | x, .seq [y] => valEqualOrIdentical x y
+  | a, b => valIdentical a b || valCompare a b == some .eq
+
+def valsEqualOrIdentical : List Val → List Val → Bool
+  | [], [] => true
+  | x :: xs, y :: ys => valEqualOrIdentical x y && valsEqualOrIdentical xs ys
+  | _, _ => false
+end
 
 /-! ## §3 — the lexical mappings, one entry per built-in -/
 

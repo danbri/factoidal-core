@@ -18,7 +18,7 @@ The same applies to the round bound: a chain that stops at the bound
 has not reached a fixed point, and reporting `no` from it would be
 the same mistake.
 -/
-import L4Factoidal.RIF.Builtins
+import L4Factoidal.RIF.Matching
 
 namespace L4Factoidal.RIF
 
@@ -37,13 +37,12 @@ abbrev Subst := List (String × GTerm)
 def lookupVar (s : Subst) (v : String) : Option GTerm :=
   (s.find? (fun (k, _) => k == v)).map (·.2)
 
-/-- Extend a substitution, failing when the variable already stands
-    for a DIFFERENT term. This is what makes a repeated variable a
-    JOIN rather than two independent matches. -/
-def extend (s : Subst) (v : String) (t : GTerm) : Option Subst :=
+/-- Bind an unbound variable, or join its existing value using shared
+    datatype identity. Unresolved comparisons retain the blocked flag. -/
+def extend (s : Subst) (v : String) (t : GTerm) : Option Subst × Bool :=
   match lookupVar s v with
-  | some u => if u == t then some s else none
-  | none   => some ((v, t) :: s)
+  | some u => matchResult s (groundMatch u t)
+  | none   => (some ((v, t) :: s), false)
 
 /-- Whether a built-in blocked evaluation. Threaded through grounding
     and matching so a single `unknown` anywhere reaches the caller. -/
@@ -87,13 +86,20 @@ partial def groundTm (s : Subst) : Tm → Option GTerm × Bool
                         | some v => (some v, blocked)
                         | none   => (none, true))
 
-/-- Match a term pattern against a ground term. -/
+mutual
+/-- Match a pattern, binding variables inside lists/function arguments too. -/
 def matchTm (s : Subst) (pat : Tm) (t : GTerm) : Option Subst × Bool :=
-  match pat with
-  | .var v => (extend s v t, false)
-  | _      => match groundTm s pat with
-              | (some g, b) => (if g == t then some s else none, b)
-              | (none, b)   => (none, b)
+  match pat, t with
+  | .var v, _ => extend s v t
+  | .list ps, .list ts => matchTms s ps ts
+  | .fapp f sp ps, .fapp g sq ts =>
+      if f == g && sp == sq then matchTms s ps ts else (none, false)
+  | _, _ =>
+      match groundTm s pat with
+      | (some g, blocked) =>
+          let (result, unresolved) := matchResult s (groundMatch g t)
+          (result, blocked || unresolved)
+      | (none, blocked) => (none, blocked)
 
 private def matchTms (s : Subst) : List Tm → List GTerm → Option Subst × Bool
   | [],      []      => (some s, false)
@@ -102,6 +108,7 @@ private def matchTms (s : Subst) : List Tm → List GTerm → Option Subst × Bo
        | (none, b)    => (none, b)
        | (some s1, b) => let (r, b2) := matchTms s1 ps ts; (r, b || b2))
   | _, _ => (none, false)
+end
 
 /-- Every substitution extending `s` under which the atom holds. -/
 def matchAtom (facts : Facts) (s : Subst) (a : Atom) : List Subst × Bool :=
@@ -122,8 +129,16 @@ def matchAtom (facts : Facts) (s : Subst) (a : Atom) : List Subst × Bool :=
                           | .unknown => ([], true))))
   | .equal x y =>
       (match groundTm s x, groundTm s y with
-       | (some a', b1), (some b', b2) => (if a' == b' then [s] else [], b1 || b2)
-       | (_, b1), (_, b2) => ([], b1 || b2))
+       | (some a', b1), (some b', b2) =>
+           let (result, unresolved) := matchResult s (groundMatch a' b')
+           (result.toList, b1 || b2 || unresolved)
+       | (some a', b1), (none, b2) =>
+           let (result, unresolved) := matchTm s y a'
+           (result.toList, b1 || b2 || unresolved)
+       | (none, b1), (some b', b2) =>
+           let (result, unresolved) := matchTm s x b'
+           (result.toList, b1 || b2 || unresolved)
+       | (none, _), (none, _) => ([], true))
   | .pos fn sp args =>
       facts.foldl (fun (acc, blk) f => match f with
         | .pos fn2 sp2 args2 =>
@@ -195,7 +210,7 @@ def instantiate (s : Subst) (a : Atom) : Option GAtom × Bool :=
       (match groundTm s c, groundTm s d with
        | (some a', b1), (some b', b2) => (some (.sub a' b'), b1 || b2)
        | (_, b1), (_, b2) => (none, b1 || b2))
-  | .equal _ _ | .externalPred _ _ => (none, false)
+  | .equal _ _ | .externalPred _ _ => (none, true)
 
 /-- One round of forward chaining. -/
 def step (rules : List Rule) (facts : Facts) : Facts × Bool :=

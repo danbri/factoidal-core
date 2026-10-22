@@ -4,6 +4,8 @@ evaluation and Presentation rendering.
 -/
 import L4Factoidal.MathML.Core
 
+import L4Factoidal.MathML.NamespaceTests
+
 namespace L4Factoidal.MathML
 
 private def noEnv : String → Option (Int × Int) := fun _ => none
