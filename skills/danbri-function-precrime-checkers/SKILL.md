@@ -1461,6 +1461,15 @@ Rules from this repair:
   inside the long line, a last line with no line break, and CR LF. The offset after a long carry is where a
   reversed carry would go wrong.
 
+## A memory cause named from the code, not measured (https://github.com/danbri/factoidal/issues/874, 2026-10-22)
+
+The issue named the `List Char` partial line as the cost of 32.5 bytes per input byte for one long line. A `String`
+carry with re-proved equality theorems made peak memory worse (34.8 to 39.2 bytes per input byte), because the
+completed line is a `List Char` for the readers (33.3 bytes per character, measured with `String.toList` alone in a
+small Lean program). Rule: before changing a representation to remove a memory cost, build the smallest program that
+holds only that representation at the size of the row and read its peak resident set. Record: parsing strategy
+section 3b.9.
+
 ## A ratio over one small sample fails under load (2026-10-21)
 
 `tests/lws/scaling.mjs` measured the type-index reopen once per size. At the

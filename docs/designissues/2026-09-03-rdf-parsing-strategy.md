@@ -1927,6 +1927,32 @@ same with CR LF; and N-Quads with a graph name and a blank-node graph name.
   `tests/sbm11/threads.sh` (all answers identical) and `tests/delta-log/run.sh` (46 pass, 0 fail): exit 0.
   `tests/known-defects/run.sh`: 24 XFAIL, 0 XPASS, 0 ERROR (out of 24).
 
+### 3b.9 The partial line is not the memory cost of one long line (2026-10-22, https://github.com/danbri/factoidal/issues/874)
+
+Claim tested: the 32.5 to 32.7 bytes of peak resident memory per input byte for one long line come from holding the
+partial line as a `List Char` (`LineFeed.carryRev`, `LenientStream.carryRev`). A change was built and measured: the
+partial line held as a `String` (`carryText`, chunks appended with `String.push`, in place), with `feed_eq_feedSpec`
+re-proved for both walks. The claim is false, and the change was not landed.
+
+Measurements, one line of 8,000,000 bytes, `l4factoidal parse`, peak resident set (`/usr/bin/time -f %M`):
+
+- Before: N-Triples 278,664 KB, N-Quads 278,436 KB (34.8 bytes per input byte, with the process base).
+- With the `String` carry: N-Triples 313,696 KB, N-Quads 313,780 KB, lenient the same (39.2 bytes per input byte). Time
+  did not change (0.61 s).
+- A Lean program with no parser: build a `String` of 8,000,000 characters by appending: 35,452 KB. Then `String.toList`
+  of it: 301,588 KB. So one `List Char` of the line costs 33.3 bytes per character in this runtime, with or without
+  `++` or `reverse`.
+
+Cause: when a line is complete, `foldLines` and the statement readers (`readTriple11`, `readNQuad11`,
+`readStringLiteralBody`) take the whole line as a `List Char`. That list alone costs about 33 bytes per input byte,
+which is the measured peak. The literal is accumulated in a `String` already. Any form of the carry keeps this cost;
+a `String` carry adds the string and its growth on top.
+
+What would meet the bound of 8: statement readers that read a `String` (or `ByteArray`) at a byte offset, with a theorem
+that they equal the `List Char` readers, used for lines longer than one chunk. This is a rewrite of the readers and of
+their theorems, not a change of the carry. Rows `ntriples-long-line-memory` and `nquads-long-line-memory` stay
+expected failures (bound 8).
+
 ## 3c. RDF/XML: where the time and the memory went, and the repair (2026-10-13)
 
 Issues: https://github.com/danbri/factoidal/issues/814 (time: 13 to 15 times
