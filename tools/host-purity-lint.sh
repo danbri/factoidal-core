@@ -47,6 +47,8 @@ protocol_files=(
   # both a protocol host and a store host, so it is in both groups.
   "$root/npm/factoidal/bin/serve.mjs"
   "$root/npm/factoidal/bin/serve-worker.mjs"
+  # The authorization server host (issue 916): also in the authz group below.
+  "$root/npm/factoidal/authz/server.mjs"
 )
 store_files=(
   "$root/npm/factoidal/store-http/index.mjs"
@@ -93,6 +95,14 @@ store_allow="s/'manifest\.sbm[12]'//g"
 
 for f in "${protocol_files[@]}"; do scan "$f" "$protocol_pattern" "$protocol_allow"; done
 for f in "${store_files[@]}"; do scan "$f" "$store_pattern" "$store_allow"; done
+
+# The authorization server host (https://github.com/danbri/factoidal/issues/916):
+# no OAuth error code, no JWT claim or header member, no token type and no
+# address range. Lean (L4Factoidal/Authz/) decides every one of them.
+authz_files=("$root/npm/factoidal/authz/server.mjs")
+authz_pattern='invalid_(request|target|grant|client|token)|unsupported_grant_type|server_error|\b(aud|iss|sub|kid|jti|iat|exp|nbf|azp|client_id)\b|token-exchange|token-type|at\+jwt|\b(127|169\.254|192\.168|10)\.[0-9]|::1|fe80|fc00'
+# The default bind address of the listening socket is not a fetch decision.
+for f in "${authz_files[@]}"; do scan "$f" "$authz_pattern" "s/'127\.0\.0\.1'//g"; done
 
 # GROUP 3, the RDF/JS, dataset, CLI and hub JavaScript: no RDF SYNTAX, DATATYPE
 # or IRI decision (https://github.com/danbri/factoidal/issues/894; CLAUDE.md

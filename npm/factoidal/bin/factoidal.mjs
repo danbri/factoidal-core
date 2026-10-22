@@ -101,6 +101,9 @@ commands:
   lws-serve DIR               serve Linked Web Storage 1.0 over HTTP
   solid-serve DIR             serve the Solid Protocol over HTTP
   solid-client OP URL         run one Solid client operation
+  authz-serve DIR             serve an OAuth 2.0 authorization server for LWS
+                              (RFC 8414 metadata, JWK Set, RFC 8693 token exchange)
+  authz-keys DIR              print the public JWK Set of an authorization server
 
 global options:
   -h, --help                  print this text, or a command's own help
@@ -327,6 +330,44 @@ landed makes this command exit 3 and say so.
 Specifications: https://www.w3.org/TR/sparql11-protocol/
 https://www.w3.org/TR/sparql11-http-rdf-update/
 https://www.w3.org/TR/sparql11-service-description/`,
+
+  'authz-serve': `factoidal authz-serve - serve an OAuth 2.0 authorization server
+
+usage: factoidal authz-serve DIR --resource IRI[,IRI...] [--issuer IRI]
+                           [--port N] [--host ADDRESS] [--alg ES256|EdDSA]
+                           [--token-lifetime SECONDS] [--rotate-after SECONDS]
+                           [--allow-http] [--allow-private-fetch]
+
+An authorization server as a component (https://github.com/danbri/factoidal/issues/916),
+for lws-serve and any resource server that reads RFC 8414 metadata:
+  GET  /.well-known/lws-configuration (also /.well-known/oauth-authorization-server)
+  GET  /jwks                          the JWK Set (public keys only)
+  POST /token                         RFC 8693 token exchange for an RFC 9068
+                                      access token whose aud is the resource
+Subject tokens: OpenID Connect ID tokens (lws10-authn-openid) and
+self-issued JWTs for https and did:key subjects (lws10-authn-ssi-cid). SAML
+2.0 is not accepted (https://github.com/danbri/factoidal/issues/926).
+
+--resource names the resource IRIs (for lws-serve: BASE.well-known/lws-storage)
+tokens may be issued for; any other is refused with invalid_target.
+--issuer defaults to the bound origin. Give lws-serve --issuer the same IRI.
+DIR holds the signing keys (DIR/authz-keys.json, mode 0600), sealed with
+FACTOIDAL_LWS_KEY when it is set. --rotate-after makes a new key when the
+current one is that old; the old key stays published until its tokens expire.
+--allow-http accepts http subject identifiers; --allow-private-fetch lets the
+server fetch documents from loopback, link-local and private addresses. Both
+are off by default and are for tests.
+
+Every decision is made in formal/lean4/L4Factoidal/Authz/; this command only
+carries sockets, the clock, random bytes, DNS answers and files.`,
+
+  'authz-keys': `factoidal authz-keys - print the JWK Set of an authorization server
+
+usage: factoidal authz-keys DIR [--private]
+
+Prints the published JWK Set of the key file in DIR. --private prints the
+private keys (with d): for a conformance harness that mints test tokens
+(tools/lws-touchstone.sh --authz factoidal). Never publish that output.`,
 
   'lws-serve': `factoidal lws-serve - serve Linked Web Storage 1.0 over HTTP
 
@@ -600,7 +641,9 @@ const VALUE_OPTIONS = {
     'audience', 'page-size', 'moves', 'controller-inbox', 'delivery-limit', 'delivery-window',
     'redirects-max', 'storage']),
   'solid-serve': new Set(['port', 'host', 'base', 'owner', 'issuer', 'auth-config']),
-  'solid-client': new Set(['body', 'file', 'content-type', 'interpret'])
+  'solid-client': new Set(['body', 'file', 'content-type', 'interpret']),
+  'authz-serve': new Set(['port', 'host', 'issuer', 'resource', 'alg', 'token-lifetime', 'rotate-after']),
+  'authz-keys': new Set([])
 }
 
 // ------------------------------------------------------------- commands
@@ -1476,6 +1519,78 @@ async function commandLwsServe (positional, options) {
   return untilInterrupted(running, quiet)
 }
 
+async function commandAuthzServe (positional, options) {
+  if (positional.length !== 1) throw new UsageError('authz-serve needs one DIR')
+  if (typeof options.resource !== 'string') {
+    throw new UsageError('authz-serve needs --resource IRI[,IRI...]: the resources tokens may be issued for')
+  }
+  const quiet = options.quiet === true
+  const { listen } = await import('../authz/server.mjs')
+  let running
+  try {
+    running = await listen({
+      port: servePort(options, 3001),
+      host: serveHost(options),
+      dir: positional[0],
+      resources: options.resource.split(',').filter((v) => v !== ''),
+      ...(typeof options.issuer === 'string' ? { issuer: options.issuer } : {}),
+      // Passed unread; the engine checks them (Wasm/Ops/Authz.lean).
+      ...(typeof options.alg === 'string' ? { alg: options.alg } : {}),
+      ...(options['token-lifetime'] !== undefined ? { tokenLifetime: natOption('token-lifetime', options['token-lifetime']) } : {}),
+      ...(options['rotate-after'] !== undefined ? { rotateAfter: natOption('rotate-after', options['rotate-after']) } : {}),
+      ...(options['allow-http'] === true ? { allowHttp: true } : {}),
+      ...(options['allow-private-fetch'] === true ? { allowPrivateFetch: true } : {})
+    })
+  } catch (error) {
+    if (error !== null && typeof error === 'object' && error.envelope !== undefined) {
+      err(`factoidal authz-serve: ${error.envelope.error}`)
+      return EXIT_FAILURE
+    }
+    if (error !== null && typeof error === 'object' && /unknown op/.test(String(error.message))) {
+      return notWired('authz-serve', error.message)
+    }
+    throw error
+  }
+  if (!quiet) {
+    err(`authz-serve: listening on ${running.origin}, issuer ${running.issuer}`)
+    if (options['allow-http'] === true) err('authz-serve: WARNING: --allow-http: http subject identifiers are accepted')
+    if (options['allow-private-fetch'] === true) err('authz-serve: WARNING: --allow-private-fetch: private addresses may be fetched')
+  }
+  out(running.origin)
+  return untilInterrupted(running, quiet)
+}
+
+async function commandAuthzKeys (positional, options) {
+  if (positional.length !== 1) throw new UsageError('authz-keys needs one DIR')
+  const { openAuthorizationServer, readKeyFile } = await import('../authz/server.mjs')
+  if (readKeyFile(positional[0]) === null) {
+    err(`factoidal authz-keys: ${positional[0]} holds no key file`)
+    return EXIT_FAILURE
+  }
+  let authz
+  try {
+    // The issuer and resources do not matter for reading the keys.
+    authz = await openAuthorizationServer({ dir: positional[0], issuer: 'https://authz.invalid', resources: [] })
+  } catch (error) {
+    if (error !== null && typeof error === 'object' && error.envelope !== undefined) {
+      err(`factoidal authz-keys: ${error.envelope.error}`)
+      return EXIT_FAILURE
+    }
+    throw error
+  }
+  try {
+    if (options.private === true) {
+      out(JSON.stringify(authz.privateJwks()))
+    } else {
+      const answer = await authz.step({ method: 'GET', target: '/jwks', headers: [], body: '' })
+      out(answer.body)
+    }
+  } finally {
+    authz.close()
+  }
+  return EXIT_OK
+}
+
 async function commandSolidServe (positional, options) {
   if (positional.length !== 1) throw new UsageError('solid-serve needs one DIR')
   const quiet = options.quiet === true
@@ -1599,7 +1714,9 @@ const COMMANDS = {
   serve: commandServe,
   'lws-serve': commandLwsServe,
   'solid-serve': commandSolidServe,
-  'solid-client': commandSolidClient
+  'solid-client': commandSolidClient,
+  'authz-serve': commandAuthzServe,
+  'authz-keys': commandAuthzKeys
 }
 
 // ----------------------------------------------------------------- main
