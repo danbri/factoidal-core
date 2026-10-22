@@ -1263,6 +1263,17 @@ below 2 ^ 31 (`findFits`, `gatherFits`).
 
 ### 11.17 d19, grouped aggregates on ids: a pure two-pass loop (2026-10-22)
 
+Landing note, 2026-10-22: the numbers below (warm 232 to 267 ms and the assertion
+`d19-warm-300ms`) were measured on the branch `batch3/kr11-d19b`, where
+`AggStream` kept SUM and AVG as a `Scaled` mantissa and scale, MIN and MAX
+as a `Summary` compared with `Scaled.cmp`. `main` replaced that with the
+shared arithmetic of commit f1f78d98 (`evalArithmetic` per step, `sparqlOrderValue`),
+so those `AggStream` commits (839ee1fb, 51e19799 and the `AggStream` part of
+c275b659, c61c92e5, 1cd1294a) were not landed. Only the `IdAgg` loop changes were.
+Measured on the landed tree, `l4sbm11 query ... d19 --repeat 5`: warm 1,432 and
+1,501 ms; the tree of `main` before this landing: 1,638 ms. The case is an
+expected failure again, naming https://github.com/danbri/factoidal/issues/862.
+
 https://github.com/danbri/factoidal/issues/862 (OKR batch 3 KR 1.1). Section 11.18
 ended at 302 ms warm, with the acceptance of 300 ms missed in 2 of 3 rounds. Profile
 of the 11.18 binary (`perf record -e cpu-clock --call-graph dwarf,16384`, 5 runs in
