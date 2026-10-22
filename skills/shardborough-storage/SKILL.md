@@ -1590,11 +1590,12 @@ producers of RDF quads, and a file is one producer.
 - `l4factoidal query` loses these graphs:
   https://github.com/danbri/factoidal/issues/876 (expected failure in
   `tests/sbm11/named_graphs.sh`).
-- The IBK4 and IBK5 stores lose a graph with no triple without a message
-  (2 of the 6 graphs of `d5.trig`; `CREATE GRAPH` committed and not visible):
-  https://github.com/danbri/factoidal/issues/880, 3 expected failures. The
-  choice (refuse, or port GNL1) waits for the owner; the coordinator
-  recommends refusal, as IBK is a read oracle until stage 7.
+- The IBK4 and IBK5 stores REFUSE a graph with no triple (owner decision,
+  2026-10-22, https://github.com/danbri/factoidal/issues/880): the pack of a
+  source that declares one (2 of the 6 graphs of `d5.trig`), `CREATE GRAPH`
+  and `CLEAR GRAPH` in `l4block-delta-log` exit 1 with a message that names the
+  rule, and the log is unchanged. A DELETE that empties a graph is not
+  detected. Use SBM11 for such data.
 - The replay of a log of NEW terms costs 37 to 42 microseconds of CPU for
   each entry, against 15 to 18 for dictionary terms. Cause: overlay ids are
   `14 * 2^60 + n`, above 2^63, so a Lean `Nat` holds them as GMP numbers, and

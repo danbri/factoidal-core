@@ -54,6 +54,20 @@ private def hasInsertBnode : List UpdateOp → Bool
       (collectQuads none quads).any (fun q => q.2.hasBnode) || hasInsertBnode rest
   | _ :: rest => hasInsertBnode rest
 
+/-- The operations IBK4 and IBK5 refuse: CREATE GRAPH adds a named graph with no
+    triple, and CLEAR of a named graph leaves one. The store has no graph list,
+    so the graph would vanish from `GRAPH ?g { }` after the log was applied
+    (https://github.com/danbri/factoidal/issues/880, owner decision of
+    2026-10-22: refuse). A DELETE that removes the last triple of a graph is
+    not detected here: that needs the composed base-plus-delta view. -/
+private def emptiesNamedGraph : UpdateOp → Bool
+  | .create _ _ => true
+  | .clear _ (.graph _) => true
+  | _ => false
+
+private def graphRefusal : String :=
+  "l4block-delta-log refused: IBK4 and IBK5 store no named graph without a triple (https://github.com/danbri/factoidal/issues/880); CREATE GRAPH and CLEAR of a named graph are refused; use SBM11"
+
 private def commitUpdate (path : System.FilePath) (epoch : Nat) (update : Update) : Nat → IO UInt32
   | 0 => do
       IO.eprintln "l4block-delta-log failed: concurrent writers prevented a stable append after 3 retries"
@@ -84,7 +98,10 @@ private def appendUpdate (directory : System.FilePath) (updateText : String) : I
   match parseSparqlUpdate updateText with
   | .error error => IO.eprintln s!"l4block-delta-log update parse error at {error.pos}: {error.msg}"; pure 1
   | .ok update =>
-      if hasInsertBnode update.ops then
+      if update.ops.any emptiesNamedGraph then
+        IO.eprintln graphRefusal
+        pure 1
+      else if hasInsertBnode update.ops then
         IO.eprintln "l4block-delta-log rejected: INSERT DATA blank nodes await composed-store freshness allocation"
         pure 1
       else commitUpdate path epoch update 3

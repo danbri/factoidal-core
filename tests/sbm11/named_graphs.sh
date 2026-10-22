@@ -38,8 +38,8 @@
 # And expected failures that name open issues; the run fails when one passes:
 # `l4factoidal query`, the in-memory query ops, gives neither a graph with no triple nor a
 # graph named by a blank node (https://github.com/danbri/factoidal/issues/876); the IBK4
-# and IBK5 stores lose a graph with no triple, in the pack and after CREATE GRAPH
-# (https://github.com/danbri/factoidal/issues/880).
+# and IBK5 stores refuse a graph with no triple, in the pack and in CREATE GRAPH and CLEAR
+# GRAPH (https://github.com/danbri/factoidal/issues/880).
 #
 # Prints "named graphs: N pass, M fail, K expected-fail (out of T)". Exit 0 when no case
 # failed and no expected failure passed; 2 when a binary is missing.
@@ -221,37 +221,59 @@ fi
 if [ "$rows" = 6 ]; then xfail xfail-l4factoidal-graph-names https://github.com/danbri/factoidal/issues/876 1 "l4factoidal query gives the 6 named graphs of d5.trig"
 else xfail xfail-l4factoidal-graph-names https://github.com/danbri/factoidal/issues/876 0 "GRAPH ?g { } on d5.trig: l4factoidal query gives $rows rows, the reference evaluator 6"; fi
 
-echo "=== shortfall: the IBK4 and IBK5 stores"
-# The IBK stores have no graph list and their log (DLOG version 1) has no graph slot, so a
-# named graph with no triple is lost: in the pack of a TriG graph block, and after CREATE
-# GRAPH, which is committed with exit 0 (https://github.com/danbri/factoidal/issues/880).
-# A missing binary is a failure, not an expected failure.
+echo "=== refusal: the IBK4 and IBK5 stores"
+# The IBK stores have no graph list and their log (DLOG version 1) has no graph slot. Owner
+# decision of 2026-10-22 (https://github.com/danbri/factoidal/issues/880): they refuse a source
+# that declares a named graph with no triple, and CREATE GRAPH and CLEAR of a named graph,
+# with a message that names the rule. SBM11 stores such a graph.
+# A missing binary is a failure.
 ibk_rows() { # ibk_rows <collection root>: the rows of GRAPH ?g { }, "error" on a failure
   timeout 120 "$BIN/l4block-quad-query" "$1" --json --query "$(cat "$QDIR/ref-graph-names.rq")" 2>"$1.q.err" \
     | tail -1 >"$1.srj"
   python3 -I -c 'import json, sys; print(len(json.load(open(sys.argv[1]))["results"]["bindings"]))' "$1.srj" 2>/dev/null \
     || echo error
 }
+RULE="IBK4 and IBK5 store no named graph without a triple (https://github.com/danbri/factoidal/issues/880)"
 ibk_ok=0
 for need in l4block-shard-pack l4block-shard-activate l4block-quad-query l4block-delta-log; do
   [ -x "$BIN/$need" ] || { record ibk-binaries 1 "missing: $BIN/$need"; ibk_ok=1; }
 done
 if [ "$ibk_ok" = 0 ]; then
   for fmt in ibk4 ibk5; do
+    c="$TMP/$fmt-refused"; mkdir -p "$c"
+    rc=0; timeout 120 "$BIN/l4block-shard-pack" "$FX" "$c/gen-1" "$fmt" >"$c.pack.log" 2>&1 || rc=$?
+    if [ "$rc" -ne 0 ] && grep -qF "refused: $RULE" "$c.pack.log" && [ ! -e "$c/gen-1/manifest.sbm2" ]; then
+      record "$fmt-pack-refuses-empty-graph" 0 "d5.trig: exit $rc, message names the rule, no manifest written"
+    else record "$fmt-pack-refuses-empty-graph" 1 "exit $rc: $(tail -1 "$c.pack.log" | cut -c1-200)"; fi
+  done
+  # a TriG whose named graphs all hold a triple still packs and answers
+  printf '%s\n' '@prefix ex: <http://example.org/> .' 'ex:s ex:p ex:o .' \
+    'ex:g1 { ex:a ex:p ex:b . }' 'ex:g2 { ex:c ex:p ex:d . }' >"$TMP/full.trig"
+  for fmt in ibk4 ibk5; do
     c="$TMP/$fmt"; mkdir -p "$c"
-    if timeout 120 "$BIN/l4block-shard-pack" "$FX" "$c/gen-1" "$fmt" >"$c.pack.log" 2>&1 \
+    if timeout 120 "$BIN/l4block-shard-pack" "$TMP/full.trig" "$c/gen-1" "$fmt" >"$c.pack.log" 2>&1 \
         && timeout 120 "$BIN/l4block-shard-activate" "$c" gen-1 >"$c.act.log" 2>&1; then
       rows="$(ibk_rows "$c")"
-      if [ "$rows" = 6 ]; then xfail "xfail-$fmt-graph-names" https://github.com/danbri/factoidal/issues/880 1 "the $fmt store gives the 6 named graphs of d5.trig"
-      else xfail "xfail-$fmt-graph-names" https://github.com/danbri/factoidal/issues/880 0 "GRAPH ?g { } on d5.trig: the $fmt store gives $rows rows, the reference 6"; fi
-    else record "$fmt-pack" 1 "pack or activation of d5.trig failed: $(tail -1 "$c.pack.log" "$c.act.log" 2>/dev/null | tr '\n' ' ' | cut -c1-160)"; fi
+      if [ "$rows" = 2 ]; then record "$fmt-pack-nonempty-graphs" 0 "2 named graphs, each with a triple, packed and answered"
+      else record "$fmt-pack-nonempty-graphs" 1 "GRAPH ?g { } gives $rows rows, expected 2"; fi
+    else record "$fmt-pack-nonempty-graphs" 1 "pack or activation failed: $(tail -1 "$c.pack.log" "$c.act.log" 2>/dev/null | tr '\n' ' ' | cut -c1-160)"; fi
   done
   c="$TMP/ibk5"
-  if [ -f "$c/CURRENT" ] && timeout 120 "$BIN/l4block-delta-log" "$c" --update 'CREATE GRAPH <http://example.org/g9>' >"$c.upd.log" 2>&1; then
-    rows="$(ibk_rows "$c")"
-    if [ "$rows" = 7 ]; then xfail xfail-ibk5-create-graph https://github.com/danbri/factoidal/issues/880 1 "after CREATE GRAPH ex:g9 the ibk5 store gives 7 named graphs"
-    else xfail xfail-ibk5-create-graph https://github.com/danbri/factoidal/issues/880 0 "CREATE GRAPH ex:g9 committed; GRAPH ?g { } then gives $rows rows, the reference 7"; fi
-  else record ibk5-create-graph 1 "the ibk5 store or its update failed: $(tail -1 "$c.upd.log" 2>/dev/null | cut -c1-160)"; fi
+  if [ -f "$c/CURRENT" ]; then
+    # the first commit makes the log; the refusals are then checked against its bytes
+    rc=0; timeout 120 "$BIN/l4block-delta-log" "$c" --update 'INSERT DATA { GRAPH <http://example.org/g1> { <http://example.org/z> <http://example.org/p> <http://example.org/y> } }' >"$c.upd.log" 2>&1 || rc=$?
+    if [ "$rc" -eq 0 ]; then record ibk5-insert-data-still-commits 0 "exit 0"
+    else record ibk5-insert-data-still-commits 1 "exit $rc: $(tail -1 "$c.upd.log" | cut -c1-160)"; fi
+    log="$(find "$c" -name deltas.dlog | head -1)"
+    before="$(cksum "$log" 2>/dev/null || echo none)"
+    for upd in 'CREATE GRAPH <http://example.org/g9>' 'CLEAR GRAPH <http://example.org/g1>'; do
+      rc=0; timeout 120 "$BIN/l4block-delta-log" "$c" --update "$upd" >"$c.upd.log" 2>&1 || rc=$?
+      after="$(cksum "$log" 2>/dev/null || echo none)"
+      if [ "$rc" -ne 0 ] && grep -qF "$RULE" "$c.upd.log" && [ "$before" = "$after" ] && [ "$before" != none ]; then
+        record "ibk5-refuses: $upd" 0 "exit $rc, message names the rule, log unchanged"
+      else record "ibk5-refuses: $upd" 1 "exit $rc, log before $before after $after: $(tail -1 "$c.upd.log" | cut -c1-160)"; fi
+    done
+  else record ibk5-delta-log 1 "no activated ibk5 collection"; fi
 fi
 
 echo "named graphs: $PASS pass, $FAIL fail, $XFAIL expected-fail (out of $((PASS + FAIL + XFAIL)))"
