@@ -1045,3 +1045,83 @@ Gates: `lake build` (1868 jobs); `tests/sbm11/agg_ids.sh` 28 pass, 0 fail, 9 exp
 (438 on the id path); `tools/lean-unbuilt-modules.py`, `lean-tail-recursion-audit.py`,
 `lean-registry-audit.py` and `lean-csimp-reach.py` with `--gate` exit 0;
 `lean-hygiene-audit.py` clean (no sorry, axiom or native_decide added).
+
+### 11.17 d19, grouped aggregates on ids: a pure two-pass loop (2026-10-22)
+
+https://github.com/danbri/factoidal/issues/862 (OKR batch 3 KR 1.1). Section 11.14
+ended at 302 ms warm, with the acceptance of 300 ms missed in 2 of 3 rounds. Profile
+of the 11.14 binary (`perf record -e cpu-clock --call-graph dwarf,16384`, 5 runs in
+one process): `aggregateM` row loop 17 percent in its own frames, `lean_dec_ref_cold`
+9 percent called from `aggregateM`, `mi_malloc_small` and `mi_free` 9.5 percent,
+`clear_page_erms` (kernel zeroing of fresh pages for the join columns and index
+arrays) 11 percent, `deltaRangeGoF` (frame decode) 9 percent, `mergeGo` and `runEnd`
+8 percent. The d19 scans use the merge join, not the sideways scan, so the delta
+loop changes of branch `batch3/kr11-d14b` (`Sip`) do not apply to them.
+
+Cause found in the generated C of the row loop: it ran in `ExceptT String m` with
+the decoder `termOf` as a closure, so each row allocated a closure for `termOf`, a
+`ForInStep` and a state tuple, and unwrapped an `ExceptT` result, although the decoder
+is needed for 48,815 of 326,365 rows only.
+
+Change (`Storage/Sbm11/IdAgg.lean`):
+
+1. `assignGroups` (pass 1, pure): the group number of each row and the first row of
+   each group. `accs` is built once from the group count.
+2. `stepRows` (pass 2, pure, tail call with fuel, `Array.foldl` for the inner
+   loops): steps every accumulator in row order from row `i`. It stops at the first
+   row whose argument id is bound and absent from the summary table, before that
+   row changes any accumulator, and returns the id. `aggregateM` decodes that id
+   once, inserts its summary, and resumes at the same row. The monad is run 48,815
+   times instead of 326,365.
+3. The argument ids are not kept in `terms` (only their summaries). `decoded` is
+   computed at the end as the number of summaries plus the representative ids that
+   are not argument ids, which is the number the earlier code reported.
+
+Theorems (`IdAgg.lean`; dependencies: propext, Classical.choice, Quot.sound; no
+sorry): `Cache.insert_valid`, `Cache.hit_eq`, `Cache.fill_valid` and
+`sums_fill_valid`: the summary table is valid for `sumOf termOf` however it is
+filled (hits, misses, any order, repeats), so a step with a cached summary equals a
+step with a recomputed one, which is what stop-and-resume relies on. That
+`aggregateM` as a whole equals `AggStream.selectPost_aggPlan`'s specification is
+still not proved (end-to-end lemma L5k); `tests/sbm11/agg_ids.sh` and the census
+compare it with `--no-agg-ids` and with the reference engine.
+
+Tried and not kept: reserving the capacity of the two index arrays in
+`Qlvr.mergeJoin` (`Array.emptyWithCapacity`; `mergeJoin_eq` stays `rfl`): no change
+beyond the noise.
+
+Measurement: `l4sbm11 query /home/user/bench-data/sbm11/dbpedia --file
+tools/bench/three-engines/queries/dbpedia/d19-group-aggregates.rq --verify none
+--repeat 7`, execution median in one process, interleaved with the 11.14 binary
+("before", built from the parent commit). The machine carried a second session
+(load average 1.3 to 2.8), so each pair is listed.
+
+| round | before (ms) | after (ms) |
+| --- | ---: | ---: |
+| 1 | 311 | 232 |
+| 2 | 320 | 237 |
+| 3 | 401 | 267 |
+| earlier 5 rounds, after (ms) | | 253, 265, 282, 292, 319 (first version of the change) |
+| QLever 1 CPU (11.10) | | 103 |
+
+Last measurement with the final binary, `tests/sbm11/agg_ids.sh`: warm 227 ms.
+The acceptance of 300 ms holds in all 3 rounds, so `xfail-d19-warm-300ms` is now the
+assertion `d19-warm-300ms`. Ratio to QLever 1 CPU: 2.2 (11.14: 2.9). Peak RSS
+54,160 kB (VmHWM, one run). The answer is byte-identical to the answer of the
+parent commit, to `--no-agg-ids` and to
+`/home/user/bench-data/answers/dbpedia/d19-group-aggregates.sbm11-none.json`.
+
+Remaining cost (profile of the final binary): kernel page zeroing 15 percent (join
+columns, gather outputs and the group-number array are fresh allocations in each
+run), frame decode `deltaRangeGoF` 11 percent, `stepRows` 11 percent plus 5 percent
+in its inner folds, `lean_dec_ref_cold` 7 percent (freeing the 48,815 summaries and
+the table), `mergeGo` and `runEnd` 9 percent. Next candidates: aggregate during the
+merge join without the joined columns; a flat numeric `Summary`; reuse of the join
+output buffers between runs.
+
+Gates: `lake build` (1868 jobs); `tests/sbm11/agg_ids.sh` 29 pass, 0 fail, 8
+expected-fail (out of 37); `tests/sbm11/run.sh` 3,113 pass, 0 fail, 28 expected-fail
+(out of 3,141); `SBM11_THREADS=4 tests/sbm11/census.sh` 605 executed, 605 matched the
+reference engine (438 on the id path); `lean-unbuilt-modules.py`,
+`lean-tail-recursion-audit.py`, `lean-registry-audit.py`, `lean-csimp-reach.py` with
+`--gate` exit 0; `lean-hygiene-audit.py` clean.
