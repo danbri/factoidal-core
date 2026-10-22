@@ -60,7 +60,7 @@ https://github.com/danbri/factoidal/issues/801.
 
 Recursion: `dfs` recurses once per chosen access (at most `k`),
 `argLists` once per argument position (the arity), `chainOk` once per
-access of a rewriting. `estCostGo` and `greedyGo` are tail calls.
+access of a rewriting. `estUseGo` and `greedyGo` are tail calls.
 -/
 import L4Factoidal.Planner.Soundness
 
@@ -186,27 +186,89 @@ def Rewriting.isMinimal (cat : Catalog) (req : Requirement) (rw : Rewriting) : B
 
 /-! ## Cost estimate and the plan family
 
-The estimate assumes `fanout` rows for each variable an access binds
-for the first time, and one call of an access per incoming row (the
-dependent join of `Plan.exec`). It orders the family; no theorem uses
-it. -/
+The estimate assumes, for each call of an access, the source's statistic
+`rowsPerCall` when it has one, and otherwise `fanout` rows for each
+variable the access binds for the first time; and one call of an access
+per incoming row (the dependent join of `Plan.exec`). It orders the
+family and decides admission (below); no theorem uses its numbers.
+
+`estUse` is parameterised by an `EstModel` so that the driver
+`Planner.Exec` can use the same walk with measured rows per call,
+measured latency and the calls whose answers it already holds. -/
 
 def Access.newVars (bound : List VarName) (a : Access) : Nat :=
   ((a.vars.eraseDups).filter (fun v => !bound.contains v)).length
 
-def estCostGo (cat : Catalog) (fanout : Nat) :
-    List Access → List VarName → Nat → Nat → Nat
+/-- The estimated use of one access: its source, the calls, the tuples
+returned, and the cost. -/
+structure UseEst where
+  src : Nat
+  calls : Nat
+  rows : Nat
+  cost : Nat
+  deriving Repr
+
+/-- How an estimate counts: tuples per call (source index, source, new
+variables), the cost of one call, the tuple count of an access whose
+answer is already known (it makes no call), and whether an access whose
+inputs are all constants is called once (a driver with a cache of call
+results) or once per incoming row (`Plan.exec`). -/
+structure EstModel where
+  rowsPerCall : Nat → Source → Nat → Nat
+  callCost : Nat → Source → Nat
+  known : Access → Option Nat
+  cacheScans : Bool := false
+
+/-- The model of the cost model's own numbers. -/
+def statModel (fanout : Nat) : EstModel where
+  rowsPerCall := fun _ s nv => s.cap.cost.rowsPerCall.getD (fanout ^ nv)
+  callCost := fun _ s => s.cap.cost.perCall
+  known := fun _ => none
+
+/-- Tail-recursive walk of a chain; the accumulator is in reverse order. -/
+def estUseGo (cat : Catalog) (em : EstModel) :
+    List Access → List VarName → Nat → List UseEst → List UseEst
   | [], _, _, acc => acc
   | a :: s, bound, calls, acc =>
     match cat[a.src]? with
-    | none => estCostGo cat fanout s bound calls acc
+    | none => estUseGo cat em s bound calls acc
     | some src =>
-      let rows := calls * fanout ^ (a.newVars bound)
-      estCostGo cat fanout s (bound ++ a.vars) rows
-        (acc + calls * src.cap.cost.perCall + rows * src.cap.cost.perRow)
+      match em.known a with
+      | some n =>
+        estUseGo cat em s (bound ++ a.vars) (calls * n)
+          ({ src := a.src, calls := 0, rows := 0, cost := 0 } :: acc)
+      | none =>
+        let rpc := em.rowsPerCall a.src src (a.newVars bound)
+        let n := if em.cacheScans && (a.inputs? src.cap []).isSome then min calls 1 else calls
+        estUseGo cat em s (bound ++ a.vars) (calls * rpc)
+          ({ src := a.src, calls := n, rows := n * rpc,
+             cost := n * em.callCost a.src src + calls * rpc * src.cap.cost.perRow } :: acc)
+
+def estUse (cat : Catalog) (em : EstModel) (steps : List Access) : List UseEst :=
+  estUseGo cat em steps [] 1 []
+
+def totalCost (us : List UseEst) : Nat := us.foldl (fun n u => n + u.cost) 0
+
+/-- The sum of `f` over the uses of source `i`. -/
+def sumUse (us : List UseEst) (i : Nat) (f : UseEst → Nat) : Nat :=
+  us.foldl (fun n u => if u.src = i then n + f u else n) 0
+
+/-- With `calls0 i` calls and `rows0 i` tuples already used, the estimated
+use stays within every call quota and every row quota of the catalog. -/
+def withinQuotas (cat : Catalog) (us : List UseEst) (calls0 rows0 : Nat → Nat) : Bool :=
+  (List.range cat.length).all (fun i =>
+    match cat[i]? with
+    | none => true
+    | some s =>
+      (match s.cap.cost.callQuota with
+       | some q => decide (calls0 i + sumUse us i (·.calls) ≤ q)
+       | none => true) &&
+      (match s.cap.cost.rowQuota with
+       | some q => decide (rows0 i + sumUse us i (·.rows) ≤ q)
+       | none => true))
 
 def estCost (cat : Catalog) (fanout : Nat) (rw : Rewriting) : Nat :=
-  estCostGo cat fanout rw.steps [] 1 0
+  totalCost (estUse cat (statModel fanout) rw.steps)
 
 /-- The rewriting uses an `approximate` source; its rows are marked. -/
 def Rewriting.approx (cat : Catalog) (rw : Rewriting) : Bool :=
@@ -301,6 +363,28 @@ theorem preferIrredundant_ne_nil {cat : Catalog} {req : Requirement} {fam : List
     intro hnil
     rw [hnil] at hne
     exact hne rfl
+
+/-! ### Admission by quota
+
+Preparation admits a member of the structural family when its estimated
+calls and tuples (`statModel`) are within every call quota and row quota
+of the catalog. `search` stays the structural family, so `search_complete`
+keeps its statement; `searchAdmitted` is the family that the driver
+`Planner.Exec` runs. The estimate can be wrong (a statistic that is too
+low); the driver enforces both quotas at run time, so I2 does not depend
+on it. -/
+
+def admissible (cat : Catalog) (fanout : Nat) (rw : Rewriting) : Bool :=
+  withinQuotas cat (estUse cat (statModel fanout) rw.steps) (fun _ => 0) (fun _ => 0)
+
+def searchAdmitted (cat : Catalog) (req : Requirement) (k : Nat) (fanout : Nat := 10) :
+    List Ranked :=
+  (search cat req k fanout).filter (fun r => admissible cat fanout r.rewriting)
+
+theorem searchAdmitted_mem {cat : Catalog} {req : Requirement} {k fanout : Nat} {r : Ranked}
+    (h : r ∈ searchAdmitted cat req k fanout) :
+    r ∈ search cat req k fanout ∧ admissible cat fanout r.rewriting = true :=
+  List.mem_filter.mp h
 
 /-- The verdict of the structural planner. -/
 inductive Verdict where

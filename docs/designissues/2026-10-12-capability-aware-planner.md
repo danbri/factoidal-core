@@ -1,6 +1,6 @@
 # Capability-aware, cost-based planner for data access, computation and service interaction
 
-2026-10-12. Status: direction set by the owner. KR 2.1, 2.2, 2.3 and 2.4 landed (sections 8, 9, 10, 11).
+2026-10-12. Status: direction set by the owner. KR 2.1, 2.2, 2.3 and 2.4 landed (sections 8, 9, 10, 11); batch 3 KR 4.1 and 4.2 landed (sections 12, 13).
 
 Tracking:
 - Epic: https://github.com/danbri/factoidal/issues/800
@@ -477,7 +477,7 @@ https://github.com/danbri/factoidal/issues/801. It is counted in the
 | `search-outside-constant` | Search completeness over all checked rewritings: an access with a required input that no requirement pattern names | the search finds a plan for `?s ?p ?o` over a scan that requires a key (the rewriting with key `"k1"` passes the check: control case) |
 | `wide-relation-unnamed-output` | `Rewriting.check` admits no fresh variable, so a relation with a column that the requirement does not use gives no plan | the first plan for `?x name ?n` over the (person, name, department) table gives the reference answers |
 | `indirect-binder-inclusion-dependency` | Inclusion dependencies (PDQ constraints) are not modelled, so an access that covers no pattern and only binds an input for a later access is not admitted. This is also the case for answer completeness (section 8, first item): the sources are complete and no plan gives every answer | the first plan for `?x name ?n` over a lookup by subject and a complete scan of members gives the reference answers |
-| `quota-in-admission` | Costs and quotas are not used for admission; no theorem about cost | no plan in the family exceeds a call quota |
+| `quota-in-admission` | Costs and quotas are not used for admission; no theorem about cost. Flipped to an assertion by KR 4.2 (section 13): `searchAdmitted` | no plan in the admitted family exceeds a call quota |
 | `runtime-quota-adaptation` | Adaptation: no execution state machine; quotas are not enforced at run time. Flipped to an assertion by KR 2.4 (section 11): the driver's run stays within each call quota and gives the reference answers | the run of the first plan stays within each call quota and gives the reference answers |
 | `named-graph-requirement` | Named graphs: the declared dataset has a default graph only | `ofQuery?` accepts `GRAPH <g> { ... }` |
 | `rowfilter-from-expr` | `RowFilter` from a SPARQL `Expr` | `ofQuery?` accepts a FILTER |
@@ -736,14 +736,13 @@ exit 1.
 
 | xfail case | Open item | What the case asserts |
 |---|---|---|
-| `exec-row-quota` | `CostModel.rowQuota` is not enforced at run time | a scan with a row quota of 1 that answers 3 rows gives at most 1 row, or the run stops |
-| `exec-reuse-after-adaptation` | After a switch the new plan makes again the calls whose answers are known (no cache of call results) | in the `runtime-quota-adaptation` run the scan is called once |
-| `quota-in-admission` (section 9) | Quotas are not used for admission, so the first plan can be one that the run must leave | no plan in the family exceeds a call quota |
+| `exec-row-quota` | `CostModel.rowQuota` is not enforced at run time. Assertion since KR 4.2 (section 13) | a scan with a row quota of 1 that answers 3 rows gives at most 1 row, or the run stops |
+| `exec-reuse-after-adaptation` | After a switch the new plan makes again the calls whose answers are known (no cache of call results). Assertion since KR 4.2 | in the `runtime-quota-adaptation` run the scan is called once |
+| `quota-in-admission` (section 9) | Quotas are not used for admission, so the first plan can be one that the run must leave. Assertion since KR 4.2 | no plan in the admitted family exceeds a call quota |
 | `exec-driver-io` (section 12, https://github.com/danbri/factoidal/issues/933) | The driver `Exec.run` takes tuples from `Source.sem.impl` and failures from a fault schedule | `Exec.run` makes its calls through IO; a call error is a `Fail` step |
 
-Other limits, with no case yet: the driver takes the alternatives in
-family order, without measurements (the runtime planner of section 3 is
-batch 3); there is no fairness condition and no temporal property beyond
+Other limits, with no case yet: the driver took the alternatives in
+family order, without measurements, until KR 4.2 (section 13); there is no fairness condition and no temporal property beyond
 termination (the assume-guarantee composition of skill rule 10).
 
 ## 12. KR 4.1: plans executed through IO
@@ -832,3 +831,105 @@ forms outside `ofQuery?` (section 9).
 | `exec-driver-io` | The driver `Exec.run` (section 11) takes tuples from `Source.sem.impl` and failures from a fault schedule; a driver whose `Call`, `Receive` and `Fail` steps are IO calls is open | https://github.com/danbri/factoidal/issues/933 |
 | `rowfilter-from-expr` (section 9) | FILTER is not accepted, so most gate queries are not run by the planner | https://github.com/danbri/factoidal/issues/801 |
 
+## 13. KR 4.2: run-time adaptation
+
+Landed 2026-10-22 for OKR batch 3, KR 4.2
+(https://github.com/danbri/factoidal/issues/875). The cases
+`exec-row-quota`, `exec-reuse-after-adaptation` (section 11) and
+`quota-in-admission` (section 9) are assertions now.
+
+### Admission (`Planner/Search.lean`)
+
+`CostModel.rowsPerCall` is an optional statistic of a source (tuples per
+call). `estUse cat em steps` walks a chain and gives, for each access, the
+source, the estimated calls, tuples and cost; `EstModel` says how it counts
+(`statModel fanout`: the statistic, or `fanout` per new variable, and
+`perCall`). `estCost` is the total of `estUse` under `statModel` (the same
+numbers as before when no source has a statistic). `admissible` holds when
+the estimated calls and tuples of each source are within its call quota and
+row quota (`withinQuotas`). `searchAdmitted` is `search` filtered by
+`admissible`; `search` stays the structural family, so `search_complete`
+keeps its statement. The driver runs `searchAdmitted`.
+
+Effect: without a statistic the estimate is large (fanout 10 per new
+variable), and a plan with a quota source after a scan can be refused. The
+KR 2.2 case `approximate-marked` (LLM source, call quota 10, after a scan
+with no statistic) has no admitted plan; `exec-equals-plan-run` now covers
+17 cases, not 18. The run-time quota checks stay: a statistic that is too
+low admits a plan that the run must leave. The refusal of a plan that fits its
+quota is open: https://github.com/danbri/factoidal/issues/937, xfail
+`admission-without-statistic`.
+
+### State, actions (`Planner/Exec.lean`)
+
+| Change | Content |
+|---|---|
+| State | the observed-cost record `answered`, `rows` (tuples received; the row-quota count), `latency` (sum of the latencies of answered calls), all by catalog index; `cache : List CacheEntry` (source, input binding, tuples); `hits` |
+| `Receive` | enabled only when the tuples are within the row quota (`rowQuotaOk`); takes the latency `lat` from the environment; updates the record and adds the cache entry |
+| `Hit` (new, ninth action) | the head pending row's call (source, input) is in the cache: its rows are added to `next` with no call |
+| `Config` | `fanout` for the estimate |
+| driver | a `Latency` schedule (`lat i n`) beside the fault schedule; a cache hit before a call; an answer over the row quota leads to a switch or a stop; a switch takes the alternative of least `adaptScore` |
+
+`adaptScore` (no theorem uses it): `estUse` under `obsModel`, which takes
+the measured tuples per call of a source that has answered, the measured
+latency per answered call at the source's location as the call cost
+(`perCall` before an answer there), zero calls for an access whose
+constant-only call is in the cache, and one call for a constant-only access
+(the later rows are hits). The score is (0 if the estimate added to the
+calls and tuples already used is within every quota, else 1; the total
+cost), compared lexicographically; ties keep the family order.
+
+### Theorems
+
+| Theorem | Statement |
+|---|---|
+| `reachable_sound` (I1), `reachable_quota` (I2) | as in section 11, for the new machine |
+| `reachable_rowQuota` (I2, rows) | in a reachable state, no source's tuple count exceeds its row quota |
+| `reachable_cache` | every cache entry of a reachable state is the call's result: `e.tuples = s.sem.impl e.inp` for the catalog's source `e.src` |
+| `reachable_cache_hit` | the rows of a cache hit (`accessRows s a x e.tuples`) are `(Plan.access a).exec cat x`, the rows of the call: the cache never changes an answer |
+| `cache_rows_eq`, `frontier_pop`, `exec_access_of`, `rowQuota_add` | lemmas of the above |
+| `pickMin_mem`, `cacheFind_some` | the driver's choice is a member of the alternatives; a cache lookup returns a matching entry of the cache |
+| `searchAdmitted_mem` | an admitted plan is a member of `search` and admissible |
+| `run_spec` | now with the row quota, the cache, and the admitted family |
+
+Hazard 29: the hypotheses of `reachable_cache_hit` are reachability and
+that the entry, the access and the input match; none states that the
+cache gives the rows of `Plan.exec`. The cache invariant is a field of
+`Inv`, proved by induction on traces (`init_inv`, `receive_inv`,
+`hit_inv`). `#print axioms` for each new theorem: `propext`,
+`Classical.choice`, `Quot.sound` at most (`Planner/ExecTests.lean`).
+
+### Tests
+
+`lake exe l4planner-test`, new and changed cases:
+
+| Case | Checks |
+|---|---|
+| `quota-in-admission` | `search` keeps the plan over the quota; `searchAdmitted` drops it; with a quota of 1000 it is admitted; no admitted plan, no run |
+| `exec-quota-stops`, `runtime-quota-adaptation` | as in section 11, with a scan whose statistic is too low (1 tuple; it answers 3) so that the plan is admitted |
+| `exec-row-quota` | a scan with a row quota of 1 answers 3 tuples: the run stops, no output, no tuple counted |
+| `exec-row-quota-adaptation` | the same scan and another scan: one switch, the other scan, reference answers |
+| `exec-reuse-after-adaptation` | after the switch the scan is not called again (1 call) and the new plan starts with a cache hit |
+| `exec-cache-duplicate-input` | two rows need the same lookup: 1 call, 1 hit, reference answers |
+| `exec-adapt-measured-rows` | a scan declares 1 tuple and answers 20; the quota lookup is left after 2 calls; the second admitted plan (control) uses the other lookup, but the driver, from the measured 20 tuples, takes a plan with the name scan: calls [1, 2, 0, 1] |
+| `exec-adapt-measured-latency` | calls at `host-b` take 1000 units: the driver takes lookup C (`host-c`); with no latency it takes lookup B (`host-b`, lower static cost) |
+| `exec-approximate-marked`, `exec-exact-before-approximate` | with the scan's true statistic (3 tuples), so that the LLM plan is admitted |
+
+`#guard`s in `Planner/ExecTests.lean`: admission refuses the call-quota
+plan with no statistic; with a statistic that is too low the run stops
+after one call; the observed-cost record after a run.
+
+Result 2026-10-22: planner: 77 pass, 0 fail, 16 expected-fail (out of 93).
+`tests/planner/sbm11_gate.sh`: 8 pass, 0 fail (out of 8 accepted); 106 not
+accepted (one gate query more than in section 12).
+
+### Open
+
+- Admission with no statistic refuses a plan within its quota
+  (https://github.com/danbri/factoidal/issues/937, xfail
+  `admission-without-statistic`).
+- The driver over IO calls (https://github.com/danbri/factoidal/issues/933,
+  xfail `exec-driver-io`): not in this landing. The cache and the
+  observed-cost record are in the pure state, so an IO driver can keep them.
+- No theorem about costs or about the choice of the alternative; the
+  invariants hold for any choice inside the family.

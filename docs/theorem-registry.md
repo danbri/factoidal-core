@@ -3091,7 +3091,9 @@ audit in `Planner/ExecTests.lean` (`propext`, `Classical.choice`,
 | `reachable_output` — a `done` output is the `Plan.run` of a family member (list equality) | ✅ PROVED (2026-10-13) | reachability |
 | `next_measure_lt`, `next_wf` — `Next` has no infinite chain | ✅ PROVED (2026-10-13) | none |
 | `stepExec_next`, `runFrom_reachable`, `runFrom_final`, `run_spec` — the driver takes `Next` steps and ends `done` or `stopped` | ✅ PROVED (2026-10-13) | `ExactSourcesSound` for the I1 part of `run_spec` |
-| Row quotas at run time; reuse of call results after a switch | ⬜ OPEN — expected-failure cases `exec-row-quota`, `exec-reuse-after-adaptation` of `l4planner-test` | — |
+| `reachable_rowQuota` (I2, rows) — no source returns more tuples than its row quota | ✅ PROVED (2026-10-22, KR 4.2) | reachability |
+| `reachable_cache`, `reachable_cache_hit` — every cache entry is the call's result; the rows of a cache hit are the rows of `Plan.exec` for the access | ✅ PROVED (2026-10-22, KR 4.2) | reachability; the entry matches the access's source and input |
+| `searchAdmitted_mem` — an admitted plan is a member of `search` and admissible | ✅ PROVED (2026-10-22, KR 4.2) | none |
 
 ## 10. JOSE, DPoP and Solid-OIDC over HACL\* — Lean tree
 

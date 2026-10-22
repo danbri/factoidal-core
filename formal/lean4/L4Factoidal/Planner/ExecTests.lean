@@ -24,7 +24,20 @@ def refRows (c : Catalog) (req : Requirement) : List (List (Option Term)) :=
 /-- `people` with a call quota of 1. -/
 def peopleQ1 : Source := { people with cap := { people.cap with cost := { people.cap.cost with callQuota := some 1 } } }
 
+/-- `knows` with the statistic `rowsPerCall := some n` (it answers 2). -/
+def knowsStat (n : Nat) : Source :=
+  { knows with cap := { knows.cap with cost := { knows.cap.cost with rowsPerCall := some n } } }
+
+/-- No statistic: the estimate (fanout 10, two new variables) is 100
+`knows` rows, so 100 calls of `people`, over the quota of 1. -/
 def catQ1 : Catalog := [peopleQ1, knows, age]
+
+/-- A statistic that is too low (1 row; it answers 2): the plan is
+admitted, and the run meets the quota. -/
+def catQ1Low : Catalog := [peopleQ1, knowsStat 1, age]
+
+/-- The true statistic (2 rows): 2 calls of `age`, within its quota of 10. -/
+def catStat : Catalog := [people, knowsStat 2, age]
 
 -- The run of the family ends `done`, and its output is the reference
 -- evaluator's answers over the declared graph.
@@ -36,9 +49,14 @@ def catQ1 : Catalog := [peopleQ1, knows, age]
   | some st => st.calls 1 == 1 && st.calls 0 == 2
   | none => false)
 
--- With a call quota of 1 on `people`, the plan needs 2 calls; the family
--- has no other plan, so the run stops after one call, with no output.
-#guard (match run catQ1 reqNames 2 {} noFaults with
+-- Admission: with a call quota of 1 on `people` and no statistic, the
+-- estimate is over the quota, so no plan is admitted and there is no run.
+#guard (search catQ1 reqNames 2).length == 1
+#guard (run catQ1 reqNames 2 {} noFaults).isNone
+-- With a statistic that is too low the plan is admitted; it needs 2 calls,
+-- the family has no other plan, so the run stops after one call, with no
+-- output.
+#guard (match run catQ1Low reqNames 2 {} noFaults with
   | some st => st.status == .stopped && st.calls 0 == 1 && st.output.isEmpty
   | none => false)
 
@@ -55,8 +73,12 @@ def catQ1 : Catalog := [peopleQ1, knows, age]
   | none => false)
 
 -- The approximate source: every output row is marked.
-#guard (match run cat reqAge 2 {} noFaults with
+#guard (match run catStat reqAge 2 {} noFaults with
   | some st => st.status == .done && !st.output.isEmpty && st.output.all (·.approx)
+  | none => false)
+-- The observed-cost record: 1 answered call of `knows` with 2 tuples.
+#guard (match run cat reqNames 2 {} noFaults with
+  | some st => st.answered 1 == 1 && st.rows 1 == 2 && st.cache.length == 3
   | none => false)
 
 /-! ## KR 4.1: the plan run through a monad (`Planner/ExecM.lean`)
@@ -87,6 +109,20 @@ def rwGoodPlan : Plan := rwGood.toPlan reqNames
 #print axioms runM_sound
 #print axioms pureCalls_denote
 
+#print axioms searchAdmitted_mem
+#print axioms rowQuota_add
+#print axioms exec_access_of
+#print axioms cache_rows_eq
+#print axioms frontier_pop
+#print axioms receive_inv
+#print axioms hit_inv
+#print axioms reachable_rowQuota
+#print axioms reachable_cache
+#print axioms reachable_cache_hit
+#print axioms pickMinGo_mem
+#print axioms pickMin_mem
+#print axioms cacheFind_some
+#print axioms adaptOrStop_next
 #print axioms init_inv
 #print axioms next_inv
 #print axioms reachable_inv
