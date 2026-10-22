@@ -307,7 +307,7 @@ async function runFiles (engine, listen) {
     const key = sealed ? { storageKey: KEY_HEX } : { storageKey: null }
     try {
       await check(`migration from lws-state.json (${sealed ? 'sealed' : 'clear'}): renamed, every resource with its entity tag`, async () => {
-        const s = await listen({ engine, port: 0, now: 1000, insecureNoAuth: true, onError: () => {}, dir, baseIri: BASE, ...key })
+        const s = await listen({ engine, port: 0, now: 1000, insecureNoAuth: true, onError: () => {}, dir, baseIri: BASE, storage: 'snapshot', ...key })
         let before
         try {
           await populate(s.origin)

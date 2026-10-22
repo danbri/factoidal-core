@@ -560,8 +560,12 @@ def persist (A : Seal.Aead) (key? : Option ByteArray) (seed : ByteArray) (fs : F
     (js : JState MemStore) (side : List (String × Json)) (clock : Nat) :
     Except String (FilesState × Plan) := do
   let paths := lastTouch js.touched
+  -- Take the reference table out of `fs` first, so it is not shared while
+  -- `assignBodies` updates it (it is updated in place).
+  let refs0 := fs.refs
+  let fs := { fs with refs := {} }
   let (refs', next', ni, pl, dead) ← assignBodies A key? seed (memLookup js.base) (memLookup js.prior)
-    paths (fs.refs, fs.nextBody, 0, {}, [])
+    paths (refs0, fs.nextBody, 0, {}, [])
   let ops := js.record (projWith refs')
   let sideText := Json.toString (.object side)
   let sideChanged := sideText != fs.side

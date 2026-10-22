@@ -426,7 +426,8 @@ It protects the file on disk only (formal/lean4/L4Factoidal/LWS/SnapshotSeal.lea
                   https://github.com/danbri/factoidal/issues/914
   --storage snapshot|files
                   how DIR keeps the storage (config member storage;
-                  default snapshot): one snapshot file written whole after
+                  default the environment variable FACTOIDAL_LWS_STORAGE,
+                  else snapshot): one snapshot file written whole after
                   each change, or one file per body with a journal, so a
                   write costs the same whatever the storage size
                   https://github.com/danbri/factoidal/issues/918

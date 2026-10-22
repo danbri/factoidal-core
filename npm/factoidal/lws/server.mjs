@@ -84,7 +84,7 @@
 // produced and this code keeps working unchanged.
 
 import { loadEngine } from '../bin/engine.mjs'
-import { readSnapshot, persistIfChanged, storageKeyText, loadFiles, persistFilesIfChanged } from './persist.mjs'
+import { readSnapshot, persistIfChanged, storageKeyText, storageModeText, loadFiles, persistFilesIfChanged } from './persist.mjs'
 
 /** The ops this host needs from the engine. */
 export const LWS_OPS = ['lwsOpen', 'lwsStep', 'lwsClose', 'lwsSnapshot', 'lwsFetched', 'lwsDelivered',
@@ -323,11 +323,15 @@ export async function openLwsStorage (options = {}) {
   // `storage` is passed unread; the engine refuses a value it does not know.
   // With "files" the engine names the files to read (`load`) and gives the
   // plan of every write (`lwsPersist`), and this host reads no snapshot.
-  if (typeof options.storage === 'string') config.storage = options.storage
+  // With a DIR and no `storage` option, the environment variable
+  // FACTOIDAL_LWS_STORAGE is the value; without a DIR there is nothing to
+  // keep, and only an explicit option is passed.
+  const dir = typeof options.dir === 'string' ? options.dir : null
+  const storage = dir !== null ? storageModeText(options.storage) : options.storage
+  if (typeof storage === 'string') config.storage = storage
   // `dir` names the storage directory. The snapshot found there, if any,
   // is the storage to continue from; the engine checks it.
-  const dir = typeof options.dir === 'string' ? options.dir : null
-  if (dir !== null && options.storage !== 'files') {
+  if (dir !== null && storage !== 'files') {
     const snapshot = readSnapshot(dir)
     if (snapshot !== null) config.snapshot = snapshot
   }

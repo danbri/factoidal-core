@@ -22,7 +22,7 @@
 // known shortfall with an open issue: it must FAIL today, and the run fails
 // when one passes.
 
-import { mkdtempSync, rmSync, readFileSync } from 'node:fs'
+import { mkdtempSync, rmSync, readFileSync, existsSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import http from 'node:http'
@@ -300,7 +300,11 @@ async function main () {
       const r0 = await roots()
       const d0 = await reprOf(o, '/docs/bin')
       await on.close()
-      const text = readFileSync(join(dir, 'lws-state.json'), 'utf8')
+      // The snapshot, or for a storage kept in files (issue 918) its
+      // metadata file and journal: neither holds a hash.
+      const text = existsSync(join(dir, 'lws-files.json'))
+        ? readFileSync(join(dir, 'lws-files.json'), 'utf8') + readFileSync(join(dir, 'lws-journal'), 'latin1')
+        : readFileSync(join(dir, 'lws-state.json'), 'utf8')
       for (const v of Object.values(r0)) {
         const b64 = v.slice('sha-256=:'.length, -1)
         assert(text.indexOf(b64) < 0, `the snapshot holds the root ${v}`)

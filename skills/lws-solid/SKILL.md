@@ -100,7 +100,12 @@ instead (section "Storage on disk" below).
 
 Design record: `docs/designissues/2026-10-22-lws-storage-on-disk.md`. Off by
 default: config `storage: "files"` (`listen({ storage: 'files' })`,
-`lws-serve --storage files`, `tools/lws-touchstone.sh --storage files`).
+`lws-serve --storage files`, `tools/lws-touchstone.sh --storage files`). With
+a DIR and no `storage` option the host passes the environment variable
+`FACTOIDAL_LWS_STORAGE` (unread; the engine checks it), so
+`FACTOIDAL_LWS_STORAGE=files node tests/lws/<suite>.mjs` runs a suite's
+restart checks on a storage kept in files. `tests/lws/encryption.mjs` deletes
+the variable: it tests the sealed snapshot file.
 
 * Layout (`L4Factoidal/LWS/FileLayout.lean`): `lws-files.json` (metadata of
   every resource and the other state, format `lws-files-1`), `lws-journal`

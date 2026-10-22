@@ -625,34 +625,32 @@ persist of a storage kept in files (`Files.persist`): `plan`, its bytes in the
 out region. The host performs it before it answers the request. -/
 def lwsPersist (h optsJson : String) : IO (String × ByteArray) := do
   let noBytes (s : String) : String × ByteArray := (s, ByteArray.empty)
-  -- The storage is taken out of the table while its files state is updated,
-  -- so the body reference table is not shared and is updated in place.
+  let parsed : Except String ByteArray := match parseJson optsJson with
+    | .error e => .error s!"persist: {toString e}"
+    | .ok j => (seedOf j).mapError (fun e => s!"persist: {e}")
+  match parsed with
+  | .error e => pure (noBytes (errJson e))
+  | .ok seed =>
+  -- The storage is taken out of the table and taken apart while its files
+  -- state is updated, so the body reference table is not shared and is
+  -- updated in place (skills/lean4-performance: a value named in a later
+  -- branch is alive during the call).
   match ← lwsTable.modifyGet (fun t => (t[h]?, t.erase h)) with
   | none => pure (noBytes (unknownLwsHandle h))
-  | some open_ =>
-      match open_.files with
+  | some ⟨cfg, mem, authz, notif, signingKey, results, storageKey, moved, files⟩ =>
+      let o' : OpenStorage := ⟨cfg, mem, authz, notif, signingKey, results, storageKey, moved, none⟩
+      match files with
       | none =>
-          lwsTable.modify (·.insert h open_)
+          lwsTable.modify (·.insert h o')
           pure (noBytes (errJson "lwsPersist: this storage is not kept in files (\"storage\": \"files\")"))
       | some fs =>
-          let parsed : Except String ByteArray := match parseJson optsJson with
-            | .error e => .error s!"persist: {toString e}"
-            | .ok j => (seedOf j).mapError (fun e => s!"persist: {e}")
-          match parsed with
+          match Files.persist Seal.hacl storageKey seed fs mem.journal (sideMembers o') mem.mem.clock with
           | .error e =>
-              lwsTable.modify (·.insert h open_)
-              pure (noBytes (errJson e))
-          | .ok seed =>
-          let side := sideMembers open_
-          let js := open_.mem.journal
-          let clock := open_.mem.mem.clock
-          let o' := { open_ with files := none }
-          match Files.persist Seal.hacl open_.storageKey seed fs js side clock with
-          | .error e =>
-              lwsTable.modify (·.insert h { o' with files := some fs })
-              pure (noBytes (errJson e))
+              -- Fail-stop: the handle is closed, and the files hold the
+              -- storage as of the last persist (as after a crash).
+              pure (noBytes (errJson s!"{e}; the storage is closed"))
           | .ok (fs', pl) =>
-              lwsTable.modify (·.insert h { o' with files := some fs', mem := o'.mem.resetJournal })
+              lwsTable.modify (·.insert h { o' with files := some fs', mem := mem.resetJournal })
               pure (planAnswer [] pl)
 
 /-- A delivery request as the host receives it: POST `body` to `url` with

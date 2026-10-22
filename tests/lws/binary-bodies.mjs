@@ -12,7 +12,7 @@
 //
 // Score line: "N pass, M fail, S skipped (out of T)".
 
-import { mkdtempSync, rmSync, writeFileSync, readFileSync } from 'node:fs'
+import { mkdtempSync, rmSync, writeFileSync, readFileSync, existsSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import http from 'node:http'
@@ -210,8 +210,14 @@ async function runServer (server, engine) {
       } finally {
         await first.close()
       }
-      const state = JSON.parse(readFileSync(join(dir, 'lws-state.json'), 'utf8'))
-      assert(state.format === 'lws-snapshot-2', `format ${state.format}`)
+      if (existsSync(join(dir, 'lws-files.json'))) {
+        // A storage kept in files (FACTOIDAL_LWS_STORAGE=files, issue 918):
+        // no snapshot, and the body is one file, byte for byte.
+        assert(!existsSync(join(dir, 'lws-state.json')), 'a storage kept in files wrote lws-state.json')
+      } else {
+        const state = JSON.parse(readFileSync(join(dir, 'lws-state.json'), 'utf8'))
+        assert(state.format === 'lws-snapshot-2', `format ${state.format}`)
+      }
       const second = await open({ dir })
       try {
         const g = await request(second.origin, 'GET', '/kept.png')

@@ -54,6 +54,30 @@ export function storageKeyText (explicit) {
   return typeof value === 'string' && value !== '' ? value : undefined
 }
 
+/** The environment variable that sets where `lws-serve DIR` keeps the
+ *  storage when the caller names no `storage` (issue 918). */
+export const STORAGE_MODE_VARIABLE = 'FACTOIDAL_LWS_STORAGE'
+
+/**
+ * The text of the storage mode: `explicit` when the caller gave a string,
+ * and otherwise the environment variable, passed unread; the engine checks
+ * it. An empty value is none (the engine's default, the snapshot).
+ */
+export function storageModeText (explicit) {
+  if (typeof explicit === 'string') return explicit
+  let value
+  try {
+    if (globalThis.process !== undefined && globalThis.process.env !== undefined) {
+      value = globalThis.process.env[STORAGE_MODE_VARIABLE]
+    } else if (globalThis.Deno !== undefined) {
+      value = globalThis.Deno.env.get(STORAGE_MODE_VARIABLE)
+    }
+  } catch (_error) {
+    value = undefined
+  }
+  return typeof value === 'string' && value !== '' ? value : undefined
+}
+
 /** 12 bytes from the platform's random source, base64: the nonce of one
  *  snapshot write. Pure I/O. */
 function nonceBase64 () {
