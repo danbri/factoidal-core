@@ -90,9 +90,9 @@ An LWS client (https://github.com/danbri/factoidal/issues/917; design record
   `step_write_precondition`, `step_no_token_request_without_validation`,
   `step_no_blind_create_retry`, `step_no_repeat_after_refusal`.
 - CLI `factoidal lws-client <op> URL`.
-- Expected failures: CID self-issued credentials need ES256 signing
-  (https://github.com/danbri/factoidal/issues/916); OpenID sign-in is not
-  built (row names issue 917).
+- Self-issued credentials (lws10-authn-ssi-cid): `createLwsClient({ selfIssued:
+  { subject, keyId, jwk } })`; the engine signs the ES256 JWT with HACL*.
+- Expected failure: OpenID sign-in is not built (row names issue 917).
 
 ## 0.12.0 — 2026-10-22
 

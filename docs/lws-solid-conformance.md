@@ -301,8 +301,9 @@ op      { kind, url, body | bodyBase64, mediaType, slug, container, types, links
           method, headers, requestTarget }          (members a kind does not use are ignored)
 action  { fetch: { method, url, headers: [[name, value]], bodyBase64? } }
       | { done: RESULT, session } | { fail: { code, ... }, session }
-event   { status, headers: [[name, value]], bodyBase64 | body } | { error }
-session { tokens: [{ storage, root, token }], subjectToken, subjectTokenType }
+event   { status, headers: [[name, value]], bodyBase64 | body, now, randomBase64 } | { error }
+session { tokens: [{ storage, root, token }], subjectToken, subjectTokenType,
+          selfIssued?: { subject, keyId, jwk } }
 ```
 
 Kinds: `discover`, `read`, `head`, `create`, `update`, `patch`, `delete`,

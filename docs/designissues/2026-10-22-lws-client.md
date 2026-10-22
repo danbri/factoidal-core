@@ -39,22 +39,23 @@ a later change to one op, recorded here.
 
 | Draft section | Statement (verbatim) | Lean | Touchstone rule |
 | --- | --- | --- | --- |
-| lws10-core §Authorization, Discovery Validation by a Client | "Before requesting an access token, a client MUST perform the following checks ... If any check fails, the client MUST NOT use the discovered values to request an access token." (resource_metadata same scheme and authority; metadata `resource` identical to the requested URI; StorageRoot `serviceEndpoint` same scheme and authority) | `Client.Auth.validated`, `step_no_token_request_without_validation` | client-token-after-discovery-checks |
+| lws10-core §Authorization, Discovery Validation by a Client | "Before requesting an access token, a client MUST perform the following checks ... If any check fails, the client MUST NOT use the discovered values to request an access token." (resource_metadata same scheme and authority; metadata `resource` identical to the requested URI; StorageRoot `serviceEndpoint` same scheme and authority) | `Client.Machine.validated`, `step_no_token_request_without_validation` | client-token-after-discovery-checks |
 | same, Authorization Server Metadata | "This metadata resource MUST be available at a URL with the path /.well-known/lws-configuration." (RFC 8414 §3.1 insertion form) | `Client.Wire.asMetadataUrl` | |
-| same, Token Exchange | "The resource parameter is REQUIRED ... The supplied value MUST be the URI of the storage that contains the requested resource, as provided in the Link header of an unauthorized response." and "The subject_token parameter is REQUIRED." | `Client.Auth.tokenRequest` | client-token-exchange-resource, client-token-exchange-subject-token, client-saml-token-type-saml2 |
+| lws10-authn-ssi-cid | a self-issued credential: `sub`, `iss`, `client_id` the agent, `aud` the authorization server, `exp`, `iat`, signed (not `alg` none), token type `jwt` | `Client.Machine.selfIssuedJwt`, `subjectFor` | the 10 client-cid-* rules |
+| lws10-core §Authorization, Token Exchange | "The resource parameter is REQUIRED ... The supplied value MUST be the URI of the storage that contains the requested resource, as provided in the Link header of an unauthorized response." and "The subject_token parameter is REQUIRED." | `Client.Machine.tokenRequest` | client-token-exchange-resource, client-token-exchange-subject-token, client-saml-token-type-saml2 |
 | same, Presentation | "A client MUST present an access token to a storage server using the Authorization header with an authentication scheme as defined in [RFC6750]." | `Client.Machine.attachToken` | client-token-in-authorization-header |
-| §Create Resource | "To create a Container, the client MUST include a Link header with rel="type" pointing to the Container type" | `Client.Requests.createReq` | client-create-container-type-link |
-| §Create Resource | "Server-managed metadata MUST be generated automatically by the server upon creation and MUST NOT be overridden by client-provided links." (a client link with a server-managed relation is refused before sending) | `Client.Requests.clientLinksOk` | client-create-no-server-managed-links |
+| §Create Resource | "To create a Container, the client MUST include a Link header with rel="type" pointing to the Container type" | `Client.Machine.createReq` | client-create-container-type-link |
+| §Create Resource | "Server-managed metadata MUST be generated automatically by the server upon creation and MUST NOT be overridden by client-provided links." (a client link with a server-managed relation is refused before sending) | `Client.Machine.clientLinksOk` | client-create-no-server-managed-links |
 | §Create Resource | "Repeating it may create duplicates; clients SHOULD avoid unintentional retries or use unique identifiers/checks to prevent this." | phase `createCheck`, `step_no_blind_create_retry` | client-no-blind-retry-of-create |
 | §Update Resource | "Clients SHOULD use conditional requests as defined in [RFC9110] to avoid overwriting concurrent changes." | `Precondition`, phase `tagRead`, `step_write_precondition` | client-put-conditional, client-linkset-write-conditional |
-| §Update Resource | "clients MAY include Link headers in the PUT/PATCH request to the resource URI and specify the preference 'Prefer: set-linkset'" | `Client.Requests.updateReq` (Link implies Prefer) | client-combined-update-prefer-set-linkset |
-| §Delete Resource | "Clients MUST use the Depth: infinity header to request for a recursive delete" and "Clients MAY include an If-Match header with an ETag" | `Client.Requests.deleteReq` | client-delete-container-depth, client-delete-conditional |
+| §Update Resource | "clients MAY include Link headers in the PUT/PATCH request to the resource URI and specify the preference 'Prefer: set-linkset'" | `Client.Machine.updateReq` (Link implies Prefer) | client-combined-update-prefer-set-linkset |
+| §Delete Resource | "Clients MUST use the Depth: infinity header to request for a recursive delete" and "Clients MAY include an If-Match header with an ETag" | `Client.Machine.deleteReq` | client-delete-container-depth, client-delete-conditional |
 | §Metadata | "Clients SHOULD NOT assume support for PUT or specific patch formats unless they are advertised in the resource headers and MUST handle 405 Method Not Allowed or 415 Unsupported Media Type responses gracefully." | phases `linksetMeta`, `linksetRecheck`; `step_no_repeat_after_refusal` | client-linkset-put-only-when-advertised, client-linkset-patch-format-advertised, client-no-repeat-after-405-415 |
 | §Moving Resources | "A client moves a resource by applying a partial update to the resource's linkset resource, replacing the target of the up link" and "Clients MUST NOT assume that the up link is modifiable in the absence of this capability." | op `move` | |
 | §Pagination | "rel="next": ... MUST be present when there are subsequent pages." (the client follows `next`, builds no page URL) | phase `paging`, `walk_concat`, `walk_members_once` | client-page-urls-issued, client-member-urls-issued |
-| §Notifications, Subscription | `type`, `topic`, `inbox` of a webhook subscription, POSTed as `application/lws+json` | `Client.Requests.subscribeReq` | client-subscription-media-type, -type, -topic, -inbox, -own-inbox |
+| §Notifications, Subscription | `type`, `topic`, `inbox` of a webhook subscription, POSTed as `application/lws+json` | `Client.Machine.subscribeReq` | client-subscription-media-type, -type, -topic, -inbox, -own-inbox |
 | lws10-notifications-webhook §5.2 Signature Verification | "The keyid value MUST be a URL with a fragment component." and "The id property of the top-level document map MUST match the storage identifier." | op `verifyNotification` | client-inbox-acknowledges-genuine-delivery, -refuses-unpublished-key, -refuses-altered-body, -refuses-keyid-without-fragment, -refuses-foreign-key-document |
-| §Access Requests and Grants | the data model (`@context`, `type`, `storage`, `access`, policy `type`, `action`, `assignee`, `target`, `constraint`, `inbox`) | `Client.Requests.accessDoc` | the 11 client-access-* rules |
+| §Access Requests and Grants | the data model (`@context`, `type`, `storage`, `access`, policy `type`, `action`, `assignee`, `target`, `constraint`, `inbox`) | `Client.Machine.accessDoc` | the 11 client-access-* rules |
 | lws10-index §Type Search | "The query format is identified by the request's Content-Type header field, which MUST be present", "Clients MUST NOT assume read-your-writes consistency", page refused with 404 or 410: restart | op `search`, phase `searchPage` | client-query-content-type, client-query-baseline-after-415, client-restart-after-refused-page |
 
 ## Retry rules (all in Lean)
@@ -133,8 +134,16 @@ ordinary flows never reach the refusal of `enforce`.
 
 ## Gaps (each has an expected failure)
 
-* CID self-issued credentials (10 authentication rules) need ES256 signing,
-  which https://github.com/danbri/factoidal/issues/916 adds.
+* CID self-issued credentials: built after the merge of
+  https://github.com/danbri/factoidal/issues/916 (the HACL* P-256 signer).
+  The session may hold `selfIssued: { subject, keyId, jwk }`; with no subject
+  token the engine signs an ES256 JWT (`iss`, `sub`, `client_id` the agent,
+  `aud` the authorization server named by the storage's metadata, `iat`,
+  `exp` five minutes on, `jti`) and exchanges it with token type
+  `urn:ietf:params:oauth:token-type:jwt` (`selfIssuedJwt`, `subjectFor`).
+  The clock and 48 random bytes (32 for the ECDSA nonce, 16 for `jti`) come
+  from the host with each response event (`now`, `randomBase64`); without
+  them the operation ends with `fail {code: "credential"}`.
 * OpenID sign-in (authorization code flow with PKCE) for
   `client-oidc-token-type-id-token`: the client takes an ID Token from the
   caller, but has no sign-in of its own. Issue to open; until then the row

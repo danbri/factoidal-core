@@ -869,11 +869,15 @@ const { location } = await c.create(containerUrl, { slug: 'a.txt', mediaType: 't
 ```
 
 `fetch` is injected: Node's, a browser's, or one that carries requests over
-XMPP. Gaps, each an expected failure in
-`tests/lws/client/touchstone-xfail.tsv`: CID self-issued credentials need
-ES256 signing (https://github.com/danbri/factoidal/issues/916); OpenID
-sign-in (code flow with PKCE) for `client-oidc-token-type-id-token`
-(issue to open; the row names https://github.com/danbri/factoidal/issues/917).
+XMPP. A credential is a subject token (`subjectToken`, `subjectTokenType`,
+for example a SAML assertion) or a P-256 key (`selfIssued: { subject, keyId,
+jwk }`), from which the engine signs a self-issued credential (ES256, HACL*;
+the host gives `now` and 48 random bytes with each response event).
+`step` takes `Authz.Crypto` (the verifiers and signers of
+https://github.com/danbri/factoidal/issues/916). Gap, an expected failure in
+`tests/lws/client/touchstone-xfail.tsv`: OpenID sign-in (code flow with
+PKCE) for `client-oidc-token-type-id-token` (issue to open; the row names
+https://github.com/danbri/factoidal/issues/917).
 
 ## Run the tests
 
