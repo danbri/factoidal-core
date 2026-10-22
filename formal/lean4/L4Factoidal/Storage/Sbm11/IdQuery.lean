@@ -1959,6 +1959,17 @@ def strTestKey (key : ByteArray) (k : Nat) (needle : ByteArray) : Option Bool :=
 /-- The id's tag. -/
 @[inline] def tagOf (x : UInt64) : Nat := (x >>> 60).toNat
 
+/-- The id test of `FKind.strRange` on the id `x`: a dictionary literal
+    (tag 3) whose rank is in `[classLo, classHi)` (classes 3 and 4) is decided
+    by the rank ranges of the needle (`some`); any other id goes to the
+    reference evaluator (`none`). -/
+@[inline] def strRangeFast? (ranges : Array (Nat × Nat)) (classLo classHi : Nat) (x : UInt64) :
+    Option Bool :=
+  let rank := (x &&& 0x0FFFFFFFFFFFFFFF).toNat
+  if tagOf x == 3 && classLo ≤ rank && rank < classHi then
+    some (ranges.any fun (lo, hi) => lo ≤ rank && rank < hi)
+  else none
+
 /-- Memo of the reference evaluation per FILTER conjunct. -/
 abbrev Memo := Std.HashMap (List UInt64) Bool
 
@@ -2012,10 +2023,9 @@ def applyFilters {m : Type → Type} [Monad m] (st : Store m) (fs : Array FKind)
         for i in [0:t.rows] do
           if !keep[i]! then continue
           let x := t.at col i
-          let rank := (x &&& 0x0FFFFFFFFFFFFFFF).toNat
-          let r ← if tagOf x == 3 && classLo ≤ rank && rank < classHi then
-              pure (ranges.any fun (lo, hi) => lo ≤ rank && rank < hi)
-            else match memo.get? [x] with
+          let r ← match strRangeFast? ranges classLo classHi x with
+            | some r => pure r
+            | none => match memo.get? [x] with
               | some r => pure r
               | none => do
                 let r := refFilter e [(v, ← st.termOf x)]
@@ -2069,6 +2079,91 @@ def applyFilters {m : Type → Type} [Monad m] (st : Store m) (fs : Array FKind)
         if !r then keep := keep.set! i false
       memos := memos.set! fi (if memo.size > 65536 then {} else memo)
   return (t.select fun i => keep[i]!, memos)
+
+/-! ## FILTER windows on the scan column (https://github.com/danbri/factoidal/issues/929)
+
+A STRSTARTS conjunct on the variable of the column after the scan key
+(`FKind.strRange`) decides every dictionary literal of classes 3 and 4 by
+its rank (`strRangeFast?`): the ranks that pass are the ranges of the keys
+with the needle as prefix, so in a permutation sorted on that column the
+rows that pass lie in a few id intervals. A selected block whose rows with
+the key prefix all hold ids that the test decides `false` (their column is
+bounded by `sipRange`, and `spanRejects` holds of the bounds) gives no row
+after the FILTER; the scan does not read it. For DBpedia d13 (`?s foaf:name
+?n FILTER(STRSTARTS(?n, "Tim Bern"))`) this reads a few blocks of the
+POS range of foaf:name in place of all of them.
+
+`WindowTheorems.scanFoldM_window`: over an admitted permutation with no
+overlay, the scan of the window store gives the rows of the full scan that
+`windowRejects` does not reject, together with some rows it rejects, in row
+order; the FILTER removes those (`applyFilters` keeps a row only when
+`strRangeFast?` does not answer `some false`). -/
+
+/-- Every id `x` with `vlo ≤ x ≤ vhi` has tag 3 and a rank in
+    `[classLo, classHi)` outside every range, so `strRangeFast?` answers
+    `some false` for it (`WindowTheorems.strRangeFast?_of_span`). -/
+def spanRejects (ranges : Array (Nat × Nat)) (classLo classHi : Nat) (vlo vhi : UInt64) : Bool :=
+  let rlo := (vlo &&& 0x0FFFFFFFFFFFFFFF).toNat
+  let rhi := (vhi &&& 0x0FFFFFFFFFFFFFFF).toNat
+  tagOf vlo == 3 && tagOf vhi == 3 && classLo ≤ rlo && rhi < classHi &&
+    ranges.all fun (lo, hi) => rhi < lo || hi ≤ rlo
+
+/-- Some `strRange` conjunct of `fs` on the variable `v` decides the id `x`
+    `false`. -/
+def windowRejects (fs : Array FKind) (v : String) (x : UInt64) : Bool :=
+  fs.any fun f => match f with
+    | .strRange w ranges lo hi _ => w == v && strRangeFast? ranges lo hi x == some false
+    | _ => false
+
+/-- Block `b` holds no row with the key prefix that passes the `strRange`
+    conjuncts on the scan's sort variable (the variable of column
+    `key.size`): some conjunct rejects every id in the block's range of that
+    column (`sipRange`). -/
+def windowSkip (fs : Array FKind) (spec : ScanSpec) (b : BlockMeta) : Bool :=
+  match sortVarOf spec with
+  | none => false
+  | some v =>
+    let r := sipRange b spec.key spec.key.size
+    fs.any fun f => match f with
+      | .strRange w ranges lo hi _ => w == v && spanRejects ranges lo hi r.1 r.2
+      | _ => false
+
+/-- The store `st` whose answer for the scan `spec` is `kept` (the selected
+    PRM1 entries without the blocks `windowSkip` rules out); every other
+    request goes to `st`. -/
+def windowStore {m : Type → Type} [Monad m] (st : Store m) (spec : ScanSpec) (fs : Array FKind)
+    (sel : Array BlockMeta) : Store m :=
+  let kept := sel.filter fun b => !windowSkip fs spec b
+  { st with blocksForRange := fun perm key =>
+      if perm == spec.perm && key == spec.key then pure kept else st.blocksForRange perm key }
+
+/-- The window store for the scan `spec`, and (blocks skipped, blocks
+    selected), when the scan has no delta overlay, a sort variable and a
+    `strRange` conjunct; else `st` itself. -/
+def windowStoreM {m : Type → Type} [Monad m] (st : Store m) (spec : ScanSpec) (fs : Array FKind) :
+    ExceptT String m (Store m × Option (Nat × Nat)) := do
+  let some v := sortVarOf spec | return (st, none)
+  let hasRange := fs.any fun f => match f with
+    | .strRange w _ _ _ _ => w == v
+    | _ => false
+  if !hasRange || !(st.ovl spec.perm).isEmpty then return (st, none)
+  let sel ← st.blocksForRange spec.perm spec.key
+  let kept := (sel.filter fun b => !windowSkip fs spec b).size
+  return (windowStore st spec fs sel, some (sel.size - kept, sel.size))
+
+/-- The position (0 subject, 1 predicate, 2 object) of the first variable
+    of `t` that a `strRange` conjunct of `fs` tests, for `permFor`. -/
+def windowPref (t : Pat) (fs : Array FKind) : Option Nat :=
+  [0, 1, 2].find? fun q => match t.slot q with
+    | .var v => fs.any fun f => match f with
+      | .strRange w _ _ _ _ => w == v
+      | _ => false
+    | _ => false
+
+/-- The `--explain` text of a window. -/
+def windowNote : Option (Nat × Nat) → String
+  | some (k, n) => s!"; FILTER window on the scan column: {k} of {n} selected blocks not read"
+  | none => ""
 
 /-! ## GROUP BY with COUNT -/
 
@@ -2756,7 +2851,11 @@ def runPlanM {m : Type → Type} [Monad m] (st : Store m) (plan : Plan) (emit : 
   if single && !plan.agg && plan.order.isEmpty && !plan.distinct then
     -- one pattern, no modifier that needs every row: block by block
     let t := pats[0]!
-    let spec := mkSpec t (permFor t none) need
+    -- a STRSTARTS conjunct on a variable of the pattern: the permutation that
+    -- sorts on it after the bound positions (`windowPref`), so that blocks
+    -- that no passing row can come from are not read (`windowStoreM`)
+    let spec := mkSpec t (permFor t (windowPref t fs)) need
+    let (st, window) ← windowStoreM st spec fs
     let lim := plan.limit.getD (2 ^ 63)
     if lim == 0 then
       stats := { stats with plan := #["LIMIT 0"] }
@@ -2772,7 +2871,7 @@ def runPlanM {m : Type → Type} [Monad m] (st : Store m) (plan : Plan) (emit : 
             fun (acc, s) (pieces, s') => do
               let acc ← pieces.foldlM (emitPieceM emit plan.offset lim) acc
               pure (acc, s.add s')
-        stats := { plan := #[s!"pattern 0 streamed in {chunks.length} block ranges ({p.threads} tasks at once at most; OFFSET + LIMIT above the estimate {est}): {permNames[spec.perm]!} key {spec.key.size}; blocks {s.blocksRead} read of {s.blocksSelected} selected of {s.blocksTotal}, frames {s.framesRead}, {s.bytesRead} bytes; rows {s.rowsOut}"],
+        stats := { plan := #[s!"pattern 0 streamed in {chunks.length} block ranges ({p.threads} tasks at once at most; OFFSET + LIMIT above the estimate {est}): {permNames[spec.perm]!} key {spec.key.size}; blocks {s.blocksRead} read of {s.blocksSelected} selected of {s.blocksTotal}, frames {s.framesRead}, {s.bytesRead} bytes; rows {s.rowsOut}{windowNote window}"],
                    rows := emitted, scan := s.full }
       | _, _ =>
         let ((_, emitted, _), s) ← scanFoldM st spec true ((0 : Nat), (0 : Nat), memos0)
@@ -2785,7 +2884,7 @@ def runPlanM {m : Type → Type} [Monad m] (st : Store m) (plan : Plan) (emit : 
             (emit bytes : m Unit)
           let emitted := emitted + takeHere
           pure ((skipped + skipHere, emitted, memos), emitted < lim)
-        stats := { plan := #[s!"pattern 0 streamed: {permNames[spec.perm]!} key {spec.key.size}; blocks {s.blocksRead} read of {s.blocksSelected} selected of {s.blocksTotal}, frames {s.framesRead}, {s.bytesRead} bytes; rows {s.rowsOut}"],
+        stats := { plan := #[s!"pattern 0 streamed: {permNames[spec.perm]!} key {spec.key.size}; blocks {s.blocksRead} read of {s.blocksSelected} selected of {s.blocksTotal}, frames {s.framesRead}, {s.bytesRead} bytes; rows {s.rowsOut}{windowNote window}"],
                    rows := emitted, scan := s.full }
   else
     let mut table : Table := default
