@@ -55,6 +55,39 @@ open L4Factoidal.SPARQL
 open L4Factoidal.SPARQL.AggStream
 open L4Factoidal.Qlvr (Table)
 
+/-! ## A term id as a hash key -/
+
+/-- A term id as a hash-map key. `Std.HashMap` indexes a bucket from the key's
+hash, and the hash of a `UInt64` is the number itself: ids that differ in a few
+bits (the dictionary ids of one predicate's objects) share buckets. `Id64`
+hashes the id times a 64-bit odd constant (a bijection of `UInt64`), which
+spreads such ids over the buckets (measured on d19 in the benchmark record,
+issue 862). Equality is equality of ids. -/
+def Id64 : Type := UInt64
+
+namespace Id64
+
+/-- The key of an id (no allocation: `Id64` is `UInt64`). -/
+@[inline] def ofU (x : UInt64) : Id64 := x
+
+/-- The id of a key. -/
+@[inline] def val (k : Id64) : UInt64 := k
+
+end Id64
+
+instance : BEq Id64 := inferInstanceAs (BEq UInt64)
+
+instance : LawfulBEq Id64 := inferInstanceAs (LawfulBEq UInt64)
+
+instance : Hashable Id64 := ⟨fun k => k.val * 0x9E3779B97F4A7C15⟩
+
+instance : LawfulHashable Id64 where
+  hash_eq := by
+    intro a b h
+    have e : a = b := eq_of_beq h
+    subst e
+    simp
+
 /-! ## A cache of a function's values -/
 
 /-- The values of a function at the keys asked so far. -/
@@ -193,14 +226,14 @@ structure Result where
 the variables in column order, an unbound one left out. Each id is decoded once:
 `terms` holds the terms decoded so far. -/
 def rowBinding {m : Type → Type} [Monad m] (termOf : UInt64 → ExceptT String m Term)
-    (t : Table) (i : Nat) (terms : Cache UInt64 Term) :
-    ExceptT String m (Binding × Cache UInt64 Term) := do
+    (t : Table) (i : Nat) (terms : Cache Id64 Term) :
+    ExceptT String m (Binding × Cache Id64 Term) := do
   let mut mu : Array (String × Term) := Array.mkEmpty t.vars.size
   let mut terms := terms
   for c in [0:t.vars.size] do
     let x := t.at c i
     if x != L4Factoidal.Storage.Sbm11.OptJoin.unbound then
-      let (tm, terms') ← terms.getM termOf x
+      let (tm, terms') ← terms.getM (fun k => termOf k.val) (Id64.ofU x)
       terms := terms'
       mu := mu.push (t.vars[c]!, tm)
   return (mu.toList, terms)
@@ -241,21 +274,21 @@ def aggregateM {m : Type → Type} [Monad m] (termOf : UInt64 → ExceptT String
           match byCol.findIdx? (fun e => e.1 == c) with
           | some j => byCol := byCol.modify j fun e => (e.1, e.2.push k)
           | none => byCol := byCol.push (c, #[k])
-    let mut index1 : Std.HashMap UInt64 Nat := {}
+    let mut index1 : Std.HashMap Id64 Nat := {}
     let mut index : Std.HashMap (List UInt64) Nat := {}
-    let mut terms : Cache UInt64 Term := {}
-    let mut sums : Cache UInt64 Summary := {}
+    let mut terms : Cache Id64 Term := {}
+    let mut sums : Cache Id64 Summary := {}
     for i in [0:t.rows] do
       let mut gi := 0
       if !p.implicit then
         if gcols.size == 1 then
           -- one group column: the id is the key
           let key := t.at gcols[0]! i
-          match index1.get? key with
+          match index1.get? (Id64.ofU key) with
           | some g => gi := g
           | none =>
             gi := first.size
-            index1 := index1.insert key gi
+            index1 := index1.insert (Id64.ofU key) gi
             first := first.push (some i)
             accs := accs ++ inits
         else
@@ -277,13 +310,13 @@ def aggregateM {m : Type → Type} [Monad m] (termOf : UInt64 → ExceptT String
       for e in byCol do
         let x := t.at e.1 i
         if x != L4Factoidal.Storage.Sbm11.OptJoin.unbound then
-          let s ← match sums.map.get? x with
+          let s ← match sums.map.get? (Id64.ofU x) with
             | some s => pure s
             | none => do
-              let (tm, terms') ← terms.getM termOf x
+              let (tm, terms') ← terms.getM (fun k => termOf k.val) (Id64.ofU x)
               terms := terms'
               let s := Summary.of (varView tm)
-              sums := { sums with map := sums.map.insert x s }
+              sums := { sums with map := sums.map.insert (Id64.ofU x) s }
               pure s
           for k in e.2 do
             accs := accs.modify (gi * n + k) fun a => AggAcc.step specs[k]!.1 a s

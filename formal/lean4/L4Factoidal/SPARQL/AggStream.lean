@@ -161,20 +161,45 @@ def AggAcc.stepCount : AggAcc → AggAcc
   | .cnt n => .cnt (n + 1)
   | a => a
 
+/-- `Scaled.add` with the equal-scale case first: two operands of one scale
+(every integer sum) add their mantissas and nothing else. -/
+@[inline] def addScaled (a b : Scaled) : Scaled :=
+  if a.scale == b.scale then ⟨a.mantissa + b.mantissa, a.scale⟩ else a.add b
+
+theorem addScaled_eq (a b : Scaled) : addScaled a b = a.add b := by
+  rcases a with ⟨m, s⟩
+  rcases b with ⟨n, t⟩
+  unfold addScaled Scaled.add
+  by_cases h : s = t
+  · subst h; simp [pow10]
+  · simp [h]
+
 def AggAcc.stepNum (a : AggAcc) (s : Summary) : AggAcc :=
   match a with
   | .num sc k c bad =>
     match s.tn with
-    | some (x, vk) => .num (sc.add x) (promoteKind k vk) (c + 1) bad
+    | some (x, vk) => .num (addScaled sc x) (promoteKind k vk) (c + 1) bad
     | none => .num sc k c true
   | a => a
+
+/-- `Scaled.cmp` with the equal-scale case first (every integer comparison). -/
+@[inline] def cmpScaled (a b : Scaled) : Int :=
+  if a.scale == b.scale then intCompare a.mantissa b.mantissa else a.cmp b
+
+theorem cmpScaled_eq (a b : Scaled) : cmpScaled a b = a.cmp b := by
+  rcases a with ⟨m, s⟩
+  rcases b with ⟨n, t⟩
+  unfold cmpScaled Scaled.cmp
+  by_cases h : s = t
+  · subst h; simp [pow10]
+  · simp [h]
 
 /-- `sparqlOrder` of the two `numericView`s of summaries: when both have a numeric
 reading it is the comparison of the two scaled values (`Scaled.cmp`), which
 needs no walk over the views (`cmpSummary_of`). -/
 def cmpSummary (s b : Summary) : Int :=
   match s.tn, b.tn with
-  | some (x, _), some (y, _) => x.cmp y
+  | some (x, _), some (y, _) => cmpScaled x y
   | _, _ => sparqlOrder s.nv b.nv
 
 /-- A view with a numeric reading is a number, ranks 4, and its reading is
@@ -203,6 +228,7 @@ theorem cmpSummary_of (v a : EvalResult) :
       obtain ⟨t2, r2, c2⟩ := numOfView_shape na q h2
       dsimp only
       rw [h1, h2]
+      simp only [cmpScaled_eq]
       rcases c1 with ⟨n, rfl⟩ | ⟨s, rfl⟩ | ⟨s, rfl⟩ <;>
         simp [sparqlOrder, r1, r2, sparqlOrderNumeric, numericCompare, t1, t2]
 
@@ -363,7 +389,7 @@ theorem num_stream (fn : AggregateFn) (hfn : fn = .sum ∨ fn = .avg) (vals : Li
       exact ih sc k c bad
     · simp only [hv, if_false, List.map_cons, List.foldl_cons]
       rw [step_num_of_ne fn hfn _ v hv]
-      simp only [AggAcc.stepNum, Summary.of_tn]
+      simp only [AggAcc.stepNum, Summary.of_tn, addScaled_eq]
       cases hn : v.toNumeric? with
       | none => simp [ih, sumNumericAcc, hn]
       | some p =>
