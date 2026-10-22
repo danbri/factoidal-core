@@ -111,6 +111,11 @@ jobs:
       # makes the storage host's substitution of the HACL* hasher into
       # Storage/BlockMerkle.lean sound, so it is a required gate. The probe
       # exits non-zero on any failure.
+      # The same probe also runs the pinned VCDM fixtures. A plain checkout
+      # leaves this submodule empty and correctly fails its inventory check.
+      - name: Fetch pinned VC fixtures for the native probe
+        run: git submodule update --init --depth 1 third_party/testing/vc
+
       - name: HACL* extern probe (Ed25519 vectors + sha256 differential)
         working-directory: formal/lean4
         run: lake exe l4vc-probe
