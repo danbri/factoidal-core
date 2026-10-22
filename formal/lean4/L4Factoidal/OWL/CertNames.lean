@@ -38,7 +38,7 @@ theorem frameAcc_eq (cs acc : List Char) : frameAcc cs acc = acc.reverse ++ fram
   | nil => rfl
   | cons c cs ih => simp [frameAcc, frame, ih, List.reverse_cons, List.append_assoc]
 
-@[csimp] theorem frame_eq_frameTR : frame = frameTR := by
+@[csimp] theorem frame_eq_frameTR : @frame = @frameTR := by
   funext cs
   simp [frameTR, frameAcc_eq]
 

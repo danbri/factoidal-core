@@ -110,6 +110,57 @@ private def matchTms (s : Subst) : List Tm → List GTerm → Option Subst × Bo
   | _, _ => (none, false)
 end
 
+mutual
+/-- Tail-list executable matcher; term nesting remains structural. -/
+def matchTmTR (s : Subst) (pat : Tm) (t : GTerm) : Option Subst × Bool :=
+  match pat, t with
+  | .var v, _ => extend s v t
+  | .list ps, .list ts => matchTmsAcc s ps ts false
+  | .fapp f sp ps, .fapp g sq ts =>
+      if f == g && sp == sq then matchTmsAcc s ps ts false else (none, false)
+  | _, _ =>
+      match groundTm s pat with
+      | (some g, blocked) =>
+          let (result, unresolved) := matchResult s (groundMatch g t)
+          (result, blocked || unresolved)
+      | (none, blocked) => (none, blocked)
+
+
+private def matchTmsAcc (s : Subst) : List Tm → List GTerm → Bool → Option Subst × Bool
+  | [], [], blocked => (some s, blocked)
+  | p :: ps, t :: ts, blocked =>
+      match matchTmTR s p t with
+      | (none, b) => (none, blocked || b)
+      | (some s1, b) => matchTmsAcc s1 ps ts (blocked || b)
+  | _, _, blocked => (none, blocked)
+end
+
+private theorem matchTmTR_correct :
+    (∀ s p t, matchTmTR s p t = matchTm s p t) ∧
+    (∀ s ps ts blocked, matchTmsAcc s ps ts blocked =
+      let (r, b) := matchTms s ps ts; (r, blocked || b)) := by
+  apply matchTm.mutual_induct
+    (motive_1 := fun s p t => matchTmTR s p t = matchTm s p t)
+    (motive_2 := fun s ps ts => ∀ blocked, matchTmsAcc s ps ts blocked =
+      let (r, b) := matchTms s ps ts; (r, blocked || b))
+  all_goals intros
+  all_goals simp_all [matchTmTR, matchTmsAcc, matchTm, matchTms]
+  case case4 => grind
+  case case9 s p ps t ts s1 b h result unresolved htail blocked ihMatch ihRest =>
+    cases blocked <;> cases b <;> simp_all
+
+private def matchTmsTR (s : Subst) (ps : List Tm) (ts : List GTerm) : Option Subst × Bool :=
+  matchTmsAcc s ps ts false
+
+@[csimp] theorem matchTm_eq_matchTmTR : @matchTm = @matchTmTR := by
+  funext s p t
+  exact (matchTmTR_correct.1 s p t).symm
+
+@[csimp] private theorem matchTms_eq_matchTmsTR : @matchTms = @matchTmsTR := by
+  funext s ps ts
+  simp [matchTmsTR, matchTmTR_correct.2]
+
+
 /-- Legacy Boolean view of the shared operational matcher. Actual rule
 matching keeps `Ans.unknown` in its blocked flag; this compatibility helper
 cannot establish a negative RIF semantic judgment. -/

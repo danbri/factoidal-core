@@ -66,4 +66,30 @@ def lower : List Nat → Bool → List Nat
       [0x5B, 0x5E, 0x0A, 0x0D, 0x2028, 0x2029, 0x5D] ++ lower rest false
   | c :: rest, cls => c :: lower rest cls
 
+/-- Flat pattern lowering keeps output in reverse order until completion. -/
+def lowerAcc : List Nat → Bool → List Nat → List Nat
+  | [], _, acc => acc.reverse
+  | 0x5C :: c :: rest, cls, acc =>
+      let item := if c == 0x73 then asClass spaceBody cls
+        else if c == 0x53 then asClass nonSpaceBody cls
+        else if c == 0x76 then [0x0B]
+        else [0x5C, c]
+      lowerAcc rest cls (item.reverse ++ acc)
+  | 0x5B :: rest, _, acc => lowerAcc rest true (0x5B :: acc)
+  | 0x5D :: rest, _, acc => lowerAcc rest false (0x5D :: acc)
+  | 0x2E :: rest, false, acc =>
+      lowerAcc rest false ([0x5B, 0x5E, 0x0A, 0x0D, 0x2028, 0x2029, 0x5D].reverse ++ acc)
+  | c :: rest, cls, acc => lowerAcc rest cls (c :: acc)
+
+theorem lowerAcc_eq (xs : List Nat) (cls : Bool) (acc : List Nat) :
+    lowerAcc xs cls acc = acc.reverse ++ lower xs cls := by
+  induction xs, cls using lower.induct generalizing acc <;>
+    simp_all [lowerAcc, lower, List.reverse_append, List.reverse_cons, List.append_assoc]
+
+def lowerTR (xs : List Nat) (cls : Bool) : List Nat := lowerAcc xs cls []
+
+@[csimp] theorem lower_eq_lowerTR : @lower = @lowerTR := by
+  funext xs cls
+  simp [lowerTR, lowerAcc_eq]
+
 end L4Factoidal.Regex.Ecma

@@ -1,0 +1,18 @@
+{
+  "command": [
+    "/Users/danbri/.elan/bin/lake",
+    "env",
+    "lean",
+    "/Users/danbri/working/sandbox/october/tpac/codex-npm-review/logs/IntegrationTailFlatInputs.lean"
+  ],
+  "cwd": "/Users/danbri/working/sandbox/october/tpac/codex-npm-review/integrate-pr3/formal/lean4",
+  "environment": {
+    "LEAN_NUM_THREADS": "2"
+  },
+  "exit": 0,
+  "seconds": 23.238,
+  "pass": 9,
+  "fail": 0,
+  "backend": "Lean evaluator, not a Wasm artifact run",
+  "portableReplayFromFormalLean4": "LEAN_NUM_THREADS=2 lake env lean ../../docs/audits/integration-tail-20261022/IntegrationTailFlatInputs.lean"
+}

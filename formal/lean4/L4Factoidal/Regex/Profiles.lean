@@ -40,6 +40,27 @@ def xsdLiterals : List Char → Bool → List Char
       if !cls && (c == '^' || c == '$') then '\\' :: c :: xsdLiterals rest cls
       else c :: xsdLiterals rest cls
 
+def xsdLiteralsAcc : List Char → Bool → List Char → List Char
+  | [], _, acc => acc.reverse
+  | '\\' :: c :: rest, cls, acc => xsdLiteralsAcc rest cls (c :: '\\' :: acc)
+  | '[' :: rest, _, acc => xsdLiteralsAcc rest true ('[' :: acc)
+  | ']' :: rest, _, acc => xsdLiteralsAcc rest false (']' :: acc)
+  | c :: rest, cls, acc =>
+      if !cls && (c == '^' || c == '$') then xsdLiteralsAcc rest cls (c :: '\\' :: acc)
+      else xsdLiteralsAcc rest cls (c :: acc)
+
+theorem xsdLiteralsAcc_eq (xs : List Char) (cls : Bool) (acc : List Char) :
+    xsdLiteralsAcc xs cls acc = acc.reverse ++ xsdLiterals xs cls := by
+  induction xs, cls using xsdLiterals.induct generalizing acc <;>
+    simp_all [xsdLiteralsAcc, xsdLiterals, List.reverse_cons, List.append_assoc]
+  case case6 => grind
+
+def xsdLiteralsTR (xs : List Char) (cls : Bool) : List Char := xsdLiteralsAcc xs cls []
+
+@[csimp] theorem xsdLiterals_eq_xsdLiteralsTR : @xsdLiterals = @xsdLiteralsTR := by
+  funext xs cls
+  simp [xsdLiteralsTR, xsdLiteralsAcc_eq]
+
 /-- A hyphen before `[` is subtraction only inside a character class. -/
 def hasClassSubtraction : List Char → Bool → Bool
   | [], _ => false

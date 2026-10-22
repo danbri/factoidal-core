@@ -714,6 +714,27 @@ def quoteReplacement : List Nat → List Nat
       if c == cpBackslash || c == cpDollar then cpBackslash :: c :: quoteReplacement rest
       else c :: quoteReplacement rest
 
+def quoteReplacementAcc : List Nat → List Nat → List Nat
+  | [], acc => acc.reverse
+  | c :: rest, acc =>
+      quoteReplacementAcc rest
+        (if c == cpBackslash || c == cpDollar then c :: cpBackslash :: acc else c :: acc)
+
+theorem quoteReplacementAcc_eq (xs acc : List Nat) :
+    quoteReplacementAcc xs acc = acc.reverse ++ quoteReplacement xs := by
+  induction xs generalizing acc with
+  | nil => simp [quoteReplacementAcc, quoteReplacement]
+  | cons c xs ih =>
+    simp only [quoteReplacementAcc, quoteReplacement]
+    split <;> simp_all [List.reverse_cons, List.append_assoc]
+
+def quoteReplacementTR (xs : List Nat) : List Nat := quoteReplacementAcc xs []
+
+@[csimp] theorem quoteReplacement_eq_quoteReplacementTR :
+    @quoteReplacement = @quoteReplacementTR := by
+  funext xs
+  simp [quoteReplacementTR, quoteReplacementAcc_eq]
+
 /-- SPARQL `REPLACE` / XPath `fn:replace`: global, non-overlapping,
 ordered leftmost selection; `$N` group references, `\$` and `\\` escapes, or literal
 replacement when compiled with q. -/
