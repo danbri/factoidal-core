@@ -378,7 +378,7 @@ run_suite () {
           as.filter((x) => x.outcome === "passed").length + " passed, " +
           as.filter((x) => x.outcome === "failed").length + " failed")
         const all = t.filter((x) => /^(auth\/|core\/authorization_server#)/.test(x.id))
-        if (process.argv[3] === "factoidal") {
+        if (process.argv[3] === "factoidal" && as.length) {
           for (const g of ["core/authorization_server#", "auth/oidc", "auth/cid", "auth/saml"]) {
             const xs = all.filter((x) => x.id.startsWith(g))
             const n = (o) => xs.filter((x) => x.outcome === o).length
