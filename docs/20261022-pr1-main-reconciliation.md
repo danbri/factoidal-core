@@ -186,3 +186,29 @@ after source handoff, with no proof errors in that run. It is not counted
 as a full-build pass. The parent performs the final combined PR1–3 source
 gate. Native runner build completed 158 jobs; CLI-only rebuild completed
 151 jobs. No Wasm build was run in this worktree.
+
+## XSD edition and name-complement correction
+
+The reduced native score exposed an introduced adapter error: this library's
+existing XSD 1.1 caller used the new XSD 1.0 admission profile. A separate
+`Regex/Xsd11.lean` compiler now admits the existing XML 1.0 Fifth Edition
+name escapes, and `SimpleType` uses that compiler. The global 1.0 profile
+is unchanged. [XSD 1.1 (2012), G.4.2.5 and K.1](https://www.w3.org/TR/2012/REC-xmlschema11-2-20120405/#regexs)
+define those name classes and cite that XML edition. This does not justify
+calling the same tables XSD 1.0 (2004) tables.
+
+The explicit complement control caught a separate inherited kernel defect:
+`nameCharRanges` appends extra ranges to the name-start ranges, while
+`complementRanges` requires sorted disjoint input. Consequently `\\C`
+wrongly admitted U+00B7, which also belongs to `\\c`. Normalization is now
+applied only at that complement call; positive range order is unchanged.
+No new Unicode table or separate matching engine is introduced.
+
+The targeted build passes 21 jobs, including the existing profile tests and
+16 new controls covering ASCII/non-ASCII names, complements, actual caller
+admission, retained digit/word-category refusal, and unchanged 1.0 refusal.
+The U+00B7 control's initial failure is retained as evidence. This is a
+restricted profile repair, not a full regex-conformance proof. The raw old
+parser's ASCII-only `\\d` and ECMAScript `\\w` have distinguishing contrary
+examples; those category escapes remain refused. Native XSD recovery counts
+are pending at this code commit and will be recorded separately.

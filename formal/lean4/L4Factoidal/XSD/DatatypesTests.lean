@@ -268,4 +268,29 @@ private def strLen (lo hi : Nat) : SimpleType :=
 #guard validate (.union [.atomic .integer {}, .atomic .boolean {}] {}) "42"
 #guard !validate (.union [.atomic .integer {}, .atomic .boolean {}] {}) "x"
 
+
+/- XSD 1.1 G.4.2.5 / XML 1.0 Fifth Edition name-class profile. -/
+private def namePattern11 (pattern text : String) : Option Bool :=
+  (Regex.Profiles.compileXsd11 pattern).toOption.map (fun r =>
+    Regex.Exec.acceptsNorm r (Regex.cpsOfString text))
+
+#guard namePattern11 "\\i\\c*" "A:b_1" == some true
+#guard namePattern11 "\\i\\c*" "é名_1" == some true
+#guard namePattern11 "\\i\\c*" "1bad" == some false
+#guard namePattern11 "\\I" "1" == some true
+#guard namePattern11 "\\I" "é" == some false
+#guard namePattern11 "\\C" "!" == some true
+#guard namePattern11 "\\C" "1" == some false
+#guard namePattern11 "\\C" "·" == some false
+#guard namePattern11 "\\c" "·" == some true
+#guard namePattern11 "\\i" "·" == some false
+#guard (["\\d", "\\D", "\\w", "\\W"]).all (fun p =>
+  (Regex.Profiles.compileXsd11 p).toOption.isNone)
+#guard (["\\i", "\\I", "\\c", "\\C"]).all (fun p =>
+  (Regex.Profiles.compileXsd10 p).toOption.isNone)
+#guard unreadablePatterns [["\\i\\c*"]] == []
+#guard patternMatches [["\\i\\c*"]] "é名_1"
+#guard !patternMatches [["\\i\\c*"]] "1bad"
+#guard unreadablePatterns [["\\d"]] == ["\\d"]
+
 end L4Factoidal.XSD

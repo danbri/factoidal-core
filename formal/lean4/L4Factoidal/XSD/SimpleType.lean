@@ -32,7 +32,7 @@ No `sorry`, no `axiom`, no `native_decide`, no `partial`.
 -/
 import L4Factoidal.XSD.Datatypes
 
-import L4Factoidal.Regex.Profiles
+import L4Factoidal.Regex.Xsd11
 
 namespace L4Factoidal.XSD
 
@@ -136,13 +136,13 @@ rather than folded into a score. -/
 def patternMatches (groups : List (List String)) (lit : String) : Bool :=
   let w := lit.toList.map Char.toNat
   groups.all (fun alts =>
-    let parsed := alts.filterMap (fun p => (Regex.Profiles.compileXsd10 p).toOption)
+    let parsed := alts.filterMap (fun p => (Regex.Profiles.compileXsd11 p).toOption)
     parsed.isEmpty || parsed.any (fun r => Exec.acceptsNorm r w))
 
 /-- A pattern the parser cannot read — reported, never scored. -/
 def unreadablePatterns (groups : List (List String)) : List String :=
   groups.flatMap (fun alts =>
-    alts.filter (fun p => (Regex.Profiles.compileXsd10 p).toOption.isNone))
+    alts.filter (fun p => (Regex.Profiles.compileXsd11 p).toOption.isNone))
 
 /-! ## The value-space facets -/
 
