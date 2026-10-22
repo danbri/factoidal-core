@@ -139,7 +139,7 @@ def errE : Expr := .var "unbound"
 #guard (Expr.arith .mul (.numericLit 2) (.numericLit 3)).eval [] == .num 6
 -- integer ÷ integer is an xsd:DECIMAL, never an integer (§17.4.1).
 #guard (Expr.arith .div (.numericLit 1) (.numericLit 2)).eval [] == .dec "0.5"
--- Division by zero is a type error, in every numeric type.
+-- Integer/decimal division by zero is an error; floating division has IEEE results.
 #guard (Expr.arith .div (.numericLit 1) (.numericLit 0)).eval [] == .error
 #guard (Expr.arith .div (.numericLit 1) (.decimalLit "0.0")).eval [] == .error
 -- Decimal addition is exact in the scaled model.
@@ -158,7 +158,8 @@ def errE : Expr := .var "unbound"
 #guard (Expr.floor (.decimalLit "-1.5")).eval [] == .dec "-2"
 #guard (Expr.ceil (.decimalLit "1.5")).eval [] == .dec "2"
 #guard (Expr.round (.decimalLit "1.5")).eval [] == .dec "2"
-#guard (Expr.round (.decimalLit "-1.5")).eval [] == .dec "-2"
+-- F&O §6.4.4: ties go toward positive infinity, including negatives.
+#guard (Expr.round (.decimalLit "-1.5")).eval [] == .dec "-1"
 #guard (Expr.round (.decimalLit "1.4")).eval [] == .dec "1"
 
 /-! ### §17.4.2 node tests and accessors -/
@@ -459,9 +460,8 @@ open L4Factoidal.Tests
     (.bgp qNameAge)).eval g).map (fun mu => mu.lookup "n"))
   == [some (Term.literal (litStr "Alice"))]
 
--- With xsd:integer ages IN THE DATA, the variable lookup promotes and
--- the numeric filter works end to end: Alice (30) survives, Bob (7)
--- does not.
+-- Typed data follows the same operator conversion: Alice (30) survives,
+-- Bob (7) does not. Variable lookup itself retains the original term.
 def gTyped : Graph :=
   [{ s := alice, p := exName, o := .literal (litStr "Alice") },
    { s := alice, p := exAge,  o := .literal (litInt "30") },
@@ -597,10 +597,17 @@ def xsdFn (t : String) (e : Expr) (h : isIri (xsdNamespace ++ t) := by rfl) : Ex
 #guard (xsdFn "string" (.decimalLit "1.0")).eval [] == erString "1"
 #guard (xsdFn "string" (.doubleLit "1E0")).eval [] == erString "1"
 #guard (xsdFn "string" (.boolLit false)).eval [] == erString "false"
--- Any other XSD datatype builds a typed literal; a blank node or an
--- unbound variable is a type error; the arity is one.
+-- dateTime uses the shared lexical decision and rejects unsupported source types.
 #guard (xsdFn "dateTime" (.lit (litStr "2002-10-10T17:00:00Z"))).eval []
   == .term (.literal (mkTypedLiteral "2002-10-10T17:00:00Z" xsdDateTime))
+#guard (xsdFn "dateTime" (.lit (litStr "not-a-date"))).eval [] == .error
+#guard (xsdFn "dateTime" (.lit (litStr "2001-02-29T00:00:00Z"))).eval [] == .error
+#guard (xsdFn "dateTime" (.lit (litStr "+2002-10-10T17:00:00Z"))).eval [] == .error
+#guard (xsdFn "dateTime" (.lit (litLang "2002-10-10T17:00:00Z" "en"))).eval [] == .error
+#guard (xsdFn "dateTime" (.numericLit 13)).eval [] == .error
+#guard (xsdFn "dateTime" (.iri (iriE "2002-10-10T17:00:00Z"))).eval [] == .error
+#guard (xsdFn "dateTime" (.lit (mkTypedLiteral "12345-01-01T00:00:00" xsdDateTime))).eval []
+  == .term (.literal (mkTypedLiteral "12345-01-01T00:00:00" xsdDateTime))
 #guard (xsdFn "integer" errE).eval [] == .error
 #guard (Expr.functionCall (iriE "http://www.w3.org/2001/XMLSchema#integer")
           [.numericLit 1, .numericLit 2]).eval [] == .error

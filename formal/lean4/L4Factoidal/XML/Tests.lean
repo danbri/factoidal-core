@@ -21,6 +21,8 @@ import L4Factoidal.XML.Wellformedness
 import L4Factoidal.XML.Encoding
 import L4Factoidal.XML.Validity
 
+import L4Factoidal.XML.NamespaceViewTests
+
 namespace L4Factoidal.XML.Tests
 
 open L4Factoidal.XML

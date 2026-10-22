@@ -112,6 +112,6 @@ worknote, kept as the record of a decision or a measurement),
 | 2026-10-21 | [OWL public verdict repair](20261021-owl-public-verdict-repair.md) | see file history | record: original audit draft; follow-up below |
 | 2026-10-21 | [OWL reader preservation: atomic fragment and generated names](20261021-owl-reader-preservation.md) | see file history | record: original audit draft; follow-up below |
 | 2026-10-22 | [OWL PR reconciliation](20261022-owl-pr-reconciliation.md) | see file history | current: checked producer, gate QA and explicit release blockers |
-
 | 2026-10-22 | [Core PRs 1–3 integration](20261022-pr-integration.md) | see file history | current: reconciliation, independent review evidence and combined validation |
 | 2026-10-22 | [XMPP PR3 integration: host lifecycle and persistence](20261022-xmpp-pr3-integration.md) | same commit | current: integration checks and limits |
+| 2026-10-22 | [PR1 standards reuse reconciled with main](20261022-pr1-main-reconciliation.md) | see file history | integration record: per-family reconciliation, source-aware zero duration cast, main functionality preserved, validation and explicit limits |

@@ -19,7 +19,7 @@ is commit 7 of the plan in
 ACCEPTANCE, not values, and its gate is the SPARQL suites rather than
 the RIF corpus, so it is a separate commit with a separate measurement.
 -/
-import L4Factoidal.XSD.Datatypes
+import L4Factoidal.Fn.Cast
 
 namespace L4Factoidal.Fn.Casting
 
@@ -37,12 +37,7 @@ def dtKindOfBase (b : String) : Option DTKind :=
 /-- Is `lex` in the lexical space of the date/time datatype `b`?
     `none` when `b` is not one of them. -/
 def inDateTimeLexicalSpace (b lex : String) : Option Bool :=
-  if b == "dateTimeStamp" then
-    some (match parseDateTimeLex .dateTime lex with
-          | some v => v.tz.isSome
-          | none   => false)
-  else
-    (dtKindOfBase b).map (fun k => (parseDateTimeLex k lex).isSome)
+  (dtKindOfBase b).bind (fun _ => validLexicalFor .xsd11 b lex)
 
 /-- Is `lex` in the lexical space of the duration datatype `b`?
     `none` when `b` is not one of them. XSD §3.4.27 and §3.4.28 make
@@ -50,10 +45,11 @@ def inDateTimeLexicalSpace (b lex : String) : Option Bool :=
     `xs:duration` by PATTERN, so each has its own lexical space and
     `P1Y2DT3H` is in none of the two. -/
 def inDurationLexicalSpace (b lex : String) : Option Bool :=
-  if b == "duration" then some (parseDurationLex lex).isSome
-  else if b == "dayTimeDuration" then some (parseDayTimeDurationLex lex).isSome
-  else if b == "yearMonthDuration" then some (parseYearMonthDurationLex lex).isSome
-  else none
+  if ["duration", "dayTimeDuration", "yearMonthDuration"].contains b
+  then validLexicalFor .xsd11 b lex else none
+
+/-- Main's compatibility namespace exposes the shared source-aware value cast. -/
+abbrev castValue := Cast.castFrom
 
 /-- The two together, which is the whole of the RIF-DTB 4.8 datatype
     slice. -/

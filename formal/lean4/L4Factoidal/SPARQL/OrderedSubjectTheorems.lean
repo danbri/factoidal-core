@@ -26,7 +26,8 @@ theorem compare_binding (plan : Plan) (env : EvalEnv) (active : Graph)
     simp [compareOnCondition, sparqlOrderValue, numericView, substituteExistentials,
       Expr.evalIn, binding_subject, compareSubjects, hd] <;>
     cases asub <;> cases bsub <;>
-    simp [Subject.toTerm, binding_subject, sparqlOrder, erRank,
+    simp [Subject.toTerm, Expr.evalIn, binding_subject, sparqlOrder, sparqlOrderValues, EvalResult.isNumericOperand,
+      EvalResult.promoteLiteral, erRank,
       subjectOrder, termOrder, termRank] <;> (intro hz; exact hz.symm)
 
 theorem detect_query (query : Query) (plan : Plan) (found : detect query = some plan) :

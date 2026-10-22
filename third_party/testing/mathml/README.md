@@ -51,7 +51,7 @@ labelled as authored, not as a W3C conformance pass.
   "provenance": "...",
   "tests": [
     { "name": "...", "spec": "MathML3 §... / OpenMath CD",
-      "input": "<math>...</math>",
+      "input": "<math xmlns=\"http://www.w3.org/1998/Math/MathML\">...</math>",
       "expectedValue": "<canonical value string>",
       "env": { "x": "41" }          // optional variable bindings
     }
@@ -85,3 +85,8 @@ irrational operators (`exp`, `ln`, `log`, trigonometric functions,
 non-integer `power`, inexact `root`) are **refused** with `undef`
 rather than approximated, which is why the corpus scores them as
 `undef` expectations.
+
+The scalar corpus declares the MathML namespace explicitly (namespace audit,
+2026-10-21). Earlier scalar examples omitted it. Expected numeric values and
+case counts are unchanged. The matrix corpus is a separate F* target and has
+not been migrated by the Lean namespace work.

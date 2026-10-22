@@ -206,7 +206,7 @@ extern_lib libl4exthost pkg := do
 -- library: these do file I/O and print scores. The probes
 -- (`Harness.TurtleProbe`, `Harness.CanonProbe`) stay executable roots.
 @[default_target] lean_lib Harness where globs :=
-  #[`Harness.Common, `Harness.Fixtures, `Harness.Manifest, `Harness.Compare, `Harness.ProtocolRun, `Harness.Run, `Harness.HarnessTests,
+  #[`Harness.Common, `Harness.RifImport, `Harness.Fixtures, `Harness.Manifest, `Harness.Compare, `Harness.ProtocolRun, `Harness.Run, `Harness.HarnessTests,
     `Harness.NativeHasher,
     `Harness.PosixRangeIO, `Harness.CompactedEpoch, `Harness.GenerationPointer, `Harness.ShardMerkleMaterialize, `Harness.ShardMerkleProfile, `Harness.ShardPublish,
     `Harness.IndexedBlockV3Materialize, `Harness.JsonLdScale, `Harness.LenientRun, `Harness.QlvrKernel,
@@ -242,7 +242,7 @@ extern_lib libl4exthost pkg := do
              `Wasm.Ops.Xmpp,
              `Wasm.Ops.XmppSession,
              `Wasm.Ops.Crypto,
-             `Wasm.Ops.Formats,
+             `Wasm.Ops.Formats, `Wasm.FormatsBoundaryTests,
              `Wasm.Ops.ServiceReg, `Wasm.Ops.Reasoning, `Wasm.Ops.QueryExtras,
              `Wasm.Ops.Maths,
              `Wasm.Ops.Vc,
@@ -636,3 +636,4 @@ extern_lib libl4exthost pkg := do
 -- outside it (XEP-0368 direct TLS); see deploy/fly/xmpp/. Every
 -- protocol decision is in L4Factoidal/XMPP/Server.lean, not here.
 @[default_target] lean_exe «l4xmpp-serve» where root := `Harness.XmppServe
+@[default_target] lean_exe «l4xml-namespaces» where root := `Harness.NamespaceRun

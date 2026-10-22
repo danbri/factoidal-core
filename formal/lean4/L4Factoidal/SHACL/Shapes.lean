@@ -43,6 +43,7 @@ import L4Factoidal.SHACL.Vocabulary
 import L4Factoidal.RDF.Graph
 import Std.Data.HashMap
 import Std.Data.HashSet
+import L4Factoidal.RDF.TermIdentity
 
 namespace L4Factoidal.SHACL
 
@@ -336,19 +337,19 @@ def objectsOfTerm (g : Graph) (t : Term) (p : WfIri) : List Term :=
 
 /-- Every subject of a `(·, p, o)` triple, as terms. -/
 def subjectsOf (g : Graph) (p : WfIri) (o : Term) : List Term :=
-  (g.filter (fun t => t.p == p && t.o.eqb o)).map (fun t => t.s.toTerm)
+  (g.filter (fun t => t.p == p && t.o.sameTerm o)).map (fun t => t.s.toTerm)
 
 /-- The distinct subjects of a graph, in first-appearance order. -/
 def distinctSubjects (g : Graph) : List Subject :=
   g.foldl (fun acc t => if acc.contains t.s then acc else acc ++ [t.s]) []
 
-/-- Deduplicate terms under the engine equality `Term.eqb`, keeping
-first occurrences (F* `dedup_terms`). -/
+/-- SHACL §§2.1.3, 2.3.1: sets of RDF nodes use term identity,
+    preserving XMLLiteral spelling. Keep first occurrences. -/
 def dedupTerms (l : List Term) : List Term :=
-  l.foldl (fun acc t => if acc.any (fun u => u.eqb t) then acc else acc ++ [t]) []
+  l.foldl (fun acc t => if acc.any (fun u => u.sameTerm t) then acc else acc ++ [t]) []
 
-/-- Does `t` occur in `l` under `Term.eqb`? -/
-def termMem (t : Term) (l : List Term) : Bool := l.any (fun u => u.eqb t)
+/-- SHACL §§4.5, 4.8: RDF node membership, without datatype value conversion. -/
+def termMem (t : Term) (l : List Term) : Bool := l.any (fun u => u.sameTerm t)
 
 /-! ### Hash-indexed forms of `distinctSubjects` and `dedupTerms` (2026-10-10)
 
@@ -361,8 +362,8 @@ every focus-node and value-node list. Callgrind on `l4shacl`, 2,000
 instructions (https://github.com/danbri/factoidal/issues/723).
 
 The fast forms keep the kept values newest first and a hash set (subjects) or
-hash buckets keyed by `Term.joinKey` (terms; `Term.joinKey_eq_of_eqb` puts
-every `Term.eqb`-equal term in one bucket, and `Term.eqb` decides inside the
+hash buckets keyed by `Term.joinKey` (terms; `Term.joinKey_eq_of_sameTerm` puts
+every identical RDF term in one bucket, and `Term.sameTerm` decides inside the
 bucket). Each is proved to return the same list, and `csimp` makes the
 compiler use it. -/
 
@@ -406,20 +407,20 @@ def dedupTermsGo : List Term → Std.HashMap Term (List Term) → List Term → 
   | [], _, acc => acc.reverse
   | t :: rest, b, acc =>
       let bucket := b.getD t.joinKey []
-      if bucket.any (fun u => u.eqb t) then dedupTermsGo rest b acc
+      if bucket.any (fun u => u.sameTerm t) then dedupTermsGo rest b acc
       else dedupTermsGo rest (b.insert t.joinKey (t :: bucket)) (t :: acc)
 
 def dedupTermsFast (l : List Term) : List Term := dedupTermsGo l ∅ []
 
 private theorem dedupTerms_bucket_any (t : Term) : ∀ acc : List Term,
-    (acc.filter (fun u => u.joinKey == t.joinKey)).any (fun u => u.eqb t) =
-      acc.any (fun u => u.eqb t)
+    (acc.filter (fun u => u.joinKey == t.joinKey)).any (fun u => u.sameTerm t) =
+      acc.any (fun u => u.sameTerm t)
   | [] => rfl
   | u :: rest => by
       have ih := dedupTerms_bucket_any t rest
-      by_cases hu : u.eqb t = true
+      by_cases hu : u.sameTerm t = true
       · have hk : (u.joinKey == t.joinKey) = true := by
-          simp [Term.joinKey_eq_of_eqb hu]
+          simp [Term.joinKey_eq_of_sameTerm hu]
         simp [hu, hk]
       · by_cases hk : (u.joinKey == t.joinKey) = true
         · simp [hu, hk, ih]
@@ -428,11 +429,11 @@ private theorem dedupTerms_bucket_any (t : Term) : ∀ acc : List Term,
 theorem dedupTermsGo_eq : ∀ (l : List Term) (b : Std.HashMap Term (List Term))
     (acc : List Term), (∀ k, b.getD k [] = acc.filter (fun u => u.joinKey == k)) →
     dedupTermsGo l b acc =
-      l.foldl (fun acc t => if acc.any (fun u => u.eqb t) then acc else acc ++ [t]) acc.reverse
+      l.foldl (fun acc t => if acc.any (fun u => u.sameTerm t) then acc else acc ++ [t]) acc.reverse
   | [], _, _, _ => by simp [dedupTermsGo]
   | t :: rest, b, acc, h => by
-      have hany : (b.getD t.joinKey []).any (fun u => u.eqb t) =
-          acc.reverse.any (fun u => u.eqb t) := by
+      have hany : (b.getD t.joinKey []).any (fun u => u.sameTerm t) =
+          acc.reverse.any (fun u => u.sameTerm t) := by
         rw [h t.joinKey, dedupTerms_bucket_any, List.any_reverse]
       simp only [dedupTermsGo, List.foldl_cons, hany]
       split

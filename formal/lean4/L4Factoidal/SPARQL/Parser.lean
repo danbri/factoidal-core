@@ -1525,8 +1525,10 @@ def pPrimaryExpr (fuel : Nat) (st : PState) (ts : TStream) : Except ParseError (
     | .falseKw   => .ok (.boolLit false, advTok ts)
     | .integer n =>
       match parseIntStr n with
-      | some i => .ok (.numericLit i, advTok ts)
-      | none   => .ok (.decimalLit n, advTok ts)
+      | some i =>
+          if toString i == n then .ok (.numericLit i, advTok ts)
+          else .ok (.lit (mkTypedLiteral n RDF.xsdInteger), advTok ts)
+      | none => .ok (.lit (mkTypedLiteral n RDF.xsdInteger), advTok ts)
     | .decimal d => .ok (.decimalLit d, advTok ts)
     | .double d  => .ok (.doubleLit d, advTok ts)
     | .str s     => pRdfLiteralExpr f st s (advTok ts)

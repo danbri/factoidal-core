@@ -11,7 +11,7 @@ the section it implements. RDF 1.2 triple-term bindings
 
 Built on `L4Factoidal.XML` (`Document`/`Parser`/`Theorems`) — this
 module walks the already-parsed XML infoset via `Node.elementTag`/
-`Node.textContent`/`findAttr`; it does NOT re-implement XML parsing
+`Node.textContent`/`findAttr` after shared namespace resolution; it does NOT re-implement XML parsing
 (iron rule #7's spirit: no cobbling a second XML reader).
 
 Port of `formal/fstar/Parser.SRX.fst` (parsing) and the XML half of
@@ -31,53 +31,45 @@ cover), returning `ResultsError` when it fails rather than silently
 reading an unrelated document as an empty result set.
 -/
 import L4Factoidal.SPARQL.Results
-import L4Factoidal.XML.Parser
+import L4Factoidal.XML.NamespaceView
 
 namespace L4Factoidal.SPARQL
 
 open L4Factoidal.RDF
 open L4Factoidal.XML (Node parseXML findAttr)
 
-/-! ## Namespace-flexible tag matching — SRX §2
+/-! ## Vocabulary matching — SRX §2
 
-SRX documents declare `xmlns='http://www.w3.org/2005/sparql-results#'`
-and may (rarely) use a namespace PREFIX (`<rs:result>`) instead of the
-bare tag; `Parser.XML` (this port's XML layer, like the F* source's)
-is deliberately not namespace-aware at the tree level (see
-`XML.Namespaces`'s module header), so SRX has to do its own
-prefix-insensitive tag comparison. Port of `Parser.SRX.fst`'s
-`find_colon_in_list`/`strip_ns_prefix`/`tag_matches`. -/
+The top-level reader checks namespace well-formedness and resolves expanded
+names with XML.NamespaceView. Helpers below consume its vocabulary projection,
+not raw XML nodes. Prefix stripping would lose namespace identity. -/
 
-/-- The characters of `tag` after its first `:`, or `none` if `tag` has
-no colon. Port of `find_colon_in_list`, phrased as a search rather than
-an accumulator. -/
-private def afterFirstColon : List Char → Option (List Char)
-  | [] => none
-  | c :: rest => if c == ':' then some rest else afterFirstColon rest
+def srxNamespace : String := "http://www.w3.org/2005/sparql-results#"
 
-/-- Strip a namespace prefix: `"rs:result" ↦ "result"`, `"result" ↦
-"result"`. Port of `strip_ns_prefix`. -/
-def stripNsPrefix (tag : String) : String :=
-  match afterFirstColon tag.toList with
-  | some rest => String.ofList rest
-  | none => tag
+def tagMatches (expected actual : String) : Bool := actual == expected
 
-/-- `actual` names `expected`, either directly or with a namespace
-prefix stripped. Port of `tag_matches`. -/
-def tagMatches (expected actual : String) : Bool :=
-  actual == expected || stripNsPrefix actual == expected
+mutual
+private def inSrxNamespace : XML.NamespaceNode → Bool
+  | .other _ => true
+  | .element n _ children =>
+    n.namespace_ == some srxNamespace && childrenInSrxNamespace children
+
+private def childrenInSrxNamespace : List XML.NamespaceNode → Bool
+  | [] => true
+  | child :: rest => inSrxNamespace child && childrenInSrxNamespace rest
+end
 
 /-! ## Tree navigation — port of `find_child`/`find_children`/`get_attr`/
 `collect_text` -/
 
-/-- The first child element tagged `tag` (namespace-flexible). Port of
+/-- The first child element tagged `tag` (resolved vocabulary names). Port of
 `find_child`. -/
 def findChildTag (tag : String) (children : List Node) : Option Node :=
   children.find? (fun n => match n.elementTag with
     | some t => tagMatches tag t
     | none => false)
 
-/-- Every child element tagged `tag` (namespace-flexible). Port of
+/-- Every child element tagged `tag` (resolved vocabulary names). Port of
 `find_children`. -/
 def findChildrenTag (tag : String) (children : List Node) : List Node :=
   children.filter (fun n => match n.elementTag with
@@ -114,7 +106,7 @@ def parseLiteralValue (node : Node) : Option Term :=
 
 /-- The value child of a `<binding>` (or of a `<subject>`/`<predicate>`/
 `<object>` triple-term wrapper): the first ELEMENT child, dispatched on
-its (namespace-stripped) local tag. `fuel` bounds triple-term nesting
+its resolved vocabulary name. `fuel` bounds triple-term nesting
 depth exactly as `Parser.SRX.fst`'s `parse_binding_value_fuel` does.
 Port of `parse_binding_value_fuel`. -/
 def parseSrxBindingValueFuel : Nat → Node → Option Term
@@ -127,7 +119,7 @@ def parseSrxBindingValueFuel : Nat → Node → Option Term
           | valueNode :: _ =>
               match valueNode with
               | .element t _ vchildren =>
-                  let localTag := stripNsPrefix t
+                  let localTag := t
                   if localTag == "uri" then parseUriValue valueNode
                   else if localTag == "bnode" then parseBnodeValue valueNode
                   else if localTag == "literal" then parseLiteralValue valueNode
@@ -190,13 +182,14 @@ def parseHeadVars (headNode : Node) : List VarName :=
 `parse_srx_boolean`, unified into one `QueryResult`-returning function
 (the F* source keeps them separate because F* has no shared sum type
 for "bindings or boolean" at that layer) and made stricter in one way:
-the root element must actually be (namespace-flexibly) `<sparql>` — see
+the root element must actually be (in the SPARQL results namespace) `<sparql>` — see
 the module header. -/
 def parseSrx (input : String) : Except ResultsError QueryResult :=
-  match parseXML input with
+  match XML.parseNamespaceView input with
   | .error e => .error ⟨s!"SRX: {e}"⟩
-  | .ok doc =>
-      match doc.root with
+  | .ok view =>
+      if !inSrxNamespace view then .error ⟨"SRX: element outside the SPARQL results namespace"⟩
+      else match view.forVocabulary srxNamespace with
       | .element rootTag _ children =>
           if !tagMatches "sparql" rootTag then
             .error ⟨s!"SRX: root element <{rootTag}> is not <sparql>"⟩

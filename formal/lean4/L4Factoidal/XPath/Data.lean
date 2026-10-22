@@ -47,6 +47,7 @@ puts them where the specification does, and no separate ordering rule
 is needed.
 -/
 import L4Factoidal.XML.Document
+import L4Factoidal.XML.NamespaceView
 
 /-!
 The namespace is `L4Factoidal.XPath.Full`, beside `XPath.Mini`'s
@@ -267,41 +268,21 @@ def attributesOf (it : Item) : List Item :=
         else some (.attr { path := l.path, slot := some (true, i), doc := l.doc } a))
   | _ => []
 
-/-- The namespace nodes IN SCOPE on an element: every declaration on
+/- The namespace nodes IN SCOPE on an element: every declaration on
     it or on an ancestor, nearer declarations winning, plus the
     implicit `xml` binding §5.4 requires on every element. A prefix
     undeclared by `xmlns:p=""` contributes no node. -/
+/-- XPath's node forest retains document identity but not the XML declaration.
+The XML parser validates version-specific rules; this view allows XML 1.1
+undeclarations while still rejecting unbound names and duplicate expansions. -/
+def namespaceScope (d : Doc) (path : List Nat) : Option NsScope :=
+  scopeAtPath "1.1" d path
+
 def namespacesOf (d : Doc) (it : Item) : List Item :=
   match it with
   | .tree l (.element _ _ _) =>
-      let chain : List (List Nat) :=
-        (List.range (l.path.length + 1)).map (fun k => l.path.take k)
-      let decls : List (String × String) :=
-        chain.flatMap (fun p =>
-          match nodeAt d p with
-          | some n => (attrsOfNode n).filterMap (fun a =>
-              if a.name == "xmlns" then some ("", a.value)
-              else if a.name.startsWith "xmlns:" then
-                some (String.ofList (a.name.toList.drop 6), a.value)
-              else none)
-          | none => [])
-      -- Nearer declarations are LATER in `chain`, so folding forward
-      -- with replacement makes the nearest win.
-      let merged := decls.foldl (fun acc (p, u) =>
-        (acc.filter (fun (q, _) => q != p)) ++ [(p, u)])
-        [("xml", "http://www.w3.org/XML/1998/namespace")]
-      -- Presentation order (not a document-order fact -- namespace
-      -- nodes have no source position of their own): the default
-      -- binding first, then the remaining prefixes ascending
-      -- lexicographic, `xml` included. Plain string `<` gives this
-      -- directly, since `""` is a PREFIX of every non-empty prefix
-      -- and so already sorts first. `slot`'s index feeds `normalize`'s
-      -- document-order sort, so the order has to be fixed HERE, not
-      -- by re-sorting the axis result afterward -- a later `normalize`
-      -- call re-sorts by this same key and would undo any reordering
-      -- done downstream.
-      let ordered := (merged.filter (fun (_, u) => u != "")).toArray.qsort
-        (fun (p1, _) (p2, _) => p1 < p2) |>.toList
+      let bindings := ((namespaceScope d l.path).map visibleBindings).getD []
+      let ordered := bindings.toArray.qsort (fun (p, _) (q, _) => p < q) |>.toList
       (ordered.zipIdx).map (fun ((p, u), i) =>
         .ns { path := l.path, slot := some (false, i), doc := l.doc } p u)
   | _ => []

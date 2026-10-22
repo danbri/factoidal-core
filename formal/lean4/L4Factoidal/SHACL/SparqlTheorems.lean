@@ -53,42 +53,18 @@ namespace L4Factoidal.SHACL
 The property that makes AST substitution a faithful implementation of
 pre-binding in EXPRESSION positions: the expression the substitution
 puts in place of `$v` evaluates to exactly what `Expr.var v` would
-evaluate to under the pre-binding row — including SPARQL §17.1 numeric
-promotion, which `Expr.lit` alone does not perform. -/
+evaluate to under the pre-binding row. Numeric conversion is performed by
+operators, so substitution also preserves term identity and lexical spelling. -/
 
-theorem termToExpr_evalIn_eq_literalPromote (env : EvalEnv) (mu : Binding) (l : WfLiteral) :
-    (termToExpr? (.literal l)).map (Expr.evalIn env mu) = some (literalPromote l) := by
-  simp only [termToExpr?, literalPromote]
-  by_cases h1 : (l.val.datatype == RDF.xsdInteger) = true
-  · rw [if_pos h1, if_pos h1]
-    cases hp : XSD.parseIntegerLex l.val.lexicalForm <;> simp [Expr.evalIn, hp]
-  · rw [if_neg h1, if_neg h1]
-    by_cases h2 : (l.val.datatype == RDF.xsdDecimal) = true
-    · rw [if_pos h2, if_pos h2]; simp [Expr.evalIn]
-    · rw [if_neg h2, if_neg h2]
-      by_cases h3 :
-          (l.val.datatype == RDF.xsdDouble || l.val.datatype == SPARQL.xsdFloat) = true
-      · rw [if_pos h3, if_pos h3]; simp [Expr.evalIn]
-      · rw [if_neg h3, if_neg h3]
-        by_cases h4 : (l.val.datatype == RDF.xsdBoolean) = true
-        · rw [if_pos h4, if_pos h4]
-          split <;> simp_all [Expr.evalIn]
-        · rw [if_neg h4, if_neg h4]; simp [Expr.evalIn]
+theorem termToExpr_evalIn_eq_literal (env : EvalEnv) (mu : Binding) (l : WfLiteral) :
+    (termToExpr? (.literal l)).map (Expr.evalIn env mu) = some (.term (.literal l)) := rfl
 
-/-- The same statement in the form the substitution uses it: replacing
-`Expr.var v` by `termToExpr? t` preserves the value `Expr.var v` has
-under a mapping that binds `v` to `t`. -/
+/-- Replacing a bound literal variable by a literal expression preserves its
+    complete RDF term, not merely its promoted datatype value. -/
 theorem substVarExpr_var_evalIn (env : EvalEnv) (mu : Binding) (v : VarName) (l : WfLiteral) :
     Expr.evalIn env mu (substVarExpr v (.literal l) (.var v)) =
       Expr.evalIn env [(v, .literal l)] (.var v) := by
-  have h := termToExpr_evalIn_eq_literalPromote env mu l
-  have hr : Expr.evalIn env [(v, Term.literal l)] (Expr.var v) = literalPromote l := by
-    simp [Expr.evalIn, Binding.lookup]
-  rw [hr]
-  simp only [substVarExpr, beq_self_eq_true, if_true]
-  cases he : termToExpr? (Term.literal l) with
-  | none => rw [he] at h; simp at h
-  | some e => rw [he] at h; simpa using h
+  simp [substVarExpr, termToExpr?, Expr.evalIn, Binding.lookup]
 
 /-! ## The failure channel produces no results -/
 

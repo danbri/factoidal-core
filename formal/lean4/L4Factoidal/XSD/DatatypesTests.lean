@@ -127,8 +127,8 @@ namespace L4Factoidal.XSD
 
 #guard (lexicalMapWs .dateTime "2002-10-10T12:00:00-05:00").isSome
 #guard (lexicalMapWs .dateTime "2002-10-10T17:00:00Z").isSome
--- §3.3.8: the two above denote the SAME instant.
-#guard valIdentical
+-- §3.3.7: same instant, different timezone offsets: equal, not identical.
+#guard !valIdentical
   ((lexicalMapWs .dateTime "2002-10-10T12:00:00-05:00").getD (.bool false))
   ((lexicalMapWs .dateTime "2002-10-10T17:00:00Z").getD (.bool true))
 #guard (lexicalMapWs .dateTime "2002-10-10T12:00:00").isSome

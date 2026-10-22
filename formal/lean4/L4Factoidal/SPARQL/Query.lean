@@ -173,12 +173,11 @@ def erNumericLexical : EvalResult → String
   | .term (.literal l) => l.val.lexicalForm
   | _                  => ""
 
-/-- Ordering on the numeric fragment. §15.1 leaves the position of
-operands with no defined `<` undefined and requires only CONSISTENCY,
-so "a value that parses sorts before one that does not; two
-unparseable values compare lexically" is conformant — and it is what
-the F* source settled on (its own note records that the earlier
-"unparseable means tie" rule was NOT transitive). -/
+/-- Legacy numeric ordering inherited from F*. Values accepted by the
+    scaled parser precede rejected values; rejected pairs compare lexically.
+    IEEE rounding, infinities and NaN still need integration with the shared
+    value model. §15.1's freedom for undefined pairs does not establish that
+    this entire ordering is conformant. -/
 def sparqlOrderNumeric (a b : EvalResult) : Int :=
   match numericCompare a b with
   | some cmp => cmp
@@ -190,7 +189,7 @@ def sparqlOrderNumeric (a b : EvalResult) : Int :=
 
 /-- §15.1 ordering of two evaluated values: `-1`, `0`, `1` (port of
 `sparql_order`). -/
-def sparqlOrder (a b : EvalResult) : Int :=
+def sparqlOrderValues (a b : EvalResult) : Int :=
   let ra := erRank a
   let rb := erRank b
   if ra < rb then -1
@@ -206,17 +205,55 @@ def sparqlOrder (a b : EvalResult) : Int :=
     | .term t1, .term t2 => termOrder t1 t2
     | _, _ => 0
 
-/-- The §15.1 ordering ORDER BY, MIN and MAX use: `sparqlOrder` on the
-`numericView` of each value, so a literal of a type derived from
-`xsd:integer` sorts among the numerics by value (§15.1 orders numerics
-by the `<` operator). `erEqual`, the GROUP BY and DISTINCT key, keeps
-`sparqlOrder` on the values as they are.
-https://github.com/danbri/factoidal/issues/782 -/
-def sparqlOrderValue (a b : EvalResult) : Int :=
-  sparqlOrder (numericView a) (numericView b)
+/-- ORDER BY and MIN/MAX compare datatype values but leave the original
+    results intact. Grouping uses RDF term identity separately. -/
+def sparqlOrder (a b : EvalResult) : Int :=
+  -- Compare admitted numeric values before representation-only literal
+  -- promotion: a source float has already rounded at float precision.
+  let numericOrder : Option Int := if a.isNumericOperand && b.isNumericOperand then do
+    let x ← a.numericValue?
+    let y ← b.numericValue?
+    let nan : XSD.Val → Bool := fun
+      | .flt f | .dbl f => f.cls == .nan
+      | _ => false
+    -- SPARQL leaves unordered numeric pairs open to implementation policy.
+    -- Give NaN a fixed position rather than tying it with every number.
+    if nan x || nan y then pure (if nan x == nan y then 0 else if nan x then 1 else -1)
+    else
+      let less ← Fn.Comparison.numericCompare x y .lt
+      let greater ← Fn.Comparison.numericCompare x y .gt
+      pure (if less then -1 else if greater then 1 else 0)
+    else none
+  match numericOrder with
+  | some order => order
+  | none =>
+    let view : EvalResult → EvalResult := fun v => match v with
+      | .term (.literal l) => match integerDerivedValue? l with
+        | some i => .num i
+        | none => v.promoteLiteral
+      | _ => v
+    sparqlOrderValues (view a) (view b)
 
-/-- Order-equality of two evaluated values (port of `er_equal`). -/
-def erEqual (a b : EvalResult) : Bool := sparqlOrder a b == 0
+/-- SPARQL §18.5 grouping compares RDF term keys. Failed/unbound keys
+    form one group; numeric value equality does not erase lexical spelling. -/
+def groupTermEqual (a b : Option Term) : Bool :=
+  match a, b with
+  | none, none => true
+  | some x, some y => x.sameTerm y
+  | _, _ => false
+
+/-- Grouping equality shares the RDF term view used by projection. -/
+def erEqual (a b : EvalResult) : Bool := groupTermEqual a.toTerm? b.toTerm?
+
+/-- Aggregate DISTINCT compares RDF terms; error results are filtered by
+    its caller. Lexically different integers remain distinct. -/
+def erTermEqual (a b : EvalResult) : Bool :=
+  match a.toTerm?, b.toTerm? with
+  | some x, some y => x.sameTerm y
+  | _, _ => false
+
+/-- Main compatibility name for value ordering. -/
+abbrev sparqlOrderValue := sparqlOrder
 
 /-! ## The query AST — SPARQL 1.1 §18.2.4
 
@@ -747,65 +784,52 @@ evaluated values with different keys are never order-equal, so a group can only
 match a row whose key bucket is its own (`erEqual_erBucket`). Numerics share one
 bucket, because `sparqlOrderNumeric` compares across `xsd:integer`, `xsd:decimal`
 and `xsd:double`; literals are keyed by datatype, lexical form and language tag. -/
-def erBucket : EvalResult → Nat × String
-  | .error                    => (0, "")
-  | .term (.bnode x)          => (1, x)
-  | .term (.iri x)            => (2, x.val)
-  | .bool b                   => (3, if b then "1" else "0")
-  | .num _ | .dec _ | .dbl _  => (4, "")
-  | .term (.literal l)        =>
-      (7, l.val.datatype.val ++ "\x1f" ++ l.val.lexicalForm ++ "\x1f" ++ l.val.langTag.getD "")
-  | .term (.tripleTerm _ _ _) => (8, "")
+def termBucket : Term → Nat × String
+  | .bnode x => (1, x)
+  | .iri x => (2, x.val)
+  | .literal l => (7, l.val.datatype.val ++ "\x1f" ++ l.val.lexicalForm ++ "\x1f" ++
+      (l.val.langTag.map String.toLower).getD "")
+  | .tripleTerm _ _ _ => (8, "")
 
-open L4Factoidal.SPARQL.ExprRefinement in
-/-- `literalOrder` is zero only for literals with equal datatype, lexical form and
-language tag (as the key sees it). -/
-theorem literalOrder_eq_zero {l1 l2 : Literal} (h : literalOrder l1 l2 = 0) :
-    l1.datatype.val = l2.datatype.val ∧ l1.lexicalForm = l2.lexicalForm ∧
-      l1.langTag.getD "" = l2.langTag.getD "" := by
-  unfold literalOrder at h
-  by_cases h1 : strCompare l1.datatype.val l2.datatype.val = 0
-  · by_cases h2 : strCompare l1.lexicalForm l2.lexicalForm = 0
-    · refine ⟨(strCompare_eq_zero_iff _ _).mp h1, (strCompare_eq_zero_iff _ _).mp h2, ?_⟩
-      simp only [h1, h2, ne_eq, not_true_eq_false, if_false] at h
-      cases ht1 : l1.langTag <;> cases ht2 : l2.langTag <;> rw [ht1, ht2] at h <;> simp_all [Option.getD]
-      exact (strCompare_eq_zero_iff _ _).mp h
-    · simp [h1, h2] at h
-  · simp [h1] at h
+def erBucket (v : EvalResult) : Nat × String :=
+  match v.toTerm? with | none => (0, "") | some t => termBucket t
 
-open L4Factoidal.SPARQL.ExprRefinement in
-/-- Order-equal values share a bucket: the bucket never hides a match. -/
-theorem erEqual_erBucket {a b : EvalResult} (h : erEqual a b = true) :
+theorem sameTerm_termBucket {a b : Term} (same : a.sameTerm b = true) :
+    termBucket a = termBucket b := by
+  cases a <;> cases b <;> simp only [Term.sameTerm] at same
+  all_goals try { cases same }
+  all_goals try { rfl }
+  · simp only [beq_iff_eq] at same
+    subst same
+    rfl
+  · simp only [beq_iff_eq] at same
+    subst same
+    rfl
+  · rename_i left right
+    simp only [Literal.sameTerm, Bool.and_eq_true, beq_iff_eq] at same
+    obtain ⟨⟨⟨lexical, datatype⟩, language⟩, _⟩ := same
+    have tag : (left.val.langTag.map String.toLower).getD "" =
+        (right.val.langTag.map String.toLower).getD "" := by
+      cases hl : left.val.langTag <;> cases hr : right.val.langTag <;>
+        simp_all [langTagOptionEq, langTagEq]
+    simp [termBucket, lexical, datatype, tag]
+
+theorem erEqual_erBucket {a b : EvalResult} (same : erEqual a b = true) :
     erBucket a = erBucket b := by
-  unfold erEqual at h
-  simp only [beq_iff_eq] at h
-  have hr : erRank a = erRank b := by
-    refine Classical.byContradiction (fun hne => ?_)
-    unfold sparqlOrder at h
-    rcases Int.lt_or_gt_of_ne hne with hlt | hgt
-    · simp [hlt] at h
-    · simp [Int.not_lt.mpr (Int.le_of_lt hgt), hgt] at h
-  rcases a with (i1 | b1 | l1 | ⟨s1, p1, o1⟩) | x1 | n1 | d1 | s1 | _ <;>
-  rcases b with (i2 | b2 | l2 | ⟨s2, p2, o2⟩) | x2 | n2 | d2 | s2 | _ <;>
-  first | (exfalso; revert hr; simp [erRank]; done) | skip
-  all_goals (try rfl)
-  all_goals (try (simp only [erBucket]; done))
-  · -- iri, iri
-    have h' : strCompare i1.val i2.val = 0 := by simpa [sparqlOrder, erRank] using h
-    simp [erBucket, (strCompare_eq_zero_iff _ _).mp h']
-  · -- bnode, bnode
-    have h' : strCompare b1 b2 = 0 := by simpa [sparqlOrder, erRank] using h
-    simp [erBucket, (strCompare_eq_zero_iff _ _).mp h']
-  · -- literal, literal
-    have h' : literalOrder l1.val l2.val = 0 := by simpa [sparqlOrder, erRank] using h
-    obtain ⟨e1, e2, e3⟩ := literalOrder_eq_zero h'
-    simp [erBucket, e1, e2, e3]
-  · -- bool, bool
-    have h' : intCompare (if x1 then 1 else 0) (if x2 then 1 else 0) = 0 := by
-      simpa [sparqlOrder, erRank] using h
-    have := (intCompare_eq_zero_iff _ _).mp h'
-    cases x1 <;> cases x2 <;> simp_all [erBucket]
+  cases ha : a.toTerm? with
+  | none => cases hb : b.toTerm? <;> simp_all [erEqual, groupTermEqual, erBucket]
+  | some x =>
+    cases hb : b.toTerm? with
+    | none => simp [erEqual, groupTermEqual, ha, hb] at same
+    | some y =>
+      simp only [erEqual, groupTermEqual, ha, hb] at same
+      simpa only [erBucket, ha, hb] using sameTerm_termBucket same
 
+theorem erTermEqual_erBucket {a b : EvalResult} (same : erTermEqual a b = true) :
+    erBucket a = erBucket b := by
+  apply erEqual_erBucket
+  cases ha : a.toTerm? <;> cases hb : b.toTerm? <;>
+    simp_all [erTermEqual, erEqual, groupTermEqual]
 
 /-- The bucket of a whole group key. -/
 def keyBucket (k : List EvalResult) : List (Nat × String) := k.map erBucket
@@ -873,18 +897,19 @@ def evalOverGroup (env : EvalEnv) (e : Expr) (g : SolutionGroup) :
     List EvalResult :=
   g.solutions.map (fun mu => Expr.evalIn env mu e)
 
-/-- Drop type errors (an aggregate ignores rows whose expression
-errors, §18.5.1.1). -/
+/-- Retained engine policy: aggregate inputs omit expression errors.
+COUNT explicitly removes errors in SPARQL 1.1; this helper's use for other
+aggregates is a compatibility boundary, not general conformance established
+by §18.5.1.1 (see errata-query-6). -/
 def filterNonError (vals : List EvalResult) : List EvalResult :=
   vals.filter (fun v => v != .error)
 
-/-- Deduplicate values under the §15.1 ordering, keeping the first
-occurrence — what `COUNT(DISTINCT ?x)` and friends need (port of
-`dedup_er`). -/
+/-- Aggregate DISTINCT removes repeated RDF terms, keeping their first
+occurrence. Group error keys have a separate equivalence policy. -/
 def dedupErAcc : List EvalResult → List EvalResult → List EvalResult
   | [],       acc => acc.reverse
   | v :: rest, acc =>
-      if acc.any (fun x => erEqual v x) then dedupErAcc rest acc
+      if acc.any (fun x => erTermEqual v x) then dedupErAcc rest acc
       else dedupErAcc rest (v :: acc)
 
 def dedupEr (vals : List EvalResult) : List EvalResult := dedupErAcc vals []
@@ -916,7 +941,7 @@ def dedupErFastGo : List EvalResult → Std.HashMap (Nat × String) (List EvalRe
   | v :: rest, buckets, acc =>
       let k := erBucket v
       let bucket := buckets.getD k []
-      if bucket.any (fun x => erEqual v x) then dedupErFastGo rest buckets acc
+      if bucket.any (fun x => erTermEqual v x) then dedupErFastGo rest buckets acc
       else dedupErFastGo rest (buckets.insert k (v :: bucket)) (v :: acc)
 
 /-- `dedupEr` with a hash index on `erBucket`; the same list (`dedupEr_eq_dedupErFast`). -/
@@ -932,14 +957,14 @@ def DedupErBucketWf (buckets : Std.HashMap (Nat × String) (List EvalResult))
 /-- Scanning the kept values of the bucket of `v` answers the same as scanning
 every kept value: an order-equal kept value has the bucket of `v`. -/
 theorem dedupErBucketAny_eq (v : EvalResult) : ∀ acc : List EvalResult,
-    (acc.filter (fun x => erBucket x == erBucket v)).any (fun x => erEqual v x) =
-      acc.any (fun x => erEqual v x)
+    (acc.filter (fun x => erBucket x == erBucket v)).any (fun x => erTermEqual v x) =
+      acc.any (fun x => erTermEqual v x)
   | [] => rfl
   | x :: rest => by
       have ih := dedupErBucketAny_eq v rest
-      by_cases hx : erEqual v x = true
+      by_cases hx : erTermEqual v x = true
       · have hk : (erBucket x == erBucket v) = true := by
-          simp [erEqual_erBucket hx]
+          simp [erTermEqual_erBucket hx]
         simp [hx, hk]
       · by_cases hk : (erBucket x == erBucket v) = true
         · simp [hx, hk, ih]
@@ -953,8 +978,8 @@ theorem dedupErFastGo_eq : ∀ (vals : List EvalResult)
     dedupErFastGo vals buckets acc = dedupErAcc vals acc
   | [], _, _, _ => by simp [dedupErFastGo, dedupErAcc]
   | v :: rest, buckets, acc, hwf => by
-      have hany : (buckets.getD (erBucket v) []).any (fun x => erEqual v x) =
-          acc.any (fun x => erEqual v x) := by
+      have hany : (buckets.getD (erBucket v) []).any (fun x => erTermEqual v x) =
+          acc.any (fun x => erTermEqual v x) := by
         rw [hwf (erBucket v)]
         exact dedupErBucketAny_eq v acc
       simp only [dedupErFastGo, dedupErAcc, hany]
@@ -977,37 +1002,25 @@ theorem dedupEr_eq_dedupErFast_apply (vals : List EvalResult) :
 @[csimp] theorem dedupEr_eq_dedupErFast : @dedupEr = @dedupErFast :=
   funext dedupEr_eq_dedupErFast_apply
 
-/-- Running sum over the numeric values, carrying the promoted type
-and the count of numeric operands (port of `sum_numeric_acc`). -/
-def sumNumericAcc : List EvalResult → Scaled → NumKind → Nat →
-    (Scaled × NumKind × Nat)
-  | [],       acc, k, c => (acc, k, c)
-  | v :: rest, acc, k, c =>
-      match v.toNumeric? with
-      | some (s, vk) => sumNumericAcc rest (acc.add s) (promoteKind k vk) (c + 1)
-      | none         => sumNumericAcc rest acc k c
-
-/-- §18.5.1.4 SUM. The sum of no values is `0` (the spec's stated
-identity). -/
+/-- SPARQL §§18.3/18.5.1.3: right-nested numeric addition over the chosen
+reverse enumeration of the aggregate bag, with integer zero as the base.
+Validation, promotion and rounding belong to shared arithmetic. -/
 def sumNumeric (vals : List EvalResult) : EvalResult :=
-  let (s, k, c) := sumNumericAcc vals ⟨0, 0⟩ .int 0
-  if c == 0 then .num 0 else formatNumericResult s k
+  vals.foldl (fun acc v => evalArithmetic .add v acc) (.num 0)
 
-/-- §18.5.1.5 AVG. The result is never an integer: an average of
-integers is an `xsd:decimal`. Division carries ten extra fraction
-digits, as in the F* source. -/
+/-- SPARQL §18.3 permits any ToList enumeration of an aggregate multiset.
+We choose reverse input enumeration for §18.5.1.3's right-nested Sum, so the
+implementation keeps constant aggregate state. This equality assumes no
+associativity or commutativity of rounded numeric addition. -/
+theorem sumNumeric_reverse_enumeration (vals : List EvalResult) :
+    sumNumeric vals = vals.reverse.foldr (evalArithmetic .add) (.num 0) := by
+  simp only [sumNumeric, List.foldr_reverse]
+
+/-- SPARQL 1.1 §18.5.1.4: AVG is SUM / count, including arithmetic's result
+    type and rounding. Empty input is the specified integer zero. -/
 def avgNumeric (vals : List EvalResult) : EvalResult :=
-  let (s, k, c) := sumNumericAcc vals ⟨0, 0⟩ .int 0
-  if c == 0 then .num 0
-  else
-    let resultKind := match k with | .int => NumKind.dec | other => other
-    let extra : Nat := 10
-    let extended := s.mantissa * pow10 extra
-    let divided := intDivT extended (Int.ofNat c)
-    let resultScale := s.scale + extra
-    match resultKind with
-    | .dbl => .dbl (formatAsDouble divided resultScale)
-    | _    => .dec (stripTrailingDecimalZeros (formatScaledValue divided resultScale))
+  if vals.isEmpty then .num 0
+  else evalArithmetic .div (sumNumeric vals) (.num (Int.ofNat vals.length))
 
 /-- §18.5.1.6 MIN by the §15.1 ordering; MIN of nothing is an error. -/
 def findMin (vals : List EvalResult) : EvalResult :=
@@ -1057,12 +1070,11 @@ def evalAggregate (env : EvalEnv) (fn : AggregateFn) (distinct : Bool)
   | .sum =>
       let vals := filterNonError (evalOverGroup env e g)
       let vals := if distinct then dedupEr vals else vals
-      -- §18.5.1.4: a non-numeric operand makes the whole sum an error.
-      if vals.any (fun v => v.toNumeric?.isNone) then .error else sumNumeric vals
+      sumNumeric vals
   | .avg =>
       let vals := filterNonError (evalOverGroup env e g)
       let vals := if distinct then dedupEr vals else vals
-      if vals.any (fun v => v.toNumeric?.isNone) then .error else avgNumeric vals
+      avgNumeric vals
   | .min =>
       let vals := filterNonError (evalOverGroup env e g)
       findMin (if distinct then dedupEr vals else vals)

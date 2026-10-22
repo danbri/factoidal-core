@@ -50,6 +50,7 @@ fuel `Nat` exactly where the F* source also needed one
 (`parse_object_12_f`'s `decreases fuel`).
 -/
 
+import L4Factoidal.Encoding.Hex
 namespace L4Factoidal.Syntax
 
 /-! ## Parse errors — message + position (RFC: W3C negative-syntax tests
@@ -76,11 +77,7 @@ instance : ToString ParseError :=
 `hex_val` the F* source keeps only for Turtle/TriG backward compatibility;
 every caller here treats an invalid hex digit as a parse error, never a
 silent 0. -/
-def hexVal (c : Char) : Option Nat :=
-  if '0' ≤ c ∧ c ≤ '9' then some (c.toNat - '0'.toNat)
-  else if 'A' ≤ c ∧ c ≤ 'F' then some (c.toNat - 'A'.toNat + 10)
-  else if 'a' ≤ c ∧ c ≤ 'f' then some (c.toNat - 'a'.toNat + 10)
-  else none
+def hexVal (c : Char) : Option Nat := Encoding.Hex.digitValue c
 
 /-! ## Codepoint validity — [26] UCHAR decode target
 

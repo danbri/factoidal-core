@@ -1,25 +1,50 @@
-/-
-L4Factoidal.Fn.Numeric — the numeric part of XQuery 1.0 and XPath 2.0
-Functions and Operators (https://www.w3.org/TR/xpath-functions/), §6.
-
-RIF-DTB 4.5 cites `op:numeric-add`, `op:numeric-subtract`,
-`op:numeric-multiply`, `op:numeric-divide`, `op:numeric-integer-divide`
-and `op:numeric-mod`; SPARQL 1.1 §17.4.1 cites the same operators for
-`+`, `-`, `*` and `/`. They are written HERE, once, over
-`XSD.Dec` — the `xs:decimal` value space of XML Schema Part 2 §3.3.3.
-
-`XSD.Dec` already carries addition, subtraction, negation, comparison
-and normalisation. This module adds what the F&O operators need and
-`XSD.Dec` does not have: multiplication of two decimals, division,
-integer division, modulus, and the two roundings.
-
-Division is TRUNCATED at `divScale` fractional digits. XSD 1.1 §3.3.4
-gives `xs:decimal` arbitrary precision but lets an implementation state
-a limit; this is the limit, stated.
--/
-import L4Factoidal.XSD.Datatypes
+/- Shared numeric inputs for F&O comparisons and Boolean conversion.
+   SPARQL §§17.1–17.3 and §17.4.2.4; F&O 2007 §17.1.6.
+   Lexical parsing uses XSD 1.0, including integer-derived bounds and the
+   existing IEEE conversion profile. This module also owns exact decimal
+   arithmetic and the lexical decimal adapters used by existing consumers. -/
+import L4Factoidal.RDF.Core
+import L4Factoidal.XSD.Lexical
+import L4Factoidal.Fn.Rounding
 
 namespace L4Factoidal.Fn.Numeric
+open RDF XSD
+
+def isType (b : Builtin) : Bool :=
+  (intBounds b).isSome || b == .decimal || b == .float || b == .double
+
+/-- Datatype classification alone does not establish lexical validity. -/
+def isDatatype (dt : WfIri) : Bool := (builtinOfIri? dt.val).any isType
+
+def lexicalValue? (dt : WfIri) (s : String) : Option Val := do
+  let b ← builtinOfIri? dt.val
+  if isType b then lexicalFor .xsd10 b s else none
+
+def literalValue? (l : Literal) : Option Val := lexicalValue? l.datatype l.lexicalForm
+
+/-- Exact decimal input to the shared IEEE conversion profile. -/
+def decimalParsed (d : Dec) : Parsed :=
+  .num (d.mantissa < 0) d.mantissa.natAbs (-(d.scale : Int))
+
+/-- F&O numeric promotion, shared by comparison and arithmetic. -/
+def floatingValue (double : Bool) : Val → Option Fval
+  | .dec d => some (if double then canonDouble (decimalParsed d) else canonFloat (decimalParsed d))
+  | .flt f => some f
+  | .dbl f => if double then some f else none
+  | _ => none
+
+/-- F&O numeric-to-Boolean conversion: zero and NaN are false. Parsing
+    must happen first so underflow and derived-type bounds have taken effect.
+    Nonnumeric values remain errors; string conversion is a caller policy. -/
+def booleanValue? : Val → Option Bool
+  | .dec d => some (d.mantissa != 0)
+  | .flt f | .dbl f => some (match f.cls with
+      | .zero | .nan => false
+      | .inf => true
+      | .finite m _ => m != 0)
+  | _ => none
+
+
 
 open L4Factoidal.XSD (Dec)
 
@@ -59,7 +84,7 @@ def decDiv? (scale : Nat) (a b : Dec) : Option Dec :=
 /-- The FLOOR of a decimal, which is not `Dec.floorDiv` — that name is
     on a truncating division. Needed wherever a negative offset must
     carry into the next lower day (`Fn.DateTime.plusDuration`). -/
-def decFloorInt (a : Dec) : Int := Int.fdiv a.mantissa ((10 : Int) ^ a.scale)
+def decFloorInt (a : Dec) : Int := Rounding.integral .floor a.mantissa ((10 : Int) ^ a.scale)
 
 /-- The fractional part, in `[0, 1)`, for any sign. -/
 def decFrac (a : Dec) : Dec := Dec.sub a (Dec.ofInt (decFloorInt a))
@@ -71,10 +96,7 @@ def decFrac (a : Dec) : Dec := Dec.sub a (Dec.ofInt (decFloorInt a))
     month", and the Approved `Builtins_Time` fixture asserts
     `multiply-yearMonthDuration("P2Y11M", 2.3) = "P6Y9M"` — 35 months
     times 2.3 is 80.5 months, and the answer is 81. -/
-def decRound (a : Dec) : Int :=
-  let p := (10 : Int) ^ a.scale
-  if p == 1 then a.mantissa
-  else Int.fdiv (a.mantissa * 2 + p) (2 * p)
+def decRound (a : Dec) : Int := Rounding.integral .nearest a.mantissa ((10 : Int) ^ a.scale)
 
 /-- §6.2.5 `op:numeric-integer-divide`: truncated toward zero. -/
 def decIntDiv? (a b : Dec) : Option Int :=
@@ -92,83 +114,31 @@ def decMod? (a b : Dec) : Option Dec :=
 
 /-! ## The decimal-NUMERAL layer
 
-RIF-DTB's built-ins are given ground terms whose lexical forms are
-decimal numerals, and `RIF/Builtins.lean` worked in those strings
-rather than in `XSD.Dec`. The five functions below are that layer,
-moved here unchanged so there is one home for them. Replacing them
-with `XSD.parseDecimalLex` + `Dec.canonical` is commit 7 of the
-consolidation plan in
-`docs/designissues/2026-09-07-xsd-datatypes-audit.md` §8, and is
-deliberately NOT done here: it moves acceptance behaviour and needs
-the SPARQL suites as its gate, not the RIF corpus. -/
+RIF-DTB's lexical decimal adapters now delegate parsing and rendering to
+`XSD.parseDecimalLex` and `Dec.canonical`, and arithmetic to the operations
+above. Existing public function names remain adapters to this one decimal
+kernel. Lexical admission changes require the RIF and SPARQL regression gates. -/
 
 /-- A decimal numeral as an exact MANTISSA and SCALE: the value is
     `mant / 10 ^ scale`. -/
 def decParts (s : String) : Option (Int × Nat) :=
-  match (s.splitOn ".") with
-  | [i]    => (i.toInt?).map (fun m => (m, 0))
-  | [i, f] =>
-      if !(f.toList.all (·.isDigit)) then none
-      else
-        let neg := i.startsWith "-"
-        let ii := if i == "" || i == "-" || i == "+" then (if neg then "-0" else "0") else i
-        (match ii.toInt? with
-         | some m =>
-             let frac : Int := Int.ofNat (f.toNat?.getD 0)
-             let pow : Int := (10 : Int) ^ f.length
-             some ((if neg then m * pow - frac else m * pow + frac), f.length)
-         | none   => none)
-  | _      => none
+  (XSD.parseDecimalLex s).map (fun d => (d.mantissa, d.scale))
 
-/-- Render `mant / 10 ^ scale` as a decimal numeral, without a trailing
-    fractional zero run. -/
-def decRender (m : Int) (scale : Nat) : String :=
-  if scale == 0 then toString m
-  else
-    let neg := m < 0
-    let a := (if neg then -m else m).toNat
-    let p := 10 ^ scale
-    let ip := a / p
-    let fp := a % p
-    let fs := (toString fp)
-    let fs := String.ofList (List.replicate (scale - fs.length) '0') ++ fs
-    let fs := String.ofList (fs.toList.reverse.dropWhile (· == '0')).reverse
-    (if neg then "-" else "") ++ toString ip ++ (if fs == "" then "" else "." ++ fs)
+def decRender (m : Int) (scale : Nat) : String := (Dec.norm ⟨m, scale⟩).canonical
 
-private def align (a b : String) : Option (Int × Int × Nat) :=
-  match decParts a, decParts b with
-  | some (ma, sa), some (mb, sb) =>
-      let sc := Nat.max sa sb
-      some (ma * (10 : Int) ^ (sc - sa), mb * (10 : Int) ^ (sc - sb), sc)
-  | _, _ => none
+def decOfNumeral (s : String) : Option Dec := XSD.parseDecimalLex s
 
-def addDec (a b : String) : Option String :=
-  (align a b).map (fun (x, y, sc) => decRender (x + y) sc)
+def addDec (a b : String) : Option String := do
+  pure ((← decOfNumeral a).add (← decOfNumeral b)).canonical
 
-def subDec (a b : String) : Option String :=
-  (align a b).map (fun (x, y, sc) => decRender (x - y) sc)
+def subDec (a b : String) : Option String := do
+  pure ((← decOfNumeral a).sub (← decOfNumeral b)).canonical
 
-def mulDec (a b : String) : Option String :=
-  match decParts a, decParts b with
-  | some (ma, sa), some (mb, sb) => some (decRender (ma * mb) (sa + sb))
-  | _, _ => none
+def mulDec (a b : String) : Option String := do
+  pure (decMul (← decOfNumeral a) (← decOfNumeral b)).canonical
 
-/-- `func:numeric-divide`. Division by zero has no value. -/
-def divDec (a b : String) : Option String :=
-  match decParts a, decParts b with
-  | some (ma, sa), some (mb, sb) =>
-      if mb == 0 then none
-      else
-        let num := ma * (10 : Int) ^ (sb + divScale)
-        let den := mb * (10 : Int) ^ sa
-        some (decRender (Int.tdiv num den) divScale)
-  | _, _ => none
-
-/-- A decimal numeral read as an `XSD.Dec`, which is the bridge from
-    the numeral layer to the value layer the date/time functions work
-    in. -/
-def decOfNumeral (s : String) : Option Dec :=
-  (decParts s).map (fun (m, sc) => Dec.norm ⟨m, sc⟩)
+def divDec (a b : String) : Option String := do
+  (decDiv? divScale (← decOfNumeral a) (← decOfNumeral b)).map Dec.canonical
 
 /-! ## Pins
 
@@ -206,5 +176,6 @@ writes out. -/
 #guard decFloorInt ⟨-15, 1⟩ = -2
 #guard decFloorInt ⟨15, 1⟩ = 1
 #guard decFrac ⟨-15, 1⟩ = ⟨5, 1⟩
+
 
 end L4Factoidal.Fn.Numeric

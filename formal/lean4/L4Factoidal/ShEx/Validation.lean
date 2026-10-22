@@ -159,37 +159,10 @@ private def splitOnDot (l : List Char) : List (List Char) :=
 /-- Compare two decimal lexemes EXACTLY, without a float. `none` when
     either side is not a plain decimal — the caller then treats the
     facet as unsatisfied rather than guessing an ordering. -/
-def compareDecimal (a0 b0 : String) : Option Ordering :=
-  -- An `xsd:double` writes its value in E-notation, and the facet it
-  -- is compared against may not. Folding the exponent into the digits
-  -- FIRST is what lets `1.0E2` be compared with `100`; without it the
-  -- parse below failed, the comparison returned `none`, and the facet
-  -- was reported unsatisfied — twelve entries of the suite, every one
-  -- a POSITIVE test that a correct value was rejected.
-  let a := L4Factoidal.CSVW.resolveExponent a0
-  let b := L4Factoidal.CSVW.resolveExponent b0
-  let parse (s : String) : Option (Bool × List Char × List Char) :=
-    let neg := s.startsWith "-"
-    let body := if neg || s.startsWith "+" then s.toList.drop 1 else s.toList
-    let isD := fun (c : Char) => '0' ≤ c && c ≤ '9'
-    match splitOnDot body with
-    | [ip]     => if !ip.isEmpty && ip.all isD then some (neg, ip, []) else none
-    | [ip, fp] => if (!ip.isEmpty || !fp.isEmpty) && ip.all isD && fp.all isD
-                  then some (neg, ip, fp) else none
-    | _        => none
-  match parse a, parse b with
-  | some (na, ia, fa), some (nb, ib, fb) =>
-      let iw := max ia.length ib.length
-      let fw := max fa.length fb.length
-      let ka := List.replicate (iw - ia.length) '0' ++ ia ++ fa ++ List.replicate (fw - fa.length) '0'
-      let kb := List.replicate (iw - ib.length) '0' ++ ib ++ fb ++ List.replicate (fw - fb.length) '0'
-      let magnitude := compare (String.ofList ka) (String.ofList kb)
-      some (match na, nb with
-        | false, false => magnitude
-        | true,  true  => magnitude.swap
-        | true,  false => .lt
-        | false, true  => .gt)
-  | _, _ => none
+def compareDecimal (a b : String) : Option Ordering := do
+  let x ← XSD.decimalOrScientific a
+  let y ← XSD.decimalOrScientific b
+  some (XSD.Dec.cmp x y)
 
 private def cmpOk (facet : Option String) (lex : String) (ok : Ordering → Bool) : Bool :=
   match facet with

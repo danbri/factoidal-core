@@ -32,6 +32,8 @@ No `sorry`, no `axiom`, no `native_decide`, no `partial`.
 -/
 import L4Factoidal.XSD.Datatypes
 
+import L4Factoidal.Regex.Profiles
+
 namespace L4Factoidal.XSD
 
 open L4Factoidal.Regex
@@ -134,13 +136,13 @@ rather than folded into a score. -/
 def patternMatches (groups : List (List String)) (lit : String) : Bool :=
   let w := lit.toList.map Char.toNat
   groups.all (fun alts =>
-    let parsed := alts.filterMap XSDPattern.parseXsdPattern
+    let parsed := alts.filterMap (fun p => (Regex.Profiles.compileXsd10 p).toOption)
     parsed.isEmpty || parsed.any (fun r => Exec.acceptsNorm r w))
 
 /-- A pattern the parser cannot read — reported, never scored. -/
 def unreadablePatterns (groups : List (List String)) : List String :=
   groups.flatMap (fun alts =>
-    alts.filter (fun p => (XSDPattern.parseXsdPattern p).isNone))
+    alts.filter (fun p => (Regex.Profiles.compileXsd10 p).toOption.isNone))
 
 /-! ## The value-space facets -/
 
@@ -192,7 +194,7 @@ def valueFacetsOk (b : Builtin) (f : Facets) (v : Val) : Bool :=
    | some lexs =>
        lexs.any (fun lex =>
          match lexicalMapWs b lex with
-         | some ev => valIdentical v ev
+         | some ev => valEqualOrIdentical v ev
          | none    => false))
 
 /-! ## §4.1.4 / §3.1.2 — validation -/
@@ -228,7 +230,7 @@ def valueOfFuel : Nat → SimpleType → String → Option Val
                 let ets := (applyWhiteSpace .collapse lex).splitOn " "
                              |>.filter (fun t => t != "")
                 let evs := ets.map (fun t => valueOfFuel fuel item t)
-                !evs.any Option.isNone && valIdentical v (.seq (evs.filterMap id)))
+                !evs.any Option.isNone && valEqualOrIdentical v (.seq (evs.filterMap id)))
           if (match lf.length with | some n => vs.length == n | none => true) &&
              (match lf.minLength with | some n => vs.length ≥ n | none => true) &&
              (match lf.maxLength with | some n => vs.length ≤ n | none => true) &&
@@ -245,7 +247,7 @@ def valueOfFuel : Nat → SimpleType → String → Option Val
             | none => true
             | some lexs => lexs.any (fun lex =>
                 match members.filterMap (fun m => valueOfFuel fuel m lex) |>.head? with
-                | some ev => valIdentical v ev
+                | some ev => valEqualOrIdentical v ev
                 | none    => false)
           if enumOk then some v else none
 

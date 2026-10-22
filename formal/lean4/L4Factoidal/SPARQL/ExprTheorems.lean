@@ -20,9 +20,8 @@ Contents:
     `cmp b a = -cmp a b` (hence antisymmetry), the cross-multiplied
     characterisation that reconciles the two scale-normalisation
     branches, and TRANSITIVITY of the strict order;
-  * §17.4.1.7 — reflexivity of `=` on IRI, literal, Boolean and numeric
-    values, and its NON-reflexivity on blank nodes (a fact about the
-    operator mapping, not an omission);
+  * §17.4.1.7 — reflexivity of `=` on IRIs, blank nodes, Booleans,
+    integers and the nonnumeric unpromoted-literal fallback;
   * §18.5 — the FILTER bridge collapses a type error to `false`.
 
 Each theorem pins down behaviour a plausible-looking simplification
@@ -63,7 +62,10 @@ theorem ebv_num_nonzero {n : Int} (h : n ≠ 0) : ebv (.num n) = some true := by
 language-tagged literal is a TYPE ERROR — not `true` because it happens
 to be non-empty. -/
 theorem ebv_langString (lex tag : String) :
-    ebv (.term (.literal (Literal.langString lex tag))) = none := rfl
+    ebv (.term (.literal (Literal.langString lex tag))) = none := by
+  have hn : isNumericDatatype rdfLangString = false := by decide +kernel
+  simp only [ebv, Literal.langString, hn]
+  rfl
 
 /-- A plain `xsd:string` literal, by contrast, does have an EBV. -/
 theorem ebv_string (lex : String) :
@@ -354,11 +356,9 @@ theorem Scaled.cmp_trans {a b c : Scaled}
 
 /-! ## §17.4.1.7 — reflexivity of `=`
 
-`=` is reflexive on the term kinds its operator mapping covers. It is
-NOT reflexive on blank nodes: §17.4.1.7 gives no `op:` mapping for
-them, so `?b = ?b` on a blank node is a type error. That is the
-specification, and pinning it down here stops a future "obvious"
-catch-all arm from quietly changing FILTER results. -/
+Numeric value equality is distinct from RDF term identity (for example NaN
+is not reflexive under value equality). Blank-node equality uses the RDFterm
+fallback. Literal reflexivity below explicitly covers unpromoted terms. -/
 
 theorem listCharCompare_refl (cs : List Char) : listCharCompare cs cs = 0 := by
   induction cs with
@@ -371,45 +371,44 @@ theorem listCharCompare_refl (cs : List Char) : listCharCompare cs cs = 0 := by
 /-- `=` holds between an IRI term and itself. -/
 theorem valueCompare_eq_refl_iri (i : WfIri) :
     valueCompare (.term (.iri i)) (.term (.iri i)) .eq = some true := by
-  simp [valueCompare, numericView, applyCompOp]
+  simp [valueCompare, EvalResult.isNumericOperand, EvalResult.promoteLiteral, applyCompOp]
 
-/-- `=` holds between a literal term and itself, whatever its datatype
-and language tag. A literal with a value for the operators
-(`literalOperandView`: numeric, derived from `xsd:integer`, or boolean)
-compares by that value; every other literal by its term. -/
-theorem valueCompare_eq_refl_literal (l : WfLiteral) :
+/-- `=` is reflexive in the nonnumeric RDF fallback. Numeric value and
+    ill-typed-literal fallback have their own entry points. -/
+theorem valueCompare_eq_refl_unpromoted_literal (l : WfLiteral)
+    (h : literalPromote l = .term (.literal l))
+    (hn : Fn.Comparison.numericDatatype l.val.datatype = false) :
     valueCompare (.term (.literal l)) (.term (.literal l)) .eq = some true := by
-  rcases literalOperandView_cases l with h | ⟨i, h⟩ | ⟨s, v, h, hp⟩ | ⟨s, v, h, hp⟩ | ⟨b, h⟩
-  · simp [valueCompare, numericView, h, applyCompOp]
-  · simp [valueCompare, numericView, h, numericCompare, EvalResult.toNumeric?,
-      Scaled.cmp, intCompare, applyCompOp]
-  · simp [valueCompare, numericView, h, numericCompare, EvalResult.toNumeric?, hp,
-      applyCompOp, Scaled.cmp_refl]
-  · simp [valueCompare, numericView, h, numericCompare, EvalResult.toNumeric?, hp,
-      applyCompOp, Scaled.cmp_refl]
-  · cases b <;> simp [valueCompare, numericView, h, applyCompOp]
+  simp [valueCompare, EvalResult.isNumericOperand, hn, EvalResult.promoteLiteral, h, applyCompOp]
 
 /-- `=` holds between a Boolean value and itself. -/
 theorem valueCompare_eq_refl_bool (b : Bool) :
     valueCompare (.bool b) (.bool b) .eq = some true := by
-  cases b <;> simp [valueCompare, numericView, applyCompOp]
+  cases b <;> simp [valueCompare, EvalResult.isNumericOperand, EvalResult.promoteLiteral, applyCompOp]
+
+/-- SPARQL §17.4.1.7 preserves identity of ill-typed numeric RDF literals
+    after numeric value lookup fails. This is not a NaN identity shortcut. -/
+theorem numericEquality_refl_invalid_literal (l : WfLiteral)
+    (h : Fn.Comparison.numericLiteralValue? l.val = none) :
+    numericEquality (.term (.literal l)) (.term (.literal l)) false = some true ∧
+    numericEquality (.term (.literal l)) (.term (.literal l)) true = some false := by
+  simp [numericEquality, numericValueCompare, EvalResult.numericValue?, h, Literal.sameTerm_refl]
 
 /-- `=` holds between an integer value and itself. -/
 theorem valueCompare_eq_refl_num (n : Int) :
     valueCompare (.num n) (.num n) .eq = some true := by
-  simp [valueCompare, numericView, numericCompare, EvalResult.toNumeric?, applyCompOp]
+  simp [valueCompare, EvalResult.isNumericOperand, numericEquality, numericValueCompare, EvalResult.numericValue?,
+    Fn.Comparison.numericCompare, XSD.Dec.cmp, XSD.Dec.ofInt, Fn.Comparison.Op.apply]
 
-/-- RDFterm-equal (§17.4.1.7) holds between a blank node and itself:
-`=` on two blank nodes is term identity. -/
-theorem valueCompare_eq_bnode_refl (b : BNodeId) :
+/-- §17.4.1.7's RDFterm fallback compares blank-node identity. -/
+theorem valueCompare_eq_bnode (b : BNodeId) :
     valueCompare (.term (.bnode b)) (.term (.bnode b)) .eq = some true := by
-  simp [valueCompare, numericView]
+  simp [valueCompare, EvalResult.isNumericOperand, EvalResult.promoteLiteral]
 
-/-- `sameTerm` IS reflexive on every RDF term — it is
-term identity, and `Term.eqb` is proved reflexive in `RDF.Core`. -/
+/-- `sameTerm` is reflexive even when datatype value comparison is not. -/
 theorem eval_sameTerm_refl (env : EvalEnv) (mu : Binding) (l : WfLiteral) :
     Expr.evalIn env mu (.sameTerm (.lit l) (.lit l)) = .bool true := by
-  simp [Expr.evalIn, EvalResult.toTerm?]
+  simp [Expr.evalIn, EvalResult.toTerm?, Term.sameTerm]
 
 /-! ## §18.5 — the FILTER bridge -/
 
@@ -443,8 +442,9 @@ The lines below put that in every build log. -/
 #print axioms Scaled.cmp_refl
 #print axioms Scaled.cmp_swap
 #print axioms Scaled.cmp_trans
-#print axioms valueCompare_eq_refl_literal
-#print axioms valueCompare_eq_bnode_refl
+#print axioms valueCompare_eq_refl_unpromoted_literal
+#print axioms valueCompare_eq_bnode
+#print axioms numericEquality_refl_invalid_literal
 #print axioms toCond_bound
 
 end L4Factoidal.SPARQL

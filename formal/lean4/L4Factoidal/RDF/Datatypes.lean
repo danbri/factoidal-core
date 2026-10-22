@@ -29,15 +29,16 @@ to any caller-supplied map.
 
 * **Numbers** (`xsd:integer`, `xsd:int`, `xsd:decimal`): a lexical form
   is normalised to `(mantissa : Int, scale : Nat)` with no trailing
-  zeros in the fraction (`NumVal.normalize`), so `"010"`, `"10"` and
+  zeros in the fraction (`XSD.Dec.norm`), so `"010"`, `"10"` and
   `"10.0"` all normalise to `(10, 0)` — RDF 1.1 Semantics §7's "the
   value of the literal". `xsd:int` is `xsd:integer` restricted to
   [-2147483648, 2147483647] (XSD 1.1 §3.4.17). The value space of
   `xsd:int` is inside `xsd:integer`'s, which is inside `xsd:decimal`'s
   (XSD 1.1 §3.4: "the ·value space· of integer is the infinite set ...
-  a subset of decimal"); `valueInSpace` knows that chain and nothing
-  else — every other pair of modelled datatypes has disjoint value
-  spaces (§7: "datatypes ... with disjoint value spaces").
+  a subset of decimal"). `valueInSpace` delegates to `XSD.ValueSpace`,
+  including individual decimal values in the integer/int spaces;
+  every other pair of modelled datatypes has disjoint value spaces
+  (§7: "datatypes ... with disjoint value spaces").
 * **Strings**: `xsd:string` values are the lexical forms;
   `rdf:langString` values are (string, lowercased tag) pairs (RDF 1.1
   Concepts §3.3: "the value space of language tags is always in lower
@@ -60,6 +61,7 @@ import L4Factoidal.NatBounds
 import L4Factoidal.XSD.IEEE754
 import L4Factoidal.XSD.Datatypes
 import L4Factoidal.JSON.Parser
+import L4Factoidal.XSD.ValueSpace
 
 namespace L4Factoidal.RDF
 
@@ -209,13 +211,16 @@ def literalValueEq (D : List WfIri) (l1 l2 : Literal) : Bool :=
     | some a, some b => a == b
     | _, _ => false))
 
-/-- Is the value of the (well-formed, recognised) literal `l` a member
-of the value space of the recognised datatype `c`? Same datatype: yes.
-Otherwise only along the XSD numeric chain int ⊂ integer ⊂ decimal;
-every other pair of modelled datatypes is disjoint. -/
+/-- Membership for the modelled datatype map. Numeric values use the shared
+XSD service, including decimal values that are integral and fit `int`.
+Recognition by the caller's datatype map remains the caller's responsibility. -/
 def valueInSpace (l : Literal) (c : WfIri) : Bool :=
-  l.datatype == c ||
-  (c == xsdDecimal && (l.datatype == xsdInteger || l.datatype == xsdInt)) ||
-  (c == xsdInteger && l.datatype == xsdInt)
+  if isNumericDatatype l.datatype && isNumericDatatype c then
+    let source := if l.datatype == xsdInt then XSD.Builtin.int
+      else if l.datatype == xsdInteger then .integer else .decimal
+    let target := if c == xsdInt then XSD.Builtin.int
+      else if c == xsdInteger then .integer else .decimal
+    (XSD.lexicalValueInBuiltin .xsd11 source l.lexicalForm target).getD false
+  else l.datatype == c
 
 end L4Factoidal.RDF

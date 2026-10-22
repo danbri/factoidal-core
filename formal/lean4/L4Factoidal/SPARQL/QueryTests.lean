@@ -1279,8 +1279,8 @@ the same query on 2026-08-26). -/
 groups `groupSolutions` (`addToGroups` per row) returns: same keys, same first
 appearance order, same rows in input order. The keys below are evaluated
 values, so the cases that decide the bucket choice are exercised directly:
-`1`, `1.0` and `1.0E0` are order-equal across `xsd:integer`, `xsd:decimal` and
-`xsd:double` and must land in ONE group; an unbound variable is an error key;
+`1`, `1.0` and `1.0E0` denote distinct RDF terms across `xsd:integer`,
+`xsd:decimal` and `xsd:double` and must remain separate groups; an unbound variable is an error key;
 two literals that differ only in language tag or datatype are different
 groups. -/
 
@@ -1327,20 +1327,20 @@ private def gkFast (rows : List (List EvalResult × Binding)) : List SolutionGro
 #guard gkShape (gkFast (gkRows 7)) == gkShape (gkSpec (gkRows 7))
 
 -- The groups are the expected ones, so a grouping that put every row in one
--- group, or every row in its own group, fails: 1, 1.0 and 1.0E0 share a group
--- and so do the equal numeric pairs of the two-component keys.
+-- group, or every row in its own group, fails. Numeric value equality does
+-- not erase RDF datatype or lexical spelling in one- or two-component keys.
 #guard (gkFast (gkRows 3)).length == (gkSpec (gkRows 3)).length
 #guard (gkFast (gkRows 3)).length > 10
 #guard (gkFast (gkRows 3)).length < gkeys.length
-#guard ((gkFast (gkRows 1)).head?.map (fun g => g.solutions.length)) == some 4
-#guard ((gkFast (gkRows 2)).head?.map (fun g => g.solutions.length)) == some 8
+#guard ((gkFast (gkRows 1)).head?.map (fun g => g.solutions.length)) == some 3
+#guard ((gkFast (gkRows 2)).head?.map (fun g => g.solutions.length)) == some 6
 #guard (gkFast (gkRows 3)).all (fun g => g.solutions.length > 1)
 -- Rows keep their input order inside a group.
 #guard ((gkFast (gkRows 1)).head?.map (fun g => g.solutions)) ==
-  some [[("i", nLit "0")], [("i", nLit "2")], [("i", nLit "6")], [("i", nLit "22")]]
+  some [[("i", nLit "0")], [("i", nLit "16")], [("i", nLit "22")]]
 
--- Order-equal keys share a bucket; the bucket separates the keys it may separate.
-#guard keyBucket [gkNum1] == keyBucket [gkDec1] && keyBucket [gkDec1] == keyBucket [gkDbl1]
+-- These identity-distinct terms have distinct datatype/lexical bucket keys.
+#guard keyBucket [gkNum1] != keyBucket [gkDec1] && keyBucket [gkDec1] != keyBucket [gkDbl1]
 #guard keyBucket [gkAlice] != keyBucket [gkBob]
 #guard keyBucket [gkLitEn] != keyBucket [gkLitFr]
 #guard keyBucket [gkLitI] != keyBucket [gkLitPl]
@@ -1362,14 +1362,14 @@ private def dkVals (cycles : Nat) : List EvalResult :=
 #guard dedupErFast (dkVals 1) == dedupErAcc (dkVals 1) []
 #guard dedupErFast (dkVals 5) == dedupErAcc (dkVals 5) []
 #guard dedupEr (dkVals 3) == dedupErAcc (dkVals 3) []
--- The kept values are the expected ones: 1, 1.0 and 1.0E0 are one value and
--- the first occurrence stays; language-tagged, plain and typed literals stay
--- apart. A removal that kept everything, or merged everything, fails.
-#guard (dedupErFast (dkVals 4)).length == 12
-#guard dedupErFast [gkNum1, gkDec1, gkDbl1, gkNum2, gkDec2] == [gkNum1, gkNum2]
-#guard dedupErFast [gkDec1, gkNum1] == [gkDec1]
+-- RDF term identities remain distinct. Direct low-level dedup preserves
+-- errors (no RDF term); aggregate callers remove them before deduplication.
+-- There are thirteen distinct bound terms and eight errors in four cycles.
+#guard (dedupErFast (dkVals 4)).length == 21
+#guard dedupErFast [gkNum1, gkDec1, gkDbl1, gkNum2, gkDec2] == [gkNum1, gkDec1, gkDbl1, gkNum2, gkDec2]
+#guard dedupErFast [gkDec1, gkNum1] == [gkDec1, gkNum1]
 #guard dedupErFast [gkLitEn, gkLitFr, gkLitPl, gkLitEn, gkLitI] == [gkLitEn, gkLitFr, gkLitPl, gkLitI]
-#guard dedupErFast [gkErr, gkErr, gkBn, gkBn, gkAlice] == [gkErr, gkBn, gkAlice]
+#guard dedupErFast [gkErr, gkErr, gkBn, gkBn, gkAlice] == [gkErr, gkErr, gkBn, gkAlice]
 
 -- COUNT(DISTINCT *) counts distinct rows (the code runs `distinctSolutionsFast`,
 -- `evalAggregate_countDistinctStar` restates it with `distinctSolutions`), and
@@ -1447,3 +1447,12 @@ def dsSame : Dataset := { default := gSame, named := [] }
     (.and (.sameTerm (.var "v1") (.var "v2")) (.compare .eq (.var "v1") (.var "v2"))) pSame))).length == 10
 
 end L4Factoidal.SPARQL.QueryTests
+
+-- Numeric ORDER BY preserves source rounding; NaN has one fixed position,
+-- rather than tying every finite pair through an unordered intermediary.
+#guard L4Factoidal.SPARQL.sparqlOrder (.dbl "1") (.dbl "NaN") == -1
+#guard L4Factoidal.SPARQL.sparqlOrder (.dbl "NaN") (.dbl "2") == 1
+#guard L4Factoidal.SPARQL.sparqlOrder (.dbl "NaN") (.dbl "NaN") == 0
+#guard L4Factoidal.SPARQL.sparqlOrder (.dbl "1") (.dbl "2") == -1
+#guard L4Factoidal.SPARQL.findMin [.dbl "NaN", .num 1] == .num 1
+#guard L4Factoidal.SPARQL.findMax [.num 1, .dbl "NaN"] == .dbl "NaN"
