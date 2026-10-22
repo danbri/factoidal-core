@@ -21,7 +21,8 @@ Cases, for every array size in a fixed list and a random set:
   and shared (another reference is live): the shared original must be
   unchanged after the store.
 
-`Prim.Bytes.pushU64LE` (append 8 bytes) is compared with `pushU64LERef`
+`Prim.Bytes.ldU64LEIn` (proof-carrying 8-byte load) is compared with
+`ldU64LEInRef` inside the array. `Prim.Bytes.pushU64LE` (append 8 bytes) is compared with `pushU64LERef`
 (eight `ByteArray.push`) on arrays of every listed size with capacity equal
 to the size, 1, 7, 8, 9 and 16 bytes above it, 0 and half the size (so the
 append must grow the array), exclusive and shared; and on chains of 120
@@ -92,6 +93,12 @@ def runCase (t : Tally) (n : Nat) (seed : UInt64) (p : USize) (x : UInt64) : IO 
   -- Load against its specification, on the input and the output.
   t := t.check (ldU64LE orig p == ldU64LESpec orig p.toNat) s!"load /= spec ({tag})"
   t := t.check (ldU64LE r1 p == ldU64LESpec r1 p.toNat) s!"load /= spec after store ({tag})"
+  -- Proof-carrying load against its reference, inside the array.
+  if h : p.toNat + 8 ≤ orig.usize.toNat then
+    t := t.check (ldU64LEIn orig p h == ldU64LEInRef orig p h) s!"ldU64LEIn /= reference ({tag})"
+    t := t.check (ldU64LEIn orig p h == ldU64LESpec orig p.toNat) s!"ldU64LEIn /= spec ({tag})"
+  if h : p.toNat + 8 ≤ r1.usize.toNat then
+    t := t.check (ldU64LEIn r1 p h == ldU64LEInRef r1 p h) s!"ldU64LEIn /= reference after store ({tag})"
   return t
 
 /-- An array of `n` pseudo-random bytes from `seed` with capacity `cap`

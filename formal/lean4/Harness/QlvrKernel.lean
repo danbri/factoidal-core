@@ -572,6 +572,109 @@ theorem mergeFlatIn_eq (ai : ByteArray) (na : USize) (bi ba : ByteArray) (nb : U
   · rw [mergeFlatP_eq, mergeFlatU_eq]
   · rw [mergeFlatU_eq]
 
+/-! ### Step C: the scan filters with the bounds tests of their loads proved away
+
+`filterBU` and `filterAU` test the window of each load (`ldU64LE`: two
+compares, then eight `uget`). `filterBP` and `filterAP` take the facts
+`8 * n <= c.usize` for the columns they read and use `ldU64LEIn`, as
+`mergeFlatP` does. The callers `filterBIn` and `filterAIn` test the facts once
+(`n <= c.usize / 8` in `USize`) and otherwise run the tested loop.
+`filterBP_eq` and `filterAP_eq`: equal to `filterBU` and `filterAU`;
+`filterBIn_eq` and `filterAIn_eq`: the same for the callers. -/
+
+@[specialize] def filterBP (c0 c1 c2 : ByteArray) (k0 : UInt64) (n : USize)
+    (h0 : 8 * n.toNat ≤ c0.usize.toNat) (h1 : 8 * n.toNat ≤ c1.usize.toNat)
+    (h2 : 8 * n.toNat ≤ c2.usize.toNat) (i m : USize) (o1 o2 : ByteArray) :
+    ByteArray × ByteArray × USize :=
+  if h : i < n then
+    let hi := USize.lt_iff_toNat_lt.mp h
+    if ldU64LEIn c0 (8 * i) (idx8_window hi h0) == k0 then
+      filterBP c0 c1 c2 k0 n h0 h1 h2 (i + 1) (m + 1)
+        (st o1 (8 * m) (ldU64LEIn c1 (8 * i) (idx8_window hi h1)))
+        (st o2 (8 * m) (ldU64LEIn c2 (8 * i) (idx8_window hi h2)))
+    else filterBP c0 c1 c2 k0 n h0 h1 h2 (i + 1) m o1 o2
+  else (o1, o2, m)
+termination_by n.toNat - i.toNat
+decreasing_by all_goals (have := usize_succ_toNat h; have := USize.lt_iff_toNat_lt.mp h; omega)
+
+theorem filterBP_eq (c0 c1 c2 : ByteArray) (k0 : UInt64) (n : USize)
+    (h0 : 8 * n.toNat ≤ c0.usize.toNat) (h1 : 8 * n.toNat ≤ c1.usize.toNat)
+    (h2 : 8 * n.toNat ≤ c2.usize.toNat) (i m : USize) (o1 o2 : ByteArray) :
+    filterBP st c0 c1 c2 k0 n h0 h1 h2 i m o1 o2 = filterBU st c0 c1 c2 k0 n i m o1 o2 := by
+  fun_induction filterBP st c0 c1 c2 k0 n h0 h1 h2 i m o1 o2 with
+  | case1 i m o1 o2 h hi hk ih =>
+    rw [ih]
+    conv => rhs; rw [filterBU, dif_pos h]
+    simp only
+    rw [ldU64LE_eq_in c0 _ (idx8_window hi h0), ldU64LE_eq_in c1 _ (idx8_window hi h1),
+      ldU64LE_eq_in c2 _ (idx8_window hi h2), if_pos hk]
+  | case2 i m o1 o2 h hi hk ih =>
+    rw [ih]
+    conv => rhs; rw [filterBU, dif_pos h]
+    simp only
+    rw [ldU64LE_eq_in c0 _ (idx8_window hi h0), if_neg hk]
+  | case3 i m o1 o2 h =>
+    conv => rhs; rw [filterBU, dif_neg h]
+
+@[inline] def filterBIn (c0 c1 c2 : ByteArray) (k0 : UInt64) (n : USize) (o1 o2 : ByteArray) :
+    ByteArray × ByteArray × USize :=
+  if h : n ≤ c0.usize / 8 ∧ n ≤ c1.usize / 8 ∧ n ≤ c2.usize / 8 then
+    filterBP st c0 c1 c2 k0 n (le_div8_toNat h.1) (le_div8_toNat h.2.1) (le_div8_toNat h.2.2) 0 0 o1 o2
+  else filterBU st c0 c1 c2 k0 n 0 0 o1 o2
+
+theorem filterBIn_eq (c0 c1 c2 : ByteArray) (k0 : UInt64) (n : USize) (o1 o2 : ByteArray) :
+    filterBIn st c0 c1 c2 k0 n o1 o2 = filterBU st c0 c1 c2 k0 n 0 0 o1 o2 := by
+  unfold filterBIn
+  split
+  · rw [filterBP_eq]
+  · rfl
+
+@[specialize] def filterAP (c0 c1 c2 : ByteArray) (k0 k1 : UInt64) (n : USize)
+    (h0 : 8 * n.toNat ≤ c0.usize.toNat) (h1 : 8 * n.toNat ≤ c1.usize.toNat)
+    (h2 : 8 * n.toNat ≤ c2.usize.toNat) (i m : USize) (out : ByteArray) :
+    ByteArray × USize :=
+  if h : i < n then
+    let hi := USize.lt_iff_toNat_lt.mp h
+    if ldU64LEIn c0 (8 * i) (idx8_window hi h0) == k0 && ldU64LEIn c1 (8 * i) (idx8_window hi h1) == k1 then
+      filterAP c0 c1 c2 k0 k1 n h0 h1 h2 (i + 1) (m + 1)
+        (st out (8 * m) (ldU64LEIn c2 (8 * i) (idx8_window hi h2)))
+    else filterAP c0 c1 c2 k0 k1 n h0 h1 h2 (i + 1) m out
+  else (out, m)
+termination_by n.toNat - i.toNat
+decreasing_by all_goals (have := usize_succ_toNat h; have := USize.lt_iff_toNat_lt.mp h; omega)
+
+theorem filterAP_eq (c0 c1 c2 : ByteArray) (k0 k1 : UInt64) (n : USize)
+    (h0 : 8 * n.toNat ≤ c0.usize.toNat) (h1 : 8 * n.toNat ≤ c1.usize.toNat)
+    (h2 : 8 * n.toNat ≤ c2.usize.toNat) (i m : USize) (out : ByteArray) :
+    filterAP st c0 c1 c2 k0 k1 n h0 h1 h2 i m out = filterAU st c0 c1 c2 k0 k1 n i m out := by
+  fun_induction filterAP st c0 c1 c2 k0 k1 n h0 h1 h2 i m out with
+  | case1 i m out h hi hk ih =>
+    rw [ih]
+    conv => rhs; rw [filterAU, dif_pos h]
+    simp only
+    rw [ldU64LE_eq_in c0 _ (idx8_window hi h0), ldU64LE_eq_in c1 _ (idx8_window hi h1),
+      ldU64LE_eq_in c2 _ (idx8_window hi h2), if_pos hk]
+  | case2 i m out h hi hk ih =>
+    rw [ih]
+    conv => rhs; rw [filterAU, dif_pos h]
+    simp only
+    rw [ldU64LE_eq_in c0 _ (idx8_window hi h0), ldU64LE_eq_in c1 _ (idx8_window hi h1), if_neg hk]
+  | case3 i m out h =>
+    conv => rhs; rw [filterAU, dif_neg h]
+
+@[inline] def filterAIn (c0 c1 c2 : ByteArray) (k0 k1 : UInt64) (n : USize) (out : ByteArray) :
+    ByteArray × USize :=
+  if h : n ≤ c0.usize / 8 ∧ n ≤ c1.usize / 8 ∧ n ≤ c2.usize / 8 then
+    filterAP st c0 c1 c2 k0 k1 n (le_div8_toNat h.1) (le_div8_toNat h.2.1) (le_div8_toNat h.2.2) 0 0 out
+  else filterAU st c0 c1 c2 k0 k1 n 0 0 out
+
+theorem filterAIn_eq (c0 c1 c2 : ByteArray) (k0 k1 : UInt64) (n : USize) (out : ByteArray) :
+    filterAIn st c0 c1 c2 k0 k1 n out = filterAU st c0 c1 c2 k0 k1 n 0 0 out := by
+  unfold filterAIn
+  split
+  · rw [filterAP_eq]
+  · rfl
+
 end UsizeLoops
 
 def sumLoopU (oi oa : ByteArray) (n : USize) (i : USize) (s : UInt64) : UInt64 :=
@@ -662,6 +765,16 @@ def runUsizeCPushIn (x : Input) : Nat × UInt64 :=
   let nB := x.nB.toUSize
   let (ai, na) := filterAU pushAt x.a0 x.a1 x.a2 x.kA0 x.kA1 nA 0 0 (newBuf (8 * x.nA) 1)
   let (bi, ba, nb) := filterBU pushAt x.b0 x.b1 x.b2 x.kB0 nB 0 0
+    (newBuf (8 * x.nB) 2) (newBuf (8 * x.nB) 3)
+  let (oi, oa, n) := mergeFlatIn pushAt ai na bi ba nb (na + nb + 1)
+    (newBuf (8 * x.nB) 4) (newBuf (8 * x.nB) 5)
+  (n.toNat, sumLoopU oi oa n 0 0)
+
+def runUsizeCPushFilt (x : Input) : Nat × UInt64 :=
+  let nA := x.nA.toUSize
+  let nB := x.nB.toUSize
+  let (ai, na) := filterAIn pushAt x.a0 x.a1 x.a2 x.kA0 x.kA1 nA (newBuf (8 * x.nA) 1)
+  let (bi, ba, nb) := filterBIn pushAt x.b0 x.b1 x.b2 x.kB0 nB
     (newBuf (8 * x.nB) 2) (newBuf (8 * x.nB) 3)
   let (oi, oa, n) := mergeFlatIn pushAt ai na bi ba nb (na + nb + 1)
     (newBuf (8 * x.nB) 4) (newBuf (8 * x.nB) 5)
@@ -835,7 +948,8 @@ tools/lean-wasm-exe.sh: its import closure has no FFI). -/
     | 8 => runUsizeCStoreFlat x
     | 9 => runUsizeCPush x
     | 10 => runUsizeCPushFlat x
-    | _ => runUsizeCPushIn x)
+    | 11 => runUsizeCPushIn x
+    | _ => runUsizeCPushFilt x)
 
 def medianNat (xs : Array Nat) : Nat :=
   let s := mergeSortBy xs (· ≤ ·)
@@ -852,7 +966,7 @@ def runKernel (data : ByteArray) (iters : Nat) : IO UInt32 := do
   let fx := FInput.ofInput x
   let ux := UInput.ofInput x
   let names := #["current", "bytes-push", "bytes-set", "floats", "production", "native", "usize", "usize-cstore",
-    "usize-cstore-flat", "usize-cpush", "usize-cpush-flat", "usize-cpush-in"]
+    "usize-cstore-flat", "usize-cpush", "usize-cpush-flat", "usize-cpush-in", "usize-cpush-filt"]
   let mut sums : Array (Nat × UInt64) := #[]
   for impl in [0:names.size] do
     let mut ts : Array Nat := #[]
