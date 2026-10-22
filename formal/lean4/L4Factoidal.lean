@@ -769,6 +769,8 @@ import L4Factoidal.LWS.MerkleHttp
 import L4Factoidal.LWS.Journal
 import L4Factoidal.LWS.FileLayout
 import L4Factoidal.LWS.FileLayoutTests
+import L4Factoidal.HTTP.Cors
+import L4Factoidal.LWS.Cors
 -- The authorization server component (https://github.com/danbri/factoidal/issues/916).
 import L4Factoidal.Authz.Keys
 import L4Factoidal.Authz.Fetch

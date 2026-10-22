@@ -48,6 +48,7 @@ import L4Factoidal.LWS.Linkset
 import L4Factoidal.LWS.Pagination
 import L4Factoidal.LWS.Move
 import L4Factoidal.HTTP.Server
+import L4Factoidal.HTTP.Cors
 
 namespace L4Factoidal.LWS
 
@@ -196,6 +197,13 @@ structure Config where
   request is announced there with a `Create` notification
   (`L4Factoidal.LWS.AccessGrants`, issue 920). -/
   controllerInbox : Option String := none
+  /-- Which origins get CORS fields (Fetch Standard §3.2,
+  `L4Factoidal.LWS.Cors`, https://github.com/danbri/factoidal/issues/923).
+  Off here; the wasm handle turns on `echo` unless the configuration says
+  `"cors": false` or lists origins. `step` itself never reads it: the wasm
+  layer answers a CORS-preflight request before any other decision and adds
+  the fields to every other answer. -/
+  cors : L4Factoidal.HTTP.Cors.Policy := .off
 deriving Repr, Inhabited
 
 /-! ## Helpers over the store -/

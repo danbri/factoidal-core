@@ -550,6 +550,24 @@ def solidGuardWacEnforced : Bool :=
   (run strictBob (req "GET" "/alice/card.acl") st).1.status == 403 &&
   (run strictBob (req "GET" "/alice/card") st).1.status == 200
 
+/-- A CORS-preflight request carries no credentials, so with enforcement on
+it is answered 204 with the CORS fields before Web Access Control
+(https://github.com/danbri/factoidal/issues/923). An `OPTIONS` without
+`Access-Control-Request-Method` is still refused. -/
+def solidGuardPreflightBeforeWac : Bool :=
+  let st := (run cfg (req "PUT" "/alice/card.acl" turtle aclDoc) populated).2
+  let strict : ServerConfig := { cfg with enforceWac := true }
+  let pre := (run strict (req "OPTIONS" "/alice/card"
+    [("origin", "https://app.example"), ("access-control-request-method", "PUT")]) st).1
+  pre.status == 204 &&
+  hdr pre "access-control-allow-origin" == some "https://app.example" &&
+  has pre "access-control-allow-methods" "PUT" &&
+  (run strict (req "OPTIONS" "/alice/card" [("origin", "https://app.example")]) st).1.status == 401 &&
+  -- With no Origin it is no CORS request at all.
+  (run strict (req "OPTIONS" "/alice/card" [("access-control-request-method", "PUT")]) st).1.status == 401
+
+#guard solidGuardPreflightBeforeWac
+
 /-! ## Solid-OIDC (Solid Protocol §10.1, RFC 9449)
 
 `L4Factoidal.Solid.Server.Auth` decides whether a request carries a valid

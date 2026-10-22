@@ -376,4 +376,42 @@ def statusOf (r : StepResult × AuthzState × Bool) : Nat :=
 #guard (step stub cfg {} now rnd (get "/jwks")).2.2 == true
 #guard (step stub cfg st0 now rnd (get "/jwks")).2.2 == false
 
+/-! ## CORS (https://github.com/danbri/factoidal/issues/923) -/
+
+def page : String := "https://danbri.github.io"
+def corsOn : AuthzConfig := { cfg with cors := .echo }
+def hdrOf (r : StepResult × AuthzState × Bool) (k : String) : Option String :=
+  match r.1 with
+  | .respond resp => resp.headers.lookup k
+  | .need _ => none
+def preflightTo (p : String) : Request :=
+  { method := "OPTIONS", path := p, queryStr := "",
+    headers := [("origin", page), ("access-control-request-method", "POST"),
+                ("access-control-request-headers", "content-type")] }
+
+-- A preflight to the token endpoint: 204, the page's origin, POST allowed,
+-- and no key made (state and `changed` as before, even with no key).
+#guard statusOf (stepCors stub corsOn st0 now rnd (preflightTo "/token")) == 204
+#guard hdrOf (stepCors stub corsOn st0 now rnd (preflightTo "/token")) "access-control-allow-origin" == some page
+#guard hdrOf (stepCors stub corsOn st0 now rnd (preflightTo "/token")) "access-control-allow-methods" ==
+  some "GET, HEAD, OPTIONS, POST"
+#guard (stepCors stub corsOn {} now rnd (preflightTo "/token")).2.2 == false
+-- Other answers carry the fields; status unchanged.
+#guard statusOf (stepCors stub corsOn st0 now rnd { tokenReq (form (baseForm didToken)) with
+    headers := (tokenReq (form (baseForm didToken))).headers ++ [("origin", page)] }) == 200
+#guard hdrOf (stepCors stub corsOn st0 now rnd { get "/jwks" with headers := [("origin", page)] })
+  "access-control-allow-origin" == some page
+#guard hdrOf (stepCors stub corsOn st0 now rnd { get "/jwks" with headers := [("origin", page)] })
+  "access-control-allow-credentials" == none
+#guard hdrOf (stepCors stub corsOn st0 now rnd { get "/token" with headers := [("origin", page)] })
+  "access-control-expose-headers" == some "Allow, WWW-Authenticate"
+-- An origin not on the list gets no Access-Control-Allow-Origin.
+#guard hdrOf (stepCors stub { cfg with cors := .allow [page] } st0 now rnd
+    { get "/jwks" with headers := [("origin", "https://evil.example")] })
+  "access-control-allow-origin" == none
+-- CORS off: a preflight is an ordinary OPTIONS (404 here, as before).
+#guard statusOf (stepCors stub cfg st0 now rnd (preflightTo "/elsewhere")) == 404
+#guard hdrOf (stepCors stub cfg st0 now rnd { get "/jwks" with headers := [("origin", page)] })
+  "access-control-allow-origin" == none
+
 end L4Factoidal.Authz.Tests

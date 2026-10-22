@@ -337,6 +337,7 @@ usage: factoidal authz-serve DIR --resource IRI[,IRI...] [--issuer IRI]
                            [--port N] [--host ADDRESS] [--alg ES256|EdDSA]
                            [--token-lifetime SECONDS] [--rotate-after SECONDS]
                            [--allow-http] [--allow-private-fetch]
+                           [--cors-origin ORIGIN]... [--no-cors]
 
 An authorization server as a component (https://github.com/danbri/factoidal/issues/916),
 for lws-serve and any resource server that reads RFC 8414 metadata:
@@ -357,6 +358,11 @@ current one is that old; the old key stays published until its tokens expire.
 --allow-http accepts http subject identifiers; --allow-private-fetch lets the
 server fetch documents from loopback, link-local and private addresses. Both
 are off by default and are for tests.
+CORS (https://github.com/danbri/factoidal/issues/923): by default every answer
+echoes a valid request Origin in Access-Control-Allow-Origin, so a page on
+another origin can read the metadata and keys and exchange a token; a
+preflight is answered 204 first. --cors-origin ORIGIN (repeatable) answers
+only those origins; --no-cors sends no CORS fields.
 
 Every decision is made in formal/lean4/L4Factoidal/Authz/; this command only
 carries sockets, the clock, random bytes, DNS answers and files.`,
@@ -379,6 +385,7 @@ usage: factoidal lws-serve DIR (--issuer IRI | --auth-config FILE | --insecure-n
                          [--controller-inbox URL] [--delivery-limit N]
                          [--delivery-window SECONDS] [--redirects-max N]
                          [--storage snapshot|files]
+                         [--cors-origin ORIGIN]... [--no-cors]
 
 Starts a Node HTTP server that answers every request through the engine's
 lwsStep operation.
@@ -472,6 +479,18 @@ It protects the file on disk only (formal/lean4/L4Factoidal/LWS/SnapshotSeal.lea
                   each change, or one file per body with a journal, so a
                   write costs the same whatever the storage size
                   https://github.com/danbri/factoidal/issues/918
+  --cors-origin ORIGIN
+                  answer CORS (Fetch Standard) only for this origin, written
+                  scheme://host[:port] (for example https://danbri.github.io);
+                  give it once per origin. Default: echo any valid request
+                  Origin, as the Solid Protocol section 8.1 requires of Solid
+                  servers. Never Access-Control-Allow-Credentials: the token
+                  travels in Authorization. A preflight (OPTIONS with
+                  Access-Control-Request-Method) is answered 204 before any
+                  authorization decision.
+                  https://github.com/danbri/factoidal/issues/923
+  --no-cors       send no CORS fields; a page on another origin cannot read
+                  any answer
 
 Authorization (LWS editor's draft, section Authorization; one of the three
 is required):
@@ -608,8 +627,16 @@ function parseArguments (args, valueOptions) {
     }
     const equals = argument.indexOf('=')
     const name = equals < 0 ? argument.slice(2) : argument.slice(2, equals)
+    // An option named in REPEATABLE_OPTIONS keeps every value, in order.
+    const keep = (value) => {
+      if (REPEATABLE_OPTIONS.has(name)) {
+        options[name] = Array.isArray(options[name]) ? [...options[name], value] : [value]
+      } else {
+        options[name] = value
+      }
+    }
     if (equals >= 0) {
-      options[name] = argument.slice(equals + 1)
+      keep(argument.slice(equals + 1))
       continue
     }
     if (valueOptions.has(name)) {
@@ -617,7 +644,7 @@ function parseArguments (args, valueOptions) {
       if (index >= args.length) {
         throw new UsageError(`option --${name} needs a value`)
       }
-      options[name] = args[index]
+      keep(args[index])
       continue
     }
     options[name] = true
@@ -626,6 +653,9 @@ function parseArguments (args, valueOptions) {
 }
 
 class UsageError extends Error {}
+
+/** Options that may be given more than once; their value is the list. */
+const REPEATABLE_OPTIONS = new Set(['cors-origin'])
 
 const VALUE_OPTIONS = {
   version: new Set([]),
@@ -639,10 +669,11 @@ const VALUE_OPTIONS = {
   serve: new Set(['port', 'host', 'query-path', 'gsp-path', 'file', 'layout', 'tdb2']),
   'lws-serve': new Set(['port', 'host', 'base', 'issuer', 'auth-config', 'owner', 'root-acl',
     'audience', 'page-size', 'moves', 'controller-inbox', 'delivery-limit', 'delivery-window',
-    'redirects-max', 'storage']),
+    'redirects-max', 'storage', 'cors-origin']),
   'solid-serve': new Set(['port', 'host', 'base', 'owner', 'issuer', 'auth-config']),
   'solid-client': new Set(['body', 'file', 'content-type', 'interpret']),
-  'authz-serve': new Set(['port', 'host', 'issuer', 'resource', 'alg', 'token-lifetime', 'rotate-after']),
+  'authz-serve': new Set(['port', 'host', 'issuer', 'resource', 'alg', 'token-lifetime', 'rotate-after',
+    'cors-origin']),
   'authz-keys': new Set([])
 }
 
@@ -1348,6 +1379,21 @@ function natOption (flag, value) {
   return n
 }
 
+// --cors-origin ORIGIN (repeatable) and --no-cors, as the config member
+// `cors`: a list of origins, or false. Passed unread; the engine checks each
+// origin and decides every CORS field (L4Factoidal/HTTP/Cors.lean). With
+// neither option the member is absent and the engine echoes the request
+// Origin (Solid Protocol section 8.1).
+function corsConfig (options) {
+  const origins = options['cors-origin']
+  if (options['no-cors'] === true && origins !== undefined) {
+    throw new UsageError('--no-cors cannot be combined with --cors-origin')
+  }
+  if (options['no-cors'] === true) return { cors: false }
+  if (Array.isArray(origins)) return { cors: origins }
+  return {}
+}
+
 function serveHost (options) {
   if (options.host === undefined) return '127.0.0.1'
   if (typeof options.host !== 'string' || options.host.length === 0) {
@@ -1489,6 +1535,7 @@ async function commandLwsServe (positional, options) {
       ...(options['delivery-window'] !== undefined ? { deliveryWindow: natOption('delivery-window', options['delivery-window']) } : {}),
       ...(options['redirects-max'] !== undefined ? { redirectsMax: natOption('redirects-max', options['redirects-max']) } : {}),
       ...(typeof options.storage === 'string' ? { storage: options.storage } : {}),
+      ...corsConfig(options),
       ...(insecure ? { insecureNoAuth: true } : { auth }),
       ...(typeof options.owner === 'string' ? { owner: options.owner } : {}),
       ...(typeof options['root-acl'] === 'string'
@@ -1539,7 +1586,8 @@ async function commandAuthzServe (positional, options) {
       ...(options['token-lifetime'] !== undefined ? { tokenLifetime: natOption('token-lifetime', options['token-lifetime']) } : {}),
       ...(options['rotate-after'] !== undefined ? { rotateAfter: natOption('rotate-after', options['rotate-after']) } : {}),
       ...(options['allow-http'] === true ? { allowHttp: true } : {}),
-      ...(options['allow-private-fetch'] === true ? { allowPrivateFetch: true } : {})
+      ...(options['allow-private-fetch'] === true ? { allowPrivateFetch: true } : {}),
+      ...corsConfig(options)
     })
   } catch (error) {
     if (error !== null && typeof error === 'object' && error.envelope !== undefined) {

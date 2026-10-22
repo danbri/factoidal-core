@@ -178,7 +178,16 @@ def stepAs (S : Store σ) (cfg : ServerConfig) (who : Requester) (r : Request) (
   let granted :=
     !cfg.enforceWac ||
     allowed S aclGraphOf cfg.lws.baseIri st subject who mode
-  if !granted then
+  -- A CORS-preflight request (§8.1: "A server MUST also support the HTTP
+  -- OPTIONS method such that it can respond appropriately to CORS preflight
+  -- requests") carries no credentials (Fetch §3.2.2), and Fetch §4.8 needs
+  -- an ok status: it is answered 204 before Web Access Control
+  -- (https://github.com/danbri/factoidal/issues/923). Until then a preflight
+  -- to a resource that is not public got 401 and the browser refused the
+  -- request it preceded.
+  if isPreflight r && (r.header? "origin").isSome then
+    (withCors r ⟨204, [], "", none⟩, st)
+  else if !granted then
     let resp := match who.webId with
       | none   => refuse 401 "Unauthorized"
       | some _ => refuse 403 "Forbidden"
