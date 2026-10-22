@@ -52,12 +52,17 @@
 // The cost of one write against the size of the storage
 // (https://github.com/danbri/factoidal/issues/918, `--storage files`): a
 // storage of s, 2s, 4s data resources (default s = 1,000, `--storage-base S`),
-// opened from DIR in each mode; 20 PUTs of new small resources per repeat,
-// the minimum of three repeats, per PUT; peak RSS of the child reported.
-//   time(4s) <= 1.5 * time(s) with `--storage files`. The model is constant
-//     (one body file and one journal record per write); the snapshot mode,
-//     which writes the whole storage, gives about 4 and is reported, not
-//     bounded.
+// and 16s with `--storage files`, opened from DIR in each mode; 20 PUTs of new
+// small resources per repeat, the minimum of three repeats, per PUT; peak RSS
+// of the child reported.
+//   time(4s) <= 1.5 * time(s) and time(16s) <= 1.5 * time(s) with
+//     `--storage files`. The model is constant: one body file and one journal
+//     record per write, and a step in a logarithm of the store (stage 2: the
+//     tree store and the persistent type index). The snapshot mode, which
+//     writes the whole storage, gives about 4 and is reported, not bounded.
+//   Peak RSS of a start and one GET of a storage kept in files with s, 2s,
+//     4s resources of 16 KiB: rss(4s) - rss(s) <= 16 MiB (the bodies grow by
+//     48 MiB; stage 2 reads no body at start and keeps none in memory).
 //
 // Score line: "N pass, M fail (out of T)". Exit 0 pass, 1 fail, 2 setup error.
 
@@ -314,11 +319,11 @@ async function storageChild (s, mode) {
   }
 }
 
-// The memory of a storage kept in files (issue 918 stage 2, an EXPECTED
-// FAILURE today): phase `fill` writes s resources of 16 KiB into DIR with
-// `storage: "files"`; phase `open` (a new process) opens DIR and reads one
-// resource, and reports its peak resident set. Stage 1 reads every body into
-// memory at start, so the peak grows with the storage.
+// The memory of a storage kept in files (issue 918 stage 2): phase `fill`
+// writes s resources of 16 KiB into DIR with `storage: "files"`; phase `open`
+// (a new process) opens DIR and reads one resource, and reports its peak
+// resident set. Stage 1 read every body into memory at start, so the peak
+// grew with the storage; stage 2 reads none.
 async function storageMemChild (s, dir, phase) {
   const f = await import(join(PKG, 'index.mjs'))
   const { listen } = await import(join(PKG, 'lws/server.mjs'))
@@ -447,11 +452,13 @@ if (mrows.length === 3) {
     check(`merkle: ${label} at ${mc.k} members < 2000 ms`, mc[op] < 2000, `${mc[op].toFixed(1)} ms`)
   }
 }
-// The cost of one write with `--storage files` (issue 918).
+// The cost of one write with `--storage files` (issue 918). Files mode at s,
+// 2s, 4s and 16s resources (bounded); snapshot mode at s, 2s, 4s (reported).
 const sBase = Number(opt('--storage-base') ?? 1000)
 const srows = { snapshot: [], files: [] }
 for (const mode of ['snapshot', 'files']) {
-  for (const s of [sBase, 2 * sBase, 4 * sBase]) {
+  const sizes = mode === 'files' ? [sBase, 2 * sBase, 4 * sBase, 16 * sBase] : [sBase, 2 * sBase, 4 * sBase]
+  for (const s of sizes) {
     let out
     try {
       out = execFileSync(process.execPath, [fileURLToPath(import.meta.url), '--storage-child', String(s), '--mode', mode],
@@ -465,25 +472,28 @@ for (const mode of ['snapshot', 'files']) {
     console.log(`  storage ${mode}, ${s} resources: PUT ${r.put.toFixed(2)} ms, peak RSS ${(r.rss / 1048576).toFixed(1)} MiB`)
   }
 }
-if (srows.files.length === 3) {
-  const [fa, , fc] = srows.files
+if (srows.files.length === 4) {
+  const [fa, , fc, fd] = srows.files
   const ratio = fc.put / fa.put
   check(`storage files: PUT time 4s/s <= 1.5 (s = ${sBase}, flat in the storage size)`, ratio <= 1.5, `ratio ${ratio.toFixed(2)}`)
+  const ratio16 = fd.put / fa.put
+  check(`storage files: PUT time 16s/s <= 1.5 (s = ${sBase})`, ratio16 <= 1.5, `ratio ${ratio16.toFixed(2)}`)
 }
 if (srows.snapshot.length === 3) {
   const [sa, , sc] = srows.snapshot
   // Reported, not bounded: the snapshot mode writes the whole storage.
   console.log(`  storage snapshot: PUT time 4s/s ${(sc.put / sa.put).toFixed(2)} (reported; the snapshot is linear in the storage)`)
 }
-// EXPECTED FAILURE, https://github.com/danbri/factoidal/issues/918 stage 2:
-// the peak memory of a start must not grow with the storage. Stage 1 holds
-// every body in memory, so 4s resources of 16 KiB take about 48 MiB more
-// than s. When stage 2 lands this row passes, the run turns red as an
-// unexpected pass, and the row becomes an assertion.
-let xfail = 0
+// The peak memory of a start of a storage kept in files (issue 918, stage 2):
+// s, 2s, 4s resources of 16 KiB. A start reads no body file and keeps no body
+// in memory, so the body bytes (16 MiB more for each s) do not reach the
+// peak. What grows is the metadata: about 1 KiB of memory per resource
+// (record JSON, entry, stub, index facts), 3 MiB from s to 4s at s = 1,000.
+//   rss(4s) - rss(s) <= 16 MiB, a quarter of the 48 MiB of body bytes that
+//   stage 1 added (it held every body: 258 MiB at 1,000, 515 MiB at 4,000).
 {
   const mrowsS = []
-  for (const s of [sBase, 4 * sBase]) {
+  for (const s of [sBase, 2 * sBase, 4 * sBase]) {
     const dir = mkdtempSync(join(tmpdir(), 'lws918-storage-mem-'))
     try {
       for (const phase of ['fill', 'open']) {
@@ -497,20 +507,16 @@ let xfail = 0
       rmSync(dir, { recursive: true, force: true })
     }
   }
-  if (mrowsS.length === 2) {
-    const [ma, mc] = mrowsS
+  for (const m of mrowsS) {
+    console.log(`  storage files: start and one GET, ${m.s} resources of 16 KiB (${(m.s * 16 / 1024).toFixed(1)} MiB of bodies): ` +
+                `peak RSS ${(m.rss / 1048576).toFixed(1)} MiB`)
+  }
+  if (mrowsS.length === 3) {
+    const [ma, , mc] = mrowsS
     const growth = mc.rss - ma.rss
-    console.log(`  storage files: start and one GET, ${ma.s} resources of 16 KiB: peak RSS ${(ma.rss / 1048576).toFixed(1)} MiB; ` +
-                `${mc.s}: ${(mc.rss / 1048576).toFixed(1)} MiB`)
-    const ok = growth <= 8 * 1048576
-    if (ok) {
-      fail++
-      console.log(`  FAIL  UNEXPECTED PASS (issue 918 stage 2): peak RSS of a start grows ${(growth / 1048576).toFixed(1)} MiB <= 8 MiB from s to 4s; make this row an assertion`)
-    } else {
-      xfail++
-      console.log(`  xfail storage files: peak RSS of a start does not grow with the storage (issue 918 stage 2; growth ${(growth / 1048576).toFixed(1)} MiB, bound 8 MiB)`)
-    }
+    check(`storage files: peak RSS of a start grows <= 16 MiB from s to 4s (bodies grow ${(3 * ma.s * 16 / 1024).toFixed(0)} MiB)`,
+      growth <= 16 * 1048576, `growth ${(growth / 1048576).toFixed(1)} MiB`)
   }
 }
-console.log(`lws scaling: ${pass} pass, ${fail} fail, ${xfail} xfail (out of ${pass + fail + xfail})`)
+console.log(`lws scaling: ${pass} pass, ${fail} fail (out of ${pass + fail})`)
 process.exit(fail ? 1 : 0)
