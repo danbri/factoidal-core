@@ -199,3 +199,62 @@ every byte of its last record; encryption on and off; migration from
 `lws-state.json`); `tests/lws/scaling.mjs` rows "storage files" (PUT time at
 n, 2n, 4n resources, ratio at most 1.5, peak memory reported); every LWS suite
 and Touchstone with `--storage files`.
+
+`FACTOIDAL_LWS_STORAGE=files` makes every `listen` with a DIR and no
+`storage` option keep the storage in files, so the restart checks of the
+other suites (index rebuild, search results records, redirect table,
+notifications, binary bodies, Merkle hashes) run on a storage kept in files.
+`tests/lws/encryption.mjs` deletes the variable: it tests the sealed snapshot.
+
+## Measured (2026-10-22, this VM, wasm in Node)
+
+`node tests/lws/scaling.mjs`, rows "storage": a storage of s small resources,
+then 20 PUTs of new resources per repeat, minimum of three repeats, per PUT;
+peak RSS of the child process (it also built the storage in memory).
+
+| resources | snapshot PUT | snapshot peak RSS | files PUT | files peak RSS |
+| ---: | ---: | ---: | ---: | ---: |
+| 1,000 | 42.6 ms | 318 MiB | 2.70 ms | 302 MiB |
+| 2,000 | 83.9 ms | 320 MiB | 2.40 ms | 355 MiB |
+| 4,000 | 170.4 ms | 399 MiB | 2.89 ms | 291 MiB |
+
+Ratio 4s/s: snapshot 4.00, files 1.07 (bound 1.5; an earlier run of the same
+row gave 2.18, 2.43, 2.75 ms, ratio 1.26). The peak RSS figures are noisy
+(the child builds the storage in memory first, and wasm memory does not
+shrink); the expected-failure row measures memory separately: a start of a
+storage of 1,000 resources of 16 KiB peaks at 258 MiB, of 4,000 at 515 MiB,
+because stage 1 reads every body into memory.
+
+Where the remaining time of one files-mode write goes, measured with direct
+engine calls (60 PUTs, mean): the step 0.21 ms at 1,000 resources, 0.56 ms at
+4,000, 2.8 to 3.7 ms at 16,000; `lwsPersist` 0.14, 0.18, 0.46 to 0.65 ms; the
+host's file operations (two fsyncs and a rename) 0.9, 1.2, 1.5 ms. The step is
+linear in the store: `MemState.entries` is a list (`memPut` filters it,
+`memLookup` scans it), and the handle table holds the previous state during a
+step, so the hash sets of the type index are copied on update. Both are
+in-memory costs that stage 1 does not change and the snapshot mode has too;
+stage 2 removes them with the on-disk metadata index.
+
+Touchstone (`tools/lws-touchstone.sh`), the same totals in both modes:
+`--config both` open 76 pass, 0 fail, 145 inapplicable; authorization 215
+pass, 0 fail, 6 inapplicable (out of 221 each). `--config all
+--unstable-search-results`: 220 passed in at least one configuration, 0
+failed, 1 never applied (out of 221). With `--storage files` the stores in
+the work directory hold `lws-files.json`, `lws-journal` and `bodies/`, and one
+of them (the authorization store, 179 body files, a journal of 932,881 bytes)
+reopened with its journal compacted.
+
+## What stage 2 must do
+
+1. Bodies out of memory: `Entry` carries the size and the digests (FNV-1a for
+   the entity tag, SHA-256 when Merkle is on) instead of the bytes, and a step
+   that needs bytes (GET, a range, JSON Patch, a Turtle body for the type
+   index, the notification classification) names the body file it needs
+   first, as `fetch` names a document today; the host reads it and steps
+   again.
+2. The metadata in an on-disk index (keyed by path, with the containment
+   listing per container), so neither the start nor a step is linear in the
+   store; then the step's list scans and the copies of shared state go.
+3. A start that reads no body, and the expected failure in
+   `tests/lws/scaling.mjs` (peak RSS of a start) turned into an assertion.
+4. The same for `solid-serve`, which keeps the snapshot.

@@ -47,7 +47,9 @@ Lean (`L4Factoidal/LWS/Journal.lean`, `FileLayout.lean`):
   file per resource body under `bodies/`, a journal `lws-journal` with one
   record per change, and a metadata file `lws-files.json` that the journal is
   folded into when it passes max(1 MiB, the size of the metadata file). A
-  write no longer rewrites the whole storage: PUT_TIMES.
+  write no longer rewrites the whole storage: a PUT into a storage of 1,000,
+  2,000 and 4,000 resources took 2.70, 2.40 and 2.89 ms, against 42.6, 83.9 and
+  170.4 ms with the snapshot (`tests/lws/scaling.mjs`, rows "storage").
 - A journal record is valid only when it is complete and its SHA-256 matches;
   a torn last record is ignored at start (theorem `decodeFrames_torn`).
   Replaying the records of a sequence of steps gives the metadata of the store

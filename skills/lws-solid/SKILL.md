@@ -151,8 +151,18 @@ the variable: it tests the sealed snapshot file.
 Tests: `L4Factoidal/LWS/FileLayoutTests.lean` (`#guard`s that play the host on
 a table of files: round trips clear and sealed, every step compacting, a
 journal cut at every byte of its last record, a changed or missing body file,
-a wrong key, a record out of order, migration); `node tests/lws/storage-files.mjs`;
-`tests/lws/scaling.mjs` rows "storage".
+a wrong key, a record out of order, migration); `node tests/lws/storage-files.mjs`
+(11 pass, 0 fail, 0 skipped (out of 11), 2026-10-22); `tests/lws/scaling.mjs`
+rows "storage". Measured 2026-10-22: a PUT into a storage of 1,000, 2,000 and
+4,000 resources 2.70, 2.40, 2.89 ms with files (ratio 1.07, bound 1.5) against
+42.6, 83.9, 170.4 ms with the snapshot; the peak RSS of a start grows with the
+storage (258 MiB at 1,000 resources of 16 KiB, 515 MiB at 4,000), an expected
+failure naming issue 918 until stage 2. The step itself is still linear in
+the store (0.21 ms at 1,000 resources, about 3 ms at 16,000: the list store and
+the copies of shared index state). Touchstone with `--storage files`: the same
+totals as the default (open 76 pass, authorization 215 pass, 0 fail; `--config
+all --unstable-search-results` 220 passed, 0 failed, 1 never applied, out of
+221). Every LWS suite also passes with `FACTOIDAL_LWS_STORAGE=files`.
 
 The LWS binding of the 2026-10-19 editor's draft (ETag, conditional
 requests, ranges, `application/lws+json` listings, linksets, the
