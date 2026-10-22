@@ -1087,6 +1087,32 @@ else
 fi
 
 # ---------------------------------------------------------------------
+# JS-1 (https://github.com/danbri/factoidal/issues/946) -- the JSON-LD item
+# reader of the source layer (formal/lean4/L4Factoidal/Syntax/JsonLdChunkFold.lean,
+# https://github.com/danbri/factoidal/issues/839) reads one top-level node
+# object at a time. Its fall-back is proved equal to the whole-document reader
+# (Source.jsonld_readAll_of_notStreamed); the item reading is measured only
+# (l4jsonld-chunk-diff: 68,812 agree, 0 differ (out of 68,812) on 2026-10-22).
+# XFAIL while no theorem named jsonld_chunk_readAll_eq_whole exists under
+# formal/lean4. When one lands, the row reads XPASS: retire it, close issue 946
+# and update docs/designissues/2026-09-03-rdf-parsing-strategy.md section 3n in
+# the same commit.
+# ---------------------------------------------------------------------
+JS_SRC="${LEAN_SRC}/L4Factoidal/Syntax/JsonLdChunkFold.lean"
+JS_TITLE="JSON-LD item reader = whole-document reader unproved"
+if [ ! -f "$JS_SRC" ]; then
+  record JS-1 946 "$JS_TITLE" ERROR "${JS_SRC#"$ROOT"/} not found"
+elif ! grep -qE '^def State\.endItem ' "$JS_SRC"; then
+  record JS-1 946 "$JS_TITLE" ERROR "probe drifted: State.endItem is no longer defined in ${JS_SRC#"$ROOT"/}"
+elif grep -rqE "^[[:space:]]*(@\[[^]]*\][[:space:]]*)?(private[[:space:]]+)?(theorem|lemma)[[:space:]]+([A-Za-z0-9_.]*\.)?jsonld_chunk_readAll_eq_whole\b" \
+      "${LEAN_SRC}" --include='*.lean'; then
+  record JS-1 946 "$JS_TITLE" XPASS "a theorem named jsonld_chunk_readAll_eq_whole now exists"
+else
+  record JS-1 946 "$JS_TITLE" XFAIL \
+    "no jsonld_chunk_readAll_eq_whole theorem in formal/lean4 (agreement is measured by l4jsonld-chunk-diff only)"
+fi
+
+# ---------------------------------------------------------------------
 # SR-1 (https://github.com/danbri/factoidal/issues/944) -- the Turtle and TriG
 # split read (several readers, one for each byte range between the dot
 # boundaries that formal/lean4/L4Factoidal/Syntax/TurtleSplitScan.lean finds;

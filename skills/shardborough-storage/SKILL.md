@@ -244,8 +244,9 @@ the source
 (`docs/designissues/2026-09-05-pack-publication-every-batch.md`). TriG joined
 them on 2026-10-14 (https://github.com/danbri/factoidal/issues/769), and RDF/XML
 on 2026-10-22 (one child of `rdf:RDF` at a time,
-https://github.com/danbri/factoidal/issues/838). JSON-LD reads the whole document
-(https://github.com/danbri/factoidal/issues/839). Measured on skosdex N-Quads
+https://github.com/danbri/factoidal/issues/838), and JSON-LD on 2026-10-22 (one top-level
+node object at a time, when `Prepass` finds the document in streaming form,
+https://github.com/danbri/factoidal/issues/839). Measured on skosdex N-Quads
 prefixes, 2026-09-05: peak footprint 222,955,392 bytes for 52,428,626 of
 source, 328,272,128 for 104,857,577, 331,581,824 for 209,715,187 and
 472,746,624 for 1,543,478,120 — a 2.12x rise over a 29.4x source, against
@@ -293,9 +294,9 @@ What does NOT work yet:
   the 472,746,624-byte peak. A manifest written incrementally is the next
   step. (The BLOCKS themselves are no longer held: the IBK4 path publishes
   them during the ingest pass, and the streamed grammars — N-Quads, Turtle,
-  N-Triples, TriG, RDF/XML — no longer buffer the source either. Only
-  JSON-LD does, and RDF/XML under the fall-back rule of
-  `Syntax/RdfXmlChunkFold.lean`.)
+  N-Triples, TriG, RDF/XML, JSON-LD — no longer buffer the source either,
+  except under the fall-back rules of `Syntax/RdfXmlChunkFold.lean` and
+  `Syntax/JsonLdChunkFold.lean`.)
 - **No compaction and no delta log.** There is no compacted SBM7 layout label.
 
 ### Querying an IBK4 generation
@@ -1143,7 +1144,7 @@ section 3f.
 | Turtle | `.ttl` `.turtle` | chunk fold | K byte ranges cut at dot boundaries found by one read of the bytes (`SplitScan`), K workers |
 | TriG | `.trig` | chunk fold | K byte ranges cut at dot boundaries, at the top level or inside a graph block, K workers |
 | RDF/XML | `.rdf` `.xml` `.owl` `.rdfxml` | chunk fold: one child of `rdf:RDF` at a time (`RdfXmlChunkFold`); the whole document under the fall-back rule below | one worker |
-| JSON-LD | `.jsonld` `.json-ld` | whole document | one worker |
+| JSON-LD | `.jsonld` `.json-ld` | chunk fold: one top-level node object at a time (`JsonLdChunkFold`), for an array or `{"@context":C,"@graph":[...]}`; the whole document otherwise | one worker |
 
 `l4sbm11-pack` and `l4sbm11 canon` read RDF 1.2 syntax, which includes RDF 1.1
 syntax for these grammars. The format comes from `--format` or from the

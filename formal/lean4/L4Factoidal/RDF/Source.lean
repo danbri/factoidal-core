@@ -34,10 +34,15 @@ at the edge chooses a format by name (`RdfFormat`, `formatOfLabel`,
 | Turtle | `TurtleChunkFold` | one chunk and one unfinished statement |
 | TriG | `TriGChunkFold` | one chunk and one unfinished unit |
 | RDF/XML | `RdfXmlChunkFold` | one chunk and one child of `rdf:RDF`; the document when the fall-back rule applies |
-| JSON-LD | `whole` | the document: the chunks are kept, joined and parsed at the end |
+| JSON-LD | `JsonLdChunkFold` | one chunk and one top-level node object; the document when the fall-back rule applies |
 
-JSON-LD reads the whole document: the JSON parser builds a tree over the
-whole text (https://github.com/danbri/factoidal/issues/839). RDF/XML reads
+JSON-LD reads one top-level node object at a time when the document is an
+array of node objects, or `{"@context":C,"@graph":[...]}`, and no string of it
+mentions `_jld_anon` (`Syntax/JsonLdChunkFold.lean`, the streaming document
+form of https://www.w3.org/TR/json-ld11-streaming/,
+https://github.com/danbri/factoidal/issues/839). `Prepass` decides this by one
+read of the document and `Reader.init` receives its answer as the
+generated-prefix argument; any other argument reads the document whole. RDF/XML reads
 one child of `rdf:RDF` at a time (`Syntax/RdfXmlChunkFold.lean`,
 https://github.com/danbri/factoidal/issues/838); a document that the fold
 cannot read item by item (its document element is not `rdf:RDF`, it declares
@@ -101,6 +106,7 @@ import L4Factoidal.Syntax.TriG
 import L4Factoidal.Syntax.TriGChunkFold
 import L4Factoidal.Syntax.RdfXml
 import L4Factoidal.Syntax.RdfXmlChunkFold
+import L4Factoidal.Syntax.JsonLdChunkFold
 import L4Factoidal.Syntax.TurtleSplitScan
 
 namespace L4Factoidal.RDF.Source
@@ -116,12 +122,12 @@ abbrev RdfVersion := Mode
 
 /-! ## What a format does -/
 
-/-- JSON-LD is read whole: the reader keeps the chunks and parses the joined
-    text at the end. RDF/XML is read one child of `rdf:RDF` at a time, and
-    whole only under the fall-back rule of `RdfXmlChunkFold`. -/
+/-- Whether a format is always read whole. None is: RDF/XML is read one child
+    of `rdf:RDF` at a time and JSON-LD one top-level node object at a time, and
+    each is read whole only under its fall-back rule (`RdfXmlChunkFold`,
+    `JsonLdChunkFold`). -/
 def readsWhole : RdfFormat → Bool
-  | .jsonld => true
-  | .nt | .turtle | .nquads | .trig | .rdfxml => false
+  | .jsonld | .nt | .turtle | .nquads | .trig | .rdfxml => false
 
 /-- A line start is a statement boundary: N-Triples and N-Quads. A source in
     one of these can be cut at line starts into byte ranges that are read
@@ -133,8 +139,8 @@ def splitsAtLines : RdfFormat → Bool
 /-- Turtle and TriG mint blank-node labels with a document-wide prefix, which
     `Prepass` computes before the first chunk is read. -/
 def needsPrepass : RdfFormat → Bool
-  | .turtle | .trig => true
-  | .nt | .nquads | .rdfxml | .jsonld => false
+  | .turtle | .trig | .jsonld => true
+  | .nt | .nquads | .rdfxml => false
 
 /-- The formats whose documents can carry a named graph. -/
 def hasNamedGraphs : RdfFormat → Bool
@@ -174,6 +180,9 @@ abbrev DocParser := Mode → Option String → String → Except ParseError Data
     it: `L4Factoidal/RDF/SourceJsonLd.lean` supplies `withJsonLd`. -/
 structure Extra where
   jsonld : Option DocParser := none
+  /-- The item reader of JSON-LD (`Syntax/JsonLdChunkFold.lean`). Without it
+      JSON-LD is always read whole. -/
+  jsonldStream : Option JsonLdChunkFold.Ops := none
 
 /-- The RDF/XML parser as a `DocParser`. RDF/XML has no named graphs. -/
 def rdfXmlParser : DocParser := fun _ base text =>
@@ -259,6 +268,9 @@ inductive Reader (α : Type) where
   | trig (f : TriGChunkFoldState α)
   /-- RDF/XML: one child of `rdf:RDF` at a time (`RdfXmlChunkFold`). -/
   | rdfxml (f : RdfXmlChunkFold.State α)
+  /-- JSON-LD: one top-level node object at a time, for a document that the
+      `Prepass` found eligible (`JsonLdChunkFold`). -/
+  | jsonldItems (f : JsonLdChunkFold.State α)
   /-- JSON-LD (and any whole parser): the chunks, newest first, and the parser that reads
       their join. -/
   | whole (parse : DocParser) (mode : Mode) (base : Option String) (acc : α) (bufRev : List String)
@@ -277,7 +289,13 @@ def Reader.init {α : Type} (extra : Extra) (fmt : RdfFormat) (mode : Mode)
   | .rdfxml => .ok (.rdfxml (RdfXmlChunkFold.State.init base acc))
   | .jsonld =>
       match extra.jsonld with
-      | some parse => .ok (.whole parse mode base acc [])
+      | some parse =>
+          match extra.jsonldStream with
+          | some ops =>
+              if bnodePrefix == JsonLdChunkFold.streamPrefix then
+                .ok (.jsonldItems (JsonLdChunkFold.State.init ops mode base acc))
+              else .ok (.whole parse mode base acc [])
+          | none => .ok (.whole parse mode base acc [])
       | none => .error "JSON-LD is not available in this build"
 
 /-- Feed one decoded chunk. The consumer sees every quad of every statement
@@ -291,6 +309,7 @@ def Reader.feedD {α : Type} (step : Step α) (decl : Decl α) : Reader α → S
   | .turtle f, text => (f.feed (turtleStep step) text).map .turtle
   | .trig f, text => (f.feed (trigStepD step decl) text).map .trig
   | .rdfxml f, text => (f.feed (fun a t => step a t none) text).map .rdfxml
+  | .jsonldItems f, text => (f.feed step decl text).map .jsonldItems
   | .whole parse mode base acc bufRev, text => .ok (.whole parse mode base acc (text :: bufRev))
 
 /-- `feedD` without declarations. -/
@@ -306,6 +325,7 @@ def Reader.finishD {α : Type} (step : Step α) (decl : Decl α) : Reader α →
   | .turtle f => f.finish (turtleStep step)
   | .trig f => f.finish (trigStepD step decl)
   | .rdfxml f => f.finish (fun a t => step a t none)
+  | .jsonldItems f => f.finish
   | .whole parse mode base acc bufRev =>
       (parse mode base (String.join bufRev.reverse)).map (foldDatasetD step decl acc)
 
@@ -320,6 +340,7 @@ def Reader.acc {α : Type} : Reader α → α
   | .turtle f => f.acc
   | .trig f => f.acc
   | .rdfxml f => f.acc
+  | .jsonldItems f => f.acc
   | .whole _ _ _ acc _ => acc
 
 /-- Take the accumulator out, give it to `f`, and put the first result back;
@@ -342,6 +363,9 @@ def Reader.withAcc {α β : Type} (f : α → α × β) : Reader α → Reader �
   | .rdfxml fs =>
       let (fs, b) := fs.withAcc f
       (.rdfxml fs, b)
+  | .jsonldItems fs =>
+      let (fs, b) := fs.withAcc f
+      (.jsonldItems fs, b)
   | .whole parse mode base acc bufRev =>
       let (acc, b) := f acc
       (.whole parse mode base acc bufRev, b)
@@ -508,12 +532,23 @@ structure Prepass where
   /-- `StrictFeed.doubleLtStep` over the text so far: 2 when the text has `<<`
       (`TurtleChunkFold.hasDoubleLt`). -/
   lt : Nat := 0
+  /-- A JSON-LD document: the shape and mention probe of `JsonLdChunkFold`
+      instead of the two counts above (`Prepass.forFormat`). -/
+  jld : Option JsonLdChunkFold.Probe := none
 
-def Prepass.feed : Prepass → ByteArray → Except String Prepass
-  | ⟨utf8, us, lt⟩, bytes =>
-      match utf8.feed bytes with
-      | .error m => .error m
-      | .ok (text, utf8) => .ok ⟨utf8, us.feedChars text.toList, text.foldl StrictFeed.doubleLtStep lt⟩
+/-- The pre-pass for a source in syntax `fmt`. -/
+def Prepass.forFormat (fmt : RdfFormat) : Prepass :=
+  { jld := if fmt == .jsonld then some {} else none }
+
+def Prepass.feed (p : Prepass) (bytes : ByteArray) : Except String Prepass :=
+  match p.utf8.feed bytes with
+  | .error m => .error m
+  | .ok (text, utf8) =>
+      match p.jld with
+      | some probe => .ok { p with utf8, jld := some (probe.feedString text) }
+      | none =>
+          .ok { p with utf8, underscores := p.underscores.feedChars text.toList,
+                       lt := text.foldl StrictFeed.doubleLtStep p.lt }
 
 /-- Whether the whole text has `<<`, the opening of an RDF 1.2 triple term or
     reified triple (`TurtleChunkFold.hasDoubleLt`). `parseTurtleText` reads such a
@@ -521,19 +556,25 @@ def Prepass.feed : Prepass → ByteArray → Except String Prepass
     reads it whole for the same reason. -/
 def Prepass.hasDoubleLt (p : Prepass) : Bool := p.lt == 2
 
-/-- The generated-label prefix of the whole text, once its bytes are all fed. -/
+/-- The generated-label prefix of the whole text, once its bytes are all fed.
+    For a JSON-LD pre-pass it is the argument that `Reader.init` reads:
+    `JsonLdChunkFold.streamPrefix` when the document is read item by item,
+    `""` when it is read whole. -/
 def Prepass.finish (p : Prepass) : Except String String :=
   match p.utf8.finish with
   | .error m => .error m
-  | .ok _ => .ok (freshBnodePrefixOfLongest p.underscores.longest)
+  | .ok _ =>
+      match p.jld with
+      | some probe => .ok probe.prefixArg
+      | none => .ok (freshBnodePrefixOfLongest p.underscores.longest)
 
 /-! ## Build-time checks -/
 
-#guard readsWhole .jsonld && !readsWhole .rdfxml
+#guard !readsWhole .jsonld && !readsWhole .rdfxml
 #guard !readsWhole .turtle && !readsWhole .trig && !readsWhole .nt && !readsWhole .nquads
 #guard splitsAtLines .nt && splitsAtLines .nquads
 #guard !splitsAtLines .turtle && !splitsAtLines .trig && !splitsAtLines .rdfxml && !splitsAtLines .jsonld
-#guard needsPrepass .turtle && needsPrepass .trig && !needsPrepass .nquads
+#guard needsPrepass .turtle && needsPrepass .trig && needsPrepass .jsonld && !needsPrepass .nquads
 
 /-- The quads of a dataset in the order `foldDataset` gives them. -/
 private def quadsOf (ds : Dataset) : List (Triple × Option Subject) :=

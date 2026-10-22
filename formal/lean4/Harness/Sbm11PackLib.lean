@@ -189,7 +189,7 @@ def failureText (source : String) (start pos : Nat) : Source.Failure → String
     syntaxes need none. -/
 def bnodePrefixOf (source : String) (fmt : RdfFormat) (size : Nat) : IO String := do
   if !Source.needsPrepass fmt then return ""
-  let mut scan : Source.Prepass := {}
+  let mut scan : Source.Prepass := Source.Prepass.forFormat fmt
   let mut pos := 0
   for _ in [0:size / 1048576 + 2] do
     if pos ≥ size then break

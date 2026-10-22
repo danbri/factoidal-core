@@ -591,7 +591,6 @@ ROW_BOUND = {"owlrl-closure-chain": 20.0, "termwire-page-decode": 6.0}
 # leaves this table in the commit that repairs it.
 XFAIL: dict[str, str] = {
     "query-memory-fstar": "https://github.com/danbri/factoidal/issues/729",
-    "sbm11-pack-jsonld-memory": "https://github.com/danbri/factoidal/issues/839",
     "iso-noniso-search": "https://github.com/danbri/factoidal/issues/877",
     "sbm11-replay-insert-time": "https://github.com/danbri/factoidal/issues/879",
     "ntriples-long-line-memory": "https://github.com/danbri/factoidal/issues/874",
@@ -1193,15 +1192,18 @@ def sbm11_rdfxml(n: int) -> str:
 
 
 def sbm11_jsonld(n: int) -> str:
-    return "[" + ",\n".join(
-        f'{{"@id":"{EX}s{i}","{EX}p":"{sbm11_payload(i)}"}}' for i in range(n)) + "]\n"
+    # The streaming document form (W3C Streaming JSON-LD, 7 May 2020): the
+    # context first, then one node object per statement, each with @id first.
+    # The pack reads it one node object at a time (Syntax/JsonLdChunkFold.lean).
+    return (f'{{"@context":{{"ex":"{EX}"}},"@graph":[\n' + ",\n".join(
+        f'{{"@id":"ex:s{i}","ex:p":"{sbm11_payload(i)}"}}' for i in range(n)) + "]}\n")
 
 
 SBM11_PACK_MEMORY_ROWS = {
     "sbm11-pack-ttl-memory": (25000, sbm11_ttl, "ttl", 0.75),
     "sbm11-pack-trig-memory": (25000, sbm11_trig, "trig", 0.75),
     "sbm11-pack-rdfxml-memory": (25000, sbm11_rdfxml, "rdf", 0.75),
-    "sbm11-pack-jsonld-memory": (5000, sbm11_jsonld, "jsonld", 0.75),
+    "sbm11-pack-jsonld-memory": (50000, sbm11_jsonld, "jsonld", 0.75),
 }
 
 

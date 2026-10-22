@@ -115,16 +115,37 @@ theorem rdfxml_readAll_of_notStreamed {α : Type} (extra : Extra) (mode : Mode)
   | error e => rfl
   | ok g => rfl
 
-/-- JSON-LD: when the caller linked a parser, the reader that `init` gives reads
-`parseDocument` of the joined chunks, for every list of chunks. -/
-theorem jsonld_readAll {α : Type} (extra : Extra) (parse : DocParser)
+/-- JSON-LD, the fall-back: when the caller linked a parser and the
+generated-prefix argument is not `JsonLdChunkFold.streamPrefix` (the pre-pass
+found the document not in streaming form, or the caller ran none), the reader
+that `init` gives reads `parseDocument` of the joined chunks, for every list of
+chunks. When the argument is `streamPrefix` the reader reads one top-level node
+object at a time; the equality is measured (`l4jsonld-chunk-diff`) and not
+proved: row JS-1 of `tests/known-defects/run.sh`,
+https://github.com/danbri/factoidal/issues/946. -/
+theorem jsonld_readAll_of_notStreamed {α : Type} (extra : Extra) (parse : DocParser)
     (hx : extra.jsonld = some parse) (mode : Mode) (base : Option String)
-    (bnodePrefix : String) (acc : α) (step : Step α) (chunks : List String) :
+    (bnodePrefix : String) (hp : (bnodePrefix == JsonLdChunkFold.streamPrefix) = false)
+    (acc : α) (step : Step α) (chunks : List String) :
     ∃ r, Reader.init extra .jsonld mode base bnodePrefix acc = .ok r ∧
       r.readAll step chunks =
         (parseDocument extra .jsonld mode base (String.join chunks)).map (foldDataset step acc) := by
   refine ⟨.whole parse mode base acc [], ?_, ?_⟩
-  · simp [Reader.init, hx]
+  · simp only [Reader.init, hx, hp]
+    cases extra.jsonldStream <;> simp
+  · rw [whole_readAll]
+    simp [parseDocument, hx]
+
+/-- JSON-LD without the item reader linked: always the whole reader. -/
+theorem jsonld_readAll {α : Type} (extra : Extra) (parse : DocParser)
+    (hx : extra.jsonld = some parse) (hs : extra.jsonldStream = none) (mode : Mode)
+    (base : Option String) (bnodePrefix : String) (acc : α) (step : Step α)
+    (chunks : List String) :
+    ∃ r, Reader.init extra .jsonld mode base bnodePrefix acc = .ok r ∧
+      r.readAll step chunks =
+        (parseDocument extra .jsonld mode base (String.join chunks)).map (foldDataset step acc) := by
+  refine ⟨.whole parse mode base acc [], ?_, ?_⟩
+  · simp [Reader.init, hx, hs]
   · rw [whole_readAll]
     simp [parseDocument, hx]
 
@@ -232,6 +253,7 @@ theorem prepass_chunks (chunks : List String) :
 #print axioms whole_readAll
 #print axioms rdfxml_readAll_of_notStreamed
 #print axioms jsonld_readAll
+#print axioms jsonld_readAll_of_notStreamed
 #print axioms nquads_foldlM
 #print axioms nquads_readAll_eq_run
 #print axioms flatten_toList_eq_join

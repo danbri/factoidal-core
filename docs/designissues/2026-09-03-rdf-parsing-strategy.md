@@ -472,7 +472,7 @@ one reader:
 | Turtle | `TurtleChunkFold` (section 2.2) | one chunk and one unfinished statement |
 | TriG | `TriGChunkFold` (section 3e) | one chunk and one unfinished unit |
 | RDF/XML | `RdfXmlChunkFold` (section 3k, since 2026-10-22): one child of `rdf:RDF` at a time; the whole document under the fall-back rule | one chunk and one item (https://github.com/danbri/factoidal/issues/838) |
-| JSON-LD | `Reader.whole` with the parser that `SourceJsonLd.lean` supplies | the document (https://github.com/danbri/factoidal/issues/839) |
+| JSON-LD | `JsonLdChunkFold` (section 3n, since 2026-10-22): one top-level node object at a time; `Reader.whole` with the parser that `SourceJsonLd.lean` supplies under the fall-back rule | one chunk and one node object (https://github.com/danbri/factoidal/issues/839) |
 
 JSON-LD stays out of the core wasm: `Source.Extra.jsonld` holds the parser, and
 a tool that reads JSON-LD passes `Source.withJsonLd`.
@@ -584,9 +584,9 @@ nesting depth of a triple term. No document that parsed before is refused now.
 The scaling row `sbm11-pack-nt-vs-nq` (N-Triples text takes at most 2.0 times the
 CPU time of N-Quads text) is the gate.
 
-**Costs open.** JSON-LD holds the document (issue 839, row
-`sbm11-pack-jsonld-memory`). RDF/XML held it until 2026-10-22 (issue 838,
-section 3k). The JSON-LD reader
+**Costs open.** JSON-LD held the document until 2026-10-22 (issue 839, section
+3n) and holds it only under the fall-back rule of section 3n. RDF/XML held it
+until 2026-10-22 (issue 838, section 3k). The JSON-LD reader
 uses native stack in proportion to the number of elements: documents of 25,000
 to 100,000 elements overflow a stack of 512 KB, and parse under the 1 GB stack
 of a native process (https://github.com/danbri/factoidal/issues/844, row
@@ -2854,6 +2854,111 @@ count mismatch. 2026-10-22, over the W3C Turtle and TriG files
 `{|`, not split); 17,962 agree (16,843 accepted by both, 1,119 refused by both),
 0 differ (out of 17,962 cases, 17,040 with at least one split); 0 count
 mismatches.
+### 3n. JSON-LD read one node object at a time (2026-10-22)
+
+Issue: https://github.com/danbri/factoidal/issues/839 (OKR batch 3 KR 2.2,
+https://github.com/danbri/factoidal/issues/875). Module:
+`formal/lean4/L4Factoidal/Syntax/JsonLdChunkFold.lean`; the item function is
+`jsonLdOps` in `RDF/SourceJsonLd.lean`; `ToRdf.datasetOfJsonAt` is the walk of
+`datasetOfJson` started at a given blank-node counter and prefix
+(`datasetOfJson_eq_at`).
+
+**Before.** `Reader.whole` kept the chunks, joined them and gave the text to
+`JSONLD.parseJsonLd`: the text, the JSON tree, the expanded tree and the dataset
+were live together. `l4sbm11-pack SOURCE.jsonld` held 11.3 to 13.5 bytes of
+peak resident memory for each source byte.
+
+**The document forms.** The streaming document form of "Streaming JSON-LD"
+(W3C Working Group Note, 7 May 2020, https://www.w3.org/TR/json-ld11-streaming/)
+puts `@context` first in a node object. The item reader takes two shapes:
+(A) a top-level array, `[node, node, ...]`; (B) an object with exactly the
+members `@context` and `@graph`, in this order, `@graph` an array, and nothing
+after the closing brace. For each node object it builds the document of that
+node (`[node]`, or `{"@context":C,"@graph":[node]}`), expands it with the
+processing the whole reader uses for the document (`expand` when the document
+has an inline `@context` or a base, nothing otherwise: the same branch as
+`parseJsonLd`), and walks it with `datasetOfJsonAt`. The quads go to the
+consumer at once and the node object's text is dropped. The context of shape B
+is processed once at its end, for its error, and again with each node (the
+cost is the context's size for each node).
+
+**Blank-node labels.** `datasetOfJson` threads one counter through the
+top-level objects and mints `_jld_anon` + counter (section 3h). The item reader
+threads the same counter from one node object to the next, so the labels are
+those of the whole reader. The prefix of the whole reader depends on the whole
+document (`generatedPrefix`: one more underscore than any written label
+`_:_jld_anon_...` needs). The item reader needs it before the first node
+object, so `Source.Prepass` reads the document once first (as for Turtle) and
+the answer goes to `Reader.init` as the generated-prefix argument.
+
+**Fall-back rule.** `Prepass.forFormat .jsonld` runs a `Probe`: a scan of the
+document structure (`Scan`, a state for each place in shapes A and B, string and
+escape state, bracket depth) and a matcher for the nine characters `_jld_anon`
+in the unescaped JSON strings (keys and values). The document is read item by
+item when the scan ends in an accepting state and no string mentions
+`_jld_anon`; then the prefix argument is `_jld_anon`. Otherwise the argument is
+empty and `Reader.init` builds `Reader.whole`, the reader of before. The test
+for the mention is stronger than `generatedPrefix` makes, so a document that
+mentions `_jld_anon` only in a dropped context definition is read whole. A
+caller that gives another prefix (Turtle's, or none) gets the whole reader.
+Documents read whole: a top-level object that is a single node, an object with
+`@graph` before `@context`, with a member after `@graph`, or without
+`@context`, a top-level scalar, and any document that is not JSON.
+
+**Order.** A document with named graphs gives the same quads as a multiset,
+not in the same order: the whole reader gives the default graph first, then the
+named graphs, the item reader gives each node object's default graph and named
+graphs in turn. Without named graphs the list is the same. N.B. the whole
+reader does not expand a top-level array that has no base: a node's own
+`@context` is then ignored (`hasInlineContext` is false for an array); the item
+reader does the same, to give the same quads.
+
+**Theorems** (`RDF/SourceTheorems.lean`; `#print axioms`: `propext`,
+`Classical.choice`, `Quot.sound`):
+
+- `jsonld_readAll_of_notStreamed`: when the generated-prefix argument is not
+  `_jld_anon`, the reader gives `parseDocument` of the joined chunks, for every
+  list of chunks.
+- `jsonld_readAll`: the same when the item reader is not linked.
+- `JSONLD.datasetOfJson_eq_at`: `datasetOfJson` is `datasetOfJsonAt` at the
+  document's prefix and counter 0.
+
+Not proved: when the reader reads item by item, it gives the quads of the whole
+reader. Open issue: https://github.com/danbri/factoidal/issues/946; expected
+failure: row JS-1 of `tests/known-defects/run.sh`.
+
+**Measured equality.** `tools/jsonld-chunk-differential.sh` runs
+`l4jsonld-chunk-diff` (`Harness/JsonLdChunkDiff.lean`) over every `.jsonld`
+file under `third_party/testing/json-ld` and `tests/sbm11/syntax`. Each file
+is read as it is and in three wrappings (`[` file `]`; `{"@context":{},"@graph":[`
+file `]}`; the same with the file twice), with no base and with
+`http://example.org/dir/doc.jsonld`, in chunks of 1, 7, 64 and 65,536
+characters (1 and 7 for texts under 100,000 characters): 2,152 files; 68,812
+agree (65,928 accepted by both, 2,884 refused by both), 0 differ (out of
+68,812 cases); 56,888 of the cases were read item by item, 55,840 of them
+accepted, 2026-10-22. The `#guard`s of `SourceJsonLd.lean` cut a document in
+streaming form at every position.
+
+**Memory** (`l4sbm11-pack SOURCE.jsonld OUT --workers 1 --run-terms 20000
+--sort-rows 50000`, peak resident set, shape B, one statement of about 400
+source bytes in each node object):
+
+| Statements | Source bytes | Peak RSS |
+| ---: | ---: | ---: |
+| 25,000 | 10,102,833 | 49 MB |
+| 50,000 | 20,227,833 | 62 to 70 MB |
+| 100,000 | 40,477,833 | 69 to 90 MB |
+| 200,000 | 81,177,833 | 84 MB |
+| 300,000 | 121,000,000 (about) | 88 MB |
+
+Row `sbm11-pack-jsonld-memory` of `tests/stack/lean_scaling.py` now measures
+50,000, 100,000 and 200,000 statements: 0.37 bytes of peak RSS per source byte
+(bound 0.75), against 11.3 to 13.5 before at 5,000 statements. The packer's
+runs grow up to about 100,000 statements and are flat above, so the row starts
+at 50,000 (at 25,000 the slope reads 0.9 because the first point is below the
+plateau). The row leaves the expected-failure table. A document that falls back
+is read whole and holds the memory it held before.
+
 
 ## 4. Rules that follow
 
