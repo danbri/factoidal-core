@@ -39,7 +39,8 @@
 # `l4factoidal query`, the in-memory query ops, gives neither a graph with no triple nor a
 # graph named by a blank node (https://github.com/danbri/factoidal/issues/876); the IBK4
 # and IBK5 stores refuse a graph with no triple, in the pack and in CREATE GRAPH and CLEAR
-# GRAPH (https://github.com/danbri/factoidal/issues/880).
+# GRAPH (https://github.com/danbri/factoidal/issues/880), and every update on them is refused
+# (https://github.com/danbri/factoidal/issues/935).
 #
 # Prints "named graphs: N pass, M fail, K expected-fail (out of T)". Exit 0 when no case
 # failed and no expected failure passed; 2 when a binary is missing.
@@ -258,32 +259,41 @@ if [ "$ibk_ok" = 0 ]; then
       else record "$fmt-pack-nonempty-graphs" 1 "GRAPH ?g { } gives $rows rows, expected 2"; fi
     else record "$fmt-pack-nonempty-graphs" 1 "pack or activation failed: $(tail -1 "$c.pack.log" "$c.act.log" 2>/dev/null | tr '\n' ' ' | cut -c1-160)"; fi
   done
-  c="$TMP/ibk5"
-  if [ -f "$c/CURRENT" ]; then
-    # the first commit makes the log; the refusals are then checked against its bytes
-    rc=0; timeout 120 "$BIN/l4block-delta-log" "$c" --update 'INSERT DATA { GRAPH <http://example.org/g1> { <http://example.org/z> <http://example.org/p> <http://example.org/y> } }' >"$c.upd.log" 2>&1 || rc=$?
-    if [ "$rc" -eq 0 ]; then record ibk5-insert-data-still-commits 0 "exit 0"
-    else record ibk5-insert-data-still-commits 1 "exit $rc: $(tail -1 "$c.upd.log" | cut -c1-160)"; fi
-    log="$(find "$c" -name deltas.dlog | head -1)"
-    before="$(cksum "$log" 2>/dev/null || echo none)"
-    for upd in 'CREATE GRAPH <http://example.org/g9>' 'CLEAR GRAPH <http://example.org/g1>'; do
-      rc=0; timeout 120 "$BIN/l4block-delta-log" "$c" --update "$upd" >"$c.upd.log" 2>&1 || rc=$?
-      after="$(cksum "$log" 2>/dev/null || echo none)"
-      if [ "$rc" -ne 0 ] && grep -qF "$RULE" "$c.upd.log" && [ "$before" = "$after" ] && [ "$before" != none ]; then
-        record "ibk5-refuses: $upd" 0 "exit $rc, message names the rule, log unchanged"
-      else record "ibk5-refuses: $upd" 1 "exit $rc, log before $before after $after: $(tail -1 "$c.upd.log" | cut -c1-160)"; fi
-    done
-  else record ibk5-delta-log 1 "no activated ibk5 collection"; fi
-  # shortfall: a DELETE DATA of the last triple of a named graph is committed, not refused
-  # (https://github.com/danbri/factoidal/issues/934)
-  d="$TMP/ibk5-del"; mkdir -p "$d"
-  printf '%s\n' '@prefix ex: <http://example.org/> .' 'ex:g1 { ex:a ex:p ex:b . }' >"$TMP/one.trig"
-  if timeout 120 "$BIN/l4block-shard-pack" "$TMP/one.trig" "$d/gen-1" ibk5 >"$d.pack.log" 2>&1 \
-      && timeout 120 "$BIN/l4block-shard-activate" "$d" gen-1 >"$d.act.log" 2>&1; then
-    rc=0; timeout 120 "$BIN/l4block-delta-log" "$d" --update 'DELETE DATA { GRAPH <http://example.org/g1> { <http://example.org/a> <http://example.org/p> <http://example.org/b> } }' >"$d.upd.log" 2>&1 || rc=$?
-    if [ "$rc" -ne 0 ] && grep -qF "$RULE" "$d.upd.log"; then xfail xfail-ibk5-delete-last-triple https://github.com/danbri/factoidal/issues/934 1 "the DELETE of the last triple of ex:g1 is refused"
-    else xfail xfail-ibk5-delete-last-triple https://github.com/danbri/factoidal/issues/934 0 "DELETE DATA of the only triple of ex:g1: exit $rc, committed, not refused"; fi
-  else record ibk5-delete-setup 1 "pack or activation failed: $(tail -n 1 "$d.pack.log" | cut -c1-160)"; fi
+  # Every update on an IBK4 or IBK5 collection is refused: l4block-quad-query does not replay the
+  # delta log, so a committed update would be invisible (https://github.com/danbri/factoidal/issues/935).
+  # This covers CREATE GRAPH, CLEAR GRAPH, INSERT DATA and the DELETE DATA of the last triple of a
+  # named graph (https://github.com/danbri/factoidal/issues/934). Refused: exit non-zero, a message
+  # that names the rule, and no file of the collection changed.
+  snapshot() { find "$1" -type f -exec cksum {} + 2>/dev/null | sort; }
+  ISSUE935="https://github.com/danbri/factoidal/issues/935"
+  printf '%s\n' '@prefix ex: <http://example.org/> .' 'ex:s ex:p ex:o .' 'ex:g1 { ex:a ex:p ex:b . }' >"$TMP/one.trig"
+  for fmt in ibk4 ibk5; do
+    c="$TMP/$fmt-upd"; mkdir -p "$c"
+    if timeout 120 "$BIN/l4block-shard-pack" "$TMP/one.trig" "$c/gen-1" "$fmt" >"$c.pack.log" 2>&1 \
+        && timeout 120 "$BIN/l4block-shard-activate" "$c" gen-1 >"$c.act.log" 2>&1; then
+      before="$(snapshot "$c")"
+      for upd in 'CREATE GRAPH <http://example.org/g9>' 'CLEAR GRAPH <http://example.org/g1>' \
+          'INSERT DATA { GRAPH <http://example.org/g1> { <http://example.org/z> <http://example.org/p> <http://example.org/y> } }' \
+          'DELETE DATA { GRAPH <http://example.org/g1> { <http://example.org/a> <http://example.org/p> <http://example.org/b> } }'; do
+        rc=0; timeout 120 "$BIN/l4block-delta-log" "$c" --update "$upd" >"$c.upd.log" 2>&1 || rc=$?
+        if [ "$rc" -ne 0 ] && grep -qF "$ISSUE935" "$c.upd.log" && [ "$before" = "$(snapshot "$c")" ]; then
+          record "$fmt-update-refused: ${upd:0:30}" 0 "exit $rc, message names the rule, no file changed"
+        else record "$fmt-update-refused: ${upd:0:30}" 1 "exit $rc: $(tail -n 1 "$c.upd.log" | cut -c1-160)"; fi
+      done
+    else record "$fmt-update-setup" 1 "pack or activation failed: $(tail -n 1 "$c.pack.log" | cut -c1-160)"; fi
+  done
+  # IBK3 keeps taking updates, and its query path replays them
+  if [ -x "$BIN/l4block-id-v3-query" ]; then
+    c="$TMP/ibk3-upd"; mkdir -p "$c"
+    printf '%s\n' '@prefix ex: <http://example.org/> .' 'ex:s ex:p ex:o .' >"$TMP/one.ttl"
+    rc=0
+    timeout 120 "$BIN/l4block-shard-pack" "$TMP/one.ttl" "$c/gen-1" ibk3 >"$c.pack.log" 2>&1 \
+      && timeout 120 "$BIN/l4block-shard-activate" "$c" gen-1 >"$c.act.log" 2>&1 \
+      && timeout 120 "$BIN/l4block-delta-log" "$c" --update 'INSERT DATA { <http://example.org/new> <http://example.org/p> <http://example.org/o2> }' >"$c.upd.log" 2>&1 || rc=$?
+    seen="$(timeout 120 "$BIN/l4block-id-v3-query" "$c" --json --query 'SELECT ?s WHERE { ?s ?p ?o }' 2>/dev/null | tail -n 1 | grep -c 'http://example.org/new')"
+    if [ "$rc" -eq 0 ] && [ "$seen" -ge 1 ]; then record ibk3-update-commits-and-is-visible 0 "committed, exit 0; the query returns ex:new"
+    else record ibk3-update-commits-and-is-visible 1 "exit $rc, rows with ex:new: $seen: $(tail -n 1 "$c.upd.log" | cut -c1-160)"; fi
+  else record ibk3-update 1 "missing: $BIN/l4block-id-v3-query"; fi
 fi
 
 echo "named graphs: $PASS pass, $FAIL fail, $XFAIL expected-fail (out of $((PASS + FAIL + XFAIL)))"

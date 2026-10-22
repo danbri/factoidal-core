@@ -1594,8 +1594,12 @@ producers of RDF quads, and a file is one producer.
   2026-10-22, https://github.com/danbri/factoidal/issues/880): the pack of a
   source that declares one (2 of the 6 graphs of `d5.trig`), `CREATE GRAPH`
   and `CLEAR GRAPH` in `l4block-delta-log` exit 1 with a message that names the
-  rule, and the log is unchanged. A DELETE that empties a graph is not
-  detected (https://github.com/danbri/factoidal/issues/934, expected failure). Use SBM11 for such data.
+  rule, and the log is unchanged. `l4block-delta-log --update` refuses EVERY
+  update on an IBK4 or IBK5 collection (exit 1, no file changed): their query
+  path `l4block-quad-query` does not replay the log
+  (https://github.com/danbri/factoidal/issues/935; this also covers a DELETE
+  that empties a graph, https://github.com/danbri/factoidal/issues/934). IBK3
+  updates still commit and `l4block-id-v3-query` replays them. Use SBM11 for such data.
 - The replay of a log of NEW terms costs 37 to 42 microseconds of CPU for
   each entry, against 15 to 18 for dictionary terms. Cause: overlay ids are
   `14 * 2^60 + n`, above 2^63, so a Lean `Nat` holds them as GMP numbers, and
