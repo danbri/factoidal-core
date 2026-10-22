@@ -1092,3 +1092,159 @@ Gates on this change (exit codes 0): `lake build` (1872 jobs);
 reference engine (438 on the id path); `tools/lean-tail-recursion-audit.py`,
 `tools/lean-unbuilt-modules.py` and `tools/lean-csimp-reach.py` with `--gate`;
 `tools/lean-hygiene-audit.py` clean.
+
+### 11.16 d14, row numbers on machine words, sign without a branch, varint read without a branch (2026-10-22)
+
+https://github.com/danbri/factoidal/issues/930 (OKR batch 3 KR 1.1,
+https://github.com/danbri/factoidal/issues/875). Continues 11.15. Target:
+d14 warm at most QLever 1 CPU warm (6.09 ms, section 11.8). Result: median 6.2
+to 6.4 ms in the series below (before 8.7 to 10.7 ms in the same series); the
+target is met within the spread of the rounds, not by a margin.
+
+Cause, from `valgrind --tool=cachegrind --branch-sim=yes --cache-sim=no` of
+one run of d14 (deterministic; `perf` has no hardware counters in this
+container). The claim of 11.15, that the branch on the continuation bit of
+the object column is the cost of both loops, holds for one loop:
+
+| loop | instructions | conditional branches | mispredicted |
+| --- | ---: | ---: | ---: |
+| find (`deltaFindGoC`), before | 43.9 M | 10.8 M | 13,516 |
+| gather (`deltaGatherGoK`), before | 29.3 M | 7.6 M | 455,383 |
+
+- The find loop is bound by instruction count (74 per row, 593,920 rows), not
+  by mispredicted branches. The row number, `lo`, `hi` and the candidate
+  pointer were `Nat`: every `idx + 1`, `idx >= hi`, `idx >= lo` and `p <
+  cands.size` is a tag test, a shift and an overflow branch.
+- The gather loop mispredicts 0.75 branches per row: the sign of the zigzag
+  step (`z % 2`, taken in 50 percent of rows of an unsorted column) and the
+  length of the varint.
+
+Changes (`Storage/Sbm11/Sip.lean`, `Storage/Sbm11/VarintWord.lean`):
+
+1. `deltaFindGoY`, `deltaGatherGoY`: `deltaFindGoC` and `deltaGatherGoK` with
+   the row number, `lo`, `hi`, the candidate pointer, the index into `pos`
+   and the next wanted row as `USize`. The starts use them when `findFits`
+   or `gatherFits` holds (the bytes, `lo`, `hi`, the candidates, `pos` and
+   its entries all fewer than `smallBytes`, 2 ^ 31, so that no `USize` wraps
+   on wasm32), else the earlier loops (`deltaFindStartNat`,
+   `deltaGatherStartNat`).
+2. `VarintWord.zzV`, `zzOk`: the zigzag step with no branch on the sign
+   (`prev + ((z >>> 1) ^^^ (0 - (z &&& 1)))`; the step is inside the 64-bit
+   range when `(v < prev) == (z is odd)`).
+3. `VarintWord.lenMask`, `vLen`, `vVal`, used by `deltaGatherGoY` at the start
+   of a varint (accumulator 0, eight bytes in the window, a byte that ends a
+   varint among them): `y = w ||| 0x7f7f7f7f7f7f7f7f`; the mask of the bytes
+   up to the first byte whose continuation bit is clear is `y ^^^ (y + 1)`
+   (the carry of `y + 1` runs through the bytes that are `0xFF`); the length
+   is the number of those bytes (one multiplication); `vCompress` packs the
+   seven-bit groups in three shift-or steps and a variable shift drops the
+   bytes after the last. No C primitive: `Prim.Bytes.ldU64LE` loads the
+   window. A window with no varint end (a varint of nine bytes or more), a
+   window past the end of the array and a varint that began in an earlier
+   window go through the byte step. The loop takes fuel (`b.size + 1`)
+   because the positivity of the length is a theorem about `vLen`, not
+   something the termination check sees.
+
+Theorems (`Storage/Sbm11/VarintWordTheorems.lean`, `SipWordTheorems.lean`;
+`#print axioms`: propext, Classical.choice, Quot.sound, except `K_row`,
+`bt_ld`, `probeFrom_le` (propext, Quot.sound)). No `sorry`, no
+`native_decide`.
+
+- `lenMask_eq`: for a window whose bytes `0 .. n-1` have the continuation bit
+  set and whose byte `n` has it clear (`n < 8`), `lenMask (w ||| C7)` is
+  `2 ^ (8 n + 8) - 1`. From `xor_add_one_bit`: bit `i` of `x ^^^ (x + 1)` is
+  set exactly when the bits of `x` below `i` are all set
+  (`BitVec.carry_succ_one`); no case split on `n`.
+- `vVal_eq`: the value is `hf (bt w) 0 n`, the Horner form of the groups of
+  the bytes `0 .. n`. One bit-level proof per `n` (`val_0` .. `val_7`, 64
+  output bits each, 1 min 40 s of wall time for the module on 4 cores).
+- `hz_eq_hf`: the accumulation of the byte loop (`acc * 128 + group`) equals
+  the Horner form. `exists_term`: a window with `w ||| C7 ≠ allOnes` has such
+  an `n`. `fastRead_spec`: length `n + 1` and value, together.
+- `zz_even`, `zz_odd`, `SipWordTheorems.zz_spec`: `zzV` and `zzOk` are the
+  two branches of the zigzag step of the earlier loops.
+- `SipWordTheorems.K_row`: `deltaGatherGoK` over one varint of `n + 1` bytes
+  equals the row step with the value `hz`; `gatherFast` joins it with
+  `fastRead_spec` and `bt_ld` (byte `k` of the load is `getOr0 b (i + k)`).
+- `deltaFindGoY_eq`, `deltaGatherGoY_eq`: each equals its `Nat`-state loop
+  (`deltaFindGoC`, `deltaGatherGoK`) from the same state, with the bounds
+  above. `deltaFindStart_eq`, `deltaGatherStart_eq`: the starts equal the
+  `Nat` loops with the fuel they had before, so `SipTheorems.findWords_spec`
+  and `gatherWords_spec` hold of the changed scan unchanged (the starts of the
+  earlier loops are now `deltaFindStartNat_eq`, `deltaGatherStartNat_eq` in
+  `SipFastTheorems`).
+
+Tests: the `#guard`s of `Sip.lean` run `findWords` and `gatherWords` against
+the decoded reference; two columns are added: deltas of 1 to 9 bytes up and
+down (the read at every length, and the byte step for nine bytes), and 300
+rows with lengths of 1 to 5 bytes in one column.
+
+Measurement. Instruction and branch counts, one run of d14 (cachegrind):
+
+| build | find: instructions / mispredicted | gather: instructions / mispredicted | all: mispredicted |
+| --- | ---: | ---: | ---: |
+| before (11.15) | 43.9 M / 13,516 | 29.3 M / 455,383 | 1,009,818 |
+| sign without branch only | 46.3 M / 13,748 | 30.7 M / 209,831 | 745,971 |
+| varint read in both loops, sign without branch | 79.9 M / 3,596 | 43.0 M / 2,283 | 532,460 |
+| row numbers as `USize` in both loops | 25.5 M / 12,687 | 23.4 M / 209,720 | 914,952 |
+| this change (`USize`; varint read in gather only) | 27.9 M / 12,961 | 35.7 M / 2,456 | 552,463 |
+
+The varint read in the find loop removes 10,000 mispredictions and adds 34 M
+instructions; it is not used there. In the gather loop it removes 207,000
+mispredictions and adds 12 M instructions; it is used there. Intermediate
+builds, same series (3 interleaved rounds, medians of 31 runs): sign without
+branch only 8.1 to 8.8 ms against 9.5 to 9.9 ms before; `USize` in both
+loops 6.8 to 7.0 ms; plus the varint read in the gather loop 6.2 to 6.3 ms.
+
+`l4sbm11 query /home/user/bench-data/sbm11/dbpedia --file
+tools/bench/three-engines/queries/dbpedia/d14-filter-date.rq --verify none
+--repeat 7 --explain`, execution median of 7 runs in one process, 3
+interleaved rounds; "before" is the build of `eaf0274d`, "after" the build of
+this change. 1-minute load average 1.7 to 2.3 (other sessions on the machine,
+4 cores). Answers of all runs equal to
+`/home/user/bench-data/answers/dbpedia/d14-filter-date.sbm11-none.json`
+(54 rows), and the answers of d05, d08 and d13 are byte-identical between the
+two builds.
+
+| | before | after | QLever 1 CPU warm (11.8) | QLever default warm (11.8) |
+| --- | ---: | ---: | ---: | ---: |
+| warm, round 1 / 2 / 3, `--repeat 7` (ms) | 9.49 / 12.39 / 12.81 | 8.88 / 6.40 / 5.78 | | |
+| warm, round 1 / 2 / 3, `--repeat 41` (ms) | 8.75 / 12.34 / 10.65 | 6.29 / 8.00 / 6.20 | | |
+| warm, minimum over the runs of the rounds (ms) | 8.17 to 8.52 | 5.57 to 5.64 | | |
+| warm, median of rounds, `--repeat 41` (ms) | 10.65 | 6.29 | 6.09 | 6.09 |
+
+The QLever times include HTTP and JSON (about 2 to 3 ms for a small answer).
+The ratio to QLever 1 CPU goes from 1.7 to 1.0 on the median, and the minimum
+of the after build (5.6 ms) is below QLever. The spread of single rounds
+(5.8 to 8.9 ms after) comes from other sessions on the machine.
+
+Other queries, same method (`--repeat 21`, 3 rounds, median of rounds, ms):
+d13 1.40 before and 1.51 after (minimum 1.26 and 1.26; the difference is
+inside the spread); d05 23.1 before and 16.0 after (minimum 19.6 and 14.6);
+d08 15.8 before and 12.6 after (minimum 13.9 and 11.3).
+
+What is left in d14 (cachegrind): the find loop is 15 percent of the
+instructions (27.9 M for 593,920 rows, 47 per row, the candidate test and the
+state of the loop); the remaining mispredictions (552,463) are 13,000 in the
+find loop, 2,500 in the gather loop and the rest outside both loops. A decoder
+that finds the row boundaries of a whole word at once (the terminator mask of
+eight bytes, the rows taken one set bit at a time) would decouple the
+boundary search from the value, and is not done.
+
+Gates on this change (exit codes 0): `lake build` (1,876 jobs);
+`tests/prim/run.sh` 24,896 pass, 0 fail on native and 24,896 pass, 0 fail on
+wasm32 (no primitive changed; the wasm32 run shows the 32-bit `USize` build
+of `Prim.Bytes` is intact); `tests/sbm11/run.sh` with
+`FACTOIDAL_TESTING_ROOT=/home/user/factoidal-core/third_party/testing`
+3,115 pass, 0 fail, 29 expected-fail (out of 3,144) (the run in a worktree
+without the fixtures gives 1,052 pass, 3 fail, 11 expected-fail for stages 4
+and 5; the 3 failures are the missing fixture directories of
+`w3c_roundtrip.sh`, `w3c_update.sh` and `quad_source.sh`, which pass with the
+fixtures: 1,281 + 94 + 688 pass); `SBM11_THREADS=4 tests/sbm11/census.sh` 605
+executed, 605 matched the reference engine (438 on the id path);
+`tools/lean-tail-recursion-audit.py` (one line added to
+`tools/lean-tail-recursion-allow.txt`: `VarintWord.hf`, specification only),
+`tools/lean-unbuilt-modules.py` and `tools/lean-csimp-reach.py` with
+`--gate`; `tools/lean-hygiene-audit.py` clean. The wasm32 build of the
+changed loops is not run by these gates; the loops use only `USize` values
+below 2 ^ 31 (`findFits`, `gatherFits`).

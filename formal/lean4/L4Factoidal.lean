@@ -390,7 +390,10 @@ import L4Factoidal.Storage.Sbm11.OptJoin
 import L4Factoidal.Storage.Sbm11.OptJoinTheorems
 import L4Factoidal.Storage.Sbm11.SemiJoinTheorems
 import L4Factoidal.Storage.Sbm11.Sip
+import L4Factoidal.Storage.Sbm11.VarintWord
+import L4Factoidal.Storage.Sbm11.VarintWordTheorems
 import L4Factoidal.Storage.Sbm11.SipFastTheorems
+import L4Factoidal.Storage.Sbm11.SipWordTheorems
 import L4Factoidal.Storage.Sbm11.SipTheorems
 import L4Factoidal.Storage.Sbm11.IdQuery
 import L4Factoidal.Storage.Sbm11.IdQueryTests

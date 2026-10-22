@@ -11,7 +11,7 @@ information passing on machine words equal their `Nat` loops
   same state, with the fuel `b.size - i + 3`, when the bytes are fewer than
   `Sip.smallBytes`.
 * `deltaGatherGoW_eq`: the same for `Sip.deltaGatherGo`.
-* `deltaFindStart_eq`, `deltaGatherStart_eq`: the starts that `findWords`
+* `deltaFindStartNat_eq`, `deltaGatherStartNat_eq`: the starts that `findWords`
   and `gatherWords` call equal the `Nat` loops with the fuel those used
   before (`b.size - i + 2` from byte `i + 1`), so `SipTheorems.findWords_spec`
   and `gatherWords_spec` hold of the word loops.
@@ -523,9 +523,9 @@ theorem toUSize_succ (b : ByteArray) (i : Nat) (hb : b.size < smallBytes) (hi : 
 
 /-- The start that `findWords` calls equals the `Nat` find loop with the
     fuel it had before the word loop. -/
-theorem deltaFindStart_eq (b : ByteArray) (lo hi : Nat) (cands : Array UInt64) (i p : Nat) (hi' : i < b.size) :
-    deltaFindStart b lo hi cands i p = deltaFindGo b lo hi cands (b.size - i + 2) 0 0 (i + 1) 0 p #[] .empty := by
-  unfold deltaFindStart
+theorem deltaFindStartNat_eq (b : ByteArray) (lo hi : Nat) (cands : Array UInt64) (i p : Nat) (hi' : i < b.size) :
+    deltaFindStartNat b lo hi cands i p = deltaFindGo b lo hi cands (b.size - i + 2) 0 0 (i + 1) 0 p #[] .empty := by
+  unfold deltaFindStartNat
   split
   · rename_i hb
     rw [deltaFindGoC_eq b lo hi cands _ (i + 1).toUSize 0 0 0 p _ _ #[] .empty (Nat.le_refl _) rfl rfl,
@@ -536,10 +536,10 @@ theorem deltaFindStart_eq (b : ByteArray) (lo hi : Nat) (cands : Array UInt64) (
 
 /-- The start that `gatherWords` calls equals the `Nat` gather loop with
     the fuel it had before the word loop. -/
-theorem deltaGatherStart_eq (b : ByteArray) (pos : Array Nat) (i : Nat) (hi' : i < b.size) :
-    deltaGatherStart b pos i =
+theorem deltaGatherStartNat_eq (b : ByteArray) (pos : Array Nat) (i : Nat) (hi' : i < b.size) :
+    deltaGatherStartNat b pos i =
       deltaGatherGo b pos (b.size - i + 2) 0 0 (i + 1) 0 0 (ByteArray.emptyWithCapacity (8 * pos.size)) := by
-  unfold deltaGatherStart
+  unfold deltaGatherStartNat
   split
   · rename_i hb
     rw [deltaGatherGoK_eq b pos _ (i + 1).toUSize 0 0 0 0 _ _ (Nat.le_refl _) rfl,
@@ -557,7 +557,7 @@ theorem deltaGatherStart_eq (b : ByteArray) (pos : Array Nat) (i : Nat) (hi' : i
 #print axioms deltaGatherGoW_eq
 #print axioms posAt_eq
 #print axioms deltaGatherGoK_eq
-#print axioms deltaFindStart_eq
-#print axioms deltaGatherStart_eq
+#print axioms deltaFindStartNat_eq
+#print axioms deltaGatherStartNat_eq
 
 end L4Factoidal.Storage.Sbm11.Sip
