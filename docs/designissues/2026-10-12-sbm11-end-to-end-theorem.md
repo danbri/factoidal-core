@@ -366,6 +366,78 @@ and peak RSS was 200 to 208 MB; with `G = 65,536` (28 buckets) 5,473 ms and
 time about doubles (about 4.5 µs per quad more); it stays linear in the
 quads.
 
+### 9.1 Segments in place of buckets (2026-10-22, issue 810)
+
+The bucket method above wrote 32 bytes per row of POS, SPO and OSP: 171 MB
+for the 34.8 MB olympics generation (4.9 times), and about 2.2 GB for the
+568 MB DBpedia generation (23,269,559 quads; not run, because this container
+had 3 to 4 GB free). https://github.com/danbri/factoidal/issues/810 (OKR batch
+3 KR 1.4, https://github.com/danbri/factoidal/issues/875) set the target:
+temporary disk at most 0.5 times the generation, activation time not worse.
+
+**Method** (`Harness/Sbm11PermCheck.lean`). Each row of POS, SPO and OSP is
+re-keyed to its PSO row (`PermSet.rekeyCols`, equal to `rekey` by
+`rekeyCols_eq`) and appended to the current segment. A POS segment ends where
+the predicate changes: POS and PSO both start with the predicate, so one POS
+predicate is one contiguous range of PSO. SPO and OSP are one segment each.
+At its end a segment is sorted and compared row by row with the next rows of
+PSO, read through a cursor block by block; at the end of the permutation the
+cursor must be at the end of PSO. A segment that reaches
+`SBM11_VERIFY_GROUP_ROWS` rows (default 131,072) is sorted and written as a
+run: chunks of 4,096 rows, each the four column frames of the packer's
+encoder (`encodeColumnFast`), so a run costs about what a PSO block costs per
+row. At the end of the segment the runs are merged with a binary heap (more
+than 128 runs are first merged 128 at a time) and the merged rows are compared
+with PSO. The runs of a segment are removed when it is done. Sorting runs and
+comparing segments run in background tasks (`IO.asTask`; at most
+`SBM11_VERIFY_SPILLS`, default 6, runs sorted at once); each comparing job is
+bound to the end of the previous one, so the PSO cursor advances in segment
+order as in a sequential run, and the jobs of one permutation go on while the
+next permutation is decoded.
+
+**Theorem** (`Storage/Sbm11/PermSet.lean`). `segmentsSame outs c` is
+`outs.flatten == c`. `segments_perm`: if each output is a permutation of its
+segment (`PermPairs outs segs`), the check gives `segs.flatten ~ c`.
+`perms_same` (L3b): if the segments, in order, are the re-keyed rows of
+permutation `p` (`segs.flatten = rowsP.map (rekey p)`) and the check holds
+against the PSO rows, then `rowsP.map (ofPermRow p) ~ rows0.map (ofPermRow 0)`.
+`perms_same_sorted` is the in-memory instance: each output is `sortRowsL` of
+its segment (`List.mergeSort`, `sortRowsL_perm`). Neither hypothesis restates
+the conclusion: one says how the segments were cut, the other is the check's
+result; the conclusion is about decoded quads. The check compares whole
+lists, so it needs neither the manifest's row counts nor the strict order of
+the permutations (the design in the issue proposed a lemma on duplicate-free
+lists of equal length; a list equality makes it unnecessary). Axioms:
+`perms_same` uses `propext` and `Quot.sound`; `perms_same_sorted` the same.
+Not proved: that the `IO` code computes the check (the run files, the merge,
+the task chain). Tested: `tests/sbm11/run.sh` part (j) (the gate fixture with
+limits of 1, 3 and 1,000,000 rows, so runs and merges; the POS tamper case
+refused by this check with the digest off), and part (w),
+`tests/sbm11/perm_check_disk.sh` (120,000 generated lines: peak temporary
+bytes at most half the generation with the default limit and with a limit of
+4,096; 5,697 runs with a limit of 64, so the merge in stages).
+
+**Cost** (`/usr/bin/time -v l4sbm11 verify`, old bucket binary and new binary
+interleaved, 5 rounds each, 2026-10-22, 4 vCPU shared with other sessions,
+load average 1.3 to 4.1):
+
+| olympics (34.8 MB generation) | buckets (old) | segments (new) |
+| --- | ---: | ---: |
+| wall s | 9.20 / 9.41 / 9.13 / 8.52 / 10.02 (median 9.20) | 8.07 / 8.06 / 7.15 / 7.31 / 8.20 (median 8.06) |
+| user s | 8.27 to 9.31 | 8.25 to 9.08 |
+| peak RSS kB | 113,508 to 114,836 | 112,980 to 125,604 |
+| temporary bytes written | 171,036,000 | 11,330,172 |
+| temporary peak bytes | 171,036,000 (4.91 x generation) | 4,150,942 (0.12 x generation) |
+
+DBpedia slice (567,655,687 bytes, 23,269,559 quads), new binary only: 2 min
+46 s wall, 149.5 s user; 514 runs; 433,502,850 bytes written, peak
+172,588,845 bytes (0.30 x generation); peak RSS 1,232,148 kB. With a limit of
+32,768 rows and one run sorted at a time: 2 min 20 s, peak 128,672,143 bytes,
+peak RSS 1,238,312 kB. The peak RSS does not change with the in-flight rows of
+the check; most of it is the verified chunk cache of the files read
+(`Harness/PosixRangeIO.lean`, `VerifiedChunkCache` keeps every chunk it
+admitted), which the bucket method had as well.
+
 ## 10. L4e: the scan as a whole (second landing)
 
 `scanFoldM` was cut into `scanBlockM` and pure per-block functions (section

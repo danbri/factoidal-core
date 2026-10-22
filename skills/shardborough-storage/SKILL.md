@@ -1052,14 +1052,22 @@ Activation's exact permutation check and the scan theorem (2026-10-12,
 https://github.com/danbri/factoidal/issues/776; record: sections 9 and 10 of
 [`docs/designissues/2026-10-12-sbm11-end-to-end-theorem.md`](../../docs/designissues/2026-10-12-sbm11-end-to-end-theorem.md)).
 `l4sbm11 verify` and `activate` now also check exactly that POS, SPO and OSP
-hold the quads of PSO (`Harness/Sbm11PermCheck.lean`): the rows are re-keyed
-to PSO rows, written to bucket files by groups of PSO blocks
-(`SBM11_VERIFY_GROUP_ROWS`, default 262,144) in `GEN.verify-PID` next to
-the generation, and each bucket is sorted and compared with its group;
-stderr prints `exact permutation check: buckets=... failures=...`. The check
-is proved to give equal quad multisets (`PermSet.perms_same`, lemma L3b).
-Cost on olympics: activation 6.4 to 7.4 s before, 13.8 to 15.4 s after;
-peak RSS 88 to 111 MB; 171 MB of bucket files written and read.
+hold the quads of PSO (`Harness/Sbm11PermCheck.lean`). Since 2026-10-22
+(https://github.com/danbri/factoidal/issues/810) the rows are re-keyed to PSO
+rows and cut into segments: one per predicate for POS (POS and PSO both
+start with the predicate), the whole permutation for SPO and OSP. Each
+segment is sorted and compared row by row with the next PSO rows; a segment
+above `SBM11_VERIFY_GROUP_ROWS` rows (default 131,072) is written as sorted
+runs (compressed with the column encoder of the packer) in `GEN.verify-PID`
+and merged. Sorting and comparing run in background tasks
+(`SBM11_VERIFY_SPILLS`, default 6 runs sorted at once), in segment order.
+stderr prints `exact permutation check: segments=... runs=... failures=...
+temp-written-bytes=... temp-peak-bytes=...`. The check is proved to give
+equal quad multisets (`PermSet.perms_same`, lemma L3b). Measured: olympics
+temporary peak 4.2 MB for a 34.8 MB generation (the bucket method of
+2026-10-12 wrote 171 MB); DBpedia 173 MB for 568 MB. Gate:
+`tests/sbm11/perm_check_disk.sh` (peak at most half the generation), run
+as part (w) of `tests/sbm11/run.sh`.
 `SBM11_VERIFY_DIGEST=0` turns the digest comparison off (test support).
 The scan (`IdQuery.scanFoldM`) is a `forIn` over `blocksFor` with the body
 `scanBlockM` and pure per-block functions; `ScanFoldTheorems.scanFoldM_tuples`
