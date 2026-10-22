@@ -117,13 +117,25 @@ ordinary flows never reach the refusal of `enforce`.
 
 ## Measured (2026-10-22)
 
-* `node tests/lws/client/own-server.mjs`: 21 pass, 0 fail, 0 skipped (out
+* After the merge of the authorization server (issue 916) and the
+  self-issued credentials: `node tests/lws/client/own-server.mjs` 22 pass,
+  0 fail, 0 skipped (out of 22; the 22nd check exchanges a did:key
+  credential signed by the engine at `factoidal authz-serve`);
+  `bash tools/lws-touchstone-client.sh` 52 pass, 0 fail, 0 inapplicable,
+  1 untested, 0 cantTell (out of 53), the untested rule the expected failure
+  `client-oidc-token-type-id-token`; lab verdict "no MUST failure in 40 MUST
+  rules exercised, of 41 that apply". Server Touchstone after the merge:
+  open 76 pass, 0 fail, 145 inapplicable (out of 221); authorization on
+  215 pass, 0 fail, 6 inapplicable (out of 221). `tools/land-gates.sh`
+  exit 0.
+* Before that merge: `node tests/lws/client/own-server.mjs`: 21 pass, 0 fail, 0 skipped (out
   of 21).
 * `bash tools/lws-touchstone-client.sh` (Touchstone 1060872, client lab,
   areas core, authentication, notifications, index): 42 pass, 0 fail,
   0 inapplicable, 11 untested, 0 cantTell (out of 53). The 11 untested are
   the expected failures below. Lab verdict: "no MUST failure in 31 MUST
-  rules exercised, of 41 that apply".
+  rules exercised, of 41 that apply" (the 10 CID rules were then untested,
+  waiting for ES256 signing).
 * A first run gave 39 pass and 2 fail: the receiver rebuilt the signature
   base from its own base URL instead of the inbox URL as subscribed (repaired:
   `Op.requestTarget`, `inboxUrl`), and a recursive delete without `If-Match`
