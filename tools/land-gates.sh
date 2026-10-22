@@ -10,6 +10,7 @@
 # (hazard 45 in skills/workflow-gotchas-debugging).
 export PATH="$HOME/.elan/bin:$PATH"
 R="$(git -C "$(dirname "$0")" rev-parse --show-toplevel)"
+mkdir -p "${LAND_LOG_DIR:-/tmp}" || { echo "LAND GATES FAILED: cannot create LAND_LOG_DIR ${LAND_LOG_DIR}"; exit 2; }
 FAILED=""
 gate() { local name="$1" rc="$2"; echo "$name=$rc"; [ "$rc" = 0 ] || FAILED="$FAILED $name"; }
 cd $R/formal/lean4 && { RC=0; timeout 3000 lake build > "${LAND_LOG_DIR:-/tmp}"/lp0-build.log 2>&1 || RC=$?; gate build $RC; }
