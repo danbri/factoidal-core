@@ -1117,6 +1117,15 @@ add_script_counts graphs named_graphs.sh "named graphs"
 echo "=== (w) the temporary disk of the exact permutation check (issue 810)"
 add_script_counts permdisk perm_check_disk.sh "perm check disk"
 
+echo "=== (x) the compiled scan differential and the counting reference (issue 799, KR 1.2)"
+# The scan decodes frames with FrameWords.decodeWordsF, which reaches the extern
+# Prim.Bytes.pushU64LE; the build-time interpreter cannot run it, so the old-scan
+# comparison of ScanFoldTests and the countChunk comparison run here.
+if [ -x "$BIN/l4scanfold-test" ]; then
+  rc=0; out="$("$BIN/l4scanfold-test" 2>&1)" || rc=$?
+  record scanfold l4scanfold-test "$rc" "$out"
+else record scanfold l4scanfold-test 1 "missing $BIN/l4scanfold-test (lake build l4scanfold-test)"; fi
+
 echo
 echo "sbm11 stages 4 and 5: $PASS pass, $FAIL fail, $XFAILS expected-fail (out of $((PASS + FAIL + XFAILS)))"
 [ "$FAIL" -eq 0 ]

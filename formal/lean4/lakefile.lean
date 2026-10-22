@@ -306,6 +306,8 @@ extern_lib libl4exthost pkg := do
 -- differential test of the `@[extern c inline]` store against its Lean reference.
 -- tests/prim/run.sh runs it natively and as wasm32 under node.
 @[default_target] lean_exe «l4prim-test» where root := `Harness.PrimBytesTest
+-- The scan-versus-old-scan differential of Storage/Sbm11/ScanFoldTests (needs compiled code).
+@[default_target] lean_exe «l4scanfold-test» where root := `Harness.ScanFoldTest
 -- Capability-aware planner, KR 2.2 (https://github.com/danbri/factoidal/issues/801):
 -- the structural planner's test set, with its expected-failure bucket.
 @[default_target] lean_exe «l4planner-test» where root := `Harness.PlannerTest

@@ -120,7 +120,7 @@ open L4Factoidal.RDF
 open L4Factoidal.SPARQL (Expr CompOp QueryPattern QueryForm SelectClause SelectItem GroupCondition
   OrderCondition PatternTerm PatternSubject AggregateFn TriplePattern EvalEnv EvalResult Binding)
 open L4Factoidal.Qlvr (Table gather joinVars sharedCols mergeJoin hashJoin mergeSortBy)
-open L4Factoidal.Codec.Zstd (word64)
+open L4Factoidal.Codec.Zstd (word64 word64U)
 open L4Factoidal.Storage.Sbm11.Block (BlockMeta Row)
 
 /-- Bound on the nodes of a WHERE tree or FILTER expression. -/
@@ -1092,7 +1092,7 @@ def readFrames {m : Type → Type} [Monad m] (st : Store m) (perm : Nat) (b : Bl
     must end at its PRM1 length. -/
 def colAll (b : BlockMeta) (bytes : ByteArray) (starts : Array Nat) (c : Nat) : Except String ByteArray :=
   let lens : Array Nat := #[b.len0, b.len1, b.len2, b.len3]
-  match L4Factoidal.Storage.Sbm11.FrameWords.decodeWords bytes b.rows starts[c]! with
+  match L4Factoidal.Storage.Sbm11.FrameWords.decodeWordsF bytes b.rows starts[c]! with
   | some (ws, j) =>
     if j != starts[c]! + lens[c]! || ws.size != 8 * b.rows then
       .error s!"block at {b.offset}: frame {c} does not end at its length"
@@ -1103,7 +1103,7 @@ def colAll (b : BlockMeta) (bytes : ByteArray) (starts : Array Nat) (c : Nat) : 
     the frame is read only up to row `hi - 1`). -/
 def colRange (b : BlockMeta) (bytes : ByteArray) (starts : Array Nat) (c lo hi : Nat) :
     Except String ByteArray :=
-  match L4Factoidal.Storage.Sbm11.FrameWords.decodeWordsRange bytes b.rows starts[c]! lo hi with
+  match L4Factoidal.Storage.Sbm11.FrameWords.decodeWordsRangeF bytes b.rows starts[c]! lo hi with
   | some ws => .ok ws
   | none => .error s!"block at {b.offset}: frame {c} does not decode"
 
@@ -2244,8 +2244,33 @@ def Groups.add (g : Groups) (k : List UInt64) (n : Nat) : Groups :=
   | some c => { g with counts := g.counts.insert k (c + n) }
   | none => { counts := g.counts.insert k n, keys := g.keys.push k }
 
+/-- Rows `e` and `i` agree on every column of `vcols` (a loop, no closure per
+    row; `Array.all` with a lambda took a quarter of d10's time). -/
+@[inline] def sameKeyRows (t : Table) (vcols : Array Nat) (e i : Nat) : Bool := Id.run do
+  for c in vcols do
+    if t.at c e != t.at c i then return false
+  return true
+
+/-- The first row after `i` (at most `t.rows`) whose key differs from row
+    `i` on the columns `vcols`. One column (the common case, a GROUP BY on
+    one variable): the column and the word of row `i` are read once, and each
+    row costs one word read (`Codec.Zstd.word64U`, equal to `word64`:
+    `word64U_eq`). -/
+def runEnd (t : Table) (vcols : Array Nat) (i : Nat) : Nat := Id.run do
+  let mut e := i + 1
+  if vcols.size == 1 then
+    let col := t.cols[vcols[0]!]!
+    let x := word64U col (8 * i).toUInt64
+    for _ in [0:t.rows] do
+      if e < t.rows && word64U col (8 * e).toUInt64 == x then e := e + 1 else break
+  else
+    for _ in [0:t.rows] do
+      if e < t.rows && sameKeyRows t vcols e i then e := e + 1 else break
+  return e
+
 /-- Count the rows of a chunk per group key. A group column that is constant
-    over the chunk counts the chunk at once. -/
+    over the chunk counts the chunk at once. The key list is built once per run
+    of equal keys (`runEnd`); `countChunkRef` builds one per row. -/
 def countChunk (groupVars : Array String) (ch : Chunk) (g : Groups) : Groups := Id.run do
   let t := ch.table
   if t.rows == 0 then return g
@@ -2254,7 +2279,30 @@ def countChunk (groupVars : Array String) (ch : Chunk) (g : Groups) : Groups := 
   if consts.all Option.isSome then
     return g.add (consts.map (·.getD 0)).toList t.rows
   let mut g := g
-  -- runs of equal keys
+  let keyAt (i : Nat) : List UInt64 :=
+    (List.range gc.size).map fun k => match consts[k]! with
+      | some x => x
+      | none => t.at gc[k]! i
+  let vcols : Array Nat := (List.range gc.size).foldl
+    (fun a k => if (consts[k]!).isSome then a else a.push gc[k]!) #[]
+  let mut i := 0
+  for _ in [0:t.rows] do
+    if i ≥ t.rows then break
+    let e := runEnd t vcols i
+    g := g.add (keyAt i) (e - i)
+    i := e
+  return g
+
+/-- The reference of `countChunk`: the first version, one key list per row.
+    `Harness/ScanFoldTest.lean` compares the two. -/
+def countChunkRef (groupVars : Array String) (ch : Chunk) (g : Groups) : Groups := Id.run do
+  let t := ch.table
+  if t.rows == 0 then return g
+  let gc := groupVars.map fun v => (t.idx v).getD 0
+  let consts := gc.map fun c => ch.consts.getD c none
+  if consts.all Option.isSome then
+    return g.add (consts.map (·.getD 0)).toList t.rows
+  let mut g := g
   let keyAt (i : Nat) : List UInt64 :=
     (List.range gc.size).map fun k => match consts[k]! with
       | some x => x
