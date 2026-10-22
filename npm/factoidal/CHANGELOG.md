@@ -91,8 +91,56 @@ https://github.com/danbri/factoidal/issues/913), decided in Lean
 - A new grant is announced (one `Create` notification) to its `inbox` and
   to the inbox of each access request naming one of its assignees. Grants
   and requests are kept in the storage snapshot (member `access`).
-- Not done: a notification to the storage controller for a new access
-  request (https://github.com/danbri/factoidal/issues/920, an xfail).
+- The storage controller hears of a new access request
+  (https://github.com/danbri/factoidal/issues/920). Core §Access Requests and
+  Grants: "When a new access request is submitted, the storage controller
+  SHOULD be notified." The draft names no inbox for the controller, so this
+  server's is configuration: `listen({ controllerInbox: URL })` or
+  `factoidal lws-serve --controller-inbox URL`. When it is set, each new
+  access request gives one `Create` notification there (signed, retried, as
+  every delivery); when it is not set, nothing is sent. An inbox that is not
+  `http` or `https` stops the start.
+
+Linked Web Storage moves and notifications, three more rules
+(w3c/lws-protocol `9a08ff65`), decided in Lean:
+
+- 301 at the previous identifiers of a moved resource
+  (https://github.com/danbri/factoidal/issues/914;
+  `L4Factoidal/LWS/MoveRedirect.lean`). §Moving Resources: "Such a server
+  SHOULD respond to subsequent requests on the previous identifiers of the
+  resource and of its auxiliary resources with 301 Moved Permanently,
+  including a `Location` header field pointing at the new identifier." After
+  a move, a request to the old path of the resource, of each descendant of a
+  moved container, of its `.acl` and `.meta` and of its `?linkset` answers
+  301 with the new IRI, when the same request at the new path would be
+  authorized (§Privacy Considerations, "Redirects": "Servers SHOULD apply the
+  same access control to such responses as to the moved resource itself");
+  otherwise the old path answers as before. A chain of moves answers the
+  current path. The table holds at most `redirectsMax` pairs (default 256,
+  `lws-serve --redirects-max N`), is kept in the snapshot (member `moved`),
+  and loses a pair when a new resource is created at its old path or the
+  moved resource is deleted. Theorems `redirect_current`, `after_ok`,
+  `redirect_after_move`.
+- A webhook inbox that names this server under another host name, an IP
+  address or `localhost`, at its port, is refused with 400
+  (https://github.com/danbri/factoidal/issues/915;
+  `L4Factoidal/LWS/InboxGuard.lean`). The engine compares the inbox
+  authority with the base IRI, the bound address and the interface
+  addresses; for a host name it answers `lwsStep` with `resolve: {host}`, the
+  host resolves the name and steps the request again with `resolved`. The
+  host passes `listen: {address, port, addresses}` to `lwsOpen`.
+- A delivery rate limit per subscription (issue 915; the webhook suite:
+  "Rate limiting and endpoint verification are suggested to prevent abuse of
+  the subscription mechanism"): at most `deliveryLimit` deliveries (default
+  10) in a window of `deliveryWindow` seconds (default 60;
+  `lws-serve --delivery-limit N --delivery-window S`; `deliveryLimit: 0`
+  turns it off). The activities over the limit wait and go, when the window
+  ends, in one envelope with an `activity` array (core §Batching
+  Notifications). An answer may carry `wake: SECONDS`; the host then calls
+  the new op `lwsFlush`. Theorem `admits_le`: at most `deliveryLimit`
+  deliveries per subscription in one window. Endpoint verification: the
+  drafts define no procedure (no request, no challenge, no expected answer),
+  so there is no behaviour to implement.
 
 Linked Web Storage, three rules of the editor's draft (w3c/lws-protocol
 `9a08ff65`, 2026-10-19), all decided in Lean:

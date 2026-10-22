@@ -27,11 +27,12 @@ host or the engine failed rather than answered.
 | op | arguments | answer |
 | --- | --- | --- |
 | `lwsOpen` | `[configJson]` | `{ ok, handle, root }` |
-| `lwsStep` | `[handle, requestJson]` | `{ ok, response, changed, deliveries? }` |
+| `lwsStep` | `[handle, requestJson]` | `{ ok, response, changed, deliveries?, wake? }`, or `{ ok, resolve: { host } }` |
 | `lwsClose` | `[handle]` | `{ ok }` |
 | `lwsSnapshot` | `[handle]` | `{ ok, snapshot }` |
 | `lwsFetched` | `[handle, documentJson]` | `{ ok, fetch? , installed?, refused? }` |
 | `lwsDelivered` | `[handle, reportJson]` | `{ ok, changed, retry? }` |
+| `lwsFlush` | `[handle, { now? }]` | `{ ok, changed, deliveries?, wake? }` |
 
 ```
 request  { method, target, headers: [[name, value]] } + the content as bytes
@@ -135,6 +136,23 @@ LWS notifications and the webhook notification suite
   the status to `lwsDelivered`; when the engine answers `retry`, it waits
   `after` seconds and sends the delivery it names. `storage().settled()`
   resolves when no delivery is in flight.
+* Rate limit (https://github.com/danbri/factoidal/issues/915): at most
+  `deliveryLimit` deliveries (default 10) per subscription in a window of
+  `deliveryWindow` seconds (default 60; `deliveryLimit: 0` turns it off).
+  The rest wait; an answer then carries `wake: SECONDS`, and this host calls
+  `lwsFlush` after that many seconds and sends the one batched delivery it
+  names.
+* Inbox check (issue 915): when an inbox host is a name, `lwsStep` answers
+  `resolve: { host }`; this host resolves it (`dns.lookup`, every address)
+  and steps the request again with `resolved: [{ host, addresses }]`.
+  `listen()` passes `listen: { address, port, addresses }` to `lwsOpen`. The
+  engine refuses a container of this storage under another name of this
+  server.
+* `controllerInbox: URL` (https://github.com/danbri/factoidal/issues/920):
+  each new access request is announced there with a `Create` notification.
+* After a move, a request to a previous path answers 301 with `Location`
+  (https://github.com/danbri/factoidal/issues/914); `redirectsMax` (default
+  256) bounds the table.
 
 ## Use
 

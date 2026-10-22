@@ -96,9 +96,10 @@ ShEx) and reasons over RDF.
   https://github.com/danbri/factoidal/issues/913.
 - Moving resources, 11 tests: https://github.com/danbri/factoidal/issues/914
   (in progress).
-- Notification hardening (rate limits, inbox checks, loops through another
-  host name): https://github.com/danbri/factoidal/issues/915. Only the webhook
-  channel exists; no streaming channel.
+- Only the webhook notification channel exists; no streaming channel. (The
+  hardening of https://github.com/danbri/factoidal/issues/915, a delivery
+  rate limit and the refusal of an inbox that names this server, landed on
+  2026-10-22; the drafts define no endpoint verification procedure.)
 - Storage: the whole state is held in memory and written to one snapshot file,
   so a storage is limited by memory. A storage on Shardborough is not started.
 - No authorization server of our own; the storage trusts an external one.

@@ -335,6 +335,8 @@ usage: factoidal lws-serve DIR (--issuer IRI | --auth-config FILE | --insecure-n
                          [--port N] [--host ADDRESS] [--base IRI] [--page-size N]
                          [--paginate-always] [--moves all|data|off]
                          [--no-linkset-put] [--unstable-search-results] [--merkle]
+                         [--controller-inbox URL] [--delivery-limit N]
+                         [--delivery-window SECONDS] [--redirects-max N]
 
 Starts a Node HTTP server that answers every request through the engine's
 lwsStep operation.
@@ -389,6 +391,26 @@ It protects the file on disk only (formal/lean4/L4Factoidal/LWS/SnapshotSeal.lea
                   authorization). Entity tags do not change. The hashes are
                   rebuilt when the storage is opened, not stored.
                   https://github.com/danbri/factoidal/issues/919
+  --controller-inbox URL
+                  the storage controller's inbox (config member
+                  controllerInbox; default none): each new access request
+                  is announced there with a Create notification. The LWS
+                  draft names no such inbox; this is a server choice.
+                  https://github.com/danbri/factoidal/issues/920
+  --delivery-limit N
+                  the most webhook deliveries one subscription gets in one
+                  window (config member deliveryLimit; default 10, 0 turns
+                  the limit off); the changes over it wait and go in one
+                  batched notification when the window ends
+                  https://github.com/danbri/factoidal/issues/915
+  --delivery-window SECONDS
+                  the length of that window (config member deliveryWindow;
+                  default 60)
+  --redirects-max N
+                  the most previous identifiers of moved resources kept to
+                  answer 301 Moved Permanently (config member redirectsMax;
+                  default 256)
+                  https://github.com/danbri/factoidal/issues/914
 
 Authorization (LWS editor's draft, section Authorization; one of the three
 is required):
@@ -555,7 +577,8 @@ const VALUE_OPTIONS = {
   compact: new Set([]),
   serve: new Set(['port', 'host', 'query-path', 'gsp-path', 'file', 'layout', 'tdb2']),
   'lws-serve': new Set(['port', 'host', 'base', 'issuer', 'auth-config', 'owner', 'root-acl',
-    'audience', 'page-size', 'moves']),
+    'audience', 'page-size', 'moves', 'controller-inbox', 'delivery-limit', 'delivery-window',
+    'redirects-max']),
   'solid-serve': new Set(['port', 'host', 'base', 'owner', 'issuer', 'auth-config']),
   'solid-client': new Set(['body', 'file', 'content-type', 'interpret'])
 }
@@ -1251,9 +1274,13 @@ function servePort (options, fallback) {
 // --page-size N: a CLI number, passed unchanged as the engine config member
 // `pageSize`; what a page holds is decided in L4Factoidal/LWS/Pagination.lean.
 function pageSizeOption (value) {
+  return natOption('page-size', value)
+}
+
+function natOption (flag, value) {
   const n = Number(value)
   if (!Number.isInteger(n) || n < 0) {
-    throw new UsageError(`--page-size must be a non-negative integer, not "${value}"`)
+    throw new UsageError(`--${flag} must be a non-negative integer, not "${value}"`)
   }
   return n
 }
@@ -1394,6 +1421,10 @@ async function commandLwsServe (positional, options) {
       ...(options['paginate-always'] === true ? { paginateAlways: true } : {}),
       ...(typeof options.moves === 'string' ? { moves: options.moves } : {}),
       ...(options['no-linkset-put'] === true ? { linksetPut: false } : {}),
+      ...(typeof options['controller-inbox'] === 'string' ? { controllerInbox: options['controller-inbox'] } : {}),
+      ...(options['delivery-limit'] !== undefined ? { deliveryLimit: natOption('delivery-limit', options['delivery-limit']) } : {}),
+      ...(options['delivery-window'] !== undefined ? { deliveryWindow: natOption('delivery-window', options['delivery-window']) } : {}),
+      ...(options['redirects-max'] !== undefined ? { redirectsMax: natOption('redirects-max', options['redirects-max']) } : {}),
       ...(insecure ? { insecureNoAuth: true } : { auth }),
       ...(typeof options.owner === 'string' ? { owner: options.owner } : {}),
       ...(typeof options['root-acl'] === 'string'

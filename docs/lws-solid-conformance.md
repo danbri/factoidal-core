@@ -80,11 +80,12 @@ A response is a JSON object with the same shape minus the method:
 | op | arguments | answer |
 |---|---|---|
 | `lwsOpen` | `[configJson]` | `{"ok":true,"handle":"lws1","root":"/"}` |
-| `lwsStep` | `[handle, requestJson]` | `{"ok":true,"response":{…},"changed":B}`, with `"deliveries":[{"id","url","headers":[[n,v],…],"body"},…]` when the step causes notifications |
+| `lwsStep` | `[handle, requestJson]` | `{"ok":true,"response":{…},"changed":B}`, with `"deliveries":[{"id","url","headers":[[n,v],…],"body"},…]` when the step causes notifications and `"wake":SECONDS` when deliveries wait for a rate-limit window; or `{"ok":true,"resolve":{"host":H}}` before a subscription request whose inbox host is a name (https://github.com/danbri/factoidal/issues/915) |
 | `lwsClose` | `[handle]` | `{"ok":true}` |
 | `lwsSnapshot` | `[handle, optionsJson?]` | `{"ok":true,"snapshot":{"format":"lws-snapshot-2","clock":N,"entries":[…]}}`; each entry's body is `bodyBase64`. A `lws-snapshot-1` document (body as the string `body`) is still read. With a `storageKey` the snapshot is the sealed document `{"format":"lws-snapshot-sealed-1","cipher":"chacha20-poly1305","keyId","nonce","ciphertext"}`, and `optionsJson` must be `{"nonce":"<base64 of 12 random bytes>"}` (https://github.com/danbri/factoidal/issues/921). |
 | `lwsFetched` | `[handle, documentJson]` | `{"ok":true,"fetch":{"issuer":…,"url":…}}`, `{"ok":true,"installed":N}` or `{"ok":true,"refused":"…"}` |
 | `lwsDelivered` | `[handle, {"id","status","now"?}]` | `{"ok":true,"changed":B}`, with `"retry":{"delivery":{…},"after":SECONDS}` when the engine wants the delivery made again |
+| `lwsFlush` | `[handle, {"now"?}]` | `{"ok":true,"changed":B}`, with `"deliveries":[…]` for the waiting activities whose window has ended (one batched envelope per subscription) and `"wake":SECONDS` when more wait (https://github.com/danbri/factoidal/issues/915) |
 | `solidOpen` | `[configJson]` | `{"ok":true,"handle":"solid1","root":"/","storage":"…"}` |
 | `solidStep` | `[handle, requestJson]` | `{"ok":true,"response":{…}}` |
 | `solidClose` | `[handle]` | `{"ok":true}` |
@@ -115,6 +116,11 @@ A response is a JSON object with the same shape minus the method:
 | `merkle` | `false` | `lwsOpen` only. Merkle hashes, an option of this server (https://github.com/danbri/factoidal/issues/919; the LWS drafts define no integrity mechanism). `true` keeps a SHA-256 digest of every resource and a Merkle digest of every container (`L4Factoidal/LWS/Merkle.lean`) and shows them (`MerkleHttp.lean`): `Repr-Digest` (RFC 9530) on a 200 or 206 GET or HEAD of a resource with its stored media type, `Factoidal-Merkle-Root` and the listing member `https://github.com/danbri/factoidal/issues/919#merkleRoot` on a container, the member `https://github.com/danbri/factoidal/issues/919#storageMerkleRoot` in the storage description; under authorization the roots to the storage controller only. Entity tags do not change. No hash is in a snapshot; they are rebuilt at open. `factoidal lws-serve --merkle`. |
 | `entropy` | absent | `lwsOpen` only. At least 16 random bytes, base64, from the host. The seed of the notification signing key (Ed25519) when the snapshot holds none, and of the run tag in activity identifiers. Without it deliveries are not signed. `npm/factoidal/lws/server.mjs` passes 32 bytes from `crypto.getRandomValues`. |
 | `storageKey` | absent | `lwsOpen` and `solidOpen`. The storage key text, 32 bytes as 64 hex digits or base64url (the hosts read it from the environment variable `FACTOIDAL_LWS_KEY`). With it, `snapshot` must be a sealed document under this key and is authenticated before use, and every snapshot is sealed with ChaCha20-Poly1305 (HACL*). A wrong key, a changed or truncated sealed document, a clear-text `snapshot` with a key and a sealed one without a key are refused (`L4Factoidal/LWS/SnapshotSeal.lean`, https://github.com/danbri/factoidal/issues/921). The LWS drafts and the Solid Protocol say nothing about encryption at rest; this is an option of this server, off by default. |
+| `redirectsMax` | `256` | `lwsOpen` only. The most (previous path, current path) pairs kept to answer 301 at the previous identifiers of moved resources (`L4Factoidal/LWS/MoveRedirect.lean`, https://github.com/danbri/factoidal/issues/914); the oldest are removed first. `factoidal lws-serve --redirects-max N`. |
+| `deliveryLimit` | `10` | `lwsOpen` only. The most webhook deliveries one subscription gets in one window; `0` turns the limit off (`Notifications.admit`, https://github.com/danbri/factoidal/issues/915). The activities of later changes in the window wait and go in one batched envelope when it ends. `factoidal lws-serve --delivery-limit N`. |
+| `deliveryWindow` | `60` | `lwsOpen` only. The length of that window, in seconds. `factoidal lws-serve --delivery-window S`. |
+| `listen` | absent | `lwsOpen` only. What the host bound: `{"address":IP,"port":N,"addresses":[IP,…]}` (the bound address, its port, the addresses of the machine's interfaces). Data for `L4Factoidal/LWS/InboxGuard.lean`, which refuses a webhook inbox that names this server (issue 915). `npm/factoidal/lws/server.mjs` `listen()` passes it. |
+| `controllerInbox` | absent | `lwsOpen` only. The storage controller's inbox, an `http` or `https` URL (another value stops the start): each new access request is announced there with a `Create` notification (`AccessGrants.announceRequest`, https://github.com/danbri/factoidal/issues/920). The LWS draft names no such inbox; this is a server choice. `factoidal lws-serve --controller-inbox URL`. |
 | `rootAcl` | absent | the ACL document (Turtle) of the storage root, written when the storage is created. Web Access Control §3.2 requires the root container's ACL resource to have a representation, and under enforcement a storage cannot write its own: the request that would write it is the first request it would authorize. It is therefore a host provisioning input. |
 
 `lwsStep` and `solidStep` answer `"changed": true` when the step changed the
@@ -135,6 +141,29 @@ the host waits `after` seconds and makes the request in `delivery`, which
 carries a new signature. The engine decides which changes are announced,
 to whom, the body, the signature, whether to retry and when a subscription
 is deactivated.
+
+Delivery rate (https://github.com/danbri/factoidal/issues/915): at most
+`deliveryLimit` deliveries per subscription in a window of `deliveryWindow`
+seconds. The activities over the limit wait in the notification state (and in
+the snapshot member `notifications.held`); an answer then carries `"wake":
+SECONDS`, and the host calls `lwsFlush(handle, {"now"?})` after that many
+seconds and makes the deliveries it names. A later change of the same
+subscription after the window also carries them.
+
+Inbox check (issue 915): before stepping a subscription request whose `inbox`
+host is a name, `lwsStep` answers `{"ok":true,"resolve":{"host":H}}`. The
+host resolves `H` (every address) and steps the same request again with the
+member `"resolved":[{"host":H,"addresses":[IP,…]}]` (an empty list when the
+name does not resolve). Lean then refuses with 400 an inbox whose authority
+is this server: the `baseIri` authority, or an address of the name at the
+bound port (`listen`), every loopback address being one address and
+`localhost` names being loopback names (RFC 6761 §6.3).
+
+Moved resources (https://github.com/danbri/factoidal/issues/914): after a
+move, a request to a previous path answers 301 with `Location` of the
+current IRI (query kept), when the same request at the current path would be
+authorized. The snapshot carries the table as the member `moved`
+(`[[previous, current], …]`), which `lwsOpen` prunes against the storage.
 
 A request document may override the clock and the agent for one step with the
 members `now` and `agent` beside `method`. An LWS request document may also
@@ -291,7 +320,8 @@ server does not advertise.
 | Moving Resources | containment integrity: a container MUST NOT move into itself or a descendant | tested (409; theorem `move_tree` with `tree_acyclic`) | `MoveTests`; draft-binding |
 | Moving Resources | content and user-defined metadata unaffected; links the client may not modify preserved; auxiliary resources stay bound | tested (theorem `move_moved`; ACL and description resources move with their primary resource) | `MoveTests` "Client links travel" |
 | Moving Resources | a server that does not preserve identifiers MUST answer 200 with the updated linkset (new `anchor`) and `Content-Location` | tested | `MoveTests`; draft-binding |
-| Moving Resources | SHOULD answer the previous identifiers with 301 and `Location` | missing | https://github.com/danbri/factoidal/issues/914; draft-binding xfail |
+| Moving Resources | SHOULD answer the previous identifiers (of the resource and of its auxiliary resources) with 301 and `Location` of the new identifier | tested (a bounded table of previous and current paths in the state and the snapshot, pruned after every request: a pair goes when a new resource is created at its previous path or the moved resource is deleted; a chain of moves answers the current path; theorems `redirect_current`, `after_ok`, `redirect_after_move`) | `MoveRedirectTests`; draft-binding "Moving Resources: a request to the previous identifier ... answers 301", "a path never moved answers 404" (https://github.com/danbri/factoidal/issues/914) |
+| Privacy Considerations: Redirects | SHOULD apply the same access control to a 301 as to the moved resource; MAY answer 404 | tested (a 301 only when `Authorization.decide` allows the same request at the new identifier; otherwise the previous identifier answers as before) | `MoveRedirectTests` "Negative cases" |
 | Moving Resources | containers MAY move (descendants with them), indicated by `Container` in `appliesTo` | tested | `MoveTests` "A container moves"; draft-binding "a container moves" |
 | Moving Resources | MUST NOT move unless the agent may delete the resource (the whole subtree for a container) and create in the destination | tested (Web Access Control: Write, or Control for an ACL resource, on every moved resource; Append on the destination) | `MoveTests` "Authorization" |
 | Status mappings | SHOULD use RFC 9457 problem details | tested | `lwsGuardProblemDetails` |
@@ -321,6 +351,9 @@ server does not advertise.
 | Webhook: Signature Requirements | covers `@method`, `@scheme`, `@authority`, `@path`, `content-type`, `content-digest` (RFC 9530); `created` and `keyid` | tested | `NotificationsTests` "Signatures"; draft-binding |
 | Webhook: Subscription Management | the endpoint lists the subscriber's subscriptions as an LWS container (SHOULD page); GET and DELETE on each | tested (paged at `pageSize`; another agent's subscription is 404) | `NotificationsTests` "Subscription management"; draft-binding; authorization.mjs |
 | Webhook: Notification Delivery | POST to the inbox, body `application/lws+json`; MAY retry; MAY deactivate after repeated failures | tested (3 attempts for no answer, 408, 425, 429, 5xx; 410 or 3 failed deliveries deactivate) | `NotificationsTests` "Delivery outcomes"; draft-binding "503 is tried again" |
+| Webhook: Security Considerations | "Rate limiting and endpoint verification are suggested to prevent abuse of the subscription mechanism": rate limiting | tested (`deliveryLimit` per subscription per `deliveryWindow`, default 10 per 60 s; the rest batched, core §Batching Notifications; theorem `admits_le`) | `NotificationsTests` "Delivery rate"; draft-binding "30 changes in one window give 10 POSTs", "one batched envelope" (https://github.com/danbri/factoidal/issues/915) |
+| Webhook: Security Considerations | the same sentence: endpoint verification | n/a (the drafts define no verification request, challenge or expected answer) | https://github.com/danbri/factoidal/issues/915 |
+| (server choice) | an inbox that names this server under another host name, an IP address or `localhost` is refused | tested (400; the base IRI authority, the bound address and interface addresses, host-resolved names; `InboxGuard.loops`) | `InboxGuard` guards, `NotificationsTests` "An inbox that is this server"; draft-binding "an inbox that names this server ... is refused with 400", "an inbox on another port of this machine ... is accepted" (https://github.com/danbri/factoidal/issues/915) |
 | Access Requests: Discovery | MAY advertise; `AccessRequestService` and `AccessGrantService` service objects; SHOULD `conformsTo` the access profiles | tested (both, with `conformsTo` the Access Profile) | `lwsGuardAccessDiscovery`; draft-binding "Access Requests and Grants: the storage description advertises" |
 | Access Requests: Protocol | the endpoints are LWS containers; GET and POST, DELETE RECOMMENDED; JSON-LD payloads both ways | tested (paged listing with `Link` type Container; 415 for another media type) | `AccessGrantsTests` "The endpoints are LWS containers"; draft-binding "the grant endpoint is an LWS container" |
 | Access Requests: Protocol | an agent POSTs an access request; a storage controller POSTs an access grant; a successful POST MUST answer with `Location` | tested (201 with `Location`; a grant from an agent that is not the controller is 403; theorem `accessStep_grant_needs_controller`) | `lwsGuardAccessCreate`; draft-binding; authorization.mjs "only the storage controller" |
@@ -329,12 +362,20 @@ server does not advertise.
 | Access Profile: Constraints | each constraint has `leftOperand`, `operator`, `rightOperand`; all MUST be satisfied; MUST support `client`, `format`, `type`, `purpose`, `dateTime` | tested (`purpose` is accepted and no request satisfies it; a window that does not hold permits nothing: theorems `policyPermits_excluded`, `recordPermits_expired`) | `lwsGuardAccessConstraints`; authorization.mjs "constraints must all hold" |
 | Access Requests (overview) | when a grant is created or revoked the server adjusts the access policy | tested (grants are part of `Authorization.decide`, notification checks and the type index; theorem `grantsPermit_revoke`) | authorization.mjs "revoking it ends the access", "subscribe after the revocation" |
 | Access Requests: Notifications | with an `inbox`, SHOULD notify; on grant creation SHOULD notify the inbox of the associated request | tested (one `Create` notification to the grant's inbox and to the inbox of each request naming one of its assignees) | `AccessGrantsTests` "Access requests"; draft-binding "are announced there" |
-| Access Requests: Notification Events | on access request creation the storage controller SHOULD be notified | missing (the draft names no controller inbox) | https://github.com/danbri/factoidal/issues/920; draft-binding xfail |
+| Access Requests: Notification Events | on access request creation the storage controller SHOULD be notified | tested (the draft names no controller inbox; server choice: config `controllerInbox`, `lws-serve --controller-inbox URL`; when set, one `Create` notification of the new request there; when unset, nothing) | `AccessGrantsTests` "The storage controller hears of a new access request"; draft-binding "with --controller-inbox, creating an access request notifies the storage controller" (https://github.com/danbri/factoidal/issues/920) |
 | Data resource | any bytes (images, documents) | tested: stored and returned byte for byte; RDF media types are read as UTF-8 and content that is not UTF-8 gets 400 | `lwsGuardBinaryRoundTrip`, `lwsGuardInvalidUtf8Turtle`; draft-binding "Data resources: a non-UTF-8 body round-trips byte for byte"; `tests/lws/binary-bodies.mjs` (https://github.com/danbri/factoidal/issues/889) |
 | (server choice) | request paths with dot segments or encoded traversal are refused | tested | `lwsGuardTraversalRefused`; draft-binding "Paths" |
 | (server choice) | storage persists under `DIR` | tested | `lwsGuardSnapshotRoundTrip`, `lwsGuardSnapshotRefusesTraversal`; draft-binding "Persistence" |
 
-Counts: 78 tested, 2 missing, 1 not applicable (out of 81 rows). Updated
+Counts: 83 tested, 0 missing, 2 not applicable (out of 85 rows). Updated 2026-10-22 for
+https://github.com/danbri/factoidal/issues/914,
+https://github.com/danbri/factoidal/issues/915 and
+https://github.com/danbri/factoidal/issues/920: the 301 row and the controller
+notification row became tested, and four rows were added (Privacy
+Considerations: Redirects, tested; webhook rate limiting, tested; webhook
+endpoint verification, not applicable; the inbox that names this server,
+tested). The count line before this update said 78 tested, 2 missing, 1 not
+applicable (out of 81 rows). Updated
 2026-10-21 for https://github.com/danbri/factoidal/issues/913: the Access Requests
 row became nine rows of §Access Requests and Grants (eight tested; the
 notification of the controller for a new request is missing, with an xfail,

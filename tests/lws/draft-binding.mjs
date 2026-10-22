@@ -702,9 +702,10 @@ async function main () {
       const g = await fetch(`${o}/mv/dst/a.txt`)
       assert(g.status === 200 && (await g.text()) === 'a resource on the move', `GET new ${g.status}`)
       assert(linkTarget(g.headers.get('link'), 'up') === '/mv/dst/', g.headers.get('link'))
-      const old = await fetch(`${o}/mv/src/a.txt`)
+      // The old path names nothing now; it answers 301 (issue 914, below).
+      const old = await fetch(`${o}/mv/src/a.txt`, { redirect: 'manual' })
       await old.text()
-      assert(old.status === 404, `GET old ${old.status}`)
+      assert(old.status === 301, `GET old ${old.status}`)
       assert(JSON.stringify(await ids(`${o}/mv/dst/`)) === JSON.stringify([`${o}/mv/dst/a.txt`]), 'destination listing')
       assert((await ids(`${o}/mv/src/`)).length === 0, 'source listing')
       assert(await tagOf(`${o}/mv/src/`) !== srcTag && await tagOf(`${o}/mv/dst/`) !== dstTag, 'a container ETag did not change')
@@ -749,14 +750,47 @@ async function main () {
     })
     // LWS §Moving Resources: "Such a server SHOULD respond to subsequent
     // requests on the previous identifiers of the resource and of its
-    // auxiliary resources with 301 Moved Permanently". Not implemented;
-    // the xfail turns the run red when it starts to pass.
-    await xfail('Moving Resources: a request to the previous identifier of a moved resource answers 301 with Location',
-      'https://github.com/danbri/factoidal/issues/914', async () => {
-        const r = await fetch(`${o}/mv/src/a.txt`, { redirect: 'manual' })
+    // auxiliary resources with 301 Moved Permanently, including a Location
+    // header field pointing at the new identifier." Decided by
+    // formal/lean4/L4Factoidal/LWS/MoveRedirect.lean (issue 914).
+    await check('Moving Resources: a request to the previous identifier of a moved resource answers 301 with Location of the new identifier (issue 914)', async () => {
+      const at = async (path, method = 'GET') => {
+        const r = await fetch(`${o}${path}`, { method, redirect: 'manual' })
         await r.text()
-        assert(r.status === 301 && r.headers.get('location') !== null, `answered ${r.status}`)
-      })
+        return r
+      }
+      const r = await at('/mv/src/a.txt')
+      assert(r.status === 301 && r.headers.get('location') === `${o}/mv/dst/a.txt`,
+        `answered ${r.status} ${r.headers.get('location')}`)
+      const h = await at('/mv/src/a.txt', 'HEAD')
+      assert(h.status === 301 && h.headers.get('location') === `${o}/mv/dst/a.txt`, `HEAD answered ${h.status}`)
+      const ls = await at('/mv/src/a.txt?linkset')
+      assert(ls.status === 301 && ls.headers.get('location') === `${o}/mv/dst/a.txt?linkset`,
+        `linkset answered ${ls.status} ${ls.headers.get('location')}`)
+      const box = await at('/mv/src/box/')
+      assert(box.status === 301 && box.headers.get('location') === `${o}/mv/dst/box/`, `container answered ${box.status}`)
+      const inner = await at('/mv/src/box/inner.txt')
+      assert(inner.status === 301 && inner.headers.get('location') === `${o}/mv/dst/box/inner.txt`,
+        `descendant answered ${inner.status} ${inner.headers.get('location')}`)
+      const follow = await fetch(`${o}/mv/src/a.txt`)
+      assert(follow.status === 200 && (await follow.text()) === 'a resource on the move', `following answered ${follow.status}`)
+    })
+    await check('Moving Resources: a path never moved answers 404; a new resource at a previous identifier ends its 301 (issue 914)', async () => {
+      const never = await fetch(`${o}/mv/src/never.txt`, { redirect: 'manual' })
+      await never.text()
+      assert(never.status === 404, `never moved: ${never.status}`)
+      const c = await fetch(`${o}/mv/src/`, { method: 'POST', headers: { 'content-type': 'text/plain', slug: 'a.txt' }, body: 'a new one' })
+      await c.text()
+      assert(c.status === 201 && new URL(c.headers.get('location'), `${o}/`).pathname === '/mv/src/a.txt',
+        `POST answered ${c.status} ${c.headers.get('location')}`)
+      const g = await fetch(`${o}/mv/src/a.txt`, { redirect: 'manual' })
+      assert(g.status === 200 && (await g.text()) === 'a new one', `GET answered ${g.status}`)
+      const d = await fetch(`${o}/mv/src/a.txt`, { method: 'DELETE' })
+      await d.text()
+      const again = await fetch(`${o}/mv/src/a.txt`, { redirect: 'manual' })
+      await again.text()
+      assert(again.status === 404, `after delete: ${again.status}`)
+    })
 
     // LWS 1.0 core §Notifications and the webhook notification suite
     // (https://github.com/danbri/factoidal/issues/890). Decided by
@@ -922,33 +956,74 @@ async function main () {
           a.object.id === `${o}/mvn/dst/m.txt` && a.object.type.includes('DataResource'), JSON.stringify(a))
       })
 
-      // https://github.com/danbri/factoidal/issues/915: an inbox that names
-      // this server through another host name is not detected, and
-      // deliveries are not rate limited. Each xfail turns the run red when
-      // it starts to pass.
-      await xfail('Notifications: an inbox that names this server by another host name (localhost) is refused with 400',
-        'https://github.com/danbri/factoidal/issues/915', async () => {
-          const port = new URL(o).port
-          const r = await subscribe({ '@context': ctx, type: 'WebhookSubscription', topic: [`${o}/loop/`], inbox: `http://localhost:${port}/loop/` })
+      // https://github.com/danbri/factoidal/issues/915. Decided by
+      // formal/lean4/L4Factoidal/LWS/InboxGuard.lean (this server under
+      // another name) and Notifications.lean (`admit`, the delivery rate).
+      await check('Notifications: an inbox that is a container of this storage under another host name, a loopback address or localhost is refused with 400 (issue 915)', async () => {
+        const port = new URL(o).port
+        for (const inbox of [`http://localhost:${port}/loop/`, `http://127.0.0.2:${port}/loop/`,
+          `http://[::1]:${port}/loop/`, `http://LOCALHOST.:${port}/loop/`]) {
+          const r = await subscribe({ '@context': ctx, type: 'WebhookSubscription', topic: [`${o}/loop/`], inbox })
           const j = await r.json()
           // Cancel at once, so that a subscription made here cannot loop.
           if (typeof j.subscription === 'string') await fetch(j.subscription, { method: 'DELETE' }).then((x) => x.text())
-          assert(r.status === 400, `answered ${r.status}`)
-        })
-      await xfail('Notifications: deliveries to one inbox are rate limited (30 changes in one burst give fewer than 30 POSTs)',
-        'https://github.com/danbri/factoidal/issues/915', async () => {
-          const s = await (await subscribe({ '@context': ctx, type: 'WebhookSubscription', topic: [`${o}/burst/`], inbox: `${receiver.origin}/hook/burst` })).json()
-          try {
-            for (let i = 0; i < 30; i += 1) {
-              await fetch(`${o}/burst/r${i}.txt`, { method: 'PUT', headers: { 'content-type': 'text/plain' }, body: `${i}` }).then((x) => x.text())
-            }
-            await settle()
-            const posts = receiver.got.filter((x) => x.path === '/hook/burst').length
-            assert(posts < 30, `${posts} POSTs for 30 changes`)
-          } finally {
-            await fetch(s.subscription, { method: 'DELETE' }).then((x) => x.text())
+          assert(r.status === 400 && r.headers.get('content-type') === 'application/problem+json',
+            `${inbox} answered ${r.status}`)
+        }
+      })
+      await check('Notifications: an inbox on another port of this machine, by name or address, is accepted (issue 915)', async () => {
+        const rport = new URL(receiver.origin).port
+        for (const inbox of [`http://localhost:${rport}/hook/other`, `${receiver.origin}/hook/other`]) {
+          const r = await subscribe({ '@context': ctx, type: 'WebhookSubscription', topic: [`${o}/loop/`], inbox })
+          const j = await r.json()
+          assert(r.status === 201, `${inbox} answered ${r.status} ${JSON.stringify(j)}`)
+          await fetch(j.subscription, { method: 'DELETE' }).then((x) => x.text())
+        }
+      })
+      await check('Notifications: deliveries to one subscription are rate limited: 30 changes in one window give 10 POSTs (issue 915)', async () => {
+        const s = await (await subscribe({ '@context': ctx, type: 'WebhookSubscription', topic: [`${o}/burst/`], inbox: `${receiver.origin}/hook/burst` })).json()
+        try {
+          for (let i = 0; i < 30; i += 1) {
+            await fetch(`${o}/burst/r${i}.txt`, { method: 'PUT', headers: { 'content-type': 'text/plain' }, body: `${i}` }).then((x) => x.text())
           }
-        })
+          await settle()
+          const posts = receiver.got.filter((x) => x.path === '/hook/burst').length
+          assert(posts === 10, `${posts} POSTs for 30 changes`)
+        } finally {
+          await fetch(s.subscription, { method: 'DELETE' }).then((x) => x.text())
+        }
+      })
+      // Core §Batching Notifications: "A server MAY combine multiple
+      // activities into a single notification envelope by providing an
+      // array of activity objects as the value of the activity property."
+      await check('Notifications: changes over the limit wait and go in one batched envelope when the window ends (issue 915)', async () => {
+        const rc = await listen({ engine, port: 0, insecureNoAuth: true, realClock: true, deliveryLimit: 2, deliveryWindow: 2 })
+        try {
+          const s = await fetch(`${rc.origin}/.well-known/lws-subscriptions/`, {
+            method: 'POST',
+            headers: { 'content-type': 'application/lws+json' },
+            body: JSON.stringify({ '@context': ctx, type: 'WebhookSubscription', topic: [`${rc.origin}/b/`], inbox: `${receiver.origin}/hook/batch` })
+          })
+          await s.text()
+          assert(s.status === 201, `subscribe answered ${s.status}`)
+          for (let i = 0; i < 5; i += 1) {
+            await fetch(`${rc.origin}/b/r${i}.txt`, { method: 'PUT', headers: { 'content-type': 'text/plain' }, body: `${i}` }).then((x) => x.text())
+          }
+          await (await rc.storage()).settled()
+          const first = receiver.got.filter((d) => d.path === '/hook/batch').length
+          assert(first <= 3, `${first} POSTs before the window ended`)
+          await new Promise((resolve) => setTimeout(resolve, 4000))
+          await (await rc.storage()).settled()
+          const ds = receiver.got.filter((d) => d.path === '/hook/batch')
+          const ids = ds.flatMap(activitiesOf).map((a) => a.object.id).filter((id) => /\/b\/r\d\.txt$/.test(id))
+          assert(JSON.stringify(ids) === JSON.stringify([0, 1, 2, 3, 4].map((i) => `${rc.origin}/b/r${i}.txt`)),
+            `activities ${JSON.stringify(ids)}`)
+          assert(ds.length > first && ds.some((d) => Array.isArray(d.body.activity) && d.body.activity.length > 1),
+            `no batched envelope: ${ds.map((d) => activitiesOf(d).length)}`)
+        } finally {
+          await rc.close()
+        }
+      })
 
       // LWS §Access Requests and Grants
       // (https://github.com/danbri/factoidal/issues/913). Decided by
@@ -1058,16 +1133,45 @@ async function main () {
             typeof a.published === 'string' && a.object.id === new URL(location, grants).href, JSON.stringify(ds[0].body))
         }
       })
-      // The draft names no inbox for the storage controller; the xfail
-      // turns the run red when it starts to pass.
-      await xfail('Access Requests and Grants: creating an access request notifies the storage controller',
-        'https://github.com/danbri/factoidal/issues/920', async () => {
-          const before = receiver.got.length
-          const r = await post(requests, grantDoc({ type: ['AccessRequest'] }))
-          await r.text()
-          await settle()
-          assert(receiver.got.length > before, 'no delivery for a new access request')
-        })
+      // The draft names no inbox for the storage controller; this server's
+      // is configuration (`controllerInbox`, `lws-serve --controller-inbox`).
+      // Decided by formal/lean4/L4Factoidal/LWS/AccessGrants.lean (issue 920).
+      await check('Access Requests and Grants: without a controller inbox, creating an access request sends nothing (issue 920)', async () => {
+        const before = receiver.got.length
+        const r = await post(requests, grantDoc({ type: ['AccessRequest'] }))
+        await r.text()
+        assert(r.status === 201, `answered ${r.status}`)
+        await settle()
+        assert(receiver.got.length === before, 'a delivery with no controller inbox configured')
+      })
+      await check('Access Requests and Grants: with --controller-inbox, creating an access request notifies the storage controller with a Create (issue 920)', async () => {
+        const ctl = await listen({ engine, port: 0, insecureNoAuth: true, controllerInbox: `${receiver.origin}/hook/controller` })
+        try {
+          const creq = `${ctl.origin}/.well-known/lws-access-requests/`
+          const doc = Object.assign(grantDoc({ type: ['AccessRequest'] }), { storage: `${ctl.origin}/.well-known/lws-storage` })
+          doc.access[0].target.value = [`${ctl.origin}/doc.txt`]
+          const r = await fetch(creq, { method: 'POST', headers: { 'content-type': 'application/lws+json' }, body: JSON.stringify(doc) })
+          const body = await r.text()
+          assert(r.status === 201, `answered ${r.status} ${body}`)
+          await (await ctl.storage()).settled()
+          const ds = receiver.got.filter((d) => d.path === '/hook/controller')
+          assert(ds.length === 1, `${ds.length} deliveries`)
+          const a = activitiesOf(ds[0])[0]
+          assert(ds[0].body.type === 'Notification' && a.type.includes('Create') &&
+            a.object.id === new URL(r.headers.get('location'), creq).href, JSON.stringify(ds[0].body))
+          // A grant is not an access request: the controller hears nothing more.
+          const g = await fetch(`${ctl.origin}/.well-known/lws-access-grants/`, {
+            method: 'POST', headers: { 'content-type': 'application/lws+json' },
+            body: JSON.stringify(Object.assign({}, doc, { type: ['AccessGrant'] }))
+          })
+          await g.text()
+          assert(g.status === 201, `grant answered ${g.status}`)
+          await (await ctl.storage()).settled()
+          assert(receiver.got.filter((d) => d.path === '/hook/controller').length === 1, 'a grant was announced to the controller')
+        } finally {
+          await ctl.close()
+        }
+      })
       await check('Access Requests and Grants: DELETE revokes a grant (204, then 404)', async () => {
         const d = await fetch(grant, { method: 'DELETE' })
         await d.text()

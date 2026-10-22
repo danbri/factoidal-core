@@ -64,6 +64,8 @@ factoidal lws-serve   DIR (--issuer IRI[,IRI…] | --auth-config FILE | --insecu
                           [--port N] [--host ADDRESS] [--base IRI] [--page-size N]
                           [--paginate-always] [--moves all|data|off]
                           [--no-linkset-put] [--unstable-search-results] [--merkle]
+                          [--controller-inbox URL] [--delivery-limit N]
+                          [--delivery-window SECONDS] [--redirects-max N]
 factoidal solid-serve DIR (--issuer IRI[,IRI…] | --auth-config FILE | --insecure-no-auth)
                           [--port N] [--host ADDRESS] [--base IRI] [--owner WEBID]
 ```
@@ -145,15 +147,41 @@ header quotes each section it decides.
   `entropy` that the host passes to `lwsOpen` (32 random bytes) and kept in
   the snapshot with the subscriptions (member `notifications`).
 
+* This server under another name (https://github.com/danbri/factoidal/issues/915,
+  `L4Factoidal/LWS/InboxGuard.lean`): an inbox whose authority is the base
+  IRI's, or whose host (an IP literal, `localhost`, or a name the HOST
+  resolved) is an address of this server at its port, is refused with 400.
+  Every loopback address counts as one address; another port is another
+  server. The host passes `listen: {address, port, addresses}` to `lwsOpen`
+  (`server.mjs` `listen()` does); for an inbox host that is a name `lwsStep`
+  answers `resolve: {host}` first (`Notifications.resolveNeeded?`, only for an
+  authorized subscription POST), the host runs `dns.lookup(host, {all: true})`
+  and steps the request again with `resolved: [{host, addresses}]`.
+* Rate limit (issue 915): at most `deliveryLimit` deliveries (default 10) per
+  subscription in a window of `deliveryWindow` seconds (default 60; `0` turns
+  it off; `lws-serve --delivery-limit N --delivery-window S`). Activities over
+  the limit wait (`NotifState.held`, at most 1,024, kept in the snapshot) and
+  go in ONE envelope with an `activity` array when the window ends (core
+  §Batching Notifications): with the subscription's next change, or when the
+  host calls `lwsFlush` after the `wake` seconds an answer named. Theorems
+  `admits_le` (at most `limit` deliveries in one window) and `admit_count_le`.
+  With the test clock (`now` set, one second per mutation) a `wake` flush
+  finds nothing due; use `realClock: true` to see a flush.
+* Endpoint verification: the webhook draft only says "Rate limiting and
+  endpoint verification are suggested to prevent abuse of the subscription
+  mechanism" and defines no procedure, so there is no behaviour to implement.
+
 Tests: `L4Factoidal/LWS/NotificationsTests.lean` (`#guard`s through
-`serverStep`, positive and negative); `tests/lws/draft-binding.mjs` rows
+`serverStep`, positive and negative, also "Delivery rate" and "An inbox that
+is this server"); `L4Factoidal/LWS/InboxGuard.lean` guards (IP parsing,
+authorities, `loops`, `toResolve?`); `tests/lws/draft-binding.mjs` rows
 "Notifications" (a local receiver; signatures verified with `node:crypto`
-against the published key); `tests/lws/authorization.mjs` rows
+against the published key; the 400 for `localhost`, `127.0.0.2`, `[::1]` at
+the server's port, 201 for another port; 30 changes give 10 POSTs; a
+real-clock server with `deliveryLimit: 2, deliveryWindow: 2` sends the rest
+in one batched envelope); `tests/lws/authorization.mjs` rows
 "Notifications" (401, 403, delivery-time filtering with real tokens and
-ACLs). Not done: rate limiting and inbox verification (the drafts only
-suggest them), and a loop through another host name of this server
-(https://github.com/danbri/factoidal/issues/915, two xfails in
-`tests/lws/draft-binding.mjs`), and the Solid server's channels
+ACLs). Not done: the Solid server's channels
 (https://github.com/danbri/factoidal/issues/898).
 
 ### Moving resources (https://github.com/danbri/factoidal/issues/914)
@@ -193,11 +221,23 @@ suggest them), and a loop through another host name of this server
   `move_vacated`. Two path facts are checked at run time, not proved for
   every string (`moveChecks`); a failed check is a 409 with the store
   unchanged.
-* Not done: 301 from the previous identifiers (a SHOULD; xfail naming
-  https://github.com/danbri/factoidal/issues/914).
+* 301 at the previous identifiers (`L4Factoidal/LWS/MoveRedirect.lean`, a
+  SHOULD of §Moving Resources): the wasm layer keeps (previous path, current
+  path) pairs for every moved path (`MovePlan.moves`), at most
+  `redirectsMax` (256, `lws-serve --redirects-max N`), in the snapshot as
+  member `moved`. Before a step, a request whose path names nothing and has
+  a pair answers 301 with `Location` of the current IRI (query kept, so
+  `?linkset` too), when `Authorization.decide` allows the same request at the
+  current path (§Privacy Considerations, "Redirects"); else it is stepped as
+  before. After every step the table is pruned (`after`): a pair goes when a
+  new resource is created at its previous path (POST with that name; a PUT
+  there is a request to the moved resource and answers 301) or the moved
+  resource is deleted; a later move follows the current path. Theorems
+  `redirect_current`, `prune_ok`, `record_ok`, `after_ok`, `record_length`,
+  `redirect_after_move`.
 
-Tests: `L4Factoidal/LWS/MoveTests.lean`; `tests/lws/draft-binding.mjs`, the
-"Moving Resources" rows. Touchstone: `definitions/lws10/core/moving.yamlld`;
+Tests: `L4Factoidal/LWS/MoveTests.lean`, `MoveRedirectTests.lean`;
+`tests/lws/draft-binding.mjs`, the "Moving Resources" rows. Touchstone: `definitions/lws10/core/moving.yamlld`;
 three of its 11 tests have preconditions this server cannot meet at once
 (`move-keeps-identifier-content-and-links` needs `preservesIdentifier: true`,
 `move-container-refused-without-container-support` needs no `Container` in
@@ -352,8 +392,15 @@ The module headers quote each statement and list the server choices.
   to state one). A container grant does not reach its members.
 * Notification: a new grant gives one `Create` notification to its `inbox`
   and to the inbox of each access request naming one of its assignees.
-  Not done: a notification to the controller for a new request (the draft
-  names no inbox): https://github.com/danbri/factoidal/issues/920, an xfail.
+* Controller notification (https://github.com/danbri/factoidal/issues/920):
+  core §Access Requests and Grants says "When a new access request is
+  submitted, the storage controller SHOULD be notified", and names no inbox
+  for the controller. Server choice: config `controllerInbox`
+  (`listen({ controllerInbox })`, `lws-serve --controller-inbox URL`). When
+  set, each new access request gives one `Create` notification there
+  (`announceRequest`, the same signed and retried delivery path); when
+  unset, nothing. A value that is not an `http` or `https` URL stops the
+  start; one inside this storage is not used.
 * Persistence: snapshot member `access` (`stateJson`); every stored document
   is parsed again at open (`stateOfJson`).
 * Theorems: `grantsPermit_sound`, `grantAllows_sound`, `grantAllows_acl`,

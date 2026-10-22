@@ -506,12 +506,12 @@ this server agree: the draft does not say whether a grant on a container
 reaches its members (Touchstone's `readDataResource-public-read` comment;
 here it does not); it gives no status for a malformed grant (here 400); and
 it gives a request no way to state a `purpose` (Touchstone tests only that a
-`purpose` constraint is accepted; here no request satisfies one). One SHOULD
-is not done: "Access Request creation: When a new access request is
-submitted, the storage controller SHOULD be notified", because the draft
-names no inbox for the controller
-(https://github.com/danbri/factoidal/issues/920, an xfail in
-`tests/lws/draft-binding.mjs`); no Touchstone test covers it.
+`purpose` constraint is accepted; here no request satisfies one). The SHOULD
+"Access Request creation: When a new access request is submitted, the
+storage controller SHOULD be notified" names no inbox for the controller; on
+2026-10-22 it got a server-configured inbox (`lws-serve --controller-inbox
+URL`, https://github.com/danbri/factoidal/issues/920); no Touchstone test
+covers it.
 
 Gates on the branch (after the merge of `claude/wt-lws912`): full `lake
 build` exit 0 (1788 jobs); `tools/lean-unbuilt-modules.py --gate` 825 of 825
@@ -722,9 +722,9 @@ the new linkset and `Content-Location`, as the draft requires of such a
 server. The test is not applicable to this design. Identifiers are not
 redesigned for it; that would be a change of the resource model, not a
 configuration. The SHOULD itself (preserve the identifier) is not met; its
-neighbour, 301 from the previous identifier, is the open expected failure
-of https://github.com/danbri/factoidal/issues/914 in
-`tests/lws/draft-binding.mjs`.
+neighbour, 301 from the previous identifier, is done since 2026-10-22
+(`L4Factoidal/LWS/MoveRedirect.lean`,
+https://github.com/danbri/factoidal/issues/914).
 
 ## Run details
 

@@ -23,6 +23,17 @@
 //   lwsClose [handle]                -> { ok }
 //   lwsFetched [handle, documentJson] -> { ok, fetch? | installed? | refused? }
 //   lwsDelivered [handle, reportJson] -> { ok, changed, retry? }
+//   lwsFlush [handle, { now? }]       -> { ok, changed, deliveries?, wake? }
+//
+// RATE LIMIT AND INBOX CHECK (https://github.com/danbri/factoidal/issues/915)
+// An answer may carry `wake: SECONDS`: deliveries wait for a rate-limit
+// window. This host calls `lwsFlush` after that many seconds and makes the
+// deliveries it names. `lwsStep` may answer `{ ok, resolve: { host } }`:
+// this host resolves the name (`dns.lookup`, every address) and steps the
+// request again with `resolved: [{ host, addresses }]`. The listen address,
+// port and the machine's interface addresses go to `lwsOpen` as `listen`.
+// Whether an inbox is this server, and how many deliveries go when, are
+// decided by `L4Factoidal/LWS/InboxGuard.lean` and `Notifications.lean`.
 //
 // NOTIFICATIONS (https://github.com/danbri/factoidal/issues/890)
 // `lwsStep` may carry `deliveries: [{ id, url, headers, body }]`: HTTP
@@ -99,6 +110,32 @@ function entropyBase64 (size = 32) {
  *  metadata, then its key set); this bound only stops a defective module
  *  from looping the host. */
 const MAX_FETCHES = 8
+
+/** The most host names one request may make this host resolve. The engine
+ *  names at most one (the inbox of a subscription request). */
+const MAX_RESOLVES = 4
+
+/** Resolve one host name the engine named. Pure I/O: every address
+ *  `dns.lookup` gives, or none when it fails; the engine decides. */
+async function resolveHost (host) {
+  try {
+    const dns = await import('node:dns')
+    const found = await dns.promises.lookup(host, { all: true, verbatim: true })
+    return found.map((a) => a.address)
+  } catch (_error) {
+    return []
+  }
+}
+
+/** The addresses of this machine's network interfaces. Pure I/O. */
+async function interfaceAddresses () {
+  try {
+    const os = await import('node:os')
+    return Object.values(os.networkInterfaces()).flat().filter(Boolean).map((i) => i.address)
+  } catch (_error) {
+    return []
+  }
+}
 
 /**
  * Fetch one document the engine named, for `lwsFetched`. Pure I/O: the
@@ -264,6 +301,15 @@ export async function openLwsStorage (options = {}) {
   // unless the caller turns them on (L4Factoidal/LWS/MerkleHttp.lean decides
   // every field and member they add).
   if (options.merkle === true) config.merkle = true
+  // Webhook delivery rate (issue 915), the redirect table bound (issue 914)
+  // and the storage controller's inbox (issue 920): passed unread; the
+  // engine checks and decides.
+  if (typeof options.deliveryLimit === 'number') config.deliveryLimit = options.deliveryLimit
+  if (typeof options.deliveryWindow === 'number') config.deliveryWindow = options.deliveryWindow
+  if (typeof options.redirectsMax === 'number') config.redirectsMax = options.redirectsMax
+  if (typeof options.controllerInbox === 'string') config.controllerInbox = options.controllerInbox
+  // What this host bound: data for the engine's inbox check (issue 915).
+  if (options.listen !== undefined && options.listen !== null) config.listen = options.listen
   config.entropy = entropyBase64()
   // Encryption at rest (issue 921): the key text from `storageKey` or the
   // environment variable FACTOIDAL_LWS_KEY, passed unread. The engine checks
@@ -296,6 +342,9 @@ export async function openLwsStorage (options = {}) {
   // Deliveries in flight, so a caller (a test, a shutdown) can wait.
   const inFlight = new Set()
   let closed = false
+  // The one timer that calls `lwsFlush` when the engine named a `wake`.
+  let flushTimer = null
+  let flushAt = Infinity
   const clockNow = () => (options.realClock === true ? { now: Math.floor(Date.now() / 1000) } : {})
 
   /** Make one delivery request the engine named, report the status, and
@@ -337,6 +386,31 @@ export async function openLwsStorage (options = {}) {
       .finally(() => inFlight.delete(job))
   }
 
+  /** Call `lwsFlush` after `seconds`, unless an earlier call is due. */
+  function scheduleFlush (seconds) {
+    if (closed || typeof seconds !== 'number') return
+    const at = Date.now() + seconds * 1000
+    if (flushTimer !== null && flushAt <= at) return
+    if (flushTimer !== null) clearTimeout(flushTimer)
+    flushAt = at
+    flushTimer = setTimeout(() => {
+      flushTimer = null
+      flushAt = Infinity
+      if (closed) return
+      try {
+        const told = engine.call('lwsFlush', [handle, JSON.stringify(clockNow())])
+        if (dir !== null) persistIfChanged(engine, 'lwsSnapshot', handle, told, dir)
+        if (told !== null && typeof told === 'object') {
+          if (Array.isArray(told.deliveries)) for (const delivery of told.deliveries) deliver(delivery)
+          if (typeof told.wake === 'number') scheduleFlush(told.wake)
+        }
+      } catch (error) {
+        console.error(`lws-serve: flush: ${error && error.message ? error.message : error}`)
+      }
+    }, seconds * 1000)
+    if (flushTimer && typeof flushTimer.unref === 'function') flushTimer.unref()
+  }
+
   return {
     engine,
     handle,
@@ -355,9 +429,24 @@ export async function openLwsStorage (options = {}) {
       const record = options.realClock === true
         ? { ...stamped, now: Math.floor(Date.now() / 1000) }
         : stamped
+      // The engine may ask for the addresses of a host name first
+      // (`resolve`); this host resolves it and steps the request again.
+      let resolves = 0
       const callStep = () => engine.callBlobIO('lwsStep', [handle, JSON.stringify(record)], content)
       let answered = callStep()
       let envelope = answered.envelope
+      while (envelope !== null && typeof envelope === 'object' &&
+             envelope.resolve !== undefined && envelope.resolve !== null) {
+        resolves += 1
+        if (resolves > MAX_RESOLVES) {
+          throw new LwsHostError('the engine asked for more host names than one request may resolve')
+        }
+        const host = String(envelope.resolve.host)
+        const addresses = await resolveHost(host)
+        record.resolved = [...(Array.isArray(record.resolved) ? record.resolved : []), { host, addresses }]
+        answered = callStep()
+        envelope = answered.envelope
+      }
       // The engine may answer "fetch this document first" (an issuer's
       // metadata or key set). The host fetches exactly what it is told,
       // hands the bytes back, and steps the request again.
@@ -387,6 +476,7 @@ export async function openLwsStorage (options = {}) {
         // records them as pending.
         for (const delivery of envelope.deliveries) setTimeout(() => deliver(delivery), 0)
       }
+      if (typeof envelope.wake === 'number') scheduleFlush(envelope.wake)
       return answer
     },
     /** Resolves when no delivery request is in flight. */
@@ -396,6 +486,7 @@ export async function openLwsStorage (options = {}) {
     },
     close () {
       closed = true
+      if (flushTimer !== null) clearTimeout(flushTimer)
       try { engine.call('lwsClose', [handle]) } catch (_error) { /* already gone */ }
     }
   }
@@ -493,6 +584,14 @@ export async function createLwsServer (options = {}) {
       }
       settings = { ...settings, baseIri: value }
     },
+    /** Pass what the socket bound (address, port, interface addresses),
+     *  before the first request. Data for the engine's inbox check. */
+    setListen (value) {
+      if (opening !== null) {
+        throw new LwsHostError('the storage is already open; set listen first')
+      }
+      settings = { ...settings, listen: value }
+    },
     close () {
       return new Promise((resolve) => {
         server.close(() => {
@@ -540,6 +639,7 @@ export async function listen (options = {}) {
   const bound = created.server.address()
   const origin = `http://${host}:${bound.port}`
   if (typeof options.baseIri !== 'string') created.setBaseIri(`${origin}/`)
+  created.setListen({ address: bound.address, port: bound.port, addresses: await interfaceAddresses() })
   try {
     await created.storage()
   } catch (error) {
