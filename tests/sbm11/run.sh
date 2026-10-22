@@ -685,6 +685,45 @@ else
     ""|*": 0 of "*) record window gate-strstarts 1 "no block skipped: '$w'" ;;
     *) record window gate-strstarts 0 "$w (blocks of 2 rows, POS)" ;;
   esac; fi
+  # (l1c) issue 932: a COUNT with no FILTER, no GROUP BY and no overlay takes
+  # the rows of the blocks its PRM1 entry decides from the entry. Fixture of 32
+  # default-graph triples packed in blocks of 10 rows: per permutation three
+  # full blocks of 10 rows with a constant graph frame and one block of 2
+  # rows (graph frame not provably constant: read). Equal to the reference
+  # engine; the all-variable count decides at least one block and reads one;
+  # the first four take the PRM1 count.
+  M="$L/meta"
+  mkdir -p "$M"
+  mrc=0
+  "$BIN/l4sbm11-pack" "$HERE/gate/count-meta.nq" "$M/col/gen" --workers 1 --block-rows 10 >"$M/pack.log" 2>&1 || mrc=$?
+  [ "$mrc" -eq 0 ] && { "$BIN/l4sbm11" activate "$M/col" gen >"$M/act.log" 2>&1 || mrc=$?; }
+  if [ "$mrc" -ne 0 ]; then record meta-count pack 1 "exit $mrc"
+  else
+    bad=""; mk=0; mline=""
+    for q in 'SELECT (COUNT(*) AS ?n) WHERE { ?s ?p ?o }' \
+             'SELECT (COUNT(*) AS ?n) WHERE { ?s <http://example.org/p2> ?o }' \
+             'SELECT (COUNT(*) AS ?n) WHERE { ?s <http://example.org/p4> ?o }' \
+             'SELECT (COUNT(?o) AS ?n) WHERE { <http://example.org/s1> ?p ?o }' \
+             'SELECT (COUNT(*) AS ?n) WHERE { ?s <http://example.org/p9> ?o }'; do
+      mk=$((mk + 1))
+      printf '%s\n' "$q" >"$M/q.rq"
+      qrc=0
+      timeout 120 "$BIN/l4sbm11" query "$M/col" --file "$M/q.rq" --explain >"$M/got.$mk" 2>"$M/err.$mk" || qrc=$?
+      rrc=0
+      timeout 120 "$BIN/l4factoidal" query "$HERE/gate/count-meta.nq" --format nquads --query "$M/q.rq" >"$M/want.$mk" 2>/dev/null || rrc=$?
+      v="$(python3 -I "$HERE/compare_answers.py" "$M/got.$mk" "$M/want.$mk" "$rrc")"
+      case "$qrc:$v" in 0:equal*) ;; *) bad="$bad [$q]($qrc $v)" ;; esac
+      # the last query names a predicate with no id: its pattern is empty
+      # before any scan
+      [ "$mk" -eq 5 ] || grep -q 'from PRM1 entries' "$M/err.$mk" || bad="$bad [$q](no PRM1 count)"
+      [ "$mk" -eq 1 ] && mline="$(grep -o 'from PRM1 entries ([0-9]* blocks decided by their entries)[^;]*; blocks [0-9]* read' "$M/err.$mk")"
+    done
+    if [ -n "$bad" ]; then record meta-count queries 1 "failed:$bad"
+    else case "$mline" in
+      *"(0 blocks"*|*"blocks 0 read"|"") record meta-count queries 1 "count of all: expected decided and read blocks: '$mline'" ;;
+      *) record meta-count queries 0 "5 COUNT queries equal to the reference engine; count of all: $mline" ;;
+    esac; fi
+  fi
 fi
 # (l2) olympics: q01 to q21 and tests/sbm11/sip/*.rq with --sip off, auto (the
 # default) and always, equal as multisets (a hash join may change the row

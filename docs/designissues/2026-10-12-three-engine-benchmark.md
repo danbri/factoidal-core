@@ -817,3 +817,77 @@ d14 https://github.com/danbri/factoidal/issues/930, d12
 https://github.com/danbri/factoidal/issues/931, d17
 https://github.com/danbri/factoidal/issues/932, d19
 https://github.com/danbri/factoidal/issues/862.
+
+### 11.13 d17, COUNT(*) from the PRM1 entries (2026-10-22)
+
+https://github.com/danbri/factoidal/issues/932 (OKR batch 3 KR 1.1,
+https://github.com/danbri/factoidal/issues/875). Query d17 is `SELECT
+(COUNT(*) AS ?n) WHERE { ?s ?p ?o }`. Cause before the change: the counted
+path (`scanFoldM` with `countStepM`) ran `scanBlockM` on each of the 5,941
+PSO blocks. For 5,940 of them the PRM1 entry already decides the count (the
+graph frame is a constant frame of graph 0, so the default-graph check holds
+for every row and no frame is read), but each block still made a plan, a
+chunk, a scan state and a group-map update. A profile (`perf record -e
+cpu-clock --call-graph dwarf,16384`, 50 runs in one process) put `mi_free`,
+`mi_malloc_small`, `scanBlockM`, `readFrames`, `countChunk` and
+`chunkOfCols` at the top; no time was in block decoding.
+
+Change (`formal/lean4/L4Factoidal/Storage/Sbm11/IdQuery.lean`): a COUNT with
+no FILTER, no GROUP BY and an empty delta overlay goes to `metaCountM`. One
+loop over the selected PRM1 entries (`metaSplitGo`) adds `metaStep` of each
+block: 0 when the block is not selected or a check fails on a column that is
+constant over the block (`checkFails`); all its rows when every row carries
+the key prefix (`fullFor`), every check is on a constant column, and the
+scan has no repeated variable and no named-graph test. The other blocks go
+through `scanBlockM` with a count as the accumulator (`countAdd`). The
+default graph is still a check on the graph column, so `?s ?p ?o` counts the
+default graph only, as SPARQL 1.1 section 13 requires; a block whose graph
+frame is not provably constant is read. `--explain` gives `counted while
+streaming from PRM1 entries (K blocks decided by their entries)`.
+
+Theorems (`Storage/Sbm11/MetaCountTheorems.lean`, axioms propext,
+Classical.choice, Quot.sound only): `metaStep_sound` (on an admitted block,
+the number `metaStep` gives is the number of output tuples of the block),
+`forIn_count`, `metaSplitGo_sum`, and `metaCountM_eq_scan` (over a store in
+memory of an admitted permutation with no overlay, `metaCountM` gives the
+length of the tuple list of `ScanFoldTheorems.scanFoldM_tuples`, the rows
+that carry the key prefix and pass the checks, the named-graph test and the
+repeated-variable tests).
+
+Gate: `tests/sbm11/run.sh` part (l1c) packs `tests/sbm11/gate/count-meta.nq`
+(32 default-graph triples) in blocks of 10 rows and runs five COUNT queries
+against the reference engine; the count of all must decide some blocks and
+read some. Three gate queries (`ids-count-all`, `ids-count-repeat-var`,
+`ids-count-graph-var`) run in parts (d) and (l1) on the gate fixture, which
+has named graphs.
+
+Measurement: `l4sbm11 query /home/user/bench-data/sbm11/dbpedia --file
+tools/bench/three-engines/queries/dbpedia/d17-count-all.rq --verify none
+--repeat 7 --explain`, execution median of 7 runs in one process, 3
+interleaved rounds; "before" is `l4sbm11` built from `origin/main` at
+`0383de52`, "after" the build of this change. 1-minute load average 2.56 to
+2.70 in all rounds (another session was building on the machine). The
+answers of all 6 runs are byte-identical to
+`/home/user/bench-data/answers/dbpedia/d17-count-all.sbm11-none.json`
+(23,269,559).
+
+| | before | after | QLever 1 CPU warm (11.8) | QLever default warm (11.8) |
+| --- | ---: | ---: | ---: | ---: |
+| warm, round 1 / 2 / 3 (ms) | 3.897 / 3.416 / 3.890 | 0.433 / 0.456 / 0.437 | | |
+| warm, median of rounds (ms) | 3.890 | 0.437 | 1.79 | 1.91 |
+| blocks counted from the PRM1 entry | 0 of 5,941 | 5,940 of 5,941 | | |
+| blocks read | 1 (9 bytes) | 1 (9 bytes) | | |
+| rows through a chunk | 23,269,559 | 3 | | |
+| peak RSS (VmHWM, kB) | 21,700 to 22,332 | 21,736 to 22,292 | | |
+
+SBM11 is in-process; the QLever times include HTTP and JSON. The ratio to
+QLever 1 CPU goes from 2.2 to 0.24. Both builds
+read the whole PSO PRM1 file (550,132 bytes from file); the remaining time is
+that read and the decoding of 5,941 entries.
+
+Gates on this change (exit codes 0): `lake build` (837 jobs);
+`tests/sbm11/run.sh` 3,101 pass, 0 fail, 29 expected-fail (out of 3,130);
+`SBM11_THREADS=4 tests/sbm11/census.sh` 605 executed, 605 matched the
+reference engine (438 on the id path); `tests/planner/sbm11_gate.sh` 8 pass,
+0 fail (out of 8 accepted); `tools/lean-tail-recursion-audit.py`,
+`tools/lean-unbuilt-modules.py` and `tools/lean-csimp-reach.py` with `--gate`.
