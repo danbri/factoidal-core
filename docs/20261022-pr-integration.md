@@ -10,9 +10,9 @@ No remote merge or npm release is claimed by this record. The user authorized in
 ## Source identity and reconciliation
 
 The integration started at main `dac8e98`. PR1 head
-`ed19f0905781008d12275c6fbbff257cb77f044a` has no common ancestor with that
-main: apply its changes while preserving main's newer XML, numeric, RIF,
-SPARQL, Authz and LWS work. A wholesale source replacement is not acceptable.
+`ed19f0905781008d12275c6fbbff257cb77f044a` required reconciliation with
+main's newer XML, numeric, RIF, SPARQL, Authz and LWS work.
+Its changes were applied while preserving that newer implementation.
 PR2 head `25bdeaf597bc9f91acd6a980861fb0d20eaf5927` applied as `65b2471`,
 `87fd052`, `87af61c`; the worknote-index conflict retained both sets of notes.
 PR3 head `87d1009df1842a64669530e3d1f1875e2b2c8e22` was reconciled as
@@ -21,7 +21,10 @@ PR3 head `87d1009df1842a64669530e3d1f1875e2b2c8e22` was reconciled as
 [the XMPP integration note](20261022-xmpp-pr3-integration.md).
 Original branches and dirty audit worktrees are preserved. Main `d36c993c`
 was merged as `96ac91dc` after PR2+PR3 artifact validation; the later combined
-source requires its own build and tests.
+source requires its own build and tests. Main `885ec1d1a` is now included,
+and PR1's reconciled implementation was incorporated as `f1f78d987`.
+The [PR1 reconciliation note](20261022-pr1-main-reconciliation.md) records
+the semantic choices, repair proofs and remaining capability gaps.
 
 PR1's [independent review and raw evidence](audits/pr1-review-20261022/README.md)
 are retained unchanged. The introduced zero yearMonthDuration string-cast
@@ -113,13 +116,17 @@ as solved. The historical test run before correction records 18 pass/8 fail.
 
 ## Acceptance and evidence still required
 
-Finish reconciling PR1, inspect its commits, then build the combined library
-and Wasm with the normal build script. Run native suites with failure,
+All three source changes are combined in PR4. Finish the combined library
+and Wasm builds with the normal build script. Run native suites with failure,
 unknown, missing-fixture and comparator counts separately; run public OWL,
 XMPP real TCP/interop, npm, hub and relevant newer-main host tests on that
 artifact. Record source identity, runtime, commands and artifact digests.
 Fetch current main before push and reconcile any further mainline changes.
 Source proof success is not artifact validation or a merge receipt.
+
+The user stopped the separate old-package provenance investigation. The old
+historical provenance test remains unresolved; it is outside this integration's
+remaining work. No additional history reconstruction is required.
 
 The existing F* scope qualifier remains: parser and algebra spec verified in
 F*; on-disk backend has unverified OCaml-side optimization layers being
