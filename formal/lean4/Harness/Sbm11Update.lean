@@ -295,8 +295,13 @@ def Run.evalWhere (r : Run) (u : Update) (opIx : Nat) (withIri : Option WfIri)
       return none
     | .ok plan =>
       let plan := match withIri with | some w => redirectPlan w plan | none => plan
-      let st := ss.storeWith 1 (some 16) 8192
-      match ← (IdQuery.whereTableM st plan env none).run with
+      let st0 := ss.storeWith 1 (some 16) 8192
+      -- the VALUES blocks as id tables, and the store that decodes their
+      -- query-local ids (issue 950)
+      let (vtabs, st) ← match ← (IdQuery.resolveValuesM st0 plan.values).run with
+        | .error e => throw (IO.userError s!"id query failed: {e}")
+        | .ok r => pure r
+      match ← (IdQuery.whereTableM st plan env none vtabs).run with
       | .error e => throw (IO.userError s!"id query failed: {e}")
       | .ok (t, _, _) =>
         match ← (IdQuery.decodeRowsM st t).run with

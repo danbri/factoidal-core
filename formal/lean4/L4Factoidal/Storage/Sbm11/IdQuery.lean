@@ -30,6 +30,15 @@ FILTER beside the OPTIONALs over base variables only (`flattenOptional`).
 Evaluation: `evalOptionalsM` and `OptJoin.leftOuterJoin`; an unbound
 variable is the id `OptJoin.unbound` (0) in its column.
 
+Inline VALUES (https://github.com/danbri/factoidal/issues/950): a VALUES
+block in the join tree of the WHERE clause outside GRAPH, and a trailing
+VALUES block of a query that does not group, when the WHERE clause has no
+OPTIONAL and no FILTER reads a VALUES variable (`flattenWhere`). Each block
+is an id table (`resolveValuesM`; UNDEF is `OptJoin.unbound`, a term without
+an id in the generation a query-local id of tag `tagLocal`, decoded by
+`Store.withLocal`), joined with the table of the triple patterns after their
+FILTERs (`joinValues`, `IdJoin.joinIds`; theorems in `IdJoinTheorems`).
+
 Issue 823 (https://github.com/danbri/factoidal/issues/823): a FILTER conjunct
 outside `backendLocal` (REGEX, LANGMATCHES, casts, IRI(), hashes, ...), or one
 that reads a variable no pattern of the WHERE clause binds, is a residual
@@ -106,6 +115,7 @@ import L4Factoidal.Storage.Sbm11.TermId
 import L4Factoidal.Storage.Sbm11.FrameWords
 import L4Factoidal.Storage.Sbm11.Overlay
 import L4Factoidal.Storage.Sbm11.OptJoin
+import L4Factoidal.Storage.Sbm11.IdJoin
 import L4Factoidal.Storage.Sbm11.IdAgg
 import L4Factoidal.Storage.Sbm11.Sip
 import L4Factoidal.Storage.Sbm11.ParallelScan
@@ -171,6 +181,18 @@ structure OptGroup where
   residuals : Array Expr := #[]
   deriving Inhabited
 
+/-- An inline VALUES block of the WHERE clause (SPARQL 1.1 section 10.2,
+    https://github.com/danbri/factoidal/issues/950): its variables and its
+    rows, `none` for UNDEF. -/
+structure ValuesBlock where
+  vars : Array String
+  rows : Array (Array (Option Term))
+  deriving Inhabited
+
+/-- The variables of a plan's VALUES blocks. -/
+def valuesVars (vs : Array ValuesBlock) : Array String :=
+  vs.foldl (fun a b => b.vars.foldl (fun a v => if a.contains v then a else a.push v) a) #[]
+
 /-- The reference post-processing of a plan (issue 823). The id path computes
     the solutions of the WHERE clause on ids, decodes them, and applies the
     reference evaluator's own post-WHERE functions to that solution sequence:
@@ -205,6 +227,10 @@ structure Plan where
       every variable a group shares with anything outside it is bound by
       `pats` -/
   optionals : Array OptGroup := #[]
+  /-- the VALUES blocks of the WHERE clause (issue 950), each joined with the
+      rows of `pats` after `filters` and `residuals` (`IdJoin.joinIds`);
+      never with `optionals` -/
+  values : Array ValuesBlock := #[]
   proj : Array ProjItem
   /-- the result variables (`Query.projectedVars`) -/
   outVars : Array String
@@ -378,7 +404,9 @@ def subtreeVars (p : QueryPattern) : Option (Array String) := Id.run do
             | .error _ => return none
       | .join l r => stack := (stack.push r).push l
       | .filter _ q | .graph _ q => stack := stack.push q
-      | .empty => pure ()
+      -- a VALUES block (issue 950): an UNDEF cell leaves its variable
+      -- unbound, so it binds no variable in every row
+      | .empty | .values _ _ => pure ()
       | _ => return none
   if !stack.isEmpty then return none
   return some out
@@ -437,6 +465,9 @@ def whereVars (p : QueryPattern) : Array String := Id.run do
         if !out.contains v then out := out.push v
         stack := stack.push q
       | .graph _ q => stack := stack.push q
+      | .values vs _ =>
+        for v in vs do
+          if !out.contains v then out := out.push v
       | _ => pure ()
   return out
 
@@ -466,15 +497,19 @@ def splitFilter (c : Expr) (inScope allVars : Array String) :
   return (onIds, residual)
 
 /-- Flatten a WHERE tree of BGPs, joins, FILTERs and one level of GRAPH: the
-    triple patterns, the FILTER conjuncts on ids and the residual FILTER
-    conjuncts (`splitFilter`). `allVars`: `whereVars` of the whole WHERE
-    clause. -/
+    triple patterns, the FILTER conjuncts on ids, the residual FILTER
+    conjuncts (`splitFilter`) and the VALUES blocks outside GRAPH (issue
+    950; Join is associative and commutative on multisets, SPARQL 1.1
+    section 18.5, so each block is joined with the rows of the patterns).
+    `allVars`: `whereVars` of the whole WHERE clause, which holds the VALUES
+    variables, so a FILTER that reads one is refused (`splitFilter`). -/
 def flattenWhere (p : QueryPattern) (allVars : Array String) :
-    Except String (Array PatSpec × Array Expr × Array Expr) := do
+    Except String (Array PatSpec × Array Expr × Array Expr × Array ValuesBlock) := do
   let mut stack : Array WalkItem := #[⟨p, .dflt⟩]
   let mut pats : Array PatSpec := #[]
   let mut filters : Array Expr := #[]
   let mut residuals : Array Expr := #[]
+  let mut values : Array ValuesBlock := #[]
   for _ in [0:maxNodes] do
     match stack.back? with
     | none => break
@@ -505,10 +540,19 @@ def flattenWhere (p : QueryPattern) (allVars : Array String) :
         -- a GRAPH group with no triple pattern reads the graph names only
         if !(hasPattern q) then throw "a GRAPH group with no triple pattern"
         stack := stack.push ⟨q, gArg⟩
+      | .values vs rows =>
+        match g with
+        | .dflt => pure ()
+        | _ => throw "a VALUES block inside a GRAPH"
+        let va := vs.toArray
+        for i in [0:va.size] do
+          for j in [i + 1:va.size] do
+            if va[i]! == va[j]! then throw s!"?{va[i]!} twice in one VALUES block"
+        values := values.push { vars := va, rows := rows.toArray.map List.toArray }
       | .empty => pure ()
       | _ => throw "a WHERE clause outside the fragment (OPTIONAL, UNION, MINUS, BIND, VALUES, sub-SELECT, SERVICE or a property path)"
   if !stack.isEmpty then throw s!"a WHERE clause with more than {maxNodes} nodes"
-  return (pats, filters, residuals)
+  return (pats, filters, residuals, values)
 where
   /-- Whether a subtree holds a triple pattern. -/
   hasPattern (q : QueryPattern) : Bool := Id.run do
@@ -576,13 +620,15 @@ def hasGraph (q : QueryPattern) : Bool := Id.run do
     occurs in no other group (a well-designed pattern: every variable a
     group shares with anything outside it is bound in every left row). -/
 def flattenOptional (p : QueryPattern) :
-    Except String (Array PatSpec × Array Expr × Array Expr × Array Expr × Array OptGroup) := do
+    Except String (Array PatSpec × Array Expr × Array Expr × Array Expr × Array OptGroup ×
+      Array ValuesBlock) := do
   let allVars := whereVars p
   let (tops, base, raw) := optionalSpine p
   if raw.isEmpty then
-    let (pats, filters, residuals) ← flattenWhere p allVars
-    return (pats, filters, residuals, #[], #[])
-  let (pats, filters, residuals) ← flattenWhere base allVars
+    let (pats, filters, residuals, values) ← flattenWhere p allVars
+    return (pats, filters, residuals, #[], #[], values)
+  let (pats, filters, residuals, values) ← flattenWhere base allVars
+  if !values.isEmpty then throw "a VALUES block beside an OPTIONAL"
   if pats.isEmpty then throw "an OPTIONAL with no triple pattern before it"
   let some baseScope := scopeVars base | throw "a group before an OPTIONAL outside the fragment"
   -- A FILTER beside the OPTIONALs is `Filter(f, LeftJoin(...))` (section
@@ -604,7 +650,8 @@ def flattenOptional (p : QueryPattern) :
   let mut groups : Array OptGroup := #[]
   for (r, c) in raw do
     if hasGraph r then throw "a GRAPH inside an OPTIONAL group"
-    let (gp, gf, gr) ← flattenWhere r allVars
+    let (gp, gf, gr, gv) ← flattenWhere r allVars
+    if !gv.isEmpty then throw "a VALUES block inside an OPTIONAL group"
     if gp.isEmpty then throw "an OPTIONAL group with no triple pattern"
     let g0 : OptGroup := { pats := gp, filters := gf, residuals := gr }
     let (cf, cr) ← match c with
@@ -628,7 +675,7 @@ def flattenOptional (p : QueryPattern) :
         for j in [0:groups.size] do
           if j != k && groups[j]!.vars.contains v then
             throw s!"?{v} occurs in two OPTIONAL groups and not in the triple patterns before them"
-  return (pats, filters ++ topFilters, residuals ++ topResiduals, postFilters, groups)
+  return (pats, filters ++ topFilters, residuals ++ topResiduals, postFilters, groups, #[])
 
 /-- The number of first WHERE solutions the answer of a post-processed query
     reads (`PostSpec.firstRows`), or `none` for all of them.
@@ -732,12 +779,17 @@ def translate (q : L4Factoidal.SPARQL.Query) : Except String Plan := do
   unless q.dataset.isEmpty do throw "FROM / FROM NAMED"
   if q.pattern.mentionsFulltext then
     throw "text:query (full-text search): the reference evaluator answers it"
-  let (pats, filters, residuals, postFilters, optionals) ← flattenOptional q.pattern.rewriteBnodes
+  let (pats, filters, residuals, postFilters, optionals, values) ←
+    flattenOptional q.pattern.rewriteBnodes
   let allPats : Array PatSpec := pats ++ optionals.foldl (fun (a : Array PatSpec) (g : OptGroup) => a ++ g.pats) #[]
-  let patVars := allPats.foldl
-    (fun a (t : PatSpec) => t.vars.foldl (fun a v => if a.contains v then a else a.push v) a) #[]
+  -- the VALUES variables count as variables the WHERE clause binds (in some
+  -- rows; an UNDEF cell is `OptJoin.unbound` in its column, as after an
+  -- OPTIONAL)
+  let patVars := (allPats.foldl
+    (fun a (t : PatSpec) => t.vars.foldl (fun a v => if a.contains v then a else a.push v) a) #[]) ++
+    (valuesVars values).filter fun v => !(allPats.any fun t => t.vars.contains v)
   let base : Plan := {
-    pats, filters, residuals, postFilters, optionals, proj := #[], outVars := #[],
+    pats, filters, residuals, postFilters, optionals, values, proj := #[], outVars := #[],
     groupVars := #[], agg := false, order := #[], distinct := false, offset := 0,
     limit := none }
   let post (why : String) : Except String Plan := do
@@ -2590,6 +2642,80 @@ def renderRowsM {m : Type → Type} [Monad m] (st : Store m) (reference : Bool) 
 
 /-! ## Running a plan -/
 
+/-! ## VALUES on ids (issue 950) -/
+
+/-- The tag of a query-local id: a VALUES term that has no id in the
+    generation gets `tagLocal · 2^60 + k`, `k` its index in the query's local
+    vocabulary (one entry per distinct `normalizeTerm` of such a term). No
+    stored term and no delta-log term has tag 15 (`TermId`), so a local id
+    joins with no stored id, as the term it names matches no stored term;
+    and it reaches the answer when its variable is joined with nothing
+    (`Store.withLocal` decodes it). -/
+def tagLocal : Nat := 15
+
+def localId (k : Nat) : UInt64 := (tagLocal * two60 + k).toUInt64
+
+/-- The store with the query-local ids of `vocab` decoded by `termOf`. Every
+    other read is the store's: the key reads (`keyOf`, `keySlice`) are made
+    for tags 1, 2 and 3 only (`appendIdJsonM`, `applyFilters`), ORDER BY by
+    ids for tags 1, 2 and 4 only (`orderKeysByIds?`), and the harness
+    prefetch for the dictionary tags only. -/
+def localTermOf {m : Type → Type} [Monad m] (st : Store m) (vocab : Array Term) (x : UInt64) :
+    ExceptT String m Term :=
+  if tagOf x == tagLocal then
+    match vocab[x.toNat % two60]? with
+    | some t => pure t
+    | none => throw s!"id {x}: not in the query-local vocabulary"
+  else st.termOf x
+
+def Store.withLocal {m : Type → Type} [Monad m] (st : Store m) (vocab : Array Term) : Store m :=
+  if vocab.isEmpty then st else { st with termOf := localTermOf st vocab }
+
+/-- The VALUES blocks of a plan as id tables (one column per variable,
+    `OptJoin.unbound` for UNDEF and for a cell a short row lacks, as
+    `zipBindings` leaves it out), and the store that decodes their local ids.
+    A term's id is `Store.idOf` (inline, dictionary or delta log), else a
+    local id (`tagLocal`). -/
+def resolveValuesM {m : Type → Type} [Monad m] (st : Store m) (blocks : Array ValuesBlock) :
+    ExceptT String m (Array Table × Store m) := do
+  let mut vocab : Array Term := #[]
+  let mut localIdx : Std.HashMap Term Nat := {}
+  let mut out : Array Table := #[]
+  for b in blocks do
+    let mut cols : Array ByteArray := b.vars.map fun _ => ByteArray.empty
+    for row in b.rows do
+      for c in [0:b.vars.size] do
+        let mut x : UInt64 := OptJoin.unbound
+        match row[c]? with
+        | some (some t) =>
+          match ← st.idOf t with
+          | some y => x := y
+          | none =>
+            let key := normalizeTerm t
+            match localIdx.get? key with
+            | some k => x := localId k
+            | none =>
+              localIdx := localIdx.insert key vocab.size
+              x := localId vocab.size
+              vocab := vocab.push key
+        | _ => pure ()
+        cols := cols.modify c (L4Factoidal.Qlvr.Side.put64 · x)
+    out := out.push { vars := b.vars, cols, rows := b.rows.size }
+  return (out, st.withLocal vocab)
+
+/-- Join the id tables of the VALUES blocks with `t`, in order
+    (`IdJoin.joinIds`, SPARQL 1.1 section 18.5 Join), and say what was done. -/
+def joinValues (t : Table) (vtabs : Array Table) : Table × Array String := Id.run do
+  let mut t := t
+  let mut lines : Array String := #[]
+  for k in [0:vtabs.size] do
+    let v := vtabs[k]!
+    let before := t.rows
+    let shared := v.vars.filter t.vars.contains
+    t := IdJoin.joinIds t v
+    lines := lines.push s!"VALUES block {k}: {v.rows} rows, {shared.size} of its {v.vars.size} variables shared; join with {before} rows: {t.rows} rows"
+  return (t, lines)
+
 structure RunStats where
   plan : Array String := #[]
   rows : Nat := 0
@@ -2957,20 +3083,23 @@ def topPartM {m : Type → Type} [Monad m] (st : Store m) (plan : Plan) (spec : 
 def runPlanM {m : Type → Type} [Monad m] (st : Store m) (plan : Plan) (emit : ByteArray → m Unit)
     (reference : Bool := false) (par : Option (Par m) := none) (env : EvalEnv := {}) :
     ExceptT String m RunStats := do
+  -- the VALUES blocks as id tables; the store then decodes their local ids
+  let (vtabs, st) ← resolveValuesM st plan.values
   let pats ← plan.pats.mapM (resolvePat st)
   let fs := (← plan.filters.mapM (compileFilter st)) ++ plan.residuals.map (residualKind env)
   let memos0 : Array Memo := fs.map fun _ => {}
   let filterVars : Array String := fkVars fs ++ fkVars (plan.postFilters.map (residualKind env))
+  -- a VALUES variable is a join column: the pattern table keeps it
   let used : Array String :=
     plan.proj.foldl (fun a p => match p with
       | .var x => a.push x
       | .count _ (some x) => a.push x
       | .count _ none => a) #[]
-    ++ filterVars ++ plan.order.map (·.1) ++ plan.groupVars
+    ++ filterVars ++ plan.order.map (·.1) ++ plan.groupVars ++ valuesVars plan.values
   let need (x : String) : Bool := used.contains x
   let mut stats : RunStats := {}
   (emit (jsonHead plan.outVars).toUTF8 : m Unit)
-  let single := pats.size == 1 && !pats[0]!.hasMissing && plan.optionals.isEmpty
+  let single := pats.size == 1 && !pats[0]!.hasMissing && plan.optionals.isEmpty && plan.values.isEmpty
   if single && !plan.agg && plan.order.isEmpty && !plan.distinct then
     -- one pattern, no modifier that needs every row: block by block
     let t := pats[0]!
@@ -3067,7 +3196,8 @@ def runPlanM {m : Type → Type} [Monad m] (st : Store m) (plan : Plan) (emit : 
           if plan.optionals.isEmpty then do
             let (t0, lines, s) ← evalBgpM st pats need
             let (t1, _) ← applyFilters st fs memos0 t0
-            pure (t1, lines, s)
+            let (t2, vlines) := joinValues t1 vtabs
+            pure (t2, lines ++ vlines, s)
           else evalOptionalsM st plan pats fs need env
       stats := { stats with plan := lines, scan := s }
       if plan.agg then
@@ -3163,17 +3293,24 @@ def decodeRowsM {m : Type → Type} [Monad m] (st : Store m) (t : Table) :
     only the first `n` rows; a single pattern then streams and its scan stops
     after them. -/
 def whereTableM {m : Type → Type} [Monad m] (st : Store m) (plan : Plan) (env : EvalEnv)
-    (firstRows : Option Nat) : ExceptT String m (Table × Array String × ScanStats) := do
+    (firstRows : Option Nat) (vtabs : Array Table := #[]) :
+    ExceptT String m (Table × Array String × ScanStats) := do
+  if vtabs.size != plan.values.size then
+    throw "the VALUES blocks of the plan are not resolved (`resolveValuesM`)"
   let fs := (← plan.filters.mapM (compileFilter st)) ++ plan.residuals.map (residualKind env)
   let memos0 : Array Memo := fs.map fun _ => {}
   if plan.pats.isEmpty then
     let t0 : Table := { vars := #[], cols := #[], rows := 1 }
-    let (t, _) ← applyFilters st fs memos0 t0
-    return (t, #[s!"no triple pattern: one solution with no binding, {fs.size} FILTER conjuncts: {t.rows} rows"], {})
+    let (t1, _) ← applyFilters st fs memos0 t0
+    let (t2, vlines) := joinValues t1 vtabs
+    let t := match firstRows with
+      | some n => t2.slice 0 n
+      | none => t2
+    return (t, #[s!"no triple pattern: one solution with no binding, {fs.size} FILTER conjuncts: {t1.rows} rows"] ++ vlines, {})
   let pats ← plan.pats.mapM (resolvePat st)
   let need : String → Bool := fun _ => true
   if let some n := firstRows then
-    if pats.size == 1 && !pats[0]!.hasMissing && plan.optionals.isEmpty then
+    if pats.size == 1 && !pats[0]!.hasMissing && plan.optionals.isEmpty && plan.values.isEmpty then
       let t := pats[0]!
       let spec := mkSpec t (permFor t none) need
       let init : Table := Table.empty spec.outVars
@@ -3186,7 +3323,8 @@ def whereTableM {m : Type → Type} [Monad m] (st : Store m) (plan : Plan) (env 
   let (t0, lines, s) ← if plan.optionals.isEmpty then do
       let (t0, lines, s) ← evalBgpM st pats need
       let (t1, _) ← applyFilters st fs memos0 t0
-      pure (t1, lines, s)
+      let (t2, vlines) := joinValues t1 vtabs
+      pure (t2, lines ++ vlines, s)
     else evalOptionalsM st plan pats fs need env
   let t := match firstRows with
     | some n => t0.slice 0 n
@@ -3208,7 +3346,9 @@ def whereTableM {m : Type → Type} [Monad m] (st : Store m) (plan : Plan) (env 
     (https://github.com/danbri/factoidal/issues/825). -/
 def runPostM {m : Type → Type} [Monad m] (st : Store m) (plan : Plan) (ps : PostSpec) (env : EvalEnv) :
     ExceptT String m (PostAnswer × RunStats) := do
-  let (t, lines, s) ← whereTableM st plan env ps.firstRows
+  -- the VALUES blocks as id tables; the store then decodes their local ids
+  let (vtabs, st) ← resolveValuesM st plan.values
+  let (t, lines, s) ← whereTableM st plan env ps.firstRows vtabs
   let q := ps.query
   let active : Graph := Graph.empty
   let totalLine := s!"total: rows decoded {s.rowsDecoded}; blocks read {s.blocksRead} of {s.blocksSelected} selected, {s.sipSkipped} skipped by candidates; {s.bytesRead} bytes"
