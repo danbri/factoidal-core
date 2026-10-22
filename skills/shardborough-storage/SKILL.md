@@ -876,8 +876,9 @@ group `graphs`, `tests/delta-log/run.sh` (DLOG versions), `OverlayTheorems`
 Queries over named graphs with no triple (2026-10-15,
 https://github.com/danbri/factoidal/issues/855). The id path reads triples only,
 and refuses every shape that can see a graph with no triple: a GRAPH group with no
-triple pattern or with only a FILTER, FROM and FROM NAMED, MINUS, OPTIONAL inside
-GRAPH. The reference fallback (`selectedDataset`, also for the WHERE clause of
+triple pattern or with only a FILTER, MINUS, OPTIONAL inside GRAPH. (FROM and FROM
+NAMED run on ids since 2026-10-23, issue 953: the id path then reads triple
+patterns only, and a graph with no triple gives no row to a triple pattern.) The reference fallback (`selectedDataset`, also for the WHERE clause of
 `l4sbm11 update`) puts every named graph of the overlaid generation that the
 planner guard keeps into its dataset (`Session.namedGraphIds`), a graph with no
 selected quad with no triple, so `GRAPH ?g { }` and FROM NAMED see it. The
@@ -949,6 +950,24 @@ branch lacks a variable), and the result is joined with the other rows
 (`IdJoin.joinIds`). `l4sbm11 update` redirects the branch patterns under
 `WITH` too (`redirectPlan`). Theorems: `union_decode`, `unionChain_decode`
 (lemma L5m). Gates: 10 `ids-union-*` and 4 `ref-union-*` queries.
+
+FROM and FROM NAMED on ids (2026-10-23, https://github.com/danbri/factoidal/issues/953;
+record: section 19 of the stage 4 record). `IdQuery.datasetSpec` reads the
+dataset clauses (a FROM IRI given twice is one graph; a FROM NAMED IRI given
+twice is refused, because the reference then iterates that graph twice), and
+`IdQuery.resolvePatIn` resolves each pattern under it, as `applyDataset`
+builds the dataset from the store's named graphs. A default-graph pattern
+reads: no graph when no FROM IRI names a graph of the store (`missing`); one
+graph as `GRAPH <iri>`; several graphs as the RDF merge (`Pat.merge`:
+`scanPatM` scans each graph with every variable of the pattern, concatenates,
+removes duplicate rows, then projects; one row per triple of the merge, set
+merge as `Graph.union`). `GRAPH <iri>` reads the graph only when a FROM NAMED
+IRI names it; `GRAPH ?g` keeps the rows of the FROM NAMED graphs
+(`Pat.gnames`). The streamed single-pattern paths take only plain patterns
+(`Pat.plain`). Blank nodes are not renamed apart: one label is one blank node
+across the store's graphs, as in the reference. Theorems (`IdDatasetTheorems`,
+lemma L5n): `lookup_decode`, `from_default_decode`, `from_named_decode`,
+`mergedRows_eq`. Gates: 23 `ids-from-*` and 1 `ref-from-*` queries.
 
 Sideways information passing (2026-10-13,
 https://github.com/danbri/factoidal/issues/809; record: section 11 of the

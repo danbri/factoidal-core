@@ -48,6 +48,18 @@ concatenated (`IdJoin.unionIds`, `unbound` where a branch lacks a variable),
 and the result is joined with the other rows after the VALUES blocks
 (`evalUnionsM`, `joinExtrasM`).
 
+FROM / FROM NAMED (https://github.com/danbri/factoidal/issues/953, SPARQL
+1.1 section 13.2): the dataset of the query is built from the store's named
+graphs as `applyDataset` builds it (`datasetSpec`, `resolvePatIn`). A
+default-graph pattern reads the RDF merge of the FROM graphs: one graph is
+read as `GRAPH <iri>`; for several, the pattern's scans of each graph are
+concatenated and duplicate triples removed (`scanPatM`; set merge, section
+13.2.2, as `Graph.union` merges); none gives an empty graph. GRAPH reads only
+the FROM NAMED graphs (`Pat.gnames`). A FROM NAMED IRI twice is refused.
+Blank nodes are not renamed apart: the store, like the reference evaluator,
+has one blank node per label across its graphs. Theorems:
+`IdDatasetTheorems`.
+
 Issue 823 (https://github.com/danbri/factoidal/issues/823): a FILTER conjunct
 outside `backendLocal` (REGEX, LANGMATCHES, casts, IRI(), hashes, ...), or one
 that reads a variable no pattern of the WHERE clause binds, is a residual
@@ -207,6 +219,18 @@ structure UnionBranch where
   residuals : Array Expr := #[]
   deriving Inhabited
 
+/-- The dataset of a query with FROM / FROM NAMED (SPARQL 1.1 section 13.2,
+    https://github.com/danbri/factoidal/issues/953): the IRIs of the FROM
+    clauses, each once, in order, and the IRIs of the FROM NAMED clauses
+    (no IRI twice: `translate` refuses that). The default graph is the RDF
+    merge of the store's named graphs that the FROM IRIs name; GRAPH reads
+    only the named graphs that the FROM NAMED IRIs name. An IRI that names no
+    graph of the store gives no graph (`applyDataset`). -/
+structure DatasetSpec where
+  defaults : Array Term
+  named : Array Term
+  deriving Inhabited
+
 /-- The variables of a plan's VALUES blocks. -/
 def valuesVars (vs : Array ValuesBlock) : Array String :=
   vs.foldl (fun a b => b.vars.foldl (fun a v => if a.contains v then a else a.push v) a) #[]
@@ -254,6 +278,8 @@ structure Plan where
       (`IdJoin.unionIds` of the branch tables) are joined with the rows of
       `pats` after the VALUES blocks; never with `optionals` -/
   unions : Array (Array UnionBranch) := #[]
+  /-- FROM / FROM NAMED (issue 953); `none`: the store's dataset -/
+  dataset : Option DatasetSpec := none
   proj : Array ProjItem
   /-- the result variables (`Query.projectedVars`) -/
   outVars : Array String
@@ -838,6 +864,22 @@ def selectOnIds (q : L4Factoidal.SPARQL.Query) (sel : SelectClause) (base : Plan
            groupVars := groupVars, agg := agg, order := order, distinct := q.modifier.distinct,
            offset := q.modifier.offset.getD 0, limit := q.modifier.limit }
 
+/-- The dataset clauses of a query (issue 953, SPARQL 1.1 section 13.2):
+    `none` without one. The FROM IRIs once each (the RDF merge of a graph
+    with itself is the graph); a FROM NAMED IRI twice is refused (the
+    reference evaluator then iterates that graph twice, `applyDataset`). -/
+def datasetSpec (dcs : List L4Factoidal.SPARQL.DatasetClause) : Except String (Option DatasetSpec) := do
+  if dcs.isEmpty then return none
+  let mut defaults : Array Term := #[]
+  let mut named : Array Term := #[]
+  for dc in dcs do
+    match dc with
+    | .default i => if !defaults.contains (.iri i) then defaults := defaults.push (.iri i)
+    | .named i =>
+      if named.contains (.iri i) then throw s!"FROM NAMED <{i.val}> twice"
+      named := named.push (.iri i)
+  return some { defaults, named }
+
 /-- Accept the fragment or say why not.
 
     The WHERE clause must be in the id fragment (`flattenOptional`). Then:
@@ -854,7 +896,7 @@ def selectOnIds (q : L4Factoidal.SPARQL.Query) (sel : SelectClause) (base : Plan
 def translate (q : L4Factoidal.SPARQL.Query) : Except String Plan := do
   if let .describe _ := q.form then
     throw "DESCRIBE: the description reads statements no pattern of the query selects"
-  unless q.dataset.isEmpty do throw "FROM / FROM NAMED"
+  let dataset ← datasetSpec q.dataset
   if q.pattern.mentionsFulltext then
     throw "text:query (full-text search): the reference evaluator answers it"
   let (pats, filters, residuals, postFilters, optionals, values, unions) ←
@@ -867,7 +909,7 @@ def translate (q : L4Factoidal.SPARQL.Query) : Except String Plan := do
     (fun a (t : PatSpec) => t.vars.foldl (fun a v => if a.contains v then a else a.push v) a) #[]) ++
     ((valuesVars values ++ unionVars unions).filter fun v => !(allPats.any fun t => t.vars.contains v))
   let base : Plan := {
-    pats, filters, residuals, postFilters, optionals, values, unions, proj := #[], outVars := #[],
+    pats, filters, residuals, postFilters, optionals, values, unions, dataset, proj := #[], outVars := #[],
     groupVars := #[], agg := false, order := #[], distinct := false, offset := 0,
     limit := none }
   let post (why : String) : Except String Plan := do
@@ -901,6 +943,11 @@ structure Pat where
   g : Slot
   /-- `g` is a variable over the NAMED graphs (`GRAPH ?g`): id 0 excluded -/
   named : Bool
+  /-- FROM with two or more graphs (issue 953): the pattern reads the RDF
+      merge of the graphs of these ids (`scanPatM`); `g` is the first -/
+  merge : Array UInt64 := #[]
+  /-- FROM NAMED (issue 953): `GRAPH ?g` reads only the graphs of these ids -/
+  gnames : Option (Array UInt64) := none
   deriving Repr, Inhabited
 
 def Pat.slot (t : Pat) : Nat → Slot
@@ -916,6 +963,10 @@ def Pat.vars (t : Pat) : Array String := Id.run do
     | .var v => if !out.contains v then out := out.push v
     | _ => pure ()
   return out
+
+/-- A pattern of one graph or of every named graph (no FROM merge, no FROM
+    NAMED restriction): the scans of the streamed paths read it directly. -/
+def Pat.plain (t : Pat) : Bool := t.merge.isEmpty && t.gnames.isNone
 
 def Pat.hasMissing (t : Pat) : Bool :=
   t.s == .missing || t.p == .missing || t.o == .missing || t.g == .missing
@@ -1921,6 +1972,51 @@ def scanForJoinM {m : Type → Type} [Monad m] (st : Store m) (spec : ScanSpec) 
 
 /-! ## The BGP -/
 
+/-- The table of one pattern of a BGP: the scan `spec` (`mkSpec t perm
+    keep`), with the left values as candidates when `left` is given
+    (`scanForJoinM`). Under FROM / FROM NAMED (issue 953, SPARQL 1.1 section
+    13.2): for `Pat.merge` the scan of each graph with every variable of the
+    pattern, concatenated, the duplicate rows removed (one row per triple of
+    the RDF merge: the constants are fixed, so a row is its triple;
+    `IdDatasetTheorems.mergedRows_eq`), then the columns `keep` holds; for
+    `Pat.gnames` the rows whose graph is one of those ids, then the columns
+    `keep` holds. Neither takes candidates; neither has a sort variable. -/
+def scanPatM {m : Type → Type} [Monad m] (st : Store m) (t : Pat) (spec : ScanSpec) (keep : String → Bool)
+    (left : Option Table) (estimate : Nat) : ExceptT String m (Table × ScanStats × String) := do
+  if t.plain then
+    match left with
+    | some l => scanForJoinM st spec l estimate
+    | none => do
+      let (tb, s) ← scanTableOf st spec
+      pure (tb, s.full, "")
+  else
+    let tv := t.vars
+    let every (v : String) : Bool := tv.contains v
+    if t.merge.isEmpty then
+      let ns := t.gnames.getD #[]
+      let spec' := mkSpec t spec.perm every
+      let (tb, s) ← scanTableOf st spec'
+      let gv := match t.g with
+        | .var v => v
+        | _ => ""
+      let kept := match tb.idx gv with
+        | some c => tb.select fun i => ns.contains (tb.at c i)
+        | none => Table.empty tb.vars
+      return (IdJoin.keepVars kept keep, s.full, s!"; FROM NAMED: {kept.rows} rows in the {ns.size} graphs of the dataset")
+    else
+      let mut acc : Option Table := none
+      let mut total : ScanStats := {}
+      for x in t.merge do
+        let spec' := mkSpec { t with g := .const x, merge := #[] } spec.perm every
+        let (tb, s) ← scanTableOf st spec'
+        total := total.add s.full
+        acc := some (match acc with
+          | some a => a.append tb
+          | none => { tb with sortVar := none })
+      let all := acc.getD (Table.empty #[])
+      let d := IdJoin.distinctRows all
+      return (IdJoin.keepVars d keep, total, s!"; FROM: the RDF merge of {t.merge.size} graphs, {all.rows} rows, {d.rows} distinct triples")
+
 def varCount (pats : Array Pat) (v : String) : Nat :=
   pats.foldl (fun a t => if t.vars.contains v then a + 1 else a) 0
 
@@ -1968,11 +2064,7 @@ def evalBgpM {m : Type → Type} [Monad m] (st : Store m) (pats : Array Pat) (ne
   let spec0 := mkSpec t0 (permFor t0 sortPos0) keep
   -- an OPTIONAL group's first scan takes the left table's join values as
   -- candidates (issue 809)
-  let (tab0, st0, sip0) ← match left0 with
-    | some l => scanForJoinM st spec0 l ests[first]!
-    | none => do
-      let (t, s) ← scanTableOf st spec0
-      pure (t, s.full, "")
+  let (tab0, st0, sip0) ← scanPatM st t0 spec0 keep left0 ests[first]!
   let mut total := st0
   lines := lines.push s!"pattern {first}: {permNames[spec0.perm]!} key {spec0.key.size} estimate {ests[first]!}; blocks {st0.blocksRead} read of {st0.blocksSelected} selected of {st0.blocksTotal}, frames {st0.framesRead}, {st0.bytesRead} bytes; rows {tab0.rows}{sip0}"
   let mut tab := tab0
@@ -1990,7 +2082,7 @@ def evalBgpM {m : Type → Type} [Monad m] (st : Store m) (pats : Array Pat) (ne
       | some (_, q) => permFor t (some q)
       | none => permFor t (bestSortPos t pats)
     let spec := mkSpec t perm keep
-    let (rt, s, sipNote) ← scanForJoinM st spec tab ests[next]!
+    let (rt, s, sipNote) ← scanPatM st t spec keep (some tab) ests[next]!
     total := total.add s
     let (joined, how) := match mergeVar with
       | some (v, _) =>
@@ -2814,6 +2906,40 @@ def resolvePat {m : Type → Type} [Monad m] (st : Store m) (p : PatSpec) : Exce
     | .var v => pure (Slot.var v, true)
   return { s := ← toSlot st p.s, p := ← toSlot st p.p, o := ← toSlot st p.o, g, named }
 
+/-- The ids of the terms that have one, each once, in order. -/
+def idsOfM {m : Type → Type} [Monad m] (st : Store m) (ts : Array Term) :
+    ExceptT String m (Array UInt64) := do
+  let mut out : Array UInt64 := #[]
+  for t in ts do
+    if let some x ← st.idOf t then
+      if !out.contains x then out := out.push x
+  return out
+
+/-- `resolvePat` under the dataset of the query (issue 953, SPARQL 1.1
+    section 13.2). A default-graph pattern reads the RDF merge of the FROM
+    graphs: none (an empty graph: `missing`), one (that graph, as `GRAPH
+    <iri>`), or several (`Pat.merge`). `GRAPH <iri>` reads that graph when a
+    FROM NAMED IRI names it, else nothing; `GRAPH ?g` reads the FROM NAMED
+    graphs (`Pat.gnames`). A term with no id names no graph of the store. -/
+def resolvePatIn {m : Type → Type} [Monad m] (st : Store m) (ds : Option DatasetSpec) (p : PatSpec) :
+    ExceptT String m Pat := do
+  match ds with
+  | none => resolvePat st p
+  | some d =>
+    let base ← resolvePat st { p with g := .dflt }
+    match p.g with
+    | .dflt =>
+      let gs ← idsOfM st d.defaults
+      if gs.isEmpty then return { base with g := .missing }
+      else if gs.size == 1 then return { base with g := .const gs[0]! }
+      else return { base with g := .const gs[0]!, merge := gs }
+    | .term t =>
+      let ns ← idsOfM st d.named
+      match ← st.idOf t with
+      | some x => if ns.contains x then return { base with g := .const x } else return { base with g := .missing }
+      | none => return { base with g := .missing }
+    | .var v => return { base with g := .var v, named := true, gnames := some (← idsOfM st d.named) }
+
 /-- The variables compiled FILTER conjuncts read. -/
 def fkVars (fs : Array FKind) : Array String :=
   fs.foldl (fun a f => match f with
@@ -2839,7 +2965,7 @@ def evalUnionsM {m : Type → Type} [Monad m] (st : Store m) (plan : Plan) (env 
     let bs := plan.unions[k]!
     for j in [0:bs.size] do
       let b := bs[j]!
-      let bp ← b.pats.mapM (resolvePat st)
+      let bp ← b.pats.mapM (resolvePatIn st plan.dataset)
       let bfs := (← b.filters.mapM (compileFilter st)) ++ b.residuals.map (residualKind env)
       let (t0, bl, s) ← evalBgpM st bp (fun _ => true)
       let (t1, _) ← applyFilters st bfs (bfs.map fun _ => {}) t0
@@ -2892,7 +3018,7 @@ def evalOptionalsM {m : Type → Type} [Monad m] (st : Store m) (plan : Plan) (p
   let mut total := s0
   for k in [0:plan.optionals.size] do
     let g := plan.optionals[k]!
-    let gp ← g.pats.mapM (resolvePat st)
+    let gp ← g.pats.mapM (resolvePatIn st plan.dataset)
     let gfs := (← g.filters.mapM (compileFilter st)) ++ g.residuals.map (residualKind env)
     let gfv := fkVars gfs
     let left := tab
@@ -3207,7 +3333,7 @@ def runPlanM {m : Type → Type} [Monad m] (st : Store m) (plan : Plan) (emit : 
     ExceptT String m RunStats := do
   -- the VALUES blocks as id tables; the store then decodes their local ids
   let (vtabs, st) ← resolveValuesM st plan.values
-  let pats ← plan.pats.mapM (resolvePat st)
+  let pats ← plan.pats.mapM (resolvePatIn st plan.dataset)
   let fs := (← plan.filters.mapM (compileFilter st)) ++ plan.residuals.map (residualKind env)
   let memos0 : Array Memo := fs.map fun _ => {}
   let filterVars : Array String := fkVars fs ++ fkVars (plan.postFilters.map (residualKind env))
@@ -3222,8 +3348,8 @@ def runPlanM {m : Type → Type} [Monad m] (st : Store m) (plan : Plan) (emit : 
   let need (x : String) : Bool := used.contains x
   let mut stats : RunStats := {}
   (emit (jsonHead plan.outVars).toUTF8 : m Unit)
-  let single := pats.size == 1 && !pats[0]!.hasMissing && plan.optionals.isEmpty && plan.values.isEmpty &&
-    plan.unions.isEmpty
+  let single := pats.size == 1 && !pats[0]!.hasMissing && pats[0]!.plain && plan.optionals.isEmpty &&
+    plan.values.isEmpty && plan.unions.isEmpty
   if single && !plan.agg && plan.order.isEmpty && !plan.distinct then
     -- one pattern, no modifier that needs every row: block by block
     let t := pats[0]!
@@ -3431,11 +3557,11 @@ def whereTableM {m : Type → Type} [Monad m] (st : Store m) (plan : Plan) (env 
       | some n => t2.slice 0 n
       | none => t2
     return (t, #[s!"no triple pattern: one solution with no binding, {fs.size} FILTER conjuncts: {t1.rows} rows"] ++ vlines, us)
-  let pats ← plan.pats.mapM (resolvePat st)
+  let pats ← plan.pats.mapM (resolvePatIn st plan.dataset)
   let need : String → Bool := fun _ => true
   if let some n := firstRows then
-    if pats.size == 1 && !pats[0]!.hasMissing && plan.optionals.isEmpty && plan.values.isEmpty &&
-        plan.unions.isEmpty then
+    if pats.size == 1 && !pats[0]!.hasMissing && pats[0]!.plain && plan.optionals.isEmpty &&
+        plan.values.isEmpty && plan.unions.isEmpty then
       let t := pats[0]!
       let spec := mkSpec t (permFor t none) need
       let init : Table := Table.empty spec.outVars

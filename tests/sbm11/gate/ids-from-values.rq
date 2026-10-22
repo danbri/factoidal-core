@@ -1,0 +1,3 @@
+PREFIX ex: <http://ex.org/>
+# FROM NAMED with a VALUES block on the graph variable.
+SELECT * FROM NAMED ex:g1 WHERE { VALUES ?g { ex:g1 ex:g2 } GRAPH ?g { ?s ex:knows ?o } }

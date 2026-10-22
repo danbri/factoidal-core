@@ -1,0 +1,3 @@
+PREFIX ex: <http://ex.org/>
+# GRAPH <iri> of a graph that FROM NAMED does not list: no solution.
+SELECT * FROM NAMED ex:g1 WHERE { GRAPH ex:g2 { ?s ?p ?o } }
