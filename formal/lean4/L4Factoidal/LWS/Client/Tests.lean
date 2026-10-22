@@ -186,6 +186,12 @@ def searched := script { kind := "search", url := B, query := .object [("type", 
 -- A page refused with 410: the QUERY is sent again, and its answer is the result.
 #guard searched.1.map (·.method) == ["HEAD", "GET", "QUERY", "GET", "QUERY"]
 #guard (doneJson searched.2).getArray? "items" == some [.string "x", .string "y"]
+-- A richer query format first: after its 415 the baseline format.
+def richer := script { kind := "search", url := B, mediaType := "application/sparql-query", body := "ASK {}".toUTF8, query := .object [("type", .array [.string "https://e.example/T"])] } [descHead, desc, rsp 415, page ["z"] none]
+#guard (richer.1.map (fun r => r.header? "content-type")) == [none, none, some "application/sparql-query", some mediaLwsQuery]
+#guard (doneJson richer.2).getArray? "items" == some [.string "z"]
+-- A 415 to the baseline itself ends the search.
+#guard failCode (script { kind := "search", url := B } [descHead, desc, rsp 415]).2 == "status"
 -- A webhook subscription: lws+json, type, topic array, inbox.
 def subscribed := script { kind := "subscribe", url := B ++ "a", inbox := "https://in.example/1" } [descHead, desc, rsp 201 [("Location", "/subs/1")]]
 #guard (sentAt subscribed.1 2).header? "content-type" == some mediaLwsJson

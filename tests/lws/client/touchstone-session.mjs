@@ -140,7 +140,8 @@ async function main () {
     await task('client-delete-container-depth')
     const tmp = (await step('create a container to delete', () => client.create(storage, { container: true, slug: 'tmp' })) || {}).location
     await step('put a member in it', () => client.create(tmp, { slug: 'x.txt', mediaType: 'text/plain', body: 'x' }))
-    await step('delete it with everything in it', () => client.delete(tmp, { recursive: true }))
+    await step('delete it with everything in it, conditional on its ETag', () =>
+      client.delete(tmp, { recursive: true, precondition: 'ifMatchCurrent' }))
     const d1 = (await step('create a resource to delete', () => client.create(notes, { slug: 'd.txt', mediaType: 'text/plain', body: 'd' })) || {}).location
     await step('delete it, conditional on its ETag', () => client.delete(d1, { precondition: 'ifMatchCurrent' }))
 
@@ -149,6 +150,10 @@ async function main () {
     await sleep(3500)
     await step('read the type index', () => client.typeIndex(storage))
     await step('search by type', () => client.search(storage, { query: { type: ['https://example.org/Recipe'] } }))
+    await step('search in another query format first, then the baseline after its 415', () => client.search(storage, {
+      mediaType: 'application/sparql-query', body: 'SELECT ?s WHERE { ?s a <https://example.org/Recipe> }',
+      query: { type: ['https://example.org/Recipe'] }
+    }))
     await task('client-restart-after-refused-page')
     await step('search again; the lab refuses the next page once with 410', () =>
       client.search(storage, { query: { type: ['https://example.org/Recipe'] } }))
@@ -170,7 +175,9 @@ async function main () {
     const verdicts = receiver.received()
     steps.push(`info  the receiver answered ${verdicts.length} deliveries: ${verdicts.filter((v) => v.accept).length} accepted, ` +
       `${verdicts.filter((v) => !v.accept).length} refused (${[...new Set(verdicts.filter((v) => !v.accept).map((v) => v.reason))].join('; ')})`)
-    if (sub && sub.location) await step('unsubscribe', () => client.unsubscribe(sub.location))
+    const third = await step('subscribe a third time', () => client.subscribe(note, { inbox: `${receiver.url}inbox/4` }))
+    if (third && third.location) await step('unsubscribe', () => client.unsubscribe(third.location))
+    if (sub) steps.push(`info  first subscription: ${sub.location}`)
 
     // Access requests and grants.
     await step('request access', () => client.requestAccess(storage, {

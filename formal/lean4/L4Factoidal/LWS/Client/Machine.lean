@@ -716,6 +716,12 @@ def onPage (s : ClientState) (r : Resp) : ClientState × Action :=
       match linkTarget? (sentUrl s) r "next" with
       | some u => send s .paging (getReq u mediaLwsJson)
       | none => pagingDone s
+  else if s.op.kind == "search" && r.status == 415 && s.endpoint != "" &&
+      (s.sent.bind (fun q => q.header? "content-type")) != some mediaLwsQuery then
+    -- lws10-index §Type Search: a server that does not accept a query format
+    -- answers 415; the baseline application/lws-query+json is the format
+    -- "Every server MUST support", so the search is sent in it.
+    send { s with items := [], pages := 0 } .paging (queryReq s.endpoint s.op.query)
   else if s.op.kind == "search" && (r.status == 404 || r.status == 410) && !s.restarted &&
       s.endpoint != "" then
     -- lws10-index §Errors: a page reference the server no longer
@@ -916,7 +922,14 @@ def afterDiscovery (s : ClientState) (desc : Json) : ClientState × Action :=
   match op.kind with
   | "discover" => finish s (.done (.object [("storage", .string storageId), ("description", desc)]))
   | "typeIndex" => need "TypeIndexService" (fun e => send { s with endpoint := e } .paging (getReq e mediaLwsJson))
-  | "search" => need "TypeSearchService" (fun e => send { s with endpoint := e } .paging (queryReq e op.query))
+  | "search" => need "TypeSearchService" (fun e =>
+      -- A query in another format first, when the caller gives one (its
+      -- media type and body); the baseline filter `query` after a 415.
+      if op.mediaType != "" && op.mediaType.toLower != mediaLwsQuery then
+        send { s with endpoint := e } .paging
+          { method := "QUERY", url := e, body := op.body
+            headers := [("Content-Type", op.mediaType), ("Accept", mediaLwsJson)] }
+      else send { s with endpoint := e } .paging (queryReq e op.query))
   | "subscribe" =>
       match service? desc "NotificationService" with
       | none => failWith s "noService" [("service", .string "NotificationService")]

@@ -91,8 +91,9 @@ In `L4Factoidal/LWS/Client/Theorems.lean`, imported from the build root:
   in the next state whose three checks hold over the recorded values (the
   requested URI, the `resource_metadata` URL, the metadata `resource`, the
   StorageRoot endpoint), and its `resource` is the storage of that record.
-* `step_no_blind_create_retry`: after a create POST answered 5xx or a
-  transport error, the next action is not the same POST.
+* `step_no_blind_create_retry` and `step_no_retry_after_lost_post`: after
+  a POST answered 5xx, or lost (a transport error), the next action is not
+  the same POST.
 * `step_no_repeat_after_refusal`: after a 405 or 415, the next action is not
   the same request.
 
@@ -112,6 +113,23 @@ ordinary flows never reach the refusal of `enforce`.
 * CLI `factoidal lws-client <op> URL [options]`.
 * wasm ops `lwsClientStart(opJson, sessionJson)` and
   `lwsClientStep(stateJson, eventJson)`: `{ok, state, action}`.
+
+## Measured (2026-10-22)
+
+* `node tests/lws/client/own-server.mjs`: 21 pass, 0 fail, 0 skipped (out
+  of 21).
+* `bash tools/lws-touchstone-client.sh` (Touchstone 1060872, client lab,
+  areas core, authentication, notifications, index): 42 pass, 0 fail,
+  0 inapplicable, 11 untested, 0 cantTell (out of 53). The 11 untested are
+  the expected failures below. Lab verdict: "no MUST failure in 31 MUST
+  rules exercised, of 41 that apply".
+* A first run gave 39 pass and 2 fail: the receiver rebuilt the signature
+  base from its own base URL instead of the inbox URL as subscribed (repaired:
+  `Op.requestTarget`, `inboxUrl`), and a recursive delete without `If-Match`
+  failed the MAY rule `client-delete-conditional` (the driver now asks for the
+  precondition). `client-query-baseline-after-415` was untested until the
+  `search` op learned to send a caller's richer query format first and the
+  baseline after its 415.
 
 ## Gaps (each has an expected failure)
 
