@@ -177,7 +177,7 @@ theorem addScaled_eq (a b : Scaled) : addScaled a b = a.add b := by
   rcases b with ⟨n, t⟩
   unfold addScaled Scaled.add
   by_cases h : s = t
-  · subst h; simp [pow10]
+  · subst h; simp
   · simp [h]
 
 def AggAcc.stepNum (a : AggAcc) (s : Summary) : AggAcc :=
@@ -221,7 +221,7 @@ theorem cmpScaled_eq (a b : Scaled) : cmpScaled a b = a.cmp b := by
   rcases b with ⟨n, t⟩
   unfold cmpScaled Scaled.cmp
   by_cases h : s = t
-  · subst h; simp [pow10]
+  · subst h; simp
   · simp [h]
 
 /-- `sparqlOrder` of the two `numericView`s of summaries: when both have a numeric
