@@ -12,7 +12,7 @@
 #        names the check and the executed path that replaces it)
 #   (a) PENDING <issue>  LENGTH- or VALUE-proportional over data; the issue
 #        lists it for conversion; the line keeps the gate green meanwhile
-#   UNTRIAGED <issue>  found by the 2026-10-10 repair (issue 750); no bound
+#   UNTRIAGED <issue>  (none left since 2026-10-22) found by the 2026-10-10 repair (issue 750); no bound
 #        stated yet; the issue tracks the triage
 # The lines up to the first `# ---` section carry no reason: they are the
 # first baseline, recorded before reasons were required (imported from
@@ -808,7 +808,7 @@ L4Factoidal_XSLT_parseSteps_build  # (b) steps of one XSLT match pattern (styles
 L4Wasm_Ops_roundsToFixpoint  # (c) one frame per closure round; the cap argument bounds it (rounds, not triples)
 *_instRepr*  # (b) derived Repr instances of recursive inductive types (138 declarations on 2026-10-10): the recursion follows the nesting of the value printed
 #
-# --- UNTRIAGED (same landing): recursive through a mutual cycle, or found once
+# --- Triaged (same landing): recursive through a mutual cycle, or found once
 # the indexer read comments, sections and `where` helpers correctly. No bound is
 # stated yet; each line is a work item of https://github.com/danbri/factoidal/issues/753 ---
 Harness_matchBack  # (b) harness; every call decrements fuel or budget (set by the caller from the rows of one expected result), so depth is at most that quantity
@@ -1384,7 +1384,7 @@ L4Factoidal_SPARQL_selectPostFailure  # (b) nesting of sub-SELECTs in one query 
 # --- Added 2026-10-12, refuter scaling (https://github.com/danbri/factoidal/issues/760, OKR batch 1 KR 3.3)
 L4Factoidal_OWL_Refute_ceSubHashesInto  # (b) class-expression nesting of one TBox axiom or initial label (lazyOccurrences); operand lists are tail calls
 L4Factoidal_OWL_Refute_ceListSubHashesInto  # (b) as ceSubHashesInto: the operands of one intersection or union are a self tail call (loop); one frame per nesting level
-RefuteProfile_searchP  # UNTRIAGED https://github.com/danbri/factoidal/issues/753 the profiler's copy of Refute.search (also listed there): one frame per expansion step on one search path, at most --budget (default 20000); 2 to 19 on the real ontologies measured
+RefuteProfile_searchP  # (b) the profiler's copy of Refute.search (also listed there): one frame per expansion step on one search path, at most --budget (default 20000); 2 to 19 measured on the real ontologies
 #
 # --- Added 2026-10-13, the accumulator twins of issue 752 (OKR batch 1 KR 2.6) ---
 L4Factoidal_XML_countElementsAcc  # (b) element nesting of the document: the twin of validate.countElements (csimp validate_eq_fast); the sibling step of countListAcc is a goto _start, so the two call each other once per nesting level only
