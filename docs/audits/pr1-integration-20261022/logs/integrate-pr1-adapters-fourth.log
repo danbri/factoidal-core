@@ -1,0 +1,70 @@
+⚠ [18/53] Replayed L4Factoidal.RDF.Core
+info: L4Factoidal/RDF/Core.lean:239:0: 'L4Factoidal.RDF.Term.hashDown_eq' depends on axioms: [propext, Classical.choice, Quot.sound]
+info: L4Factoidal/RDF/Core.lean:240:0: 'L4Factoidal.RDF.Term.hashFast_eq' depends on axioms: [propext, Classical.choice, Quot.sound]
+warning: L4Factoidal/RDF/Core.lean:372:10: This simp argument is unused:
+  h
+
+Hint: Omit it from the simp argument list.
+  [apply] simp [XmlCanon.xmlCanonEq]
+
+Note: This linter can be disabled with `set_option linter.unusedSimpArgs false`
+info: L4Factoidal/RDF/Core.lean:661:0: 'L4Factoidal.RDF.Term.joinKeyLoop_eq' depends on axioms: [propext, Classical.choice, Quot.sound]
+info: L4Factoidal/RDF/Core.lean:662:0: 'L4Factoidal.RDF.Term.joinKey_eq_fast' depends on axioms: [propext, Classical.choice, Quot.sound]
+⚠ [30/53] Replayed L4Factoidal.XML.Parser
+warning: L4Factoidal/XML/Parser.lean:1716:20: This simp argument is unused:
+  Bool.or_assoc
+
+Hint: Omit it from the simp argument list.
+  [apply] simp [Bool.or_comm, Bool.or_left_comm]
+
+Note: This linter can be disabled with `set_option linter.unusedSimpArgs false`
+warning: L4Factoidal/XML/Parser.lean:2224:5: This simp argument is unused:
+  List.append_nil
+
+Hint: Omit it from the simp argument list.
+  [apply] simp_all (config := { zetaDelta := true }) only [resumeC_exit, resumeC_err, resumeC_nil, resumeC_cons_ok,
+    ↓reduceIte, Bool.false_eq_true, decide_true, decide_false, Bool.and_true, Bool.or_false, Bool.and_false,
+    Bool.false_and, Bool.true_or, Bool.or_true, List.cons_append, List.append_assoc, List.nil_append]
+
+Note: This linter can be disabled with `set_option linter.unusedSimpArgs false`
+warning: L4Factoidal/XML/Parser.lean:2787:14: Variable name `f` is not explicitly referenced.
+
+Hint: The binding can be removed (if unused) or named `_` (if used implicitly). Alternatively, prefix the name with `_` to silence this warning:
+  [apply] _f
+
+Note: This linter can be disabled with `set_option linter.unusedVariables false`
+ℹ [46/70] Replayed L4Factoidal.Syntax.NTriples
+info: L4Factoidal/Syntax/NTriples.lean:466:0: 'L4Factoidal.Syntax.readObject12Down_eq' depends on axioms: [propext, Classical.choice, Quot.sound]
+info: L4Factoidal/Syntax/NTriples.lean:467:0: 'L4Factoidal.Syntax.readObject12_eq_loop' depends on axioms: [propext, Classical.choice, Quot.sound]
+info: L4Factoidal/Syntax/NTriples.lean:770:0: 'L4Factoidal.Syntax.Term.toNTriplesLoop_eq' depends on axioms: [propext, Classical.choice, Quot.sound]
+info: L4Factoidal/Syntax/NTriples.lean:771:0: 'L4Factoidal.Syntax.Term.toNTriples_eq_fast' depends on axioms: [propext, Classical.choice, Quot.sound]
+info: L4Factoidal/Syntax/NTriples.lean:883:0: 'L4Factoidal.Syntax.Graph.toNTriples_eq_lines' depends on axioms: [propext, Classical.choice, Quot.sound]
+info: L4Factoidal/Syntax/NTriples.lean:1044:0: 'L4Factoidal.Syntax.Term.toCanonicalNTriplesLoop_eq' depends on axioms: [propext, Classical.choice, Quot.sound]
+info: L4Factoidal/Syntax/NTriples.lean:1045:0: 'L4Factoidal.Syntax.Term.toCanonicalNTriples_eq_fast' depends on axioms: [propext, Classical.choice, Quot.sound]
+ℹ [48/70] Replayed L4Factoidal.Syntax.Turtle
+info: L4Factoidal/Syntax/Turtle.lean:297:0: 'L4Factoidal.Syntax.TurtleState.lookupPrefixIndexed_eq' depends on axioms: [propext, Classical.choice, Quot.sound]
+info: L4Factoidal/Syntax/Turtle.lean:298:0: 'L4Factoidal.Syntax.TurtleState.lookupPrefix_eq_indexed' depends on axioms: [propext, Classical.choice, Quot.sound]
+info: L4Factoidal/Syntax/Turtle.lean:299:0: 'L4Factoidal.Syntax.TurtleState.lookupPrefix_bindPrefix' depends on axioms: [propext, Classical.choice, Quot.sound]
+info: L4Factoidal/Syntax/Turtle.lean:1317:0: 'L4Factoidal.Syntax.readTripleTermDown_eq' depends on axioms: [propext, Classical.choice, Quot.sound]
+info: L4Factoidal/Syntax/Turtle.lean:1318:0: 'L4Factoidal.Syntax.readTripleTerm_eq_loop' depends on axioms: [propext, Classical.choice, Quot.sound]
+info: L4Factoidal/Syntax/Turtle.lean:1319:0: 'L4Factoidal.Syntax.readTtObject_eq_loop' depends on axioms: [propext, Classical.choice, Quot.sound]
+ℹ [50/70] Replayed L4Factoidal.Syntax.RdfXml
+info: L4Factoidal/Syntax/RdfXml.lean:899:0: 'L4Factoidal.Syntax.RdfXml.serializeNodesT_eq_fast' depends on axioms: [propext, Classical.choice, Quot.sound]
+info: L4Factoidal/Syntax/RdfXml.lean:900:0: 'L4Factoidal.Syntax.RdfXml.serializeLiteralContent_eq_fuel' depends on axioms: [propext, Classical.choice, Quot.sound]
+✔ [56/70] Built Harness.RifImport (1.3s)
+✖ [57/70] Building L4Factoidal.Regex.XPath (3.4s)
+trace: .> LEAN_PATH=/Users/danbri/working/sandbox/october/tpac/codex-npm-review/integrate-pr1/formal/lean4/.lake/build/lib/lean /Users/danbri/.elan/toolchains/leanprover--lean4---v4.33.1/bin/lean /Users/danbri/working/sandbox/october/tpac/codex-npm-review/integrate-pr1/formal/lean4/L4Factoidal/Regex/XPath.lean -o /Users/danbri/working/sandbox/october/tpac/codex-npm-review/integrate-pr1/formal/lean4/.lake/build/lib/lean/L4Factoidal/Regex/XPath.olean -i /Users/danbri/working/sandbox/october/tpac/codex-npm-review/integrate-pr1/formal/lean4/.lake/build/lib/lean/L4Factoidal/Regex/XPath.ilean -c /Users/danbri/working/sandbox/october/tpac/codex-npm-review/integrate-pr1/formal/lean4/.lake/build/ir/L4Factoidal/Regex/XPath.c --setup /Users/danbri/working/sandbox/october/tpac/codex-npm-review/integrate-pr1/formal/lean4/.lake/build/ir/L4Factoidal/Regex/XPath.setup.json --json
+error: L4Factoidal/Regex/XPath.lean:627:8: `simp` made no progress
+error: L4Factoidal/Regex/XPath.lean:627:8: `simp` made no progress
+error: Lean exited with code 1
+⚠ [70/70] Built L4Factoidal.XSLT.Transform (4.3s)
+warning: L4Factoidal/XSLT/Transform.lean:761:37: This simp argument is unused:
+  h
+
+Hint: Omit it from the simp argument list.
+  [apply] simp [insertByTR_go_eq le x ys]
+
+Note: This linter can be disabled with `set_option linter.unusedSimpArgs false`
+Some required targets logged failures:
+- L4Factoidal.Regex.XPath
+error: build failed

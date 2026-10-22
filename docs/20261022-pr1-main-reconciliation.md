@@ -212,3 +212,30 @@ restricted profile repair, not a full regex-conformance proof. The raw old
 parser's ASCII-only `\\d` and ECMAScript `\\w` have distinguishing contrary
 examples; those category escapes remain refused. Native XSD recovery counts
 are pending at this code commit and will be recorded separately.
+
+## Final native evidence at `f90efa6f5`
+
+The corrected XSD 1.1 replay is **16,135 pass, zero fail, 10,222 excluded**
+on all 26,357 manifest instances (93 test sets read). It recovers 255 scored
+cases from the first integrated replay. Unreadable-pattern exclusions fall
+from 3,180 to 2,925; main's corresponding baseline was 105. An independent
+NIST schema/manifest scan identifies exactly 2,820 instance tests under
+patterns using `\\d`, matching the remaining score decrease. The existing
+parser's ASCII-only digit escape cannot implement the XSD Unicode category;
+these cases remain excluded, never counted as passes. The scan is a
+structural cross-check rather than an engine or semantic oracle.
+
+Final native RIF remains **42 pass, one fail, three unknown, zero unread**,
+exit one, with output byte-identical to the original zero-exit replay. The
+four focused runner controls pass again after the shared-parser correction.
+Native rebuilding of both runners passes 160 jobs. The selected profile and
+datatype build passes 21 jobs. No extra corpus or Wasm build was run here.
+The parent performs the final combined source/Wasm/CI and hygiene gates.
+
+[Captured evidence](audits/pr1-integration-20261022/README.md) preserves
+initial failures, the interrupted full build, independent reviews/baselines,
+complement red/green, runner red/green, native output, source probes and
+commands/binary hashes. Its readable manifest verifies **73 files,
+2,103,283 bytes**, SHA256
+`6e11095895cd1356ba91e9e75fcdf0d58f01d176af737ccd6b2d7d8004c18a20`. Captured files were verified for hashes, sizes, missing and
+unexpected files. External suites, binaries and caches are excluded.

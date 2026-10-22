@@ -1,0 +1,27 @@
+ensure-test-env: suite fixture verification (/Users/danbri/working/sandbox/october/tpac/codex-npm-review/integrate-pr1)
+  ok       sparql+rdf (W3C)       third_party/testing/w3c/README.md
+  ok       rdfc10                 third_party/testing/rdf-canon
+  ok       shacl                  third_party/testing/shacl
+  ok       shex                   third_party/testing/shex
+  ok       jsonld                 third_party/testing/json-ld
+  ok       csvw                   third_party/testing/csvw
+  ok       vc                     third_party/testing/vc
+  ok       did                    third_party/testing/did
+  ok       rml-core               third_party/testing/rml-modules/rml-core
+  ok       rml-io                 third_party/testing/rml-modules/rml-io
+  ok       rml-cc                 third_party/testing/rml-modules/rml-cc
+  ok       rml-fnml               third_party/testing/rml-modules/rml-fnml
+  ok       rml-star               third_party/testing/rml-modules/rml-star
+  MISSING  xsd (W3C)              third_party/testing/xsd/suite.xml  -> breaks: l4xsd-datatypes, the XML Schema Part 2 datatype score
+  ok       xml-conformance        third_party/testing/xml/xmlconf
+  ok       xslt                   third_party/testing/xslt/manifest.json
+  ok       xslt1-xalan (Apache)   third_party/testing/xslt1-xalan/xalan-test-src/tests/conf/axes/axes01.xsl
+  ok       owl                    third_party/testing/owl
+  MISSING  wycheproof (C2SP)      third_party/testing/wycheproof/testvectors_v1/ecdsa_secp256r1_sha256_p1363_test.json  -> breaks: l4jose-probe: the ECDSA and RSA signature corpora
+  ok       hdt                    third_party/testing/hdt/rml-core-ontology.hdt
+  MISSING  solid-crud             third_party/testing/solid-crud-tests/package.json  -> breaks: tools/solid-server-interop.sh (Solid CRUD surface tests)
+  MISSING  solid-wac              third_party/testing/web-access-control-tests/package.json  -> breaks: tools/solid-server-interop.sh (Web Access Control tests)
+  MISSING  solid-spec-tests       third_party/testing/solid-specification-tests/run.sh  -> breaks: tools/solid-conformance-harness.sh (Gherkin harness, needs Docker)
+  ABSENT   build products         bin/darwin-arm64  -> breaks: F* binary suites (w3c_runner, factoidal CLI); run tools/fetch-builds.sh
+ensure-test-env: GAPS FOUND — do not trust 0/0 scores or ENOENT test failures from this checkout.
+ensure-test-env: rerun without --check (needs network) or copy fixtures from a populated checkout.

@@ -1,0 +1,181 @@
+⚠ [17/30] Replayed L4Factoidal.RDF.Core
+info: L4Factoidal/RDF/Core.lean:239:0: 'L4Factoidal.RDF.Term.hashDown_eq' depends on axioms: [propext, Classical.choice, Quot.sound]
+info: L4Factoidal/RDF/Core.lean:240:0: 'L4Factoidal.RDF.Term.hashFast_eq' depends on axioms: [propext, Classical.choice, Quot.sound]
+warning: L4Factoidal/RDF/Core.lean:372:10: This simp argument is unused:
+  h
+
+Hint: Omit it from the simp argument list.
+  [apply] simp [XmlCanon.xmlCanonEq]
+
+Note: This linter can be disabled with `set_option linter.unusedSimpArgs false`
+info: L4Factoidal/RDF/Core.lean:661:0: 'L4Factoidal.RDF.Term.joinKeyLoop_eq' depends on axioms: [propext, Classical.choice, Quot.sound]
+info: L4Factoidal/RDF/Core.lean:662:0: 'L4Factoidal.RDF.Term.joinKey_eq_fast' depends on axioms: [propext, Classical.choice, Quot.sound]
+ℹ [34/57] Replayed L4Factoidal.RDF.ConciseBoundedDescription
+info: L4Factoidal/RDF/ConciseBoundedDescription.lean:368:0: 'L4Factoidal.RDF.cbd_subset' depends on axioms: [propext, Classical.choice, Quot.sound]
+info: L4Factoidal/RDF/ConciseBoundedDescription.lean:369:0: 'L4Factoidal.RDF.cbd_root_triples' depends on axioms: [propext, Classical.choice, Quot.sound]
+info: L4Factoidal/RDF/ConciseBoundedDescription.lean:370:0: 'L4Factoidal.RDF.cbd_nil' depends on axioms: [propext, Classical.choice, Quot.sound]
+ℹ [35/57] Replayed L4Factoidal.SPARQL.OrderedPrefix
+info: L4Factoidal/SPARQL/OrderedPrefix.lean:106:0: 'L4Factoidal.SPARQL.mergeSortPrefix_eq_take' depends on axioms: [propext, Quot.sound]
+info: L4Factoidal/SPARQL/OrderedPrefix.lean:107:0: 'L4Factoidal.SPARQL.mergePrefix_eq_TR' depends on axioms: [propext, Quot.sound]
+ℹ [36/57] Replayed L4Factoidal.SPARQL.IndexedEvalRefinement
+info: L4Factoidal/SPARQL/IndexedEvalRefinement.lean:854:0: 'L4Factoidal.SPARQL.hashMinus_eq_minus' depends on axioms: [propext, Classical.choice, Quot.sound]
+info: L4Factoidal/SPARQL/IndexedEvalRefinement.lean:856:0: 'L4Factoidal.SPARQL.hashLeftJoin_eq_leftJoin' depends on axioms: [propext, Classical.choice, Quot.sound]
+info: L4Factoidal/SPARQL/IndexedEvalRefinement.lean:857:0: 'L4Factoidal.SPARQL.hashJoin_eq_join' depends on axioms: [propext, Classical.choice, Quot.sound]
+info: L4Factoidal/SPARQL/IndexedEvalRefinement.lean:858:0: 'L4Factoidal.SPARQL.cachedTpIndex_correct' depends on axioms: [propext, Classical.choice, Quot.sound]
+info: L4Factoidal/SPARQL/IndexedEvalRefinement.lean:859:0: 'L4Factoidal.SPARQL.evalBgpStepCached_correct' depends on axioms: [propext, Classical.choice, Quot.sound]
+info: L4Factoidal/SPARQL/IndexedEvalRefinement.lean:860:0: 'L4Factoidal.SPARQL.evalBgpRowsCached_eq' depends on axioms: [propext, Classical.choice, Quot.sound]
+info: L4Factoidal/SPARQL/IndexedEvalRefinement.lean:861:0: 'L4Factoidal.SPARQL.evalBgpIdx_eq_evalBgp' depends on axioms: [propext, Classical.choice, Quot.sound]
+info: L4Factoidal/SPARQL/IndexedEvalRefinement.lean:862:0: 'L4Factoidal.SPARQL.evalIn_bgp' depends on axioms: [propext, Classical.choice, Quot.sound]
+ℹ [37/57] Replayed L4Factoidal.SPARQL.ExistsIndex
+info: L4Factoidal/SPARQL/ExistsIndex.lean:114:0: 'L4Factoidal.SPARQL.ExistsIndex.bgpNonempty_ofGraph' depends on axioms: [propext, Classical.choice, Quot.sound]
+✔ [40/57] Built L4Factoidal.RDF.TermIdentity (967ms)
+✔ [41/57] Built L4Factoidal.RIF.Syntax (1.8s)
+✔ [42/57] Built L4Factoidal.Fn.Casting (1.4s)
+✔ [43/57] Built L4Factoidal.Fn.Comparison (1.7s)
+✔ [44/57] Built L4Factoidal.Fn.Duration (1.8s)
+✔ [45/57] Built L4Factoidal.Fn.DateTime (1.3s)
+ℹ [46/57] Built L4Factoidal.Fn.ComparisonTheorems (1.4s)
+info: L4Factoidal/Fn/ComparisonTheorems.lean:20:0: 'L4Factoidal.Fn.Comparison.numericCompare_dec_refl' depends on axioms: [propext, Classical.choice, Quot.sound]
+info: L4Factoidal/Fn/ComparisonTheorems.lean:21:0: 'L4Factoidal.Fn.Comparison.fvalCmp_refl' depends on axioms: [propext, Classical.choice, Quot.sound]
+info: L4Factoidal/Fn/ComparisonTheorems.lean:22:0: 'L4Factoidal.Fn.Comparison.numericCompare_dbl_refl' depends on axioms: [propext, Classical.choice, Quot.sound]
+✔ [47/57] Built L4Factoidal.XPath.Expr (2.6s)
+✔ [48/57] Built L4Factoidal.Regex.XPath (3.6s)
+✔ [49/57] Built L4Factoidal.Regex.Profiles (952ms)
+✔ [50/57] Built L4Factoidal.XPath.Eval (1.6s)
+⚠ [51/57] Built L4Factoidal.CSVW.Formats (1.8s)
+warning: L4Factoidal/CSVW/Formats.lean:108:44: `String.mk` has been deprecated: Use `String.ofList` instead
+warning: L4Factoidal/CSVW/Formats.lean:152:26: `String.mk` has been deprecated: Use `String.ofList` instead
+✖ [52/57] Building L4Factoidal.RIF.Builtins (2.6s)
+trace: .> LEAN_PATH=/Users/danbri/working/sandbox/october/tpac/codex-npm-review/integrate-pr1/formal/lean4/.lake/build/lib/lean /Users/danbri/.elan/toolchains/leanprover--lean4---v4.33.1/bin/lean /Users/danbri/working/sandbox/october/tpac/codex-npm-review/integrate-pr1/formal/lean4/L4Factoidal/RIF/Builtins.lean -o /Users/danbri/working/sandbox/october/tpac/codex-npm-review/integrate-pr1/formal/lean4/.lake/build/lib/lean/L4Factoidal/RIF/Builtins.olean -i /Users/danbri/working/sandbox/october/tpac/codex-npm-review/integrate-pr1/formal/lean4/.lake/build/lib/lean/L4Factoidal/RIF/Builtins.ilean -c /Users/danbri/working/sandbox/october/tpac/codex-npm-review/integrate-pr1/formal/lean4/.lake/build/ir/L4Factoidal/RIF/Builtins.c --setup /Users/danbri/working/sandbox/october/tpac/codex-npm-review/integrate-pr1/formal/lean4/.lake/build/ir/L4Factoidal/RIF/Builtins.setup.json --json
+error: L4Factoidal/RIF/Builtins.lean:731:2: Type mismatch. The `do` element has monadic result type
+  Unit
+but the rest of the `do` block has monadic result type
+  GTerm
+error: L4Factoidal/RIF/Builtins.lean:732:21: Type mismatch. The `do` element has monadic result type
+  Unit
+but the rest of the `do` block has monadic result type
+  XSD.Builtin
+error: L4Factoidal/RIF/Builtins.lean:731:19: Missing cases:
+(GTerm.list _)
+(GTerm.fapp (String.ofByteArray (ByteArray.mk (Array.mk _)) (ByteArray.IsValidUTF8.intro _ _)) (String.ofByteArray (ByteArray.mk (Array.mk _)) (ByteArray.IsValidUTF8.intro _ _)) _)
+error: L4Factoidal/RIF/Builtins.lean:733:8: unexpected token 'else'; expected command
+error: L4Factoidal/RIF/Builtins.lean:945:0: cannot evaluate code because 'L4Factoidal.RIF.castXsd' uses 'sorry' and/or contains errors
+error: L4Factoidal/RIF/Builtins.lean:947:0: cannot evaluate code because 'L4Factoidal.RIF.castXsd' uses 'sorry' and/or contains errors
+error: L4Factoidal/RIF/Builtins.lean:954:0: cannot evaluate code because 'L4Factoidal.RIF.castXsd' uses 'sorry' and/or contains errors
+error: L4Factoidal/RIF/Builtins.lean:956:0: cannot evaluate code because 'L4Factoidal.RIF.castXsd' uses 'sorry' and/or contains errors
+error: L4Factoidal/RIF/Builtins.lean:958:0: cannot evaluate code because 'L4Factoidal.RIF.castXsd' uses 'sorry' and/or contains errors
+error: L4Factoidal/RIF/Builtins.lean:960:0: cannot evaluate code because 'L4Factoidal.RIF.castXsd' uses 'sorry' and/or contains errors
+error: L4Factoidal/RIF/Builtins.lean:961:0: cannot evaluate code because 'L4Factoidal.RIF.castXsd' uses 'sorry' and/or contains errors
+error: L4Factoidal/RIF/Builtins.lean:964:0: cannot evaluate code because 'L4Factoidal.RIF.castXsd' uses 'sorry' and/or contains errors
+error: L4Factoidal/RIF/Builtins.lean:976:0: cannot evaluate code because 'L4Factoidal.RIF.castXsd' uses 'sorry' and/or contains errors
+error: L4Factoidal/RIF/Builtins.lean:977:0: cannot evaluate code because 'L4Factoidal.RIF.castXsd' uses 'sorry' and/or contains errors
+error: L4Factoidal/RIF/Builtins.lean:978:0: cannot evaluate code because 'L4Factoidal.RIF.castXsd' uses 'sorry' and/or contains errors
+error: L4Factoidal/RIF/Builtins.lean:979:0: cannot evaluate code because 'L4Factoidal.RIF.castXsd' uses 'sorry' and/or contains errors
+error: L4Factoidal/RIF/Builtins.lean:980:0: cannot evaluate code because 'L4Factoidal.RIF.castXsd' uses 'sorry' and/or contains errors
+error: L4Factoidal/RIF/Builtins.lean:983:0: cannot evaluate code because 'L4Factoidal.RIF.castXsd' uses 'sorry' and/or contains errors
+error: L4Factoidal/RIF/Builtins.lean:984:0: cannot evaluate code because 'L4Factoidal.RIF.castXsd' uses 'sorry' and/or contains errors
+error: L4Factoidal/RIF/Builtins.lean:990:0: cannot evaluate code because 'L4Factoidal.RIF.castXsd' uses 'sorry' and/or contains errors
+error: L4Factoidal/RIF/Builtins.lean:1001:0: Expression
+  decide (evalPred "is-literal-dateTime" [dC "2008-07-22Z"] = Ans.yes)
+did not evaluate to `true`
+error: L4Factoidal/RIF/Builtins.lean:1002:0: cannot evaluate code because 'L4Factoidal.RIF.castXsd' uses 'sorry' and/or contains errors
+error: L4Factoidal/RIF/Builtins.lean:1004:0: cannot evaluate code because 'L4Factoidal.RIF.castXsd' uses 'sorry' and/or contains errors
+error: L4Factoidal/RIF/Builtins.lean:1006:0: cannot evaluate code because 'L4Factoidal.RIF.castXsd' uses 'sorry' and/or contains errors
+error: L4Factoidal/RIF/Builtins.lean:1013:0: Expression
+  decide (evalPred "is-literal-dateTimeStamp" [gLit "2000-12-13T00:11:11.3" (xsdNs ++ "dateTimeStamp")] = Ans.no)
+did not evaluate to `true`
+error: L4Factoidal/RIF/Builtins.lean:1022:0: cannot evaluate code because 'L4Factoidal.RIF.castXsd' uses 'sorry' and/or contains errors
+error: L4Factoidal/RIF/Builtins.lean:1023:0: cannot evaluate code because 'L4Factoidal.RIF.castXsd' uses 'sorry' and/or contains errors
+error: L4Factoidal/RIF/Builtins.lean:1024:0: cannot evaluate code because 'L4Factoidal.RIF.castXsd' uses 'sorry' and/or contains errors
+error: L4Factoidal/RIF/Builtins.lean:1025:0: cannot evaluate code because 'L4Factoidal.RIF.castXsd' uses 'sorry' and/or contains errors
+error: L4Factoidal/RIF/Builtins.lean:1028:0: cannot evaluate code because 'L4Factoidal.RIF.castXsd' uses 'sorry' and/or contains errors
+error: L4Factoidal/RIF/Builtins.lean:1029:0: cannot evaluate code because 'L4Factoidal.RIF.castXsd' uses 'sorry' and/or contains errors
+error: L4Factoidal/RIF/Builtins.lean:1030:0: cannot evaluate code because 'L4Factoidal.RIF.castXsd' uses 'sorry' and/or contains errors
+error: L4Factoidal/RIF/Builtins.lean:1031:0: cannot evaluate code because 'L4Factoidal.RIF.castXsd' uses 'sorry' and/or contains errors
+error: L4Factoidal/RIF/Builtins.lean:1032:0: cannot evaluate code because 'L4Factoidal.RIF.castXsd' uses 'sorry' and/or contains errors
+error: L4Factoidal/RIF/Builtins.lean:1033:0: cannot evaluate code because 'L4Factoidal.RIF.castXsd' uses 'sorry' and/or contains errors
+error: L4Factoidal/RIF/Builtins.lean:1035:0: cannot evaluate code because 'L4Factoidal.RIF.castXsd' uses 'sorry' and/or contains errors
+error: L4Factoidal/RIF/Builtins.lean:1036:0: cannot evaluate code because 'L4Factoidal.RIF.castXsd' uses 'sorry' and/or contains errors
+error: L4Factoidal/RIF/Builtins.lean:1037:0: cannot evaluate code because 'L4Factoidal.RIF.castXsd' uses 'sorry' and/or contains errors
+error: L4Factoidal/RIF/Builtins.lean:1038:0: cannot evaluate code because 'L4Factoidal.RIF.castXsd' uses 'sorry' and/or contains errors
+error: L4Factoidal/RIF/Builtins.lean:1040:0: cannot evaluate code because 'L4Factoidal.RIF.castXsd' uses 'sorry' and/or contains errors
+error: L4Factoidal/RIF/Builtins.lean:1041:0: cannot evaluate code because 'L4Factoidal.RIF.castXsd' uses 'sorry' and/or contains errors
+error: L4Factoidal/RIF/Builtins.lean:1042:0: cannot evaluate code because 'L4Factoidal.RIF.castXsd' uses 'sorry' and/or contains errors
+error: L4Factoidal/RIF/Builtins.lean:1043:0: cannot evaluate code because 'L4Factoidal.RIF.castXsd' uses 'sorry' and/or contains errors
+error: L4Factoidal/RIF/Builtins.lean:1044:0: cannot evaluate code because 'L4Factoidal.RIF.castXsd' uses 'sorry' and/or contains errors
+error: L4Factoidal/RIF/Builtins.lean:1045:0: cannot evaluate code because 'L4Factoidal.RIF.castXsd' uses 'sorry' and/or contains errors
+error: L4Factoidal/RIF/Builtins.lean:1046:0: cannot evaluate code because 'L4Factoidal.RIF.castXsd' uses 'sorry' and/or contains errors
+error: L4Factoidal/RIF/Builtins.lean:1050:0: cannot evaluate code because 'L4Factoidal.RIF.castXsd' uses 'sorry' and/or contains errors
+error: L4Factoidal/RIF/Builtins.lean:1053:0: cannot evaluate code because 'L4Factoidal.RIF.castXsd' uses 'sorry' and/or contains errors
+error: L4Factoidal/RIF/Builtins.lean:1054:0: cannot evaluate code because 'L4Factoidal.RIF.castXsd' uses 'sorry' and/or contains errors
+error: L4Factoidal/RIF/Builtins.lean:1055:0: cannot evaluate code because 'L4Factoidal.RIF.castXsd' uses 'sorry' and/or contains errors
+error: L4Factoidal/RIF/Builtins.lean:1057:0: cannot evaluate code because 'L4Factoidal.RIF.castXsd' uses 'sorry' and/or contains errors
+error: L4Factoidal/RIF/Builtins.lean:1059:0: cannot evaluate code because 'L4Factoidal.RIF.castXsd' uses 'sorry' and/or contains errors
+error: L4Factoidal/RIF/Builtins.lean:1061:0: cannot evaluate code because 'L4Factoidal.RIF.castXsd' uses 'sorry' and/or contains errors
+error: L4Factoidal/RIF/Builtins.lean:1063:0: cannot evaluate code because 'L4Factoidal.RIF.castXsd' uses 'sorry' and/or contains errors
+error: L4Factoidal/RIF/Builtins.lean:1065:0: cannot evaluate code because 'L4Factoidal.RIF.castXsd' uses 'sorry' and/or contains errors
+error: L4Factoidal/RIF/Builtins.lean:1067:0: cannot evaluate code because 'L4Factoidal.RIF.castXsd' uses 'sorry' and/or contains errors
+error: L4Factoidal/RIF/Builtins.lean:1068:0: cannot evaluate code because 'L4Factoidal.RIF.castXsd' uses 'sorry' and/or contains errors
+error: L4Factoidal/RIF/Builtins.lean:1070:0: cannot evaluate code because 'L4Factoidal.RIF.castXsd' uses 'sorry' and/or contains errors
+error: L4Factoidal/RIF/Builtins.lean:1072:0: cannot evaluate code because 'L4Factoidal.RIF.castXsd' uses 'sorry' and/or contains errors
+error: L4Factoidal/RIF/Builtins.lean:1074:0: cannot evaluate code because 'L4Factoidal.RIF.castXsd' uses 'sorry' and/or contains errors
+error: L4Factoidal/RIF/Builtins.lean:1077:0: cannot evaluate code because 'L4Factoidal.RIF.castXsd' uses 'sorry' and/or contains errors
+error: L4Factoidal/RIF/Builtins.lean:1093:0: cannot evaluate code because 'L4Factoidal.RIF.castXsd' uses 'sorry' and/or contains errors
+error: L4Factoidal/RIF/Builtins.lean:1095:0: cannot evaluate code because 'L4Factoidal.RIF.castXsd' uses 'sorry' and/or contains errors
+error: L4Factoidal/RIF/Builtins.lean:1107:0: cannot evaluate code because 'L4Factoidal.RIF.castXsd' uses 'sorry' and/or contains errors
+error: L4Factoidal/RIF/Builtins.lean:1108:0: cannot evaluate code because 'L4Factoidal.RIF.castXsd' uses 'sorry' and/or contains errors
+error: L4Factoidal/RIF/Builtins.lean:1109:0: cannot evaluate code because 'L4Factoidal.RIF.castXsd' uses 'sorry' and/or contains errors
+error: L4Factoidal/RIF/Builtins.lean:1110:0: cannot evaluate code because 'L4Factoidal.RIF.castXsd' uses 'sorry' and/or contains errors
+error: L4Factoidal/RIF/Builtins.lean:1112:0: cannot evaluate code because 'L4Factoidal.RIF.castXsd' uses 'sorry' and/or contains errors
+error: L4Factoidal/RIF/Builtins.lean:1114:0: cannot evaluate code because 'L4Factoidal.RIF.castXsd' uses 'sorry' and/or contains errors
+error: L4Factoidal/RIF/Builtins.lean:1116:0: cannot evaluate code because 'L4Factoidal.RIF.castXsd' uses 'sorry' and/or contains errors
+error: L4Factoidal/RIF/Builtins.lean:1117:0: cannot evaluate code because 'L4Factoidal.RIF.castXsd' uses 'sorry' and/or contains errors
+error: L4Factoidal/RIF/Builtins.lean:1120:0: cannot evaluate code because 'L4Factoidal.RIF.castXsd' uses 'sorry' and/or contains errors
+error: L4Factoidal/RIF/Builtins.lean:1121:0: cannot evaluate code because 'L4Factoidal.RIF.castXsd' uses 'sorry' and/or contains errors
+error: L4Factoidal/RIF/Builtins.lean:1122:0: cannot evaluate code because 'L4Factoidal.RIF.castXsd' uses 'sorry' and/or contains errors
+error: L4Factoidal/RIF/Builtins.lean:1123:0: cannot evaluate code because 'L4Factoidal.RIF.castXsd' uses 'sorry' and/or contains errors
+error: Lean exited with code 1
+✔ [53/57] Built L4Factoidal.SPARQL.Expr (9.0s)
+ℹ [55/57] Built L4Factoidal.SPARQL.ExprTheorems (11s)
+info: L4Factoidal/SPARQL/ExprTheorems.lean:438:0: 'L4Factoidal.SPARQL.ebv_langString' depends on axioms: [propext, Classical.choice, Quot.sound]
+info: L4Factoidal/SPARQL/ExprTheorems.lean:439:0: 'L4Factoidal.SPARQL.eval_bound' depends on axioms: [propext, Classical.choice, Quot.sound]
+info: L4Factoidal/SPARQL/ExprTheorems.lean:440:0: 'L4Factoidal.SPARQL.eval_and_false_left' depends on axioms: [propext, Classical.choice, Quot.sound]
+info: L4Factoidal/SPARQL/ExprTheorems.lean:441:0: 'L4Factoidal.SPARQL.eval_and_true_error' depends on axioms: [propext, Classical.choice, Quot.sound]
+info: L4Factoidal/SPARQL/ExprTheorems.lean:442:0: 'L4Factoidal.SPARQL.Scaled.cmp_refl' depends on axioms: [propext, Quot.sound]
+info: L4Factoidal/SPARQL/ExprTheorems.lean:443:0: 'L4Factoidal.SPARQL.Scaled.cmp_swap' depends on axioms: [propext, Quot.sound]
+info: L4Factoidal/SPARQL/ExprTheorems.lean:444:0: 'L4Factoidal.SPARQL.Scaled.cmp_trans' depends on axioms: [propext, Quot.sound]
+info: L4Factoidal/SPARQL/ExprTheorems.lean:445:0: 'L4Factoidal.SPARQL.valueCompare_eq_refl_unpromoted_literal' depends on axioms: [propext, Classical.choice, Quot.sound]
+info: L4Factoidal/SPARQL/ExprTheorems.lean:446:0: 'L4Factoidal.SPARQL.valueCompare_eq_bnode' depends on axioms: [propext, Classical.choice, Quot.sound]
+info: L4Factoidal/SPARQL/ExprTheorems.lean:447:0: 'L4Factoidal.SPARQL.numericEquality_refl_invalid_literal' depends on axioms: [propext, Classical.choice, Quot.sound]
+info: L4Factoidal/SPARQL/ExprTheorems.lean:448:0: 'L4Factoidal.SPARQL.toCond_bound' depends on axioms: [propext, Classical.choice, Quot.sound]
+ℹ [56/57] Built L4Factoidal.SPARQL.ExprRefinement (5.1s)
+info: L4Factoidal/SPARQL/ExprRefinement.lean:440:0: 'L4Factoidal.SPARQL.ExprRefinement.ebvSpec_agrees' depends on axioms: [propext, Classical.choice, Quot.sound]
+info: L4Factoidal/SPARQL/ExprRefinement.lean:441:0: 'L4Factoidal.SPARQL.ExprRefinement.ebvOrFalse_of_spec_none' depends on axioms: [propext, Classical.choice, Quot.sound]
+info: L4Factoidal/SPARQL/ExprRefinement.lean:442:0: 'L4Factoidal.SPARQL.ExprRefinement.eval_and_matches_spec' depends on axioms: [propext, Classical.choice, Quot.sound]
+info: L4Factoidal/SPARQL/ExprRefinement.lean:443:0: 'L4Factoidal.SPARQL.ExprRefinement.eval_and_true_error_agrees' depends on axioms: [propext,
+ Classical.choice,
+ Quot.sound]
+info: L4Factoidal/SPARQL/ExprRefinement.lean:444:0: 'L4Factoidal.SPARQL.ExprRefinement.strCompare_beq_zero' depends on axioms: [propext, Classical.choice, Quot.sound]
+info: L4Factoidal/SPARQL/ExprRefinement.lean:445:0: 'L4Factoidal.SPARQL.ExprRefinement.eq_num_matches_spec' depends on axioms: [propext, Classical.choice, Quot.sound]
+info: L4Factoidal/SPARQL/ExprRefinement.lean:446:0: 'L4Factoidal.SPARQL.ExprRefinement.eq_plain_string_matches_spec' depends on axioms: [propext,
+ Classical.choice,
+ Quot.sound]
+info: L4Factoidal/SPARQL/ExprRefinement.lean:447:0: 'L4Factoidal.SPARQL.ExprRefinement.eq_literal_same_datatype_diff_lang' depends on axioms: [propext,
+ Classical.choice,
+ Quot.sound]
+info: L4Factoidal/SPARQL/ExprRefinement.lean:448:0: 'L4Factoidal.SPARQL.ExprRefinement.eval_eq_num_matches_spec' depends on axioms: [propext, Classical.choice, Quot.sound]
+✖ [57/57] Building L4Factoidal.SPARQL.Query (11s)
+trace: .> LEAN_PATH=/Users/danbri/working/sandbox/october/tpac/codex-npm-review/integrate-pr1/formal/lean4/.lake/build/lib/lean /Users/danbri/.elan/toolchains/leanprover--lean4---v4.33.1/bin/lean /Users/danbri/working/sandbox/october/tpac/codex-npm-review/integrate-pr1/formal/lean4/L4Factoidal/SPARQL/Query.lean -o /Users/danbri/working/sandbox/october/tpac/codex-npm-review/integrate-pr1/formal/lean4/.lake/build/lib/lean/L4Factoidal/SPARQL/Query.olean -i /Users/danbri/working/sandbox/october/tpac/codex-npm-review/integrate-pr1/formal/lean4/.lake/build/lib/lean/L4Factoidal/SPARQL/Query.ilean -c /Users/danbri/working/sandbox/october/tpac/codex-npm-review/integrate-pr1/formal/lean4/.lake/build/ir/L4Factoidal/SPARQL/Query.c --setup /Users/danbri/working/sandbox/october/tpac/codex-npm-review/integrate-pr1/formal/lean4/.lake/build/ir/L4Factoidal/SPARQL/Query.setup.json --json
+info: L4Factoidal/SPARQL/Query.lean:672:0: 'L4Factoidal.SPARQL.finishSelectRows_eq_prefix' depends on axioms: [propext, Classical.choice, Quot.sound]
+error: L4Factoidal/SPARQL/Query.lean:796:6: Type mismatch
+  sameTerm_termBucket same
+has type
+  termBucket x = termBucket y
+but is expected to have type
+  erBucket a = erBucket b
+info: L4Factoidal/SPARQL/Query.lean:2644:0: 'L4Factoidal.SPARQL.filterLowered_evalIn' depends on axioms: [propext, Classical.choice, Quot.sound]
+error: Lean exited with code 1
+Some required targets logged failures:
+- L4Factoidal.RIF.Builtins
+- L4Factoidal.SPARQL.Query
+error: build failed
