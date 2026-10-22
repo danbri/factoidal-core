@@ -68,6 +68,32 @@ design record `docs/designissues/2026-10-22-authorization-server.md`; skill
   0 fail (out of 6), auth/cid 22 pass, 0 fail (out of 22), auth/saml 3
   inapplicable (issue 926).
 
+An LWS client (https://github.com/danbri/factoidal/issues/917; design record
+`docs/designissues/2026-10-22-lws-client.md`):
+
+- `@factoidal/core/lws/client`: `createLwsClient({ fetch, subjectToken,
+  subjectTokenType })` with `discover`, `read`, `head`, `create`, `update`,
+  `patch`, `delete`, `readLinkset`, `updateLinkset`, `move`, `list`,
+  `typeIndex`, `search`, `subscribe`, `unsubscribe`, `requestAccess`,
+  `grantAccess`, `getAccess`, `revokeAccess`, `verifyNotification`; and
+  `createNotificationReceiver`, a webhook receiver that answers each delivery
+  with the engine's verdict. `fetch` is injected (Node, a browser, or a
+  transport such as XMPP).
+- Every decision is in Lean (`L4Factoidal/LWS/Client/`, wasm ops
+  `lwsClientStart` and `lwsClientStep`): the 401 flow with the three checks of
+  lws10-core "Discovery Validation by a Client", RFC 8414 metadata and RFC 8693
+  token exchange; conditional writes (the current ETag by default for
+  `update`, `patch`, `updateLinkset`, `move`); no repeat after 405 or 415, no
+  POST again after a 5xx or a lost answer; paging by `rel="next"` only;
+  linkset writes only in advertised methods and formats; the RFC 9421 check of
+  a notification. Theorems: `walk_concat`, `walk_members_once`,
+  `step_write_precondition`, `step_no_token_request_without_validation`,
+  `step_no_blind_create_retry`, `step_no_repeat_after_refusal`.
+- CLI `factoidal lws-client <op> URL`.
+- Self-issued credentials (lws10-authn-ssi-cid): `createLwsClient({ selfIssued:
+  { subject, keyId, jwk } })`; the engine signs the ES256 JWT with HACL*.
+- Expected failure: OpenID sign-in is not built (row names issue 917).
+
 ## 0.12.0 — 2026-10-22
 
 One error model for the whole package

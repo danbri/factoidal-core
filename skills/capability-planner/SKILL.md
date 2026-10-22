@@ -100,6 +100,25 @@ rows of `Plan.exec`). `l4planner-test`: 77 pass, 0 fail, 16 expected-fail
 (out of 93). Open: admission with no statistic refuses a plan within its
 quota (https://github.com/danbri/factoidal/issues/937). Record section 13.
 
+KR 4.3 (batch 3) landed 2026-10-22: probes (rule 6). `CostModel.probeCost`
+is the cost of a count of one call's tuples. A tenth action `Probe` counts
+one call within the call quota, records the count, and changes no plan,
+row, output or cache (`probe_frame`). The driver `Exec.runProbed` starts
+from the structural family (`search`), decides each candidate (a
+constant-only access of a source with a probe and no statistic) by
+`wantProbe`: probe when `c * |scenarios| + Σ costWith < Σ costWithout`
+over `Config.scenarios` (uniform prior on the tuples per call; a plan over
+a quota costs `Config.refuseCost`), then `chooseStart` takes the plan of
+least score under the probe counts, or stops. Proved: `wantProbe_iff`,
+`probe_inv`, `reachable_probes`, `runProbed_spec` (I1, I2 with probes).
+Issue 937 closed: with a probe the plan is admitted. `l4planner-test`:
+91 pass, 0 fail, 15 expected-fail (out of 106). Record section 14.
+
+When you write a probe test: state the expected decision and give a
+control (the same catalog with no probe operation, a statistic, or a
+probe cost of `ceil(expSaving / |scenarios|)`); read the numbers with
+`probeNumbers` in `Harness/PlannerTest.lean`.
+
 When you add an IO source kind: give its calls as `Calls m`, keep a pure
 `graphSource` (or other) implementation as the specification, and add a
 differential test that each call equals it (the `CallsDenote` hypothesis).

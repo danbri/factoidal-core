@@ -43,6 +43,7 @@ protocol_files=(
   "$root/npm/factoidal/lws/server.mjs"
   "$root/npm/factoidal/solid/server/index.mjs"
   "$root/npm/factoidal/solid/client/index.mjs"
+  "$root/npm/factoidal/lws/client.mjs"
   # `factoidal serve`: the SPARQL Protocol / Graph Store host, which is
   # both a protocol host and a store host, so it is in both groups.
   "$root/npm/factoidal/bin/serve.mjs"
@@ -128,6 +129,7 @@ rdf_files=(
   "$root/npm/factoidal/rdfjs.mjs"
   "$root/npm/factoidal/fn.js"
   "$root/npm/factoidal/solid/client/index.mjs"
+  "$root/npm/factoidal/lws/client.mjs"
 )
 for f in "$root"/npm/factoidal/lib/*.mjs "$root"/npm/factoidal/bin/*.mjs \
          "$root"/docs/web/hub/assets/*.mjs; do

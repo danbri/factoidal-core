@@ -281,6 +281,51 @@ A caller that names no `target` gets the facts of one reply, `storage` null
 and `continue` false: §4.1's rule is about the path hierarchy of a named
 resource, so with no name there is no walk.
 
+### The LWS client (https://github.com/danbri/factoidal/issues/917)
+
+Two stateless operations; the state is a JSON document the host passes back
+unread. Every decision is `L4Factoidal.LWS.Client.step`
+(`formal/lean4/L4Factoidal/LWS/Client/`); the host is
+`npm/factoidal/lws/client.mjs`; the design record is
+`docs/designissues/2026-10-22-lws-client.md`.
+
+| op | arguments | answer |
+| --- | --- | --- |
+| `lwsClientStart` | `[opJson, sessionJson]` | `{ ok, state, action }` |
+| `lwsClientStep` | `[stateJson, eventJson]` | `{ ok, state, action }` |
+
+```
+op      { kind, url, body | bodyBase64, mediaType, slug, container, types, links,
+          precondition, tag, retry412, recursive, accept, query, topics, inbox,
+          actions, assignee, targets, constraint, destination,
+          method, headers, requestTarget }          (members a kind does not use are ignored)
+action  { fetch: { method, url, headers: [[name, value]], bodyBase64? } }
+      | { done: RESULT, session } | { fail: { code, ... }, session }
+event   { status, headers: [[name, value]], bodyBase64 | body, now, randomBase64 } | { error }
+session { tokens: [{ storage, root, token }], subjectToken, subjectTokenType,
+          selfIssued?: { subject, keyId, jwk } }
+```
+
+Kinds: `discover`, `read`, `head`, `create`, `update`, `patch`, `delete`,
+`readLinkset`, `updateLinkset`, `move`, `list`, `typeIndex`, `search`,
+`subscribe`, `unsubscribe`, `requestAccess`, `grantAccess`, `getAccess`,
+`revokeAccess`, `verifyNotification`. Preconditions: `none`, `ifMatch`,
+`ifMatchCurrent`, `ifNoneMatchStar`, `ifUnmodifiedSince`; empty is the
+default of the kind (`ifMatchCurrent` for `update`, `patch`,
+`updateLinkset`, `move`). Bodies cross the string entry as base64 in both
+directions; `callBlobIO` is not used, because a client step carries a body
+in one direction only and client bodies are small.
+
+`fail` codes: `status` (the answer was not a success), `unauthorized`,
+`discoveryValidation` (with `check`: `resourceMetadataOrigin`,
+`metadataResource`, `authorizationServers`, `storageRoot`,
+`storageRootOrigin`), `authorization`, `preconditionFailed`, `noEtag`,
+`createOutcomeUnknown`, `outcomeUnknown`, `methodRefused`, `notAdvertised`,
+`noLinkset`, `noStorageLink`, `noService`, `noSubscriptionType`,
+`noMoveCapability`, `malformedListing`, `malformedLinkset`,
+`malformedDescription`, `badArguments`, `transport`, `stepLimit`,
+`enforce`. `verifyNotification` ends with `done { accept, status, reason? }`.
+
 ### Errors
 
 An operation that cannot answer at all — an unknown handle, a request
@@ -788,6 +833,8 @@ SKIPS each check by name with that reason printed. A skip is never a pass.
 | `tests/lws/merkle.mjs` | Node | the optional Merkle hashes (https://github.com/danbri/factoidal/issues/919): `Repr-Digest` against `node:crypto` SHA-256 (text, binary, range, HEAD); the container field equals its JSON member and its Turtle statement; the storage description root; a deep write, a move and a delete change the roots above them and no other; a restart rebuilds the same hashes and the snapshot holds none; off by default nothing is added; ETags equal with the option on and off; under authorization only the controller sees roots; `lws-serve --merkle`. One xfail (issue 919): a container ETag does not follow its root |
 | `tests/lws/storage-files.mjs` | Node | a storage kept in files (`storage: "files"`, https://github.com/danbri/factoidal/issues/918): bodies, entity tags and listings the same across a restart (a binary body included); one body file per body version, old ones removed, no `lws-state.json`; the journal cut at every byte of its last record starts with the state before it, and a later write survives; stage 2: a start reads no body file (with `merkle` it reads each body once, then none), a range, a JSON Patch and a type search after a restart; with a key no file holds clear text, a restart works, a wrong key and no key are refused at start, a changed body byte at the first read of that body; migration from a clear and a sealed `lws-state.json`; `lws-serve --storage files` and `--storage bogus`. 14 pass, 0 fail (out of 14), 2026-10-22 |
 | `tests/solid/client/against-own-server.mjs` | Node, Deno | our client at an in-process instance of our server: `discoverStorage`, `replace`, `read`, `create` with a `Location`, `delete`, that a deleted resource is gone while its POSTed sibling survives, and that every request reached the socket through the engine |
+| `tests/lws/client/own-server.mjs` | Node | the LWS client (https://github.com/danbri/factoidal/issues/917) against our LWS server, open and with authorization through a local RFC 8693 authorization server: discovery, a container create with the type link, bytes round trip, conditional update with the read ETag, 412 with and without `retry412`, `Prefer: set-linkset`, ten members over four pages each once, linkset read and JSON Patch, no PUT when not advertised, `Depth: infinity`, type index and search, a subscription with a notification verified with the published key, forged notifications refused, access request and grant, a move, a fetch carried as serialized messages, the CLI, the 401 flow with one token exchange, a decoy whose storage root is on another origin (no token request), a refused token exchanged again, no subject token |
+| `tools/lws-touchstone-client.sh` | Node, JDK 21 | our client in Touchstone's client lab (53 rules); expected failures in `tests/lws/client/touchstone-xfail.tsv` |
 | `tests/solid/client/against-community-server.mjs` | Node | the same five operations with the far end replaced by Community Solid Server, so a misreading our own two sides share cannot pass. Driven by `tools/solid-client-interop.sh` |
 
 Interop scripts, all three exiting `0` passed, `1` failed, `2` could not
