@@ -617,17 +617,201 @@ def execEqualsPlanRun : Nat × List String :=
         else (n + 1, errs ++ [s!"{c.id}: status {statusName st.status}, {st.output.length} rows, want {want.length}"])
       | _, _ => (n + 1, errs ++ [s!"{c.id}: no plan or no run"])) (0, [])
 
-/-- Expected failures of the execution cases (`admission-without-statistic`,
-KR 4.2). `exec-row-quota` and
+/-- Expected failures of the execution cases. `exec-row-quota` and
 `exec-reuse-after-adaptation` (KR 2.4) are assertions in `execCases` since
-KR 4.2 (https://github.com/danbri/factoidal/issues/875). -/
-def execXcases : List XCase := [
-  { id := "admission-without-statistic", issue := "https://github.com/danbri/factoidal/issues/937",
-    what := "admission with no statistic: the scan answers 3 tuples, so the LLM lookup (call quota 10) needs 3 calls, but the estimate (fanout 10) refuses the plan",
-    test := fun _ =>
-      match run [knows, ageLlm] reqAge 2 {} noFaults with
-      | some st => st.status == Status.done
-      | none => false }
+KR 4.2, and `admission-without-statistic` (KR 4.2,
+https://github.com/danbri/factoidal/issues/937) is an assertion in
+`probeCases` since KR 4.3 (https://github.com/danbri/factoidal/issues/875). -/
+def execXcases : List XCase := []
+
+/-! ## KR 4.3: probes (`Exec.runProbed`)
+
+A probe is a count of the tuples of one call (`CostModel.probeCost`). The
+driver makes it only when the expected saving of the decision model
+(`Exec.wantProbe`) is more than its cost. Each case states the expected
+decision (probe or no probe) and the run's result. -/
+
+def withProbe (s : Source) (c : Nat) : Source :=
+  { s with cap := { s.cap with cost := { s.cap.cost with probeCost := some c } } }
+
+def withCallQuota (s : Source) (q : Nat) : Source :=
+  { s with cap := { s.cap with cost := { s.cap.cost with callQuota := some q } } }
+
+/-- `knows` (no statistic) with a probe of cost 1. -/
+def knowsP : Source := withProbe knows 1
+
+/-- The decision numbers of the first candidate in the start state of a
+run with probes: (source, sum without, sum with, expected saving). -/
+def probeNumbers (cat : Catalog) (req : Requirement) (k : Nat) (cfg : Config) :
+    Option (Nat × Nat × Nat × Nat) :=
+  match structFamily cat req k cfg.fanout with
+  | [] => none
+  | rw :: alts =>
+    let st := initState rw alts
+    match probeCands cat (rw :: alts) with
+    | [] => none
+    | (i, _) :: _ => some (i, sumWithout cat cfg st i, sumWith cat cfg st i, expSaving cat cfg st i)
+
+/-- Common checks of a run with probes: the run exists, ends with `want`,
+makes `probes` probes, stays within the call and row quotas, and every
+probe record is the count of its call; when `want` is `done` and `exact`,
+the output is the reference answers. -/
+def probeChecks (cat : Catalog) (req : Requirement) (k : Nat) (cfg : Config) (want : Status)
+    (probes : Nat) (exact : Bool := true) : Option State × List String :=
+  match runProbed cat req k cfg noFaults with
+  | none => (none, ["no plan family"])
+  | some st =>
+    let nums := match probeNumbers cat req k cfg with
+      | some (i, w0, w1, e) => s!" (candidate {i}: sum without {w0}, sum with {w1}, saving {e})"
+      | none => " (no candidate)"
+    let f1 := if st.status == want then [] else [s!"status {statusName st.status}, want {statusName want}"]
+    let f2 := if st.probes.length == probes then [] else
+      [s!"{st.probes.length} probes, want {probes}{nums}"]
+    let f3 := if callsWithinQuota cat st then [] else [s!"a call quota is exceeded: {callList cat st}"]
+    let f4 := if st.probes.all (fun p => match cat[p.src]? with
+        | some s => p.count == (s.sem.impl p.inp).length
+        | none => false) then [] else ["a probe record is not the count of its call"]
+    let f5 := if want == .done && exact then
+        (if sameMultiset (outRows req st) (refRows cat req) then []
+         else [s!"output differs from the reference ({st.output.length} rows)"])
+      else []
+    let f6 := if want == .stopped && !st.output.isEmpty then ["a stopped run has output"] else []
+    (some st, f1 ++ f2 ++ f3 ++ f4 ++ f5 ++ f6)
+
+/-- The plans and the candidate of the choice case: the `knows` scan with
+a probe, the name lookup (cheap per call) and the name scan (one call). -/
+def catChoice (c : Nat) : Catalog := [withProbe knows c, people, namesScan]
+
+/-- For every answerable KR 2.2 case, every source offers a probe of cost
+1: a run with probes that ends `done` gives the run of its plan, and,
+when exact, the reference answers (mode `equal`); the same as the run with
+no probe allowed. Returns (cases run, runs with a probe, failures). -/
+def probeAnswersUnchanged : Nat × Nat × List String :=
+  cases.foldl (fun (n, np, errs) c =>
+    if !c.answerable then (n, np, errs) else
+    match c.req with
+    | none => (n, np, errs)
+    | some req =>
+      let cat := c.cat.map (withProbe · 1)
+      match runProbed cat req c.k {} noFaults, runProbed cat req c.k { maxProbes := 0 } noFaults with
+      | some st, some st0 =>
+        let np := if st.probes.isEmpty then np else np + 1
+        let e1 := if st.status == .done &&
+            outRows req st != canon req.projection
+              (((st.plan.toPlan req).run cat).map Row.binding)
+          then [s!"{c.id}: output is not the run of its plan"] else []
+        let exactOut := st.output.all (fun x => !x.approx)
+        let e2 := if st.status == .done && (match c.mode with | .equal => true | _ => false) && exactOut &&
+            !sameMultiset (outRows req st) (refRows cat req)
+          then [s!"{c.id}: output differs from the reference"] else []
+        let e3 := if st.status == .done && st0.status == .done && (match c.mode with | .equal => true | _ => false) &&
+            exactOut && st0.output.all (fun x => !x.approx) &&
+            !sameMultiset (outRows req st) (outRows req st0)
+          then [s!"{c.id}: the probe changed the answers"] else []
+        let e4 := if callsWithinQuota cat st then [] else [s!"{c.id}: a call quota is exceeded"]
+        (n + 1, np, errs ++ e1 ++ e2 ++ e3 ++ e4)
+      | none, none => (n, np, errs)
+      | _, _ => (n + 1, np, errs ++ [s!"{c.id}: one run has no family"])) (0, 0, [])
+
+def probeCases : List (String × List String) := [
+  -- Issue 937: with no statistic the estimate (fanout 10) refuses the
+  -- plan [knows, LLM lookup]. A probe of `knows` (cost 1) counts 3
+  -- tuples; the plan needs 3 LLM calls (quota 10) and is admitted.
+  -- Expected: probe.
+  ("admission-without-statistic",
+    let (st?, errs) := probeChecks [knowsP, ageLlm] reqAge 2 {} .done 1 (exact := false)
+    errs ++ match st? with
+      | some st => (if !st.output.isEmpty && st.output.all (·.approx) then [] else ["a row is not marked"]) ++
+          (if (st.probes.head?.map (·.count)) == some 3 then [] else ["the probe did not count 3 tuples"]) ++
+          (if st.calls 1 == 3 && st.calls 0 == 2 then [] else
+            [s!"calls {callList [knowsP, ageLlm] st}, want [2, 3] (probe and scan, 3 lookups)"])
+      | none => []),
+  -- Control: the same catalog with no probe operation. Expected: no
+  -- probe; no plan is admitted, so the run stops with no call.
+  ("probe-no-capability",
+    let (st?, errs) := probeChecks [knows, ageLlm] reqAge 2 {} .stopped 0
+    errs ++ (if (run [knows, ageLlm] reqAge 2 {} noFaults).isNone then [] else ["run admits a plan"]) ++
+    match st? with
+      | some st => if st.calls 0 == 0 && st.calls 1 == 0 then [] else ["a call was made"]
+      | none => []),
+  -- Control: the source has a statistic, so it is not a candidate.
+  -- Expected: no probe; done.
+  ("probe-statistic-known",
+    (probeChecks [withProbe knowsTrue 1, ageLlm] reqAge 2 {} .done 0 (exact := false)).2),
+  -- The probe costs more than its expected saving. Expected: no probe;
+  -- the run stops.
+  ("probe-too-expensive",
+    (probeChecks [withProbe knows 1000000, ageLlm] reqAge 2 {} .stopped 0).2),
+  -- The decision at its boundary: with cost c, the probe is made exactly
+  -- when 4c is less than the summed saving E (4 scenarios). Cost
+  -- E/4 - 1: probe. Cost ceil(E/4): no probe.
+  ("probe-cost-threshold",
+    match probeNumbers [knowsP, ageLlm] reqAge 2 {} with
+    | none => ["no candidate"]
+    | some (_, _, _, e) =>
+      let below := e / 4 - 1
+      let above := (e + 3) / 4
+      (if e ≥ 8 then [] else [s!"saving {e} too small for the case"]) ++
+      (probeChecks [withProbe knows below, ageLlm] reqAge 2 {} .done 1 (exact := false)).2.map (s!"cost {below}: " ++ ·) ++
+      (probeChecks [withProbe knows above, ageLlm] reqAge 2 {} .stopped 0).2.map (s!"cost {above}: " ++ ·)),
+  -- The result cannot change the choice: one plan, within its quota in
+  -- every scenario. Expected: no probe; done.
+  ("probe-no-saving",
+    (probeChecks [knowsP, people] reqChain 2 {} .done 0).2),
+  -- The result changes the choice: below 10 tuples per call the lookup
+  -- plan is cheaper, above it the name-scan plan. The estimate (100)
+  -- takes the scan; the probe counts 3 and the run takes the lookup.
+  -- Expected: probe; done with the lookup.
+  ("probe-changes-choice",
+    let (st?, errs) := probeChecks (catChoice 1) reqChain 2 {} .done 1
+    errs ++ match st? with
+      | some st => (if usesSrc st 1 && !usesSrc st 2 then [] else ["the plan does not use the lookup"])
+      | none => []),
+  -- Control of the case above: the probe costs more than the saving.
+  -- Expected: no probe; done with the name scan.
+  ("probe-changes-choice-control",
+    match probeNumbers (catChoice 1) reqChain 2 {} with
+    | none => ["no candidate"]
+    | some (_, _, _, e) =>
+      let (st?, errs) := probeChecks (catChoice ((e + 3) / 4)) reqChain 2 {} .done 0
+      errs ++ match st? with
+        | some st => if usesSrc st 2 then [] else ["the plan does not use the name scan"]
+        | none => []),
+  -- The probe would use the source's last call (call quota 1), and then
+  -- no plan is within the quota in any scenario. Expected: no probe; the
+  -- run stops with no call.
+  ("probe-quota-last-call",
+    let c := [withCallQuota knowsP 1, ageLlm]
+    let (st?, errs) := probeChecks c reqAge 2 {} .stopped 0
+    errs ++ match st? with
+      | some st => if st.calls 0 == 0 then [] else ["a call of the scan was made"]
+      | none => []),
+  -- The probe counts against the call quota: quota 2 is the probe and
+  -- the scan. Expected: probe; done; 2 calls of the scan.
+  ("probe-call-quota-counted",
+    let c := [withCallQuota knowsP 2, ageLlm]
+    let (st?, errs) := probeChecks c reqAge 2 {} .done 1 (exact := false)
+    errs ++ match st? with
+      | some st => if st.calls 0 == 2 then [] else [s!"calls {callList c st}, want 2 of the scan"]
+      | none => []),
+  -- No probe allowed. Expected: no probe; the run stops.
+  ("probe-max-probes-zero",
+    (probeChecks [knowsP, ageLlm] reqAge 2 { maxProbes := 0 } .stopped 0).2),
+  -- No scenario in the model: no saving. Expected: no probe; stops.
+  ("probe-no-scenarios",
+    (probeChecks [knowsP, ageLlm] reqAge 2 { scenarios := [] } .stopped 0).2),
+  -- A lookup (a required input that is not a constant) is not a
+  -- candidate. Expected: no probe; done.
+  ("probe-lookup-not-candidate",
+    (probeChecks [knowsTrue, withProbe ageLlm 1] reqAge 2 {} .done 0 (exact := false)).2 ++
+    (if (probeCands [knowsTrue, withProbe ageLlm 1]
+          (structFamily [knowsTrue, withProbe ageLlm 1] reqAge 2)).isEmpty then []
+     else ["the lookup is a candidate"])),
+  -- Probes change no answer, over the KR 2.2 cases.
+  ("probe-answers-unchanged",
+    let (n, np, errs) := probeAnswersUnchanged
+    errs ++ (if n ≥ 10 then [] else [s!"{n} cases run"]) ++
+      (if np ≥ 1 then [] else ["no case made a probe"]))
   ]
 
 end ExecCases
@@ -674,6 +858,16 @@ def main : IO UInt32 := do
   else
     fail := fail + 1
     IO.println s!"FAIL exec-equals-plan-run ({nEq} cases): {errsEq}"
+  -- KR 4.3: probes
+  for (id, errs) in probeCases do
+    if errs.isEmpty then
+      pass := pass + 1
+      IO.println s!"PASS {id}"
+    else
+      fail := fail + 1
+      IO.println s!"FAIL {id}: {errs}"
+  let (nPr, npPr, _) := probeAnswersUnchanged
+  IO.println s!"  probe-answers-unchanged: {nPr} cases, {npPr} with a probe"
   for x in execXcases do
     if x.test () then
       xpass := xpass + 1

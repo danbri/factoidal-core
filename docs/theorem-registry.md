@@ -3094,6 +3094,10 @@ audit in `Planner/ExecTests.lean` (`propext`, `Classical.choice`,
 | `reachable_rowQuota` (I2, rows) — no source returns more tuples than its row quota | ✅ PROVED (2026-10-22, KR 4.2) | reachability |
 | `reachable_cache`, `reachable_cache_hit` — every cache entry is the call's result; the rows of a cache hit are the rows of `Plan.exec` for the access | ✅ PROVED (2026-10-22, KR 4.2) | reachability; the entry matches the access's source and input |
 | `searchAdmitted_mem` — an admitted plan is a member of `search` and admissible | ✅ PROVED (2026-10-22, KR 4.2) | none |
+| `probe_inv`, `reachable_probes` — a probe (`Probe`, tenth action) keeps `Inv`: one call counted within the call quota (I2), every probe record is the count of its call, at most `Config.maxProbes` probes | ✅ PROVED (2026-10-22, KR 4.3) | reachability |
+| `probe_frame` — a probe leaves plan, alternatives, step, pending rows, `next`, phase, output, status, cache and tuple counts unchanged (no answer changes) | ✅ PROVED (2026-10-22, KR 4.3) | a `Probe` step |
+| `wantProbe_iff`, `wantProbe_iff_saving`, `wantProbe_no_scenarios` — the probe decision is `c * |scenarios| + Σ costWith < Σ costWithout`, that is `c * |scenarios| < expSaving` | ✅ PROVED (2026-10-22, KR 4.3) | none |
+| `probeStep_cases`, `probeAll_reachable`, `chooseStart_reachable`, `runProbed_reachable`, `runProbed_final`, `runProbed_spec` — the driver with probes takes `Next` steps, probes only when `wantProbe` holds, ends `done` or `stopped`, keeps I1, I2 (calls and tuples) and the probe records, and a `done` output is the `Plan.run` of a member of `search` | ✅ PROVED (2026-10-22, KR 4.3) | `ExactSourcesSound` for the I1 part |
 
 ## 10. JOSE, DPoP and Solid-OIDC over HACL\* — Lean tree
 
