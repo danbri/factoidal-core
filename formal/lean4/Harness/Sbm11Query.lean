@@ -731,7 +731,7 @@ def scanTableParM (ss : Session) (spec : IdQuery.ScanSpec) (threads : Nat) (minR
   let mut tasks : Array (Task (Except IO.Error (L4Factoidal.Qlvr.Table × IdQuery.ScanStats)) × Session) := #[]
   for X in chunks do
     let v ← ss.view
-    let t ← IO.asTask (prio := .dedicated) (do
+    let t ← IO.asTask (do
       -- stage 1b: the task's own copies of the spec, the overlay context and
       -- the empty table (`IdQuery.ScanSpec.fresh`; `ScanSpec.fresh_eq` says
       -- the copy is equal to `spec`, the spec of `ParallelScanTheorems`). The
@@ -760,6 +760,59 @@ def scanTableParM (ss : Session) (spec : IdQuery.ScanSpec) (threads : Nat) (minR
       stats := stats.add s
     | .error e => if failure.isNone then failure := some (toString e)
     -- the counters of every task are added, failed or not
+    ss.absorb v
+  if let some e := failure then throw e
+  return (out, stats)
+
+/-- The scan with candidates (`IdQuery.scanSipTableM`) in block ranges, one
+    task per range (issue 799, KR 1.2): the tasks of `scanTableParM` with
+    `IdQuery.scanListSipM`, their tables appended in range order and their
+    statistics added. A scan with a delta overlay, fewer than two ranges
+    (`IdQuery.rangeCount`) or one selected block runs `scanSipTableM` on the
+    calling thread. Each task has its own copy of the candidates (a value the
+    tasks share costs atomic reference counts, section "Values that two threads
+    can reach" of `skills/lean4-performance`). -/
+def scanSipTableParM (ss : Session) (spec : IdQuery.ScanSpec) (cands : Array UInt64) (threads : Nat)
+    (minRows : Nat := 8192) : ExceptT String IO (L4Factoidal.Qlvr.Table × IdQuery.ScanStats) := do
+  let st := ss.store
+  let metas ← st.blocksForRange spec.perm spec.key
+  let ox := IdQuery.ovCtx (st.ovl spec.perm) spec.key
+  let n := IdQuery.rangeCount threads minRows (IdQuery.selRows metas)
+  if threads ≤ 1 || ox.on || n < 2 || metas.size < 2 then return ← IdQuery.scanSipTableM st spec cands
+  let sortVar := match spec.outCols[0]? with
+    | some c => if c == spec.key.size then spec.outVars[0]? else none
+    | none => none
+  let sel := List.range metas.size
+  let c := (sel.length + n - 1) / n
+  let chunks := L4Factoidal.Storage.Sbm11.ParallelScan.chunksOf c sel
+  let init : L4Factoidal.Qlvr.Table :=
+    { vars := spec.outVars, cols := spec.outVars.map fun _ => ByteArray.empty,
+      rows := 0, sortVar := IdQuery.sortVarOf spec }
+  let f := fun (acc : L4Factoidal.Qlvr.Table) (ch : IdQuery.Chunk) =>
+    (pure (acc.append ch.table, true) : ExceptT String IO (L4Factoidal.Qlvr.Table × Bool))
+  let mut tasks : Array (Task (Except IO.Error (L4Factoidal.Qlvr.Table × IdQuery.ScanStats)) × Session) := #[]
+  for X in chunks do
+    let v ← ss.view
+    let t ← IO.asTask (do
+      let spec := spec.fresh
+      let ox := ox.fresh spec.key
+      let cands := cands.map fun x => UInt64.ofNat x.toNat
+      let init : L4Factoidal.Qlvr.Table :=
+        { vars := spec.outVars, cols := spec.outVars.map fun _ => ByteArray.empty,
+          rows := 0, sortVar := IdQuery.sortVarOf spec }
+      match ← (IdQuery.scanListSipM v.store spec cands init f metas sortVar ox X).run with
+      | .ok r => pure r
+      | .error e => throw (IO.userError e))
+    tasks := tasks.push (t, v)
+  let mut out := init
+  let mut stats : IdQuery.ScanStats := { blocksTotal := ← st.blockCount spec.perm }
+  let mut failure : Option String := none
+  for (t, v) in tasks do
+    match ← IO.wait t with
+    | .ok (tab, s) =>
+      out := out.append tab
+      stats := stats.add s
+    | .error e => if failure.isNone then failure := some (toString e)
     ss.absorb v
   if let some e := failure then throw e
   return (out, stats)
@@ -825,7 +878,8 @@ def Session.storeWith (ss : Session) (threads : Nat) (sip : Option Nat := some 1
     (aggOnIds : Bool := true) : IdQuery.Store IO :=
   let base := { ss.store with sipFactor := sip, aggOnIds := aggOnIds }
   if threads ≤ 1 then base
-  else { base with scanTable := some fun spec => scanTableParM ss spec threads minRows }
+  else { base with scanTable := some fun spec => scanTableParM ss spec threads minRows,
+                   scanSipTable := some fun spec cands => scanSipTableParM ss spec cands threads minRows }
 
 /-! ## The delta overlay (stage 5) -/
 

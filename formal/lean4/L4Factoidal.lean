@@ -422,6 +422,7 @@ import L4Factoidal.Storage.Sbm11.SipScanTheorems
 import L4Factoidal.Storage.Sbm11.WindowTheorems
 import L4Factoidal.Storage.Sbm11.MetaCountTheorems
 import L4Factoidal.Storage.Sbm11.ParallelScanTheorems
+import L4Factoidal.Storage.Sbm11.ParallelSipTheorems
 import L4Factoidal.Storage.Sbm11.ParallelMergeTheorems
 import L4Factoidal.Storage.Sbm11.PermSet
 import L4Factoidal.Qlvr.Bgp
