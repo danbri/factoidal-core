@@ -40,6 +40,7 @@ import L4Factoidal.Syntax.TurtleSerialize
 import L4Factoidal.XSD.Datatypes
 import L4Factoidal.RDF.Isomorphism
 import Std.Data.HashMap
+import L4Factoidal.RDF.Runs
 
 namespace L4Factoidal.Syntax.RdfXmlWrite
 
@@ -48,7 +49,8 @@ open L4Factoidal.RDF
 private def rdfNs : String := "http://www.w3.org/1999/02/22-rdf-syntax-ns#"
 private def xsdString : String := "http://www.w3.org/2001/XMLSchema#string"
 
-private def subjectKey : Subject → String
+/-- The key of a subject: its IRI, or `_:` and its blank node label. -/
+def subjectKey : Subject → String
   | .iri i => i.val
   | .bnode b => "_:" ++ b
 
@@ -73,14 +75,24 @@ private def escAttr (s : String) : String :=
 /-- Is every character one XML 1.0 can carry? -/
 private def xmlSafe (s : String) : Bool := s.toList.all L4Factoidal.XML.isXmlChar
 
-/-- The namespaces of a graph's predicates, each with a prefix. `rdf`
-    is always bound; others are `ns1`, `ns2`, in first-use order. -/
-private def predicateNamespaces (g : Graph) : List (String × String) :=
-  let nss := g.foldl (fun acc t =>
-    match nsSplit t.p.val with
-    | some (ns, _) => if ns == rdfNs || acc.contains ns then acc else acc ++ [ns]
-    | none => acc) ([] : List String)
+/-- One step of the namespace list: the namespace of predicate `p`, when it has one,
+    is not `rdf` and is not in the list yet, goes at the end. -/
+def nsStep (acc : List String) (p : WfIri) : List String :=
+  match nsSplit p.val with
+  | some (ns, _) => if ns == rdfNs || acc.contains ns then acc else acc ++ [ns]
+  | none => acc
+
+/-- The namespaces of a list of predicates, each with a prefix. `rdf` is always
+    bound; others are `ns1`, `ns2`, in first-use order. The list depends only on
+    the order in which the predicates first appear, so a caller that knows the
+    predicates of a graph in that order (`l4sbm11 export` reads them from the
+    store before it writes) gets the table of the whole graph. -/
+def namespacesOf (ps : List WfIri) : List (String × String) :=
+  let nss := ps.foldl nsStep []
   (rdfNs, "rdf") :: nss.zipIdx.map (fun (ns, i) => (ns, "ns" ++ toString (i + 1)))
+
+/-- The namespaces of a graph's predicates (`namespacesOf`). -/
+def predicateNamespaces (g : Graph) : List (String × String) := namespacesOf (g.map (·.p))
 
 private def propertyName (nss : List (String × String)) (p : WfIri) : Except String String :=
   match nsSplit p.val with
@@ -278,21 +290,269 @@ theorem subjectGroupsFast_eq (g : Graph) : subjectGroupsFast g = subjectGroups g
 @[csimp] theorem subjectGroups_eq_fast : @subjectGroups = @subjectGroupsFast := by
   funext g; exact (subjectGroupsFast_eq g).symm
 
-/-- Serialise a graph as RDF/XML. -/
-def graphToRdfXml (g : Graph) : Except String String := do
-  let nss := predicateNamespaces g
+/-! ## The document
+
+`graphToRdfXmlWith nss g` writes the graph with the namespace table `nss`: the
+header (`headerOf`), one `rdf:Description` for each subject group
+(`descriptionText`), and the end tag. `graphToRdfXml` takes the table of the
+graph's own predicates. -/
+
+/-- The XML declaration and the start tag of `rdf:RDF` with the namespace
+    declarations. -/
+def headerOf (nss : List (String × String)) : String :=
   let decls := String.join (nss.map (fun (ns, p) => s!"\n  xmlns:{p}=\"{escAttr ns}\""))
-  let mut body := ""
-  for (s, ts) in subjectGroups g do
-    let head :=
-      if s.startsWith "_:" then s!"  <rdf:Description rdf:nodeID=\"{escAttr (s.drop 2).toString}\">\n"
-      else s!"  <rdf:Description rdf:about=\"{escAttr s}\">\n"
-    let mut props := ""
-    for t in ts do
-      let name ← propertyName nss t.p
-      props := props ++ (← renderObject name t.o)
-    body := body ++ head ++ props ++ "  </rdf:Description>\n"
-  return s!"<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n<rdf:RDF{decls}>\n{body}</rdf:RDF>\n"
+  s!"<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n<rdf:RDF{decls}>\n"
+
+/-- The end tag of `rdf:RDF`. -/
+def footer : String := "</rdf:RDF>\n"
+
+/-- The property elements of the triples, after `acc`. -/
+def propsText (nss : List (String × String)) (acc : String) : List Triple → Except String String
+  | [] => .ok acc
+  | t :: ts =>
+      match propertyName nss t.p with
+      | .error e => .error e
+      | .ok name =>
+          match renderObject name t.o with
+          | .error e => .error e
+          | .ok x => propsText nss (acc ++ x) ts
+
+/-- The `rdf:Description` of the subject with key `s` and its triples `ts`. -/
+def descriptionText (nss : List (String × String)) (s : String) (ts : List Triple) :
+    Except String String :=
+  let head :=
+    if s.startsWith "_:" then s!"  <rdf:Description rdf:nodeID=\"{escAttr (s.drop 2).toString}\">\n"
+    else s!"  <rdf:Description rdf:about=\"{escAttr s}\">\n"
+  match propsText nss "" ts with
+  | .error e => .error e
+  | .ok props => .ok (head ++ props ++ "  </rdf:Description>\n")
+
+/-- The descriptions of the groups, after `acc`. -/
+def groupsText (nss : List (String × String)) (acc : String) :
+    List (String × List Triple) → Except String String
+  | [] => .ok acc
+  | (s, ts) :: gs =>
+      match descriptionText nss s ts with
+      | .error e => .error e
+      | .ok d => groupsText nss (acc ++ d) gs
+
+/-- The text with the end tag added, or the error. -/
+def withFooter : Except String String → Except String String
+  | .ok b => .ok (b ++ footer)
+  | .error e => .error e
+
+/-- Serialise a graph as RDF/XML with the namespace table `nss`: one
+    `rdf:Description` for each subject (`subjectGroups`). -/
+def graphToRdfXmlWith (nss : List (String × String)) (g : Graph) : Except String String :=
+  withFooter (groupsText nss (headerOf nss) (subjectGroups g))
+
+/-- Serialise a graph as RDF/XML. -/
+def graphToRdfXml (g : Graph) : Except String String :=
+  graphToRdfXmlWith (predicateNamespaces g) g
+
+/-! ## The stream form
+
+A writer that gets the triples one at a time keeps the key of the current subject
+and its triples (`Open`), and writes the subject's `rdf:Description` when a triple
+of another subject arrives (`rxPush`) or at the end (`rxFinish`). It holds one
+subject's triples and the namespace table, which the caller gives at the start
+(https://github.com/danbri/factoidal/issues/846). `rxRun` runs it over a list.
+
+`rxRun_eq` says what it writes: the descriptions of the runs of the list
+(`Runs.runsFrom`). When each subject's triples are consecutive (`Contiguous`, which
+the SPO order of a store gives), the runs are the subject groups
+(`subjectGroups_eq_runs`), and the stream writes the text of the whole-graph writer
+(`streamRdfXml_eq`, `streamRdfXml_eq_graphToRdfXml`). When they are not, the stream
+writes a second `rdf:Description` for a subject that comes back, which is the same
+graph. -/
+
+/-- The open subject group: the subject key and its triples, the newest first. -/
+abbrev Open := Option (String × List Triple)
+
+def tripleKey (t : Triple) : String := subjectKey t.s
+
+/-- Give the stream one triple: the text it completes and the new open group. -/
+def rxPush (nss : List (String × String)) : Open → Triple → Except String (Open × String)
+  | none, t => .ok (some (tripleKey t, [t]), "")
+  | some (k, ts), t =>
+      if k == tripleKey t then .ok (some (k, t :: ts), "")
+      else
+        match descriptionText nss k ts.reverse with
+        | .error e => .error e
+        | .ok d => .ok (some (tripleKey t, [t]), d)
+
+/-- The end of the stream: the open group's description and the end tag. -/
+def rxFinish (nss : List (String × String)) : Open → Except String String
+  | none => .ok footer
+  | some (k, ts) =>
+      match descriptionText nss k ts.reverse with
+      | .error e => .error e
+      | .ok d => .ok (d ++ footer)
+
+/-- The stream over a list, after the text `acc`. -/
+def rxRun (nss : List (String × String)) : Open → String → List Triple → Except String String
+  | cur, acc, [] =>
+      match rxFinish nss cur with
+      | .error e => .error e
+      | .ok e => .ok (acc ++ e)
+  | cur, acc, t :: l =>
+      match rxPush nss cur t with
+      | .error e => .error e
+      | .ok (c, s) => rxRun nss c (acc ++ s) l
+
+/-- The document the stream writes for the triples `l`. -/
+def streamRdfXml (nss : List (String × String)) (l : List Triple) : Except String String :=
+  rxRun nss none (headerOf nss) l
+
+/-- Each subject's triples are consecutive in `l`: no two runs have the same subject. -/
+def Contiguous (l : List Triple) : Prop := ((Runs.runs tripleKey l).map (·.1)).Nodup
+
+theorem groupsText_singleton (nss : List (String × String)) (acc s : String) (ts : List Triple) :
+    withFooter (groupsText nss acc [(s, ts)]) =
+      match descriptionText nss s ts with
+      | .error e => .error e
+      | .ok d => .ok (acc ++ (d ++ footer)) := by
+  unfold groupsText
+  cases descriptionText nss s ts <;> simp [groupsText, withFooter, String.append_assoc]
+
+/-- The stream writes the descriptions of the runs. -/
+theorem rxRun_eq (nss : List (String × String)) :
+    ∀ (l : List Triple) (cur : Open) (acc : String),
+      rxRun nss cur acc l = withFooter (groupsText nss acc (Runs.runsFrom tripleKey cur l))
+  | [], none, acc => by simp [rxRun, rxFinish, Runs.runsFrom, groupsText, withFooter]
+  | [], some (k, ts), acc => by
+      rw [rxRun, Runs.runsFrom, groupsText_singleton]
+      simp only [rxFinish]
+      cases descriptionText nss k ts.reverse <;> rfl
+  | t :: l, none, acc => by
+      have : rxRun nss none acc (t :: l) = rxRun nss (some (tripleKey t, [t])) acc l := by
+        simp [rxRun, rxPush]
+      rw [this, rxRun_eq nss l _ acc]
+      simp [Runs.runsFrom]
+  | t :: l, some (k, ts), acc => by
+      by_cases hk : (k == tripleKey t) = true
+      · have : rxRun nss (some (k, ts)) acc (t :: l) = rxRun nss (some (k, t :: ts)) acc l := by
+          simp [rxRun, rxPush, hk]
+        rw [this, rxRun_eq nss l _ acc]
+        simp [Runs.runsFrom, hk]
+      · cases hd : descriptionText nss k ts.reverse with
+        | error e => simp [rxRun, rxPush, hk, hd, Runs.runsFrom, groupsText, withFooter]
+        | ok d =>
+            have : rxRun nss (some (k, ts)) acc (t :: l) =
+                rxRun nss (some (tripleKey t, [t])) (acc ++ d) l := by
+              simp [rxRun, rxPush, hk, hd]
+            rw [this, rxRun_eq nss l _ (acc ++ d)]
+            simp [Runs.runsFrom, hk, groupsText, hd]
+
+/-! ### The runs of a contiguous graph are its subject groups -/
+
+theorem foldl_subjectStep_mem (k : String) :
+    ∀ (ts : List Triple) (acc : List String), (∀ y ∈ ts, tripleKey y = k) → k ∈ acc →
+      ts.foldl subjectStep acc = acc
+  | [], _, _, _ => rfl
+  | t :: ts, acc, hk, hm => by
+      have ht : subjectKey t.s = k := hk t (by simp)
+      simp only [List.foldl_cons, subjectStep, ht, List.contains_iff_mem, hm, if_true]
+      exact foldl_subjectStep_mem k ts acc (fun y hy => hk y (by simp [hy])) hm
+
+theorem foldl_subjectStep_run (k : String) (ts : List Triple) (acc : List String)
+    (hne : ts ≠ []) (hk : ∀ y ∈ ts, tripleKey y = k) (hm : k ∉ acc) :
+    ts.foldl subjectStep acc = acc ++ [k] := by
+  cases ts with
+  | nil => exact absurd rfl hne
+  | cons t ts =>
+      have ht : subjectKey t.s = k := hk t (by simp)
+      have hm' : (acc.contains k) = false := by simpa [List.contains_iff_mem] using hm
+      simp only [List.foldl_cons, subjectStep, ht, hm', Bool.false_eq_true, if_false]
+      exact foldl_subjectStep_mem k ts _ (fun y hy => hk y (by simp [hy])) (by simp)
+
+/-- The run properties `Runs.mem_runs` gives, for groups of triples by subject key. -/
+def GoodGroups (gs : List (String × List Triple)) : Prop :=
+  ∀ r ∈ gs, r.2 ≠ [] ∧ ∀ y ∈ r.2, tripleKey y = r.1
+
+theorem foldl_subjectStep_groups :
+    ∀ (gs : List (String × List Triple)) (acc : List String), GoodGroups gs →
+      (gs.map (·.1)).Nodup → (∀ r ∈ gs, r.1 ∉ acc) →
+      (gs.flatMap (·.2)).foldl subjectStep acc = acc ++ gs.map (·.1)
+  | [], acc, _, _, _ => by simp
+  | r :: gs, acc, hg, hnd, hout => by
+      simp only [List.flatMap_cons, List.foldl_append, List.map_cons]
+      obtain ⟨hne, hk⟩ := hg r (by simp)
+      rw [foldl_subjectStep_run r.1 r.2 acc hne hk (hout r (by simp))]
+      have hnd' := List.nodup_cons.mp hnd
+      rw [foldl_subjectStep_groups gs (acc ++ [r.1]) (fun x hx => hg x (by simp [hx])) hnd'.2]
+      · simp
+      · intro x hx hmem
+        rcases List.mem_append.mp hmem with h | h
+        · exact hout x (by simp [hx]) h
+        · have : x.1 = r.1 := by simpa using h
+          exact hnd'.1 (List.mem_map.mpr ⟨x, hx, this⟩)
+
+theorem filter_groups :
+    ∀ (gs : List (String × List Triple)), GoodGroups gs → (gs.map (·.1)).Nodup →
+      ∀ r ∈ gs, (gs.flatMap (·.2)).filter (fun t => subjectKey t.s == r.1) = r.2
+  | [], _, _, r, hr => by simp at hr
+  | r0 :: gs, hg, hnd, r, hr => by
+      have hnd' := List.nodup_cons.mp hnd
+      have hg' : GoodGroups gs := fun x hx => hg x (by simp [hx])
+      obtain ⟨_, hk0⟩ := hg r0 (by simp)
+      simp only [List.flatMap_cons, List.filter_append]
+      rcases List.mem_cons.mp hr with rfl | hr
+      · have h1 : r.2.filter (fun t => subjectKey t.s == r.1) = r.2 := by
+          apply List.filter_eq_self.mpr
+          intro t ht; simpa [tripleKey] using hk0 t ht
+        have h2 : (gs.flatMap (·.2)).filter (fun t => subjectKey t.s == r.1) = [] := by
+          apply List.filter_eq_nil_iff.mpr
+          intro t ht
+          obtain ⟨x, hx, htx⟩ := List.mem_flatMap.mp ht
+          have hkx : subjectKey t.s = x.1 := (hg' x hx).2 t htx
+          intro heq
+          have : x.1 = r.1 := by rw [← hkx]; simpa using heq
+          exact hnd'.1 (List.mem_map.mpr ⟨x, hx, this⟩)
+        rw [h1, h2, List.append_nil]
+      · have h1 : r0.2.filter (fun t => subjectKey t.s == r.1) = [] := by
+          apply List.filter_eq_nil_iff.mpr
+          intro t ht heq
+          have hk : subjectKey t.s = r0.1 := hk0 t ht
+          have : r.1 = r0.1 := by rw [← hk]; exact (beq_iff_eq.mp heq).symm
+          exact hnd'.1 (List.mem_map.mpr ⟨r, hr, this⟩)
+        rw [h1, List.nil_append]
+        exact filter_groups gs hg' hnd'.2 r hr
+
+theorem subjectGroups_of_groups (gs : List (String × List Triple)) (hg : GoodGroups gs)
+    (hnd : (gs.map (·.1)).Nodup) : subjectGroups (gs.flatMap (·.2)) = gs := by
+  unfold subjectGroups subjectOrder
+  rw [foldl_subjectStep_groups gs [] hg hnd (by simp), List.nil_append, List.map_map]
+  conv => rhs; rw [← List.map_id gs]
+  apply List.map_congr_left
+  intro r hr
+  simp only [Function.comp, triplesOf, id]
+  rw [filter_groups gs hg hnd r hr]
+
+/-- The subject groups of a contiguous graph are its runs. -/
+theorem subjectGroups_eq_runs (l : List Triple) (h : Contiguous l) :
+    subjectGroups l = Runs.runs tripleKey l := by
+  have := subjectGroups_of_groups (Runs.runs tripleKey l) (Runs.mem_runs tripleKey l) h
+  rwa [Runs.runs_flatten] at this
+
+/-- The stream writes the text of the whole-graph writer with the same namespace
+    table, for a graph whose subjects' triples are consecutive. -/
+theorem streamRdfXml_eq (nss : List (String × String)) (l : List Triple) (h : Contiguous l) :
+    streamRdfXml nss l = graphToRdfXmlWith nss l := by
+  unfold streamRdfXml graphToRdfXmlWith
+  rw [rxRun_eq, subjectGroups_eq_runs l h]
+  rfl
+
+/-- With the namespace table of the graph's predicates, the stream writes the text of
+    `graphToRdfXml`. -/
+theorem streamRdfXml_eq_graphToRdfXml (l : List Triple) (h : Contiguous l) :
+    streamRdfXml (predicateNamespaces l) l = graphToRdfXml l :=
+  streamRdfXml_eq _ l h
+
+#print axioms rxRun_eq
+#print axioms subjectGroups_eq_runs
+#print axioms streamRdfXml_eq
+#print axioms streamRdfXml_eq_graphToRdfXml
 
 /-! ## Build-time checks -/
 
@@ -342,5 +602,31 @@ private def interleaved : Graph :=
 #guard (subjectGroupsFast sample).map (fun e => (e.1, e.2.length)) ==
   (subjectGroups sample).map (fun e => (e.1, e.2.length))
 #guard subjectGroups [] |>.isEmpty
+
+-- The text of the whole-graph writer, pinned as it was before the stream form was added
+-- (2026-10-22): three triples of two subjects, the first subject's triples not adjacent.
+private def pinned : Graph :=
+  [ { s := .iri (iri! "http://ex/a"), p := iri! "http://ex/p/x", o := .iri (iri! "http://ex/o1") }
+  , { s := .bnode "b", p := iri! "http://xmlns.com/foaf/0.1/name", o := .literal (Literal.string "A & B <c>") }
+  , { s := .iri (iri! "http://ex/a"), p := iri! "http://ex/p/y", o := .literal (Literal.langString "hi" "en") } ]
+#guard (graphToRdfXml pinned).toOption == some "<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n<rdf:RDF\n  xmlns:rdf=\"http://www.w3.org/1999/02/22-rdf-syntax-ns#\"\n  xmlns:ns1=\"http://ex/p/\"\n  xmlns:ns2=\"http://xmlns.com/foaf/0.1/\">\n  <rdf:Description rdf:about=\"http://ex/a\">\n    <ns1:x rdf:resource=\"http://ex/o1\"/>\n    <ns1:y xml:lang=\"en\">hi</ns1:y>\n  </rdf:Description>\n  <rdf:Description rdf:nodeID=\"b\">\n    <ns2:name>A &amp; B &lt;c&gt;</ns2:name>\n  </rdf:Description>\n</rdf:RDF>\n"
+-- The stream over the same triples with the subject `a` contiguous writes the same text.
+#guard (match pinned with
+        | [a, b, c] => (streamRdfXml (predicateNamespaces pinned) [a, c, b]).toOption == (graphToRdfXml pinned).toOption
+        | _ => false)
+-- Not contiguous: a second description of `a`, and the same graph read back.
+#guard match streamRdfXml (predicateNamespaces pinned) pinned with
+       | .ok t => (t.splitOn "rdf:about=\"http://ex/a\"").length == 3 &&
+                  (match RdfXml.parseRdfXml t with
+                   | .ok g => g.isomorphic? pinned
+                   | .error _ => false)
+       | .error _ => false
+#guard match streamRdfXml (predicateNamespaces sample) sample with
+       | .ok t => (match RdfXml.parseRdfXml t with
+                   | .ok g => g.isomorphic? sample
+                   | .error _ => false)
+       | .error _ => false
+-- The stream refuses what the whole-graph writer refuses.
+#guard (streamRdfXml (predicateNamespaces ctrlGraph) ctrlGraph).toOption.isNone
 
 end L4Factoidal.Syntax.RdfXmlWrite

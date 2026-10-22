@@ -36,13 +36,37 @@ format by name (`RdfFormat`, `formatOfLabel`, `formatOfExtension`) and gives it 
 | N-Quads, N-Triples | one line for each quad | one quad |
 | Turtle | `bodyPush`: one statement for each subject, `;` between predicates, `,` between objects | one subject, one predicate, one triple |
 | TriG | the Turtle statements inside blocks; a new block when the graph of the quad changes | the same, and the open graph name |
-| RDF/XML, JSON-LD | `whole`: the quads are kept and the document is written at the end | the dataset |
+| RDF/XML | `rdfxml`: one `rdf:Description` for each subject, written when the next subject starts (`RdfXmlWrite.rxPush`); the namespace table comes from the caller (`Options.rdfxmlNamespaces`) | one subject's triples |
+| JSON-LD | `jsonld`: a flattened document, one node object for each subject and graph, written when the next subject starts (`JsonLdStream`) | one subject's quads |
+| RDF/XML without a namespace table, JSON-LD without `Extra.jsonldStream` | `whole`: the quads are kept and the document is written at the end | the dataset |
 
-The RDF/XML writer takes a whole graph and the JSON-LD writer a whole dataset
-(`graphToRdfXml`, `fromRdf`). The open issues, each with an expected-failure
-memory row in `tests/stack/lean_scaling.py`, are
-https://github.com/danbri/factoidal/issues/846 (RDF/XML) and
-https://github.com/danbri/factoidal/issues/847 (JSON-LD).
+RDF/XML (https://github.com/danbri/factoidal/issues/846). The start tag of
+`rdf:RDF` declares the namespaces of all the predicates, so the writer needs them
+before the first triple: the caller gives the table (`Options.rdfxmlNamespaces`;
+`l4sbm11 export` reads the predicates of the store first, and `streamQuads` takes
+them from its list). When each subject's triples arrive one after the other (the
+SPO order of a store), the text is the text of the whole-graph writer
+`graphToRdfXmlWith` with the same table (`runList_rdfxml_eq`,
+`RdfXmlWrite.streamRdfXml_eq`); with the table of the graph's own predicates that is
+`graphToRdfXml`.
+
+JSON-LD (https://github.com/danbri/factoidal/issues/847). The whole-dataset
+writer (`fromRdf`, JSON-LD 1.1 API section 8.5) sorts the node objects by `@id` and
+turns `rdf:first`/`rdf:rest` chains of blank nodes that are referenced once into
+`@list`: both need the whole dataset. The stream writes a flattened document in
+expanded form: a JSON array with, for each run of one subject's quads, one node
+object for the default graph (`{"@id": s, ...}`) and one graph object for each
+named graph (`{"@id": g, "@graph": [{"@id": s, ...}]}`), in the order of the
+quads, and `{"@id": g, "@graph": []}` for a named graph with no triple. The node
+object of a subject is the one `fromRdf` builds from the subject's triples
+(`rdf:type` to `@type`). JSON-LD node map generation (JSON-LD 1.1 API section 7.2)
+merges node objects with the same `@id` and the graphs with the same name, so the
+document is the same dataset; a list is written as its `rdf:first` and `rdf:rest`
+triples. `runList_jsonld_eq` proves that the stream writes the elements of all
+the runs, in order, separated by commas, in one array. That a JSON-LD reader reads
+the document back to the same quads is checked (`SinkJsonLd.lean`,
+`tests/sbm11/export_roundtrip.sh`), not proved:
+https://github.com/danbri/factoidal/issues/943.
 
 The streaming Turtle and TriG writers write every IRI in full (`<...>`), `a` for
 `rdf:type`, and numbers and booleans in their short form, unless the caller gives
@@ -96,6 +120,7 @@ import L4Factoidal.Syntax.NTriples
 import L4Factoidal.Syntax.NQuads
 import L4Factoidal.Syntax.TurtleSerialize
 import L4Factoidal.Syntax.RdfXmlWrite
+import L4Factoidal.RDF.Runs
 import Std.Data.HashMap
 
 namespace L4Factoidal.RDF.Sink
@@ -109,15 +134,11 @@ abbrev RdfVersion := Source.RdfVersion
 
 /-! ## What a format does -/
 
-/-- RDF/XML and JSON-LD are written whole: the writer keeps the quads and writes
-    the document at the end. -/
-def writesWhole : RdfFormat → Bool
+/-- The formats whose stream writer keeps the quads of one subject until the next
+    subject starts (RDF/XML and JSON-LD); the others keep at most one statement. -/
+def writesBySubject : RdfFormat → Bool
   | .rdfxml | .jsonld => true
   | .nt | .turtle | .nquads | .trig => false
-
-/-- The formats that write a statement as soon as the quad is known and keep no
-    quad. -/
-def streams (fmt : RdfFormat) : Bool := !writesWhole fmt
 
 /-! ## Parameters of a writer -/
 
@@ -139,14 +160,27 @@ structure Options where
   /-- Turtle and TriG: namespace IRIs and labels with their colon, as
       `PrefixTable` has them. The writer declares each of them at the start. -/
   prefixes : PrefixTable := []
+  /-- RDF/XML: the namespace table of the predicates the writer will get
+      (`RdfXmlWrite.namespacesOf`). With a table the writer streams; without one it
+      keeps the triples and writes at the end. -/
+  rdfxmlNamespaces : Option (List (String × String)) := none
 
 /-- A serialiser of one whole dataset, for the syntaxes the caller links in.
     JSON-LD lives outside this module so that a build without the JSON-LD library
     does not carry it: `L4Factoidal/RDF/SinkJsonLd.lean` supplies `withJsonLd`. -/
 abbrev DatasetWriter := RdfVersion → Dataset → Except String String
 
+/-- The JSON-LD stream writer's two element writers, which the caller links in
+    (`L4Factoidal/RDF/SinkJsonLd.lean`, `jsonLdStream`). -/
+structure JsonLdStream where
+  /-- The JSON texts of the elements for the quads of one subject, in order. -/
+  subject : List (Triple × Option Subject) → Except String (List String)
+  /-- The JSON text of a named graph with no triple. -/
+  emptyGraph : Subject → String
+
 structure Extra where
   jsonld : Option DatasetWriter := none
+  jsonldStream : Option JsonLdStream := none
 
 /-! ## The batch meaning -/
 
@@ -335,6 +369,12 @@ inductive WholeKind where
   | rdfxml
   | custom (write : DatasetWriter)
 
+/-- The quads of one subject, the newest first, and the subject key. -/
+abbrev QuadRun := Option (String × List (Triple × Option Subject))
+
+/-- The key of a quad: the key of its subject. -/
+def quadKey (q : Triple × Option Subject) : String := RdfXmlWrite.tripleKey q.1
+
 /-- A writer of one document, generic in nothing: every constructor holds its own
     small state. -/
 inductive Writer where
@@ -342,25 +382,56 @@ inductive Writer where
   | ntriples (v : RdfVersion) (graphs : GraphChoice) (last : Option Triple)
   | turtle (ab : Abbreviator) (graphs : GraphChoice) (st : BodyState)
   | trig (ab : Abbreviator) (st : BodyState)
-  /-- RDF/XML, JSON-LD: the kept quads, newest first, how to write them, and the
-      names of the named graphs that `declare` stated, newest first. -/
+  /-- RDF/XML by subject: the namespace table, the open subject group and the last
+      triple written (to skip a repeat in the union of the graphs). -/
+  | rdfxml (nss : List (String × String)) (graphs : GraphChoice) (cur : RdfXmlWrite.Open)
+      (last : Option Triple)
+  /-- JSON-LD by subject: the element writers, the open subject's quads, and whether an
+      element has been written (the next one is preceded by a comma). -/
+  | jsonld (js : JsonLdStream) (cur : QuadRun) (started : Bool)
+  /-- RDF/XML without a namespace table, JSON-LD without a stream writer: the kept
+      quads, newest first, how to write them, and the names of the named graphs
+      that `declare` stated, newest first. -/
   | whole (kind : WholeKind) (v : RdfVersion) (graphs : GraphChoice) (quadsRev : List (Triple × Option Subject))
       (last : Option Triple) (declaredRev : List Subject)
 
+/-- The text that appends the elements `es` to an array that already has an element
+    when `started` is true. -/
+def sepText (started : Bool) : List String → String
+  | [] => ""
+  | e :: es => (if started then "," else "") ++ ",".intercalate (e :: es)
+
+/-- Whether the array has an element after `es` is appended. -/
+def sepNext (started : Bool) (es : List String) : Bool := started || !es.isEmpty
+
 /-- A writer at the start of a document, and the text that starts it (the prefix
-    declarations of Turtle and TriG). The only failure is a format whose writer the
-    caller did not link: JSON-LD without `Extra.jsonld`. -/
+    declarations of Turtle and TriG, the start tag of RDF/XML, the `[` of JSON-LD).
+    The only failure is a format whose writer the caller did not link: JSON-LD
+    without `Extra.jsonldStream` or `Extra.jsonld`. -/
 def Writer.init (extra : Extra) (fmt : RdfFormat) (opts : Options) : Except String (Writer × String) :=
   match fmt with
   | .nquads => .ok (.nquads opts.version, "")
   | .nt => .ok (.ntriples opts.version opts.graphs none, "")
   | .turtle => .ok (.turtle (Abbreviator.ofTable opts.prefixes) opts.graphs {}, prefixHeader opts.prefixes)
   | .trig => .ok (.trig (Abbreviator.ofTable opts.prefixes) {}, prefixHeader opts.prefixes)
-  | .rdfxml => .ok (.whole .rdfxml opts.version opts.graphs [] none [], "")
+  | .rdfxml =>
+      match opts.rdfxmlNamespaces with
+      | some nss => .ok (.rdfxml nss opts.graphs none none, RdfXmlWrite.headerOf nss)
+      | none => .ok (.whole .rdfxml opts.version opts.graphs [] none [], "")
   | .jsonld =>
-      match extra.jsonld with
-      | some write => .ok (.whole (.custom write) opts.version .union [] none [], "")
-      | none => .error "JSON-LD is not available in this build"
+      match extra.jsonldStream, extra.jsonld with
+      | some js, _ => .ok (.jsonld js none false, "[")
+      | none, some write => .ok (.whole (.custom write) opts.version .union [] none [], "")
+      | none, none => .error "JSON-LD is not available in this build"
+
+/-- JSON-LD: the elements of the open subject's quads, and the new state of the array. -/
+def flushJsonLd (js : JsonLdStream) (cur : QuadRun) (started : Bool) : Except String (Bool × String) :=
+  match cur with
+  | none => .ok (started, "")
+  | some (_, qs) =>
+      match js.subject qs.reverse with
+      | .error e => .error e
+      | .ok es => .ok (sepNext started es, sepText started es)
 
 /-- Give the writer one quad; the text it completes comes back with the new
     writer. -/
@@ -386,6 +457,26 @@ def Writer.push : Writer → Triple → Option Subject → Except String (Writer
       else
         let (st2, text) := bodyPushBy ab st1 t
         .ok (.trig ab st2, opening ++ text)
+  | .rdfxml nss graphs cur last, t, g =>
+      match graphs.keeps g with
+      | .error e => .error e
+      | .ok false => .ok (.rdfxml nss graphs cur last, "")
+      | .ok true =>
+          if graphs == .union && last == some t then .ok (.rdfxml nss graphs cur last, "")
+          else
+            match RdfXmlWrite.rxPush nss cur t with
+            | .error e => .error e
+            | .ok (c, text) => .ok (.rdfxml nss graphs c (some t), text)
+  | .jsonld js cur started, t, g =>
+      let k := quadKey (t, g)
+      match cur with
+      | none => .ok (.jsonld js (some (k, [(t, g)])) started, "")
+      | some (k', qs) =>
+          if k' == k then .ok (.jsonld js (some (k', (t, g) :: qs)) started, "")
+          else
+            match js.subject qs.reverse with
+            | .error e => .error e
+            | .ok es => .ok (.jsonld js (some (k, [(t, g)])) (sepNext started es), sepText started es)
   | .whole kind v graphs quadsRev last declaredRev, t, g => do
       if !(← graphs.keeps g) then pure (.whole kind v graphs quadsRev last declaredRev, "")
       else if last == some t && g.isNone then pure (.whole kind v graphs quadsRev last declaredRev, "")
@@ -396,22 +487,30 @@ def Writer.push : Writer → Triple → Option Subject → Except String (Writer
     no graph name. -/
 def Writer.statesEmptyGraph : Writer → Bool
   | .trig .. => true
+  | .jsonld .. => true
   | .whole (.custom _) .. => true
   | _ => false
 
 /-- State the named graph `name` with no triple (RDF 1.1 Concepts section 4).
-    TriG ends the open statement and block and writes a block with no triple. A
-    JSON-LD writer keeps the name, and the dataset it writes at the end has the
-    graph. The other writers cannot state it: the writer and no text come back
-    (`statesEmptyGraph` is `false`). A name that also has quads is stated twice in
-    TriG, which is the same dataset (a graph is the union of its blocks). -/
-def Writer.declare : Writer → Subject → Writer × String
+    TriG ends the open statement and block and writes a block with no triple.
+    JSON-LD writes the open subject's elements and a graph object with an empty
+    `@graph`; a whole JSON-LD writer keeps the name, and the dataset it writes at
+    the end has the graph. The other writers cannot state it: the writer and no
+    text come back (`statesEmptyGraph` is `false`). A name that also has quads is
+    stated twice in TriG and JSON-LD, which is the same dataset (a graph is the
+    union of its blocks; node map generation merges graph objects of one name). -/
+def Writer.declare : Writer → Subject → Except String (Writer × String)
   | .trig ab st, name =>
       let close := st.closeStatement ++ (if st.graph.isSome then "}\n\n" else "")
-      (.trig ab {}, close ++ "GRAPH " ++ tsSubjectToTurtleBy ab.run name ++ " {\n}\n\n")
+      .ok (.trig ab {}, close ++ "GRAPH " ++ tsSubjectToTurtleBy ab.run name ++ " {\n}\n\n")
+  | .jsonld js cur started, name =>
+      match flushJsonLd js cur started with
+      | .error e => .error e
+      | .ok (st, text) =>
+          .ok (.jsonld js none true, text ++ sepText st [js.emptyGraph name])
   | .whole kind v graphs quadsRev last declaredRev, name =>
-      (.whole kind v graphs quadsRev last (name :: declaredRev), "")
-  | w, _ => (w, "")
+      .ok (.whole kind v graphs quadsRev last (name :: declaredRev), "")
+  | w, _ => .ok (w, "")
 
 /-- The dataset of kept quads given newest first: the default graph, then the
     named graphs in the order their names first appear. -/
@@ -444,28 +543,56 @@ def Writer.finish : Writer → Except String String
   | .ntriples .. => .ok ""
   | .turtle _ _ st => .ok st.finish
   | .trig _ st => .ok st.finish
+  | .rdfxml nss _ cur _ => RdfXmlWrite.rxFinish nss cur
+  | .jsonld js cur started =>
+      match flushJsonLd js cur started with
+      | .error e => .error e
+      | .ok (_, text) => .ok (text ++ "]")
   | .whole kind v _ quadsRev _ declaredRev =>
       let ds := withDeclared (datasetOfQuadsRev quadsRev) declaredRev.reverse
       match kind with
       | .rdfxml => RdfXmlWrite.graphToRdfXml (flatten ds)
       | .custom write => write v ds
 
+/-- Write a list of quads after the text `acc` and finish: the text a caller
+    assembles from the pieces. A loop: one call for each quad, no frame kept. -/
+def Writer.runList : Writer → String → List (Triple × Option Subject) → Except String String
+  | w, acc, [] =>
+      match w.finish with
+      | .error e => .error e
+      | .ok e => .ok (acc ++ e)
+  | w, acc, (t, g) :: l =>
+      match w.push t g with
+      | .error e => .error e
+      | .ok (w', text) => w'.runList (acc ++ text) l
+
 /-- Write a list of quads and finish: the text a caller would assemble from the
     pieces. -/
 def Writer.writeAll (w : Writer) (header : String) (quads : List (Triple × Option Subject)) :
-    Except String String := do
-  let mut w := w
-  let mut out := header
-  for (t, g) in quads do
-    let (w', text) ← w.push t g
-    w := w'
-    out := out ++ text
-  pure (out ++ (← w.finish))
+    Except String String :=
+  w.runList header quads
+
+/-- RDF/XML: the namespace table of predicates given in the order they first appear
+    (`RdfXmlWrite.namespacesOf`). -/
+def rdfxmlTableOfPredicates (ps : List WfIri) : List (String × String) :=
+  RdfXmlWrite.namespacesOf ps
+
+/-- RDF/XML: the namespace table of the quads a writer with graph choice `graphs`
+    keeps (a quad that `graphs` refuses is skipped here; the writer refuses it). -/
+def rdfxmlTableOf (graphs : GraphChoice) (quads : List (Triple × Option Subject)) :
+    List (String × String) :=
+  RdfXmlWrite.namespacesOf ((quads.filter (fun q => (graphs.keeps q.2).toOption.getD false)).map (·.1.p))
+
+/-- The options with the RDF/XML namespace table of `quads` when the caller gave none. -/
+def withTable (fmt : RdfFormat) (opts : Options) (quads : List (Triple × Option Subject)) : Options :=
+  match fmt, opts.rdfxmlNamespaces with
+  | .rdfxml, none => { opts with rdfxmlNamespaces := some (rdfxmlTableOf opts.graphs quads) }
+  | _, _ => opts
 
 /-- The text of the quads in syntax `fmt`, by the stream writer. -/
 def streamQuads (extra : Extra) (fmt : RdfFormat) (opts : Options)
     (quads : List (Triple × Option Subject)) : Except String String := do
-  let (w, header) ← Writer.init extra fmt opts
+  let (w, header) ← Writer.init extra fmt (withTable fmt opts quads)
   w.writeAll header quads
 
 /-- The text of a whole dataset by the stream writer: its quads (the default
@@ -473,21 +600,141 @@ def streamQuads (extra : Extra) (fmt : RdfFormat) (opts : Options)
     triple, stated by `Writer.declare`. -/
 def streamDataset (extra : Extra) (fmt : RdfFormat) (opts : Options) (ds : Dataset) :
     Except String String := do
-  let (w0, header) ← Writer.init extra fmt opts
-  let mut w := w0
-  let mut out := header
   let quads : List (Triple × Option Subject) :=
     ds.default.map (fun t => (t, none)) ++ ds.named.flatMap (fun ng => ng.graph.map (fun t => (t, some ng.name)))
+  let (w0, header) ← Writer.init extra fmt (withTable fmt opts quads)
+  let mut w := w0
+  let mut out := header
   for (t, g) in quads do
     let (w', text) ← w.push t g
     w := w'
     out := out ++ text
   for ng in ds.named do
     if ng.graph.isEmpty then
-      let (w', text) := w.declare ng.name
+      let (w', text) ← w.declare ng.name
       w := w'
       out := out ++ text
   pure (out ++ (← w.finish))
+
+/-! ## What the stream writers write
+
+`runList_rdfxml_eq`: for the triples of the default graph, the RDF/XML writer writes
+what `RdfXmlWrite.rxRun` writes, so (`RdfXmlWrite.streamRdfXml_eq`) the text of the
+whole-graph writer when each subject's triples are consecutive.
+
+`runList_jsonld_eq`: the JSON-LD writer writes one array of the elements of the
+runs of one subject's quads (`Runs.runs quadKey`), in order. -/
+
+/-- The elements of the runs, in order. A specification: one call for each run. -/
+def elemsOf (js : JsonLdStream) : List (String × List (Triple × Option Subject)) → Except String (List String)
+  | [] => .ok []
+  | r :: rs =>
+      match js.subject r.2 with
+      | .error e => .error e
+      | .ok a =>
+          match elemsOf js rs with
+          | .error e => .error e
+          | .ok b => .ok (a ++ b)
+
+theorem sepText_append (started : Bool) (es1 es2 : List String) :
+    sepText started (es1 ++ es2) = sepText started es1 ++ sepText (sepNext started es1) es2 := by
+  cases es1 with
+  | nil => simp [sepText, sepNext]
+  | cons e es1 =>
+      cases es2 with
+      | nil => simp [sepText]
+      | cons f es2 =>
+          simp only [List.cons_append, sepText, sepNext, List.isEmpty_cons, Bool.not_false,
+            Bool.or_true, if_true]
+          rw [← List.cons_append, String.intercalate_append_of_ne_nil (by simp) (by simp)]
+          simp [String.append_assoc]
+
+/-- The default graph's triples through the RDF/XML writer: `RdfXmlWrite.rxRun`. -/
+theorem runList_rdfxml (nss : List (String × String)) :
+    ∀ (l : List Triple) (cur : RdfXmlWrite.Open) (last : Option Triple) (acc : String),
+      (Writer.rdfxml nss .refuse cur last).runList acc (l.map (·, none)) =
+        RdfXmlWrite.rxRun nss cur acc l
+  | [], cur, last, acc => by
+      simp only [List.map_nil, Writer.runList, Writer.finish, RdfXmlWrite.rxRun]
+      cases RdfXmlWrite.rxFinish nss cur <;> rfl
+  | t :: l, cur, last, acc => by
+      simp only [List.map_cons, Writer.runList, Writer.push, GraphChoice.keeps, RdfXmlWrite.rxRun]
+      have hu : ((GraphChoice.refuse == GraphChoice.union) && last == some t) = false := rfl
+      simp only [hu, Bool.false_eq_true, if_false]
+      cases RdfXmlWrite.rxPush nss cur t with
+      | error e => rfl
+      | ok r => exact runList_rdfxml nss l r.1 (some t) (acc ++ r.2)
+
+/-- The RDF/XML writer with namespace table `nss`, given the triples of a graph in an
+    order where each subject's triples are consecutive (the SPO order of a store),
+    writes the text of the whole-graph writer with the same table. -/
+theorem runList_rdfxml_eq (nss : List (String × String)) (l : List Triple)
+    (h : RdfXmlWrite.Contiguous l) :
+    (Writer.rdfxml nss .refuse none none).runList (RdfXmlWrite.headerOf nss) (l.map (·, none)) =
+      RdfXmlWrite.graphToRdfXmlWith nss l := by
+  rw [runList_rdfxml]
+  exact RdfXmlWrite.streamRdfXml_eq nss l h
+
+/-- The JSON-LD writer after the text `acc`, with the open run `cur`: the elements of
+    the runs, appended to the array. -/
+theorem runList_jsonld (js : JsonLdStream) :
+    ∀ (l : List (Triple × Option Subject)) (cur : QuadRun) (started : Bool) (acc : String),
+      (Writer.jsonld js cur started).runList acc l =
+        match elemsOf js (Runs.runsFrom quadKey cur l) with
+        | .error e => .error e
+        | .ok es => .ok (acc ++ (sepText started es ++ "]"))
+  | [], none, started, acc => by
+      simp [Writer.runList, Writer.finish, flushJsonLd, Runs.runsFrom, elemsOf, sepText]
+  | [], some (k, qs), started, acc => by
+      simp only [Writer.runList, Writer.finish, flushJsonLd, Runs.runsFrom, elemsOf]
+      cases js.subject qs.reverse with
+      | error e => rfl
+      | ok es => simp
+  | (t, g) :: l, none, started, acc => by
+      have : (Writer.jsonld js none started).runList acc ((t, g) :: l) =
+          (Writer.jsonld js (some (quadKey (t, g), [(t, g)])) started).runList acc l := by
+        simp [Writer.runList, Writer.push]
+      rw [this, runList_jsonld js l]
+      simp [Runs.runsFrom]
+  | (t, g) :: l, some (k, qs), started, acc => by
+      by_cases hk : (k == quadKey (t, g)) = true
+      · have : (Writer.jsonld js (some (k, qs)) started).runList acc ((t, g) :: l) =
+            (Writer.jsonld js (some (k, (t, g) :: qs)) started).runList acc l := by
+          simp [Writer.runList, Writer.push, hk]
+        rw [this, runList_jsonld js l]
+        simp [Runs.runsFrom, hk]
+      · cases hs : js.subject qs.reverse with
+        | error e => simp [Writer.runList, Writer.push, hk, hs, Runs.runsFrom, elemsOf]
+        | ok es =>
+            have : (Writer.jsonld js (some (k, qs)) started).runList acc ((t, g) :: l) =
+                (Writer.jsonld js (some (quadKey (t, g), [(t, g)])) (sepNext started es)).runList
+                  (acc ++ sepText started es) l := by
+              simp [Writer.runList, Writer.push, hk, hs]
+            rw [this, runList_jsonld js l]
+            simp only [Runs.runsFrom, hk, Bool.false_eq_true, if_false, elemsOf, hs]
+            cases elemsOf js (Runs.runsFrom quadKey (some (quadKey (t, g), [(t, g)])) l) with
+            | error e => rfl
+            | ok b => simp [sepText_append, String.append_assoc]
+
+/-- The JSON-LD writer from the start: `[`, the elements of all the runs of one
+    subject's quads separated by commas, and `]`. -/
+theorem runList_jsonld_eq (js : JsonLdStream) (l : List (Triple × Option Subject)) :
+    (Writer.jsonld js none false).runList "[" l =
+      match elemsOf js (Runs.runs quadKey l) with
+      | .error e => .error e
+      | .ok es => .ok ("[" ++ ",".intercalate es ++ "]") := by
+  rw [runList_jsonld]
+  unfold Runs.runs
+  cases elemsOf js (Runs.runsFrom quadKey none l) with
+  | error e => rfl
+  | ok es =>
+      cases es with
+      | nil => simp [sepText]
+      | cons e es => simp [sepText, String.append_assoc]
+
+#print axioms sepText_append
+#print axioms runList_rdfxml_eq
+#print axioms runList_jsonld_eq
 
 /-! ## Build-time checks -/
 
@@ -545,6 +792,14 @@ private def roundTrips (fmt : RdfFormat) (quads : List (Triple × Option Subject
 #guard roundTrips .nquads quadsSpo
 #guard roundTrips .trig quadsSpo
 #guard roundTrips .rdfxml (quadsSpo.filter (·.2.isNone))
+-- RDF/XML by subject: the default graph of `quadsSpo` (each subject's triples
+-- consecutive) gives the text of the whole-graph writer (`runList_rdfxml_eq`).
+#guard (streamQuads {} .rdfxml {} (quadsSpo.filter (·.2.isNone))).toOption ==
+  (serializeDataset {} .rdfxml .rdf12 (datasetOf (quadsSpo.filter (·.2.isNone)))).toOption
+-- The union of the graphs: a triple in two graphs is written once.
+#guard match streamQuads {} .rdfxml { graphs := .union } quadsSpo with
+       | .ok text => (text.splitOn "rdf:resource=\"http://e/o2\"").length == 2
+       | .error _ => false
 
 -- The graph-only syntaxes refuse a quad in a named graph, and write what the caller chooses.
 #guard (streamQuads {} .nt {} quadsSpo).toOption.isNone
@@ -618,8 +873,9 @@ private def likeDsEmpty (ds : Dataset) : Bool :=
        | .ok (w, _) =>
            match w.push (tr sA "http://e/p" (strLit "v")) (some gX) with
            | .ok (w1, t1) =>
-               let (_, t2) := w1.declare gY
-               t1 ++ t2 == "GRAPH <http://e/gx> {\n<http://e/a> <http://e/p> \"v\" .\n\n}\n\nGRAPH _:gy {\n}\n\n"
+               match w1.declare gY with
+               | .ok (_, t2) => t1 ++ t2 == "GRAPH <http://e/gx> {\n<http://e/a> <http://e/p> \"v\" .\n\n}\n\nGRAPH _:gy {\n}\n\n"
+               | .error _ => false
            | .error _ => false
        | .error _ => false
 -- N-Quads cannot state them: the two lines of the quads only.

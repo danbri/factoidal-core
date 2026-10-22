@@ -26,8 +26,11 @@
 #   multi  a generated dataset of about 1 MB (tests/sbm11/syntax/gen_multi.py,
 #       N-Triples and N-Quads), so that the output crosses many 64 KiB writes and
 #       the SPO order interleaves the graphs (TriG starts a new block each time the
-#       graph changes): N-Quads, TriG, N-Triples, Turtle and RDF/XML (the default
-#       graph only). In the RDF/XML of the 12,000 triples the `note` of every
+#       graph changes; JSON-LD writes a graph object for each subject and graph):
+#       N-Quads, TriG, JSON-LD, N-Triples, Turtle and RDF/XML (the default graph
+#       only). RDF/XML and JSON-LD keep one subject's quads
+#       (https://github.com/danbri/factoidal/issues/846 and
+#       https://github.com/danbri/factoidal/issues/847). In the RDF/XML of the 12,000 triples the `note` of every
 #       subject follows its language-tagged labels (the order of the keys), which
 #       is the shape of https://github.com/danbri/factoidal/issues/841.
 #
@@ -233,7 +236,7 @@ mkdir -p "$TMP/multi"
 if python3 -I "$FX/gen_multi.py" "$TMP/multi" 1500; then
   pack multi-nt "$TMP/multi/multi.nt" || record "pack multi.nt" 1 "$(tail -1 "$TMP/multi-nt.log")"
   pack multi-nq "$TMP/multi/multi.nq" || record "pack multi.nq" 1 "$(tail -1 "$TMP/multi-nq.log")"
-  for fmt in nquads trig; do
+  for fmt in nquads trig jsonld; do
     out="$(roundtrip multi-nq "multi-nq-$fmt" "$fmt")"; record "multi (named graphs) export $fmt" $? "$out"
   done
   for fmt in ntriples turtle rdfxml; do

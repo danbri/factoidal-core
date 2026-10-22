@@ -131,12 +131,19 @@ repaired (docs/designissues/2026-10-10-lean-vs-fstar-performance.md):
                    and a 64 KiB output buffer (https://github.com/danbri/factoidal/issues/837
                    item 6). A writer that keeps the quads (1 to 3 bytes per output byte) fails.
   sbm11-export-rdfxml-memory, sbm11-export-jsonld-memory
-                   the same slope for RDF/XML and JSON-LD at 2,000, 4,000 and 8,000 statements
-                   (0.9 MB to 3.6 MB). Expected failures:
-                   https://github.com/danbri/factoidal/issues/846 and
-                   https://github.com/danbri/factoidal/issues/847. Both library writers take
-                   the whole graph or dataset (`graphToRdfXml`, `fromRdf`), so
-                   `Sink.Writer.whole` keeps the quads until the end.
+                   the same slope for RDF/XML and JSON-LD at 25,000, 50,000 and 100,000
+                   statements (11 MB to 47 MB of output). The writers keep one subject's
+                   quads: RDF/XML one `rdf:Description` for each subject, with the
+                   namespace table read from the store first
+                   (https://github.com/danbri/factoidal/issues/846), JSON-LD a flattened
+                   document with one node object for each subject and graph
+                   (https://github.com/danbri/factoidal/issues/847). Measured 2026-10-22
+                   before (the writers kept the dataset): RDF/XML 64, 109, 212 MB, 4.38
+                   bytes of peak RSS per output byte; JSON-LD 81, 111, 175 MB, 2.94. After:
+                   RDF/XML 36, 36, 36 MB, 0.00; JSON-LD 36, 36, 47 MB, 0.36 (Turtle in the
+                   same run: 0.38). Until 2026-10-22 the rows ran at 2,000 to 8,000
+                   statements, where the dictionary page window (256 pages) still grows
+                   with the input: 3.7 bytes per output byte with either writer.
   sbm11-dump-time, sbm11-export-nq-time
                    CPU time of `l4sbm11 dump` and of `l4sbm11 export --format nquads`
                    (both with `--verify merkle`, the default for a generation that no
@@ -589,8 +596,6 @@ XFAIL: dict[str, str] = {
     "iso-noniso-search": "https://github.com/danbri/factoidal/issues/877",
     "sbm11-pack-ttl-workers": "https://github.com/danbri/factoidal/issues/842",
     "sbm11-pack-trig-workers": "https://github.com/danbri/factoidal/issues/842",
-    "sbm11-export-rdfxml-memory": "https://github.com/danbri/factoidal/issues/846",
-    "sbm11-export-jsonld-memory": "https://github.com/danbri/factoidal/issues/847",
     "sbm11-replay-insert-time": "https://github.com/danbri/factoidal/issues/879",
     "ntriples-long-line-memory": "https://github.com/danbri/factoidal/issues/874",
     "nquads-long-line-memory": "https://github.com/danbri/factoidal/issues/874",
@@ -1248,17 +1253,16 @@ def sbm11_pack_memory_row(rid):
 #
 # as the pack rows do. The packing is not measured. A writer that keeps the quads
 # adds the payload strings (about 1 byte per output byte) and the quads themselves, and
-# fails the bound of 0.75. RDF/XML and JSON-LD are written whole by the library
-# (issues 846 and 847): expected failures at 2,000, 4,000 and 8,000 statements, sizes at
-# which the quadratic RDF/XML writer (issue 845) still finishes in seconds.
+# fails the bound of 0.75. RDF/XML and JSON-LD keep one subject's quads (issues 846 and
+# 847); they run at the sizes of the other rows, above the dictionary page window.
 # Each value is (statements at x, fixture maker, source extension, export format,
 # bound).
 SBM11_EXPORT_MEMORY_ROWS = {
     "sbm11-export-nq-memory": (25000, sbm11_ttl, "ttl", "nquads", 0.75),
     "sbm11-export-ttl-memory": (25000, sbm11_ttl, "ttl", "turtle", 0.75),
     "sbm11-export-trig-memory": (25000, sbm11_trig, "trig", "trig", 0.75),
-    "sbm11-export-rdfxml-memory": (2000, sbm11_ttl, "ttl", "rdfxml", 0.75),
-    "sbm11-export-jsonld-memory": (2000, sbm11_ttl, "ttl", "jsonld", 0.75),
+    "sbm11-export-rdfxml-memory": (25000, sbm11_ttl, "ttl", "rdfxml", 0.75),
+    "sbm11-export-jsonld-memory": (25000, sbm11_ttl, "ttl", "jsonld", 0.75),
 }
 _EXPORT_GENS: dict = {}
 
