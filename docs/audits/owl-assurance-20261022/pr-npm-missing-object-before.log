@@ -1,0 +1,73 @@
+✔ parse.syntax: Turtle, with line, column, offset, byteOffset (1.996458ms)
+✔ parse.syntax: position offset is UTF-16, byteOffset UTF-8 (0.259208ms)
+✖ parse.syntax: missing RDF object is not an invalid IRI (0.738625ms)
+✔ parse.syntax: RDF/XML has the RDF/XML grammar and no position (3.868625ms)
+✔ parse.rdf12-required: a triple term read as RDF 1.1 Turtle (0.242084ms)
+✔ term.invalid-iri: an IRIREF with a space (0.176125ms)
+✔ term.invalid-iri: an RDF/JS NamedNode that is not an IRI (1.028666ms)
+✔ term.invalid-langtag: a language tag that starts with a digit (0.402459ms)
+✔ term.invalid: a literal in subject position (0.390458ms)
+✔ query.syntax: position counts into the query text (5.949917ms)
+✔ query.syntax: SPARQL 1.2 query names the SPARQL 1.2 grammar (0.322333ms)
+✔ query.failed: an unregistered SERVICE endpoint (2.687292ms)
+✔ update.syntax: an unclosed INSERT DATA (1.366417ms)
+✔ update.failed: LOAD has no host to fetch from (0.960042ms)
+✔ format.unknown: parse and serialize (0.411792ms)
+✔ serialize.unsupported-rdf12: a triple term written as RDF 1.1 N-Triples (0.53075ms)
+✔ serialize.failed: N-Quads text the writer cannot read (1.987ms)
+✔ canon.unsupported-rdf12: RDFC-1.0 of a triple term (0.711708ms)
+✔ canon.failed: canonicalizeToNQuads of text that is not N-Quads (0.110958ms)
+✔ owl.unsupported-rdf12: OWL 2 DL consistency of a triple term (1.30925ms)
+✔ reason.failed: owlClosure of text that is not N-Quads (0.156292ms)
+✔ regime.refused: an x-ikl-* regime (0.146958ms)
+✔ validate.failed: SHACL with data that is not N-Quads (0.1505ms)
+✔ xml.failed: an XPath expression the engine cannot read (2.192417ms)
+✔ crypto.failed: an Ed25519 secret key that is not hex (0.276917ms)
+✔ store.failed: a store manifest that is not hex (1.6655ms)
+✔ registry.failed: a SERVICE endpoint whose data is not N-Quads (0.18375ms)
+✔ handle.unknown: a handle the engine never issued (0.145875ms)
+✔ handle.disposed: every method of a disposed Dataset (0.332125ms)
+✔ option.unknown: a key parse() does not take (0.219166ms)
+✔ option.invalid-value: an output outside the table (0.259125ms)
+✔ option.conflict: SPARQL 1.2 with a results format (0.160208ms)
+✔ capacity.exceeded: a byte region above the engine limit (9.869375ms)
+✔ call.arity: an op called with no arguments (0.097958ms)
+✔ call.arguments: an arguments document that is not an array (0.071875ms)
+✔ op.unknown: an op the engine does not have (0.065667ms)
+✔ op.failed: a Common Logic text that does not parse (0.592083ms)
+✔ host.io: a store root with no CURRENT pointer (0.27625ms)
+✔ a wrong JavaScript type is a TypeError (0.233583ms)
+✔ every declared code has a test above (0.065917ms)
+✔ every op error path of the dispatch table maps to a declared code (62.501125ms)
+✔ README errors table is the engine list (0.641916ms)
+✔ index.d.ts FactoidalErrorCode is the engine list (0.961542ms)
+ℹ tests 43
+ℹ suites 0
+ℹ pass 42
+ℹ fail 1
+ℹ cancelled 0
+ℹ skipped 0
+ℹ todo 0
+ℹ duration_ms 318.545083
+
+✖ failing tests:
+
+test at npm/factoidal/test/errors.test.mjs:90:1
+✖ parse.syntax: missing RDF object is not an invalid IRI (0.738625ms)
+  AssertionError [ERR_ASSERTION]: expected object (IRIREF, BLANK_NODE_LABEL, or literal) at line 1, column 17
+  + actual - expected
+  
+  + 'term.invalid-iri'
+  - 'parse.syntax'
+  
+      at check (file:///Users/danbri/working/sandbox/october/tpac/codex-npm-review/pr-core/npm/factoidal/test/errors.test.mjs:55:10)
+      at TestContext.<anonymous> (file:///Users/danbri/working/sandbox/october/tpac/codex-npm-review/pr-core/npm/factoidal/test/errors.test.mjs:96:5)
+      at async Test.run (node:internal/test_runner/test:1404:7)
+      at async Test.processPendingSubtests (node:internal/test_runner/test:969:7) {
+    generatedMessage: false,
+    code: 'ERR_ASSERTION',
+    actual: 'term.invalid-iri',
+    expected: 'parse.syntax',
+    operator: 'strictEqual',
+    diff: 'simple'
+  }

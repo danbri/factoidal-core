@@ -1,0 +1,268 @@
+TAP version 13
+# Subtest: parse.syntax: Turtle, with line, column, offset, byteOffset
+ok 1 - parse.syntax: Turtle, with line, column, offset, byteOffset
+  ---
+  duration_ms: 2.578209
+  type: 'test'
+  ...
+# Subtest: parse.syntax: position offset is UTF-16, byteOffset UTF-8
+ok 2 - parse.syntax: position offset is UTF-16, byteOffset UTF-8
+  ---
+  duration_ms: 0.325542
+  type: 'test'
+  ...
+# Subtest: parse.syntax: missing RDF object is not an invalid IRI
+ok 3 - parse.syntax: missing RDF object is not an invalid IRI
+  ---
+  duration_ms: 0.744333
+  type: 'test'
+  ...
+# Subtest: parse.syntax: RDF/XML has the RDF/XML grammar and no position
+ok 4 - parse.syntax: RDF/XML has the RDF/XML grammar and no position
+  ---
+  duration_ms: 3.237958
+  type: 'test'
+  ...
+# Subtest: parse.rdf12-required: a triple term read as RDF 1.1 Turtle
+ok 5 - parse.rdf12-required: a triple term read as RDF 1.1 Turtle
+  ---
+  duration_ms: 0.241458
+  type: 'test'
+  ...
+# Subtest: term.invalid-iri: an IRIREF with a space
+ok 6 - term.invalid-iri: an IRIREF with a space
+  ---
+  duration_ms: 0.220083
+  type: 'test'
+  ...
+# Subtest: term.invalid-iri: an RDF/JS NamedNode that is not an IRI
+ok 7 - term.invalid-iri: an RDF/JS NamedNode that is not an IRI
+  ---
+  duration_ms: 0.899625
+  type: 'test'
+  ...
+# Subtest: term.invalid-langtag: a language tag that starts with a digit
+ok 8 - term.invalid-langtag: a language tag that starts with a digit
+  ---
+  duration_ms: 0.218708
+  type: 'test'
+  ...
+# Subtest: term.invalid: a literal in subject position
+ok 9 - term.invalid: a literal in subject position
+  ---
+  duration_ms: 0.540167
+  type: 'test'
+  ...
+# Subtest: query.syntax: position counts into the query text
+ok 10 - query.syntax: position counts into the query text
+  ---
+  duration_ms: 4.999791
+  type: 'test'
+  ...
+# Subtest: query.syntax: SPARQL 1.2 query names the SPARQL 1.2 grammar
+ok 11 - query.syntax: SPARQL 1.2 query names the SPARQL 1.2 grammar
+  ---
+  duration_ms: 0.383708
+  type: 'test'
+  ...
+# Subtest: query.failed: an unregistered SERVICE endpoint
+ok 12 - query.failed: an unregistered SERVICE endpoint
+  ---
+  duration_ms: 2.247917
+  type: 'test'
+  ...
+# Subtest: update.syntax: an unclosed INSERT DATA
+ok 13 - update.syntax: an unclosed INSERT DATA
+  ---
+  duration_ms: 1.229292
+  type: 'test'
+  ...
+# Subtest: update.failed: LOAD has no host to fetch from
+ok 14 - update.failed: LOAD has no host to fetch from
+  ---
+  duration_ms: 0.812667
+  type: 'test'
+  ...
+# Subtest: format.unknown: parse and serialize
+ok 15 - format.unknown: parse and serialize
+  ---
+  duration_ms: 0.410333
+  type: 'test'
+  ...
+# Subtest: serialize.unsupported-rdf12: a triple term written as RDF 1.1 N-Triples
+ok 16 - serialize.unsupported-rdf12: a triple term written as RDF 1.1 N-Triples
+  ---
+  duration_ms: 0.510292
+  type: 'test'
+  ...
+# Subtest: serialize.failed: N-Quads text the writer cannot read
+ok 17 - serialize.failed: N-Quads text the writer cannot read
+  ---
+  duration_ms: 1.732833
+  type: 'test'
+  ...
+# Subtest: canon.unsupported-rdf12: RDFC-1.0 of a triple term
+ok 18 - canon.unsupported-rdf12: RDFC-1.0 of a triple term
+  ---
+  duration_ms: 0.892542
+  type: 'test'
+  ...
+# Subtest: canon.failed: canonicalizeToNQuads of text that is not N-Quads
+ok 19 - canon.failed: canonicalizeToNQuads of text that is not N-Quads
+  ---
+  duration_ms: 0.1455
+  type: 'test'
+  ...
+# Subtest: owl.unsupported-rdf12: OWL 2 DL consistency of a triple term
+ok 20 - owl.unsupported-rdf12: OWL 2 DL consistency of a triple term
+  ---
+  duration_ms: 1.02325
+  type: 'test'
+  ...
+# Subtest: reason.failed: owlClosure of text that is not N-Quads
+ok 21 - reason.failed: owlClosure of text that is not N-Quads
+  ---
+  duration_ms: 0.146833
+  type: 'test'
+  ...
+# Subtest: regime.refused: an x-ikl-* regime
+ok 22 - regime.refused: an x-ikl-* regime
+  ---
+  duration_ms: 0.128167
+  type: 'test'
+  ...
+# Subtest: validate.failed: SHACL with data that is not N-Quads
+ok 23 - validate.failed: SHACL with data that is not N-Quads
+  ---
+  duration_ms: 0.147916
+  type: 'test'
+  ...
+# Subtest: xml.failed: an XPath expression the engine cannot read
+ok 24 - xml.failed: an XPath expression the engine cannot read
+  ---
+  duration_ms: 1.97925
+  type: 'test'
+  ...
+# Subtest: crypto.failed: an Ed25519 secret key that is not hex
+ok 25 - crypto.failed: an Ed25519 secret key that is not hex
+  ---
+  duration_ms: 0.302708
+  type: 'test'
+  ...
+# Subtest: store.failed: a store manifest that is not hex
+ok 26 - store.failed: a store manifest that is not hex
+  ---
+  duration_ms: 1.474125
+  type: 'test'
+  ...
+# Subtest: registry.failed: a SERVICE endpoint whose data is not N-Quads
+ok 27 - registry.failed: a SERVICE endpoint whose data is not N-Quads
+  ---
+  duration_ms: 0.231709
+  type: 'test'
+  ...
+# Subtest: handle.unknown: a handle the engine never issued
+ok 28 - handle.unknown: a handle the engine never issued
+  ---
+  duration_ms: 0.197333
+  type: 'test'
+  ...
+# Subtest: handle.disposed: every method of a disposed Dataset
+ok 29 - handle.disposed: every method of a disposed Dataset
+  ---
+  duration_ms: 0.35625
+  type: 'test'
+  ...
+# Subtest: option.unknown: a key parse() does not take
+ok 30 - option.unknown: a key parse() does not take
+  ---
+  duration_ms: 0.209833
+  type: 'test'
+  ...
+# Subtest: option.invalid-value: an output outside the table
+ok 31 - option.invalid-value: an output outside the table
+  ---
+  duration_ms: 0.28975
+  type: 'test'
+  ...
+# Subtest: option.conflict: SPARQL 1.2 with a results format
+ok 32 - option.conflict: SPARQL 1.2 with a results format
+  ---
+  duration_ms: 0.15175
+  type: 'test'
+  ...
+# Subtest: capacity.exceeded: a byte region above the engine limit
+ok 33 - capacity.exceeded: a byte region above the engine limit
+  ---
+  duration_ms: 8.178083
+  type: 'test'
+  ...
+# Subtest: call.arity: an op called with no arguments
+ok 34 - call.arity: an op called with no arguments
+  ---
+  duration_ms: 0.082125
+  type: 'test'
+  ...
+# Subtest: call.arguments: an arguments document that is not an array
+ok 35 - call.arguments: an arguments document that is not an array
+  ---
+  duration_ms: 0.143
+  type: 'test'
+  ...
+# Subtest: op.unknown: an op the engine does not have
+ok 36 - op.unknown: an op the engine does not have
+  ---
+  duration_ms: 0.058625
+  type: 'test'
+  ...
+# Subtest: op.failed: a Common Logic text that does not parse
+ok 37 - op.failed: a Common Logic text that does not parse
+  ---
+  duration_ms: 0.486959
+  type: 'test'
+  ...
+# Subtest: host.io: a store root with no CURRENT pointer
+ok 38 - host.io: a store root with no CURRENT pointer
+  ---
+  duration_ms: 0.307125
+  type: 'test'
+  ...
+# Subtest: a wrong JavaScript type is a TypeError
+ok 39 - a wrong JavaScript type is a TypeError
+  ---
+  duration_ms: 0.232917
+  type: 'test'
+  ...
+# Subtest: every declared code has a test above
+ok 40 - every declared code has a test above
+  ---
+  duration_ms: 0.11325
+  type: 'test'
+  ...
+# Subtest: every op error path of the dispatch table maps to a declared code
+ok 41 - every op error path of the dispatch table maps to a declared code
+  ---
+  duration_ms: 50.873292
+  type: 'test'
+  ...
+# Subtest: README errors table is the engine list
+ok 42 - README errors table is the engine list
+  ---
+  duration_ms: 0.792292
+  type: 'test'
+  ...
+# Subtest: index.d.ts FactoidalErrorCode is the engine list
+ok 43 - index.d.ts FactoidalErrorCode is the engine list
+  ---
+  duration_ms: 1.6505
+  type: 'test'
+  ...
+1..43
+# tests 43
+# suites 0
+# pass 43
+# fail 0
+# cancelled 0
+# skipped 0
+# todo 0
+# duration_ms 356.611167

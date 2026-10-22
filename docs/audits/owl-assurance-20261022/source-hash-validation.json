@@ -1,0 +1,85 @@
+{
+  "checks": [
+    {
+      "report": "pr-owl-public-error-fix.json",
+      "file": "formal/lean4/Wasm/Ops/ReasonDl.lean",
+      "matches": true
+    },
+    {
+      "report": "pr-owl-public-error-fix.json",
+      "file": "formal/lean4/Wasm/Ops/ReasonDlCertified.lean",
+      "matches": true
+    },
+    {
+      "report": "pr-owl-public-error-fix.json",
+      "file": "tests/assurance/OwlPublicBoundary.lean",
+      "matches": true
+    },
+    {
+      "report": "pr-owl-public-error-fix.json",
+      "file": "tools/check-owl-public-boundary.py",
+      "matches": true
+    },
+    {
+      "report": "pr-owl-public-error-fix.json",
+      "file": "formal/lean4/Wasm/Dispatch.lean",
+      "matches": true
+    },
+    {
+      "report": "pr-owl-public-error-fix.json",
+      "file": "formal/lean4/Wasm/Ops/ErrorModel.lean",
+      "matches": true
+    },
+    {
+      "report": "pr-owl-public-error-fix.json",
+      "file": "formal/lean4/L4Factoidal/OWL/DirectCert.lean",
+      "matches": true
+    },
+    {
+      "report": "pr-owl-public-error-fix.json",
+      "file": "formal/lean4/L4Factoidal/OWL/AtomicDirect.lean",
+      "matches": true
+    },
+    {
+      "report": "pr-owl-reader-hardened.json",
+      "file": "tests/assurance/AtomicDirectAcceptance.lean",
+      "matches": true
+    },
+    {
+      "report": "pr-owl-reader-hardened.json",
+      "file": "tests/assurance/AtomicDirect.lean",
+      "matches": true
+    },
+    {
+      "report": "pr-owl-reader-hardened.json",
+      "file": "formal/lean4/L4Factoidal/OWL/CertNames.lean",
+      "matches": true
+    },
+    {
+      "report": "pr-owl-reader-hardened.json",
+      "file": "formal/lean4/L4Factoidal/OWL/AtomicDirect.lean",
+      "matches": true
+    },
+    {
+      "report": "pr-owl-reader-hardened.json",
+      "file": "tools/check-owl-reader-contracts.py",
+      "matches": true
+    },
+    {
+      "report": "pr-owl-reader-hardened.json",
+      "file": "formal/lean4/L4Factoidal/OWL/DirectCert.lean",
+      "matches": true
+    },
+    {
+      "report": "pr-owl-artifact-node22.json",
+      "file": "tools/check-owl-public-artifact.mjs",
+      "matches": true
+    },
+    {
+      "report": "pr-owl-artifact-final.json",
+      "file": "tools/check-owl-public-artifact.mjs",
+      "matches": true
+    }
+  ],
+  "passed": true
+}

@@ -53,3 +53,8 @@ bin/ci-darwin-arm64/factoidal-http           binary
 bin/ci-darwin-arm64/owl_runner               binary
 bin/ci-darwin-arm64/rdfc10_runner            binary
 bin/ci-darwin-arm64/w3c_runner               binary
+
+# Raw audit outputs retain exact bytes, including test-runner whitespace.
+# Keep the written review and failure summary visible; collapse generated data.
+docs/audits/owl-assurance-20261022/*.log -whitespace linguist-generated=true
+docs/audits/owl-assurance-20261022/*.json linguist-generated=true
