@@ -768,6 +768,13 @@ import L4Factoidal.LWS.MerkleHttp
 import L4Factoidal.LWS.Journal
 import L4Factoidal.LWS.FileLayout
 import L4Factoidal.LWS.FileLayoutTests
+-- The authorization server component (https://github.com/danbri/factoidal/issues/916).
+import L4Factoidal.Authz.Keys
+import L4Factoidal.Authz.Fetch
+import L4Factoidal.Authz.SubjectToken
+import L4Factoidal.Authz.Server
+import L4Factoidal.Authz.Theorems
+import L4Factoidal.Authz.Tests
 import L4Factoidal.Solid.Tests
 
 -- XMPP / GC3 (https://github.com/danbri/factoidal/ ... xmpp/DESIGN.md
