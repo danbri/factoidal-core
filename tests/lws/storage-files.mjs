@@ -27,9 +27,9 @@
 //
 // Score line: "N pass, M fail, S skipped (out of T)".
 
-import { mkdtempSync, rmSync, readFileSync, writeFileSync, existsSync, readdirSync, statSync, cpSync } from 'node:fs'
+import { mkdtempSync, mkdirSync, rmSync, readFileSync, writeFileSync, existsSync, readdirSync, statSync, cpSync } from 'node:fs'
 import { tmpdir } from 'node:os'
-import { join } from 'node:path'
+import { dirname, join } from 'node:path'
 import { randomBytes } from 'node:crypto'
 import { spawn } from 'node:child_process'
 import { fileURLToPath } from 'node:url'
@@ -105,6 +105,7 @@ const bodyFiles = (dir) => existsSync(join(dir, 'bodies')) ? filesUnder(dir).fil
 
 const SECRET = 'a-line-that-must-not-reach-the-disk-in-clear'
 const BINARY = Buffer.from([0, 255, 1, 254, 0, 0, 10, 13, 128, 200, 0])
+const BASE = 'http://storage.test/'
 const KEY_HEX = randomBytes(32).toString('hex')
 const OTHER_HEX = randomBytes(32).toString('hex')
 
@@ -137,7 +138,9 @@ async function populate (origin) {
 }
 
 async function runFiles (engine, listen) {
-  const open = (dir, extra = {}) => listen({ engine, port: 0, now: 1000, insecureNoAuth: true, onError: () => {}, dir, storage: 'files', ...extra })
+  // One base IRI for every start: listings hold absolute IRIs, and each
+  // start binds another ephemeral port.
+  const open = (dir, extra = {}) => listen({ engine, port: 0, now: 1000, insecureNoAuth: true, onError: () => {}, dir, storage: 'files', baseIri: BASE, ...extra })
 
   // ---------------------------------------------------------------- round trip
   {
@@ -213,7 +216,10 @@ async function runFiles (engine, listen) {
           for (let k = 0; k <= last; k++) {
             rmSync(dir, { recursive: true, force: true })
             cpSync(saved, dir, { recursive: true })
-            for (const [f, b] of newBodies) writeFileSync(join(dir, f), b)
+            for (const [f, b] of newBodies) {
+              mkdirSync(dirname(join(dir, f)), { recursive: true })
+              writeFileSync(join(dir, f), b)
+            }
             writeFileSync(join(dir, 'lws-journal'), journalAfter.subarray(0, journalBefore.length + k))
             const t = await open(dir)
             try {
@@ -301,7 +307,7 @@ async function runFiles (engine, listen) {
     const key = sealed ? { storageKey: KEY_HEX } : { storageKey: null }
     try {
       await check(`migration from lws-state.json (${sealed ? 'sealed' : 'clear'}): renamed, every resource with its entity tag`, async () => {
-        const s = await listen({ engine, port: 0, now: 1000, insecureNoAuth: true, onError: () => {}, dir, ...key })
+        const s = await listen({ engine, port: 0, now: 1000, insecureNoAuth: true, onError: () => {}, dir, baseIri: BASE, ...key })
         let before
         try {
           await populate(s.origin)
