@@ -12,6 +12,8 @@
 # the limit (exit 124) and test the old wasm.
 # Never run it while another build writes the same formal/lean4/.lake
 # (hazard 45 in skills/workflow-gotchas-debugging).
+# Never edit this file while a run of it from the same checkout is active:
+# bash reads the script as it runs (hazard 42; repeated 2026-10-22).
 export PATH="$HOME/.elan/bin:$PATH"
 R="$(git -C "$(dirname "$0")" rev-parse --show-toplevel)"
 mkdir -p "${LAND_LOG_DIR:-/tmp}" || { echo "LAND GATES FAILED: cannot create LAND_LOG_DIR ${LAND_LOG_DIR}"; exit 2; }
