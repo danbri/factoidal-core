@@ -48,7 +48,7 @@ namespace L4Factoidal.Storage.Sbm11.IdJoin
 open L4Factoidal.Qlvr (Table)
 open L4Factoidal.Storage.Sbm11.OptJoin (IdRow idCompatible idMerge decRow RowIds compatible_decRow
   merge_decRow filterMap_congr' unbound)
-open L4Factoidal.SPARQL (Binding SolutionSeq join evalValues zipBindings)
+open L4Factoidal.SPARQL (Binding SolutionSeq join union evalValues zipBindings)
 open L4Factoidal.RDF (Term)
 
 /-! ## Join over ids -/
@@ -130,6 +130,31 @@ theorem values_decode (dec : UInt64 → Term) (idv : Term → UInt64) (vars : Li
   simp only [Function.comp_def]
   exact zip_decode dec idv vars row [] (h row hrow)
 
+/-! ## UNION over ids -/
+
+/-- Decoding a concatenation of id rows gives SPARQL 1.1 Union (section 18.5,
+    multiset union) of the decoded rows, as a list. -/
+theorem union_decode (dec : UInt64 → Term) (L R : List IdRow) :
+    (L ++ R).map (decRow dec) = union (L.map (decRow dec)) (R.map (decRow dec)) := by
+  unfold union
+  exact List.map_append
+
+/-- A chain `{ P1 } UNION { P2 } UNION ... UNION { Pk }` parses as
+    `Union(... Union(P1, P2) ..., Pk)`: decoding the concatenation of the
+    branches' id rows (`IdJoin.unionIds`) is that left-nested Union of the
+    decoded branches, after any rows `acc` already decoded. -/
+theorem unionChain_decode (f : IdRow → Binding) :
+    ∀ (Ls : List (List IdRow)) (acc : SolutionSeq),
+      acc ++ Ls.flatten.map f = Ls.foldl (fun a L => union a (L.map f)) acc := by
+  intro Ls
+  induction Ls with
+  | nil => intro acc; simp
+  | cons L Ls ih =>
+    intro acc
+    rw [List.flatten_cons, List.map_append, List.foldl_cons, ← ih (union acc (L.map f))]
+    unfold union
+    rw [List.append_assoc]
+
 /-! ## The `Table` implementation against `idJoin`, on samples
 
 The step from `Table` columns to rows is not proved (module header). Here
@@ -178,5 +203,16 @@ private def Ru : Table := tab #["x", "y"] [[1, 0, 2], [5, 6, 0]]
 #guard (joinIds L1 V3).sortVar == some "s" && (joinIds L1 V1).sortVar == none
 -- a shared column takes the right id where the left one is unbound
 #guard (rowsOfTable (joinIds Lu Ru)).contains [("x", 1), ("y", 5)]
+
+-- `unionIds` against the concatenation of the rows: branches with different
+-- variables, an empty branch, a branch with unbound ids, a single branch
+private def agreesUnion (ts : List Table) : Bool :=
+  rowsOfTable (unionIds ts.toArray) == (ts.map rowsOfTable).flatten
+
+#guard agreesUnion [L1, V2, V3] && (unionIds #[L1, V2, V3]).rows == 10
+#guard agreesUnion [V5, L1] && agreesUnion [Lu, Ru, V6] && agreesUnion [L1] && agreesUnion []
+#guard (unionIds #[L1, V2]).vars == #["s", "a", "z"]
+-- a union joined with a left table (the shape `{ P { A } UNION { B } }`)
+#guard agrees L1 (unionIds #[V1, V3])
 
 end L4Factoidal.Storage.Sbm11.IdJoin

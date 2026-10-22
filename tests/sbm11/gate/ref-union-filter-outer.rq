@@ -1,0 +1,4 @@
+PREFIX ex: <http://ex.org/>
+PREFIX xsd: <http://www.w3.org/2001/XMLSchema#>
+# A FILTER beside a UNION that reads a branch variable: the reference fallback.
+SELECT ?x WHERE { ?x ex:name ?n { ?x ex:age ?a } UNION { ?x ex:flag ?a } FILTER(?a = 71) }

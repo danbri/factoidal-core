@@ -277,7 +277,8 @@ def redirectPlan (w : WfIri) (plan : IdQuery.Plan) : IdQuery.Plan :=
     | .dflt => { p with g := .term (.iri w) }
     | _ => p
   { plan with pats := plan.pats.map redir,
-              optionals := plan.optionals.map fun g => { g with pats := g.pats.map redir } }
+              optionals := plan.optionals.map fun g => { g with pats := g.pats.map redir },
+              unions := plan.unions.map fun bs => bs.map fun b => { b with pats := b.pats.map redir } }
 
 /-- The solutions of a WHERE clause on the state the operation reads, and the
     path that evaluated it. -/

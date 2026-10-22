@@ -937,6 +937,19 @@ shared column and computes a cross product. Theorems:
 L5l; the `Table` step L5l″ is open and tested by `#guard`s). Gates: the 15
 `ids-values-*` and 3 `ref-values-*` gate queries.
 
+UNION on ids (2026-10-22, issue 950; record: section 18 of the stage 4
+record). A chain `{ P1 } UNION ... UNION { Pk }` outside GRAPH runs on
+`path=ids` when the WHERE clause has no OPTIONAL, each branch is a group of
+the id fragment with a triple pattern and no VALUES or UNION inside, and no
+FILTER outside the branches reads a branch variable (`IdQuery.flattenUnions`;
+`whereVars` walks the UNION, `scopeVars` does not count its variables, so
+`splitFilter` refuses such a FILTER). Each branch is evaluated with every
+column kept, the tables are concatenated (`IdJoin.unionIds`, id 0 where a
+branch lacks a variable), and the result is joined with the other rows
+(`IdJoin.joinIds`). `l4sbm11 update` redirects the branch patterns under
+`WITH` too (`redirectPlan`). Theorems: `union_decode`, `unionChain_decode`
+(lemma L5m). Gates: 10 `ids-union-*` and 4 `ref-union-*` queries.
+
 Sideways information passing (2026-10-13,
 https://github.com/danbri/factoidal/issues/809; record: section 11 of the
 stage 4 record). The right scan of a join (merge or hash), and the first scan

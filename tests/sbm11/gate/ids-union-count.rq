@@ -1,0 +1,4 @@
+PREFIX ex: <http://ex.org/>
+PREFIX xsd: <http://www.w3.org/2001/XMLSchema#>
+# COUNT(*) and COUNT(?f) grouped over a UNION.
+SELECT ?x (COUNT(*) AS ?n) (COUNT(?f) AS ?m) WHERE { { ?x ex:age ?a } UNION { ?x ex:flag ?f } } GROUP BY ?x

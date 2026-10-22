@@ -39,6 +39,15 @@ an id in the generation a query-local id of tag `tagLocal`, decoded by
 `Store.withLocal`), joined with the table of the triple patterns after their
 FILTERs (`joinValues`, `IdJoin.joinIds`; theorems in `IdJoinTheorems`).
 
+UNION (issue 950): a chain `{ P1 } UNION ... UNION { Pk }` in the join tree
+of the WHERE clause outside GRAPH, with no OPTIONAL in the WHERE clause, each
+branch a group of the fragment above with a triple pattern and no VALUES or
+UNION inside, and no FILTER outside a branch that reads a branch variable
+(`flattenUnions`). Each branch is evaluated on ids, the branch tables are
+concatenated (`IdJoin.unionIds`, `unbound` where a branch lacks a variable),
+and the result is joined with the other rows after the VALUES blocks
+(`evalUnionsM`, `joinExtrasM`).
+
 Issue 823 (https://github.com/danbri/factoidal/issues/823): a FILTER conjunct
 outside `backendLocal` (REGEX, LANGMATCHES, casts, IRI(), hashes, ...), or one
 that reads a variable no pattern of the WHERE clause binds, is a residual
@@ -189,6 +198,15 @@ structure ValuesBlock where
   rows : Array (Array (Option Term))
   deriving Inhabited
 
+/-- One branch of a UNION (https://github.com/danbri/factoidal/issues/950):
+    a group of the fragment of `flattenWhere` with no VALUES block and no
+    UNION inside, as a plan's patterns and FILTERs. -/
+structure UnionBranch where
+  pats : Array PatSpec
+  filters : Array Expr
+  residuals : Array Expr := #[]
+  deriving Inhabited
+
 /-- The variables of a plan's VALUES blocks. -/
 def valuesVars (vs : Array ValuesBlock) : Array String :=
   vs.foldl (fun a b => b.vars.foldl (fun a v => if a.contains v then a else a.push v) a) #[]
@@ -231,6 +249,11 @@ structure Plan where
       rows of `pats` after `filters` and `residuals` (`IdJoin.joinIds`);
       never with `optionals` -/
   values : Array ValuesBlock := #[]
+  /-- the UNION blocks of the WHERE clause (issue 950), each the branches of
+      one chain `{ P1 } UNION ... UNION { Pk }`; each block's rows
+      (`IdJoin.unionIds` of the branch tables) are joined with the rows of
+      `pats` after the VALUES blocks; never with `optionals` -/
+  unions : Array (Array UnionBranch) := #[]
   proj : Array ProjItem
   /-- the result variables (`Query.projectedVars`) -/
   outVars : Array String
@@ -298,6 +321,15 @@ def PatSpec.vars (t : PatSpec) : Array String :=
 /-- The variables of a group's triple patterns. -/
 def OptGroup.vars (g : OptGroup) : Array String :=
   g.pats.foldl (fun a t => t.vars.foldl (fun a v => if a.contains v then a else a.push v) a) #[]
+
+/-- The variables of a branch's triple patterns (and `GRAPH ?g` names). -/
+def UnionBranch.vars (b : UnionBranch) : Array String :=
+  b.pats.foldl (fun a t => t.vars.foldl (fun a v => if a.contains v then a else a.push v) a) #[]
+
+/-- The variables of a plan's UNION blocks (each block: its branches, in
+    order). -/
+def unionVars (us : Array (Array UnionBranch)) : Array String :=
+  us.foldl (fun a bs => bs.foldl (fun a b => b.vars.foldl (fun a v => if a.contains v then a else a.push v) a) a) #[]
 
 /-- The variables an admitted (`backendLocal`) expression reads, by an
     explicit stack. `none` for a constructor outside `backendLocal`. -/
@@ -406,7 +438,9 @@ def subtreeVars (p : QueryPattern) : Option (Array String) := Id.run do
       | .filter _ q | .graph _ q => stack := stack.push q
       -- a VALUES block (issue 950): an UNDEF cell leaves its variable
       -- unbound, so it binds no variable in every row
-      | .empty | .values _ _ => pure ()
+      -- a UNION (issue 950): each branch binds its own variables, so the
+      -- UNION binds no variable in every row
+      | .empty | .values _ _ | .union _ _ => pure ()
       | _ => return none
   if !stack.isEmpty then return none
   return some out
@@ -459,7 +493,7 @@ def whereVars (p : QueryPattern) : Array String := Id.run do
             match a with
             | .ok (.var v) => if !out.contains v then out := out.push v
             | _ => pure ()
-      | .join l r | .leftJoin l r _ => stack := (stack.push r).push l
+      | .join l r | .leftJoin l r _ | .union l r => stack := (stack.push r).push l
       | .filter _ q => stack := stack.push q
       | .graph (.var v) q =>
         if !out.contains v then out := out.push v
@@ -504,12 +538,14 @@ def splitFilter (c : Expr) (inScope allVars : Array String) :
     `allVars`: `whereVars` of the whole WHERE clause, which holds the VALUES
     variables, so a FILTER that reads one is refused (`splitFilter`). -/
 def flattenWhere (p : QueryPattern) (allVars : Array String) :
-    Except String (Array PatSpec × Array Expr × Array Expr × Array ValuesBlock) := do
+    Except String (Array PatSpec × Array Expr × Array Expr × Array ValuesBlock ×
+      Array (Array QueryPattern)) := do
   let mut stack : Array WalkItem := #[⟨p, .dflt⟩]
   let mut pats : Array PatSpec := #[]
   let mut filters : Array Expr := #[]
   let mut residuals : Array Expr := #[]
   let mut values : Array ValuesBlock := #[]
+  let mut unions : Array (Array QueryPattern) := #[]
   for _ in [0:maxNodes] do
     match stack.back? with
     | none => break
@@ -549,11 +585,31 @@ def flattenWhere (p : QueryPattern) (allVars : Array String) :
           for j in [i + 1:va.size] do
             if va[i]! == va[j]! then throw s!"?{va[i]!} twice in one VALUES block"
         values := values.push { vars := va, rows := rows.toArray.map List.toArray }
+      | .union l r =>
+        match g with
+        | .dflt => pure ()
+        | _ => throw "a UNION inside a GRAPH"
+        unions := unions.push (unionLeaves (.union l r))
       | .empty => pure ()
-      | _ => throw "a WHERE clause outside the fragment (OPTIONAL, UNION, MINUS, BIND, VALUES, sub-SELECT, SERVICE or a property path)"
+      | _ => throw "a WHERE clause outside the fragment (OPTIONAL not at the top level, MINUS, BIND, sub-SELECT, SERVICE or a property path)"
   if !stack.isEmpty then throw s!"a WHERE clause with more than {maxNodes} nodes"
-  return (pats, filters, residuals, values)
+  return (pats, filters, residuals, values, unions)
 where
+  /-- The branches of a chain `Union(... Union(P1, P2) ..., Pk)`, in order.
+      A branch that is a group holding a UNION is a branch (refused by
+      `flattenUnions`). -/
+  unionLeaves (q : QueryPattern) : Array QueryPattern := Id.run do
+    let mut stack : Array QueryPattern := #[q]
+    let mut out : Array QueryPattern := #[]
+    for _ in [0:maxNodes] do
+      match stack.back? with
+      | none => break
+      | some x =>
+        stack := stack.pop
+        match x with
+        | .union l r => stack := (stack.push r).push l
+        | other => out := out.push other
+    return out ++ stack.reverse
   /-- Whether a subtree holds a triple pattern. -/
   hasPattern (q : QueryPattern) : Bool := Id.run do
     let mut stack : Array QueryPattern := #[q]
@@ -568,6 +624,26 @@ where
         | .filter _ y | .graph _ y => stack := stack.push y
         | _ => pure ()
     return false
+
+/-- The branches of the UNION blocks that `flattenWhere` collected (issue
+    950): each branch a group of the fragment of `flattenWhere` with at least
+    one triple pattern, no VALUES block and no UNION inside. A FILTER in a
+    branch is scoped to the branch (SPARQL 1.1 section 18.2.2.6); `allVars`
+    holds every variable of the WHERE clause, so a branch FILTER that reads a
+    variable bound outside the branch is refused (`splitFilter`). -/
+def flattenUnions (raw : Array (Array QueryPattern)) (allVars : Array String) :
+    Except String (Array (Array UnionBranch)) := do
+  let mut out : Array (Array UnionBranch) := #[]
+  for leaves in raw do
+    let mut bs : Array UnionBranch := #[]
+    for q in leaves do
+      let (pats, filters, residuals, values, unions) ← flattenWhere q allVars
+      if !unions.isEmpty then throw "a UNION inside a UNION branch"
+      if !values.isEmpty then throw "a VALUES block inside a UNION branch"
+      if pats.isEmpty then throw "a UNION branch with no triple pattern"
+      bs := bs.push { pats, filters, residuals }
+    out := out.push bs
+  return out
 
 /-- The OPTIONAL spine of a WHERE clause: `filter* (leftJoin (... (leftJoin
     base g1 c1) ...) gk ck)` as the parser builds `{ base OPTIONAL { g1 } ...
@@ -621,14 +697,15 @@ def hasGraph (q : QueryPattern) : Bool := Id.run do
     group shares with anything outside it is bound in every left row). -/
 def flattenOptional (p : QueryPattern) :
     Except String (Array PatSpec × Array Expr × Array Expr × Array Expr × Array OptGroup ×
-      Array ValuesBlock) := do
+      Array ValuesBlock × Array (Array UnionBranch)) := do
   let allVars := whereVars p
   let (tops, base, raw) := optionalSpine p
   if raw.isEmpty then
-    let (pats, filters, residuals, values) ← flattenWhere p allVars
-    return (pats, filters, residuals, #[], #[], values)
-  let (pats, filters, residuals, values) ← flattenWhere base allVars
+    let (pats, filters, residuals, values, unions) ← flattenWhere p allVars
+    return (pats, filters, residuals, #[], #[], values, ← flattenUnions unions allVars)
+  let (pats, filters, residuals, values, unions) ← flattenWhere base allVars
   if !values.isEmpty then throw "a VALUES block beside an OPTIONAL"
+  if !unions.isEmpty then throw "a UNION beside an OPTIONAL"
   if pats.isEmpty then throw "an OPTIONAL with no triple pattern before it"
   let some baseScope := scopeVars base | throw "a group before an OPTIONAL outside the fragment"
   -- A FILTER beside the OPTIONALs is `Filter(f, LeftJoin(...))` (section
@@ -650,8 +727,9 @@ def flattenOptional (p : QueryPattern) :
   let mut groups : Array OptGroup := #[]
   for (r, c) in raw do
     if hasGraph r then throw "a GRAPH inside an OPTIONAL group"
-    let (gp, gf, gr, gv) ← flattenWhere r allVars
+    let (gp, gf, gr, gv, gu) ← flattenWhere r allVars
     if !gv.isEmpty then throw "a VALUES block inside an OPTIONAL group"
+    if !gu.isEmpty then throw "a UNION inside an OPTIONAL group"
     if gp.isEmpty then throw "an OPTIONAL group with no triple pattern"
     let g0 : OptGroup := { pats := gp, filters := gf, residuals := gr }
     let (cf, cr) ← match c with
@@ -675,7 +753,7 @@ def flattenOptional (p : QueryPattern) :
         for j in [0:groups.size] do
           if j != k && groups[j]!.vars.contains v then
             throw s!"?{v} occurs in two OPTIONAL groups and not in the triple patterns before them"
-  return (pats, filters ++ topFilters, residuals ++ topResiduals, postFilters, groups, #[])
+  return (pats, filters ++ topFilters, residuals ++ topResiduals, postFilters, groups, #[], #[])
 
 /-- The number of first WHERE solutions the answer of a post-processed query
     reads (`PostSpec.firstRows`), or `none` for all of them.
@@ -779,7 +857,7 @@ def translate (q : L4Factoidal.SPARQL.Query) : Except String Plan := do
   unless q.dataset.isEmpty do throw "FROM / FROM NAMED"
   if q.pattern.mentionsFulltext then
     throw "text:query (full-text search): the reference evaluator answers it"
-  let (pats, filters, residuals, postFilters, optionals, values) ←
+  let (pats, filters, residuals, postFilters, optionals, values, unions) ←
     flattenOptional q.pattern.rewriteBnodes
   let allPats : Array PatSpec := pats ++ optionals.foldl (fun (a : Array PatSpec) (g : OptGroup) => a ++ g.pats) #[]
   -- the VALUES variables count as variables the WHERE clause binds (in some
@@ -787,9 +865,9 @@ def translate (q : L4Factoidal.SPARQL.Query) : Except String Plan := do
   -- OPTIONAL)
   let patVars := (allPats.foldl
     (fun a (t : PatSpec) => t.vars.foldl (fun a v => if a.contains v then a else a.push v) a) #[]) ++
-    (valuesVars values).filter fun v => !(allPats.any fun t => t.vars.contains v)
+    ((valuesVars values ++ unionVars unions).filter fun v => !(allPats.any fun t => t.vars.contains v))
   let base : Plan := {
-    pats, filters, residuals, postFilters, optionals, values, proj := #[], outVars := #[],
+    pats, filters, residuals, postFilters, optionals, values, unions, proj := #[], outVars := #[],
     groupVars := #[], agg := false, order := #[], distinct := false, offset := 0,
     limit := none }
   let post (why : String) : Except String Plan := do
@@ -2746,6 +2824,50 @@ def fkVars (fs : Array FKind) : Array String :=
     | .general _ vs => a ++ vs
     | .residual _ _ vs => a ++ vs) #[]
 
+/-- The rows of each UNION block of a plan (issue 950): per branch its BGP
+    (every column kept: a branch variable may be projected, ordered or shared
+    with the rows it is joined with) and its FILTERs, then the branch tables
+    concatenated in order (`IdJoin.unionIds`, SPARQL 1.1 section 18.5 Union).
+    -/
+def evalUnionsM {m : Type → Type} [Monad m] (st : Store m) (plan : Plan) (env : EvalEnv) :
+    ExceptT String m (Array Table × Array String × ScanStats) := do
+  let mut out : Array Table := #[]
+  let mut lines : Array String := #[]
+  let mut total : ScanStats := {}
+  for k in [0:plan.unions.size] do
+    let mut tabs : Array Table := #[]
+    let bs := plan.unions[k]!
+    for j in [0:bs.size] do
+      let b := bs[j]!
+      let bp ← b.pats.mapM (resolvePat st)
+      let bfs := (← b.filters.mapM (compileFilter st)) ++ b.residuals.map (residualKind env)
+      let (t0, bl, s) ← evalBgpM st bp (fun _ => true)
+      let (t1, _) ← applyFilters st bfs (bfs.map fun _ => {}) t0
+      lines := lines ++ bl.map (s!"union {k} branch {j} " ++ ·)
+      lines := lines.push s!"union {k} branch {j}: {bfs.size} FILTER conjuncts, {t1.rows} rows"
+      total := total.add s
+      tabs := tabs.push t1
+    let u := IdJoin.unionIds tabs
+    lines := lines.push s!"union {k}: {bs.size} branches, {u.rows} rows"
+    out := out.push u
+  return (out, lines, total)
+
+/-- After the triple patterns and their FILTERs: the VALUES blocks
+    (`joinValues`), then the rows of each UNION block (`evalUnionsM`), each
+    joined in order (`IdJoin.joinIds`). -/
+def joinExtrasM {m : Type → Type} [Monad m] (st : Store m) (plan : Plan) (env : EvalEnv) (t : Table)
+    (vtabs : Array Table) : ExceptT String m (Table × Array String × ScanStats) := do
+  let (t, lines) := joinValues t vtabs
+  if plan.unions.isEmpty then return (t, lines, {})
+  let (us, ulines, s) ← evalUnionsM st plan env
+  let mut t := t
+  let mut lines := lines ++ ulines
+  for k in [0:us.size] do
+    let before := t.rows
+    t := IdJoin.joinIds t us[k]!
+    lines := lines.push s!"union {k}: join with {before} rows: {t.rows} rows"
+  return (t, lines, s)
+
 /-- The base of a plan with OPTIONAL groups (issue 775): its BGP and FILTERs,
     then, group by group, the left outer join with the group's BGP after the
     group's FILTERs (`OptJoin.leftOuterJoin`). A group's FILTER reads only the
@@ -3096,10 +3218,12 @@ def runPlanM {m : Type → Type} [Monad m] (st : Store m) (plan : Plan) (emit : 
       | .count _ (some x) => a.push x
       | .count _ none => a) #[]
     ++ filterVars ++ plan.order.map (·.1) ++ plan.groupVars ++ valuesVars plan.values
+    ++ unionVars plan.unions
   let need (x : String) : Bool := used.contains x
   let mut stats : RunStats := {}
   (emit (jsonHead plan.outVars).toUTF8 : m Unit)
-  let single := pats.size == 1 && !pats[0]!.hasMissing && plan.optionals.isEmpty && plan.values.isEmpty
+  let single := pats.size == 1 && !pats[0]!.hasMissing && plan.optionals.isEmpty && plan.values.isEmpty &&
+    plan.unions.isEmpty
   if single && !plan.agg && plan.order.isEmpty && !plan.distinct then
     -- one pattern, no modifier that needs every row: block by block
     let t := pats[0]!
@@ -3196,8 +3320,8 @@ def runPlanM {m : Type → Type} [Monad m] (st : Store m) (plan : Plan) (emit : 
           if plan.optionals.isEmpty then do
             let (t0, lines, s) ← evalBgpM st pats need
             let (t1, _) ← applyFilters st fs memos0 t0
-            let (t2, vlines) := joinValues t1 vtabs
-            pure (t2, lines ++ vlines, s)
+            let (t2, vlines, us) ← joinExtrasM st plan env t1 vtabs
+            pure (t2, lines ++ vlines, s.add us)
           else evalOptionalsM st plan pats fs need env
       stats := { stats with plan := lines, scan := s }
       if plan.agg then
@@ -3302,15 +3426,16 @@ def whereTableM {m : Type → Type} [Monad m] (st : Store m) (plan : Plan) (env 
   if plan.pats.isEmpty then
     let t0 : Table := { vars := #[], cols := #[], rows := 1 }
     let (t1, _) ← applyFilters st fs memos0 t0
-    let (t2, vlines) := joinValues t1 vtabs
+    let (t2, vlines, us) ← joinExtrasM st plan env t1 vtabs
     let t := match firstRows with
       | some n => t2.slice 0 n
       | none => t2
-    return (t, #[s!"no triple pattern: one solution with no binding, {fs.size} FILTER conjuncts: {t1.rows} rows"] ++ vlines, {})
+    return (t, #[s!"no triple pattern: one solution with no binding, {fs.size} FILTER conjuncts: {t1.rows} rows"] ++ vlines, us)
   let pats ← plan.pats.mapM (resolvePat st)
   let need : String → Bool := fun _ => true
   if let some n := firstRows then
-    if pats.size == 1 && !pats[0]!.hasMissing && plan.optionals.isEmpty && plan.values.isEmpty then
+    if pats.size == 1 && !pats[0]!.hasMissing && plan.optionals.isEmpty && plan.values.isEmpty &&
+        plan.unions.isEmpty then
       let t := pats[0]!
       let spec := mkSpec t (permFor t none) need
       let init : Table := Table.empty spec.outVars
@@ -3323,8 +3448,8 @@ def whereTableM {m : Type → Type} [Monad m] (st : Store m) (plan : Plan) (env 
   let (t0, lines, s) ← if plan.optionals.isEmpty then do
       let (t0, lines, s) ← evalBgpM st pats need
       let (t1, _) ← applyFilters st fs memos0 t0
-      let (t2, vlines) := joinValues t1 vtabs
-      pure (t2, lines ++ vlines, s)
+      let (t2, vlines, us) ← joinExtrasM st plan env t1 vtabs
+      pure (t2, lines ++ vlines, s.add us)
     else evalOptionalsM st plan pats fs need env
   let t := match firstRows with
     | some n => t0.slice 0 n

@@ -28,8 +28,12 @@ generation (`TermIdTheorems.toId?_eq_iff`) and on the query-local terms
    row in right-row order: the order of `IdJoinTheorems.idJoin`.
 3. The output columns from the pairs.
 
+UNION (`unionIds`): the rows of the branch tables in order, `unbound` in a
+column a branch does not have (SPARQL 1.1 section 18.5 Union, multiset
+union).
+
 Theorems: `Storage/Sbm11/IdJoinTheorems.lean` (`join_decode`,
-`values_decode`). The step from these `Table` columns to rows of ids is
+`values_decode`, `union_decode`, `unionChain_decode`). The step from these `Table` columns to rows of ids is
 tested there by `#guard`s, as for `OptJoin.leftOuterJoin` (lemma L5g″ of
 docs/designissues/2026-10-12-sbm11-end-to-end-theorem.md).
 
@@ -122,5 +126,28 @@ def joinIds (l r : Table) : Table := Id.run do
     | some v => if r.vars.contains v then none else some v
     | none => none
   return { vars, cols, rows := li.size, sortVar }
+
+/-- SPARQL 1.1 section 18.5 Union of id tables, in order (multiset union:
+    the rows of the first table, then those of the next): the variables of
+    the tables in order of first occurrence, and `unbound` in a column that a
+    table does not have. -/
+def unionIds (ts : Array Table) : Table := Id.run do
+  let mut vars : Array String := #[]
+  for t in ts do
+    for v in t.vars do
+      if !vars.contains v then vars := vars.push v
+  let mut cols : Array ByteArray := vars.map fun _ => ByteArray.empty
+  let mut rows := 0
+  for t in ts do
+    for c in [0:vars.size] do
+      match t.idx vars[c]! with
+      | some k => cols := cols.modify c (· ++ t.cols[k]!)
+      | none =>
+        let mut b := cols[c]!
+        for _ in [0:t.rows] do
+          b := L4Factoidal.Qlvr.Side.put64 b unbound
+        cols := cols.set! c b
+    rows := rows + t.rows
+  return { vars, cols, rows }
 
 end L4Factoidal.Storage.Sbm11.IdJoin

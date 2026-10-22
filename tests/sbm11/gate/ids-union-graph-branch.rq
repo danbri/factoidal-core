@@ -1,0 +1,4 @@
+PREFIX ex: <http://ex.org/>
+PREFIX xsd: <http://www.w3.org/2001/XMLSchema#>
+# GRAPH ?g inside one branch: ?g bound in those rows only.
+SELECT ?g ?x ?y WHERE { { GRAPH ?g { ?x ex:knows ?y } } UNION { ?x ex:knows ?y } }
