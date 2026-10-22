@@ -139,6 +139,8 @@ def fullOnlyOpNames : List String :=
   , "toanSummation", "toanProduct", "toanSimplify", "toanDiff", "toanSubst"
   , "xmppJidParse", "xmppJidRender", "xmppStreamHeaderParse"
   , "xmppStreamHeaderRender", "xmppFeaturesFor", "xmppStanzaParse"
+  , "xmppOpen", "xmppClose", "xmppSessionOpen", "xmppSessionFeed"
+  , "xmppSessionDeliver", "xmppSessionClose", "xmppRosterGet", "xmppRosterSet"
   , "aeadSeal", "aeadOpen", "hpkeSeal", "hpkeOpen"
   , "jsonldToRdf", "jsonldFromRdf", "rmlMap", "csvwToRdf", "xmlWellformed"
   , "xpathEval", "xsltTransform", "schematronValidate", "jsonSchemaValidate"
