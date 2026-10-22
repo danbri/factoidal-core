@@ -57,12 +57,16 @@ open L4Factoidal.Qlvr (Table)
 
 /-! ## A term id as a hash key -/
 
-/-- A term id as a hash-map key. `Std.HashMap` indexes a bucket from the key's
-hash, and the hash of a `UInt64` is the number itself: ids that differ in a few
-bits (the dictionary ids of one predicate's objects) share buckets. `Id64`
-hashes the id times a 64-bit odd constant (a bijection of `UInt64`), which
-spreads such ids over the buckets (measured on d19 in the benchmark record,
-issue 862). Equality is equality of ids. -/
+/-- A term id as a hash-map key. `Std.HashMap` takes the bucket from the low bits
+of the hash, and the hash of a `UInt64` is the number itself: the ids of one
+dictionary (a tag in the top bits, an index below it) that differ in their middle
+bits share buckets. `Id64` hashes the id times a 64-bit odd constant (a
+bijection of `UInt64`) with its high half folded onto its low half, so that every
+bit of the id reaches the low bits. On d19 the lookups of the group key and of the
+argument id were 15 percent of the time before and the change took 15 to 30 ms
+off the warm time (interleaved runs, benchmark record, issue 862). Equality is
+equality of ids. `Id64` is `UInt64` (no allocation per key); `ofU` and `val` are
+the identity. -/
 def Id64 : Type := UInt64
 
 namespace Id64
@@ -79,7 +83,7 @@ instance : BEq Id64 := inferInstanceAs (BEq UInt64)
 
 instance : LawfulBEq Id64 := inferInstanceAs (LawfulBEq UInt64)
 
-instance : Hashable Id64 := ⟨fun k => k.val * 0x9E3779B97F4A7C15⟩
+instance : Hashable Id64 := ⟨fun k => let h := k.val * 0x9E3779B97F4A7C15; h ^^^ (h >>> 32)⟩
 
 instance : LawfulHashable Id64 where
   hash_eq := by
@@ -274,6 +278,9 @@ def aggregateM {m : Type → Type} [Monad m] (termOf : UInt64 → ExceptT String
           match byCol.findIdx? (fun e => e.1 == c) with
           | some j => byCol := byCol.modify j fun e => (e.1, e.2.push k)
           | none => byCol := byCol.push (c, #[k])
+    -- the columns read in the loop, held once rather than fetched from `t.cols` per row
+    let gd : ByteArray := if gcols.size == 1 then t.cols[gcols[0]!]! else ByteArray.empty
+    let ad : ByteArray := if byCol.size == 1 then t.cols[byCol[0]!.1]! else ByteArray.empty
     let mut index1 : Std.HashMap Id64 Nat := {}
     let mut index : Std.HashMap (List UInt64) Nat := {}
     let mut terms : Cache Id64 Term := {}
@@ -283,7 +290,7 @@ def aggregateM {m : Type → Type} [Monad m] (termOf : UInt64 → ExceptT String
       if !p.implicit then
         if gcols.size == 1 then
           -- one group column: the id is the key
-          let key := t.at gcols[0]! i
+          let key := L4Factoidal.Codec.Zstd.word64 gd (8 * i)
           match index1.get? (Id64.ofU key) with
           | some g => gi := g
           | none =>
@@ -308,7 +315,7 @@ def aggregateM {m : Type → Type} [Monad m] (termOf : UInt64 → ExceptT String
             accs := accs.modify (gi * n + k) AggAcc.stepCount
         | _ => accs := accs.modify (gi * n + k) AggAcc.stepCount
       for e in byCol do
-        let x := t.at e.1 i
+        let x := if byCol.size == 1 then L4Factoidal.Codec.Zstd.word64 ad (8 * i) else t.at e.1 i
         if x != L4Factoidal.Storage.Sbm11.OptJoin.unbound then
           let s ← match sums.map.get? (Id64.ofU x) with
             | some s => pure s
