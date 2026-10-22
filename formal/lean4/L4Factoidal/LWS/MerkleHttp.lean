@@ -37,6 +37,7 @@ the storage description member) are shown only to the storage controller
 whose reader has the bytes anyway.
 -/
 import L4Factoidal.LWS.Merkle
+import L4Factoidal.LWS.Journal
 import L4Factoidal.LWS.TypeIndex
 import L4Factoidal.LWS.AccessGrants
 import L4Factoidal.LWS.Snapshot
@@ -49,29 +50,56 @@ open L4Factoidal.LWS.Merkle
 
 /-! ## The store the LWS handles run -/
 
-/-- The backend of an LWS handle: the reference store with the Merkle
-hashes (off unless the handle turns them on). The type index sits on top
-(`IndexedStore LwsBackend lwsBackendLaws`). -/
-abbrev LwsBackend : Store (MkState MemStore) := MerkleStore MemStore memStoreLaws
+/-- The bottom of the store an LWS handle runs: the reference store, with the
+paths each write touches recorded for the journal of a storage kept in files
+(`L4Factoidal.LWS.Journal`, https://github.com/danbri/factoidal/issues/918).
+Lookups, the paths and the clock are the reference store's. -/
+abbrev LwsBase : Store (Journal.JState MemStore) := Journal.JournalStore MemStore memStoreLaws
 
-theorem lwsBackendLaws : StoreLaws LwsBackend := merkleStoreLaws MemStore memStoreLaws
+theorem lwsBaseLaws : StoreLaws LwsBase := Journal.journalStoreLaws MemStore memStoreLaws
+
+/-- The backend of an LWS handle: the recording reference store with the
+Merkle hashes (off unless the handle turns them on). The type index sits on
+top (`IndexedStore LwsBackend lwsBackendLaws`). -/
+abbrev LwsBackend : Store (MkState LwsBase) := MerkleStore LwsBase lwsBaseLaws
+
+theorem lwsBackendLaws : StoreLaws LwsBackend := merkleStoreLaws LwsBase lwsBaseLaws
+
+/-- The Merkle state of a reference state with nothing recorded, built from
+its entries in one pass; `none` leaves the option off. -/
+def MkState.ofJ (hasher : Option Storage.BlockMerkle.Hasher) (m : MemState) : MkState LwsBase :=
+  match hasher with
+  | none => { base := Journal.JState.fresh MemStore m, hasher := none, data := {}, ok := trivial }
+  | some h => { base := Journal.JState.fresh MemStore m, hasher := some h,
+                data := Merkle.rebuild h m.entries, ok := Merkle.rebuild_ok h m.entries }
 
 /-- An indexed state of the LWS backend, built from the entries of a
 reference state: the type index and (when `hasher` is given) the Merkle data,
 each in one pass. -/
 def IxState.ofMerkle (b : String) (hasher : Option Storage.BlockMerkle.Hasher) (m : MemState) :
     IxState LwsBackend :=
-  { base := MkState.ofMem hasher m, baseIri := b, ix := rebuildEntries b m.entries
+  { base := MkState.ofJ hasher m, baseIri := b, ix := rebuildEntries b m.entries
     ok := by
-      show IndexOk b (fun p => memLookup (MkState.ofMem hasher m).base p) _
+      show IndexOk b (fun p => memLookup (MkState.ofJ hasher m).base.base p) _
       cases hasher <;> exact rebuildEntries_ok b m.entries }
 
 /-- Set the clock of an indexed LWS state; no resource changes. -/
 def IxState.withClockM (s : IxState LwsBackend) (t : Nat) : IxState LwsBackend :=
-  { s with base := s.base.withClock t, ok := s.ok }
+  let js : Journal.JState MemStore :=
+    { s.base.base with base := { s.base.base.base with clock := t }, ok := s.base.base.ok }
+  let mk : MkState LwsBase := { s.base with base := js, ok := s.base.ok }
+  { s with base := mk, ok := s.ok }
+
+/-- Forget the paths recorded since the last persist: the journal record of
+them is written (`Journal.JState.reset`); no resource changes. -/
+def IxState.resetJournal (s : IxState LwsBackend) : IxState LwsBackend :=
+  { s with base := { s.base with base := s.base.base.reset, ok := s.base.ok }, ok := s.ok }
 
 /-- The reference state under an LWS state. -/
-def IxState.mem (s : IxState LwsBackend) : MemState := s.base.base
+def IxState.mem (s : IxState LwsBackend) : MemState := s.base.base.base
+
+/-- The recording state under an LWS state. -/
+def IxState.journal (s : IxState LwsBackend) : Journal.JState MemStore := s.base.base
 
 namespace Merkle
 

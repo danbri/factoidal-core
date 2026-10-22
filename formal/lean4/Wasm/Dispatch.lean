@@ -331,6 +331,8 @@ def lwsSolidOpNames : List String :=
   , "lwsFetched"
   , "lwsDelivered"
   , "lwsFlush"
+  , "lwsLoad"
+  , "lwsPersist"
   , "solidOpen"
   , "solidStep"
   , "solidClose"
@@ -630,6 +632,10 @@ def callIOUncoded (op : String) (argsJson : String) : IO String :=
   | "lwsFetched"       => withArgs (arityIO2 op Ops.lwsFetched)
   | "lwsDelivered"     => withArgs (arityIO2 op Ops.lwsDelivered)
   | "lwsFlush"         => withArgs (arityIO2 op Ops.lwsFlush)
+  -- A storage kept in files (https://github.com/danbri/factoidal/issues/918):
+  -- both carry file bytes, in and out.
+  | "lwsLoad" | "lwsPersist" =>
+      pure (errJson s!"{op} carries file bytes; call it through l4_call_blob_io")
   | "solidSnapshot"    => withArgs (fun args =>
       match args with
       | [a] => Ops.solidSnapshot a
@@ -746,6 +752,22 @@ def callBlobIOUncoded (op : String) (argsJson : String) (blob : ByteArray) :
       | .error e   => pure (errJson e, ByteArray.empty)
       | .ok [a, b] => Ops.lwsStepWith a b (some blob)
       | .ok args   => pure (errJson s!"lwsStep expects 2 arguments, got {args.length}",
+                            ByteArray.empty)
+  -- A storage kept in files (https://github.com/danbri/factoidal/issues/918):
+  -- `lwsLoad` takes the bytes of the files the engine named (IN region) and
+  -- may answer the plan of the start (OUT region); `lwsPersist` answers the
+  -- plan of one write (OUT region).
+  | "lwsLoad" =>
+      match decodeArgs argsJson with
+      | .error e   => pure (errJson e, ByteArray.empty)
+      | .ok [a, b] => Ops.lwsLoad a b blob
+      | .ok args   => pure (errJson s!"lwsLoad expects 2 arguments, got {args.length}",
+                            ByteArray.empty)
+  | "lwsPersist" =>
+      match decodeArgs argsJson with
+      | .error e   => pure (errJson e, ByteArray.empty)
+      | .ok [a, b] => Ops.lwsPersist a b
+      | .ok args   => pure (errJson s!"lwsPersist expects 2 arguments, got {args.length}",
                             ByteArray.empty)
   | "solidStep" =>
       match decodeArgs argsJson with

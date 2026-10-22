@@ -49,6 +49,16 @@
 //     quadratic (16).
 //   Absolute: the 20 updates and the reopen each under 2 s at 4k.
 //
+// The cost of one write against the size of the storage
+// (https://github.com/danbri/factoidal/issues/918, `--storage files`): a
+// storage of s, 2s, 4s data resources (default s = 1,000, `--storage-base S`),
+// opened from DIR in each mode; 20 PUTs of new small resources per repeat,
+// the minimum of three repeats, per PUT; peak RSS of the child reported.
+//   time(4s) <= 1.5 * time(s) with `--storage files`. The model is constant
+//     (one body file and one journal record per write); the snapshot mode,
+//     which writes the whole storage, gives about 4 and is reported, not
+//     bounded.
+//
 // Score line: "N pass, M fail (out of T)". Exit 0 pass, 1 fail, 2 setup error.
 
 import { execFileSync } from 'node:child_process'
@@ -257,8 +267,92 @@ if (opt('--index-child')) {
   await indexChild(Number(opt('--index-child')))
   process.exit(0)
 }
+// The cost of one write against the size of the storage
+// (https://github.com/danbri/factoidal/issues/918). A storage of s data
+// resources is built in memory, written as lws-state.json, and opened from
+// DIR in the given mode (`files` migrates it). One repeat is 20 PUTs of new
+// small resources; the row keeps the minimum of three repeats, per PUT, and
+// the peak resident set of the child process.
+async function storageChild (s, mode) {
+  const f = await import(join(PKG, 'index.mjs'))
+  const { listen } = await import(join(PKG, 'lws/server.mjs'))
+  const { writeSnapshot } = await import(join(PKG, 'lws/persist.mjs'))
+  const engine = await f.loadEngine()
+  const time = async (fn) => { const t0 = process.hrtime.bigint(); await fn(); return Number(process.hrtime.bigint() - t0) / 1e6 }
+  const dir = mkdtempSync(join(tmpdir(), 'lws918-storage-scaling-'))
+  try {
+    const fill = await listen({ engine, port: 0, insecureNoAuth: true, onError: () => {} })
+    const o = fill.origin
+    try {
+      const mk = await fetch(`${o}/items/`, { method: 'PUT', headers: { 'content-type': 'text/turtle' }, body: '' })
+      await mk.text()
+      for (let i = 0; i < s; i++) {
+        const r = await fetch(`${o}/items/`, { method: 'POST', headers: { 'content-type': 'text/plain', slug: `r${i}` }, body: `resource ${i} `.repeat(20) })
+        await r.arrayBuffer()
+        if (r.status !== 201) throw new Error(`POST ${i} answered ${r.status}`)
+      }
+      const storage = await fill.storage()
+      writeSnapshot(dir, engine.call('lwsSnapshot', [storage.handle]).snapshot)
+    } finally { await fill.close() }
+    const server = await listen({ engine, port: 0, insecureNoAuth: true, onError: () => {}, dir, baseIri: `${o}/`, storage: mode })
+    const reps = []
+    let k = 0
+    try {
+      for (let rep = 0; rep < 3; rep++) {
+        reps.push(await time(async () => {
+          for (let j = 0; j < 20; j++) {
+            const r = await fetch(`${server.origin}/items/new${k++}`, { method: 'PUT', headers: { 'content-type': 'text/plain' }, body: `new ${k}` })
+            await r.arrayBuffer()
+            if (r.status !== 201) throw new Error(`PUT answered ${r.status}`)
+          }
+        }) / 20)
+      }
+    } finally { await server.close() }
+    process.stdout.write(JSON.stringify({ s, mode, put: Math.min(...reps), rss: process.resourceUsage().maxRSS * 1024 }) + '\n')
+  } finally {
+    rmSync(dir, { recursive: true, force: true })
+  }
+}
+
+// The memory of a storage kept in files (issue 918 stage 2, an EXPECTED
+// FAILURE today): phase `fill` writes s resources of 16 KiB into DIR with
+// `storage: "files"`; phase `open` (a new process) opens DIR and reads one
+// resource, and reports its peak resident set. Stage 1 reads every body into
+// memory at start, so the peak grows with the storage.
+async function storageMemChild (s, dir, phase) {
+  const f = await import(join(PKG, 'index.mjs'))
+  const { listen } = await import(join(PKG, 'lws/server.mjs'))
+  const engine = await f.loadEngine()
+  const server = await listen({ engine, port: 0, insecureNoAuth: true, onError: () => {}, dir, storage: 'files' })
+  try {
+    if (phase === 'fill') {
+      const mk = await fetch(`${server.origin}/items/`, { method: 'PUT', headers: { 'content-type': 'text/turtle' }, body: '' })
+      await mk.text()
+      const body = 'x'.repeat(16384)
+      for (let i = 0; i < s; i++) {
+        const r = await fetch(`${server.origin}/items/`, { method: 'POST', headers: { 'content-type': 'text/plain', slug: `r${i}` }, body })
+        await r.arrayBuffer()
+        if (r.status !== 201) throw new Error(`POST ${i} answered ${r.status}`)
+      }
+    } else {
+      const r = await fetch(`${server.origin}/items/r0`)
+      await r.arrayBuffer()
+      if (r.status !== 200) throw new Error(`GET answered ${r.status}`)
+    }
+  } finally { await server.close() }
+  process.stdout.write(JSON.stringify({ s, phase, rss: process.resourceUsage().maxRSS * 1024 }) + '\n')
+}
+
 if (opt('--merkle-child')) {
   await merkleChild(Number(opt('--merkle-child')))
+  process.exit(0)
+}
+if (opt('--storage-mem-child')) {
+  await storageMemChild(Number(opt('--storage-mem-child')), opt('--dir'), opt('--phase'))
+  process.exit(0)
+}
+if (opt('--storage-child')) {
+  await storageChild(Number(opt('--storage-child')), opt('--mode'))
   process.exit(0)
 }
 
@@ -353,5 +447,70 @@ if (mrows.length === 3) {
     check(`merkle: ${label} at ${mc.k} members < 2000 ms`, mc[op] < 2000, `${mc[op].toFixed(1)} ms`)
   }
 }
-console.log(`lws scaling: ${pass} pass, ${fail} fail (out of ${pass + fail})`)
+// The cost of one write with `--storage files` (issue 918).
+const sBase = Number(opt('--storage-base') ?? 1000)
+const srows = { snapshot: [], files: [] }
+for (const mode of ['snapshot', 'files']) {
+  for (const s of [sBase, 2 * sBase, 4 * sBase]) {
+    let out
+    try {
+      out = execFileSync(process.execPath, [fileURLToPath(import.meta.url), '--storage-child', String(s), '--mode', mode],
+        { encoding: 'utf8', stdio: ['ignore', 'pipe', 'inherit'], timeout: 900000 })
+    } catch (e) {
+      check(`storage ${mode} at ${s} resources`, false, `the child process stopped (${String(e.message).split('\n')[0]})`)
+      break
+    }
+    const r = JSON.parse(out.trim().split('\n').pop())
+    srows[mode].push(r)
+    console.log(`  storage ${mode}, ${s} resources: PUT ${r.put.toFixed(2)} ms, peak RSS ${(r.rss / 1048576).toFixed(1)} MiB`)
+  }
+}
+if (srows.files.length === 3) {
+  const [fa, , fc] = srows.files
+  const ratio = fc.put / fa.put
+  check(`storage files: PUT time 4s/s <= 1.5 (s = ${sBase}, flat in the storage size)`, ratio <= 1.5, `ratio ${ratio.toFixed(2)}`)
+}
+if (srows.snapshot.length === 3) {
+  const [sa, , sc] = srows.snapshot
+  // Reported, not bounded: the snapshot mode writes the whole storage.
+  console.log(`  storage snapshot: PUT time 4s/s ${(sc.put / sa.put).toFixed(2)} (reported; the snapshot is linear in the storage)`)
+}
+// EXPECTED FAILURE, https://github.com/danbri/factoidal/issues/918 stage 2:
+// the peak memory of a start must not grow with the storage. Stage 1 holds
+// every body in memory, so 4s resources of 16 KiB take about 48 MiB more
+// than s. When stage 2 lands this row passes, the run turns red as an
+// unexpected pass, and the row becomes an assertion.
+let xfail = 0
+{
+  const mrowsS = []
+  for (const s of [sBase, 4 * sBase]) {
+    const dir = mkdtempSync(join(tmpdir(), 'lws918-storage-mem-'))
+    try {
+      for (const phase of ['fill', 'open']) {
+        const out = execFileSync(process.execPath, [fileURLToPath(import.meta.url), '--storage-mem-child', String(s), '--dir', dir, '--phase', phase],
+          { encoding: 'utf8', stdio: ['ignore', 'pipe', 'inherit'], timeout: 900000 })
+        if (phase === 'open') mrowsS.push(JSON.parse(out.trim().split('\n').pop()))
+      }
+    } catch (e) {
+      check(`storage files memory at ${s} resources`, false, `the child process stopped (${String(e.message).split('\n')[0]})`)
+    } finally {
+      rmSync(dir, { recursive: true, force: true })
+    }
+  }
+  if (mrowsS.length === 2) {
+    const [ma, mc] = mrowsS
+    const growth = mc.rss - ma.rss
+    console.log(`  storage files: start and one GET, ${ma.s} resources of 16 KiB: peak RSS ${(ma.rss / 1048576).toFixed(1)} MiB; ` +
+                `${mc.s}: ${(mc.rss / 1048576).toFixed(1)} MiB`)
+    const ok = growth <= 8 * 1048576
+    if (ok) {
+      fail++
+      console.log(`  FAIL  UNEXPECTED PASS (issue 918 stage 2): peak RSS of a start grows ${(growth / 1048576).toFixed(1)} MiB <= 8 MiB from s to 4s; make this row an assertion`)
+    } else {
+      xfail++
+      console.log(`  xfail storage files: peak RSS of a start does not grow with the storage (issue 918 stage 2; growth ${(growth / 1048576).toFixed(1)} MiB, bound 8 MiB)`)
+    }
+  }
+}
+console.log(`lws scaling: ${pass} pass, ${fail} fail, ${xfail} xfail (out of ${pass + fail + xfail})`)
 process.exit(fail ? 1 : 0)

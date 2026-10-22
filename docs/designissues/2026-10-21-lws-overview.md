@@ -41,7 +41,12 @@ the permission of the owner. The drafts define:
   `Link rel="type"`, the native class and Turtle content, a QUERY filter in
   conjunctive normal form over types and indexed relations, answers filtered
   by the requester's read access (https://github.com/danbri/factoidal/issues/912);
-- persistence in `DIR/lws-state.json`;
+- persistence in `DIR/lws-state.json`, or, with `--storage files` (off by
+  default), one file per resource body and a journal of metadata changes, so
+  the cost of a write does not grow with the size of the storage; a torn last
+  journal record is ignored at start, and an existing `lws-state.json` is
+  migrated (https://github.com/danbri/factoidal/issues/918, stage 1;
+  `docs/designissues/2026-10-22-lws-storage-on-disk.md`);
 - encryption at rest of that file, off by default: with `FACTOIDAL_LWS_KEY`
   set to a 32-byte key, the file is sealed with ChaCha20-Poly1305 (HACL*)
   under a new random nonce for every write and authenticated at start; a
@@ -100,8 +105,11 @@ ShEx) and reasons over RDF.
   hardening of https://github.com/danbri/factoidal/issues/915, a delivery
   rate limit and the refusal of an inbox that names this server, landed on
   2026-10-22; the drafts define no endpoint verification procedure.)
-- Storage: the whole state is held in memory and written to one snapshot file,
-  so a storage is limited by memory. A storage on Shardborough is not started.
+- Storage: the whole state is held in memory, so a storage is limited by
+  memory. With `--storage files` a write no longer rewrites the whole storage
+  (stage 1 of https://github.com/danbri/factoidal/issues/918); stage 2 (bodies
+  out of memory and read on GET, the metadata in an on-disk index) is open. A
+  storage on Shardborough is not started.
 - No authorization server of our own; the storage trusts an external one.
 - Not on the public results page (https://ebremer.com/lws/conformance); owner
   decision 2026-10-21: "Not yet". No users outside the project.

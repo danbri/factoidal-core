@@ -30,6 +30,12 @@ import { spawn } from 'node:child_process'
 import { fileURLToPath } from 'node:url'
 import http from 'node:http'
 
+// This suite tests the sealed SNAPSHOT file; a storage kept in files with a
+// key is tested by tests/lws/storage-files.mjs (issue 918). The variable
+// that selects the files mode is therefore not passed to the servers and the
+// command lines started here.
+delete process.env.FACTOIDAL_LWS_STORAGE
+
 const ROOT = fileURLToPath(new URL('../../', import.meta.url))
 const CLI = join(ROOT, 'npm/factoidal/bin/factoidal.mjs')
 

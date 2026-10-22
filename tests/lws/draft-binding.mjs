@@ -1740,9 +1740,14 @@ async function main () {
       } finally {
         await first.close()
       }
-      assert(existsSync(join(dir, 'lws-state.json')), 'no lws-state.json')
-      const names = readdirSync(dir)
-      assert(names.length === 1 && names[0] === 'lws-state.json', `DIR holds ${names}`)
+      const names = readdirSync(dir).sort()
+      if (process.env.FACTOIDAL_LWS_STORAGE === 'files') {
+        // A storage kept in files (issue 918): metadata, journal, bodies.
+        assert(names.join(',') === 'bodies,lws-files.json,lws-journal', `DIR holds ${names}`)
+      } else {
+        assert(existsSync(join(dir, 'lws-state.json')), 'no lws-state.json')
+        assert(names.length === 1 && names[0] === 'lws-state.json', `DIR holds ${names}`)
+      }
       const second = await listen({ engine, port: 0, insecureNoAuth: true, dir })
       try {
         const g = await fetch(`${second.origin}/kept/note.txt`)

@@ -337,6 +337,7 @@ usage: factoidal lws-serve DIR (--issuer IRI | --auth-config FILE | --insecure-n
                          [--no-linkset-put] [--unstable-search-results] [--merkle]
                          [--controller-inbox URL] [--delivery-limit N]
                          [--delivery-window SECONDS] [--redirects-max N]
+                         [--storage snapshot|files]
 
 Starts a Node HTTP server that answers every request through the engine's
 lwsStep operation.
@@ -347,6 +348,18 @@ changed it (temporary file, fsync, rename), and read back on the next
 start. The engine decides the snapshot format and refuses a snapshot
 path with a dot segment or other traversal form
 (formal/lean4/L4Factoidal/LWS/Snapshot.lean).
+
+With --storage files (off by default) a write costs the same whatever the
+size of the storage: DIR holds one file per resource body (DIR/bodies/),
+a journal of metadata changes (DIR/lws-journal) and a metadata file
+(DIR/lws-files.json) that the journal is folded into from time to time.
+A journal record is valid only when it is complete and its SHA-256
+matches; a torn last record is ignored at start. An existing
+DIR/lws-state.json is migrated at the first start and renamed to
+lws-state.json.migrated. The engine decides every file name and every
+byte (formal/lean4/L4Factoidal/LWS/FileLayout.lean); the storage is still
+held in memory while the server runs
+(docs/designissues/2026-10-22-lws-storage-on-disk.md).
 
 Encryption at rest (off by default): when the environment variable
 FACTOIDAL_LWS_KEY holds a 32-byte key (64 hex digits, or 43 characters of
@@ -411,6 +424,13 @@ It protects the file on disk only (formal/lean4/L4Factoidal/LWS/SnapshotSeal.lea
                   answer 301 Moved Permanently (config member redirectsMax;
                   default 256)
                   https://github.com/danbri/factoidal/issues/914
+  --storage snapshot|files
+                  how DIR keeps the storage (config member storage;
+                  default the environment variable FACTOIDAL_LWS_STORAGE,
+                  else snapshot): one snapshot file written whole after
+                  each change, or one file per body with a journal, so a
+                  write costs the same whatever the storage size
+                  https://github.com/danbri/factoidal/issues/918
 
 Authorization (LWS editor's draft, section Authorization; one of the three
 is required):
@@ -578,7 +598,7 @@ const VALUE_OPTIONS = {
   serve: new Set(['port', 'host', 'query-path', 'gsp-path', 'file', 'layout', 'tdb2']),
   'lws-serve': new Set(['port', 'host', 'base', 'issuer', 'auth-config', 'owner', 'root-acl',
     'audience', 'page-size', 'moves', 'controller-inbox', 'delivery-limit', 'delivery-window',
-    'redirects-max']),
+    'redirects-max', 'storage']),
   'solid-serve': new Set(['port', 'host', 'base', 'owner', 'issuer', 'auth-config']),
   'solid-client': new Set(['body', 'file', 'content-type', 'interpret'])
 }
@@ -1425,6 +1445,7 @@ async function commandLwsServe (positional, options) {
       ...(options['delivery-limit'] !== undefined ? { deliveryLimit: natOption('delivery-limit', options['delivery-limit']) } : {}),
       ...(options['delivery-window'] !== undefined ? { deliveryWindow: natOption('delivery-window', options['delivery-window']) } : {}),
       ...(options['redirects-max'] !== undefined ? { redirectsMax: natOption('redirects-max', options['redirects-max']) } : {}),
+      ...(typeof options.storage === 'string' ? { storage: options.storage } : {}),
       ...(insecure ? { insecureNoAuth: true } : { auth }),
       ...(typeof options.owner === 'string' ? { owner: options.owner } : {}),
       ...(typeof options['root-acl'] === 'string'

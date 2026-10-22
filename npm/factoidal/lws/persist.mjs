@@ -24,8 +24,8 @@
 // fsync, rename over the state file, fsync of DIR. A crash leaves the old
 // snapshot or the new one, never a torn one.
 
-import { closeSync, fsyncSync, mkdirSync, openSync, readFileSync, renameSync, writeSync, existsSync } from 'node:fs'
-import { join, resolve } from 'node:path'
+import { closeSync, fsyncSync, mkdirSync, openSync, readFileSync, renameSync, unlinkSync, writeSync, existsSync } from 'node:fs'
+import { dirname, join, resolve, sep } from 'node:path'
 
 export const STATE_FILE = 'lws-state.json'
 
@@ -47,6 +47,30 @@ export function storageKeyText (explicit) {
       value = globalThis.process.env[STORAGE_KEY_VARIABLE]
     } else if (globalThis.Deno !== undefined) {
       value = globalThis.Deno.env.get(STORAGE_KEY_VARIABLE)
+    }
+  } catch (_error) {
+    value = undefined
+  }
+  return typeof value === 'string' && value !== '' ? value : undefined
+}
+
+/** The environment variable that sets where `lws-serve DIR` keeps the
+ *  storage when the caller names no `storage` (issue 918). */
+export const STORAGE_MODE_VARIABLE = 'FACTOIDAL_LWS_STORAGE'
+
+/**
+ * The text of the storage mode: `explicit` when the caller gave a string,
+ * and otherwise the environment variable, passed unread; the engine checks
+ * it. An empty value is none (the engine's default, the snapshot).
+ */
+export function storageModeText (explicit) {
+  if (typeof explicit === 'string') return explicit
+  let value
+  try {
+    if (globalThis.process !== undefined && globalThis.process.env !== undefined) {
+      value = globalThis.process.env[STORAGE_MODE_VARIABLE]
+    } else if (globalThis.Deno !== undefined) {
+      value = globalThis.Deno.env.get(STORAGE_MODE_VARIABLE)
     }
   } catch (_error) {
     value = undefined
@@ -120,4 +144,166 @@ export function persistIfChanged (engine, snapshotOp, handle, envelope, dir) {
     throw new Error(`${snapshotOp} answered with no snapshot`)
   }
   writeSnapshot(dir, answer.snapshot)
+}
+
+// ---------------------------------------------------------------------------
+// A STORAGE KEPT IN FILES (https://github.com/danbri/factoidal/issues/918)
+//
+// With the open configuration `storage: "files"` the engine decides the
+// directory layout and every byte (formal/lean4/L4Factoidal/LWS/FileLayout.lean,
+// design record docs/designissues/2026-10-22-lws-storage-on-disk.md). This
+// part of the file only performs what the engine names:
+//
+//   * reads: the engine names files (paths relative to DIR); each is read
+//     whole, or reported absent;
+//   * a plan of file operations, in order, with their bytes in one region:
+//       write  {path, temp, offset, length}  parent directory, temp file,
+//                                            fsync, rename, fsync directory
+//       append {path, offset, length}        append, fsync
+//       remove {path}                        remove; a missing file is no error
+//       rename {from, to}                    rename, fsync directory; a missing
+//                                            file is no error
+//
+// A name that leaves DIR is refused as a failure of this host; the engine
+// never names one.
+
+/** The absolute path of a name the engine gave, inside DIR. */
+function insideDir (root, name) {
+  if (typeof name !== 'string' || name === '') throw new Error('lws files: the engine named no file')
+  const abs = resolve(root, name)
+  if (!abs.startsWith(root + sep)) throw new Error(`lws files: ${name} is outside the storage directory`)
+  return abs
+}
+
+/** fsync a directory; some platforms cannot, and the rename stands. */
+function fsyncDir (dir) {
+  try {
+    const fd = openSync(dir, 'r')
+    try { fsyncSync(fd) } finally { closeSync(fd) }
+  } catch (_error) {
+    // Some platforms cannot fsync a directory.
+  }
+}
+
+/** `seed` for one engine call: 32 random bytes, base64. Pure I/O. */
+function seedBase64 () {
+  const bytes = new Uint8Array(32)
+  globalThis.crypto.getRandomValues(bytes)
+  let text = ''
+  for (const b of bytes) text += String.fromCharCode(b)
+  return btoa(text)
+}
+
+/**
+ * Read the files the engine named. Returns the `files` member of the load
+ * document and the bytes of the present files, one after the other.
+ */
+export function readNamedFiles (dir, names) {
+  const root = resolve(dir)
+  const files = []
+  const parts = []
+  let total = 0
+  for (const name of names) {
+    const abs = insideDir(root, name)
+    if (!existsSync(abs)) {
+      files.push({ path: name, present: false })
+      continue
+    }
+    const bytes = readFileSync(abs)
+    files.push({ path: name, present: true, length: bytes.length })
+    parts.push(bytes)
+    total += bytes.length
+  }
+  const region = new Uint8Array(total)
+  let at = 0
+  for (const part of parts) { region.set(part, at); at += part.length }
+  return { files, region }
+}
+
+/** Perform a plan of file operations exactly as the engine gave it. */
+export function performPlan (dir, plan, bytes) {
+  const root = resolve(dir)
+  mkdirSync(root, { recursive: true })
+  const slice = (op) => bytes.subarray(op.offset, op.offset + op.length)
+  for (const op of Array.isArray(plan) ? plan : []) {
+    switch (op.op) {
+      case 'write': {
+        const path = insideDir(root, op.path)
+        const temp = insideDir(root, op.temp)
+        mkdirSync(dirname(path), { recursive: true })
+        const fd = openSync(temp, 'w', 0o600)
+        try {
+          writeSync(fd, slice(op))
+          fsyncSync(fd)
+        } finally {
+          closeSync(fd)
+        }
+        renameSync(temp, path)
+        fsyncDir(dirname(path))
+        break
+      }
+      case 'append': {
+        const path = insideDir(root, op.path)
+        mkdirSync(dirname(path), { recursive: true })
+        const fd = openSync(path, 'a', 0o600)
+        try {
+          writeSync(fd, slice(op))
+          fsyncSync(fd)
+        } finally {
+          closeSync(fd)
+        }
+        break
+      }
+      case 'remove': {
+        try { unlinkSync(insideDir(root, op.path)) } catch (error) {
+          if (error.code !== 'ENOENT') throw error
+        }
+        break
+      }
+      case 'rename': {
+        const to = insideDir(root, op.to)
+        try { renameSync(insideDir(root, op.from), to) } catch (error) {
+          if (error.code !== 'ENOENT') throw error
+        }
+        fsyncDir(dirname(to))
+        break
+      }
+      default:
+        throw new Error(`lws files: the engine named an unknown file operation ${String(op.op)}`)
+    }
+  }
+}
+
+/**
+ * Open a storage kept in files: read what `lwsOpen` named, give it to
+ * `lwsLoad`, read what that names, until the engine is ready; then perform
+ * the plan of the start. An engine refusal is thrown as the engine's error.
+ */
+export function loadFiles (engine, handle, opened, dir) {
+  let want = opened.load
+  for (let round = 0; round < 8; round += 1) {
+    const { files, region } = readNamedFiles(dir, Array.isArray(want.read) ? want.read : [])
+    const answered = engine.callBlobIO('lwsLoad', [handle, JSON.stringify({ files, seed: seedBase64() })], region)
+    const envelope = answered.envelope
+    if (envelope.ready === true) {
+      performPlan(dir, envelope.plan, answered.bytes)
+      return envelope
+    }
+    if (envelope.load === undefined || envelope.load === null) {
+      throw new Error('lwsLoad answered neither load nor ready')
+    }
+    want = envelope.load
+  }
+  throw new Error('lwsLoad asked for more reads than one start may make')
+}
+
+/**
+ * After one step of a storage kept in files: when the engine says the
+ * storage changed, ask it for the write plan (`lwsPersist`) and perform it.
+ */
+export function persistFilesIfChanged (engine, handle, envelope, dir) {
+  if (typeof dir !== 'string' || envelope === null || typeof envelope !== 'object') return
+  if (envelope.changed !== true) return
+  const answered = engine.callBlobIO('lwsPersist', [handle, JSON.stringify({ seed: seedBase64() })], new Uint8Array(0))
+  performPlan(dir, answered.envelope.plan, answered.bytes)
 }

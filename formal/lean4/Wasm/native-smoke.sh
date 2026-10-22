@@ -1853,6 +1853,31 @@ checkseq "LWS: resolve, inbox loop 400, rate limit with wake and lwsFlush, 301 a
    and rs[12]["response"]["status"] == 201
    and [d["url"] for d in rs[12]["deliveries"]] == ["http://192.0.2.9/ctl"]'
 
+# A storage kept in files (https://github.com/danbri/factoidal/issues/918):
+# lwsOpen names the control files to read; lwsLoad and lwsPersist carry file
+# bytes and answer only through the byte-region entry (their round trips are
+# tests/lws/storage-files.mjs and L4Factoidal/LWS/FileLayoutTests.lean); an
+# unknown storage mode, and a snapshot with "files", are refused.
+python3 - "$TMP/lws-files.json" <<'EOF'
+import json, sys
+seq = [
+  ["lwsOpen",    [json.dumps({"insecureNoAuth": True, "storage": "files"})]],
+  ["lwsLoad",    ["lws1", json.dumps({"files": [], "seed": "AAAAAAAAAAAAAAAAAAAAAA=="})]],
+  ["lwsPersist", ["lws1", json.dumps({"seed": "AAAAAAAAAAAAAAAAAAAAAA=="})]],
+  ["lwsOpen",    [json.dumps({"insecureNoAuth": True, "storage": "disk"})]],
+  ["lwsOpen",    [json.dumps({"insecureNoAuth": True, "storage": "files",
+                              "snapshot": {"format": "lws-snapshot-2", "clock": 1, "entries": []}})]],
+]
+json.dump(seq, open(sys.argv[1], "w"))
+EOF
+
+checkseq "LWS: storage files names lws-files.json, lws-journal, lws-state.json; lwsLoad and lwsPersist only through the byte region; bad modes refused (issue 918)" "$TMP/lws-files.json" \
+  'rs[0]["load"]["read"] == ["lws-files.json", "lws-journal", "lws-state.json"]
+   and rs[1]["ok"] is False and "l4_call_blob_io" in rs[1]["error"]
+   and rs[2]["ok"] is False and "l4_call_blob_io" in rs[2]["error"]
+   and rs[3]["ok"] is False and "\"storage\" is" in rs[3]["error"]
+   and rs[4]["ok"] is False and "lwsLoad" in rs[4]["error"]'
+
 # Authorization is on unless the configuration opts out
 # (https://github.com/danbri/factoidal/issues/886): with no "auth" and no
 # "insecureNoAuth", an anonymous write answers 401 with resource_metadata,
@@ -3116,7 +3141,7 @@ check "ops reflection (incl. handle ops via callIO)" ops "$TMP/empty.json" \
             "tdb2ServeKeys","tdb2ServeOpen"]) <= set(r["ops"])
    and r["blobIoOps"] == ["blobEcho","packFeed","packNext",
                           "storeServeRequest","storeServeCommit","datasetQuadsBin",
-                          "lwsStep","solidStep"]'
+                          "lwsStep","solidStep","lwsLoad","lwsPersist"]'
 
 check "unknown op -> error" definitelyNotAnOp "$TMP/empty.json" \
   'r["ok"] is False and "unknown op" in r["error"]'

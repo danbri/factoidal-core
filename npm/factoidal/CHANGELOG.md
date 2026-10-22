@@ -38,6 +38,34 @@ generated from the engine's list.
 - `@factoidal/core/fn` `entail()` with an `x-ikl-*` regime rejects with code
   `regime.refused` and the message names `query`, the function that refuses.
 
+Linked Web Storage kept in files, stage 1 (https://github.com/danbri/factoidal/issues/918;
+design record `docs/designissues/2026-10-22-lws-storage-on-disk.md`), decided in
+Lean (`L4Factoidal/LWS/Journal.lean`, `FileLayout.lean`):
+
+- `factoidal lws-serve DIR --storage files` (config member `storage: "files"`,
+  `listen({ storage: 'files' })`; the default stays `snapshot`): DIR holds one
+  file per resource body under `bodies/`, a journal `lws-journal` with one
+  record per change, and a metadata file `lws-files.json` that the journal is
+  folded into when it passes max(1 MiB, the size of the metadata file). A
+  write no longer rewrites the whole storage: a PUT into a storage of 1,000,
+  2,000 and 4,000 resources took 2.70, 2.40 and 2.89 ms, against 42.6, 83.9 and
+  170.4 ms with the snapshot (`tests/lws/scaling.mjs`, rows "storage").
+- A journal record is valid only when it is complete and its SHA-256 matches;
+  a torn last record is ignored at start (theorem `decodeFrames_torn`).
+  Replaying the records of a sequence of steps gives the metadata of the store
+  after them (`replay_records`, `persist_replay`).
+- With `FACTOIDAL_LWS_KEY` every body file and journal record is sealed with
+  ChaCha20-Poly1305 (HACL*), the file's own name in the associated data, and
+  `lws-files.json` as the snapshot is.
+- An existing `lws-state.json` is migrated at the first start in files mode and
+  renamed to `lws-state.json.migrated`.
+- New ops `lwsLoad` and `lwsPersist` (byte-region entry only): the engine names
+  the files to read and gives every file operation and byte; the host
+  (`lws/persist.mjs`) performs them. `tools/lws-touchstone.sh --storage files`.
+- Stage 1 still holds the whole storage in memory; stage 2 (bodies read on GET,
+  the metadata in an on-disk index) is an expected failure in
+  `tests/lws/scaling.mjs` naming issue 918.
+
 Linked Web Storage Search and Type Index Services (`lws10-index`, w3c/lws-protocol
 `9a08ff65`; https://github.com/danbri/factoidal/issues/912), decided in Lean
 (`L4Factoidal/LWS/TypeIndex.lean`, `Search.lean`):
