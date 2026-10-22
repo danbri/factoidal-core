@@ -28,7 +28,8 @@ the semantic choices, repair proofs and remaining capability gaps.
 
 PR1's [independent review and raw evidence](audits/pr1-review-20261022/README.md)
 are retained unchanged. The introduced zero yearMonthDuration string-cast
-regression and inherited repeated-anchor regex defect need integration tests.
+regression and inherited repeated-anchor regex defect have been repaired;
+public regression tests are included in the final artifact replay.
 Those original native results do not establish the behavior of the combined
 source or of a rebuilt package.
 
@@ -147,8 +148,14 @@ that caller precondition. The public SHACL regression fails on the old Wasm;
 its passing run on the final artifact remains required.
 
 The recursion audit initially failed on 17 unclassified declarations. The
-compiled-rewrite reach audit passed. Finite refinement repairs and explicit
-nesting-only classifications are being checked before the final build.
+compiled-rewrite reach audit passed. Five flat-input paths now use proved iterative replacements, with explicit
+nesting-only classifications for the remaining relevant declarations. The
+focused 56-job build, generated-code gates and nine evaluator controls passed;
+the latter include 100,000-item inputs.
+[Post-replacement native evidence](audits/pr1-tail-final-20261022/manifest.json)
+confirms the RIF and XSD outputs are byte-identical to their pre-replacement
+runs, with the same failures and exclusions. These are native results, not
+a Wasm stack-safety claim.
 Main `0a7fab490` was merged as `19ea4dd4f` without conflicts; its three changes
 concern storage buffer capacity, native query handling and thread tests.
 
@@ -168,3 +175,12 @@ The existing F* scope qualifier remains: parser and algebra spec verified in
 F*; on-disk backend has unverified OCaml-side optimization layers being
 migrated back to F* (see fstar-purity-unwind.md). This integration is not a new
 F* audit or an npm publication.
+
+## CI test setup repair
+
+CI at `4f11a392f` passed all 979 build jobs and the hygiene audit. The newly
+enabled recursion-audit self-tests then failed 2 of 12 fixtures because their
+temporary repository did not contain the compiler-replacement audit now
+invoked by the production gate. This is a test-fixture dependency failure,
+not a Lean proof failure. The failed CI log is preserved. The setup must be
+repaired and the complete CI rerun before acceptance.
