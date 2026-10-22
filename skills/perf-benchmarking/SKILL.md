@@ -496,6 +496,11 @@ Plus `factoidal --explain` dumps the query plan without executing
 (`SPARQL.Explain`, `SPARQL.Plan.Explain`). Reach for these before any
 ad-hoc profiling.
 
+In the cloud container (kernel 6.18, 2026-10-18) `/usr/bin/perf` is a wrapper
+that fails ("perf not found for kernel"). Use the installed binary
+`/usr/lib/linux-tools-6.8.0-146/perf record -e cpu-clock --call-graph dwarf,16384`.
+Without DWARF call graphs the callers of GMP and libc functions are lost.
+
 ## Profiling policy
 
 On 2026-10-10 a decoded-page-cache trial's unchanged baseline warmup rose from

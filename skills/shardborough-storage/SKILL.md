@@ -1581,6 +1581,35 @@ producers of RDF quads, and a file is one producer.
    (`tests/sbm11/syntax_bench.sh`) found it; the scaling row
    `sbm11-pack-nt-vs-nq` now gates it.
 
+## Named graphs, replay cost and IBK limits (2026-10-18)
+
+- Every named graph is kept by SBM11, also a graph with no triple and a graph
+  named by a blank node: graph list GNL1 (`graphs.gnl1`, eleventh manifest
+  role) and DLOG version 3 (graph slots; CREATE adds, CLEAR keeps, DROP
+  removes). Issues 855 and 856, closed. Record: stage 5 record section 12.
+- `l4factoidal query` loses these graphs:
+  https://github.com/danbri/factoidal/issues/876 (expected failure in
+  `tests/sbm11/named_graphs.sh`).
+- The IBK4 and IBK5 stores lose a graph with no triple without a message
+  (2 of the 6 graphs of `d5.trig`; `CREATE GRAPH` committed and not visible):
+  https://github.com/danbri/factoidal/issues/880, 3 expected failures. The
+  choice (refuse, or port GNL1) waits for the owner; the coordinator
+  recommends refusal, as IBK is a read oracle until stage 7.
+- The replay of a log of NEW terms costs 37 to 42 microseconds of CPU for
+  each entry, against 15 to 18 for dictionary terms. Cause: overlay ids are
+  `14 * 2^60 + n`, above 2^63, so a Lean `Nat` holds them as GMP numbers, and
+  the per-permutation sort in `Session.withOverlay` spends 30 percent of the
+  replay in `mpz_cmp`. https://github.com/danbri/factoidal/issues/879, row
+  `sbm11-replay-insert-time` (expected failure). Any Shardborough id at or
+  above 2^63 (tag 8 or more, including triple terms, tag 9) has the same
+  cost wherever rows are compared or hashed.
+- Code or machine? Build the older commit in a worktree with a copy of
+  `formal/lean4/.lake/build` (Lake rebuilds only the changed modules: 510
+  jobs, about 10 minutes for `l4sbm11` and `l4sbm11-pack`), then run both
+  binaries interleaved on this machine. On 2026-10-18 this showed that a
+  recorded 746 ms (2026-10-15) was a different machine state, not a code
+  change. Remove the worktree in the same turn (2 GB).
+
 ## Cross-backend differential gate and Jena TDB2 reader (2026-10-13)
 
 - `tests/stack/backend_diff.py`: every SELECT/ASK W3C SPARQL 1.1
