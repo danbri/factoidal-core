@@ -1952,6 +1952,25 @@ inductive FKind where
   | residual (env : EvalEnv) (e : Expr) (vars : Array String)
   deriving Inhabited
 
+/-- `?a, ?b` for `--explain`. -/
+def varsText (vs : Array String) : String :=
+  ", ".intercalate (vs.toList.map fun v => "?" ++ v)
+
+/-- How a compiled conjunct is evaluated, for `--explain`
+    (tests/sbm11/filter_keys.sh reads it; issue 948). -/
+def FKind.explainName : FKind → String
+  | .idEq v _ => s!"?{v} = constant on ids"
+  | .idEqVar v w => s!"sameTerm(?{v}, ?{w}) on ids"
+  | .str _ v _ _ => s!"string test of ?{v} on key bytes"
+  | .strRange v _ _ _ _ => s!"STRSTARTS of ?{v} on key ranks"
+  | .general _ vs => s!"reference evaluator on the decoded terms of {varsText vs}"
+  | .residual _ _ vs => s!"residual: reference evaluator on the decoded terms of {varsText vs}"
+
+/-- The `--explain` line of the compiled FILTER conjuncts. -/
+def filterKindsLine (fs : Array FKind) : String :=
+  s!"FILTER conjuncts on ids: {fs.size}" ++
+    (if fs.isEmpty then "" else ": " ++ "; ".intercalate (fs.map FKind.explainName).toList)
+
 /-- The reference FILTER on one solution mapping, as `QueryPattern.lowerWith`
     builds it: `ebvOrFalse (Expr.evalIn env mu (substituteExistentials env
     active mu e))`. The id path has no active graph; a residual conjunct is
@@ -3123,7 +3142,8 @@ def runPlanM {m : Type → Type} [Monad m] (st : Store m) (plan : Plan) (emit : 
     stats := { stats with rows := out.rows }
   (emit jsonTail.toUTF8 : m Unit)
   let t := stats.scan
-  return { stats with plan := stats.plan.push s!"total: rows decoded {t.rowsDecoded} (of a full scan the rows of its table, of a scan with candidates the rows gathered); join-key values tested {t.keysTested}; blocks read {t.blocksRead} of {t.blocksSelected} selected, {t.sipSkipped} skipped by candidates; {t.bytesRead} bytes" }
+  let plan1 := stats.plan.push s!"total: rows decoded {t.rowsDecoded} (of a full scan the rows of its table, of a scan with candidates the rows gathered); join-key values tested {t.keysTested}; blocks read {t.blocksRead} of {t.blocksSelected} selected, {t.sipSkipped} skipped by candidates; {t.bytesRead} bytes"
+  return { stats with plan := if fs.isEmpty then plan1 else plan1.push (filterKindsLine fs) }
 
 /-! ## The reference post-processing on decoded solutions (issue 823)
 
@@ -3228,7 +3248,7 @@ def whereTableM {m : Type → Type} [Monad m] (st : Store m) (plan : Plan) (env 
   let t := match firstRows with
     | some n => t0.slice 0 n
     | none => t0
-  return (t, lines, s)
+  return (t, if fs.isEmpty then lines else lines.push (filterKindsLine fs), s)
 
 /-- Run a post-processed plan: the WHERE solutions on ids, decoded, then the
     reference function of the query form (section above).
