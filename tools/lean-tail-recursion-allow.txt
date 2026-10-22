@@ -335,7 +335,6 @@ L4Factoidal_RIF_closure
 L4Factoidal_RIF_externalIrisFormulas
 L4Factoidal_RIF_externalIrisTms
 L4Factoidal_RIF_matchFormula
-L4Factoidal_RIF_matchTms
 L4Factoidal_RIF_naryArgPatterns
 L4Factoidal_RIF_parseFormulaF
 L4Factoidal_RIF_parseGroupItemsF
@@ -1476,3 +1475,20 @@ L4Factoidal_Storage_BlockMerkle_rootInputsFuel  # (s) the byte strings a tree ha
 L4Factoidal_LWS_Notifications_admits  # (s) the count of deliveries that admit lets through, for the theorem admits_le only: in the emitted C of 2026-10-22 no function outside LWS/Notifications.c names it, and inside it only admits itself and its boxed form do; the server runs admit (one decision per delivery, no recursion). Checked for https://github.com/danbri/factoidal/issues/915
 L4Factoidal_RDF_Runs_runsFrom  # (s) the runs of a list, the specification of the RDF/XML and JSON-LD stream writers (https://github.com/danbri/factoidal/issues/846, https://github.com/danbri/factoidal/issues/847); called only by Runs.lean's #guard and by theorems (RdfXmlWrite.rxRun_eq, Sink.runList_jsonld); the executed path is Sink.Writer.push, which keeps one open run
 L4Factoidal_RDF_Sink_elemsOf  # (s) the JSON-LD elements of the runs, the right side of Sink.runList_jsonld_eq; no executed function calls it; the executed path is Sink.Writer.push and flushJsonLd, one run at a time
+
+# 2026-10-22 integration: emitted C checked after replacing flat-input loops.
+# These cycles add frames on nested terms/documents; sibling scans are loops.
+L4Factoidal_RIF_groundMatchTR  # (b) nesting of RIF ground terms; groundMatchesAcc loops over sibling terms
+L4Factoidal_RIF_groundMatchesAcc  # (b) nesting through groundMatchTR only; its own sibling step emits goto _start
+L4Factoidal_RIF_matchTmTR  # (b) nesting of RIF pattern terms; matchTmsAcc loops over sibling arguments
+L4Factoidal_RIF_matchTmsAcc  # (b) nesting through matchTmTR only; blocked flags accumulate in the sibling loop
+L4Factoidal_Regex_CRe_eraseAssertions  # (b) parsed regex AST depth, including linear concatenation trees; same scope as CRe.dotAll/size, not a constant bound
+L4Factoidal_SPARQL_inSrxNamespace  # (b) XML document nesting; child siblings use childrenInSrxNamespace's emitted tail loop
+L4Factoidal_SPARQL_childrenInSrxNamespace  # (b) recursion through a nested XML child only; sibling step emits goto _start
+L4Factoidal_XML_namespaceView  # (b) XML document nesting; namespaceViewsAcc loops over siblings without retaining prior sibling frames
+L4Factoidal_XML_namespaceViewsAcc  # (b) nested child namespaceView only; sibling accumulator emits goto _start
+L4Factoidal_XML_NamespaceNode_forVocabulary  # (b) XML document nesting; specialised List.mapTR sibling loop emits goto _start
+L4Factoidal_XSD_valIdentical  # (b) nesting of XSD Val.seq values; valsIdentical loops over sibling values
+L4Factoidal_XSD_valsIdentical  # (b) nested sequence items only; successful sibling comparison emits goto _start
+L4Factoidal_XSD_valEqualOrIdentical  # (b) nesting of XSD Val.seq values; valsEqualOrIdentical loops over sibling values
+L4Factoidal_XSD_valsEqualOrIdentical  # (b) nested sequence items only; successful sibling comparison emits goto _start

@@ -1,0 +1,20 @@
+PASS ImportRejectionTest/RDF_Combination_Invalid_Profiles_1: two declared import profiles have no defined ordering, so the imports have no highest profile
+PASS ImportRejectionTest/RDF_Combination_Invalid_Constant_1: an imported graph carries a rif:iri or rdf:PlainLiteral typed literal, which RIF-RDF Combination does not permit
+PASS ImportRejectionTest/Multiple_Context_Error: a constant is used both as a positional-atom predicate and as a frame slot property across the imports closure
+PASS ImportRejectionTest/OWL_Combination_Invalid_DL_Import: under OWL-Direct an empty imported graph is not recognisable as an OWL 2 DL ontology
+PASS ImportRejectionTest/OWL_Combination_Invalid_DL_Formula: under OWL-Direct a Frame slot property must be a constant, and one is a variable
+PASS ImportRejectionTest/RDF_Combination_Invalid_Constant_2: an imported graph carries a rif:iri or rdf:PlainLiteral typed literal, which RIF-RDF Combination does not permit
+OVERRIDE PositiveEntailmentTest/RDF_Combination_Constant_Equivalence_4: not entailed, and the fixture says it must be
+
+rif-core DECIDED: 45 pass, 0 fail (out of 45 decided)
+UNDECIDED: 0 cases — a built-in outside this port's slice
+  blocked a rule, the chain reached its round bound, or an import's
+  regime or ontology is outside what this port decides
+NOT READ: 0 cases
+LOCAL OVERRIDE: 1 cases — a documented disagreement with a
+  DEFECTIVE fixture, read from tests/local-overrides/rif. The engine still ran and
+  its observed verdict is printed on the OVERRIDE line above.
+
+An UNDECIDED case is counted apart, never as a pass and never as a
+failure: a closure computed without a rule is not the closure, and
+reading `does not entail` off it would be a guess.

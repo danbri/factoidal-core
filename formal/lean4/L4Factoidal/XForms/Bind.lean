@@ -29,6 +29,7 @@ document error, which is what `none` says.
 -/
 import L4Factoidal.XPath.Eval
 import L4Factoidal.XML.Parser
+import L4Factoidal.XSD.Lexical
 
 namespace L4Factoidal.XForms
 
@@ -55,47 +56,21 @@ def mipTypeOfQName (q : String) : MipType :=
   else if q == "xsd:double"  || q == "xs:double"  then .double
   else .unsupported
 
-private def isDigitC (c : Char) : Bool := '0' <= c && c <= '9'
+/-- XForms 1.1 §5.1 / XSD 1.0 integer lexical space. -/
+def isIntegerLexical (s : String) : Bool := (XSD.parseIntegerLex s).isSome
 
-private def dropSign (cs : List Char) : List Char :=
-  match cs with
-  | '+' :: r => r
-  | '-' :: r => r
-  | r        => r
+/-- XForms 1.1 §5.1 / XSD 1.0 decimal lexical space. -/
+def isDecimalLexical (s : String) : Bool := (XSD.parseDecimalLex s).isSome
 
-private def signedDigits (cs : List Char) : Bool :=
-  let r := dropSign cs
-  !r.isEmpty && r.all isDigitC
-
-/-- XSD `integer`: an optional sign, then digits. -/
-def isIntegerLexical (s : String) : Bool := signedDigits s.toList
-
-/-- XSD `decimal`: an optional sign, then digits with at most one
-    point and at least one digit. -/
-def isDecimalLexical (s : String) : Bool :=
-  let cs := dropSign s.toList
-  match cs.splitOn '.' with
-  | [ip]     => !ip.isEmpty && ip.all isDigitC
-  | [ip, fp] => (!ip.isEmpty || !fp.isEmpty) && ip.all isDigitC && fp.all isDigitC
-  | _        => false
-
-/-- XSD `float` and `double`: a decimal with an optional exponent, or
-    one of the three special values. Those three are VALUES of the
-    type, not error states, so a check that rejected them would reject
-    a legal document. -/
+/-- XForms 1.1 §5.1 selects the XSD 1.0 special-value spelling.
+    Preserve the existing rejection of `+INF`. -/
 def isFloatLexical (s : String) : Bool :=
-  if s == "NaN" || s == "INF" || s == "-INF" then true
-  else
-    match s.toList.findIdx? (fun c => c == 'e' || c == 'E') with
-    | none   => isDecimalLexical s
-    | some i =>
-        isDecimalLexical (String.ofList (s.toList.take i)) &&
-        signedDigits (s.toList.drop (i + 1))
+  (XSD.lexicalFor .xsd10 .float s).isSome
 
 def typeWellformed (t : MipType) (lex : String) : Bool :=
   match t with
   | .absent | .string => true
-  | .boolean => lex == "true" || lex == "false" || lex == "0" || lex == "1"
+  | .boolean => (XSD.parseBooleanLex lex).isSome
   | .integer => isIntegerLexical lex
   | .decimal => isDecimalLexical lex
   | .float | .double => isFloatLexical lex

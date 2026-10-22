@@ -1,0 +1,16 @@
+{
+  "command": [
+    "python3",
+    "check-ci-audit-closure.py"
+  ],
+  "cwd": "/Users/danbri/working/sandbox/october/tpac/codex-npm-review",
+  "node": "v22.22.2",
+  "source": null,
+  "nodeBin": "/opt/homebrew/Cellar/node@22/22.22.2_2/bin",
+  "npmCache": "/private/tmp/factoidal-public-pack-cache",
+  "started": "2026-10-22T18:57:56.807Z",
+  "elapsedMs": 139950,
+  "exit": 0,
+  "signal": null,
+  "error": null
+}

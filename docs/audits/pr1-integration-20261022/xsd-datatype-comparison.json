@@ -1,0 +1,687 @@
+{
+  "fixture_gitlink": "7bc3365c652a322f3d762021b3879eb92dae7e30",
+  "stages": {
+    "main_eef88c3": {
+      "«union»": {
+        "pass": 423,
+        "fail": 0,
+        "total": 423
+      },
+      "dateTimeStamp": {
+        "pass": 7,
+        "fail": 0,
+        "total": 7
+      },
+      "dayTimeDuration": {
+        "pass": 5,
+        "fail": 0,
+        "total": 5
+      },
+      "yearMonthDuration": {
+        "pass": 5,
+        "fail": 0,
+        "total": 5
+      },
+      "«xsi:type»": {
+        "pass": 5,
+        "fail": 0,
+        "total": 5
+      },
+      "anySimpleType": {
+        "pass": 1,
+        "fail": 0,
+        "total": 1
+      },
+      "decimal": {
+        "pass": 390,
+        "fail": 0,
+        "total": 390
+      },
+      "integer": {
+        "pass": 344,
+        "fail": 0,
+        "total": 344
+      },
+      "nonPositiveInteger": {
+        "pass": 340,
+        "fail": 0,
+        "total": 340
+      },
+      "negativeInteger": {
+        "pass": 340,
+        "fail": 0,
+        "total": 340
+      },
+      "long": {
+        "pass": 340,
+        "fail": 0,
+        "total": 340
+      },
+      "int": {
+        "pass": 342,
+        "fail": 0,
+        "total": 342
+      },
+      "short": {
+        "pass": 335,
+        "fail": 0,
+        "total": 335
+      },
+      "byte": {
+        "pass": 315,
+        "fail": 0,
+        "total": 315
+      },
+      "nonNegativeInteger": {
+        "pass": 340,
+        "fail": 0,
+        "total": 340
+      },
+      "unsignedLong": {
+        "pass": 340,
+        "fail": 0,
+        "total": 340
+      },
+      "unsignedInt": {
+        "pass": 340,
+        "fail": 0,
+        "total": 340
+      },
+      "unsignedShort": {
+        "pass": 335,
+        "fail": 0,
+        "total": 335
+      },
+      "unsignedByte": {
+        "pass": 315,
+        "fail": 0,
+        "total": 315
+      },
+      "positiveInteger": {
+        "pass": 340,
+        "fail": 0,
+        "total": 340
+      },
+      "double": {
+        "pass": 124,
+        "fail": 0,
+        "total": 124
+      },
+      "float": {
+        "pass": 120,
+        "fail": 0,
+        "total": 120
+      },
+      "duration": {
+        "pass": 285,
+        "fail": 0,
+        "total": 285
+      },
+      "dateTime": {
+        "pass": 309,
+        "fail": 0,
+        "total": 309
+      },
+      "time": {
+        "pass": 290,
+        "fail": 0,
+        "total": 290
+      },
+      "date": {
+        "pass": 289,
+        "fail": 0,
+        "total": 289
+      },
+      "gYearMonth": {
+        "pass": 289,
+        "fail": 0,
+        "total": 289
+      },
+      "gYear": {
+        "pass": 283,
+        "fail": 0,
+        "total": 283
+      },
+      "gMonthDay": {
+        "pass": 285,
+        "fail": 0,
+        "total": 285
+      },
+      "gDay": {
+        "pass": 270,
+        "fail": 0,
+        "total": 270
+      },
+      "gMonth": {
+        "pass": 275,
+        "fail": 0,
+        "total": 275
+      },
+      "string": {
+        "pass": 245,
+        "fail": 0,
+        "total": 245
+      },
+      "normalizedString": {
+        "pass": 210,
+        "fail": 0,
+        "total": 210
+      },
+      "token": {
+        "pass": 205,
+        "fail": 0,
+        "total": 205
+      },
+      "Name": {
+        "pass": 205,
+        "fail": 0,
+        "total": 205
+      },
+      "NMTOKEN": {
+        "pass": 205,
+        "fail": 0,
+        "total": 205
+      },
+      "NCName": {
+        "pass": 180,
+        "fail": 0,
+        "total": 180
+      },
+      "language": {
+        "pass": 200,
+        "fail": 0,
+        "total": 200
+      },
+      "anyURI": {
+        "pass": 255,
+        "fail": 0,
+        "total": 255
+      },
+      "QName": {
+        "pass": 107,
+        "fail": 0,
+        "total": 107
+      },
+      "boolean": {
+        "pass": 62,
+        "fail": 0,
+        "total": 62
+      },
+      "base64Binary": {
+        "pass": 130,
+        "fail": 0,
+        "total": 130
+      },
+      "hexBinary": {
+        "pass": 130,
+        "fail": 0,
+        "total": 130
+      },
+      "«list»": {
+        "pass": 8593,
+        "fail": 0,
+        "total": 8593
+      },
+      "NMTOKENS": {
+        "pass": 207,
+        "fail": 0,
+        "total": 207
+      }
+    },
+    "initial_aeb5c4494": {
+      "«union»": {
+        "pass": 223,
+        "fail": 0,
+        "total": 223
+      },
+      "dateTimeStamp": {
+        "pass": 7,
+        "fail": 0,
+        "total": 7
+      },
+      "dayTimeDuration": {
+        "pass": 5,
+        "fail": 0,
+        "total": 5
+      },
+      "yearMonthDuration": {
+        "pass": 5,
+        "fail": 0,
+        "total": 5
+      },
+      "«xsi:type»": {
+        "pass": 5,
+        "fail": 0,
+        "total": 5
+      },
+      "anySimpleType": {
+        "pass": 1,
+        "fail": 0,
+        "total": 1
+      },
+      "decimal": {
+        "pass": 340,
+        "fail": 0,
+        "total": 340
+      },
+      "integer": {
+        "pass": 294,
+        "fail": 0,
+        "total": 294
+      },
+      "nonPositiveInteger": {
+        "pass": 290,
+        "fail": 0,
+        "total": 290
+      },
+      "negativeInteger": {
+        "pass": 290,
+        "fail": 0,
+        "total": 290
+      },
+      "long": {
+        "pass": 290,
+        "fail": 0,
+        "total": 290
+      },
+      "int": {
+        "pass": 292,
+        "fail": 0,
+        "total": 292
+      },
+      "short": {
+        "pass": 285,
+        "fail": 0,
+        "total": 285
+      },
+      "byte": {
+        "pass": 265,
+        "fail": 0,
+        "total": 265
+      },
+      "nonNegativeInteger": {
+        "pass": 290,
+        "fail": 0,
+        "total": 290
+      },
+      "unsignedLong": {
+        "pass": 290,
+        "fail": 0,
+        "total": 290
+      },
+      "unsignedInt": {
+        "pass": 290,
+        "fail": 0,
+        "total": 290
+      },
+      "unsignedShort": {
+        "pass": 285,
+        "fail": 0,
+        "total": 285
+      },
+      "unsignedByte": {
+        "pass": 265,
+        "fail": 0,
+        "total": 265
+      },
+      "positiveInteger": {
+        "pass": 290,
+        "fail": 0,
+        "total": 290
+      },
+      "double": {
+        "pass": 74,
+        "fail": 0,
+        "total": 74
+      },
+      "float": {
+        "pass": 70,
+        "fail": 0,
+        "total": 70
+      },
+      "duration": {
+        "pass": 235,
+        "fail": 0,
+        "total": 235
+      },
+      "dateTime": {
+        "pass": 259,
+        "fail": 0,
+        "total": 259
+      },
+      "time": {
+        "pass": 240,
+        "fail": 0,
+        "total": 240
+      },
+      "date": {
+        "pass": 239,
+        "fail": 0,
+        "total": 239
+      },
+      "gYearMonth": {
+        "pass": 239,
+        "fail": 0,
+        "total": 239
+      },
+      "gYear": {
+        "pass": 233,
+        "fail": 0,
+        "total": 233
+      },
+      "gMonthDay": {
+        "pass": 235,
+        "fail": 0,
+        "total": 235
+      },
+      "gDay": {
+        "pass": 220,
+        "fail": 0,
+        "total": 220
+      },
+      "gMonth": {
+        "pass": 225,
+        "fail": 0,
+        "total": 225
+      },
+      "string": {
+        "pass": 220,
+        "fail": 0,
+        "total": 220
+      },
+      "normalizedString": {
+        "pass": 185,
+        "fail": 0,
+        "total": 185
+      },
+      "token": {
+        "pass": 180,
+        "fail": 0,
+        "total": 180
+      },
+      "Name": {
+        "pass": 180,
+        "fail": 0,
+        "total": 180
+      },
+      "NMTOKEN": {
+        "pass": 180,
+        "fail": 0,
+        "total": 180
+      },
+      "NCName": {
+        "pass": 180,
+        "fail": 0,
+        "total": 180
+      },
+      "language": {
+        "pass": 200,
+        "fail": 0,
+        "total": 200
+      },
+      "anyURI": {
+        "pass": 205,
+        "fail": 0,
+        "total": 205
+      },
+      "QName": {
+        "pass": 107,
+        "fail": 0,
+        "total": 107
+      },
+      "boolean": {
+        "pass": 62,
+        "fail": 0,
+        "total": 62
+      },
+      "base64Binary": {
+        "pass": 130,
+        "fail": 0,
+        "total": 130
+      },
+      "hexBinary": {
+        "pass": 130,
+        "fail": 0,
+        "total": 130
+      },
+      "«list»": {
+        "pass": 7168,
+        "fail": 0,
+        "total": 7168
+      },
+      "NMTOKENS": {
+        "pass": 182,
+        "fail": 0,
+        "total": 182
+      }
+    },
+    "name_profile_f90efa6f5": {
+      "«union»": {
+        "pass": 253,
+        "fail": 0,
+        "total": 253
+      },
+      "dateTimeStamp": {
+        "pass": 7,
+        "fail": 0,
+        "total": 7
+      },
+      "dayTimeDuration": {
+        "pass": 5,
+        "fail": 0,
+        "total": 5
+      },
+      "yearMonthDuration": {
+        "pass": 5,
+        "fail": 0,
+        "total": 5
+      },
+      "«xsi:type»": {
+        "pass": 5,
+        "fail": 0,
+        "total": 5
+      },
+      "anySimpleType": {
+        "pass": 1,
+        "fail": 0,
+        "total": 1
+      },
+      "decimal": {
+        "pass": 340,
+        "fail": 0,
+        "total": 340
+      },
+      "integer": {
+        "pass": 294,
+        "fail": 0,
+        "total": 294
+      },
+      "nonPositiveInteger": {
+        "pass": 290,
+        "fail": 0,
+        "total": 290
+      },
+      "negativeInteger": {
+        "pass": 290,
+        "fail": 0,
+        "total": 290
+      },
+      "long": {
+        "pass": 290,
+        "fail": 0,
+        "total": 290
+      },
+      "int": {
+        "pass": 292,
+        "fail": 0,
+        "total": 292
+      },
+      "short": {
+        "pass": 285,
+        "fail": 0,
+        "total": 285
+      },
+      "byte": {
+        "pass": 265,
+        "fail": 0,
+        "total": 265
+      },
+      "nonNegativeInteger": {
+        "pass": 290,
+        "fail": 0,
+        "total": 290
+      },
+      "unsignedLong": {
+        "pass": 290,
+        "fail": 0,
+        "total": 290
+      },
+      "unsignedInt": {
+        "pass": 290,
+        "fail": 0,
+        "total": 290
+      },
+      "unsignedShort": {
+        "pass": 285,
+        "fail": 0,
+        "total": 285
+      },
+      "unsignedByte": {
+        "pass": 265,
+        "fail": 0,
+        "total": 265
+      },
+      "positiveInteger": {
+        "pass": 290,
+        "fail": 0,
+        "total": 290
+      },
+      "double": {
+        "pass": 74,
+        "fail": 0,
+        "total": 74
+      },
+      "float": {
+        "pass": 70,
+        "fail": 0,
+        "total": 70
+      },
+      "duration": {
+        "pass": 235,
+        "fail": 0,
+        "total": 235
+      },
+      "dateTime": {
+        "pass": 259,
+        "fail": 0,
+        "total": 259
+      },
+      "time": {
+        "pass": 240,
+        "fail": 0,
+        "total": 240
+      },
+      "date": {
+        "pass": 239,
+        "fail": 0,
+        "total": 239
+      },
+      "gYearMonth": {
+        "pass": 239,
+        "fail": 0,
+        "total": 239
+      },
+      "gYear": {
+        "pass": 233,
+        "fail": 0,
+        "total": 233
+      },
+      "gMonthDay": {
+        "pass": 235,
+        "fail": 0,
+        "total": 235
+      },
+      "gDay": {
+        "pass": 220,
+        "fail": 0,
+        "total": 220
+      },
+      "gMonth": {
+        "pass": 225,
+        "fail": 0,
+        "total": 225
+      },
+      "string": {
+        "pass": 220,
+        "fail": 0,
+        "total": 220
+      },
+      "normalizedString": {
+        "pass": 185,
+        "fail": 0,
+        "total": 185
+      },
+      "token": {
+        "pass": 180,
+        "fail": 0,
+        "total": 180
+      },
+      "Name": {
+        "pass": 205,
+        "fail": 0,
+        "total": 205
+      },
+      "NMTOKEN": {
+        "pass": 205,
+        "fail": 0,
+        "total": 205
+      },
+      "NCName": {
+        "pass": 180,
+        "fail": 0,
+        "total": 180
+      },
+      "language": {
+        "pass": 200,
+        "fail": 0,
+        "total": 200
+      },
+      "anyURI": {
+        "pass": 255,
+        "fail": 0,
+        "total": 255
+      },
+      "QName": {
+        "pass": 107,
+        "fail": 0,
+        "total": 107
+      },
+      "boolean": {
+        "pass": 62,
+        "fail": 0,
+        "total": 62
+      },
+      "base64Binary": {
+        "pass": 130,
+        "fail": 0,
+        "total": 130
+      },
+      "hexBinary": {
+        "pass": 130,
+        "fail": 0,
+        "total": 130
+      },
+      "«list»": {
+        "pass": 7268,
+        "fail": 0,
+        "total": 7268
+      },
+      "NMTOKENS": {
+        "pass": 207,
+        "fail": 0,
+        "total": 207
+      }
+    }
+  },
+  "interpretation": "Coverage counts only; exclusions are not passes. All three stages use the same unmodified fixture pin."
+}

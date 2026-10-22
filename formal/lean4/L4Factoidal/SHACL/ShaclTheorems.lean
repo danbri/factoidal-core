@@ -561,7 +561,7 @@ theorem closedViolations_severity (g : Graph) (focus : Term) (s : Shape) (cc : C
 shares the value node's key. -/
 theorem uvfClash_eq_false_iff (g : Graph) (targets : List Term) (props : List WfIri) (v : Term) :
     uvfClash g targets props v = false ↔
-      ∀ k, uvfKey g v props = some k → ∀ t ∈ targets, Term.eqb t v = false →
+      ∀ k, uvfKey g v props = some k → ∀ t ∈ targets, Term.sameTerm t v = false →
         ∀ k2, uvfKey g t props = some k2 → keyEq k k2 = false := by
   unfold uvfClash
   cases hk : uvfKey g v props with
@@ -576,7 +576,7 @@ theorem uvfClash_eq_false_iff (g : Graph) (targets : List Term) (props : List Wf
     | some k2 => simp
 
 theorem termMem_iff (t : Term) (l : List Term) :
-    termMem t l = true ↔ ∃ u ∈ l, Term.eqb u t = true := by
+    termMem t l = true ↔ ∃ u ∈ l, Term.sameTerm u t = true := by
   simp [termMem, List.any_eq_true]
 
 theorem evalAggregateNonRec_eq_nil_iff (env : ValidationEnv) (g : Graph) (sg : List Shape)

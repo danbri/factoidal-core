@@ -1,0 +1,17 @@
+{
+  "command": [
+    "node",
+    "--test",
+    "--test-name-pattern=name-class complement",
+    "npm/factoidal/test/shared-semantics-regression.test.mjs"
+  ],
+  "cwd": "/Users/danbri/working/sandbox/october/tpac/codex-npm-review/integrate-core",
+  "node": "v22.22.2",
+  "nodeBin": "/opt/homebrew/Cellar/node@22/22.22.2_2/bin",
+  "npmCache": "/private/tmp/factoidal-public-pack-cache",
+  "started": "2026-10-22T18:00:55.119Z",
+  "elapsedMs": 1993,
+  "exit": 1,
+  "signal": null,
+  "error": null
+}

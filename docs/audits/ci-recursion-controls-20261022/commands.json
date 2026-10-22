@@ -1,0 +1,48 @@
+{
+  "cwd": "/Users/danbri/working/sandbox/october/tpac/codex-npm-review/integrate-pr3",
+  "commands": [
+    {
+      "command": [
+        "python3",
+        "tools/test_lean_tail_recursion_audit.py",
+        "--verbose"
+      ],
+      "stage": "before repair",
+      "exit": 1,
+      "pass": 10,
+      "fail": 2
+    },
+    {
+      "command": [
+        "python3",
+        "tools/test_lean_tail_recursion_audit.py",
+        "--verbose"
+      ],
+      "stage": "after repair",
+      "exit": 0,
+      "pass": 13,
+      "fail": 0
+    },
+    {
+      "command": [
+        "python3",
+        "tools/test_lean_csimp_reach.py",
+        "--synthetic-only"
+      ],
+      "exit": 0,
+      "pass": 28,
+      "fail": 0
+    },
+    {
+      "command": [
+        "python3",
+        "tools/test_lean_csimp_reach.py"
+      ],
+      "exit": 2,
+      "syntheticPass": 28,
+      "realBuild": "NOT RUN: required emitted modules absent"
+    }
+  ],
+  "productionGateChanged": false,
+  "buildsRun": false
+}

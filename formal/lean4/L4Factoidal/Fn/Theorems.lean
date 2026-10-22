@@ -140,14 +140,14 @@ theorem divide_by_zero_has_no_value (a : L4Factoidal.XSD.Dec) :
 /-! ## The RIF-DTB 4.8 signature layer
 
 These are not agreements between front ends — only RIF-DTB has these
-built-ins today. They pin the two fixture accommodations that
-`RIF/Builtins.lean` makes, so a later change cannot remove them
-silently. -/
+built-ins today. These controls separate XSD membership from the retained
+temporal arithmetic adapter. -/
 
--- RIF-DTB 3.2 puts the `xs:date` values inside the `xs:dateTime`
--- value space at midnight, one way only.
+-- RIF-DTB (2013) §2.3 delegates xs: value spaces to XSD; §4.2 tests
+-- membership. It does not make xs:date a subtype of xs:dateTime.
+-- https://www.w3.org/TR/2013/REC-rif-dtb-20130205/#Datatypes
 #guard L4Factoidal.RIF.evalPred "is-literal-dateTime"
-      [L4Factoidal.RIF.gLit "2008-07-22Z" (L4Factoidal.RIF.xsdNs ++ "date")] = .yes
+      [L4Factoidal.RIF.gLit "2008-07-22Z" (L4Factoidal.RIF.xsdNs ++ "date")] = .no
 
 #guard L4Factoidal.RIF.evalPred "is-literal-date"
       [L4Factoidal.RIF.gLit "2008-07-22T12:00:00Z" (L4Factoidal.RIF.xsdNs ++ "dateTime")]

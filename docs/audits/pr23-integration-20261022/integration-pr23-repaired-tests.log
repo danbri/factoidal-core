@@ -1,0 +1,256 @@
+TAP version 13
+# Subtest: l4-core parse: ntriples/turtle/nquads/trig round-trip to N-Quads
+ok 1 - l4-core parse: ntriples/turtle/nquads/trig round-trip to N-Quads
+  ---
+  duration_ms: 524.556666
+  type: 'test'
+  ...
+# Subtest: l4-core parse: turtle relative IRI resolves against baseIRI
+ok 2 - l4-core parse: turtle relative IRI resolves against baseIRI
+  ---
+  duration_ms: 1.948875
+  type: 'test'
+  ...
+# Subtest: l4-core parse: turtle fragment IRI resolves against baseIRI
+ok 3 - l4-core parse: turtle fragment IRI resolves against baseIRI
+  ---
+  duration_ms: 0.846166
+  type: 'test'
+  ...
+# Subtest: l4-core query: SELECT returns a typed literal binding
+ok 4 - l4-core query: SELECT returns a typed literal binding
+  ---
+  duration_ms: 41.728375
+  type: 'test'
+  ...
+# Subtest: l4-core query: SELECT with a two-pattern join
+ok 5 - l4-core query: SELECT with a two-pattern join
+  ---
+  duration_ms: 3.755875
+  type: 'test'
+  ...
+# Subtest: l4-core query: ASK true and false
+ok 6 - l4-core query: ASK true and false
+  ---
+  duration_ms: 2.842917
+  type: 'test'
+  ...
+# Subtest: l4-core query: CONSTRUCT returns a Dataset
+ok 7 - l4-core query: CONSTRUCT returns a Dataset
+  ---
+  duration_ms: 9.882584
+  type: 'test'
+  ...
+# Subtest: l4-core query: accepts a Dataset instance as input
+ok 8 - l4-core query: accepts a Dataset instance as input
+  ---
+  duration_ms: 1.127667
+  type: 'test'
+  ...
+# Subtest: l4-core update: INSERT DATA then query sees the triple
+ok 9 - l4-core update: INSERT DATA then query sees the triple
+  ---
+  duration_ms: 5.017292
+  type: 'test'
+  ...
+# Subtest: l4-core serialize({format:'turtle'}) round-trips the graph
+ok 10 - l4-core serialize({format:'turtle'}) round-trips the graph
+  ---
+  duration_ms: 16.436208
+  type: 'test'
+  ...
+# Subtest: l4-core serialize format:'ntriples' answers the default graph and refuses a named graph
+ok 11 - l4-core serialize format:'ntriples' answers the default graph and refuses a named graph
+  ---
+  duration_ms: 6.136541
+  type: 'test'
+  ...
+# Subtest: l4-core canonicalize: isomorphic graphs get identical canonical text
+ok 12 - l4-core canonicalize: isomorphic graphs get identical canonical text
+  ---
+  duration_ms: 7.238042
+  type: 'test'
+  ...
+# Subtest: l4-core coreRdfsClosure infers a type via subClassOf
+ok 13 - l4-core coreRdfsClosure infers a type via subClassOf
+  ---
+  duration_ms: 36.978083
+  type: 'test'
+  ...
+# Subtest: l4-core rhoDfClosure / rdfsPlusClosure return certified envelopes
+ok 14 - l4-core rhoDfClosure / rdfsPlusClosure return certified envelopes
+  ---
+  duration_ms: 8.772666
+  type: 'test'
+  ...
+# Subtest: l4-core coreRdfsCheck / rhoDfFragmentCheck report booleans
+ok 15 - l4-core coreRdfsCheck / rhoDfFragmentCheck report booleans
+  ---
+  duration_ms: 17.023666
+  type: 'test'
+  ...
+# Subtest: l4-core owlClosure mode 'OWL-RL' returns a Dataset superset
+ok 16 - l4-core owlClosure mode 'OWL-RL' returns a Dataset superset
+  ---
+  duration_ms: 14.370875
+  type: 'test'
+  ...
+# Subtest: l4-core owlIsConsistent: checked contradiction or explicit unknown
+ok 17 - l4-core owlIsConsistent: checked contradiction or explicit unknown
+  ---
+  duration_ms: 27.677667
+  type: 'test'
+  ...
+# Subtest: l4-core owlEntails: closure yes / incomplete refutation / budget-out
+ok 18 - l4-core owlEntails: closure yes / incomplete refutation / budget-out
+  ---
+  duration_ms: 124.958125
+  type: 'test'
+  ...
+# Subtest: l4-core clParse: pureCL true for CL text with no `that` operator
+ok 19 - l4-core clParse: pureCL true for CL text with no `that` operator
+  ---
+  duration_ms: 3.831042
+  type: 'test'
+  ...
+# Subtest: l4-core clParse: pureCL false once the text uses IKL's `that` operator
+ok 20 - l4-core clParse: pureCL false once the text uses IKL's `that` operator
+  ---
+  duration_ms: 0.415916
+  type: 'test'
+  ...
+# Subtest: l4-core clParse: rejects a `that`-term used where a proposition is required
+ok 21 - l4-core clParse: rejects a `that`-term used where a proposition is required
+  ---
+  duration_ms: 2.300584
+  type: 'test'
+  ...
+# Subtest: l4-core clParse: rejects a non-string argument
+ok 22 - l4-core clParse: rejects a non-string argument
+  ---
+  duration_ms: 1.091292
+  type: 'test'
+  ...
+# Subtest: l4-core clSerialize: round-trips CLIF text, surfacing roundTripProved as false (not hidden or defaulted)
+ok 23 - l4-core clSerialize: round-trips CLIF text, surfacing roundTripProved as false (not hidden or defaulted)
+  ---
+  duration_ms: 1.290375
+  type: 'test'
+  ...
+# Subtest: l4-core clSerialize: rejects a non-string argument
+ok 24 - l4-core clSerialize: rejects a non-string argument
+  ---
+  duration_ms: 1.191125
+  type: 'test'
+  ...
+# Subtest: l4-core clAlphaNorm: two alpha-variant sentences normalise to the same text
+ok 25 - l4-core clAlphaNorm: two alpha-variant sentences normalise to the same text
+  ---
+  duration_ms: 4.228917
+  type: 'test'
+  ...
+# Subtest: l4-core clAlphaNorm: rejects a non-string argument
+ok 26 - l4-core clAlphaNorm: rejects a non-string argument
+  ---
+  duration_ms: 0.256833
+  type: 'test'
+  ...
+# Subtest: l4-core clNormalize: a `that`-term reduces to a head/tail pair, with preserves and noIntrusion surfaced
+ok 27 - l4-core clNormalize: a `that`-term reduces to a head/tail pair, with preserves and noIntrusion surfaced
+  ---
+  duration_ms: 2.831667
+  type: 'test'
+  ...
+# Subtest: l4-core clNormalize: rejects a non-string argument
+ok 28 - l4-core clNormalize: rejects a non-string argument
+  ---
+  duration_ms: 0.487916
+  type: 'test'
+  ...
+# Subtest: l4-core capabilities: entry, shacl, tableau true (issue 713 stage 3)
+ok 29 - l4-core capabilities: entry, shacl, tableau true (issue 713 stage 3)
+  ---
+  duration_ms: 1.591917
+  type: 'test'
+  ...
+# Subtest: l4-core parse({lenient:true}) keeps good statements and reports the bad one (https://github.com/danbri/factoidal/issues/716)
+ok 30 - l4-core parse({lenient:true}) keeps good statements and reports the bad one (https://github.com/danbri/factoidal/issues/716)
+  ---
+  duration_ms: 8.357709
+  type: 'test'
+  ...
+# Subtest: l4-core parse({lenient:true}) in N-Quads and TriG, and maxErrors
+ok 31 - l4-core parse({lenient:true}) in N-Quads and TriG, and maxErrors
+  ---
+  duration_ms: 7.846667
+  type: 'test'
+  ...
+# Subtest: l4-core shaclValidate: a shapes graph with no shapes validates every data graph
+ok 32 - l4-core shaclValidate: a shapes graph with no shapes validates every data graph
+  ---
+  duration_ms: 8.144208
+  type: 'test'
+  ...
+# Subtest: l4-core query({entail:'RDFS'}) answers over the RDFS closure
+ok 33 - l4-core query({entail:'RDFS'}) answers over the RDFS closure
+  ---
+  duration_ms: 12.360083
+  type: 'test'
+  ...
+# Subtest: l4-core missing op: an operation the wasm lacks rejects naming the op
+ok 34 - l4-core missing op: an operation the wasm lacks rejects naming the op
+  ---
+  duration_ms: 5.747125
+  type: 'test'
+  ...
+# Subtest: l4-core multi-document merge keeps blank-node labels document-scoped
+ok 35 - l4-core multi-document merge keeps blank-node labels document-scoped
+  ---
+  duration_ms: 3.072667
+  type: 'test'
+  ...
+# Subtest: l4-core dataset handle: open, query, update, serialize, close
+ok 36 - l4-core dataset handle: open, query, update, serialize, close
+  ---
+  duration_ms: 9.600417
+  type: 'test'
+  ...
+# Subtest: dataset-handle parse error carries a line/column position
+ok 37 - dataset-handle parse error carries a line/column position
+  ---
+  duration_ms: 2.308875
+  type: 'test'
+  ...
+# Subtest: dataset handle records prefixes from a Turtle open()
+ok 38 - dataset handle records prefixes from a Turtle open()
+  ---
+  duration_ms: 1.027459
+  type: 'test'
+  ...
+# Subtest: dataset handle serialize({format:"turtle", literalShorthand:false}) is supported
+ok 39 - dataset handle serialize({format:"turtle", literalShorthand:false}) is supported
+  ---
+  duration_ms: 1.904291
+  type: 'test'
+  ...
+# Subtest: dataset handle Turtle output prints small integers bare (literal shorthand) by default
+ok 40 - dataset handle Turtle output prints small integers bare (literal shorthand) by default
+  ---
+  duration_ms: 1.24025
+  type: 'test'
+  ...
+# Subtest: pack integrity: npm pack + extract + parse/query/openStore from the tarball
+ok 41 - pack integrity: npm pack + extract + parse/query/openStore from the tarball
+  ---
+  duration_ms: 6606.557583
+  type: 'test'
+  ...
+1..41
+# tests 41
+# suites 0
+# pass 41
+# fail 0
+# cancelled 0
+# skipped 0
+# todo 0
+# duration_ms 6864.713209

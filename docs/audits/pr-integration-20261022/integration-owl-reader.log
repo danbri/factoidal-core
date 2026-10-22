@@ -1,0 +1,4 @@
+OWL reader contracts: pass
+45/45 acceptance cases
+7/7 proof mutations rejected
+Evidence: ../logs/integration-owl-reader.json

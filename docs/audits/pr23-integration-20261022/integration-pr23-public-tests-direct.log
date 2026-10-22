@@ -1,0 +1,196 @@
+Source: 6b2c847
+Wasm SHA256: 64ec60e2c52ab0f8c871e2147d553dad1a9326185fb90f282bb1615fbf280fd9
+Node22.22.2; direct invocation without shell redirection
+Command: node --test npm/factoidal/test/owl-verdict-regression.test.mjs npm/factoidal/test/xmpp-serve.test.mjs
+Exit: 0
+TAP version 13
+# Subtest: OWL consistency rejects sameAs and differentFrom
+ok 1 - OWL consistency rejects sameAs and differentFrom
+  ---
+  duration_ms: 586.53575
+  type: 'test'
+  ...
+# Subtest: OWL consistency rejects reversed differentFrom
+ok 2 - OWL consistency rejects reversed differentFrom
+  ---
+  duration_ms: 1.483875
+  type: 'test'
+  ...
+# Subtest: OWL consistency rejects self differentFrom
+ok 3 - OWL consistency rejects self differentFrom
+  ---
+  duration_ms: 0.36925
+  type: 'test'
+  ...
+# Subtest: OWL consistency rejects transitive sameAs and differentFrom
+ok 4 - OWL consistency rejects transitive sameAs and differentFrom
+  ---
+  duration_ms: 0.957
+  type: 'test'
+  ...
+# Subtest: OWL consistency does not claim a model for sameAs alone
+ok 5 - OWL consistency does not claim a model for sameAs alone
+  ---
+  duration_ms: 1.602458
+  type: 'test'
+  ...
+# Subtest: OWL consistency does not claim a model for differentFrom alone
+ok 6 - OWL consistency does not claim a model for differentFrom alone
+  ---
+  duration_ms: 0.830959
+  type: 'test'
+  ...
+# Subtest: OWL consistency does not claim a model for ordinary class membership
+ok 7 - OWL consistency does not claim a model for ordinary class membership
+  ---
+  duration_ms: 0.834709
+  type: 'test'
+  ...
+# Subtest: OWL consistency refuses negative property assertions outside its checked fragment
+ok 8 - OWL consistency refuses negative property assertions outside its checked fragment
+  ---
+  duration_ms: 2.554125
+  type: 'test'
+  ...
+# Subtest: OWL entailment still returns a closure consequence
+ok 9 - OWL entailment still returns a closure consequence
+  ---
+  duration_ms: 31.859416
+  type: 'test'
+  ...
+# Subtest: OWL entailment does not turn a quiescent search into a countermodel
+ok 10 - OWL entailment does not turn a quiescent search into a countermodel
+  ---
+  duration_ms: 35.876834
+  type: 'test'
+  ...
+# Subtest: OWL entailment does not claim a countermodel for an unproved data assertion
+ok 11 - OWL entailment does not claim a countermodel for an unproved data assertion
+  ---
+  duration_ms: 6.577541
+  type: 'test'
+  ...
+# Subtest: OWL consistency refuses an unsupported restriction before search budgeting
+ok 12 - OWL consistency refuses an unsupported restriction before search budgeting
+  ---
+  duration_ms: 1.600416
+  type: 'test'
+  ...
+# Subtest: OWL consistency compatibility fuel does not disable its fixed certificate checker
+ok 13 - OWL consistency compatibility fuel does not disable its fixed certificate checker
+  ---
+  duration_ms: 4.48825
+  type: 'test'
+  ...
+# Subtest: OWL entailment budget exhaustion remains distinct from incomplete search
+ok 14 - OWL entailment budget exhaustion remains distinct from incomplete search
+  ---
+  duration_ms: 2.812042
+  type: 'test'
+  ...
+# Subtest: OWL consistency refuses disjoint-class syntax without applying RDF punning substitution
+ok 15 - OWL consistency refuses disjoint-class syntax without applying RDF punning substitution
+  ---
+  duration_ms: 2.168084
+  type: 'test'
+  ...
+# Subtest: OWL entailment does not substitute sameAs into a punned class name
+ok 16 - OWL entailment does not substitute sameAs into a punned class name
+  ---
+  duration_ms: 2.82775
+  type: 'test'
+  ...
+# Subtest: OWL punning across premise and conclusion is indeterminate
+ok 17 - OWL punning across premise and conclusion is indeterminate
+  ---
+  duration_ms: 0.923791
+  type: 'test'
+  ...
+# Subtest: xmpp-serve: engine reports actual UTF-8 residual bytes despite a reply
+ok 18 - xmpp-serve: engine reports actual UTF-8 residual bytes despite a reply
+  ---
+  duration_ms: 30.992375
+  type: 'test'
+  ...
+# Subtest: xmpp-serve: a full session over a TCP socket, through wasm
+    # Subtest: RFC 6120 4.2/4.3: the stream header is answered with features offering SASL, not bind
+    ok 1 - RFC 6120 4.2/4.3: the stream header is answered with features offering SASL, not bind
+      ---
+      duration_ms: 54.200291
+      type: 'test'
+      ...
+    # Subtest: RFC 6120 4.9.3.6: a stream for another domain is host-unknown and the socket closes
+    ok 2 - RFC 6120 4.9.3.6: a stream for another domain is host-unknown and the socket closes
+      ---
+      duration_ms: 14.500959
+      type: 'test'
+      ...
+    # Subtest: RFC 6120 6.5: a wrong password is not-authorized
+    ok 3 - RFC 6120 6.5: a wrong password is not-authorized
+      ---
+      duration_ms: 8.716459
+      type: 'test'
+      ...
+    # Subtest: RFC 7677: SCRAM-SHA-256 computed independently with node:crypto authenticates
+    ok 4 - RFC 7677: SCRAM-SHA-256 computed independently with node:crypto authenticates
+      ---
+      duration_ms: 569.696583
+      type: 'test'
+      ...
+    # Subtest: RFC 6120 7: binding returns the full JID; a message reaches the other session with the server-stamped from
+    ok 5 - RFC 6120 7: binding returns the full JID; a message reaches the other session with the server-stamped from
+      ---
+      duration_ms: 113.246958
+      type: 'test'
+      ...
+    # Subtest: a message to an account with no bound session is held, then delivered once it binds
+    ok 6 - a message to an account with no bound session is held, then delivered once it binds
+      ---
+      duration_ms: 115.032792
+      type: 'test'
+      ...
+    # Subtest: RFC 6121 2: a roster set is pushed back and persisted under DIR/roster as the engine encodes it
+    ok 7 - RFC 6121 2: a roster set is pushed back and persisted under DIR/roster as the engine encodes it
+      ---
+      duration_ms: 172.100625
+      type: 'test'
+      ...
+    # Subtest: a stanza written as a file under DIR/spool/<bare jid>/ is delivered to the bound session and unlinked
+    ok 8 - a stanza written as a file under DIR/spool/<bare jid>/ is delivered to the bound session and unlinked
+      ---
+      duration_ms: 215.047625
+      type: 'test'
+      ...
+    # Subtest: RFC 6120 4.4: a client that half-closes gets the stream close
+    ok 9 - RFC 6120 4.4: a client that half-closes gets the stream close
+      ---
+      duration_ms: 4.304916
+      type: 'test'
+      ...
+    # Subtest: RFC 6120 4.9: a complete but not-well-formed stanza is a stream error, not a crash
+    ok 10 - RFC 6120 4.9: a complete but not-well-formed stanza is a stream error, not a crash
+      ---
+      duration_ms: 12.380709
+      type: 'test'
+      ...
+    1..10
+ok 19 - xmpp-serve: a full session over a TCP socket, through wasm
+  ---
+  duration_ms: 1454.104125
+  type: 'test'
+  ...
+# Subtest: xmpp-serve: rosters persisted by one run are loaded by the next
+ok 20 - xmpp-serve: rosters persisted by one run are loaded by the next
+  ---
+  duration_ms: 177.199167
+  type: 'test'
+  ...
+1..20
+# tests 30
+# suites 0
+# pass 30
+# fail 0
+# cancelled 0
+# skipped 0
+# todo 0
+# duration_ms 17571.654666

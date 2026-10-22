@@ -137,36 +137,13 @@ def substVarTP (name : VarName) (t : Term) (tp : TriplePattern) : TriplePattern 
 node and a triple term have none, so an `Expr.var` for them is left
 alone.
 
-A pre-bound variable must behave in an expression EXACTLY as the same
-binding would in the solution mapping, so a numeric or boolean literal
-becomes the promoted `Expr` constructor, not `Expr.lit`. `Expr.var`
-promotes a literal binding through `literalPromote` (SPARQL §17.1),
-while `Expr.lit` does not — substituting `Expr.lit "5"^^xsd:integer`
-into `FILTER($value <= $maxVal)` would compare the two LEXICALLY and
-answer `"5" > "10"`. `termToExpr_evalIn_eq_literalPromote`
-(`SparqlTheorems.lean`) pins the agreement. The F\* `term_to_expr_opt`
-returns the un-promoted `E_Literal` and has the same lexical-compare
-exposure (`SPARQL11.Algebra.fst:4013`); the vendored SHACL-SPARQL
-fixtures do not exercise it. -/
+A pre-bound literal remains an RDF term, just as variable lookup does.
+Value conversion belongs to the operator, so substitution preserves lexical
+identity for STR, DATATYPE and sameTerm as well as numeric comparisons.
+`termToExpr_evalIn_eq_literal` records this agreement. -/
 def termToExpr? : Term → Option Expr
   | .iri i => some (.iri i)
-  | .literal l =>
-    if l.val.datatype == RDF.xsdInteger then
-      match XSD.parseIntegerLex l.val.lexicalForm with
-      | some n => some (.numericLit n)
-      | none => some (.lit l)
-    else if l.val.datatype == RDF.xsdDecimal then some (.decimalLit l.val.lexicalForm)
-    else if l.val.datatype == RDF.xsdDouble || l.val.datatype == SPARQL.xsdFloat then
-      some (.doubleLit l.val.lexicalForm)
-    else if l.val.datatype == RDF.xsdBoolean then
-      -- Valid lexical forms only, matching `literalPromote`: an
-      -- ill-formed boolean stays a term literal so its type errors
-      -- surface, exactly as an unsubstituted binding's would.
-      match l.val.lexicalForm with
-      | "true" | "1" => some (.boolLit true)
-      | "false" | "0" => some (.boolLit false)
-      | _ => some (.lit l)
-    else some (.lit l)
+  | .literal l => some (.lit l)
   | _ => none
 
 mutual

@@ -17,7 +17,9 @@ both versions.  The `___redArg wrapper` fixture fails on the audit before
 https://github.com/danbri/factoidal/issues/746 repaired.  Measured
 2026-10-10: this tool 12 pass, 0 fail (out of 12); 4b5892b0 4 pass, 8 fail
 (out of 12); 5d94d3de^ 3 pass, 9 fail (out of 12).  Exit 0 only when every
-fixture passes.
+fixture passes. The temporary repository includes the real companion
+compiler-replacement gate and a positive control for it; production gate
+composition is exercised rather than stubbed out.
 """
 
 import argparse, contextlib, importlib.util, io, json, os, shutil, sys, tempfile
@@ -48,8 +50,8 @@ RET = "return x_2;"
 FIXTURES = []
 
 
-def fixture(name, defect, lean, c, allow, check):
-    FIXTURES.append((name, defect, lean, c, allow, check))
+def fixture(name, defect, lean, c, allow, check, output_contains=None):
+    FIXTURES.append((name, defect, lean, c, allow, check, output_contains))
 
 
 def cls(rows, decl):
@@ -168,6 +170,21 @@ fixture(
     "",
     lambda ex, rows: ex == 1 and cls(rows, "T_outer_scanList") == ["length"])
 
+# A replaced specification passes the recursion stage, but its stale caller
+# must still fail the real companion gate. This catches bypassing that gate.
+fixture(
+    "chained csimp gate rejects caller", False,
+    "namespace T\ndef spec (xs : List Nat) : Nat := 0\n"
+    "def fast (xs : List Nat) : Nat := 0\n"
+    "@[csimp] theorem spec_eq : @spec = @fast := rfl\n"
+    "def stale (xs : List Nat) : Nat := spec xs\nend T\n",
+    cfun(P + "T_spec", [call(P + "T_spec"), RET]) +
+    cfun(P + "T_fast", ["return x_1;"]) +
+    cfun(P + "T_stale", [call(P + "T_spec"), RET]),
+    "",
+    lambda ex, rows: ex == 1 and cls(rows, "T_spec") == ["replaced"],
+    "GATE FAIL: tools/lean-csimp-reach.py --gate exited 1")
+
 
 def load(tool):
     spec = importlib.util.spec_from_file_location("tailrec_audit_under_test", tool)
@@ -183,6 +200,23 @@ def run_fixture(tool, lean, c, allow):
         ir_dir = os.path.join(lean_dir, ".lake", "build", "ir")
         os.makedirs(os.path.join(lean_dir, "L4Factoidal"))
         os.makedirs(os.path.join(ir_dir, "L4Factoidal"))
+        tools_dir = os.path.join(tmp, "tools")
+        os.makedirs(tools_dir)
+        shutil.copyfile(os.path.join(HERE, "lean-csimp-reach.py"),
+                        os.path.join(tools_dir, "lean-csimp-reach.py"))
+        # The companion refuses an empty theorem/caller inventory. Supply a
+        # complete, unrelated positive control, not a fake successful tool.
+        with open(os.path.join(lean_dir, "lakefile.lean"), "w") as fh:
+            fh.write("package l4factoidal\n")
+        with open(os.path.join(lean_dir, "L4Factoidal", "ReachControl.lean"), "w") as fh:
+            fh.write("namespace ReachControl\ndef spec (xs : List Nat) : List Nat := xs\n"
+                     "def fast (xs : List Nat) : List Nat := xs\n"
+                     "@[csimp] theorem spec_eq : @spec = @fast := rfl\n"
+                     "def caller (xs : List Nat) : List Nat := spec xs\nend ReachControl\n")
+        with open(os.path.join(ir_dir, "L4Factoidal", "ReachControl.c"), "w") as fh:
+            fh.write(cfun(P + "ReachControl_spec", ["return x_1;"]) +
+                     cfun(P + "ReachControl_fast", ["return x_1;"]) +
+                     cfun(P + "ReachControl_caller", [call(P + "ReachControl_fast"), RET]))
         with open(os.path.join(lean_dir, "L4Factoidal", "Fixture.lean"), "w") as fh:
             fh.write(lean)
         with open(os.path.join(ir_dir, "L4Factoidal", "Fixture.c"), "w") as fh:
@@ -219,9 +253,9 @@ def main():
     ap.add_argument("-v", "--verbose", action="store_true")
     args = ap.parse_args()
     npass = nfail = 0
-    for name, defect, lean, c, allow, check in FIXTURES:
+    for name, defect, lean, c, allow, check, output_contains in FIXTURES:
         ex, rows, out = run_fixture(args.tool, lean, c, allow)
-        ok = ex is not None and check(ex, rows)
+        ok = ex is not None and check(ex, rows) and (output_contains is None or output_contains in out)
         npass += ok
         nfail += not ok
         got = "exit %s; %s" % (ex, ", ".join("%s=%s" % (r["decl"], r["class"]) for r in rows) or "no rows")

@@ -14,6 +14,7 @@ resolution. Row and table assembly build on it.
 import L4Factoidal.CSVW.Metadata
 import L4Factoidal.CSVW.UriTemplate
 import L4Factoidal.CSVW.Formats
+import L4Factoidal.CSVW.Diagnostics
 
 namespace L4Factoidal.CSVW
 
@@ -107,6 +108,12 @@ def isNullCell (nullProp : Option String) (cell : String) : Bool :=
 def applyDefault (dflt : Option String) (cell : String) : String :=
   if cell == "" then dflt.getD cell else cell
 
+/-- A lexical value, its datatype applicability, and retained diagnostics. -/
+structure PreparedLexical where
+  value : String × Bool
+  issues : List ConversionIssue := []
+deriving Repr, Inhabited
+
 /-- Prepare a cell's lexical form for its datatype: apply the
     whitespace rule from §6.4.2, then the datatype's `format`.
 
@@ -120,23 +127,32 @@ def applyDefault (dflt : Option String) (cell : String) : String :=
 
     An INVALID value keeps its written form. §6.4.2 makes a failed
     parse a validation error, not a conversion failure: the cell is
-    still reported, and it is `Validate` that says it is bad. Dropping
+    still reported, with an `invalidValue` diagnostic. Dropping
     it here would lose data on the strength of a format this module
     might have read wrongly. -/
-def prepareLexical (dt : Option Datatype) (cell : String) : String × Bool :=
+def prepareLexical (dt : Option Datatype) (cell : String) : PreparedLexical :=
   let base := (dt.bind Datatype.baseName).getD "string"
   let trimmed := if dtPreservesWs base then cell else csvwTrim cell
   match dt with
-  | none => (trimmed, true)
+  | none => ⟨(trimmed, true), []⟩
   | some d =>
-      match formatConvert base (Datatype.formatOf d) (Datatype.patternOf d)
-              (Datatype.groupCharOf d) (Datatype.decimalCharOf d) trimmed with
+      let warnings := (regexFormatWarning base (Datatype.formatOf d)).toList.map
+        (fun msg => ({ kind := .warning, message := msg } : ConversionIssue))
+      let outcome := formatConvert base (Datatype.formatOf d) (Datatype.patternOf d)
+              (Datatype.groupCharOf d) (Datatype.decimalCharOf d) trimmed
+      let value := match outcome with
       -- The VALUE CONSTRAINTS are checked after the format, on the
       -- normalised form: `minimum: 5` against a cell of `4` makes the
       -- cell invalid, so it keeps its text and loses the datatype.
       | .valid lex => (lex, satisfiesFacetsFor base d.facets lex)
       | .invalid   => (trimmed, false)
       | .noFormat  => (trimmed, satisfiesFacetsFor base d.facets trimmed)
+      | .unsupported _ => (trimmed, false)
+      let problems := match outcome with
+        | .unsupported why => [{ kind := .unsupported, message := why }]
+        | _ => if value.2 then [] else
+            [{ kind := .invalidValue, message := "cell fails datatype, format or facets" }]
+      ⟨value, warnings ++ problems⟩
 
 /-- What one cell contributes, before RDF terms are built: the
     resolved property IRI reference, and the object values (several
@@ -155,6 +171,7 @@ structure CellResult where
       asserts something false about the value (measured 2026-08-22,
       the whole test160–177 family). -/
   literals    : List (String × Bool)
+  issues      : List ConversionIssue := []
 deriving Repr, Inhabited
 
 /-- Convert one cell under its effective inherited properties.
@@ -171,16 +188,18 @@ def convertCell (inh : Inherited) (colName : String)
   let propertyRef := inh.propertyUrl.map (UriTemplate.expand lookup)
   let aboutRef := inh.aboutUrl.map (UriTemplate.expand lookup)
   if isNullCell inh.null cell then
-    ⟨propertyRef, aboutRef, [], []⟩
+    ⟨propertyRef, aboutRef, [], [], []⟩
   else
     match inh.valueUrl with
-    | some tmpl => ⟨propertyRef, aboutRef, [UriTemplate.expand lookup tmpl], []⟩
+    | some tmpl => ⟨propertyRef, aboutRef, [UriTemplate.expand lookup tmpl], [], []⟩
     | none =>
         let parts := match inh.separator with
           | some sep => splitSeparated sep cell
           | none     => [cell]
         let lits := parts.filter (fun p => !(isNullCell inh.null p))
-        ⟨propertyRef, aboutRef, [], lits.map (prepareLexical inh.datatype)⟩
+        let prepared := lits.map (prepareLexical inh.datatype)
+        ⟨propertyRef, aboutRef, [], prepared.map (·.value),
+          prepared.flatMap (fun p => p.issues.map (fun issue => { issue with column := colName }))⟩
 
 /-- The lexical forms alone, for callers that do not care whether the
     datatype applied (csv2json emits strings either way). -/

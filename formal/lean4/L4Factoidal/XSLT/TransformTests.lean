@@ -182,4 +182,24 @@ one node. -/
 #guard run (ss "<xsl:template match=\"doc\"><out>\n  <!--k-->\nx</out></xsl:template>")
            "<doc/>" == "<out>\n  \nx</out>"
 
+-- §7.1.1: excluded bindings still required by element/attribute names survive.
+#guard run "<x:stylesheet xmlns:x='http://www.w3.org/1999/XSL/Transform' xmlns='urn:out' version='1.0' exclude-result-prefixes='#default'><x:template match='/'><out/></x:template></x:stylesheet>" "<doc/>" == "<out xmlns=\"urn:out\"/>"
+-- §7.5: copying a stylesheet node must use the stylesheet's namespace scope.
+-- Namespace declarations use main's fixed prefix presentation order (p, x).
+#guard run "<x:stylesheet xmlns:x='http://www.w3.org/1999/XSL/Transform' xmlns:p='urn:p' version='1.0'><x:template match='/'><x:for-each select=\"document('')//p:a\"><x:copy/></x:for-each></x:template><p:a/></x:stylesheet>" "<doc/>" == "<p:a xmlns:p=\"urn:p\" xmlns:x=\"http://www.w3.org/1999/XSL/Transform\"/>"
+-- An unqualified copied element must not inherit a result parent's default.
+#guard run (ss "<xsl:template match='/'><out xmlns='urn:o'><xsl:copy-of select='doc/a'/></out></xsl:template>") "<doc><a/></doc>" == "<out xmlns=\"urn:o\"><a xmlns=\"\"/></out>"
+
+private def externalRejected (docs : List (String × XPath.Full.Doc))
+    (imports : List (String × Node)) : Bool :=
+  match parseXML (ss ""), parseXML "<doc/>" with
+  | .ok st, .ok src => match transform st src docs imports with
+    | .refused _ => true
+    | _ => false
+  | _, _ => false
+#guard externalRejected [("bad", [.element "p:doc" [] []])] []
+#guard externalRejected [] [("bad", .element "x:stylesheet" [] [])]
+
+-- External provenance survives variable storage, parent steps and copy-of.
+#guard run "<x:stylesheet xmlns:x='http://www.w3.org/1999/XSL/Transform' xmlns:p='urn:p' version='1.0'><x:template match='/'><x:variable name='v' select=\"document('')//p:a\"/><x:for-each select='$v'><x:value-of select='namespace-uri(.)'/><x:value-of select='name(..)'/><x:copy-of select='.'/></x:for-each></x:template><p:a/></x:stylesheet>" "<doc/>" == "urn:px:stylesheet<p:a xmlns:p=\"urn:p\" xmlns:x=\"http://www.w3.org/1999/XSL/Transform\"/>"
 end L4Factoidal.XSLT

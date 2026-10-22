@@ -1,0 +1,15 @@
+{
+  "source": "tools/lean-tail-recursion-audit.py",
+  "sourceSha256": "caf19696489ec6c8d380d3537be85d31ed6265b7b766c012588357823d515aac",
+  "old": "        rc = subprocess.call(cmd)",
+  "new": "        rc = 0  # adversarial control: bypass the chained gate",
+  "command": [
+    "python3",
+    "tools/test_lean_tail_recursion_audit.py",
+    "--tool",
+    "/Users/danbri/working/sandbox/october/tpac/codex-npm-review/logs/ci-tail-bypass-mutant.py",
+    "--verbose"
+  ],
+  "exit": 1,
+  "expected": "12 pass, 1 fail (out of 13); chained csimp gate rejects caller must fail"
+}

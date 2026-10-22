@@ -12,8 +12,9 @@ tests: tests/hub/hub_inference_test.mjs
 `ds.closure(regime)` returns a new `Dataset` that holds the input and every
 triple the regime derives. The regimes are `'rdfs'`, `'owl-rl'`,
 `'rho-df'` (the six-rule core of RDFS) and `'rdfs-plus'`.
-`Factoidal.owlIsConsistent` and `Factoidal.owlEntails` decide OWL 2 DL
-questions with a tableau.
+`Factoidal.owlIsConsistent` checks inconsistency certificates for a restricted
+OWL fragment. `Factoidal.owlEntails` uses a separate closure/refutation path.
+Both can return an unknown verdict.
 
 ## Pipeline output
 
@@ -133,15 +134,19 @@ SELECT ?p ?o ?g WHERE { GRAPH ?g { <http://example.org/station/pad> ?p ?o } } OR
 
 ## OWL 2 DL: consistency and entailment
 
-`owlIsConsistent` answers `true`, `false` or `null` (the tableau ran out
-of its step budget, with a `reason`). The pipeline is consistent:
+`owlIsConsistent` currently answers `false` with a checked inconsistency
+certificate, or `null` with a reason. It does not certify satisfiability.
+The pipeline below includes axioms outside the checked reader's fragment,
+so this call returns `null` with `unsupported-syntax`:
 
 ```observable-js
 consistent = Factoidal.owlIsConsistent(merged)
 ```
 
 A source that types a line as a station contradicts
-`ex:Line owl:disjointWith ex:Place`, through the range and subclass axioms:
+`ex:Line owl:disjointWith ex:Place`, through the range and subclass axioms.
+The current checked reader does not support these axioms; this example also
+returns `null`, despite the ontology being inconsistent:
 
 ```observable-js
 inconsistent = {
@@ -151,7 +156,7 @@ inconsistent = {
 }
 ```
 
-`owlEntails` decides an entailment that needs an OWL class expression,
+The separate `owlEntails` path derives an entailment that needs an OWL class expression,
 here an existential restriction (`owl:someValuesFrom`), which the OWL 2 RL
 rules do not derive on the left-hand side of a subclass axiom:
 
@@ -166,6 +171,9 @@ ex:eli ex:serves ex:pad . ex:pad a ex:Station .`,
 
 ## Limits
 
+- Checked consistency currently certifies only contradictions in its admitted
+  atomic fragment. Unknown does not mean consistent. This proof does not
+  establish soundness of the separate legacy entailment path.
 - The OWL DL functions (`owlIsConsistent`, `owlEntails`) and RDFC-1.0
   refuse a dataset with an RDF 1.2 triple term (the closures accept it):
   <https://github.com/danbri/factoidal/issues/873>. Expected-failure test:

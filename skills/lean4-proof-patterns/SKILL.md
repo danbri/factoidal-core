@@ -14,6 +14,40 @@ below names the proof that paid for it.
 
 ## 1. What is available here
 
+For semantic API correctness, start with
+[semantic-assurance](../semantic-assurance/SKILL.md) and the
+[proof-boundary design](../../docs/designissues/2026-10-21-semantic-proof-boundaries.md).
+An evidence-bearing result or closed theorem on the actual producer must
+connect input interpretation to the exported verdict. A tactic that closes
+an internal checker theorem does not close the reader or adapter obligation.
+Keep useful conditional composition lemmas, but supply their hypotheses
+for the concrete implementation before calling the API verified.
+
+Concrete reader pattern: `OWL/AtomicDirect.lean` keeps `MapsTo` and axiom
+denotation separate from decoding, returns syntax witnesses from the reader,
+and proves compilation preserves those meanings in actual `DirectModel`.
+Operational annotation lookup is proved against declarative graph membership.
+Both definitive constructors carry whole-input admission; partial-source
+satisfaction alone can be vacuous on unsupported syntax. The
+`accepted_covers_triples` theorem ties admission to a mapping witness for
+every original triple. Mutating the real traversal to return no clauses
+must break this proof; one-way model preservation alone allows dropping clauses.
+The
+[reader record](../../docs/20261021-owl-reader-preservation.md) preserves the
+counterexample and actual proof-mutation gate. This closes only that explicit
+fragment's bridge, not the legacy reader or the public API.
+
+The next boundary is implemented in `Wasm/Ops/ReasonDlCertified.lean` and
+the actual `ReasonDl.owlIsConsistentParsed_certified` theorem. Prove both
+JSON-field semantics and success/refusal schemas; `getBool? = none` alone
+allows a missing or wrongly typed field.
+Require unique JSON keys: external parsers can resolve duplicates differently
+from Lean's first-match lookup. Mutation-test the actual public
+body, not only its safe helper. An internal Lean resource-limit error is
+not proof rejection. The public integration's equality-chain failure also
+shows why model preservation does not establish reasoning completeness;
+see [the record](../../docs/20261021-owl-public-boundary.md).
+
 - Core Lean 4 only (`formal/lean4/lakefile`, no Mathlib, no Batteries):
   `cases`, `induction`, `split`, `simp`, `simp only`, `dsimp only`,
   `decide`, `omega`, `rfl`, `exact`, `rw`, `generalize`, `rename_i`,

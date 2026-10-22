@@ -1,0 +1,13 @@
+WARNING manifest-rdf#test153 http://www.w3.org/2013/csvw/tests/test153.csv row 0 column string1: malformed regex format ignored (delimiter, trailing escape or leading quantifier)
+
+csv2rdf POSITIVE: 212 pass, 0 fail, 0 comparison-gave-up, 0 skip, 0 unsupported (out of 212 attempted)
+csv2rdf NEGATIVE (validator must reject): 58 pass, 0 fail, 0 skip (out of 58)
+csv2rdf TOTAL: 270 pass, 0 fail, 0 comparison-gave-up, 0 skip, 0 unsupported (out of 270 manifest entries)
+VALIDATOR CROSS-CHECK: 0 positive tests whose metadata the validator wrongly rejects
+
+Comparison is by GRAPH ISOMORPHISM against the suite's own
+expected .ttl: blank-node labels are arbitrary, so triple-set
+equality would fail correct output. A comparison that gives
+up is counted SEPARATELY from a failure -- it is not evidence
+the graphs differ, and folding it into `fail` misreports the
+engine.

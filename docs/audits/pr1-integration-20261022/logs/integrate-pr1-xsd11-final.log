@@ -1,0 +1,137 @@
+common/introspection.testSet: 0 pass, 0 fail (of 0 scored); structures 91, mixed 0, schema-invalid 0, version-1.0 0, unreadable 0, not-simple 0, assertion 0, unreadable-pattern 0, nilled 0, value-constraint 0
+nistMeta/NISTXMLSchemaDatatypes.testSet: 15887 pass, 0 fail (of 15887 scored); structures 410, mixed 0, schema-invalid 0, version-1.0 0, unreadable 0, not-simple 0, assertion 0, unreadable-pattern 2920, nilled 0, value-constraint 0
+sunMeta/suntest.testSet: 0 pass, 0 fail (of 0 scored); structures 209, mixed 0, schema-invalid 0, version-1.0 0, unreadable 0, not-simple 0, assertion 0, unreadable-pattern 0, nilled 0, value-constraint 0
+sunMeta/AGroupDef.testSet: 0 pass, 0 fail (of 0 scored); structures 6, mixed 0, schema-invalid 0, version-1.0 0, unreadable 0, not-simple 0, assertion 0, unreadable-pattern 0, nilled 0, value-constraint 0
+sunMeta/AttrDecl.testSet: 0 pass, 0 fail (of 0 scored); structures 95, mixed 0, schema-invalid 0, version-1.0 0, unreadable 0, not-simple 0, assertion 0, unreadable-pattern 0, nilled 0, value-constraint 0
+sunMeta/AttrUse.testSet: 0 pass, 0 fail (of 0 scored); structures 5, mixed 0, schema-invalid 0, version-1.0 0, unreadable 0, not-simple 0, assertion 0, unreadable-pattern 0, nilled 0, value-constraint 0
+sunMeta/CType.testSet: 0 pass, 0 fail (of 0 scored); structures 54, mixed 0, schema-invalid 0, version-1.0 0, unreadable 0, not-simple 0, assertion 0, unreadable-pattern 0, nilled 0, value-constraint 0
+sunMeta/ElemDecl.testSet: 20 pass, 0 fail (of 20 scored); structures 171, mixed 0, schema-invalid 0, version-1.0 0, unreadable 33, not-simple 1, assertion 0, unreadable-pattern 0, nilled 3, value-constraint 9
+sunMeta/IdConstrDefs.testSet: 0 pass, 0 fail (of 0 scored); structures 21, mixed 0, schema-invalid 0, version-1.0 0, unreadable 0, not-simple 0, assertion 0, unreadable-pattern 0, nilled 0, value-constraint 0
+sunMeta/MGroup.testSet: 0 pass, 0 fail (of 0 scored); structures 39, mixed 0, schema-invalid 0, version-1.0 0, unreadable 0, not-simple 0, assertion 0, unreadable-pattern 0, nilled 0, value-constraint 0
+sunMeta/MGroupDef.testSet: 0 pass, 0 fail (of 0 scored); structures 14, mixed 0, schema-invalid 0, version-1.0 0, unreadable 0, not-simple 0, assertion 0, unreadable-pattern 0, nilled 0, value-constraint 0
+sunMeta/Notation.testSet: 0 pass, 0 fail (of 0 scored); structures 8, mixed 0, schema-invalid 0, version-1.0 0, unreadable 0, not-simple 0, assertion 0, unreadable-pattern 0, nilled 0, value-constraint 0
+sunMeta/SType.testSet: 128 pass, 0 fail (of 128 scored); structures 66, mixed 0, schema-invalid 0, version-1.0 0, unreadable 6, not-simple 0, assertion 0, unreadable-pattern 0, nilled 0, value-constraint 0
+sunMeta/Wildcard.testSet: 0 pass, 0 fail (of 0 scored); structures 35, mixed 0, schema-invalid 0, version-1.0 0, unreadable 0, not-simple 0, assertion 0, unreadable-pattern 0, nilled 0, value-constraint 0
+msMeta/Additional_w3c.xml: 5 pass, 0 fail (of 5 scored); structures 138, mixed 0, schema-invalid 0, version-1.0 0, unreadable 31, not-simple 6, assertion 0, unreadable-pattern 0, nilled 0, value-constraint 8
+msMeta/AttributeGroup_w3c.xml: 0 pass, 0 fail (of 0 scored); structures 35, mixed 0, schema-invalid 0, version-1.0 0, unreadable 0, not-simple 0, assertion 0, unreadable-pattern 0, nilled 0, value-constraint 0
+msMeta/Attribute_w3c.xml: 0 pass, 0 fail (of 0 scored); structures 113, mixed 0, schema-invalid 0, version-1.0 0, unreadable 11, not-simple 0, assertion 0, unreadable-pattern 0, nilled 0, value-constraint 0
+msMeta/ComplexType_w3c.xml: 0 pass, 0 fail (of 0 scored); structures 261, mixed 0, schema-invalid 0, version-1.0 0, unreadable 1, not-simple 0, assertion 0, unreadable-pattern 0, nilled 0, value-constraint 0
+msMeta/DataTypes_w3c.xml: 5 pass, 0 fail (of 5 scored); structures 1181, mixed 0, schema-invalid 0, version-1.0 0, unreadable 0, not-simple 1, assertion 0, unreadable-pattern 0, nilled 0, value-constraint 0
+msMeta/Element_w3c.xml: 1 pass, 0 fail (of 1 scored); structures 166, mixed 0, schema-invalid 0, version-1.0 0, unreadable 3, not-simple 0, assertion 0, unreadable-pattern 0, nilled 0, value-constraint 1
+msMeta/Errata10_w3c.xml: 0 pass, 0 fail (of 0 scored); structures 12, mixed 0, schema-invalid 0, version-1.0 0, unreadable 0, not-simple 0, assertion 0, unreadable-pattern 0, nilled 0, value-constraint 0
+msMeta/Group_w3c.xml: 0 pass, 0 fail (of 0 scored); structures 126, mixed 0, schema-invalid 0, version-1.0 0, unreadable 0, not-simple 0, assertion 0, unreadable-pattern 0, nilled 0, value-constraint 0
+msMeta/IdentityConstraint_w3c.xml: 0 pass, 0 fail (of 0 scored); structures 228, mixed 0, schema-invalid 0, version-1.0 0, unreadable 0, not-simple 0, assertion 0, unreadable-pattern 0, nilled 0, value-constraint 0
+msMeta/ModelGroups_w3c.xml: 0 pass, 0 fail (of 0 scored); structures 207, mixed 0, schema-invalid 0, version-1.0 0, unreadable 0, not-simple 0, assertion 0, unreadable-pattern 0, nilled 0, value-constraint 0
+msMeta/Notations_w3c.xml: 0 pass, 0 fail (of 0 scored); structures 1, mixed 0, schema-invalid 0, version-1.0 0, unreadable 2, not-simple 0, assertion 0, unreadable-pattern 0, nilled 0, value-constraint 0
+msMeta/Particles_w3c.xml: 0 pass, 0 fail (of 0 scored); structures 515, mixed 0, schema-invalid 0, version-1.0 0, unreadable 1, not-simple 0, assertion 0, unreadable-pattern 0, nilled 0, value-constraint 0
+msMeta/Regex_w3c.xml: 0 pass, 0 fail (of 0 scored); structures 1432, mixed 0, schema-invalid 0, version-1.0 0, unreadable 0, not-simple 0, assertion 0, unreadable-pattern 0, nilled 0, value-constraint 0
+msMeta/Schema_w3c.xml: 0 pass, 0 fail (of 0 scored); structures 33, mixed 0, schema-invalid 0, version-1.0 0, unreadable 2, not-simple 0, assertion 0, unreadable-pattern 0, nilled 0, value-constraint 0
+msMeta/SimpleType_w3c.xml: 8 pass, 0 fail (of 8 scored); structures 57, mixed 0, schema-invalid 1, version-1.0 0, unreadable 9, not-simple 0, assertion 0, unreadable-pattern 0, nilled 0, value-constraint 35
+msMeta/Wildcards_w3c.xml: 0 pass, 0 fail (of 0 scored); structures 119, mixed 0, schema-invalid 0, version-1.0 0, unreadable 0, not-simple 0, assertion 0, unreadable-pattern 0, nilled 0, value-constraint 0
+boeingMeta/BoeingXSDTestSet.testSet: 0 pass, 0 fail (of 0 scored); structures 12, mixed 0, schema-invalid 0, version-1.0 0, unreadable 0, not-simple 0, assertion 0, unreadable-pattern 0, nilled 0, value-constraint 0
+saxonMeta/All.testSet: 0 pass, 0 fail (of 0 scored); structures 48, mixed 0, schema-invalid 0, version-1.0 0, unreadable 0, not-simple 0, assertion 0, unreadable-pattern 0, nilled 0, value-constraint 0
+saxonMeta/Assert.testSet: 0 pass, 0 fail (of 0 scored); structures 67, mixed 0, schema-invalid 0, version-1.0 0, unreadable 0, not-simple 0, assertion 0, unreadable-pattern 0, nilled 0, value-constraint 0
+saxonMeta/Complex.testSet: 0 pass, 0 fail (of 0 scored); structures 62, mixed 0, schema-invalid 0, version-1.0 0, unreadable 0, not-simple 0, assertion 0, unreadable-pattern 0, nilled 0, value-constraint 0
+saxonMeta/CTA.testSet: 0 pass, 0 fail (of 0 scored); structures 69, mixed 0, schema-invalid 0, version-1.0 0, unreadable 0, not-simple 0, assertion 0, unreadable-pattern 0, nilled 0, value-constraint 0
+saxonMeta/Id.testSet: 0 pass, 0 fail (of 0 scored); structures 89, mixed 0, schema-invalid 0, version-1.0 0, unreadable 0, not-simple 0, assertion 0, unreadable-pattern 0, nilled 0, value-constraint 0
+saxonMeta/Open.testSet: 0 pass, 0 fail (of 0 scored); structures 114, mixed 0, schema-invalid 0, version-1.0 0, unreadable 0, not-simple 0, assertion 0, unreadable-pattern 0, nilled 0, value-constraint 0
+saxonMeta/Override.testSet: 0 pass, 0 fail (of 0 scored); structures 55, mixed 0, schema-invalid 0, version-1.0 0, unreadable 0, not-simple 0, assertion 0, unreadable-pattern 0, nilled 0, value-constraint 0
+saxonMeta/Simple.testSet: 13 pass, 0 fail (of 13 scored); structures 20, mixed 0, schema-invalid 0, version-1.0 0, unreadable 5, not-simple 0, assertion 0, unreadable-pattern 5, nilled 0, value-constraint 0
+saxonMeta/Subsgroup.testSet: 0 pass, 0 fail (of 0 scored); structures 5, mixed 0, schema-invalid 0, version-1.0 0, unreadable 0, not-simple 0, assertion 0, unreadable-pattern 0, nilled 0, value-constraint 0
+saxonMeta/TargetNS.testSet: 0 pass, 0 fail (of 0 scored); structures 5, mixed 0, schema-invalid 0, version-1.0 0, unreadable 0, not-simple 0, assertion 0, unreadable-pattern 0, nilled 0, value-constraint 0
+saxonMeta/VC.testSet: 1 pass, 0 fail (of 1 scored); structures 22, mixed 0, schema-invalid 0, version-1.0 0, unreadable 1, not-simple 0, assertion 2, unreadable-pattern 0, nilled 0, value-constraint 0
+saxonMeta/Wild.testSet: 0 pass, 0 fail (of 0 scored); structures 196, mixed 0, schema-invalid 0, version-1.0 0, unreadable 0, not-simple 0, assertion 0, unreadable-pattern 0, nilled 0, value-constraint 0
+saxonMeta/XmlVersions.testSet: 0 pass, 0 fail (of 0 scored); structures 38, mixed 0, schema-invalid 0, version-1.0 0, unreadable 0, not-simple 0, assertion 0, unreadable-pattern 0, nilled 0, value-constraint 0
+saxonMeta/Zone.testSet: 46 pass, 0 fail (of 46 scored); structures 8, mixed 0, schema-invalid 0, version-1.0 0, unreadable 0, not-simple 0, assertion 0, unreadable-pattern 0, nilled 0, value-constraint 0
+oracleMeta/Zone.testSet: 17 pass, 0 fail (of 17 scored); structures 0, mixed 0, schema-invalid 0, version-1.0 0, unreadable 0, not-simple 0, assertion 0, unreadable-pattern 0, nilled 0, value-constraint 0
+wgMeta/substitution-groups.testSet: 0 pass, 0 fail (of 0 scored); structures 41, mixed 0, schema-invalid 0, version-1.0 0, unreadable 0, not-simple 0, assertion 0, unreadable-pattern 0, nilled 0, value-constraint 0
+wgMeta/IRI.testSet: 0 pass, 0 fail (of 0 scored); structures 12, mixed 0, schema-invalid 0, version-1.0 0, unreadable 0, not-simple 0, assertion 0, unreadable-pattern 0, nilled 0, value-constraint 0
+ibmMeta/allGroup.testSet: 0 pass, 0 fail (of 0 scored); structures 6, mixed 0, schema-invalid 0, version-1.0 0, unreadable 0, not-simple 0, assertion 0, unreadable-pattern 0, nilled 0, value-constraint 0
+ibmMeta/anyAttribute.testSet: 0 pass, 0 fail (of 0 scored); structures 7, mixed 0, schema-invalid 0, version-1.0 0, unreadable 0, not-simple 0, assertion 0, unreadable-pattern 0, nilled 0, value-constraint 0
+ibmMeta/assert.testSet: 0 pass, 0 fail (of 0 scored); structures 27, mixed 0, schema-invalid 0, version-1.0 0, unreadable 0, not-simple 0, assertion 17, unreadable-pattern 0, nilled 0, value-constraint 0
+ibmMeta/assertion.testSet: 0 pass, 0 fail (of 0 scored); structures 38, mixed 0, schema-invalid 0, version-1.0 0, unreadable 2, not-simple 0, assertion 10, unreadable-pattern 0, nilled 0, value-constraint 0
+ibmMeta/conditionalInclusion.testSet: 0 pass, 0 fail (of 0 scored); structures 2, mixed 0, schema-invalid 0, version-1.0 0, unreadable 0, not-simple 0, assertion 0, unreadable-pattern 0, nilled 0, value-constraint 0
+ibmMeta/date.testSet: 0 pass, 0 fail (of 0 scored); structures 1, mixed 0, schema-invalid 0, version-1.0 0, unreadable 0, not-simple 0, assertion 0, unreadable-pattern 0, nilled 0, value-constraint 0
+ibmMeta/dateTimeStamp.testSet: 0 pass, 0 fail (of 0 scored); structures 15, mixed 0, schema-invalid 0, version-1.0 0, unreadable 0, not-simple 0, assertion 0, unreadable-pattern 0, nilled 0, value-constraint 0
+ibmMeta/dayTimeDuration.testSet: 0 pass, 0 fail (of 0 scored); structures 12, mixed 0, schema-invalid 0, version-1.0 0, unreadable 0, not-simple 0, assertion 0, unreadable-pattern 0, nilled 0, value-constraint 0
+ibmMeta/defaultAttributesApply.testSet: 0 pass, 0 fail (of 0 scored); structures 13, mixed 0, schema-invalid 0, version-1.0 0, unreadable 1, not-simple 0, assertion 0, unreadable-pattern 0, nilled 0, value-constraint 0
+ibmMeta/defaultFixed.testSet: 0 pass, 0 fail (of 0 scored); structures 5, mixed 0, schema-invalid 0, version-1.0 0, unreadable 0, not-simple 0, assertion 0, unreadable-pattern 0, nilled 0, value-constraint 0
+ibmMeta/double.testSet: 1 pass, 0 fail (of 1 scored); structures 1, mixed 0, schema-invalid 0, version-1.0 0, unreadable 0, not-simple 0, assertion 0, unreadable-pattern 0, nilled 0, value-constraint 0
+ibmMeta/edcWildcard.testSet: 0 pass, 0 fail (of 0 scored); structures 2, mixed 0, schema-invalid 0, version-1.0 0, unreadable 0, not-simple 0, assertion 0, unreadable-pattern 0, nilled 0, value-constraint 0
+ibmMeta/explicitTimezone.testSet: 0 pass, 0 fail (of 0 scored); structures 14, mixed 0, schema-invalid 0, version-1.0 0, unreadable 0, not-simple 0, assertion 0, unreadable-pattern 0, nilled 0, value-constraint 0
+ibmMeta/float.testSet: 1 pass, 0 fail (of 1 scored); structures 1, mixed 0, schema-invalid 0, version-1.0 0, unreadable 0, not-simple 0, assertion 0, unreadable-pattern 0, nilled 0, value-constraint 0
+ibmMeta/gYearMonth.testSet: 0 pass, 0 fail (of 0 scored); structures 1, mixed 0, schema-invalid 0, version-1.0 0, unreadable 0, not-simple 0, assertion 0, unreadable-pattern 0, nilled 0, value-constraint 0
+ibmMeta/gYear.testSet: 0 pass, 0 fail (of 0 scored); structures 1, mixed 0, schema-invalid 0, version-1.0 0, unreadable 0, not-simple 0, assertion 0, unreadable-pattern 0, nilled 0, value-constraint 0
+ibmMeta/gMonthDay.testSet: 0 pass, 0 fail (of 0 scored); structures 1, mixed 0, schema-invalid 0, version-1.0 0, unreadable 0, not-simple 0, assertion 0, unreadable-pattern 0, nilled 0, value-constraint 0
+ibmMeta/gDay.testSet: 0 pass, 0 fail (of 0 scored); structures 1, mixed 0, schema-invalid 0, version-1.0 0, unreadable 0, not-simple 0, assertion 0, unreadable-pattern 0, nilled 0, value-constraint 0
+ibmMeta/idIDREF.testSet: 0 pass, 0 fail (of 0 scored); structures 41, mixed 0, schema-invalid 0, version-1.0 0, unreadable 16, not-simple 0, assertion 0, unreadable-pattern 0, nilled 0, value-constraint 0
+ibmMeta/identityConstraint.testSet: 0 pass, 0 fail (of 0 scored); structures 3, mixed 0, schema-invalid 0, version-1.0 0, unreadable 3, not-simple 0, assertion 0, unreadable-pattern 0, nilled 0, value-constraint 0
+ibmMeta/list.testSet: 0 pass, 0 fail (of 0 scored); structures 1, mixed 0, schema-invalid 0, version-1.0 0, unreadable 0, not-simple 0, assertion 0, unreadable-pattern 0, nilled 0, value-constraint 0
+ibmMeta/openContent.testSet: 0 pass, 0 fail (of 0 scored); structures 16, mixed 0, schema-invalid 0, version-1.0 0, unreadable 0, not-simple 0, assertion 0, unreadable-pattern 0, nilled 0, value-constraint 0
+ibmMeta/regularExpression.testSet: 0 pass, 0 fail (of 0 scored); structures 8, mixed 0, schema-invalid 0, version-1.0 0, unreadable 0, not-simple 0, assertion 0, unreadable-pattern 0, nilled 0, value-constraint 0
+ibmMeta/restrictionOfComplexTypes.testSet: 0 pass, 0 fail (of 0 scored); structures 6, mixed 0, schema-invalid 0, version-1.0 0, unreadable 0, not-simple 0, assertion 0, unreadable-pattern 0, nilled 0, value-constraint 0
+ibmMeta/rf_whiteSpace.testSet: 0 pass, 0 fail (of 0 scored); structures 2, mixed 0, schema-invalid 0, version-1.0 0, unreadable 0, not-simple 0, assertion 0, unreadable-pattern 0, nilled 0, value-constraint 0
+ibmMeta/substitutionGroup.testSet: 0 pass, 0 fail (of 0 scored); structures 3, mixed 0, schema-invalid 0, version-1.0 0, unreadable 0, not-simple 0, assertion 0, unreadable-pattern 0, nilled 0, value-constraint 0
+ibmMeta/targetNamespace.testSet: 0 pass, 0 fail (of 0 scored); structures 2, mixed 0, schema-invalid 0, version-1.0 0, unreadable 0, not-simple 0, assertion 0, unreadable-pattern 0, nilled 0, value-constraint 0
+ibmMeta/time.testSet: 0 pass, 0 fail (of 0 scored); structures 4, mixed 0, schema-invalid 0, version-1.0 0, unreadable 0, not-simple 0, assertion 0, unreadable-pattern 0, nilled 0, value-constraint 0
+ibmMeta/typeAlternatives.testSet: 0 pass, 0 fail (of 0 scored); structures 16, mixed 0, schema-invalid 0, version-1.0 0, unreadable 0, not-simple 0, assertion 0, unreadable-pattern 0, nilled 0, value-constraint 0
+ibmMeta/typeAlternativesMixed.testSet: 0 pass, 0 fail (of 0 scored); structures 9, mixed 0, schema-invalid 0, version-1.0 0, unreadable 0, not-simple 0, assertion 0, unreadable-pattern 0, nilled 0, value-constraint 0
+ibmMeta/union.testSet: 0 pass, 0 fail (of 0 scored); structures 14, mixed 0, schema-invalid 0, version-1.0 0, unreadable 0, not-simple 0, assertion 0, unreadable-pattern 0, nilled 0, value-constraint 0
+ibmMeta/unitsLength.testSet: 0 pass, 0 fail (of 0 scored); structures 6, mixed 0, schema-invalid 0, version-1.0 0, unreadable 0, not-simple 0, assertion 0, unreadable-pattern 0, nilled 0, value-constraint 0
+ibmMeta/unsignedInteger.testSet: 0 pass, 0 fail (of 0 scored); structures 8, mixed 0, schema-invalid 0, version-1.0 0, unreadable 0, not-simple 0, assertion 0, unreadable-pattern 0, nilled 0, value-constraint 0
+ibmMeta/vc.testSet: 2 pass, 0 fail (of 2 scored); structures 2, mixed 0, schema-invalid 0, version-1.0 0, unreadable 0, not-simple 0, assertion 4, unreadable-pattern 0, nilled 0, value-constraint 0
+ibmMeta/wildcard.testSet: 0 pass, 0 fail (of 0 scored); structures 15, mixed 0, schema-invalid 0, version-1.0 0, unreadable 0, not-simple 0, assertion 0, unreadable-pattern 0, nilled 0, value-constraint 0
+ibmMeta/xml11Support.testSet: 0 pass, 0 fail (of 0 scored); structures 11, mixed 0, schema-invalid 0, version-1.0 0, unreadable 0, not-simple 0, assertion 0, unreadable-pattern 0, nilled 0, value-constraint 0
+ibmMeta/xpathDefaultNSonKeyKeyRefUnique.testSet: 0 pass, 0 fail (of 0 scored); structures 13, mixed 0, schema-invalid 0, version-1.0 0, unreadable 0, not-simple 0, assertion 0, unreadable-pattern 0, nilled 0, value-constraint 0
+ibmMeta/yearMonthDuration.testSet: 0 pass, 0 fail (of 0 scored); structures 13, mixed 0, schema-invalid 0, version-1.0 0, unreadable 0, not-simple 0, assertion 0, unreadable-pattern 0, nilled 0, value-constraint 0
+
+per-datatype (scored instance tests):
+  «union»: 253 pass, 0 fail (of 253)
+  dateTimeStamp: 7 pass, 0 fail (of 7)
+  dayTimeDuration: 5 pass, 0 fail (of 5)
+  yearMonthDuration: 5 pass, 0 fail (of 5)
+  «xsi:type»: 5 pass, 0 fail (of 5)
+  anySimpleType: 1 pass, 0 fail (of 1)
+  decimal: 340 pass, 0 fail (of 340)
+  integer: 294 pass, 0 fail (of 294)
+  nonPositiveInteger: 290 pass, 0 fail (of 290)
+  negativeInteger: 290 pass, 0 fail (of 290)
+  long: 290 pass, 0 fail (of 290)
+  int: 292 pass, 0 fail (of 292)
+  short: 285 pass, 0 fail (of 285)
+  byte: 265 pass, 0 fail (of 265)
+  nonNegativeInteger: 290 pass, 0 fail (of 290)
+  unsignedLong: 290 pass, 0 fail (of 290)
+  unsignedInt: 290 pass, 0 fail (of 290)
+  unsignedShort: 285 pass, 0 fail (of 285)
+  unsignedByte: 265 pass, 0 fail (of 265)
+  positiveInteger: 290 pass, 0 fail (of 290)
+  double: 74 pass, 0 fail (of 74)
+  float: 70 pass, 0 fail (of 70)
+  duration: 235 pass, 0 fail (of 235)
+  dateTime: 259 pass, 0 fail (of 259)
+  time: 240 pass, 0 fail (of 240)
+  date: 239 pass, 0 fail (of 239)
+  gYearMonth: 239 pass, 0 fail (of 239)
+  gYear: 233 pass, 0 fail (of 233)
+  gMonthDay: 235 pass, 0 fail (of 235)
+  gDay: 220 pass, 0 fail (of 220)
+  gMonth: 225 pass, 0 fail (of 225)
+  string: 220 pass, 0 fail (of 220)
+  normalizedString: 185 pass, 0 fail (of 185)
+  token: 180 pass, 0 fail (of 180)
+  Name: 205 pass, 0 fail (of 205)
+  NMTOKEN: 205 pass, 0 fail (of 205)
+  NCName: 180 pass, 0 fail (of 180)
+  language: 200 pass, 0 fail (of 200)
+  anyURI: 255 pass, 0 fail (of 255)
+  QName: 107 pass, 0 fail (of 107)
+  boolean: 62 pass, 0 fail (of 62)
+  base64Binary: 130 pass, 0 fail (of 130)
+  hexBinary: 130 pass, 0 fail (of 130)
+  «list»: 7268 pass, 0 fail (of 7268)
+  NMTOKENS: 207 pass, 0 fail (of 207)
+
+XSD datatype instance tests: 16135 pass, 0 fail (out of 16135 scored)
+not scored: structures 7052, mixed 0, schema-invalid 1, version-1.0 8, unreadable 139, not-simple 8, assertion 33, unreadable-pattern 2925, nilled 3, value-constraint 53
+schema tests seen (not scored in this run): 15378

@@ -1,0 +1,19 @@
+  ok   the server binds an ephemeral port
+  ok   PUT creates a data resource
+  ok   GET reads it back with Last-Modified
+  ok   HEAD carries Last-Modified and no body
+  ok   PUT updates it and moves Last-Modified
+  ok   DELETE removes it
+  ok   GET after DELETE does not find it
+  ok   PATCH refuses an insertion formula with a blank node
+lws-server node: 8 pass, 0 fail, 0 skipped (out of 8)
+deno: /opt/homebrew/bin/deno
+  ok   the server binds an ephemeral port
+  ok   PUT creates a data resource
+  ok   GET reads it back with Last-Modified
+  ok   HEAD carries Last-Modified and no body
+  ok   PUT updates it and moves Last-Modified
+  ok   DELETE removes it
+  ok   GET after DELETE does not find it
+  ok   PATCH refuses an insertion formula with a blank node
+lws-server deno: 8 pass, 0 fail, 0 skipped (out of 8)

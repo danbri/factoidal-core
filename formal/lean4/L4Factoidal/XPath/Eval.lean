@@ -139,24 +139,18 @@ private def unboundNs (pfx : String) : String := " unbound:" ++ pfx
     a document declares `xmlns=`, which is the shape of a bug that
     only appears on real-world input. -/
 def expandedName (d : Doc) (it : Item) : String × String :=
-  let q := it.qname
-  let pfx := prefixOf q
-  let loc := localOf q
+  let resolved := do
+    let scope ← namespaceScope d it.loc.path
+    let name ← match it.kind with
+      | .attribute => resolveAttributeName scope it.qname
+      | .element => resolveElementName scope it.qname
+      | _ => none
+    pure (name.namespace_.getD "", name.localPart)
   match it.kind with
-  | .attribute =>
-      if pfx == "" then ("", loc)
-      else
-        let owner := itemAt d { path := it.loc.path, doc := it.loc.doc }
-        let nss := (owner.map (namespacesOf d)).getD []
-        (((nss.find? (fun n => n.qname == pfx)).map (fun n => n.stringValue)).getD (unboundNs pfx), loc)
-  | .element | .pi =>
-      let nss := namespacesOf d it
-      -- An UNPREFIXED element with no default namespace declared is in
-      -- no namespace, not "unbound" — only a genuine prefix falls back
-      -- to the opaque-match sentinel below.
-      let fallback := if pfx == "" then "" else unboundNs pfx
-      (((nss.find? (fun n => n.qname == pfx)).map (fun n => n.stringValue)).getD fallback, loc)
-  | _ => ("", loc)
+  | .element | .attribute =>
+      resolved.getD (unboundNs (prefixOf it.qname), localOf it.qname)
+  | .pi | .namespace => ("", it.qname)
+  | _ => ("", "")
 
 /-- Expand a name written in an EXPRESSION. An unprefixed name has no
     namespace — XPath 1.0 §2.3 says so explicitly, and it is the one
@@ -581,12 +575,20 @@ partial def evalCall (c : Ctx) (f : String) (args : List Expr) : Option Value :=
 
 end
 
-/-- Evaluate a parsed expression. -/
-def eval (c : Ctx) (e : Expr) : Option Value := evalExpr c e
+/-- Namespace admission for every supplied document; node addresses keep
+main's explicit document numbers and are resolved in their owning document. -/
+def Ctx.namespaceWellFormed (c : Ctx) : Bool :=
+  checkChildren "1.1" initialScope c.doc &&
+  c.self?.all (checkChildren "1.1" initialScope) &&
+  c.docs.all (fun (_, d) => checkChildren "1.1" initialScope d)
 
-/-- Parse and evaluate. -/
+/-- Evaluate a parsed expression after namespace admission. -/
+def eval (c : Ctx) (e : Expr) : Option Value :=
+  if c.namespaceWellFormed then evalExpr c e else none
+
+/-- Parse and evaluate through the same checked entry point. -/
 def evalText (c : Ctx) (s : String) : Option Value := do
   let e ← parseExpr s
-  evalExpr c e
+  eval c e
 
 end L4Factoidal.XPath.Full

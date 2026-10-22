@@ -1,0 +1,10 @@
+lean-hygiene-audit: 1018 .lean files scanned (comments and string literals stripped first)
+  sorry                0 (must be 0)
+  user axiom           0 (must be 0)
+  native_decide        0 (must be 0)
+  unsafe               0 (must be 0)
+  @[implemented_by]    0 (must be 0)
+  partial def          163 (baseline 163, must not increase)
+  #print axioms        1602 outputs read from ../logs/pr-core-library-build.log
+
+lean-hygiene-audit: clean

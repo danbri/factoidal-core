@@ -1,0 +1,406 @@
+TAP version 13
+# (node:97764) [MODULE_TYPELESS_PACKAGE_JSON] Warning: Module type of file:///Users/danbri/working/sandbox/october/tpac/codex-npm-review/integrate-core/third_party/observable/dist/runtime.esm.js is not specified and it doesn't parse as CommonJS.
+# Reparsing as ES module because module syntax was detected. This incurs a performance overhead.
+# To eliminate this warning, add "type": "module" to /Users/danbri/package.json.
+# (Use `node --trace-warnings ...` to show where the warning was created)
+# Subtest: canonical: isomorphic documents, one canonical form, its SHA-256
+ok 1 - canonical: isomorphic documents, one canonical form, its SHA-256
+  ---
+  duration_ms: 1157.968791
+  type: 'test'
+  ...
+# Subtest: canonical: eddsa-rdfc-2022 sign, verify, tamper
+ok 2 - canonical: eddsa-rdfc-2022 sign, verify, tamper
+  ---
+  duration_ms: 78.495084
+  type: 'test'
+  ...
+# Subtest: canonical: did:key resolves to a DID document
+ok 3 - canonical: did:key resolves to a DID document
+  ---
+  duration_ms: 14.38125
+  type: 'test'
+  ...
+# Subtest: xfail: canonical: RDFC-1.0 of a dataset with an RDF 1.2 triple term (https://github.com/danbri/factoidal/issues/873)
+ok 4 - xfail: canonical: RDFC-1.0 of a dataset with an RDF 1.2 triple term (https://github.com/danbri/factoidal/issues/873)
+  ---
+  duration_ms: 23.410792
+  type: 'test'
+  ...
+# expected failure: datasetSerialize: canonicalizeToNQuads: the input holds an RDF 1.2 triple term or directional language-tagged string; RDFC-1.0 (W3C Recommendation 2024, sections 4.6 and 4.8) defines canonical labels 
+# (node:97765) [MODULE_TYPELESS_PACKAGE_JSON] Warning: Module type of file:///Users/danbri/working/sandbox/october/tpac/codex-npm-review/integrate-core/third_party/observable/dist/runtime.esm.js is not specified and it doesn't parse as CommonJS.
+# Reparsing as ES module because module syntax was detected. This incurs a performance overhead.
+# To eliminate this warning, add "type": "module" to /Users/danbri/package.json.
+# (Use `node --trace-warnings ...` to show where the warning was created)
+# Subtest: importers: each step produces a Dataset
+ok 5 - importers: each step produces a Dataset
+  ---
+  duration_ms: 1370.182208
+  type: 'test'
+  ...
+# Subtest: importers: one named graph per step, joined across steps
+ok 6 - importers: one named graph per step, joined across steps
+  ---
+  duration_ms: 165.946708
+  type: 'test'
+  ...
+# (node:97766) [MODULE_TYPELESS_PACKAGE_JSON] Warning: Module type of file:///Users/danbri/working/sandbox/october/tpac/codex-npm-review/integrate-core/third_party/observable/dist/runtime.esm.js is not specified and it doesn't parse as CommonJS.
+# Reparsing as ES module because module syntax was detected. This incurs a performance overhead.
+# To eliminate this warning, add "type": "module" to /Users/danbri/package.json.
+# (Use `node --trace-warnings ...` to show where the warning was created)
+# Subtest: hub index: the API cell
+ok 7 - hub index: the API cell
+  ---
+  duration_ms: 890.139208
+  type: 'test'
+  ...
+# Subtest: hub index: the standards table comes from a scoreboard record
+ok 8 - hub index: the standards table comes from a scoreboard record
+  ---
+  duration_ms: 22.070916
+  type: 'test'
+  ...
+# (node:97767) [MODULE_TYPELESS_PACKAGE_JSON] Warning: Module type of file:///Users/danbri/working/sandbox/october/tpac/codex-npm-review/integrate-core/third_party/observable/dist/runtime.esm.js is not specified and it doesn't parse as CommonJS.
+# Reparsing as ES module because module syntax was detected. This incurs a performance overhead.
+# To eliminate this warning, add "type": "module" to /Users/danbri/package.json.
+# (Use `node --trace-warnings ...` to show where the warning was created)
+# Subtest: inference: RDFS closure over the pipeline output
+ok 9 - inference: RDFS closure over the pipeline output
+  ---
+  duration_ms: 1637.243458
+  type: 'test'
+  ...
+# Subtest: inference: OWL 2 RL inverseOf, derived triples in their own graph
+ok 10 - inference: OWL 2 RL inverseOf, derived triples in their own graph
+  ---
+  duration_ms: 163.51925
+  type: 'test'
+  ...
+# Subtest: inference: unsupported consistency examples remain unknown; separate entailment succeeds
+ok 11 - inference: unsupported consistency examples remain unknown; separate entailment succeeds
+  ---
+  duration_ms: 45.334458
+  type: 'test'
+  ...
+# Subtest: inference: the closures accept an RDF 1.2 triple term
+ok 12 - inference: the closures accept an RDF 1.2 triple term
+  ---
+  duration_ms: 36.784291
+  type: 'test'
+  ...
+# Subtest: xfail: inference: owlIsConsistent on a dataset with an RDF 1.2 triple term (https://github.com/danbri/factoidal/issues/873)
+ok 13 - xfail: inference: owlIsConsistent on a dataset with an RDF 1.2 triple term (https://github.com/danbri/factoidal/issues/873)
+  ---
+  duration_ms: 31.580167
+  type: 'test'
+  ...
+# expected failure: owlIsConsistent: the input holds an RDF 1.2 triple term or directional language-tagged string; OWL 2 Mapping to RDF Graphs (section 3) and the OWL 2 Direct Semantics define no rule for these terms (ht
+# (node:97768) [MODULE_TYPELESS_PACKAGE_JSON] Warning: Module type of file:///Users/danbri/working/sandbox/october/tpac/codex-npm-review/integrate-core/third_party/observable/dist/runtime.esm.js is not specified and it doesn't parse as CommonJS.
+# Reparsing as ES module because module syntax was detected. This incurs a performance overhead.
+# To eliminate this warning, add "type": "module" to /Users/danbri/package.json.
+# (Use `node --trace-warnings ...` to show where the warning was created)
+# Subtest: rdf-syntaxes: Turtle read, six writers, round trips
+ok 14 - rdf-syntaxes: Turtle read, six writers, round trips
+  ---
+  duration_ms: 1666.531334
+  type: 'test'
+  ...
+# Subtest: rdf-syntaxes: strict error position and lenient diagnostics
+ok 15 - rdf-syntaxes: strict error position and lenient diagnostics
+  ---
+  duration_ms: 26.199584
+  type: 'test'
+  ...
+# Subtest: rdf-syntaxes: RDF 1.2 Turtle
+ok 16 - rdf-syntaxes: RDF 1.2 Turtle
+  ---
+  duration_ms: 34.918542
+  type: 'test'
+  ...
+# Subtest: xfail: rdf-syntaxes: RDF/XML writes an RDF 1.2 triple term (https://github.com/danbri/factoidal/issues/883)
+ok 17 - xfail: rdf-syntaxes: RDF/XML writes an RDF 1.2 triple term (https://github.com/danbri/factoidal/issues/883)
+  ---
+  duration_ms: 17.89075
+  type: 'test'
+  ...
+# expected failure: datasetSerialize: RDF/XML 1.1 has no form for a triple term
+# (node:97769) [MODULE_TYPELESS_PACKAGE_JSON] Warning: Module type of file:///Users/danbri/working/sandbox/october/tpac/codex-npm-review/integrate-core/third_party/observable/dist/runtime.esm.js is not specified and it doesn't parse as CommonJS.
+# Reparsing as ES module because module syntax was detected. This incurs a performance overhead.
+# To eliminate this warning, add "type": "module" to /Users/danbri/package.json.
+# (Use `node --trace-warnings ...` to show where the warning was created)
+# Subtest: servers: serve --file, Fuseki paths, query, update, read-only /get
+ok 18 - servers: serve --file, Fuseki paths, query, update, read-only /get
+  ---
+  duration_ms: 3481.197375
+  type: 'test'
+  ...
+# Subtest: shardborough: npm pack, activate, query
+ok 19 - shardborough: npm pack, activate, query
+  ---
+  duration_ms: 6049.262791
+  type: 'test'
+  ...
+# Subtest: xfail: shardborough: npm update through the delta log (https://github.com/danbri/factoidal/issues/641)
+ok 20 - xfail: shardborough: npm update through the delta log (https://github.com/danbri/factoidal/issues/641)
+  ---
+  duration_ms: 369.111334
+  type: 'test'
+  ...
+# expected failure: factoidal update: not yet wired. The delta-log operations are stage 4 of the milestone.\\nThis needs a WebAssembly operation from the Lean engine; see https://github.com/danbri/factoidal/issues/641.\\n\\n\\n3
+# (node:97771) [MODULE_TYPELESS_PACKAGE_JSON] Warning: Module type of file:///Users/danbri/working/sandbox/october/tpac/codex-npm-review/integrate-core/third_party/observable/dist/runtime.esm.js is not specified and it doesn't parse as CommonJS.
+# Reparsing as ES module because module syntax was detected. This incurs a performance overhead.
+# To eliminate this warning, add "type": "module" to /Users/danbri/package.json.
+# (Use `node --trace-warnings ...` to show where the warning was created)
+# Subtest: sparql: paths, aggregates, results document
+ok 21 - sparql: paths, aggregates, results document
+  ---
+  duration_ms: 1182.731958
+  type: 'test'
+  ...
+# Subtest: sparql: ASK, CONSTRUCT, Update on a clone
+ok 22 - sparql: ASK, CONSTRUCT, Update on a clone
+  ---
+  duration_ms: 38.073
+  type: 'test'
+  ...
+# Subtest: sparql: GeoSPARQL sfWithin and distance
+ok 23 - sparql: GeoSPARQL sfWithin and distance
+  ---
+  duration_ms: 27.928333
+  type: 'test'
+  ...
+# Subtest: sparql: text:query
+ok 24 - sparql: text:query
+  ---
+  duration_ms: 29.428125
+  type: 'test'
+  ...
+# Subtest: sparql: JavaScript and WebAssembly extension functions
+ok 25 - sparql: JavaScript and WebAssembly extension functions
+  ---
+  duration_ms: 258.857917
+  type: 'test'
+  ...
+# Subtest: sparql: SERVICE against a registered endpoint
+ok 26 - sparql: SERVICE against a registered endpoint
+  ---
+  duration_ms: 9.90175
+  type: 'test'
+  ...
+# Subtest: sparql: SPARQL 1.2 triple-term patterns and functions
+ok 27 - sparql: SPARQL 1.2 triple-term patterns and functions
+  ---
+  duration_ms: 20.170666
+  type: 'test'
+  ...
+# Subtest: xfail: sparql: geof:distance in metres for CRS84 points (https://github.com/danbri/factoidal/issues/772)
+ok 28 - xfail: sparql: geof:distance in metres for CRS84 points (https://github.com/danbri/factoidal/issues/772)
+  ---
+  duration_ms: 5.437709
+  type: 'test'
+  ...
+# expected failure: Cannot read properties of undefined (reading 'value')
+# Subtest: sparql: SPARQL 1.2 reifier and annotation patterns
+ok 29 - sparql: SPARQL 1.2 reifier and annotation patterns
+  ---
+  duration_ms: 6.55575
+  type: 'test'
+  ...
+# (node:97774) [MODULE_TYPELESS_PACKAGE_JSON] Warning: Module type of file:///Users/danbri/working/sandbox/october/tpac/codex-npm-review/integrate-core/third_party/observable/dist/runtime.esm.js is not specified and it doesn't parse as CommonJS.
+# Reparsing as ES module because module syntax was detected. This incurs a performance overhead.
+# To eliminate this warning, add "type": "module" to /Users/danbri/package.json.
+# (Use `node --trace-warnings ...` to show where the warning was created)
+# Subtest: validation: SHACL report as a Dataset
+ok 30 - validation: SHACL report as a Dataset
+  ---
+  duration_ms: 1224.290291
+  type: 'test'
+  ...
+# Subtest: validation: SHACL-SPARQL constraint
+ok 31 - validation: SHACL-SPARQL constraint
+  ---
+  duration_ms: 85.178791
+  type: 'test'
+  ...
+# Subtest: validation: ShEx
+ok 32 - validation: ShEx
+  ---
+  duration_ms: 66.5725
+  type: 'test'
+  ...
+# (node:97776) [MODULE_TYPELESS_PACKAGE_JSON] Warning: Module type of file:///Users/danbri/working/sandbox/october/tpac/codex-npm-review/integrate-core/third_party/observable/dist/runtime.esm.js is not specified and it doesn't parse as CommonJS.
+# Reparsing as ES module because module syntax was detected. This incurs a performance overhead.
+# To eliminate this warning, add "type": "module" to /Users/danbri/package.json.
+# (Use `node --trace-warnings ...` to show where the warning was created)
+# Subtest: post30: post ships twenty-three live cells
+ok 33 - post30: post ships twenty-three live cells
+  ---
+  duration_ms: 4.559083
+  type: 'test'
+  ...
+# Subtest: post30: dependency inference names the cells in order
+ok 34 - post30: dependency inference names the cells in order
+  ---
+  duration_ms: 21.307375
+  type: 'test'
+  ...
+# Subtest: post30: the tableau materialises at least one membership for the someValuesFrom ontology
+ok 35 - post30: the tableau materialises at least one membership for the someValuesFrom ontology
+  ---
+  duration_ms: 1097.775417
+  type: 'test'
+  ...
+# Subtest: post30: Alice is classified as a member of ParentOfDoctor (someValuesFrom)
+ok 36 - post30: Alice is classified as a member of ParentOfDoctor (someValuesFrom)
+  ---
+  duration_ms: 272.686875
+  type: 'test'
+  ...
+# Subtest: post30: Alice is classified as a BritishCitizen (hasValue)
+ok 37 - post30: Alice is classified as a BritishCitizen (hasValue)
+  ---
+  duration_ms: 40.676042
+  type: 'test'
+  ...
+# Subtest: post30: the DL pipeline flags the unsatisfiable restriction that RL leaves consistent
+ok 38 - post30: the DL pipeline flags the unsatisfiable restriction that RL leaves consistent
+  ---
+  duration_ms: 85.08125
+  type: 'test'
+  ...
+# Subtest: post30: checked consistency refuses the disjoint-classes syntax
+ok 39 - post30: checked consistency refuses the disjoint-classes syntax
+  ---
+  duration_ms: 13.467084
+  type: 'test'
+  ...
+# Subtest: post30: checked consistency refuses the min/max cardinality syntax
+ok 40 - post30: checked consistency refuses the min/max cardinality syntax
+  ---
+  duration_ms: 14.111458
+  type: 'test'
+  ...
+# Subtest: post30: checked consistency refuses the functional-property syntax
+ok 41 - post30: checked consistency refuses the functional-property syntax
+  ---
+  duration_ms: 17.005875
+  type: 'test'
+  ...
+# Subtest: post30: checked consistency refuses the satisfiable control syntax
+ok 42 - post30: checked consistency refuses the satisfiable control syntax
+  ---
+  duration_ms: 14.488708
+  type: 'test'
+  ...
+# Subtest: post30: the archived clash-family summary exposes four unsupported cases
+ok 43 - post30: the archived clash-family summary exposes four unsupported cases
+  ---
+  duration_ms: 52.462416
+  type: 'test'
+  ...
+# Subtest: post30: unsupported consistency syntax is rejected before fuel matters
+ok 44 - post30: unsupported consistency syntax is rejected before fuel matters
+  ---
+  duration_ms: 23.615375
+  type: 'test'
+  ...
+# Subtest: post30: owlEntails decides the someValuesFrom entailment in the OWL 2 RL closure (cls-svf1, cax-eqc2)
+ok 45 - post30: owlEntails decides the someValuesFrom entailment in the OWL 2 RL closure (cls-svf1, cax-eqc2)
+  ---
+  duration_ms: 27.017666
+  type: 'test'
+  ...
+# Subtest: post30: owlEntails proves the union entailment by refutation
+ok 46 - post30: owlEntails proves the union entailment by refutation
+  ---
+  duration_ms: 89.15975
+  type: 'test'
+  ...
+# (node:97778) [MODULE_TYPELESS_PACKAGE_JSON] Warning: Module type of file:///Users/danbri/working/sandbox/october/tpac/codex-npm-review/integrate-core/third_party/observable/dist/runtime.esm.js is not specified and it doesn't parse as CommonJS.
+# Reparsing as ES module because module syntax was detected. This incurs a performance overhead.
+# To eliminate this warning, add "type": "module" to /Users/danbri/package.json.
+# (Use `node --trace-warnings ...` to show where the warning was created)
+# (node:97778) [MODULE_TYPELESS_PACKAGE_JSON] Warning: Module type of file:///Users/danbri/working/sandbox/october/tpac/codex-npm-review/integrate-core/docs/web/hub/assets/l4/l4factoidal.js is not specified and it doesn't parse as CommonJS.
+# Reparsing as ES module because module syntax was detected. This incurs a performance overhead.
+# To eliminate this warning, add "type": "module" to /Users/danbri/working/sandbox/october/tpac/codex-npm-review/integrate-core/docs/package.json.
+# Subtest: post40: post has 12 live cells
+ok 47 - post40: post has 12 live cells
+  ---
+  duration_ms: 3.432458
+  type: 'test'
+  ...
+# Subtest: post40: the committed wasm artifact exists and is a real module
+ok 48 - post40: the committed wasm artifact exists and is a real module
+  ---
+  duration_ms: 1.474708
+  type: 'test'
+  ...
+# Subtest: post40 cell "orgDataset": one fn.l4Parse call opens a TriG corpus, one handle, 10 triples
+ok 49 - post40 cell "orgDataset": one fn.l4Parse call opens a TriG corpus, one handle, 10 triples
+  ---
+  duration_ms: 920.509708
+  type: 'test'
+  ...
+# Subtest: post40 cell "byDept": the cross-graph GRAPH ?g query returns 4 rows over 3 named graphs
+ok 50 - post40 cell "byDept": the cross-graph GRAPH ?g query returns 4 rows over 3 named graphs
+  ---
+  duration_ms: 448.888709
+  type: 'test'
+  ...
+# Subtest: post40 cell "afterInsert": fn.l4Update mutates the SAME handle -- size grows from 10 to 12
+ok 51 - post40 cell "afterInsert": fn.l4Update mutates the SAME handle -- size grows from 10 to 12
+  ---
+  duration_ms: 10.495292
+  type: 'test'
+  ...
+# Subtest: post40 cell "byDeptAfter": the same handle, re-queried, now shows 5 rows including Erin
+ok 52 - post40 cell "byDeptAfter": the same handle, re-queried, now shows 5 rows including Erin
+  ---
+  duration_ms: 15.190584
+  type: 'test'
+  ...
+# Subtest: post40 cell "closureCheck": rdfsPlusClosure over the handle's own data derives Employee
+ok 53 - post40 cell "closureCheck": rdfsPlusClosure over the handle's own data derives Employee
+  ---
+  duration_ms: 72.100791
+  type: 'test'
+  ...
+# Subtest: post40 cell "consistentBefore": checked consistency returns unknown before the clash
+ok 54 - post40 cell "consistentBefore": checked consistency returns unknown before the clash
+  ---
+  duration_ms: 44.733542
+  type: 'test'
+  ...
+# Subtest: post40 cell "consistentAfter": disjoint-class syntax remains unsupported after insertion
+ok 55 - post40 cell "consistentAfter": disjoint-class syntax remains unsupported after insertion
+  ---
+  duration_ms: 80.498792
+  type: 'test'
+  ...
+# Subtest: post40 cell "finalTurtle": the closing Turtle shows both classes on :alice
+ok 56 - post40 cell "finalTurtle": the closing Turtle shows both classes on :alice
+  ---
+  duration_ms: 66.010167
+  type: 'test'
+  ...
+# Subtest: post40: the handle identity is stable across parse, query, update and close
+ok 57 - post40: the handle identity is stable across parse, query, update and close
+  ---
+  duration_ms: 9.987833
+  type: 'test'
+  ...
+# Subtest: post40: the committed wasm serves every op the page calls
+ok 58 - post40: the committed wasm serves every op the page calls
+  ---
+  duration_ms: 0.414666
+  type: 'test'
+  ...
+1..58
+# tests 58
+# suites 0
+# pass 58
+# fail 0
+# cancelled 0
+# skipped 0
+# todo 0
+# duration_ms 15514.702

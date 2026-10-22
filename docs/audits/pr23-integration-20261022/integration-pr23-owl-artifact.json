@@ -1,0 +1,479 @@
+{
+  "format": "owl-public-artifact-v1",
+  "timeUtc": "2026-10-22T16:47:52.086Z",
+  "status": "pass",
+  "scope": "restricted consistency API; no entailment or OWL completeness claim",
+  "artifact": {
+    "package.json": {
+      "bytes": 3639,
+      "sha256": "5b1556a7bfd29dea17198c1c58f424c62920a62441b635a445e8c397999fd492"
+    },
+    "index.mjs": {
+      "bytes": 7787,
+      "sha256": "2b0d418485b2753469a269819566a0c79565483b6c1508d5236e4cb808c29089"
+    },
+    "lib/api.mjs": {
+      "bytes": 97715,
+      "sha256": "eb5616f27a535500f5a8d6a84f3696fde124d7f49b2716b3d8ccd6e9b7e99e5d"
+    },
+    "lib/lean-entry.mjs": {
+      "bytes": 9166,
+      "sha256": "391b6a125bddee2d7ef0e9cb5e44f40f043ebc89be304c0d625c398a81b9eb65"
+    },
+    "l4-assets/l4factoidal.js": {
+      "bytes": 13460,
+      "sha256": "4748de576c80b77be257c28d6b5567574df75040a3fc41c27b356035aadd96d3"
+    },
+    "l4-assets/l4factoidal.mjs": {
+      "bytes": 64391,
+      "sha256": "bd75f97074f452ce8b9c9e6e2e0f5c056b0f0ed49fcda92a9acb9a6d79dce94d"
+    },
+    "l4-assets/l4factoidal.wasm": {
+      "bytes": 14052465,
+      "sha256": "64ec60e2c52ab0f8c871e2147d553dad1a9326185fb90f282bb1615fbf280fd9"
+    }
+  },
+  "cases": [
+    {
+      "id": "empty",
+      "passed": true,
+      "observed": {
+        "id": "empty",
+        "status": "pass",
+        "lowLevel": {
+          "ok": true,
+          "consistent": null,
+          "reason": "incomplete-search: the bounded certificate checker did not establish a contradiction; no model is certified (indeterminate)"
+        },
+        "publicApi": {
+          "consistent": null,
+          "reason": "incomplete-search: the bounded certificate checker did not establish a contradiction; no model is certified (indeterminate)"
+        }
+      },
+      "exitCode": 0,
+      "signal": null,
+      "stdout": "OWL_ARTIFACT_CASE={\"id\":\"empty\",\"status\":\"pass\",\"lowLevel\":{\"ok\":true,\"consistent\":null,\"reason\":\"incomplete-search: the bounded certificate checker did not establish a contradiction; no model is certified (indeterminate)\"},\"publicApi\":{\"consistent\":null,\"reason\":\"incomplete-search: the bounded certificate checker did not establish a contradiction; no model is certified (indeterminate)\"}}\n",
+      "stderr": ""
+    },
+    {
+      "id": "annotation-domain",
+      "passed": true,
+      "observed": {
+        "id": "annotation-domain",
+        "status": "pass",
+        "lowLevel": {
+          "ok": true,
+          "consistent": null,
+          "reason": "incomplete-search: the bounded certificate checker did not establish a contradiction; no model is certified (indeterminate)"
+        },
+        "publicApi": {
+          "consistent": null,
+          "reason": "incomplete-search: the bounded certificate checker did not establish a contradiction; no model is certified (indeterminate)"
+        }
+      },
+      "exitCode": 0,
+      "signal": null,
+      "stdout": "OWL_ARTIFACT_CASE={\"id\":\"annotation-domain\",\"status\":\"pass\",\"lowLevel\":{\"ok\":true,\"consistent\":null,\"reason\":\"incomplete-search: the bounded certificate checker did not establish a contradiction; no model is certified (indeterminate)\"},\"publicApi\":{\"consistent\":null,\"reason\":\"incomplete-search: the bounded certificate checker did not establish a contradiction; no model is certified (indeterminate)\"}}\n",
+      "stderr": ""
+    },
+    {
+      "id": "annotation-plus-real-clash",
+      "passed": true,
+      "observed": {
+        "id": "annotation-plus-real-clash",
+        "status": "pass",
+        "lowLevel": {
+          "ok": true,
+          "consistent": false,
+          "reason": "a checked certificate proves a contradiction in the admitted atomic OWL fragment"
+        },
+        "publicApi": {
+          "consistent": false,
+          "reason": "a checked certificate proves a contradiction in the admitted atomic OWL fragment"
+        }
+      },
+      "exitCode": 0,
+      "signal": null,
+      "stdout": "OWL_ARTIFACT_CASE={\"id\":\"annotation-plus-real-clash\",\"status\":\"pass\",\"lowLevel\":{\"ok\":true,\"consistent\":false,\"reason\":\"a checked certificate proves a contradiction in the admitted atomic OWL fragment\"},\"publicApi\":{\"consistent\":false,\"reason\":\"a checked certificate proves a contradiction in the admitted atomic OWL fragment\"}}\n",
+      "stderr": ""
+    },
+    {
+      "id": "same-different",
+      "passed": true,
+      "observed": {
+        "id": "same-different",
+        "status": "pass",
+        "lowLevel": {
+          "ok": true,
+          "consistent": false,
+          "reason": "a checked certificate proves a contradiction in the admitted atomic OWL fragment"
+        },
+        "publicApi": {
+          "consistent": false,
+          "reason": "a checked certificate proves a contradiction in the admitted atomic OWL fragment"
+        }
+      },
+      "exitCode": 0,
+      "signal": null,
+      "stdout": "OWL_ARTIFACT_CASE={\"id\":\"same-different\",\"status\":\"pass\",\"lowLevel\":{\"ok\":true,\"consistent\":false,\"reason\":\"a checked certificate proves a contradiction in the admitted atomic OWL fragment\"},\"publicApi\":{\"consistent\":false,\"reason\":\"a checked certificate proves a contradiction in the admitted atomic OWL fragment\"}}\n",
+      "stderr": ""
+    },
+    {
+      "id": "same-chain",
+      "passed": true,
+      "observed": {
+        "id": "same-chain",
+        "status": "pass",
+        "lowLevel": {
+          "ok": true,
+          "consistent": false,
+          "reason": "a checked certificate proves a contradiction in the admitted atomic OWL fragment"
+        },
+        "publicApi": {
+          "consistent": false,
+          "reason": "a checked certificate proves a contradiction in the admitted atomic OWL fragment"
+        }
+      },
+      "exitCode": 0,
+      "signal": null,
+      "stdout": "OWL_ARTIFACT_CASE={\"id\":\"same-chain\",\"status\":\"pass\",\"lowLevel\":{\"ok\":true,\"consistent\":false,\"reason\":\"a checked certificate proves a contradiction in the admitted atomic OWL fragment\"},\"publicApi\":{\"consistent\":false,\"reason\":\"a checked certificate proves a contradiction in the admitted atomic OWL fragment\"}}\n",
+      "stderr": ""
+    },
+    {
+      "id": "top-below-bottom",
+      "passed": true,
+      "observed": {
+        "id": "top-below-bottom",
+        "status": "pass",
+        "lowLevel": {
+          "ok": true,
+          "consistent": false,
+          "reason": "a checked certificate proves a contradiction in the admitted atomic OWL fragment"
+        },
+        "publicApi": {
+          "consistent": false,
+          "reason": "a checked certificate proves a contradiction in the admitted atomic OWL fragment"
+        }
+      },
+      "exitCode": 0,
+      "signal": null,
+      "stdout": "OWL_ARTIFACT_CASE={\"id\":\"top-below-bottom\",\"status\":\"pass\",\"lowLevel\":{\"ok\":true,\"consistent\":false,\"reason\":\"a checked certificate proves a contradiction in the admitted atomic OWL fragment\"},\"publicApi\":{\"consistent\":false,\"reason\":\"a checked certificate proves a contradiction in the admitted atomic OWL fragment\"}}\n",
+      "stderr": ""
+    },
+    {
+      "id": "generated-looking-source-name",
+      "passed": true,
+      "observed": {
+        "id": "generated-looking-source-name",
+        "status": "pass",
+        "lowLevel": {
+          "ok": true,
+          "consistent": null,
+          "reason": "incomplete-search: the bounded certificate checker did not establish a contradiction; no model is certified (indeterminate)"
+        },
+        "publicApi": {
+          "consistent": null,
+          "reason": "incomplete-search: the bounded certificate checker did not establish a contradiction; no model is certified (indeterminate)"
+        }
+      },
+      "exitCode": 0,
+      "signal": null,
+      "stdout": "OWL_ARTIFACT_CASE={\"id\":\"generated-looking-source-name\",\"status\":\"pass\",\"lowLevel\":{\"ok\":true,\"consistent\":null,\"reason\":\"incomplete-search: the bounded certificate checker did not establish a contradiction; no model is certified (indeterminate)\"},\"publicApi\":{\"consistent\":null,\"reason\":\"incomplete-search: the bounded certificate checker did not establish a contradiction; no model is certified (indeterminate)\"}}\n",
+      "stderr": ""
+    },
+    {
+      "id": "class-individual-punning",
+      "passed": true,
+      "observed": {
+        "id": "class-individual-punning",
+        "status": "pass",
+        "lowLevel": {
+          "ok": true,
+          "consistent": null,
+          "reason": "incomplete-search: the bounded certificate checker did not establish a contradiction; no model is certified (indeterminate)"
+        },
+        "publicApi": {
+          "consistent": null,
+          "reason": "incomplete-search: the bounded certificate checker did not establish a contradiction; no model is certified (indeterminate)"
+        }
+      },
+      "exitCode": 0,
+      "signal": null,
+      "stdout": "OWL_ARTIFACT_CASE={\"id\":\"class-individual-punning\",\"status\":\"pass\",\"lowLevel\":{\"ok\":true,\"consistent\":null,\"reason\":\"incomplete-search: the bounded certificate checker did not establish a contradiction; no model is certified (indeterminate)\"},\"publicApi\":{\"consistent\":null,\"reason\":\"incomplete-search: the bounded certificate checker did not establish a contradiction; no model is certified (indeterminate)\"}}\n",
+      "stderr": ""
+    },
+    {
+      "id": "unsupported-equivalence-contradiction",
+      "passed": true,
+      "observed": {
+        "id": "unsupported-equivalence-contradiction",
+        "status": "pass",
+        "lowLevel": {
+          "ok": true,
+          "consistent": null,
+          "reason": "unsupported-syntax: the whole default graph is outside the admitted atomic OWL fragment (indeterminate)"
+        },
+        "publicApi": {
+          "consistent": null,
+          "reason": "unsupported-syntax: the whole default graph is outside the admitted atomic OWL fragment (indeterminate)"
+        }
+      },
+      "exitCode": 0,
+      "signal": null,
+      "stdout": "OWL_ARTIFACT_CASE={\"id\":\"unsupported-equivalence-contradiction\",\"status\":\"pass\",\"lowLevel\":{\"ok\":true,\"consistent\":null,\"reason\":\"unsupported-syntax: the whole default graph is outside the admitted atomic OWL fragment (indeterminate)\"},\"publicApi\":{\"consistent\":null,\"reason\":\"unsupported-syntax: the whole default graph is outside the admitted atomic OWL fragment (indeterminate)\"}}\n",
+      "stderr": ""
+    },
+    {
+      "id": "unsupported-import",
+      "passed": true,
+      "observed": {
+        "id": "unsupported-import",
+        "status": "pass",
+        "lowLevel": {
+          "ok": true,
+          "consistent": null,
+          "reason": "unsupported-syntax: the whole default graph is outside the admitted atomic OWL fragment (indeterminate)"
+        },
+        "publicApi": {
+          "consistent": null,
+          "reason": "unsupported-syntax: the whole default graph is outside the admitted atomic OWL fragment (indeterminate)"
+        }
+      },
+      "exitCode": 0,
+      "signal": null,
+      "stdout": "OWL_ARTIFACT_CASE={\"id\":\"unsupported-import\",\"status\":\"pass\",\"lowLevel\":{\"ok\":true,\"consistent\":null,\"reason\":\"unsupported-syntax: the whole default graph is outside the admitted atomic OWL fragment (indeterminate)\"},\"publicApi\":{\"consistent\":null,\"reason\":\"unsupported-syntax: the whole default graph is outside the admitted atomic OWL fragment (indeterminate)\"}}\n",
+      "stderr": ""
+    },
+    {
+      "id": "unsupported-negative-property",
+      "passed": true,
+      "observed": {
+        "id": "unsupported-negative-property",
+        "status": "pass",
+        "lowLevel": {
+          "ok": true,
+          "consistent": null,
+          "reason": "unsupported-syntax: the whole default graph is outside the admitted atomic OWL fragment (indeterminate)"
+        },
+        "publicApi": {
+          "consistent": null,
+          "reason": "unsupported-syntax: the whole default graph is outside the admitted atomic OWL fragment (indeterminate)"
+        }
+      },
+      "exitCode": 0,
+      "signal": null,
+      "stdout": "OWL_ARTIFACT_CASE={\"id\":\"unsupported-negative-property\",\"status\":\"pass\",\"lowLevel\":{\"ok\":true,\"consistent\":null,\"reason\":\"unsupported-syntax: the whole default graph is outside the admitted atomic OWL fragment (indeterminate)\"},\"publicApi\":{\"consistent\":null,\"reason\":\"unsupported-syntax: the whole default graph is outside the admitted atomic OWL fragment (indeterminate)\"}}\n",
+      "stderr": ""
+    },
+    {
+      "id": "named-contradiction-is-outside-default",
+      "passed": true,
+      "observed": {
+        "id": "named-contradiction-is-outside-default",
+        "status": "pass",
+        "lowLevel": {
+          "ok": true,
+          "consistent": null,
+          "reason": "incomplete-search: the bounded certificate checker did not establish a contradiction; no model is certified (indeterminate)"
+        },
+        "publicApi": {
+          "consistent": null,
+          "reason": "incomplete-search: the bounded certificate checker did not establish a contradiction; no model is certified (indeterminate)"
+        }
+      },
+      "exitCode": 0,
+      "signal": null,
+      "stdout": "OWL_ARTIFACT_CASE={\"id\":\"named-contradiction-is-outside-default\",\"status\":\"pass\",\"lowLevel\":{\"ok\":true,\"consistent\":null,\"reason\":\"incomplete-search: the bounded certificate checker did not establish a contradiction; no model is certified (indeterminate)\"},\"publicApi\":{\"consistent\":null,\"reason\":\"incomplete-search: the bounded certificate checker did not establish a contradiction; no model is certified (indeterminate)\"}}\n",
+      "stderr": ""
+    },
+    {
+      "id": "default-clash-with-named-data",
+      "passed": true,
+      "observed": {
+        "id": "default-clash-with-named-data",
+        "status": "pass",
+        "lowLevel": {
+          "ok": true,
+          "consistent": false,
+          "reason": "a checked certificate proves a contradiction in the admitted atomic OWL fragment"
+        },
+        "publicApi": {
+          "consistent": false,
+          "reason": "a checked certificate proves a contradiction in the admitted atomic OWL fragment"
+        }
+      },
+      "exitCode": 0,
+      "signal": null,
+      "stdout": "OWL_ARTIFACT_CASE={\"id\":\"default-clash-with-named-data\",\"status\":\"pass\",\"lowLevel\":{\"ok\":true,\"consistent\":false,\"reason\":\"a checked certificate proves a contradiction in the admitted atomic OWL fragment\"},\"publicApi\":{\"consistent\":false,\"reason\":\"a checked certificate proves a contradiction in the admitted atomic OWL fragment\"}}\n",
+      "stderr": ""
+    },
+    {
+      "id": "default-annotation-with-named-clash",
+      "passed": true,
+      "observed": {
+        "id": "default-annotation-with-named-clash",
+        "status": "pass",
+        "lowLevel": {
+          "ok": true,
+          "consistent": null,
+          "reason": "incomplete-search: the bounded certificate checker did not establish a contradiction; no model is certified (indeterminate)"
+        },
+        "publicApi": {
+          "consistent": null,
+          "reason": "incomplete-search: the bounded certificate checker did not establish a contradiction; no model is certified (indeterminate)"
+        }
+      },
+      "exitCode": 0,
+      "signal": null,
+      "stdout": "OWL_ARTIFACT_CASE={\"id\":\"default-annotation-with-named-clash\",\"status\":\"pass\",\"lowLevel\":{\"ok\":true,\"consistent\":null,\"reason\":\"incomplete-search: the bounded certificate checker did not establish a contradiction; no model is certified (indeterminate)\"},\"publicApi\":{\"consistent\":null,\"reason\":\"incomplete-search: the bounded certificate checker did not establish a contradiction; no model is certified (indeterminate)\"}}\n",
+      "stderr": ""
+    },
+    {
+      "id": "named-declaration-does-not-classify-default",
+      "passed": true,
+      "observed": {
+        "id": "named-declaration-does-not-classify-default",
+        "status": "pass",
+        "lowLevel": {
+          "ok": true,
+          "consistent": null,
+          "reason": "unsupported-syntax: the whole default graph is outside the admitted atomic OWL fragment (indeterminate)"
+        },
+        "publicApi": {
+          "consistent": null,
+          "reason": "unsupported-syntax: the whole default graph is outside the admitted atomic OWL fragment (indeterminate)"
+        }
+      },
+      "exitCode": 0,
+      "signal": null,
+      "stdout": "OWL_ARTIFACT_CASE={\"id\":\"named-declaration-does-not-classify-default\",\"status\":\"pass\",\"lowLevel\":{\"ok\":true,\"consistent\":null,\"reason\":\"unsupported-syntax: the whole default graph is outside the admitted atomic OWL fragment (indeterminate)\"},\"publicApi\":{\"consistent\":null,\"reason\":\"unsupported-syntax: the whole default graph is outside the admitted atomic OWL fragment (indeterminate)\"}}\n",
+      "stderr": ""
+    },
+    {
+      "id": "zero-search-fuel",
+      "passed": true,
+      "observed": {
+        "id": "zero-search-fuel",
+        "status": "pass",
+        "lowLevel": {
+          "ok": true,
+          "consistent": false,
+          "reason": "a checked certificate proves a contradiction in the admitted atomic OWL fragment"
+        },
+        "publicApi": {
+          "consistent": false,
+          "reason": "a checked certificate proves a contradiction in the admitted atomic OWL fragment"
+        }
+      },
+      "exitCode": 0,
+      "signal": null,
+      "stdout": "OWL_ARTIFACT_CASE={\"id\":\"zero-search-fuel\",\"status\":\"pass\",\"lowLevel\":{\"ok\":true,\"consistent\":false,\"reason\":\"a checked certificate proves a contradiction in the admitted atomic OWL fragment\"},\"publicApi\":{\"consistent\":false,\"reason\":\"a checked certificate proves a contradiction in the admitted atomic OWL fragment\"}}\n",
+      "stderr": ""
+    },
+    {
+      "id": "malformed-options",
+      "passed": true,
+      "observed": {
+        "id": "malformed-options",
+        "status": "pass",
+        "lowLevel": {
+          "ok": true,
+          "consistent": false,
+          "reason": "a checked certificate proves a contradiction in the admitted atomic OWL fragment"
+        },
+        "publicApi": {
+          "status": "not-applicable",
+          "reason": "malformed ABI options text has no public options-object equivalent"
+        }
+      },
+      "exitCode": 0,
+      "signal": null,
+      "stdout": "OWL_ARTIFACT_CASE={\"id\":\"malformed-options\",\"status\":\"pass\",\"lowLevel\":{\"ok\":true,\"consistent\":false,\"reason\":\"a checked certificate proves a contradiction in the admitted atomic OWL fragment\"},\"publicApi\":{\"status\":\"not-applicable\",\"reason\":\"malformed ABI options text has no public options-object equivalent\"}}\n",
+      "stderr": ""
+    },
+    {
+      "id": "rdf12-refusal",
+      "passed": true,
+      "observed": {
+        "id": "rdf12-refusal",
+        "status": "pass",
+        "lowLevel": {
+          "ok": false,
+          "error": "owlIsConsistent: the input holds an RDF 1.2 triple term or directional language-tagged string; OWL 2 Mapping to RDF Graphs (section 3) and the OWL 2 Direct Semantics define no rule for these terms (https://github.com/danbri/factoidal/issues/873)",
+          "code": "owl.unsupported-rdf12",
+          "spec": "https://www.w3.org/TR/owl2-mapping-to-rdf/#Mapping_from_RDF_Graphs_to_the_Structural_Specification"
+        },
+        "publicApi": {
+          "error": "owlIsConsistent: the input holds an RDF 1.2 triple term or directional language-tagged string; OWL 2 Mapping to RDF Graphs (section 3) and the OWL 2 Direct Semantics define no rule for these terms (https://github.com/danbri/factoidal/issues/873)",
+          "name": "FactoidalError",
+          "code": "owl.unsupported-rdf12",
+          "position": null,
+          "spec": "https://www.w3.org/TR/owl2-mapping-to-rdf/#Mapping_from_RDF_Graphs_to_the_Structural_Specification"
+        }
+      },
+      "exitCode": 0,
+      "signal": null,
+      "stdout": "OWL_ARTIFACT_CASE={\"id\":\"rdf12-refusal\",\"status\":\"pass\",\"lowLevel\":{\"ok\":false,\"error\":\"owlIsConsistent: the input holds an RDF 1.2 triple term or directional language-tagged string; OWL 2 Mapping to RDF Graphs (section 3) and the OWL 2 Direct Semantics define no rule for these terms (https://github.com/danbri/factoidal/issues/873)\",\"code\":\"owl.unsupported-rdf12\",\"spec\":\"https://www.w3.org/TR/owl2-mapping-to-rdf/#Mapping_from_RDF_Graphs_to_the_Structural_Specification\"},\"publicApi\":{\"error\":\"owlIsConsistent: the input holds an RDF 1.2 triple term or directional language-tagged string; OWL 2 Mapping to RDF Graphs (section 3) and the OWL 2 Direct Semantics define no rule for these terms (https://github.com/danbri/factoidal/issues/873)\",\"name\":\"FactoidalError\",\"code\":\"owl.unsupported-rdf12\",\"position\":null,\"spec\":\"https://www.w3.org/TR/owl2-mapping-to-rdf/#Mapping_from_RDF_Graphs_to_the_Structural_Specification\"}}\n",
+      "stderr": ""
+    },
+    {
+      "id": "named-rdf12-preflight",
+      "passed": true,
+      "observed": {
+        "id": "named-rdf12-preflight",
+        "status": "pass",
+        "lowLevel": {
+          "ok": false,
+          "error": "owlIsConsistent: the input holds an RDF 1.2 triple term or directional language-tagged string; OWL 2 Mapping to RDF Graphs (section 3) and the OWL 2 Direct Semantics define no rule for these terms (https://github.com/danbri/factoidal/issues/873)",
+          "code": "owl.unsupported-rdf12",
+          "spec": "https://www.w3.org/TR/owl2-mapping-to-rdf/#Mapping_from_RDF_Graphs_to_the_Structural_Specification"
+        },
+        "publicApi": {
+          "error": "owlIsConsistent: the input holds an RDF 1.2 triple term or directional language-tagged string; OWL 2 Mapping to RDF Graphs (section 3) and the OWL 2 Direct Semantics define no rule for these terms (https://github.com/danbri/factoidal/issues/873)",
+          "name": "FactoidalError",
+          "code": "owl.unsupported-rdf12",
+          "position": null,
+          "spec": "https://www.w3.org/TR/owl2-mapping-to-rdf/#Mapping_from_RDF_Graphs_to_the_Structural_Specification"
+        }
+      },
+      "exitCode": 0,
+      "signal": null,
+      "stdout": "OWL_ARTIFACT_CASE={\"id\":\"named-rdf12-preflight\",\"status\":\"pass\",\"lowLevel\":{\"ok\":false,\"error\":\"owlIsConsistent: the input holds an RDF 1.2 triple term or directional language-tagged string; OWL 2 Mapping to RDF Graphs (section 3) and the OWL 2 Direct Semantics define no rule for these terms (https://github.com/danbri/factoidal/issues/873)\",\"code\":\"owl.unsupported-rdf12\",\"spec\":\"https://www.w3.org/TR/owl2-mapping-to-rdf/#Mapping_from_RDF_Graphs_to_the_Structural_Specification\"},\"publicApi\":{\"error\":\"owlIsConsistent: the input holds an RDF 1.2 triple term or directional language-tagged string; OWL 2 Mapping to RDF Graphs (section 3) and the OWL 2 Direct Semantics define no rule for these terms (https://github.com/danbri/factoidal/issues/873)\",\"name\":\"FactoidalError\",\"code\":\"owl.unsupported-rdf12\",\"position\":null,\"spec\":\"https://www.w3.org/TR/owl2-mapping-to-rdf/#Mapping_from_RDF_Graphs_to_the_Structural_Specification\"}}\n",
+      "stderr": ""
+    },
+    {
+      "id": "parse-error",
+      "passed": true,
+      "observed": {
+        "id": "parse-error",
+        "status": "pass",
+        "lowLevel": {
+          "ok": false,
+          "error": "expected object (IRIREF, BLANK_NODE_LABEL, literal, or triple term) (offset 16)",
+          "code": "reason.failed"
+        },
+        "publicApi": {
+          "error": "expected object (IRIREF, BLANK_NODE_LABEL, or literal) at line 1, column 17",
+          "name": "FactoidalError",
+          "code": "parse.syntax",
+          "position": {
+            "line": 1,
+            "column": 17,
+            "offset": 16,
+            "byteOffset": 16
+          },
+          "spec": "https://www.w3.org/TR/rdf12-n-quads/#sec-grammar",
+          "format": "nquads"
+        }
+      },
+      "exitCode": 0,
+      "signal": null,
+      "stdout": "OWL_ARTIFACT_CASE={\"id\":\"parse-error\",\"status\":\"pass\",\"lowLevel\":{\"ok\":false,\"error\":\"expected object (IRIREF, BLANK_NODE_LABEL, literal, or triple term) (offset 16)\",\"code\":\"reason.failed\"},\"publicApi\":{\"error\":\"expected object (IRIREF, BLANK_NODE_LABEL, or literal) at line 1, column 17\",\"name\":\"FactoidalError\",\"code\":\"parse.syntax\",\"position\":{\"line\":1,\"column\":17,\"offset\":16,\"byteOffset\":16},\"spec\":\"https://www.w3.org/TR/rdf12-n-quads/#sec-grammar\",\"format\":\"nquads\"}}\n",
+      "stderr": ""
+    }
+  ],
+  "runtime": "v22.22.2",
+  "sourceReportSha256": "a14e70c34123e3f8fbffa0c7b4336d5060359881a45fe7953da6a71b9bbeb8e5",
+  "toolSha256": "e20d9ba99dbf35d431750b18b35c68eeaae3d525e2842156a6d2dd22afdf4e4b",
+  "packagePath": "/Users/danbri/working/sandbox/october/tpac/codex-npm-review/artifacts/integration-pr23/package"
+}

@@ -1,0 +1,32 @@
+FAIL copy/copy-3102
+    produced: <out xmlns:foo="http://foo.test.com" xmlns:joes="http://joes.com" xmlns:huh="http://unknown.com"><star><bar xmlns:yow="http://yow.test.com">18 Generic Ave.</bar><foo:bar>157 Fourth St.</foo:bar><wonder:bar xmlns:wonder="http://wonder.com">777 Broadway</wonder:bar><bar>12 Slammin Ave.</bar><joes:bar>17 Generic Ave.</joes:bar></star></out>
+    expected: <out xmlns:foo="http://foo.test.com" xmlns:huh="http://unknown.com" xmlns:joes="http://joes.com"><star><bar xmlns:yow="http://yow.test.com">18 Generic Ave.</bar><foo:bar>157 Fourth St.</foo:bar><wonder:bar xmlns:wonder="http://wonder.com">777 Broadway</wonder:bar><bar>12 Slammin Ave.</bar><joes:bar>17 Generic Ave.</joes:bar></star></out>
+FAIL namespace/namespace-4801
+    produced: <out xmlns:bdd="http://bdd.com/" xmlns="http://bubba.com/">
+<ped:test xmlns:xsl="http://www.w3.org/1999/XSL/Transform" xmlns:ped="http://ped.com/"/>
+<test xmlns:xsl="http://www.w3.org/1999/XSL/Transform" xmlns:ped="http://ped.com/" xmlns="http://ped.com/"/>
+<bdd:test xmlns:xsl="http://www.w3.org/1999/XSL/Transform" xmlns:ped="http://ped.com/"/>
+<test>Test5</test><test xmlns="http://missing.com/">Test6</test>
+</out>
+    expected: <out xmlns="http://bubba.com/" xmlns:bdd="http://bdd.com/">
+<ped:test xmlns:xsl="http://www.w3.org/1999/XSL/Transform" xmlns:ped="http://ped.com/"/>
+<test xmlns="http://ped.com/" xmlns:xsl="http://www.w3.org/1999/XSL/Transform" xmlns:ped="http://ped.com/"/>
+<bdd:test xmlns:xsl="http://www.w3.org/1999/XSL/Transform" xmlns:ped="http://ped.com/"/>
+<test>Test5</test><test xmlns="http://missing.com/">Test6</test>
+</out>
+FAIL node/node-1601
+    produced: <NSlist xml="http://www.w3.org/XML/1998/namespace" ext="http://somebody.elses.extension" java="http://xml.apache.org/xslt/java" ped="http://tester.com" bdd="http://buster.com" jad="http://administrator.com"/>
+    expected: <NSlist xml="http://www.w3.org/XML/1998/namespace" bdd="http://buster.com" jad="http://administrator.com" ped="http://tester.com" java="http://xml.apache.org/xslt/java" ext="http://somebody.elses.extension"/>
+REFUSED select/select-5901: an expression or instruction did not evaluate (no such document in the corpus: select-59.xml)
+
+xslt EXACT: 84 pass (out of 87 decided)
+xslt EXACT-or-WHITESPACE: 84 pass, 3 fail (out of 87 decided)
+REFUSED: 1 cases the engine declined to transform
+  (out of 88 cases in the manifest)
+
+Refusal reasons, by frequency:
+  1x  an expression or instruction did not evaluate (no such document in the corpus: select-59.xml)
+
+A REFUSED case is counted apart, never as a pass and never as a
+failure: an engine that guesses at an instruction it does not have
+produces a document of the right shape with the wrong content.

@@ -1,0 +1,16 @@
+'L4Factoidal.Regex.Ecma.lower_eq_lowerTR' depends on axioms: [propext, Classical.choice, Quot.sound]
+'L4Factoidal.Regex.Profiles.xsdLiterals_eq_xsdLiteralsTR' depends on axioms: [propext, Classical.choice, Quot.sound]
+'L4Factoidal.Regex.quoteReplacement_eq_quoteReplacementTR' depends on axioms: [propext, Quot.sound]
+'L4Factoidal.RIF.groundMatch_eq_groundMatchTR' depends on axioms: [propext, Classical.choice, Quot.sound]
+'L4Factoidal.RIF.groundMatches_eq_groundMatchesTR' depends on axioms: [propext, Classical.choice, Quot.sound]
+'L4Factoidal.RIF.matchTm_eq_matchTmTR' depends on axioms: [propext, Classical.choice, Quot.sound]
+'L4Factoidal.OWL.CertNames.frame_eq_frameTR' depends on axioms: [propext, Quot.sound]
+PASS ecma-flat-dot-100000
+PASS xsd-flat-anchors-100000
+PASS replacement-flat-dollar-100000
+PASS cert-name-flat-characters-100000
+PASS ground-list-value-equality-100000
+PASS ground-list-unknown-100000
+PASS ground-list-no-controls-unknown
+PASS pattern-list-binding-100000
+PASS pattern-list-late-mismatch

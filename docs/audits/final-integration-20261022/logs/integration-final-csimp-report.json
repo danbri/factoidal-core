@@ -1,0 +1,4440 @@
+{
+ "package": "l4factoidal",
+ "stats": {
+  "cfiles": 983,
+  "stale_cfiles": 0,
+  "definitions": 88263,
+  "duplicate_definitions": 22,
+  "lean_modules": 1120,
+  "theorems": 219,
+  "left_sides": 218,
+  "replacement_uses": 639
+ },
+ "theorems": [
+  {
+   "file": "Harness/CryptoProbe.lean",
+   "line": 212,
+   "theorem": "hexToBytesAux_eq_TR",
+   "left": "CryptoProbe.hexToBytesAux",
+   "replacement": "CryptoProbe.hexToBytesAuxTR",
+   "module": "Harness.CryptoProbe",
+   "replacement_callers": [
+    "CryptoProbe.hexToBytes?"
+   ]
+  },
+  {
+   "file": "L4Factoidal/CsimpReachFixture.lean",
+   "line": 77,
+   "theorem": "weightSpec_eq_weightFast",
+   "left": "L4Factoidal.CsimpReachFixture.weightSpec",
+   "replacement": "L4Factoidal.CsimpReachFixture.weightFast",
+   "module": "L4Factoidal.CsimpReachFixture",
+   "replacement_callers": [
+    "L4Factoidal.CsimpReachFixture.callDirect"
+   ]
+  },
+  {
+   "file": "L4Factoidal/Cottas/SortByKey.lean",
+   "line": 67,
+   "theorem": "insertByKey_eq_insertByKeyTR",
+   "left": "L4Factoidal.Cottas.insertByKey",
+   "replacement": "L4Factoidal.Cottas.insertByKeyTR",
+   "module": "L4Factoidal.Cottas.SortByKey",
+   "replacement_callers": [
+    "L4Factoidal.Cottas.sortByKeyTR"
+   ]
+  },
+  {
+   "file": "L4Factoidal/Cottas/SortByKey.lean",
+   "line": 78,
+   "theorem": "sortByKey_eq_sortByKeyTR",
+   "left": "L4Factoidal.Cottas.sortByKey",
+   "replacement": "L4Factoidal.Cottas.sortByKeyTR",
+   "module": "L4Factoidal.Cottas.SortByKey",
+   "replacement_callers": [
+    "L4Factoidal.Cottas.sortPairs",
+    "L4Factoidal.Cottas.sortSubjects"
+   ]
+  },
+  {
+   "file": "L4Factoidal/Geo/Types.lean",
+   "line": 50,
+   "theorem": "pow10_eq_fast",
+   "left": "L4Factoidal.Geo.Scaled.pow10",
+   "replacement": "L4Factoidal.Geo.Scaled.pow10Fast",
+   "module": "L4Factoidal.Geo.Types",
+   "replacement_callers": [
+    "L4Factoidal.Geo.Scaled.align",
+    "L4Factoidal.Geo.Scaled.at'",
+    "L4Factoidal.Geo.Wkt.number",
+    "L4Factoidal.Geo.Wkt.takeDigits",
+    "L4Factoidal.Geo.geoSqrtApprox"
+   ]
+  },
+  {
+   "file": "L4Factoidal/Geo/Wkt.lean",
+   "line": 73,
+   "theorem": "takeDigits_eq_fast",
+   "left": "L4Factoidal.Geo.Wkt.takeDigits",
+   "replacement": "L4Factoidal.Geo.Wkt.takeDigitsFast",
+   "module": "L4Factoidal.Geo.Wkt",
+   "replacement_callers": [
+    "L4Factoidal.Geo.Wkt.number"
+   ]
+  },
+  {
+   "file": "L4Factoidal/JSON/Parser.lean",
+   "line": 580,
+   "theorem": "parseJsonTextChars_eq_R",
+   "left": "L4Factoidal.JSON.parseJsonTextChars",
+   "replacement": "L4Factoidal.JSON.parseJsonTextCharsR",
+   "module": "L4Factoidal.JSON.Parser",
+   "replacement_callers": [
+    "L4Factoidal.JSON.parseJsonText",
+    "L4Factoidal.JSON.parseJsonTextFast"
+   ]
+  },
+  {
+   "file": "L4Factoidal/JSON/Parser.lean",
+   "line": 605,
+   "theorem": "parseJsonText_eq_fast",
+   "left": "L4Factoidal.JSON.parseJsonText",
+   "replacement": "L4Factoidal.JSON.parseJsonTextFast",
+   "module": "L4Factoidal.JSON.Parser",
+   "replacement_callers": [
+    "L4Factoidal.JSON.parseJson",
+    "L4Factoidal.JSON.parseJson?"
+   ]
+  },
+  {
+   "file": "L4Factoidal/JSON/Serialize.lean",
+   "line": 123,
+   "theorem": "escapeString_csimp",
+   "left": "L4Factoidal.JSON.escapeString",
+   "replacement": "L4Factoidal.JSON.escapeStringFast",
+   "module": "L4Factoidal.JSON.Serialize",
+   "replacement_callers": [
+    "L4Factoidal.HTTP.Ops.renderBackendInfo",
+    "L4Factoidal.HTTP.Ops.renderEntry",
+    "L4Factoidal.JSON.EscapeTests.agrees",
+    "L4Factoidal.JSON.toStringCompact",
+    "L4Factoidal.JSON.toStringFields",
+    "L4Factoidal.JSON.toStringFieldsAcc",
+    "L4Factoidal.JSON.toStringFieldsPretty",
+    "L4Factoidal.JSON.toStringFieldsPrettyAcc",
+    "L4Factoidal.JSON.toStringPrettyAt",
+    "L4Factoidal.JSONLD.jcsString",
+    "L4Factoidal.Qlvr.Query.nameBytes",
+    "L4Factoidal.RDF.TermJson.strMember",
+    "L4Factoidal.SPARQL.rowJson",
+    "L4Factoidal.SPARQL.varListJson",
+    "L4Factoidal.Storage.Sbm11.IdQuery.nameBytes"
+   ]
+  },
+  {
+   "file": "L4Factoidal/JSON/Value.lean",
+   "line": 217,
+   "theorem": "size_eq_sizeFast",
+   "left": "L4Factoidal.JSON.Json.size",
+   "replacement": "L4Factoidal.JSON.Json.sizeFast",
+   "module": "L4Factoidal.JSON.Value",
+   "replacement_callers": [
+    "L4Factoidal.JSONLD.compactDocument",
+    "L4Factoidal.JSONLD.datasetOfJson",
+    "L4Factoidal.JSONLD.datasetOfJsonAt",
+    "L4Factoidal.JSONLD.expand",
+    "L4Factoidal.JSONLD.expandNode",
+    "L4Factoidal.JSONLD.expandNodeFromMap",
+    "L4Factoidal.JSONLD.flattenDocument",
+    "L4Factoidal.JSONLD.frameDocumentWith",
+    "L4Factoidal.JSONLD.frameResults",
+    "L4Factoidal.JSONLD.generateNodeMap",
+    "L4Factoidal.JSONLD.jcsDocument",
+    "L4Factoidal.JSONLD.matchingSubjects",
+    "L4Factoidal.JSONLD.matchingSubjectsFast",
+    "L4Factoidal.JSONLD.mergeItemFields",
+    "L4Factoidal.RDF.rdfJsonValueEq"
+   ]
+  },
+  {
+   "file": "L4Factoidal/JSON/Value.lean",
+   "line": 225,
+   "theorem": "sizeItems_eq_fast",
+   "left": "L4Factoidal.JSON.Json.sizeItems",
+   "replacement": "L4Factoidal.JSON.Json.sizeItemsFast",
+   "module": "L4Factoidal.JSON.Value",
+   "replacement_callers": []
+  },
+  {
+   "file": "L4Factoidal/JSON/Value.lean",
+   "line": 228,
+   "theorem": "sizeFields_eq_fast",
+   "left": "L4Factoidal.JSON.Json.sizeFields",
+   "replacement": "L4Factoidal.JSON.Json.sizeFieldsFast",
+   "module": "L4Factoidal.JSON.Value",
+   "replacement_callers": []
+  },
+  {
+   "file": "L4Factoidal/JSONLD/Context.lean",
+   "line": 257,
+   "theorem": "strLt_eq_strLtFast",
+   "left": "L4Factoidal.JSONLD.strLt",
+   "replacement": "L4Factoidal.JSONLD.strLtFast",
+   "module": "L4Factoidal.JSONLD.Context",
+   "replacement_callers": []
+  },
+  {
+   "file": "L4Factoidal/JSONLD/Expand.lean",
+   "line": 275,
+   "theorem": "lowerPatternLanguages_eq_TR",
+   "left": "L4Factoidal.JSONLD.lowerPatternLanguages",
+   "replacement": "L4Factoidal.JSONLD.lowerPatternLanguagesTR",
+   "module": "L4Factoidal.JSONLD.Expand",
+   "replacement_callers": [
+    "L4Factoidal.JSONLD.expandValuePattern"
+   ]
+  },
+  {
+   "file": "L4Factoidal/JSONLD/Expand.lean",
+   "line": 337,
+   "theorem": "expandPatternTypes_eq_TR",
+   "left": "L4Factoidal.JSONLD.expandPatternTypes",
+   "replacement": "L4Factoidal.JSONLD.expandPatternTypesTR",
+   "module": "L4Factoidal.JSONLD.Expand",
+   "replacement_callers": [
+    "L4Factoidal.JSONLD.expandValuePattern"
+   ]
+  },
+  {
+   "file": "L4Factoidal/JSONLD/Frame.lean",
+   "line": 508,
+   "theorem": "matchingSubjectsGo_eq_TR",
+   "left": "L4Factoidal.JSONLD.matchingSubjects.matchingSubjectsGo",
+   "replacement": "L4Factoidal.JSONLD.matchingSubjectsGoTR",
+   "module": "L4Factoidal.JSONLD.Frame",
+   "replacement_callers": [
+    "L4Factoidal.JSONLD.matchingSubjectsFast"
+   ]
+  },
+  {
+   "file": "L4Factoidal/JSONLD/Frame.lean",
+   "line": 527,
+   "theorem": "matchingSubjects_eq_fast",
+   "left": "L4Factoidal.JSONLD.matchingSubjects",
+   "replacement": "L4Factoidal.JSONLD.matchingSubjectsFast",
+   "module": "L4Factoidal.JSONLD.Frame",
+   "replacement_callers": [
+    "L4Factoidal.JSONLD.frameRec"
+   ]
+  },
+  {
+   "file": "L4Factoidal/JSONLD/Frame.lean",
+   "line": 668,
+   "theorem": "FState.replaceFirstMatch_eq_fast",
+   "left": "L4Factoidal.JSONLD.FState.replaceFirstMatch",
+   "replacement": "L4Factoidal.JSONLD.FState.replaceFirstMatchFast",
+   "module": "L4Factoidal.JSONLD.Frame",
+   "replacement_callers": [
+    "L4Factoidal.JSONLD.FState.removeEmbed"
+   ]
+  },
+  {
+   "file": "L4Factoidal/JSONLD/Frame.lean",
+   "line": 1083,
+   "theorem": "matVals_eq_matValsImpl",
+   "left": "L4Factoidal.JSONLD.matVals",
+   "replacement": "L4Factoidal.JSONLD.matValsImpl",
+   "module": "L4Factoidal.JSONLD.Frame",
+   "replacement_callers": []
+  },
+  {
+   "file": "L4Factoidal/JSONLD/Frame.lean",
+   "line": 1090,
+   "theorem": "matEntries_eq_matEntriesImpl",
+   "left": "L4Factoidal.JSONLD.matEntries",
+   "replacement": "L4Factoidal.JSONLD.matEntriesImpl",
+   "module": "L4Factoidal.JSONLD.Frame",
+   "replacement_callers": []
+  },
+  {
+   "file": "L4Factoidal/JSONLD/FromRdf.lean",
+   "line": 210,
+   "theorem": "snocUniqueStr_eq_fast",
+   "left": "L4Factoidal.JSONLD.FromRdf.snocUniqueStr",
+   "replacement": "L4Factoidal.JSONLD.FromRdf.snocUniqueStrFast",
+   "module": "L4Factoidal.JSONLD.FromRdf",
+   "replacement_callers": [
+    "L4Factoidal.JSONLD.FromRdf.nodeUpdateType"
+   ]
+  },
+  {
+   "file": "L4Factoidal/JSONLD/FromRdf.lean",
+   "line": 228,
+   "theorem": "snocUniqueOv_eq_fast",
+   "left": "L4Factoidal.JSONLD.FromRdf.snocUniqueOv",
+   "replacement": "L4Factoidal.JSONLD.FromRdf.snocUniqueOvFast",
+   "module": "L4Factoidal.JSONLD.FromRdf",
+   "replacement_callers": [
+    "L4Factoidal.JSONLD.FromRdf.propAdd",
+    "L4Factoidal.JSONLD.FromRdf.propAddGo"
+   ]
+  },
+  {
+   "file": "L4Factoidal/JSONLD/FromRdf.lean",
+   "line": 265,
+   "theorem": "propAdd_eq_fast",
+   "left": "L4Factoidal.JSONLD.FromRdf.propAdd",
+   "replacement": "L4Factoidal.JSONLD.FromRdf.propAddFast",
+   "module": "L4Factoidal.JSONLD.FromRdf",
+   "replacement_callers": [
+    "L4Factoidal.JSONLD.FromRdf.nodeUpdateProp"
+   ]
+  },
+  {
+   "file": "L4Factoidal/JSONLD/FromRdf.lean",
+   "line": 982,
+   "theorem": "buildNodemap_eq_fast",
+   "left": "L4Factoidal.JSONLD.FromRdf.buildNodemap",
+   "replacement": "L4Factoidal.JSONLD.FromRdf.buildNodemapFast",
+   "module": "L4Factoidal.JSONLD.FromRdf",
+   "replacement_callers": [
+    "L4Factoidal.JSONLD.FromRdf.buildNamed",
+    "L4Factoidal.JSONLD.FromRdf.buildNamedGo",
+    "L4Factoidal.JSONLD.FromRdf.fromRdf",
+    "L4Factoidal.RDF.Sink.subjectNode"
+   ]
+  },
+  {
+   "file": "L4Factoidal/JSONLD/FromRdf.lean",
+   "line": 1028,
+   "theorem": "buildNamed_eq_fast",
+   "left": "L4Factoidal.JSONLD.FromRdf.buildNamed",
+   "replacement": "L4Factoidal.JSONLD.FromRdf.buildNamedFast",
+   "module": "L4Factoidal.JSONLD.FromRdf",
+   "replacement_callers": [
+    "L4Factoidal.JSONLD.FromRdf.fromRdf"
+   ]
+  },
+  {
+   "file": "L4Factoidal/JSONLD/FromRdf.lean",
+   "line": 1084,
+   "theorem": "ovsRefids_eq_fast",
+   "left": "L4Factoidal.JSONLD.FromRdf.ovsRefids",
+   "replacement": "L4Factoidal.JSONLD.FromRdf.ovsRefidsFast",
+   "module": "L4Factoidal.JSONLD.FromRdf",
+   "replacement_callers": [
+    "L4Factoidal.JSONLD.FromRdf.propsRefidsFast"
+   ]
+  },
+  {
+   "file": "L4Factoidal/JSONLD/FromRdf.lean",
+   "line": 1095,
+   "theorem": "propsRefids_eq_fast",
+   "left": "L4Factoidal.JSONLD.FromRdf.propsRefids",
+   "replacement": "L4Factoidal.JSONLD.FromRdf.propsRefidsFast",
+   "module": "L4Factoidal.JSONLD.FromRdf",
+   "replacement_callers": [
+    "L4Factoidal.JSONLD.FromRdf.nodesRefidsFast"
+   ]
+  },
+  {
+   "file": "L4Factoidal/JSONLD/FromRdf.lean",
+   "line": 1105,
+   "theorem": "nodesRefids_eq_fast",
+   "left": "L4Factoidal.JSONLD.FromRdf.nodesRefids",
+   "replacement": "L4Factoidal.JSONLD.FromRdf.nodesRefidsFast",
+   "module": "L4Factoidal.JSONLD.FromRdf",
+   "replacement_callers": [
+    "L4Factoidal.JSONLD.FromRdf.mapsRefidsFast"
+   ]
+  },
+  {
+   "file": "L4Factoidal/JSONLD/FromRdf.lean",
+   "line": 1114,
+   "theorem": "mapsRefids_eq_fast",
+   "left": "L4Factoidal.JSONLD.FromRdf.mapsRefids",
+   "replacement": "L4Factoidal.JSONLD.FromRdf.mapsRefidsFast",
+   "module": "L4Factoidal.JSONLD.FromRdf",
+   "replacement_callers": [
+    "L4Factoidal.JSONLD.FromRdf.fromRdf"
+   ]
+  },
+  {
+   "file": "L4Factoidal/JSONLD/FromRdf.lean",
+   "line": 1307,
+   "theorem": "resolveOv_eq_fast",
+   "left": "L4Factoidal.JSONLD.FromRdf.resolveOv",
+   "replacement": "L4Factoidal.JSONLD.FromRdf.resolveOvFast",
+   "module": "L4Factoidal.JSONLD.FromRdf",
+   "replacement_callers": []
+  },
+  {
+   "file": "L4Factoidal/JSONLD/FromRdf.lean",
+   "line": 1314,
+   "theorem": "listFrom_eq_fast",
+   "left": "L4Factoidal.JSONLD.FromRdf.listFrom",
+   "replacement": "L4Factoidal.JSONLD.FromRdf.listFromFast",
+   "module": "L4Factoidal.JSONLD.FromRdf",
+   "replacement_callers": []
+  },
+  {
+   "file": "L4Factoidal/JSONLD/FromRdf.lean",
+   "line": 1375,
+   "theorem": "ovToJson_eq_fast",
+   "left": "L4Factoidal.JSONLD.FromRdf.ovToJson",
+   "replacement": "L4Factoidal.JSONLD.FromRdf.ovToJsonW",
+   "module": "L4Factoidal.JSONLD.FromRdf",
+   "replacement_callers": [
+    "L4Factoidal.JSONLD.FromRdf.ovListToJsonW",
+    "L4Factoidal.JSONLD.FromRdf.propsFields"
+   ]
+  },
+  {
+   "file": "L4Factoidal/JSONLD/FromRdf.lean",
+   "line": 1380,
+   "theorem": "ovListToJson_eq_fast",
+   "left": "L4Factoidal.JSONLD.FromRdf.ovListToJson",
+   "replacement": "L4Factoidal.JSONLD.FromRdf.ovListToJsonFast",
+   "module": "L4Factoidal.JSONLD.FromRdf",
+   "replacement_callers": []
+  },
+  {
+   "file": "L4Factoidal/JSONLD/FromRdf.lean",
+   "line": 1440,
+   "theorem": "insertSortedNode_eq_fast",
+   "left": "L4Factoidal.JSONLD.FromRdf.insertSortedNode",
+   "replacement": "L4Factoidal.JSONLD.FromRdf.insertSortedNodeFast",
+   "module": "L4Factoidal.JSONLD.FromRdf",
+   "replacement_callers": [
+    "L4Factoidal.JSONLD.FromRdf.sortNodesFast"
+   ]
+  },
+  {
+   "file": "L4Factoidal/JSONLD/FromRdf.lean",
+   "line": 1450,
+   "theorem": "sortNodes_eq_fast",
+   "left": "L4Factoidal.JSONLD.FromRdf.sortNodes",
+   "replacement": "L4Factoidal.JSONLD.FromRdf.sortNodesFast",
+   "module": "L4Factoidal.JSONLD.FromRdf",
+   "replacement_callers": [
+    "L4Factoidal.JSONLD.FromRdf.emitDefaultNodes",
+    "L4Factoidal.JSONLD.FromRdf.emitNamedNodes"
+   ]
+  },
+  {
+   "file": "L4Factoidal/JSONLD/FromRdf.lean",
+   "line": 1567,
+   "theorem": "addGraphNames_eq_fast",
+   "left": "L4Factoidal.JSONLD.FromRdf.addGraphNames",
+   "replacement": "L4Factoidal.JSONLD.FromRdf.addGraphNamesFast",
+   "module": "L4Factoidal.JSONLD.FromRdf",
+   "replacement_callers": [
+    "L4Factoidal.JSONLD.FromRdf.fromRdf"
+   ]
+  },
+  {
+   "file": "L4Factoidal/JSONLD/FromRdf.lean",
+   "line": 2307,
+   "theorem": "emitDefaultNodes_eq_fast",
+   "left": "L4Factoidal.JSONLD.FromRdf.emitDefaultNodes",
+   "replacement": "L4Factoidal.JSONLD.FromRdf.emitDefaultFast",
+   "module": "L4Factoidal.JSONLD.FromRdf",
+   "replacement_callers": [
+    "L4Factoidal.JSONLD.FromRdf.fromRdf"
+   ]
+  },
+  {
+   "file": "L4Factoidal/JSONLD/ToRdf.lean",
+   "line": 348,
+   "theorem": "jcsInsertSorted_eq_fast",
+   "left": "L4Factoidal.JSONLD.jcsInsertSorted",
+   "replacement": "L4Factoidal.JSONLD.jcsInsertSortedFast",
+   "module": "L4Factoidal.JSONLD.ToRdf",
+   "replacement_callers": []
+  },
+  {
+   "file": "L4Factoidal/JSONLD/ToRdf.lean",
+   "line": 385,
+   "theorem": "insByKey_eq_fast",
+   "left": "L4Factoidal.JSONLD.insByKey",
+   "replacement": "L4Factoidal.JSONLD.insByKeyFast",
+   "module": "L4Factoidal.JSONLD.ToRdf",
+   "replacement_callers": [
+    "L4Factoidal.JSONLD.sortByKeyFast"
+   ]
+  },
+  {
+   "file": "L4Factoidal/JSONLD/ToRdf.lean",
+   "line": 511,
+   "theorem": "jcsSortFields_eq_fast",
+   "left": "L4Factoidal.JSONLD.jcsSortFields",
+   "replacement": "L4Factoidal.JSONLD.jcsSortFieldsFast",
+   "module": "L4Factoidal.JSONLD.ToRdf",
+   "replacement_callers": [
+    "L4Factoidal.JSONLD.jcsSerW",
+    "L4Factoidal.JSONLD.jcsSerialize"
+   ]
+  },
+  {
+   "file": "L4Factoidal/JSONLD/ToRdf.lean",
+   "line": 609,
+   "theorem": "jcsSerialize_eq_fast",
+   "left": "L4Factoidal.JSONLD.jcsSerialize",
+   "replacement": "L4Factoidal.JSONLD.jcsSerW",
+   "module": "L4Factoidal.JSONLD.ToRdf",
+   "replacement_callers": [
+    "L4Factoidal.JSONLD.jcsDocument",
+    "L4Factoidal.JSONLD.jcsFieldsW",
+    "L4Factoidal.JSONLD.jcsItemsW"
+   ]
+  },
+  {
+   "file": "L4Factoidal/JSONLD/ToRdf.lean",
+   "line": 616,
+   "theorem": "jcsSerializeItems_eq_fast",
+   "left": "L4Factoidal.JSONLD.jcsSerializeItems",
+   "replacement": "L4Factoidal.JSONLD.jcsSerializeItemsFast",
+   "module": "L4Factoidal.JSONLD.ToRdf",
+   "replacement_callers": []
+  },
+  {
+   "file": "L4Factoidal/JSONLD/ToRdf.lean",
+   "line": 619,
+   "theorem": "jcsSerializeFields_eq_fast",
+   "left": "L4Factoidal.JSONLD.jcsSerializeFields",
+   "replacement": "L4Factoidal.JSONLD.jcsSerializeFieldsFast",
+   "module": "L4Factoidal.JSONLD.ToRdf",
+   "replacement_callers": []
+  },
+  {
+   "file": "L4Factoidal/JSONLD/ToRdf.lean",
+   "line": 1410,
+   "theorem": "expandNodeR_eq_fast",
+   "left": "L4Factoidal.JSONLD.expandNodeR",
+   "replacement": "L4Factoidal.JSONLD.expandNodeRW",
+   "module": "L4Factoidal.JSONLD.ToRdf",
+   "replacement_callers": [
+    "L4Factoidal.JSONLD.expandGraphNodesW",
+    "L4Factoidal.JSONLD.expandReversePropW",
+    "L4Factoidal.JSONLD.expandTop",
+    "L4Factoidal.JSONLD.expandValueW"
+   ]
+  },
+  {
+   "file": "L4Factoidal/JSONLD/ToRdf.lean",
+   "line": 1413,
+   "theorem": "expandFieldsR_eq_fast",
+   "left": "L4Factoidal.JSONLD.expandFieldsR",
+   "replacement": "L4Factoidal.JSONLD.expandFieldsRW",
+   "module": "L4Factoidal.JSONLD.ToRdf",
+   "replacement_callers": [
+    "L4Factoidal.JSONLD.expandNodeRW",
+    "L4Factoidal.JSONLD.expandTop"
+   ]
+  },
+  {
+   "file": "L4Factoidal/JSONLD/ToRdf.lean",
+   "line": 1416,
+   "theorem": "expandGraphNodes_eq_fast",
+   "left": "L4Factoidal.JSONLD.expandGraphNodes",
+   "replacement": "L4Factoidal.JSONLD.expandGraphNodesW",
+   "module": "L4Factoidal.JSONLD.ToRdf",
+   "replacement_callers": [
+    "L4Factoidal.JSONLD.expandFieldsRW",
+    "L4Factoidal.JSONLD.expandNodeRW",
+    "L4Factoidal.JSONLD.expandTop"
+   ]
+  },
+  {
+   "file": "L4Factoidal/JSONLD/ToRdf.lean",
+   "line": 1421,
+   "theorem": "expandValue_eq_fast",
+   "left": "L4Factoidal.JSONLD.expandValue",
+   "replacement": "L4Factoidal.JSONLD.expandValueW",
+   "module": "L4Factoidal.JSONLD.ToRdf",
+   "replacement_callers": [
+    "L4Factoidal.JSONLD.expandListGo",
+    "L4Factoidal.JSONLD.expandPropertyRW"
+   ]
+  },
+  {
+   "file": "L4Factoidal/JSONLD/ToRdf.lean",
+   "line": 1428,
+   "theorem": "expandList_eq_fast",
+   "left": "L4Factoidal.JSONLD.expandList",
+   "replacement": "L4Factoidal.JSONLD.expandListFast",
+   "module": "L4Factoidal.JSONLD.ToRdf",
+   "replacement_callers": []
+  },
+  {
+   "file": "L4Factoidal/JSONLD/ToRdf.lean",
+   "line": 1432,
+   "theorem": "expandReverseMap_eq_fast",
+   "left": "L4Factoidal.JSONLD.expandReverseMap",
+   "replacement": "L4Factoidal.JSONLD.expandReverseMapW",
+   "module": "L4Factoidal.JSONLD.ToRdf",
+   "replacement_callers": [
+    "L4Factoidal.JSONLD.expandFieldsRW"
+   ]
+  },
+  {
+   "file": "L4Factoidal/JSONLD/ToRdf.lean",
+   "line": 1435,
+   "theorem": "expandReverseEntries_eq_fast",
+   "left": "L4Factoidal.JSONLD.expandReverseEntries",
+   "replacement": "L4Factoidal.JSONLD.expandReverseEntriesW",
+   "module": "L4Factoidal.JSONLD.ToRdf",
+   "replacement_callers": [
+    "L4Factoidal.JSONLD.expandReverseMapW"
+   ]
+  },
+  {
+   "file": "L4Factoidal/JSONLD/ToRdf.lean",
+   "line": 1438,
+   "theorem": "expandReverseProp_eq_fast",
+   "left": "L4Factoidal.JSONLD.expandReverseProp",
+   "replacement": "L4Factoidal.JSONLD.expandReversePropW",
+   "module": "L4Factoidal.JSONLD.ToRdf",
+   "replacement_callers": [
+    "L4Factoidal.JSONLD.expandReverseEntriesW"
+   ]
+  },
+  {
+   "file": "L4Factoidal/JSONLD/ToRdf.lean",
+   "line": 1441,
+   "theorem": "expandPropertyR_eq_fast",
+   "left": "L4Factoidal.JSONLD.expandPropertyR",
+   "replacement": "L4Factoidal.JSONLD.expandPropertyRW",
+   "module": "L4Factoidal.JSONLD.ToRdf",
+   "replacement_callers": [
+    "L4Factoidal.JSONLD.expandFieldsRW"
+   ]
+  },
+  {
+   "file": "L4Factoidal/LWS/Pagination.lean",
+   "line": 72,
+   "theorem": "dedupFrom_eq_TR",
+   "left": "L4Factoidal.LWS.dedupFrom",
+   "replacement": "L4Factoidal.LWS.dedupFromLoop",
+   "module": "L4Factoidal.LWS.Pagination",
+   "replacement_callers": []
+  },
+  {
+   "file": "L4Factoidal/LWS/Pagination.lean",
+   "line": 81,
+   "theorem": "dedupSorted_eq_TR",
+   "left": "L4Factoidal.LWS.dedupSorted",
+   "replacement": "L4Factoidal.LWS.dedupSortedTR",
+   "module": "L4Factoidal.LWS.Pagination",
+   "replacement_callers": [
+    "L4Factoidal.LWS.orderPaths"
+   ]
+  },
+  {
+   "file": "L4Factoidal/Math/Sigmoid.lean",
+   "line": 48,
+   "theorem": "pow10_eq_fast",
+   "left": "L4Factoidal.Math.Sigmoid.pow10",
+   "replacement": "L4Factoidal.Math.Sigmoid.pow10Fast",
+   "module": "L4Factoidal.Math.Sigmoid",
+   "replacement_callers": [
+    "L4Factoidal.Math.Sigmoid.fromWork",
+    "L4Factoidal.Math.Sigmoid.toWork",
+    "L4Factoidal.Math.Sigmoid.workPow10"
+   ]
+  },
+  {
+   "file": "L4Factoidal/MathML/Core.lean",
+   "line": 149,
+   "theorem": "powNat_eq_fast",
+   "left": "L4Factoidal.MathML.powNat",
+   "replacement": "L4Factoidal.MathML.powNatFast",
+   "module": "L4Factoidal.MathML.Core",
+   "replacement_callers": [
+    "L4Factoidal.MathML.eval",
+    "L4Factoidal.MathML.exactRootNat.go"
+   ]
+  },
+  {
+   "file": "L4Factoidal/OWL/CertNames.lean",
+   "line": 41,
+   "theorem": "frame_eq_frameTR",
+   "left": "L4Factoidal.OWL.CertNames.frame",
+   "replacement": "L4Factoidal.OWL.CertNames.frameTR",
+   "module": "L4Factoidal.OWL.CertNames",
+   "replacement_callers": [
+    "L4Factoidal.OWL.CertNames.fields"
+   ]
+  },
+  {
+   "file": "L4Factoidal/OWL/Comprehension.lean",
+   "line": 199,
+   "theorem": "compListCells_eq_compListCellsTR",
+   "left": "L4Factoidal.OWL.Comp.compListCells",
+   "replacement": "L4Factoidal.OWL.Comp.compListCellsTR",
+   "module": "L4Factoidal.OWL.Comprehension",
+   "replacement_callers": [
+    "L4Factoidal.OWL.Comp.adfTriples",
+    "L4Factoidal.OWL.Comp.uni1Triples"
+   ]
+  },
+  {
+   "file": "L4Factoidal/OWL/Comprehension.lean",
+   "line": 350,
+   "theorem": "dedupAcc_eq_dedupAccTR",
+   "left": "L4Factoidal.OWL.Comp.dedupAcc",
+   "replacement": "L4Factoidal.OWL.Comp.dedupAccTR",
+   "module": "L4Factoidal.OWL.Comprehension",
+   "replacement_callers": [
+    "L4Factoidal.OWL.Comp.dedupIris"
+   ]
+  },
+  {
+   "file": "L4Factoidal/OWL/Comprehension.lean",
+   "line": 381,
+   "theorem": "insIri_eq_insIriTR",
+   "left": "L4Factoidal.OWL.Comp.insIri",
+   "replacement": "L4Factoidal.OWL.Comp.insIriTR",
+   "module": "L4Factoidal.OWL.Comprehension",
+   "replacement_callers": []
+  },
+  {
+   "file": "L4Factoidal/OWL/Comprehension.lean",
+   "line": 458,
+   "theorem": "sortIris_eq_sortIrisTR",
+   "left": "L4Factoidal.OWL.Comp.sortIris",
+   "replacement": "L4Factoidal.OWL.Comp.sortIrisTR",
+   "module": "L4Factoidal.OWL.Comprehension",
+   "replacement_callers": [
+    "L4Factoidal.OWL.Comp.compAdfCliqueFor"
+   ]
+  },
+  {
+   "file": "L4Factoidal/OWL/DirectCert.lean",
+   "line": 1026,
+   "theorem": "pairsOf_eq_TR",
+   "left": "L4Factoidal.OWL.pairsOf",
+   "replacement": "L4Factoidal.OWL.pairsOfTR",
+   "module": "L4Factoidal.OWL.DirectCert",
+   "replacement_callers": [
+    "L4Factoidal.OWL.Refute.countingCert",
+    "L4Factoidal.OWL.Refute.emitCert",
+    "L4Factoidal.OWL.checkF",
+    "L4Factoidal.OWL.geFacts"
+   ]
+  },
+  {
+   "file": "L4Factoidal/OWL/OwlXml.lean",
+   "line": 190,
+   "theorem": "readList_eq_readListTR",
+   "left": "L4Factoidal.OWL.OwlXml.readList",
+   "replacement": "L4Factoidal.OWL.OwlXml.readListTR",
+   "module": "L4Factoidal.OWL.OwlXml",
+   "replacement_callers": [
+    "L4Factoidal.OWL.OwlXml.readAxiomBody",
+    "L4Factoidal.OWL.OwlXml.readCE",
+    "L4Factoidal.OWL.OwlXml.readDR",
+    "L4Factoidal.OWL.OwlXml.readDataFrom",
+    "L4Factoidal.OWL.OwlXml.readOntologyEl"
+   ]
+  },
+  {
+   "file": "L4Factoidal/OWL/OwlXml.lean",
+   "line": 245,
+   "theorem": "readFacets_eq_readFacetsTR",
+   "left": "L4Factoidal.OWL.OwlXml.readFacets",
+   "replacement": "L4Factoidal.OWL.OwlXml.readFacetsTR",
+   "module": "L4Factoidal.OWL.OwlXml",
+   "replacement_callers": [
+    "L4Factoidal.OWL.OwlXml.readDR"
+   ]
+  },
+  {
+   "file": "L4Factoidal/OWL/OwlXml.lean",
+   "line": 469,
+   "theorem": "readAnnotations_eq_readAnnotationsTR",
+   "left": "L4Factoidal.OWL.OwlXml.readAnnotations",
+   "replacement": "L4Factoidal.OWL.OwlXml.readAnnotationsTR",
+   "module": "L4Factoidal.OWL.OwlXml",
+   "replacement_callers": [
+    "L4Factoidal.OWL.OwlXml.readAxiom",
+    "L4Factoidal.OWL.OwlXml.readOntologyEl"
+   ]
+  },
+  {
+   "file": "L4Factoidal/OWL/OwlXml.lean",
+   "line": 667,
+   "theorem": "readAxioms_eq_readAxiomsTR",
+   "left": "L4Factoidal.OWL.OwlXml.readAxioms",
+   "replacement": "L4Factoidal.OWL.OwlXml.readAxiomsTR",
+   "module": "L4Factoidal.OWL.OwlXml",
+   "replacement_callers": [
+    "L4Factoidal.OWL.OwlXml.readOntologyEl"
+   ]
+  },
+  {
+   "file": "L4Factoidal/OWL/OwlXml.lean",
+   "line": 703,
+   "theorem": "readPrefixes_eq_readPrefixesTR",
+   "left": "L4Factoidal.OWL.OwlXml.readPrefixes",
+   "replacement": "L4Factoidal.OWL.OwlXml.readPrefixesTR",
+   "module": "L4Factoidal.OWL.OwlXml",
+   "replacement_callers": [
+    "L4Factoidal.OWL.OwlXml.readOntologyEl"
+   ]
+  },
+  {
+   "file": "L4Factoidal/OWL/RLClosureIndexed.lean",
+   "line": 2875,
+   "theorem": "closure_eq_indexedClosure",
+   "left": "L4Factoidal.OWL.RL.closure",
+   "replacement": "L4Factoidal.OWL.RL.indexedClosureSN",
+   "module": "L4Factoidal.OWL.RLClosureIndexed",
+   "replacement_callers": [
+    "L4Factoidal.OWL.RL.closureFixIndexed",
+    "L4Factoidal.OWL.RL.derives",
+    "L4Factoidal.RDFS.TripleTermClosureTests.owlClosures",
+    "L4Factoidal.RDFS.entailmentClosureForQueryExt"
+   ]
+  },
+  {
+   "file": "L4Factoidal/OWL/RLClosureIndexed.lean",
+   "line": 2879,
+   "theorem": "closureFix_eq_indexed",
+   "left": "L4Factoidal.OWL.RL.closureFix",
+   "replacement": "L4Factoidal.OWL.RL.closureFixIndexed",
+   "module": "L4Factoidal.OWL.RLClosureIndexed",
+   "replacement_callers": [
+    "L4Factoidal.OWL.QueryEvalRegimeTests.parent7Rows",
+    "L4Factoidal.RDFS.TripleTermClosureTests.closures",
+    "L4Factoidal.RDFS.TripleTermClosureTests.owlClosures",
+    "L4Wasm.Ops.closeDefaultGraph",
+    "L4Wasm.Ops.closureGraphOfRegime",
+    "L4Wasm.Ops.owlClosureParsed",
+    "L4Wasm.Ops.owlEntailsParsed",
+    "L4Wasm.Ops.tableauDlInconsistent"
+   ]
+  },
+  {
+   "file": "L4Factoidal/OWL/Refute.lean",
+   "line": 3378,
+   "theorem": "unorderedPairs_eq_TR",
+   "left": "L4Factoidal.OWL.Refute.unorderedPairs",
+   "replacement": "L4Factoidal.OWL.Refute.unorderedPairsTR",
+   "module": "L4Factoidal.OWL.Refute",
+   "replacement_callers": [
+    "L4Factoidal.OWL.Refute.witnessPairs"
+   ]
+  },
+  {
+   "file": "L4Factoidal/OWL/StructureRdf.lean",
+   "line": 150,
+   "theorem": "mapOPEs_eq_TR",
+   "left": "L4Factoidal.OWL.Struct.mapOPEs",
+   "replacement": "L4Factoidal.OWL.Struct.mapOPEsTR",
+   "module": "L4Factoidal.OWL.StructureRdf",
+   "replacement_callers": [
+    "L4Factoidal.OWL.Struct.mapAxiom"
+   ]
+  },
+  {
+   "file": "L4Factoidal/OWL/StructureRdf.lean",
+   "line": 194,
+   "theorem": "mapSeq_eq_TR",
+   "left": "L4Factoidal.OWL.Struct.mapSeq",
+   "replacement": "L4Factoidal.OWL.Struct.mapSeqTR",
+   "module": "L4Factoidal.OWL.StructureRdf",
+   "replacement_callers": [
+    "L4Factoidal.OWL.Struct.allMembers",
+    "L4Factoidal.OWL.Struct.dataValuesFrom",
+    "L4Factoidal.OWL.Struct.mapAxiom",
+    "L4Factoidal.OWL.Struct.mapCE",
+    "L4Factoidal.OWL.Struct.mapDR"
+   ]
+  },
+  {
+   "file": "L4Factoidal/OWL/StructureRdf.lean",
+   "line": 230,
+   "theorem": "mapFacets_eq_TR",
+   "left": "L4Factoidal.OWL.Struct.mapFacets",
+   "replacement": "L4Factoidal.OWL.Struct.mapFacetsTR",
+   "module": "L4Factoidal.OWL.StructureRdf",
+   "replacement_callers": [
+    "L4Factoidal.OWL.Struct.mapDR"
+   ]
+  },
+  {
+   "file": "L4Factoidal/OWL/SyntaxDL.lean",
+   "line": 1134,
+   "theorem": "componentsOf_eq_fast",
+   "left": "L4Factoidal.OWL.SyntaxDL.componentsOf",
+   "replacement": "L4Factoidal.OWL.SyntaxDL.componentsOfFast",
+   "module": "L4Factoidal.OWL.SyntaxDL",
+   "replacement_callers": [
+    "L4Factoidal.OWL.SyntaxDL.anonymousIndividualViolations",
+    "L4Factoidal.OWL.SyntaxDL.anonymousIndividualViolationsI"
+   ]
+  },
+  {
+   "file": "L4Factoidal/OWL/SyntaxDL.lean",
+   "line": 2386,
+   "theorem": "graphBodyViolations_eq_fast",
+   "left": "L4Factoidal.OWL.SyntaxDL.graphBodyViolations",
+   "replacement": "L4Factoidal.OWL.SyntaxDL.graphBodyViolationsI",
+   "module": "L4Factoidal.OWL.SyntaxDL",
+   "replacement_callers": [
+    "L4Factoidal.OWL.SyntaxDL.speciesViolationsFast",
+    "L4Factoidal.OWL.SyntaxDL.speciesViolationsFunctionalFast"
+   ]
+  },
+  {
+   "file": "L4Factoidal/OWL/SyntaxDL.lean",
+   "line": 2389,
+   "theorem": "speciesViolations_csimp",
+   "left": "L4Factoidal.OWL.SyntaxDL.speciesViolations",
+   "replacement": "L4Factoidal.OWL.SyntaxDL.speciesViolationsFast",
+   "module": "L4Factoidal.OWL.SyntaxDL",
+   "replacement_callers": [
+    "L4Factoidal.OWL.RdfBased.Balanced.pairSpeciesViolations",
+    "L4Factoidal.OWL.SyntaxDL.speciesIsDlFast"
+   ]
+  },
+  {
+   "file": "L4Factoidal/OWL/SyntaxDL.lean",
+   "line": 2392,
+   "theorem": "speciesIsDl_eq_fast",
+   "left": "L4Factoidal.OWL.SyntaxDL.speciesIsDl",
+   "replacement": "L4Factoidal.OWL.SyntaxDL.speciesIsDlFast",
+   "module": "L4Factoidal.OWL.SyntaxDL",
+   "replacement_callers": []
+  },
+  {
+   "file": "L4Factoidal/OWL/SyntaxDL.lean",
+   "line": 2396,
+   "theorem": "speciesViolationsFunctional_eq_fast",
+   "left": "L4Factoidal.OWL.SyntaxDL.speciesViolationsFunctional",
+   "replacement": "L4Factoidal.OWL.SyntaxDL.speciesViolationsFunctionalFast",
+   "module": "L4Factoidal.OWL.SyntaxDL",
+   "replacement_callers": [
+    "L4Factoidal.OWL.SyntaxDL.speciesIsDlFunctionalFast"
+   ]
+  },
+  {
+   "file": "L4Factoidal/OWL/SyntaxDL.lean",
+   "line": 2401,
+   "theorem": "speciesIsDlFunctional_eq_fast",
+   "left": "L4Factoidal.OWL.SyntaxDL.speciesIsDlFunctional",
+   "replacement": "L4Factoidal.OWL.SyntaxDL.speciesIsDlFunctionalFast",
+   "module": "L4Factoidal.OWL.SyntaxDL",
+   "replacement_callers": []
+  },
+  {
+   "file": "L4Factoidal/Qlvr/CmpBytesFast.lean",
+   "line": 161,
+   "theorem": "cmpBytes_eq_cmpBytesFast",
+   "left": "L4Factoidal.Qlvr.cmpBytes",
+   "replacement": "L4Factoidal.Qlvr.cmpBytesFast",
+   "module": "L4Factoidal.Qlvr.CmpBytesFast",
+   "replacement_callers": [
+    "L4Factoidal.Qlvr.Side.sideLookupM",
+    "L4Factoidal.Qlvr.Side.sortChunk",
+    "L4Factoidal.Qlvr.Side.testLookup"
+   ]
+  },
+  {
+   "file": "L4Factoidal/RDF/Canonical.lean",
+   "line": 182,
+   "theorem": "strLe_eq_strLeFast",
+   "left": "L4Factoidal.RDF.Canonical.strLe",
+   "replacement": "L4Factoidal.RDF.Canonical.strLeFast",
+   "module": "L4Factoidal.RDF.Canonical",
+   "replacement_callers": [
+    "L4Factoidal.RDF.Canonical.bucketInsert",
+    "L4Factoidal.RDF.Canonical.buildCanonicalMappingBudgeted",
+    "L4Factoidal.RDF.Canonical.canonicalize",
+    "L4Factoidal.RDF.Canonical.dedupQQuads",
+    "L4Factoidal.RDF.Canonical.groupByHfdq",
+    "L4Factoidal.RDF.Canonical.pickBest",
+    "L4Factoidal.RDF.Canonical.pickBestF",
+    "L4Factoidal.RDF.Canonical.processCollisionMembers",
+    "L4Factoidal.RDF.Canonical.sortStrings"
+   ]
+  },
+  {
+   "file": "L4Factoidal/RDF/Canonical.lean",
+   "line": 214,
+   "theorem": "insertSortedBy_eq_TR",
+   "left": "L4Factoidal.RDF.Canonical.insertSortedBy",
+   "replacement": "L4Factoidal.RDF.Canonical.insertSortedByTR",
+   "module": "L4Factoidal.RDF.Canonical",
+   "replacement_callers": [
+    "L4Factoidal.RDF.Canonical.sortBy"
+   ]
+  },
+  {
+   "file": "L4Factoidal/RDF/Canonical.lean",
+   "line": 265,
+   "theorem": "dedupAdj_eq_dedupAdjTR",
+   "left": "L4Factoidal.RDF.Canonical.dedupAdj",
+   "replacement": "L4Factoidal.RDF.Canonical.dedupAdjTR",
+   "module": "L4Factoidal.RDF.Canonical",
+   "replacement_callers": [
+    "L4Factoidal.RDF.Canonical.canonicalLinesOf",
+    "L4Factoidal.RDF.Canonical.dedupStrings"
+   ]
+  },
+  {
+   "file": "L4Factoidal/RDF/Canonical.lean",
+   "line": 416,
+   "theorem": "collapseKeyedQQuads_eq_TR",
+   "left": "L4Factoidal.RDF.Canonical.collapseKeyedQQuads",
+   "replacement": "L4Factoidal.RDF.Canonical.collapseKeyedQQuadsTR",
+   "module": "L4Factoidal.RDF.Canonical",
+   "replacement_callers": [
+    "L4Factoidal.RDF.Canonical.dedupQQuads"
+   ]
+  },
+  {
+   "file": "L4Factoidal/RDF/Canonical.lean",
+   "line": 1005,
+   "theorem": "hfdqTableOf_eq_Ix",
+   "left": "L4Factoidal.RDF.Canonical.hfdqTableOf",
+   "replacement": "L4Factoidal.RDF.Canonical.hfdqTableOfIx",
+   "module": "L4Factoidal.RDF.Canonical",
+   "replacement_callers": [
+    "L4Factoidal.RDF.Canonical.buildCanonicalMappingBudgeted",
+    "L4Factoidal.RDF.CanonicalTests.walkGroupsAgreeWith"
+   ]
+  },
+  {
+   "file": "L4Factoidal/RDF/Canonical.lean",
+   "line": 1141,
+   "theorem": "relabelDataset_eq_fast",
+   "left": "L4Factoidal.RDF.Canonical.relabelDataset",
+   "replacement": "L4Factoidal.RDF.Canonical.relabelDatasetFast",
+   "module": "L4Factoidal.RDF.Canonical",
+   "replacement_callers": [
+    "L4Factoidal.RDF.Canonical.canonicalize",
+    "L4Factoidal.RDF.Dataset.canonicalLines"
+   ]
+  },
+  {
+   "file": "L4Factoidal/RDF/Canonical.lean",
+   "line": 1774,
+   "theorem": "buildCanonicalMappingBudgeted_eq_fast",
+   "left": "L4Factoidal.RDF.Canonical.buildCanonicalMappingBudgeted",
+   "replacement": "L4Factoidal.RDF.Canonical.buildCanonicalMappingBudgetedFast",
+   "module": "L4Factoidal.RDF.Canonical",
+   "replacement_callers": [
+    "L4Factoidal.RDF.Canonical.buildCanonicalMapping",
+    "L4Factoidal.RDF.Canonical.canonicalize",
+    "L4Factoidal.RDF.Canonical.canonicalizeExceedsBudget",
+    "L4Factoidal.RDF.Dataset.canonicalLines"
+   ]
+  },
+  {
+   "file": "L4Factoidal/RDF/Core.lean",
+   "line": 72,
+   "theorem": "isIri_eq_isIriFast",
+   "left": "L4Factoidal.RDF.isIri",
+   "replacement": "L4Factoidal.RDF.isIriFast",
+   "module": "L4Factoidal.RDF.Core",
+   "replacement_callers": [
+    "L4Factoidal.CSVW.absoluteIri?",
+    "L4Factoidal.CSVW.refIri?",
+    "L4Factoidal.CSVW.toIri?",
+    "L4Factoidal.CSVW.xsdIri?",
+    "L4Factoidal.Cottas.Ballyhoo.iriOf",
+    "L4Factoidal.Geo.iriArg",
+    "L4Factoidal.JSONLD.contextProcessOneField",
+    "L4Factoidal.JSONLD.iriWf",
+    "L4Factoidal.JSONLD.mkWfIri?",
+    "L4Factoidal.JSONLD.resolveContextIri",
+    "L4Factoidal.JSONLD.resolveRel",
+    "L4Factoidal.LWS.mkIri?",
+    "L4Factoidal.OWL.CountingOracle.mkIri",
+    "L4Factoidal.OWL.FS.mkIri",
+    "L4Factoidal.OWL.RL.decodeComp",
+    "L4Factoidal.OWL.RL.decodeMinc1",
+    "L4Factoidal.OWL.SyntaxDL.i",
+    "L4Factoidal.Planner.Kinds.mkWfIri?",
+    "L4Factoidal.Qlvr.Query.idTerm",
+    "L4Factoidal.Qlvr.Query.mkWfLit",
+    "L4Factoidal.RDF.Dataset.lookupNamedIri",
+    "L4Factoidal.RDF.DatasetNormalizeTests.iriW",
+    "L4Factoidal.RDF.TermJson.iriOf?",
+    "L4Factoidal.RDF.iriW",
+    "L4Factoidal.RDF.wi",
+    "L4Factoidal.RDFS.iriW",
+    "L4Factoidal.RIF.RdfMapping.predOfG",
+    "L4Factoidal.RIF.RdfMapping.subjectOfG",
+    "L4Factoidal.RIF.RdfMapping.termOfG",
+    "L4Factoidal.RIF.iriW",
+    "L4Factoidal.RIF.posPredIri",
+    "L4Factoidal.RIF.termOfConst",
+    "L4Factoidal.RIF.unitermArgPred",
+    "L4Factoidal.RML.exIri",
+    "L4Factoidal.RML.iri!",
+    "L4Factoidal.RML.iriW",
+    "L4Factoidal.RML.mkIriE",
+    "L4Factoidal.RML.mkLiteralE",
+    "L4Factoidal.RML.quotedTriplesOfE",
+    "L4Factoidal.RML.rdfIri",
+    "L4Factoidal.RML.subjectQuadsE",
+    "L4Factoidal.SHACL.shapeRefToTerm",
+    "L4Factoidal.SPARQL.Expr.evalIn",
+    "L4Factoidal.SPARQL.GraphStore.decodeTarget",
+    "L4Factoidal.SPARQL.GraphStoreService.resolve",
+    "L4Factoidal.SPARQL.ProtocolService.datasetClauses",
+    "L4Factoidal.SPARQL.ServiceDescription.datasetIriOf",
+    "L4Factoidal.SPARQL.ServiceDescription.defaultGraphIriOf",
+    "L4Factoidal.SPARQL.StoreDataset.wfIriOf?",
+    "L4Factoidal.SPARQL.StoreEndpoint.applyDeltaEntry",
+    "L4Factoidal.SPARQL.StoreEndpoint.gspOutcome",
+    "L4Factoidal.SPARQL.StoreEndpoint.serviceDescriptionOutcome",
+    "L4Factoidal.SPARQL.decodeFulltextLiteral",
+    "L4Factoidal.SPARQL.looksLikeIri",
+    "L4Factoidal.SPARQL.mkIri?",
+    "L4Factoidal.SPARQL.mkResultLiteral",
+    "L4Factoidal.SPARQL.mkResultUri",
+    "L4Factoidal.SPARQL.pPrologue",
+    "L4Factoidal.SPARQL.parseCsvValue",
+    "L4Factoidal.SPARQL.resolveIriToken",
+    "L4Factoidal.SPARQL.wi",
+    "L4Factoidal.ShEx.iriT",
+    "L4Factoidal.Solid.Server.exIri",
+    "L4Factoidal.Storage.BrowserLog.applyEntry",
+    "L4Factoidal.Storage.BrowserLog.applyEntryIx",
+    "L4Factoidal.Storage.IndexedBlockWireV2.mkLiteralCursor?",
+    "L4Factoidal.Storage.IndexedBlockWireV2.parseTermCursor",
+    "L4Factoidal.Storage.Sbm11.IdAggTests.iri",
+    "L4Factoidal.Storage.Sbm11.IdQueryTests.iri?",
+    "L4Factoidal.Storage.Sbm11.IdQueryTests.pIri",
+    "L4Factoidal.Storage.Sbm11.decodeIri?",
+    "L4Factoidal.Storage.Sbm11.decodeKeySlice?",
+    "L4Factoidal.Storage.Sbm11.iriT",
+    "L4Factoidal.Storage.Sbm11.iriW",
+    "L4Factoidal.Storage.Sbm11.mkLit",
+    "L4Factoidal.Storage.ShardManifest.decodeEntry",
+    "L4Factoidal.Storage.ShardManifest.decodeGraphName",
+    "L4Factoidal.Storage.TermWireV2.mkLiteral?",
+    "L4Factoidal.Storage.TermWireV2.mkLiteralLocal",
+    "L4Factoidal.Storage.TermWireV2.parseBlob",
+    "L4Factoidal.Storage.TermWireV2.parseInlineGo",
+    "L4Factoidal.Storage.TermWireV2.parseInlineLoop",
+    "L4Factoidal.Storage.mkDeltaLiteral?",
+    "L4Factoidal.Storage.mkLiteral?",
+    "L4Factoidal.Storage.mkLiteralLocal",
+    "L4Factoidal.Storage.parseDeltaLeaf",
+    "L4Factoidal.Storage.parsePredicateTerm",
+    "L4Factoidal.Storage.parseSubject",
+    "L4Factoidal.Storage.parseTerm",
+    "L4Factoidal.Storage.parseTriple",
+    "L4Factoidal.Storage.parseTripleWith",
+    "L4Factoidal.Syntax.RdfJson.literalOf",
+    "L4Factoidal.Syntax.RdfJson.parseRdfJson",
+    "L4Factoidal.Syntax.RdfJson.termOfJson",
+    "L4Factoidal.Syntax.RdfXml.mkIri?",
+    "L4Factoidal.Syntax.mkIri",
+    "L4Factoidal.Syntax.wi",
+    "L4Factoidal.Testing.mkIri",
+    "L4Factoidal.Unified.herbName",
+    "L4Factoidal.Unified.liftInterp",
+    "L4Factoidal.Unified.liftLitVal",
+    "L4Factoidal.Unified.qLit",
+    "L4Factoidal.Unified.rifAtomOk",
+    "L4Factoidal.Unified.rifCoreConstName",
+    "L4Factoidal.Unified.rifFactTriple?",
+    "L4Factoidal.Unified.rifTmOk",
+    "L4Factoidal.VC.DidKey.mkIri?",
+    "L4Wasm.Ops.badIriLoop",
+    "L4Wasm.mkIri"
+   ]
+  },
+  {
+   "file": "L4Factoidal/Syntax/NTriples.lean",
+   "line": 73,
+   "theorem": "isIri_eq_isIriFast",
+   "left": "L4Factoidal.RDF.isIri",
+   "replacement": "L4Factoidal.Syntax.isIriFast",
+   "module": "L4Factoidal.Syntax.NTriples",
+   "replacement_callers": [
+    "L4Factoidal.CSVW.absoluteIri?",
+    "L4Factoidal.CSVW.refIri?",
+    "L4Factoidal.CSVW.toIri?",
+    "L4Factoidal.CSVW.xsdIri?",
+    "L4Factoidal.Cottas.Ballyhoo.iriOf",
+    "L4Factoidal.Geo.iriArg",
+    "L4Factoidal.JSONLD.contextProcessOneField",
+    "L4Factoidal.JSONLD.iriWf",
+    "L4Factoidal.JSONLD.mkWfIri?",
+    "L4Factoidal.JSONLD.resolveContextIri",
+    "L4Factoidal.JSONLD.resolveRel",
+    "L4Factoidal.LWS.mkIri?",
+    "L4Factoidal.OWL.CountingOracle.mkIri",
+    "L4Factoidal.OWL.FS.mkIri",
+    "L4Factoidal.OWL.RL.decodeComp",
+    "L4Factoidal.OWL.RL.decodeMinc1",
+    "L4Factoidal.OWL.SyntaxDL.i",
+    "L4Factoidal.Planner.Kinds.mkWfIri?",
+    "L4Factoidal.Qlvr.Query.idTerm",
+    "L4Factoidal.Qlvr.Query.mkWfLit",
+    "L4Factoidal.RDF.Dataset.lookupNamedIri",
+    "L4Factoidal.RDF.DatasetNormalizeTests.iriW",
+    "L4Factoidal.RDF.TermJson.iriOf?",
+    "L4Factoidal.RDF.iriW",
+    "L4Factoidal.RDF.wi",
+    "L4Factoidal.RDFS.iriW",
+    "L4Factoidal.RIF.RdfMapping.predOfG",
+    "L4Factoidal.RIF.RdfMapping.subjectOfG",
+    "L4Factoidal.RIF.RdfMapping.termOfG",
+    "L4Factoidal.RIF.iriW",
+    "L4Factoidal.RIF.posPredIri",
+    "L4Factoidal.RIF.termOfConst",
+    "L4Factoidal.RIF.unitermArgPred",
+    "L4Factoidal.RML.exIri",
+    "L4Factoidal.RML.iri!",
+    "L4Factoidal.RML.iriW",
+    "L4Factoidal.RML.mkIriE",
+    "L4Factoidal.RML.mkLiteralE",
+    "L4Factoidal.RML.quotedTriplesOfE",
+    "L4Factoidal.RML.rdfIri",
+    "L4Factoidal.RML.subjectQuadsE",
+    "L4Factoidal.SHACL.shapeRefToTerm",
+    "L4Factoidal.SPARQL.Expr.evalIn",
+    "L4Factoidal.SPARQL.GraphStore.decodeTarget",
+    "L4Factoidal.SPARQL.GraphStoreService.resolve",
+    "L4Factoidal.SPARQL.ProtocolService.datasetClauses",
+    "L4Factoidal.SPARQL.ServiceDescription.datasetIriOf",
+    "L4Factoidal.SPARQL.ServiceDescription.defaultGraphIriOf",
+    "L4Factoidal.SPARQL.StoreDataset.wfIriOf?",
+    "L4Factoidal.SPARQL.StoreEndpoint.applyDeltaEntry",
+    "L4Factoidal.SPARQL.StoreEndpoint.gspOutcome",
+    "L4Factoidal.SPARQL.StoreEndpoint.serviceDescriptionOutcome",
+    "L4Factoidal.SPARQL.decodeFulltextLiteral",
+    "L4Factoidal.SPARQL.looksLikeIri",
+    "L4Factoidal.SPARQL.mkIri?",
+    "L4Factoidal.SPARQL.mkResultLiteral",
+    "L4Factoidal.SPARQL.mkResultUri",
+    "L4Factoidal.SPARQL.pPrologue",
+    "L4Factoidal.SPARQL.parseCsvValue",
+    "L4Factoidal.SPARQL.resolveIriToken",
+    "L4Factoidal.SPARQL.wi",
+    "L4Factoidal.ShEx.iriT",
+    "L4Factoidal.Solid.Server.exIri",
+    "L4Factoidal.Storage.BrowserLog.applyEntry",
+    "L4Factoidal.Storage.BrowserLog.applyEntryIx",
+    "L4Factoidal.Storage.IndexedBlockWireV2.mkLiteralCursor?",
+    "L4Factoidal.Storage.IndexedBlockWireV2.parseTermCursor",
+    "L4Factoidal.Storage.Sbm11.IdAggTests.iri",
+    "L4Factoidal.Storage.Sbm11.IdQueryTests.iri?",
+    "L4Factoidal.Storage.Sbm11.IdQueryTests.pIri",
+    "L4Factoidal.Storage.Sbm11.decodeIri?",
+    "L4Factoidal.Storage.Sbm11.decodeKeySlice?",
+    "L4Factoidal.Storage.Sbm11.iriT",
+    "L4Factoidal.Storage.Sbm11.iriW",
+    "L4Factoidal.Storage.Sbm11.mkLit",
+    "L4Factoidal.Storage.ShardManifest.decodeEntry",
+    "L4Factoidal.Storage.ShardManifest.decodeGraphName",
+    "L4Factoidal.Storage.TermWireV2.mkLiteral?",
+    "L4Factoidal.Storage.TermWireV2.mkLiteralLocal",
+    "L4Factoidal.Storage.TermWireV2.parseBlob",
+    "L4Factoidal.Storage.TermWireV2.parseInlineGo",
+    "L4Factoidal.Storage.TermWireV2.parseInlineLoop",
+    "L4Factoidal.Storage.mkDeltaLiteral?",
+    "L4Factoidal.Storage.mkLiteral?",
+    "L4Factoidal.Storage.mkLiteralLocal",
+    "L4Factoidal.Storage.parseDeltaLeaf",
+    "L4Factoidal.Storage.parsePredicateTerm",
+    "L4Factoidal.Storage.parseSubject",
+    "L4Factoidal.Storage.parseTerm",
+    "L4Factoidal.Storage.parseTriple",
+    "L4Factoidal.Storage.parseTripleWith",
+    "L4Factoidal.Syntax.RdfJson.literalOf",
+    "L4Factoidal.Syntax.RdfJson.parseRdfJson",
+    "L4Factoidal.Syntax.RdfJson.termOfJson",
+    "L4Factoidal.Syntax.RdfXml.mkIri?",
+    "L4Factoidal.Syntax.mkIri",
+    "L4Factoidal.Syntax.wi",
+    "L4Factoidal.Testing.mkIri",
+    "L4Factoidal.Unified.herbName",
+    "L4Factoidal.Unified.liftInterp",
+    "L4Factoidal.Unified.liftLitVal",
+    "L4Factoidal.Unified.qLit",
+    "L4Factoidal.Unified.rifAtomOk",
+    "L4Factoidal.Unified.rifCoreConstName",
+    "L4Factoidal.Unified.rifFactTriple?",
+    "L4Factoidal.Unified.rifTmOk",
+    "L4Factoidal.VC.DidKey.mkIri?",
+    "L4Wasm.Ops.badIriLoop",
+    "L4Wasm.mkIri"
+   ]
+  },
+  {
+   "file": "L4Factoidal/RDF/Core.lean",
+   "line": 657,
+   "theorem": "Term.joinKey_eq_fast",
+   "left": "L4Factoidal.RDF.Term.joinKey",
+   "replacement": "L4Factoidal.RDF.Term.joinKeyFast",
+   "module": "L4Factoidal.RDF.Core",
+   "replacement_callers": [
+    "L4Factoidal.RDF.IsoRefine.compileTerm",
+    "L4Factoidal.RDF.IsoRefine.termHash",
+    "L4Factoidal.RDF.Triple.key",
+    "L4Factoidal.RDF.tripleKey",
+    "L4Factoidal.SHACL.dedupTermsGo",
+    "L4Factoidal.SPARQL.Binding.distinctKeyFor",
+    "L4Factoidal.SPARQL.Binding.hashKey?",
+    "L4Factoidal.SPARQL.maskedKey",
+    "L4Factoidal.SPARQL.tripleKey",
+    "L4Factoidal.Storage.QuadDataset.tripleKey"
+   ]
+  },
+  {
+   "file": "L4Factoidal/RDF/DatasetNormalize.lean",
+   "line": 117,
+   "theorem": "Term.lowerTags_eq_fast",
+   "left": "L4Factoidal.RDF.Term.lowerTags",
+   "replacement": "L4Factoidal.RDF.Term.lowerTagsFast",
+   "module": "L4Factoidal.RDF.DatasetNormalize",
+   "replacement_callers": [
+    "L4Factoidal.RDF.Triple.lowerTags"
+   ]
+  },
+  {
+   "file": "L4Factoidal/RDF/DatasetNormalize.lean",
+   "line": 150,
+   "theorem": "iriPrintSafe_eq_iriPrintSafeFast",
+   "left": "L4Factoidal.Syntax.NTriplesRoundTrip.iriPrintSafe",
+   "replacement": "L4Factoidal.RDF.iriPrintSafeFast",
+   "module": "L4Factoidal.RDF.DatasetNormalize",
+   "replacement_callers": [
+    "L4Factoidal.RDF.literalSafe",
+    "L4Factoidal.RDF.subjectSafe",
+    "L4Factoidal.RDF.termSafe",
+    "L4Factoidal.RDF.tripleSafe"
+   ]
+  },
+  {
+   "file": "L4Factoidal/RDF/Isomorphism.lean",
+   "line": 190,
+   "theorem": "noDupLabels_eq_fast",
+   "left": "L4Factoidal.RDF.noDupLabels",
+   "replacement": "L4Factoidal.RDF.noDupLabelsFast",
+   "module": "L4Factoidal.RDF.Isomorphism",
+   "replacement_callers": [
+    "L4Factoidal.RDF.bijectiveCert",
+    "L4Factoidal.RDF.bijectiveCertFast"
+   ]
+  },
+  {
+   "file": "L4Factoidal/RDF/Isomorphism.lean",
+   "line": 230,
+   "theorem": "dedupLabels_eq_fast",
+   "left": "L4Factoidal.RDF.dedupLabels",
+   "replacement": "L4Factoidal.RDF.dedupLabelsFast",
+   "module": "L4Factoidal.RDF.Isomorphism",
+   "replacement_callers": [
+    "L4Factoidal.RDF.Dataset.bnodes",
+    "L4Factoidal.RDF.Graph.bnodes"
+   ]
+  },
+  {
+   "file": "L4Factoidal/RDF/Isomorphism.lean",
+   "line": 310,
+   "theorem": "Graph.dedup_eq_hash",
+   "left": "L4Factoidal.RDF.Graph.dedup",
+   "replacement": "L4Factoidal.RDF.dedupHash",
+   "module": "L4Factoidal.RDF.Isomorphism",
+   "replacement_callers": [
+    "L4Factoidal.RDF.Graph.bnodeSig"
+   ]
+  },
+  {
+   "file": "L4Factoidal/RDF/Isomorphism.lean",
+   "line": 354,
+   "theorem": "Graph.subsetB_eq_fast",
+   "left": "L4Factoidal.RDF.Graph.subsetB",
+   "replacement": "L4Factoidal.RDF.Graph.subsetBFast",
+   "module": "L4Factoidal.RDF.Isomorphism",
+   "replacement_callers": [
+    "L4Factoidal.RDF.Graph.setEqB"
+   ]
+  },
+  {
+   "file": "L4Factoidal/RDF/Isomorphism.lean",
+   "line": 517,
+   "theorem": "bijectiveCert_eq_fast",
+   "left": "L4Factoidal.RDF.bijectiveCert",
+   "replacement": "L4Factoidal.RDF.bijectiveCertFast",
+   "module": "L4Factoidal.RDF.Isomorphism",
+   "replacement_callers": [
+    "L4Factoidal.RDF.Dataset.isoCert",
+    "L4Factoidal.RDF.Graph.isoCertFast"
+   ]
+  },
+  {
+   "file": "L4Factoidal/RDF/Isomorphism.lean",
+   "line": 556,
+   "theorem": "Graph.isoCert_eq_fast",
+   "left": "L4Factoidal.RDF.Graph.isoCert",
+   "replacement": "L4Factoidal.RDF.Graph.isoCertFast",
+   "module": "L4Factoidal.RDF.Isomorphism",
+   "replacement_callers": [
+    "L4Factoidal.RDF.Graph.isoSearch",
+    "L4Factoidal.RDF.Graph.isoSearchRef",
+    "L4Factoidal.RDF.Graph.isoSearchStepFull",
+    "L4Factoidal.RDF.Graph.isomorphismMap?",
+    "L4Factoidal.RDF.Graph.isomorphismMapFast?",
+    "L4Factoidal.RDF.Graph.isomorphismMapRef?"
+   ]
+  },
+  {
+   "file": "L4Factoidal/RDF/Isomorphism.lean",
+   "line": 841,
+   "theorem": "Dataset.checkMapping_eq_fast",
+   "left": "L4Factoidal.RDF.Dataset.checkMapping",
+   "replacement": "L4Factoidal.RDF.Dataset.checkMappingFast",
+   "module": "L4Factoidal.RDF.Isomorphism",
+   "replacement_callers": [
+    "L4Factoidal.RDF.Dataset.isoCert"
+   ]
+  },
+  {
+   "file": "L4Factoidal/RDF/Isomorphism.lean",
+   "line": 955,
+   "theorem": "Graph.isomorphismMap_eq_fast",
+   "left": "L4Factoidal.RDF.Graph.isomorphismMap?",
+   "replacement": "L4Factoidal.RDF.Graph.isomorphismMapFast?",
+   "module": "L4Factoidal.RDF.Isomorphism",
+   "replacement_callers": [
+    "L4Factoidal.RDF.Graph.isomorphicFast?",
+    "L4Factoidal.RDF.Graph.isomorphicOutcomeFast"
+   ]
+  },
+  {
+   "file": "L4Factoidal/RDF/Isomorphism.lean",
+   "line": 976,
+   "theorem": "Graph.isomorphicOutcome_eq_fast",
+   "left": "L4Factoidal.RDF.Graph.isomorphicOutcome",
+   "replacement": "L4Factoidal.RDF.Graph.isomorphicOutcomeFast",
+   "module": "L4Factoidal.RDF.Isomorphism",
+   "replacement_callers": [
+    "L4Factoidal.RDF.IsoTests.diffCase"
+   ]
+  },
+  {
+   "file": "L4Factoidal/RDF/Isomorphism.lean",
+   "line": 983,
+   "theorem": "Graph.isomorphic_eq_fast",
+   "left": "L4Factoidal.RDF.Graph.isomorphic?",
+   "replacement": "L4Factoidal.RDF.Graph.isomorphicFast?",
+   "module": "L4Factoidal.RDF.Isomorphism",
+   "replacement_callers": [
+    "L4Factoidal.OWL.FS.twinIso",
+    "L4Factoidal.OWL.OwlXml.twin",
+    "L4Factoidal.Syntax.RdfXmlTests.iso",
+    "L4Factoidal.Syntax.RdfXmlTests.isoDoc",
+    "L4Factoidal.Syntax.RdfXmlTests.isoIts",
+    "L4Factoidal.Syntax.ttlRoundTrips",
+    "L4Factoidal.Testing.propIsoReflexive",
+    "L4Factoidal.Testing.propIsoRelabel"
+   ]
+  },
+  {
+   "file": "L4Factoidal/RDF/Isomorphism.lean",
+   "line": 1001,
+   "theorem": "Dataset.isomorphismMap_eq_fast",
+   "left": "L4Factoidal.RDF.Dataset.isomorphismMap?",
+   "replacement": "L4Factoidal.RDF.Dataset.isomorphismMapFast?",
+   "module": "L4Factoidal.RDF.Isomorphism",
+   "replacement_callers": [
+    "L4Factoidal.RDF.Dataset.isomorphicFast?",
+    "L4Factoidal.RDF.Dataset.isomorphicOutcomeFast"
+   ]
+  },
+  {
+   "file": "L4Factoidal/RDF/Isomorphism.lean",
+   "line": 1023,
+   "theorem": "Dataset.isomorphicOutcome_eq_fast",
+   "left": "L4Factoidal.RDF.Dataset.isomorphicOutcome",
+   "replacement": "L4Factoidal.RDF.Dataset.isomorphicOutcomeFast",
+   "module": "L4Factoidal.RDF.Isomorphism",
+   "replacement_callers": [
+    "L4Factoidal.RDF.IsoTests.diffCase",
+    "L4Wasm.Ops.datasetIsomorphic"
+   ]
+  },
+  {
+   "file": "L4Factoidal/RDF/Isomorphism.lean",
+   "line": 1031,
+   "theorem": "Dataset.isomorphic_eq_fast",
+   "left": "L4Factoidal.RDF.Dataset.isomorphic?",
+   "replacement": "L4Factoidal.RDF.Dataset.isomorphicFast?",
+   "module": "L4Factoidal.RDF.Isomorphism",
+   "replacement_callers": [
+    "L4Factoidal.RDF.Sink.sameDataset"
+   ]
+  },
+  {
+   "file": "L4Factoidal/RDF/StoreCapabilities.lean",
+   "line": 321,
+   "theorem": "igEstimate_csimp",
+   "left": "L4Factoidal.RDF.igEstimate",
+   "replacement": "L4Factoidal.RDF.igEstimateFast",
+   "module": "L4Factoidal.RDF.StoreCapabilities",
+   "replacement_callers": [
+    "L4Factoidal.RDF.capsOfIndexed"
+   ]
+  },
+  {
+   "file": "L4Factoidal/RDF/XmlCanon.lean",
+   "line": 339,
+   "theorem": "walk_eq_fast",
+   "left": "L4Factoidal.RDF.XmlCanon.walk",
+   "replacement": "L4Factoidal.RDF.XmlCanon.walkFast",
+   "module": "L4Factoidal.RDF.XmlCanon",
+   "replacement_callers": [
+    "L4Factoidal.RDF.XmlCanon.canonicalize"
+   ]
+  },
+  {
+   "file": "L4Factoidal/RDFS/Closure.lean",
+   "line": 446,
+   "theorem": "closure_eq_closureFast",
+   "left": "L4Factoidal.RDFS.closure",
+   "replacement": "L4Factoidal.RDFS.closureFast",
+   "module": "L4Factoidal.RDFS.Closure",
+   "replacement_callers": [
+    "L4Factoidal.RDFS.closureDispatch",
+    "L4Factoidal.RDFS.closureFix",
+    "L4Factoidal.RDFS.entailmentClosureForQueryExt"
+   ]
+  },
+  {
+   "file": "L4Factoidal/RDFS/FullClosure.lean",
+   "line": 449,
+   "theorem": "fullClosureLoop_eq_fast",
+   "left": "L4Factoidal.RDFS.fullClosureLoop",
+   "replacement": "L4Factoidal.RDFS.fullClosureLoopFast",
+   "module": "L4Factoidal.RDFS.FullClosure",
+   "replacement_callers": [
+    "L4Factoidal.RDFS.fullClosure"
+   ]
+  },
+  {
+   "file": "L4Factoidal/RDFS/SemiNaive.lean",
+   "line": 243,
+   "theorem": "semiNaiveLoop_eq_fast",
+   "left": "L4Factoidal.RDFS.semiNaiveLoop",
+   "replacement": "L4Factoidal.RDFS.semiNaiveLoopFast",
+   "module": "L4Factoidal.RDFS.SemiNaive",
+   "replacement_callers": [
+    "L4Factoidal.RDFS.semiNaive"
+   ]
+  },
+  {
+   "file": "L4Factoidal/RDFS/SemiNaive.lean",
+   "line": 281,
+   "theorem": "isNaiveFixpoint_eq_fast",
+   "left": "L4Factoidal.RDFS.isNaiveFixpoint",
+   "replacement": "L4Factoidal.RDFS.isNaiveFixpointFast",
+   "module": "L4Factoidal.RDFS.SemiNaive",
+   "replacement_callers": [
+    "L4Factoidal.RDFS.closureSemiNaiveChecked",
+    "L4Factoidal.RDFS.closureSemiNaiveCheckedFast"
+   ]
+  },
+  {
+   "file": "L4Factoidal/RDFS/SemiNaiveTheorems.lean",
+   "line": 630,
+   "theorem": "semiNaive_eq_fast",
+   "left": "L4Factoidal.RDFS.semiNaive",
+   "replacement": "L4Factoidal.RDFS.semiNaiveFast",
+   "module": "L4Factoidal.RDFS.SemiNaiveTheorems",
+   "replacement_callers": []
+  },
+  {
+   "file": "L4Factoidal/RDFS/SemiNaiveTheorems.lean",
+   "line": 657,
+   "theorem": "closureSemiNaiveChecked_eq_fast",
+   "left": "L4Factoidal.RDFS.closureSemiNaiveChecked",
+   "replacement": "L4Factoidal.RDFS.closureSemiNaiveCheckedFast",
+   "module": "L4Factoidal.RDFS.SemiNaiveTheorems",
+   "replacement_callers": []
+  },
+  {
+   "file": "L4Factoidal/RIF/Engine.lean",
+   "line": 285,
+   "theorem": "splitEvaluable_eq_TR",
+   "left": "L4Factoidal.RIF.splitEvaluable",
+   "replacement": "L4Factoidal.RIF.splitEvaluableTR",
+   "module": "L4Factoidal.RIF.Engine",
+   "replacement_callers": [
+    "L4Factoidal.RIF.runConds"
+   ]
+  },
+  {
+   "file": "L4Factoidal/RIF/Xml.lean",
+   "line": 200,
+   "theorem": "listCollectSome_eq_TR",
+   "left": "L4Factoidal.RIF.Xml.listCollectSome",
+   "replacement": "L4Factoidal.RIF.Xml.listCollectSomeTR",
+   "module": "L4Factoidal.RIF.Xml",
+   "replacement_callers": [
+    "L4Factoidal.RIF.Xml.parseAtomElement",
+    "L4Factoidal.RIF.Xml.parseFrameElement",
+    "L4Factoidal.RIF.Xml.parseOpAndArgsFuel"
+   ]
+  },
+  {
+   "file": "L4Factoidal/RML/Encoding.lean",
+   "line": 58,
+   "theorem": "units_eq_unitsTR",
+   "left": "L4Factoidal.RML.units",
+   "replacement": "L4Factoidal.RML.unitsTR",
+   "module": "L4Factoidal.RML.Encoding",
+   "replacement_callers": [
+    "L4Factoidal.RML.decodeUtf16?"
+   ]
+  },
+  {
+   "file": "L4Factoidal/RML/Encoding.lean",
+   "line": 121,
+   "theorem": "charsOfUnits_eq_charsOfUnitsTR",
+   "left": "L4Factoidal.RML.charsOfUnits",
+   "replacement": "L4Factoidal.RML.charsOfUnitsTR",
+   "module": "L4Factoidal.RML.Encoding",
+   "replacement_callers": [
+    "L4Factoidal.RML.decodeUtf16?"
+   ]
+  },
+  {
+   "file": "L4Factoidal/Regex/XPath.lean",
+   "line": 638,
+   "theorem": "replaceLoop_eq_fast",
+   "left": "L4Factoidal.Regex.replaceLoop",
+   "replacement": "L4Factoidal.Regex.replaceLoopFast",
+   "module": "L4Factoidal.Regex.XPath",
+   "replacement_callers": [
+    "L4Factoidal.Regex.replace"
+   ]
+  },
+  {
+   "file": "L4Factoidal/SHACL/Shapes.lean",
+   "line": 398,
+   "theorem": "distinctSubjects_eq_fast",
+   "left": "L4Factoidal.SHACL.distinctSubjects",
+   "replacement": "L4Factoidal.SHACL.distinctSubjectsFast",
+   "module": "L4Factoidal.SHACL.Shapes",
+   "replacement_callers": [
+    "L4Factoidal.SHACL.ValidationConfig.envFor",
+    "L4Factoidal.SHACL.closedByTypesTable",
+    "L4Factoidal.SHACL.decodeCustomConstraints",
+    "L4Factoidal.SHACL.decodeShapesGraph",
+    "L4Factoidal.SHACL.evalNe",
+    "L4Factoidal.SHACL.instancesOf",
+    "L4Factoidal.SHACL.validate",
+    "L4Factoidal.SHACL.validateWithSparql"
+   ]
+  },
+  {
+   "file": "L4Factoidal/SHACL/Shapes.lean",
+   "line": 449,
+   "theorem": "dedupTerms_eq_fast",
+   "left": "L4Factoidal.SHACL.dedupTerms",
+   "replacement": "L4Factoidal.SHACL.dedupTermsFast",
+   "module": "L4Factoidal.SHACL.Shapes",
+   "replacement_callers": [
+    "L4Factoidal.SHACL.evalAltFuel",
+    "L4Factoidal.SHACL.evalAltFuelIx",
+    "L4Factoidal.SHACL.evalNe",
+    "L4Factoidal.SHACL.evalPathFuel",
+    "L4Factoidal.SHACL.evalPathFuelIx",
+    "L4Factoidal.SHACL.evalPlusFuel",
+    "L4Factoidal.SHACL.evalPlusFuelIx",
+    "L4Factoidal.SHACL.evalSeqFuel",
+    "L4Factoidal.SHACL.evalSeqFuelIx",
+    "L4Factoidal.SHACL.evalTarget",
+    "L4Factoidal.SHACL.graphNodes",
+    "L4Factoidal.SHACL.instancesOf",
+    "L4Factoidal.SHACL.shaclListMembersFuel",
+    "L4Factoidal.SHACL.shaclListMembersFuelTR.go",
+    "L4Factoidal.SHACL.shapeFocusNodes",
+    "L4Factoidal.SHACL.uvfKey",
+    "L4Factoidal.SHACL.valueDetails",
+    "L4Factoidal.SHACL.valueNodes"
+   ]
+  },
+  {
+   "file": "L4Factoidal/SHACL/Validation.lean",
+   "line": 286,
+   "theorem": "distinctDupsBy_eq_fast",
+   "left": "L4Factoidal.SHACL.distinctDupsBy",
+   "replacement": "L4Factoidal.SHACL.distinctDupsFast",
+   "module": "L4Factoidal.SHACL.Validation",
+   "replacement_callers": [
+    "L4Factoidal.SHACL.duplicatedLangTags"
+   ]
+  },
+  {
+   "file": "L4Factoidal/SHACL/Validation.lean",
+   "line": 578,
+   "theorem": "shaclListMembersFuel_eq_TR",
+   "left": "L4Factoidal.SHACL.shaclListMembersFuel",
+   "replacement": "L4Factoidal.SHACL.shaclListMembersFuelTR",
+   "module": "L4Factoidal.SHACL.Validation",
+   "replacement_callers": [
+    "L4Factoidal.SHACL.shaclListMembers"
+   ]
+  },
+  {
+   "file": "L4Factoidal/SPARQL/EvalLimits.lean",
+   "line": 63,
+   "theorem": "takeCappedAux_eq_TR",
+   "left": "L4Factoidal.SPARQL.takeCappedAux",
+   "replacement": "L4Factoidal.SPARQL.takeCappedAuxTR",
+   "module": "L4Factoidal.SPARQL.EvalLimits",
+   "replacement_callers": [
+    "L4Factoidal.SPARQL.takeCapped"
+   ]
+  },
+  {
+   "file": "L4Factoidal/SPARQL/Expr.lean",
+   "line": 678,
+   "theorem": "pow10_eq_fast",
+   "left": "L4Factoidal.SPARQL.pow10",
+   "replacement": "L4Factoidal.SPARQL.pow10Fast",
+   "module": "L4Factoidal.SPARQL.Expr",
+   "replacement_callers": [
+    "L4Factoidal.SPARQL.Scaled.add",
+    "L4Factoidal.SPARQL.Scaled.cmp",
+    "L4Factoidal.SPARQL.Scaled.div?",
+    "L4Factoidal.SPARQL.Scaled.sub",
+    "L4Factoidal.SPARQL.castString",
+    "L4Factoidal.SPARQL.evalArithInt",
+    "L4Factoidal.SPARQL.evalArithmetic",
+    "L4Factoidal.SPARQL.floatCastSpelling",
+    "L4Factoidal.SPARQL.formatNumericResult",
+    "L4Factoidal.SPARQL.formatScaledValue"
+   ]
+  },
+  {
+   "file": "L4Factoidal/SPARQL/Expr.lean",
+   "line": 873,
+   "theorem": "countDigitsFuel_eq_fast",
+   "left": "L4Factoidal.SPARQL.countDigitsFuel",
+   "replacement": "L4Factoidal.SPARQL.countDigitsFuelFast",
+   "module": "L4Factoidal.SPARQL.Expr",
+   "replacement_callers": [
+    "L4Factoidal.SPARQL.countDigits",
+    "L4Factoidal.SPARQL.formatAsDouble"
+   ]
+  },
+  {
+   "file": "L4Factoidal/SPARQL/Expr.lean",
+   "line": 1276,
+   "theorem": "strCompare_eq_strCompareFast",
+   "left": "L4Factoidal.SPARQL.strCompare",
+   "replacement": "L4Factoidal.SPARQL.strCompareFast",
+   "module": "L4Factoidal.SPARQL.Expr",
+   "replacement_callers": [
+    "L4Factoidal.SPARQL.StringOrderTests.agrees",
+    "L4Factoidal.SPARQL.literalOrder",
+    "L4Factoidal.SPARQL.sparqlOrderNumeric",
+    "L4Factoidal.SPARQL.sparqlOrderValues",
+    "L4Factoidal.SPARQL.subjectOrder",
+    "L4Factoidal.SPARQL.termOrder",
+    "L4Factoidal.SPARQL.valueCompare"
+   ]
+  },
+  {
+   "file": "L4Factoidal/SPARQL/OrderedPrefix.lean",
+   "line": 69,
+   "theorem": "mergePrefix_eq_TR",
+   "left": "L4Factoidal.SPARQL.mergePrefix",
+   "replacement": "L4Factoidal.SPARQL.mergePrefixTR",
+   "module": "L4Factoidal.SPARQL.OrderedPrefix",
+   "replacement_callers": [
+    "L4Factoidal.SPARQL.mergeSortPrefix"
+   ]
+  },
+  {
+   "file": "L4Factoidal/SPARQL/Parser.lean",
+   "line": 395,
+   "theorem": "flushTriples_eq_fast",
+   "left": "L4Factoidal.SPARQL.flushTriples",
+   "replacement": "L4Factoidal.SPARQL.flushTriplesFast",
+   "module": "L4Factoidal.SPARQL.Parser",
+   "replacement_callers": [
+    "L4Factoidal.SPARQL.flushAnswer",
+    "L4Factoidal.SPARQL.joinTriples",
+    "L4Factoidal.SPARQL.pAnnotations",
+    "L4Factoidal.SPARQL.pObjectListPath",
+    "L4Factoidal.SPARQL.pObjectWithExtras",
+    "L4Factoidal.SPARQL.pSubjectWithExtras",
+    "L4Factoidal.SPARQL.pTriplesBlock"
+   ]
+  },
+  {
+   "file": "L4Factoidal/SPARQL/Parser.lean",
+   "line": 592,
+   "theorem": "bnodesInBgp_eq_fast",
+   "left": "L4Factoidal.SPARQL.bnodesInBgp",
+   "replacement": "L4Factoidal.SPARQL.bnodesInBgpFast",
+   "module": "L4Factoidal.SPARQL.Parser",
+   "replacement_callers": [
+    "L4Factoidal.SPARQL.ggpLabeledBnodes",
+    "L4Factoidal.SPARQL.labelsLoop",
+    "L4Factoidal.SPARQL.scopeLoop",
+    "L4Factoidal.SPARQL.validateBnodeScope"
+   ]
+  },
+  {
+   "file": "L4Factoidal/SPARQL/Parser.lean",
+   "line": 870,
+   "theorem": "ggpLabeledBnodes_eq_fast",
+   "left": "L4Factoidal.SPARQL.ggpLabeledBnodes",
+   "replacement": "L4Factoidal.SPARQL.ggpLabeledBnodesFast",
+   "module": "L4Factoidal.SPARQL.Parser",
+   "replacement_callers": [
+    "L4Factoidal.SPARQL.labeledBnodesInDataOp",
+    "L4Factoidal.SPARQL.pGgpBody"
+   ]
+  },
+  {
+   "file": "L4Factoidal/SPARQL/Parser.lean",
+   "line": 874,
+   "theorem": "ggpLabeledBnodesQ_eq_fast",
+   "left": "L4Factoidal.SPARQL.ggpLabeledBnodesQ",
+   "replacement": "L4Factoidal.SPARQL.ggpLabeledBnodesQFast",
+   "module": "L4Factoidal.SPARQL.Parser",
+   "replacement_callers": []
+  },
+  {
+   "file": "L4Factoidal/SPARQL/Parser.lean",
+   "line": 1111,
+   "theorem": "validateBnodeScope_eq_fast",
+   "left": "L4Factoidal.SPARQL.validateBnodeScope",
+   "replacement": "L4Factoidal.SPARQL.validateBnodeScopeFast",
+   "module": "L4Factoidal.SPARQL.Parser",
+   "replacement_callers": [
+    "L4Factoidal.SPARQL.mkExists"
+   ]
+  },
+  {
+   "file": "L4Factoidal/SPARQL/Parser.lean",
+   "line": 1115,
+   "theorem": "validateBnodeScopeQ_eq_fast",
+   "left": "L4Factoidal.SPARQL.validateBnodeScopeQ",
+   "replacement": "L4Factoidal.SPARQL.validateBnodeScopeQFast",
+   "module": "L4Factoidal.SPARQL.Parser",
+   "replacement_callers": [
+    "L4Factoidal.SPARQL.validateBnodeScopeTop"
+   ]
+  },
+  {
+   "file": "L4Factoidal/SPARQL/Parser.lean",
+   "line": 3562,
+   "theorem": "pCollection_eq_fast",
+   "left": "L4Factoidal.SPARQL.pCollection",
+   "replacement": "L4Factoidal.SPARQL.pCollectionFast",
+   "module": "L4Factoidal.SPARQL.Parser",
+   "replacement_callers": []
+  },
+  {
+   "file": "L4Factoidal/SPARQL/PropertyPath.lean",
+   "line": 98,
+   "theorem": "dedupPath_eq_fast",
+   "left": "L4Factoidal.SPARQL.dedupPath",
+   "replacement": "L4Factoidal.SPARQL.dedupPathFast",
+   "module": "L4Factoidal.SPARQL.PropertyPath",
+   "replacement_callers": [
+    "L4Factoidal.SPARQL.evalPath",
+    "L4Factoidal.SPARQL.graphNodes",
+    "L4Factoidal.SPARQL.pathExtend"
+   ]
+  },
+  {
+   "file": "L4Factoidal/SPARQL/Query.lean",
+   "line": 691,
+   "theorem": "finishSelectRows_eq_prefix",
+   "left": "L4Factoidal.SPARQL.finishSelectRows",
+   "replacement": "L4Factoidal.SPARQL.finishSelectRowsPrefix",
+   "module": "L4Factoidal.SPARQL.Query",
+   "replacement_callers": [
+    "L4Factoidal.SPARQL.AggStream.groupedTail",
+    "L4Factoidal.SPARQL.selectPost"
+   ]
+  },
+  {
+   "file": "L4Factoidal/SPARQL/Query.lean",
+   "line": 1002,
+   "theorem": "dedupEr_eq_dedupErFast",
+   "left": "L4Factoidal.SPARQL.dedupEr",
+   "replacement": "L4Factoidal.SPARQL.dedupErFast",
+   "module": "L4Factoidal.SPARQL.Query",
+   "replacement_callers": [
+    "L4Factoidal.SPARQL.evalAggregate"
+   ]
+  },
+  {
+   "file": "L4Factoidal/SPARQL/Query.lean",
+   "line": 1402,
+   "theorem": "numberRows_eq_numberRowsTR",
+   "left": "L4Factoidal.SPARQL.numberRows",
+   "replacement": "L4Factoidal.SPARQL.numberRowsTR",
+   "module": "L4Factoidal.SPARQL.Query",
+   "replacement_callers": [
+    "L4Factoidal.SPARQL.selectPost",
+    "L4Factoidal.SPARQL.selectPostFailure"
+   ]
+  },
+  {
+   "file": "L4Factoidal/SPARQL/ResultsJson.lean",
+   "line": 212,
+   "theorem": "rowsJoinedTail_eq_TR",
+   "left": "L4Factoidal.SPARQL.rowsJoinedTail",
+   "replacement": "L4Factoidal.SPARQL.rowsJoinedTailTR",
+   "module": "L4Factoidal.SPARQL.ResultsJson",
+   "replacement_callers": []
+  },
+  {
+   "file": "L4Factoidal/SPARQL/ResultsJson.lean",
+   "line": 215,
+   "theorem": "rowsJoined_eq_rowsJoinedTR",
+   "left": "L4Factoidal.SPARQL.rowsJoined",
+   "replacement": "L4Factoidal.SPARQL.rowsJoinedTR",
+   "module": "L4Factoidal.SPARQL.ResultsJson",
+   "replacement_callers": [
+    "L4Factoidal.SPARQL.QueryResult.toSrj"
+   ]
+  },
+  {
+   "file": "L4Factoidal/SPARQL/Tokenizer.lean",
+   "line": 484,
+   "theorem": "skipWs_eq_fast",
+   "left": "L4Factoidal.SPARQL.skipWs",
+   "replacement": "L4Factoidal.SPARQL.skipWsFast",
+   "module": "L4Factoidal.SPARQL.Tokenizer",
+   "replacement_callers": [
+    "L4Factoidal.SPARQL.nextToken",
+    "L4Factoidal.SPARQL.startsWithLongString"
+   ]
+  },
+  {
+   "file": "L4Factoidal/SPARQL/Tokenizer.lean",
+   "line": 1345,
+   "theorem": "tokenize_eq_fast",
+   "left": "L4Factoidal.SPARQL.tokenize",
+   "replacement": "L4Factoidal.SPARQL.tokenizeFast",
+   "module": "L4Factoidal.SPARQL.Tokenizer",
+   "replacement_callers": [
+    "L4Factoidal.SPARQL.tokenizeAtFast"
+   ]
+  },
+  {
+   "file": "L4Factoidal/SPARQL/Tokenizer.lean",
+   "line": 1348,
+   "theorem": "tokenize12_eq_fast",
+   "left": "L4Factoidal.SPARQL.tokenize12",
+   "replacement": "L4Factoidal.SPARQL.tokenize12Fast",
+   "module": "L4Factoidal.SPARQL.Tokenizer",
+   "replacement_callers": [
+    "L4Factoidal.SPARQL.tokenizeAtFast"
+   ]
+  },
+  {
+   "file": "L4Factoidal/SPARQL/Tokenizer.lean",
+   "line": 1351,
+   "theorem": "tokenizeAt_eq_fast",
+   "left": "L4Factoidal.SPARQL.tokenizeAt",
+   "replacement": "L4Factoidal.SPARQL.tokenizeAtFast",
+   "module": "L4Factoidal.SPARQL.Tokenizer",
+   "replacement_callers": [
+    "L4Factoidal.SPARQL.parseSparqlUpdateWith",
+    "L4Factoidal.SPARQL.parseSparqlWith",
+    "L4Factoidal.SPARQL.tbBoth"
+   ]
+  },
+  {
+   "file": "L4Factoidal/SPARQL/Update.lean",
+   "line": 309,
+   "theorem": "DatasetIx.addNamed_eq_fast",
+   "left": "L4Factoidal.RDF.DatasetIx.addNamed",
+   "replacement": "L4Factoidal.RDF.DatasetIx.addNamedFast",
+   "module": "L4Factoidal.SPARQL.Update",
+   "replacement_callers": [
+    "L4Factoidal.RDF.DatasetIx.insertQuad"
+   ]
+  },
+  {
+   "file": "L4Factoidal/SPARQL/Update.lean",
+   "line": 358,
+   "theorem": "Dataset.insertQuads_eq_fast",
+   "left": "L4Factoidal.RDF.Dataset.insertQuads",
+   "replacement": "L4Factoidal.RDF.Dataset.insertQuadsFast",
+   "module": "L4Factoidal.SPARQL.Update",
+   "replacement_callers": [
+    "L4Factoidal.SPARQL.applyInsertData",
+    "L4Factoidal.SPARQL.applyModify",
+    "L4Wasm.Ops.datasetAddQuads"
+   ]
+  },
+  {
+   "file": "L4Factoidal/SPARQL/Update.lean",
+   "line": 475,
+   "theorem": "collectQuads_eq_fast",
+   "left": "L4Factoidal.SPARQL.collectQuads",
+   "replacement": "L4Factoidal.SPARQL.collectQuadsFast",
+   "module": "L4Factoidal.SPARQL.Update",
+   "replacement_callers": [
+    "L4Factoidal.SPARQL.UpdateStore.insertDataLabels",
+    "L4Factoidal.SPARQL.UpdateStore.insertDataQuads",
+    "L4Factoidal.SPARQL.applyDeleteData",
+    "L4Factoidal.SPARQL.applyInsertData",
+    "L4Factoidal.SPARQL.deltaEntriesForOp?"
+   ]
+  },
+  {
+   "file": "L4Factoidal/SPARQL/UpdateParser.lean",
+   "line": 525,
+   "theorem": "bnodeLabelsUnique_eq_fast",
+   "left": "L4Factoidal.SPARQL.bnodeLabelsUniqueAcrossDataOps",
+   "replacement": "L4Factoidal.SPARQL.bnodeLabelsUniqueFast",
+   "module": "L4Factoidal.SPARQL.UpdateParser",
+   "replacement_callers": [
+    "L4Factoidal.SPARQL.parseSparqlUpdateWith"
+   ]
+  },
+  {
+   "file": "L4Factoidal/Storage/BlockMerkle.lean",
+   "line": 92,
+   "theorem": "nextLevelWith_eq_nextLevelWithTR",
+   "left": "L4Factoidal.Storage.BlockMerkle.nextLevelWith",
+   "replacement": "L4Factoidal.Storage.BlockMerkle.nextLevelWithTR",
+   "module": "L4Factoidal.Storage.BlockMerkle",
+   "replacement_callers": [
+    "L4Factoidal.Storage.BlockMerkle.levelsFuel",
+    "L4Factoidal.Storage.BlockMerkle.nextLevel",
+    "L4Factoidal.Storage.BlockMerkle.proofFuelWith",
+    "L4Factoidal.Storage.BlockMerkle.rootFuelWith",
+    "L4Factoidal.Storage.BlockMerkle.rootInputsFuel"
+   ]
+  },
+  {
+   "file": "L4Factoidal/Storage/BrowserLog.lean",
+   "line": 223,
+   "theorem": "applyBatches_eq_fast",
+   "left": "L4Factoidal.Storage.BrowserLog.applyBatches",
+   "replacement": "L4Factoidal.Storage.BrowserLog.applyBatchesFast",
+   "module": "L4Factoidal.Storage.BrowserLog",
+   "replacement_callers": [
+    "L4Factoidal.Storage.BrowserLog.merge",
+    "L4Wasm.Ops.deltaLogMerge"
+   ]
+  },
+  {
+   "file": "L4Factoidal/Storage/DeltaLog.lean",
+   "line": 728,
+   "theorem": "serializeDeltaTerm?_eq_impl",
+   "left": "L4Factoidal.Storage.serializeDeltaTerm?",
+   "replacement": "L4Factoidal.Storage.serializeDeltaTermImpl",
+   "module": "L4Factoidal.Storage.DeltaLog",
+   "replacement_callers": [
+    "L4Factoidal.RDF.QuadsBin.putTerm",
+    "L4Factoidal.RDF.QuadsBin.serTerms",
+    "L4Factoidal.Storage.DeltaTermCodec.v2",
+    "L4Factoidal.Storage.rtTerm2"
+   ]
+  },
+  {
+   "file": "L4Factoidal/Storage/DeltaLog.lean",
+   "line": 1103,
+   "theorem": "parseNFramedDeltaEntries_eq_fast",
+   "left": "L4Factoidal.Storage.parseNFramedDeltaEntries",
+   "replacement": "L4Factoidal.Storage.parseNFramedDeltaEntriesFast",
+   "module": "L4Factoidal.Storage.DeltaLog",
+   "replacement_callers": [
+    "L4Factoidal.Storage.parseDeltaBatchBody"
+   ]
+  },
+  {
+   "file": "L4Factoidal/Storage/DeltaLogBytesTheorems.lean",
+   "line": 809,
+   "theorem": "appendPlan?_csimp",
+   "left": "L4Factoidal.Storage.appendPlan?",
+   "replacement": "L4Factoidal.Storage.DeltaLogBytes.appendPlanViaBA",
+   "module": "L4Factoidal.Storage.DeltaLogBytesTheorems",
+   "replacement_callers": []
+  },
+  {
+   "file": "L4Factoidal/Storage/DeltaLogBytesTheorems.lean",
+   "line": 821,
+   "theorem": "parseLogChecked_csimp",
+   "left": "L4Factoidal.Storage.parseLogChecked",
+   "replacement": "L4Factoidal.Storage.DeltaLogBytes.parseLogCheckedViaBA",
+   "module": "L4Factoidal.Storage.DeltaLogBytesTheorems",
+   "replacement_callers": []
+  },
+  {
+   "file": "L4Factoidal/Storage/DeltaLogBytesTheorems.lean",
+   "line": 833,
+   "theorem": "parseLogCheckedV1_csimp",
+   "left": "L4Factoidal.Storage.parseLogCheckedV1",
+   "replacement": "L4Factoidal.Storage.DeltaLogBytes.parseLogCheckedV1ViaBA",
+   "module": "L4Factoidal.Storage.DeltaLogBytesTheorems",
+   "replacement_callers": []
+  },
+  {
+   "file": "L4Factoidal/Storage/PagedTermDictionaryCore.lean",
+   "line": 111,
+   "theorem": "pagesOf_eq_pagesOfTR",
+   "left": "L4Factoidal.Storage.PTD.pagesOf",
+   "replacement": "L4Factoidal.Storage.PTD.pagesOfTR",
+   "module": "L4Factoidal.Storage.PagedTermDictionaryCore",
+   "replacement_callers": [
+    "L4Factoidal.Storage.PTD.encodePages",
+    "L4Factoidal.Storage.PagedTermDictionary.encodePages",
+    "L4Factoidal.Storage.PagedTermDictionary.pagesOf",
+    "L4Factoidal.Storage.PagedTermDictionaryV2.pagesOf"
+   ]
+  },
+  {
+   "file": "L4Factoidal/Storage/ShardManifest.lean",
+   "line": 647,
+   "theorem": "noDupKeys_eq_noDupKeysFast",
+   "left": "L4Factoidal.Storage.ShardManifest.noDupKeys",
+   "replacement": "L4Factoidal.Storage.ShardManifest.noDupKeysFast",
+   "module": "L4Factoidal.Storage.ShardManifest",
+   "replacement_callers": [
+    "L4Factoidal.Storage.ShardManifest.sbm10ManifestFields",
+    "L4Factoidal.Storage.ShardManifest.uniqueArtifactKeysFast"
+   ]
+  },
+  {
+   "file": "L4Factoidal/Storage/ShardManifest.lean",
+   "line": 651,
+   "theorem": "uniqueArtifactKeys_eq_uniqueArtifactKeysFast",
+   "left": "L4Factoidal.Storage.ShardManifest.uniqueArtifactKeys",
+   "replacement": "L4Factoidal.Storage.ShardManifest.uniqueArtifactKeysFast",
+   "module": "L4Factoidal.Storage.ShardManifest",
+   "replacement_callers": [
+    "L4Factoidal.Storage.ShardManifest.valid"
+   ]
+  },
+  {
+   "file": "L4Factoidal/Storage/ShardManifest.lean",
+   "line": 1454,
+   "theorem": "decodeGraphNames_eq_decodeGraphNamesImpl",
+   "left": "L4Factoidal.Storage.ShardManifest.decodeGraphNames",
+   "replacement": "L4Factoidal.Storage.ShardManifest.decodeGraphNamesImpl",
+   "module": "L4Factoidal.Storage.ShardManifest",
+   "replacement_callers": [
+    "L4Factoidal.Storage.ShardManifest.decodeQuadTail"
+   ]
+  },
+  {
+   "file": "L4Factoidal/Storage/ShardManifest.lean",
+   "line": 1696,
+   "theorem": "decodeBlobRefList_eq_decodeBlobRefListImpl",
+   "left": "L4Factoidal.Storage.ShardManifest.decodeBlobRefList",
+   "replacement": "L4Factoidal.Storage.ShardManifest.decodeBlobRefListImpl",
+   "module": "L4Factoidal.Storage.ShardManifest",
+   "replacement_callers": [
+    "L4Factoidal.Storage.ShardManifest.decodeBlobRefs"
+   ]
+  },
+  {
+   "file": "L4Factoidal/Storage/ShardManifest.lean",
+   "line": 1753,
+   "theorem": "decodeBlobList_eq_decodeBlobListImpl",
+   "left": "L4Factoidal.Storage.ShardManifest.decodeBlobList",
+   "replacement": "L4Factoidal.Storage.ShardManifest.decodeBlobListImpl",
+   "module": "L4Factoidal.Storage.ShardManifest",
+   "replacement_callers": [
+    "L4Factoidal.Storage.ShardManifest.decodeBlobTable"
+   ]
+  },
+  {
+   "file": "L4Factoidal/Storage/ShardManifest.lean",
+   "line": 1969,
+   "theorem": "decodeEntries_eq_decodeEntriesImpl",
+   "left": "L4Factoidal.Storage.ShardManifest.decodeEntries",
+   "replacement": "L4Factoidal.Storage.ShardManifest.decodeEntriesImpl",
+   "module": "L4Factoidal.Storage.ShardManifest",
+   "replacement_callers": [
+    "L4Factoidal.Storage.ShardManifest.decode?"
+   ]
+  },
+  {
+   "file": "L4Factoidal/Storage/SubjectRowIndexWireV2.lean",
+   "line": 117,
+   "theorem": "chunks_eq_chunksTR",
+   "left": "L4Factoidal.Storage.SubjectRowIndexWireV2.chunks",
+   "replacement": "L4Factoidal.Storage.SubjectRowIndexWireV2.chunksTR",
+   "module": "L4Factoidal.Storage.SubjectRowIndexWireV2",
+   "replacement_callers": [
+    "L4Factoidal.Storage.SubjectRowIndexWireV2.encode?",
+    "L4Factoidal.Storage.SubjectRowIndexWireV2.pageBytes"
+   ]
+  },
+  {
+   "file": "L4Factoidal/Storage/TermLocalIndexWire.lean",
+   "line": 93,
+   "theorem": "chunks_eq_chunksTR",
+   "left": "L4Factoidal.Storage.TermLocalIndexWire.chunks",
+   "replacement": "L4Factoidal.Storage.TermLocalIndexWire.chunksTR",
+   "module": "L4Factoidal.Storage.TermLocalIndexWire",
+   "replacement_callers": [
+    "L4Factoidal.Storage.TermLocalIndexWire.encode?",
+    "L4Factoidal.Storage.TermLocalIndexWire.pageBytes"
+   ]
+  },
+  {
+   "file": "L4Factoidal/Storage/TermWireV2.lean",
+   "line": 394,
+   "theorem": "parseInline_eq_fast",
+   "left": "L4Factoidal.Storage.TermWireV2.parseInline",
+   "replacement": "L4Factoidal.Storage.TermWireV2.parseInlineFast",
+   "module": "L4Factoidal.Storage.TermWireV2",
+   "replacement_callers": [
+    "L4Factoidal.Storage.TermWireV2.parseTerm"
+   ]
+  },
+  {
+   "file": "L4Factoidal/Storage/Sbm11/TermKey.lean",
+   "line": 222,
+   "theorem": "termKey?_eq_impl",
+   "left": "L4Factoidal.Storage.Sbm11.termKey?",
+   "replacement": "L4Factoidal.Storage.Sbm11.termKeyImpl",
+   "module": "L4Factoidal.Storage.Sbm11.TermKey",
+   "replacement_callers": [
+    "L4Factoidal.Storage.Sbm11.rt",
+    "L4Factoidal.Storage.Sbm11.termKeyBytes?",
+    "L4Factoidal.Storage.Sbm11.toCode?"
+   ]
+  },
+  {
+   "file": "L4Factoidal/Storage/Sbm11/TermKey.lean",
+   "line": 405,
+   "theorem": "normalizeTerm_eq_impl",
+   "left": "L4Factoidal.Storage.Sbm11.normalizeTerm",
+   "replacement": "L4Factoidal.Storage.Sbm11.normalizeImpl",
+   "module": "L4Factoidal.Storage.Sbm11.TermKey",
+   "replacement_callers": [
+    "L4Factoidal.Storage.Sbm11.IdQuery.compileFilter"
+   ]
+  },
+  {
+   "file": "L4Factoidal/Syntax/Lexing.lean",
+   "line": 284,
+   "theorem": "readIriRefBody_eq_TR",
+   "left": "L4Factoidal.Syntax.readIriRefBody",
+   "replacement": "L4Factoidal.Syntax.readIriRefBodyTR",
+   "module": "L4Factoidal.Syntax.Lexing",
+   "replacement_callers": [
+    "L4Factoidal.Syntax.bodyOf",
+    "L4Factoidal.Syntax.errOf",
+    "L4Factoidal.Syntax.readIriRef"
+   ]
+  },
+  {
+   "file": "L4Factoidal/Syntax/Lexing.lean",
+   "line": 553,
+   "theorem": "readStringLiteralBody_eq_TR",
+   "left": "L4Factoidal.Syntax.readStringLiteralBody",
+   "replacement": "L4Factoidal.Syntax.readStringLiteralBodyTR",
+   "module": "L4Factoidal.Syntax.Lexing",
+   "replacement_callers": [
+    "L4Factoidal.Syntax.readStringLiteralQuoted",
+    "L4Factoidal.Syntax.strLitSame"
+   ]
+  },
+  {
+   "file": "L4Factoidal/Syntax/NQuadsFastTheorems.lean",
+   "line": 386,
+   "theorem": "parseNQuads_eq_fast",
+   "left": "L4Factoidal.Syntax.parseNQuads",
+   "replacement": "L4Factoidal.Syntax.parseNQuadsFast",
+   "module": "L4Factoidal.Syntax.NQuadsFastTheorems",
+   "replacement_callers": [
+    "L4Factoidal.RDF.CanonicalTests.indexDs",
+    "L4Factoidal.RDF.CanonicalTests.parseDs",
+    "L4Factoidal.RDF.CanonicalTests.parsesOk",
+    "L4Factoidal.RDF.DatasetNormalizeTests.viaText",
+    "L4Factoidal.RDF.Source.parseDocument",
+    "L4Factoidal.RDF.datasetForOps",
+    "L4Factoidal.RDF.parseNQuadsFast12Or11",
+    "L4Factoidal.RML.parseDump",
+    "L4Factoidal.RML.sparqlRecords",
+    "L4Factoidal.SPARQL.OptionalFilterScope.ds",
+    "L4Factoidal.SPARQL.StoreEndpoint.parseQuadsAs",
+    "L4Factoidal.Syntax.NestedTermTests.showNQ",
+    "L4Factoidal.Syntax.NestedTermTests.showNQF",
+    "L4Factoidal.Syntax.SyntaxTests.canonDsOf",
+    "L4Factoidal.Syntax.SyntaxTests.dsCheck",
+    "L4Factoidal.Syntax.SyntaxTests.rtDsCheck",
+    "L4Wasm.Ops.canonicalizeToNQuads",
+    "L4Wasm.Ops.deltaLogMerge",
+    "L4Wasm.Ops.owlClosure",
+    "L4Wasm.Ops.owlEntails",
+    "L4Wasm.Ops.owlIsConsistent",
+    "L4Wasm.Ops.queryDataset",
+    "L4Wasm.Ops.queryDataset12IO",
+    "L4Wasm.Ops.queryDatasetIO",
+    "L4Wasm.Ops.rdfsPlusClosure",
+    "L4Wasm.Ops.readHandle",
+    "L4Wasm.Ops.registerServiceEndpoint",
+    "L4Wasm.Ops.rhoDfClosure",
+    "L4Wasm.Ops.rhoDfFragmentCheck",
+    "L4Wasm.Ops.shaclValidate",
+    "L4Wasm.Ops.shexValidate",
+    "L4Wasm.Ops.tableauDlInconsistent",
+    "L4Wasm.Ops.tableauMaterialise",
+    "L4Wasm.Ops.tdb2DatasetOf",
+    "L4Wasm.Ops.termOfToken",
+    "L4Wasm.Ops.tt12",
+    "L4Wasm.Ops.tt12Run",
+    "L4Wasm.Ops.updateDataset",
+    "L4Wasm.Ops.updateQuadsOf"
+   ]
+  },
+  {
+   "file": "L4Factoidal/Syntax/NQuadsStreaming.lean",
+   "line": 154,
+   "theorem": "splitCompleteLines_eq_TR",
+   "left": "L4Factoidal.Syntax.NQuadsStreaming.splitCompleteLines",
+   "replacement": "L4Factoidal.Syntax.NQuadsStreaming.splitCompleteLinesTR",
+   "module": "L4Factoidal.Syntax.NQuadsStreaming",
+   "replacement_callers": [
+    "L4Factoidal.Syntax.LenientStream.feed",
+    "L4Factoidal.Syntax.LenientStream.feedSpec",
+    "L4Factoidal.Syntax.NQuadsStreaming.feedChunk",
+    "L4Factoidal.Syntax.NQuadsStreaming.feedChunkC",
+    "L4Factoidal.Syntax.StrictFeed.LineFeed.feed",
+    "L4Factoidal.Syntax.StrictFeed.LineFeed.feedSpec"
+   ]
+  },
+  {
+   "file": "L4Factoidal/Syntax/NTriples.lean",
+   "line": 462,
+   "theorem": "readObject12_eq_loop",
+   "left": "L4Factoidal.Syntax.readObject12",
+   "replacement": "L4Factoidal.Syntax.readObject12Loop",
+   "module": "L4Factoidal.Syntax.NTriples",
+   "replacement_callers": [
+    "L4Factoidal.RDF.TermJson.readTermString",
+    "L4Factoidal.Syntax.NestedTermTests.termOf",
+    "L4Factoidal.Syntax.readNQuad12",
+    "L4Factoidal.Syntax.readTriple12"
+   ]
+  },
+  {
+   "file": "L4Factoidal/Syntax/NTriples.lean",
+   "line": 767,
+   "theorem": "Term.toNTriples_eq_fast",
+   "left": "L4Factoidal.Syntax.Term.toNTriples",
+   "replacement": "L4Factoidal.Syntax.Term.toNTriplesFast",
+   "module": "L4Factoidal.Syntax.NTriples",
+   "replacement_callers": [
+    "L4Factoidal.Cottas.OnDiskStore.boundObjectToToken",
+    "L4Factoidal.HDT.stringOfTerm",
+    "L4Factoidal.Planner.Kinds.Sparql.termText?",
+    "L4Factoidal.RDF.Sink.nquadsLineOfTerms",
+    "L4Factoidal.SPARQL.tsvTerm",
+    "L4Factoidal.Syntax.NestedTermTests.showTT",
+    "L4Factoidal.Syntax.NestedTermTests.showTerm",
+    "L4Factoidal.Syntax.Triple.toNTriples",
+    "L4Factoidal.Syntax.namedLine",
+    "L4Factoidal.Testing.literalText",
+    "L4Factoidal.Testing.termText",
+    "L4Wasm.Ops.termText"
+   ]
+  },
+  {
+   "file": "L4Factoidal/Syntax/NTriples.lean",
+   "line": 1040,
+   "theorem": "Term.toCanonicalNTriples_eq_fast",
+   "left": "L4Factoidal.Syntax.Term.toCanonicalNTriples",
+   "replacement": "L4Factoidal.Syntax.Term.toCanonicalNTriplesFast",
+   "module": "L4Factoidal.Syntax.NTriples",
+   "replacement_callers": [
+    "L4Factoidal.RDF.termChars",
+    "L4Factoidal.RML.reifierLabel",
+    "L4Factoidal.Syntax.Triple.toCanonicalNTriples",
+    "L4Factoidal.Syntax.canonNamedLine",
+    "L4Wasm.Ops.termsToNTriples"
+   ]
+  },
+  {
+   "file": "L4Factoidal/Syntax/RdfXml.lean",
+   "line": 300,
+   "theorem": "findNsAttr_eq_fast",
+   "left": "L4Factoidal.Syntax.RdfXml.findNsAttr",
+   "replacement": "L4Factoidal.Syntax.RdfXml.findNsAttrFast",
+   "module": "L4Factoidal.Syntax.RdfXml",
+   "replacement_callers": [
+    "L4Factoidal.Syntax.RdfXml.findRdfAttr",
+    "L4Factoidal.Syntax.RdfXml.findXmlAttr",
+    "L4Factoidal.Syntax.RdfXml.updateDir"
+   ]
+  },
+  {
+   "file": "L4Factoidal/Syntax/RdfXml.lean",
+   "line": 758,
+   "theorem": "serializeNode_eq_fast",
+   "left": "L4Factoidal.Syntax.RdfXml.serializeNode",
+   "replacement": "L4Factoidal.Syntax.RdfXml.serializeNodeF",
+   "module": "L4Factoidal.Syntax.RdfXml",
+   "replacement_callers": [
+    "L4Factoidal.Syntax.RdfXml.serializeNodesLoop"
+   ]
+  },
+  {
+   "file": "L4Factoidal/Syntax/RdfXml.lean",
+   "line": 762,
+   "theorem": "serializeNodes_eq_fast",
+   "left": "L4Factoidal.Syntax.RdfXml.serializeNodes",
+   "replacement": "L4Factoidal.Syntax.RdfXml.serializeNodesFast",
+   "module": "L4Factoidal.Syntax.RdfXml",
+   "replacement_callers": []
+  },
+  {
+   "file": "L4Factoidal/Syntax/RdfXml.lean",
+   "line": 874,
+   "theorem": "serializeNodeT_eq_fast",
+   "left": "L4Factoidal.Syntax.RdfXml.serializeNodeT",
+   "replacement": "L4Factoidal.Syntax.RdfXml.serializeNodeTF",
+   "module": "L4Factoidal.Syntax.RdfXml",
+   "replacement_callers": [
+    "L4Factoidal.Syntax.RdfXml.serializeLiteralContent",
+    "L4Factoidal.Syntax.RdfXml.serializeNodesTLoop"
+   ]
+  },
+  {
+   "file": "L4Factoidal/Syntax/RdfXml.lean",
+   "line": 877,
+   "theorem": "serializeNodesT_eq_fast",
+   "left": "L4Factoidal.Syntax.RdfXml.serializeNodesT",
+   "replacement": "L4Factoidal.Syntax.RdfXml.serializeNodesTFast",
+   "module": "L4Factoidal.Syntax.RdfXml",
+   "replacement_callers": []
+  },
+  {
+   "file": "L4Factoidal/Syntax/RdfXml.lean",
+   "line": 1285,
+   "theorem": "collectionList_eq_fast",
+   "left": "L4Factoidal.Syntax.RdfXml.collectionList",
+   "replacement": "L4Factoidal.Syntax.RdfXml.collectionListFast",
+   "module": "L4Factoidal.Syntax.RdfXml",
+   "replacement_callers": []
+  },
+  {
+   "file": "L4Factoidal/Syntax/RdfXml.lean",
+   "line": 1794,
+   "theorem": "parseRdfXml_eq_stream",
+   "left": "L4Factoidal.Syntax.RdfXml.parseRdfXml",
+   "replacement": "L4Factoidal.Syntax.RdfXml.parseRdfXmlStream",
+   "module": "L4Factoidal.Syntax.RdfXml",
+   "replacement_callers": [
+    "Harness.RifImport.load",
+    "L4Factoidal.GRDDL.applyTransformation",
+    "L4Factoidal.GRDDL.ownGraph",
+    "L4Factoidal.OWL.FS.twinIso",
+    "L4Factoidal.OWL.RdfBased.BalancedTests.parse",
+    "L4Factoidal.RDF.Source.rdfXmlParser",
+    "L4Factoidal.RML.parseDump",
+    "L4Factoidal.Syntax.RdfXmlChunkFold.cutAgrees",
+    "L4Factoidal.Syntax.RdfXmlChunkFold.readWhole",
+    "L4Factoidal.Syntax.RdfXmlTests.accepts",
+    "L4Factoidal.Syntax.RdfXmlTests.count",
+    "L4Factoidal.Syntax.RdfXmlTests.firstXmlLiteral",
+    "L4Factoidal.Syntax.RdfXmlTests.iso",
+    "L4Factoidal.Syntax.RdfXmlTests.isoDoc",
+    "L4Factoidal.Syntax.RdfXmlTests.isoIts",
+    "L4Factoidal.Syntax.RdfXmlTests.rejects",
+    "L4Factoidal.Syntax.RdfXmlTests.rejectsDoc",
+    "L4Factoidal.Syntax.RdfXmlTests.rejectsIts",
+    "L4Factoidal.Syntax.RdfXmlTests.soleLiteralLex"
+   ]
+  },
+  {
+   "file": "L4Factoidal/Syntax/RdfXmlWrite.lean",
+   "line": 290,
+   "theorem": "subjectGroups_eq_fast",
+   "left": "L4Factoidal.Syntax.RdfXmlWrite.subjectGroups",
+   "replacement": "L4Factoidal.Syntax.RdfXmlWrite.subjectGroupsFast",
+   "module": "L4Factoidal.Syntax.RdfXmlWrite",
+   "replacement_callers": [
+    "L4Factoidal.Syntax.RdfXmlWrite.graphToRdfXmlWith"
+   ]
+  },
+  {
+   "file": "L4Factoidal/Syntax/Turtle.lean",
+   "line": 280,
+   "theorem": "TurtleState.lookupPrefix_eq_indexed",
+   "left": "L4Factoidal.Syntax.TurtleState.lookupPrefix",
+   "replacement": "L4Factoidal.Syntax.TurtleState.lookupPrefixIndexed",
+   "module": "L4Factoidal.Syntax.Turtle",
+   "replacement_callers": [
+    "L4Factoidal.Syntax.TurtleState.expandPrefixed"
+   ]
+  },
+  {
+   "file": "L4Factoidal/Syntax/Turtle.lean",
+   "line": 1301,
+   "theorem": "readTripleTerm_eq_loop",
+   "left": "L4Factoidal.Syntax.readTripleTerm",
+   "replacement": "L4Factoidal.Syntax.readTripleTermLoop",
+   "module": "L4Factoidal.Syntax.Turtle",
+   "replacement_callers": [
+    "L4Factoidal.Syntax.readObject",
+    "L4Factoidal.Syntax.readRtObject"
+   ]
+  },
+  {
+   "file": "L4Factoidal/Syntax/Turtle.lean",
+   "line": 1305,
+   "theorem": "readTtObject_eq_loop",
+   "left": "L4Factoidal.Syntax.readTtObject",
+   "replacement": "L4Factoidal.Syntax.readTtObjectLoop",
+   "module": "L4Factoidal.Syntax.Turtle",
+   "replacement_callers": []
+  },
+  {
+   "file": "L4Factoidal/Syntax/Turtle.lean",
+   "line": 1903,
+   "theorem": "readCollectionRest_eq_TR",
+   "left": "L4Factoidal.Syntax.readCollectionRest",
+   "replacement": "L4Factoidal.Syntax.readCollectionRestTR",
+   "module": "L4Factoidal.Syntax.Turtle",
+   "replacement_callers": []
+  },
+  {
+   "file": "L4Factoidal/Syntax/Turtle.lean",
+   "line": 2128,
+   "theorem": "readObjectList_eq_TR",
+   "left": "L4Factoidal.Syntax.readObjectList",
+   "replacement": "L4Factoidal.Syntax.readObjectListTR",
+   "module": "L4Factoidal.Syntax.Turtle",
+   "replacement_callers": []
+  },
+  {
+   "file": "L4Factoidal/Syntax/Turtle.lean",
+   "line": 2231,
+   "theorem": "readPredicateObjectListSpec_eq_TR",
+   "left": "L4Factoidal.Syntax.readPredicateObjectListSpec",
+   "replacement": "L4Factoidal.Syntax.readPredicateObjectListSpecTR",
+   "module": "L4Factoidal.Syntax.Turtle",
+   "replacement_callers": []
+  },
+  {
+   "file": "L4Factoidal/Syntax/Turtle.lean",
+   "line": 2236,
+   "theorem": "readPredicateObjectListMoreSpec_eq_TR",
+   "left": "L4Factoidal.Syntax.readPredicateObjectListMoreSpec",
+   "replacement": "L4Factoidal.Syntax.readPredicateObjectListMoreSpecTR",
+   "module": "L4Factoidal.Syntax.Turtle",
+   "replacement_callers": []
+  },
+  {
+   "file": "L4Factoidal/Syntax/TurtleSerialize.lean",
+   "line": 731,
+   "theorem": "tsTermToTurtle_eq_fast",
+   "left": "L4Factoidal.Syntax.tsTermToTurtle",
+   "replacement": "L4Factoidal.Syntax.tsTermToTurtleFast",
+   "module": "L4Factoidal.Syntax.TurtleSerialize",
+   "replacement_callers": [
+    "L4Factoidal.RDF.Sink.bodyPush",
+    "L4Factoidal.Syntax.bare",
+    "L4Factoidal.Syntax.quoted"
+   ]
+  },
+  {
+   "file": "L4Factoidal/Syntax/TurtleSerialize.lean",
+   "line": 859,
+   "theorem": "turtleOfGraph_eq_fast",
+   "left": "L4Factoidal.Syntax.turtleOfGraph",
+   "replacement": "L4Factoidal.Syntax.turtleOfGraphFast",
+   "module": "L4Factoidal.Syntax.TurtleSerialize",
+   "replacement_callers": [
+    "L4Factoidal.Solid.Server.solidTurtle",
+    "L4Factoidal.Syntax.turtleOfGraphOpts"
+   ]
+  },
+  {
+   "file": "L4Factoidal/Syntax/TurtleSerialize.lean",
+   "line": 991,
+   "theorem": "countRuns_eq_countRunsFast",
+   "left": "L4Factoidal.Syntax.countRuns",
+   "replacement": "L4Factoidal.Syntax.countRunsFast",
+   "module": "L4Factoidal.Syntax.TurtleSerialize",
+   "replacement_callers": [
+    "L4Factoidal.Syntax.turtleOfGraphOpts"
+   ]
+  },
+  {
+   "file": "L4Factoidal/Syntax/TurtleSerialize.lean",
+   "line": 1106,
+   "theorem": "sortStrsSpec_eq_sortStrs",
+   "left": "L4Factoidal.Syntax.sortStrsSpec",
+   "replacement": "L4Factoidal.Syntax.sortStrs",
+   "module": "L4Factoidal.Syntax.TurtleSerialize",
+   "replacement_callers": [
+    "L4Factoidal.Syntax.turtleOfGraphOpts"
+   ]
+  },
+  {
+   "file": "L4Factoidal/Syntax/TurtleSerialize.lean",
+   "line": 1283,
+   "theorem": "tsUserUsed_eq_fast",
+   "left": "L4Factoidal.Syntax.tsUserUsed",
+   "replacement": "L4Factoidal.Syntax.tsUserUsedFast",
+   "module": "L4Factoidal.Syntax.TurtleSerialize",
+   "replacement_callers": [
+    "L4Factoidal.Syntax.turtleOfGraphOpts"
+   ]
+  },
+  {
+   "file": "L4Factoidal/Syntax/TurtleSerialize.lean",
+   "line": 1331,
+   "theorem": "freshTopSpec_eq_fast",
+   "left": "L4Factoidal.Syntax.freshTopSpec",
+   "replacement": "L4Factoidal.Syntax.freshTopFast",
+   "module": "L4Factoidal.Syntax.TurtleSerialize",
+   "replacement_callers": [
+    "L4Factoidal.Syntax.turtleOfGraphOpts"
+   ]
+  },
+  {
+   "file": "L4Factoidal/VC/Context.lean",
+   "line": 205,
+   "theorem": "termsOfFields_eq_TR",
+   "left": "L4Factoidal.VC.Context.termsOfFields",
+   "replacement": "L4Factoidal.VC.Context.termsOfFieldsTR",
+   "module": "L4Factoidal.VC.Context",
+   "replacement_callers": [
+    "L4Factoidal.VC.Context.baseTerms"
+   ]
+  },
+  {
+   "file": "L4Factoidal/VC/Multibase.lean",
+   "line": 137,
+   "theorem": "natToBytesBE_eq_fast",
+   "left": "L4Factoidal.VC.Multibase.natToBytesBE",
+   "replacement": "L4Factoidal.VC.Multibase.natToBytesBEFast",
+   "module": "L4Factoidal.VC.Multibase",
+   "replacement_callers": [
+    "L4Factoidal.VC.Multibase.base58Decode?"
+   ]
+  },
+  {
+   "file": "L4Factoidal/XML/Document.lean",
+   "line": 404,
+   "theorem": "entityIndexOf_eq_fast",
+   "left": "L4Factoidal.XML.entityIndexOf",
+   "replacement": "L4Factoidal.XML.entityIndexOfFast",
+   "module": "L4Factoidal.XML.Document",
+   "replacement_callers": [
+    "L4Factoidal.XML.instInhabitedEntityTable.default",
+    "L4Factoidal.XML.tryPseudoAttr"
+   ]
+  },
+  {
+   "file": "L4Factoidal/XML/Namespaces.lean",
+   "line": 254,
+   "theorem": "splitQNameShape_eq_fast",
+   "left": "L4Factoidal.XML.splitQNameShape",
+   "replacement": "L4Factoidal.XML.splitQNameShapeFast",
+   "module": "L4Factoidal.XML.Namespaces",
+   "replacement_callers": [
+    "L4Factoidal.XML.splitQName",
+    "L4Factoidal.XML.splitQNameFast"
+   ]
+  },
+  {
+   "file": "L4Factoidal/XML/Namespaces.lean",
+   "line": 316,
+   "theorem": "splitQName_eq_fast",
+   "left": "L4Factoidal.XML.splitQName",
+   "replacement": "L4Factoidal.XML.splitQNameFast",
+   "module": "L4Factoidal.XML.Namespaces",
+   "replacement_callers": [
+    "L4Factoidal.Syntax.RdfXml.isNsDecl",
+    "L4Factoidal.XML.allAttrNamesWellFormed",
+    "L4Factoidal.XML.applyDeclarations",
+    "L4Factoidal.XML.attrsPrefixesBound",
+    "L4Factoidal.XML.checkElement",
+    "L4Factoidal.XML.expandAttrKey",
+    "L4Factoidal.XML.resolveAttributeName",
+    "L4Factoidal.XML.resolveElementName",
+    "L4Factoidal.XML.scopeAtPath",
+    "L4Factoidal.XML.xmlNamespaceLocal?"
+   ]
+  },
+  {
+   "file": "L4Factoidal/XML/Parser.lean",
+   "line": 219,
+   "theorem": "sub_eq_fast",
+   "left": "L4Factoidal.XML.sub",
+   "replacement": "L4Factoidal.XML.subFast",
+   "module": "L4Factoidal.XML.Parser",
+   "replacement_callers": [
+    "L4Factoidal.XML.normalizeEntityValue",
+    "L4Factoidal.XML.parenTokens",
+    "L4Factoidal.XML.parseAttrValueBody",
+    "L4Factoidal.XML.parseCdataBody",
+    "L4Factoidal.XML.parseCommentBody",
+    "L4Factoidal.XML.parseDefaultDecl",
+    "L4Factoidal.XML.parseElementDecl",
+    "L4Factoidal.XML.parseName",
+    "L4Factoidal.XML.parsePiBody",
+    "L4Factoidal.XML.parseSystemLiteral.go",
+    "L4Factoidal.XML.parseTextContent",
+    "L4Factoidal.XML.peScan",
+    "L4Factoidal.XML.readEntityValueRaw"
+   ]
+  },
+  {
+   "file": "L4Factoidal/XML/Parser.lean",
+   "line": 328,
+   "theorem": "normalizeLineEndings_eq_normalizeLineEndingsImpl",
+   "left": "L4Factoidal.XML.normalizeLineEndings",
+   "replacement": "L4Factoidal.XML.normalizeLineEndingsImpl",
+   "module": "L4Factoidal.XML.Parser",
+   "replacement_callers": [
+    "L4Factoidal.XML.normalizeLineEndingsFor"
+   ]
+  },
+  {
+   "file": "L4Factoidal/XML/Parser.lean",
+   "line": 373,
+   "theorem": "normalizeLineEndings11_eq_normalizeLineEndings11Impl",
+   "left": "L4Factoidal.XML.normalizeLineEndings11",
+   "replacement": "L4Factoidal.XML.normalizeLineEndings11Impl",
+   "module": "L4Factoidal.XML.Parser",
+   "replacement_callers": [
+    "L4Factoidal.XML.normalizeLineEndingsFor"
+   ]
+  },
+  {
+   "file": "L4Factoidal/XML/Parser.lean",
+   "line": 494,
+   "theorem": "lookupEntityDef_eq_fast",
+   "left": "L4Factoidal.XML.lookupEntityDef",
+   "replacement": "L4Factoidal.XML.lookupEntityDefFast",
+   "module": "L4Factoidal.XML.Parser",
+   "replacement_callers": [
+    "L4Factoidal.XML.declareEntity",
+    "L4Factoidal.XML.expandEntityLoop",
+    "L4Factoidal.XML.expandEntityValue",
+    "L4Factoidal.XML.lookupEntity",
+    "L4Factoidal.XML.parseReference",
+    "L4Factoidal.XML.parseSubset",
+    "L4Factoidal.XML.scanRefs",
+    "L4Factoidal.XML.scanRefsLoop"
+   ]
+  },
+  {
+   "file": "L4Factoidal/XML/Parser.lean",
+   "line": 850,
+   "theorem": "expandEntityValue_eq_fast",
+   "left": "L4Factoidal.XML.expandEntityValue",
+   "replacement": "L4Factoidal.XML.expandEntityValueFast",
+   "module": "L4Factoidal.XML.Parser",
+   "replacement_callers": [
+    "L4Factoidal.XML.parseDefaultDecl",
+    "L4Factoidal.XML.parseReference"
+   ]
+  },
+  {
+   "file": "L4Factoidal/XML/Parser.lean",
+   "line": 939,
+   "theorem": "normalizeAttrLiteralWs_eq_fast",
+   "left": "L4Factoidal.XML.normalizeAttrLiteralWs",
+   "replacement": "L4Factoidal.XML.normalizeAttrLiteralWsFast",
+   "module": "L4Factoidal.XML.Parser",
+   "replacement_callers": [
+    "L4Factoidal.XML.parseAttrValueBody"
+   ]
+  },
+  {
+   "file": "L4Factoidal/XML/Parser.lean",
+   "line": 1606,
+   "theorem": "entityHasWsCharRef_eq_fast",
+   "left": "L4Factoidal.XML.entityHasWsCharRef",
+   "replacement": "L4Factoidal.XML.entityHasWsCharRefFast",
+   "module": "L4Factoidal.XML.Parser",
+   "replacement_callers": [
+    "L4Factoidal.XML.scanRefs",
+    "L4Factoidal.XML.scanRefsLoop"
+   ]
+  },
+  {
+   "file": "L4Factoidal/XML/Parser.lean",
+   "line": 1742,
+   "theorem": "scanRefs_eq_scanRefsFast",
+   "left": "L4Factoidal.XML.scanRefs",
+   "replacement": "L4Factoidal.XML.scanRefsFast",
+   "module": "L4Factoidal.XML.Parser",
+   "replacement_callers": [
+    "L4Factoidal.Syntax.RdfXml.parseChildrenFold",
+    "L4Factoidal.Syntax.RdfXml.parseRootFold",
+    "L4Factoidal.XML.parseChildren",
+    "L4Factoidal.XML.parseChildrenW",
+    "L4Factoidal.XML.parseElement",
+    "L4Factoidal.XML.parseElementW"
+   ]
+  },
+  {
+   "file": "L4Factoidal/XML/Parser.lean",
+   "line": 2228,
+   "theorem": "parseElement_eq_parseElementW",
+   "left": "L4Factoidal.XML.parseElement",
+   "replacement": "L4Factoidal.XML.parseElementW",
+   "module": "L4Factoidal.XML.Parser",
+   "replacement_callers": [
+    "L4Factoidal.Syntax.RdfXml.parseChildrenFold",
+    "L4Factoidal.Syntax.RdfXml.parseRootFold",
+    "L4Factoidal.XML.parseChildrenW",
+    "L4Factoidal.XML.parseXMLNotes"
+   ]
+  },
+  {
+   "file": "L4Factoidal/XML/Parser.lean",
+   "line": 2241,
+   "theorem": "parseChildren_eq_parseChildrenFromStart",
+   "left": "L4Factoidal.XML.parseChildren",
+   "replacement": "L4Factoidal.XML.parseChildrenFromStart",
+   "module": "L4Factoidal.XML.Parser",
+   "replacement_callers": [
+    "L4Factoidal.Syntax.RdfXml.parseChildrenFold",
+    "L4Factoidal.Syntax.RdfXmlChunkFold.Body.flush"
+   ]
+  },
+  {
+   "file": "L4Factoidal/XML/Parser.lean",
+   "line": 3766,
+   "theorem": "documentChars_eq_fast",
+   "left": "L4Factoidal.XML.documentChars",
+   "replacement": "L4Factoidal.XML.documentCharsFast",
+   "module": "L4Factoidal.XML.Parser",
+   "replacement_callers": [
+    "L4Factoidal.XML.documentPrologue"
+   ]
+  },
+  {
+   "file": "L4Factoidal/XML/Validity.lean",
+   "line": 693,
+   "theorem": "validate_eq_fast",
+   "left": "L4Factoidal.XML.validate",
+   "replacement": "L4Factoidal.XML.validateFast",
+   "module": "L4Factoidal.XML.Validity",
+   "replacement_callers": [
+    "L4Factoidal.XML.Document.isValid"
+   ]
+  },
+  {
+   "file": "L4Factoidal/XML/XmlAttributes.lean",
+   "line": 136,
+   "theorem": "dropExtensionSubtags_eq_TR",
+   "left": "L4Factoidal.XML.dropExtensionSubtags",
+   "replacement": "L4Factoidal.XML.dropExtensionSubtagsTR",
+   "module": "L4Factoidal.XML.XmlAttributes",
+   "replacement_callers": [
+    "L4Factoidal.XML.dropExtensions"
+   ]
+  },
+  {
+   "file": "L4Factoidal/XPath/Number.lean",
+   "line": 46,
+   "theorem": "pow10_eq_fast",
+   "left": "L4Factoidal.XPath.Num.pow10",
+   "replacement": "L4Factoidal.XPath.Num.pow10Fast",
+   "module": "L4Factoidal.XPath.Number",
+   "replacement_callers": [
+    "L4Factoidal.XPath.Num.align",
+    "L4Factoidal.XPath.Num.div",
+    "L4Factoidal.XPath.Num.integralN",
+    "L4Factoidal.XPath.Num.ofLexeme",
+    "L4Factoidal.XSLT.readStylesheetWith"
+   ]
+  },
+  {
+   "file": "L4Factoidal/XSD/Datatypes.lean",
+   "line": 313,
+   "theorem": "natDigits_eq_fast",
+   "left": "L4Factoidal.XSD.natDigits",
+   "replacement": "L4Factoidal.XSD.natDigitsFast",
+   "module": "L4Factoidal.XSD.Datatypes",
+   "replacement_callers": [
+    "L4Factoidal.XSD.Dec.totalDigits"
+   ]
+  },
+  {
+   "file": "L4Factoidal/XSD/Facets.lean",
+   "line": 314,
+   "theorem": "pow10_eq_fast",
+   "left": "L4Factoidal.XSD.pow10",
+   "replacement": "L4Factoidal.XSD.pow10Fast",
+   "module": "L4Factoidal.XSD.Facets",
+   "replacement_callers": [
+    "L4Factoidal.XSD.parseDecimalRat"
+   ]
+  },
+  {
+   "file": "L4Factoidal/XSLT/Transform.lean",
+   "line": 763,
+   "theorem": "insertBy_eq_insertByTR",
+   "left": "L4Factoidal.XSLT.insertBy",
+   "replacement": "L4Factoidal.XSLT.insertByTR",
+   "module": "L4Factoidal.XSLT.Transform",
+   "replacement_callers": [
+    "L4Factoidal.XSLT.sortStableTR"
+   ]
+  },
+  {
+   "file": "L4Factoidal/XSLT/Transform.lean",
+   "line": 775,
+   "theorem": "sortStable_eq_sortStableTR",
+   "left": "L4Factoidal.XSLT.sortStable",
+   "replacement": "L4Factoidal.XSLT.sortStableTR",
+   "module": "L4Factoidal.XSLT.Transform",
+   "replacement_callers": [
+    "L4Factoidal.XSLT.applySorts"
+   ]
+  },
+  {
+   "file": "Wasm/Ops/Parse.lean",
+   "line": 282,
+   "theorem": "declarationOrderPrefixes_eq_fast",
+   "left": "L4Wasm.Ops.declarationOrderPrefixes",
+   "replacement": "L4Wasm.Ops.declarationOrderPrefixesFast",
+   "module": "Wasm.Ops.Parse",
+   "replacement_callers": [
+    "L4Wasm.Ops.lenientDocumentOutcomeBy",
+    "L4Wasm.Ops.parseDocumentOutcomeBy"
+   ]
+  }
+ ],
+ "problems": [],
+ "findings": [
+  {
+   "left": "L4Factoidal.Cottas.insertByKey",
+   "caller": "L4Factoidal.Cottas.sortByKey",
+   "left_sym": "lp_l4factoidal_L4Factoidal_Cottas_insertByKey",
+   "evidence": [
+    {
+     "holder": "lp_l4factoidal_L4Factoidal_Cottas_sortByKey___redArg",
+     "cfile": "L4Factoidal/Cottas/SortByKey.c",
+     "kind": "call"
+    }
+   ],
+   "allow": null,
+   "status": "spec-internal",
+   "reason": "before-theorem",
+   "why": "declared at line 38, above the @[csimp] theorem at line 67: the replacement applies only to code compiled after it"
+  },
+  {
+   "left": "L4Factoidal.CsimpReachFixture.weightSpec",
+   "caller": "L4Factoidal.CsimpReachFixture.callBefore",
+   "left_sym": "lp_l4factoidal_L4Factoidal_CsimpReachFixture_weightSpec",
+   "evidence": [
+    {
+     "holder": "lp_l4factoidal_L4Factoidal_CsimpReachFixture_callBefore",
+     "cfile": "L4Factoidal/CsimpReachFixture.c",
+     "kind": "call"
+    }
+   ],
+   "allow": "fixture: compiled before the theorem",
+   "status": "allowed",
+   "reason": "before-theorem",
+   "why": "declared at line 54, above the @[csimp] theorem at line 77: the replacement applies only to code compiled after it"
+  },
+  {
+   "left": "L4Factoidal.CsimpReachFixture.weightSpec",
+   "caller": "L4Factoidal.CsimpReachFixture.callViaInline",
+   "left_sym": "lp_l4factoidal_L4Factoidal_CsimpReachFixture_weightSpec",
+   "evidence": [
+    {
+     "holder": "lp_l4factoidal_L4Factoidal_CsimpReachFixture_callViaInline",
+     "cfile": "L4Factoidal/CsimpReachFixture.c",
+     "kind": "call"
+    }
+   ],
+   "allow": "fixture: the inlined body of weightInline was compiled before the theorem",
+   "status": "allowed",
+   "reason": "after-theorem",
+   "why": "declared at line 87, below the @[csimp] theorem at line 77, and still calls the left side: the call came in through an inlined or specialised definition compiled before the theorem"
+  },
+  {
+   "left": "L4Factoidal.CsimpReachFixture.weightSpec",
+   "caller": "L4Factoidal.CsimpReachFixture.callViaInstance",
+   "left_sym": "lp_l4factoidal_L4Factoidal_CsimpReachFixture_weightSpec",
+   "evidence": [
+    {
+     "holder": "lp_l4factoidal_L4Factoidal_CsimpReachFixture_callViaInstance",
+     "cfile": "L4Factoidal/CsimpReachFixture.c",
+     "kind": "call"
+    }
+   ],
+   "allow": "fixture: the inlined instance instWeighList was compiled before the theorem",
+   "status": "allowed",
+   "reason": "after-theorem",
+   "why": "declared at line 84, below the @[csimp] theorem at line 77, and still calls the left side: the call came in through an inlined or specialised definition compiled before the theorem"
+  },
+  {
+   "left": "L4Factoidal.CsimpReachFixture.weightSpec",
+   "caller": "L4Factoidal.CsimpReachFixture.instWeighList",
+   "left_sym": "lp_l4factoidal_L4Factoidal_CsimpReachFixture_weightSpec",
+   "evidence": [
+    {
+     "holder": "lp_l4factoidal_L4Factoidal_CsimpReachFixture_instWeighList___closed__0_value",
+     "cfile": "L4Factoidal/CsimpReachFixture.c",
+     "kind": "static-closure"
+    }
+   ],
+   "allow": "fixture: the instance is a static closure over the specification",
+   "status": "allowed",
+   "reason": "before-theorem",
+   "why": "declared at line 48, above the @[csimp] theorem at line 77: the replacement applies only to code compiled after it"
+  },
+  {
+   "left": "L4Factoidal.CsimpReachFixture.weightSpec",
+   "caller": "L4Factoidal.CsimpReachFixture.weightInline",
+   "left_sym": "lp_l4factoidal_L4Factoidal_CsimpReachFixture_weightSpec",
+   "evidence": [
+    {
+     "holder": "lp_l4factoidal_L4Factoidal_CsimpReachFixture_weightInline",
+     "cfile": "L4Factoidal/CsimpReachFixture.c",
+     "kind": "call"
+    }
+   ],
+   "allow": "fixture: compiled before the theorem",
+   "status": "allowed",
+   "reason": "before-theorem",
+   "why": "declared at line 51, above the @[csimp] theorem at line 77: the replacement applies only to code compiled after it"
+  },
+  {
+   "left": "L4Factoidal.JSON.Json.size",
+   "caller": "L4Factoidal.JSON.Json.sizeFields",
+   "left_sym": "lp_l4factoidal_L4Factoidal_JSON_Json_size",
+   "evidence": [
+    {
+     "holder": "lp_l4factoidal_L4Factoidal_JSON_Json_sizeFields",
+     "cfile": "L4Factoidal/JSON/Value.c",
+     "kind": "call"
+    }
+   ],
+   "allow": null,
+   "status": "spec-internal",
+   "reason": "before-theorem",
+   "why": "declared at line 156, above the @[csimp] theorem at line 217: the replacement applies only to code compiled after it"
+  },
+  {
+   "left": "L4Factoidal.JSON.Json.size",
+   "caller": "L4Factoidal.JSON.Json.sizeItems",
+   "left_sym": "lp_l4factoidal_L4Factoidal_JSON_Json_size",
+   "evidence": [
+    {
+     "holder": "lp_l4factoidal_L4Factoidal_JSON_Json_sizeItems",
+     "cfile": "L4Factoidal/JSON/Value.c",
+     "kind": "call"
+    }
+   ],
+   "allow": null,
+   "status": "spec-internal",
+   "reason": "before-theorem",
+   "why": "declared at line 152, above the @[csimp] theorem at line 217: the replacement applies only to code compiled after it"
+  },
+  {
+   "left": "L4Factoidal.JSON.Json.sizeFields",
+   "caller": "L4Factoidal.JSON.Json.size",
+   "left_sym": "lp_l4factoidal_L4Factoidal_JSON_Json_sizeFields",
+   "evidence": [
+    {
+     "holder": "lp_l4factoidal_L4Factoidal_JSON_Json_size",
+     "cfile": "L4Factoidal/JSON/Value.c",
+     "kind": "call"
+    }
+   ],
+   "allow": null,
+   "status": "spec-internal",
+   "reason": "before-theorem",
+   "why": "declared at line 144, above the @[csimp] theorem at line 228: the replacement applies only to code compiled after it"
+  },
+  {
+   "left": "L4Factoidal.JSON.Json.sizeItems",
+   "caller": "L4Factoidal.JSON.Json.size",
+   "left_sym": "lp_l4factoidal_L4Factoidal_JSON_Json_sizeItems",
+   "evidence": [
+    {
+     "holder": "lp_l4factoidal_L4Factoidal_JSON_Json_size",
+     "cfile": "L4Factoidal/JSON/Value.c",
+     "kind": "call"
+    }
+   ],
+   "allow": null,
+   "status": "spec-internal",
+   "reason": "before-theorem",
+   "why": "declared at line 144, above the @[csimp] theorem at line 225: the replacement applies only to code compiled after it"
+  },
+  {
+   "left": "L4Factoidal.JSONLD.FromRdf.insertSortedNode",
+   "caller": "L4Factoidal.JSONLD.FromRdf.sortNodes",
+   "left_sym": "lp_l4factoidal_L4Factoidal_JSONLD_FromRdf_insertSortedNode",
+   "evidence": [
+    {
+     "holder": "lp_l4factoidal_L4Factoidal_JSONLD_FromRdf_sortNodes",
+     "cfile": "L4Factoidal/JSONLD/FromRdf.c",
+     "kind": "call"
+    }
+   ],
+   "allow": null,
+   "status": "spec-internal",
+   "reason": "before-theorem",
+   "why": "declared at line 1407, above the @[csimp] theorem at line 1440: the replacement applies only to code compiled after it"
+  },
+  {
+   "left": "L4Factoidal.JSONLD.FromRdf.listFrom",
+   "caller": "L4Factoidal.JSONLD.FromRdf.resolveOv",
+   "left_sym": "lp_l4factoidal_L4Factoidal_JSONLD_FromRdf_listFrom",
+   "evidence": [
+    {
+     "holder": "lp_l4factoidal_L4Factoidal_JSONLD_FromRdf_resolveOv",
+     "cfile": "L4Factoidal/JSONLD/FromRdf.c",
+     "kind": "call"
+    }
+   ],
+   "allow": null,
+   "status": "spec-internal",
+   "reason": "before-theorem",
+   "why": "declared at line 1210, above the @[csimp] theorem at line 1314: the replacement applies only to code compiled after it"
+  },
+  {
+   "left": "L4Factoidal.JSONLD.FromRdf.nodesRefids",
+   "caller": "L4Factoidal.JSONLD.FromRdf.mapsRefids",
+   "left_sym": "lp_l4factoidal_L4Factoidal_JSONLD_FromRdf_nodesRefids",
+   "evidence": [
+    {
+     "holder": "lp_l4factoidal_L4Factoidal_JSONLD_FromRdf_mapsRefids",
+     "cfile": "L4Factoidal/JSONLD/FromRdf.c",
+     "kind": "call"
+    }
+   ],
+   "allow": null,
+   "status": "spec-internal",
+   "reason": "before-theorem",
+   "why": "declared at line 1059, above the @[csimp] theorem at line 1105: the replacement applies only to code compiled after it"
+  },
+  {
+   "left": "L4Factoidal.JSONLD.FromRdf.ovListToJson",
+   "caller": "L4Factoidal.JSONLD.FromRdf.ovToJson",
+   "left_sym": "lp_l4factoidal_L4Factoidal_JSONLD_FromRdf_ovListToJson",
+   "evidence": [
+    {
+     "holder": "lp_l4factoidal_L4Factoidal_JSONLD_FromRdf_ovToJson",
+     "cfile": "L4Factoidal/JSONLD/FromRdf.c",
+     "kind": "call"
+    }
+   ],
+   "allow": null,
+   "status": "spec-internal",
+   "reason": "before-theorem",
+   "why": "declared at line 1327, above the @[csimp] theorem at line 1380: the replacement applies only to code compiled after it"
+  },
+  {
+   "left": "L4Factoidal.JSONLD.FromRdf.ovToJson",
+   "caller": "L4Factoidal.JSONLD.FromRdf.ovListToJson",
+   "left_sym": "lp_l4factoidal_L4Factoidal_JSONLD_FromRdf_ovToJson",
+   "evidence": [
+    {
+     "holder": "lp_l4factoidal_L4Factoidal_JSONLD_FromRdf_ovListToJson",
+     "cfile": "L4Factoidal/JSONLD/FromRdf.c",
+     "kind": "call"
+    }
+   ],
+   "allow": null,
+   "status": "spec-internal",
+   "reason": "before-theorem",
+   "why": "declared at line 1332, above the @[csimp] theorem at line 1375: the replacement applies only to code compiled after it"
+  },
+  {
+   "left": "L4Factoidal.JSONLD.FromRdf.ovsRefids",
+   "caller": "L4Factoidal.JSONLD.FromRdf.propsRefids",
+   "left_sym": "lp_l4factoidal_L4Factoidal_JSONLD_FromRdf_ovsRefids",
+   "evidence": [
+    {
+     "holder": "lp_l4factoidal_L4Factoidal_JSONLD_FromRdf_propsRefids",
+     "cfile": "L4Factoidal/JSONLD/FromRdf.c",
+     "kind": "call"
+    }
+   ],
+   "allow": null,
+   "status": "spec-internal",
+   "reason": "before-theorem",
+   "why": "declared at line 1051, above the @[csimp] theorem at line 1084: the replacement applies only to code compiled after it"
+  },
+  {
+   "left": "L4Factoidal.JSONLD.FromRdf.propsRefids",
+   "caller": "L4Factoidal.JSONLD.FromRdf.nodesRefids",
+   "left_sym": "lp_l4factoidal_L4Factoidal_JSONLD_FromRdf_propsRefids",
+   "evidence": [
+    {
+     "holder": "lp_l4factoidal_L4Factoidal_JSONLD_FromRdf_nodesRefids",
+     "cfile": "L4Factoidal/JSONLD/FromRdf.c",
+     "kind": "call"
+    }
+   ],
+   "allow": null,
+   "status": "spec-internal",
+   "reason": "before-theorem",
+   "why": "declared at line 1055, above the @[csimp] theorem at line 1095: the replacement applies only to code compiled after it"
+  },
+  {
+   "left": "L4Factoidal.JSONLD.FromRdf.resolveOv",
+   "caller": "L4Factoidal.JSONLD.FromRdf.listFrom",
+   "left_sym": "lp_l4factoidal_L4Factoidal_JSONLD_FromRdf_resolveOv",
+   "evidence": [
+    {
+     "holder": "lp_l4factoidal_L4Factoidal_JSONLD_FromRdf_listFrom",
+     "cfile": "L4Factoidal/JSONLD/FromRdf.c",
+     "kind": "call"
+    }
+   ],
+   "allow": null,
+   "status": "spec-internal",
+   "reason": "before-theorem",
+   "why": "declared at line 1193, above the @[csimp] theorem at line 1307: the replacement applies only to code compiled after it"
+  },
+  {
+   "left": "L4Factoidal.JSONLD.expandFieldsR",
+   "caller": "L4Factoidal.JSONLD.expandNodeR",
+   "left_sym": "lp_l4factoidal_L4Factoidal_JSONLD_expandFieldsR",
+   "evidence": [
+    {
+     "holder": "lp_l4factoidal_L4Factoidal_JSONLD_expandNodeR",
+     "cfile": "L4Factoidal/JSONLD/ToRdf.c",
+     "kind": "call"
+    }
+   ],
+   "allow": null,
+   "status": "spec-internal",
+   "reason": "before-theorem",
+   "why": "declared at line 1021, above the @[csimp] theorem at line 1413: the replacement applies only to code compiled after it"
+  },
+  {
+   "left": "L4Factoidal.JSONLD.expandGraphNodes",
+   "caller": "L4Factoidal.JSONLD.expandFieldsR",
+   "left_sym": "lp_l4factoidal_L4Factoidal_JSONLD_expandGraphNodes",
+   "evidence": [
+    {
+     "holder": "lp_l4factoidal_L4Factoidal_JSONLD_expandFieldsR",
+     "cfile": "L4Factoidal/JSONLD/ToRdf.c",
+     "kind": "call"
+    }
+   ],
+   "allow": null,
+   "status": "spec-internal",
+   "reason": "before-theorem",
+   "why": "declared at line 1055, above the @[csimp] theorem at line 1416: the replacement applies only to code compiled after it"
+  },
+  {
+   "left": "L4Factoidal.JSONLD.expandGraphNodes",
+   "caller": "L4Factoidal.JSONLD.expandNodeR",
+   "left_sym": "lp_l4factoidal_L4Factoidal_JSONLD_expandGraphNodes",
+   "evidence": [
+    {
+     "holder": "lp_l4factoidal_L4Factoidal_JSONLD_expandNodeR",
+     "cfile": "L4Factoidal/JSONLD/ToRdf.c",
+     "kind": "call"
+    }
+   ],
+   "allow": null,
+   "status": "spec-internal",
+   "reason": "before-theorem",
+   "why": "declared at line 1021, above the @[csimp] theorem at line 1416: the replacement applies only to code compiled after it"
+  },
+  {
+   "left": "L4Factoidal.JSONLD.expandList",
+   "caller": "L4Factoidal.JSONLD.expandValue",
+   "left_sym": "lp_l4factoidal_L4Factoidal_JSONLD_expandList",
+   "evidence": [
+    {
+     "holder": "lp_l4factoidal_L4Factoidal_JSONLD_expandValue",
+     "cfile": "L4Factoidal/JSONLD/ToRdf.c",
+     "kind": "call"
+    }
+   ],
+   "allow": null,
+   "status": "spec-internal",
+   "reason": "before-theorem",
+   "why": "declared at line 959, above the @[csimp] theorem at line 1428: the replacement applies only to code compiled after it"
+  },
+  {
+   "left": "L4Factoidal.JSONLD.expandNodeR",
+   "caller": "L4Factoidal.JSONLD.expandGraphNodes",
+   "left_sym": "lp_l4factoidal_L4Factoidal_JSONLD_expandNodeR",
+   "evidence": [
+    {
+     "holder": "lp_l4factoidal_L4Factoidal_JSONLD_expandGraphNodes",
+     "cfile": "L4Factoidal/JSONLD/ToRdf.c",
+     "kind": "call"
+    }
+   ],
+   "allow": null,
+   "status": "spec-internal",
+   "reason": "before-theorem",
+   "why": "declared at line 1143, above the @[csimp] theorem at line 1410: the replacement applies only to code compiled after it"
+  },
+  {
+   "left": "L4Factoidal.JSONLD.expandNodeR",
+   "caller": "L4Factoidal.JSONLD.expandReverseProp",
+   "left_sym": "lp_l4factoidal_L4Factoidal_JSONLD_expandNodeR",
+   "evidence": [
+    {
+     "holder": "lp_l4factoidal_L4Factoidal_JSONLD_expandReverseProp",
+     "cfile": "L4Factoidal/JSONLD/ToRdf.c",
+     "kind": "call"
+    }
+   ],
+   "allow": null,
+   "status": "spec-internal",
+   "reason": "before-theorem",
+   "why": "declared at line 1109, above the @[csimp] theorem at line 1410: the replacement applies only to code compiled after it"
+  },
+  {
+   "left": "L4Factoidal.JSONLD.expandNodeR",
+   "caller": "L4Factoidal.JSONLD.expandValue",
+   "left_sym": "lp_l4factoidal_L4Factoidal_JSONLD_expandNodeR",
+   "evidence": [
+    {
+     "holder": "lp_l4factoidal_L4Factoidal_JSONLD_expandValue",
+     "cfile": "L4Factoidal/JSONLD/ToRdf.c",
+     "kind": "call"
+    }
+   ],
+   "allow": null,
+   "status": "spec-internal",
+   "reason": "before-theorem",
+   "why": "declared at line 959, above the @[csimp] theorem at line 1410: the replacement applies only to code compiled after it"
+  },
+  {
+   "left": "L4Factoidal.JSONLD.expandPropertyR",
+   "caller": "L4Factoidal.JSONLD.expandFieldsR",
+   "left_sym": "lp_l4factoidal_L4Factoidal_JSONLD_expandPropertyR",
+   "evidence": [
+    {
+     "holder": "lp_l4factoidal_L4Factoidal_JSONLD_expandFieldsR",
+     "cfile": "L4Factoidal/JSONLD/ToRdf.c",
+     "kind": "call"
+    }
+   ],
+   "allow": null,
+   "status": "spec-internal",
+   "reason": "before-theorem",
+   "why": "declared at line 1055, above the @[csimp] theorem at line 1441: the replacement applies only to code compiled after it"
+  },
+  {
+   "left": "L4Factoidal.JSONLD.expandReverseEntries",
+   "caller": "L4Factoidal.JSONLD.expandReverseMap",
+   "left_sym": "lp_l4factoidal_L4Factoidal_JSONLD_expandReverseEntries",
+   "evidence": [
+    {
+     "holder": "lp_l4factoidal_L4Factoidal_JSONLD_expandReverseMap",
+     "cfile": "L4Factoidal/JSONLD/ToRdf.c",
+     "kind": "call"
+    }
+   ],
+   "allow": null,
+   "status": "spec-internal",
+   "reason": "before-theorem",
+   "why": "declared at line 1078, above the @[csimp] theorem at line 1435: the replacement applies only to code compiled after it"
+  },
+  {
+   "left": "L4Factoidal.JSONLD.expandReverseMap",
+   "caller": "L4Factoidal.JSONLD.expandFieldsR",
+   "left_sym": "lp_l4factoidal_L4Factoidal_JSONLD_expandReverseMap",
+   "evidence": [
+    {
+     "holder": "lp_l4factoidal_L4Factoidal_JSONLD_expandFieldsR",
+     "cfile": "L4Factoidal/JSONLD/ToRdf.c",
+     "kind": "call"
+    }
+   ],
+   "allow": null,
+   "status": "spec-internal",
+   "reason": "before-theorem",
+   "why": "declared at line 1055, above the @[csimp] theorem at line 1432: the replacement applies only to code compiled after it"
+  },
+  {
+   "left": "L4Factoidal.JSONLD.expandReverseProp",
+   "caller": "L4Factoidal.JSONLD.expandReverseEntries",
+   "left_sym": "lp_l4factoidal_L4Factoidal_JSONLD_expandReverseProp",
+   "evidence": [
+    {
+     "holder": "lp_l4factoidal_L4Factoidal_JSONLD_expandReverseEntries",
+     "cfile": "L4Factoidal/JSONLD/ToRdf.c",
+     "kind": "call"
+    }
+   ],
+   "allow": null,
+   "status": "spec-internal",
+   "reason": "before-theorem",
+   "why": "declared at line 1088, above the @[csimp] theorem at line 1438: the replacement applies only to code compiled after it"
+  },
+  {
+   "left": "L4Factoidal.JSONLD.expandValue",
+   "caller": "L4Factoidal.JSONLD.expandList",
+   "left_sym": "lp_l4factoidal_L4Factoidal_JSONLD_expandValue",
+   "evidence": [
+    {
+     "holder": "lp_l4factoidal_L4Factoidal_JSONLD_expandList",
+     "cfile": "L4Factoidal/JSONLD/ToRdf.c",
+     "kind": "call"
+    }
+   ],
+   "allow": null,
+   "status": "spec-internal",
+   "reason": "before-theorem",
+   "why": "declared at line 993, above the @[csimp] theorem at line 1421: the replacement applies only to code compiled after it"
+  },
+  {
+   "left": "L4Factoidal.JSONLD.expandValue",
+   "caller": "L4Factoidal.JSONLD.expandPropertyR",
+   "left_sym": "lp_l4factoidal_L4Factoidal_JSONLD_expandValue",
+   "evidence": [
+    {
+     "holder": "lp_l4factoidal_L4Factoidal_JSONLD_expandPropertyR",
+     "cfile": "L4Factoidal/JSONLD/ToRdf.c",
+     "kind": "call"
+    }
+   ],
+   "allow": null,
+   "status": "spec-internal",
+   "reason": "before-theorem",
+   "why": "declared at line 1126, above the @[csimp] theorem at line 1421: the replacement applies only to code compiled after it"
+  },
+  {
+   "left": "L4Factoidal.JSONLD.jcsInsertSorted",
+   "caller": "L4Factoidal.JSONLD.jcsSortFields",
+   "left_sym": "lp_l4factoidal_L4Factoidal_JSONLD_jcsInsertSorted",
+   "evidence": [
+    {
+     "holder": "lp_l4factoidal_L4Factoidal_JSONLD_jcsSortFields",
+     "cfile": "L4Factoidal/JSONLD/ToRdf.c",
+     "kind": "call"
+    }
+   ],
+   "allow": null,
+   "status": "spec-internal",
+   "reason": "before-theorem",
+   "why": "declared at line 311, above the @[csimp] theorem at line 348: the replacement applies only to code compiled after it"
+  },
+  {
+   "left": "L4Factoidal.JSONLD.jcsSerialize",
+   "caller": "L4Factoidal.JSONLD.jcsSerializeFields",
+   "left_sym": "lp_l4factoidal_L4Factoidal_JSONLD_jcsSerialize",
+   "evidence": [
+    {
+     "holder": "lp_l4factoidal_L4Factoidal_JSONLD_jcsSerializeFields",
+     "cfile": "L4Factoidal/JSONLD/ToRdf.c",
+     "kind": "call"
+    }
+   ],
+   "allow": null,
+   "status": "spec-internal",
+   "reason": "before-theorem",
+   "why": "declared at line 545, above the @[csimp] theorem at line 609: the replacement applies only to code compiled after it"
+  },
+  {
+   "left": "L4Factoidal.JSONLD.jcsSerialize",
+   "caller": "L4Factoidal.JSONLD.jcsSerializeItems",
+   "left_sym": "lp_l4factoidal_L4Factoidal_JSONLD_jcsSerialize",
+   "evidence": [
+    {
+     "holder": "lp_l4factoidal_L4Factoidal_JSONLD_jcsSerializeItems",
+     "cfile": "L4Factoidal/JSONLD/ToRdf.c",
+     "kind": "call"
+    }
+   ],
+   "allow": null,
+   "status": "spec-internal",
+   "reason": "before-theorem",
+   "why": "declared at line 538, above the @[csimp] theorem at line 609: the replacement applies only to code compiled after it"
+  },
+  {
+   "left": "L4Factoidal.JSONLD.jcsSerializeFields",
+   "caller": "L4Factoidal.JSONLD.jcsSerialize",
+   "left_sym": "lp_l4factoidal_L4Factoidal_JSONLD_jcsSerializeFields",
+   "evidence": [
+    {
+     "holder": "lp_l4factoidal_L4Factoidal_JSONLD_jcsSerialize",
+     "cfile": "L4Factoidal/JSONLD/ToRdf.c",
+     "kind": "call"
+    }
+   ],
+   "allow": null,
+   "status": "spec-internal",
+   "reason": "before-theorem",
+   "why": "declared at line 528, above the @[csimp] theorem at line 619: the replacement applies only to code compiled after it"
+  },
+  {
+   "left": "L4Factoidal.JSONLD.jcsSerializeItems",
+   "caller": "L4Factoidal.JSONLD.jcsSerialize",
+   "left_sym": "lp_l4factoidal_L4Factoidal_JSONLD_jcsSerializeItems",
+   "evidence": [
+    {
+     "holder": "lp_l4factoidal_L4Factoidal_JSONLD_jcsSerialize",
+     "cfile": "L4Factoidal/JSONLD/ToRdf.c",
+     "kind": "call"
+    }
+   ],
+   "allow": null,
+   "status": "spec-internal",
+   "reason": "before-theorem",
+   "why": "declared at line 528, above the @[csimp] theorem at line 616: the replacement applies only to code compiled after it"
+  },
+  {
+   "left": "L4Factoidal.JSONLD.matchingSubjects.matchingSubjectsGo",
+   "caller": "L4Factoidal.JSONLD.matchingSubjects",
+   "left_sym": "lp_l4factoidal_L4Factoidal_JSONLD_matchingSubjects_matchingSubjectsGo",
+   "evidence": [
+    {
+     "holder": "lp_l4factoidal_L4Factoidal_JSONLD_matchingSubjects",
+     "cfile": "L4Factoidal/JSONLD/Frame.c",
+     "kind": "call"
+    }
+   ],
+   "allow": null,
+   "status": "spec-internal",
+   "reason": "before-theorem",
+   "why": "declared at line 444, above the @[csimp] theorem at line 508: the replacement applies only to code compiled after it"
+  },
+  {
+   "left": "L4Factoidal.LWS.dedupFrom",
+   "caller": "L4Factoidal.LWS.dedupSorted",
+   "left_sym": "lp_l4factoidal_L4Factoidal_LWS_dedupFrom",
+   "evidence": [
+    {
+     "holder": "lp_l4factoidal_L4Factoidal_LWS_dedupSorted",
+     "cfile": "L4Factoidal/LWS/Pagination.c",
+     "kind": "call"
+    }
+   ],
+   "allow": null,
+   "status": "spec-internal",
+   "reason": "before-theorem",
+   "why": "declared at line 50, above the @[csimp] theorem at line 72: the replacement applies only to code compiled after it"
+  },
+  {
+   "left": "L4Factoidal.OWL.Comp.insIri",
+   "caller": "L4Factoidal.OWL.Comp.sortIris",
+   "left_sym": "lp_l4factoidal_L4Factoidal_OWL_Comp_insIri",
+   "evidence": [
+    {
+     "holder": "lp_l4factoidal_L4Factoidal_OWL_Comp_sortIris",
+     "cfile": "L4Factoidal/OWL/Comprehension.c",
+     "kind": "call"
+    }
+   ],
+   "allow": null,
+   "status": "spec-internal",
+   "reason": "before-theorem",
+   "why": "declared at line 361, above the @[csimp] theorem at line 381: the replacement applies only to code compiled after it"
+  },
+  {
+   "left": "L4Factoidal.OWL.RL.closure",
+   "caller": "L4Factoidal.OWL.RL.closureFix",
+   "left_sym": "lp_l4factoidal_L4Factoidal_OWL_RL_closure",
+   "evidence": [
+    {
+     "holder": "lp_l4factoidal_L4Factoidal_OWL_RL_closureFix",
+     "cfile": "L4Factoidal/OWL/RLClosure.c",
+     "kind": "call"
+    }
+   ],
+   "allow": null,
+   "status": "spec-internal",
+   "reason": "not-imported",
+   "why": "module L4Factoidal.OWL.RLClosure does not import L4Factoidal.OWL.RLClosureIndexed, so the replacement is not in force there"
+  },
+  {
+   "left": "L4Factoidal.OWL.RL.closure",
+   "caller": "L4Factoidal.OWL.RL.inconsistent",
+   "left_sym": "lp_l4factoidal_L4Factoidal_OWL_RL_closure",
+   "evidence": [
+    {
+     "holder": "lp_l4factoidal_L4Factoidal_OWL_RL_inconsistent",
+     "cfile": "L4Factoidal/OWL/RLClosure.c",
+     "kind": "call"
+    }
+   ],
+   "allow": "spec: OWL/RLClosure.lean: callers are the #guard lines of OWL/RLTests.lean and a theorem of OWL/RLClosureIndexed.lean; RLClosure cannot import the indexed module (it imports RLClosure)",
+   "status": "allowed",
+   "reason": "not-imported",
+   "why": "module L4Factoidal.OWL.RLClosure does not import L4Factoidal.OWL.RLClosureIndexed, so the replacement is not in force there"
+  },
+  {
+   "left": "L4Factoidal.OWL.RL.closure",
+   "caller": "L4Factoidal.OWL.RL.inconsistentPlus",
+   "left_sym": "lp_l4factoidal_L4Factoidal_OWL_RL_closure",
+   "evidence": [
+    {
+     "holder": "lp_l4factoidal_L4Factoidal_OWL_RL_inconsistentPlus",
+     "cfile": "L4Factoidal/OWL/RLClosure.c",
+     "kind": "call"
+    }
+   ],
+   "allow": "spec: the same",
+   "status": "allowed",
+   "reason": "not-imported",
+   "why": "module L4Factoidal.OWL.RLClosure does not import L4Factoidal.OWL.RLClosureIndexed, so the replacement is not in force there"
+  },
+  {
+   "left": "L4Factoidal.OWL.RL.closure",
+   "caller": "L4Factoidal.OWL.RdfBased.rbRound",
+   "left_sym": "lp_l4factoidal_L4Factoidal_OWL_RL_closure",
+   "evidence": [
+    {
+     "holder": "lp_l4factoidal_L4Factoidal_OWL_RdfBased_rbRound",
+     "cfile": "L4Factoidal/OWL/RdfBased/Engine.c",
+     "kind": "call"
+    }
+   ],
+   "allow": "spec: OWL/RdfBased/Engine.lean: the readable alternation; callers are the #guard lines of OWL/RdfBased/Tests.lean; Harness/OwlProbe.lean runs the alternation with the indexed closure",
+   "status": "allowed",
+   "reason": "not-imported",
+   "why": "module L4Factoidal.OWL.RdfBased.Engine does not import L4Factoidal.OWL.RLClosureIndexed, so the replacement is not in force there"
+  },
+  {
+   "left": "L4Factoidal.OWL.RL.closure",
+   "caller": "L4Factoidal.OWL.RdfBased.rbSaturate",
+   "left_sym": "lp_l4factoidal_L4Factoidal_OWL_RL_closure",
+   "evidence": [
+    {
+     "holder": "lp_l4factoidal_L4Factoidal_OWL_RdfBased_rbSaturate",
+     "cfile": "L4Factoidal/OWL/RdfBased/Engine.c",
+     "kind": "call"
+    }
+   ],
+   "allow": "spec: the same",
+   "status": "allowed",
+   "reason": "not-imported",
+   "why": "module L4Factoidal.OWL.RdfBased.Engine does not import L4Factoidal.OWL.RLClosureIndexed, so the replacement is not in force there"
+  },
+  {
+   "left": "L4Factoidal.OWL.SyntaxDL.graphBodyViolations",
+   "caller": "L4Factoidal.OWL.SyntaxDL.hasV",
+   "left_sym": "lp_l4factoidal_L4Factoidal_OWL_SyntaxDL_graphBodyViolations",
+   "evidence": [
+    {
+     "holder": "lp_l4factoidal___private_L4Factoidal_OWL_SyntaxDL_0__L4Factoidal_OWL_SyntaxDL_hasV",
+     "cfile": "L4Factoidal/OWL/SyntaxDL.c",
+     "kind": "call"
+    }
+   ],
+   "allow": "guard: OWL/SyntaxDL.lean, a private helper of the #guard lines that follow it",
+   "status": "allowed",
+   "reason": "before-theorem",
+   "why": "declared at line 1480, above the @[csimp] theorem at line 2386: the replacement applies only to code compiled after it"
+  },
+  {
+   "left": "L4Factoidal.OWL.SyntaxDL.graphBodyViolations",
+   "caller": "L4Factoidal.OWL.SyntaxDL.speciesViolations",
+   "left_sym": "lp_l4factoidal_L4Factoidal_OWL_SyntaxDL_graphBodyViolations",
+   "evidence": [
+    {
+     "holder": "lp_l4factoidal_L4Factoidal_OWL_SyntaxDL_speciesViolations",
+     "cfile": "L4Factoidal/OWL/SyntaxDL.c",
+     "kind": "call"
+    }
+   ],
+   "allow": null,
+   "status": "spec-internal",
+   "reason": "before-theorem",
+   "why": "declared at line 1233, above the @[csimp] theorem at line 2386: the replacement applies only to code compiled after it"
+  },
+  {
+   "left": "L4Factoidal.OWL.SyntaxDL.graphBodyViolations",
+   "caller": "L4Factoidal.OWL.SyntaxDL.speciesViolationsFunctional",
+   "left_sym": "lp_l4factoidal_L4Factoidal_OWL_SyntaxDL_graphBodyViolations",
+   "evidence": [
+    {
+     "holder": "lp_l4factoidal_L4Factoidal_OWL_SyntaxDL_speciesViolationsFunctional",
+     "cfile": "L4Factoidal/OWL/SyntaxDL.c",
+     "kind": "call"
+    }
+   ],
+   "allow": null,
+   "status": "spec-internal",
+   "reason": "before-theorem",
+   "why": "declared at line 1254, above the @[csimp] theorem at line 2386: the replacement applies only to code compiled after it"
+  },
+  {
+   "left": "L4Factoidal.OWL.SyntaxDL.speciesViolations",
+   "caller": "L4Factoidal.OWL.SyntaxDL.speciesIsDl",
+   "left_sym": "lp_l4factoidal_L4Factoidal_OWL_SyntaxDL_speciesViolations",
+   "evidence": [
+    {
+     "holder": "lp_l4factoidal_L4Factoidal_OWL_SyntaxDL_speciesIsDl",
+     "cfile": "L4Factoidal/OWL/SyntaxDL.c",
+     "kind": "call"
+    }
+   ],
+   "allow": null,
+   "status": "spec-internal",
+   "reason": "before-theorem",
+   "why": "declared at line 1247, above the @[csimp] theorem at line 2389: the replacement applies only to code compiled after it"
+  },
+  {
+   "left": "L4Factoidal.OWL.SyntaxDL.speciesViolationsFunctional",
+   "caller": "L4Factoidal.OWL.SyntaxDL.speciesIsDlFunctional",
+   "left_sym": "lp_l4factoidal_L4Factoidal_OWL_SyntaxDL_speciesViolationsFunctional",
+   "evidence": [
+    {
+     "holder": "lp_l4factoidal_L4Factoidal_OWL_SyntaxDL_speciesIsDlFunctional",
+     "cfile": "L4Factoidal/OWL/SyntaxDL.c",
+     "kind": "call"
+    }
+   ],
+   "allow": null,
+   "status": "spec-internal",
+   "reason": "before-theorem",
+   "why": "declared at line 1260, above the @[csimp] theorem at line 2396: the replacement applies only to code compiled after it"
+  },
+  {
+   "left": "L4Factoidal.Qlvr.cmpBytes",
+   "caller": "L4Factoidal.Qlvr.cmpBytesFast",
+   "left_sym": "lp_l4factoidal_L4Factoidal_Qlvr_cmpBytes",
+   "evidence": [
+    {
+     "holder": "lp_l4factoidal_L4Factoidal_Qlvr_cmpBytesFast",
+     "cfile": "L4Factoidal/Qlvr/CmpBytesFast.c",
+     "kind": "call"
+    }
+   ],
+   "allow": "bound: Qlvr/CmpBytesFast.lean: arrays of USize.size bytes or more take the specification (none exist)",
+   "status": "allowed",
+   "reason": "before-theorem",
+   "why": "declared at line 38, above the @[csimp] theorem at line 161: the replacement applies only to code compiled after it"
+  },
+  {
+   "left": "L4Factoidal.RDF.Dataset.isomorphismMap?",
+   "caller": "L4Factoidal.RDF.Dataset.isomorphic?",
+   "left_sym": "lp_l4factoidal_L4Factoidal_RDF_Dataset_isomorphismMap_x3f",
+   "evidence": [
+    {
+     "holder": "lp_l4factoidal_L4Factoidal_RDF_Dataset_isomorphic_x3f",
+     "cfile": "L4Factoidal/RDF/Isomorphism.c",
+     "kind": "call"
+    }
+   ],
+   "allow": null,
+   "status": "spec-internal",
+   "reason": "before-theorem",
+   "why": "declared at line 916, above the @[csimp] theorem at line 1001: the replacement applies only to code compiled after it"
+  },
+  {
+   "left": "L4Factoidal.RDF.Dataset.isomorphismMap?",
+   "caller": "L4Factoidal.RDF.Dataset.isomorphicOutcome",
+   "left_sym": "lp_l4factoidal_L4Factoidal_RDF_Dataset_isomorphismMap_x3f",
+   "evidence": [
+    {
+     "holder": "lp_l4factoidal_L4Factoidal_RDF_Dataset_isomorphicOutcome",
+     "cfile": "L4Factoidal/RDF/Isomorphism.c",
+     "kind": "call"
+    }
+   ],
+   "allow": null,
+   "status": "spec-internal",
+   "reason": "before-theorem",
+   "why": "declared at line 920, above the @[csimp] theorem at line 1001: the replacement applies only to code compiled after it"
+  },
+  {
+   "left": "L4Factoidal.RDF.Graph.isomorphismMap?",
+   "caller": "L4Factoidal.RDF.Graph.isomorphic?",
+   "left_sym": "lp_l4factoidal_L4Factoidal_RDF_Graph_isomorphismMap_x3f",
+   "evidence": [
+    {
+     "holder": "lp_l4factoidal_L4Factoidal_RDF_Graph_isomorphic_x3f",
+     "cfile": "L4Factoidal/RDF/Isomorphism.c",
+     "kind": "call"
+    }
+   ],
+   "allow": null,
+   "status": "spec-internal",
+   "reason": "before-theorem",
+   "why": "declared at line 725, above the @[csimp] theorem at line 955: the replacement applies only to code compiled after it"
+  },
+  {
+   "left": "L4Factoidal.RDF.Graph.isomorphismMap?",
+   "caller": "L4Factoidal.RDF.Graph.isomorphicOutcome",
+   "left_sym": "lp_l4factoidal_L4Factoidal_RDF_Graph_isomorphismMap_x3f",
+   "evidence": [
+    {
+     "holder": "lp_l4factoidal_L4Factoidal_RDF_Graph_isomorphicOutcome",
+     "cfile": "L4Factoidal/RDF/Isomorphism.c",
+     "kind": "call"
+    }
+   ],
+   "allow": null,
+   "status": "spec-internal",
+   "reason": "before-theorem",
+   "why": "declared at line 732, above the @[csimp] theorem at line 955: the replacement applies only to code compiled after it"
+  },
+  {
+   "left": "L4Factoidal.RDF.Term.joinKey",
+   "caller": "L4Factoidal.RDF.Term.joinKeyLoop",
+   "left_sym": "lp_l4factoidal_L4Factoidal_RDF_Term_joinKey",
+   "evidence": [
+    {
+     "holder": "lp_l4factoidal_L4Factoidal_RDF_Term_joinKeyLoop",
+     "cfile": "L4Factoidal/RDF/Core.c",
+     "kind": "call"
+    }
+   ],
+   "allow": "leaf: RDF/Core.lean, joinKeyLoop: a term that is not a triple term is keyed by the specification",
+   "status": "allowed",
+   "reason": "before-theorem",
+   "why": "declared at line 639, above the @[csimp] theorem at line 657: the replacement applies only to code compiled after it"
+  },
+  {
+   "left": "L4Factoidal.RDF.bijectiveCert",
+   "caller": "L4Factoidal.RDF.Graph.isoCert",
+   "left_sym": "lp_l4factoidal_L4Factoidal_RDF_bijectiveCert",
+   "evidence": [
+    {
+     "holder": "lp_l4factoidal_L4Factoidal_RDF_Graph_isoCert",
+     "cfile": "L4Factoidal/RDF/Isomorphism.c",
+     "kind": "call"
+    }
+   ],
+   "allow": null,
+   "status": "spec-internal",
+   "reason": "before-theorem",
+   "why": "declared at line 504, above the @[csimp] theorem at line 517: the replacement applies only to code compiled after it"
+  },
+  {
+   "left": "L4Factoidal.RDFS.semiNaive",
+   "caller": "L4Factoidal.RDFS.closureSemiNaiveChecked",
+   "left_sym": "lp_l4factoidal_L4Factoidal_RDFS_semiNaive",
+   "evidence": [
+    {
+     "holder": "lp_l4factoidal_L4Factoidal_RDFS_closureSemiNaiveChecked",
+     "cfile": "L4Factoidal/RDFS/SemiNaive.c",
+     "kind": "call"
+    }
+   ],
+   "allow": null,
+   "status": "spec-internal",
+   "reason": "not-imported",
+   "why": "module L4Factoidal.RDFS.SemiNaive does not import L4Factoidal.RDFS.SemiNaiveTheorems, so the replacement is not in force there"
+  },
+  {
+   "left": "L4Factoidal.SPARQL.finishSelectRows",
+   "caller": "L4Factoidal.SPARQL.finishSelectRowsPrefix",
+   "left_sym": "lp_l4factoidal_L4Factoidal_SPARQL_finishSelectRows",
+   "evidence": [
+    {
+     "holder": "lp_l4factoidal_L4Factoidal_SPARQL_finishSelectRowsPrefix",
+     "cfile": "L4Factoidal/SPARQL/Query.c",
+     "kind": "call"
+    }
+   ],
+   "allow": "twin: SPARQL/Query.lean: ORDER BY with LIMIT takes the prefix sort; DISTINCT, REDUCED and no LIMIT take the specification, whose sort and dedup are fast forms",
+   "status": "allowed",
+   "reason": "before-theorem",
+   "why": "declared at line 649, above the @[csimp] theorem at line 691: the replacement applies only to code compiled after it"
+  },
+  {
+   "left": "L4Factoidal.SPARQL.ggpLabeledBnodes",
+   "caller": "L4Factoidal.SPARQL.ggpLabeledBnodesQ",
+   "left_sym": "lp_l4factoidal_L4Factoidal_SPARQL_ggpLabeledBnodes",
+   "evidence": [
+    {
+     "holder": "lp_l4factoidal_L4Factoidal_SPARQL_ggpLabeledBnodesQ",
+     "cfile": "L4Factoidal/SPARQL/Parser.c",
+     "kind": "call"
+    }
+   ],
+   "allow": null,
+   "status": "spec-internal",
+   "reason": "before-theorem",
+   "why": "declared at line 806, above the @[csimp] theorem at line 870: the replacement applies only to code compiled after it"
+  },
+  {
+   "left": "L4Factoidal.SPARQL.ggpLabeledBnodes",
+   "caller": "L4Factoidal.SPARQL.labelStepSem",
+   "left_sym": "lp_l4factoidal_L4Factoidal_SPARQL_ggpLabeledBnodes",
+   "evidence": [
+    {
+     "holder": "lp_l4factoidal_L4Factoidal_SPARQL_labelStepSem",
+     "cfile": "L4Factoidal/SPARQL/Parser.c",
+     "kind": "call"
+    }
+   ],
+   "allow": "dead arm: SPARQL/Parser.lean: labelsLoop calls labelStepSem with .union2 only; the .visit arm names the specification",
+   "status": "allowed",
+   "reason": "before-theorem",
+   "why": "declared at line 819, above the @[csimp] theorem at line 870: the replacement applies only to code compiled after it"
+  },
+  {
+   "left": "L4Factoidal.SPARQL.ggpLabeledBnodesQ",
+   "caller": "L4Factoidal.SPARQL.ggpLabeledBnodes",
+   "left_sym": "lp_l4factoidal_L4Factoidal_SPARQL_ggpLabeledBnodesQ",
+   "evidence": [
+    {
+     "holder": "lp_l4factoidal_L4Factoidal_SPARQL_ggpLabeledBnodes",
+     "cfile": "L4Factoidal/SPARQL/Parser.c",
+     "kind": "call"
+    }
+   ],
+   "allow": null,
+   "status": "spec-internal",
+   "reason": "before-theorem",
+   "why": "declared at line 791, above the @[csimp] theorem at line 874: the replacement applies only to code compiled after it"
+  },
+  {
+   "left": "L4Factoidal.SPARQL.tokenize",
+   "caller": "L4Factoidal.SPARQL.tokenizeAt",
+   "left_sym": "lp_l4factoidal_L4Factoidal_SPARQL_tokenize",
+   "evidence": [
+    {
+     "holder": "lp_l4factoidal_L4Factoidal_SPARQL_tokenizeAt",
+     "cfile": "L4Factoidal/SPARQL/Tokenizer.c",
+     "kind": "call"
+    }
+   ],
+   "allow": null,
+   "status": "spec-internal",
+   "reason": "before-theorem",
+   "why": "declared at line 987, above the @[csimp] theorem at line 1345: the replacement applies only to code compiled after it"
+  },
+  {
+   "left": "L4Factoidal.SPARQL.tokenize12",
+   "caller": "L4Factoidal.SPARQL.tokenizeAt",
+   "left_sym": "lp_l4factoidal_L4Factoidal_SPARQL_tokenize12",
+   "evidence": [
+    {
+     "holder": "lp_l4factoidal_L4Factoidal_SPARQL_tokenizeAt",
+     "cfile": "L4Factoidal/SPARQL/Tokenizer.c",
+     "kind": "call"
+    }
+   ],
+   "allow": null,
+   "status": "spec-internal",
+   "reason": "before-theorem",
+   "why": "declared at line 987, above the @[csimp] theorem at line 1348: the replacement applies only to code compiled after it"
+  },
+  {
+   "left": "L4Factoidal.SPARQL.validateBnodeScope",
+   "caller": "L4Factoidal.SPARQL.scopeStepSem",
+   "left_sym": "lp_l4factoidal_L4Factoidal_SPARQL_validateBnodeScope",
+   "evidence": [
+    {
+     "holder": "lp_l4factoidal_L4Factoidal_SPARQL_scopeStepSem",
+     "cfile": "L4Factoidal/SPARQL/Parser.c",
+     "kind": "call"
+    }
+   ],
+   "allow": "spec: SPARQL/Parser.lean: the semantic step function of scopeLoop; scopeLoop calls scopeCombine, and only the proofs (scopeLoop_eq) call scopeStepSem",
+   "status": "allowed",
+   "reason": "before-theorem",
+   "why": "declared at line 982, above the @[csimp] theorem at line 1111: the replacement applies only to code compiled after it"
+  },
+  {
+   "left": "L4Factoidal.SPARQL.validateBnodeScope",
+   "caller": "L4Factoidal.SPARQL.validateBnodeScopeQ",
+   "left_sym": "lp_l4factoidal_L4Factoidal_SPARQL_validateBnodeScope",
+   "evidence": [
+    {
+     "holder": "lp_l4factoidal_L4Factoidal_SPARQL_validateBnodeScopeQ",
+     "cfile": "L4Factoidal/SPARQL/Parser.c",
+     "kind": "call"
+    }
+   ],
+   "allow": null,
+   "status": "spec-internal",
+   "reason": "before-theorem",
+   "why": "declared at line 936, above the @[csimp] theorem at line 1111: the replacement applies only to code compiled after it"
+  },
+  {
+   "left": "L4Factoidal.SPARQL.validateBnodeScopeQ",
+   "caller": "L4Factoidal.SPARQL.validateBnodeScope",
+   "left_sym": "lp_l4factoidal_L4Factoidal_SPARQL_validateBnodeScopeQ",
+   "evidence": [
+    {
+     "holder": "lp_l4factoidal_L4Factoidal_SPARQL_validateBnodeScope",
+     "cfile": "L4Factoidal/SPARQL/Parser.c",
+     "kind": "call"
+    }
+   ],
+   "allow": null,
+   "status": "spec-internal",
+   "reason": "before-theorem",
+   "why": "declared at line 912, above the @[csimp] theorem at line 1115: the replacement applies only to code compiled after it"
+  },
+  {
+   "left": "L4Factoidal.Storage.appendPlan?",
+   "caller": "L4Factoidal.Storage.DeltaLogBytes.v1log",
+   "left_sym": "lp_l4factoidal_L4Factoidal_Storage_appendPlan_x3f",
+   "evidence": [
+    {
+     "holder": "_init_lp_l4factoidal___private_L4Factoidal_Storage_DeltaLogBytes_0__L4Factoidal_Storage_DeltaLogBytes_v1log",
+     "cfile": "L4Factoidal/Storage/DeltaLogBytes.c",
+     "kind": "call"
+    },
+    {
+     "holder": "_init_lp_l4factoidal___private_L4Factoidal_Storage_DeltaLogBytes_0__L4Factoidal_Storage_DeltaLogBytes_v1log___closed__1",
+     "cfile": "L4Factoidal/Storage/DeltaLogBytes.c",
+     "kind": "call"
+    }
+   ],
+   "allow": "guard: Storage/DeltaLogBytes.lean, a private test log",
+   "status": "allowed",
+   "reason": "not-imported",
+   "why": "module L4Factoidal.Storage.DeltaLogBytes does not import L4Factoidal.Storage.DeltaLogBytesTheorems, so the replacement is not in force there"
+  },
+  {
+   "left": "L4Factoidal.Storage.appendPlan?",
+   "caller": "L4Factoidal.Storage.DeltaLogBytes.v2log",
+   "left_sym": "lp_l4factoidal_L4Factoidal_Storage_appendPlan_x3f",
+   "evidence": [
+    {
+     "holder": "_init_lp_l4factoidal___private_L4Factoidal_Storage_DeltaLogBytes_0__L4Factoidal_Storage_DeltaLogBytes_v2log___closed__1",
+     "cfile": "L4Factoidal/Storage/DeltaLogBytes.c",
+     "kind": "call"
+    }
+   ],
+   "allow": "guard: Storage/DeltaLogBytes.lean, a private test log",
+   "status": "allowed",
+   "reason": "not-imported",
+   "why": "module L4Factoidal.Storage.DeltaLogBytes does not import L4Factoidal.Storage.DeltaLogBytesTheorems, so the replacement is not in force there"
+  },
+  {
+   "left": "L4Factoidal.Storage.appendPlan?",
+   "caller": "L4Factoidal.Storage.DeltaLogBytes.v3log",
+   "left_sym": "lp_l4factoidal_L4Factoidal_Storage_appendPlan_x3f",
+   "evidence": [
+    {
+     "holder": "_init_lp_l4factoidal___private_L4Factoidal_Storage_DeltaLogBytes_0__L4Factoidal_Storage_DeltaLogBytes_v3log___closed__4",
+     "cfile": "L4Factoidal/Storage/DeltaLogBytes.c",
+     "kind": "call"
+    }
+   ],
+   "allow": "guard: Storage/DeltaLogBytes.lean, a private test log with a graph named by a blank node",
+   "status": "allowed",
+   "reason": "not-imported",
+   "why": "module L4Factoidal.Storage.DeltaLogBytes does not import L4Factoidal.Storage.DeltaLogBytesTheorems, so the replacement is not in force there"
+  },
+  {
+   "left": "L4Factoidal.Storage.appendPlan?",
+   "caller": "L4Factoidal.Storage.v2log",
+   "left_sym": "lp_l4factoidal_L4Factoidal_Storage_appendPlan_x3f",
+   "evidence": [
+    {
+     "holder": "_init_lp_l4factoidal___private_L4Factoidal_Storage_DeltaLog_0__L4Factoidal_Storage_v2log___closed__0",
+     "cfile": "L4Factoidal/Storage/DeltaLog.c",
+     "kind": "call"
+    },
+    {
+     "holder": "_init_lp_l4factoidal___private_L4Factoidal_Storage_DeltaLog_0__L4Factoidal_Storage_v2log___closed__1",
+     "cfile": "L4Factoidal/Storage/DeltaLog.c",
+     "kind": "call"
+    }
+   ],
+   "allow": "guard: Storage/DeltaLog.lean, a private test log (evaluated once, at module initialisation)",
+   "status": "allowed",
+   "reason": "not-imported",
+   "why": "module L4Factoidal.Storage.DeltaLog does not import L4Factoidal.Storage.DeltaLogBytesTheorems, so the replacement is not in force there"
+  },
+  {
+   "left": "L4Factoidal.Storage.appendPlan?",
+   "caller": "L4Factoidal.Storage.v3log",
+   "left_sym": "lp_l4factoidal_L4Factoidal_Storage_appendPlan_x3f",
+   "evidence": [
+    {
+     "holder": "_init_lp_l4factoidal___private_L4Factoidal_Storage_DeltaLog_0__L4Factoidal_Storage_v3log___closed__0",
+     "cfile": "L4Factoidal/Storage/DeltaLog.c",
+     "kind": "call"
+    }
+   ],
+   "allow": "guard: Storage/DeltaLog.lean, a private test log with a graph named by a blank node (evaluated once, at module initialisation)",
+   "status": "allowed",
+   "reason": "not-imported",
+   "why": "module L4Factoidal.Storage.DeltaLog does not import L4Factoidal.Storage.DeltaLogBytesTheorems, so the replacement is not in force there"
+  },
+  {
+   "left": "L4Factoidal.Storage.parseLogChecked",
+   "caller": "L4Factoidal.Storage.DeltaLogBytes.sameChecked",
+   "left_sym": "lp_l4factoidal_L4Factoidal_Storage_parseLogChecked",
+   "evidence": [
+    {
+     "holder": "lp_l4factoidal___private_L4Factoidal_Storage_DeltaLogBytes_0__L4Factoidal_Storage_DeltaLogBytes_sameChecked",
+     "cfile": "L4Factoidal/Storage/DeltaLogBytes.c",
+     "kind": "call"
+    }
+   ],
+   "allow": "guard: Storage/DeltaLogBytes.lean, a private helper that compares the specification with the byte array reader on purpose",
+   "status": "allowed",
+   "reason": "not-imported",
+   "why": "module L4Factoidal.Storage.DeltaLogBytes does not import L4Factoidal.Storage.DeltaLogBytesTheorems, so the replacement is not in force there"
+  },
+  {
+   "left": "L4Factoidal.Storage.parseLogChecked",
+   "caller": "L4Factoidal.Storage.checkedIs",
+   "left_sym": "lp_l4factoidal_L4Factoidal_Storage_parseLogChecked",
+   "evidence": [
+    {
+     "holder": "lp_l4factoidal___private_L4Factoidal_Storage_DeltaLog_0__L4Factoidal_Storage_checkedIs",
+     "cfile": "L4Factoidal/Storage/DeltaLog.c",
+     "kind": "call"
+    }
+   ],
+   "allow": "guard: Storage/DeltaLog.lean, a private helper of the #guard lines",
+   "status": "allowed",
+   "reason": "not-imported",
+   "why": "module L4Factoidal.Storage.DeltaLog does not import L4Factoidal.Storage.DeltaLogBytesTheorems, so the replacement is not in force there"
+  },
+  {
+   "left": "L4Factoidal.Storage.parseLogChecked",
+   "caller": "L4Factoidal.Storage.parseLogCheckedV1",
+   "left_sym": "lp_l4factoidal_L4Factoidal_Storage_parseLogChecked",
+   "evidence": [
+    {
+     "holder": "lp_l4factoidal_L4Factoidal_Storage_parseLogCheckedV1",
+     "cfile": "L4Factoidal/Storage/DeltaLog.c",
+     "kind": "call"
+    }
+   ],
+   "allow": null,
+   "status": "spec-internal",
+   "reason": "not-imported",
+   "why": "module L4Factoidal.Storage.DeltaLog does not import L4Factoidal.Storage.DeltaLogBytesTheorems, so the replacement is not in force there"
+  },
+  {
+   "left": "L4Factoidal.Storage.parseLogCheckedV1",
+   "caller": "L4Factoidal.Storage.DeltaLogBytes.sameCheckedV1",
+   "left_sym": "lp_l4factoidal_L4Factoidal_Storage_parseLogCheckedV1",
+   "evidence": [
+    {
+     "holder": "lp_l4factoidal___private_L4Factoidal_Storage_DeltaLogBytes_0__L4Factoidal_Storage_DeltaLogBytes_sameCheckedV1",
+     "cfile": "L4Factoidal/Storage/DeltaLogBytes.c",
+     "kind": "call"
+    }
+   ],
+   "allow": "guard: the same, for the version 1 reader",
+   "status": "allowed",
+   "reason": "not-imported",
+   "why": "module L4Factoidal.Storage.DeltaLogBytes does not import L4Factoidal.Storage.DeltaLogBytesTheorems, so the replacement is not in force there"
+  },
+  {
+   "left": "L4Factoidal.Syntax.RdfXml.serializeNode",
+   "caller": "L4Factoidal.Syntax.RdfXml.serializeNodes",
+   "left_sym": "lp_l4factoidal_L4Factoidal_Syntax_RdfXml_serializeNode",
+   "evidence": [
+    {
+     "holder": "lp_l4factoidal_L4Factoidal_Syntax_RdfXml_serializeNodes",
+     "cfile": "L4Factoidal/Syntax/RdfXml.c",
+     "kind": "call"
+    }
+   ],
+   "allow": null,
+   "status": "spec-internal",
+   "reason": "before-theorem",
+   "why": "declared at line 697, above the @[csimp] theorem at line 758: the replacement applies only to code compiled after it"
+  },
+  {
+   "left": "L4Factoidal.Syntax.RdfXml.serializeNodeT",
+   "caller": "L4Factoidal.Syntax.RdfXml.serializeNodesT",
+   "left_sym": "lp_l4factoidal_L4Factoidal_Syntax_RdfXml_serializeNodeT",
+   "evidence": [
+    {
+     "holder": "lp_l4factoidal_L4Factoidal_Syntax_RdfXml_serializeNodesT",
+     "cfile": "L4Factoidal/Syntax/RdfXml.c",
+     "kind": "call"
+    }
+   ],
+   "allow": null,
+   "status": "spec-internal",
+   "reason": "before-theorem",
+   "why": "declared at line 801, above the @[csimp] theorem at line 874: the replacement applies only to code compiled after it"
+  },
+  {
+   "left": "L4Factoidal.Syntax.RdfXml.serializeNodes",
+   "caller": "L4Factoidal.Syntax.RdfXml.serializeNode",
+   "left_sym": "lp_l4factoidal_L4Factoidal_Syntax_RdfXml_serializeNodes",
+   "evidence": [
+    {
+     "holder": "lp_l4factoidal_L4Factoidal_Syntax_RdfXml_serializeNode",
+     "cfile": "L4Factoidal/Syntax/RdfXml.c",
+     "kind": "call"
+    }
+   ],
+   "allow": null,
+   "status": "spec-internal",
+   "reason": "before-theorem",
+   "why": "declared at line 684, above the @[csimp] theorem at line 762: the replacement applies only to code compiled after it"
+  },
+  {
+   "left": "L4Factoidal.Syntax.RdfXml.serializeNodesT",
+   "caller": "L4Factoidal.Syntax.RdfXml.serializeNodeT",
+   "left_sym": "lp_l4factoidal_L4Factoidal_Syntax_RdfXml_serializeNodesT",
+   "evidence": [
+    {
+     "holder": "lp_l4factoidal_L4Factoidal_Syntax_RdfXml_serializeNodeT",
+     "cfile": "L4Factoidal/Syntax/RdfXml.c",
+     "kind": "call"
+    }
+   ],
+   "allow": null,
+   "status": "spec-internal",
+   "reason": "before-theorem",
+   "why": "declared at line 791, above the @[csimp] theorem at line 877: the replacement applies only to code compiled after it"
+  },
+  {
+   "left": "L4Factoidal.Syntax.Term.toNTriples",
+   "caller": "L4Factoidal.Syntax.toNTriplesClose",
+   "left_sym": "lp_l4factoidal_L4Factoidal_Syntax_Term_toNTriples",
+   "evidence": [
+    {
+     "holder": "lp_l4factoidal_L4Factoidal_Syntax_toNTriplesClose",
+     "cfile": "L4Factoidal/Syntax/NTriples.c",
+     "kind": "call"
+    }
+   ],
+   "allow": "leaf: Syntax/NTriples.lean, toNTriplesClose: the text of a term that is not a triple term",
+   "status": "allowed",
+   "reason": "before-theorem",
+   "why": "declared at line 703, above the @[csimp] theorem at line 767: the replacement applies only to code compiled after it"
+  },
+  {
+   "left": "L4Factoidal.Syntax.freshTopSpec",
+   "caller": "L4Factoidal.Syntax.freshTopFast",
+   "left_sym": "lp_l4factoidal_L4Factoidal_Syntax_freshTopSpec",
+   "evidence": [
+    {
+     "holder": "lp_l4factoidal_L4Factoidal_Syntax_freshTopFast",
+     "cfile": "L4Factoidal/Syntax/TurtleSerialize.c",
+     "kind": "call"
+    }
+   ],
+   "allow": "twin: Syntax/TurtleSerialize.lean: with a budget above 0 fewer than 8 rows are covered, so the specification's filter is linear",
+   "status": "allowed",
+   "reason": "before-theorem",
+   "why": "declared at line 1320, above the @[csimp] theorem at line 1331: the replacement applies only to code compiled after it"
+  },
+  {
+   "left": "L4Factoidal.Syntax.readObject12",
+   "caller": "L4Factoidal.Syntax.readObject12Down",
+   "left_sym": "lp_l4factoidal_L4Factoidal_Syntax_readObject12",
+   "evidence": [
+    {
+     "holder": "lp_l4factoidal_L4Factoidal_Syntax_readObject12Down",
+     "cfile": "L4Factoidal/Syntax/NTriples.c",
+     "kind": "call"
+    }
+   ],
+   "allow": "leaf: Syntax/NTriples.lean, readObject12Down: an object that is not a triple term is read by the specification",
+   "status": "allowed",
+   "reason": "before-theorem",
+   "why": "declared at line 338, above the @[csimp] theorem at line 462: the replacement applies only to code compiled after it"
+  },
+  {
+   "left": "L4Factoidal.Syntax.readObjectList",
+   "caller": "L4Factoidal.Syntax.readPredicateObjectListSpec",
+   "left_sym": "lp_l4factoidal_L4Factoidal_Syntax_readObjectList",
+   "evidence": [
+    {
+     "holder": "lp_l4factoidal_L4Factoidal_Syntax_readPredicateObjectListSpec",
+     "cfile": "L4Factoidal/Syntax/Turtle.c",
+     "kind": "call"
+    }
+   ],
+   "allow": null,
+   "status": "spec-internal",
+   "reason": "before-theorem",
+   "why": "declared at line 1999, above the @[csimp] theorem at line 2128: the replacement applies only to code compiled after it"
+  },
+  {
+   "left": "L4Factoidal.Syntax.readPredicateObjectListMoreSpec",
+   "caller": "L4Factoidal.Syntax.readPredicateObjectListSpec",
+   "left_sym": "lp_l4factoidal_L4Factoidal_Syntax_readPredicateObjectListMoreSpec",
+   "evidence": [
+    {
+     "holder": "lp_l4factoidal_L4Factoidal_Syntax_readPredicateObjectListSpec",
+     "cfile": "L4Factoidal/Syntax/Turtle.c",
+     "kind": "call"
+    }
+   ],
+   "allow": null,
+   "status": "spec-internal",
+   "reason": "before-theorem",
+   "why": "declared at line 1999, above the @[csimp] theorem at line 2236: the replacement applies only to code compiled after it"
+  },
+  {
+   "left": "L4Factoidal.Syntax.readPredicateObjectListSpec",
+   "caller": "L4Factoidal.Syntax.readPredicateObjectListMoreSpec",
+   "left_sym": "lp_l4factoidal_L4Factoidal_Syntax_readPredicateObjectListSpec",
+   "evidence": [
+    {
+     "holder": "lp_l4factoidal_L4Factoidal_Syntax_readPredicateObjectListMoreSpec",
+     "cfile": "L4Factoidal/Syntax/Turtle.c",
+     "kind": "call"
+    }
+   ],
+   "allow": null,
+   "status": "spec-internal",
+   "reason": "before-theorem",
+   "why": "declared at line 2033, above the @[csimp] theorem at line 2231: the replacement applies only to code compiled after it"
+  },
+  {
+   "left": "L4Factoidal.Syntax.readTripleTerm",
+   "caller": "L4Factoidal.Syntax.readTtObject",
+   "left_sym": "lp_l4factoidal_L4Factoidal_Syntax_readTripleTerm",
+   "evidence": [
+    {
+     "holder": "lp_l4factoidal_L4Factoidal_Syntax_readTtObject",
+     "cfile": "L4Factoidal/Syntax/Turtle.c",
+     "kind": "call"
+    }
+   ],
+   "allow": null,
+   "status": "spec-internal",
+   "reason": "before-theorem",
+   "why": "declared at line 1057, above the @[csimp] theorem at line 1301: the replacement applies only to code compiled after it"
+  },
+  {
+   "left": "L4Factoidal.Syntax.readTtObject",
+   "caller": "L4Factoidal.Syntax.readTripleTerm",
+   "left_sym": "lp_l4factoidal_L4Factoidal_Syntax_readTtObject",
+   "evidence": [
+    {
+     "holder": "lp_l4factoidal_L4Factoidal_Syntax_readTripleTerm",
+     "cfile": "L4Factoidal/Syntax/Turtle.c",
+     "kind": "call"
+    }
+   ],
+   "allow": null,
+   "status": "spec-internal",
+   "reason": "before-theorem",
+   "why": "declared at line 1098, above the @[csimp] theorem at line 1305: the replacement applies only to code compiled after it"
+  },
+  {
+   "left": "L4Factoidal.Syntax.readTtObject",
+   "caller": "L4Factoidal.Syntax.readTripleTermDown",
+   "left_sym": "lp_l4factoidal_L4Factoidal_Syntax_readTtObject",
+   "evidence": [
+    {
+     "holder": "lp_l4factoidal_L4Factoidal_Syntax_readTripleTermDown",
+     "cfile": "L4Factoidal/Syntax/Turtle.c",
+     "kind": "call"
+    }
+   ],
+   "allow": "leaf: Syntax/Turtle.lean, readTripleTermDown: an object that is not a triple term",
+   "status": "allowed",
+   "reason": "before-theorem",
+   "why": "declared at line 1152, above the @[csimp] theorem at line 1305: the replacement applies only to code compiled after it"
+  },
+  {
+   "left": "L4Factoidal.Syntax.readTtObject",
+   "caller": "L4Factoidal.Syntax.readTtObjectLoop",
+   "left_sym": "lp_l4factoidal_L4Factoidal_Syntax_readTtObject",
+   "evidence": [
+    {
+     "holder": "lp_l4factoidal_L4Factoidal_Syntax_readTtObjectLoop",
+     "cfile": "L4Factoidal/Syntax/Turtle.c",
+     "kind": "call"
+    }
+   ],
+   "allow": "leaf: Syntax/Turtle.lean, readTtObjectLoop: an object that is not a triple term",
+   "status": "allowed",
+   "reason": "before-theorem",
+   "why": "declared at line 1290, above the @[csimp] theorem at line 1305: the replacement applies only to code compiled after it"
+  },
+  {
+   "left": "L4Factoidal.XML.entityHasWsCharRef",
+   "caller": "L4Factoidal.XML.entityWsLoop",
+   "left_sym": "lp_l4factoidal_L4Factoidal_XML_entityHasWsCharRef",
+   "evidence": [
+    {
+     "holder": "lp_l4factoidal_L4Factoidal_XML_entityWsLoop",
+     "cfile": "L4Factoidal/XML/Parser.c",
+     "kind": "call"
+    }
+   ],
+   "allow": "bound: XML/Parser.lean, entityWsLoop: the same bound",
+   "status": "allowed",
+   "reason": "before-theorem",
+   "why": "declared at line 1533, above the @[csimp] theorem at line 1606: the replacement applies only to code compiled after it"
+  },
+  {
+   "left": "L4Factoidal.XML.expandEntityValue",
+   "caller": "L4Factoidal.XML.expandEntityLoop",
+   "left_sym": "lp_l4factoidal_L4Factoidal_XML_expandEntityValue",
+   "evidence": [
+    {
+     "holder": "lp_l4factoidal_L4Factoidal_XML_expandEntityLoop",
+     "cfile": "L4Factoidal/XML/Parser.c",
+     "kind": "call"
+    }
+   ],
+   "allow": "bound: XML/Parser.lean, expandEntityLoop: the branch for a replacement text longer than expandPendingBound (2^64 characters)",
+   "status": "allowed",
+   "reason": "before-theorem",
+   "why": "declared at line 698, above the @[csimp] theorem at line 850: the replacement applies only to code compiled after it"
+  },
+  {
+   "left": "L4Factoidal.XML.parseChildren",
+   "caller": "L4Factoidal.XML.parseElement",
+   "left_sym": "lp_l4factoidal_L4Factoidal_XML_parseChildren",
+   "evidence": [
+    {
+     "holder": "lp_l4factoidal_L4Factoidal_XML_parseElement",
+     "cfile": "L4Factoidal/XML/Parser.c",
+     "kind": "call"
+    }
+   ],
+   "allow": null,
+   "status": "spec-internal",
+   "reason": "before-theorem",
+   "why": "declared at line 1884, above the @[csimp] theorem at line 2241: the replacement applies only to code compiled after it"
+  },
+  {
+   "left": "L4Factoidal.XML.parseElement",
+   "caller": "L4Factoidal.XML.parseChildren",
+   "left_sym": "lp_l4factoidal_L4Factoidal_XML_parseElement",
+   "evidence": [
+    {
+     "holder": "lp_l4factoidal_L4Factoidal_XML_parseChildren",
+     "cfile": "L4Factoidal/XML/Parser.c",
+     "kind": "call"
+    }
+   ],
+   "allow": null,
+   "status": "spec-internal",
+   "reason": "before-theorem",
+   "why": "declared at line 1771, above the @[csimp] theorem at line 2228: the replacement applies only to code compiled after it"
+  },
+  {
+   "left": "L4Factoidal.XSLT.insertBy",
+   "caller": "L4Factoidal.XSLT.sortStable",
+   "left_sym": "lp_l4factoidal_L4Factoidal_XSLT_insertBy",
+   "evidence": [
+    {
+     "holder": "lp_l4factoidal_L4Factoidal_XSLT_sortStable___redArg",
+     "cfile": "L4Factoidal/XSLT/Transform.c",
+     "kind": "call"
+    }
+   ],
+   "allow": null,
+   "status": "spec-internal",
+   "reason": "before-theorem",
+   "why": "declared at line 742, above the @[csimp] theorem at line 763: the replacement applies only to code compiled after it"
+  }
+ ],
+ "stale_allow": [],
+ "allow_errors": []
+}

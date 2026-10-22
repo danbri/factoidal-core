@@ -150,15 +150,18 @@ def runManifest (path : String) : IO Score := do
   match ← readOpt path with
   | none =>
       IO.println s!"  MISSING {path}"
-      return {}
+      return { fail := 1 }
   | some text =>
       match L4Factoidal.Syntax.parseTurtle text (some ("file://" ++ path)) .rdf12 with
       | .error e =>
           IO.println s!"  UNPARSED {path}: {e.msg} at {e.pos}"
-          return {}
+          return { fail := 1 }
       | .ok g =>
           let dir := dirname path
           let entries := entriesOf g
+          if entries.isEmpty then
+            IO.println s!"  EMPTY {path}: no test entries"
+            return { fail := 1 }
           let mut score : Score := {}
           for e in entries do
             let (name, out) := ← runOne dir g e

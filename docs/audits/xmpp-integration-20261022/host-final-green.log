@@ -1,0 +1,71 @@
+TAP version 13
+# Subtest: XMPP server is available through its documented package export
+ok 1 - XMPP server is available through its documented package export
+  ---
+  duration_ms: 3.556625
+  type: 'test'
+  ...
+# Subtest: XMPP host releases a session exactly once after a feed exception
+ok 2 - XMPP host releases a session exactly once after a feed exception
+  ---
+  duration_ms: 8.436208
+  type: 'test'
+  ...
+# Subtest: XMPP host does not infer buffered input from absence of output
+ok 3 - XMPP host does not infer buffered input from absence of output
+  ---
+  duration_ms: 0.690875
+  type: 'test'
+  ...
+# Subtest: XMPP host limits the residual input even when the engine also sends a reply
+ok 4 - XMPP host limits the residual input even when the engine also sends a reply
+  ---
+  duration_ms: 1.166833
+  type: 'test'
+  ...
+# Subtest: XMPP host refuses an engine lacking the residual-buffer contract
+ok 5 - XMPP host refuses an engine lacking the residual-buffer contract
+  ---
+  duration_ms: 2.045375
+  type: 'test'
+  ...
+# Subtest: XMPP host rejects a partial TLS configuration before opening an engine server
+ok 6 - XMPP host rejects a partial TLS configuration before opening an engine server
+  ---
+  duration_ms: 0.846416
+  type: 'test'
+  ...
+# Subtest: XMPP host releases its engine server when TLS setup fails
+ok 7 - XMPP host releases its engine server when TLS setup fails
+  ---
+  duration_ms: 19.570917
+  type: 'test'
+  ...
+# Subtest: XMPP host closes a TCP peer that has not started its TLS handshake
+ok 8 - XMPP host closes a TCP peer that has not started its TLS handshake
+  ---
+  duration_ms: 12.791583
+  type: 'test'
+  ...
+# Subtest: XMPP host releases its engine server when state-directory initialization fails
+ok 9 - XMPP host releases its engine server when state-directory initialization fails
+  ---
+  duration_ms: 4.320583
+  type: 'test'
+  ...
+# Subtest: XMPP host serializes roster snapshots and waits for persistence before closing
+ok 10 - XMPP host serializes roster snapshots and waits for persistence before closing
+  ---
+  duration_ms: 6.550458
+  type: 'test'
+  ...
+1..10
+# tests 10
+# suites 0
+# pass 10
+# fail 0
+# cancelled 0
+# skipped 0
+# todo 0
+# duration_ms 216.05875
+

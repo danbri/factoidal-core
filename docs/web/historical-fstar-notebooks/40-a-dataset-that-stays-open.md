@@ -9,6 +9,14 @@ status: published
 tests: tests/hub/post40_test.mjs
 ---
 
+> Historical behavior notice, 22 October 2026: the original examples below
+> remain as an archive. With the current checked `owlIsConsistent` reader,
+> both consistency calls return unknown because `owl:disjointWith` is
+> unsupported. The inserted contradiction remains an OWL inconsistency;
+> the archived claim that this API reports it is no longer current.
+> See the [current inference page](../../hub/inference/) and
+> [integration record](https://github.com/danbri/factoidal-core/pull/4).
+
 [Post 38](../38-one-triple-at-a-time/) closed on `fn.l4Parse`/`fn.l4Query`:
 typed wrappers over the [dataset-handle
 ABI](https://github.com/danbri/factoidal/issues/585) (`Wasm/Ops/Handles.lean`)

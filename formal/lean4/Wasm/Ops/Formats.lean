@@ -433,7 +433,8 @@ header row. -/
 -- The dataset `csvwToRdf` writes, or its error text; the dataset-handle op
 -- `datasetFromCsvw` (`Wasm/Ops/DatasetFull.lean`) stores it without the
 -- N-Quads text.
-def csvwDataset (csv metadataJson optsJson : String) : Except String Dataset :=
+def csvwDatasetResult (csv metadataJson optsJson : String) :
+    Except String (L4Factoidal.CSVW.ConversionResult Dataset) :=
   let opts := readOptions optsJson
   let mode := (optString opts "mode").getD "standard"
   let base := (optString opts "base").getD "file:///"
@@ -452,13 +453,39 @@ def csvwDataset (csv metadataJson optsJson : String) : Except String Dataset :=
     let mbase := L4Factoidal.CSVW.effectiveBase base ctx
     let pairs := group.tables.map (fun t =>
       (t, L4Factoidal.CSVW.read (L4Factoidal.CSVW.effectiveDialect group t).resolve csv))
-    let triples := L4Factoidal.CSVW.convert mbase ctx group (mode == "minimal") pairs
-    .ok { default := triples, named := [] }
+    let converted := L4Factoidal.CSVW.convert mbase ctx group (mode == "minimal") pairs
+    .ok { value? := converted.value?.map (fun triples => { default := triples, named := [] }),
+          issues := converted.issues }
+
+private def csvwUnsupported (issues : List L4Factoidal.CSVW.ConversionIssue) : String :=
+  "unsupported-syntax: csvwToRdf: " ++ String.intercalate "; "
+    ((issues.filter (·.kind == .unsupported)).map (·.message))
+
+/-- Dataset-handle callers cannot store a partial conversion. Successful
+conversion diagnostics remain available through `csvwDatasetResult`. -/
+def csvwDataset (csv metadataJson optsJson : String) : Except String Dataset := do
+  let converted ← csvwDatasetResult csv metadataJson optsJson
+  match converted.value? with
+  | some ds => .ok ds
+  | none => .error (csvwUnsupported converted.issues)
+
+private def csvwIssueJson (issue : L4Factoidal.CSVW.ConversionIssue) : Json :=
+  .object [("kind", .string (match issue.kind with
+    | .warning => "warning" | .invalidValue => "invalidValue" | .unsupported => "unsupported")),
+    ("message", .string issue.message), ("table", .string issue.table),
+    ("row", .number (toString issue.row)), ("column", .string issue.column)]
 
 def csvwToRdf (csv metadataJson optsJson : String) : String :=
-  match csvwDataset csv metadataJson optsJson with
-  | .ok ds => nquadsEnvelope ds
+  match csvwDatasetResult csv metadataJson optsJson with
   | .error e => errJson e
+  | .ok converted =>
+    let diagnostics := Json.array (converted.issues.map csvwIssueJson)
+    match converted.value? with
+    | some ds => okWith [("nquads", .string (Dataset.toCanonicalNQuads ds)),
+        ("diagnostics", diagnostics)]
+    | none => (Json.object [("ok", .bool false),
+        ("error", .string (csvwUnsupported converted.issues)),
+        ("diagnostics", diagnostics)]).toString
 
 /-! ## RIF Core -/
 
@@ -466,9 +493,17 @@ def csvwToRdf (csv metadataJson optsJson : String) : String :=
 RIF-XML rules, or the error text of `rifEval`. -/
 def rifSaturate (rifXml : String) (ds : Dataset) : Except String (Graph × Graph) :=
   let premise := ds.default
-  match L4Factoidal.RIF.Saturate.saturateWithProgram rifXml premise with
+  match L4Factoidal.RIF.Xml.parseRifProgram rifXml with
   | none => .error "RIF-XML parse error (RIF.Xml.parseRifProgram returned none)"
-  | some saturated => .ok (premise, saturated)
+  | some doc =>
+    if !doc.imports.isEmpty then
+      .error "unsupported-syntax: rifEval: declared imports require a resolver; this pure operation has none"
+    else
+      let saturated := L4Factoidal.RIF.Saturate.saturateGraph "rules" doc.rules premise
+      match saturated.completeGraph? with
+      | some graph => .ok (premise, graph)
+      | none => .error ((if saturated.blocked || saturated.capped then "incomplete-search: "
+          else "unsupported-syntax: ") ++ "rifEval: " ++ saturated.diagnostic)
 
 /-- `rifEval(rifXml, nquads)`: parse RIF-XML rules, forward-chain over the
 default graph of the premise to the round bound of

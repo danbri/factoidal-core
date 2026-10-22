@@ -1,0 +1,136 @@
+Lean tail-recursion audit
+=========================
+C files scanned: 981   functions defined: 79570   Lean declarations indexed: 22721
+@[csimp] replacements resolved by full name: 223   not resolved: 2
+  csimp not resolved: formal/lean4/L4Factoidal/JSON/Serialize.lean:123 (no `@lhs = @rhs` equation found)
+  csimp not resolved: formal/lean4/L4Factoidal/RDF/StoreCapabilities.lean:321 (no `@lhs = @rhs` equation found)
+Type aliases read as list/array/string types: 77 (BMap, BNodeId, Bgp, BgpIndexCache, Binding, Bindings, BlobBytes, BnodeSubst, ...; full list in --json)
+Recursive functions whose recursion is NOT a `goto _start` loop: 2390
+  with a surviving self-call or self-closure: 986   only through a cycle: 1404
+Mutual-recursion cycles (strongly connected components, per module): 359
+
+By class (C functions / distinct declarations)
+----------------------------------------------
+  length     1429  1148   gated
+  depth       718   299   gated
+  counter       7     7   gated
+  bounded      82    67
+  replaced    153   152
+  unknown       1     1   gated
+
+By area (length / depth / counter / bounded / replaced / unknown)
+----------------------------------------------------------------
+  XMPP                          3    0    0    0    0    0
+  SPARQL                      211   39    0    7   17    0
+  RDF parsers/serializers      76   13    0   10   28    0
+  Shardborough (storage)       94    2    1   15   14    0
+  JSON-LD                     123   17    0   12   35    0
+  XML                          46   20    0    0   13    0
+  XSD                          30   16    1    0    2    0
+  OWL                         117   39    0   12   15    0
+  SHACL/ShEx                  152  106    1    2    2    0
+  XPath/XSLT                   94   74    0    0    3    0
+  CSVW                         16    1    0    0    0    0
+  everything else             467  391    4   24   24    1
+
+Input-proportional recursions (class length and depth), ranked by risk
+----------------------------------------------------------------------
+risk declaration                                      class    area                     lean file:line
+9    L4Factoidal_JSONLD_expandProperty                length   JSON-LD                  formal/lean4/L4Factoidal/JSONLD/Expand.lean:1512
+9    L4Factoidal_Syntax_readStringLiteralBodyLegacy   length   RDF parsers/serializers  formal/lean4/L4Factoidal/Syntax/Lexing.lean:422
+9    L4Factoidal_XPath_Full_tokenize                  length   XPath/XSLT               formal/lean4/L4Factoidal/XPath/Expr.lean:153
+9    L4Factoidal_XSLT_readSeq                         length   XPath/XSLT               formal/lean4/L4Factoidal/XSLT/Transform.lean:265
+9    L4Factoidal_JSONSchema_percentDecode_go          length   everything else          formal/lean4/L4Factoidal/JSONSchema/Validate.lean:231
+9    L4Wasm_decodePatternTerm                         length   everything else          formal/lean4/Wasm/Abi.lean:371
+8    L4Factoidal_Syntax_readAnnotations               length   RDF parsers/serializers  formal/lean4/L4Factoidal/Syntax/Turtle.lean:1668
+8    L4Factoidal_XML_parseSubset                      length   XML                      formal/lean4/L4Factoidal/XML/Parser.lean:3294
+7    L4Factoidal_JSONLD_dropFfFields                  length   JSON-LD                  formal/lean4/L4Factoidal/JSONLD/Expand.lean:784
+7    L4Factoidal_JSONLD_expandAliasedField            length   JSON-LD                  formal/lean4/L4Factoidal/JSONLD/Expand.lean:1500
+7    L4Factoidal_JSONLD_expandFieldsList              length   JSON-LD                  formal/lean4/L4Factoidal/JSONLD/Expand.lean:916
+7    L4Factoidal_JSONLD_expandFieldsRW                length   JSON-LD                  formal/lean4/L4Factoidal/JSONLD/ToRdf.lean:1254
+7    L4Factoidal_JSONLD_expandGraphIdMap              length   JSON-LD                  formal/lean4/L4Factoidal/JSONLD/Expand.lean:1466
+7    L4Factoidal_JSONLD_expandGraphIdMapOne           length   JSON-LD                  formal/lean4/L4Factoidal/JSONLD/Expand.lean:1477
+7    L4Factoidal_JSONLD_expandGraphIndexKwMap         length   JSON-LD                  formal/lean4/L4Factoidal/JSONLD/Expand.lean:1318
+7    L4Factoidal_JSONLD_expandGraphIndexMap           length   JSON-LD                  formal/lean4/L4Factoidal/JSONLD/Expand.lean:1336
+7    L4Factoidal_JSONLD_expandIdMap                   length   JSON-LD                  formal/lean4/L4Factoidal/JSONLD/Expand.lean:1366
+7    L4Factoidal_JSONLD_expandItem                    length   JSON-LD                  formal/lean4/L4Factoidal/JSONLD/Expand.lean:1582
+7    L4Factoidal_JSONLD_expandLanguageMap             length   JSON-LD                  formal/lean4/L4Factoidal/JSONLD/Expand.lean:545
+7    L4Factoidal_JSONLD_expandListGo                  length   JSON-LD                  formal/lean4/L4Factoidal/JSONLD/ToRdf.lean:1212
+7    L4Factoidal_JSONLD_expandNestArray               length   JSON-LD                  formal/lean4/L4Factoidal/JSONLD/Expand.lean:1066
+7    L4Factoidal_JSONLD_expandOneField                length   JSON-LD                  formal/lean4/L4Factoidal/JSONLD/Expand.lean:934
+7    L4Factoidal_JSONLD_expandOrdinaryProperty        length   JSON-LD                  formal/lean4/L4Factoidal/JSONLD/Expand.lean:1086
+7    L4Factoidal_JSONLD_expandPlainIndexMap           length   JSON-LD                  formal/lean4/L4Factoidal/JSONLD/Expand.lean:1295
+7    L4Factoidal_JSONLD_expandPropertyIndexMap        length   JSON-LD                  formal/lean4/L4Factoidal/JSONLD/Expand.lean:1268
+7    L4Factoidal_JSONLD_expandReverseBlockFields      length   JSON-LD                  formal/lean4/L4Factoidal/JSONLD/Expand.lean:1155
+7    L4Factoidal_JSONLD_expandReverseEntriesW         length   JSON-LD                  formal/lean4/L4Factoidal/JSONLD/ToRdf.lean:1285
+7    L4Factoidal_JSONLD_expandReverseProperty         length   JSON-LD                  formal/lean4/L4Factoidal/JSONLD/Expand.lean:1128
+7    L4Factoidal_JSONLD_expandTypeMap                 length   JSON-LD                  formal/lean4/L4Factoidal/JSONLD/Expand.lean:1395
+7    L4Factoidal_OWL_FS_parseCEBody                   length   OWL                      formal/lean4/L4Factoidal/OWL/FunctionalSyntax.lean:383
+7    L4Factoidal_OWL_OwlXml_readCE                    depth    OWL                      formal/lean4/L4Factoidal/OWL/OwlXml.lean:293
+7    L4Factoidal_OWL_OwlXml_readObjCard               length   OWL                      formal/lean4/L4Factoidal/OWL/OwlXml.lean:353
+7    L4Factoidal_RDF_patternTermShort                 length   RDF parsers/serializers  formal/lean4/L4Factoidal/RDF/Pretty.lean:132
+7    L4Factoidal_Syntax_readCollection                length   RDF parsers/serializers  formal/lean4/L4Factoidal/Syntax/Turtle.lean:1577
+7    L4Factoidal_Syntax_readCollectionCells           length   RDF parsers/serializers  formal/lean4/L4Factoidal/Syntax/Turtle.lean:1608
+7    L4Factoidal_Syntax_readObject                    length   RDF parsers/serializers  formal/lean4/L4Factoidal/Syntax/Turtle.lean:1503
+7    L4Factoidal_Syntax_readObjectListRev             length   RDF parsers/serializers  formal/lean4/L4Factoidal/Syntax/Turtle.lean:1638
+7    L4Factoidal_Syntax_readPredicateObjectList       length   RDF parsers/serializers  formal/lean4/L4Factoidal/Syntax/Turtle.lean:1726
+7    L4Factoidal_Syntax_readReifiedTriple             length   RDF parsers/serializers  formal/lean4/L4Factoidal/Syntax/Turtle.lean:1454
+7    L4Factoidal_Syntax_readRtObject                  length   RDF parsers/serializers  formal/lean4/L4Factoidal/Syntax/Turtle.lean:1410
+  ... 2107 more (use --json for the full table)
+
+Mutual-recursion cycles (largest 20)
+------------------------------------
+  size 49  length   L4Factoidal_SPARQL_pAddExpr, L4Factoidal_SPARQL_pAddRest, L4Factoidal_SPARQL_pAggregate, L4Factoidal_SPARQL_pAndExpr
+  size 36  length   L4Factoidal_SPARQL_QueryPattern_lowerWith, L4Factoidal_SPARQL_QueryPattern_lowerWith, L4Factoidal_SPARQL_QueryPattern_lowerWith, L4Factoidal_SPARQL_QueryPattern_lowerWith
+  size 26  length   L4Factoidal_JSONLD_expandAliasedField, L4Factoidal_JSONLD_expandDefaultItems, L4Factoidal_JSONLD_expandFieldsList, L4Factoidal_JSONLD_expandGraphContainerItems
+  size 24  depth    L4Factoidal_RML_instReprFnExec_repr__1, L4Factoidal_RML_instReprFnExec_repr__2, L4Factoidal_RML_instReprFnExec_repr__3, L4Factoidal_RML_instReprFnExec_repr__4
+  size 24  depth    L4Factoidal_RML_instReprFnInput_repr__1, L4Factoidal_RML_instReprFnInput_repr__2, L4Factoidal_RML_instReprFnInput_repr__3, L4Factoidal_RML_instReprFnInput_repr__4
+  size 24  depth    L4Factoidal_RML_instReprGatherMember_repr__1, L4Factoidal_RML_instReprGatherMember_repr__2, L4Factoidal_RML_instReprGatherMember_repr__3, L4Factoidal_RML_instReprGatherMember_repr__4
+  size 24  depth    L4Factoidal_RML_instReprGatherSpec_repr__1, L4Factoidal_RML_instReprGatherSpec_repr__2, L4Factoidal_RML_instReprGatherSpec_repr__3, L4Factoidal_RML_instReprGatherSpec_repr__4
+  size 24  depth    L4Factoidal_RML_instReprJoinCondition_repr__1, L4Factoidal_RML_instReprJoinCondition_repr__2, L4Factoidal_RML_instReprJoinCondition_repr__3, L4Factoidal_RML_instReprJoinCondition_repr__4
+  size 24  depth    L4Factoidal_RML_instReprQuotedSpec_repr__1, L4Factoidal_RML_instReprQuotedSpec_repr__2, L4Factoidal_RML_instReprQuotedSpec_repr__3, L4Factoidal_RML_instReprQuotedSpec_repr__4
+  size 24  depth    L4Factoidal_RML_instReprTermMapForm_repr__1, L4Factoidal_RML_instReprTermMapForm_repr__2, L4Factoidal_RML_instReprTermMapForm_repr__3, L4Factoidal_RML_instReprTermMapForm_repr__4
+  size 24  depth    L4Factoidal_RML_instReprTermMap_repr__1, L4Factoidal_RML_instReprTermMap_repr__2, L4Factoidal_RML_instReprTermMap_repr__3, L4Factoidal_RML_instReprTermMap_repr__4
+  size 21  length   L4Factoidal_SHACL_collectShapeViolations, L4Factoidal_SHACL_evalAggregate, L4Factoidal_SHACL_evalOneConstraint, L4Factoidal_SHACL_qualifyingCount
+  size 21  length   L4Factoidal_XPath_Full_pAddTail, L4Factoidal_XPath_Full_pAdditive, L4Factoidal_XPath_Full_pAnd, L4Factoidal_XPath_Full_pAndTail
+  size 19  depth    L4Factoidal_CL_instReprBinding_repr__1, L4Factoidal_CL_instReprBinding_repr__2, L4Factoidal_CL_instReprBinding_repr__3, L4Factoidal_CL_instReprBinding_repr__4
+  size 19  depth    L4Factoidal_CL_instReprSentence_repr__1, L4Factoidal_CL_instReprSentence_repr__2, L4Factoidal_CL_instReprSentence_repr__3, L4Factoidal_CL_instReprSentence_repr__4
+  size 19  depth    L4Factoidal_CL_instReprSeqItem_repr__1, L4Factoidal_CL_instReprSeqItem_repr__2, L4Factoidal_CL_instReprSeqItem_repr__3, L4Factoidal_CL_instReprSeqItem_repr__4
+  size 19  depth    L4Factoidal_CL_instReprTerm_repr__1, L4Factoidal_CL_instReprTerm_repr__2, L4Factoidal_CL_instReprTerm_repr__3, L4Factoidal_CL_instReprTerm_repr__4
+  size 17  depth    L4Factoidal_ShEx_instReprGroup_repr__1, L4Factoidal_ShEx_instReprGroup_repr__2, L4Factoidal_ShEx_instReprGroup_repr__3, L4Factoidal_ShEx_instReprGroup_repr__4
+  size 17  depth    L4Factoidal_ShEx_instReprShapeExpr_repr__1, L4Factoidal_ShEx_instReprShapeExpr_repr__2, L4Factoidal_ShEx_instReprShapeExpr_repr__3, L4Factoidal_ShEx_instReprShapeExpr_repr__4
+  size 17  depth    L4Factoidal_ShEx_instReprShape_repr__1, L4Factoidal_ShEx_instReprShape_repr__2, L4Factoidal_ShEx_instReprShape_repr__3, L4Factoidal_ShEx_instReprShape_repr__4
+
+Method limits: see the docstring at the top of this file.
+
+Allow list: 1406 lines, 30 marked (a) PENDING, 0 marked UNTRIAGED, 108 match no gated row
+
+GATE PASS: every recursive declaration of class length/depth/counter/unknown is listed in tools/lean-tail-recursion-allow.txt
+
+Running tools/lean-csimp-reach.py --gate
+Lean @[csimp] reach check
+=========================
+C files scanned: 981 (ignored, no Lean source: 0)   definitions: 88743   Lean modules: 1121
+@[csimp] theorems found: 226   distinct left sides: 225   not resolved: 0
+Calls of a replacement found in the emitted C (the positive control): 653
+  left side with two theorems: L4Factoidal.RDF.isIri (L4Factoidal/RDF/Core.lean:72, L4Factoidal/Syntax/NTriples.lean:73)
+Findings (a left side that compiled code still reaches): 98
+  new: 0   allowed: 30   suppressed, held by a specification nothing reaches: 68
+  by reason: after-theorem 2, before-theorem 16, not-imported 12
+Allow list: 30 lines, 0 match no finding, 0 malformed
+
+
+GATE PASS: every left side that compiled code still reaches is on tools/lean-csimp-reach-allow.txt with a reason
+Lean @[csimp] reach check
+=========================
+C files scanned: 981 (ignored, no Lean source: 0)   definitions: 88743   Lean modules: 1121
+@[csimp] theorems found: 226   distinct left sides: 225   not resolved: 0
+Calls of a replacement found in the emitted C (the positive control): 653
+  left side with two theorems: L4Factoidal.RDF.isIri (L4Factoidal/RDF/Core.lean:72, L4Factoidal/Syntax/NTriples.lean:73)
+Findings (a left side that compiled code still reaches): 98
+  new: 0   allowed: 30   suppressed, held by a specification nothing reaches: 68
+  by reason: after-theorem 2, before-theorem 16, not-imported 12
+Allow list: 30 lines, 0 match no finding, 0 malformed
+
+
+GATE PASS: every left side that compiled code still reaches is on tools/lean-csimp-reach-allow.txt with a reason

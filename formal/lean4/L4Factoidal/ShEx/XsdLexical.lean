@@ -9,17 +9,11 @@ validation suite spends 144 entries on it, one per shape of
 `"1.0"^^xsd:integer`, `"NaN"^^xsd:decimal`, `"+1"^^xsd:negativeInteger`
 and their kin, every one of which the port accepted.
 
-## Where the lexical spaces live, and why here
+## Shared implementation
 
-The XSD lexical-space predicates are in `CSVW/Formats.lean`, because
-csv2rdf is where they were first needed. This module REUSES them
-rather than restating them — a second copy is exactly the cobbling
-rule #7 forbids, and two copies of a lexical space drift silently.
-
-Their proper home is a shared `Xsd` module that neither CSVW nor ShEx
-owns. That move is deferred rather than forgotten: it touches every
-CSVW call site, and the CSVW suites are at 270 pass, 0 fail, so the
-move should be its own landing with those suites as the gate.
+XSD.Lexical owns edition-sensitive date and numeric lexical decisions.
+ShEx's adapter selects the XSD 1.0 reading used by its corpus. Unknown
+and context-dependent datatypes remain explicit gaps.
 
 ## An UNMODELLED datatype imposes no lexical check
 
@@ -29,11 +23,12 @@ here has written down. `none` is not `true`: the caller keeps the
 behaviour it had, and the gap is a `none` that can be counted rather
 than a silent `true` that cannot.
 -/
-import L4Factoidal.CSVW.Formats
+import L4Factoidal.XSD.Lexical
+import L4Factoidal.Regex.XPath
 
 namespace L4Factoidal.ShEx
 
-open L4Factoidal.CSVW
+open L4Factoidal.XSD
 
 def xsdNs : String := "http://www.w3.org/2001/XMLSchema#"
 
@@ -53,12 +48,9 @@ def stringLikeBases : List String :=
 
 def binaryBases : List String := ["hexBinary", "base64Binary"]
 
-private def isHexDigit (c : Char) : Bool :=
-  ('0' ≤ c && c ≤ '9') || ('a' ≤ c && c ≤ 'f') || ('A' ≤ c && c ≤ 'F')
-
 /-- `xsd:boolean` (§3.3.2). -/
 def isBooleanLexical (s : String) : Bool :=
-  s == "true" || s == "false" || s == "1" || s == "0"
+  (parseBooleanLex s).isSome
 
 /-- The lexical-space decision for one datatype IRI. `none` means this
     module does not decide that datatype — see the header. -/
@@ -68,38 +60,7 @@ def inXsdLexicalSpace (dtIri lex : String) : Option Bool :=
   | some base =>
       if base == "boolean" then some (isBooleanLexical lex)
       else if stringLikeBases.contains base then some true
-      else if base == "hexBinary" then
-        some (lex.toList.length % 2 == 0 && lex.toList.all isHexDigit)
-      else if base == "base64Binary" then none
-      else if base == "float" || base == "double" then
-        -- XSD 1.1 admits `+INF`; XSD 1.0 does not, and the ShEx
-        -- validation corpus states the 1.0 reading —
-        -- `"+INF"^^xsd:float` is `float-pINF_fail`, a
-        -- `sht:ValidationFailure`. `CSVW.Formats.isDoubleLexical`
-        -- keeps the 1.1 reading for csv2rdf; the difference is
-        -- confined to this branch rather than resolved by changing a
-        -- lexical space two specifications disagree about.
-        some (lex != "+INF" && isXsdNumericLexical base lex)
-      else if isNumericBase base then some (isXsdNumericLexical base lex)
-      else if isDateBase base then
-        some (match parseCanonicalDate base lex with
-              | .valid _ => true
-              | _        => false)
-      else if isDurationBase base then
-        -- The two RESTRICTED durations are not just `xsd:duration`
-        -- with a different name: a `dayTimeDuration` may carry no
-        -- year or month field, and a `yearMonthDuration` may carry
-        -- nothing else.
-        some (isDurationLexical lex &&
-              (if base == "dayTimeDuration" then
-                 !(lex.toList.contains 'Y') && !(lex.toList.contains 'M' &&
-                   (match (lex.toList.findIdx? (· == 'T')) with
-                    | some ti => (lex.toList.findIdx? (· == 'M')).any (fun mi => mi < ti)
-                    | none    => true))
-               else if base == "yearMonthDuration" then
-                 !(lex.toList.contains 'T') && !(lex.toList.contains 'D')
-               else true))
-      else none
+      else validLexicalFor .xsd10 base lex
 
 /-! ## The numeric-digit facets (§5.4.6)
 
@@ -130,12 +91,13 @@ def digitFacetsApply (dtIri lex : String) : Bool :=
 /-- The integer-part and fraction-part digit runs of a decimal lexical
     form, `none` when it is not one. -/
 def decimalDigits (s : String) : Option (List Char × List Char) :=
-  if !isDecimalLexical s then none
+  if (parseDecimalLex s).isNone then none
   else
     let body := if s.startsWith "-" || s.startsWith "+" then s.toList.drop 1 else s.toList
-    match splitFirst '.' body with
-    | some (ip, fp) => some (ip, fp)
-    | none          => some (body, [])
+    match (String.ofList body).splitOn "." with
+    | [ip, fp] => some (ip.toList, fp.toList)
+    | [ip] => some (ip.toList, [])
+    | _ => none
 
 /-- `totalDigits`: the count of digits in the value, with leading
     zeros of the integer part and trailing zeros of the fraction NOT
@@ -150,7 +112,6 @@ def totalDigitsOf (s : String) : Option Nat :=
 /-- `fractionDigits`: the digits after the point, trailing zeros not
     counted for the same reason. -/
 def fractionDigitsOf (s : String) : Option Nat :=
-  (decimalDigits s).map (fun (_, fp) =>
-    ((fp.reverse.dropWhile (· == '0')).reverse).length)
+  (parseDecimalLex s).map Dec.fractionDigits
 
 end L4Factoidal.ShEx

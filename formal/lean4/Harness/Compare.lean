@@ -1,7 +1,7 @@
 /-
 Harness.Compare — PURE comparison of a SPARQL query's actual result
-with the expected one, reproducing `bin/w3c-runner/w3c_runner.ml`'s
-`run_query_eval_test` rules clause for clause:
+with the expected one, following `bin/w3c-runner/w3c_runner.ml`'s
+`run_query_eval_test` rules, with XSD value comparison for numeric results:
 
   * SELECT: the two solution sequences compare as MULTISETS under a
     blank-node BIJECTION (the F* `solutions_isomorphic_outcome`).
@@ -19,7 +19,8 @@ with the expected one, reproducing `bin/w3c-runner/w3c_runner.ml`'s
     `"2.0E-1"^^xsd:double` matches an engine's `"2E-1"`. The W3C
     expected files record one implementation's lexical conventions
     (`"1050"^^xsd:double`, `"1.0e6"`), which no canonical formatter
-    reproduces; the tests that pass only through this rule are named
+    reproduces. Numeric matching now uses XSD IEEE values instead of scaled
+    decimals; the tests that pass only through this rule are named
     in `PORT_NOTES.md`.
   * `.csv` expected files are lossy (every value is written as a plain
     string, blank-node labels are not stable), so the CSV comparison
@@ -59,15 +60,13 @@ def bmapExtend (m : BMap) (e a : String) : Option BMap :=
 /-- A term comparator threading the bijection. -/
 abbrev TermCmp := BMap → Term → Term → Option BMap
 
-/-- The F* runner's `numeric_literal_equal`: two literals of the same
-numeric datatype (integer, decimal, float, double) are equal when
-their VALUES are, read through the engine's own scaled-decimal parser
-(`parseDoubleToScaled`, which also accepts a lowercase `e`). -/
+/-- Same-datatype numeric value leniency. IEEE-equivalent spellings match;
+    adjacent floating values and different result datatypes do not. This shares
+    the XSD value layer with evaluation, so independent arithmetic bit-vector
+    tests remain necessary; it is not a separate arithmetic correctness oracle. -/
 def numericLiteralEqual (e a : WfLiteral) : Bool :=
   e.val.datatype == a.val.datatype && isNumericDatatype e.val.datatype &&
-  (match parseDoubleToScaled e.val.lexicalForm, parseDoubleToScaled a.val.lexicalForm with
-   | some x, some y => x.cmp y == 0
-   | _, _ => false)
+  (L4Factoidal.Fn.Comparison.literalCompare e.val a.val .eq == some true)
 
 /-- `Term.eqb`, or value-equal numeric literals (`term_equal`). -/
 def termEqualLenient : Term → Term → Bool

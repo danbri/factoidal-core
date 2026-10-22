@@ -1,0 +1,12 @@
+{
+  "command": [
+    "/Users/danbri/.elan/bin/lake",
+    "build",
+    "L4Factoidal.SPARQL.AggStreamTests",
+    "L4Factoidal.Storage.Sbm11.IdAggTests"
+  ],
+  "cwd": "/Users/danbri/working/sandbox/october/tpac/codex-npm-review/integrate-pr1/formal/lean4",
+  "exit_code": 1,
+  "seconds": 34.47,
+  "log": "/Users/danbri/working/sandbox/october/tpac/codex-npm-review/logs/pr1-aggstream-targeted-build.log"
+}

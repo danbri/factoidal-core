@@ -1,0 +1,27 @@
+{
+  "command": [
+    "/opt/homebrew/Cellar/node@22/22.22.2_2/bin/node",
+    "--test",
+    "--test-concurrency=2",
+    "tests/hub/hub_canonical_test.mjs",
+    "tests/hub/hub_importers_test.mjs",
+    "tests/hub/hub_index_test.mjs",
+    "tests/hub/hub_inference_test.mjs",
+    "tests/hub/hub_rdf_syntaxes_test.mjs",
+    "tests/hub/hub_servers_test.mjs",
+    "tests/hub/hub_sparql_test.mjs",
+    "tests/hub/hub_validation_test.mjs",
+    "tests/hub/post30_test.mjs",
+    "tests/hub/post40_test.mjs"
+  ],
+  "cwd": "/Users/danbri/working/sandbox/october/tpac/codex-npm-review/integrate-core",
+  "node": "v22.22.2",
+  "source": "ebe0188a3ae8d5a1d58b80b0356c50a6dfd6cf50",
+  "nodeBin": "/opt/homebrew/Cellar/node@22/22.22.2_2/bin",
+  "npmCache": "/private/tmp/factoidal-public-pack-cache",
+  "started": "2026-10-22T19:02:21.143Z",
+  "elapsedMs": 15985,
+  "exit": 0,
+  "signal": null,
+  "error": null
+}

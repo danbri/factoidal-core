@@ -1,0 +1,85 @@
+PASS direct self-call                           exit 1; T_walk=length
+FAIL tail self-call is a loop                   exit 1; no rows
+Lean tail-recursion audit
+=========================
+C files scanned: 1   functions defined: 1   Lean declarations indexed: 1
+@[csimp] replacements resolved by full name: 0   not resolved: 0
+Recursive functions whose recursion is NOT a `goto _start` loop: 0
+  with a surviving self-call or self-closure: 0   only through a cycle: 0
+Mutual-recursion cycles (strongly connected components, per module): 0
+
+By class (C functions / distinct declarations)
+----------------------------------------------
+  length        0     0   gated
+  depth         0     0   gated
+  counter       0     0   gated
+  bounded       0     0
+  replaced      0     0
+  unknown       0     0   gated
+
+By area (length / depth / counter / bounded / replaced / unknown)
+----------------------------------------------------------------
+
+Input-proportional recursions (class length and depth), ranked by risk
+----------------------------------------------------------------------
+risk declaration                                      class    area                     lean file:line
+
+Method limits: see the docstring at the top of this file.
+wrote /var/folders/8l/h5b0tb8s6tlft0wb4fl3w1y80000gn/T/tailrec-fixture-byi3ug_3/out.json
+
+Allow list: 0 lines, 0 marked (a) PENDING, 0 marked UNTRIAGED, 0 match no gated row
+
+GATE PASS: every recursive declaration of class length/depth/counter/unknown is listed in allow.txt
+
+Running tools/lean-csimp-reach.py --gate
+GATE FAIL: tools/lean-csimp-reach.py --gate exited 2
+
+PASS mutual pair                        defect  exit 1; T_isEven=length, T_isOdd=length
+PASS ___redArg wrapper                          exit 1; T_count=length
+PASS csimp namesake                     defect  exit 1; A_insertBy=replaced, B_insertBy=length
+PASS namespace word in a doc comment    defect  exit 1; T_readRest=length
+PASS length alias with fuel             defect  exit 1; T_scan=length
+PASS section end                        defect  exit 1; T_b=length
+PASS unknown is gated                   defect  exit 1; Mystery_f=unknown
+PASS closure body cycle                 defect  exit 1; T_walkTree=length, T_walkTree=length
+FAIL allow list line                            exit 1; T_walk=length
+Lean tail-recursion audit
+=========================
+C files scanned: 1   functions defined: 1   Lean declarations indexed: 1
+@[csimp] replacements resolved by full name: 0   not resolved: 0
+Recursive functions whose recursion is NOT a `goto _start` loop: 1
+  with a surviving self-call or self-closure: 1   only through a cycle: 0
+Mutual-recursion cycles (strongly connected components, per module): 0
+
+By class (C functions / distinct declarations)
+----------------------------------------------
+  length        1     1   gated
+  depth         0     0   gated
+  counter       0     0   gated
+  bounded       0     0
+  replaced      0     0
+  unknown       0     0   gated
+
+By area (length / depth / counter / bounded / replaced / unknown)
+----------------------------------------------------------------
+  everything else               1    0    0    0    0    0
+
+Input-proportional recursions (class length and depth), ranked by risk
+----------------------------------------------------------------------
+risk declaration                                      class    area                     lean file:line
+2    T_walk                                           length   everything else          formal/lean4/L4Factoidal/Fixture.lean:2
+
+Method limits: see the docstring at the top of this file.
+wrote /var/folders/8l/h5b0tb8s6tlft0wb4fl3w1y80000gn/T/tailrec-fixture-oal9ucau/out.json
+
+Allow list: 1 lines, 0 marked (a) PENDING, 0 marked UNTRIAGED, 0 match no gated row
+
+GATE PASS: every recursive declaration of class length/depth/counter/unknown is listed in allow.txt
+
+Running tools/lean-csimp-reach.py --gate
+GATE FAIL: tools/lean-csimp-reach.py --gate exited 2
+
+PASS where helper                       defect  exit 1; T_outer_scanList=length
+10 pass, 2 fail (out of 12)
+/opt/homebrew/Cellar/python@3.14/3.14.7/Frameworks/Python.framework/Versions/3.14/Resources/Python.app/Contents/MacOS/Python: can't open file '/var/folders/8l/h5b0tb8s6tlft0wb4fl3w1y80000gn/T/tailrec-fixture-byi3ug_3/tools/lean-csimp-reach.py': [Errno 2] No such file or directory
+/opt/homebrew/Cellar/python@3.14/3.14.7/Frameworks/Python.framework/Versions/3.14/Resources/Python.app/Contents/MacOS/Python: can't open file '/var/folders/8l/h5b0tb8s6tlft0wb4fl3w1y80000gn/T/tailrec-fixture-oal9ucau/tools/lean-csimp-reach.py': [Errno 2] No such file or directory

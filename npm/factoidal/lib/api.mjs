@@ -1071,8 +1071,9 @@ function buildApi(driver) {
   }
 
   /**
-   * OWL DL consistency: `consistent` is true, false, or null (the refuter's
-   * budget ran out; `reason` names the cap).
+   * Checked atomic OWL consistency of the default graph: false is a checked
+   * contradiction; null means unsupported syntax or no accepted refutation.
+   * No model producer exists. fuel does not change the fixed checker bound.
    * @param {Dataset|string|Array} data
    * @param {{format?: string, baseIRI?: string, fuel?: number|string}} [options]
    * @returns {Promise<{consistent: boolean|null, reason?: string}>}

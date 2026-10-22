@@ -1,0 +1,112 @@
+✔ [10/27] Built L4Factoidal.Regex.Ecma (7.2s)
+⚠ [18/52] Replayed L4Factoidal.RDF.Core
+info: L4Factoidal/RDF/Core.lean:239:0: 'L4Factoidal.RDF.Term.hashDown_eq' depends on axioms: [propext, Classical.choice, Quot.sound]
+info: L4Factoidal/RDF/Core.lean:240:0: 'L4Factoidal.RDF.Term.hashFast_eq' depends on axioms: [propext, Classical.choice, Quot.sound]
+warning: L4Factoidal/RDF/Core.lean:372:10: This simp argument is unused:
+  h
+
+Hint: Omit it from the simp argument list.
+  [apply] simp [XmlCanon.xmlCanonEq]
+
+Note: This linter can be disabled with `set_option linter.unusedSimpArgs false`
+info: L4Factoidal/RDF/Core.lean:661:0: 'L4Factoidal.RDF.Term.joinKeyLoop_eq' depends on axioms: [propext, Classical.choice, Quot.sound]
+info: L4Factoidal/RDF/Core.lean:662:0: 'L4Factoidal.RDF.Term.joinKey_eq_fast' depends on axioms: [propext, Classical.choice, Quot.sound]
+⚠ [28/52] Replayed L4Factoidal.XML.Parser
+warning: L4Factoidal/XML/Parser.lean:1716:20: This simp argument is unused:
+  Bool.or_assoc
+
+Hint: Omit it from the simp argument list.
+  [apply] simp [Bool.or_comm, Bool.or_left_comm]
+
+Note: This linter can be disabled with `set_option linter.unusedSimpArgs false`
+warning: L4Factoidal/XML/Parser.lean:2224:5: This simp argument is unused:
+  List.append_nil
+
+Hint: Omit it from the simp argument list.
+  [apply] simp_all (config := { zetaDelta := true }) only [resumeC_exit, resumeC_err, resumeC_nil, resumeC_cons_ok,
+    ↓reduceIte, Bool.false_eq_true, decide_true, decide_false, Bool.and_true, Bool.or_false, Bool.and_false,
+    Bool.false_and, Bool.true_or, Bool.or_true, List.cons_append, List.append_assoc, List.nil_append]
+
+Note: This linter can be disabled with `set_option linter.unusedSimpArgs false`
+warning: L4Factoidal/XML/Parser.lean:2787:14: Variable name `f` is not explicitly referenced.
+
+Hint: The binding can be removed (if unused) or named `_` (if used implicitly). Alternatively, prefix the name with `_` to silence this warning:
+  [apply] _f
+
+Note: This linter can be disabled with `set_option linter.unusedVariables false`
+ℹ [35/52] Replayed L4Factoidal.Syntax.NTriples
+info: L4Factoidal/Syntax/NTriples.lean:466:0: 'L4Factoidal.Syntax.readObject12Down_eq' depends on axioms: [propext, Classical.choice, Quot.sound]
+info: L4Factoidal/Syntax/NTriples.lean:467:0: 'L4Factoidal.Syntax.readObject12_eq_loop' depends on axioms: [propext, Classical.choice, Quot.sound]
+info: L4Factoidal/Syntax/NTriples.lean:770:0: 'L4Factoidal.Syntax.Term.toNTriplesLoop_eq' depends on axioms: [propext, Classical.choice, Quot.sound]
+info: L4Factoidal/Syntax/NTriples.lean:771:0: 'L4Factoidal.Syntax.Term.toNTriples_eq_fast' depends on axioms: [propext, Classical.choice, Quot.sound]
+info: L4Factoidal/Syntax/NTriples.lean:883:0: 'L4Factoidal.Syntax.Graph.toNTriples_eq_lines' depends on axioms: [propext, Classical.choice, Quot.sound]
+info: L4Factoidal/Syntax/NTriples.lean:1044:0: 'L4Factoidal.Syntax.Term.toCanonicalNTriplesLoop_eq' depends on axioms: [propext, Classical.choice, Quot.sound]
+info: L4Factoidal/Syntax/NTriples.lean:1045:0: 'L4Factoidal.Syntax.Term.toCanonicalNTriples_eq_fast' depends on axioms: [propext, Classical.choice, Quot.sound]
+ℹ [38/52] Replayed L4Factoidal.Syntax.Turtle
+info: L4Factoidal/Syntax/Turtle.lean:297:0: 'L4Factoidal.Syntax.TurtleState.lookupPrefixIndexed_eq' depends on axioms: [propext, Classical.choice, Quot.sound]
+info: L4Factoidal/Syntax/Turtle.lean:298:0: 'L4Factoidal.Syntax.TurtleState.lookupPrefix_eq_indexed' depends on axioms: [propext, Classical.choice, Quot.sound]
+info: L4Factoidal/Syntax/Turtle.lean:299:0: 'L4Factoidal.Syntax.TurtleState.lookupPrefix_bindPrefix' depends on axioms: [propext, Classical.choice, Quot.sound]
+info: L4Factoidal/Syntax/Turtle.lean:1317:0: 'L4Factoidal.Syntax.readTripleTermDown_eq' depends on axioms: [propext, Classical.choice, Quot.sound]
+info: L4Factoidal/Syntax/Turtle.lean:1318:0: 'L4Factoidal.Syntax.readTripleTerm_eq_loop' depends on axioms: [propext, Classical.choice, Quot.sound]
+info: L4Factoidal/Syntax/Turtle.lean:1319:0: 'L4Factoidal.Syntax.readTtObject_eq_loop' depends on axioms: [propext, Classical.choice, Quot.sound]
+ℹ [41/151] Replayed L4Factoidal.Syntax.RdfXml
+info: L4Factoidal/Syntax/RdfXml.lean:899:0: 'L4Factoidal.Syntax.RdfXml.serializeNodesT_eq_fast' depends on axioms: [propext, Classical.choice, Quot.sound]
+info: L4Factoidal/Syntax/RdfXml.lean:900:0: 'L4Factoidal.Syntax.RdfXml.serializeLiteralContent_eq_fuel' depends on axioms: [propext, Classical.choice, Quot.sound]
+✔ [54/151] Built L4Factoidal.Regex.Ecma:c.o (4.4s)
+⚠ [131/160] Built L4Factoidal.Regex.XPath (19s)
+warning: L4Factoidal/Regex/XPath.lean:628:22: This simp argument is unused:
+  hc
+
+Hint: Omit it from the simp argument list.
+  [apply] simp [replaceLoopAcc_eq cre prefixRe multiline rep inputAll fuel]
+
+Note: This linter can be disabled with `set_option linter.unusedSimpArgs false`
+warning: L4Factoidal/Regex/XPath.lean:631:18: This simp argument is unused:
+  hc
+
+Hint: Omit it from the simp argument list.
+  [apply] simp [ho, replaceLoopAcc_eq cre prefixRe multiline rep inputAll fuel]
+
+Note: This linter can be disabled with `set_option linter.unusedSimpArgs false`
+warning: L4Factoidal/Regex/XPath.lean:632:18: This simp argument is unused:
+  hc
+
+Hint: Omit it from the simp argument list.
+  [apply] simp [ho, replaceLoopAcc_eq cre prefixRe multiline rep inputAll fuel]
+
+Note: This linter can be disabled with `set_option linter.unusedSimpArgs false`
+✔ [132/160] Built L4Factoidal.Regex.Profiles (13s)
+✔ [133/160] Built L4Factoidal.Regex.Profiles:c.o (8.6s)
+✔ [134/160] Built L4Factoidal.Regex.XPath:c.o (23s)
+✔ [135/160] Built L4Factoidal.Regex.Xsd11 (4.6s)
+✔ [136/160] Built L4Factoidal.Regex.Xsd11:c.o (1.3s)
+✔ [137/160] Built L4Factoidal.XSD.SimpleType (8.7s)
+⚠ [139/160] Built L4Factoidal.CSVW.Formats (17s)
+warning: L4Factoidal/CSVW/Formats.lean:108:44: `String.mk` has been deprecated: Use `String.ofList` instead
+warning: L4Factoidal/CSVW/Formats.lean:152:26: `String.mk` has been deprecated: Use `String.ofList` instead
+⚠ [141/160] Built L4Factoidal.XSD.SchemaReader (14s)
+warning: L4Factoidal/XSD/SchemaReader.lean:282:15: `String.trim` has been deprecated: Use `String.trimAscii` instead
+
+Note: The updated constant has a different type:
+  String → String.Slice
+instead of
+  String → String
+warning: L4Factoidal/XSD/SchemaReader.lean:633:14: `String.trim` has been deprecated: Use `String.trimAscii` instead
+
+Note: The updated constant has a different type:
+  String → String.Slice
+instead of
+  String → String
+✔ [143/160] Built Harness.XsdDatatypesRun (11s)
+✔ [145/160] Built «l4xsd-datatypes»:exe (2.5s)
+✔ [146/160] Built L4Factoidal.RIF.Builtins (25s)
+✔ [148/160] Built L4Factoidal.RIF.Matching (23s)
+✔ [149/160] Built L4Factoidal.RIF.Matching:c.o (5.0s)
+✔ [150/160] Built L4Factoidal.RIF.Engine (33s)
+✔ [151/160] Built L4Factoidal.RIF.RdfMapping (5.3s)
+✔ [153/160] Built L4Factoidal.RIF.Saturate (5.4s)
+✔ [155/160] Built L4Factoidal.RIF.Engine:c.o (36s)
+✔ [156/160] Built L4Factoidal.RIF.OwlDirect (30s)
+✔ [158/160] Built Harness.RifRun (17s)
+✔ [160/160] Built l4rif:exe (3.4s)
+Build completed successfully (160 jobs).

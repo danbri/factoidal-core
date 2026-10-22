@@ -1,0 +1,2811 @@
+TAP version 13
+# (node:66941) [MODULE_TYPELESS_PACKAGE_JSON] Warning: Module type of file:///Users/danbri/working/sandbox/october/tpac/codex-npm-review/integrate-core/third_party/observable/dist/runtime.esm.js is not specified and it doesn't parse as CommonJS.
+# Reparsing as ES module because module syntax was detected. This incurs a performance overhead.
+# To eliminate this warning, add "type": "module" to /Users/danbri/package.json.
+# (Use `node --trace-warnings ...` to show where the warning was created)
+# (node:66941) [MODULE_TYPELESS_PACKAGE_JSON] Warning: Module type of file:///Users/danbri/working/sandbox/october/tpac/codex-npm-review/integrate-core/npm/factoidal/browser.js is not specified and it doesn't parse as CommonJS.
+# Reparsing as ES module because module syntax was detected. This incurs a performance overhead.
+# To eliminate this warning, add "type": "module" to /Users/danbri/working/sandbox/october/tpac/codex-npm-review/integrate-core/npm/factoidal/package.json.
+# Subtest: fn-surface parity: hub.njk binds Factoidal to the package browser entry and builds fn from it
+ok 1 - fn-surface parity: hub.njk binds Factoidal to the package browser entry and builds fn from it
+  ---
+  duration_ms: 3.101917
+  type: 'test'
+  ...
+# Subtest: fn-surface parity: browser.js exports every name the Node entry exports, except the Node-only store path
+ok 2 - fn-surface parity: browser.js exports every name the Node entry exports, except the Node-only store path
+  ---
+  duration_ms: 54.302292
+  type: 'test'
+  ...
+# Subtest: fn-surface parity: every fn.* and Factoidal.* name called by any published hub post is on the browser surface
+ok 3 - fn-surface parity: every fn.* and Factoidal.* name called by any published hub post is on the browser surface
+  ---
+  duration_ms: 61.603042
+  type: 'test'
+  ...
+# Subtest: fn-surface parity: npm/factoidal/browser.js exports deltaLogOpen
+ok 4 - fn-surface parity: npm/factoidal/browser.js exports deltaLogOpen
+  ---
+  duration_ms: 0.236208
+  type: 'test'
+  ...
+# Subtest: fn-surface parity: npm/factoidal/browser.js exports deltaLogAppend
+ok 5 - fn-surface parity: npm/factoidal/browser.js exports deltaLogAppend
+  ---
+  duration_ms: 0.192542
+  type: 'test'
+  ...
+# Subtest: fn-surface parity: npm/factoidal/browser.js exports deltaLogReadAllHex
+ok 6 - fn-surface parity: npm/factoidal/browser.js exports deltaLogReadAllHex
+  ---
+  duration_ms: 0.132625
+  type: 'test'
+  ...
+# Subtest: fn-surface parity: npm/factoidal/browser.js exports deltaLogMerge
+ok 7 - fn-surface parity: npm/factoidal/browser.js exports deltaLogMerge
+  ---
+  duration_ms: 0.108167
+  type: 'test'
+  ...
+# Subtest: fn-surface parity: npm/factoidal/browser.js exports deltaLogDestroy
+ok 8 - fn-surface parity: npm/factoidal/browser.js exports deltaLogDestroy
+  ---
+  duration_ms: 0.101208
+  type: 'test'
+  ...
+# Subtest: fn-surface parity: npm/factoidal/browser.js exports _deltaLogCorruptLastForTest
+ok 9 - fn-surface parity: npm/factoidal/browser.js exports _deltaLogCorruptLastForTest
+  ---
+  duration_ms: 0.59075
+  type: 'test'
+  ...
+# (node:66942) [MODULE_TYPELESS_PACKAGE_JSON] Warning: Module type of file:///Users/danbri/working/sandbox/october/tpac/codex-npm-review/integrate-core/third_party/observable/dist/runtime.esm.js is not specified and it doesn't parse as CommonJS.
+# Reparsing as ES module because module syntax was detected. This incurs a performance overhead.
+# To eliminate this warning, add "type": "module" to /Users/danbri/package.json.
+# (Use `node --trace-warnings ...` to show where the warning was created)
+# Subtest: canonical: isomorphic documents, one canonical form, its SHA-256
+ok 10 - canonical: isomorphic documents, one canonical form, its SHA-256
+  ---
+  duration_ms: 4706.106292
+  type: 'test'
+  ...
+# Subtest: canonical: eddsa-rdfc-2022 sign, verify, tamper
+ok 11 - canonical: eddsa-rdfc-2022 sign, verify, tamper
+  ---
+  duration_ms: 46.395708
+  type: 'test'
+  ...
+# Subtest: canonical: did:key resolves to a DID document
+ok 12 - canonical: did:key resolves to a DID document
+  ---
+  duration_ms: 10.821084
+  type: 'test'
+  ...
+# Subtest: xfail: canonical: RDFC-1.0 of a dataset with an RDF 1.2 triple term (https://github.com/danbri/factoidal/issues/873)
+ok 13 - xfail: canonical: RDFC-1.0 of a dataset with an RDF 1.2 triple term (https://github.com/danbri/factoidal/issues/873)
+  ---
+  duration_ms: 231.224209
+  type: 'test'
+  ...
+# expected failure: datasetSerialize: canonicalizeToNQuads: the input holds an RDF 1.2 triple term or directional language-tagged string; RDFC-1.0 (W3C Recommendation 2024, sections 4.6 and 4.8) defines canonical labels 
+# (node:66944) [MODULE_TYPELESS_PACKAGE_JSON] Warning: Module type of file:///Users/danbri/working/sandbox/october/tpac/codex-npm-review/integrate-core/third_party/observable/dist/runtime.esm.js is not specified and it doesn't parse as CommonJS.
+# Reparsing as ES module because module syntax was detected. This incurs a performance overhead.
+# To eliminate this warning, add "type": "module" to /Users/danbri/package.json.
+# (Use `node --trace-warnings ...` to show where the warning was created)
+# Subtest: importers: each step produces a Dataset
+ok 14 - importers: each step produces a Dataset
+  ---
+  duration_ms: 5636.374375
+  type: 'test'
+  ...
+# Subtest: importers: one named graph per step, joined across steps
+ok 15 - importers: one named graph per step, joined across steps
+  ---
+  duration_ms: 1034.162042
+  type: 'test'
+  ...
+# (node:66946) [MODULE_TYPELESS_PACKAGE_JSON] Warning: Module type of file:///Users/danbri/working/sandbox/october/tpac/codex-npm-review/integrate-core/third_party/observable/dist/runtime.esm.js is not specified and it doesn't parse as CommonJS.
+# Reparsing as ES module because module syntax was detected. This incurs a performance overhead.
+# To eliminate this warning, add "type": "module" to /Users/danbri/package.json.
+# (Use `node --trace-warnings ...` to show where the warning was created)
+# Subtest: hub index: the API cell
+ok 16 - hub index: the API cell
+  ---
+  duration_ms: 4156.019333
+  type: 'test'
+  ...
+# Subtest: hub index: the standards table comes from a scoreboard record
+ok 17 - hub index: the standards table comes from a scoreboard record
+  ---
+  duration_ms: 17.616833
+  type: 'test'
+  ...
+# (node:66948) [MODULE_TYPELESS_PACKAGE_JSON] Warning: Module type of file:///Users/danbri/working/sandbox/october/tpac/codex-npm-review/integrate-core/third_party/observable/dist/runtime.esm.js is not specified and it doesn't parse as CommonJS.
+# Reparsing as ES module because module syntax was detected. This incurs a performance overhead.
+# To eliminate this warning, add "type": "module" to /Users/danbri/package.json.
+# (Use `node --trace-warnings ...` to show where the warning was created)
+# Subtest: inference: RDFS closure over the pipeline output
+ok 18 - inference: RDFS closure over the pipeline output
+  ---
+  duration_ms: 7769.364125
+  type: 'test'
+  ...
+# Subtest: inference: OWL 2 RL inverseOf, derived triples in their own graph
+ok 19 - inference: OWL 2 RL inverseOf, derived triples in their own graph
+  ---
+  duration_ms: 249.11225
+  type: 'test'
+  ...
+# Subtest: inference: OWL DL consistency and entailment
+not ok 20 - inference: OWL DL consistency and entailment
+  ---
+  duration_ms: 373.172209
+  type: 'test'
+  location: '/Users/danbri/working/sandbox/october/tpac/codex-npm-review/integrate-core/tests/hub/hub_inference_test.mjs:32:1'
+  failureType: 'testCodeFailure'
+  error: |-
+    Expected values to be strictly equal:
+    
+    null !== true
+    
+  code: 'ERR_ASSERTION'
+  name: 'AssertionError'
+  expected: true
+  actual: ~
+  operator: 'strictEqual'
+  stack: |-
+    TestContext.<anonymous> (file:///Users/danbri/working/sandbox/october/tpac/codex-npm-review/integrate-core/tests/hub/hub_inference_test.mjs:33:10)
+    async Test.run (node:internal/test_runner/test:1054:7)
+    async Test.processPendingSubtests (node:internal/test_runner/test:744:7)
+  ...
+# Subtest: inference: the closures accept an RDF 1.2 triple term
+ok 21 - inference: the closures accept an RDF 1.2 triple term
+  ---
+  duration_ms: 43.784584
+  type: 'test'
+  ...
+# Subtest: xfail: inference: owlIsConsistent on a dataset with an RDF 1.2 triple term (https://github.com/danbri/factoidal/issues/873)
+ok 22 - xfail: inference: owlIsConsistent on a dataset with an RDF 1.2 triple term (https://github.com/danbri/factoidal/issues/873)
+  ---
+  duration_ms: 126.038167
+  type: 'test'
+  ...
+# expected failure: owlIsConsistent: the input holds an RDF 1.2 triple term or directional language-tagged string; OWL 2 Mapping to RDF Graphs (section 3) and the OWL 2 Direct Semantics define no rule for these terms (ht
+# (node:66957) [MODULE_TYPELESS_PACKAGE_JSON] Warning: Module type of file:///Users/danbri/working/sandbox/october/tpac/codex-npm-review/integrate-core/third_party/observable/dist/runtime.esm.js is not specified and it doesn't parse as CommonJS.
+# Reparsing as ES module because module syntax was detected. This incurs a performance overhead.
+# To eliminate this warning, add "type": "module" to /Users/danbri/package.json.
+# (Use `node --trace-warnings ...` to show where the warning was created)
+# Subtest: rdf-syntaxes: Turtle read, six writers, round trips
+ok 23 - rdf-syntaxes: Turtle read, six writers, round trips
+  ---
+  duration_ms: 5817.320459
+  type: 'test'
+  ...
+# Subtest: rdf-syntaxes: strict error position and lenient diagnostics
+ok 24 - rdf-syntaxes: strict error position and lenient diagnostics
+  ---
+  duration_ms: 25.057
+  type: 'test'
+  ...
+# Subtest: rdf-syntaxes: RDF 1.2 Turtle
+ok 25 - rdf-syntaxes: RDF 1.2 Turtle
+  ---
+  duration_ms: 20.052541
+  type: 'test'
+  ...
+# Subtest: xfail: rdf-syntaxes: RDF/XML writes an RDF 1.2 triple term (https://github.com/danbri/factoidal/issues/883)
+ok 26 - xfail: rdf-syntaxes: RDF/XML writes an RDF 1.2 triple term (https://github.com/danbri/factoidal/issues/883)
+  ---
+  duration_ms: 10.217709
+  type: 'test'
+  ...
+# expected failure: datasetSerialize: RDF/XML 1.1 has no form for a triple term
+# (node:66984) [MODULE_TYPELESS_PACKAGE_JSON] Warning: Module type of file:///Users/danbri/working/sandbox/october/tpac/codex-npm-review/integrate-core/third_party/observable/dist/runtime.esm.js is not specified and it doesn't parse as CommonJS.
+# Reparsing as ES module because module syntax was detected. This incurs a performance overhead.
+# To eliminate this warning, add "type": "module" to /Users/danbri/package.json.
+# (Use `node --trace-warnings ...` to show where the warning was created)
+# Subtest: servers: serve --file, Fuseki paths, query, update, read-only /get
+ok 27 - servers: serve --file, Fuseki paths, query, update, read-only /get
+  ---
+  duration_ms: 20826.699958
+  type: 'test'
+  ...
+# Subtest: shardborough: npm pack, activate, query
+ok 28 - shardborough: npm pack, activate, query
+  ---
+  duration_ms: 31999.22525
+  type: 'test'
+  ...
+# Subtest: xfail: shardborough: npm update through the delta log (https://github.com/danbri/factoidal/issues/641)
+ok 29 - xfail: shardborough: npm update through the delta log (https://github.com/danbri/factoidal/issues/641)
+  ---
+  duration_ms: 1223.11075
+  type: 'test'
+  ...
+# expected failure: factoidal update: not yet wired. The delta-log operations are stage 4 of the milestone.\\nThis needs a WebAssembly operation from the Lean engine; see https://github.com/danbri/factoidal/issues/641.\\n\\n\\n3
+# (node:66985) [MODULE_TYPELESS_PACKAGE_JSON] Warning: Module type of file:///Users/danbri/working/sandbox/october/tpac/codex-npm-review/integrate-core/third_party/observable/dist/runtime.esm.js is not specified and it doesn't parse as CommonJS.
+# Reparsing as ES module because module syntax was detected. This incurs a performance overhead.
+# To eliminate this warning, add "type": "module" to /Users/danbri/package.json.
+# (Use `node --trace-warnings ...` to show where the warning was created)
+# Subtest: sparql: paths, aggregates, results document
+ok 30 - sparql: paths, aggregates, results document
+  ---
+  duration_ms: 10760.2075
+  type: 'test'
+  ...
+# Subtest: sparql: ASK, CONSTRUCT, Update on a clone
+ok 31 - sparql: ASK, CONSTRUCT, Update on a clone
+  ---
+  duration_ms: 132.801625
+  type: 'test'
+  ...
+# Subtest: sparql: GeoSPARQL sfWithin and distance
+ok 32 - sparql: GeoSPARQL sfWithin and distance
+  ---
+  duration_ms: 222.030125
+  type: 'test'
+  ...
+# Subtest: sparql: text:query
+ok 33 - sparql: text:query
+  ---
+  duration_ms: 6.462417
+  type: 'test'
+  ...
+# Subtest: sparql: JavaScript and WebAssembly extension functions
+ok 34 - sparql: JavaScript and WebAssembly extension functions
+  ---
+  duration_ms: 583.00325
+  type: 'test'
+  ...
+# Subtest: sparql: SERVICE against a registered endpoint
+ok 35 - sparql: SERVICE against a registered endpoint
+  ---
+  duration_ms: 4181.614208
+  type: 'test'
+  ...
+# Subtest: sparql: SPARQL 1.2 triple-term patterns and functions
+ok 36 - sparql: SPARQL 1.2 triple-term patterns and functions
+  ---
+  duration_ms: 38.534917
+  type: 'test'
+  ...
+# Subtest: xfail: sparql: geof:distance in metres for CRS84 points (https://github.com/danbri/factoidal/issues/772)
+ok 37 - xfail: sparql: geof:distance in metres for CRS84 points (https://github.com/danbri/factoidal/issues/772)
+  ---
+  duration_ms: 6.501625
+  type: 'test'
+  ...
+# expected failure: Cannot read properties of undefined (reading 'value')
+# Subtest: sparql: SPARQL 1.2 reifier and annotation patterns
+ok 38 - sparql: SPARQL 1.2 reifier and annotation patterns
+  ---
+  duration_ms: 9.307625
+  type: 'test'
+  ...
+# (node:67022) [MODULE_TYPELESS_PACKAGE_JSON] Warning: Module type of file:///Users/danbri/working/sandbox/october/tpac/codex-npm-review/integrate-core/third_party/observable/dist/runtime.esm.js is not specified and it doesn't parse as CommonJS.
+# Reparsing as ES module because module syntax was detected. This incurs a performance overhead.
+# To eliminate this warning, add "type": "module" to /Users/danbri/package.json.
+# (Use `node --trace-warnings ...` to show where the warning was created)
+# Subtest: validation: SHACL report as a Dataset
+ok 39 - validation: SHACL report as a Dataset
+  ---
+  duration_ms: 7309.510625
+  type: 'test'
+  ...
+# Subtest: validation: SHACL-SPARQL constraint
+ok 40 - validation: SHACL-SPARQL constraint
+  ---
+  duration_ms: 494.692375
+  type: 'test'
+  ...
+# Subtest: validation: ShEx
+ok 41 - validation: ShEx
+  ---
+  duration_ms: 310.327792
+  type: 'test'
+  ...
+# (node:67026) [MODULE_TYPELESS_PACKAGE_JSON] Warning: Module type of file:///Users/danbri/working/sandbox/october/tpac/codex-npm-review/integrate-core/docs/web/hub/assets/l4/l4factoidal.js is not specified and it doesn't parse as CommonJS.
+# Reparsing as ES module because module syntax was detected. This incurs a performance overhead.
+# To eliminate this warning, add "type": "module" to /Users/danbri/working/sandbox/october/tpac/codex-npm-review/integrate-core/docs/package.json.
+# (Use `node --trace-warnings ...` to show where the warning was created)
+# Subtest: FILTER NOT EXISTS keeps the row whose reversed pattern is absent
+ok 42 - FILTER NOT EXISTS keeps the row whose reversed pattern is absent
+  ---
+  duration_ms: 6789.537083
+  type: 'test'
+  ...
+# Subtest: FILTER EXISTS drops that row
+ok 43 - FILTER EXISTS drops that row
+  ---
+  duration_ms: 1.899541
+  type: 'test'
+  ...
+# Subtest: the stateless queryDataset op agrees
+ok 44 - the stateless queryDataset op agrees
+  ---
+  duration_ms: 33.973791
+  type: 'test'
+  ...
+# (node:67073) [MODULE_TYPELESS_PACKAGE_JSON] Warning: Module type of file:///Users/danbri/working/sandbox/october/tpac/codex-npm-review/integrate-core/third_party/observable/dist/runtime.esm.js is not specified and it doesn't parse as CommonJS.
+# Reparsing as ES module because module syntax was detected. This incurs a performance overhead.
+# To eliminate this warning, add "type": "module" to /Users/danbri/package.json.
+# (Use `node --trace-warnings ...` to show where the warning was created)
+# Subtest: factoidal/l4: an alias of the main entry, the Lean engine
+ok 45 - factoidal/l4: an alias of the main entry, the Lean engine
+  ---
+  duration_ms: 380.533
+  type: 'test'
+  ...
+# Subtest: factoidal/l4: version identifies the Lean engine
+ok 46 - factoidal/l4: version identifies the Lean engine
+  ---
+  duration_ms: 4945.766208
+  type: 'test'
+  ...
+# Subtest: factoidal/l4: the low-level bgpQuery agrees with the typed query()
+ok 47 - factoidal/l4: the low-level bgpQuery agrees with the typed query()
+  ---
+  duration_ms: 361.486792
+  type: 'test'
+  ...
+# Subtest: factoidal/l4: the IBK3 predicate scan through the engine handle
+ok 48 - factoidal/l4: the IBK3 predicate scan through the engine handle
+  ---
+  duration_ms: 206.234042
+  type: 'test'
+  ...
+# Subtest: factoidal/l4: missing-assets error names the remedies
+ok 49 - factoidal/l4: missing-assets error names the remedies
+  ---
+  duration_ms: 0.811375
+  type: 'test'
+  ...
+# (node:67083) [MODULE_TYPELESS_PACKAGE_JSON] Warning: Module type of file:///Users/danbri/working/sandbox/october/tpac/codex-npm-review/integrate-core/third_party/observable/dist/runtime.esm.js is not specified and it doesn't parse as CommonJS.
+# Reparsing as ES module because module syntax was detected. This incurs a performance overhead.
+# To eliminate this warning, add "type": "module" to /Users/danbri/package.json.
+# (Use `node --trace-warnings ...` to show where the warning was created)
+# Subtest: post01: foaf:knows Turtle parses to 5 triples
+ok 50 - post01: foaf:knows Turtle parses to 5 triples
+  ---
+  duration_ms: 3002.987
+  type: 'test'
+  ...
+# Subtest: post01: iterating quads shows subject/predicate/object term kinds
+ok 51 - post01: iterating quads shows subject/predicate/object term kinds
+  ---
+  duration_ms: 262.137291
+  type: 'test'
+  ...
+# Subtest: post01: blank-node subject is a genuine BlankNode term
+ok 52 - post01: blank-node subject is a genuine BlankNode term
+  ---
+  duration_ms: 1.958417
+  type: 'test'
+  ...
+# Subtest: post01: post has 4 live cells (turtle hoisted into its own named cell)
+ok 53 - post01: post has 4 live cells (turtle hoisted into its own named cell)
+  ---
+  duration_ms: 0.184292
+  type: 'test'
+  ...
+# Subtest: post01: dependency inference wires cells 2 and 3 to the named turtle cell
+ok 54 - post01: dependency inference wires cells 2 and 3 to the named turtle cell
+  ---
+  duration_ms: 100.602584
+  type: 'test'
+  ...
+# Subtest: post01 cell 1 (named turtle cell): the Turtle text itself
+ok 55 - post01 cell 1 (named turtle cell): the Turtle text itself
+  ---
+  duration_ms: 1310.022792
+  type: 'test'
+  ...
+# Subtest: post01 cell 2 (parse + size): returns 5
+ok 56 - post01 cell 2 (parse + size): returns 5
+  ---
+  duration_ms: 17.710333
+  type: 'test'
+  ...
+# Subtest: post01 cell 3 (pretty(dataset) -> triples table): 5 rows, 2 quoted literals, 3 IRIs
+ok 57 - post01 cell 3 (pretty(dataset) -> triples table): 5 rows, 2 quoted literals, 3 IRIs
+  ---
+  duration_ms: 15.388
+  type: 'test'
+  ...
+# Subtest: post01 cell 4 (blank node): size 2, BlankNode subject, shared across both triples
+ok 58 - post01 cell 4 (blank node): size 2, BlankNode subject, shared across both triples
+  ---
+  duration_ms: 3.782792
+  type: 'test'
+  ...
+# (node:67086) [MODULE_TYPELESS_PACKAGE_JSON] Warning: Module type of file:///Users/danbri/working/sandbox/october/tpac/codex-npm-review/integrate-core/third_party/observable/dist/runtime.esm.js is not specified and it doesn't parse as CommonJS.
+# Reparsing as ES module because module syntax was detected. This incurs a performance overhead.
+# To eliminate this warning, add "type": "module" to /Users/danbri/package.json.
+# (Use `node --trace-warnings ...` to show where the warning was created)
+# Subtest: post02: dataset has 5 triples
+ok 59 - post02: dataset has 5 triples
+  ---
+  duration_ms: 3141.554292
+  type: 'test'
+  ...
+# Subtest: post02: SELECT with OPTIONAL returns 3 rows (one per Q42 edge)
+ok 60 - post02: SELECT with OPTIONAL returns 3 rows (one per Q42 edge)
+  ---
+  duration_ms: 206.127792
+  type: 'test'
+  ...
+# Subtest: post02: ASK confirms Douglas Adams occupation is writer
+ok 61 - post02: ASK confirms Douglas Adams occupation is writer
+  ---
+  duration_ms: 3.655375
+  type: 'test'
+  ...
+# Subtest: post02: property-path alternation (wdt:P31|wdt:P106) returns both targets
+ok 62 - post02: property-path alternation (wdt:P31|wdt:P106) returns both targets
+  ---
+  duration_ms: 12.080708
+  type: 'test'
+  ...
+# Subtest: post02: CONSTRUCT derives a one-triple occupation-label graph
+ok 63 - post02: CONSTRUCT derives a one-triple occupation-label graph
+  ---
+  duration_ms: 205.508042
+  type: 'test'
+  ...
+# Subtest: post02: post has 9 live cells (including the music property-path notebook)
+ok 64 - post02: post has 9 live cells (including the music property-path notebook)
+  ---
+  duration_ms: 2.859167
+  type: 'test'
+  ...
+# Subtest: post02: dependency inference wires ttl -> dataset -> every query cell
+ok 65 - post02: dependency inference wires ttl -> dataset -> every query cell
+  ---
+  duration_ms: 10.055125
+  type: 'test'
+  ...
+# Subtest: post02 cell 3 (pretty(SELECT bindings) -> table): 3 rows, one "label" column
+ok 66 - post02 cell 3 (pretty(SELECT bindings) -> table): 3 rows, one "label" column
+  ---
+  duration_ms: 960.961458
+  type: 'test'
+  ...
+# Subtest: post02 cell 4 (ASK): true
+ok 67 - post02 cell 4 (ASK): true
+  ---
+  duration_ms: 14.795084
+  type: 'test'
+  ...
+# Subtest: post02 cell 5 (property-path alternation): both targets
+ok 68 - post02 cell 5 (property-path alternation): both targets
+  ---
+  duration_ms: 5.347792
+  type: 'test'
+  ...
+# Subtest: post02 cell 6 (CONSTRUCT): one-triple occupation-label graph
+ok 69 - post02 cell 6 (CONSTRUCT): one-triple occupation-label graph
+  ---
+  duration_ms: 8.058292
+  type: 'test'
+  ...
+# Subtest: post02: music notebook retains the album-to-band-to-musician property path
+ok 70 - post02: music notebook retains the album-to-band-to-musician property path
+  ---
+  duration_ms: 1.545916
+  type: 'test'
+  ...
+# (node:67089) [MODULE_TYPELESS_PACKAGE_JSON] Warning: Module type of file:///Users/danbri/working/sandbox/october/tpac/codex-npm-review/integrate-core/third_party/observable/dist/runtime.esm.js is not specified and it doesn't parse as CommonJS.
+# Reparsing as ES module because module syntax was detected. This incurs a performance overhead.
+# To eliminate this warning, add "type": "module" to /Users/danbri/package.json.
+# (Use `node --trace-warnings ...` to show where the warning was created)
+# Subtest: post03: no entailment sees only the asserted type
+ok 71 - post03: no entailment sees only the asserted type
+  ---
+  duration_ms: 3305.979917
+  type: 'test'
+  ...
+# Subtest: post03: RDFS entailment adds schema:Thing via subClassOf
+ok 72 - post03: RDFS entailment adds schema:Thing via subClassOf
+  ---
+  duration_ms: 227.039792
+  type: 'test'
+  ...
+# Subtest: post03: RDFS entailment does not know owl:equivalentClass
+ok 73 - post03: RDFS entailment does not know owl:equivalentClass
+  ---
+  duration_ms: 63.860375
+  type: 'test'
+  ...
+# Subtest: post03: OWL-RL entailment derives foaf:Person via equivalentClass (cax-eqc1), and no owl:Thing or rdfs:Resource typing
+ok 74 - post03: OWL-RL entailment derives foaf:Person via equivalentClass (cax-eqc1), and no owl:Thing or rdfs:Resource typing
+  ---
+  duration_ms: 57.25175
+  type: 'test'
+  ...
+# Subtest: post03: post has 4 live cells (the shared query hoisted into its own named cell)
+ok 75 - post03: post has 4 live cells (the shared query hoisted into its own named cell)
+  ---
+  duration_ms: 0.415583
+  type: 'test'
+  ...
+# Subtest: post03: dependency inference wires all three query cells to the named q cell
+ok 76 - post03: dependency inference wires all three query cells to the named q cell
+  ---
+  duration_ms: 166.295792
+  type: 'test'
+  ...
+# Subtest: post03 cell 2 (RDFS toggle): schema:Thing appears only with entailment
+ok 77 - post03 cell 2 (RDFS toggle): schema:Thing appears only with entailment
+  ---
+  duration_ms: 742.251958
+  type: 'test'
+  ...
+# Subtest: post03 cell 3 (OWL-RL toggle): equivalentClass only fires under OWL-RL
+ok 78 - post03 cell 3 (OWL-RL toggle): equivalentClass only fires under OWL-RL
+  ---
+  duration_ms: 12.812584
+  type: 'test'
+  ...
+# Subtest: post03 cell 4 (mutual subClassOf): equivalence in pure RDFS
+ok 79 - post03 cell 4 (mutual subClassOf): equivalence in pure RDFS
+  ---
+  duration_ms: 63.328625
+  type: 'test'
+  ...
+# (node:67092) [MODULE_TYPELESS_PACKAGE_JSON] Warning: Module type of file:///Users/danbri/working/sandbox/october/tpac/codex-npm-review/integrate-core/third_party/observable/dist/runtime.esm.js is not specified and it doesn't parse as CommonJS.
+# Reparsing as ES module because module syntax was detected. This incurs a performance overhead.
+# To eliminate this warning, add "type": "module" to /Users/danbri/package.json.
+# (Use `node --trace-warnings ...` to show where the warning was created)
+# Subtest: post04: post has 7 live cells (fixtures hoisted into named cells)
+ok 80 - post04: post has 7 live cells (fixtures hoisted into named cells)
+  ---
+  duration_ms: 7.923583
+  type: 'test'
+  ...
+# Subtest: post04: dependency inference wires SKOS_VALID_TTL -> dataset -> query cells, and SKOS_BROKEN_TTL -> the checks cells
+ok 81 - post04: dependency inference wires SKOS_VALID_TTL -> dataset -> query cells, and SKOS_BROKEN_TTL -> the checks cells
+  ---
+  duration_ms: 67.206375
+  type: 'test'
+  ...
+# Subtest: post04 cell 3 (parse the concept scheme): 28 triples, four English concept labels
+ok 82 - post04 cell 3 (parse the concept scheme): 28 triples, four English concept labels
+  ---
+  duration_ms: 3742.607875
+  type: 'test'
+  ...
+# Subtest: post04 cell 4 (skos:broader+ property path): Dog's ancestors are Mammal then Animal
+ok 83 - post04 cell 4 (skos:broader+ property path): Dog's ancestors are Mammal then Animal
+  ---
+  duration_ms: 1018.945
+  type: 'test'
+  ...
+# Subtest: post04 cell 6 (six SPARQL integrity checks): valid scheme clean, broken scheme catches exactly its planted defect
+ok 84 - post04 cell 6 (six SPARQL integrity checks): valid scheme clean, broken scheme catches exactly its planted defect
+  ---
+  duration_ms: 252.398917
+  type: 'test'
+  ...
+# Subtest: post04 cell 7 (SHACL integrity check): valid conforms, broken reports 5 SHACL-checkable violations
+ok 85 - post04 cell 7 (SHACL integrity check): valid conforms, broken reports 5 SHACL-checkable violations
+  ---
+  duration_ms: 662.086958
+  type: 'test'
+  ...
+# Subtest: post04: skos:broader+ from Dog reaches Mammal and Animal, direct API
+ok 86 - post04: skos:broader+ from Dog reaches Mammal and Animal, direct API
+  ---
+  duration_ms: 13.355792
+  type: 'test'
+  ...
+# Subtest: post04: S9 (ConceptScheme/Concept disjoint) is clean on the valid scheme
+ok 87 - post04: S9 (ConceptScheme/Concept disjoint) is clean on the valid scheme
+  ---
+  duration_ms: 16.788833
+  type: 'test'
+  ...
+# (node:67094) [MODULE_TYPELESS_PACKAGE_JSON] Warning: Module type of file:///Users/danbri/working/sandbox/october/tpac/codex-npm-review/integrate-core/third_party/observable/dist/runtime.esm.js is not specified and it doesn't parse as CommonJS.
+# Reparsing as ES module because module syntax was detected. This incurs a performance overhead.
+# To eliminate this warning, add "type": "module" to /Users/danbri/package.json.
+# (Use `node --trace-warnings ...` to show where the warning was created)
+# Subtest: post05: post has 4 live cells (PERSON_SHAPE_TTL hoisted into its own named cell)
+ok 88 - post05: post has 4 live cells (PERSON_SHAPE_TTL hoisted into its own named cell)
+  ---
+  duration_ms: 2.635459
+  type: 'test'
+  ...
+# Subtest: post05: dependency inference wires all three later cells to the named shape cell
+ok 89 - post05: dependency inference wires all three later cells to the named shape cell
+  ---
+  duration_ms: 94.695458
+  type: 'test'
+  ...
+# Subtest: post05 cell 1 (conforming data): Alice and Bob satisfy the PersonShape
+ok 90 - post05 cell 1 (conforming data): Alice and Bob satisfy the PersonShape
+  ---
+  duration_ms: 3980.643916
+  type: 'test'
+  ...
+# Subtest: post05 cell 2 (broken data): missing foaf:name on Bob is one minCount violation
+ok 91 - post05 cell 2 (broken data): missing foaf:name on Bob is one minCount violation
+  ---
+  duration_ms: 3227.44075
+  type: 'test'
+  ...
+# Subtest: post05 cell 3 (three distinct constraints): minCount/datatype/class each fire independently
+ok 92 - post05 cell 3 (three distinct constraints): minCount/datatype/class each fire independently
+  ---
+  duration_ms: 332.1105
+  type: 'test'
+  ...
+# Subtest: post05: shaclValidate accepts raw Turtle text for both data and shapes
+ok 93 - post05: shaclValidate accepts raw Turtle text for both data and shapes
+  ---
+  duration_ms: 4.228416
+  type: 'test'
+  ...
+# Subtest: post05: capabilities() reports SHACL support (grounds the "check first" cell pattern)
+ok 94 - post05: capabilities() reports SHACL support (grounds the "check first" cell pattern)
+  ---
+  duration_ms: 0.782875
+  type: 'test'
+  ...
+# (node:67095) [MODULE_TYPELESS_PACKAGE_JSON] Warning: Module type of file:///Users/danbri/working/sandbox/october/tpac/codex-npm-review/integrate-core/third_party/observable/dist/runtime.esm.js is not specified and it doesn't parse as CommonJS.
+# Reparsing as ES module because module syntax was detected. This incurs a performance overhead.
+# To eliminate this warning, add "type": "module" to /Users/danbri/package.json.
+# (Use `node --trace-warnings ...` to show where the warning was created)
+# Subtest: post06: post has 10 live cells (WD_TTL/dataset/HUMAN_SHAPE_SCHEMA/tryShexValidate/HUMAN_SHAPE_SHEXC hoisted into named cells)
+ok 95 - post06: post has 10 live cells (WD_TTL/dataset/HUMAN_SHAPE_SCHEMA/tryShexValidate/HUMAN_SHAPE_SHEXC hoisted into named cells)
+  ---
+  duration_ms: 24.571917
+  type: 'test'
+  ...
+# Subtest: post06: dependency inference wires the shared cells to every consumer
+ok 96 - post06: dependency inference wires the shared cells to every consumer
+  ---
+  duration_ms: 119.795584
+  type: 'test'
+  ...
+# Subtest: post06 cell 3 (parse the Wikidata-shaped dataset): 3 triples
+ok 97 - post06 cell 3 (parse the Wikidata-shaped dataset): 3 triples
+  ---
+  duration_ms: 2477.4195
+  type: 'test'
+  ...
+# Subtest: post06 cell 6 (conforming node, ShExJ schema): Q42 matches HumanShape
+ok 98 - post06 cell 6 (conforming node, ShExJ schema): Q42 matches HumanShape
+  ---
+  duration_ms: 1626.551084
+  type: 'test'
+  ...
+# Subtest: post06 cell 7 (non-conforming node, ShExJ schema): Q5 does not match HumanShape
+ok 99 - post06 cell 7 (non-conforming node, ShExJ schema): Q5 does not match HumanShape
+  ---
+  duration_ms: 44.438
+  type: 'test'
+  ...
+# Subtest: post06 cell 9 (conforming node, ShExC schema text): Q42 matches HumanShape
+ok 100 - post06 cell 9 (conforming node, ShExC schema text): Q42 matches HumanShape
+  ---
+  duration_ms: 56.347667
+  type: 'test'
+  ...
+# Subtest: post06 cell 10 (non-conforming node, ShExC schema text): Q5 does not match HumanShape
+ok 101 - post06 cell 10 (non-conforming node, ShExC schema text): Q5 does not match HumanShape
+  ---
+  duration_ms: 10.850542
+  type: 'test'
+  ...
+# Subtest: post06: capabilities() reports ShEx support (grounds the "check first" cell pattern)
+ok 102 - post06: capabilities() reports ShEx support (grounds the "check first" cell pattern)
+  ---
+  duration_ms: 0.680792
+  type: 'test'
+  ...
+# Subtest: post06: shexValidate accepts RDF/JS terms for focus/shape too
+ok 103 - post06: shexValidate accepts RDF/JS terms for focus/shape too
+  ---
+  duration_ms: 182.11125
+  type: 'test'
+  ...
+# Subtest: post06: shexValidate dispatches ShExC text (no leading "{") straight to Parser.ShExC.fst
+ok 104 - post06: shexValidate dispatches ShExC text (no leading "{") straight to Parser.ShExC.fst
+  ---
+  duration_ms: 1.853917
+  type: 'test'
+  ...
+# (node:67125) [MODULE_TYPELESS_PACKAGE_JSON] Warning: Module type of file:///Users/danbri/working/sandbox/october/tpac/codex-npm-review/integrate-core/third_party/observable/dist/runtime.esm.js is not specified and it doesn't parse as CommonJS.
+# Reparsing as ES module because module syntax was detected. This incurs a performance overhead.
+# To eliminate this warning, add "type": "module" to /Users/danbri/package.json.
+# (Use `node --trace-warnings ...` to show where the warning was created)
+# Subtest: post07: post has 5 live cells (ALICE_JSONLD hoisted into its own named cell)
+ok 105 - post07: post has 5 live cells (ALICE_JSONLD hoisted into its own named cell)
+  ---
+  duration_ms: 3.831208
+  type: 'test'
+  ...
+# Subtest: post07: dependency inference wires ALICE_JSONLD to the tryJsonldToRdf and round-trip cells
+ok 106 - post07: dependency inference wires ALICE_JSONLD to the tryJsonldToRdf and round-trip cells
+  ---
+  duration_ms: 8.879125
+  type: 'test'
+  ...
+# Subtest: post07 cell 1 (plain JSON, no @context): zero triples
+ok 107 - post07 cell 1 (plain JSON, no @context): zero triples
+  ---
+  duration_ms: 2974.541458
+  type: 'test'
+  ...
+# Subtest: post07 cell 3 (@context mapping): three triples, available
+ok 108 - post07 cell 3 (@context mapping): three triples, available
+  ---
+  duration_ms: 787.710416
+  type: 'test'
+  ...
+# Subtest: post07 cell 4 (round trip): JSON-LD -> N-Quads -> query returns Alice/Engineer
+ok 109 - post07 cell 4 (round trip): JSON-LD -> N-Quads -> query returns Alice/Engineer
+  ---
+  duration_ms: 117.172833
+  type: 'test'
+  ...
+# Subtest: post07 cell 5 (fromRdf): N-Quads -> expanded JSON-LD node object
+ok 110 - post07 cell 5 (fromRdf): N-Quads -> expanded JSON-LD node object
+  ---
+  duration_ms: 78.706375
+  type: 'test'
+  ...
+# Subtest: post07: capabilities() reports JSON-LD support (grounds the "check first" cell pattern)
+ok 111 - post07: capabilities() reports JSON-LD support (grounds the "check first" cell pattern)
+  ---
+  duration_ms: 0.668125
+  type: 'test'
+  ...
+# Subtest: post07: jsonldToRdf resolves relative @id against an explicit base option
+ok 112 - post07: jsonldToRdf resolves relative @id against an explicit base option
+  ---
+  duration_ms: 117.988833
+  type: 'test'
+  ...
+# (node:67127) [MODULE_TYPELESS_PACKAGE_JSON] Warning: Module type of file:///Users/danbri/working/sandbox/october/tpac/codex-npm-review/integrate-core/third_party/observable/dist/runtime.esm.js is not specified and it doesn't parse as CommonJS.
+# Reparsing as ES module because module syntax was detected. This incurs a performance overhead.
+# To eliminate this warning, add "type": "module" to /Users/danbri/package.json.
+# (Use `node --trace-warnings ...` to show where the warning was created)
+# Subtest: post08: post has 4 live cells (DOC_A/DOC_B hoisted into named cells)
+ok 113 - post08: post has 4 live cells (DOC_A/DOC_B hoisted into named cells)
+  ---
+  duration_ms: 50.130333
+  type: 'test'
+  ...
+# Subtest: post08: dependency inference wires DOC_A/DOC_B to both downstream cells
+ok 114 - post08: dependency inference wires DOC_A/DOC_B to both downstream cells
+  ---
+  duration_ms: 100.105208
+  type: 'test'
+  ...
+# Subtest: post08 cell 3 (canonicalize twice, different bnode labels): identical bytes
+ok 115 - post08 cell 3 (canonicalize twice, different bnode labels): identical bytes
+  ---
+  duration_ms: 2184.965917
+  type: 'test'
+  ...
+# Subtest: post08 cell 4 (content-addressed hash): same facts hash equal, changed fact hashes differ
+ok 116 - post08 cell 4 (content-addressed hash): same facts hash equal, changed fact hashes differ
+  ---
+  duration_ms: 546.803958
+  type: 'test'
+  ...
+# Subtest: post08: capabilities() reports canonicalize support (grounds the "check first" cell pattern)
+ok 117 - post08: capabilities() reports canonicalize support (grounds the "check first" cell pattern)
+  ---
+  duration_ms: 0.617625
+  type: 'test'
+  ...
+# Subtest: post08: canonicalize is a fixpoint on its own output
+ok 118 - post08: canonicalize is a fixpoint on its own output
+  ---
+  duration_ms: 4.317916
+  type: 'test'
+  ...
+# (node:67128) [MODULE_TYPELESS_PACKAGE_JSON] Warning: Module type of file:///Users/danbri/working/sandbox/october/tpac/codex-npm-review/integrate-core/third_party/observable/dist/runtime.esm.js is not specified and it doesn't parse as CommonJS.
+# Reparsing as ES module because module syntax was detected. This incurs a performance overhead.
+# To eliminate this warning, add "type": "module" to /Users/danbri/package.json.
+# (Use `node --trace-warnings ...` to show where the warning was created)
+# Subtest: post09: post has at least 2 live cells
+ok 119 - post09: post has at least 2 live cells
+  ---
+  duration_ms: 35.34
+  type: 'test'
+  ...
+# Subtest: post09 cell 1 (RMLTC0002a-JSON, rml-core): 3 triples for Venus
+ok 120 - post09 cell 1 (RMLTC0002a-JSON, rml-core): 3 triples for Venus
+  ---
+  duration_ms: 2186.258792
+  type: 'test'
+  ...
+# Subtest: post09 cell 2 (RMLSTC0007b, rml-io): 5 Friends rows, queried
+ok 121 - post09 cell 2 (RMLSTC0007b, rml-io): 5 Friends rows, queried
+  ---
+  duration_ms: 199.474875
+  type: 'test'
+  ...
+# Subtest: post09: capabilities() reports RML support (grounds the "check first" cell pattern)
+ok 122 - post09: capabilities() reports RML support (grounds the "check first" cell pattern)
+  ---
+  duration_ms: 0.623459
+  type: 'test'
+  ...
+# Subtest: post09: the post's inlined JSON mapping/source match the real rml-core fixture files on disk
+not ok 123 - post09: the post's inlined JSON mapping/source match the real rml-core fixture files on disk
+  ---
+  duration_ms: 2.427792
+  type: 'test'
+  location: '/Users/danbri/working/sandbox/october/tpac/codex-npm-review/integrate-core/tests/hub/post09_test.mjs:71:1'
+  failureType: 'testCodeFailure'
+  error: "ENOENT: no such file or directory, open '/Users/danbri/working/sandbox/october/tpac/codex-npm-review/integrate-core/third_party/testing/rml-modules/rml-core/test-cases/RMLTC0002a-JSON/mapping.ttl'"
+  code: 'ENOENT'
+  stack: |-
+    Object.readFileSync (node:fs:440:20)
+    TestContext.<anonymous> (file:///Users/danbri/working/sandbox/october/tpac/codex-npm-review/integrate-core/tests/hub/post09_test.mjs:72:22)
+    Test.runInAsyncScope (node:async_hooks:214:14)
+    Test.run (node:internal/test_runner/test:1047:25)
+    Test.processPendingSubtests (node:internal/test_runner/test:744:18)
+    Test.postRun (node:internal/test_runner/test:1173:19)
+    Test.run (node:internal/test_runner/test:1101:12)
+    async Test.processPendingSubtests (node:internal/test_runner/test:744:7)
+  ...
+# Subtest: post09: the post's inlined CSV mapping/source match the real rml-io fixture files on disk
+not ok 124 - post09: the post's inlined CSV mapping/source match the real rml-io fixture files on disk
+  ---
+  duration_ms: 0.316291
+  type: 'test'
+  location: '/Users/danbri/working/sandbox/october/tpac/codex-npm-review/integrate-core/tests/hub/post09_test.mjs:82:1'
+  failureType: 'testCodeFailure'
+  error: "ENOENT: no such file or directory, open '/Users/danbri/working/sandbox/october/tpac/codex-npm-review/integrate-core/third_party/testing/rml-modules/rml-io/test-cases/RMLSTC0007b/mapping.ttl'"
+  code: 'ENOENT'
+  stack: |-
+    Object.readFileSync (node:fs:440:20)
+    TestContext.<anonymous> (file:///Users/danbri/working/sandbox/october/tpac/codex-npm-review/integrate-core/tests/hub/post09_test.mjs:83:22)
+    Test.runInAsyncScope (node:async_hooks:214:14)
+    Test.run (node:internal/test_runner/test:1047:25)
+    Test.processPendingSubtests (node:internal/test_runner/test:744:18)
+    Test.postRun (node:internal/test_runner/test:1173:19)
+    Test.run (node:internal/test_runner/test:1101:12)
+    async Test.processPendingSubtests (node:internal/test_runner/test:744:7)
+  ...
+# (node:67150) [MODULE_TYPELESS_PACKAGE_JSON] Warning: Module type of file:///Users/danbri/working/sandbox/october/tpac/codex-npm-review/integrate-core/third_party/observable/dist/runtime.esm.js is not specified and it doesn't parse as CommonJS.
+# Reparsing as ES module because module syntax was detected. This incurs a performance overhead.
+# To eliminate this warning, add "type": "module" to /Users/danbri/package.json.
+# (Use `node --trace-warnings ...` to show where the warning was created)
+# Subtest: post10: post has at least 2 live cells
+ok 125 - post10: post has at least 2 live cells
+  ---
+  duration_ms: 28.585667
+  type: 'test'
+  ...
+# Subtest: post10 cell 1 (gold + silver rules, two customers): each derives its own discount
+ok 126 - post10 cell 1 (gold + silver rules, two customers): each derives its own discount
+  ---
+  duration_ms: 2018.882209
+  type: 'test'
+  ...
+# Subtest: post10 cell 2 (unmatched status): no rule fires, nothing derived
+ok 127 - post10 cell 2 (unmatched status): no rule fires, nothing derived
+  ---
+  duration_ms: 2.944166
+  type: 'test'
+  ...
+# Subtest: post10: rifEval saturates the vendored Frames fixture as-is (DOCTYPE + entities, ground fact included)
+ok 128 - post10: rifEval saturates the vendored Frames fixture as-is (DOCTYPE + entities, ground fact included)
+  ---
+  duration_ms: 144.288
+  type: 'test'
+  ...
+# Subtest: post10: a cell degrades gracefully (not a thrown rejection) when the ABI lacks rifEval
+ok 129 - post10: a cell degrades gracefully (not a thrown rejection) when the ABI lacks rifEval
+  ---
+  duration_ms: 6.899875
+  type: 'test'
+  ...
+# (node:67151) [MODULE_TYPELESS_PACKAGE_JSON] Warning: Module type of file:///Users/danbri/working/sandbox/october/tpac/codex-npm-review/integrate-core/third_party/observable/dist/runtime.esm.js is not specified and it doesn't parse as CommonJS.
+# Reparsing as ES module because module syntax was detected. This incurs a performance overhead.
+# To eliminate this warning, add "type": "module" to /Users/danbri/package.json.
+# (Use `node --trace-warnings ...` to show where the warning was created)
+# Subtest: post11: post has 4 live cells (the shared Turtle text hoisted into its own named cell)
+ok 130 - post11: post has 4 live cells (the shared Turtle text hoisted into its own named cell)
+  ---
+  duration_ms: 1.961542
+  type: 'test'
+  ...
+# Subtest: post11: dependency inference wires the two comparison cells to the named turtle cell
+ok 131 - post11: dependency inference wires the two comparison cells to the named turtle cell
+  ---
+  duration_ms: 5.357583
+  type: 'test'
+  ...
+# Subtest: post11 cell 2 (Turtle vs RDF/XML): identical canonical bytes
+ok 132 - post11 cell 2 (Turtle vs RDF/XML): identical canonical bytes
+  ---
+  duration_ms: 2103.095791
+  type: 'test'
+  ...
+# Subtest: post11 cell 3 (Turtle vs N-Triples): identical canonical bytes
+ok 133 - post11 cell 3 (Turtle vs N-Triples): identical canonical bytes
+  ---
+  duration_ms: 623.48125
+  type: 'test'
+  ...
+# Subtest: post11 cell 4 (TriG vs N-Quads, named graph): identical canonical bytes
+ok 134 - post11 cell 4 (TriG vs N-Quads, named graph): identical canonical bytes
+  ---
+  duration_ms: 10.282791
+  type: 'test'
+  ...
+# Subtest: post11: RDF 1.1 combined W3C score is 1031 pass, 0 fail (grounds this post's headline figure)
+ok 135 - post11: RDF 1.1 combined W3C score is 1031 pass, 0 fail (grounds this post's headline figure)
+  ---
+  duration_ms: 4.043958
+  type: 'test'
+  ...
+# (node:67153) [MODULE_TYPELESS_PACKAGE_JSON] Warning: Module type of file:///Users/danbri/working/sandbox/october/tpac/codex-npm-review/integrate-core/third_party/observable/dist/runtime.esm.js is not specified and it doesn't parse as CommonJS.
+# Reparsing as ES module because module syntax was detected. This incurs a performance overhead.
+# To eliminate this warning, add "type": "module" to /Users/danbri/package.json.
+# (Use `node --trace-warnings ...` to show where the warning was created)
+# Subtest: post12: post has at least 2 live cells
+ok 136 - post12: post has at least 2 live cells
+  ---
+  duration_ms: 82.306458
+  type: 'test'
+  ...
+# Subtest: post12 cell 1 (parse + query, the one door): SELECT returns Alice then Bob
+ok 137 - post12 cell 1 (parse + query, the one door): SELECT returns Alice then Bob
+  ---
+  duration_ms: 2082.325917
+  type: 'test'
+  ...
+# Subtest: post12 cell 2 (capability probe): every RIF/SHACL/ShEx/OWL/RML/CSVW/JSON-LD capability is true against the real bundle
+ok 138 - post12 cell 2 (capability probe): every RIF/SHACL/ShEx/OWL/RML/CSVW/JSON-LD capability is true against the real bundle
+  ---
+  duration_ms: 0.732583
+  type: 'test'
+  ...
+# Subtest: post12 cell 2 degrades gracefully when the npm-entry bundle is unavailable
+ok 139 - post12 cell 2 degrades gracefully when the npm-entry bundle is unavailable
+  ---
+  duration_ms: 0.428834
+  type: 'test'
+  ...
+# Subtest: post12: capabilities() function list matches the table this post documents
+ok 140 - post12: capabilities() function list matches the table this post documents
+  ---
+  duration_ms: 0.192334
+  type: 'test'
+  ...
+# Subtest: post12: the package has one entry; factoidal/wasm left in 0.9.0 (issue 713)
+ok 141 - post12: the package has one entry; factoidal/wasm left in 0.9.0 (issue 713)
+  ---
+  duration_ms: 3.23475
+  type: 'test'
+  ...
+# (node:67154) [MODULE_TYPELESS_PACKAGE_JSON] Warning: Module type of file:///Users/danbri/working/sandbox/october/tpac/codex-npm-review/integrate-core/third_party/observable/dist/runtime.esm.js is not specified and it doesn't parse as CommonJS.
+# Reparsing as ES module because module syntax was detected. This incurs a performance overhead.
+# To eliminate this warning, add "type": "module" to /Users/danbri/package.json.
+# (Use `node --trace-warnings ...` to show where the warning was created)
+# Subtest: post13: post has 7 live cells (credential + csvText + metadataJson hoisted into named cells)
+ok 142 - post13: post has 7 live cells (credential + csvText + metadataJson hoisted into named cells)
+  ---
+  duration_ms: 3.647083
+  type: 'test'
+  ...
+# Subtest: post13: dependency inference wires both VC step cells to credential, both CSVW mode cells to csvText/metadataJson
+ok 143 - post13: dependency inference wires both VC step cells to credential, both CSVW mode cells to csvText/metadataJson
+  ---
+  duration_ms: 153.925958
+  type: 'test'
+  ...
+# Subtest: post13 cell 2 (VC step 1: RDFC-1.0 canonicalize): 3 lines, bnode canonicalized to _:c14n0
+ok 144 - post13 cell 2 (VC step 1: RDFC-1.0 canonicalize): 3 lines, bnode canonicalized to _:c14n0
+  ---
+  duration_ms: 1939.311375
+  type: 'test'
+  ...
+# Subtest: post13 cell 3 (VC step 2: SHA-256 of canonical form): 64 hex chars, stable digest
+ok 145 - post13 cell 3 (VC step 2: SHA-256 of canonical form): 64 hex chars, stable digest
+  ---
+  duration_ms: 676.51375
+  type: 'test'
+  ...
+# Subtest: post13 cell 6 (CSVW standard mode): 22 quads = 8 typed row data + 14 provenance
+ok 146 - post13 cell 6 (CSVW standard mode): 22 quads = 8 typed row data + 14 provenance
+  ---
+  duration_ms: 23.214666
+  type: 'test'
+  ...
+# Subtest: post13 cell 7 (CSVW minimal mode): 8 typed quads, no provenance, template subjects
+ok 147 - post13 cell 7 (CSVW minimal mode): 8 typed quads, no provenance, template subjects
+  ---
+  duration_ms: 8.019416
+  type: 'test'
+  ...
+# Subtest: post13: a CSVW cell degrades gracefully when the ABI lacks csvwToRdf
+ok 148 - post13: a CSVW cell degrades gracefully when the ABI lacks csvwToRdf
+  ---
+  duration_ms: 2.846708
+  type: 'test'
+  ...
+# Subtest: post13: the vendored tree-ops.csv + metadata fixture converts via the real ABI, matching the post's own inline copy
+ok 149 - post13: the vendored tree-ops.csv + metadata fixture converts via the real ABI, matching the post's own inline copy
+  ---
+  duration_ms: 25.024791
+  type: 'test'
+  ...
+# Subtest: post13: the vendored validVc.json fixture is the exact JSON shown statically in the post
+ok 150 - post13: the vendored validVc.json fixture is the exact JSON shown statically in the post
+  ---
+  duration_ms: 3.450417
+  type: 'test'
+  ...
+# Subtest: post13: npm/factoidal exposes the vc* crypto primitives but no VC structural validator
+ok 151 - post13: npm/factoidal exposes the vc* crypto primitives but no VC structural validator
+  ---
+  duration_ms: 45.671792
+  type: 'test'
+  ...
+# (node:67156) [MODULE_TYPELESS_PACKAGE_JSON] Warning: Module type of file:///Users/danbri/working/sandbox/october/tpac/codex-npm-review/integrate-core/third_party/observable/dist/runtime.esm.js is not specified and it doesn't parse as CommonJS.
+# Reparsing as ES module because module syntax was detected. This incurs a performance overhead.
+# To eliminate this warning, add "type": "module" to /Users/danbri/package.json.
+# (Use `node --trace-warnings ...` to show where the warning was created)
+# Subtest: post14: real npm/factoidal query() bindings carry genuine RDF/JS term instances
+ok 152 - post14: real npm/factoidal query() bindings carry genuine RDF/JS term instances
+  ---
+  duration_ms: 2128.091
+  type: 'test'
+  ...
+# Subtest: post14: dataFactory-built quads round-trip through N-Quads text
+ok 153 - post14: dataFactory-built quads round-trip through N-Quads text
+  ---
+  duration_ms: 76.683875
+  type: 'test'
+  ...
+# Subtest: post14: post has 3 live cells (namedNode hoisted into its own named cell)
+ok 154 - post14: post has 3 live cells (namedNode hoisted into its own named cell)
+  ---
+  duration_ms: 0.207
+  type: 'test'
+  ...
+# Subtest: post14: dependency inference wires both consuming cells to the named namedNode cell
+ok 155 - post14: dependency inference wires both consuming cells to the named namedNode cell
+  ---
+  duration_ms: 18.157208
+  type: 'test'
+  ...
+# Subtest: post14 cell 2 (dataFactory-built quads, parsed and queried): SELECT returns Alice then Bob
+ok 156 - post14 cell 2 (dataFactory-built quads, parsed and queried): SELECT returns Alice then Bob
+  ---
+  duration_ms: 424.720208
+  type: 'test'
+  ...
+# Subtest: post14 cell 3 (.equals() vs ===): identity differs, value-equality agrees, and a real query term has .equals()
+ok 157 - post14 cell 3 (.equals() vs ===): identity differs, value-equality agrees, and a real query term has .equals()
+  ---
+  duration_ms: 15.365
+  type: 'test'
+  ...
+# (node:67167) [MODULE_TYPELESS_PACKAGE_JSON] Warning: Module type of file:///Users/danbri/working/sandbox/october/tpac/codex-npm-review/integrate-core/third_party/observable/dist/runtime.esm.js is not specified and it doesn't parse as CommonJS.
+# Reparsing as ES module because module syntax was detected. This incurs a performance overhead.
+# To eliminate this warning, add "type": "module" to /Users/danbri/package.json.
+# (Use `node --trace-warnings ...` to show where the warning was created)
+# Subtest: post15: post has at least 1 live cell
+ok 158 - post15: post has at least 1 live cell
+  ---
+  duration_ms: 22.488125
+  type: 'test'
+  ...
+# Subtest: post15 cell 1 (in-browser timing illustration): 3000 generated triples round-trip and count correctly
+ok 159 - post15 cell 1 (in-browser timing illustration): 3000 generated triples round-trip and count correctly
+  ---
+  duration_ms: 2929.383917
+  type: 'test'
+  ...
+# (node:67170) [MODULE_TYPELESS_PACKAGE_JSON] Warning: Module type of file:///Users/danbri/working/sandbox/october/tpac/codex-npm-review/integrate-core/third_party/observable/dist/runtime.esm.js is not specified and it doesn't parse as CommonJS.
+# Reparsing as ES module because module syntax was detected. This incurs a performance overhead.
+# To eliminate this warning, add "type": "module" to /Users/danbri/package.json.
+# (Use `node --trace-warnings ...` to show where the warning was created)
+# Subtest: post16: post has at least 1 live cell
+ok 160 - post16: post has at least 1 live cell
+  ---
+  duration_ms: 56.709459
+  type: 'test'
+  ...
+# Subtest: post16 cell 1 (extraction pipeline table): four targets, native/js/wasm/C, in order
+ok 161 - post16 cell 1 (extraction pipeline table): four targets, native/js/wasm/C, in order
+  ---
+  duration_ms: 23.856
+  type: 'test'
+  ...
+# Subtest: post16: the quoted RDF.Term.fsti banner text matches the real file
+ok 162 - post16: the quoted RDF.Term.fsti banner text matches the real file
+  ---
+  duration_ms: 21.264334
+  type: 'test'
+  ...
+# Subtest: post16: the standing Iron Rule \#11 qualifier is quoted verbatim from CLAUDE.md
+ok 163 - post16: the standing Iron Rule \#11 qualifier is quoted verbatim from CLAUDE.md
+  ---
+  duration_ms: 3.168084
+  type: 'test'
+  ...
+# Subtest: post16: the freshly-measured F* module/line/assume-val counts are at least what the post claims
+ok 164 - post16: the freshly-measured F* module/line/assume-val counts are at least what the post claims
+  ---
+  duration_ms: 475.394709
+  type: 'test'
+  ...
+# (node:67172) [MODULE_TYPELESS_PACKAGE_JSON] Warning: Module type of file:///Users/danbri/working/sandbox/october/tpac/codex-npm-review/integrate-core/third_party/observable/dist/runtime.esm.js is not specified and it doesn't parse as CommonJS.
+# Reparsing as ES module because module syntax was detected. This incurs a performance overhead.
+# To eliminate this warning, add "type": "module" to /Users/danbri/package.json.
+# (Use `node --trace-warnings ...` to show where the warning was created)
+# Subtest: post17: post has at least 2 live cells
+ok 165 - post17: post has at least 2 live cells
+  ---
+  duration_ms: 8.6855
+  type: 'test'
+  ...
+# (node:67172) [MODULE_TYPELESS_PACKAGE_JSON] Warning: Module type of file:///Users/danbri/working/sandbox/october/tpac/codex-npm-review/integrate-core/npm/factoidal/browser.js is not specified and it doesn't parse as CommonJS.
+# Reparsing as ES module because module syntax was detected. This incurs a performance overhead.
+# To eliminate this warning, add "type": "module" to /Users/danbri/working/sandbox/october/tpac/codex-npm-review/integrate-core/npm/factoidal/package.json.
+# Subtest: post17 cell 1 (INSERT DATA): Bob appears alongside Alice after the update
+ok 166 - post17 cell 1 (INSERT DATA): Bob appears alongside Alice after the update
+  ---
+  duration_ms: 3635.333875
+  type: 'test'
+  ...
+# Subtest: post17 cell 1 degrades gracefully when the npm-entry bundle is unavailable
+ok 167 - post17 cell 1 degrades gracefully when the npm-entry bundle is unavailable
+  ---
+  duration_ms: 2.642208
+  type: 'test'
+  ...
+# Subtest: post17 cell 2 (DELETE/INSERT WHERE): Bob becomes Bobby, Alice untouched
+ok 168 - post17 cell 2 (DELETE/INSERT WHERE): Bob becomes Bobby, Alice untouched
+  ---
+  duration_ms: 159.48
+  type: 'test'
+  ...
+# Subtest: post17 cell 2 degrades gracefully when the npm-entry bundle is unavailable
+ok 169 - post17 cell 2 degrades gracefully when the npm-entry bundle is unavailable
+  ---
+  duration_ms: 1.37225
+  type: 'test'
+  ...
+# Subtest: post17: the page's fn carries update() (grounds this post's fn.update cells)
+ok 170 - post17: the page's fn carries update() (grounds this post's fn.update cells)
+  ---
+  duration_ms: 7.181583
+  type: 'test'
+  ...
+# Subtest: post17: the committed Lean conformance baseline has SPARQL 1.1 manifest-all, which includes the 13 Update manifests, at 0 fail
+ok 171 - post17: the committed Lean conformance baseline has SPARQL 1.1 manifest-all, which includes the 13 Update manifests, at 0 fail
+  ---
+  duration_ms: 8.518584
+  type: 'test'
+  ...
+# Subtest: post17: the three durable-UPDATE commits cited exist (danbri/factoidal ids, mapped into factoidal-core)
+ok 172 - post17: the three durable-UPDATE commits cited exist (danbri/factoidal ids, mapped into factoidal-core)
+  ---
+  duration_ms: 520.528166
+  type: 'test'
+  ...
+# Subtest: post17: the delta-log F* modules this post cites exist and verify without assume vals (DeltaLog/DeltaMerge)
+ok 173 - post17: the delta-log F* modules this post cites exist and verify without assume vals (DeltaLog/DeltaMerge)
+  ---
+  duration_ms: 7.129208
+  type: 'test'
+  ...
+# Subtest: post17: the CLI --delta-log flag this post cites is real
+ok 174 - post17: the CLI --delta-log flag this post cites is real
+  ---
+  duration_ms: 11.294292
+  type: 'test'
+  ...
+# Subtest: post17: SPARQL.GraphStore.fst is verified F* with no assume vals (grounds "specified and proven")
+ok 175 - post17: SPARQL.GraphStore.fst is verified F* with no assume vals (grounds "specified and proven")
+  ---
+  duration_ms: 2.631542
+  type: 'test'
+  ...
+# Subtest: post17: factoidal-http now routes the Graph Store Protocol (grounds the "landed, routed" update)
+ok 176 - post17: factoidal-http now routes the Graph Store Protocol (grounds the "landed, routed" update)
+  ---
+  duration_ms: 3.540125
+  type: 'test'
+  ...
+# Subtest: post17: the stage-8 HTTP-wiring commit cited exists on this branch
+ok 177 - post17: the stage-8 HTTP-wiring commit cited exists on this branch
+  ---
+  duration_ms: 245.038708
+  type: 'test'
+  ...
+# (node:67173) [MODULE_TYPELESS_PACKAGE_JSON] Warning: Module type of file:///Users/danbri/working/sandbox/october/tpac/codex-npm-review/integrate-core/third_party/observable/dist/runtime.esm.js is not specified and it doesn't parse as CommonJS.
+# Reparsing as ES module because module syntax was detected. This incurs a performance overhead.
+# To eliminate this warning, add "type": "module" to /Users/danbri/package.json.
+# (Use `node --trace-warnings ...` to show where the warning was created)
+# Subtest: post18: post has at least 5 live cells (4 lifecycle steps + the runtimes table)
+ok 178 - post18: post has at least 5 live cells (4 lifecycle steps + the runtimes table)
+  ---
+  duration_ms: 7.205875
+  type: 'test'
+  ...
+# Subtest: post18 cell 1 (parse + in-memory UPDATE): Carol appears alongside Alice/Bob
+ok 179 - post18 cell 1 (parse + in-memory UPDATE): Carol appears alongside Alice/Bob
+  ---
+  duration_ms: 3489.40875
+  type: 'test'
+  ...
+# Subtest: post18 cell 1 degrades gracefully when the npm-entry bundle is unavailable
+ok 180 - post18 cell 1 degrades gracefully when the npm-entry bundle is unavailable
+  ---
+  duration_ms: 10.650584
+  type: 'test'
+  ...
+# Subtest: post18 cell 2 degrades gracefully when loadNpmEntry throws
+ok 181 - post18 cell 2 degrades gracefully when loadNpmEntry throws
+  ---
+  duration_ms: 1.609333
+  type: 'test'
+  ...
+# Subtest: post18 cell 3 degrades gracefully when loadNpmEntry throws
+ok 182 - post18 cell 3 degrades gracefully when loadNpmEntry throws
+  ---
+  duration_ms: 877.598458
+  type: 'test'
+  ...
+# Subtest: post18 cell 4 degrades gracefully when loadNpmEntry throws
+ok 183 - post18 cell 4 degrades gracefully when loadNpmEntry throws
+  ---
+  duration_ms: 0.648208
+  type: 'test'
+  ...
+# Subtest: post18 cell 5 (the runtimes pretty() table): four rows, native/js/C/wasm in that order, wasm now proven too
+ok 184 - post18 cell 5 (the runtimes pretty() table): four rows, native/js/C/wasm in that order, wasm now proven too
+  ---
+  duration_ms: 1.747583
+  type: 'test'
+  ...
+# Subtest: post18: RDF.Store.Columnar.DeltaLog.fst declares exactly five ML-effect I/O assume vals
+ok 185 - post18: RDF.Store.Columnar.DeltaLog.fst declares exactly five ML-effect I/O assume vals
+  ---
+  duration_ms: 2.898458
+  type: 'test'
+  ...
+# Subtest: post18: the native realisation of the five delta-log I/O assume vals exists (issue \#282 patch)
+ok 186 - post18: the native realisation of the five delta-log I/O assume vals exists (issue \#282 patch)
+  ---
+  duration_ms: 1.917583
+  type: 'test'
+  ...
+# Subtest: post18: npm/factoidal/browser.js exports the durable update log this post's cells call
+ok 187 - post18: npm/factoidal/browser.js exports the durable update log this post's cells call
+  ---
+  duration_ms: 1.598
+  type: 'test'
+  ...
+# Subtest: post18 cell 2 (deltaLogAppend) runs on the Lean package: seq 0, opCount 1
+ok 188 - post18 cell 2 (deltaLogAppend) runs on the Lean package: seq 0, opCount 1
+  ---
+  duration_ms: 9.14375
+  type: 'test'
+  ...
+# Subtest: post18 cell 3 (deltaLogMerge) runs on the Lean package: the log read back holds Dana
+ok 189 - post18 cell 3 (deltaLogMerge) runs on the Lean package: the log read back holds Dana
+  ---
+  duration_ms: 312.148292
+  type: 'test'
+  ...
+# Subtest: post18 cell 4 (torn write) runs on the Lean package: Eve survives, Frank is lost
+ok 190 - post18 cell 4 (torn write) runs on the Lean package: Eve survives, Frank is lost
+  ---
+  duration_ms: 7.120125
+  type: 'test'
+  ...
+# Subtest: post18: the Lean engine reports the torn record, and a fresh log after it is clean
+ok 191 - post18: the Lean engine reports the torn record, and a fresh log after it is clean
+  ---
+  duration_ms: 64.150625
+  type: 'test'
+  ...
+# Subtest: post18: deltaLogAppend refuses an update form the log does not admit, and writes nothing
+ok 192 - post18: deltaLogAppend refuses an update form the log does not admit, and writes nothing
+  ---
+  duration_ms: 29.120375
+  type: 'test'
+  ...
+# Subtest: post18: entry_jsoo.ml exports the delta-log ABI AND the toCottas BaseWriter write path (grounds the "base-store write path reaches the browser too" section)
+ok 193 - post18: entry_jsoo.ml exports the delta-log ABI AND the toCottas BaseWriter write path (grounds the "base-store write path reaches the browser too" section)
+  ---
+  duration_ms: 3.905625
+  type: 'test'
+  ...
+# Subtest: post18: RDF.CottasStore.BaseWriter.fst exists and is the module the zero-Python claim cites
+ok 194 - post18: RDF.CottasStore.BaseWriter.fst exists and is the module the zero-Python claim cites
+  ---
+  duration_ms: 0.492666
+  type: 'test'
+  ...
+# Subtest: post18: the C demo transcript quoted in this post is printed by the committed delta_log_demo.c
+ok 195 - post18: the C demo transcript quoted in this post is printed by the committed delta_log_demo.c
+  ---
+  duration_ms: 1.449709
+  type: 'test'
+  ...
+# Subtest: post18: the KaRaMeL C output directory this post links to exists
+ok 196 - post18: the KaRaMeL C output directory this post links to exists
+  ---
+  duration_ms: 0.676792
+  type: 'test'
+  ...
+# Subtest: post18: the delta-log merge correspondence lemma this post cites is present (same lemma post17 cites)
+ok 197 - post18: the delta-log merge correspondence lemma this post cites is present (same lemma post17 cites)
+  ---
+  duration_ms: 1.068667
+  type: 'test'
+  ...
+# Subtest: post18: the commits cited in this post are real, reachable commits
+ok 198 - post18: the commits cited in this post are real, reachable commits
+  ---
+  duration_ms: 461.546208
+  type: 'test'
+  ...
+# Subtest: post18: the zero-Python DuckDB verdict quoted in this post matches the real commit message
+ok 199 - post18: the zero-Python DuckDB verdict quoted in this post matches the real commit message
+  ---
+  duration_ms: 139.562958
+  type: 'test'
+  ...
+# (node:67207) [MODULE_TYPELESS_PACKAGE_JSON] Warning: Module type of file:///Users/danbri/working/sandbox/october/tpac/codex-npm-review/integrate-core/third_party/observable/dist/runtime.esm.js is not specified and it doesn't parse as CommonJS.
+# Reparsing as ES module because module syntax was detected. This incurs a performance overhead.
+# To eliminate this warning, add "type": "module" to /Users/danbri/package.json.
+# (Use `node --trace-warnings ...` to show where the warning was created)
+# Subtest: post19: post has 6 live cells (LAT_TTL + dataset hoisted into named cells)
+ok 200 - post19: post has 6 live cells (LAT_TTL + dataset hoisted into named cells)
+  ---
+  duration_ms: 3.964875
+  type: 'test'
+  ...
+# Subtest: post19: dependency inference wires LAT_TTL -> dataset -> every query cell
+ok 201 - post19: dependency inference wires LAT_TTL -> dataset -> every query cell
+  ---
+  duration_ms: 63.856417
+  type: 'test'
+  ...
+# Subtest: post19 cell 1 (parse the dataset): 7 triples
+ok 202 - post19 cell 1 (parse the dataset): 7 triples
+  ---
+  duration_ms: 2580.427625
+  type: 'test'
+  ...
+# Subtest: post19 cell 2 (plain correlated pattern): 4 rows, carol dropped
+ok 203 - post19 cell 2 (plain correlated pattern): 4 rows, carol dropped
+  ---
+  duration_ms: 445.949375
+  type: 'test'
+  ...
+# Subtest: post19 cell 3 (top-N per group): one label per person
+ok 204 - post19 cell 3 (top-N per group): one label per person
+  ---
+  duration_ms: 13.069458
+  type: 'test'
+  ...
+# Subtest: post19 cell 4 (LATERAL vs plain join): 2 rows vs 1 row
+ok 205 - post19 cell 4 (LATERAL vs plain join): 2 rows vs 1 row
+  ---
+  duration_ms: 9.431458
+  type: 'test'
+  ...
+# Subtest: post19: SPARQL11.Algebra.fst really defines the GP_Lateral algebra node
+ok 206 - post19: SPARQL11.Algebra.fst really defines the GP_Lateral algebra node
+  ---
+  duration_ms: 15.544167
+  type: 'test'
+  ...
+# (node:67241) [MODULE_TYPELESS_PACKAGE_JSON] Warning: Module type of file:///Users/danbri/working/sandbox/october/tpac/codex-npm-review/integrate-core/third_party/observable/dist/runtime.esm.js is not specified and it doesn't parse as CommonJS.
+# Reparsing as ES module because module syntax was detected. This incurs a performance overhead.
+# To eliminate this warning, add "type": "module" to /Users/danbri/package.json.
+# (Use `node --trace-warnings ...` to show where the warning was created)
+# Subtest: post20: post has 9 live cells (FT_TTL + dataset hoisted into named cells)
+ok 207 - post20: post has 9 live cells (FT_TTL + dataset hoisted into named cells)
+  ---
+  duration_ms: 14.707542
+  type: 'test'
+  ...
+# Subtest: post20: dependency inference wires FT_TTL -> dataset -> every query cell
+ok 208 - post20: dependency inference wires FT_TTL -> dataset -> every query cell
+  ---
+  duration_ms: 53.620875
+  type: 'test'
+  ...
+# Subtest: post20 cell 1 (parse the dataset): 15 triples
+ok 209 - post20 cell 1 (parse the dataset): 15 triples
+  ---
+  duration_ms: 2262.349875
+  type: 'test'
+  ...
+# Subtest: post20 cell 2 (2-arity "panel"): 4 subjects across labels + a title
+ok 210 - post20 cell 2 (2-arity "panel"): 4 subjects across labels + a title
+  ---
+  duration_ms: 651.737834
+  type: 'test'
+  ...
+# Subtest: post20 cell 3 (AND-by-default "solar panel"): only the 2 with both tokens
+ok 211 - post20 cell 3 (AND-by-default "solar panel"): only the 2 with both tokens
+  ---
+  duration_ms: 52.708458
+  type: 'test'
+  ...
+# Subtest: post20 cell 4 (list form, rdfs:label restriction): controlpanel dropped
+ok 212 - post20 cell 4 (list form, rdfs:label restriction): controlpanel dropped
+  ---
+  duration_ms: 8.5605
+  type: 'test'
+  ...
+# Subtest: post20 cell 5 (list form + limit 2): capped count, no ranking claim
+ok 213 - post20 cell 5 (list form + limit 2): capped count, no ranking claim
+  ---
+  duration_ms: 14.80125
+  type: 'test'
+  ...
+# Subtest: post20 cell 6 (no-match): zero rows, no error
+ok 214 - post20 cell 6 (no-match): zero rows, no error
+  ---
+  duration_ms: 8.890709
+  type: 'test'
+  ...
+# Subtest: post20 cell 7 (BGP composition): text:query joins ex:status, retired dropped
+ok 215 - post20 cell 7 (BGP composition): text:query joins ex:status, retired dropped
+  ---
+  duration_ms: 14.706375
+  type: 'test'
+  ...
+# Subtest: post20: SPARQL.FullText.fst exists, uses the jena-text IRI, and is honest about no scoring
+ok 216 - post20: SPARQL.FullText.fst exists, uses the jena-text IRI, and is honest about no scoring
+  ---
+  duration_ms: 9.58575
+  type: 'test'
+  ...
+# (node:67243) [MODULE_TYPELESS_PACKAGE_JSON] Warning: Module type of file:///Users/danbri/working/sandbox/october/tpac/codex-npm-review/integrate-core/third_party/observable/dist/runtime.esm.js is not specified and it doesn't parse as CommonJS.
+# Reparsing as ES module because module syntax was detected. This incurs a performance overhead.
+# To eliminate this warning, add "type": "module" to /Users/danbri/package.json.
+# (Use `node --trace-warnings ...` to show where the warning was created)
+# Subtest: post21: post has 8 live cells (GEO_TTL hoisted into its own named cell)
+ok 217 - post21: post has 8 live cells (GEO_TTL hoisted into its own named cell)
+  ---
+  duration_ms: 4.989041
+  type: 'test'
+  ...
+# Subtest: post21: dependency inference wires GEO_TTL into cells 2,3,5,6 (not the map/envelope/BOX_TTL cells)
+ok 218 - post21: dependency inference wires GEO_TTL into cells 2,3,5,6 (not the map/envelope/BOX_TTL cells)
+  ---
+  duration_ms: 18.931
+  type: 'test'
+  ...
+# Subtest: post21 cell 1 (parse the geo dataset): 15 triples
+ok 219 - post21 cell 1 (parse the geo dataset): 15 triples
+  ---
+  duration_ms: 2634.271792
+  type: 'test'
+  ...
+# Subtest: post21 cell 2 (geof:sfWithin): the two inside pairs, ordered
+ok 220 - post21 cell 2 (geof:sfWithin): the two inside pairs, ordered
+  ---
+  duration_ms: 1202.631125
+  type: 'test'
+  ...
+# Subtest: post21 map cell helper: geomToWkt serializes a simple Polygon
+ok 221 - post21 map cell helper: geomToWkt serializes a simple Polygon
+  ---
+  duration_ms: 4.277208
+  type: 'test'
+  ...
+# Subtest: post21 map cell helper: geomToWkt serializes a MultiPolygon with the OGC triple-paren nesting
+ok 222 - post21 map cell helper: geomToWkt serializes a MultiPolygon with the OGC triple-paren nesting
+  ---
+  duration_ms: 1.11975
+  type: 'test'
+  ...
+# Subtest: post21 map cell helper: geomToWkt serializes a LineString
+ok 223 - post21 map cell helper: geomToWkt serializes a LineString
+  ---
+  duration_ms: 0.196625
+  type: 'test'
+  ...
+# Subtest: post21 choropleth query: landmark-in-borough sfWithin counts, run against the REAL engine
+ok 224 - post21 choropleth query: landmark-in-borough sfWithin counts, run against the REAL engine
+  ---
+  duration_ms: 1650.572916
+  type: 'test'
+  ...
+# Subtest: post21 map cell (cell 3): runs to completion with a minimal document/L/fetch stub, no throw
+ok 225 - post21 map cell (cell 3): runs to completion with a minimal document/L/fetch stub, no throw
+  ---
+  duration_ms: 91575.708333
+  type: 'test'
+  ...
+# Subtest: post21 cell 4 (geof:sfDisjoint): the two cities outside the London box
+ok 226 - post21 cell 4 (geof:sfDisjoint): the two cities outside the London box
+  ---
+  duration_ms: 228.363958
+  type: 'test'
+  ...
+# Subtest: post21 cell 5 (geof:distance ORDER BY): London 0 first, then Manchester, Edinburgh
+ok 227 - post21 cell 5 (geof:distance ORDER BY): London 0 first, then Manchester, Edinburgh
+  ---
+  duration_ms: 50.214042
+  type: 'test'
+  ...
+# Subtest: post21 cell 6 (geof:envelope): polygon envelopes to itself, point to a degenerate box
+ok 228 - post21 cell 6 (geof:envelope): polygon envelopes to itself, point to a degenerate box
+  ---
+  duration_ms: 4.2315
+  type: 'test'
+  ...
+# Subtest: post21 cell 7 (exact boundary): on-edge point is intersects+touches but NOT within
+ok 229 - post21 cell 7 (exact boundary): on-edge point is intersects+touches but NOT within
+  ---
+  duration_ms: 267.1365
+  type: 'test'
+  ...
+# (node:67244) [MODULE_TYPELESS_PACKAGE_JSON] Warning: Module type of file:///Users/danbri/working/sandbox/october/tpac/codex-npm-review/integrate-core/third_party/observable/dist/runtime.esm.js is not specified and it doesn't parse as CommonJS.
+# Reparsing as ES module because module syntax was detected. This incurs a performance overhead.
+# To eliminate this warning, add "type": "module" to /Users/danbri/package.json.
+# (Use `node --trace-warnings ...` to show where the warning was created)
+# Subtest: post23: post has 6 live cells (DID + didDataset hoisted into named cells)
+ok 230 - post23: post has 6 live cells (DID + didDataset hoisted into named cells)
+  ---
+  duration_ms: 64.843334
+  type: 'test'
+  ...
+# Subtest: post23: dependency inference wires DID -> didDataset -> every downstream cell
+ok 231 - post23: dependency inference wires DID -> didDataset -> every downstream cell
+  ---
+  duration_ms: 10.424958
+  type: 'test'
+  ...
+# Subtest: post23 cell 1 (resolve did:key): 8 triples, no network
+ok 232 - post23 cell 1 (resolve did:key): 8 triples, no network
+  ---
+  duration_ms: 2455.645458
+  type: 'test'
+  ...
+# Subtest: post23 cell 2 (DID Document as triples): 8-row s/p/o table
+ok 233 - post23 cell 2 (DID Document as triples): 8-row s/p/o table
+  ---
+  duration_ms: 739.145083
+  type: 'test'
+  ...
+# Subtest: post23 cell 3 (verification method via SPARQL): one row, typed key literal
+ok 234 - post23 cell 3 (verification method via SPARQL): one row, typed key literal
+  ---
+  duration_ms: 138.534708
+  type: 'test'
+  ...
+# Subtest: post23 cell 4 (node-graph): 4 nodes, 8 edges derived from the document
+ok 235 - post23 cell 4 (node-graph): 4 nodes, 8 edges derived from the document
+  ---
+  duration_ms: 24.46775
+  type: 'test'
+  ...
+# (node:67265) [MODULE_TYPELESS_PACKAGE_JSON] Warning: Module type of file:///Users/danbri/working/sandbox/october/tpac/codex-npm-review/integrate-core/third_party/observable/dist/runtime.esm.js is not specified and it doesn't parse as CommonJS.
+# Reparsing as ES module because module syntax was detected. This incurs a performance overhead.
+# To eliminate this warning, add "type": "module" to /Users/danbri/package.json.
+# (Use `node --trace-warnings ...` to show where the warning was created)
+# Subtest: post24: post has 4 live cells (buf fetch hoisted into its own named cell)
+ok 236 - post24: post has 4 live cells (buf fetch hoisted into its own named cell)
+  ---
+  duration_ms: 2.221958
+  type: 'test'
+  ...
+# Subtest: post24: dependency inference wires buf into every query cell
+ok 237 - post24: dependency inference wires buf into every query cell
+  ---
+  duration_ms: 73.940541
+  type: 'test'
+  ...
+# Subtest: post24 cell 1 (count triples): 343
+ok 238 - post24 cell 1 (count triples): 343
+  ---
+  duration_ms: 2743.714708
+  type: 'test'
+  ...
+# Subtest: post24 cell 2 (owl:Class labels): pretty table including RML classes
+ok 239 - post24 cell 2 (owl:Class labels): pretty table including RML classes
+  ---
+  duration_ms: 1941.343458
+  type: 'test'
+  ...
+# Subtest: post24 cell 3 (predicate histogram): rdf:type bar at 84
+ok 240 - post24 cell 3 (predicate histogram): rdf:type bar at 84
+  ---
+  duration_ms: 447.101458
+  type: 'test'
+  ...
+# Subtest: post24: HDT count is 343 through the package API directly (no cell machinery)
+ok 241 - post24: HDT count is 343 through the package API directly (no cell machinery)
+  ---
+  duration_ms: 375.925
+  type: 'test'
+  ...
+# (node:67273) [MODULE_TYPELESS_PACKAGE_JSON] Warning: Module type of file:///Users/danbri/working/sandbox/october/tpac/codex-npm-review/integrate-core/third_party/observable/dist/runtime.esm.js is not specified and it doesn't parse as CommonJS.
+# Reparsing as ES module because module syntax was detected. This incurs a performance overhead.
+# To eliminate this warning, add "type": "module" to /Users/danbri/package.json.
+# (Use `node --trace-warnings ...` to show where the warning was created)
+# Subtest: post25: post has 5 live cells (XML hoisted into its own named cell)
+ok 242 - post25: post has 5 live cells (XML hoisted into its own named cell)
+  ---
+  duration_ms: 1.8135
+  type: 'test'
+  ...
+# Subtest: post25: dependency inference wires XML into cells 2, 4, 5 (not the BAD cell at 3)
+ok 243 - post25: dependency inference wires XML into cells 2, 4, 5 (not the BAD cell at 3)
+  ---
+  duration_ms: 128.020958
+  type: 'test'
+  ...
+# Subtest: post25 cell 1 (well-formed document): wellformed true
+ok 244 - post25 cell 1 (well-formed document): wellformed true
+  ---
+  duration_ms: 2993.809958
+  type: 'test'
+  ...
+# Subtest: post25 cell 2 (mismatched close tag): wellformed false
+ok 245 - post25 cell 2 (mismatched close tag): wellformed false
+  ---
+  duration_ms: 636.847375
+  type: 'test'
+  ...
+# Subtest: post25 cell 3 (//book/title node-set): two title elements
+ok 246 - post25 cell 3 (//book/title node-set): two title elements
+  ---
+  duration_ms: 17.855625
+  type: 'test'
+  ...
+# Subtest: post25 cell 4 (four XPath result types): number/nodeset/string/boolean
+ok 247 - post25 cell 4 (four XPath result types): number/nodeset/string/boolean
+  ---
+  duration_ms: 15.169542
+  type: 'test'
+  ...
+# (node:67281) [MODULE_TYPELESS_PACKAGE_JSON] Warning: Module type of file:///Users/danbri/working/sandbox/october/tpac/codex-npm-review/integrate-core/third_party/observable/dist/runtime.esm.js is not specified and it doesn't parse as CommonJS.
+# Reparsing as ES module because module syntax was detected. This incurs a performance overhead.
+# To eliminate this warning, add "type": "module" to /Users/danbri/package.json.
+# (Use `node --trace-warnings ...` to show where the warning was created)
+# Subtest: post26: post ships the seven-cell reactive chain
+ok 248 - post26: post ships the seven-cell reactive chain
+  ---
+  duration_ms: 5.394625
+  type: 'test'
+  ...
+# Subtest: post26: dependency inference names the right cells + inputs
+ok 249 - post26: dependency inference names the right cells + inputs
+  ---
+  duration_ms: 166.316834
+  type: 'test'
+  ...
+# Subtest: post26: values propagate ttl -> graph -> results -> chartData
+ok 250 - post26: values propagate ttl -> graph -> results -> chartData
+  ---
+  duration_ms: 60222.732708
+  type: 'test'
+  ...
+# Subtest: post26: editing ttl re-runs graph + chartData downstream
+ok 251 - post26: editing ttl re-runs graph + chartData downstream
+  ---
+  duration_ms: 791.514542
+  type: 'test'
+  ...
+# (node:67333) [MODULE_TYPELESS_PACKAGE_JSON] Warning: Module type of file:///Users/danbri/working/sandbox/october/tpac/codex-npm-review/integrate-core/third_party/observable/dist/runtime.esm.js is not specified and it doesn't parse as CommonJS.
+# Reparsing as ES module because module syntax was detected. This incurs a performance overhead.
+# To eliminate this warning, add "type": "module" to /Users/danbri/package.json.
+# (Use `node --trace-warnings ...` to show where the warning was created)
+# Subtest: post27: post ships four live cells
+ok 252 - post27: post ships four live cells
+  ---
+  duration_ms: 16.95475
+  type: 'test'
+  ...
+# Subtest: post27: dependency inference names the cells in order
+ok 253 - post27: dependency inference names the cells in order
+  ---
+  duration_ms: 28.0475
+  type: 'test'
+  ...
+# Subtest: post27: xsltResult builds the catalog via for-each/value-of
+ok 254 - post27: xsltResult builds the catalog via for-each/value-of
+  ---
+  duration_ms: 5475.34275
+  type: 'test'
+  ...
+# Subtest: post27: schematronBad reports one assert-fail finding as a table
+ok 255 - post27: schematronBad reports one assert-fail finding as a table
+  ---
+  duration_ms: 1433.461584
+  type: 'test'
+  ...
+# Subtest: post27: schematronGood clears the same rule
+ok 256 - post27: schematronGood clears the same rule
+  ---
+  duration_ms: 4.872042
+  type: 'test'
+  ...
+# (node:67345) [MODULE_TYPELESS_PACKAGE_JSON] Warning: Module type of file:///Users/danbri/working/sandbox/october/tpac/codex-npm-review/integrate-core/third_party/observable/dist/runtime.esm.js is not specified and it doesn't parse as CommonJS.
+# Reparsing as ES module because module syntax was detected. This incurs a performance overhead.
+# To eliminate this warning, add "type": "module" to /Users/danbri/package.json.
+# (Use `node --trace-warnings ...` to show where the warning was created)
+# Subtest: post28: post ships fourteen live cells
+ok 257 - post28: post ships fourteen live cells
+  ---
+  duration_ms: 66.626667
+  type: 'test'
+  ...
+# Subtest: post28: dependency inference names the cells in order
+ok 258 - post28: dependency inference names the cells in order
+  ---
+  duration_ms: 167.068459
+  type: 'test'
+  ...
+# Subtest: post28: mathmlDemo evaluates 2+3 to an exact rational and 1/0 to undef
+ok 259 - post28: mathmlDemo evaluates 2+3 to an exact rational and 1/0 to undef
+  ---
+  duration_ms: 4458.690875
+  type: 'test'
+  ...
+# Subtest: post28: the pretty(mathmlDemo) cell renders a two-row table
+ok 260 - post28: the pretty(mathmlDemo) cell renders a two-row table
+  ---
+  duration_ms: 1657.656167
+  type: 'test'
+  ...
+# Subtest: post28: summationMathml carries the verified Content MathML for the sum
+ok 261 - post28: summationMathml carries the verified Content MathML for the sum
+  ---
+  duration_ms: 16.299208
+  type: 'test'
+  ...
+# Subtest: post28: summationPresentation converts to Presentation MathML for display
+ok 262 - post28: summationPresentation converts to Presentation MathML for display
+  ---
+  duration_ms: 140.018916
+  type: 'test'
+  ...
+# Subtest: post28: determinantPlain is -2, determinantExact is the exact fraction 1/4
+ok 263 - post28: determinantPlain is -2, determinantExact is the exact fraction 1/4
+  ---
+  duration_ms: 24.247084
+  type: 'test'
+  ...
+# Subtest: post28: sigmoidFormulaMathml is the engine-serialized Presentation MathML for L/(1+exp(-k*(x-x0)))
+ok 264 - post28: sigmoidFormulaMathml is the engine-serialized Presentation MathML for L/(1+exp(-k*(x-x0)))
+  ---
+  duration_ms: 5.740583
+  type: 'test'
+  ...
+# Subtest: post28: sigmoidFormulaDisplay wraps the raw MathML for the browser unchanged
+ok 265 - post28: sigmoidFormulaDisplay wraps the raw MathML for the browser unchanged
+  ---
+  duration_ms: 9.206333
+  type: 'test'
+  ...
+# Subtest: post28: sigmoidParams carries the default slider values
+ok 266 - post28: sigmoidParams carries the default slider values
+  ---
+  duration_ms: 12.389667
+  type: 'test'
+  ...
+# Subtest: post28: sigmoidSamples has 25 F*-computed points; the midpoint is exact
+ok 267 - post28: sigmoidSamples has 25 F*-computed points; the midpoint is exact
+  ---
+  duration_ms: 347.941125
+  type: 'test'
+  ...
+# Subtest: post28: sigmoidPlot is an SVG polyline over the 25 F*-computed points
+ok 268 - post28: sigmoidPlot is an SVG polyline over the 25 F*-computed points
+  ---
+  duration_ms: 50.557167
+  type: 'test'
+  ...
+# Subtest: post28: sigmoidPlotDisplay wraps the raw SVG for the browser unchanged
+ok 269 - post28: sigmoidPlotDisplay wraps the raw SVG for the browser unchanged
+  ---
+  duration_ms: 252.205791
+  type: 'test'
+  ...
+# Subtest: post28: sigmoidInteractive builds three sliders and an SVG, and renders without throwing
+ok 270 - post28: sigmoidInteractive builds three sliders and an SVG, and renders without throwing
+  ---
+  duration_ms: 38.205667
+  type: 'test'
+  ...
+# (node:67346) [MODULE_TYPELESS_PACKAGE_JSON] Warning: Module type of file:///Users/danbri/working/sandbox/october/tpac/codex-npm-review/integrate-core/third_party/observable/dist/runtime.esm.js is not specified and it doesn't parse as CommonJS.
+# Reparsing as ES module because module syntax was detected. This incurs a performance overhead.
+# To eliminate this warning, add "type": "module" to /Users/danbri/package.json.
+# (Use `node --trace-warnings ...` to show where the warning was created)
+# Subtest: post29: post ships five live cells
+ok 271 - post29: post ships five live cells
+  ---
+  duration_ms: 28.684
+  type: 'test'
+  ...
+# Subtest: post29: dependency inference names the cells in order
+ok 272 - post29: dependency inference names the cells in order
+  ---
+  duration_ms: 72.975792
+  type: 'test'
+  ...
+# Subtest: post29: schemaAccept passes a well-formed instance
+ok 273 - post29: schemaAccept passes a well-formed instance
+  ---
+  duration_ms: 4473.987917
+  type: 'test'
+  ...
+# Subtest: post29: schemaReject fails an instance missing the required property
+ok 274 - post29: schemaReject fails an instance missing the required property
+  ---
+  duration_ms: 1164.693958
+  type: 'test'
+  ...
+# Subtest: post29: xformsResult recalculates sum = a + b onto the sum leaf
+ok 275 - post29: xformsResult recalculates sum = a + b onto the sum leaf
+  ---
+  duration_ms: 53.823959
+  type: 'test'
+  ...
+# (node:67349) [MODULE_TYPELESS_PACKAGE_JSON] Warning: Module type of file:///Users/danbri/working/sandbox/october/tpac/codex-npm-review/integrate-core/third_party/observable/dist/runtime.esm.js is not specified and it doesn't parse as CommonJS.
+# Reparsing as ES module because module syntax was detected. This incurs a performance overhead.
+# To eliminate this warning, add "type": "module" to /Users/danbri/package.json.
+# (Use `node --trace-warnings ...` to show where the warning was created)
+# Subtest: post30: post ships twenty-three live cells
+ok 276 - post30: post ships twenty-three live cells
+  ---
+  duration_ms: 79.828959
+  type: 'test'
+  ...
+# Subtest: post30: dependency inference names the cells in order
+ok 277 - post30: dependency inference names the cells in order
+  ---
+  duration_ms: 30.793542
+  type: 'test'
+  ...
+# Subtest: post30: the tableau materialises at least one membership for the someValuesFrom ontology
+ok 278 - post30: the tableau materialises at least one membership for the someValuesFrom ontology
+  ---
+  duration_ms: 3181.531166
+  type: 'test'
+  ...
+# Subtest: post30: Alice is classified as a member of ParentOfDoctor (someValuesFrom)
+ok 279 - post30: Alice is classified as a member of ParentOfDoctor (someValuesFrom)
+  ---
+  duration_ms: 1416.079833
+  type: 'test'
+  ...
+# Subtest: post30: Alice is classified as a BritishCitizen (hasValue)
+ok 280 - post30: Alice is classified as a BritishCitizen (hasValue)
+  ---
+  duration_ms: 6.644375
+  type: 'test'
+  ...
+# Subtest: post30: the DL pipeline flags the unsatisfiable restriction that RL leaves consistent
+ok 281 - post30: the DL pipeline flags the unsatisfiable restriction that RL leaves consistent
+  ---
+  duration_ms: 124.468166
+  type: 'test'
+  ...
+# Subtest: post30: owlIsConsistent refutes the disjoint-classes clash with a reason
+not ok 282 - post30: owlIsConsistent refutes the disjoint-classes clash with a reason
+  ---
+  duration_ms: 180.555
+  type: 'test'
+  location: '/Users/danbri/working/sandbox/october/tpac/codex-npm-review/integrate-core/tests/hub/post30_test.mjs:88:1'
+  failureType: 'testCodeFailure'
+  error: |-
+    Expected values to be strictly equal:
+    
+    null !== false
+    
+  code: 'ERR_ASSERTION'
+  name: 'AssertionError'
+  expected: false
+  actual: ~
+  operator: 'strictEqual'
+  stack: |-
+    TestContext.<anonymous> (file:///Users/danbri/working/sandbox/october/tpac/codex-npm-review/integrate-core/tests/hub/post30_test.mjs:91:10)
+    async Test.run (node:internal/test_runner/test:1054:7)
+    async Test.processPendingSubtests (node:internal/test_runner/test:744:7)
+  ...
+# Subtest: post30: owlIsConsistent refutes the min/max cardinality clash
+not ok 283 - post30: owlIsConsistent refutes the min/max cardinality clash
+  ---
+  duration_ms: 175.922667
+  type: 'test'
+  location: '/Users/danbri/working/sandbox/october/tpac/codex-npm-review/integrate-core/tests/hub/post30_test.mjs:96:1'
+  failureType: 'testCodeFailure'
+  error: |-
+    Expected values to be strictly equal:
+    
+    null !== false
+    
+  code: 'ERR_ASSERTION'
+  name: 'AssertionError'
+  expected: false
+  actual: ~
+  operator: 'strictEqual'
+  stack: |-
+    TestContext.<anonymous> (file:///Users/danbri/working/sandbox/october/tpac/codex-npm-review/integrate-core/tests/hub/post30_test.mjs:99:10)
+    async Test.run (node:internal/test_runner/test:1054:7)
+    async Test.processPendingSubtests (node:internal/test_runner/test:744:7)
+  ...
+# Subtest: post30: owlIsConsistent refutes the functional-property clash
+not ok 284 - post30: owlIsConsistent refutes the functional-property clash
+  ---
+  duration_ms: 14.436
+  type: 'test'
+  location: '/Users/danbri/working/sandbox/october/tpac/codex-npm-review/integrate-core/tests/hub/post30_test.mjs:102:1'
+  failureType: 'testCodeFailure'
+  error: |-
+    Expected values to be strictly equal:
+    
+    null !== false
+    
+  code: 'ERR_ASSERTION'
+  name: 'AssertionError'
+  expected: false
+  actual: ~
+  operator: 'strictEqual'
+  stack: |-
+    TestContext.<anonymous> (file:///Users/danbri/working/sandbox/october/tpac/codex-npm-review/integrate-core/tests/hub/post30_test.mjs:105:10)
+    async Test.run (node:internal/test_runner/test:1054:7)
+    async Test.processPendingSubtests (node:internal/test_runner/test:744:7)
+  ...
+# Subtest: post30: owlIsConsistent leaves the satisfiable control graph consistent
+not ok 285 - post30: owlIsConsistent leaves the satisfiable control graph consistent
+  ---
+  duration_ms: 9.407
+  type: 'test'
+  location: '/Users/danbri/working/sandbox/october/tpac/codex-npm-review/integrate-core/tests/hub/post30_test.mjs:108:1'
+  failureType: 'testCodeFailure'
+  error: |-
+    Expected values to be strictly equal:
+    
+    null !== true
+    
+  code: 'ERR_ASSERTION'
+  name: 'AssertionError'
+  expected: true
+  actual: ~
+  operator: 'strictEqual'
+  stack: |-
+    TestContext.<anonymous> (file:///Users/danbri/working/sandbox/october/tpac/codex-npm-review/integrate-core/tests/hub/post30_test.mjs:111:10)
+    async Test.run (node:internal/test_runner/test:1054:7)
+    async Test.processPendingSubtests (node:internal/test_runner/test:744:7)
+  ...
+# Subtest: post30: the clash-family summary is three refuted families plus one open control
+not ok 286 - post30: the clash-family summary is three refuted families plus one open control
+  ---
+  duration_ms: 273.922667
+  type: 'test'
+  location: '/Users/danbri/working/sandbox/october/tpac/codex-npm-review/integrate-core/tests/hub/post30_test.mjs:115:1'
+  failureType: 'testCodeFailure'
+  error: |-
+    Expected values to be strictly deep-equal:
+    + actual - expected
+    
+      [
+    +   null,
+    +   null,
+    +   null,
+    +   null
+    -   false,
+    -   false,
+    -   false,
+    -   true
+      ]
+    
+  code: 'ERR_ASSERTION'
+  name: 'AssertionError'
+  expected:
+    0: false
+    1: false
+    2: false
+    3: true
+  actual:
+    0: ~
+    1: ~
+    2: ~
+    3: ~
+  operator: 'deepStrictEqual'
+  stack: |-
+    TestContext.<anonymous> (file:///Users/danbri/working/sandbox/october/tpac/codex-npm-review/integrate-core/tests/hub/post30_test.mjs:119:10)
+    async Test.run (node:internal/test_runner/test:1054:7)
+    async Test.processPendingSubtests (node:internal/test_runner/test:744:7)
+  ...
+# Subtest: post30: a fuel:0 budget-out is reported as null, never a false
+not ok 287 - post30: a fuel:0 budget-out is reported as null, never a false
+  ---
+  duration_ms: 36.867333
+  type: 'test'
+  location: '/Users/danbri/working/sandbox/october/tpac/codex-npm-review/integrate-core/tests/hub/post30_test.mjs:125:1'
+  failureType: 'testCodeFailure'
+  error: 'the reason names the exhausted cap'
+  code: 'ERR_ASSERTION'
+  name: 'AssertionError'
+  expected:
+  actual: 'unsupported-syntax: the whole default graph is outside the admitted atomic OWL fragment (indeterminate)'
+  operator: 'match'
+  stack: |-
+    TestContext.<anonymous> (file:///Users/danbri/working/sandbox/october/tpac/codex-npm-review/integrate-core/tests/hub/post30_test.mjs:130:10)
+    async Test.run (node:internal/test_runner/test:1054:7)
+    async Test.processPendingSubtests (node:internal/test_runner/test:744:7)
+  ...
+# Subtest: post30: owlEntails decides the someValuesFrom entailment in the OWL 2 RL closure (cls-svf1, cax-eqc2)
+ok 288 - post30: owlEntails decides the someValuesFrom entailment in the OWL 2 RL closure (cls-svf1, cax-eqc2)
+  ---
+  duration_ms: 259.794959
+  type: 'test'
+  ...
+# Subtest: post30: owlEntails proves the union entailment by refutation
+ok 289 - post30: owlEntails proves the union entailment by refutation
+  ---
+  duration_ms: 439.225125
+  type: 'test'
+  ...
+# (node:67350) [MODULE_TYPELESS_PACKAGE_JSON] Warning: Module type of file:///Users/danbri/working/sandbox/october/tpac/codex-npm-review/integrate-core/third_party/observable/dist/runtime.esm.js is not specified and it doesn't parse as CommonJS.
+# Reparsing as ES module because module syntax was detected. This incurs a performance overhead.
+# To eliminate this warning, add "type": "module" to /Users/danbri/package.json.
+# (Use `node --trace-warnings ...` to show where the warning was created)
+# Subtest: post31: Turtle 1.2 parses to 7 quads (2 claims + reifier expansion + base + 2 titles)
+ok 290 - post31: Turtle 1.2 parses to 7 quads (2 claims + reifier expansion + base + 2 titles)
+  ---
+  duration_ms: 3584.420542
+  type: 'test'
+  ...
+# Subtest: post31: Mode_11 (default) rejects the 1.2-only syntax with a FactoidalError — opt-in is load-bearing
+ok 291 - post31: Mode_11 (default) rejects the 1.2-only syntax with a FactoidalError — opt-in is load-bearing
+  ---
+  duration_ms: 256.052166
+  type: 'test'
+  ...
+# Subtest: post31: a variable binds a whole triple term (Quad term)
+ok 292 - post31: a variable binds a whole triple term (Quad term)
+  ---
+  duration_ms: 158.235625
+  type: 'test'
+  ...
+# Subtest: post31: <<( ?s ?p ?o )>> pattern matches inside the triple term
+ok 293 - post31: <<( ?s ?p ?o )>> pattern matches inside the triple term
+  ---
+  duration_ms: 3.936875
+  type: 'test'
+  ...
+# Subtest: post31: isTRIPLE(?t) is true for both claimed statements
+ok 294 - post31: isTRIPLE(?t) is true for both claimed statements
+  ---
+  duration_ms: 233.270583
+  type: 'test'
+  ...
+# Subtest: post31: the annotation confidence is readable as a plain triple
+ok 295 - post31: the annotation confidence is readable as a plain triple
+  ---
+  duration_ms: 105.274041
+  type: 'test'
+  ...
+# Subtest: post31: post has 7 live cells (ttl + mode11Rejects + dataset + 4 query cells)
+ok 296 - post31: post has 7 live cells (ttl + mode11Rejects + dataset + 4 query cells)
+  ---
+  duration_ms: 0.249667
+  type: 'test'
+  ...
+# Subtest: post31: dependency inference wires ttl -> mode11Rejects, ttl -> dataset -> every query cell
+ok 297 - post31: dependency inference wires ttl -> mode11Rejects, ttl -> dataset -> every query cell
+  ---
+  duration_ms: 208.035959
+  type: 'test'
+  ...
+# Subtest: post31 cell 2 (mode11Rejects): renders the FactoidalError name, line and column
+ok 298 - post31 cell 2 (mode11Rejects): renders the FactoidalError name, line and column
+  ---
+  duration_ms: 185.153834
+  type: 'test'
+  ...
+# Subtest: post31 cell 4 (bind whole triple term): 2 rows, statement renders as <<( )>>
+ok 299 - post31 cell 4 (bind whole triple term): 2 rows, statement renders as <<( )>>
+  ---
+  duration_ms: 5.886833
+  type: 'test'
+  ...
+# Subtest: post31 cell 5 (match inside triple term): 2 rows, 4 columns
+ok 300 - post31 cell 5 (match inside triple term): 2 rows, 4 columns
+  ---
+  duration_ms: 8.327125
+  type: 'test'
+  ...
+# Subtest: post31 cell 6 (isTRIPLE): 2 rows, both true
+ok 301 - post31 cell 6 (isTRIPLE): 2 rows, both true
+  ---
+  duration_ms: 28.247791
+  type: 'test'
+  ...
+# Subtest: post31 cell 7 (annotation confidence): 0.99
+ok 302 - post31 cell 7 (annotation confidence): 0.99
+  ---
+  duration_ms: 12.6575
+  type: 'test'
+  ...
+# (node:67367) [MODULE_TYPELESS_PACKAGE_JSON] Warning: Module type of file:///Users/danbri/working/sandbox/october/tpac/codex-npm-review/integrate-core/third_party/observable/dist/runtime.esm.js is not specified and it doesn't parse as CommonJS.
+# Reparsing as ES module because module syntax was detected. This incurs a performance overhead.
+# To eliminate this warning, add "type": "module" to /Users/danbri/package.json.
+# (Use `node --trace-warnings ...` to show where the warning was created)
+# (node:67367) [MODULE_TYPELESS_PACKAGE_JSON] Warning: Module type of file:///Users/danbri/working/sandbox/october/tpac/codex-npm-review/integrate-core/npm/factoidal/browser.js is not specified and it doesn't parse as CommonJS.
+# Reparsing as ES module because module syntax was detected. This incurs a performance overhead.
+# To eliminate this warning, add "type": "module" to /Users/danbri/working/sandbox/october/tpac/codex-npm-review/integrate-core/npm/factoidal/package.json.
+# Subtest: post32: the org graph is IN the proved fragment
+ok 303 - post32: the org graph is IN the proved fragment
+  ---
+  duration_ms: 4824.686291
+  type: 'test'
+  ...
+# Subtest: post32: certified closure derives the two-step subclass fact (rdfs9 twice) and the domain fact (rdfs2)
+ok 304 - post32: certified closure derives the two-step subclass fact (rdfs9 twice) and the domain fact (rdfs2)
+  ---
+  duration_ms: 99.808833
+  type: 'test'
+  ...
+# Subtest: post32: the certified closure is idempotent (saturation is real, not one-round luck)
+ok 305 - post32: the certified closure is idempotent (saturation is real, not one-round luck)
+  ---
+  duration_ms: 221.481583
+  type: 'test'
+  ...
+# Subtest: post32: the ASK over the closure answers true — the theorem-backed answer of the page
+ok 306 - post32: the ASK over the closure answers true — the theorem-backed answer of the page
+  ---
+  duration_ms: 434.448625
+  type: 'test'
+  ...
+# Subtest: post32: the fragment-escape counterexample behaves exactly as finding F-1 states
+ok 307 - post32: the fragment-escape counterexample behaves exactly as finding F-1 states
+  ---
+  duration_ms: 140.861292
+  type: 'test'
+  ...
+# Subtest: post32: a literal-object subClassOf graph is OUT of the fragment — the checker is load-bearing
+ok 308 - post32: a literal-object subClassOf graph is OUT of the fragment — the checker is load-bearing
+  ---
+  duration_ms: 7.827459
+  type: 'test'
+  ...
+# Subtest: post32: the perf cell runs — both closures complete on the 60-class chain and the certified one derives the chain facts
+ok 309 - post32: the perf cell runs — both closures complete on the 60-class chain and the certified one derives the chain facts
+  ---
+  duration_ms: 8015.196792
+  type: 'test'
+  ...
+# Subtest: post32: BROWSER-SURFACE PARITY — every fn.* name the page calls is on the browser fn
+ok 310 - post32: BROWSER-SURFACE PARITY — every fn.* name the page calls is on the browser fn
+  ---
+  duration_ms: 286.989542
+  type: 'test'
+  ...
+# Subtest: post32: every observable-js cell in the page parses and runs under the reactive harness
+ok 311 - post32: every observable-js cell in the page parses and runs under the reactive harness
+  ---
+  duration_ms: 9000.717166
+  type: 'test'
+  ...
+# Subtest: post32: the rhoDf* literature-name aliases stay wired (node entry + browser entry)
+ok 312 - post32: the rhoDf* literature-name aliases stay wired (node entry + browser entry)
+  ---
+  duration_ms: 14.390959
+  type: 'test'
+  ...
+# Subtest: post32 step 4: RDFS-Plus derives the symmetric worksWith row the corerdfs closure cannot
+ok 313 - post32 step 4: RDFS-Plus derives the symmetric worksWith row the corerdfs closure cannot
+  ---
+  duration_ms: 6.177125
+  type: 'test'
+  ...
+# Subtest: post32 step 4: the SELECT over the RDFS-Plus closure returns both directions
+ok 314 - post32 step 4: the SELECT over the RDFS-Plus closure returns both directions
+  ---
+  duration_ms: 292.512708
+  type: 'test'
+  ...
+# (node:67368) [MODULE_TYPELESS_PACKAGE_JSON] Warning: Module type of file:///Users/danbri/working/sandbox/october/tpac/codex-npm-review/integrate-core/third_party/observable/dist/runtime.esm.js is not specified and it doesn't parse as CommonJS.
+# Reparsing as ES module because module syntax was detected. This incurs a performance overhead.
+# To eliminate this warning, add "type": "module" to /Users/danbri/package.json.
+# (Use `node --trace-warnings ...` to show where the warning was created)
+# Subtest: post33: post has 6 live cells
+ok 315 - post33: post has 6 live cells
+  ---
+  duration_ms: 4.679958
+  type: 'test'
+  ...
+# Subtest: post33: dependency inference wires the endpoints cell into every query cell
+ok 316 - post33: dependency inference wires the endpoints cell into every query cell
+  ---
+  duration_ms: 190.590875
+  type: 'test'
+  ...
+# Subtest: post33 endpoints cell: registers both endpoints and returns their IRIs
+ok 317 - post33 endpoints cell: registers both endpoints and returns their IRIs
+  ---
+  duration_ms: 5191.763333
+  type: 'test'
+  ...
+# Subtest: post33 cell "remote lookup per row": both rows answer from endpoint A
+ok 318 - post33 cell "remote lookup per row": both rows answer from endpoint A
+  ---
+  duration_ms: 1595.881959
+  type: 'test'
+  ...
+# Subtest: post33 cell "SERVICE ?endpoint": each row dispatched to ITS OWN endpoint
+ok 319 - post33 cell "SERVICE ?endpoint": each row dispatched to ITS OWN endpoint
+  ---
+  duration_ms: 268.869542
+  type: 'test'
+  ...
+# Subtest: post33 cell "SILENT vs not": silent keeps 2 unextended rows, without SILENT the query fails
+ok 320 - post33 cell "SILENT vs not": silent keeps 2 unextended rows, without SILENT the query fails
+  ---
+  duration_ms: 158.009083
+  type: 'test'
+  ...
+# (node:67404) [MODULE_TYPELESS_PACKAGE_JSON] Warning: Module type of file:///Users/danbri/working/sandbox/october/tpac/codex-npm-review/integrate-core/third_party/observable/dist/runtime.esm.js is not specified and it doesn't parse as CommonJS.
+# Reparsing as ES module because module syntax was detected. This incurs a performance overhead.
+# To eliminate this warning, add "type": "module" to /Users/danbri/package.json.
+# (Use `node --trace-warnings ...` to show where the warning was created)
+# Subtest: post34: post has 7 live cells
+ok 321 - post34: post has 7 live cells
+  ---
+  duration_ms: 9.433375
+  type: 'test'
+  ...
+# Subtest: post34 cell "the error is the specification": unbound in BIND, dropped in FILTER
+ok 322 - post34 cell "the error is the specification": unbound in BIND, dropped in FILTER
+  ---
+  duration_ms: 8621.342916
+  type: 'test'
+  ...
+# Subtest: post34 cell "sync FILTER": fn:isAdult keeps only alice
+ok 323 - post34 cell "sync FILTER": fn:isAdult keeps only alice
+  ---
+  duration_ms: 1661.57525
+  type: 'test'
+  ...
+# Subtest: post34 cell "async BIND": fn:category labels adult/child through the trampoline
+ok 324 - post34 cell "async BIND": fn:category labels adult/child through the trampoline
+  ---
+  duration_ms: 50.12325
+  type: 'test'
+  ...
+# Subtest: post34 cell "wasm": fn:wasmAdd computes age+100 inside WebAssembly
+ok 325 - post34 cell "wasm": fn:wasmAdd computes age+100 inside WebAssembly
+  ---
+  duration_ms: 1617.446083
+  type: 'test'
+  ...
+# Subtest: post34 cell "F*-verified body": fn:sigmoid computes sigma(age/10) via Math.Sigmoid
+ok 326 - post34 cell "F*-verified body": fn:sigmoid computes sigma(age/10) via Math.Sigmoid
+  ---
+  duration_ms: 32.737958
+  type: 'test'
+  ...
+# (node:67413) [MODULE_TYPELESS_PACKAGE_JSON] Warning: Module type of file:///Users/danbri/working/sandbox/october/tpac/codex-npm-review/integrate-core/third_party/observable/dist/runtime.esm.js is not specified and it doesn't parse as CommonJS.
+# Reparsing as ES module because module syntax was detected. This incurs a performance overhead.
+# To eliminate this warning, add "type": "module" to /Users/danbri/package.json.
+# (Use `node --trace-warnings ...` to show where the warning was created)
+# Subtest: post35: post has 6 live cells
+ok 327 - post35: post has 6 live cells
+  ---
+  duration_ms: 3.027583
+  type: 'test'
+  ...
+# Subtest: post35 wikifn cell: registers 4 ZIDs; exactly Z11040 answers via the interpreter
+ok 328 - post35 wikifn cell: registers 4 ZIDs; exactly Z11040 answers via the interpreter
+  ---
+  duration_ms: 13264.204833
+  type: 'test'
+  ...
+# Subtest: post35 cell "palindrome canals": 6 rows, four true (Mercer + three classics), controls false
+ok 329 - post35 cell "palindrome canals": 6 rows, four true (Mercer + three classics), controls false
+  ---
+  duration_ms: 3471.333875
+  type: 'test'
+  ...
+# Subtest: post35 cell "filter to just those": the four palindromic canals survive
+ok 330 - post35 cell "filter to just those": the four palindromic canals survive
+  ---
+  duration_ms: 620.856167
+  type: 'test'
+  ...
+# Subtest: post35 cell "any ZID": interpreter-backed length, compiled ROT13, ordered by letters
+ok 331 - post35 cell "any ZID": interpreter-backed length, compiled ROT13, ordered by letters
+  ---
+  duration_ms: 833.807791
+  type: 'test'
+  ...
+# (node:67420) [MODULE_TYPELESS_PACKAGE_JSON] Warning: Module type of file:///Users/danbri/working/sandbox/october/tpac/codex-npm-review/integrate-core/third_party/observable/dist/runtime.esm.js is not specified and it doesn't parse as CommonJS.
+# Reparsing as ES module because module syntax was detected. This incurs a performance overhead.
+# To eliminate this warning, add "type": "module" to /Users/danbri/package.json.
+# (Use `node --trace-warnings ...` to show where the warning was created)
+# (node:67420) [MODULE_TYPELESS_PACKAGE_JSON] Warning: Module type of file:///Users/danbri/working/sandbox/october/tpac/codex-npm-review/integrate-core/docs/web/hub/assets/l4/l4factoidal.js is not specified and it doesn't parse as CommonJS.
+# Reparsing as ES module because module syntax was detected. This incurs a performance overhead.
+# To eliminate this warning, add "type": "module" to /Users/danbri/working/sandbox/october/tpac/codex-npm-review/integrate-core/docs/package.json.
+# Subtest: post36: post has 13 live cells
+ok 332 - post36: post has 13 live cells
+  ---
+  duration_ms: 7.624875
+  type: 'test'
+  ...
+# Subtest: post36: the committed wasm artifact exists and is a real module
+ok 333 - post36: the committed wasm artifact exists and is a real module
+  ---
+  duration_ms: 9.130625
+  type: 'test'
+  ...
+# Subtest: post36 cell "loading": Lean identifies itself across the C boundary
+ok 334 - post36 cell "loading": Lean identifies itself across the C boundary
+  ---
+  duration_ms: 5224.153292
+  type: 'test'
+  ...
+# Subtest: post36 cell "lean parses it": the Turtle parses to two triples per person
+ok 335 - post36 cell "lean parses it": the Turtle parses to two triples per person
+  ---
+  duration_ms: 3001.699625
+  type: 'test'
+  ...
+# Subtest: post36 cell "lean answers it": the join returns Alice and Bob
+ok 336 - post36 cell "lean answers it": the join returns Alice and Bob
+  ---
+  duration_ms: 708.603875
+  type: 'test'
+  ...
+# Subtest: post36 cell "the F* engine": the same query, parsed from the same Turtle text
+ok 337 - post36 cell "the F* engine": the same query, parsed from the same Turtle text
+  ---
+  duration_ms: 1562.354375
+  type: 'test'
+  ...
+# Subtest: post36 cell "do they agree": the two engines return the identical answer set
+ok 338 - post36 cell "do they agree": the two engines return the identical answer set
+  ---
+  duration_ms: 382.590583
+  type: 'test'
+  ...
+# Subtest: post36 cell "one more question": both engines ASK true over the typed-literal FILTER
+ok 339 - post36 cell "one more question": both engines ASK true over the typed-literal FILTER
+  ---
+  duration_ms: 27.073041
+  type: 'test'
+  ...
+# Subtest: post36: every named cell resolves to a defined value
+ok 340 - post36: every named cell resolves to a defined value
+  ---
+  duration_ms: 37.633834
+  type: 'test'
+  ...
+# Subtest: post36: a dispatch parse error comes back as an error, not as a module abort
+ok 341 - post36: a dispatch parse error comes back as an error, not as a module abort
+  ---
+  duration_ms: 2.853375
+  type: 'test'
+  ...
+# (node:67428) [MODULE_TYPELESS_PACKAGE_JSON] Warning: Module type of file:///Users/danbri/working/sandbox/october/tpac/codex-npm-review/integrate-core/third_party/observable/dist/runtime.esm.js is not specified and it doesn't parse as CommonJS.
+# Reparsing as ES module because module syntax was detected. This incurs a performance overhead.
+# To eliminate this warning, add "type": "module" to /Users/danbri/package.json.
+# (Use `node --trace-warnings ...` to show where the warning was created)
+# Subtest: post37: installed tarball version.json gitSha is an ancestor of (or equal to) HEAD
+not ok 342 - post37: installed tarball version.json gitSha is an ancestor of (or equal to) HEAD
+  ---
+  duration_ms: 1020.017167
+  type: 'test'
+  location: '/Users/danbri/working/sandbox/october/tpac/codex-npm-review/integrate-core/tests/hub/post37_test.mjs:109:1'
+  failureType: 'testCodeFailure'
+  error: 'Command failed: git merge-base --is-ancestor 3338831101b7 HEAD'
+  code: 'ERR_TEST_FAILURE'
+  stack: |-
+    genericNodeError (node:internal/errors:983:15)
+    wrappedFn (node:internal/errors:537:14)
+    checkExecSyncError (node:child_process:916:11)
+    execFileSync (node:child_process:952:15)
+    TestContext.<anonymous> (file:///Users/danbri/working/sandbox/october/tpac/codex-npm-review/integrate-core/tests/hub/post37_test.mjs:153:5)
+    Test.runInAsyncScope (node:async_hooks:214:14)
+    Test.run (node:internal/test_runner/test:1047:25)
+    Test.start (node:internal/test_runner/test:944:17)
+    startSubtestAfterBootstrap (node:internal/test_runner/harness:296:17)
+  ...
+# Subtest: post37: post has 9 live cells
+ok 343 - post37: post has 9 live cells
+  ---
+  duration_ms: 1.651584
+  type: 'test'
+  ...
+# Subtest: post37 cell 0 (registry): loads @factoidal/core@0.1.0 from the real registry
+ok 344 - post37 cell 0 (registry): loads @factoidal/core@0.1.0 from the real registry
+  ---
+  duration_ms: 195.151167
+  type: 'test'
+  ...
+# Subtest: post37 cell 1 (versions): registry version matches the published 0.1.0, distinct from the same-origin binding only in name not value
+ok 345 - post37 cell 1 (versions): registry version matches the published 0.1.0, distinct from the same-origin binding only in name not value
+  ---
+  duration_ms: 29.160458
+  type: 'test'
+  ...
+# Subtest: post37 cell 3 (registryDataset): 4 triples parsed through the registry module
+ok 346 - post37 cell 3 (registryDataset): 4 triples parsed through the registry module
+  ---
+  duration_ms: 2443.64375
+  type: 'test'
+  ...
+# Subtest: post37 cell 4 (SELECT via registry): alice(30) then bob(7)
+ok 347 - post37 cell 4 (SELECT via registry): alice(30) then bob(7)
+  ---
+  duration_ms: 650.009792
+  type: 'test'
+  ...
+# Subtest: post37 cell 5 (ASK via registry): true (alice is >= 18)
+ok 348 - post37 cell 5 (ASK via registry): true (alice is >= 18)
+  ---
+  duration_ms: 47.023917
+  type: 'test'
+  ...
+# Subtest: post37 cell 6 (canonicalize via registry): 4 canonical N-Quads lines mentioning alice
+ok 349 - post37 cell 6 (canonicalize via registry): 4 canonical N-Quads lines mentioning alice
+  ---
+  duration_ms: 23.967833
+  type: 'test'
+  ...
+# Subtest: post37 cell 7 (extension function via registry): fn:isAdult keeps only alice
+ok 350 - post37 cell 7 (extension function via registry): fn:isAdult keeps only alice
+  ---
+  duration_ms: 206.232167
+  type: 'test'
+  ...
+# Subtest: post37 cell 8 (cross-check): same-origin and registry query answers agree
+ok 351 - post37 cell 8 (cross-check): same-origin and registry query answers agree
+  ---
+  duration_ms: 4268.040958
+  type: 'test'
+  ...
+# (node:67429) [MODULE_TYPELESS_PACKAGE_JSON] Warning: Module type of file:///Users/danbri/working/sandbox/october/tpac/codex-npm-review/integrate-core/third_party/observable/dist/runtime.esm.js is not specified and it doesn't parse as CommonJS.
+# Reparsing as ES module because module syntax was detected. This incurs a performance overhead.
+# To eliminate this warning, add "type": "module" to /Users/danbri/package.json.
+# (Use `node --trace-warnings ...` to show where the warning was created)
+# (node:67429) [MODULE_TYPELESS_PACKAGE_JSON] Warning: Module type of file:///Users/danbri/working/sandbox/october/tpac/codex-npm-review/integrate-core/docs/web/hub/assets/l4/l4factoidal.js is not specified and it doesn't parse as CommonJS.
+# Reparsing as ES module because module syntax was detected. This incurs a performance overhead.
+# To eliminate this warning, add "type": "module" to /Users/danbri/working/sandbox/october/tpac/codex-npm-review/integrate-core/docs/package.json.
+# Subtest: post38: post has 17 live cells
+ok 352 - post38: post has 17 live cells
+  ---
+  duration_ms: 147.599333
+  type: 'test'
+  ...
+# Subtest: post38: the committed wasm artifact exists and is a real module
+ok 353 - post38: the committed wasm artifact exists and is a real module
+  ---
+  duration_ms: 11.172333
+  type: 'test'
+  ...
+# Subtest: post38 cell "one triple": parse reports count 1 and the canonical echo
+ok 354 - post38 cell "one triple": parse reports count 1 and the canonical echo
+  ---
+  duration_ms: 3332.5605
+  type: 'test'
+  ...
+# Subtest: post38 cell "is anything there": ASK over one triple is true
+ok 355 - post38 cell "is anything there": ASK over one triple is true
+  ---
+  duration_ms: 1421.930791
+  type: 'test'
+  ...
+# Subtest: post38 cell "what is its name": SELECT one variable finds Alice
+ok 356 - post38 cell "what is its name": SELECT one variable finds Alice
+  ---
+  duration_ms: 19.601
+  type: 'test'
+  ...
+# Subtest: post38 cell "two triples, one join": one row carries name and age together
+ok 357 - post38 cell "two triples, one join": one row carries name and age together
+  ---
+  duration_ms: 25.759458
+  type: 'test'
+  ...
+# Subtest: post38 cell "turtle in": same canonical bytes, same rows
+ok 358 - post38 cell "turtle in": same canonical bytes, same rows
+  ---
+  duration_ms: 87.693666
+  type: 'test'
+  ...
+# Subtest: post38 cell "insert data": the dataset grows from 2 to 4 triples
+ok 359 - post38 cell "insert data": the dataset grows from 2 to 4 triples
+  ---
+  duration_ms: 235.304208
+  type: 'test'
+  ...
+# Subtest: post38 cell "query sees the new row": the join now returns Alice and Bob
+ok 360 - post38 cell "query sees the new row": the join now returns Alice and Bob
+  ---
+  duration_ms: 15.268708
+  type: 'test'
+  ...
+# Subtest: post38 cell "construct": new foaf:name triples, serialized as Turtle
+ok 361 - post38 cell "construct": new foaf:name triples, serialized as Turtle
+  ---
+  duration_ms: 46.212834
+  type: 'test'
+  ...
+# Subtest: post38 cell "rdfs closure": rex is an Animal after the closure, not before
+ok 362 - post38 cell "rdfs closure": rex is an Animal after the closure, not before
+  ---
+  duration_ms: 566.208
+  type: 'test'
+  ...
+# Subtest: post38 cell "owl-rl closure": sameAs propagates the name to superman
+ok 363 - post38 cell "owl-rl closure": sameAs propagates the name to superman
+  ---
+  duration_ms: 37.621167
+  type: 'test'
+  ...
+# Subtest: post38 cell "same graph": two bnode labelings canonicalize identically
+ok 364 - post38 cell "same graph": two bnode labelings canonicalize identically
+  ---
+  duration_ms: 415.964667
+  type: 'test'
+  ...
+# Subtest: post38 cell "changed graph": one changed predicate breaks canonical equality
+ok 365 - post38 cell "changed graph": one changed predicate breaks canonical equality
+  ---
+  duration_ms: 26.425791
+  type: 'test'
+  ...
+# Subtest: post38 cell "typed surface": fn.l4Parse/fn.l4Query reproduce the earlier join
+ok 366 - post38 cell "typed surface": fn.l4Parse/fn.l4Query reproduce the earlier join
+  ---
+  duration_ms: 216.602667
+  type: 'test'
+  ...
+# Subtest: post38 cell "the F* engine": the same join from the same bytes
+ok 367 - post38 cell "the F* engine": the same join from the same bytes
+  ---
+  duration_ms: 1026.695709
+  type: 'test'
+  ...
+# Subtest: post38 cell "agreement": the two engines return the identical answer set
+ok 368 - post38 cell "agreement": the two engines return the identical answer set
+  ---
+  duration_ms: 14.780334
+  type: 'test'
+  ...
+# Subtest: post38: a dispatch parse error throws and leaves the module alive
+ok 369 - post38: a dispatch parse error throws and leaves the module alive
+  ---
+  duration_ms: 3.0905
+  type: 'test'
+  ...
+# Subtest: post38: the committed wasm serves every op the page calls
+ok 370 - post38: the committed wasm serves every op the page calls
+  ---
+  duration_ms: 0.408791
+  type: 'test'
+  ...
+# (node:67449) [MODULE_TYPELESS_PACKAGE_JSON] Warning: Module type of file:///Users/danbri/working/sandbox/october/tpac/codex-npm-review/integrate-core/third_party/observable/dist/runtime.esm.js is not specified and it doesn't parse as CommonJS.
+# Reparsing as ES module because module syntax was detected. This incurs a performance overhead.
+# To eliminate this warning, add "type": "module" to /Users/danbri/package.json.
+# (Use `node --trace-warnings ...` to show where the warning was created)
+# (node:67449) [MODULE_TYPELESS_PACKAGE_JSON] Warning: Module type of file:///Users/danbri/working/sandbox/october/tpac/codex-npm-review/integrate-core/docs/web/hub/assets/l4/l4factoidal.js is not specified and it doesn't parse as CommonJS.
+# Reparsing as ES module because module syntax was detected. This incurs a performance overhead.
+# To eliminate this warning, add "type": "module" to /Users/danbri/working/sandbox/october/tpac/codex-npm-review/integrate-core/docs/package.json.
+# Subtest: post40: post has 12 live cells
+ok 371 - post40: post has 12 live cells
+  ---
+  duration_ms: 3.930084
+  type: 'test'
+  ...
+# Subtest: post40: the committed wasm artifact exists and is a real module
+ok 372 - post40: the committed wasm artifact exists and is a real module
+  ---
+  duration_ms: 2.252792
+  type: 'test'
+  ...
+# Subtest: post40 cell "orgDataset": one fn.l4Parse call opens a TriG corpus, one handle, 10 triples
+ok 373 - post40 cell "orgDataset": one fn.l4Parse call opens a TriG corpus, one handle, 10 triples
+  ---
+  duration_ms: 5239.370667
+  type: 'test'
+  ...
+# Subtest: post40 cell "byDept": the cross-graph GRAPH ?g query returns 4 rows over 3 named graphs
+ok 374 - post40 cell "byDept": the cross-graph GRAPH ?g query returns 4 rows over 3 named graphs
+  ---
+  duration_ms: 1337.129125
+  type: 'test'
+  ...
+# Subtest: post40 cell "afterInsert": fn.l4Update mutates the SAME handle -- size grows from 10 to 12
+ok 375 - post40 cell "afterInsert": fn.l4Update mutates the SAME handle -- size grows from 10 to 12
+  ---
+  duration_ms: 74.996417
+  type: 'test'
+  ...
+# Subtest: post40 cell "byDeptAfter": the same handle, re-queried, now shows 5 rows including Erin
+ok 376 - post40 cell "byDeptAfter": the same handle, re-queried, now shows 5 rows including Erin
+  ---
+  duration_ms: 21.606917
+  type: 'test'
+  ...
+# Subtest: post40 cell "closureCheck": rdfsPlusClosure over the handle's own data derives Employee
+ok 377 - post40 cell "closureCheck": rdfsPlusClosure over the handle's own data derives Employee
+  ---
+  duration_ms: 319.38225
+  type: 'test'
+  ...
+# Subtest: post40 cell "consistentBefore": owlIsConsistent reports consistent (true) before the clash
+not ok 378 - post40 cell "consistentBefore": owlIsConsistent reports consistent (true) before the clash
+  ---
+  duration_ms: 15.622167
+  type: 'test'
+  location: '/Users/danbri/working/sandbox/october/tpac/codex-npm-review/integrate-core/tests/hub/post40_test.mjs:142:1'
+  failureType: 'testCodeFailure'
+  error: |-
+    Expected values to be strictly equal:
+    
+    null !== true
+    
+  code: 'ERR_ASSERTION'
+  name: 'AssertionError'
+  expected: true
+  actual: ~
+  operator: 'strictEqual'
+  stack: |-
+    TestContext.<anonymous> (file:///Users/danbri/working/sandbox/october/tpac/codex-npm-review/integrate-core/tests/hub/post40_test.mjs:145:10)
+    async Test.run (node:internal/test_runner/test:1054:7)
+    async Test.processPendingSubtests (node:internal/test_runner/test:744:7)
+  ...
+# Subtest: post40 cell "consistentAfter": inserting the disjoint-class pair flips the verdict to false, with a reason
+not ok 379 - post40 cell "consistentAfter": inserting the disjoint-class pair flips the verdict to false, with a reason
+  ---
+  duration_ms: 28.46025
+  type: 'test'
+  location: '/Users/danbri/working/sandbox/october/tpac/codex-npm-review/integrate-core/tests/hub/post40_test.mjs:148:1'
+  failureType: 'testCodeFailure'
+  error: |-
+    Expected values to be strictly equal:
+    
+    null !== true
+    
+  code: 'ERR_ASSERTION'
+  name: 'AssertionError'
+  expected: true
+  actual: ~
+  operator: 'strictEqual'
+  stack: |-
+    TestContext.<anonymous> (file:///Users/danbri/working/sandbox/october/tpac/codex-npm-review/integrate-core/tests/hub/post40_test.mjs:150:10)
+    async Test.run (node:internal/test_runner/test:1054:7)
+    async Test.processPendingSubtests (node:internal/test_runner/test:744:7)
+  ...
+# Subtest: post40 cell "finalTurtle": the closing Turtle shows both classes on :alice
+ok 380 - post40 cell "finalTurtle": the closing Turtle shows both classes on :alice
+  ---
+  duration_ms: 302.166416
+  type: 'test'
+  ...
+# Subtest: post40: the handle identity is stable across parse, query, update and close
+ok 381 - post40: the handle identity is stable across parse, query, update and close
+  ---
+  duration_ms: 9.186209
+  type: 'test'
+  ...
+# Subtest: post40: the committed wasm serves every op the page calls
+ok 382 - post40: the committed wasm serves every op the page calls
+  ---
+  duration_ms: 1.998792
+  type: 'test'
+  ...
+# (node:67502) [MODULE_TYPELESS_PACKAGE_JSON] Warning: Module type of file:///Users/danbri/working/sandbox/october/tpac/codex-npm-review/integrate-core/third_party/observable/dist/runtime.esm.js is not specified and it doesn't parse as CommonJS.
+# Reparsing as ES module because module syntax was detected. This incurs a performance overhead.
+# To eliminate this warning, add "type": "module" to /Users/danbri/package.json.
+# (Use `node --trace-warnings ...` to show where the warning was created)
+# (node:67502) [MODULE_TYPELESS_PACKAGE_JSON] Warning: Module type of file:///Users/danbri/working/sandbox/october/tpac/codex-npm-review/integrate-core/docs/web/hub/assets/l4/l4factoidal.js is not specified and it doesn't parse as CommonJS.
+# Reparsing as ES module because module syntax was detected. This incurs a performance overhead.
+# To eliminate this warning, add "type": "module" to /Users/danbri/working/sandbox/october/tpac/codex-npm-review/integrate-core/docs/package.json.
+# Subtest: post41: post has 10 live cells
+ok 383 - post41: post has 10 live cells
+  ---
+  duration_ms: 25.315459
+  type: 'test'
+  ...
+# Subtest: post41: the committed wasm artifact exists and is a real module
+ok 384 - post41: the committed wasm artifact exists and is a real module
+  ---
+  duration_ms: 0.854708
+  type: 'test'
+  ...
+# Subtest: post41: the committed wasm serves the clParse op the page calls
+ok 385 - post41: the committed wasm serves the clParse op the page calls
+  ---
+  duration_ms: 5711.847917
+  type: 'test'
+  ...
+# Subtest: post41 cell "moduleAttempt": cl:text is rejected with the issue-580 error, module stays alive
+ok 386 - post41 cell "moduleAttempt": cl:text is rejected with the issue-580 error, module stays alive
+  ---
+  duration_ms: 2182.761833
+  type: 'test'
+  ...
+# Subtest: post41 cell "groundParse": two ground facts, pure CL, re-enclosed normal form
+ok 387 - post41 cell "groundParse": two ground facts, pure CL, re-enclosed normal form
+  ---
+  duration_ms: 5.9575
+  type: 'test'
+  ...
+# Subtest: post41 cell "restrictedParse": restricted forall/exists, pure CL
+ok 388 - post41 cell "restrictedParse": restricted forall/exists, pure CL
+  ---
+  duration_ms: 4.539208
+  type: 'test'
+  ...
+# Subtest: post41 cell "cheikesParse": cancelling-parentheses assertion flips pureCL false
+ok 389 - post41 cell "cheikesParse": cancelling-parentheses assertion flips pureCL false
+  ---
+  duration_ms: 3.149583
+  type: 'test'
+  ...
+# Subtest: post41 cell "loisParse": the GUIDE's quantifying-in sentence parses, pureCL false
+ok 390 - post41 cell "loisParse": the GUIDE's quantifying-in sentence parses, pureCL false
+  ---
+  duration_ms: 3.630792
+  type: 'test'
+  ...
+# Subtest: post41: every JSON-envelope/table cell renders under pretty()
+ok 391 - post41: every JSON-envelope/table cell renders under pretty()
+  ---
+  duration_ms: 9.458625
+  type: 'test'
+  ...
+# (node:67509) [MODULE_TYPELESS_PACKAGE_JSON] Warning: Module type of file:///Users/danbri/working/sandbox/october/tpac/codex-npm-review/integrate-core/third_party/observable/dist/runtime.esm.js is not specified and it doesn't parse as CommonJS.
+# Reparsing as ES module because module syntax was detected. This incurs a performance overhead.
+# To eliminate this warning, add "type": "module" to /Users/danbri/package.json.
+# (Use `node --trace-warnings ...` to show where the warning was created)
+# Subtest: post42: post has exactly 8 live cells
+ok 392 - post42: post has exactly 8 live cells
+  ---
+  duration_ms: 278.088583
+  type: 'test'
+  ...
+# Subtest: post42: fixture fetch cell reads the committed corpus text
+ok 393 - post42: fixture fetch cell reads the committed corpus text
+  ---
+  duration_ms: 103.049209
+  type: 'test'
+  ...
+# Subtest: post42: parsed cell reports the labelled 4,000-triple count
+ok 394 - post42: parsed cell reports the labelled 4,000-triple count
+  ---
+  duration_ms: 7413.862958
+  type: 'test'
+  ...
+# Subtest: post42: store cell (pack in memory + openStore) produces a non-empty generation and an open Store
+ok 395 - post42: store cell (pack in memory + openStore) produces a non-empty generation and an open Store
+  ---
+  duration_ms: 5547.976083
+  type: 'test'
+  ...
+# Subtest: post42: storeTimings cell -- 3 queries, each run 3 times, rows match the fixture
+ok 396 - post42: storeTimings cell -- 3 queries, each run 3 times, rows match the fixture
+  ---
+  duration_ms: 968.928333
+  type: 'test'
+  ...
+# Subtest: post42: memoryTimings cell -- same 3 queries against the parsed dataset, same row counts
+ok 397 - post42: memoryTimings cell -- same 3 queries against the parsed dataset, same row counts
+  ---
+  duration_ms: 1594.108625
+  type: 'test'
+  ...

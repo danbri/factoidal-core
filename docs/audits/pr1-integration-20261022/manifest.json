@@ -1,0 +1,378 @@
+{
+  "schema_version": 1,
+  "captured_utc": "2026-10-22T18:02:56.803619+00:00",
+  "source_baseline": "87af61c9b7398ed1effa65744cbd3c84afe311be",
+  "source_commits": [
+    "aeb5c44946b4da7884082814472a144062fc6c6c",
+    "884647492a3453c47519a1a7945fceeae8705326",
+    "f90efa6f5acdbc98bd0978a0e19188796645fb08"
+  ],
+  "status": "finite-evidence; external-dependencies-not-included; no-claim-all-findings-repaired",
+  "files": [
+    {
+      "path": "README.md",
+      "size": 3778,
+      "sha256": "3dac6941037db1aaaabaf99c39c70cfd9fdffc483b72a6f5ff15bdfe7051101e"
+    },
+    {
+      "path": "logs/20261022-pr1-csvw-aggregate-review.md",
+      "size": 5702,
+      "sha256": "42cf4338a344ced5d1a9b7c77fcb6d6f06cdfcee6d699a809d078a4482921bcf"
+    },
+    {
+      "path": "logs/20261022-pr1-final-adapter-review.json",
+      "size": 3017,
+      "sha256": "35a8729e69fc69ebf7cc74b7bdc803063a0cc19beb3db0ce9ef0f7213ff6062f"
+    },
+    {
+      "path": "logs/20261022-pr1-final-adapter-review.md",
+      "size": 7187,
+      "sha256": "b5437131500045f5c2a1367ef8c23e31e3a4d6ca8df8e1d36838847ab28a3128"
+    },
+    {
+      "path": "logs/20261022-pr1-reconciliation-review.md",
+      "size": 4777,
+      "sha256": "5dcda5a1084873d7c1dd3ca7fba471826b14807604b6d36054caf7c430cd8125"
+    },
+    {
+      "path": "logs/integrate-pr1-adapters-fifth.log",
+      "size": 9636,
+      "sha256": "9558c0f1adf3a5581dc899416fb02bf55d505323bcad6a773871ddd46880aac2"
+    },
+    {
+      "path": "logs/integrate-pr1-adapters-fourth.log",
+      "size": 5980,
+      "sha256": "b9e8153c04b4ad47bbf1b2455f81c229e48a2774bfe9fbf24ec15b46403230f1"
+    },
+    {
+      "path": "logs/integrate-pr1-adapters-sixth.log",
+      "size": 8605,
+      "sha256": "c5e3c3d24df5b2e32cf80fcb494aa7a7f43e954b7151b95e220c76f70a9baa25"
+    },
+    {
+      "path": "logs/integrate-pr1-adapters-third.log",
+      "size": 10908,
+      "sha256": "31c5d7b84677cbdb08a879cbca699acc3db1675a05b5e6b204346d1c26bc8048"
+    },
+    {
+      "path": "logs/integrate-pr1-boundaries-seventh.log",
+      "size": 18529,
+      "sha256": "3678970f30cf3120745e085603aff4ea35578b775fc53d2649ccea80cd98c4b4"
+    },
+    {
+      "path": "logs/integrate-pr1-consumers-first.log",
+      "size": 20739,
+      "sha256": "067cdfb7103b1c013ac007f8aff3c81be9866efb5b398cf21efb451534223826"
+    },
+    {
+      "path": "logs/integrate-pr1-consumers-second.log",
+      "size": 16326,
+      "sha256": "3d083495917cce4f7e15550028dcaca84d399844d9e305b61ed3a739e7e44161"
+    },
+    {
+      "path": "logs/integrate-pr1-env-check.log",
+      "size": 2492,
+      "sha256": "41ee0c21f6a4be47cb1316619b748ac5d36a3769e9dd9d71952ebeaa509bbcc6"
+    },
+    {
+      "path": "logs/integrate-pr1-final-library.log",
+      "size": 430235,
+      "sha256": "03de6118aa8659483ad8149fccb739c801d96b1940ac953c1cf0beb2f77d6b55"
+    },
+    {
+      "path": "logs/integrate-pr1-focused-first.log",
+      "size": 5684,
+      "sha256": "283a26e4b636a871a3094756a010704465e2f1ebfea56ef54ee25cc5b6902901"
+    },
+    {
+      "path": "logs/integrate-pr1-grouping-probe.lean",
+      "size": 2555,
+      "sha256": "64b1fe4759a20801d144d4933c929e51ac4a96091c3b83d33d8d71205518e1c0"
+    },
+    {
+      "path": "logs/integrate-pr1-library-first.log",
+      "size": 433091,
+      "sha256": "1433dc1bfb5ebcbba31f9717864e33f05b365f7737529f931fd8f5ec9f0ba975"
+    },
+    {
+      "path": "logs/integrate-pr1-native-build.log",
+      "size": 11260,
+      "sha256": "4b460e057a069965abc396599840d29a8276817bacdb9d95aac71904a558c2a4"
+    },
+    {
+      "path": "logs/integrate-pr1-producers-fourth.log",
+      "size": 44015,
+      "sha256": "b17e737a24915c16c0c92d7101cccf9e4634414e1ee800eb32c91c3c46b98b6f"
+    },
+    {
+      "path": "logs/integrate-pr1-public-third.log",
+      "size": 45212,
+      "sha256": "4115803c010718f2ce78f64d193c0258a4567b5f06972cd8d0fca4dc262b44f4"
+    },
+    {
+      "path": "logs/integrate-pr1-reconcile-second.log",
+      "size": 20071,
+      "sha256": "a48d24b0e3ae37cbfd013b4df0cf232a636b363125591291afabe8efcc9fef7f"
+    },
+    {
+      "path": "logs/integrate-pr1-reuse-audit.json",
+      "size": 239750,
+      "sha256": "4fe83cfd587203a2be1ed7b4cd623ca8ff60c5a8db6cd9ec221c7afa68f069e5"
+    },
+    {
+      "path": "logs/integrate-pr1-reuse-audit.log",
+      "size": 0,
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "path": "logs/integrate-pr1-reuse-controls.log",
+      "size": 103,
+      "sha256": "0a7487dd447ed39892a423a22370611e100bf0b90f72781bde8e794e93941693"
+    },
+    {
+      "path": "logs/integrate-pr1-rif-final.json",
+      "size": 802,
+      "sha256": "eeca41e1abffbb25a302de5b148cbc7f493c3d41eb0b0fff9aeed4ff6fac43d0"
+    },
+    {
+      "path": "logs/integrate-pr1-rif-final.log",
+      "size": 8532,
+      "sha256": "3201a656c890b0aada4d45e18642bc548e04b3c618e27bf26069cd3617586f89"
+    },
+    {
+      "path": "logs/integrate-pr1-rif-fixed.json",
+      "size": 864,
+      "sha256": "0d2d95e10e281bbf38acac64d9049e4aa3bbe33b9170e49802d2fd06a153462a"
+    },
+    {
+      "path": "logs/integrate-pr1-rif-fixed.log",
+      "size": 8532,
+      "sha256": "3201a656c890b0aada4d45e18642bc548e04b3c618e27bf26069cd3617586f89"
+    },
+    {
+      "path": "logs/integrate-pr1-rif-original.json",
+      "size": 775,
+      "sha256": "efcb13633e66e95390d38981e58da98302c2ccc404411f498566c1f925434c69"
+    },
+    {
+      "path": "logs/integrate-pr1-rif-original.log",
+      "size": 8532,
+      "sha256": "3201a656c890b0aada4d45e18642bc548e04b3c618e27bf26069cd3617586f89"
+    },
+    {
+      "path": "logs/integrate-pr1-rif-preliminary.log",
+      "size": 8532,
+      "sha256": "3201a656c890b0aada4d45e18642bc548e04b3c618e27bf26069cd3617586f89"
+    },
+    {
+      "path": "logs/integrate-pr1-runner-controls-after.log",
+      "size": 102,
+      "sha256": "cfc2e5c7745a039ad4dd5df4e9fad0525586cedfc2496a272ba27dcfc4300945"
+    },
+    {
+      "path": "logs/integrate-pr1-runner-controls-before.log",
+      "size": 4130,
+      "sha256": "16b26c721402736fde97d2a59a6e53f83d3956648e604a6a9223a67c483b90c4"
+    },
+    {
+      "path": "logs/integrate-pr1-runner-controls-final.log",
+      "size": 102,
+      "sha256": "ba77ebfd913e0c66faeece7f6582c7a122a36d9103eb2312d43bea6a2cbebc29"
+    },
+    {
+      "path": "logs/integrate-pr1-runner-fix-build.log",
+      "size": 5781,
+      "sha256": "c25479f9e1e95b09f598a4dc10def94cb82ae95a5bf98e71ab805e6b9b68bb57"
+    },
+    {
+      "path": "logs/integrate-pr1-source-final-status.json",
+      "size": 505,
+      "sha256": "0edd3944041f280255d1ed5b10ebd58baeef4579af3798f2545d763545123c89"
+    },
+    {
+      "path": "logs/integrate-pr1-source-final.log",
+      "size": 332456,
+      "sha256": "9deaddaf8979efe86ba2202b0e50c5edeac16ce496e9e9d51a531f8fb1b1ace4"
+    },
+    {
+      "path": "logs/integrate-pr1-tail-audit.log",
+      "size": 1158,
+      "sha256": "80330ca7ea20ae3262a662652ce4b4c2a530615290e34f3b6a9e34c398ce2862"
+    },
+    {
+      "path": "logs/integrate-pr1-xsd-pattern-cause.json",
+      "size": 167309,
+      "sha256": "79ab82fdeecae1b331b53ee0d6dd5a1c4fbb548278c30ae8da94d422372a528f"
+    },
+    {
+      "path": "logs/integrate-pr1-xsd-pattern-probe.lean",
+      "size": 823,
+      "sha256": "de96477db91064bcad23a48f68430317c85f5ef4249f0c7e5526eec9f7777ad8"
+    },
+    {
+      "path": "logs/integrate-pr1-xsd-pattern-probe.log",
+      "size": 177,
+      "sha256": "98f4fb3f9abe9b892bdc279bdd8c3969f93d36ae922579bea66cd9f63c361d41"
+    },
+    {
+      "path": "logs/integrate-pr1-xsd.json",
+      "size": 978,
+      "sha256": "4f7ddc60ba41710f089995dcb9fa1d7baa2858dbb7f639a2e12bab857e39d978"
+    },
+    {
+      "path": "logs/integrate-pr1-xsd.log",
+      "size": 19881,
+      "sha256": "97040d954c76cb8bd84dfc34dad92ea8a0412bd2a229add318a6f4fbd154f4f2"
+    },
+    {
+      "path": "logs/integrate-pr1-xsd11-complement-red.log",
+      "size": 2223,
+      "sha256": "c8dfab846723113e896b30541d0205c2c0f372974231f94252aa7af4a3b2fe93"
+    },
+    {
+      "path": "logs/integrate-pr1-xsd11-final.json",
+      "size": 933,
+      "sha256": "d1fd2313753e4d98c9b98342a423da47cde9e8a1698f99eccd049e6917de9b03"
+    },
+    {
+      "path": "logs/integrate-pr1-xsd11-final.log",
+      "size": 19881,
+      "sha256": "e6d1ed8375b142e485dd0851a38f03549345ed8589b82954cdc4fc39007891ff"
+    },
+    {
+      "path": "logs/integrate-pr1-xsd11-native-build.log",
+      "size": 7274,
+      "sha256": "9cba0303303164d0b671745a8dd92cd465e40714c51d93ae97d0e101dc0187f8"
+    },
+    {
+      "path": "logs/integrate-pr1-xsd11-tail-inspection.json",
+      "size": 450,
+      "sha256": "c2b07a357c5eff0ddd3f22e049f1b7e2f3377c62f073cc4b3114e76ecea8a1b4"
+    },
+    {
+      "path": "logs/integrate-pr1-xsd11-targeted-green.log",
+      "size": 1563,
+      "sha256": "88f39fb063813a9a16859bc20771b4bf68649038ce939a2bc4597c441c8e451f"
+    },
+    {
+      "path": "logs/integrate-pr1-xsd11-targeted.log",
+      "size": 2223,
+      "sha256": "c8dfab846723113e896b30541d0205c2c0f372974231f94252aa7af4a3b2fe93"
+    },
+    {
+      "path": "logs/integrate-pr1-xslt-probe.lean",
+      "size": 1675,
+      "sha256": "3fb4acece1bf62b5ecd62022ef471f5f58397ee0de36c6d7dd43b615c7f130db"
+    },
+    {
+      "path": "logs/integrate-pr1-xslt-probe.log",
+      "size": 169,
+      "sha256": "d94b333d80405112629dc95d467aa01718f2513bd4f8dcfe9ee037243b0c5410"
+    },
+    {
+      "path": "logs/pr1-aggstream-drop-operand-mutation-reviewed.json",
+      "size": 1101,
+      "sha256": "7f6af35c820148736f57cde2834816377898f394d54d6be6d872f0c0c9e7ed9e"
+    },
+    {
+      "path": "logs/pr1-aggstream-drop-operand-mutation.json",
+      "size": 678,
+      "sha256": "25db11c8118bddf6eb95c0b152c13d8c4c0906d1484e9defe7cf64dd8dc52b46"
+    },
+    {
+      "path": "logs/pr1-aggstream-drop-operand-mutation.log",
+      "size": 1593,
+      "sha256": "1b113e95edeff57eb9ccc7bc96a88f26a1eef543923fd4c3a01498bd3089f882"
+    },
+    {
+      "path": "logs/pr1-aggstream-first-check.log",
+      "size": 3661,
+      "sha256": "86b9d58c44750c292ea1a72950db1d2b48112134a29af60402c4deb4d8523814"
+    },
+    {
+      "path": "logs/pr1-aggstream-source-green.log",
+      "size": 661,
+      "sha256": "1ea8b8133c67de5f5fb608c521aeaa50ab8f246ffd88991441aeee86e56b851a"
+    },
+    {
+      "path": "logs/pr1-aggstream-targeted-build.json",
+      "size": 403,
+      "sha256": "c3e7769a46ebb83491bbfa0b57c21e70e1da538db9cf6064b16209163a1876ff"
+    },
+    {
+      "path": "logs/pr1-aggstream-targeted-build.log",
+      "size": 15126,
+      "sha256": "59a89fddfe45954179b4f86c27a5fe2e9e4d82c63c69072632f40d607156b228"
+    },
+    {
+      "path": "logs/pr3-baseline-rif-build.json",
+      "size": 340,
+      "sha256": "7dc8448b85a499f462a24d17dc0bead4798d84eabba5b8b2841e07724a5dc95f"
+    },
+    {
+      "path": "logs/pr3-baseline-rif-build.log",
+      "size": 7549,
+      "sha256": "1d24f0afb7daf13ab02212c11ff038f05ea7c14795b535d1a5e6b47962abb96e"
+    },
+    {
+      "path": "logs/pr3-baseline-rif-inventory.json",
+      "size": 42863,
+      "sha256": "ceab7b6f1c8b70436daad267186aa6335e5785ad35ca5970bc840565152a53d9"
+    },
+    {
+      "path": "logs/pr3-baseline-rif-run.json",
+      "size": 2641,
+      "sha256": "adc46c3747e03ab3b839f4382309797f36d66c9504bc25ea225bd6b2bf11cb1f"
+    },
+    {
+      "path": "logs/pr3-baseline-rif-run.log",
+      "size": 1716,
+      "sha256": "d839539b6a97c324ad0bdc70900751c534fa67d1619fb6ebe90041cbe4281482"
+    },
+    {
+      "path": "logs/pr3-baseline-xsd-build.json",
+      "size": 350,
+      "sha256": "e76ad489fc12e60b05524144a7769f177238721b63f70e3d6a49ea5619f17918"
+    },
+    {
+      "path": "logs/pr3-baseline-xsd-build.log",
+      "size": 4143,
+      "sha256": "cd9a8d048de66f40d3a165f0e0aced7122b3ddf48888f69b730d9e41c08abb78"
+    },
+    {
+      "path": "logs/pr3-baseline-xsd-datatype-counts.json",
+      "size": 3961,
+      "sha256": "e51da382e7d170e24193a4ef349431040623f24880e224a0cb115ddd46311c41"
+    },
+    {
+      "path": "logs/pr3-baseline-xsd-environment.json",
+      "size": 220,
+      "sha256": "0ff4162312c2418ee848ac2f4671cef043a81a583f176ca837795fcb81b04ef4"
+    },
+    {
+      "path": "logs/pr3-baseline-xsd-inventory.json",
+      "size": 22238,
+      "sha256": "2d58984f1c6edd9c54a077c781acca6ef9487a7b714fde6fb229327d63b73e94"
+    },
+    {
+      "path": "logs/pr3-baseline-xsd-run.json",
+      "size": 2090,
+      "sha256": "9a77d0d9d525999fbeaa2b87cd7086526dc4a6516dc540d65a3e33f29f477fd5"
+    },
+    {
+      "path": "logs/pr3-baseline-xsd-run.log",
+      "size": 19883,
+      "sha256": "20406e0ee519afff8fd566e03161a24221339c6b1abcacbb9b77c795b812b0ce"
+    },
+    {
+      "path": "logs/pr3-baseline-xsd.md",
+      "size": 3542,
+      "sha256": "c8aacc97dee3c20f59b5126591fad2ee59b9821742e9fee498f34a37b50e24c3"
+    },
+    {
+      "path": "xsd-datatype-comparison.json",
+      "size": 12510,
+      "sha256": "a31d3527d3e28d191cf870ffb94cbbe25aa7c5ad967ab7207bf59afec08e061e"
+    }
+  ]
+}

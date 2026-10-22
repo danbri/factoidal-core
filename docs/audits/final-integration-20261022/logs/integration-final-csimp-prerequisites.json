@@ -1,0 +1,17 @@
+{
+  "command": [
+    "python3",
+    "tools/test_lean_csimp_reach.py",
+    "--synthetic-only"
+  ],
+  "cwd": "/Users/danbri/working/sandbox/october/tpac/codex-npm-review/integrate-core",
+  "node": "v22.22.2",
+  "source": "fe9c816f6d389bd939797d5e6e30a0c624f63ebe",
+  "nodeBin": "/opt/homebrew/Cellar/node@22/22.22.2_2/bin",
+  "npmCache": "/private/tmp/factoidal-public-pack-cache",
+  "started": "2026-10-22T18:57:40.225Z",
+  "elapsedMs": 2030,
+  "exit": 0,
+  "signal": null,
+  "error": null
+}

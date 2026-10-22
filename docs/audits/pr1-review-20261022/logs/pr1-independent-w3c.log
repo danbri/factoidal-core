@@ -1,0 +1,139 @@
+rdf-mt: 39 pass, 0 fail, 0 skip, 0 unsupported (out of 39)
+HARNESS-DIAG rdf-mt: no_manifest=0 zero_tests=0 budget_exceeded=0 rows_compared=0 triples_compared=133 gsp_seeded=0
+
+add: 8 pass, 0 fail, 0 skip, 0 unsupported (out of 8)
+HARNESS-DIAG add: no_manifest=0 zero_tests=0 budget_exceeded=0 rows_compared=0 triples_compared=134 gsp_seeded=0
+
+aggregates: 47 pass, 0 fail, 0 skip, 0 unsupported (out of 47)
+HARNESS-DIAG aggregates: no_manifest=0 zero_tests=0 budget_exceeded=0 rows_compared=176 triples_compared=0 gsp_seeded=0
+
+basic-update: 13 pass, 0 fail, 0 skip, 0 unsupported (out of 13)
+HARNESS-DIAG basic-update: no_manifest=0 zero_tests=0 budget_exceeded=0 rows_compared=0 triples_compared=56 gsp_seeded=0
+
+bind: 10 pass, 0 fail, 0 skip, 0 unsupported (out of 10)
+HARNESS-DIAG bind: no_manifest=0 zero_tests=0 budget_exceeded=0 rows_compared=60 triples_compared=0 gsp_seeded=0
+
+bindings: 11 pass, 0 fail, 0 skip, 0 unsupported (out of 11)
+HARNESS-DIAG bindings: no_manifest=0 zero_tests=0 budget_exceeded=0 rows_compared=50 triples_compared=0 gsp_seeded=0
+
+cast: 6 pass, 0 fail, 0 skip, 0 unsupported (out of 6)
+HARNESS-DIAG cast: no_manifest=0 zero_tests=0 budget_exceeded=0 rows_compared=372 triples_compared=0 gsp_seeded=0
+
+clear: 4 pass, 0 fail, 0 skip, 0 unsupported (out of 4)
+HARNESS-DIAG clear: no_manifest=0 zero_tests=0 budget_exceeded=0 rows_compared=0 triples_compared=12 gsp_seeded=0
+
+construct: 7 pass, 0 fail, 0 skip, 0 unsupported (out of 7)
+HARNESS-DIAG construct: no_manifest=0 zero_tests=0 budget_exceeded=0 rows_compared=0 triples_compared=64 gsp_seeded=0
+
+copy: 6 pass, 0 fail, 0 skip, 0 unsupported (out of 6)
+HARNESS-DIAG copy: no_manifest=0 zero_tests=0 budget_exceeded=0 rows_compared=0 triples_compared=84 gsp_seeded=0
+
+csv-tsv-res: 6 pass, 0 fail, 0 skip, 0 unsupported (out of 6)
+HARNESS-DIAG csv-tsv-res: no_manifest=0 zero_tests=0 budget_exceeded=0 rows_compared=76 triples_compared=0 gsp_seeded=0
+
+delete-data: 6 pass, 0 fail, 0 skip, 0 unsupported (out of 6)
+HARNESS-DIAG delete-data: no_manifest=0 zero_tests=0 budget_exceeded=0 rows_compared=0 triples_compared=96 gsp_seeded=0
+
+delete-insert: 17 pass, 0 fail, 0 skip, 0 unsupported (out of 17)
+HARNESS-DIAG delete-insert: no_manifest=0 zero_tests=0 budget_exceeded=0 rows_compared=0 triples_compared=122 gsp_seeded=0
+
+delete-where: 6 pass, 0 fail, 0 skip, 0 unsupported (out of 6)
+HARNESS-DIAG delete-where: no_manifest=0 zero_tests=0 budget_exceeded=0 rows_compared=0 triples_compared=96 gsp_seeded=0
+
+delete: 19 pass, 0 fail, 0 skip, 0 unsupported (out of 19)
+HARNESS-DIAG delete: no_manifest=0 zero_tests=0 budget_exceeded=0 rows_compared=0 triples_compared=370 gsp_seeded=0
+
+drop: 4 pass, 0 fail, 0 skip, 0 unsupported (out of 4)
+HARNESS-DIAG drop: no_manifest=0 zero_tests=0 budget_exceeded=0 rows_compared=0 triples_compared=12 gsp_seeded=0
+
+entailment: 70 pass, 0 fail, 0 skip, 0 unsupported (out of 70)
+HARNESS-DIAG entailment: no_manifest=0 zero_tests=0 budget_exceeded=0 rows_compared=247 triples_compared=0 gsp_seeded=0
+
+exists: 6 pass, 0 fail, 0 skip, 0 unsupported (out of 6)
+HARNESS-DIAG exists: no_manifest=0 zero_tests=0 budget_exceeded=0 rows_compared=16 triples_compared=0 gsp_seeded=0
+
+functions: 75 pass, 0 fail, 0 skip, 0 unsupported (out of 75)
+HARNESS-DIAG functions: no_manifest=0 zero_tests=0 budget_exceeded=0 rows_compared=569 triples_compared=0 gsp_seeded=0
+
+grouping: 6 pass, 0 fail, 0 skip, 0 unsupported (out of 6)
+HARNESS-DIAG grouping: no_manifest=0 zero_tests=0 budget_exceeded=0 rows_compared=18 triples_compared=0 gsp_seeded=0
+
+json-res: 4 pass, 0 fail, 0 skip, 0 unsupported (out of 4)
+HARNESS-DIAG json-res: no_manifest=0 zero_tests=0 budget_exceeded=0 rows_compared=26 triples_compared=0 gsp_seeded=0
+
+move: 6 pass, 0 fail, 0 skip, 0 unsupported (out of 6)
+HARNESS-DIAG move: no_manifest=0 zero_tests=0 budget_exceeded=0 rows_compared=0 triples_compared=54 gsp_seeded=0
+
+negation: 12 pass, 0 fail, 0 skip, 0 unsupported (out of 12)
+HARNESS-DIAG negation: no_manifest=0 zero_tests=0 budget_exceeded=0 rows_compared=84 triples_compared=0 gsp_seeded=0
+
+project-expression: 7 pass, 0 fail, 0 skip, 0 unsupported (out of 7)
+HARNESS-DIAG project-expression: no_manifest=0 zero_tests=0 budget_exceeded=0 rows_compared=24 triples_compared=0 gsp_seeded=0
+
+property-path: 33 pass, 0 fail, 0 skip, 0 unsupported (out of 33)
+HARNESS-DIAG property-path: no_manifest=0 zero_tests=0 budget_exceeded=0 rows_compared=149 triples_compared=0 gsp_seeded=0
+
+service: 7 pass, 0 fail, 0 skip, 0 unsupported (out of 7)
+HARNESS-DIAG service: no_manifest=0 zero_tests=0 budget_exceeded=0 rows_compared=34 triples_compared=0 gsp_seeded=0
+
+subquery: 14 pass, 0 fail, 0 skip, 0 unsupported (out of 14)
+HARNESS-DIAG subquery: no_manifest=0 zero_tests=0 budget_exceeded=0 rows_compared=74 triples_compared=24 gsp_seeded=0
+
+syntax-query: 94 pass, 0 fail, 0 skip, 0 unsupported (out of 94)
+HARNESS-DIAG syntax-query: no_manifest=0 zero_tests=0 budget_exceeded=0 rows_compared=0 triples_compared=0 gsp_seeded=0
+
+syntax-update-1: 54 pass, 0 fail, 0 skip, 0 unsupported (out of 54)
+HARNESS-DIAG syntax-update-1: no_manifest=0 zero_tests=0 budget_exceeded=0 rows_compared=0 triples_compared=0 gsp_seeded=0
+
+syntax-update-2: 1 pass, 0 fail, 0 skip, 0 unsupported (out of 1)
+HARNESS-DIAG syntax-update-2: no_manifest=0 zero_tests=0 budget_exceeded=0 rows_compared=0 triples_compared=0 gsp_seeded=0
+
+update-silent: 13 pass, 0 fail, 0 skip, 0 unsupported (out of 13)
+HARNESS-DIAG update-silent: no_manifest=0 zero_tests=0 budget_exceeded=0 rows_compared=0 triples_compared=12 gsp_seeded=0
+
+syntax-fed: 3 pass, 0 fail, 0 skip, 0 unsupported (out of 3)
+HARNESS-DIAG syntax-fed: no_manifest=0 zero_tests=0 budget_exceeded=0 rows_compared=0 triples_compared=0 gsp_seeded=0
+
+service-description: 3 pass, 0 fail, 0 skip, 0 unsupported (out of 3)
+HARNESS-DIAG service-description: no_manifest=0 zero_tests=0 budget_exceeded=0 rows_compared=0 triples_compared=0 gsp_seeded=0
+
+protocol: 34 pass, 0 fail, 0 skip, 0 unsupported (out of 34)
+HARNESS-DIAG protocol: no_manifest=0 zero_tests=0 budget_exceeded=0 rows_compared=0 triples_compared=0 gsp_seeded=0
+
+http-rdf-update: 19 pass, 0 fail, 0 skip, 0 unsupported (out of 19)
+HARNESS-DIAG http-rdf-update: no_manifest=0 zero_tests=0 budget_exceeded=0 rows_compared=0 triples_compared=0 gsp_seeded=1
+
+
+grouping: 1 pass, 0 fail, 0 skip, 0 unsupported (out of 1)
+HARNESS-DIAG grouping: no_manifest=0 zero_tests=0 budget_exceeded=0 rows_compared=6 triples_compared=0 gsp_seeded=0
+
+codepoint-escapes: 8 pass, 0 fail, 0 skip, 0 unsupported (out of 8)
+HARNESS-DIAG codepoint-escapes: no_manifest=0 zero_tests=0 budget_exceeded=0 rows_compared=0 triples_compared=0 gsp_seeded=0
+
+syntax-triple-terms-negative: 65 pass, 0 fail, 0 skip, 0 unsupported (out of 65)
+HARNESS-DIAG syntax-triple-terms-negative: no_manifest=0 zero_tests=0 budget_exceeded=0 rows_compared=0 triples_compared=0 gsp_seeded=0
+
+syntax-triple-terms-positive: 113 pass, 0 fail, 0 skip, 0 unsupported (out of 113)
+HARNESS-DIAG syntax-triple-terms-positive: no_manifest=0 zero_tests=0 budget_exceeded=0 rows_compared=0 triples_compared=0 gsp_seeded=0
+
+eval-triple-terms: 41 pass, 0 fail, 0 skip, 0 unsupported (out of 41)
+HARNESS-DIAG eval-triple-terms: no_manifest=0 zero_tests=0 budget_exceeded=0 rows_compared=214 triples_compared=82 gsp_seeded=0
+
+expression: 1 pass, 0 fail, 0 skip, 0 unsupported (out of 1)
+HARNESS-DIAG expression: no_manifest=0 zero_tests=0 budget_exceeded=0 rows_compared=20 triples_compared=0 gsp_seeded=0
+
+lang-basedir: 11 pass, 0 fail, 0 skip, 0 unsupported (out of 11)
+HARNESS-DIAG lang-basedir: no_manifest=0 zero_tests=0 budget_exceeded=0 rows_compared=55 triples_compared=0 gsp_seeded=0
+
+rdf11: 3 pass, 0 fail, 0 skip, 0 unsupported (out of 3)
+HARNESS-DIAG rdf11: no_manifest=0 zero_tests=0 budget_exceeded=0 rows_compared=5 triples_compared=0 gsp_seeded=0
+
+version: 9 pass, 0 fail, 0 skip, 0 unsupported (out of 9)
+HARNESS-DIAG version: no_manifest=0 zero_tests=0 budget_exceeded=0 rows_compared=0 triples_compared=0 gsp_seeded=0
+
+sparql12/syntax: 2 pass, 0 fail, 0 skip, 0 unsupported (out of 2)
+HARNESS-DIAG sparql12/syntax: no_manifest=0 zero_tests=0 budget_exceeded=0 rows_compared=0 triples_compared=0 gsp_seeded=0
+
+
+TOTAL: 924 pass, 0 fail, 0 skip, 0 unsupported (out of 924)
+HARNESS-DIAG TOTAL: no_manifest=0 zero_tests=0 budget_exceeded=0 rows_compared=2275 triples_compared=1351 gsp_seeded=1

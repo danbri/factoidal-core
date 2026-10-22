@@ -81,8 +81,8 @@ private def xsI (l : String) : String := xsdNs ++ l
 #guard evalPred "boolean-less-than" [gLit "0" (xsI "boolean"), gLit "1" (xsI "boolean")] == .yes
 #guard evalPred "boolean-equal" [gLit "1" (xsI "boolean"), gLit "true" (xsI "boolean")] == .yes
 
--- `pred:literal-not-identical` compares the PAIR, so the same lexical
--- form in two symbol spaces is two constants.
+-- These integer/string values belong to disjoint primitive spaces, despite
+-- having the same lexical spelling.
 #guard evalPred "literal-not-identical" [gLit "1" (xsI "integer"), gLit "1" (xsI "string")] == .yes
 #guard evalPred "literal-not-identical" [gLit "1" (xsI "integer"), gLit "1" (xsI "integer")] == .no
 

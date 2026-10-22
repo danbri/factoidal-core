@@ -24,6 +24,8 @@ import L4Factoidal.SPARQL.ResultsXml
 import L4Factoidal.SPARQL.ResultsJson
 import L4Factoidal.SPARQL.ResultsCsvTsv
 
+import L4Factoidal.SPARQL.ResultsNamespaceTests
+
 namespace L4Factoidal.SPARQL.ResultsTests
 
 open L4Factoidal.RDF

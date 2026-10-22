@@ -8,13 +8,13 @@ docs/designissues/2026-10-12-sbm11-stage4.md section 16).
 ## Why
 
 `evalAggregate` evaluates the argument of an aggregate at every row of a
-group (`evalOverGroup`: a lookup in the row's binding, the promotion of a
-literal), then filters, then folds. The SBM11 id path (`Storage/Sbm11/IdAgg`)
+group (`evalOverGroup`: a lookup in the row's binding), then filters, then
+folds. The SBM11 id path (`Storage/Sbm11/IdAgg`)
 holds the rows of a group as term ids. It decodes each distinct id once into a
-`Summary` (the value, its `numericView`, its numeric reading), and feeds the
+`Summary` (the original evaluated value), and feeds the
 summaries of a group's rows, in row order, to the accumulator of the aggregate.
 The accumulator makes the same decisions as the list functions the reference
-calls (`filterNonError`, `sumNumericAcc`, `findMin`, `findMax`, `avgNumeric`),
+calls (`filterNonError`, `sumNumeric`, `findMin`, `findMax`, `avgNumeric`),
 in the same order, so the theorems here say that its result IS
 `evalAggregate`'s:
 
@@ -47,11 +47,9 @@ open L4Factoidal.RDF
 
 /-! ## The value a variable has -/
 
-/-- The value `Expr.evalIn` gives a variable that is bound to `t`: a literal
-is promoted (`literalPromote`), any other term stays a term. -/
-def varView : Term → EvalResult
-  | .literal l => literalPromote l
-  | t => .term t
+/-- A bound variable retains its RDF term. Numeric interpretation belongs to
+arithmetic, so an xsd:float is not promoted to double before the operation. -/
+def varView (t : Term) : EvalResult := .term t
 
 /-- `Expr.evalIn` of a variable reads its binding and nothing else. -/
 theorem evalIn_var (env : EvalEnv) (mu : Binding) (v : VarName) :
@@ -60,77 +58,26 @@ theorem evalIn_var (env : EvalEnv) (mu : Binding) (v : VarName) :
        | some t => varView t
        | none => .error) := by
   simp only [Expr.evalIn]
-  cases mu.lookup v with
-  | none => rfl
-  | some t => cases t <;> rfl
-
-/-- A promoted literal is never the type error. -/
-theorem literalPromote_ne_error (l : WfLiteral) : literalPromote l ≠ .error := by
-  unfold literalPromote
-  split
-  · split <;> simp
-  · split
-    · simp
-    · split
-      · simp
-      · split
-        · split <;> simp
-        · simp
+  cases mu.lookup v <;> rfl
 
 /-- A bound variable is never the type error, so `COUNT(?x)` counts the rows
 where `?x` is bound, whatever term it is bound to. -/
 theorem varView_ne_error (t : Term) : varView t ≠ .error := by
-  cases t with
-  | literal l => exact literalPromote_ne_error l
-  | iri _ => simp [varView]
-  | bnode _ => simp [varView]
-  | tripleTerm _ _ _ => simp [varView]
+  simp [varView]
 
 /-! ## What a step reads of one value -/
 
-/-- The numeric reading of a `numericView`: what `EvalResult.toNumeric?` gives
-the value it came from. -/
-def numOfView : EvalResult → Option (Scaled × NumKind)
-  | .num n => some (⟨n, 0⟩, .int)
-  | .dec s => (parseToScaled s).map (fun v => (v, .dec))
-  | .dbl s => (parseDoubleToScaled s).map (fun v => (v, .dbl))
-  | _ => none
-
-theorem toNumeric_eq_numOfView (v : EvalResult) : v.toNumeric? = numOfView (numericView v) := by
-  cases v with
-  | term t =>
-    cases t with
-    | literal l =>
-      simp only [EvalResult.toNumeric?, numericView]
-      cases literalOperandView l <;> simp [numOfView]
-    | iri _ => simp [EvalResult.toNumeric?, numericView, numOfView]
-    | bnode _ => simp [EvalResult.toNumeric?, numericView, numOfView]
-    | tripleTerm _ _ _ => simp [EvalResult.toNumeric?, numericView, numOfView]
-  | bool _ => simp [EvalResult.toNumeric?, numericView, numOfView]
-  | num _ => simp [EvalResult.toNumeric?, numericView, numOfView]
-  | dec _ => simp [EvalResult.toNumeric?, numericView, numOfView]
-  | dbl _ => simp [EvalResult.toNumeric?, numericView, numOfView]
-  | error => simp [EvalResult.toNumeric?, numericView, numOfView]
-
-/-- A value with what the aggregate steps read of it, computed once. The
-id path keeps one per distinct term id. -/
+/-- The original evaluated value, cached once per distinct term id. Both
+arithmetic and ordering interpret this value through their shared adapters;
+promoting it here would lose the source float datatype. -/
 structure Summary where
   v : EvalResult
-  nv : EvalResult
-  tn : Option (Scaled × NumKind)
 
-instance : Inhabited Summary := ⟨⟨.error, .error, none⟩⟩
+instance : Inhabited Summary := ⟨⟨.error⟩⟩
 
-def Summary.of (v : EvalResult) : Summary :=
-  let nv := numericView v
-  ⟨v, nv, numOfView nv⟩
+def Summary.of (v : EvalResult) : Summary := ⟨v⟩
 
 theorem Summary.of_v (v : EvalResult) : (Summary.of v).v = v := rfl
-
-theorem Summary.of_nv (v : EvalResult) : (Summary.of v).nv = numericView v := rfl
-
-theorem Summary.of_tn (v : EvalResult) : (Summary.of v).tn = v.toNumeric? := by
-  simp [Summary.of, toNumeric_eq_numOfView]
 
 /-! ## The accumulators -/
 
@@ -138,11 +85,11 @@ theorem Summary.of_tn (v : EvalResult) : (Summary.of v).tn = v.toNumeric? := by
 inductive AggAcc where
   /-- COUNT: the values counted -/
   | cnt (n : Nat)
-  /-- SUM and AVG: the running sum, its promoted type, the numeric operands, and
-      whether a non-numeric operand was seen -/
-  | num (s : Scaled) (k : NumKind) (c : Nat) (bad : Bool)
-  /-- MIN and MAX: the best value so far with its `numericView` -/
-  | best (b : Option (EvalResult × EvalResult))
+  /-- SUM and AVG: the running shared-arithmetic result and non-error count.
+      Arithmetic propagates a nonnumeric operand as `.error`. -/
+  | num (s : EvalResult) (c : Nat)
+  /-- MIN and MAX: the best original value so far -/
+  | best (b : Option EvalResult)
 
 instance : Inhabited AggAcc := ⟨.cnt 0⟩
 
@@ -153,7 +100,7 @@ def Streamed : AggregateFn → Bool
 
 def AggAcc.init : AggregateFn → AggAcc
   | .count => .cnt 0
-  | .sum | .avg => .num ⟨0, 0⟩ .int 0 false
+  | .sum | .avg => .num (.num 0) 0
   | _ => .best none
 
 def AggAcc.stepCount : AggAcc → AggAcc
@@ -162,24 +109,21 @@ def AggAcc.stepCount : AggAcc → AggAcc
 
 def AggAcc.stepNum (a : AggAcc) (s : Summary) : AggAcc :=
   match a with
-  | .num sc k c bad =>
-    match s.tn with
-    | some (x, vk) => .num (sc.add x) (promoteKind k vk) (c + 1) bad
-    | none => .num sc k c true
+  | .num total c => .num (evalArithmetic .add s.v total) (c + 1)
   | a => a
 
 /-- MAX and MIN: a later value replaces the best one when `keep` accepts the
-comparison of the two numeric views. MAX keeps it when it is not below the best
-(`findMax` keeps the last of equal values, §18.5.1.7); MIN when it is not above
-it (`findMin`, §18.5.1.6). -/
+comparison of the two original values. MAX keeps it when it is not below the best
+(`findMax` keeps the last of equal values, §18.5.1.6); MIN when it is not above
+it (`findMin`, §18.5.1.5). -/
 def AggAcc.stepBest (keep : Int → Bool) (a : AggAcc) (s : Summary) : AggAcc :=
   match a with
-  | .best none => .best (some (s.v, s.nv))
-  | .best (some (_, bnv)) => if keep (sparqlOrder s.nv bnv) then .best (some (s.v, s.nv)) else a
+  | .best none => .best (some s.v)
+  | .best (some current) => if keep (sparqlOrderValue s.v current) then .best (some s.v) else a
   | a => a
 
-/-- The step of the functions that keep the best value, with the type error
-dropped (§18.5.1.1). -/
+/-- The best-value step retains the reference engine's error-removal policy.
+This agreement does not establish the unresolved SPARQL 1.1 error policy. -/
 def AggAcc.stepKeep (keep : Int → Bool) (a : AggAcc) (s : Summary) : AggAcc :=
   match s.v with
   | .error => a
@@ -188,8 +132,9 @@ def AggAcc.stepKeep (keep : Int → Bool) (a : AggAcc) (s : Summary) : AggAcc :=
 def keepMax : Int → Bool := fun c => decide (c ≥ 0)
 def keepMin : Int → Bool := fun c => decide (c ≤ 0)
 
-/-- One value: the type error is dropped (§18.5.1.1), any other value goes to
-the step of the function. -/
+/-- One value: retain the reference engine's error-removal policy, then
+apply the chosen aggregate step. COUNT's error removal is normative; agreement
+for the other aggregates is a compatibility result (errata-query-6). -/
 def AggAcc.step (fn : AggregateFn) (a : AggAcc) (s : Summary) : AggAcc :=
   match fn with
   | .count => (match s.v with | .error => a | _ => a.stepCount)
@@ -198,43 +143,28 @@ def AggAcc.step (fn : AggregateFn) (a : AggAcc) (s : Summary) : AggAcc :=
   | .max => a.stepKeep keepMax s
   | _ => a
 
-/-- §18.5.1.5 AVG from the sum, its type and the count: the part of
-`avgNumeric` that follows `sumNumericAcc`. -/
-def avgOfAcc (s : Scaled) (k : NumKind) (c : Nat) : EvalResult :=
+/-- §18.5.1.4 AVG from the shared sum and non-error count. The accumulator
+uses the same reverse enumeration as `sumNumeric`; no reassociation is used.
+The number of state fields is constant; arbitrary-precision values can grow.
+Shared arithmetic parses lexical operands at each step. A cached value-space
+implementation would need its own refinement and performance measurements. -/
+def avgOfAcc (s : EvalResult) (c : Nat) : EvalResult :=
   if c == 0 then .num 0
-  else
-    let resultKind := match k with | .int => NumKind.dec | other => other
-    let extra : Nat := 10
-    let extended := s.mantissa * pow10 extra
-    let divided := intDivT extended (Int.ofNat c)
-    let resultScale := s.scale + extra
-    match resultKind with
-    | .dbl => .dbl (formatAsDouble divided resultScale)
-    | _    => .dec (stripTrailingDecimalZeros (formatScaledValue divided resultScale))
+  else evalArithmetic .div s (.num (Int.ofNat c))
 
 theorem avgNumeric_eq (vals : List EvalResult) :
-    avgNumeric vals = avgOfAcc (sumNumericAcc vals ⟨0, 0⟩ .int 0).1 (sumNumericAcc vals ⟨0, 0⟩ .int 0).2.1
-      (sumNumericAcc vals ⟨0, 0⟩ .int 0).2.2 := by
-  unfold avgNumeric avgOfAcc
-  rfl
-
-theorem sumNumeric_eq (vals : List EvalResult) :
-    sumNumeric vals =
-      (if (sumNumericAcc vals ⟨0, 0⟩ .int 0).2.2 == 0 then .num 0
-       else formatNumericResult (sumNumericAcc vals ⟨0, 0⟩ .int 0).1 (sumNumericAcc vals ⟨0, 0⟩ .int 0).2.1) := by
-  unfold sumNumeric
-  rfl
+    avgNumeric vals = avgOfAcc (sumNumeric vals) vals.length := by
+  cases vals <;> simp [avgNumeric, avgOfAcc]
 
 /-- The value of the aggregate from its final state. -/
 def AggAcc.finish (fn : AggregateFn) (a : AggAcc) : EvalResult :=
   match fn, a with
   | .count, .cnt n => .num (Int.ofNat n)
-  | .sum, .num s k c bad =>
-    if bad then .error else if c == 0 then .num 0 else formatNumericResult s k
-  | .avg, .num s k c bad => if bad then .error else avgOfAcc s k c
+  | .sum, .num s _ => s
+  | .avg, .num s c => avgOfAcc s c
   | .min, .best b | .max, .best b =>
     match b with
-    | some (v, _) => v
+    | some v => v
     | none => .error
   | _, _ => .error
 
@@ -242,12 +172,8 @@ def AggAcc.finish (fn : AggregateFn) (a : AggAcc) : EvalResult :=
 functions the accumulators cover (`evalAggregate` after `evalOverGroup`). -/
 def aggVals : AggregateFn → List EvalResult → EvalResult
   | .count, vals => .num (Int.ofNat (filterNonError vals).length)
-  | .sum, vals =>
-    let vs := filterNonError vals
-    if vs.any (fun v => v.toNumeric?.isNone) then .error else sumNumeric vs
-  | .avg, vals =>
-    let vs := filterNonError vals
-    if vs.any (fun v => v.toNumeric?.isNone) then .error else avgNumeric vs
+  | .sum, vals => sumNumeric (filterNonError vals)
+  | .avg, vals => avgNumeric (filterNonError vals)
   | .min, vals => findMin (filterNonError vals)
   | .max, vals => findMax (filterNonError vals)
   | _, _ => .error
@@ -305,32 +231,27 @@ theorem step_num_error (fn : AggregateFn) (hfn : fn = .sum ∨ fn = .avg) (a : A
     AggAcc.step fn a (Summary.of .error) = a := by
   rcases hfn with rfl | rfl <;> rfl
 
-/-- SUM and AVG: the running sum is `sumNumericAcc` over the values that are not
-the type error, and the flag is "some value has no numeric reading". -/
+/-- SUM and AVG use exactly the reference arithmetic step and count values
+that survive `filterNonError`. The state has no input-sized value buffer. -/
 theorem num_stream (fn : AggregateFn) (hfn : fn = .sum ∨ fn = .avg) (vals : List EvalResult) :
-    ∀ sc k c bad,
-    (vals.map Summary.of).foldl (AggAcc.step fn) (.num sc k c bad) =
-      .num (sumNumericAcc (filterNonError vals) sc k c).1
-           (sumNumericAcc (filterNonError vals) sc k c).2.1
-           (sumNumericAcc (filterNonError vals) sc k c).2.2
-           (bad || (filterNonError vals).any (fun v => v.toNumeric?.isNone)) := by
+    ∀ total c,
+    (vals.map Summary.of).foldl (AggAcc.step fn) (.num total c) =
+      .num ((filterNonError vals).foldl (fun acc v => evalArithmetic .add v acc) total)
+           (c + (filterNonError vals).length) := by
   induction vals with
-  | nil => intro sc k c bad; simp [filterNonError, sumNumericAcc]
+  | nil => intro total c; simp [filterNonError]
   | cons v rest ih =>
-    intro sc k c bad
+    intro total c
     rw [filterNonError_cons]
     by_cases hv : v = .error
     · subst hv
       simp only [if_true, List.map_cons, List.foldl_cons, step_num_error fn hfn]
-      exact ih sc k c bad
+      exact ih total c
     · simp only [hv, if_false, List.map_cons, List.foldl_cons]
       rw [step_num_of_ne fn hfn _ v hv]
-      simp only [AggAcc.stepNum, Summary.of_tn]
-      cases hn : v.toNumeric? with
-      | none => simp [ih, sumNumericAcc, hn]
-      | some p =>
-        obtain ⟨x, vk⟩ := p
-        simp [ih, sumNumericAcc, hn]
+      simp only [AggAcc.stepNum, Summary.of_v, ih, List.length_cons]
+      congr 1
+      omega
 
 /-- The fold of MAX and MIN: the best value so far against the next. -/
 def bestFold (keep : Int → Bool) (a : EvalResult) (rest : List EvalResult) : EvalResult :=
@@ -354,9 +275,8 @@ theorem findMin_eq (vals : List EvalResult) :
 
 /-- MIN and MAX from a state that already holds a value. -/
 theorem best_stream_from (keep : Int → Bool) (vals : List EvalResult) : ∀ (a : EvalResult),
-    (vals.map Summary.of).foldl (AggAcc.stepKeep keep) (.best (some (a, numericView a))) =
-      .best (some (bestFold keep a (filterNonError vals),
-                   numericView (bestFold keep a (filterNonError vals)))) := by
+    (vals.map Summary.of).foldl (AggAcc.stepKeep keep) (.best (some a)) =
+      .best (some (bestFold keep a (filterNonError vals))) := by
   induction vals with
   | nil => intro a; simp [filterNonError, bestFold]
   | cons v rest ih =>
@@ -366,18 +286,17 @@ theorem best_stream_from (keep : Int → Bool) (vals : List EvalResult) : ∀ (a
     · subst hv
       simp [AggAcc.stepKeep, Summary.of, ih]
     · simp only [hv, if_false, List.map_cons, List.foldl_cons]
-      have hv' : (Summary.of v).v ≠ .error := hv
-      by_cases hk : keep (sparqlOrder (numericView v) (numericView a)) = true
-      · have h1 : AggAcc.stepKeep keep (.best (some (a, numericView a))) (Summary.of v) =
-            .best (some (v, numericView v)) := by
+      by_cases hk : keep (sparqlOrderValue v a) = true
+      · have h1 : AggAcc.stepKeep keep (.best (some a)) (Summary.of v) =
+            .best (some v) := by
           cases v <;> simp_all [AggAcc.stepKeep, AggAcc.stepBest, Summary.of]
         rw [h1, ih v]
-        simp [bestFold, sparqlOrderValue, hk]
-      · have h1 : AggAcc.stepKeep keep (.best (some (a, numericView a))) (Summary.of v) =
-            .best (some (a, numericView a)) := by
+        simp [bestFold, hk]
+      · have h1 : AggAcc.stepKeep keep (.best (some a)) (Summary.of v) =
+            .best (some a) := by
           cases v <;> simp_all [AggAcc.stepKeep, AggAcc.stepBest, Summary.of]
         rw [h1, ih a]
-        simp [bestFold, sparqlOrderValue, hk]
+        simp [bestFold, hk]
 
 /-- MIN and MAX from the empty state: the first value that is not the type
 error starts the fold. -/
@@ -385,7 +304,7 @@ theorem best_stream (keep : Int → Bool) (vals : List EvalResult) :
     (vals.map Summary.of).foldl (AggAcc.stepKeep keep) (.best none) =
       (match filterNonError vals with
        | [] => .best none
-       | v :: rest => .best (some (bestFold keep v rest, numericView (bestFold keep v rest)))) := by
+       | v :: rest => .best (some (bestFold keep v rest))) := by
   induction vals with
   | nil => simp [filterNonError]
   | cons v rest ih =>
@@ -394,7 +313,7 @@ theorem best_stream (keep : Int → Bool) (vals : List EvalResult) :
     · subst hv
       simp [AggAcc.stepKeep, Summary.of, ih]
     · simp only [hv, if_false, List.map_cons, List.foldl_cons]
-      have h1 : AggAcc.stepKeep keep (.best none) (Summary.of v) = .best (some (v, numericView v)) := by
+      have h1 : AggAcc.stepKeep keep (.best none) (Summary.of v) = .best (some v) := by
         cases v <;> simp_all [AggAcc.stepKeep, AggAcc.stepBest, Summary.of]
       rw [h1, best_stream_from]
 
@@ -428,17 +347,15 @@ theorem evalAggregate_stream (env : EvalEnv) (fn : AggregateFn) (hfn : Streamed 
     rw [count_stream vals 0]
     simp [AggAcc.finish]
   | sum =>
-    have h := num_stream .sum (Or.inl rfl) vals ⟨0, 0⟩ .int 0 false
+    have h := num_stream .sum (Or.inl rfl) vals (.num 0) 0
     simp only [AggAcc.init, aggVals]
     rw [h]
-    simp only [AggAcc.finish, Bool.false_or]
-    cases hb : (filterNonError vals).any (fun v => v.toNumeric?.isNone) <;> simp [sumNumeric_eq]
+    rfl
   | avg =>
-    have h := num_stream .avg (Or.inr rfl) vals ⟨0, 0⟩ .int 0 false
+    have h := num_stream .avg (Or.inr rfl) vals (.num 0) 0
     simp only [AggAcc.init, aggVals]
     rw [h]
-    simp only [AggAcc.finish, Bool.false_or]
-    cases hb : (filterNonError vals).any (fun v => v.toNumeric?.isNone) <;> simp [avgNumeric_eq]
+    simp only [AggAcc.finish, Nat.zero_add, avgNumeric_eq, sumNumeric]
   | min =>
     simp only [AggAcc.init, aggVals, step_min]
     rw [best_stream keepMin vals, findMin_eq]

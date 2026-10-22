@@ -1,0 +1,32 @@
+  ok    Authorization Server Metadata: /.well-known/lws-configuration is RFC 8414 with the LWS members
+  ok    RFC 8414: the same document at /.well-known/oauth-authorization-server
+  ok    JWK Set: one ES256 public key with its RFC 7638 kid and no private member
+  ok    Token Exchange: a did:key (P-256) credential gives an RFC 9068 token for the resource
+  ok    Token Exchange: a did:key (Ed25519) credential gives a token too
+  ok    Request: an unknown resource is refused with invalid_target
+  ok    Request: no resource is invalid_request
+  ok    Request: no subject_token is invalid_request
+  ok    Request: another grant type is unsupported_grant_type
+  ok    Validation: a corrupted signature is refused
+  ok    Validation: alg none is refused
+  ok    Validation: an expired credential is refused
+  ok    Validation: aud without this server is refused
+  ok    Validation: client_id other than sub is refused
+  ok    Validation: a missing exp is refused
+  ok    Token endpoint: GET answers 405; a JSON body answers 400
+  ok    CID suite: an https-style subject with a JsonWebKey authentication method gives a token
+  ok    CID suite: a revoked method is refused (CID 1.0 section 2.2)
+  ok    CID suite: a key listed only for assertion is refused (CID 1.0 section 3.3)
+  ok    CID suite: an unknown kid is refused
+  ok    OpenID Connect suite: an ID token gives a token with sub and client_id = azp
+  ok    OpenID Connect suite: a provider the subject does not name is refused
+  ok    OpenID Connect suite: an ID token without azp is refused
+  xfail SAML suite: a signed SAML 2.0 assertion is exchanged for a token (https://github.com/danbri/factoidal/issues/926): status 400: SAML 2.0 assertions are not accepted: this server has no XML Signature verifier (https://github.com/danbri/factoidal/issues/926)
+  ok    Fetch guard: a subject document on a loopback address is not fetched without --allow-private-fetch
+  ok    Fetch guard: a localhost subject is refused too
+  ok    Fetch guard: an http subject is refused without --allow-http
+  ok    Rotation: a new key signs; the old key stays published and its tokens still verify
+  ok    Key file: written with mode 0600 and read back with the same keys
+  ok    Key file sealed with FACTOIDAL_LWS_KEY: sealed on disk, reopened with the key, refused without it or with another
+  ok    EdDSA: a server started with alg EdDSA signs EdDSA tokens that verify under its JWK Set
+authz-server node: 30 pass, 0 fail, 1 xfail, 0 skipped (out of 31)

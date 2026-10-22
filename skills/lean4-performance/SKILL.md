@@ -10,6 +10,12 @@ bucket/index build, block encode/decode, range I/O, query evaluation, or result
 formatting. A green semantic test is not a throughput result, and a fast host
 shim is not a semantic replacement.
 
+For rounded aggregates, preserve the chosen operation order in both reference
+and streaming paths. A bag's permitted enumeration can avoid buffering, but
+write the exact list identity rather than assuming floating associativity.
+The SUM/AVG reconciliation and its remaining grouping obligation are recorded
+in [the aggregate-order note](../../docs/designissues/2026-10-22-shared-aggregate-order.md).
+
 ## Recursion and collection rules
 
 - In a repeatedly invoked path, treat `xs.length`, `List.reverse`, `++`, and

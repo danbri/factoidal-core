@@ -1,0 +1,8 @@
+{
+  "status": "pass",
+  "cases": 20,
+  "mutations": 3,
+  "oldReportSha256": "3f4119e7ac53f9b55b3b37368b4388ff993d09350c22077720379b912de4d156",
+  "finalReportSha256": "a59370af7a4af3344946bd8f1062a759bab4eb5123db39779a7ae9f1e02f1735",
+  "scope": "Extracted-artifact replay uses exactly the cases that passed the final source producer gate."
+}

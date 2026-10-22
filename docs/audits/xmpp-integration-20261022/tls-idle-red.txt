@@ -1,0 +1,13 @@
+Captured tool output before raw-transport tracking repair, Node v22.22.2:
+Command: /opt/homebrew/opt/node@22/bin/node --test --test-name-pattern="has not started" npm/factoidal/test/xmpp-host.test.mjs
+Exit status: 1
+Subtest: XMPP host closes a TCP peer that has not started its TLS handshake
+failureType: testCodeFailure
+error: shutdown waited on an idle TLS peer
+code: ERR_TEST_FAILURE
+Tests: 1; pass: 0; fail: 1; skipped: 0
+
+Preceding standalone probe output:
+{"closeCompleted":false,"calls":["xmppOpen"]}
+
+This file preserves the relevant tool transcript, not the complete TAP stream.

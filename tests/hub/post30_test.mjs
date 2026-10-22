@@ -85,49 +85,50 @@ test('post30: the DL pipeline flags the unsatisfiable restriction that RL leaves
   assert.deepEqual(verdict, { inconsistent: true, rlAlone: true });
 });
 
-test('post30: owlIsConsistent refutes the disjoint-classes clash with a reason', async () => {
+// These archived examples have known OWL verdicts, but their syntax is outside
+// the checked reader. Pin explicit refusal; do not count these as conformance.
+test('post30: checked consistency refuses the disjoint-classes syntax', async () => {
   const post = runReactivePost(cells, { fn, pretty });
   const v = await post.value('disjointClassesVerdict');
-  assert.equal(v.consistent, false);
-  assert.equal(typeof v.reason, 'string');
-  assert.ok(v.reason.length > 0, 'expected a non-empty reason string');
+  assert.equal(v.consistent, null);
+  assert.match(v.reason, /unsupported-syntax/);
 });
 
-test('post30: owlIsConsistent refutes the min/max cardinality clash', async () => {
+test('post30: checked consistency refuses the min/max cardinality syntax', async () => {
   const post = runReactivePost(cells, { fn, pretty });
   const v = await post.value('cardinalityClashVerdict');
-  assert.equal(v.consistent, false);
+  assert.equal(v.consistent, null);
+  assert.match(v.reason, /unsupported-syntax/);
 });
 
-test('post30: owlIsConsistent refutes the functional-property clash', async () => {
+test('post30: checked consistency refuses the functional-property syntax', async () => {
   const post = runReactivePost(cells, { fn, pretty });
   const v = await post.value('functionalClashVerdict');
-  assert.equal(v.consistent, false);
+  assert.equal(v.consistent, null);
+  assert.match(v.reason, /unsupported-syntax/);
 });
 
-test('post30: owlIsConsistent leaves the satisfiable control graph consistent', async () => {
+test('post30: checked consistency refuses the satisfiable control syntax', async () => {
   const post = runReactivePost(cells, { fn, pretty });
   const v = await post.value('satisfiableVerdict');
-  assert.equal(v.consistent, true);
-  assert.equal(v.reason, undefined, 'a true verdict carries no reason');
+  assert.equal(v.consistent, null);
+  assert.match(v.reason, /unsupported-syntax/);
 });
 
-test('post30: the clash-family summary is three refuted families plus one open control', async () => {
+test('post30: the archived clash-family summary exposes four unsupported cases', async () => {
   const post = runReactivePost(cells, { fn, pretty });
   const rows = await post.value('clashFamilySummary');
   assert.equal(rows.length, 4);
-  assert.deepEqual(rows.map((r) => r.consistent), [false, false, false, true]);
-  // every refuted family names a reason; the open control does not.
-  for (const r of rows.slice(0, 3)) assert.ok(r.reason.length > 0, `${r.family} has a reason`);
-  assert.equal(rows[3].reason, '');
+  assert.deepEqual(rows.map((r) => r.consistent), [null, null, null, null]);
+  for (const r of rows) assert.match(r.reason, /unsupported-syntax/, r.family);
 });
 
-test('post30: a fuel:0 budget-out is reported as null, never a false', async () => {
+test('post30: unsupported consistency syntax is rejected before fuel matters', async () => {
   const post = runReactivePost(cells, { fn, pretty });
   const v = await post.value('budgetOutVerdict');
   assert.equal(v.consistent, null);
   assert.equal(typeof v.reason, 'string');
-  assert.match(v.reason, /fuel 0/, 'the reason names the exhausted cap');
+  assert.match(v.reason, /unsupported-syntax/);
 });
 
 // The conclusion is in the OWL 2 RL/RDF closure of the premise:

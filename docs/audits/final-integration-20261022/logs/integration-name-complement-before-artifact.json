@@ -1,0 +1,6 @@
+{
+  "artifact": "npm/factoidal/l4-assets/l4factoidal.wasm",
+  "sha256": "64ec60e2c52ab0f8c871e2147d553dad1a9326185fb90f282bb1615fbf280fd9",
+  "bytes": 14052465,
+  "scope": "existing PR2+PR3 artifact before XSD complement repair; regression command/log stored separately"
+}

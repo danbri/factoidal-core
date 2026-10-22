@@ -1,0 +1,59 @@
+{
+  "local_source_commit": "37746b673",
+  "tail_refinement": "84cb4ddc7",
+  "xsd_repair": "f90efa6f5",
+  "source_files": [
+    {
+      "path": "formal/lean4/L4Factoidal/OWL/CertNames.lean",
+      "sha256": "52d852d191dc7c97851b6cd977c8634959475f1155c9caa2980fe90464108373",
+      "matches_tail_commit_bytes": true
+    },
+    {
+      "path": "formal/lean4/L4Factoidal/RIF/Engine.lean",
+      "sha256": "575ac4e4f38ad76714c1f686a799961865863e9e5b8b4aed0fa738155db3b8b7",
+      "matches_tail_commit_bytes": true
+    },
+    {
+      "path": "formal/lean4/L4Factoidal/RIF/Matching.lean",
+      "sha256": "3232dfc4153ec8ab138460533a8b457477e6ca0087d3d84e993e6603b7bcb41b",
+      "matches_tail_commit_bytes": true
+    },
+    {
+      "path": "formal/lean4/L4Factoidal/Regex/Ecma.lean",
+      "sha256": "2e7b331bae67afc5470e7035d1d7f85138bd9ad0a69f24f58f5e0dbac58a6b5e",
+      "matches_tail_commit_bytes": true
+    },
+    {
+      "path": "formal/lean4/L4Factoidal/Regex/Profiles.lean",
+      "sha256": "f67b5ba584fa5ce63aadb6ebe4b58c270c38ae2952e99d0e49f41a037c09e414",
+      "matches_tail_commit_bytes": true
+    },
+    {
+      "path": "formal/lean4/L4Factoidal/Regex/XPath.lean",
+      "sha256": "eb500423fae3c5c58544780e544dd30696bf06eacc23129226cea94a9f048f25",
+      "matches_tail_commit_bytes": true
+    }
+  ],
+  "xsd_repair_files": [
+    {
+      "path": "formal/lean4/L4Factoidal/Regex/Xsd11.lean",
+      "sha256": "6488ece2789a46115c03bb1b921930fce5db91088fc48d1ed2396ece21af52fa",
+      "unchanged_from_xsd_repair": true
+    },
+    {
+      "path": "formal/lean4/L4Factoidal/Regex/XSDPattern.lean",
+      "sha256": "3a9581bf6436e5330de08c74a4e41edc835ce1d1ff1eac3cb33fe642735ffd36",
+      "unchanged_from_xsd_repair": true
+    },
+    {
+      "path": "formal/lean4/L4Factoidal/XSD/SimpleType.lean",
+      "sha256": "9edc7104812c4f5bf6c00ecf85adc748cdb9f5d6fded31f6373023a67f84e925",
+      "unchanged_from_xsd_repair": true
+    },
+    {
+      "path": "formal/lean4/L4Factoidal/XSD/DatatypesTests.lean",
+      "sha256": "e8e842a06093175876abadc6babbe9815b4ab167003967c33c9ad47aa6e6d3f8",
+      "unchanged_from_xsd_repair": true
+    }
+  ]
+}
