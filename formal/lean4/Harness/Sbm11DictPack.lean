@@ -16,8 +16,12 @@ and prints. The formats and the decoders are
       (https://github.com/danbri/factoidal/issues/792 item 1). For N-Triples and
       N-Quads, SOURCE is cut into K byte ranges at line starts (default 4), each
       read in its own task; lines are independent in those two syntaxes, and a
-      blank node keeps its label, so the cut changes no term. Any other syntax is
-      one range (`Sbm11Pack.planRanges`). Each task collects the
+      blank node keeps its label, so the cut changes no term. Turtle and TriG
+      are cut at the dot boundaries `l4sbm11-pack` uses
+      (`Sbm11Pack.planStatementRanges`, https://github.com/danbri/factoidal/issues/842),
+      so the two commands give each range the same generated blank-node prefix
+      and write the same dictionary. Any other syntax is one range
+      (`Sbm11Pack.planRanges`). Each task collects the
       distinct non-inline terms (language tags folded to lower case) in a
       hash set; when it holds N / K terms (N default 262,144) it sorts their
       keys in byte order and writes a run file `OUTDIR/run-W-J.tmp`. The reader's
@@ -154,8 +158,8 @@ structure WorkerOut where
 /-- Phase 1 over one byte range: collect terms in a hash set, spill a
     sorted run whenever it holds `runTerms` terms. The source is read by the
     source layer (`Sbm11Pack.streamRange`) in the syntax `cfg` names. -/
-def phase1Worker (cfg : Sbm11Pack.ReadCfg) (source outDir : String) (w start stop runTerms : Nat) :
-    IO WorkerOut := do
+def phase1Worker (cfg : Sbm11Pack.ReadCfg) (source outDir : String) (w start stop runTerms : Nat)
+    (resume : Sbm11Pack.RangeStart := {}) : IO WorkerOut := do
   let runsRef ← IO.mkRef (#[] : Array String)
   let setRef ← IO.mkRef (({} : Std.HashMap Term Unit))
   let spill (acc : P1) (force : Bool) : IO P1 := do
@@ -174,7 +178,7 @@ def phase1Worker (cfg : Sbm11Pack.ReadCfg) (source outDir : String) (w start sto
     IO.FS.writeBinFile path (encodeRun ks)
     runsRef.set (rs.push path)
     return acc
-  let final ← Sbm11Pack.streamRange cfg source start stop consume ({} : P1) fun acc => spill acc false
+  let final ← Sbm11Pack.streamRange cfg source start stop consume ({} : P1) (fun acc => spill acc false) resume
   let final ← spill final true
   return { runs := ← runsRef.get, quads := final.quads, inlineOcc := final.inlineOcc }
 
@@ -253,26 +257,39 @@ def copyInto (dst : IO.FS.Handle) (src : String) : IO Unit := do
       if b.isEmpty then break
       dst.write b
 
-def runPack (source outDir : String) (runTerms workers : Nat) (opts : Sbm11Pack.SourceOpts := {}) :
+def runPackOnce (source outDir : String) (runTerms workers : Nat) (opts : Sbm11Pack.SourceOpts := {}) :
     IO UInt32 := do
   let t0 ← IO.monoNanosNow
   IO.FS.createDirAll outDir
   -- phase 1: one task for each byte range (`workers` ranges cut at line starts
-  -- for N-Triples and N-Quads, else one); each keeps a set of at most
+  -- for N-Triples and N-Quads, at dot boundaries for Turtle and TriG, as
+  -- `l4sbm11-pack` cuts them, else one); each keeps a set of at most
   -- runTerms / ranges terms
   let size ← fileSize source
-  let cfg ← Sbm11Pack.readCfg source size opts
-  let ranges ← Sbm11Pack.planRanges cfg.fmt source size workers
+  let fmt ← match Sbm11Pack.chooseFormat source opts.format with
+    | .ok f => pure f
+    | .error m => throw (IO.userError m)
+  let ranges : Array (Sbm11Pack.ReadCfg × Nat × Nat × Sbm11Pack.RangeStart) ←
+    if Source.splitsAtStatements fmt && workers > 1 then
+      Sbm11Pack.planStatementRanges fmt opts.base source size workers
+    else do
+      let cfg ← Sbm11Pack.readCfg source size opts
+      let rs ← Sbm11Pack.planRanges cfg.fmt source size workers
+      pure (rs.map fun (lo, hi) => (cfg, lo, hi, {}))
   let perWorker := max 1 (runTerms / ranges.size)
   let mut tasks := #[]
   for i in [0:ranges.size] do
-    let (lo, hi) := ranges[i]!
-    let t ← IO.asTask (phase1Worker cfg source outDir i lo hi perWorker) .dedicated
+    let some (cfg, lo, hi, st) := ranges[i]? | throw (IO.userError "no range")
+    let t ← IO.asTask (phase1Worker cfg source outDir i lo hi perWorker st) .dedicated
     tasks := tasks.push t
   let mut runs : Array String := #[]
   let mut final : P1 := {}
+  -- wait for every task before an error is thrown (`Sbm11Pack.withSplitRetry`)
+  let mut results := #[]
   for t in tasks do
-    match ← IO.wait t with
+    results := results.push (← IO.wait t)
+  for r in results do
+    match r with
     | .ok o =>
       runs := runs ++ o.runs
       final := { final with quads := final.quads + o.quads, inlineOcc := final.inlineOcc + o.inlineOcc }
@@ -568,6 +585,13 @@ def usage : String :=
   "       l4sbm11-dict-pack --nest-check N\n" ++
   "  F is ntriples, nquads, turtle, trig, rdfxml or jsonld; without --format the file extension decides\n" ++
   "  (.nt .nq .ttl .trig .rdf .jsonld). There is no default syntax."
+
+/-- `runPackOnce`; a Turtle or TriG source whose split read fails its blank-node
+    count check is read again as one range (`Sbm11Pack.withSplitRetry`). -/
+def runPack (source outDir : String) (runTerms workers : Nat) (opts : Sbm11Pack.SourceOpts := {}) :
+    IO UInt32 := do
+  IO.FS.createDirAll outDir
+  Sbm11Pack.withSplitRetry outDir workers fun w => runPackOnce source outDir runTerms w opts
 
 /-- The options of a pack or a check. -/
 structure Opts where

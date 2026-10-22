@@ -1087,6 +1087,35 @@ else
 fi
 
 # ---------------------------------------------------------------------
+# SR-1 (https://github.com/danbri/factoidal/issues/944) -- the Turtle and TriG
+# split read (several readers, one for each byte range between the dot
+# boundaries that formal/lean4/L4Factoidal/Syntax/TurtleSplitScan.lean finds;
+# `Source.Reader.resume`; https://github.com/danbri/factoidal/issues/842) has
+# no theorem that its quads equal the single reader's, blank-node labels
+# included. It is measured only
+# (tools/split-read-differential.sh: 17,962 agree, 0 differ (out of 17,962)
+# over the W3C Turtle and TriG files and the tests/sbm11/syntax fixtures on
+# 2026-10-22). Like SF-1 to SF-4, this
+# probe reads the SOURCE: XFAIL while no theorem named splitRead_eq_single
+# exists under formal/lean4. When one lands, the row reads XPASS: retire it,
+# close issue 944 and update docs/designissues/2026-09-03-rdf-parsing-
+# strategy.md section 3l in the same commit.
+# ---------------------------------------------------------------------
+SR_SRC="${LEAN_SRC}/L4Factoidal/Syntax/TurtleSplitScan.lean"
+SR_TITLE="Turtle/TriG split read = single reader unproved"
+if [ ! -f "$SR_SRC" ]; then
+  record SR-1 944 "$SR_TITLE" ERROR "${SR_SRC#"$ROOT"/} not found"
+elif ! grep -qE '^def Cold\.handle ' "$SR_SRC"; then
+  record SR-1 944 "$SR_TITLE" ERROR "probe drifted: Cold.handle is no longer defined in ${SR_SRC#"$ROOT"/}"
+elif grep -rqE "^[[:space:]]*(@\[[^]]*\][[:space:]]*)?(private[[:space:]]+)?(theorem|lemma)[[:space:]]+([A-Za-z0-9_.]*\.)?splitRead_eq_single\b" \
+      "${LEAN_SRC}" --include='*.lean'; then
+  record SR-1 944 "$SR_TITLE" XPASS "a theorem named splitRead_eq_single now exists"
+else
+  record SR-1 944 "$SR_TITLE" XFAIL \
+    "no splitRead_eq_single theorem in formal/lean4 (agreement is measured by tools/split-read-differential.sh only)"
+fi
+
+# ---------------------------------------------------------------------
 # Summary + JSON
 # ---------------------------------------------------------------------
 TOTAL=$((XFAIL + XPASS + ERRORS))

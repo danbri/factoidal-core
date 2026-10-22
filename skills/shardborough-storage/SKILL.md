@@ -1132,8 +1132,8 @@ section 3f.
 | --- | --- | --- | --- |
 | N-Triples | `.nt` `.ntriples` | line stream; strict: a graph name is an error | K byte ranges cut at line starts, K workers |
 | N-Quads | `.nq` `.nquads` | line stream | K byte ranges, K workers |
-| Turtle | `.ttl` `.turtle` | chunk fold, after a pre-pass over the source | one worker |
-| TriG | `.trig` | chunk fold, after a pre-pass over the source | one worker |
+| Turtle | `.ttl` `.turtle` | chunk fold | K byte ranges cut at dot boundaries found by one read of the bytes (`SplitScan`), K workers |
+| TriG | `.trig` | chunk fold | K byte ranges cut at dot boundaries, at the top level or inside a graph block, K workers |
 | RDF/XML | `.rdf` `.xml` `.owl` `.rdfxml` | chunk fold: one child of `rdf:RDF` at a time (`RdfXmlChunkFold`); the whole document under the fall-back rule below | one worker |
 | JSON-LD | `.jsonld` `.json-ld` | whole document | one worker |
 
@@ -1162,6 +1162,20 @@ the triples are measured equal: `tools/rdfxml-chunk-differential.sh` (308 files,
 2432 agree, 0 differ (out of 2432) on 2026-10-22). Row
 `sbm11-pack-rdfxml-memory`: 0.51 bytes of peak RSS per source byte at 25,000 to
 100,000 statements (12.7 before, measured with the binary of the parent commit).
+
+**Turtle and TriG in K workers (2026-10-22,
+https://github.com/danbri/factoidal/issues/842).** `Syntax/TurtleSplitScan.lean`
+reads the bytes once and gives dot boundaries near `size * k / K` and the units
+that can hold a directive; the reader of each range after the first reads those
+units with a step that keeps nothing (`Source.Reader.resume`), enters the TriG
+graph block of its start, and starts its blank-node counter at the count the
+scan made before the split (`[` and collection items), so the generation is the
+same bytes for every K. A range that ends with another counter than the scan
+counted makes the pack read the source again as one range
+(`Sbm11Pack.withSplitRetry`). A source with `<<`, `~` or `{|` is one range. The
+pack prints `split-scan-ms=`. Phase 1 at 880,000 quads: Turtle 11.3 to 13.2 s with 1
+worker, 2.7 to 2.9 s with 4; TriG 11.8 to 12.8 s and 2.9 to 3.6 s. Record:
+section 3l of `docs/designissues/2026-09-03-rdf-parsing-strategy.md`.
 
 **Blank nodes.** A blank node label is local to one document (RDF 1.1 Concepts,
 section 3.4). The reader keeps the blank nodes of one document apart: a label
@@ -1344,7 +1358,7 @@ expected failure.
 | RDF/XML chunk fold, children phase: equality with the whole-document reader is measured (`tools/rdfxml-chunk-differential.sh`), not proved | https://github.com/danbri/factoidal/issues/936 | `tests/known-defects/run.sh` row RX-1 |
 | JSON-LD is read whole | https://github.com/danbri/factoidal/issues/839 | row `sbm11-pack-jsonld-memory` |
 | The Lean JSON-LD writer (`fromRdf` node list) takes time quadratic in the number of triples | https://github.com/danbri/factoidal/issues/712 | row `jsonld-write` |
-| Turtle and TriG phase 1 runs in one worker | https://github.com/danbri/factoidal/issues/842 | rows `sbm11-pack-ttl-workers`, `sbm11-pack-trig-workers` |
+| Turtle and TriG read by K workers: equality with the single reader (after a renaming of the generated blank-node labels) is measured (`tools/split-read-differential.sh`), not proved | https://github.com/danbri/factoidal/issues/944 | `tests/known-defects/run.sh` row SR-1 |
 | The JSON-LD reader of the source layer takes no document loader and no processing option (18 toRdf tests) | https://github.com/danbri/factoidal/issues/848 | `w3c_roundtrip_xfail.tsv`, 18 rows |
 | No theorem relates the stream writers (`Sink.Writer`) to the batch writers | https://github.com/danbri/factoidal/issues/852 | `tests/known-defects/run.sh`, rows `SK-1`, `SK-2` |
 | The RDF/XML export holds the whole graph | https://github.com/danbri/factoidal/issues/846 | row `sbm11-export-rdfxml-memory` |

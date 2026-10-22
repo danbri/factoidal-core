@@ -48,10 +48,13 @@ except for the source length and digest in the manifest
 
 Phase 1. For N-Triples and N-Quads, SOURCE is cut into K byte ranges at line
   starts (default 4; a line start is a statement boundary), and each range is
-  read by its own task. For every other syntax one task reads the whole
-  source: Turtle and TriG after one read for the generated blank-node prefix
-  (`Source.Prepass`), RDF/XML and JSON-LD by parsing the joined chunks at the
-  end (https://github.com/danbri/factoidal/issues/838,
+  read by its own task. Turtle and TriG are cut into K byte ranges at dot
+  boundaries that one read of the bytes finds (`planStatementRanges`,
+  `Syntax.SplitScan`; https://github.com/danbri/factoidal/issues/842); the
+  reader of a range reads the directives before it first (`Source.Reader.resume`).
+  With `--workers 1` they are read in one range after one read for the
+  generated blank-node prefix (`Source.Prepass`). RDF/XML and JSON-LD are one
+  task (https://github.com/danbri/factoidal/issues/838,
   https://github.com/danbri/factoidal/issues/839). A task reads 64 KiB chunks
   through the source layer. A task gives each distinct non-inline term of its
   batch a batch-local number (a hash map of at most N / K terms, N default
@@ -207,6 +210,37 @@ def readCfg (source : String) (size : Nat) (opts : SourceOpts) : IO ReadCfg := d
     | .error m => throw (IO.userError m)
   pure { fmt, base := opts.base, bnodePrefix := ← bnodePrefixOf source fmt size }
 
+/-- How the reader of a byte range starts and ends when the range is not the
+    whole document (Turtle and TriG, `planStatementRanges`): the directive units
+    before the range, the header of the TriG graph block it starts in, and
+    whether it ends at a split (then it may end inside a graph block). -/
+structure RangeStart where
+  prelude : String := ""
+  header : Option String := none
+  openEnd : Bool := false
+  /-- the generated blank-node counter at the start (`SplitScan.Split.counter`) -/
+  counter : Option Nat := none
+  /-- the counter the range must end with: the count at the next split -/
+  counterEnd : Option Nat := none
+
+/-- The text of the error when a range ends with another generated blank-node
+    counter than the scan counted. The pack then reads the source as one range
+    (`withSplitRetry`). -/
+def splitCountMismatch : String := "split-count-mismatch"
+
+/-- Run `act workers`; when a range of a Turtle or TriG source ended with
+    another blank-node counter than the scan counted (`splitCountMismatch`),
+    remove the temporary files of `outDir` and run `act 1`. -/
+def withSplitRetry {α : Type} (outDir : String) (workers : Nat) (act : Nat → IO α) : IO α := do
+  try act workers
+  catch e =>
+    if workers > 1 && (toString e).startsWith splitCountMismatch then
+      IO.eprintln s!"sbm11-pack: {e}; the source is read again as one range"
+      for ent in ← System.FilePath.readDir outDir do
+        if ent.fileName.endsWith ".tmp" then IO.FS.removeFile ent.path
+      act 1
+    else throw e
+
 /-- The reader of one byte range of a source, in the syntax `cfg` names, with the
     accumulator `init`. -/
 def openRangeReader {α : Type} (cfg : ReadCfg) (source : String) (init : α) :
@@ -214,6 +248,15 @@ def openRangeReader {α : Type} (cfg : ReadCfg) (source : String) (init : α) :
   match Source.ByteReader.init Source.withJsonLd cfg.fmt cfg.version cfg.base cfg.bnodePrefix init with
   | .ok r => pure r
   | .error m => throw (IO.userError s!"{source}: {m}")
+
+/-- The reader of a range that starts inside its document reads the directives
+    before it first (`Source.ByteReader.resume`). -/
+def resumeReader {α : Type} (source : String) (start : Nat) (resume : RangeStart)
+    (reader : Source.ByteReader α) : IO (Source.ByteReader α) :=
+  if resume.prelude.isEmpty && resume.header.isNone && resume.counter.isNone then pure reader else
+    match reader.resume resume.prelude resume.header resume.counter with
+    | .ok r => pure r
+    | .error e => throw (IO.userError s!"{source}: the directives before byte {start}: parse error at {e.pos}: {e.msg}")
 
 /-- Read the next 64 KiB of bytes `[start, stop)` of the source, from `pos`, and
     give them to the reader. Returns the reader and the position after the chunk.
@@ -232,13 +275,22 @@ def feedChunk {α : Type} (source : String) (start stop : Nat) (step : Source.St
     returned. A whole reader (RDF/XML, JSON-LD) declares the named graphs of its
     dataset here. -/
 def finishRange {α : Type} (source : String) (start pos : Nat) (step : Source.Step α)
-    (rd : Source.ByteReader α) (decl : Source.Decl α := Source.noDecl) : IO α :=
+    (rd : Source.ByteReader α) (decl : Source.Decl α := Source.noDecl) (resume : RangeStart := {}) :
+    IO α :=
   match rd.endBytes with
   | .error f => throw (IO.userError (failureText source start pos f))
   | .ok reader =>
-    match reader.finishD step decl with
-    | .error e => throw (IO.userError (failureText source start pos (.parse e)))
-    | .ok acc => pure acc
+    if resume.openEnd then
+      match reader.finishRangeCountD step decl with
+      | .error e => throw (IO.userError (failureText source start pos (.parse e)))
+      | .ok (acc, counter) =>
+        if resume.counterEnd.isSome && counter != resume.counterEnd then
+          throw (IO.userError s!"{splitCountMismatch}: {source}: the range from byte {start} to {pos} ends with {counter.getD 0} generated blank nodes, the scan counted {resume.counterEnd.getD 0}")
+        else pure acc
+    else
+      match reader.finishD step decl with
+      | .error e => throw (IO.userError (failureText source start pos (.parse e)))
+      | .ok acc => pure acc
 
 /-- Stream bytes `[start, stop)` of the source through the source layer in
     64 KiB positioned reads. The consumer is `step` from the accumulator `init`;
@@ -247,8 +299,8 @@ def finishRange {α : Type} (source : String) (start pos : Nat) (step : Source.S
     (`Sbm11DictPack`) each pass their own. The packer's phase 1 takes quads from
     `fileRangeSource` instead. -/
 def streamRange {α : Type} (cfg : ReadCfg) (source : String) (start stop : Nat)
-    (step : Source.Step α) (init : α) (onFeed : α → IO α) : IO α := do
-  let mut rd ← openRangeReader cfg source init
+    (step : Source.Step α) (init : α) (onFeed : α → IO α) (resume : RangeStart := {}) : IO α := do
+  let mut rd ← resumeReader source start resume (← openRangeReader cfg source init)
   let mut pos := start
   for _ in [0:(stop - start) / 65536 + 2] do
     if pos ≥ stop then break
@@ -256,7 +308,7 @@ def streamRange {α : Type} (cfg : ReadCfg) (source : String) (start stop : Nat)
     pos := pos'
     let acc ← onFeed next.acc
     rd := next.setAcc acc
-  let acc ← finishRange source start pos step rd
+  let acc ← finishRange source start pos step rd (resume := resume)
   onFeed acc
 
 /-- The quad consumer of `fileRangeSource`: the reader's accumulator is the batch. -/
@@ -280,8 +332,9 @@ structure RangePos where
     completed, and the named graphs they declared. The end of the range gives the
     quads of the last statement. A parse error is an exception of `next`
     (`failureText`: the position is in the file). -/
-def fileRangeSource (cfg : ReadCfg) (source : String) (start stop : Nat) : IO QuadSource := do
-  let reader ← openRangeReader cfg source ({} : QuadSource.Batch)
+def fileRangeSource (cfg : ReadCfg) (source : String) (start stop : Nat) (resume : RangeStart := {}) :
+    IO QuadSource := do
+  let reader ← resumeReader source start resume (← openRangeReader cfg source ({} : QuadSource.Batch))
   QuadSource.ofStep (some (⟨reader, start⟩ : RangePos)) fun st => do
     match st with
     | none => pure none
@@ -296,7 +349,7 @@ def fileRangeSource (cfg : ReadCfg) (source : String) (start stop : Nat) : IO Qu
         let (next, batch) := next.withAcc fun acc => ({}, acc)
         rd := next
         if !batch.isEmpty then return some (batch, some ⟨rd, pos⟩)
-      let last ← finishRange source start pos pushQuad rd pushGraph
+      let last ← finishRange source start pos pushQuad rd pushGraph resume
       pure (if last.isEmpty then none else some (last, none))
 
 def lineStartFrom (source : String) (size b : Nat) : IO Nat := do
@@ -314,8 +367,8 @@ def lineStartFrom (source : String) (size b : Nat) : IO Nat := do
 /-- The byte ranges phase 1 reads. N-Triples and N-Quads are cut at line
     starts into `workers` ranges, a line start being a statement boundary
     (`Source.splitsAtLines`). Every other syntax is one range, the whole
-    source: a statement of Turtle, TriG, RDF/XML or JSON-LD has no boundary
-    that is found without reading from the start. -/
+    source. The packer cuts Turtle and TriG with `planStatementRanges`; the
+    dictionary packer (`Sbm11DictPack`) reads them in one range. -/
 def planRanges (fmt : RdfFormat) (source : String) (size workers : Nat) : IO (Array (Nat × Nat)) := do
   if !Source.splitsAtLines fmt then return #[(0, size)]
   let mut bounds : Array Nat := #[]
@@ -324,6 +377,54 @@ def planRanges (fmt : RdfFormat) (source : String) (size workers : Nat) : IO (Ar
   let mut out : Array (Nat × Nat) := #[]
   for i in [0:workers] do
     out := out.push (bounds[i]!, bounds[i + 1]!)
+  pure out
+
+/-- The byte ranges of a Turtle or TriG source for `workers` readers, from one
+    read of the bytes (`Syntax.SplitScan` through the source layer): a split
+    near each `size * k / workers`, at a dot boundary. Each range has the read
+    configuration of its reader and how it starts and ends (`RangeStart`: the
+    directives before it, its graph block, the generated blank-node counter at
+    its start and at its end). The read also gives the generated blank-node
+    prefix of the document (the longest run of `_`), so `Source.Prepass` is not
+    run. A source with `<<`, or with a construct whose minted blank nodes the
+    scan does not count, is one range (`SplitScan.Plan.doubleLt`,
+    `SplitScan.Plan.uncounted`). -/
+def planStatementRanges (fmt : RdfFormat) (base : Option String) (source : String) (size workers : Nat) :
+    IO (Array (ReadCfg × Nat × Nat × RangeStart)) := do
+  let targets := (Array.range (workers - 1)).map fun i => size * (i + 1) / workers
+  let mut st := L4Factoidal.Syntax.SplitScan.State.init (fmt == .trig) targets
+  let mut pos := 0
+  for _ in [0:size / 1048576 + 2] do
+    if pos ≥ size then break
+    let len := min 1048576 (size - pos)
+    st := st.feed (← pread source pos len)
+    pos := pos + len
+  let plan := st.finish
+  let pfx := L4Factoidal.Syntax.freshBnodePrefixOfLongest plan.longestUnderscore
+  let cfg : ReadCfg := { fmt, base, bnodePrefix := pfx }
+  let splits := if plan.doubleLt || plan.uncounted then #[] else plan.splits
+  let textOf (a b : Nat) : IO String := do
+    match String.fromUTF8? (← pread source a (b - a)) with
+    | some t => pure t
+    | none => throw (IO.userError s!"{source}: UTF-8 error in bytes {a} to {b}")
+  -- the directive units, read once, each with its line end
+  let mut units : Array String := #[]
+  for u in plan.directives do
+    units := units.push ((← textOf u.start u.stop) ++ (if u.header then " { }\n" else "\n"))
+  let n := splits.size
+  let mut out := #[]
+  for i in [0:n + 1] do
+    let lo := if i == 0 then 0 else splits[i - 1]!.pos
+    let hi := if i == n then size else splits[i]!.pos
+    let start ← if i == 0 then pure ({ openEnd := n > 0 } : RangeStart) else do
+      let sp := splits[i - 1]!
+      let prelude := String.join (units.extract 0 sp.directives).toList
+      let header ← match sp.block with
+        | none => pure none
+        | some (a, b) => some <$> textOf a b
+      pure ({ prelude, header, openEnd := i < n, counter := some sp.counter } : RangeStart)
+    let start := { start with counterEnd := if i < n then some splits[i]!.counter else none }
+    out := out.push (cfg, lo, hi, start)
   pure out
 
 structure Batch where
@@ -471,9 +572,15 @@ def phase1 (sources : Array (IO QuadSource)) (outDir : String) (runTerms : Nat) 
     let openSource := sources[i]!
     let t ← IO.asTask (do phase1Worker (← openSource) outDir i perWorker) .dedicated
     tasks := tasks.push t
-  let mut out : Phase1Out := {}
+  -- wait for every task before an error is thrown, so that no task still
+  -- writes its run files when the caller reads the source again
+  -- (`withSplitRetry`)
+  let mut results := #[]
   for t in tasks do
-    match ← IO.wait t with
+    results := results.push (← IO.wait t)
+  let mut out : Phase1Out := {}
+  for r in results do
+    match r with
     | .ok o =>
       out := { batches := out.batches ++ o.batches, quads := out.quads + o.quads,
                inlineOcc := out.inlineOcc + o.inlineOcc }
@@ -1106,6 +1213,12 @@ def producersOf (source : String) (size workers : Nat) (opts : SourceOpts) : IO 
       if opts.viaDataset then
         pure { label := formatLabel fmt, note := " producer=dataset",
                sources := #[openDatasetSource source fmt opts.base] }
+      else if Source.splitsAtStatements fmt && workers > 1 then
+        let t0 ← IO.monoNanosNow
+        let ranges ← planStatementRanges fmt opts.base source size workers
+        let t1 ← IO.monoNanosNow
+        pure { label := formatLabel fmt, note := s!" split-scan-ms={(t1 - t0) / 1000000}",
+               sources := ranges.map fun (cfg, lo, hi, st) => fileRangeSource cfg source lo hi st }
       else
         let cfg ← readCfg source size opts
         let ranges ← planRanges cfg.fmt source size workers
@@ -1117,7 +1230,7 @@ def producersOf (source : String) (size workers : Nat) (opts : SourceOpts) : IO 
     phase 2 can be timed and its output compared byte for byte
     (`tests/sbm11/phase2_scaling.sh`,
     https://github.com/danbri/factoidal/issues/804). -/
-def runPhase2Only (source outDir : String) (workers runTerms : Nat) (opts : SourceOpts := {}) :
+def runPhase2OnlyOnce (source outDir : String) (workers runTerms : Nat) (opts : SourceOpts := {}) :
     IO UInt32 := do
   let t0 ← IO.monoNanosNow
   IO.FS.createDirAll outDir
@@ -1142,7 +1255,7 @@ def runPhase2Only (source outDir : String) (workers runTerms : Nat) (opts : Sour
 /-- `l4sbm11-pack SOURCE OUTDIR`: the producers of SOURCE (`producersOf`), then the
     entry `packQuads`. The source recorded in the manifest is SOURCE: its length and
     its SHA-256, which a task computes while phase 1 runs. -/
-def runPack (source outDir : String) (workers runTerms blockRows sortRowsMax : Nat)
+def runPackOnce (source outDir : String) (workers runTerms blockRows sortRowsMax : Nat)
     (opts : SourceOpts := {}) : IO UInt32 := do
   let t0 ← IO.monoNanosNow
   IO.FS.createDirAll outDir
@@ -1162,6 +1275,16 @@ def runPack (source outDir : String) (workers runTerms blockRows sortRowsMax : N
   IO.println s!"sbm11-pack: generation-bytes={r.genBytes} manifest-bytes={r.manifestBytes} merkle-bytes={r.merkleBytes} total-on-disk={r.genBytes + r.manifestBytes + r.merkleBytes}"
   IO.println s!"sbm11-pack: phase1-ms={ms t0 out.phase1End} phase2-ms={ms 0 r.phase2Ns} phase3a-ms={ms 0 r.phase3aNs} phase3b-ms={ms 0 r.phase3bNs} hash-manifest-ms={ms 0 r.hashNs} total-ms={ms t0 t5} peak-rss={← vmHWM}"
   pure 0
+
+def runPhase2Only (source outDir : String) (workers runTerms : Nat) (opts : SourceOpts := {}) :
+    IO UInt32 :=
+  withSplitRetry outDir workers fun w => runPhase2OnlyOnce source outDir w runTerms opts
+
+/-- `runPackOnce`; a Turtle or TriG source whose split read fails its blank-node
+    count check is read again as one range (`withSplitRetry`). -/
+def runPack (source outDir : String) (workers runTerms blockRows sortRowsMax : Nat)
+    (opts : SourceOpts := {}) : IO UInt32 :=
+  withSplitRetry outDir workers fun w => runPackOnce source outDir w runTerms blockRows sortRowsMax opts
 
 def usage : String :=
   "usage: l4sbm11-pack SOURCE OUTDIR [--format F] [--base IRI] [--workers K] [--run-terms N] [--block-rows B] [--sort-rows M] [--phase2-only] [--via-dataset]\n" ++
