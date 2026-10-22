@@ -228,12 +228,73 @@ decreasing_by
     rw [L4Factoidal.Prim.Bytes.usize_succ_toNat h]
     omega
 
+/-! ### The find loop with the current candidate in the loop state
+
+`deltaFindGoW` reads `cands[p]` and `cands[p - 1]` for every row; an
+`Array UInt64` holds boxed words, so each read is two dependent loads (issue
+930: a third of the samples of the find loop). `deltaFindGoC` carries
+`c = cAt cands p` and `lc = lAt cands p` as `UInt64` loop variables. The
+pointer stays at `p` when `p < cands.size`, `c` is not below the value, and
+`lc` (the candidate before `p`) is below it (`isFast`); then no array is read.
+Otherwise the pointer is `probeFrom`, and `c`, `lc` are read for it.
+`SipFastTheorems.deltaFindGoC_eq`: with the invariants `c = cAt cands p`,
+`lc = lAt cands p`, it equals `deltaFindGoW`. -/
+
+/-- `cands[q]` when `q < cands.size`, else 0 (a guarded read). -/
+@[inline] def cAt (cands : Array UInt64) (q : Nat) : UInt64 :=
+  if h : q < cands.size then cands[q] else 0
+
+/-- `cands[q - 1]` when `q ≠ 0` and `q - 1 < cands.size`, else 0. -/
+@[inline] def lAt (cands : Array UInt64) (q : Nat) : UInt64 :=
+  if q = 0 then 0 else if h : q - 1 < cands.size then cands[q - 1] else 0
+
+/-- The pointer `p` is the answer for `w`: it is inside the array, its
+    candidate `c` is not below `w`, and the candidate before it `lc` (if
+    any) is below `w`. -/
+@[inline] def isFast (cands : Array UInt64) (w : UInt64) (p : Nat) (c lc : UInt64) : Bool :=
+  p < cands.size && !(c < w) && (p == 0 || lc < w)
+
+/-- `deltaFindGoW` with `c` and `lc` in the loop state (see above). -/
+def deltaFindGoC (b : ByteArray) (lo hi : Nat) (cands : Array UInt64)
+    (idx : Nat) (prev : UInt64) (i : USize) (acc : UInt64) (p : Nat) (c lc : UInt64)
+    (pos : Array Nat) (out : ByteArray) : Option (Array Nat × ByteArray) :=
+  if idx ≥ hi then some (pos, out)
+  else if h : i < b.usize then
+    if acc < accCap then
+      let x := b.uget i (L4Factoidal.Prim.Bytes.usize_lt_size h)
+      if x < 128 then
+        let z := acc * 128 + x.toUInt64
+        let h2 := if z % 2 == 0 then z / 2 else z / 2 + 1
+        let v := if z % 2 == 0 then prev + h2 else prev - h2
+        let ok := if z % 2 == 0 then prev ≤ v else h2 ≤ prev
+        if ok then
+          if idx ≥ lo then
+            let fast := isFast cands v p c lc
+            let q := if fast then p else probeFrom cands v p
+            let c' := if fast then c else cAt cands q
+            let lc' := if fast then lc else lAt cands q
+            if q < cands.size && c' == v then
+              deltaFindGoC b lo hi cands (idx + 1) v (i + 1) 0 q c' lc' (pos.push idx) (put64 out v)
+            else deltaFindGoC b lo hi cands (idx + 1) v (i + 1) 0 q c' lc' pos out
+          else deltaFindGoC b lo hi cands (idx + 1) v (i + 1) 0 p c lc pos out
+        else none
+      else deltaFindGoC b lo hi cands idx prev (i + 1) (acc * 128 + (x - 128).toUInt64) p c lc pos out
+    else deltaFindGo b lo hi cands (b.size - i.toNat + 3) idx prev.toNat i.toNat acc.toNat p pos out
+  else none
+termination_by b.size - i.toNat
+decreasing_by
+  all_goals
+    have h1 := L4Factoidal.Prim.Bytes.usize_lt_size h
+    rw [L4Factoidal.Prim.Bytes.usize_succ_toNat h]
+    omega
+
 /-- The start of `findWords` on a delta frame whose tag is at `i`: the word
     loop when the bytes are fewer than `smallBytes`, else the `Nat` loop
     (`SipFastTheorems.deltaFindStart_eq`). -/
 def deltaFindStart (b : ByteArray) (lo hi : Nat) (cands : Array UInt64) (i p : Nat) :
     Option (Array Nat × ByteArray) :=
-  if b.size < smallBytes then deltaFindGoW b lo hi cands 0 0 (i + 1).toUSize 0 p #[] .empty
+  if b.size < smallBytes then
+    deltaFindGoC b lo hi cands 0 0 (i + 1).toUSize 0 p (cAt cands p) (lAt cands p) #[] .empty
   else deltaFindGo b lo hi cands (b.size - i + 2) 0 0 (i + 1) 0 p #[] .empty
 
 /-- Rows `r..hi-1` of a column of words: each row whose word is a candidate
@@ -323,11 +384,44 @@ decreasing_by
     rw [L4Factoidal.Prim.Bytes.usize_succ_toNat h]
     omega
 
+/-- `pos[k]` when `k < pos.size`, else 0 (the guarded read of the next
+    wanted row). -/
+@[inline] def posAt (pos : Array Nat) (k : Nat) : Nat :=
+  if h : k < pos.size then pos[k] else 0
+
+/-- `deltaGatherGoW` with the next wanted row `nk = posAt pos k` in the loop
+    state: the row test compares `idx` with a loop variable, and `pos` is read
+    once per found row (`SipFastTheorems.deltaGatherGoK_eq`). -/
+def deltaGatherGoK (b : ByteArray) (pos : Array Nat)
+    (idx : Nat) (prev : UInt64) (i : USize) (acc : UInt64) (k nk : Nat) (out : ByteArray) : Option ByteArray :=
+  if k ≥ pos.size then some out
+  else if h : i < b.usize then
+    if acc < accCap then
+      let x := b.uget i (L4Factoidal.Prim.Bytes.usize_lt_size h)
+      if x < 128 then
+        let z := acc * 128 + x.toUInt64
+        let h2 := if z % 2 == 0 then z / 2 else z / 2 + 1
+        let v := if z % 2 == 0 then prev + h2 else prev - h2
+        let ok := if z % 2 == 0 then prev ≤ v else h2 ≤ prev
+        if ok then
+          if idx == nk then deltaGatherGoK b pos (idx + 1) v (i + 1) 0 (k + 1) (posAt pos (k + 1)) (put64 out v)
+          else deltaGatherGoK b pos (idx + 1) v (i + 1) 0 k nk out
+        else none
+      else deltaGatherGoK b pos idx prev (i + 1) (acc * 128 + (x - 128).toUInt64) k nk out
+    else deltaGatherGo b pos (b.size - i.toNat + 3) idx prev.toNat i.toNat acc.toNat k out
+  else none
+termination_by b.size - i.toNat
+decreasing_by
+  all_goals
+    have h1 := L4Factoidal.Prim.Bytes.usize_lt_size h
+    rw [L4Factoidal.Prim.Bytes.usize_succ_toNat h]
+    omega
+
 /-- The start of `gatherWords` on a delta frame whose tag is at `i`
     (`SipFastTheorems.deltaGatherStart_eq`). -/
 def deltaGatherStart (b : ByteArray) (pos : Array Nat) (i : Nat) : Option ByteArray :=
   if b.size < smallBytes then
-    deltaGatherGoW b pos 0 0 (i + 1).toUSize 0 0 (ByteArray.emptyWithCapacity (8 * pos.size))
+    deltaGatherGoK b pos 0 0 (i + 1).toUSize 0 0 (posAt pos 0) (ByteArray.emptyWithCapacity (8 * pos.size))
   else deltaGatherGo b pos (b.size - i + 2) 0 0 (i + 1) 0 0 (ByteArray.emptyWithCapacity (8 * pos.size))
 
 /-- The words at rows `pos` of a column of words. -/
