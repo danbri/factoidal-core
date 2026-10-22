@@ -8,7 +8,8 @@ description: Run, test and extend Factoidal's Linked Web Storage 1.0 and Solid P
 Two standards, one engine, four hosts.
 
 One-page overview (what LWS is, what the server does, strengths, gaps):
-`docs/designissues/2026-10-21-lws-overview.md`. External conformance:
+`docs/designissues/2026-10-21-lws-overview.md`. Landing gates for a change: `bash tools/land-gates.sh` (exit 0 only if every
+gate passes), then the two Touchstone runs it names. External conformance:
 `docs/designissues/2026-10-21-lws-touchstone-run.md` (`tools/lws-touchstone.sh`).
 
 * **LWS 1.0 core** — <https://w3c.github.io/lws-protocol/lws10-core/>,
