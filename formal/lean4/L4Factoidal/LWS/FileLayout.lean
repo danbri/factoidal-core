@@ -1,7 +1,8 @@
 /-
 L4Factoidal.LWS.FileLayout — an LWS storage kept in files: the directory
-layout, the bytes of every file, the write plan of one step, and the start
-(https://github.com/danbri/factoidal/issues/918, stage 1).
+layout, the bytes of every file, the write plan of one step, the start, and
+the body files one step reads (https://github.com/danbri/factoidal/issues/918,
+stages 1 and 2).
 
 Design record: `docs/designissues/2026-10-22-lws-storage-on-disk.md`.
 
@@ -21,11 +22,22 @@ With a storage key every body file and every journal payload is sealed with
 `sealBin` (the file's own name, or `lws-journal`, is in the associated data)
 and `lws-files.json` with `Seal.sealSnapshot`.
 
+Stage 2: an entry with bytes holds its stub (`BodyStub`, the body file and
+the facts of its bytes) and no bytes in memory. `persist` moves the bytes of
+every touched entry to a body file (`bodiesOut`, `IxState.stubAt`); a start
+builds the entries from the metadata and reads no body file unless a fact
+is missing (`needsRead`); a step reads the body files it needs
+(`readBodies`, `Bodies.bodiesNeeded`), and `unhydrate` drops the bytes after
+it. The metadata record of a resource is its stub (`refOf`, `projE`).
+
 Theorems: `fileMetaOfJson_fileMetaJson`, `recordOfJson_recordJson` (the JSON
-forms read back), `openBin_sealBin`, `openBin_keyId` (the binary seal, over
-any AEAD with RFC 8439 correctness), and, through `Journal.JState.record`, the
-replay theorems of `L4Factoidal.LWS.Journal` cover the records `persist`
-writes: the operations of a record ARE `js.record (projWith refs')`.
+forms read back), `projE_toEntry` (a record read back as an entry with its
+stub gives the same record), `openBin_sealBin`, `openBin_keyId` (the binary
+seal, over any AEAD with RFC 8439 correctness), `bodiesOut_journal` (the body
+moves change neither the state at the last persist nor the recorded paths),
+and `persist_replay`: the record `persist` writes (`s1.journal.record projE`),
+replayed onto the metadata at the last persist, gives the metadata of the
+store after the step (through `Journal.replay_jstate`).
 -/
 import L4Factoidal.LWS.Journal
 import L4Factoidal.LWS.Bodies

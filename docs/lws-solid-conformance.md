@@ -88,6 +88,7 @@ A response is a JSON object with the same shape minus the method:
 | `lwsFlush` | `[handle, {"now"?}]` | `{"ok":true,"changed":B}`, with `"deliveries":[…]` for the waiting activities whose window has ended (one batched envelope per subscription) and `"wake":SECONDS` when more wait (https://github.com/danbri/factoidal/issues/915) |
 | `lwsLoad` | `[handle, {"files":[{"path","present","length"?}],"seed"}]` + the bytes of the present files, one after the other, as the IN region (`l4_call_blob_io` only) | `{"ok":true,"load":{"read":[PATH,…]}}` (read these files next) or `{"ok":true,"ready":true,"handle","root","plan":[…],"bytes":N}` with the plan's bytes as the OUT region; the handle serves steps after `ready`. An error ends the start. Only for `"storage": "files"` (https://github.com/danbri/factoidal/issues/918). |
 | `lwsPersist` | `[handle, {"seed"}]` (`l4_call_blob_io` only) | `{"ok":true,"plan":[…],"bytes":N}`, the plan's bytes as the OUT region: the writes of the changes since the last persist. Only for `"storage": "files"`. |
+| `lwsRead` | `[handle, {"files":[{"path","present","length"?}]}]` + the bytes of the present files as the IN region (`l4_call_blob_io` only) | `{"ok":true,"read":N}`: the body files the last `lwsStep` answer named (`{"ok":true,"read":[PATH,…]}`), checked by the engine (`Files.readBodies`: the seal under the storage key, the length, the FNV-1a digest, the SHA-256 when recorded) and put into their entries for the next step of the same request. A missing or changed file answers `{"ok":false,"error":"…"}` (the host answers 500). Only for `"storage": "files"` (https://github.com/danbri/factoidal/issues/918, stage 2). |
 | `solidOpen` | `[configJson]` | `{"ok":true,"handle":"solid1","root":"/","storage":"…"}` |
 | `solidStep` | `[handle, requestJson]` | `{"ok":true,"response":{…}}` |
 | `solidClose` | `[handle]` | `{"ok":true}` |
@@ -136,6 +137,20 @@ rename to `path`, fsync the directory), `{"op":"append","path","offset","length"
 (base64) from the host for every call; the engine derives the nonces of a
 storage key from it. The host makes no other file decision
 (`npm/factoidal/lws/persist.mjs`).
+
+With `"storage": "files"` an entry keeps only the facts of its bytes (its
+`BodyStub`: body file number, length, FNV-1a, SHA-256 with `merkle`, the
+types of a Turtle body) and no bytes in memory (issue 918, stage 2;
+`L4Factoidal/LWS/Bodies.lean`). A step that needs bytes (a GET body or
+range, a JSON Patch, a PUT that a subscription may hear of, a change of the
+`up` link of a Turtle resource with moves and the type index on) first
+answers `{"ok":true,"read":[PATH,…]}`. The host reads those files (paths
+relative to `DIR`), passes them to `lwsRead`, and steps the same request
+again; the engine drops the bytes after the step. A start reads no body
+file, except when the metadata lacks a fact the configuration needs (an ACL
+resource, whose bytes stay in memory; a SHA-256 when `merkle` is on; the
+types of a Turtle body read under another base IRI); then it records the
+fact, so the next start reads none.
 
 `lwsStep` and `solidStep` answer `"changed": true` when the step changed the
 storage (every mutation advances the clock). `factoidal lws-serve DIR` and
@@ -730,7 +745,7 @@ SKIPS each check by name with that reason printed. A skip is never a pass.
 | `tests/solid/server/protocol.mjs` | Node, Deno | the storage root advertises `pim:Storage` by `Link rel=type` (§4.1); OPTIONS reports `Allow`, `Accept-Post`, `Accept-Patch`, `Accept-Put` (§4.3); PUT creates a resource and its container gains the containment triple (§5.3); POST assigns a name and reports it in `Location` (§5.4); a PUT that edits a containment triple is refused with 409 (§5.3); DELETE on the storage root is refused with 405 (§5.5); a resource advertises its `describedby` auxiliary and the auxiliary dies with its subject (§4.2); PATCH applies an N3 Patch (§5.6); a CORS preflight is answered with the allow headers (§6); the LDN inbox is advertised and accepts a notification (§7) |
 | `tests/lws/encryption.mjs` | Node | encryption at rest (https://github.com/danbri/factoidal/issues/921), for `lws-serve` and `solid-serve`: the sealed file names the key id and holds no clear text; restart with the key (hex and base64url forms); a new nonce per write; a wrong key, every one-byte change of the file, a truncated file, a shortened ciphertext, a clear-text file with a key, a sealed file without one and a key of the wrong length are each refused at open; with no key a clear-text storage behaves as before; the CLI with `FACTOIDAL_LWS_KEY` |
 | `tests/lws/merkle.mjs` | Node | the optional Merkle hashes (https://github.com/danbri/factoidal/issues/919): `Repr-Digest` against `node:crypto` SHA-256 (text, binary, range, HEAD); the container field equals its JSON member and its Turtle statement; the storage description root; a deep write, a move and a delete change the roots above them and no other; a restart rebuilds the same hashes and the snapshot holds none; off by default nothing is added; ETags equal with the option on and off; under authorization only the controller sees roots; `lws-serve --merkle`. One xfail (issue 919): a container ETag does not follow its root |
-| `tests/lws/storage-files.mjs` | Node | a storage kept in files (`storage: "files"`, https://github.com/danbri/factoidal/issues/918): bodies, entity tags and listings the same across a restart (a binary body included); one body file per body version, old ones removed, no `lws-state.json`; the journal cut at every byte of its last record starts with the state before it, and a later write survives; with a key no file holds clear text, a restart works, a wrong key, no key and a changed body byte are refused; migration from a clear and a sealed `lws-state.json`; `lws-serve --storage files` and `--storage bogus` |
+| `tests/lws/storage-files.mjs` | Node | a storage kept in files (`storage: "files"`, https://github.com/danbri/factoidal/issues/918): bodies, entity tags and listings the same across a restart (a binary body included); one body file per body version, old ones removed, no `lws-state.json`; the journal cut at every byte of its last record starts with the state before it, and a later write survives; stage 2: a start reads no body file (with `merkle` it reads each body once, then none), a range, a JSON Patch and a type search after a restart; with a key no file holds clear text, a restart works, a wrong key and no key are refused at start, a changed body byte at the first read of that body; migration from a clear and a sealed `lws-state.json`; `lws-serve --storage files` and `--storage bogus`. 14 pass, 0 fail (out of 14), 2026-10-22 |
 | `tests/solid/client/against-own-server.mjs` | Node, Deno | our client at an in-process instance of our server: `discoverStorage`, `replace`, `read`, `create` with a `Location`, `delete`, that a deleted resource is gone while its POSTed sibling survives, and that every request reached the socket through the engine |
 | `tests/solid/client/against-community-server.mjs` | Node | the same five operations with the far end replaced by Community Solid Server, so a misreading our own two sides share cannot pass. Driven by `tools/solid-client-interop.sh` |
 

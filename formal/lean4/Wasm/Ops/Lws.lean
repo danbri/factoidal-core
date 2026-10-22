@@ -21,6 +21,12 @@ member `resolved: [{host, addresses}]`; Lean decides what they mean
 wait for a rate-limit window (`Notifications.nextWake`), and the host calls
 `lwsFlush` after that many seconds.
 
+A storage kept in files (`"storage": "files"`, issue 918) starts with
+`lwsLoad` and writes with `lwsPersist`. Stage 2: `lwsStep` may answer
+`{"ok":true,"read":[PATH,…]}`, the body files the step needs
+(`Bodies.bodiesNeeded`); the host passes them to `lwsRead`
+(`Files.readBodies` checks them) and steps the same request again.
+
 A request document may carry `random` (base64, at least 16 bytes from the
 host's random source): the name of an ANTICIPATORY AND UNSTABLE search
 results resource, when the configuration says `"searchResults": true`
