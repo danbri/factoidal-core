@@ -1,5 +1,31 @@
 # Changelog
 
+## 0.13.0 (unreleased)
+
+Linked Web Storage kept in files, stage 2 (https://github.com/danbri/factoidal/issues/918;
+design record `docs/designissues/2026-10-22-lws-storage-on-disk.md`):
+
+- Stage 2 (`L4Factoidal/LWS/Bodies.lean`): with `--storage files` the bodies
+  stay in their body files. An entry keeps its length, its FNV-1a and SHA-256
+  digests and the types of a Turtle body, and no bytes (ACL resources keep
+  theirs). A step that needs bytes (GET body or range, JSON Patch, a PUT a
+  subscription may hear of, a move of a Turtle resource) answers
+  `read: [PATH, ...]`; the host reads those files and gives them to the new op
+  `lwsRead` (byte-region entry only), which checks them, and steps again. A
+  start reads no body file unless the metadata lacks a fact; the peak RSS of a
+  start and one GET of 1,000 and 4,000 resources of 16 KiB is 230 and 211 MiB
+  (stage 1: 258 and 515 MiB). A changed body file is refused when it is read
+  (the request answers 500), no longer at start.
+- The LWS handles run a tree store (`TreeStore`, theorem `treeStoreLaws`) and
+  a type index in persistent trees: the engine's step and persist of a PUT
+  take 0.30, 0.27, 0.28 and 0.29 ms in a storage of 1,000, 2,000, 4,000 and
+  16,000 resources (stage 1: 0.21 ms at 1,000, about 3 ms at 16,000). A POST
+  no longer lists every path; a DELETE lists paths only for a container.
+- The order of the entries of a snapshot and of `lws-files.json`, and of the
+  activities of a recursive DELETE in one notification, is path order (was
+  newest first). `lwsSnapshot` of a storage kept in files is refused.
+- `solid-serve` keeps the snapshot: an expected failure naming issue 918.
+
 ## 0.12.0 — 2026-10-22
 
 One error model for the whole package
@@ -41,7 +67,7 @@ generated from the engine's list.
 - `@factoidal/core/fn` `entail()` with an `x-ikl-*` regime rejects with code
   `regime.refused` and the message names `query`, the function that refuses.
 
-Linked Web Storage kept in files, stages 1 and 2 (https://github.com/danbri/factoidal/issues/918;
+Linked Web Storage kept in files, stage 1 (https://github.com/danbri/factoidal/issues/918;
 design record `docs/designissues/2026-10-22-lws-storage-on-disk.md`), decided in
 Lean (`L4Factoidal/LWS/Journal.lean`, `FileLayout.lean`):
 
@@ -65,26 +91,9 @@ Lean (`L4Factoidal/LWS/Journal.lean`, `FileLayout.lean`):
 - New ops `lwsLoad` and `lwsPersist` (byte-region entry only): the engine names
   the files to read and gives every file operation and byte; the host
   (`lws/persist.mjs`) performs them. `tools/lws-touchstone.sh --storage files`.
-- Stage 2 (`L4Factoidal/LWS/Bodies.lean`): with `--storage files` the bodies
-  stay in their body files. An entry keeps its length, its FNV-1a and SHA-256
-  digests and the types of a Turtle body, and no bytes (ACL resources keep
-  theirs). A step that needs bytes (GET body or range, JSON Patch, a PUT a
-  subscription may hear of, a move of a Turtle resource) answers
-  `read: [PATH, ...]`; the host reads those files and gives them to the new op
-  `lwsRead` (byte-region entry only), which checks them, and steps again. A
-  start reads no body file unless the metadata lacks a fact; the peak RSS of a
-  start and one GET of 1,000 and 4,000 resources of 16 KiB is 230 and 211 MiB
-  (stage 1: 258 and 515 MiB). A changed body file is refused when it is read
-  (the request answers 500), no longer at start.
-- The LWS handles run a tree store (`TreeStore`, theorem `treeStoreLaws`) and
-  a type index in persistent trees: the engine's step and persist of a PUT
-  take 0.30, 0.27, 0.28 and 0.29 ms in a storage of 1,000, 2,000, 4,000 and
-  16,000 resources (stage 1: 0.21 ms at 1,000, about 3 ms at 16,000). A POST
-  no longer lists every path; a DELETE lists paths only for a container.
-- The order of the entries of a snapshot and of `lws-files.json`, and of the
-  activities of a recursive DELETE in one notification, is path order (was
-  newest first). `lwsSnapshot` of a storage kept in files is refused.
-- `solid-serve` keeps the snapshot: an expected failure naming issue 918.
+- Stage 1 still holds the whole storage in memory; stage 2 (bodies read on GET,
+  the metadata in an on-disk index) is an expected failure in
+  `tests/lws/scaling.mjs` naming issue 918.
 
 Linked Web Storage Search and Type Index Services (`lws10-index`, w3c/lws-protocol
 `9a08ff65`; https://github.com/danbri/factoidal/issues/912), decided in Lean
