@@ -44,6 +44,7 @@ loop). Nothing recurses once per row.
 -/
 import L4Factoidal.Storage.Sbm11.FrameWords
 import L4Factoidal.Codec.Zstd
+import L4Factoidal.Prim.Bytes
 
 namespace L4Factoidal.Storage.Sbm11.Sip
 
@@ -82,6 +83,23 @@ def advGo (cands : Array UInt64) (w : UInt64) : Nat → Nat → Nat
 @[inline] def probeFrom (cands : Array UInt64) (w : UInt64) (p : Nat) : Nat :=
   let p0 := startFor cands w p
   advGo cands w (cands.size - p0) p0
+
+/-- `probeFrom` with its most frequent case first: when the candidate at
+    `p` is not below `w` and the candidate before it (if any) is below `w`,
+    the answer is `p`, with no call (`SipFastTheorems.probeFast_eq`). The
+    reads are guarded by `h`, not by `[]!`: the compiled default of
+    `cands[q]!` at a `UInt64` element is a boxed word, one allocation per
+    call. -/
+@[inline] def probeFast (cands : Array UInt64) (w : UInt64) (p : Nat) : Nat :=
+  if h : p < cands.size then
+    if !(cands[p] < w) && (p == 0 || cands[p - 1] < w) then p
+    else probeFrom cands w p
+  else probeFrom cands w p
+
+/-- `q < cands.size && cands[q]! == w`, with a guarded read for the reason
+    of `probeFast` (`SipFastTheorems.candAt_eq`). -/
+@[inline] def candAt (cands : Array UInt64) (q : Nat) (w : UInt64) : Bool :=
+  if h : q < cands.size then cands[q] == w else false
 
 /-- Binary search in `[lo, hi)` for the first candidate not below `w` (a
     hint: nothing depends on it being exact). -/
@@ -138,6 +156,86 @@ def deltaFindGo (b : ByteArray) (lo hi : Nat) (cands : Array UInt64) :
       else deltaFindGo b lo hi cands fuel idx prev (i + 1) (acc * 128 + (x - 128)) p pos out
     else none
 
+
+/-! ## The delta loops on machine words
+
+`deltaFindGoW` and `deltaGatherGoW` are `deltaFindGo` and `deltaGatherGo`
+with the byte position as a `USize`, the previous value and the varint
+accumulator as `UInt64`, and no fuel (each call reads one byte: the
+measure is `b.size - i`). The `Nat` loops spend most of their time on
+`Nat` bookkeeping: a term id is near `2 ^ 61`, the test
+`prev + z / 2 < two64` compares with a number above the scalar range on
+every row, and every byte position, row number and fuel step is a tagged
+`Nat` (issue 930: d14 tested 593,920 join-key values per query in these
+loops).
+
+While the accumulator is below `accCap = 2 ^ 57`, `acc * 128 + x` (with
+`x < 128`) is below `2 ^ 64`, so the word operations give the `Nat`
+results: `prev ≤ prev + h` is `prev + h < 2 ^ 64`, and `h ≤ prev` makes
+`prev - h` exact. When the accumulator reaches `accCap` (a varint of more
+than eight bytes: a jump of `2 ^ 63` or more between two ids), the loop
+continues as the `Nat` loop from the same state. The callers use these
+loops only when the bytes are fewer than `2 ^ 31`, so that `USize`
+positions are exact on 32-bit targets too.
+
+`SipFastTheorems.deltaFindGoW_eq` and `deltaGatherGoW_eq`: each equals its
+`Nat` loop, started with the fuel the callers give it. -/
+
+/-- `2 ^ 57`. -/
+@[inline] def accCap : UInt64 := 144115188075855872
+
+/-- `2 ^ 31`: below it a byte position is an exact `USize` on every target. -/
+@[inline] def smallBytes : Nat := 2147483648
+
+/-- `deltaFindGo` on machine words (see above). -/
+def deltaFindGoW (b : ByteArray) (lo hi : Nat) (cands : Array UInt64)
+    (idx : Nat) (prev : UInt64) (i : USize) (acc : UInt64) (p : Nat) (pos : Array Nat) (out : ByteArray) :
+    Option (Array Nat × ByteArray) :=
+  if idx ≥ hi then some (pos, out)
+  else if h : i < b.usize then
+    if acc < accCap then
+      let x := b.uget i (L4Factoidal.Prim.Bytes.usize_lt_size h)
+      if x < 128 then
+        let z := acc * 128 + x.toUInt64
+        if z % 2 == 0 then
+          let v := prev + z / 2
+          if prev ≤ v then
+            if idx ≥ lo then
+              let q := probeFast cands v p
+              if candAt cands q v then
+                deltaFindGoW b lo hi cands (idx + 1) v (i + 1) 0 q (pos.push idx) (put64 out v)
+              else deltaFindGoW b lo hi cands (idx + 1) v (i + 1) 0 q pos out
+            else deltaFindGoW b lo hi cands (idx + 1) v (i + 1) 0 p pos out
+          else none
+        else
+          let hz := z / 2 + 1
+          if hz ≤ prev then
+            let v := prev - hz
+            if idx ≥ lo then
+              let q := probeFast cands v p
+              if candAt cands q v then
+                deltaFindGoW b lo hi cands (idx + 1) v (i + 1) 0 q (pos.push idx) (put64 out v)
+              else deltaFindGoW b lo hi cands (idx + 1) v (i + 1) 0 q pos out
+            else deltaFindGoW b lo hi cands (idx + 1) v (i + 1) 0 p pos out
+          else none
+      else deltaFindGoW b lo hi cands idx prev (i + 1) (acc * 128 + (x - 128).toUInt64) p pos out
+    else deltaFindGo b lo hi cands (b.size - i.toNat + 3) idx prev.toNat i.toNat acc.toNat p pos out
+  else none
+termination_by b.size - i.toNat
+decreasing_by
+  all_goals
+    have h1 := L4Factoidal.Prim.Bytes.usize_lt_size h
+    rw [L4Factoidal.Prim.Bytes.usize_succ_toNat h]
+    omega
+
+/-- The start of `findWords` on a delta frame whose tag is at `i`: the word
+    loop when the bytes are fewer than `smallBytes`, else the `Nat` loop
+    (`SipFastTheorems.deltaFindStart_eq`). -/
+def deltaFindStart (b : ByteArray) (lo hi : Nat) (cands : Array UInt64) (i p : Nat) :
+    Option (Array Nat × ByteArray) :=
+  if b.size < smallBytes then deltaFindGoW b lo hi cands 0 0 (i + 1).toUSize 0 p #[] .empty
+  else deltaFindGo b lo hi cands (b.size - i + 2) 0 0 (i + 1) 0 p #[] .empty
+
 /-- Rows `r..hi-1` of a column of words: each row whose word is a candidate
     is appended (a tail call with fuel). The constant and raw frames are
     read through `FrameWords.decodeWords` (a raw frame is a copy of its
@@ -163,7 +261,7 @@ def findWords (b : ByteArray) (n i lo hi : Nat) (cands : Array UInt64) (p : Nat)
     Option (Array Nat × ByteArray) :=
   if hi > n || lo > hi then none
   else if i < b.size && b.get! i == tagDelta then
-    deltaFindGo b lo hi cands (b.size - i + 2) 0 0 (i + 1) 0 p #[] .empty
+    deltaFindStart b lo hi cands i p
   else match FrameWords.decodeWords b n i with
     | some (ws, _) => some (wordsFindGo ws hi cands (hi - lo) lo p #[] .empty)
     | none => none
@@ -192,6 +290,46 @@ def deltaGatherGo (b : ByteArray) (pos : Array Nat) :
       else deltaGatherGo b pos fuel idx prev (i + 1) (acc * 128 + (x - 128)) k out
     else none
 
+
+/-- `deltaGatherGo` on machine words (see `deltaFindGoW`). -/
+def deltaGatherGoW (b : ByteArray) (pos : Array Nat)
+    (idx : Nat) (prev : UInt64) (i : USize) (acc : UInt64) (k : Nat) (out : ByteArray) : Option ByteArray :=
+  if k ≥ pos.size then some out
+  else if h : i < b.usize then
+    if acc < accCap then
+      let x := b.uget i (L4Factoidal.Prim.Bytes.usize_lt_size h)
+      if x < 128 then
+        let z := acc * 128 + x.toUInt64
+        if z % 2 == 0 then
+          let v := prev + z / 2
+          if prev ≤ v then
+            if idx == pos[k]! then deltaGatherGoW b pos (idx + 1) v (i + 1) 0 (k + 1) (put64 out v)
+            else deltaGatherGoW b pos (idx + 1) v (i + 1) 0 k out
+          else none
+        else
+          let hz := z / 2 + 1
+          if hz ≤ prev then
+            let v := prev - hz
+            if idx == pos[k]! then deltaGatherGoW b pos (idx + 1) v (i + 1) 0 (k + 1) (put64 out v)
+            else deltaGatherGoW b pos (idx + 1) v (i + 1) 0 k out
+          else none
+      else deltaGatherGoW b pos idx prev (i + 1) (acc * 128 + (x - 128).toUInt64) k out
+    else deltaGatherGo b pos (b.size - i.toNat + 3) idx prev.toNat i.toNat acc.toNat k out
+  else none
+termination_by b.size - i.toNat
+decreasing_by
+  all_goals
+    have h1 := L4Factoidal.Prim.Bytes.usize_lt_size h
+    rw [L4Factoidal.Prim.Bytes.usize_succ_toNat h]
+    omega
+
+/-- The start of `gatherWords` on a delta frame whose tag is at `i`
+    (`SipFastTheorems.deltaGatherStart_eq`). -/
+def deltaGatherStart (b : ByteArray) (pos : Array Nat) (i : Nat) : Option ByteArray :=
+  if b.size < smallBytes then
+    deltaGatherGoW b pos 0 0 (i + 1).toUSize 0 0 (ByteArray.emptyWithCapacity (8 * pos.size))
+  else deltaGatherGo b pos (b.size - i + 2) 0 0 (i + 1) 0 0 (ByteArray.emptyWithCapacity (8 * pos.size))
+
 /-- The words at rows `pos` of a column of words. -/
 def pickWords (ws : ByteArray) (pos : Array Nat) : ByteArray :=
   pos.foldl (fun out r => put64 out (word64 ws (8 * r))) (ByteArray.emptyWithCapacity (8 * pos.size))
@@ -200,7 +338,7 @@ def pickWords (ws : ByteArray) (pos : Array Nat) : ByteArray :=
     `n` rows at `i` (`SipTheorems.gatherWords_spec`). -/
 def gatherWords (b : ByteArray) (n i : Nat) (pos : Array Nat) : Option ByteArray :=
   if i < b.size && b.get! i == tagDelta then
-    deltaGatherGo b pos (b.size - i + 2) 0 0 (i + 1) 0 0 (ByteArray.emptyWithCapacity (8 * pos.size))
+    deltaGatherStart b pos i
   else match FrameWords.decodeWords b n i with
     | some (ws, _) => some (pickWords ws pos)
     | none => none

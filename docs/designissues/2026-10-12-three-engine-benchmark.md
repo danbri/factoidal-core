@@ -817,3 +817,90 @@ d14 https://github.com/danbri/factoidal/issues/930, d12
 https://github.com/danbri/factoidal/issues/931, d17
 https://github.com/danbri/factoidal/issues/932, d19
 https://github.com/danbri/factoidal/issues/862.
+
+### 11.12 d14 with the delta loops on machine words (2026-10-22)
+
+https://github.com/danbri/factoidal/issues/930 (OKR batch 3 KR 1.1,
+https://github.com/danbri/factoidal/issues/875). Target: d14 warm at most
+QLever 1 CPU warm (6.09 ms, section 11.8). Target not met; result 12.4 ms.
+
+Plan (unchanged by this work): POS scan of `dbo:birthPlace dbr:Edinburgh`
+(1,083 subjects), then the PSO scan of `dbo:birthDate` with the 1,083
+subjects as candidates (sideways information passing, section 11.9): 145 of
+154 selected blocks read, 593,920 join-key values tested, 953 rows gathered,
+merge join, then the FILTER on 953 rows (54 rows out).
+
+Cause, from `perf record -e cpu-clock --call-graph dwarf` of `l4sbm11 query
+... --repeat 60` (perf of linux-tools 6.8.0-146): 62 percent of the samples
+were in the two delta loops of `Storage/Sbm11/Sip.lean`, `deltaGatherGo`
+(the object column up to the last found row of each block, 36 percent) and
+`deltaFindGo` (the subject column, 26 percent), plus 8 percent in
+`advGo` (the candidate pointer). The loops kept the byte position, row
+number, fuel, previous value and varint accumulator as `Nat`; a term id is
+near `2 ^ 61`, so the test `prev + z / 2 < two64` compared with a number
+above the scalar range on every row (`lean_nat_big_lt`). A second cost was
+allocation: the compiled `cands[q]!` on an `Array UInt64` boxes a `UInt64`
+default, one `malloc` and one `free` per row (24 percent of the samples in
+an intermediate build, before the guarded reads below).
+
+Change (`formal/lean4/L4Factoidal/Storage/Sbm11/Sip.lean`):
+
+- `deltaFindGoW`, `deltaGatherGoW`: the same loops with the byte position
+  as `USize` (`ByteArray.uget`), the previous value and the accumulator as
+  `UInt64`, no fuel (`termination_by b.size - i`). While the accumulator is
+  below `2 ^ 57`, the word operations give the `Nat` results; above it the
+  loop continues as the `Nat` loop from the same state. `deltaFindStart`
+  and `deltaGatherStart` use them when the frame bytes are fewer than
+  `2 ^ 31` (so that a `USize` position is exact on wasm32 too), else the
+  `Nat` loops.
+- `probeFast` (the candidate pointer with its frequent case first, no
+  call) and `candAt` (the candidate test with a guarded read, no boxed
+  default).
+- `--explain`: the sideways text gives `key values tested N (on words in K
+  blocks)`; d14: `(on words in 145 blocks)`.
+
+Theorems (`Storage/Sbm11/SipFastTheorems.lean`; `#print axioms`: propext,
+Classical.choice, Quot.sound; `candAt_eq` propext only): `candAt_eq`,
+`probeFast_eq`, `deltaFindGoW_eq` and `deltaGatherGoW_eq` (each word loop
+equals its `Nat` loop from the same state with the fuel `b.size - i + 3`),
+`deltaFindStart_eq` and `deltaGatherStart_eq` (the starts equal the `Nat`
+loops with the fuel the callers gave before). `SipTheorems.findWords_spec`
+and `gatherWords_spec` now go through the two start theorems, so the scan
+theorems of `SipScanTheorems` hold of the changed scan unchanged (the scan
+returns the same tuples).
+
+Measurement: `l4sbm11 query /home/user/bench-data/sbm11/dbpedia --file
+tools/bench/three-engines/queries/dbpedia/d14-filter-date.rq --verify none
+--repeat 7 --explain`, execution median of 7 runs in one process, 3
+interleaved rounds; "before" is the build of commit aba9a13a, "after" the
+build of this change. 1-minute load average 3.96 in all rounds (other
+sessions on the machine). Answers of all 6 runs equal to
+`/home/user/bench-data/answers/dbpedia/d14-filter-date.sbm11-none.json`
+(54 rows).
+
+| | before | after | QLever 1 CPU warm (11.8) | QLever default warm (11.8) |
+| --- | ---: | ---: | ---: | ---: |
+| warm, round 1 / 2 / 3 (ms) | 22.56 / 22.87 / 22.07 | 12.07 / 13.43 / 12.41 | | |
+| warm, median of rounds (ms) | 22.56 | 12.41 | 6.09 | 6.09 |
+| peak RSS (VmHWM, kB) | 25,828 to 26,164 | 26,088 to 26,240 | | |
+
+The QLever times include HTTP and JSON (about 2 to 3 ms for a small
+answer). The ratio to QLever 1 CPU goes from 3.7 to 2.0.
+
+Remaining cost (profile of the "after" build, inclusive samples):
+`deltaGatherGoW` 36 percent, `deltaFindGoW` 28 percent, the FILTER
+(`applyFilters`) 18 percent, of which `Session.termOf` 13 percent (the
+dictionary key of each of the 953 dates decoded to a `Term`, 7 percent in
+`decodeTyped?`), `readFrames` 6 percent, the POS scan 3 percent.
+
+- The two loops are now tight (about 15 instructions per byte, no call, no
+  allocation). Their remaining cost is one varint per row: the length of
+  each varint of the object column (random literal ranks) varies, and the
+  branch on the continuation bit is not predictable. Removing it needs a
+  different frame codec for unsorted columns (a wire format change) or a
+  branch-free decoder of several bytes at a time with its own proof.
+- In the find loop, a third of the samples are the reads of `cands[p]`
+  (an `Array UInt64` holds boxed words: two dependent loads per row).
+  Keeping the current candidate value in the loop state removes them.
+- The FILTER decodes the date of every joined row to a `Term` before the
+  comparison (about 2 microseconds per row).

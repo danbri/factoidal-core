@@ -685,6 +685,14 @@ else
     ""|*": 0 of "*) record window gate-strstarts 1 "no block skipped: '$w'" ;;
     *) record window gate-strstarts 0 "$w (blocks of 2 rows, POS)" ;;
   esac; fi
+  # (l1c) issue 930: ids-sip-date-filter (answer checked above, the shape of
+  # DBpedia d14) passes candidates into the ex:when scan, whose join column
+  # is a delta frame decoded by the word loop (Sip.deltaFindGoW)
+  wl="$(grep -o 'key values tested [0-9]* (on words in [0-9]* blocks)' "$L/ids-sip-date-filter.err" | head -1)"
+  case "$wl" in
+    ""|*"in 0 blocks"*) record sip gate-word-loop 1 "no block decoded on words: '$wl'" ;;
+    *) record sip gate-word-loop 0 "$wl (blocks of 2 rows)" ;;
+  esac
 fi
 # (l2) olympics: q01 to q21 and tests/sbm11/sip/*.rq with --sip off, auto (the
 # default) and always, equal as multisets (a hash join may change the row
