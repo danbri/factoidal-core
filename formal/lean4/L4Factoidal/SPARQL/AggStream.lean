@@ -141,8 +141,9 @@ inductive AggAcc where
   /-- SUM and AVG: the running sum, its promoted type, the numeric operands, and
       whether a non-numeric operand was seen -/
   | num (s : Scaled) (k : NumKind) (c : Nat) (bad : Bool)
-  /-- MIN and MAX: the best value so far with its `numericView` -/
-  | best (b : Option (EvalResult × EvalResult))
+  /-- MIN and MAX: the best value so far, with its `numericView` and the numeric
+      reading of that (its `Summary`) -/
+  | best (b : Option Summary)
 
 instance : Inhabited AggAcc := ⟨.cnt 0⟩
 
@@ -168,14 +169,51 @@ def AggAcc.stepNum (a : AggAcc) (s : Summary) : AggAcc :=
     | none => .num sc k c true
   | a => a
 
+/-- `sparqlOrder` of the two `numericView`s of summaries: when both have a numeric
+reading it is the comparison of the two scaled values (`Scaled.cmp`), which
+needs no walk over the views (`cmpSummary_of`). -/
+def cmpSummary (s b : Summary) : Int :=
+  match s.tn, b.tn with
+  | some (x, _), some (y, _) => x.cmp y
+  | _, _ => sparqlOrder s.nv b.nv
+
+/-- A view with a numeric reading is a number, ranks 4, and its reading is
+`toNumeric?`. -/
+theorem numOfView_shape (w : EvalResult) (r : Scaled × NumKind) (h : numOfView w = some r) :
+    w.toNumeric? = some r ∧ erRank w = 4 ∧
+    ((∃ n, w = .num n) ∨ (∃ s, w = .dec s) ∨ (∃ s, w = .dbl s)) := by
+  cases w <;> simp [numOfView] at h <;> simp [EvalResult.toNumeric?, erRank, h]
+  all_goals first | exact ⟨_, rfl⟩ | skip
+
+/-- On the summaries of two values, `cmpSummary` is `sparqlOrder` of their
+`numericView`s: the comparator of MIN and MAX on the numeric reading is the
+reference comparator. -/
+theorem cmpSummary_of (v a : EvalResult) :
+    cmpSummary (Summary.of v) (Summary.of a) = sparqlOrder (numericView v) (numericView a) := by
+  unfold cmpSummary Summary.of
+  generalize numericView v = nv
+  generalize numericView a = na
+  cases h1 : numOfView nv with
+  | none => simp [h1]
+  | some p =>
+    cases h2 : numOfView na with
+    | none => simp [h1, h2]
+    | some q =>
+      obtain ⟨t1, r1, c1⟩ := numOfView_shape nv p h1
+      obtain ⟨t2, r2, c2⟩ := numOfView_shape na q h2
+      dsimp only
+      rw [h1, h2]
+      rcases c1 with ⟨n, rfl⟩ | ⟨s, rfl⟩ | ⟨s, rfl⟩ <;>
+        simp [sparqlOrder, r1, r2, sparqlOrderNumeric, numericCompare, t1, t2]
+
 /-- MAX and MIN: a later value replaces the best one when `keep` accepts the
 comparison of the two numeric views. MAX keeps it when it is not below the best
 (`findMax` keeps the last of equal values, §18.5.1.7); MIN when it is not above
 it (`findMin`, §18.5.1.6). -/
 def AggAcc.stepBest (keep : Int → Bool) (a : AggAcc) (s : Summary) : AggAcc :=
   match a with
-  | .best none => .best (some (s.v, s.nv))
-  | .best (some (_, bnv)) => if keep (sparqlOrder s.nv bnv) then .best (some (s.v, s.nv)) else a
+  | .best none => .best (some s)
+  | .best (some b) => if keep (cmpSummary s b) then .best (some s) else a
   | a => a
 
 /-- The step of the functions that keep the best value, with the type error
@@ -234,7 +272,7 @@ def AggAcc.finish (fn : AggregateFn) (a : AggAcc) : EvalResult :=
   | .avg, .num s k c bad => if bad then .error else avgOfAcc s k c
   | .min, .best b | .max, .best b =>
     match b with
-    | some (v, _) => v
+    | some b => b.v
     | none => .error
   | _, _ => .error
 
@@ -352,11 +390,24 @@ theorem findMin_eq (vals : List EvalResult) :
   | nil => rfl
   | cons v rest => simp [findMin, bestFold, keepMin]
 
+theorem stepKeep_some (keep : Int → Bool) (a v : EvalResult) (hv : v ≠ .error) :
+    AggAcc.stepKeep keep (.best (some (Summary.of a))) (Summary.of v) =
+      if keep (sparqlOrder (numericView v) (numericView a)) = true
+      then .best (some (Summary.of v)) else .best (some (Summary.of a)) := by
+  cases v <;> first | exact absurd rfl hv |
+    simp only [AggAcc.stepKeep, AggAcc.stepBest, Summary.of_v, cmpSummary_of]
+
+theorem stepKeep_none (keep : Int → Bool) (v : EvalResult) (hv : v ≠ .error) :
+    AggAcc.stepKeep keep (.best none) (Summary.of v) = .best (some (Summary.of v)) := by
+  cases v <;> first | exact absurd rfl hv | rfl
+
+theorem stepKeep_error (keep : Int → Bool) (a : AggAcc) :
+    AggAcc.stepKeep keep a (Summary.of .error) = a := rfl
+
 /-- MIN and MAX from a state that already holds a value. -/
 theorem best_stream_from (keep : Int → Bool) (vals : List EvalResult) : ∀ (a : EvalResult),
-    (vals.map Summary.of).foldl (AggAcc.stepKeep keep) (.best (some (a, numericView a))) =
-      .best (some (bestFold keep a (filterNonError vals),
-                   numericView (bestFold keep a (filterNonError vals)))) := by
+    (vals.map Summary.of).foldl (AggAcc.stepKeep keep) (.best (some (Summary.of a))) =
+      .best (some (Summary.of (bestFold keep a (filterNonError vals)))) := by
   induction vals with
   | nil => intro a; simp [filterNonError, bestFold]
   | cons v rest ih =>
@@ -364,19 +415,17 @@ theorem best_stream_from (keep : Int → Bool) (vals : List EvalResult) : ∀ (a
     rw [filterNonError_cons]
     by_cases hv : v = .error
     · subst hv
-      simp [AggAcc.stepKeep, Summary.of, ih]
+      simp only [if_true, List.map_cons, List.foldl_cons, stepKeep_error]
+      exact ih a
     · simp only [hv, if_false, List.map_cons, List.foldl_cons]
-      have hv' : (Summary.of v).v ≠ .error := hv
+      rw [stepKeep_some keep a v hv]
       by_cases hk : keep (sparqlOrder (numericView v) (numericView a)) = true
-      · have h1 : AggAcc.stepKeep keep (.best (some (a, numericView a))) (Summary.of v) =
-            .best (some (v, numericView v)) := by
-          cases v <;> simp_all [AggAcc.stepKeep, AggAcc.stepBest, Summary.of]
-        rw [h1, ih v]
+      · simp only [hk, if_true]
+        rw [ih v]
         simp [bestFold, sparqlOrderValue, hk]
-      · have h1 : AggAcc.stepKeep keep (.best (some (a, numericView a))) (Summary.of v) =
-            .best (some (a, numericView a)) := by
-          cases v <;> simp_all [AggAcc.stepKeep, AggAcc.stepBest, Summary.of]
-        rw [h1, ih a]
+      · have hk' : keep (sparqlOrder (numericView v) (numericView a)) = false := by simpa using hk
+        simp only [hk', Bool.false_eq_true, if_false]
+        rw [ih a]
         simp [bestFold, sparqlOrderValue, hk]
 
 /-- MIN and MAX from the empty state: the first value that is not the type
@@ -385,18 +434,17 @@ theorem best_stream (keep : Int → Bool) (vals : List EvalResult) :
     (vals.map Summary.of).foldl (AggAcc.stepKeep keep) (.best none) =
       (match filterNonError vals with
        | [] => .best none
-       | v :: rest => .best (some (bestFold keep v rest, numericView (bestFold keep v rest)))) := by
+       | v :: rest => .best (some (Summary.of (bestFold keep v rest)))) := by
   induction vals with
   | nil => simp [filterNonError]
   | cons v rest ih =>
     rw [filterNonError_cons]
     by_cases hv : v = .error
     · subst hv
-      simp [AggAcc.stepKeep, Summary.of, ih]
+      simp only [if_true, List.map_cons, List.foldl_cons, stepKeep_error]
+      exact ih
     · simp only [hv, if_false, List.map_cons, List.foldl_cons]
-      have h1 : AggAcc.stepKeep keep (.best none) (Summary.of v) = .best (some (v, numericView v)) := by
-        cases v <;> simp_all [AggAcc.stepKeep, AggAcc.stepBest, Summary.of]
-      rw [h1, best_stream_from]
+      rw [stepKeep_none keep v hv, best_stream_from]
 
 
 theorem step_min : AggAcc.step .min = AggAcc.stepKeep keepMin := rfl
@@ -442,11 +490,11 @@ theorem evalAggregate_stream (env : EvalEnv) (fn : AggregateFn) (hfn : Streamed 
   | min =>
     simp only [AggAcc.init, aggVals, step_min]
     rw [best_stream keepMin vals, findMin_eq]
-    cases filterNonError vals <;> simp [AggAcc.finish]
+    cases filterNonError vals <;> simp [AggAcc.finish, Summary.of_v]
   | max =>
     simp only [AggAcc.init, aggVals, step_max]
     rw [best_stream keepMax vals, findMax_eq]
-    cases filterNonError vals <;> simp [AggAcc.finish]
+    cases filterNonError vals <;> simp [AggAcc.finish, Summary.of_v]
   | groupConcat s => simp [Streamed] at hfn
   | sample => simp [Streamed] at hfn
 
