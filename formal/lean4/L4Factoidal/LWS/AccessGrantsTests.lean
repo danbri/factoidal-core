@@ -82,8 +82,8 @@ private def w0 : W := ⟨st0, az0, {}, ⟨200, [], "", none⟩, []⟩
 private def req (m t : String) (hs : List (String × String) := []) (body : String := "") : Request :=
   { method := m, path := t, queryStr := "", headers := hs, body }
 
-private def run1 (w : W) (r : Request) : W :=
-  match serverStep stubV MemStore cfg w.az none 1100 r w.st w.ns with
+private def run1 (w : W) (r : Request) (c : Config := cfg) : W :=
+  match serverStep stubV MemStore c w.az none 1100 r w.st w.ns with
   | .inl _ => { w with resp := ⟨599, [], "", none⟩, ds := [] }
   | .inr (resp, st', ns', acc', ds) => ⟨st', { w.az with access := acc' }, ns', resp, ds⟩
 
@@ -294,6 +294,40 @@ private def wQG : W := postGrant wQ (grantDoc ["read"] bob ["box/"])
   (·.url) == ["https://inbox.example/g/"]
 -- No inbox, no delivery.
 #guard wG.ds.isEmpty
+
+/-! ## The storage controller hears of a new access request (issue 920)
+
+"Access Request creation: When a new access request is submitted, the
+storage controller SHOULD be notified." The draft names no inbox for the
+controller; this server's is configuration (`Config.controllerInbox`). -/
+
+private def cCtl : Config := { cfg with controllerInbox := some "https://controller.example/inbox/" }
+private def postRequest (w : W) (c : Config) : W :=
+  run1 w (req "POST" accessRequestsPath (("content-type", "application/lws+json") :: asBob)
+    (grantDoc ["read"] bob ["box/"] "" "" "AccessRequest")) c
+
+-- Positive: one delivery to the controller's inbox, a Create of the new request.
+#guard (postRequest w0 cCtl).resp.status == 201
+#guard (postRequest w0 cCtl).ds.map (·.url) == ["https://controller.example/inbox/"]
+#guard (postRequest w0 cCtl).ds.map (fun d =>
+    (((j d.body).field? "activity").bind (·.field? "type"),
+     (((j d.body).field? "activity").bind (·.field? "object")).bind (·.getString? "id"))) ==
+  [(some (.array [.string "Create"]), some "http://localhost/.well-known/lws-access-requests/r0")]
+-- A request with its own inbox: only the controller hears of its creation
+-- (the request's inbox hears of the grant that answers it, above).
+#guard (run1 w0 (req "POST" accessRequestsPath (("content-type", "application/lws+json") :: asBob)
+    (grantDoc ["read"] bob ["box/"] "" "\"inbox\":\"https://inbox.example/bob/\"," "AccessRequest")) cCtl).ds.map
+  (·.url) == ["https://controller.example/inbox/"]
+-- Negative: no controller inbox configured, no delivery.
+#guard (postRequest w0 cfg).resp.status == 201 && (postRequest w0 cfg).ds.isEmpty
+-- Negative: a refused request (400) and a grant announce nothing to the controller.
+#guard (run1 w0 (req "POST" accessRequestsPath (("content-type", "application/lws+json") :: asBob)
+    (grantDoc ["read"] bob ["box/"])) cCtl).ds.isEmpty
+#guard (run1 w0 (req "POST" accessGrantsPath (("content-type", "application/lws+json") :: asAlice)
+    (grantDoc ["read"] bob ["doc.txt"])) cCtl).ds.isEmpty
+-- Negative: an inbox inside this storage, or not http(s), is not used.
+#guard (postRequest w0 { cfg with controllerInbox := some "http://localhost/inbox/" }).ds.isEmpty
+#guard (postRequest w0 { cfg with controllerInbox := some "mailto:alice@example.org" }).ds.isEmpty
 
 /-! ## Persistence -/
 

@@ -10,6 +10,16 @@ it, close it.
     -> {"ok":true}
   lwsDelivered(handle, {id, status, now?})
     -> {"ok":true,"changed":B,"retry"?:{"delivery":{…},"after":SECONDS}}
+  lwsFlush(handle, {now?})
+    -> {"ok":true,"changed":B,"deliveries"?:[…],"wake"?:SECONDS}
+
+`lwsStep` may answer `{"ok":true,"resolve":{"host":H}}`: the engine needs
+the addresses of a webhook inbox host (`Notifications.resolveNeeded?`,
+issue 915). The host resolves `H` and steps the request again with the
+member `resolved: [{host, addresses}]`; Lean decides what they mean
+(`InboxGuard.loops`). An answer may carry `"wake": SECONDS`: deliveries
+wait for a rate-limit window (`Notifications.nextWake`), and the host calls
+`lwsFlush` after that many seconds.
 
 A request document may carry `random` (base64, at least 16 bytes from the
 host's random source): the name of an ANTICIPATORY AND UNSTABLE search
@@ -46,6 +56,7 @@ import L4Factoidal.LWS.Search
 import L4Factoidal.LWS.AccessGrants
 import L4Factoidal.LWS.SearchResults
 import L4Factoidal.LWS.MerkleHttp
+import L4Factoidal.LWS.MoveRedirect
 import L4Factoidal.JOSE.Base64Url
 import L4Factoidal.Crypto.P256Native
 import L4Factoidal.Crypto.RsaNative
@@ -185,6 +196,8 @@ structure OpenConfig where
   the snapshot is sealed (`L4Factoidal.LWS.SnapshotSeal`); with none it is
   clear text, as before https://github.com/danbri/factoidal/issues/921. -/
   storageKey : Option ByteArray := none
+  /-- The redirect table of a snapshot written earlier (issue 914). -/
+  moved : List (String × String) := []
 deriving Inhabited
 
 /-- The configuration member `moves`: absent, `true` or `"all"` (data
@@ -269,6 +282,34 @@ def openConfigOfJson (text : String) : Except String OpenConfig :=
           | _ => d
         let searchResultsTtl := natOr "searchResultsTtl" 600
         let searchResultsMax := natOr "searchResultsMax" 100
+        -- Moved resources (issue 914): the redirect table and its bound.
+        let redirectsMax := natOr "redirectsMax" 256
+        let moved ← match snapDoc, snapshot with
+          | some sj, some ms => match sj.field? "moved" with
+            | none | some .null => .ok []
+            | some mj => MoveRedirect.stateOfJson MemStore ms redirectsMax mj
+          | _, _ => .ok []
+        -- The webhook delivery rate (issue 915); 0 turns the limit off.
+        let deliveryLimit := natOr "deliveryLimit" 10
+        let deliveryWindow := natOr "deliveryWindow" 60
+        -- What the host bound (issue 915): `listen: {address, port, addresses}`.
+        let (listenAddress, listenPort, localAddresses) := match j.field? "listen" with
+          | some lj =>
+              (lj.getString? "address",
+               (match lj.field? "port" with
+                | some (.number s) => s.toNat?
+                | _ => none),
+               ((lj.getArray? "addresses").getD []).filterMap (fun (a : Json) => match a with
+                 | .string t => some t
+                 | _ => none))
+          | none => (none, none, [])
+        -- The storage controller's inbox (issue 920).
+        let controllerInbox ← match j.field? "controllerInbox" with
+          | none | some .null => .ok none
+          | some (.string u) =>
+              if (Notifications.urlParts? u).isSome then .ok (some u)
+              else .error "config: \"controllerInbox\" is an http or https URL"
+          | some _ => .error "config: \"controllerInbox\" is an http or https URL"
         let results ← match snapDoc with
           | some sj => match sj.field? "searchResults" with
             | none | some .null => .ok none
@@ -299,7 +340,10 @@ def openConfigOfJson (text : String) : Except String OpenConfig :=
                 let key := (nj.getString? "signingKey").bind Base64.decode?
                 .ok (some ns, key.filter (·.size == 32))
           | none => .ok (none, none)
-        .ok { cfg := { baseIri, owner, agent, pageSize, moveContainers, linksetPut, paginateAlways },
+        .ok { cfg := { baseIri, owner, agent, pageSize, moveContainers, linksetPut, paginateAlways,
+                       redirectsMax, deliveryLimit, deliveryWindow, listenAddress, listenPort,
+                       localAddresses, controllerInbox },
+              moved,
               now, rootAcl, snapshot, authz,
               notifications, moves, typeIndex, accessGrants, entropy, notif, signingKey,
               searchResults, searchResultsTtl, searchResultsMax, results, storageKey, merkle }
@@ -328,6 +372,9 @@ structure OpenStorage where
   results : SearchResults.ResultsState := {}
   /-- The storage key: `lwsSnapshot` seals the snapshot under it. -/
   storageKey : Option ByteArray := none
+  /-- (previous path, current path) of moved resources
+  (`L4Factoidal.LWS.MoveRedirect`, issue 914). -/
+  moved : List (String × String) := []
 
 /-- The signer of a storage: Ed25519 (RFC 8032) through the vendored HACL*
 code, under the verification method its storage description publishes. -/
@@ -390,7 +437,7 @@ def lwsOpen (configJson : String) : IO String := do
             (if oc.merkle then some Merkle.haclHasher else none)
             (oc.snapshot.getD (initialStorage oc.now oc.rootAcl)),
           authz := oc.authz, notif, signingKey, results := oc.results.getD {},
-          storageKey := oc.storageKey })
+          storageKey := oc.storageKey, moved := oc.moved })
       pure (okWith [("handle", .string h), ("root", .string rootPath)])
 
 /-- A delivery request as the host receives it: POST `body` to `url` with
@@ -399,6 +446,23 @@ def deliveryJson (d : Notifications.Delivery) : Json :=
   .object [ ("id", .string d.id), ("url", .string d.url)
           , ("headers", .array (d.headers.map (fun (n, v) => Json.array [.string n, .string v])))
           , ("body", .string d.body) ]
+
+/-- The request member `resolved`: `[{host, addresses: [...]}]`, the host's
+answer to a `resolve`. Members of another shape are dropped. -/
+def resolvedOfJson (j : Json) : List (String × List String) :=
+  ((j.getArray? "resolved").getD []).filterMap (fun it =>
+    match it.getString? "host", it.getArray? "addresses" with
+    | some h, some xs => some (h.toLower, xs.filterMap (fun x => match x with
+        | .string t => some t
+        | _ => none))
+    | _, _ => none)
+
+/-- The `wake` member: seconds until deliveries that wait for a rate-limit
+window may go (`Notifications.nextWake`), when any wait. -/
+def wakeMember (now : Nat) (cfg : Config) (ns : Notifications.NotifState) : List (String × Json) :=
+  match Notifications.nextWake now cfg.rate ns with
+  | some t => [("wake", .number (toString t))]
+  | none => []
 
 /-- One LWS step. `blob` is the content when the request came through the
 byte-region entry; the answer is then the envelope and the response content
@@ -425,7 +489,26 @@ def lwsStepWith (h requestJson : String) (blob : Option ByteArray) :
                 | some a => if open_.authz.insecureNoAuth then { open_.cfg with agent := some a }
                             else open_.cfg
                 | none   => open_.cfg
+              -- The addresses the host resolved for a name the engine asked
+              -- about (`resolve`, issue 915): data only.
+              let cfg := { cfg with resolved := resolvedOfJson j }
               let now := now?.getD mem.mem.clock
+              let S := IndexedStore LwsBackend lwsBackendLaws
+              -- An inbox host to resolve before a subscription is decided.
+              match Notifications.resolveNeeded? lwsVerifiers S cfg open_.authz now r mem with
+              | some host =>
+                  pure (noBytes (okWith [("resolve", .object [("host", .string host)])]))
+              | none =>
+              -- The previous identifier of a moved resource (issue 914).
+              match MoveRedirect.answer? lwsVerifiers S cfg open_.authz now r mem open_.moved with
+              | some (.inl (issuer, url)) =>
+                  pure (noBytes (okWith [("fetch", .object [("issuer", .string issuer),
+                                                   ("url", .string url)])]))
+              | some (.inr resp) =>
+                  pure (okWith [ ("response", jsonOfResponse resp blobOut), ("changed", .bool false) ],
+                        if blobOut then resp.content else ByteArray.empty)
+              | none =>
+              let plan? := movePlanOf? S cfg.baseIri cfg.moves cfg.moveContainers r mem
               -- Random bytes from the host for a search results name.
               let rand : Option ByteArray := (j.getString? "random").bind Base64.decode?
               match SearchResults.serverStep lwsVerifiers LwsBackend lwsBackendLaws cfg open_.authz now
@@ -448,22 +531,27 @@ def lwsStepWith (h requestJson : String) (blob : Option ByteArray) :
                                                    ("url", .string url)])]))
               | .inr (resp, mem', notif', access', ds) =>
                   let authz' := { open_.authz with access := access' }
+                  let moved' := MoveRedirect.after S cfg.redirectsMax plan? resp.status mem' open_.moved
                   -- Merkle fields and members (issue 919); unchanged when off.
                   let resp := Merkle.decorate MemStore cfg mem'.base
                     (fun _ => Merkle.rootsVisible lwsVerifiers (IndexedStore LwsBackend lwsBackendLaws)
                       cfg authz' now r mem') r resp
-                  lwsTable.modify (·.insert h { open_ with mem := mem', notif := notif', authz := authz' })
+                  let stored : OpenStorage :=
+                    { open_ with mem := mem', notif := notif', authz := authz', moved := moved' }
+                  lwsTable.modify (·.insert h stored)
                   -- Every mutation advances the clock (`StoreLaws.nowTick`),
                   -- so a changed clock is exactly "the storage changed"; a
                   -- subscription change advances the notification revision.
                   -- A host that persists writes `lwsSnapshot` when this is true.
                   let changed := mem'.mem.clock != mem.mem.clock ||
                     notif'.revision != open_.notif.revision ||
-                    access'.revision != open_.authz.access.revision
+                    access'.revision != open_.authz.access.revision ||
+                    moved' != open_.moved
                   pure (okWith ([ ("response", jsonOfResponse resp blobOut)
                                 , ("changed", .bool changed) ] ++
                                 (if ds.isEmpty then []
-                                 else [("deliveries", .array (ds.map deliveryJson))])),
+                                 else [("deliveries", .array (ds.map deliveryJson))]) ++
+                                wakeMember now cfg notif'),
                         if blobOut then resp.content else ByteArray.empty)
 
 /-- `lwsDelivered(handle, {id, status, now})`: the host's report of one
@@ -492,6 +580,25 @@ def lwsDelivered (h docJson : String) : IO String := do
                  | some (d, after) => [("retry", .object [ ("delivery", deliveryJson d)
                                                         , ("after", .number (toString after)) ])]
                  | none => [])))
+
+/-- `lwsFlush(handle, {now})`: the host's call after the seconds a `wake`
+named. Lean decides which waiting activities may go now
+(`Notifications.flush`, one batched envelope per subscription) and when to
+wake again. -/
+def lwsFlush (h docJson : String) : IO String := do
+  match (← lwsTable.get)[h]? with
+  | none => pure (unknownLwsHandle h)
+  | some open_ =>
+      let now : Nat := match parseJson docJson with
+        | .ok j => (match j.field? "now" with
+            | some (.number s) => (s.toNat?).getD open_.mem.mem.clock
+            | _ => open_.mem.mem.clock)
+        | .error _ => open_.mem.mem.clock
+      let (ns', ds) := Notifications.flush open_.cfg.baseIri open_.signer now open_.cfg.rate open_.notif
+      lwsTable.modify (·.insert h { open_ with notif := ns' })
+      pure (okWith ([("changed", .bool (ns'.revision != open_.notif.revision))] ++
+        (if ds.isEmpty then [] else [("deliveries", .array (ds.map deliveryJson))]) ++
+        wakeMember now open_.cfg ns'))
 
 /-- `lwsStep(handle, requestJson)` through the string entry: the content
 travels in the document (`body` or `bodyBase64`). -/
@@ -574,15 +681,19 @@ def lwsSnapshot (h : String) (optsJson : String := "") : IO String := do
       let results : List (String × Json) :=
         if open_.results.records.isEmpty then []
         else [("searchResults", SearchResults.stateJson open_.results)]
+      -- The redirect table of moved resources (issue 914), only when there
+      -- is one.
+      let moved : List (String × Json) :=
+        if open_.moved.isEmpty then [] else [("moved", MoveRedirect.stateJson open_.moved)]
       let snap := match snapshotJson open_.mem.mem with
         | .object fs => Json.object (fs ++ [("notifications", notif),
-            ("access", AccessPolicy.stateJson open_.cfg.baseIri open_.authz.access)] ++ results)
+            ("access", AccessPolicy.stateJson open_.cfg.baseIri open_.authz.access)] ++ results ++ moved)
         | other => other
       pure (snapshotAnswer open_.storageKey optsJson snap)
 
 /-- The op names this module serves. -/
 def lwsOpNames : List String :=
-  ["lwsOpen", "lwsStep", "lwsClose", "lwsSnapshot", "lwsFetched", "lwsDelivered"]
+  ["lwsOpen", "lwsStep", "lwsClose", "lwsSnapshot", "lwsFetched", "lwsDelivered", "lwsFlush"]
 
 /-- The LWS and Solid ops that also take and give a byte region: the
 request content in, the response content out. -/

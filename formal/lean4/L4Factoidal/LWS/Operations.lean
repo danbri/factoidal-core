@@ -170,6 +170,32 @@ structure Config where
   /-- The most search results resources the storage keeps; the oldest is
   removed first. -/
   searchResultsMax : Nat := 100
+  /-- The most (previous path, current path) pairs the storage keeps to
+  answer 301 at the previous identifiers of moved resources
+  (`L4Factoidal.LWS.MoveRedirect`, LWS §Moving Resources); the oldest are
+  removed first. -/
+  redirectsMax : Nat := 256
+  /-- The address the server listens on, as the host bound it (an IP
+  literal; `0.0.0.0` or `::` for every interface), and its port
+  (`L4Factoidal.LWS.InboxGuard`). -/
+  listenAddress : Option String := none
+  listenPort : Option Nat := none
+  /-- The addresses of the machine's network interfaces, as the host read
+  them; used when `listenAddress` is every interface. -/
+  localAddresses : List String := []
+  /-- For one request: the addresses the host resolved for a host name the
+  engine asked about (`resolve`), as (name, addresses). -/
+  resolved : List (String × List String) := []
+  /-- The most webhook deliveries one subscription gets in one window of
+  `deliveryWindow` seconds; the activities of later changes in the window
+  wait and go in one batched envelope when it ends
+  (`Notifications.admit`). 0 turns the limit off. -/
+  deliveryLimit : Nat := 10
+  deliveryWindow : Nat := 60
+  /-- The inbox of the storage controller: when set, each new access
+  request is announced there with a `Create` notification
+  (`L4Factoidal.LWS.AccessGrants`, issue 920). -/
+  controllerInbox : Option String := none
 deriving Repr, Inhabited
 
 /-! ## Helpers over the store -/

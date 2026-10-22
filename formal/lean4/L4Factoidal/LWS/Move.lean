@@ -90,9 +90,8 @@ w3c/lws-protocol commit 9a08ff65a6670cc5d308ed5e531032f23af30fcc
   destination's path and its old name. The capability says
   `"preservesIdentifier": false`, and a move answers 200 with the new
   linkset and `Content-Location`. The draft's SHOULD to answer the old
-  identifiers with 301 is not implemented
-  (https://github.com/danbri/factoidal/issues/914; expected failure in
-  `tests/lws/draft-binding.mjs`).
+  identifiers with 301 is `L4Factoidal.LWS.MoveRedirect`
+  (https://github.com/danbri/factoidal/issues/914).
 * A move is refused with 409 when the destination already holds a resource
   of the same name (as a container or as a data resource), when the
   resource is the storage root (it has no `up` link), and when it is an

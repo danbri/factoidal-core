@@ -63,10 +63,18 @@ The data model, the access profile and what a grant permits are
   draft defines no other answer and no link from a grant to a request.
 * An inbox inside this storage is not delivered to (a delivery there would
   create a resource).
-* Not done: "Access Request creation: When a new access request is
-  submitted, the storage controller SHOULD be notified." The draft names no
-  inbox for the controller. https://github.com/danbri/factoidal/issues/920,
-  an expected failure in `tests/lws/draft-binding.mjs`.
+* "Access Request creation: When a new access request is submitted, the
+  storage controller SHOULD be notified." The draft names no inbox for the
+  storage controller: an access request's own `inbox` is the requesting
+  agent's ("informing an assignee of the event"), and the storage
+  description has no member for it. Server choice
+  (https://github.com/danbri/factoidal/issues/920): the controller's inbox is
+  server configuration, `Config.controllerInbox` (`lws-serve
+  --controller-inbox URL`, configuration member `controllerInbox`). When it is
+  set, each new access request gives one `Notification` with a `Create`
+  activity whose object is the new request, POSTed there through the same
+  delivery path (signed, retried, `lwsDelivered`) as every other
+  notification (`announceRequest`). When it is not set, nothing is sent.
 -/
 import L4Factoidal.LWS.Notifications
 
@@ -172,7 +180,7 @@ def jsonMedia (ct : Option String) : Bool :=
 
 /-- One request to an access endpoint by `agent` (already authenticated by
 `Authorization.decide`). The answer, the new access state, and the grant
-it created, if any. -/
+it created, if any (a grant or an access request: the path says which). -/
 def accessStep (S : Store σ) (cfg : Config) (a : Authorization.AuthzConfig) (now : Nat)
     (agent : Option String) (r : Request) (path : String) (st : σ) :
     Response × AccessState × Option Record :=
@@ -233,7 +241,7 @@ def accessStep (S : Store σ) (cfg : Config) (a : Authorization.AuthzConfig) (no
                 let doc := toStringCompact (servedDoc base e rec_)
                 (lwsJson 201 doc [("location", recordIri base e id), ("etag", etagOf doc),
                    ("link", renderLinks [storageLink])], acc',
-                 if e == .grants then some rec_ else none)
+                 some rec_)
     | _ => (problem 405 ("the " ++ e.kind ++ " endpoint accepts GET, HEAD, OPTIONS and POST") path
               [("allow", allow)], acc, none)
   else
@@ -269,13 +277,12 @@ def inboxesFor (baseIri : String) (acc : AccessState) (g : Record) : List String
   (g.inbox.toList ++ fromRequests).eraseDups.filter (fun u =>
     (urlParts? u).isSome && !u.startsWith baseIri)
 
-/-- The notification of a new grant: one `Create` activity about the grant
-(an LWS data resource in the grant endpoint), one delivery per inbox. -/
-def announce (baseIri : String) (signer : Option Signer) (now : Nat) (acc : AccessState)
-    (g : Record) (ns : NotifState) : NotifState × List Delivery :=
-  let inboxes := inboxesFor baseIri acc g
+/-- One `Create` notification about the access record at `path`, one
+delivery per inbox. -/
+def announceAt (baseIri : String) (signer : Option Signer) (now : Nat) (inboxes : List String)
+    (path : String) (ns : NotifState) : NotifState × List Delivery :=
   if inboxes.isEmpty then (ns, []) else
-  let change : Change := { type := .create, path := accessGrantsPath ++ g.id, kind := .dataResource }
+  let change : Change := { type := .create, path, kind := .dataResource }
   let body := toStringCompact (envelopeJson baseIri
     [activityJson baseIri (activityId ns.run ns.seq) (isoDateTime now) change])
   let pend : List Pending := inboxes.zipIdx.map (fun (u, k) =>
@@ -283,6 +290,24 @@ def announce (baseIri : String) (signer : Option Signer) (now : Nat) (acc : Acce
   ({ ns with seq := ns.seq + 1 + inboxes.length
              pending := (pend.reverse ++ ns.pending).take pendingLimit },
    pend.map (deliveryOf signer now))
+
+/-- The notification of a new grant: one `Create` activity about the grant
+(an LWS data resource in the grant endpoint), one delivery per inbox. -/
+def announce (baseIri : String) (signer : Option Signer) (now : Nat) (acc : AccessState)
+    (g : Record) (ns : NotifState) : NotifState × List Delivery :=
+  announceAt baseIri signer now (inboxesFor baseIri acc g) (accessGrantsPath ++ g.id) ns
+
+/-- The storage controller's inbox, when the configuration names one that
+is an `http` or `https` URL outside this storage. -/
+def controllerInbox? (cfg : Config) : Option String :=
+  cfg.controllerInbox.filter (fun u => (urlParts? u).isSome && !u.startsWith cfg.baseIri)
+
+/-- The notification of a new access request to the storage controller
+(issue 920): one `Create` activity about the request, to
+`Config.controllerInbox`; nothing when it is not set. -/
+def announceRequest (cfg : Config) (signer : Option Signer) (now : Nat) (q : Record)
+    (ns : NotifState) : NotifState × List Delivery :=
+  announceAt cfg.baseIri signer now (controllerInbox? cfg).toList (accessRequestsPath ++ q.id) ns
 
 /-- One request to a storage with access requests and grants: the access
 endpoints here, everything else through `next` (the notification layer,
@@ -301,11 +326,14 @@ def serverStepWith (V : JOSE.Verifiers) (S : Store σ) (cfg : Config)
     | .respond resp => .inr (resp, st, ns, a.access, [])
     | .proceed agent =>
         let (resp, acc', created) := accessStep S cfg a now agent r path st
-        match created with
-        | none => .inr (resp, st, ns, acc', [])
-        | some g =>
+        match created, endpointOf? path with
+        | some g, some .grants =>
             let (ns', ds) := announce cfg.baseIri signer now acc' g ns
             .inr (resp, st, ns', acc', ds)
+        | some q, some .requests =>
+            let (ns', ds) := announceRequest cfg signer now q ns
+            .inr (resp, st, ns', acc', ds)
+        | _, _ => .inr (resp, st, ns, acc', [])
   else
     match next r st ns with
     | .inl x => .inl x

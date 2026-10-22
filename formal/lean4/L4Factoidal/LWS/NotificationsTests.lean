@@ -135,8 +135,16 @@ private def refused (body : String) (ct : String := "application/lws+json") : Na
 -- An inbox that is a container of this storage would make a loop: refused.
 #guard refused "{\"type\":\"WebhookSubscription\",\"topic\":[\"http://localhost/docs/\"],\"inbox\":\"http://localhost/docs/\"}" == (400, 0)
 #guard refused "{\"type\":\"WebhookSubscription\",\"topic\":[\"http://localhost/docs/\"],\"inbox\":\"http://localhost/\"}" == (400, 0)
--- The storage description is not a container: accepted (a delivery to it is refused with 405).
-#guard refused "{\"type\":\"WebhookSubscription\",\"topic\":[\"http://localhost/docs/\"],\"inbox\":\"http://localhost/.well-known/lws-storage\"}" == (201, 1)
+-- Any inbox at this server's authority is refused (issue 915,
+-- `InboxGuard.loops`), also one that is not a container.
+#guard refused "{\"type\":\"WebhookSubscription\",\"topic\":[\"http://localhost/docs/\"],\"inbox\":\"http://localhost/.well-known/lws-storage\"}" == (400, 0)
+-- This server under another name: `localhost` at another spelling, a loopback
+-- address, IPv6 loopback, all at port 80 (the base IRI's).
+#guard refused "{\"type\":\"WebhookSubscription\",\"topic\":[\"http://localhost/docs/\"],\"inbox\":\"http://LOCALHOST:80/in\"}" == (400, 0)
+#guard refused "{\"type\":\"WebhookSubscription\",\"topic\":[\"http://localhost/docs/\"],\"inbox\":\"http://127.0.0.1/in\"}" == (400, 0)
+#guard refused "{\"type\":\"WebhookSubscription\",\"topic\":[\"http://localhost/docs/\"],\"inbox\":\"http://[::1]/in\"}" == (400, 0)
+-- Negative: another port of this machine is another server.
+#guard refused "{\"type\":\"WebhookSubscription\",\"topic\":[\"http://localhost/docs/\"],\"inbox\":\"http://127.0.0.1:8080/in\"}" == (201, 1)
 #guard refused subBody "text/plain" == (415, 0)
 
 -- `expires` far in the future is accepted and echoed.
@@ -345,6 +353,103 @@ private def hdr (k : String) : Option String := wSigned.ds.head?.bind (·.header
   let acl : Entry := { path := "/.acl", kind := .metadataResource, contentType := "text/turtle",
                        body := .empty, mtime := 1 }
   classify MemStore st0 (memPut st0 acl) "/.acl" == none
+
+/-! ## Delivery rate (issue 915; webhook suite §Security Considerations)
+
+"Rate limiting and endpoint verification are suggested to prevent abuse of
+the subscription mechanism." At most `deliveryLimit` deliveries per
+subscription in a window of `deliveryWindow` seconds; the activities over
+the limit wait and go in one batched envelope (core §Batching
+Notifications). -/
+
+private def cRate : Config := { cfg with deliveryLimit := 2, deliveryWindow := 60 }
+
+/-- Subscribe, then `n` PUTs into the topic, each one engine second after
+the last. -/
+private def burst (c : Config) (n : Nat) : List W :=
+  let w0' := run1 w1 (subReq subBody) (c := c)
+  (List.range n).foldl (fun ws i =>
+    let w := ws.getLast?.getD w0'
+    ws ++ [run1 { w with ds := [] } (putText ("/docs/r" ++ toString i ++ ".txt") (toString i)) (c := c)])
+    [w0']
+
+private def bRate : List W := burst cRate 5
+private def bOff : List W := burst { cRate with deliveryLimit := 0 } 5
+
+-- Positive: 5 changes in one window give 2 deliveries; 3 activities wait.
+#guard (bRate.flatMap (·.ds)).length == 2
+#guard (bRate.getLast?.map (fun w => w.ns.held.length)) == some 3
+#guard (bRate.getLast?.map (fun w => decide (w.ns.revision > w2.ns.revision))) == some true
+-- The engine names when to flush: the end of the window.
+#guard (bRate.getLast?.bind (fun w => nextWake w.st.clock cRate.rate w.ns)).isSome
+-- Before the window ends a flush sends nothing ...
+#guard (bRate.getLast?.map (fun w => (flush "http://localhost/" none w.st.clock cRate.rate w.ns).2.length)) == some 0
+-- ... after it, ONE envelope with the three waiting activities, in order,
+-- and nothing waits any more.
+private def flushed : Option (NotifState × List Delivery) :=
+  bRate.getLast?.map (fun w => flush "http://localhost/" none (w.st.clock + 60) cRate.rate w.ns)
+#guard flushed.map (fun x => x.2.length) == some 1
+#guard flushed.map (fun x => x.2.flatMap (fun d => (acts d).map objId)) ==
+  some [some "http://localhost/docs/r2.txt", some "http://localhost/docs/r3.txt", some "http://localhost/docs/r4.txt"]
+#guard flushed.map (fun x => x.1.held.isEmpty) == some true
+#guard flushed.bind (fun x => nextWake 0 cRate.rate x.1) == none
+-- A change in a later window carries the waiting activities first.
+#guard
+  match bRate.getLast? with
+  | some w =>
+      let w' := run1 { w with st := { w.st with clock := w.st.clock + 60 }, ds := [] }
+        (putText "/docs/late.txt" "late") (c := cRate)
+      w'.ds.length == 1 && w'.ns.held.isEmpty &&
+      w'.ds.flatMap (fun d => (acts d).map objId) ==
+        [some "http://localhost/docs/r2.txt", some "http://localhost/docs/r3.txt",
+         some "http://localhost/docs/r4.txt", some "http://localhost/docs/late.txt"]
+  | none => false
+-- Negative: with the limit off every change is delivered at once.
+#guard (bOff.flatMap (·.ds)).length == 5
+#guard (bOff.getLast?.map (fun w => w.ns.held.isEmpty)) == some true
+-- Negative: a cancelled subscription drops what waits for it.
+#guard
+  match bRate.getLast? with
+  | some w => (run1 w (req "DELETE" (subscriptionsPath ++ "sub0")) (c := cRate)).ns.held.isEmpty
+  | none => false
+-- The default: 10 deliveries per subscription per 60 seconds.
+#guard (({} : Config).rate.limit, ({} : Config).rate.window) == (10, 60)
+-- `admit` itself: the third decision in one window is refused, the first of
+-- the next window is admitted.
+#guard
+  let s : Subscription := { id := "s", owner := none, topics := ["/"], inbox := "http://h.example/", created := 0 }
+  let r : Rate := ⟨2, 60⟩
+  let (a1, s1) := admit r 100 s
+  let (a2, s2) := admit r 101 s1
+  let (a3, s3) := admit r 102 s2
+  let (a4, _) := admit r 160 s3
+  a1 && a2 && !a3 && a4
+
+/-! ## An inbox that is this server under another name (issue 915)
+
+The host resolves the inbox host name when the engine asks
+(`resolveNeeded?`) and passes the addresses back (`Config.resolved`);
+`InboxGuard.loops` decides. -/
+
+#guard resolveNeeded? stubV MemStore cfg az 0 (subReq subBody) st0 == some "hook.example"
+-- Negative: nothing to resolve for an unauthorized request, a resolved name,
+-- an IP literal, or another request.
+#guard resolveNeeded? stubV MemStore cfg {} 0 (subReq subBody) st0 == none
+#guard resolveNeeded? stubV MemStore { cfg with resolved := [("hook.example", ["192.0.2.1"])] } az 0
+  (subReq subBody) st0 == none
+#guard resolveNeeded? stubV MemStore cfg az 0 (subReq
+  "{\"type\":\"WebhookSubscription\",\"topic\":[\"http://localhost/docs/\"],\"inbox\":\"http://192.0.2.1/\"}") st0 == none
+#guard resolveNeeded? stubV MemStore cfg az 0 (putText "/x.txt" "y") st0 == none
+
+private def cListen (addrs : List String) : Config :=
+  { cfg with listenAddress := some "127.0.0.1", listenPort := some 8080,
+             resolved := [("hook.example", addrs)] }
+-- Positive: the name resolves to the address and port this server listens on.
+#guard (run1 w1 (subReq subBody) (c := cListen ["127.0.0.1"])).resp.status == 400
+#guard (run1 w1 (subReq subBody) (c := cListen ["192.0.2.1", "::1"])).resp.status == 400
+-- Negative: it resolves elsewhere, or not at all.
+#guard (run1 w1 (subReq subBody) (c := cListen ["192.0.2.1"])).resp.status == 201
+#guard (run1 w1 (subReq subBody) (c := cListen [])).resp.status == 201
 
 /-! ## The registry check (`lws-core-16`) -/
 

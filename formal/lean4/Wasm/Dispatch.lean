@@ -330,6 +330,7 @@ def lwsSolidOpNames : List String :=
   , "lwsSnapshot"
   , "lwsFetched"
   , "lwsDelivered"
+  , "lwsFlush"
   , "solidOpen"
   , "solidStep"
   , "solidClose"
@@ -628,6 +629,7 @@ def callIOUncoded (op : String) (argsJson : String) : IO String :=
       | args => pure (errJson s!"lwsSnapshot expects 1 or 2 arguments, got {args.length}"))
   | "lwsFetched"       => withArgs (arityIO2 op Ops.lwsFetched)
   | "lwsDelivered"     => withArgs (arityIO2 op Ops.lwsDelivered)
+  | "lwsFlush"         => withArgs (arityIO2 op Ops.lwsFlush)
   | "solidSnapshot"    => withArgs (fun args =>
       match args with
       | [a] => Ops.solidSnapshot a

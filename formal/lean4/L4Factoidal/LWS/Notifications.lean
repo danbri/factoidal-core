@@ -127,15 +127,31 @@ subscription is deactivated are all decided here.
   or metadata was modified").
 * The inbox must be an `http` or `https` URL, and not a container of this
   storage (a delivery POSTed there would create a resource, whose Create
-  would be delivered again). A loop through another name of this server is
-  not detected; under authorization the delivery is an anonymous POST, which
-  the access policy refuses unless it grants Append to the public. The
-  drafts suggest "Rate limiting and endpoint verification" against
-  subscription abuse; neither is implemented here
-  (https://github.com/danbri/factoidal/issues/890).
+  would be delivered again), and not this server under another host name, IP
+  address or `localhost` (`InboxGuard.loops`, 400;
+  https://github.com/danbri/factoidal/issues/915). For an inbox host that is
+  a name, the engine asks the host to resolve it first (`resolveNeeded?`, the
+  `resolve` answer of the wasm ABI).
+* The webhook suite, "Security Considerations": "Subscription Abuse: Rate
+  limiting and endpoint verification are suggested to prevent abuse of the
+  subscription mechanism." Rate limiting (issue 915): at most
+  `Config.deliveryLimit` deliveries (default 10) per subscription in a window
+  of `Config.deliveryWindow` seconds (default 60); 0 turns it off
+  (`admit`, theorems `admits_le`, `admit_count_le`). The activities of a
+  change over the limit wait (`NotifState.held`, at most `heldLimit` in all,
+  the oldest dropped first) and go, when the window ends, in ONE envelope
+  with an `activity` array (core §Batching Notifications: "A server MAY
+  combine multiple activities into a single notification envelope by
+  providing an array of activity objects as the value of the activity
+  property"): at the subscription's next change, or when the host calls
+  `lwsFlush` after the seconds the engine named (`nextWake`, `flush`).
+  Endpoint verification: the drafts describe no procedure for it (no
+  verification request, no challenge, no expected answer), so this server
+  makes none.
 -/
 import L4Factoidal.LWS.Authorization
 import L4Factoidal.LWS.Snapshot
+import L4Factoidal.LWS.InboxGuard
 import L4Factoidal.Crypto.SHA2
 
 namespace L4Factoidal.LWS.Notifications
@@ -503,6 +519,10 @@ structure Subscription where
   created : Nat
   failures : Nat := 0
   active : Bool := true
+  /-- The delivery window (`admit`): when it began and how many deliveries
+  went in it. Not persisted. -/
+  windowStart : Nat := 0
+  windowCount : Nat := 0
 deriving Repr, Inhabited, DecidableEq
 
 /-- Is the subscription delivering at time `now`? -/
@@ -536,6 +556,9 @@ structure NotifState where
   pending : List Pending := []
   /-- The run tag of `activityId`. -/
   run : String := ""
+  /-- Activities over the delivery limit, waiting for the end of their
+  subscription's window: (subscription id, activity), oldest first. -/
+  held : List (String × Json) := []
 deriving Repr, Inhabited
 
 /-- The most deliveries kept waiting for an answer; the oldest are dropped. -/
@@ -546,6 +569,80 @@ def maxAttempts : Nat := 3
 
 /-- Failed deliveries in a row that deactivate a subscription. -/
 def failureLimit : Nat := 3
+
+/-- The most activities kept waiting over the delivery limit, in all; the
+oldest are dropped first. -/
+def heldLimit : Nat := 1024
+
+/-- The delivery rate: at most `limit` deliveries per subscription in a
+window of `window` seconds; `limit` 0 turns the limit off. -/
+structure Rate where
+  limit : Nat := 10
+  window : Nat := 60
+deriving Repr, Inhabited
+
+/-- The rate of a configuration. -/
+def _root_.L4Factoidal.LWS.Config.rate (cfg : Config) : Rate := ⟨cfg.deliveryLimit, cfg.deliveryWindow⟩
+
+/-- **One delivery decision** for subscription `s` at time `now`: a window
+that has ended starts again at `now`; then a delivery is admitted when the
+window has had fewer than `limit` deliveries, and counted. -/
+def admit (rate : Rate) (now : Nat) (s : Subscription) : Bool × Subscription :=
+  let s0 := if s.windowStart + rate.window ≤ now then { s with windowStart := now, windowCount := 0 } else s
+  if rate.limit == 0 then (true, s0)
+  else if s0.windowCount < rate.limit then (true, { s0 with windowCount := s0.windowCount + 1 })
+  else (false, s0)
+
+/-- The number of deliveries `admit` lets through for decisions at the times
+`ts`, in order. -/
+def admits (rate : Rate) : List Nat → Subscription → Nat
+  | [], _ => 0
+  | t :: ts, s => (if (admit rate t s).1 then 1 else 0) + admits rate ts (admit rate t s).2
+
+/-- **At most `limit` deliveries in one window.** For decisions at times
+before the end of the subscription's window, `admit` lets through at most
+the number of deliveries left in that window. -/
+theorem admits_le (rate : Rate) (hl : 0 < rate.limit) :
+    ∀ (ts : List Nat) (s : Subscription), (∀ t ∈ ts, t < s.windowStart + rate.window) →
+      s.windowCount ≤ rate.limit → admits rate ts s ≤ rate.limit - s.windowCount := by
+  intro ts
+  induction ts with
+  | nil => intro s _ _; simp [admits]
+  | cons t ts ih =>
+      intro s hts hc
+      have ht : ¬ (s.windowStart + rate.window ≤ t) := by
+        have := hts t (List.mem_cons_self ..); omega
+      have hl0 : (rate.limit == 0) = false := by
+        cases h : rate.limit with
+        | zero => omega
+        | succ _ => rfl
+      have hrest : ∀ x ∈ ts, x < s.windowStart + rate.window :=
+        fun x hx => hts x (List.mem_cons_of_mem _ hx)
+      by_cases hlt : s.windowCount < rate.limit
+      · have hadm : admit rate t s = (true, { s with windowCount := s.windowCount + 1 }) := by
+          simp [admit, ht, hl0, hlt]
+        simp only [admits, hadm, ↓reduceIte]
+        have := ih { s with windowCount := s.windowCount + 1 } hrest (by simp; omega)
+        simp only at this
+        omega
+      · have hadm : admit rate t s = (false, s) := by
+          simp [admit, ht, hl0, hlt]
+        simp only [admits, hadm, Bool.false_eq_true, ↓reduceIte, Nat.zero_add]
+        exact ih s hrest hc
+
+/-- A decision keeps the count of its window within the limit. -/
+theorem admit_count_le (rate : Rate) (now : Nat) (s : Subscription) (hl : 0 < rate.limit)
+    (hc : s.windowCount ≤ rate.limit) : (admit rate now s).2.windowCount ≤ rate.limit := by
+  have hl0 : (rate.limit == 0) = false := by
+    cases h : rate.limit with
+    | zero => omega
+    | succ _ => rfl
+  unfold admit
+  by_cases hw : s.windowStart + rate.window ≤ now
+  · simp only [hw, ↓reduceIte, hl0, Bool.false_eq_true]
+    split <;> simp_all <;> omega
+  · simp only [hw, ↓reduceIte, hl0, Bool.false_eq_true]
+    split <;> simp_all <;> omega
 
 /-- What signs deliveries: the verification method identifier and the
 signing function (Ed25519 in the wasm layer). -/
@@ -677,23 +774,72 @@ theorem routed_authorized {α : Type} {canRead : Option String → σ → String
     simp only [eligible, Bool.and_eq_true] at this
     exact ⟨this.2.1.1, this.2.1.2, this.2.2, hs', this.1⟩
 
+/-- The activities waiting for subscription `id`, oldest first. -/
+def heldOf (ns : NotifState) (id : String) : List Json :=
+  (ns.held.filter (·.1 == id)).map (·.2)
+
 /-- The deliveries of one step: number the changes, build each activity
-once, route them, and make one pending delivery per subscription. -/
+once, route them, and make one pending delivery per subscription that
+`admit` lets through, with the activities that waited for it first. The
+activities of a subscription over its limit wait in `held`. -/
 def emit (canRead : Option String → σ → String → Bool) (baseIri : String)
     (signer : Option Signer) (now : Nat) (pre post : σ) (changes : List Change)
-    (ns : NotifState) : NotifState × List Delivery :=
+    (ns : NotifState) (rate : Rate := {}) : NotifState × List Delivery :=
   if changes.isEmpty then (ns, []) else
   let published := isoDateTime now
   let acts := changes.zipIdx.map (fun (c, i) =>
     (c, activityJson baseIri (activityId ns.run (ns.seq + i)) published c))
   let seq1 := ns.seq + changes.length
   let groups := routed canRead pre post now ns.subs acts
-  let pend : List Pending := groups.zipIdx.map (fun ((s, mine), k) =>
+  let decided : List (Subscription × Bool × List Json) := groups.map (fun (s, mine) =>
+    let (send, s') := admit rate now s
+    (s', send, mine.map (fun (x : Change × Json) => x.2)))
+  let sends := (decided.filter (·.2.1)).map (fun (s', _, as_) => (s', heldOf ns s'.id ++ as_))
+  let waits := decided.filter (fun x => !x.2.1)
+  let held1 := (ns.held.filter (fun h => !sends.any (·.1.id == h.1))) ++
+    waits.flatMap (fun (s', _, as_) => as_.map (s'.id, ·))
+  let held2 := held1.drop (held1.length - heldLimit)
+  let heldChanged := !waits.isEmpty || sends.any (fun x => !(heldOf ns x.1.id).isEmpty)
+  let subs' := ns.subs.map (fun s => match decided.find? (·.1.id == s.id) with
+    | some (s', _, _) => s'
+    | none => s)
+  let pend : List Pending := sends.zipIdx.map (fun ((s, as_), k) =>
     { id := "d" ++ toString (seq1 + k), subId := s.id, inbox := s.inbox
-      body := toStringCompact (envelopeJson baseIri (mine.map (·.2))), attempt := 1 })
-  ({ ns with seq := seq1 + groups.length
+      body := toStringCompact (envelopeJson baseIri as_), attempt := 1 })
+  ({ ns with seq := seq1 + sends.length, subs := subs', held := held2
+             revision := if heldChanged then ns.revision + 1 else ns.revision
              pending := (pend.reverse ++ ns.pending).take pendingLimit },
    pend.map (deliveryOf signer now))
+
+/-- The waiting activities whose window has ended: one batched envelope per
+live subscription that `admit` lets through; the activities of a
+subscription that is no longer live, or no longer exists, are dropped. -/
+def flush (baseIri : String) (signer : Option Signer) (now : Nat) (rate : Rate)
+    (ns : NotifState) : NotifState × List Delivery :=
+  let waiting := ns.subs.filter (fun s => !(heldOf ns s.id).isEmpty)
+  let dead := waiting.filter (fun s => !live now s)
+  let ready := (waiting.filter (live now)).filterMap (fun s =>
+    match admit rate now s with
+    | (true, s') => some s'
+    | (false, _) => none)
+  let gone := (ready ++ dead).map (·.id)
+  let orphans := ns.held.filter (fun h => !ns.subs.any (·.id == h.1))
+  if gone.isEmpty && orphans.isEmpty then (ns, []) else
+  let pend : List Pending := ready.zipIdx.map (fun (s, k) =>
+    { id := "d" ++ toString (ns.seq + k), subId := s.id, inbox := s.inbox
+      body := toStringCompact (envelopeJson baseIri (heldOf ns s.id)), attempt := 1 })
+  ({ ns with subs := ns.subs.map (fun s => (ready.find? (·.id == s.id)).getD s)
+             held := ns.held.filter (fun h => !gone.contains h.1 && ns.subs.any (·.id == h.1))
+             seq := ns.seq + ready.length, revision := ns.revision + 1
+             pending := (pend.reverse ++ ns.pending).take pendingLimit },
+   pend.map (deliveryOf signer now))
+
+/-- The seconds until the first window with waiting activities ends (at
+least 1), or `none` when nothing waits. The host calls `lwsFlush` then. -/
+def nextWake (now : Nat) (rate : Rate) (ns : NotifState) : Option Nat :=
+  let ends := (ns.subs.filter (fun s => live now s && !(heldOf ns s.id).isEmpty)).map
+    (fun s => Nat.max 1 (s.windowStart + rate.window - now))
+  ends.foldl (fun acc e => some (match acc with | some a => Nat.min a e | none => e)) none
 
 /-! ## Delivery outcomes (webhook suite §Notification Delivery) -/
 
@@ -770,7 +916,8 @@ structure SubRequest where
 /-- Read a subscription request body (LWS §Subscription Request, webhook
 suite §Creating a Webhook Subscription). The error is the status and the
 detail of the refusal. -/
-def readSubRequest (baseIri : String) (now : Nat) (body : ByteArray) :
+def readSubRequest (baseIri : String) (now : Nat) (body : ByteArray)
+    (loops : String → Bool := fun _ => false) :
     Except (Nat × String) SubRequest := do
   let text ← (String.fromUTF8? body).elim (.error (400, "the request is not UTF-8")) .ok
   let j ← match parseJson text with
@@ -798,6 +945,10 @@ def readSubRequest (baseIri : String) (now : Nat) (body : ByteArray) :
     let p := String.ofList (p.toList.takeWhile (fun (c : Char) => c != '#'))
     if pathIsContainer p && !isSubscriptionPath p then
       .error (400, "inbox is a container of this storage: a delivery would create a resource and so another notification")
+  -- This server under another host name, IP address or `localhost`
+  -- (`InboxGuard.loops`, issue 915).
+  if loops inbox then
+    .error (400, "inbox names this server (its host, one of its addresses or localhost, at its port): a delivery would be a request to this server")
   let (expires, expiresAt) ← match j.field? "expires" with
     | none | some .null => .ok (none, none)
     | some (.string e) =>
@@ -875,7 +1026,7 @@ def subscriptionsStep (canRead : Option String → String → Bool) (cfg : Confi
         if ct != some mediaLwsJson && ct != some "application/json" then
           (problem 415 "a subscription request is application/lws+json" path
             [("accept-post", mediaLwsJson)], ns)
-        else match readSubRequest base now r.content with
+        else match readSubRequest base now r.content (InboxGuard.loops cfg) with
           | .error (status, msg) => (problem status msg path, ns)
           | .ok q =>
               -- LWS §Subscription Authorization: read access to EVERY topic.
@@ -915,6 +1066,7 @@ def subscriptionsStep (canRead : Option String → String → Bool) (cfg : Confi
             (⟨204, [], "", none⟩,
              { ns with subs := ns.subs.filter (fun x => x.id != id),
                        pending := ns.pending.filter (fun p => p.subId != id),
+                       held := ns.held.filter (fun h => h.1 != id),
                        revision := ns.revision + 1 })
         | _ => (problem 405 "a subscription accepts GET, HEAD, OPTIONS and DELETE" path
                   [("allow", allow)], ns)
@@ -959,8 +1111,23 @@ def serverStep (V : JOSE.Verifiers) (S : Store σ) (cfg : Config)
         let (resp, st') := step S { cfg with agent := agent } r st
         if !cfg.notifications || ns.subs.isEmpty then .inr (resp, st', ns, []) else
         let changes := changesOf S r resp st st'
-        let (ns', ds) := emit (wacCanRead S cfg a) cfg.baseIri signer now st st' changes ns
+        let (ns', ds) := emit (wacCanRead S cfg a) cfg.baseIri signer now st st' changes ns cfg.rate
         .inr (resp, st', ns', ds)
+
+/-- The inbox host of a subscription request that the host must resolve
+before the request is stepped (`InboxGuard.toResolve?`): only for an
+authorized POST to the subscription endpoint, so an unauthorized client
+makes the host resolve nothing. -/
+def resolveNeeded? (V : JOSE.Verifiers) (S : Store σ) (cfg : Config)
+    (a : Authorization.AuthzConfig) (now : Nat) (r : Request) (st : σ) : Option String :=
+  let (path, _) := splitTarget r.path
+  if !cfg.notifications || path != subscriptionsPath || r.method != "POST" then none else
+  match Authorization.decide V S cfg a now r st with
+  | .proceed _ =>
+      match (String.fromUTF8? r.content).bind parseJson? with
+      | some j => (j.getString? "inbox").bind (InboxGuard.toResolve? cfg)
+      | none => none
+  | _ => none
 
 /-! ## Persistence -/
 
@@ -978,7 +1145,9 @@ def notifStateJson (ns : NotifState) : Json :=
         , ("active", .bool s.active) ] ++
         (match s.expires, s.expiresAt with
          | some e, some t => [("expires", .string e), ("expiresAt", .number (toString t))]
-         | _, _ => []))))) ]
+         | _, _ => [])))))
+    , ("held", .array (ns.held.map (fun (id, act) =>
+        Json.object [("subscription", .string id), ("activity", act)]))) ]
 
 private def natOf? (j : Json) (k : String) : Option Nat :=
   match j.field? k with
@@ -1001,6 +1170,10 @@ def notifStateOfJson (j : Json) : Except String NotifState := do
            expires := it.getString? "expires", expiresAt := natOf? it "expiresAt"
            created := (natOf? it "created").getD 0, failures := (natOf? it "failures").getD 0
            active := it.field? "active" != some (.bool false) } : Subscription))
-  .ok { subs, seq := (natOf? j "seq").getD 0 }
+  let held : List (String × Json) := ((j.getArray? "held").getD []).filterMap (fun h =>
+    match h.getString? "subscription", h.field? "activity" with
+    | some id, some act => some (id, act)
+    | _, _ => none)
+  .ok { subs, seq := (natOf? j "seq").getD 0, held := held.drop (held.length - heldLimit) }
 
 end L4Factoidal.LWS.Notifications
