@@ -138,14 +138,20 @@ theorem Summary.of_tn (v : EvalResult) : (Summary.of v).tn = v.toNumeric? := by
 inductive AggAcc where
   /-- COUNT: the values counted -/
   | cnt (n : Nat)
-  /-- SUM and AVG: the running sum, its promoted type, the numeric operands, and
-      whether a non-numeric operand was seen -/
-  | num (s : Scaled) (k : NumKind) (c : Nat) (bad : Bool)
+  /-- SUM and AVG: the running sum as its mantissa and scale (the fields of a
+      `Scaled`, so that a step allocates no `Scaled`; `AggAcc.ofScaled`), its
+      promoted type, the numeric operands, and whether a non-numeric operand
+      was seen -/
+  | num (m : Int) (sc : Nat) (k : NumKind) (c : Nat) (bad : Bool)
   /-- MIN and MAX: the best value so far, with its `numericView` and the numeric
       reading of that (its `Summary`) -/
   | best (b : Option Summary)
 
 instance : Inhabited AggAcc := ⟨.cnt 0⟩
+
+/-- The SUM or AVG state of a running sum held as a `Scaled`. -/
+@[inline] def AggAcc.ofScaled (s : Scaled) (k : NumKind) (c : Nat) (bad : Bool) : AggAcc :=
+  .num s.mantissa s.scale k c bad
 
 /-- The aggregate functions the accumulators cover. -/
 def Streamed : AggregateFn → Bool
@@ -154,7 +160,7 @@ def Streamed : AggregateFn → Bool
 
 def AggAcc.init : AggregateFn → AggAcc
   | .count => .cnt 0
-  | .sum | .avg => .num ⟨0, 0⟩ .int 0 false
+  | .sum | .avg => .ofScaled ⟨0, 0⟩ .int 0 false
   | _ => .best none
 
 def AggAcc.stepCount : AggAcc → AggAcc
@@ -176,11 +182,35 @@ theorem addScaled_eq (a b : Scaled) : addScaled a b = a.add b := by
 
 def AggAcc.stepNum (a : AggAcc) (s : Summary) : AggAcc :=
   match a with
-  | .num sc k c bad =>
+  | .num m sc k c bad =>
     match s.tn with
-    | some (x, vk) => .num (addScaled sc x) (promoteKind k vk) (c + 1) bad
-    | none => .num sc k c true
+    | some (x, vk) =>
+      -- the equal-scale case (every integer sum) adds the mantissas in place
+      if sc == x.scale then .num (m + x.mantissa) sc (promoteKind k vk) (c + 1) bad
+      else
+        let r := Scaled.add ⟨m, sc⟩ x
+        .num r.mantissa r.scale (promoteKind k vk) (c + 1) bad
+    | none => .num m sc k c true
   | a => a
+
+/-- The step of SUM and AVG on a running sum held as a `Scaled` is `Scaled.add` of
+the operand's reading: the in-place form above equals the specification. -/
+theorem stepNum_ofScaled (s0 : Scaled) (k : NumKind) (c : Nat) (bad : Bool) (s : Summary) :
+    AggAcc.stepNum (.ofScaled s0 k c bad) s =
+      match s.tn with
+      | some (x, vk) => .ofScaled (s0.add x) (promoteKind k vk) (c + 1) bad
+      | none => .ofScaled s0 k c true := by
+  rcases s0 with ⟨m, sc⟩
+  unfold AggAcc.ofScaled AggAcc.stepNum
+  cases s.tn with
+  | none => rfl
+  | some p =>
+    obtain ⟨x, vk⟩ := p
+    by_cases h : sc = x.scale
+    · subst h
+      simp [← addScaled_eq, addScaled]
+    · have h' : (sc == x.scale) = false := by simpa using h
+      simp [h']
 
 /-- `Scaled.cmp` with the equal-scale case first (every integer comparison). -/
 @[inline] def cmpScaled (a b : Scaled) : Int :=
@@ -293,9 +323,9 @@ theorem sumNumeric_eq (vals : List EvalResult) :
 def AggAcc.finish (fn : AggregateFn) (a : AggAcc) : EvalResult :=
   match fn, a with
   | .count, .cnt n => .num (Int.ofNat n)
-  | .sum, .num s k c bad =>
-    if bad then .error else if c == 0 then .num 0 else formatNumericResult s k
-  | .avg, .num s k c bad => if bad then .error else avgOfAcc s k c
+  | .sum, .num m sc k c bad =>
+    if bad then .error else if c == 0 then .num 0 else formatNumericResult ⟨m, sc⟩ k
+  | .avg, .num m sc k c bad => if bad then .error else avgOfAcc ⟨m, sc⟩ k c
   | .min, .best b | .max, .best b =>
     match b with
     | some b => b.v
@@ -373,8 +403,8 @@ theorem step_num_error (fn : AggregateFn) (hfn : fn = .sum ∨ fn = .avg) (a : A
 the type error, and the flag is "some value has no numeric reading". -/
 theorem num_stream (fn : AggregateFn) (hfn : fn = .sum ∨ fn = .avg) (vals : List EvalResult) :
     ∀ sc k c bad,
-    (vals.map Summary.of).foldl (AggAcc.step fn) (.num sc k c bad) =
-      .num (sumNumericAcc (filterNonError vals) sc k c).1
+    (vals.map Summary.of).foldl (AggAcc.step fn) (.ofScaled sc k c bad) =
+      .ofScaled (sumNumericAcc (filterNonError vals) sc k c).1
            (sumNumericAcc (filterNonError vals) sc k c).2.1
            (sumNumericAcc (filterNonError vals) sc k c).2.2
            (bad || (filterNonError vals).any (fun v => v.toNumeric?.isNone)) := by
@@ -389,7 +419,7 @@ theorem num_stream (fn : AggregateFn) (hfn : fn = .sum ∨ fn = .avg) (vals : Li
       exact ih sc k c bad
     · simp only [hv, if_false, List.map_cons, List.foldl_cons]
       rw [step_num_of_ne fn hfn _ v hv]
-      simp only [AggAcc.stepNum, Summary.of_tn, addScaled_eq]
+      simp only [stepNum_ofScaled, Summary.of_tn]
       cases hn : v.toNumeric? with
       | none => simp [ih, sumNumericAcc, hn]
       | some p =>
@@ -505,13 +535,13 @@ theorem evalAggregate_stream (env : EvalEnv) (fn : AggregateFn) (hfn : Streamed 
     have h := num_stream .sum (Or.inl rfl) vals ⟨0, 0⟩ .int 0 false
     simp only [AggAcc.init, aggVals]
     rw [h]
-    simp only [AggAcc.finish, Bool.false_or]
+    simp only [AggAcc.finish, AggAcc.ofScaled, Bool.false_or]
     cases hb : (filterNonError vals).any (fun v => v.toNumeric?.isNone) <;> simp [sumNumeric_eq]
   | avg =>
     have h := num_stream .avg (Or.inr rfl) vals ⟨0, 0⟩ .int 0 false
     simp only [AggAcc.init, aggVals]
     rw [h]
-    simp only [AggAcc.finish, Bool.false_or]
+    simp only [AggAcc.finish, AggAcc.ofScaled, Bool.false_or]
     cases hb : (filterNonError vals).any (fun v => v.toNumeric?.isNone) <;> simp [avgNumeric_eq]
   | min =>
     simp only [AggAcc.init, aggVals, step_min]
