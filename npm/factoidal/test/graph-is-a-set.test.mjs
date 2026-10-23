@@ -56,20 +56,10 @@ test('query and serialize and canonicalize take the text directly', async () => 
   assert.equal(lines(await f.canonicalize(NT)).length, 1);
 });
 
-// Shortfall: https://github.com/danbri/factoidal/issues/967. jsonldToRdf stores
-// the made dataset without Dataset.toSet. The case turns the suite red when it
-// starts to pass; then change it to a plain assertion and close the issue.
-const ISSUE_967 = 'https://github.com/danbri/factoidal/issues/967';
-function xfail(name, issueUrl, fn) {
-  test(`xfail: ${name} (${issueUrl})`, async () => {
-    let failed = false;
-    try { await fn(); } catch { failed = true; }
-    assert.ok(failed, `unexpected pass: ${name} now works; flip this xfail to an assertion and close ${issueUrl}`);
-  });
-}
-xfail('jsonldToRdf: a repeated value is one triple', ISSUE_967, async () => {
+test('jsonldToRdf: a repeated value is one triple', async () => {
   const ds = await f.jsonldToRdf(SOURCES.jsonld);
-  try { await oneTriple(ds); } finally { ds.dispose(); }
+  await oneTriple(ds);
+  ds.dispose();
 });
 
 test('fromQuads: the same quad given twice is one quad', async () => {
