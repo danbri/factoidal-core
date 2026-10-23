@@ -936,6 +936,18 @@ structure Store (m : Type → Type) where
       post-processed query does: the measurement of the two paths and the
       oracle of their comparison. -/
   aggOnIds : Bool := true
+  /-- issue 961: called with a phase name at the end of each phase of
+      `runPlanM` and `evalBgpM` (the constants, each scan and join, the
+      ORDER BY and DISTINCT step, the rendering). No effect on any answer;
+      `l4sbm11 query` with `SBM11_PHASES` set prints the median time of each
+      phase. -/
+  mark : Option (String → m Unit) := none
+
+/-- `Store.mark`, when the store has one. -/
+def Store.markM {m : Type → Type} [Monad m] (st : Store m) (l : String) : ExceptT String m Unit :=
+  match st.mark with
+  | some f => ExceptT.lift (f l)
+  | none => pure ()
 
 /-- The runner of the divided paths. `fold job chunks init g` runs `job` on
     every chunk of block numbers, each with its own view of the store, and
@@ -1917,6 +1929,7 @@ def evalBgpM {m : Type → Type} [Monad m] (st : Store m) (pats : Array Pat) (ne
     | none => do
       let (t, s) ← scanTableOf st spec0
       pure (t, s.full, "")
+  st.markM "scanfirst"
   let mut total := st0
   lines := lines.push s!"pattern {first}: {permNames[spec0.perm]!} key {spec0.key.size} estimate {ests[first]!}; blocks {st0.blocksRead} read of {st0.blocksSelected} selected of {st0.blocksTotal}, frames {st0.framesRead}, {st0.bytesRead} bytes; rows {tab0.rows}{sip0}"
   let mut tab := tab0
@@ -1935,6 +1948,7 @@ def evalBgpM {m : Type → Type} [Monad m] (st : Store m) (pats : Array Pat) (ne
       | none => permFor t (bestSortPos t pats)
     let spec := mkSpec t perm keep
     let (rt, s, sipNote) ← scanForJoinM st spec tab ests[next]!
+    st.markM s!"scan{next}"
     total := total.add s
     let (joined, how) ← match mergeVar with
       | some (v, _) =>
@@ -1942,6 +1956,7 @@ def evalBgpM {m : Type → Type} [Monad m] (st : Store m) (pats : Array Pat) (ne
           pure ((← mergeJoinParM par tab rt v), s!"merge join on ?{v}")
         else pure (hashJoin tab rt, "hash join")
       | none => pure (hashJoin tab rt, if (sharedCols tab rt).isEmpty then "cross product" else "hash join")
+    st.markM s!"join{next}"
     lines := lines.push s!"pattern {next}: {permNames[perm]!} key {spec.key.size} estimate {ests[next]!}; blocks {s.blocksRead} read of {s.blocksSelected} selected of {s.blocksTotal}, frames {s.framesRead}, {s.bytesRead} bytes; rows {rt.rows}{sipNote}; {how}: {joined.rows} rows"
     tab := joined
   return (tab, lines, total)
@@ -3128,6 +3143,7 @@ def runPlanM {m : Type → Type} [Monad m] (st : Store m) (plan : Plan) (emit : 
       | .count _ none => a) #[]
     ++ filterVars ++ plan.order.map (·.1) ++ plan.groupVars
   let need (x : String) : Bool := used.contains x
+  st.markM "consts"
   let mut stats : RunStats := {}
   (emit (jsonHead plan.outVars).toUTF8 : m Unit)
   let single := pats.size == 1 && !pats[0]!.hasMissing && plan.optionals.isEmpty
@@ -3236,7 +3252,9 @@ def runPlanM {m : Type → Type} [Monad m] (st : Store m) (plan : Plan) (emit : 
         | .ok t => table := t
         | .error e => throw e
       else table := t1
+    st.markM "bgp+filters"
     let out ← finishM st plan table
+    st.markM "finish"
     let pieces := (out.rows + 4095) / 4096
     for k in [0:pieces] do
       let lo := 4096 * k
@@ -3244,6 +3262,7 @@ def runPlanM {m : Type → Type} [Monad m] (st : Store m) (plan : Plan) (emit : 
       let bytes ← renderRowsM st reference out plan.outVars lo hi (lo == 0)
       (emit bytes : m Unit)
     stats := { stats with rows := out.rows }
+    st.markM "render"
   (emit jsonTail.toUTF8 : m Unit)
   let t := stats.scan
   let plan1 := stats.plan.push s!"total: rows decoded {t.rowsDecoded} (of a full scan the rows of its table, of a scan with candidates the rows gathered); join-key values tested {t.keysTested}; blocks read {t.blocksRead} of {t.blocksSelected} selected, {t.sipSkipped} skipped by candidates; {t.bytesRead} bytes"

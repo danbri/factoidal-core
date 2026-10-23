@@ -100,6 +100,7 @@ import L4Factoidal.Geo.Functions
 import Wasm.Ops.Clock
 import Std.Sync.Mutex
 import Std.Data.TreeMap
+import Harness.WorkerPool
 
 namespace Harness.Sbm11Query
 
@@ -242,6 +243,15 @@ structure Session where
       q19 at 4 threads. -/
   pageLimit : Nat := 8192
   taskPageLimit : Nat := 256
+  /-- The session's worker pool (`Harness.WorkerPool`, issue 961): started by
+      `l4sbm11 query --threads N` for N above 1 (N - 1 workers; the calling
+      thread is the N-th), stopped when the command ends. `none`: divided work
+      runs on the Lean task pool (`IO.asTask`). -/
+  pool : Option Harness.WorkerPool.Pool := none
+  /-- `SBM11_PHASES` set: the id path records the time of each phase mark
+      (`IdQuery.Store.mark`) and `l4sbm11 query --repeat N` prints the median
+      time of each phase over runs 2 to N. -/
+  phases : Bool := false
 
 /-- The default of `SBM11_PAGES`, the most dictionary pages a cache holds. A
     page is about 4.5 KB (olympics q19 needs between 4,096 and 8,192 pages). At
@@ -737,6 +747,30 @@ def Session.absorb (ss v : Session) : IO Unit := do
 
 def liftIO {α : Type} (x : IO α) : ExceptT String IO α := ExceptT.lift x
 
+/-- The phase marks of the current run (`Session.phases`): label and
+    `IO.monoNanosNow` at the end of the phase. -/
+initialize phaseMarks : IO.Ref (Array (String × Nat)) ← IO.mkRef #[]
+
+def phaseMark (l : String) : IO Unit := do
+  let t ← IO.monoNanosNow
+  phaseMarks.modify (·.push (l, t))
+
+/-- Start `act` on another thread: a job of worker `i` of the session's worker
+    pool when it has one and `i` is below its size (a polling worker starts it
+    within microseconds), else a task of
+    the Lean pool (`IO.asTask`; a parked pool thread starts it 50 to 120
+    microseconds later on the 4-vCPU test VM). -/
+def Session.spawnAt {α : Type} (ss : Session) (i : Nat) (act : IO α) :
+    IO (Harness.WorkerPool.Handle (Except IO.Error α)) := do
+  match ss.pool with
+  | some p => if i < p.size then p.spawnOn i act else return .task (← IO.asTask act)
+  | none => return .task (← IO.asTask act)
+
+/-- Wait for a job of `Session.spawnAt`: a pool job's result cell is polled
+    for at most the pool's poll time before the thread blocks. -/
+def Session.await {α : Type} (ss : Session) (h : Harness.WorkerPool.Handle α) : IO α :=
+  h.await (match ss.pool with | some p => p.spinNs | none => 0)
+
 def Session.store (ss : Session) : IdQuery.Store IO :=
   { blockCount := fun p => liftIO do pure (← ss.perm p).count
     blocksForRange := fun p key => liftIO (ss.rangeFor p key)
@@ -747,7 +781,8 @@ def Session.store (ss : Session) : IdQuery.Store IO :=
     termOf := fun x => liftIO (ss.termOf x)
     lowerBound := fun k => liftIO (ss.lowerBound k)
     ovl := fun p => ss.ovl.getD p {}
-    prefetch := some fun t n => liftIO (ss.prefetch t n) }
+    prefetch := some fun t n => liftIO (ss.prefetch t n)
+    mark := if ss.phases then some phaseMark else none }
 
 /-! ## Parallel block scans (stage 1, issue 799) -/
 
@@ -787,10 +822,10 @@ def scanTableParM (ss : Session) (spec : IdQuery.ScanSpec) (threads : Nat) (minR
   -- each task: its own view (counters, dictionary state, permutation copies).
   -- Stage 1f: the first range is scanned by the calling thread after the
   -- tasks of the others have started (it would otherwise wait for them).
-  let mut tasks : Array (Task (Except IO.Error (L4Factoidal.Qlvr.Table × IdQuery.ScanStats)) × Session) := #[]
+  let mut tasks : Array (Harness.WorkerPool.Handle (Except IO.Error (L4Factoidal.Qlvr.Table × IdQuery.ScanStats)) × Session) := #[]
   for X in chunks.drop 1 do
     let v ← ss.view
-    let t ← IO.asTask (do
+    let t ← ss.spawnAt tasks.size (do
       -- stage 1b: the task's own copies of the spec, the overlay context and
       -- the empty table (`IdQuery.ScanSpec.fresh`; `ScanSpec.fresh_eq` says
       -- the copy is equal to `spec`, the spec of `ParallelScanTheorems`). The
@@ -819,7 +854,7 @@ def scanTableParM (ss : Session) (spec : IdQuery.ScanSpec) (threads : Nat) (minR
     stats := stats.add s
   | Except.error e => failure := some e
   for (t, v) in tasks do
-    match ← IO.wait t with
+    match ← liftIO (ss.await t) with
     | .ok (tab, s) =>
       out := out.append tab
       stats := stats.add s
@@ -860,10 +895,10 @@ def scanSipTableParM (ss : Session) (spec : IdQuery.ScanSpec) (cands : Array UIn
   -- tasks of the others have started. Olympics q07 at 4 threads (41 runs per
   -- process, 3 processes): the two scans with candidates took 1.08 to 1.14
   -- and 0.76 to 0.78 ms with a task per range, 0.81 to 0.85 and 0.62 ms so.
-  let mut tasks : Array (Task (Except IO.Error (L4Factoidal.Qlvr.Table × IdQuery.ScanStats)) × Session) := #[]
+  let mut tasks : Array (Harness.WorkerPool.Handle (Except IO.Error (L4Factoidal.Qlvr.Table × IdQuery.ScanStats)) × Session) := #[]
   for X in chunks.drop 1 do
     let v ← ss.view
-    let t ← IO.asTask (do
+    let t ← ss.spawnAt tasks.size (do
       let spec := spec.fresh
       let ox := ox.fresh spec.key
       let cands := cands.map fun x => UInt64.ofNat x.toNat
@@ -883,7 +918,7 @@ def scanSipTableParM (ss : Session) (spec : IdQuery.ScanSpec) (cands : Array UIn
     stats := stats.add s
   | Except.error e => failure := some e
   for (t, v) in tasks do
-    match ← IO.wait t with
+    match ← liftIO (ss.await t) with
     | .ok (tab, s) =>
       out := out.append tab
       stats := stats.add s
@@ -934,10 +969,10 @@ def parFold (ss : Session) (nWorkers window : Nat) {α β : Type}
   for k in [0:min w n] do liftIO (permit k)
   let next ← liftIO (IO.mkRef (0 : Nat))
   let stop ← liftIO (IO.mkRef false)
-  let mut workers : Array (Task (Except IO.Error Unit) × Session) := #[]
+  let mut workers : Array (Harness.WorkerPool.Handle (Except IO.Error Unit) × Session) := #[]
   for _ in [0:nwk] do
     let v ← liftIO ss.view
-    let t ← liftIO (IO.asTask (do
+    let t ← liftIO (ss.spawnAt workers.size (do
       let lv ← v.local
       let st := lv.store
       for _ in [0:n] do
@@ -971,7 +1006,7 @@ def parFold (ss : Session) (nWorkers window : Nat) {α β : Type}
     if failure.isSome then liftIO (stop.set true)
     liftIO (permit (k + w))
   for (t, v) in workers do
-    match ← liftIO (IO.wait t) with
+    match ← liftIO (ss.await t) with
     | .ok () => pure ()
     | .error e => if failure.isNone then failure := some (toString e)
     liftIO (ss.absorb v)
@@ -1497,6 +1532,9 @@ def runOne (ss : Session) (q : Query) (emit : ByteArray → IO Unit) (forceRefer
     let (n, line) ← runReference ss q reason emit
     return { rows := n, path := line }
   | .ok plan =>
+    -- issue 961: parked pool workers poll again from here, so the first
+    -- divided phase does not wait for a kernel wake-up
+    if let some p := ss.pool then p.wake
     let minRows ← minRangeRows
     let par := if threads ≤ 1 then none else some (ss.par threads minRows)
     let env ← queryEnv q
@@ -1618,11 +1656,23 @@ def runQuery (dir : String) (o : Opts) : IO UInt32 := do
   let q ← parse text o.base (if o.sparql12 then .v12 else .v11)
   let (v, why) ← chooseVerify dir o.verify
   let ss ← openOverlaid v dir
+  -- issue 961: the session's worker pool, N - 1 threads that poll between the
+  -- divided phases of a query (the calling thread is the N-th). Not when N is
+  -- above the hardware threads: a polling worker then takes a core from a
+  -- thread with work (olympics q07 at 8 threads on 4 vCPUs, 7 polling
+  -- workers: the scans with candidates took 2.5 to 4.6 ms against 0.5 to
+  -- 0.9 ms at 4 threads).
+  let hw := (System.Platform.Internal.getHardwareConcurrency ()).toNat
+  let ss ← if o.threads > 1 && (hw == 0 || o.threads ≤ hw) then
+      pure { ss with pool := some (← Harness.WorkerPool.start (o.threads - 1)) }
+    else pure ss
+  let ss := { ss with phases := (← IO.getEnv "SBM11_PHASES").isSome }
   let t1 ← IO.monoNanosNow
   let openBytes ← ss.g.fileBytes.get
   let stdout ← IO.getStdout
   let runs := max o.repeatN 1
   let mut execs : Array Nat := #[]
+  let mut phaseTimes : Array (Array (String × Nat)) := #[]
   let mut last : Option Outcome := none
   for k in [0:runs] do
     let final := k + 1 == runs
@@ -1631,14 +1681,21 @@ def runQuery (dir : String) (o : Opts) : IO UInt32 := do
     ss.frameBytes.set 0
     ss.prmBytes.set 0
     ss.g.fetchedBytes.set 0
+    phaseMarks.set #[]
     let a ← IO.monoNanosNow
+    phaseMark "start"
     let r ← runOne ss q (if final then fun s => stdout.write s else fun _ => pure ()) o.reference o.referenceRender
       o.threads o.sip o.aggOnIds
     let b ← IO.monoNanosNow
     execs := execs.push (b - a)
+    if ss.phases then
+      let ms ← phaseMarks.get
+      phaseTimes := phaseTimes.push ((List.range (ms.size - 1)).toArray.map fun i =>
+        (ms[i + 1]!.1, ms[i + 1]!.2 - ms[i]!.2))
     last := some r
   stdout.write "\n".toUTF8
   stdout.flush
+  if let some p := ss.pool then p.shutdown
   let t2 ← IO.monoNanosNow
   let some r := last | return 1
   if o.explain then
@@ -1649,6 +1706,13 @@ def runQuery (dir : String) (o : Opts) : IO UInt32 := do
     IO.eprintln s!"plan: {ss.deltaText}"
   let fb ← ss.frameBytes.get
   let fetched ← ss.g.fetchedBytes.get
+  -- SBM11_PHASES: the median of each phase over runs 2 to N (run 1 fills the
+  -- caches); phases are matched by position, as every run of one query
+  -- passes the same marks
+  if let some w := phaseTimes[1]? then
+    for j in [0:w.size] do
+      let xs := (phaseTimes.extract 1 phaseTimes.size).filterMap fun r => (r[j]?).map (·.2)
+      IO.eprintln s!"phase: {w[j]!.1} median {msText (median xs)} ms"
   if runs > 1 then
     IO.eprintln s!"repeat: {runs} runs in one process; execution ms median {msText (median execs)} min {msText (execs.foldl min (execs.getD 0 0))} max {msText (execs.foldl max 0)}"
   IO.eprintln s!"sbm11-query: {r.path}; rows {r.rows}; verify={v.name}; {ss.deltaText}; constants looked up {← ss.lookups.get}; block bytes read {fb}; PRM1 bytes read {← ss.prmBytes.get}; range bytes fetched {fetched}; file bytes read {← ss.g.fileBytes.get}; open file bytes {openBytes}; open {msText (t1 - t0)} ms; execution {msText (t2 - t1)} ms; total {msText (t2 - t0)} ms; peak RSS (VmHWM): {← vmHWM}"

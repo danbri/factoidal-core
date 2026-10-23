@@ -25,7 +25,7 @@ def pct (xs : Array Nat) (q : Nat) : Nat :=
   if s.size == 0 then 0 else s[min (s.size - 1) (s.size * q / 100)]!
 
 def report (name : String) (starts dones : Array Nat) : IO Unit :=
-  IO.println s!"{name}: start p50 {pct starts 50 / 1000} us p90 {pct starts 90 / 1000} us; \
+  IO.eprintln s!"{name}: start p50 {pct starts 50 / 1000} us p90 {pct starts 90 / 1000} us; \
     all done p50 {pct dones 50 / 1000} us p90 {pct dones 90 / 1000} us"
 
 /-- The Lean task pool: one `IO.asTask` per job. -/
@@ -70,7 +70,7 @@ def main (args : List String) : IO UInt32 := do
   let rounds := (args[0]? >>= String.toNat?).getD 2000
   let gapUs := (args[1]? >>= String.toNat?).getD 200
   let jobs := (args[2]? >>= String.toNat?).getD 3
-  IO.println s!"rounds {rounds}, gap {gapUs} us, jobs {jobs}"
+  IO.eprintln s!"rounds {rounds}, gap {gapUs} us, jobs {jobs}"
   runMode "lean task pool (IO.asTask)" rounds gapUs (roundTasks jobs)
   let spinning ← start jobs 1000000
   runMode "worker pool, poll 1 ms" rounds gapUs (roundPool spinning jobs)
