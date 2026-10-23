@@ -1565,9 +1565,13 @@ def runOne (ss : Session) (q : Query) (emit : ByteArray → IO Unit) (forceRefer
     let (n, line) ← runReference ss q reason emit
     return { rows := n, path := line }
   | .ok plan =>
-    -- issue 961: parked pool workers poll again from here, so the first
-    -- divided phase does not wait for a kernel wake-up
-    if let some p := ss.pool then p.wake
+    -- issue 961: blocked pool workers poll again from here, so the first
+    -- divided phase does not wait for a kernel wake-up. Only for a plan with
+    -- two or more triple patterns (joins, then the steps after them): DBpedia
+    -- d17, one pattern answered from the PRM1 entries in 0.3 ms, took 0.37 ms
+    -- at 4 threads against 0.29 ms with every query waking the workers.
+    if plan.pats.size ≥ 2 then
+      if let some p := ss.pool then p.wake
     let minRows ← minRangeRows
     let par := if threads ≤ 1 then none else some (ss.par threads minRows)
     let env ← queryEnv q
