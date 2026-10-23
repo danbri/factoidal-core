@@ -1848,8 +1848,15 @@ def runQuery (dir : String) (o : Opts) : IO UInt32 := do
     phaseMarks.set #[]
     let a ← IO.monoNanosNow
     phaseMark "start"
-    let r ← runOne ss q (if final then fun s => stdout.write s else fun _ => pure ()) o.reference o.referenceRender
-      o.threads o.sip o.aggOnIds
+    -- a failed run stops the worker pool before the error leaves `main`: the
+    -- runtime waits for the pool's dedicated threads at exit, so an error
+    -- with the pool running made the process hang (stage 1j)
+    let r ← match ← (runOne ss q (if final then fun s => stdout.write s else fun _ => pure ()) o.reference
+        o.referenceRender o.threads o.sip o.aggOnIds).toBaseIO with
+      | .ok r => pure r
+      | .error e =>
+        if let some p := ss.pool then p.shutdown
+        throw e
     let b ← IO.monoNanosNow
     execs := execs.push (b - a)
     if ss.phases then

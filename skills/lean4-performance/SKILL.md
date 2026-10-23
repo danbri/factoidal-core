@@ -884,7 +884,22 @@ section "Stage 1b", subsection "What failed on the way"):
   Tried for a dictionary page cache that lives as long as the pool (stage
   1h): olympics q19 at 4 threads 21.1 to 16.8 ms and 40 percent less CPU,
   but peak RSS 2.03 times the 1-thread RSS against a limit of 2, so not
-  kept until the allocator work.
+  kept until the allocator work. Landed 2026-10-23 with transparent huge
+  pages off in `l4sbm11` (owner: "Land it"; stage 1i of the record).
+- **`IO.Ref.get` on a ref that another thread writes can lose the write.**
+  For an MT ref, `lean_st_ref_get` takes the value out with one atomic
+  exchange, increments it and puts it back with a second exchange; a `set`
+  by another thread between the two is overwritten and its value freed
+  (two `xchg` in the disassembly of `lean_st_ref_get`, Lean 4.33.1). Use
+  `swap`, `modify` or `modifyGet` on a ref two threads write, and ask
+  whether a result is ready through its promise (`IO.hasFinished
+  p.result?`), never by `get` of the result's ref. Paid for 2026-10-23
+  (stage 1j of the record): `parFold` with the calling thread as a worker
+  polled each result slot with `get`; about one fold in 2,000 lost a range's
+  result ("block range 1: its worker stopped"), and the process then hung at
+  exit because the error skipped the pool's shutdown. Found by the 1b.6
+  measurement method, which logs a process that fails: run it before a
+  landing, and read its log.
 
 Measure every one of these with `perf record` at 1 and N threads and the
 CPU time (`perf stat -e task-clock`): CPU time that grows with the thread
