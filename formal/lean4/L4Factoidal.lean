@@ -425,6 +425,7 @@ import L4Factoidal.Storage.Sbm11.LeftJoinTableTheorems
 import L4Factoidal.Storage.Sbm11.GroupTableTheorems
 import L4Factoidal.Storage.Sbm11.ExprLocalTheorems
 import L4Factoidal.Storage.Sbm11.FilterIdTheorems
+import L4Factoidal.Storage.Sbm11.FilterTableTheorems
 import L4Factoidal.Storage.Sbm11.IdAgg
 import L4Factoidal.Storage.Sbm11.IdAggTests
 import L4Factoidal.Storage.Sbm11.IdPostTheorems

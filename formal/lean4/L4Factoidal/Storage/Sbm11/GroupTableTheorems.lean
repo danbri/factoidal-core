@@ -10,7 +10,6 @@ were the list evaluator `IdGroup.evalGroupIds`. This file proves the
 operators that `evalGroupM` runs on `Table`s and composes them by
 induction on the pattern:
 
-* `select_spec`: `Table.select` keeps the rows its test passes, in order.
 * `semiMatches_spec`: the MINUS test of `IdQuery.semiMatches` (with
   `needShared`) is, for each left row, whether some right row is
   compatible with it and shares a bound variable with it (`minusHit`): the
@@ -20,13 +19,16 @@ induction on the pattern:
 * `minus_rows`: the rows of the MINUS table are `IdMinus.idMinus` of the
   rows of the two tables, in order.
 * `query_where_allowed_exec`: for every pattern built from basic graph
-  patterns, property paths, `{}`, Join, LeftJoin with the condition `true`
-  (OPTIONAL with no FILTER inside; `LeftJoinTableTheorems`), Union, MINUS
-  and GRAPH with an IRI, at any depth (`ExecHyps`), `evalGroupM` returns, from any state, a
-  well-formed table whose rows decode to an answer SPARQL 1.1 allows
-  (`IdGroup.Allowed`), with ids in `ok`. The hypotheses are on the store,
-  the dictionary and the dataset only; none states the table of a pattern
-  or of a subpattern.
+  patterns, property paths, `{}`, Join, LeftJoin (OPTIONAL) with the
+  condition `true` (`LeftJoinTableTheorems`) or with an EXISTS-free
+  condition, FILTER with an EXISTS-free condition (`FilterTableTheorems`),
+  Union, MINUS and GRAPH with an IRI, at any depth (`ExecHyps`),
+  `evalGroupM` returns, from any state, a well-formed table whose rows
+  decode to an answer SPARQL 1.1 allows (`IdGroup.Allowed`), with ids in
+  `ok`. The hypotheses are on the store, the dictionary, the dataset, the
+  environment and the syntax of the conditions only; none states the table
+  of a pattern or of a subpattern. `Table.select` is
+  `FilterTableTheorems.select_spec`.
 
 ## Why the statement is `Allowed`, not `IdEquiv` to `evalGroupIds`
 
@@ -39,20 +41,24 @@ depends on the state (`termIdM`), so for BIND, VALUES and a sub-SELECT the
 two encodings differ; (2) for a FILTER or a LeftJoin condition, `IdEquiv`
 of the inputs gives the output only if the condition has the same value on
 two rows that are the same solution mapping with their pairs in another
-order, which is not proved for `Expr.evalIn`. `Allowed` needs neither.
+order (proved since: `ExprLocalTheorems.evalIn_bindEq`). `Allowed` needs
+neither; the FILTER and LeftJoin cases use the locality lemma only for the
+memoised conjuncts and for the merged rows of a pair.
 
 ## Not proved here
 
-LeftJoin with a condition other than `true` (`leftJoinCondM` runs `filterM`
-on the merged rows), FILTER (`filterM`: `applyFilters` and the EXISTS
-semi-joins), GRAPH with a variable, BIND (`extendM`), VALUES
-(`resolveValuesVocabM`) and a sub-SELECT (`subSelectM`): `ExecHyps` is
-`False` for them. Tested by `tests/sbm11/gate/ids-*.rq` and the W3C census.
+FILTER and LeftJoin conditions with an EXISTS or NOT EXISTS conjunct (the
+semi-joins `semiJoinByM`), with a UUID, STRUUID or BNODE call, or with a
+STRSTARTS, STRENDS or CONTAINS test on dictionary keys
+(`FilterIdTheorems.StrForm`); GRAPH with a variable, BIND (`extendM`),
+VALUES (`resolveValuesVocabM`) and a sub-SELECT (`subSelectM`): `ExecHyps`
+is `False` for them. Tested by `tests/sbm11/gate/ids-*.rq` and the W3C
+census.
 
 
 No `sorry`, no user `axiom`, no `native_decide`, no `partial`.
 -/
-import L4Factoidal.Storage.Sbm11.LeftJoinTableTheorems
+import L4Factoidal.Storage.Sbm11.FilterTableTheorems
 
 namespace L4Factoidal.Storage.Sbm11.GroupTableTheorems
 
@@ -65,79 +71,7 @@ open L4Factoidal.Storage.Sbm11.OptJoin (IdRow idLookup idCompatible idMerge unbo
 open L4Factoidal.Storage.Sbm11.TableTheorems (RowEq RowsEq ColHolds forIn_range_inv range'_succ_filter
   gather_at)
 open L4Factoidal.Storage.Sbm11.IdLeaf (IdEquiv Nd)
-
-/-! ## `Table.select` -/
-
-theorem select_idx (t : Table) (keep : Nat → Bool) :
-    (forIn (m := _root_.Id) (List.range' 0 t.rows) (#[] : Array Nat) fun i r =>
-        if keep i then ForInStep.yield (r.push i) else ForInStep.yield r).run.toList =
-      (List.range' 0 t.rows).filter keep := by
-  generalize hF : forIn (m := _root_.Id) (List.range' 0 t.rows) (#[] : Array Nat) _ = F
-  have := forIn_range_inv t.rows (fun k (r : Array Nat) => r.toList = (List.range' 0 k).filter keep) hF
-    (by simp) (fun k r _ hk => by
-      by_cases hc : keep k = true
-      · refine ⟨r.push k, by simp [hc, Id.run], ?_⟩
-        rw [range'_succ_filter, Array.toList_push, hk]; simp [hc]
-      · refine ⟨r, by simp [hc, Id.run], ?_⟩
-        rw [range'_succ_filter, hk]; simp [hc])
-  exact this
-
-/-- `Table.select` of a well-formed table: a well-formed table whose rows are
-    the rows `i` with `keep i`, in order. -/
-theorem select_spec (t : Table) (ht : t.WF) (keep : Nat → Bool) :
-    (t.select keep).WF ∧ (t.select keep).vars = t.vars ∧
-      (t.select keep).idRows = ((List.range t.rows).filter keep).map t.idRow := by
-  have hidx := select_idx t keep
-  unfold Table.select
-  simp only [_root_.Id.run, Std.Legacy.Range.forIn_eq_forIn_range', Std.Legacy.Range.size, Nat.sub_zero,
-    Nat.add_sub_cancel, Nat.div_one]
-  generalize forIn (m := _root_.Id) (List.range' 0 t.rows) (#[] : Array Nat) _ = F at hidx ⊢
-  rw [List.range_eq_range']
-  have hin : ∀ i ∈ F.run.toList, i < t.rows := by
-    intro i hi
-    rw [hidx, List.mem_filter, List.mem_range'] at hi
-    omega
-  by_cases hs : F.run.size = t.rows
-  · have hall : (List.range' 0 t.rows).filter keep = List.range' 0 t.rows := by
-      apply List.Sublist.eq_of_length (List.filter_sublist)
-      rw [← hidx, Array.length_toList]; simpa using hs
-    rw [TableTheorems.id_bind, if_pos (by simpa using hs)]
-    refine ⟨ht, rfl, ?_⟩
-    show t.idRows = _
-    rw [hall, Table.idRows, List.range_eq_range']
-  · have hne : (F.run.size == t.rows) = false := by simpa using hs
-    rw [TableTheorems.id_bind, if_neg (by simpa using hs)]
-    change (({ t with cols := t.cols.map (gather · F.run), rows := F.run.size } : Table)).WF ∧
-      (({ t with cols := t.cols.map (gather · F.run), rows := F.run.size } : Table)).vars = t.vars ∧
-      (({ t with cols := t.cols.map (gather · F.run), rows := F.run.size } : Table)).idRows = _
-    refine ⟨⟨?_, ?_, ht.nodup⟩, rfl, ?_⟩
-    · simp [ht.cols_size]
-    · intro c hc
-      simp only [Array.size_map] at hc
-      simp only [Array.getElem_map]
-      have hc' : c < t.vars.size := by rw [← ht.cols_size]; exact hc
-      have := (gather_at t ht c hc' F.run hin).1
-      rw [getElem!_pos t.cols c hc] at this
-      rw [this]; simp
-    · rw [← hidx]
-      apply List.ext_getElem
-      · simp [Table.idRows]
-      · intro k h1 h2
-        simp only [Table.idRows, List.getElem_map, List.getElem_range] at h1 ⊢
-        simp only [List.length_map, Array.length_toList] at h2
-        rw [Array.getElem_toList]
-        unfold Table.idRow
-        apply OptJoin.filterMap_congr' _ _ _
-        intro c hc
-        rw [List.mem_range] at hc
-        have hw : (({ t with cols := t.cols.map (gather · F.run), rows := F.run.size } : Table).at c k) =
-            t.at c F.run[k] := by
-          show word64 (t.cols.map (gather · F.run))[c]! (8 * k) = _
-          have hc' : c < t.cols.size := by rw [ht.cols_size]; exact hc
-          rw [getElem!_pos _ c (by simpa using hc'), Array.getElem_map,
-            ← getElem!_pos t.cols c hc', TableTheorems.gather_word t ht c hc F.run hin k h2,
-            getElem!_pos F.run k h2]
-        rw [hw]
+open L4Factoidal.Storage.Sbm11.FilterTableTheorems (select_spec)
 
 /-! ## MINUS: `IdQuery.semiMatches` with `needShared` -/
 
@@ -506,21 +440,33 @@ open L4Factoidal.Storage.Sbm11.ScanTableTheorems (PermMem)
 open L4Factoidal.Storage.Sbm11.IdMinus (idMinus)
 open L4Factoidal.Storage.Sbm11.LeftJoinTableTheorems (note_run leftJoinTrue_run leftJoinTrue_rows ljTable)
 
+/-- `CidOk` on a larger set of ids gives it on a smaller one. -/
+theorem cidOk_sok {dec : UInt64 → Term} {sok ok : UInt64 → Prop} (hsok : ∀ x, sok x → ok x)
+    {cid : Term → Option UInt64} (h : ∀ c, CidOk dec ok c (cid c)) : ∀ c, CidOk dec sok c (cid c) := by
+  intro c
+  have := h c
+  cases e : cid c with
+  | none => rw [e] at this; exact fun y hy => this y (hsok y hy)
+  | some x => rw [e] at this; exact fun y hy => this y (hsok y hy)
+
 /-- The patterns this file proves, with what each node needs: at a leaf
     (basic graph pattern, property path) the condition `LP`; at GRAPH with
     an IRI, a store that lists its named graphs, and the IRI is a named graph
     of the dataset exactly when the dictionary gives it an id among the
     query's named graphs (`cx.named`), the id of the active graph `gof g`;
-    at LeftJoin, the condition `true` (OPTIONAL with no FILTER inside).
-    `False` for the constructors not proved here (FILTER, GRAPH with a
-    variable, BIND, VALUES, sub-SELECT, LATERAL, SERVICE). -/
+    at LeftJoin, the condition `true` or `FilterTableTheorems.FilterOk`; at
+    FILTER, `FilterOk` (an EXISTS-free condition whose conjuncts are
+    `FilterIdTheorems.CjOk`). `False` for the constructors not proved here
+    (GRAPH with a variable, BIND, VALUES, sub-SELECT, LATERAL, SERVICE). -/
 def ExecHyps (LP : QueryPattern → Graph → Prop) (cx : NCx Id) (cid : Term → Option UInt64) (ds : Dataset)
     (gof : Graph → GCtx) : QueryPattern → Graph → Prop
   | .bgp b, a => LP (.bgp b) a
   | .propertyPath s path o, a => LP (.propertyPath s path o) a
   | .empty, _ => True
   | .join l r, a => ExecHyps LP cx cid ds gof l a ∧ ExecHyps LP cx cid ds gof r a
-  | .leftJoin l r c, a => c = .boolLit true ∧ ExecHyps LP cx cid ds gof l a ∧ ExecHyps LP cx cid ds gof r a
+  | .leftJoin l r c, a => (c = .boolLit true ∨ FilterTableTheorems.FilterOk c) ∧ ExecHyps LP cx cid ds gof l a ∧
+      ExecHyps LP cx cid ds gof r a
+  | .filter c q, a => FilterTableTheorems.FilterOk c ∧ ExecHyps LP cx cid ds gof q a
   | .union l r, a => ExecHyps LP cx cid ds gof l a ∧ ExecHyps LP cx cid ds gof r a
   | .minus l r, a => ExecHyps LP cx cid ds gof l a ∧ ExecHyps LP cx cid ds gof r a
   | .graph (.iri i) q, _ => cx.st.namedGraphs.isSome ∧
@@ -536,26 +482,34 @@ variable (cx : NCx Id) (gof : Graph → GCtx) (prb : Nat → ByteArray) (ms : Na
 
 /-- **The WHERE clause on ids as the nested evaluator runs it.** For every
     pattern built from basic graph patterns, property paths, `{}`, Join,
-    LeftJoin with the condition `true`, Union, MINUS and GRAPH with an IRI,
-    at any depth (`ExecHyps`),
+    LeftJoin with the condition `true` or an EXISTS-free condition, FILTER
+    with an EXISTS-free condition, Union, MINUS and GRAPH with an IRI, at any
+    depth (`ExecHyps`),
     `IdGroup.evalGroupM` returns, from any state, a well-formed table whose
     rows decode to an answer SPARQL 1.1 allows for the pattern (`Allowed`),
     with ids in `ok`. Each operator is the executed `Table` operator
     (`IdJoin.joinIds`, `IdGroup.pathM` with candidates from the left rows,
-    `IdGroup.leftJoinCondM`, `IdJoin.unionIds`, `Table.select` of
-    `IdQuery.semiMatches`). Hypotheses:
+    `IdGroup.leftJoinCondM`, `IdGroup.filterM`, `IdJoin.unionIds`,
+    `Table.select` of `IdQuery.semiMatches`). Hypotheses:
     those of `ExecLeafTheorems.where_allowed_exec` for the store (`PermMem`
     of each permutation, single-thread scans, no dataset clause, a
-    dictionary lookup `cid` that never fails, `hdec`, `hsok`, `hcid`,
-    `hidv`, `hcid0`, `htag`) and `ExecHyps ExecLeaf` of the pattern. No
-    hypothesis states the table of a pattern or of a subpattern. -/
+    dictionary lookup `cid` that never fails, `hdec`, `hsok`, `hidv`,
+    `hcid0`, `htag`), with `CidOk` on the ids in `ok` (`hcid`, which gives
+    the leaves' `CidOk` on `sok`); for the conditions: the lookup answers the
+    tag-folded term itself (`hcidN`), the evaluator's environment is the
+    query's (`henv`), and `termOf` decodes the ids in `ok` as `dec` does,
+    none with the query-local tag (`htermOf`, `hloc`); and `ExecHyps
+    ExecLeaf` of the pattern. No hypothesis states the table of a pattern or
+    of a subpattern. -/
 theorem query_where_allowed_exec (env : EvalEnv) (ds : Dataset)
     (hpm : ∀ k, k < 4 → PermMem cx.st k (prb k) (ms k)) (hscan : cx.st.scanTable = none)
     (hds : cx.ds = none) (hid : ∀ t, cx.st.idOf t = pure (cid t))
     (hdec : ∀ x y, ok x → ok y → (dec x).eqb (dec y) = (x == y)) (hsok : ∀ x, sok x → ok x)
-    (hcid : ∀ c, CidOk dec sok c (cid c))
+    (hcid : ∀ c, CidOk dec ok c (cid c))
     (hidv : ∀ t x, cid t = some x → idv t = x) (hcid0 : ∀ t x, cid t = some x → x ≠ 0)
-    (htag : ∀ x, sok x → IdPathEval.litTag x = some (!isNotLiteral (dec x))) :
+    (htag : ∀ x, sok x → IdPathEval.litTag x = some (!isNotLiteral (dec x)))
+    (hcidN : ∀ t x, cid t = some x → dec x = normalizeTerm t) (henv : cx.env = env)
+    (htermOf : ∀ x, ok x → cx.st.termOf x = pure (dec x)) (hloc : ∀ x, ok x → tagOf x ≠ tagLocal) :
     ∀ (p : QueryPattern) (a : Graph),
       ExecHyps (ExecLeaf cid dec sok ok idv (listingsOf gof prb ms)) cx cid ds gof p a →
       ∀ (nst1 : NSt), ∃ t nst2, (evalGroupM cx p (gof a)).run nst1 = pure (t, nst2) ∧ t.WF ∧
@@ -566,7 +520,7 @@ theorem query_where_allowed_exec (env : EvalEnv) (ds : Dataset)
       ⟨fun k hk => ⟨prb k, ms k, hpm k hk, hs.1.2 ⟨k, hk⟩⟩, hscan⟩
     obtain ⟨tab, nst2, hrun, hwf, _, _⟩ := bgpM_rows cx cid hid hds (gof a) _ hst b htp nst1
     obtain ⟨hlr1, hlr2⟩ := leafRel_exec cx nst1 gof prb ms cid dec idv sok ok env ds hpm hscan hds hid hdec hsok
-      hcid hidv hcid0 htag (.bgp b) a ⟨hs, htp⟩
+      (cidOk_sok hsok hcid) hidv hcid0 htag (.bgp b) a ⟨hs, htp⟩
     have hrows : (execLeaves cx nst1 gof).bgp a b = tab.idRows := by
       show (match ((IdGroup.bgpM cx (gof a) b).run nst1).run with | .ok p => p.1.idRows | .error _ => []) = _
       rw [hrun]; rfl
@@ -586,7 +540,7 @@ theorem query_where_allowed_exec (env : EvalEnv) (ds : Dataset)
     obtain ⟨tab, nst2, hrun, hwf, _, _⟩ := pathM_rows cx cid hid hds (gof a) _ hst dec idv hidv hcid0 hlit
       s path o hs ho nst1
     obtain ⟨hlr1, hlr2⟩ := leafRel_exec cx nst1 gof prb ms cid dec idv sok ok env ds hpm hscan hds hid hdec hsok
-      hcid hidv hcid0 htag (.propertyPath s path o) a ⟨hl, hs, ho⟩
+      (cidOk_sok hsok hcid) hidv hcid0 htag (.propertyPath s path o) a ⟨hl, hs, ho⟩
     have hrows : (execLeaves cx nst1 gof).path a s path o = tab.idRows := by
       show (match ((IdGroup.pathM cx (gof a) s path o unitTable).run nst1).run with
         | .ok p => p.1.idRows | .error _ => []) = _
@@ -601,14 +555,14 @@ theorem query_where_allowed_exec (env : EvalEnv) (ds : Dataset)
     intro b hb; cases hb
   | .join l r, a, h, nst1 => by
     obtain ⟨tl, nst2, hl, hwl, hAl, hol⟩ :=
-      query_where_allowed_exec env ds hpm hscan hds hid hdec hsok hcid hidv hcid0 htag l a h.1 nst1
+      query_where_allowed_exec env ds hpm hscan hds hid hdec hsok hcid hidv hcid0 htag hcidN henv htermOf hloc l a h.1 nst1
     by_cases hrp : ∃ s path o, r = .propertyPath s path o
     · obtain ⟨s, path, o, rfl⟩ := hrp
-      exact where_allowed_exec_join cx gof prb ms cid dec idv sok ok env ds hpm hscan hds hid hdec hsok hcid
+      exact where_allowed_exec_join cx gof prb ms cid dec idv sok ok env ds hpm hscan hds hid hdec hsok (cidOk_sok hsok hcid)
         hidv hcid0 htag l s path o a h.2 nst1 nst2 tl hl hwl hAl hol
     · have hr : ∀ s path o, r ≠ .propertyPath s path o := fun s path o e => hrp ⟨s, path, o, e⟩
       obtain ⟨tr, nst3, hrr, hwr, hAr, hor⟩ :=
-        query_where_allowed_exec env ds hpm hscan hds hid hdec hsok hcid hidv hcid0 htag r a h.2 nst2
+        query_where_allowed_exec env ds hpm hscan hds hid hdec hsok hcid hidv hcid0 htag hcidN henv htermOf hloc r a h.2 nst2
       obtain ⟨hjwf, hjr⟩ := TableTheorems.joinIds_rows tl tr hwl hwr
       have heq : IdEquiv (IdJoin.joinIds tl tr).idRows (IdJoin.idJoin tl.idRows tr.idRows) :=
         BgpTableTheorems.idEquiv_of_rowsEq_perm hjr (List.Perm.refl _)
@@ -625,9 +579,9 @@ theorem query_where_allowed_exec (env : EvalEnv) (ds : Dataset)
           (IdGroup.rowIds_idJoin ok _ _ hol hor)
   | .union l r, a, h, nst1 => by
     obtain ⟨tl, nst2, hl, hwl, hAl, hol⟩ :=
-      query_where_allowed_exec env ds hpm hscan hds hid hdec hsok hcid hidv hcid0 htag l a h.1 nst1
+      query_where_allowed_exec env ds hpm hscan hds hid hdec hsok hcid hidv hcid0 htag hcidN henv htermOf hloc l a h.1 nst1
     obtain ⟨tr, nst3, hrr, hwr, hAr, hor⟩ :=
-      query_where_allowed_exec env ds hpm hscan hds hid hdec hsok hcid hidv hcid0 htag r a h.2 nst2
+      query_where_allowed_exec env ds hpm hscan hds hid hdec hsok hcid hidv hcid0 htag hcidN henv htermOf hloc r a h.2 nst2
     obtain ⟨huwf, hur⟩ := TableTheorems.unionIds_rows #[tl, tr] (by
       intro t ht
       simp only [List.mem_cons, List.not_mem_nil, or_false] at ht
@@ -652,9 +606,9 @@ theorem query_where_allowed_exec (env : EvalEnv) (ds : Dataset)
       · exact hor x e
   | .minus l r, a, h, nst1 => by
     obtain ⟨tl, nst2, hl, hwl, hAl, hol⟩ :=
-      query_where_allowed_exec env ds hpm hscan hds hid hdec hsok hcid hidv hcid0 htag l a h.1 nst1
+      query_where_allowed_exec env ds hpm hscan hds hid hdec hsok hcid hidv hcid0 htag hcidN henv htermOf hloc l a h.1 nst1
     obtain ⟨tr, nst3, hrr, hwr, hAr, hor⟩ :=
-      query_where_allowed_exec env ds hpm hscan hds hid hdec hsok hcid hidv hcid0 htag r a h.2 nst2
+      query_where_allowed_exec env ds hpm hscan hds hid hdec hsok hcid hidv hcid0 htag hcidN henv htermOf hloc r a h.2 nst2
     obtain ⟨hmwf, hmr⟩ := minus_rows tl tr hwl hwr
     obtain ⟨nst4, hn⟩ := note_run s!"MINUS: {tl.rows} rows, right {tr.rows} rows: {(tl.select fun i => !(semiMatches tl tr true)[i]!).rows} rows" nst3
     refine ⟨tl.select fun i => !(semiMatches tl tr true)[i]!, nst4, ?_, hmwf, ?_, ?_⟩
@@ -688,7 +642,7 @@ theorem query_where_allowed_exec (env : EvalEnv) (ds : Dataset)
       rw [hg] at hq
       obtain ⟨⟨x, hx, hxn, hgx⟩, hq'⟩ := hq
       obtain ⟨t, nst2, hr, hwf, hA, hok⟩ :=
-        query_where_allowed_exec env ds hpm hscan hds hid hdec hsok hcid hidv hcid0 htag q g hq' nst1
+        query_where_allowed_exec env ds hpm hscan hds hid hdec hsok hcid hidv hcid0 htag hcidN henv htermOf hloc q g hq' nst1
       rw [hgx] at hr
       refine ⟨t, nst2, ?_, hwf, .graphIri hg hA, hok⟩
       simp only [hx, hxn, if_true]
@@ -717,29 +671,72 @@ theorem query_where_allowed_exec (env : EvalEnv) (ds : Dataset)
   | .graph (.tripleTerm _ _ _) _, _, h, _ => h.elim
   | .leftJoin l r c, a, h, nst1 => by
     obtain ⟨hc, h1, h2⟩ := h
-    subst hc
     obtain ⟨tl, nst2, hl, hwl, hAl, hol⟩ :=
-      query_where_allowed_exec env ds hpm hscan hds hid hdec hsok hcid hidv hcid0 htag l a h1 nst1
+      query_where_allowed_exec env ds hpm hscan hds hid hdec hsok hcid hidv hcid0 htag hcidN henv htermOf hloc l a h1 nst1
     obtain ⟨tr, nst3, hrr, hwr, hAr, hor⟩ :=
-      query_where_allowed_exec env ds hpm hscan hds hid hdec hsok hcid hidv hcid0 htag r a h2 nst2
-    obtain ⟨nst4, hrun⟩ := leftJoinTrue_run cx (gof a) tl tr nst3
-    obtain ⟨htwf, hpw⟩ := leftJoinTrue_rows tl tr hwl hwr
-    have heq := IdEquiv.of_pw hpw
-    refine ⟨_, nst4, ?_, htwf, ?_, ?_⟩
-    · rw [evalGroupM, StateT.run_bind, hl, pure_bind, StateT.run_bind, hrr, pure_bind]
+      query_where_allowed_exec env ds hpm hscan hds hid hdec hsok hcid hidv hcid0 htag hcidN henv htermOf hloc r a h2 nst2
+    by_cases htc : c = .boolLit true
+    · subst htc
+      obtain ⟨nst4, hrun⟩ := leftJoinTrue_run cx (gof a) tl tr nst3
+      obtain ⟨htwf, hpw⟩ := leftJoinTrue_rows tl tr hwl hwr
+      have heq := IdEquiv.of_pw hpw
+      refine ⟨_, nst4, ?_, htwf, ?_, ?_⟩
+      · rw [evalGroupM, StateT.run_bind, hl, pure_bind, StateT.run_bind, hrr, pure_bind]
+        exact hrun
+      · have e : (fun m => IdGroup.filterFn env (.boolLit true) a (decRow dec m)) = fun _ => true :=
+          funext fun _ => rfl
+        have hj : Allowed env ds (.leftJoin l r (.boolLit true)) a
+            ((IdGroup.idLeftJoinC (fun m => IdGroup.filterFn env (.boolLit true) a (decRow dec m))
+              tl.idRows tr.idRows).map (decRow dec)) := by
+          rw [IdGroup.leftJoinC_decode dec ok hdec (IdGroup.filterFn env (.boolLit true) a) _ _ hol hor]
+          exact .leftJoin hAl hAr
+        rw [e] at hj
+        exact .equiv hj (IdLeaf.solEquiv_decode dec heq.symm)
+      · exact rowIds_of_equiv ok (BgpTableTheorems.nd_idRows _ htwf.nodup) heq
+          (IdGroup.rowIds_idLeftJoinC ok _ _ _ hol hor)
+    · have hfc : FilterTableTheorems.FilterOk c := hc.resolve_left htc
+      obtain ⟨hjwf, hjr⟩ := TableTheorems.joinIds_rows tl tr hwl hwr
+      have heqj : IdEquiv (IdJoin.joinIds tl tr).idRows (IdJoin.idJoin tl.idRows tr.idRows) :=
+        BgpTableTheorems.idEquiv_of_rowsEq_perm hjr (List.Perm.refl _)
+      have hjok : ∀ q ∈ (IdJoin.joinIds tl tr).idRows, RowIds ok q :=
+        rowIds_of_equiv ok (BgpTableTheorems.nd_idRows _ hjwf.nodup) heqj (IdGroup.rowIds_idJoin ok _ _ hol hor)
+      obtain ⟨keep, nst4, hrun, _, hkeep⟩ := FilterTableTheorems.leftJoinCond_run cx cid dec ok hid hcid hcidN hdec
+        htermOf hloc env henv (gof a) tl tr hjwf hjok c hfc htc a nst3
+      have hcond : ∀ r1 r2, RowEq r1 r2 →
+          IdGroup.filterFn env c a (decRow dec r1) = IdGroup.filterFn env c a (decRow dec r2) := by
+        intro r1 r2 hr12
+        rw [FilterTableTheorems.filterFn_eq env c a _ hfc.1, FilterTableTheorems.filterFn_eq env c a _ hfc.1,
+          ExprLocalTheorems.evalIn_bindEq env (decRow dec r1) (decRow dec r2) (fun v => by
+            simp only [OptJoin.lookup_decRow, hr12 v]) c]
+      obtain ⟨htwf, hpw⟩ := FilterTableTheorems.leftJoinCond_rows tl tr hwl hwr keep
+        (fun m => IdGroup.filterFn env c a (decRow dec m)) hkeep hcond
+      have heq := IdEquiv.of_pw hpw
+      refine ⟨_, nst4, ?_, htwf, ?_, ?_⟩
+      · rw [evalGroupM, StateT.run_bind, hl, pure_bind, StateT.run_bind, hrr, pure_bind]
+        exact hrun
+      · have hj : Allowed env ds (.leftJoin l r c) a
+            ((IdGroup.idLeftJoinC (fun m => IdGroup.filterFn env c a (decRow dec m))
+              tl.idRows tr.idRows).map (decRow dec)) := by
+          rw [IdGroup.leftJoinC_decode dec ok hdec (IdGroup.filterFn env c a) _ _ hol hor]
+          exact .leftJoin hAl hAr
+        exact .equiv hj (IdLeaf.solEquiv_decode dec heq.symm)
+      · exact rowIds_of_equiv ok (BgpTableTheorems.nd_idRows _ htwf.nodup) heq
+          (IdGroup.rowIds_idLeftJoinC ok _ _ _ hol hor)
+  | .filter c q, a, h, nst1 => by
+    obtain ⟨hc, hq⟩ := h
+    obtain ⟨tq, nst2, hq', hwq, hAq, hoq⟩ :=
+      query_where_allowed_exec env ds hpm hscan hds hid hdec hsok hcid hidv hcid0 htag hcidN henv htermOf hloc q a hq nst1
+    obtain ⟨t', nst3, hrun, hwf, hrows⟩ := FilterTableTheorems.filterM_run cx cid dec ok hid hcid hcidN hdec
+      htermOf hloc env henv (gof a) tq hwq hoq c hc a nst2
+    refine ⟨t', nst3, ?_, hwf, ?_, ?_⟩
+    · rw [evalGroupM, StateT.run_bind, hq', pure_bind]
       exact hrun
-    · have e : (fun m => IdGroup.filterFn env (.boolLit true) a (decRow dec m)) = fun _ => true :=
-        funext fun _ => rfl
-      have hj : Allowed env ds (.leftJoin l r (.boolLit true)) a
-          ((IdGroup.idLeftJoinC (fun m => IdGroup.filterFn env (.boolLit true) a (decRow dec m))
-            tl.idRows tr.idRows).map (decRow dec)) := by
-        rw [IdGroup.leftJoinC_decode dec ok hdec (IdGroup.filterFn env (.boolLit true) a) _ _ hol hor]
-        exact .leftJoin hAl hAr
-      rw [e] at hj
-      exact .equiv hj (IdLeaf.solEquiv_decode dec heq.symm)
-    · exact rowIds_of_equiv ok (BgpTableTheorems.nd_idRows _ htwf.nodup) heq
-        (IdGroup.rowIds_idLeftJoinC ok _ _ _ hol hor)
-  | .filter _ _, _, h, _ => h.elim
+    · rw [hrows, show (tq.idRows.filter fun r => IdGroup.filterFn env c a (decRow dec r)).map (decRow dec) =
+          (tq.idRows.map (decRow dec)).filter (IdGroup.filterFn env c a) by
+        rw [List.filter_map]; rfl]
+      exact .filter hAq
+    · rw [hrows]
+      exact fun r hr => hoq r (List.mem_filter.mp hr).1
   | .lateral _ _, _, h, _ => h.elim
   | .bind _ _ _, _, h, _ => h.elim
   | .values _ _, _, h, _ => h.elim
@@ -753,7 +750,6 @@ end main
 
 end L4Factoidal.Storage.Sbm11.GroupTableTheorems
 
-#print axioms L4Factoidal.Storage.Sbm11.GroupTableTheorems.select_spec
 #print axioms L4Factoidal.Storage.Sbm11.GroupTableTheorems.semiMatches_spec
 #print axioms L4Factoidal.Storage.Sbm11.GroupTableTheorems.minus_rows
 #print axioms L4Factoidal.Storage.Sbm11.GroupTableTheorems.query_where_allowed_exec
