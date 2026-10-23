@@ -187,7 +187,9 @@ import L4Factoidal.Storage.Sbm11.IdJoin
 import L4Factoidal.Storage.Sbm11.IdAgg
 import L4Factoidal.Storage.Sbm11.IdPath
 import L4Factoidal.Storage.Sbm11.Sip
+import L4Factoidal.Storage.Sbm11.DateKey
 import L4Factoidal.Storage.Sbm11.ParallelScan
+import L4Factoidal.Storage.Sbm11.ParallelJoin
 import L4Factoidal.SPARQL.Query
 import L4Factoidal.SPARQL.ResultsJson
 import Std.Data.HashMap
@@ -1542,6 +1544,11 @@ structure Store (m : Type → Type) where
       driver (`Harness/Sbm11Query.lean`) sets it when `--threads` is above 1;
       it must return the table of `scanTableM` (`ParallelScanTheorems`). -/
   scanTable : Option (ScanSpec → ExceptT String m (Table × ScanStats)) := none
+  /-- issue 799, KR 1.2: a replacement for `scanSipTableM` (the scan with
+      candidates), used by `scanForJoinM`. `none` is the single-thread path.
+      The parallel driver sets it when `--threads` is above 1; it must return
+      the table and the statistics of `scanSipTableM`. -/
+  scanSipTable : Option (ScanSpec → Array UInt64 → ExceptT String m (Table × ScanStats)) := none
   /-- issue 809: the right scan of a merge join takes the left values of the
       join variable as candidates when `k × left rows < estimate` for
       `sipFactor = some k` (`sipRule`; 16 by default, 0 whenever the shape
@@ -1559,6 +1566,50 @@ structure Store (m : Type → Type) where
       `GRAPH ?g` and `GRAPH <iri>` over a nested group (`IdGroup.evalGroupM`).
       `none`: the nested evaluator refuses GRAPH. -/
   namedGraphs : Option (ExceptT String m (Array UInt64)) := none
+  /-- issue 961: called with a phase name at the end of each phase of
+      `runPlanM` and `evalBgpM` (the constants, each scan and join, the
+      ORDER BY and DISTINCT step, the rendering). No effect on any answer;
+      `l4sbm11 query` with `SBM11_PHASES` set prints the median time of each
+      phase. -/
+  mark : Option (String → m Unit) := none
+
+/-- `Store.mark`, when the store has one. -/
+def Store.markM {m : Type → Type} [Monad m] (st : Store m) (l : String) : ExceptT String m Unit :=
+  match st.mark with
+  | some f => ExceptT.lift (f l)
+  | none => pure ()
+
+/-- The runner of the divided paths. `fold job chunks init g` runs `job` on
+    every chunk of block numbers, each with its own view of the store, and
+    folds `g` over the results in chunk order. Its meaning is
+    `chunks.foldlM (fun b X => do g b (← job st X)) init`; the native driver
+    (`Harness/Sbm11Query.lean`, `parFold`) runs the jobs as tasks. -/
+structure Par (m : Type → Type) where
+  threads : Nat
+  /-- the fewest estimated rows per range (`rangeCount`); 0: no minimum -/
+  minRows : Nat := 8192
+  /-- `bounded`: at most a fixed number of range results may wait in memory
+      (the streamed path, whose results are rendered rows); `false`: the
+      results are small (group maps, the first `k` rows of a range) and a
+      worker never waits for the parent before it takes the next range. -/
+  fold : {α β : Type} → (bounded : Bool) → (Store m → List Nat → ExceptT String m α) → List (List Nat) →
+    β → (β → α → ExceptT String m β) → ExceptT String m β
+  /-- issue 961: a map of a pure function whose elements the native driver
+      computes on the session's worker pool. Its meaning is
+      `fun f xs => pure (xs.map f)` (`mergeJoinParM_eq` takes that as its
+      hypothesis); `none`: `ParallelJoin.mapPar` (tasks of the Lean pool). -/
+  mapList : Option ({α β : Type} → (α → β) → List α → m (List β)) := none
+  /-- the fewest input rows (left plus right) per range of a divided merge
+      join (`joinMinRows` by default; `mergeJoinParM`) -/
+  joinRows : Nat := 32768
+  /-- block ranges per thread of the divided counted path (`divide?`;
+      issue 961, stage 1i of docs/designissues/2026-10-12-parallel-block-scans.md).
+      The workers take the ranges from a shared counter, so a worker that ends
+      a cheap range takes the next one. DBpedia d10 at 4 threads (blocks in
+      which the group key changes are not spread evenly over the ranges), 21
+      runs per process, median of 5 processes: 1 range per thread 7.65 ms, 2
+      ranges 6.18 ms, 4 ranges 6.15 ms, 8 ranges 6.51 ms, 32 ranges 7.27 ms. -/
+  countPerThread : Nat := 2
 
 def ScanSpec.colPos (perm c : Nat) : Nat := if c < 3 then permOrder[perm]![c]! else 3
 
@@ -2340,6 +2391,27 @@ def scanSipTableM {m : Type → Type} [Monad m] (st : Store m) (spec : ScanSpec)
                         rows := 0, sortVar := sortVarOf spec }
   scanFoldSipM st spec cands init fun acc ch => pure (acc.append ch.table, true)
 
+/-- `scanSipTableM`, or the store's `scanSipTable` when it sets one. -/
+def scanSipTableOf {m : Type → Type} [Monad m] (st : Store m) (spec : ScanSpec) (cands : Array UInt64) :
+    ExceptT String m (Table × ScanStats) :=
+  match st.scanSipTable with
+  | some f => f spec cands
+  | none => scanSipTableM st spec cands
+
+/-- The loop of `scanFoldSipM` over the selected-block positions `sel`
+    (positions in `metas`), from the state `init`, with no delta overlay
+    (`ox.on = false`): the parallel scan with candidates
+    (`Harness/Sbm11Query.lean`, issue 799, KR 1.2) runs one such loop per
+    block range, as `scanListM` does for a scan without candidates, and
+    appends the tables in range order. -/
+def scanListSipM {m : Type → Type} [Monad m] {σ : Type} (st : Store m) (spec : ScanSpec)
+    (cands : Array UInt64) (init : σ) (f : σ → Chunk → ExceptT String m (σ × Bool))
+    (metas : Array BlockMeta) (sortVar : Option String) (ox : OvCtx) (sel : List Nat) :
+    ExceptT String m (σ × ScanStats) := do
+  let s ← forIn sel { acc := init, stats := {}, insPos := 0, stopped := false }
+    (scanBlockSipM st spec cands f metas sortVar ox)
+  return (s.acc, s.stats)
+
 /-- The rule that selects sideways information passing for a scan, with
     the store's factor `k` (`Store.sipFactor`, 16 by default): the left input
     has fewer than `1/k` of the rows the PRM1 entries give for the scan
@@ -2411,7 +2483,7 @@ def scanForJoinM {m : Type → Type} [Monad m] (st : Store m) (spec : ScanSpec) 
     if left.vars.contains v && sipRule st.sipFactor left.rows estimate then
       match sipCands left v with
       | some cands =>
-        let (t, s0) ← scanSipTableM st spec cands
+        let (t, s0) ← scanSipTableOf st spec cands
         let s := s0.withSip
         return (t, s, s!"; sideways ?{v}: {cands.size} candidates, blocks skipped {s.sipSkipped}, key values tested {s.keysTested} (on words in {s.sipWordBlocks} blocks), rows gathered {s.rowsGathered}")
       | none => pure ()
@@ -2486,6 +2558,38 @@ def bestSortPos (t : Pat) (pats : Array Pat) : Option Nat := Id.run do
 def posOf (t : Pat) (v : String) : Option Nat :=
   [0, 1, 2].find? fun i => t.slot i == .var v
 
+/-- The fewest input rows (left plus right) per range of a divided merge join
+    (stage 1f). A range costs a task: on the 4-vCPU test machine a task
+    waits 50 to 120 microseconds before a sleeping worker runs it, and olympics
+    q07's join of 6,248 and 13,369 rows (0.45 ms on one thread) was not faster
+    in 4 ranges (0.47 to 0.52 ms). Olympics q07 with `--sip off` joins 13,369
+    and 269,625 rows: 16.8 ms at 4 threads before, 13.5 to 15.5 ms with the
+    join in 4 ranges. With `Par.minRows = 0` (the gate fixtures of
+    `tests/sbm11/threads.sh`) every join of 2 rows or more is divided. -/
+def joinMinRows : Nat := 32768
+
+/-- `mergeJoin l r v`, with the left rows cut into at most `threads` ranges
+    (`ParallelJoin.rangeChunks`) when `par` is set and the inputs have at
+    least `joinMinRows` rows per range: each range's index pairs are computed
+    by a task (`ParallelJoin.rangePairsOf`, `ParallelJoin.mapPar`) and
+    appended in range order, then the output columns are gathered once. This
+    is `ParallelJoin.mergeJoinRanges l r v (rangeChunks l.rows k)`
+    (`mapPar_eq`), and `ParallelJoinTheorems.mergeJoinRanges_rangeChunks`
+    proves that equal to `mergeJoin l r v` for join columns in
+    non-decreasing order (the precondition of `mergeJoin` itself). -/
+def mergeJoinParM {m : Type → Type} [Monad m] (par : Option (Par m)) (l r : Table) (v : String) :
+    ExceptT String m Table := do
+  match par with
+  | none => return mergeJoin l r v
+  | some p =>
+    let k := min p.threads ((l.rows + r.rows) / (if p.minRows == 0 then 1 else max p.joinRows 1))
+    if k < 2 || l.rows < k then return mergeJoin l r v
+    let parts ← match p.mapList with
+      | some mp => ExceptT.lift (mp (ParallelJoin.rangePairsOf l r v) (ParallelJoin.rangeChunks l.rows k))
+      | none => pure (ParallelJoin.mapPar (ParallelJoin.rangePairsOf l r v) (ParallelJoin.rangeChunks l.rows k))
+    let pairs := ParallelJoin.concatPairs parts
+    return L4Factoidal.Qlvr.joinOutput l r (joinVars l r).1 (joinVars l r).2 pairs.1 pairs.2 (some v)
+
 /-- The next pattern of the join loop: among the remaining patterns that
     share a variable with the table so far (all remaining ones when none
     does), the first of least estimate. -/
@@ -2517,6 +2621,34 @@ def joinStep (tab rt : Table) (mergeVar : Option (String × Nat)) : Table × Str
     else (hashJoin tab rt, "hash join")
   | none => (hashJoin tab rt, if (sharedCols tab rt).isEmpty then "cross product" else "hash join")
 
+/-- `joinStep` as executed: the merge join is `mergeJoinParM` (divided into
+    block ranges when `par` is set, issue 961). With `par = none` it is
+    `joinStep` (`joinStepM_none`); with `par = some p` it is `joinStep` when
+    `p.mapList` is a map and the join columns are in non-decreasing order
+    (`WorkerPoolTheorems.mergeJoinParM_eq`). -/
+def joinStepM {m : Type → Type} [Monad m] (par : Option (Par m)) (tab rt : Table)
+    (mergeVar : Option (String × Nat)) : ExceptT String m (Table × String) :=
+  match mergeVar with
+  | some (v, _) =>
+    if rt.sortVar == some v then do
+      let j ← mergeJoinParM par tab rt v
+      pure (j, s!"merge join on ?{v}")
+    else pure (hashJoin tab rt, "hash join")
+  | none => pure (joinStep tab rt none)
+
+theorem joinStepM_none {m : Type → Type} [Monad m] [LawfulMonad m] (tab rt : Table)
+    (mergeVar : Option (String × Nat)) :
+    joinStepM (m := m) none tab rt mergeVar = pure (joinStep tab rt mergeVar) := by
+  unfold joinStepM joinStep
+  cases mergeVar with
+  | none => rfl
+  | some p =>
+    obtain ⟨v, _⟩ := p
+    simp only
+    split
+    · simp only [mergeJoinParM, pure_bind]
+    · rfl
+
 /-- The state of the join loop of `evalBgpM`. -/
 structure BgpLoop where
   remaining : Array Nat
@@ -2528,7 +2660,8 @@ structure BgpLoop where
     (`scanPatM`, with the table so far as the left side for candidates), the
     join (`joinStep`). Stops when no pattern remains. -/
 def bgpStepM {m : Type → Type} [Monad m] (st : Store m) (pats : Array Pat) (keep : String → Bool)
-    (ests : Array Nat) (s : BgpLoop) : ExceptT String m (ForInStep BgpLoop) := do
+    (ests : Array Nat) (s : BgpLoop) (par : Option (Par m) := none) :
+    ExceptT String m (ForInStep BgpLoop) := do
   if s.remaining.isEmpty then return .done s
   let next := pickNext ests pats s.remaining s.tab
   let t := pats[next]!
@@ -2536,7 +2669,9 @@ def bgpStepM {m : Type → Type} [Monad m] (st : Store m) (pats : Array Pat) (ke
   let perm := stepPerm t pats mergeVar
   let spec := mkSpec t perm keep
   let (rt, sc, sipNote) ← scanPatM st t spec keep (some s.tab) ests[next]!
-  let (joined, how) := joinStep s.tab rt mergeVar
+  st.markM s!"scan{next}"
+  let (joined, how) ← joinStepM par s.tab rt mergeVar
+  st.markM s!"join{next}"
   return .yield { remaining := s.remaining.filter (· != next),
                   lines := s.lines.push s!"pattern {next}: {permNames[perm]!} key {spec.key.size} estimate {ests[next]!}; blocks {sc.blocksRead} read of {sc.blocksSelected} selected of {sc.blocksTotal}, frames {sc.framesRead}, {sc.bytesRead} bytes; rows {rt.rows}{sipNote}; {how}: {joined.rows} rows",
                   total := s.total.add sc, tab := joined }
@@ -2548,7 +2683,7 @@ def bgpStepM {m : Type → Type} [Monad m] (st : Store m) (pats : Array Pat) (ke
     is `bgpStepM` (`BgpTableTheorems.evalBgpM_model`: the table denotes the
     model's evaluation of the patterns, up to order). -/
 def evalBgpM {m : Type → Type} [Monad m] (st : Store m) (pats : Array Pat) (need : String → Bool)
-    (pref : Option String := none) (left0 : Option Table := none) :
+    (pref : Option String := none) (left0 : Option Table := none) (par : Option (Par m) := none) :
     ExceptT String m (Table × Array String × ScanStats) := do
   let allVars := pats.foldl (fun a t => t.vars.foldl (fun a v => if a.contains v then a else a.push v) a) #[]
   let keep (v : String) : Bool := need v || varCount pats v ≥ 2
@@ -2569,11 +2704,12 @@ def evalBgpM {m : Type → Type} [Monad m] (st : Store m) (pats : Array Pat) (ne
   -- an OPTIONAL group's first scan takes the left table's join values as
   -- candidates (issue 809)
   let (tab0, st0, sip0) ← scanPatM st t0 spec0 keep left0 ests[first]!
+  st.markM "scanfirst"
   let s0 : BgpLoop :=
     { remaining := remaining.filter (· != first),
       lines := #[s!"pattern {first}: {permNames[spec0.perm]!} key {spec0.key.size} estimate {ests[first]!}; blocks {st0.blocksRead} read of {st0.blocksSelected} selected of {st0.blocksTotal}, frames {st0.framesRead}, {st0.bytesRead} bytes; rows {tab0.rows}{sip0}"],
       total := st0, tab := tab0 }
-  let s ← forIn [0:pats.size] s0 fun _ s => bgpStepM st pats keep ests s
+  let s ← forIn [0:pats.size] s0 fun _ s => bgpStepM st pats keep ests s par
   return (s.tab, s.lines, s.total)
 
 /-! ## FILTER -/
@@ -2620,6 +2756,15 @@ inductive FKind where
       is in one of `ranges` (the keys `[c] ++ needle ...` for c = 3, 4); any
       other id goes to the reference evaluator -/
   | strRange (v : String) (ranges : Array (Nat × Nat)) (classLo classHi : Nat) (e : Expr)
+  /-- `?v OP c` or `c OP ?v` (`swap`) with `OP` one of `<`, `<=`, `>`, `>=`
+      (`op`) and `c` an `xsd:date` constant that `DateKey.dateConst?` admits
+      (issue 948, d14): a dictionary literal (tag 3) whose key is `pre` and an
+      admitted lexical form `YYYY-MM-DD` is decided on the key bytes by
+      `DateKey.dateCmpKey?`, without a `Term`
+      (`DateKeyTheorems.dateCmpKey_termCompare`: the XSD value-space order of
+      `Fn.Comparison.termCompare`); any other id goes to the reference
+      evaluator on `e` -/
+  | dateCmp (v : String) (op : Fn.Comparison.Op) (swap : Bool) (pre : ByteArray) (kc : Nat) (e : Expr)
   /-- the reference evaluator on the terms of `vars`, memoised by their ids -/
   | general (e : Expr) (vars : Array String)
   /-- issue 823: an EXISTS-free FILTER conjunct outside `backendLocal`, or
@@ -2630,6 +2775,26 @@ inductive FKind where
       `vars`, memoised by the ids (0 for unbound) -/
   | residual (env : EvalEnv) (e : Expr) (vars : Array String)
   deriving Inhabited
+
+/-- `?a, ?b` for `--explain`. -/
+def varsText (vs : Array String) : String :=
+  ", ".intercalate (vs.toList.map fun v => "?" ++ v)
+
+/-- How a compiled conjunct is evaluated, for `--explain`
+    (tests/sbm11/filter_keys.sh reads it; issue 948). -/
+def FKind.explainName : FKind → String
+  | .idEq v _ => s!"?{v} = constant on ids"
+  | .idEqVar v w => s!"sameTerm(?{v}, ?{w}) on ids"
+  | .str _ v _ _ => s!"string test of ?{v} on key bytes"
+  | .strRange v _ _ _ _ => s!"STRSTARTS of ?{v} on key ranks"
+  | .dateCmp v _ _ _ _ _ => s!"xsd:date order of ?{v} on key bytes (YYYY-MM-DD keys; other keys decoded)"
+  | .general _ vs => s!"reference evaluator on the decoded terms of {varsText vs}"
+  | .residual _ _ vs => s!"residual: reference evaluator on the decoded terms of {varsText vs}"
+
+/-- The `--explain` line of the compiled FILTER conjuncts. -/
+def filterKindsLine (fs : Array FKind) : String :=
+  s!"FILTER conjuncts on ids: {fs.size}" ++
+    (if fs.isEmpty then "" else ": " ++ "; ".intercalate (fs.map FKind.explainName).toList)
 
 /-- The reference FILTER on one solution mapping, as `QueryPattern.lowerWith`
     builds it: `ebvOrFalse (Expr.evalIn env mu (substituteExistentials env
@@ -2661,8 +2826,23 @@ def simpleNeedle? : Expr → Option String
       some l.val.lexicalForm else none
   | _ => none
 
+/-- The `dateCmp` conjunct of a relational comparison of a variable with an
+    admitted `xsd:date` constant (either order). -/
+def dateCmpOf? (e : Expr) : Option FKind :=
+  match e with
+  | .compare op (.var v) (.lit c) =>
+    match DateKey.relOp? op, DateKey.dateConst? c with
+    | some o, some (pre, kc) => some (.dateCmp v o false pre kc e)
+    | _, _ => none
+  | .compare op (.lit c) (.var v) =>
+    match DateKey.relOp? op, DateKey.dateConst? c with
+    | some o, some (pre, kc) => some (.dateCmp v o true pre kc e)
+    | _, _ => none
+  | _ => none
+
 /-- Classify a conjunct; constants are looked up. -/
 def compileFilter {m : Type → Type} [Monad m] (st : Store m) (e : Expr) : ExceptT String m FKind := do
+  if let some k := dateCmpOf? e then return k
   let general : ExceptT String m FKind := do
     let some vs := exprVars e | throw "a FILTER expression outside the fragment"
     pure (.general e vs)
@@ -2806,6 +2986,28 @@ def filterKeep {m : Type → Type} [Monad m] (st : Store m) (fs : Array FKind) (
           if !keep[i]! then continue
           let x := t.at col i
           let r ← match strRangeFast? ranges classLo classHi x with
+            | some r => pure r
+            | none => match memo.get? [x] with
+              | some r => pure r
+              | none => do
+                let r := refFilter e [(v, ← st.termOf x)]
+                memo := memo.insert [x] r
+                pure r
+          if !r then keep := keep.set! i false
+        memos := memos.set! fi (if memo.size > 65536 then {} else memo)
+    | .dateCmp v op swap pre kc e =>
+      match t.idx v with
+      | none => keep := Array.replicate t.rows false
+      | some col =>
+        let mut memo := memos[fi]!
+        for i in [0:t.rows] do
+          if !keep[i]! then continue
+          let x := t.at col i
+          let fast : Option Bool ← if tagOf x == 3 then do
+              let (buf, a, b) ← st.keySlice x
+              pure (DateKey.dateCmpKey? op swap pre kc buf a b)
+            else pure none
+          let r ← match fast with
             | some r => pure r
             | none => match memo.get? [x] with
               | some r => pure r
@@ -3095,6 +3297,57 @@ def groupTable (plan : Plan) (g : Groups) (items : Array (Option Groups) := #[])
 def orderValue (t : Term) : EvalResult :=
   L4Factoidal.SPARQL.Expr.evalIn {} [("v", t)] (.var "v")
 
+/-- The order reading of one value (issue 961): `isNumericOperand`,
+    `numericValue?` and `orderView`, made once per distinct value of an ORDER
+    BY column. `OrderRead.cmp_of`: the comparison of two readings is
+    `sparqlOrderValue` of the two values. Olympics q07 (291 distinct labels):
+    the sort took 0.28 ms when every comparison read the datatype IRIs of
+    both operands again. -/
+structure OrderRead where
+  isNum : Bool
+  num : Option L4Factoidal.XSD.Val
+  view : EvalResult
+
+def OrderRead.of (v : EvalResult) : OrderRead :=
+  ⟨v.isNumericOperand, v.numericValue?, L4Factoidal.SPARQL.orderView v⟩
+
+def OrderRead.cmp (a b : OrderRead) : Int :=
+  L4Factoidal.SPARQL.sparqlOrderViewed a.isNum b.isNum a.num b.num a.view b.view
+
+theorem OrderRead.cmp_of (a b : EvalResult) :
+    (OrderRead.of a).cmp (OrderRead.of b) = L4Factoidal.SPARQL.sparqlOrderValue a b :=
+  (L4Factoidal.SPARQL.sparqlOrder_eq_viewed a b).symm
+
+/-- The reading of an unbound variable (an error, which section 15.1 orders
+    first). -/
+def errorRead : OrderRead := OrderRead.of .error
+
+/-- The reading of the value of id `x` (`errorRead` for `OptJoin.unbound`). -/
+def orderReadOfM {m : Type → Type} [Monad m] (st : Store m) (x : UInt64) : ExceptT String m OrderRead := do
+  if x == OptJoin.unbound then return errorRead
+  return OrderRead.of (orderValue (← st.termOf x))
+
+/-- The ranks of `reads` given its positions in `OrderRead.cmp` order: equal
+    readings, equal ranks. -/
+def ranksOfSorted (reads : Array OrderRead) (sorted : Array Nat) : Array Nat := Id.run do
+  let mut rank : Array Nat := Array.replicate reads.size 0
+  let mut r := 0
+  for j in [0:sorted.size] do
+    if j > 0 && (reads.getD sorted[j - 1]! errorRead).cmp (reads.getD sorted[j]! errorRead) != 0 then
+      r := r + 1
+    rank := rank.set! sorted[j]! r
+  return rank
+
+/-- The positions of `reads` in `OrderRead.cmp` order (`mergeSortBy`,
+    stable). -/
+def sortReads (reads : Array OrderRead) : Array Nat :=
+  mergeSortBy (List.range reads.size).toArray fun a b =>
+    (reads.getD a errorRead).cmp (reads.getD b errorRead) ≤ 0
+
+/-- The ranks of `reads` in the section 15.1 order: equal values, equal
+    ranks (the order of `mergeSortBy` with `OrderRead.cmp`, stable). -/
+def orderRanks (reads : Array OrderRead) : Array Nat := ranksOfSorted reads (sortReads reads)
+
 /-- Sort keys read from the ids alone, when every id of column `c` is a
     blank node or an IRI (tags 1 and 2), or every one is an inline integer
     (tag 4); `none` otherwise.
@@ -3138,21 +3391,12 @@ def orderKeysM {m : Type → Type} [Monad m] (st : Store m) (t : Table) (c : Nat
     if !idx.contains x then
       idx := idx.insert x ids.size
       ids := ids.push x
-  let mut vals : Array EvalResult := #[]
+  -- an unbound variable (`OptJoin.unbound`, after an OPTIONAL) evaluates
+  -- to an error, which section 15.1 orders first, as the reference does
+  let mut reads : Array OrderRead := Array.mkEmpty ids.size
   for x in ids do
-    -- an unbound variable (`OptJoin.unbound`, after an OPTIONAL) evaluates
-    -- to an error, which section 15.1 orders first, as the reference does
-    if x == OptJoin.unbound then vals := vals.push .error
-    else vals := vals.push (orderValue (← st.termOf x))
-  let sorted := mergeSortBy (List.range ids.size).toArray fun a b =>
-    L4Factoidal.SPARQL.sparqlOrderValue (vals.getD a .error) (vals.getD b .error) ≤ 0
-  let mut rank : Array Nat := Array.replicate ids.size 0
-  let mut r := 0
-  for j in [0:sorted.size] do
-    if j > 0 && L4Factoidal.SPARQL.sparqlOrderValue (vals.getD sorted[j - 1]! .error)
-        (vals.getD sorted[j]! .error) != 0 then
-      r := r + 1
-    rank := rank.set! sorted[j]! r
+    reads := reads.push (← orderReadOfM st x)
+  let rank := orderRanks reads
   let mut out : Array UInt64 := Array.mkEmpty t.rows
   for i in [0:t.rows] do
     let k := (rank[idx.getD (t.at c i) 0]!).toUInt64
@@ -3513,6 +3757,7 @@ def fkVars (fs : Array FKind) : Array String :=
     | .idEqVar v w => (a.push v).push w
     | .str _ v _ _ => a.push v
     | .strRange v _ _ _ _ => a.push v
+    | .dateCmp v _ _ _ _ _ => a.push v
     | .general _ vs => a ++ vs
     | .residual _ _ vs => a ++ vs) #[]
 
@@ -4383,18 +4628,6 @@ With `par = none` (`--threads 1`) none of this runs: `runPlanM` takes the
 single-thread code. A scan with a delta overlay stays on one thread, as in
 stage 1. -/
 
-/-- The runner of the divided paths. `fold job chunks init g` runs `job` on
-    every chunk of block numbers, each with its own view of the store, and
-    folds `g` over the results in chunk order. Its meaning is
-    `chunks.foldlM (fun b X => do g b (← job st X)) init`; the native driver
-    (`Harness/Sbm11Query.lean`, `parFold`) runs the jobs as tasks. -/
-structure Par (m : Type → Type) where
-  threads : Nat
-  /-- the fewest estimated rows per range (`rangeCount`); 0: no minimum -/
-  minRows : Nat := 8192
-  fold : {α β : Type} → (Store m → List Nat → ExceptT String m α) → List (List Nat) → β →
-    (β → α → ExceptT String m β) → ExceptT String m β
-
 /-- How many block ranges a scan of `est` estimated rows is divided into with
     `threads` threads: at most `threads`, and with `minRows > 0` at most
     `est / minRows`. Fewer than 2: the scan runs on one thread. A range costs
@@ -4414,7 +4647,7 @@ def rangeCount (threads minRows est : Nat) : Nat :=
     list of positions in that array), the overlay context and the estimate
     (`selRows`). -/
 def divide? {m : Type → Type} [Monad m] (st : Store m) (threads minRows : Nat) (spec : ScanSpec)
-    (maxBlocks : Nat) :
+    (maxBlocks : Nat) (perThread : Nat := 1) :
     ExceptT String m (Option (Array BlockMeta × OvCtx × List (List Nat) × Nat)) := do
   if threads ≤ 1 then return none
   let ox := ovCtx (st.ovl spec.perm) spec.key
@@ -4424,7 +4657,7 @@ def divide? {m : Type → Type} [Monad m] (st : Store m) (threads minRows : Nat)
   let metas ← st.blocksForRange spec.perm spec.key
   let sel := List.range metas.size
   let est := selRows metas
-  let n := rangeCount threads minRows est
+  let n := rangeCount threads minRows est * max perThread 1
   if sel.length < 2 || n < 2 then return none
   let c0 := (sel.length + n - 1) / n
   let c := if maxBlocks == 0 then c0 else min c0 maxBlocks
@@ -4432,9 +4665,9 @@ def divide? {m : Type → Type} [Monad m] (st : Store m) (threads minRows : Nat)
 
 /-- `divide?` with the threads of `par`; none without `par`. -/
 def divideFor? {m : Type → Type} [Monad m] (st : Store m) (par : Option (Par m)) (spec : ScanSpec)
-    (maxBlocks : Nat) : ExceptT String m (Option (Array BlockMeta × OvCtx × List (List Nat) × Nat)) :=
+    (maxBlocks : Nat) (perThread : Nat := 1) : ExceptT String m (Option (Array BlockMeta × OvCtx × List (List Nat) × Nat)) :=
   match par with
-  | some p => divide? st p.threads p.minRows spec maxBlocks
+  | some p => divide? st p.threads p.minRows spec maxBlocks perThread
   | none => pure none
 
 /-- Rows `[lo, hi)` of `t`, each as a comma and its binding object (the text
@@ -4461,6 +4694,22 @@ def renderRowsEndsM {m : Type → Type} [Monad m] (st : Store m) (reference : Bo
     ends := ends.push out.size
   return (out, ends)
 
+/-- A new string object equal to `s` (`freshStr_eq`), made by the calling
+    thread. `s ++ ""` is not one: the compiler emits `s` itself for it (and for
+    `"" ++ s`; checked with `lean -c`, Lean 4.33.1), so the copies that
+    `ScanSpec.fresh`, `FKind.fresh` and `countPartM` made of their variable
+    names before KR 1.2 of batch 3 were the shared strings. DBpedia d10 at 4
+    threads: the reference counts of the group variable names that every task
+    read in every block (`countChunk`) were 5 percent of the profile, against
+    0.5 percent at 1 thread. -/
+@[noinline] def freshStr (s : String) : String := String.ofList s.toList
+
+theorem freshStr_eq (s : String) : freshStr s = s := by simp [freshStr]
+
+theorem map_freshStr (a : Array String) : a.map freshStr = a := by
+  conv => rhs; rw [← Array.map_id a]
+  congr 1; funext x; exact freshStr_eq x
+
 /-- A copy of `spec` whose arrays, pairs, boxed words and strings are new
     objects, made by the task that calls it. A scan reads its spec in every
     block; the spec the parent made is reachable from every task, and the Lean
@@ -4469,20 +4718,21 @@ def renderRowsEndsM {m : Type → Type} [Monad m] (st : Store m) (reference : Bo
     (DBpedia d17 at 4 threads: `planChecksGo`, `lean_array_to_list_impl` and
     `lean_dec_ref_cold` together a third of the profile). The copy has the
     same value (`ScanSpec.fresh_eq`). The words go through `toNat` and back
-    and the strings through `++ ""` so that the compiler does not reduce the
+    and the strings through `freshStr` so that the compiler does not reduce the
     copy to the original object (it reduces `⟨x.a, x.b⟩` to `x`). -/
 def ScanSpec.fresh (s : ScanSpec) : ScanSpec :=
   { perm := s.perm
     key := s.key.map fun x => UInt64.ofNat x.toNat
     checks := s.checks.map fun p => (p.1, UInt64.ofNat p.2.toNat)
     named := s.named
-    outVars := s.outVars.map (· ++ "")
+    outVars := s.outVars.map freshStr
     outCols := s.outCols.toList.toArray
     eqs := s.eqs.map fun p => (p.1 + 0, p.2 + 0) }
 
 theorem ScanSpec.fresh_eq (s : ScanSpec) : s.fresh = s := by
   obtain ⟨perm, key, checks, named, outVars, outCols, eqs⟩ := s
-  simp only [ScanSpec.fresh, Nat.add_zero, String.append_empty, Array.toArray_toList]
+  simp only [ScanSpec.fresh, Nat.add_zero, Array.toArray_toList]
+  rw [map_freshStr]
   have hk : key.map (fun x => UInt64.ofNat x.toNat) = key := by
     conv => rhs; rw [← Array.map_id key]
     congr 1; funext x; simp
@@ -4497,30 +4747,43 @@ theorem ScanSpec.fresh_eq (s : ScanSpec) : s.fresh = s := by
     are read for every row of every block). The expression `e` is shared: it
     is read only when the reference evaluator decides a row. -/
 def FKind.fresh : FKind → FKind
-  | .idEq v c => .idEq (v ++ "") (c.map fun x => UInt64.ofNat x.toNat)
-  | .idEqVar v w => .idEqVar (v ++ "") (w ++ "")
-  | .str k v needle e => .str k (v ++ "") (needle.extract 0 needle.size) e
-  | .strRange v ranges lo hi e => .strRange (v ++ "") (ranges.map fun p => (p.1 + 0, p.2 + 0)) lo hi e
-  | .general e vs => .general e (vs.map (· ++ ""))
-  | .residual env e vs => .residual env e (vs.map (· ++ ""))
+  | .idEq v c => .idEq (freshStr v) (c.map fun x => UInt64.ofNat x.toNat)
+  | .idEqVar v w => .idEqVar (freshStr v) (freshStr w)
+  | .str k v needle e => .str k (freshStr v) (needle.extract 0 needle.size) e
+  | .strRange v ranges lo hi e => .strRange (freshStr v) (ranges.map fun p => (p.1 + 0, p.2 + 0)) lo hi e
+  | .dateCmp v op swap pre kc e => .dateCmp (freshStr v) op swap (pre.extract 0 pre.size) (kc + 0) e
+  | .general e vs => .general e (vs.map freshStr)
+  | .residual env e vs => .residual env e (vs.map freshStr)
 
 theorem FKind.fresh_eq (f : FKind) : f.fresh = f := by
   cases f with
-  | idEq v c => cases c <;> simp [FKind.fresh]
-  | idEqVar v w => simp [FKind.fresh]
-  | str k v needle e => simp [FKind.fresh, ByteArray.extract_zero_size]
+  | idEq v c => cases c <;> simp [FKind.fresh, freshStr_eq]
+  | idEqVar v w => simp [FKind.fresh, freshStr_eq]
+  | str k v needle e => simp [FKind.fresh, freshStr_eq, ByteArray.extract_zero_size]
   | strRange v ranges lo hi e =>
-    simp only [FKind.fresh, String.append_empty, Nat.add_zero]
+    simp only [FKind.fresh, freshStr_eq, Nat.add_zero]
     congr 1
     conv => rhs; rw [← Array.map_id ranges]
     rfl
-  | general e vs => simp [FKind.fresh]
-  | residual env e vs => simp [FKind.fresh]
+  | dateCmp v op swap pre kc e => simp [FKind.fresh, freshStr_eq, ByteArray.extract_zero_size]
+  | general e vs => simp [FKind.fresh, map_freshStr]
+  | residual env e vs => simp [FKind.fresh, map_freshStr]
 
 /-- The overlay context of a divided scan (no overlay: `divide?` refuses a
     scan with one), made by the task that calls it. -/
 def OvCtx.fresh (ox : OvCtx) (key : Array UInt64) : OvCtx :=
   if ox.on then ox else ovCtx {} key
+
+/-- The most blocks in one range of the divided streamed path. The parent
+    writes the ranges in order, so a range that finishes early waits in memory
+    with its rendered pieces until the earlier ranges are written. With
+    ranges of at most this many blocks there are more ranges than tasks, and
+    `Par.fold` (window = threads) holds at most `threads` finished or running
+    ranges: the bytes held are bounded by `threads * streamRangeBlocks`
+    blocks of output, not by the whole scan (olympics q21 at 4 threads:
+    4 ranges of 9 blocks, all held, 23 MB of rendered rows; issue 799,
+    stage 1d). -/
+def streamRangeBlocks : Nat := 1
 
 /-- Rows per rendered piece of the divided streamed path. A piece is made by
     a task and freed by the parent after it is written; a buffer of a whole
@@ -4592,7 +4855,7 @@ def countPartM {m : Type → Type} [Monad m] (st : Store m) (spec : ScanSpec) (f
   let spec := spec.fresh
   let fs := fs.map FKind.fresh
   let ox := ox.fresh spec.key
-  let groupVars := groupVars.map (· ++ "")
+  let groupVars := groupVars.map freshStr
   let ((g, _), s) ← scanListM st spec (!fs.isEmpty) (({} : Groups), (fs.map fun _ => ({} : Memo)))
     (countStepM st fs groupVars) metas (sortVarOf spec) ox X
   return (g, s)
@@ -4638,6 +4901,7 @@ def runPlanM {m : Type → Type} [Monad m] (st : Store m) (plan : Plan) (emit : 
     ++ filterVars ++ plan.order.map (·.1) ++ plan.groupVars ++ valuesVars plan.values
     ++ unionVars plan.unions ++ bindVars plan.binds ++ pathVars plan.paths ++ semiVars plan.semis
   let need (x : String) : Bool := used.contains x
+  st.markM "consts"
   let mut stats : RunStats := {}
   -- the JSON head is emitted when no refusal can follow (issue 956: the
   -- semi-joins check their rows after the joins and may refuse)
@@ -4659,10 +4923,10 @@ def runPlanM {m : Type → Type} [Monad m] (st : Store m) (plan : Plan) (emit : 
     else
       -- stage 1b: divided when OFFSET + LIMIT is above the estimate (the single
       -- scan then reads every selected block)
-      match par, (← divideFor? st par spec 16).filter (fun d => plan.offset + lim > d.2.2.2) with
+      match par, (← divideFor? st par spec streamRangeBlocks).filter (fun d => plan.offset + lim > d.2.2.2) with
       | some p, some (metas, ox, chunks, est) =>
         let total ← st.blockCount spec.perm
-        let ((_, emitted), s) ← p.fold
+        let ((_, emitted), s) ← p.fold true
             (fun v X => streamPartM v spec fs reference plan.outVars (plan.offset + lim) metas ox X) chunks
             (((0 : Nat), (0 : Nat)), ({ blocksTotal := total } : ScanStats))
             fun (acc, s) (pieces, s') => do
@@ -4697,10 +4961,10 @@ def runPlanM {m : Type → Type} [Monad m] (st : Store m) (plan : Plan) (emit : 
           let (n, decided, s) ← metaCountM st spec
           let g : Groups := if n == 0 then {} else ({} : Groups).add [] n
           pure (g, s, s!" from PRM1 entries ({decided} blocks decided by their entries)")
-        else match par, ← divideFor? st par spec 0 with
+        else match par, ← divideFor? st par spec 0 (par.map (·.countPerThread) |>.getD 1) with
         | some p, some (metas, ox, chunks, _) => do
           let total ← st.blockCount spec.perm
-          let (g, s) ← p.fold (fun v X => countPartM v spec fs plan.groupVars metas ox X) chunks
+          let (g, s) ← p.fold false (fun v X => countPartM v spec fs plan.groupVars metas ox X) chunks
             (({} : Groups), ({ blocksTotal := total } : ScanStats))
             fun (g, s) (g', s') => pure (g.merge g', s.add s')
           pure (g, s, s!" in {chunks.length} block ranges ({p.threads} tasks at once at most)")
@@ -4733,13 +4997,13 @@ def runPlanM {m : Type → Type} [Monad m] (st : Store m) (plan : Plan) (emit : 
           let k := plan.offset + plan.limit.getD 0
           let init : Table := Table.empty spec0.outVars
           let total ← st.blockCount spec0.perm
-          let (u, s) ← p.fold (fun v X => topPartM v plan spec0 fs k metas ox X) chunks
+          let (u, s) ← p.fold false (fun v X => topPartM v plan spec0 fs k metas ox X) chunks
             (init, ({ blocksTotal := total } : ScanStats))
             fun (u, s) (t, s') => pure (u.append t, s.add s')
           pure (u, #[s!"pattern 0: {permNames[spec0.perm]!} key {spec0.key.size} estimate {est}; blocks {s.blocksRead} read of {s.blocksSelected} selected of {s.blocksTotal}, frames {s.framesRead}, {s.bytesRead} bytes; rows {s.rowsOut}; first {k} rows of the order kept in each of {chunks.length} block ranges ({p.threads} tasks at once at most): {u.rows} rows"], s.full)
         | _, _ =>
           if plan.optionals.isEmpty then do
-            let (t0, lines, s) ← evalBgpM st pats need
+            let (t0, lines, s) ← evalBgpM st pats need none none par
             let (t1, _) ← applyFilters st fs memos0 t0
             let (t2, vlines, us) ← joinExtrasM st plan env t1 vtabs btabs rpaths
             pure (t2, xlines ++ lines ++ vlines, (s.add us).add xs)
@@ -4751,8 +5015,10 @@ def runPlanM {m : Type → Type} [Monad m] (st : Store m) (plan : Plan) (emit : 
         | .ok t => table := t
         | .error e => throw e
       else table := t1
+    st.markM "bgp+filters"
     (emit (jsonHead plan.outVars).toUTF8 : m Unit)
     let out ← finishM st plan table
+    st.markM "finish"
     let pieces := (out.rows + 4095) / 4096
     for k in [0:pieces] do
       let lo := 4096 * k
@@ -4760,9 +5026,11 @@ def runPlanM {m : Type → Type} [Monad m] (st : Store m) (plan : Plan) (emit : 
       let bytes ← renderRowsM st reference out plan.outVars lo hi (lo == 0)
       (emit bytes : m Unit)
     stats := { stats with rows := out.rows }
+    st.markM "render"
   (emit jsonTail.toUTF8 : m Unit)
   let t := stats.scan
-  return { stats with plan := stats.plan.push s!"total: rows decoded {t.rowsDecoded} (of a full scan the rows of its table, of a scan with candidates the rows gathered); join-key values tested {t.keysTested}; blocks read {t.blocksRead} of {t.blocksSelected} selected, {t.sipSkipped} skipped by candidates; {t.bytesRead} bytes" }
+  let plan1 := stats.plan.push s!"total: rows decoded {t.rowsDecoded} (of a full scan the rows of its table, of a scan with candidates the rows gathered); join-key values tested {t.keysTested}; blocks read {t.blocksRead} of {t.blocksSelected} selected, {t.sipSkipped} skipped by candidates; {t.bytesRead} bytes"
+  return { stats with plan := if fs.isEmpty then plan1 else plan1.push (filterKindsLine fs) }
 
 /-! ## The reference post-processing on decoded solutions (issue 823)
 
@@ -4819,14 +5087,14 @@ inductive PostAnswer where
     the same within the spread, so the rows are decoded in table order. -/
 def decodeRowsM {m : Type → Type} [Monad m] (st : Store m) (t : Table) :
     ExceptT String m L4Factoidal.SPARQL.SolutionSeq := do
-  let mut memo : IdAgg.Cache UInt64 Term := {}
+  let mut memo : IdAgg.Cache IdAgg.Id64 Term := {}
   let mut out : Array Binding := Array.mkEmpty t.rows
   for i in [0:t.rows] do
     let mut mu : Array (String × Term) := Array.mkEmpty t.vars.size
     for c in [0:t.vars.size] do
       let x := t.at c i
       if x != OptJoin.unbound then
-        let (tm, memo') ← memo.getM st.termOf x
+        let (tm, memo') ← memo.getM (fun k => st.termOf k.val) (IdAgg.Id64.ofU x)
         memo := memo'
         mu := mu.push (t.vars[c]!, tm)
     out := out.push mu.toList
@@ -4880,7 +5148,7 @@ def whereTableM {m : Type → Type} [Monad m] (st : Store m) (plan : Plan) (env 
   let t := match firstRows with
     | some n => t0.slice 0 n
     | none => t0
-  return (t, lines, s)
+  return (t, if fs.isEmpty then lines else lines.push (filterKindsLine fs), s)
 
 /-- Run a post-processed plan: the WHERE solutions on ids, decoded, then the
     reference function of the query form (section above).

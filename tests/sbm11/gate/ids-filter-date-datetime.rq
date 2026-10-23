@@ -1,0 +1,6 @@
+# Issue 948: a dateTime constant is outside the admitted set of
+# DateKey.dateConst?; the reference evaluator answers every row (the two
+# xsd:date literals are type errors, removed).
+PREFIX ex: <http://ex.org/>
+PREFIX xsd: <http://www.w3.org/2001/XMLSchema#>
+SELECT ?s ?d WHERE { ?s ex:when ?d FILTER(?d <= "2020-01-01T10:00:00"^^xsd:dateTime) }

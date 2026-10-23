@@ -188,7 +188,7 @@ theorem pathScanM_eq (st : Store Id) (g : UInt64) (pid : Option UInt64) (perm : 
 theorem pathScan_rows (st : Store Id) (g : UInt64) (pid : Option UInt64) (perm : Nat) (hperm : perm < 4)
     (sv : String) (hsv : sortVarOf (mkSpec (pathPat g pid) perm (fun _ => true)) = some sv)
     (hk : (mkSpec (pathPat g pid) perm (fun _ => true)).key.size < 4)
-    (prb : ByteArray) (ms : List Block.BlockMeta) (hpm : PermMem st perm prb ms) (hscan : st.scanTable = none)
+    (prb : ByteArray) (ms : List Block.BlockMeta) (hpm : PermMem st perm prb ms) (hscan : st.Sequential)
     (R : Option (Array UInt64)) (hR : ∀ cs, R = some cs → Sip.Sorted cs) :
     ∃ t s, pathScanM st g pid perm R = pure (t, s) ∧ t.vars.toList.Nodup ∧ NoUnbound t ∧
       Pw RowEq t.idRows ((scanRows (ipatOf (pathPat g pid))
@@ -229,7 +229,7 @@ theorem pathScan_rows (st : Store Id) (g : UInt64) (pid : Option UInt64) (perm :
       scanTable_model st (pathPat g pid) perm hperm g htg hnamed hmiss prb ms hpm
     refine ⟨T, stats.full, ?_, hwf.nodup, hnu, ?_⟩
     · unfold scanTableOf
-      rw [hscan]
+      rw [hscan.1]
       simp only []
       rw [he]
       rfl

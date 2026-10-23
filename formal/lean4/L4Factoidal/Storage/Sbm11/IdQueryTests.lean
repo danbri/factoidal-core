@@ -247,6 +247,94 @@ def argRefused : Except String Arg → Bool
 -- every other object is `argOfTerm`
 #guard argTerm? (argOfObject (pIri "http://ex.org/b")) == iri? "http://ex.org/b"
 
+/-! ## `dateCmp`: an `xsd:date` literal compared with a constant on the key
+bytes (issue 948, d14) -/
+
+/-- Stored terms for the date comparison: the samples, admitted dates, and
+    dates outside the admitted set (timezone, negative year, five-digit year,
+    year 0000, a day that does not exist, a leap day, a `dateTime`, another
+    datatype). -/
+def dateSamples : List Term :=
+  samples ++ ([lit? "2020-01-01" (xsdT "date") none, lit? "2021-06-30" (xsdT "date") none,
+    lit? "1500-04-23" (xsdT "date") none, lit? "1799-12-31" (xsdT "date") none,
+    lit? "1800-01-01" (xsdT "date") none, lit? "0001-01-01" (xsdT "date") none,
+    lit? "2000-02-29" (xsdT "date") none, lit? "1999-12-31Z" (xsdT "date") none,
+    lit? "1800-01-01+14:00" (xsdT "date") none, lit? "1800-01-01-14:00" (xsdT "date") none,
+    lit? "-0044-03-15" (xsdT "date") none, lit? "12020-01-01" (xsdT "date") none,
+    lit? "0000-01-01" (xsdT "date") none, lit? "2001-02-29" (xsdT "date") none,
+    lit? "2020-13-01" (xsdT "date") none, lit? "2020-01-01T10:00:00" (xsdT "dateTime") none,
+    lit? "2020-01-01" "http://ex.org/dt" none, lit? "" (xsdT "date") none]).filterMap id
+
+/-- Constants: three admitted dates, then refused ones (timezone, negative
+    year, five-digit year, a `dateTime`, an unknown datatype, a number). -/
+def dateConsts : List WfLiteral :=
+  (([lit? "2020-06-01" (xsdT "date") none, lit? "1800-01-01" (xsdT "date") none,
+    lit? "2000-02-29" (xsdT "date") none,
+    lit? "1800-01-01Z" (xsdT "date") none, lit? "-0044-03-15" (xsdT "date") none,
+    lit? "12020-01-01" (xsdT "date") none, lit? "2020-01-01T10:00:00" (xsdT "dateTime") none,
+    lit? "2020-01-01" "http://ex.org/dt" none, lit? "72" (xsdT "integer") none]).filterMap id).filterMap
+    fun t => match t with | .literal l => some l | _ => none
+
+def dateExpr (op : CompOp) (swap : Bool) (c : WfLiteral) : Expr :=
+  if swap then .compare op (.lit c) (.var "v") else .compare op (.var "v") (.lit c)
+
+def relOps : List CompOp := [.lt, .gt, .le, .ge]
+
+/- Wherever the compiled conjunct answers on a stored key, the answer is the
+   reference evaluator's (the theorem is
+   `DateKeyFilterTheorems.dateCmp_fast_eq_ref`; this runs it on the samples). -/
+#guard dateConsts.all fun c => relOps.all fun op => [false, true].all fun swap =>
+  match dateCmpOf? (dateExpr op swap c) with
+  | some (.dateCmp v o sw pre kc e) => dateSamples.all fun t =>
+    match L4Factoidal.Storage.Sbm11.termKeyBytes? t with
+    | none => true
+    | some key =>
+      match L4Factoidal.Storage.Sbm11.DateKey.dateCmpKey? o sw pre kc key 0 key.size with
+      | some r => v == "v" && r == refFilter e (mu t)
+      | none => true
+  | _ => true
+
+/- The test decides keys (it is not vacuous): 3 admitted constants, 7 admitted
+   stored dates, 4 operators, 2 orders: 168 decided keys. -/
+#guard (dateConsts.filter fun c => (L4Factoidal.Storage.Sbm11.DateKey.dateConst? c).isSome).length == 3
+#guard (dateConsts.foldl (fun n c => n + relOps.foldl (fun n op => n + [false, true].foldl (fun n swap =>
+    match dateCmpOf? (dateExpr op swap c) with
+    | some (.dateCmp _ o sw pre kc _) => n + (dateSamples.filter fun t =>
+        match L4Factoidal.Storage.Sbm11.termKeyBytes? t with
+        | some key => (L4Factoidal.Storage.Sbm11.DateKey.dateCmpKey? o sw pre kc key 0 key.size).isSome
+        | none => false).length
+    | _ => n) 0) 0) 0) == 168
+
+/- A key outside the admitted set is not decided: a timezone, a negative or
+   five-digit year, year 0000, a day that does not exist, another datatype. -/
+#guard (match dateConsts[1]? with
+  | some c => match L4Factoidal.Storage.Sbm11.DateKey.dateConst? c with
+    | some (pre, kc) => ([lit? "1800-01-01+14:00" (xsdT "date") none, lit? "-0044-03-15" (xsdT "date") none,
+        lit? "12020-01-01" (xsdT "date") none, lit? "0000-01-01" (xsdT "date") none,
+        lit? "2001-02-29" (xsdT "date") none, lit? "2020-01-01" "http://ex.org/dt" none].filterMap id).all
+        fun t => match L4Factoidal.Storage.Sbm11.termKeyBytes? t with
+          | some key => (L4Factoidal.Storage.Sbm11.DateKey.dateCmpKey? .lt false pre kc key 0 key.size).isNone
+          | none => false
+    | none => false
+  | none => false)
+
+/- Two keys on which the lexical order and the XSD order differ, so the key
+   bytes must not decide them: `"12020-01-01" < "1800-01-01"` is true in code
+   point order and false in the value space; `"1800-01-01Z" > "1800-01-01"` is
+   true in code point order, and the value space leaves the pair incomparable
+   (no implicit timezone, the +-14:00 window), so the FILTER is false. -/
+#guard (match dateConsts[1]?, lit? "12020-01-01" (xsdT "date") none, lit? "1800-01-01Z" (xsdT "date") none with
+  | some c, some t1, some t2 =>
+    !refFilter (dateExpr .lt false c) (mu t1) && !refFilter (dateExpr .gt false c) (mu t2)
+  | _, _, _ => false)
+
+/- `=` and `!=` are not compiled to `dateCmp` (they compare `xsd:date` literals
+   by lexical form); the relational operators are, for admitted constants only. -/
+#guard dateConsts.all fun c =>
+  (dateCmpOf? (dateExpr .eq false c)).isNone && (dateCmpOf? (dateExpr .ne true c)).isNone &&
+  (dateCmpOf? (dateExpr .lt false c)).isSome == (L4Factoidal.Storage.Sbm11.DateKey.dateConst? c).isSome &&
+  (dateCmpOf? (dateExpr .ge true c)).isSome == (L4Factoidal.Storage.Sbm11.DateKey.dateConst? c).isSome
+
 #print axioms ebvOrFalse_evalIn_and
 
 end L4Factoidal.Storage.Sbm11.IdQueryTests

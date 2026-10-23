@@ -152,7 +152,7 @@ theorem mem_hpm (h : G.check = true) (k : Nat) (hk : k < 4) : PermMem G.store k 
     | 2, _ => exact (ok_of_idOkB G _ h2).2
 
 /-- `hscan` -/
-theorem mem_hscan : G.store.scanTable = none := rfl
+theorem mem_hscan : G.store.Sequential := ⟨rfl, rfl⟩
 
 /-- `hnamed` -/
 theorem mem_hnamed : namedOf G.store none = pure G.named := rfl

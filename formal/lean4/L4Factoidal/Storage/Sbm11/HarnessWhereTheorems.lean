@@ -74,7 +74,7 @@ theorem harness_where_allowed (st : Store Id) (clock : EvalEnv) (base : Option S
     (cid : Term → Option UInt64) (dec : UInt64 → Term) (idv : Term → UInt64) (sok ok : UInt64 → Prop)
     (hnest : plan.nested = some p) (hdsq : plan.dataset = none)
     (hnamed : namedOf st plan.dataset = pure named)
-    (hpm : ∀ k, k < 4 → PermMem st k (prb k) (ms k)) (hscan : st.scanTable = none)
+    (hpm : ∀ k, k < 4 → PermMem st k (prb k) (ms k)) (hscan : st.Sequential)
     (hid : ∀ t, st.idOf t = pure (cid t))
     (hdec : ∀ x y, ok x → ok y → (dec x).eqb (dec y) = (x == y)) (hsok : ∀ x, sok x → ok x)
     (hcid : ∀ c, CidOk dec ok c (cid c))

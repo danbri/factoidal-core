@@ -37,7 +37,7 @@ def canonicalizeParsed (ds : Dataset) : String :=
     okWith [("nquads", .string r.nquads)]
 
 /-- The refusal for a dataset with an RDF 1.2 term
-(https://github.com/danbri/factoidal/issues/873). RDFC-1.0 (W3C
+(https://github.com/danbri/factoidal/issues/957). RDFC-1.0 (W3C
 Recommendation, 21 May 2024) is stated on RDF 1.1 datasets (§1, §4); its
 hashing algorithms (§4.6 Hash First Degree Quads, §4.8 Hash N-Degree Quads)
 have no rule for a blank node inside a triple term, and the W3C rdf-canon
@@ -48,7 +48,7 @@ def canonRdf12Refusal : String :=
   "canonicalizeToNQuads: the input holds an RDF 1.2 triple term or directional "
   ++ "language-tagged string; RDFC-1.0 (W3C Recommendation 2024, sections 4.6 "
   ++ "and 4.8) defines canonical labels for RDF 1.1 datasets only and has no rule "
-  ++ "for these terms (https://github.com/danbri/factoidal/issues/873)"
+  ++ "for these terms (https://github.com/danbri/factoidal/issues/957)"
 
 /-- Canonicalise an RDF 1.1 dataset; refuse a dataset with an RDF 1.2 term
 with the message that names the missing rule. -/

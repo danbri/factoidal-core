@@ -372,7 +372,7 @@ theorem named_rows_perm (t : Pat) (perm : Nat) (v : String) (htg : t.g = .var v)
     `L x`, the model of a pattern over the named graphs (`?g` its graph slot)
     is `gS v G L`. -/
 theorem named_scanStore (st : Store Id) (prb : Nat → ByteArray) (ms : Nat → List BlockMeta)
-    (hpm : ∀ k, k < 4 → ScanTableTheorems.PermMem st k (prb k) (ms k)) (hscan : st.scanTable = none)
+    (hpm : ∀ k, k < 4 → ScanTableTheorems.PermMem st k (prb k) (ms k)) (hscan : st.Sequential)
     (v : String) (G : List UInt64) (hG : G.Nodup) (hG0 : ∀ x ∈ G, x ≠ 0)
     (hin : ∀ k, k < 4 → ∀ r ∈ (ms k).flatMap (ScanFoldTheorems.blockRows (prb k)), r.g ≠ 0 → r.g.toUInt64 ∈ G)
     (L : UInt64 → List IdTriple)

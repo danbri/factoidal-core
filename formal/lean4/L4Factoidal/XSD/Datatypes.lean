@@ -262,6 +262,24 @@ def Dec.cmp (a b : Dec) : Ordering :=
   let mb := b.mantissa * (10 : Int) ^ (s - b.scale)
   compare ma mb
 
+/-- `Dec.cmp` without the powers of ten when the two scales are equal (the
+usual case: two integers, scale 0). On DBpedia d19 the `10 ^ 0` factors were
+15 percent of the warm time of MAX over 326,365 integers
+(https://github.com/danbri/factoidal/issues/862). -/
+def Dec.cmpFast (a b : Dec) : Ordering :=
+  if a.scale == b.scale then compare a.mantissa b.mantissa
+  else
+    let s := max a.scale b.scale
+    compare (a.mantissa * (10 : Int) ^ (s - a.scale)) (b.mantissa * (10 : Int) ^ (s - b.scale))
+
+/-- The compiler runs `Dec.cmpFast` wherever the source says `Dec.cmp`. -/
+@[csimp] theorem Dec.cmp_eq_cmpFast : @Dec.cmp = @Dec.cmpFast := by
+  funext a b
+  unfold Dec.cmpFast
+  by_cases h : a.scale = b.scale
+  · simp [h, Dec.cmp]
+  · simp [h, Dec.cmp]
+
 def Dec.add (a b : Dec) : Dec :=
   let s := max a.scale b.scale
   Dec.norm ⟨a.mantissa * (10 : Int) ^ (s - a.scale)

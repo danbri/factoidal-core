@@ -978,3 +978,730 @@ Gates on this change (exit codes 0): `lake build` (837 jobs);
 reference engine (438 on the id path); `tests/planner/sbm11_gate.sh` 8 pass,
 0 fail (out of 8 accepted); `tools/lean-tail-recursion-audit.py`,
 `tools/lean-unbuilt-modules.py` and `tools/lean-csimp-reach.py` with `--gate`.
+
+### 11.14 d12 re-measured after the d14 word loops (2026-10-22)
+
+https://github.com/danbri/factoidal/issues/931 (OKR batch 3 KR 1.1,
+https://github.com/danbri/factoidal/issues/875). Target: d12 warm at most
+QLever 1 CPU warm (10.10 ms, section 11.8). Target met with no code change.
+
+The 13 ms of section 11.8 was measured before the d14 delta word loops
+(section 11.12, commit a407748f). On `origin/main` at `0a7fab49`, `l4sbm11
+query /home/user/bench-data/sbm11/dbpedia --file
+tools/bench/three-engines/queries/dbpedia/d12-filter-numeric.rq --verify
+none --repeat 7 --explain`, execution median of 7 runs in one process, 3
+rounds: 7.55 / 7.09 / 7.83 ms (median of rounds 7.55 ms). 1-minute load
+average 3.4 to 3.7 (other sessions on the machine). Answers of all 3 runs
+byte-identical to
+`/home/user/bench-data/answers/dbpedia/d12-filter-numeric.sbm11-none.json`
+(69 rows). Peak RSS (VmHWM) 23,868 to 24,124 kB.
+
+Plan unchanged: POS scan of `dbo:country dbr:Norway` (5,520 rows), then the
+PSO scan of `dbo:populationTotal` with 5,520 candidates (80 of 80 selected
+blocks read, 327,277 key values tested on words, 708 rows gathered), merge
+join, FILTER on 708 rows. The ratio to QLever 1 CPU is 0.75. An id window on
+the filter column was not built: the filter variable is on the candidate
+scan, whose key values tested are the cost, and the target is met.
+
+### 11.15 d14, candidate in the loop state and the date compare on key bytes (2026-10-22)
+
+https://github.com/danbri/factoidal/issues/930 (OKR batch 3 KR 1.1,
+https://github.com/danbri/factoidal/issues/875). Continues 11.12. Target:
+d14 warm at most QLever 1 CPU warm (6.09 ms, section 11.8). Target not met;
+result 9.7 ms (before 12.0 ms).
+
+Three changes, cheapest first. Each has a theorem that it equals the loop or
+the evaluator it replaces.
+
+1. Find loop, current candidate in the loop state
+   (`Storage/Sbm11/Sip.lean`, `deltaFindGoC`). `deltaFindGoW` read `cands[p]`
+   and `cands[p - 1]` for every row; an `Array UInt64` holds boxed words.
+   `deltaFindGoC` carries `c = cAt cands p` and `lc = lAt cands p` as
+   `UInt64` loop variables. When `isFast` holds (`p < cands.size`, `c` is not
+   below the value, `lc` is below it or `p = 0`), the pointer stays and no
+   array is read. Otherwise the pointer is `probeFrom` and `c`, `lc` are read
+   for it. Theorems (`SipFastTheorems.lean`): `candAt_cAt`,
+   `probeFast_isFast`, `deltaFindGoC_eq` (equals `deltaFindGoW` from the
+   same state when `c`, `lc` are the guarded reads at `p`); `deltaFindStart_eq`
+   holds unchanged for the changed start.
+2. Gather loop, next wanted row in the loop state (`deltaGatherGoK`): the
+   test `idx == pos[k]!` compares with a loop variable `nk = posAt pos k`;
+   `pos` is read once per found row. Theorems: `posAt_eq`,
+   `deltaGatherGoK_eq` (equals `deltaGatherGoW`); `deltaGatherStart_eq`
+   holds unchanged.
+3. FILTER on key bytes (`Storage/Sbm11/TypedCmp.lean`, `FKind.typedCmp`):
+   NOT LANDED on `main` (2026-10-22). It compared two literals of one typed
+   datatype by the code point order of their lexical forms, which was
+   `Expr.valueCompare` before commit f1f78d98. On `main` the operators `<`,
+   `<=`, `>` and `>=` go through `relationalCompare`, that is
+   `Fn.Comparison.termCompare` (the XSD value space), so for `xsd:date` and
+   `xsd:dateTime` the lexical order is not the reference order, and the
+   soundness theorem `typedCmpKey_sound` no longer holds. The code and its
+   theorems are dropped from the landing; the branch
+   `batch3/kr11-d14c` keeps them. The 9.7 ms result below includes this
+   change and is not reproduced on `main`. Tracking:
+   https://github.com/danbri/factoidal/issues/948.
+
+`#print axioms` of every theorem above: propext, Classical.choice,
+Quot.sound, except `candAt_cAt` and `posAt_eq` (propext only) and
+`deltaGatherGoK_eq` (propext, Quot.sound).
+No `sorry`, no `native_decide`, no `partial`. Tests:
+`IdQueryTests` `#guard`s run `typedCmpKey?` on 5 admitted constants (two
+dates, a dateTime, a gYear, an unknown datatype) and 2 refused ones, against
+the stored samples, all six operators and both orders, against `refFilter`,
+and check that at least 10 keys are decided (not vacuous), that a key with
+a lexical form that is not UTF-8 is not decided, and which constants
+`typedCmpOf?` accepts. New gate queries `tests/sbm11/gate/ids-filter-typed-swap.rq`,
+`ids-filter-typed-datetime.rq`, `ids-filter-typed-ne.rq`, and the existing
+`ids-sip-date-filter.rq`, run in `tests/sbm11/run.sh` against the reference
+engine.
+
+Measurement: `l4sbm11 query /home/user/bench-data/sbm11/dbpedia --file
+tools/bench/three-engines/queries/dbpedia/d14-filter-date.rq --verify none
+--repeat 7 --explain`, execution median of 7 runs in one process, 3
+interleaved rounds; "before" is the build of `origin/main` at `0a7fab49`,
+"after" the build of this change. 1-minute load average 2.2 to 2.5 in all
+rounds (other sessions on the machine, 4 cores). Answers of both builds
+byte-identical to
+`/home/user/bench-data/answers/dbpedia/d14-filter-date.sbm11-none.json`
+(54 rows).
+
+| | before | after | QLever 1 CPU warm (11.8) | QLever default warm (11.8) |
+| --- | ---: | ---: | ---: | ---: |
+| warm, round 1 / 2 / 3 (ms) | 12.02 / 11.67 / 15.75 | 10.20 / 9.72 / 9.32 | | |
+| warm, median of rounds (ms) | 12.02 | 9.72 | 6.09 | 6.09 |
+| peak RSS (VmHWM, kB) | 26,372 to 26,492 | 26,372 to 26,488 | | |
+
+Contribution of each change, from a second series (`taskset -c 2`,
+`--repeat 41`, 3 interleaved rounds, medians per round, median of rounds):
+before 11.63; find loop only 11.04; find loop and FILTER 9.69; all three
+9.20 ms. The gather change is within the spread of the rounds (8.66 to
+10.00). The QLever times include HTTP and JSON (about 2 to 3 ms for a small
+answer). The ratio to QLever 1 CPU goes from 2.0 to 1.6.
+
+Remaining cost (`perf record -e cpu-clock --call-graph dwarf,16384` of the
+"after" build, inclusive samples): `deltaGatherGoK` 45 percent,
+`deltaFindGoC` 31 percent, pread of blocks 7 percent, the FILTER
+(`applyFilters`) 5 percent (before: 18 percent), of which `typedCmpKey?` 1.7
+percent and `Session.keySlice` 2.8 percent; `readFrames` 5 percent.
+
+- The two loops are 76 percent. Per row they spend a state machine step per
+  byte (bounds check, accumulator test, `k` or `idx` test, byte test). The
+  length of each varint of the object column (random literal ranks) varies
+  and the branch on the continuation bit is not predictable. What would
+  remove it: a decoder of several bytes at a time (read 8 bytes, find the
+  terminating byte with a mask and a count of trailing zeros, gather the
+  7-bit groups) with its own equality proof against the byte loop, or a
+  different frame codec for unsorted columns (a wire format change). Neither
+  is done here.
+- The FILTER is no longer a cost that matters. A prefix test with
+  `ByteArray.extract` allocates 42 bytes per row; it is 1.7 percent of the
+  samples, so a loop-based prefix test is not worth its proof.
+
+Gates on this change (exit codes 0): `lake build` (1872 jobs);
+`tests/sbm11/run.sh` 3,115 pass, 0 fail, 29 expected-fail (out of 3,144);
+`SBM11_THREADS=4 tests/sbm11/census.sh` 605 executed, 605 matched the
+reference engine (438 on the id path); `tools/lean-tail-recursion-audit.py`,
+`tools/lean-unbuilt-modules.py` and `tools/lean-csimp-reach.py` with `--gate`;
+`tools/lean-hygiene-audit.py` clean.
+
+### 11.16 d14, row numbers on machine words, sign without a branch, varint read without a branch (2026-10-22)
+
+https://github.com/danbri/factoidal/issues/930 (OKR batch 3 KR 1.1,
+https://github.com/danbri/factoidal/issues/875). Continues 11.15. Target:
+d14 warm at most QLever 1 CPU warm (6.09 ms, section 11.8). Result: median 6.2
+to 6.4 ms in the series below (before 8.7 to 10.7 ms in the same series); the
+target is met within the spread of the rounds, not by a margin.
+
+Cause, from `valgrind --tool=cachegrind --branch-sim=yes --cache-sim=no` of
+one run of d14 (deterministic; `perf` has no hardware counters in this
+container). The claim of 11.15, that the branch on the continuation bit of
+the object column is the cost of both loops, holds for one loop:
+
+| loop | instructions | conditional branches | mispredicted |
+| --- | ---: | ---: | ---: |
+| find (`deltaFindGoC`), before | 43.9 M | 10.8 M | 13,516 |
+| gather (`deltaGatherGoK`), before | 29.3 M | 7.6 M | 455,383 |
+
+- The find loop is bound by instruction count (74 per row, 593,920 rows), not
+  by mispredicted branches. The row number, `lo`, `hi` and the candidate
+  pointer were `Nat`: every `idx + 1`, `idx >= hi`, `idx >= lo` and `p <
+  cands.size` is a tag test, a shift and an overflow branch.
+- The gather loop mispredicts 0.75 branches per row: the sign of the zigzag
+  step (`z % 2`, taken in 50 percent of rows of an unsorted column) and the
+  length of the varint.
+
+Changes (`Storage/Sbm11/Sip.lean`, `Storage/Sbm11/VarintWord.lean`):
+
+1. `deltaFindGoY`, `deltaGatherGoY`: `deltaFindGoC` and `deltaGatherGoK` with
+   the row number, `lo`, `hi`, the candidate pointer, the index into `pos`
+   and the next wanted row as `USize`. The starts use them when `findFits`
+   or `gatherFits` holds (the bytes, `lo`, `hi`, the candidates, `pos` and
+   its entries all fewer than `smallBytes`, 2 ^ 31, so that no `USize` wraps
+   on wasm32), else the earlier loops (`deltaFindStartNat`,
+   `deltaGatherStartNat`).
+2. `VarintWord.zzV`, `zzOk`: the zigzag step with no branch on the sign
+   (`prev + ((z >>> 1) ^^^ (0 - (z &&& 1)))`; the step is inside the 64-bit
+   range when `(v < prev) == (z is odd)`).
+3. `VarintWord.lenMask`, `vLen`, `vVal`, used by `deltaGatherGoY` at the start
+   of a varint (accumulator 0, eight bytes in the window, a byte that ends a
+   varint among them): `y = w ||| 0x7f7f7f7f7f7f7f7f`; the mask of the bytes
+   up to the first byte whose continuation bit is clear is `y ^^^ (y + 1)`
+   (the carry of `y + 1` runs through the bytes that are `0xFF`); the length
+   is the number of those bytes (one multiplication); `vCompress` packs the
+   seven-bit groups in three shift-or steps and a variable shift drops the
+   bytes after the last. No C primitive: `Prim.Bytes.ldU64LE` loads the
+   window. A window with no varint end (a varint of nine bytes or more), a
+   window past the end of the array and a varint that began in an earlier
+   window go through the byte step. The loop takes fuel (`b.size + 1`)
+   because the positivity of the length is a theorem about `vLen`, not
+   something the termination check sees.
+
+Theorems (`Storage/Sbm11/VarintWordTheorems.lean`, `SipWordTheorems.lean`;
+`#print axioms`: propext, Classical.choice, Quot.sound, except `K_row`,
+`bt_ld`, `probeFrom_le` (propext, Quot.sound)). No `sorry`, no
+`native_decide`.
+
+- `lenMask_eq`: for a window whose bytes `0 .. n-1` have the continuation bit
+  set and whose byte `n` has it clear (`n < 8`), `lenMask (w ||| C7)` is
+  `2 ^ (8 n + 8) - 1`. From `xor_add_one_bit`: bit `i` of `x ^^^ (x + 1)` is
+  set exactly when the bits of `x` below `i` are all set
+  (`BitVec.carry_succ_one`); no case split on `n`.
+- `vVal_eq`: the value is `hf (bt w) 0 n`, the Horner form of the groups of
+  the bytes `0 .. n`. One bit-level proof per `n` (`val_0` .. `val_7`, 64
+  output bits each, 1 min 40 s of wall time for the module on 4 cores).
+- `hz_eq_hf`: the accumulation of the byte loop (`acc * 128 + group`) equals
+  the Horner form. `exists_term`: a window with `w ||| C7 ≠ allOnes` has such
+  an `n`. `fastRead_spec`: length `n + 1` and value, together.
+- `zz_even`, `zz_odd`, `SipWordTheorems.zz_spec`: `zzV` and `zzOk` are the
+  two branches of the zigzag step of the earlier loops.
+- `SipWordTheorems.K_row`: `deltaGatherGoK` over one varint of `n + 1` bytes
+  equals the row step with the value `hz`; `gatherFast` joins it with
+  `fastRead_spec` and `bt_ld` (byte `k` of the load is `getOr0 b (i + k)`).
+- `deltaFindGoY_eq`, `deltaGatherGoY_eq`: each equals its `Nat`-state loop
+  (`deltaFindGoC`, `deltaGatherGoK`) from the same state, with the bounds
+  above. `deltaFindStart_eq`, `deltaGatherStart_eq`: the starts equal the
+  `Nat` loops with the fuel they had before, so `SipTheorems.findWords_spec`
+  and `gatherWords_spec` hold of the changed scan unchanged (the starts of the
+  earlier loops are now `deltaFindStartNat_eq`, `deltaGatherStartNat_eq` in
+  `SipFastTheorems`).
+
+Tests: the `#guard`s of `Sip.lean` run `findWords` and `gatherWords` against
+the decoded reference; two columns are added: deltas of 1 to 9 bytes up and
+down (the read at every length, and the byte step for nine bytes), and 300
+rows with lengths of 1 to 5 bytes in one column.
+
+Measurement. Instruction and branch counts, one run of d14 (cachegrind):
+
+| build | find: instructions / mispredicted | gather: instructions / mispredicted | all: mispredicted |
+| --- | ---: | ---: | ---: |
+| before (11.15) | 43.9 M / 13,516 | 29.3 M / 455,383 | 1,009,818 |
+| sign without branch only | 46.3 M / 13,748 | 30.7 M / 209,831 | 745,971 |
+| varint read in both loops, sign without branch | 79.9 M / 3,596 | 43.0 M / 2,283 | 532,460 |
+| row numbers as `USize` in both loops | 25.5 M / 12,687 | 23.4 M / 209,720 | 914,952 |
+| this change (`USize`; varint read in gather only) | 27.9 M / 12,961 | 35.7 M / 2,456 | 552,463 |
+
+The varint read in the find loop removes 10,000 mispredictions and adds 34 M
+instructions; it is not used there. In the gather loop it removes 207,000
+mispredictions and adds 12 M instructions; it is used there. Intermediate
+builds, same series (3 interleaved rounds, medians of 31 runs): sign without
+branch only 8.1 to 8.8 ms against 9.5 to 9.9 ms before; `USize` in both
+loops 6.8 to 7.0 ms; plus the varint read in the gather loop 6.2 to 6.3 ms.
+
+`l4sbm11 query /home/user/bench-data/sbm11/dbpedia --file
+tools/bench/three-engines/queries/dbpedia/d14-filter-date.rq --verify none
+--repeat 7 --explain`, execution median of 7 runs in one process, 3
+interleaved rounds; "before" is the build of `eaf0274d`, "after" the build of
+this change. 1-minute load average 1.7 to 2.3 (other sessions on the machine,
+4 cores). Answers of all runs equal to
+`/home/user/bench-data/answers/dbpedia/d14-filter-date.sbm11-none.json`
+(54 rows), and the answers of d05, d08 and d13 are byte-identical between the
+two builds.
+
+| | before | after | QLever 1 CPU warm (11.8) | QLever default warm (11.8) |
+| --- | ---: | ---: | ---: | ---: |
+| warm, round 1 / 2 / 3, `--repeat 7` (ms) | 9.49 / 12.39 / 12.81 | 8.88 / 6.40 / 5.78 | | |
+| warm, round 1 / 2 / 3, `--repeat 41` (ms) | 8.75 / 12.34 / 10.65 | 6.29 / 8.00 / 6.20 | | |
+| warm, minimum over the runs of the rounds (ms) | 8.17 to 8.52 | 5.57 to 5.64 | | |
+| warm, median of rounds, `--repeat 41` (ms) | 10.65 | 6.29 | 6.09 | 6.09 |
+
+The QLever times include HTTP and JSON (about 2 to 3 ms for a small answer).
+The ratio to QLever 1 CPU goes from 1.7 to 1.0 on the median, and the minimum
+of the after build (5.6 ms) is below QLever. The spread of single rounds
+(5.8 to 8.9 ms after) comes from other sessions on the machine.
+
+Other queries, same method (`--repeat 21`, 3 rounds, median of rounds, ms):
+d13 1.40 before and 1.51 after (minimum 1.26 and 1.26; the difference is
+inside the spread); d05 23.1 before and 16.0 after (minimum 19.6 and 14.6);
+d08 15.8 before and 12.6 after (minimum 13.9 and 11.3).
+
+What is left in d14 (cachegrind): the find loop is 15 percent of the
+instructions (27.9 M for 593,920 rows, 47 per row, the candidate test and the
+state of the loop); the remaining mispredictions (552,463) are 13,000 in the
+find loop, 2,500 in the gather loop and the rest outside both loops. A decoder
+that finds the row boundaries of a whole word at once (the terminator mask of
+eight bytes, the rows taken one set bit at a time) would decouple the
+boundary search from the value, and is not done.
+
+Gates on this change (exit codes 0): `lake build` (1,876 jobs);
+`tests/prim/run.sh` 24,896 pass, 0 fail on native and 24,896 pass, 0 fail on
+wasm32 (no primitive changed; the wasm32 run shows the 32-bit `USize` build
+of `Prim.Bytes` is intact); `tests/sbm11/run.sh` with
+`FACTOIDAL_TESTING_ROOT=/home/user/factoidal-core/third_party/testing`
+3,115 pass, 0 fail, 29 expected-fail (out of 3,144) (the run in a worktree
+without the fixtures gives 1,052 pass, 3 fail, 11 expected-fail for stages 4
+and 5; the 3 failures are the missing fixture directories of
+`w3c_roundtrip.sh`, `w3c_update.sh` and `quad_source.sh`, which pass with the
+fixtures: 1,281 + 94 + 688 pass); `SBM11_THREADS=4 tests/sbm11/census.sh` 605
+executed, 605 matched the reference engine (438 on the id path);
+`tools/lean-tail-recursion-audit.py` (one line added to
+`tools/lean-tail-recursion-allow.txt`: `VarintWord.hf`, specification only),
+`tools/lean-unbuilt-modules.py` and `tools/lean-csimp-reach.py` with
+`--gate`; `tools/lean-hygiene-audit.py` clean. The wasm32 build of the
+changed loops is not run by these gates; the loops use only `USize` values
+below 2 ^ 31 (`findFits`, `gatherFits`).
+
+### 11.17 d19, grouped aggregates on ids: a pure two-pass loop (2026-10-22)
+
+Landing note, 2026-10-22: the numbers below (warm 232 to 267 ms and the assertion
+`d19-warm-300ms`) were measured on the branch `batch3/kr11-d19b`, where
+`AggStream` kept SUM and AVG as a `Scaled` mantissa and scale, MIN and MAX
+as a `Summary` compared with `Scaled.cmp`. `main` replaced that with the
+shared arithmetic of commit f1f78d98 (`evalArithmetic` per step, `sparqlOrderValue`),
+so those `AggStream` commits (839ee1fb, 51e19799 and the `AggStream` part of
+c275b659, c61c92e5, 1cd1294a) were not landed. Only the `IdAgg` loop changes were.
+Measured on the landed tree, `l4sbm11 query ... d19 --repeat 5`: warm 1,432 and
+1,501 ms; the tree of `main` before this landing: 1,638 ms. The case is an
+expected failure again, naming https://github.com/danbri/factoidal/issues/862.
+
+https://github.com/danbri/factoidal/issues/862 (OKR batch 3 KR 1.1). Section 11.18
+ended at 302 ms warm, with the acceptance of 300 ms missed in 2 of 3 rounds. Profile
+of the 11.18 binary (`perf record -e cpu-clock --call-graph dwarf,16384`, 5 runs in
+one process): `aggregateM` row loop 17 percent in its own frames, `lean_dec_ref_cold`
+9 percent called from `aggregateM`, `mi_malloc_small` and `mi_free` 9.5 percent,
+`clear_page_erms` (kernel zeroing of fresh pages for the join columns and index
+arrays) 11 percent, `deltaRangeGoF` (frame decode) 9 percent, `mergeGo` and `runEnd`
+8 percent. The d19 scans use the merge join, not the sideways scan, so the delta
+loop changes of branch `batch3/kr11-d14b` (`Sip`) do not apply to them.
+
+Cause found in the generated C of the row loop: it ran in `ExceptT String m` with
+the decoder `termOf` as a closure, so each row allocated a closure for `termOf`, a
+`ForInStep` and a state tuple, and unwrapped an `ExceptT` result, although the decoder
+is needed for 48,815 of 326,365 rows only.
+
+Change (`Storage/Sbm11/IdAgg.lean`):
+
+1. `assignGroups` (pass 1, pure): the group number of each row and the first row of
+   each group. `accs` is built once from the group count.
+2. `stepRows` (pass 2, pure, tail call with fuel, `Array.foldl` for the inner
+   loops): steps every accumulator in row order from row `i`. It stops at the first
+   row whose argument id is bound and absent from the summary table, before that
+   row changes any accumulator, and returns the id. `aggregateM` decodes that id
+   once, inserts its summary, and resumes at the same row. The monad is run 48,815
+   times instead of 326,365.
+3. The argument ids are not kept in `terms` (only their summaries). `decoded` is
+   computed at the end as the number of summaries plus the representative ids that
+   are not argument ids, which is the number the earlier code reported.
+
+Theorems (`IdAgg.lean`; dependencies: propext, Classical.choice, Quot.sound; no
+sorry): `Cache.insert_valid`, `Cache.hit_eq`, `Cache.fill_valid` and
+`sums_fill_valid`: the summary table is valid for `sumOf termOf` however it is
+filled (hits, misses, any order, repeats), so a step with a cached summary equals a
+step with a recomputed one, which is what stop-and-resume relies on. That
+`aggregateM` as a whole equals `AggStream.selectPost_aggPlan`'s specification is
+still not proved (end-to-end lemma L5k); `tests/sbm11/agg_ids.sh` and the census
+compare it with `--no-agg-ids` and with the reference engine.
+
+Tried and not kept: reserving the capacity of the two index arrays in
+`Qlvr.mergeJoin` (`Array.emptyWithCapacity`; `mergeJoin_eq` stays `rfl`): no change
+beyond the noise.
+
+Measurement: `l4sbm11 query /home/user/bench-data/sbm11/dbpedia --file
+tools/bench/three-engines/queries/dbpedia/d19-group-aggregates.rq --verify none
+--repeat 7`, execution median in one process, interleaved with the 11.18 binary
+("before", built from the parent commit). The machine carried a second session
+(load average 1.3 to 2.8), so each pair is listed.
+
+| round | before (ms) | after (ms) |
+| --- | ---: | ---: |
+| 1 | 311 | 232 |
+| 2 | 320 | 237 |
+| 3 | 401 | 267 |
+| earlier 5 rounds, after (ms) | | 253, 265, 282, 292, 319 (first version of the change) |
+| QLever 1 CPU (11.10) | | 103 |
+
+Last measurement with the final binary, `tests/sbm11/agg_ids.sh`: warm 227 ms.
+The acceptance of 300 ms holds in all 3 rounds, so `xfail-d19-warm-300ms` is now the
+assertion `d19-warm-300ms`. Ratio to QLever 1 CPU: 2.2 (11.18: 2.9). Peak RSS
+54,160 kB (VmHWM, one run). The answer is byte-identical to the answer of the
+parent commit, to `--no-agg-ids` and to
+`/home/user/bench-data/answers/dbpedia/d19-group-aggregates.sbm11-none.json`.
+
+Remaining cost (profile of the final binary): kernel page zeroing 15 percent (join
+columns, gather outputs and the group-number array are fresh allocations in each
+run), frame decode `deltaRangeGoF` 11 percent, `stepRows` 11 percent plus 5 percent
+in its inner folds, `lean_dec_ref_cold` 7 percent (freeing the 48,815 summaries and
+the table), `mergeGo` and `runEnd` 9 percent. Next candidates: aggregate during the
+merge join without the joined columns; a flat numeric `Summary`; reuse of the join
+output buffers between runs.
+
+Gates: `lake build` (1868 jobs); `tests/sbm11/agg_ids.sh` 29 pass, 0 fail, 8
+expected-fail (out of 37); `tests/sbm11/run.sh` 3,113 pass, 0 fail, 28 expected-fail
+(out of 3,141); `SBM11_THREADS=4 tests/sbm11/census.sh` 605 executed, 605 matched the
+reference engine (438 on the id path); `lean-unbuilt-modules.py`,
+`lean-tail-recursion-audit.py`, `lean-registry-audit.py`, `lean-csimp-reach.py` with
+`--gate` exit 0; `lean-hygiene-audit.py` clean.
+### 11.18 d19, grouped aggregates on ids: four candidates of issue 862 (2026-10-22)
+
+https://github.com/danbri/factoidal/issues/862 (OKR batch 3 KR 1.1,
+https://github.com/danbri/factoidal/issues/875). Query d19 groups 326,365 join
+rows into 730 groups and takes COUNT, MAX and AVG. Profile before (`perf record
+-e cpu-clock --call-graph dwarf,16384`, 10 runs in one process): `IdAgg.aggregateM`
+69 percent. Removing the argument-column work (lookup, decode and steps) from the
+loop left 123 ms of about 330, so aggregation was about 200 ms; decoding the 48,815
+distinct argument ids was 20 to 30 ms of that.
+
+Changes, in the order of the issue (`Storage/Sbm11/IdAgg.lean`, `SPARQL/AggStream.lean`):
+
+1. One `UInt64` key for a single GROUP BY column (no `List UInt64` per row), and one
+   summary lookup per row and argument column (MAX and AVG of one column shared one
+   lookup each). 446 to 370 ms (one round).
+2. MIN and MAX keep the `Summary` of the best value and compare numeric readings
+   with `cmpScaled` (equal scales compare mantissas). Theorem `cmpSummary_of`:
+   on the summaries of two values, `cmpSummary` equals `sparqlOrder` of their
+   `numericView`s. `best_stream` and `stepKeep_some` are restated over `Summary`.
+   `cmpScaled_eq`: `cmpScaled a b = Scaled.cmp a b`.
+3. SUM and AVG state holds mantissa and scale (no `Scaled` per step). `addScaled_eq`
+   and `stepNum_ofScaled`: the in-place step equals `Scaled.add` of the operand's
+   reading. `num_stream` and `evalAggregate_stream` keep their statements over
+   `AggAcc.ofScaled`. All new theorems depend on propext, Classical.choice and
+   Quot.sound only.
+4. Not in the issue: the id hash. `Std.HashMap` takes the bucket from the low bits of
+   the hash and the hash of a `UInt64` is the number. `Id64` hashes `id * C`
+   with the high half folded onto the low half; keys are not boxed. 15 to 30 ms in 3
+   of 3 interleaved rounds. Multiplication alone (no fold) showed no gain. The group
+   and argument columns are read from a held `ByteArray` (3 of 3 rounds not slower;
+   gain within the noise).
+
+Tried and removed (no gain beyond the noise, so not kept): `getD` against `get?`;
+a flat open-addressing id table in a `ByteArray` (slower than `Std.HashMap` at
+first because of `2 ^ bits` per lookup, then equal); a pure tail-recursive row loop
+with pauses for decoding; flat numeric fields in `Summary`; a pre-sized cache.
+Removing the group lookup altogether saved 45 ms, but that run also kept all rows in
+one group, so the saving is not the cost of the hash alone.
+
+Measurement: `l4sbm11 query /home/user/bench-data/sbm11/dbpedia --file
+tools/bench/three-engines/queries/dbpedia/d19-group-aggregates.rq --verify none
+--repeat 7`, execution median in one process, 3 interleaved rounds, "before" built
+from `origin/main` at `0a7fab49`. Load average 1.0 to 3.2 (another session was
+building); one build gave 285 to 342 ms in different rounds, so differences under
+about 20 ms are not resolved.
+
+| | before | after | QLever 1 CPU (11.10) |
+| --- | ---: | ---: | ---: |
+| warm median, round 1 / 2 / 3 (ms) | 451 / 423 / 518 | 302 / 301 / 334 | 103 |
+| warm median of rounds (ms) | 451 | 302 | 103 |
+| peak RSS, one run (VmHWM, kB) | 53,796 | 53,736 | |
+
+Answers are byte-identical to the answer of `0a7fab49` (and to `--no-agg-ids`:
+`tests/sbm11/agg_ids.sh`). The acceptance of 300 ms is not reached
+on every round (302, 301 and 334 ms), so `xfail-d19-warm-300ms` stays an expected failure.
+QLever 1 CPU (103 ms) is not reached: ratio 2.9 from 4.4. Remaining cost: the join
+and scan (about 120 ms: `deltaRangeGoF`, `mergeJoin`), the 48,815 dictionary decodes
+(20 to 30 ms), and per-row hash lookups, accumulator updates and frees (about 150 ms).
+Peak RSS is 53.7 MB, above the 52 MB of the task; the base build is 53.8 MB.
+
+Gates: `lake build` (1868 jobs); `tests/sbm11/agg_ids.sh` 28 pass, 0 fail, 9 expected-fail
+(out of 37); `tests/sbm11/run.sh` 3,112 pass, 0 fail, 29 expected-fail (out of 3,141);
+`SBM11_THREADS=4 tests/sbm11/census.sh` 605 executed, 605 matched the reference engine
+(438 on the id path); `tools/lean-unbuilt-modules.py`, `lean-tail-recursion-audit.py`,
+`lean-registry-audit.py` and `lean-csimp-reach.py` with `--gate` exit 0;
+`lean-hygiene-audit.py` clean (no sorry, axiom or native_decide added).
+
+### 11.19 d14, the `xsd:date` FILTER on key bytes in the XSD value space (2026-10-22)
+
+https://github.com/danbri/factoidal/issues/948 and the d14 target of
+https://github.com/danbri/factoidal/issues/930 (OKR batch 3 KR 1.1). Target:
+d14 warm within 10 percent of QLever 1 CPU warm (6.09 ms, section 11.8), that
+is at most 6.70 ms. Target met: median of rounds 6.03 ms (`--repeat 41`) and
+6.32 ms (`--repeat 7`); before 11.23 ms and 12.30 ms.
+
+Cause. Section 11.15 decided the FILTER on key bytes by the code point order of
+the lexical forms. Commit f1f78d98 moved `<`, `<=`, `>`, `>=` to the XSD value
+space (`Fn.Comparison.termCompare`), the theorem of 11.15 stopped holding, and
+4ff10b87 removed the change. On `main` each of the 953 joined rows decoded its
+date to a `Term` and the reference evaluator parsed both lexical forms
+(about 6 microseconds per row, half of the query time).
+
+The admitted set (`Storage/Sbm11/DateKey.lean`, `dateParts?`): a lexical form
+of exactly ten bytes `YYYY-MM-DD`, ASCII digits, year 0001 to 9999, month 1 to
+12, a day that exists in that month (`XSD.daysInMonth`), no timezone. For two
+such forms the XSD 1.0 order is the order of `year * 512 + month * 32 + day`.
+The set excludes, and the key path gives `none` for (the reference evaluator
+answers): a timezone (the +-14:00 window can make the pair incomparable), a
+negative year and a year of five or more digits (the code point order is
+wrong there: `"12020-01-01" < "1800-01-01"` by code points), year 0000 (not in
+XSD 1.0), a day that does not exist, any other length or byte, another
+datatype. A constant outside the set gives no key-byte conjunct at all
+(`dateConst?`); `=` and `!=` are not compiled to it (they compare `xsd:date`
+literals by lexical form in `Expr.valueCompare`).
+
+Change: `FKind.dateCmp` (`IdQuery.dateCmpOf?`, `applyFilters`) runs
+`DateKey.dateCmpKey?` on the key slice of each tag 3 id: prefix test, the ten
+bytes through `dateParts?`, one comparison of two numbers. `--explain` prints
+`xsd:date order of ?d on key bytes (YYYY-MM-DD keys; other keys decoded)`.
+
+Theorems (`Storage/Sbm11/DateKeyTheorems.lean`,
+`DateKeyFilterTheorems.lean`; `#print axioms`: propext, Classical.choice,
+Quot.sound; no `sorry`, no `native_decide`):
+
+- `mono`: on valid dates with year at least 1, `XSD.daysFromCivil` is strictly
+  increasing in the order key (`same_year`: 144 month pairs by `omega` on the
+  Euclidean form `civ`; `first_mono`: induction over the years between).
+- `dateParts?_parse`: `XSD.parseDateTimeFor .xsd10 .date` of an admitted form
+  is the value with that year, month and day and no timezone, through the
+  XSD 1.0 year adapter (`padYear_digits`, with the core `Nat.toDigits`
+  lemmas).
+- `calendarOrder_admitted`: `Fn.Comparison.calendarOrder .date` of two admitted
+  forms is `some (compare k1 k2)`.
+- `dateCmpKey_termCompare`: when `dateCmpKey? op swap pre kc buf a e = some r`,
+  `dateConst? c = some (pre, kc)` and `decodeKey?` reads the key as `t`, then
+  `termCompare t (.literal c) op` (`swap`: `termCompare (.literal c) t op`) is
+  `some r`. No premise states a comparison result.
+- `dateCmp_fast_eq_ref`: for a conjunct that `dateCmpOf?` built, the answer is
+  `refFilter e [(v, t)]`, the reference FILTER value.
+
+Tests: `IdQueryTests` `#guard`s run the compiled conjunct on 3 admitted and 6
+refused constants, 4 operators and both orders against `refFilter` on stored
+dates inside and outside the set (168 keys decided, so the test is not
+vacuous); keys with a timezone, a negative, five-digit or zero year and a day
+that does not exist are not decided; two cases where the code point order and
+the value order differ. `tests/sbm11/filter_keys.sh`:
+`xfail-typed-date-filter-on-key-bytes` is now the assertion
+`typed-date-filter-on-key-bytes`, and 12 cases on a fixture of 17 dates
+(5 on key bytes, 7 by the reference evaluator: constants with a timezone, a
+negative or five-digit year, a day that does not exist, a `dateTime`, and `=`)
+each equal `--reference`: filter keys 15 pass, 0 fail (out of 15). Gate
+queries `ids-filter-date-swap.rq`, `ids-filter-date-ne.rq`,
+`ids-filter-date-datetime.rq` run in part (d) of `tests/sbm11/run.sh`.
+
+Measurement: `l4sbm11 query /home/user/bench-data/sbm11/dbpedia --file
+tools/bench/three-engines/queries/dbpedia/d14-filter-date.rq --verify none
+--repeat N`, execution median of N runs in one process, 5 interleaved rounds
+for each N; "before" is `l4sbm11` of `origin/main` at `18bd7edb`, "after" the
+build of this change. 1-minute load average 0.8 to 1.4. All 20 answers
+byte-identical to
+`/home/user/bench-data/answers/dbpedia/d14-filter-date.sbm11-none.json`
+(54 rows).
+
+| | before | after | QLever 1 CPU warm (11.8) |
+| --- | ---: | ---: | ---: |
+| warm, rounds 1 to 5, `--repeat 7` (ms) | 11.40 / 12.25 / 12.31 / 12.30 / 12.95 | 6.03 / 9.34 / 6.18 / 6.32 / 6.35 | |
+| warm, median of rounds, `--repeat 7` (ms) | 12.30 | 6.32 | 6.09 |
+| warm, rounds 1 to 5, `--repeat 41` (ms) | 11.40 / 11.85 / 10.91 / 11.11 / 11.23 | 6.22 / 5.89 / 6.20 / 6.03 / 6.03 | |
+| warm, median of rounds, `--repeat 41` (ms) | 11.23 | 6.03 | 6.09 |
+| minimum over the runs (ms) | 10.70 | 5.64 | |
+| peak RSS (VmHWM, kB) | 24,888 to 26,904 | 26,320 to 26,816 | |
+
+The QLever times include HTTP and JSON (about 2 to 3 ms for a small answer).
+The ratio to QLever 1 CPU goes from 1.8 to 0.99 (`--repeat 41`) and 1.04
+(`--repeat 7`).
+
+Where the time goes now (`perf record -e cpu-clock --call-graph
+dwarf,16384`, 60 runs, inclusive samples): `deltaGatherGoY` 35 percent,
+`deltaFindGoY` 28 percent (the sideways scan, section 11.16), block reads
+(`pread`) 10 percent, the FILTER 10 percent (of which `Session.keySlice`, the
+dictionary page of each id, 5 percent, and `dateCmpKey?` 4 percent),
+`readFrames` 7 percent, constant lookups 4 percent.
+
+Gates (exit codes 0): `lake build` (1981 jobs); `tests/sbm11/run.sh` with
+`FACTOIDAL_TESTING_ROOT=third_party/testing` 3,130 pass, 0 fail, 29
+expected-fail (out of 3,159); `SBM11_THREADS=4 tests/sbm11/census.sh` 605
+executed, 605 matched the reference engine (438 on the id path);
+`tools/lean-unbuilt-modules.py --gate` (937 of 937 modules reached),
+`tools/lean-tail-recursion-audit.py --gate`, `tools/lean-csimp-reach.py
+--gate`; `tools/lean-hygiene-audit.py` clean.
+
+### 11.20 d19 on the shared arithmetic: readings made once per distinct id (2026-10-23)
+
+https://github.com/danbri/factoidal/issues/862 (OKR batch 3 KR 1.1,
+https://github.com/danbri/factoidal/issues/875). Commit f1f78d98 replaced the
+Scaled accumulators of 11.18 with the shared arithmetic (`evalArithmetic`) and
+the value-space order (`sparqlOrder`); d19 warm went from about 300 ms to about
+1,450 ms. Coordinator decision (issue 875): keep the shared arithmetic and the
+value-space comparison, and add speed inside them with refinement theorems.
+
+Profile of `main` at `0dd31a27` (`perf record --call-graph dwarf,16384`,
+inclusive samples): the accumulator steps (`IdAgg.stepRows`) 79 percent, of
+which MAX (`sparqlOrder`) 48 and AVG (`evalArithmetic`) 26. Inside them
+`XSD.builtinOfIri?` was 42 percent (a character walk over the namespace,
+`String.Slice.Pos.nextn` 21 percent, and a search of 50 local names,
+`List.find?` 13 percent), integer parsing 14 percent. The cause is that every
+row read its value again: SUM and AVG call `numericValue?` and
+`isIntegerOperand`, MAX calls `isNumericOperand` and `numericValue?` on the new
+value and on the best value, and each of these looks up the datatype IRI and
+parses the lexical form. All 326,365 values are `xsd:nonNegativeInteger`;
+47,473 are distinct. Arithmetic itself was not the cost.
+
+Changes:
+
+1. `SPARQL/AggStream.lean`: `Summary` holds the value and its three readings
+   (`nv` = `numericValue?`, `isInt` = `isIntegerOperand`, `isNum` =
+   `isNumericOperand`), made once per distinct id by `Summary.of`. MIN and MAX
+   keep the `Summary` of the best value. Fast forms with theorems:
+   `evalArithmeticRead` (`SPARQL/Expr.lean`) with `evalArithmetic_eq_read`;
+   `sparqlOrderRead` (`SPARQL/Query.lean`) with `sparqlOrder_eq_read`;
+   `sparqlOrderReadFast` (one `Dec.cmp` when both readings are decimals) with
+   `sparqlOrderReadFast_eq`; `AggAcc.stepNum` adds an integer value to an
+   integer sum with no reading of the sum (`stepNum_read`, `stepNum_of`);
+   `AggAcc.stepBest_of`. `num_stream`, `best_stream_from`, `best_stream` and
+   `evalAggregate_stream` keep their conclusions (equality with
+   `evalAggregate`); the best state is now `Summary.of` of the reference value.
+2. `Summary.ofFast` with `@[csimp] Summary.of_eq_ofFast`: one datatype lookup
+   for the three readings of a literal.
+3. `XSD/Datatypes.lean`: `Dec.cmpFast` with `@[csimp] Dec.cmp_eq_cmpFast`
+   (equal scales compare mantissas; the `10 ^ 0` factors went to GMP and were
+   15 percent after change 1). It applies to every caller of `Dec.cmp`.
+4. `Storage/Sbm11/IdAgg.lean`: `sumCached` looks up each distinct datatype IRI
+   once (a `Cache` of `builtinOfIri?`), with `sumCached_fst` (on a valid cache
+   the summary is `Summary.of (varView tm)`) and `sumCached_valid`.
+
+All new theorems: `#print axioms` propext, Classical.choice, Quot.sound; no
+`sorry`, no new `axiom`, no `native_decide`. No premise of a theorem states its
+conclusion. Tests: `AggStreamTests` compares the stream with `aggVals` (the
+reference `sumNumeric`, `avgNumeric`, `findMin`, `findMax` and COUNT) for
+COUNT, SUM, AVG, MIN and MAX on 10 value lists and their reverses (integer,
+`nonNegativeInteger`, decimal, double, float, NaN and -INF, a non-numeric
+literal, an IRI, `.error` for an unbound value, the empty list), and with
+`evalAggregate` on a group with an unbound row.
+
+Tried and removed: pre-sized index arrays in `Qlvr.mergeJoin` (no gain beyond
+the noise of about 20 ms).
+
+Measurement: `l4sbm11 query /home/user/bench-data/sbm11/dbpedia --file
+tools/bench/three-engines/queries/dbpedia/d19-group-aggregates.rq --verify none
+--repeat 7`, execution median in one process, 5 interleaved rounds; "before" is
+`l4sbm11` of `origin/main` at `0dd31a27`. Load average 0.9 to 2.3. All 10
+answers byte-identical (md5 `20a94fcb1a530503a1eadef01ab10e98`, 10 rows; also
+identical to `--no-agg-ids`, `tests/sbm11/agg_ids.sh`).
+
+| | before | after | QLever 1 CPU (11.10) |
+| --- | ---: | ---: | ---: |
+| warm median, rounds 1 to 5 (ms) | 1,534 / 1,507 / 1,508 / 1,460 / 1,470 | 308 / 267 / 271 / 289 / 292 | |
+| warm median of rounds (ms) | 1,507 | 289 | 103 |
+| peak RSS, rounds (VmHWM, kB) | 60,740 to 64,272 | 60,512 to 61,400 | |
+
+The run-to-run spread of one build is large on this machine: the same binary
+gave medians of 250 to 270 ms in one hour and 295 to 330 ms in another
+(the `main` binary moved from 1,360 to 1,520 ms in the same hours). Three runs
+of `tests/sbm11/agg_ids.sh` gave 325, 284 and 273 ms: 2 of 3 at most 300 ms.
+So `xfail-d19-warm-300ms` stays an expected failure, and the issue stays open.
+The ratio to QLever 1 CPU goes from 14.6 to 2.8.
+
+Where the time goes now (`perf record --call-graph dwarf,16384`, 3 runs,
+inclusive samples): the aggregation 54 percent, the WHERE clause (scan and
+merge join) 41 percent. Remaining costs, by name:
+
+- per-row hash probe of the summary table (`stepRows` self time, 11 percent):
+  `Std.HashMap` with boxed keys, three dependent loads per row;
+- page zeroing of fresh memory (`clear_page_erms`, 16 percent, kernel): the
+  merge-join index arrays growing by `push` (`Qlvr.pairsRow`, 6 percent of all
+  samples) and `Qlvr.Table.append` of scan chunks (4 percent);
+- the frame decoder of the scan (`FrameWords.deltaRangeGoF`, 10 percent self);
+- per distinct id: decoding the term (`Session.termOf`, 7 percent), the
+  integer lexical form parsed again from the decoded inline integer
+  (`lexicalMapFuel`, `parseIntegerLex`, 5 percent), and freeing the 47,473
+  cached summaries at the end of the pass (`lean_dec_ref_cold` at one site in
+  `aggregateM`, 7 percent);
+- the accumulator steps themselves (`stepBest`, `stepNum`, about 8 percent).
+
+The inline integer id already holds the value; reading it without parsing
+`toString v` needs a theorem that `parseIntegerLex (toString v) = some v`
+(not in the tree). That and a flat summary table are the next candidates.
+
+Gates: `lake build` (1981 jobs, exit 0); `tools/lean-unbuilt-modules.py`,
+`lean-tail-recursion-audit.py`, `lean-csimp-reach.py` and
+`lean-registry-audit.py` with `--gate` exit 0; `lean-hygiene-audit.py` clean;
+`SBM11_THREADS=4 tests/sbm11/census.sh` exit 0, 605 executed, 605 matched the
+reference engine (438 on the id path). `tests/sbm11/run.sh` with
+`FACTOIDAL_TESTING_ROOT=third_party/testing`: 3,130 pass, 1 fail, 28
+expected-fail (out of 3,159), exit 1. The 1 fail is the XPASS of
+`xfail-d19-warm-300ms` (275 ms in that run). Every other case passes. The
+case is at the limit (267 to 325 ms over 9 runs of the final build, 7 of them at
+most 300 ms), so it gives a failure in either form, as an expected failure
+or as an assertion; the decision is on the issue.
+
+### 11.21 d19, an integer path for an argument column of inline integers (2026-10-23)
+
+https://github.com/danbri/factoidal/issues/862. Coordinator decision after 11.20:
+keep the 300 ms target, aim at a median of at most 250 ms and 5 of 5 single
+runs at most 300 ms. Section 11.20 named the remaining costs of the
+aggregation: the per-row hash probe of the summary table, the decode, the
+re-parse and the summary of each of the 47,473 distinct values, and the free
+of the table at the end.
+
+Change (`Storage/Sbm11/IdAgg.lean`): every value of the d19 argument column is
+an inline integer id (tag 4). Its value is in its bits (payload minus 2^55)
+and its datatype is the subtype field. When every bound id of the one argument
+column reads this way (`intVal?`: a known integer type whose literals are well
+formed, the value admitted by the type and inside the bounds of its built-in),
+`intRows` steps an `IAcc` per group and aggregate: an integer sum and count for
+SUM and AVG, the best value with its id for MIN and MAX. There is no summary
+table. Only the best id of each group is decoded, at the end (`IAcc.absM`).
+Any other id makes `intRows` answer `none`, and the summary path of 11.20 runs
+from the first row.
+
+Theorems (`#print axioms`: propext, Classical.choice, Quot.sound; no
+`sorry`, no new `axiom`, no `native_decide`):
+
+- `XSD/IntegerLexTheorems.lean`: `parseIntegerLex_toString`:
+  `parseIntegerLex (toString v) = some v` for every integer (through the core
+  `Nat.ofDigitChars_ten_toDigits`); `lexicalFor_int`: for an integer
+  built-in, `lexicalFor .xsd10 b (toString v)` is `Dec.ofInt v` inside the
+  bounds of `b`.
+- `IdAgg.summary_inlineInt`: the `Summary.of` of a decoded inline integer has
+  the numeric reading `Dec.ofInt v` and the integer and numeric flags set.
+  `intVal?_reads`: an id that `intVal?` reads as `v` decodes
+  (`ofInlineCode?`), and its summary is that one.
+- `IAcc.step_abs`, `IAcc.step_abs_inv`, `IAcc.fold_abs`: over ids that read as
+  their values, the `IAcc` fold equals the `AggStream` fold (`AggAcc.step`) on
+  the summaries of the decoded values, so the integer path computes what the
+  summary path computes.
+
+Tests (`IdAggTests`): a column of 9 integer datatypes with negative values and
+an unbound value, in two groups and in one, for COUNT, SUM, MIN, MAX and AVG,
+equal to the reference evaluator on the decoded rows; the decoded-id count
+shows that the integer path ran; a column with one decimal goes to the summary
+path and is equal to the reference too.
+
+Measurement: as in 11.20 (`--repeat 7`, 5 interleaved rounds); "before" is
+`l4sbm11` of `main` at `db0ec566` (section 11.20). Load average 0.8 to 1.2. All
+10 answers byte-identical (md5 `20a94fcb1a530503a1eadef01ab10e98`).
+`--explain`: 2,633 ids decoded (49,000 before).
+
+| | before (11.20) | after | QLever 1 CPU (11.10) |
+| --- | ---: | ---: | ---: |
+| warm median, rounds 1 to 5 (ms) | 303 / 294 / 295 / 288 / 303 | 204 / 219 / 210 / 208 / 208 | |
+| warm median of rounds (ms) | 295 | 208 | 103 |
+| peak RSS, rounds (VmHWM, kB) | 60,392 to 64,636 | 60,872 to 61,836 | |
+
+`tests/sbm11/agg_ids.sh`, run alone: 7 of 7 runs at most 300 ms (187, 193
+before a container restart; 216, 218, 205, 210, 196 after). The case is now the
+assertion `d19-warm-300ms`. Measured against `main` at `0dd31a27` (1,507 ms,
+11.20), d19 warm is 7.2 times faster; the ratio to QLever 1 CPU is 2.0.
+
+Where the time goes now (`perf record --call-graph dwarf,16384`, 3 runs,
+inclusive samples): the WHERE clause 57 percent (merge join 31, of which the
+index-array pushes `pairsRow` 17; scan 21, of which the frame decoder
+`deltaRangeGoF` 11), the aggregation 39 percent (`intRows` 31: the group
+lookup and the `IAcc` steps). Kernel page zeroing of fresh memory
+(`clear_page_erms`) is 26 percent of all samples, spread over both. None of
+these is a cost of the shared arithmetic.
+
+Gates (exit codes 0): `lake build` (1985 jobs); `tools/lean-unbuilt-modules.py`
+(938 of 938 modules reached), `lean-tail-recursion-audit.py`,
+`lean-csimp-reach.py`, `lean-registry-audit.py` with `--gate`;
+`lean-hygiene-audit.py` clean; `tests/sbm11/run.sh` with
+`FACTOIDAL_TESTING_ROOT=third_party/testing` 3,131 pass, 0 fail, 28
+expected-fail (out of 3,159); `SBM11_THREADS=4 tests/sbm11/census.sh` 605
+executed, 605 matched the reference engine (438 on the id path).

@@ -639,7 +639,7 @@ variable (cx : NCx Id) (nst : NSt) (gof : Graph → GCtx) (prb : Nat → ByteArr
 /-- The rows of an executed basic graph pattern are those of the model of
     `IdLeaf.storeLeaves` (every pattern from the SPO listing, in the written
     order), up to order. -/
-theorem exec_bgp_equiv (hpm : ∀ k, k < 4 → PermMem cx.st k (prb k) (ms k)) (hscan : cx.st.scanTable = none)
+theorem exec_bgp_equiv (hpm : ∀ k, k < 4 → PermMem cx.st k (prb k) (ms k)) (hscan : cx.st.Sequential)
     (hds : cx.ds = none) (hid : ∀ t, cx.st.idOf t = pure (cid t))
     (a : Graph) (b : Bgp) (hg : StoreGraph dec sok (listingsOf gof prb ms) a) (htp : ∀ tp ∈ b, ExecTp tp) :
     IdEquiv ((execLeaves cx nst gof).bgp a b)
@@ -663,7 +663,7 @@ theorem exec_bgp_equiv (hpm : ∀ k, k < 4 → PermMem cx.st k (prb k) (ms k)) (
 
 /-- The rows of an executed property path pattern are those of the model of
     `IdLeaf.storeLeaves` (`pathRows` over the SPO listing), up to order. -/
-theorem exec_path_equiv (hpm : ∀ k, k < 4 → PermMem cx.st k (prb k) (ms k)) (hscan : cx.st.scanTable = none)
+theorem exec_path_equiv (hpm : ∀ k, k < 4 → PermMem cx.st k (prb k) (ms k)) (hscan : cx.st.Sequential)
     (hds : cx.ds = none) (hid : ∀ t, cx.st.idOf t = pure (cid t))
     (hidv : ∀ t x, cid t = some x → idv t = x) (hcid0 : ∀ t x, cid t = some x → x ≠ 0)
     (htag : ∀ x, sok x → IdPathEval.litTag x = some (!isNotLiteral (dec x)))
@@ -695,7 +695,7 @@ theorem exec_path_equiv (hpm : ∀ k, k < 4 → PermMem cx.st k (prb k) (ms k)) 
 /-- The leaf part of the hypotheses of `evalGroupIds_allowed` for the leaves
     of the executed id path, from store invariants. -/
 theorem leafRel_exec (env : EvalEnv) (ds : Dataset)
-    (hpm : ∀ k, k < 4 → PermMem cx.st k (prb k) (ms k)) (hscan : cx.st.scanTable = none)
+    (hpm : ∀ k, k < 4 → PermMem cx.st k (prb k) (ms k)) (hscan : cx.st.Sequential)
     (hds : cx.ds = none) (hid : ∀ t, cx.st.idOf t = pure (cid t))
     (hdec : ∀ x y, ok x → ok y → (dec x).eqb (dec y) = (x == y)) (hsok : ∀ x, sok x → ok x)
     (hcid : ∀ c, CidOk dec sok c (cid c))
@@ -743,7 +743,7 @@ theorem leafRel_exec (env : EvalEnv) (ds : Dataset)
     store's listings and the leaf's shape; elsewhere, each term the evaluator
     encodes decodes back. No hypothesis states a leaf's rows. -/
 theorem where_allowed_exec (env : EvalEnv) (ds : Dataset)
-    (hpm : ∀ k, k < 4 → PermMem cx.st k (prb k) (ms k)) (hscan : cx.st.scanTable = none)
+    (hpm : ∀ k, k < 4 → PermMem cx.st k (prb k) (ms k)) (hscan : cx.st.Sequential)
     (hds : cx.ds = none) (hid : ∀ t, cx.st.idOf t = pure (cid t))
     (hdec : ∀ x y, ok x → ok y → (dec x).eqb (dec y) = (x == y)) (hsok : ∀ x, sok x → ok x)
     (hcid : ∀ c, CidOk dec sok c (cid c))
@@ -772,7 +772,7 @@ theorem where_allowed_exec (env : EvalEnv) (ds : Dataset)
     join is well formed and its rows are, up to order (`IdEquiv`), the join
     of the rows of `tl` with the executed path leaf of `execLeaves` (the
     step with no rows joined before). -/
-theorem join_path_exec (hpm : ∀ k, k < 4 → PermMem cx.st k (prb k) (ms k)) (hscan : cx.st.scanTable = none)
+theorem join_path_exec (hpm : ∀ k, k < 4 → PermMem cx.st k (prb k) (ms k)) (hscan : cx.st.Sequential)
     (hds : cx.ds = none) (hid : ∀ t, cx.st.idOf t = pure (cid t))
     (hidv : ∀ t x, cid t = some x → idv t = x) (hcid0 : ∀ t x, cid t = some x → x ≠ 0)
     (htag : ∀ x, sok x → IdPathEval.litTag x = some (!isNotLiteral (dec x)))
@@ -811,7 +811,7 @@ theorem join_path_exec (hpm : ∀ k, k < 4 → PermMem cx.st k (prb k) (ms k)) (
     those of `where_allowed_exec` for the store, and `ExecLeaf` of the path
     pattern. -/
 theorem where_allowed_exec_join (env : EvalEnv) (ds : Dataset)
-    (hpm : ∀ k, k < 4 → PermMem cx.st k (prb k) (ms k)) (hscan : cx.st.scanTable = none)
+    (hpm : ∀ k, k < 4 → PermMem cx.st k (prb k) (ms k)) (hscan : cx.st.Sequential)
     (hds : cx.ds = none) (hid : ∀ t, cx.st.idOf t = pure (cid t))
     (hdec : ∀ x y, ok x → ok y → (dec x).eqb (dec y) = (x == y)) (hsok : ∀ x, sok x → ok x)
     (hcid : ∀ c, CidOk dec sok c (cid c))
@@ -847,7 +847,7 @@ theorem where_allowed_exec_join (env : EvalEnv) (ds : Dataset)
     `evalGroupM` gives such a table for every `P` is the open table step of
     L5t.) -/
 theorem where_allowed_exec_join_ids (env : EvalEnv) (ds : Dataset)
-    (hpm : ∀ k, k < 4 → PermMem cx.st k (prb k) (ms k)) (hscan : cx.st.scanTable = none)
+    (hpm : ∀ k, k < 4 → PermMem cx.st k (prb k) (ms k)) (hscan : cx.st.Sequential)
     (hds : cx.ds = none) (hid : ∀ t, cx.st.idOf t = pure (cid t))
     (hdec : ∀ x y, ok x → ok y → (dec x).eqb (dec y) = (x == y)) (hsok : ∀ x, sok x → ok x)
     (hcid : ∀ c, CidOk dec sok c (cid c))

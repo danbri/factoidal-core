@@ -476,9 +476,10 @@ repaired (docs/designissues/2026-10-10-lean-vs-fstar-performance.md):
                    0.566 s (2.1 and 1.9; 4.1), 0.148 s, 0.271 s and 0.562 s (1.8 and 2.1; 3.8).
   ntriples-long-line-memory, nquads-long-line-memory
                    peak resident memory of the count of the same files at 2 MB and 8 MB, per
-                   input byte: at most 8. Expected failures,
-                   https://github.com/danbri/factoidal/issues/874: the reader holds the line as a
-                   `List Char`, 34 bytes per input byte.
+                   input byte: at most 8
+                   (https://github.com/danbri/factoidal/issues/874). The reader held the line as a
+                   `List Char`: 32.5 and 32.4 bytes per input byte. `StrictFeedText` reads it as a
+                   `String` at a cursor: 3.7 and 3.8 (measured 2026-10-22).
   rdfxml-entity-chain-time
                    `l4factoidal parse --format rdfxml` of a document whose `rdf:RDF` content is a
                    chain of n markup entities (the document of the stack case
@@ -593,8 +594,12 @@ XFAIL: dict[str, str] = {
     "query-memory-fstar": "https://github.com/danbri/factoidal/issues/729",
     "iso-noniso-search": "https://github.com/danbri/factoidal/issues/877",
     "sbm11-replay-insert-time": "https://github.com/danbri/factoidal/issues/879",
-    "ntriples-long-line-memory": "https://github.com/danbri/factoidal/issues/874",
-    "nquads-long-line-memory": "https://github.com/danbri/factoidal/issues/874",
+    "owl-consistent-cl": "https://github.com/danbri/factoidal/issues/960",
+    "ntriples-long-line-uescape-memory": "https://github.com/danbri/factoidal/issues/949",
+    "ntriples-long-line-bnode-dot-memory": "https://github.com/danbri/factoidal/issues/949",
+    "ntriples12-long-line-memory": "https://github.com/danbri/factoidal/issues/949",
+    "nquads12-long-line-memory": "https://github.com/danbri/factoidal/issues/949",
+    "ntriples-lenient-long-line-memory": "https://github.com/danbri/factoidal/issues/949",
 }
 # A run longer than this is not repeated: the minimum of several runs only
 # removes timer and load noise, which is small against a run this long.
@@ -1048,10 +1053,20 @@ PARSE_MEMORY_ROWS = {
     "parse-rdfxml-memory": (25000, bl.gen_rdfxml, ["--format", "rdfxml", "--out", "nquads"], 16.0),
     # One line of n bytes (the fixtures of the long-line time rows, issue 869), 2 MB and 8 MB,
     # counted (`parse` prints 1). https://github.com/danbri/factoidal/issues/874: the reader
-    # holds the line as a `List Char`, 34 bytes of peak RSS per input byte (8 MB: 276 MB).
-    # Bound 8: the line as bytes and the literal as a `String`, with room for the term.
+    # held the line as a `List Char`, 32.5 bytes of peak RSS per input byte (8 MB: 272 MB);
+    # `StrictFeedText` reads it as a `String` at a cursor: 3.7 (8 MB: 58 MB). Bound 8.
     "ntriples-long-line-memory": (2000000, lambda n: long_line_nt(n), ["--format", "ntriples"], 8.0),
     "nquads-long-line-memory": (2000000, lambda n: long_line_nq(n), ["--format", "nquads"], 8.0),
+    # https://github.com/danbri/factoidal/issues/949: the native reader declines this form.
+    "ntriples-long-line-uescape-memory": (2000000, lambda n: long_line_nt_u(n), ["--format", "ntriples"], 8.0),
+    # https://github.com/danbri/factoidal/issues/949: the native reader declines this form.
+    "ntriples-long-line-bnode-dot-memory": (2000000, lambda n: long_line_nt_b(n), ["--format", "ntriples"], 8.0),
+    # https://github.com/danbri/factoidal/issues/949: the native reader declines this form.
+    "ntriples12-long-line-memory": (2000000, lambda n: long_line_nt(n), ["--format", "nt12"], 8.0),
+    # https://github.com/danbri/factoidal/issues/949: the native reader declines this form.
+    "nquads12-long-line-memory": (2000000, lambda n: long_line_nq(n), ["--format", "nq12"], 8.0),
+    # https://github.com/danbri/factoidal/issues/949: the native reader declines this form.
+    "ntriples-lenient-long-line-memory": (2000000, lambda n: long_line_nt(n), ["--format", "ntriples", "--lenient"], 8.0),
 }
 
 
@@ -2050,6 +2065,22 @@ def long_line_nt(n: int) -> Path:
     def text():
         return '<urn:s> <urn:p> "' + "a" * (n - 21) + '" .\n'
     return fixture(f"long-line-{n}.nt", text)
+
+
+def long_line_nt_u(n: int) -> Path:
+    """One N-Triples line of n bytes with its line break: a literal of n - 30 bytes ending in a
+    `\\u0041` escape (issue 949)."""
+    def text():
+        return '<urn:s> <urn:p> "' + "a" * (n - 30) + '\\u0041" .\n'
+    return fixture(f"long-line-u-{n}.nt", text)
+
+
+def long_line_nt_b(n: int) -> Path:
+    """One N-Triples line of n bytes with its line break: a blank node label of n - 26 bytes that
+    ends in a dot (issue 949)."""
+    def text():
+        return '<urn:s> <urn:p> _:' + "a" * (n - 26) + '.\n'
+    return fixture(f"long-line-b-{n}.nt", text)
 
 
 def long_line_nq(n: int) -> Path:

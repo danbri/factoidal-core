@@ -33,9 +33,10 @@ in the same order, so the theorems here say that its result IS
 
 That a table of ids, grouped by the id path, gives the groups of
 `groupWhere` on the decoded rows, with the same representative rows and the
-same sequence of values in each group (lemma L5k of the end-to-end record). Like
-`groupSolutionsFast` against `groupSolutions`, it is checked by the gate
-queries of `tests/sbm11/gate` and by the W3C census, and is NOT proved.
+same sequence of values in each group (lemma L5k of the end-to-end record). It
+is checked by the gate queries of `tests/sbm11/gate` and by the W3C census, and
+is NOT proved. (The agreement of `groupSolutionsFast` with `groupSolutions` is
+proved: `groupSolutionsFast_eq` in `L4Factoidal.SPARQL.GroupFastTheorems`.)
 
 No `sorry`, no user `axiom`, no `native_decide`, no `partial`.
 -/
@@ -67,15 +68,60 @@ theorem varView_ne_error (t : Term) : varView t ≠ .error := by
 
 /-! ## What a step reads of one value -/
 
-/-- The original evaluated value, cached once per distinct term id. Both
-arithmetic and ordering interpret this value through their shared adapters;
-promoting it here would lose the source float datatype. -/
+/-- The original evaluated value, cached once per distinct term id, with the
+readings the shared arithmetic and the shared order make of it: `nv` is
+`numericValue?`, `isInt` is `isIntegerOperand`, `isNum` is `isNumericOperand`.
+The value itself is not promoted (that would lose the source float datatype);
+the readings are made once here and not at every row
+(https://github.com/danbri/factoidal/issues/862). A summary is only made by
+`Summary.of`, so the readings are those of `v`. -/
 structure Summary where
   v : EvalResult
+  nv : Option XSD.Val
+  isInt : Bool
+  isNum : Bool
 
-instance : Inhabited Summary := ⟨⟨.error⟩⟩
+def Summary.of (v : EvalResult) : Summary :=
+  ⟨v, v.numericValue?, v.isIntegerOperand, v.isNumericOperand⟩
 
-def Summary.of (v : EvalResult) : Summary := ⟨v⟩
+/-- `Summary.of .error`, written out so that compiled code does not call
+`Summary.of` (`tools/lean-csimp-reach.py`). -/
+instance : Inhabited Summary := ⟨⟨.error, none, false, false⟩⟩
+
+/-- `Summary.of` with one datatype lookup for a literal: the three readings
+of a literal all start from `builtinOfIri?` of its datatype IRI, which on
+DBpedia d19 was most of the cost of a summary
+(https://github.com/danbri/factoidal/issues/862). -/
+def Summary.ofFast (v : EvalResult) : Summary :=
+  match v with
+  | .term (.literal l) =>
+    let bo := XSD.builtinOfIri? l.val.datatype.val
+    ⟨v, bo.bind (fun b => if Fn.Numeric.isType b then XSD.lexicalFor .xsd10 b l.val.lexicalForm else none),
+      bo.any (fun b => (XSD.intBounds b).isSome), bo.any Fn.Numeric.isType⟩
+  | _ => ⟨v, v.numericValue?, v.isIntegerOperand, v.isNumericOperand⟩
+
+/-- The summary of a literal whose datatype lookup `bo` is already made (by a
+caller that keeps the lookups of the datatype IRIs it has met). -/
+def Summary.ofLit (l : WfLiteral) (bo : Option XSD.Builtin) : Summary :=
+  ⟨.term (.literal l),
+    bo.bind (fun b => if Fn.Numeric.isType b then XSD.lexicalFor .xsd10 b l.val.lexicalForm else none),
+    bo.any (fun b => (XSD.intBounds b).isSome), bo.any Fn.Numeric.isType⟩
+
+/-- With the lookup of its own datatype IRI, `ofLit` is `Summary.of`. -/
+theorem Summary.ofLit_eq (l : WfLiteral) :
+    Summary.ofLit l (XSD.builtinOfIri? l.val.datatype.val) = Summary.of (.term (.literal l)) := rfl
+
+/-- The compiler runs `Summary.ofFast` wherever the source says `Summary.of`. -/
+@[csimp] theorem Summary.of_eq_ofFast : @Summary.of = @Summary.ofFast := by
+  funext v
+  cases v with
+  | term t =>
+    cases t with
+    | literal l => rfl
+    | _ => rfl
+  | _ => rfl
+
+
 
 theorem Summary.of_v (v : EvalResult) : (Summary.of v).v = v := rfl
 
@@ -88,8 +134,8 @@ inductive AggAcc where
   /-- SUM and AVG: the running shared-arithmetic result and non-error count.
       Arithmetic propagates a nonnumeric operand as `.error`. -/
   | num (s : EvalResult) (c : Nat)
-  /-- MIN and MAX: the best original value so far -/
-  | best (b : Option EvalResult)
+  /-- MIN and MAX: the best original value so far, with its readings -/
+  | best (b : Option Summary)
 
 instance : Inhabited AggAcc := ⟨.cnt 0⟩
 
@@ -109,8 +155,32 @@ def AggAcc.stepCount : AggAcc → AggAcc
 
 def AggAcc.stepNum (a : AggAcc) (s : Summary) : AggAcc :=
   match a with
-  | .num total c => .num (evalArithmetic .add s.v total) (c + 1)
+  | .num total c =>
+    match total, s.nv, s.isInt with
+    -- an integer value onto an integer sum: `evalArithInt .add`, without the
+    -- reading of the sum (`Dec.ofInt`) at every row
+    | .num t, some (.dec x), true => .num (.num (x.mantissa + t)) (c + 1)
+    | _, _, _ =>
+      .num (evalArithmeticRead .add s.nv total.numericValue? s.isInt total.isIntegerOperand) (c + 1)
   | a => a
+
+/-- The integer branch of `stepNum` is the shared arithmetic on the readings. -/
+theorem AggAcc.stepNum_read (total : EvalResult) (c : Nat) (s : Summary) :
+    (AggAcc.num total c).stepNum s =
+      .num (evalArithmeticRead .add s.nv total.numericValue? s.isInt total.isIntegerOperand) (c + 1) := by
+  simp only [AggAcc.stepNum]
+  split
+  · rename_i t x h2 h3
+    rw [h2, h3]
+    simp [EvalResult.numericValue?, EvalResult.isIntegerOperand, evalArithmeticRead, evalArithInt,
+      XSD.Dec.ofInt, Int.add_comm]
+  · rfl
+
+/-- On a summary made by `Summary.of`, the step is the shared arithmetic. -/
+theorem AggAcc.stepNum_of (v total : EvalResult) (c : Nat) :
+    (AggAcc.num total c).stepNum (Summary.of v) = .num (evalArithmetic .add v total) (c + 1) := by
+  rw [AggAcc.stepNum_read, evalArithmetic_eq_read]
+  rfl
 
 /-- MAX and MIN: a later value replaces the best one when `keep` accepts the
 comparison of the two original values. MAX keeps it when it is not below the best
@@ -118,9 +188,19 @@ comparison of the two original values. MAX keeps it when it is not below the bes
 it (`findMin`, §18.5.1.5). -/
 def AggAcc.stepBest (keep : Int → Bool) (a : AggAcc) (s : Summary) : AggAcc :=
   match a with
-  | .best none => .best (some s.v)
-  | .best (some current) => if keep (sparqlOrderValue s.v current) then .best (some s.v) else a
+  | .best none => .best (some s)
+  | .best (some current) =>
+    if keep (sparqlOrderReadFast s.v current.v s.isNum current.isNum s.nv current.nv)
+    then .best (some s) else a
   | a => a
+
+/-- On summaries made by `Summary.of`, the comparison is the shared order. -/
+theorem AggAcc.stepBest_of (keep : Int → Bool) (v cur : EvalResult) :
+    AggAcc.stepBest keep (.best (some (Summary.of cur))) (Summary.of v) =
+      if keep (sparqlOrderValue v cur) then .best (some (Summary.of v))
+      else .best (some (Summary.of cur)) := by
+  simp only [AggAcc.stepBest, sparqlOrderReadFast_eq, sparqlOrderValue, sparqlOrder_eq_read]
+  rfl
 
 /-- The best-value step retains the reference engine's error-removal policy.
 This agreement does not establish the unresolved SPARQL 1.1 error policy. -/
@@ -146,8 +226,8 @@ def AggAcc.step (fn : AggregateFn) (a : AggAcc) (s : Summary) : AggAcc :=
 /-- §18.5.1.4 AVG from the shared sum and non-error count. The accumulator
 uses the same reverse enumeration as `sumNumeric`; no reassociation is used.
 The number of state fields is constant; arbitrary-precision values can grow.
-Shared arithmetic parses lexical operands at each step. A cached value-space
-implementation would need its own refinement and performance measurements. -/
+The readings of each value are made once (`Summary.of`); the running sum is
+read again at each step, which for an integer sum is `Dec.ofInt`. -/
 def avgOfAcc (s : EvalResult) (c : Nat) : EvalResult :=
   if c == 0 then .num 0
   else evalArithmetic .div s (.num (Int.ofNat c))
@@ -164,7 +244,7 @@ def AggAcc.finish (fn : AggregateFn) (a : AggAcc) : EvalResult :=
   | .avg, .num s c => avgOfAcc s c
   | .min, .best b | .max, .best b =>
     match b with
-    | some v => v
+    | some v => v.v
     | none => .error
   | _, _ => .error
 
@@ -248,8 +328,8 @@ theorem num_stream (fn : AggregateFn) (hfn : fn = .sum ∨ fn = .avg) (vals : Li
       simp only [if_true, List.map_cons, List.foldl_cons, step_num_error fn hfn]
       exact ih total c
     · simp only [hv, if_false, List.map_cons, List.foldl_cons]
-      rw [step_num_of_ne fn hfn _ v hv]
-      simp only [AggAcc.stepNum, Summary.of_v, ih, List.length_cons]
+      rw [step_num_of_ne fn hfn _ v hv, AggAcc.stepNum_of]
+      simp only [ih, List.length_cons]
       congr 1
       omega
 
@@ -275,8 +355,8 @@ theorem findMin_eq (vals : List EvalResult) :
 
 /-- MIN and MAX from a state that already holds a value. -/
 theorem best_stream_from (keep : Int → Bool) (vals : List EvalResult) : ∀ (a : EvalResult),
-    (vals.map Summary.of).foldl (AggAcc.stepKeep keep) (.best (some a)) =
-      .best (some (bestFold keep a (filterNonError vals))) := by
+    (vals.map Summary.of).foldl (AggAcc.stepKeep keep) (.best (some (Summary.of a))) =
+      .best (some (Summary.of (bestFold keep a (filterNonError vals)))) := by
   induction vals with
   | nil => intro a; simp [filterNonError, bestFold]
   | cons v rest ih =>
@@ -284,18 +364,18 @@ theorem best_stream_from (keep : Int → Bool) (vals : List EvalResult) : ∀ (a
     rw [filterNonError_cons]
     by_cases hv : v = .error
     · subst hv
-      simp [AggAcc.stepKeep, Summary.of, ih]
-    · simp only [hv, if_false, List.map_cons, List.foldl_cons]
+      simp only [if_true, List.map_cons, List.foldl_cons]
+      exact ih a
+    · have hs : AggAcc.stepKeep keep (.best (some (Summary.of a))) (Summary.of v) =
+          AggAcc.stepBest keep (.best (some (Summary.of a))) (Summary.of v) := by
+        cases v <;> first | exact absurd rfl hv | rfl
+      simp only [hv, if_false, List.map_cons, List.foldl_cons, hs, AggAcc.stepBest_of]
       by_cases hk : keep (sparqlOrderValue v a) = true
-      · have h1 : AggAcc.stepKeep keep (.best (some a)) (Summary.of v) =
-            .best (some v) := by
-          cases v <;> simp_all [AggAcc.stepKeep, AggAcc.stepBest, Summary.of]
-        rw [h1, ih v]
+      · simp only [hk, if_true]
+        rw [ih v]
         simp [bestFold, hk]
-      · have h1 : AggAcc.stepKeep keep (.best (some a)) (Summary.of v) =
-            .best (some a) := by
-          cases v <;> simp_all [AggAcc.stepKeep, AggAcc.stepBest, Summary.of]
-        rw [h1, ih a]
+      · simp only [hk, Bool.false_eq_true, if_false]
+        rw [ih a]
         simp [bestFold, hk]
 
 /-- MIN and MAX from the empty state: the first value that is not the type
@@ -304,17 +384,18 @@ theorem best_stream (keep : Int → Bool) (vals : List EvalResult) :
     (vals.map Summary.of).foldl (AggAcc.stepKeep keep) (.best none) =
       (match filterNonError vals with
        | [] => .best none
-       | v :: rest => .best (some (bestFold keep v rest))) := by
+       | v :: rest => .best (some (Summary.of (bestFold keep v rest)))) := by
   induction vals with
   | nil => simp [filterNonError]
   | cons v rest ih =>
     rw [filterNonError_cons]
     by_cases hv : v = .error
     · subst hv
-      simp [AggAcc.stepKeep, Summary.of, ih]
+      simp only [if_true, List.map_cons, List.foldl_cons]
+      exact ih
     · simp only [hv, if_false, List.map_cons, List.foldl_cons]
-      have h1 : AggAcc.stepKeep keep (.best none) (Summary.of v) = .best (some v) := by
-        cases v <;> simp_all [AggAcc.stepKeep, AggAcc.stepBest, Summary.of]
+      have h1 : AggAcc.stepKeep keep (.best none) (Summary.of v) = .best (some (Summary.of v)) := by
+        cases v <;> first | exact absurd rfl hv | rfl
       rw [h1, best_stream_from]
 
 
@@ -359,11 +440,11 @@ theorem evalAggregate_stream (env : EvalEnv) (fn : AggregateFn) (hfn : Streamed 
   | min =>
     simp only [AggAcc.init, aggVals, step_min]
     rw [best_stream keepMin vals, findMin_eq]
-    cases filterNonError vals <;> simp [AggAcc.finish]
+    cases filterNonError vals <;> simp [AggAcc.finish, Summary.of_v]
   | max =>
     simp only [AggAcc.init, aggVals, step_max]
     rw [best_stream keepMax vals, findMax_eq]
-    cases filterNonError vals <;> simp [AggAcc.finish]
+    cases filterNonError vals <;> simp [AggAcc.finish, Summary.of_v]
   | groupConcat s => simp [Streamed] at hfn
   | sample => simp [Streamed] at hfn
 

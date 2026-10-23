@@ -75,6 +75,46 @@ private def group : SolutionGroup :=
 #guard streamAgg emptyEnv group (.avg, some "x") ==
   evalAggregate emptyEnv .avg false (.var "x") group
 
+-- https://github.com/danbri/factoidal/issues/862: the accumulators read each
+-- value once (`Summary.of`) and step on the readings (`evalArithmeticRead`,
+-- `sparqlOrderRead`). The stream must equal the reference list functions
+-- (`aggVals`: `sumNumeric`, `avgNumeric`, `findMin`, `findMax`, which call
+-- `evalArithmetic` and `sparqlOrder` on the values) on mixed numeric types,
+-- a non-numeric literal and an unbound value (`.error`), in several orders.
+private def typed (lex : String) (dt : WfIri) : EvalResult :=
+  .term (.literal (mkTypedLiteral lex dt))
+private def xsdNNI : WfIri := ⟨"http://www.w3.org/2001/XMLSchema#nonNegativeInteger", rfl⟩
+private def mixes : List (List EvalResult) :=
+  [ [typed "3" xsdNNI, typed "0012" xsdNNI, typed "7" xsdNNI],
+    [integerTerm "2", typed "2.50" xsdDecimal, .num 4, .dec "1.25"],
+    [integerTerm "1", typed "2.5" xsdDecimal, .dbl "1e1", flt "0.5"],
+    [flt "1.5", integerTerm "-3", .error, typed "0.75" xsdDecimal],
+    [integerTerm "5", erString "five", typed "6" xsdNNI],
+    [.error, .error],
+    [],
+    [typed "10" xsdNNI, typed "9.0" xsdDecimal, typed "1E1" xsdDouble, flt "10"],
+    [flt "NaN", integerTerm "1", .dbl "-INF"],
+    [erString "b", erString "a", .term (.iri ⟨"http://example.org/x", rfl⟩), integerTerm "1"] ]
+private def fns : List AggregateFn := [.count, .sum, .avg, .min, .max]
+#guard fns.all fun fn => mixes.all fun vs =>
+  run fn vs == aggVals fn vs && run fn vs.reverse == aggVals fn vs.reverse
+-- and the reference through `evalAggregate` itself, on a group with an unbound row
+private def mixGroup : SolutionGroup :=
+  { key := [], solutions := [[("x", .literal (mkTypedLiteral "12" xsdNNI))], [],
+      [("x", .literal (mkTypedLiteral "2.5" xsdDecimal))],
+      [("x", .literal (mkTypedLiteral "1e0" xsdDouble))],
+      [("x", .literal (mkTypedLiteral "4" xsdFloat))],
+      [("x", .literal (mkTypedLiteral "007" xsdInteger))]] }
+#guard fns.all fun fn => streamAgg emptyEnv mixGroup (fn, some "x") ==
+  evalAggregate emptyEnv fn false (.var "x") mixGroup
+
+#print axioms AggAcc.stepNum_of
+#print axioms AggAcc.stepBest_of
+#print axioms evalArithmetic_eq_read
+#print axioms sparqlOrder_eq_read
+#print axioms sparqlOrderReadFast_eq
+#print axioms AggAcc.stepNum_read
+#print axioms Summary.of_eq_ofFast
 #print axioms num_stream
 #print axioms evalAggregate_stream
 #print axioms evalSelectItemsGroup_pre

@@ -21,9 +21,9 @@ an asserted triple; no rule reads the triple inside it. So:
   the `[ext]` row eq-rep-tt (`OWL.RL.eqRepTtFor`, `Derives.eqRepTt`): one
   occurrence of an IRI in subject, predicate or object position of a triple
   term, at any nesting depth, is replaced by an IRI it is `owl:sameAs` to.
-  The RDFS closures have no `owl:sameAs` semantics and do not substitute;
-  `RDF.regimeEntails .rdfsPlus` decides the case on the graph-entailment path
-  (`RDF/EntailmentTests.lean`);
+  The RDFS-Plus closure (`rdfsPlusClosureFix`) runs the same row, because
+  the W3C test's regime is "RDFS-Plus" (added 2026-10-23). The RDFS and
+  rho-df closures have no `owl:sameAs` semantics and do not substitute;
 * the derivations from asserted triples stay (`ex:x rdf:type ex:D`).
 
 Each fixture checks a triple the rules must derive AND triples they must not
@@ -91,11 +91,12 @@ private def closures : List Graph :=
 #guard Graph.mem (tr t sameAs s) (OWL.RL.closureFix g)
 
 -- eq-rep-tt (issue 873, W3C `opaque-iri`): the OWL 2 RL closure, in the
--- list form and in the indexed semi-naive form, substitutes `owl:sameAs`
--- inside a triple term.
+-- list form and in the indexed semi-naive form, and the RDFS-Plus closure
+-- substitute `owl:sameAs` inside a triple term.
 private def owlClosures (h : Graph) : List Graph :=
   [ OWL.RL.closureFix h,
-    OWL.RL.indexedClosureSN h (OWL.RL.closureFuelBound h) ]
+    OWL.RL.indexedClosureSN h (OWL.RL.closureFuelBound h),
+    rdfsPlusClosureFix h ]
 
 private def saysTypeC (subj : WfIri) : Triple :=
   ⟨.iri a, says, .tripleTerm (.iri subj) rdfType (.iri C)⟩

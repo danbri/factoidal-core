@@ -41,11 +41,14 @@ formatMathValue = (v) => {
 
 ```observable-js
 mathmlDemo = {
-  const two = await fn.mathmlEval("<apply><plus/><cn>2</cn><cn>3</cn></apply>");
-  const zero = await fn.mathmlEval("<apply><divide/><cn>1</cn><cn>0</cn></apply>");
+  // MathML 3 section 2.1.2: in XML the elements are in the MathML namespace.
+  const sum = '<math xmlns="http://www.w3.org/1998/Math/MathML"><apply><plus/><cn>2</cn><cn>3</cn></apply></math>';
+  const quotient = '<math xmlns="http://www.w3.org/1998/Math/MathML"><apply><divide/><cn>1</cn><cn>0</cn></apply></math>';
+  const two = await fn.mathmlEval(sum);
+  const zero = await fn.mathmlEval(quotient);
   return [
-    { contentMathml: "<apply><plus/><cn>2</cn><cn>3</cn></apply>", value: formatMathValue(two) },
-    { contentMathml: "<apply><divide/><cn>1</cn><cn>0</cn></apply>", value: formatMathValue(zero) },
+    { contentMathml: sum, value: formatMathValue(two) },
+    { contentMathml: quotient, value: formatMathValue(zero) },
   ];
 }
 ```

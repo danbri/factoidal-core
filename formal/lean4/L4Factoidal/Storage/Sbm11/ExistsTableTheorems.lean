@@ -923,7 +923,7 @@ variable (cx : NCx Id) (gof : Graph → GCtx) (prb : Nat → ByteArray) (ms : Na
     the tags of the store (`htagk`), the leaf conditions of `b` in `a`
     (`hleaf`) and no `text:query` predicate in `b` (`hnft`). -/
 theorem semiHitsM_spec (env : EvalEnv) (ds : Dataset)
-    (hpm : ∀ k, k < 4 → PermMem cx.st k (prb k) (ms k)) (hscan : cx.st.scanTable = none)
+    (hpm : ∀ k, k < 4 → PermMem cx.st k (prb k) (ms k)) (hscan : cx.st.Sequential)
     (hds : cx.ds = none) (hid : ∀ t, cx.st.idOf t = pure (cid t))
     (hdec : ∀ x y, ok x → ok y → (dec x).eqb (dec y) = (x == y)) (hsok : ∀ x, sok x → ok x)
     (hcid : ∀ c, CidOk dec ok c (cid c)) (hcidS : ∀ c, CidOk dec sok c (cid c))
@@ -1227,7 +1227,7 @@ theorem mapIdx_get (keep : Array Bool) (f : Nat → Bool → Bool) (i : Nat) (hi
 
 /-- **The loop over the EXISTS and NOT EXISTS blocks.** -/
 theorem semis_loop (env : EvalEnv) (ds : Dataset)
-    (hpm : ∀ k, k < 4 → PermMem cx.st k (prb k) (ms k)) (hscan : cx.st.scanTable = none)
+    (hpm : ∀ k, k < 4 → PermMem cx.st k (prb k) (ms k)) (hscan : cx.st.Sequential)
     (hds : cx.ds = none) (hid : ∀ t, cx.st.idOf t = pure (cid t))
     (hdec : ∀ x y, ok x → ok y → (dec x).eqb (dec y) = (x == y)) (hsok : ∀ x, sok x → ok x)
     (hcid : ∀ c, CidOk dec ok c (cid c)) (hcidS : ∀ c, CidOk dec sok c (cid c))
@@ -1327,7 +1327,7 @@ theorem semis_loop (env : EvalEnv) (ds : Dataset)
     the decoded row `i`. -/
 theorem filterMaskM_spec (env : EvalEnv) (ds : Dataset)
     (henv : ExprLocalTheorems.EnvAgree cx.env env)
-    (hpm : ∀ k, k < 4 → PermMem cx.st k (prb k) (ms k)) (hscan : cx.st.scanTable = none)
+    (hpm : ∀ k, k < 4 → PermMem cx.st k (prb k) (ms k)) (hscan : cx.st.Sequential)
     (hds : cx.ds = none) (hid : ∀ t, cx.st.idOf t = pure (cid t))
     (hdec : ∀ x y, ok x → ok y → (dec x).eqb (dec y) = (x == y)) (hsok : ∀ x, sok x → ok x)
     (hcid : ∀ c, CidOk dec ok c (cid c)) (hcidS : ∀ c, CidOk dec sok c (cid c))
@@ -1437,7 +1437,7 @@ theorem filterMaskM_spec (env : EvalEnv) (ds : Dataset)
     that pass the reference FILTER (`IdGroup.filterFn`), in order. -/
 theorem filterM_run (env : EvalEnv) (ds : Dataset)
     (henv : ExprLocalTheorems.EnvAgree cx.env env)
-    (hpm : ∀ k, k < 4 → PermMem cx.st k (prb k) (ms k)) (hscan : cx.st.scanTable = none)
+    (hpm : ∀ k, k < 4 → PermMem cx.st k (prb k) (ms k)) (hscan : cx.st.Sequential)
     (hds : cx.ds = none) (hid : ∀ t, cx.st.idOf t = pure (cid t))
     (hdec : ∀ x y, ok x → ok y → (dec x).eqb (dec y) = (x == y)) (hsok : ∀ x, sok x → ok x)
     (hcid : ∀ c, CidOk dec ok c (cid c)) (hcidS : ∀ c, CidOk dec sok c (cid c))
@@ -1474,7 +1474,7 @@ theorem filterM_run (env : EvalEnv) (ds : Dataset)
     merged row `k`. -/
 theorem leftJoinCond_run (env : EvalEnv) (ds : Dataset)
     (henv : ExprLocalTheorems.EnvAgree cx.env env)
-    (hpm : ∀ k, k < 4 → PermMem cx.st k (prb k) (ms k)) (hscan : cx.st.scanTable = none)
+    (hpm : ∀ k, k < 4 → PermMem cx.st k (prb k) (ms k)) (hscan : cx.st.Sequential)
     (hds : cx.ds = none) (hid : ∀ t, cx.st.idOf t = pure (cid t))
     (hdec : ∀ x y, ok x → ok y → (dec x).eqb (dec y) = (x == y)) (hsok : ∀ x, sok x → ok x)
     (hcid : ∀ c, CidOk dec ok c (cid c)) (hcidS : ∀ c, CidOk dec sok c (cid c))

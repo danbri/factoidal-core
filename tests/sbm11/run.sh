@@ -247,6 +247,11 @@
 #   (w) permdisk tests/sbm11/perm_check_disk.sh: the temporary disk of the exact
 #                permutation check (part (j)) is at most half the generation (issue 810), also when
 #                it writes runs; more than a thousand runs are merged.
+#   (y) filter-keys  tests/sbm11/filter_keys.sh: the --explain line "FILTER conjuncts
+#                on ids" names how each conjunct runs; a STRSTARTS conjunct runs on key
+#                bytes, and the typed-date FILTER of the d14 shape is an expected failure
+#                (it goes to the reference evaluator) that names
+#                https://github.com/danbri/factoidal/issues/948. Its counts are added.
 #   (g) tamper   a copy of the generation with one byte changed in a block
 #                frame of spo.prb1 (manifest and sidecars kept): `scan` and
 #                `query` must be refused under merkle (and by default, the
@@ -1138,6 +1143,9 @@ add_script_counts graphs named_graphs.sh "named graphs"
 
 echo "=== (w) the temporary disk of the exact permutation check (issue 810)"
 add_script_counts permdisk perm_check_disk.sh "perm check disk"
+
+echo "=== (y) how each FILTER conjunct is evaluated on the id path (issue 948)"
+add_script_counts filter-keys filter_keys.sh "filter keys"
 
 echo "=== (x) the compiled scan differential and the counting reference (issue 799, KR 1.2)"
 # The scan decodes frames with FrameWords.decodeWordsF, which reaches the extern

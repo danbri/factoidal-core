@@ -53,7 +53,8 @@ regression tests.
 
 The string tests on dictionary keys (`FKind.str`, `FKind.strRange`:
 STRSTARTS, STRENDS and CONTAINS of a variable and a simple literal) are
-excluded (`StrForm`); they are tested by `IdQueryTests` and the W3C census.
+excluded (`StrForm`), and so are the comparisons with an `xsd:date`
+constant on key bytes (`FKind.dateCmp`, issue 948); they are tested by `IdQueryTests` and the W3C census.
 
 No `sorry`, no user `axiom`, no `native_decide`, no `partial`.
 -/
@@ -604,9 +605,16 @@ end ids
 /-- A conjunct `compileFilter` compiles to a string test on dictionary keys
     (`FKind.str`, `FKind.strRange`): STRSTARTS, STRENDS or CONTAINS of a
     variable and a simple literal. Not proved here. -/
-def StrForm : Expr → Prop
+def StrNeedleForm : Expr → Prop
   | .strStarts (.var _) c | .strEnds (.var _) c | .contains (.var _) c => simpleNeedle? c ≠ none
   | _ => False
+
+/-- A conjunct `compileFilter` compiles to a test on dictionary keys: a
+    string test (`StrNeedleForm`) or a comparison of a variable with an
+    `xsd:date` constant on key bytes (`FKind.dateCmp`, `dateCmpOf?`, issue
+    948; its order is `DateKeyTheorems.dateCmpKey_termCompare`). Excluded
+    here. -/
+def StrForm (e : Expr) : Prop := StrNeedleForm e ∨ dateCmpOf? e ≠ none
 
 /-- What `compileFilter` compiles a conjunct to. -/
 def KOk (cid : Term → Option UInt64) (cj : Expr) (k : FKind) : Prop :=
@@ -622,8 +630,13 @@ theorem compile_spec (st : Store Id) (cid : Term → Option UInt64) (hid : ∀ t
     (cj : Expr) (hns : ¬ StrForm cj) (vs : Array String) (hev : exprVars cj = some vs) :
     ∃ k, compileFilter st cj = pure k ∧ KOk cid cj k := by
   have hg : KOk cid cj (.general cj vs) := Or.inr (Or.inr (Or.inr ⟨vs, hev, rfl⟩))
+  have hns' : ¬ StrNeedleForm cj := fun h => hns (Or.inl h)
+  have hdc : dateCmpOf? cj = none := by
+    cases h : dateCmpOf? cj with
+    | none => rfl
+    | some _ => exact absurd (Or.inr (by simp [h])) hns
   unfold compileFilter
-  simp only [hev]
+  simp only [hdc, hev]
   split
   · next v c =>
     cases ht : eqByTermConst? c with
@@ -643,15 +656,15 @@ theorem compile_spec (st : Store Id) (cid : Term → Option UInt64) (hid : ∀ t
     | some t => exact ⟨_, by simp only [hid]; rfl, Or.inr (Or.inr (Or.inl ⟨v, c, t, Or.inr rfl, ht, rfl⟩))⟩
     | none => exact ⟨_, rfl, hg⟩
   · next v c =>
-    have : simpleNeedle? c = none := by simpa [StrForm] using hns
+    have : simpleNeedle? c = none := by simpa [StrNeedleForm] using hns'
     simp only [this]
     exact ⟨_, rfl, hg⟩
   · next v c =>
-    have : simpleNeedle? c = none := by simpa [StrForm] using hns
+    have : simpleNeedle? c = none := by simpa [StrNeedleForm] using hns'
     simp only [this]
     exact ⟨_, rfl, hg⟩
   · next v c =>
-    have : simpleNeedle? c = none := by simpa [StrForm] using hns
+    have : simpleNeedle? c = none := by simpa [StrNeedleForm] using hns'
     simp only [this]
     exact ⟨_, rfl, hg⟩
   · exact ⟨_, rfl, hg⟩
@@ -905,6 +918,7 @@ def keepOf (dec : UInt64 → Term) (t : Table) (i : Nat) : FKind → Bool
   | .residual env e vs => residualHolds env e (resMu dec vs (resKey t vs i))
   | .str _ _ _ _ => false
   | .strRange _ _ _ _ _ => false
+  | .dateCmp _ _ _ _ _ _ => false
 
 /-- The value a memo of `applyFilters` holds for a key. -/
 def memoVal (dec : UInt64 → Term) : FKind → List UInt64 → Bool
@@ -1341,7 +1355,7 @@ open L4Factoidal.Storage.Sbm11.BgpTableTheorems (forIn_exc)
 /-- The conjuncts `filterKeep_spec` covers: no string test on dictionary keys;
     the variables of a `general` conjunct have columns bound in every row. -/
 def KWf (t : Table) : FKind → Prop
-  | .str _ _ _ _ | .strRange _ _ _ _ _ => False
+  | .str _ _ _ _ | .strRange _ _ _ _ _ | .dateCmp _ _ _ _ _ _ => False
   | .general _ vs => ∀ w ∈ vs.toList, ∃ c, t.idx w = some c ∧ ∀ i, i < t.rows → t.at c i ≠ unbound
   | _ => True
 
@@ -1473,6 +1487,7 @@ theorem filterKeep_spec (st : Store Id) (dec : UInt64 → Term) (t : Table) (ht 
             simp [keepOf, hv, hw]
       | str _ _ _ _ => exact hkw.elim
       | strRange _ _ _ _ _ => exact hkw.elim
+      | dateCmp _ _ _ _ _ _ => exact hkw.elim
       | general e vs =>
         dsimp only
         have hkw' : ∀ w ∈ vs.toList, ∃ c, t.idx w = some c ∧ ∀ i, i < t.rows → t.at c i ≠ unbound := hkw

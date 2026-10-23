@@ -1927,6 +1927,48 @@ same with CR LF; and N-Quads with a graph name and a blank-node graph name.
   `tests/sbm11/threads.sh` (all answers identical) and `tests/delta-log/run.sh` (46 pass, 0 fail): exit 0.
   `tests/known-defects/run.sh`: 24 XFAIL, 0 XPASS, 0 ERROR (out of 24).
 
+### 3b.9 One long line: the partial line as text, read at a cursor (2026-10-22, https://github.com/danbri/factoidal/issues/874)
+
+Measured first: one `List Char` of the line costs 33.3 bytes per character in this runtime (a program with no
+parser: a `String` of 8,000,000 characters 35 MB, its `String.toList` 302 MB). A change that kept only the carry
+as a `String` and still read the completed line as a `List Char` made it worse (39.2 bytes per input byte, 314 MB
+at 8,000,000 bytes), so the representation of the line, not the carry, had to change.
+
+Change (`Syntax/StrictFeedText.lean`, `RDF/Source.lean`): the strict N-Triples and N-Quads reader keeps the partial
+line as a `String` (`TextFeed.carryText`, chunks appended in place) and reads a line that crosses a chunk boundary
+as a `String` at a `String.Pos` cursor.
+
+- Native readers at the cursor, RDF 1.1: `skipWsS`, `skipToEolS`, `skipCommentS`, `skipEolS`, `iriBodyS`,
+  `litBodyS` (the literal body is pushed onto a `String`, no character list), `bnodeS`, `langS`, `datatypeS`,
+  `literalS`, `subjectS`, `predicateS`, `objectS`, `optGraphLabelS`, `nquad11S`, `triple11S`. Each has a theorem
+  that the list reader of the same name applied to `rest p` gives the same value and `rest` of the new cursor
+  (`skipWsS_eq`, `iriBodyS_sound`, `litBodyS_sound`, `bnodeS_sound`, `literalS_sound`, `nquad11S_sound`,
+  `triple11S_sound`, `stmtS_sound`, ...).
+- A native reader declines (returns `none`) on an escape `\u` or `\U`, a blank node label that ends in a dot, and
+  any error. `foldLinesS` then runs `StrictFeed.foldLines` on `rest p` from the start of that round, so the answer is
+  the list reader's by definition and only the memory saving is lost, for the rest of that buffer.
+- `foldLinesS_eq`: the walk over a string is `foldLines` over its characters. `TextFeed.feed_eq`,
+  `TextFeed.finish_eq`: a chunk and the end of input equal `LineFeed.feed` and `LineFeed.finish` on the characters,
+  through `toLF` and `ofLF`. `LineFeed.feed_eq_feedSpec`, `LineFeed.run_quad11_eq_batch` and
+  `LenientStream.feed_eq_feedSpec` are unchanged; `SourceTheorems` (`feed_nquads`, `nquads_foldlM`,
+  `nquads_readAll_eq_run`) is re-proved through the bridge.
+- A chunk that follows no partial line is walked as the list walk walks it; a chunk that follows a partial line is
+  walked as text. RDF 1.2 and the lenient walk are unchanged (list).
+
+Measured on 2026-10-22 (peak resident set per input byte between 2 MB and 8 MB, `tests/stack/lean_scaling.py`):
+`ntriples-long-line-memory` 32.5 before, 3.7 after; `nquads-long-line-memory` 32.4 before, 3.8 after (bound 8; the
+rows left the XFAIL table). 8,000,000 bytes: 272 MB before, 58 MB after. User CPU at 2, 4, 8 MB for one line:
+N-Triples 0.135, 0.247, 0.519 s before and 0.052, 0.089, 0.181 s after; N-Quads 0.134, 0.256, 0.548 s before and
+0.049, 0.091, 0.180 s after. A 33 MB file of short lines (`parse --out nquads`): 1.62 s before, 1.15 s after; the
+count: 2.7 s before, 2.0 s after. `#guard`s in `StrictFeedText.lean` compare the text walk with the list walk on
+documents cut in pieces of 1 to 4096 characters, accepted and refused, in both modes.
+
+Open, tracked by https://github.com/danbri/factoidal/issues/949 with five expected-failure rows in
+`tests/stack/lean_scaling.py` (bound 8, peak resident set per input byte, 2026-10-22): literal ending in a `\u` escape
+37.9 (`ntriples-long-line-uescape-memory`); blank node label ending in a dot 46.3
+(`ntriples-long-line-bnode-dot-memory`); RDF 1.2 N-Triples 40.9 (`ntriples12-long-line-memory`); RDF 1.2 N-Quads 40.9
+(`nquads12-long-line-memory`); lenient walk 33.7 (`ntriples-lenient-long-line-memory`).
+
 ## 3c. RDF/XML: where the time and the memory went, and the repair (2026-10-13)
 
 Issues: https://github.com/danbri/factoidal/issues/814 (time: 13 to 15 times

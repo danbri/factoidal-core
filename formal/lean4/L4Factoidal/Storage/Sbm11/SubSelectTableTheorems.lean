@@ -1072,10 +1072,10 @@ section decode
 
 open L4Factoidal.Qlvr (Table)
 open L4Factoidal.Storage.Sbm11.OptJoin (IdRow idLookup decRow RowIds unbound)
-open L4Factoidal.Storage.Sbm11.IdAgg (Cache)
+open L4Factoidal.Storage.Sbm11.IdAgg (Cache Id64)
 
-theorem getM_pure (c : Cache UInt64 Term) (f : UInt64 → ExceptT String _root_.Id Term) (D : UInt64 → Term)
-    (k : UInt64) (hf : f k = pure (D k)) : c.getM f k = pure (c.getPure D k) := by
+theorem getM_pure {α : Type} [BEq α] [Hashable α] (c : Cache α Term) (f : α → ExceptT String _root_.Id Term)
+    (D : α → Term) (k : α) (hf : f k = pure (D k)) : c.getM f k = pure (c.getPure D k) := by
   unfold Cache.getM Cache.getPure
   cases c.map.get? k with
   | some v => rfl
@@ -1106,18 +1106,18 @@ theorem decodeRowsM_run (st : IdQuery.Store _root_.Id) (t : Table) (D : UInt64 �
   let rowUpTo : Nat → Nat → IdRow := fun i n => (List.range' 0 n).filterMap fun c =>
     if t.at c i == unbound then none else some (t.vars[c]!, t.at c i)
   refine forIn_bind_yields _ _
-    (fun n (s : Cache UInt64 Term × Array Binding) =>
-      Cache.Valid D s.1 ∧ s.2.toList = (List.range' 0 n).map fun i => decRow D (t.idRow i))
+    (fun n (s : Cache Id64 Term × Array Binding) =>
+      Cache.Valid (fun k : Id64 => D k.val) s.1 ∧ s.2.toList = (List.range' 0 n).map fun i => decRow D (t.idRow i))
     _ ?_ ?_ _ (fun z => z = pure (t.idRows.map (decRow D))) ?_
-  · exact ⟨Cache.valid_empty D, by simp⟩
+  · exact ⟨Cache.valid_empty _, by simp⟩
   · intro i hi s ⟨hv, hout⟩
     rw [List.length_range'] at hi
     rw [List.getElem_range', Nat.zero_add, Nat.one_mul]
     refine forIn_bind_yields _ _
-      (fun n (r : Cache UInt64 Term × Array (String × Term)) =>
-        Cache.Valid D r.1 ∧ r.2.toList = decRow D (rowUpTo i n))
-      _ ?_ ?_ _ (fun z => ∃ b' : Cache UInt64 Term × Array Binding, z = pure (ForInStep.yield b') ∧
-        Cache.Valid D b'.1 ∧ b'.2.toList = (List.range' 0 (i + 1)).map fun i => decRow D (t.idRow i)) ?_
+      (fun n (r : Cache Id64 Term × Array (String × Term)) =>
+        Cache.Valid (fun k : Id64 => D k.val) r.1 ∧ r.2.toList = decRow D (rowUpTo i n))
+      _ ?_ ?_ _ (fun z => ∃ b' : Cache Id64 Term × Array Binding, z = pure (ForInStep.yield b') ∧
+        Cache.Valid (fun k : Id64 => D k.val) b'.1 ∧ b'.2.toList = (List.range' 0 (i + 1)).map fun i => decRow D (t.idRow i)) ?_
     · exact ⟨hv, by simp [rowUpTo, decRow]⟩
     · intro c hc r ⟨hr1, hr2⟩
       rw [List.length_range'] at hc
@@ -1134,11 +1134,12 @@ theorem decodeRowsM_run (st : IdQuery.Store _root_.Id) (t : Table) (D : UInt64 �
         · rw [hstep, hr2]; simp [hx]
       · have hne : (t.at c i != unbound) = true := by simpa using hx
         simp only [hne, if_true]
-        rw [getM_pure r.1 st.termOf D _ (hD i hi c hc hx)]
-        refine ⟨((r.1.getPure D (t.at c i)).2, r.2.push (t.vars[c]!, (r.1.getPure D (t.at c i)).1)), rfl,
-          Cache.getPure_valid D r.1 hr1 _, ?_⟩
-        rw [Array.toList_push, hr2, hstep, Cache.getPure_fst D r.1 hr1]
-        simp [hx, decRow]
+        rw [getM_pure r.1 (fun k => st.termOf k.val) (fun k : Id64 => D k.val) (Id64.ofU (t.at c i)) (hD i hi c hc hx)]
+        refine ⟨((r.1.getPure (fun k : Id64 => D k.val) (Id64.ofU (t.at c i))).2,
+          r.2.push (t.vars[c]!, (r.1.getPure (fun k : Id64 => D k.val) (Id64.ofU (t.at c i))).1)), rfl,
+          Cache.getPure_valid _ r.1 hr1 _, ?_⟩
+        rw [Array.toList_push, hr2, hstep, Cache.getPure_fst _ r.1 hr1]
+        simp [hx, decRow, Id64.val, Id64.ofU]
     · intro r ⟨hr1, hr2⟩
       refine ⟨(r.1, s.2.push r.2.toList), rfl, hr1, ?_⟩
       rw [Array.toList_push, hout, hr2, List.range'_concat]

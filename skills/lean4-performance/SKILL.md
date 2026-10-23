@@ -750,9 +750,17 @@ section "Stage 1b", subsection "What failed on the way"):
 - **The compiler removes a copy that rebuilds a structure from its own
   fields.** `⟨x.a, x.b⟩` compiles to `x` (check with
   `set_option trace.compiler.ir.result true`). Arrays copied with `map` and a
-  non-identity function, words through `toNat` and back, and strings through
-  `++ ""` are new objects; a pair rebuilt from a shared pair is a new object
-  (the reset/reuse path allocates when the pair is shared).
+  non-identity function and words through `toNat` and back are new objects;
+  a pair rebuilt from a shared pair is a new object (the reset/reuse path
+  allocates when the pair is shared). **`s ++ ""` and `"" ++ s` are NOT new
+  strings**: the compiler emits `s` itself for both (`lean -c`, Lean 4.33.1).
+  Use `IdQuery.freshStr` (`String.ofList s.toList`, `@[noinline]`). Cost,
+  found 2026-10-23 (KR 1.2 of batch 3): this skill said the opposite from
+  2026-10-13, so `ScanSpec.fresh`, `FKind.fresh` and `countPartM` kept the
+  shared variable-name strings for ten days; on DBpedia d10 at 4 threads the
+  reference counts of the group variable names were 5 percent of the profile
+  (0.5 percent at 1 thread). Check a copy in the generated C
+  (`.lake/build/ir/...c`) before you write that it is one.
 - **Memory a task allocates and the parent frees is not reused at once.**
   mimalloc gives each thread its own heap; a block freed by another thread
   returns to its heap later, and fresh memory in this machine's heaps comes
@@ -760,6 +768,123 @@ section "Stage 1b", subsection "What failed on the way"):
   a third of q19's profile at 4 threads with whole-block render buffers).
   Rule: what a task hands to the parent is small pieces (512 rows, about 64
   KB), not one buffer per block.
+  The huge pages come from mimalloc (v2.2.3 in Lean 4.33.1, the only
+  allocator of the runtime: `LEAN_MIMALLOC` in `include/lean/config.h`), which
+  calls `madvise(MADV_HUGEPAGE)` on its memory (`allow_large_os_pages`). With
+  `MIMALLOC_ALLOW_LARGE_OS_PAGES=0` (or `prctl(PR_SET_THP_DISABLE)`) peak RSS
+  at 4 threads fell by 17 to 31 MB and no 4-thread time changed beyond the
+  variation (2026-10-23, stage 1i of the parallel-scans record). The
+  `MIMALLOC_*` variables are read at process start (`MIMALLOC_VERBOSE=1`
+  prints them). A change of a default allocator setting goes to the owner
+  with its measurements first (CLAUDE.md, KR 1.2 decisions of 2026-10-23).
+
+- **A task per small range starts every per-task cache empty.** The divided
+  streamed path ran one task per block, each with a new page cache filled
+  from the shared level under a lock; olympics q19 at 4 threads used 1.5
+  times the CPU time of 1 thread, most of it `copyPage` and lock waits.
+  Repair (2026-10-23, `Harness/Sbm11Query.parFold`): at most N worker tasks
+  per fold that take ranges from a shared counter and keep their caches; a
+  ready page of the shared tree map is read without the lock; a page is
+  copied into a worker's cache on its second use only. A worker cache that
+  lives longer than one fold must be reachable from two threads, so it is MT:
+  tried with a `Std.TreeMap` per worker slot, q19 at 4 threads went from 18
+  to 22 ms (tree look-ups on every id). Find what threads wait for with
+  `perf sched record` and `perf record -e sched:sched_switch --call-graph
+  dwarf`, not only with CPU samples.
+
+- **Comparisons over values that tasks share.** An ORDER BY sort cut into
+  blocks, one task per block (`Task.spawn`), each comparing `EvalResult`s of
+  one shared array: the closure makes the array and every value in it MT, so
+  every `getD` in every comparison took and dropped a reference atomically,
+  in the tasks and in the parent's final merge passes. 137,026 labels: 930
+  ms at 4 threads against 648 ms single-threaded (2026-10-23, KR 1.2 of
+  https://github.com/danbri/factoidal/issues/875; not kept). Rule: a task
+  compares values it made itself, or scalar keys.
+- **A column passed to a specialised loop as a closure costs an allocation
+  per row.** `rangePairs (l.at c) ...` gave `mergeGo` a closure; the loop was
+  specialised for the closure *parameter*, so every row read was
+  `lean_apply_1` and its `UInt64` result was boxed: a merge join of 6,248 and
+  13,369 rows took 2.5 ms in 4 tasks against 0.45 ms on one thread. Repair:
+  bind the byte arrays to local names and pass `fun i => word64 ca (8 * i)`
+  at the call site, with the helper `@[inline]`, so that `mergeGo` is
+  specialised for the lambda (`ParallelJoin.rangePairsOf`). Check the
+  generated C for `lean_apply_1` in the loop.
+- **A task waits for a worker that sleeps.** The Lean pool's workers block on
+  a condition variable when idle; on the 4-vCPU test VM a woken thread runs
+  50 to 120 microseconds later (median 79, p90 126, a C condition-variable
+  test). The pool also starts workers lazily (a new one only when a task is
+  queued and none counts as idle), and `perf sched record` showed 2 worker
+  threads in a whole 4-thread q07 process. So a phase of less than about 0.5
+  ms single-threaded does not gain from tasks: olympics q07's merge join (0.45
+  ms) in 4 ranges took 0.47 to 0.52 ms, its ORDER BY with values read by
+  range workers 0.5 ms more. What helped: the calling thread runs the first
+  range itself after it has started the tasks of the others (q07 at 4
+  threads, 4.25 to 3.68 ms). Starting all N pool workers at open (N tasks
+  that wait until all N run) did not: no time gained and peak RSS above 2
+  times the 1-thread RSS (each worker's heap). Stage 1f of
+  [`docs/designissues/2026-10-12-parallel-block-scans.md`](../../docs/designissues/2026-10-12-parallel-block-scans.md).
+- **Workers that stay awake: a per-session pool, and its three traps**
+  (2026-10-23, https://github.com/danbri/factoidal/issues/961, stage 1g of the
+  same record). `Harness/WorkerPool.lean`: N - 1 threads
+  (`Task.Priority.dedicated`) that poll a mailbox `IO.Ref` with `swap` for
+  up to 1 ms, then block on a promise; results come back the same way.
+  `l4pool-bench`, 3 jobs after 200 microseconds of caller work: start p50 5,
+  p90 9 microseconds, against 59 and 87 with `IO.asTask`. Paid for on the
+  way: (1) a mailbox and results passed as `IO.Promise` values: start p50
+  24 microseconds, because `resolve` and `wait` take the task manager's lock,
+  which every thread shares; resolve a promise only for a reader that
+  blocked. (2) A mailbox written with `IO.Ref.modify` while the worker
+  polled it with `swap`: p90 1,020 microseconds, the whole poll time; write
+  with `swap` then `set`. (3) A shutdown that only resolved the published
+  promise of a blocked worker: a worker between its last poll and its wait
+  had not published one yet, and the process hung; write a value. Polling
+  workers beyond the hardware threads (8 on 4 vCPUs) made q07's scans 3 to
+  5 times slower, so the pool starts only when N is at most the hardware
+  threads (`System.Platform.Internal.getHardwareConcurrency`).
+- **Awake workers do not make a small step that reads shared structures
+  pay.** Olympics q07's ORDER BY readings (291 values) and rendering (313
+  rows), cut into 4 parts on the pool with a view of the session per part:
+  each part took 2 to 4 times as long per item as the same part on the
+  calling thread with its own page cache (page copies on second use,
+  references to shared pages), and the parent's sort of the values that
+  workers returned (MT) took 0.48 ms against 0.14 ms. Over 6 processes the
+  query was not faster (median 3.29 ms against 2.99 ms). What did pay on
+  the pool: the merge join of 6,248 by 13,369 rows in 4 ranges (pure, over
+  two byte arrays), 0.42 to 0.19 ms.
+- **Make a comparison's per-value work once per value.** `sparqlOrder`
+  reads `isNumericOperand`, `numericValue?`, `integerDerivedValue?` and
+  `promoteLiteral` of both operands on every comparison; an ORDER BY of `n`
+  values does that about `n log n` times. `IdQuery.OrderRead` makes them
+  once per value and `SPARQL.sparqlOrderViewed` compares two readings
+  (`sparqlOrder_eq_viewed`, `WorkerPoolTheorems.orderRanks_map`): q07's sort
+  and ranks 0.33 to 0.14 ms at every thread count.
+
+- **Split the extra CPU of N threads by class before you write a fix**
+  (2026-10-23, stage 1h of the same record,
+  https://github.com/danbri/factoidal/issues/961). Stage 1g named "shared
+  reference counts on PRM1 entries" as the likely cause of slow worker
+  ranges; three copies made by the worker (counters, permutation handles,
+  PRM1 entries) were then measured and gave nothing: on olympics q07 the
+  atomic reference counts are 0.19 ms of 13.2 ms CPU per run at 4 threads.
+  Method: `perf record -e cpu-clock --call-graph dwarf` of `--repeat N` and
+  of `--repeat 1`, then `tools/perf-cost-split.py`, which subtracts the
+  second and puts each sample in a class (pool polling, page faults,
+  atomic RC, allocator, kernel, compute). Use
+  `/usr/lib/linux-tools/6.8.0-146-generic/perf` (`/usr/bin/perf` refuses the
+  container kernel). This VM has no hardware counters: cache misses show
+  only as more samples in the same compute symbol. `lean_dec_ref_cold` also
+  frees single-threaded objects (a count of 1 reaching 0), so its samples
+  are an upper bound for atomic decrements. For wall time per range, mark
+  start, end and `IO.getTID` per range and record
+  `perf record -k CLOCK_MONOTONIC -e sched:sched_switch`: none of 800 q07
+  ranges was switched out, so their extra time is on the CPU.
+- **A value per pool thread stays single-threaded.** A value that a worker
+  thread makes itself and passes to its jobs as an argument is never marked
+  MT (an `IO.Ref` the parent made, or anything a job closure captures, is).
+  Tried for a dictionary page cache that lives as long as the pool (stage
+  1h): olympics q19 at 4 threads 21.1 to 16.8 ms and 40 percent less CPU,
+  but peak RSS 2.03 times the 1-thread RSS against a limit of 2, so not
+  kept until the allocator work.
 
 Measure every one of these with `perf record` at 1 and N threads and the
 CPU time (`perf stat -e task-clock`): CPU time that grows with the thread

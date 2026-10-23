@@ -487,7 +487,7 @@ theorem flatMap_fa2 {α β γ : Type} {R : α → β → Prop} (f : α → List 
     graph, over the listings of the id of its name (`ExecLeaf` of
     `listingsAt (.named x)`: the store invariant of the graph). -/
 theorem graphBgp_ends (env : EvalEnv) (ds : Dataset)
-    (hpm : ∀ k, k < 4 → PermMem cx.st k (prb k) (ms k)) (hscan : cx.st.scanTable = none)
+    (hpm : ∀ k, k < 4 → PermMem cx.st k (prb k) (ms k)) (hscan : cx.st.Sequential)
     (hds : cx.ds = none) (hid : ∀ t, cx.st.idOf t = pure (cid t))
     (hdec : ∀ x y, ok x → ok y → (dec x).eqb (dec y) = (x == y)) (hsok : ∀ x, sok x → ok x)
     (hcid : ∀ c, CidOk dec ok c (cid c)) (hcidN : ∀ t x, cid t = some x → dec x = normalizeTerm t)
@@ -651,7 +651,7 @@ theorem graphBgp_ends (env : EvalEnv) (ds : Dataset)
     NamedRows` of the pattern. No hypothesis states the table of a pattern or of a subpattern,
     or the vocabulary of a state other than the first. -/
 theorem query_where_allowed_exec (env : EvalEnv) (ds : Dataset)
-    (hpm : ∀ k, k < 4 → PermMem cx.st k (prb k) (ms k)) (hscan : cx.st.scanTable = none)
+    (hpm : ∀ k, k < 4 → PermMem cx.st k (prb k) (ms k)) (hscan : cx.st.Sequential)
     (hds : cx.ds = none) (hid : ∀ t, cx.st.idOf t = pure (cid t))
     (hdec : ∀ x y, ok x → ok y → (dec x).eqb (dec y) = (x == y)) (hsok : ∀ x, sok x → ok x)
     (hcid : ∀ c, CidOk dec ok c (cid c))
@@ -988,7 +988,7 @@ theorem query_where_allowed_exec (env : EvalEnv) (ds : Dataset)
 /-- `query_where_allowed_exec` from the state a query starts in (`{}`, the
     state `IdGroup.nestedTableM` runs from): no local id yet. -/
 theorem query_where_allowed_exec_init (env : EvalEnv) (ds : Dataset)
-    (hpm : ∀ k, k < 4 → PermMem cx.st k (prb k) (ms k)) (hscan : cx.st.scanTable = none)
+    (hpm : ∀ k, k < 4 → PermMem cx.st k (prb k) (ms k)) (hscan : cx.st.Sequential)
     (hds : cx.ds = none) (hid : ∀ t, cx.st.idOf t = pure (cid t))
     (hdec : ∀ x y, ok x → ok y → (dec x).eqb (dec y) = (x == y)) (hsok : ∀ x, sok x → ok x)
     (hcid : ∀ c, CidOk dec ok c (cid c))

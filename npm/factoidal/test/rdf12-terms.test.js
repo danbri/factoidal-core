@@ -19,7 +19,8 @@ const test = require('node:test');
 const assert = require('node:assert/strict');
 const { xfail } = require('./helpers.js');
 
-const ISSUE = 'https://github.com/danbri/factoidal/issues/873';
+const ISSUE_CANON = 'https://github.com/danbri/factoidal/issues/957';
+const ISSUE_OWL_DL = 'https://github.com/danbri/factoidal/issues/958';
 const RDF_TYPE = 'http://www.w3.org/1999/02/22-rdf-syntax-ns#type';
 const SUBCLASS = 'http://www.w3.org/2000/01/rdf-schema#subClassOf';
 const X = 'http://example.com/';
@@ -61,7 +62,7 @@ for (const [name, run, key] of CLOSURES) {
 // `eng.call` throws the error text of an {ok:false} envelope.
 test('canonicalizeToNQuads refuses a triple term with the RDFC-1.0 rule named', async () => {
   const eng = await engine();
-  assert.throws(() => eng.call('canonicalizeToNQuads', [TT_BNODE]), /RDFC-1\.0.*issues\/873/);
+  assert.throws(() => eng.call('canonicalizeToNQuads', [TT_BNODE]), /RDFC-1\.0.*issues\/957/);
   // An RDF 1.1 dataset is canonicalised as before.
   const r = eng.call('canonicalizeToNQuads', [`_:x <${X}p> <${X}o> .\n`]);
   assert.equal(r.ok, true);
@@ -70,24 +71,24 @@ test('canonicalizeToNQuads refuses a triple term with the RDFC-1.0 rule named', 
 
 test('owlIsConsistent and owlEntails refuse a triple term with the rule named', async () => {
   const eng = await engine();
-  assert.throws(() => eng.call('owlIsConsistent', [DATA, '']), /OWL 2 Mapping to RDF Graphs.*issues\/873/);
+  assert.throws(() => eng.call('owlIsConsistent', [DATA, '']), /OWL 2 Mapping to RDF Graphs.*issues\/958/);
   assert.throws(() => eng.call('owlEntails', [DATA, `<${X}x> <${RDF_TYPE}> <${X}D> .\n`, '']),
-    /OWL 2 Mapping to RDF Graphs.*issues\/873/);
+    /OWL 2 Mapping to RDF Graphs.*issues\/958/);
 });
 
-xfail('canonicalizeToNQuads gives canonical labels to blank nodes inside a triple term', ISSUE, async () => {
+xfail('canonicalizeToNQuads gives canonical labels to blank nodes inside a triple term', ISSUE_CANON, async () => {
   const r = (await engine()).call('canonicalizeToNQuads', [TT_BNODE]);
   assert.equal(r.ok, true, JSON.stringify(r));
   assert.ok(r.nquads.includes('<<( _:c14n0 '));
 });
 
-xfail('owlIsConsistent decides a graph with a triple term', ISSUE, async () => {
+xfail('owlIsConsistent decides a graph with a triple term', ISSUE_OWL_DL, async () => {
   const r = (await engine()).call('owlIsConsistent', [DATA, '']);
   assert.equal(r.ok, true, JSON.stringify(r));
   assert.equal(r.consistent, true);
 });
 
-xfail('owlEntails decides a premise with a triple term', ISSUE, async () => {
+xfail('owlEntails decides a premise with a triple term', ISSUE_OWL_DL, async () => {
   const r = (await engine()).call('owlEntails', [DATA, `<${X}x> <${RDF_TYPE}> <${X}D> .\n`, '']);
   assert.equal(r.ok, true, JSON.stringify(r));
   assert.equal(r.entailed, true);
@@ -109,6 +110,19 @@ test('owlClosure OWL-RL substitutes owl:sameAs inside a triple term (opaque-iri)
     'the triple inside a triple term is not asserted');
   assert.ok(!r.nquads.includes(`<${X}clark> <${X}can> <${X}fly> .`),
     'the substituted triple inside a triple term is not asserted');
+});
+
+// The W3C test's regime is "RDFS-Plus": rdfsPlusClosure runs the same row.
+test('rdfsPlusClosure substitutes owl:sameAs inside a triple term (opaque-iri)', async () => {
+  const data =
+    `<${X}clark> <${X}reports> <<( <${X}superman> <${X}can> <${X}fly> )>> .\n` +
+    `<${X}clark> <http://www.w3.org/2002/07/owl#sameAs> <${X}superman> .\n`;
+  const r = (await engine()).call('rdfsPlusClosure', [data]);
+  assert.equal(r.ok, true, JSON.stringify(r));
+  assert.ok(r.ntriples.includes(`<${X}clark> <${X}reports> <<( <${X}clark> <${X}can> <${X}fly> )>> .`),
+    'owl:sameAs substitutes inside the triple term');
+  assert.ok(!r.ntriples.includes(`<${X}superman> <${X}can> <${X}fly> .`),
+    'the triple inside a triple term is not asserted');
 });
 
 // The RDFS closures have no owl:sameAs semantics and do not substitute.

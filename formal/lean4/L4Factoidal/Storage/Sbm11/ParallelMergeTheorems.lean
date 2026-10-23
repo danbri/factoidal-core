@@ -205,6 +205,23 @@ theorem stream_divided_eq_single {α β : Type} (R : β → List α) (L : List �
   rw [hmap, window_cap cap _ off lim hcap, flatMap_chunks, chunksOf_flatten]
   congr 2
 
+/-- Stage 1d (`IdQuery.streamRangeBlocks` = 1): ranges of one block each. -/
+theorem stream_one_block_ranges_eq_single {α β : Type} (R : β → List α) (L : List β)
+    (off lim cap : Nat) (hcap : off + lim ≤ cap) :
+    (((chunksOf 1 L).map fun X => (X.flatMap R).take cap).foldl (winStep off lim) (0, 0, [])).2.2
+      = ((L.map R).foldl (winStep off lim) (0, 0, [])).2.2 :=
+  stream_divided_eq_single R L 1 off lim cap hcap
+
+/-- Stage 1d: the parent writes range `k` as soon as ranges `0..k` are done and
+    frees it (`Harness/Sbm11Query.parFold`). Stepping over the ranges one
+    prefix at a time, in range order, is the same fold as stepping over all of
+    them: for any split of the ranges into the written ones `A` and the later
+    ones `B`, folding `B` from the state after `A` is folding `A ++ B`. -/
+theorem stream_incremental_eq {α : Type} (off lim : Nat) (A B : List (List α)) :
+    B.foldl (winStep off lim) (A.foldl (winStep off lim) (0, 0, []))
+      = (A ++ B).foldl (winStep off lim) (0, 0, []) := by
+  rw [List.foldl_append]
+
 /-! ## Counted path: counts and group maps -/
 
 /-- **Counts.** The rows of the ranges add up to the rows of all blocks. -/
@@ -624,6 +641,8 @@ theorem topK_divided_eq_single {β : Type} (trans : ∀ a b c, le a b → le b c
 end TopK
 
 #print axioms stream_divided_eq_single
+#print axioms stream_one_block_ranges_eq_single
+#print axioms stream_incremental_eq
 #print axioms count_divided_eq_single
 #print axioms groups_divided_eq_single
 #print axioms topK_divided_eq_single
