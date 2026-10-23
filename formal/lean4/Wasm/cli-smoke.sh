@@ -625,8 +625,16 @@ assert_text "closure unknown --regime -> usage error" 2 err "unknown --regime" \
   "$CLI" closure "$TMP/subclass.nq" --format nquads --regime bogus
 
 # --- owl-consistent / owl-entails --------------------------------------
-assert_text "owl-consistent true -> exit 0" 0 out "true" \
+# Since commit 87fd052e (docs/20261022-owl-pr-reconciliation.md) a definite
+# verdict needs a checked certificate: owl-consistent prints false or
+# unknown, never true, and owl-entails prints unknown where no countermodel
+# is certified. The old verdicts are expected failures of
+# https://github.com/danbri/factoidal/issues/960; an XPASS fails the run.
+assert_text "owl-consistent consistent input -> unknown, exit 1" 1 out "unknown" \
   "$CLI" owl-consistent "$TMP/subclass.nq" --format nquads
+run_cmd "$CLI" owl-consistent "$TMP/subclass.nq" --format nquads
+OK=0; [ "$RC" -eq 0 ] && [ "$OUT" = "true" ] && OK=1
+verdict "owl-consistent true -> exit 0" 960 "$OK" "exit=$RC" "stdout=$OUT" "stderr=$ERR"
 
 NOTHING='<http://e/i> <http://www.w3.org/1999/02/22-rdf-syntax-ns#type> <http://www.w3.org/2002/07/owl#Nothing> .
 '
@@ -642,7 +650,7 @@ _:r <http://www.w3.org/2002/07/owl#onProperty> <http://e/p> .
 _:r <http://www.w3.org/2002/07/owl#someValuesFrom> <http://e/A> .
 '
 printf '%s' "$CYCLIC" > "$TMP/cyclic.nq"
-assert_text "owl-consistent budget-out -> unknown, exit 1" 1 out "unknown" \
+assert_text "owl-consistent someValuesFrom input, fuel 1 -> unknown, exit 1" 1 out "unknown" \
   "$CLI" owl-consistent "$TMP/cyclic.nq" --format nquads --fuel 1
 
 CONCL='<http://e/a> <http://www.w3.org/1999/02/22-rdf-syntax-ns#type> <http://e/D> .
@@ -653,8 +661,11 @@ printf '%s' "$CONCL" > "$TMP/concl.nq"
 printf '%s' "$UNRELATED" > "$TMP/unrelated.nq"
 assert_text "owl-entails true (closure) -> exit 0" 0 out "true" \
   "$CLI" owl-entails "$TMP/subclass.nq" "$TMP/concl.nq" --format nquads
-assert_text "owl-entails false (refutation) -> exit 1" 1 out "false" \
+assert_text "owl-entails not entailed, no countermodel certified -> unknown, exit 1" 1 out "unknown" \
   "$CLI" owl-entails "$TMP/subclass.nq" "$TMP/unrelated.nq" --format nquads
+run_cmd "$CLI" owl-entails "$TMP/subclass.nq" "$TMP/unrelated.nq" --format nquads
+OK=0; [ "$RC" -eq 1 ] && [ "$OUT" = "false" ] && OK=1
+verdict "owl-entails false (refutation) -> exit 1" 960 "$OK" "exit=$RC" "stdout=$OUT" "stderr=$ERR"
 assert_text "owl-entails missing conclusion file -> usage error" 2 err "need PREMISE_FILE" \
   "$CLI" owl-entails "$TMP/subclass.nq"
 
