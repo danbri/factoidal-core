@@ -412,6 +412,7 @@ import L4Factoidal.Storage.Sbm11.IdAllowedTheorems
 import L4Factoidal.Storage.Sbm11.IdLeafTheorems
 import L4Factoidal.Storage.Sbm11.TableTheorems
 import L4Factoidal.Storage.Sbm11.TableOuterTheorems
+import L4Factoidal.Storage.Sbm11.ScanTableTheorems
 import L4Factoidal.Storage.Sbm11.IdAgg
 import L4Factoidal.Storage.Sbm11.IdAggTests
 import L4Factoidal.Storage.Sbm11.IdPostTheorems
