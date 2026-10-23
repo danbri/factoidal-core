@@ -443,6 +443,10 @@ import L4Factoidal.Storage.Sbm11.MemGenWhereTheorems
 import L4Factoidal.Storage.Sbm11.FileGenTheorems
 import L4Factoidal.Storage.Sbm11.PackSpec
 import L4Factoidal.Storage.Sbm11.PackSpecTheorems
+import L4Factoidal.RDF.DictInjective
+import L4Factoidal.Storage.Sbm11.OverlayDict
+import L4Factoidal.Storage.Sbm11.DictInjectiveTheorems
+import L4Factoidal.Storage.Sbm11.DictInjectiveTests
 import L4Factoidal.Storage.Sbm11.PackSpecSomeTheorems
 import L4Factoidal.Storage.Sbm11.ColumnFastTheorems
 import L4Factoidal.Storage.Sbm11.PackStream
