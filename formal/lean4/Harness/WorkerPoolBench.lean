@@ -13,6 +13,7 @@
   microseconds.
 -/
 import Harness.WorkerPool
+import L4Factoidal.Qlvr.Sort
 
 open Harness.WorkerPool
 
@@ -21,7 +22,7 @@ def busyUntil (t : Nat) : IO Unit := do
     if (← IO.monoNanosNow) ≥ t then return
 
 def pct (xs : Array Nat) (q : Nat) : Nat :=
-  let s := xs.qsort (· < ·)
+  let s := L4Factoidal.Qlvr.mergeSortBy xs (· ≤ ·)
   if s.size == 0 then 0 else s[min (s.size - 1) (s.size * q / 100)]!
 
 def report (name : String) (starts dones : Array Nat) : IO Unit :=
