@@ -40,6 +40,7 @@ Read first:
 | path | what it is |
 | --- | --- |
 | `formal/lean4/L4Factoidal/LWS/` | the LWS resource model, store, operations, patch, discovery, conformance registry |
+| `formal/lean4/L4Factoidal/HTTP/Cors.lean` | the CORS protocol (Fetch Standard) as a policy and `preflight?`/`decorate`, shared by LWS and `authz-serve` |
 | `formal/lean4/L4Factoidal/Solid/Server/` | storage, containment, auxiliaries, methods, N3 Patch, WAC, CORS, LDN |
 | `formal/lean4/L4Factoidal/Solid/Client/` | discovery, request building, response interpretation, WebID profile |
 | `formal/lean4/Wasm/Ops/Lws.lean`, `Solid.lean` | the handle ops |
@@ -68,6 +69,7 @@ factoidal lws-serve   DIR (--issuer IRI[,IRI…] | --auth-config FILE | --insecu
                           [--controller-inbox URL] [--delivery-limit N]
                           [--delivery-window SECONDS] [--redirects-max N]
                           [--storage snapshot|files]
+                          [--cors-origin ORIGIN]... [--no-cors]
 factoidal solid-serve DIR (--issuer IRI[,IRI…] | --auth-config FILE | --insecure-no-auth)
                           [--port N] [--host ADDRESS] [--base IRI] [--owner WEBID]
 ```
@@ -711,6 +713,39 @@ Tests: `L4Factoidal/LWS/MerkleTests.lean`, the checks in `MerkleHttp.lean`;
 2026-10-21: one write into a container of 2,000 members takes about 6.3 ms on
 against 0.9 ms off (linear in the members of each container above the
 write); a reopen of 2,000 resources with the hashes rebuilt, 246 ms.
+
+### CORS (https://github.com/danbri/factoidal/issues/923)
+
+A page on another origin (for example GitHub Pages) calls `lws-serve`
+directly. Ledger section "CORS" in `docs/lws-solid-conformance.md` has every
+field value.
+
+* Lean: `L4Factoidal/HTTP/Cors.lean` (the policy `off | echo | allow`, the
+  origin syntax of RFC 6454 §6.2, `preflight?`, `decorate`, `around`) and
+  `L4Factoidal/LWS/Cors.lean` (the LWS profile). `Wasm/Ops/Lws.lean`
+  `lwsStepWith` calls `Cors.preflight?` FIRST: a preflight (`OPTIONS` with
+  `Access-Control-Request-Method` and `Origin`) is answered 204 before body
+  files, redirects, inbox resolution, authentication and Web Access Control
+  (theorem `around_preflight`). Every other answer goes through
+  `Cors.decorate` (status and content unchanged, `decorate_status`). A new
+  answer path in `lwsStepWith` must call `Cors.decorate` too.
+* Default: echo a valid request `Origin` (Solid §8.1), never `null`, no
+  `Access-Control-Allow-Credentials` (the token is in `Authorization`), and
+  `Vary: Origin` on every answer, merged into the answer's own `Vary`.
+  Config `cors`: `false` (`--no-cors`) or a list (`--cors-origin ORIGIN`,
+  repeatable); a malformed origin stops the start.
+* `authz-serve` has the same config and flags (`Authz.stepCors`, its own
+  profile). `solid-serve` keeps its Solid §8.1 module
+  (`Solid/Server/Cors.lean`, with credentials, no flags: §8.1 requires the
+  echo); its preflight is now answered before Web Access Control.
+* A new response field that a page must read goes in `exposedHeaders` of
+  `LWS/Cors.lean`, and a new request field in `requestHeaders`; the `#guard`s
+  compare the lists with `tests/lws/cors.mjs`.
+
+Tests: `#guard`s in `HTTP/Cors.lean`, `LWS/Cors.lean`, `Authz/Tests.lean`,
+`Solid/Tests.lean`; `node tests/lws/cors.mjs`; `node tests/lws/cors-browser.mjs`
+(Chromium through Playwright, `PLAYWRIGHT_BROWSERS_PATH=/opt/pw-browsers`,
+never `playwright install`; exit 2 when it cannot run).
 
 ### LWS authorization (https://github.com/danbri/factoidal/issues/886)
 

@@ -166,6 +166,8 @@ async function fetchFrom (url, accept, address) {
  * @param {boolean} [options.allowHttp] accept http subjects (default false)
  * @param {boolean} [options.allowPrivateFetch] fetch from loopback, link-local and private addresses (default false)
  * @param {string|null} [options.storageKey] the key text; default FACTOIDAL_LWS_KEY; null reads none
+ * @param {boolean|string[]} [options.cors] false for no CORS fields, or the origins to answer;
+ *   default: echo any valid request Origin (issue 923)
  * @param {object} [options.engine] an engine to reuse
  */
 export async function openAuthorizationServer (options = {}) {
@@ -182,6 +184,9 @@ export async function openAuthorizationServer (options = {}) {
   }
   if (options.allowHttp === true) config.allowHttp = true
   if (options.allowPrivateFetch === true) config.allowPrivateFetch = true
+  // CORS (issue 923): false or a list of origins, passed unread; absent, the
+  // engine echoes the request Origin (L4Factoidal/Authz/Server.lean stepCors).
+  if (options.cors !== undefined) config.cors = options.cors
   const key = storageKeyText(options.storageKey)
   if (key !== undefined) config.storageKey = key
   if (dir !== null) {

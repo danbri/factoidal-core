@@ -252,6 +252,8 @@ function contentBytes (request) {
  *   default the environment variable FACTOIDAL_LWS_KEY; `null` reads no key
  * @param {string} [options.storage] where DIR keeps the storage: "snapshot" (default, one
  *   file) or "files" (one file per body and a journal, issue 918); passed unread
+ * @param {boolean|string[]} [options.cors] CORS (issue 923): false for none, a list of
+ *   origins to answer; default: echo any valid request Origin. Passed unread
  * @param {object} [options.engine] an engine handle to reuse
  * @returns {Promise<{step: Function, close: Function, handle: string, engine: object}>}
  */
@@ -311,6 +313,10 @@ export async function openLwsStorage (options = {}) {
   if (typeof options.deliveryWindow === 'number') config.deliveryWindow = options.deliveryWindow
   if (typeof options.redirectsMax === 'number') config.redirectsMax = options.redirectsMax
   if (typeof options.controllerInbox === 'string') config.controllerInbox = options.controllerInbox
+  // CORS (https://github.com/danbri/factoidal/issues/923): `cors` is false or
+  // a list of origins, passed unread; absent, the engine echoes the request
+  // Origin. L4Factoidal/LWS/Cors.lean decides every CORS field.
+  if (options.cors !== undefined) config.cors = options.cors
   // What this host bound: data for the engine's inbox check (issue 915).
   if (options.listen !== undefined && options.listen !== null) config.listen = options.listen
   config.entropy = entropyBase64()

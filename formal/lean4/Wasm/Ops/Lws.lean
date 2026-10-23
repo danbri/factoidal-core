@@ -64,6 +64,7 @@ import L4Factoidal.LWS.SearchResults
 import L4Factoidal.LWS.MerkleHttp
 import L4Factoidal.LWS.MoveRedirect
 import L4Factoidal.LWS.FileLayout
+import L4Factoidal.LWS.Cors
 import L4Factoidal.JOSE.Base64Url
 import L4Factoidal.Crypto.P256Native
 import L4Factoidal.Crypto.RsaNative
@@ -343,6 +344,9 @@ def openConfigOfJson (text : String) : Except String OpenConfig :=
         -- The webhook delivery rate (issue 915); 0 turns the limit off.
         let deliveryLimit := natOr "deliveryLimit" 10
         let deliveryWindow := natOr "deliveryWindow" 60
+        -- CORS (issue 923): absent or true echoes the request Origin, false
+        -- turns it off, a list names the origins (`Cors.policyOfJson`).
+        let cors ← Cors.policyOfJson (j.field? "cors")
         -- What the host bound (issue 915): `listen: {address, port, addresses}`.
         let (listenAddress, listenPort, localAddresses) := match j.field? "listen" with
           | some lj =>
@@ -375,7 +379,7 @@ def openConfigOfJson (text : String) : Except String OpenConfig :=
         let (moved, results, notif, signingKey) := (side.moved, side.results, side.notif, side.signingKey)
         .ok { cfg := { baseIri, owner, agent, pageSize, moveContainers, linksetPut, paginateAlways,
                        redirectsMax, deliveryLimit, deliveryWindow, listenAddress, listenPort,
-                       localAddresses, controllerInbox },
+                       localAddresses, controllerInbox, cors },
               moved,
               now, rootAcl, snapshot, authz,
               notifications, moves, typeIndex, accessGrants, entropy, notif, signingKey,
@@ -726,6 +730,14 @@ def lwsStepWith (h requestJson : String) (blob : Option ByteArray) :
           match requestOfJson j blob with
           | .error e => pure (noBytes (errJson e))
           | .ok (r, now?, agent?) => do
+              -- A CORS-preflight request (issue 923) is answered before any
+              -- other decision: no body read, no redirect, no
+              -- authentication, no access control (`L4Factoidal.LWS.Cors`).
+              match Cors.preflight? open_.cfg r with
+              | some resp =>
+                  return (okWith [ ("response", jsonOfResponse resp blobOut), ("changed", .bool false) ],
+                          if blobOut then resp.content else ByteArray.empty)
+              | none =>
               let mem := match now? with
                 | some t => open_.mem.withClockM t
                 | none   => open_.mem
@@ -760,6 +772,7 @@ def lwsStepWith (h requestJson : String) (blob : Option ByteArray) :
                   pure (noBytes (okWith [("fetch", .object [("issuer", .string issuer),
                                                    ("url", .string url)])]))
               | some (.inr resp) =>
+                  let resp := Cors.decorate cfg r resp
                   pure (okWith [ ("response", jsonOfResponse resp blobOut), ("changed", .bool false) ],
                         if blobOut then resp.content else ByteArray.empty)
               | none =>
@@ -772,6 +785,7 @@ def lwsStepWith (h requestJson : String) (blob : Option ByteArray) :
                   pure (noBytes (okWith [("fetch", .object [("issuer", .string issuer),
                                                    ("url", .string url)])]))
               | .handled resp rs' =>
+                  let resp := Cors.decorate cfg r resp
                   lwsTable.modify (·.insert h { open_ with results := rs' })
                   pure (okWith [ ("response", jsonOfResponse resp blobOut)
                                , ("changed", .bool (rs'.revision != open_.results.revision)) ],
@@ -791,6 +805,8 @@ def lwsStepWith (h requestJson : String) (blob : Option ByteArray) :
                   let resp := Merkle.decorate LwsBase cfg mem'.base
                     (fun _ => Merkle.rootsVisible lwsVerifiers (IndexedStore LwsBackend lwsBackendLaws)
                       cfg authz' now r mem') r resp
+                  -- The CORS fields of the answer (issue 923).
+                  let resp := Cors.decorate cfg r resp
                   -- A snapshot storage keeps no journal: forget the touched
                   -- paths now. A storage kept in files forgets them in
                   -- `lwsPersist`, after it wrote their record.

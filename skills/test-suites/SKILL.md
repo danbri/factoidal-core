@@ -869,8 +869,15 @@ record. Conventions, by test kind:
   published no web set. Run the suite in the CI layout before a change to it
   lands: copy the four programs into one directory DIR, set
   `FACTOIDAL_BIN=DIR/factoidal` and `L4FACTOIDAL_BIN=DIR/l4factoidal`, and run
-  `tests/known-defects/run.sh`. Expected on 2026-10-15: 24 XFAIL, 0 XPASS, 0 ERROR
-  (out of 24).
+  `tests/known-defects/run.sh`. Expected on 2026-10-23: 26 XFAIL, 0 XPASS, 0 ERROR
+  (out of 26).
+  A change to what a Lean command answers can break this suite, and
+  `tools/land-gates.sh` does not run it. Run it in the CI layout above when a
+  change alters `l4factoidal owl-consistent`, `parse` or `query` output. Cost,
+  2026-10-22/23: factoidal-core 87fd052e made `owl-consistent` answer unknown
+  outside the admitted atomic fragment (intended, issue 960); the OWL control
+  required Lean false, every OWL row read ERROR, and four factoidal-builds runs
+  (125 to 128) published no web set for about 20 hours.
 
 Every score line that includes expected failures prints them separately;
 they never count as passes.

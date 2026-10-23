@@ -20,7 +20,9 @@ Wasm.Ops.Authz — handles of the authorization server component
 
 Config members: `issuer` (required), `resources` (array), `alg` (`ES256`
 default, or `EdDSA`), `tokenLifetime` (1..300, default 300), `leeway`,
-`rotateAfter`, `allowHttp`, `allowPrivateFetch`, `docTtl`, `now`, `entropy`
+`rotateAfter`, `allowHttp`, `allowPrivateFetch`, `docTtl`, `cors` (absent or
+`true`: echo the request Origin; `false`; or a list of origins: issue 923),
+`now`, `entropy`
 (base64, at least 64 bytes: two private key candidates for a new key
 store), `keys` (the key file document, clear or sealed), `storageKey` (the
 `FACTOIDAL_LWS_KEY` text: the key file is sealed under it, as the LWS
@@ -101,12 +103,16 @@ def openAuthzOfJson (text : String) : Except String (OpenAuthz × Bool) := do
   if lifetime == 0 || lifetime > 300 then
     throw "authz: tokenLifetime must be 1 to 300 seconds (lws10-core: RECOMMENDED 300 seconds or less)"
   let flag (k : String) : Bool := (j.getBool? k).getD false
+  -- CORS (issue 923): absent or true echoes the request Origin, false turns
+  -- it off, a list names the origins.
+  let cors ← L4Factoidal.HTTP.Cors.policyOfJson (j.field? "cors")
   let cfg : AuthzConfig :=
     { issuer, resources, alg, tokenLifetime := lifetime
       leeway := (natOf? j "leeway").getD 60
       rotateAfter := (natOf? j "rotateAfter").getD 0
       fetch := { allowHttp := flag "allowHttp", allowPrivateFetch := flag "allowPrivateFetch"
-                 docTtl := (natOf? j "docTtl").getD 60 } }
+                 docTtl := (natOf? j "docTtl").getD 60 }
+      cors }
   let now := (natOf? j "now").getD 0
   let key? ← storageKeyOf? (j.getString? "storageKey")
   let doc? ← L4Factoidal.LWS.Seal.openSnapshot L4Factoidal.LWS.Seal.hacl key? (j.field? "keys")
@@ -156,7 +162,7 @@ def authzStep (h requestJson : String) : IO String := do
               else
                 let now := now?.getD oa.clock
                 let r := { r with path := (r.path.splitOn "?").headD r.path }
-                let (res, st, changed) := step hacl oa.cfg oa.st now rnd r
+                let (res, st, changed) := stepCors hacl oa.cfg oa.st now rnd r
                 authzTable.modify (·.insert h { oa with st, clock := now })
                 pure <| match res with
                   | .respond resp => okWith [("response", jsonOfResponse resp), ("changed", .bool changed)]

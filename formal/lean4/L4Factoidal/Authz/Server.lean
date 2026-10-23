@@ -61,6 +61,7 @@ passed the answer.
 -/
 import L4Factoidal.Authz.SubjectToken
 import L4Factoidal.HTTP.Server
+import L4Factoidal.HTTP.Cors
 import L4Factoidal.SPARQL.Protocol
 
 namespace L4Factoidal.Authz
@@ -85,6 +86,12 @@ structure AuthzConfig where
   /-- Make a new signing key when the current one is this old; 0: never. -/
   rotateAfter : Nat := 0
   fetch : FetchPolicy := {}
+  /-- Which origins get CORS fields (`L4Factoidal.HTTP.Cors`,
+  https://github.com/danbri/factoidal/issues/923), so a page on another
+  origin can read the metadata and the keys and ask for a token. Off here;
+  the wasm handle turns on `echo` unless the configuration says
+  `"cors": false` or lists origins. -/
+  cors : L4Factoidal.HTTP.Cors.Policy := .off
 
 structure AuthzState where
   keys : KeyStore := {}
@@ -374,6 +381,46 @@ def step (C : Crypto) (cfg : AuthzConfig) (st0 : AuthzState) (now : Nat) (rnd : 
       | .refused resp => (.respond resp, st, changed)
       | .issued resp _ _ _ _ => (.respond resp, st, changed)
   else (.respond notFound, st, changed)
+
+/-! ## CORS (https://github.com/danbri/factoidal/issues/923) -/
+
+/-- The CORS profile of this server: its methods, the request header fields
+it reads, and the response header fields a page may read that are not
+CORS-safelisted (`Allow` of a 405, `WWW-Authenticate`). No credentials: a
+token request carries no cookie (RFC 6749 §3.2, the client authenticates in
+the form or not at all). -/
+def corsProfile : L4Factoidal.HTTP.Cors.Profile :=
+  { methods := ["GET", "HEAD", "OPTIONS", "POST"]
+    requestHeaders := ["Accept", "Authorization", "Content-Type", "DPoP"]
+    exposedHeaders := ["Allow", "WWW-Authenticate"] }
+
+/-- One HTTP request with CORS: a CORS-preflight request is answered first,
+with no key rotation and no other decision; every other answer of `step` gets
+the CORS fields. -/
+def stepCors (C : Crypto) (cfg : AuthzConfig) (st0 : AuthzState) (now : Nat) (rnd : ByteArray)
+    (r : Request) : StepResult × AuthzState × Bool :=
+  match L4Factoidal.HTTP.Cors.preflight? corsProfile cfg.cors r with
+  | some resp => (.respond resp, st0, false)
+  | none =>
+      match step C cfg st0 now rnd r with
+      | (.respond resp, st, changed) =>
+          (.respond (L4Factoidal.HTTP.Cors.decorate corsProfile cfg.cors r resp), st, changed)
+      | other => other
+
+/-- A CORS-preflight request changes no state and makes no decision of
+`step`. -/
+theorem stepCors_preflight (C : Crypto) (cfg : AuthzConfig) (st0 : AuthzState) (now : Nat)
+    (rnd : ByteArray) (r : Request) (resp : Response)
+    (h : L4Factoidal.HTTP.Cors.preflight? corsProfile cfg.cors r = some resp) :
+    stepCors C cfg st0 now rnd r = (.respond resp, st0, false) := by
+  simp [stepCors, h]
+
+/-- With CORS off, `stepCors` is `step`. -/
+theorem stepCors_off (C : Crypto) (cfg : AuthzConfig) (st0 : AuthzState) (now : Nat)
+    (rnd : ByteArray) (r : Request) (h : cfg.cors = .off) :
+    stepCors C cfg st0 now rnd r = step C cfg st0 now rnd r := by
+  simp only [stepCors, h, L4Factoidal.HTTP.Cors.preflight?_off]
+  split <;> simp_all [L4Factoidal.HTTP.Cors.decorate_off]
 
 /-- The answer of the host to a `Need`. -/
 def recordFetched (cfg : AuthzConfig) (st : AuthzState) (url : String) (status : Nat) (body : String)

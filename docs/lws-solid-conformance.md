@@ -124,6 +124,7 @@ A response is a JSON object with the same shape minus the method:
 | `deliveryWindow` | `60` | `lwsOpen` only. The length of that window, in seconds. `factoidal lws-serve --delivery-window S`. |
 | `listen` | absent | `lwsOpen` only. What the host bound: `{"address":IP,"port":N,"addresses":[IP,…]}` (the bound address, its port, the addresses of the machine's interfaces). Data for `L4Factoidal/LWS/InboxGuard.lean`, which refuses a webhook inbox that names this server (issue 915). `npm/factoidal/lws/server.mjs` `listen()` passes it. |
 | `controllerInbox` | absent | `lwsOpen` only. The storage controller's inbox, an `http` or `https` URL (another value stops the start): each new access request is announced there with a `Create` notification (`AccessGrants.announceRequest`, https://github.com/danbri/factoidal/issues/920). The LWS draft names no such inbox; this is a server choice. `factoidal lws-serve --controller-inbox URL`. |
+| `cors` | absent (echo) | `lwsOpen` only. CORS, decided by `L4Factoidal/LWS/Cors.lean` over `L4Factoidal/HTTP/Cors.lean` (https://github.com/danbri/factoidal/issues/923). Absent or `true`: echo a valid request `Origin` (RFC 6454 §6.2 serialization, not `null`) in `Access-Control-Allow-Origin`. `false`: no CORS field. A non-empty list of serialized origins (or `null`): echo only those; a value with a path, a slash, upper case or `*` stops the start. `factoidal lws-serve --cors-origin ORIGIN` (repeatable), `--no-cors`. Section "CORS" below. |
 | `storage` | `"snapshot"` | `lwsOpen` only. Where `DIR` keeps the storage (https://github.com/danbri/factoidal/issues/918, design record `docs/designissues/2026-10-22-lws-storage-on-disk.md`): `"snapshot"`, the one document of `lwsSnapshot`; or `"files"` (`L4Factoidal/LWS/FileLayout.lean`): one file per body version under `bodies/`, a journal `lws-journal`, a metadata file `lws-files.json`. With `"files"`, `lwsOpen` answers `load: {read: [PATH, …]}` and the config must carry no `snapshot`; the host reads the named files and passes them to `lwsLoad` until it answers `ready`, performs the start's `plan`, and after each answer with `"changed": true` calls `lwsPersist` and performs its plan before it answers the request. Another value is refused. `factoidal lws-serve --storage files`; with a DIR and no option the hosts pass the environment variable `FACTOIDAL_LWS_STORAGE`. Touchstone with `--storage files` gives the totals of the default (2026-10-22: open 76 pass, 0 fail; authorization 215 pass, 0 fail, out of 221; `--config all --unstable-search-results` 220 passed, 0 failed, 1 never applied). |
 | `rootAcl` | absent | the ACL document (Turtle) of the storage root, written when the storage is created. Web Access Control §3.2 requires the root container's ACL resource to have a representation, and under enforcement a storage cannot write its own: the request that would write it is the first request it would authorize. It is therefore a host provisioning input. |
 
@@ -345,7 +346,7 @@ Design record: `docs/designissues/2026-10-22-authorization-server.md`; skill:
 
 | op | arguments | answer |
 | --- | --- | --- |
-| `authzOpen` | config JSON: `issuer`, `resources`, `alg`, `tokenLifetime`, `leeway`, `rotateAfter`, `allowHttp`, `allowPrivateFetch`, `docTtl`, `now`, `entropy` (base64, 64 bytes), `keys` (the key file), `storageKey` | `{ok, handle, issuer, kid, changed}` |
+| `authzOpen` | config JSON: `issuer`, `resources`, `alg`, `tokenLifetime`, `leeway`, `rotateAfter`, `allowHttp`, `allowPrivateFetch`, `docTtl`, `cors` (as `lwsOpen`; issue 923), `now`, `entropy` (base64, 64 bytes), `keys` (the key file), `storageKey` | `{ok, handle, issuer, kid, changed}` |
 | `authzStep` | handle, request JSON: `method`, `target`, `headers`, `body`, `now`, `random` (base64, 112 bytes) | `{ok, response, changed}`, `{ok, resolve: {host}, changed}` or `{ok, fetch: {url, accept, address}, changed}` |
 | `authzFetched` | handle, `{url, status, body, now}` or `{host, addresses, now}` | `{ok}` |
 | `authzKeys` | handle, `{nonce?, private?}` | `{ok, keys}` (the key file document, sealed with a storage key) or `{ok, jwks}` (private keys, for a test harness) |
@@ -658,6 +659,52 @@ Theorems: `MkOk.dig_eq_recompute`, `MkState.dig_eq_recompute`, `rebuild_ok`,
 `nextLevelWith_inj`. Collision-freedom of SHA-256 is a hypothesis
 (`NoCollision`, over the byte strings hashed at one path in two states).
 
+## CORS (https://github.com/danbri/factoidal/issues/923)
+
+The LWS drafts say nothing about CORS. Owner order, 2026-10-22, item 4 of
+"Order after LWS storage stage 2" in `CLAUDE.md` (from the glitchcan-minigam
+foafos report: a page on GitHub Pages could not call `lws-serve`). Source:
+Fetch Standard §3.2 "CORS protocol"; the default follows Solid Protocol §8.1:
+"The server MUST set the Access-Control-Allow-Origin header field value to
+the valid Origin header field value from the request and list Origin in the
+Vary header field value."
+
+Lean: `L4Factoidal/HTTP/Cors.lean` (policy, `preflight?`, `decorate`,
+`around`, theorems), `L4Factoidal/LWS/Cors.lean` (the LWS profile, `#guard`s
+through `Authorization.authorizedStep`), `L4Factoidal/Authz/Server.lean`
+(`corsProfile`, `stepCors`), `L4Factoidal/Solid/Server/Methods.lean`
+(`stepAs`: preflight before Web Access Control).
+
+| decision | value |
+|---|---|
+| CORS-preflight request | `OPTIONS` with `Access-Control-Request-Method` and `Origin` (Fetch §3.2.2) |
+| where it is answered | first: `Wasm/Ops/Lws.lean` `lwsStepWith` calls `Cors.preflight?` before the body files, the redirect table, the inbox resolution, authentication and Web Access Control. A preflight carries no token; Fetch §4.8 needs an ok status |
+| preflight answer, allowed origin | 204; `Access-Control-Allow-Origin` (the origin), `-Allow-Methods` `GET, HEAD, OPTIONS, POST, PUT, PATCH, DELETE, QUERY`, `-Allow-Headers` `Accept, Authorization, Content-Type, DPoP, If-Match, If-Modified-Since, If-None-Match, If-Unmodified-Since, Link, Prefer, Range, Slug`, `-Max-Age` 7200 (the Chromium bound), `Vary: Origin` |
+| preflight answer, other origin | 204 with `Vary: Origin` only; the browser refuses (no `Access-Control-Allow-Origin`) |
+| every other answer | when the `Origin` is answered: `Access-Control-Allow-Origin` and `Access-Control-Expose-Headers` `Accept-Patch, Accept-Post, Accept-Put, Accept-Query, Accept-Ranges, Allow, Content-Location, Content-Range, ETag, Factoidal-Merkle-Root, Last-Modified, Link, Location, Preference-Applied, Repr-Digest, WWW-Authenticate` (every field the binding writes that is not CORS-safelisted, Solid §8.1 SHOULD); always `Vary: Origin` (Fetch §3.2.6), merged with the answer's own `Vary` into one field |
+| credentials | no `Access-Control-Allow-Credentials`: the token travels in `Authorization` (RFC 6750 §2.1), which the preflight lists |
+| `null` origin | not echoed by default (it stands for every opaque origin at once); answered when a configured list names it |
+| `OPTIONS` without `Access-Control-Request-Method` | stepped as before (`Operations.step`), then decorated |
+| `cors: false` | `decorate_off`, `preflight?_off`: every answer exactly as before |
+| `authz-serve` | the same functions with its own profile: methods `GET, HEAD, OPTIONS, POST`; request fields `Accept, Authorization, Content-Type, DPoP`; exposed `Allow, WWW-Authenticate`; same config member and flags |
+| `solid-serve` | its own Solid §8.1 module (`Solid/Server/Cors.lean`, echo with `Access-Control-Allow-Credentials: true`, unchanged). This change answers a preflight 204 before Web Access Control; until now a preflight to a resource that is not public got 401. No `--cors-origin`: §8.1 requires the echo |
+
+Theorems (`HTTP/Cors.lean`): `around_preflight` (a preflight gives the same
+answer and state for every server step, so no step decision is made for it),
+`around_step`, `preflight?_status` (204), `preflight?_allowed`,
+`preflight?_not_preflight`, `preflight?_off`, `decorate_off`,
+`decorate_status` (status and content unchanged); `Authz.stepCors_preflight`,
+`Authz.stepCors_off`.
+
+Tests: the `#guard`s of `HTTP/Cors.lean` (origin syntax, `Vary` merge),
+`LWS/Cors.lean` (through the authorized and the open step), `Authz/Tests.lean`
+section CORS, `Solid/Tests.lean` `solidGuardPreflightBeforeWac`; host
+`node tests/lws/cors.mjs`; browser `node tests/lws/cors-browser.mjs`
+(Chromium: a page on another origin writes with a token, writes with
+`If-Match`, reads back, reads the 401's `WWW-Authenticate`; a storage with
+`cors: false` or a list without the page's origin is refused by the
+browser).
+
 ## LWS 1.0 Core
 
 Source: <https://w3c.github.io/lws-protocol/lws10-core/>, W3C Linked Web
@@ -832,6 +879,8 @@ SKIPS each check by name with that reason printed. A skip is never a pass.
 | `tests/lws/encryption.mjs` | Node | encryption at rest (https://github.com/danbri/factoidal/issues/921), for `lws-serve` and `solid-serve`: the sealed file names the key id and holds no clear text; restart with the key (hex and base64url forms); a new nonce per write; a wrong key, every one-byte change of the file, a truncated file, a shortened ciphertext, a clear-text file with a key, a sealed file without one and a key of the wrong length are each refused at open; with no key a clear-text storage behaves as before; the CLI with `FACTOIDAL_LWS_KEY` |
 | `tests/lws/merkle.mjs` | Node | the optional Merkle hashes (https://github.com/danbri/factoidal/issues/919): `Repr-Digest` against `node:crypto` SHA-256 (text, binary, range, HEAD); the container field equals its JSON member and its Turtle statement; the storage description root; a deep write, a move and a delete change the roots above them and no other; a restart rebuilds the same hashes and the snapshot holds none; off by default nothing is added; ETags equal with the option on and off; under authorization only the controller sees roots; `lws-serve --merkle`. One xfail (issue 919): a container ETag does not follow its root |
 | `tests/lws/storage-files.mjs` | Node | a storage kept in files (`storage: "files"`, https://github.com/danbri/factoidal/issues/918): bodies, entity tags and listings the same across a restart (a binary body included); one body file per body version, old ones removed, no `lws-state.json`; the journal cut at every byte of its last record starts with the state before it, and a later write survives; stage 2: a start reads no body file (with `merkle` it reads each body once, then none), a range, a JSON Patch and a type search after a restart; with a key no file holds clear text, a restart works, a wrong key and no key are refused at start, a changed body byte at the first read of that body; migration from a clear and a sealed `lws-state.json`; `lws-serve --storage files` and `--storage bogus`. 14 pass, 0 fail (out of 14), 2026-10-22 |
+| `tests/lws/cors.mjs` | Node | CORS (https://github.com/danbri/factoidal/issues/923): the LWS preflight (204, methods with QUERY and PATCH, request fields, Max-Age, no credentials, `Vary: Origin`), the fields of every other answer, one `Vary` field with `Accept` and `Origin`, no field without `Origin`, an `OPTIONS` without `Access-Control-Request-Method` as before; `null` and malformed origins not echoed; a list; `cors: false`; refused configurations; under authorization a preflight with no token is 204 and a 401 exposes `WWW-Authenticate`; a write with `If-Match`; `lws-serve --cors-origin` twice, `--no-cors`, a bad origin; `authz-serve` on and off; `solid-serve` preflight before Web Access Control |
+| `tests/lws/cors-browser.mjs` | Chromium (Playwright) | a page on another origin writes with a Bearer token, reads `ETag`, writes with `If-Match` (412 for a stale tag), reads back, reads the 401's `WWW-Authenticate` and `Link`; a storage with `cors: false` and one whose list omits the page's origin are refused by the browser. Exit 2 when Playwright or Chromium is missing |
 | `tests/solid/client/against-own-server.mjs` | Node, Deno | our client at an in-process instance of our server: `discoverStorage`, `replace`, `read`, `create` with a `Location`, `delete`, that a deleted resource is gone while its POSTed sibling survives, and that every request reached the socket through the engine |
 | `tests/lws/client/own-server.mjs` | Node | the LWS client (https://github.com/danbri/factoidal/issues/917) against our LWS server, open and with authorization through a local RFC 8693 authorization server: discovery, a container create with the type link, bytes round trip, conditional update with the read ETag, 412 with and without `retry412`, `Prefer: set-linkset`, ten members over four pages each once, linkset read and JSON Patch, no PUT when not advertised, `Depth: infinity`, type index and search, a subscription with a notification verified with the published key, forged notifications refused, access request and grant, a move, a fetch carried as serialized messages, the CLI, the 401 flow with one token exchange, a decoy whose storage root is on another origin (no token request), a refused token exchanged again, no subject token |
 | `tools/lws-touchstone-client.sh` | Node, JDK 21 | our client in Touchstone's client lab (53 rules); expected failures in `tests/lws/client/touchstone-xfail.tsv` |

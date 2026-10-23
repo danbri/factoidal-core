@@ -81,6 +81,34 @@ design record `docs/designissues/2026-10-22-authorization-server.md`; skill
   0 fail (out of 6), auth/cid 22 pass, 0 fail (out of 22), auth/saml 3
   inapplicable (issue 926).
 
+CORS in the LWS HTTP binding (https://github.com/danbri/factoidal/issues/923),
+decided in Lean (`L4Factoidal/HTTP/Cors.lean`, `L4Factoidal/LWS/Cors.lean`), so
+a page on another origin (for example GitHub Pages) can call `lws-serve`:
+
+- A CORS-preflight request (`OPTIONS` with `Access-Control-Request-Method`
+  and `Origin`) is answered 204 before any other decision, with no token and
+  no access check: `Access-Control-Allow-Methods` (with `QUERY` and `PATCH`),
+  `-Allow-Headers` (`Authorization`, `Content-Type`, `If-Match`,
+  `If-None-Match`, `If-Modified-Since`, `If-Unmodified-Since`, `Link`,
+  `Prefer`, `Slug`, `Range`, `DPoP`, `Accept`), `-Max-Age` 7200. An `OPTIONS`
+  without `Access-Control-Request-Method` is answered as before.
+- Every answer carries `Vary: Origin` (one `Vary` field with the answer's
+  own), and, for an answered origin, `Access-Control-Allow-Origin` and
+  `Access-Control-Expose-Headers` (`ETag`, `Link`, `Location`, `Allow`,
+  `Accept-Patch`, `Accept-Post`, `Accept-Put`, `Accept-Query`,
+  `Accept-Ranges`, `Content-Location`, `Content-Range`, `WWW-Authenticate`,
+  `Preference-Applied`, `Repr-Digest`, `Last-Modified`,
+  `Factoidal-Merkle-Root`). No `Access-Control-Allow-Credentials`: the token
+  goes in `Authorization`.
+- Default: echo a valid request `Origin` (Solid Protocol §8.1), never `null`.
+  `lws-serve --cors-origin ORIGIN` (repeatable) answers only those origins;
+  `--no-cors` sends no CORS field; config member `cors` (`false` or a list).
+  A malformed origin stops the start.
+- `authz-serve` gets the same (`Authz.stepCors`; methods `GET, HEAD, OPTIONS,
+  POST`), with the same flags. `solid-serve` keeps its own Solid §8.1 CORS;
+  its preflight is now answered before Web Access Control (it was 401 for a
+  resource that is not public).
+
 An LWS client (https://github.com/danbri/factoidal/issues/917; design record
 `docs/designissues/2026-10-22-lws-client.md`):
 
