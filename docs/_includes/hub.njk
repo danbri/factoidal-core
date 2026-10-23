@@ -938,6 +938,36 @@ function prettySrjTermNode(term) {
   return span;
 }
 
+// A short label for an object that is not plain data: an engine handle
+// (Dataset, Store), a typed array, or any other class instance. Such an
+// object can reach the engine's wasm memory: a Dataset holds the engine
+// context in `_ctx`, and JSON.stringify walked that memory byte by byte,
+// blocked the page for about 15 s per cell and then threw "Invalid string
+// length" (posts 30 and 42 of the historical notebooks, 2026-10-23).
+function prettyOpaqueLabel(v) {
+  if (ArrayBuffer.isView(v)) return v.constructor.name + "(" + v.length + ")";
+  const name = (v.constructor && v.constructor.name) || "object";
+  if (prettyIsDatasetLike(v)) return name + " (" + prettyCount(v.size, "quad") + ")";
+  return name;
+}
+
+// JSON for display: recurse only into plain objects, arrays and Maps; every
+// other object becomes its label, so the output stays small and the walk
+// never enters an engine handle. A cyclic value gives a label too.
+function prettyBoundedJson(value) {
+  const isData = (v) => Array.isArray(v) || prettyIsPlainObject(v);
+  if (!isData(value)) return prettyOpaqueLabel(value);
+  try {
+    return JSON.stringify(value, (key, v) => {
+      if (v === null || typeof v !== "object" || isData(v)) return v;
+      if (v instanceof Map) return Object.fromEntries(v);
+      return prettyOpaqueLabel(v);
+    });
+  } catch (err) {
+    return "(not shown: " + ((err && err.message) || String(err)) + ")";
+  }
+}
+
 function prettyCellNode(value) {
   if (value && typeof value === "object" && typeof value.termType === "string") {
     return prettyTermNode(value);
@@ -956,7 +986,7 @@ function prettyCellNode(value) {
   if (value !== null && typeof value === "object") {
     const span = document.createElement("span");
     span.className = "pretty-value";
-    const json = JSON.stringify(value);
+    const json = prettyBoundedJson(value);
     span.textContent = json.length > 80 ? json.slice(0, 80) + "…" : json;
     span.title = json;
     return span;
