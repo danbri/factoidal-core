@@ -1405,4 +1405,18 @@ Issue https://github.com/danbri/factoidal/issues/961 stays open.
 
 ### 1h.6 Gates
 
-GATES
+On commit `c55bb893` (the Lean code of `origin/main` `cbd7c72a`; exit codes
+read):
+
+| Gate | Result |
+| --- | --- |
+| `lake build` | exit 0 (1,994 jobs) |
+| `tests/sbm11/threads.sh` | exit 0: gate 140 and 140 identical, olympics 21, 2 and 2, DBpedia 19; DBpedia against the three-engine record: equal 76, different 0 |
+| `tests/sbm11/run.sh` | exit 0: 3,131 pass, 0 fail, 28 expected-fail (out of 3,159) |
+| `SBM11_THREADS=4 tests/sbm11/census.sh` | exit 0: 605 executed, 605 matched the reference engine, 0 differed; 4 refused at query |
+| `lean-tail-recursion-audit.py --gate`, `lean-unbuilt-modules.py --gate` | exit 0, exit 0 (941 modules reached) |
+| `tools/land-gates.sh` | exit 0 (LAND GATES PASSED): native-smoke 377 pass, 0 fail, 4 xfail (out of 381), cli-smoke 151 pass, 0 fail, 5 xfail (out of 156), wasm, npm, hub, engine-compare, the LWS, Solid and authorization suites, host-purity-lint 40 pass, 0 fail (out of 40) |
+| `sorry`, `native_decide`, `axiom`, `maxHeartbeats` in the Lean diff | no Lean diff |
+
+The answers of `threads.sh` were also identical with the code of 1h.4 items
+2 and 3 in place (run before they were taken out).
