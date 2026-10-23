@@ -32,7 +32,7 @@ def countChunkDifferential : Bool :=
         let ch : Chunk := { table := t, consts := t.vars.mapIdx fun c _ => cf c }
         let a := countChunk gv ch {}
         let b := countChunkRef gv ch {}
-        a.keys == b.keys && a.keys.all fun k => a.counts.getD k 0 == b.counts.getD k 0
+        a.keys == b.keys && a.keys.all fun k => a.countOf k == b.countOf k
 
 def main : IO UInt32 := do
   let a := scanDifferential

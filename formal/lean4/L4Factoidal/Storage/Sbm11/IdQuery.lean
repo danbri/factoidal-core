@@ -1679,10 +1679,10 @@ def prefixCmpGo (r : Row) (key : Array UInt64) : Nat → Nat → Ordering
 /-- Compare the first `key.size` columns of `r` with `key`. -/
 def prefixCmp (r : Row) (key : Array UInt64) : Ordering := prefixCmpGo r key key.size 0
 
-def selects (b : BlockMeta) (key : Array UInt64) : Bool :=
+def selects (b : @& BlockMeta) (key : Array UInt64) : Bool :=
   prefixCmp b.first key != .gt && prefixCmp b.last key != .lt
 
-def fullFor (b : BlockMeta) (key : Array UInt64) : Bool :=
+def fullFor (b : @& BlockMeta) (key : Array UInt64) : Bool :=
   prefixCmp b.first key == .eq && prefixCmp b.last key == .eq
 
 /-- The value of column `c` when every row of the block has the same value
@@ -1694,7 +1694,7 @@ def fullFor (b : BlockMeta) (key : Array UInt64) : Bool :=
     byte per row after its tag, a raw frame eight; activation re-encodes every
     column and compares the bytes, so an activated generation has the
     encoder's frames. -/
-def colConst? (b : BlockMeta) (c : Nat) : Option Nat :=
+def colConst? (b : @& BlockMeta) (c : Nat) : Option Nat :=
   if c < 3 then
     if (List.range (c + 1)).all (fun j => rowCol b.first j == rowCol b.last j) then some (rowCol b.first c)
     else none
@@ -1760,12 +1760,12 @@ def constWords (x : UInt64) (rows : Nat) : ByteArray :=
 /-- The bytes of the frames `need` of block `b`: one positioned read of the
     contiguous frames from the first to the last needed one. Returns the
     bytes, the start of each frame in them, and the bytes read. -/
-def frameStarts (b : BlockMeta) : Array Nat := #[0, b.len0, b.len0 + b.len1, b.len0 + b.len1 + b.len2]
+def frameStarts (b : @& BlockMeta) : Array Nat := #[0, b.len0, b.len0 + b.len1, b.len0 + b.len1 + b.len2]
 
 /-- The byte range `[lo, hi)` of a block (from its first frame) that holds
     the frames `need`: from the start of the first needed frame to the end
     of the last; `none` when no frame is needed. -/
-def frameSpan (b : BlockMeta) (need : Array Bool) : Option (Nat × Nat) :=
+def frameSpan (b : @& BlockMeta) (need : Array Bool) : Option (Nat × Nat) :=
   let lo? : Option Nat :=
     if need[0]! then some 0
     else if need[1]! then some b.len0
@@ -1779,7 +1779,7 @@ def frameSpan (b : BlockMeta) (need : Array Bool) : Option (Nat × Nat) :=
     else b.len0
   lo?.map fun lo => (lo, hi)
 
-def readFrames {m : Type → Type} [Monad m] (st : Store m) (perm : Nat) (b : BlockMeta)
+def readFrames {m : Type → Type} [Monad m] (st : Store m) (perm : Nat) (b : @& BlockMeta)
     (need : Array Bool) : ExceptT String m (ByteArray × Array Nat × Nat) := do
   let starts := frameStarts b
   let some (lo0, hi) := frameSpan b need | return (.empty, starts, 0)
@@ -1791,7 +1791,7 @@ def readFrames {m : Type → Type} [Monad m] (st : Store m) (perm : Nat) (b : Bl
     tested equal to `Column.decodeColumnAt`, which is proved equal to the
     specification decoder, `ColumnTheorems.decodeColumnAt_eq`); the frame
     must end at its PRM1 length. -/
-def colAll (b : BlockMeta) (bytes : ByteArray) (starts : Array Nat) (c : Nat) : Except String ByteArray :=
+def colAll (b : @& BlockMeta) (bytes : ByteArray) (starts : Array Nat) (c : Nat) : Except String ByteArray :=
   let lens : Array Nat := #[b.len0, b.len1, b.len2, b.len3]
   match L4Factoidal.Storage.Sbm11.FrameWords.decodeWordsF bytes b.rows starts[c]! with
   | some (ws, j) =>
@@ -1802,7 +1802,7 @@ def colAll (b : BlockMeta) (bytes : ByteArray) (starts : Array Nat) (c : Nat) : 
 
 /-- Rows `[lo, hi)` of column `c` as words (`FrameWords.decodeWordsRange`:
     the frame is read only up to row `hi - 1`). -/
-def colRange (b : BlockMeta) (bytes : ByteArray) (starts : Array Nat) (c lo hi : Nat) :
+def colRange (b : @& BlockMeta) (bytes : ByteArray) (starts : Array Nat) (c lo hi : Nat) :
     Except String ByteArray :=
   match L4Factoidal.Storage.Sbm11.FrameWords.decodeWordsRangeF bytes b.rows starts[c]! lo hi with
   | some ws => .ok ws
@@ -1897,7 +1897,7 @@ def chunkOfRows (spec : ScanSpec) (rows : List Row) (sortVar : Option String) : 
 /-- Columns `c, c + 1, ...` (`k` of them) of a block in full, as words
     (`colAll`), appended to `acc`; the first error stops (a tail call with
     a count). -/
-def colsAllGo (b : BlockMeta) (bytes : ByteArray) (starts : Array Nat) :
+def colsAllGo (b : @& BlockMeta) (bytes : ByteArray) (starts : Array Nat) :
     Nat → Nat → Array ByteArray → Except String (Array ByteArray)
   | 0, _, acc => .ok acc
   | k + 1, c, acc =>
@@ -1950,7 +1950,7 @@ order. -/
 /-- The checks of a block that `colConst?` decides: `skip` becomes true when
     one fails for every row; the undecided checks are kept (a tail call over
     the list). -/
-def planChecksGo (b : BlockMeta) : List (Nat × UInt64) → Bool → Array (Nat × UInt64) →
+def planChecksGo (b : @& BlockMeta) : List (Nat × UInt64) → Bool → Array (Nat × UInt64) →
     Bool × Array (Nat × UInt64)
   | [], skip, acc => (skip, acc)
   | (c, x) :: cs, skip, acc =>
@@ -1969,7 +1969,7 @@ structure BlockPlan where
   /-- every row carries the key prefix (`fullFor`) -/
   full : Bool
 
-def blockPlan (spec : ScanSpec) (b : BlockMeta) : BlockPlan :=
+def blockPlan (spec : ScanSpec) (b : @& BlockMeta) : BlockPlan :=
   let (skip, checks) := planChecksGo b spec.checks.toList false #[]
   let (skip, named) :=
     if spec.named then
@@ -1985,7 +1985,7 @@ def BlockPlan.perRow (bp : BlockPlan) (spec : ScanSpec) : Bool :=
 
 /-- Per output column, its value when the block is `full` and the column is
     constant over the block. -/
-def constOutOf (spec : ScanSpec) (b : BlockMeta) (bp : BlockPlan) : Array (Option Nat) :=
+def constOutOf (spec : ScanSpec) (b : @& BlockMeta) (bp : BlockPlan) : Array (Option Nat) :=
   spec.outCols.map fun c => if bp.full then colConst? b c else none
 
 /-- Whether output `k` or a later one reads column `c` (a tail call). -/
@@ -2011,7 +2011,7 @@ def needOf (spec : ScanSpec) (bp : BlockPlan) (constOut : Array (Option Nat)) : 
 
 /-- Column `c` cut to rows `[lo, hi)`: empty when not needed; from the full
     key column when there is one; else by the range decoder. -/
-def cutCol (b : BlockMeta) (bytes : ByteArray) (starts : Array Nat) (need : Array Bool)
+def cutCol (b : @& BlockMeta) (bytes : ByteArray) (starts : Array Nat) (need : Array Bool)
     (keyWords : Array ByteArray) (lo hi c : Nat) : Except String ByteArray :=
   if need[c]! then
     if h : c < keyWords.size then .ok (keyWords[c].extract (8 * lo) (8 * hi))
@@ -2020,13 +2020,13 @@ def cutCol (b : BlockMeta) (bytes : ByteArray) (starts : Array Nat) (need : Arra
 
 /-- The key columns `0 .. k - 1` of a block in full; none when the block is
     `full` (every row carries the key prefix). -/
-def keyWordsOf (b : BlockMeta) (bytes : ByteArray) (starts : Array Nat) (full : Bool) (k : Nat) :
+def keyWordsOf (b : @& BlockMeta) (bytes : ByteArray) (starts : Array Nat) (full : Bool) (k : Nat) :
     Except String (Array ByteArray) :=
   if full then .ok #[] else colsAllGo b bytes starts k 0 #[]
 
 /-- The rows `[lo, hi)` of a block that carry the key prefix: all rows when
     the block is `full`; else two binary searches over the key columns. -/
-def keyRange (spec : ScanSpec) (b : BlockMeta) (full : Bool) (keyWords : Array ByteArray) : Nat × Nat :=
+def keyRange (spec : ScanSpec) (b : @& BlockMeta) (full : Bool) (keyWords : Array ByteArray) : Nat × Nat :=
   if full then (0, b.rows)
   else
     let fuel := Nat.log2 b.rows + 2
@@ -2055,7 +2055,7 @@ def chunkOfCols (spec : ScanSpec) (fill : Bool) (sortVar : Option String) (bp : 
     columns in full (to find the rows with the key prefix, unless `full`),
     then every needed column for those rows only (`cutCol`), then
     `chunkOfCols`. -/
-def blockChunk (spec : ScanSpec) (fill : Bool) (sortVar : Option String) (b : BlockMeta)
+def blockChunk (spec : ScanSpec) (fill : Bool) (sortVar : Option String) (b : @& BlockMeta)
     (bp : BlockPlan) (constOut : Array (Option Nat)) (need : Array Bool) (bytes : ByteArray)
     (starts : Array Nat) : Except String Chunk := do
   let keyWords ← keyWordsOf b bytes starts bp.full spec.key.size
@@ -2206,14 +2206,14 @@ with no overlay, the count is the length of the tuple list of the scan
 
 /-- A check fails for every row of the block: its column is constant over
     the block with another value. -/
-def checkFails (b : BlockMeta) (ck : Nat × UInt64) : Bool :=
+def checkFails (b : @& BlockMeta) (ck : Nat × UInt64) : Bool :=
   match colConst? b ck.1 with
   | some y => y != ck.2.toNat
   | none => false
 
 /-- The rows of the block that the scan keeps, when the PRM1 entry gives it;
     `none` when the block must be read. -/
-def metaStep (spec : ScanSpec) (b : BlockMeta) : Option Nat :=
+def metaStep (spec : ScanSpec) (b : @& BlockMeta) : Option Nat :=
   if !selects b spec.key || spec.checks.any (checkFails b) then some 0
   else if fullFor b spec.key && spec.checks.all (fun ck => (colConst? b ck.1).isSome) &&
       spec.eqs.isEmpty && !spec.named then some b.rows
@@ -2278,7 +2278,7 @@ only. -/
     prefix (else 0) to the last row's value when the last row carries it
     (else the largest word). The rows are sorted, so a row with the prefix
     has its column `c = key.size` between them. -/
-def sipRange (b : BlockMeta) (key : Array UInt64) (c : Nat) : UInt64 × UInt64 :=
+def sipRange (b : @& BlockMeta) (key : Array UInt64) (c : Nat) : UInt64 × UInt64 :=
   (if prefixCmp b.first key == .eq then (rowCol b.first c).toUInt64 else 0,
    if prefixCmp b.last key == .eq then (rowCol b.last c).toUInt64 else 0xFFFFFFFFFFFFFFFF)
 
@@ -2286,7 +2286,7 @@ def sipRange (b : BlockMeta) (key : Array UInt64) (c : Nat) : UInt64 × UInt64 :
     `jc` the found values `jw`; for a needed key column its decoded words at
     `pos`; for any other needed column the words of its frame at `pos`
     (`Sip.gatherWords`). -/
-def sipCol (b : BlockMeta) (bytes : ByteArray) (starts : Array Nat) (need : Array Bool)
+def sipCol (b : @& BlockMeta) (bytes : ByteArray) (starts : Array Nat) (need : Array Bool)
     (keyWords : Array ByteArray) (jc : Nat) (jw : ByteArray) (pos : Array Nat) (c : Nat) :
     Except String ByteArray :=
   if c == jc then .ok jw
@@ -2303,7 +2303,7 @@ def sipCol (b : BlockMeta) (bytes : ByteArray) (starts : Array Nat) (need : Arra
     needed column at those rows (`sipCol`), then `chunkOfCols` with
     `fill = true`. Also returns the join-key values tested and the rows
     found. -/
-def sipChunk (spec : ScanSpec) (cands : Array UInt64) (sortVar : Option String) (b : BlockMeta)
+def sipChunk (spec : ScanSpec) (cands : Array UInt64) (sortVar : Option String) (b : @& BlockMeta)
     (bp : BlockPlan) (constOut : Array (Option Nat)) (need : Array Bool) (bytes : ByteArray)
     (starts : Array Nat) (p : Nat) : Except String (Chunk × Nat × Nat) := do
   let keyWords ← keyWordsOf b bytes starts bp.full spec.key.size
@@ -3130,7 +3130,7 @@ def windowRejects (fs : Array FKind) (v : String) (x : UInt64) : Bool :=
     conjuncts on the scan's sort variable (the variable of column
     `key.size`): some conjunct rejects every id in the block's range of that
     column (`sipRange`). -/
-def windowSkip (fs : Array FKind) (spec : ScanSpec) (b : BlockMeta) : Bool :=
+def windowSkip (fs : Array FKind) (spec : ScanSpec) (b : @& BlockMeta) : Bool :=
   match sortVarOf spec with
   | none => false
   | some v =>
@@ -3178,16 +3178,29 @@ def windowNote : Option (Nat × Nat) → String
 
 /-! ## GROUP BY with COUNT -/
 
-/-- Group key → count, and the keys in first-seen order. -/
+/-- The group keys in first-seen order, the count of each (`cnts[i]` is the
+    count of `keys[i]`), and each key's position. Stage 1k: the counts were
+    the values of the map, so an addition to a known key hashed it twice
+    (`get?`, then `insert`), `merge` once more for the count of each key of
+    `b`, and `groupTable` once per key; with the counts in an array an
+    addition hashes the key once and the other two read the array.
+    `ParallelMergeTheorems.GM` is the model (`keys`, and `countOf` as `cnt`). -/
 structure Groups where
-  counts : Std.HashMap (List UInt64) Nat := {}
+  index : Std.HashMap (List UInt64) Nat := {}
   keys : Array (List UInt64) := #[]
+  cnts : Array Nat := #[]
   deriving Inhabited
 
+/-- The count of key `k` (0 for a key not in `g`). -/
+def Groups.countOf (g : Groups) (k : List UInt64) : Nat :=
+  match g.index.get? k with
+  | some i => g.cnts.getD i 0
+  | none => 0
+
 def Groups.add (g : Groups) (k : List UInt64) (n : Nat) : Groups :=
-  match g.counts.get? k with
-  | some c => { g with counts := g.counts.insert k (c + n) }
-  | none => { counts := g.counts.insert k n, keys := g.keys.push k }
+  match g.index.get? k with
+  | some i => { g with cnts := g.cnts.modify i (· + n) }
+  | none => { index := g.index.insert k g.keys.size, keys := g.keys.push k, cnts := g.cnts.push n }
 
 /-- Rows `e` and `i` agree on every column of `vcols` (a loop, no closure per
     row; `Array.all` with a lambda took a quarter of d10's time). -/
@@ -3267,8 +3280,11 @@ def countChunkRef (groupVars : Array String) (ch : Chunk) (g : Groups) : Groups 
     the parent adds the groups of each block range in range order). Over the
     list model, `ParallelMergeTheorems.merge_foldl` and `groups_chunks`: the
     result has the keys and counts of one pass over the concatenation. -/
-def Groups.merge (a b : Groups) : Groups :=
-  b.keys.foldl (fun g k => g.add k (b.counts.getD k 0)) a
+def Groups.merge (a b : Groups) : Groups := Id.run do
+  let mut g := a
+  for i in [0:b.keys.size] do
+    g := g.add b.keys[i]! (b.cnts.getD i 0)
+  return g
 
 /-- The counted path's step for one scan chunk: the FILTERs, then `countChunk`
     (the chunk's constant columns count at once when there is no FILTER). -/
@@ -3283,8 +3299,28 @@ def countStepM {m : Type → Type} [Monad m] (st : Store m) (fs : Array FKind) (
 
 /-- The inline id of an `xsd:integer` count (`TermId`: tag 4, datatype 0,
     value + 2^55). -/
-def countId (n : Nat) : UInt64 :=
+def countIdSpec (n : Nat) : UInt64 :=
   (L4Factoidal.Storage.Sbm11.tagInt * L4Factoidal.Storage.Sbm11.two60 + 0 + (n + 2 ^ 55)).toUInt64
+
+/-- `countIdSpec 0`, computed once. -/
+def countIdBase : UInt64 :=
+  (L4Factoidal.Storage.Sbm11.tagInt * L4Factoidal.Storage.Sbm11.two60 + 2 ^ 55).toUInt64
+
+/-- `countIdSpec n` with one word addition (stage 1k: the `Nat` form built a
+    number above `2 ^ 63`, a big-number object, and read the literal `2 ^ 55`
+    from its decimal text, for every group of DBpedia d10). -/
+def countId (n : Nat) : UInt64 := countIdBase + n.toUInt64
+
+theorem countId_eq (n : Nat) : countId n = countIdSpec n := by
+  unfold countId countIdBase countIdSpec
+  generalize L4Factoidal.Storage.Sbm11.tagInt * L4Factoidal.Storage.Sbm11.two60 = a
+  generalize hb : (2 ^ 55 : Nat) = b
+  rw [Nat.add_zero, Nat.toUInt64_eq, Nat.toUInt64_eq, Nat.toUInt64_eq, ← UInt64.ofNat_add]
+  congr 1
+  omega
+
+/-- `2 ^ 55`, the bound of a count (`groupTable`), computed once. -/
+@[noinline] def countLimit : Nat := 2 ^ 55
 
 /-- The aggregated table: the group variables, then one column per COUNT.
     With no GROUP BY there is one group, also over no rows. `items` (one per
@@ -3296,16 +3332,17 @@ def groupTable (plan : Plan) (g : Groups) (items : Array (Option Groups) := #[])
   let ks := if g.keys.isEmpty && plan.groupVars.isEmpty then #[[]] else g.keys
   let cnt := plan.proj.filterMap fun | .count a _ => some a | _ => none
   let mut cols := (plan.groupVars ++ cnt).map fun _ => ByteArray.empty
-  for k in ks do
-    let n := g.counts.getD k 0
-    if n ≥ 2 ^ 55 then return .error "a count of 2^55 or more"
+  for i in [0:ks.size] do
+    let k := ks[i]!
+    let n := g.cnts.getD i 0
+    if n ≥ countLimit then return .error "a count of 2^55 or more"
     let mut j := 0
     for x in k do
       cols := cols.modify j (L4Factoidal.Qlvr.Side.put64 · x)
       j := j + 1
     for c in [0:cnt.size] do
       let nc := match items[c]? with
-        | some (some gi) => gi.counts.getD k 0
+        | some (some gi) => gi.countOf k
         | _ => n
       cols := cols.modify j (L4Factoidal.Qlvr.Side.put64 · (countId nc))
       j := j + 1
@@ -4675,29 +4712,30 @@ def rangeCount (threads minRows est : Nat) : Nat :=
     ranges (`rangeCount`), no delta overlay on the scan, two or more
     selected blocks; each range of at most `maxBlocks` blocks when
     `maxBlocks > 0` (then there can be more ranges than threads). Also the
-    PRM1 entries of the selected blocks (`Store.blocksForRange`; a range is a
-    list of positions in that array), the overlay context and the estimate
-    (`selRows`). -/
+    PRM1 entries of the selected blocks (`Store.blocksForRange`; a range is
+    given by its bounds `(lo, hi)` of positions in that array, the list
+    `ParallelScan.boundsList`), the overlay context and the estimate
+    (`selRows`). The ranges, as lists, are `chunksOf c (List.range
+    metas.size)` (`rangeBounds_map`, `rangeChunks_eq`). -/
 def divide? {m : Type → Type} [Monad m] (st : Store m) (threads minRows : Nat) (spec : ScanSpec)
     (maxBlocks : Nat) (perThread : Nat := 1) :
-    ExceptT String m (Option (Array BlockMeta × OvCtx × List (List Nat) × Nat)) := do
+    ExceptT String m (Option (Array BlockMeta × OvCtx × List (Nat × Nat) × Nat)) := do
   if threads ≤ 1 then return none
   let ox := ovCtx (st.ovl spec.perm) spec.key
   if ox.on then return none
   -- the selected blocks' PRM1 entries (issue 805); the ranges are lists of
   -- positions in that array
   let metas ← st.blocksForRange spec.perm spec.key
-  let sel := List.range metas.size
   let est := selRows metas
   let n := rangeCount threads minRows est * max perThread 1
-  if sel.length < 2 || n < 2 then return none
-  let c0 := (sel.length + n - 1) / n
+  if metas.size < 2 || n < 2 then return none
+  let c0 := (metas.size + n - 1) / n
   let c := if maxBlocks == 0 then c0 else min c0 maxBlocks
-  return some (metas, ox, L4Factoidal.Storage.Sbm11.ParallelScan.chunksOf c sel, est)
+  return some (metas, ox, L4Factoidal.Storage.Sbm11.ParallelScan.rangeBounds c metas.size, est)
 
 /-- `divide?` with the threads of `par`; none without `par`. -/
 def divideFor? {m : Type → Type} [Monad m] (st : Store m) (par : Option (Par m)) (spec : ScanSpec)
-    (maxBlocks : Nat) (perThread : Nat := 1) : ExceptT String m (Option (Array BlockMeta × OvCtx × List (List Nat) × Nat)) :=
+    (maxBlocks : Nat) (perThread : Nat := 1) : ExceptT String m (Option (Array BlockMeta × OvCtx × List (Nat × Nat) × Nat)) :=
   match par with
   | some p => divide? st p.threads p.minRows spec maxBlocks perThread
   | none => pure none
@@ -5016,7 +5054,8 @@ def runPlanM {m : Type → Type} [Monad m] (st : Store m) (plan : Plan) (emit : 
       -- stage 1b: divided when OFFSET + LIMIT is above the estimate (the single
       -- scan then reads every selected block)
       match par, (← divideFor? st par spec streamRangeBlocks).filter (fun d => plan.offset + lim > d.2.2.2) with
-      | some p, some (metas, ox, chunks, est) =>
+      | some p, some (metas, ox, bounds, est) =>
+        let chunks := bounds.map L4Factoidal.Storage.Sbm11.ParallelScan.boundsList
         let total ← st.blockCount spec.perm
         let cap := plan.offset + lim
         let jobs := streamJobs p.threads cap metas chunks p.streamPerThread
@@ -5061,7 +5100,8 @@ def runPlanM {m : Type → Type} [Monad m] (st : Store m) (plan : Plan) (emit : 
         | some p, some (metas, ox, chunks, _) => do
           let total ← st.blockCount spec.perm
           st.markM "divide"
-          let (g, s) ← p.fold false (fun v X => countPartM v spec fs plan.groupVars metas ox X) chunks
+          let (g, s) ← p.fold false (fun v (X : Nat × Nat) =>
+              countPartM v spec fs plan.groupVars metas ox (L4Factoidal.Storage.Sbm11.ParallelScan.boundsList X)) chunks
             (({} : Groups), ({ blocksTotal := total } : ScanStats))
             fun (g, s) (g', s') => pure (g.merge g', s.add s')
           st.markM "countfold"
@@ -5096,7 +5136,8 @@ def runPlanM {m : Type → Type} [Monad m] (st : Store m) (plan : Plan) (emit : 
           let k := plan.offset + plan.limit.getD 0
           let init : Table := Table.empty spec0.outVars
           let total ← st.blockCount spec0.perm
-          let (u, s) ← p.fold false (fun v X => topPartM v plan spec0 fs k metas ox X) chunks
+          let (u, s) ← p.fold false (fun v (X : Nat × Nat) =>
+              topPartM v plan spec0 fs k metas ox (L4Factoidal.Storage.Sbm11.ParallelScan.boundsList X)) chunks
             (init, ({ blocksTotal := total } : ScanStats))
             fun (u, s) (t, s') => pure (u.append t, s.add s')
           pure (u, #[s!"pattern 0: {permNames[spec0.perm]!} key {spec0.key.size} estimate {est}; blocks {s.blocksRead} read of {s.blocksSelected} selected of {s.blocksTotal}, frames {s.framesRead}, {s.bytesRead} bytes; rows {s.rowsOut}; first {k} rows of the order kept in each of {chunks.length} block ranges ({p.threads} tasks at once at most): {u.rows} rows"], s.full)

@@ -892,9 +892,11 @@ def scanTableParM (ss : Session) (spec : IdQuery.ScanSpec) (threads : Nat) (minR
     (IdQuery.selRows metas)
   if threads ≤ 1 || ox.on || n < 2 then return ← IdQuery.scanTableM st spec
   let sortVar := IdQuery.sortVarOf spec
-  let sel := List.range metas.size
-  let c := (sel.length + n - 1) / n
-  let chunks := L4Factoidal.Storage.Sbm11.ParallelScan.chunksOf c sel
+  let c := (metas.size + n - 1) / n
+  -- the ranges as bounds (`ParallelScan.rangeBounds_map`): a task makes the
+  -- list of its positions (`boundsList`), so no list the parent frees was
+  -- reachable from a task (stage 1k)
+  let chunks := L4Factoidal.Storage.Sbm11.ParallelScan.rangeBounds c metas.size
   let cap := 8 * IdQuery.selRows metas
   let init : L4Factoidal.Qlvr.Table :=
     { vars := spec.outVars, cols := spec.outVars.map fun _ => ByteArray.emptyWithCapacity cap,
@@ -918,7 +920,7 @@ def scanTableParM (ss : Session) (spec : IdQuery.ScanSpec) (threads : Nat) (minR
       let spec := spec.fresh
       let ox := ox.fresh spec.key
       let sortVar := IdQuery.sortVarOf spec
-      let (metasX, posX) := rangeMetas metas X
+      let (metasX, posX) := rangeMetas metas (L4Factoidal.Storage.Sbm11.ParallelScan.boundsList X)
       let capX := 8 * metasX.foldl (fun a b => a + b.rows) 0
       let init : L4Factoidal.Qlvr.Table :=
         { vars := spec.outVars, cols := spec.outVars.map fun _ => ByteArray.emptyWithCapacity capX,
@@ -931,7 +933,7 @@ def scanTableParM (ss : Session) (spec : IdQuery.ScanSpec) (threads : Nat) (minR
   let mut stats : IdQuery.ScanStats := { blocksTotal := ← st.blockCount spec.perm }
   let mut failure : Option String := none
   -- the first range, onto `init` (the capacity of the whole scan)
-  match ← liftIO (IdQuery.scanListM st spec true init f metas sortVar ox (chunks.headD [])).run with
+  match ← liftIO (IdQuery.scanListM st spec true init f metas sortVar ox (L4Factoidal.Storage.Sbm11.ParallelScan.boundsList (chunks.headD (0, 0)))).run with
   | Except.ok (tab, s) =>
     out := tab
     stats := stats.add s
@@ -966,9 +968,11 @@ def scanSipTableParM (ss : Session) (spec : IdQuery.ScanSpec) (cands : Array UIn
   let sortVar := match spec.outCols[0]? with
     | some c => if c == spec.key.size then spec.outVars[0]? else none
     | none => none
-  let sel := List.range metas.size
-  let c := (sel.length + n - 1) / n
-  let chunks := L4Factoidal.Storage.Sbm11.ParallelScan.chunksOf c sel
+  let c := (metas.size + n - 1) / n
+  -- the ranges as bounds (`ParallelScan.rangeBounds_map`): a task makes the
+  -- list of its positions (`boundsList`), so no list the parent frees was
+  -- reachable from a task (stage 1k)
+  let chunks := L4Factoidal.Storage.Sbm11.ParallelScan.rangeBounds c metas.size
   let init : L4Factoidal.Qlvr.Table :=
     { vars := spec.outVars, cols := spec.outVars.map fun _ => ByteArray.empty,
       rows := 0, sortVar := IdQuery.sortVarOf spec }
@@ -985,7 +989,7 @@ def scanSipTableParM (ss : Session) (spec : IdQuery.ScanSpec) (cands : Array UIn
       let spec := spec.fresh
       let ox := ox.fresh spec.key
       let cands := cands.map fun x => UInt64.ofNat x.toNat
-      let (metasX, posX) := rangeMetas metas X
+      let (metasX, posX) := rangeMetas metas (L4Factoidal.Storage.Sbm11.ParallelScan.boundsList X)
       let init : L4Factoidal.Qlvr.Table :=
         { vars := spec.outVars, cols := spec.outVars.map fun _ => ByteArray.empty,
           rows := 0, sortVar := IdQuery.sortVarOf spec }
@@ -996,7 +1000,7 @@ def scanSipTableParM (ss : Session) (spec : IdQuery.ScanSpec) (cands : Array UIn
   let mut out := init
   let mut stats : IdQuery.ScanStats := { blocksTotal := ← st.blockCount spec.perm }
   let mut failure : Option String := none
-  match ← liftIO (IdQuery.scanListSipM st spec cands init f metas sortVar ox (chunks.headD [])).run with
+  match ← liftIO (IdQuery.scanListSipM st spec cands init f metas sortVar ox (L4Factoidal.Storage.Sbm11.ParallelScan.boundsList (chunks.headD (0, 0)))).run with
   | Except.ok (tab, s) =>
     out := tab
     stats := stats.add s
