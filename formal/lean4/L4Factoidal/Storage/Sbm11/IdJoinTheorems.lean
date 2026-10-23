@@ -32,10 +32,12 @@ already stated for the stored terms (`Term.eqb` identifies two
 terms in the language-tag case the packer folds to (`normalizeTerm`; the
 reference compares language tags without case, `Term.eqb`).
 
-Not proved (open, the step of lemma L5g″): that the `Table` that
-`IdJoin.joinIds` builds denotes the rows of `idJoin` of the tables' rows,
-`unbound` read as absent. Tested by the `#guard`s at the end of this file
-and by the gate queries `tests/sbm11/gate/ids-values-*.rq` against the
+The `Table` that `IdJoin.joinIds` builds denotes the rows of `idJoin` of
+the tables' rows, `unbound` read as absent, and `IdJoin.unionIds` the
+concatenation of the tables' rows: `TableTheorems.joinIds_rows` and
+`TableTheorems.unionIds_rows` (lemmas L5l″ and L5m of the design record).
+Also tested by the `#guard`s at the end of this file and by the gate queries
+`tests/sbm11/gate/ids-values-*.rq` and `ids-union-*.rq` against the
 reference engine.
 
 No `sorry`, no user `axiom`, no `native_decide`, no `partial`.
