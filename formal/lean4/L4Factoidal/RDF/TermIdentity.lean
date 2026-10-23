@@ -1,6 +1,8 @@
 /- RDF 1.1 Concepts §3.3 literal term equality, extended recursively to
-   RDF 1.2 triple terms. Separate from the store's historical XML-canonical
-   `Term.eqb`: RDF term identity preserves XMLLiteral lexical spelling. -/
+   RDF 1.2 triple terms. Until 2026-10-23 `Term.eqb` compared `rdf:XMLLiteral`
+   by canonical XML; since https://github.com/danbri/factoidal/issues/963 it
+   is this relation on literals too (`Literal.sameTerm` and `Literal.eqb` are
+   the same function). -/
 import L4Factoidal.RDF.Core
 
 namespace L4Factoidal.RDF
@@ -23,13 +25,17 @@ def Term.sameTerm : Term → Term → Bool
 @[simp] theorem Literal.sameTerm_refl (l : Literal) : l.sameTerm l = true := by
   simp [Literal.sameTerm]
 
-/-- Strict RDF identity implies the historical coarse engine equality.
-The converse is false for differently spelled XMLLiteral terms. -/
+/-- Strict RDF identity implies the engine equality.
+(`Literal.sameTerm_eq_eqb` below: the two are the same function.) -/
 theorem Literal.eqb_of_sameTerm {a b : Literal} (h : a.sameTerm b = true) :
     a.eqb b = true := by
   simp only [Literal.sameTerm, Bool.and_eq_true, beq_iff_eq] at h
   obtain ⟨⟨⟨hl, hd⟩, ht⟩, hr⟩ := h
   simp [Literal.eqb, hl, hd, ht, hr]
+
+/-- Literal identity IS the engine literal equality: `rdf:XMLLiteral` is
+compared by lexical form in both (https://github.com/danbri/factoidal/issues/963). -/
+theorem Literal.sameTerm_eq_eqb (a b : Literal) : a.sameTerm b = a.eqb b := rfl
 
 theorem Term.eqb_of_sameTerm : ∀ {a b : Term}, a.sameTerm b = true → a.eqb b = true
   | .iri _, .iri _, h => h
