@@ -13,7 +13,16 @@ docs/designissues/2026-10-12-sbm11-end-to-end-theorem.md).
   relation, up to order: a pair outside the restriction gives no row.
 * `pathTableM_rows`: `pathTableM` over a store of `BgpStore`, with no rows
   joined before (`unitTable`, the leaf of the nested evaluator), answers a
-  table whose rows are `IdEquiv` to the model's rows of the path pattern.
+  well-formed table whose rows are `IdEquiv` to the model's rows of the path
+  pattern.
+* `pathTableM_join`: `pathTableM` with the rows of a well-formed table `t`
+  joined before (the right side of a join in `IdGroup.evalGroupM`, with
+  candidates for a variable endpoint from `t`, `pathCands`): the table is
+  well formed and its join with the rows of `t` is `IdEquiv` to the join of
+  the rows of `t` with the model's rows. A pair the candidates drop gives a
+  row whose restricted variable is not a candidate; every row of `t` binds
+  that variable to a candidate (`pathCands_rows`), so that row joins no row
+  of `t` (`SemiJoin.idJoin_semijoin`).
 
 No `sorry`, no user `axiom`, no `native_decide`, no `partial`.
 -/
@@ -123,7 +132,8 @@ theorem table_of_fold (V : Array String) (hV : V.toList.Nodup) (acc : UInt64 × 
       | none => none)
     (hnz : ∀ a ∈ l, acc a = true → ∀ c < V.size, colF c a ≠ 0) :
     let r := l.foldl step (V.map (fun _ => ByteArray.emptyWithCapacity n), 0)
-    Pw RowEq ({ vars := V, cols := r.1, rows := r.2 } : Table).idRows ((l.filter acc).map row) := by
+    ({ vars := V, cols := r.1, rows := r.2 } : Table).WF ∧
+      Pw RowEq ({ vars := V, cols := r.1, rows := r.2 } : Table).idRows ((l.filter acc).map row) := by
   intro r
   obtain ⟨h1, h2, h3⟩ := fold_cols V.size acc colF step hstep l (V.map (fun _ => ByteArray.emptyWithCapacity n), 0)
     (fun _ => []) (by simp) (fun c hc => by
@@ -131,6 +141,11 @@ theorem table_of_fold (V : Array String) (hV : V.toList.Nodup) (acc : UInt64 × 
   simp only [List.nil_append, Nat.zero_add] at h2 h3
   let t : Table := { vars := V, cols := r.1, rows := r.2 }
   have hrows : t.rows = (l.filter acc).length := h2
+  refine ⟨⟨h1, fun c hc => ?_, hV⟩, ?_⟩
+  · have hcl := (h3 c (by rw [← h1]; exact hc)).1
+    rw [getElem!_pos _ c hc, List.length_map] at hcl
+    show r.1[c].size = 8 * r.2
+    rw [hcl, h2]
   apply pw_of_get
   · rw [TableTheorems.idRows_length, List.length_map]; exact hrows
   · intro i hi
@@ -169,14 +184,13 @@ def endOf : Slot → End
   | .missing => .var ""
 
 theorem rows_vv (v w : String) (hvw : v ≠ w) (pairs : Pairs) (hnz : ∀ pr ∈ pairs.toList, pr.1 ≠ 0 ∧ pr.2 ≠ 0) :
-    (pathRowsTable (.var v) (.var w) pairs).vars.toList.Nodup ∧
+    (pathRowsTable (.var v) (.var w) pairs).WF ∧
       Pw RowEq (pathRowsTable (.var v) (.var w) pairs).idRows
         (pairs.toList.filterMap (idPathRow (.var v) (.var w))) := by
   have hwv : (w != v) = true := by simpa using (Ne.symm hvw)
   unfold pathRowsTable
   simp only [Id.run, ← Array.forIn_toList, List.forIn_cons, List.forIn_nil]
   simp [hwv, Ne.symm hvw]
-  refine ⟨by show [v, w].Nodup; simp [hvw], ?_⟩
   rw [← Array.foldl_toList]
   have hfm : pairs.toList.filterMap (idPathRow (.var v) (.var w)) =
       (pairs.toList.filter (fun _ => true)).map (fun a => [(w, a.2), (v, a.1)]) := by
@@ -236,14 +250,13 @@ theorem step1 (b : Array ByteArray × Nat) (hb : b.1.size = 1) (y : UInt64) :
   rw [getElem!_modify _ _ _ _ (by simp [hb])]; simp
 
 theorem rows_vsame (v : String) (pairs : Pairs) (hnz : ∀ pr ∈ pairs.toList, pr.1 ≠ 0 ∧ pr.2 ≠ 0) :
-    (pathRowsTable (.var v) (.var v) pairs).vars.toList.Nodup ∧
+    (pathRowsTable (.var v) (.var v) pairs).WF ∧
       Pw RowEq (pathRowsTable (.var v) (.var v) pairs).idRows
         (pairs.toList.filterMap (idPathRow (.var v) (.var v))) := by
   unfold pathRowsTable
   simp only [Id.run, ← Array.forIn_toList, List.forIn_cons, List.forIn_nil]
   simp
   rw [forIn_if]
-  refine ⟨by show [v].Nodup; simp, ?_⟩
   have hfm : pairs.toList.filterMap (idPathRow (.var v) (.var v)) =
       (pairs.toList.filter (fun a => decide (a.2 = a.1))).map (fun a => [(v, a.1)]) := by
     rw [← List.filterMap_eq_map, List.filterMap_filter]
@@ -263,14 +276,13 @@ theorem rows_vsame (v : String) (pairs : Pairs) (hnz : ∀ pr ∈ pairs.toList, 
     _ _ _ (fun a u => lookup1 v u a.1) (fun a ha _ c _ => (hnz a ha).1)
 
 theorem rows_vconst (v : String) (k : UInt64) (pairs : Pairs) (hnz : ∀ pr ∈ pairs.toList, pr.1 ≠ 0 ∧ pr.2 ≠ 0) :
-    (pathRowsTable (.var v) (.const k) pairs).vars.toList.Nodup ∧
+    (pathRowsTable (.var v) (.const k) pairs).WF ∧
       Pw RowEq (pathRowsTable (.var v) (.const k) pairs).idRows
         (pairs.toList.filterMap (idPathRow (.var v) (.const k))) := by
   unfold pathRowsTable
   simp only [Id.run, ← Array.forIn_toList, List.forIn_cons, List.forIn_nil]
   simp
   rw [forIn_if]
-  refine ⟨by show [v].Nodup; simp, ?_⟩
   have hfm : pairs.toList.filterMap (idPathRow (.var v) (.const k)) =
       (pairs.toList.filter (fun a => decide (a.2 = k))).map (fun a => [(v, a.1)]) := by
     rw [← List.filterMap_eq_map, List.filterMap_filter]
@@ -290,14 +302,13 @@ theorem rows_vconst (v : String) (k : UInt64) (pairs : Pairs) (hnz : ∀ pr ∈ 
     _ _ _ (fun a u => lookup1 v u a.1) (fun a ha _ c _ => (hnz a ha).1)
 
 theorem rows_constv (k : UInt64) (w : String) (pairs : Pairs) (hnz : ∀ pr ∈ pairs.toList, pr.1 ≠ 0 ∧ pr.2 ≠ 0) :
-    (pathRowsTable (.const k) (.var w) pairs).vars.toList.Nodup ∧
+    (pathRowsTable (.const k) (.var w) pairs).WF ∧
       Pw RowEq (pathRowsTable (.const k) (.var w) pairs).idRows
         (pairs.toList.filterMap (idPathRow (.const k) (.var w))) := by
   unfold pathRowsTable
   simp only [Id.run, ← Array.forIn_toList, List.forIn_cons, List.forIn_nil]
   simp
   rw [forIn_if]
-  refine ⟨by show [w].Nodup; simp, ?_⟩
   have hfm : pairs.toList.filterMap (idPathRow (.const k) (.var w)) =
       (pairs.toList.filter (fun a => decide (a.1 = k))).map (fun a => [(w, a.2)]) := by
     rw [← List.filterMap_eq_map, List.filterMap_filter]
@@ -317,14 +328,13 @@ theorem rows_constv (k : UInt64) (w : String) (pairs : Pairs) (hnz : ∀ pr ∈ 
     _ _ _ (fun a u => lookup1 w u a.2) (fun a ha _ c _ => (hnz a ha).2)
 
 theorem rows_constconst (k k' : UInt64) (pairs : Pairs) :
-    (pathRowsTable (.const k) (.const k') pairs).vars.toList.Nodup ∧
+    (pathRowsTable (.const k) (.const k') pairs).WF ∧
       Pw RowEq (pathRowsTable (.const k) (.const k') pairs).idRows
         (pairs.toList.filterMap (idPathRow (.const k) (.const k'))) := by
   unfold pathRowsTable
   simp only [Id.run, ← Array.forIn_toList, List.forIn_cons, List.forIn_nil]
   simp
   rw [forIn_if]
-  refine ⟨by show ([] : List String).Nodup; simp, ?_⟩
   have hfm : pairs.toList.filterMap (idPathRow (.const k) (.const k')) =
       (pairs.toList.filter (fun a => decide (a.1 = k ∧ a.2 = k'))).map (fun _ => []) := by
     rw [← List.filterMap_eq_map, List.filterMap_filter]
@@ -353,7 +363,7 @@ theorem rows_constconst (k k' : UInt64) (pairs : Pairs) :
 /-- **`pathRowsTable`**: row for row, the rows `idPathRow` gives. -/
 theorem pathRowsTable_rows (s o : Slot) (hs : s ≠ .missing) (ho : o ≠ .missing) (pairs : Pairs)
     (hnz : ∀ pr ∈ pairs.toList, pr.1 ≠ 0 ∧ pr.2 ≠ 0) :
-    (pathRowsTable s o pairs).vars.toList.Nodup ∧
+    (pathRowsTable s o pairs).WF ∧
       Pw RowEq (pathRowsTable s o pairs).idRows (pairs.toList.filterMap (idPathRow (endOf s) (endOf o))) := by
   cases s with
   | missing => exact absurd rfl hs
@@ -538,7 +548,7 @@ theorem pathTableM_rows (st : Store Id) (g : UInt64) (T : List IdTriple) (hst : 
     (rp : RPath) (path : L4Factoidal.SPARQL.PropertyPath) (hg : rp.g = some g)
     (hip : IdPathEval.IPathOk cid path rp.ipath) (hz : rp.zeroLen = IdPath.pathZeroLen path)
     (hs : rp.s ≠ .missing) (ho : rp.o ≠ .missing) (hc0 : ∀ x, (rp.s = .const x ∨ rp.o = .const x) → x ≠ 0) :
-    ∃ tab how s, pathTableM st rp IdGroup.unitTable = pure (tab, how, s) ∧ (∀ r ∈ tab.idRows, Nd r) ∧
+    ∃ tab how s, pathTableM st rp IdGroup.unitTable = pure (tab, how, s) ∧ tab.WF ∧ (∀ r ∈ tab.idRows, Nd r) ∧
       IdEquiv tab.idRows (idPathRows (endOf rp.s) (endOf rp.o)
         (IdPath.idConstRefl (IdPath.pathZeroLen path) (IdPath.idConsts (endOf rp.s) (endOf rp.o))
           (IdPath.idEvalPath (fun i => cid (.iri i)) notLit path T))) := by
@@ -588,7 +598,7 @@ theorem pathTableM_rows (st : Store Id) (g : UInt64) (T : List IdTriple) (hst : 
   rw [hz] at hperm
   refine ⟨pathRowsTable rp.s rp.o (pathPairsOf rp pairs0),
     s!"{how}: {(pathPairsOf rp pairs0).size} pairs, {(pathRowsTable rp.s rp.o (pathPairsOf rp pairs0)).rows} rows",
-    s, ?_, BgpTableTheorems.nd_idRows _ hnd, ?_⟩
+    s, ?_, hnd, BgpTableTheorems.nd_idRows _ hnd.nodup, ?_⟩
   · unfold pathTableM
     rw [hP]
     simp only []
@@ -597,8 +607,271 @@ theorem pathTableM_rows (st : Store Id) (g : UInt64) (T : List IdTriple) (hst : 
   · obtain ⟨A', hp, hw⟩ := Pw.perm_right hpw hperm
     exact ⟨A', hp, hw⟩
 
+/-! ## `pathTableM` with rows joined before (`IdQuery.pathCands`) -/
+
+/-- The loop of `pathCands`: it stops at the first row whose column holds
+    `unbound`, else it has appended the column's value of every row. -/
+theorem cands_loop (bad : Nat → Bool) (val : Nat → UInt64) :
+    ∀ (L : List Nat) (acc : Array UInt64),
+      let F := forIn (m := Id) L ((none : Option (Option (Array UInt64))), acc) fun i s =>
+        if bad i = true then pure (ForInStep.done (some none, s.2))
+        else pure (ForInStep.yield (none, s.2.push (val i)))
+      F.1 = some none ∨ (F.1 = none ∧ (∀ i ∈ L, bad i = false) ∧ F.2 = acc ++ (L.map val).toArray) := by
+  intro L
+  induction L with
+  | nil =>
+    intro acc; right
+    refine ⟨rfl, ?_, ?_⟩
+    · intro _ h; cases h
+    · show acc = acc ++ #[]; simp
+  | cons i L ih =>
+    intro acc
+    simp only [List.forIn_cons]
+    cases hb : bad i with
+    | true => left; rfl
+    | false =>
+      simp only [Bool.false_eq_true, if_false]
+      rcases ih (acc.push (val i)) with h | ⟨h1, h2, h3⟩
+      · left; exact h
+      · right
+        refine ⟨h1, fun j hj => ?_, ?_⟩
+        · rcases List.mem_cons.mp hj with e | e
+          · subst e; exact hb
+          · exact h2 j e
+        · erw [h3]; simp
+
+/-- What `pathCands` returns: the variable is a column, no row leaves it
+    unbound, and the candidates are the column's values, sorted, each once. -/
+theorem pathCands_some (t : Table) (v : String) (c : Array UInt64) (h : pathCands t v = some c) :
+    ∃ col, t.idx v = some col ∧ (∀ i < t.rows, (t.at col i == unbound) = false) ∧
+      c = IdPath.sortedDistinct ((List.range t.rows).map (t.at col)).toArray := by
+  unfold pathCands at h
+  cases hx : t.idx v with
+  | none => rw [hx] at h; cases h
+  | some col =>
+    rw [hx] at h
+    simp only [Id.run, Std.Legacy.Range.forIn_eq_forIn_range', Std.Legacy.Range.size, Nat.sub_zero,
+      Nat.add_sub_cancel, Nat.div_one] at h
+    have hl := cands_loop (fun i => t.at col i == unbound) (t.at col) (List.range' 0 t.rows) (Array.mkEmpty t.rows)
+    generalize hF : forIn (m := Id) (List.range' 0 t.rows) _ _ = F at h hl
+    obtain ⟨f1, f2⟩ := F
+    simp only [] at hl
+    rcases hl with h1 | ⟨h1, h2, h3⟩
+    · subst h1; cases h
+    · subst h1
+      have h' : some (IdPath.sortedDistinct f2) = some c := h
+      refine ⟨col, rfl, fun i hi => h2 i (by simp [List.mem_range'_1]; omega), ?_⟩
+      rw [← Option.some.inj h', show f2 = _ from h3, List.range_eq_range']
+      simp [Array.mkEmpty]
+
+
+/-- Candidates from `pathCands` are increasing (`RGood`), and every row of the
+    table binds the variable to a candidate. -/
+theorem pathCands_rows (t : Table) (ht : t.WF) (v : String) (c : Array UInt64) (h : pathCands t v = some c) :
+    IdPathClosureExec.RGood (some c) ∧ ∀ r ∈ t.idRows, ∃ x, idLookup v r = some x ∧ c.contains x = true := by
+  obtain ⟨col, hx, hb, hc⟩ := pathCands_some t v c h
+  subst hc
+  refine ⟨IdPathEval.rgood_sd _, ?_⟩
+  intro r hr
+  obtain ⟨i, hi, rfl⟩ := List.mem_map.mp hr
+  have hi' := List.mem_range.mp hi
+  refine ⟨t.at col i, ?_, ?_⟩
+  · rw [TableTheorems.lookup_idRow t ht.nodup]
+    unfold L4Factoidal.Qlvr.Table.lookupAt
+    rw [hx]
+    simp [hb i hi']
+  · rw [Array.contains_iff_mem, ← Array.mem_toList_iff, (IdPath.sortedDistinct_spec _).2]
+    simp only [List.mem_map, List.mem_range]
+    exact ⟨i, hi', rfl⟩
+
+/-- A filter before `filterMap` is a filter after it, when the test after
+    reads what the test before reads. -/
+theorem filterMap_filter_comm {α β : Type} (F : α → Option β) (q : α → Bool) (k : β → Bool)
+    (hk : ∀ a b, F a = some b → k b = q a) :
+    ∀ L : List α, (L.filter q).filterMap F = (L.filterMap F).filter k := by
+  intro L
+  induction L with
+  | nil => rfl
+  | cons a L ih =>
+    simp only [List.filter_cons, List.filterMap_cons]
+    cases hF : F a with
+    | none =>
+      simp only []
+      split <;> simp [hF, ih]
+    | some b =>
+      simp only [List.filter_cons, hk a b hF]
+      split <;> simp [hF, ih]
+
+/-- For two variable endpoints, the restriction `Restr` of the candidates
+    keeps a pair exactly when the row of the pair binds the restricted
+    variable to a candidate (`SemiJoin.keepRow`). -/
+theorem keep_vv (v w : String) (c : Array UInt64) (fwd : Bool) (pr : UInt64 × UInt64) (r : IdRow)
+    (h : idPathRow (.var v) (.var w) pr = some r) :
+    SemiJoin.keepRow (if fwd then v else w) (fun x => c.contains x) r =
+      IdPathScanTheorems.Restr fwd (some c) pr := by
+  unfold idPathRow at h
+  by_cases hvw : v = w
+  · subst hvw
+    simp only [idLookup, if_true] at h
+    by_cases he : pr.1 = pr.2
+    · simp only [he, beq_self_eq_true, if_true, Option.some.injEq] at h
+      subst h
+      cases fwd <;> simp [SemiJoin.keepRow, idLookup, IdPathScanTheorems.Restr, he]
+    · have : (pr.1 == pr.2) = false := by simpa using he
+      simp [this] at h
+  · simp only [idLookup, hvw, if_false, Option.some.injEq] at h
+    subst h
+    have hwv : ¬ w = v := Ne.symm hvw
+    cases fwd <;> simp [SemiJoin.keepRow, idLookup, IdPathScanTheorems.Restr, hwv]
+
+
+/-- No id of a pair of the path relation over the graph is 0. -/
+theorem eval_nz (st : Store Id) (g : UInt64) (T : List IdTriple) (hst : BgpStore st g T)
+    (cid : Term → Option UInt64) (notLit : UInt64 → Bool) (path : L4Factoidal.SPARQL.PropertyPath) :
+    ∀ pr ∈ IdPath.idEvalPath (fun i => cid (.iri i)) notLit path T, pr.1 ≠ 0 ∧ pr.2 ≠ 0 := by
+  have hTnz := store_nz st g T hst
+  intro pr hpr'
+  obtain ⟨h1, h2⟩ := IdPath.eval_nodes (fun i => cid (.iri i)) notLit T path pr hpr'
+  rw [IdPathScanTheorems.mem_graphNodes] at h1 h2
+  obtain ⟨x, hx, e1 | e1⟩ := h1 <;> obtain ⟨y, hy, e2 | e2⟩ := h2 <;>
+    exact ⟨e1 ▸ (by first | exact (hTnz x hx).1 | exact (hTnz x hx).2),
+      e2 ▸ (by first | exact (hTnz y hy).1 | exact (hTnz y hy).2)⟩
+
+/-- The model's rows for two variable endpoints: no constant, so
+    `idConstRefl` adds no pair. -/
+theorem model_vv (v w : String) (z : Bool) (L : IdPairs) :
+    idPathRows (endOf (.var v)) (endOf (.var w)) (IdPath.idConstRefl z (IdPath.idConsts (endOf (.var v)) (endOf (.var w))) L) =
+      idPathRows (.var v) (.var w) L := by
+  cases z <;> simp [IdPath.idConstRefl, IdPath.idConsts, endOf]
+
+section
+variable (st : Store Id) (g : UInt64) (T : List IdTriple) (hst : BgpStore st g T)
+    (cid : Term → Option UInt64) (notLit : UInt64 → Bool)
+    (hlit : ∀ x ∈ IdPath.idGraphNodes T, IdPathEval.litTag x = some (!notLit x))
+    (rp : RPath) (path : L4Factoidal.SPARQL.PropertyPath) (hg : rp.g = some g)
+    (hip : IdPathEval.IPathOk cid path rp.ipath)
+include hst hlit hg hip
+
+/-- `pathTableM` with candidates for a variable endpoint from the rows of
+    `t`: its table, joined with `t`, gives the rows of the join of `t` with
+    the model's unrestricted rows, up to order (`IdEquiv`). A pair the
+    candidates drop gives a row whose restricted variable is not a
+    candidate, and every row of `t` binds that variable to a candidate, so
+    the row joins no row of `t` (`SemiJoin.idJoin_semijoin`). -/
+theorem pathTableM_cands (v w : String) (hsv : rp.s = .var v) (hov : rp.o = .var w)
+    (t : Table) (ht : t.WF) (fwd : Bool) (c : Array UInt64)
+    (hR : (pathRestr rp t).1 = fwd ∧ (pathRestr rp t).2.1 = some c)
+    (hc : pathCands t (if fwd then v else w) = some c) :
+    ∃ tab how s, pathTableM st rp t = pure (tab, how, s) ∧ tab.WF ∧ (∀ r ∈ tab.idRows, Nd r) ∧
+      IdEquiv (IdJoin.idJoin t.idRows tab.idRows)
+        (IdJoin.idJoin t.idRows (idPathRows (.var v) (.var w) (IdPath.idEvalPath (fun i => cid (.iri i)) notLit path T))) := by
+  obtain ⟨hgood, hrows⟩ := pathCands_rows t ht _ c hc
+  generalize hP : pathRestr rp t = pr at hR
+  obtain ⟨fwd', R, how⟩ := pr
+  obtain ⟨e1, e2⟩ := hR
+  simp only [] at e1 e2
+  subst e1 e2
+  obtain ⟨pairs0, s, he, hp0⟩ := IdPathEval.evalIM_spec st g T hst cid notLit hlit path rp.ipath hip fwd' (some c) hgood
+  have hpp : pathPairsOf rp pairs0 = pairs0 := by
+    simp [pathPairsOf, hsv, hov]
+  have hLnz := eval_nz st g T hst cid notLit path
+  have hpnz : ∀ pr ∈ pairs0.toList, pr.1 ≠ 0 ∧ pr.2 ≠ 0 := fun q hq =>
+    hLnz q (List.mem_filter.mp (hp0.mem_iff.mp hq)).1
+  obtain ⟨hwf, hpw⟩ := pathRowsTable_rows (.var v) (.var w) (by simp) (by simp) pairs0 hpnz
+  let L := IdPath.idEvalPath (fun i => cid (.iri i)) notLit path T
+  have hperm : (pairs0.toList.filterMap (idPathRow (endOf (.var v)) (endOf (.var w)))).Perm
+      ((idPathRows (.var v) (.var w) L).filter (SemiJoin.keepRow (if fwd' then v else w) (fun x => c.contains x))) := by
+    refine (hp0.filterMap _).trans (List.Perm.of_eq ?_)
+    unfold idPathRows
+    exact filterMap_filter_comm _ _ _ (fun pr r h => keep_vv v w c fwd' pr r h) L
+  obtain ⟨A', hp, hw⟩ := Pw.perm_right hpw hperm
+  have hnd := BgpTableTheorems.nd_idRows t ht.nodup
+  refine ⟨pathRowsTable rp.s rp.o (pathPairsOf rp pairs0),
+    s!"{how}: {(pathPairsOf rp pairs0).size} pairs, {(pathRowsTable rp.s rp.o (pathPairsOf rp pairs0)).rows} rows",
+    s, ?_, ?_, ?_, ?_⟩
+  · unfold pathTableM
+    rw [hP]
+    simp only []
+    rw [hg, he]
+    rfl
+  · rw [hpp, hsv, hov]; exact hwf
+  · rw [hpp, hsv, hov]; exact BgpTableTheorems.nd_idRows _ hwf.nodup
+  · rw [hpp, hsv, hov]
+    have h1 := BgpTableTheorems.idJoin_equiv (IdEquiv.refl t.idRows) ⟨A', hp, hw⟩ hnd hnd
+    have h2 : IdJoin.idJoin t.idRows ((idPathRows (.var v) (.var w) L).filter
+        (SemiJoin.keepRow (if fwd' then v else w) (fun x => c.contains x))) =
+        IdJoin.idJoin t.idRows (idPathRows (.var v) (.var w) L) :=
+      SemiJoin.idJoin_semijoin _ _ _ _ hrows
+    rw [h2] at h1
+    exact h1
+
+/-- `pathTableM` when the rows of `t` give no candidates (or a constant
+    endpoint restricts first): the table of `pathTableM_rows`. -/
+theorem pathTableM_same (hz : rp.zeroLen = IdPath.pathZeroLen path)
+    (hs : rp.s ≠ .missing) (ho : rp.o ≠ .missing) (hc0 : ∀ x, (rp.s = .const x ∨ rp.o = .const x) → x ≠ 0)
+    (t : Table) (ht : t.WF) (hP : pathRestr rp t = pathRestr rp IdGroup.unitTable) :
+    ∃ tab how s, pathTableM st rp t = pure (tab, how, s) ∧ tab.WF ∧ (∀ r ∈ tab.idRows, Nd r) ∧
+      IdEquiv (IdJoin.idJoin t.idRows tab.idRows)
+        (IdJoin.idJoin t.idRows (idPathRows (endOf rp.s) (endOf rp.o)
+          (IdPath.idConstRefl (IdPath.pathZeroLen path) (IdPath.idConsts (endOf rp.s) (endOf rp.o))
+            (IdPath.idEvalPath (fun i => cid (.iri i)) notLit path T)))) := by
+  obtain ⟨tab, how, s, he, hwf, hnd, heq⟩ :=
+    pathTableM_rows st g T hst cid notLit hlit rp path hg hip hz hs ho hc0
+  have hnt := BgpTableTheorems.nd_idRows t ht.nodup
+  refine ⟨tab, how, s, ?_, hwf, hnd, BgpTableTheorems.idJoin_equiv (IdEquiv.refl _) heq hnt hnt⟩
+  have : pathTableM st rp t = pathTableM st rp IdGroup.unitTable := by
+    unfold pathTableM; rw [hP]
+  rw [this, he]
+
+/-- **The table of a path pattern with rows joined before** (`pathTableM`
+    with `t` the left side of a join, as `IdGroup.evalGroupM` runs it): over
+    a store of `BgpStore`, for any well-formed `t`, the table is well formed,
+    its rows bind no variable twice, and its join with the rows of `t` is,
+    up to order (`IdEquiv`), the join of the rows of `t` with the model's
+    rows of the path pattern (`idPathRows` after `idConstRefl` of
+    `idEvalPath`), which are the rows of `pathTableM` with no rows joined
+    before (`pathTableM_rows`). -/
+theorem pathTableM_join (hz : rp.zeroLen = IdPath.pathZeroLen path)
+    (hs : rp.s ≠ .missing) (ho : rp.o ≠ .missing) (hc0 : ∀ x, (rp.s = .const x ∨ rp.o = .const x) → x ≠ 0)
+    (t : Table) (ht : t.WF) :
+    ∃ tab how s, pathTableM st rp t = pure (tab, how, s) ∧ tab.WF ∧ (∀ r ∈ tab.idRows, Nd r) ∧
+      IdEquiv (IdJoin.idJoin t.idRows tab.idRows)
+        (IdJoin.idJoin t.idRows (idPathRows (endOf rp.s) (endOf rp.o)
+          (IdPath.idConstRefl (IdPath.pathZeroLen path) (IdPath.idConsts (endOf rp.s) (endOf rp.o))
+            (IdPath.idEvalPath (fun i => cid (.iri i)) notLit path T)))) := by
+  have same := pathTableM_same st g T hst cid notLit hlit rp path hg hip hz hs ho hc0 t ht
+  cases hs' : rp.s with
+  | missing => exact absurd hs' hs
+  | const x =>
+    rw [← hs']
+    exact same (by simp [pathRestr, hs'])
+  | var v =>
+    cases ho' : rp.o with
+    | missing => exact absurd ho' ho
+    | const y =>
+      rw [← hs', ← ho']
+      exact same (by simp [pathRestr, hs', ho'])
+    | var w =>
+      rw [model_vv]
+      cases hcv : pathCands t v with
+      | some c =>
+        exact pathTableM_cands st g T hst cid notLit hlit rp path hg hip v w hs' ho' t ht true c
+          (by simp [pathRestr, hs', ho', hcv]) (by simpa using hcv)
+      | none =>
+        cases hcw : pathCands t w with
+        | some c =>
+          exact pathTableM_cands st g T hst cid notLit hlit rp path hg hip v w hs' ho' t ht false c
+            (by simp [pathRestr, hs', ho', hcv, hcw]) (by simpa using hcw)
+        | none =>
+          have := same (by simp [pathRestr, hs', ho', hcv, hcw, pathCands_unit])
+          rw [hs', ho', model_vv] at this
+          exact this
+
+end
+
 end L4Factoidal.Storage.Sbm11.IdPathTable
 
 #print axioms L4Factoidal.Storage.Sbm11.IdPathTable.pathTableM_rows
 #print axioms L4Factoidal.Storage.Sbm11.IdPathTable.pathRowsTable_rows
 #print axioms L4Factoidal.Storage.Sbm11.IdPathTable.pathPairs_rows
+#print axioms L4Factoidal.Storage.Sbm11.IdPathTable.pathTableM_join

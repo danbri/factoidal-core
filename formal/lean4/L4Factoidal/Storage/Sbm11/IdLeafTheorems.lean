@@ -70,8 +70,10 @@ sequential evaluation, hence to `bgpJoin`; right scans with candidates
 included), and the WHERE clause with those leaves executed in
 `ExecLeafTheorems.where_allowed_exec`, with the property path leaves
 executed too (`IdPathTableTheorems.pathTableM_rows`, `ExecLeafTheorems.pathM_rows`:
-`IdQuery.pathTableM` with no rows joined before against `pathRows`). Open:
-`pathTableM` with candidates from a left side, and that the listings are
+`IdQuery.pathTableM` with no rows joined before against `pathRows`), and
+`pathTableM` with candidates from a left side in
+`IdPathTableTheorems.pathTableM_join` and
+`ExecLeafTheorems.where_allowed_exec_join`. Open: that the listings are
 the decoded PRB1 files of an admitted generation (E0, L3c).
 
 No `sorry`, no user `axiom`, no `native_decide`, no `partial`.
