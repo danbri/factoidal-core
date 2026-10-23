@@ -27,7 +27,9 @@ special case.
 
 Blank nodes are terms with labels here. Their scope (one origin, for example
 one document) and equality up to a consistent relabelling are part of the
-contract of a stage, not of this type (phases B3 and C of issue 975).
+contract of a stage, not of this type (phases B3 and C of issue 975):
+`DatasetDen.Iso` in `RDF/BnodeTransport.lean`, the document scope and
+`DatasetDen.IsMerge` in `RDF/DocumentScope.lean`.
 
 Two conditions hold of every `DatasetDen`:
 
