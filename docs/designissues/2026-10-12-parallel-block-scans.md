@@ -1126,7 +1126,7 @@ table above.
 
 ### 1g.5 Gates
 
-On commit `a7c1e0f0` and the commits before it (exit codes read):
+On commit `dc320096` (exit codes read; the answer gates on `54208643`, which has the same Lean code apart from the wake rule of `26ce3f94`; `threads.sh` was run again on `dc320096`):
 
 | Gate | Result |
 | --- | --- |
@@ -1135,7 +1135,7 @@ On commit `a7c1e0f0` and the commits before it (exit codes read):
 | `tests/sbm11/run.sh` | exit 0: 3,131 pass, 0 fail, 28 expected-fail (out of 3,159) |
 | `SBM11_THREADS=4 tests/sbm11/census.sh` | exit 0: 605 executed, 605 matched the reference engine, 0 differed; 4 refused at query |
 | `lean-tail-recursion-audit.py --gate`, `lean-unbuilt-modules.py --gate` | exit 0, exit 0 (941 modules reached) |
-| `tools/land-gates.sh` | LAND_GATES_RESULT |
+| `tools/land-gates.sh` | exit 0 (LAND GATES PASSED): `lake build`, unbuilt-modules, tail-recursion, wasm, native-smoke 377 pass, 0 fail, 4 xfail (out of 381), cli-smoke 151 pass, 0 fail, 5 xfail (out of 156), npm, hub, engine-compare, the LWS, Solid and authorization suites, lint |
 | `sorry`, `native_decide`, `axiom`, `maxHeartbeats` in the Lean diff | none |
 
 ### 1g.6 Tried and not kept
