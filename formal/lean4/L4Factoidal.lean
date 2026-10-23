@@ -32,6 +32,8 @@ import L4Factoidal.Dataflow.Stage
 import L4Factoidal.Dataflow.StageTests
 import L4Factoidal.Dataflow.Instances
 import L4Factoidal.Dataflow.InstancesTests
+import L4Factoidal.Dataflow.PhaseD
+import L4Factoidal.Dataflow.PhaseDTests
 import L4Factoidal.Dataflow.Registry
 import L4Factoidal.Dataflow.RegistryTests
 import L4Factoidal.RDF.ConciseBoundedDescription
@@ -279,6 +281,8 @@ import L4Factoidal.SPARQL.UpdateStore
 import L4Factoidal.SPARQL.UpdateStoreTheorems
 import L4Factoidal.SPARQL.UpdateTests
 import L4Factoidal.SPARQL.UpdateTheorems
+import L4Factoidal.SPARQL.UpdateDenotation
+import L4Factoidal.SPARQL.UpdateDenotationTests
 import L4Factoidal.Regex.Syntax
 import L4Factoidal.Regex.Derivative
 import L4Factoidal.Regex.Exec

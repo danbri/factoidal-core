@@ -81,9 +81,11 @@ ends at `SolutionSeq`. `sbm11PlannerSelect` is the reference fallback of
    `documentToSolutions_sound` proves that the decoded rows are
    `t.idRows.map (decRow (decV G.dec s.vocab))`, the sequence that `WhereOk`
    allows (`termOf_withLocal`, `store_written`, `mem_htermOf`, `mem_hloc`).
-5. Reasoners take one graph. `rdfsClosureStage` maps `Graph` to `Graph`;
-   there is no stage from `Dataset` (RDF 1.1 Semantics defines entailment on
-   graphs; a dataset regime is a choice, not stated here).
+5. Reasoners take one graph (closed in phase D). `rdfsClosureStage` maps
+   `Graph` to `Graph`; RDF 1.1 Semantics defines entailment on graphs.
+   `Dataflow/PhaseD.lean` gives each reasoner a dataset form: the graph
+   selection (`GraphSelection`, `selectStage`, `mem_select`) is an explicit
+   stage parameter.
 6. Planner stage input (partly closed). The planner SELECT stage is on the
    shipped path: the reference fallback of `l4sbm11 query` reads a dataset
    from the generation (`selectedDataset`) and runs it. `sbm11PlannerSelect`
