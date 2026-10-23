@@ -372,7 +372,7 @@ store_update "$LM" "$TMP/limit/r1.ru" --max-overlay-entries 5
 if [ "$URC" -eq 1 ] && grep -q "refused" "$LM.upd" && grep -q "l4sbm11 compact" "$LM.upd" && grep -q "limit of 5 entries" "$LM.upd" && cmp -s "$LOG" "$TMP/limit/before.dlog"; then
   record limit entries-over-limit-refused 0 "a sixth entry: exit 1, the log file unchanged, the message names the limit and 'l4sbm11 compact': $(grep -o 'would hold [0-9]* entries' "$LM.upd")"
 else record limit entries-over-limit-refused 1 "exit $URC, log $(cmp -s "$LOG" "$TMP/limit/before.dlog" && echo unchanged || echo CHANGED): $(tail -1 "$LM.upd" | cut -c1-200)"; fi
-SIZE="$(stat -c %s "$LOG")"
+SIZE="$(wc -c <"$LOG" | tr -d ' ')"
 store_update "$LM" "$TMP/limit/r1.ru" --max-overlay-bytes $((SIZE + 10))
 if [ "$URC" -eq 1 ] && grep -q "l4sbm11 compact" "$LM.upd" && grep -q "would hold [0-9]* bytes" "$LM.upd" && cmp -s "$LOG" "$TMP/limit/before.dlog"; then
   record limit bytes-over-limit-refused 0 "a log of $SIZE bytes, limit $((SIZE + 10)) bytes: a request of one entry is refused ($(grep -o 'would hold [0-9]* bytes' "$LM.upd")), the log file unchanged"
@@ -401,7 +401,7 @@ else record limit not-a-number 1 "flag exit $U1, environment exit $URC"; fi
 SV="$(printf '' | SBM11_MAX_OVERLAY_ENTRIES=4 "$BIN/l4sbm11" serve "$LM" 2>&1 >/dev/null | grep 'overlay size')"
 SW="$(printf '' | SBM11_MAX_OVERLAY_ENTRIES=100 "$BIN/l4sbm11" serve "$LM" 2>&1 >/dev/null | grep 'overlay size')"
 SN="$(printf '' | "$BIN/l4sbm11" serve "$LM" 2>&1 >/dev/null | grep 'overlay size')"
-LB="$(stat -c %s "$LOG")"
+LB="$(wc -c <"$LOG" | tr -d ' ')"
 case "$SV|$SW|$SN" in
   *"overlay size: 7 log entries in 4 batches, $LB bytes of log"*"over the limit of 4 entries"*"|"*"within the limit of 100 entries"*"|"*"no limit set"*)
     record limit serve-reports-size 0 "7 log entries in 4 batches, $LB bytes of log: over a limit of 4 entries, within 100, no limit set" ;;
@@ -547,7 +547,10 @@ bbytes="$(grep -o ' bytes=[0-9]*' "$Z.upd" | head -1 | cut -d= -f2)"
 brss="$(grep -o 'peak RSS (VmHWM): [0-9]* kB' "$Z.upd" | grep -o '[0-9][0-9]*' | head -1)"
 brc="$(grep -o 'peak RSS after compile [0-9]* kB' "$Z.upd" | grep -o '[0-9][0-9]*' | head -1)"
 bre="$(grep -o 'after encode [0-9]* kB' "$Z.upd" | grep -o '[0-9][0-9]*' | head -1)"
-if [ "$URC" -ne 0 ] || [ -z "$bbytes" ] || [ -z "$brss" ] || [ -z "$brc" ] || [ -z "$bre" ]; then
+if [ ! -r /proc/self/status ]; then
+  # the peak RSS figures come from /proc/self/status (VmHWM), which only Linux has
+  echo "(scaling batch-encoder-memory) left out: no /proc/self/status for the peak RSS (not counted)"
+elif [ "$URC" -ne 0 ] || [ -z "$bbytes" ] || [ -z "$brss" ] || [ -z "$brc" ] || [ -z "$bre" ]; then
   record scaling batch-encoder-setup 1 "exit $URC, bytes '$bbytes', rss '$brss', after compile '$brc', after encode '$bre': $(tail -1 "$Z.upd" | cut -c1-120)"
 else
   inc=$(((bre - brc) * 1024))

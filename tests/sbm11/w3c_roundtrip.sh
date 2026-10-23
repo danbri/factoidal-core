@@ -180,7 +180,7 @@ export TMP BIN
 
 echo "=== $total_rows tests from $(echo "${manifests[@]}" | wc -w) RDF manifests, the JSON-LD toRdf manifest and 9 empty documents, $JOBS in parallel"
 t0=$SECONDS
-tr '\n' '\0' <"$TMP/rows.tsv" | xargs -0 -P "$JOBS" -I{} bash -c 'run_row "$1"' _ {} >"$TMP/results.tsv"
+tr '\n' '\0' <"$TMP/rows.tsv" | xargs -0 -P "$JOBS" -n 1 bash -c 'run_row "$1"' _ >"$TMP/results.tsv"
 echo "=== ran in $((SECONDS - t0)) s"
 done_rows="$(wc -l <"$TMP/results.tsv")"
 if [ "$done_rows" -ne "$total_rows" ]; then

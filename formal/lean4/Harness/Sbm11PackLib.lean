@@ -81,8 +81,17 @@ Then every file is hashed (SHA-256 and 65,536-byte Merkle leaves, written to
 Memory is bounded by the K phase-1 maps and quad buffers, the merge buffers
 and the four row buffers; for N-Triples, N-Quads, Turtle and TriG it does not
 grow with the source. For RDF/XML and JSON-LD the reader holds the document
-(see Phase 1). Every frame the packer writes is decoded again and compared
-with its column.
+(see Phase 1).
+
+The bytes of every GDV1 page, GDX1 entry, PRB1 block and PRM1 entry come from
+the pure step functions of `L4Factoidal/Storage/Sbm11/PackStream.lean`
+(`Pages.push`, `Cut.push`), and the theorems there state that, for the key
+stream and the row streams of the pure specification `PackSpec.packSpec`, they
+are the bytes of `packSpec` (`Pages.gdv_eq`, `Pages.entries_eq`,
+`Cut.packPerm_eq`; the frames by `ColumnFastTheorems.encodeColumnFast_eq`).
+The merges that deliver those streams are checked at run time (order, the four
+permutations' row counts and digests) and tested byte for byte against
+`packSpec` (`l4sbm11 packspec-check`).
 
 Prints phase times and VmHWM. Exit 1 on any error.
 -/
@@ -92,6 +101,7 @@ import L4Factoidal.RDF.SourceJsonLd
 import L4Factoidal.RDF.QuadSource
 import L4Factoidal.HDT.QuadSource
 import L4Factoidal.Storage.Sbm11.GraphList
+import L4Factoidal.Storage.Sbm11.PackStream
 import L4Factoidal.Qlvr.Sort
 import L4Factoidal.Qlvr.CmpBytesFast
 import Std.Data.HashMap
@@ -638,11 +648,15 @@ def RunReader.nextWord (r : RunReader) : IO (Option UInt64 × RunReader) := do
   let r ← r.ensure 8
   return (some (wordAt r.buf r.pos), { r with pos := r.pos + 8 })
 
+/-- The GDV1 and GDX1 writer of phase 2. The pages and their GDX1 entries come
+    from `PackStream.Pages.push` and `PackStream.Pages.finish`, one key at a time
+    (`PackStream.Pages.gdv_eq`, `PackStream.Pages.entries_eq`: for the key stream
+    `keys` they are the bytes of `Dict.encodeDict? keys`); the writer only buffers
+    and writes them. -/
 structure Writer where
   gdv : IO.FS.Handle
   ent : IO.FS.Handle
-  page : Array (List UInt8) := #[]
-  gdvOff : Nat := gdvHeader.length
+  st : PackStream.Pages := ⟨#[], gdvHeader.length⟩
   pages : Nat := 0
   terms : Nat := 0
   bufGdv : ByteArray := ByteArray.emptyWithCapacity (1 <<< 20)
@@ -658,21 +672,25 @@ def Writer.flushBufs (w : Writer) (force : Bool) : IO Writer := do
     w := { w with bufEnt := ByteArray.emptyWithCapacity (1 <<< 16) }
   return w
 
-def Writer.closePage (w : Writer) : IO Writer := do
-  if w.page.isEmpty then return w
-  let bytes := encodePage w.page.toList
-  let e : DirEntry := ⟨w.gdvOff, bytes.length⟩
+/-- Write one closed page: its bytes to GDV1, its entry to GDX1. -/
+def Writer.emit (w : Writer) (o : List UInt8 × DirEntry) : IO Writer := do
   let w := { w with
-    bufGdv := w.bufGdv ++ listBytes bytes
-    bufEnt := w.bufEnt ++ listBytes (entryBytes e)
-    gdvOff := w.gdvOff + bytes.length
-    pages := w.pages + 1
-    page := #[] }
+    bufGdv := w.bufGdv ++ listBytes o.1
+    bufEnt := w.bufEnt ++ listBytes (entryBytes o.2)
+    pages := w.pages + 1 }
   w.flushBufs false
 
+def Writer.closePage (w : Writer) : IO Writer := do
+  match w.st.finish with
+  | some o => Writer.emit { w with st := ⟨#[], w.st.off⟩ } o
+  | none => return w
+
 def Writer.add (w : Writer) (k : ByteArray) : IO Writer := do
-  let w := { w with page := w.page.push k.data.toList, terms := w.terms + 1 }
-  if w.page.size ≥ pageTerms then w.closePage else return w
+  let (st, o) := w.st.push k.data.toList
+  let w := { w with st, terms := w.terms + 1 }
+  match o with
+  | some o => w.emit o
+  | none => return w
 
 def copyInto (dst : IO.FS.Handle) (src : String) : IO Unit := do
   IO.FS.withFile src .read fun h => do
@@ -951,58 +969,53 @@ structure PermOut where
   frameBytes : Array Nat
   deriving Inhabited
 
+/-- The PRB1 writer of phase 3b. The blocks, their frames and their PRM1 entries
+    come from `PackStream.Cut.push` and `PackStream.Cut.finish`, one row at a time
+    (`PackStream.Cut.packPerm_eq`: for the row stream of permutation `k` of
+    `PackSpec.packSpec` they are the bytes of `PackSpec.packPerm?`); the writer only
+    buffers and writes them, and counts the frame codecs and the rows' digest. -/
 structure BlockWriter where
   perm : Nat
+  blockRows : Nat
   h : IO.FS.Handle
   buf : ByteArray := ByteArray.emptyWithCapacity (1 <<< 20)
-  offset : Nat := prbHeaderBytes
+  cut : PackStream.Cut := ⟨prbHeaderBytes, #[]⟩
   metas : Array BlockMeta := #[]
-  cur : Array QRow := #[]
   digest : Digest2 := {}
   codecs : Array Nat := #[0, 0, 0, 0]
   frameBytes : Array Nat := #[0, 0, 0, 0]
 
-def encodeChecked (col : Array Nat) (what : String) : IO ByteArray := do
-  let f := encodeColumnFast col
-  match decodeColumnAt f col.size 0 with
-  | some (c, j) =>
-    if j == f.size && c == col then pure f
-    else throw (IO.userError s!"{what}: the frame does not decode to its column")
-  | none => throw (IO.userError s!"{what}: the frame does not decode")
-
-def BlockWriter.close (w : BlockWriter) : IO BlockWriter := do
-  if w.cur.isEmpty then return w
-  let n := w.cur.size
-  let mut c0 : Array Nat := Array.mkEmpty n
-  let mut c1 : Array Nat := Array.mkEmpty n
-  let mut c2 : Array Nat := Array.mkEmpty n
-  let mut g : Array Nat := Array.mkEmpty n
-  let mut d := w.digest
-  for r in w.cur do
-    let (a, b, c, e) := (r.a.toNat, r.b.toNat, r.c.toNat, r.d.toNat)
-    c0 := c0.push a; c1 := c1.push b; c2 := c2.push c; g := g.push e
-    let (s, p, o, gg) := ofPerm w.perm a b c e
-    d := d.add (quadDigest s p o gg)
-  let what := s!"{permNamesArr[w.perm]!} block at {w.offset}"
-  let f0 ← encodeChecked c0 what
-  let f1 ← encodeChecked c1 what
-  let f2 ← encodeChecked c2 what
-  let f3 ← encodeChecked g what
-  let m : BlockMeta := { first := w.cur[0]!.toRow, last := w.cur[n - 1]!.toRow, rows := n, offset := w.offset,
-                         len0 := f0.size, len1 := f1.size, len2 := f2.size, len3 := f3.size }
+/-- Write one closed block: its frames to PRB1, its entry to the PRM1 list. -/
+def BlockWriter.emit (w : BlockWriter) (o : BlockMeta × ByteArray) : IO BlockWriter := do
+  let (m, bytes) := o
   let mut codecs := w.codecs
   let mut fb := w.frameBytes
-  for (k, f) in [(0, f0), (1, f1), (2, f2), (3, f3)] do
-    let t := (f.get! 0).toNat
+  for (k, start, len) in [(0, 0, m.len0), (1, m.len0, m.len1), (2, m.len0 + m.len1, m.len2),
+                          (3, m.len0 + m.len1 + m.len2, m.len3)] do
+    let t := (bytes.get! start).toNat
     codecs := codecs.modify (min t 3) (· + 1)
-    fb := fb.modify k (· + f.size)
-  let buf := w.buf ++ f0 ++ f1 ++ f2 ++ f3
-  let w := { w with buf, offset := w.offset + m.size, metas := w.metas.push m, cur := #[], digest := d,
-                    codecs, frameBytes := fb }
+    fb := fb.modify k (· + len)
+  let w := { w with buf := w.buf ++ bytes, metas := w.metas.push m, codecs, frameBytes := fb }
   if w.buf.size ≥ (1 <<< 20) then
     w.h.write w.buf
     return { w with buf := ByteArray.emptyWithCapacity (1 <<< 20) }
   return w
+
+/-- Add one row (in the permutation's order, without repeats). -/
+def BlockWriter.push (w : BlockWriter) (x : QRow) : IO BlockWriter := do
+  let (s, p, o, gg) := ofPerm w.perm x.a.toNat x.b.toNat x.c.toNat x.d.toNat
+  let w := { w with digest := w.digest.add (quadDigest s p o gg) }
+  let (cut, out) := w.cut.push w.blockRows x.toRow
+  let w := { w with cut }
+  match out with
+  | some o => w.emit o
+  | none => return w
+
+/-- Close the last block. -/
+def BlockWriter.finish (w : BlockWriter) : IO BlockWriter := do
+  match w.cut.finish with
+  | some o => BlockWriter.emit { w with cut := ⟨w.cut.off, #[]⟩ } o
+  | none => return w
 
 def phase3b (outDir : String) (perm : Nat) (runs : Array String) (blockRows : Nat) : IO PermOut := do
   let name := permNamesArr[perm]!
@@ -1010,7 +1023,7 @@ def phase3b (outDir : String) (perm : Nat) (runs : Array String) (blockRows : Na
   let prmPath := s!"{outDir}/{name}.prm1"
   let h ← IO.FS.Handle.mk prbPath .write
   h.write (listBytes (prbHeader perm))
-  let mut w : BlockWriter := { perm, h }
+  let mut w : BlockWriter := { perm, blockRows, h }
   let mut readers : Array RunReader := #[]
   let mut heads : Array (Option QRow) := #[]
   let mut total := 0
@@ -1024,7 +1037,6 @@ def phase3b (outDir : String) (perm : Nat) (runs : Array String) (blockRows : Na
   let mut prev : Option QRow := none
   let mut dups := 0
   let mut rows := 0
-  let cutAt := max 1 (blockRows / 16)
   let mut tree := Harness.RunHeap.build QRow.cmp heads
   for _ in [0:total + 1] do
     let k := Harness.RunHeap.winner tree
@@ -1038,16 +1050,14 @@ def phase3b (outDir : String) (perm : Nat) (runs : Array String) (blockRows : Na
       else
         if let some p := prev then
           if !p.lt x then throw (IO.userError s!"{name}: rows out of order")
-        if w.cur.size ≥ blockRows || (w.cur.size ≥ cutAt && (w.cur[w.cur.size - 1]!).a != x.a) then
-          w ← w.close
-        w := { w with cur := w.cur.push x }
+        w ← w.push x
         rows := rows + 1
         prev := some x
       let (hd, r) ← readers[k]!.nextRow
       readers := readers.set! k r
       heads := heads.set! k hd
       tree := Harness.RunHeap.replay QRow.cmp heads tree k
-  w ← w.close
+  w ← w.finish
   w.h.write w.buf
   w.h.flush
   for path in runs do IO.FS.removeFile path
