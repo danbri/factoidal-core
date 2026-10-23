@@ -1,7 +1,7 @@
 /-
 L4Factoidal.Storage.Sbm11.DenotationTheorems — the SBM11 layers mapped into
 the one dataset denotation `RDF.DatasetDen`
-(https://github.com/danbri/factoidal/issues/975, step 1). No code of SBM11
+(https://github.com/danbri/factoidal/issues/975, phase A1). No code of SBM11
 changes; this module adds definitions and theorems.
 
 The generation in memory (`MemGen.denote`, a `Dataset` in SPO row order):

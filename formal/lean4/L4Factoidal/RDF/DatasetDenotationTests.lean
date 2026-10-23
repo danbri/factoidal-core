@@ -1,7 +1,7 @@
 /-
 L4Factoidal.RDF.DatasetDenotationTests — checks of `RDF/DatasetDenotation.lean`,
 evaluated during `lake build` (https://github.com/danbri/factoidal/issues/975,
-step 1).
+phase A1).
 
 * A dataset with a repeated triple and the same set without the repeat have
   one denotation.

@@ -1,7 +1,7 @@
 /-
 L4Factoidal.Storage.BlockDenotation — the block layers mapped into the one
 dataset denotation `RDF.DatasetDen` (https://github.com/danbri/factoidal/issues/975,
-step 1). No code of a block layer changes; this module adds definitions and
+phase A1). No code of a block layer changes; this module adds definitions and
 theorems over the existing `denotes` functions.
 
 | Layer | Existing denotation | Into `DatasetDen` |

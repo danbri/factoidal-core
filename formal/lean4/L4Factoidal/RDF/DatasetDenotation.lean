@@ -1,7 +1,10 @@
 /-
 L4Factoidal.RDF.DatasetDenotation — the denotation of an RDF dataset as
-membership, the one target that every store maps into
-(https://github.com/danbri/factoidal/issues/975, step 1).
+membership: the system-wide wire type for RDF datasets, the common target that
+every stage maps into (parsers, serializers, query and update, reasoners,
+validators, checkers, and the components that keep data). Phase A1 of
+https://github.com/danbri/factoidal/issues/975: a stage states its contract
+against this type, and stage contracts compose through it.
 
 RDF 1.1 Concepts and Abstract Syntax, section 4: "An RDF dataset is a
 collection of RDF graphs, and comprises: exactly one default graph ... zero or
@@ -21,6 +24,10 @@ graph for each `n`, so two named graphs with one name cannot be expressed.
 Each graph is a set: a predicate has no order and no multiplicity. RDF 1.2
 triple terms are terms (`Term.tripleTerm`), so they are in the target with no
 special case.
+
+Blank nodes are terms with labels here. Their scope (one origin, for example
+one document) and equality up to a consistent relabelling are part of the
+contract of a stage, not of this type (phases B3 and C of issue 975).
 
 Two conditions hold of every `DatasetDen`:
 
@@ -45,17 +52,16 @@ case. `Literal.joinKey` lowers the tag with `String.toLower`, which maps ASCII
 letters only, as section 3.4 asks.
 
 `DecidableEq Triple` is structural: it tells `"chat"@EN` from `"chat"@en`, so
-it is not the target equality. A store whose dictionary gives one id per
-structural term (https://github.com/danbri/factoidal/issues/977) still maps
-into the target, because the decoded triples are compared by key; but a
-theorem that compares ids (DELETE of one row, a join on ids) then needs the
-store to fold language tags before it assigns ids (see
-`Storage/Sbm11/DenotationTheorems.lean`, `HeldFolded`). Literal VALUE equality
+it is not the target equality. A component that gives one id per structural
+term (https://github.com/danbri/factoidal/issues/977) still maps into the
+target, because the decoded triples are compared by key; but a theorem that
+compares ids (the removal of one row, a join on ids) then needs a fold of the
+language tags before the ids are assigned. Literal VALUE equality
 (`Literal.valueEqb`, for example two `rdf:XMLLiteral` lexical forms with one
 canonical form) is not used: those are two terms.
 
 Prop, and a Bool view. The target is a specification, so the predicates are
-`Prop`, and a store with an infinite or a computed membership can map into it.
+`Prop`, and a stage with an infinite or a computed membership can map into it.
 For a finite `Dataset` the membership is decidable: `Dataset.memQuadB` is the
 Bool view (`Dataset.memQuadB_iff`), and `Decidable` instances are given for
 `ds.den.graph gn t`, `ds.den.names n` and `ds.den.mem q`.
@@ -78,9 +84,9 @@ What is proved, for every `Dataset`:
 * `Dataset.den_eq_ofQuads`: a dataset denotes the quads of its lists and its
   names (`DatasetDen.ofQuads`).
 
-`DatasetDen.ofRows` is the denotation of a store of rows with a decoder (an
-id-based store: decode after denote). The dictionary contract of such a store
-is `RDF/DictInjective.lean` (step 2 of issue 975).
+`DatasetDen.ofRows` is the denotation of a collection of rows with a decoder
+(rows of ids: decode after denote). The contract of the dictionary of such rows
+is `RDF/DictInjective.lean` (phase A2 of issue 975).
 
 No `sorry`, no `axiom`, no `native_decide`, no `partial`.
 -/
@@ -121,7 +127,7 @@ theorem DatasetDen.graph_eqb (d : DatasetDen) {gn : Option Subject} {t u : Tripl
 
 /-! ## Rows with a decoder, quad lists -/
 
-/-- The denotation of a store of rows `R`: `mem` says which rows the store
+/-- The denotation of a collection of rows `R`: `mem` says which rows it
 holds, `dec` decodes a row to a quad (graph position first; `none` refuses the
 row), `decl` gives the declared graph names. The names are the declared ones
 and the graph names of the decoded rows. -/
