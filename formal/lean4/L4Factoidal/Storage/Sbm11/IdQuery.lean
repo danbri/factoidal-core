@@ -188,6 +188,7 @@ import L4Factoidal.Storage.Sbm11.IdAgg
 import L4Factoidal.Storage.Sbm11.IdPath
 import L4Factoidal.Storage.Sbm11.Sip
 import L4Factoidal.Storage.Sbm11.DateKey
+import L4Factoidal.Storage.Sbm11.OrderKey
 import L4Factoidal.Storage.Sbm11.ParallelScan
 import L4Factoidal.Storage.Sbm11.ParallelJoin
 import L4Factoidal.SPARQL.Query
@@ -3561,12 +3562,50 @@ def orderKeysByIds? (t : Table) (c : Nat) : Option (Array UInt64) := Id.run do
     out := out.push (if allRef then x else x &&& 0x00FFFFFFFFFFFFFF)
   return some out
 
+/-- Sort keys read from the ids and the dictionary keys of the literals, when
+    every id of column `c` is unbound, a blank node or an IRI (tags 1 and 2),
+    or a dictionary literal (tag 3) whose key is in group 3 or 4 of
+    `OrderKey.keyGroup?` (an `rdf:langString` literal whose lexical form holds
+    no `0x00`, or an `xsd:string` literal); `none` otherwise (stage 1l,
+    https://github.com/danbri/factoidal/issues/961).
+
+    The key of a row is `0` for an unbound variable, the id for groups 1 to
+    3, and the id plus `2 ^ 60` for group 4, so the groups are in the order
+    unbound, blank node, IRI, `rdf:langString`, `xsd:string`, and inside a
+    group the ids are ranks of the byte-sorted dictionary.
+    `OrderKeyTheorems.orderValue_keyOrder`: for two terms of these groups,
+    `sparqlOrderValue` of their values is the order of the groups and then
+    the byte order of the keys; `orderValue_error_term`: an unbound variable
+    comes first. Olympics q07 (`ORDER BY ?label`, 291 language-tagged labels):
+    the decode of each label to a `Term`, its order reading and the
+    comparison sort leave the ORDER BY. -/
+def orderKeysByKeysM? {m : Type → Type} [Monad m] (st : Store m) (t : Table) (c : Nat) :
+    ExceptT String m (Option (Array UInt64)) := do
+  let mut out : Array UInt64 := Array.mkEmpty t.rows
+  for i in [0:t.rows] do
+    let x := t.at c i
+    if x == OptJoin.unbound then out := out.push 0
+    else
+      let g := tagOf x
+      if g == 1 || g == 2 then out := out.push x
+      else if g == 3 then
+        let (buf, a, e) ← st.keySlice x
+        match OrderKey.keyGroupSlice? buf a e with
+        | some 3 => out := out.push x
+        | some 4 => out := out.push (x + 0x1000000000000000)
+        | _ => return none
+      else return none
+  return some out
+
 /-- Per row of column `c`, the number of its value in the section 15.1 order
     of the column's distinct values (`sparqlOrderValue`), complemented for
     DESC. -/
 def orderKeysM {m : Type → Type} [Monad m] (st : Store m) (t : Table) (c : Nat) (desc : Bool) :
     ExceptT String m (Array UInt64) := do
   match orderKeysByIds? t c with
+  | some ks => return (if desc then ks.map (~~~ ·) else ks)
+  | none => pure ()
+  match ← orderKeysByKeysM? st t c with
   | some ks => return (if desc then ks.map (~~~ ·) else ks)
   | none => pure ()
   let mut idx : Std.HashMap UInt64 Nat := {}

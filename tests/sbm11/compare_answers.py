@@ -3,7 +3,12 @@
 
 SBM11 stage 4, https://github.com/danbri/factoidal/issues/790.
 
-Usage: compare_answers.py GOT WANT WANT_EXIT_CODE
+Usage: compare_answers.py GOT WANT WANT_EXIT_CODE [ordered]
+
+With `ordered` (stage 1l of docs/designissues/2026-10-12-parallel-block-scans.md,
+https://github.com/danbri/factoidal/issues/961), SELECT answers are compared
+as sequences: the rows in the order the engines give them, for queries whose
+ORDER BY keys put every row in one place.
 
 SPARQL JSON SELECT answers: multisets of solutions; a blank node compares
 equal to any blank node (labels are not compared: the two engines may name
@@ -57,6 +62,7 @@ def load_json(path):
 
 def main():
     got_p, want_p, want_rc = sys.argv[1:4]
+    ordered = len(sys.argv) > 4 and sys.argv[4] == "ordered"
     if want_rc not in ("0", "1"):
         print("uncompared: the reference engine exited %s" % want_rc)
         return 0
@@ -81,6 +87,17 @@ def main():
     if isinstance(got, dict) and "results" in got:
         if not isinstance(want, dict) or "results" not in want:
             print("uncompared: reference answer is not SPARQL JSON")
+            return 0
+        if ordered:
+            gs = [frozenset((k, term_key(v)) for k, v in r.items()) for r in got["results"]["bindings"]]
+            ws = [frozenset((k, term_key(v)) for k, v in r.items()) for r in want["results"]["bindings"]]
+            if gs == ws:
+                print("equal: %d rows in order" % len(gs))
+            else:
+                i = next((j for j in range(min(len(gs), len(ws))) if gs[j] != ws[j]), min(len(gs), len(ws)))
+                print("different: %d rows, reference %d rows; first difference at row %d: %s, reference %s" % (
+                    len(gs), len(ws), i, sorted(gs[i]) if i < len(gs) else None,
+                    sorted(ws[i]) if i < len(ws) else None))
             return 0
         g = Counter(frozenset((k, term_key(v)) for k, v in r.items()) for r in got["results"]["bindings"])
         w = Counter(frozenset((k, term_key(v)) for k, v in r.items()) for r in want["results"]["bindings"])

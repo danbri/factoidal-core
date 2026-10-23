@@ -1,0 +1,3 @@
+PREFIX ex: <http://ex.org/>
+# DESC: unbound values after OPTIONAL come last (issue 961).
+SELECT ?s ?v WHERE { ?s ex:in ex:set OPTIONAL { ?s ex:v ?v } } ORDER BY DESC(?v) DESC(?s)

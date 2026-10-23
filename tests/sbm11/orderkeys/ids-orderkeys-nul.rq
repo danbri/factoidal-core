@@ -1,0 +1,3 @@
+PREFIX ex: <http://ex.org/>
+# A lexical form with U+0000: the key path refuses the column (issue 961).
+SELECT ?s ?v WHERE { ?s ex:n ?v } ORDER BY ?v ?s

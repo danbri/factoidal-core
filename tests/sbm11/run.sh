@@ -52,6 +52,13 @@
 #                tests/sbm11/xmlliteral/data.nq (two rdf:XMLLiteral literals
 #                with one canonical XML: two RDF terms, issue 963) and its
 #                check.sh, which also fixes the row counts.
+#   (z) orderkey tests/sbm11/orderkeys/data.nq packed and activated; each
+#                tests/sbm11/orderkeys/*.rq answered on ids at 1 and 4 threads
+#                and by `l4factoidal query`, equal row by row IN ORDER
+#                (compare_answers.py ordered): ORDER BY on dictionary keys for
+#                unbound values, blank nodes, IRIs, rdf:langString and
+#                xsd:string literals, and the reference keys for a lexical form
+#                with U+0000 and for typed literals (issue 961, stage 1l).
 #   (e) checks   `l4sbm11 prm-check` (the byte-array PRM1 decoder against the
 #                list decoder of the round-trip theorem; and the PRM1 range
 #                search of issue 805, PrmRange.rangeM, against decoding the
@@ -381,6 +388,37 @@ gate_part "$HERE/xmlliteral/data.nq" "$HERE/xmlliteral" "$TMP/gate-xmlliteral"
 xrc=0; xout="$("$HERE/xmlliteral/check.sh" 2>&1)" || xrc=$?
 if [ "$xrc" -eq 0 ]; then record gate xmlliteral-check 0 "$(printf '%s' "$xout" | tr '\n' ' ')"
 else record gate xmlliteral-check 1 "exit $xrc: $(printf '%s' "$xout" | tr '\n' ' ')"; fi
+
+echo "=== (z) ORDER BY on dictionary keys, in order, against l4factoidal (issue 961)"
+# tests/sbm11/orderkeys/data.nq: unbound values, a blank node, IRIs,
+# rdf:langString and xsd:string literals with 1- to 4-byte UTF-8 characters,
+# a lexical form with U+0000 and typed literals (the last two take the
+# reference ORDER BY keys). Each query is answered on ids and by
+# `l4factoidal query`; the rows must be equal IN ORDER (compare_answers.py
+# ordered). Stage 1l of docs/designissues/2026-10-12-parallel-block-scans.md.
+OK="$TMP/orderkeys"
+okrc=0
+"$BIN/l4sbm11-pack" "$HERE/orderkeys/data.nq" "$OK/gen" --workers 1 >"$OK.pack.log" 2>&1 || okrc=$?
+[ "$okrc" -eq 0 ] && { "$BIN/l4sbm11" activate "$OK" gen >"$OK.act.log" 2>&1 || okrc=$?; }
+if [ "$okrc" -ne 0 ]; then record orderkey pack-activate 1 "exit $okrc"
+else
+  for rq in "$HERE"/orderkeys/*.rq; do
+    n="$(basename "$rq" .rq)"
+    for th in 1 4; do
+      rc=0
+      timeout 120 "$BIN/l4sbm11" query "$OK" --file "$rq" --threads "$th" >"$TMP/ok-$n.got" 2>"$TMP/ok-$n.err" || rc=$?
+      if [ "$rc" -ne 0 ]; then record orderkey "$n/$th" 1 "exit $rc: $(tail -1 "$TMP/ok-$n.err")"; continue; fi
+      rrc=0
+      timeout 120 "$BIN/l4factoidal" query "$HERE/orderkeys/data.nq" --format nquads --query "$rq" \
+        >"$TMP/ok-$n.want" 2>/dev/null || rrc=$?
+      v="$(python3 -I "$HERE/compare_answers.py" "$TMP/ok-$n.got" "$TMP/ok-$n.want" "$rrc" ordered)"
+      p="$(grep -o 'path=[a-z]*' "$TMP/ok-$n.err")"
+      if [ "$p" != path=ids ]; then record orderkey "$n/$th" 1 "$p, expected path=ids"
+      else case "$v" in equal*) record orderkey "$n/$th" 0 "$v" ;; *) record orderkey "$n/$th" 1 "$v" ;; esac
+      fi
+    done
+  done
+fi
 
 echo "=== (x) the I/O store against MemGen.store (issue 776)"
 # memgen_part <name> <generation> <query dir>: the generation read into
