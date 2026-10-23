@@ -4036,29 +4036,43 @@ def pathFuelM {m : Type → Type} [Monad m] (st : Store m) (extra : Nat) : Excep
   let base := selRows (← st.blocksForRange 0 #[])
   return 2 * (base + (st.ovl 0).ins.size) + extra + 2
 
-/-- The rounds of `closureM` under a restriction: per round the step
-    relation from the frontier (`stepM fwd`), the new nodes (objects for a
-    subject restriction, subjects for an object one) not yet visited become
-    the next frontier; at most `fuel` rounds, an error when they run out
-    with a frontier left. -/
-def closureRoundsM {m : Type → Type} [Monad m]
-    (stepM : Bool → Option (Array UInt64) → ExceptT String m (IdPath.Pairs × ScanStats)) (fwd : Bool) :
-    Nat → Std.HashSet UInt64 → Array UInt64 → IdPath.Pairs → ScanStats →
-      ExceptT String m (IdPath.Pairs × ScanStats)
-  | 0, _, frontier, edges, total =>
-    if frontier.isEmpty then pure (edges, total)
-    else throw "a property path closure: the round bound ran out (a bug: the bound is the number of ids)"
-  | fuel + 1, visited, frontier, edges, total =>
-    if frontier.isEmpty then pure (edges, total)
-    else do
-      let (e, s) ← stepM fwd (some frontier)
-      let next := (if fwd then IdPath.seconds e else IdPath.firsts e).filter (!visited.contains ·)
-      closureRoundsM stepM fwd fuel (next.foldl (fun h x => h.insert x) visited) next (edges ++ e) (total.add s)
+/-- The state of the rounds of `closureM`: the visited nodes, the frontier,
+    the step pairs collected, the scan counts. -/
+abbrev RoundState := Std.HashSet UInt64 × Array UInt64 × IdPath.Pairs × ScanStats
+
+/-- One round of `closureRoundsLoopM`: stop when the frontier is empty; else
+    the step relation from the frontier (`stepM fwd`), and the new nodes
+    (objects for a subject restriction, subjects for an object one) not yet
+    visited become the next frontier. -/
+def closureRoundStep {m : Type → Type} [Monad m]
+    (stepM : Bool → Option (Array UInt64) → ExceptT String m (IdPath.Pairs × ScanStats)) (fwd : Bool)
+    (_ : Nat) (st : RoundState) : ExceptT String m (ForInStep RoundState) :=
+  if st.2.1.isEmpty then pure (.done st)
+  else do
+    let (e, s) ← stepM fwd (some st.2.1)
+    let next := (if fwd then IdPath.seconds e else IdPath.firsts e).filter (!st.1.contains ·)
+    pure (.yield (next.foldl (fun h x => h.insert x) st.1, next, st.2.2.1 ++ e, st.2.2.2.add s))
+
+/-- The rounds of `closureM` under a restriction, as a loop of at most
+    `fuel` rounds (`closureRoundStep`); an error when they run out with a
+    frontier left. The number of rounds grows with the data (the length of
+    the longest shortest path from the restriction), so this is a `for`
+    loop, not a recursion with one stack frame per round
+    (https://github.com/danbri/factoidal/issues/964).
+    `IdPathClosureExec.closureRoundsLoopM_eq` proves it equal to the
+    recursive specification `IdPathClosureExec.closureRoundsM`. -/
+def closureRoundsLoopM {m : Type → Type} [Monad m]
+    (stepM : Bool → Option (Array UInt64) → ExceptT String m (IdPath.Pairs × ScanStats)) (fwd : Bool)
+    (fuel : Nat) (visited : Std.HashSet UInt64) (frontier : Array UInt64) (edges : IdPath.Pairs)
+    (total : ScanStats) : ExceptT String m (IdPath.Pairs × ScanStats) := do
+  let st ← forIn [0:fuel] ((visited, frontier, edges, total) : RoundState) (closureRoundStep stepM fwd)
+  if st.2.1.isEmpty then pure (st.2.2.1, st.2.2.2)
+  else throw "a property path closure: the round bound ran out (a bug: the bound is the number of ids)"
 
 /-- The step relation `closureM` closes, its start nodes, and the nodes that
     give a reflexive pair (`zero`): without a restriction the whole step
     relation, every node of the graph (`p*`) or every subject of a step
-    (`p+`); with a restriction `rs` the rounds of `closureRoundsM` from `rs`
+    (`p+`); with a restriction `rs` the rounds of `closureRoundsLoopM` from `rs`
     and the nodes of the graph among `rs`. -/
 def closureEdgesM {m : Type → Type} [Monad m] (st : Store m) (g : Option UInt64)
     (stepM : Bool → Option (Array UInt64) → ExceptT String m (IdPath.Pairs × ScanStats))
@@ -4075,7 +4089,7 @@ def closureEdgesM {m : Type → Type} [Monad m] (st : Store m) (g : Option UInt6
     let (nodes, s0) ← if zero then nodesAmongM st g rs else pure (#[], {})
     let fuel ← pathFuelM st rs.size
     let visited : Std.HashSet UInt64 := rs.foldl (fun h x => h.insert x) {}
-    let (edges, total) ← closureRoundsM stepM fwd fuel visited rs #[] s0
+    let (edges, total) ← closureRoundsLoopM stepM fwd fuel visited rs #[] s0
     return (edges, rs, nodes, total)
 
 /-- The pairs of one start node `a` of `closureM`: `(a, a)` for `p*` when `a`

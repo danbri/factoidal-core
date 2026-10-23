@@ -1,7 +1,7 @@
 /-
 L4Factoidal.Storage.Sbm11.IdPathClosureExecTheorems — the closures `p*` and
 `p+` as the id path executes them (`IdQuery.closureM`: `closureEdgesM`,
-`closureRoundsM`, `closureEmitM`) against the reference's closure over ids
+`closureRoundsLoopM`, `closureEmitM`) against the reference's closure over ids
 (https://github.com/danbri/factoidal/issues/776; part of lemma L4n of
 docs/designissues/2026-10-12-sbm11-end-to-end-theorem.md).
 
@@ -13,6 +13,8 @@ up to order, the pairs of a relation `E` the restriction keeps
 
 * `emit_spec`: the pairs `closureEmitM` emits for the start nodes, from the
   worklist (`IdPath.reachPlus`, against `reachModel` by `reachPlus_eq`).
+* `closureRoundsLoopM_eq`: the loop of rounds equals its recursive
+  specification `closureRoundsM`, which only theorems read.
 * `rounds_spec`: the rounds from a restriction collect, within the round
   bound of `pathFuelM` (`IdPathScanTheorems.pathFuel_ge`), the pairs of `E`
   whose subject (object, for an object restriction) is reached from the
@@ -265,6 +267,60 @@ theorem unvisited_step (N V nx : List UInt64) (hN : N.Nodup) (hnx : nx.Nodup) (h
   have := length_filter_split (N.filter (fun n => decide (n ∉ V))) (fun n => decide (n ∈ nx))
   rw [hB, hA.length_eq] at this
   omega
+
+/-! ## The rounds: the loop and its recursive specification -/
+
+/-- The rounds of `closureM` under a restriction, one recursive call per
+    round: the specification of the loop `IdQuery.closureRoundsLoopM`
+    (`closureRoundsLoopM_eq`). Only theorems read it; the id path runs the
+    loop (https://github.com/danbri/factoidal/issues/964). -/
+def closureRoundsM {m : Type → Type} [Monad m]
+    (stepM : Bool → Option (Array UInt64) → ExceptT String m (IdPath.Pairs × ScanStats)) (fwd : Bool) :
+    Nat → Std.HashSet UInt64 → Array UInt64 → IdPath.Pairs → ScanStats →
+      ExceptT String m (IdPath.Pairs × ScanStats)
+  | 0, _, frontier, edges, total =>
+    if frontier.isEmpty then pure (edges, total)
+    else throw "a property path closure: the round bound ran out (a bug: the bound is the number of ids)"
+  | fuel + 1, visited, frontier, edges, total =>
+    if frontier.isEmpty then pure (edges, total)
+    else do
+      let (e, s) ← stepM fwd (some frontier)
+      let next := (if fwd then IdPath.seconds e else IdPath.firsts e).filter (!visited.contains ·)
+      closureRoundsM stepM fwd fuel (next.foldl (fun h x => h.insert x) visited) next (edges ++ e) (total.add s)
+
+theorem rounds_forIn_eq {m : Type → Type} [Monad m] [LawfulMonad m]
+    (stepM : Bool → Option (Array UInt64) → ExceptT String m (IdPath.Pairs × ScanStats)) (fwd : Bool) :
+    ∀ (n k : Nat) (visited : Std.HashSet UInt64) (F : Array UInt64) (edges : IdPath.Pairs) (total : ScanStats),
+      (do
+        let st ← forIn (List.range' k n) ((visited, F, edges, total) : RoundState) (closureRoundStep stepM fwd)
+        if st.2.1.isEmpty then pure (st.2.2.1, st.2.2.2)
+        else throw "a property path closure: the round bound ran out (a bug: the bound is the number of ids)" :
+          ExceptT String m (IdPath.Pairs × ScanStats)) =
+      closureRoundsM stepM fwd n visited F edges total := by
+  intro n
+  induction n with
+  | zero => intro k visited F edges total; simp [closureRoundsM]
+  | succ n ih =>
+    intro k visited F edges total
+    rw [List.range'_succ, List.forIn_cons]
+    by_cases hF : F.isEmpty = true
+    · simp only [closureRoundStep, closureRoundsM, hF, if_true, pure_bind]
+    · simp only [closureRoundStep, closureRoundsM, hF, if_false, Bool.false_eq_true, bind_assoc]
+      congr 1
+      funext x
+      obtain ⟨e, s⟩ := x
+      simp only [pure_bind]
+      exact ih _ _ _ _ _
+
+/-- The loop of the id path equals its recursive specification. -/
+theorem closureRoundsLoopM_eq {m : Type → Type} [Monad m] [LawfulMonad m]
+    (stepM : Bool → Option (Array UInt64) → ExceptT String m (IdPath.Pairs × ScanStats)) (fwd : Bool)
+    (fuel : Nat) (visited : Std.HashSet UInt64) (F : Array UInt64) (edges : IdPath.Pairs) (total : ScanStats) :
+    closureRoundsLoopM stepM fwd fuel visited F edges total = closureRoundsM stepM fwd fuel visited F edges total := by
+  unfold closureRoundsLoopM
+  simp only [Std.Legacy.Range.forIn_eq_forIn_range', Std.Legacy.Range.size, Nat.sub_zero, Nat.add_sub_cancel,
+    Nat.div_one]
+  exact rounds_forIn_eq stepM fwd fuel 0 visited F edges total
 
 section
 variable (E : IdPairs) (N : List UInt64) (hN : N.Nodup) (hEN : ∀ p ∈ E, p.1 ∈ N ∧ p.2 ∈ N)
@@ -540,7 +596,7 @@ theorem closureEdges_spec (fwd : Bool) (R : Option (Array UInt64)) (hR : RGood R
     · unfold closureEdgesM
       simp only []
       cases zero <;> simp only [if_true, if_false, Bool.false_eq_true] at hnodes ⊢ <;>
-        (rw [hnodes]; simp only [pure_bind]; rw [hfuel]; simp only [pure_bind]; rw [hr]; rfl)
+        (rw [hnodes]; simp only [pure_bind]; rw [hfuel]; simp only [pure_bind]; rw [closureRoundsLoopM_eq, hr]; rfl)
     · intro a ha c
       have haV : a ∈ V' := hsub a ha
       cases fwd with
@@ -740,3 +796,4 @@ end L4Factoidal.Storage.Sbm11.IdPathClosureExec
 #print axioms L4Factoidal.Storage.Sbm11.IdPathClosureExec.closureEdges_spec
 #print axioms L4Factoidal.Storage.Sbm11.IdPathClosureExec.rounds_spec
 #print axioms L4Factoidal.Storage.Sbm11.IdPathClosureExec.emit_all
+#print axioms L4Factoidal.Storage.Sbm11.IdPathClosureExec.closureRoundsLoopM_eq
