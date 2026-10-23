@@ -22,8 +22,9 @@ induction on the pattern:
   patterns, property paths, `{}`, Join, LeftJoin (OPTIONAL) with the
   condition `true` (`LeftJoinTableTheorems`) or with an EXISTS-free
   condition, FILTER with an EXISTS-free condition (`FilterTableTheorems`),
-  Union, MINUS, GRAPH with an IRI, VALUES and BIND (`LocalTableTheorems`),
-  at any depth (`ExecHyps`),
+  Union, MINUS, GRAPH with an IRI, GRAPH with a variable over a pattern that
+  is not a basic graph pattern (`graphVar_ends`, `GraphVarTableTheorems`),
+  VALUES and BIND (`LocalTableTheorems`), at any depth (`ExecHyps`),
   `evalGroupM` run from any state that keeps the invariant of the
   query-local vocabulary (`LocalVocab.Inv`) refuses with a refusal of that
   vocabulary (`LocalVocab.LocalRefusal`), or returns a well-formed table
@@ -57,8 +58,11 @@ memoised conjuncts and for the merged rows of a pair.
 FILTER and LeftJoin conditions with an EXISTS or NOT EXISTS conjunct (the
 semi-joins `semiJoinByM`), with a UUID, STRUUID or BNODE call, or with a
 STRSTARTS, STRENDS or CONTAINS test on dictionary keys
-(`FilterIdTheorems.StrForm`); GRAPH with a variable and a sub-SELECT
-(`subSelectM`): `ExecHyps` is `False` for them. VALUES with a term whose
+(`FilterIdTheorems.StrForm`); GRAPH with a variable over a basic graph
+pattern (`bgpGraphVarM`: one scan with the graph as a column, a leaf this
+file does not prove) and a sub-SELECT (`subSelectM`: it needs the projection,
+DISTINCT and the variables of the reference `selectPost`, no lemma of which
+exists yet): `ExecHyps` is `False` for them. VALUES with a term whose
 language tag is not in lower case, or with a variable twice, and BIND with
 an expression that reads a freshness key (UUID, STRUUID, BNODE) or whose
 value can have a language tag not in lower case on such rows: `ExecHyps` is
@@ -70,7 +74,7 @@ census.
 No `sorry`, no user `axiom`, no `native_decide`, no `partial`.
 -/
 import L4Factoidal.Storage.Sbm11.FilterTableTheorems
-import L4Factoidal.Storage.Sbm11.LocalTableTheorems
+import L4Factoidal.Storage.Sbm11.GraphVarTableTheorems
 
 namespace L4Factoidal.Storage.Sbm11.GroupTableTheorems
 
@@ -477,8 +481,13 @@ theorem cidOk_sok {dec : UInt64 → Term} {sok ok : UInt64 → Prop} (hsok : ∀
     refuses those), and whose value on a mapping of terms that are their own
     `normalizeTerm` is such a term (it fails for a language tag not in lower
     case that the expression builds, e.g. `STRLANG("a", "EN")`). `False` for
-    the constructors not proved here (GRAPH with a variable, sub-SELECT,
-    LATERAL, SERVICE). -/
+    the constructors not proved here (sub-SELECT, LATERAL, SERVICE). At
+    GRAPH with a variable: a pattern that is not a basic graph pattern (one
+    of those is one scan with the graph as a column, `IdGroup.bgpGraphVarM`,
+    not proved here), a store that lists its named graphs, distinct named
+    graphs in the dataset, `cx.named` listing in the order of `ds.named` the
+    ids the dictionary gives their names, each the active graph `gof` gives
+    the graph; and the pattern's conditions in each named graph. -/
 def ExecHyps (LP : QueryPattern → Graph → Prop) (cx : NCx Id) (cid : Term → Option UInt64) (ds : Dataset)
     (gof : Graph → GCtx) : QueryPattern → Graph → Prop
   | .bgp b, a => LP (.bgp b) a
@@ -495,6 +504,10 @@ def ExecHyps (LP : QueryPattern → Graph → Prop) (cx : NCx Id) (cid : Term �
     | some g => (∃ x, cid (.iri i) = some x ∧ cx.named.contains x = true ∧ gof g = .named x) ∧
         ExecHyps LP cx cid ds gof q g
     | none => ∀ x, cid (.iri i) = some x → cx.named.contains x = false
+  | .graph (.var _) q, _ => cx.st.namedGraphs.isSome ∧ (∀ tps, q ≠ .bgp tps) ∧ ds.named.Nodup ∧
+    FilterTableTheorems.Fa2 (fun x (ng : NamedGraph) => cid ng.name.toTerm = some x ∧ gof ng.graph = .named x)
+      cx.named.toList ds.named ∧
+    ∀ ng ∈ ds.named, ExecHyps LP cx cid ds gof q ng.graph
   | .values vars rows, _ => vars.Nodup ∧ ∀ row ∈ rows, ∀ t, some t ∈ row → normalizeTerm t = t
   | .bind e v q, a => e.existsFree = true ∧ (∃ vs, residualVars e = some vs) ∧
       (∀ w ∈ e.refVars, ¬ ExprLocalTheorems.IsFx w) ∧
@@ -570,6 +583,188 @@ theorem cidOkV (cid : Term → Option UInt64) (dec : UInt64 → Term) (ok : UInt
 section
 variable (cx : NCx Id) (gof : Graph → GCtx) (prb : Nat → ByteArray) (ms : Nat → List Block.BlockMeta)
   (cid : Term → Option UInt64) (dec : UInt64 → Term) (idv : Term → UInt64) (sok ok : UInt64 → Prop)
+
+theorem pw_map {α β : Type} {R : α → α → Prop} {S : β → β → Prop} (f : α → β) (hf : ∀ a b, R a b → S (f a) (f b)) :
+    ∀ {A B : List α}, IdGroup.Pw R A B → IdGroup.Pw S (A.map f) (B.map f)
+  | _, _, .nil => .nil
+  | _, _, .cons h t => .cons (hf _ _ h) (pw_map f hf t)
+
+/-- Decoding the rows `IdGroup.idBindG` gives is `Binding.bindIfCompatible` on
+    the decoded rows. -/
+theorem bindG_rows (D : UInt64 → Term) (okD : UInt64 → Prop)
+    (hdec : ∀ x y, okD x → okD y → (D x).eqb (D y) = (x == y)) (v : String) (x : UInt64) (hx : okD x)
+    (R : List IdRow) (hR : ∀ r ∈ R, RowIds okD r) :
+    (R.filterMap (IdGroup.idBindG v x)).map (decRow D) =
+      (R.map (decRow D)).filterMap (Binding.bindIfCompatible v (D x)) := by
+  rw [List.filterMap_map, List.map_filterMap]
+  apply OptJoin.filterMap_congr'
+  intro r hr
+  simp only [Function.comp_def]
+  rw [IdGroup.bindG_decode D okD hdec v x hx r (hR r hr)]
+
+/-- **GRAPH with a variable as the nested evaluator runs it**, for a pattern
+    that is not a basic graph pattern (one of those is one scan with the
+    graph as a column, `IdGroup.bgpGraphVarM`, not proved here): per id of
+    `cx.named` in order, the pattern with that named graph active, `?v`
+    bound to the id (`IdGroup.bindGraph`), the tables concatenated
+    (`IdJoin.unionIds`). Hypotheses besides those of the pattern
+    (`IH`, per named graph of the dataset): the store lists its named graphs,
+    the dataset's named graphs are distinct, and `cx.named` lists, in the
+    order of `ds.named`, the ids the dictionary gives their names, each the
+    active graph `gof` gives the graph. -/
+theorem graphVar_ends (env : EvalEnv) (ds : Dataset)
+    (hdec : ∀ x y, ok x → ok y → (dec x).eqb (dec y) = (x == y)) (hcid : ∀ c, CidOk dec ok c (cid c))
+    (hcidN : ∀ t x, cid t = some x → dec x = normalizeTerm t) (hloc : ∀ x, ok x → tagOf x ≠ tagLocal)
+    (hcidok : ∀ t x, cid t = some x → ok x) (hcid0 : ∀ t x, cid t = some x → x ≠ 0)
+    (v : String) (q : QueryPattern) (hng : cx.st.namedGraphs.isSome) (hnb : ∀ tps, q ≠ .bgp tps)
+    (hnd : ds.named.Nodup)
+    (hfa : FilterTableTheorems.Fa2 (fun x (ng : NamedGraph) => cid ng.name.toTerm = some x ∧ gof ng.graph = .named x)
+      cx.named.toList ds.named)
+    (IH : ∀ ng ∈ ds.named, ∀ s, LocalVocab.Inv cid s →
+      Ends ((evalGroupM cx q (gof ng.graph)).run s) (WhereOk env ds cid dec ok q ng.graph s))
+    (a : Graph) (nst1 : NSt) (hi1 : LocalVocab.Inv cid nst1) :
+    Ends ((evalGroupM cx (.graph (.var v) q) (gof a)).run nst1)
+      (WhereOk env ds cid dec ok (.graph (.var v) q) a nst1) := by
+  obtain ⟨hlen, hR⟩ := GraphVar.fa2_get hfa
+  have hnone : cx.st.namedGraphs.isNone = false := by
+    cases e : cx.st.namedGraphs with
+    | none => rw [e] at hng; cases hng
+    | some _ => rfl
+  let P : Nat → Array Table → NSt → Prop := fun k parts s =>
+    LocalVocab.Inv cid s ∧ nst1.vocab.toList <+: s.vocab.toList ∧ parts.size = k ∧
+    ∀ j, j < k → ∃ (tj : Table) (x : UInt64) (ng : NamedGraph), cx.named.toList[j]? = some x ∧
+      ds.named[j]? = some ng ∧ parts[j]? = some (IdGroup.bindGraph tj v x) ∧ tj.WF ∧
+      Allowed env ds q ng.graph (tj.idRows.map (decRow (decV dec s.vocab))) ∧
+      ∀ r ∈ tj.idRows, RowIds (okV ok s.vocab) r
+  have hx0 : ∀ (x : UInt64) (ng : NamedGraph), cid ng.name.toTerm = some x → x ≠ OptJoin.unbound :=
+    fun x ng h => hcid0 _ x h
+  rw [evalGroupM]
+  · simp only [hnone, Bool.false_eq_true, if_false]
+    rw [← Array.forIn_toList]
+    refine ends_bind (GraphVar.forIn_nm_ends _ cx.named.toList P #[] nst1
+      ⟨hi1, List.prefix_refl _, rfl, fun j hj => absurd hj (Nat.not_lt_zero _)⟩ ?_) fun parts sF hP => ?_
+    · -- one named graph
+      intro k hk parts s ⟨hs1, hs2, hs3, hs4⟩
+      have hkL : k < ds.named.length := by rw [← hlen]; exact hk
+      obtain ⟨hcx, hgx⟩ := hR k cx.named.toList[k] ds.named[k] (List.getElem?_eq_getElem hk)
+        (List.getElem?_eq_getElem hkL)
+      show Ends ((evalGroupM cx q (.named cx.named.toList[k]) >>= fun t =>
+        pure (ForInStep.yield (parts.push (IdGroup.bindGraph t v cx.named.toList[k])))).run s) _
+      rw [← hgx]
+      refine ends_bind (IH ds.named[k] (List.getElem_mem hkL) s hs1) fun t s' ⟨hwt, hAt, hot, hi', hp'⟩ =>
+        ends_pure rfl ⟨_, rfl, hi', hs2.trans hp', by simp [hs3], fun j hj => ?_⟩
+      by_cases hjk : j < k
+      · obtain ⟨tj, x, ng, h1, h2, h3, h4, h5, h6⟩ := hs4 j hjk
+        obtain ⟨h5', h6'⟩ := allowed_mono env ds dec hloc hp' hi'.size h5 h6
+        refine ⟨tj, x, ng, h1, h2, ?_, h4, h5', h6'⟩
+        rw [Array.getElem?_push, if_neg (by omega)]; exact h3
+      · have : j = k := by omega
+        subst this
+        refine ⟨t, _, _, List.getElem?_eq_getElem hk, List.getElem?_eq_getElem hkL, ?_, hwt, hAt, hot⟩
+        rw [Array.getElem?_push, if_pos (by omega)]
+    · -- the union of the parts
+      obtain ⟨hiF, hpF, hszF, hF⟩ := hP
+      have hdecV' := hdecV cid dec ok hdec hcid hloc hiF
+      -- each part
+      have hpart : ∀ j (hj : j < parts.size), ∃ (tj : Table) (x : UInt64) (ng : NamedGraph),
+          cx.named.toList[j]? = some x ∧ ds.named[j]? = some ng ∧ parts[j] = IdGroup.bindGraph tj v x ∧ tj.WF ∧
+          Allowed env ds q ng.graph (tj.idRows.map (decRow (decV dec sF.vocab))) ∧
+          (∀ r ∈ tj.idRows, RowIds (okV ok sF.vocab) r) ∧ cid ng.name.toTerm = some x := by
+        intro j hj
+        obtain ⟨tj, x, ng, h1, h2, h3, h4, h5, h6⟩ := hF j (by rw [← hszF]; exact hj)
+        rw [Array.getElem?_eq_getElem hj] at h3
+        exact ⟨tj, x, ng, h1, h2, Option.some.inj h3, h4, h5, h6, (hR j x ng h1 h2).1⟩
+      -- what a part gives
+      have hpart2 : ∀ j (hj : j < parts.size), ∃ (tj : Table) (x : UInt64) (ng : NamedGraph),
+          ds.named[j]? = some ng ∧ (parts[j]).WF ∧
+          Allowed env ds q ng.graph (tj.idRows.map (decRow (decV dec sF.vocab))) ∧
+          IdGroup.PermPw IdGroup.BindEq
+            ((tj.idRows.map (decRow (decV dec sF.vocab))).filterMap (Binding.bindIfCompatible v ng.name.toTerm))
+            ((parts[j]).idRows.map (decRow (decV dec sF.vocab))) ∧
+          ∀ r ∈ (parts[j]).idRows, RowIds (okV ok sF.vocab) r := by
+        intro j hj
+        obtain ⟨tj, x, ng, _, h2, h3, h4, h5, h6, h7⟩ := hpart j hj
+        have hxok : okV ok sF.vocab x := ok_okV (hcidok _ x h7)
+        have hdx : decV dec sF.vocab x = ng.name.toTerm := by
+          rw [decV_ok dec hloc _ (hcidok _ x h7), hcidN _ x h7]
+          cases ng.name <;> rfl
+        obtain ⟨hbw, hbp⟩ := GraphVar.bindGraph_rows tj h4 v x (hx0 x ng h7)
+        rw [h3]
+        refine ⟨tj, x, ng, h2, hbw, h5, ?_, ?_⟩
+        · rw [← hdx, ← bindG_rows _ _ hdecV' v x hxok _ h6]
+          exact IdGroup.PermPw.of_pw (IdGroup.Pw.symm (fun _ _ h => IdGroup.BindEq.symm h)
+            (pw_map (decRow (decV dec sF.vocab)) (fun _ _ h => IdLeaf.rowEq_bindEq _ h) hbp))
+        · exact rowIds_of_equiv _ (BgpTableTheorems.nd_idRows _ hbw.nodup) (IdEquiv.of_pw hbp)
+            (fun r hr => by
+              obtain ⟨r0, h0, e0⟩ := List.mem_filterMap.mp hr
+              exact IdGroup.rowIds_idBindG _ v x hxok r0 r (h6 r0 h0) e0)
+      have hall : ∀ t ∈ parts.toList, t.WF := by
+        intro t ht
+        obtain ⟨j, hj, e⟩ := List.getElem_of_mem ht
+        simp only [Array.length_toList] at hj
+        obtain ⟨_, _, _, _, hw, _⟩ := hpart2 j hj
+        rw [← e]; simpa using hw
+      obtain ⟨huwf, hur⟩ := TableTheorems.unionIds_rows parts hall
+      have heq : IdEquiv (IdJoin.unionIds parts).idRows (parts.toList.flatMap Table.idRows) :=
+        BgpTableTheorems.idEquiv_of_rowsEq_perm hur (List.Perm.refl _)
+      refine ends_pure (a := IdJoin.unionIds parts) (s := { sF with lines := _ }) rfl ⟨huwf, ?_, ?_, hiF, hpF⟩
+      · show Allowed env ds _ a ((IdJoin.unionIds parts).idRows.map (decRow (decV dec sF.vocab)))
+        classical
+        let Rj : Nat → SolutionSeq := fun j =>
+          if hj : j < parts.size then (Classical.choose (hpart2 j hj)).idRows.map (decRow (decV dec sF.vocab)) else []
+        let F : NamedGraph → SolutionSeq := fun ng =>
+          if h : ∃ j, j < parts.size ∧ ds.named[j]? = some ng then Rj (Classical.choose h) else []
+        have hRj : ∀ j (hj : j < parts.size), ∃ (x : UInt64) (ng : NamedGraph), ds.named[j]? = some ng ∧
+            Allowed env ds q ng.graph (Rj j) ∧
+            IdGroup.PermPw IdGroup.BindEq ((Rj j).filterMap (Binding.bindIfCompatible v ng.name.toTerm))
+              ((parts[j]).idRows.map (decRow (decV dec sF.vocab))) := by
+          intro j hj
+          have := Classical.choose_spec (hpart2 j hj)
+          obtain ⟨x, ng, h1, _, h3, h4, _⟩ := this
+          refine ⟨x, ng, h1, ?_, ?_⟩
+          · simp only [Rj, dif_pos hj]; exact h3
+          · simp only [Rj, dif_pos hj]; exact h4
+        have hFj : ∀ j (hj : j < parts.size) (ng : NamedGraph), ds.named[j]? = some ng → F ng = Rj j := by
+          intro j hj ng hng'
+          have hex : ∃ j, j < parts.size ∧ ds.named[j]? = some ng := ⟨j, hj, hng'⟩
+          simp only [F, dif_pos hex]
+          obtain ⟨h1, h2⟩ := Classical.choose_spec hex
+          have : Classical.choose hex = j := by
+            have hl : Classical.choose hex < ds.named.length := by rw [← hlen]; simpa [← hszF] using h1
+            exact (List.getElem?_inj hl hnd).mp (h2.trans hng'.symm)
+          rw [this]
+        have hA : Allowed env ds (.graph (.var v) q) a
+            (ds.named.flatMap fun ng => (F ng).filterMap (Binding.bindIfCompatible v ng.name.toTerm)) := by
+          refine .graphVar F fun ng hng' => ?_
+          obtain ⟨j, hj, e⟩ := List.getElem_of_mem hng'
+          have hj' : j < parts.size := by rw [hszF, hlen]; exact hj
+          rw [hFj j hj' ng (by rw [List.getElem?_eq_getElem hj, e])]
+          obtain ⟨x, ng', h1, h2, _⟩ := hRj j hj'
+          rw [List.getElem?_eq_getElem hj, e] at h1
+          cases h1
+          exact h2
+        refine .equiv hA (IdGroup.SolEquiv.trans ?_ (IdLeaf.solEquiv_decode _ heq).symm)
+        rw [List.map_flatMap, GraphVar.flatMap_range _ ds.named, GraphVar.flatMap_range _ parts.toList,
+          Array.length_toList, hszF, hlen]
+        apply IdGroup.PermPw.flatMap
+        intro j hj
+        rw [List.mem_range] at hj
+        have hj' : j < parts.size := by rw [hszF, hlen]; exact hj
+        obtain ⟨x, ng, h1, _, h3⟩ := hRj j hj'
+        rw [h1, Array.getElem?_toList, Array.getElem?_eq_getElem hj']
+        simp only []
+        rw [hFj j hj' ng h1]
+        exact h3
+      · show ∀ r ∈ (IdJoin.unionIds parts).idRows, RowIds (okV ok sF.vocab) r
+        refine rowIds_of_equiv _ (BgpTableTheorems.nd_idRows _ huwf.nodup) heq ?_
+        intro r hr
+        obtain ⟨t, ht, hrt⟩ := List.mem_flatMap.mp hr
+        obtain ⟨j, hj, e⟩ := List.getElem_of_mem ht
+        simp only [Array.length_toList] at hj
+        obtain ⟨_, _, _, _, _, _, _, h6⟩ := hpart2 j hj
+        rw [← e] at hrt
+        exact h6 r (by simpa using hrt)
+  · exact fun tps e => hnb tps e
 
 /-- **The WHERE clause on ids as the nested evaluator runs it.** For every
     pattern built from basic graph patterns, property paths, `{}`, Join,
@@ -796,7 +991,11 @@ theorem query_where_allowed_exec (env : EvalEnv) (ds : Dataset)
         rfl
       · intro r hr
         simp [Table.idRows, Table.empty] at hr
-  | .graph (.var _) _, _, h, _, _ => h.elim
+  | .graph (.var v) q, a, h, nst1, hi1 => by
+    obtain ⟨hng, hnb, hnd, hfa, hq⟩ := h
+    exact graphVar_ends cx gof cid dec ok env ds hdec hcid hcidN hloc hcidok hcid0 v q hng hnb hnd hfa
+      (fun ng hng' s hs => query_where_allowed_exec env ds hpm hscan hds hid hdec hsok hcid hidv hcid0 htag hcidN
+        henv htermOf hloc hcidok q ng.graph (hq ng hng') s hs) a nst1 hi1
   | .graph (.bnode _) _, _, h, _, _ => h.elim
   | .graph (.literal _) _, _, h, _, _ => h.elim
   | .graph (.tripleTerm _ _ _) _, _, h, _, _ => h.elim
@@ -925,3 +1124,4 @@ end L4Factoidal.Storage.Sbm11.GroupTableTheorems
 #print axioms L4Factoidal.Storage.Sbm11.GroupTableTheorems.minus_rows
 #print axioms L4Factoidal.Storage.Sbm11.GroupTableTheorems.query_where_allowed_exec
 #print axioms L4Factoidal.Storage.Sbm11.GroupTableTheorems.query_where_allowed_exec_init
+#print axioms L4Factoidal.Storage.Sbm11.GroupTableTheorems.graphVar_ends

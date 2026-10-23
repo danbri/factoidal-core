@@ -38,11 +38,14 @@ same recursion over rows of ids, and `IdAllowedTheorems.evalGroupIds_allowed`
 proves that it decodes to an answer the reference evaluator allows (SPARQL
 1.1 fixes no order of solutions), for every pattern of the fragment, at any
 depth. `GroupTableTheorems.query_where_allowed_exec` proves that this
-evaluator's table decodes to such an answer for Join, LeftJoin, FILTER (a
+evaluator refuses a term the query-local vocabulary cannot hold, or returns
+a table that decodes, with the decoder of its final state
+(`LocalVocabTheorems`), to such an answer for Join, LeftJoin, FILTER (a
 condition with no EXISTS, `FilterTableTheorems`), Union, MINUS, GRAPH with an
-IRI and the leaves; the other arms (EXISTS in a condition, GRAPH ?g, BIND,
-VALUES, sub-SELECT) are tested by `tests/sbm11/gate/ids-nest-*.rq` and the
-W3C census.
+IRI, GRAPH ?g over a pattern that is not a basic graph pattern, BIND, VALUES
+and the leaves; the other arms (EXISTS in a condition, GRAPH ?g over a basic
+graph pattern, sub-SELECT) are tested by `tests/sbm11/gate/ids-nest-*.rq`
+and the W3C census.
 
 Refused, with a message the harness reports (`refused: ...` at run time, a
 `translate` error before): LATERAL, SERVICE, a GRAPH name that
