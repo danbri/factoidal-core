@@ -206,14 +206,14 @@ extern_lib libl4exthost pkg := do
 -- library: these do file I/O and print scores. The probes
 -- (`Harness.TurtleProbe`, `Harness.CanonProbe`) stay executable roots.
 @[default_target] lean_lib Harness where globs :=
-  #[`Harness.Common, `Harness.RifImport, `Harness.Fixtures, `Harness.Manifest, `Harness.Compare, `Harness.ProtocolRun, `Harness.Run, `Harness.HarnessTests,
+  (#[`Harness.Common, `Harness.RifImport, `Harness.Fixtures, `Harness.Manifest, `Harness.Compare, `Harness.ProtocolRun, `Harness.Run, `Harness.HarnessTests,
     `Harness.NativeHasher,
     `Harness.PosixRangeIO, `Harness.CompactedEpoch, `Harness.GenerationPointer, `Harness.ShardMerkleMaterialize, `Harness.ShardMerkleProfile, `Harness.ShardPublish,
     `Harness.IndexedBlockV3Materialize, `Harness.JsonLdScale, `Harness.LenientRun, `Harness.QlvrKernel,
     `Harness.Sbm11Gen, `Harness.RunHeap, `Harness.Sbm11Query, `Harness.Sbm11Delta, `Harness.Sbm11Update, `Harness.Sbm11PackLib, `Harness.Sbm11Compact, `Harness.Sbm11PermCheck,
     `Harness.Sbm11Export,
     `Harness.PlannerCheck, `Harness.PlannerKinds, `Harness.PlannerSbm11IO,
-    `Harness.ProofObligations]
+    `Harness.ProofObligations, `Harness.WorkerPool] : Array Lean.Name).map Glob.one
 
 -- The WebAssembly export surface: the JSON string-in / string-out ABI
 -- (Wasm/Abi.lean) and the `@[export]` C symbols (Wasm/Exports.lean).
@@ -315,6 +315,9 @@ extern_lib libl4exthost pkg := do
 -- The q07 kernel timing loop alone (no FFI in its imports), for the native and
 -- wasm32 measurements of issue 797 (tools/lean-wasm-exe.sh builds the wasm32 one).
 @[default_target] lean_exe «l4qlvr-kernel» where root := `Harness.QlvrKernelBench
+-- Start latency of a short job on the Lean task pool and on the per-session
+-- worker pool of the SBM11 harness (issue 961, Harness/WorkerPool.lean).
+@[default_target] lean_exe «l4pool-bench» where root := `Harness.WorkerPoolBench
 -- SBM11 stage 2 (https://github.com/danbri/factoidal/issues/788): packer
 -- phases 1 and 2 (global dictionary GDV1/GDX1), its check and lookup bench.
 @[default_target] lean_exe «l4sbm11-dict-pack» where root := `Harness.Sbm11DictPack
