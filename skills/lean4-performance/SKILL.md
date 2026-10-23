@@ -783,6 +783,38 @@ section "Stage 1b", subsection "What failed on the way"):
   `perf sched record` and `perf record -e sched:sched_switch --call-graph
   dwarf`, not only with CPU samples.
 
+- **Comparisons over values that tasks share.** An ORDER BY sort cut into
+  blocks, one task per block (`Task.spawn`), each comparing `EvalResult`s of
+  one shared array: the closure makes the array and every value in it MT, so
+  every `getD` in every comparison took and dropped a reference atomically,
+  in the tasks and in the parent's final merge passes. 137,026 labels: 930
+  ms at 4 threads against 648 ms single-threaded (2026-10-23, KR 1.2 of
+  https://github.com/danbri/factoidal/issues/875; not kept). Rule: a task
+  compares values it made itself, or scalar keys.
+- **A column passed to a specialised loop as a closure costs an allocation
+  per row.** `rangePairs (l.at c) ...` gave `mergeGo` a closure; the loop was
+  specialised for the closure *parameter*, so every row read was
+  `lean_apply_1` and its `UInt64` result was boxed: a merge join of 6,248 and
+  13,369 rows took 2.5 ms in 4 tasks against 0.45 ms on one thread. Repair:
+  bind the byte arrays to local names and pass `fun i => word64 ca (8 * i)`
+  at the call site, with the helper `@[inline]`, so that `mergeGo` is
+  specialised for the lambda (`ParallelJoin.rangePairsOf`). Check the
+  generated C for `lean_apply_1` in the loop.
+- **A task waits for a worker that sleeps.** The Lean pool's workers block on
+  a condition variable when idle; on the 4-vCPU test VM a woken thread runs
+  50 to 120 microseconds later (median 79, p90 126, a C condition-variable
+  test). The pool also starts workers lazily (a new one only when a task is
+  queued and none counts as idle), and `perf sched record` showed 2 worker
+  threads in a whole 4-thread q07 process. So a phase of less than about 0.5
+  ms single-threaded does not gain from tasks: olympics q07's merge join (0.45
+  ms) in 4 ranges took 0.47 to 0.52 ms, its ORDER BY with values read by
+  range workers 0.5 ms more. What helped: the calling thread runs the first
+  range itself after it has started the tasks of the others (q07 at 4
+  threads, 4.25 to 3.68 ms). Starting all N pool workers at open (N tasks
+  that wait until all N run) did not: no time gained and peak RSS above 2
+  times the 1-thread RSS (each worker's heap). Stage 1f of
+  [`docs/designissues/2026-10-12-parallel-block-scans.md`](../../docs/designissues/2026-10-12-parallel-block-scans.md).
+
 Measure every one of these with `perf record` at 1 and N threads and the
 CPU time (`perf stat -e task-clock`): CPU time that grows with the thread
 count at a fixed amount of work is the sign.
