@@ -349,6 +349,29 @@ def ttDec : Term :=
 -- Triple terms have no ordering: `<` on them is a type error.
 #guard valueCompare (.term ttInt) (.term ttDec) .lt == none
 
+/-! ### §17.4.1.7 RDFterm-equal: literals of a datatype with no value comparison
+
+Two literals that are not the same RDF term, of a datatype this engine does
+not compare by value (`rdf:XMLLiteral`, an unknown datatype), are a type
+error under `=` and `!=` (SPARQL 1.1 section 17.4.1.7; W3C test
+open-world/open-eq-06). The same term is `true` under `=`. -/
+
+def litXml (s : String) : WfLiteral := mkTypedLiteral s rdfXMLLiteral
+def litUnknown (s : String) : WfLiteral := mkTypedLiteral s (iriE "http://example/t#type1")
+
+#guard valueCompare (.term (.literal (litXml "<x></x>"))) (.term (.literal (litXml "<x/>"))) .eq == none
+#guard valueCompare (.term (.literal (litXml "<x></x>"))) (.term (.literal (litXml "<x/>"))) .ne == none
+#guard valueCompare (.term (.literal (litXml "<x/>"))) (.term (.literal (litXml "<x/>"))) .eq == some true
+#guard valueCompare (.term (.literal (litXml "<x/>"))) (.term (.literal (litXml "<x/>"))) .ne == some false
+#guard valueCompare (.term (.literal (litUnknown "a"))) (.term (.literal (litUnknown "b"))) .ne == none
+#guard valueCompare (.term (.literal (litUnknown "a"))) (.term (.literal (litUnknown "a"))) .eq == some true
+-- `xsd:string` and language-tagged literals keep value comparison
+#guard valueCompare (.term (.literal (litStr "a"))) (.term (.literal (litStr "b"))) .eq == some false
+#guard valueCompare (.term (.literal (litLang "a" "en"))) (.term (.literal (litLang "b" "en"))) .ne == some true
+-- `xsd:dateTime` compares by value
+#guard valueCompare (.term (.literal (mkTypedLiteral "2006-08-23T09:00:00+01:00" xsdDateTime)))
+  (.term (.literal (mkTypedLiteral "2006-08-23T08:00:00Z" xsdDateTime))) .eq == some true
+
 /-! ### §17.4.3.14 REGEX / §17.4.3.15 REPLACE over the pure engine -/
 
 -- Unanchored search: "a." matches inside "abc".
