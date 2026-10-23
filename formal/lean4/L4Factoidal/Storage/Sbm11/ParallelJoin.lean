@@ -1,34 +1,26 @@
 /-
-L4Factoidal.Storage.Sbm11.ParallelJoin — the merge join and the ORDER BY sort
-of the SBM11 id path, divided into ranges (KR 1.2 of OKR batch 3,
+L4Factoidal.Storage.Sbm11.ParallelJoin — the merge join of the SBM11 id path
+divided into left row ranges (KR 1.2 of OKR batch 3,
 https://github.com/danbri/factoidal/issues/875; costs named in
 https://github.com/danbri/factoidal/issues/961; record
 docs/designissues/2026-10-12-parallel-block-scans.md, stage 1f).
 
-Merge join. `Qlvr.mergeJoin` walks the left and the right join columns once
-(`mergeGo`). Here the left rows are cut into consecutive ranges
-(`ranges`). For a range `[lo, hi)` the walk starts at left row `lo` and at
-the first right row whose join value is not below the left value of row `lo`
-(`lowerBound`, a binary search), and stops at left row `hi` (`rangePairs`).
-The index pairs of the ranges, appended in range order (`concatPairs`), are
-the index pairs of the single walk: `ParallelJoinTheorems.mergeJoinRanges_eq`
-proves `mergeJoinRanges l r v rs = mergeJoin l r v` for join columns in
-non-decreasing order and ranges that cover the left rows in order. The
-native driver computes `rangePairs` of each range in a task and appends the
-results in range order (`IdQuery.mergeJoinParM`).
-
-ORDER BY sort. `Qlvr.mergeSortBy` is a bottom-up merge sort: pass `k`
-merges runs of width `2^k`. A pass of width below `w`, for `w` a power of two,
-merges only inside the aligned blocks `[i w, (i + 1) w)`, so sorting each
-block alone and then running the passes from width `w` on the concatenation
-(`sortFromWidth`) gives the array of `mergeSortBy`. That equality is checked
-by the `#guard`s below and by `tests/sbm11/threads.sh` (byte-identical
-answers at 1, 2, 4 and 8 threads); it is not proved.
+`Qlvr.mergeJoin` walks the left and the right join columns once (`mergeGo`).
+Here the left rows are cut into consecutive ranges (`ranges`). For a range
+`[lo, hi)` the walk starts at left row `lo` and at the first right row whose
+join value is not below the left value of row `lo` (`lowerBound`, a binary
+search), and stops at left row `hi` (`rangePairs`). The index pairs of the
+ranges, appended in range order (`concatPairs`), are the index pairs of the
+single walk: `ParallelJoinTheorems.mergeJoinRanges_eq` proves
+`mergeJoinRanges l r v rs = mergeJoin l r v` for join columns in
+non-decreasing order and ranges that cover the left rows in order. The native
+driver computes `rangePairsOf` of each range in a task (`mapPar`, which is
+`List.map` in the logic: `mapPar_eq`) and appends the results in range order
+(`IdQuery.mergeJoinParM`).
 
 Every recursion here is a tail call with a fuel argument.
 -/
 import L4Factoidal.Qlvr.Bgp
-import L4Factoidal.Qlvr.Sort
 
 namespace L4Factoidal.Storage.Sbm11.ParallelJoin
 
@@ -114,10 +106,9 @@ def rangeChunks (n k : Nat) : List (List Nat) := (ranges n k).map fun (lo, hi) =
 /-- `xs.map f`, with `f` of every element after the first computed by a task
     (`Task.spawn`) and the first computed by the calling thread meanwhile.
     `mapPar_eq`: it is `List.map` (`Task.spawn fn` is `⟨fn ()⟩` in the
-    logic). Used for pure work of a few hundred microseconds (the ranges of a
-    merge join, the blocks of an ORDER BY sort): `IdQuery.Par.fold` gives each
-    worker a view of the store, and that cost more than the work (olympics
-    q07 at 4 threads, 2026-10-23). -/
+    logic). Used for the ranges of a merge join, which read no store:
+    `IdQuery.Par.fold` gives each worker a view of the store and a page cache,
+    which a pure computation does not need. -/
 def mapPar {α β : Type} (f : α → β) : List α → List β
   | [] => []
   | x :: rest =>
@@ -130,58 +121,10 @@ theorem mapPar_eq {α β : Type} (f : α → β) (xs : List α) : mapPar f xs = 
   | nil => rfl
   | cons x rest => simp [mapPar, Task.spawn]
 
-/-! ## The ORDER BY sort from runs of width `w` -/
-
-/-- The smallest power of two that is at least `n` (and at least 1). -/
-def pow2AtLeast (n : Nat) : Nat := go 64 1
-where
-  go : Nat → Nat → Nat
-    | 0, w => w
-    | f + 1, w => if w < n then go f (2 * w) else w
-
-/-- The passes of `mergeSortBy` from width `w` on: for an array whose aligned
-    blocks of width `w` (a power of two) are each sorted by `mergeSortBy`,
-    the array `mergeSortBy` gives for the whole input. -/
-def sortFromWidth {α : Type} [Inhabited α] (a : Array α) (le : α → α → Bool) (w : Nat) : Array α :=
-  mergeSortGo le a.size 64 a w
-
-/-- `mergeSortBy` with the aligned blocks of width `w` sorted one by one,
-    then `sortFromWidth` (the order the divided ORDER BY computes). -/
-def blockSortBy {α : Type} [Inhabited α] (a : Array α) (le : α → α → Bool) (w : Nat) : Array α :=
-  let w := max w 1
-  let blocks := (List.range ((a.size + w - 1) / w)).map fun i => mergeSortBy (a.extract (i * w) ((i + 1) * w)) le
-  sortFromWidth (blocks.foldl (· ++ ·) #[]) le w
-
-#guard pow2AtLeast 0 == 1
-#guard pow2AtLeast 73 == 128
-#guard pow2AtLeast 128 == 128
 #guard ranges 10 3 == [(0, 4), (4, 8), (8, 10)]
 #guard ranges 10 1 == [(0, 10)]
 #guard ranges 3 4 == [(0, 1), (1, 2), (2, 3)]
 #guard ranges 0 4 == [(0, 0)]
-
-/-- A pseudo-random array of `n` keys in `[0, m)` (a linear congruence). -/
-private def sample (n m seed : Nat) : Array (Nat × Nat) := Id.run do
-  let mut x := seed
-  let mut out : Array (Nat × Nat) := #[]
-  for i in [0:n] do
-    x := (x * 1103515245 + 12345) % 2147483648
-    out := out.push (x % m, i)
-  return out
-
--- the block sort equals `mergeSortBy` (stable: the second component is the
--- input position) for block widths 1 to 64 and sizes that are and are not
--- multiples of the width, with many equal keys and with few
-#guard (List.range 70).all fun n => [1, 2, 4, 8, 16, 64].all fun w =>
-  let a := sample n 5 n
-  blockSortBy a (fun x y => x.1 ≤ y.1) w == mergeSortBy a (fun x y => x.1 ≤ y.1)
-#guard [291, 300, 1000, 4097].all fun n => [32, 128, 256].all fun w =>
-  let a := sample n 1000 (n + w)
-  blockSortBy a (fun x y => x.1 ≤ y.1) w == mergeSortBy a (fun x y => x.1 ≤ y.1)
--- a comparison that is not a total preorder still gives the same array
-#guard [100, 291].all fun n => [4, 32, 128].all fun w =>
-  let a := sample n 7 (3 * n)
-  let le := fun (x y : Nat × Nat) => (x.1 + y.1) % 3 != 1
-  blockSortBy a le w == mergeSortBy a le
+#guard mapPar (· * 2) [1, 2, 3] == [2, 4, 6]
 
 end L4Factoidal.Storage.Sbm11.ParallelJoin

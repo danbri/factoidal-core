@@ -938,9 +938,8 @@ structure Store (m : Type → Type) where
   aggOnIds : Bool := true
 
 /-- The runner of the divided paths. `fold job chunks init g` runs `job` on
-    every chunk (block numbers; for the divided merge join and ORDER BY of
-    stage 1f, a range `[lo, hi]` of rows or values), each with its own view
-    of the store, and folds `g` over the results in chunk order. Its meaning is
+    every chunk of block numbers, each with its own view of the store, and
+    folds `g` over the results in chunk order. Its meaning is
     `chunks.foldlM (fun b X => do g b (← job st X)) init`; the native driver
     (`Harness/Sbm11Query.lean`, `parFold`) runs the jobs as tasks. -/
 structure Par (m : Type → Type) where
@@ -2542,9 +2541,14 @@ def orderKeysByIds? (t : Table) (c : Nat) : Option (Array UInt64) := Id.run do
     out := out.push (if allRef then x else x &&& 0x00FFFFFFFFFFFFFF)
   return some out
 
-/-- The distinct ids of column `c` of `t` in the order of their first row,
-    and the position of each id in that array. -/
-def distinctIds (t : Table) (c : Nat) : Std.HashMap UInt64 Nat × Array UInt64 := Id.run do
+/-- Per row of column `c`, the number of its value in the section 15.1 order
+    of the column's distinct values (`sparqlOrderValue`), complemented for
+    DESC. -/
+def orderKeysM {m : Type → Type} [Monad m] (st : Store m) (t : Table) (c : Nat) (desc : Bool) :
+    ExceptT String m (Array UInt64) := do
+  match orderKeysByIds? t c with
+  | some ks => return (if desc then ks.map (~~~ ·) else ks)
+  | none => pure ()
   let mut idx : Std.HashMap UInt64 Nat := {}
   let mut ids : Array UInt64 := #[]
   for i in [0:t.rows] do
@@ -2552,25 +2556,15 @@ def distinctIds (t : Table) (c : Nat) : Std.HashMap UInt64 Nat × Array UInt64 :
     if !idx.contains x then
       idx := idx.insert x ids.size
       ids := ids.push x
-  return (idx, ids)
-
-/-- The ORDER BY value of an id. An unbound variable (`OptJoin.unbound`,
-    after an OPTIONAL) evaluates to an error, which section 15.1 orders
-    first, as the reference does. -/
-def orderValueM {m : Type → Type} [Monad m] (st : Store m) (x : UInt64) : ExceptT String m EvalResult := do
-  if x == OptJoin.unbound then return .error
-  return orderValue (← st.termOf x)
-
-/-- "Value `a` may come before value `b`" for the positions of `vals`. -/
-def orderLe (vals : Array EvalResult) (a b : Nat) : Bool :=
-  L4Factoidal.SPARQL.sparqlOrderValue (vals.getD a .error) (vals.getD b .error) ≤ 0
-
-/-- Per row of column `c`, the rank of its value among the values `vals` of
-    the distinct ids (`idx` gives an id's position), given the positions
-    `sorted` in the order of the values; complemented for DESC. -/
-def keysOfSorted (t : Table) (c : Nat) (desc : Bool) (idx : Std.HashMap UInt64 Nat)
-    (vals : Array EvalResult) (sorted : Array Nat) : Array UInt64 := Id.run do
-  let mut rank : Array Nat := Array.replicate vals.size 0
+  let mut vals : Array EvalResult := #[]
+  for x in ids do
+    -- an unbound variable (`OptJoin.unbound`, after an OPTIONAL) evaluates
+    -- to an error, which section 15.1 orders first, as the reference does
+    if x == OptJoin.unbound then vals := vals.push .error
+    else vals := vals.push (orderValue (← st.termOf x))
+  let sorted := mergeSortBy (List.range ids.size).toArray fun a b =>
+    L4Factoidal.SPARQL.sparqlOrderValue (vals.getD a .error) (vals.getD b .error) ≤ 0
+  let mut rank : Array Nat := Array.replicate ids.size 0
   let mut r := 0
   for j in [0:sorted.size] do
     if j > 0 && L4Factoidal.SPARQL.sparqlOrderValue (vals.getD sorted[j - 1]! .error)
@@ -2583,60 +2577,16 @@ def keysOfSorted (t : Table) (c : Nat) (desc : Bool) (idx : Std.HashMap UInt64 N
     out := out.push (if desc then ~~~k else k)
   return out
 
-/-- The fewest distinct values per block of a divided ORDER BY sort (stage
-    1f). A block costs a task (see `joinMinRows`); olympics q07 sorts 291
-    values (about 0.3 ms on one thread), and the sort in 3 blocks with the
-    values read by range workers (`Par.fold`) made its ORDER BY 0.5 ms slower
-    at 4 threads. With `Par.minRows = 0` (the gate fixtures) every sort of 2
-    values or more is divided. -/
-def orderMinIds : Nat := 4096
-
-/-- Per row of column `c`, the number of its value in the section 15.1 order
-    of the column's distinct values (`sparqlOrderValue`), complemented for
-    DESC.
-
-    Divided (stage 1f; `par` set and at least `orderMinIds` distinct values
-    per block): the values are read on the calling thread (`termOf`, the
-    dictionary read); the positions are cut into aligned blocks of `w`, `w` a
-    power of two, and a task sorts each block with `mergeSortBy`
-    (`ParallelJoin.mapPar`); the parent appends the sorted blocks in order and
-    runs the merge passes from width `w` on (`ParallelJoin.sortFromWidth`). A
-    pass of width below `w` merges only inside one aligned block, so the
-    result is the array `mergeSortBy` gives for all the positions
-    (`ParallelJoin.blockSortBy`, checked by its `#guard`s; not proved), and
-    the keys are those of the single-thread path. -/
-def orderKeysM {m : Type → Type} [Monad m] (st : Store m) (t : Table) (c : Nat) (desc : Bool)
-    (par : Option (Par m) := none) : ExceptT String m (Array UInt64) := do
-  match orderKeysByIds? t c with
-  | some ks => return (if desc then ks.map (~~~ ·) else ks)
-  | none => pure ()
-  let (idx, ids) := distinctIds t c
-  let mut vals : Array EvalResult := Array.mkEmpty ids.size
-  for x in ids do
-    vals := vals.push (← orderValueM st x)
-  let valsF := vals
-  let le := orderLe valsF
-  if let some p := par then
-    let k := min p.threads (ids.size / (if p.minRows == 0 then 2 else orderMinIds))
-    if k ≥ 2 then
-      let w := ParallelJoin.pow2AtLeast ((ids.size + k - 1) / k)
-      let blocks := (List.range ((ids.size + w - 1) / w)).map fun i =>
-        (List.range' (i * w) (min ids.size ((i + 1) * w) - i * w)).toArray
-      let sortedBlocks := ParallelJoin.mapPar (fun b => mergeSortBy b le) blocks
-      return keysOfSorted t c desc idx valsF
-        (ParallelJoin.sortFromWidth (sortedBlocks.foldl (· ++ ·) #[]) le w)
-  return keysOfSorted t c desc idx valsF (mergeSortBy (List.range ids.size).toArray le)
-
 /-- The rows of `t` in the ORDER BY order of `plan` (stable: rows whose keys
     are equal keep their order), as row indices; with `firstK = some k` only
     the first `k` of them (`topK`). `finishM` uses it; so does each block range
     of the divided ORDER BY ... LIMIT path (`topPartM`). -/
 def orderPermM {m : Type → Type} [Monad m] (st : Store m) (plan : Plan) (t : Table)
-    (firstK : Option Nat) (par : Option (Par m) := none) : ExceptT String m (Array Nat) := do
+    (firstK : Option Nat) : ExceptT String m (Array Nat) := do
   let mut keys : Array (Array UInt64) := #[]
   for (v, desc) in plan.order do
     match t.idx v with
-    | some c => keys := keys.push (← orderKeysM st t c desc par)
+    | some c => keys := keys.push (← orderKeysM st t c desc)
     | none => pure ()
   match firstK with
   | some k =>
@@ -2656,12 +2606,12 @@ def orderPermM {m : Type → Type} [Monad m] (st : Store m) (plan : Plan) (t : T
     ids are equal terms and different ids different terms), OFFSET, LIMIT.
     Without DISTINCT, ORDER BY with LIMIT keeps only the first OFFSET + LIMIT
     rows of the order (`topK`). -/
-def finishM {m : Type → Type} [Monad m] (st : Store m) (plan : Plan) (t : Table)
-    (par : Option (Par m) := none) : ExceptT String m Table := do
+def finishM {m : Type → Type} [Monad m] (st : Store m) (plan : Plan) (t : Table) :
+    ExceptT String m Table := do
   let mut t := t
   if !plan.order.isEmpty then
     let firstK := if plan.distinct then none else plan.limit.map (plan.offset + ·)
-    let perm ← orderPermM st plan t firstK par
+    let perm ← orderPermM st plan t firstK
     t := t.reorder perm
   if plan.distinct then
     let cols := plan.outVars.filterMap t.idx
@@ -3286,7 +3236,7 @@ def runPlanM {m : Type → Type} [Monad m] (st : Store m) (plan : Plan) (emit : 
         | .ok t => table := t
         | .error e => throw e
       else table := t1
-    let out ← finishM st plan table par
+    let out ← finishM st plan table
     let pieces := (out.rows + 4095) / 4096
     for k in [0:pieces] do
       let lo := 4096 * k
