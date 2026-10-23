@@ -276,6 +276,7 @@ import L4Factoidal.SPARQL.UpdateStore
 import L4Factoidal.SPARQL.UpdateStoreTheorems
 import L4Factoidal.SPARQL.UpdateTests
 import L4Factoidal.SPARQL.UpdateTheorems
+import L4Factoidal.SPARQL.UpdateDenotation
 import L4Factoidal.SPARQL.UpdateDenotationTests
 import L4Factoidal.Regex.Syntax
 import L4Factoidal.Regex.Derivative
