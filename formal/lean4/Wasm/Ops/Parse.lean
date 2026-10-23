@@ -121,7 +121,9 @@ def formatOfTag (tag : String) : Option RdfFormat :=
 
 /-- Parse `text` under `formatTag` into a `Dataset`. Graph-shaped
 formats (Turtle, N-Triples, RDF/XML) wrap as the default graph; JSON-LD and a
-tag outside the table go to `extra`.
+tag outside the table go to `extra`. The dataset is a set of quads
+(`Source.parseDocument`; the answer of `extra` goes through `Dataset.toSet`;
+`parseTextToDatasetBy_isSet`).
 Not private: `Wasm/Ops/Handles.lean`'s `datasetOpenBy` is the same parse. -/
 def parseTextToDatasetBy (extra : ExtraReader) (text formatTag baseIRI : String) :
     Except String Dataset :=
@@ -129,7 +131,7 @@ def parseTextToDatasetBy (extra : ExtraReader) (text formatTag baseIRI : String)
   let (mode, tag) := resolveModeAndTag formatTag
   let viaExtra : Except String Dataset :=
     match extra tag text base with
-    | some r => r
+    | some r => r.map Dataset.toSet
     | none => .error s!"unknown format tag '{formatTag}'"
   match formatOfTag tag with
   | none | some .jsonld => viaExtra
@@ -300,7 +302,7 @@ def parseDocumentOutcomeBy (extra : ExtraReader) (text formatTag baseIRI : Strin
   | some fmt =>
       if fmt == .jsonld then
         match extra tag text base with
-        | some (.ok ds) => .ok { ds := ds, prefixes := [] }
+        | some (.ok ds) => .ok { ds := ds.toSet, prefixes := [] }
         | some (.error m) => .error (noPosition m)
         | none => .error (noPosition s!"unknown format tag '{formatTag}'")
       else
@@ -309,9 +311,72 @@ def parseDocumentOutcomeBy (extra : ExtraReader) (text formatTag baseIRI : Strin
         | .ok (ds, ps) => .ok { ds := ds, prefixes := declarationOrderPrefixes ps }
   | none =>
       match extra tag text base with
-      | some (.ok ds) => .ok { ds := ds, prefixes := [] }
+      | some (.ok ds) => .ok { ds := ds.toSet, prefixes := [] }
       | some (.error m) => .error (noPosition m)
       | none => .error (noPosition s!"unknown format tag '{formatTag}'")
+
+/-- The dataset of `parseTextToDatasetBy` is a set of quads (RDF 1.1 Concepts
+section 3: "An RDF graph is a set of RDF triples"). -/
+theorem parseTextToDatasetBy_isSet (extra : ExtraReader) (text formatTag baseIRI : String)
+    (ds : Dataset) (h : parseTextToDatasetBy extra text formatTag baseIRI = .ok ds) :
+    ds.IsSet := by
+  unfold parseTextToDatasetBy at h
+  simp only at h
+  split at h
+  · split at h
+    · next r _ =>
+      cases r with
+      | error e => cases h
+      | ok d => simp only [Except.map, Except.ok.injEq] at h; subst h; exact Dataset.toSet_isSet d
+    · cases h
+  · split at h
+    · next r _ =>
+      cases r with
+      | error e => cases h
+      | ok d => simp only [Except.map, Except.ok.injEq] at h; subst h; exact Dataset.toSet_isSet d
+    · cases h
+  · have key : ∀ f m b,
+        (L4Factoidal.RDF.Source.parseDocument {} f m b text).mapError fmtParseError = .ok ds →
+        ds.IsSet := by
+      intro f m b hf
+      cases hr : L4Factoidal.RDF.Source.parseDocument {} f m b text with
+      | error e => rw [hr] at hf; cases hf
+      | ok d =>
+        rw [hr] at hf
+        simp only [Except.mapError, Except.ok.injEq] at hf
+        subst hf
+        obtain ⟨_, _, hs⟩ := L4Factoidal.RDF.Source.parseDocument_set {} f m b text d hr
+        exact hs.isSet
+    exact key _ _ _ h
+
+/-- The dataset of `parseDocumentOutcomeBy`, which `datasetOpen` stores, is a
+set of quads. -/
+theorem parseDocumentOutcomeBy_isSet (extra : ExtraReader) (text formatTag baseIRI : String)
+    (o : ParseOutcome) (h : parseDocumentOutcomeBy extra text formatTag baseIRI = .ok o) :
+    o.ds.IsSet := by
+  unfold parseDocumentOutcomeBy at h
+  simp only at h
+  split at h
+  · next fmt _ =>
+    split at h
+    · split at h
+      · next d _ => simp only [Except.ok.injEq] at h; subst h; exact Dataset.toSet_isSet d
+      · cases h
+      · cases h
+    · cases hr : L4Factoidal.RDF.Source.parseDocumentWithPrefixes {} fmt _ _ text with
+      | error e => rw [hr] at h; cases h
+      | ok r =>
+        rw [hr] at h
+        simp only [Except.ok.injEq] at h
+        subst h
+        exact L4Factoidal.RDF.Source.parseDocumentWithPrefixes_isSet {} fmt _ _ text r hr
+  · split at h
+    · next d _ => simp only [Except.ok.injEq] at h; subst h; exact Dataset.toSet_isSet d
+    · cases h
+    · cases h
+
+#print axioms parseTextToDatasetBy_isSet
+#print axioms parseDocumentOutcomeBy_isSet
 
 /-- The display tag of an error envelope: the caller's own spelling,
 lower-cased, or `turtle` for the empty default. -/

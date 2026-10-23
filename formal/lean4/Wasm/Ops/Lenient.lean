@@ -76,7 +76,9 @@ def diagnosticJson (d : Diagnostic) : Json :=
     , ("class", .string d.cls.tag) ]
 
 /-- The lenient parse of `text` under `formatTag`: the outcome and the
-diagnostics. RDF/XML, the syntaxes `extra` reads (JSON-LD in the full
+diagnostics. The dataset is a set of quads: the Turtle and N-Triples readers
+list a repeated triple two times, so their graph goes through `Dataset.toSet`
+(the N-Quads and TriG readers add with `addQuad`). RDF/XML, the syntaxes `extra` reads (JSON-LD in the full
 dispatch) and unknown tags are the strict `parseDocumentOutcomeBy`. -/
 def lenientDocumentOutcomeBy (extra : ExtraReader) (text formatTag baseIRI : String)
     (opts : LenientOptions) :
@@ -86,10 +88,11 @@ def lenientDocumentOutcomeBy (extra : ExtraReader) (text formatTag baseIRI : Str
   match tag with
   | "" | "turtle" | "ttl" =>
       let (g, ds, ps) := parseTurtleLenientWithPrefixes text base mode opts
-      .ok ({ ds := { default := g, named := [] }, prefixes := declarationOrderPrefixes ps }, ds)
+      .ok ({ ds := Dataset.toSet { default := g, named := [] },
+             prefixes := declarationOrderPrefixes ps }, ds)
   | "ntriples" | "nt" | "n-triples" =>
       let (g, ds) := parseNTriplesLenient text mode opts
-      .ok ({ ds := { default := g, named := [] }, prefixes := [] }, ds)
+      .ok ({ ds := Dataset.toSet { default := g, named := [] }, prefixes := [] }, ds)
   | "nquads" | "nq" | "n-quads" =>
       let (d, ds) := parseNQuadsFastLenient text mode opts
       .ok ({ ds := d, prefixes := [] }, ds)

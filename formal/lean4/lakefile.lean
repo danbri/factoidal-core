@@ -242,7 +242,7 @@ extern_lib libl4exthost pkg := do
              `Wasm.Ops.Xmpp,
              `Wasm.Ops.XmppSession,
              `Wasm.Ops.Crypto,
-             `Wasm.Ops.Formats, `Wasm.FormatsBoundaryTests,
+             `Wasm.Ops.Formats, `Wasm.FormatsBoundaryTests, `Wasm.GraphSetTests,
              `Wasm.Ops.ServiceReg, `Wasm.Ops.Reasoning, `Wasm.Ops.QueryExtras,
              `Wasm.Ops.Maths,
              `Wasm.Ops.Vc,
