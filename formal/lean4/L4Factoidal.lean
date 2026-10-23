@@ -32,6 +32,7 @@ import L4Factoidal.RDF.StoreCapabilities
 import L4Factoidal.RDF.StoreCapabilitiesCottas
 import L4Factoidal.RDF.StoreDeltaMerge
 import L4Factoidal.RDF.StoreCapabilitiesDelta
+import L4Factoidal.RDF.StoreCapsDenotation
 import L4Factoidal.RDF.StoreCombine
 import L4Factoidal.RDF.LangTag
 import L4Factoidal.RDF.IriSyntax
