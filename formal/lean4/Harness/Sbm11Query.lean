@@ -189,6 +189,9 @@ structure Session where
   /-- A task view (`Session.view`): `pageKeys` goes to `taskPages` under
       `dictLock` on a miss in the view's own `pages`. -/
   inTask : Bool := false
+  /-- In a task view (made by the task, `Session.local`): the pages it has
+      taken once from `taskPages` without a copy (`Session.sharedPage`). -/
+  onceSeen : Option (IO.Ref (Std.HashSet Nat)) := none
   /-- The dictionary's term count (`g.dictHdr.termCount`), read by every
       `keySlice`. A field of its own: reading it through `g.dictHdr` took and
       released a reference to the header object, which every task view
@@ -446,6 +449,22 @@ def Session.putTaskPage (ss : Session) (pg : Nat) (e : TaskPage) : IO Unit := do
     under the lock (the chunk caches are shared). Then a copy goes to the
     view's own cache. -/
 def Session.sharedPage (ss : Session) (pg : Nat) : IO (ByteArray × Array Nat) := do
+  -- a page that `taskPages` holds ready is read without `dictLock`: the map
+  -- is a persistent tree, and `IO.Ref.get` gives the whole map as it was at
+  -- one moment (KR 1.2 of batch 3: olympics q19 at 4 threads, 82 percent of
+  -- the context switches were waits for `dictLock` in this function)
+  if let some (.ready ks) := (← ss.taskPages.get).get? pg then
+    -- the first use of a page by this view reads the shared page and keeps
+    -- no copy; the second copies it into the view's cache. Most pages of a
+    -- scan give one key to a view, and the copy of 4.5 KB per page and view
+    -- on every query was the largest cost that 1 thread does not have
+    -- (olympics q19 at 4 threads, KR 1.2 of batch 3)
+    if let some r := ss.onceSeen then
+      if ← r.modifyGet (fun st => if st.contains pg then (false, st) else (true, st.insert pg)) then
+        return ks
+    let ks := copyPage ks
+    cacheTaskPage ss.taskPageLimit ss.pages pg ks
+    return ks
   let underLock := ss.g.verify != .none
   let step ← ss.dictLock.atomically (do
     match (← ss.taskPages.get).get? pg with
@@ -687,7 +706,7 @@ def Session.view (ss : Session) : IO Session := do
     thread, `lean_copy_expand_array` and `lean_mark_mt` at the top of the
     profile). -/
 def Session.local (v : Session) : IO Session := do
-  return { v with pages := ← IO.mkRef {} }
+  return { v with pages := ← IO.mkRef {}, onceSeen := some (← IO.mkRef {}) }
 
 /-- Add the counters of a finished task view to the session. -/
 def Session.absorb (ss v : Session) : IO Unit := do
@@ -832,14 +851,15 @@ def scanSipTableParM (ss : Session) (spec : IdQuery.ScanSpec) (cands : Array UIn
   return (out, stats)
 
 /-- `IdQuery.Par.fold` on this session (issue 799, stage 1b; workers from
-    KR 1.2 of batch 3). At most `window` worker tasks, started once per fold.
+    KR 1.2 of batch 3). At most `nWorkers` worker tasks, started once per
+    fold.
     Each worker has its own view of the session (`Session.view`, then
     `Session.local` in the worker: counters, permutation copies and a page
     cache that it keeps for all its ranges) and takes the next range from a
     shared counter, so the ranges are taken in range order. The parent folds
     the results with `g` in range order. Range `k` starts only after range
     `k - window` is folded (a permit per range), so at most `window` ranges
-    are running or wait in memory, as before. The counters of every worker are
+    are running or wait in memory (`parWindowFactor`). The counters of every worker are
     added (`Session.absorb`), failed or not; after a failure the workers
     finish the ranges they hold and take no new work.
 
@@ -849,13 +869,14 @@ def scanSipTableParM (ss : Session) (spec : IdQuery.ScanSpec) (cands : Array UIn
     `taskPages` under `dictLock`: olympics q19 at 4 threads spent 1.5 times
     the CPU time of 1 thread, most of the extra in `copyPage` (`memmove`),
     lock waits and fresh memory. -/
-def parFold (ss : Session) (window : Nat) {α β : Type}
+def parFold (ss : Session) (nWorkers window : Nat) {α β : Type}
     (job : IdQuery.Store IO → List Nat → ExceptT String IO α) (chunks : List (List Nat)) (init : β)
     (g : β → α → ExceptT String IO β) : ExceptT String IO β := do
   let arr := chunks.toArray
   let n := arr.size
   if n == 0 then return init
   let w := max window 1
+  let nwk := min (max nWorkers 1) n
   -- a range's result goes to its slot, then its promise is resolved; the
   -- parent takes the result out of the slot, so a folded result is freed (a
   -- resolved promise keeps its value while the promise is reachable)
@@ -872,7 +893,7 @@ def parFold (ss : Session) (window : Nat) {α β : Type}
   let next ← liftIO (IO.mkRef (0 : Nat))
   let stop ← liftIO (IO.mkRef false)
   let mut workers : Array (Task (Except IO.Error Unit) × Session) := #[]
-  for _ in [0:min w n] do
+  for _ in [0:nwk] do
     let v ← liftIO ss.view
     let t ← liftIO (IO.asTask (do
       let lv ← v.local
@@ -915,10 +936,18 @@ def parFold (ss : Session) (window : Nat) {α β : Type}
   if let some e := failure then throw e
   return acc
 
+/-- The ranges that may run or wait in memory, per worker, in `parFold`. With
+    one range per worker, a worker that finished its range waited until the
+    parent had written the range before it, the slowest of the window: olympics
+    at 4 threads (KR 1.2 of batch 3, 21 runs per process), q19 19.0 ms against
+    15.2 ms with 2 per worker, q21 37.0 ms against 28.9 ms; peak RSS 112 and 81
+    MB against 119 and 88 MB (1 thread: 69 and 53 MB). -/
+def parWindowFactor : Nat := 2
+
 /-- The divided single-pattern paths of `IdQuery.runPlanM` with `threads`
     tasks at once (issue 799, stage 1b). -/
 def Session.par (ss : Session) (threads : Nat) (minRows : Nat := 8192) : IdQuery.Par IO :=
-  { threads, minRows, fold := fun job chunks init g => parFold ss threads job chunks init g }
+  { threads, minRows, fold := fun job chunks init g => parFold ss threads (parWindowFactor * threads) job chunks init g }
 
 /-- `SBM11_MIN_RANGE_ROWS`: the fewest estimated rows per block range
     (`IdQuery.rangeCount`; default 8,192; 0: one range per thread, as the
