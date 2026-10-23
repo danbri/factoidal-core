@@ -27,7 +27,9 @@ induction on the pattern:
   a projection of variables on ids, or `SELECT` with a list of items whose
   variables are distinct and no EXISTS outside its WHERE clause, with any
   GROUP BY, HAVING, aggregate, expression, ORDER BY, OFFSET, LIMIT,
-  DISTINCT or REDUCED), at any depth (`ExecHyps`),
+  DISTINCT or REDUCED; or `SELECT *` with no GROUP BY and no EXISTS outside
+  its WHERE clause, whose rows bind only variables in scope,
+  `ScopeTheorems`), at any depth (`ExecHyps`),
   `evalGroupM` run from any state that keeps the invariant of the
   query-local vocabulary (`LocalVocab.Inv`) refuses with a refusal of that
   vocabulary (`LocalVocab.LocalRefusal`), or returns a well-formed table
@@ -62,10 +64,9 @@ FILTER and LeftJoin conditions with EXISTS of a pattern that is not a basic
 graph pattern or `{}`, or EXISTS inside an expression (`filterKindsM` refuses
 both), with a blank node in an EXISTS body (`ExecLeafTheorems.ExecTp`), with a
 UUID, STRUUID or BNODE call, or with a STRSTARTS, STRENDS or CONTAINS test on
-dictionary keys (`FilterIdTheorems.StrForm`); a `SELECT *` sub-SELECT that is not a
-projection of variables (its table has the variables `Query.projectedVars`
-gives, the variables in scope of the WHERE clause; that every row of
-`selectPost` binds only those is not proved), and a sub-SELECT with a
+dictionary keys (`FilterIdTheorems.StrForm`); a `SELECT *` sub-SELECT with
+GROUP BY, or over a WHERE clause with a `text:query` pattern or a nested
+`SELECT *` with GROUP BY (`ScopeTheorems.ScopeOk`), and a sub-SELECT with a
 variable projected twice: `ExecHyps` is `False` for them. VALUES with a variable twice
 and BIND with an expression that reads a freshness key (UUID, STRUUID,
 BNODE): `ExecHyps` is `False`. A VALUES term or a BIND value with a
@@ -78,6 +79,7 @@ census.
 No `sorry`, no user `axiom`, no `native_decide`, no `partial`.
 -/
 import L4Factoidal.Storage.Sbm11.ExistsTableTheorems
+import L4Factoidal.Storage.Sbm11.ScopeTheorems
 import L4Factoidal.Storage.Sbm11.GraphVarTableTheorems
 import L4Factoidal.Storage.Sbm11.GraphBgpTableTheorems
 import L4Factoidal.Storage.Sbm11.SubSelectTableTheorems
@@ -147,7 +149,8 @@ def NamedRows (cx : NCx Id) (prb : Nat → ByteArray) (ms : Nat → List Block.B
     variables (`IdGroup.plainProjection?`), or `SELECT items` with the
     variables of `items` distinct and no EXISTS outside the WHERE clause
     (`Query.expressionsOutsidePatternExistsFree`, which `nestedRefusal?`
-    checks). `False` for the constructors not proved here (LATERAL,
+    checks), or `SELECT *` with no GROUP BY, no EXISTS outside the WHERE
+    clause and a WHERE clause that is `ScopeTheorems.ScopeOk`. `False` for the constructors not proved here (LATERAL,
     SERVICE). At
     GRAPH with a variable over a nonempty basic graph pattern
     (`IdGroup.bgpGraphVarM`, one scan per triple pattern with the graph as a
@@ -193,8 +196,11 @@ def ExecHyps (LP : QueryPattern → Graph → Prop) (NG : Prop) (XD : Prop) (cx 
       (∀ w ∈ e.refVars, ¬ ExprLocalTheorems.IsFx w) ∧ ExecHyps LP NG XD cx cid ds gof q a
   | .subSelect (.mk form dcs inner gb hv md pv bs), a => ExecHyps LP NG XD cx cid ds gof inner a ∧
       ((IdGroup.plainProjection? (.mk form dcs inner gb hv md pv bs)).isSome ∨
-        ∃ items, form = .select (.vars items) ∧ (selectItemVars items).Nodup ∧
-          (Query.mk form dcs inner gb hv md pv bs).expressionsOutsidePatternExistsFree = true)
+        (∃ items, form = .select (.vars items) ∧ (selectItemVars items).Nodup ∧
+          (Query.mk form dcs inner gb hv md pv bs).expressionsOutsidePatternExistsFree = true) ∨
+        (form = .select .all ∧ gb = none ∧
+          (Query.mk form dcs inner gb hv md pv bs).expressionsOutsidePatternExistsFree = true ∧
+          ScopeTheorems.ScopeOk inner))
   | _, _ => False
 
 /-- What the nested evaluator gives for `p` from the state `nst1`: a
@@ -937,13 +943,24 @@ theorem query_where_allowed_exec (env : EvalEnv) (ds : Dataset)
       exact .equiv (.subSelect hAq) heq
     | none =>
       -- any other sub-SELECT: the reference post-processing on the decoded rows
-      rcases hs with hs | ⟨items, rfl, hnd, hef⟩
+      rcases hs with hs | ⟨items, rfl, hnd, hef⟩ | ⟨rfl, rfl, hef, hso⟩
       · rw [hpp] at hs; cases hs
-      refine ends_mono (SubSelect.subSelectM_post cid dec ok cx hid hcid hcidok hcidN hloc hcid0 htermOf _ hpp hnd
-        (fun A mu hmu p hp => SubSelect.selectPost_dom cx.env Graph.empty items dcs inner gb hv md pv bs A mu hmu p hp)
-        tq nst2 hi2 hoq) fun T s ⟨hwf, hpw, hok, hi, hp⟩ => ⟨hwf, ?_, hok, hi, hp12.trans hp⟩
-      rw [henv, ← SubSelect.selectPost_active env a Graph.empty _ hef] at hpw
-      exact .equiv (.subSelect hAq) (IdGroup.PermPw.of_pw hpw)
+      · refine ends_mono (SubSelect.subSelectM_post cid dec ok cx hid hcid hcidok hcidN hloc hcid0 htermOf _ hpp hnd
+          tq nst2 hi2 hoq
+          (fun mu hmu p hp => SubSelect.selectPost_dom cx.env Graph.empty items dcs inner gb hv md pv bs _ mu hmu p hp))
+          fun T s ⟨hwf, hpw, hok, hi, hp⟩ => ⟨hwf, ?_, hok, hi, hp12.trans hp⟩
+        rw [henv, ← SubSelect.selectPost_active env a Graph.empty _ hef] at hpw
+        exact .equiv (.subSelect hAq) (IdGroup.PermPw.of_pw hpw)
+      · -- `SELECT *` with no GROUP BY: its rows bind only variables in scope
+        -- of the WHERE clause, an allowed answer (`ScopeTheorems`)
+        have hnd : (Query.mk (.select .all) dcs inner none hv md pv bs).projectedVars.Nodup :=
+          projectedVars_star_nodup dcs inner none hv md pv bs
+        have hkeys := ScopeTheorems.allowed_keys env ds hAq hso
+        refine ends_mono (SubSelect.subSelectM_post cid dec ok cx hid hcid hcidok hcidN hloc hcid0 htermOf _ hpp hnd
+          tq nst2 hi2 hoq (ScopeTheorems.selectPost_all_keys cx.env Graph.empty dcs inner hv md pv bs _ hkeys))
+          fun T s ⟨hwf, hpw, hok, hi, hp⟩ => ⟨hwf, ?_, hok, hi, hp12.trans hp⟩
+        rw [henv, ← SubSelect.selectPost_active env a Graph.empty _ hef] at hpw
+        exact .equiv (.subSelect hAq) (IdGroup.PermPw.of_pw hpw)
 
 /-- `query_where_allowed_exec` from the state a query starts in (`{}`, the
     state `IdGroup.nestedTableM` runs from): no local id yet. -/

@@ -45,7 +45,9 @@ The two code paths:
   well-formed table whose decoded rows are `SolEquiv` to `selectPost` of the
   decoded input rows, for every active graph.
 * `subSelectM_post`: any other sub-SELECT whose projected variables are
-  distinct and bind every variable of a row of `selectPost` refuses with a
+  distinct and bind every variable of a row of `selectPost` over the decoded
+  rows of the WHERE table (for `SELECT *`: `ScopeTheorems.selectPost_all_keys`
+  with `ScopeTheorems.allowed_keys`) refuses with a
   refusal of the query-local vocabulary (a value with a language tag not in
   lower case, a full vocabulary), or answers a well-formed table whose rows
   decode, row for row, to the rows of `selectPost` with the empty graph.
@@ -991,7 +993,9 @@ variable (cid : Term → Option UInt64) (dec : UInt64 → Term) (ok : UInt64 →
     runs it over a well-formed table `t` whose ids are ids of the state:
     decode the rows, `selectPost` with the empty graph, encode the values of
     the projected variables. When the projected variables are distinct and
-    every row of `selectPost` binds only them (`hdom`), it refuses with a
+    every row of `selectPost` over the decoded rows of `t` binds only them
+    (`hdom`; `selectPost_dom` for `SELECT items`,
+    `ScopeTheorems.selectPost_all_keys` for `SELECT *`), it refuses with a
     refusal of the query-local vocabulary, or returns a well-formed table
     whose rows decode, with the decoder of the new state, to the rows of
     `selectPost` row for row as solution mappings; the new state keeps the
@@ -1001,9 +1005,10 @@ theorem subSelectM_post (cx : NCx _root_.Id) (hid : ∀ t, cx.st.idOf t = pure (
     (hcidN : ∀ t x, cid t = some x → dec x = normalizeTerm t) (hloc : ∀ x, ok x → tagOf x ≠ tagLocal)
     (hcid0 : ∀ t x, cid t = some x → x ≠ 0) (htermOf : ∀ x, ok x → cx.st.termOf x = pure (dec x))
     (sq : Query) (hpp : IdGroup.plainProjection? sq = none) (hnd : sq.projectedVars.Nodup)
-    (hdom : ∀ A, ∀ mu ∈ selectPost cx.env Graph.empty sq A, ∀ p ∈ mu, p.1 ∈ sq.projectedVars)
     (t : Table) (nst : NSt) (hi : Inv cid nst)
-    (hok : ∀ r ∈ t.idRows, RowIds (okV ok nst.vocab) r) :
+    (hok : ∀ r ∈ t.idRows, RowIds (okV ok nst.vocab) r)
+    (hdom : ∀ mu ∈ selectPost cx.env Graph.empty sq (t.idRows.map (decRow (decV dec nst.vocab))),
+      ∀ p ∈ mu, p.1 ∈ sq.projectedVars) :
     Ends ((IdGroup.subSelectM cx sq t).run nst) fun T nst' =>
       T.WF ∧ Pw BindEq (selectPost cx.env Graph.empty sq (t.idRows.map (decRow (decV dec nst.vocab))))
         (T.idRows.map (decRow (decV dec nst'.vocab))) ∧
@@ -1016,7 +1021,7 @@ theorem subSelectM_post (cx : NCx _root_.Id) (hid : ∀ t, cx.st.idOf t = pure (
     have hr := hok (t.idRow i) (List.mem_map.mpr ⟨i, List.mem_range.mpr hi', rfl⟩)
     exact hr (t.vars[c]!, t.at c i) (TableTheorems.mem_idRow.mpr ⟨c, hc, hx, rfl⟩)
   generalize hout : selectPost cx.env Graph.empty sq (t.idRows.map (decRow (decV dec nst.vocab))) = out
-  have hdom' : ∀ mu ∈ out, ∀ p ∈ mu, p.1 ∈ sq.projectedVars := by rw [← hout]; exact hdom _
+  have hdom' : ∀ mu ∈ out, ∀ p ∈ mu, p.1 ∈ sq.projectedVars := by rw [← hout]; exact hdom
   unfold IdGroup.subSelectM
   rw [hpp]
   simp only []

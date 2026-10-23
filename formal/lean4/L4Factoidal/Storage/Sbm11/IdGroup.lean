@@ -45,9 +45,9 @@ condition of EXISTS-free conjuncts and EXISTS or NOT EXISTS of a basic graph
 pattern or `{}`, `FilterTableTheorems`, `ExistsTableTheorems`), Union, MINUS,
 GRAPH with an IRI, GRAPH ?g (over a basic graph pattern: one scan per triple
 pattern with the graph as a column, `GraphBgpTableTheorems`; over `{}`), BIND,
-VALUES, a sub-SELECT (`SubSelectTableTheorems`; not `SELECT *` unless it is a
-projection of variables) and the leaves; `SELECT *` sub-SELECTs are tested by
-`tests/sbm11/gate/ids-nest-*.rq` and the W3C census.
+VALUES, a sub-SELECT (`SubSelectTableTheorems`; `SELECT *` with no GROUP BY,
+`ScopeTheorems`) and the leaves; tested also by `tests/sbm11/gate/ids-nest-*.rq`
+and the W3C census.
 
 Refused, with a message the harness reports (`refused: ...` at run time, a
 `translate` error before): LATERAL, SERVICE, a GRAPH name that
