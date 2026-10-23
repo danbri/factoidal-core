@@ -1,0 +1,4 @@
+PREFIX ex: <http://ex.org/>
+PREFIX xsd: <http://www.w3.org/2001/XMLSchema#>
+# DISTINCT and ORDER BY over a join with a UNION.
+SELECT DISTINCT ?x WHERE { ?x ex:name ?n { ?x ex:age ?a } UNION { ?x ex:knows ?k } } ORDER BY ?x

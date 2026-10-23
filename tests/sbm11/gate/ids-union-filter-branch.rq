@@ -1,0 +1,4 @@
+PREFIX ex: <http://ex.org/>
+PREFIX xsd: <http://www.w3.org/2001/XMLSchema#>
+# A FILTER inside one branch reads that branch's variables.
+SELECT ?x ?a WHERE { { ?x ex:age ?a FILTER(?a > 71) } UNION { ?x ex:flag ?a } }

@@ -1,0 +1,4 @@
+PREFIX ex: <http://ex.org/>
+PREFIX xsd: <http://www.w3.org/2001/XMLSchema#>
+# COUNT(*), COUNT(?z) and GROUP BY a VALUES variable with UNDEF.
+SELECT ?z (COUNT(*) AS ?n) (COUNT(?z) AS ?m) WHERE { ?s ex:name ?o VALUES ?z { 1 UNDEF ex:nowhere } } GROUP BY ?z

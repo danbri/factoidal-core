@@ -1,0 +1,4 @@
+PREFIX ex: <http://ex.org/>
+PREFIX xsd: <http://www.w3.org/2001/XMLSchema#>
+# A UNION and a trailing VALUES block.
+SELECT ?x ?a WHERE { { ?x ex:age ?a } UNION { ?x ex:flag ?a } } VALUES ?x { ex:b ex:c ex:zz }

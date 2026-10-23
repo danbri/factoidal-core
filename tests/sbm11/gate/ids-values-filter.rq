@@ -1,0 +1,4 @@
+PREFIX ex: <http://ex.org/>
+PREFIX xsd: <http://www.w3.org/2001/XMLSchema#>
+# A FILTER over a triple-pattern variable beside VALUES.
+SELECT ?s ?a WHERE { ?s ex:age ?a FILTER(?a > 10) VALUES ?s { ex:a ex:c ex:e } }

@@ -1,0 +1,4 @@
+PREFIX ex: <http://ex.org/>
+PREFIX xsd: <http://www.w3.org/2001/XMLSchema#>
+# Two variables per row; term identity: ex:a has "72"^^xsd:int, not the integer 72.
+SELECT ?s ?a WHERE { ?s ex:age ?a } VALUES (?s ?a) { (ex:c 71) (ex:f 72) (ex:a 72) (ex:b "072"^^xsd:integer) }

@@ -917,6 +917,39 @@ condition and throws), so such a query takes the reference fallback
 (`ref-optional-filter-outer.rq`), which now answers section 18.2.2.5. Admitting
 it on ids is open.
 
+Inline VALUES on ids (2026-10-22, https://github.com/danbri/factoidal/issues/950;
+record: section 17 of the stage 4 record). A VALUES block in the WHERE clause,
+and a trailing VALUES block of a query that does not group (the parser joins
+it with the WHERE pattern, `attachValues`), runs on `path=ids` when it is
+outside GRAPH, the WHERE clause has no OPTIONAL, its variables are distinct,
+and no FILTER reads one of its variables (`IdQuery.flattenWhere`; a trailing
+VALUES block after GROUP BY goes to the reference post-processing on decoded
+rows, `selectPost`). `IdQuery.resolveValuesM` makes each block an id table
+(UNDEF is id 0, `OptJoin.unbound`); a term that has no id in the generation
+gets a query-local id, tag 15 (`IdQuery.tagLocal`), one per distinct
+`normalizeTerm`, which joins with no stored id and which `Store.withLocal`
+decodes when the term reaches the answer. `IdJoin.joinIds` joins each block
+with the table of the triple patterns (compatible: equal ids, or one side
+id 0). `evalBgpM` drops the columns that `need` does not name, so
+`runPlanM` adds the VALUES variables to `need`; without them the join has no
+shared column and computes a cross product. Theorems:
+`Storage/Sbm11/IdJoinTheorems.lean` (`join_decode`, `values_decode`, lemma
+L5l; the `Table` step L5l″ is open and tested by `#guard`s). Gates: the 15
+`ids-values-*` and 3 `ref-values-*` gate queries.
+
+UNION on ids (2026-10-22, issue 950; record: section 18 of the stage 4
+record). A chain `{ P1 } UNION ... UNION { Pk }` outside GRAPH runs on
+`path=ids` when the WHERE clause has no OPTIONAL, each branch is a group of
+the id fragment with a triple pattern and no VALUES or UNION inside, and no
+FILTER outside the branches reads a branch variable (`IdQuery.flattenUnions`;
+`whereVars` walks the UNION, `scopeVars` does not count its variables, so
+`splitFilter` refuses such a FILTER). Each branch is evaluated with every
+column kept, the tables are concatenated (`IdJoin.unionIds`, id 0 where a
+branch lacks a variable), and the result is joined with the other rows
+(`IdJoin.joinIds`). `l4sbm11 update` redirects the branch patterns under
+`WITH` too (`redirectPlan`). Theorems: `union_decode`, `unionChain_decode`
+(lemma L5m). Gates: 10 `ids-union-*` and 4 `ref-union-*` queries.
+
 Sideways information passing (2026-10-13,
 https://github.com/danbri/factoidal/issues/809; record: section 11 of the
 stage 4 record). The right scan of a join (merge or hash), and the first scan

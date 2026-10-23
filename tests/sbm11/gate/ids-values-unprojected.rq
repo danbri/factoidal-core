@@ -1,0 +1,3 @@
+PREFIX ex: <http://ex.org/>
+# The join variable ?s is not projected: the pattern table must keep its column.
+SELECT ?n WHERE { ?s ex:name ?n } VALUES ?s { ex:a ex:c ex:zz }
