@@ -222,6 +222,28 @@ structure Session where
   /-- the size in bytes of the log file the replay read (0: no log); a
       positioned append of `l4sbm11 update` uses it -/
   ovLogBytes : Nat := 0
+  /-- `SBM11_PAGES` (default `defaultPages`) and the per-view limit
+      `min SBM11_PAGES SBM11_TASK_PAGES` (default 256), read once at open
+      (issue 799, KR 1.2). They were read from the environment on every page
+      insert: `getenv` and its string compares were 1.3 percent of olympics
+      q19 at 4 threads. -/
+  pageLimit : Nat := 8192
+  taskPageLimit : Nat := 256
+
+/-- The default of `SBM11_PAGES`, the most dictionary pages a cache holds. A
+    page is about 4.5 KB (olympics q19 needs between 4,096 and 8,192 pages). At
+    2,048 pages, the former default, q19 and q21 loaded pages again on every
+    run, and q19 took 97 ms against 36 ms with no limit (issue 799, KR 1.2). -/
+def defaultPages : Nat := 8192
+
+/-- `SBM11_PAGES` (default `defaultPages`), read once per session. -/
+def pagesLimitEnv : IO Nat := do
+  return ((← IO.getEnv "SBM11_PAGES").bind String.toNat?).getD defaultPages
+
+/-- The page limit of a task view's own cache: `SBM11_TASK_PAGES` (default
+    256), never more than `SBM11_PAGES`; read once per session. -/
+def taskPagesLimitEnv : IO Nat := do
+  return min (← pagesLimitEnv) (((← IO.getEnv "SBM11_TASK_PAGES").bind String.toNat?).getD 256)
 
 /-- Open a generation for queries, reads checked as `v` says (no default:
     the caller chooses; the CLI's choice is `Sbm11Gen.cliDefaultVerify`). -/
@@ -253,7 +275,8 @@ def openSession (v : Verify) (dir0 : String) : IO Session := do
            lookups := ← IO.mkRef 0,
            gdx := ← IO.mkRef none, ovVocab := ← IO.mkRef #[], ovIds := ← IO.mkRef {}, baseIds := ← IO.mkRef {},
            baseNamedRef := ← IO.mkRef none,
-           lock := ← Std.Mutex.new (), dictLock := ← Std.Mutex.new (), taskPages := ← IO.mkRef {} }
+           lock := ← Std.Mutex.new (), dictLock := ← Std.Mutex.new (), taskPages := ← IO.mkRef {},
+           pageLimit := ← pagesLimitEnv, taskPageLimit := ← taskPagesLimitEnv }
 
 /-- A positioned read of a PRM1 file (`PrmRange`'s `read`): under `none` one
     `pread` of exactly the bytes, under `merkle` through the file's verified
@@ -335,12 +358,6 @@ def Session.gdvFetch (ss : Session) (off len : Nat) : IO ByteArray := do
     | none => throw (IO.userError s!"GDV1: chunk {c} refused")
   return out
 
-/-- The default of `SBM11_PAGES`, the most dictionary pages a cache holds. A
-    page is about 4.5 KB (olympics q19 needs between 4,096 and 8,192 pages). At
-    2,048 pages, the former default, q19 and q21 loaded pages again on every
-    run, and q19 took 97 ms against 36 ms with no limit (issue 799, KR 1.2). -/
-def defaultPages : Nat := 8192
-
 /-- The class of pages that a full cache drops: pages whose
     number has the same remainder modulo 16 as the page being inserted. -/
 def evictClasses : Nat := 16
@@ -378,9 +395,8 @@ def Session.loadPage (ss : Session) (pg : Nat) : IO (ByteArray × Array Nat) := 
 
 /-- Put page `pg` in the page cache `c`, emptied first when it holds
     `SBM11_PAGES` pages (default 8,192; 0: no cache). -/
-def cachePage (c : IO.Ref (Std.HashMap Nat (ByteArray × Array Nat))) (pg : Nat)
+def cachePage (lim : Nat) (c : IO.Ref (Std.HashMap Nat (ByteArray × Array Nat))) (pg : Nat)
     (ks : ByteArray × Array Nat) : IO Unit := do
-  let lim := ((← IO.getEnv "SBM11_PAGES").bind String.toNat?).getD defaultPages
   if lim > 0 then
     c.modify fun m => insertPageBounded m lim pg ks
 
@@ -397,10 +413,8 @@ def cachePage (c : IO.Ref (Std.HashMap Nat (ByteArray × Array Nat))) (pg : Nat)
     (q21); 256, 98 to 108 MB and 105 to 108 MB; 0, 97 MB and 102 MB but 3 to 9
     times slower (every page loaded again). A block of 4,096 rows can need more
     pages than a small cache holds, and its prefetched pages then drop others. -/
-def cacheTaskPage (c : IO.Ref (Std.HashMap Nat (ByteArray × Array Nat))) (pg : Nat)
+def cacheTaskPage (lim : Nat) (c : IO.Ref (Std.HashMap Nat (ByteArray × Array Nat))) (pg : Nat)
     (ks : ByteArray × Array Nat) : IO Unit := do
-  let all := ((← IO.getEnv "SBM11_PAGES").bind String.toNat?).getD defaultPages
-  let lim := min all (((← IO.getEnv "SBM11_TASK_PAGES").bind String.toNat?).getD 256)
   if lim > 0 then
     c.modify fun m => insertPageBounded m lim pg ks
 
@@ -414,7 +428,7 @@ def copyPage (ks : ByteArray × Array Nat) : ByteArray × Array Nat :=
 /-- Put an entry in `taskPages` (call under `dictLock`), emptied first when
     it holds `SBM11_PAGES` entries. -/
 def Session.putTaskPage (ss : Session) (pg : Nat) (e : TaskPage) : IO Unit := do
-  let lim := ((← IO.getEnv "SBM11_PAGES").bind String.toNat?).getD defaultPages
+  let lim := ss.pageLimit
   if lim > 0 then
     ss.taskPages.modify fun m =>
       if m.size < lim then m.insert pg e
@@ -464,7 +478,7 @@ def Session.sharedPage (ss : Session) (pg : Nat) : IO (ByteArray × Array Nat) :
         p.resolve (.error (toString e))
         throw e
   let ks := copyPage ks
-  cacheTaskPage ss.pages pg ks
+  cacheTaskPage ss.taskPageLimit ss.pages pg ks
   return ks
 
 /-- A task view under `none` (issue 799, stage 1b): the dictionary pages of
@@ -530,10 +544,10 @@ def Session.prefetch (ss : Session) (t : L4Factoidal.Qlvr.Table) (n : Nat) : IO 
     | none => p.resolve (.error (match failure with | some e => toString e | none => "not loaded"))
     k := k + 1
   if let some e := failure then throw e
-  for (pg, ks) in got ++ loaded do cacheTaskPage ss.pages pg (copyPage ks)
+  for (pg, ks) in got ++ loaded do cacheTaskPage ss.taskPageLimit ss.pages pg (copyPage ks)
   for (pg, p) in waits do
     match ← IO.wait p.result? with
-    | some (.ok ks) => cacheTaskPage ss.pages pg (copyPage ks)
+    | some (.ok ks) => cacheTaskPage ss.taskPageLimit ss.pages pg (copyPage ks)
     | some (.error e) => throw (IO.userError e)
     | none => throw (IO.userError s!"GDV1 page {pg}: the task that loaded it stopped")
 
@@ -549,10 +563,10 @@ def Session.pageKeys (ss : Session) (pg : Nat) : IO (ByteArray × Array Nat) := 
     if !tp.isEmpty then
       if let some (.ready ks) := tp.get? pg then
         let ks := copyPage ks
-        cachePage ss.pages pg ks
+        cachePage ss.pageLimit ss.pages pg ks
         return ks
     let ks ← ss.loadPage pg
-    cachePage ss.pages pg ks
+    cachePage ss.pageLimit ss.pages pg ks
     return ks
 
 def Session.keySlice (ss : Session) (x : UInt64) : IO (ByteArray × Nat × Nat) := do
@@ -817,47 +831,87 @@ def scanSipTableParM (ss : Session) (spec : IdQuery.ScanSpec) (cands : Array UIn
   if let some e := failure then throw e
   return (out, stats)
 
-/-- `IdQuery.Par.fold` on this session (issue 799, stage 1b): one dedicated
-    task per chunk of blocks, each on its own view (`Session.view`), at most
-    `window` tasks at once; the results are folded with `g` in chunk order as
-    they finish, and the next task starts when one is folded, so at most
-    `window` results wait in memory. The counters of every task are added
-    (`Session.absorb`), failed or not; after a failure no task starts. -/
+/-- `IdQuery.Par.fold` on this session (issue 799, stage 1b; workers from
+    KR 1.2 of batch 3). At most `window` worker tasks, started once per fold.
+    Each worker has its own view of the session (`Session.view`, then
+    `Session.local` in the worker: counters, permutation copies and a page
+    cache that it keeps for all its ranges) and takes the next range from a
+    shared counter, so the ranges are taken in range order. The parent folds
+    the results with `g` in range order. Range `k` starts only after range
+    `k - window` is folded (a permit per range), so at most `window` ranges
+    are running or wait in memory, as before. The counters of every worker are
+    added (`Session.absorb`), failed or not; after a failure the workers
+    finish the ranges they hold and take no new work.
+
+    The first version started one task per range, each with a new view and an
+    empty page cache. With the streamed path's ranges of one block
+    (`IdQuery.streamRangeBlocks`), every block filled a new cache from
+    `taskPages` under `dictLock`: olympics q19 at 4 threads spent 1.5 times
+    the CPU time of 1 thread, most of the extra in `copyPage` (`memmove`),
+    lock waits and fresh memory. -/
 def parFold (ss : Session) (window : Nat) {α β : Type}
     (job : IdQuery.Store IO → List Nat → ExceptT String IO α) (chunks : List (List Nat)) (init : β)
     (g : β → α → ExceptT String IO β) : ExceptT String IO β := do
   let arr := chunks.toArray
-  let spawn (X : List Nat) : IO (Task (Except IO.Error α) × Session) := do
-    let v ← ss.view
-    let t ← IO.asTask (do
-      let w ← v.local
-      match ← (job w.store X).run with
-      | .ok r => pure r
-      | .error e => throw (IO.userError e))
-    pure (t, v)
-  let mut queue : Array (Task (Except IO.Error α) × Session) := #[]
-  let mut next := 0
-  for _ in [0:max window 1] do
-    if next < arr.size then
-      queue := queue.push (← liftIO (spawn arr[next]!))
-      next := next + 1
+  let n := arr.size
+  if n == 0 then return init
+  let w := max window 1
+  -- a range's result goes to its slot, then its promise is resolved; the
+  -- parent takes the result out of the slot, so a folded result is freed (a
+  -- resolved promise keeps its value while the promise is reachable)
+  let slots ← liftIO (arr.mapM fun _ => (IO.mkRef none : IO (IO.Ref (Option (Except String α)))))
+  let results ← liftIO (arr.mapM fun _ => (IO.Promise.new : IO (IO.Promise Unit)))
+  let permits ← liftIO (arr.mapM fun _ => (IO.Promise.new : IO (IO.Promise Unit)))
+  let permit (k : Nat) : IO Unit := match permits[k]? with
+    | some p => p.resolve ()
+    | none => pure ()
+  let resolveAt (k : Nat) (r : Except String α) : IO Unit := do
+    if let some c := slots[k]? then c.set (some r)
+    if let some p := results[k]? then p.resolve ()
+  for k in [0:min w n] do liftIO (permit k)
+  let next ← liftIO (IO.mkRef (0 : Nat))
+  let stop ← liftIO (IO.mkRef false)
+  let mut workers : Array (Task (Except IO.Error Unit) × Session) := #[]
+  for _ in [0:min w n] do
+    let v ← liftIO ss.view
+    let t ← liftIO (IO.asTask (do
+      let lv ← v.local
+      let st := lv.store
+      for _ in [0:n] do
+        let k ← next.modifyGet fun k => (k, k + 1)
+        if k ≥ n then break
+        if let some p := permits[k]? then
+          let _ ← IO.wait p.result?
+        if ← stop.get then
+          resolveAt k (.error "a range before this one failed")
+        else
+          match ← ((job st arr[k]!).run).toBaseIO with
+          | .ok r => resolveAt k r
+          | .error e => resolveAt k (.error (toString e))))
+    workers := workers.push (t, v)
   let mut acc := init
   let mut failure : Option String := none
-  for _ in [0:arr.size] do
-    let some (t, v) := queue[0]? | break
-    queue := queue.extract 1 queue.size
-    let r ← liftIO (IO.wait t)
-    liftIO (ss.absorb v)
+  for k in [0:n] do
+    if let some p := results[k]? then
+      let _ ← liftIO (IO.wait p.result?)
+    let r : Option (Except String α) ← match slots[k]? with
+      | some c => liftIO (c.swap none)
+      | none => pure none
     match r with
-    | .ok a =>
+    | some (.ok a) =>
       if failure.isNone then
         match ← liftIO (g acc a).run with
         | .ok b => acc := b
         | .error e => failure := some e
+    | some (.error e) => if failure.isNone then failure := some e
+    | none => if failure.isNone then failure := some s!"block range {k}: its worker stopped"
+    if failure.isSome then liftIO (stop.set true)
+    liftIO (permit (k + w))
+  for (t, v) in workers do
+    match ← liftIO (IO.wait t) with
+    | .ok () => pure ()
     | .error e => if failure.isNone then failure := some (toString e)
-    if failure.isNone && next < arr.size then
-      queue := queue.push (← liftIO (spawn arr[next]!))
-      next := next + 1
+    liftIO (ss.absorb v)
   if let some e := failure then throw e
   return acc
 
