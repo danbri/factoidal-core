@@ -343,6 +343,16 @@ theorem eq_num_matches_spec (a b : Int) :
       Fn.Comparison.numericCompare, XSD.Dec.cmp, XSD.Dec.ofInt, Fn.Comparison.Op.apply,
       eqSpecNum, bne, hc]
 
+theorem lexicalValueDatatype_string : lexicalValueDatatype xsdString = true := by
+  simp [lexicalValueDatatype]
+
+/-- Two literals of `xsd:string`, `rdf:langString` or `rdf:dirLangString`
+    compare by their lexical forms. -/
+theorem sameDatatypeLiteralEq_lexical (l1 l2 : Literal) (op : CompOp)
+    (h : lexicalValueDatatype l1.datatype = true) :
+    sameDatatypeLiteralEq l1 l2 op = some (applyCompOp (strCompare l1.lexicalForm l2.lexicalForm) op) := by
+  simp [sameDatatypeLiteralEq, h]
+
 theorem eq_plain_string_matches_spec (l1 l2 : WfLiteral)
     (h1 : l1.val.datatype = xsdString) (h2 : l2.val.datatype = xsdString)
     (t1 : l1.val.langTag = none) (t2 : l2.val.langTag = none) :
@@ -358,8 +368,9 @@ theorem eq_plain_string_matches_spec (l1 l2 : WfLiteral)
     rw [h2]; exact Fn.Comparison.numericDatatype_string
   simp only [valueCompare, EvalResult.isNumericOperand, n1, n2,
     Bool.false_or, Bool.false_eq_true, if_false]
+  have hl : lexicalValueDatatype l1.val.datatype = true := by rw [h1]; exact lexicalValueDatatype_string
   constructor <;>
-    simp [EvalResult.promoteLiteral, literalPromote, h1, h2, t1, t2, d1, d2,
+    simp [EvalResult.promoteLiteral, literalPromote, h1, h2, t1, t2, d1, d2, sameDatatypeLiteralEq_lexical _ _ _ hl,
           langTagOptionEq, xsdString, xsdInteger, xsdDecimal, xsdDouble, xsdFloat, xsdBoolean,
           applyCompOp, eqSpecPlainString,
           strCompare_beq_zero, bne]

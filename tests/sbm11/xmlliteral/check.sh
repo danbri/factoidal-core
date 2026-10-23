@@ -13,10 +13,17 @@
 # XML and the reference gave 4 and 2 rows
 # (https://github.com/danbri/factoidal/issues/963).
 #
+# `ids-ne` (FILTER(?o != ?q) over the two literals): SPARQL 1.1 section
+# 17.4.1.7, RDFterm-equal: two literals that are not the same term, of a
+# datatype with no value comparison (rdf:XMLLiteral), are a type error under
+# `=` and `!=`, so the FILTER removes every row (0 rows; a pair of the same
+# term gives `false`). Until 2026-10-23 the reference evaluator compared the
+# lexical forms and kept 2 rows.
+#
 # Part (d) of tests/sbm11/run.sh runs this script.
 #
 # Checks: each query runs on the id path and gives the RDF 1.1 answer
-# (ids-join 2 rows, ids-const 1 row), and the reference evaluator gives the
+# (ids-join 2 rows, ids-const 1 row, ids-ne 0 rows), and the reference evaluator gives the
 # same number of rows. Exit 0 only when the checks pass.
 set -uo pipefail
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -30,7 +37,7 @@ rc=0
 if [ "$rc" -ne 0 ]; then echo "FAIL pack-activate exit $rc"; exit 1; fi
 rows() { python3 -I -c 'import json,sys; print(len(json.load(open(sys.argv[1]))["results"]["bindings"]))' "$1"; }
 fail=0
-for q in ids-join:2 ids-const:1; do
+for q in ids-join:2 ids-const:1 ids-ne:0; do
   n="${q%%:*}"; want="${q##*:}"
   qrc=0
   timeout 120 "$BIN/l4sbm11" query "$TMP/st" --file "$HERE/$n.rq" >"$TMP/$n.got" 2>"$TMP/$n.err" || qrc=$?
