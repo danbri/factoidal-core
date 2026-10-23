@@ -34,9 +34,10 @@ tuple of ids it reads), a BIND expression (once per distinct tuple), the
 substitution check of EXISTS. The joins compare ids.
 
 The specification of this evaluator is `IdGroupTheorems.evalGroupIds`, the
-same recursion over rows of ids, and `IdGroupTheorems.evalGroupIds_decode`
-proves that it decodes to the reference evaluator's solutions, for every
-pattern of the fragment, at any depth. The step from these `Table` operators
+same recursion over rows of ids, and `IdAllowedTheorems.evalGroupIds_allowed`
+proves that it decodes to an answer the reference evaluator allows (SPARQL
+1.1 fixes no order of solutions), for every pattern of the fragment, at any
+depth. The step from these `Table` operators
 to the list operators of that file is not proved (module header there);
 tested by `tests/sbm11/gate/ids-nest-*.rq` and the W3C census.
 

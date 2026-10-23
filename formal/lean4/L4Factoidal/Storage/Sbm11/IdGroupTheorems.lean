@@ -35,27 +35,21 @@ id form of the arm of `QueryPattern.lowerWith env Binding.empty` followed by
 FILTER, the LeftJoin condition and the BIND expression are the reference's
 own functions (the closures `lowerWith` builds), applied to the decoded row.
 
-## The theorem
+## The theorem (in `IdAllowedTheorems`)
 
-`evalGroupIds_decode`: for every pattern `p` with `InIdFragment p` (every
-constructor but LATERAL, SERVICE and SERVICE ?v, at any depth of nesting),
-the rows of `evalGroupIds` decode to the reference's solutions
-`(QueryPattern.lowerWith env Binding.empty p).evalIn ds active`, list order
-included, and every id they hold satisfies `ok`, under:
-
-* `hdec`: `Term.eqb` of two decoded ids is id equality, on the ids in `ok`
-  (the hypothesis of `join_decode`, `leftJoin_decode`, `minus_decode`);
-* `Hyps`: the scans at the leaves of `p` decode to the reference's solutions
-  of the leaf, with ids in `ok` (the open lemma L5a′ of
-  docs/designissues/2026-10-12-sbm11-end-to-end-theorem.md: these scans are
-  `IdQuery.evalBgpM` and `IdQuery.pathTableM`); and each term that the
-  evaluator encodes (a VALUES term, a graph name, a BIND value, a value of a
-  sub-SELECT) gets an id in `ok` that decodes back to it. `Hyps` names only
-  the terms of the rows the evaluation produces, a finite set, so it can be
-  met by a dictionary with query-local ids (`IdQuery.termIdM`).
-
-The conclusion of `evalGroupIds_decode` is about the compositions; for a
-pattern that is one leaf, the conclusion is the leaf part of `Hyps` itself.
+`IdAllowedTheorems.evalGroupIds_allowed`: for every pattern `p` with
+`InIdFragment p` (every constructor but LATERAL, SERVICE and SERVICE ?v, at
+any depth of nesting), the rows of `evalGroupIds` decode to an answer that
+SPARQL 1.1 allows for `p` (`Allowed`: the reference evaluator's functions
+over some order of each intermediate multiset), and every id they hold
+satisfies `ok`. Until 2026-10-23 this file stated list equality with the
+reference (`evalGroupIds_decode`) under a hypothesis that each leaf's rows
+decode to the reference leaf as a list; the id path's scans do not give
+that list (issue 776: permutation key order, join order, hash-join probe
+side), and for a leaf that statement was its own hypothesis. The
+operator lemmas below are the steps of the new theorem; its leaf hypothesis
+(`LeafRel`: each leaf's rows decode to the same multiset of solution
+mappings as the reference leaf) is open there.
 
 Not proved here (the step of lemma L5g″ of the design record): that the
 `Table` operators `IdQuery.evalGroupM` runs (`IdJoin.joinIds`,
@@ -172,43 +166,6 @@ def InIdFragment : QueryPattern → Prop
 /-- A term the evaluator encodes gets an id in `ok` that decodes to it. -/
 def TermOk (dec : UInt64 → Term) (ok : UInt64 → Prop) (idv : Term → UInt64) (t : Term) : Prop :=
   ok (idv t) ∧ dec (idv t) = t
-
-/-- The rows of a leaf decode to the reference's solutions, with ids in
-    `ok`. -/
-def LeafOk (dec : UInt64 → Term) (ok : UInt64 → Prop) (L : List IdRow) (ref : SolutionSeq) : Prop :=
-  L.map (decRow dec) = ref ∧ ∀ r ∈ L, RowIds ok r
-
-/-- The hypotheses of `evalGroupIds_decode` (module header): the leaves'
-    scans, and the terms the evaluator encodes, on the rows it produces. -/
-def Hyps (env : EvalEnv) (ds : Dataset) (σ : Leaves) (dec : UInt64 → Term) (idv : Term → UInt64)
-    (ok : UInt64 → Prop) : QueryPattern → Graph → Prop
-  | .bgp b, a => LeafOk dec ok (σ.bgp a b) ((QueryPattern.lowerWith env Binding.empty (.bgp b)).evalIn ds a)
-  | .propertyPath s path o, a =>
-    LeafOk dec ok (σ.path a s path o)
-      ((QueryPattern.lowerWith env Binding.empty (.propertyPath s path o)).evalIn ds a)
-  | .join l r, a | .leftJoin l r _, a | .union l r, a | .minus l r, a =>
-    Hyps env ds σ dec idv ok l a ∧ Hyps env ds σ dec idv ok r a
-  | .filter _ q, a => Hyps env ds σ dec idv ok q a
-  | .graph (.iri i) q, _ =>
-    match ds.lookupNamedIri i.val with
-    | some g => Hyps env ds σ dec idv ok q g
-    | none => True
-  | .graph (.var _) q, _ =>
-    ∀ ng ∈ ds.named, Hyps env ds σ dec idv ok q ng.graph ∧ TermOk dec ok idv ng.name.toTerm
-  | .graph (.bnode _) q, a | .graph (.literal _) q, a | .graph (.tripleTerm _ _ _) q, a =>
-    Hyps env ds σ dec idv ok q a
-  | .bind e v q, a =>
-    Hyps env ds σ dec idv ok q a ∧
-      ∀ j (hj : j < (evalGroupIds env ds σ dec idv q a).length) (t : Term),
-        binderFn env e a ((decRow dec (evalGroupIds env ds σ dec idv q a)[j]).withFreshnessCtx
-          (toString j) v) = some t → TermOk dec ok idv t
-  | .values _ rows, _ => ∀ row ∈ rows, ∀ t, some t ∈ row → TermOk dec ok idv t
-  | .subSelect (.mk form dcs inner gb hv md pv bs), a =>
-    Hyps env ds σ dec idv ok inner a ∧
-      ∀ mu ∈ selectPost env a (.mk form dcs inner gb hv md pv bs)
-          ((evalGroupIds env ds σ dec idv inner a).map (decRow dec)),
-        ∀ p ∈ mu, TermOk dec ok idv p.2
-  | .empty, _ | .lateral _ _, _ | .service _ _ _, _ | .serviceVar _ _ _, _ => True
 
 /-! ## Lemmas on the operators -/
 
@@ -459,177 +416,5 @@ theorem evalIn_join (ds : Dataset) (a : Graph) (l r : GraphPattern)
   rw [GraphPattern.evalIn]
   · intro v res s q h; exact hr v res s q h
   · intro v res s q h; exact hl v res s q h
-
-/-! ## The theorem -/
-
-/-- **Nested groups on ids.** For every pattern of the fragment, decoding the
-    rows of `evalGroupIds` gives the reference evaluator's solutions
-    (`QueryPattern.lowerWith env Binding.empty` then `GraphPattern.evalIn`),
-    list order included, and the rows hold ids in `ok` only; under `hdec`
-    and `Hyps` (module header). Structural recursion on the pattern. -/
-theorem evalGroupIds_decode (env : EvalEnv) (ds : Dataset) (σ : Leaves) (dec : UInt64 → Term)
-    (idv : Term → UInt64) (ok : UInt64 → Prop)
-    (hdec : ∀ x y, ok x → ok y → (dec x).eqb (dec y) = (x == y)) :
-    ∀ (p : QueryPattern) (a : Graph), InIdFragment p → Hyps env ds σ dec idv ok p a →
-      (evalGroupIds env ds σ dec idv p a).map (decRow dec) =
-          (QueryPattern.lowerWith env Binding.empty p).evalIn ds a ∧
-        ∀ r ∈ evalGroupIds env ds σ dec idv p a, RowIds ok r
-  | .bgp b, a, _, h => h
-  | .propertyPath s path o, a, _, h => h
-  | .join l r, a, hp, h => by
-    obtain ⟨il, ir⟩ := evalGroupIds_decode env ds σ dec idv ok hdec l a hp.1 h.1
-    obtain ⟨jl, jr⟩ := evalGroupIds_decode env ds σ dec idv ok hdec r a hp.2 h.2
-    refine ⟨?_, rowIds_idJoin ok _ _ ir jr⟩
-    show (idJoin _ _).map (decRow dec) = (GraphPattern.join _ _).evalIn ds a
-    rw [evalIn_join ds a _ _ (lower_ne_serviceVar env l hp.1) (lower_ne_serviceVar env r hp.2),
-      hashJoin_eq_join, ← il, ← jl]
-    exact join_decode dec ok hdec _ _ ir jr
-  | .leftJoin l r c, a, hp, h => by
-    obtain ⟨il, ir⟩ := evalGroupIds_decode env ds σ dec idv ok hdec l a hp.1 h.1
-    obtain ⟨jl, jr⟩ := evalGroupIds_decode env ds σ dec idv ok hdec r a hp.2 h.2
-    refine ⟨?_, rowIds_idLeftJoinC ok _ _ _ ir jr⟩
-    simp only [QueryPattern.lowerWith]
-    rw [GraphPattern.evalIn, hashLeftJoin_eq_leftJoin, ← il, ← jl]
-    exact leftJoinC_decode dec ok hdec (filterFn env c a) _ _ ir jr
-  | .filter c q, a, hp, h => by
-    obtain ⟨iq, jq⟩ := evalGroupIds_decode env ds σ dec idv ok hdec q a hp h
-    refine ⟨?_, fun r hr => jq r ((List.mem_filter.mp hr).1)⟩
-    simp only [QueryPattern.lowerWith]
-    rw [filterLowered_evalIn, ← iq]
-    unfold filterSeq
-    rw [List.filter_map]
-    rfl
-  | .union l r, a, hp, h => by
-    obtain ⟨il, ir⟩ := evalGroupIds_decode env ds σ dec idv ok hdec l a hp.1 h.1
-    obtain ⟨jl, jr⟩ := evalGroupIds_decode env ds σ dec idv ok hdec r a hp.2 h.2
-    refine ⟨?_, ?_⟩
-    · simp only [QueryPattern.lowerWith]
-      rw [GraphPattern.evalIn, ← il, ← jl]
-      exact union_decode dec _ _
-    · intro x hx
-      rcases List.mem_append.mp hx with e | e
-      · exact ir x e
-      · exact jr x e
-  | .minus l r, a, hp, h => by
-    obtain ⟨il, ir⟩ := evalGroupIds_decode env ds σ dec idv ok hdec l a hp.1 h.1
-    obtain ⟨jl, jr⟩ := evalGroupIds_decode env ds σ dec idv ok hdec r a hp.2 h.2
-    refine ⟨?_, fun x hx => ir x ((List.mem_filter.mp hx).1)⟩
-    simp only [QueryPattern.lowerWith]
-    rw [GraphPattern.evalIn, hashMinus_eq_minus, ← il, ← jl]
-    exact minus_decode dec ok hdec _ _ ir jr
-  | .graph (.iri i) q, a, hp, h => by
-    have e : QueryPattern.lowerWith env Binding.empty (.graph (.iri i) q) =
-        .graph (.iri i) (QueryPattern.lowerWith env Binding.empty q) := rfl
-    rw [e, GraphPattern.evalIn, evalGroupIds]
-    rw [Hyps] at h
-    cases hg : ds.lookupNamedIri i.val with
-    | none => exact ⟨rfl, fun r hr => by cases hr⟩
-    | some g =>
-      rw [hg] at h
-      exact evalGroupIds_decode env ds σ dec idv ok hdec q g hp h
-  | .graph (.var v) q, a, hp, h => by
-    have e : QueryPattern.lowerWith env Binding.empty (.graph (.var v) q) =
-        .graph (.var v) (QueryPattern.lowerWith env Binding.empty q) := rfl
-    rw [e, evalGroupIds]
-    rw [Hyps] at h
-    refine ⟨?_, ?_⟩
-    · rw [GraphPattern.evalIn]
-      rw [List.map_flatMap]
-      apply L4Factoidal.Qlvr.flatMap_congr'
-      intro ng hng
-      obtain ⟨hq, hok, hd⟩ := h ng hng
-      obtain ⟨iq, jq⟩ := evalGroupIds_decode env ds σ dec idv ok hdec q ng.graph hp hq
-      rw [← iq, List.filterMap_map, List.map_filterMap]
-      apply filterMap_congr'
-      intro r hr
-      simp only [Function.comp_def]
-      rw [bindG_decode dec ok hdec v _ hok r (jq r hr), hd]
-    · intro r hr
-      rw [List.mem_flatMap] at hr
-      obtain ⟨ng, hng, hr⟩ := hr
-      obtain ⟨hq, hok, _⟩ := h ng hng
-      obtain ⟨_, jq⟩ := evalGroupIds_decode env ds σ dec idv ok hdec q ng.graph hp hq
-      rw [List.mem_filterMap] at hr
-      obtain ⟨r0, h0, e0⟩ := hr
-      exact rowIds_idBindG ok v _ hok r0 r (jq r0 h0) e0
-  | .graph (.bnode b) q, a, hp, h => by
-    have e : QueryPattern.lowerWith env Binding.empty (.graph (.bnode b) q) =
-        .graph (.bnode b) (QueryPattern.lowerWith env Binding.empty q) := rfl
-    rw [e, GraphPattern.evalIn]
-    · exact evalGroupIds_decode env ds σ dec idv ok hdec q a hp h
-    · intro _ h'; cases h'
-    · intro _ h'; cases h'
-  | .graph (.literal l) q, a, hp, h => by
-    have e : QueryPattern.lowerWith env Binding.empty (.graph (.literal l) q) =
-        .graph (.literal l) (QueryPattern.lowerWith env Binding.empty q) := rfl
-    rw [e, GraphPattern.evalIn]
-    · exact evalGroupIds_decode env ds σ dec idv ok hdec q a hp h
-    · intro _ h'; cases h'
-    · intro _ h'; cases h'
-  | .graph (.tripleTerm s' p' o') q, a, hp, h => by
-    have e : QueryPattern.lowerWith env Binding.empty (.graph (.tripleTerm s' p' o') q) =
-        .graph (.tripleTerm s' p' o') (QueryPattern.lowerWith env Binding.empty q) := rfl
-    rw [e, GraphPattern.evalIn]
-    · exact evalGroupIds_decode env ds σ dec idv ok hdec q a hp h
-    · intro _ h'; cases h'
-    · intro _ h'; cases h'
-  | .bind e v q, a, hp, h => by
-    obtain ⟨iq, jq⟩ := evalGroupIds_decode env ds σ dec idv ok hdec q a hp h.1
-    have hT : ∀ j (hj : j < (evalGroupIds env ds σ dec idv q a).length) (t : Term),
-        binderFn env e a ((decRow dec (evalGroupIds env ds σ dec idv q a)[j]).withFreshnessCtx
-          (toString (0 + j)) v) = some t → TermOk dec ok idv t := by
-      intro j hj t ht
-      rw [Nat.zero_add] at ht
-      exact h.2 j hj t ht
-    obtain ⟨d1, d2⟩ := extendAt_decode dec ok idv (binderFn env e a) (binderFn env e) a
-      (fun _ => rfl) v (evalGroupIds env ds σ dec idv q a) 0 jq hT
-    refine ⟨?_, d2⟩
-    simp only [QueryPattern.lowerWith]
-    rw [GraphPattern.evalIn, ← iq]
-    exact d1
-  | .values vars rows, a, _, h => by
-    refine ⟨?_, ?_⟩
-    · simp only [QueryPattern.lowerWith]
-      rw [GraphPattern.evalIn]
-      exact values_decode dec idv vars rows fun row hrow t ht => (h row hrow t ht).2
-    · intro r hr
-      simp only [evalGroupIds, idValues, List.map_map, List.mem_map] at hr
-      obtain ⟨row, hrow, e⟩ := hr
-      subst e
-      exact rowIds_idZip ok idv vars row [] (fun t ht => (h row hrow t ht).1) (fun _ h => by cases h)
-  | .subSelect (.mk form dcs inner gb hv md pv bs), a, hp, h => by
-    obtain ⟨iq, _⟩ := evalGroupIds_decode env ds σ dec idv ok hdec inner a hp h.1
-    refine ⟨?_, ?_⟩
-    · simp only [evalGroupIds, QueryPattern.lowerWith]
-      rw [GraphPattern.evalIn]
-      have hmu : lateralVisibleMu Binding.empty form inner = Binding.empty := by
-        unfold lateralVisibleMu
-        cases lateralVisibleVars form <;> rfl
-      rw [hmu, ← iq, List.map_map]
-      conv => rhs; rw [← List.map_id (selectPost env a _ _)]
-      apply List.map_congr_left
-      intro mu hmu'
-      exact decRow_encRow dec idv mu fun p hp' => (h.2 mu hmu' p hp').2
-    · intro r hr
-      simp only [evalGroupIds, List.mem_map] at hr
-      obtain ⟨mu, hmu, e⟩ := hr
-      subst e
-      intro b hb
-      simp only [encRow, List.mem_map] at hb
-      obtain ⟨p, hp', e⟩ := hb
-      subst e
-      exact (h.2 mu hmu p hp').1
-  | .empty, a, _, _ => by
-    refine ⟨?_, ?_⟩
-    · simp only [QueryPattern.lowerWith]
-      rw [GraphPattern.evalIn]
-      rfl
-    · intro r hr
-      simp only [evalGroupIds, List.mem_singleton] at hr
-      subst hr
-      intro b hb; cases hb
-  | .lateral _ _, _, hp, _ => absurd hp id
-  | .service _ _ _, _, hp, _ => absurd hp id
-  | .serviceVar _ _ _, _, hp, _ => absurd hp id
 
 end L4Factoidal.Storage.Sbm11.IdGroup

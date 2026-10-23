@@ -15,7 +15,9 @@ positioned reads, https://github.com/danbri/factoidal/issues/805) proved
 https://github.com/danbri/factoidal/issues/825) 2026-10-15 (stage 4 record,
 sections 15 and 16); L5a′, L5b, L5g″, L5l″ and the table part of L5m (the
 `Table` joins and union over the denotation `Table.idRows`) proved
-2026-10-23 (section 3 says what they assume of the scans). Gap issue: https://github.com/danbri/factoidal/issues/776.
+2026-10-23 (section 3 says what they assume of the scans); L5u (the
+answers SPARQL 1.1 allows, and the nested evaluator's answer as one of them,
+up to order) proved 2026-10-23. Gap issue: https://github.com/danbri/factoidal/issues/776.
 Tracking: https://github.com/danbri/factoidal/issues/787. Related work
 issues: https://github.com/danbri/factoidal/issues/792 (dictionary, item 4),
 https://github.com/danbri/factoidal/issues/793 (items 2 and 4),
@@ -135,7 +137,8 @@ every `G` with `denote G = norm D`" is also acceptable; a form "for every
 | L5q | Closures `p*`, `p+` on ids (issue 954): with a duplicate-free seed and the reference's fuel (the number of nodes of the graph), `pathFixpoint` on ids returns exactly the pairs reached from the seed; `p*` is (node, reached in zero or more steps), `p+` reached in one or more steps, each pair once; the worklist model of `IdPath.reachPlus` ends within the bound the id path passes and returns the nodes reached; the pairs `IdQuery.closureM` emits per start node are the reference's closure pairs with that subject. Since issue 955 the reference seeds `p+` with the deduplicated step relation, so `plus_mem` needs no hypothesis on it and nothing is refused. Hash-map worklist against the list model, and the rounds that collect the step pairs, open, tested | **proved (2026-10-23)**; hash-map worklist and rounds open, tested | `IdPathClosureTheorems.fixpoint_mem`, `star_mem`, `plus_mem`, `reachModel_some`, `reachModel_mem`, `starFrom_mem`, `plusFrom_mem`, `reach_restrict`, `reach_swap`; 5 `#guard`s; `tests/sbm11/run.sh` part (d), `ids-path-star-*`, `ids-path-plus-*`, `ids-path-opt-*` queries |
 | L5r | FILTER EXISTS / NOT EXISTS on ids (https://github.com/danbri/factoidal/issues/956, SPARQL 1.1 section 18.6): for a basic graph pattern `B` with no triple-term pattern and a row with no variable twice whose bound variables of `B` are all substituted (a subject position takes an IRI or a blank node; no position takes a triple term), `evalBgp (substBgp μ B) g` is empty exactly when no solution of `evalBgp B g` is compatible with μ; decoding the id semi-join (anti-semi-join) of the rows is the filter of the decoded rows by that test; with the rows of `B` decoding to `evalBgp B g`, it is the reference FILTER (`existsBgpRow`, top-level μ empty, a dataset in the environment, no `text:query` after substitution). The id path checks the substitution condition per row and refuses otherwise. Table part (`IdQuery.semiMatches`) and the body scans open, tested | **proved (2026-10-23)**; table part open, tested | `IdExistsTheorems.exists_bgp_iff`, `semi_decode`, `exists_decode`, `exists_filter_decode`; 11 `#guard`s; `tests/sbm11/run.sh` part (d), `ids-exists-*` queries |
 | L5s | MINUS on ids (issue 956, SPARQL 1.1 section 18.5): decoding `idMinus L R` (a row of `L` kept unless some row of `R` is id-compatible with it and shares a variable with it) is `SPARQL.minus` of the decoded rows, as a list, when `Term.eqb` of two decoded ids is id equality on the ids that occur; with the rows of `B` decoding to `evalBgp B g`, it is the reference `(GraphPattern.minus l (.bgp B)).evalIn ds g` (`hashMinus_eq_minus`). MINUS does not substitute, so no row is refused. Table part (`IdQuery.semiMatches` with `needShared`) open, tested | **proved (2026-10-23)**; table part open, tested | `IdMinusTheorems.disjoint_decRow`, `minus_decode`, `minus_bgp_decode`; 4 `#guard`s; `tests/sbm11/run.sh` part (d), `ids-minus-*` queries |
-| L5t | Nested group graph patterns on ids (https://github.com/danbri/factoidal/issues/959, SPARQL 1.1 sections 18.2, 18.5, 18.6): `IdGroupTheorems.evalGroupIds` recurses on the parser's `QueryPattern` (Join, LeftJoin with its condition, Filter, Union, Minus, Graph with an IRI or a variable, Extend, VALUES, sub-SELECT, `{}`, at any depth); for every pattern with `InIdFragment` (all but LATERAL and SERVICE), decoding its rows is `(QueryPattern.lowerWith env Binding.empty p).evalIn ds active`, list for list, and every id is in `ok`, when `Term.eqb` of decoded ids is id equality on `ok` and `Hyps` holds: the leaf scans (BGP, property path) decode to the reference leaf, and each term the evaluator encodes (VALUES, graph names, BIND values, sub-SELECT values; only the terms of the rows produced) gets an id in `ok` that decodes back. The `Table` operators of `IdGroup.evalGroupM` against these list operators open, tested | **proved (2026-10-23)**; table part: `joinIds` and `unionIds` proved (L5l″, L5m), `leftJoinCondM`, `semiMatches`, `extendM`, `applyFilters` open, tested; leaf scans open, and `LeafOk` holds only up to permutation and `RowEq` (section 3, leaf scans) | `IdGroupTheorems.evalGroupIds_decode`, `leftJoinC_decode`, `extendAt_decode`, `bindG_decode`; `tests/sbm11/run.sh` part (d), `ids-nest-*` queries |
+| L5t | Nested group graph patterns on ids (https://github.com/danbri/factoidal/issues/959, SPARQL 1.1 sections 18.2, 18.5, 18.6): `IdGroupTheorems.evalGroupIds` recurses on the parser's `QueryPattern` (Join, LeftJoin with its condition, Filter, Union, Minus, Graph with an IRI or a variable, Extend, VALUES, sub-SELECT, `{}`, at any depth); each operator's id form decodes to the reference operator on the decoded rows, list for list. Until 2026-10-23 the composition was stated as list equality with the reference (`evalGroupIds_decode`) under `Hyps`, whose leaf part `LeafOk` asked the leaf scans for list equality: the scans do not give it, and for a one-leaf pattern the conclusion was the hypothesis (anti-pattern 29). Replaced by L5u | operator lemmas **proved (2026-10-23)**; the composition is L5u; table part: `joinIds` and `unionIds` proved (L5l″, L5m), `leftJoinCondM`, `semiMatches`, `extendM`, `applyFilters` open, tested | `IdGroupTheorems.leftJoinC_decode`, `extendAt_decode`, `bindG_decode`, `rowIds_idJoin`, `decRow_encRow`; `tests/sbm11/run.sh` part (d), `ids-nest-*` queries |
+| L5u | The answers SPARQL 1.1 allows (issue 776; sections 15.1 and 18.5.1 fix no order of solutions, none among ORDER BY ties, none of the values GROUP_CONCAT and SAMPLE read): `Allowed env ds p a ans` is inductive: each operator is the reference's own function on allowed answers of its operands, a leaf is the reference's solutions, and any answer may be replaced by the same multiset of solution mappings (`SolEquiv`: a permutation, then `BindEq` row for row, the same lookup for every variable) in another order. So a sub-SELECT with LIMIT or OFFSET, GROUP_CONCAT or SAMPLE gets `selectPost` over some order of its input (choice (a) of the issue 776 brief; no query refused, census cost 0). The reference's own answer is allowed (`allowed_ref`, every pattern of `InIdFragment`). The order-free operators are permutation-congruent: Join, LeftJoin, Union, Minus, Filter, GRAPH ?g, and Extend when the binder does not read the row index (BNODE(), UUID(), STRUUID() do; the id path refuses that BIND). For every pattern of `InIdFragment`, decoding `evalGroupIds` is an allowed answer and its ids are in `ok`, under `hdec` and `HypsW LeafRel`: each leaf's rows decode to a `SolEquiv` list of the reference leaf, and each term the evaluator encodes decodes back. `LeafRel` is the scans' property (open, section 3), not a composition step | **proved (2026-10-23)** | `IdAllowedTheorems.Allowed`, `allowed_ref`, `evalGroupIds_allowed`, `HypsW`, `HypsW.mono`, `join_perm`, `leftJoin_perm`, `union_perm`, `minus_perm`, `filter_perm`, `bindRowsFresh_perm`, `graphVar_perm`; `PermPw.symm`, `PermPw.trans`, `Pw.perm_right` |
 | L6a | E1 from L1 to L5 | open | — |
 | L6b | E2: the fallback selection keeps every quad the query can read (the planner theorem of 2026-09-06 restated for PSO scans), and the `datasetOfQuads` bridge (that record's section 6.6 item 1) | open | — |
 | L6c | The JSON printer (`keyJsonInto`) equals `jsonOfTerm` | tested only | `tests/sbm11/run.sh` part (b), byte comparison on 21 queries |
@@ -180,28 +183,23 @@ every `G` with `denote G = norm D`" is also acceptable; a form "for every
   (`Table.WF`), hold no id 0 (`NoUnbound`, `SharedBound`) and are in the
   order their sort variable says (`SortOk`). These are properties of the
   scans (leaf scans, next item).
-- **Leaf scans (the leaf part of `IdGroupTheorems.Hyps`).** Not closed, and
-  not closable as `Hyps` states it. `LeafOk` asks that the rows of a BGP
-  scan, decoded, equal `evalBgp` of the pattern as a list of `Binding`s.
-  `IdQuery.evalBgpM` does not produce that list: (1) it scans a pattern from
-  a permutation file, so a single pattern's rows come in key order of that
-  permutation, not in the order of the graph's triple list; (2) it joins the
-  patterns in the order of their estimates, not in the written order;
-  (3) `hashJoin` with a smaller left table gives the rows right row first
-  (L5b); (4) a row's pairs come in column order, while `evalTP` builds each
-  `Binding` in its own order. What holds is a multiset statement: the rows
-  are a permutation of the reference rows, each the same solution mapping
-  (`RowEq`). Discharging the leaf part therefore needs
-  `evalGroupIds_decode` restated up to permutation and `RowEq`. Join,
-  LeftJoin, Union, Minus, Filter and Extend preserve that relation; a
-  sub-SELECT with LIMIT or OFFSET, or with ORDER BY on keys that tie, does
-  not (the slice depends on the input order), and SPARQL 1.1 leaves that
-  order to the implementation. The scan side then needs: the scan table of
-  one pattern is well formed, holds no id 0 and is sorted on its sort
-  variable (from L4e, `ScanFoldTheorems`), and its rows are, as a multiset,
-  the reference rows of the pattern over the store's triples decoded (L4e
-  and the dictionary lemmas); then the join-order step (L6a: the join order
-  does not change the multiset).
+- **Leaf scans (the leaf part of the nested evaluator's hypotheses).**
+  `LeafOk` asked that the rows of a BGP scan, decoded, equal `evalBgp` of
+  the pattern as a list of `Binding`s. `IdQuery.evalBgpM` does not produce
+  that list: (1) it scans a pattern from a permutation file, so a single
+  pattern's rows come in key order of that permutation, not in the order
+  of the graph's triple list; (2) it joins the patterns in the order of
+  their estimates, not in the written order; (3) `hashJoin` with a smaller
+  left table gives the rows right row first (L5b); (4) a row's pairs come
+  in column order, while `evalTP` builds each `Binding` in its own order.
+  What holds is a multiset statement. Since 2026-10-23 the composition is
+  stated that way (L5u: `evalGroupIds_allowed`, with the leaf hypothesis
+  `LeafRel` up to `SolEquiv`), and `LeafOk`, `Hyps` and
+  `evalGroupIds_decode` are deleted. A sub-SELECT with LIMIT or OFFSET, or
+  with ORDER BY on keys that tie, and GROUP_CONCAT or SAMPLE, are not
+  congruent under permutation of their input; `Allowed` takes them over
+  any allowed order, which is what SPARQL 1.1 leaves to the
+  implementation. Open of the leaves: `LeafRel` from store invariants.
 - **L5k.** The grouped aggregates of issue 825 replace `decodeRowsM` and
   `selectPost`'s grouping by a pass over the id table (`IdAgg.aggregateM`).
   L5j fixes what the pass must compute: the value of every aggregate and the
