@@ -37,6 +37,7 @@ output, row order included, is unchanged.
 import Wasm.Abi
 import Wasm.Dispatch
 import L4Factoidal.RDF.Source
+import L4Factoidal.RDF.StreamSet
 import L4Factoidal.RDF.SinkJsonLd
 import L4Factoidal.Syntax.LenientFeed
 import L4Factoidal.Syntax.StrictFeed
@@ -623,11 +624,13 @@ def driveSource {α : Type} (path : String) (fmt : RdfFormat) (mode : Mode) (bas
       | .error e => pure (.error (← failParse e))
       | .ok acc => pure (.ok acc)
 
-/-- Write the triples a chunk completed (newest first in `accRev`) and leave an
-empty list in the reader; `printed` counts them. -/
-def writeChunk (printed : IO.Ref Nat) (rd : Source.ByteReader (List Triple)) :
-    IO (Source.ByteReader (List Triple)) := do
-  let (rd', accRev) := rd.withAcc (fun acc => ([], acc))
+/-- Write the triples a chunk completed that no earlier triple repeats (newest
+first in `fresh`, `StreamSet.lean`) and empty `fresh`, keeping the seen graph;
+`printed` counts the triples written. RDF 1.1 Concepts section 3: the output
+is a set, as the whole-file output is. -/
+def writeChunk (printed : IO.Ref Nat) (rd : Source.ByteReader DedupAcc) :
+    IO (Source.ByteReader DedupAcc) := do
+  let (rd', accRev) := rd.withAcc DedupAcc.drain
   writeTriples accRev
   printed.modify (· + accRev.length)
   pure rd'
@@ -637,12 +640,13 @@ count. -/
 def streamStrictLines (path : String) (fmt : RdfFormat) (mode : Mode) (emit : Bool) : IO StrictOutcome := do
   let printed ← IO.mkRef 0
   if fmt == .nt && emit then
-    -- The triples of each chunk are written and dropped.
-    match ← driveSource path .nt mode none "" true Source.collect ([] : List Triple) (writeChunk printed) with
+    -- The triples of each chunk that no earlier triple repeats are written and
+    -- dropped; the seen graph stays (`dedupStep`).
+    match ← driveSource path .nt mode none "" true dedupStep ({} : DedupAcc) (writeChunk printed) with
     | .error .failed => pure (.done 1)
     | .error .whole => pure (.whole (← printed.get) false)
-    | .ok accRev =>
-        writeTriples accRev
+    | .ok st =>
+        writeTriples st.fresh
         IO.println ""
         pure (.done 0)
   else
@@ -683,11 +687,11 @@ def streamStrictTurtle (path : String) (mode : Mode) (base : String) (emit : Boo
   if p.hasDoubleLt then pure (.whole 0 true) else
   let printed ← IO.mkRef 0
   if emit then
-    match ← driveSource path .turtle mode baseOpt pfx false Source.collect ([] : List Triple) (writeChunk printed) with
+    match ← driveSource path .turtle mode baseOpt pfx false dedupStep ({} : DedupAcc) (writeChunk printed) with
     | .error .failed => pure (.done 1)
     | .error .whole => pure (.whole (← printed.get) true)
-    | .ok accRev =>
-        writeTriples accRev
+    | .ok st =>
+        writeTriples st.fresh
         IO.println ""
         pure (.done 0)
   else
@@ -723,8 +727,11 @@ def strictWhole (path format base : String) (emit : Bool) (printed : Nat) (turtl
         -- they are its first `printed`.
         let (mode, _) := Ops.resolveModeAndTag format
         let baseOpt : Option String := if base == "" then none else some base
-        let walked := StrictFeed.walkPrefix
+        let walkedRaw := StrictFeed.walkPrefix
           (TurtleChunkFoldState.init (freshBnodePrefixText text) prependReverse [] baseOpt mode) text
+        -- The streamed output is a set: the `printed` triples written are the first
+        -- `printed` triples of the set of the walk's triples (`StreamSet.lean`).
+        let walked := (Dataset.toSet { default := walkedRaw, named := [] }).default
         if turtle && ds.named.isEmpty && printed ≤ walked.length &&
             walked.take printed == ds.default.take printed then
           let out ← IO.getStdout
