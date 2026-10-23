@@ -402,6 +402,7 @@ import L4Factoidal.Storage.Sbm11.IdPathPureTheorems
 import L4Factoidal.Storage.Sbm11.IdPathScanTheorems
 import L4Factoidal.Storage.Sbm11.IdPathClosureExecTheorems
 import L4Factoidal.Storage.Sbm11.IdPathEvalTheorems
+import L4Factoidal.Storage.Sbm11.IdPathTableTheorems
 import L4Factoidal.Storage.Sbm11.IdExistsTheorems
 import L4Factoidal.Storage.Sbm11.IdMinusTheorems
 import L4Factoidal.Storage.Sbm11.SemiJoinTheorems

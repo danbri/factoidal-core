@@ -3886,6 +3886,70 @@ def pathCands (t : Table) (v : String) : Option (Array UInt64) := Id.run do
       xs := xs.push x
     return some (IdPath.sortedDistinct xs)
 
+/-- The restriction of a path pattern's evaluation: a constant endpoint
+    (subject first), else the candidates of an endpoint variable from the rows
+    `t` (`pathCands`), else none. -/
+def pathRestr (rp : RPath) (t : Table) : Bool × Option (Array UInt64) × String :=
+  match rp.s, rp.o with
+  | .const x, _ => (true, some #[x], "subject constant")
+  | _, .const y => (false, some #[y], "object constant")
+  | .var v, ov =>
+    match pathCands t v with
+    | some c => (true, some c, s!"{c.size} candidates for ?{v}")
+    | none =>
+      match ov with
+      | .var w =>
+        match pathCands t w with
+        | some c => (false, some c, s!"{c.size} candidates for ?{w}")
+        | none => (true, none, "no restriction")
+      | _ => (true, none, "no restriction")
+  | _, _ => (true, none, "no restriction")
+
+/-- For `p*` and `p?`, the reflexive pair of each constant endpoint that the
+    pairs lack, appended once per constant (`addConstantReflexivity`). -/
+def pathPairsOf (rp : RPath) (pairs0 : IdPath.Pairs) : IdPath.Pairs :=
+  let consts : List UInt64 :=
+    (match rp.s with | .const x => [x] | _ => []) ++ (match rp.o with | .const y => [y] | _ => [])
+  if rp.zeroLen then
+    let missing := consts.filter fun c => !pairs0.any (· == (c, c))
+    pairs0 ++ missing.toArray.map fun c => (c, c)
+  else pairs0
+
+/-- One row per pair that the endpoints `s` and `o` accept, as
+    `pathResultToSolutions` (a variable in both positions needs the two ids
+    equal); one column per distinct endpoint variable. -/
+def pathRowsTable (s o : Slot) (pairs : IdPath.Pairs) : Table := Id.run do
+  let vars : Array String := Id.run do
+    let mut vs : Array String := #[]
+    for sl in [s, o] do
+      match sl with
+      | .var v => if !vs.contains v then vs := vs.push v
+      | _ => pure ()
+    return vs
+  let mut cols : Array ByteArray := vars.map fun _ => ByteArray.emptyWithCapacity (8 * pairs.size)
+  let mut rows := 0
+  for (x, y) in pairs do
+    let okS := match s with
+      | .const c => x == c
+      | .var _ => true
+      | .missing => false
+    let okO := match o, s with
+      | .const c, _ => y == c
+      | .var w, .var v => w != v || y == x
+      | .var _, _ => true
+      | .missing, _ => false
+    if okS && okO then
+      rows := rows + 1
+      let mut k := 0
+      if let .var _ := s then
+        cols := cols.modify k (L4Factoidal.Qlvr.Side.put64 · x)
+        k := k + 1
+      match o, s with
+      | .var w, .var v => if w != v then cols := cols.modify k (L4Factoidal.Qlvr.Side.put64 · y)
+      | .var _, _ => cols := cols.modify k (L4Factoidal.Qlvr.Side.put64 · y)
+      | _, _ => pure ()
+  return { vars, cols, rows }
+
 /-- The rows of one property path pattern (SPARQL 1.1 section 18.4), to be
     joined with `t`: the pairs of the path under the restriction of a
     constant endpoint (subject first) or of the values of `t` for an endpoint
@@ -3896,58 +3960,11 @@ def pathCands (t : Table) (v : String) : Option (Array UInt64) := Id.run do
     positions needs the two ids equal). -/
 def pathTableM {m : Type → Type} [Monad m] (st : Store m) (rp : RPath) (t : Table) :
     ExceptT String m (Table × String × ScanStats) := do
-  let (fwd, R, how) : Bool × Option (Array UInt64) × String :=
-    match rp.s, rp.o with
-    | .const x, _ => (true, some #[x], "subject constant")
-    | _, .const y => (false, some #[y], "object constant")
-    | .var v, ov =>
-      match pathCands t v with
-      | some c => (true, some c, s!"{c.size} candidates for ?{v}")
-      | none =>
-        match ov with
-        | .var w =>
-          match pathCands t w with
-          | some c => (false, some c, s!"{c.size} candidates for ?{w}")
-          | none => (true, none, "no restriction")
-        | _ => (true, none, "no restriction")
-    | _, _ => (true, none, "no restriction")
+  let (fwd, R, how) := pathRestr rp t
   let (pairs0, s) ← evalIM st rp.g fwd rp.ipath R
-  let consts : List UInt64 :=
-    (match rp.s with | .const x => [x] | _ => []) ++ (match rp.o with | .const y => [y] | _ => [])
-  let pairs := if rp.zeroLen then
-      let missing := consts.filter fun c => !pairs0.any (· == (c, c))
-      pairs0 ++ missing.toArray.map fun c => (c, c)
-    else pairs0
-  let vars : Array String := Id.run do
-    let mut vs : Array String := #[]
-    for sl in [rp.s, rp.o] do
-      match sl with
-      | .var v => if !vs.contains v then vs := vs.push v
-      | _ => pure ()
-    return vs
-  let mut cols : Array ByteArray := vars.map fun _ => ByteArray.emptyWithCapacity (8 * pairs.size)
-  let mut rows := 0
-  for (x, y) in pairs do
-    let okS := match rp.s with
-      | .const c => x == c
-      | .var _ => true
-      | .missing => false
-    let okO := match rp.o, rp.s with
-      | .const c, _ => y == c
-      | .var w, .var v => w != v || y == x
-      | .var _, _ => true
-      | .missing, _ => false
-    if okS && okO then
-      rows := rows + 1
-      let mut k := 0
-      if let .var _ := rp.s then
-        cols := cols.modify k (L4Factoidal.Qlvr.Side.put64 · x)
-        k := k + 1
-      match rp.o, rp.s with
-      | .var w, .var v => if w != v then cols := cols.modify k (L4Factoidal.Qlvr.Side.put64 · y)
-      | .var _, _ => cols := cols.modify k (L4Factoidal.Qlvr.Side.put64 · y)
-      | _, _ => pure ()
-  return ({ vars, cols, rows }, s!"{how}: {pairs.size} pairs, {rows} rows", s)
+  let pairs := pathPairsOf rp pairs0
+  let tab := pathRowsTable rp.s rp.o pairs
+  return (tab, s!"{how}: {pairs.size} pairs, {tab.rows} rows", s)
 
 /-- `l4sbm11 update` (WITH) and the query paths: resolve the property path
     patterns of a plan (the endpoint constants to ids, `termIdM`, extending
