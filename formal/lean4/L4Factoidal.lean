@@ -483,6 +483,7 @@ import L4Factoidal.Storage.Sbm11.DictFingerTheorems
 import L4Factoidal.Storage.Sbm11.Overlay
 import L4Factoidal.Storage.Sbm11.OverlayTheorems
 import L4Factoidal.Storage.Sbm11.DenotationTheorems
+import L4Factoidal.Storage.Sbm11.HeldFoldedTheorems
 import L4Factoidal.Storage.Sbm11.OverlayLimit
 import L4Factoidal.Storage.Sbm11.UpdateOverlayTheorems
 import L4Factoidal.Storage.Sbm11.ScanFoldTests
@@ -788,6 +789,7 @@ import L4Factoidal.Syntax.TriGChunkFoldTheorems
 import L4Factoidal.Storage.ShardManifest
 import L4Factoidal.Storage.ShardManifestTheorems
 import L4Factoidal.Storage.PlannerSoundness
+import L4Factoidal.Storage.Sbm11.StoreCapsConnection
 import L4Factoidal.Storage.PackStream
 import L4Factoidal.Storage.GenerationVerify
 import L4Factoidal.CL.Syntax
