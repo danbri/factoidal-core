@@ -11,7 +11,9 @@ open, clone, update, add and delete, for Turtle, N-Triples, N-Quads, JSON-LD,
 RDF/XML and TriG input. They also check what a set must NOT do: distinct
 lexical forms stay distinct, the same triple in two graphs stays two quads,
 an empty named graph stays, and a SPARQL solution sequence keeps its
-multiplicities (UNION, VALUES).
+multiplicities (UNION, VALUES). A second group (16 assertions) checks the
+parse entry points that answer quads without storing them
+(`parseToDatasetJson`, `parseQuadsJson`, lenient `parseDocument`).
 
 The assertions came from an unmerged prototype (2026-10-21, npm review finding
 R02: `<urn:s> <urn:p> "x", "x" .` opened with size 2 and COUNT 2). Every
@@ -116,5 +118,26 @@ def main : IO UInt32 := do
   let fs ← failures.get
   let ps ← passes.get
   IO.println s!"dataset-set regression: {ps} pass, {fs.length} fail (out of {ps + fs.length})"
+  -- Second group: every public parse entry point that answers quads without
+  -- storing them gives a set. These do not go through the handle store, so
+  -- `CertifiedDataset` does not cover them; the lenient N-Quads and TriG
+  -- readers have no set theorem.
+  let docs : List (String × String) :=
+    [ ("turtle", "<urn:s> <urn:p> \"x\", \"x\" ."), ("ntriples", t ++ t), ("nquads", t ++ t),
+      ("trig", "<urn:g> {" ++ t ++ t ++ "}"),
+      ("jsonld", "{\"@id\":\"urn:s\",\"urn:p\":[{\"@value\":\"x\"},{\"@value\":\"x\"}]}"),
+      ("rdfxml", "<rdf:RDF xmlns:rdf=\"http://www.w3.org/1999/02/22-rdf-syntax-ns#\" xmlns:e=\"urn:\"><rdf:Description rdf:about=\"urn:s\"><e:p>x</e:p><e:p>x</e:p></rdf:Description></rdf:RDF>") ]
+  for (fmt, text) in docs do
+    expectCount s!"parseToDatasetJson {fmt}" (parseToDatasetJson text fmt "") 1
+    let q := envelope (← parseQuadsJsonBy jsonLdReader text fmt "")
+    let len := (q.bind (·.getArray? "quads")).map List.length
+    expect s!"parseQuadsJson {fmt}" (len == some 1) s!"quads {len}, expected 1"
+    if fmt != "jsonld" && fmt != "rdfxml" then
+      expectCount s!"parseDocument lenient {fmt}"
+        (parseDocumentBy jsonLdReader text fmt "" "{\"lenient\":true}") 1
+  let fs2 ← failures.get
+  let ps2 ← passes.get
+  IO.println s!"parse entry points: {ps2 - ps} pass, {fs2.length - fs.length} fail (out of {ps2 - ps + fs2.length - fs.length})"
+  let fs := fs2
   for f in fs do IO.println s!"  failed: {f}"
   pure (if fs.isEmpty then 0 else 1)
