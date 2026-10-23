@@ -551,8 +551,17 @@ def usage : String :=
 
 end Sbm11Cli
 
+/-- Transparent huge pages off for this process (`ffi/block_pread.c`;
+    issue 961, stage 1i of docs/designissues/2026-10-12-parallel-block-scans.md).
+    A default allocator setting: not for `main` without the owner's approval.
+    `L4_THP=on` keeps huge pages. -/
+@[extern "l4_thp_disable"]
+opaque thpDisableRaw : IO UInt32
+
 open Sbm11Cli in
 def main (args0 : List String) : IO UInt32 := do
+  if (← IO.getEnv "L4_THP") != some "on" then
+    let _ ← thpDisableRaw
   try
     let (args, verify?) ← match splitVerify args0 [] Option.none with
       | .ok r => pure r

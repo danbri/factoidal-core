@@ -757,7 +757,7 @@ def Session.local (v : Session) : IO Session := do
     more than `SBM11_PAGES`. Olympics q19 at 4 threads renders with about
     2,100 dictionary pages per query; a worker that does every fourth block
     range needs about a quarter of them and the pages every range shares. -/
-def workerPageLimit : Nat := 1024
+def workerPageLimit : Nat := 2048
 
 /-- The view with the page cache of the pool worker that runs the job (call
     it in the job). The cache lives as long as the pool: a page that the
