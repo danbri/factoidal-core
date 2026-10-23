@@ -4,7 +4,7 @@
 
 import test from 'node:test'
 import assert from 'node:assert/strict'
-import { mkdtempSync, writeFileSync } from 'node:fs'
+import { mkdtempSync, writeFileSync, readFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join, dirname } from 'node:path'
 import { fileURLToPath } from 'node:url'
@@ -42,6 +42,34 @@ test('hpkeSeal and hpkeOpen, RFC 9180 A.2.1 key pair', async () => {
 test('proofInspect and proofCheck reject a document with no profile', async () => {
   await assert.rejects(f.proofInspect('{}'), /profile/)
   await assert.rejects(f.proofCheck('{}'), /profile/)
+})
+
+// https://github.com/danbri/factoidal/issues/976: two artifacts with one
+// RDFC-1.0 digest and swapped blank-node labels. 0.12.0 accepted the
+// cross-artifact join with valid: true.
+const fpp0Fixture = (name) => readFileSync(
+  join(dirname(fileURLToPath(import.meta.url)), 'fixtures', name), 'utf8')
+
+test('proofCheck refuses a blank-node join across two artifacts (issue 976)', async () => {
+  const r = await f.proofCheck(fpp0Fixture('fpp0-976-cross-artifact-bnode.json'))
+  assert.equal(r.valid, false)
+  assert.equal(r.foundationalOnly, false)
+  assert.match(r.rejection, /blank nodes from different scopes/)
+})
+
+test('proofCheck accepts the same chain inside one artifact (issue 976 control)', async () => {
+  const r = await f.proofCheck(fpp0Fixture('fpp0-976-one-artifact-bnode.json'))
+  assert.equal(r.valid, true)
+  assert.equal(r.foundationalOnly, true)
+  assert.deepEqual(r.assumptions, [])
+  assert.equal(r.rejection, null)
+})
+
+test('proofCheck accepts an IRI-only chain across two artifacts (issue 976 control)', async () => {
+  const r = await f.proofCheck(fpp0Fixture('fpp0-976-cross-artifact-iri.json'))
+  assert.equal(r.valid, true)
+  assert.equal(r.foundationalOnly, true)
+  assert.equal(r.rejection, null)
 })
 
 test('canonicalizeNQuads relabels blank nodes per RDFC-1.0', async () => {
