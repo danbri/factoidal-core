@@ -19,8 +19,10 @@ declares every named graph with `ensureNamed`, so an empty named graph stays.
 The first occurrence of a triple fixes its place in the result. The equality
 is `Triple.eqb`, the equality of the N-Quads reader: language tags compare
 without case (RDF 1.1 Concepts section 3.3, "The value space of language tags
-is always in lower case") and `rdf:XMLLiteral` lexical forms compare in their
-canonical form. The compiler runs `Dataset.toSetFast`, the same steps on the
+is always in lower case"); lexical form, datatype and base direction compare
+exactly (`Literal.eqb`, RDF term equality since 2026-10-23; two
+`rdf:XMLLiteral` lexical forms with one canonical form are two terms). The
+compiler runs `Dataset.toSetFast`, the same steps on the
 hash-indexed accumulator of `parseNQuadsFast` (`FastDataset`); it takes time
 linear in the number of quads, where `addQuad` scans the graph
 (`Dataset.toSet_eq_fast`).

@@ -1095,6 +1095,16 @@ rule #17").
     way!" Fix and lint extension:
     https://github.com/danbri/factoidal/issues/894.)
 
+37. A set-valued specification object (an RDF graph or dataset) needs an
+    enforced invariant at every producer and a test of observable
+    cardinality (count, `COUNT(*)`, serializer line count); membership
+    theorems give the same answer for `[t]` and `[t, t]`. (2026-09-08: a
+    Codex brief said to keep "the graph list's order and duplicate triples"
+    on parse; npm review finding R02, 2026-10-21, found count 2 and
+    `COUNT(*)` 2 for `<urn:s> <urn:p> "x", "x" .`; published in npm 0.11.0
+    and 0.12.0. Fixed by PR 26 and the `CertifiedDataset` handle store.
+    Full text: hazard #46 in `skills/workflow-gotchas-debugging`.)
+
 ## Skills (operational details, on-demand)
 
 Skill files live at `skills/<name>/SKILL.md` in the

@@ -2160,3 +2160,41 @@ fails; the version before it reported `EXIT 0` with a failing npm suite.
    -delete` was enough here), and run the gates again.
 4. A gate script exits non-zero when any gate fails. Read the exit code, not
    the last line.
+
+## Hazard #46 — a set-valued specification object stored as a list, checked only by membership (2026-10-23)
+
+**What happened.** RDF 1.1 Concepts §3 and RDF 1.1 Semantics §4 define an RDF
+graph as a set of triples. The Lean port represents it as `List Triple`. On
+2026-09-08 a Codex worker brief said to preserve "the graph list's order and
+duplicate triples" on parse. The N-Triples, Turtle, RDF/XML and JSON-LD readers
+then put every triple they read into the list. The npm 0.11.0 review
+(finding R02, 2026-10-21) opened `<urn:s> <urn:p> "x", "x" .` and got
+`datasetOpen` count 2 and `COUNT(*)` 2; the writers wrote the triple two times.
+The correct answer is 1.
+
+**Why the proofs did not catch it.** Every theorem about graphs used membership
+(`Graph.mem`, `HoldsAll`, indexed-graph refinement). Membership gives the same
+answer for `[t]` and `[t, t]`, so each theorem was true of the defective output.
+`Dataset.namesNoDup` existed, but only as a hypothesis of isomorphism theorems;
+no producer had to establish it.
+
+**Cost.** Published in npm 0.11.0; npm 0.12.0 still has it. About six weeks
+from the brief to the fix. Fixed by PR 26 (2026-10-23: every parser returns
+`Dataset.toSet`, with `Dataset.toSet_isSet`) and by branch
+`claude/certified-dataset-handle` (the handle store holds only a
+`CertifiedDataset`, a dataset with a proof of `Dataset.IsSet`).
+
+**Rules.**
+1. A specification object that is a set (graph, dataset, set of graph names)
+   needs an enforced invariant at every producer: a type that carries the proof
+   (`CertifiedDataset`), or a theorem for each producer (`parseDocument_set`).
+   A comment that says "set semantics is maintained by the operations" is not
+   enforcement.
+2. Each such producer needs a test of observable cardinality: count, `COUNT(*)`,
+   serializer line count (`Harness/DatasetSetRegression.lean`). A membership
+   theorem does not replace it.
+3. A brief or a review that asks to "preserve duplicates" in a set-valued object
+   contradicts the specification. Cite RDF 1.1 Concepts §3 and refuse it.
+4. Not enforced today: raw `Graph`/`Dataset` values outside the parsers and the
+   handle store (query results, closures, merges, the lenient N-Quads and TriG
+   readers). See the module header of `L4Factoidal/RDF/Graph.lean`.
