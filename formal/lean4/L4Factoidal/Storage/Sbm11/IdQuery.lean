@@ -2486,10 +2486,67 @@ def bestSortPos (t : Pat) (pats : Array Pat) : Option Nat := Id.run do
 def posOf (t : Pat) (v : String) : Option Nat :=
   [0, 1, 2].find? fun i => t.slot i == .var v
 
+/-- The next pattern of the join loop: among the remaining patterns that
+    share a variable with the table so far (all remaining ones when none
+    does), the first of least estimate. -/
+def pickNext (ests : Array Nat) (pats : Array Pat) (remaining : Array Nat) (tab : Table) : Nat :=
+  let connected := remaining.filter fun k => pats[k]!.vars.any tab.vars.contains
+  let cands := if connected.isEmpty then remaining else connected
+  cands.foldl (fun b k => if ests[k]! < ests[b]! then k else b) cands[0]!
+
+/-- The variable a merge join can use: the sort variable of the table so
+    far, when the pattern holds it at a variable position (the position, to
+    sort the scan on). -/
+def mergeVarOf (tab : Table) (t : Pat) : Option (String × Nat) :=
+  match tab.sortVar with
+  | some v => (posOf t v).bind fun q => if t.bound q then none else some (v, q)
+  | none => none
+
+/-- The permutation of the scan of `t` in the join loop. -/
+def stepPerm (t : Pat) (pats : Array Pat) (mergeVar : Option (String × Nat)) : Nat :=
+  match mergeVar with
+  | some (_, q) => permFor t (some q)
+  | none => permFor t (bestSortPos t pats)
+
+/-- The join of the table so far with the scan of the next pattern: a merge
+    join when both are sorted on the merge variable, else a hash join. -/
+def joinStep (tab rt : Table) (mergeVar : Option (String × Nat)) : Table × String :=
+  match mergeVar with
+  | some (v, _) =>
+    if rt.sortVar == some v then (mergeJoin tab rt v, s!"merge join on ?{v}")
+    else (hashJoin tab rt, "hash join")
+  | none => (hashJoin tab rt, if (sharedCols tab rt).isEmpty then "cross product" else "hash join")
+
+/-- The state of the join loop of `evalBgpM`. -/
+structure BgpLoop where
+  remaining : Array Nat
+  lines : Array String
+  total : ScanStats
+  tab : Table
+
+/-- One step of the join loop: the next pattern (`pickNext`), its scan
+    (`scanPatM`, with the table so far as the left side for candidates), the
+    join (`joinStep`). Stops when no pattern remains. -/
+def bgpStepM {m : Type → Type} [Monad m] (st : Store m) (pats : Array Pat) (keep : String → Bool)
+    (ests : Array Nat) (s : BgpLoop) : ExceptT String m (ForInStep BgpLoop) := do
+  if s.remaining.isEmpty then return .done s
+  let next := pickNext ests pats s.remaining s.tab
+  let t := pats[next]!
+  let mergeVar := mergeVarOf s.tab t
+  let perm := stepPerm t pats mergeVar
+  let spec := mkSpec t perm keep
+  let (rt, sc, sipNote) ← scanPatM st t spec keep (some s.tab) ests[next]!
+  let (joined, how) := joinStep s.tab rt mergeVar
+  return .yield { remaining := s.remaining.filter (· != next),
+                  lines := s.lines.push s!"pattern {next}: {permNames[perm]!} key {spec.key.size} estimate {ests[next]!}; blocks {sc.blocksRead} read of {sc.blocksSelected} selected of {sc.blocksTotal}, frames {sc.framesRead}, {sc.bytesRead} bytes; rows {rt.rows}{sipNote}; {how}: {joined.rows} rows",
+                  total := s.total.add sc, tab := joined }
+
 /-- Evaluate a BGP over ids (the join rules of `Qlvr.evalBgpM`, with the four
     SBM11 permutations). `need v`: the query reads `v` after the BGP. `pref`:
     a variable to sort the first scan on when that pattern has it (the join
-    variable of a left outer join, so that the join can merge). -/
+    variable of a left outer join, so that the join can merge). The join loop
+    is `bgpStepM` (`BgpTableTheorems.evalBgpM_model`: the table denotes the
+    model's evaluation of the patterns, up to order). -/
 def evalBgpM {m : Type → Type} [Monad m] (st : Store m) (pats : Array Pat) (need : String → Bool)
     (pref : Option String := none) (left0 : Option Table := none) :
     ExceptT String m (Table × Array String × ScanStats) := do
@@ -2502,10 +2559,8 @@ def evalBgpM {m : Type → Type} [Monad m] (st : Store m) (pats : Array Pat) (ne
   for t in pats do
     let spec := mkSpec t (permFor t none) keep
     ests := ests.push (selRows (← st.blocksForRange spec.perm spec.key))
-  let mut remaining := (List.range pats.size).toArray
-  let mut lines : Array String := #[]
+  let remaining := (List.range pats.size).toArray
   let first := remaining.foldl (fun b k => if ests[k]! < ests[b]! then k else b) remaining[0]!
-  remaining := remaining.filter (· != first)
   let t0 := pats[first]!
   let sortPos0 := match pref.bind (posOf t0) with
     | some q => some q
@@ -2514,33 +2569,12 @@ def evalBgpM {m : Type → Type} [Monad m] (st : Store m) (pats : Array Pat) (ne
   -- an OPTIONAL group's first scan takes the left table's join values as
   -- candidates (issue 809)
   let (tab0, st0, sip0) ← scanPatM st t0 spec0 keep left0 ests[first]!
-  let mut total := st0
-  lines := lines.push s!"pattern {first}: {permNames[spec0.perm]!} key {spec0.key.size} estimate {ests[first]!}; blocks {st0.blocksRead} read of {st0.blocksSelected} selected of {st0.blocksTotal}, frames {st0.framesRead}, {st0.bytesRead} bytes; rows {tab0.rows}{sip0}"
-  let mut tab := tab0
-  for _ in [0:pats.size] do
-    if remaining.isEmpty then break
-    let connected := remaining.filter fun k => pats[k]!.vars.any tab.vars.contains
-    let cands := if connected.isEmpty then remaining else connected
-    let next := cands.foldl (fun b k => if ests[k]! < ests[b]! then k else b) cands[0]!
-    remaining := remaining.filter (· != next)
-    let t := pats[next]!
-    let mergeVar : Option (String × Nat) := match tab.sortVar with
-      | some v => (posOf t v).bind fun q => if t.bound q then none else some (v, q)
-      | none => none
-    let perm := match mergeVar with
-      | some (_, q) => permFor t (some q)
-      | none => permFor t (bestSortPos t pats)
-    let spec := mkSpec t perm keep
-    let (rt, s, sipNote) ← scanPatM st t spec keep (some tab) ests[next]!
-    total := total.add s
-    let (joined, how) := match mergeVar with
-      | some (v, _) =>
-        if rt.sortVar == some v then (mergeJoin tab rt v, s!"merge join on ?{v}")
-        else (hashJoin tab rt, "hash join")
-      | none => (hashJoin tab rt, if (sharedCols tab rt).isEmpty then "cross product" else "hash join")
-    lines := lines.push s!"pattern {next}: {permNames[perm]!} key {spec.key.size} estimate {ests[next]!}; blocks {s.blocksRead} read of {s.blocksSelected} selected of {s.blocksTotal}, frames {s.framesRead}, {s.bytesRead} bytes; rows {rt.rows}{sipNote}; {how}: {joined.rows} rows"
-    tab := joined
-  return (tab, lines, total)
+  let s0 : BgpLoop :=
+    { remaining := remaining.filter (· != first),
+      lines := #[s!"pattern {first}: {permNames[spec0.perm]!} key {spec0.key.size} estimate {ests[first]!}; blocks {st0.blocksRead} read of {st0.blocksSelected} selected of {st0.blocksTotal}, frames {st0.framesRead}, {st0.bytesRead} bytes; rows {tab0.rows}{sip0}"],
+      total := st0, tab := tab0 }
+  let s ← forIn [0:pats.size] s0 fun _ s => bgpStepM st pats keep ests s
+  return (s.tab, s.lines, s.total)
 
 /-! ## FILTER -/
 

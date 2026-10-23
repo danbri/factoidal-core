@@ -1290,9 +1290,13 @@ theorem shEq_list (l r : Table) (i j : Nat) :
 theorem hashJoin_pairs (l r : Table) :
     ∃ li ri sv, L4Factoidal.Qlvr.hashJoin l r =
       L4Factoidal.Qlvr.joinOutput l r (L4Factoidal.Qlvr.joinVars l r).1 (L4Factoidal.Qlvr.joinVars l r).2 li ri sv ∧
-      ((r.rows ≤ l.rows ∧ li.toList = (innerSpec l.rows r.rows (shEq l r)).map Prod.fst ∧
+      ((r.rows ≤ l.rows ∧ sv = l.sortVar ∧ li.toList = (innerSpec l.rows r.rows (shEq l r)).map Prod.fst ∧
           ri.toList = (innerSpec l.rows r.rows (shEq l r)).map Prod.snd) ∨
-        (¬ r.rows ≤ l.rows ∧ li.toList = (innerSpecR l.rows r.rows (shEq l r)).map Prod.fst ∧
+        (¬ r.rows ≤ l.rows ∧
+          sv = (match r.sortVar with
+            | some v => if (l.vars.contains v || r.vars.contains v) = true then some v else none
+            | none => none) ∧
+          li.toList = (innerSpecR l.rows r.rows (shEq l r)).map Prod.fst ∧
           ri.toList = (innerSpecR l.rows r.rows (shEq l r)).map Prod.snd)) := by
   unfold L4Factoidal.Qlvr.hashJoin
   simp only [Std.Legacy.Range.forIn_eq_forIn_range', Std.Legacy.Range.size, Nat.sub_zero, Nat.add_sub_cancel,
@@ -1309,7 +1313,7 @@ theorem hashJoin_pairs (l r : Table) :
           | none => some #[j]) (by intro j o; cases o <;> rfl) r.rows l.rows
         (fun li ri => L4Factoidal.Qlvr.joinOutput l r (L4Factoidal.Qlvr.joinVars l r).1
           (L4Factoidal.Qlvr.joinVars l r).2 li ri l.sortVar)
-      refine ⟨li, ri, l.sortVar, he, Or.inl ⟨hle, ?_, ?_⟩⟩
+      refine ⟨li, ri, l.sortVar, he, Or.inl ⟨hle, rfl, ?_, ?_⟩⟩
       all_goals
         rw [innerSpec_eq]
         first | rw [e1] | rw [e2]
@@ -1328,7 +1332,7 @@ theorem hashJoin_pairs (l r : Table) :
           | none => some #[j]) (by intro j o; cases o <;> rfl) r.rows l.rows
         (fun li ri => L4Factoidal.Qlvr.joinOutput l r (L4Factoidal.Qlvr.joinVars l r).1
           (L4Factoidal.Qlvr.joinVars l r).2 li ri l.sortVar)
-      refine ⟨li, ri, l.sortVar, he, Or.inl ⟨hle, ?_, ?_⟩⟩
+      refine ⟨li, ri, l.sortVar, he, Or.inl ⟨hle, rfl, ?_, ?_⟩⟩
       all_goals
         rw [innerSpec_eq]
         first | rw [e1] | rw [e2]
@@ -1352,7 +1356,7 @@ theorem hashJoin_pairs (l r : Table) :
           (match r.sortVar with
            | some v => if (l.vars.contains v || r.vars.contains v) = true then some v else none
            | none => none))
-      refine ⟨li, ri, _, he, Or.inr ⟨hle, ?_, ?_⟩⟩
+      refine ⟨li, ri, _, he, Or.inr ⟨hle, rfl, ?_, ?_⟩⟩
       all_goals
         unfold innerSpecR
         first | rw [e1] | rw [e2]
@@ -1374,7 +1378,7 @@ theorem hashJoin_pairs (l r : Table) :
           (match r.sortVar with
            | some v => if (l.vars.contains v || r.vars.contains v) = true then some v else none
            | none => none))
-      refine ⟨li, ri, _, he, Or.inr ⟨hle, ?_, ?_⟩⟩
+      refine ⟨li, ri, _, he, Or.inr ⟨hle, rfl, ?_, ?_⟩⟩
       all_goals
         unfold innerSpecR
         first | rw [e1] | rw [e2]
@@ -1502,7 +1506,7 @@ theorem hashJoin_rows (l r : Table) (hl : l.WF) (hr : r.WF) (hlu : NoUnbound l) 
     rw [idJoin_rows, innerSpec_congr l.rows r.rows _ _ (fun i j hi hj => (hcand i j hi hj).symm)]
   obtain ⟨li, ri, sv, he, hcase⟩ := hashJoin_pairs l r
   rw [he]
-  rcases hcase with ⟨hle, h1, h2⟩ | ⟨hle, h1, h2⟩
+  rcases hcase with ⟨hle, -, h1, h2⟩ | ⟨hle, -, h1, h2⟩
   · obtain ⟨hT, hR⟩ := joinOutput_rows l r hl hr li ri _ h1 h2 (fun p hp => by
       obtain ⟨i, j⟩ := p
       obtain ⟨hi, hj, hc⟩ := mem_innerSpec.mp hp

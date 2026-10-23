@@ -1340,6 +1340,7 @@ theorem scanTable_model (st : Store Id) (t : Pat) (perm : Nat) (hperm : perm < 4
     (htg : t.g = .const gid) (hnamed : t.named = false) (hmiss : t.hasMissing = false)
     (prb : ByteArray) (ms : List BlockMeta) (hst : PermMem st perm prb ms) :
     ∃ T stats, scanTableM st (mkSpec t perm (fun _ => true)) = pure (T, stats) ∧ T.WF ∧ NoUnbound T ∧
+      T.vars = (mkSpec t perm (fun _ => true)).outVars ∧
       T.sortVar = sortVarOf (mkSpec t perm (fun _ => true)) ∧ TableTheorems.SortOk T ∧
       Pw RowEq T.idRows (scanRows (ipatOf t) (permListing perm gid (ms.flatMap (blockRows prb)))) := by
   have hspec := specOk_mkSpec t perm hmiss
@@ -1358,7 +1359,7 @@ theorem scanTable_model (st : Store Id) (t : Pat) (perm : Nat) (hperm : perm < 4
     rw [hT.vars, mkSpec_eq]
     simp only [specOf, hI.outVars]
     simpa using hI.nodup
-  refine ⟨T, stats, he, ⟨by rw [hT.size, hT.vars], hT.bytes, hnd⟩, hnu, hT.sortVar,
+  refine ⟨T, stats, he, ⟨by rw [hT.size, hT.vars], hT.bytes, hnd⟩, hnu, hT.vars, hT.sortVar,
     scanTable_sortOk t perm hmiss T _ hT (hsorted.filter _) (fun r hr => (List.mem_filter.mp hr).2) hnd, ?_⟩
   · rw [hrows, filter_map_eq_filterMap]
     unfold scanRows IdLeaf.idEvalTP permListing
