@@ -46,6 +46,8 @@ No `sorry`, no user `axiom`, no `native_decide`, no `partial`.
 import L4Factoidal.Qlvr.Bgp
 import L4Factoidal.Storage.Sbm11.OptJoin
 import L4Factoidal.SPARQL.AggStream
+import L4Factoidal.Storage.Sbm11.TermIdTheorems
+import L4Factoidal.XSD.IntegerLexTheorems
 import Std.Data.HashMap
 
 namespace L4Factoidal.Storage.Sbm11.IdAgg
@@ -287,6 +289,299 @@ def argColOf (t : Table) : Option VarName → ArgCol
     | some c => .col c
     | none => .absent
 
+/-! ## Argument columns of inline integers (issue 862)
+
+When every bound id of the one argument column is an inline integer (tag 4),
+the value of the id is in its bits: `v = payload - 2^55`, the datatype is
+entry `sub` of `intTypesList`. Its readings are then those of
+`Summary.of` with no decoding and no parse (`summary_inlineInt`, through
+`parseIntegerLex (toString v) = some v`), so SUM and AVG add `v` to an integer
+sum and MIN and MAX compare two integers (`IAcc.step_abs`). Only the best id of
+each group is decoded, at the end. On DBpedia d19 (326,365 rows,
+`xsd:nonNegativeInteger`) this removes the summary table: the per-row hash
+probe, the 47,473 decodes and summaries and their frees. -/
+
+/-- The entry of an inline integer type with its built-in datatype, when the
+type's literals are well formed (`mkLit` succeeds) and the built-in is an
+integer type. -/
+structure IntInfo where
+  e : IntType
+  b : XSD.Builtin
+
+/-- `IntInfo` of each of the 13 inline integer types, by subtype field. -/
+def intInfoOf (e : IntType) : Option IntInfo :=
+  if (mkLit "0" e.iri.val none none).isSome then
+    match XSD.builtinOfIri? e.iri.val with
+    | some b => if (XSD.intBounds b).isSome then some ⟨e, b⟩ else none
+    | none => none
+  else none
+
+def intInfos : Array (Option IntInfo) := intTypesList.toArray.map intInfoOf
+
+/-- The value of an inline integer id whose type is in `infos` and whose value
+is in the bounds of that type; `none` for any other id. -/
+@[inline] def intVal? (infos : Array (Option IntInfo)) (x : UInt64) : Option Int :=
+  let n := x.toNat
+  if n / two60 == tagInt then
+    match infos[(n / two56) % 16]? with
+    | some (some i) =>
+      let v : Int := ((n % two56 : Nat) : Int) - two55Int
+      if i.e.admits v && XSD.inIntBounds i.b v then some v else none
+    | _ => none
+  else none
+
+/-- The order of two integers as `sparqlOrder` gives it for their values. -/
+@[inline] def ordInt (a b : Int) : Int := if a < b then -1 else if b < a then 1 else 0
+
+/-- The keep test of MIN (`keepMin`) and MAX (`keepMax`). -/
+def keepOf : AggregateFn → Int → Bool
+  | .min => keepMin
+  | _ => keepMax
+
+/-- The state of SUM, AVG, MIN or MAX over an integer column: the integer sum
+and the count, or the best value with its id. -/
+inductive IAcc where
+  | sum (t : Int) (c : Nat)
+  | best (o : Option (Int × UInt64))
+
+instance : Inhabited IAcc := ⟨.sum 0 0⟩
+
+def IAcc.init : AggregateFn → IAcc
+  | .min | .max => .best none
+  | _ => .sum 0 0
+
+/-- One value `v` of id `x`. -/
+@[inline] def IAcc.step (fn : AggregateFn) (a : IAcc) (x : UInt64) (v : Int) : IAcc :=
+  match a with
+  | .sum t c => .sum (v + t) (c + 1)
+  | .best none => .best (some (v, x))
+  | .best (some (bv, _)) => if keepOf fn (ordInt v bv) then .best (some (v, x)) else a
+
+/-- The accumulator of `AggStream` that an `IAcc` stands for; `dec` decodes an
+id (`ofInlineCode?` for the ids met here). -/
+def IAcc.abs (dec : UInt64 → Term) : IAcc → AggAcc
+  | .sum t c => .num (.num t) c
+  | .best none => .best none
+  | .best (some (_, x)) => .best (some (Summary.of (varView (dec x))))
+
+/-- The readings of an id: what `Summary.of` of its decoded term gives when it
+is the integer `v`. -/
+def ReadsInt (dec : UInt64 → Term) (x : UInt64) (v : Int) : Prop :=
+  Summary.of (varView (dec x)) = ⟨varView (dec x), some (.dec (XSD.Dec.ofInt v)), true, true⟩
+
+/-- The readings of an inline integer id, from its bits. -/
+theorem summary_inlineInt (n : Nat) (h4 : n / two60 = 4) (e : IntType)
+    (he : intTypesList[(n / two56) % 16]? = some e)
+    (b : XSD.Builtin) (hb : XSD.builtinOfIri? e.iri.val = some b) (hib : (XSD.intBounds b).isSome = true)
+    (hin : XSD.inIntBounds b (((n % two56 : Nat) : Int) - two55Int) = true)
+    (t : Term) (ht : ofInlineCode? n = some t) :
+    Summary.of (varView t) =
+      ⟨varView t, some (.dec (XSD.Dec.ofInt (((n % two56 : Nat) : Int) - two55Int))), true, true⟩ := by
+  rw [ofInlineCode?_int n h4, he] at ht
+  simp only at ht
+  split at ht
+  · unfold mkLit at ht
+    split at ht
+    · dsimp only at ht
+      split at ht
+      · cases ht
+        have hty : L4Factoidal.Fn.Numeric.isType b = true := by
+          simp [L4Factoidal.Fn.Numeric.isType, hib]
+        simp only [Summary.of, varView, EvalResult.numericValue?, EvalResult.isIntegerOperand,
+          EvalResult.isNumericOperand, L4Factoidal.Fn.Numeric.literalValue?,
+          L4Factoidal.Fn.Numeric.lexicalValue?, L4Factoidal.Fn.Comparison.numericDatatype,
+          L4Factoidal.Fn.Numeric.isDatatype, hb, Option.any_some, hty, hib]
+        simp only [bind, Option.bind, hty, if_true]
+        rw [XSD.IntegerLexTheorems.lexicalFor_int b hib, hin]
+        rfl
+      · cases ht
+    · cases ht
+  · cases ht
+
+/-- `mkLit` with no language tag and no direction succeeds or fails by the
+datatype alone. -/
+theorem mkLit_isSome_lex (a c dt : String) :
+    (mkLit a dt none none).isSome = (mkLit c dt none none).isSome := by
+  unfold mkLit
+  split
+  · rename_i h
+    by_cases hP : ((⟨dt, h⟩ : WfIri) != rdfLangString && (⟨dt, h⟩ : WfIri) != rdfDirLangString) = true
+    · simp [literalWf, hP]
+    · simp [literalWf, hP]
+  · rfl
+
+/-- An id that `intVal?` reads as `v` decodes, and its readings are those of
+the integer `v`. -/
+theorem intVal?_reads (x : UInt64) (v : Int) (h : intVal? intInfos x = some v) :
+    ∃ t, ofInlineCode? x.toNat = some t ∧ ReadsInt (fun y => (ofInlineCode? y.toNat).getD t) x v := by
+  unfold intVal? at h
+  simp only at h
+  split at h
+  · rename_i h4
+    split at h
+    · rename_i i hi
+      split at h
+      · rename_i hok
+        cases h
+        simp only [intInfos, Array.getElem?_map, List.getElem?_toArray] at hi
+        cases he : intTypesList[(x.toNat / two56) % 16]? with
+        | none => rw [he] at hi; cases hi
+        | some e =>
+          rw [he] at hi
+          simp only [Option.map_some, Option.some.injEq] at hi
+          unfold intInfoOf at hi
+          split at hi
+          · rename_i hmk
+            split at hi
+            · rename_i b hb
+              split at hi
+              · rename_i hib
+                cases hi
+                simp only [Bool.and_eq_true] at hok
+                have h4' : x.toNat / two60 = 4 := by simpa [tagInt] using h4
+                have hsome : (ofInlineCode? x.toNat).isSome = true := by
+                  rw [ofInlineCode?_int _ h4', he]
+                  simp only [hok.1, if_true]
+                  rw [mkLit_isSome_lex _ "0"]
+                  exact hmk
+                obtain ⟨t, ht⟩ := Option.isSome_iff_exists.mp hsome
+                refine ⟨t, ht, ?_⟩
+                unfold ReadsInt
+                simp only [ht, Option.getD_some]
+                exact summary_inlineInt _ h4' e he b hb hib hok.2 t ht
+              · cases hi
+            · cases hi
+          · cases hi
+      · cases h
+    · cases h
+  · cases h
+
+/-- `Dec.cmp` of two integers is the order of the integers. -/
+theorem decCmp_ofInt (a b : Int) :
+    XSD.Dec.cmp (XSD.Dec.ofInt a) (XSD.Dec.ofInt b) = compare a b := by
+  simp [XSD.Dec.cmp, XSD.Dec.ofInt]
+
+/-- One step of `IAcc` is one step of `AggStream`'s accumulator on the summary
+of the decoded value. Premises: the value `x` reads as `v`, and a held best id
+reads as its held value. -/
+theorem IAcc.step_abs (dec : UInt64 → Term) (fn : AggregateFn)
+    (hfn : fn = .sum ∨ fn = .avg ∨ fn = .min ∨ fn = .max) (a : IAcc)
+    (ha : ∀ bv bx, a = .best (some (bv, bx)) → ReadsInt dec bx bv)
+    (hshape : (∃ t c, a = .sum t c) ↔ (fn = .sum ∨ fn = .avg))
+    (x : UInt64) (v : Int) (hx : ReadsInt dec x v) :
+    (a.step fn x v).abs dec = AggAcc.step fn (a.abs dec) (Summary.of (varView (dec x))) := by
+  unfold ReadsInt at hx ha
+  have hxv : (Summary.of (varView (dec x))).v = .term (dec x) := rfl
+  have hxn : (Summary.of (varView (dec x))).nv = some (.dec (XSD.Dec.ofInt v)) := by rw [hx]
+  have hxi : (Summary.of (varView (dec x))).isInt = true := by rw [hx]
+  have hxs : (Summary.of (varView (dec x))).isNum = true := by rw [hx]
+  cases a with
+  | sum t c =>
+    have hs : fn = .sum ∨ fn = .avg := hshape.mp ⟨t, c, rfl⟩
+    have hstep : AggAcc.stepNum (.num (.num t) c) (Summary.of (varView (dec x))) =
+        .num (.num (v + t)) (c + 1) := by
+      unfold AggAcc.stepNum
+      rw [hxn, hxi]
+      simp [XSD.Dec.ofInt]
+    rcases hs with rfl | rfl <;>
+      simp only [IAcc.step, IAcc.abs, AggAcc.step, hxv, hstep]
+  | best o =>
+    have hs : fn = .min ∨ fn = .max := by
+      rcases hfn with h | h | h | h
+      · exact absurd (hshape.mpr (Or.inl h)) (by rintro ⟨_, _, h'⟩; cases h')
+      · exact absurd (hshape.mpr (Or.inr h)) (by rintro ⟨_, _, h'⟩; cases h')
+      · exact Or.inl h
+      · exact Or.inr h
+    cases o with
+    | none =>
+      rcases hs with rfl | rfl <;>
+        simp only [IAcc.step, IAcc.abs, AggAcc.step, AggAcc.stepKeep, AggAcc.stepBest, hxv]
+    | some p =>
+      obtain ⟨bv, bx⟩ := p
+      have hb := ha bv bx rfl
+      have hbn : (Summary.of (varView (dec bx))).nv = some (.dec (XSD.Dec.ofInt bv)) := by rw [hb]
+      have hbs : (Summary.of (varView (dec bx))).isNum = true := by rw [hb]
+      have hord : sparqlOrderReadFast (Summary.of (varView (dec x))).v (Summary.of (varView (dec bx))).v
+          (Summary.of (varView (dec x))).isNum (Summary.of (varView (dec bx))).isNum
+          (Summary.of (varView (dec x))).nv (Summary.of (varView (dec bx))).nv = ordInt v bv := by
+        rw [hxs, hbs, hxn, hbn]
+        simp only [sparqlOrderReadFast, decCmp_ofInt, ordInt]
+        cases hc : compare v bv <;>
+          simp_all [Int.compare_eq_lt, Int.compare_eq_gt] <;> omega
+      rcases hs with rfl | rfl <;>
+      · simp only [IAcc.step, AggAcc.step, AggAcc.stepKeep, AggAcc.stepBest, hord, keepOf, IAcc.abs]
+        simp only [hxv]
+        by_cases hk : keepMin (ordInt v bv) = true <;> by_cases hk' : keepMax (ordInt v bv) = true <;>
+          simp [hk, hk']
+
+/-- The invariant of an `IAcc` for `fn`: the shape fits the function, and a
+held best id reads as its held value. -/
+def IAcc.Inv (dec : UInt64 → Term) (fn : AggregateFn) : IAcc → Prop
+  | .sum _ _ => fn = .sum ∨ fn = .avg
+  | .best none => fn = .min ∨ fn = .max
+  | .best (some (bv, bx)) => (fn = .min ∨ fn = .max) ∧ ReadsInt dec bx bv
+
+theorem IAcc.init_inv (dec : UInt64 → Term) (fn : AggregateFn)
+    (hfn : fn = .sum ∨ fn = .avg ∨ fn = .min ∨ fn = .max) : (IAcc.init fn).Inv dec fn := by
+  rcases hfn with rfl | rfl | rfl | rfl <;> simp [IAcc.init, IAcc.Inv]
+
+theorem IAcc.step_inv (dec : UInt64 → Term) (fn : AggregateFn) (a : IAcc) (ha : a.Inv dec fn)
+    (x : UInt64) (v : Int) (hx : ReadsInt dec x v) : (a.step fn x v).Inv dec fn := by
+  cases a with
+  | sum t c => exact ha
+  | best o =>
+    cases o with
+    | none => exact ⟨ha, hx⟩
+    | some p =>
+      obtain ⟨bv, bx⟩ := p
+      simp only [IAcc.step]
+      split
+      · exact ⟨ha.1, hx⟩
+      · exact ha
+
+/-- `IAcc.step_abs` under the invariant. -/
+theorem IAcc.step_abs_inv (dec : UInt64 → Term) (fn : AggregateFn) (a : IAcc) (ha : a.Inv dec fn)
+    (x : UInt64) (v : Int) (hx : ReadsInt dec x v) :
+    (a.step fn x v).abs dec = AggAcc.step fn (a.abs dec) (Summary.of (varView (dec x))) := by
+  have hfn : fn = .sum ∨ fn = .avg ∨ fn = .min ∨ fn = .max := by
+    cases a with
+    | sum t c => rcases (ha : fn = .sum ∨ fn = .avg) with h | h <;> simp [h]
+    | best o =>
+      cases o with
+      | none => rcases (ha : fn = .min ∨ fn = .max) with h | h <;> simp [h]
+      | some p => rcases ha.1 with h | h <;> simp [h]
+  apply IAcc.step_abs dec fn hfn a _ _ x v hx
+  · intro bv bx h
+    subst h
+    exact ha.2
+  · constructor
+    · rintro ⟨t, c, rfl⟩
+      exact ha
+    · intro h
+      cases a with
+      | sum t c => exact ⟨t, c, rfl⟩
+      | best o =>
+        cases o with
+        | none =>
+          rcases (ha : fn = .min ∨ fn = .max) with h' | h' <;> rcases h with h | h <;> rw [h'] at h <;> cases h
+        | some p =>
+          rcases ha.1 with h' | h' <;> rcases h with h | h <;> rw [h'] at h <;> cases h
+
+/-- Over a list of ids with their values, each reading as its value, the
+`IAcc` fold is the `AggStream` fold on the summaries of the decoded values:
+the integer path computes what the summary path computes. -/
+theorem IAcc.fold_abs (dec : UInt64 → Term) (fn : AggregateFn) :
+    ∀ (xs : List (UInt64 × Int)) (a : IAcc), a.Inv dec fn → (∀ p ∈ xs, ReadsInt dec p.1 p.2) →
+      (xs.foldl (fun a p => a.step fn p.1 p.2) a).abs dec =
+        (xs.map (fun p => Summary.of (varView (dec p.1)))).foldl (AggAcc.step fn) (a.abs dec)
+  | [], _, _, _ => rfl
+  | p :: ps, a, ha, hall => by
+    have hp := hall p (List.mem_cons_self ..)
+    simp only [List.foldl_cons, List.map_cons]
+    rw [← IAcc.step_abs_inv dec fn a ha p.1 p.2 hp]
+    exact IAcc.fold_abs dec fn ps _ (IAcc.step_inv dec fn a ha p.1 p.2 hp)
+      (fun q hq => hall q (List.mem_cons_of_mem _ hq))
+
 /-! ## The pass -/
 
 /-- What the pass computes. -/
@@ -295,7 +590,8 @@ structure Result where
   reps : Array Binding
   /-- the value of each aggregate item of each group, in item order -/
   vals : Array (Array EvalResult)
-  /-- the distinct ids decoded, for aggregate arguments and representative rows -/
+  /-- the distinct ids decoded, for aggregate arguments and representative rows,
+      plus one for each best id of MIN or MAX that the integer path decodes -/
   decoded : Nat
   /-- the values bound in the representative rows, summed over the groups -/
   repValues : Nat
@@ -419,6 +715,44 @@ def stepRows (t : Table) (n : Nat) (fns : Array AggregateFn) (argCols : Array Ar
             (stepSimple t n argCols simple i gi accs)
     else { i, accs, miss := none }
 
+/-- The functions the integer path takes. -/
+def intFn : AggregateFn → Bool
+  | .sum | .avg | .min | .max => true
+  | _ => false
+
+/-- The integer path from row `i` (a tail call with fuel): the specs `ks` read
+the one argument column `ad`, the others are the specs that read no value.
+`none` at the first bound id that `intVal?` does not read (the caller then runs
+the summary path from the start). -/
+def intRows (t : Table) (n : Nat) (fns : Array AggregateFn) (argCols : Array ArgCol)
+    (simple : Array Nat) (ks : Array Nat) (ad : ByteArray) (gids : Array Nat) (implicit : Bool)
+    (infos : Array (Option IntInfo)) :
+    Nat → Nat → Array AggAcc → Array IAcc → Option (Array AggAcc × Array IAcc)
+  | 0, _, accs, iaccs => some (accs, iaccs)
+  | f + 1, i, accs, iaccs =>
+    if i < t.rows then
+      let gi := if implicit then 0 else gids[i]!
+      let accs := stepSimple t n argCols simple i gi accs
+      let x := L4Factoidal.Codec.Zstd.word64 ad (8 * i)
+      if x != L4Factoidal.Storage.Sbm11.OptJoin.unbound then
+        match intVal? infos x with
+        | none => none
+        | some v =>
+          intRows t n fns argCols simple ks ad gids implicit infos f (i + 1) accs
+            (ks.foldl (init := iaccs) fun ia k => ia.modify (gi * n + k) fun a => a.step fns[k]! x v)
+      else intRows t n fns argCols simple ks ad gids implicit infos f (i + 1) accs iaccs
+    else some (accs, iaccs)
+
+/-- The accumulator an `IAcc` stands for (`IAcc.abs` with `ofInlineCode?`):
+the best id of MIN or MAX is decoded here, once per group. -/
+def IAcc.absM {m : Type → Type} [Monad m] : IAcc → ExceptT String m AggAcc
+  | .sum t c => pure (.num (.num t) c)
+  | .best none => pure (.best none)
+  | .best (some (_, x)) =>
+    match ofInlineCode? x.toNat with
+    | some tm => pure (.best (some (Summary.of (varView tm))))
+    | none => throw s!"inline id {x} does not decode"
+
 /-- Group the rows of `t` and aggregate; `none` when the plan does not apply to
 this table (a group column that is missing, unbound somewhere, or holds an id
 that is not a blank node, an IRI, an inline integer or an inline boolean). -/
@@ -467,7 +801,34 @@ def aggregateM {m : Type → Type} [Monad m] (termOf : UInt64 → ExceptT String
     let mut sums : Cache Id64 Summary := {}
     let mut dts : Cache String (Option XSD.Builtin) := {}
     let mut start := 0
+    let mut bestDecoded := 0
+    -- the integer path (issue 862): one argument column of inline integers
+    let fns := specs.map (·.1)
+    let intRes : Option (Array AggAcc × Array IAcc) :=
+      if byCol.size == 1 && byCol[0]!.2.all (fun k => intFn fns[k]!) then
+        let ks := byCol[0]!.2
+        let iinit : Array IAcc := Id.run do
+          let mut a : Array IAcc := Array.mkEmpty (first.size * n)
+          for _ in [0:first.size] do
+            for k in [0:n] do
+              a := a.push (IAcc.init fns[k]!)
+          return a
+        intRows t n fns argCols simple ks ad grp.gids p.implicit intInfos (t.rows + 1) 0 accs iinit
+      else none
+    match intRes with
+    | some (accs', iaccs) =>
+      accs := accs'
+      for g in [0:first.size] do
+        for k in byCol[0]!.2 do
+          let ia := iaccs[g * n + k]!
+          match ia with
+          | .best (some _) => bestDecoded := bestDecoded + 1
+          | _ => pure ()
+          accs := accs.set! (g * n + k) (← ia.absM)
+      start := t.rows + 1
+    | none => pure ()
     for _ in [0:t.rows + 1] do
+      if start > t.rows then break
       let o := stepRows t n (specs.map (·.1)) argCols simple byCol ad grp.gids p.implicit sums.map (t.rows - start + 1) start accs
       accs := o.accs
       start := o.i
@@ -497,7 +858,7 @@ def aggregateM {m : Type → Type} [Monad m] (termOf : UInt64 → ExceptT String
       vals := vals.push row
     -- the distinct ids decoded: the argument ids, and the ids of the representative
     -- rows that are not argument ids
-    let decoded := terms.map.fold (fun c k _ => if sums.map.contains k then c else c + 1) sums.map.size
+    let decoded := terms.map.fold (fun c k _ => if sums.map.contains k then c else c + 1) sums.map.size + bestDecoded
     return some { reps, vals, decoded, repValues }
 
 #print axioms Cache.getM_id

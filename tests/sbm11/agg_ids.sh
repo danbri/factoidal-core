@@ -39,10 +39,9 @@
 #             /home/user/bench-data/sbm11/dbpedia): d19 and the queries of
 #             tests/sbm11/agg-dbpedia (630,000 date literals, 730 to 180,000
 #             groups, MIN and MAX of IRIs, two group keys) on ids and with
-#             `--no-agg-ids`, byte-identical; and one expected failure,
-#             "d19 warm time at most 300 ms" (267 to 325 ms since section
-#             11.20 of the benchmark record), which names
-#             https://github.com/danbri/factoidal/issues/862.
+#             `--no-agg-ids`, byte-identical; and "d19 warm time at most
+#             300 ms" (https://github.com/danbri/factoidal/issues/862;
+#             sections 11.17, 11.20 and 11.21 of the benchmark record).
 #
 # Usage: tests/sbm11/agg_ids.sh. Environment: L4_BIN_DIR (the built binaries).
 # Prints "agg ids: N pass, M fail, K expected-fail (out of T)"; exit 1 when any
@@ -174,16 +173,13 @@ if [ -d "$DBP" ] && [ -f "$ROOT/tools/bench/three-engines/queries/dbpedia/d19-gr
   elif ! cmp -s "$TMP/d19.a.out" "$TMP/d19.b.out"; then record dbpedia d19 1 "the answers differ in bytes"
   else record dbpedia d19 0 "$(grep -o 'aggregated on ids into [0-9]* groups' "$TMP/d19.a.err"); byte-identical to --no-agg-ids ($(wc -c <"$TMP/d19.a.out") bytes)"; fi
   # https://github.com/danbri/factoidal/issues/862: d19 warm time (the execution median of 5
-  # runs in one process) at most 300 ms. About 1,450 ms on main after the shared arithmetic
-  # of f1f78d98; the readings made once per distinct id (`Summary.of`, `evalArithmeticRead`,
-  # `sparqlOrderReadFast`), `Dec.cmpFast` and the datatype cache took it to 267 to 325 ms
-  # (benchmark record section 11.20): 2 of 3 runs at most 300 ms, so the case stays an
-  # expected failure. It is near the limit: an XPASS on one run is not yet a reason to flip it.
-  ISSUE862="${AGG_IDS_ISSUE_862:-https://github.com/danbri/factoidal/issues/862}"
+  # runs in one process) at most 300 ms. About 1,450 ms after the shared arithmetic of
+  # f1f78d98, about 290 ms with the readings made once per distinct id (section 11.20), about
+  # 195 ms with the integer path of `IdAgg` (section 11.21). An assertion since then.
   warm="$(timeout 600 "$BIN/l4sbm11" query "$DBP" --file "$ROOT/tools/bench/three-engines/queries/dbpedia/d19-group-aggregates.rq" --verify none --repeat 5 2>&1 >/dev/null | sed -n 's/.*execution ms median \([0-9]*\)\..*/\1/p')"
-  if [ -z "$warm" ]; then record dbpedia d19-warm 1 "no warm time in the output"
-  elif [ "$warm" -le 300 ]; then xfail dbpedia xfail-d19-warm-300ms "$ISSUE862" 1 "warm $warm ms"
-  else xfail dbpedia xfail-d19-warm-300ms "$ISSUE862" 0 "warm $warm ms against 300 ms"; fi
+  if [ -z "$warm" ]; then record dbpedia d19-warm-300ms 1 "no warm time in the output"
+  elif [ "$warm" -le 300 ]; then record dbpedia d19-warm-300ms 0 "warm $warm ms (at most 300 ms)"
+  else record dbpedia d19-warm-300ms 1 "warm $warm ms against 300 ms"; fi
   for q in "$HERE"/agg-dbpedia/*.rq; do
     n="$(basename "$q" .rq)"
     r1=0; r2=0
