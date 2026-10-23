@@ -48,8 +48,8 @@ decode to the reference leaf as a list; the id path's scans do not give
 that list (issue 776: permutation key order, join order, hash-join probe
 side), and for a leaf that statement was its own hypothesis. The
 operator lemmas below are the steps of the new theorem; its leaf hypothesis
-(`LeafRel`: each leaf's rows decode to the same multiset of solution
-mappings as the reference leaf) is open there.
+(`LeafRel`) is derived from store invariants in
+`IdLeafTheorems.where_allowed`.
 
 Not proved here (the step of lemma L5g″ of the design record): that the
 `Table` operators `IdQuery.evalGroupM` runs (`IdJoin.joinIds`,

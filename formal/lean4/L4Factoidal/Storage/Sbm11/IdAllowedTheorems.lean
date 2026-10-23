@@ -57,8 +57,10 @@ specification allows.
   `ok`, under `hdec` (`Term.eqb` of two decoded ids is id equality on `ok`)
   and `HypsW LeafRel`: each leaf's rows decode to a `SolEquiv` list of the
   reference leaf (`LeafRel`), and each term the evaluator encodes gets an id
-  in `ok` that decodes back. The leaf part (`LeafRel`) is a hypothesis
-  here; it is the scans' property, not a composition step.
+  in `ok` that decodes back. The leaf part (`LeafRel`) is the scans'
+  property, not a composition step: `IdLeafTheorems.leafRel_of_store`
+  derives it from store invariants, and `IdLeafTheorems.where_allowed` is
+  the theorem with those invariants as hypotheses.
 
 No `sorry`, no user `axiom`, no `native_decide`, no `partial`.
 -/
