@@ -25,6 +25,7 @@ translation, `QueryPattern`), each arm the id form of the reference arm
 | Graph(?g, P)          | per named graph, `P` with it active and `?g` bound; a basic graph pattern alone is one scan with `?g` as the graph column |
 | Extend(P, ?v, e)      | `IdQuery.extendM`                                    |
 | VALUES                | `IdQuery.resolveValuesVocabM`                        |
+| sub-SELECT            | `subSelectM`: a projection of variables on ids, else the reference `selectPost` on the decoded rows, the values encoded |
 | {}                    | one row, no column                                   |
 
 Every operator works on columns of `UInt64` ids. Values are decoded only
@@ -40,8 +41,9 @@ to the list operators of that file is not proved (module header there);
 tested by `tests/sbm11/gate/ids-nest-*.rq` and the W3C census.
 
 Refused, with a message the harness reports (`refused: ...` at run time, a
-`translate` error before): LATERAL, SERVICE, a sub-SELECT, a GRAPH name that
-is not an IRI or a variable, EXISTS of a pattern that is not a basic graph
+`translate` error before): LATERAL, SERVICE, a GRAPH name that
+is not an IRI or a variable, a sub-SELECT with EXISTS outside its WHERE
+clause, EXISTS of a pattern that is not a basic graph
 pattern or EXISTS inside an expression, a BIND whose value depends on the row
 index, a property path under FROM or FROM NAMED, and GRAPH on a store that
 gives no list of named graphs.
@@ -315,6 +317,56 @@ def valuesNM (cx : NCx m) (vars : List String) (rows : List (List (Option Term))
   set { s with vocab := voc, localIdx := ix }
   return ts[0]!
 
+/-- The projection of a sub-SELECT that is a list of variables and nothing
+    else (no GROUP BY, HAVING, aggregate, expression, ORDER BY, OFFSET,
+    LIMIT, REDUCED or trailing VALUES): its variables and DISTINCT. -/
+def plainProjection? (sq : L4Factoidal.SPARQL.Query) : Option (Array String × Bool) :=
+  match sq with
+  | .mk (.select (.vars items)) _ _ none [] md none _ =>
+    if md.orderBy.isNone && md.offset.isNone && md.limit.isNone && !md.reduced then
+      items.foldl (fun acc it => match acc, it with
+        | some vs, .var v => some (vs.push v)
+        | _, _ => none) (some #[]) |>.map fun vs => (vs, md.distinct)
+    else none
+  | _ => none
+
+/-- A sub-SELECT (SPARQL 1.1 section 18.2.4.1 and 18.2.5) over the id table
+    `t` of its WHERE clause. A projection of variables (`plainProjection?`)
+    stays on ids: the columns of the projected variables (`IdJoin.keepVars`),
+    then `IdJoin.distinctRows` for DISTINCT (equal ids are equal terms). Any
+    other sub-SELECT decodes the rows (`decodeRowsM`), runs the reference
+    post-processing (`selectPost`: grouping, aggregates, HAVING, expressions,
+    ORDER BY, projection, DISTINCT, slice) and encodes the values of the
+    projected variables (`termIdM`; a new term gets a query-local id), as
+    `IdGroupTheorems.evalGroupIds` does. `nestedRefusal?` admits only a
+    sub-SELECT with no EXISTS outside its WHERE clause, so the post-processing
+    reads no active graph. -/
+def subSelectM (cx : NCx m) (sq : L4Factoidal.SPARQL.Query) (t : Table) : NM m Table := do
+  match plainProjection? sq with
+  | some (vs, distinct) =>
+    let p := IdJoin.keepVars t vs.contains
+    let p := if distinct then IdJoin.distinctRows p else p
+    note s!"sub-SELECT on ids: {vs.size} variables{if distinct then ", DISTINCT" else ""}: {t.rows} rows to {p.rows}"
+    return p
+  | none =>
+    let rows ← liftE (decodeRowsM (← localStore cx) t)
+    let out := L4Factoidal.SPARQL.selectPost cx.env Graph.empty sq rows
+    let vars := (L4Factoidal.SPARQL.Query.projectedVars sq).toArray
+    let mut cols : Array ByteArray := vars.map fun _ => ByteArray.emptyWithCapacity (8 * out.length)
+    for mu in out do
+      for k in [0:vars.size] do
+        let mut x := OptJoin.unbound
+        match mu.lookup vars[k]! with
+        | some term =>
+          let s ← get
+          let (y, voc, ix) ← liftE (termIdM cx.st s.vocab s.localIdx term)
+          set { s with vocab := voc, localIdx := ix }
+          x := y
+        | none => pure ()
+        cols := cols.modify k (L4Factoidal.Qlvr.Side.put64 · x)
+    note s!"sub-SELECT: {t.rows} rows decoded, reference selectPost: {out.length} rows encoded"
+    return { vars, cols, rows := out.length }
+
 /-- The evaluator (module header): the rows of `p` with `g` the active
     graph, every variable of `p` that a row binds a column (`unbound` where a
     row does not bind it). -/
@@ -375,7 +427,9 @@ def evalGroupM (cx : NCx m) : QueryPattern → GCtx → NM m Table
     extendNM cx t e v
   | .values vars rows, _ => valuesNM cx vars rows
   | .propertyPath s path o, g => pathM cx g s path o unitTable
-  | .subSelect _, _ => throw "refused: a sub-SELECT"
+  | .subSelect (.mk form dcs inner gb hv md pv bs), g => do
+    let t ← evalGroupM cx inner g
+    subSelectM cx (.mk form dcs inner gb hv md pv bs) t
   | .lateral _ _, _ => throw "refused: LATERAL"
   | .service _ _ _, _ => throw "refused: SERVICE"
   | .serviceVar _ _ _, _ => throw "refused: SERVICE"

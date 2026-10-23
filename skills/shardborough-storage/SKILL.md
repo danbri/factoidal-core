@@ -1064,7 +1064,11 @@ builds, one arm per constructor, on id tables: `joinIds`, `leftJoinCondM`
 `unionIds`, `semiMatches` for MINUS, `extendM`, `filterM` (compiled, residual,
 EXISTS of a BGP in the active graph), GRAPH with an IRI or a variable (per
 named graph of `Store.namedGraphs`, `Session.storeNested`; a lone BGP under
-`GRAPH ?g` is one scan). The flat planner keeps every query it accepted.
+`GRAPH ?g` is one scan), `subSelectM` (a projection of variables on ids,
+else `selectPost` on the decoded rows and the values encoded with
+`termIdM`). The flat planner keeps every query it accepted. Census after:
+597 of 605 on ids; the 8 left are EXISTS of a non-BGP pattern or inside an
+expression, a BIND of EXISTS or of UUID()/STRUUID()/BNODE(), SERVICE.
 Theorem (`IdGroupTheorems`, lemma L5t): `evalGroupIds_decode`, by structural
 recursion on the pattern, for every pattern but LATERAL and SERVICE at any
 depth; the leaf scans are its hypothesis.

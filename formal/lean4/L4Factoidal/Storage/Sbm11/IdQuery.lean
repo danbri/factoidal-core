@@ -1334,7 +1334,7 @@ def translate (q : L4Factoidal.SPARQL.Query) : Except String Plan := do
     | .error why =>
       -- issue 959: a WHERE clause outside the flat fragment goes to the
       -- nested evaluator, unless it holds a construct that has no id form
-      if let some refusal := nestedRefusal? pat (subSelect := false) then throw refusal
+      if let some refusal := nestedRefusal? pat then throw refusal
       unless q.expressionsOutsidePatternExistsFree do
         throw s!"{why}; EXISTS or NOT EXISTS outside the WHERE clause"
       return { pats := #[], filters := #[], dataset, nested := some pat,
