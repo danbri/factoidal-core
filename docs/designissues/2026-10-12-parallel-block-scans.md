@@ -1880,3 +1880,148 @@ https://github.com/danbri/factoidal/issues/964.
   0.43.
 
 Issue https://github.com/danbri/factoidal/issues/961 stays open.
+
+## Stage 1k: the calling thread's work on the counted path, and the label keys (2026-10-23)
+
+Issue https://github.com/danbri/factoidal/issues/961, key result KR 1.2 of
+https://github.com/danbri/factoidal/issues/875. No allocator setting changed;
+the block-bytes rule of `tests/sbm11/threads.sh` and `SBM11_STREAM_JOBS` are
+not changed (owner question pending).
+
+### 1k.1 Result
+
+KR 1.2 is met for d10, q19 and q21; it is not met for q07. Final interleaved
+run, binary of `main` `67c29a44` against this stage (`91f3fa3c`), 16 rounds
+(15 kept), `--repeat 21`, 2026-10-23 19:29 to 19:31 UTC, after all gates had
+ended (raw CSV `.claude-runs/kr12k/final.csv`, not in the repository):
+
+| Query | `main` 1 / 4 threads ms | 4/1 | this stage 1 / 4 threads ms | 4/1 | peak RSS 4/1 (largest), main / this stage | target met |
+| --- | ---: | ---: | ---: | ---: | ---: | --- |
+| q07 | 4.76 / 2.86 | 0.60 | 4.75 / 2.87 | 0.60 | 1.11 / 1.14 | no |
+| q19 | 34.33 / 11.17 | 0.33 | 34.26 / 11.94 | 0.35 | 1.82 / 1.81 | yes |
+| q21 | 91.08 / 31.03 | 0.34 | 92.40 / 31.32 | 0.34 | 1.67 / 1.68 | yes |
+| d10 | 9.04 / 4.37 | 0.48 | 9.05 / 3.20 | 0.35 | 1.18 / 1.14 | yes |
+
+d10 at 4 threads: 15 of 15 processes of this stage at or below 4.27 ms, 14
+of 15 of `main` at or above 3.55 ms. q19 4-thread times of single processes
+range from 9.6 to 16.2 ms for both binaries (1i.2); its difference here is
+inside that range (a separate run of 13 rounds gave 11.16 for this stage and
+12.11 for `main`). The 1-thread times did not get slower.
+
+### 1k.2 Measurements before the changes
+
+`tools/perf-cost-split.py` (stage 1h method), DBpedia d10, `--repeat 61`
+against `--repeat 1`, 1 against 4 threads, binary of `main`: CPU per warm
+run 8.76 ms at 1 thread, 15.07 ms at 4; of the difference, pool polling
+3.60 ms, compute 1.23 ms, atomic reference counts 0.95 ms (`cutCol`,
+`blockChunk`, `frameSpan`, `frameStarts`, `keyRange`: the shared PRM1
+entries). The calling thread, per run (profile of that thread at 4,999 Hz):
+`divide` 0.2 to 0.25 ms in `List.range`, `chunksOf` (`take`, `drop`,
+`length`) and `selRows`; about 0.25 ms of `lean_dec_ref_cold` after the fold
+(the position lists, MT because the jobs held them, freed one cell at a time
+with atomic operations); `Groups.merge` and `groupTable` hashing every key
+two or three times. `SBM11_RANGE_TRACE=1`: 8 jobs of 0.8 to 1.7 ms, 9.6 to
+9.8 ms of CPU together against 7.3 to 8.4 ms for the scan on one thread.
+
+Olympics q07, `finish` (ORDER BY keys) 0.65 to 0.69 ms at 1 and 4 threads:
+`orderReadOfM` 64 percent of it, nearly all `Session.termOf` of 291
+language-tagged labels; in `termOf`, `decodeLang?` on the list of the key
+(UTF-8 checks over lists 27 percent, the list of the key 13 percent,
+`splitLast` 9 percent, `tagAdmitted` 8 percent) and the dictionary page
+access 27 percent.
+
+### 1k.3 What changed
+
+1. **Ranges as bounds** (`ParallelScan.rangeChunks`, `rangeBounds`,
+   `boundsList`; `divide?`, `scanTableParM`, `scanSipTableParM`). The ranges
+   of `List.range n` are built from `List.range'` segments, and a job gets
+   `(lo, hi)` and makes its own list. Proved: `rangeChunks_eq`
+   (`rangeChunks c n = chunksOf c (List.range n)`) and `rangeBounds_map`,
+   so `parallel_acc_eq` and the merge theorems still describe the ranges.
+   d10 at 4 threads: `divide` 0.19-0.26 to 0.03 ms; the interval after the
+   fold (`groups` mark) 0.10-0.13 to 0.002 ms.
+2. **Groups with a count array** (`IdQuery.Groups`: `index`, `keys`,
+   `cnts`; `countOf`): an addition to a known key hashes it once; `merge`
+   and `groupTable` read the counts from the array. Tested
+   (`Harness/ScanFoldTest.lean`, `threads.sh`, census), as the former map was.
+3. **Groups returned as numbers** (`FlatGroups`, `Groups.toFlat`,
+   `mergeFlat`): a job returns the key words and the counts as two `Array
+   Nat`; the calling thread adds them. Proved: `mergeFlat_toFlat` (equal to
+   `Groups.merge` for keys of `w` words with a count each). d10 at 4
+   threads, group table: 0.20-0.23 to 0.06-0.07 ms (1 thread: 0.13-0.15 to
+   0.05-0.08 ms with item 4).
+4. **Word count ids** (`countId` as `countIdBase + n.toUInt64`,
+   `countId_eq` against the former `Nat` form `countIdSpec`; `countLimit`
+   `@[noinline]`). The `Nat` form built a number above `2 ^ 63` and read
+   `2 ^ 55` from decimal text (`lean_cstr_to_nat`) for every group.
+5. **Borrowed PRM1 entries** (`(b : @& BlockMeta)` in the 21 per-block
+   functions of the scan): atomic reference counts on d10 at 4 threads 1.07
+   to 0.52 ms CPU per run.
+6. **Language-tagged literal keys decoded from the byte range**
+   (`TermKeyFast.decodeLangSlice`, `lastZeroGo`): the last `0x00` is found in
+   the array and the two parts go to `String.fromUTF8?`. Proved:
+   `lastZeroGo_spec`, `decodeLangSlice_eq`; `decodeKeySlice?_eq` holds for
+   every key. q07 `finish`: 0.65 to 0.37-0.44 ms at 1 thread, 0.65 to 0.50
+   ms at 4 threads.
+
+Phases, `SBM11_PHASES=1`, 61 runs per process, 2 processes per cell (ms):
+
+| Phase | d10 `main` 1 / 4 threads | d10 this stage 1 / 4 threads | q07 `main` 1 / 4 | q07 this stage 1 / 4 |
+| --- | ---: | ---: | ---: | ---: |
+| divide | - / 0.19-0.20 | - / 0.03 | | |
+| count fold (4 threads) or scan (1 thread) | 7.3-8.4 / 2.80-2.91 | 6.8-10.4 / 2.59-2.74 | | |
+| after the fold (`groups` mark) | - / 0.11 | - / 0.002 | | |
+| group table (`bgp+filters` mark) | 0.13-0.15 / 0.20-0.22 | 0.05-0.08 / 0.06-0.07 | | |
+| finish (ORDER BY keys) | | | 0.65 / 0.64-0.65 | 0.37-0.44 / 0.50-0.51 |
+| render | 0.47-0.52 / 0.27-0.30 | 0.46-0.70 / 0.27-0.30 | 0.25 / 0.25-0.26 | 0.20-0.24 / 0.28-0.30 |
+
+### 1k.4 Tried and not kept
+
+- Ranges of equal estimated work on the counted path (`chunksByWeight`, a
+  block whose output columns are constant over it weighing 1, another 1 per
+  16 rows): d10 at 4 threads 5.26 ms against 4.10 ms with ranges of equal
+  block counts (9 rounds). The trace showed balanced jobs; the loss was not
+  explained and the code was removed.
+- A copy of the PRM1 entries per job on the counted path (`rangeMetas`, as
+  the BGP scans do): atomic counts 0.31 ms CPU lower, allocator 0.62 ms
+  higher, no change in wall time. Item 5 removed the counts without the copy.
+- A shorter poll before a pool worker blocks (`SBM11_SPIN_NS` 100,000 and
+  20,000 against 1,000,000): no change in the serial phases larger than the
+  variation between processes.
+
+### 1k.5 Gates
+
+On commit `91f3fa3c` (the Lean code of this stage; exit codes read):
+
+| Gate | Result |
+| --- | --- |
+| `lake build` | exit 0 |
+| `tests/sbm11/run.sh` | exit 0: 3,354 pass, 0 fail, 28 expected-fail (out of 3,382) |
+| `tests/sbm11/threads.sh` | exit 0: gate 347 and gate2 347 identical, olympics 21, 2 and 2, DBpedia 19; DBpedia against the three-engine record: equal 76, different 0 |
+| `SBM11_THREADS=4 tests/sbm11/census.sh` | exit 0: 605 matched the reference engine |
+| `lean-unbuilt-modules.py --gate`, `lean-tail-recursion-audit.py --gate`, `lean-csimp-reach.py --gate` | exit 0 (985 modules reached), exit 0, exit 0 |
+| `tools/land-gates.sh` | exit 0 (LAND GATES PASSED): native-smoke 377 pass, 0 fail, 4 xfail (out of 381), cli-smoke 151 pass, 0 fail, 5 xfail (out of 156), the LWS (scaling 21 pass, 0 fail, out of 21), Solid and authorization suites, host-purity-lint 40 pass, 0 fail (out of 40) |
+| `sorry`, `native_decide`, `axiom`, `maxHeartbeats` in the Lean diff | none |
+
+### 1k.6 What remains
+
+- q07 (0.60): at 4 threads about 1.4 ms is on the calling thread after or
+  between the scans: ORDER BY keys 0.50 ms (of which dictionary page access
+  for 291 labels and the sort of their readings about 0.15 ms each; at 4
+  threads the labels are read through the shared page map, 0.07 to 0.13 ms
+  slower than at 1 thread), rendering 0.28 ms, joins about 0.3 ms, constants
+  0.06 to 0.08 ms (0.03 ms at 1 thread). The two scans with candidates reach
+  2.1 and 1.8 times their 1-thread speed. 0.40 needs about 1.9 ms at 4
+  threads in all; the serial work alone at its 1-thread speed is about 1.2
+  ms, so the target needs the ORDER BY keys or the rendering on the pool, or
+  ORDER BY on the key bytes. Key byte order is the SPARQL order for
+  `rdf:langString` labels only when no lexical form holds `0x00` (the key is
+  lexical form, `0x00`, tag) and when UTF-8 byte order is the code point
+  order of `strCompare`; neither is proved yet.
+- d10 (0.35): the 8 jobs of the count fold take 1.2 to 1.3 times the CPU of
+  the scan on one thread; the time after the fold is now about 0.4 ms
+  (group table 0.06 ms, rendering 0.27 to 0.30 ms on the pool).
+- The 1-thread time of one process still varies by up to 1.5 times on this
+  VM (1i.2); d10 single processes at 1 thread: 7.7 to 13.9 ms.
+
+Issue https://github.com/danbri/factoidal/issues/961 stays open.

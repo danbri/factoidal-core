@@ -901,6 +901,33 @@ section "Stage 1b", subsection "What failed on the way"):
   measurement method, which logs a process that fails: run it before a
   landing, and read its log.
 
+- **What the calling thread gives to a job, the calling thread frees with
+  atomic operations.** A list, map or array that a job closure captures, or
+  that a job returns, is MT; when the calling thread drops it, each of its
+  objects is freed with an atomic decrement (and `mi_free_generic_mt` for a
+  block another thread allocated). Give a job numbers, and return numbers:
+  block ranges as bounds `(lo, hi)` that the job expands
+  (`ParallelScan.rangeBounds`, `rangeBounds_map`), group counts as arrays of
+  numbers (`IdQuery.FlatGroups`, `mergeFlat_toFlat`). Paid for 2026-10-23
+  (stage 1k of the record): on DBpedia d10 at 4 threads the free of the
+  5,941-position lists after the fold took 0.11 ms and building them 0.2 ms;
+  both went to 0.03 ms. A `Nat` below `2 ^ 63` is a scalar, so an
+  `Array Nat` of ids is one object.
+- **Borrowed parameters remove reference counts on shared entries.** A
+  function that takes a shared structure as an owned parameter increments
+  and decrements it at each call; with `(b : @& BlockMeta)` it does neither.
+  Stage 1k: the per-block scan functions with borrowed PRM1 entries halved
+  the atomic-reference-count CPU of d10 at 4 threads (1.07 to 0.52 ms per
+  run). A copy of the entries per job (`rangeMetas`) did the same for the
+  counts but cost more in the allocator, and was not kept for that path.
+- **A `Nat` literal of `2 ^ 32` or more is read from decimal text where it is
+  used.** The C code calls `lean_cstr_to_nat("36028797018963968")` at each
+  evaluation, also inside a loop, and arithmetic above `2 ^ 63` makes a
+  big-number object. Put the number in an `@[noinline] def` (computed once)
+  or compute in `UInt64` with a theorem against the `Nat` form
+  (`IdQuery.countId_eq`). Check with
+  `grep lean_cstr_to_nat .lake/build/ir/<Module>.c`.
+
 Measure every one of these with `perf record` at 1 and N threads and the
 CPU time (`perf stat -e task-clock`): CPU time that grows with the thread
 count at a fixed amount of work is the sign.
