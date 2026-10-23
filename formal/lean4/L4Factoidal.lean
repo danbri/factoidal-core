@@ -25,6 +25,9 @@ import L4Factoidal.RDF.NormalizeSet
 import L4Factoidal.RDF.NormalizeSetTests
 import L4Factoidal.RDF.DatasetDenotation
 import L4Factoidal.RDF.DatasetDenotationTests
+import L4Factoidal.RDF.BnodeTransport
+import L4Factoidal.RDF.DocumentScope
+import L4Factoidal.RDF.BnodeTransportTests
 import L4Factoidal.Dataflow.Stage
 import L4Factoidal.Dataflow.StageTests
 import L4Factoidal.Dataflow.Instances
@@ -692,6 +695,7 @@ import L4Factoidal.SPARQL.PlanStreamable
 import L4Factoidal.RDF.CanonicalManifest
 import L4Factoidal.RDF.DatasetMerge
 import L4Factoidal.RDF.CertifiedDataset
+import L4Factoidal.RDF.DocumentScopeTests
 import L4Factoidal.RDF.Format
 import L4Factoidal.RDF.MediaType
 import L4Factoidal.RDF.MediaTypeTests

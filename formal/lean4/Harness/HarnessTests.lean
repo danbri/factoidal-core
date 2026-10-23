@@ -550,6 +550,32 @@ root and from `formal/lean4`. -/
 #print axioms extractTestCases
 #print axioms collectList
 #print axioms Score.line
+/-! ## Fixture files are separate documents (https://github.com/danbri/factoidal/issues/975)
+
+RDF 1.1 Concepts section 3.4: blank node identifiers are scoped to the
+document. Two fixture files that both write `_:b0` hold two blank nodes, so
+the store is their merge (RDF 1.1 Semantics section 5.2), not their union. -/
+
+private def fixA : L4Factoidal.RDF.Dataset :=
+  match parseDataFile "/x/a.ttl" "_:b0 <http://example.org/p> 1 ." with
+  | .ok d => d
+  | .error _ => L4Factoidal.RDF.Dataset.empty
+private def fixB : L4Factoidal.RDF.Dataset :=
+  match parseDataFile "/x/b.ttl" "_:b0 <http://example.org/q> 2 ." with
+  | .ok d => d
+  | .error _ => L4Factoidal.RDF.Dataset.empty
+
+#guard fixA.bnodes.length == 1 && fixB.bnodes.length == 1
+-- Two data files: two blank nodes.
+#guard (addDataFile (addDataFile L4Factoidal.RDF.Dataset.empty 0 fixA) 1 fixB).bnodes.length == 2
+-- A data file and a graph file: two blank nodes.
+#guard (addGraphFile (addDataFile L4Factoidal.RDF.Dataset.empty 0 fixA) 1
+  (.iri ⟨"http://example.org/g", by decide⟩) fixB).bnodes.length == 2
+-- Within one file the label is one blank node.
+#guard (addDataFile L4Factoidal.RDF.Dataset.empty 0
+  (match parseDataFile "/x/c.ttl" "_:b0 <http://example.org/p> _:b0 ." with
+   | .ok d => d | .error _ => L4Factoidal.RDF.Dataset.empty)).bnodes.length == 1
+
 #print axioms iriToLocalPath
 #print axioms fixtureBase
 #print axioms Harness.fixtureCandidates

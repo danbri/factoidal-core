@@ -52,6 +52,7 @@ import L4Factoidal.Syntax.RdfXml
 import L4Factoidal.Syntax.NTriples
 import L4Factoidal.Syntax.NQuads
 import L4Factoidal.RDF.Isomorphism
+import L4Factoidal.RDF.DocumentScope
 import L4Factoidal.RDF.Canonical
 import L4Factoidal.RDF.Entailment
 import L4Factoidal.SPARQL.Parser
@@ -177,18 +178,36 @@ coming after, as in the F* runner). -/
 def mergeDatasets (a b : Dataset) : Dataset :=
   { default := Graph.union a.default b.default, named := a.named ++ b.named }
 
+/-- Add the data file with document number `i` to the store. Each fixture
+file is its own document, so its blank nodes are scoped by `i`
+(`Dataset.scopeDocument`): two files that both write `_:b0` hold two blank
+nodes, and the store is their RDF 1.1 Semantics section 5.2 merge
+(`scopeDocument_combine_isMerge`). Until 2026-10-24 the files were combined
+with no scope, which is the union
+(https://github.com/danbri/factoidal/issues/975, phase C). -/
+def addDataFile (ds : Dataset) (i : Nat) (d : Dataset) : Dataset :=
+  mergeDatasets ds (d.scopeDocument i)
+
+/-- Add the default graph of the graph file with document number `i` to the
+store as the named graph `name`, with its blank nodes scoped by `i`. -/
+def addGraphFile (ds : Dataset) (i : Nat) (name : Subject) (d : Dataset) : Dataset :=
+  { ds with named := ds.named ++ [{ name := name, graph := (d.scopeDocument i).default }] }
+
 /-- Read and parse every fixture of a test. `.error o` carries the
 outcome to report (skip for a missing file, fail for a parse error). -/
 def loadFixtures (tc : TestCase) (mode : Mode := .rdf11) :
     IO (Except Outcome (Dataset × List (Iri × Graph))) := do
   let mut ds : Dataset := Dataset.empty
+  let mut doc : Nat := 0
   for df in tc.dataFiles do
     match ← readOpt df with
     | none      => return .error (.skip s!"file missing: {df}")
     | some text =>
       match parseDataFile df text mode with
       | .error e => return .error (.fail s!"data parse error in {basename df}: {e}")
-      | .ok d    => ds := mergeDatasets ds d
+      | .ok d    =>
+        ds := addDataFile ds doc d
+        doc := doc + 1
   for (iri, path) in tc.graphData do
     match ← readOpt path with
     | none      => return .error (.skip s!"file missing: {path}")
@@ -197,7 +216,8 @@ def loadFixtures (tc : TestCase) (mode : Mode := .rdf11) :
       | .error e => return .error (.fail s!"graph data parse error in {basename path}: {e}")
       | .ok d    =>
         if h : isIri iri = true then
-          ds := { ds with named := ds.named ++ [{ name := .iri ⟨iri, h⟩, graph := d.default }] }
+          ds := addGraphFile ds doc (.iri ⟨iri, h⟩) d
+          doc := doc + 1
         else return .error (.fail s!"qt:graphData name is not an IRI: {iri}")
   let mut services : List (Iri × Graph) := []
   for (endpoint, path) in tc.serviceData do
@@ -598,13 +618,16 @@ into named graphs (the F* `load_dataset` + `load_triples` fold). -/
 def loadUpdateStore (dataFiles : List String) (graphData : List (String × String))
     (mode : Mode := .rdf11) : IO (Except Outcome Dataset) := do
   let mut ds : Dataset := Dataset.empty
+  let mut doc : Nat := 0
   for df in dataFiles do
     match ← readOpt df with
     | none      => return .error (.skip s!"file missing: {df}")
     | some text =>
       match parseDataFile df text mode with
       | .error e => return .error (.fail s!"data parse error in {basename df}: {e}")
-      | .ok d    => ds := mergeDatasets ds d
+      | .ok d    =>
+        ds := addDataFile ds doc d
+        doc := doc + 1
   for (iri, path) in graphData do
     match ← readOpt path with
     | none      => return .error (.skip s!"file missing: {path}")
@@ -613,7 +636,8 @@ def loadUpdateStore (dataFiles : List String) (graphData : List (String × Strin
       | .error e => return .error (.fail s!"graph data parse error in {basename path}: {e}")
       | .ok d    =>
         if h : isIri iri = true then
-          ds := { ds with named := ds.named ++ [{ name := .iri ⟨iri, h⟩, graph := d.default }] }
+          ds := addGraphFile ds doc (.iri ⟨iri, h⟩) d
+          doc := doc + 1
         else return .error (.fail s!"ut:graphData label is not an IRI: {iri}")
   return .ok ds
 
