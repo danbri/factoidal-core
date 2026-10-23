@@ -25,6 +25,11 @@ Every pass is structurally recursive over a finite list. There is no
 fuel parameter and no fixpoint, so there is no budget that can be
 exhausted and no silent cap (`skills/measuring-inference` section 8).
 
+Every claim the passes join is SCOPED (issue 976, `Proof/Syntax.lean`
+section "Blank-node scope"): the environment holds each claim with its
+blank nodes relabelled by the artifact, assumption or step it came
+from. A refused bundle's `rejection` names the first failed check.
+
 ## The foundational rule family delegates
 
 A `Justification.rule` step at a section 8.1 / section 9.2 inference
@@ -98,6 +103,11 @@ theorem artifactById_mem {b : Bundle} {id : String} {a : Artifact}
     (h : artifactById b id = some a) : a ∈ b.artifacts.toList :=
   List.mem_of_find?_eq_some h
 
+theorem artifactById_id {b : Bundle} {id : String} {a : Artifact}
+    (h : artifactById b id = some a) : a.id = id := by
+  have := List.find?_some h
+  simpa using this
+
 /-! ## Pass 2 — the assumption table
 
 Adoption doc section 3: assumptions are the frontier. Two conditions,
@@ -122,16 +132,17 @@ def assumptionsOk (l : List Assumption) : Bool :=
   l.all (fun a => !(a.level == EvidenceLevel.foundational))
     && idsDistinct (l.map (·.id))
 
-/-- The claim environment the declared assumptions contribute. Total:
+/-- The claim environment the declared assumptions contribute, each
+claim read in the assumption's own blank-node scope (issue 976). Total:
 malformedness is reported by `assumptionsOk`, not by an `Option`, so
 the environment itself needs no case analysis anywhere. -/
 def assumptionEnv (l : List Assumption) : List (String × Claim) :=
-  l.map (fun a => (a.id, a.subject))
+  l.map (fun a => (a.id, a.subject.scoped (.frontier a.id)))
 
 /-- Everything the assumption environment holds comes from an
 assumption of the table. -/
 theorem assumptionEnv_mem {l : List Assumption} {e : String × Claim}
-    (he : e ∈ assumptionEnv l) : ∃ a ∈ l, a.subject = e.2 := by
+    (he : e ∈ assumptionEnv l) : ∃ a ∈ l, a.subject.scoped (.frontier a.id) = e.2 := by
   simp only [assumptionEnv, List.mem_map] at he
   obtain ⟨a, ha, rfl⟩ := he
   exact ⟨a, ha, rfl⟩
@@ -159,8 +170,8 @@ theorem lookupClaim_mem {env : List (String × Claim)} {id : String} {c : Claim}
     simp only [Option.map_some, Option.some.injEq] at h
     exact ⟨e, List.mem_of_find?_eq_some hf, h⟩
 
-/-- Read a list of premise ids as triples, all about the SAME graph
-and the SAME axiom set. A premise about a different graph, or a
+/-- Read a list of premise ids as SCOPED triples (the environment holds
+scoped claims), all about the SAME graph and the SAME axiom set. A premise about a different graph, or a
 premise that is a CLIF proposition rather than an RDF claim, is a
 rejection — this is where certificate v1 section 5's splice attack is
 closed at the claim level. -/
@@ -210,9 +221,15 @@ Sixteen rows, three treatments, and every one of them a finite test.
   base step; that leaf has to be an assumption.
 * `axiomatic` — likewise against the inline axiom-set body.
 * the fourteen inference rows — decided by `RDFS.stepOk` over the
-  premise triples alone. `RDFS.rowCheck` reads neither the graph nor
-  the axiom set for these rows, so the check is local to the premises
-  and needs no artifact body at all. -/
+  SCOPED premise triples alone, against the conclusion read in the
+  scope of the step's graph artifact. `RDFS.rowCheck` reads neither
+  the graph nor the axiom set for these rows, so the check is local to
+  the premises and needs no artifact body at all.
+
+Issue 976: the row is checked on SCOPED triples, so a join on a blank
+node succeeds only when both occurrences come from one scope. `_:x`
+read from artifact `G1` and `_:x` read from artifact `G2` do not
+match, even when `G1` and `G2` share an RDFC-1.0 digest. -/
 
 /-- Rebuild the premise triples as RDFS steps, so the landed
 `RDFS.stepOk` can be applied to them positionally. -/
@@ -239,8 +256,12 @@ theorem inferenceRowOk_sound {r : RuleId} {prem : List Triple} {t : Triple}
     (fun b hb => DerivesFull.base (rdfsPrefix_conclusion hb)) h
   simpa using this
 
-/-- The whole `rule` justification. -/
-def ruleStepOk (b : Bundle) (env : List (String × Claim)) (r : RuleId)
+/-- The whole `rule` justification, with the conclusion read through
+`sc`. The kernel uses `ruleStepOk` (`sc := Triple.scoped`); the
+identity instance serves only the rejection diagnosis, which asks
+whether a refused step would have passed had raw labels joined. -/
+def ruleStepOkWith (sc : Scope → Triple → Triple) (b : Bundle)
+    (env : List (String × Claim)) (r : RuleId)
     (gaId aaId : String) (concl : Claim) (premIds : List String) : Bool :=
   match artifactById b gaId, artifactById b aaId with
   | some ga, some aa =>
@@ -263,8 +284,14 @@ def ruleStepOk (b : Bundle) (env : List (String × Claim)) (r : RuleId)
             | _ =>
                 match premTriples env gd ad premIds with
                 | none => false
-                | some prem => inferenceRowOk r prem t))
+                | some prem => inferenceRowOk r prem (sc (.artifact gaId) t)))
   | _, _ => false
+
+/-- The kernel's `rule` check: conclusion read in the scope of the
+graph artifact. -/
+def ruleStepOk (b : Bundle) (env : List (String × Claim)) (r : RuleId)
+    (gaId aaId : String) (concl : Claim) (premIds : List String) : Bool :=
+  ruleStepOkWith Triple.scoped b env r gaId aaId concl premIds
 
 /-! ## One step -/
 
@@ -291,13 +318,24 @@ def stepValid (b : Bundle) (env : List (String × Claim)) (st : BundleStep) : Bo
           !(st.level == EvidenceLevel.foundational)
             && st.premises.all (fun p => (lookupClaim env p).isSome))
 
+/-- The blank-node scope a step's conclusion is read in (issue 976).
+A base or inference row reads its conclusion in the scope of its graph
+artifact; an axiomatic row in the scope of its axiom artifact; an
+adapter step's conclusion is a frontier fact in its own scope. -/
+def stepScope (st : BundleStep) : Scope :=
+  match st.justification with
+  | .rule .axiomatic _ aa => .artifact aa
+  | .rule _ ga _ => .artifact ga
+  | .adapterEvidence _ _ => .frontier st.id
+
 /-- One left-to-right pass. `env` is the claim environment of the
 accepted prefix; the second argument is what is left. Structurally
 recursive: no fuel, and equation lemmas the soundness proof uses. -/
 def checkSteps (b : Bundle) : List (String × Claim) → List BundleStep → Bool
   | _, [] => true
   | env, st :: rest =>
-      stepValid b env st && checkSteps b (env ++ [(st.id, st.conclusion)]) rest
+      stepValid b env st
+        && checkSteps b (env ++ [(st.id, st.conclusion.scoped (stepScope st))]) rest
 
 /-! ## The frontier and the support
 
@@ -345,6 +383,82 @@ def conclusionReached (b : Bundle) : Bool :=
   b.steps.toList.any (fun st => st.conclusion == b.conclusion)
     || b.assumptions.toList.any (fun a => a.subject == b.conclusion)
 
+/-! ## The rejection reason
+
+Diagnosis only: `valid` is the verdict and no theorem reads the text.
+It names the first check that failed, so a producer can tell a
+blank-node scope conflict (issue 976) from a wrong rule row. -/
+
+/-- The refused step would pass if raw blank-node labels joined across
+scopes: its rule check succeeds when the conclusion and the premises
+are read WITHOUT scoping. -/
+def blankScopeConflict (b : Bundle) (rawEnv : List (String × Claim))
+    (st : BundleStep) : Bool :=
+  match st.justification with
+  | .rule r ga aa =>
+      (st.level == EvidenceLevel.foundational)
+        && ruleStepOkWith (fun _ t => t) b rawEnv r ga aa st.conclusion st.premises
+  | .adapterEvidence _ _ => false
+
+/-- Text for a step that `stepValid` refused. -/
+def stepRejection (b : Bundle) (env rawEnv : List (String × Claim))
+    (st : BundleStep) : String :=
+  if !(st.profile == fpp0Profile) then
+    s!"step '{st.id}': profile is not {fpp0Profile}"
+  else if env.any (fun e => e.1 == st.id) then
+    s!"step '{st.id}': the id is already used by an assumption or an earlier step"
+  else if !(levelEvidenceOk st) then
+    s!"step '{st.id}': a verifiedReplay step must cite a theorem (adoption doc section 8b)"
+  else if blankScopeConflict b rawEnv st then
+    s!"step '{st.id}': the step joins blank nodes from different scopes. A blank node "
+      ++ "is local to the artifact or assumption it was read from (RDF 1.1 Concepts "
+      ++ "sections 3.4 and 3.5; RDF 1.1 Semantics section 5.2: a merge renames blank "
+      ++ "nodes apart), so equal labels in two artifacts are different nodes, also when "
+      ++ "the artifacts have the same RDFC-1.0 digest. FPP0/1 has no relabelling step: "
+      ++ "a premise can cross from one artifact to another only as a triple with no "
+      ++ "blank node"
+  else
+    s!"step '{st.id}': its justification does not license its conclusion"
+
+/-- The first refused step, if any, by the same left-to-right pass as
+`checkSteps`, carrying the raw claims beside the scoped ones. -/
+def firstRejection (b : Bundle) :
+    List (String × Claim) → List (String × Claim) → List BundleStep → Option String
+  | _, _, [] => none
+  | env, raw, st :: rest =>
+      if stepValid b env st then
+        firstRejection b (env ++ [(st.id, st.conclusion.scoped (stepScope st))])
+          (raw ++ [(st.id, st.conclusion)]) rest
+      else some (stepRejection b env raw st)
+
+theorem firstRejection_none_iff (b : Bundle) :
+    ∀ (rest : List BundleStep) (env raw : List (String × Claim)),
+      firstRejection b env raw rest = none ↔ checkSteps b env rest = true := by
+  intro rest
+  induction rest with
+  | nil => intro env raw; simp [firstRejection, checkSteps]
+  | cons st rest ih =>
+      intro env raw
+      by_cases h : stepValid b env st = true
+      · simp only [firstRejection, checkSteps, h, if_true, Bool.true_and]
+        exact ih _ _
+      · simp [firstRejection, checkSteps, h]
+
+/-- Why `checkBundle` refuses `b`, or `none` when it accepts. -/
+def rejectionOf (b : Bundle) : Option String :=
+  if !(artifactsOk b.artifacts.toList) then
+    some ("artifact table: a duplicate id, or an inline body whose RDFC-1.0 digest "
+      ++ "is not the declared digest")
+  else if !(assumptionsOk b.assumptions.toList) then
+    some "assumption table: a duplicate id, or an assumption at foundational"
+  else
+    match firstRejection b (assumptionEnv b.assumptions.toList)
+        (b.assumptions.toList.map (fun a => (a.id, a.subject))) b.steps.toList with
+    | some r => some r
+    | none =>
+        if conclusionReached b then none
+        else some "no step and no assumption states the bundle's conclusion"
+
 /-! ## The kernel -/
 
 /-- **The FPP0 kernel.** Total: three structural passes over finite
@@ -355,9 +469,9 @@ a bundle that declares its own conclusion as an assumption is valid
 and proves nothing, and the fields that say so are
 `conclusionIsAssumption`, `assumptions` and `counts.foundational`.
 This kernel reports that shape rather than rejecting it, because
-`Derives assumptions conclusion` genuinely HOLDS of it — what the
-result must not do is let a reader mistake it for a proof, and
-`foundational steps: 0` beside a non-empty frontier is that
+`Derives artifacts assumptions conclusion` genuinely HOLDS of it —
+what the result must not do is let a reader mistake it for a proof,
+and `foundational steps: 0` beside a non-empty frontier is that
 statement. -/
 def checkBundle (b : Bundle) : CheckResult :=
   let ok :=
@@ -370,15 +484,42 @@ def checkBundle (b : Bundle) : CheckResult :=
     assumptions := (frontierOf b).toArray
     counts := supportCounts b
     foundationalOnly := ok && (frontierOf b).isEmpty
-    conclusionIsAssumption := b.assumptions.toList.any (fun a => a.subject == b.conclusion) }
+    conclusionIsAssumption := b.assumptions.toList.any (fun a => a.subject == b.conclusion)
+    rejection := rejectionOf b }
+
+/-- The rejection text is present exactly when the bundle is refused. -/
+theorem checkBundle_rejection_none_iff (b : Bundle) :
+    (checkBundle b).rejection = none ↔ (checkBundle b).valid = true := by
+  simp only [checkBundle, rejectionOf]
+  by_cases ha : artifactsOk b.artifacts.toList = true
+  · by_cases hs : assumptionsOk b.assumptions.toList = true
+    · simp only [ha, hs, Bool.not_true, Bool.false_eq_true, if_false, Bool.true_and]
+      cases hf : firstRejection b (assumptionEnv b.assumptions.toList)
+          (b.assumptions.toList.map (fun a => (a.id, a.subject))) b.steps.toList with
+      | some r =>
+          have hc : checkSteps b (assumptionEnv b.assumptions.toList) b.steps.toList = false := by
+            cases hcs : checkSteps b (assumptionEnv b.assumptions.toList) b.steps.toList
+            · rfl
+            · rw [← firstRejection_none_iff] at hcs; rw [hcs] at hf; cases hf
+          simp [hc]
+      | none =>
+          have hc := (firstRejection_none_iff b _ _ _).1 hf
+          by_cases hr : conclusionReached b = true <;> simp [hc, hr]
+    · simp [ha, hs]
+  · simp [ha]
 
 /-! ## Soundness
 
 The shape mirrors `RDFS.checkSteps_sound`: an environment invariant
-carried left to right, discharged one step at a time. -/
+carried left to right, discharged one step at a time. Every claim in
+the environment is a SCOPED claim (issue 976), and `Derives` is taken
+over the bundle's own artifact table. -/
 
 /-- Γ, as `checkBundle` reports it. -/
 abbrev Frontier (b : Bundle) : List Assumption := frontierOf b
+
+/-- The artifact table, as the list `Derives` is indexed by. -/
+abbrev Arts (b : Bundle) : List Artifact := b.artifacts.toList
 
 theorem mem_frontier_of_assumption {b : Bundle} {a : Assumption}
     (h : a ∈ b.assumptions.toList) : a ∈ Frontier b :=
@@ -390,29 +531,31 @@ theorem mem_frontier_of_step {b : Bundle} {st : BundleStep}
   refine List.mem_append.2 (Or.inr ?_)
   exact List.mem_map_of_mem (List.mem_filter.2 ⟨h, by simp [hlvl]⟩)
 
-/-- One accepted step's conclusion is `Derives`-derivable from the
-frontier. Three cases: the fourteen inference rows delegate to
-`RDFS.stepOk_sound` through `inferenceRowOk_sound`; the two leaf rows
-read the inline body whose digest pass 1 has already tied to the
-claim; an adapter step is its own assumption. -/
+/-- One accepted step's conclusion, read in the step's scope, is
+`Derives`-derivable from the frontier. Three cases: the fourteen
+inference rows delegate to `RDFS.stepOk_sound` through
+`inferenceRowOk_sound`; the two leaf rows read the inline body of the
+artifact they name; an adapter step is its own assumption. -/
 theorem stepValid_sound {b : Bundle} {env : List (String × Claim)} {st : BundleStep}
-    (hart : artifactsOk b.artifacts.toList = true)
-    (henv : ∀ e ∈ env, Derives (Frontier b) e.2)
+    (henv : ∀ e ∈ env, Derives (Arts b) (Frontier b) e.2)
     (hpromo : (st.level == EvidenceLevel.foundational) = false → promoteStep st ∈ Frontier b)
-    (h : stepValid b env st = true) : Derives (Frontier b) st.conclusion := by
+    (h : stepValid b env st = true) :
+    Derives (Arts b) (Frontier b) (st.conclusion.scoped (stepScope st)) := by
   simp only [stepValid, Bool.and_eq_true] at h
   obtain ⟨⟨⟨_, _⟩, _⟩, hjust⟩ := h
   cases hj : st.justification with
   | adapterEvidence adp det =>
       rw [hj] at hjust
       simp only [Bool.and_eq_true, Bool.not_eq_true'] at hjust
-      have := Derives.assumption (Γ := Frontier b) (hpromo hjust.1)
+      have := Derives.assumption (A := Arts b) (Γ := Frontier b) (hpromo hjust.1)
+      have hsc : stepScope st = .frontier st.id := by simp [stepScope, hj]
+      rw [hsc]
       simpa [promoteStep] using this
   | rule r gaId aaId =>
       rw [hj] at hjust
       simp only [Bool.and_eq_true] at hjust
       obtain ⟨_, hrule⟩ := hjust
-      unfold ruleStepOk at hrule
+      unfold ruleStepOk ruleStepOkWith at hrule
       split at hrule
       · rename_i ga aa hga haa
         simp only [Bool.and_eq_true] at hrule
@@ -427,6 +570,8 @@ theorem stepValid_sound {b : Bundle} {env : List (String × Claim)} {st : Bundle
           cases hr : r with
           | base =>
               rw [hr] at hrow
+              have hsc : stepScope st = .artifact gaId := by simp [stepScope, hj, hr]
+              rw [hsc]
               simp only [Bool.and_eq_true] at hrow
               obtain ⟨_, hbody⟩ := hrow
               cases hbb : ga.body with
@@ -434,11 +579,14 @@ theorem stepValid_sound {b : Bundle} {env : List (String × Claim)} {st : Bundle
               | some g =>
                   rw [hbb] at hbody
                   simp only [decide_eq_true_eq] at hbody
-                  refine Derives.rdfsBase (g := g) ?_ hbody
-                  rw [hgd]
-                  exact artifactOk_body (artifactsOk_mem hart (artifactById_mem hga)) hbb
+                  have := Derives.rdfsBase (A := Arts b) (Γ := Frontier b) (ad := ad)
+                    (artifactById_mem hga) hbb hgd.symm hbody
+                  rw [artifactById_id hga] at this
+                  exact this
           | axiomatic =>
               rw [hr] at hrow
+              have hsc : stepScope st = .artifact aaId := by simp [stepScope, hj, hr]
+              rw [hsc]
               simp only [Bool.and_eq_true] at hrow
               obtain ⟨_, hbody⟩ := hrow
               cases hbb : aa.body with
@@ -446,11 +594,14 @@ theorem stepValid_sound {b : Bundle} {env : List (String × Claim)} {st : Bundle
               | some ax =>
                   rw [hbb] at hbody
                   simp only [decide_eq_true_eq] at hbody
-                  refine Derives.rdfsAxiom (ax := ax) ?_ hbody
-                  rw [had]
-                  exact artifactOk_body (artifactsOk_mem hart (artifactById_mem haa)) hbb
+                  have := Derives.rdfsAxiom (A := Arts b) (Γ := Frontier b) (gd := gd)
+                    (artifactById_mem haa) hbb had.symm hbody
+                  rw [artifactById_id haa] at this
+                  exact this
           | _ =>
               rw [hr] at hrow
+              have hsc : stepScope st = .artifact gaId := by simp [stepScope, hj, hr]
+              rw [hsc]
               (cases hpt : premTriples env gd ad st.premises with
                | none => rw [hpt] at hrow; exact absurd hrow (by simp)
                | some prem =>
@@ -464,13 +615,13 @@ theorem stepValid_sound {b : Bundle} {env : List (String × Claim)} {st : Bundle
       · exact absurd hrule (by simp)
 
 /-- The pass, as an induction. -/
-theorem checkSteps_sound {b : Bundle} (hart : artifactsOk b.artifacts.toList = true) :
+theorem checkSteps_sound {b : Bundle} :
     ∀ (rest : List BundleStep) (env : List (String × Claim)),
-      (∀ e ∈ env, Derives (Frontier b) e.2) →
+      (∀ e ∈ env, Derives (Arts b) (Frontier b) e.2) →
       (∀ st ∈ rest, (st.level == EvidenceLevel.foundational) = false →
           promoteStep st ∈ Frontier b) →
       checkSteps b env rest = true →
-      ∀ st ∈ rest, Derives (Frontier b) st.conclusion := by
+      ∀ st ∈ rest, Derives (Arts b) (Frontier b) (st.conclusion.scoped (stepScope st)) := by
   intro rest
   induction rest with
   | nil => intro env _ _ _ st hst; cases hst
@@ -478,21 +629,24 @@ theorem checkSteps_sound {b : Bundle} (hart : artifactsOk b.artifacts.toList = t
     intro env henv hpromo h st hst
     simp only [checkSteps, Bool.and_eq_true] at h
     obtain ⟨ha, has⟩ := h
-    have hader : Derives (Frontier b) a.conclusion :=
-      stepValid_sound hart henv (hpromo a (List.mem_cons_self ..)) ha
+    have hader : Derives (Arts b) (Frontier b) (a.conclusion.scoped (stepScope a)) :=
+      stepValid_sound henv (hpromo a (List.mem_cons_self ..)) ha
     rcases List.mem_cons.1 hst with rfl | hst
     · exact hader
-    · refine ih (env ++ [(a.id, a.conclusion)]) ?_
+    · refine ih (env ++ [(a.id, a.conclusion.scoped (stepScope a))]) ?_
         (fun x hx => hpromo x (List.mem_cons_of_mem _ hx)) has st hst
       intro e he
       rcases List.mem_append.1 he with he | he
       · exact henv e he
       · rw [List.mem_singleton.1 he]; exact hader
 
-/-- **Soundness of the FPP0 kernel** (adoption doc section 3).
+/-- **Soundness of the FPP0 kernel** (adoption doc section 3), with
+blank nodes scoped by artifact (issue 976).
 
-If `checkBundle b` reports `valid`, then the conclusion it reports is
-`Derives`-derivable from the frontier it reports.
+If `checkBundle b` reports `valid`, then the conclusion it reports,
+read in SOME scope `s` — the scope of the step or assumption that
+states it — is `Derives`-derivable over the bundle's artifact table
+from the frontier it reports.
 
 UNCONDITIONAL: no hypothesis on `b`, and in particular no hypothesis
 that the bundle came from this engine.
@@ -504,18 +658,20 @@ IS true of it. The theorem is a statement about the frontier, not a
 verdict that something was proved; `foundationalOnly`, `counts` and
 `conclusionIsAssumption` are what carry the verdict. -/
 theorem checkBundle_sound {b : Bundle} (h : (checkBundle b).valid = true) :
-    Derives (checkBundle b).assumptions.toList (checkBundle b).conclusion := by
+    ∃ s : Scope, Derives b.artifacts.toList (checkBundle b).assumptions.toList
+      ((checkBundle b).conclusion.scoped s) := by
   simp only [checkBundle, Bool.and_eq_true] at h
-  obtain ⟨⟨⟨hart, _hasm⟩, hsteps⟩, hconc⟩ := h
+  obtain ⟨⟨⟨_hart, _hasm⟩, hsteps⟩, hconc⟩ := h
   have hfront : ((frontierOf b).toArray).toList = Frontier b := by simp
   simp only [checkBundle, hfront]
-  -- every step's conclusion is derivable
-  have hall : ∀ st ∈ b.steps.toList, Derives (Frontier b) st.conclusion := by
-    refine checkSteps_sound hart b.steps.toList
+  -- every step's conclusion is derivable, in the step's scope
+  have hall : ∀ st ∈ b.steps.toList,
+      Derives (Arts b) (Frontier b) (st.conclusion.scoped (stepScope st)) := by
+    refine checkSteps_sound b.steps.toList
       (assumptionEnv b.assumptions.toList) ?_ ?_ hsteps
     · intro e he
       obtain ⟨a, ha, hae⟩ := assumptionEnv_mem he
-      have := Derives.assumption (Γ := Frontier b) (mem_frontier_of_assumption ha)
+      have := Derives.assumption (A := Arts b) (Γ := Frontier b) (mem_frontier_of_assumption ha)
       rw [hae] at this
       exact this
     · intro st hst hlvl
@@ -524,10 +680,65 @@ theorem checkBundle_sound {b : Bundle} (h : (checkBundle b).valid = true) :
   unfold conclusionReached at hconc
   simp only [Bool.or_eq_true, List.any_eq_true, beq_iff_eq] at hconc
   rcases hconc with ⟨st, hst, hsc⟩ | ⟨a, ha, hac⟩
-  · rw [← hsc]; exact hall st hst
-  · have := Derives.assumption (Γ := Frontier b) (mem_frontier_of_assumption ha)
+  · exact ⟨stepScope st, by rw [← hsc]; exact hall st hst⟩
+  · refine ⟨.frontier a.id, ?_⟩
+    have := Derives.assumption (A := Arts b) (Γ := Frontier b) (mem_frontier_of_assumption ha)
     rw [hac] at this
     exact this
+
+/-- **Acceptance gives a derivation from the MERGE of the cited
+artifacts** (issue 976). For a valid bundle whose conclusion is
+`rdfDerivable gd ad t`: there is a scope `s` such that `t`, read in
+`s`, is `DerivesFull`-derivable with the RDF 1.1 Semantics section 5.2
+merge of the artifacts filed under `ad` as the axiom set and the
+merge of the artifacts filed under `gd` as the graph (blank nodes
+renamed apart by artifact id, `scopeLabel_inj`).
+
+`hΓ` is about the reported FRONTIER only; `checkBundle_merge` is the
+case with an empty frontier, where it is vacuous. -/
+theorem checkBundle_merge_frontier {b : Bundle} (h : (checkBundle b).valid = true)
+    (hΓ : ∀ a ∈ (checkBundle b).assumptions.toList, ∀ (gd ad : String) (u : Triple),
+        a.subject = Claim.rdfDerivable gd ad u →
+        DerivesFull (mergeOf b.artifacts.toList ad) (mergeOf b.artifacts.toList gd)
+          (u.scoped (.frontier a.id)))
+    {gd ad : String} {t : Triple} (hc : b.conclusion = Claim.rdfDerivable gd ad t) :
+    ∃ s : Scope, DerivesFull (mergeOf b.artifacts.toList ad)
+      (mergeOf b.artifacts.toList gd) (t.scoped s) := by
+  obtain ⟨s, hd⟩ := checkBundle_sound h
+  refine ⟨s, Derives.toMerge hΓ hd gd ad (t.scoped s) ?_⟩
+  show b.conclusion.scoped s = _
+  rw [hc]
+  rfl
+
+/-- The assumption-free case: `foundationalOnly` gives the merge
+derivation with no hypothesis at all. -/
+theorem checkBundle_merge {b : Bundle} (h : (checkBundle b).foundationalOnly = true)
+    {gd ad : String} {t : Triple} (hc : b.conclusion = Claim.rdfDerivable gd ad t) :
+    ∃ s : Scope, DerivesFull (mergeOf b.artifacts.toList ad)
+      (mergeOf b.artifacts.toList gd) (t.scoped s) := by
+  have hv : (checkBundle b).valid = true := by
+    simp only [checkBundle, Bool.and_eq_true] at h ⊢
+    exact h.1
+  have hempty : (checkBundle b).assumptions.toList = [] := by
+    simp only [checkBundle, Bool.and_eq_true, List.isEmpty_iff] at h ⊢
+    simp [h.2]
+  refine checkBundle_merge_frontier hv ?_ hc
+  intro a ha
+  rw [hempty] at ha
+  cases ha
+
+/-- For a conclusion with no blank node, the scope drops out: the
+triple itself is derivable from the merge. This is the statement the
+issue 976 bundle violates — `:A rdfs:subClassOf :C` is not derivable
+from the merge of its two artifacts, so the kernel must refuse it
+(`Proof/Tests.lean`, issue 976 pins). -/
+theorem checkBundle_merge_ground {b : Bundle} (h : (checkBundle b).foundationalOnly = true)
+    {gd ad : String} {t : Triple} (hc : b.conclusion = Claim.rdfDerivable gd ad t)
+    (hg : t.isGround = true) :
+    DerivesFull (mergeOf b.artifacts.toList ad) (mergeOf b.artifacts.toList gd) t := by
+  obtain ⟨s, hd⟩ := checkBundle_merge h hc
+  rw [Triple.scoped_of_isGround s hg] at hd
+  exact hd
 
 
 /-! ## Wrapping an RDFS witness as an FPP0 bundle

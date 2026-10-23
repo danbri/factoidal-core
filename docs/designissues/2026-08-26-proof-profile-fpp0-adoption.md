@@ -53,6 +53,8 @@ decidable and total.
 
     checkBundle b = .ok r  ->  Derives r.assumptions r.conclusion
 
+(Since 2026-10-23 the landed form is scoped by artifact: see section 4a.)
+
 Not "the bundle is true". External and replay stages appear as NAMED
 ASSUMPTIONS rather than being accidentally promoted to truth, which
 makes the assurance frontier mathematically explicit. Adapter-specific
@@ -78,6 +80,74 @@ Join proof fragments on canonical syntactic identity — alpha-normalised
 CLIF plus a digest. Never by deciding whether two arbitrary IKL
 sentences are logically equivalent. `clAlphaNorm` already exists and is
 the building block.
+
+### 4a. Blank nodes are scoped to their artifact (2026-10-23, issue 976)
+
+Defect: https://github.com/danbri/factoidal/issues/976. Up to npm 0.12.0
+and main at f0a7e5c3 the kernel joined raw blank-node labels across
+artifacts. Two graph artifacts that differ only by a swap of `_:x` and
+`_:y` have the same RDFC-1.0 digest. A bundle took
+`:A rdfs:subClassOf _:x` from one and `_:x rdfs:subClassOf :C` from the
+other, joined them by rdfs11, and was accepted with
+`valid: true, foundationalOnly: true, assumptions: []`. Neither graph,
+and not their merge, entails `:A rdfs:subClassOf :C`. The cause: a claim
+names its graph by digest, a digest names an isomorphism class, and the
+leaf constructor of `Derives` accepted any graph with that digest, so
+two labellings of one class supplied leaves whose raw labels then
+joined. `Derives.toDerivesFull` stated a digest-collision hypothesis
+that two distinct isomorphic graphs falsify, so it gave no protection.
+
+Specification: RDF 1.1 Concepts sections 3.4 and 3.5 (blank-node
+identifiers are local to a document or store and may be replaced);
+RDF 1.1 Semantics section 5.2 (a merge renames blank nodes apart).
+RDFC-1.0 identity gives no correspondence between the raw labels of two
+representations.
+
+Design chosen (the smaller of the two the issue offers; no format
+change, profile stays `fpp0/1`):
+
+- The kernel reads every raw claim in a SCOPE. A `base` or inference
+  step reads its conclusion in the scope of its graph artifact; an
+  `axiomatic` step in the scope of its axiom artifact; a declared
+  assumption and an adapter step in their own id
+  (`Scope.frontier`). The scoped label is a self-delimiting encoding of
+  (scope, label), so equal labels in different scopes are different
+  nodes (`scopeLabel_inj`).
+- Inference rows are checked on scoped triples. A join on a blank node
+  succeeds only inside one scope.
+- FPP0/1 has NO relabelling step. A premise crosses from one artifact
+  to another only as a triple with no blank node, which every scope
+  leaves unchanged (`Triple.scoped_of_isGround`). A relabelling step
+  would need a checked bijection between two bodies; it is not added
+  until a producer needs it.
+- A refused bundle carries `rejection`, the first failed check in
+  words. For this defect it says that the step joins blank nodes from
+  different scopes. It is diagnostic; no theorem reads it.
+
+What is proved (`L4Factoidal/Proof/Syntax.lean`, `Proof/Checker.lean`):
+
+    checkBundle_sound : (checkBundle b).valid ->
+      exists s, Derives b.artifacts r.assumptions (r.conclusion.scoped s)
+    checkBundle_merge : (checkBundle b).foundationalOnly ->
+      b.conclusion = rdfDerivable gd ad t ->
+      exists s, DerivesFull (mergeOf A ad) (mergeOf A gd) (t.scoped s)
+    checkBundle_merge_ground : ... -> t.isGround ->
+      DerivesFull (mergeOf A ad) (mergeOf A gd) t
+
+`mergeOf A d` is the merge of every artifact filed under digest `d`,
+each body renamed apart by its artifact id. `Derives` is now indexed by
+the artifact table: a leaf is a triple of a named artifact's inline
+body. The digest-collision hypotheses of the old `toDerivesFull` are
+gone; `Derives.toMerge` replaces it and needs a hypothesis only about
+the frontier. `checkBundle_merge_frontier` is the general form with
+that hypothesis.
+
+Behaviour change: a bundle that joined blank nodes across artifacts,
+or joined an assumption's blank node with an artifact's, is now
+refused. Those bundles were unsound. The pins are in
+`Proof/Tests.lean` (issue 976 section) and `Wasm/Ops/Proof.lean`, with
+the two controls (the chain inside one artifact; a chain across two
+artifacts through IRI-only triples) pinned accepted.
 
 ### 5. One node DAG, three projections
 
