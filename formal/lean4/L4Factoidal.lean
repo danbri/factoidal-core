@@ -479,6 +479,7 @@ import L4Factoidal.Storage.Sbm11.DictRangeTheorems
 import L4Factoidal.Storage.Sbm11.DictFingerTheorems
 import L4Factoidal.Storage.Sbm11.Overlay
 import L4Factoidal.Storage.Sbm11.OverlayTheorems
+import L4Factoidal.Storage.Sbm11.DenotationTheorems
 import L4Factoidal.Storage.Sbm11.OverlayLimit
 import L4Factoidal.Storage.Sbm11.UpdateOverlayTheorems
 import L4Factoidal.Storage.Sbm11.ScanFoldTests
