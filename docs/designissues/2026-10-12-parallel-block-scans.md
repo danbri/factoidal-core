@@ -1654,3 +1654,218 @@ On commit `15256876` (the Lean code of this landing; exit codes read):
   q21.
 
 Issue https://github.com/danbri/factoidal/issues/961 stays open.
+
+## Stage 1j: huge pages off on `main`, and the work after the scans (2026-10-23)
+
+Issue https://github.com/danbri/factoidal/issues/961, key result KR 1.2 of
+https://github.com/danbri/factoidal/issues/875. Owner, 2026-10-23, answer
+"Land it" to: "Land branch batch3/kr12-thp (prctl THP off at start of main,
+L4_THP=on keeps huge pages, plus the 2,048-page worker cache) on main?".
+
+### 1j.1 Result
+
+KR 1.2 is met for q21 only. Peak RSS 4/1 is at most 1.82 for the four
+queries. Final interleaved run, binary of `main` after part A (`15da4cc4`)
+against this stage (`8b6f63b0`), 16 rounds (15 kept), `--repeat 21`,
+2026-10-23 14:55 to 14:58 UTC:
+
+| Query | `main` 1 / 4 threads ms | 4/1 | this stage 1 / 4 threads ms | 4/1 | peak RSS 4/1 (largest), main / this stage | target met |
+| --- | ---: | ---: | ---: | ---: | ---: | --- |
+| q07 | 5.25 / 3.69 | 0.70 | 5.49 / 3.63 | 0.66 | 1.06 / 1.13 | no |
+| q19 | 37.16 / 15.93 | 0.43 | 38.93 / 16.61 | 0.43 | 1.84 / 1.82 | no |
+| q21 | 100.98 / 40.80 | 0.40 | 100.34 / 38.63 | 0.38 | 1.75 / 1.69 | yes |
+| d10 | 10.54 / 6.38 | 0.61 | 10.48 / 4.71 | 0.45 | 1.22 / 1.25 | no |
+
+A run of 11 rounds just before (10 kept) gave 4/1 of q07 0.63, q19 0.35,
+q21 0.36, d10 0.48 for this stage, with 1-thread times of `main` up to 1.3
+times those of this run (1i.2). Raw CSV: `.claude-runs/kr12j/F.csv`,
+`F2.csv` (not in the repository).
+
+A version of this stage with two more changes reached q19 0.38, q21 0.35 and
+d10 0.41 to 0.44 (variant `E`, 1j.4 items 3 and 4), but it read some
+dictionary pages and blocks twice, so the counters of
+`tests/sbm11/threads.sh` differed from one thread (1j.5). Those two changes
+are off or repaired in what landed; q19 at 4 threads, interleaved, 12
+rounds: `E` 14.02 ms, landed 15.41 ms, landed with
+`SBM11_STREAM_JOBS=4` 14.57 ms.
+
+### 1j.2 Part A: branch `batch3/kr12-thp` on `main`
+
+Merge `c2ee8e35` (no conflict) and the CLAUDE.md decision `15da4cc4`.
+The 1b.6 method, one binary, 10 rounds (9 kept), `--repeat 21`:
+
+| Query | 1 / 4 threads ms | 4/1 | peak RSS MB 1 thread / 4 threads (largest) | RSS 4/1 |
+| --- | ---: | ---: | ---: | ---: |
+| q07 | 5.24 / 3.74 | 0.71 | 23 / 25 | 1.06 |
+| q19 | 34.96 / 15.81 | 0.45 | 57 / 105 | 1.86 |
+| q21 | 99.70 / 38.42 | 0.39 | 40 / 72 | 1.79 |
+| d10 | 10.65 / 5.70 | 0.54 | 24 / 28 | 1.18 |
+
+Gates on `15da4cc4`: `lake build`, `tests/sbm11/run.sh`, `threads.sh`,
+`SBM11_THREADS=4 census.sh`, the unbuilt-modules and tail-recursion gates
+exit 0; `tools/land-gates.sh` exit 1 twice, each
+time on one row of `tests/lws/scaling.mjs` ("storage files: peak RSS of a
+start grows <= 16 MiB from s to 4s", growth 40.6 MiB). The merge changes
+only `l4sbm11` harness files, which that test does not run; alone the test
+failed once in four runs. Issue:
+https://github.com/danbri/factoidal/issues/962.
+
+### 1j.3 Measurements before the changes
+
+`SBM11_PHASES=1`, 61 runs, binary of part A:
+
+| Phase (ms) | q07 1 / 4 threads | d10 1 / 4 threads |
+| --- | ---: | ---: |
+| constants | 0.033 / 0.076 | 0.028 / 0.026 |
+| scans and joins | 3.98 / 2.28 | 8.86 / 4.68 (the counted scan and the group table) |
+| finish (ORDER BY keys) | 0.672 / 0.690 | 0.003 / 0.003 |
+| render | 0.263 / 0.264 | 1.115 / 1.118 |
+
+- d10 render: 665 groups, 1.7 microseconds per row. The dwarf profile puts
+  most of it under `appendIdJsonM` for the count column: an inline integer
+  went through `termOf`, `jsonOfTerm` and `Json.toString`
+  (`escapeStringFast`, `lean_string_push`, `toStringFieldsAcc`).
+- q07 finish: `orderReadOfM` 0.33 ms (`termOf` of 291 labels: list
+  conversions and UTF-8 checks of the key decoder), `sortReads` 0.1 ms.
+- q19 at 4 threads (`tools/perf-cost-split.py`, 60 warm runs): 47.8 ms of
+  CPU per run against 39.2 at 1 thread (2.7 ms of it pool polling). The
+  extra CPU is no longer the main cost (stage 1h: 79.9 against 29.1). The
+  10 ranges of one block each went to 4 workers, and the fourth worker was a
+  task of the Lean pool with a new page cache for each fold.
+- d10 counted scan at 4 threads (`SBM11_RANGE_TRACE=1`, new: each job's
+  start and duration): the 8 jobs keep the 4 workers busy 2.7 to 3.0 ms each
+  (balanced), the fold takes 3.3 to 3.9 ms; the jobs together take 10.7 ms
+  of CPU against about 8.2 ms for the same scan on one thread.
+
+### 1j.4 What changed
+
+1. **Inline literals printed from the id** (`IdQuery.appendIdJsonM`). An
+   inline integer or boolean id gives its literal through `ofInlineCode?`
+   (the term `termOf` gives) and the key printer's literal form
+   (`Qlvr.Query.litBytes`). Tested, not proved: `tests/sbm11/run.sh`
+   compares the output with `--reference-render` byte for byte. d10 render
+   at 1 thread: 1.115 to 0.54 ms.
+2. **The finished table rendered on the pool** (`IdQuery.renderJobs`,
+   `Par.renderRows`, `SBM11_RENDER_ROWS`): at most two ranges per thread of
+   at least 160 rows each, rendered by `renderRowsEndsM` and written in range
+   order by `emitPieceM` (the text of `renderRowsM`). d10 at 4 threads,
+   render phase: 0.55 to 0.71 ms on one thread, 0.43 to 0.49 ms divided (3
+   processes each). A worker renders a row in about 1.2 microseconds against
+   0.8 on the calling thread (dictionary pages from the shared map). With
+   128 rows per range q07 (313 rows, 2 ranges) was slower (render 0.48
+   against 0.25 ms), so 160 keeps q07 on the calling thread:
+
+   | `SBM11_RENDER_ROWS` | d10 4 threads ms | q07 4 threads ms |
+   | --- | ---: | ---: |
+   | 0 (calling thread) | 5.74 | 3.81 |
+   | 128 | 5.13 | 4.07 |
+   | 160 | 4.65 | 3.43 |
+   | 320 | 5.36 | 3.62 |
+
+   (9 rounds, 8 kept, `--repeat 41`; q07 at 0 and 160 runs the same code,
+   so 0.4 ms is the variation of this run.)
+3. **Windows of a block range, off by default** (`IdQuery.StreamJob`,
+   `streamJobs`, `Par.streamPerThread`, `SBM11_STREAM_JOBS=4` turns it on):
+   with fewer than 4 jobs per thread, each range of the streamed path is cut
+   into windows of about equal estimated rows; each job scans the range and
+   renders its window; one job per range gives the scan statistics. Proved:
+   `ParallelMergeTheorems.windows_concat` and `windows_range` (the windows'
+   rows in order are the range's rows). Tested, not proved: that
+   `streamPartM` keeps the window and that `streamJobs` chains the windows
+   from 0 to `cap`. q19 at 4 threads, interleaved: 14.04 ms with windows,
+   14.91 ms without; q21 38.73 against 37.63 ms (variation). Not on by
+   default: each job reads the blocks of its range again, so the block bytes
+   of `tests/sbm11/threads.sh` are not those of one thread (q19 at 4 threads:
+   159,754 against 79,877), for a gain near the variation.
+4. **The calling thread is the last worker of `parFold`** (`parentAt`;
+   `SBM11_PARENT_TASK=1` gives the former task of the Lean pool). It runs
+   its jobs between the folds of the results, with the session's own store
+   and page cache, and takes a range only when its permit is given, so it
+   never waits for itself. With a pool, the calling thread loads dictionary
+   pages through `taskPages` as the workers do (`Session.pageKeys`), so no
+   page is read twice (the range bytes of `threads.sh` equal those of one
+   thread). Interleaved, 9 rounds (8 kept), `--repeat 21`, before that page
+   change and with windows on:
+
+   | Query | Lean pool task: 4 threads ms, RSS 4/1 | calling thread: 4 threads ms, RSS 4/1 |
+   | --- | ---: | ---: |
+   | q19 | 16.41, 1.77 | 13.11, 1.61 |
+   | q21 | 40.12, 1.74 | 37.58, 1.57 |
+   | d10 | 4.58, 1.23 | 4.54, 1.23 |
+
+5. Phase marks `divide`, `countfold`, `groups` on the counted path, and
+   `SBM11_RANGE_TRACE` and `SBM11_POOL_SIZE` (experiments only).
+
+### 1j.5 A defect found and repaired before the landing
+
+The first version of item 4 asked whether range `k` was ready with
+`IO.Ref.get` on its result slot. For a ref that another thread writes,
+`lean_st_ref_get` takes the value out and puts it back with two atomic
+exchanges, and a write between them is lost (two `xchg` in its disassembly,
+Lean 4.33.1). About one fold in 4,000 lost a range's result: the run failed
+with "block range 1: its worker stopped", and the process hung at exit,
+because the error left `main` with the pool running and the runtime waits
+for its dedicated threads. Found by the 1b.6 method, which logged a
+`FAIL Csj0 d10-group-predicates 4`; `gdb` of a hung process showed the main
+thread in `lean_finalize_task_manager` and the three pool workers in
+`Cell.take?`. Repairs: the ready test reads the range's promise
+(`IO.hasFinished`); a failed run stops the pool before the error leaves
+`main`. After the repair: 600 processes of d10 at 4 threads (21 runs each),
+no failure; before it, 4 in about 400. Rule added to skill
+`lean4-performance` (section "Values that two threads can reach").
+
+`tests/sbm11/threads.sh` found two more differences before the landing,
+both in the counters, not the answers: the windows read blocks twice (item
+3, now off by default), and the calling thread read dictionary pages from
+the file that a worker had read too (DBpedia d05, d08 and d11: range bytes
+6,470,002 against 6,456,166 at one thread; repaired in item 4).
+
+### 1j.6 Tried and not kept
+
+- A pool of 4 workers for 4 threads (`SBM11_POOL_SIZE=4`, the calling
+  thread folding only): q19 14.40 ms, but d10 7.28 and q07 5.14 ms against
+  5.05 and 4.08 (a polling fourth worker takes a vCPU from the calling
+  thread's serial phases).
+
+### 1j.7 Gates
+
+On commit `8b6f63b0` (the Lean code of this landing; exit codes read):
+
+| Gate | Result |
+| --- | --- |
+| `lake build` | exit 0 (1,994 jobs) |
+| `tests/sbm11/threads.sh` | exit 0: gate 140 and gate2 140 identical, olympics 21, 2 and 2, DBpedia 19; DBpedia against the three-engine record: equal 76, different 0 |
+| `tests/sbm11/run.sh` | exit 0: 3,131 pass, 0 fail, 28 expected-fail (out of 3,159) |
+| `SBM11_THREADS=4 tests/sbm11/census.sh` | exit 0: 605 executed, 605 matched the reference engine, 0 differed; 4 refused at query |
+| `lean-tail-recursion-audit.py --gate`, `lean-unbuilt-modules.py --gate` | exit 0 (one allow-list line: `ParallelMergeTheorems.winsOf`, specification only), exit 0 (941 modules reached) |
+| `tools/land-gates.sh` | exit 0 (LAND GATES PASSED): native-smoke 377 pass, 0 fail, 4 xfail (out of 381), cli-smoke 151 pass, 0 fail, 5 xfail (out of 156), wasm, npm, hub, engine-compare, the LWS (scaling 21 pass, 0 fail, out of 21), Solid and authorization suites, host-purity-lint 40 pass, 0 fail (out of 40) |
+| `sorry`, `native_decide`, `axiom`, `maxHeartbeats` in the Lean diff | none |
+| d10 at 4 threads, 600 processes of 21 runs (binary with the 1j.5 repair, before the page change of 1j.4 item 4); q19 at 4 threads, 250 processes of 21 runs (`8b6f63b0`) | no failure, no hang |
+
+### 1j.8 What remains
+
+- q07 (0.66): the serial work after the scans at 4 threads is about 1.6 ms
+  (constants 0.08, ORDER BY keys 0.69, rendering 0.26, joins 0.37,
+  first scan 0.18); 0.4 needs about 2.0 ms in all. The ORDER BY keys spend
+  0.33 ms in `termOf` of the labels (key decoding to a `Term`: list
+  conversions and UTF-8 checks) and 0.1 ms in the sort; rendering 313 rows
+  on the pool was slower than on the calling thread (1j.4 item 2). Next
+  steps: order readings from the key bytes for string and language-tagged
+  keys (with a proof against `orderValue`), and the 15 to 25 percent slower
+  worker ranges of stage 1h.
+- q19 (0.43): 10 ranges of one block on 4 workers (3, 3, 2 and 2 ranges),
+  and the dictionary pages that the calling thread now takes through
+  `taskPages` (peak RSS at 4 threads 103 MB against 91 MB with its own cache
+  only). The windows of item 3 give about 0.8 ms but read each block twice;
+  turning them on needs a decision on the block-bytes rule of
+  `threads.sh`.
+- d10 (0.45): the counted scan's jobs take 1.3 times the CPU of one thread
+  (10.7 against 8.2 ms; stage 1h: compute and frees across threads), plus
+  serial work of about 0.9 ms at 4 threads (`divide` 0.2 to 0.3 ms reading
+  5,941 PRM1 entries, the group table 0.21 ms, rendering on the pool 0.42 to
+  0.47 ms with workers 1.5 times slower per row than the calling thread).
+- The 1-thread time of one process still varies by up to 1.5 times on this
+  VM (1i.2): two runs of the method on one pair of binaries gave q19 0.35 and
+  0.43.
+
+Issue https://github.com/danbri/factoidal/issues/961 stays open.
