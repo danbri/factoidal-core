@@ -236,8 +236,8 @@ theorem graph_map_o (pid : WfIri → Option UInt64) :
   | x :: xs, t :: ts, h => by
     simp only [List.map_cons, h.1.2.1, graph_map_o pid xs ts h.2]
 
-theorem nodes_ok (pid : WfIri → Option UInt64) (G : List IdTriple) (g : Graph)
-    (hG : GraphDecodes dec ok pid G g) : ∀ n ∈ idGraphNodes G, ok n := by
+theorem nodes_ok' (G : List IdTriple) (hG : ∀ x ∈ G, ok x.1 ∧ ok x.2.2) :
+    ∀ n ∈ idGraphNodes G, ok n := by
   intro n hn
   unfold idGraphNodes at hn
   rcases List.mem_map.mp hn with ⟨pr, hpr, rfl⟩
@@ -245,9 +245,13 @@ theorem nodes_ok (pid : WfIri → Option UInt64) (G : List IdTriple) (g : Graph)
   rcases List.mem_map.mp hm with ⟨k, hk, rfl⟩
   rcases List.mem_append.mp hk with hk | hk
   · rcases List.mem_map.mp hk with ⟨x, hx, rfl⟩
-    exact (graph_ok dec ok pid G g hG x hx).1
+    exact (hG x hx).1
   · rcases List.mem_map.mp hk with ⟨x, hx, rfl⟩
-    exact (graph_ok dec ok pid G g hG x hx).2
+    exact (hG x hx).2
+
+theorem nodes_ok (pid : WfIri → Option UInt64) (G : List IdTriple) (g : Graph)
+    (hG : GraphDecodes dec ok pid G g) : ∀ n ∈ idGraphNodes G, ok n :=
+  nodes_ok' ok G (graph_ok dec ok pid G g hG)
 
 theorem nodes_decode (hdec : ∀ x y, ok x → ok y → (dec x).eqb (dec y) = (x == y))
     (pid : WfIri → Option UInt64) (G : List IdTriple) (g : Graph)
@@ -343,39 +347,39 @@ theorem fixpoint_decode (hdec : ∀ x y, ok x → ok y → (dec x).eqb (dec y) =
 
 /-! ### The path relation -/
 
-theorem eval_ok (pid : WfIri → Option UInt64) (notLit : UInt64 → Bool) (G : List IdTriple) (g : Graph)
-    (hG : GraphDecodes dec ok pid G g) : ∀ p, PairsOk ok (idEvalPath pid notLit p G)
+theorem eval_ok' (pid : WfIri → Option UInt64) (notLit : UInt64 → Bool) (G : List IdTriple)
+    (hG : ∀ x ∈ G, ok x.1 ∧ ok x.2.2) : ∀ p, PairsOk ok (idEvalPath pid notLit p G)
   | .iri i => by
     intro pr hpr
     rcases List.mem_filterMap.mp hpr with ⟨x, hx, h⟩
     split at h
-    · cases h; exact graph_ok dec ok pid G g hG x hx
+    · cases h; exact hG x hx
     · cases h
   | .inverse p => by
     intro pr hpr
     rcases List.mem_filterMap.mp hpr with ⟨q, hq, h⟩
     split at h
-    · cases h; exact ⟨(eval_ok pid notLit G g hG p q hq).2, (eval_ok pid notLit G g hG p q hq).1⟩
+    · cases h; exact ⟨(eval_ok' pid notLit G hG p q hq).2, (eval_ok' pid notLit G hG p q hq).1⟩
     · cases h
   | .sequence p1 p2 => by
     intro pr hpr
     rcases List.mem_flatMap.mp hpr with ⟨a, ha, h⟩
     rcases List.mem_filterMap.mp h with ⟨b, hb, h⟩
     split at h
-    · cases h; exact ⟨(eval_ok pid notLit G g hG p1 a ha).1, (eval_ok pid notLit G g hG p2 b hb).2⟩
+    · cases h; exact ⟨(eval_ok' pid notLit G hG p1 a ha).1, (eval_ok' pid notLit G hG p2 b hb).2⟩
     · cases h
-  | .alternative p1 p2 => pairsOk_append ok (eval_ok pid notLit G g hG p1) (eval_ok pid notLit G g hG p2)
+  | .alternative p1 p2 => pairsOk_append ok (eval_ok' pid notLit G hG p1) (eval_ok' pid notLit G hG p2)
   | .zeroOrOne p => by
-    have hn := nodes_ok dec ok pid G g hG
+    have hn := nodes_ok' ok G hG
     apply pairsOk_sub ok (fun x hx => idDedup_mem hx)
     apply pairsOk_append ok
     · intro pr hpr
       rcases List.mem_map.mp hpr with ⟨n, hm, rfl⟩
       exact ⟨hn n hm, hn n hm⟩
-    · exact eval_ok pid notLit G g hG p
+    · exact eval_ok' pid notLit G hG p
   | .zeroOrMore p => by
-    have hn := nodes_ok dec ok pid G g hG
-    have hs := eval_ok pid notLit G g hG p
+    have hn := nodes_ok' ok G hG
+    have hs := eval_ok' pid notLit G hG p
     apply fixpoint_ok ok _ hs
     apply pairsOk_sub ok (fun x hx => idDedup_mem hx)
     apply pairsOk_append ok _ hs
@@ -383,7 +387,7 @@ theorem eval_ok (pid : WfIri → Option UInt64) (notLit : UInt64 → Bool) (G : 
     rcases List.mem_map.mp hpr with ⟨n, hm, rfl⟩
     exact ⟨hn n hm, hn n hm⟩
   | .oneOrMore p => by
-    have hs := eval_ok pid notLit G g hG p
+    have hs := eval_ok' pid notLit G hG p
     exact fixpoint_ok ok _ hs _ _ hs
   | .negatedSet ps => by
     apply pairsOk_append ok
@@ -393,14 +397,18 @@ theorem eval_ok (pid : WfIri → Option UInt64) (notLit : UInt64 → Bool) (G : 
         rcases List.mem_filterMap.mp hpr with ⟨x, hx, h⟩
         split at h
         · cases h
-        · cases h; exact graph_ok dec ok pid G g hG x hx
+        · cases h; exact hG x hx
     · split
       · intro pr hpr; simp at hpr
       · intro pr hpr
         rcases List.mem_filterMap.mp hpr with ⟨x, hx, h⟩
         split at h
         · cases h
-        · cases h; exact ⟨(graph_ok dec ok pid G g hG x hx).2, (graph_ok dec ok pid G g hG x hx).1⟩
+        · cases h; exact ⟨(hG x hx).2, (hG x hx).1⟩
+
+theorem eval_ok (pid : WfIri → Option UInt64) (notLit : UInt64 → Bool) (G : List IdTriple) (g : Graph)
+    (hG : GraphDecodes dec ok pid G g) : ∀ p, PairsOk ok (idEvalPath pid notLit p G) :=
+  eval_ok' ok pid notLit G (graph_ok dec ok pid G g hG)
 
 theorem iriInList_decode (pid : WfIri → Option UInt64) (x : IdTriple) (t : Triple)
     (h : TripleDecodes dec ok pid x t) (ex : List WfIri) :

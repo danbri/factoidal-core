@@ -992,9 +992,8 @@ L5o): `lower_bind`, `refBinder_active`, `extend_decode`, `bind_decode`. Gates:
 
 Property paths on ids (2026-10-23, https://github.com/danbri/factoidal/issues/954;
 record: section 21 of the stage 4 record). A pattern `s path o` outside GRAPH
-runs on `path=ids` when the WHERE clause has no OPTIONAL and no FROM, and the
-path is built from IRIs, `^p`, `p1/p2`, `p1|p2`, `!(...)` (`IdQuery.flattenWhere`
-collects `PathBlock`s). `IdQuery.evalIM` computes the reference's
+runs on `path=ids` when the WHERE clause has no OPTIONAL and no FROM
+(`IdQuery.flattenWhere` collects `PathBlock`s). `IdQuery.evalIM` computes the reference's
 `SPARQL.evalPath` on ids under a restriction (a constant endpoint, else the ids
 the rows joined so far hold for an endpoint variable, `pathCands`): a step is a
 PSO or POS scan with the restriction as candidates; a sequence restricts its
@@ -1004,6 +1003,25 @@ after the BIND blocks; a FILTER of the top group over an endpoint variable runs
 after every join. Theorems (`IdPathTheorems`, lemma L5p): `evalPath_decode`,
 `pathRows_decode`, `pathPattern_decode`. Gates: `ids-path-*` and `ref-path-*`
 queries.
+
+Closures on ids (2026-10-23, issue 954; record: section 22 of the stage 4
+record). `p*`, `p+`, `p?` run on ids too (`IdQuery.closureM`): the step pairs
+reachable from the restriction are collected in rounds of scans with
+candidates, then a worklist per start node (`IdPath.reachPlus`). The
+worklist bound (pairs plus two) is proved sufficient for its list model
+(`reachModel_some`); the rounds bound is a bound on the number of distinct ids,
+and each round adds one; either loop fails the query, never truncates, if its
+bound runs out. `p*` and `p?` add `(n, n)` for each node of the active graph, so
+`?s p* ?o` with both ends variables scans the whole graph for its nodes, as
+the reference semantics require. Trap: the reference's `pathFixpoint step
+step` for `p+` stops on a length test that is not a fixpoint test when the
+step relation has a pair twice (`(p1/p2)+`, `(p|q)+` can have one); the id
+path computes that relation first and refuses with an error that starts with
+`refused:`, and the harnesses (`runOne`, `Run.evalWhere`) then run the
+reference evaluator. A refusal after reading must come before the first
+`emit` (`resolveExtrasM` runs first in `runPlanM`). Theorems
+(`IdPathClosureTheorems`, lemma L5q): `fixpoint_mem`, `star_mem`, `plus_mem`,
+`reachModel_some`, `reachModel_mem`, `starFrom_mem`, `plusFrom_mem`.
 
 Sideways information passing (2026-10-13,
 https://github.com/danbri/factoidal/issues/809; record: section 11 of the

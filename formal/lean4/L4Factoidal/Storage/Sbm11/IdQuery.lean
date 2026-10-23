@@ -77,13 +77,19 @@ in an inner group is refused. Theorems: `IdBindTheorems`.
 Property paths (https://github.com/danbri/factoidal/issues/954, SPARQL 1.1
 sections 9 and 18.4): a pattern `s path o` in the join tree of the WHERE
 clause outside GRAPH, with no OPTIONAL in the WHERE clause and no FROM, the
-path built from IRIs, `^p`, `p1/p2`, `p1|p2` and `!(...)` (`flattenWhere`).
-`evalIM` computes the reference's `evalPath` on ids under a restriction (a
+path built from IRIs, `^p`, `p1/p2`, `p1|p2`, `!(...)`, `p*`, `p+` and `p?`
+(`flattenWhere`). `evalIM` computes the reference's `evalPath` on ids under a
+restriction (a
 constant endpoint, or the ids the rows joined so far hold for an endpoint
 variable, `pathCands`), with PSO and POS scans that take the restriction as
-candidates; `pathTableM` makes the rows as `pathResultToSolutions` does; they
-are joined after the BIND blocks, and a FILTER of the top group over an
-endpoint variable after every join. Theorems: `IdPathTheorems`.
+candidates; a closure collects the step relation reachable from the
+restriction in rounds and runs a worklist per start node (`closureM`); a `+`
+whose step relation holds a pair twice is refused after that relation is read
+(`resolvePathsM`, an error starting with `refused:`, the caller runs the
+reference evaluator). `pathTableM` makes the rows as `pathResultToSolutions`
+does; they are joined after the BIND blocks, and a FILTER of the top group
+over an endpoint variable after every join. Theorems: `IdPathTheorems`,
+`IdPathClosureTheorems`.
 
 Issue 823 (https://github.com/danbri/factoidal/issues/823): a FILTER conjunct
 outside `backendLocal` (REGEX, LANGMATCHES, casts, IRI(), hashes, ...), or one
@@ -419,13 +425,6 @@ def UnionBranch.vars (b : UnionBranch) : Array String :=
 def BindBlock.vars (b : BindBlock) : Array String :=
   let pv := b.pats.foldl (fun a t => t.vars.foldl (fun a v => if a.contains v then a else a.push v) a) #[]
   b.exts.foldl (fun a (_, v) => if a.contains v then a else a.push v) pv
-
-/-- Whether a path holds `*`, `+` or `?`. -/
-def _root_.L4Factoidal.SPARQL.PropertyPath.hasClosure : L4Factoidal.SPARQL.PropertyPath → Bool
-  | .iri _ | .negatedSet _ => false
-  | .inverse q => q.hasClosure
-  | .sequence a b | .alternative a b => a.hasClosure || b.hasClosure
-  | .zeroOrMore _ | .oneOrMore _ | .zeroOrOne _ => true
 
 /-- The variables of a property path pattern: its endpoints. -/
 def PathBlock.vars (b : PathBlock) : Array String := Id.run do
@@ -842,7 +841,6 @@ def flattenWhere (p : QueryPattern) (allVars : Array String) :
         match g with
         | .dflt => pure ()
         | _ => throw "a property path inside a GRAPH"
-        if path.hasClosure then throw "a property path with *, + or ?"
         paths := paths.push { s := ← argOfSubject s, path, o := ← argOfObject o }
       | .empty => pure ()
       | _ => throw "a WHERE clause outside the fragment (OPTIONAL not at the top level, MINUS, sub-SELECT or SERVICE)"
@@ -3391,6 +3389,27 @@ inductive IPath where
   | nps (direct inverse : Array UInt64) (hasDirect hasInverse : Bool)
   deriving Inhabited, Repr
 
+/-- Whether the relation of a path has each pair at most once on a graph
+    with no triple twice: a one-step path, its inverse, and the closures
+    (deduplicated). A sequence, an alternative and a negated property set can
+    give a pair twice. -/
+def IPath.setValued : IPath → Bool
+  | .link _ => true
+  | .inv q => q.setValued
+  | .star _ | .plus _ | .opt _ => true
+  | .seq _ _ | .alt _ _ | .nps _ _ _ _ => false
+
+/-- The `+` subpaths whose step relation may hold a pair twice. For those the
+    reference's `pathFixpoint step step` stops early on a length test that is
+    not a fixpoint test (it compares the deduplicated next round with the
+    step list itself), so the id path computes the step relation and refuses
+    the query when a pair occurs twice (`resolvePathsM`). -/
+def IPath.plusMaybeDup : IPath → Array IPath
+  | .link _ | .nps _ _ _ _ => #[]
+  | .inv q | .star q | .opt q => q.plusMaybeDup
+  | .plus q => (if q.setValued then #[] else #[q]) ++ q.plusMaybeDup
+  | .seq a b | .alt a b => a.plusMaybeDup ++ b.plusMaybeDup
+
 /-- Whether a path admits the zero-length match (`p*`, `p?`): the reference
     then adds the reflexive pair of each constant endpoint
     (`addConstantReflexivity`). -/
@@ -3461,6 +3480,95 @@ def pathScanM {m : Type → Type} [Monad m] (st : Store m) (g : UInt64) (pid : O
     let (tb, s) ← scanTableOf st spec
     return (tb, s.full)
 
+/-- The ids among `rs` (sorted, distinct) that are the subject or the object
+    of a triple of graph `g`: the nodes of the graph (`graphNodes`), sorted. -/
+def nodesAmongM {m : Type → Type} [Monad m] (st : Store m) (g : Option UInt64) (rs : Array UInt64) :
+    ExceptT String m (Array UInt64 × ScanStats) := do
+  match g with
+  | none => return (#[], {})
+  | some g =>
+    let (t1, s1) ← pathScanM st g none 2 (some rs)
+    let (t2, s2) ← pathScanM st g none 3 (some rs)
+    let xs := (pairsOf t1 "s" "s").map (·.1) ++ (pairsOf t2 "o" "o").map (·.1)
+    return (IdPath.sortedDistinct xs, s1.add s2)
+
+/-- Every node of graph `g` (`graphNodes`: the subjects and objects of its
+    triples), sorted. -/
+def allNodesM {m : Type → Type} [Monad m] (st : Store m) (g : Option UInt64) :
+    ExceptT String m (Array UInt64 × ScanStats) := do
+  match g with
+  | none => return (#[], {})
+  | some g =>
+    let (t, s) ← pathScanM st g none 2 none
+    let ps := pairsOf t "s" "o"
+    return (IdPath.sortedDistinct (ps.map (·.1) ++ ps.map (·.2)), s)
+
+/-- A bound on the number of distinct ids a closure over the store can meet:
+    two per row of the base and of the delta inserts, plus the restriction. -/
+def pathFuelM {m : Type → Type} [Monad m] (st : Store m) (extra : Nat) : ExceptT String m Nat := do
+  let base := selRows (← st.blocksForRange 0 #[])
+  return 2 * (base + (st.ovl 0).ins.size) + extra + 2
+
+/-- `q*` (`zero`) and `q+` under the restriction (`stepM`: `evalIM` of `q`;
+    `IdPathClosureTheorems`: `star_mem`, `plus_mem` say what the reference
+    computes, `starFrom_mem`, `plusFrom_mem` that the per-node emission below
+    gives those pairs, `reachModel_some` that the worklist bound suffices): the step relation of the
+    part of the graph reachable from the restriction (rounds of `evalIM`
+    on the new nodes, at most `pathFuelM` rounds, an error when they run
+    out), then per restriction node the nodes reachable in one or more
+    steps (`IdPath.reachPlus`), and for `q*` the node itself when it is a
+    node of the graph. Each pair once. -/
+def closureM {m : Type → Type} [Monad m] (st : Store m) (g : Option UInt64)
+  (stepM : Bool → Option (Array UInt64) → ExceptT String m (IdPath.Pairs × ScanStats))
+  (fwd : Bool) (R : Option (Array UInt64)) (zero : Bool) :
+  ExceptT String m (IdPath.Pairs × ScanStats) := do
+  let mut total : ScanStats := {}
+  let mut edges : IdPath.Pairs := #[]
+  let mut sources : Array UInt64 := #[]
+  let mut nodes : Array UInt64 := #[]
+  let dirFwd := R.isNone || fwd
+  match R with
+  | none =>
+    let (e, s) ← stepM true none
+    total := total.add s
+    edges := e
+    if zero then
+      let (ns, s0) ← allNodesM st g
+      total := total.add s0
+      sources := ns
+      nodes := ns
+    else sources := IdPath.firsts e
+  | some rs =>
+    sources := rs
+    if zero then
+      let (ns, s0) ← nodesAmongM st g rs
+      total := total.add s0
+      nodes := ns
+    let fuel ← pathFuelM st rs.size
+    let mut visited : Std.HashSet UInt64 := rs.foldl (fun h x => h.insert x) {}
+    let mut frontier := rs
+    for _ in [0:fuel] do
+      if frontier.isEmpty then break
+      let (e, s) ← stepM fwd (some frontier)
+      total := total.add s
+      edges := edges ++ e
+      let next := (if fwd then IdPath.seconds e else IdPath.firsts e).filter (!visited.contains ·)
+      visited := next.foldl (fun h x => h.insert x) visited
+      frontier := next
+    if !frontier.isEmpty then
+      throw "a property path closure: the round bound ran out (a bug: the bound is the number of ids)"
+  let adj := IdPath.adjOf (if dirFwd then edges else IdPath.swap edges)
+  let nodeSet : Std.HashSet UInt64 := nodes.foldl (fun h x => h.insert x) {}
+  let mut out : IdPath.Pairs := #[]
+  for a in sources do
+    let some reach := IdPath.reachPlus adj a (edges.size + 2)
+      | throw "a property path closure: the worklist bound ran out (a bug: the bound is the number of edges)"
+    let self := zero && nodeSet.contains a
+    if self then out := out.push (a, a)
+    for c in reach do
+      if !(self && c == a) then out := out.push (if dirFwd then (a, c) else (c, a))
+  return (out, total)
+
 /-- `evalPath` on ids under a restriction (section above): `fwd`, `R`
     restrict the subjects (`fwd`) or the objects to `R` (sorted, distinct);
     `R = none` gives every pair. The pair order may differ from the
@@ -3504,9 +3612,16 @@ def evalIM {m : Type → Type} [Monad m] (st : Store m) (g : Option UInt64) :
     let (r1, s1) ← evalIM st g fwd a R
     let (r2, s2) ← evalIM st g fwd b R
     return (r1 ++ r2, s1.add s2)
-  -- `*`, `+`, `?`: refused by `flattenWhere` (`PropertyPath.hasClosure`)
-  | _, .opt _, _ | _, .star _, _ | _, .plus _, _ =>
-    throw "a property path with *, + or ? (refused by translate)"
+  | fwd, .opt q, R => do
+    -- `q?`: the reflexive pair of each node of the graph, and the pairs of
+    -- `q`, each once (`dedupPath`)
+    let (nodes, s0) ← match R with
+      | some rs => nodesAmongM st g rs
+      | none => allNodesM st g
+    let (e, s1) ← evalIM st g fwd q R
+    return (IdPath.dedupPairs (nodes.map (fun n => (n, n)) ++ e), s0.add s1)
+  | fwd, .star q, R => closureM st g (fun f r => evalIM st g f q r) fwd R true
+  | fwd, .plus q, R => closureM st g (fun f r => evalIM st g f q r) fwd R false
   | fwd, .nps ds is hd hi, R => do
     match g with
     | none => return (#[], {})
@@ -3613,9 +3728,12 @@ def pathTableM {m : Type → Type} [Monad m] (st : Store m) (rp : RPath) (t : Ta
       | _, _ => pure ()
   return ({ vars, cols, rows }, s!"{how}: {pairs.size} pairs, {rows} rows", s)
 
-/-- Resolve the property path patterns of a plan: the endpoint constants to
-    ids (`termIdM`, extending the query-local vocabulary), the IRIs of the
-    path, the graph. -/
+/-- `l4sbm11 update` (WITH) and the query paths: resolve the property path
+    patterns of a plan (the endpoint constants to ids, `termIdM`, extending
+    the query-local vocabulary; the IRIs of the path; the graph). Then, per
+    `+` whose step relation may hold a pair twice (`IPath.plusMaybeDup`), the
+    step relation over the graph: a pair twice refuses the query (an error
+    starting with `refused:`; the caller runs the reference evaluator). -/
 def resolvePathsM {m : Type → Type} [Monad m] (st : Store m) (plan : Plan)
     (vocab0 : Array Term) (localIdx0 : Std.HashMap Term Nat) :
     ExceptT String m (Array RPath × Array Term × Std.HashMap Term Nat × Array String) := do
@@ -3639,7 +3757,11 @@ def resolvePathsM {m : Type → Type} [Monad m] (st : Store m) (plan : Plan)
       | .term t => st.idOf t
       | .var _ => throw "a property path pattern over a graph variable"
     let ip ← resolvePathM st b.path
-    lines := lines.push s!"path {k}: resolved"
+    for q in ip.plusMaybeDup do
+      let (e, _) ← evalIM st g true q none
+      if IdPath.hasDup e then
+        throw s!"refused: path {k}: a `+` whose step relation holds a pair twice ({e.size} pairs); the reference's fixpoint test then differs from a set fixpoint"
+    lines := lines.push s!"path {k}: resolved, {ip.plusMaybeDup.size} `+` step relations checked for a pair twice"
     out := out.push { s := slots[0]!, o := slots[1]!, ipath := ip, zeroLen := isZeroLen b.path, g }
   return (out, vocab, localIdx, lines)
 

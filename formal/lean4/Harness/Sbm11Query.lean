@@ -1325,11 +1325,21 @@ def runOne (ss : Session) (q : Query) (emit : ByteArray → IO Unit) (forceRefer
       | .ok (ans, st) =>
         emitPost ans emit
         return { rows := st.rows, path := "path=ids", plan := st.plan }
-      | .error e => throw (IO.userError s!"id query failed: {e}")
+      | .error e => refusedOr e
     | none =>
+    -- `runPlanM` refuses (issue 954) before it emits anything
     match ← (IdQuery.runPlanM (ss.storeWith threads sip minRows) plan emit referenceRender par env).run with
     | .ok st => return { rows := st.rows, path := "path=ids", plan := st.plan }
-    | .error e => throw (IO.userError s!"id query failed: {e}")
+    | .error e => refusedOr e
+where
+  /-- An id-path error that starts with `refused: ` (issue 954: a shape the
+      id path recognises only after reading the store) runs the reference
+      evaluator; any other error fails the query. -/
+  refusedOr (e : String) : IO Outcome := do
+    if e.startsWith "refused: " then
+      let (n, line) ← runReference ss q (e.drop 9).toString emit
+      return { rows := n, path := line }
+    throw (IO.userError s!"id query failed: {e}")
 
 def verifyText : Verify → String
   | .merkle => "each read widened to its 65,536-byte chunks, each chunk checked by its Merkle proof"

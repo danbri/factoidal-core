@@ -304,7 +304,12 @@ def Run.evalWhere (r : Run) (u : Update) (opIx : Nat) (withIri : Option WfIri)
       -- the VALUES blocks as id tables, the rows of the BIND blocks, and the
       -- store that decodes their query-local ids (issues 950 and 953)
       match ← (IdQuery.resolveExtrasM st0 plan env).run with
-      | .error e => throw (IO.userError s!"id query failed: {e}")
+      | .error e =>
+        -- issue 954: a query the id path refuses only after reading the store
+        if e.startsWith "refused: " then
+          r.notes.modify (·.push s!"op {opIx}: where path=reference reason=\"{e.drop 9}\"")
+          return none
+        throw (IO.userError s!"id query failed: {e}")
       | .ok (vtabs, btabs, st, _, _, rpaths) =>
       match ← (IdQuery.whereTableM st plan env none vtabs btabs rpaths).run with
       | .error e => throw (IO.userError s!"id query failed: {e}")
