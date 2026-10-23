@@ -1493,3 +1493,4 @@ L4Factoidal_XSD_valsIdentical  # (b) nested sequence items only; successful sibl
 L4Factoidal_XSD_valEqualOrIdentical  # (b) nesting of XSD Val.seq values; valsEqualOrIdentical loops over sibling values
 L4Factoidal_XSD_valsEqualOrIdentical  # (b) nested sequence items only; successful sibling comparison emits goto _start
 L4Factoidal_Storage_Sbm11_VarintWord_hf  # (s) the Horner form of at most eight byte groups (the call depth is the varint length, at most 8 by the hypotheses of VarintWordTheorems.hz_eq_hf and fastRead_spec), the right side of VarintWordTheorems.vVal_eq; called only by theorems and by no emitted function outside VarintWordTheorems.c
+L4Factoidal_Storage_Sbm11_ParallelMergeTheorems_winsOf  # (s) the windows of a list, the left side of ParallelMergeTheorems.windows_concat (https://github.com/danbri/factoidal/issues/961, stage 1j); only ParallelMergeTheorems.c names it; the executed path is IdQuery.streamJobs and streamPartM

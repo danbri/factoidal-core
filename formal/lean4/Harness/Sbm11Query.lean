@@ -621,6 +621,11 @@ def Session.pageKeys (ss : Session) (pg : Nat) : IO (ByteArray × Array Nat) := 
   | some ks => return ks
   | none =>
     if ss.inTask then return ← ss.sharedPage pg
+    -- with a worker pool (stage 1j) the calling thread renders and runs
+    -- jobs while the workers load pages: it loads through `taskPages` as
+    -- they do, so that no page is read from the file twice (the range
+    -- bytes of `tests/sbm11/threads.sh` equal those of one thread)
+    if ss.pool.isSome then return ← { ss with taskPageLimit := ss.pageLimit }.sharedPage pg
     let tp ← ss.taskPages.get
     if !tp.isEmpty then
       if let some (.ready ks) := tp.get? pg then
@@ -1105,7 +1110,7 @@ def parFold (ss : Session) (nWorkers window : Nat) (fixed : Bool := false) {α �
         -- the promise, not the slot: `IO.Ref.get` on a ref that another
         -- thread writes takes the value out and puts it back, so a write
         -- between the two is lost (the runtime's `lean_st_ref_get`); a get
-        -- here lost a range's result about once in 2,000 folds ("its worker
+        -- here lost a range's result about once in 4,000 folds ("its worker
         -- stopped", then a hang at exit with the pool still running)
         let ready ← match results[k]? with
           | some p => liftIO (IO.hasFinished p.result?)

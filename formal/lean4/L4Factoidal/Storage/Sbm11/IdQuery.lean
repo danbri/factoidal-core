@@ -949,9 +949,13 @@ def Store.markM {m : Type → Type} [Monad m] (st : Store m) (l : String) : Exce
   | some f => ExceptT.lift (f l)
   | none => pure ()
 
-/-- The fewest jobs per thread of the divided streamed path (`streamJobs`).
-    Olympics at 4 threads, `--repeat 21` (stage 1j): see the record. -/
-def streamJobsPerThread : Nat := 4
+/-- The fewest jobs per thread of the divided streamed path (`streamJobs`);
+    0 or 1: one job per block range. Off (1) by default: each window's job
+    reads the blocks of its range again (olympics q19 at 4 threads: block
+    bytes 159,754 against 79,877), for 0.9 ms on q19 at 4 threads (14.04
+    against 14.91 ms) and none on q21 (stage 1j of the record).
+    `SBM11_STREAM_JOBS=4` turns it on. -/
+def streamJobsPerThread : Nat := 1
 
 /-- The fewest rows per job of the divided rendering of a finished table
     (`renderJobs`, stage 1j). -/
@@ -3199,7 +3203,7 @@ def streamPartM {m : Type → Type} [Monad m] (st : Store m) (spec : ScanSpec) (
 def streamJobs (threads cap : Nat) (metas : Array BlockMeta) (chunks : List (List Nat))
     (perThread : Nat := streamJobsPerThread) : List StreamJob :=
   let want := perThread * threads
-  let parts := if chunks.length == 0 || chunks.length ≥ want then 1
+  let parts := if perThread ≤ 1 || chunks.length == 0 || chunks.length ≥ want then 1
     else (want + chunks.length - 1) / chunks.length
   chunks.flatMap fun X =>
     if parts ≤ 1 then [{ blocks := X, wTo := cap }]

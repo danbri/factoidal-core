@@ -895,7 +895,7 @@ section "Stage 1b", subsection "What failed on the way"):
   whether a result is ready through its promise (`IO.hasFinished
   p.result?`), never by `get` of the result's ref. Paid for 2026-10-23
   (stage 1j of the record): `parFold` with the calling thread as a worker
-  polled each result slot with `get`; about one fold in 2,000 lost a range's
+  polled each result slot with `get`; about one fold in 4,000 lost a range's
   result ("block range 1: its worker stopped"), and the process then hung at
   exit because the error skipped the pool's shutdown. Found by the 1b.6
   measurement method, which logs a process that fails: run it before a
