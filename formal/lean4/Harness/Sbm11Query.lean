@@ -936,8 +936,10 @@ def parFold (ss : Session) (nWorkers window : Nat) {α β : Type}
   if let some e := failure then throw e
   return acc
 
-/-- The ranges that may run or wait in memory, per worker, in `parFold`. With
-    one range per worker, a worker that finished its range waited until the
+/-- The ranges that may run or wait in memory, per worker, in `parFold`, for a
+    bounded fold (`IdQuery.Par.fold`; the streamed path). An unbounded fold
+    (small results) gives every range a permit at once, so a worker does
+    not wait for the parent between ranges. With one range per worker, a worker that finished its range waited until the
     parent had written the range before it, the slowest of the window: olympics
     at 4 threads (KR 1.2 of batch 3, 21 runs per process), q19 19.0 ms against
     15.2 ms with 2 per worker, q21 37.0 ms against 28.9 ms; peak RSS 112 and 81
@@ -947,7 +949,9 @@ def parWindowFactor : Nat := 2
 /-- The divided single-pattern paths of `IdQuery.runPlanM` with `threads`
     tasks at once (issue 799, stage 1b). -/
 def Session.par (ss : Session) (threads : Nat) (minRows : Nat := 8192) : IdQuery.Par IO :=
-  { threads, minRows, fold := fun job chunks init g => parFold ss threads (parWindowFactor * threads) job chunks init g }
+  { threads, minRows,
+    fold := fun bounded job chunks init g =>
+      parFold ss threads (if bounded then parWindowFactor * threads else chunks.length) job chunks init g }
 
 /-- `SBM11_MIN_RANGE_ROWS`: the fewest estimated rows per block range
     (`IdQuery.rangeCount`; default 8,192; 0: one range per thread, as the

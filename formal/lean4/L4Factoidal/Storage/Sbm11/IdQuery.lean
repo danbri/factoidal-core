@@ -2822,8 +2822,12 @@ structure Par (m : Type → Type) where
   threads : Nat
   /-- the fewest estimated rows per range (`rangeCount`); 0: no minimum -/
   minRows : Nat := 8192
-  fold : {α β : Type} → (Store m → List Nat → ExceptT String m α) → List (List Nat) → β →
-    (β → α → ExceptT String m β) → ExceptT String m β
+  /-- `bounded`: at most a fixed number of range results may wait in memory
+      (the streamed path, whose results are rendered rows); `false`: the
+      results are small (group maps, the first `k` rows of a range) and a
+      worker never waits for the parent before it takes the next range. -/
+  fold : {α β : Type} → (bounded : Bool) → (Store m → List Nat → ExceptT String m α) → List (List Nat) →
+    β → (β → α → ExceptT String m β) → ExceptT String m β
 
 /-- How many block ranges a scan of `est` estimated rows is divided into with
     `threads` threads: at most `threads`, and with `minRows > 0` at most
@@ -2891,6 +2895,22 @@ def renderRowsEndsM {m : Type → Type} [Monad m] (st : Store m) (reference : Bo
     ends := ends.push out.size
   return (out, ends)
 
+/-- A new string object equal to `s` (`freshStr_eq`), made by the calling
+    thread. `s ++ ""` is not one: the compiler emits `s` itself for it (and for
+    `"" ++ s`; checked with `lean -c`, Lean 4.33.1), so the copies that
+    `ScanSpec.fresh`, `FKind.fresh` and `countPartM` made of their variable
+    names before KR 1.2 of batch 3 were the shared strings. DBpedia d10 at 4
+    threads: the reference counts of the group variable names that every task
+    read in every block (`countChunk`) were 5 percent of the profile, against
+    0.5 percent at 1 thread. -/
+@[noinline] def freshStr (s : String) : String := String.ofList s.toList
+
+theorem freshStr_eq (s : String) : freshStr s = s := by simp [freshStr]
+
+theorem map_freshStr (a : Array String) : a.map freshStr = a := by
+  conv => rhs; rw [← Array.map_id a]
+  congr 1; funext x; exact freshStr_eq x
+
 /-- A copy of `spec` whose arrays, pairs, boxed words and strings are new
     objects, made by the task that calls it. A scan reads its spec in every
     block; the spec the parent made is reachable from every task, and the Lean
@@ -2899,20 +2919,21 @@ def renderRowsEndsM {m : Type → Type} [Monad m] (st : Store m) (reference : Bo
     (DBpedia d17 at 4 threads: `planChecksGo`, `lean_array_to_list_impl` and
     `lean_dec_ref_cold` together a third of the profile). The copy has the
     same value (`ScanSpec.fresh_eq`). The words go through `toNat` and back
-    and the strings through `++ ""` so that the compiler does not reduce the
+    and the strings through `freshStr` so that the compiler does not reduce the
     copy to the original object (it reduces `⟨x.a, x.b⟩` to `x`). -/
 def ScanSpec.fresh (s : ScanSpec) : ScanSpec :=
   { perm := s.perm
     key := s.key.map fun x => UInt64.ofNat x.toNat
     checks := s.checks.map fun p => (p.1, UInt64.ofNat p.2.toNat)
     named := s.named
-    outVars := s.outVars.map (· ++ "")
+    outVars := s.outVars.map freshStr
     outCols := s.outCols.toList.toArray
     eqs := s.eqs.map fun p => (p.1 + 0, p.2 + 0) }
 
 theorem ScanSpec.fresh_eq (s : ScanSpec) : s.fresh = s := by
   obtain ⟨perm, key, checks, named, outVars, outCols, eqs⟩ := s
-  simp only [ScanSpec.fresh, Nat.add_zero, String.append_empty, Array.toArray_toList]
+  simp only [ScanSpec.fresh, Nat.add_zero, Array.toArray_toList]
+  rw [map_freshStr]
   have hk : key.map (fun x => UInt64.ofNat x.toNat) = key := by
     conv => rhs; rw [← Array.map_id key]
     congr 1; funext x; simp
@@ -2927,27 +2948,27 @@ theorem ScanSpec.fresh_eq (s : ScanSpec) : s.fresh = s := by
     are read for every row of every block). The expression `e` is shared: it
     is read only when the reference evaluator decides a row. -/
 def FKind.fresh : FKind → FKind
-  | .idEq v c => .idEq (v ++ "") (c.map fun x => UInt64.ofNat x.toNat)
-  | .idEqVar v w => .idEqVar (v ++ "") (w ++ "")
-  | .str k v needle e => .str k (v ++ "") (needle.extract 0 needle.size) e
-  | .strRange v ranges lo hi e => .strRange (v ++ "") (ranges.map fun p => (p.1 + 0, p.2 + 0)) lo hi e
-  | .dateCmp v op swap pre kc e => .dateCmp (v ++ "") op swap (pre.extract 0 pre.size) (kc + 0) e
-  | .general e vs => .general e (vs.map (· ++ ""))
-  | .residual env e vs => .residual env e (vs.map (· ++ ""))
+  | .idEq v c => .idEq (freshStr v) (c.map fun x => UInt64.ofNat x.toNat)
+  | .idEqVar v w => .idEqVar (freshStr v) (freshStr w)
+  | .str k v needle e => .str k (freshStr v) (needle.extract 0 needle.size) e
+  | .strRange v ranges lo hi e => .strRange (freshStr v) (ranges.map fun p => (p.1 + 0, p.2 + 0)) lo hi e
+  | .dateCmp v op swap pre kc e => .dateCmp (freshStr v) op swap (pre.extract 0 pre.size) (kc + 0) e
+  | .general e vs => .general e (vs.map freshStr)
+  | .residual env e vs => .residual env e (vs.map freshStr)
 
 theorem FKind.fresh_eq (f : FKind) : f.fresh = f := by
   cases f with
-  | idEq v c => cases c <;> simp [FKind.fresh]
-  | idEqVar v w => simp [FKind.fresh]
-  | str k v needle e => simp [FKind.fresh, ByteArray.extract_zero_size]
+  | idEq v c => cases c <;> simp [FKind.fresh, freshStr_eq]
+  | idEqVar v w => simp [FKind.fresh, freshStr_eq]
+  | str k v needle e => simp [FKind.fresh, freshStr_eq, ByteArray.extract_zero_size]
   | strRange v ranges lo hi e =>
-    simp only [FKind.fresh, String.append_empty, Nat.add_zero]
+    simp only [FKind.fresh, freshStr_eq, Nat.add_zero]
     congr 1
     conv => rhs; rw [← Array.map_id ranges]
     rfl
-  | dateCmp v op swap pre kc e => simp [FKind.fresh, ByteArray.extract_zero_size]
-  | general e vs => simp [FKind.fresh]
-  | residual env e vs => simp [FKind.fresh]
+  | dateCmp v op swap pre kc e => simp [FKind.fresh, freshStr_eq, ByteArray.extract_zero_size]
+  | general e vs => simp [FKind.fresh, map_freshStr]
+  | residual env e vs => simp [FKind.fresh, map_freshStr]
 
 /-- The overlay context of a divided scan (no overlay: `divide?` refuses a
     scan with one), made by the task that calls it. -/
@@ -3035,7 +3056,7 @@ def countPartM {m : Type → Type} [Monad m] (st : Store m) (spec : ScanSpec) (f
   let spec := spec.fresh
   let fs := fs.map FKind.fresh
   let ox := ox.fresh spec.key
-  let groupVars := groupVars.map (· ++ "")
+  let groupVars := groupVars.map freshStr
   let ((g, _), s) ← scanListM st spec (!fs.isEmpty) (({} : Groups), (fs.map fun _ => ({} : Memo)))
     (countStepM st fs groupVars) metas (sortVarOf spec) ox X
   return (g, s)
@@ -3095,7 +3116,7 @@ def runPlanM {m : Type → Type} [Monad m] (st : Store m) (plan : Plan) (emit : 
       match par, (← divideFor? st par spec streamRangeBlocks).filter (fun d => plan.offset + lim > d.2.2.2) with
       | some p, some (metas, ox, chunks, est) =>
         let total ← st.blockCount spec.perm
-        let ((_, emitted), s) ← p.fold
+        let ((_, emitted), s) ← p.fold true
             (fun v X => streamPartM v spec fs reference plan.outVars (plan.offset + lim) metas ox X) chunks
             (((0 : Nat), (0 : Nat)), ({ blocksTotal := total } : ScanStats))
             fun (acc, s) (pieces, s') => do
@@ -3133,7 +3154,7 @@ def runPlanM {m : Type → Type} [Monad m] (st : Store m) (plan : Plan) (emit : 
         else match par, ← divideFor? st par spec 0 with
         | some p, some (metas, ox, chunks, _) => do
           let total ← st.blockCount spec.perm
-          let (g, s) ← p.fold (fun v X => countPartM v spec fs plan.groupVars metas ox X) chunks
+          let (g, s) ← p.fold false (fun v X => countPartM v spec fs plan.groupVars metas ox X) chunks
             (({} : Groups), ({ blocksTotal := total } : ScanStats))
             fun (g, s) (g', s') => pure (g.merge g', s.add s')
           pure (g, s, s!" in {chunks.length} block ranges ({p.threads} tasks at once at most)")
@@ -3166,7 +3187,7 @@ def runPlanM {m : Type → Type} [Monad m] (st : Store m) (plan : Plan) (emit : 
           let k := plan.offset + plan.limit.getD 0
           let init : Table := Table.empty spec0.outVars
           let total ← st.blockCount spec0.perm
-          let (u, s) ← p.fold (fun v X => topPartM v plan spec0 fs k metas ox X) chunks
+          let (u, s) ← p.fold false (fun v X => topPartM v plan spec0 fs k metas ox X) chunks
             (init, ({ blocksTotal := total } : ScanStats))
             fun (u, s) (t, s') => pure (u.append t, s.add s')
           pure (u, #[s!"pattern 0: {permNames[spec0.perm]!} key {spec0.key.size} estimate {est}; blocks {s.blocksRead} read of {s.blocksSelected} selected of {s.blocksTotal}, frames {s.framesRead}, {s.bytesRead} bytes; rows {s.rowsOut}; first {k} rows of the order kept in each of {chunks.length} block ranges ({p.threads} tasks at once at most): {u.rows} rows"], s.full)
