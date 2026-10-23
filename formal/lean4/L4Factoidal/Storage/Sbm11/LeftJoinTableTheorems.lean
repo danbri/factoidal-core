@@ -359,20 +359,22 @@ theorem off_congr {γ δ : Type} (B : Nat → List γ) (B' : Nat → List δ) (h
   simp only [off, h]
 
 theorem note_run (line : String) (nst : NSt) :
-    ∃ nst', (IdGroup.note (m := Id) line).run nst = pure (PUnit.unit, nst') := ⟨_, rfl⟩
+    ∃ nst', (IdGroup.note (m := Id) line).run nst = pure (PUnit.unit, nst') ∧
+      nst'.vocab = nst.vocab ∧ nst'.localIdx = nst.localIdx := ⟨_, rfl, rfl, rfl⟩
 
 theorem leftJoinTrue_run (cx : NCx Id) (g : GCtx) (l r : Table) (nst : NSt) :
     ∃ nst', (leftJoinCondM cx g l r (.boolLit true)).run nst =
       pure (ljTable (IdJoin.joinIds l r) l (IdGroup.ljSource l.rows
         (IdJoin.joinPairs l r (L4Factoidal.Qlvr.sharedCols l r)).1
-        (Array.replicate (IdJoin.joinPairs l r (L4Factoidal.Qlvr.sharedCols l r)).1.size true)), nst') := by
+        (Array.replicate (IdJoin.joinPairs l r (L4Factoidal.Qlvr.sharedCols l r)).1.size true)), nst') ∧
+      nst'.vocab = nst.vocab ∧ nst'.localIdx = nst.localIdx := by
   unfold leftJoinCondM
   simp only [if_true]
   rw [StateT.run_bind, StateT.run_pure, pure_bind]
   simp only []
   rw [StateT.run_bind]
-  obtain ⟨nst', hn⟩ := note_run _ nst
-  exact ⟨nst', by rw [hn, pure_bind]; rfl⟩
+  obtain ⟨nst', hn, hv1, hv2⟩ := note_run _ nst
+  exact ⟨nst', by rw [hn, pure_bind]; rfl, hv1, hv2⟩
 
 /-- **LeftJoin with the condition `true` on id tables.** For two
     well-formed tables, `leftJoinCondM` with the condition `true` (OPTIONAL

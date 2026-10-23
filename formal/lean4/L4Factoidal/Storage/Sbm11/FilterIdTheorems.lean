@@ -531,10 +531,10 @@ open L4Factoidal.Storage.Sbm11.IdLeaf (CidOk)
 /-- **`=` on ids.** With a dictionary lookup `cid` exact on the ids in `ok`
     (`CidOk`), the id test of `?v = c` (the id of `normalizeTerm c`, no row
     when it has none) is `Term.eqb` of `c` and the decoded id. -/
-theorem eq_ids (cid : Term → Option UInt64) (dec : UInt64 → Term) (ok : UInt64 → Prop)
-    (hcid : ∀ c, CidOk dec ok c (cid c)) (t : Term) (y : UInt64) (hy : ok y) :
+theorem eq_ids (cid : Term → Option UInt64) (dec : UInt64 → Term) (ok : UInt64 → Prop) (t : Term)
+    (hcid : CidOk dec ok (normalizeTerm t) (cid (normalizeTerm t))) (y : UInt64) (hy : ok y) :
     (match cid (normalizeTerm t) with | some x => y == x | none => false) = t.eqb (dec y) := by
-  have h := hcid (normalizeTerm t)
+  have h := hcid
   rw [← eqb_normalize t (dec y)]
   cases e : cid (normalizeTerm t) with
   | some x =>
@@ -550,10 +550,11 @@ theorem eq_ids (cid : Term → Option UInt64) (dec : UInt64 → Term) (ok : UInt
     that answers the id of the term itself, folded (`hcidN`), the id test of
     `sameTerm(?v, c)` is `Term.sameTerm` of the decoded id and `c`. -/
 theorem same_ids (cid : Term → Option UInt64) (dec : UInt64 → Term) (ok : UInt64 → Prop)
-    (hcid : ∀ c, CidOk dec ok c (cid c)) (hcidN : ∀ t x, cid t = some x → dec x = normalizeTerm t)
-    (t : Term) (ht : ∀ a p o, t ≠ .tripleTerm a p o) (y : UInt64) (hy : ok y) :
+    (hcidN : ∀ t x, cid t = some x → dec x = normalizeTerm t)
+    (t : Term) (hcid : CidOk dec ok (normalizeTerm t) (cid (normalizeTerm t)))
+    (ht : ∀ a p o, t ≠ .tripleTerm a p o) (y : UInt64) (hy : ok y) :
     (match cid (normalizeTerm t) with | some x => y == x | none => false) = (dec y).sameTerm t := by
-  have h := hcid (normalizeTerm t)
+  have h := hcid
   have hne : (normalizeTerm t).eqb (dec y) = false → (dec y).sameTerm t = false := by
     intro he
     cases hs : (dec y).sameTerm t
@@ -1113,13 +1114,21 @@ theorem bound_var (dec : UInt64 → Term) (ok : UInt64 → Prop) (t : Table) (ht
     dictionary lookup `cid` is exact on the ids in `ok` (`CidOk`) and answers
     the folded term itself (`hcidN`), and `Term.eqb` of decoded ids in `ok`
     is id equality (`hdec`). -/
-theorem keep_compiled (dec : UInt64 → Term) (ok : UInt64 → Prop) (cid : Term → Option UInt64)
-    (hcid : ∀ c, CidOk dec ok c (cid c)) (hcidN : ∀ t x, cid t = some x → dec x = normalizeTerm t)
+theorem keep_compiled (dec : UInt64 → Term) (ok : UInt64 → Prop) (cid : Term → Option UInt64) (VE : Prop)
+    (hcid : ∀ c, ((cid c).isSome = true ∨ VE) → CidOk dec ok c (cid c))
+    (hcidN : ∀ t x, cid t = some x → dec x = normalizeTerm t)
     (hdec : ∀ x y, ok x → ok y → (dec x).eqb (dec y) = (x == y))
     (t : Table) (ht : t.WF) (i : Nat) (hr : RowIds ok (t.idRow i)) (env : EvalEnv) (cj : Expr) (k : FKind)
-    (hk : KOk cid cj k) (hcj : CjOk cj) (hbl : cj.backendLocal = true) (vs : Array String)
+    (hk : KOk cid cj k) (hve : ∀ v, k = .idEq v none → VE) (hcj : CjOk cj) (hbl : cj.backendLocal = true)
+    (vs : Array String)
     (hvs : residualVars cj = some vs) (hb : ∀ w ∈ vs.toList, ∃ c, t.idx w = some c ∧ t.at c i ≠ unbound) :
     keepOf dec t i k = ebvOrFalse (Expr.evalIn env (decRow dec (t.idRow i)) cj) := by
+  have hcidk : ∀ v c, k = .idEq v (cid c) → CidOk dec ok c (cid c) := by
+    intro v c hkc
+    apply hcid
+    cases e : cid c with
+    | some _ => exact Or.inl rfl
+    | none => exact Or.inr (hve v (by rw [hkc, e]))
   have bv := bound_var dec ok t ht i hr cj hcj vs hvs hb
   have hidEq : ∀ v col c', t.idx v = some col →
       keepOf dec t i (.idEq v c') = (match c' with | some x => t.at col i == x | none => false) := by
@@ -1131,7 +1140,7 @@ theorem keep_compiled (dec : UInt64 → Term) (ok : UInt64 → Prop) (cid : Term
   · have hv : v ∈ cj.refVars := by rcases hform with rfl | rfl <;> simp [Expr.refVars]
     obtain ⟨col, hc, _, hok, hl⟩ := bv v hv
     rw [hidEq v col _ hc]
-    rw [eq_ids cid dec ok hcid tt _ hok]
+    rw [eq_ids cid dec ok tt (hcidk v _ rfl) _ hok]
     have := eq_row env (decRow dec (t.idRow i)) v ce tt _ hce hl
     rcases hform with rfl | rfl
     · exact this.1.symm
@@ -1150,7 +1159,7 @@ theorem keep_compiled (dec : UInt64 → Term) (ok : UInt64 → Prop) (cid : Term
       cases ce <;> simp only [sameTermConst?, reduceCtorEq, Option.some.injEq] at hce
       · subst hce; cases e
       · subst hce; cases e
-    rw [same_ids cid dec ok hcid hcidN tt hsh _ hok]
+    rw [same_ids cid dec ok hcidN tt (hcidk v _ rfl) hsh _ hok]
     have := sameTerm_row env (decRow dec (t.idRow i)) v ce tt _ hce hl
     rcases hform with rfl | rfl
     · exact this.1.symm
@@ -1669,11 +1678,13 @@ def KindOf (env : EvalEnv) (cid : Term → Option UInt64) (t : Table) (cj : Expr
     (`ebvOrFalse (Expr.evalIn env ...)`), and the kind is one `filterKeep_spec`
     covers. Hypotheses: on the dictionary (`CidOk` on `ok`, `hcidN`) and on
     the decoding (`hdec`), and the ids of the rows in `ok`. -/
-theorem kind_sem (dec : UInt64 → Term) (ok : UInt64 → Prop) (cid : Term → Option UInt64)
-    (hcid : ∀ c, CidOk dec ok c (cid c)) (hcidN : ∀ t x, cid t = some x → dec x = normalizeTerm t)
+theorem kind_sem (dec : UInt64 → Term) (ok : UInt64 → Prop) (cid : Term → Option UInt64) (VE : Prop)
+    (hcid : ∀ c, ((cid c).isSome = true ∨ VE) → CidOk dec ok c (cid c))
+    (hcidN : ∀ t x, cid t = some x → dec x = normalizeTerm t)
     (hdec : ∀ x y, ok x → ok y → (dec x).eqb (dec y) = (x == y))
     (t : Table) (ht : t.WF) (hrows : ∀ i, i < t.rows → RowIds ok (t.idRow i))
-    (env : EvalEnv) (cj : Expr) (hcj : CjOk cj) (k : FKind) (hk : KindOf env cid t cj k) :
+    (env : EvalEnv) (cj : Expr) (hcj : CjOk cj) (k : FKind) (hk : KindOf env cid t cj k)
+    (hve : ∀ v, k = .idEq v none → VE) :
     KWf t k ∧ ∀ i, i < t.rows → keepOf dec t i k = ebvOrFalse (Expr.evalIn env (decRow dec (t.idRow i)) cj) := by
   obtain ⟨vs, hvs⟩ : ∃ vs, residualVars cj = some vs := Option.isSome_iff_exists.mp hcj.rv
   rcases hk with rfl | ⟨hbl, hcb, hk⟩
@@ -1683,7 +1694,7 @@ theorem kind_sem (dec : UInt64 → Term) (ok : UInt64 → Prop) (cid : Term → 
   · rw [hvs, Option.getD_some] at hcb
     have hb : ∀ w ∈ vs.toList, ∃ c, t.idx w = some c ∧ ∀ i, i < t.rows → t.at c i ≠ unbound :=
       fun w hw => colBound_spec t w (hcb w hw)
-    refine ⟨?_, fun i hi => keep_compiled dec ok cid hcid hcidN hdec t ht i (hrows i hi) env cj k hk hcj hbl vs hvs
+    refine ⟨?_, fun i hi => keep_compiled dec ok cid VE hcid hcidN hdec t ht i (hrows i hi) env cj k hk hve hcj hbl vs hvs
       (fun w hw => by obtain ⟨c, hc, hne⟩ := hb w hw; exact ⟨c, hc, hne i hi⟩)⟩
     rcases hk with ⟨_, _, _, _, _, rfl⟩ | ⟨_, _, _, rfl⟩ | ⟨_, _, _, _, _, rfl⟩ | ⟨vs', hev, rfl⟩
     · trivial

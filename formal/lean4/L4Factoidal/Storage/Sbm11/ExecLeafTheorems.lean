@@ -262,11 +262,11 @@ theorem unitTable_wf : unitTable.WF := ⟨rfl, fun c hc => by simp [unitTable] a
 theorem bgpM_rows (cx : NCx Id) (cid : Term → Option UInt64) (hid : ∀ t, cx.st.idOf t = pure (cid t))
     (hds : cx.ds = none) (g : GCtx) (T : List IdPath.IdTriple) (hst : BgpStore cx.st (gctxId g) T)
     (tps : List TriplePattern) (htp : ∀ tp ∈ tps, ExecTp tp) (nst : NSt) :
-    ∃ tab nst', (bgpM cx g tps).run nst = pure (tab, nst') ∧ tab.WF ∧ (∀ r ∈ tab.idRows, Nd r) ∧
+    ∃ tab nst', (bgpM cx g tps).run nst = pure (tab, nst') ∧ nst'.vocab = nst.vocab ∧ nst'.localIdx = nst.localIdx ∧ tab.WF ∧ (∀ r ∈ tab.idRows, Nd r) ∧
       IdEquiv tab.idRows (IdLeaf.idBgpFrom T (tps.map (ipat cid)) []) := by
   cases htps : tps with
   | nil =>
-    refine ⟨unitTable, nst, rfl, unitTable_wf, ?_, ?_⟩
+    refine ⟨unitTable, nst, rfl, rfl, rfl, unitTable_wf, ?_, ?_⟩
     · intro r hr; rw [unitTable_idRows, List.mem_singleton] at hr; subst hr; exact List.nodup_nil
     · rw [unitTable_idRows]; exact IdEquiv.refl _
   | cons tp0 rest =>
@@ -299,9 +299,11 @@ theorem bgpM_rows (cx : NCx Id) (cid : Term → Option UInt64) (hid : ∀ t, cx.
     rw [StateT.run_bind, StateT.run_lift, he, pure_bind, pure_bind]
     refine ⟨tab, ?_⟩
     apply Exists.intro
-    refine ⟨?_, hwf, hnd, ?_⟩
+    refine ⟨?_, ?_, ?_, hwf, hnd, ?_⟩
     · simp only [addStats, note, StateT.run_bind, StateT.run_modify, pure_bind, StateT.run_pure]
       rfl
+    · rfl
+    · rfl
     · have hm : pats.toList.map ipatOf = tps.map (ipat cid) := by
         rw [← hpats]
         simp only [Array.toList_map, List.map_map]
@@ -418,7 +420,7 @@ theorem pathM_run (cx : NCx Id) (cid : Term → Option UInt64) (hid : ∀ t, cx.
       (∀ x, (rp.s = .const x ∨ rp.o = .const x) → x ≠ 0) →
       IdPathTable.endOf rp.s = endS idv s → IdPathTable.endOf rp.o = endO idv o →
       ∃ tab how ps, pathTableM (cx.st.withLocal nst.vocab) rp left = pure (tab, how, ps) ∧ P tab) :
-    ∃ tab nst', (IdGroup.pathM cx g s path o left).run nst = pure (tab, nst') ∧ P tab := by
+    ∃ tab nst', (IdGroup.pathM cx g s path o left).run nst = pure (tab, nst') ∧ nst'.vocab = nst.vocab ∧ nst'.localIdx = nst.localIdx ∧ P tab := by
   obtain ⟨a, ha, haok, hae, ham, hac⟩ := endOf_subj cid idv hidv s hs
   obtain ⟨b, hb, hbok, hbe, hbm, hbc⟩ := endOf_obj cid idv hidv o ho
   obtain ⟨ip, hip, hipok⟩ := IdPathEval.resolvePathM_ok cx.st cid hid path
@@ -437,7 +439,7 @@ theorem pathM_run (cx : NCx Id) (cid : Term → Option UInt64) (hid : ∀ t, cx.
     · exact haok
     · exact hbok
   refine ⟨tab, { nst with stats := nst.stats.add ps, lines := nst.lines.push (toString "property path: " ++ toString how) },
-    ?_, hPt⟩
+    ?_, rfl, rfl, hPt⟩
   unfold IdGroup.pathM
   simp only [hds, ha, hb, ← Array.forIn_toList]
   have e0 : ((#[] ++ (List.map (argSlot cid) [a, b]).toArray : Array Slot))[0]! = argSlot cid a := by simp
@@ -492,7 +494,7 @@ theorem pathM_rows (cx : NCx Id) (cid : Term → Option UInt64) (hid : ∀ t, cx
     (hlit : ∀ x ∈ IdPath.idGraphNodes T, IdPathEval.litTag x = some (!isNotLiteral (dec x)))
     (s : PatternSubject) (path : PropertyPath) (o : PatternTerm) (hs : SubjOkP cid s) (ho : ObjOkP cid o)
     (nst : NSt) :
-    ∃ tab nst', (IdGroup.pathM cx g s path o unitTable).run nst = pure (tab, nst') ∧ tab.WF ∧
+    ∃ tab nst', (IdGroup.pathM cx g s path o unitTable).run nst = pure (tab, nst') ∧ nst'.vocab = nst.vocab ∧ nst'.localIdx = nst.localIdx ∧ tab.WF ∧
       (∀ r ∈ tab.idRows, Nd r) ∧ IdEquiv tab.idRows (pathRows cid dec idv T s path o) := by
   have hst' := bgpStore_withLocal cx.st nst.vocab _ T hst
   refine pathM_run cx cid hid hds g idv hidv hcid0 s path o hs ho nst unitTable _ ?_
@@ -521,7 +523,7 @@ theorem pathM_join_rows (cx : NCx Id) (cid : Term → Option UInt64) (hid : ∀ 
     (hlit : ∀ x ∈ IdPath.idGraphNodes T, IdPathEval.litTag x = some (!isNotLiteral (dec x)))
     (s : PatternSubject) (path : PropertyPath) (o : PatternTerm) (hs : SubjOkP cid s) (ho : ObjOkP cid o)
     (nst : NSt) (left : Table) (hleft : left.WF) :
-    ∃ tab nst', (IdGroup.pathM cx g s path o left).run nst = pure (tab, nst') ∧ tab.WF ∧
+    ∃ tab nst', (IdGroup.pathM cx g s path o left).run nst = pure (tab, nst') ∧ nst'.vocab = nst.vocab ∧ nst'.localIdx = nst.localIdx ∧ tab.WF ∧
       IdEquiv (IdJoin.idJoin left.idRows tab.idRows) (IdJoin.idJoin left.idRows (pathRows cid dec idv T s path o)) := by
   have hst' := bgpStore_withLocal cx.st nst.vocab _ T hst
   refine pathM_run cx cid hid hds g idv hidv hcid0 s path o hs ho nst left _ ?_
@@ -645,7 +647,7 @@ theorem exec_bgp_equiv (hpm : ∀ k, k < 4 → PermMem cx.st k (prb k) (ms k)) (
       ∀ r ∈ (execLeaves cx nst gof).bgp a b, Nd r := by
   have hst : BgpStore cx.st (gctxId (gof a)) (listingsOf gof prb ms spo a) :=
     ⟨fun k hk => ⟨prb k, ms k, hpm k hk, hg.2 ⟨k, hk⟩⟩, hscan⟩
-  obtain ⟨tab, nst', hrun, _, hnd, heq⟩ := bgpM_rows cx cid hid hds (gof a) _ hst b htp nst
+  obtain ⟨tab, nst', hrun, _, _, _, hnd, heq⟩ := bgpM_rows cx cid hid hds (gof a) _ hst b htp nst
   have hrows : (execLeaves cx nst gof).bgp a b = tab.idRows := by
     show (match ((bgpM cx (gof a) b).run nst).run with | .ok p => p.1.idRows | .error _ => []) = _
     rw [hrun]
@@ -680,7 +682,7 @@ theorem exec_path_equiv (hpm : ∀ k, k < 4 → PermMem cx.st k (prb k) (ms k)) 
     obtain ⟨t, ht, e | e⟩ := hx
     · rw [← e]; exact htag _ (graphDec_sok dec sok _ a hg.1 t ht).1
     · rw [← e]; exact htag _ (graphDec_sok dec sok _ a hg.1 t ht).2
-  obtain ⟨tab, nst', hrun, _, hnd, heq⟩ := pathM_rows cx cid hid hds (gof a) _ hst dec idv hidv hcid0 hlit
+  obtain ⟨tab, nst', hrun, _, _, _, hnd, heq⟩ := pathM_rows cx cid hid hds (gof a) _ hst dec idv hidv hcid0 hlit
     s path o hs ho nst
   have hrows : (execLeaves cx nst gof).path a s path o = tab.idRows := by
     show (match ((IdGroup.pathM cx (gof a) s path o unitTable).run nst).run with
@@ -777,7 +779,8 @@ theorem join_path_exec (hpm : ∀ k, k < 4 → PermMem cx.st k (prb k) (ms k)) (
     (a : Graph) (s : PatternSubject) (path : PropertyPath) (o : PatternTerm)
     (hg : StoreGraph dec sok (listingsOf gof prb ms) a) (hs : SubjOkP cid s) (ho : ObjOkP cid o)
     (tl : Table) (htl : tl.WF) (nst1 : NSt) :
-    ∃ tp nst2, (IdGroup.pathM cx (gof a) s path o tl).run nst1 = pure (tp, nst2) ∧ (IdJoin.joinIds tl tp).WF ∧
+    ∃ tp nst2, (IdGroup.pathM cx (gof a) s path o tl).run nst1 = pure (tp, nst2) ∧
+      nst2.vocab = nst1.vocab ∧ nst2.localIdx = nst1.localIdx ∧ (IdJoin.joinIds tl tp).WF ∧
       IdEquiv (IdJoin.joinIds tl tp).idRows (IdJoin.idJoin tl.idRows ((execLeaves cx nst gof).path a s path o)) := by
   have hst : BgpStore cx.st (gctxId (gof a)) (listingsOf gof prb ms spo a) :=
     ⟨fun k hk => ⟨prb k, ms k, hpm k hk, hg.2 ⟨k, hk⟩⟩, hscan⟩
@@ -788,13 +791,13 @@ theorem join_path_exec (hpm : ∀ k, k < 4 → PermMem cx.st k (prb k) (ms k)) (
     obtain ⟨t, ht, e | e⟩ := hx
     · rw [← e]; exact htag _ (graphDec_sok dec sok _ a hg.1 t ht).1
     · rw [← e]; exact htag _ (graphDec_sok dec sok _ a hg.1 t ht).2
-  obtain ⟨tp, nst2, hrun, hwf, heq⟩ := pathM_join_rows cx cid hid hds (gof a) _ hst dec idv hidv hcid0 hlit
+  obtain ⟨tp, nst2, hrun, hv1, hv2, hwf, heq⟩ := pathM_join_rows cx cid hid hds (gof a) _ hst dec idv hidv hcid0 hlit
     s path o hs ho nst1 tl htl
   obtain ⟨hjwf, hjr⟩ := TableTheorems.joinIds_rows tl tp htl hwf
   obtain ⟨hE, _⟩ := exec_path_equiv cx nst gof prb ms cid dec idv sok hpm hscan hds hid hidv hcid0 htag
     a s path o hg hs ho
   have hnd := BgpTableTheorems.nd_idRows tl htl.nodup
-  refine ⟨tp, nst2, hrun, hjwf, ?_⟩
+  refine ⟨tp, nst2, hrun, hv1, hv2, hjwf, ?_⟩
   exact (BgpTableTheorems.idEquiv_of_rowsEq_perm hjr (List.Perm.refl _)).trans
     (heq.trans (BgpTableTheorems.idJoin_equiv (IdEquiv.refl _) hE.symm hnd hnd))
 
@@ -823,7 +826,7 @@ theorem where_allowed_exec_join (env : EvalEnv) (ds : Dataset)
       t.WF ∧ IdGroup.Allowed env ds (.join l (.propertyPath s path o)) a (t.idRows.map (decRow dec)) ∧
       ∀ r ∈ t.idRows, RowIds ok r := by
   obtain ⟨hgl, hs, ho⟩ := hleaf
-  obtain ⟨tp, nst3, hrun, hjwf, hjeq⟩ := join_path_exec cx nst2 gof prb ms cid dec idv sok hpm hscan hds hid
+  obtain ⟨tp, nst3, hrun, _, _, hjwf, hjeq⟩ := join_path_exec cx nst2 gof prb ms cid dec idv sok hpm hscan hds hid
     hidv hcid0 htag a s path o hgl.1 hs ho tl htl nst2
   obtain ⟨hlr1, hlr2⟩ := leafRel_exec cx nst2 gof prb ms cid dec idv sok ok env ds hpm hscan hds hid hdec hsok hcid
     hidv hcid0 htag (.propertyPath s path o) a ⟨hgl, hs, ho⟩

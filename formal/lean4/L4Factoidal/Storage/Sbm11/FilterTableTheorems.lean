@@ -171,6 +171,14 @@ theorem Fa2.all_eq {α β : Type} {R : α → β → Prop} (f : α → Bool) (g 
     simp only [List.all_cons]
     rw [hfg _ List.mem_cons_self _ h1, Fa2.all_eq f g h2 (fun a ha b hr => hfg a (List.mem_cons_of_mem _ ha) b hr)]
 
+theorem Fa2.all_eq' {α β : Type} {R : α → β → Prop} (f : α → Bool) (g : β → Bool) :
+    ∀ {l : List α} {l' : List β}, Fa2 R l l' → (∀ a ∈ l, ∀ b ∈ l', R a b → g b = f a) → l'.all g = l.all f
+  | [], [], .nil, _ => rfl
+  | _ :: _, _ :: _, .cons h1 h2, hfg => by
+    simp only [List.all_cons]
+    rw [hfg _ List.mem_cons_self _ List.mem_cons_self h1, Fa2.all_eq' f g h2
+      (fun a ha b hb hr => hfg a (List.mem_cons_of_mem _ ha) b (List.mem_cons_of_mem _ hb) hr)]
+
 theorem forIn_nm' {α β : Type} {f : α → β → NM Id (ForInStep β)} (nst : NSt) {xs : List α} {b0 : β}
     {F : NM Id β} (hF : forIn xs b0 f = F) (P : Nat → β → Prop) (h0 : P 0 b0)
     (hs : ∀ k (hk : k < xs.length) b, P k b → ∃ b', (f xs[k] b).run nst = pure (.yield b', nst) ∧ P (k + 1) b') :
@@ -194,24 +202,31 @@ theorem forall₂_take_succ {α β : Type} (R : α → β → Prop) (xs : List �
 theorem filterKindsM_spec (cx : NCx Id) (cid : Term → Option UInt64) (hid : ∀ t, cx.st.idOf t = pure (cid t))
     (t : Table) (c : Expr) (hc : FilterOk c) (nst : NSt) :
     ∃ fs, (filterKindsM cx t c).run nst = pure ((fs, #[], false), nst) ∧
-      Fa2 (KindOf cx.env cid t) (conjuncts c).toList fs.toList := by
+      Fa2 (KindOf cx.env cid t) (conjuncts c).toList fs.toList ∧
+      ∀ k ∈ fs.toList, ∀ v, k = .idEq v none → nst.vocab.isEmpty = true := by
   unfold filterKindsM
   simp only []
   rw [StateT.run_bind, ← Array.forIn_toList]
   generalize hF : forIn (m := NM Id) (conjuncts c).toList ((#[] : Array FKind), (#[] : Array SemiBlock), false) _ = F
   obtain ⟨⟨fs, semis, none_⟩, h, hsem, hnone, hP⟩ := forIn_nm' nst hF
     (fun k (s : Array FKind × Array SemiBlock × Bool) => s.2.1 = #[] ∧ s.2.2 = false ∧
-      Fa2 (KindOf cx.env cid t) ((conjuncts c).toList.take k) s.1.toList)
-    ⟨rfl, rfl, by simp; exact Fa2.nil⟩ (by
-      intro k hk ⟨fs, semis, none_⟩ ⟨hs, hn, hf⟩
-      simp only [] at hs hn hf
+      Fa2 (KindOf cx.env cid t) ((conjuncts c).toList.take k) s.1.toList ∧
+      ∀ k' ∈ s.1.toList, ∀ v, k' = .idEq v none → nst.vocab.isEmpty = true)
+    ⟨rfl, rfl, by simp; exact Fa2.nil, by simp⟩ (by
+      intro k hk ⟨fs, semis, none_⟩ ⟨hs, hn, hf, hne⟩
+      simp only [] at hs hn hf hne
       subst hs hn
       have hcj := hc.2 _ (List.getElem_mem hk)
       have hstep : ∀ k', KindOf cx.env cid t (conjuncts c).toList[k] k' →
-          Fa2 (KindOf cx.env cid t) ((conjuncts c).toList.take (k + 1)) (fs.push k').toList := by
-        intro k' hk'
+          (∀ v, k' = .idEq v none → nst.vocab.isEmpty = true) →
+          Fa2 (KindOf cx.env cid t) ((conjuncts c).toList.take (k + 1)) (fs.push k').toList ∧
+          ∀ k'' ∈ (fs.push k').toList, ∀ v, k'' = .idEq v none → nst.vocab.isEmpty = true := by
+        intro k' hk' hv
         rw [Array.toList_push]
-        exact forall₂_take_succ _ _ _ k hk k' hf hk'
+        refine ⟨forall₂_take_succ _ _ _ k hk k' hf hk', fun k'' hk'' => ?_⟩
+        rcases List.mem_append.mp hk'' with h | h
+        · exact hne k'' h
+        · rw [List.mem_singleton] at h; subst h; exact hv
       generalize hcd : (conjuncts c).toList[k] = cj at hcj hstep ⊢
       obtain ⟨vs, hvs⟩ := Option.isSome_iff_exists.mp hcj.rv
       have hef := hcj.ef
@@ -241,10 +256,10 @@ theorem filterKindsM_spec (cx : NCx Id) (cid : Term → Option UInt64) (hid : �
             rw [StateT.run_bind]
             simp only [StateT.run_get, pure_bind]
             split
-            · exact ⟨_, rfl, rfl, rfl, hstep _ (Or.inr ⟨hbl, hcb', hK⟩)⟩
-            · exact ⟨_, rfl, rfl, rfl, hstep _ (Or.inl rfl)⟩
-          · exact ⟨_, rfl, rfl, rfl, hstep _ (Or.inr ⟨hbl, hcb', hK⟩)⟩
-        · exact ⟨_, rfl, rfl, rfl, hstep _ (Or.inl rfl)⟩)
+            · next hvemp => exact ⟨_, rfl, rfl, rfl, hstep _ (Or.inr ⟨hbl, hcb', hK⟩) fun _ _ => hvemp⟩
+            · exact ⟨_, rfl, rfl, rfl, hstep _ (Or.inl rfl) fun _ e => by cases e⟩
+          · next hne0 => exact ⟨_, rfl, rfl, rfl, hstep _ (Or.inr ⟨hbl, hcb', hK⟩) fun v e => absurd e (hne0 v)⟩
+        · exact ⟨_, rfl, rfl, rfl, hstep _ (Or.inl rfl) fun _ e => by cases e⟩)
   simp only [] at hsem hnone hP
   subst hsem hnone
   rw [List.take_length] at hP
@@ -280,20 +295,22 @@ theorem termOf_local (st : Store Id) (dec : UInt64 → Term) (ok : UInt64 → Pr
 /-- **The kept rows.** For conjuncts classified as `KindOf` says, the tests
     `filterKeep` runs are covered (`KWf`) and their conjunction in row `i` is
     the reference FILTER of the condition on the decoded row. -/
-theorem keep_all (dec : UInt64 → Term) (ok : UInt64 → Prop) (cid : Term → Option UInt64)
-    (hcid : ∀ c, CidOk dec ok c (cid c)) (hcidN : ∀ t x, cid t = some x → dec x = normalizeTerm t)
+theorem keep_all (dec : UInt64 → Term) (ok : UInt64 → Prop) (cid : Term → Option UInt64) (VE : Prop)
+    (hcid : ∀ c, ((cid c).isSome = true ∨ VE) → CidOk dec ok c (cid c))
+    (hcidN : ∀ t x, cid t = some x → dec x = normalizeTerm t)
     (hdec : ∀ x y, ok x → ok y → (dec x).eqb (dec y) = (x == y))
     (t : Table) (ht : t.WF) (hrows : ∀ i, i < t.rows → RowIds ok (t.idRow i)) (env : EvalEnv) (c : Expr)
-    (hc : FilterOk c) (fs : Array FKind) (hfs : Fa2 (KindOf env cid t) (conjuncts c).toList fs.toList) (a : Graph) :
+    (hc : FilterOk c) (fs : Array FKind) (hfs : Fa2 (KindOf env cid t) (conjuncts c).toList fs.toList)
+    (hve : ∀ k ∈ fs.toList, ∀ v, k = .idEq v none → VE) (a : Graph) :
     (∀ k ∈ fs.toList, KWf t k) ∧
       ∀ i, i < t.rows → fs.toList.all (keepOf dec t i) = IdGroup.filterFn env c a (decRow dec (t.idRow i)) := by
   refine ⟨fun k hk => ?_, fun i hi => ?_⟩
   · obtain ⟨cj, hcj, hK⟩ := hfs.mem_right k hk
-    exact (kind_sem dec ok cid hcid hcidN hdec t ht hrows env cj (hc.2 cj hcj) k hK).1
+    exact (kind_sem dec ok cid VE hcid hcidN hdec t ht hrows env cj (hc.2 cj hcj) k hK (hve k hk)).1
   · rw [filterFn_eq env c a _ hc.1, (conjuncts_spec env _ c).1]
-    apply Fa2.all_eq _ _ hfs
-    intro cj hcj k hK
-    exact (kind_sem dec ok cid hcid hcidN hdec t ht hrows env cj (hc.2 cj hcj) k hK).2 i hi
+    apply Fa2.all_eq' _ _ hfs
+    intro cj hcj k hk' hK
+    exact (kind_sem dec ok cid VE hcid hcidN hdec t ht hrows env cj (hc.2 cj hcj) k hK (hve k hk')).2 i hi
 
 theorem rows_of (t : Table) (ok : UInt64 → Prop) (hrows : ∀ r ∈ t.idRows, RowIds ok r) :
     ∀ i, i < t.rows → RowIds ok (t.idRow i) := fun i hi =>
@@ -340,33 +357,35 @@ theorem applyFilters_ok (st : Store Id) (dec : UInt64 → Term) (t : Table) (ht 
     rows of `t` that pass the reference FILTER (`IdGroup.filterFn`), in
     order. -/
 theorem filterM_run (cx : NCx Id) (cid : Term → Option UInt64) (dec : UInt64 → Term) (ok : UInt64 → Prop)
-    (hid : ∀ t, cx.st.idOf t = pure (cid t)) (hcid : ∀ c, CidOk dec ok c (cid c))
+    (nst : NSt) (hid : ∀ t, cx.st.idOf t = pure (cid t))
+    (hcid : ∀ c, ((cid c).isSome = true ∨ nst.vocab.isEmpty = true) → CidOk dec ok c (cid c))
     (hcidN : ∀ t x, cid t = some x → dec x = normalizeTerm t)
     (hdec : ∀ x y, ok x → ok y → (dec x).eqb (dec y) = (x == y))
-    (htermOf : ∀ x, ok x → cx.st.termOf x = pure (dec x)) (hloc : ∀ x, ok x → tagOf x ≠ tagLocal)
+    (hterm : ∀ x, ok x → (cx.st.withLocal nst.vocab).termOf x = pure (dec x))
     (env : EvalEnv) (henv : cx.env = env) (g : GCtx) (t : Table) (ht : t.WF)
-    (hrows : ∀ r ∈ t.idRows, RowIds ok r) (c : Expr) (hc : FilterOk c) (a : Graph) (nst : NSt) :
+    (hrows : ∀ r ∈ t.idRows, RowIds ok r) (c : Expr) (hc : FilterOk c) (a : Graph) :
     ∃ t' nst', (filterM cx g t c).run nst = pure (t', nst') ∧ t'.WF ∧
-      t'.idRows = t.idRows.filter (fun r => IdGroup.filterFn env c a (decRow dec r)) := by
-  obtain ⟨fs, hk, hfs⟩ := filterKindsM_spec cx cid hid t c hc nst
+      t'.idRows = t.idRows.filter (fun r => IdGroup.filterFn env c a (decRow dec r)) ∧
+      nst'.vocab = nst.vocab ∧ nst'.localIdx = nst.localIdx := by
+  obtain ⟨fs, hk, hfs, hve⟩ := filterKindsM_spec cx cid hid t c hc nst
   rw [henv] at hfs
   have hrows' := rows_of t ok hrows
-  obtain ⟨hkw, hkeep⟩ := keep_all dec ok cid hcid hcidN hdec t ht hrows' env c hc fs hfs a
+  obtain ⟨hkw, hkeep⟩ := keep_all dec ok cid _ hcid hcidN hdec t ht hrows' env c hc fs hfs hve a
   unfold filterM
   rw [StateT.run_bind, hk, pure_bind]
   simp only [Bool.false_eq_true, if_false]
   rw [StateT.run_bind]
   have hls : (IdGroup.localStore cx).run nst = pure (cx.st.withLocal nst.vocab, nst) := rfl
   rw [hls, pure_bind, StateT.run_bind]
-  have hterm : ∀ i, i < t.rows → ∀ p ∈ t.idRow i, (cx.st.withLocal nst.vocab).termOf p.2 = pure (dec p.2) :=
-    fun i hi p hp => termOf_local cx.st dec ok htermOf hloc nst.vocab p.2 (hrows' i hi p hp)
-  obtain ⟨t1, ms', ha, hwf, hrw⟩ := applyFilters_ok (cx.st.withLocal nst.vocab) dec t ht hterm fs hkw
+  have hterm' : ∀ i, i < t.rows → ∀ p ∈ t.idRow i, (cx.st.withLocal nst.vocab).termOf p.2 = pure (dec p.2) :=
+    fun i hi p hp => hterm p.2 (hrows' i hi p hp)
+  obtain ⟨t1, ms', ha, hwf, hrw⟩ := applyFilters_ok (cx.st.withLocal nst.vocab) dec t ht hterm' fs hkw
     (fun r => IdGroup.filterFn env c a (decRow dec r)) (fun i hi => hkeep i hi)
   have hl : (liftE (applyFilters (cx.st.withLocal nst.vocab) fs (fs.map fun _ => {}) t) : NM Id _).run nst =
       pure ((t1, ms'), nst) := by
     unfold liftE; rw [StateT.run_lift, ha]; rfl
   rw [hl, pure_bind]
-  exact ⟨t1, _, rfl, hwf, hrw⟩
+  exact ⟨t1, _, rfl, hwf, hrw, rfl, rfl⟩
 
 end filter
 
@@ -382,16 +401,18 @@ open L4Factoidal.Storage.Sbm11.LeftJoinTableTheorems (ljTable)
     mask (`filterKeep`): entry `k` is the reference FILTER of the condition on
     merged row `k`. -/
 theorem leftJoinCond_run (cx : NCx Id) (cid : Term → Option UInt64) (dec : UInt64 → Term) (ok : UInt64 → Prop)
-    (hid : ∀ t, cx.st.idOf t = pure (cid t)) (hcid : ∀ c, CidOk dec ok c (cid c))
+    (nst : NSt) (hid : ∀ t, cx.st.idOf t = pure (cid t))
+    (hcid : ∀ c, ((cid c).isSome = true ∨ nst.vocab.isEmpty = true) → CidOk dec ok c (cid c))
     (hcidN : ∀ t x, cid t = some x → dec x = normalizeTerm t)
     (hdec : ∀ x y, ok x → ok y → (dec x).eqb (dec y) = (x == y))
-    (htermOf : ∀ x, ok x → cx.st.termOf x = pure (dec x)) (hloc : ∀ x, ok x → tagOf x ≠ tagLocal)
+    (hterm : ∀ x, ok x → (cx.st.withLocal nst.vocab).termOf x = pure (dec x))
     (env : EvalEnv) (henv : cx.env = env) (g : GCtx) (l r : Table)
     (hm : (IdJoin.joinIds l r).WF) (hrows : ∀ q ∈ (IdJoin.joinIds l r).idRows, RowIds ok q)
-    (c : Expr) (hc : FilterOk c) (htriv : c ≠ .boolLit true) (a : Graph) (nst : NSt) :
+    (c : Expr) (hc : FilterOk c) (htriv : c ≠ .boolLit true) (a : Graph) :
     ∃ keep nst', (leftJoinCondM cx g l r c).run nst =
       pure (ljTable (IdJoin.joinIds l r) l (IdGroup.ljSource l.rows
         (IdJoin.joinPairs l r (L4Factoidal.Qlvr.sharedCols l r)).1 keep), nst') ∧
+      nst'.vocab = nst.vocab ∧ nst'.localIdx = nst.localIdx ∧
       keep.size = (IdJoin.joinIds l r).rows ∧
       ∀ k, k < (IdJoin.joinIds l r).rows →
         keep[k]! = IdGroup.filterFn env c a (decRow dec ((IdJoin.joinIds l r).idRow k)) := by
@@ -399,17 +420,18 @@ theorem leftJoinCond_run (cx : NCx Id) (cid : Term → Option UInt64) (dec : UIn
       (IdJoin.joinPairs l r (L4Factoidal.Qlvr.sharedCols l r)).1
       (IdJoin.joinPairs l r (L4Factoidal.Qlvr.sharedCols l r)).2 := rfl
   generalize hM : IdJoin.joinIds l r = M at hm hrows ⊢
-  obtain ⟨fs, hk, hfs⟩ := filterKindsM_spec cx cid hid M c hc nst
+  obtain ⟨fs, hk, hfs, hve⟩ := filterKindsM_spec cx cid hid M c hc nst
   rw [henv] at hfs
   have hrows' := rows_of M ok hrows
-  obtain ⟨hkw, hkeep⟩ := keep_all dec ok cid hcid hcidN hdec M hm hrows' env c hc fs hfs a
-  have hterm : ∀ i, i < M.rows → ∀ p ∈ M.idRow i, (cx.st.withLocal nst.vocab).termOf p.2 = pure (dec p.2) :=
-    fun i hi p hp => termOf_local cx.st dec ok htermOf hloc nst.vocab p.2 (hrows' i hi p hp)
-  obtain ⟨keep, ms', hfk, hsz, hkk⟩ := filterKeep_spec (cx.st.withLocal nst.vocab) dec M hm hterm fs hkw _
+  obtain ⟨hkw, hkeep⟩ := keep_all dec ok cid _ hcid hcidN hdec M hm hrows' env c hc fs hfs hve a
+  have hterm' : ∀ i, i < M.rows → ∀ p ∈ M.idRow i, (cx.st.withLocal nst.vocab).termOf p.2 = pure (dec p.2) :=
+    fun i hi p hp => hterm p.2 (hrows' i hi p hp)
+  obtain ⟨keep, ms', hfk, hsz, hkk⟩ := filterKeep_spec (cx.st.withLocal nst.vocab) dec M hm hterm' fs hkw _
     (memoOk_empty dec fs)
   have hrun : ∃ nst', (leftJoinCondM cx g l r c).run nst =
       pure (ljTable M l (IdGroup.ljSource l.rows
-        (IdJoin.joinPairs l r (L4Factoidal.Qlvr.sharedCols l r)).1 keep), nst') := by
+        (IdJoin.joinPairs l r (L4Factoidal.Qlvr.sharedCols l r)).1 keep), nst') ∧
+      nst'.vocab = nst.vocab ∧ nst'.localIdx = nst.localIdx := by
     unfold leftJoinCondM
     simp only []
     rw [hmj] at hM
@@ -432,7 +454,7 @@ theorem leftJoinCond_run (cx : NCx Id) (cid : Term → Option UInt64) (dec : UIn
             pure ((keep, ms'), nst) := by
           unfold liftE; rw [StateT.run_lift, hfk]; rfl
         rw [hl, pure_bind]
-        exact ⟨_, rfl⟩
+        exact ⟨_, rfl, rfl, rfl⟩
       · intro _ h _ _ _; exact absurd rfl h
     all_goals intro hc _ hk hfs hkeep
     all_goals simp only [Bool.false_eq_true, if_false]
@@ -446,9 +468,9 @@ theorem leftJoinCond_run (cx : NCx Id) (cid : Term → Option UInt64) (dec : UIn
           pure ((keep, ms'), nst) := by
         unfold liftE; rw [StateT.run_lift, hfk]; rfl
       rw [hl, pure_bind]
-      exact ⟨_, rfl⟩
-  obtain ⟨nst', hr⟩ := hrun
-  exact ⟨keep, nst', hr, hsz, fun k hk' => by rw [hkk k hk', hkeep k hk']⟩
+      exact ⟨_, rfl, rfl, rfl⟩
+  obtain ⟨nst', hr, hv1, hv2⟩ := hrun
+  exact ⟨keep, nst', hr, hv1, hv2, hsz, fun k hk' => by rw [hkk k hk', hkeep k hk']⟩
 
 end lj
 
