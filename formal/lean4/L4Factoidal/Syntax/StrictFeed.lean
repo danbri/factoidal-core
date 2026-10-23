@@ -22,9 +22,11 @@ byte chunks:
 
 What is kept between chunks: the walk's own state (prefixes, base, the
 unfinished line or statement candidate, the offset) and the consumer's state.
-The command line's consumers are a list of the chunk's triples (written as
-canonical N-Quads lines, then dropped) and, for the count and for N-Quads,
-the indexed accumulator `FastDataset` (the set of distinct triples).
+The command line's consumers are `DedupAcc` (`RDF/StreamSet.lean`: the triples
+of the chunk that no earlier triple repeats, written as canonical N-Quads
+lines and then dropped, with the graph of the triples seen so far kept) and,
+for the count and for N-Quads, the indexed accumulator `FastDataset` (the set
+of distinct triples).
 
 Theorems, in this file and in `TurtleChunkFold.lean`:
 

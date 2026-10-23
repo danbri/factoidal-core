@@ -288,6 +288,17 @@ theorem queryDatasetOf_eq (ds : Dataset) (sparql : String) (base : Option String
   rw [withOpsDataset_eq]
   cases parseNQuadsFast (Dataset.toCanonicalNQuads ds) .rdf12 <;> rfl
 
+/-- `queryDatasetOf` for a dataset that is a set of quads, as the parsers give it. -/
+def queryDatasetOfSet (ds : Dataset) (h : ds.IsSet) (sparql : String) (base : Option String := none)
+    (now : Option String := none) : String :=
+  withOpsSetDataset .rdf12 ds h (fun d => queryParsedDataset d sparql base now)
+
+theorem queryDatasetOfSet_eq (ds : Dataset) (h : ds.IsSet) (sparql : String)
+    (base : Option String) (now : Option String) :
+    queryDatasetOfSet ds h sparql base now = queryDatasetOf ds sparql base now := by
+  unfold queryDatasetOfSet queryDatasetOf
+  rw [withOpsSetDataset_eq]
+
 def updateDatasetOf (ds : Dataset) (updateText : String) (base : Option String := none)
     (now : Option String := none) (version : SparqlVersion := .v11) : String :=
   withOpsDataset .rdf12 ds (fun d => updateParsedDataset d updateText base now version)
