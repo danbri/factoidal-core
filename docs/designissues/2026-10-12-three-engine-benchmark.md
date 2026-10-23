@@ -1697,3 +1697,11 @@ index-array pushes `pairsRow` 17; scan 21, of which the frame decoder
 lookup and the `IAcc` steps). Kernel page zeroing of fresh memory
 (`clear_page_erms`) is 26 percent of all samples, spread over both. None of
 these is a cost of the shared arithmetic.
+
+Gates (exit codes 0): `lake build` (1985 jobs); `tools/lean-unbuilt-modules.py`
+(938 of 938 modules reached), `lean-tail-recursion-audit.py`,
+`lean-csimp-reach.py`, `lean-registry-audit.py` with `--gate`;
+`lean-hygiene-audit.py` clean; `tests/sbm11/run.sh` with
+`FACTOIDAL_TESTING_ROOT=third_party/testing` 3,131 pass, 0 fail, 28
+expected-fail (out of 3,159); `SBM11_THREADS=4 tests/sbm11/census.sh` 605
+executed, 605 matched the reference engine (438 on the id path).
