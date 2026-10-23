@@ -701,3 +701,146 @@ matched the reference engine, 0 differed); `tools/lean-tail-recursion-audit.py
 --gate`, `tools/lean-unbuilt-modules.py --gate`,
 `tools/lean-registry-audit.py --gate`, `tools/lean-csimp-reach.py --gate` exit
 0; `tools/lean-hygiene-audit.py` (no `--gate` option) clean; no `sorry` added.
+
+## Stage 1e: range workers and the remaining costs (2026-10-23)
+
+Issue https://github.com/danbri/factoidal/issues/799, key result KR 1.2 of
+https://github.com/danbri/factoidal/issues/875. Owner constraint, 2026-10-22,
+verbatim: "Yes lets come back to allocator later". No allocator option or
+environment variable was set or changed. Commits on branch
+`batch3/kr12-speed`: `5fdf2a9e`, `71ad4e92`, `f3022eae`, `a2cdf15d` and this
+record.
+
+### 1e.1 Result
+
+4 threads against 1 thread, before (`origin/main` `271fbcae`) and after
+(this branch), the 1b.6 method: `tests/sbm11/bench-threads.sh` with
+`ROUNDS=8 REPEAT=7 THREADS="1 4"` (DBpedia with `VERIFY=none`), round 1
+dropped, median over 7 processes of each process's warm median; RSS is the
+largest VmHWM. Machine: 4 vCPU (`nproc` 4), kernel 6.18.44-fc-v153 (the
+container restarted during this work and the kernel changed; both columns
+were measured on the new kernel, one after the other, 2026-10-23 04:20 to
+04:33 UTC); load average 1.3 to 1.4. Raw CSV:
+`.claude-runs/kr12-final-{before,after}-{oly,dbp}.csv` (not in the
+repository).
+
+| Query | 1 thread ms before / after | 4 threads ms before / after | 4/1 before | 4/1 after | RSS MB 1 / 4 threads after | RSS 4/1 after |
+| --- | ---: | ---: | ---: | ---: | ---: | ---: |
+| q21 | 100.3 / 95.3 | 46.9 / 31.7 | 0.47 | 0.33 | 52 / 92 | 1.76 |
+| q19 | 33.2 / 34.4 | 24.4 / 19.6 | 0.73 | 0.57 | 70 / 116 | 1.65 |
+| d10 | 10.2 / 9.9 | 6.5 / 5.6 | 0.64 | 0.56 | 26 / 50 | 1.92 |
+| q07 | 5.05 / 4.95 | 5.39 / 5.58 | 1.07 | 1.13 | 38 / 57 | 1.51 |
+| d17 | 0.33 / 0.32 | 0.34 / 0.32 | 1.02 | 1.02 | 22 / 22 | 1.00 |
+
+q21 meets 0.4. q19, d10, q07 and d17 do not. The RSS limit (at most 2 times
+1 thread) holds for all five. The 1-thread code is the same before and after
+except the page-limit reads (1e.2 item 2); the 1-thread differences are run
+to run variation. Single processes vary by up to 2 times between their
+fastest and median runs at 4 threads (q19: medians 13.8 to 22.4 ms over four
+processes of 7 runs), so a ratio is not reliable to better than about 0.05.
+
+Answers: `tests/sbm11/threads.sh` exit 0 after each commit (gate fixture 140
+and 140 identical, olympics 21 and 2 and 2, DBpedia 19; DBpedia against the
+three-engine record: equal 76, different 0).
+
+### 1e.2 Method
+
+1. **Range workers** (`Harness/Sbm11Query.parFold`). Before: one pool task
+   per block range, each with a new view of the session and an empty page
+   cache. The streamed path has ranges of one block (stage 1d), so q19 made
+   about 70 tasks per query, and each filled a new cache from `taskPages`.
+   After: at most `threads` worker tasks per fold. A worker takes the next
+   range from a shared counter (ranges are taken in range order), keeps its
+   view and page cache for all its ranges, and puts the result in the range's
+   slot; the parent folds the slots in range order and takes each result out
+   of its slot (a resolved `IO.Promise` keeps its value while the promise is
+   reachable: with results in promises, q21 at 4 threads held all its rows,
+   121 MB peak RSS against 81 MB). A bounded fold (the streamed path) gives
+   range `k` a permit only after range `k - 2 × threads` is folded
+   (`parWindowFactor` 2; 1 per thread: q19 19.0 ms and q21 37.0 ms against
+   15.2 and 28.9 ms, single processes of 21 runs). The counted and ORDER BY
+   ... LIMIT paths (small results) give every range a permit at once
+   (`IdQuery.Par.fold`'s `bounded` argument).
+2. **Page limits read once.** `SBM11_PAGES` and `SBM11_TASK_PAGES` were read
+   from the environment on every page insert (`getenv`: 1.3 percent of q19
+   at 4 threads). They are read at `openSession` (`Session.pageLimit`,
+   `Session.taskPageLimit`).
+3. **Shared pages without `dictLock`.** `Session.sharedPage` reads a ready
+   page from `taskPages` with `IO.Ref.get` (a persistent tree map: the get
+   gives the map as it was at one moment) and takes the lock only for a page
+   that is missing or being loaded. `perf record -e sched:sched_switch`: 82
+   percent of the context switches of q19 at 4 threads were waits for
+   `dictLock` in this function before; most remaining switches are in the
+   loads under `--verify merkle`, which still run under the lock.
+4. **A page is copied on its second use.** A worker's first use of a page
+   reads the shared page and keeps no copy (`Session.onceSeen`, a set the
+   worker makes); the second use copies it into the worker's cache.
+   Reading every page shared (no copy): q19 at 4 threads 26 ms against 18
+   ms (reference counts on pages that all workers read).
+5. **New strings in the task copies.** `s ++ ""` compiles to `s` (checked
+   with `lean -c`, Lean 4.33.1), so `ScanSpec.fresh`, `FKind.fresh` and
+   `countPartM` kept the shared variable-name strings that every task reads
+   in every block. `IdQuery.freshStr` (`String.ofList s.toList`,
+   `@[noinline]`) makes a new object. d10 at 4 threads: the reference counts
+   of the group variable names were 5 percent of the profile (0.5 percent at
+   1 thread); after, they are not in the profile. The skill
+   `lean4-performance` said `++ ""` makes a copy from 2026-10-13; corrected
+   in the same landing.
+
+### 1e.3 What is proved and what is tested only
+
+- `IdQuery.freshStr_eq` (`freshStr s = s`) and `IdQuery.map_freshStr`; with
+  them `ScanSpec.fresh_eq` and `FKind.fresh_eq` stay proved. `#print
+  axioms`: `propext`, `Classical.choice`, `Quot.sound`.
+- The merge theorems of stages 1b and 1d hold for the ranges of any size and
+  are unchanged: the workers fold the same ranges in the same order.
+- Tested only: that `parFold` folds every range once in range order, frees
+  each result, and finishes its workers after a failure;
+  `tests/sbm11/threads.sh` (1, 2, 4 and 8 threads, byte-identical answers and
+  stderr byte counts with `SBM11_PAGES=1000000`), `tests/sbm11/run.sh` and the
+  census at 4 threads.
+
+### 1e.4 Tried and not kept
+
+- A page cache per worker slot kept for the life of the session (a
+  `Std.TreeMap`, because a cache that two threads reach over its life is MT
+  and a hash map that is MT is copied on every insert): q19 at 4 threads 18 to
+  22 ms, q21 38 to 48 ms (a tree look-up per id).
+- Larger worker caches (`SBM11_TASK_PAGES` 1,024 to 8,192): no faster, peak
+  RSS of q19 at 4 threads 150 to 157 MB.
+- 4 and 64 counted ranges per thread for d10 (to spread its 137 read blocks
+  over more ranges): no change in time (5.5 to 6.5 ms at 4 threads either
+  way).
+
+### 1e.5 What remains (https://github.com/danbri/factoidal/issues/961)
+
+- q07 (5 ms): at 4 threads the parent thread has 36 percent of the CPU
+  samples (about 2.8 ms per run): the plan, the two scans below the range
+  minimum, the merge and hash joins, the ORDER BY keys and the rendering. The
+  divided scans with candidates are 48 percent of the 1-thread time. 0.4
+  needs the joins and the ORDER BY keys divided.
+- d17: answered from the PRM1 entries (commit `ddcd9e54`); there is no scan
+  to divide. A decision for the owner: drop it from KR 1.2 or replace it.
+- d10 and q19: `clear_page_erms` (first touch of fresh memory in the worker
+  heaps) is the largest cost that 1 thread does not have (q19: +877 samples
+  of 14,359 at 4 threads; d10: +459 of 12,212). It is allocator behaviour,
+  left for the deferred allocator work.
+- d10 and q19: at 4 threads CPU time is 1.37 and 1.47 times the 1-thread CPU
+  time, and the workers are busy about half the wall time.
+- No timing harness compares these ratios with a target, so there is no
+  expected-failure row.
+
+### 1e.6 Gates
+
+On commit `a2cdf15d` (exit codes read):
+
+| Gate | Result |
+| --- | --- |
+| `tests/sbm11/run.sh` | exit 0: 3,131 pass, 0 fail, 28 expected-fail (out of 3,159) |
+| `tests/sbm11/threads.sh` | exit 0: all answers identical (1e.1) |
+| `SBM11_THREADS=4 tests/sbm11/census.sh` | exit 0: 605 executed, 605 matched the reference engine, 0 differed; 4 refused at query |
+| `tools/land-gates.sh` | exit 0: `lake build`, `lean-unbuilt-modules.py --gate`, `lean-tail-recursion-audit.py --gate`, wasm, native-smoke 377 pass, 0 fail, 4 xfail (out of 381), cli-smoke 151 pass, 0 fail, 5 xfail (out of 156), npm 588 pass, 0 fail, 2 skipped, hub 479 pass, 0 fail, engine-compare 7 pass, 0 fail, the LWS, Solid and authorization suites, host-purity-lint 40 pass, 0 fail (out of 40) |
+| `sorry`, `native_decide`, `axiom`, `maxHeartbeats` in the Lean diff | none |
+
+Census rows: "matched the reference engine" is row agreement over the same
+input, not conformance.
