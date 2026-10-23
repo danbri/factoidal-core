@@ -216,7 +216,7 @@ def batchesOf (src : QuadSource) : IO (Array Batch) := do
     | some b => out := out.push b
   pure out
 
-def flat (bs : Array Batch) : Array Quad := bs.foldl (fun acc b => acc ++ b.quads) #[]
+def flat (bs : Array Batch) : Array QuadSource.Quad := bs.foldl (fun acc b => acc ++ b.quads) #[]
 
 /-- The graph names that the batches declare, in order. -/
 def graphsOf (bs : Array Batch) : Array Subject := bs.foldl (fun acc b => acc ++ b.graphs) #[]
@@ -308,7 +308,7 @@ def readDir (dir : String) : IO (Array (String × ByteArray)) := do
   pure out
 
 /-- `parts` slices of the array, as nearly equal as possible. -/
-def slices (qs : Array Quad) (parts : Nat) : Array (Array Quad) :=
+def slices (qs : Array QuadSource.Quad) (parts : Nat) : Array (Array QuadSource.Quad) :=
   (Array.range parts).map fun i => qs.extract (qs.size * i / parts) (qs.size * (i + 1) / parts)
 
 def packFrom (sources : Array (IO QuadSource)) (dir : String) (runTerms : Nat) : IO Unit := do

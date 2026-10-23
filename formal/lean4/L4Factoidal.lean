@@ -440,6 +440,8 @@ import L4Factoidal.Storage.Sbm11.FileGenTheorems
 import L4Factoidal.Storage.Sbm11.PackSpec
 import L4Factoidal.Storage.Sbm11.PackSpecTheorems
 import L4Factoidal.Storage.Sbm11.PackSpecSomeTheorems
+import L4Factoidal.Storage.Sbm11.ColumnFastTheorems
+import L4Factoidal.Storage.Sbm11.PackStream
 import L4Factoidal.Storage.Sbm11.ExprLocalTheorems
 import L4Factoidal.Storage.Sbm11.FilterIdTheorems
 import L4Factoidal.Storage.Sbm11.FilterTableTheorems
