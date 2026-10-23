@@ -594,6 +594,7 @@ XFAIL: dict[str, str] = {
     "query-memory-fstar": "https://github.com/danbri/factoidal/issues/729",
     "iso-noniso-search": "https://github.com/danbri/factoidal/issues/877",
     "sbm11-replay-insert-time": "https://github.com/danbri/factoidal/issues/879",
+    "owl-consistent-cl": "https://github.com/danbri/factoidal/issues/960",
     "ntriples-long-line-uescape-memory": "https://github.com/danbri/factoidal/issues/949",
     "ntriples-long-line-bnode-dot-memory": "https://github.com/danbri/factoidal/issues/949",
     "ntriples12-long-line-memory": "https://github.com/danbri/factoidal/issues/949",
