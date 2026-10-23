@@ -439,6 +439,7 @@ import L4Factoidal.Storage.Sbm11.MemGenWhereTheorems
 import L4Factoidal.Storage.Sbm11.FileGenTheorems
 import L4Factoidal.Storage.Sbm11.PackSpec
 import L4Factoidal.Storage.Sbm11.PackSpecTheorems
+import L4Factoidal.Storage.Sbm11.PackSpecSomeTheorems
 import L4Factoidal.Storage.Sbm11.ExprLocalTheorems
 import L4Factoidal.Storage.Sbm11.FilterIdTheorems
 import L4Factoidal.Storage.Sbm11.FilterTableTheorems

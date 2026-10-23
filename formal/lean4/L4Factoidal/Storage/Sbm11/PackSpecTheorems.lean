@@ -30,9 +30,8 @@ its offset (`decodeBlockAt_encode`, with `decodeColumnAt_frame` and
 `decodeColumnAt_le`); the blocks of `cutRows` flatten to the rows
 (`cutRows_flatten`, `encodeBlocks_spec`, `packPerm_spec`).
 
-Not proved here: that `packSpec` is `some` (it is `none` when an encoder
-refuses: a term with no key, more than `2^60` keys, a block or a PRM1 list
-outside the encoders' bounds; tested: `some` on every census input); that
+`PackSpecSomeTheorems.packSpec_some`: `packSpec` is `some` on a checkable
+domain (block size, input size, every term with an id). Not proved here: that
 the `IO` packer writes the bytes of `packSpec` (tested byte for byte by
 `l4sbm11 packspec-check`); that `Allowed` is invariant under a permutation
 of a graph's triples (needed to state the answer for the input `Dataset`
