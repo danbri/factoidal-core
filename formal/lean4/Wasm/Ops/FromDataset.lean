@@ -23,6 +23,7 @@ Targeted imports only — never the L4Factoidal umbrella (see
 -/
 import Wasm.Ops.Support
 import L4Factoidal.RDF.DatasetNormalize
+import L4Factoidal.RDF.NormalizeSet
 
 namespace L4Wasm.Ops
 
@@ -44,5 +45,19 @@ theorem withOpsDataset_eq (mode : Mode) (ds : Dataset) (k : Dataset → String) 
        | .ok ds' => k ds') := by
   unfold withOpsDataset
   rw [datasetForOps_eq]
+
+/-- `withOpsDataset` for a dataset that is a set of quads (RDF 1.1 Concepts section 3):
+`datasetForOpsSet` does not index the triples a second time
+(`RDF/NormalizeSet.lean`). -/
+def withOpsSetDataset (mode : Mode) (ds : Dataset) (h : ds.IsSet) (k : Dataset → String) : String :=
+  match datasetForOpsSet mode ds h with
+  | .error e => errJson (fmtParseError e)
+  | .ok ds' => k ds'
+
+/-- `withOpsSetDataset` answers what `withOpsDataset` answers. -/
+theorem withOpsSetDataset_eq (mode : Mode) (ds : Dataset) (h : ds.IsSet) (k : Dataset → String) :
+    withOpsSetDataset mode ds h k = withOpsDataset mode ds k := by
+  unfold withOpsSetDataset withOpsDataset
+  rw [datasetForOpsSet_eq]
 
 end L4Wasm.Ops

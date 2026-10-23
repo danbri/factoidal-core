@@ -35,6 +35,14 @@ def jsonLdReader : ExtraReader := fun tag text base =>
 def parseTextToDataset (text formatTag baseIRI : String) : Except String Dataset :=
   parseTextToDatasetBy jsonLdReader text formatTag baseIRI
 
+/-- `parseTextToDataset`, with the proof that the dataset is a set of quads
+(`parseTextToDatasetBy_isSet`). -/
+def parseTextToDatasetSet (text formatTag baseIRI : String) :
+    Except String { ds : Dataset // ds.IsSet } :=
+  match h : parseTextToDataset text formatTag baseIRI with
+  | .ok ds => .ok ⟨ds, parseTextToDatasetBy_isSet jsonLdReader text formatTag baseIRI ds h⟩
+  | .error e => .error e
+
 /-- `parseToDatasetJson(text, formatTag, baseIRI)` with JSON-LD. -/
 def parseToDatasetJson (text formatTag baseIRI : String) : String :=
   parseToDatasetJsonBy jsonLdReader text formatTag baseIRI

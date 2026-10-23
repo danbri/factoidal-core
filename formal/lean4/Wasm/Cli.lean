@@ -37,6 +37,7 @@ output, row order included, is unchanged.
 import Wasm.Abi
 import Wasm.Dispatch
 import L4Factoidal.RDF.Source
+import L4Factoidal.RDF.StreamSet
 import L4Factoidal.RDF.SinkJsonLd
 import L4Factoidal.Syntax.LenientFeed
 import L4Factoidal.Syntax.StrictFeed
@@ -132,6 +133,22 @@ def readDataset (pathOpt : Option String) (formatTag baseIri : String) :
   match ← readInput pathOpt with
   | .error e => pure (.error e)
   | .ok text => pure (Ops.parseTextToDataset text formatTag baseIri)
+
+/-- `readDataset`, with the proof that the dataset is a set of quads
+(`Ops.parseTextToDatasetSet`): the verbs that hand the dataset to an `Ops.*OfSet`
+function use it, and the operation does not index the triples a second time. -/
+def readDatasetSet (pathOpt : Option String) (formatTag baseIri : String) :
+    IO (Except String { ds : Dataset // ds.IsSet }) := do
+  if formatTag == "tdb2" then
+    match pathOpt with
+    | none | some "-" => return .error "--format tdb2 needs a database directory"
+    | some dir =>
+      match ← L4Factoidal.Tdb2.readDatabaseNQuads dir with
+      | .error e => return .error e
+      | .ok text => return Ops.parseTextToDatasetSet text "nquads" baseIri
+  match ← readInput pathOpt with
+  | .error e => pure (.error e)
+  | .ok text => pure (Ops.parseTextToDatasetSet text formatTag baseIri)
 
 /-- Resolve a `--foo FILE` / `--foo-string TEXT` pair (exactly one of
 the two) into the text it names — shared by `query` and `update`.
@@ -607,11 +624,13 @@ def driveSource {α : Type} (path : String) (fmt : RdfFormat) (mode : Mode) (bas
       | .error e => pure (.error (← failParse e))
       | .ok acc => pure (.ok acc)
 
-/-- Write the triples a chunk completed (newest first in `accRev`) and leave an
-empty list in the reader; `printed` counts them. -/
-def writeChunk (printed : IO.Ref Nat) (rd : Source.ByteReader (List Triple)) :
-    IO (Source.ByteReader (List Triple)) := do
-  let (rd', accRev) := rd.withAcc (fun acc => ([], acc))
+/-- Write the triples a chunk completed that no earlier triple repeats (newest
+first in `fresh`, `StreamSet.lean`) and empty `fresh`, keeping the seen graph;
+`printed` counts the triples written. RDF 1.1 Concepts section 3: the output
+is a set, as the whole-file output is. -/
+def writeChunk (printed : IO.Ref Nat) (rd : Source.ByteReader DedupAcc) :
+    IO (Source.ByteReader DedupAcc) := do
+  let (rd', accRev) := rd.withAcc DedupAcc.drain
   writeTriples accRev
   printed.modify (· + accRev.length)
   pure rd'
@@ -621,12 +640,13 @@ count. -/
 def streamStrictLines (path : String) (fmt : RdfFormat) (mode : Mode) (emit : Bool) : IO StrictOutcome := do
   let printed ← IO.mkRef 0
   if fmt == .nt && emit then
-    -- The triples of each chunk are written and dropped.
-    match ← driveSource path .nt mode none "" true Source.collect ([] : List Triple) (writeChunk printed) with
+    -- The triples of each chunk that no earlier triple repeats are written and
+    -- dropped; the seen graph stays (`dedupStep`).
+    match ← driveSource path .nt mode none "" true dedupStep ({} : DedupAcc) (writeChunk printed) with
     | .error .failed => pure (.done 1)
     | .error .whole => pure (.whole (← printed.get) false)
-    | .ok accRev =>
-        writeTriples accRev
+    | .ok st =>
+        writeTriples st.fresh
         IO.println ""
         pure (.done 0)
   else
@@ -667,11 +687,11 @@ def streamStrictTurtle (path : String) (mode : Mode) (base : String) (emit : Boo
   if p.hasDoubleLt then pure (.whole 0 true) else
   let printed ← IO.mkRef 0
   if emit then
-    match ← driveSource path .turtle mode baseOpt pfx false Source.collect ([] : List Triple) (writeChunk printed) with
+    match ← driveSource path .turtle mode baseOpt pfx false dedupStep ({} : DedupAcc) (writeChunk printed) with
     | .error .failed => pure (.done 1)
     | .error .whole => pure (.whole (← printed.get) true)
-    | .ok accRev =>
-        writeTriples accRev
+    | .ok st =>
+        writeTriples st.fresh
         IO.println ""
         pure (.done 0)
   else
@@ -707,8 +727,11 @@ def strictWhole (path format base : String) (emit : Bool) (printed : Nat) (turtl
         -- they are its first `printed`.
         let (mode, _) := Ops.resolveModeAndTag format
         let baseOpt : Option String := if base == "" then none else some base
-        let walked := StrictFeed.walkPrefix
+        let walkedRaw := StrictFeed.walkPrefix
           (TurtleChunkFoldState.init (freshBnodePrefixText text) prependReverse [] baseOpt mode) text
+        -- The streamed output is a set: the `printed` triples written are the first
+        -- `printed` triples of the set of the walk's triples (`StreamSet.lean`).
+        let walked := (Dataset.toSet { default := walkedRaw, named := [] }).default
         if turtle && ds.named.isEmpty && printed ≤ walked.length &&
             walked.take printed == ds.default.take printed then
           let out ← IO.getStdout
@@ -961,9 +984,9 @@ def queryCmd (args : List String) : IO UInt32 := do
     | .ok queryBase =>
       let format := (s.value? "--format").getD "turtle"
       let base := (s.value? "--base").getD ""
-      match ← readDataset s.positional[0]? format base with
+      match ← readDatasetSet s.positional[0]? format base with
       | .error e => IO.eprintln e; pure 1
-      | .ok ds =>
+      | .ok ⟨ds, hds⟩ =>
         -- SPARQL 1.1 §17.4.5.1: `NOW()` is one instant for the whole query
         -- execution. The clock is read here, at the edge, once, and passed to
         -- the pure op (https://github.com/danbri/factoidal/issues/743).
@@ -975,10 +998,10 @@ def queryCmd (args : List String) : IO UInt32 := do
         -- https://github.com/danbri/factoidal/issues/792 item 1)
         let answer :=
           if s.hasBool "--sparql12" then
-            withOpsDataset .rdf12 ds (fun d =>
+            withOpsSetDataset .rdf12 ds hds (fun d =>
               queryParsedDatasetWith d (some (L4Factoidal.SPARQL.StoreDataset.indexedDatasetBackend d)) sparql
                 (version := .v12) (base := queryBase) (now := some now))
-          else Ops.queryDatasetOf ds sparql queryBase (some now)
+          else Ops.queryDatasetOfSet ds hds sparql queryBase (some now)
         match ← parseEnvelope answer with
         | none => pure 1
         | some j => printQueryResult j (s.hasBool "--table")
