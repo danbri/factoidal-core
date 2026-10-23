@@ -1102,8 +1102,13 @@ def parFold (ss : Session) (nWorkers window : Nat) (fixed : Bool := false) {α �
     if let some j := parentAt then
       let mut go := true
       while go do
-        let ready ← match slots[k]? with
-          | some c => liftIO (return (← c.get).isSome)
+        -- the promise, not the slot: `IO.Ref.get` on a ref that another
+        -- thread writes takes the value out and puts it back, so a write
+        -- between the two is lost (the runtime's `lean_st_ref_get`); a get
+        -- here lost a range's result about once in 2,000 folds ("its worker
+        -- stopped", then a hang at exit with the pool still running)
+        let ready ← match results[k]? with
+          | some p => liftIO (IO.hasFinished p.result?)
           | none => pure true
         if ready then go := false
         else
