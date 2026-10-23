@@ -11,10 +11,15 @@ sources define it on this run. It stops with an error (exit 1) when:
 * a named declaration does not exist;
 * a named declaration depends on an axiom other than propext,
   Classical.choice, Quot.sound (`sorryAx` included);
-* a status disagrees with its fields: `proved` needs a `Stage` value, a
-  contract and theorems; `assumed` needs an `IOStage` value and an IO
-  assumption; `tested` needs a suite and no stage; `missing` has no stage, no
-  contract and no suite.
+* a status disagrees with its fields (`Entry.statusError` in
+  `Dataflow/Registry.lean`): `proved` needs a `Stage` value, a contract and
+  theorems; `assumed` needs an `IOStage` value and an IO assumption; `tested`
+  needs a suite, no stage and no contract; `missing` has no stage, no
+  contract, no suite and no IO assumption.
+
+With `DATAFLOW_REGISTRY=negative` it checks `negativeRegistry`
+(`Dataflow/RegistryTests.lean`) instead; every entry there must stop it
+(`tests/dataflow/run.sh`).
 
 Output: one line per entry between `BEGIN-INVENTORY` and `END-INVENTORY`,
 fields separated by a tab: area, dir, stage, wire in, wire out, contract,
@@ -22,6 +27,7 @@ status, theorems, IO assumptions, tests, note.
 -/
 import Lean
 import L4Factoidal.Dataflow.Registry
+import L4Factoidal.Dataflow.RegistryTests
 
 open Lean Elab Command
 open L4Factoidal.Dataflow
@@ -39,12 +45,23 @@ def resultHead (env : Environment) (n : Name) : Option Name := do
 
 def clean (s : String) : String := (s.replace "\t" " ").replace "\n" " "
 
+/-- The kind of the declaration a `stage` field names. -/
+def stageKind (env : Environment) (n : Name) : StageKind :=
+  if n.isAnonymous then .none
+  else match resultHead env n with
+    | some h => if h == ``Stage then .stage else if h == ``IOStage then .ioStage else .other
+    | Option.none => .other
+
 #eval show CommandElabM Unit from do
   let env ← getEnv
-  if registry.isEmpty then
+  -- `DATAFLOW_REGISTRY=negative`: the entries of `RegistryTests.lean`, each of
+  -- which must stop the report (tests/dataflow/run.sh)
+  let which ← (IO.getEnv "DATAFLOW_REGISTRY" : IO (Option String))
+  let entries := if which == some "negative" then negativeRegistry else registry
+  if entries.isEmpty then
     throwError "dataflow registry is empty"
   let mut errs : Array String := #[]
-  for e in registry do
+  for e in entries do
     let named := ([e.stage, e.contract] ++ e.theorems ++ e.ioAssumptions).filter (fun n => !n.isAnonymous)
     for n in named do
       if !env.contains n then
@@ -54,27 +71,13 @@ def clean (s : String) : String := (s.replace "\t" " ").replace "\n" " "
         for a in axs do
           if !allowedAxioms.contains a then
             errs := errs.push s!"{e.area}: {n} depends on axiom {a}"
-    match e.status with
-    | .proved =>
-      if e.stage.isAnonymous || e.contract.isAnonymous || e.theorems.isEmpty then
-        errs := errs.push s!"{e.area}: proved needs a stage, a contract and theorems"
-      else if resultHead env e.stage != some ``Stage then
-        errs := errs.push s!"{e.area}: {e.stage} is not a Stage"
-    | .assumed =>
-      if e.ioAssumptions.isEmpty then
-        errs := errs.push s!"{e.area}: assumed needs a named IO assumption"
-      else if resultHead env e.stage != some ``IOStage then
-        errs := errs.push s!"{e.area}: {e.stage} is not an IOStage"
-    | .tested =>
-      if e.tests.isEmpty || !e.stage.isAnonymous then
-        errs := errs.push s!"{e.area}: tested needs a suite and no stage"
-    | .missing =>
-      if !e.stage.isAnonymous || !e.contract.isAnonymous || !e.tests.isEmpty then
-        errs := errs.push s!"{e.area}: missing has no stage, no contract and no suite"
+    match e.statusError (stageKind env e.stage) with
+    | some why => errs := errs.push s!"{e.area}: {why}"
+    | Option.none => pure ()
   if !errs.isEmpty then
     throwError "dataflow registry check failed:\n{"\n".intercalate errs.toList}"
   IO.println "BEGIN-INVENTORY"
-  for e in registry do
+  for e in entries do
     let fields := [e.area, e.dir, nameField e.stage, e.wireIn, e.wireOut, nameField e.contract,
       e.status.label, listField (e.theorems.map Name.toString),
       listField (e.ioAssumptions.map Name.toString), listField e.tests, e.note]

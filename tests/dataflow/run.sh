@@ -1,7 +1,36 @@
 #!/usr/bin/env bash
-# Dataflow inventory drift test (https://github.com/danbri/factoidal/issues/975, phase A3).
-# Regenerates the inventory from the Lean registry and fails when
-# docs/dataflow-inventory.md differs from it.
+# Dataflow inventory tests (https://github.com/danbri/factoidal/issues/975).
+#
+# 1. Negative test: the report program run on `negativeRegistry`
+#    (formal/lean4/L4Factoidal/Dataflow/RegistryTests.lean), where every entry
+#    has a status that disagrees with its fields, must stop with exit 1 and
+#    print an error line for every entry.
+# 2. Drift test: regenerate the inventory from the Lean registry and fail
+#    when docs/dataflow-inventory.md differs from it.
 set -euo pipefail
 here="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
+lean="$here/formal/lean4"
+
+(cd "$lean" && timeout 600 lake build L4Factoidal.Dataflow.RegistryTests >/dev/null)
+rc=0
+out="$(cd "$lean" && DATAFLOW_REGISTRY=negative timeout 600 lake env lean ../../tools/dataflow-inventory.lean 2>&1)" || rc=$?
+if [ "$rc" -ne 1 ]; then
+  printf "%s\n" "$out"
+  echo "dataflow negative test: expected exit 1 from the report on negativeRegistry, got $rc" >&2
+  exit 1
+fi
+if printf "%s\n" "$out" | grep -q "BEGIN-INVENTORY"; then
+  printf "%s\n" "$out"
+  echo "dataflow negative test: the report printed an inventory for negativeRegistry" >&2
+  exit 1
+fi
+for i in 1 2 3 4 5 6 7 8 9; do
+  if ! printf "%s\n" "$out" | grep -q "^negative $i:"; then
+    printf "%s\n" "$out"
+    echo "dataflow negative test: no error line for negative entry $i" >&2
+    exit 1
+  fi
+done
+echo "dataflow negative test: the report stopped on all 9 negative entries"
+
 python3 "$here/tools/dataflow-inventory.py" --check

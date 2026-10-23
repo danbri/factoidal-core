@@ -63,8 +63,9 @@ namespace L4Factoidal.Dataflow
 /-! ## Wire types -/
 
 /-- A document at the system boundary: its bytes, its media type (for example
-`text/turtle`, or a format label that `RDF.formatOfLabel` accepts), and the id
-of its source (a path or a URL). The source id is the scope of the blank-node
+`text/turtle; charset=utf-8`; the empty string when it is absent, then
+`RDF.formatOfDocument` reads the registered extension of the source), and the
+id of its source (a path or a URL). The source id is the scope of the blank-node
 labels of the document (RDF 1.1 Concepts section 3.4); no parser contract
 uses it yet (phase C of issue 975). -/
 structure Document where

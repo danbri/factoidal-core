@@ -11,12 +11,14 @@ existing theorem; the only new lemmas are hand-over facts about the wire types
 
 | stage | in → out | contract | from |
 |---|---|---|---|
-| `decodeStage` | `Document` → `RdfFormat × String` | `DecodeContract`: the label maps to the format, the text is the UTF-8 decoding of the bytes | `String.fromUTF8?` (core) |
+| `decodeStage` | `Document` → `RdfFormat × String` | `DecodeContract`: the media type (or, when it is absent, the registered extension of the source) gives the format, the text is the UTF-8 decoding of the bytes | `RDF.formatOfDocument`, `String.fromUTF8?` (core) |
 | `parseStage` | `RdfFormat × String` → `Dataset` | `ParseContract`: a set, with the denotation of the raw parse | `Source.parseDocument_set`, `Dataset.memQuad_toSet` |
 | `sbm11PackStage` | `Dataset` → `MemGen × FileGen` | `PackContract`: the generation denotes the dataset, the files hold the bytes the encoders write, and the generation answers as the dataset | `den_packSpec`, `packSpec_written`, `packSpec_check`, `AllowedPerm.allowed_perm` |
 | `sbm11Disk` (IO) | `FileGen` → `FileGen` | `ReadsWritten`: the bytes read are the bytes written | named assumption |
 | `sbm11WhereStage` | `MemGen × FileGen` → harness output | `WhereContract`: the WHERE answer is an answer SPARQL 1.1 allows over the generation | `harness_where_allowed_file` |
+| `sbm11DecodeStage` | harness output → `SolutionSeq` | `DecodeRowsContract`: the rows decoded with any decoder that agrees with the output store | `decodeRowsM_run` |
 | `plannerSelectStage` | `Dataset` → `SolutionSeq` | `PlannerSelectContract`: the answer over the kept entries is the answer over all entries | `plannerSoundnessSelect` |
+| `sbm11SelectedRead` (IO) | `MemGen × FileGen` → `Dataset` | `SelectedAgrees`: after the restriction, the dataset read is the generation's | named assumption |
 | `proofCheckStage` | `FPP0.Bundle` → `Claim` | `CheckContract`: accept implies the claim is derivable from the merge | `checkBundle_merge` |
 | `rdfsClosureStage` | `Graph` → `Graph` | `RdfsEntails`: the closure is RDFS-entailed | `fullClosure_entails` |
 
@@ -24,7 +26,11 @@ existing theorem; the only new lemmas are hand-over facts about the wire types
 
 `documentToWhere` is `decodeStage`, then `parseStage`, then `sbm11PackStage`,
 then `sbm11Disk` on the files, then `sbm11WhereStage`.
-`documentToWhere_sound` states what a successful run gives. Its premises:
+`documentToWhere_sound` states what a successful run gives.
+`documentToSolutions` adds `sbm11DecodeStage`; `documentToSolutions_sound`
+ends at `SolutionSeq`. `sbm11PlannerSelect` is the reference fallback of
+`l4sbm11 query`: `sbm11SelectedRead`, then `plannerSelectStage`
+(`sbm11PlannerSelect_sound`). The premises of `documentToWhere_sound`:
 
 * `ReadsWritten` (named IO assumption, `sbm11Disk.Realised readBack`);
 * the parameters of the WHERE stage: `plan.nested = some p` and
@@ -37,14 +43,14 @@ then `sbm11Disk` on the files, then `sbm11WhereStage`.
 
 ## Hand-over findings
 
-1. Media type. `Document.mediaType` is mapped by `RDF.formatOfLabel`, which
-   accepts format labels and only one IANA media type
-   (`application/ld+json`). `text/turtle`, `application/n-triples`,
-   `application/n-quads`, `application/trig` and `application/rdf+xml` give no
-   format. No Lean function of the RDF layer maps media types to `RdfFormat`
-   (`SPARQL/GraphStoreService.lean` and the Solid modules hold their own
-   lists). `decodeStage` therefore refuses a `text/turtle` document
-   (`InstancesTests.lean`).
+1. Media type (closed). `decodeStage` uses `RDF.formatOfDocument`
+   (`RDF/MediaType.lean`): the six registered media types, parameters
+   allowed, and the registered extension of the source only when the media
+   type is absent. `decodeParse_mediaType`: a known media type gives the
+   format whose parser the parse stage calls. The shipped CLI and harness
+   paths take format labels (`formatOfLabel`) and do not read a media type,
+   so no runtime path changed. `SPARQL/GraphStoreService.lean`,
+   `SPARQL/Protocol.lean` and the Solid modules keep their own lists.
 2. Blank-node scope. `Document.source` is not an input of any parser
    contract. Blank nodes are labels; two documents that use `_:b` give the
    same term. Phase C of issue 975.
@@ -56,25 +62,33 @@ then `sbm11Disk` on the files, then `sbm11WhereStage`.
    and its own `normTriple`. No parser theorem gives it, and a document with
    `"x"@EN` breaks it (`InstancesTests.lean`). So the end-to-end answer over
    the parsed dataset is conditional on that premise.
-4. Id table → solution sequence. The WHERE stage returns the id table and
-   `F.store.withLocal s.vocab`. The decoded answer of the theorem is
-   `t.idRows.map (decRow (decV G.dec s.vocab))`, where `s` is the evaluation
-   state, which the run does not return, and `G.dec` is the in-memory
-   decoder. No theorem says that `(F.store.withLocal s.vocab).termOf` decodes
-   as `decV G.dec s.vocab`. So the hand-over from the store's output to the
-   `SolutionSeq` wire type is not a stage; the contract names the decoded
-   rows with an existential `s`.
+4. Id table → solution sequence (closed). The WHERE stage's output carries
+   the store with the query-local vocabulary, and that is enough:
+   `sbm11DecodeStage` runs `decodeRowsM` on it (the shipped nested path), and
+   `documentToSolutions_sound` proves that the decoded rows are
+   `t.idRows.map (decRow (decV G.dec s.vocab))`, the sequence that `WhereOk`
+   allows (`termOf_withLocal`, `store_written`, `mem_htermOf`, `mem_hloc`).
 5. Reasoners take one graph. `rdfsClosureStage` maps `Graph` to `Graph`;
    there is no stage from `Dataset` (RDF 1.1 Semantics defines entailment on
    graphs; a dataset regime is a choice, not stated here).
-6. Planner stage input. `plannerSelectStage` runs over
-   `indexedDatasetBackend dS`, a `Dataset` in memory. Its contract compares
-   two datasets (`dS`, `dE`); there is no stage from the SBM11 files to it.
+6. Planner stage input (partly closed). The planner SELECT stage is on the
+   shipped path: the reference fallback of `l4sbm11 query` reads a dataset
+   from the generation (`selectedDataset`) and runs it. `sbm11PlannerSelect`
+   composes the read (IO, named assumption `SelectedAgrees`) with
+   `plannerSelectStage`; `sbm11PlannerSelect_sound` gives the planner answer
+   over `G.denote`. Missing: a pure model of `selectedDataset` over `FileGen`
+   with a proof of `SelectedAgrees`; the planner theorem needs non-empty
+   named graphs, and the read keeps a named graph that the predicate
+   selection empties; and no theorem relates the planner answer over
+   `G.denote` to the id path's answer or to the answer over the parsed
+   dataset (`G.den = ds.den` is equality of denotations, not of lists).
 
 No `sorry`, no `axiom`, no `native_decide`, no `partial`.
 -/
 import L4Factoidal.Dataflow.Stage
+import L4Factoidal.RDF.MediaType
 import L4Factoidal.RDF.Source
+import L4Factoidal.Storage.Sbm11.SubSelectTableTheorems
 import L4Factoidal.Storage.Sbm11.DenotationTheorems
 import L4Factoidal.Storage.Sbm11.FileGenTheorems
 import L4Factoidal.Storage.PlannerSoundness
@@ -96,10 +110,11 @@ open L4Factoidal.Storage.Sbm11.AllowedPerm
 
 /-! ## Decode: bytes to text -/
 
-/-- The document's media type gives the format, and the text is the UTF-8
-decoding of its bytes. -/
+/-- The document's media type gives the format (the registered extension of
+its source when the media type is absent: `RDF.formatOfDocument`), and the
+text is the UTF-8 decoding of its bytes. -/
 def DecodeContract (d : Document) (out : RdfFormat × String) : Prop :=
-  formatOfLabel d.mediaType = some out.1 ∧ out.2.toUTF8 = d.bytes
+  formatOfDocument d.mediaType d.source = some out.1 ∧ out.2.toUTF8 = d.bytes
 
 theorem fromUTF8?_toUTF8 {b : ByteArray} {s : String} (h : String.fromUTF8? b = some s) :
     s.toUTF8 = b := by
@@ -110,15 +125,15 @@ theorem fromUTF8?_toUTF8 {b : ByteArray} {s : String} (h : String.fromUTF8? b = 
 
 def decodeStage : Stage String Document (RdfFormat × String) where
   run d :=
-    match formatOfLabel d.mediaType, String.fromUTF8? d.bytes with
+    match formatOfDocument d.mediaType d.source, String.fromUTF8? d.bytes with
     | some f, some s => .ok (f, s)
-    | none, _ => .error s!"{d.source}: no RDF format for media type {d.mediaType}"
+    | none, _ => .error s!"{d.source}: no RDF format for media type '{d.mediaType}'"
     | some _, none => .error s!"{d.source}: the bytes are not UTF-8"
   contract := DecodeContract
   sound := by
     intro d out h
     revert h
-    cases hf : formatOfLabel d.mediaType with
+    cases hf : formatOfDocument d.mediaType d.source with
     | none => intro h; cases h
     | some f =>
       cases hs : String.fromUTF8? d.bytes with
@@ -161,6 +176,27 @@ def parseStage (extra : Extra) (mode : Syntax.Mode) (base : Option String) :
       subst h
       obtain ⟨raw, hr, hs⟩ := parseDocument_set extra f mode base s ds' hp
       exact ⟨raw, hr, hs, hs.isSet, SetOf.den_eq hs⟩
+
+/-- **A known media type selects the parser.** When the media type of `d`
+names the format `f` (`formatOfMediaType`, parameters allowed), a successful
+decode and parse of `d` is the output of `parseDocument` for `f` on the UTF-8
+text of `d`; the source name is not read. -/
+theorem decodeParse_mediaType (extra : Extra) (mode : Syntax.Mode) (base : Option String)
+    {d : Document} {f : RdfFormat} (hf : formatOfMediaType d.mediaType = some f) {ds : Dataset}
+    (h : (decodeStage.comp (parseStage extra mode base)).run d = .ok ds) :
+    ∃ text : String, text.toUTF8 = d.bytes ∧ parseDocument extra f mode base text = .ok ds := by
+  obtain ⟨⟨f', text⟩, hd, hp⟩ := Stage.comp_ok _ _ h
+  obtain ⟨hf', hutf⟩ := decodeStage.sound d _ hd
+  rw [formatOfDocument_of_mediaType d.source hf] at hf'
+  have e : f' = f := by injection hf' with e; exact e.symm
+  rw [e] at hp
+  refine ⟨text, hutf, ?_⟩
+  revert hp
+  show (match parseDocument extra f mode base text with
+    | .ok ds => (.ok ds : Except String Dataset) | .error e => .error e.msg) = .ok ds → _
+  cases parseDocument extra f mode base text with
+  | error e => intro h; cases h
+  | ok ds' => intro h; injection h with h; rw [h]
 
 /-! ## SBM11: pack, write, read back, WHERE -/
 
@@ -323,9 +359,9 @@ theorem documentToWhere_sound (extra : Extra) (mode : Syntax.Mode) (docBase : Op
     (d : Document) (r : WhereOut)
     (h : (documentToWhere extra mode docBase B readBack hrw clock base plan p hnest hdsq).run d = .ok r) :
     ∃ (fmt : RdfFormat) (text : String) (ds raw : Dataset) (G : MemGen) (F F' : FileGen),
-      formatOfLabel d.mediaType = some fmt ∧ text.toUTF8 = d.bytes ∧
+      formatOfDocument d.mediaType d.source = some fmt ∧ text.toUTF8 = d.bytes ∧
       parseDocumentRaw extra fmt mode docBase text = .ok raw ∧ SetOf ds raw ∧ ds.den = raw.den ∧
-      G.den = ds.den ∧ ReadsWritten F F' ∧
+      G.den = ds.den ∧ ReadsWritten F F' ∧ Written G F ∧ (∀ q, 4 ≤ q → G.ms q = []) ∧
       (QHyps G.cid p →
         ∃ t, ∃ s : NSt, ∃ lines stats, r = (t, F'.store.withLocal s.vocab, lines, stats) ∧
           WhereOk { queryEnvOf clock base with dataset := some G.denote } G.denote G.cid G.dec G.ok p
@@ -341,11 +377,95 @@ theorem documentToWhere_sound (extra : Extra) (mode : Syntax.Mode) (docBase : Op
   subst hG
   have hF : F' = F := hdisk
   subst hF
-  refine ⟨fmt, text, ds, raw, G, F', F', hlab, hutf, hraw, hset, hden, hpack.den, rfl, ?_⟩
+  refine ⟨fmt, text, ds, raw, G, F', F', hlab, hutf, hraw, hset, hden, hpack.den, rfl, hpack.written,
+    hpack.noHigh, ?_⟩
   intro hq
   obtain ⟨t, s, lines, stats, hr, hok⟩ := hwhere hpack.written hpack.noHigh hpack.check hq
   exact ⟨t, s, lines, stats, hr, hok, fun hfold hp =>
     hpack.answers hisSet hfold clock base p _ hp hok.2.1⟩
+
+/-! ## The id table to a solution sequence -/
+
+open L4Factoidal.Storage.Sbm11.OptJoin (decRow unbound) in
+/-- The decoded rows are the rows of the table decoded with any decoder `D`
+that agrees with the output store's `termOf` on every bound cell. -/
+def DecodeRowsContract (r : WhereOut) (sols : SolutionSeq) : Prop :=
+  ∀ D : UInt64 → Term,
+    (∀ i, i < r.1.rows → ∀ c, c < r.1.vars.size → r.1.at c i ≠ unbound →
+      r.2.1.termOf (r.1.at c i) = pure (D (r.1.at c i))) →
+    sols = r.1.idRows.map (decRow D)
+
+/-- Decode the id table of the WHERE stage with the store it returns (the
+store with the query-local vocabulary), as the shipped nested path does
+(`IdGroup.runNestedM`, then `postAnswerM`, which calls `decodeRowsM`). -/
+def sbm11DecodeStage : Stage String WhereOut SolutionSeq where
+  run r := (decodeRowsM r.2.1 r.1).run
+  contract := DecodeRowsContract
+  sound := by
+    intro r sols h D hD
+    have e := L4Factoidal.Storage.Sbm11.SubSelect.decodeRowsM_run r.2.1 r.1 D hD
+    have h' : (decodeRowsM r.2.1 r.1).run = Except.ok sols := h
+    rw [e] at h'
+    injection h' with h'
+    exact h'.symm
+
+/-- Document bytes → decode → parse → SBM11 pack → disk (IO) → WHERE →
+decoded solutions. -/
+def documentToSolutions (extra : Extra) (mode : Syntax.Mode) (docBase : Option String) (B : Nat)
+    (readBack : FileGen → Except String FileGen) (hrw : sbm11Disk.Realised readBack)
+    (clock : EvalEnv) (base : Option String) (plan : Plan) (p : QueryPattern)
+    (hnest : plan.nested = some p) (hdsq : plan.dataset = none) : Stage String Document SolutionSeq :=
+  (documentToWhere extra mode docBase B readBack hrw clock base plan p hnest hdsq).comp sbm11DecodeStage
+
+open L4Factoidal.Storage.Sbm11.OptJoin (decRow) in
+/-- **End to end, to a solution sequence.** A successful run of
+`documentToSolutions` gives the facts of `documentToWhere_sound` and, under
+`QHyps`, a solution sequence `sols` that is the id table decoded with the
+decoder of the final evaluation state (with multiplicity, in table order), and
+that SPARQL 1.1 allows over the generation and, under `Sbm11Folded` and
+`PermOk`, over the parsed dataset. The decoding of the output store is proved
+(`termOf_withLocal`, `store_written`), not assumed.
+
+Premises: `hrw` (`ReadsWritten`), `hnest`, `hdsq`; inside the conclusion
+`QHyps`, `Sbm11Folded`, `PermOk`. -/
+theorem documentToSolutions_sound (extra : Extra) (mode : Syntax.Mode) (docBase : Option String)
+    (B : Nat) (readBack : FileGen → Except String FileGen) (hrw : sbm11Disk.Realised readBack)
+    (clock : EvalEnv) (base : Option String) (plan : Plan) (p : QueryPattern)
+    (hnest : plan.nested = some p) (hdsq : plan.dataset = none)
+    (d : Document) (sols : SolutionSeq)
+    (h : (documentToSolutions extra mode docBase B readBack hrw clock base plan p hnest hdsq).run d =
+      .ok sols) :
+    ∃ (fmt : RdfFormat) (text : String) (ds raw : Dataset) (G : MemGen),
+      formatOfDocument d.mediaType d.source = some fmt ∧ text.toUTF8 = d.bytes ∧
+      parseDocumentRaw extra fmt mode docBase text = .ok raw ∧ SetOf ds raw ∧ ds.den = raw.den ∧
+      G.den = ds.den ∧
+      (QHyps G.cid p →
+        ∃ (t : Qlvr.Table) (s : NSt), sols = t.idRows.map (decRow (decV G.dec s.vocab)) ∧
+          Allowed { queryEnvOf clock base with dataset := some G.denote } G.denote p
+            G.denote.default sols ∧
+          (Sbm11Folded ds → PermOk p →
+            Allowed { queryEnvOf clock base with dataset := some ds } ds p ds.default sols)) := by
+  obtain ⟨r, hw, hdec⟩ := Stage.comp_ok _ _ h
+  obtain ⟨fmt, text, ds, raw, G, F, F', hlab, hutf, hraw, hset, hden, hGden, hrb, hwr, h4, hq⟩ :=
+    documentToWhere_sound extra mode docBase B readBack hrw clock base plan p hnest hdsq d r hw
+  refine ⟨fmt, text, ds, raw, G, hlab, hutf, hraw, hset, hden, hGden, fun hQ => ?_⟩
+  obtain ⟨t, s, lines, stats, hr, hok, hds⟩ := hq hQ
+  have hF : F' = F := hrb
+  subst hF
+  have hst : F'.store = G.store := store_written G F' hwr h4
+  have hcon := sbm11DecodeStage.sound r sols hdec
+  subst hr
+  have hsols : sols = t.idRows.map (decRow (decV G.dec s.vocab)) := by
+    apply hcon
+    intro i hi c hc hx
+    show (F'.store.withLocal s.vocab).termOf (t.at c i) = pure (decV G.dec s.vocab (t.at c i))
+    rw [hst]
+    apply termOf_withLocal G.store G.cid G.dec G.ok (mem_htermOf G) (mem_hloc G) hok.2.2.2.1
+    have hrow := hok.2.2.1 (t.idRow i) (List.mem_map.mpr ⟨i, List.mem_range.mpr hi, rfl⟩)
+    exact hrow (t.vars[c]!, t.at c i)
+      (L4Factoidal.Storage.Sbm11.TableTheorems.mem_idRow.mpr ⟨c, hc, hx, rfl⟩)
+  subst hsols
+  exact ⟨t, s, rfl, hok.2.1, hds⟩
 
 /-! ## SPARQL SELECT over the planner's restricted dataset -/
 
@@ -384,6 +504,88 @@ def plannerSelectStage (env : EvalEnv) (q : Query) : Stage String Dataset Soluti
       cases h
       rw [← plannerSoundnessSelect env q hdE hneE hdS hneS hagree hf hk hn hv]
       exact hr
+
+/-! ## The SBM11 generation to the planner SELECT stage
+
+`l4sbm11 query` (`Harness/Sbm11Query.lean`) has two evaluation paths:
+
+* the id path: a query in the id fragment (`IdQuery.translate`) runs on ids
+  (`IdQuery.runPlanM`; for a nested WHERE clause `IdGroup.runNestedM`, the
+  path of `documentToSolutions`);
+* the reference fallback (`runReference`): every other SELECT reads a dataset
+  from the generation (`selectedDataset`: the quads of the predicates the
+  query names, in the graphs it reads, or every quad when the planner guard
+  selects nothing) and runs
+  `runSelectQueryBackendDataset env q (indexedDatasetBackend applied)`, which
+  is `plannerSelectStage.run` (after `applyDataset`, when the graph names are
+  IRIs).
+
+So the planner SELECT stage is on the shipped query path, behind an IO read.
+`sbm11SelectedRead` is that read, with the named assumption `SelectedAgrees`:
+after the restriction `keep` of the planner guard, the dataset read is the
+generation's dataset. `selectedDataset` is IO over `Session` and has no Lean
+model, so this is an assumption, not a theorem (missing: a pure model of
+`selectedDataset` over `FileGen` and the proof of `SelectedAgrees` for it). -/
+
+open L4Factoidal.Storage.PlannerSoundness in
+/-- **The named IO assumption of the reference fallback's read**: after the
+restriction `keep`, the dataset read from the files is the dataset of the
+generation. -/
+def SelectedAgrees (keep : Triple → Bool) (gf : MemGen × FileGen) (dS : Dataset) : Prop :=
+  restrictDataset keep dS = restrictDataset keep gf.1.denote
+
+/-- The read of the reference fallback (`Harness.Sbm11Query.selectedDataset`).
+IO; its contract is the named assumption `SelectedAgrees`. -/
+def sbm11SelectedRead (keep : Triple → Bool) : IOStage String (MemGen × FileGen) Dataset :=
+  { assumption := SelectedAgrees keep }
+
+/-- SBM11 generation → selected dataset (IO) → planner SELECT. -/
+def sbm11PlannerSelect (keep : Triple → Bool) (read : MemGen × FileGen → Except String Dataset)
+    (hr : (sbm11SelectedRead keep).Realised read) (env : EvalEnv) (q : Query) :
+    Stage String (MemGen × FileGen) SolutionSeq :=
+  ((sbm11SelectedRead keep).toStage read hr).comp (plannerSelectStage env q)
+
+open L4Factoidal.Storage.PlannerSoundness in
+open L4Factoidal.SPARQL.StoreDataset in
+open L4Factoidal.SPARQL.DatasetRestriction in
+/-- **The reference fallback answers as over the generation.** A successful run
+of `sbm11PlannerSelect` reads a dataset `dS` that meets `SelectedAgrees`, and,
+when both datasets have distinct, non-empty named graphs and the query meets
+the planner's guards for `keep`, its answer is the planner SELECT answer over
+the whole generation `G.denote`.
+
+Premises: `hr` (the named IO assumption `SelectedAgrees`); inside the
+conclusion, the hypotheses of `plannerSoundnessSelect`. The dataset `dS` comes
+from the read, so its hypotheses stay inside the conclusion. -/
+theorem sbm11PlannerSelect_sound (keep : Triple → Bool)
+    (read : MemGen × FileGen → Except String Dataset) (hr : (sbm11SelectedRead keep).Realised read)
+    (env : EvalEnv) (q : Query) (gf : MemGen × FileGen) (r : SolutionSeq)
+    (h : (sbm11PlannerSelect keep read hr env q).run gf = .ok r) :
+    ∃ dS : Dataset, SelectedAgrees keep gf dS ∧
+      runSelectQueryBackendDataset env q (indexedDatasetBackend dS) = some r ∧
+      ∀ readable : Option (List WfIri),
+        distinctNames gf.1.denote.named → (∀ ng ∈ gf.1.denote.named, ng.graph ≠ []) →
+        distinctNames dS.named → (∀ ng ∈ dS.named, ng.graph ≠ []) →
+        plannerFragment q.pattern.rewriteBnodes = true →
+        PatternKept keep q.pattern.rewriteBnodes →
+        (∀ i ∈ graphNamesIn q.pattern.rewriteBnodes, readableName readable i) →
+        (graphVarIn q.pattern.rewriteBnodes = true → readable = none) →
+        runSelectQueryBackendDataset env q (indexedDatasetBackend gf.1.denote) = some r := by
+  obtain ⟨dS, hrd, hp⟩ := Stage.comp_ok _ _ h
+  have hagree : SelectedAgrees keep gf dS := hr gf dS hrd
+  have hrun : runSelectQueryBackendDataset env q (indexedDatasetBackend dS) = some r := by
+    revert hp
+    show (match runSelectQueryBackendDataset env q (indexedDatasetBackend dS) with
+      | some r => (.ok r : Except String SolutionSeq) | none => .error _) = .ok r → _
+    cases runSelectQueryBackendDataset env q (indexedDatasetBackend dS) with
+    | none => intro h; cases h
+    | some r' => intro h; injection h with h; rw [h]
+  refine ⟨dS, hagree, hrun, ?_⟩
+  intro readable hdE hneE hdS hneS hf hk hn hv
+  exact (plannerSelectStage env q).sound dS r (by
+      show (match runSelectQueryBackendDataset env q (indexedDatasetBackend dS) with
+        | some r => (.ok r : Except String SolutionSeq) | none => .error _) = .ok r
+      rw [hrun]) keep readable gf.1.denote hdE hneE hdS hneS hagree hf hk hn hv
 
 /-! ## The proof checker -/
 
@@ -428,7 +630,11 @@ def rdfsClosureStage (D cmps : List WfIri) (hcmps : ∀ c ∈ cmps, IsRdfMemberI
 #print axioms sbm11PackStage
 #print axioms sbm11WhereStage
 #print axioms documentToWhere_sound
+#print axioms decodeParse_mediaType
+#print axioms sbm11DecodeStage
+#print axioms documentToSolutions_sound
 #print axioms plannerSelectStage
+#print axioms sbm11PlannerSelect_sound
 #print axioms proofCheckStage
 #print axioms rdfsClosureStage
 
