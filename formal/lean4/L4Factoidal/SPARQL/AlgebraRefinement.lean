@@ -33,8 +33,9 @@ partial ports and the coverage count.
 
 The engine's `Binding.compatible` decides agreement with `Term.eqb`,
 which bottoms out in `Literal.eqb`. That test folds language-tag case
-and compares two `rdf:XMLLiteral` lexical forms by exclusive canonical
-XML. The specification's `Compatible` demands `t1 = t2`.
+(until 2026-10-23 it also compared two `rdf:XMLLiteral` lexical forms by
+exclusive canonical XML, https://github.com/danbri/factoidal/issues/963).
+The specification's `Compatible` demands `t1 = t2`.
 
 So the engine's test is strictly COARSER, and the two directions are
 not alike:

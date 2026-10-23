@@ -5,20 +5,19 @@
 # https://github.com/danbri/factoidal/issues/776).
 #
 # RDF 1.1 Concepts section 3.3: two literals are the same term only when
-# their lexical forms are the same character by character. The id path gives
-# the two literals two ids and follows that rule. The reference evaluator
-# compares two rdf:XMLLiteral literals with `Term.eqb`, which compares their
-# canonical XML (`XmlCanon.xmlCanonEq`), so it joins them.
+# their lexical forms are the same character by character. SPARQL 1.1
+# sections 18.3 and 18.4 join and match by RDF term equality. Both paths
+# follow that: the id path gives the two literals two ids, and the reference
+# evaluator compares them with `Term.eqb`, which compares lexical forms.
+# Until 2026-10-23 `Term.eqb` compared rdf:XMLLiteral literals by canonical
+# XML and the reference gave 4 and 2 rows
+# (https://github.com/danbri/factoidal/issues/963).
 #
-# This dataset makes the dictionary hypotheses `hdec` and `hcid` of
-# `HarnessWhereTheorems.harness_where_allowed` false;
-# `MemGenDictTheorems` proves them only for a dictionary with no
-# rdf:XMLLiteral literal (`MemGen.keysOk`). Not in the gate parts of
-# tests/sbm11/run.sh, because there the id path must equal the reference.
+# Part (d) of tests/sbm11/run.sh runs this script.
 #
 # Checks: each query runs on the id path and gives the RDF 1.1 answer
-# (ids-join 2 rows, ids-const 1 row). The reference row counts are printed
-# (4 and 2 on 2026-10-23). Exit 0 only when the checks pass.
+# (ids-join 2 rows, ids-const 1 row), and the reference evaluator gives the
+# same number of rows. Exit 0 only when the checks pass.
 set -uo pipefail
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 ROOT="$(cd "$HERE/../../.." && pwd)"
@@ -40,10 +39,10 @@ for q in ids-join:2 ids-const:1; do
   p="$(grep -o 'path=[a-z]*' "$TMP/$n.err" | head -1)"
   got="$( [ "$qrc" -eq 0 ] && rows "$TMP/$n.got" || echo "exit $qrc")"
   ref="$( [ "$rrc" -eq 0 ] && rows "$TMP/$n.ref" || echo "exit $rrc")"
-  if [ "$p" = path=ids ] && [ "$got" = "$want" ]; then
-    echo "ok   $n: $p, $got rows (RDF 1.1 term equality); reference $ref rows"
+  if [ "$p" = path=ids ] && [ "$got" = "$want" ] && [ "$ref" = "$want" ]; then
+    echo "ok   $n: $p, $got rows, reference $ref rows (RDF 1.1 term equality)"
   else
-    echo "FAIL $n: $p, $got rows, expected path=ids and $want rows; reference $ref rows"; fail=1
+    echo "FAIL $n: $p, $got rows, reference $ref rows; expected path=ids and $want rows on both"; fail=1
   fi
 done
 exit "$fail"

@@ -83,22 +83,14 @@ def MemGen.store (G : MemGen) : Store Id where
 
 /-! ## The check of the dictionary keys -/
 
-/-- No `rdf:XMLLiteral` literal in the term. `Term.eqb` compares two
-    `rdf:XMLLiteral` literals by their canonical XML
-    (`XmlCanon.xmlCanonEq`), not by their lexical forms; two such literals
-    with different lexical forms are different RDF terms with two ids, and
-    `Term.eqb` says they are equal. -/
-def noXml : Term → Bool
-  | .literal l => l.val.datatype != rdfXMLLiteral
-  | .tripleTerm _ _ o => noXml o
-  | _ => true
-
-/-- Every key decodes to a term whose language tags are in lower case and
-    that holds no `rdf:XMLLiteral` literal. -/
+/-- Every key decodes to a term whose language tags are in lower case.
+    Until https://github.com/danbri/factoidal/issues/963 was repaired
+    (2026-10-23) the check also refused an `rdf:XMLLiteral` literal, because
+    `Term.eqb` then compared such literals by canonical XML. -/
 def keysOk (keys : List Key) : Bool :=
   keys.all fun k =>
     match decodeKey? k with
-    | some t => normalizeTerm t == t && noXml t
+    | some t => normalizeTerm t == t
     | none => false
 
 end L4Factoidal.Storage.Sbm11.MemGen

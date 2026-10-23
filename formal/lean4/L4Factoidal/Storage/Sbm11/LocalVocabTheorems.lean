@@ -15,19 +15,17 @@ the invariant of that vocabulary and the decoder of a state:
   and the local ids of `voc`.
 * `VocInv cid voc ix`: at most `2^60` entries; `ix` is the index of `voc`
   (`ix[key]? = some k` exactly when entry `k` is `key`, so no entry twice);
-  each entry has no id in the store (`cid` is `none`), is its own
-  `normalizeTerm` and holds no `rdf:XMLLiteral` (`IdQuery.hasXmlLit`).
+  each entry has no id in the store (`cid` is `none`) and is its own
+  `normalizeTerm`.
 * `hdecV`: `Term.eqb` of two decoded ids in `okV ok voc` is id equality,
   from `hdec` on `ok` and the invariant (`eqb_norm_eq`: two terms that are
-  their own `normalizeTerm` and hold no `rdf:XMLLiteral` are `Term.eqb`
-  exactly when they are equal).
+  their own `normalizeTerm` are `Term.eqb` exactly when they are equal).
 * `decV_mono`, `okV_mono`: the state only grows (the vocabulary of a later
   state has the earlier one as a prefix), and an id decodes the same in the
   later state.
 * `termIdM_spec`: `IdQuery.termIdM` keeps the invariant and gives an id in
   `okV` of the new state that decodes to `normalizeTerm t`; or it refuses
-  (`LocalRefusal`: an `rdf:XMLLiteral` with no store id, or a vocabulary of
-  `2^60` terms; the harness then runs the reference evaluator).
+  (`LocalRefusal`: a vocabulary of `2^60` terms; the harness then runs the reference evaluator).
 * `valueIdM_spec`: `IdQuery.valueIdM`, the id of a VALUES, BIND or
   sub-SELECT value, as `termIdM`, or the refusal `langCaseMsg` for a value
   that is not its own `normalizeTerm`; an id it gives decodes to the value
@@ -102,22 +100,21 @@ theorem normalizeLit_self (l : WfLiteral) (h : normalizeLit l = .literal l) :
     revert this
     cases l.val.direction <;> simp
 
-/-- Two terms that are their own `normalizeTerm`, the first with no
-    `rdf:XMLLiteral`, are `Term.eqb` only when they are equal: `Term.eqb`
-    compares language tags without case (both are lower case here) and
-    `rdf:XMLLiteral` lexical forms by canonical XML (none here). -/
-theorem eqb_norm_eq : ∀ (t s : Term), normalizeTerm t = t → normalizeTerm s = s → hasXmlLit t = false →
+/-- Two terms that are their own `normalizeTerm` are `Term.eqb` only when
+    they are equal: `Term.eqb` compares language tags without case (both
+    are lower case here) and every other field exactly (RDF 1.1 Concepts
+    3.3; `rdf:XMLLiteral` included since
+    https://github.com/danbri/factoidal/issues/963). -/
+theorem eqb_norm_eq : ∀ (t s : Term), normalizeTerm t = t → normalizeTerm s = s →
     t.eqb s = true → t = s
-  | .iri i, .iri j, _, _, _, h => by simp [Term.eqb] at h; exact congrArg Term.iri (Subtype.ext h)
-  | .bnode i, .bnode j, _, _, _, h => by simp [Term.eqb] at h; rw [h]
-  | .literal l1, .literal l2, h1, h2, hx, h => by
+  | .iri i, .iri j, _, _, h => by simp [Term.eqb] at h; exact congrArg Term.iri (Subtype.ext h)
+  | .bnode i, .bnode j, _, _, h => by simp [Term.eqb] at h; rw [h]
+  | .literal l1, .literal l2, h1, h2, h => by
     simp only [normalizeTerm] at h1 h2
     have t1 := normalizeLit_self l1 h1
     have t2 := normalizeLit_self l2 h2
-    simp only [hasXmlLit, beq_eq_false_iff_ne, ne_eq] at hx
     simp only [Term.eqb, Literal.eqb, Bool.and_eq_true, beq_iff_eq] at h
     obtain ⟨⟨⟨hlex, hdt⟩, hlang⟩, hdir⟩ := h
-    rw [if_neg (fun hh => hx hh.1), beq_iff_eq] at hlex
     congr 1
     apply Subtype.ext
     obtain ⟨⟨a1, d1, g1, r1⟩, _⟩ := l1
@@ -135,20 +132,19 @@ theorem eqb_norm_eq : ∀ (t s : Term), normalizeTerm t = t → normalizeTerm s 
         simp only [langTagOptionEq, langTagEq, beq_iff_eq] at hlang
         rw [t1 a rfl, t2 b rfl] at hlang
         rw [hlang]
-  | .tripleTerm s1 p1 o1, .tripleTerm s2 p2 o2, h1, h2, hx, h => by
+  | .tripleTerm s1 p1 o1, .tripleTerm s2 p2 o2, h1, h2, h => by
     simp only [normalizeTerm, Term.tripleTerm.injEq, true_and] at h1 h2
-    simp only [hasXmlLit] at hx
     simp only [Term.eqb, Bool.and_eq_true, beq_iff_eq] at h
     obtain ⟨⟨hs, hp⟩, ho⟩ := h
-    have := eqb_norm_eq o1 o2 h1 h2 hx ho
+    have := eqb_norm_eq o1 o2 h1 h2 ho
     subst this hp
     cases s1 <;> cases s2 <;> simp_all [Subject.eqb]
     exact Subtype.ext hs
-  | .iri _, .bnode _, _, _, _, h | .iri _, .literal _, _, _, _, h | .iri _, .tripleTerm _ _ _, _, _, _, h
-  | .bnode _, .iri _, _, _, _, h | .bnode _, .literal _, _, _, _, h | .bnode _, .tripleTerm _ _ _, _, _, _, h
-  | .literal _, .iri _, _, _, _, h | .literal _, .bnode _, _, _, _, h | .literal _, .tripleTerm _ _ _, _, _, _, h
-  | .tripleTerm _ _ _, .iri _, _, _, _, h | .tripleTerm _ _ _, .bnode _, _, _, _, h
-  | .tripleTerm _ _ _, .literal _, _, _, _, h => by simp [Term.eqb] at h
+  | .iri _, .bnode _, _, _, h | .iri _, .literal _, _, _, h | .iri _, .tripleTerm _ _ _, _, _, h
+  | .bnode _, .iri _, _, _, h | .bnode _, .literal _, _, _, h | .bnode _, .tripleTerm _ _ _, _, _, h
+  | .literal _, .iri _, _, _, h | .literal _, .bnode _, _, _, h | .literal _, .tripleTerm _ _ _, _, _, h
+  | .tripleTerm _ _ _, .iri _, _, _, h | .tripleTerm _ _ _, .bnode _, _, _, h
+  | .tripleTerm _ _ _, .literal _, _, _, h => by simp [Term.eqb] at h
 
 /-! ## The decoder of a state -/
 
@@ -170,7 +166,7 @@ def okV (ok : UInt64 → Prop) (voc : Array Term) (x : UInt64) : Prop :=
 structure VocInv (cid : Term → Option UInt64) (voc : Array Term) (ix : Std.HashMap Term Nat) : Prop where
   size : voc.size ≤ two60
   idx : ∀ (key : Term) (k : Nat), ix[key]? = some k ↔ voc[k]? = some key
-  entry : ∀ k (h : k < voc.size), cid voc[k] = none ∧ normalizeTerm voc[k] = voc[k] ∧ hasXmlLit voc[k] = false
+  entry : ∀ k (h : k < voc.size), cid voc[k] = none ∧ normalizeTerm voc[k] = voc[k]
 
 /-- The invariant of a run state. -/
 def Inv (cid : Term → Option UInt64) (s : NSt) : Prop := VocInv cid s.vocab s.localIdx
@@ -277,9 +273,9 @@ theorem hdecV (cid : Term → Option UInt64) (dec : UInt64 → Term) (ok : UInt6
       | false => rfl
       | true =>
         exfalso
-        obtain ⟨_, hn1, hx1⟩ := hinv.entry k hk
-        obtain ⟨_, hn2, _⟩ := hinv.entry k' hk'
-        have heq := eqb_norm_eq _ _ hn1 hn2 hx1 hb
+        obtain ⟨_, hn1⟩ := hinv.entry k hk
+        obtain ⟨_, hn2⟩ := hinv.entry k' hk'
+        have heq := eqb_norm_eq _ _ hn1 hn2 hb
         have i1 := (hinv.idx voc[k] k).mpr (Array.getElem?_eq_getElem hk)
         have i2 := (hinv.idx voc[k] k').mpr (by rw [Array.getElem?_eq_getElem hk', heq])
         rw [i1] at i2
@@ -311,7 +307,7 @@ theorem decV_normal (cid : Term → Option UInt64) (dec : UInt64 → Term) (ok :
     (hinv : VocInv cid voc ix) (x : UInt64) (hx : okV ok voc x) : normalizeTerm (decV dec voc x) = decV dec voc x := by
   rcases hx with hx | ⟨k, hk, rfl⟩
   · rw [decV_ok dec hloc voc hx]; exact dec_normal cid dec ok hcid hcidN x hx
-  · rw [decV_local dec voc hinv.size hk]; exact (hinv.entry k hk).2.1
+  · rw [decV_local dec voc hinv.size hk]; exact (hinv.entry k hk).2
 
 /-- The dictionary lookup is exact on the ids of a state for a term with an
     id: a local id decodes to a term with no id, so to no term `Term.eqb` to
@@ -372,7 +368,7 @@ theorem termOf_withLocal (st : Store Id) (cid : Term → Option UInt64) (dec : U
     (`IdQuery.semiHitsM`: `substRefusalMsg`, `fulltextRefusalMsg`; added
     2026-10-23 with `ExistsTableTheorems`). On each the harness runs the
     reference evaluator. -/
-def LocalRefusal (e : String) : Prop := e = localFullMsg ∨ e = localXmlMsg ∨ e = langCaseMsg ∨
+def LocalRefusal (e : String) : Prop := e = localFullMsg ∨ e = langCaseMsg ∨
   (∃ v subject, e = substRefusalMsg v subject) ∨ ∃ v, e = fulltextRefusalMsg v
 
 /-- A term with no id whose folded form has an id would contradict `CidOk`. -/
@@ -414,52 +410,49 @@ theorem localIdOf_spec (cid : Term → Option UInt64) (voc : Array Term) (ix : S
     exact Option.some.inj hv
   | none =>
     simp only []
-    by_cases hx : hasXmlLit (normalizeTerm t) = true
-    · left; exact ⟨_, by rw [if_pos hx], Or.inr (Or.inl rfl)⟩
-    · rw [if_neg hx]
-      by_cases hs : voc.size < two60
-      · rw [if_pos hs]
-        right
-        have hnot : ∀ k : Nat, voc[k]? ≠ some (normalizeTerm t) := by
-          intro k h
-          rw [(hinv.idx _ k).mpr h] at hk
-          cases hk
-        refine ⟨localId voc.size, voc.push (normalizeTerm t), ix.insert (normalizeTerm t) voc.size, rfl,
-          ⟨by simp; omega, ?_, ?_⟩, ⟨[normalizeTerm t], by simp⟩, Or.inr ⟨voc.size, by simp, rfl⟩,
-          localId_ne_zero hs, ?_⟩
-        · intro key k
-          rw [Std.HashMap.getElem?_insert]
-          by_cases e : (normalizeTerm t == key) = true
-          · have e' : normalizeTerm t = key := by simpa using e
-            subst e'
-            rw [if_pos e]
-            constructor
-            · intro h; cases h
-              simp
-            · intro h
-              rw [Array.getElem?_push] at h
-              split at h
-              · next he => rw [he]
-              · exact absurd h (hnot k)
-          · rw [if_neg e]
-            have e' : normalizeTerm t ≠ key := by simpa using e
-            rw [hinv.idx key k, Array.getElem?_push]
-            split
-            · next he =>
-              subst he
-              constructor
-              · intro h
-                rw [Array.getElem?_eq_none (Nat.le_refl _)] at h; cases h
-              · intro h; exact absurd (Option.some.inj h) e'
-            · exact Iff.rfl
-        · intro k hk
-          rw [Array.getElem_push]
+    by_cases hs : voc.size < two60
+    · rw [if_pos hs]
+      right
+      have hnot : ∀ k : Nat, voc[k]? ≠ some (normalizeTerm t) := by
+        intro k h
+        rw [(hinv.idx _ k).mpr h] at hk
+        cases hk
+      refine ⟨localId voc.size, voc.push (normalizeTerm t), ix.insert (normalizeTerm t) voc.size, rfl,
+        ⟨by simp; omega, ?_, ?_⟩, ⟨[normalizeTerm t], by simp⟩, Or.inr ⟨voc.size, by simp, rfl⟩,
+        localId_ne_zero hs, ?_⟩
+      · intro key k
+        rw [Std.HashMap.getElem?_insert]
+        by_cases e : (normalizeTerm t == key) = true
+        · have e' : normalizeTerm t = key := by simpa using e
+          subst e'
+          rw [if_pos e]
+          constructor
+          · intro h; cases h
+            simp
+          · intro h
+            rw [Array.getElem?_push] at h
+            split at h
+            · next he => rw [he]
+            · exact absurd h (hnot k)
+        · rw [if_neg e]
+          have e' : normalizeTerm t ≠ key := by simpa using e
+          rw [hinv.idx key k, Array.getElem?_push]
           split
-          · exact hinv.entry k (by assumption)
-          · refine ⟨hnone, normalize_idem t, by simpa using hx⟩
-        · rw [decV_local dec _ (by simp; omega) (by simp), Array.getElem_push_eq]
-      · rw [if_neg hs]
-        left; exact ⟨_, rfl, Or.inl rfl⟩
+          · next he =>
+            subst he
+            constructor
+            · intro h
+              rw [Array.getElem?_eq_none (Nat.le_refl _)] at h; cases h
+            · intro h; exact absurd (Option.some.inj h) e'
+          · exact Iff.rfl
+      · intro k hk
+        rw [Array.getElem_push]
+        split
+        · exact hinv.entry k (by assumption)
+        · refine ⟨hnone, normalize_idem t⟩
+      · rw [decV_local dec _ (by simp; omega) (by simp), Array.getElem_push_eq]
+    · rw [if_neg hs]
+      left; exact ⟨_, rfl, Or.inl rfl⟩
 
 /-- **`termIdM` on a state.** Over a store whose dictionary lookup is `cid`,
     `IdQuery.termIdM` refuses (`LocalRefusal`), or gives an id in `okV` of
@@ -513,7 +506,7 @@ theorem valueIdM_spec (st : Store Id) (cid : Term → Option UInt64) (hid : ∀ 
     · exact Or.inl h
     · exact Or.inr ⟨y, voc', ix', h1, h2, h3, h4, h5, by rw [h6, hn]⟩
   · rw [if_neg hn]
-    exact Or.inl ⟨_, rfl, Or.inr (Or.inr (Or.inl rfl))⟩
+    exact Or.inl ⟨_, rfl, Or.inr (Or.inl rfl)⟩
 
 /-! ## Runs that end with a refusal or a result -/
 

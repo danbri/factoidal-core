@@ -275,7 +275,7 @@ theorem named_cid (h : G.check = true) (x : UInt64) (hx : x ∈ G.named.toList) 
     G.cid (subjOf (G.dec x)).toTerm = some x := by
   rw [subj_of G x (named_ok G h x hx).2]
   have hc := named_code G h x hx
-  have hn := (code_norm G.keys (check_keys G h) _ _ hc).1
+  have hn := code_norm G.keys (check_keys G h) _ _ hc
   unfold MemGen.cid
   rw [hn, hc]
   simp

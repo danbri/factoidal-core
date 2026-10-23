@@ -5,21 +5,17 @@ memory (https://github.com/danbri/factoidal/issues/776; rows E0 and L4e of
 docs/designissues/2026-10-12-sbm11-end-to-end-theorem.md).
 
 For `G : MemGen` whose keys pass `keysOk` (every key decodes to a term with
-its language tags in lower case and with no `rdf:XMLLiteral` literal), with
+its language tags in lower case), with
 `cid := G.cid`, `dec := G.dec`, `sok = ok := G.ok`, `idv := G.idv`, the
 hypotheses `hid`, `hdec`, `hsok`, `hcid`, `hidv`, `hcid0`, `htag`, `hcidN`,
 `htermOf`, `hloc`, `hcidok` and `htagk` hold (`dict_hyps`).
 
-Why `keysOk` excludes `rdf:XMLLiteral`: `Term.eqb` compares two
-`rdf:XMLLiteral` literals by their canonical XML (`XmlCanon.xmlCanonEq`), so
-for the literals `"<x></x>"^^rdf:XMLLiteral` and `"<x/>"^^rdf:XMLLiteral`,
-two keys and two ids, `(dec x).eqb (dec y) = true` with `x ≠ y`, and `hdec`
-is false; for any `rdf:XMLLiteral` key, `hcid` is false at a term with
-another lexical form and the same canonical XML. RDF 1.1 Concepts section
-3.3 makes two literals the same term only when the lexical forms are the
-same character by character; the id path follows that, the reference
-evaluator does not (tests/sbm11/xmlliteral: the id path gives 2 rows, the
-reference 4).
+Until 2026-10-23 `keysOk` also excluded `rdf:XMLLiteral`: `Term.eqb` then
+compared two `rdf:XMLLiteral` literals by their canonical XML, so for the
+literals `"<x></x>"^^rdf:XMLLiteral` and `"<x/>"^^rdf:XMLLiteral` (two keys,
+two ids) `hdec` was false. `Term.eqb` is now RDF term equality (RDF 1.1
+Concepts section 3.3, https://github.com/danbri/factoidal/issues/963), and
+the restriction is gone (tests/sbm11/xmlliteral: both paths give 2 rows).
 
 No `sorry`, no user `axiom`, no `native_decide`, no `partial`.
 -/
@@ -59,7 +55,7 @@ theorem string_toLower_toLower (s : String) : s.toLower.toLower = s.toLower := b
   funext c
   exact char_toLower_toLower c
 
-/-! ## `Term.eqb` against a term in lower case with no `rdf:XMLLiteral` -/
+/-! ## `Term.eqb` against a term in lower case -/
 
 theorem wf_lower (l : Literal) (a b : String) (h : l.langTag = some a) (hw : literalWf l = true) :
     literalWf { l with langTag := some b } = true := by
@@ -87,26 +83,20 @@ theorem tag_lower (l : WfLiteral) (b : String) (h : l.val.langTag = some b)
   simp only [h, Option.some.injEq] at this
   exact this
 
-/-- A term that is `Term.eqb` to a term in lower case with no
-    `rdf:XMLLiteral` literal is that term once its tags are in lower case. -/
-theorem eqb_norm : ∀ (c t : Term), normalizeTerm t = t → noXml t = true → c.eqb t = true →
+/-- A term that is `Term.eqb` to a term in lower case is that term once its
+    tags are in lower case. -/
+theorem eqb_norm : ∀ (c t : Term), normalizeTerm t = t → c.eqb t = true →
     normalizeTerm c = t
-  | .iri i, .iri j, _, _, h => by
+  | .iri i, .iri j, _, h => by
     simp only [Term.eqb, beq_iff_eq] at h
     subst h; rfl
-  | .bnode i, .bnode j, _, _, h => by
+  | .bnode i, .bnode j, _, h => by
     simp only [Term.eqb, beq_iff_eq] at h
     subst h; rfl
-  | .literal l1, .literal l2, hn, hx, h => by
+  | .literal l1, .literal l2, hn, h => by
     obtain ⟨⟨lex1, dt1, tag1, dir1⟩, w1⟩ := l1
     obtain ⟨⟨lex2, dt2, tag2, dir2⟩, w2⟩ := l2
-    simp only [noXml, bne_iff_ne, ne_eq] at hx
-    simp only [Term.eqb, Literal.eqb] at h
-    have h1 : (dt2 == rdfXMLLiteral) = false := beq_eq_false_iff_ne.mpr hx
-    have hif : (dt1 == rdfXMLLiteral && dt2 == rdfXMLLiteral) = false := by
-      rw [h1, Bool.and_false]
-    rw [hif] at h
-    simp only [Bool.false_eq_true, ↓reduceIte, Bool.and_eq_true, beq_iff_eq] at h
+    simp only [Term.eqb, Literal.eqb, Bool.and_eq_true, beq_iff_eq] at h
     obtain ⟨⟨⟨hlex, hdt⟩, htag⟩, hdir⟩ := h
     subst hlex hdt hdir
     cases tag1 with
@@ -125,7 +115,7 @@ theorem eqb_norm : ∀ (c t : Term), normalizeTerm t = t → noXml t = true → 
         simp only [Term.literal.injEq]
         apply Subtype.ext
         simp only [htag, hb]
-  | .tripleTerm s p o, .tripleTerm s' p' o', hn, hx, h => by
+  | .tripleTerm s p o, .tripleTerm s' p' o', hn, h => by
     simp only [Term.eqb, Bool.and_eq_true, beq_iff_eq] at h
     obtain ⟨⟨hs, hp⟩, ho⟩ := h
     have hs' : s = s' := by
@@ -133,12 +123,12 @@ theorem eqb_norm : ∀ (c t : Term), normalizeTerm t = t → noXml t = true → 
         first | (subst hs; rfl) | cases hs
     subst hs' hp
     simp only [normalizeTerm, Term.tripleTerm.injEq, true_and] at hn ⊢
-    exact eqb_norm o o' hn hx ho
-  | .iri _, .bnode _, _, _, h | .iri _, .literal _, _, _, h | .iri _, .tripleTerm _ _ _, _, _, h
-  | .bnode _, .iri _, _, _, h | .bnode _, .literal _, _, _, h | .bnode _, .tripleTerm _ _ _, _, _, h
-  | .literal _, .iri _, _, _, h | .literal _, .bnode _, _, _, h | .literal _, .tripleTerm _ _ _, _, _, h
-  | .tripleTerm _ _ _, .iri _, _, _, h | .tripleTerm _ _ _, .bnode _, _, _, h
-  | .tripleTerm _ _ _, .literal _, _, _, h => by simp [Term.eqb] at h
+    exact eqb_norm o o' hn ho
+  | .iri _, .bnode _, _, h | .iri _, .literal _, _, h | .iri _, .tripleTerm _ _ _, _, h
+  | .bnode _, .iri _, _, h | .bnode _, .literal _, _, h | .bnode _, .tripleTerm _ _ _, _, h
+  | .literal _, .iri _, _, h | .literal _, .bnode _, _, h | .literal _, .tripleTerm _ _ _, _, h
+  | .tripleTerm _ _ _, .iri _, _, h | .tripleTerm _ _ _, .bnode _, _, h
+  | .tripleTerm _ _ _, .literal _, _, h => by simp [Term.eqb] at h
 
 /-- A term is `Term.eqb` to itself with its tags in lower case. -/
 theorem eqb_normalize : ∀ c : Term, c.eqb (normalizeTerm c) = true
@@ -189,19 +179,15 @@ theorem inline_lit (t : Term) (c : Nat) (h : inlineCode? t = some c) :
   | bnode _ => simp [inlineCode?] at h
   | tripleTerm _ _ _ => simp [inlineCode?] at h
 
-/-- A term with an id in a dictionary that passes `keysOk` is in lower case
-    and holds no `rdf:XMLLiteral` literal. -/
+/-- A term with an id in a dictionary that passes `keysOk` is in lower case. -/
 theorem code_norm (keys : List Key) (hk : keysOk keys = true) (t : Term) (n : Nat)
-    (h : toCode? keys t = some n) : normalizeTerm t = t ∧ noXml t = true := by
+    (h : toCode? keys t = some n) : normalizeTerm t = t := by
   unfold toCode? at h
   cases hin : inlineCode? t with
   | some c =>
-    obtain ⟨l, rfl, hl, hx⟩ := inline_lit t c hin
-    refine ⟨?_, ?_⟩
-    · show normalizeLit l = _
-      unfold normalizeLit; rw [hl]
-    · simp only [noXml, bne_iff_ne, ne_eq]
-      exact hx
+    obtain ⟨l, rfl, hl, _⟩ := inline_lit t c hin
+    show normalizeLit l = _
+    unfold normalizeLit; rw [hl]
   | none =>
     rw [hin] at h
     cases hkey : termKey? t with
@@ -214,7 +200,7 @@ theorem code_norm (keys : List Key) (hk : keysOk keys = true) (t : Term) (n : Na
         have hmem : k ∈ keys := List.idxOf_lt_length_iff.mp hc.1
         have hall := List.all_eq_true.mp hk k hmem
         rw [decodeKey?_termKey? t k hkey] at hall
-        simp only [Bool.and_eq_true, beq_iff_eq] at hall
+        simp only [beq_iff_eq] at hall
         exact hall
       · rw [if_neg hc] at h; cases h
 
@@ -410,9 +396,9 @@ theorem mem_hdec (hk : keysOk G.keys = true) (x y : UInt64) (hx : G.ok x) (hy : 
     | false => rfl
     | true =>
       exfalso
-      obtain ⟨hn2, hx2⟩ := code_norm G.keys hk t2 _ h2
-      have e := eqb_norm t1 t2 hn2 hx2 he
-      rw [(code_norm G.keys hk t1 _ h1).1] at e
+      have hn2 := code_norm G.keys hk t2 _ h2
+      have e := eqb_norm t1 t2 hn2 he
+      rw [code_norm G.keys hk t1 _ h1] at e
       subst e
       rw [h1] at h2
       exact hxy (UInt64.toNat_inj.mp (Option.some.inj h2))
@@ -434,8 +420,8 @@ theorem mem_hcid (hk : keysOk G.keys = true) (c : Term) : CidOk G.dec G.ok c (G.
       | false => rfl
       | true =>
         exfalso
-        obtain ⟨hn2, hx2⟩ := code_norm G.keys hk t2 _ h2
-        have e := eqb_norm c t2 hn2 hx2 he
+        have hn2 := code_norm G.keys hk t2 _ h2
+        have e := eqb_norm c t2 hn2 he
         rw [e, h2] at hx
         exact hxy (UInt64.toNat_inj.mp (Option.some.inj hx)).symm
   | none =>
@@ -446,8 +432,8 @@ theorem mem_hcid (hk : keysOk G.keys = true) (c : Term) : CidOk G.dec G.ok c (G.
     | false => rfl
     | true =>
       exfalso
-      obtain ⟨hn2, hx2⟩ := code_norm G.keys hk t2 _ h2
-      have e := eqb_norm c t2 hn2 hx2 he
+      have hn2 := code_norm G.keys hk t2 _ h2
+      have e := eqb_norm c t2 hn2 he
       unfold MemGen.cid at hc
       rw [e, h2] at hc
       cases hc

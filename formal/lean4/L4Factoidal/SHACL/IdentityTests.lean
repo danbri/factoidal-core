@@ -21,8 +21,9 @@ private def shape : Shape :=
     targets := [.node (.iri a)], severity := .violation, message := none,
     constraints := [], propertyRefs := [] }
 
--- A distinguishing input: the legacy engine relation intentionally differs.
-#guard shortXml.eqb longXml
+-- Two RDF terms with one XML value: the engine term equality separates them
+-- too since https://github.com/danbri/factoidal/issues/963.
+#guard !shortXml.eqb longXml
 #guard !shortXml.sameTerm longXml
 #guard !termMem shortXml [longXml]
 #guard dedupTerms [shortXml, longXml, shortXml] == [shortXml, longXml]

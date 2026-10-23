@@ -1,7 +1,0 @@
-# The BIND form of ref-values-xml-join.rq: two BIND values that are the same
-# canonical XML with different lexical forms, no stored term. One row from the
-# reference; until 2026-10-23 none from the id path.
-SELECT ?x ?y WHERE {
-  { BIND(STRDT("<a></a>", <http://www.w3.org/1999/02/22-rdf-syntax-ns#XMLLiteral>) AS ?x) }
-  { BIND(STRDT("<a/>", <http://www.w3.org/1999/02/22-rdf-syntax-ns#XMLLiteral>) AS ?x) BIND(1 AS ?y) }
-}

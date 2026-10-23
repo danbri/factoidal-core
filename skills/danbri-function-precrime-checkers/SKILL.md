@@ -1083,8 +1083,8 @@ Four costs, each found after the one before it was repaired:
 2. **`Dataset.insertQuads` scanned and copied the graph per quad.**
    `RDF/GraphIndex.lean`: a `GraphIx` holds the graph as `base ++
    rev.reverse` and a `Std.HashSet` of the KEYS of its triples. `Graph.mem`
-   compares with `Triple.eqb` (tags case-insensitively, XMLLiterals by
-   canonical form), so the key is the triple with `Term.joinKey` in the object
+   compares with `Triple.eqb` (tags case-insensitively; until 2026-10-23
+   also XMLLiterals by canonical form, issue 963), so the key is the triple with `Term.joinKey` in the object
    position, and `Triple.eqb_iff_key` proves that equal keys are exactly
    `eqb`-equal triples. A graph slot makes its set on the SECOND add, so one
    insert into a large graph costs what it cost before.

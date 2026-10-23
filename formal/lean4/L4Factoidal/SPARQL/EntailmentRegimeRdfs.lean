@@ -101,14 +101,16 @@ theorem rdfsRegime_bgp_sound (g : Graph) (q : Bgp) (fuel : Nat) {mu : Binding}
 /-! ### The fragment where the two equalities coincide
 
 `Term.eqb` is coarser than structural equality in exactly one place —
-literals, where `rdf:XMLLiteral` compares by canonical XML and language
-tags compare case-insensitively. `LitExact` names the literals where it
+literals, where language tags compare case-insensitively (until
+2026-10-23 `rdf:XMLLiteral` also compared by canonical XML,
+https://github.com/danbri/factoidal/issues/963). `LitExact` names the literals where it
 is not coarser, and on those the existential collapses. -/
 
 /-- Two `LitExact` literals that the engine equality accepts are the
-same record. `Literal.eqb` is coarser than record equality in exactly two
-places — `rdf:XMLLiteral` lexical forms compare by canonical XML, and
-language tags compare case-insensitively — and `LitExact` rules out both.
+same record. `Literal.eqb` is coarser than record equality in one place —
+language tags compare case-insensitively — and `LitExact` rules it out
+(it also rules out `rdf:XMLLiteral`, which `Literal.eqb` compared by
+canonical XML until 2026-10-23).
 -/
 theorem literalExact_eqb_eq {a b : Literal} (ha : LitExact a) (hb : LitExact b)
     (h : Literal.eqb a b = true) : a = b := by
@@ -117,9 +119,7 @@ theorem literalExact_eqb_eq {a b : Literal} (ha : LitExact a) (hb : LitExact b)
   simp only [LitExact] at ha hb
   simp only [Literal.eqb, Bool.and_eq_true, beq_iff_eq] at h
   obtain ⟨⟨⟨hx, hd⟩, hl⟩, hdir⟩ := h
-  rw [if_neg (by simp [ha.1])] at hx
-  have hx' : ax = bx := by simpa using hx
-  subst hx'; subst hd; subst hdir
+  subst hx; subst hd; subst hdir
   cases atag <;> cases btag <;>
     simp_all [langTagOptionEq, langTagEq]
 

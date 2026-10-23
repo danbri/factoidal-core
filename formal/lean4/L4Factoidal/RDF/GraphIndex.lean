@@ -37,18 +37,7 @@ theorem Literal.eqb_of_joinKey_eq {l1 l2 : Literal}
   obtain ⟨hlex, hdt, htag, hdir⟩ := h
   unfold Literal.eqb
   simp only [Bool.and_eq_true, beq_iff_eq]
-  refine ⟨⟨⟨?_, hdt⟩, ?_⟩, hdir⟩
-  · by_cases hx : l1.datatype = rdfXMLLiteral
-    · have hx2 : l2.datatype = rdfXMLLiteral := hdt ▸ hx
-      rw [if_pos (by simp [hx, hx2])]
-      rw [if_pos (beq_iff_eq.mpr hx), if_pos (beq_iff_eq.mpr hx2)] at hlex
-      simp only [XmlCanon.xmlCanonEq, beq_iff_eq]
-      exact String.ofList_inj.mp hlex
-    · have hx2 : ¬ l2.datatype = rdfXMLLiteral := fun h2 => hx (hdt.trans h2)
-      rw [if_neg (by simp [hx])]
-      rw [if_neg (fun hb => hx (eq_of_beq hb)),
-          if_neg (fun hb => hx2 (eq_of_beq hb))] at hlex
-      exact beq_iff_eq.mpr hlex
+  refine ⟨⟨⟨hlex, hdt⟩, ?_⟩, hdir⟩
   · cases h1 : l1.langTag with
     | none =>
       cases h2 : l2.langTag with

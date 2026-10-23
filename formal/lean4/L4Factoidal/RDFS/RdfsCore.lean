@@ -57,7 +57,7 @@ open L4Factoidal.RDF
 `Derives g t` — "graph `g` rdfs-core-derives triple `t`". Membership of
 the base case is LIST membership (`t ∈ g`), not the engine's
 `Graph.mem`; the engine's `Triple.eqb` is coarser than equality on
-literals (language-tag case folding, `rdf:XMLLiteral` canonicalisation),
+literals (language-tag case folding),
 and a specification relation should not inherit that. Where the coarse
 comparison does appear — the executable closure's deduplication — the
 theorems say so explicitly.

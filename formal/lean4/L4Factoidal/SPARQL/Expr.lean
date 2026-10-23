@@ -1208,12 +1208,15 @@ def numericEquality (a b : EvalResult) (negate : Bool) : Option Bool :=
     | _, _ => none
 
 /-- Literal equality that compares numeric literals by VALUE and
-everything else by the engine's term equality (port of
-`literal_value_eq_numeric`). -/
+everything else by `Literal.valueEqb` (`rdf:XMLLiteral` by canonical
+XML, other literals by term equality; port of
+`literal_value_eq_numeric`). Value comparison is explicit here: since
+https://github.com/danbri/factoidal/issues/963 `Literal.eqb` is term
+equality. -/
 def literalValueEqNumeric (l1 l2 : WfLiteral) : Bool :=
   if Fn.Comparison.numericDatatype l1.val.datatype || Fn.Comparison.numericDatatype l2.val.datatype then
     (numericEquality (.term (.literal l1)) (.term (.literal l2)) false).getD false
-  else l1.val.eqb l2.val
+  else l1.val.valueEqb l2.val
 
 /-- RDF 1.2 triple-term VALUE equality, used by `=` (op:triple):
 subject and predicate compare structurally, the object recurses and

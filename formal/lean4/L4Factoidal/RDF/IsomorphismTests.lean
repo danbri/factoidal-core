@@ -396,8 +396,11 @@ reference to another blank node — the property section 5 leans on. -/
 #guard Triple.sigKey "a" (tb "a" iP (ob "b"))
          = "S I<http://example.org/p> B"
 
-/- An `rdf:XMLLiteral` is compared by its exclusive canonical form
-(`Literal.eqb`), so the blank-node signature compares it that way too.
+/- An `rdf:XMLLiteral` is compared as an RDF term (`Literal.eqb`, RDF 1.1
+Concepts 3.3 and 3.6): two lexical forms with one exclusive canonical form
+are two terms, so the graphs below are NOT isomorphic. Until 2026-10-23
+`Literal.eqb` compared them by canonical XML and these graphs were
+isomorphic (https://github.com/danbri/factoidal/issues/963). The case is
 W3C rdf12 `rdf-xml/eval/rdf12-xml-an-14`: the same XML literal written
 with namespace declarations it does not use, and without them, each in
 a triple that also mentions a blank node. -/
@@ -413,8 +416,8 @@ private def xmlBare : Graph :=
 private def xmlOther : Graph :=
   [ ti iA iP (xl "<br></br>"), tb "y" iQ (xl "<hr></hr>") ]
 
-#guard Graph.isomorphic? xmlWithDecls xmlBare = true
-#guard Graph.isomorphic? xmlBare xmlWithDecls = true
+#guard Graph.isomorphic? xmlWithDecls xmlBare = false
+#guard Graph.isomorphic? xmlBare xmlWithDecls = false
 -- A different XML value is not the same literal.
 #guard Graph.isomorphic? xmlWithDecls xmlOther = false
 #guard Graph.isomorphic? xmlOther xmlBare = false
