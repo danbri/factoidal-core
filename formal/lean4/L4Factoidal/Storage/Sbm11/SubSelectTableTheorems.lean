@@ -178,6 +178,236 @@ theorem selectPost_active (q : Query) (h : q.expressionsOutsidePatternExistsFree
 
 end active
 
+/-! ## `selectPost` and the dataset of the environment
+
+The nested evaluator runs `selectPost` with the environment of the id path,
+which has no dataset (`Harness/Sbm11Query.queryEnv`); the reference runs it
+with the environment `evalSelect` builds, which has the query's dataset.
+`selectPost` reads the environment through `Expr.evalIn` (which does not
+read the dataset, `ExprLocalTheorems.evalIn_agree`), through the aggregates
+and GROUP BY keys (which call `Expr.evalIn`), and through
+`substituteExistentials` (the identity on an EXISTS-free expression). So two
+environments that agree on `ext`, `now` and `base` give the same rows, for
+any two active graphs, when no expression outside the WHERE clause has
+EXISTS. -/
+
+section agree
+
+open L4Factoidal.Storage.Sbm11.ExprLocalTheorems (EnvAgree evalIn_agree)
+
+theorem evalAggregate_agree {env1 env2 : EvalEnv} (hA : EnvAgree env1 env2) (fn : AggregateFn) (d : Bool)
+    (e : Expr) (g : SolutionGroup) : evalAggregate env1 fn d e g = evalAggregate env2 fn d e g := by
+  simp only [evalAggregate, evalOverGroup, evalIn_agree hA]
+
+mutual
+theorem rewriteAggregates_agree {env1 env2 : EvalEnv} (h : EnvAgree env1 env2) (g : SolutionGroup) :
+    (e : Expr) → rewriteAggregates env1 g e = rewriteAggregates env2 g e
+  | .existsPat p => rfl
+  | .notExistsPat p => rfl
+  | .var v => rfl
+  | .iri i => rfl
+  | .lit l => rfl
+  | .boolLit b => rfl
+  | .numericLit n => rfl
+  | .decimalLit s => rfl
+  | .doubleLit s => rfl
+  | .bound v => rfl
+  | .now => rfl
+  | .arith op a b => by simp only [rewriteAggregates, rewriteAggregates_agree h g a, rewriteAggregates_agree h g b]
+  | .unaryMinus a => by simp only [rewriteAggregates, rewriteAggregates_agree h g a]
+  | .unaryPlus a => by simp only [rewriteAggregates, rewriteAggregates_agree h g a]
+  | .compare op a b => by simp only [rewriteAggregates, rewriteAggregates_agree h g a, rewriteAggregates_agree h g b]
+  | .and a b => by simp only [rewriteAggregates, rewriteAggregates_agree h g a, rewriteAggregates_agree h g b]
+  | .or a b => by simp only [rewriteAggregates, rewriteAggregates_agree h g a, rewriteAggregates_agree h g b]
+  | .not a => by simp only [rewriteAggregates, rewriteAggregates_agree h g a]
+  | .isIri a => by simp only [rewriteAggregates, rewriteAggregates_agree h g a]
+  | .isBlank a => by simp only [rewriteAggregates, rewriteAggregates_agree h g a]
+  | .isLiteral a => by simp only [rewriteAggregates, rewriteAggregates_agree h g a]
+  | .isNumeric a => by simp only [rewriteAggregates, rewriteAggregates_agree h g a]
+  | .str a => by simp only [rewriteAggregates, rewriteAggregates_agree h g a]
+  | .lang a => by simp only [rewriteAggregates, rewriteAggregates_agree h g a]
+  | .datatype a => by simp only [rewriteAggregates, rewriteAggregates_agree h g a]
+  | .iriFn a => by simp only [rewriteAggregates, rewriteAggregates_agree h g a]
+  | .hasLang a => by simp only [rewriteAggregates, rewriteAggregates_agree h g a]
+  | .hasLangDir a => by simp only [rewriteAggregates, rewriteAggregates_agree h g a]
+  | .langDir a => by simp only [rewriteAggregates, rewriteAggregates_agree h g a]
+  | .strDt a b => by simp only [rewriteAggregates, rewriteAggregates_agree h g a, rewriteAggregates_agree h g b]
+  | .strLang a b => by simp only [rewriteAggregates, rewriteAggregates_agree h g a, rewriteAggregates_agree h g b]
+  | .strLangDir a b c => by simp only [rewriteAggregates, rewriteAggregates_agree h g a, rewriteAggregates_agree h g b, rewriteAggregates_agree h g c]
+  | .cond c t e => by simp only [rewriteAggregates, rewriteAggregates_agree h g c, rewriteAggregates_agree h g t, rewriteAggregates_agree h g e]
+  | .coalesce es => by simp only [rewriteAggregates, rewriteAggregateList_agree h g es]
+  | .inList a es => by simp only [rewriteAggregates, rewriteAggregates_agree h g a, rewriteAggregateList_agree h g es]
+  | .notInList a es => by simp only [rewriteAggregates, rewriteAggregates_agree h g a, rewriteAggregateList_agree h g es]
+  | .strLen a => by simp only [rewriteAggregates, rewriteAggregates_agree h g a]
+  | .substr a b c => by simp only [rewriteAggregates, rewriteAggregates_agree h g a, rewriteAggregates_agree h g b, rewriteAggregateOpt_agree h g c]
+  | .uCase a => by simp only [rewriteAggregates, rewriteAggregates_agree h g a]
+  | .lCase a => by simp only [rewriteAggregates, rewriteAggregates_agree h g a]
+  | .strStarts a b => by simp only [rewriteAggregates, rewriteAggregates_agree h g a, rewriteAggregates_agree h g b]
+  | .strEnds a b => by simp only [rewriteAggregates, rewriteAggregates_agree h g a, rewriteAggregates_agree h g b]
+  | .contains a b => by simp only [rewriteAggregates, rewriteAggregates_agree h g a, rewriteAggregates_agree h g b]
+  | .strBefore a b => by simp only [rewriteAggregates, rewriteAggregates_agree h g a, rewriteAggregates_agree h g b]
+  | .strAfter a b => by simp only [rewriteAggregates, rewriteAggregates_agree h g a, rewriteAggregates_agree h g b]
+  | .concat es => by simp only [rewriteAggregates, rewriteAggregateList_agree h g es]
+  | .encodeForUri a => by simp only [rewriteAggregates, rewriteAggregates_agree h g a]
+  | .replace a b c d => by simp only [rewriteAggregates, rewriteAggregates_agree h g a, rewriteAggregates_agree h g b, rewriteAggregates_agree h g c, rewriteAggregateOpt_agree h g d]
+  | .regex a b c => by simp only [rewriteAggregates, rewriteAggregates_agree h g a, rewriteAggregates_agree h g b, rewriteAggregateOpt_agree h g c]
+  | .abs a => by simp only [rewriteAggregates, rewriteAggregates_agree h g a]
+  | .round a => by simp only [rewriteAggregates, rewriteAggregates_agree h g a]
+  | .ceil a => by simp only [rewriteAggregates, rewriteAggregates_agree h g a]
+  | .floor a => by simp only [rewriteAggregates, rewriteAggregates_agree h g a]
+  | .md5 a => by simp only [rewriteAggregates, rewriteAggregates_agree h g a]
+  | .sha1 a => by simp only [rewriteAggregates, rewriteAggregates_agree h g a]
+  | .sha256 a => by simp only [rewriteAggregates, rewriteAggregates_agree h g a]
+  | .sha384 a => by simp only [rewriteAggregates, rewriteAggregates_agree h g a]
+  | .sha512 a => by simp only [rewriteAggregates, rewriteAggregates_agree h g a]
+  | .year a => by simp only [rewriteAggregates, rewriteAggregates_agree h g a]
+  | .month a => by simp only [rewriteAggregates, rewriteAggregates_agree h g a]
+  | .day a => by simp only [rewriteAggregates, rewriteAggregates_agree h g a]
+  | .hours a => by simp only [rewriteAggregates, rewriteAggregates_agree h g a]
+  | .minutes a => by simp only [rewriteAggregates, rewriteAggregates_agree h g a]
+  | .seconds a => by simp only [rewriteAggregates, rewriteAggregates_agree h g a]
+  | .timezone a => by simp only [rewriteAggregates, rewriteAggregates_agree h g a]
+  | .tz a => by simp only [rewriteAggregates, rewriteAggregates_agree h g a]
+  | .sameTerm a b => by simp only [rewriteAggregates, rewriteAggregates_agree h g a, rewriteAggregates_agree h g b]
+  | .aggregate fn distinct sub => by simp only [rewriteAggregates, evalAggregate_agree h]
+  | .functionCall i args => by simp only [rewriteAggregates, rewriteAggregateList_agree h g args]
+  | .tripleTerm a b c => by simp only [rewriteAggregates, rewriteAggregates_agree h g a, rewriteAggregates_agree h g b, rewriteAggregates_agree h g c]
+  | .ttSubject a => by simp only [rewriteAggregates, rewriteAggregates_agree h g a]
+  | .ttPredicate a => by simp only [rewriteAggregates, rewriteAggregates_agree h g a]
+  | .ttObject a => by simp only [rewriteAggregates, rewriteAggregates_agree h g a]
+  | .isTriple a => by simp only [rewriteAggregates, rewriteAggregates_agree h g a]
+
+theorem rewriteAggregateList_agree {env1 env2 : EvalEnv} (h : EnvAgree env1 env2) (g : SolutionGroup) :
+    (es : List Expr) → rewriteAggregateList env1 g es = rewriteAggregateList env2 g es
+  | [] => rfl
+  | e :: es => by
+    simp only [rewriteAggregateList, rewriteAggregates_agree h g e, rewriteAggregateList_agree h g es]
+
+theorem rewriteAggregateOpt_agree {env1 env2 : EvalEnv} (h : EnvAgree env1 env2) (g : SolutionGroup) :
+    (o : Option Expr) → rewriteAggregateOpt env1 g o = rewriteAggregateOpt env2 g o
+  | none => rfl
+  | some e => by simp only [rewriteAggregateOpt, rewriteAggregates_agree h g e]
+end
+
+theorem groupWhere_agree {env1 env2 : EvalEnv} (hA : EnvAgree env1 env2) (gb : Option (List GroupCondition))
+    (omega : SolutionSeq) : groupWhere env1 gb omega = groupWhere env2 gb omega := by
+  have hc : ∀ gc mu, evalGroupCondition env1 gc mu = evalGroupCondition env2 gc mu := by
+    intro gc mu
+    cases gc with
+    | var v => rfl
+    | expr e _ => simp only [evalGroupCondition, evalIn_agree hA]
+  have hal : ∀ conds mu, extendWithGroupAliases env1 conds mu = extendWithGroupAliases env2 conds mu := by
+    intro conds mu
+    simp only [extendWithGroupAliases, evalIn_agree hA]
+  cases gb with
+  | none => rfl
+  | some conds => simp only [groupWhere, groupSolutionsFast, evalGroupKey, hc, hal]
+
+variable {env1 env2 : EvalEnv} (hA : EnvAgree env1 env2) (a1 a2 : Graph)
+include hA
+
+theorem compareOnConditions_agree :
+    ∀ (os : List OrderCondition), os.all OrderCondition.existsFree = true → ∀ (mu1 mu2 : Binding),
+      compareOnConditions env1 a1 os mu1 mu2 = compareOnConditions env2 a2 os mu1 mu2
+  | [], _, _, _ => rfl
+  | c :: rest, h, mu1, mu2 => by
+    simp only [List.all_cons, Bool.and_eq_true] at h
+    have hc : compareOnCondition env1 a1 c mu1 mu2 = compareOnCondition env2 a2 c mu1 mu2 := by
+      cases c with
+      | asc e =>
+        simp only [OrderCondition.existsFree] at h
+        simp only [compareOnCondition, substituteExistentials_existsFree _ _ _ e h.1, evalIn_agree hA]
+      | desc e =>
+        simp only [OrderCondition.existsFree] at h
+        simp only [compareOnCondition, substituteExistentials_existsFree _ _ _ e h.1, evalIn_agree hA]
+    simp only [compareOnConditions, hc, compareOnConditions_agree rest h.2 mu1 mu2]
+
+theorem havingSatisfies_agree :
+    ∀ (hv : List Expr), Expr.existsFreeList hv = true → ∀ (g : SolutionGroup),
+      havingSatisfies env1 a1 hv g = havingSatisfies env2 a2 hv g
+  | [], _, _ => rfl
+  | c :: rest, h, g => by
+    simp only [Expr.existsFreeList, Bool.and_eq_true] at h
+    simp only [havingSatisfies, substituteExistentials_existsFree _ _ _ c h.1, evalExprInGroup,
+      rewriteAggregates_agree hA, evalIn_agree hA, havingSatisfies_agree rest h.2 g]
+
+theorem evalSelectItemGroup_agree (it : SelectItem) (h : it.existsFree = true) (g : SolutionGroup)
+    (row : Binding) : evalSelectItemGroup env1 a1 it g row = evalSelectItemGroup env2 a2 it g row := by
+  cases it with
+  | var v => rfl
+  | expr e v =>
+    simp only [SelectItem.existsFree] at h
+    simp only [evalSelectItemGroup, substituteExistentials_existsFree _ _ _ e h, rewriteAggregates_agree hA,
+      evalIn_agree hA]
+
+theorem evalSelectItemsGroup_agree :
+    ∀ (items : List SelectItem), items.all SelectItem.existsFree = true → ∀ (g : SolutionGroup) (row : Binding),
+      evalSelectItemsGroup env1 a1 items g row = evalSelectItemsGroup env2 a2 items g row
+  | [], _, _, _ => rfl
+  | it :: rest, h, g, row => by
+    simp only [List.all_cons, Bool.and_eq_true] at h
+    simp only [evalSelectItemsGroup, evalSelectItemGroup_agree hA a1 a2 it h.1 g row]
+    split
+    · next b _ => rw [evalSelectItemsGroup_agree rest h.2 g (b :: row)]
+    · exact evalSelectItemsGroup_agree rest h.2 g row
+
+theorem evalSelectItemsRowFrom_agree (row : String) :
+    ∀ (items : List SelectItem), items.all SelectItem.existsFree = true → ∀ (acc : Binding) (i : Nat),
+      evalSelectItemsRowFrom env1 a1 row items acc i = evalSelectItemsRowFrom env2 a2 row items acc i
+  | [], _, _, _ => rfl
+  | .var _ :: rest, h, acc, i => by
+    simp only [List.all_cons, Bool.and_eq_true] at h
+    simp only [evalSelectItemsRowFrom, evalSelectItemsRowFrom_agree row rest h.2 acc (i + 1)]
+  | .expr e v :: rest, h, acc, i => by
+    simp only [List.all_cons, Bool.and_eq_true, SelectItem.existsFree] at h
+    simp only [evalSelectItemsRowFrom, substituteExistentials_existsFree _ _ _ e h.1, evalIn_agree hA]
+    split
+    · next t _ => exact evalSelectItemsRowFrom_agree row rest h.2 _ _
+    · exact evalSelectItemsRowFrom_agree row rest h.2 _ _
+
+/-- **`selectPost` and the environment.** With no EXISTS outside the WHERE
+    clause, two environments that agree on `ext`, `now` and `base` (the
+    dataset may differ) give `selectPost` the same rows, for any two active
+    graphs. -/
+theorem selectPost_agree (q : Query) (h : q.expressionsOutsidePatternExistsFree = true) (rows : SolutionSeq) :
+    selectPost env1 a1 q rows = selectPost env2 a2 q rows := by
+  obtain ⟨form, dcs, pat, gb, hv, md, pv, b⟩ := q
+  obtain ⟨ob, dd, rr, oo, ll⟩ := md
+  simp only [Query.expressionsOutsidePatternExistsFree, Query.form, Query.groupBy, Query.having,
+    Query.modifier, Bool.and_eq_true] at h
+  obtain ⟨⟨⟨hf, _⟩, hh⟩, ho⟩ := h
+  have hO : ∀ o, ob = some o → ∀ mu1 mu2,
+      compareOnConditions env1 a1 o mu1 mu2 = compareOnConditions env2 a2 o mu1 mu2 := by
+    intro o e mu1 mu2
+    subst e
+    exact compareOnConditions_agree hA a1 a2 o (by simpa using ho) mu1 mu2
+  have hW := groupWhere_agree hA gb
+  cases form with
+  | select sel =>
+    have hH := havingSatisfies_agree hA a1 a2 hv hh
+    cases sel with
+    | vars items =>
+      simp only [QueryForm.existsFree] at hf
+      have hG := evalSelectItemsGroup_agree hA a1 a2 items hf
+      have hR : ∀ row, evalSelectItemsRowFrom env1 a1 row items = evalSelectItemsRowFrom env2 a2 row items := by
+        intro row; funext acc i; exact evalSelectItemsRowFrom_agree hA a1 a2 row items hf acc i
+      cases ob with
+      | none => simp only [selectPost, hH, hG, hR, hW]
+      | some o =>
+        have hO' := hO o rfl
+        simp only [selectPost, hH, hG, hR, hO', hW]
+    | all =>
+      cases ob with
+      | none => simp only [selectPost, hH, hW]
+      | some o =>
+        have hO' := hO o rfl
+        simp only [selectPost, hH, hO', hW]
+  | construct _ => rfl
+  | ask => rfl
+  | describe _ => rfl
+
+end agree
+
 /-! ## `selectPost` of a projection of variables, and the variables it binds -/
 
 section plain

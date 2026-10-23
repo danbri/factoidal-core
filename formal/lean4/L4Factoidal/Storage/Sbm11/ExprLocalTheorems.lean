@@ -21,6 +21,9 @@ the mapping. This file proves that.
   hash or function call). The id path's `.general`, `.str` and `.strRange`
   conjuncts are evaluated in the empty environment (`IdQuery.refFilter`),
   and `compileFilter` only builds them for a `backendLocal` conjunct.
+* `EnvAgree`, `evalIn_agree`: two environments that agree on `ext`, `now`
+  and `base` give every expression the same value; `Expr.evalIn` does not
+  read `EvalEnv.dataset` (only `substituteExistentials` does, for EXISTS).
 * `evalIn_bindEq`: the same lookup for every name gives the same value, so
   the order of the pairs of a mapping does not change it.
 * `lookup_merge_empty`: `Binding.empty.merge row` (the mapping
@@ -81,8 +84,20 @@ open L4Factoidal.SPARQL
 open L4Factoidal.Storage.Sbm11.IdQuery
 open L4Factoidal.Storage.Sbm11.IdQueryTests (ebvOrFalse_evalIn_and)
 
-theorem nonlocal {env1 env2 : EvalEnv} {e : Expr} (he : e.backendLocal = true ∨ env1 = env2)
-    (hb : e.backendLocal = false) : env1 = env2 := by
+/-- Two environments that agree on what `Expr.evalIn` reads of an
+    environment: the extension functions (`ext`), NOW (`now`) and BASE
+    (`base`). The dataset (`EvalEnv.dataset`, which `substituteExistentials`
+    reads for EXISTS) and the SERVICE endpoints are not among them. -/
+def EnvAgree (env1 env2 : EvalEnv) : Prop := env1.ext = env2.ext ∧ env1.now = env2.now ∧ env1.base = env2.base
+
+theorem EnvAgree.refl (env : EvalEnv) : EnvAgree env env := ⟨rfl, rfl, rfl⟩
+
+/-- An environment and the same environment with another dataset agree. -/
+theorem EnvAgree.withDataset (env : EvalEnv) (d : Option Dataset) : EnvAgree env { env with dataset := d } :=
+  ⟨rfl, rfl, rfl⟩
+
+theorem nonlocal {env1 env2 : EvalEnv} {e : Expr} (he : e.backendLocal = true ∨ EnvAgree env1 env2)
+    (hb : e.backendLocal = false) : EnvAgree env1 env2 := by
   rcases he with h | h
   · rw [hb] at h; cases h
   · exact h
@@ -109,7 +124,7 @@ mutual
     environments do when `e` is `backendLocal`. -/
 theorem evalIn_congr (env1 env2 : EvalEnv) (mu1 mu2 : Binding) :
     (e : Expr) → (∀ v ∈ Expr.refVars e, mu1.lookup v = mu2.lookup v) →
-      (e.backendLocal = true ∨ env1 = env2) → Expr.evalIn env1 mu1 e = Expr.evalIn env2 mu2 e
+      (e.backendLocal = true ∨ EnvAgree env1 env2) → Expr.evalIn env1 mu1 e = Expr.evalIn env2 mu2 e
   | .iri _, _, _ => by simp only [Expr.evalIn]
   | .lit _, _, _ => by simp only [Expr.evalIn]
   | .boolLit _, _, _ => by simp only [Expr.evalIn]
@@ -118,7 +133,7 @@ theorem evalIn_congr (env1 env2 : EvalEnv) (mu1 mu2 : Binding) :
   | .doubleLit _, _, _ => by simp only [Expr.evalIn]
   | .now, _, he => by
     have e := nonlocal he (by rfl)
-    subst e; rfl
+    simp only [Expr.evalIn, e.2.1]
   | .existsPat _, _, _ => by simp only [Expr.evalIn]
   | .notExistsPat _, _, _ => by simp only [Expr.evalIn]
   | .aggregate _ _ _, _, _ => by simp only [Expr.evalIn]
@@ -219,52 +234,52 @@ theorem evalIn_congr (env1 env2 : EvalEnv) (mu1 mu2 : Binding) :
     have e := nonlocal he (by rfl)
     simp only [Expr.evalIn]
     rw [evalIn_congr env1 env2 mu1 mu2 a (fun v hv => h v (by simp [Expr.refVars, hv])) (Or.inr e)]
-    all_goals (subst e; rfl)
+    all_goals (simp only [e.2.2])
   | .md5 a, h, he => by
     have e := nonlocal he (by rfl)
     simp only [Expr.evalIn]
     rw [evalIn_congr env1 env2 mu1 mu2 a (fun v hv => h v (by simp [Expr.refVars, hv])) (Or.inr e)]
-    all_goals (subst e; rfl)
+    all_goals (simp only [e.1, e.2.1, e.2.2])
   | .sha1 a, h, he => by
     have e := nonlocal he (by rfl)
     simp only [Expr.evalIn]
     rw [evalIn_congr env1 env2 mu1 mu2 a (fun v hv => h v (by simp [Expr.refVars, hv])) (Or.inr e)]
-    all_goals (subst e; rfl)
+    all_goals (simp only [e.1, e.2.1, e.2.2])
   | .sha256 a, h, he => by
     have e := nonlocal he (by rfl)
     simp only [Expr.evalIn]
     rw [evalIn_congr env1 env2 mu1 mu2 a (fun v hv => h v (by simp [Expr.refVars, hv])) (Or.inr e)]
-    all_goals (subst e; rfl)
+    all_goals (simp only [e.1, e.2.1, e.2.2])
   | .sha384 a, h, he => by
     have e := nonlocal he (by rfl)
     simp only [Expr.evalIn]
     rw [evalIn_congr env1 env2 mu1 mu2 a (fun v hv => h v (by simp [Expr.refVars, hv])) (Or.inr e)]
-    all_goals (subst e; rfl)
+    all_goals (simp only [e.1, e.2.1, e.2.2])
   | .sha512 a, h, he => by
     have e := nonlocal he (by rfl)
     simp only [Expr.evalIn]
     rw [evalIn_congr env1 env2 mu1 mu2 a (fun v hv => h v (by simp [Expr.refVars, hv])) (Or.inr e)]
-    all_goals (subst e; rfl)
+    all_goals (simp only [e.1, e.2.1, e.2.2])
   | .ttSubject a, h, he => by
     have e := nonlocal he (by rfl)
     simp only [Expr.evalIn]
     rw [evalIn_congr env1 env2 mu1 mu2 a (fun v hv => h v (by simp [Expr.refVars, hv])) (Or.inr e)]
-    all_goals (subst e; rfl)
+    all_goals (simp only [e.1, e.2.1, e.2.2])
   | .ttPredicate a, h, he => by
     have e := nonlocal he (by rfl)
     simp only [Expr.evalIn]
     rw [evalIn_congr env1 env2 mu1 mu2 a (fun v hv => h v (by simp [Expr.refVars, hv])) (Or.inr e)]
-    all_goals (subst e; rfl)
+    all_goals (simp only [e.1, e.2.1, e.2.2])
   | .ttObject a, h, he => by
     have e := nonlocal he (by rfl)
     simp only [Expr.evalIn]
     rw [evalIn_congr env1 env2 mu1 mu2 a (fun v hv => h v (by simp [Expr.refVars, hv])) (Or.inr e)]
-    all_goals (subst e; rfl)
+    all_goals (simp only [e.1, e.2.1, e.2.2])
   | .isTriple a, h, he => by
     have e := nonlocal he (by rfl)
     simp only [Expr.evalIn]
     rw [evalIn_congr env1 env2 mu1 mu2 a (fun v hv => h v (by simp [Expr.refVars, hv])) (Or.inr e)]
-    all_goals (subst e; rfl)
+    all_goals (simp only [e.1, e.2.1, e.2.2])
   | .arith op a b, h, he => by
     have ⟨ha, hb⟩ := local2 (a := Expr.backendLocal a) (b := Expr.backendLocal b) he (by simp only [Expr.backendLocal])
     simp only [Expr.evalIn]
@@ -325,7 +340,7 @@ theorem evalIn_congr (env1 env2 : EvalEnv) (mu1 mu2 : Binding) :
     have e := nonlocal he (by rfl)
     simp only [Expr.evalIn]
     rw [evalIn_congr env1 env2 mu1 mu2 a (fun v hv => h v (by simp [Expr.refVars, hv])) (Or.inr e), evalIn_congr env1 env2 mu1 mu2 b (fun v hv => h v (by simp [Expr.refVars, hv])) (Or.inr e), evalIn_congr env1 env2 mu1 mu2 c (fun v hv => h v (by simp [Expr.refVars, hv])) (Or.inr e)]
-    all_goals (subst e; rfl)
+    all_goals (simp only [e.1, e.2.1, e.2.2])
   | .coalesce es, h, he => by
     simp only [Expr.evalIn]
     rw [evalArgs_congr env1 env2 mu1 mu2 es (fun v hv => h v (by simp [Expr.refVars, hv])) (by simpa only [Expr.backendLocal] using he)]
@@ -352,26 +367,25 @@ theorem evalIn_congr (env1 env2 : EvalEnv) (mu1 mu2 : Binding) :
     have e := nonlocal he (by rfl)
     simp only [Expr.evalIn]
     rw [evalIn_congr env1 env2 mu1 mu2 a (fun v hv => h v (by simp [Expr.refVars, hv])) (Or.inr e), evalIn_congr env1 env2 mu1 mu2 b (fun v hv => h v (by simp [Expr.refVars, hv])) (Or.inr e)]
-    all_goals (subst e; rfl)
+    all_goals (simp only [e.1, e.2.1, e.2.2])
   | .regex a b (some c), h, he => by
     have e := nonlocal he (by rfl)
     simp only [Expr.evalIn]
     rw [evalIn_congr env1 env2 mu1 mu2 a (fun v hv => h v (by simp [Expr.refVars, hv])) (Or.inr e), evalIn_congr env1 env2 mu1 mu2 b (fun v hv => h v (by simp [Expr.refVars, hv])) (Or.inr e), evalIn_congr env1 env2 mu1 mu2 c (fun v hv => h v (by simp [Expr.refVars, hv])) (Or.inr e)]
-    all_goals (subst e; rfl)
+    all_goals (simp only [e.1, e.2.1, e.2.2])
   | .replace a b c none, h, he => by
     have e := nonlocal he (by rfl)
     simp only [Expr.evalIn]
     rw [evalIn_congr env1 env2 mu1 mu2 a (fun v hv => h v (by simp [Expr.refVars, hv])) (Or.inr e), evalIn_congr env1 env2 mu1 mu2 b (fun v hv => h v (by simp [Expr.refVars, hv])) (Or.inr e), evalIn_congr env1 env2 mu1 mu2 c (fun v hv => h v (by simp [Expr.refVars, hv])) (Or.inr e)]
-    all_goals (subst e; rfl)
+    all_goals (simp only [e.1, e.2.1, e.2.2])
   | .replace a b c (some d), h, he => by
     have e := nonlocal he (by rfl)
     simp only [Expr.evalIn]
     rw [evalIn_congr env1 env2 mu1 mu2 a (fun v hv => h v (by simp [Expr.refVars, hv])) (Or.inr e), evalIn_congr env1 env2 mu1 mu2 b (fun v hv => h v (by simp [Expr.refVars, hv])) (Or.inr e), evalIn_congr env1 env2 mu1 mu2 c (fun v hv => h v (by simp [Expr.refVars, hv])) (Or.inr e), evalIn_congr env1 env2 mu1 mu2 d (fun v hv => h v (by simp [Expr.refVars, hv])) (Or.inr e)]
-    all_goals (subst e; rfl)
+    all_goals (simp only [e.1, e.2.1, e.2.2])
   | .functionCall i es, h, he => by
     have e := nonlocal he (by rfl)
     have hv := evalArgs_congr env1 env2 mu1 mu2 es (fun v hv => h v (by simp [Expr.refVars, hv])) (Or.inr e)
-    subst e
     by_cases hf : Expr.freshFn i = true
     · have h1 := h fxKeyRow (by simp [Expr.refVars, hf])
       have h2 := h fxKeyOcc (by simp [Expr.refVars, hf])
@@ -379,16 +393,16 @@ theorem evalIn_congr (env1 env2 : EvalEnv) (mu1 mu2 : Binding) :
         simp only [Binding.freshnessCtx, h1]
       have e2 : mu1.freshnessCtx fxKeyOcc = mu2.freshnessCtx fxKeyOcc := by
         simp only [Binding.freshnessCtx, h2]
-      simp only [Expr.evalIn, hv, e1, e2]
+      simp only [Expr.evalIn, hv, e1, e2, e.1]
     · simp only [Expr.freshFn, Bool.or_eq_true, not_or, Bool.not_eq_true] at hf
       obtain ⟨⟨f1, f2⟩, f3⟩ := hf
-      simp only [Expr.evalIn, hv, f1, f2, f3, Bool.false_eq_true, if_false]
+      simp only [Expr.evalIn, hv, f1, f2, f3, Bool.false_eq_true, if_false, e.1]
 
 
 /-- The list form of `evalIn_congr`. -/
 theorem evalArgs_congr (env1 env2 : EvalEnv) (mu1 mu2 : Binding) :
     (es : List Expr) → (∀ v ∈ Expr.refVarsList es, mu1.lookup v = mu2.lookup v) →
-      (Expr.backendLocalList es = true ∨ env1 = env2) → Expr.evalArgs env1 mu1 es = Expr.evalArgs env2 mu2 es
+      (Expr.backendLocalList es = true ∨ EnvAgree env1 env2) → Expr.evalArgs env1 mu1 es = Expr.evalArgs env2 mu2 es
   | [], _, _ => by simp only [Expr.evalArgs]
   | e :: es, h, he => by
     have ⟨ha, hb⟩ := local2 (a := Expr.backendLocal e) (b := Expr.backendLocalList es) he (by simp only [Expr.backendLocalList])
@@ -402,7 +416,15 @@ end
     not change it. -/
 theorem evalIn_bindEq (env : EvalEnv) (mu1 mu2 : Binding) (h : ∀ v, mu1.lookup v = mu2.lookup v) (e : Expr) :
     Expr.evalIn env mu1 e = Expr.evalIn env mu2 e :=
-  evalIn_congr env env mu1 mu2 e (fun v _ => h v) (Or.inr rfl)
+  evalIn_congr env env mu1 mu2 e (fun v _ => h v) (Or.inr (EnvAgree.refl env))
+
+/-- **`Expr.evalIn` does not read the dataset.** Two environments that agree
+    on `ext`, `now` and `base` give every expression the same value on every
+    mapping: `Expr.evalIn` reads EXISTS as an error, and only
+    `substituteExistentials` reads `EvalEnv.dataset`. -/
+theorem evalIn_agree {env1 env2 : EvalEnv} (h : EnvAgree env1 env2) (mu : Binding) (e : Expr) :
+    Expr.evalIn env1 mu e = Expr.evalIn env2 mu e :=
+  evalIn_congr env1 env2 mu mu e (fun _ _ => rfl) (Or.inr h)
 
 /-- `merge` keeps the first binding of a name: the lookup of `mu.merge row`
     is `mu`'s, else `row`'s. -/

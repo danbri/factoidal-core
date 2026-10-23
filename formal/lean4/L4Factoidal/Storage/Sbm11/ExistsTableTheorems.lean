@@ -39,9 +39,13 @@ that the earlier conjuncts kept and refuses the query otherwise
 * `filterM_run`, `leftJoinCond_run`: FILTER and OPTIONAL with a condition
   other than `true`, from `filterMaskM_spec`.
 
-The hypotheses beyond those of `FilterTableTheorems`: the environment has a
-dataset (`env.dataset = some _`; without one the reference leaves EXISTS
-unevaluated); the leaf conditions of each EXISTS body in the active graph
+The hypotheses beyond those of `FilterTableTheorems`: the reference's
+environment `env` has a dataset (`env.dataset = some _`; without one the
+reference leaves EXISTS unevaluated, SPARQL 1.1 section 18.6 evaluates it
+against the active graph of the dataset). The id path's environment `cx.env`
+need not have one: it evaluates EXISTS on ids (`semiHitsM`), and agrees with
+`env` on what `Expr.evalIn` reads (`ExprLocalTheorems.EnvAgree`: `ext`, `now`,
+`base`; `henv`). The leaf conditions of each EXISTS body in the active graph
 (`ExecLeafTheorems.ExecLeaf`), as for a basic graph pattern of the WHERE
 clause; no EXISTS body has `text:query` as a constant predicate (`NoFtPred`;
 `IdQuery.translate` refuses such a query); and the tag of a store id says
@@ -1314,14 +1318,15 @@ theorem semis_loop (env : EvalEnv) (ds : Dataset)
     · intro hcb; cases hcb
 /-- **The mask of a FILTER condition, EXISTS included.** For a condition
     whose conjuncts are `CjExOk`, each EXISTS body with the leaf conditions in
-    the active graph `a` (`hbody`), a dataset in the environment, the
-    hypotheses of `semiHitsM_spec` and of the EXISTS-free conjuncts
+    the active graph `a` (`hbody`), a dataset in the reference's environment
+    `env`, the id path's environment agreeing with it on `ext`, `now` and
+    `base` (`henv`), the hypotheses of `semiHitsM_spec` and of the EXISTS-free conjuncts
     (`FilterTableTheorems`): `filterMaskM` refuses (a `LocalRefusal`), or
     returns, keeping the vocabulary, a mask with one entry per row of `t`,
     entry `i` the reference FILTER (`IdGroup.filterFn`) of the condition on
     the decoded row `i`. -/
 theorem filterMaskM_spec (env : EvalEnv) (ds : Dataset)
-    (henv : cx.env = env)
+    (henv : ExprLocalTheorems.EnvAgree cx.env env)
     (hpm : ∀ k, k < 4 → PermMem cx.st k (prb k) (ms k)) (hscan : cx.st.scanTable = none)
     (hds : cx.ds = none) (hid : ∀ t, cx.st.idOf t = pure (cid t))
     (hdec : ∀ x y, ok x → ok y → (dec x).eqb (dec y) = (x == y)) (hsok : ∀ x, sok x → ok x)
@@ -1337,7 +1342,6 @@ theorem filterMaskM_spec (env : EvalEnv) (ds : Dataset)
       nst'.localIdx = nst.localIdx ∧ keep.size = t.rows ∧
       ∀ i, i < t.rows → keep[i]! = IdGroup.filterFn env c a (decRow (decV dec nst.vocab) (t.idRow i))) := by
   obtain ⟨fs, hk, hfs, hve⟩ := filterKindsM_spec_ex cx cid hid t c hc nst
-  rw [henv] at hfs
   unfold filterMaskM
   rw [StateT.run_bind, hk, pure_bind]
   simp only []
@@ -1373,14 +1377,16 @@ theorem filterMaskM_spec (env : EvalEnv) (ds : Dataset)
     rcases hc cj hm with hok | ⟨b, hb | hb, _⟩ | hb | hb
     · exact hok
     all_goals (subst hb; simp [Expr.existsFree] at hef)
-  have hsem : ∀ cj ∈ (conjuncts c).toList.filter (·.existsFree), ∀ k ∈ fs.toList, KindOf env cid t cj k →
+  -- the code classifies the conjuncts with its own environment `cx.env`;
+  -- `Expr.evalIn` reads only what `henv` says the two environments share
+  have hsem : ∀ cj ∈ (conjuncts c).toList.filter (·.existsFree), ∀ k ∈ fs.toList, KindOf cx.env cid t cj k →
       KWf t k ∧ ∀ i, i < t.rows → keepOf (decV dec nst.vocab) t i k =
         cjVal env a (decRow (decV dec nst.vocab) (t.idRow i)) cj := by
     intro cj hcj k hk' hK
-    obtain ⟨hkw, hkv⟩ := kind_sem (decV dec nst.vocab) (okV ok nst.vocab) cid _ hcidV hcidN' hdV t ht hrows' env cj
-      (hplain cj hcj) k hK (hve k hk')
+    obtain ⟨hkw, hkv⟩ := kind_sem (decV dec nst.vocab) (okV ok nst.vocab) cid _ hcidV hcidN' hdV t ht hrows' cx.env
+      cj (hplain cj hcj) k hK (hve k hk')
     refine ⟨hkw, fun i hi => ?_⟩
-    rw [hkv i hi, cjVal_existsFree env a _ cj (List.mem_filter.mp hcj).2]
+    rw [hkv i hi, cjVal_existsFree env a _ cj (List.mem_filter.mp hcj).2, ExprLocalTheorems.evalIn_agree henv]
   have hkw : ∀ k ∈ fs.toList, KWf t k := by
     intro k hk'
     obtain ⟨cj, hcj, hK⟩ := hfs.mem_right k hk'
@@ -1430,7 +1436,7 @@ theorem filterMaskM_spec (env : EvalEnv) (ds : Dataset)
     keeping the vocabulary, a well-formed table whose rows are the rows of `t`
     that pass the reference FILTER (`IdGroup.filterFn`), in order. -/
 theorem filterM_run (env : EvalEnv) (ds : Dataset)
-    (henv : cx.env = env)
+    (henv : ExprLocalTheorems.EnvAgree cx.env env)
     (hpm : ∀ k, k < 4 → PermMem cx.st k (prb k) (ms k)) (hscan : cx.st.scanTable = none)
     (hds : cx.ds = none) (hid : ∀ t, cx.st.idOf t = pure (cid t))
     (hdec : ∀ x y, ok x → ok y → (dec x).eqb (dec y) = (x == y)) (hsok : ∀ x, sok x → ok x)
@@ -1467,7 +1473,7 @@ theorem filterM_run (env : EvalEnv) (ds : Dataset)
     of a mask whose entry `k` is the reference FILTER of the condition on
     merged row `k`. -/
 theorem leftJoinCond_run (env : EvalEnv) (ds : Dataset)
-    (henv : cx.env = env)
+    (henv : ExprLocalTheorems.EnvAgree cx.env env)
     (hpm : ∀ k, k < 4 → PermMem cx.st k (prb k) (ms k)) (hscan : cx.st.scanTable = none)
     (hds : cx.ds = none) (hid : ∀ t, cx.st.idOf t = pure (cid t))
     (hdec : ∀ x y, ok x → ok y → (dec x).eqb (dec y) = (x == y)) (hsok : ∀ x, sok x → ok x)

@@ -544,7 +544,7 @@ theorem refBinder_local (env : EvalEnv) (e : Expr) (vs : Array String) (hvs : re
   rw [IdPostTheorems.substituteExistentials_existsFree env a1 _ e hef,
     IdPostTheorems.substituteExistentials_existsFree env a2 _ e hef]
   congr 1
-  apply ExprLocalTheorems.evalIn_congr env env _ _ e _ (Or.inr rfl)
+  apply ExprLocalTheorems.evalIn_congr env env _ _ e _ (Or.inr (ExprLocalTheorems.EnvAgree.refl env))
   intro w hw
   rw [ExprLocalTheorems.lookup_merge_empty, ExprLocalTheorems.lookup_merge_empty,
     lookup_fresh _ _ _ w (hfx w hw), lookup_fresh _ _ _ w (hfx w hw)]
@@ -1088,13 +1088,15 @@ theorem ext_rows (hloc : ∀ x, ok x → tagOf x ≠ tagLocal) (env : EvalEnv) (
     (`LocalRefusal`, among them a value that is not its own `normalizeTerm`,
     `IdQuery.valueIdM`) or returns a well-formed table whose rows decode, with
     the decoder of the new state, to `bindRowsFresh` of the reference binder
-    on the decoded rows of `t`, row for row. -/
+    on the decoded rows of `t`, row for row. The reference binder is the one
+    of the environment `env`, which agrees with the id path's environment
+    `cx.env` on `ext`, `now` and `base` (`henv`); the dataset may differ. -/
 theorem extendNM_spec (cx : IdGroup.NCx Id) (hid : ∀ t, cx.st.idOf t = pure (cid t))
     (hcid : ∀ c, CidOk dec ok c (cid c))
     (hcidok : ∀ t x, cid t = some x → ok x) (hcidN : ∀ t x, cid t = some x → dec x = normalizeTerm t)
     (htermOf : ∀ x, ok x → cx.st.termOf x = pure (dec x))
     (hloc : ∀ x, ok x → tagOf x ≠ tagLocal) (hcid0 : ∀ t x, cid t = some x → x ≠ 0)
-    (env : EvalEnv) (henv : cx.env = env) (e : Expr) (v : String) (vs : Array String)
+    (env : EvalEnv) (henv : ExprLocalTheorems.EnvAgree cx.env env) (e : Expr) (v : String) (vs : Array String)
     (hvs : residualVars e = some vs) (hef : e.existsFree = true) (hfx : ∀ w ∈ e.refVars, ¬ IsFx w)
     (t : Table) (ht : t.WF) (nst : IdGroup.NSt) (hi : Inv cid nst)
     (hrows : ∀ r ∈ t.idRows, RowIds (okV ok nst.vocab) r) (a : Graph) :
@@ -1105,10 +1107,16 @@ theorem extendNM_spec (cx : IdGroup.NCx Id) (hid : ∀ t, cx.st.idOf t = pure (c
         (∀ r ∈ T.idRows, RowIds (okV ok nst'.vocab) r) ∧ Inv cid nst' ∧ nst.vocab.toList <+: nst'.vocab.toList := by
   have hrows' : ∀ i, i < t.rows → RowIds (okV ok nst.vocab) (t.idRow i) :=
     fun i hi' => hrows _ (List.mem_map.mpr ⟨i, List.mem_range.mpr hi', rfl⟩)
+  -- the code binds with its own environment `cx.env`; on an EXISTS-free
+  -- expression the binder reads only what `henv` says the two share
+  have hb : IdGroup.binderFn env e = IdGroup.binderFn cx.env e := by
+    funext a' row
+    simp only [IdGroup.binderFn, IdPostTheorems.substituteExistentials_existsFree _ _ _ e hef,
+      ExprLocalTheorems.evalIn_agree henv]
+  rw [hb]
   unfold IdGroup.extendNM IdGroup.liftE
   simp only [StateT.run_bind, StateT.run_get, pure_bind, StateT.run_lift]
-  rw [henv]
-  rcases extendM_spec cx.st cid dec ok hid hcid hcidok hcidN htermOf hloc hcid0 env e v vs hvs hef hfx t ht.nodup
+  rcases extendM_spec cx.st cid dec ok hid hcid hcidok hcidN htermOf hloc hcid0 cx.env e v vs hvs hef hfx t ht.nodup
     nst.vocab nst.localIdx hi hrows' with ⟨e', he, hr⟩ | ⟨out, voc', ix', he, h1, h2, xs, hx1, hx2, hx3⟩
   · left
     refine ⟨e', ?_, hr⟩
@@ -1116,7 +1124,7 @@ theorem extendNM_spec (cx : IdGroup.NCx Id) (hid : ∀ t, cx.st.idOf t = pure (c
   · right
     rw [he]
     obtain ⟨hwf, _, _⟩ := ext_table t ht v out xs hx1 hx2
-    obtain ⟨hpw, hok⟩ := ext_rows dec ok hloc env e v vs hvs hef hfx t ht nst.vocab voc' h2 h1.size hrows' out xs
+    obtain ⟨hpw, hok⟩ := ext_rows dec ok hloc cx.env e v vs hvs hef hfx t ht nst.vocab voc' h2 h1.size hrows' out xs
       hx1 hx2 hx3 a
     exact ⟨extTable t v (t.idx v) out, _, rfl, hwf, hpw, hok, h1, h2⟩
 

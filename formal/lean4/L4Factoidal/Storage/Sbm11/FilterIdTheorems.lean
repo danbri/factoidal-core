@@ -1064,7 +1064,7 @@ theorem keep_residual (dec : UInt64 → Term) (t : Table) (ht : t.WF) (i : Nat) 
     keepOf dec t i (.residual env cj vs) = ebvOrFalse (Expr.evalIn env (decRow dec (t.idRow i)) cj) := by
   simp only [keepOf, residualHolds,
     L4Factoidal.Storage.Sbm11.IdPostTheorems.substituteExistentials_existsFree env _ _ cj hcj.ef]
-  rw [evalIn_congr env env _ (decRow dec (t.idRow i)) cj (fun v hv => ?_) (Or.inr rfl)]
+  rw [evalIn_congr env env _ (decRow dec (t.idRow i)) cj (fun v hv => ?_) (Or.inr (ExprLocalTheorems.EnvAgree.refl env))]
   rcases residualVars_spec cj vs hvs v hv with h | h
   · exact lookup_resMu dec t ht i vs v h
   · exact absurd h (hcj.nofx v hv)
