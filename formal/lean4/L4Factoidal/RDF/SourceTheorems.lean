@@ -2,15 +2,15 @@
 L4Factoidal.RDF.SourceTheorems — what the source layer proves about reading a
 document in chunks.
 
-`Source.Reader` reads a document chunk by chunk, and `Source.parseDocument`
+`Source.Reader` reads a document chunk by chunk, and `Source.parseDocumentRaw`
 reads the joined text at once. This file states the relations between them.
 
 * `whole_readAll`, `jsonld_readAll`: the whole reader (JSON-LD) gives
-  `parseDocument` of the joined text, folded through the consumer, for EVERY
+  `parseDocumentRaw` of the joined text, folded through the consumer, for EVERY
   list of chunks. The reader keeps the chunks and parses their join, so the
   statement does not depend on the cuts.
 * `rdfxml_readAll_of_notStreamed`: the RDF/XML chunk fold, when it ends in its
-  prologue or fall-back phase, gives `parseDocument` of the joined text. In
+  prologue or fall-back phase, gives `parseDocumentRaw` of the joined text. In
   the children phase the equality is measured, not proved (row RX-1 of
   `tests/known-defects/run.sh`, https://github.com/danbri/factoidal/issues/936).
 * `nquads11_readAll_eq_batch`: the N-Quads reader in RDF 1.1 mode, when it
@@ -79,7 +79,7 @@ theorem whole_readAll {α : Type} (step : Step α) (parse : DocParser) (mode : M
 
 /-- RDF/XML, the fall-back: when the chunk fold (`RdfXmlChunkFold`) ends in
 its prologue or fall-back phase, the reader that `init` gives reads
-`parseDocument` of the joined chunks. When it reads item by item the equality
+`parseDocumentRaw` of the joined chunks. When it reads item by item the equality
 is measured (`l4rdfxml-chunk-diff`) and not proved: row RX-1 of
 `tests/known-defects/run.sh`, https://github.com/danbri/factoidal/issues/936. -/
 theorem rdfxml_readAll_of_notStreamed {α : Type} (extra : Extra) (mode : Mode)
@@ -90,7 +90,7 @@ theorem rdfxml_readAll_of_notStreamed {α : Type} (extra : Extra) (mode : Mode)
     (hn : s.notStreamed = true) :
     ∃ r, Reader.init extra .rdfxml mode base bnodePrefix acc = .ok r ∧
       r.readAll step chunks =
-        (parseDocument extra .rdfxml mode base (String.join chunks)).map (foldDataset step acc) := by
+        (parseDocumentRaw extra .rdfxml mode base (String.join chunks)).map (foldDataset step acc) := by
   refine ⟨.rdfxml (RdfXmlChunkFold.State.init base acc), rfl, ?_⟩
   have hfeed : ∀ (cs : List String) (st : RdfXmlChunkFold.State α),
       cs.foldlM (fun (r : Reader α) c => r.feed step c) (Reader.rdfxml st) =
@@ -111,7 +111,7 @@ theorem rdfxml_readAll_of_notStreamed {α : Type} (extra : Extra) (mode : Mode)
   simp only [RdfXmlChunkFold.readAll, hf] at hw
   simp only [Reader.readAll, hfeed, hf, Except.map, Reader.finish, Reader.finishD]
   rw [hw]
-  simp only [RdfXmlChunkFold.readWhole, parseDocument, rdfXmlParser]
+  simp only [RdfXmlChunkFold.readWhole, parseDocumentRaw, rdfXmlParser]
   cases RdfXml.parseRdfXml (String.join chunks) base with
   | error e => rfl
   | ok g => rfl
@@ -119,7 +119,7 @@ theorem rdfxml_readAll_of_notStreamed {α : Type} (extra : Extra) (mode : Mode)
 /-- JSON-LD, the fall-back: when the caller linked a parser and the
 generated-prefix argument is not `JsonLdChunkFold.streamPrefix` (the pre-pass
 found the document not in streaming form, or the caller ran none), the reader
-that `init` gives reads `parseDocument` of the joined chunks, for every list of
+that `init` gives reads `parseDocumentRaw` of the joined chunks, for every list of
 chunks. When the argument is `streamPrefix` the reader reads one top-level node
 object at a time; the equality is measured (`l4jsonld-chunk-diff`) and not
 proved: row JS-1 of `tests/known-defects/run.sh`,
@@ -130,12 +130,12 @@ theorem jsonld_readAll_of_notStreamed {α : Type} (extra : Extra) (parse : DocPa
     (acc : α) (step : Step α) (chunks : List String) :
     ∃ r, Reader.init extra .jsonld mode base bnodePrefix acc = .ok r ∧
       r.readAll step chunks =
-        (parseDocument extra .jsonld mode base (String.join chunks)).map (foldDataset step acc) := by
+        (parseDocumentRaw extra .jsonld mode base (String.join chunks)).map (foldDataset step acc) := by
   refine ⟨.whole parse mode base acc [], ?_, ?_⟩
   · simp only [Reader.init, hx, hp]
     cases extra.jsonldStream <;> simp
   · rw [whole_readAll]
-    simp [parseDocument, hx]
+    simp [parseDocumentRaw, hx]
 
 /-- JSON-LD without the item reader linked: always the whole reader. -/
 theorem jsonld_readAll {α : Type} (extra : Extra) (parse : DocParser)
@@ -144,11 +144,11 @@ theorem jsonld_readAll {α : Type} (extra : Extra) (parse : DocParser)
     (chunks : List String) :
     ∃ r, Reader.init extra .jsonld mode base bnodePrefix acc = .ok r ∧
       r.readAll step chunks =
-        (parseDocument extra .jsonld mode base (String.join chunks)).map (foldDataset step acc) := by
+        (parseDocumentRaw extra .jsonld mode base (String.join chunks)).map (foldDataset step acc) := by
   refine ⟨.whole parse mode base acc [], ?_, ?_⟩
   · simp [Reader.init, hx, hs]
   · rw [whole_readAll]
-    simp [parseDocument, hx]
+    simp [parseDocumentRaw, hx]
 
 /-! ## N-Quads, RDF 1.1 -/
 
