@@ -171,6 +171,16 @@ structure Session where
       `none` when the dictionary does not hold it. Empty except during a
       replay; `idOf` reads it before it reads the dictionary. -/
   baseIds : IO.Ref (Std.HashMap Term (Option UInt64))
+  /-- The dictionary ids that `idOf` has looked up in this session (a
+      normalised term to its id; terms the dictionary does not hold are not
+      kept, since the delta overlay may give them an id). The base dictionary
+      does not change while the session is open, so an entry stays right, as
+      a cached dictionary page does. At most `idMemoLimit` entries, emptied
+      when full. Olympics q07 looks up 6 constants per run; each lookup is a
+      binary search over GDX1 entries and GDV1 pages, about 14 positioned
+      reads: 0.43 ms of the 5.4 ms query on one thread, the same at 4
+      threads (KR 1.2 of https://github.com/danbri/factoidal/issues/875). -/
+  idMemo : IO.Ref (Std.HashMap Term UInt64)
   /-- Serialises the verified chunk cache (`merkle` reads) between scan
       tasks (issue 799). Shared by every task view of the session. -/
   lock : Std.Mutex Unit
@@ -277,6 +287,7 @@ def openSession (v : Verify) (dir0 : String) : IO Session := do
            pages := ← IO.mkRef {}, frameBytes := ← IO.mkRef 0, prmBytes := ← IO.mkRef 0,
            lookups := ← IO.mkRef 0,
            gdx := ← IO.mkRef none, ovVocab := ← IO.mkRef #[], ovIds := ← IO.mkRef {}, baseIds := ← IO.mkRef {},
+           idMemo := ← IO.mkRef {},
            baseNamedRef := ← IO.mkRef none,
            lock := ← Std.Mutex.new (), dictLock := ← Std.Mutex.new (), taskPages := ← IO.mkRef {},
            pageLimit := ← pagesLimitEnv, taskPageLimit := ← taskPagesLimitEnv }
@@ -631,9 +642,12 @@ def Session.overlayIdOf (ss : Session) (t : Term) : IO (Option UInt64) := do
   return ((← ss.ovIds.get).get? t).map fun n =>
     (L4Factoidal.Storage.Sbm11.Overlay.tagDelta * two60 + n).toUInt64
 
+/-- The most entries `Session.idMemo` holds. -/
+def idMemoLimit : Nat := 65536
+
 /-- The id of a term: its inline code, its dictionary id (from `baseIds` when
-    a replay has put it there, else one `Dict.lookupM`), else the id the delta
-    log gave it. -/
+    a replay has put it there, else from `idMemo`, else one `Dict.lookupM`),
+    else the id the delta log gave it. -/
 def Session.idOf (ss : Session) (t : Term) : IO (Option UInt64) := do
   ss.lookups.modify (· + 1)
   let t := normalizeTerm t
@@ -645,12 +659,16 @@ def Session.idOf (ss : Session) (t : Term) : IO (Option UInt64) := do
     | some (some x) => return some x
     | some none => ss.overlayIdOf t
     | none =>
+      if let some x := (← ss.idMemo.get).get? t then return some x
       match termKeyBytes? t with
       | none => return none
       | some k =>
         let (r, _) ← ok "lookup" (← (Dict.lookupM ss.gdxFetch ss.gdvFetch ss.g.dictHdr k).run)
         match r with
-        | some r => return some (dictIdOfRank k r)
+        | some r =>
+          let x := dictIdOfRank k r
+          ss.idMemo.modify fun m => (if m.size < idMemoLimit then m else {}).insert t x
+          return some x
         | none =>
           -- a term the delta log added (stage 5)
           ss.overlayIdOf t
@@ -747,8 +765,13 @@ def scanTableParM (ss : Session) (spec : IdQuery.ScanSpec) (threads : Nat) (minR
   -- positions in that array
   let metas ← st.blocksForRange spec.perm spec.key
   let ox := IdQuery.ovCtx (st.ovl spec.perm) spec.key
-  -- stage 1b: at most `IdQuery.rangeCount` ranges; fewer than 2: one thread
-  let n := IdQuery.rangeCount threads minRows (IdQuery.selRows metas)
+  -- stage 1b: at most `IdQuery.rangeCount` ranges; fewer than 2: one thread.
+  -- Stage 1f: at least `2 * minRows` rows per range (16,384 by default).
+  -- Olympics q07's second scan (16,384 estimated rows, 4 blocks, 0.22 ms on
+  -- one thread) took 0.37 to 0.47 ms at 4 threads in 2 ranges and 0.24 to
+  -- 0.28 ms in one: a range waits for a sleeping worker (50 to 120
+  -- microseconds on the test machine) and the parent appends the tables.
+  let n := IdQuery.rangeCount threads (2 * minRows) (IdQuery.selRows metas)
   if threads ≤ 1 || ox.on || n < 2 then return ← IdQuery.scanTableM st spec
   let sortVar := IdQuery.sortVarOf spec
   let sel := List.range metas.size
