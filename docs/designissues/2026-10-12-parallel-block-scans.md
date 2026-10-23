@@ -1842,6 +1842,17 @@ On commit `8b6f63b0` (the Lean code of this landing; exit codes read):
 | `sorry`, `native_decide`, `axiom`, `maxHeartbeats` in the Lean diff | none |
 | d10 at 4 threads, 600 processes of 21 runs (binary with the 1j.5 repair, before the page change of 1j.4 item 4); q19 at 4 threads, 250 processes of 21 runs (`8b6f63b0`) | no failure, no hang |
 
+After `origin/main` moved by 53 commits (`200c4e64`), the merge `48be0759`
+(no conflict): `lake build` exit 0 (2,042 jobs); `threads.sh` exit 0 (gate
+347 and gate2 347 identical, olympics 21, 2 and 2, DBpedia 19, record equal
+76, different 0); census at 4 threads exit 0 (605 matched); unbuilt-modules
+exit 0 (985 modules reached); `tools/land-gates.sh` exit 1 only on its tail-recursion step (native-smoke 377 pass, 0 fail, 4 xfail, out of 381; cli-smoke 151 pass, 0 fail, 5 xfail, out of 156; npm, hub, engine-compare, the LWS (scaling 21 pass, 0 fail, out of 21), Solid and authorization suites, host-purity-lint 40 pass, 0 fail, out of 40).
+`tests/sbm11/run.sh` exit 1 (3,346 pass, 5 fail, 28 expected-fail, out of
+3,379) and the tail-recursion gate exit 1 (15 declarations): the same 5
+failures and the same 15 declarations on a build of `200c4e64` alone, which
+this stage does not change; issue
+https://github.com/danbri/factoidal/issues/964.
+
 ### 1j.8 What remains
 
 - q07 (0.66): the serial work after the scans at 4 threads is about 1.6 ms
