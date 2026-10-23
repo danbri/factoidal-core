@@ -1604,6 +1604,24 @@ smaller for the 4 queries; with the page cache, q19 at 4 threads 18.66 to
 16.52 ms with peak RSS 4/1 1.92 (2.01 with huge pages). What it does not
 give: KR 1.2. q19 4/1 stays 0.46 to 0.47, q07 0.64, d10 0.60.
 
+The branch itself (`496d790a`: `prctl` called first in `l4sbm11`'s `main`,
+`L4_THP=on` keeps huge pages), against `main` (`15256876`), interleaved, 10
+rounds (9 kept), `--repeat 21`; 4-thread ms, 4/1, peak RSS 4/1 (largest):
+
+| Query | `main` | branch | branch with `L4_THP=on` |
+| --- | --- | --- | --- |
+| q07 | 3.50, 0.56, 1.47 | 3.32, 0.63, 1.06 | 3.64, 0.74, 1.46 |
+| q19 | 18.24, 0.53, 1.80 | 15.98, 0.47, 1.85 | 16.57, 0.48, 2.04 |
+| q21 | 34.80, 0.36, 1.78 | 39.33, 0.42, 1.74 | 38.41, 0.40, 2.05 |
+| d10 | 6.10, 0.58, 2.10 | 6.31, 0.64, 1.19 | 5.74, 0.58, 2.07 |
+
+Called in `main`, `prctl` takes away less memory than the variable (q07 25
+against 20 MB, d10 28 against 22 MB at 4 threads): the runtime has touched
+some memory before `main` runs. The d10 peak RSS 4/1 of `main` is at the
+limit with huge pages (2.05 to 2.10 as the largest value in two runs; the
+medians are 1.88 to 1.96): the limit of 2 holds for d10 only as a median
+until a setting of this kind lands. Raw CSV: `.claude-runs/alloc/s4.csv`.
+
 ### 1i.6 Gates
 
 On commit `15256876` (the Lean code of this landing; exit codes read):
