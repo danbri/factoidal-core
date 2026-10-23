@@ -1,0 +1,7 @@
+# The BIND form of ids-values-xml-join.rq: two BIND values with one
+# canonical XML and two lexical forms, no stored term. Two RDF terms, so no
+# row on either path (issue 963; until 2026-10-23 the reference gave one row).
+SELECT ?x ?y WHERE {
+  { BIND(STRDT("<a></a>", <http://www.w3.org/1999/02/22-rdf-syntax-ns#XMLLiteral>) AS ?x) }
+  { BIND(STRDT("<a/>", <http://www.w3.org/1999/02/22-rdf-syntax-ns#XMLLiteral>) AS ?x) BIND(1 AS ?y) }
+}

@@ -485,7 +485,7 @@ theorem substCellM_spec (st : Store Id) (D : UInt64 → Term) (O : UInt64 → Pr
   cases r with
   | false =>
     left
-    exact ⟨_, rfl, Or.inr (Or.inr (Or.inr (Or.inl ⟨v, subject, rfl⟩)))⟩
+    exact ⟨_, rfl, Or.inr (Or.inr (Or.inl ⟨v, subject, rfl⟩))⟩
   | true =>
     simp only [Bool.not_true, Bool.false_eq_true, if_false, pure_bind]
     have hsub : x ≠ unbound → SubstTerm subject (D x) := hrs rfl
@@ -496,7 +496,7 @@ theorem substCellM_spec (st : Store Id) (D : UInt64 → Term) (O : UInt64 → Pr
       by_cases hf : (ftId == some x) = true
       · simp only [hf, if_true]
         left
-        exact ⟨_, rfl, Or.inr (Or.inr (Or.inr (Or.inr ⟨v, rfl⟩)))⟩
+        exact ⟨_, rfl, Or.inr (Or.inr (Or.inr ⟨v, rfl⟩))⟩
       · simp only [hf, Bool.false_eq_true, if_false, pure_bind]
         by_cases hl : (tagOf x == tagLocal) = true
         · simp only [hl, if_true]
@@ -504,7 +504,7 @@ theorem substCellM_spec (st : Store Id) (D : UInt64 → Term) (O : UInt64 → Pr
           by_cases he : (D x == .iri fulltextQueryPred) = true
           · simp only [he, if_true]
             left
-            exact ⟨_, rfl, Or.inr (Or.inr (Or.inr (Or.inr ⟨v, rfl⟩)))⟩
+            exact ⟨_, rfl, Or.inr (Or.inr (Or.inr ⟨v, rfl⟩))⟩
           · simp only [he, Bool.false_eq_true, if_false, pure_bind]
             right
             exact ⟨memo', rfl, hm', hsub, fun _ _ e => he (by rw [e]; simp)⟩

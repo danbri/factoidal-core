@@ -3586,37 +3586,24 @@ def localTermOf {m : Type → Type} [Monad m] (st : Store m) (vocab : Array Term
 def Store.withLocal {m : Type → Type} [Monad m] (st : Store m) (vocab : Array Term) : Store m :=
   if vocab.isEmpty then st else { st with termOf := localTermOf st vocab }
 
-/-- Whether a term is an `rdf:XMLLiteral`, or a triple term with one in its
-    object position (the only position that can hold a literal). -/
-def hasXmlLit : Term → Bool
-  | .literal l => l.val.datatype == L4Factoidal.RDF.rdfXMLLiteral
-  | .tripleTerm _ _ o => hasXmlLit o
-  | _ => false
-
 /-- The refusal when the query-local vocabulary holds `2^60` terms: a further
     local id would not fit below tag 15 (`localId`). -/
 def localFullMsg : String := "refused: more than 2^60 query-local terms"
 
-/-- The refusal for an `rdf:XMLLiteral` with no id in the store. Two local ids
-    are equal exactly when their terms are (`normalizeTerm`), but the reference
-    compares `rdf:XMLLiteral` lexical forms by exclusive canonical XML
-    (`Term.eqb`, RDF 1.1 Concepts section 5.1): `"<a></a>"` and `"<a/>"` would get
-    two local ids that join with nothing, where the reference joins them
-    (until 2026-10-23 the id path answered no row,
-    `tests/sbm11/gate/ref-values-xml-join.rq`). The reference evaluator answers
-    such a query. -/
-def localXmlMsg : String := "refused: an rdf:XMLLiteral with no id in the store"
-
 /-- The query-local id of a term with no store id: its index in `vocab`
-    (added when new; one entry per `normalizeTerm` of the term). -/
+    (added when new; one entry per `normalizeTerm` of the term). Two local
+    ids are equal exactly when their terms are, which is RDF term equality
+    (`Term.eqb`, RDF 1.1 Concepts section 3.3) for `rdf:XMLLiteral` too.
+    From 2026-10-23 until https://github.com/danbri/factoidal/issues/963 was
+    repaired an `rdf:XMLLiteral` with no store id was refused here, because
+    `Term.eqb` then compared such literals by canonical XML. -/
 def localIdOf (vocab : Array Term) (localIdx : Std.HashMap Term Nat) (t : Term) :
     Except String (UInt64 × Array Term × Std.HashMap Term Nat) :=
   let key := normalizeTerm t
   match localIdx.get? key with
   | some k => .ok (localId k, vocab, localIdx)
   | none =>
-    if hasXmlLit key then .error localXmlMsg
-    else if vocab.size < two60 then .ok (localId vocab.size, vocab.push key, localIdx.insert key vocab.size)
+    if vocab.size < two60 then .ok (localId vocab.size, vocab.push key, localIdx.insert key vocab.size)
     else .error localFullMsg
 
 /-- The id of a term: `Store.idOf`, else its query-local id (`localIdOf`). -/
