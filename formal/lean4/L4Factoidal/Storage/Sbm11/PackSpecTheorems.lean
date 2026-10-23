@@ -35,9 +35,9 @@ domain (block size, input size, every term with an id).
 `PackStream`: the bytes the `IO` packer writes come from pure step
 functions, equal to the bytes of `packSpec` over its key and row streams
 (the merges that deliver those streams are tested byte for byte by
-`l4sbm11 packspec-check`, not proved). Not proved here: that `Allowed` is invariant under a permutation
-of a graph's triples (needed to state the answer for the input `Dataset`
-rather than for `denote G`).
+`l4sbm11 packspec-check`, not proved). `PackSpecInputTheorems` states the
+answer for the input `Dataset` rather than for `denote G`, with
+`AllowedPermTheorems.allowed_perm` (the order of a graph's triples).
 
 No `sorry`, no user `axiom`, no `native_decide`, no `partial`.
 -/
