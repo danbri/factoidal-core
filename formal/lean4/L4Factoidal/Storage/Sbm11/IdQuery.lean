@@ -972,6 +972,14 @@ structure Par (m : Type → Type) where
   /-- the fewest input rows (left plus right) per range of a divided merge
       join (`joinMinRows` by default; `mergeJoinParM`) -/
   joinRows : Nat := 32768
+  /-- block ranges per thread of the divided counted path (`divide?`;
+      issue 961, stage 1i of docs/designissues/2026-10-12-parallel-block-scans.md).
+      The workers take the ranges from a shared counter, so a worker that ends
+      a cheap range takes the next one. DBpedia d10 at 4 threads (blocks in
+      which the group key changes are not spread evenly over the ranges), 21
+      runs per process, median of 5 processes: 1 range per thread 7.65 ms, 2
+      ranges 6.18 ms, 4 ranges 6.15 ms, 8 ranges 6.51 ms, 32 ranges 7.27 ms. -/
+  countPerThread : Nat := 2
 
 def ScanSpec.colPos (perm c : Nat) : Nat := if c < 3 then permOrder[perm]![c]! else 3
 
@@ -2947,7 +2955,7 @@ def rangeCount (threads minRows est : Nat) : Nat :=
     list of positions in that array), the overlay context and the estimate
     (`selRows`). -/
 def divide? {m : Type → Type} [Monad m] (st : Store m) (threads minRows : Nat) (spec : ScanSpec)
-    (maxBlocks : Nat) :
+    (maxBlocks : Nat) (perThread : Nat := 1) :
     ExceptT String m (Option (Array BlockMeta × OvCtx × List (List Nat) × Nat)) := do
   if threads ≤ 1 then return none
   let ox := ovCtx (st.ovl spec.perm) spec.key
@@ -2957,7 +2965,7 @@ def divide? {m : Type → Type} [Monad m] (st : Store m) (threads minRows : Nat)
   let metas ← st.blocksForRange spec.perm spec.key
   let sel := List.range metas.size
   let est := selRows metas
-  let n := rangeCount threads minRows est
+  let n := rangeCount threads minRows est * max perThread 1
   if sel.length < 2 || n < 2 then return none
   let c0 := (sel.length + n - 1) / n
   let c := if maxBlocks == 0 then c0 else min c0 maxBlocks
@@ -2965,9 +2973,9 @@ def divide? {m : Type → Type} [Monad m] (st : Store m) (threads minRows : Nat)
 
 /-- `divide?` with the threads of `par`; none without `par`. -/
 def divideFor? {m : Type → Type} [Monad m] (st : Store m) (par : Option (Par m)) (spec : ScanSpec)
-    (maxBlocks : Nat) : ExceptT String m (Option (Array BlockMeta × OvCtx × List (List Nat) × Nat)) :=
+    (maxBlocks : Nat) (perThread : Nat := 1) : ExceptT String m (Option (Array BlockMeta × OvCtx × List (List Nat) × Nat)) :=
   match par with
-  | some p => divide? st p.threads p.minRows spec maxBlocks
+  | some p => divide? st p.threads p.minRows spec maxBlocks perThread
   | none => pure none
 
 /-- Rows `[lo, hi)` of `t`, each as a comma and its binding object (the text
@@ -3251,7 +3259,7 @@ def runPlanM {m : Type → Type} [Monad m] (st : Store m) (plan : Plan) (emit : 
           let (n, decided, s) ← metaCountM st spec
           let g : Groups := if n == 0 then {} else ({} : Groups).add [] n
           pure (g, s, s!" from PRM1 entries ({decided} blocks decided by their entries)")
-        else match par, ← divideFor? st par spec 0 with
+        else match par, ← divideFor? st par spec 0 (par.map (·.countPerThread) |>.getD 1) with
         | some p, some (metas, ox, chunks, _) => do
           let total ← st.blockCount spec.perm
           let (g, s) ← p.fold false (fun v X => countPartM v spec fs plan.groupVars metas ox X) chunks
