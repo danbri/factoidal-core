@@ -3276,15 +3276,143 @@ def countChunkRef (groupVars : Array String) (ch : Chunk) (g : Groups) : Groups 
     i := e
   return g
 
+/-- The groups `i, i + 1, ...` of `b` (fuel `f`) added to `g`; a tail call
+    per group. -/
+def Groups.mergeGo (b : Groups) : Nat → Nat → Groups → Groups
+  | 0, _, g => g
+  | f + 1, i, g => b.mergeGo f (i + 1) (g.add b.keys[i]! (b.cnts.getD i 0))
+
 /-- The groups of `b` added to `a`, in `b`'s key order (issue 799, stage 1b:
     the parent adds the groups of each block range in range order). Over the
     list model, `ParallelMergeTheorems.merge_foldl` and `groups_chunks`: the
     result has the keys and counts of one pass over the concatenation. -/
-def Groups.merge (a b : Groups) : Groups := Id.run do
-  let mut g := a
-  for i in [0:b.keys.size] do
-    g := g.add b.keys[i]! (b.cnts.getD i 0)
-  return g
+def Groups.merge (a b : Groups) : Groups := b.mergeGo b.keys.size 0 a
+
+/-- The groups of a block range as numbers (stage 1k): the words of the keys,
+    `w` per key, in key order, and the counts. A job of the divided counted
+    path gives its groups to the calling thread in this form: the words are
+    small numbers (a key word is below `2 ^ 63` for every tag but 9), so the
+    two arrays are the only objects the calling thread receives. The groups
+    themselves (a hash map, a list per key) were reachable from two threads,
+    and the calling thread freed each of their objects with an atomic
+    operation after it had added them. -/
+structure FlatGroups where
+  w : Nat
+  keys : Array Nat
+  cnts : Array Nat
+
+/-- The words of key `k` appended to `acc`. -/
+def flatPush (acc : Array Nat) (k : List UInt64) : Array Nat := k.foldl (fun acc x => acc.push x.toNat) acc
+
+/-- `g` as a `FlatGroups` with `w` words per key. -/
+def Groups.toFlat (w : Nat) (g : Groups) : FlatGroups :=
+  { w, keys := g.keys.foldl flatPush (Array.mkEmpty (w * g.keys.size)), cnts := g.cnts }
+
+/-- The words `[lo, lo + n)` of `ks` as a key, onto `acc` (built from the
+    last word down; a tail call per word). -/
+def flatKeyGo (ks : Array Nat) (lo : Nat) : Nat → List UInt64 → List UInt64
+  | 0, acc => acc
+  | n + 1, acc => flatKeyGo ks lo n (UInt64.ofNat ks[lo + n]! :: acc)
+
+/-- `Groups.mergeGo` over a flat form. -/
+def FlatGroups.mergeGo (f : FlatGroups) : Nat → Nat → Groups → Groups
+  | 0, _, g => g
+  | n + 1, i, g => f.mergeGo n (i + 1) (g.add (flatKeyGo f.keys (i * f.w) f.w []) (f.cnts.getD i 0))
+
+/-- `Groups.merge a b` with `b` in its flat form (`mergeFlat_toFlat`). -/
+def Groups.mergeFlat (a : Groups) (f : FlatGroups) : Groups := f.mergeGo f.cnts.size 0 a
+
+theorem flatPush_toList (acc : Array Nat) (k : List UInt64) :
+    (flatPush acc k).toList = acc.toList ++ k.map UInt64.toNat := by
+  induction k generalizing acc with
+  | nil => simp [flatPush]
+  | cons x xs ih =>
+    have : flatPush acc (x :: xs) = flatPush (acc.push x.toNat) xs := rfl
+    rw [this, ih]; simp
+
+theorem foldl_flatPush_toList (L : List (List UInt64)) (acc : Array Nat) :
+    (L.foldl flatPush acc).toList = acc.toList ++ L.flatMap (fun k => k.map UInt64.toNat) := by
+  induction L generalizing acc with
+  | nil => simp
+  | cons k ks ih => simp [List.foldl_cons, ih, flatPush_toList]
+
+theorem flatKeyGo_eq (ks : Array Nat) (lo : Nat) : ∀ n acc,
+    flatKeyGo ks lo n acc = (List.range n).map (fun j => UInt64.ofNat ks[lo + j]!) ++ acc := by
+  intro n
+  induction n with
+  | zero => intro acc; simp [flatKeyGo]
+  | succ n ih =>
+    intro acc
+    simp [flatKeyGo, ih, List.range_succ]
+
+/-- In the flat list of keys of length `w`, word `i * w + j` is word `j` of key `i`. -/
+theorem flat_getElem (w : Nat) : ∀ (L : List (List UInt64)), (∀ k ∈ L, k.length = w) →
+    ∀ i j, i < L.length → j < w →
+      (L.flatMap (fun k => k.map UInt64.toNat))[i * w + j]? = some ((L[i]!)[j]!).toNat
+  | [], _, i, _, hi, _ => by simp at hi
+  | k :: ks, hL, i, j, hi, hj => by
+    have hk : k.length = w := hL k (by simp)
+    rw [List.flatMap_cons]
+    cases i with
+    | zero =>
+      rw [List.getElem?_append_left (by simp [hk]; omega)]
+      simp [hk ▸ hj]
+    | succ i =>
+      rw [List.getElem?_append_right (by simp [hk]; rw [Nat.succ_mul]; omega)]
+      have : (i + 1) * w + j - (k.map UInt64.toNat).length = i * w + j := by
+        simp [hk, Nat.succ_mul]; omega
+      rw [this, flat_getElem w ks (fun k' hk' => hL k' (by simp [hk'])) i j (by simp at hi; omega) hj]
+      simp
+
+theorem toFlat_key (w : Nat) (b : Groups) (hw : ∀ k ∈ b.keys, k.length = w) (i : Nat)
+    (hi : i < b.keys.size) :
+    flatKeyGo (b.toFlat w).keys (i * w) w [] = b.keys[i]! := by
+  rw [flatKeyGo_eq, List.append_nil]
+  apply List.ext_getElem
+  · simp [hw b.keys[i]! (by simp [hi])]
+  · intro j h1 h2
+    simp only [List.getElem_map, List.getElem_range]
+    have hj : j < w := by simpa using h1
+    have hflat : (b.toFlat w).keys.toList = b.keys.toList.flatMap (fun k => k.map UInt64.toNat) := by
+      simp [Groups.toFlat, foldl_flatPush_toList, ← Array.foldl_toList]
+    have hL : ∀ k ∈ b.keys.toList, k.length = w := fun k hk => hw k (by simpa using hk)
+    have h := flat_getElem w b.keys.toList hL i j (by simpa using hi) hj
+    rw [← hflat] at h
+    have h' : (b.toFlat w).keys[i * w + j]! = ((b.keys.toList[i]!)[j]!).toNat := by
+      have h2 := h
+      rw [List.getElem?_eq_some_iff] at h2
+      obtain ⟨hlt, hv⟩ := h2
+      simp only [Array.length_toList] at hlt
+      rw [getElem!_pos (b.toFlat w).keys (i * w + j) hlt]
+      simpa using hv
+    rw [h']
+    have hb : b.keys.toList[i]! = b.keys[i]! := by
+      simp [hi]
+    rw [hb]
+    simp [List.getElem!_eq_getElem?_getD, List.getElem?_eq_getElem h2]
+
+/-- Adding the flat form of `b` is adding `b`, when every key of `b` has `w`
+    words and `b` has a count per key (the groups `countChunk` builds over
+    `w` group variables). -/
+theorem mergeFlat_toFlat (a b : Groups) (w : Nat) (hw : ∀ k ∈ b.keys, k.length = w)
+    (hc : b.cnts.size = b.keys.size) : a.mergeFlat (b.toFlat w) = a.merge b := by
+  have hgo : ∀ f i g, i + f = b.keys.size →
+      (b.toFlat w).mergeGo f i g = b.mergeGo f i g := by
+    intro f
+    induction f with
+    | zero => intro i g _; rfl
+    | succ f ih =>
+      intro i g hif
+      simp only [FlatGroups.mergeGo, Groups.mergeGo]
+      have hk := toFlat_key w b hw i (by omega)
+      have hw' : (b.toFlat w).w = w := rfl
+      have hc' : (b.toFlat w).cnts = b.cnts := rfl
+      rw [hw', hk, hc']
+      exact ih (i + 1) _ (by omega)
+  unfold Groups.mergeFlat Groups.merge
+  have : (b.toFlat w).cnts.size = b.keys.size := hc
+  rw [this]
+  exact hgo _ 0 a (by omega)
 
 /-- The counted path's step for one scan chunk: the FILTERs, then `countChunk`
     (the chunk's constant columns count at once when there is no FILTER). -/
@@ -4966,14 +5094,14 @@ def emitPieceM {m : Type → Type} [Monad m] (emit : ByteArray → m Unit) (off 
     from no groups. -/
 def countPartM {m : Type → Type} [Monad m] (st : Store m) (spec : ScanSpec) (fs : Array FKind)
     (groupVars : Array String) (metas : Array BlockMeta) (ox : OvCtx) (X : List Nat) :
-    ExceptT String m (Groups × ScanStats) := do
+    ExceptT String m (FlatGroups × ScanStats) := do
   let spec := spec.fresh
   let fs := fs.map FKind.fresh
   let ox := ox.fresh spec.key
   let groupVars := groupVars.map freshStr
   let ((g, _), s) ← scanListM st spec (!fs.isEmpty) (({} : Groups), (fs.map fun _ => ({} : Memo)))
     (countStepM st fs groupVars) metas (sortVarOf spec) ox X
-  return (g, s)
+  return (g.toFlat groupVars.size, s)
 
 /-- One block range of the divided ORDER BY ... LIMIT path: the range's table,
     its rows that pass the FILTERs, then the first `k` of them in the ORDER BY
@@ -5103,7 +5231,7 @@ def runPlanM {m : Type → Type} [Monad m] (st : Store m) (plan : Plan) (emit : 
           let (g, s) ← p.fold false (fun v (X : Nat × Nat) =>
               countPartM v spec fs plan.groupVars metas ox (L4Factoidal.Storage.Sbm11.ParallelScan.boundsList X)) chunks
             (({} : Groups), ({ blocksTotal := total } : ScanStats))
-            fun (g, s) (g', s') => pure (g.merge g', s.add s')
+            fun (g, s) (g', s') => pure (g.mergeFlat g', s.add s')
           st.markM "countfold"
           pure (g, s, s!" in {chunks.length} block ranges ({p.threads} tasks at once at most)")
         | _, _ => do
