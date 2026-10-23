@@ -1630,3 +1630,70 @@ expected-fail (out of 3,159), exit 1. The 1 fail is the XPASS of
 case is at the limit (267 to 325 ms over 9 runs of the final build, 7 of them at
 most 300 ms), so it gives a failure in either form, as an expected failure
 or as an assertion; the decision is on the issue.
+
+### 11.21 d19, an integer path for an argument column of inline integers (2026-10-23)
+
+https://github.com/danbri/factoidal/issues/862. Coordinator decision after 11.20:
+keep the 300 ms target, aim at a median of at most 250 ms and 5 of 5 single
+runs at most 300 ms. Section 11.20 named the remaining costs of the
+aggregation: the per-row hash probe of the summary table, the decode, the
+re-parse and the summary of each of the 47,473 distinct values, and the free
+of the table at the end.
+
+Change (`Storage/Sbm11/IdAgg.lean`): every value of the d19 argument column is
+an inline integer id (tag 4). Its value is in its bits (payload minus 2^55)
+and its datatype is the subtype field. When every bound id of the one argument
+column reads this way (`intVal?`: a known integer type whose literals are well
+formed, the value admitted by the type and inside the bounds of its built-in),
+`intRows` steps an `IAcc` per group and aggregate: an integer sum and count for
+SUM and AVG, the best value with its id for MIN and MAX. There is no summary
+table. Only the best id of each group is decoded, at the end (`IAcc.absM`).
+Any other id makes `intRows` answer `none`, and the summary path of 11.20 runs
+from the first row.
+
+Theorems (`#print axioms`: propext, Classical.choice, Quot.sound; no
+`sorry`, no new `axiom`, no `native_decide`):
+
+- `XSD/IntegerLexTheorems.lean`: `parseIntegerLex_toString`:
+  `parseIntegerLex (toString v) = some v` for every integer (through the core
+  `Nat.ofDigitChars_ten_toDigits`); `lexicalFor_int`: for an integer
+  built-in, `lexicalFor .xsd10 b (toString v)` is `Dec.ofInt v` inside the
+  bounds of `b`.
+- `IdAgg.summary_inlineInt`: the `Summary.of` of a decoded inline integer has
+  the numeric reading `Dec.ofInt v` and the integer and numeric flags set.
+  `intVal?_reads`: an id that `intVal?` reads as `v` decodes
+  (`ofInlineCode?`), and its summary is that one.
+- `IAcc.step_abs`, `IAcc.step_abs_inv`, `IAcc.fold_abs`: over ids that read as
+  their values, the `IAcc` fold equals the `AggStream` fold (`AggAcc.step`) on
+  the summaries of the decoded values, so the integer path computes what the
+  summary path computes.
+
+Tests (`IdAggTests`): a column of 9 integer datatypes with negative values and
+an unbound value, in two groups and in one, for COUNT, SUM, MIN, MAX and AVG,
+equal to the reference evaluator on the decoded rows; the decoded-id count
+shows that the integer path ran; a column with one decimal goes to the summary
+path and is equal to the reference too.
+
+Measurement: as in 11.20 (`--repeat 7`, 5 interleaved rounds); "before" is
+`l4sbm11` of `main` at `db0ec566` (section 11.20). Load average 0.8 to 1.2. All
+10 answers byte-identical (md5 `20a94fcb1a530503a1eadef01ab10e98`).
+`--explain`: 2,633 ids decoded (49,000 before).
+
+| | before (11.20) | after | QLever 1 CPU (11.10) |
+| --- | ---: | ---: | ---: |
+| warm median, rounds 1 to 5 (ms) | 303 / 294 / 295 / 288 / 303 | 204 / 219 / 210 / 208 / 208 | |
+| warm median of rounds (ms) | 295 | 208 | 103 |
+| peak RSS, rounds (VmHWM, kB) | 60,392 to 64,636 | 60,872 to 61,836 | |
+
+`tests/sbm11/agg_ids.sh`, run alone: 7 of 7 runs at most 300 ms (187, 193
+before a container restart; 216, 218, 205, 210, 196 after). The case is now the
+assertion `d19-warm-300ms`. Measured against `main` at `0dd31a27` (1,507 ms,
+11.20), d19 warm is 7.2 times faster; the ratio to QLever 1 CPU is 2.0.
+
+Where the time goes now (`perf record --call-graph dwarf,16384`, 3 runs,
+inclusive samples): the WHERE clause 57 percent (merge join 31, of which the
+index-array pushes `pairsRow` 17; scan 21, of which the frame decoder
+`deltaRangeGoF` 11), the aggregation 39 percent (`intRows` 31: the group
+lookup and the `IAcc` steps). Kernel page zeroing of fresh memory
+(`clear_page_erms`) is 26 percent of all samples, spread over both. None of
+these is a cost of the shared arithmetic.
