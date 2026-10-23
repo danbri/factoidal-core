@@ -1434,7 +1434,8 @@ to the owner with its measurements before it lands. Branch
 
 KR 1.2 is not met. With what landed on `main` (2 block ranges per thread on
 the counted path, 1i.4) and the default allocator settings, `--repeat 21`:
-q07 0.71, q19 0.51, q21 0.39, d10 0.54; peak RSS 4/1 at most 1.96.
+q07 0.71, q19 0.51, q21 0.39, d10 0.54; peak RSS 4/1 (largest) at most
+1.96 in that run, but 2.10 for d10 in the run of 1i.5 (medians 1.88 to 1.96).
 
 - No allocator setting makes a 4-thread run faster beyond the run-to-run
   variation (1i.3).
