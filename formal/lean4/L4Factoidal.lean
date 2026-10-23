@@ -431,6 +431,7 @@ import L4Factoidal.Storage.Sbm11.HarnessWhereTheorems
 import L4Factoidal.Storage.Sbm11.MemGen
 import L4Factoidal.Storage.Sbm11.MemGenDictTheorems
 import L4Factoidal.Storage.Sbm11.MemGenStoreTheorems
+import L4Factoidal.Storage.Sbm11.MemGenWhereTheorems
 import L4Factoidal.Storage.Sbm11.ExprLocalTheorems
 import L4Factoidal.Storage.Sbm11.FilterIdTheorems
 import L4Factoidal.Storage.Sbm11.FilterTableTheorems
