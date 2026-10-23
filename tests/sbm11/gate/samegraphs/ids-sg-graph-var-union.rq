@@ -1,0 +1,2 @@
+PREFIX ex: <http://ex.org/>
+SELECT * WHERE { GRAPH ?g { { ?s ex:q ?v } UNION { ?s ex:name ?n } } }

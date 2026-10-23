@@ -44,6 +44,11 @@
 #                Expr.backendLocal on ids (issue 823), with the error cases: a
 #                FILTER error removes the row, an aggregate over an empty
 #                group, an unbound variable in an expression.
+#                Then the same for tests/sbm11/gate/samegraphs/data.nq and
+#                its queries: two named graphs with the same triples and a
+#                named graph with the triples of the default graph, under
+#                GRAPH ?g and GRAPH <i> (issue 776: the evaluator selects a
+#                graph by its name, not by its triples).
 #   (e) checks   `l4sbm11 prm-check` (the byte-array PRM1 decoder against the
 #                list decoder of the round-trip theorem; and the PRM1 range
 #                search of issue 805, PrmRange.rangeM, against decoding the
@@ -312,21 +317,29 @@ for rq in "$ROOT"/tests/qlvr/queries/q*.rq; do
 done
 
 echo "=== (d) gate fixture: id path and reference fallback against l4factoidal"
-G="$TMP/gate"
-rc=0
-"$BIN/l4sbm11-pack" "$HERE/gate/gate.nq" "$G/gen" --workers 1 >"$TMP/gpack.log" 2>&1 || rc=$?
-[ "$rc" -eq 0 ] && { "$BIN/l4sbm11" activate "$G" gen >"$TMP/gact.log" 2>&1 || rc=$?; }
-if [ "$rc" -ne 0 ]; then
-  record gate pack-activate 1 "exit $rc: $(tail -1 "$TMP/gpack.log" "$TMP/gact.log" 2>/dev/null | tr '\n' ' ')"
-else
-  for rq in "$HERE"/gate/*.rq; do
+# gate_part <fixture> <query dir> <store dir>: pack and activate the
+# fixture, then each query of the directory against `l4factoidal query`.
+# The second fixture, tests/sbm11/gate/samegraphs/data.nq, has two named
+# graphs with the same triples and a named graph with the triples of the
+# default graph: the evaluator must select a graph by its name, not by its
+# triples (issue 776).
+gate_part() {
+  local fix="$1" qdir="$2" G="$3" rc rrc n qb v p want_path
+  rc=0
+  "$BIN/l4sbm11-pack" "$fix" "$G/gen" --workers 1 >"$G.pack.log" 2>&1 || rc=$?
+  [ "$rc" -eq 0 ] && { "$BIN/l4sbm11" activate "$G" gen >"$G.act.log" 2>&1 || rc=$?; }
+  if [ "$rc" -ne 0 ]; then
+    record gate "pack-activate $(basename "$fix")" 1 "exit $rc: $(tail -1 "$G.pack.log" "$G.act.log" 2>/dev/null | tr '\n' ' ')"
+    return
+  fi
+  for rq in "$qdir"/*.rq; do
     n="$(basename "$rq" .rq)"
     qb="file://$(realpath "$rq")"
     rc=0
     timeout 120 "$BIN/l4sbm11" query "$G" --file "$rq" --base "$qb" >"$TMP/g-$n.got" 2>"$TMP/g-$n.err" || rc=$?
     if [ "$rc" -ne 0 ]; then record gate "$n" 1 "exit $rc: $(tail -1 "$TMP/g-$n.err")"; continue; fi
     rrc=0
-    timeout 120 "$BIN/l4factoidal" query "$HERE/gate/gate.nq" --format nquads --query "$rq" \
+    timeout 120 "$BIN/l4factoidal" query "$fix" --format nquads --query "$rq" \
       >"$TMP/g-$n.want" 2>/dev/null || rrc=$?
     v="$(python3 -I "$HERE/compare_answers.py" "$TMP/g-$n.got" "$TMP/g-$n.want" "$rrc")"
     p="$(grep -o 'path=[a-z]*' "$TMP/g-$n.err")"
@@ -335,7 +348,9 @@ else
     else case "$v" in equal*) record gate "$n" 0 "$p; $v" ;; *) record gate "$n" 1 "$p; $v" ;; esac
     fi
   done
-fi
+}
+gate_part "$HERE/gate/gate.nq" "$HERE/gate" "$TMP/gate"
+gate_part "$HERE/gate/samegraphs/data.nq" "$HERE/gate/samegraphs" "$TMP/gate-samegraphs"
 
 echo "=== (e) decoder checks on every PRM1 file and frame"
 if out="$("$BIN/l4sbm11" prm-check "$GEN" 2>&1)"; then record checks prm-check 0 "$(printf '%s' "$out" | tr '\n' ' ' | head -c 150)"
@@ -648,22 +663,28 @@ mkdir -p "$L"
 # (l1) the gate fixture packed with blocks of 2 rows, so that candidates skip
 # blocks and key ranges cross blocks; every ids-* gate query with --sip always
 # (candidates whenever the join shape allows them) against the reference engine
+# (and the ids-* queries of the second fixture, tests/sbm11/gate/samegraphs)
 rc=0
 "$BIN/l4sbm11-pack" "$HERE/gate/gate.nq" "$L/col/gen" --workers 1 --block-rows 2 >"$L/pack.log" 2>&1 || rc=$?
 [ "$rc" -eq 0 ] && { "$BIN/l4sbm11" activate "$L/col" gen >"$L/act.log" 2>&1 || rc=$?; }
+[ "$rc" -eq 0 ] && { "$BIN/l4sbm11-pack" "$HERE/gate/samegraphs/data.nq" "$L/col2/gen" --workers 1 --block-rows 2 \
+  >"$L/pack2.log" 2>&1 || rc=$?; }
+[ "$rc" -eq 0 ] && { "$BIN/l4sbm11" activate "$L/col2" gen >"$L/act2.log" 2>&1 || rc=$?; }
 if [ "$rc" -ne 0 ]; then
-  record sip gate-pack 1 "exit $rc: $(tail -1 "$L/pack.log" "$L/act.log" 2>/dev/null | tr '\n' ' ')"
+  record sip gate-pack 1 "exit $rc: $(tail -1 "$L/pack.log" "$L/act.log" "$L/pack2.log" "$L/act2.log" 2>/dev/null | tr '\n' ' ')"
 else
   n=0; bad=""; sw=0; skipped=0
-  for rq in "$HERE"/gate/ids-*.rq; do
+  for rq in "$HERE"/gate/ids-*.rq "$HERE"/gate/samegraphs/ids-*.rq; do
     nq="$(basename "$rq" .rq)"
     n=$((n + 1))
+    col="$L/col"; fix="$HERE/gate/gate.nq"
+    case $rq in */samegraphs/*) col="$L/col2"; fix="$HERE/gate/samegraphs/data.nq" ;; esac
     qrc=0
-    timeout 120 "$BIN/l4sbm11" query "$L/col" --file "$rq" --base "file://$(realpath "$rq")" --sip always --explain \
+    timeout 120 "$BIN/l4sbm11" query "$col" --file "$rq" --base "file://$(realpath "$rq")" --sip always --explain \
       >"$L/$nq.got" 2>"$L/$nq.err" || qrc=$?
     if [ "$qrc" -ne 0 ]; then bad="$bad $nq(exit $qrc)"; continue; fi
     rrc=0
-    timeout 120 "$BIN/l4factoidal" query "$HERE/gate/gate.nq" --format nquads --query "$rq" >"$L/$nq.want" 2>/dev/null || rrc=$?
+    timeout 120 "$BIN/l4factoidal" query "$fix" --format nquads --query "$rq" >"$L/$nq.want" 2>/dev/null || rrc=$?
     v="$(python3 -I "$HERE/compare_answers.py" "$L/$nq.got" "$L/$nq.want" "$rrc")"
     case "$v" in equal*) ;; *) bad="$bad $nq($v)" ;; esac
     grep -q 'path=ids' "$L/$nq.err" || bad="$bad $nq(path)"
