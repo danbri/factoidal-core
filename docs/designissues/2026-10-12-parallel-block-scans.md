@@ -985,3 +985,204 @@ On commit `a0c92771` (exit codes read):
 | `SBM11_THREADS=4 tests/sbm11/census.sh` | exit 0: 605 executed, 605 matched the reference engine, 0 differed; 4 refused at query |
 | `tools/land-gates.sh` | exit 0: `lake build`, `lean-unbuilt-modules.py --gate`, `lean-tail-recursion-audit.py --gate`, wasm, native-smoke 377 pass, 0 fail, 4 xfail (out of 381), cli-smoke 151 pass, 0 fail, 5 xfail (out of 156), npm 588 pass, 0 fail, 2 skipped, hub 479 pass, 0 fail, engine-compare 7 pass, 0 fail, the LWS, Solid and authorization suites, host-purity-lint 40 pass, 0 fail (out of 40) |
 | `sorry`, `native_decide`, `axiom`, `maxHeartbeats` in the Lean diff | none |
+
+## Stage 1g: a per-session worker pool (2026-10-23)
+
+Issue https://github.com/danbri/factoidal/issues/961 (item 1), key result KR
+1.2 of https://github.com/danbri/factoidal/issues/875. Owner constraint,
+2026-10-22, verbatim: "Yes lets come back to allocator later". No allocator
+option or environment variable was set or changed. Branch
+`batch3/kr12-pool`.
+
+### 1g.1 Result
+
+q07 does not meet 0.4. Its 4-thread over 1-thread ratio went from 0.74 to
+0.66 (the 1b.6 method) and from 0.76 to 0.62 with 21 runs per process. The
+RSS limit holds for q07, q19, q21 and d17. d10 is at the limit before and
+after (below).
+
+Method: the 1b.6 method with the two binaries interleaved (before:
+`origin/main` `4cb598ae`; after: this branch), 8 rounds, round 1 dropped, 7
+processes per cell, `--repeat 7` (a second run with `--repeat 21`), median
+over processes of each process's warm median; RSS is the largest VmHWM.
+DBpedia with `--verify none`. 2026-10-23 07:20 to 07:40 UTC, load average 1.6
+to 2.3 (the 4-thread runs themselves; no other job ran). Raw CSV:
+`.claude-runs/pool/ab-r7.csv`, `ab-r21.csv` (not in the repository).
+
+| Query | 1 thread ms before / after | 4 threads ms before / after | 4/1 before | 4/1 after | RSS MB 1 / 4 threads after | RSS 4/1 after |
+| --- | ---: | ---: | ---: | ---: | ---: | ---: |
+| q07 | 5.05 / 5.30 | 3.75 / 3.50 | 0.74 | 0.66 | 26 / 38 | 1.45 |
+| q21 | 109.57 / 90.86 | 35.73 / 36.87 | 0.33 | 0.41 | 42 / 74 | 1.76 |
+| q19 | 32.70 / 32.46 | 20.61 / 16.50 | 0.63 | 0.51 | 58 / 102 | 1.76 |
+| d10 | 10.38 / 13.87 | 7.67 / 6.67 | 0.74 | 0.48 | 26 / 48 | 1.84 |
+| d17 | 0.34 / 0.39 | 0.34 / 0.36 | 1.02 | 0.92 | 22 / 28 | 1.28 |
+
+With `--repeat 21` (same method otherwise):
+
+| Query | 4/1 before | 4/1 after | 4 threads ms before / after | RSS 4/1 after |
+| --- | ---: | ---: | ---: | ---: |
+| q07 | 0.76 | 0.62 | 4.06 / 3.34 | 1.45 |
+| q21 | 0.38 | 0.37 | 34.29 / 33.84 | 1.72 |
+| q19 | 0.57 | 0.53 | 18.52 / 18.27 | 1.79 |
+| d10 | 0.67 | 0.66 | 6.89 / 6.50 | 2.07 |
+| d17 | 1.26 | 1.06 | 0.39 / 0.31 | 1.28 |
+
+The q21 and d10 1-thread differences in the first table (109.6 against 90.9
+ms, 10.4 against 13.9 ms) are run-to-run variation: those paths have the same
+code at 1 thread, and the second table has 91.0 / 92.3 and 10.3 / 9.9 ms.
+No 1-thread time and no 4-thread time of q19, q21, d10 or d17 got slower
+beyond that variation. d10 peak RSS, 10 processes each, 21 runs: 1 thread
+26.4 to 29.0 MB; 4 threads before 48.4 to 57.2 MB (median 55.1), after 44.9
+to 55.5 MB (median 53.7). The ratio of the largest values is 2.1 before and
+1.9 after; the limit of 2 is met by the medians, not by every process, and
+this work did not change that.
+
+One process of q07 with 61 runs (`SBM11_PHASES=1`, the phase medians in
+milliseconds; "before" is `4cb598ae` with the same marks added):
+
+| Phase | 1 thread before | 1 thread after | 4 threads before | 4 threads after |
+| --- | ---: | ---: | ---: | ---: |
+| constants | 0.036 | 0.033 | 0.036 | 0.073 |
+| scan of pattern 1 | 0.208 | 0.182 | 0.216 | 0.152 |
+| scan of pattern 0 | 0.251 | 0.215 | 0.243 | 0.131 |
+| merge join | 0.444 | 0.407 | 0.429 | 0.188 |
+| scan with candidates, pattern 2 | 1.906 | 1.796 | 0.950 | 0.729 |
+| merge join | 0.031 | 0.030 | 0.041 | 0.040 |
+| scan with candidates, pattern 3 | 1.357 | 1.257 | 0.760 | 0.579 |
+| hash join | 0.051 | 0.048 | 0.062 | 0.070 |
+| ORDER BY keys and sort | 0.845 | 0.668 | 0.879 | 0.737 |
+| rendering | 0.280 | 0.234 | 0.251 | 0.260 |
+| whole query | 5.41 | 4.92 | 4.02 | 3.05 |
+
+### 1g.2 The pool alone: start latency
+
+`l4pool-bench 2000 200 3` (`Harness/WorkerPoolBench.lean`): 2,000 rounds;
+in each the caller works 200 microseconds, then starts 3 jobs that read the
+clock, and waits for them.
+
+| Runner | job start p50 / p90 (us) | all results p50 / p90 (us) |
+| --- | ---: | ---: |
+| `IO.asTask` (Lean task pool) | 59 / 87 | 74 / 119 |
+| worker pool, poll 1 ms | 5 / 9 | 8 / 12 |
+| worker pool, poll 0 (block at once) | 124 / 219 | 167 / 266 |
+
+The pool reduces the start latency by a factor of about 10, so the work went
+on to divide phases on it.
+
+### 1g.3 Design
+
+`Harness/WorkerPool.lean`. `l4sbm11 query --threads N` starts N - 1 threads
+when N is above 1 and at most the hardware threads
+(`System.Platform.Internal.getHardwareConcurrency`); the calling thread is
+the N-th. They stop when the command ends.
+
+- Threads: `IO.asTask ... Task.Priority.dedicated`, one thread per worker,
+  outside the Lean pool's worker limit, and no other task queued on it.
+- Channel: a `Cell` per worker (mailbox) and per job (result): an `IO.Ref`
+  that its one reader polls with `swap` (an atomic exchange) for at most 1 ms,
+  then a promise it blocks on. A writer resolves the promise only when the
+  reader has published one.
+- Not chosen: `IO.Promise` as the channel (start p50 24 us: `resolve` and
+  `wait` take the task manager's lock that every thread shares);
+  `Std.Channel` (not measured: it is built on a mutex and condition
+  variables, so a blocked receiver has the same kernel wake-up, and it has
+  no bounded poll);
+  `Task.spawn` (the Lean pool, 1f).
+- `wake` at the start of a query with two or more triple patterns makes
+  blocked workers poll again, so the first divided phase finds them awake.
+- At 8 threads on 4 vCPUs no pool is started (7 polling workers made the
+  scans with candidates 3 to 5 times slower); the divided paths then use
+  `IO.asTask` as before.
+
+What runs on the pool: the ranges of `scanTableParM`, `scanSipTableParM`
+and the workers of `parFold` (`Session.spawnAt`); the ranges of the merge
+join (`IdQuery.Par.mapList`, `poolMap`), divided from 4,096 input rows per
+range (`poolJoinRows`; 32,768 without the pool); BGP scans divided from
+4,096 estimated rows per range (`poolScanRows`; 16,384 without).
+
+Not on the pool: ORDER BY keys and rendering (1g.6). In their place, a
+1-thread change: `IdQuery.OrderRead` makes `isNumericOperand`,
+`numericValue?` and `orderView` once per distinct value, and
+`SPARQL.sparqlOrderViewed` compares two readings; `sparqlOrder` made them for
+both operands on every comparison. q07's sort and ranks: 0.33 to 0.14 ms at
+every thread count.
+
+`IdQuery.Store.mark` (no effect on answers) and `SBM11_PHASES`: the phase
+table above.
+
+### 1g.4 What is proved and what is tested only
+
+- Proved (`WorkerPoolTheorems`, `SPARQL/Query.lean`; `#print axioms`:
+  `propext`, `Classical.choice`, `Quot.sound`; no hypothesis states a
+  conclusion): `mergeJoinParM_eq` (the divided merge join is `mergeJoin`,
+  given the runner's contract `mapList f xs = pure (xs.map f)` and join
+  columns in non-decreasing order); `sparqlOrder_eq_viewed`,
+  `OrderRead.cmp_of`, `orderRanks_map` (the ORDER BY ranks from the readings
+  are the ranks the former code computed).
+- Tested only: that the pool's `mapList` meets that contract, that the pool
+  runs every job once and returns its result, the scan thresholds:
+  `tests/sbm11/threads.sh` (byte-identical answers at 1, 2, 4 and 8 threads;
+  8 threads uses no pool), `tests/sbm11/run.sh`, the census at 4 threads.
+
+### 1g.5 Gates
+
+On commit `a7c1e0f0` and the commits before it (exit codes read):
+
+| Gate | Result |
+| --- | --- |
+| `lake build` | exit 0 (1,994 jobs) |
+| `tests/sbm11/threads.sh` | exit 0: gate 140 and 140 identical, olympics 21, 2 and 2, DBpedia 19; DBpedia against the three-engine record: equal 76, different 0 |
+| `tests/sbm11/run.sh` | exit 0: 3,131 pass, 0 fail, 28 expected-fail (out of 3,159) |
+| `SBM11_THREADS=4 tests/sbm11/census.sh` | exit 0: 605 executed, 605 matched the reference engine, 0 differed; 4 refused at query |
+| `lean-tail-recursion-audit.py --gate`, `lean-unbuilt-modules.py --gate` | exit 0, exit 0 (941 modules reached) |
+| `tools/land-gates.sh` | LAND_GATES_RESULT |
+| `sorry`, `native_decide`, `axiom`, `maxHeartbeats` in the Lean diff | none |
+
+### 1g.6 Tried and not kept
+
+- **ORDER BY readings and rendering in 4 parts on the pool**, each part on a
+  view of the session (`Session.view`, `Session.local`). Each part took 2 to
+  4 times as long per item as the same part on the calling thread with its
+  own page cache; the same part on the calling thread through a view was as
+  slow (page copies on second use, references to shared pages). With no
+  page copies in those views, rendering 0.25 to 0.19 ms; the parent's sort
+  of values the workers returned (MT) took 0.48 ms against 0.14 ms. Each
+  part sorting its own values and the parent merging the runs: sort and
+  ranks 0.12 ms, but the parts no faster. A/B over 6 processes of 41 runs:
+  median 3.29 ms with the divided steps, 2.99 ms without. Removed.
+- **Scans with candidates in 3 ranges per thread taken from a shared
+  counter** (to balance ranges whose blocks are skipped by candidates):
+  no change beyond run-to-run variation (0.69 to 0.83 and 0.55 to 0.67 ms).
+- **A mailbox written with `IO.Ref.modify`** while the worker polled it with
+  `swap`: job start p90 1,020 us (the whole poll time). Written with `swap`
+  then `set`: p90 9 us.
+- **A shutdown that only resolved a published promise**: a worker between
+  its last poll and its wait had published none, and the process hung.
+  Shutdown writes a value.
+- **Waking the workers at the start of every query**: d17 (one pattern, 0.3
+  ms) 0.37 ms at 4 threads against 0.29 ms.
+
+### 1g.7 What remains
+
+q07 at 4 threads is about 3.0 to 3.5 ms; 0.4 needs about 2.0 ms. The parts
+of the work that the pool divides do not reach 4 times their 1-thread speed:
+
+- The two scans with candidates (3.05 ms at 1 thread) take 1.3 ms at 4
+  threads: each range does its blocks 1.3 to 1.7 times slower per block than
+  1 thread does (27 to 44 us against 26 us per block, single runs). A C test
+  of 4 threads on this VM (integer work, and random reads of 32 MB) runs at
+  1.0 and 1.17 times the 1-thread time, so the machine is not the cause.
+  The cause is not measured. Candidates: the PRM1 entries array that every
+  range reads (shared, so reference counts are atomic), and the fresh memory
+  of each worker's heap (1e), which is in the allocator work the owner
+  deferred.
+- The ORDER BY keys (0.67 ms, 291 values read through the dictionary) and
+  the rendering (0.23 ms) stay on one thread (1g.6).
+- The constants phase is 0.07 ms at 4 threads against 0.03 ms: the wake of
+  the workers (`IO.Promise.resolve` for blocked workers).
+
+Next step for 0.4: find the per-block cost of a range at 4 threads with a
+per-thread profile (`perf record` with the binary unchanged since the
+record), then give a worker unshared copies of what it reads per block; and
+the allocator work.
+Issue https://github.com/danbri/factoidal/issues/961 stays open.

@@ -814,6 +814,41 @@ section "Stage 1b", subsection "What failed on the way"):
   that wait until all N run) did not: no time gained and peak RSS above 2
   times the 1-thread RSS (each worker's heap). Stage 1f of
   [`docs/designissues/2026-10-12-parallel-block-scans.md`](../../docs/designissues/2026-10-12-parallel-block-scans.md).
+- **Workers that stay awake: a per-session pool, and its three traps**
+  (2026-10-23, https://github.com/danbri/factoidal/issues/961, stage 1g of the
+  same record). `Harness/WorkerPool.lean`: N - 1 threads
+  (`Task.Priority.dedicated`) that poll a mailbox `IO.Ref` with `swap` for
+  up to 1 ms, then block on a promise; results come back the same way.
+  `l4pool-bench`, 3 jobs after 200 microseconds of caller work: start p50 5,
+  p90 9 microseconds, against 59 and 87 with `IO.asTask`. Paid for on the
+  way: (1) a mailbox and results passed as `IO.Promise` values: start p50
+  24 microseconds, because `resolve` and `wait` take the task manager's lock,
+  which every thread shares; resolve a promise only for a reader that
+  blocked. (2) A mailbox written with `IO.Ref.modify` while the worker
+  polled it with `swap`: p90 1,020 microseconds, the whole poll time; write
+  with `swap` then `set`. (3) A shutdown that only resolved the published
+  promise of a blocked worker: a worker between its last poll and its wait
+  had not published one yet, and the process hung; write a value. Polling
+  workers beyond the hardware threads (8 on 4 vCPUs) made q07's scans 3 to
+  5 times slower, so the pool starts only when N is at most the hardware
+  threads (`System.Platform.Internal.getHardwareConcurrency`).
+- **Awake workers do not make a small step that reads shared structures
+  pay.** Olympics q07's ORDER BY readings (291 values) and rendering (313
+  rows), cut into 4 parts on the pool with a view of the session per part:
+  each part took 2 to 4 times as long per item as the same part on the
+  calling thread with its own page cache (page copies on second use,
+  references to shared pages), and the parent's sort of the values that
+  workers returned (MT) took 0.48 ms against 0.14 ms. Over 6 processes the
+  query was not faster (median 3.29 ms against 2.99 ms). What did pay on
+  the pool: the merge join of 6,248 by 13,369 rows in 4 ranges (pure, over
+  two byte arrays), 0.42 to 0.19 ms.
+- **Make a comparison's per-value work once per value.** `sparqlOrder`
+  reads `isNumericOperand`, `numericValue?`, `integerDerivedValue?` and
+  `promoteLiteral` of both operands on every comparison; an ORDER BY of `n`
+  values does that about `n log n` times. `IdQuery.OrderRead` makes them
+  once per value and `SPARQL.sparqlOrderViewed` compares two readings
+  (`sparqlOrder_eq_viewed`, `WorkerPoolTheorems.orderRanks_map`): q07's sort
+  and ranks 0.33 to 0.14 ms at every thread count.
 
 Measure every one of these with `perf record` at 1 and N threads and the
 CPU time (`perf stat -e task-clock`): CPU time that grows with the thread
