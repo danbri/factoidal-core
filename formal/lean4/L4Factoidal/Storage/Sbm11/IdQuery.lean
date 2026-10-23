@@ -102,6 +102,12 @@ ids and the reference evaluator's post-WHERE function on the decoded
 solutions (`PostSpec`, `runPostM`; theorems in `IdPostTheorems`). DESCRIBE
 stays refused.
 
+MINUS (issue 956, SPARQL 1.1 section 18.5): `P MINUS { B }` over the whole
+top group (only FILTERs and other MINUS above it), `B` a basic graph pattern;
+`B` is evaluated by itself and, after every join, a row is dropped when some
+row of `B` is compatible with it and shares a bound variable with it
+(`semiJoinM` with `SemiKind.minus`). Theorems: `IdMinusTheorems`.
+
 FILTER EXISTS / NOT EXISTS (https://github.com/danbri/factoidal/issues/956,
 SPARQL 1.1 section 18.6): a conjunct `EXISTS { B }` or `NOT EXISTS { B }` of a
 FILTER of the top group, outside GRAPH, with no OPTIONAL in the WHERE clause,
@@ -292,11 +298,15 @@ instance : Inhabited PathBlock := ⟨{ s := .var "", path := .negatedSet [], o :
 inductive SemiKind where
   | semi
   | anti
+  /-- `P MINUS { B }` of the top group (SPARQL 1.1 section 18.5): a row is
+      kept unless some solution of `B` is compatible with it and shares a
+      variable with it (`IdMinusTheorems.minus_decode`) -/
+  | minus
   deriving Inhabited, BEq, Repr
 
 /-- A conjunct `EXISTS { B }` or `NOT EXISTS { B }` of a FILTER of the top
-    group, `B` a basic graph pattern (issue 956), as the patterns of `B` over
-    the default graph. -/
+    group, or a `MINUS { B }` of the top group, `B` a basic graph pattern
+    (issue 956), as the patterns of `B` over the default graph. -/
 structure SemiBlock where
   pats : Array PatSpec
   kind : SemiKind
@@ -592,6 +602,8 @@ def subtreeVars (p : QueryPattern) : Option (Array String) := Id.run do
             | .error _ => return none
       | .join l r => stack := (stack.push r).push l
       | .filter _ q | .graph _ q => stack := stack.push q
+      -- MINUS (issue 956): a solution binds the left side's variables only
+      | .minus l _ => stack := stack.push l
       -- a VALUES block (issue 950): an UNDEF cell leaves its variable
       -- unbound, so it binds no variable in every row
       -- a UNION (issue 950): each branch binds its own variables, so the
@@ -624,7 +636,7 @@ def scopeVars (p : QueryPattern) : Option (Array String) := Id.run do
       stack := stack.pop
       match x with
       | .join l r => stack := (stack.push r).push l
-      | .filter _ q => stack := stack.push q
+      | .filter _ q | .minus q _ => stack := stack.push q
       | .graph (.var v) q =>
         if !out.contains v then out := out.push v
         stack := stack.push q
@@ -656,7 +668,7 @@ def whereVars (p : QueryPattern) : Array String := Id.run do
             | .ok (.var v) => if !out.contains v then out := out.push v
             | _ => pure ()
       | .join l r | .leftJoin l r _ | .union l r => stack := (stack.push r).push l
-      | .filter _ q => stack := stack.push q
+      | .filter _ q | .minus q _ => stack := stack.push q
       | .graph (.var v) q =>
         if !out.contains v then out := out.push v
         stack := stack.push q
@@ -688,7 +700,7 @@ def bindScopeVars (p : QueryPattern) : Array String := Id.run do
       stack := stack.pop
       match x with
       | .join l r => stack := (stack.push r).push l
-      | .filter _ q => stack := stack.push q
+      | .filter _ q | .minus q _ => stack := stack.push q
       | .bind _ v q =>
         if !out.contains v then out := out.push v
         for w in (scopeVars q).getD #[] do
@@ -709,7 +721,7 @@ def pathScopeVars (p : QueryPattern) : Array String := Id.run do
       stack := stack.pop
       match x with
       | .join l r => stack := (stack.push r).push l
-      | .filter _ q => stack := stack.push q
+      | .filter _ q | .minus q _ => stack := stack.push q
       | .propertyPath s _ o =>
         for a in [argOfSubject s, argOfTerm o] do
           match a with
@@ -821,7 +833,7 @@ def flattenWhere (p : QueryPattern) (allVars : Array String) :
     | some ⟨x, g⟩ =>
       stack := stack.pop
       let top := atTop
-      atTop := top && (match x with | .filter _ _ => true | _ => false)
+      atTop := top && (match x with | .filter _ _ | .minus _ _ => true | _ => false)
       match x with
       | .bgp tps =>
         for tp in tps do
@@ -902,8 +914,21 @@ def flattenWhere (p : QueryPattern) (allVars : Array String) :
         | .dflt => pure ()
         | _ => throw "a property path inside a GRAPH"
         paths := paths.push { s := ← argOfSubject s, path, o := ← argOfObject o }
+      | .minus l r =>
+        -- issue 956: `P MINUS { B }` of the top group, `B` a basic graph
+        -- pattern; MINUS, a FILTER of the group and the other MINUS of the
+        -- group each keep or drop a row by itself, so the MINUS is applied
+        -- after every join
+        unless top do throw "a MINUS that is not over the whole top group"
+        let some b := (match r with | .bgp b => some b | _ => none)
+          | throw "a MINUS whose right side is not a basic graph pattern"
+        let mut bp : Array PatSpec := #[]
+        for tp in b do
+          bp := bp.push { s := ← argOfSubject tp.s, p := ← argOfTerm tp.p, o := ← argOfObject tp.o, g := .dflt }
+        semis := semis.push { pats := bp, kind := .minus }
+        stack := stack.push ⟨l, g⟩
       | .empty => pure ()
-      | _ => throw "a WHERE clause outside the fragment (OPTIONAL not at the top level, MINUS, sub-SELECT or SERVICE)"
+      | _ => throw "a WHERE clause outside the fragment (OPTIONAL not at the top level, sub-SELECT or SERVICE)"
   if !stack.isEmpty then throw s!"a WHERE clause with more than {maxNodes} nodes"
   return (pats, filters, residuals, values, unions, binds, late, paths, semis)
 where
@@ -933,7 +958,7 @@ where
         match x with
         | .bgp tps => if !tps.isEmpty then return true
         | .join l r => stack := (stack.push r).push l
-        | .filter _ y | .graph _ y | .bind _ _ y => stack := stack.push y
+        | .filter _ y | .graph _ y | .bind _ _ y | .minus y _ => stack := stack.push y
         | _ => pure ()
     return false
 
@@ -950,7 +975,7 @@ def flattenUnions (raw : Array (Array QueryPattern)) (allVars : Array String) :
     let mut bs : Array UnionBranch := #[]
     for q in leaves do
       let (pats, filters, residuals, values, unions, binds, _, paths, semis) ← flattenWhere q allVars
-      if !semis.isEmpty then throw "a FILTER with EXISTS, NOT EXISTS or an aggregate"
+      if !semis.isEmpty then throw "an EXISTS, NOT EXISTS or MINUS outside the top group"
       if !paths.isEmpty then throw "a property path inside a UNION branch"
       if !binds.isEmpty then throw "a BIND inside a UNION branch"
       if !unions.isEmpty then throw "a UNION inside a UNION branch"
@@ -972,7 +997,7 @@ def flattenBinds (raw : Array (Array (Expr × String) × QueryPattern)) (allVars
   let mut out : Array BindBlock := #[]
   for (exts, q) in raw do
     let (pats, filters, residuals, values, unions, binds, _, paths, semis) ← flattenWhere q allVars
-    if !semis.isEmpty then throw "a FILTER with EXISTS, NOT EXISTS or an aggregate"
+    if !semis.isEmpty then throw "an EXISTS, NOT EXISTS or MINUS outside the top group"
     if !paths.isEmpty then throw "a BIND over a group with a property path"
     if !binds.isEmpty then throw "a BIND over a group that holds a BIND block"
     if !values.isEmpty then throw "a BIND over a group with a VALUES block"
@@ -1049,7 +1074,7 @@ def flattenOptional (p : QueryPattern) :
     return (pats, filters, residuals, #[], #[], values, ← flattenUnions unions allVars,
       ← flattenBinds binds allVars, late, paths, semis)
   let (pats, filters, residuals, values, unions, binds, _, paths, semis) ← flattenWhere base allVars
-  if !semis.isEmpty then throw "a FILTER with EXISTS, NOT EXISTS or an aggregate"
+  if !semis.isEmpty then throw "an EXISTS, NOT EXISTS or MINUS beside an OPTIONAL"
   if !paths.isEmpty then throw "a property path beside an OPTIONAL"
   if !binds.isEmpty then throw "a BIND beside an OPTIONAL"
   if !values.isEmpty then throw "a VALUES block beside an OPTIONAL"
@@ -1076,7 +1101,7 @@ def flattenOptional (p : QueryPattern) :
   for (r, c) in raw do
     if hasGraph r then throw "a GRAPH inside an OPTIONAL group"
     let (gp, gf, gr, gv, gu, gb, _, gpaths, gsemis) ← flattenWhere r allVars
-    if !gsemis.isEmpty then throw "a FILTER with EXISTS, NOT EXISTS or an aggregate"
+    if !gsemis.isEmpty then throw "an EXISTS, NOT EXISTS or MINUS outside the top group"
     if !gpaths.isEmpty then throw "a property path inside an OPTIONAL group"
     if !gb.isEmpty then throw "a BIND inside an OPTIONAL group"
     if !gv.isEmpty then throw "a VALUES block inside an OPTIONAL group"
@@ -3822,8 +3847,10 @@ def resolveExtrasM {m : Type → Type} [Monad m] (st : Store m) (plan : Plan) (e
     row test of `IdExistsTheorems.idSemi`). The rows of `r` bound in every
     shared column go into one hash set per set of bound shared columns of a
     left row (a bit mask, built when a left row first needs it); the other
-    rows of `r` are tested one by one. -/
-def semiMatches (l r : Table) : Array Bool := Id.run do
+    rows of `r` are tested one by one. `needShared` (MINUS, SPARQL 1.1
+    section 18.5): only a row of `r` that also shares a bound variable with
+    the left row counts (`IdMinusTheorems.idMinus`). -/
+def semiMatches (l r : Table) (needShared : Bool := false) : Array Bool := Id.run do
   let shared : Array (Nat × Nat) := (List.range l.vars.size).toArray.filterMap fun c =>
     (r.idx l.vars[c]!).map fun q => (c, q)
   let mut tight : Array Nat := #[]
@@ -3852,11 +3879,13 @@ def semiMatches (l r : Table) : Array Bool := Id.run do
           h := h.insert kj
         sets := sets.insert mask h
         pure h
-    let hit := set.contains key ||
-      loose.any fun j => shared.all fun (p, q) =>
-        let a := l.at p i
-        let b := r.at q j
-        a == OptJoin.unbound || b == OptJoin.unbound || a == b
+    let hit := (!needShared || mask != 0) && set.contains key ||
+      loose.any fun j =>
+        (shared.all fun (p, q) =>
+          let a := l.at p i
+          let b := r.at q j
+          a == OptJoin.unbound || b == OptJoin.unbound || a == b) &&
+        (!needShared || shared.any fun (p, q) => l.at p i != OptJoin.unbound && r.at q j != OptJoin.unbound)
     out := out.push hit
   return out
 
@@ -3888,7 +3917,10 @@ def substOkIdM {m : Type → Type} [Monad m] (st : Store m) (x : UInt64) (subjec
     subject position of `B` to a literal, or a variable of `B` to a triple
     term, or a variable of a predicate position to `text:query`, refuses the
     query (an error starting with `refused:`; the caller runs the reference
-    evaluator). -/
+    evaluator). `P MINUS { B }` (`minus`, SPARQL 1.1 section 18.5) does not
+    substitute: a row is dropped when some row of `B` is compatible with it
+    and shares a bound variable with it (`IdMinusTheorems.minus_decode`), and
+    no row is checked. -/
 def semiJoinM {m : Type → Type} [Monad m] (st : Store m) (plan : Plan) (t : Table) (b : SemiBlock) :
     ExceptT String m (Table × String × ScanStats) := do
   let bvars := b.vars
@@ -3896,7 +3928,8 @@ def semiJoinM {m : Type → Type} [Monad m] (st : Store m) (plan : Plan) (t : Ta
   let predVars : Array String := b.pats.filterMap fun p => p.p.var?
   let ftId ← st.idOf (.iri L4Factoidal.SPARQL.fulltextQueryPred)
   let mut memo : Std.HashMap (UInt64 × Bool) Bool := {}
-  for c in [0:t.vars.size] do
+  -- MINUS does not substitute (SPARQL 1.1 section 18.5): no check
+  for c in [0:(if b.kind == .minus then 0 else t.vars.size)] do
     let v := t.vars[c]!
     if !bvars.contains v then continue
     let subject := subjVars.contains v
@@ -3923,12 +3956,15 @@ def semiJoinM {m : Type → Type} [Monad m] (st : Store m) (plan : Plan) (t : Ta
       let bp ← b.pats.mapM (resolvePatIn st plan.dataset)
       let (bt, _, s) ← evalBgpM st bp (fun _ => true)
       pure (bt, s)
-  let hits := semiMatches t body
+  let hits := semiMatches t body (b.kind == .minus)
   let want := b.kind == .semi
   let mut idx : Array Nat := #[]
   for i in [0:t.rows] do
     if hits[i]! == want then idx := idx.push i
-  let kindText := if want then "EXISTS" else "NOT EXISTS"
+  let kindText := match b.kind with
+    | .semi => "EXISTS"
+    | .anti => "NOT EXISTS"
+    | .minus => "MINUS"
   return (t.reorder idx, s!"{kindText}: body {body.rows} rows; {t.rows} rows to {idx.size}", bs)
 
 /-- After the triple patterns and their FILTERs: the VALUES blocks

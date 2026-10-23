@@ -1043,7 +1043,14 @@ row (`?s :name ?n FILTER EXISTS { ?n :knows ?y }` keeps every row with a
 error that starts with `refused:` (gate `ref-exists-literal-subject.rq`);
 `runPlanM` emits the JSON head only after that check. Theorems
 (`IdExistsTheorems`, lemma L5r): `exists_bgp_iff`, `semi_decode`,
-`exists_decode`, `exists_filter_decode`.
+`exists_decode`, `exists_filter_decode`. MINUS (same issue): `P MINUS { B }`
+over the whole top group, `B` a basic graph pattern, runs on ids with
+`SemiKind.minus` (a row dropped when a row of `B` is compatible AND shares a
+bound variable; no substitution, so no row check); `{ P MINUS { B } Q }` is
+`Join(Minus(P, B), Q)` and stays on the fallback. Theorems
+(`IdMinusTheorems`, lemma L5s): `minus_decode`, `minus_bgp_decode`. The W3C
+MINUS tests all have a right side with OPTIONAL or FILTER NOT EXISTS and stay
+on the fallback.
 
 Sideways information passing (2026-10-13,
 https://github.com/danbri/factoidal/issues/809; record: section 11 of the
