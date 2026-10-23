@@ -19,6 +19,8 @@ import L4Factoidal.RDF.FastGraph
 import L4Factoidal.RDF.DatasetNormalize
 import L4Factoidal.RDF.Rdf11Terms
 import L4Factoidal.RDF.DatasetNormalizeTests
+import L4Factoidal.RDF.NormalizeSet
+import L4Factoidal.RDF.NormalizeSetTests
 import L4Factoidal.RDF.ConciseBoundedDescription
 import L4Factoidal.RDF.ConciseBoundedDescriptionTheorems
 import L4Factoidal.RDF.StoreLoader

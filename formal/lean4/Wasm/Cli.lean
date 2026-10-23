@@ -133,6 +133,22 @@ def readDataset (pathOpt : Option String) (formatTag baseIri : String) :
   | .error e => pure (.error e)
   | .ok text => pure (Ops.parseTextToDataset text formatTag baseIri)
 
+/-- `readDataset`, with the proof that the dataset is a set of quads
+(`Ops.parseTextToDatasetSet`): the verbs that hand the dataset to an `Ops.*OfSet`
+function use it, and the operation does not index the triples a second time. -/
+def readDatasetSet (pathOpt : Option String) (formatTag baseIri : String) :
+    IO (Except String { ds : Dataset // ds.IsSet }) := do
+  if formatTag == "tdb2" then
+    match pathOpt with
+    | none | some "-" => return .error "--format tdb2 needs a database directory"
+    | some dir =>
+      match ← L4Factoidal.Tdb2.readDatabaseNQuads dir with
+      | .error e => return .error e
+      | .ok text => return Ops.parseTextToDatasetSet text "nquads" baseIri
+  match ← readInput pathOpt with
+  | .error e => pure (.error e)
+  | .ok text => pure (Ops.parseTextToDatasetSet text formatTag baseIri)
+
 /-- Resolve a `--foo FILE` / `--foo-string TEXT` pair (exactly one of
 the two) into the text it names — shared by `query` and `update`.
 The `Except UInt32` error already carries the exit code
@@ -961,9 +977,9 @@ def queryCmd (args : List String) : IO UInt32 := do
     | .ok queryBase =>
       let format := (s.value? "--format").getD "turtle"
       let base := (s.value? "--base").getD ""
-      match ← readDataset s.positional[0]? format base with
+      match ← readDatasetSet s.positional[0]? format base with
       | .error e => IO.eprintln e; pure 1
-      | .ok ds =>
+      | .ok ⟨ds, hds⟩ =>
         -- SPARQL 1.1 §17.4.5.1: `NOW()` is one instant for the whole query
         -- execution. The clock is read here, at the edge, once, and passed to
         -- the pure op (https://github.com/danbri/factoidal/issues/743).
@@ -975,10 +991,10 @@ def queryCmd (args : List String) : IO UInt32 := do
         -- https://github.com/danbri/factoidal/issues/792 item 1)
         let answer :=
           if s.hasBool "--sparql12" then
-            withOpsDataset .rdf12 ds (fun d =>
+            withOpsSetDataset .rdf12 ds hds (fun d =>
               queryParsedDatasetWith d (some (L4Factoidal.SPARQL.StoreDataset.indexedDatasetBackend d)) sparql
                 (version := .v12) (base := queryBase) (now := some now))
-          else Ops.queryDatasetOf ds sparql queryBase (some now)
+          else Ops.queryDatasetOfSet ds hds sparql queryBase (some now)
         match ← parseEnvelope answer with
         | none => pure 1
         | some j => printQueryResult j (s.hasBool "--table")
