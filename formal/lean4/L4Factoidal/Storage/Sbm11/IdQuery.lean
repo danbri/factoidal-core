@@ -3706,6 +3706,61 @@ def pathFuelM {m : Type → Type} [Monad m] (st : Store m) (extra : Nat) : Excep
   let base := selRows (← st.blocksForRange 0 #[])
   return 2 * (base + (st.ovl 0).ins.size) + extra + 2
 
+/-- The rounds of `closureM` under a restriction: per round the step
+    relation from the frontier (`stepM fwd`), the new nodes (objects for a
+    subject restriction, subjects for an object one) not yet visited become
+    the next frontier; at most `fuel` rounds, an error when they run out
+    with a frontier left. -/
+def closureRoundsM {m : Type → Type} [Monad m]
+    (stepM : Bool → Option (Array UInt64) → ExceptT String m (IdPath.Pairs × ScanStats)) (fwd : Bool) :
+    Nat → Std.HashSet UInt64 → Array UInt64 → IdPath.Pairs → ScanStats →
+      ExceptT String m (IdPath.Pairs × ScanStats)
+  | 0, _, frontier, edges, total =>
+    if frontier.isEmpty then pure (edges, total)
+    else throw "a property path closure: the round bound ran out (a bug: the bound is the number of ids)"
+  | fuel + 1, visited, frontier, edges, total =>
+    if frontier.isEmpty then pure (edges, total)
+    else do
+      let (e, s) ← stepM fwd (some frontier)
+      let next := (if fwd then IdPath.seconds e else IdPath.firsts e).filter (!visited.contains ·)
+      closureRoundsM stepM fwd fuel (next.foldl (fun h x => h.insert x) visited) next (edges ++ e) (total.add s)
+
+/-- The step relation `closureM` closes, its start nodes, and the nodes that
+    give a reflexive pair (`zero`): without a restriction the whole step
+    relation, every node of the graph (`p*`) or every subject of a step
+    (`p+`); with a restriction `rs` the rounds of `closureRoundsM` from `rs`
+    and the nodes of the graph among `rs`. -/
+def closureEdgesM {m : Type → Type} [Monad m] (st : Store m) (g : Option UInt64)
+    (stepM : Bool → Option (Array UInt64) → ExceptT String m (IdPath.Pairs × ScanStats))
+    (fwd : Bool) (R : Option (Array UInt64)) (zero : Bool) :
+    ExceptT String m (IdPath.Pairs × Array UInt64 × Array UInt64 × ScanStats) := do
+  match R with
+  | none =>
+    let (e, s) ← stepM true none
+    if zero then
+      let (ns, s0) ← allNodesM st g
+      return (e, ns, ns, s.add s0)
+    else return (e, IdPath.firsts e, #[], s)
+  | some rs =>
+    let (nodes, s0) ← if zero then nodesAmongM st g rs else pure (#[], {})
+    let fuel ← pathFuelM st rs.size
+    let visited : Std.HashSet UInt64 := rs.foldl (fun h x => h.insert x) {}
+    let (edges, total) ← closureRoundsM stepM fwd fuel visited rs #[] s0
+    return (edges, rs, nodes, total)
+
+/-- The pairs of one start node `a` of `closureM`: `(a, a)` for `p*` when `a`
+    is a node of the graph, then one pair per node the worklist reaches (in
+    the direction of the restriction), `a` itself skipped when its pair is
+    already there. -/
+def closureEmitM {m : Type → Type} [Monad m] (adj : Std.HashMap UInt64 (Array UInt64))
+    (nodeSet : Std.HashSet UInt64) (zero dirFwd : Bool) (fuel : Nat) (out : IdPath.Pairs) (a : UInt64) :
+    ExceptT String m IdPath.Pairs := do
+  let some reach := IdPath.reachPlus adj a fuel
+    | throw "a property path closure: the worklist bound ran out (a bug: the bound is the number of edges)"
+  let self := zero && nodeSet.contains a
+  let out := if self then out.push (a, a) else out
+  return reach.foldl (fun out c => if !(self && c == a) then out.push (if dirFwd then (a, c) else (c, a)) else out) out
+
 /-- `q*` (`zero`) and `q+` under the restriction (`stepM`: `evalIM` of `q`;
     `IdPathClosureTheorems`: `star_mem`, `plus_mem` say what the reference
     computes, `starFrom_mem`, `plusFrom_mem` that the per-node emission below
@@ -3719,52 +3774,41 @@ def closureM {m : Type → Type} [Monad m] (st : Store m) (g : Option UInt64)
   (stepM : Bool → Option (Array UInt64) → ExceptT String m (IdPath.Pairs × ScanStats))
   (fwd : Bool) (R : Option (Array UInt64)) (zero : Bool) :
   ExceptT String m (IdPath.Pairs × ScanStats) := do
-  let mut total : ScanStats := {}
-  let mut edges : IdPath.Pairs := #[]
-  let mut sources : Array UInt64 := #[]
-  let mut nodes : Array UInt64 := #[]
   let dirFwd := R.isNone || fwd
-  match R with
-  | none =>
-    let (e, s) ← stepM true none
-    total := total.add s
-    edges := e
-    if zero then
-      let (ns, s0) ← allNodesM st g
-      total := total.add s0
-      sources := ns
-      nodes := ns
-    else sources := IdPath.firsts e
-  | some rs =>
-    sources := rs
-    if zero then
-      let (ns, s0) ← nodesAmongM st g rs
-      total := total.add s0
-      nodes := ns
-    let fuel ← pathFuelM st rs.size
-    let mut visited : Std.HashSet UInt64 := rs.foldl (fun h x => h.insert x) {}
-    let mut frontier := rs
-    for _ in [0:fuel] do
-      if frontier.isEmpty then break
-      let (e, s) ← stepM fwd (some frontier)
-      total := total.add s
-      edges := edges ++ e
-      let next := (if fwd then IdPath.seconds e else IdPath.firsts e).filter (!visited.contains ·)
-      visited := next.foldl (fun h x => h.insert x) visited
-      frontier := next
-    if !frontier.isEmpty then
-      throw "a property path closure: the round bound ran out (a bug: the bound is the number of ids)"
+  let (edges, sources, nodes, total) ← closureEdgesM st g stepM fwd R zero
   let adj := IdPath.adjOf (if dirFwd then edges else IdPath.swap edges)
   let nodeSet : Std.HashSet UInt64 := nodes.foldl (fun h x => h.insert x) {}
-  let mut out : IdPath.Pairs := #[]
-  for a in sources do
-    let some reach := IdPath.reachPlus adj a (edges.size + 2)
-      | throw "a property path closure: the worklist bound ran out (a bug: the bound is the number of edges)"
-    let self := zero && nodeSet.contains a
-    if self then out := out.push (a, a)
-    for c in reach do
-      if !(self && c == a) then out := out.push (if dirFwd then (a, c) else (c, a))
+  let out ← sources.foldlM (closureEmitM adj nodeSet zero dirFwd (edges.size + 2)) #[]
   return (out, total)
+
+/-- `^q` on a relation: `(b, a)` per pair `(a, b)` whose `b` is not a
+    literal (`isLitIdM`, once per distinct `b`). -/
+def invPairsM {m : Type → Type} [Monad m] (st : Store m) (r : IdPath.Pairs) :
+    ExceptT String m IdPath.Pairs := do
+  let mut out : IdPath.Pairs := Array.mkEmpty r.size
+  let mut memo : Std.HashMap UInt64 Bool := {}
+  for (a, b) in r do
+    let lit ← match memo.get? b with
+      | some l => pure l
+      | none => do
+        let l ← isLitIdM st b
+        memo := memo.insert b l
+        pure l
+    if !lit then out := out.push (b, a)
+  return out
+
+/-- The pairs of a negated property set from the table of a scan with the
+    variables `?s`, `?p`, `?o`: per row whose predicate is not in `ex`,
+    `(s, o)`, or `(o, s)` for the inverse members (`inv`). -/
+def npsPairs (t : Table) (ex : Array UInt64) (inv : Bool) : IdPath.Pairs := Id.run do
+  match t.idx "s", t.idx "p", t.idx "o" with
+  | some cs, some cp, some co =>
+    let mut out : IdPath.Pairs := #[]
+    for i in [0:t.rows] do
+      if !ex.contains (t.at cp i) then
+        out := out.push (if inv then (t.at co i, t.at cs i) else (t.at cs i, t.at co i))
+    return out
+  | _, _, _ => return #[]
 
 /-- `evalPath` on ids under a restriction (section above): `fwd`, `R`
     restrict the subjects (`fwd`) or the objects to `R` (sorted, distinct);
@@ -3785,17 +3829,7 @@ def evalIM {m : Type → Type} [Monad m] (st : Store m) (g : Option UInt64) :
     -- `^q`: (b, a) per pair (a, b) of `q` whose `b` is not a literal; the
     -- subject of `^q` is the object of `q`
     let (r, s) ← evalIM st g (R.isSome && !fwd) q R
-    let mut out : IdPath.Pairs := Array.mkEmpty r.size
-    let mut memo : Std.HashMap UInt64 Bool := {}
-    for (a, b) in r do
-      let lit ← match memo.get? b with
-        | some l => pure l
-        | none => do
-          let l ← isLitIdM st b
-          memo := memo.insert b l
-          pure l
-      if !lit then out := out.push (b, a)
-    return (out, s)
+    return (← invPairsM st r, s)
   | fwd, .seq a b, R => do
     if R.isNone || fwd then
       let (r1, s1) ← evalIM st g true a R
@@ -3828,26 +3862,16 @@ def evalIM {m : Type → Type} [Monad m] (st : Store m) (g : Option UInt64) :
       -- (`negatedSet`: a set of inverse members only gives no direct pair,
       -- and the other way round)
       let byS := R.isNone || fwd
-      let mut out : IdPath.Pairs := #[]
-      let mut total : ScanStats := {}
-      if !(hi && !hd) then
-        let (t, s) ← pathScanM st g none (if byS then 2 else 3) R
-        total := total.add s
-        match t.idx "s", t.idx "p", t.idx "o" with
-        | some cs, some cp, some co =>
-          for i in [0:t.rows] do
-            if !ds.contains (t.at cp i) then out := out.push (t.at cs i, t.at co i)
-        | _, _, _ => pure ()
-      if !(hd && !hi) then
-        -- the subject of an inverse pair is the triple's object
-        let (t, s) ← pathScanM st g none (if byS then 3 else 2) R
-        total := total.add s
-        match t.idx "s", t.idx "p", t.idx "o" with
-        | some cs, some cp, some co =>
-          for i in [0:t.rows] do
-            if !is.contains (t.at cp i) then out := out.push (t.at co i, t.at cs i)
-        | _, _, _ => pure ()
-      return (out, total)
+      let (d, s1) ← if !(hi && !hd) then do
+          let (t, s) ← pathScanM st g none (if byS then 2 else 3) R
+          pure (npsPairs t ds false, s)
+        else pure (#[], {})
+      -- the subject of an inverse pair is the triple's object
+      let (i, s2) ← if !(hd && !hi) then do
+          let (t, s) ← pathScanM st g none (if byS then 3 else 2) R
+          pure (npsPairs t is true, s)
+        else pure (#[], {})
+      return (d ++ i, s1.add s2)
 /-- The candidates for an endpoint variable from the rows joined so far: the
     distinct ids of its column, sorted; `none` when the table does not have
     the variable or a row leaves it unbound (that row joins any value). -/
