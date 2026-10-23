@@ -201,7 +201,7 @@ else record "multi generate" 1 "gen_multi.py failed"; fi
 
 echo "=== blank nodes of one document stay distinct"
 distinct_subjects() { # NAME: distinct blank node subjects in the dump
-  "$BIN/l4sbm11" dump "$TMP/$1" 2>/dev/null | grep -o '^_:[^ ]*' | sort -u | wc -l
+  "$BIN/l4sbm11" dump "$TMP/$1" 2>/dev/null | grep -o '^_:[^ ]*' | sort -u | wc -l | tr -d ' '
 }
 for ext in ttl trig rdf jsonld; do
   rc=0; pack "bc-$ext" "$FX/bnode_collide.$ext" || rc=$?

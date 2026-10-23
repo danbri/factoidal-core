@@ -25,8 +25,10 @@ It is `none` when an encoder refuses (a term with no key, a dictionary, a
 block or a PRM1 list out of the encoders' bounds).
 
 `Harness/Sbm11PackSpecCheck.lean` compares the bytes of `packSpec` with the
-files `l4sbm11-pack` writes for the same input (a test, not a proof: the
-packer is an `IO` program over run files).
+files `l4sbm11-pack` writes for the same input. The packer makes those bytes
+with the step functions of `PackStream.lean`, proved equal to `packSpec`
+over the key and row streams; that its run-file merges give those streams
+is tested, not proved.
 
 No `sorry`, no user `axiom`, no `native_decide`, no `partial`.
 -/

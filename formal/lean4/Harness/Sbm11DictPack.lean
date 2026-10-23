@@ -211,51 +211,11 @@ def RunReader.next (r : RunReader) : IO (Option ByteArray × RunReader) := do
   return (some w, { r with pos := r.pos + 4 + len })
 
 /-- The page writer: GDV1 directly, the GDX1 entries to a temporary file
-    that is copied behind the GDX1 header at the end. -/
-structure Writer where
-  gdv : IO.FS.Handle
-  ent : IO.FS.Handle
-  page : Array (List UInt8) := #[]
-  gdvOff : Nat := gdvHeader.length
-  pages : Nat := 0
-  terms : Nat := 0
-  bufGdv : ByteArray := ByteArray.emptyWithCapacity (1 <<< 20)
-  bufEnt : ByteArray := ByteArray.emptyWithCapacity (1 <<< 16)
+    that is copied behind the GDX1 header at the end. It is the packer's
+    (`Sbm11Pack.Writer`): pages and entries from `PackStream.Pages.push`. -/
+abbrev Writer := Sbm11Pack.Writer
 
-def Writer.flushBufs (w : Writer) (force : Bool) : IO Writer := do
-  let mut w := w
-  if force || w.bufGdv.size ≥ (1 <<< 20) then
-    w.gdv.write w.bufGdv
-    w := { w with bufGdv := ByteArray.emptyWithCapacity (1 <<< 20) }
-  if force || w.bufEnt.size ≥ (1 <<< 16) then
-    w.ent.write w.bufEnt
-    w := { w with bufEnt := ByteArray.emptyWithCapacity (1 <<< 16) }
-  return w
-
-/-- Encode the open page with `Dict.encodePage` (the encoder of the round
-    trip theorem) and its directory entry with `Dict.entryBytes`. -/
-def Writer.closePage (w : Writer) : IO Writer := do
-  if w.page.isEmpty then return w
-  let bytes := encodePage w.page.toList
-  let e : DirEntry := ⟨w.gdvOff, bytes.length⟩
-  let w := { w with
-    bufGdv := w.bufGdv ++ listBytes bytes
-    bufEnt := w.bufEnt ++ listBytes (entryBytes e)
-    gdvOff := w.gdvOff + bytes.length
-    pages := w.pages + 1
-    page := #[] }
-  w.flushBufs false
-
-def Writer.add (w : Writer) (k : ByteArray) : IO Writer := do
-  let w := { w with page := w.page.push k.data.toList, terms := w.terms + 1 }
-  if w.page.size ≥ pageTerms then w.closePage else return w
-
-def copyInto (dst : IO.FS.Handle) (src : String) : IO Unit := do
-  IO.FS.withFile src .read fun h => do
-    repeat
-      let b ← h.read 1048576
-      if b.isEmpty then break
-      dst.write b
+def copyInto (dst : IO.FS.Handle) (src : String) : IO Unit := Sbm11Pack.copyInto dst src
 
 def runPackOnce (source outDir : String) (runTerms workers : Nat) (opts : Sbm11Pack.SourceOpts := {}) :
     IO UInt32 := do

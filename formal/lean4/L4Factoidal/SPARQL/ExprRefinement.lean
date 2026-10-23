@@ -394,17 +394,65 @@ theorem eq_dbl_reflexive (s : String) (f : XSD.Fval)
     EvalResult.numericValue?, h, Fn.Comparison.numericCompare_dbl_refl f hn]
 
 /-- Different datatypes remain a type error in the unpromoted literal
-fallback. Numeric literals are deliberately excluded: integer and decimal
-values can compare equal despite having different datatype IRIs. -/
+fallback when neither datatype is `rdf:langString` or `xsd:dateTime`
+(`distinctLiteralsEq` gives `false` only for those).
+Numeric literals are deliberately excluded: integer and decimal values can
+compare equal despite having different datatype IRIs. Until 2026-10-23 this
+theorem needed no `k1`/`k2`: every pair of different datatypes was a type
+error, also `rdf:langString` against `xsd:string` and `xsd:dateTime` against
+`xsd:date`, which the W3C open-world tests expect to be `false`. -/
 theorem eq_literal_different_datatype_typeerror (l1 l2 : WfLiteral)
     (p1 : literalPromote l1 = .term (.literal l1))
     (p2 : literalPromote l2 = .term (.literal l2))
     (n1 : Fn.Comparison.numericDatatype l1.val.datatype = false)
     (n2 : Fn.Comparison.numericDatatype l2.val.datatype = false)
-    (h : l1.val.datatype ≠ l2.val.datatype) :
+    (h : l1.val.datatype ≠ l2.val.datatype)
+    (k1 : l1.val.datatype ≠ rdfLangString) (k2 : l2.val.datatype ≠ rdfLangString)
+    (k3 : l1.val.datatype ≠ xsdDateTime) (k4 : l2.val.datatype ≠ xsdDateTime) :
     valueCompare (.term (.literal l1)) (.term (.literal l2)) .eq = none := by
   have hne : (l1.val.datatype == l2.val.datatype) = false := beq_eq_false_iff_ne.mpr h
-  simp [valueCompare, EvalResult.isNumericOperand, n1, n2, EvalResult.promoteLiteral, p1, p2, hne]
+  have hv : l1.val.datatype.val ≠ l2.val.datatype.val := fun e => h (Subtype.ext e)
+  have k1' : l1.val.datatype.val ≠ rdfLangString.val := fun e => k1 (Subtype.ext e)
+  have k2' : l2.val.datatype.val ≠ rdfLangString.val := fun e => k2 (Subtype.ext e)
+  have k3' : l1.val.datatype.val ≠ xsdDateTime.val := fun e => k3 (Subtype.ext e)
+  have k4' : l2.val.datatype.val ≠ xsdDateTime.val := fun e => k4 (Subtype.ext e)
+  have k1b : (l1.val.datatype.val == rdfLangString.val) = false := beq_eq_false_iff_ne.mpr k1'
+  have k2b : (l2.val.datatype.val == rdfLangString.val) = false := beq_eq_false_iff_ne.mpr k2'
+  simp [valueCompare, EvalResult.isNumericOperand, n1, n2, EvalResult.promoteLiteral, p1, p2, hne, hv,
+    termEqualFallback, EvalResult.toTerm?, rdfTermEqualFallback, Literal.sameTerm,
+    distinctLiteralsEq, dateTimeDatePair, k1b, k2b, k3', k4']
+
+/-- Promotion turns a literal into a value or keeps the literal; it never
+gives an IRI. -/
+theorem literalPromote_ne_iri (l : WfLiteral) (j : WfIri) :
+    literalPromote l ≠ .term (.iri j) := by
+  intro h
+  simp only [literalPromote] at h
+  repeat' split at h
+  all_goals simp_all
+
+/-- §17.4.1.7: an IRI and a literal are not the same RDF term and are not
+both literals, so RDFterm-equal is false: `=` is `false` and `!=` is `true`,
+for every literal (also an ill-formed one, or one of an unknown datatype). -/
+theorem eq_iri_literal_false (i : WfIri) (l : WfLiteral) :
+    valueCompare (.term (.iri i)) (.term (.literal l)) .eq = some false ∧
+    valueCompare (.term (.iri i)) (.term (.literal l)) .ne = some true := by
+  constructor <;>
+  · unfold valueCompare
+    cases hn : Fn.Comparison.numericDatatype l.val.datatype
+    · simp only [EvalResult.isNumericOperand, hn, Bool.or_false, Bool.false_eq_true, if_false,
+        EvalResult.promoteLiteral]
+      split <;> simp_all [termEqualFallback, EvalResult.toTerm?, rdfTermEqualFallback,
+        literalPromote_ne_iri]
+    · simp [EvalResult.isNumericOperand, hn, numericEquality, numericValueCompare,
+        EvalResult.numericValue?, termEqualFallback, EvalResult.toTerm?, rdfTermEqualFallback]
+
+/-- §17.4.1.7: a blank node and an IRI are not the same RDF term. -/
+theorem eq_bnode_iri_false (b : BNodeId) (i : WfIri) :
+    valueCompare (.term (.bnode b)) (.term (.iri i)) .eq = some false ∧
+    valueCompare (.term (.bnode b)) (.term (.iri i)) .ne = some true := by
+  constructor <;> simp [valueCompare, EvalResult.isNumericOperand, EvalResult.promoteLiteral,
+    termEqualFallback, EvalResult.toTerm?, rdfTermEqualFallback]
 
 /-- Unequal language tags after case normalization make unpromoted literals
 unequal. A difference only in letter case does not satisfy this premise. -/
@@ -450,6 +498,9 @@ theorem eval_eq_num_matches_spec (env : EvalEnv) (mu : Binding)
 #print axioms eq_num_matches_spec
 #print axioms eq_plain_string_matches_spec
 #print axioms eq_literal_same_datatype_diff_lang
+#print axioms eq_literal_different_datatype_typeerror
+#print axioms eq_iri_literal_false
+#print axioms eq_bnode_iri_false
 #print axioms eval_eq_num_matches_spec
 
 end L4Factoidal.SPARQL.ExprRefinement

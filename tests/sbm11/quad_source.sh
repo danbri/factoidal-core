@@ -222,7 +222,7 @@ hdt_case() { # hdt_case NAME FILE.hdt GROUND-TRUTH KIND MODE DIGEST
     *) record "hdt $name = the file it was made from" 1 "$(printf '%s' "$out" | head -1 | cut -c1-200)" ;;
   esac
   local got; got="$("$BIN/l4sbm11" stats "$d/gen" 2>/dev/null | sed -n 's/^source-bytes: \([0-9]*\) source-sha256: \(.*\)$/\1 \2/p')"
-  local want; want="$(stat -c %s "$f") $digest"
+  local want; want="$(wc -c <"$f" | tr -d ' ') $digest"
   if [ "$got" = "$want" ]; then record "hdt $name manifest source" 0 "the length and SHA-256 of the HDT file"
   else record "hdt $name manifest source" 1 "manifest '$got', file '$want'"; fi
 }

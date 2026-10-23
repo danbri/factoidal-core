@@ -225,10 +225,10 @@ theorem lit_vc (ls lt : WfLiteral) (hdt : lt.val.datatype = xsdString ∨ lt.val
     constructor
     · simp only [valueCompare, EvalResult.isNumericOperand, hn, Bool.true_or, if_true, numericEquality,
         numericValueCompare, EvalResult.numericValue?, hlv, hst1]
-      cases L4Factoidal.Fn.Numeric.literalValue? ls.val <;> rfl
+      cases L4Factoidal.Fn.Numeric.literalValue? ls.val <;> simp [termEqualFallback_eq_getD]
     · simp only [valueCompare, EvalResult.isNumericOperand, hn, Bool.or_true, if_true, numericEquality,
         numericValueCompare, EvalResult.numericValue?, hlv, hst2]
-      rfl
+      simp [termEqualFallback_eq_getD]
   · have hn' : L4Factoidal.Fn.Comparison.numericDatatype ls.val.datatype = false := by simpa using hn
     have hpc := promote_cases ls hn'
     have hbool : RDF.xsdBoolean ≠ lt.val.datatype := by
@@ -273,13 +273,13 @@ theorem lit_vc (ls lt : WfLiteral) (hdt : lt.val.datatype = xsdString ∨ lt.val
         · have hd' : (ls.val.datatype == lt.val.datatype) = false := beq_eq_false_iff_ne.mpr hd
           have hd'' : (lt.val.datatype == ls.val.datatype) = false := beq_eq_false_iff_ne.mpr (Ne.symm hd)
           simp only [hd', hd'', Bool.false_eq_true, if_false, Bool.and_false, Bool.false_and]
-          rfl
+          exact termEqualFallback_eq_getD _ _
       · rw [hp]
         have hd'' : (lt.val.datatype == ls.val.datatype) = false := by
           rw [hb]; exact beq_eq_false_iff_ne.mpr (Ne.symm hbool)
         rw [hlr, hd'']
         simp only [Bool.and_false, Bool.false_and]
-        rfl
+        exact termEqualFallback_eq_getD _ _
     · simp only [valueCompare, EvalResult.isNumericOperand, hn', hnt, Bool.or_false, Bool.false_eq_true, if_false,
         EvalResult.promoteLiteral, hpt]
       rcases hpc with hp | ⟨b, hp, hb⟩
@@ -294,13 +294,13 @@ theorem lit_vc (ls lt : WfLiteral) (hdt : lt.val.datatype = xsdString ∨ lt.val
         · have hd' : (ls.val.datatype == lt.val.datatype) = false := beq_eq_false_iff_ne.mpr hd
           have hd'' : (lt.val.datatype == ls.val.datatype) = false := beq_eq_false_iff_ne.mpr (Ne.symm hd)
           simp only [hd', hd'', Bool.false_eq_true, if_false, Bool.and_false, Bool.false_and]
-          rfl
+          exact termEqualFallback_eq_getD _ _
       · rw [hp]
         have hd'' : (lt.val.datatype == ls.val.datatype) = false := by
           rw [hb]; exact beq_eq_false_iff_ne.mpr (Ne.symm hbool)
         rw [hlr, hd'']
         simp only [Bool.and_false, Bool.false_and]
-        rfl
+        exact termEqualFallback_eq_getD _ _
 
 theorem iri_beq (i j : WfIri) : (i.val == j.val) = (i == j) := by
   by_cases h : i = j

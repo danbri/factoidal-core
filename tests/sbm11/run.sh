@@ -288,6 +288,10 @@
 # an activated olympics generation; tests/sbm11/stage3_check.sh makes one).
 # Exit 0 only when every check passes; 2 when an input is missing.
 # Env: QLVR_WORK                the QLever work directory (instance, oracle, generations)
+#      SBM11_OLYMPICS=0         leave out the parts that read the olympics generation GEN or the
+#                               QLever oracle: (a), (b), (c), (e), (f), (g), (i) and the
+#                               olympics half of (l); printed, not counted; GEN and the oracle
+#                               are then not required
 #      FACTOIDAL_TESTING_ROOT   the directory of the W3C fixtures for parts (p), (s) and the
 #                               HDT files of (u) (default third_party/testing of this tree);
 #                               a git worktree has no submodules, and sets it to the
@@ -300,7 +304,10 @@ BIN="$ROOT/formal/lean4/.lake/build/bin"
 WORK="${QLVR_WORK:-/home/user/qlvr-work}"
 GEN="${1:-$WORK/sbm11/s3/wfull}"
 ORACLE="$WORK/oracle"
-for need in "$BIN/l4sbm11" "$BIN/l4sbm11-pack" "$BIN/l4factoidal" "$GEN" "$ORACLE"; do
+OLY="${SBM11_OLYMPICS:-1}"
+NEEDS=("$BIN/l4sbm11" "$BIN/l4sbm11-pack" "$BIN/l4factoidal")
+[ "$OLY" = 1 ] && NEEDS+=("$GEN" "$ORACLE")
+for need in "${NEEDS[@]}"; do
   if [ ! -e "$need" ]; then echo "missing: $need" >&2; exit 2; fi
 done
 TMP="$(mktemp -d "${TMPDIR:-/tmp}/sbm11-run.XXXXXX")"
@@ -311,6 +318,7 @@ record() { # record <part> <name> <ok:0|1> <detail>
   else FAIL=$((FAIL + 1)); printf 'FAIL %-8s %-34s %s\n' "$1" "$2" "$4"; fi
 }
 
+if [ "$OLY" = 1 ]; then
 echo "=== (a) oracle queries"
 OP=0; OF=0
 for rq in "$ROOT"/tests/qlvr/queries/q*.rq; do
@@ -345,6 +353,8 @@ for rq in "$ROOT"/tests/qlvr/queries/q*.rq; do
   v="$(python3 -I "$HERE/compare_answers.py" "$TMP/$n.srj" "$TMP/$n.fb" 0)"
   case "$v" in equal*) record ids-ref "$n" 0 "$v; $(grep -o 'quads=[0-9]*' "$TMP/$n.fberr")" ;; *) record ids-ref "$n" 1 "$v" ;; esac
 done
+
+else echo "(a), (b), (c) left out: SBM11_OLYMPICS=0 (not counted)"; fi
 
 echo "=== (d) gate fixture: id path and reference fallback against l4factoidal"
 # gate_part <fixture> <query dir> <store dir>: pack and activate the
@@ -460,6 +470,7 @@ packspec_part samegraphs "$HERE/gate/samegraphs/data.nq" "$TMP/gate-samegraphs"
 packspec_part xmlliteral "$HERE/xmlliteral/data.nq" "$TMP/gate-xmlliteral"
 packspec_part gate-blocks-of-2 "$HERE/gate/gate.nq" "$TMP/mg-b2" 2
 
+if [ "$OLY" = 1 ]; then
 echo "=== (e) decoder checks on every PRM1 file and frame"
 if out="$("$BIN/l4sbm11" prm-check "$GEN" 2>&1)"; then record checks prm-check 0 "$(printf '%s' "$out" | tr '\n' ' ' | head -c 150)"
 else record checks prm-check 1 "$out"; fi
@@ -556,6 +567,8 @@ if [ -f "$GEN/CURRENT" ]; then
   if grep -q 'plan: verify=none (default' "$TMP/def.err"; then record tamper default-activated 0 "GEN has CURRENT: verify=none by default"
   else record tamper default-activated 1 "$(grep 'verify' "$TMP/def.err" | head -1)"; fi
 fi
+
+else echo "(e), (f), (g) left out: SBM11_OLYMPICS=0 (not counted)"; fi
 
 # --- stage 5 ----------------------------------------------------------------
 # run_q <gen> <rq> <out> <err>: one query on a generation, exit code in $QRC
@@ -688,8 +701,8 @@ fi
 
 echo "=== (i) delta overlay and compaction on olympics"
 OLY_SRC="$WORK/instance/olympics.nt"
-if [ "${SBM11_DELTA_OLYMPICS:-1}" = 0 ]; then
-  echo "(i) left out: SBM11_DELTA_OLYMPICS=0 (not counted)"
+if [ "${SBM11_DELTA_OLYMPICS:-1}" = 0 ] || [ "$OLY" = 0 ]; then
+  echo "(i) left out: SBM11_DELTA_OLYMPICS=0 or SBM11_OLYMPICS=0 (not counted)"
 elif [ ! -f "$OLY_SRC" ]; then
   record olympics source 1 "missing: $OLY_SRC"
 else
@@ -867,6 +880,7 @@ else
     esac; fi
   fi
 fi
+if [ "$OLY" = 1 ]; then
 # (l2) olympics: q01 to q21 and tests/sbm11/sip/*.rq with --sip off, auto (the
 # default) and always, equal as multisets (a hash join may change the row
 # order); every sip-*.rq takes a scan with candidates under auto, and
@@ -891,6 +905,8 @@ else record sip olympics-modes 1 "failed:$bad"; fi
 if grep -q 'sideways ?a: [0-9]* candidates, blocks skipped 0' "$L/o-sip-every-block.auto.err"; then
   record sip every-block 0 "$(grep -o 'sideways ?a: [^;]*' "$L/o-sip-every-block.auto.err")"
 else record sip every-block 1 "$(grep -o 'sideways [^;]*' "$L/o-sip-every-block.auto.err" | tr '\n' ' ')"; fi
+
+else echo "(l2) left out: SBM11_OLYMPICS=0 (not counted)"; fi
 
 echo "=== (j) the exact permutation check of activation (lemma L3b)"
 J="$TMP/exact"
@@ -934,7 +950,7 @@ else
       record exact refused-digest-on 0 "the digest refuses it too"
     else record exact refused-digest-on 1 "exit $vrc"; fi
     # no run directory is left next to the generation
-    left="$(ls -d "$J"/*.verify-* 2>/dev/null | wc -l)"
+    left="$(ls -d "$J"/*.verify-* 2>/dev/null | wc -l | tr -d " ")"
     if [ "$left" = 0 ]; then record exact temp-removed 0 "no run directory left"
     else record exact temp-removed 1 "$left left"; fi
   fi
