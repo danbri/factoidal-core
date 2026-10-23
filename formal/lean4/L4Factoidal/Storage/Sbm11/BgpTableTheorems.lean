@@ -44,7 +44,12 @@ and the semi-join reduction `SemiJoin.idJoin_semijoin`) gives the same join
 as the full scan. The patterns: graph
 slot `.const gid`, not over the named graphs, no FROM merge or FROM NAMED
 (`PatG`); every variable kept (`need = fun _ => true`, as
-`IdGroup.bgpM` calls it); no `pref`, no left table.
+`IdGroup.bgpM` calls it); no `pref`, no left table. The loop is proved over
+any `ScanStore` (`evalBgpM_modelS`: a model `S t` of each pattern that the
+matches `ScanTableTheorems.rowM` of every permutation's rows are a
+permutation of): `BgpStore` is the case of one graph (`evalBgpM_model`),
+`GraphBgpTableTheorems.named_scanStore` the case of `GRAPH ?g` over the named
+graphs.
 
 ## Code
 
@@ -643,7 +648,8 @@ theorem filter_ne_perm (l : List Nat) (hnd : l.Nodup) (a : Nat) (ha : a ∈ l) :
 
 /-! ## One scan of the loop -/
 
-open L4Factoidal.Storage.Sbm11.ScanTableTheorems (PermMem permListing ipatOf scanTable_model)
+open L4Factoidal.Storage.Sbm11.ScanTableTheorems (PermMem permListing ipatOf scanTable_model GSlot rowM rowM_const
+  scanTable_modelG keptRows_pwG idRows_eqG)
 
 /-- `permFor` names one of the four permutations. -/
 theorem permFor_lt (t : Pat) (pref : Option Nat) : permFor t pref < 4 := by
@@ -689,31 +695,59 @@ theorem sortVarOf_mem (spec : ScanSpec) (v : String) (h : sortVarOf spec = some 
     · cases h
   · cases h
 
+/-- A store whose four permutations are in memory, with single-thread scans,
+    and whose model of each pattern `t` with `P t` is the list `S t`: the
+    matches `ScanTableTheorems.rowM t perm` of each permutation's rows are a
+    permutation of `S t`. `BgpStore` is the case of one graph
+    (`BgpStore.scanStore`); `GRAPH ?g` as one scan is the case of the named
+    graphs (`GraphBgpTableTheorems`). -/
+structure ScanStore (st : Store Id) (P : Pat → Prop) (S : Pat → List IdRow) : Prop where
+  perm : ∀ perm, perm < 4 → ∃ prb ms, PermMem st perm prb ms ∧
+    ∀ t, P t → ((ms.flatMap (ScanFoldTheorems.blockRows prb)).filterMap (rowM t perm)).Perm (S t)
+  scan : st.scanTable = none
+
+theorem BgpStore.scanStore {st : Store Id} {gid : UInt64} {T : List IdPath.IdTriple} (h : BgpStore st gid T) :
+    ScanStore st (fun t => t.g = .const gid) (fun t => scanRows (ipatOf t) T) := by
+  refine ⟨fun perm hp => ?_, h.scan⟩
+  obtain ⟨prb, ms, hpm, hP⟩ := h.perm perm hp
+  refine ⟨prb, ms, hpm, fun t ht => ?_⟩
+  rw [rowM_const t perm gid ht]
+  exact List.Perm.filterMap _ hP
+
+/-- One scan of the loop over a `ScanStore`: a table of the invariant whose
+    rows are the model `S t`, up to order. -/
+theorem scan_goodS (st : Store Id) (P : Pat → Prop) (S : Pat → List IdRow) (t : Pat) (perm : Nat)
+    (hperm : perm < 4) (hP : P t) (hgs : GSlot t) (hmiss : t.hasMissing = false) (hst : ScanStore st P S) :
+    ∃ tb stats, scanTableM st (mkSpec t perm (fun _ => true)) = pure (tb, stats) ∧ Good tb ∧
+      IdEquiv tb.idRows (S t) := by
+  obtain ⟨prb, ms, hpm, hPS⟩ := hst.perm perm hperm
+  obtain ⟨tb, stats, he, hwf, hnu, hvars, hsv, hso, hpw⟩ :=
+    scanTable_modelG st t perm hperm hgs hmiss prb ms hpm
+  refine ⟨tb, stats, he, ⟨hwf, hnu, hso, fun v hv => ?_⟩, ?_⟩
+  · rw [hsv] at hv
+    apply idx_isSome_of_mem
+    rw [hvars]
+    exact sortVarOf_mem _ v hv
+  · obtain ⟨A', hp, hw⟩ := Pw.perm_right hpw (hPS t hP)
+    exact ⟨A', hp, hw⟩
+
 /-- One scan of the loop: a table of the invariant whose rows are the
     model's scan of the pattern over `T`, up to order. -/
 theorem scan_good (st : Store Id) (t : Pat) (perm : Nat) (hperm : perm < 4) (gid : UInt64)
     (T : List IdPath.IdTriple) (htg : t.g = .const gid) (hnamed : t.named = false) (hmiss : t.hasMissing = false)
     (hst : BgpStore st gid T) :
     ∃ tb stats, scanTableM st (mkSpec t perm (fun _ => true)) = pure (tb, stats) ∧ Good tb ∧
-      IdEquiv tb.idRows (scanRows (ipatOf t) T) := by
-  obtain ⟨prb, ms, hpm, hP⟩ := hst.perm perm hperm
-  obtain ⟨tb, stats, he, hwf, hnu, hvars, hsv, hso, hpw⟩ :=
-    scanTable_model st t perm hperm gid htg hnamed hmiss prb ms hpm
-  refine ⟨tb, stats, he, ⟨hwf, hnu, hso, fun v hv => ?_⟩, ?_⟩
-  · rw [hsv] at hv
-    apply idx_isSome_of_mem
-    rw [hvars]
-    exact sortVarOf_mem _ v hv
-  · obtain ⟨A', hp, hw⟩ := Pw.perm_right hpw (List.Perm.filterMap _ hP)
-    exact ⟨A', hp, hw⟩
+      IdEquiv tb.idRows (scanRows (ipatOf t) T) :=
+  scan_goodS st (fun t => t.g = .const gid) (fun t => scanRows (ipatOf t) T) t perm hperm htg
+    (Or.inl ⟨gid, htg, hnamed⟩) hmiss hst.scanStore
 
 /-! ## The join loop (`IdQuery.bgpStepM`) -/
 
-/-- A pattern of the loop: over the graph `gid`, not over the named graphs,
-    no FROM merge or FROM NAMED, no constant without an id. -/
-structure PatOk (gid : UInt64) (t : Pat) : Prop where
-  g : t.g = .const gid
-  named : t.named = false
+/-- A pattern of the loop: of the store's model (`P`), a graph slot of
+    `GSlot`, no FROM merge or FROM NAMED, no constant without an id. -/
+structure PatOk (P : Pat → Prop) (t : Pat) : Prop where
+  p : P t
+  gs : GSlot t
   plain : t.plain = true
   miss : t.hasMissing = false
 
@@ -786,16 +820,16 @@ open L4Factoidal.Storage.Sbm11.ScanTableTheorems (keep_eq_test specOk_mkSpec spe
     from the left table when `sipRule` selects them and `sipCands` gives
     them (L4i, `SipTableTheorems.scanSipTableM_spec`), else the full scan.
     Either way the table is of the invariant `Good`, and its join with the
-    left table is the join with rows `F` that are the model's scan of the
-    pattern over `T`, up to order (the semi-join reduction,
+    left table is the join with rows `F` that are the model `S t` of the
+    pattern, up to order (the semi-join reduction,
     `SemiJoin.idJoin_semijoin`: a right row whose join value is not a
     candidate joins no left row). -/
-theorem scanForJoin_good (st : Store Id) (t : Pat) (perm : Nat) (hperm : perm < 4) (gid : UInt64)
-    (T : List IdPath.IdTriple) (htg : t.g = .const gid) (hnamed : t.named = false) (hmiss : t.hasMissing = false)
-    (hst : BgpStore st gid T) (tab : Table) (gt : Good tab) (est : Nat) :
+theorem scanForJoin_goodS (st : Store Id) (P : Pat → Prop) (S : Pat → List IdRow) (t : Pat) (perm : Nat)
+    (hperm : perm < 4) (hP : P t) (hgs : GSlot t) (hmiss : t.hasMissing = false)
+    (hst : ScanStore st P S) (tab : Table) (gt : Good tab) (est : Nat) :
     ∃ rt sc note, scanForJoinM st (mkSpec t perm (fun _ => true)) tab est = pure (rt, sc, note) ∧ Good rt ∧
-      ∃ F, IdEquiv F (scanRows (ipatOf t) T) ∧ idJoin tab.idRows rt.idRows = idJoin tab.idRows F := by
-  obtain ⟨tb, stats, hsc, gtb, htb⟩ := scan_good st t perm hperm gid T htg hnamed hmiss hst
+      ∃ F, IdEquiv F (S t) ∧ idJoin tab.idRows rt.idRows = idJoin tab.idRows F := by
+  obtain ⟨tb, stats, hsc, gtb, htb⟩ := scan_goodS st P S t perm hperm hP hgs hmiss hst
   have hfull : (do
       let x ← scanTableOf st (mkSpec t perm (fun _ => true))
       match x with
@@ -809,7 +843,7 @@ theorem scanForJoin_good (st : Store Id) (t : Pat) (perm : Nat) (hperm : perm < 
       let x ← scanTableOf st (mkSpec t perm (fun _ => true))
       match x with
       | (t, s) => pure (t, s.full, "") : ExceptT String Id _) = pure (rt, sc, note) ∧ Good rt ∧
-      ∃ F, IdEquiv F (scanRows (ipatOf t) T) ∧ idJoin tab.idRows rt.idRows = idJoin tab.idRows F :=
+      ∃ F, IdEquiv F (S t) ∧ idJoin tab.idRows rt.idRows = idJoin tab.idRows F :=
     ⟨tb, _, _, hfull, gtb, tb.idRows, htb, rfl⟩
   unfold scanForJoinM
   cases hsv : sortVarOf (mkSpec t perm (fun _ => true)) with
@@ -839,13 +873,14 @@ theorem scanForJoin_good (st : Store Id) (t : Pat) (perm : Nat) (hperm : perm < 
               have he : c0 = (mkSpec t perm (fun _ => true)).key.size := by simpa using hce
               omega
             · rw [if_neg hce] at hv; cases hv
-        obtain ⟨prb, ms, hpm, hP⟩ := hst.perm perm hperm
+        obtain ⟨prb, ms, hpm, hPS⟩ := hst.perm perm hperm
+        have hP' := hPS t hP
         obtain ⟨T', stats', he', hT'⟩ := SipTableTheorems.scanSipTableM_spec st _ hspec hk cands hs prb ms
           (by rw [hperm']; exact hpm.range _) (by rw [hperm']; exact hpm.count) (by rw [hperm']; exact hpm.bytes)
           (by rw [hperm']; exact hpm.ovl) (by rw [hperm']; exact hpm.adm) hpm.blocks
         rw [he', pure_bind]
         refine ⟨T', _, _, rfl, ?_⟩
-        generalize hR : ms.flatMap (ScanFoldTheorems.blockRows prb) = R at hT' hP
+        generalize hR : ms.flatMap (ScanFoldTheorems.blockRows prb) = R at hT' hP'
         have hfitR : ∀ r ∈ R, ScanTableTheorems.Fits r := by rw [← hR]; exact rows_fit prb ms
         have hnzR : ∀ r ∈ R, ∀ c, c < 3 → rowCol r c ≠ 0 := by rw [← hR]; exact hpm.nz
         have hsorted : R.Pairwise (fun a b => a.lt b = true) := by
@@ -858,8 +893,8 @@ theorem scanForJoin_good (st : Store Id) (t : Pat) (perm : Nat) (hperm : perm < 
           obtain ⟨h1, h2⟩ := List.mem_filter.mp hr
           simp only [Bool.and_eq_true] at h2
           exact ⟨h1, h2.1⟩
-        obtain ⟨hrows, hnu⟩ := idRows_eq t perm hmiss gid htg T' K hT'
-          (fun r hr => hfitR r (hKsub r hr).1) (fun r hr => hnzR r (hKsub r hr).1)
+        obtain ⟨hrows, hnu⟩ := idRows_eqG t perm hmiss hgs T' K hT'
+          (fun r hr => hfitR r (hKsub r hr).1) (fun r hr => hnzR r (hKsub r hr).1) (fun r hr => (hKsub r hr).2)
         have hI := ScanTableTheorems.specInv_four t perm hmiss
         have hnd : T'.vars.toList.Nodup := by
           rw [hT'.vars, ScanTableTheorems.mkSpec_eq]
@@ -877,8 +912,7 @@ theorem scanForJoin_good (st : Store Id) (t : Pat) (perm : Nat) (hperm : perm < 
           let F := (R.filter (ScanFoldTheorems.keep (mkSpec t perm (fun _ => true)))).map
             (seenRow (specAcc t perm (fun _ => true)))
           refine ⟨F, ?_, ?_⟩
-          · obtain ⟨A', hp, hw⟩ := Pw.perm_right (keptRows_pw t perm hperm gid htg hnamed hmiss R hfitR)
-              (List.Perm.filterMap _ hP)
+          · obtain ⟨A', hp, hw⟩ := Pw.perm_right (keptRows_pwG t perm hperm hgs hmiss R hfitR) hP'
             exact ⟨A', hp, hw⟩
           · have hKF : T'.idRows = F.filter (SemiJoin.keepRow v (fun x => cands.contains x)) := by
               rw [hrows, ← hK, List.filter_map, List.filter_filter]
@@ -904,26 +938,77 @@ theorem scanForJoin_good (st : Store Id) (t : Pat) (perm : Nat) (hperm : perm < 
     · rw [if_neg hc]
       exact hfullR
 
+/-- `scanForJoin_goodS` over one graph: `F` the model's scan of the pattern
+    over `T`. -/
+theorem scanForJoin_good (st : Store Id) (t : Pat) (perm : Nat) (hperm : perm < 4) (gid : UInt64)
+    (T : List IdPath.IdTriple) (htg : t.g = .const gid) (hnamed : t.named = false) (hmiss : t.hasMissing = false)
+    (hst : BgpStore st gid T) (tab : Table) (gt : Good tab) (est : Nat) :
+    ∃ rt sc note, scanForJoinM st (mkSpec t perm (fun _ => true)) tab est = pure (rt, sc, note) ∧ Good rt ∧
+      ∃ F, IdEquiv F (scanRows (ipatOf t) T) ∧ idJoin tab.idRows rt.idRows = idJoin tab.idRows F :=
+  scanForJoin_goodS st (fun t => t.g = .const gid) (fun t => scanRows (ipatOf t) T) t perm hperm htg
+    (Or.inl ⟨gid, htg, hnamed⟩) hmiss hst.scanStore tab gt est
+
+/-- The model of the loop: the models `S t` of the patterns in the order
+    given, joined left to right with `IdJoin.idJoin`. -/
+def joinL (S : Pat → List IdRow) (ps : List Pat) (L : List IdRow) : List IdRow :=
+  ps.foldl (fun acc t => idJoin acc (S t)) L
+
+theorem joinL_snoc (S : Pat → List IdRow) (ps : List Pat) (t : Pat) (L : List IdRow) :
+    joinL S (ps ++ [t]) L = idJoin (joinL S ps L) (S t) := by
+  unfold joinL
+  rw [List.foldl_append]
+  rfl
+
+theorem bgpJoin_joinL (T : List IdPath.IdTriple) (ps : List Pat) (L : List IdRow) :
+    bgpJoin (fun _ => T) (ps.map ipatOf) L = joinL (fun t => scanRows (ipatOf t) T) ps L := by
+  unfold bgpJoin joinL
+  rw [List.foldl_map]
+
+theorem nd_joinL (S : Pat → List IdRow) : ∀ (ps : List Pat) (L : List IdRow), (∀ r ∈ L, Nd r) →
+    ∀ r ∈ joinL S ps L, Nd r
+  | [], _, h => h
+  | t :: ps, L, h => nd_joinL S ps _ (IdLeaf.nd_idJoin L (S t) h)
+
+theorem joinL_empty (S : Pat → List IdRow) : ∀ (ps : List Pat), joinL S ps [] = []
+  | [] => rfl
+  | t :: ps => by
+    show joinL S ps (idJoin [] (S t)) = []
+    exact joinL_empty S ps
+
+/-- A pattern whose model has no row: the joins have no row. -/
+theorem joinL_nil (S : Pat → List IdRow) : ∀ (ps : List Pat) (L : List IdRow), (∃ t ∈ ps, S t = []) →
+    joinL S ps L = []
+  | [], _, ⟨_, h, _⟩ => by cases h
+  | t :: ps, L, ⟨u, hu, he⟩ => by
+    show joinL S ps (idJoin L (S t)) = []
+    rcases List.mem_cons.mp hu with e | e
+    · subst e
+      rw [he]
+      have : idJoin L [] = [] := by unfold idJoin; simp
+      rw [this]
+      exact joinL_empty S ps
+    · exact joinL_nil S ps _ ⟨u, e, he⟩
+
 /-- The invariant of the join loop after `k` steps: the patterns joined so
     far (`vis`) and the remaining ones are all the patterns, once each; the
-    table is of the invariant `Good` and denotes the model's joins of the
-    scans of the patterns joined so far, in that order, up to order. -/
-def LoopInv (pats : Array Pat) (T : List IdPath.IdTriple) (k : Nat) (s : BgpLoop) : Prop :=
+    table is of the invariant `Good` and denotes the joins of the models of
+    the patterns joined so far, in that order, up to order. -/
+def LoopInv (pats : Array Pat) (S : Pat → List IdRow) (k : Nat) (s : BgpLoop) : Prop :=
   ∃ vis : List Nat, (vis ++ s.remaining.toList).Perm (List.range pats.size) ∧ s.remaining.toList.Nodup ∧
     s.remaining.size + k + 1 = pats.size ∧ Good s.tab ∧
-    IdEquiv s.tab.idRows (bgpJoin (fun _ => T) (vis.map fun i => ipatOf pats[i]!) [[]])
+    IdEquiv s.tab.idRows (joinL S (vis.map fun i => pats[i]!) [[]])
 
 /-- The loop's end: every pattern joined. -/
-def LoopDone (pats : Array Pat) (T : List IdPath.IdTriple) (s : BgpLoop) : Prop :=
+def LoopDone (pats : Array Pat) (S : Pat → List IdRow) (s : BgpLoop) : Prop :=
   ∃ vis : List Nat, vis.Perm (List.range pats.size) ∧ Good s.tab ∧
-    IdEquiv s.tab.idRows (bgpJoin (fun _ => T) (vis.map fun i => ipatOf pats[i]!) [[]])
+    IdEquiv s.tab.idRows (joinL S (vis.map fun i => pats[i]!) [[]])
 
 /-- **One step of the join loop.** -/
-theorem bgpStep_spec (st : Store Id) (pats : Array Pat) (gid : UInt64) (T : List IdPath.IdTriple)
-    (hst : BgpStore st gid T) (hpats : ∀ i, i < pats.size → PatOk gid pats[i]!) (ests : Array Nat)
-    (k : Nat) (s : BgpLoop) (hI : LoopInv pats T k s) :
-    (∃ s', bgpStepM st pats (fun _ => true) ests s = pure (.yield s') ∧ LoopInv pats T (k + 1) s') ∨
-      (∃ s', bgpStepM st pats (fun _ => true) ests s = pure (.done s') ∧ LoopDone pats T s') := by
+theorem bgpStep_spec (st : Store Id) (pats : Array Pat) (P : Pat → Prop) (S : Pat → List IdRow)
+    (hst : ScanStore st P S) (hpats : ∀ i, i < pats.size → PatOk P pats[i]!) (ests : Array Nat)
+    (k : Nat) (s : BgpLoop) (hI : LoopInv pats S k s) :
+    (∃ s', bgpStepM st pats (fun _ => true) ests s = pure (.yield s') ∧ LoopInv pats S (k + 1) s') ∨
+      (∃ s', bgpStepM st pats (fun _ => true) ests s = pure (.done s') ∧ LoopDone pats S s') := by
   obtain ⟨vis, hperm, hnd, hcount, hgood, heq⟩ := hI
   by_cases hE : s.remaining.isEmpty = true
   · right
@@ -944,7 +1029,7 @@ theorem bgpStep_spec (st : Store Id) (pats : Array Pat) (gid : UInt64) (T : List
       exact List.mem_range.mp this
     have hok := hpats next hnlt
     have hpl := stepPerm_lt pats[next]! pats (mergeVarOf s.tab pats[next]!)
-    obtain ⟨rt, sc, note, hsc, grt, F, hF, hjF⟩ := scanForJoin_good st pats[next]! _ hpl gid T hok.g hok.named
+    obtain ⟨rt, sc, note, hsc, grt, F, hF, hjF⟩ := scanForJoin_goodS st P S pats[next]! _ hpl hok.p hok.gs
       hok.miss hst s.tab hgood ests[next]!
     obtain ⟨gj, hj⟩ := joinStep_good s.tab rt pats[next]! hgood grt
     apply Exists.intro
@@ -971,52 +1056,36 @@ theorem bgpStep_spec (st : Store Id) (pats : Array Pat) (gid : UInt64) (T : List
         show (s.remaining.filter fun x => x != next).size + (k + 1) + 1 = pats.size
         rw [hf]
         omega
-      · rw [List.map_append, List.map_singleton, bgpJoin_snoc]
+      · rw [List.map_append, List.map_singleton, joinL_snoc]
         refine IdEquiv.trans hj ?_
         rw [hjF]
         exact idJoin_equiv heq hF (nd_idRows s.tab hgood.wf.nodup)
-          (nd_bgpJoin _ _ [[]] (fun r hr => by
+          (nd_joinL S _ [[]] (fun r hr => by
             rw [List.mem_singleton] at hr; subst hr; exact List.nodup_nil))
 
 /-- The loop from a state of the invariant ends with every pattern joined:
-    the table denotes the model's evaluation of the patterns, up to order. -/
-theorem loop_final (st : Store Id) (pats : Array Pat) (gid : UInt64) (T : List IdPath.IdTriple)
-    (hst : BgpStore st gid T) (hok : ∀ i, i < pats.size → PatOk gid pats[i]!) (ests : Array Nat)
-    (s0 : BgpLoop) (h0 : LoopInv pats T 0 s0) :
+    the table denotes the joins of the models of the patterns in some order,
+    up to order. -/
+theorem loop_final (st : Store Id) (pats : Array Pat) (P : Pat → Prop) (S : Pat → List IdRow)
+    (hst : ScanStore st P S) (hok : ∀ i, i < pats.size → PatOk P pats[i]!) (ests : Array Nat)
+    (s0 : BgpLoop) (h0 : LoopInv pats S 0 s0) :
     ∃ tab lines stats,
       (do
         let s ← forIn (List.range' 0 pats.size) s0 (fun _ s => bgpStepM st pats (fun _ => true) ests s)
         pure (s.tab, s.lines, s.total)) = (pure (tab, lines, stats) : ExceptT String Id _) ∧
-      tab.WF ∧ (∀ r ∈ tab.idRows, Nd r) ∧ IdEquiv tab.idRows (IdLeaf.idBgpFrom T (pats.toList.map ipatOf) []) := by
-  obtain ⟨b, hfor, hb⟩ := forIn_exc (LoopInv pats T) (LoopDone pats T)
+      tab.WF ∧ (∀ r ∈ tab.idRows, Nd r) ∧ ∃ vis : List Nat, vis.Perm (List.range pats.size) ∧
+        IdEquiv tab.idRows (joinL S (vis.map fun i => pats[i]!) [[]]) := by
+  obtain ⟨b, hfor, hb⟩ := forIn_exc (LoopInv pats S) (LoopDone pats S)
     (fun _ s => bgpStepM st pats (fun _ => true) ests s) pats.size 0 s0 h0
-    (fun a b _ _ hP => bgpStep_spec st pats gid T hst hok ests a b hP)
+    (fun a b _ _ hP => bgpStep_spec st pats P S hst hok ests a b hP)
   rw [hfor, pure_bind]
   refine ⟨b.tab, b.lines, b.total, rfl, ?_⟩
-  have hdone : LoopDone pats T b := by
+  have hdone : LoopDone pats S b := by
     rcases hb with hP | hQ
     · obtain ⟨_, _, _, hc, _⟩ := hP; omega
     · exact hQ
   obtain ⟨vis, hvis, hg, he⟩ := hdone
-  refine ⟨hg.wf, nd_idRows b.tab hg.wf.nodup, ?_⟩
-  have hnd : ∀ r ∈ ([[]] : List IdRow), Nd r := by
-    intro r hr
-    simp only [List.mem_singleton] at hr
-    subst hr
-    exact List.nodup_nil
-  have h1 := IdLeaf.bgpJoin_equiv T (fun _ => T) (fun _ => List.Perm.refl T)
-    (vis.map fun i => ipatOf pats[i]!) [[]] hnd
-  rw [List.flatMap_singleton] at h1
-  have hps : (vis.map fun i => ipatOf pats[i]!).Perm (pats.toList.map ipatOf) := by
-    have : pats.toList.map ipatOf = (List.range pats.size).map fun i => ipatOf pats[i]! := by
-      apply List.ext_getElem
-      · simp
-      · intro n h1 h2
-        simp only [List.getElem_map, List.getElem_range, Array.getElem_toList]
-        rw [getElem!_pos pats n (by simpa using h1)]
-    rw [this]
-    exact hvis.map _
-  exact IdEquiv.trans he (IdEquiv.trans h1 (IdLeaf.idBgpFrom_perm T hps [] [] (TableTheorems.RowEq.refl _)))
+  exact ⟨hg.wf, nd_idRows b.tab hg.wf.nodup, vis, hvis, he⟩
 
 /-! ## A constant with no id -/
 
@@ -1124,10 +1193,19 @@ theorem varsFold_nodup (pats : Array Pat) :
 theorem empty_wf (vars : Array String) (h : vars.toList.Nodup) : (Table.empty vars).WF :=
   ⟨by simp [Table.empty], fun c hc => by simp [Table.empty], h⟩
 
-theorem evalBgpM_model (st : Store Id) (pats : Array Pat) (hne : 0 < pats.size) (gid : UInt64)
-    (T : List IdPath.IdTriple) (hst : BgpStore st gid T) (hpats : ∀ i, i < pats.size → PatG gid pats[i]!) :
+/-- **`evalBgpM` over a `ScanStore`.** For patterns of the store's model
+    (`P`), each with a graph slot of `GSlot` and no FROM merge or FROM NAMED,
+    whose model has no row when the pattern has a constant with no id,
+    `evalBgpM` returns a well-formed table whose rows bind no variable twice
+    and denote the joins of the models of the patterns in some order, up to
+    order. -/
+theorem evalBgpM_modelS (st : Store Id) (pats : Array Pat) (hne : 0 < pats.size) (P : Pat → Prop)
+    (S : Pat → List IdRow) (hst : ScanStore st P S)
+    (hpats : ∀ i, i < pats.size → P pats[i]! ∧ GSlot pats[i]! ∧ pats[i]!.plain = true)
+    (hmissS : ∀ t, P t → t.hasMissing = true → S t = []) :
     ∃ tab lines stats, evalBgpM st pats (fun _ => true) = pure (tab, lines, stats) ∧
-      tab.WF ∧ (∀ r ∈ tab.idRows, Nd r) ∧ IdEquiv tab.idRows (IdLeaf.idBgpFrom T (pats.toList.map ipatOf) []) := by
+      tab.WF ∧ (∀ r ∈ tab.idRows, Nd r) ∧ ∃ vis : List Nat, vis.Perm (List.range pats.size) ∧
+        IdEquiv tab.idRows (joinL S (vis.map fun i => pats[i]!) [[]]) := by
   unfold evalBgpM
   simp only [Bool.true_or]
   have hne' : pats.isEmpty = false := by
@@ -1137,14 +1215,14 @@ theorem evalBgpM_model (st : Store Id) (pats : Array Pat) (hne : 0 < pats.size) 
   by_cases hm : (pats.any fun x => x.hasMissing) = true
   · simp only [hne', hm, Bool.false_eq_true, if_false, if_true]
     refine ⟨_, _, _, rfl, empty_wf _ (by rw [Array.toList_filter]; exact (varsFold_nodup pats).filter _),
-      fun r hr => by simp [Table.idRows, Table.empty] at hr, ?_⟩
+      fun r hr => by simp [Table.idRows, Table.empty] at hr, List.range pats.size, List.Perm.refl _, ?_⟩
     have hrows : (Table.empty ((pats.foldl (fun a t => t.vars.foldl
         (fun a v => if a.contains v then a else a.push v) a) #[]).filter fun _ => true)).idRows = [] := by
       simp [Table.idRows, Table.empty]
     rw [hrows]
     obtain ⟨i, hi, him⟩ := Array.any_eq_true.mp hm
-    rw [idBgpFrom_missing T _ [] ⟨ipatOf pats[i], List.mem_map.mpr ⟨pats[i], Array.getElem_mem_toList hi, rfl⟩,
-      iMiss_of gid _ (by have := (hpats i hi).g; rwa [getElem!_pos pats i hi] at this) him⟩]
+    rw [joinL_nil S _ _ ⟨pats[i]!, List.mem_map.mpr ⟨i, List.mem_range.mpr hi, rfl⟩,
+      hmissS _ (hpats i hi).1 (by rw [getElem!_pos pats i hi]; exact him)⟩]
     exact IdEquiv.refl []
   · have hm' : (pats.any fun x => x.hasMissing) = false := by simpa using hm
     simp only [hne', hm', Bool.false_eq_true, if_false]
@@ -1152,8 +1230,8 @@ theorem evalBgpM_model (st : Store Id) (pats : Array Pat) (hne : 0 < pats.size) 
       intro i hi
       have := Array.any_eq_false.mp hm' i hi
       rw [getElem!_pos pats i hi]; simpa using this
-    have hok : ∀ i, i < pats.size → PatOk gid pats[i]! := fun i hi =>
-      ⟨(hpats i hi).g, (hpats i hi).named, (hpats i hi).plain, hnomiss i hi⟩
+    have hok : ∀ i, i < pats.size → PatOk P pats[i]! := fun i hi =>
+      ⟨(hpats i hi).1, (hpats i hi).2.1, (hpats i hi).2.2, hnomiss i hi⟩
     -- the estimates
     obtain ⟨ests, hests⟩ := forIn_arr_exc pats (#[] : Array Nat)
       (fun t (r : Array Nat) => do
@@ -1182,7 +1260,7 @@ theorem evalBgpM_model (st : Store Id) (pats : Array Pat) (hne : 0 < pats.size) 
       | some q => some q
       | none => bestSortPos pats[first]! pats) = p0 at hp0 ⊢
     have hok0 := hok first hfl
-    obtain ⟨tb0, stats0, hsc0, g0, he0⟩ := scan_good st pats[first]! p0 hp0 gid T hok0.g hok0.named hok0.miss hst
+    obtain ⟨tb0, stats0, hsc0, g0, he0⟩ := scan_goodS st P S pats[first]! p0 hp0 hok0.p hok0.gs hok0.miss hst
     rw [scanPatM_plain st _ hok0.plain]
     simp only []
     unfold scanTableOf
@@ -1194,7 +1272,7 @@ theorem evalBgpM_model (st : Store Id) (pats : Array Pat) (hne : 0 < pats.size) 
     -- the loop
     rw [Std.Legacy.Range.forIn_eq_forIn_range']
     simp only [Std.Legacy.Range.size, Nat.sub_zero, Nat.add_sub_cancel, Nat.div_one]
-    have hI0 : ∀ ls, LoopInv pats T 0 (BgpLoop.mk ((List.range pats.size).toArray.filter (· != first))
+    have hI0 : ∀ ls, LoopInv pats S 0 (BgpLoop.mk ((List.range pats.size).toArray.filter (· != first))
         ls stats0.full tb0) := by
       intro ls
       have hrp := filter_ne_perm (List.range pats.size) List.nodup_range first (List.mem_range.mpr hfl)
@@ -1210,14 +1288,44 @@ theorem evalBgpM_model (st : Store Id) (pats : Array Pat) (hne : 0 < pats.size) 
           rw [← Array.length_toList, Array.toList_filter, List.toList_toArray]
         show ((List.range pats.size).toArray.filter fun x => x != first).size + 0 + 1 = pats.size
         rw [hf]; omega
-      · show IdEquiv tb0.idRows (idJoin [[]] (scanRows (ipatOf pats[first]!) T))
+      · show IdEquiv tb0.idRows (idJoin [[]] (S pats[first]!))
         exact IdEquiv.trans he0 (idJoin_unit _).symm
-    apply loop_final st pats gid T hst hok ests
+    apply loop_final st pats P S hst hok ests
     exact hI0 _
+
+theorem evalBgpM_model (st : Store Id) (pats : Array Pat) (hne : 0 < pats.size) (gid : UInt64)
+    (T : List IdPath.IdTriple) (hst : BgpStore st gid T) (hpats : ∀ i, i < pats.size → PatG gid pats[i]!) :
+    ∃ tab lines stats, evalBgpM st pats (fun _ => true) = pure (tab, lines, stats) ∧
+      tab.WF ∧ (∀ r ∈ tab.idRows, Nd r) ∧ IdEquiv tab.idRows (IdLeaf.idBgpFrom T (pats.toList.map ipatOf) []) := by
+  obtain ⟨tab, lines, stats, he, hwf, hnd, vis, hvis, heq⟩ := evalBgpM_modelS st pats hne
+    (fun t => t.g = .const gid) (fun t => scanRows (ipatOf t) T) hst.scanStore
+    (fun i hi => ⟨(hpats i hi).g, Or.inl ⟨gid, (hpats i hi).g, (hpats i hi).named⟩, (hpats i hi).plain⟩)
+    (fun t ht hm => idEvalTP_missing _ (iMiss_of gid t ht hm) T [])
+  refine ⟨tab, lines, stats, he, hwf, hnd, ?_⟩
+  rw [← bgpJoin_joinL, List.map_map] at heq
+  have hnd0 : ∀ r ∈ ([[]] : List IdRow), Nd r := by
+    intro r hr
+    simp only [List.mem_singleton] at hr
+    subst hr
+    exact List.nodup_nil
+  have h1 := IdLeaf.bgpJoin_equiv T (fun _ => T) (fun _ => List.Perm.refl T)
+    (vis.map (ipatOf ∘ fun i => pats[i]!)) [[]] hnd0
+  rw [List.flatMap_singleton] at h1
+  have hps : (vis.map (ipatOf ∘ fun i => pats[i]!)).Perm (pats.toList.map ipatOf) := by
+    have : pats.toList.map ipatOf = (List.range pats.size).map (ipatOf ∘ fun i => pats[i]!) := by
+      apply List.ext_getElem
+      · simp
+      · intro n h1 h2
+        simp only [List.getElem_map, List.getElem_range, Array.getElem_toList, Function.comp]
+        rw [getElem!_pos pats n (by simpa using h1)]
+    rw [this]
+    exact hvis.map _
+  exact IdEquiv.trans heq (IdEquiv.trans h1 (IdLeaf.idBgpFrom_perm T hps [] [] (TableTheorems.RowEq.refl _)))
 
 end L4Factoidal.Storage.Sbm11.BgpTableTheorems
 
 #print axioms L4Factoidal.Storage.Sbm11.BgpTableTheorems.evalBgpM_model
+#print axioms L4Factoidal.Storage.Sbm11.BgpTableTheorems.evalBgpM_modelS
 #print axioms L4Factoidal.Storage.Sbm11.BgpTableTheorems.bgpStep_spec
 #print axioms L4Factoidal.Storage.Sbm11.BgpTableTheorems.idJoin_equiv
 #print axioms L4Factoidal.Storage.Sbm11.BgpTableTheorems.hashJoin_good

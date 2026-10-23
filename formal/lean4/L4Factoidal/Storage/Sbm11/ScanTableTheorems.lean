@@ -48,9 +48,10 @@ arrays (the in-memory store; `PrmRangeTheorems.rangeM_array` gives the range
 answer), the permutation has no delta overlay, activation admitted the PRM1
 entries and every block, and no subject, predicate or object id of a row is
 0. The pattern: a constant graph slot (`GCtx.dflt` without a dataset clause,
-or `GCtx.named`), `named = false`, no constant without an id. Not covered:
-the overlay (L7e), the `IO` store, `GRAPH ?g` as one scan, FROM / FROM
-NAMED patterns.
+or `GCtx.named`), `named = false`, no constant without an id; or, since
+2026-10-23, a variable graph slot over the named graphs (`GRAPH ?g` as one
+scan: `GSlot`, `rowM`, `row_optG`, `idRows_eqG`, `scanTable_modelG`). Not
+covered: the overlay (L7e), the `IO` store, FROM / FROM NAMED patterns.
 
 No `sorry`, no user `axiom`, no `native_decide`, no `partial`.
 -/
@@ -1415,9 +1416,223 @@ theorem scanTable_model (st : Store Id) (t : Pat) (perm : Nat) (hperm : perm < 4
   · rw [hrows]
     exact keptRows_pw t perm hperm gid htg hnamed hmiss R hfitR
 
+/-! ## The graph as a column: `GRAPH ?g` over one scan
+
+`IdGroup.bgpGraphVarM` scans each triple pattern of `GRAPH ?g { B }` with the
+graph slot the variable `?g` over the named graphs (`Pat.named`): the scan
+keeps the rows whose graph id is not 0 and binds `?g` to it. The model of one
+row is `rowM`: for a constant graph, the triple's match in that graph; for
+the graph variable, the triple's match from the mapping `{?g ↦ graph id}`. -/
+
+/-- The graph slot of a pattern the scan theorems cover: a constant graph,
+    not over the named graphs; or a variable over the named graphs. -/
+def GSlot (t : Pat) : Prop :=
+  (∃ gid, t.g = .const gid ∧ t.named = false) ∨ (∃ v, t.g = .var v ∧ t.named = true)
+
+/-- The model's match of one row of permutation `perm` for the pattern `t`. -/
+def rowM (t : Pat) (perm : Nat) (r : Row) : Option IdRow :=
+  match t.g with
+  | .const gid => if r.g == gid.toNat then idTpMatch (ipatOf t) (tripleOf perm r) [] else none
+  | .var v => if r.g == 0 then none else idTpMatch (ipatOf t) (tripleOf perm r) [(v, r.g.toUInt64)]
+  | .missing => none
+
+/-- Over the named graphs, the scan keeps a row exactly when its graph id is
+    not 0 and the loop's tests pass on it. -/
+theorem keep_eq_test_named (t : Pat) (perm : Nat) (hnamed : t.named = true) (r : Row) :
+    keep (mkSpec t perm (fun _ => true)) r = ((r.g != 0) && test (specAcc t perm (fun _ => true)) r) := by
+  rw [mkSpec_eq]
+  unfold keep test testF specOf
+  simp only [hnamed, Bool.not_true, Bool.false_or]
+  rw [prefixCmp_iff]
+  cases (r.g != 0) <;> simp [Bool.and_assoc]
+
+/-- Matching a variable last is matching it first. -/
+theorem matchSlots_var_last (A : List (ISlot × UInt64)) (v : String) (y : UInt64) :
+    OptRowEq (matchSlots (A ++ [(.var v, y)]) []) (matchSlots A [(v, y)]) := by
+  have h := IdLeaf.matchSlots_perm (List.perm_append_comm (l₁ := A) (l₂ := [(ISlot.var v, y)])) []
+  have e : matchSlots ([(ISlot.var v, y)] ++ A) [] = matchSlots A [(v, y)] := by
+    simp [matchSlots, slotMatch, idLookup]
+  rw [e] at h
+  exact h
+
+theorem optRowEq_isSome {o o' : Option IdRow} {s : IdRow} (hR : ∀ m, o = some m → RowEq m s)
+    (h : OptRowEq o o') : OptRowEq (if o.isSome then some s else none) o' := by
+  cases o with
+  | none => cases o' with
+    | none => trivial
+    | some _ => exact h.elim
+  | some m => cases o' with
+    | none => exact h.elim
+    | some m' => exact TableTheorems.RowEq.trans (TableTheorems.RowEq.symm (hR m rfl)) h
+
+/-- **One row, any graph slot of `GSlot`.** The scan keeps a row exactly when
+    the model matches it (`rowM`), and the scan's solution mapping of the row
+    is the model's, up to `RowEq`. -/
+theorem row_optG (t : Pat) (perm : Nat) (hperm : perm < 4) (hgs : GSlot t) (hmiss : t.hasMissing = false)
+    (r : Row) (hr : Fits r) :
+    OptRowEq (if keep (mkSpec t perm (fun _ => true)) r then some (seenRow (specAcc t perm (fun _ => true)) r) else none)
+      (rowM t perm r) := by
+  rcases hgs with ⟨gid, htg, hnamed⟩ | ⟨v, htg, hnamed⟩
+  · have := row_opt t perm hperm gid htg hnamed hmiss r hr
+    unfold rowM
+    rw [htg]
+    exact this
+  · have hI := specInv_four t perm hmiss
+    rw [keep_eq_test_named t perm hnamed, hI.test_eq r hr]
+    have hP := IdLeaf.matchSlots_perm (colSl_perm t perm hperm r) []
+    rw [htg] at hP
+    have hP' := OptRowEq.trans hP (matchSlots_var_last _ v r.g.toUInt64)
+    unfold rowM
+    rw [htg]
+    by_cases hg : r.g = 0
+    · simp [hg, OptRowEq]
+    · have hg' : (r.g != 0) = true := by simpa using hg
+      have hg'' : (r.g == 0) = false := by simpa using hg
+      rw [hg', hg'', Bool.true_and]
+      simp only [Bool.false_eq_true, if_false]
+      exact optRowEq_isSome (hI.row_eq r hr) hP'
+
+/-- The solution mappings of the rows a scan keeps are, row for row, the
+    model's matches of the permutation's rows (`rowM`). -/
+theorem keptRows_pwG (t : Pat) (perm : Nat) (hperm : perm < 4) (hgs : GSlot t) (hmiss : t.hasMissing = false)
+    (R : List Row) (hfit : ∀ r ∈ R, Fits r) :
+    Pw RowEq ((R.filter (keep (mkSpec t perm (fun _ => true)))).map (seenRow (specAcc t perm (fun _ => true))))
+      (R.filterMap (rowM t perm)) := by
+  rw [filter_map_eq_filterMap]
+  apply IdLeaf.pw_filterMap
+  intro r hr
+  exact row_optG t perm hperm hgs hmiss r (hfit r hr)
+
+/-- For a constant graph, `rowM` over the permutation's rows is the model's
+    scan of the pattern over the listing of that graph. -/
+theorem rowM_const (t : Pat) (perm : Nat) (gid : UInt64) (htg : t.g = .const gid) (R : List Row) :
+    R.filterMap (rowM t perm) = scanRows (ipatOf t) (permListing perm gid R) := by
+  unfold scanRows IdLeaf.idEvalTP permListing
+  rw [List.filterMap_map, filterMap_filter_eq]
+  congr 1
+  funext r
+  unfold rowM
+  rw [htg]
+  rfl
+
+/-- `idRows_eq` with the nonzero test on the seen columns as a hypothesis. -/
+theorem idRows_eqC (t : Pat) (perm : Nat) (hmiss : t.hasMissing = false)
+    (T : Table) (K : List Row) (hT : TableOf (mkSpec t perm (fun _ => true)) T (K.map (proj (mkSpec t perm (fun _ => true)))))
+    (hfit : ∀ r ∈ K, Fits r)
+    (hz : ∀ r ∈ K, ∀ p ∈ (specAcc t perm (fun _ => true)).seen.toList, rowCol r p.2 ≠ 0) :
+    T.idRows = K.map (seenRow (specAcc t perm (fun _ => true))) ∧ NoUnbound T := by
+  have hI := specInv_four t perm hmiss
+  have hspec := mkSpec_eq t perm (fun _ => true)
+  generalize hA : specAcc t perm (fun _ => true) = A at hI hspec hz
+  obtain ⟨hrows, hat⟩ := tabTuples_at T _ hT.tuples
+  rw [List.length_map] at hrows
+  have hvars : T.vars = A.seen.map (·.1) := by rw [hT.vars, hspec]; exact hI.outVars
+  have hsz : T.cols.size = A.seen.size := by rw [hT.size, hspec]; simp [specOf, hI.outVars]
+  have hvsz : T.vars.size = A.seen.size := by rw [hvars]; simp
+  have hval : ∀ i, i < K.length → ∀ c, c < A.seen.size →
+      T.at c i = (rowCol K[i]! A.seen[c]!.2).toUInt64 := by
+    intro i hi c hc
+    apply toUInt64_of_toNat
+    rw [hat i (by omega) c (by omega), getElem!_pos _ i (by simpa using hi), List.getElem_map]
+    unfold proj
+    rw [hspec]
+    simp only [specOf]
+    rw [hI.outCols]
+    rw [getElem!_pos _ c (by simp; exact hc)]
+    simp only [List.getElem_map, List.getElem_range, Array.size_map]
+    rw [getElem!_pos _ i hi, getElem!_pos (A.seen.map (·.2)) c (by simp; exact hc),
+      getElem!_pos A.seen c hc]
+    simp
+  have hne : ∀ i, i < K.length → ∀ c, c < A.seen.size → T.at c i ≠ OptJoin.unbound := by
+    intro i hi c hc he
+    rw [hval i hi c hc] at he
+    have hK : K[i]! ∈ K := by rw [getElem!_pos K i hi]; exact List.getElem_mem hi
+    have hm : A.seen[c]! ∈ A.seen.toList := by rw [getElem!_pos A.seen c hc]; simp
+    have h1 := hz _ hK _ hm
+    have h2 := hfit _ hK (A.seen[c]!.2) (hI.seenLt _ hm)
+    have : (rowCol K[i]! A.seen[c]!.2).toUInt64.toNat = 0 := by rw [he]; rfl
+    rw [ScanFoldTheorems.uint64_toNat_toUInt64 _ h2] at this
+    exact h1 this
+  refine ⟨?_, fun c i hc hi => hne i (by omega) c (by omega)⟩
+  unfold Table.idRows
+  apply List.ext_getElem
+  · simp [hrows]
+  · intro i h1 h2
+    simp only [List.getElem_map, List.getElem_range]
+    have hi : i < K.length := by simpa using h2
+    unfold Table.idRow seenRow
+    rw [filterMap_some _ (fun c => (T.vars[c]!, T.at c i)) _ ?_]
+    · apply List.ext_getElem
+      · simp [hvsz]
+      · intro c hc1 hc2
+        simp only [List.getElem_map, List.getElem_range]
+        have hc : c < A.seen.size := by simpa using hc2
+        rw [hval i hi c hc, getElem!_pos K i hi, hvars, getElem!_pos _ c (by simpa using hc),
+          getElem!_pos A.seen c hc]
+        simp
+    · intro c hc
+      have hc' : c < A.seen.size := by rw [← hvsz]; exact List.mem_range.mp hc
+      rw [if_neg (by rw [beq_iff_eq]; exact hne i hi c hc')]
+
+/-- The rows of the table of a scan with a graph slot of `GSlot`, from the
+    rows it keeps. -/
+theorem idRows_eqG (t : Pat) (perm : Nat) (hmiss : t.hasMissing = false) (hgs : GSlot t)
+    (T : Table) (K : List Row) (hT : TableOf (mkSpec t perm (fun _ => true)) T (K.map (proj (mkSpec t perm (fun _ => true)))))
+    (hfit : ∀ r ∈ K, Fits r) (hnz : ∀ r ∈ K, ∀ c, c < 3 → rowCol r c ≠ 0)
+    (hkeep : ∀ r ∈ K, keep (mkSpec t perm (fun _ => true)) r = true) :
+    T.idRows = K.map (seenRow (specAcc t perm (fun _ => true))) ∧ NoUnbound T := by
+  have hI := specInv_four t perm hmiss
+  apply idRows_eqC t perm hmiss T K hT hfit
+  intro r hr p hp
+  have hl := hI.seenLt p hp
+  by_cases h3 : p.2 = 3
+  · have hv := hI.seenVar p hp
+    rw [h3, show ScanSpec.colPos perm 3 = 3 from rfl, show t.slot 3 = t.g from rfl] at hv
+    rcases hgs with ⟨gid, htg, _⟩ | ⟨v, _, hnamed⟩
+    · rw [htg] at hv; cases hv
+    · have hk := hkeep r hr
+      rw [keep_eq_test_named t perm hnamed, Bool.and_eq_true] at hk
+      rw [h3]
+      show r.g ≠ 0
+      simpa using hk.1
+  · exact hnz r hr p.2 (by omega)
+
+/-- **The table of one triple pattern, any graph slot of `GSlot`.** As
+    `scanTable_model`, with the rows row for row the model's matches `rowM`
+    of the permutation's rows. -/
+theorem scanTable_modelG (st : Store Id) (t : Pat) (perm : Nat) (hperm : perm < 4) (hgs : GSlot t)
+    (hmiss : t.hasMissing = false) (prb : ByteArray) (ms : List BlockMeta) (hst : PermMem st perm prb ms) :
+    ∃ T stats, scanTableM st (mkSpec t perm (fun _ => true)) = pure (T, stats) ∧ T.WF ∧ NoUnbound T ∧
+      T.vars = (mkSpec t perm (fun _ => true)).outVars ∧
+      T.sortVar = sortVarOf (mkSpec t perm (fun _ => true)) ∧ TableTheorems.SortOk T ∧
+      Pw RowEq T.idRows ((ms.flatMap (blockRows prb)).filterMap (rowM t perm)) := by
+  have hspec := specOk_mkSpec t perm hmiss
+  have hperm' : (mkSpec t perm (fun _ => true)).perm = perm := by rw [mkSpec_eq]; rfl
+  obtain ⟨T, stats, he, hT⟩ := scanTableM_spec st (mkSpec t perm (fun _ => true)) hspec prb ms
+    (by rw [hperm']; exact hst.range _) (by rw [hperm']; exact hst.count) (by rw [hperm']; exact hst.bytes)
+    (by rw [hperm']; exact hst.ovl) (by rw [hperm']; exact hst.adm) hst.blocks
+  generalize hR : ms.flatMap (blockRows prb) = R at hT ⊢
+  have hfitR : ∀ r ∈ R, Fits r := by rw [← hR]; exact rows_fit prb ms
+  have hsorted : R.Pairwise (fun a b => a.lt b = true) := by rw [← hR]; exact rows_sorted prb ms hst.adm hst.blocks
+  have hnzR : ∀ r ∈ R, ∀ c, c < 3 → rowCol r c ≠ 0 := by rw [← hR]; exact hst.nz
+  obtain ⟨hrows, hnu⟩ := idRows_eqG t perm hmiss hgs T (R.filter (keep (mkSpec t perm (fun _ => true)))) hT
+    (fun r hr => hfitR r ((List.mem_filter.mp hr).1)) (fun r hr => hnzR r ((List.mem_filter.mp hr).1))
+    (fun r hr => (List.mem_filter.mp hr).2)
+  have hI := specInv_four t perm hmiss
+  have hnd : T.vars.toList.Nodup := by
+    rw [hT.vars, mkSpec_eq]
+    simp only [specOf, hI.outVars]
+    simpa using hI.nodup
+  refine ⟨T, stats, he, ⟨by rw [hT.size, hT.vars], hT.bytes, hnd⟩, hnu, hT.vars, hT.sortVar,
+    scanTable_sortOk t perm hmiss T _ hT (hsorted.filter _) (fun r hr => (List.mem_filter.mp hr).2) hnd, ?_⟩
+  rw [hrows]
+  exact keptRows_pwG t perm hperm hgs hmiss R hfitR
+
 end L4Factoidal.Storage.Sbm11.ScanTableTheorems
 
 #print axioms L4Factoidal.Storage.Sbm11.ScanTableTheorems.scanTable_model
+#print axioms L4Factoidal.Storage.Sbm11.ScanTableTheorems.scanTable_modelG
+#print axioms L4Factoidal.Storage.Sbm11.ScanTableTheorems.row_optG
 #print axioms L4Factoidal.Storage.Sbm11.ScanTableTheorems.scanTableM_spec
 #print axioms L4Factoidal.Storage.Sbm11.ScanTableTheorems.scanFoldM_R
 #print axioms L4Factoidal.Storage.Sbm11.ScanTableTheorems.row_opt

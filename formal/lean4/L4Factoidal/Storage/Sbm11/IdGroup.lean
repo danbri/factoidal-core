@@ -42,9 +42,9 @@ evaluator refuses a term the query-local vocabulary cannot hold, or returns
 a table that decodes, with the decoder of its final state
 (`LocalVocabTheorems`), to such an answer for Join, LeftJoin, FILTER (a
 condition with no EXISTS, `FilterTableTheorems`), Union, MINUS, GRAPH with an
-IRI, GRAPH ?g over a pattern that is not a basic graph pattern, BIND, VALUES
-and the leaves; the other arms (EXISTS in a condition, GRAPH ?g over a basic
-graph pattern, sub-SELECT) are tested by `tests/sbm11/gate/ids-nest-*.rq`
+IRI, GRAPH ?g (over a basic graph pattern: one scan per triple pattern with
+the graph as a column, `GraphBgpTableTheorems`), BIND, VALUES and the leaves;
+the other arms (EXISTS in a condition, sub-SELECT) are tested by `tests/sbm11/gate/ids-nest-*.rq`
 and the W3C census.
 
 Refused, with a message the harness reports (`refused: ...` at run time, a
