@@ -24,15 +24,15 @@ literal test by `notLit`; the closures are the reference's own
   `addConstantReflexivity`, when the endpoint constants decode to the
   pattern's terms and are among the ids `hdec` covers.
 
-Not proved here (open, the step of lemma L5g″ of
-docs/designissues/2026-10-12-sbm11-end-to-end-theorem.md): that
-`IdQuery.evalIM` under a restriction (scans of PSO or POS with candidates,
-the relation of a sequence restricted by the objects of its first part) gives
-the pairs of `idEvalPath` whose subject (or object) is in the restriction, as
-a multiset; and that the `Table` of `IdQuery.pathTableM` denotes the rows of
-`idPathRows`. Tested by the gate queries `tests/sbm11/gate/ids-path-*.rq`
-(with blocks of 2 rows and candidates in every scan, part (l1)) and by the
-census (`tests/sbm11/census.sh`).
+The executed path evaluator against this model (lemma L4n of
+docs/designissues/2026-10-12-sbm11-end-to-end-theorem.md):
+`IdPathEvalTheorems.evalIM_spec` (`IdQuery.evalIM` under a restriction gives,
+as a multiset, the pairs of `idEvalPath` whose subject, or object, is in the
+restriction) and `IdPathTableTheorems.pathTableM_rows` (the `Table` of
+`IdQuery.pathTableM` with no rows joined before denotes the rows of
+`idPathRows`). Also tested by the gate queries
+`tests/sbm11/gate/ids-path-*.rq` (with blocks of 2 rows and candidates in
+every scan, part (l1)) and by the census (`tests/sbm11/census.sh`).
 
 No `sorry`, no user `axiom`, no `native_decide`, no `partial`.
 -/

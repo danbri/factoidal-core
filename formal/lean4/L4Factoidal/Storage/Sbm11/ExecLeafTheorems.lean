@@ -1,14 +1,15 @@
 /-
-L4Factoidal.Storage.Sbm11.ExecLeafTheorems — the WHERE clause on ids with the
-basic graph patterns executed (https://github.com/danbri/factoidal/issues/776;
-lemma L4m of docs/designissues/2026-10-12-sbm11-end-to-end-theorem.md).
+L4Factoidal.Storage.Sbm11.ExecLeafTheorems — the WHERE clause on ids with its
+leaves executed (https://github.com/danbri/factoidal/issues/776; lemmas L4m
+and L4n of docs/designissues/2026-10-12-sbm11-end-to-end-theorem.md).
 
 `IdLeafTheorems.where_allowed` proves the WHERE clause allowed over a model
-of the leaves (`storeLeaves`). This file replaces the model of a basic graph
-pattern by the executed step of the nested evaluator: `execLeaves` takes, for
-a basic graph pattern, the rows of the table `IdGroup.bgpM` returns
+of the leaves (`storeLeaves`). This file replaces the model of each leaf by
+the executed step of the nested evaluator: `execLeaves` takes, for a basic
+graph pattern, the rows of the table `IdGroup.bgpM` returns
 (`IdQuery.evalBgpM` over the patterns `resolveIn` builds from the store's
-dictionary lookup).
+dictionary lookup), and for a property path, the rows of the table
+`IdGroup.pathM` returns with no rows joined before (`IdQuery.pathTableM`).
 
 * `resolveIn_eq`, `patSpecsOf_run`, `ipatOf_spec`: over a store whose
   dictionary lookup is the function `cid` and a query with no dataset
@@ -17,9 +18,12 @@ dictionary lookup).
   or literals (`ExecTp`).
 * `bgpM_rows`: `IdGroup.bgpM` returns a table whose rows are `IdEquiv` to
   `IdLeaf.idBgpFrom` of the triple patterns (L4l, `evalBgpM_model`).
-* `leafRel_bgp_transfer`, `exec_bgp_equiv`, `leafRel_exec`: the leaf
-  hypothesis `LeafRel` for the executed leaves, from the store invariants
-  of `IdLeaf.leafRel_of_store`.
+* `pathM_rows`: `IdGroup.pathM` returns a table whose rows are `IdEquiv` to
+  `IdLeaf.pathRows` (L4n: `IdPathTable.pathTableM_rows`), for endpoints
+  that are variables or constants with an id (`SubjOkP`, `ObjOkP`).
+* `leafRel_bgp_transfer`, `exec_bgp_equiv`, `leafRel_path_transfer`,
+  `exec_path_equiv`, `leafRel_exec`: the leaf hypothesis `LeafRel` for the
+  executed leaves, from the store invariants of `IdLeaf.leafRel_of_store`.
 * `where_allowed_exec`: for every pattern of `InIdFragment`,
   `IdGroup.evalGroupIds` over `execLeaves` decodes to an answer SPARQL 1.1
   allows (`IdGroup.Allowed`), with ids in `ok`.
@@ -30,18 +34,25 @@ The basic graph patterns are the executed step `bgpM`, with the hypotheses
 of L4l: the four permutations in memory with no overlay (`PermMem`), the
 single-thread scans; the right scans take candidates as the store's
 `sipFactor` selects them. A
-property path leaf is the model (`IdLeaf.pathRows`); `IdQuery.pathTableM`
-against it is open. The operators above the leaves are the list evaluator
+property path leaf is the executed step `pathM` with no rows joined before,
+with three conditions on the term ids: `idv` is the dictionary's id where
+the dictionary has one, no term has id 0, and the tag of a store id says
+whether its term is a literal (what `isLitIdM` reads). `pathM` with
+candidates from the rows of a left side (`evalGroupM` on a join whose right
+side is a path, `IdQuery.pathCands`) is not covered. The operators above the leaves are the list evaluator
 `evalGroupIds`; the `Table` operators of `IdGroup.evalGroupM` against it are
 proved for Join and Union (L5l″, L5m) and open for LeftJoin with a
 condition, FILTER, MINUS and Extend (L5t). A blank node of a triple pattern
-is excluded (`ExecTp`): the id path reads it as a variable
-(`IdQuery.argOfSubject`), the model as a constant (`IdLeaf.islotS`).
+or of a path endpoint is excluded (`ExecTp`, `SubjOkP`, `ObjOkP`): the id
+path reads it as a variable (`IdQuery.argOfSubject`), the model as a
+constant (`IdLeaf.islotS`, `IdLeaf.endS`); so is a path endpoint constant
+with no id (the id path gives it a query-local id, `termIdM`).
 
 No `sorry`, no user `axiom`, no `native_decide`, no `partial`.
 -/
 import L4Factoidal.Storage.Sbm11.BgpTableTheorems
 import L4Factoidal.Storage.Sbm11.IdGroup
+import L4Factoidal.Storage.Sbm11.IdPathTableTheorems
 
 namespace L4Factoidal.Storage.Sbm11.ExecLeafTheorems
 
@@ -281,6 +292,174 @@ theorem bgpM_rows (cx : NCx Id) (cid : Term → Option UInt64) (hid : ∀ t, cx.
       rw [hm] at heq
       exact heq
 
+/-! ## The property path leaf of the nested evaluator -/
+
+/-- A subject endpoint the executed leaf reads as the model does: a variable,
+    or an IRI with an id. (A blank node is a variable for the id path,
+    `argOfSubject`, and a constant for the model, `IdLeaf.endS`; a constant
+    with no id becomes a query-local id, `termIdM`.) -/
+def SubjOkP (cid : Term → Option UInt64) : PatternSubject → Prop
+  | .var _ => True
+  | .iri i => (cid (.iri i)).isSome
+  | _ => False
+
+/-- An object endpoint the executed leaf reads as the model does: a
+    variable, or an IRI or a literal with an id. -/
+def ObjOkP (cid : Term → Option UInt64) : PatternTerm → Prop
+  | .var _ => True
+  | .iri i => (cid (.iri i)).isSome
+  | .literal l => (cid (.literal l)).isSome
+  | _ => False
+
+/-- An argument as the slot `pathM` makes of it, for a constant with an id. -/
+def argSlot (cid : Term → Option UInt64) : Arg → Slot
+  | .var v => .var v
+  | .term t => match cid t with
+    | some x => .const x
+    | none => .missing
+
+/-- An argument whose constant has an id. -/
+def ArgOk (cid : Term → Option UInt64) : Arg → Prop
+  | .var _ => True
+  | .term t => (cid t).isSome
+
+theorem slots_loop (cid : Term → Option UInt64) (f : Arg → Array Slot → IdGroup.NM Id (ForInStep (Array Slot)))
+    (hf : ∀ a, ArgOk cid a → ∀ (acc : Array Slot) (s : NSt), (f a acc).run s = pure (.yield (acc.push (argSlot cid a)), s)) :
+    ∀ (args : List Arg), (∀ a ∈ args, ArgOk cid a) → ∀ (acc : Array Slot) (nst : NSt),
+      (forIn args acc f).run nst = pure (acc ++ (args.map (argSlot cid)).toArray, nst) := by
+  intro args
+  induction args with
+  | nil => intro _ acc nst; simp
+  | cons a args ih =>
+    intro hargs acc nst
+    rw [List.forIn_cons, StateT.run_bind, hf a (hargs a List.mem_cons_self) acc nst]
+    simp only [pure_bind]
+    rw [ih (fun b hb => hargs b (List.mem_cons_of_mem _ hb))]
+    simp
+
+theorem bgpStore_withLocal (st : Store Id) (v : Array Term) (gid : UInt64) (T : List IdPath.IdTriple)
+    (hst : BgpStore st gid T) : BgpStore (st.withLocal v) gid T := by
+  unfold Store.withLocal
+  split
+  · exact hst
+  · refine ⟨fun k hk => ?_, hst.scan⟩
+    obtain ⟨prb, ms, hpm, hP⟩ := hst.perm k hk
+    exact ⟨prb, ms, ⟨hpm.range, hpm.count, hpm.bytes, hpm.ovl, hpm.adm, hpm.blocks, hpm.nz⟩, hP⟩
+
+open L4Factoidal.Storage.Sbm11.IdLeaf (endS endO pathRows)
+
+theorem endOf_subj (cid : Term → Option UInt64) (idv : Term → UInt64)
+    (hidv : ∀ t x, cid t = some x → idv t = x) (s : PatternSubject) (h : SubjOkP cid s) :
+    ∃ a, argOfSubject s = .ok a ∧ ArgOk cid a ∧ IdPathTable.endOf (argSlot cid a) = endS idv s ∧
+      argSlot cid a ≠ .missing ∧ ∀ x, argSlot cid a = .const x → ∃ t, cid t = some x := by
+  cases s with
+  | var v => exact ⟨.var v, rfl, trivial, rfl, by simp [argSlot], fun x h => by simp [argSlot] at h⟩
+  | iri i =>
+    obtain ⟨x, hx⟩ := Option.isSome_iff_exists.mp h
+    refine ⟨.term (.iri i), rfl, h, ?_, by simp [argSlot, hx], fun y hy => ⟨.iri i, ?_⟩⟩
+    · simp [argSlot, hx, IdPathTable.endOf, endS, hidv _ _ hx]
+    · simp [argSlot, hx] at hy; rw [hx, hy]
+  | bnode b => exact absurd h id
+  | tripleTerm _ _ _ => exact absurd h id
+
+theorem endOf_obj (cid : Term → Option UInt64) (idv : Term → UInt64)
+    (hidv : ∀ t x, cid t = some x → idv t = x) (o : PatternTerm) (h : ObjOkP cid o) :
+    ∃ a, argOfTerm o = .ok a ∧ ArgOk cid a ∧ IdPathTable.endOf (argSlot cid a) = endO idv o ∧
+      argSlot cid a ≠ .missing ∧ ∀ x, argSlot cid a = .const x → ∃ t, cid t = some x := by
+  cases o with
+  | var v => exact ⟨.var v, rfl, trivial, rfl, by simp [argSlot], fun x h => by simp [argSlot] at h⟩
+  | iri i =>
+    obtain ⟨x, hx⟩ := Option.isSome_iff_exists.mp h
+    refine ⟨.term (.iri i), rfl, h, ?_, by simp [argSlot, hx], fun y hy => ⟨.iri i, ?_⟩⟩
+    · simp [argSlot, hx, IdPathTable.endOf, endO, hidv _ _ hx]
+    · simp [argSlot, hx] at hy; rw [hx, hy]
+  | literal l =>
+    obtain ⟨x, hx⟩ := Option.isSome_iff_exists.mp h
+    refine ⟨.term (.literal l), rfl, h, ?_, by simp [argSlot, hx], fun y hy => ⟨.literal l, ?_⟩⟩
+    · simp [argSlot, hx, IdPathTable.endOf, endO, hidv _ _ hx]
+    · simp [argSlot, hx] at hy; rw [hx, hy]
+  | bnode b => exact absurd h id
+  | tripleTerm _ _ _ => exact absurd h id
+
+/-- **The property path step of the nested evaluator** (`IdGroup.pathM`
+    with no rows joined before), over an in-memory store whose dictionary
+    lookup is `cid`, with no dataset clause: its table's rows bind no
+    variable twice and are `IdEquiv` to the model's rows of the path pattern
+    (`IdLeaf.pathRows` over the listing `T` of the active graph). -/
+theorem pathM_rows (cx : NCx Id) (cid : Term → Option UInt64) (hid : ∀ t, cx.st.idOf t = pure (cid t))
+    (hds : cx.ds = none) (g : GCtx) (T : List IdPath.IdTriple) (hst : BgpStore cx.st (gctxId g) T)
+    (dec : UInt64 → Term) (idv : Term → UInt64) (hidv : ∀ t x, cid t = some x → idv t = x)
+    (hcid0 : ∀ t x, cid t = some x → x ≠ 0)
+    (hlit : ∀ x ∈ IdPath.idGraphNodes T, IdPathEval.litTag x = some (!isNotLiteral (dec x)))
+    (s : PatternSubject) (path : PropertyPath) (o : PatternTerm) (hs : SubjOkP cid s) (ho : ObjOkP cid o)
+    (nst : NSt) :
+    ∃ tab nst', (IdGroup.pathM cx g s path o unitTable).run nst = pure (tab, nst') ∧ (∀ r ∈ tab.idRows, Nd r) ∧
+      IdEquiv tab.idRows (pathRows cid dec idv T s path o) := by
+  obtain ⟨a, ha, haok, hae, ham, hac⟩ := endOf_subj cid idv hidv s hs
+  obtain ⟨b, hb, hbok, hbe, hbm, hbc⟩ := endOf_obj cid idv hidv o ho
+  obtain ⟨ip, hip, hipok⟩ := IdPathEval.resolvePathM_ok cx.st cid hid path
+  have hst' := bgpStore_withLocal cx.st nst.vocab _ T hst
+  let rp : RPath := { s := argSlot cid a, o := argSlot cid b, ipath := ip, zeroLen := isZeroLen path,
+                      g := some (gctxId g) }
+  obtain ⟨tab, how, ps, hpt, hnd, heq⟩ := IdPathTable.pathTableM_rows (cx.st.withLocal nst.vocab) (gctxId g) T hst'
+    cid (fun x => isNotLiteral (dec x)) hlit rp path rfl hipok (by show isZeroLen path = _; rw [IdPath.isZeroLen_eq]) ham hbm
+    (fun x hx => by
+      rcases hx with hx | hx
+      · obtain ⟨t, ht⟩ := hac x hx; exact hcid0 t x ht
+      · obtain ⟨t, ht⟩ := hbc x hx; exact hcid0 t x ht)
+  have hargs : ∀ c ∈ [a, b], ArgOk cid c := by
+    intro c hc
+    simp only [List.mem_cons, List.not_mem_nil, or_false] at hc
+    rcases hc with rfl | rfl
+    · exact haok
+    · exact hbok
+  refine ⟨tab, { nst with stats := nst.stats.add ps, lines := nst.lines.push (toString "property path: " ++ toString how) },
+    ?_, hnd, ?_⟩
+  · unfold IdGroup.pathM
+    simp only [hds, ha, hb, ← Array.forIn_toList]
+    have e0 : ((#[] ++ (List.map (argSlot cid) [a, b]).toArray : Array Slot))[0]! = argSlot cid a := by simp
+    have e1 : ((#[] ++ (List.map (argSlot cid) [a, b]).toArray : Array Slot))[1]! = argSlot cid b := by simp
+    cases g with
+    | named x =>
+      simp only [StateT.run_bind, StateT.run_pure, pure_bind]
+      rw [slots_loop cid _ (fun c hc acc s' => by
+        cases c with
+        | var v => rfl
+        | term t =>
+          obtain ⟨x, hx⟩ := Option.isSome_iff_exists.mp hc
+          have hterm : termIdM cx.st s'.vocab s'.localIdx t = pure (x, s'.vocab, s'.localIdx) := by
+            unfold termIdM
+            rw [hid t, hx]
+            rfl
+          simp only [StateT.run_bind, StateT.run_get, pure_bind, liftE, StateT.run_lift, hterm,
+            StateT.run_modify, StateT.run_pure]
+          simp [argSlot, hx]) [a, b] hargs #[] nst]
+      simp only [pure_bind, liftE, StateT.run_lift, hip, IdGroup.localStore, StateT.run_bind, StateT.run_get,
+        StateT.run_pure, e0, e1]
+      erw [hpt]
+      rfl
+    | dflt =>
+      simp only [StateT.run_bind, StateT.run_pure, pure_bind]
+      rw [slots_loop cid _ (fun c hc acc s' => by
+        cases c with
+        | var v => rfl
+        | term t =>
+          obtain ⟨x, hx⟩ := Option.isSome_iff_exists.mp hc
+          have hterm : termIdM cx.st s'.vocab s'.localIdx t = pure (x, s'.vocab, s'.localIdx) := by
+            unfold termIdM
+            rw [hid t, hx]
+            rfl
+          simp only [StateT.run_bind, StateT.run_get, pure_bind, liftE, StateT.run_lift, hterm,
+            StateT.run_modify, StateT.run_pure]
+          simp [argSlot, hx]) [a, b] hargs #[] nst]
+      simp only [pure_bind, liftE, StateT.run_lift, hip, IdGroup.localStore, StateT.run_bind, StateT.run_get,
+        StateT.run_pure, e0, e1]
+      erw [hpt]
+      rfl
+  · unfold pathRows
+    rw [← hae, ← hbe]
+    exact heq
+
 /-! ## The leaves of the executed id path, and the WHERE clause -/
 
 open L4Factoidal.Storage.Sbm11.IdLeaf (Listings spo storeLeaves StoreGraph StoreLeaf CidOk pathRows)
@@ -291,27 +470,30 @@ open L4Factoidal.Storage.Sbm11.IdLeaf (Listings spo storeLeaves StoreGraph Store
 def listingsOf (gof : Graph → GCtx) (prb : Nat → ByteArray) (ms : Nat → List Block.BlockMeta) : Listings :=
   fun k a => permListing k.val (gctxId (gof a)) ((ms k.val).flatMap (ScanFoldTheorems.blockRows (prb k.val)))
 
-/-- The leaves of the executed id path: a basic graph pattern is the table
-    `IdGroup.bgpM` returns (the step of the nested evaluator `evalGroupM`),
-    in the active graph `gof a`; a property path is the model's
-    (`IdLeaf.pathRows` over the SPO listing; `IdQuery.pathTableM` against it
-    is open). -/
-def execLeaves (cx : NCx Id) (nst : NSt) (gof : Graph → GCtx) (TP : Listings) (cid : Term → Option UInt64)
-    (dec : UInt64 → Term) (idv : Term → UInt64) : IdGroup.Leaves where
+/-- The leaves of the executed id path, in the active graph `gof a`: a basic
+    graph pattern is the table `IdGroup.bgpM` returns, a property path the
+    table `IdGroup.pathM` returns with no rows joined before (the steps of
+    the nested evaluator `evalGroupM`). -/
+def execLeaves (cx : NCx Id) (nst : NSt) (gof : Graph → GCtx) : IdGroup.Leaves where
   bgp a b :=
     match ((bgpM cx (gof a) b).run nst).run with
     | .ok p => p.1.idRows
     | .error _ => []
-  path a s path o := pathRows cid dec idv (TP spo a) s path o
+  path a s path o :=
+    match ((IdGroup.pathM cx (gof a) s path o unitTable).run nst).run with
+    | .ok p => p.1.idRows
+    | .error _ => []
 
 /-- What a leaf of the executed id path needs: the store invariant and shape
     of `IdLeaf.StoreLeaf`; for a basic graph pattern, triple patterns whose
-    positions are variables, IRIs or literals (no blank node: the id path
-    reads a blank node of a pattern as a variable, the model as a
-    constant). -/
-def ExecLeaf (dec : UInt64 → Term) (sok ok : UInt64 → Prop) (idv : Term → UInt64) (TP : Listings) :
-    QueryPattern → Graph → Prop
+    positions are variables, IRIs or literals; for a property path, endpoints
+    that are variables or constants with an id (`SubjOkP`, `ObjOkP`). No
+    blank node: the id path reads a blank node of a pattern as a variable,
+    the model as a constant. -/
+def ExecLeaf (cid : Term → Option UInt64) (dec : UInt64 → Term) (sok ok : UInt64 → Prop) (idv : Term → UInt64)
+    (TP : Listings) : QueryPattern → Graph → Prop
   | .bgp b, a => StoreLeaf dec sok ok idv TP (.bgp b) a ∧ ∀ tp ∈ b, ExecTp tp
+  | .propertyPath s path o, a => StoreLeaf dec sok ok idv TP (.propertyPath s path o) a ∧ SubjOkP cid s ∧ ObjOkP cid o
   | p, a => StoreLeaf dec sok ok idv TP p a
 
 theorem pw_mem {A B : List IdRow} (h : IdGroup.Pw RowEq A B) : ∀ r ∈ A, ∃ m ∈ B, RowEq r m := by
@@ -339,6 +521,31 @@ theorem leafRel_bgp_transfer (env : EvalEnv) (ds : Dataset) (σ σ' : IdGroup.Le
   rw [hrm p.1] at hl
   exact h2 m hm _ (OptJoin.idLookup_mem hl)
 
+/-- `LeafRel` of a property path pattern carries over to rows of the same
+    multiset of solution mappings that bind no variable twice. -/
+theorem leafRel_path_transfer (env : EvalEnv) (ds : Dataset) (σ σ' : IdGroup.Leaves) (dec : UInt64 → Term)
+    (ok : UInt64 → Prop) (s : PatternSubject) (path : PropertyPath) (o : PatternTerm) (a : Graph)
+    (h : IdGroup.LeafRel env ds σ dec ok (.propertyPath s path o) a)
+    (heq : IdEquiv (σ'.path a s path o) (σ.path a s path o)) (hnd : ∀ r ∈ σ'.path a s path o, Nd r) :
+    IdGroup.LeafRel env ds σ' dec ok (.propertyPath s path o) a := by
+  obtain ⟨h1, h2⟩ := h
+  refine ⟨IdGroup.SolEquiv.trans h1 (IdLeaf.solEquiv_decode dec heq.symm), ?_⟩
+  intro r hr p hp
+  obtain ⟨C, hpc, hw⟩ := heq
+  obtain ⟨m, hm, hrm⟩ := pw_mem hw r (hpc.mem_iff.mp hr)
+  have hl := nd_mem_lookup (hnd r hr) p hp
+  rw [hrm p.1] at hl
+  exact h2 m hm _ (OptJoin.idLookup_mem hl)
+
+theorem graphDec_sok (dec : UInt64 → Term) (sok : UInt64 → Prop) :
+    ∀ (T : List IdPath.IdTriple) (g : Graph), IdLeaf.GraphDec dec sok T g → ∀ x ∈ T, sok x.1 ∧ sok x.2.2
+  | [], _, _, _, hx => by cases hx
+  | _ :: _, [], h, _, _ => h.elim
+  | _ :: xs, _ :: ts, ⟨hx, hxs⟩, y, hy => by
+    rcases List.mem_cons.mp hy with e | e
+    · subst e; exact ⟨hx.2.2.2.1, hx.2.2.2.2.2⟩
+    · exact graphDec_sok dec sok xs ts hxs y e
+
 section
 variable (cx : NCx Id) (nst : NSt) (gof : Graph → GCtx) (prb : Nat → ByteArray) (ms : Nat → List Block.BlockMeta)
   (cid : Term → Option UInt64) (dec : UInt64 → Term) (idv : Term → UInt64) (sok ok : UInt64 → Prop)
@@ -349,13 +556,13 @@ variable (cx : NCx Id) (nst : NSt) (gof : Graph → GCtx) (prb : Nat → ByteArr
 theorem exec_bgp_equiv (hpm : ∀ k, k < 4 → PermMem cx.st k (prb k) (ms k)) (hscan : cx.st.scanTable = none)
     (hds : cx.ds = none) (hid : ∀ t, cx.st.idOf t = pure (cid t))
     (a : Graph) (b : Bgp) (hg : StoreGraph dec sok (listingsOf gof prb ms) a) (htp : ∀ tp ∈ b, ExecTp tp) :
-    IdEquiv ((execLeaves cx nst gof (listingsOf gof prb ms) cid dec idv).bgp a b)
+    IdEquiv ((execLeaves cx nst gof).bgp a b)
         ((storeLeaves (listingsOf gof prb ms) (fun _ => spo) (fun _ b => ⟨b, List.Perm.refl b⟩) cid dec idv).bgp a b) ∧
-      ∀ r ∈ (execLeaves cx nst gof (listingsOf gof prb ms) cid dec idv).bgp a b, Nd r := by
+      ∀ r ∈ (execLeaves cx nst gof).bgp a b, Nd r := by
   have hst : BgpStore cx.st (gctxId (gof a)) (listingsOf gof prb ms spo a) :=
     ⟨fun k hk => ⟨prb k, ms k, hpm k hk, hg.2 ⟨k, hk⟩⟩, hscan⟩
   obtain ⟨tab, nst', hrun, hnd, heq⟩ := bgpM_rows cx cid hid hds (gof a) _ hst b htp nst
-  have hrows : (execLeaves cx nst gof (listingsOf gof prb ms) cid dec idv).bgp a b = tab.idRows := by
+  have hrows : (execLeaves cx nst gof).bgp a b = tab.idRows := by
     show (match ((bgpM cx (gof a) b).run nst).run with | .ok p => p.1.idRows | .error _ => []) = _
     rw [hrun]
     rfl
@@ -368,15 +575,48 @@ theorem exec_bgp_equiv (hpm : ∀ k, k < 4 → PermMem cx.st k (prb k) (ms k)) (
   rw [List.flatMap_singleton] at h1
   exact IdEquiv.trans heq h1.symm
 
+/-- The rows of an executed property path pattern are those of the model of
+    `IdLeaf.storeLeaves` (`pathRows` over the SPO listing), up to order. -/
+theorem exec_path_equiv (hpm : ∀ k, k < 4 → PermMem cx.st k (prb k) (ms k)) (hscan : cx.st.scanTable = none)
+    (hds : cx.ds = none) (hid : ∀ t, cx.st.idOf t = pure (cid t))
+    (hidv : ∀ t x, cid t = some x → idv t = x) (hcid0 : ∀ t x, cid t = some x → x ≠ 0)
+    (htag : ∀ x, sok x → IdPathEval.litTag x = some (!isNotLiteral (dec x)))
+    (a : Graph) (s : PatternSubject) (path : PropertyPath) (o : PatternTerm)
+    (hg : StoreGraph dec sok (listingsOf gof prb ms) a) (hs : SubjOkP cid s) (ho : ObjOkP cid o) :
+    IdEquiv ((execLeaves cx nst gof).path a s path o)
+        ((storeLeaves (listingsOf gof prb ms) (fun _ => spo) (fun _ b => ⟨b, List.Perm.refl b⟩) cid dec idv).path
+          a s path o) ∧
+      ∀ r ∈ (execLeaves cx nst gof).path a s path o, Nd r := by
+  have hst : BgpStore cx.st (gctxId (gof a)) (listingsOf gof prb ms spo a) :=
+    ⟨fun k hk => ⟨prb k, ms k, hpm k hk, hg.2 ⟨k, hk⟩⟩, hscan⟩
+  have hlit : ∀ x ∈ IdPath.idGraphNodes (listingsOf gof prb ms spo a),
+      IdPathEval.litTag x = some (!isNotLiteral (dec x)) := by
+    intro x hx
+    rw [IdPathScanTheorems.mem_graphNodes] at hx
+    obtain ⟨t, ht, e | e⟩ := hx
+    · rw [← e]; exact htag _ (graphDec_sok dec sok _ a hg.1 t ht).1
+    · rw [← e]; exact htag _ (graphDec_sok dec sok _ a hg.1 t ht).2
+  obtain ⟨tab, nst', hrun, hnd, heq⟩ := pathM_rows cx cid hid hds (gof a) _ hst dec idv hidv hcid0 hlit
+    s path o hs ho nst
+  have hrows : (execLeaves cx nst gof).path a s path o = tab.idRows := by
+    show (match ((IdGroup.pathM cx (gof a) s path o unitTable).run nst).run with
+      | .ok p => p.1.idRows | .error _ => []) = _
+    rw [hrun]
+    rfl
+  rw [hrows]
+  exact ⟨heq, hnd⟩
+
 /-- The leaf part of the hypotheses of `evalGroupIds_allowed` for the leaves
     of the executed id path, from store invariants. -/
 theorem leafRel_exec (env : EvalEnv) (ds : Dataset)
     (hpm : ∀ k, k < 4 → PermMem cx.st k (prb k) (ms k)) (hscan : cx.st.scanTable = none)
     (hds : cx.ds = none) (hid : ∀ t, cx.st.idOf t = pure (cid t))
     (hdec : ∀ x y, ok x → ok y → (dec x).eqb (dec y) = (x == y)) (hsok : ∀ x, sok x → ok x)
-    (hcid : ∀ c, CidOk dec sok c (cid c)) :
-    ∀ (p : QueryPattern) (a : Graph), ExecLeaf dec sok ok idv (listingsOf gof prb ms) p a →
-      IdGroup.LeafRel env ds (execLeaves cx nst gof (listingsOf gof prb ms) cid dec idv) dec ok p a := by
+    (hcid : ∀ c, CidOk dec sok c (cid c))
+    (hidv : ∀ t x, cid t = some x → idv t = x) (hcid0 : ∀ t x, cid t = some x → x ≠ 0)
+    (htag : ∀ x, sok x → IdPathEval.litTag x = some (!isNotLiteral (dec x))) :
+    ∀ (p : QueryPattern) (a : Graph), ExecLeaf cid dec sok ok idv (listingsOf gof prb ms) p a →
+      IdGroup.LeafRel env ds (execLeaves cx nst gof) dec ok p a := by
   intro p a h
   have hstore := IdLeaf.leafRel_of_store env ds (listingsOf gof prb ms) (fun _ => spo)
     (fun _ b => ⟨b, List.Perm.refl b⟩) cid dec idv sok ok hdec hsok hcid
@@ -384,7 +624,10 @@ theorem leafRel_exec (env : EvalEnv) (ds : Dataset)
   | .bgp b, ⟨hs, htp⟩ =>
     obtain ⟨heq, hnd⟩ := exec_bgp_equiv cx nst gof prb ms cid dec idv sok hpm hscan hds hid a b hs.1 htp
     exact leafRel_bgp_transfer env ds _ _ dec ok b a (hstore (.bgp b) a hs) heq hnd
-  | .propertyPath s path o, h => exact hstore (.propertyPath s path o) a h
+  | .propertyPath s path o, ⟨hl, hs, ho⟩ =>
+    obtain ⟨heq, hnd⟩ := exec_path_equiv cx nst gof prb ms cid dec idv sok hpm hscan hds hid hidv hcid0 htag
+      a s path o hl.1 hs ho
+    exact leafRel_path_transfer env ds _ _ dec ok s path o a (hstore (.propertyPath s path o) a hl) heq hnd
   | .join _ _, _ => trivial
   | .leftJoin _ _ _, _ => trivial
   | .filter _ _, _ => trivial
@@ -399,14 +642,17 @@ theorem leafRel_exec (env : EvalEnv) (ds : Dataset)
   | .subSelect _, _ => trivial
   | .empty, _ => trivial
 
-/-- **The WHERE clause on ids, its basic graph patterns executed.** For every
-    pattern of `InIdFragment`, `IdGroup.evalGroupIds` over the leaves of the
-    executed id path (`execLeaves`: each basic graph pattern the table that
-    `IdGroup.bgpM` returns from the store's permutations) decodes to an
-    answer SPARQL 1.1 allows, with ids in `ok`. Hypotheses: the store
-    (`PermMem` of each permutation, single-thread scans, a dictionary
-    lookup `cid` that never fails; any `sipFactor`), no dataset
-    clause, `hdec`, `hsok`, `hcid` (as `IdLeaf.where_allowed`), and
+/-- **The WHERE clause on ids, its leaves executed.** For every pattern of
+    `InIdFragment`, `IdGroup.evalGroupIds` over the leaves of the executed id
+    path (`execLeaves`: each basic graph pattern the table that
+    `IdGroup.bgpM` returns, each property path the table that `IdGroup.pathM`
+    returns, from the store's permutations) decodes to an answer SPARQL 1.1
+    allows, with ids in `ok`. Hypotheses: the store (`PermMem` of each
+    permutation, single-thread scans, a dictionary lookup `cid` that never
+    fails; any `sipFactor`), no dataset clause, `hdec`, `hsok`, `hcid` (as
+    `IdLeaf.where_allowed`); the term ids: `idv` is the dictionary's id where
+    the dictionary has one (`hidv`), no term has id 0 (`hcid0`), and the tag
+    of a store id says whether its term is a literal (`htag`); and
     `HypsW ExecLeaf`: at each leaf, `StoreGraph` of its active graph over the
     store's listings and the leaf's shape; elsewhere, each term the evaluator
     encodes decodes back. No hypothesis states a leaf's rows. -/
@@ -414,17 +660,21 @@ theorem where_allowed_exec (env : EvalEnv) (ds : Dataset)
     (hpm : ∀ k, k < 4 → PermMem cx.st k (prb k) (ms k)) (hscan : cx.st.scanTable = none)
     (hds : cx.ds = none) (hid : ∀ t, cx.st.idOf t = pure (cid t))
     (hdec : ∀ x y, ok x → ok y → (dec x).eqb (dec y) = (x == y)) (hsok : ∀ x, sok x → ok x)
-    (hcid : ∀ c, CidOk dec sok c (cid c)) (p : QueryPattern) (a : Graph) (hp : IdGroup.InIdFragment p)
-    (h : IdGroup.HypsW (ExecLeaf dec sok ok idv (listingsOf gof prb ms)) env ds
-      (execLeaves cx nst gof (listingsOf gof prb ms) cid dec idv) dec idv ok p a) :
+    (hcid : ∀ c, CidOk dec sok c (cid c))
+    (hidv : ∀ t x, cid t = some x → idv t = x) (hcid0 : ∀ t x, cid t = some x → x ≠ 0)
+    (htag : ∀ x, sok x → IdPathEval.litTag x = some (!isNotLiteral (dec x)))
+    (p : QueryPattern) (a : Graph) (hp : IdGroup.InIdFragment p)
+    (h : IdGroup.HypsW (ExecLeaf cid dec sok ok idv (listingsOf gof prb ms)) env ds
+      (execLeaves cx nst gof) dec idv ok p a) :
     IdGroup.Allowed env ds p a
-        ((IdGroup.evalGroupIds env ds (execLeaves cx nst gof (listingsOf gof prb ms) cid dec idv) dec idv p a).map
+        ((IdGroup.evalGroupIds env ds (execLeaves cx nst gof) dec idv p a).map
           (decRow dec)) ∧
-      ∀ r ∈ IdGroup.evalGroupIds env ds (execLeaves cx nst gof (listingsOf gof prb ms) cid dec idv) dec idv p a,
+      ∀ r ∈ IdGroup.evalGroupIds env ds (execLeaves cx nst gof) dec idv p a,
         RowIds ok r :=
   IdGroup.evalGroupIds_allowed env ds _ dec idv ok hdec p a hp
     (IdGroup.HypsW.mono env ds _ dec idv ok
-      (leafRel_exec cx nst gof prb ms cid dec idv sok ok env ds hpm hscan hds hid hdec hsok hcid) p a h)
+      (leafRel_exec cx nst gof prb ms cid dec idv sok ok env ds hpm hscan hds hid hdec hsok hcid hidv hcid0 htag)
+        p a h)
 
 end
 
@@ -433,3 +683,5 @@ end L4Factoidal.Storage.Sbm11.ExecLeafTheorems
 #print axioms L4Factoidal.Storage.Sbm11.ExecLeafTheorems.where_allowed_exec
 #print axioms L4Factoidal.Storage.Sbm11.ExecLeafTheorems.bgpM_rows
 #print axioms L4Factoidal.Storage.Sbm11.ExecLeafTheorems.leafRel_exec
+#print axioms L4Factoidal.Storage.Sbm11.ExecLeafTheorems.pathM_rows
+#print axioms L4Factoidal.Storage.Sbm11.ExecLeafTheorems.exec_path_equiv
