@@ -736,6 +736,7 @@ import L4Factoidal.Cottas.LazyTermCache
 import L4Factoidal.Cottas.OffsetIndex
 import L4Factoidal.Cottas.SubjectOffsetIndex
 import L4Factoidal.Storage.IndexedBlock
+import L4Factoidal.Storage.IndexedBlockDictTheorems
 import L4Factoidal.Storage.IndexedBlockTests
 import L4Factoidal.Storage.SubjectRowIndex
 import L4Factoidal.Storage.SubjectRowIndexTests
