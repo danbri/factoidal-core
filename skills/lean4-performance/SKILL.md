@@ -768,6 +768,15 @@ section "Stage 1b", subsection "What failed on the way"):
   a third of q19's profile at 4 threads with whole-block render buffers).
   Rule: what a task hands to the parent is small pieces (512 rows, about 64
   KB), not one buffer per block.
+  The huge pages come from mimalloc (v2.2.3 in Lean 4.33.1, the only
+  allocator of the runtime: `LEAN_MIMALLOC` in `include/lean/config.h`), which
+  calls `madvise(MADV_HUGEPAGE)` on its memory (`allow_large_os_pages`). With
+  `MIMALLOC_ALLOW_LARGE_OS_PAGES=0` (or `prctl(PR_SET_THP_DISABLE)`) peak RSS
+  at 4 threads fell by 17 to 31 MB and no 4-thread time changed beyond the
+  variation (2026-10-23, stage 1i of the parallel-scans record). The
+  `MIMALLOC_*` variables are read at process start (`MIMALLOC_VERBOSE=1`
+  prints them). A change of a default allocator setting goes to the owner
+  with its measurements first (CLAUDE.md, KR 1.2 decisions of 2026-10-23).
 
 - **A task per small range starts every per-task cache empty.** The divided
   streamed path ran one task per block, each with a new page cache filled

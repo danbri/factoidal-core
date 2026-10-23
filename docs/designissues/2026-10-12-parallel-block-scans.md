@@ -1420,3 +1420,218 @@ read):
 
 The answers of `threads.sh` were also identical with the code of 1h.4 items
 2 and 3 in place (run before they were taken out).
+
+## Stage 1i: the allocator (2026-10-23)
+
+Issue https://github.com/danbri/factoidal/issues/961, key result KR 1.2 of
+https://github.com/danbri/factoidal/issues/875. Owner, 2026-10-23, verbatim:
+"Start now" (the allocator work) and "Remove it" (d17 leaves KR 1.2). Rule
+from the same decision: a change to the default allocator settings is shown
+to the owner with its measurements before it lands. Branch
+`batch3/kr12-alloc`.
+
+### 1i.1 Result
+
+KR 1.2 is not met. With what landed on `main` (2 block ranges per thread on
+the counted path, 1i.4) and the default allocator settings, `--repeat 21`:
+q07 0.71, q19 0.51, q21 0.39, d10 0.54; peak RSS 4/1 at most 1.96.
+
+- No allocator setting makes a 4-thread run faster beyond the run-to-run
+  variation (1i.3).
+- `MIMALLOC_ALLOW_LARGE_OS_PAGES=0` (no transparent huge pages) makes peak
+  RSS smaller at 4 threads (`--repeat 7`, largest, `main`): d10 51 to 23 MB,
+  q07 38 to 20 MB, q19 101 to 82 MB, q21 72 to 55 MB. Peak RSS 4/1 then is 1.1 to 1.7. The 1-thread time
+  does not change beyond the variation.
+- With that setting, the page cache per pool worker (stage 1h.4 item 3, 2,048
+  pages) keeps peak RSS 4/1 below 2 (q19 1.86 to 1.92). q19 at 4 threads:
+  17.1 and 16.5 ms against 19.3 and 18.5 ms without the cache. Its 4/1 ratio
+  is 0.46 to 0.47: the q19 1-thread time varies between processes (1i.2).
+  The setting is a default allocator setting: it is on a branch for the
+  owner's decision (1i.5), not on `main`.
+- q07 (0.64 at best) and d10 (0.53 at best) do not reach 0.4 with any
+  setting or code change of this stage.
+
+### 1i.2 Method
+
+The 1b.6 method with variants interleaved (`.claude-runs/alloc/ab.sh`, not
+in the repository): in each round, for each query and thread count, one
+process per variant, the variant order turned by one each round; round 1
+dropped; median over processes of each process's warm median; peak RSS is
+the largest VmHWM of the cell. Olympics generation of stage 1h; DBpedia with
+`--verify none`. 12 rounds (11 kept) with `--repeat 7` (2026-10-23 10:10 to
+10:13 UTC) and with `--repeat 21` (10:13 to 10:21 UTC). The settings
+screen: 6 rounds (5 kept), `--repeat 7`. Raw CSV: `.claude-runs/alloc/`
+(`s1.csv` screen, `s3r7.csv`, `s3r21.csv`).
+
+Run-to-run variation: the warm median of a 1-thread process varies by up to
+1.5 times between processes of one binary and one setting (d10, 41 runs per
+process: 9.1 to 14.6 ms; q19 7 runs: 30 to 52 ms). It is the same with the
+process pinned to each of the four vCPUs (`taskset`) and with address
+randomisation off (`setarch -R`), so it is the VM, not the code. A 4/1 ratio
+of one variant therefore moves by about 0.05 to 0.1 between two runs of the
+method; compare 4-thread times, and ratios only when the difference is
+larger than that.
+
+### 1i.3 The allocator in this toolchain, and its settings
+
+Lean 4.33.1 (`leanprover/lean4:v4.33.1`). `include/lean/config.h` defines
+`LEAN_MIMALLOC`, so `lean.h` allocates small objects with `mi_malloc_small`
+(`lean_alloc_small_object`), other objects with `mi_malloc`
+(`lean_alloc_object`, `src/runtime/object.cpp`) and frees with `mi_free` /
+`mi_free_size`. Lean's own small-object allocator is not in this build (the
+`#ifndef LEAN_MIMALLOC` paths use `malloc`, and they are not compiled).
+mimalloc is v2.2.3 (`CMakeLists.txt`: `FetchContent`, `GIT_TAG v2.2.3`),
+linked statically in `libleanrt.a`, with secure level 0 (`LEAN_MI_SECURE`).
+It does not replace `malloc`: the Lean objects and the FFI buffers
+(`lean_alloc_sarray` in `ffi/block_pread.c`) use it, the C library's own
+calls do not. Each thread has its own mimalloc heap; an object freed by a
+thread that did not allocate it goes to the thread-free list of its page and
+the owning thread takes it back later (`_mi_free_delayed_block`,
+`mi_free_generic_mt` in the stage 1h profiles).
+
+Knobs:
+
+- Compile time: `USE_MIMALLOC`, `LEAN_MI_SECURE`. Both need a rebuilt
+  toolchain; not tried.
+- Run time: the `MIMALLOC_*` environment variables, read when the process
+  starts. Checked with `MIMALLOC_VERBOSE=1`, which prints the version and
+  every option. Defaults in this build: `purge_delay` 10 ms, `purge_decommits`
+  1, `eager_commit` 1, `eager_commit_delay` 1, `arena_eager_commit` 2,
+  `arena_reserve` 1 GiB, `allow_large_os_pages` 2 (mimalloc calls
+  `madvise(MADV_HUGEPAGE)` on the memory it maps; this VM has transparent huge
+  pages set to `madvise`, so the kernel then gives 2 MB pages and clears each
+  on first touch), `abandoned_reclaim_on_free` 0, `target_segments_per_thread`
+  0, `generic_collect` 10000.
+- In the process: `mi_option_set`, `mi_collect`, `mi_heap_*` are in
+  `libleanrt.a` but Lean has no binding; a call needs an FFI function. The
+  kernel call `prctl(PR_SET_THP_DISABLE)` has the same effect as
+  `allow_large_os_pages=0` here (tested with a preloaded constructor: d10
+  peak RSS 19.0 and 22.7 MB at 1 and 4 threads, against 18.6 and 22.8 MB with
+  the variable) and also holds on a machine where huge pages are `always`.
+- Not a knob here: `LEAN_NUM_THREADS` (the pool threads are
+  `Task.Priority.dedicated`).
+
+Screen of the settings (`--repeat 7`, 5 rounds kept; 4-thread ms, and RSS
+MB at 4 threads, largest):
+
+| Setting | q07 | q19 | q21 | d10 |
+| --- | ---: | ---: | ---: | ---: |
+| default | 4.54, 38 | 19.98, 102 | 35.60, 72 | 7.47, 48 |
+| `PURGE_DELAY=-1` (never return memory) | 4.28, 38 | 19.56, 104 | 37.52, 79 | 6.86, 51 |
+| `PURGE_DELAY=100` | 4.04, 39 | 19.91, 101 | 36.66, 75 | 7.62, 51 |
+| `PURGE_DECOMMITS=0` (`MADV_FREE`) | 4.16, 38 | 20.17, 100 | 38.98, 75 | 9.06, 47 |
+| `EAGER_COMMIT_DELAY=0` | 4.22, 38 | 19.94, 98 | 36.78, 73 | 7.87, 48 |
+| `ALLOW_LARGE_OS_PAGES=0` | 3.95, 20 | 19.94, 84 | 38.60, 55 | 6.47, 22 |
+
+No setting changes the 4-thread time beyond the variation. Only
+`ALLOW_LARGE_OS_PAGES=0` changes peak RSS.
+
+The interleaved runs (ms at 1 / 4 threads, 4/1, peak RSS MB at 1 / 4
+threads largest and their ratio). `main`: `origin/main` `fc74f2a1`; `cand`:
+`main` with 1i.4; `cand+pc`: `cand` with the page cache per pool worker of
+stage 1h.4 item 3 at 2,048 pages; `lp0`: `MIMALLOC_ALLOW_LARGE_OS_PAGES=0`;
+`pd-1`: `MIMALLOC_PURGE_DELAY=-1`.
+
+`--repeat 21`:
+
+| Variant | q07 | q19 | q21 | d10 |
+| --- | --- | --- | --- | --- |
+| main | 5.14 / 3.78, 0.74; 26 / 39, 1.47 | 37.19 / 18.19, 0.49; 58 / 105, 1.79 | 97.92 / 38.85, 0.40; 42 / 74, 1.76 | 10.26 / 7.26, 0.71; 26 / 54, 2.05 |
+| cand (landed) | 5.09 / 3.63, 0.71; 26 / 38, 1.45 | 36.92 / 18.66, 0.51; 58 / 103, 1.77 | 100.67 / 38.87, 0.39; 42 / 74, 1.75 | 11.80 / 6.32, 0.54; 26 / 52, 1.96 |
+| main, lp0 | 5.02 / 3.76, 0.75; 18 / 20, 1.09 | 34.91 / 18.56, 0.53; 52 / 88, 1.69 | 111.43 / 37.56, 0.34; 35 / 60, 1.70 | 10.20 / 7.08, 0.69; 19 / 24, 1.25 |
+| cand, lp0 | 5.08 / 3.74, 0.74; 18 / 20, 1.09 | 42.64 / 18.47, 0.43; 52 / 85, 1.63 | 98.77 / 39.19, 0.40; 36 / 57, 1.60 | 10.32 / 6.16, 0.60; 19 / 23, 1.22 |
+| cand+pc | 5.13 / 3.29, 0.64; 26 / 39, 1.46 | 35.42 / 15.84, 0.45; 58 / 117, 2.01 | 104.39 / 41.80, 0.40; 42 / 82, 1.94 | 10.16 / 6.55, 0.64; 26 / 54, 2.07 |
+| cand+pc, lp0 | 5.44 / 3.45, 0.64; 18 / 20, 1.07 | 35.60 / 16.52, 0.46; 52 / 100, 1.92 | 110.55 / 43.88, 0.40; 36 / 65, 1.81 | 10.26 / 6.12, 0.60; 19 / 24, 1.26 |
+| cand+pc, lp0, pd-1 | 5.14 / 3.58, 0.70; 18 / 20, 1.08 | 37.69 / 16.64, 0.44; 52 / 100, 1.92 | 98.00 / 39.72, 0.41; 36 / 66, 1.85 | 11.43 / 6.08, 0.53; 19 / 23, 1.23 |
+
+`--repeat 7`:
+
+| Variant | q07 | q19 | q21 | d10 |
+| --- | --- | --- | --- | --- |
+| main | 5.11 / 3.91, 0.77; 26 / 38, 1.45 | 37.80 / 20.60, 0.55; 58 / 101, 1.73 | 116.30 / 39.42, 0.34; 42 / 72, 1.71 | 10.77 / 7.13, 0.66; 26 / 51, 1.93 |
+| cand (landed) | 5.57 / 3.90, 0.70; 26 / 38, 1.46 | 39.50 / 20.47, 0.52; 58 / 101, 1.73 | 114.93 / 39.79, 0.35; 42 / 74, 1.76 | 10.19 / 6.83, 0.67; 26 / 50, 1.92 |
+| main, lp0 | 5.32 / 3.77, 0.71; 18 / 20, 1.13 | 46.67 / 19.98, 0.43; 52 / 82, 1.58 | 98.40 / 40.43, 0.41; 36 / 55, 1.54 | 10.26 / 7.20, 0.70; 18 / 23, 1.23 |
+| cand, lp0 | 5.27 / 3.78, 0.72; 18 / 20, 1.12 | 44.60 / 19.25, 0.43; 52 / 83, 1.59 | 107.74 / 38.70, 0.36; 36 / 57, 1.59 | 11.72 / 7.03, 0.60; 18 / 22, 1.20 |
+| cand+pc | 5.72 / 3.79, 0.66; 26 / 39, 1.46 | 43.53 / 17.38, 0.40; 58 / 117, 2.00 | 104.80 / 41.73, 0.40; 42 / 82, 1.95 | 10.54 / 6.27, 0.59; 26 / 49, 1.85 |
+| cand+pc, lp0 | 5.37 / 3.52, 0.66; 18 / 20, 1.11 | 36.61 / 17.08, 0.47; 52 / 97, 1.86 | 113.75 / 40.74, 0.36; 36 / 62, 1.76 | 10.30 / 6.15, 0.60; 19 / 22, 1.20 |
+| cand+pc, lp0, pd-1 | 5.66 / 4.22, 0.75; 18 / 20, 1.11 | 40.16 / 17.34, 0.43; 52 / 97, 1.86 | 103.77 / 39.83, 0.38; 36 / 65, 1.82 | 13.37 / 6.56, 0.49; 18 / 22, 1.19 |
+
+Findings:
+
+- Transparent huge pages cost memory, not time, here: without them each
+  thread's heap grows in 4 KB pages, so peak RSS at 4 threads falls by 17 to
+  31 MB and the 4-thread times stay within the variation.
+- The page cache per pool worker makes q19 at 4 threads 2 to 3 ms faster
+  (15.8 to 17.4 ms against 18.2 to 20.6 ms) in every setting. Without huge
+  pages its peak RSS 4/1 is 1.86 to 1.92; with them, 2.00 to 2.01.
+- Memory never returned (`PURGE_DELAY=-1`) gives no measured gain: the
+  pages that the stage 1h profiles show cleared (`clear_page_erms`) are first
+  touches of new heap memory, not memory given back and taken again.
+
+### 1i.4 What landed: 2 block ranges per thread on the counted path
+
+`IdQuery.Par.countPerThread` (default 2): `divide?` cuts the selected blocks
+of the counted path (GROUP BY with COUNT over one pattern) into
+2 × threads ranges, and the pool workers take them from the shared counter
+of `parFold`. d10's costly blocks (the 137 of 5,941 in which the predicate
+changes) are not spread evenly over 4 equal ranges; with 8 ranges a worker
+that ends a cheap range takes another. DBpedia d10 at 4 threads, 21 runs per
+process, 5 processes per value (`.claude-runs/alloc/cr.csv`):
+
+| Ranges per thread | 1 | 2 | 4 | 8 | 16 | 32 |
+| --- | ---: | ---: | ---: | ---: | ---: | ---: |
+| d10 4 threads ms | 7.65 | 6.18 | 6.15 | 6.51 | 6.63 | 7.27 |
+
+In the interleaved runs: 7.26 to 6.32 ms (`--repeat 21`) and 7.13 to 6.83 ms
+(`--repeat 7`); peak RSS unchanged.
+
+Proved: no new theorem is needed. `ParallelScanTheorems.parallel_acc_eq` is
+stated for every chunk width `c` of `ParallelScan.chunksOf`, so it covers the
+smaller ranges. Tested: `tests/sbm11/threads.sh` and the census at 4 threads
+(1i.6).
+
+### 1i.5 For the owner: one default allocator setting
+
+The setting: transparent huge pages off in the `l4sbm11` process, either
+`MIMALLOC_ALLOW_LARGE_OS_PAGES=0` in its environment or
+`prctl(PR_SET_THP_DISABLE, 1)` at the start of its `main` (same measured
+effect; the `prctl` form also holds where the kernel's huge-page mode is
+`always`). Branch `batch3/kr12-thp` has the `prctl` form and the page cache
+per pool worker (2,048 pages) on top of `main`.
+
+What it gives (`--repeat 21`, 1i.3): peak RSS at 4 threads 17 to 31 MB
+smaller for the 4 queries; with the page cache, q19 at 4 threads 18.66 to
+16.52 ms with peak RSS 4/1 1.92 (2.01 with huge pages). What it does not
+give: KR 1.2. q19 4/1 stays 0.46 to 0.47, q07 0.64, d10 0.60.
+
+### 1i.6 Gates
+
+On commit `15256876` (the Lean code of this landing; exit codes read):
+
+| Gate | Result |
+| --- | --- |
+| `lake build` | exit 0 (1,994 jobs) |
+| `tests/sbm11/threads.sh` | exit 0: gate 140 and 140 identical, olympics 21, 2 and 2, DBpedia 19; DBpedia against the three-engine record: equal 76, different 0 |
+| `tests/sbm11/run.sh` | exit 0: 3,131 pass, 0 fail, 28 expected-fail (out of 3,159) |
+| `SBM11_THREADS=4 tests/sbm11/census.sh` | exit 0: 605 executed, 605 matched the reference engine, 0 differed; 4 refused at query |
+| `lean-tail-recursion-audit.py --gate`, `lean-unbuilt-modules.py --gate` | exit 0, exit 0 (941 modules reached) |
+| `tools/land-gates.sh` | exit 0 (LAND GATES PASSED): native-smoke 377 pass, 0 fail, 4 xfail (out of 381), cli-smoke 151 pass, 0 fail, 5 xfail (out of 156), wasm, npm, hub, engine-compare, the LWS, Solid and authorization suites, host-purity-lint 40 pass, 0 fail (out of 40) |
+| `sorry`, `native_decide`, `axiom`, `maxHeartbeats` in the Lean diff | none |
+
+### 1i.7 What remains
+
+- q07 (0.71): the serial phases are slower at 4 threads than at 1 (ORDER BY
+  keys 0.90 against 0.68 ms, rendering 0.34 against 0.26 ms, constants 0.08
+  against 0.03 ms; `SBM11_PHASES=1`, 61 runs), and the two scans with
+  candidates reach 1.9 times their 1-thread speed (1.67 against 3.13 ms).
+  0.4 needs about 2.0 ms at 4 threads; the serial phases alone take 1.6 ms.
+- d10 (0.54): rendering of the groups is serial (1.07 ms at 4 threads), and
+  the 4-thread CPU time is 1.6 times the 1-thread CPU time (stage 1h.3).
+- q19 (0.51): the page copies of the per-query worker caches; the page cache
+  per pool worker removes part of them and needs the setting of 1i.5 to stay
+  within the RSS limit.
+- The method: the 1-thread time varies by up to 1.5 times between processes
+  on this VM (1i.2). A 4/1 target of 0.4 is near the variation for q19 and
+  q21.
+
+Issue https://github.com/danbri/factoidal/issues/961 stays open.
