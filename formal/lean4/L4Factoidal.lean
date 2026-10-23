@@ -29,6 +29,7 @@ import L4Factoidal.Dataflow.Stage
 import L4Factoidal.Dataflow.StageTests
 import L4Factoidal.Dataflow.Instances
 import L4Factoidal.Dataflow.InstancesTests
+import L4Factoidal.Dataflow.Registry
 import L4Factoidal.RDF.ConciseBoundedDescription
 import L4Factoidal.RDF.ConciseBoundedDescriptionTheorems
 import L4Factoidal.RDF.StoreLoader
