@@ -37,8 +37,10 @@ The specification of this evaluator is `IdGroupTheorems.evalGroupIds`, the
 same recursion over rows of ids, and `IdAllowedTheorems.evalGroupIds_allowed`
 proves that it decodes to an answer the reference evaluator allows (SPARQL
 1.1 fixes no order of solutions), for every pattern of the fragment, at any
-depth. The step from these `Table` operators
-to the list operators of that file is not proved (module header there);
+depth. `GroupTableTheorems.query_where_allowed_exec` proves that this
+evaluator's table decodes to such an answer for Join, LeftJoin with the
+condition `true`, Union, MINUS, GRAPH with an IRI and the leaves; the other
+arms (FILTER, a LeftJoin condition, GRAPH ?g, BIND, VALUES, sub-SELECT) are
 tested by `tests/sbm11/gate/ids-nest-*.rq` and the W3C census.
 
 Refused, with a message the harness reports (`refused: ...` at run time, a
@@ -223,6 +225,39 @@ def filterM (cx : NCx m) (g : GCtx) (t : Table) (c : Expr) : NM m Table := do
     variable has it). -/
 def pairCol : String := "#pair"
 
+/-- The rows of `LeftJoin` as indices: per left row `i < nl` in order, its
+    pairs `k` (`li[k] = i`; `li` is non-decreasing) that passed the
+    condition (`alive`), else `(none, i)`, the left row alone. -/
+def ljSource (nl : Nat) (li : Array Nat) (alive : Array Bool) : Array (Option Nat × Nat) := Id.run do
+  let mut src : Array (Option Nat × Nat) := Array.mkEmpty (nl + li.size)
+  let mut k := 0
+  for i in [0:nl] do
+    let mut any := false
+    for _ in [0:li.size] do
+      if k < li.size && li[k]! == i then
+        if alive[k]! then
+          src := src.push (some k, i)
+          any := true
+        k := k + 1
+      else break
+    if !any then src := src.push (none, i)
+  return src
+
+/-- The columns of the `LeftJoin` table: per column of `merged`, for each
+    entry of `src` the merged row of a pair, or the left row (`unbound` in
+    a column the left table does not have). -/
+def ljColumns (merged l : Table) (src : Array (Option Nat × Nat)) : Array ByteArray := Id.run do
+  let mut cols : Array ByteArray := Array.mkEmpty merged.vars.size
+  for c in [0:merged.vars.size] do
+    let mut out := ByteArray.emptyWithCapacity (8 * src.size)
+    for (pk, i) in src do
+      let x := match pk with
+        | some k => merged.at c k
+        | none => if c < l.vars.size then l.at c i else OptJoin.unbound
+      out := L4Factoidal.Qlvr.Side.put64 out x
+    cols := cols.push out
+  return cols
+
 /-- `LeftJoin(Ω1, Ω2, e)` on id tables (SPARQL 1.1 section 18.5): the pairs
     of compatible rows (`IdJoin.joinPairs`; an `unbound` id is compatible
     with any), merged (`IdJoin.pairsTable`); `e` on the merged rows
@@ -249,28 +284,8 @@ def leftJoinCondM (cx : NCx m) (g : GCtx) (l r : Table) (c : Expr) : NM m Table 
         a := a.set! (kept.at pc i).toNat true
     | none => pure ()
     pure a
-  -- per left row: its passing pairs (`li` is non-decreasing), else the row
-  let mut src : Array (Option Nat × Nat) := Array.mkEmpty (l.rows + li.size)
-  let mut k := 0
-  for i in [0:l.rows] do
-    let mut any := false
-    for _ in [0:li.size] do
-      if k < li.size && li[k]! == i then
-        if alive[k]! then
-          src := src.push (some k, i)
-          any := true
-        k := k + 1
-      else break
-    if !any then src := src.push (none, i)
-  let mut cols : Array ByteArray := Array.mkEmpty merged.vars.size
-  for c in [0:merged.vars.size] do
-    let mut out := ByteArray.emptyWithCapacity (8 * src.size)
-    for (pk, i) in src do
-      let x := match pk with
-        | some k => merged.at c k
-        | none => if c < l.vars.size then l.at c i else OptJoin.unbound
-      out := L4Factoidal.Qlvr.Side.put64 out x
-    cols := cols.push out
+  let src := ljSource l.rows li alive
+  let cols := ljColumns merged l src
   note s!"OPTIONAL: {l.rows} left rows, {r.rows} right rows, {li.size} compatible pairs; {src.size} rows"
   return { vars := merged.vars, cols, rows := src.size }
 

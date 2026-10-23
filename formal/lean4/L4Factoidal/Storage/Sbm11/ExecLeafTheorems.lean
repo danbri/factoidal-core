@@ -57,8 +57,9 @@ in `evalGroupM` (`bgpM` scans alone; its own scans with candidates between
 its triple patterns are L4l). The operators above the leaves are the list evaluator
 `evalGroupIds` here; `GroupTableTheorems.query_where_allowed_exec` (L4p)
 composes the `Table` operators of `IdGroup.evalGroupM` instead, for Join,
-Union, MINUS and GRAPH with an IRI; LeftJoin with a condition, FILTER, GRAPH
-with a variable, Extend, VALUES and sub-SELECT stay open (L5t). A blank node of a triple pattern
+LeftJoin with the condition `true`, Union, MINUS and GRAPH with an IRI;
+LeftJoin with another condition, FILTER, GRAPH with a variable, Extend,
+VALUES and sub-SELECT stay open (L5t). A blank node of a triple pattern
 or of a path endpoint is excluded (`ExecTp`, `SubjOkP`, `ObjOkP`): the id
 path reads it as a variable (`IdQuery.argOfSubject`), the model as a
 constant (`IdLeaf.islotS`, `IdLeaf.endS`); so is a path endpoint constant

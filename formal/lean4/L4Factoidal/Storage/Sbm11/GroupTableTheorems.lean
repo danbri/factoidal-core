@@ -20,8 +20,9 @@ induction on the pattern:
 * `minus_rows`: the rows of the MINUS table are `IdMinus.idMinus` of the
   rows of the two tables, in order.
 * `query_where_allowed_exec`: for every pattern built from basic graph
-  patterns, property paths, `{}`, Join, Union, MINUS and GRAPH with an IRI,
-  at any depth (`ExecHyps`), `evalGroupM` returns, from any state, a
+  patterns, property paths, `{}`, Join, LeftJoin with the condition `true`
+  (OPTIONAL with no FILTER inside; `LeftJoinTableTheorems`), Union, MINUS
+  and GRAPH with an IRI, at any depth (`ExecHyps`), `evalGroupM` returns, from any state, a
   well-formed table whose rows decode to an answer SPARQL 1.1 allows
   (`IdGroup.Allowed`), with ids in `ok`. The hypotheses are on the store,
   the dictionary and the dataset only; none states the table of a pattern
@@ -42,15 +43,16 @@ order, which is not proved for `Expr.evalIn`. `Allowed` needs neither.
 
 ## Not proved here
 
-LeftJoin (`leftJoinCondM`), FILTER (`filterM`: `applyFilters` and the
-EXISTS semi-joins), GRAPH with a variable, BIND (`extendM`), VALUES
+LeftJoin with a condition other than `true` (`leftJoinCondM` runs `filterM`
+on the merged rows), FILTER (`filterM`: `applyFilters` and the EXISTS
+semi-joins), GRAPH with a variable, BIND (`extendM`), VALUES
 (`resolveValuesVocabM`) and a sub-SELECT (`subSelectM`): `ExecHyps` is
 `False` for them. Tested by `tests/sbm11/gate/ids-*.rq` and the W3C census.
 
 
 No `sorry`, no user `axiom`, no `native_decide`, no `partial`.
 -/
-import L4Factoidal.Storage.Sbm11.ExecLeafTheorems
+import L4Factoidal.Storage.Sbm11.LeftJoinTableTheorems
 
 namespace L4Factoidal.Storage.Sbm11.GroupTableTheorems
 
@@ -502,20 +504,23 @@ open L4Factoidal.Storage.Sbm11.ExecLeafTheorems
 open L4Factoidal.Storage.Sbm11.IdLeaf (Listings spo StoreGraph StoreLeaf CidOk)
 open L4Factoidal.Storage.Sbm11.ScanTableTheorems (PermMem)
 open L4Factoidal.Storage.Sbm11.IdMinus (idMinus)
+open L4Factoidal.Storage.Sbm11.LeftJoinTableTheorems (note_run leftJoinTrue_run leftJoinTrue_rows ljTable)
 
 /-- The patterns this file proves, with what each node needs: at a leaf
     (basic graph pattern, property path) the condition `LP`; at GRAPH with
     an IRI, a store that lists its named graphs, and the IRI is a named graph
     of the dataset exactly when the dictionary gives it an id among the
-    query's named graphs (`cx.named`), the id of the active graph `gof g`.
-    `False` for the constructors not proved here (LeftJoin, FILTER, GRAPH
-    with a variable, BIND, VALUES, sub-SELECT, LATERAL, SERVICE). -/
+    query's named graphs (`cx.named`), the id of the active graph `gof g`;
+    at LeftJoin, the condition `true` (OPTIONAL with no FILTER inside).
+    `False` for the constructors not proved here (FILTER, GRAPH with a
+    variable, BIND, VALUES, sub-SELECT, LATERAL, SERVICE). -/
 def ExecHyps (LP : QueryPattern → Graph → Prop) (cx : NCx Id) (cid : Term → Option UInt64) (ds : Dataset)
     (gof : Graph → GCtx) : QueryPattern → Graph → Prop
   | .bgp b, a => LP (.bgp b) a
   | .propertyPath s path o, a => LP (.propertyPath s path o) a
   | .empty, _ => True
   | .join l r, a => ExecHyps LP cx cid ds gof l a ∧ ExecHyps LP cx cid ds gof r a
+  | .leftJoin l r c, a => c = .boolLit true ∧ ExecHyps LP cx cid ds gof l a ∧ ExecHyps LP cx cid ds gof r a
   | .union l r, a => ExecHyps LP cx cid ds gof l a ∧ ExecHyps LP cx cid ds gof r a
   | .minus l r, a => ExecHyps LP cx cid ds gof l a ∧ ExecHyps LP cx cid ds gof r a
   | .graph (.iri i) q, _ => cx.st.namedGraphs.isSome ∧
@@ -525,21 +530,20 @@ def ExecHyps (LP : QueryPattern → Graph → Prop) (cx : NCx Id) (cid : Term �
     | none => ∀ x, cid (.iri i) = some x → cx.named.contains x = false
   | _, _ => False
 
-theorem note_run (line : String) (nst : NSt) :
-    ∃ nst', (IdGroup.note (m := Id) line).run nst = pure (PUnit.unit, nst') := ⟨_, rfl⟩
-
 section
 variable (cx : NCx Id) (gof : Graph → GCtx) (prb : Nat → ByteArray) (ms : Nat → List Block.BlockMeta)
   (cid : Term → Option UInt64) (dec : UInt64 → Term) (idv : Term → UInt64) (sok ok : UInt64 → Prop)
 
 /-- **The WHERE clause on ids as the nested evaluator runs it.** For every
     pattern built from basic graph patterns, property paths, `{}`, Join,
-    Union, MINUS and GRAPH with an IRI, at any depth (`ExecHyps`),
+    LeftJoin with the condition `true`, Union, MINUS and GRAPH with an IRI,
+    at any depth (`ExecHyps`),
     `IdGroup.evalGroupM` returns, from any state, a well-formed table whose
     rows decode to an answer SPARQL 1.1 allows for the pattern (`Allowed`),
     with ids in `ok`. Each operator is the executed `Table` operator
     (`IdJoin.joinIds`, `IdGroup.pathM` with candidates from the left rows,
-    `IdJoin.unionIds`, `Table.select` of `IdQuery.semiMatches`). Hypotheses:
+    `IdGroup.leftJoinCondM`, `IdJoin.unionIds`, `Table.select` of
+    `IdQuery.semiMatches`). Hypotheses:
     those of `ExecLeafTheorems.where_allowed_exec` for the store (`PermMem`
     of each permutation, single-thread scans, no dataset clause, a
     dictionary lookup `cid` that never fails, `hdec`, `hsok`, `hcid`,
@@ -711,7 +715,30 @@ theorem query_where_allowed_exec (env : EvalEnv) (ds : Dataset)
   | .graph (.bnode _) _, _, h, _ => h.elim
   | .graph (.literal _) _, _, h, _ => h.elim
   | .graph (.tripleTerm _ _ _) _, _, h, _ => h.elim
-  | .leftJoin _ _ _, _, h, _ => h.elim
+  | .leftJoin l r c, a, h, nst1 => by
+    obtain ⟨hc, h1, h2⟩ := h
+    subst hc
+    obtain ⟨tl, nst2, hl, hwl, hAl, hol⟩ :=
+      query_where_allowed_exec env ds hpm hscan hds hid hdec hsok hcid hidv hcid0 htag l a h1 nst1
+    obtain ⟨tr, nst3, hrr, hwr, hAr, hor⟩ :=
+      query_where_allowed_exec env ds hpm hscan hds hid hdec hsok hcid hidv hcid0 htag r a h2 nst2
+    obtain ⟨nst4, hrun⟩ := leftJoinTrue_run cx (gof a) tl tr nst3
+    obtain ⟨htwf, hpw⟩ := leftJoinTrue_rows tl tr hwl hwr
+    have heq := IdEquiv.of_pw hpw
+    refine ⟨_, nst4, ?_, htwf, ?_, ?_⟩
+    · rw [evalGroupM, StateT.run_bind, hl, pure_bind, StateT.run_bind, hrr, pure_bind]
+      exact hrun
+    · have e : (fun m => IdGroup.filterFn env (.boolLit true) a (decRow dec m)) = fun _ => true :=
+        funext fun _ => rfl
+      have hj : Allowed env ds (.leftJoin l r (.boolLit true)) a
+          ((IdGroup.idLeftJoinC (fun m => IdGroup.filterFn env (.boolLit true) a (decRow dec m))
+            tl.idRows tr.idRows).map (decRow dec)) := by
+        rw [IdGroup.leftJoinC_decode dec ok hdec (IdGroup.filterFn env (.boolLit true) a) _ _ hol hor]
+        exact .leftJoin hAl hAr
+      rw [e] at hj
+      exact .equiv hj (IdLeaf.solEquiv_decode dec heq.symm)
+    · exact rowIds_of_equiv ok (BgpTableTheorems.nd_idRows _ htwf.nodup) heq
+        (IdGroup.rowIds_idLeftJoinC ok _ _ _ hol hor)
   | .filter _ _, _, h, _ => h.elim
   | .lateral _ _, _, h, _ => h.elim
   | .bind _ _ _, _, h, _ => h.elim
