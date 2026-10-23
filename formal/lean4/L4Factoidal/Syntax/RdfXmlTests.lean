@@ -253,13 +253,19 @@ def soleLiteralLex (body : String) : Option String :=
   ("<http://example.org/s> <http://example.org/p> \"text\""
     ++ "^^<http://www.w3.org/1999/02/22-rdf-syntax-ns#XMLLiteral> .")
 
--- [7.2.17]: an empty element is written open+close, and the ambient
--- namespace declarations land on the top-level element of the content.
+-- [7.2.17]: an empty element is written open+close, and the lexical form is
+-- exclusive canonical XML: an ambient namespace declaration that the
+-- content does not visibly use is dropped (issue 963).
 #guard soleLiteralLex
   ("<rdf:Description rdf:about='http://example.org/s'>"
     ++ "<eg:p rdf:parseType='Literal'><br/></eg:p></rdf:Description>")
-  == some ("<br xmlns:rdf=\"http://www.w3.org/1999/02/22-rdf-syntax-ns#\""
-            ++ " xmlns:eg=\"http://example.org/\"></br>")
+  == some "<br></br>"
+
+-- [7.2.17]: a visibly used prefix keeps its declaration.
+#guard soleLiteralLex
+  ("<rdf:Description rdf:about='http://example.org/s'>"
+    ++ "<eg:p rdf:parseType='Literal'><eg:q/></eg:p></rdf:Description>")
+  == some "<eg:q xmlns:eg=\"http://example.org/\"></eg:q>"
 
 -- [7.2.17]: markup-significant characters in character data are escaped.
 #guard soleLiteralLex
@@ -267,13 +273,12 @@ def soleLiteralLex (body : String) : Option String :=
     ++ "<eg:p rdf:parseType='Literal'>a &amp; b</eg:p></rdf:Description>")
   == some "a &amp; b"
 
--- [7.2.17]: nested elements keep their structure; only the TOP-level
--- element carries the ambient declarations.
+-- [7.2.17]: nested elements keep their structure; unused ambient
+-- declarations are dropped.
 #guard soleLiteralLex
   ("<rdf:Description rdf:about='http://example.org/s'>"
     ++ "<eg:p rdf:parseType='Literal'><a><b>x</b></a></eg:p></rdf:Description>")
-  == some ("<a xmlns:rdf=\"http://www.w3.org/1999/02/22-rdf-syntax-ns#\""
-            ++ " xmlns:eg=\"http://example.org/\"><b>x</b></a>")
+  == some "<a><b>x</b></a>"
 
 -- [7.2.20] parseTypeOtherPropertyElt: any other `rdf:parseType` value is
 -- treated as if it were `Literal`.

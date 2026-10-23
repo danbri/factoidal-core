@@ -54,15 +54,15 @@ WHAT IS PROVED HERE, and how it differs from the F* statements.
 ## Two membership relations, and why both appear
 
 `Graph.mem` is the engine's membership: it compares with `Triple.eqb`,
-which is COARSER than equality (language-tag case folding,
-`rdf:XMLLiteral` canonical-XML equality). List membership `∈` is exact.
+which is COARSER than equality (language-tag case folding). List
+membership `∈` is exact.
 
 * T1 and T2 use LIST membership. That is the strong reading in both
   directions: the closure really contains the input triples, and every
   list element really has a derivation.
 * T4 uses `Graph.mem`. It has to: `Graph.add t g` skips the insert
   when `g` already holds an eqb-equal triple, so after adding `t` the
-  graph may contain an XMLLiteral-variant of `t` instead of `t`
+  graph may contain a tag-case variant of `t` instead of `t`
   itself, and `t ∈ closure g fuel` would be false while the triple is
   present up to the equality the engine uses. `Graph.mem` is exactly
   the right relation there, and list membership implies it

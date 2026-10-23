@@ -26,11 +26,12 @@ unbound variable absent; `decRow` decodes each id).
 `IdQuery.resolveValuesM` gives a VALUES term its id in the generation
 (`Store.idOf`), or, when the generation has no id for it, a query-local id
 (`IdQuery.tagLocal`, one per distinct normalised term) that `Store.withLocal`
-decodes. Both hypotheses then hold on the ids that occur, with the exception
-already stated for the stored terms (`Term.eqb` identifies two
-`rdf:XMLLiteral` forms with one exclusive canonical form) and with the
-terms in the language-tag case the packer folds to (`normalizeTerm`; the
-reference compares language tags without case, `Term.eqb`).
+decodes. Both hypotheses then hold on the ids that occur, with the terms in
+the language-tag case the packer folds to (`normalizeTerm`; the reference
+compares language tags without case, `Term.eqb`). Until 2026-10-23
+`Term.eqb` also identified two `rdf:XMLLiteral` forms with one exclusive
+canonical form, an exception repaired in
+https://github.com/danbri/factoidal/issues/963.
 
 The `Table` that `IdJoin.joinIds` builds denotes the rows of `idJoin` of
 the tables' rows, `unbound` read as absent, and `IdJoin.unionIds` the

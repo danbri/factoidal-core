@@ -48,7 +48,10 @@
 #                its queries: two named graphs with the same triples and a
 #                named graph with the triples of the default graph, under
 #                GRAPH ?g and GRAPH <i> (issue 776: the evaluator selects a
-#                graph by its name, not by its triples).
+#                graph by its name, not by its triples). Then the same for
+#                tests/sbm11/xmlliteral/data.nq (two rdf:XMLLiteral literals
+#                with one canonical XML: two RDF terms, issue 963) and its
+#                check.sh, which also fixes the row counts.
 #   (e) checks   `l4sbm11 prm-check` (the byte-array PRM1 decoder against the
 #                list decoder of the round-trip theorem; and the PRM1 range
 #                search of issue 805, PrmRange.rangeM, against decoding the
@@ -356,6 +359,13 @@ gate_part() {
 }
 gate_part "$HERE/gate/gate.nq" "$HERE/gate" "$TMP/gate"
 gate_part "$HERE/gate/samegraphs/data.nq" "$HERE/gate/samegraphs" "$TMP/gate-samegraphs"
+# Two rdf:XMLLiteral literals with one canonical XML and two lexical forms:
+# two RDF terms on both paths (RDF 1.1 Concepts 3.3, issue 963), and the
+# row counts of tests/sbm11/xmlliteral/check.sh.
+gate_part "$HERE/xmlliteral/data.nq" "$HERE/xmlliteral" "$TMP/gate-xmlliteral"
+xrc=0; xout="$("$HERE/xmlliteral/check.sh" 2>&1)" || xrc=$?
+if [ "$xrc" -eq 0 ]; then record gate xmlliteral-check 0 "$(printf '%s' "$xout" | tr '\n' ' ')"
+else record gate xmlliteral-check 1 "exit $xrc: $(printf '%s' "$xout" | tr '\n' ' ')"; fi
 
 echo "=== (e) decoder checks on every PRM1 file and frame"
 if out="$("$BIN/l4sbm11" prm-check "$GEN" 2>&1)"; then record checks prm-check 0 "$(printf '%s' "$out" | tr '\n' ' ' | head -c 150)"

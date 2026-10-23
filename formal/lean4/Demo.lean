@@ -67,5 +67,6 @@ def main : IO Unit := do
   -- Literal equality subtleties, printed:
   IO.println s!"\"chat\"@EN  ==engine==  \"chat\"@en   ? {lEN.eqb lEnLc}"
   IO.println s!"\"chat\"@EN  ==strict==  \"chat\"@en   ? {lEN.termEq lEnLc}"
-  IO.println s!"XMLLiteral <a x y> vs <a y x> (attr order) ? {xml1.eqb xml2}"
-  IO.println s!"XMLLiteral <a x=1> vs <a x=9>             ? {xml1.eqb xml3}"
+  IO.println s!"XMLLiteral <a x y> vs <a y x> (attr order) ==term==  ? {xml1.eqb xml2}"
+  IO.println s!"XMLLiteral <a x y> vs <a y x> (attr order) ==value== ? {xml1.valueEqb xml2}"
+  IO.println s!"XMLLiteral <a x=1> vs <a x=9>             ==value== ? {xml1.valueEqb xml3}"

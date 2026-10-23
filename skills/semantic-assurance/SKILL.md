@@ -33,6 +33,13 @@ it does not authorize publishing, messaging, or changes outside the task.
   two named graphs is permitted. Preserve legitimate SPARQL solution bags.
 - Literal lexical identity differs from datatype value equality, including
   XMLLiteral values. Test both duplicate retention and accidental collapse.
+  When a fast path and the reference engine disagree, check which one the
+  specification supports before you make one match the other. 2026-10-23: the
+  SBM11 id path refused `rdf:XMLLiteral` local terms so that the reference
+  answered, but the reference was the defective side (it joined by canonical
+  XML; SPARQL 1.1 18.3 joins by RDF term equality). The refusal sent correct
+  queries to an incorrect answer until
+  https://github.com/danbri/factoidal/issues/963 repaired `Term.eqb`.
 - A search without refutation is not automatically a model. A missing
   consequence is not automatically non-entailment. Preserve unknown, caps,
   unsupported scope, and checked model/countermodel evidence separately.

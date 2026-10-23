@@ -139,19 +139,22 @@ def lEnLc : Literal := (Literal.langString "chat" "en").val
 #guard lEN.termEq lEnLc == false
 
 -- rdf:XMLLiteral: attribute order is c14n-insignificant, so these are
--- the SAME value under engine equality (WebOnt-miscellaneous-202)...
+-- the SAME value (`valueEqb`, WebOnt-miscellaneous-202) but two different
+-- RDF terms (`eqb`, RDF 1.1 Concepts §3.3; issue 963)...
 def xml1 : Literal :=
   { lexicalForm := "<a x=\"1\" y=\"2\"/>", datatype := rdfXMLLiteral,
     langTag := none, direction := none }
 def xml2 : Literal :=
   { lexicalForm := "<a y=\"2\" x=\"1\"></a>", datatype := rdfXMLLiteral,
     langTag := none, direction := none }
-#guard xml1.eqb xml2 == true
--- ...while genuinely different markup stays different.
+#guard xml1.eqb xml2 == false
+#guard xml1.valueEqb xml2 == true
+-- ...while different markup is a different value too.
 def xml3 : Literal :=
   { lexicalForm := "<a x=\"9\"/>", datatype := rdfXMLLiteral,
     langTag := none, direction := none }
 #guard xml1.eqb xml3 == false
+#guard xml1.valueEqb xml3 == false
 
 /-! ### Blank-node renaming reaches inside triple terms -/
 

@@ -611,8 +611,8 @@ def termTable : List (String × List String) := [
   ("\"<a  b='1'/>\"^^<http://www.w3.org/1999/02/22-rdf-syntax-ns#XMLLiteral> .", ["ok(\"\\\"<a  b='1'/>\\\"^^<http://www.w3.org/1999/02/22-rdf-syntax-ns#XMLLiteral>\")",
     "ok(\"\\\"<a  b='1'/>\\\"^^<http://www.w3.org/1999/02/22-rdf-syntax-ns#XMLLiteral>\")",
     "1333030609920413699",
-    "ok(\"\\\"<a b=\\\\\\\"1\\\\\\\"></a>\\\"^^<http://www.w3.org/1999/02/22-rdf-syntax-ns#XMLLiteral>\")",
-    "12044940314552929710"]),
+    "ok(\"\\\"<a  b='1'/>\\\"^^<http://www.w3.org/1999/02/22-rdf-syntax-ns#XMLLiteral>\")",
+    "1333030609920413699"]),
   ("<<( <http://a/s> <http://a/p> <http://a/o> )>> .", ["ok(\"<<( <http://a/s> <http://a/p> <http://a/o> )>>\")",
     "error(RDF 1.2 triple term requires mode .rdf12)",
     "12131285083262620389",
@@ -636,8 +636,8 @@ def termTable : List (String × List String) := [
   ("<<( <http://a/s> <http://a/p> <<( <http://a/s> <http://a/p> <<( _:b <http://a/p> \"<a  b='1'/>\"^^<http://www.w3.org/1999/02/22-rdf-syntax-ns#XMLLiteral> )>> )>> )>> .", ["ok(\"<<( <http://a/s> <http://a/p> <<( <http://a/s> <http://a/p> <<( _:b <http://a/p> \\\"<a  b='1'/>\\\"^^<http://www.w3.org/1999/02/22-rdf-syntax-ns#XMLLiteral> )>> )>> )>>\")",
     "error(RDF 1.2 triple term requires mode .rdf12)",
     "568093988719086980",
-    "ok(\"<<( <http://a/s> <http://a/p> <<( <http://a/s> <http://a/p> <<( _:b <http://a/p> \\\"<a b=\\\\\\\"1\\\\\\\"></a>\\\"^^<http://www.w3.org/1999/02/22-rdf-syntax-ns#XMLLiteral> )>> )>> )>>\")",
-    "16181699609238892708"])
+    "ok(\"<<( <http://a/s> <http://a/p> <<( <http://a/s> <http://a/p> <<( _:b <http://a/p> \\\"<a  b='1'/>\\\"^^<http://www.w3.org/1999/02/22-rdf-syntax-ns#XMLLiteral> )>> )>> )>>\")",
+    "568093988719086980"])
 ]
 
 #guard termTable.all fun (d, want) =>

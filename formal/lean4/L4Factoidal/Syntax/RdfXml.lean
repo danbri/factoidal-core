@@ -622,12 +622,13 @@ canonical-form rules matter for the shape produced here:
   * an empty element is written open+close, never self-closing;
   * the top-level element(s) of the content carry the namespace
     declarations inherited from the enclosing document.
-Attribute ORDER is also part of c14n, but it is not part of this
-function's job: `RDF.XmlCanon` sorts attributes when it compares two
-`rdf:XMLLiteral` values (RDF 1.1 §5.1 defines their value space that
-way), so `Literal.eqb` — and therefore graph equality and isomorphism —
-is already insensitive to it. `RDF.XmlCanon.canonTag` likewise expands
-a self-closing tag, so the two rules above are belt and braces. -/
+Attribute ORDER and the namespace axis are also part of c14n:
+`parseTypeLiteral` passes this function's text through
+`RDF.XmlCanon.canonicalize`, which sorts attributes, keeps only the
+visibly used namespace declarations and expands a self-closing tag.
+(Until 2026-10-23 that was left to `Literal.eqb`, which compared
+`rdf:XMLLiteral` values by canonical XML; issue 963 made it RDF term
+equality.) -/
 
 /-- §2.4 escaping for character data. -/
 def escapeText (s : String) : String :=
@@ -939,10 +940,16 @@ def closePropertyElt (st : St) (r : Res) : Res :=
   ⟨r.triples, closePropertyScope st r.st⟩
 
 /-- `[7.2.17] parseTypeLiteralPropertyElt` (also the target of
-`[7.2.20]`). -/
+`[7.2.20]`). The lexical form is the exclusive canonical XML of the content
+(`XmlCanon.canonicalize`: a namespace declaration only where its prefix is
+visibly used, attributes in order, no self-closing tag). Since
+https://github.com/danbri/factoidal/issues/963 `Literal.eqb` compares
+`rdf:XMLLiteral` lexical forms as written, so the parser writes the canonical
+form itself (W3C `xml-canon-test001`, `xml-canon-test002`,
+`rdf12-xml-an-13`, `rdf12-xml-an-14`). -/
 def parseTypeLiteral (st : St) (subj : Subject) (pred : WfIri)
     (reif : Option WfIri) (annot : Option Subject) (children : List XML.Node) : Res :=
-  let lex := serializeLiteralContent st.scope children
+  let lex := String.ofList (XmlCanon.canonicalize (serializeLiteralContent st.scope children))
   match mkTypedLiteral? lex rdfXMLLiteral with
   | none => ⟨[], st.fail "rdf:XMLLiteral cannot type this literal"⟩
   | some l =>

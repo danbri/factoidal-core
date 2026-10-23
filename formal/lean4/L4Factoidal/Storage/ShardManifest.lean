@@ -1234,8 +1234,9 @@ def constantSubjectOf : PatternSubject → Option Term
 def constantObjectOf : PatternTerm → Option Term
   | .iri value => some (.iri value)
   | .literal value =>
-      -- A language-tagged literal and an `rdf:XMLLiteral` are compared by
-      -- `Term.eqb`, which folds language-tag CASE and canonicalises XML, while
+      -- A language-tagged literal is compared by `Term.eqb`, which folds
+      -- language-tag CASE (until 2026-10-23 it also canonicalised
+      -- `rdf:XMLLiteral`, issue 963; that exclusion is kept), while
       -- a zone bound is the version-2 wire key, which does neither. `"chat"@en-US`
       -- and `"chat"@en-us` are one value with two keys, so a zone test on the
       -- query's key can drop a block that holds a matching row. This is the
