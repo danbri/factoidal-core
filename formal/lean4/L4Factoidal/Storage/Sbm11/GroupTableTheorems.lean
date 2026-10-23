@@ -22,8 +22,8 @@ induction on the pattern:
   patterns, property paths, `{}`, Join, LeftJoin (OPTIONAL) with the
   condition `true` (`LeftJoinTableTheorems`) or with an EXISTS-free
   condition, FILTER with an EXISTS-free condition (`FilterTableTheorems`),
-  Union, MINUS, GRAPH with an IRI and VALUES (`LocalTableTheorems`), at any
-  depth (`ExecHyps`),
+  Union, MINUS, GRAPH with an IRI, VALUES and BIND (`LocalTableTheorems`),
+  at any depth (`ExecHyps`),
   `evalGroupM` run from any state that keeps the invariant of the
   query-local vocabulary (`LocalVocab.Inv`) refuses with a refusal of that
   vocabulary (`LocalVocab.LocalRefusal`), or returns a well-formed table
@@ -57,11 +57,13 @@ memoised conjuncts and for the merged rows of a pair.
 FILTER and LeftJoin conditions with an EXISTS or NOT EXISTS conjunct (the
 semi-joins `semiJoinByM`), with a UUID, STRUUID or BNODE call, or with a
 STRSTARTS, STRENDS or CONTAINS test on dictionary keys
-(`FilterIdTheorems.StrForm`); GRAPH with a variable, BIND (`extendM`) and
-a sub-SELECT (`subSelectM`): `ExecHyps` is `False` for them. VALUES with a
-term whose language tag is not in lower case, or with a variable twice:
-`ExecHyps` is `False` (the id path folds language tags, and `Allowed`
-compares terms exactly). Tested by `tests/sbm11/gate/ids-*.rq` and the W3C
+(`FilterIdTheorems.StrForm`); GRAPH with a variable and a sub-SELECT
+(`subSelectM`): `ExecHyps` is `False` for them. VALUES with a term whose
+language tag is not in lower case, or with a variable twice, and BIND with
+an expression that reads a freshness key (UUID, STRUUID, BNODE) or whose
+value can have a language tag not in lower case on such rows: `ExecHyps` is
+`False` (the id path folds language tags, and `Allowed` compares terms
+exactly). Tested by `tests/sbm11/gate/ids-*.rq` and the W3C
 census.
 
 
@@ -469,9 +471,14 @@ theorem cidOk_sok {dec : UInt64 → Term} {sok ok : UInt64 → Prop} (hsok : ∀
     FILTER, `FilterOk` (an EXISTS-free condition whose conjuncts are
     `FilterIdTheorems.CjOk`); at VALUES, distinct variables and terms that
     are their own `normalizeTerm` (language tags in lower case: the id path
-    folds them, RDF 1.1 Concepts 3.3, and `Allowed` compares terms exactly).
-    `False` for the constructors not proved here (GRAPH with a variable,
-    BIND, sub-SELECT, LATERAL, SERVICE). -/
+    folds them, RDF 1.1 Concepts 3.3, and `Allowed` compares terms exactly);
+    at BIND, an EXISTS-free expression whose variables `residualVars` lists,
+    that reads no freshness key (no UUID, STRUUID or BNODE; `translate`
+    refuses those), and whose value on a mapping of terms that are their own
+    `normalizeTerm` is such a term (it fails for a language tag not in lower
+    case that the expression builds, e.g. `STRLANG("a", "EN")`). `False` for
+    the constructors not proved here (GRAPH with a variable, sub-SELECT,
+    LATERAL, SERVICE). -/
 def ExecHyps (LP : QueryPattern → Graph → Prop) (cx : NCx Id) (cid : Term → Option UInt64) (ds : Dataset)
     (gof : Graph → GCtx) : QueryPattern → Graph → Prop
   | .bgp b, a => LP (.bgp b) a
@@ -489,6 +496,11 @@ def ExecHyps (LP : QueryPattern → Graph → Prop) (cx : NCx Id) (cid : Term �
         ExecHyps LP cx cid ds gof q g
     | none => ∀ x, cid (.iri i) = some x → cx.named.contains x = false
   | .values vars rows, _ => vars.Nodup ∧ ∀ row ∈ rows, ∀ t, some t ∈ row → normalizeTerm t = t
+  | .bind e v q, a => e.existsFree = true ∧ (∃ vs, residualVars e = some vs) ∧
+      (∀ w ∈ e.refVars, ¬ ExprLocalTheorems.IsFx w) ∧
+      (∀ mu : Binding, (∀ p ∈ mu, normalizeTerm p.2 = p.2) → ∀ s r,
+        refBinder cx.env e Graph.empty (Binding.withFreshnessCtx s v mu) = some r → normalizeTerm r = r) ∧
+      ExecHyps LP cx cid ds gof q a
   | _, _ => False
 
 /-- What the nested evaluator gives for `p` from the state `nst1`: a
@@ -866,7 +878,16 @@ theorem query_where_allowed_exec (env : EvalEnv) (ds : Dataset)
     · rw [hv1, hrows]
       exact fun r hr => hoq r (List.mem_filter.mp hr).1
   | .lateral _ _, _, h, _, _ => h.elim
-  | .bind _ _ _, _, h, _, _ => h.elim
+  | .bind e v q, a, h, nst1, hi1 => by
+    obtain ⟨hef, ⟨vs, hvs⟩, hfx, hnorm, hq⟩ := h
+    rw [evalGroupM]
+    refine ends_bind (query_where_allowed_exec env ds hpm hscan hds hid hdec hsok hcid hidv hcid0 htag hcidN henv
+      htermOf hloc hcidok q a hq nst1 hi1) fun tq nst2 ⟨hwq, hAq, hoq, hi2, hp12⟩ => ?_
+    rw [henv] at hnorm
+    refine ends_mono (LocalTable.extendNM_spec cid dec ok cx hid hcid hcidok hcidN htermOf hloc hcid0 env henv e v vs
+      hvs hef hfx hnorm tq hwq nst2 hi2 hoq a) fun T s ⟨hwf, hpw, hok, hi, hp⟩ => ⟨hwf, ?_, hok, hi, hp12.trans hp⟩
+    obtain ⟨hAq', _⟩ := allowed_mono env ds dec hloc hp hi.size hAq hoq
+    exact .equiv (.bind hAq') (IdGroup.PermPw.of_pw hpw)
   | .values vars rows, a, h, nst1, hi1 => by
     obtain ⟨hnd, hn⟩ := h
     rw [evalGroupM]
