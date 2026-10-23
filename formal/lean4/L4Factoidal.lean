@@ -426,6 +426,8 @@ import L4Factoidal.Storage.Sbm11.SemiTableTheorems
 import L4Factoidal.Storage.Sbm11.ExistsTableTheorems
 import L4Factoidal.Storage.Sbm11.ScopeTheorems
 import L4Factoidal.Storage.Sbm11.GroupTableTheorems
+import L4Factoidal.Storage.Sbm11.QueryEnv
+import L4Factoidal.Storage.Sbm11.HarnessWhereTheorems
 import L4Factoidal.Storage.Sbm11.ExprLocalTheorems
 import L4Factoidal.Storage.Sbm11.FilterIdTheorems
 import L4Factoidal.Storage.Sbm11.FilterTableTheorems

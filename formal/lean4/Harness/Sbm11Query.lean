@@ -84,6 +84,7 @@ import Harness.Sbm11Gen
 import Harness.Sbm11Delta
 import L4Factoidal.Storage.Sbm11.IdQuery
 import L4Factoidal.Storage.Sbm11.IdGroup
+import L4Factoidal.Storage.Sbm11.QueryEnv
 import L4Factoidal.Storage.Sbm11.TermKeyFast
 import L4Factoidal.Storage.Sbm11.ParallelScan
 import L4Factoidal.Storage.Sbm11.Overlay
@@ -1246,10 +1247,12 @@ def emitGraph (graph : Graph) (emit : ByteArray → IO Unit) : IO Nat := do
 /-- The query's environment for expressions (NOW read once, BASE, the
     GeoSPARQL extension functions), without a dataset: the id path's
     post-processing and residual FILTERs (issue 823) read no EXISTS. The
-    reference fallback adds its dataset (`runReference`). -/
+    reference fallback adds its dataset (`runReference`). The theorem for the
+    WHERE clause under this environment:
+    `HarnessWhereTheorems.harness_where_allowed`. -/
 def queryEnv (q : Query) : IO EvalEnv := do
   let clockEnv ← L4Wasm.Ops.emptyEnvNow
-  return { clockEnv with ext := L4Factoidal.Geo.extFns, base := q.base }
+  return IdGroup.queryEnvOf clockEnv q.base
 
 /-- Write the answer of a post-processed id plan (issue 823) as
     `runReference` writes the reference evaluator's answer of the same form. -/
