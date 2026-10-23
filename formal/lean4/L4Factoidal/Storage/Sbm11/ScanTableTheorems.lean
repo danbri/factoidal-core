@@ -1312,6 +1312,57 @@ theorem scanTable_sortOk (t : Pat) (perm : Nat) (hmiss : t.hasMissing = false)
       · subst heq; exact Nat.le_refl _
     · cases hsv
 
+/-- The solution mappings of the rows a scan keeps are, row for row, the
+    model's scan of the pattern over the permutation's listing. -/
+theorem keptRows_pw (t : Pat) (perm : Nat) (hperm : perm < 4) (gid : UInt64) (htg : t.g = .const gid)
+    (hnamed : t.named = false) (hmiss : t.hasMissing = false) (R : List Row) (hfit : ∀ r ∈ R, Fits r) :
+    Pw RowEq ((R.filter (keep (mkSpec t perm (fun _ => true)))).map (seenRow (specAcc t perm (fun _ => true))))
+      (scanRows (ipatOf t) (permListing perm gid R)) := by
+  rw [filter_map_eq_filterMap]
+  unfold scanRows IdLeaf.idEvalTP permListing
+  rw [List.filterMap_map, filterMap_filter_eq]
+  apply IdLeaf.pw_filterMap
+  intro r hr
+  exact row_opt t perm hperm gid htg hnamed hmiss r (hfit r hr)
+
+/-- The sort variable of a scan is bound, in the solution mapping of a row,
+    to the row's column `key.size`. -/
+theorem seen_sortVar (t : Pat) (perm : Nat) (hmiss : t.hasMissing = false) (v : String)
+    (hv : sortVarOf (mkSpec t perm (fun _ => true)) = some v) (r : Row) :
+    idLookup v (seenRow (specAcc t perm (fun _ => true)) r) =
+      some (rowCol r (mkSpec t perm (fun _ => true)).key.size).toUInt64 := by
+  have hI := specInv_four t perm hmiss
+  have hspec := mkSpec_eq t perm (fun _ => true)
+  generalize specAcc t perm (fun _ => true) = A at hI hspec ⊢
+  rw [hspec] at hv ⊢
+  unfold sortVarOf at hv
+  rw [show (specOf perm t.named A).outCols = A.outCols from rfl,
+    show (specOf perm t.named A).outVars = A.outVars from rfl,
+    show (specOf perm t.named A).key = A.key from rfl] at hv
+  rw [show (specOf perm t.named A).key = A.key from rfl]
+  rw [hI.outCols, hI.outVars] at hv
+  cases hs : A.seen.toList with
+  | nil =>
+    have : A.seen = #[] := by
+      apply Array.ext'; exact hs
+    rw [this] at hv; simp at hv
+  | cons p rest =>
+    have h0 : A.seen[0]? = some p := by
+      rw [← Array.getElem?_toList, hs]; rfl
+    rw [Array.getElem?_map, h0] at hv
+    simp only [Option.map_some] at hv
+    by_cases hc : (p.snd == A.key.size) = true
+    · rw [if_pos hc] at hv
+      rw [Array.getElem?_map, h0] at hv
+      simp only [Option.map_some, Option.some.injEq] at hv
+      subst hv
+      unfold seenRow
+      rw [hs]
+      have hc' : p.2 = A.key.size := by simpa using hc
+      show (if p.1 = p.1 then some (rowCol r p.2).toUInt64 else _) = _
+      rw [if_pos rfl, hc']
+    · rw [if_neg hc] at hv; cases hv
+
 /-- A permutation of an in-memory store (`m = Id`): the store answers the
     PRM1 range queries and the PRB1 reads from the arrays `ms` and `prb`
     (`PrmRangeTheorems.rangeM_array` for the range), the permutation has no
@@ -1361,12 +1412,8 @@ theorem scanTable_model (st : Store Id) (t : Pat) (perm : Nat) (hperm : perm < 4
     simpa using hI.nodup
   refine ⟨T, stats, he, ⟨by rw [hT.size, hT.vars], hT.bytes, hnd⟩, hnu, hT.vars, hT.sortVar,
     scanTable_sortOk t perm hmiss T _ hT (hsorted.filter _) (fun r hr => (List.mem_filter.mp hr).2) hnd, ?_⟩
-  · rw [hrows, filter_map_eq_filterMap]
-    unfold scanRows IdLeaf.idEvalTP permListing
-    rw [List.filterMap_map, filterMap_filter_eq]
-    apply IdLeaf.pw_filterMap
-    intro r hr
-    exact row_opt t perm hperm gid htg hnamed hmiss r (hfitR r hr)
+  · rw [hrows]
+    exact keptRows_pw t perm hperm gid htg hnamed hmiss R hfitR
 
 end L4Factoidal.Storage.Sbm11.ScanTableTheorems
 

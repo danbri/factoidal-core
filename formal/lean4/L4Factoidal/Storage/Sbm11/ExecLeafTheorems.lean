@@ -28,7 +28,8 @@ dictionary lookup).
 
 The basic graph patterns are the executed step `bgpM`, with the hypotheses
 of L4l: the four permutations in memory with no overlay (`PermMem`), the
-single-thread scans, no scan with candidates (`sipFactor = none`). A
+single-thread scans; the right scans take candidates as the store's
+`sipFactor` selects them. A
 property path leaf is the model (`IdLeaf.pathRows`); `IdQuery.pathTableM`
 against it is open. The operators above the leaves are the list evaluator
 `evalGroupIds`; the `Table` operators of `IdGroup.evalGroupM` against it are
@@ -346,13 +347,13 @@ variable (cx : NCx Id) (nst : NSt) (gof : Graph → GCtx) (prb : Nat → ByteArr
     `IdLeaf.storeLeaves` (every pattern from the SPO listing, in the written
     order), up to order. -/
 theorem exec_bgp_equiv (hpm : ∀ k, k < 4 → PermMem cx.st k (prb k) (ms k)) (hscan : cx.st.scanTable = none)
-    (hsip : cx.st.sipFactor = none) (hds : cx.ds = none) (hid : ∀ t, cx.st.idOf t = pure (cid t))
+    (hds : cx.ds = none) (hid : ∀ t, cx.st.idOf t = pure (cid t))
     (a : Graph) (b : Bgp) (hg : StoreGraph dec sok (listingsOf gof prb ms) a) (htp : ∀ tp ∈ b, ExecTp tp) :
     IdEquiv ((execLeaves cx nst gof (listingsOf gof prb ms) cid dec idv).bgp a b)
         ((storeLeaves (listingsOf gof prb ms) (fun _ => spo) (fun _ b => ⟨b, List.Perm.refl b⟩) cid dec idv).bgp a b) ∧
       ∀ r ∈ (execLeaves cx nst gof (listingsOf gof prb ms) cid dec idv).bgp a b, Nd r := by
   have hst : BgpStore cx.st (gctxId (gof a)) (listingsOf gof prb ms spo a) :=
-    ⟨fun k hk => ⟨prb k, ms k, hpm k hk, hg.2 ⟨k, hk⟩⟩, hscan, hsip⟩
+    ⟨fun k hk => ⟨prb k, ms k, hpm k hk, hg.2 ⟨k, hk⟩⟩, hscan⟩
   obtain ⟨tab, nst', hrun, hnd, heq⟩ := bgpM_rows cx cid hid hds (gof a) _ hst b htp nst
   have hrows : (execLeaves cx nst gof (listingsOf gof prb ms) cid dec idv).bgp a b = tab.idRows := by
     show (match ((bgpM cx (gof a) b).run nst).run with | .ok p => p.1.idRows | .error _ => []) = _
@@ -371,7 +372,7 @@ theorem exec_bgp_equiv (hpm : ∀ k, k < 4 → PermMem cx.st k (prb k) (ms k)) (
     of the executed id path, from store invariants. -/
 theorem leafRel_exec (env : EvalEnv) (ds : Dataset)
     (hpm : ∀ k, k < 4 → PermMem cx.st k (prb k) (ms k)) (hscan : cx.st.scanTable = none)
-    (hsip : cx.st.sipFactor = none) (hds : cx.ds = none) (hid : ∀ t, cx.st.idOf t = pure (cid t))
+    (hds : cx.ds = none) (hid : ∀ t, cx.st.idOf t = pure (cid t))
     (hdec : ∀ x y, ok x → ok y → (dec x).eqb (dec y) = (x == y)) (hsok : ∀ x, sok x → ok x)
     (hcid : ∀ c, CidOk dec sok c (cid c)) :
     ∀ (p : QueryPattern) (a : Graph), ExecLeaf dec sok ok idv (listingsOf gof prb ms) p a →
@@ -381,7 +382,7 @@ theorem leafRel_exec (env : EvalEnv) (ds : Dataset)
     (fun _ b => ⟨b, List.Perm.refl b⟩) cid dec idv sok ok hdec hsok hcid
   match p, h with
   | .bgp b, ⟨hs, htp⟩ =>
-    obtain ⟨heq, hnd⟩ := exec_bgp_equiv cx nst gof prb ms cid dec idv sok hpm hscan hsip hds hid a b hs.1 htp
+    obtain ⟨heq, hnd⟩ := exec_bgp_equiv cx nst gof prb ms cid dec idv sok hpm hscan hds hid a b hs.1 htp
     exact leafRel_bgp_transfer env ds _ _ dec ok b a (hstore (.bgp b) a hs) heq hnd
   | .propertyPath s path o, h => exact hstore (.propertyPath s path o) a h
   | .join _ _, _ => trivial
@@ -403,15 +404,15 @@ theorem leafRel_exec (env : EvalEnv) (ds : Dataset)
     executed id path (`execLeaves`: each basic graph pattern the table that
     `IdGroup.bgpM` returns from the store's permutations) decodes to an
     answer SPARQL 1.1 allows, with ids in `ok`. Hypotheses: the store
-    (`PermMem` of each permutation, single-thread scans, no scan with
-    candidates, a dictionary lookup `cid` that never fails), no dataset
+    (`PermMem` of each permutation, single-thread scans, a dictionary
+    lookup `cid` that never fails; any `sipFactor`), no dataset
     clause, `hdec`, `hsok`, `hcid` (as `IdLeaf.where_allowed`), and
     `HypsW ExecLeaf`: at each leaf, `StoreGraph` of its active graph over the
     store's listings and the leaf's shape; elsewhere, each term the evaluator
     encodes decodes back. No hypothesis states a leaf's rows. -/
 theorem where_allowed_exec (env : EvalEnv) (ds : Dataset)
     (hpm : ∀ k, k < 4 → PermMem cx.st k (prb k) (ms k)) (hscan : cx.st.scanTable = none)
-    (hsip : cx.st.sipFactor = none) (hds : cx.ds = none) (hid : ∀ t, cx.st.idOf t = pure (cid t))
+    (hds : cx.ds = none) (hid : ∀ t, cx.st.idOf t = pure (cid t))
     (hdec : ∀ x y, ok x → ok y → (dec x).eqb (dec y) = (x == y)) (hsok : ∀ x, sok x → ok x)
     (hcid : ∀ c, CidOk dec sok c (cid c)) (p : QueryPattern) (a : Graph) (hp : IdGroup.InIdFragment p)
     (h : IdGroup.HypsW (ExecLeaf dec sok ok idv (listingsOf gof prb ms)) env ds
@@ -423,7 +424,7 @@ theorem where_allowed_exec (env : EvalEnv) (ds : Dataset)
         RowIds ok r :=
   IdGroup.evalGroupIds_allowed env ds _ dec idv ok hdec p a hp
     (IdGroup.HypsW.mono env ds _ dec idv ok
-      (leafRel_exec cx nst gof prb ms cid dec idv sok ok env ds hpm hscan hsip hds hid hdec hsok hcid) p a h)
+      (leafRel_exec cx nst gof prb ms cid dec idv sok ok env ds hpm hscan hds hid hdec hsok hcid) p a h)
 
 end
 
