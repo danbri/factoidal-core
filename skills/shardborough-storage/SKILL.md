@@ -1029,6 +1029,22 @@ A refusal after reading must come before the first
 (`IdPathClosureTheorems`, lemma L5q): `fixpoint_mem`, `star_mem`, `plus_mem`,
 `reachModel_some`, `reachModel_mem`, `starFrom_mem`, `plusFrom_mem`.
 
+FILTER EXISTS / NOT EXISTS on ids (2026-10-23,
+https://github.com/danbri/factoidal/issues/956; record: section 23 of the
+stage 4 record). A conjunct `EXISTS { B }` or `NOT EXISTS { B }` of a FILTER
+of the top group, `B` a basic graph pattern, runs on ids (`Plan.semis`,
+`IdQuery.semiJoinM`): `B` is evaluated by itself and the rows are kept when
+some row of `B` is compatible (or none is) after every join. Trap: the
+reference SUBSTITUTES the row into `B` (section 18.6), and substitution leaves
+a variable bound to a literal in a subject position, or to a triple term, as a
+variable of `B`; then the substituted pattern is not `B` restricted to the
+row (`?s :name ?n FILTER EXISTS { ?n :knows ?y }` keeps every row with a
+`:knows` triple anywhere). The id path checks each row and refuses with an
+error that starts with `refused:` (gate `ref-exists-literal-subject.rq`);
+`runPlanM` emits the JSON head only after that check. Theorems
+(`IdExistsTheorems`, lemma L5r): `exists_bgp_iff`, `semi_decode`,
+`exists_decode`, `exists_filter_decode`.
+
 Sideways information passing (2026-10-13,
 https://github.com/danbri/factoidal/issues/809; record: section 11 of the
 stage 4 record). The right scan of a join (merge or hash), and the first scan

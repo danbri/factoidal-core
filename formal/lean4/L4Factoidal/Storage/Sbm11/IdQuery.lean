@@ -99,8 +99,20 @@ A query whose WHERE clause is in the fragment but whose SELECT clause is not
 (expressions, aggregates other than COUNT, HAVING, GROUP BY or ORDER BY an
 expression, REDUCED), and every ASK and CONSTRUCT, run the WHERE clause on
 ids and the reference evaluator's post-WHERE function on the decoded
-solutions (`PostSpec`, `runPostM`; theorems in `IdPostTheorems`). EXISTS and
-NOT EXISTS, anywhere, and DESCRIBE stay refused.
+solutions (`PostSpec`, `runPostM`; theorems in `IdPostTheorems`). DESCRIBE
+stays refused.
+
+FILTER EXISTS / NOT EXISTS (https://github.com/danbri/factoidal/issues/956,
+SPARQL 1.1 section 18.6): a conjunct `EXISTS { B }` or `NOT EXISTS { B }` of a
+FILTER of the top group, outside GRAPH, with no OPTIONAL in the WHERE clause,
+`B` a basic graph pattern (`flattenWhere`, `Plan.semis`). `B` is evaluated by
+itself, and after every join the rows are kept when some row of `B` is
+compatible with them, or none is (`semiJoinM`, `semiMatches`). The reference
+substitutes each row into `B`; a row that binds a variable of `B` to a term
+that substitution leaves out (a literal in a subject position, a triple term)
+refuses the query after the joins, before anything is emitted. Theorems:
+`IdExistsTheorems`. EXISTS elsewhere (an inner group, GRAPH, OPTIONAL, BIND,
+SELECT expressions) stays refused.
 
 RDF 1.2 triple terms (https://github.com/danbri/factoidal/issues/792 item
 1). A stored triple term has an id of tag 9 (dictionary class 7), and joins,
@@ -273,6 +285,23 @@ structure PathBlock where
 
 instance : Inhabited PathBlock := ⟨{ s := .var "", path := .negatedSet [], o := .var "" }⟩
 
+/-- How a block of `SemiBlock` restricts the rows of the WHERE clause
+    (https://github.com/danbri/factoidal/issues/956): `FILTER EXISTS { B }`
+    keeps a row when some solution of `B` is compatible with it (`semi`),
+    `FILTER NOT EXISTS { B }` when none is (`anti`). -/
+inductive SemiKind where
+  | semi
+  | anti
+  deriving Inhabited, BEq, Repr
+
+/-- A conjunct `EXISTS { B }` or `NOT EXISTS { B }` of a FILTER of the top
+    group, `B` a basic graph pattern (issue 956), as the patterns of `B` over
+    the default graph. -/
+structure SemiBlock where
+  pats : Array PatSpec
+  kind : SemiKind
+  deriving Inhabited
+
 /-- The dataset of a query with FROM / FROM NAMED (SPARQL 1.1 section 13.2,
     https://github.com/danbri/factoidal/issues/953): the IRIs of the FROM
     clauses, each once, in order, and the IRIs of the FROM NAMED clauses
@@ -346,6 +375,11 @@ structure Plan where
       evaluated on ids (`pathTableM`) and joined with the rows of `pats` after
       the BIND blocks; never with `optionals` -/
   paths : Array PathBlock := #[]
+  /-- the FILTER EXISTS and FILTER NOT EXISTS conjuncts of the top group
+      (issue 956), each body a basic graph pattern evaluated by itself; the
+      rows of the WHERE clause are restricted by each after every join
+      (`semiJoinM`) -/
+  semis : Array SemiBlock := #[]
   proj : Array ProjItem
   /-- the result variables (`Query.projectedVars`) -/
   outVars : Array String
@@ -435,6 +469,14 @@ def PathBlock.vars (b : PathBlock) : Array String := Id.run do
 
 def pathVars (ps : Array PathBlock) : Array String :=
   ps.foldl (fun a b => b.vars.foldl (fun a v => if a.contains v then a else a.push v) a) #[]
+
+/-- The variables of the patterns of a `SemiBlock`. -/
+def SemiBlock.vars (b : SemiBlock) : Array String :=
+  b.pats.foldl (fun a t => t.vars.foldl (fun a v => if a.contains v then a else a.push v) a) #[]
+
+/-- The variables of a plan's EXISTS and NOT EXISTS blocks (issue 956). -/
+def semiVars (bs : Array SemiBlock) : Array String :=
+  bs.foldl (fun a b => b.vars.foldl (fun a v => if a.contains v then a else a.push v) a) #[]
 
 /-- The variables of a plan's BIND blocks. -/
 def bindVars (bs : Array BindBlock) : Array String :=
@@ -760,9 +802,10 @@ def splitFilter (c : Expr) (inScope allVars : Array String) :
 def flattenWhere (p : QueryPattern) (allVars : Array String) :
     Except String (Array PatSpec × Array Expr × Array Expr × Array ValuesBlock ×
       Array (Array QueryPattern) × Array (Array (Expr × String) × QueryPattern) × Array Expr ×
-      Array PathBlock) := do
+      Array PathBlock × Array SemiBlock) := do
   let mut stack : Array WalkItem := #[⟨p, .dflt⟩]
   let mut paths : Array PathBlock := #[]
+  let mut semis : Array SemiBlock := #[]
   -- the root and the FILTERs around it: the top group (issue 953)
   let mut atTop := true
   let mut binds : Array (Array (Expr × String) × QueryPattern) := #[]
@@ -790,6 +833,25 @@ def flattenWhere (p : QueryPattern) (allVars : Array String) :
         -- is applied after every join (issue 953)
         let bscope := if top then bindScopeVars q ++ pathScopeVars q else #[]
         for cj in conjuncts c do
+          -- issue 956: `EXISTS { B }` / `NOT EXISTS { B }` of the top group,
+          -- `B` a basic graph pattern: a semi-join after every join
+          let semi? : Option (L4Factoidal.SPARQL.Bgp × SemiKind) := match cj with
+            | .existsPat (.bgp b) => some (b, .semi)
+            | .notExistsPat (.bgp b) => some (b, .anti)
+            | _ => none
+          if semi?.isNone && top then
+            match cj with
+            | .existsPat _ | .notExistsPat _ =>
+              throw "an EXISTS or NOT EXISTS whose pattern is not a basic graph pattern"
+            | _ => pure ()
+          if let some (b, kind) := semi? then
+            let isDflt := match g with | .dflt => true | _ => false
+            unless top && isDflt do throw "a FILTER with EXISTS, NOT EXISTS or an aggregate"
+            let mut bp : Array PatSpec := #[]
+            for tp in b do
+              bp := bp.push { s := ← argOfSubject tp.s, p := ← argOfTerm tp.p, o := ← argOfObject tp.o, g := .dflt }
+            semis := semis.push { pats := bp, kind }
+            continue
           let vs := (residualVars cj).getD #[]
           if !bscope.isEmpty && vs.any bscope.contains then
             unless cj.existsFree && (residualVars cj).isSome do
@@ -843,7 +905,7 @@ def flattenWhere (p : QueryPattern) (allVars : Array String) :
       | .empty => pure ()
       | _ => throw "a WHERE clause outside the fragment (OPTIONAL not at the top level, MINUS, sub-SELECT or SERVICE)"
   if !stack.isEmpty then throw s!"a WHERE clause with more than {maxNodes} nodes"
-  return (pats, filters, residuals, values, unions, binds, late, paths)
+  return (pats, filters, residuals, values, unions, binds, late, paths, semis)
 where
   /-- The branches of a chain `Union(... Union(P1, P2) ..., Pk)`, in order.
       A branch that is a group holding a UNION is a branch (refused by
@@ -887,7 +949,8 @@ def flattenUnions (raw : Array (Array QueryPattern)) (allVars : Array String) :
   for leaves in raw do
     let mut bs : Array UnionBranch := #[]
     for q in leaves do
-      let (pats, filters, residuals, values, unions, binds, _, paths) ← flattenWhere q allVars
+      let (pats, filters, residuals, values, unions, binds, _, paths, semis) ← flattenWhere q allVars
+      if !semis.isEmpty then throw "a FILTER with EXISTS, NOT EXISTS or an aggregate"
       if !paths.isEmpty then throw "a property path inside a UNION branch"
       if !binds.isEmpty then throw "a BIND inside a UNION branch"
       if !unions.isEmpty then throw "a UNION inside a UNION branch"
@@ -908,7 +971,8 @@ def flattenBinds (raw : Array (Array (Expr × String) × QueryPattern)) (allVars
     Except String (Array BindBlock) := do
   let mut out : Array BindBlock := #[]
   for (exts, q) in raw do
-    let (pats, filters, residuals, values, unions, binds, _, paths) ← flattenWhere q allVars
+    let (pats, filters, residuals, values, unions, binds, _, paths, semis) ← flattenWhere q allVars
+    if !semis.isEmpty then throw "a FILTER with EXISTS, NOT EXISTS or an aggregate"
     if !paths.isEmpty then throw "a BIND over a group with a property path"
     if !binds.isEmpty then throw "a BIND over a group that holds a BIND block"
     if !values.isEmpty then throw "a BIND over a group with a VALUES block"
@@ -977,14 +1041,15 @@ def hasGraph (q : QueryPattern) : Bool := Id.run do
 def flattenOptional (p : QueryPattern) :
     Except String (Array PatSpec × Array Expr × Array Expr × Array Expr × Array OptGroup ×
       Array ValuesBlock × Array (Array UnionBranch) × Array BindBlock × Array Expr ×
-      Array PathBlock) := do
+      Array PathBlock × Array SemiBlock) := do
   let allVars := whereVars p
   let (tops, base, raw) := optionalSpine p
   if raw.isEmpty then
-    let (pats, filters, residuals, values, unions, binds, late, paths) ← flattenWhere p allVars
+    let (pats, filters, residuals, values, unions, binds, late, paths, semis) ← flattenWhere p allVars
     return (pats, filters, residuals, #[], #[], values, ← flattenUnions unions allVars,
-      ← flattenBinds binds allVars, late, paths)
-  let (pats, filters, residuals, values, unions, binds, _, paths) ← flattenWhere base allVars
+      ← flattenBinds binds allVars, late, paths, semis)
+  let (pats, filters, residuals, values, unions, binds, _, paths, semis) ← flattenWhere base allVars
+  if !semis.isEmpty then throw "a FILTER with EXISTS, NOT EXISTS or an aggregate"
   if !paths.isEmpty then throw "a property path beside an OPTIONAL"
   if !binds.isEmpty then throw "a BIND beside an OPTIONAL"
   if !values.isEmpty then throw "a VALUES block beside an OPTIONAL"
@@ -1010,7 +1075,8 @@ def flattenOptional (p : QueryPattern) :
   let mut groups : Array OptGroup := #[]
   for (r, c) in raw do
     if hasGraph r then throw "a GRAPH inside an OPTIONAL group"
-    let (gp, gf, gr, gv, gu, gb, _, gpaths) ← flattenWhere r allVars
+    let (gp, gf, gr, gv, gu, gb, _, gpaths, gsemis) ← flattenWhere r allVars
+    if !gsemis.isEmpty then throw "a FILTER with EXISTS, NOT EXISTS or an aggregate"
     if !gpaths.isEmpty then throw "a property path inside an OPTIONAL group"
     if !gb.isEmpty then throw "a BIND inside an OPTIONAL group"
     if !gv.isEmpty then throw "a VALUES block inside an OPTIONAL group"
@@ -1038,7 +1104,7 @@ def flattenOptional (p : QueryPattern) :
         for j in [0:groups.size] do
           if j != k && groups[j]!.vars.contains v then
             throw s!"?{v} occurs in two OPTIONAL groups and not in the triple patterns before them"
-  return (pats, filters ++ topFilters, residuals ++ topResiduals, postFilters, groups, #[], #[], #[], #[], #[])
+  return (pats, filters ++ topFilters, residuals ++ topResiduals, postFilters, groups, #[], #[], #[], #[], #[], #[])
 
 /-- The number of first WHERE solutions the answer of a post-processed query
     reads (`PostSpec.firstRows`), or `none` for all of them.
@@ -1158,7 +1224,7 @@ def translate (q : L4Factoidal.SPARQL.Query) : Except String Plan := do
   let dataset ← datasetSpec q.dataset
   if q.pattern.mentionsFulltext then
     throw "text:query (full-text search): the reference evaluator answers it"
-  let (pats, filters, residuals, postFilters, optionals, values, unions, binds, lateFilters, paths) ←
+  let (pats, filters, residuals, postFilters, optionals, values, unions, binds, lateFilters, paths, semis) ←
     flattenOptional q.pattern.rewriteBnodes
   if dataset.isSome && !paths.isEmpty then
     throw "a property path with FROM or FROM NAMED"
@@ -1172,7 +1238,7 @@ def translate (q : L4Factoidal.SPARQL.Query) : Except String Plan := do
       fun v => !(allPats.any fun t => t.vars.contains v))
   let base : Plan := {
     pats, filters, residuals, postFilters, optionals, values, unions, dataset, binds, lateFilters, paths,
-    proj := #[], outVars := #[],
+    semis, proj := #[], outVars := #[],
     groupVars := #[], agg := false, order := #[], distinct := false, offset := 0,
     limit := none }
   let post (why : String) : Except String Plan := do
@@ -3750,6 +3816,121 @@ def resolveExtrasM {m : Type → Type} [Monad m] (st : Store m) (plan : Plan) (e
   let (rpaths, vocab, _, plines) ← resolvePathsM st plan vocab localIdx
   return (vtabs, btabs, st.withLocal vocab, lines ++ plines, s, rpaths)
 
+/-- Per row of `l`, whether some row of `r` is compatible with it: in every
+    column the two tables share, the ids are equal or one is
+    `OptJoin.unbound` (https://github.com/danbri/factoidal/issues/956; the
+    row test of `IdExistsTheorems.idSemi`). The rows of `r` bound in every
+    shared column go into one hash set per set of bound shared columns of a
+    left row (a bit mask, built when a left row first needs it); the other
+    rows of `r` are tested one by one. -/
+def semiMatches (l r : Table) : Array Bool := Id.run do
+  let shared : Array (Nat × Nat) := (List.range l.vars.size).toArray.filterMap fun c =>
+    (r.idx l.vars[c]!).map fun q => (c, q)
+  let mut tight : Array Nat := #[]
+  let mut loose : Array Nat := #[]
+  for j in [0:r.rows] do
+    if shared.all (fun (_, q) => r.at q j != OptJoin.unbound) then tight := tight.push j
+    else loose := loose.push j
+  let mut sets : Std.HashMap Nat (Std.HashSet (List UInt64)) := {}
+  let mut out : Array Bool := Array.mkEmpty l.rows
+  for i in [0:l.rows] do
+    let mut mask := 0
+    let mut key : List UInt64 := []
+    for k in [0:shared.size] do
+      let x := l.at shared[k]!.1 i
+      if x != OptJoin.unbound then
+        mask := mask ||| (1 <<< k)
+        key := x :: key
+    let set ← match sets[mask]? with
+      | some h => pure h
+      | none =>
+        let mut h : Std.HashSet (List UInt64) := {}
+        for j in tight do
+          let mut kj : List UInt64 := []
+          for k in [0:shared.size] do
+            if (mask >>> k) % 2 == 1 then kj := r.at shared[k]!.2 j :: kj
+          h := h.insert kj
+        sets := sets.insert mask h
+        pure h
+    let hit := set.contains key ||
+      loose.any fun j => shared.all fun (p, q) =>
+        let a := l.at p i
+        let b := r.at q j
+        a == OptJoin.unbound || b == OptJoin.unbound || a == b
+    out := out.push hit
+  return out
+
+/-- Whether substituting the id `x` into a position of a basic graph pattern
+    replaces the variable (`IdExistsTheorems.SubstOk`): a subject position
+    takes an IRI or a blank node, the other positions every term but a triple
+    term (`substPatternSubject`, `substPatternTerm`). `OptJoin.unbound` is no
+    binding. -/
+def substOkIdM {m : Type → Type} [Monad m] (st : Store m) (x : UInt64) (subject : Bool) :
+    ExceptT String m Bool := do
+  if x == OptJoin.unbound then return true
+  let t := tagOf x
+  if t == 1 || t == 2 then return true
+  if t == 9 then return false
+  if t == 3 || t == 4 || t == 5 then return !subject
+  match ← st.termOf x with
+  | .iri _ | .bnode _ => return true
+  | .literal _ => return !subject
+  | .tripleTerm _ _ _ => return false
+
+/-- `FILTER EXISTS { B }` and `FILTER NOT EXISTS { B }` of the top group on
+    ids (https://github.com/danbri/factoidal/issues/956, SPARQL 1.1 section
+    18.6): `B` evaluated by itself over the plan's dataset (every column
+    kept), then the rows of `t` kept when some row of `B` is compatible
+    (`semi`) or none is (`anti`), in order (`semiMatches`). The reference
+    substitutes the row into `B`; the two agree when each variable of `B`
+    that the row binds is replaced at every position where it occurs
+    (`IdExistsTheorems.exists_decode`). A row that binds a variable of a
+    subject position of `B` to a literal, or a variable of `B` to a triple
+    term, or a variable of a predicate position to `text:query`, refuses the
+    query (an error starting with `refused:`; the caller runs the reference
+    evaluator). -/
+def semiJoinM {m : Type → Type} [Monad m] (st : Store m) (plan : Plan) (t : Table) (b : SemiBlock) :
+    ExceptT String m (Table × String × ScanStats) := do
+  let bvars := b.vars
+  let subjVars : Array String := b.pats.filterMap fun p => p.s.var?
+  let predVars : Array String := b.pats.filterMap fun p => p.p.var?
+  let ftId ← st.idOf (.iri L4Factoidal.SPARQL.fulltextQueryPred)
+  let mut memo : Std.HashMap (UInt64 × Bool) Bool := {}
+  for c in [0:t.vars.size] do
+    let v := t.vars[c]!
+    if !bvars.contains v then continue
+    let subject := subjVars.contains v
+    let pred := predVars.contains v
+    for i in [0:t.rows] do
+      let x := t.at c i
+      let ok ← match memo[(x, subject)]? with
+        | some r => pure r
+        | none => do
+          let r ← substOkIdM st x subject
+          memo := memo.insert (x, subject) r
+          pure r
+      unless ok do
+        throw s!"refused: ?{v} is bound to a term that substitution does not put into {if subject then "a subject position" else "a position"} of an EXISTS or NOT EXISTS pattern"
+      if pred && x != OptJoin.unbound then
+        if ftId == some x then
+          throw s!"refused: ?{v} is bound to text:query in a predicate position of an EXISTS or NOT EXISTS pattern"
+        if tagOf x == tagLocal then
+          if (← st.termOf x) == .iri L4Factoidal.SPARQL.fulltextQueryPred then
+            throw s!"refused: ?{v} is bound to text:query in a predicate position of an EXISTS or NOT EXISTS pattern"
+  let (body, bs) ← if b.pats.isEmpty then
+      pure (({ vars := #[], cols := #[], rows := 1 } : Table), ({} : ScanStats))
+    else do
+      let bp ← b.pats.mapM (resolvePatIn st plan.dataset)
+      let (bt, _, s) ← evalBgpM st bp (fun _ => true)
+      pure (bt, s)
+  let hits := semiMatches t body
+  let want := b.kind == .semi
+  let mut idx : Array Nat := #[]
+  for i in [0:t.rows] do
+    if hits[i]! == want then idx := idx.push i
+  let kindText := if want then "EXISTS" else "NOT EXISTS"
+  return (t.reorder idx, s!"{kindText}: body {body.rows} rows; {t.rows} rows to {idx.size}", bs)
+
 /-- After the triple patterns and their FILTERs: the VALUES blocks
     (`joinValues`), then the rows of each UNION block (`evalUnionsM`), each
     joined in order (`IdJoin.joinIds`). -/
@@ -3790,6 +3971,14 @@ def joinExtrasM {m : Type → Type} [Monad m] (st : Store m) (plan : Plan) (env 
     let (t', _) ← applyFilters st lfs (lfs.map fun _ => {}) t
     t := t'
     lines := lines.push s!"{lfs.size} FILTER conjuncts over BIND or path variables, after the joins: {before} rows to {t.rows}"
+  -- FILTER EXISTS and FILTER NOT EXISTS of the top group (issue 956): a
+  -- FILTER of the group applies to the rows of the whole group, and each
+  -- conjunct restricts the rows by itself
+  for k in [0:plan.semis.size] do
+    let (t', line, s') ← semiJoinM st plan t plan.semis[k]!
+    t := t'
+    s := s.add s'
+    lines := lines.push s!"semi {k}: {line}"
   return (t, lines, s)
 
 /-- The base of a plan with OPTIONAL groups (issue 775): its BGP and FILTERs,
@@ -4144,14 +4333,16 @@ def runPlanM {m : Type → Type} [Monad m] (st : Store m) (plan : Plan) (emit : 
       | .count _ (some x) => a.push x
       | .count _ none => a) #[]
     ++ filterVars ++ plan.order.map (·.1) ++ plan.groupVars ++ valuesVars plan.values
-    ++ unionVars plan.unions ++ bindVars plan.binds ++ pathVars plan.paths
+    ++ unionVars plan.unions ++ bindVars plan.binds ++ pathVars plan.paths ++ semiVars plan.semis
   let need (x : String) : Bool := used.contains x
   let mut stats : RunStats := {}
-  (emit (jsonHead plan.outVars).toUTF8 : m Unit)
+  -- the JSON head is emitted when no refusal can follow (issue 956: the
+  -- semi-joins check their rows after the joins and may refuse)
   let single := pats.size == 1 && !pats[0]!.hasMissing && pats[0]!.plain && plan.optionals.isEmpty &&
     plan.values.isEmpty && plan.unions.isEmpty && plan.binds.isEmpty && plan.lateFilters.isEmpty &&
-    plan.paths.isEmpty
+    plan.paths.isEmpty && plan.semis.isEmpty
   if single && !plan.agg && plan.order.isEmpty && !plan.distinct then
+    (emit (jsonHead plan.outVars).toUTF8 : m Unit)
     -- one pattern, no modifier that needs every row: block by block
     let t := pats[0]!
     -- a STRSTARTS conjunct on a variable of the pattern: the permutation that
@@ -4257,6 +4448,7 @@ def runPlanM {m : Type → Type} [Monad m] (st : Store m) (plan : Plan) (emit : 
         | .ok t => table := t
         | .error e => throw e
       else table := t1
+    (emit (jsonHead plan.outVars).toUTF8 : m Unit)
     let out ← finishM st plan table
     let pieces := (out.rows + 4095) / 4096
     for k in [0:pieces] do
@@ -4366,7 +4558,7 @@ def whereTableM {m : Type → Type} [Monad m] (st : Store m) (plan : Plan) (env 
   if let some n := firstRows then
     if pats.size == 1 && !pats[0]!.hasMissing && pats[0]!.plain && plan.optionals.isEmpty &&
         plan.values.isEmpty && plan.unions.isEmpty && plan.binds.isEmpty && plan.lateFilters.isEmpty &&
-        plan.paths.isEmpty then
+        plan.paths.isEmpty && plan.semis.isEmpty then
       let t := pats[0]!
       let spec := mkSpec t (permFor t none) need
       let init : Table := Table.empty spec.outVars

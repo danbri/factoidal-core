@@ -25,8 +25,9 @@
 #                `l4sbm11 query` and by the in-memory reference engine
 #                (`l4factoidal query gate.nq`), equal as multisets. A query
 #                named ids-* must run on ids (path=ids); one named ref-* must
-#                take the reference fallback (path=reference): EXISTS, NOT
-#                EXISTS, MINUS, sub-SELECT, the OPTIONAL shapes outside the id
+#                take the reference fallback (path=reference): EXISTS and NOT
+#                EXISTS outside the top group or over a pattern that is not a
+#                basic graph pattern (issue 956), MINUS, sub-SELECT, the OPTIONAL shapes outside the id
 #                fragment (nested, a variable two groups share that the base
 #                does not bind, a FILTER in the group over a base variable,
 #                OPTIONAL first, GRAPH in the group), EXISTS in a SELECT

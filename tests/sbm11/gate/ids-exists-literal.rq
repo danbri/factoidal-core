@@ -1,0 +1,3 @@
+PREFIX ex: <http://ex.org/>
+# A shared variable bound to a literal, in the object position of the body.
+SELECT ?s ?a WHERE { ?s ex:age ?a FILTER EXISTS { ?t ex:age ?a . ?t ex:name ?n } }

@@ -282,7 +282,8 @@ def redirectPlan (w : WfIri) (plan : IdQuery.Plan) : IdQuery.Plan :=
               binds := plan.binds.map fun b => { b with pats := b.pats.map redir },
               paths := plan.paths.map fun b => match b.g with
                 | .dflt => { b with g := .term (.iri w) }
-                | _ => b }
+                | _ => b,
+              semis := plan.semis.map fun b => { b with pats := b.pats.map redir } }
 
 /-- The solutions of a WHERE clause on the state the operation reads, and the
     path that evaluated it. -/
@@ -312,7 +313,12 @@ def Run.evalWhere (r : Run) (u : Update) (opIx : Nat) (withIri : Option WfIri)
         throw (IO.userError s!"id query failed: {e}")
       | .ok (vtabs, btabs, st, _, _, rpaths) =>
       match ← (IdQuery.whereTableM st plan env none vtabs btabs rpaths).run with
-      | .error e => throw (IO.userError s!"id query failed: {e}")
+      | .error e =>
+        -- issue 956: an EXISTS or NOT EXISTS the id path refuses after the joins
+        if e.startsWith "refused: " then
+          r.notes.modify (·.push s!"op {opIx}: where path=reference reason=\"{e.drop 9}\"")
+          return none
+        throw (IO.userError s!"id query failed: {e}")
       | .ok (t, _, _) =>
         match ← (IdQuery.decodeRowsM st t).run with
         | .error e => throw (IO.userError s!"id query failed: {e}")
