@@ -1,4 +1,4 @@
 PREFIX ex: <http://ex.org/>
 PREFIX xsd: <http://www.w3.org/2001/XMLSchema#>
-# UNION inside GRAPH: the reference fallback.
+# UNION inside GRAPH: the nested evaluator on ids (issue 959).
 SELECT ?g ?x WHERE { GRAPH ?g { { ?x ex:knows ?y } UNION { ?y ex:knows ?x } } }

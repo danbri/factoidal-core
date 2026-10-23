@@ -300,6 +300,23 @@ def Run.evalWhere (r : Run) (u : Update) (opIx : Nat) (withIri : Option WfIri)
       r.notes.modify (·.push s!"op {opIx}: where path=reference reason=\"{why}\"")
       return none
     | .ok plan =>
+      if plan.nested.isSome then
+        -- issue 959: a nested WHERE clause; under WITH the reference evaluator
+        if withIri.isSome then
+          r.notes.modify (·.push s!"op {opIx}: where path=reference reason=\"a nested WHERE clause under WITH\"")
+          return none
+        match ← (IdGroup.nestedTableM (ss.storeNested 1 (some 16) 8192) plan env).run with
+        | .error e =>
+          if e.startsWith "refused: " then
+            r.notes.modify (·.push s!"op {opIx}: where path=reference reason=\"{e.drop 9}\"")
+            return none
+          throw (IO.userError s!"id query failed: {e}")
+        | .ok (t, st, _, _) =>
+          match ← (IdQuery.decodeRowsM st t).run with
+          | .error e => throw (IO.userError s!"id query failed: {e}")
+          | .ok rows =>
+            r.notes.modify (·.push s!"op {opIx}: where path=ids solutions={rows.length}")
+            return some rows
       let plan := match withIri with | some w => redirectPlan w plan | none => plan
       let st0 := ss.storeWith 1 (some 16) 8192
       -- the VALUES blocks as id tables, the rows of the BIND blocks, and the

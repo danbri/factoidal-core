@@ -912,11 +912,11 @@ row only (https://github.com/danbri/factoidal/issues/815). The Lean parser
 now makes the group's FILTERs the LeftJoin condition, evaluated on the merged
 row (SPARQL 1.1 section 18.2.2.5; `optionalGroup`, theorems in
 `SPARQL/OptionalFilterScope.lean`); the F* engine still has the defect
-(known-defects case `SPARQL-OPT-FILTER-SCOPE`). The id path still refuses a
-group FILTER over a left-side variable (`IdQuery.flattenOptional` reads the
-condition and throws), so such a query takes the reference fallback
-(`ref-optional-filter-outer.rq`), which now answers section 18.2.2.5. Admitting
-it on ids is open.
+(known-defects case `SPARQL-OPT-FILTER-SCOPE`). The flat planner still refuses
+a group FILTER over a left-side variable (`IdQuery.flattenOptional` reads the
+condition and throws); since issue 959 such a query runs on the nested
+evaluator, which evaluates the condition on the merged rows
+(`IdGroup.leftJoinCondM`, gate `ids-nest-optional-filter-outer.rq`).
 
 Inline VALUES on ids (2026-10-22, https://github.com/danbri/factoidal/issues/950;
 record: section 17 of the stage 4 record). A VALUES block in the WHERE clause,
@@ -1051,6 +1051,23 @@ bound variable; no substitution, so no row check); `{ P MINUS { B } Q }` is
 (`IdMinusTheorems`, lemma L5s): `minus_decode`, `minus_bgp_decode`. The W3C
 MINUS tests all have a right side with OPTIONAL or FILTER NOT EXISTS and stay
 on the fallback.
+
+Nested groups (2026-10-23, https://github.com/danbri/factoidal/issues/959;
+record: section 25 of the stage 4 record). A WHERE clause that
+`flattenOptional` refuses gets `Plan.nested := some p` unless
+`IdQuery.nestedRefusal?` names a construct with no id form (LATERAL, SERVICE,
+a GRAPH name that is not an IRI or a variable, EXISTS of a pattern that is not
+a basic graph pattern or EXISTS inside an expression, a BIND that reads the
+row index). `IdGroup.evalGroupM` then recurses on the pattern the parser
+builds, one arm per constructor, on id tables: `joinIds`, `leftJoinCondM`
+(the condition on the merged rows, so it may read left variables),
+`unionIds`, `semiMatches` for MINUS, `extendM`, `filterM` (compiled, residual,
+EXISTS of a BGP in the active graph), GRAPH with an IRI or a variable (per
+named graph of `Store.namedGraphs`, `Session.storeNested`; a lone BGP under
+`GRAPH ?g` is one scan). The flat planner keeps every query it accepted.
+Theorem (`IdGroupTheorems`, lemma L5t): `evalGroupIds_decode`, by structural
+recursion on the pattern, for every pattern but LATERAL and SERVICE at any
+depth; the leaf scans are its hypothesis.
 
 Sideways information passing (2026-10-13,
 https://github.com/danbri/factoidal/issues/809; record: section 11 of the

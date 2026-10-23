@@ -1,0 +1,4 @@
+PREFIX ex: <http://ex.org/>
+PREFIX xsd: <http://www.w3.org/2001/XMLSchema#>
+# Issue 959: GRAPH ?g { } has one solution per named graph.
+SELECT ?g WHERE { GRAPH ?g { } }

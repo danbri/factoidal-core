@@ -107,15 +107,14 @@ def joinPairs (l r : Table) (shared : Array (Nat × Nat)) : Array Nat × Array N
           ri := ri.push j
   return (li, ri)
 
-/-- SPARQL 1.1 section 18.5 Join of two id tables, `unbound` an unbound
+/-- The rows of the pairs `(li[k], ri[k])` of rows of `l` and `r` merged
+    (SPARQL 1.1 section 18.5, `merge`), `unbound` an unbound
     variable: the left variables, then the right variables the left does not
     have. A shared column takes the left id, or the right id where the left
     is `unbound`. The left row order is kept; the left sort variable is kept
     when the right table does not have it. -/
-def joinIds (l r : Table) : Table := Id.run do
-  let shared := sharedCols l r
+def pairsTable (l r : Table) (shared : Array (Nat × Nat)) (li ri : Array Nat) : Table := Id.run do
   let (vars, extra) := joinVars l r
-  let (li, ri) := joinPairs l r shared
   let mut cols : Array ByteArray := Array.mkEmpty vars.size
   for c in [0:l.vars.size] do
     match shared.find? (·.1 == c) with
@@ -132,6 +131,13 @@ def joinIds (l r : Table) : Table := Id.run do
     | some v => if r.vars.contains v then none else some v
     | none => none
   return { vars, cols, rows := li.size, sortVar }
+
+/-- SPARQL 1.1 section 18.5 Join of two id tables (`pairsTable` of the pairs
+    of compatible rows, `joinPairs`). -/
+def joinIds (l r : Table) : Table :=
+  let shared := sharedCols l r
+  let (li, ri) := joinPairs l r shared
+  pairsTable l r shared li ri
 
 /-- SPARQL 1.1 section 18.5 Union of id tables, in order (multiset union:
     the rows of the first table, then those of the next): the variables of

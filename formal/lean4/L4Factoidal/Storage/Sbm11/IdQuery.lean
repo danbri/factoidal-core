@@ -390,6 +390,11 @@ structure Plan where
       rows of the WHERE clause are restricted by each after every join
       (`semiJoinM`) -/
   semis : Array SemiBlock := #[]
+  /-- https://github.com/danbri/factoidal/issues/959: a WHERE clause outside
+      the flat fragment of `flattenOptional`, evaluated by the recursive
+      evaluator `IdGroup.evalGroupM` (every field above is empty; `post` is
+      set) -/
+  nested : Option QueryPattern := none
   proj : Array ProjItem
   /-- the result variables (`Query.projectedVars`) -/
   outVars : Array String
@@ -1230,6 +1235,79 @@ def datasetSpec (dcs : List L4Factoidal.SPARQL.DatasetClause) : Except String (O
       named := named.push (.iri i)
   return some { defaults, named }
 
+/-- A FILTER or OPTIONAL condition the nested evaluator
+    (https://github.com/danbri/factoidal/issues/959, `IdGroup.evalGroupM`)
+    evaluates: per conjunct, `EXISTS { B }` or `NOT EXISTS { B }` with `B` a
+    basic graph pattern or the empty group, or an EXISTS-free expression.
+    `some why` names the first conjunct it does not evaluate. -/
+def nestedCondRefusal? (c : Expr) : Option String := Id.run do
+  for cj in conjuncts c do
+    match cj with
+    | .existsPat (.bgp b) | .notExistsPat (.bgp b) =>
+      for tp in b do
+        match argOfSubject tp.s, argOfTerm tp.p, argOfObject tp.o with
+        | .error e, _, _ | _, .error e, _ | _, _, .error e => return some e
+        | _, _, _ => pure ()
+    | .existsPat .empty | .notExistsPat .empty => pure ()
+    | .existsPat _ | .notExistsPat _ =>
+      return some "an EXISTS or NOT EXISTS whose pattern is not a basic graph pattern"
+    | _ =>
+      unless cj.existsFree && (residualVars cj).isSome do
+        return some "an EXISTS or NOT EXISTS inside an expression"
+  return none
+
+/-- The nested evaluator (https://github.com/danbri/factoidal/issues/959,
+    `IdGroup.evalGroupM`) evaluates every group graph pattern of the SPARQL
+    1.1 section 18.2 translation except the ones this names: LATERAL,
+    SERVICE, a sub-SELECT (`subSelect := false`), a GRAPH whose name is not an
+    IRI or a variable, a triple-term pattern with a variable inside, a BIND
+    whose value depends on the row index or reads the active graph
+    (`readsRowIndex`), and a FILTER or OPTIONAL condition outside
+    `nestedCondRefusal?`. `none`: it evaluates `p`. -/
+def nestedRefusal? (p : QueryPattern) (subSelect : Bool := true) : Option String := Id.run do
+  let mut stack : Array QueryPattern := #[p]
+  for _ in [0:maxNodes] do
+    match stack.back? with
+    | none => return none
+    | some x =>
+      stack := stack.pop
+      match x with
+      | .bgp tps =>
+        for tp in tps do
+          match argOfSubject tp.s, argOfTerm tp.p, argOfObject tp.o with
+          | .error e, _, _ | _, .error e, _ | _, _, .error e => return some e
+          | _, _, _ => pure ()
+      | .join l r | .union l r | .minus l r => stack := (stack.push r).push l
+      | .leftJoin l r c =>
+        if let some why := nestedCondRefusal? c then return some why
+        stack := (stack.push r).push l
+      | .filter c q =>
+        if let some why := nestedCondRefusal? c then return some why
+        stack := stack.push q
+      | .graph name q =>
+        match name with
+        | .iri _ | .var _ => stack := stack.push q
+        | _ => return some "a GRAPH name that is not an IRI or a variable"
+      | .bind e _ q =>
+        if readsRowIndex e then return some "a BIND of EXISTS, an aggregate, UUID(), STRUUID() or BNODE()"
+        stack := stack.push q
+      | .values _ _ | .empty => pure ()
+      | .propertyPath s _ o =>
+        match argOfSubject s, argOfTerm o with
+        | .error e, _ | _, .error e => return some e
+        | _, _ => pure ()
+      | .subSelect sq =>
+        unless subSelect do return some "a sub-SELECT"
+        match sq with
+        | .mk (.select _) _ inner _ _ _ _ _ =>
+          unless sq.expressionsOutsidePatternExistsFree do
+            return some "a sub-SELECT with EXISTS or NOT EXISTS outside its WHERE clause"
+          stack := stack.push inner
+        | _ => return some "a sub-query that is not a SELECT"
+      | .lateral _ _ => return some "LATERAL"
+      | .service _ _ _ | .serviceVar _ _ _ => return some "SERVICE"
+  return some "a WHERE tree of more than 4096 nodes"
+
 /-- Accept the fragment or say why not.
 
     The WHERE clause must be in the id fragment (`flattenOptional`). Then:
@@ -1249,8 +1327,20 @@ def translate (q : L4Factoidal.SPARQL.Query) : Except String Plan := do
   let dataset ← datasetSpec q.dataset
   if q.pattern.mentionsFulltext then
     throw "text:query (full-text search): the reference evaluator answers it"
+  let pat := q.pattern.rewriteBnodes
   let (pats, filters, residuals, postFilters, optionals, values, unions, binds, lateFilters, paths, semis) ←
-    flattenOptional q.pattern.rewriteBnodes
+    match flattenOptional pat with
+    | .ok r => pure r
+    | .error why =>
+      -- issue 959: a WHERE clause outside the flat fragment goes to the
+      -- nested evaluator, unless it holds a construct that has no id form
+      if let some refusal := nestedRefusal? pat (subSelect := false) then throw refusal
+      unless q.expressionsOutsidePatternExistsFree do
+        throw s!"{why}; EXISTS or NOT EXISTS outside the WHERE clause"
+      return { pats := #[], filters := #[], dataset, nested := some pat,
+               post := some { query := q, firstRows := firstRowsOf q },
+               proj := #[], outVars := #[], groupVars := #[], agg := false, order := #[],
+               distinct := false, offset := 0, limit := none }
   if dataset.isSome && !paths.isEmpty then
     throw "a property path with FROM or FROM NAMED"
   let allPats : Array PatSpec := pats ++ optionals.foldl (fun (a : Array PatSpec) (g : OptGroup) => a ++ g.pats) #[]
@@ -1464,6 +1554,11 @@ structure Store (m : Type → Type) where
       post-processed query does: the measurement of the two paths and the
       oracle of their comparison. -/
   aggOnIds : Bool := true
+  /-- https://github.com/danbri/factoidal/issues/959: the ids of the named
+      graphs of the dataset, sorted (graphs with no triple included), for
+      `GRAPH ?g` and `GRAPH <iri>` over a nested group (`IdGroup.evalGroupM`).
+      `none`: the nested evaluator refuses GRAPH. -/
+  namedGraphs : Option (ExceptT String m (Array UInt64)) := none
 
 def ScanSpec.colPos (perm c : Nat) : Nat := if c < 3 then permOrder[perm]![c]! else 3
 
@@ -3921,7 +4016,8 @@ def substOkIdM {m : Type → Type} [Monad m] (st : Store m) (x : UInt64) (subjec
     substitute: a row is dropped when some row of `B` is compatible with it
     and shares a bound variable with it (`IdMinusTheorems.minus_decode`), and
     no row is checked. -/
-def semiJoinM {m : Type → Type} [Monad m] (st : Store m) (plan : Plan) (t : Table) (b : SemiBlock) :
+def semiJoinByM {m : Type → Type} [Monad m] (st : Store m) (resolve : PatSpec → ExceptT String m Pat)
+    (t : Table) (b : SemiBlock) :
     ExceptT String m (Table × String × ScanStats) := do
   let bvars := b.vars
   let subjVars : Array String := b.pats.filterMap fun p => p.s.var?
@@ -3953,7 +4049,7 @@ def semiJoinM {m : Type → Type} [Monad m] (st : Store m) (plan : Plan) (t : Ta
   let (body, bs) ← if b.pats.isEmpty then
       pure (({ vars := #[], cols := #[], rows := 1 } : Table), ({} : ScanStats))
     else do
-      let bp ← b.pats.mapM (resolvePatIn st plan.dataset)
+      let bp ← b.pats.mapM resolve
       let (bt, _, s) ← evalBgpM st bp (fun _ => true)
       pure (bt, s)
   let hits := semiMatches t body (b.kind == .minus)
@@ -3966,6 +4062,11 @@ def semiJoinM {m : Type → Type} [Monad m] (st : Store m) (plan : Plan) (t : Ta
     | .anti => "NOT EXISTS"
     | .minus => "MINUS"
   return (t.reorder idx, s!"{kindText}: body {body.rows} rows; {t.rows} rows to {idx.size}", bs)
+
+/-- `semiJoinByM` with the patterns of `B` over the plan's dataset. -/
+def semiJoinM {m : Type → Type} [Monad m] (st : Store m) (plan : Plan) (t : Table) (b : SemiBlock) :
+    ExceptT String m (Table × String × ScanStats) :=
+  semiJoinByM st (resolvePatIn st plan.dataset) t b
 
 /-- After the triple patterns and their FILTERs: the VALUES blocks
     (`joinValues`), then the rows of each UNION block (`evalUnionsM`), each
@@ -4628,14 +4729,9 @@ def whereTableM {m : Type → Type} [Monad m] (st : Store m) (plan : Plan) (env 
     blank node, an IRI, an inline integer or an inline boolean, or unbound) the
     rows are decoded and `selectPost` runs as for any other query
     (https://github.com/danbri/factoidal/issues/825). -/
-def runPostM {m : Type → Type} [Monad m] (st : Store m) (plan : Plan) (ps : PostSpec) (env : EvalEnv) :
+def postAnswerM {m : Type → Type} [Monad m] (st : Store m) (ps : PostSpec) (env : EvalEnv)
+    (t : Table) (lines : Array String) (s : ScanStats) :
     ExceptT String m (PostAnswer × RunStats) := do
-  -- the VALUES blocks as id tables and the rows of the BIND blocks; the
-  -- store then decodes their local ids
-  let (vtabs, btabs, st, xlines, xs, rpaths) ← resolveExtrasM st plan env
-  let (t, lines, s) ← whereTableM st plan env ps.firstRows vtabs btabs rpaths
-  let lines := xlines ++ lines
-  let s := s.add xs
   let q := ps.query
   let active : Graph := Graph.empty
   let totalLine := s!"total: rows decoded {s.rowsDecoded}; blocks read {s.blocksRead} of {s.blocksSelected} selected, {s.sipSkipped} skipped by candidates; {s.bytesRead} bytes"
@@ -4669,5 +4765,14 @@ def runPostM {m : Type → Type} [Monad m] (st : Store m) (plan : Plan) (ps : Po
   let line := s!"post: {t.rows} WHERE solutions decoded{match ps.firstRows with | some k => s!" (the first {k} suffice)" | none => ""}; reference {how}: {n} results"
   return (ans, { plan := (lines.push line).push totalLine,
                  rows := n, scan := s })
+
+/-- `postAnswerM` of the WHERE solutions of a flat plan (`whereTableM`). -/
+def runPostM {m : Type → Type} [Monad m] (st : Store m) (plan : Plan) (ps : PostSpec) (env : EvalEnv) :
+    ExceptT String m (PostAnswer × RunStats) := do
+  -- the VALUES blocks as id tables and the rows of the BIND blocks; the
+  -- store then decodes their local ids
+  let (vtabs, btabs, st, xlines, xs, rpaths) ← resolveExtrasM st plan env
+  let (t, lines, s) ← whereTableM st plan env ps.firstRows vtabs btabs rpaths
+  postAnswerM st ps env t (xlines ++ lines) (s.add xs)
 
 end L4Factoidal.Storage.Sbm11.IdQuery

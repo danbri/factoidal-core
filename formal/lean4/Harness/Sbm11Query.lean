@@ -83,6 +83,7 @@ This is a HARNESS: it does file I/O. The query engine is
 import Harness.Sbm11Gen
 import Harness.Sbm11Delta
 import L4Factoidal.Storage.Sbm11.IdQuery
+import L4Factoidal.Storage.Sbm11.IdGroup
 import L4Factoidal.Storage.Sbm11.TermKeyFast
 import L4Factoidal.Storage.Sbm11.ParallelScan
 import L4Factoidal.Storage.Sbm11.Overlay
@@ -1034,6 +1035,14 @@ def Session.namedGraphIds (ss : Session) : IO (Array Nat) := do
     if !L4Factoidal.Storage.Sbm11.GraphList.contains base x then out := out.push x
   return L4Factoidal.Qlvr.mergeSortBy out (· ≤ ·)
 
+/-- `storeWith` with the named graphs of the overlaid generation
+    (`namedGraphIds`), which the nested evaluator reads for GRAPH
+    (https://github.com/danbri/factoidal/issues/959). -/
+def Session.storeNested (ss : Session) (threads : Nat) (sip : Option Nat := some 16) (minRows : Nat := 8192)
+    (aggOnIds : Bool := true) : IdQuery.Store IO :=
+  { ss.storeWith threads sip minRows aggOnIds with
+    namedGraphs := some (liftIO do return (← ss.namedGraphIds).map (·.toUInt64)) }
+
 /-- The session with the overlay state `st`: `ovl` cut from it per
     permutation, and the counters of `deltaText` read from it. -/
 def Session.withOverlay (ss : Session) (st : L4Factoidal.Storage.Sbm11.Overlay.State) : IO Session := do
@@ -1319,6 +1328,14 @@ def runOne (ss : Session) (q : Query) (emit : ByteArray → IO Unit) (forceRefer
     let env ← queryEnv q
     match plan.post with
     | some ps =>
+      if plan.nested.isSome then
+        -- issue 959: a nested WHERE clause, the recursive evaluator on ids
+        match ← (IdGroup.runNestedM (ss.storeNested threads sip minRows aggOnIds) plan ps env).run with
+        | .ok (ans, st) =>
+          emitPost ans emit
+          return { rows := st.rows, path := "path=ids", plan := st.plan }
+        | .error e => refusedOr e
+      else
       -- issue 823: the WHERE clause on ids, the reference post-processing on
       -- the decoded solutions
       match ← (IdQuery.runPostM (ss.storeWith threads sip minRows aggOnIds) plan ps env).run with

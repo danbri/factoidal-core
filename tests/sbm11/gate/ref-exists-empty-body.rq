@@ -1,3 +1,0 @@
-PREFIX ex: <http://ex.org/>
-# EXISTS {}: the parser gives the empty group, not a basic graph pattern; refused.
-SELECT ?s WHERE { ?s ex:flag ?f FILTER EXISTS { } }

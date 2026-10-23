@@ -1,4 +1,4 @@
 PREFIX ex: <http://ex.org/>
 PREFIX xsd: <http://www.w3.org/2001/XMLSchema#>
-# A UNION inside a branch group: the reference fallback.
+# A UNION inside a branch group: the nested evaluator on ids (issue 959).
 SELECT ?x WHERE { { ?x ex:name ?n { ?x ex:age ?a } UNION { ?x ex:flag ?a } } UNION { ?x ex:knows ?k } }
