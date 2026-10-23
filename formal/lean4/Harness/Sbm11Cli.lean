@@ -61,6 +61,10 @@ https://github.com/danbri/factoidal/issues/789).
       The files read into `MemGen`, `MemGen.check`, and each query on ids
       answered by the I/O store and by `MemGen.store`, byte for byte (issue
       776): `Harness/Sbm11MemGenCheck.lean`.
+  l4sbm11 packspec-check SOURCE GEN [--block-rows B] [--base IRI]
+      The bytes of the pure packer specification `PackSpec.packSpec` of
+      SOURCE against the files of GEN, file by file (issue 776, row L3c):
+      `Harness/Sbm11PackSpecCheck.lean`.
   l4sbm11 reseal GEN
       Test support: rewrite the manifest digests and the `.merkle` sidecars
       from the files as they are (`tests/sbm11/stage3_check.sh` uses it to
@@ -94,6 +98,7 @@ import Harness.Sbm11Compact
 import Harness.Sbm11PermCheck
 import Harness.Sbm11Export
 import Harness.Sbm11MemGenCheck
+import Harness.Sbm11PackSpecCheck
 import Std.Data.HashSet
 
 open L4Factoidal.RDF
@@ -548,6 +553,7 @@ def usage : String :=
   "         [--sparql12]\n" ++
   "       | serve GEN [--sparql12] | prm-check GEN | frame-check GEN\n" ++
   "       | memgen-check GEN [--base IRI] Q.rq...\n" ++
+  "       | packspec-check SOURCE GEN [--block-rows B] [--base IRI]\n" ++
   "       | update GEN ('SPARQL UPDATE' | --file U.ru) [--max-overlay-entries N] [--max-overlay-bytes N]\n" ++
   "       | compact GEN OUTDIR [--block-rows B] [--sort-rows M]\n" ++
   "  --verify merkle|none (query, serve, scan, count, dump, dump-ids): merkle checks every 65,536-byte chunk\n" ++
@@ -602,6 +608,7 @@ def main (args0 : List String) : IO UInt32 := do
     | "query" :: _ | ["prm-check", _] | ["frame-check", _] => Harness.Sbm11Query.main args0
     | "update" :: _ | "compact" :: _ => Harness.Sbm11Compact.main args0
     | "memgen-check" :: _ => Harness.Sbm11MemGenCheck.main args0
+    | "packspec-check" :: _ => Harness.Sbm11PackSpecCheck.main args0
     | _ => IO.eprintln usage; pure 2
   catch e =>
     IO.eprintln s!"l4sbm11: {e}"

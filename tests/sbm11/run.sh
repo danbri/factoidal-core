@@ -260,6 +260,11 @@
 #                (`Session.store`) and by `MemGen.store` (the store of
 #                `MemGenWhereTheorems.harness_where_allowed_mem`), byte for byte.
 #                Each line prints "N queries, N equal, 0 differ".
+#                Then `l4sbm11 packspec-check` on the same generations: each
+#                file (GDV1, GDX1, PRM1 and PRB1 of the four permutations)
+#                byte-identical to the pure specification PackSpec.packSpec
+#                of the fixture, the named graph ids equal, `check = true`
+#                (issue 776, row L3c).
 #   (y) filter-keys  tests/sbm11/filter_keys.sh: the --explain line "FILTER conjuncts
 #                on ids" names how each conjunct runs; a STRSTARTS conjunct runs on key
 #                bytes, and the typed-date FILTER of the d14 shape is an expected failure
@@ -402,6 +407,20 @@ rc=0
 [ "$rc" -eq 0 ] && { "$BIN/l4sbm11" activate "$TMP/mg-b2" gen >"$TMP/mg-b2.act.log" 2>&1 || rc=$?; }
 if [ "$rc" -ne 0 ]; then record memgen gate-blocks-of-2 1 "pack or activate exit $rc"
 else memgen_part gate-blocks-of-2 "$TMP/mg-b2" "$HERE/gate"; fi
+# packspec_part <name> <fixture> <generation> [B]: the files of the
+# generation against the bytes of the pure specification PackSpec.packSpec
+# of the fixture (issue 776, row L3c).
+packspec_part() {
+  local rc=0 last
+  timeout 600 "$BIN/l4sbm11" packspec-check "$2" "$3" --block-rows "${4:-4096}" >"$TMP/ps-$1.log" 2>&1 || rc=$?
+  last="$(tail -1 "$TMP/ps-$1.log")"
+  if [ "$rc" -eq 0 ]; then record packspec "$1" 0 "${last#packspec-check: }"
+  else record packspec "$1" 1 "exit $rc: ${last#packspec-check: }; $(grep -m1 '^DIFFER' "$TMP/ps-$1.log")"; fi
+}
+packspec_part gate "$HERE/gate/gate.nq" "$TMP/gate"
+packspec_part samegraphs "$HERE/gate/samegraphs/data.nq" "$TMP/gate-samegraphs"
+packspec_part xmlliteral "$HERE/xmlliteral/data.nq" "$TMP/gate-xmlliteral"
+packspec_part gate-blocks-of-2 "$HERE/gate/gate.nq" "$TMP/mg-b2" 2
 
 echo "=== (e) decoder checks on every PRM1 file and frame"
 if out="$("$BIN/l4sbm11" prm-check "$GEN" 2>&1)"; then record checks prm-check 0 "$(printf '%s' "$out" | tr '\n' ' ' | head -c 150)"
