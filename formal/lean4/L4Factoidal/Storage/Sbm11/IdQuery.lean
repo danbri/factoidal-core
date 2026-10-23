@@ -964,6 +964,14 @@ structure Par (m : Type → Type) where
       worker never waits for the parent before it takes the next range. -/
   fold : {α β : Type} → (bounded : Bool) → (Store m → List Nat → ExceptT String m α) → List (List Nat) →
     β → (β → α → ExceptT String m β) → ExceptT String m β
+  /-- issue 961: a map of a pure function whose elements the native driver
+      computes on the session's worker pool. Its meaning is
+      `fun f xs => pure (xs.map f)` (`mergeJoinParM_eq` takes that as its
+      hypothesis); `none`: `ParallelJoin.mapPar` (tasks of the Lean pool). -/
+  mapList : Option ({α β : Type} → (α → β) → List α → m (List β)) := none
+  /-- the fewest input rows (left plus right) per range of a divided merge
+      join (`joinMinRows` by default; `mergeJoinParM`) -/
+  joinRows : Nat := 32768
 
 def ScanSpec.colPos (perm c : Nat) : Nat := if c < 3 then permOrder[perm]![c]! else 3
 
@@ -1891,11 +1899,13 @@ def mergeJoinParM {m : Type → Type} [Monad m] (par : Option (Par m)) (l r : Ta
   match par with
   | none => return mergeJoin l r v
   | some p =>
-    let k := min p.threads ((l.rows + r.rows) / (if p.minRows == 0 then 1 else joinMinRows))
+    let k := min p.threads ((l.rows + r.rows) / (if p.minRows == 0 then 1 else max p.joinRows 1))
     if k < 2 || l.rows < k then return mergeJoin l r v
-    let parts := ParallelJoin.mapPar (ParallelJoin.rangePairsOf l r v) (ParallelJoin.rangeChunks l.rows k)
-    let (li, ri) := ParallelJoin.concatPairs parts
-    return L4Factoidal.Qlvr.joinOutput l r (joinVars l r).1 (joinVars l r).2 li ri (some v)
+    let parts ← match p.mapList with
+      | some mp => ExceptT.lift (mp (ParallelJoin.rangePairsOf l r v) (ParallelJoin.rangeChunks l.rows k))
+      | none => pure (ParallelJoin.mapPar (ParallelJoin.rangePairsOf l r v) (ParallelJoin.rangeChunks l.rows k))
+    let pairs := ParallelJoin.concatPairs parts
+    return L4Factoidal.Qlvr.joinOutput l r (joinVars l r).1 (joinVars l r).2 pairs.1 pairs.2 (some v)
 
 /-- Evaluate a BGP over ids (the join rules of `Qlvr.evalBgpM`, with the four
     SBM11 permutations). `need v`: the query reads `v` after the BGP. `pref`:
@@ -2528,6 +2538,57 @@ def groupTable (plan : Plan) (g : Groups) (items : Array (Option Groups) := #[])
 def orderValue (t : Term) : EvalResult :=
   L4Factoidal.SPARQL.Expr.evalIn {} [("v", t)] (.var "v")
 
+/-- The order reading of one value (issue 961): `isNumericOperand`,
+    `numericValue?` and `orderView`, made once per distinct value of an ORDER
+    BY column. `OrderRead.cmp_of`: the comparison of two readings is
+    `sparqlOrderValue` of the two values. Olympics q07 (291 distinct labels):
+    the sort took 0.28 ms when every comparison read the datatype IRIs of
+    both operands again. -/
+structure OrderRead where
+  isNum : Bool
+  num : Option L4Factoidal.XSD.Val
+  view : EvalResult
+
+def OrderRead.of (v : EvalResult) : OrderRead :=
+  ⟨v.isNumericOperand, v.numericValue?, L4Factoidal.SPARQL.orderView v⟩
+
+def OrderRead.cmp (a b : OrderRead) : Int :=
+  L4Factoidal.SPARQL.sparqlOrderViewed a.isNum b.isNum a.num b.num a.view b.view
+
+theorem OrderRead.cmp_of (a b : EvalResult) :
+    (OrderRead.of a).cmp (OrderRead.of b) = L4Factoidal.SPARQL.sparqlOrderValue a b :=
+  (L4Factoidal.SPARQL.sparqlOrder_eq_viewed a b).symm
+
+/-- The reading of an unbound variable (an error, which section 15.1 orders
+    first). -/
+def errorRead : OrderRead := OrderRead.of .error
+
+/-- The reading of the value of id `x` (`errorRead` for `OptJoin.unbound`). -/
+def orderReadOfM {m : Type → Type} [Monad m] (st : Store m) (x : UInt64) : ExceptT String m OrderRead := do
+  if x == OptJoin.unbound then return errorRead
+  return OrderRead.of (orderValue (← st.termOf x))
+
+/-- The ranks of `reads` given its positions in `OrderRead.cmp` order: equal
+    readings, equal ranks. -/
+def ranksOfSorted (reads : Array OrderRead) (sorted : Array Nat) : Array Nat := Id.run do
+  let mut rank : Array Nat := Array.replicate reads.size 0
+  let mut r := 0
+  for j in [0:sorted.size] do
+    if j > 0 && (reads.getD sorted[j - 1]! errorRead).cmp (reads.getD sorted[j]! errorRead) != 0 then
+      r := r + 1
+    rank := rank.set! sorted[j]! r
+  return rank
+
+/-- The positions of `reads` in `OrderRead.cmp` order (`mergeSortBy`,
+    stable). -/
+def sortReads (reads : Array OrderRead) : Array Nat :=
+  mergeSortBy (List.range reads.size).toArray fun a b =>
+    (reads.getD a errorRead).cmp (reads.getD b errorRead) ≤ 0
+
+/-- The ranks of `reads` in the section 15.1 order: equal values, equal
+    ranks (the order of `mergeSortBy` with `OrderRead.cmp`, stable). -/
+def orderRanks (reads : Array OrderRead) : Array Nat := ranksOfSorted reads (sortReads reads)
+
 /-- Sort keys read from the ids alone, when every id of column `c` is a
     blank node or an IRI (tags 1 and 2), or every one is an inline integer
     (tag 4); `none` otherwise.
@@ -2571,21 +2632,12 @@ def orderKeysM {m : Type → Type} [Monad m] (st : Store m) (t : Table) (c : Nat
     if !idx.contains x then
       idx := idx.insert x ids.size
       ids := ids.push x
-  let mut vals : Array EvalResult := #[]
+  -- an unbound variable (`OptJoin.unbound`, after an OPTIONAL) evaluates
+  -- to an error, which section 15.1 orders first, as the reference does
+  let mut reads : Array OrderRead := Array.mkEmpty ids.size
   for x in ids do
-    -- an unbound variable (`OptJoin.unbound`, after an OPTIONAL) evaluates
-    -- to an error, which section 15.1 orders first, as the reference does
-    if x == OptJoin.unbound then vals := vals.push .error
-    else vals := vals.push (orderValue (← st.termOf x))
-  let sorted := mergeSortBy (List.range ids.size).toArray fun a b =>
-    L4Factoidal.SPARQL.sparqlOrderValue (vals.getD a .error) (vals.getD b .error) ≤ 0
-  let mut rank : Array Nat := Array.replicate ids.size 0
-  let mut r := 0
-  for j in [0:sorted.size] do
-    if j > 0 && L4Factoidal.SPARQL.sparqlOrderValue (vals.getD sorted[j - 1]! .error)
-        (vals.getD sorted[j]! .error) != 0 then
-      r := r + 1
-    rank := rank.set! sorted[j]! r
+    reads := reads.push (← orderReadOfM st x)
+  let rank := orderRanks reads
   let mut out : Array UInt64 := Array.mkEmpty t.rows
   for i in [0:t.rows] do
     let k := (rank[idx.getD (t.at c i) 0]!).toUInt64

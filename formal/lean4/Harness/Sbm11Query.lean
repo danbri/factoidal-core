@@ -786,6 +786,11 @@ def Session.store (ss : Session) : IdQuery.Store IO :=
 
 /-! ## Parallel block scans (stage 1, issue 799) -/
 
+/-- The fewest estimated rows per range of a divided BGP scan on the worker
+    pool (issue 961): `minRows / 2` (4,096 by default), so that olympics
+    q07's first two scans (8,192 and 16,384 estimated rows) are divided. -/
+def poolScanRows (minRows : Nat) : Nat := minRows / 2
+
 /-- The table of `IdQuery.scanTableM`, computed with the selected blocks cut
     into at most `threads` consecutive chunks. The first chunk is scanned by
     the calling thread, each other one by its own task (`IO.asTask`), with
@@ -807,7 +812,9 @@ def scanTableParM (ss : Session) (spec : IdQuery.ScanSpec) (threads : Nat) (minR
   -- one thread) took 0.37 to 0.47 ms at 4 threads in 2 ranges and 0.24 to
   -- 0.28 ms in one: a range waits for a sleeping worker (50 to 120
   -- microseconds on the test machine) and the parent appends the tables.
-  let n := IdQuery.rangeCount threads (2 * minRows) (IdQuery.selRows metas)
+  -- issue 961: on the worker pool a range costs microseconds, not a wake-up
+  let n := IdQuery.rangeCount threads (if ss.pool.isSome then poolScanRows minRows else 2 * minRows)
+    (IdQuery.selRows metas)
   if threads ≤ 1 || ox.on || n < 2 then return ← IdQuery.scanTableM st spec
   let sortVar := IdQuery.sortVarOf spec
   let sel := List.range metas.size
@@ -1023,12 +1030,38 @@ def parFold (ss : Session) (nWorkers window : Nat) {α β : Type}
     MB against 119 and 88 MB (1 thread: 69 and 53 MB). -/
 def parWindowFactor : Nat := 2
 
+/-- `xs.map f` with `f` of the first element computed by the calling thread
+    and of element `i ≥ 1` by worker `i - 1` of the pool (issue 961;
+    `IdQuery.Par.mapList`). `IO.lazyPure` puts the call of `f` inside the
+    job: `pure (f y)` would compute it on the calling thread. -/
+def poolMap {α β : Type} (p : Harness.WorkerPool.Pool) (f : α → β) (xs : List α) : IO (List β) := do
+  match xs with
+  | [] => return []
+  | x :: rest =>
+    let mut hs := #[]
+    for y in rest do
+      hs := hs.push (← p.spawnOn hs.size (IO.lazyPure fun _ => f y))
+    let a := f x
+    let mut out := #[a]
+    for h in hs do
+      match ← h.await p.spinNs with
+      | .ok b => out := out.push b
+      | .error e => throw e
+    return out.toList
+
+/-- The fewest input rows per range of a divided merge join on the worker
+    pool (issue 961): a job starts within microseconds, so ranges can be
+    smaller than with tasks of the Lean pool (`IdQuery.joinMinRows`). -/
+def poolJoinRows : Nat := 4096
+
 /-- The divided single-pattern paths of `IdQuery.runPlanM` with `threads`
     tasks at once (issue 799, stage 1b). -/
 def Session.par (ss : Session) (threads : Nat) (minRows : Nat := 8192) : IdQuery.Par IO :=
   { threads, minRows,
     fold := fun bounded job chunks init g =>
-      parFold ss threads (if bounded then parWindowFactor * threads else chunks.length) job chunks init g }
+      parFold ss threads (if bounded then parWindowFactor * threads else chunks.length) job chunks init g
+    mapList := ss.pool.map fun p => fun f xs => poolMap p f xs
+    joinRows := if ss.pool.isSome then poolJoinRows else IdQuery.joinMinRows }
 
 /-- `SBM11_MIN_RANGE_ROWS`: the fewest estimated rows per block range
     (`IdQuery.rangeCount`; default 8,192; 0: one range per thread, as the

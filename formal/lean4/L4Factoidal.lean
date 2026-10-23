@@ -431,6 +431,7 @@ import L4Factoidal.Storage.Sbm11.ParallelScanTheorems
 import L4Factoidal.Storage.Sbm11.ParallelSipTheorems
 import L4Factoidal.Storage.Sbm11.ParallelMergeTheorems
 import L4Factoidal.Storage.Sbm11.ParallelJoinTheorems
+import L4Factoidal.Storage.Sbm11.WorkerPoolTheorems
 import L4Factoidal.Storage.Sbm11.PermSet
 import L4Factoidal.Qlvr.Bgp
 import L4Factoidal.Qlvr.MergeTheorems

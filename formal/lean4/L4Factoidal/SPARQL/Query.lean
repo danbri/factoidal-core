@@ -270,6 +270,49 @@ theorem sparqlOrder_eq_read (a b : EvalResult) :
   unfold sparqlOrder sparqlOrderRead
   rfl
 
+/-- The value that `sparqlOrderRead` compares when the numeric readings do
+not decide: a literal of an integer-derived datatype as its integer, else
+`promoteLiteral`. -/
+def orderView (v : EvalResult) : EvalResult :=
+  match v with
+  | .term (.literal l) => match integerDerivedValue? l with
+    | some i => .num i
+    | none => v.promoteLiteral
+  | _ => v
+
+/-- `sparqlOrderRead` with both operands' views (`orderView`) already made.
+An ORDER BY over `n` distinct values compares about `n log n` pairs; with
+the readings and views made once per value, a comparison no longer reads
+datatype IRIs (olympics q07 on the SBM11 id path, 291 labels, issue 961).
+`sparqlOrderRead_eq_viewed`: it is `sparqlOrderRead`. -/
+def sparqlOrderViewed (ia ib : Bool) (na nb : Option XSD.Val) (va vb : EvalResult) : Int :=
+  let numericOrder : Option Int := if ia && ib then do
+    let x ← na
+    let y ← nb
+    let nan : XSD.Val → Bool := fun
+      | .flt f | .dbl f => f.cls == .nan
+      | _ => false
+    if nan x || nan y then pure (if nan x == nan y then 0 else if nan x then 1 else -1)
+    else
+      let less ← Fn.Comparison.numericCompare x y .lt
+      let greater ← Fn.Comparison.numericCompare x y .gt
+      pure (if less then -1 else if greater then 1 else 0)
+    else none
+  match numericOrder with
+  | some order => order
+  | none => sparqlOrderValues va vb
+
+theorem sparqlOrderRead_eq_viewed (a b : EvalResult) (ia ib : Bool) (na nb : Option XSD.Val) :
+    sparqlOrderRead a b ia ib na nb = sparqlOrderViewed ia ib na nb (orderView a) (orderView b) := by
+  unfold sparqlOrderRead sparqlOrderViewed orderView
+  rfl
+
+/-- `sparqlOrder` is `sparqlOrderViewed` of the operands' readings and views. -/
+theorem sparqlOrder_eq_viewed (a b : EvalResult) :
+    sparqlOrder a b = sparqlOrderViewed a.isNumericOperand b.isNumericOperand
+      a.numericValue? b.numericValue? (orderView a) (orderView b) := by
+  rw [sparqlOrder_eq_read, sparqlOrderRead_eq_viewed]
+
 /-- `sparqlOrderRead` when both readings are `xsd:decimal` values (every
 integer type reads as one): one `Dec.cmp`, no `Option` chain and no second
 comparison. `sparqlOrderReadFast_eq`: it is `sparqlOrderRead`. -/
