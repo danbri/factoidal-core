@@ -266,6 +266,8 @@ structure Session where
   /-- `IdQuery.Par.renderRows` (`SBM11_RENDER_ROWS`; 0: the calling thread
       renders a finished table) -/
   renderRows : Nat := IdQuery.renderJobRows
+  /-- `IdQuery.Par.streamPerThread` (`SBM11_STREAM_JOBS`) -/
+  streamPerThread : Nat := IdQuery.streamJobsPerThread
 
 /-- The default of `SBM11_PAGES`, the most dictionary pages a cache holds. A
     page is about 4.5 KB (olympics q19 needs between 4,096 and 8,192 pages). At
@@ -1029,10 +1031,22 @@ def parFold (ss : Session) (nWorkers window : Nat) (fixed : Bool := false) {α �
   if n == 0 then return init
   let w := max window 1
   let poolOnly := (← liftIO (IO.getEnv "SBM11_POOLONLY")).isSome
+  let trace := (← liftIO (IO.getEnv "SBM11_RANGE_TRACE")).isSome
   let nW := match ss.pool with
     | some p => if poolOnly && p.size > 0 then min nWorkers p.size else nWorkers
     | none => nWorkers
   let nwk := min (max nW 1) n
+  -- stage 1j: with a pool of fewer threads than workers, the calling thread
+  -- is the last worker (its jobs run between the folds of the results, with
+  -- the session's own store and page cache), not a task of the Lean pool
+  -- with a new page cache for each fold
+  let parentTask := (← liftIO (IO.getEnv "SBM11_PARENT_TASK")).isSome
+  let parentAt : Option Nat := match ss.pool with
+    | some p => if p.size > 0 && nwk > p.size && !parentTask then some p.size else none
+    | none => none
+  let nSpawn := match parentAt with
+    | some j => j
+    | none => nwk
   -- a range's result goes to its slot, then its promise is resolved; the
   -- parent takes the result out of the slot, so a folded result is freed (a
   -- resolved promise keeps its value while the promise is reachable)
@@ -1048,8 +1062,20 @@ def parFold (ss : Session) (nWorkers window : Nat) (fixed : Bool := false) {α �
   for k in [0:min w n] do liftIO (permit k)
   let next ← liftIO (IO.mkRef (0 : Nat))
   let stop ← liftIO (IO.mkRef false)
+  let fx := fixed && (← liftIO (IO.getEnv "SBM11_DYNAMIC")).isNone
+  let runJob (st : IdQuery.Store IO) (j k : Nat) : IO Unit := do
+    if ← stop.get then
+      resolveAt k (.error "a range before this one failed")
+    else
+      let t0 ← IO.monoNanosNow
+      match ← ((job st arr[k]!).run).toBaseIO with
+      | .ok r => resolveAt k r
+      | .error e => resolveAt k (.error (toString e))
+      if trace then
+        let t1 ← IO.monoNanosNow
+        IO.eprintln s!"range-trace: job {k} worker {j} start {t0} us {(t1 - t0) / 1000}"
   let mut workers : Array (Harness.WorkerPool.Handle (Except IO.Error Unit) × Session) := #[]
-  for j in [0:nwk] do
+  for j in [0:nSpawn] do
     let v ← liftIO ss.view
     let t ← liftIO (ss.spawnLocal workers.size (fun wp => do
       let lim := ((← IO.getEnv "SBM11_WORKER_PAGES").bind String.toNat?).getD workerPageLimit
@@ -1058,21 +1084,37 @@ def parFold (ss : Session) (nWorkers window : Nat) (fixed : Bool := false) {α �
         | none => v.local
       let st := lv.store
       for i in [0:n] do
-        let fx := fixed && (← IO.getEnv "SBM11_DYNAMIC").isNone
         let k ← if fx then pure (j + i * nwk) else next.modifyGet fun k => (k, k + 1)
         if k ≥ n then break
         if let some p := permits[k]? then
           let _ ← IO.wait p.result?
-        if ← stop.get then
-          resolveAt k (.error "a range before this one failed")
-        else
-          match ← ((job st arr[k]!).run).toBaseIO with
-          | .ok r => resolveAt k r
-          | .error e => resolveAt k (.error (toString e))))
+        runJob st j k))
     workers := workers.push (t, v)
+  -- the calling thread's next job (`parentAt`): in fixed order its ranges
+  -- `j, j + nwk, ...`; else the next range of the shared counter. It takes a
+  -- range only when that range's permit is given (below `k + w`, `k` the
+  -- next range to fold), so it never waits for itself.
+  let pst := ss.store
+  let mut mine : Nat := parentAt.getD 0
   let mut acc := init
   let mut failure : Option String := none
   for k in [0:n] do
+    if let some j := parentAt then
+      let mut go := true
+      while go do
+        let ready ← match slots[k]? with
+          | some c => liftIO (return (← c.get).isSome)
+          | none => pure true
+        if ready then go := false
+        else
+          let lim := min n (k + w)
+          let mk ← if fx then pure (if mine < lim then some mine else none)
+            else liftIO (next.modifyGet fun i => if i < lim then (some i, i + 1) else (none, i))
+          match mk with
+          | some i =>
+            liftIO (runJob pst j i)
+            if fx then mine := mine + nwk
+          | none => go := false
     if let some p := results[k]? then
       let _ ← liftIO (IO.wait p.result?)
     let r : Option (Except String α) ← match slots[k]? with
@@ -1138,7 +1180,8 @@ def Session.par (ss : Session) (threads : Nat) (minRows : Nat := 8192) : IdQuery
       parFold ss threads (if bounded then parWindowFactor * threads else chunks.length) bounded job chunks init g
     mapList := ss.pool.map fun p => fun f xs => poolMap p f xs
     joinRows := if ss.pool.isSome then poolJoinRows else IdQuery.joinMinRows
-    renderRows := ss.renderRows }
+    renderRows := ss.renderRows
+    streamPerThread := ss.streamPerThread }
 
 /-- `SBM11_MIN_RANGE_ROWS`: the fewest estimated rows per block range
     (`IdQuery.rangeCount`; default 8,192; 0: one range per thread, as the
@@ -1781,7 +1824,8 @@ def runQuery (dir : String) (o : Opts) : IO UInt32 := do
       pure { ss with pool := some (← Harness.WorkerPool.start (((← IO.getEnv "SBM11_POOL_SIZE").bind String.toNat?).getD (o.threads - 1)) ((← IO.getEnv "SBM11_SPIN_NS").bind String.toNat? |>.getD 1000000) (IO.mkRef {})) }
     else pure ss
   let ss := { ss with phases := (← IO.getEnv "SBM11_PHASES").isSome,
-                      renderRows := ((← IO.getEnv "SBM11_RENDER_ROWS").bind String.toNat?).getD IdQuery.renderJobRows }
+                      renderRows := ((← IO.getEnv "SBM11_RENDER_ROWS").bind String.toNat?).getD IdQuery.renderJobRows,
+                      streamPerThread := ((← IO.getEnv "SBM11_STREAM_JOBS").bind String.toNat?).getD IdQuery.streamJobsPerThread }
   let t1 ← IO.monoNanosNow
   let openBytes ← ss.g.fileBytes.get
   let stdout ← IO.getStdout

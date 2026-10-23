@@ -949,9 +949,13 @@ def Store.markM {m : Type → Type} [Monad m] (st : Store m) (l : String) : Exce
   | some f => ExceptT.lift (f l)
   | none => pure ()
 
+/-- The fewest jobs per thread of the divided streamed path (`streamJobs`).
+    Olympics at 4 threads, `--repeat 21` (stage 1j): see the record. -/
+def streamJobsPerThread : Nat := 4
+
 /-- The fewest rows per job of the divided rendering of a finished table
     (`renderJobs`, stage 1j). -/
-def renderJobRows : Nat := 128
+def renderJobRows : Nat := 160
 
 /-- The runner of the divided paths. `fold job chunks init g` runs `job` on
     every chunk of block numbers, each with its own view of the store, and
@@ -989,6 +993,9 @@ structure Par (m : Type → Type) where
   /-- the fewest rows per range of the divided rendering of a finished table
       (`renderJobs`; stage 1j); 0: the calling thread renders -/
   renderRows : Nat := renderJobRows
+  /-- `streamJobs`: the fewest jobs per thread of the divided streamed path;
+      0 or 1: one job per block range -/
+  streamPerThread : Nat := streamJobsPerThread
 
 def ScanSpec.colPos (perm c : Nat) : Nat := if c < 3 then permOrder[perm]![c]! else 3
 
@@ -3121,10 +3128,6 @@ def streamRangeBlocks : Nat := 1
     the profile of q19 at 4 threads). 512 rows of q21 are about 64 KB. -/
 def pieceRows : Nat := 512
 
-/-- The fewest jobs per thread of the divided streamed path (`streamJobs`).
-    Olympics at 4 threads, `--repeat 21` (stage 1j): see the record. -/
-def streamJobsPerThread : Nat := 4
-
 /-- One job of the divided streamed path (stage 1j, issue 961): the blocks of
     a range, and the window `[wFrom, wTo)` of the range's rows (after the
     FILTERs, at most `cap` of them) that the job renders. `stats`: the job
@@ -3187,14 +3190,15 @@ def streamPartM {m : Type → Type} [Monad m] (st : Store m) (spec : ScanSpec) (
   return (pieces, s)
 
 /-- The jobs of the divided streamed path for its block ranges (stage 1j,
-    issue 961). With fewer than `streamJobsPerThread × threads` ranges, each
+    issue 961). With fewer than `perThread × threads` ranges, each
     range is cut into windows of about equal estimated rows (the PRM1 rows of
     its blocks), so that the workers get about equal work: olympics q19 at 4
     threads had 10 ranges of one block each, so one worker rendered 3 of them
     while another rendered 2. The last window of a range ends at `cap`, so
     the windows cover the range's rows whatever the estimate. -/
-def streamJobs (threads cap : Nat) (metas : Array BlockMeta) (chunks : List (List Nat)) : List StreamJob :=
-  let want := streamJobsPerThread * threads
+def streamJobs (threads cap : Nat) (metas : Array BlockMeta) (chunks : List (List Nat))
+    (perThread : Nat := streamJobsPerThread) : List StreamJob :=
+  let want := perThread * threads
   let parts := if chunks.length == 0 || chunks.length ≥ want then 1
     else (want + chunks.length - 1) / chunks.length
   chunks.flatMap fun X =>
@@ -3308,7 +3312,7 @@ def runPlanM {m : Type → Type} [Monad m] (st : Store m) (plan : Plan) (emit : 
       | some p, some (metas, ox, chunks, est) =>
         let total ← st.blockCount spec.perm
         let cap := plan.offset + lim
-        let jobs := streamJobs p.threads cap metas chunks
+        let jobs := streamJobs p.threads cap metas chunks p.streamPerThread
         let ((_, emitted), s) ← p.fold true
             (fun v (J : StreamJob) => do
               let (pieces, s') ← streamPartM v spec fs reference plan.outVars cap metas ox J.blocks J.wFrom J.wTo
@@ -3349,14 +3353,17 @@ def runPlanM {m : Type → Type} [Monad m] (st : Store m) (plan : Plan) (emit : 
         else match par, ← divideFor? st par spec 0 (par.map (·.countPerThread) |>.getD 1) with
         | some p, some (metas, ox, chunks, _) => do
           let total ← st.blockCount spec.perm
+          st.markM "divide"
           let (g, s) ← p.fold false (fun v X => countPartM v spec fs plan.groupVars metas ox X) chunks
             (({} : Groups), ({ blocksTotal := total } : ScanStats))
             fun (g, s) (g', s') => pure (g.merge g', s.add s')
+          st.markM "countfold"
           pure (g, s, s!" in {chunks.length} block ranges ({p.threads} tasks at once at most)")
         | _, _ => do
           let ((groups, _), s) ← scanFoldM st spec (!fs.isEmpty) (({} : Groups), memos0)
             (countStepM st fs plan.groupVars)
           pure (groups, s, "")
+      st.markM "groups"
       let line := s!"pattern 0 counted while streaming{how}: {permNames[spec.perm]!} key {spec.key.size}; blocks {s.blocksRead} read of {s.blocksSelected} selected of {s.blocksTotal}, frames {s.framesRead}, {s.bytesRead} bytes; rows {s.rowsOut}; groups {groups.keys.size}"
       stats := { stats with plan := #[line], scan := s.full }
       match groupTable plan groups with
