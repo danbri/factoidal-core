@@ -537,6 +537,13 @@ Lean functionality and gates land. Port functionality, not files.
   GRAPH, a TriG graph block with no triple), with a message that names the
   rule. They do not get the SBM11 graph list. IBK stays a read oracle until
   SBM11 stage 7.
+- KR 1.2 (4 threads against 1 thread), owner, 2026-10-23, answers to two
+  questions: "Start now" (the allocator work deferred on 2026-10-22 with "Yes
+  lets come back to allocator later") and "Remove it" (d17, which block
+  metadata answers with no scan). KR 1.2 is judged on d10, q07, q19 and q21.
+  The allocator work starts from branch `batch3/kr12-percache`; a change to
+  the default allocator settings is shown to the owner with its measurements
+  before it lands. Record: https://github.com/danbri/factoidal/issues/961.
 
 ### Issue 566 — the hex layer. RULED, do not ask again.
 
