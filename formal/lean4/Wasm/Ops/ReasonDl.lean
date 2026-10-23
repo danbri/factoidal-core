@@ -67,7 +67,7 @@ def owlRefuteFuelOfOpts (optsJson : String) : Nat :=
       | none   => defaultFuel
 
 /-- The refusal for a dataset with an RDF 1.2 term
-(https://github.com/danbri/factoidal/issues/873). The verdicts below are OWL 2
+(https://github.com/danbri/factoidal/issues/958). The verdicts below are OWL 2
 Direct Semantics verdicts. The RDF graph is read as an OWL 2 ontology by OWL 2
 Mapping to RDF Graphs (§3, Mapping from RDF Graphs to the Structural
 Specification), which is stated on RDF 1.1 graphs and has no rule for a
@@ -77,7 +77,7 @@ def owlDlRdf12Refusal (op : String) : String :=
   s!"{op}: the input holds an RDF 1.2 triple term or directional language-tagged "
   ++ "string; OWL 2 Mapping to RDF Graphs (section 3) and the OWL 2 Direct "
   ++ "Semantics define no rule for these terms "
-  ++ "(https://github.com/danbri/factoidal/issues/873)"
+  ++ "(https://github.com/danbri/factoidal/issues/958)"
 
 def owlDlPunningReason : String :=
   "unsupported-punning: a class or property IRI is also used as an individual; "

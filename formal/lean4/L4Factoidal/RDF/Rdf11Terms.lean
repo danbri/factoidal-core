@@ -8,8 +8,10 @@ whose specification is stated on RDF 1.1 datasets only, and which has no rule
 for these terms, uses `Dataset.isRdf11` to refuse such input with a message
 that names the missing rule, instead of a parse error at an unrelated offset
 (https://github.com/danbri/factoidal/issues/873). The operations that refuse
-today are RDFC-1.0 canonicalisation (`Wasm/Ops/Canon.lean`) and the OWL 2
-Direct Semantics consistency and entailment checks (`Wasm/Ops/ReasonDl.lean`);
+today are RDFC-1.0 canonicalisation (`Wasm/Ops/Canon.lean`,
+https://github.com/danbri/factoidal/issues/957) and the OWL 2 Direct Semantics
+consistency and entailment checks (`Wasm/Ops/ReasonDl.lean`,
+https://github.com/danbri/factoidal/issues/958);
 the design record is
 `docs/designissues/2026-10-18-rdf12-terms-canon-and-closures.md`.
 

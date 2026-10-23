@@ -24,7 +24,7 @@ private def owlConsistencyRdf12Message : String :=
   "owlIsConsistent: the input holds an RDF 1.2 triple term or directional language-tagged "
   ++ "string; OWL 2 Mapping to RDF Graphs (section 3) and the OWL 2 Direct "
   ++ "Semantics define no rule for these terms "
-  ++ "(https://github.com/danbri/factoidal/issues/873)"
+  ++ "(https://github.com/danbri/factoidal/issues/958)"
 
 private def owlConsistencyReason (verdict : CertifiedDecision.WireVerdict) : String :=
   match verdict.consistent with

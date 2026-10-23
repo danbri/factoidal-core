@@ -25,7 +25,13 @@ truth-preservation lemma in the F\* tree
 certificates, e.g. `eq_sym_licensed`, `eq_trans_licensed`,
 `prp_symp_licensed`. Rows covered: eq-sym, eq-trans, eq-rep-s,
 eq-rep-o, eq-rep-p, prp-symp, prp-trp, prp-inv1, prp-inv2, prp-fp,
-prp-ifp, cax-eqc, prp-eqp.
+prp-ifp, cax-eqc, prp-eqp. The `[ext]` row eq-rep-tt (`owl:sameAs`
+substitution inside an RDF 1.2 triple term, `OWL.RL.eqRepTtFor`) is the
+last row; its soundness is the Lean lemma `OWL.RL.eqRepTtFor_sound` and
+the model condition `RlCondEqRepTt` (W3C rdf12 rdf-semantics test
+`opaque-iri`, regime "RDFS-Plus"; issue
+https://github.com/danbri/factoidal/issues/873). It emits nothing on a
+graph with no triple term.
 
 **NO chain-level completeness is claimed for this tier.** Unlike ρdf
 closure, whose completeness theorem decides ρdf entailment,
@@ -80,7 +86,8 @@ def rdfsPlusConclusions (g : Graph) : List Triple :=
   g0.flatMap (eqTransFor g0) ++
   g0.flatMap (eqRepSFor g0) ++
   g0.flatMap (eqRepOFor g0) ++
-  g0.flatMap (eqRepPFor g0)
+  g0.flatMap (eqRepPFor g0) ++
+  g0.flatMap (eqRepTtFor g0)
 
 /-- One round. Same fuel, dedup and length-test shape as
     `RDFS.Closure.step`. -/

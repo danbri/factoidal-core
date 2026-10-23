@@ -662,7 +662,9 @@ assert_text "owl-entails missing conclusion file -> usage error" 2 err "need PRE
 # The closures read RDF 1.2 and treat a triple term as an opaque object term:
 # the asserted triple stays, the asserted derivation is made, and nothing is
 # derived from the triple inside the triple term. RDFC-1.0 and OWL DL refuse
-# with a message that names the missing rule; their acceptance is an xfail.
+# with a message that names the missing rule; their acceptance is an xfail
+# (RDFC-1.0: https://github.com/danbri/factoidal/issues/957; OWL DL:
+# https://github.com/danbri/factoidal/issues/958).
 TT='<http://e/z> <http://e/says> <<( <http://e/s> <http://www.w3.org/1999/02/22-rdf-syntax-ns#type> <http://e/C> )>> .
 <http://e/z> <http://e/says> <<( _:b1 <http://www.w3.org/1999/02/22-rdf-syntax-ns#type> <http://e/C> )>> .
 '
@@ -688,18 +690,65 @@ verdict "closure --regime owl-rl substitutes owl:sameAs inside a triple term" ""
       && grep -qF '<http://e/clark> <http://e/reports> <<( <http://e/clark> <http://e/can> <http://e/fly> )>> .' <<< "$OUT" \
       && ! grep -qF '<http://e/superman> <http://e/can> <http://e/fly> .' <<< "$OUT" \
       && echo 1 || echo 0 )" "exit=$RC" "stdout=$OUT" "stderr=$ERR"
+run_cmd "$CLI" closure "$TMP/clark.nq" --format nquads12 --regime rdfs-plus
+verdict "closure --regime rdfs-plus substitutes owl:sameAs inside a triple term" "" \
+  "$( [ "$RC" -eq 0 ] \
+      && grep -qF '<http://e/clark> <http://e/reports> <<( <http://e/clark> <http://e/can> <http://e/fly> )>> .' <<< "$OUT" \
+      && ! grep -qF '<http://e/superman> <http://e/can> <http://e/fly> .' <<< "$OUT" \
+      && echo 1 || echo 0 )" "exit=$RC" "stdout=$OUT" "stderr=$ERR"
+for REG in rdfs rho-df; do
+  run_cmd "$CLI" closure "$TMP/clark.nq" --format nquads12 --regime "$REG"
+  verdict "closure --regime $REG does not substitute owl:sameAs inside a triple term" "" \
+    "$( [ "$RC" -eq 0 ] \
+        && ! grep -qF '<<( <http://e/clark> <http://e/can>' <<< "$OUT" \
+        && echo 1 || echo 0 )" "exit=$RC" "stdout=$OUT" "stderr=$ERR"
+done
+# The W3C RDF 1.2 rdf-semantics test files (third_party/testing/w3c/rdf/rdf12/
+# rdf-semantics), run through the closure verbs. A positive test passes when
+# every triple of the result file is in the closure of the action file (the
+# result files here have no blank node, so this is simple entailment); a
+# negative test passes when the result triple is not in any closure.
+# `triple-terms-propositions` (rdfs14, a new blank node) is not a closure
+# case: the closures make no blank node; `l4rdf-semantics` decides it.
+W3C_SEM="$LEAN_DIR/../../third_party/testing/w3c/rdf/rdf12/rdf-semantics"
+if [ ! -r "$W3C_SEM/manifest.ttl" ]; then
+  fail "W3C RDF 1.2 rdf-semantics test files" "missing under third_party/testing/w3c (run tools/ensure-test-env.sh)"
+else
+  # sem_closure NAME REGIME ACTION RESULT positive|negative
+  sem_closure() {
+    local name="$1" reg="$2" act="$W3C_SEM/$3" res="$W3C_SEM/$4" kind="$5" ok=1 line
+    run_cmd "$CLI" closure "$act" --format turtle12 --regime "$reg"
+    [ "$RC" -eq 0 ] || ok=0
+    local closed="$OUT" want
+    want="$("$CLI" parse "$res" --format turtle12 --out nquads | sed '/^$/d')"
+    while IFS= read -r line; do
+      [ -z "$line" ] && continue
+      if [ "$kind" = positive ]; then grep -qxF -- "$line" <<< "$closed" || ok=0
+      else ! grep -qxF -- "$line" <<< "$closed" || ok=0; fi
+    done <<< "$want"
+    verdict "W3C rdf-semantics $name: closure --regime $reg ($kind)" "" "$ok" \
+      "exit=$RC" "want=$want" "stderr=$ERR"
+  }
+  sem_closure opaque-iri rdfs-plus superman.ttl superman_undesired_entailment.ttl positive
+  sem_closure opaque-iri owl-rl superman.ttl superman_undesired_entailment.ttl positive
+  sem_closure reifies-range rdfs reifies-rangea.ttl reifies-ranger.ttl positive
+  for REG in rdfs owl-rl rho-df rdfs-plus; do
+    sem_closure triple-term-not-asserted "$REG" test002a.ttl test002pgr.ttl negative
+    sem_closure triple-terms-no-spurious "$REG" test002a.ttl test005.ttl negative
+  done
+fi
 assert_text "canonicalize triple term -> refusal names RDFC-1.0" 1 err "RDFC-1.0" \
   "$CLI" canonicalize "$TMP/tt.nq" --format nquads12
 run_cmd "$CLI" canonicalize "$TMP/tt.nq" --format nquads12
-verdict "canonicalize labels blank nodes inside a triple term" 873 \
+verdict "canonicalize labels blank nodes inside a triple term" 957 \
   "$( [ "$RC" -eq 0 ] && grep -qF '<<( _:c14n' <<< "$OUT" && echo 1 || echo 0 )"
 assert_text "owl-consistent triple term -> refusal names OWL 2 Mapping" 1 err "OWL 2 Mapping" \
   "$CLI" owl-consistent "$TMP/tt.nq" --format nquads12
 run_cmd "$CLI" owl-consistent "$TMP/tt.nq" --format nquads12
-verdict "owl-consistent decides a graph with a triple term" 873 \
+verdict "owl-consistent decides a graph with a triple term" 958 \
   "$( [ "$RC" -eq 0 ] && [ "$OUT" = true ] && echo 1 || echo 0 )"
 run_cmd "$CLI" owl-entails "$TMP/tt.nq" "$TMP/concl.nq" --format nquads12
-verdict "owl-entails decides a premise with a triple term" 873 \
+verdict "owl-entails decides a premise with a triple term" 958 \
   "$( [ "$RC" -eq 0 ] && [ "$OUT" = true ] && echo 1 || echo 0 )"
 
 # --- cl ------------------------------------------------------------------
