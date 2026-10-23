@@ -851,12 +851,76 @@ interpretation a reply wants is a protocol decision: the host uses the
 `interpret` kind the request envelope named, then the one the caller
 passed, and otherwise returns the reply uninterpreted.
 
+## The LWS client (https://github.com/danbri/factoidal/issues/917)
+
+Design record: `docs/designissues/2026-10-22-lws-client.md` (requirements
+table: each client statement of the drafts, the Lean definition that decides
+it, the Touchstone rule that observes it).
+
+One pure state machine decides everything:
+`L4Factoidal.LWS.Client.step : Verifiers → ClientState → Event → ClientState × Action`
+(`L4Factoidal/LWS/Client/Machine.lean`). The caller gives an operation
+(`Op`, kinds `discover`, `read`, `head`, `create`, `update`, `patch`,
+`delete`, `readLinkset`, `updateLinkset`, `move`, `list`, `typeIndex`,
+`search`, `subscribe`, `unsubscribe`, `requestAccess`, `grantAccess`,
+`getAccess`, `revokeAccess`, `verifyNotification`); `step` names each
+request (`fetch`) and ends with `done` or `fail`. In Lean: the 401 flow
+(the three checks of §Discovery Validation by a Client, RFC 8414 metadata
+at `/.well-known/lws-configuration`, RFC 8693 token exchange, `Bearer`
+only to URLs under the StorageRoot of the token's storage), preconditions
+(`update`, `patch`, `updateLinkset`, `move` default to the current ETag),
+the 412, 405/415 and 5xx retry rules, paging by `rel="next"` only, linkset
+writes only in advertised methods and formats, and the RFC 9421 check of a
+webhook notification (keyid with a fragment, document id, digest,
+signature by HACL*).
+
+| path | what it is |
+| --- | --- |
+| `formal/lean4/L4Factoidal/LWS/Client/Wire.lean` | requests, responses, `Link`, `WWW-Authenticate`, `Allow`, `Accept-Patch`, form bodies, JSON forms |
+| `formal/lean4/L4Factoidal/LWS/Client/Machine.lean` | `Op`, `ClientState`, `step`, `enforce`, state JSON |
+| `formal/lean4/L4Factoidal/LWS/Client/Theorems.lean` | `walk_concat`, `walk_paths`, `walk_members_once`, `walk_listedMembers`, `step_write_precondition`, `step_no_token_request_without_validation`, `step_no_blind_create_retry`, `step_no_retry_after_lost_post`, `step_no_repeat_after_refusal` |
+| `formal/lean4/L4Factoidal/LWS/Client/Tests.lean` | `#guard`s: canned responses (decoys, stale tags, 405, 503, forged notifications) and a loopback against `LWS.step MemStore` |
+| `formal/lean4/Wasm/Ops/LwsClient.lean` | `lwsClientStart(opJson, sessionJson)`, `lwsClientStep(stateJson, eventJson)` → `{ok, state, action}` |
+| `npm/factoidal/lws/client.mjs` | `createLwsClient({ fetch, subjectToken, subjectTokenType, session })`, `createNotificationReceiver({ client })` |
+| `tests/lws/client/own-server.mjs` | our client against our server, open and with authorization |
+| `tools/lws-touchstone-client.sh` | our client in Touchstone's client lab (53 rules) |
+
+The `step_*` theorems hold because `step` ends with `enforce`, which turns a
+violating action into `fail`; the `#guard`s show the ordinary flows never
+reach it. The state crosses the ABI as JSON; bodies as `bodyBase64`.
+
+```
+factoidal lws-client <op> URL [--body TEXT|--file PATH] [--content-type M]
+    [--if-match TAG|--if-match-current|--if-none-match-star|--no-precondition]
+    [--retry-412 N] [--recursive] [--container] [--slug S] [--type IRI]
+    [--subject-token-file F --subject-token-type URI] [--query JSON]
+    [--inbox URL] [--topic URL] [--action A,B --assignee URI --target URL]
+```
+
+```js
+import { createLwsClient } from '@factoidal/core/lws/client'
+const c = await createLwsClient({ fetch, subjectToken, subjectTokenType })
+const { location } = await c.create(containerUrl, { slug: 'a.txt', mediaType: 'text/plain', body: 'x' })
+```
+
+`fetch` is injected: Node's, a browser's, or one that carries requests over
+XMPP. A credential is a subject token (`subjectToken`, `subjectTokenType`,
+for example a SAML assertion) or a P-256 key (`selfIssued: { subject, keyId,
+jwk }`), from which the engine signs a self-issued credential (ES256, HACL*;
+the host gives `now` and 48 random bytes with each response event).
+`step` takes `Authz.Crypto` (the verifiers and signers of
+https://github.com/danbri/factoidal/issues/916). Gap, an expected failure in
+`tests/lws/client/touchstone-xfail.tsv`: OpenID sign-in (code flow with
+PKCE) for `client-oidc-token-type-id-token` (issue to open; the row names
+https://github.com/danbri/factoidal/issues/917).
+
 ## Run the tests
 
 ```
 node tests/lws/server.mjs
 node tests/solid/server/protocol.mjs
 node tests/solid/client/against-own-server.mjs
+node tests/lws/client/own-server.mjs
 ```
 
 Each also runs under Deno (`deno run --allow-read --allow-net --allow-env

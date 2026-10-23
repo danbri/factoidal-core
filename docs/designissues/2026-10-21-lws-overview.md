@@ -72,6 +72,14 @@ the permission of the owner. The drafts define:
   inapplicable (no XML Signature verifier,
   https://github.com/danbri/factoidal/issues/926).
 
+An LWS client (`factoidal lws-client`, `@factoidal/core/lws/client`,
+https://github.com/danbri/factoidal/issues/917) is one Lean state machine:
+it finds the storage, does the 401 flow with the three discovery checks and
+RFC 8693 token exchange, writes with preconditions, pages by `rel="next"`,
+writes linksets only in advertised methods, subscribes, verifies webhook
+notifications, and composes access requests and grants. `fetch` is
+injected. Design record: `docs/designissues/2026-10-22-lws-client.md`.
+
 The same engine serves the Solid Protocol (`solid-serve`) and has a Solid
 client. The same package also parses, queries (SPARQL), validates (SHACL,
 ShEx) and reasons over RDF.

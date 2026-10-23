@@ -187,3 +187,14 @@ the owner suspended Codex ("You have the reins!") and Claude commits and
 pushes directly, still recording each landing in the file so a returning
 Codex can resume cold. Commit attribution stays iron rule 13 (human only)
 whichever agent lands the change.
+
+
+## Two coordinators on one `main` (2026-10-22)
+
+On 2026-10-22 the batch 3 coordinator and an LWS/XMPP coordinator pushed to
+`main` in the same hours, and the second could not tell whose store and planner
+commits were arriving. The owner asked the first to keep off `main` for 90
+minutes. Rule: when another session is landing on `main`, push finished work to
+a branch named for its KR (`batch3/<kr>`), and land it later with a rebase,
+rebuild and gate run. Record which areas a coordinator lands in its batch issue.
+Progress record: `docs/designissues/2026-10-22-okr-batch3-progress.md`.
