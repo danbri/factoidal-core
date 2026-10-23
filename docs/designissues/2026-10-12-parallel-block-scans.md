@@ -1186,3 +1186,223 @@ per-thread profile (`perf record` with the binary unchanged since the
 record), then give a worker unshared copies of what it reads per block; and
 the allocator work.
 Issue https://github.com/danbri/factoidal/issues/961 stays open.
+
+## Stage 1h: where the 4-thread time goes (2026-10-23)
+
+Issue https://github.com/danbri/factoidal/issues/961, key result KR 1.2 of
+https://github.com/danbri/factoidal/issues/875. Owner constraint, 2026-10-22,
+verbatim: "Yes lets come back to allocator later". No allocator option or
+environment variable was set or changed. Branch `batch3/kr12-perthread`. The
+question from stage 1g: why does each range of a scan with candidates do its
+blocks 1.3 to 1.7 times slower at 4 threads than 1 thread does?
+
+### 1h.1 Result
+
+No engine code changed. The three code changes that this stage tried did not
+meet the gates of KR 1.2 (1h.4). The measurements:
+
+- Atomic reference counts are a small part of the extra time. Olympics q07 at
+  4 threads: 0.19 ms of CPU per run (of 13.2 ms over all threads, 6.2 ms of
+  it pool polling). The parts that code can remove without allocator work
+  are not large enough to measure through the run-to-run variation.
+- The scans with candidates of q07 lose time in four places: no range is
+  switched out by the scheduler (0 of 800 ranges); a range run on a pool
+  worker takes 15 to 25 percent longer than the same range on the calling
+  thread, also when it is the only range that runs (stage 1g measured 1.3 to
+  1.7 times from single runs; the medians of 100 runs per mode give 1.15 to
+  1.25); the four ranges hold
+  unequal work (the largest is 1.20 and 1.12 times the mean); and the
+  waits at the start and end of the phase are 10 to 40 microseconds.
+- The cause of the slower worker ranges is not found. It is not contention
+  between workers, not the shared reference counts of the session's
+  counters and permutation handles (copies made by the worker: no change),
+  not the polling of the other workers (polling off: no change), and not the
+  vCPU (the four vCPUs run one thread at the same speed). This VM has no
+  hardware counters, so cache misses cannot be counted. The data a worker
+  reads and writes per block is in its own heap (the block buffer from
+  `pread`, the output columns), which is allocator behaviour.
+- Olympics q19 at 4 threads spends 2.7 times the CPU time of 1 thread
+  (79.9 against 29.1 ms per run). Most of the extra is that each query copies
+  the dictionary pages again into new per-worker caches: the copies, the
+  evictions of a full cache, fresh memory in the worker heaps and the frees
+  of objects another thread made. A page cache per pool worker that lives as
+  long as the pool removes 40 percent of that CPU time and 20 percent of the
+  4-thread time, but its peak RSS is above 2 times the 1-thread RSS (1h.4).
+
+KR 1.2 now (binary of `origin/main` `cbd7c72a`, which this stage does not
+change), and the page cache of 1h.4 item 3 beside it for the record. The
+1b.6 method with the two binaries interleaved: 8 rounds, round 1 dropped, 7
+processes per cell, median over processes of each process's warm median; RSS
+is the largest VmHWM. DBpedia with `--verify none`. 2026-10-23 08:22 to 08:40
+UTC; load average 0.7 to 1.0 before the runs. Raw CSV:
+`.claude-runs/perthread/ab-r7.csv`, `ab-r21.csv` (not in the repository).
+
+| Query | `--repeat 7`: 1 / 4 threads ms | 4/1 | `--repeat 21`: 1 / 4 threads ms | 4/1 | RSS MB 1 / 4 threads (largest) | RSS 4/1 | target met |
+| --- | ---: | ---: | ---: | ---: | ---: | ---: | --- |
+| q07 | 5.83 / 3.44 | 0.59 | 5.32 / 3.38 | 0.64 | 26 / 38 | 1.45 | no |
+| q19 | 37.38 / 19.77 | 0.53 | 35.03 / 18.68 | 0.53 | 58 / 101 to 105 | 1.73 to 1.80 | no |
+| q21 | 103.03 / 37.72 | 0.37 | 95.62 / 35.96 | 0.38 | 42 / 74 to 76 | 1.75 to 1.79 | yes |
+| d10 | 10.39 / 7.26 | 0.70 | 10.70 / 7.27 | 0.68 | 26 to 28 / 50 to 51 | 1.83 to 1.90 | no |
+| d17 | 0.35 / 0.36 | 1.02 | 0.31 / 0.31 | 0.99 | 22 / 28 to 29 | 1.28 | no |
+
+The page cache per pool worker (not kept), same runs:
+
+| Query | 4/1 `--repeat 7` | 4/1 `--repeat 21` | RSS 4/1 (largest) |
+| --- | ---: | ---: | ---: |
+| q07 | 0.60 | 0.78 | 1.45 |
+| q19 | 0.44 | 0.39 | 2.02 to 2.03 |
+| q21 | 0.42 | 0.40 | 1.94 |
+| d10 | 0.70 | 0.59 | 1.92 to 2.01 |
+| d17 | 1.21 | 0.86 | 1.28 |
+
+The d10 1-thread time (10.4 to 10.7 ms) is the same as in stage 1g's second
+table (10.3 / 9.9 ms); its 4-thread time is 7.3 ms here against 6.5 to 6.7
+ms there, run-to-run variation of the VM (single processes of q19 at 4
+threads took 14 to 33 ms in this stage).
+
+### 1h.2 Method
+
+- `perf`: `/usr/lib/linux-tools/6.8.0-146-generic/perf` (`/usr/bin/perf`
+  asks for a package of the running kernel 6.18.44-fc-v153). Software
+  events only: `perf stat -e cache-misses,instructions` gives "not
+  supported" on this VM.
+- Cost split: `perf record -e cpu-clock -F 1999 --call-graph dwarf,8192`
+  of `l4sbm11 query --repeat N` and of `--repeat 1` (open, first run, exit)
+  at 1 and 4 threads; `tools/perf-cost-split.py` (new) subtracts the second
+  from the first and puts each sample in a class by its stack. The figures
+  are CPU milliseconds per warm run, summed over all threads. The class
+  "atomic RC / MT refs" counts `lean_dec_ref_cold`, which also frees
+  single-threaded objects, so it is an upper bound.
+- Range timing (temporary marks, not committed): the start and end time and
+  the thread id (`IO.getTID`) of each range of `scanSipTableParM`, with
+  `perf record -k CLOCK_MONOTONIC -e sched:sched_switch` for the times a
+  thread was switched out. Three modes in one process (61 to 101 runs): the
+  ranges one after another on the calling thread, one after another on the
+  pool workers (each awaited before the next), and in parallel as shipped.
+- MT state: a temporary `@[extern c inline "lean_is_mt(#2)"]` probe printed
+  which session fields are marked multi-threaded after a run at 4 threads:
+  `taskPages` and `idMemo` (shared with the task views, as designed); the
+  session's own `pages` is not.
+
+### 1h.3 Cost split
+
+CPU milliseconds per warm run, all threads. q07: 300 warm runs; q19: 60;
+d10: 200 (DBpedia, `--verify none`). Binary of `origin/main` `cbd7c72a`.
+
+| Class | q07 1 / 4 threads | q19 1 / 4 threads | d10 1 / 4 threads |
+| --- | ---: | ---: | ---: |
+| compute (Lean code) | 4.80 / 5.32 | 28.74 / 56.37 | 8.46 / 9.89 |
+| allocator | 0.40 / 0.87 | 5.53 / 12.21 | 2.48 / 2.80 |
+| atomic RC / MT refs (upper bound) | 0.06 / 0.24 | 0.69 / 5.64 | 0.35 / 1.02 |
+| page faults, zeroing | 0.07 / 0.09 | (1) / 1.69 | 0.04 / 0.62 |
+| kernel: read, open | 0.29 / 0.49 | 0.03 / 0.77 | 0.48 / 0.68 |
+| kernel: wake, sleep | 0.00 / 0.05 | 0.01 / 0.60 | 0.00 / 0.20 |
+| pool polling | 0 / 6.16 | 0 / 2.58 | 0 / 3.26 |
+| total | 5.62 / 13.22 | 29.12 / 79.87 | 11.81 / 18.47 |
+
+(1) The first run of q19 at 1 thread clears more fresh pages than 60 warm
+runs together, so the subtraction is negative (-5.9 ms); the 4-thread warm
+runs clear about 7.6 ms more per run than the 1-thread warm runs.
+
+The extra time at 4 threads that is not polling, in the classes the stage 1g
+record asked for:
+
+| Query | atomic RC (upper bound) | page faults, zeroing | allocator | compute (same code, more CPU: includes cache misses) | kernel |
+| --- | ---: | ---: | ---: | ---: | ---: |
+| q07 (+1.44 ms) | 0.19 (13 %) | 0.01 (1 %) | 0.47 (33 %) | 0.52 (36 %) | 0.25 (17 %) |
+| q19 (+48.2 ms) | 4.95 (10 %) | 7.57 (16 %) | 6.69 (14 %) | 27.63 (57 %) | 1.33 (3 %) |
+| d10 (+3.39 ms) | 0.67 (20 %) | 0.58 (17 %) | 0.32 (9 %) | 1.43 (42 %) | 0.39 (12 %) |
+
+Where the classes come from (callers in the profiles):
+
+- q07: the allocator extra is the frees at the end of each pool job of
+  objects the calling thread made (`mi_free_block_delayed_mt`,
+  `mi_free_generic_mt` under `workerLoop`) and the hash join. The compute
+  extra is the divided merge join (its own symbol at 4 threads) and the
+  decode loops `Sip.deltaGatherGoY` and `Sip.deltaFindGoY`: 0 to 9 percent
+  more samples at 4 threads in two profiles (dwarf, 150 runs: 3,128 against
+  3,099 samples in `scanBlockSipM`; flat, 401 runs: +8.8 and +7.9 percent).
+  The kernel extra is `open` of the PRB1 file for each block (`d_lookup`,
+  `init_file`).
+- q19: `copyPage` (`memcpy`, its fresh memory and the reference counts of
+  the shared page it copies), `insertPageBounded` (filters of a full worker
+  cache), `onceSeen`, `sharedPage` (`taskPages.get` on a shared reference),
+  `prefetch`, and the JSON escaping loop `escLoop` (2,420 against 1,857
+  samples: the same work reading pages that another thread wrote).
+- d10: `clear_page_erms` under `decodeWordsRangeF` (fresh output columns in
+  the worker heaps), `lean_dec_ref_cold` under the block functions
+  (`cutCol`, `frameSpan`, `blockChunk`), task posting (`lean_mark_mt`).
+
+q07, the scans with candidates (microseconds, medians of 100 runs in one
+process at 4 threads, ranges in range order; four processes gave the same
+pattern, one of them with every mode 20 percent slower):
+
+| Mode | pattern 2: ranges 0 to 3 | sum | pattern 3: ranges 0 to 3 | sum |
+| --- | --- | ---: | --- | ---: |
+| one after another, calling thread | 546 525 400 368 | 1,840 | 337 340 338 228 | 1,242 |
+| one after another, pool workers | 599 586 564 424 | 2,173 | 395 418 452 280 | 1,545 |
+| in parallel (as shipped) | 584 559 476 502 | 2,122 | 370 377 402 342 | 1,491 |
+
+`sched_switch` over 101 runs: no range was switched out (800 ranges, 0
+switches between start and end). With pool polling off (`spinNs` 0, the
+workers block at once) the pattern is the same.
+
+### 1h.4 Tried and not kept
+
+1. **Counters and permutation handles made by the worker**
+   (`Session.forWorker`: new counter refs, `LoadedPerm` copies with new path
+   strings, made in the job and added to the view at its end). The session
+   view's refs were made by the calling thread next to the result cell that
+   it polls, so false sharing was a candidate. q07 ranges on the pool
+   workers, sum of the four ranges of pattern 2 (4 processes of 101 runs):
+   2,173 to 2,356 us without, 2,266 to 2,446 us with. No gain.
+2. **PRM1 entries copied per range** (`freshMeta` of each entry of the
+   range, in the job, positions renumbered). DBpedia d10 at 4 threads, CPU
+   per warm run: 18.47 against 18.03 ms; the reference-count class 1.02
+   against 0.99 ms. The decrements in `cutCol` and `frameSpan` stayed: they
+   are frees, not shared entries. Not kept (no measured gain).
+3. **A page cache per pool worker for the life of the pool**
+   (`Harness.WorkerPool.start` with a value that each pool thread makes and
+   gives to its jobs, a dictionary page cache that only that thread reaches;
+   bounded folds take ranges in a fixed order, worker `j` ranges `j, j + n,
+   ...`, so a worker meets the same pages in the next query; a page is
+   copied into it on its second use in a fold). Olympics, 14 rounds (13
+   kept) of `--repeat 7`, 2,048 pages per worker:
+
+   | Query | 4 threads ms main / cache | peak RSS MB at 4 threads, median and largest, main / cache | RSS 4/1 largest main / cache |
+   | --- | ---: | ---: | ---: |
+   | q19 | 21.08 / 16.79 | 97 and 100 / 109 and 119 | 1.72 / 2.03 |
+   | q21 | 42.41 / 41.67 | 72 and 74 / 82 and 83 | 1.76 / 1.95 |
+
+   CPU per warm q19 run at 4 threads: 79.9 ms main, 48.4 ms with the cache
+   (no `onceSeen`), 64.5 ms with 1,024 pages. 1,536 pages: q19 17.66 ms,
+   RSS 4/1 2.12. 512 and 768 pages: no gain for q19, q21 45 ms. Ranges taken
+   from the shared counter with the cache: q19 RSS 4/1 2.09 to 2.57. Three
+   workers only (no fourth on the Lean task pool): q19 RSS 1.90 but q21 46
+   to 49 ms. Not kept: the RSS limit of KR 1.2 (at most 2). The copies live in
+   the worker heaps; with the allocator work (less fresh memory per worker)
+   this is the first change to try again.
+
+### 1h.5 What remains
+
+- q19 (0.53) and d10 (0.68 to 0.70): the per-query page copies of the
+  worker caches (q19), fresh memory in the worker heaps (q19, d10: `clear_page_erms`
+  under the render buffers and decoded columns) and frees across threads.
+  The page cache per pool worker meets 0.4 for q19 (0.39 to 0.44) but its
+  peak RSS is 2.02 to 2.03 times the 1-thread RSS. Both need the allocator
+  work (less fresh memory per worker heap, frees returned at once), which the
+  owner deferred.
+- q07 (0.59 to 0.64): the slower worker ranges (1h.1; cause not measured,
+  candidate: the worker heap's memory, allocator work), the unequal ranges,
+  and the serial ORDER BY keys and rendering (stage 1g).
+- d17 (0.3 ms, no scan): the owner decision of
+  https://github.com/danbri/factoidal/issues/961 item 2 is still open.
+- `open` of the PRB1 file for each block read (`l4_block_pread`): kernel
+  path lookups that grow at 4 threads (q07 +0.2 ms CPU per run). A cached
+  descriptor was tried in stage 1f for the constants only.
+
+Issue https://github.com/danbri/factoidal/issues/961 stays open.
+
+### 1h.6 Gates
+
+GATES

@@ -850,6 +850,33 @@ section "Stage 1b", subsection "What failed on the way"):
   (`sparqlOrder_eq_viewed`, `WorkerPoolTheorems.orderRanks_map`): q07's sort
   and ranks 0.33 to 0.14 ms at every thread count.
 
+- **Split the extra CPU of N threads by class before you write a fix**
+  (2026-10-23, stage 1h of the same record,
+  https://github.com/danbri/factoidal/issues/961). Stage 1g named "shared
+  reference counts on PRM1 entries" as the likely cause of slow worker
+  ranges; three copies made by the worker (counters, permutation handles,
+  PRM1 entries) were then measured and gave nothing: on olympics q07 the
+  atomic reference counts are 0.19 ms of 13.2 ms CPU per run at 4 threads.
+  Method: `perf record -e cpu-clock --call-graph dwarf` of `--repeat N` and
+  of `--repeat 1`, then `tools/perf-cost-split.py`, which subtracts the
+  second and puts each sample in a class (pool polling, page faults,
+  atomic RC, allocator, kernel, compute). Use
+  `/usr/lib/linux-tools/6.8.0-146-generic/perf` (`/usr/bin/perf` refuses the
+  container kernel). This VM has no hardware counters: cache misses show
+  only as more samples in the same compute symbol. `lean_dec_ref_cold` also
+  frees single-threaded objects (a count of 1 reaching 0), so its samples
+  are an upper bound for atomic decrements. For wall time per range, mark
+  start, end and `IO.getTID` per range and record
+  `perf record -k CLOCK_MONOTONIC -e sched:sched_switch`: none of 800 q07
+  ranges was switched out, so their extra time is on the CPU.
+- **A value per pool thread stays single-threaded.** A value that a worker
+  thread makes itself and passes to its jobs as an argument is never marked
+  MT (an `IO.Ref` the parent made, or anything a job closure captures, is).
+  Tried for a dictionary page cache that lives as long as the pool (stage
+  1h): olympics q19 at 4 threads 21.1 to 16.8 ms and 40 percent less CPU,
+  but peak RSS 2.03 times the 1-thread RSS against a limit of 2, so not
+  kept until the allocator work.
+
 Measure every one of these with `perf record` at 1 and N threads and the
 CPU time (`perf stat -e task-clock`): CPU time that grows with the thread
 count at a fixed amount of work is the sign.
