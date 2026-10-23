@@ -22,6 +22,11 @@ phase A3).
 * Hand-over finding 3: a document with `"x"@EN` parses, and its dataset is not
   in SBM11 form (`Sbm11Folded` fails), so the end-to-end answer over the
   parsed dataset needs that premise.
+* Hand-over finding 2 (closed): two Turtle documents that both write `_:b0`,
+  parsed with `scopedParseStage` and the scope numbers 0 and 1 and combined,
+  hold two blank nodes; the raw parses combined hold one. Inside one document
+  a label is one blank node at every position, inside triple terms too, and
+  the end-to-end answer carries the scoped label.
 * The RDFS closure stage adds the `rdf:type` triple of a domain rule.
 * The identity read-back realises `ReadsWritten` (a model of the IO stage).
 
@@ -99,9 +104,9 @@ private theorem idRead_realised : sbm11Disk.Realised idRead := by
   injection h with h
   exact h.symm
 
-private def solutionsOf (d : Document) (q : String) : Option SPARQL.SolutionSeq :=
+private def solutionsOf (d : Document) (q : String) (n : Nat := 0) : Option SPARQL.SolutionSeq :=
   let p := patOf q
-  okVal? ((documentToSolutions {} .rdf12 none 4096 idRead idRead_realised {} none (planOf p) p
+  okVal? ((documentToSolutions {} .rdf12 none n 4096 idRead idRead_realised {} none (planOf p) p
     rfl rfl).run d)
 
 private def spo : String := "SELECT * WHERE { ?s ?p ?o }"
@@ -121,6 +126,35 @@ private def spo : String := "SELECT * WHERE { ?s ?p ?o }"
   "<http://ex.org/a> <http://ex.org/p> <http://ex.org/b> . <http://ex.org/a> <http://ex.org/p> <http://ex.org/b> .")
   spo).map List.length) == some 1
 #guard ((solutionsOf (doc "application/n-quads" nq) "SELECT * WHERE { ?s <http://ex.org/q> ?o }").map List.length) == some 0
+
+
+/-! ### Finding 2: blank nodes scoped per document
+
+Two Turtle documents that both write `_:b0`. Parsed with the scope numbers 0
+and 1 and combined, they hold two blank nodes (the merge); the raw parses
+combined hold one (the union). -/
+
+private def scoped? (n : Nat) (d : Document) : Option Dataset :=
+  okVal? ((decodeStage.comp (scopedParseStage {} .rdf12 none n)).run d)
+
+private def docA : Document := doc "text/turtle" "_:b0 <http://ex.org/p> <http://ex.org/o> ."
+private def docB : Document := doc "text/turtle" "_:b0 <http://ex.org/q> <http://ex.org/o> ."
+
+#guard match parsed? docA, parsed? docB with
+  | some a, some c => (a.combine c).bnodes.length == 1
+  | _, _ => false
+#guard match scoped? 0 docA, scoped? 1 docB with
+  | some a, some c => (a.combine c).bnodes.length == 2
+  | _, _ => false
+-- one label inside one document stays one blank node, at every position
+#guard match scoped? 4 (doc "text/turtle"
+    "_:b0 <http://ex.org/p> <<( _:b0 <http://ex.org/q> _:b1 )>> .") with
+  | some a => a.bnodes == ["d4_b0", "d4_b1"] || a.bnodes == ["d4_b1", "d4_b0"]
+  | none => false
+-- the end-to-end answer carries the scoped label
+#guard match solutionsOf docA "SELECT ?s WHERE { ?s ?p ?o }" 5 with
+  | some [mu] => mu.lookup "s" == some (.bnode "d5_b0")
+  | _ => false
 
 /-! ### Finding 6: SBM11 generation to the planner SELECT stage -/
 

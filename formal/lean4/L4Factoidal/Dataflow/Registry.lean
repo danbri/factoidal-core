@@ -112,7 +112,31 @@ def registry : List Entry := [
     contract := ``ParseContract, status := .proved
     theorems := [``L4Factoidal.RDF.Source.parseDocument_set, ``L4Factoidal.RDF.Dataset.memQuad_toSet,
       ``L4Factoidal.RDF.Dataset.toSet_isSet, ``SetOf.den_eq]
-    note := "blank nodes not scoped by Document.source (finding 2)" },
+    note := "labels as written; the document scope is scopedParseStage" },
+  { area := "Document blank-node scope (fresh labels per document)", dir := "RDF"
+    stage := ``scopeStage, wireIn := "Dataset", wireOut := "Dataset"
+    contract := ``ScopeContract, status := .proved
+    theorems := [``L4Factoidal.RDF.Dataset.den_iso_scopeDocument,
+      ``L4Factoidal.RDF.Dataset.scopeDocument_inScope, ``L4Factoidal.RDF.Dataset.scopeDocument_isSet,
+      ``L4Factoidal.RDF.docLabel_inj]
+    note := "scope number from a fresh-label supply (Wasm counter, harness file index); the supply is IO, not modelled" },
+  { area := "RDF readers with the document scope; two documents combine to a merge", dir := "RDF"
+    stage := ``scopedParseStage, wireIn := "RdfFormat × String", wireOut := "Dataset"
+    contract := ``ScopedParseContract, status := .proved
+    theorems := [``scopedParseContract_of, ``scopedParse_combine_isMerge,
+      ``L4Factoidal.RDF.scopeDocument_combine_isMerge, ``L4Factoidal.RDF.Dataset.den_combine]
+    note := "RDF 1.1 Semantics 5.2 merge (DatasetDen.IsMerge), not the union" },
+  { area := "Blank-node relabelling at a store boundary (identity transport)", dir := "RDF"
+    stage := ``relabelStage, wireIn := "Dataset", wireOut := "Dataset"
+    contract := ``RelabelContract, status := .proved
+    theorems := [``L4Factoidal.RDF.Dataset.den_iso_renameBnodes,
+      ``L4Factoidal.RDF.Dataset.den_renameBnodes, ``L4Factoidal.RDF.Dataset.renameBnodes_isSet,
+      ``L4Factoidal.RDF.Dataset.renameBnodes_invertible, ``L4Factoidal.RDF.DatasetDen.iso_equivalence]
+    note := "DatasetDen.Iso: one relabelling over graphs, graph names and triple terms" },
+  { area := "W3C harness fixture loading (data and graph files as separate documents)", dir := "RDF"
+    wireIn := "files", wireOut := "Dataset", status := .tested
+    tests := ["W3C SPARQL 1.1 manifest-all (l4w3c)", "Harness/HarnessTests.lean fixture-scope #guards"]
+    note := "each file scoped by its index (addDataFile, addGraphFile)" },
   { area := "RDF readers: grammar conformance", dir := "Syntax"
     wireIn := "String", wireOut := "Dataset", status := .tested
     tests := ["W3C RDF 1.1 syntax suites (l4w3c)", "W3C RDF 1.2 syntax suites (l4w3c)"] },
@@ -150,7 +174,7 @@ def registry : List Entry := [
     contract := ``documentToWhere_sound, status := .proved
     theorems := [``documentToWhere_sound, ``Stage.comp_ok_contract]
     ioAssumptions := [``ReadsWritten]
-    note := "premises: ReadsWritten, plan hypotheses, QHyps, Sbm11Folded, PermOk" },
+    note := "document scope n; raw parse to generation is DatasetDen.Iso; premises: ReadsWritten, plan hypotheses, QHyps, Sbm11Folded, PermOk" },
   { area := "End to end: document bytes to SolutionSeq (SBM11 id path)", dir := "Dataflow"
     stage := ``documentToSolutions, wireIn := "Document", wireOut := "SolutionSeq"
     contract := ``documentToSolutions_sound, status := .proved
