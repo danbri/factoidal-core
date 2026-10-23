@@ -444,6 +444,8 @@ import L4Factoidal.Storage.Sbm11.ColumnFastTheorems
 import L4Factoidal.Storage.Sbm11.PackStream
 import L4Factoidal.Storage.Sbm11.AllowedPermTheorems
 import L4Factoidal.Storage.Sbm11.PackSpecInputTheorems
+import L4Factoidal.Storage.Sbm11.MemoCache
+import L4Factoidal.Storage.Sbm11.SessionCacheTheorems
 import L4Factoidal.Storage.Sbm11.ExprLocalTheorems
 import L4Factoidal.Storage.Sbm11.FilterIdTheorems
 import L4Factoidal.Storage.Sbm11.FilterTableTheorems

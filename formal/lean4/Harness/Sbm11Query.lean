@@ -94,6 +94,7 @@ import L4Factoidal.Storage.Sbm11.PrmRange
 import L4Factoidal.Storage.Sbm11.DictRange
 import L4Factoidal.Storage.Sbm11.DictFinger
 import L4Factoidal.Storage.Sbm11.FrameWords
+import L4Factoidal.Storage.Sbm11.MemoCache
 import L4Factoidal.Storage.ShardManifest
 import L4Factoidal.Storage.QuadDataset
 import L4Factoidal.SPARQL.StoreDataset
@@ -400,22 +401,20 @@ def Session.gdvFetch (ss : Session) (off len : Nat) : IO ByteArray := do
     | none => throw (IO.userError s!"GDV1: chunk {c} refused")
   return out
 
-/-- The class of pages that a full cache drops: pages whose
-    number has the same remainder modulo 16 as the page being inserted. -/
-def evictClasses : Nat := 16
+/-- The class of pages that a full cache drops (`MemoCache.evictClasses`). -/
+abbrev evictClasses : Nat := MemoCache.evictClasses
 
-/-- Insert page `pg` in a page map that holds at most `lim` entries. When the
-    map is full, the entries whose number is in the same class modulo
-    `evictClasses` as `pg` are dropped (about one sixteenth), and the whole map
-    if that does not make room. The earlier rule emptied the whole map when it
-    was full: a scan whose pages are a few more than the limit (olympics q19
-    and q21: between 4,096 and 8,192 pages against 2,048) then loaded every page again on
-    every run (q19: 97 ms against 36 ms with no limit; issue 799, KR 1.2). -/
-def insertPageBounded {α : Type} (m : Std.HashMap Nat α) (lim pg : Nat) (v : α) : Std.HashMap Nat α :=
-  if m.size < lim then m.insert pg v
-  else
-    let m' := m.filter fun k _ => k % evictClasses != pg % evictClasses
-    (if m'.size < lim then m' else {}).insert pg v
+/-- Insert page `pg` in a page map that holds at most `lim` entries
+    (`MemoCache.insertEvict`). When the map is full, the entries whose number
+    is in the same class modulo `evictClasses` as `pg` are dropped (about one
+    sixteenth), and the whole map if that does not make room. The earlier rule
+    emptied the whole map when it was full: a scan whose pages are a few more
+    than the limit (olympics q19 and q21: between 4,096 and 8,192 pages against
+    2,048) then loaded every page again on every run (q19: 97 ms against 36 ms
+    with no limit; issue 799, KR 1.2). `MemoCache.coherent_insertEvict`: the
+    insert keeps every entry the page of its number. -/
+abbrev insertPageBounded {α : Type} (m : Std.HashMap Nat α) (lim pg : Nat) (v : α) : Std.HashMap Nat α :=
+  MemoCache.insertEvict m lim pg v
 
 /-- The keys of dictionary page `pg`, packed: one byte array holding the keys
     one after the other and the start of each key (and the end of the last).
@@ -463,9 +462,10 @@ def cacheTaskPage (lim : Nat) (c : IO.Ref (Std.HashMap Nat (ByteArray × Array N
 /-- A copy of a page made by the calling thread. A page in `taskPages` is
     reachable from every task, so taking and releasing a reference to it is an
     atomic operation on one cache line from every thread that renders with it;
-    each task and the session keep their own copy (about 2 KB). -/
-def copyPage (ks : ByteArray × Array Nat) : ByteArray × Array Nat :=
-  (ks.1.extract 0 ks.1.size, ks.2.extract 0 ks.2.size)
+    each task and the session keep their own copy (about 2 KB). The copy is
+    the same value (`MemoCache.copyPage_eq`). -/
+abbrev copyPage (ks : ByteArray × Array Nat) : ByteArray × Array Nat :=
+  MemoCache.copyPage ks
 
 /-- Put an entry in `taskPages` (call under `dictLock`), emptied first when
     it holds `SBM11_PAGES` entries. -/
@@ -698,7 +698,7 @@ def Session.idOf (ss : Session) (t : Term) : IO (Option UInt64) := do
     | some (some x) => return some x
     | some none => ss.overlayIdOf t
     | none =>
-      if let some x := (← ss.idMemo.get).get? t then return some x
+      if let some x := MemoCache.find? (← ss.idMemo.get) t then return some x
       match termKeyBytes? t with
       | none => return none
       | some k =>
@@ -706,7 +706,7 @@ def Session.idOf (ss : Session) (t : Term) : IO (Option UInt64) := do
         match r with
         | some r =>
           let x := dictIdOfRank k r
-          ss.idMemo.modify fun m => (if m.size < idMemoLimit then m else {}).insert t x
+          ss.idMemo.modify fun m => MemoCache.insertBounded idMemoLimit m t x
           return some x
         | none =>
           -- a term the delta log added (stage 5)
@@ -722,12 +722,12 @@ def Session.lowerBound (ss : Session) (k : ByteArray) : IO Nat := do
     with the same key. -/
 def Session.rangeFor (ss : Session) (p : Nat) (key : Array UInt64) : IO (Array BlockMeta) := do
   let lp ← ss.perm p
-  if let some r := (← lp.ranges.get).get? key then return r
+  if let some r := MemoCache.find? (← lp.ranges.get) key then return r
   let read := ss.prmReadAt lp.prmPath lp.prmRef lp.prmLeaves lp.prmCache
   let r ← match ← (PrmRange.rangeM (PrmRange.bytesReader read lp.count) key).run with
     | .ok r => pure r
     | .error e => throw (IO.userError s!"{lp.prmPath}: {e}")
-  lp.ranges.modify fun m => (if m.size ≥ 256 then {} else m).insert key r
+  lp.ranges.modify fun m => MemoCache.insertBounded 256 m key r
   return r
 
 def Session.prb (ss : Session) (p off len : Nat) : IO ByteArray := do
