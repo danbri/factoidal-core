@@ -313,13 +313,20 @@ OWL_PROBE_ERR=""
 # Sensitivity control. An OWL case reads XPASS when the F* probe reports
 # "consistent", and that is also what a probe reports when it sees nothing at
 # all (an empty premise, a runner that stopped consulting the tableau). The
-# control is an ontology both engines must call INCONSISTENT; if the F* probe
-# does not, every OWL case below is an ERROR, not an XPASS.
+# control is an INCONSISTENT ontology; if the F* probe does not call it
+# inconsistent, every OWL case below is an ERROR, not an XPASS.
+# Lean must answer false (inconsistent) or unknown, never true. Since
+# factoidal-core 87fd052e (2026-10-22) `owl-consistent` gives a verdict only
+# with a checked certificate and answers unknown outside the admitted atomic
+# fragment, which does not admit data cardinality restrictions
+# (https://github.com/danbri/factoidal/issues/960). Until 2026-10-22 the
+# control required Lean false, and the web gates of factoidal-builds failed
+# from core 0a7fab49 (2026-10-22 22:25 UTC) to this change.
 if [ -z "$OWL_PROBE_ERR" ]; then
   CTL_F=$(fstar_owl_verdict "${FIXTURES}/owl-control-inconsistent.rdf")
   CTL_L=$(lean_owl_verdict "${FIXTURES}/owl-control-inconsistent.rdf")
-  if [ "$CTL_F" != "INCONSISTENT" ] || [ "$CTL_L" != "false" ]; then
-    OWL_PROBE_ERR="sensitivity control owl-control-inconsistent.rdf: F* probe ${CTL_F}, Lean ${CTL_L} (both must report inconsistent)"
+  if [ "$CTL_F" != "INCONSISTENT" ] || { [ "$CTL_L" != "false" ] && [ "$CTL_L" != "unknown" ]; }; then
+    OWL_PROBE_ERR="sensitivity control owl-control-inconsistent.rdf: F* probe ${CTL_F}, Lean ${CTL_L} (F* must report inconsistent; Lean false or unknown)"
   fi
 fi
 
@@ -333,15 +340,25 @@ owl_case () {
   fi
   fv=$(fstar_owl_verdict "$file")
   lv=$(lean_owl_verdict "$file")
-  if [ "$lv" != "true" ]; then
-    record "$id" "$issue" "$title" ERROR \
-      "Lean oracle answered ${lv}, not true; the expectation 'consistent' is unconfirmed"
-  elif [ "$fv" = "INCONSISTENT" ]; then
+  # Lean true confirms the fixture. Lean unknown is no verdict: the public
+  # operation answers true only with a model certificate, which does not
+  # exist yet (issue 960 item 1); the fixture stays as confirmed by the Lean
+  # tableau before 87fd052e. Lean false contradicts the fixture: ERROR.
+  local oracle
+  case "$lv" in
+    true)    oracle="Lean reports consistent (correct)" ;;
+    unknown) oracle="Lean gives no verdict (https://github.com/danbri/factoidal/issues/960)" ;;
+    *)
+      record "$id" "$issue" "$title" ERROR \
+        "Lean oracle answered ${lv}; the expectation 'consistent' is contradicted or unconfirmed"
+      return 0 ;;
+  esac
+  if [ "$fv" = "INCONSISTENT" ]; then
     record "$id" "$issue" "$title" XFAIL \
-      "F* reports inconsistent; Lean reports consistent (correct)"
+      "F* reports inconsistent; ${oracle}"
   elif [ "$fv" = "CONSISTENT" ]; then
     record "$id" "$issue" "$title" XPASS \
-      "F* now reports consistent, as Lean does -- defect appears FIXED"
+      "F* now reports consistent -- defect appears FIXED; ${oracle}"
   else
     record "$id" "$issue" "$title" ERROR "F* probe: ${fv}"
   fi
