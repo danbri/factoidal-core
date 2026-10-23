@@ -2891,6 +2891,24 @@ tracking [#658](https://github.com/danbri/factoidal/issues/658) and
 | A language-tagged or `rdf:XMLLiteral` constant object was UNSOUND to zone-test on — `Term.eqb` folds language-tag case and canonicalises XML, a zone bound is the version-2 wire key | `Storage/ShardManifest.lean` (`constantObjectOf`) | `RDF.exactObjectIndexKeySafe` | ✅ REPAIRED (2026-09-06) | — |
 | `restrictDataset keep (D S) = restrictDataset keep (D E)` — the storage obligation. Needs an `Index.Wf`-style characterisation of `datasetOfQuads` (a `foldl` over `Std.HashMap`) plus the entry-level facts under the activation invariants | `Storage/QuadDataset.lean`, `Storage/PlannerSoundness.lean` | `Storage.QuadDataset.datasetOfQuads` | ⬜ OPEN (2026-09-06) — recorded with its route | — |
 | The DELEGATING arms of `evalPatternBackend` (`FILTER` / `OPTIONAL` / `BIND` with an expression that is not `Expr.backendLocal`, property paths, sub-SELECT, `VALUES`, `SERVICE`, `LATERAL`) — they materialise the dataset and run the algebra evaluator, a second evaluator the induction does not reach | `SPARQL/DatasetRestriction.lean` module header | `QueryPattern.lowerWith` / `GraphPattern.evalIn` | ⬜ OPEN (2026-09-06) — the collectors refuse them, so the planner reads more | — |
+## Lawful store records with a denotation (Lean 4, 2026-10-23, issue 975 B1/B2)
+
+[Issue 975](https://github.com/danbri/factoidal/issues/975), phase B. `StoreCapsExact G caps` (`RDF/StoreCapsDenotation.lean`): the five laws of `StoreCapsLawful`, plus `solveExact` (a read returns the matching triples of `G` up to RDF term equality, and no other), `solveNodupKeys` (no two RDF-term-equal rows) and `distinctPredicatesComplete`. `StoreCapsDenotes d gn` is `StoreCapsExact (d.graph gn)`.
+
+| Theorem | Module | Native anchor | Status | Fragment / hypotheses |
+|---|---|---|---|---|
+| `igSearch_of_wf`, `capsOfIndexed_exact`, `capsOfIndexed_default_denotes`, `capsOfIndexed_named_denotes` | `RDF/StoreCapsDenotation.lean` | `RDF.capsOfIndexed` | ✅ PROVED | `Index.Wf i g`, `g.KeyNodup` (dataset: `IsSet`) |
+| `capsOfCottas_exact` | `RDF/StoreCapsDenotation.lean` | `RDF.CottasCaps.capsOfCottas` | ✅ PROVED from the reader law | `CottasReadOpsExact` (named I/O assumption) |
+| `unionCaps_exact` | `RDF/StoreCapsDenotation.lean` | `RDF.unionCaps` | ✅ PROVED | members lawful; the union is a set union since 2026-10-23 |
+| `overlay_exact`, `overlayPred_fold`, `overlay_fold_exact` (base plus a folded log denotes the log applied to the base, `applyEntriesRef`) | `RDF/StoreCapsDenotation.lean` | `RDF.overlay` | ✅ PROVED | base lawful |
+| `capsOfList_exact`, `capsOfList_dup_not_exact`, `capsOfReadOps_exact`, `capsOfRmlSource_lawful`, `capsOfRmlSource_nodupKeys`, `capsOfBackend_exact`, `capsOfBackendList_exact` | `SPARQL/StoreBackendDenotation.lean` | `StoreBackend.capsOfBackend` | ✅ PROVED | `BackendExact`, one clause per arm |
+| `capsOfRmlSource_exact` | `SPARQL/StoreBackendDenotation.lean` | `RML.capsOfRmlSource` | 🟡 PROVED under two OPEN hypotheses | `RmlPushdownInvisible`, `RmlVirtualIsMaterialised` (both tested by `#guard`s only) |
+| `backendSearch_exact`, `backendSearch_nodupKeys`, `backendSearchLimited_sub`, `backendSearch_keys_perm_of_den`, `backendCountExact_eq_of_den`, `backendPredicatePresent_false` | `SPARQL/StoreBackendDenotation.lean` | the six dispatchers | ✅ PROVED | `BackendExact gb G` |
+| `restrictDataset_eq_of_cover`, `plannerSoundnessSelectDen`, `plannerSoundnessAskDen`, `indexedDatasetBackend_exact` | `Storage/PlannerSoundness.lean` | `ShardManifest.quadEntriesForQueryWithKeys` | ✅ PROVED — the storage obligation against the denotation | `hcover` (kept quads of `dE.den` are in `dS.den`), `SubEntries dS dE`, `dE.IsSet`, `keep` respects keys |
+| `heldFolded_sbm11`, `overlayDen_remove_sbm11_vocab` — closes the A1 open hypothesis `HeldFolded` | `Storage/Sbm11/HeldFoldedTheorems.lean` | `OverlayDict.vocabAdd`, `MemGen.keysOk` | ✅ PROVED | `keysOk`, `idOkB`, vocabulary from `vocabAddAll keys []` |
+| `sbm11_record_denotes` — the SBM11 generation and the lawful dataset record denote one dataset | `Storage/Sbm11/StoreCapsConnection.lean` | `PackSpec.packSpec` | ✅ PROVED | `D.IsSet`, `distinctNames`, `D.den = inputDen` |
+| Union read a shared triple twice; overlay over an exact-estimate base broke `estimateExact` | `RDF/StoreCapabilities.lean`, `RDF/StoreCapabilitiesDelta.lean` | — | ✅ REPAIRED (2026-10-23), `#guard`s pin it | — |
+
 ## GeoSPARQL bounding-box index (Lean 4, 2026-09-07)
 
 The GBI1 index is a CANDIDATE FILTER: a box can exclude a row, never

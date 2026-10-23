@@ -38,6 +38,7 @@ import L4Factoidal.RDF.StoreCapabilities
 import L4Factoidal.RDF.StoreCapabilitiesCottas
 import L4Factoidal.RDF.StoreDeltaMerge
 import L4Factoidal.RDF.StoreCapabilitiesDelta
+import L4Factoidal.RDF.StoreCapsDenotation
 import L4Factoidal.RDF.StoreCombine
 import L4Factoidal.RDF.LangTag
 import L4Factoidal.RDF.IriSyntax
@@ -53,6 +54,8 @@ import L4Factoidal.SPARQL.IndexedEvalRefinement
 import L4Factoidal.SPARQL.SharedSubjectTriple
 import L4Factoidal.SPARQL.SharedSubjectTripleRefinement
 import L4Factoidal.SPARQL.StoreBackend
+import L4Factoidal.SPARQL.StoreCapsDenotationTests
+import L4Factoidal.SPARQL.StoreBackendDenotation
 import L4Factoidal.SPARQL.StorePlan
 import L4Factoidal.SPARQL.StoreFastPath
 import L4Factoidal.SPARQL.StoreDataset
@@ -486,6 +489,7 @@ import L4Factoidal.Storage.Sbm11.DictFingerTheorems
 import L4Factoidal.Storage.Sbm11.Overlay
 import L4Factoidal.Storage.Sbm11.OverlayTheorems
 import L4Factoidal.Storage.Sbm11.DenotationTheorems
+import L4Factoidal.Storage.Sbm11.HeldFoldedTheorems
 import L4Factoidal.Storage.Sbm11.OverlayLimit
 import L4Factoidal.Storage.Sbm11.UpdateOverlayTheorems
 import L4Factoidal.Storage.Sbm11.ScanFoldTests
@@ -795,6 +799,7 @@ import L4Factoidal.Syntax.TriGChunkFoldTheorems
 import L4Factoidal.Storage.ShardManifest
 import L4Factoidal.Storage.ShardManifestTheorems
 import L4Factoidal.Storage.PlannerSoundness
+import L4Factoidal.Storage.Sbm11.StoreCapsConnection
 import L4Factoidal.Storage.PackStream
 import L4Factoidal.Storage.GenerationVerify
 import L4Factoidal.CL.Syntax

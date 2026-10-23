@@ -47,6 +47,7 @@ accounts for every member explicitly, and `unionCaps` always advertises
 `some` with the per-member fallback inside.
 -/
 import L4Factoidal.SPARQL.Algebra
+import L4Factoidal.RDF.GraphIndex
 import L4Factoidal.Storage.DeltaLog
 import L4Factoidal.OWL.RLClosureIndexed
 
@@ -150,16 +151,29 @@ def capsTakeN (n : Nat) (xs : List α) : List α := xs.take n
 
 A read-only federation over a list of read seams. It mirrors the
 per-field arithmetic the six tag dispatchers did for a union backend,
-without a union-shaped constructor. -/
+without a union-shaped constructor.
+
+**The union is a SET union** (https://github.com/danbri/factoidal/issues/975,
+B1). RDF 1.1 Semantics defines the union of graphs as the set-theoretic union,
+and an RDF graph is a set of triples (RDF 1.1 Concepts section 3). Until
+2026-10-23 `unionSolve` concatenated the members' answers and
+`unionCountExact` summed their counts, as the F\* module does: two members that
+hold one triple returned it twice, and a basic graph pattern then counted each
+solution twice. Now `unionSolve` keeps the first occurrence of each triple up to
+RDF term equality (`Graph.unionFast`, equal to `Graph.union` by
+`Graph.union_eq_unionFast`), `unionCountExact` counts that answer, and
+`unionSolveLimited` returns its prefix. This is a deliberate divergence from
+the F\* source. `unionEstimate` stays the sum: an upper bound, and the record
+does not advertise an exact estimate. -/
 
 def unionSolve (members : List StoreCaps) (b : PatternBound) : List Triple :=
-  members.flatMap (fun m => m.solve b)
+  Graph.unionFast [] (members.flatMap (fun m => m.solve b))
 
 def unionEstimate (members : List StoreCaps) (b : PatternBound) : Nat :=
   members.foldl (fun acc m => acc + m.estimate b) 0
 
 def unionCountExact (members : List StoreCaps) (b : PatternBound) : Nat :=
-  members.foldl (fun acc m => acc + m.countExact b) 0
+  (unionSolve members b).length
 
 def unionPredicatePresent (members : List StoreCaps) (pred : WfIri) : Bool :=
   members.any (fun m => m.predicatePresent pred)
@@ -175,21 +189,31 @@ pushdown would be made to decode its entire result before the union
 threw most of it away, which defeats the one path that exists to avoid
 that. So each member is asked for only its REMAINING budget, and the
 walk stops before touching a later member at all once the budget is
-spent. -/
+spent.
 
-def unionSolveLimitedAcc : List StoreCaps → PatternBound → Nat → List Triple → Nat →
-    List Triple
-  | [], _, _, accRev, _ => accRev
-  | m :: rest, b, limit, accRev, accLen =>
-      if accLen ≥ limit then accRev
+With the set union a member's limited answer can repeat rows the union
+already holds, so it can add fewer rows than its budget. Then, and only then,
+the member is read in full: its limited answer filled the budget, so the
+member may hold more new rows. A member that returned fewer rows than its
+budget has no more, and a merge that filled the limit needs no later row. -/
+
+def unionSolveLimitedAcc : List StoreCaps → PatternBound → Nat → Graph → Graph
+  | [], _, _, acc => acc
+  | m :: rest, b, limit, acc =>
+      if acc.length ≥ limit then acc
       else
-        let part := m.solveLimited b (limit - accLen)
-        unionSolveLimitedAcc rest b limit (part.reverse ++ accRev) (accLen + part.length)
+        let budget := limit - acc.length
+        let part := m.solveLimited b budget
+        let merged := Graph.unionFast acc part
+        if part.length < budget || merged.length ≥ limit then
+          unionSolveLimitedAcc rest b limit merged
+        else
+          unionSolveLimitedAcc rest b limit (Graph.unionFast acc (m.solve b))
 
 def unionSolveLimited (members : List StoreCaps) (b : PatternBound) (limit : Nat) :
     List Triple :=
   if limit == 0 then []
-  else capsTakeN limit (unionSolveLimitedAcc members b limit [] 0).reverse
+  else capsTakeN limit (unionSolveLimitedAcc members b limit [])
 
 /-! ### DISTINCT predicates across a union
 
@@ -233,10 +257,10 @@ plain `solve` when it has no accelerated realisation. This mirrors
 
 def unionSolveSelective (members : List StoreCaps) (b : PatternBound) (need : ColNeed) :
     List Triple :=
-  members.flatMap (fun m =>
+  Graph.unionFast [] (members.flatMap (fun m =>
     match m.solveSelective with
     | some f => f b need
-    | none   => m.solve b)
+    | none   => m.solve b))
 
 def unionCaps (members : List StoreCaps) : StoreCaps :=
   { flags :=
@@ -424,6 +448,15 @@ private def capsLang : StoreCaps := capsOfIndexed (OWL.RL.Index.ofGraph [lang1, 
 #guard (unionCaps [capsA, capsB]).countExact patternBoundAll == 3
 #guard (unionCaps []).solve patternBoundAll == []
 #guard (unionCaps [capsA, capsB]).predicatePresent (iriP "http://e.org/q")
+
+/-! ### The union is a set: a triple two members hold is read once, and
+the count and LIMIT agree with the read -/
+
+#guard (unionCaps [capsA, capsA]).solve patternBoundAll == [a, b2]
+#guard (unionCaps [capsA, capsA]).countExact patternBoundAll == 2
+#guard (unionCaps [capsA, capsA, capsB]).solveLimited patternBoundAll 3 == [a, b2, c]
+#guard (unionCaps [capsA, capsA, capsB]).solveLimited patternBoundAll 2 == [a, b2]
+#guard ((unionCaps [capsLang, capsLang]).solve patternBoundAll).length == 2
 
 /-! ### LIMIT pushdown truncates to exactly the limit, in order
 

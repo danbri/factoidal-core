@@ -45,7 +45,9 @@ asserted:
 
 * graph names come out in FIRST-ENCOUNTER order across the input list;
 * within one name, members come out in input order, so a solve over the
-  combined graph concatenates the per-source solves left to right.
+  combined graph holds the triples of the per-source solves, and of no other
+  (stated by `Graph.mem`: since `unionCaps` reads a set union, a triple two
+  sources hold is read once, https://github.com/danbri/factoidal/issues/975).
 
 Duplicate names WITHIN one input dataset are all collected, matching the
 F\* fold, which adds every `ngb_named` entry it walks. `datasetCapsLookupNamed`
@@ -130,14 +132,24 @@ def namedSolve (n : Iri) (named : List (Iri × StoreCaps)) (b : PatternBound) :
 
 /-! ## Proofs -/
 
-/-- `collapse` solves as the concatenation of its members' solves — the
-one-member case included, which is the case that is NOT a `unionCaps`. -/
-theorem collapse_solve (cs : List StoreCaps) (b : PatternBound) :
-    (collapse cs).solve b = cs.flatMap (fun c => c.solve b) := by
+theorem mem_unionFast_nil (t : Triple) (l : Graph) : Graph.mem t (Graph.unionFast [] l) = Graph.mem t l := by
+  rw [← Graph.union_eq_unionFast, mem_graph_union]
+  simp [Graph.mem]
+
+theorem mem_flatMap_iff {cs : List StoreCaps} {b : PatternBound} (t : Triple) :
+    Graph.mem t (cs.flatMap (fun c => c.solve b)) = cs.any (fun c => Graph.mem t (c.solve b)) := by
+  induction cs with
+  | nil => simp [Graph.mem]
+  | cons c rest ih => rw [List.flatMap_cons, mem_append, ih, List.any_cons]
+
+/-- `collapse` holds the triples of its members' solves — the one-member case
+included, which is the case that is NOT a `unionCaps`. -/
+theorem collapse_solve (cs : List StoreCaps) (b : PatternBound) (t : Triple) :
+    Graph.mem t ((collapse cs).solve b) = Graph.mem t (cs.flatMap (fun c => c.solve b)) := by
   match cs with
-  | [] => simp [collapse, unionCaps, unionSolve]
+  | [] => simp only [collapse, unionCaps, unionSolve, mem_unionFast_nil]
   | [_] => simp [collapse]
-  | _ :: _ :: _ => simp [collapse, unionCaps, unionSolve]
+  | _ :: _ :: _ => simp only [collapse, unionCaps, unionSolve, mem_unionFast_nil]
 
 /-- Adding one record appends to that name's bucket and leaves every
 other name's bucket alone. Both arms of `extendBucket` — extend in place,
@@ -192,47 +204,48 @@ theorem bucketLookup_buckets (ds : List DatasetCaps) (n : Iri) :
         simp [List.foldl_cons, ih, bucketLookup_extendBuckets, List.append_assoc]
   simpa [buckets, bucketLookup] using gen ds []
 
-/-- Reading one name out of a collapsed bucket list is the concatenated
-solve of that bucket. This needs NO side condition about empty buckets:
+/-- Reading one name out of a collapsed bucket list gives the triples of the
+solves of that bucket. This needs NO side condition about empty buckets:
 an absent name gives `[]` from the lookup, and a bucket that somehow held
 no members would collapse to `unionCaps []`, which also solves to `[]`. -/
 theorem namedSolve_map_collapse (n : Iri) (bs : List (Iri × List StoreCaps))
-    (b : PatternBound) :
-    namedSolve n (bs.map (fun p => (p.1, collapse p.2))) b
-      = (bucketLookup n bs).flatMap (fun c => c.solve b) := by
+    (b : PatternBound) (t : Triple) :
+    Graph.mem t (namedSolve n (bs.map (fun p => (p.1, collapse p.2))) b)
+      = Graph.mem t ((bucketLookup n bs).flatMap (fun c => c.solve b)) := by
   induction bs with
   | nil => simp [namedSolve, datasetCapsLookupNamed, bucketLookup]
   | cons p rest ih =>
       obtain ⟨k, cs⟩ := p
       by_cases hkn : k = n
       · subst hkn
-        simp [namedSolve, datasetCapsLookupNamed, bucketLookup, collapse_solve]
+        simp only [namedSolve, List.map_cons, datasetCapsLookupNamed, beq_self_eq_true,
+          if_true, bucketLookup]
+        exact collapse_solve cs b t
       · simpa [namedSolve, datasetCapsLookupNamed, bucketLookup, hkn] using ih
 
-/-- The reader's view of one named graph of the combination: the rows are
-every input dataset's rows for that name, concatenated in input order.
+/-- The reader's view of one named graph of the combination: the triples are
+those of every input dataset's rows for that name.
 
 This is the statement the fold exists to make true, and it holds for
 every name at once — including a name no input carries, where both sides
 are empty. -/
-theorem combineNamed_solve (ds : List DatasetCaps) (n : Iri) (b : PatternBound) :
-    namedSolve n (combineNamed ds) b
-      = (ds.flatMap (fun d => capsForName n d.named)).flatMap (fun c => c.solve b) := by
+theorem combineNamed_solve (ds : List DatasetCaps) (n : Iri) (b : PatternBound) (t : Triple) :
+    Graph.mem t (namedSolve n (combineNamed ds) b)
+      = Graph.mem t ((ds.flatMap (fun d => capsForName n d.named)).flatMap (fun c => c.solve b)) := by
   rw [combineNamed, namedSolve_map_collapse, bucketLookup_buckets]
 
-/-- The default graph of the combination: every input's default, in
-order. All three arms of `combineDatasetCaps` agree with it — the empty
+/-- The default graph of the combination: the triples of every input's
+default. All three arms of `combineDatasetCaps` agree with it — the empty
 list because `unionCaps []` solves to nothing, and the one-element list
 because `flatMap` over a singleton is that element's own rows. -/
-theorem combineDatasetCaps_default_solve (ds : List DatasetCaps) (b : PatternBound) :
-    (combineDatasetCaps ds).default.solve b
-      = ds.flatMap (fun d => d.default.solve b) := by
+theorem combineDatasetCaps_default_solve (ds : List DatasetCaps) (b : PatternBound) (t : Triple) :
+    Graph.mem t ((combineDatasetCaps ds).default.solve b)
+      = Graph.mem t (ds.flatMap (fun d => d.default.solve b)) := by
   match ds with
-  | [] => simp [combineDatasetCaps, unionCaps, unionSolve]
+  | [] => simp only [combineDatasetCaps, unionCaps, unionSolve, mem_unionFast_nil]; rfl
   | [_] => simp [combineDatasetCaps]
   | _ :: _ :: _ =>
-      simp [combineDatasetCaps, unionCaps, unionSolve, List.flatMap_map,
-            ]
+      simp only [combineDatasetCaps, unionCaps, unionSolve, mem_unionFast_nil, List.flatMap_map]
 
 /-! ## Pinned behaviour -/
 
