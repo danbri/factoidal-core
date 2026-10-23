@@ -6,7 +6,8 @@ https://github.com/danbri/factoidal/issues/975, phase A3.
 Every run derives the table from the Lean sources (anti-pattern 30: no
 cache):
 
-1. `lake build L4Factoidal.Dataflow.Registry` in formal/lean4;
+1. `lake build L4Factoidal.Dataflow.Registry L4Factoidal.Dataflow.RegistryTests`
+   in formal/lean4;
 2. `lake env lean ../../tools/dataflow-inventory.lean`, which elaborates
    against the built library, checks every entry of
    `L4Factoidal.Dataflow.registry` (names exist, axioms, status agrees with
@@ -57,7 +58,7 @@ def run(cmd):
 
 
 def registry_rows():
-    run(["lake", "build", "L4Factoidal.Dataflow.Registry"])
+    run(["lake", "build", "L4Factoidal.Dataflow.Registry", "L4Factoidal.Dataflow.RegistryTests"])
     out = run(["lake", "env", "lean", str(REPORT)])
     lines = out.splitlines()
     if "BEGIN-INVENTORY" not in lines or "END-INVENTORY" not in lines:

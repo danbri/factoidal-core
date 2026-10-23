@@ -30,6 +30,7 @@ import L4Factoidal.Dataflow.StageTests
 import L4Factoidal.Dataflow.Instances
 import L4Factoidal.Dataflow.InstancesTests
 import L4Factoidal.Dataflow.Registry
+import L4Factoidal.Dataflow.RegistryTests
 import L4Factoidal.RDF.ConciseBoundedDescription
 import L4Factoidal.RDF.ConciseBoundedDescriptionTheorems
 import L4Factoidal.RDF.StoreLoader
@@ -688,6 +689,8 @@ import L4Factoidal.RDF.CanonicalManifest
 import L4Factoidal.RDF.DatasetMerge
 import L4Factoidal.RDF.CertifiedDataset
 import L4Factoidal.RDF.Format
+import L4Factoidal.RDF.MediaType
+import L4Factoidal.RDF.MediaTypeTests
 import L4Factoidal.RDF.Source
 import L4Factoidal.RDF.SourceJsonLd
 import L4Factoidal.RDF.SourceTheorems

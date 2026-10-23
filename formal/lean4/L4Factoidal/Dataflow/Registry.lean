@@ -59,14 +59,51 @@ structure Entry where
   note : String := ""
   deriving Inhabited
 
+/-- What the `stage` field names, as the report reads it from the environment:
+a `Stage` value, an `IOStage` value, nothing, or another declaration. -/
+inductive StageKind where
+  | stage | ioStage | none | other
+  deriving Repr, DecidableEq, Inhabited
+
+/-- `Name.anonymous`: the field names nothing. -/
+def isNone : Lean.Name → Bool
+  | .anonymous => true
+  | _ => false
+
+/-- The status rule of the module header: `none` when the status agrees with
+the fields and the kind of the stage, else the reason. The report stops on any
+reason (`tools/dataflow-inventory.lean`); `RegistryTests.lean` holds an entry
+for each way to disagree. -/
+def Entry.statusError (e : Entry) (k : StageKind) : Option String :=
+  match e.status with
+  | .proved =>
+    if isNone e.stage || isNone e.contract || e.theorems.isEmpty then
+      some "proved needs a stage, a contract and theorems"
+    else if k != .stage then some s!"proved: {e.stage} is not a Stage"
+    else Option.none
+  | .assumed =>
+    if e.ioAssumptions.isEmpty then some "assumed needs a named IO assumption"
+    else if k != .ioStage then some s!"assumed: {e.stage} is not an IOStage"
+    else Option.none
+  | .tested =>
+    if e.tests.isEmpty || !isNone e.stage || !isNone e.contract then
+      some "tested needs a suite, no stage and no contract"
+    else Option.none
+  | .missing =>
+    if !isNone e.stage || !isNone e.contract || !e.tests.isEmpty || !e.ioAssumptions.isEmpty then
+      some "missing has no stage, no contract, no suite and no IO assumption"
+    else Option.none
+
 /-- The registry. Order: boundary, syntax, stores, query, reasoning,
 validation, evidence. -/
 def registry : List Entry := [
-  { area := "Document decode (UTF-8, format label)", dir := "RDF"
+  { area := "Document decode (UTF-8, media type)", dir := "RDF"
     stage := ``decodeStage, wireIn := "Document", wireOut := "RdfFormat × String"
     contract := ``DecodeContract, status := .proved
-    theorems := [``fromUTF8?_toUTF8]
-    note := "media types other than application/ld+json give no format (finding 1)" },
+    theorems := [``fromUTF8?_toUTF8, ``decodeParse_mediaType,
+      ``L4Factoidal.RDF.formatOfDocument_of_mediaType, ``L4Factoidal.RDF.formatOfDocument_absent,
+      ``L4Factoidal.RDF.formatOfMediaType_params]
+    note := "six registered media types (RDF/MediaType.lean); the extension only when the media type is absent; text/n3 has no reader" },
   { area := "RDF readers: N-Triples, Turtle, N-Quads, TriG, RDF/XML, JSON-LD (set contract)"
     dir := "RDF"
     stage := ``parseStage, wireIn := "RdfFormat × String", wireOut := "Dataset"
@@ -100,13 +137,27 @@ def registry : List Entry := [
     contract := ``WhereContract, status := .proved
     theorems := [``L4Factoidal.Storage.Sbm11.MemGen.harness_where_allowed_file,
       ``L4Factoidal.Storage.Sbm11.MemGen.store_written]
-    note := "decoding to SolutionSeq uses a state the run does not return (finding 4)" },
+    note := "the output store decodes the table (sbm11DecodeStage)" },
+  { area := "SBM11 id table to solution sequence", dir := "Storage"
+    stage := ``sbm11DecodeStage, wireIn := "id table (WhereOut)", wireOut := "SolutionSeq"
+    contract := ``DecodeRowsContract, status := .proved
+    theorems := [``L4Factoidal.Storage.Sbm11.SubSelect.decodeRowsM_run]
+    note := "decodeRowsM, the decoder of the shipped nested path" },
   { area := "End to end: document bytes to SBM11 WHERE answer", dir := "Dataflow"
     stage := ``documentToWhere, wireIn := "Document", wireOut := "id table (WhereOut)"
     contract := ``documentToWhere_sound, status := .proved
     theorems := [``documentToWhere_sound, ``Stage.comp_ok_contract]
     ioAssumptions := [``ReadsWritten]
     note := "premises: ReadsWritten, plan hypotheses, QHyps, Sbm11Folded, PermOk" },
+  { area := "End to end: document bytes to SolutionSeq (SBM11 id path)", dir := "Dataflow"
+    stage := ``documentToSolutions, wireIn := "Document", wireOut := "SolutionSeq"
+    contract := ``documentToSolutions_sound, status := .proved
+    theorems := [``documentToSolutions_sound, ``documentToWhere_sound,
+      ``L4Factoidal.Storage.Sbm11.LocalVocab.termOf_withLocal,
+      ``L4Factoidal.Storage.Sbm11.MemGen.store_written,
+      ``L4Factoidal.Storage.Sbm11.MemGen.mem_htermOf]
+    ioAssumptions := [``ReadsWritten]
+    note := "decoded solutions = the sequence WhereOk allows, with multiplicity; premises as above" },
   { area := "SBM11 session and its caches", dir := "Storage"
     wireIn := "files", wireOut := "id table", status := .tested
     tests := ["SBM11 gate (tests/sbm11/run.sh)"] },
@@ -132,7 +183,21 @@ def registry : List Entry := [
     stage := ``plannerSelectStage, wireIn := "Dataset", wireOut := "SolutionSeq"
     contract := ``PlannerSelectContract, status := .proved
     theorems := [``L4Factoidal.Storage.PlannerSoundness.plannerSoundnessSelect]
-    note := "input is an in-memory Dataset; no stage from SBM11 files (finding 6)" },
+    note := "on the shipped path as the reference fallback of l4sbm11 query (finding 6)" },
+  { area := "SBM11 reference-fallback read (selectedDataset)", dir := "Storage"
+    stage := ``sbm11SelectedRead, wireIn := "MemGen × FileGen", wireOut := "Dataset", status := .assumed
+    ioAssumptions := [``SelectedAgrees]
+    note := "IO over Session, no Lean model; keeps named graphs the selection empties" },
+  { area := "SBM11 generation to planner SELECT (reference fallback)", dir := "Dataflow"
+    stage := ``sbm11PlannerSelect, wireIn := "MemGen × FileGen", wireOut := "SolutionSeq"
+    contract := ``sbm11PlannerSelect_sound, status := .proved
+    theorems := [``sbm11PlannerSelect_sound,
+      ``L4Factoidal.Storage.PlannerSoundness.plannerSoundnessSelect]
+    ioAssumptions := [``SelectedAgrees]
+    note := "answer = planner answer over G.denote; needs non-empty named graphs" },
+  { area := "Reference fallback answer vs id path answer and parsed dataset", dir := "SPARQL"
+    wireIn := "Query × MemGen", wireOut := "SolutionSeq", status := .missing
+    note := "no theorem relates runSelectQueryBackendDataset over G.denote to WhereOk or to the dataset parsed; pure model of selectedDataset missing (finding 6)" },
   { area := "SPARQL query evaluation (reference evaluator)", dir := "SPARQL"
     wireIn := "Query × Dataset", wireOut := "QueryResult", status := .tested
     tests := ["W3C SPARQL 1.1 manifest-all (l4w3c)", "W3C SPARQL 1.2 (l4w3c)"] },
