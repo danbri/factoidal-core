@@ -22,7 +22,8 @@ induction on the pattern:
   patterns, property paths, `{}`, Join, LeftJoin (OPTIONAL) with the
   condition `true` (`LeftJoinTableTheorems`) or with an EXISTS-free
   condition, FILTER with an EXISTS-free condition (`FilterTableTheorems`),
-  Union, MINUS and GRAPH with an IRI, at any depth (`ExecHyps`),
+  Union, MINUS, GRAPH with an IRI and VALUES (`LocalTableTheorems`), at any
+  depth (`ExecHyps`),
   `evalGroupM` run from any state that keeps the invariant of the
   query-local vocabulary (`LocalVocab.Inv`) refuses with a refusal of that
   vocabulary (`LocalVocab.LocalRefusal`), or returns a well-formed table
@@ -56,16 +57,18 @@ memoised conjuncts and for the merged rows of a pair.
 FILTER and LeftJoin conditions with an EXISTS or NOT EXISTS conjunct (the
 semi-joins `semiJoinByM`), with a UUID, STRUUID or BNODE call, or with a
 STRSTARTS, STRENDS or CONTAINS test on dictionary keys
-(`FilterIdTheorems.StrForm`); GRAPH with a variable, BIND (`extendM`),
-VALUES (`resolveValuesVocabM`) and a sub-SELECT (`subSelectM`): `ExecHyps`
-is `False` for them. Tested by `tests/sbm11/gate/ids-*.rq` and the W3C
+(`FilterIdTheorems.StrForm`); GRAPH with a variable, BIND (`extendM`) and
+a sub-SELECT (`subSelectM`): `ExecHyps` is `False` for them. VALUES with a
+term whose language tag is not in lower case, or with a variable twice:
+`ExecHyps` is `False` (the id path folds language tags, and `Allowed`
+compares terms exactly). Tested by `tests/sbm11/gate/ids-*.rq` and the W3C
 census.
 
 
 No `sorry`, no user `axiom`, no `native_decide`, no `partial`.
 -/
 import L4Factoidal.Storage.Sbm11.FilterTableTheorems
-import L4Factoidal.Storage.Sbm11.LocalVocabTheorems
+import L4Factoidal.Storage.Sbm11.LocalTableTheorems
 
 namespace L4Factoidal.Storage.Sbm11.GroupTableTheorems
 
@@ -464,8 +467,11 @@ theorem cidOk_sok {dec : UInt64 → Term} {sok ok : UInt64 → Prop} (hsok : ∀
     query's named graphs (`cx.named`), the id of the active graph `gof g`;
     at LeftJoin, the condition `true` or `FilterTableTheorems.FilterOk`; at
     FILTER, `FilterOk` (an EXISTS-free condition whose conjuncts are
-    `FilterIdTheorems.CjOk`). `False` for the constructors not proved here
-    (GRAPH with a variable, BIND, VALUES, sub-SELECT, LATERAL, SERVICE). -/
+    `FilterIdTheorems.CjOk`); at VALUES, distinct variables and terms that
+    are their own `normalizeTerm` (language tags in lower case: the id path
+    folds them, RDF 1.1 Concepts 3.3, and `Allowed` compares terms exactly).
+    `False` for the constructors not proved here (GRAPH with a variable,
+    BIND, sub-SELECT, LATERAL, SERVICE). -/
 def ExecHyps (LP : QueryPattern → Graph → Prop) (cx : NCx Id) (cid : Term → Option UInt64) (ds : Dataset)
     (gof : Graph → GCtx) : QueryPattern → Graph → Prop
   | .bgp b, a => LP (.bgp b) a
@@ -482,6 +488,7 @@ def ExecHyps (LP : QueryPattern → Graph → Prop) (cx : NCx Id) (cid : Term �
     | some g => (∃ x, cid (.iri i) = some x ∧ cx.named.contains x = true ∧ gof g = .named x) ∧
         ExecHyps LP cx cid ds gof q g
     | none => ∀ x, cid (.iri i) = some x → cx.named.contains x = false
+  | .values vars rows, _ => vars.Nodup ∧ ∀ row ∈ rows, ∀ t, some t ∈ row → normalizeTerm t = t
   | _, _ => False
 
 /-- What the nested evaluator gives for `p` from the state `nst1`: a
@@ -860,7 +867,12 @@ theorem query_where_allowed_exec (env : EvalEnv) (ds : Dataset)
       exact fun r hr => hoq r (List.mem_filter.mp hr).1
   | .lateral _ _, _, h, _, _ => h.elim
   | .bind _ _ _, _, h, _, _ => h.elim
-  | .values _ _, _, h, _, _ => h.elim
+  | .values vars rows, a, h, nst1, hi1 => by
+    obtain ⟨hnd, hn⟩ := h
+    rw [evalGroupM]
+    exact ends_mono (LocalTable.valuesNM_spec cid dec ok cx hid hcid hcidok hcidN hloc hcid0 vars rows hnd hn nst1 hi1)
+      fun T s ⟨hwf, hpw, hok, hi, hp⟩ =>
+        ⟨hwf, .equiv (.values vars rows a) (IdGroup.PermPw.of_pw hpw), hok, hi, hp⟩
   | .service _ _ _, _, h, _, _ => h.elim
   | .serviceVar _ _ _, _, h, _, _ => h.elim
   | .subSelect _, _, h, _, _ => h.elim
