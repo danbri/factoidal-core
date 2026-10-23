@@ -23,6 +23,8 @@ import L4Factoidal.RDF.StreamSet
 import L4Factoidal.RDF.StreamSetTests
 import L4Factoidal.RDF.NormalizeSet
 import L4Factoidal.RDF.NormalizeSetTests
+import L4Factoidal.RDF.DatasetDenotation
+import L4Factoidal.RDF.DatasetDenotationTests
 import L4Factoidal.RDF.ConciseBoundedDescription
 import L4Factoidal.RDF.ConciseBoundedDescriptionTheorems
 import L4Factoidal.RDF.StoreLoader
