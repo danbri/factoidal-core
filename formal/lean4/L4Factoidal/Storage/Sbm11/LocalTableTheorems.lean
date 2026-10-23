@@ -6,9 +6,9 @@ docs/designissues/2026-10-12-sbm11-end-to-end-theorem.md).
 
 * `forIn_ends`: a loop in `ExceptT String Id` whose every step refuses with a
   `LocalVocab.LocalRefusal` or yields keeps an invariant.
-* `resolveValues_spec`: for one VALUES block whose variables are distinct
-  and whose terms are their own `normalizeTerm`, `resolveValuesVocabM`
-  refuses (`LocalRefusal`) or returns one well-formed table with the
+* `resolveValues_spec`: for one VALUES block whose variables are distinct,
+  `resolveValuesVocabM` refuses (`LocalRefusal`, among them a term that is
+  not its own `normalizeTerm`, `IdQuery.valueIdM`) or returns one well-formed table with the
   block's variables and one row per block row, each cell the id of the
   block's term in the new vocabulary (`CellOk`: an id of the state, not 0,
   that decodes to the term), or `unbound` for UNDEF and for a cell a short
@@ -150,7 +150,7 @@ def cellStep (st : Store Id) (row : Array (Option Term)) (c : Nat)
     ExceptT String Id (ForInStep (Array Term × Std.HashMap Term Nat × Array ByteArray)) :=
   match row[c]? with
   | some (some t) => do
-    let r ← termIdM st s.1 s.2.1 t
+    let r ← valueIdM st s.1 s.2.1 t
     pure (.yield (r.2.1, r.2.2, s.2.2.modify c fun b => L4Factoidal.Qlvr.Side.put64 b r.1))
   | _ => pure (.yield (s.1, s.2.1, s.2.2.modify c fun b => L4Factoidal.Qlvr.Side.put64 b unbound))
 
@@ -179,7 +179,7 @@ theorem cells_spec (hid : ∀ t, st.idOf t = pure (cid t)) (hcid : ∀ c, CidOk 
     (hcidok : ∀ t x, cid t = some x → ok x) (hcidN : ∀ t x, cid t = some x → dec x = normalizeTerm t)
     (hloc : ∀ x, ok x → tagOf x ≠ tagLocal) (hcid0 : ∀ t x, cid t = some x → x ≠ 0)
     (rows : List (Array (Option Term))) (nv i : Nat) (row : Array (Option Term)) (hrow : rows[i]! = row)
-    (hn : ∀ c t, cellOf row c = some t → normalizeTerm t = t) (voc0 : Array Term)
+    (voc0 : Array Term)
     (vocR : Array Term) (ixR : Std.HashMap Term Nat) (cols : Array ByteArray)
     (hR : VocInv cid vocR ixR) (hpR : voc0.toList <+: vocR.toList)
     (hcR : ColsOk dec ok vocR rows nv i 0 cols) :
@@ -199,8 +199,7 @@ theorem cells_spec (hid : ∀ t, st.idOf t = pure (cid t)) (hcid : ∀ c, CidOk 
         cases o with
         | some t =>
           have hct : cellOf rows[i]! c = some t := by rw [hrow]; unfold cellOf; rw [hcell]
-          have hnt := hn c t (by unfold cellOf; rw [hcell])
-          rcases termIdM_spec st cid hid dec ok hcid hcidok hcidN hloc hcid0 s.1 s.2.1 hs1 t with
+          rcases valueIdM_spec st cid hid dec ok hcid hcidok hcidN hloc hcid0 s.1 s.2.1 hs1 t with
             ⟨e, he, hr⟩ | ⟨y, voc', ix', he, h1, h2, h3, h4, h5⟩
           · left; exact ⟨e, by simp only []; rw [he]; rfl, hr⟩
           · right
@@ -209,7 +208,7 @@ theorem cells_spec (hid : ∀ t, st.idOf t = pure (cid t)) (hcid : ∀ c, CidOk 
             · simp only []; rw [he]; rfl
             · apply colsOk_step dec ok voc' _ _ i c hc _ (colsOk_mono dec hloc h2 h1.size hs3)
               rw [hct]
-              exact ⟨h3, h4, by rw [h5, hnt]⟩
+              exact ⟨h3, h4, h5⟩
         | none =>
           right
           refine ⟨(s.1, s.2.1, s.2.2.modify c fun x_1 => L4Factoidal.Qlvr.Side.put64 x_1 unbound), rfl, hs1, hs2, ?_⟩
@@ -238,7 +237,7 @@ theorem colsOk_next {dec : UInt64 → Term} {ok : UInt64 → Prop} {voc : Array 
 theorem resolveValues_spec (hid : ∀ t, st.idOf t = pure (cid t)) (hcid : ∀ c, CidOk dec ok c (cid c))
     (hcidok : ∀ t x, cid t = some x → ok x) (hcidN : ∀ t x, cid t = some x → dec x = normalizeTerm t)
     (hloc : ∀ x, ok x → tagOf x ≠ tagLocal) (hcid0 : ∀ t x, cid t = some x → x ≠ 0)
-    (b : ValuesBlock) (hn : ∀ row ∈ b.rows.toList, ∀ c t, cellOf row c = some t → normalizeTerm t = t)
+    (b : ValuesBlock)
     (voc : Array Term) (ix : Std.HashMap Term Nat) (hinv : VocInv cid voc ix) :
     (∃ e, resolveValuesVocabM st #[b] voc ix = throw e ∧ LocalRefusal e) ∨
       ∃ cols voc' ix', resolveValuesVocabM st #[b] voc ix =
@@ -256,7 +255,7 @@ theorem resolveValues_spec (hid : ∀ t, st.idOf t = pure (cid t)) (hcid : ∀ c
       intro i hi s ⟨hs1, hs2, hs3⟩
       unfold rowStep
       rcases cells_spec st cid dec ok hid hcid hcidok hcidN hloc hcid0 b.rows.toList b.vars.size i (b.rows.toList[i]'hi)
-        (getElem!_pos b.rows.toList i hi) (hn _ (List.getElem_mem hi)) voc s.1 s.2.1 s.2.2 hs1 hs2 hs3 with
+        (getElem!_pos b.rows.toList i hi) voc s.1 s.2.1 s.2.2 hs1 hs2 hs3 with
         ⟨e, he, hr⟩ | ⟨s', he, h1, h2, h3⟩
       · left; exact ⟨e, by rw [he]; rfl, hr⟩
       · right; exact ⟨s', by rw [he]; rfl, h1, h2, colsOk_next h3⟩)
@@ -433,28 +432,14 @@ theorem valuesNM_spec (cx : IdGroup.NCx Id) (hid : ∀ t, cx.st.idOf t = pure (c
     (hcidok : ∀ t x, cid t = some x → ok x) (hcidN : ∀ t x, cid t = some x → dec x = normalizeTerm t)
     (hloc : ∀ x, ok x → tagOf x ≠ tagLocal) (hcid0 : ∀ t x, cid t = some x → x ≠ 0)
     (vars : List String) (rows : List (List (Option Term))) (hnd : vars.Nodup)
-    (hn : ∀ row ∈ rows, ∀ t, some t ∈ row → normalizeTerm t = t) (nst : IdGroup.NSt) (hi : Inv cid nst) :
+    (nst : IdGroup.NSt) (hi : Inv cid nst) :
     Ends ((IdGroup.valuesNM cx vars rows).run nst) fun T nst' =>
       T.WF ∧ IdGroup.Pw IdGroup.BindEq (evalValues vars rows) (T.idRows.map (decRow (decV dec nst'.vocab))) ∧
         (∀ r ∈ T.idRows, RowIds (okV ok nst'.vocab) r) ∧ Inv cid nst' ∧ nst.vocab.toList <+: nst'.vocab.toList := by
   let b : ValuesBlock := { vars := vars.toArray, rows := (rows.map List.toArray).toArray }
-  have hnb : ∀ row ∈ b.rows.toList, ∀ c t, cellOf row c = some t → normalizeTerm t = t := by
-    intro row hrow c t ht
-    simp only [b, List.mem_map] at hrow
-    obtain ⟨r, hr, rfl⟩ := hrow
-    apply hn r hr t
-    unfold cellOf at ht
-    rw [List.getElem?_toArray] at ht
-    cases e : r[c]? with
-    | none => rw [e] at ht; cases ht
-    | some o =>
-      rw [e] at ht
-      cases o with
-      | none => cases ht
-      | some t' => cases ht; exact List.mem_of_getElem? e
   unfold IdGroup.valuesNM IdGroup.liftE
   simp only [StateT.run_bind, StateT.run_get, pure_bind, StateT.run_lift]
-  rcases resolveValues_spec cx.st cid dec ok hid hcid hcidok hcidN hloc hcid0 b hnb nst.vocab nst.localIdx hi with
+  rcases resolveValues_spec cx.st cid dec ok hid hcid hcidok hcidN hloc hcid0 b nst.vocab nst.localIdx hi with
     ⟨e, he, hr⟩ | ⟨cols, voc', ix', he, h1, h2, h3⟩
   · left
     refine ⟨e, ?_, hr⟩
@@ -504,7 +489,7 @@ def bindStep (st : Store Id) (env : EvalEnv) (t : Table) (e : Expr) (v : String)
       let mu ← forIn (List.range' 0 vs.size) ([] : Binding) (muStep dst t vs cols i)
       match refBinder env e Graph.empty (Binding.withFreshnessCtx (toString i) v mu) with
       | some term => do
-        let r ← termIdM st s.1 s.2.1 term
+        let r ← valueIdM st s.1 s.2.1 term
         pure (.yield (r.2.1, r.2.2, s.2.2.1.insert ids r.1, L4Factoidal.Qlvr.Side.put64 s.2.2.2 r.1))
       | none => pure (.yield (s.1, s.2.1, s.2.2.1.insert ids old, L4Factoidal.Qlvr.Side.put64 s.2.2.2 old))
   else pure (.yield (s.1, s.2.1, s.2.2.1, L4Factoidal.Qlvr.Side.put64 s.2.2.2 old))
@@ -716,8 +701,6 @@ theorem extendM_spec (hid : ∀ t, st.idOf t = pure (cid t)) (hcid : ∀ c, CidO
     (hloc : ∀ x, ok x → tagOf x ≠ tagLocal) (hcid0 : ∀ t x, cid t = some x → x ≠ 0)
     (env : EvalEnv) (e : Expr) (v : String) (vs : Array String) (hvs : residualVars e = some vs)
     (hef : e.existsFree = true) (hfx : ∀ w ∈ e.refVars, ¬ IsFx w)
-    (hnorm : ∀ (mu : Binding), (∀ p ∈ mu, normalizeTerm p.2 = p.2) → ∀ s r, refBinder env e Graph.empty
-      (Binding.withFreshnessCtx s v mu) = some r → normalizeTerm r = r)
     (t : Table) (hnd : t.vars.toList.Nodup) (voc0 : Array Term) (ix0 : Std.HashMap Term Nat)
     (hinv : VocInv cid voc0 ix0) (hrows : ∀ i, i < t.rows → RowIds (okV ok voc0) (t.idRow i)) :
     (∃ e', extendM st env t e v voc0 ix0 = throw e' ∧ LocalRefusal e') ∨
@@ -732,11 +715,6 @@ theorem extendM_spec (hid : ∀ t, st.idOf t = pure (cid t)) (hcid : ∀ c, CidO
       ∀ j (hj : j < xs.length), ValOk dec ok s.1 (oldOf t v j) (bvOf env e v (decV dec voc0) t j) xs[j]) ∧
     ∀ ids y, s.2.2.1[ids]? = some y → ∃ j, j < i ∧ idsOf t vs j = ids ∧ oldOf t v j = unbound ∧
       CellOk dec ok s.1 (bvOf env e v (decV dec voc0) t j) y
-  have hnormRow : ∀ i, i < t.rows → ∀ p ∈ decRow (decV dec voc0) (t.idRow i), normalizeTerm p.2 = p.2 := by
-    intro i hi p hp
-    unfold decRow at hp
-    obtain ⟨q, hq, rfl⟩ := List.mem_map.mp hp
-    exact decV_normal cid dec ok hcid hcidN hloc hinv q.2 (hrows i hi q hq)
   have := forIn_ends (bindStep st env t e v vs (vs.map t.idx) (st.withLocal voc0) (t.idx v)) (List.range' 0 t.rows) P
     (voc0, ix0, ∅, ByteArray.emptyWithCapacity (8 * t.rows))
     ⟨hinv, List.prefix_refl _, ⟨[], ColHolds.nil _ rfl, rfl, fun j hj => absurd hj (by simp)⟩,
@@ -797,12 +775,11 @@ theorem extendM_spec (hid : ∀ t, st.idOf t = pure (cid t)) (hcid : ∀ c, CidO
             · obtain ⟨j', h1, h2, h3, h4⟩ := hs4 ids y h
               exact ⟨j', by omega, h2, h3, h4⟩
           | some r =>
-            have hr : normalizeTerm r = r := hnorm _ (hnormRow i hi) _ r hb
-            rcases termIdM_spec st cid hid dec ok hcid hcidok hcidN hloc hcid0 s.1 s.2.1 hs1 r with
+            rcases valueIdM_spec st cid hid dec ok hcid hcidok hcidN hloc hcid0 s.1 s.2.1 hs1 r with
               ⟨e', he, hr'⟩ | ⟨y, voc', ix', he, h1, h2, h3, h4, h5⟩
             · left; exact ⟨e', by simp only []; rw [he]; rfl, hr'⟩
             · right
-              have hcv : CellOk dec ok voc' (bvOf env e v (decV dec voc0) t i) y := by rw [hb]; exact ⟨h3, h4, by rw [h5, hr]⟩
+              have hcv : CellOk dec ok voc' (bvOf env e v (decV dec voc0) t i) y := by rw [hb]; exact ⟨h3, h4, h5⟩
               refine ⟨(voc', ix', s.2.2.1.insert (idsOf t vs i) y, L4Factoidal.Qlvr.Side.put64 s.2.2.2 y),
                 by simp only []; rw [he]; rfl, h1, hs2.trans h2, hcol voc' y (hs2.trans h2) h2 h1.size
                 (by unfold ValOk; rw [if_pos hou]; exact hcv), ?_⟩
@@ -1107,9 +1084,9 @@ theorem ext_rows (hloc : ∀ x, ok x → tagOf x ≠ tagLocal) (env : EvalEnv) (
 
 /-- **BIND as the nested evaluator runs it** (`IdGroup.extendNM`): from a
     state with the invariant, for an EXISTS-free expression whose variables
-    `residualVars` lists, that reads no freshness key and maps mappings whose
-    terms are their own `normalizeTerm` to such a term, it refuses
-    (`LocalRefusal`) or returns a well-formed table whose rows decode, with
+    `residualVars` lists and that reads no freshness key, it refuses
+    (`LocalRefusal`, among them a value that is not its own `normalizeTerm`,
+    `IdQuery.valueIdM`) or returns a well-formed table whose rows decode, with
     the decoder of the new state, to `bindRowsFresh` of the reference binder
     on the decoded rows of `t`, row for row. -/
 theorem extendNM_spec (cx : IdGroup.NCx Id) (hid : ∀ t, cx.st.idOf t = pure (cid t))
@@ -1119,8 +1096,6 @@ theorem extendNM_spec (cx : IdGroup.NCx Id) (hid : ∀ t, cx.st.idOf t = pure (c
     (hloc : ∀ x, ok x → tagOf x ≠ tagLocal) (hcid0 : ∀ t x, cid t = some x → x ≠ 0)
     (env : EvalEnv) (henv : cx.env = env) (e : Expr) (v : String) (vs : Array String)
     (hvs : residualVars e = some vs) (hef : e.existsFree = true) (hfx : ∀ w ∈ e.refVars, ¬ IsFx w)
-    (hnorm : ∀ (mu : Binding), (∀ p ∈ mu, normalizeTerm p.2 = p.2) → ∀ s r, refBinder env e Graph.empty
-      (Binding.withFreshnessCtx s v mu) = some r → normalizeTerm r = r)
     (t : Table) (ht : t.WF) (nst : IdGroup.NSt) (hi : Inv cid nst)
     (hrows : ∀ r ∈ t.idRows, RowIds (okV ok nst.vocab) r) (a : Graph) :
     Ends ((IdGroup.extendNM cx t e v).run nst) fun T nst' =>
@@ -1133,7 +1108,7 @@ theorem extendNM_spec (cx : IdGroup.NCx Id) (hid : ∀ t, cx.st.idOf t = pure (c
   unfold IdGroup.extendNM IdGroup.liftE
   simp only [StateT.run_bind, StateT.run_get, pure_bind, StateT.run_lift]
   rw [henv]
-  rcases extendM_spec cx.st cid dec ok hid hcid hcidok hcidN htermOf hloc hcid0 env e v vs hvs hef hfx hnorm t ht.nodup
+  rcases extendM_spec cx.st cid dec ok hid hcid hcidok hcidN htermOf hloc hcid0 env e v vs hvs hef hfx t ht.nodup
     nst.vocab nst.localIdx hi hrows' with ⟨e', he, hr⟩ | ⟨out, voc', ix', he, h1, h2, xs, hx1, hx2, hx3⟩
   · left
     refine ⟨e', ?_, hr⟩

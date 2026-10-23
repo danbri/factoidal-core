@@ -1,0 +1,5 @@
+# LANG of a VALUES term reads the tag as written. Until 2026-10-23 the id
+# path folded the tag to lower case (normalizeTerm) and answered "en"; the
+# reference answers "EN" (issue 776). Now refused at run time
+# (IdQuery.valueIdM) and answered by the reference.
+SELECT (LANG(?x) AS ?l) WHERE { VALUES ?x { "a"@EN } }

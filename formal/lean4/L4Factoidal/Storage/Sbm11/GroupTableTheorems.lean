@@ -62,12 +62,12 @@ STRSTARTS, STRENDS or CONTAINS test on dictionary keys
 pattern (`bgpGraphVarM`: one scan with the graph as a column, a leaf this
 file does not prove) and a sub-SELECT (`subSelectM`: it needs the projection,
 DISTINCT and the variables of the reference `selectPost`, no lemma of which
-exists yet): `ExecHyps` is `False` for them. VALUES with a term whose
-language tag is not in lower case, or with a variable twice, and BIND with
-an expression that reads a freshness key (UUID, STRUUID, BNODE) or whose
-value can have a language tag not in lower case on such rows: `ExecHyps` is
-`False` (the id path folds language tags, and `Allowed` compares terms
-exactly). Tested by `tests/sbm11/gate/ids-*.rq` and the W3C
+exists yet): `ExecHyps` is `False` for them. VALUES with a variable twice
+and BIND with an expression that reads a freshness key (UUID, STRUUID,
+BNODE): `ExecHyps` is `False`. A VALUES term or a BIND value with a
+language tag not in lower case is refused at run time (`IdQuery.valueIdM`;
+until 2026-10-23 the id path folded the tag and `LANG` read `"en"` where the
+reference reads `"EN"`). Tested by `tests/sbm11/gate/ids-*.rq` and the W3C
 census.
 
 
@@ -473,14 +473,13 @@ theorem cidOk_sok {dec : UInt64 → Term} {sok ok : UInt64 → Prop} (hsok : ∀
     query's named graphs (`cx.named`), the id of the active graph `gof g`;
     at LeftJoin, the condition `true` or `FilterTableTheorems.FilterOk`; at
     FILTER, `FilterOk` (an EXISTS-free condition whose conjuncts are
-    `FilterIdTheorems.CjOk`); at VALUES, distinct variables and terms that
-    are their own `normalizeTerm` (language tags in lower case: the id path
-    folds them, RDF 1.1 Concepts 3.3, and `Allowed` compares terms exactly);
-    at BIND, an EXISTS-free expression whose variables `residualVars` lists,
-    that reads no freshness key (no UUID, STRUUID or BNODE; `translate`
-    refuses those), and whose value on a mapping of terms that are their own
-    `normalizeTerm` is such a term (it fails for a language tag not in lower
-    case that the expression builds, e.g. `STRLANG("a", "EN")`). `False` for
+    `FilterIdTheorems.CjOk`); at VALUES, distinct variables; at BIND, an
+    EXISTS-free expression whose variables `residualVars` lists and that
+    reads no freshness key (no UUID, STRUUID or BNODE; `translate` refuses
+    those). A VALUES term or a BIND value with a language tag not in lower
+    case (`STRLANG("a", "EN")`) is refused at run time (`IdQuery.valueIdM`:
+    the id path folds tags, RDF 1.1 Concepts 3.3, and `Allowed` compares
+    terms exactly), and the harness runs the reference evaluator. `False` for
     the constructors not proved here (sub-SELECT, LATERAL, SERVICE). At
     GRAPH with a variable: a pattern that is not a basic graph pattern (one
     of those is one scan with the graph as a column, `IdGroup.bgpGraphVarM`,
@@ -508,12 +507,9 @@ def ExecHyps (LP : QueryPattern → Graph → Prop) (cx : NCx Id) (cid : Term �
     FilterTableTheorems.Fa2 (fun x (ng : NamedGraph) => cid ng.name.toTerm = some x ∧ gof ng.graph = .named x)
       cx.named.toList ds.named ∧
     ∀ ng ∈ ds.named, ExecHyps LP cx cid ds gof q ng.graph
-  | .values vars rows, _ => vars.Nodup ∧ ∀ row ∈ rows, ∀ t, some t ∈ row → normalizeTerm t = t
-  | .bind e v q, a => e.existsFree = true ∧ (∃ vs, residualVars e = some vs) ∧
-      (∀ w ∈ e.refVars, ¬ ExprLocalTheorems.IsFx w) ∧
-      (∀ mu : Binding, (∀ p ∈ mu, normalizeTerm p.2 = p.2) → ∀ s r,
-        refBinder cx.env e Graph.empty (Binding.withFreshnessCtx s v mu) = some r → normalizeTerm r = r) ∧
-      ExecHyps LP cx cid ds gof q a
+  | .values vars _, _ => vars.Nodup
+  | .bind e _ q, a => e.existsFree = true ∧ (∃ vs, residualVars e = some vs) ∧
+      (∀ w ∈ e.refVars, ¬ ExprLocalTheorems.IsFx w) ∧ ExecHyps LP cx cid ds gof q a
   | _, _ => False
 
 /-- What the nested evaluator gives for `p` from the state `nst1`: a
@@ -1078,19 +1074,17 @@ theorem query_where_allowed_exec (env : EvalEnv) (ds : Dataset)
       exact fun r hr => hoq r (List.mem_filter.mp hr).1
   | .lateral _ _, _, h, _, _ => h.elim
   | .bind e v q, a, h, nst1, hi1 => by
-    obtain ⟨hef, ⟨vs, hvs⟩, hfx, hnorm, hq⟩ := h
+    obtain ⟨hef, ⟨vs, hvs⟩, hfx, hq⟩ := h
     rw [evalGroupM]
     refine ends_bind (query_where_allowed_exec env ds hpm hscan hds hid hdec hsok hcid hidv hcid0 htag hcidN henv
       htermOf hloc hcidok q a hq nst1 hi1) fun tq nst2 ⟨hwq, hAq, hoq, hi2, hp12⟩ => ?_
-    rw [henv] at hnorm
     refine ends_mono (LocalTable.extendNM_spec cid dec ok cx hid hcid hcidok hcidN htermOf hloc hcid0 env henv e v vs
-      hvs hef hfx hnorm tq hwq nst2 hi2 hoq a) fun T s ⟨hwf, hpw, hok, hi, hp⟩ => ⟨hwf, ?_, hok, hi, hp12.trans hp⟩
+      hvs hef hfx tq hwq nst2 hi2 hoq a) fun T s ⟨hwf, hpw, hok, hi, hp⟩ => ⟨hwf, ?_, hok, hi, hp12.trans hp⟩
     obtain ⟨hAq', _⟩ := allowed_mono env ds dec hloc hp hi.size hAq hoq
     exact .equiv (.bind hAq') (IdGroup.PermPw.of_pw hpw)
   | .values vars rows, a, h, nst1, hi1 => by
-    obtain ⟨hnd, hn⟩ := h
     rw [evalGroupM]
-    exact ends_mono (LocalTable.valuesNM_spec cid dec ok cx hid hcid hcidok hcidN hloc hcid0 vars rows hnd hn nst1 hi1)
+    exact ends_mono (LocalTable.valuesNM_spec cid dec ok cx hid hcid hcidok hcidN hloc hcid0 vars rows h nst1 hi1)
       fun T s ⟨hwf, hpw, hok, hi, hp⟩ =>
         ⟨hwf, .equiv (.values vars rows a) (IdGroup.PermPw.of_pw hpw), hok, hi, hp⟩
   | .service _ _ _, _, h, _, _ => h.elim

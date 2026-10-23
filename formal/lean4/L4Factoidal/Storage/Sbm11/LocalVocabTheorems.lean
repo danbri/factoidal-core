@@ -28,6 +28,10 @@ the invariant of that vocabulary and the decoder of a state:
   `okV` of the new state that decodes to `normalizeTerm t`; or it refuses
   (`LocalRefusal`: an `rdf:XMLLiteral` with no store id, or a vocabulary of
   `2^60` terms; the harness then runs the reference evaluator).
+* `valueIdM_spec`: `IdQuery.valueIdM`, the id of a VALUES, BIND or
+  sub-SELECT value, as `termIdM`, or the refusal `langCaseMsg` for a value
+  that is not its own `normalizeTerm`; an id it gives decodes to the value
+  itself.
 * `Ends`: a run of the nested evaluator ends with such a refusal or with a
   result, and `ends_bind` composes it.
 
@@ -361,8 +365,9 @@ theorem termOf_withLocal (st : Store Id) (cid : Term → Option UInt64) (dec : U
 
 /-! ## `termIdM` -/
 
-/-- The refusals of the query-local vocabulary. -/
-def LocalRefusal (e : String) : Prop := e = localFullMsg ∨ e = localXmlMsg
+/-- The refusals of the query-local vocabulary, and of a value whose language
+    tag is not in lower case (`IdQuery.valueIdM`). -/
+def LocalRefusal (e : String) : Prop := e = localFullMsg ∨ e = localXmlMsg ∨ e = langCaseMsg
 
 /-- A term with no id whose folded form has an id would contradict `CidOk`. -/
 theorem cid_normalize_none (cid : Term → Option UInt64) (dec : UInt64 → Term) (ok : UInt64 → Prop)
@@ -404,7 +409,7 @@ theorem localIdOf_spec (cid : Term → Option UInt64) (voc : Array Term) (ix : S
   | none =>
     simp only []
     by_cases hx : hasXmlLit (normalizeTerm t) = true
-    · left; exact ⟨_, by rw [if_pos hx], Or.inr rfl⟩
+    · left; exact ⟨_, by rw [if_pos hx], Or.inr (Or.inl rfl)⟩
     · rw [if_neg hx]
       by_cases hs : voc.size < two60
       · rw [if_pos hs]
@@ -483,6 +488,27 @@ theorem termIdM_spec (st : Store Id) (cid : Term → Option UInt64) (hid : ∀ t
       show (match localIdOf voc ix t with | .ok r => pure r | .error e => throw e : ExceptT String Id _) = _
       rw [he]
 
+/-- **`valueIdM` on a state.** As `termIdM_spec`, and an id it gives decodes
+    to the value itself: it refuses (`langCaseMsg`) a value that is not its
+    own `normalizeTerm`. -/
+theorem valueIdM_spec (st : Store Id) (cid : Term → Option UInt64) (hid : ∀ t, st.idOf t = pure (cid t))
+    (dec : UInt64 → Term) (ok : UInt64 → Prop) (hcid : ∀ c, CidOk dec ok c (cid c))
+    (hcidok : ∀ t x, cid t = some x → ok x) (hcidN : ∀ t x, cid t = some x → dec x = normalizeTerm t)
+    (hloc : ∀ x, ok x → tagOf x ≠ tagLocal) (hcid0 : ∀ t x, cid t = some x → x ≠ 0)
+    (voc : Array Term) (ix : Std.HashMap Term Nat)
+    (hinv : VocInv cid voc ix) (t : Term) :
+    (∃ e, valueIdM st voc ix t = throw e ∧ LocalRefusal e) ∨
+      ∃ y voc' ix', valueIdM st voc ix t = pure (y, voc', ix') ∧ VocInv cid voc' ix' ∧
+        voc.toList <+: voc'.toList ∧ okV ok voc' y ∧ y ≠ 0 ∧ decV dec voc' y = t := by
+  unfold valueIdM
+  by_cases hn : normalizeTerm t = t
+  · rw [if_pos hn]
+    rcases termIdM_spec st cid hid dec ok hcid hcidok hcidN hloc hcid0 voc ix hinv t with h | ⟨y, voc', ix', h1, h2, h3, h4, h5, h6⟩
+    · exact Or.inl h
+    · exact Or.inr ⟨y, voc', ix', h1, h2, h3, h4, h5, by rw [h6, hn]⟩
+  · rw [if_neg hn]
+    exact Or.inl ⟨_, rfl, Or.inr (Or.inr rfl)⟩
+
 /-! ## Runs that end with a refusal or a result -/
 
 /-- A run of the nested evaluator from a state ends with a refusal of the
@@ -514,5 +540,6 @@ end L4Factoidal.Storage.Sbm11.LocalVocab
 #print axioms L4Factoidal.Storage.Sbm11.LocalVocab.eqb_norm_eq
 #print axioms L4Factoidal.Storage.Sbm11.LocalVocab.hdecV
 #print axioms L4Factoidal.Storage.Sbm11.LocalVocab.termIdM_spec
+#print axioms L4Factoidal.Storage.Sbm11.LocalVocab.valueIdM_spec
 #print axioms L4Factoidal.Storage.Sbm11.LocalVocab.cidOkV_some
 #print axioms L4Factoidal.Storage.Sbm11.LocalVocab.termOf_withLocal

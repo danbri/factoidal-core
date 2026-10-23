@@ -1,4 +1,7 @@
 PREFIX ex: <http://ex.org/>
 PREFIX xsd: <http://www.w3.org/2001/XMLSchema#>
 # A language tag in VALUES matches the stored term whatever its case (RDF 1.1 Concepts 3.3).
+# Since 2026-10-23 a VALUES term whose tag is not in lower case takes the
+# reference fallback (IdQuery.valueIdM, issue 776): the id path folds the tag,
+# and LANG reads its case (ref-values-lang-case.rq).
 SELECT ?s ?n WHERE { ?s ex:name ?n } VALUES ?n { "Alice"@EN "carol" "nobody"@EN }

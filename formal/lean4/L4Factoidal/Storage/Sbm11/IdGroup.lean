@@ -52,8 +52,9 @@ Refused, with a message the harness reports (`refused: ...` at run time, a
 is not an IRI or a variable, a sub-SELECT with EXISTS outside its WHERE
 clause, EXISTS of a pattern that is not a basic graph
 pattern or EXISTS inside an expression, a BIND whose value depends on the row
-index, a property path under FROM or FROM NAMED, and GRAPH on a store that
-gives no list of named graphs.
+index, a property path under FROM or FROM NAMED, GRAPH on a store that
+gives no list of named graphs, and (at run time, `IdQuery.valueIdM`) a VALUES,
+BIND or sub-SELECT value with a language tag not in lower case.
 
 `for` loops only; structural recursion on the pattern.
 -/
@@ -401,7 +402,7 @@ def subSelectM (cx : NCx m) (sq : L4Factoidal.SPARQL.Query) (t : Table) : NM m T
         match mu.lookup vars[k]! with
         | some term =>
           let s ← get
-          let (y, voc, ix) ← liftE (termIdM cx.st s.vocab s.localIdx term)
+          let (y, voc, ix) ← liftE (valueIdM cx.st s.vocab s.localIdx term)
           set { s with vocab := voc, localIdx := ix }
           x := y
         | none => pure ()

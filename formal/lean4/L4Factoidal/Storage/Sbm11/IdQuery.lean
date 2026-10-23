@@ -3386,6 +3386,25 @@ def termIdM {m : Type → Type} [Monad m] (st : Store m) (vocab : Array Term)
     | .ok r => return r
     | .error e => throw e
 
+/-- The refusal for a value whose language tag is not in lower case. The id
+    path folds language tags (`normalizeTerm`, RDF 1.1 Concepts 3.3), so the
+    id of `"a"@EN` decodes to `"a"@en`; the reference keeps the tag as
+    written, and `LANG` and the argument-compatibility rule of `STRBEFORE`,
+    `STRAFTER` and the other string functions read its case: until
+    2026-10-23 `SELECT (LANG(?x) AS ?l) { VALUES ?x { "a"@EN } }` answered
+    `"en"` on ids and `"EN"` by the reference
+    (`tests/sbm11/gate/ref-values-lang-case.rq`, issue 776). The reference
+    evaluator answers such a query. -/
+def langCaseMsg : String := "refused: a VALUES, BIND or sub-SELECT value with a language tag not in lower case"
+
+/-- The id of a value that VALUES, BIND or a sub-SELECT gives a variable
+    (`termIdM`), or `langCaseMsg` when folding its language tags would
+    change it. -/
+def valueIdM {m : Type → Type} [Monad m] (st : Store m) (vocab : Array Term)
+    (localIdx : Std.HashMap Term Nat) (t : Term) :
+    ExceptT String m (UInt64 × Array Term × Std.HashMap Term Nat) :=
+  if normalizeTerm t = t then termIdM st vocab localIdx t else throw langCaseMsg
+
 /-- `resolveValuesM` from a query-local vocabulary `vocab` (and its index):
     the tables and the vocabulary extended. -/
 def resolveValuesVocabM {m : Type → Type} [Monad m] (st : Store m) (blocks : Array ValuesBlock)
@@ -3401,7 +3420,7 @@ def resolveValuesVocabM {m : Type → Type} [Monad m] (st : Store m) (blocks : A
         let mut x : UInt64 := OptJoin.unbound
         match row[c]? with
         | some (some t) =>
-          let (y, voc, ix) ← termIdM st vocab localIdx t
+          let (y, voc, ix) ← valueIdM st vocab localIdx t
           x := y
           vocab := voc
           localIdx := ix
@@ -3567,7 +3586,7 @@ def extendM {m : Type → Type} [Monad m] (st : Store m) (env : EvalEnv) (t : Ta
           | none => pure ()
         match refBinder env e Graph.empty (mu.withFreshnessCtx (toString i) v) with
         | some term =>
-          let (y, voc, ix) ← termIdM st vocab localIdx term
+          let (y, voc, ix) ← valueIdM st vocab localIdx term
           vocab := voc
           localIdx := ix
           x := y
