@@ -741,17 +741,19 @@ theorem out_nodup (l r : Table) (extra : Array Nat) (hl : l.vars.toList.Nodup) (
     exact this (by simpa using ha)
 
 /-- The lookup in a row of a join's output: a variable of the left table
-    has the id of its output column (`Lv`), any other variable the id of the
-    right row `j`. -/
-theorem out_lookup (l r T : Table) (extra : Array Nat) (k j : Nat) (Lv : Nat → UInt64)
+    has the id of its output column (`Lv`), a variable of the right table
+    only the id `Rv q` of its right column `q`. -/
+theorem out_lookup_gen (l r T : Table) (extra : Array Nat) (k : Nat) (Lv Rv : Nat → UInt64)
     (hl : l.vars.toList.Nodup) (hr : r.vars.toList.Nodup)
     (hv : T.vars.toList = l.vars.toList ++ extra.toList.map (fun q => r.vars[q]!))
     (hex : extra.toList = (List.range r.vars.size).filter (fun q => !l.vars.contains r.vars[q]!))
     (hL : ∀ c, c < l.vars.size → T.at c k = Lv c)
-    (hR : ∀ m, m < extra.size → T.at (l.vars.size + m) k = r.at extra[m]! j) (v : String) :
+    (hR : ∀ m, m < extra.size → T.at (l.vars.size + m) k = Rv extra[m]!) (v : String) :
     T.lookupAt k v = match l.idx v with
       | some c => nz (Lv c)
-      | none => r.lookupAt j v := by
+      | none => match r.idx v with
+        | some q => nz (Rv q)
+        | none => none := by
   have hnd : T.vars.toList.Nodup := by rw [hv]; exact out_nodup l r extra hl hr hex
   have hTs : T.vars.size = l.vars.size + extra.size := by
     rw [← Array.length_toList, hv]; simp
@@ -775,7 +777,6 @@ theorem out_lookup (l r T : Table) (extra : Array Nat) (k j : Nat) (Lv : Nat →
     simp only [hT, hL c hc]
   | none =>
     simp only
-    rw [lookupAt_eq]
     cases hrv : r.idx v with
     | some q =>
       obtain ⟨hq, hqv⟩ := idx_some hrv
@@ -806,6 +807,20 @@ theorem out_lookup (l r T : Table) (extra : Array Nat) (k j : Nat) (Lv : Nat →
               rw [arr_get extra _ hm]; simp
             exact idx_none hrv _ ((mem_extra hex).mp hq).1 hcv
       simp only [hT]
+
+/-- The lookup in a row of a join's output: a variable of the left table
+    has the id of its output column (`Lv`), any other variable the id of the
+    right row `j`. -/
+theorem out_lookup (l r T : Table) (extra : Array Nat) (k j : Nat) (Lv : Nat → UInt64)
+    (hl : l.vars.toList.Nodup) (hr : r.vars.toList.Nodup)
+    (hv : T.vars.toList = l.vars.toList ++ extra.toList.map (fun q => r.vars[q]!))
+    (hex : extra.toList = (List.range r.vars.size).filter (fun q => !l.vars.contains r.vars[q]!))
+    (hL : ∀ c, c < l.vars.size → T.at c k = Lv c)
+    (hR : ∀ m, m < extra.size → T.at (l.vars.size + m) k = r.at extra[m]! j) (v : String) :
+    T.lookupAt k v = match l.idx v with
+      | some c => nz (Lv c)
+      | none => r.lookupAt j v := by
+  rw [out_lookup_gen l r T extra k Lv (fun q => r.at q j) hl hr hv hex hL hR v, lookupAt_eq r]
 
 /-! ## Rows of a join's output -/
 
@@ -1166,16 +1181,16 @@ theorem probeR_spec (B : Nat → Array Nat) (n : Nat) {F : _root_.Id (Array Nat 
 
 /-- A hash join loop pair: build an index of rows `0 .. nb-1` keyed by `KB`,
     then probe it with rows `0 .. np-1` keyed by `KP`, probe rows outside. -/
-theorem hash_branch {κ : Type} [BEq κ] [Hashable κ] [LawfulBEq κ] (KB KP : Nat → κ)
+theorem hash_branch {κ β : Type} [BEq κ] [Hashable κ] [LawfulBEq κ] (KB KP : Nat → κ)
     (g : Nat → Option (Array Nat) → Option (Array Nat)) (hg : ∀ j o, g j o = some ((o.getD #[]).push j))
-    (nb np : Nat) (out : Array Nat → Array Nat → Table) :
+    (nb np : Nat) (out : Array Nat → Array Nat → β) :
     ∃ li ri : Array Nat, (do
       let hm ← forIn (List.range' 0 nb) (∅ : Std.HashMap κ (Array Nat)) (fun j s => pure (.yield (s.alter (KB j) (g j))))
       let s ← forIn (List.range' 0 np) ((#[], #[]) : Array Nat × Array Nat) (fun i s1 => do
         let s ← forIn (hm.getD (KP i) #[]) (s1.1, s1.2)
           (fun j (s : Array Nat × Array Nat) => pure (.yield (s.1.push i, s.2.push j)))
         pure (.yield (s.1, s.2)))
-      pure (out s.1 s.2) : _root_.Id Table) = out li ri ∧
+      pure (out s.1 s.2) : _root_.Id β) = out li ri ∧
     li.toList = ((List.range' 0 np).flatMap fun i =>
       ((List.range' 0 nb).filter fun j => KB j == KP i).map fun j => (i, j)).map Prod.fst ∧
     ri.toList = ((List.range' 0 np).flatMap fun i =>
