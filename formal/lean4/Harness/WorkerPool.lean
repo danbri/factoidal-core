@@ -25,7 +25,15 @@
   two threads reach are atomic exchanges in the runtime, so either the reader
   sees the value or the writer finds the promise and resolves it.
 
-  The jobs are `IO Unit` closures. A job and what it captures become shared
+  Each worker thread makes a value of its own when it starts (`start`'s
+  `mk`, run on the worker thread) and passes it to every job it runs: an
+  object that only that thread reaches, so the Lean runtime keeps it
+  single-threaded (plain reference counts, updates in place) for the life of
+  the pool. The SBM11 harness keeps a worker's dictionary page cache there,
+  so that the pages a worker copied stay with it from one query to the next
+  (stage 1h of the record).
+
+  The jobs are closures. A job and what it captures become shared
   between threads (reference counts are atomic from then on): give a job the
   inputs that it reads, not a structure that the caller keeps changing
   (skill `lean4-performance`, "Comparisons over values that tasks share").
@@ -83,42 +91,44 @@ partial def Cell.take {α : Type} (c : Cell α) (spinNs : Nat) : IO α := do
 
 /-! ## The pool -/
 
-/-- One pool thread: its mailbox (jobs, newest first) and its stop flag. -/
-structure Worker where
-  mail : Cell (List (IO Unit))
+/-- One pool thread: its mailbox (jobs, newest first) and its stop flag. A
+    job takes the worker's own value (`start`'s `mk`). -/
+structure Worker (σ : Type) where
+  mail : Cell (List (σ → IO Unit))
   stop : IO.Ref Bool
 
-/-- A pool of `workers.size` threads (`Task.Priority.dedicated`). -/
-structure Pool where
-  workers : Array Worker
+/-- A pool of `workers.size` threads (`Task.Priority.dedicated`), each with a
+    value of type `σ` that its thread made and only its thread reads. -/
+structure Pool (σ : Type) where
+  workers : Array (Worker σ)
   threads : Array (Task (Except IO.Error Unit))
   spinNs : Nat
 
 /-- The loop of one worker thread: run the jobs of the mailbox in the order
     they were posted; an error that escapes a job is dropped, so the worker
     stays up (`spawnOn` gives each job a cell for its own result). -/
-partial def workerLoop (w : Worker) (spinNs : Nat) : IO Unit := do
+partial def workerLoop {σ : Type} (w : Worker σ) (st : σ) (spinNs : Nat) : IO Unit := do
   if ← w.stop.get then return
   if let some js ← w.mail.take? spinNs then
-    js.reverse.forM fun j => do let _ ← j.toBaseIO
-  workerLoop w spinNs
+    js.reverse.forM fun j => do let _ ← (j st).toBaseIO
+  workerLoop w st spinNs
 
 /-- Start `n` worker threads that poll for `spinNs` nanoseconds before they
-    block. -/
-def start (n : Nat) (spinNs : Nat := 1000000) : IO Pool := do
+    block. Each thread first runs `mk` and keeps its value for its jobs. -/
+def start {σ : Type} (n : Nat) (spinNs : Nat := 1000000) (mk : IO σ) : IO (Pool σ) := do
   let mut ws := #[]
   let mut ts := #[]
   for _ in [0:n] do
-    let w : Worker := { mail := ← Cell.new, stop := ← IO.mkRef false }
-    let t ← IO.asTask (workerLoop w spinNs) Task.Priority.dedicated
+    let w : Worker σ := { mail := ← Cell.new, stop := ← IO.mkRef false }
+    let t ← IO.asTask (do workerLoop w (← mk) spinNs) Task.Priority.dedicated
     ws := ws.push w
     ts := ts.push t
   return { workers := ws, threads := ts, spinNs }
 
-def Pool.size (p : Pool) : Nat := p.workers.size
+def Pool.size {σ : Type} (p : Pool σ) : Nat := p.workers.size
 
 /-- Give `job` to worker `i mod size` (nothing happens on an empty pool). -/
-def Pool.postTo (p : Pool) (i : Nat) (job : IO Unit) : IO Unit := do
+def Pool.postTo {σ : Type} (p : Pool σ) (i : Nat) (job : σ → IO Unit) : IO Unit := do
   if h : 0 < p.workers.size then
     let c := (p.workers[i % p.workers.size]'(Nat.mod_lt _ h)).mail
     -- `swap` then `put`, not `IO.Ref.modify`: see `Cell.put`
@@ -126,11 +136,11 @@ def Pool.postTo (p : Pool) (i : Nat) (job : IO Unit) : IO Unit := do
     c.put (job :: old.getD [])
 
 /-- Make every blocked worker poll again (call when a query starts). -/
-def Pool.wake (p : Pool) : IO Unit :=
+def Pool.wake {σ : Type} (p : Pool σ) : IO Unit :=
   p.workers.forM fun w => w.mail.notify
 
 /-- Stop the workers and wait for their threads to end. -/
-def Pool.shutdown (p : Pool) : IO Unit := do
+def Pool.shutdown {σ : Type} (p : Pool σ) : IO Unit := do
   for w in p.workers do
     w.stop.set true
     -- a value, not only `notify`: a worker that is between its last poll and
@@ -150,9 +160,15 @@ inductive Handle (α : Type) where
 
 /-- Run `act` on worker `i mod size`; its result (or its error) goes to the
     handle's cell. -/
-def Pool.spawnOn {α : Type} (p : Pool) (i : Nat) (act : IO α) : IO (Handle (Except IO.Error α)) := do
+def Pool.spawnOn {σ α : Type} (p : Pool σ) (i : Nat) (act : IO α) : IO (Handle (Except IO.Error α)) := do
   let c ← Cell.new
-  p.postTo i (do c.put (← act.toBaseIO))
+  p.postTo i (fun _ => do c.put (← act.toBaseIO))
+  return .cell c
+
+/-- `spawnOn` for a job that takes the worker's own value. -/
+def Pool.spawnWith {σ α : Type} (p : Pool σ) (i : Nat) (act : σ → IO α) : IO (Handle (Except IO.Error α)) := do
+  let c ← Cell.new
+  p.postTo i (fun st => do c.put (← (act st).toBaseIO))
   return .cell c
 
 /-- Wait for a handle: a cell is polled for at most `spinNs` nanoseconds,
@@ -166,7 +182,7 @@ def Handle.await {α : Type} (h : Handle α) (spinNs : Nat) : IO α :=
     `i - 1` (mod the pool size), and return the results in job order. With
     an empty pool every job runs on the caller. An error of a job is returned
     in its slot. -/
-def Pool.runAll {α : Type} (p : Pool) (jobs : Array (IO α)) : IO (Array (Except IO.Error α)) := do
+def Pool.runAll {σ α : Type} (p : Pool σ) (jobs : Array (IO α)) : IO (Array (Except IO.Error α)) := do
   if p.size == 0 || jobs.size ≤ 1 then
     return ← jobs.mapM fun j => j.toBaseIO
   let mut hs : Array (Handle (Except IO.Error α)) := #[]
