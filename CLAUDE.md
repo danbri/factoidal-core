@@ -544,6 +544,12 @@ Lean functionality and gates land. Port functionality, not files.
   The allocator work starts from branch `batch3/kr12-percache`; a change to
   the default allocator settings is shown to the owner with its measurements
   before it lands. Record: https://github.com/danbri/factoidal/issues/961.
+- Owner, 2026-10-23, answer "Land it" (to: land branch `batch3/kr12-thp` on
+  `main`): `l4sbm11` turns transparent huge pages off at the start of `main`
+  (`prctl(PR_SET_THP_DISABLE, 1)`; `L4_THP=on` keeps them), and each pool
+  worker keeps a 2,048-page dictionary page cache. Reason: d10 peak RSS 4/1
+  2.10 to 1.19 with no time change (stage 1i of
+  `docs/designissues/2026-10-12-parallel-block-scans.md`).
 
 ### Issue 566 — the hex layer. RULED, do not ask again.
 
