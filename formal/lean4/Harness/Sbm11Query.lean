@@ -752,9 +752,10 @@ def Session.store (ss : Session) : IdQuery.Store IO :=
 /-! ## Parallel block scans (stage 1, issue 799) -/
 
 /-- The table of `IdQuery.scanTableM`, computed with the selected blocks cut
-    into at most `threads` consecutive chunks. Each chunk is scanned by its
-    own dedicated task (`IO.asTask`) with the same loop
-    (`IdQuery.scanListM`), the chunk tables are appended in chunk order and
+    into at most `threads` consecutive chunks. The first chunk is scanned by
+    the calling thread, each other one by its own task (`IO.asTask`), with
+    the same loop (`IdQuery.scanListM`); the chunk tables are appended in
+    chunk order and
     the statistics are summed. A scan with an overlay (stage 5) stays on one
     thread. Answers: `ParallelScanTheorems.parallel_acc_eq` (the list form),
     tests/sbm11/threads.sh (the tables, native). -/
@@ -783,9 +784,11 @@ def scanTableParM (ss : Session) (spec : IdQuery.ScanSpec) (threads : Nat) (minR
       rows := 0, sortVar }
   let f := fun (acc : L4Factoidal.Qlvr.Table) (ch : IdQuery.Chunk) =>
     (pure (acc.append ch.table, true) : ExceptT String IO (L4Factoidal.Qlvr.Table × Bool))
-  -- each task: its own view (counters, dictionary state, permutation copies)
+  -- each task: its own view (counters, dictionary state, permutation copies).
+  -- Stage 1f: the first range is scanned by the calling thread after the
+  -- tasks of the others have started (it would otherwise wait for them).
   let mut tasks : Array (Task (Except IO.Error (L4Factoidal.Qlvr.Table × IdQuery.ScanStats)) × Session) := #[]
-  for X in chunks do
+  for X in chunks.drop 1 do
     let v ← ss.view
     let t ← IO.asTask (do
       -- stage 1b: the task's own copies of the spec, the overlay context and
@@ -809,6 +812,12 @@ def scanTableParM (ss : Session) (spec : IdQuery.ScanSpec) (threads : Nat) (minR
   let mut out := init
   let mut stats : IdQuery.ScanStats := { blocksTotal := ← st.blockCount spec.perm }
   let mut failure : Option String := none
+  -- the first range, onto `init` (the capacity of the whole scan)
+  match ← liftIO (IdQuery.scanListM st spec true init f metas sortVar ox (chunks.headD [])).run with
+  | Except.ok (tab, s) =>
+    out := tab
+    stats := stats.add s
+  | Except.error e => failure := some e
   for (t, v) in tasks do
     match ← IO.wait t with
     | .ok (tab, s) =>
@@ -821,7 +830,8 @@ def scanTableParM (ss : Session) (spec : IdQuery.ScanSpec) (threads : Nat) (minR
   return (out, stats)
 
 /-- The scan with candidates (`IdQuery.scanSipTableM`) in block ranges, one
-    task per range (issue 799, KR 1.2): the tasks of `scanTableParM` with
+    task per range after the first, which the calling thread scans (issue
+    799, KR 1.2; stage 1f): the tasks of `scanTableParM` with
     `IdQuery.scanListSipM`, their tables appended in range order and their
     statistics added. A scan with a delta overlay, fewer than two ranges
     (`IdQuery.rangeCount`) or one selected block runs `scanSipTableM` on the
@@ -846,8 +856,12 @@ def scanSipTableParM (ss : Session) (spec : IdQuery.ScanSpec) (cands : Array UIn
       rows := 0, sortVar := IdQuery.sortVarOf spec }
   let f := fun (acc : L4Factoidal.Qlvr.Table) (ch : IdQuery.Chunk) =>
     (pure (acc.append ch.table, true) : ExceptT String IO (L4Factoidal.Qlvr.Table × Bool))
+  -- Stage 1f: the first range is scanned by the calling thread after the
+  -- tasks of the others have started. Olympics q07 at 4 threads (41 runs per
+  -- process, 3 processes): the two scans with candidates took 1.08 to 1.14
+  -- and 0.76 to 0.78 ms with a task per range, 0.81 to 0.85 and 0.62 ms so.
   let mut tasks : Array (Task (Except IO.Error (L4Factoidal.Qlvr.Table × IdQuery.ScanStats)) × Session) := #[]
-  for X in chunks do
+  for X in chunks.drop 1 do
     let v ← ss.view
     let t ← IO.asTask (do
       let spec := spec.fresh
@@ -863,6 +877,11 @@ def scanSipTableParM (ss : Session) (spec : IdQuery.ScanSpec) (cands : Array UIn
   let mut out := init
   let mut stats : IdQuery.ScanStats := { blocksTotal := ← st.blockCount spec.perm }
   let mut failure : Option String := none
+  match ← liftIO (IdQuery.scanListSipM st spec cands init f metas sortVar ox (chunks.headD [])).run with
+  | Except.ok (tab, s) =>
+    out := tab
+    stats := stats.add s
+  | Except.error e => failure := some e
   for (t, v) in tasks do
     match ← IO.wait t with
     | .ok (tab, s) =>
