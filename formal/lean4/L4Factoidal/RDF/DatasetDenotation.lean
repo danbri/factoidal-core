@@ -28,16 +28,31 @@ Two conditions hold of every `DatasetDen`:
   of `Triple.key` (equivalently `Triple.eqb`, `Triple.eqb_iff_key`);
 * `named_mem`: a triple in the named graph `n` makes `n` a graph name.
 
-Which equality. `DecidableEq Triple` is structural: it tells `"chat"@EN` from
-`"chat"@en`. RDF 1.1 Concepts section 3.3 says "Lexical representations of
-language tags MAY be converted to lower case. The value space of language tags
-is always in lower case", so the two literals are one RDF term. Since
-https://github.com/danbri/factoidal-core/pull/25 `Triple.eqb` is that RDF term
-equality: language tags without case, lexical form, datatype and base
-direction exactly. The target uses it (through `Triple.key`), so a store that
-lowers language tags and a store that keeps them denote one dataset. Literal
-VALUE equality (`Literal.valueEqb`, for example two `rdf:XMLLiteral` lexical
-forms with one canonical form) is not used: those are two terms.
+Which equality. The target uses RDF term equality: `Triple.key` (equivalently
+`Triple.eqb`, `Triple.eqb_iff_key`; `Literal.eqb` since
+https://github.com/danbri/factoidal-core/pull/25). For literals that is the
+literal term equality of RDF 1.2 Concepts section 3.4: "two literals are
+term-equal (the same RDF term) if and only if" the lexical forms compare equal
+"using case-sensitive matching", the datatype IRIs compare equal, "the two
+language tags are either both absent, or both present and compare equal, where
+this comparison is performed using ASCII case-insensitive matching", and the
+base directions are both absent, both ltr, or both rtl. The note of section
+3.4.1: "In RDF 1.1, "chat"@fr and "chat"@FR represent two distinct terms ...
+In RDF 1.2, they represent the exact same literal". RDF 1.1 Concepts section
+3.3 compares the tags "character by character" but says "The value space of
+language tags is always in lower case", and permits the conversion to lower
+case. `Literal.joinKey` lowers the tag with `String.toLower`, which maps ASCII
+letters only, as section 3.4 asks.
+
+`DecidableEq Triple` is structural: it tells `"chat"@EN` from `"chat"@en`, so
+it is not the target equality. A store whose dictionary gives one id per
+structural term (https://github.com/danbri/factoidal/issues/977) still maps
+into the target, because the decoded triples are compared by key; but a
+theorem that compares ids (DELETE of one row, a join on ids) then needs the
+store to fold language tags before it assigns ids (see
+`Storage/Sbm11/DenotationTheorems.lean`, `HeldFolded`). Literal VALUE equality
+(`Literal.valueEqb`, for example two `rdf:XMLLiteral` lexical forms with one
+canonical form) is not used: those are two terms.
 
 Prop, and a Bool view. The target is a specification, so the predicates are
 `Prop`, and a store with an infinite or a computed membership can map into it.
@@ -64,8 +79,8 @@ What is proved, for every `Dataset`:
   names (`DatasetDen.ofQuads`).
 
 `DatasetDen.ofRows` is the denotation of a store of rows with a decoder (an
-id-based store: decode after denote). `DictInjective` is the condition on a
-dictionary that the id-based layers need (step 2 of issue 975 proves it).
+id-based store: decode after denote). The dictionary contract of such a store
+is `RDF/DictInjective.lean` (step 2 of issue 975).
 
 No `sorry`, no `axiom`, no `native_decide`, no `partial`.
 -/
@@ -158,17 +173,6 @@ theorem DatasetDen.ofQuads_congr {qs qs' : List (Option Subject × Triple)} {dec
   · intro n
     rw [DatasetDen.ofQuads_names, DatasetDen.ofQuads_names]
     simp only [hq, hd]
-
-/-! ## Dictionaries -/
-
-/-- A dictionary `dec` from ids to terms is injective on the ids in use, up to
-RDF term equality: two ids in use whose terms have one join key are one id. So
-one term (up to the case of its language tags) never has two ids, and, `dec`
-being a function, one id never names two terms. Step 2 of
-https://github.com/danbri/factoidal/issues/975 proves this for the id-based
-stores; the theorems of step 1 take it as a hypothesis. -/
-def DictInjective {I : Type} (dec : I → Term) (inUse : I → Prop) : Prop :=
-  ∀ x y, inUse x → inUse y → (dec x).joinKey = (dec y).joinKey → x = y
 
 /-! ## The denotation of a `Dataset` -/
 

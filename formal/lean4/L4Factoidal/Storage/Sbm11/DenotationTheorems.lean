@@ -19,25 +19,38 @@ The generation in memory (`MemGen.denote`, a `Dataset` in SPO row order):
   list-level condition of PR 31, follows from these (`PackSpec.datasetOf_of_den`).
 
 The delta overlay (`Overlay.denote`, `Overlay.denoteNamed`, `Row → Bool` and
-`Nat → Bool` over ids) with a dictionary `dec : Nat → Term` as a parameter
-(decode after denote):
+`Nat → Bool` over ids) with the dictionary `dec : Nat → Option Term` as a
+parameter (decode after denote; for SBM11 `OverlayDict.ovDec keys ov`):
 
 * `Overlay.overlayDen dec base bn st`: `DatasetDen.ofRows` over the rows that
   `denote base st` holds, decoded by `Overlay.rowQuad?`, with the graph names
   that `denoteNamed bn st` holds, decoded;
-* `Overlay.overlayDen_add`, `Overlay.overlayDen_create_names`: INSERT and
-  CREATE, no hypothesis on the dictionary;
+* `Overlay.overlayDen_add`, `Overlay.overlayDen_create_names`,
+  `Overlay.overlayDen_create_graph`: INSERT and CREATE, no hypothesis on the
+  dictionary;
 * `Overlay.overlayDen_remove`: DELETE removes the quad from the dataset, under
-  `DictInjective dec inUse` for the ids of the rows (`Overlay.RowInUse`). Without
-  it, another row with other ids could decode to the same quad and stay. That
-  hypothesis is open: step 2 of issue 975 proves it from the SBM11 dictionary
-  (`check`, `toCode?`).
+  `RDF.DictInjective` (step 2, PR 32; for SBM11
+  `DictInjectiveTheorems.overlay_dictInjective`) and `Overlay.HeldFolded`
+  (the terms of the dictionary have lower-case language tags). Without these,
+  another row with other ids could decode to an RDF-term-equal quad and stay.
+  `HeldFolded` is open here: SBM11 folds every term before it gives an id
+  (`normalizeTerm`), and the proof that the held terms are their own join keys
+  is not in this module.
+
+Normalisation. The target compares language tags without case. SBM11 gives one
+id per RDF term (`MemGen.cid_eq_iff_eqb`), so it maps into the target with the
+fold it already does. IBK, PTD and the other stores of
+https://github.com/danbri/factoidal/issues/977 give one id per structural term:
+their decoded triples map into the target (membership is by key), but a theorem
+that compares their ids needs a fold before the ids are assigned.
 
 No `sorry`, no `axiom`, no `native_decide`, no `partial`.
 -/
 import L4Factoidal.RDF.DatasetDenotation
 import L4Factoidal.Storage.Sbm11.PackSpecInputTheorems
 import L4Factoidal.Storage.Sbm11.OverlayTheorems
+import L4Factoidal.RDF.DictInjective
+import L4Factoidal.Storage.Sbm11.DictInjectiveTheorems
 
 /-! ## The generation in memory -/
 
@@ -251,68 +264,98 @@ def iriOf? : Term → Option WfIri
   | .iri i => some i
   | _ => none
 
+/-- The subject of an id: its term, when that is an IRI or a blank node. -/
+def subjAt (dec : Nat → Option Term) (n : Nat) : Option Subject := (dec n).bind Term.toSubject?
+
+/-- The predicate of an id: its term, when that is an IRI. -/
+def iriAt (dec : Nat → Option Term) (n : Nat) : Option WfIri := (dec n).bind iriOf?
+
 /-- The graph position of a graph id: 0 is the default graph, another id names
 the graph its term names (an IRI or a blank node). -/
-def graphOf? (dec : Nat → Term) (g : Nat) : Option (Option Subject) :=
-  if g = 0 then some none else (dec g).toSubject?.map some
+def graphOf? (dec : Nat → Option Term) (g : Nat) : Option (Option Subject) :=
+  if g = 0 then some none else (subjAt dec g).map some
 
-/-- The quad an SPO-order row decodes to; `none` when a position does not
-decode to a term of its kind. -/
-def rowQuad? (dec : Nat → Term) (r : Row) : Option (Option Subject × Triple) :=
-  match (dec r.c0).toSubject?, iriOf? (dec r.c1), graphOf? dec r.g with
-  | some s, some p, some g => some (g, ⟨s, p, dec r.c2⟩)
-  | _, _, _ => none
+/-- The quad an SPO-order row decodes to; `none` when an id names no term or a
+position does not decode to a term of its kind. -/
+def rowQuad? (dec : Nat → Option Term) (r : Row) : Option (Option Subject × Triple) :=
+  match graphOf? dec r.g, subjAt dec r.c0, iriAt dec r.c1, dec r.c2 with
+  | some g, some s, some p, some o => some (g, ⟨s, p, o⟩)
+  | _, _, _, _ => none
 
 /-- The dataset of the overlaid generation: the rows that `denote base st`
-holds, decoded, and the graph names that `denoteNamed bn st` holds, decoded. -/
-def overlayDen (dec : Nat → Term) (base : Row → Bool) (bn : Nat → Bool) (st : State) : DatasetDen :=
+holds, decoded, and the graph names that `denoteNamed bn st` holds, decoded.
+`dec` is the dictionary (`OverlayDict.ovDec keys ov` for SBM11). -/
+def overlayDen (dec : Nat → Option Term) (base : Row → Bool) (bn : Nat → Bool) (st : State) : DatasetDen :=
   DatasetDen.ofRows (rowQuad? dec) (fun r => denote base st r = true)
-    (fun n => ∃ x, denoteNamed bn st x = true ∧ (dec x).toSubject? = some n)
+    (fun n => ∃ x, denoteNamed bn st x = true ∧ subjAt dec x = some n)
 
 /-- The ids of a row are in use (the graph id when it is not the default
 graph). -/
-def RowInUse (inUse : Nat → Prop) (r : Row) : Prop :=
-  inUse r.c0 ∧ inUse r.c1 ∧ inUse r.c2 ∧ (r.g ≠ 0 → inUse r.g)
+def RowInUse (used : Nat → Prop) (r : Row) : Prop :=
+  used r.c0 ∧ used r.c1 ∧ used r.c2 ∧ (r.g ≠ 0 → used r.g)
 
-theorem rowQuad?_eq_some (dec : Nat → Term) (r : Row) (gn : Option Subject) (u : Triple) :
+/-- The terms of the store have their language tags in lower case: each is its
+own join key. SBM11 folds a term before it gives an id (`Session.idOf`,
+`normalizeTerm`; `OverlayDict.vocabAdd`). A store that gives one id per
+structural term (https://github.com/danbri/factoidal/issues/977) does not
+satisfy it. -/
+def HeldFolded (dom : Term → Prop) : Prop := ∀ t, dom t → t.joinKey = t
+
+theorem rowQuad?_eq_some (dec : Nat → Option Term) (r : Row) (gn : Option Subject) (u : Triple) :
     rowQuad? dec r = some (gn, u) ↔
-      graphOf? dec r.g = some gn ∧ (dec r.c0).toSubject? = some u.s ∧ iriOf? (dec r.c1) = some u.p ∧
-        dec r.c2 = u.o := by
+      graphOf? dec r.g = some gn ∧ subjAt dec r.c0 = some u.s ∧ iriAt dec r.c1 = some u.p ∧
+        dec r.c2 = some u.o := by
   obtain ⟨s, p, o⟩ := u
   unfold rowQuad?
-  cases h0 : (dec r.c0).toSubject? <;> cases h1 : iriOf? (dec r.c1) <;> cases h2 : graphOf? dec r.g <;>
-    simp [eq_comm]
+  cases h0 : graphOf? dec r.g <;> cases h1 : subjAt dec r.c0 <;> cases h2 : iriAt dec r.c1 <;>
+    cases h3 : dec r.c2 <;> simp [eq_comm]
 
-theorem toSubject?_eq {t : Term} {s : Subject} (h : t.toSubject? = some s) : t = s.toTerm := by
-  cases t <;> simp [Term.toSubject?] at h <;> subst h <;> rfl
+theorem subjAt_eq {dec : Nat → Option Term} {n : Nat} {s : Subject} (h : subjAt dec n = some s) :
+    dec n = some s.toTerm := by
+  unfold subjAt at h
+  cases hd : dec n with
+  | none => rw [hd] at h; cases h
+  | some t =>
+    rw [hd] at h
+    simp only [Option.bind_some] at h
+    cases t <;> simp [Term.toSubject?] at h <;> subst h <;> rfl
 
-theorem iriOf?_eq {t : Term} {p : WfIri} (h : iriOf? t = some p) : t = .iri p := by
-  cases t <;> simp_all [iriOf?]
+theorem iriAt_eq {dec : Nat → Option Term} {n : Nat} {p : WfIri} (h : iriAt dec n = some p) :
+    dec n = some (.iri p) := by
+  unfold iriAt at h
+  cases hd : dec n with
+  | none => rw [hd] at h; cases h
+  | some t =>
+    rw [hd] at h
+    simp only [Option.bind_some] at h
+    cases t <;> simp [iriOf?] at h
+    subst h; rfl
 
-theorem graphOf?_none {dec : Nat → Term} {g : Nat} (h : graphOf? dec g = some none) : g = 0 := by
+theorem graphOf?_none {dec : Nat → Option Term} {g : Nat} (h : graphOf? dec g = some none) : g = 0 := by
   unfold graphOf? at h
   by_cases hg : g = 0
   · exact hg
   · rw [if_neg hg] at h
-    cases hs : (dec g).toSubject? <;> simp [hs] at h
+    cases hs : subjAt dec g <;> simp [hs] at h
 
-theorem graphOf?_some {dec : Nat → Term} {g : Nat} {n : Subject} (h : graphOf? dec g = some (some n)) :
-    g ≠ 0 ∧ dec g = n.toTerm := by
+theorem graphOf?_some {dec : Nat → Option Term} {g : Nat} {n : Subject} (h : graphOf? dec g = some (some n)) :
+    g ≠ 0 ∧ dec g = some n.toTerm := by
   unfold graphOf? at h
   by_cases hg : g = 0
   · rw [if_pos hg] at h; cases h
   · rw [if_neg hg] at h
-    cases hs : (dec g).toSubject? with
+    cases hs : subjAt dec g with
     | none => simp [hs] at h
     | some m =>
       simp only [hs, Option.map_some, Option.some.injEq] at h
       subst h
-      exact ⟨hg, toSubject?_eq hs⟩
+      exact ⟨hg, subjAt_eq hs⟩
 
-/-- Under `DictInjective`, two rows in use that decode to RDF-term-equal quads
-of one graph are one row. -/
-theorem rowQuad?_inj {dec : Nat → Term} {inUse : Nat → Prop} (hinj : DictInjective dec inUse)
-    {r q : Row} (hr : RowInUse inUse r) (hq : RowInUse inUse q) {gn : Option Subject} {u v : Triple}
+/-- Under `DictInjective` (step 2) and `HeldFolded`, two rows in use that decode
+to RDF-term-equal quads of one graph are one row. -/
+theorem rowQuad?_inj {enc : Term → Option Nat} {dec : Nat → Option Term} {dom : Term → Prop}
+    {used : Nat → Prop} (D : DictInjective enc dec dom used) (hfold : HeldFolded dom)
+    {r q : Row} (hr : RowInUse used r) (hq : RowInUse used q) {gn : Option Subject} {u v : Triple}
     (hu : rowQuad? dec r = some (gn, u)) (hv : rowQuad? dec q = some (gn, v)) (e : u.key = v.key) :
     r = q := by
   obtain ⟨hug, hu0, hu1, hu2⟩ := (rowQuad?_eq_some dec r gn u).mp hu
@@ -322,24 +365,34 @@ theorem rowQuad?_inj {dec : Nat → Term} {inUse : Nat → Prop} (hinj : DictInj
   simp only [Triple.key, Triple.mk.injEq] at e
   obtain ⟨rfl, rfl, eo⟩ := e
   simp only at hu0 hu1 hu2 hv0 hv1 hv2
-  have c0 : r.c0 = q.c0 := hinj _ _ hr.1 hq.1 (by rw [toSubject?_eq hu0, toSubject?_eq hv0])
-  have c1 : r.c1 = q.c1 := hinj _ _ hr.2.1 hq.2.1 (by rw [iriOf?_eq hu1, iriOf?_eq hv1])
-  have c2 : r.c2 = q.c2 := hinj _ _ hr.2.2.1 hq.2.2.1 (by rw [hu2, hv2, eo])
+  have folded : ∀ n t, used n → dec n = some t → t.joinKey = t := by
+    intro n t hn hd
+    obtain ⟨t', ht', hd', _⟩ := D.encDec n hn
+    rw [hd] at hd'
+    cases Option.some.inj hd'
+    exact hfold t ht'
+  have huo := folded _ _ hr.2.2.1 hu2
+  have hvo := folded _ _ hq.2.2.1 hv2
+  have eo' : uo = vo := by rw [← huo, eo, hvo]
+  subst eo'
+  have c0 : r.c0 = q.c0 := D.decInj _ _ _ hr.1 hq.1 (subjAt_eq hu0) (subjAt_eq hv0)
+  have c1 : r.c1 = q.c1 := D.decInj _ _ _ hr.2.1 hq.2.1 (iriAt_eq hu1) (iriAt_eq hv1)
+  have c2 : r.c2 = q.c2 := D.decInj _ _ _ hr.2.2.1 hq.2.2.1 hu2 hv2
   have cg : r.g = q.g := by
     cases gn with
     | none => rw [graphOf?_none hug, graphOf?_none hvg]
     | some n =>
       obtain ⟨hr0, hrd⟩ := graphOf?_some hug
       obtain ⟨hq0, hqd⟩ := graphOf?_some hvg
-      exact hinj _ _ (hr.2.2.2 hr0) (hq.2.2.2 hq0) (by rw [hrd, hqd])
+      exact D.decInj _ _ _ (hr.2.2.2 hr0) (hq.2.2.2 hq0) hrd hqd
   obtain ⟨_, _, _, _⟩ := r
   obtain ⟨_, _, _, _⟩ := q
   simp_all
 
 /-- An empty overlay denotes the base generation. -/
-theorem overlayDen_empty (dec : Nat → Term) (base : Row → Bool) (bn : Nat → Bool) :
+theorem overlayDen_empty (dec : Nat → Option Term) (base : Row → Bool) (bn : Nat → Bool) :
     overlayDen dec base bn {} = DatasetDen.ofRows (rowQuad? dec) (fun r => base r = true)
-      (fun n => ∃ x, (x ≠ 0 ∧ bn x = true) ∧ (dec x).toSubject? = some n) := by
+      (fun n => ∃ x, (x ≠ 0 ∧ bn x = true) ∧ subjAt dec x = some n) := by
   apply DatasetDen.ext
   · intro gn t
     show (∃ r, denote base {} r = true ∧ _) ↔ (∃ r, base r = true ∧ _)
@@ -351,7 +404,7 @@ theorem overlayDen_empty (dec : Nat → Term) (base : Row → Bool) (bn : Nat �
 
 /-- INSERT DATA (SPARQL 1.1 Update section 3.1.1): the overlay after `add q`
 denotes the quads before and the quad of `q`. -/
-theorem overlayDen_add (dec : Nat → Term) (base : Row → Bool) (bn : Nat → Bool) (st : State) (q : Row)
+theorem overlayDen_add (dec : Nat → Option Term) (base : Row → Bool) (bn : Nat → Bool) (st : State) (q : Row)
     (gn : Option Subject) (t : Triple) :
     (overlayDen dec base bn (step st (.add q))).graph gn t ↔
       (overlayDen dec base bn st).graph gn t ∨ ∃ u, rowQuad? dec q = some (gn, u) ∧ u.key = t.key := by
@@ -366,11 +419,14 @@ theorem overlayDen_add (dec : Nat → Term) (base : Row → Bool) (bn : Nat → 
     · exact ⟨q, Or.inr rfl, hd⟩
 
 /-- DELETE DATA (SPARQL 1.1 Update section 3.1.2): the overlay after
-`remove q` denotes the quads before without the quad of `q`, when the
-dictionary is injective on the ids of `q` and of every row the overlay holds. -/
-theorem overlayDen_remove (dec : Nat → Term) (base : Row → Bool) (bn : Nat → Bool) (st : State) (q : Row)
-    {inUse : Nat → Prop} (hinj : DictInjective dec inUse) (hq : RowInUse inUse q)
-    (hrows : ∀ r, denote base st r = true → RowInUse inUse r) (gn : Option Subject) (t : Triple) :
+`remove q` denotes the quads before without the quad of `q`. Hypotheses: the
+dictionary contract of step 2 (`DictInjective`, for SBM11
+`DictInjectiveTheorems.overlay_dictInjective`), its terms folded
+(`HeldFolded`), and the ids of `q` and of every row the overlay holds in use. -/
+theorem overlayDen_remove {enc : Term → Option Nat} {dec : Nat → Option Term} {dom : Term → Prop}
+    {used : Nat → Prop} (D : DictInjective enc dec dom used) (hfold : HeldFolded dom)
+    (base : Row → Bool) (bn : Nat → Bool) (st : State) (q : Row) (hq : RowInUse used q)
+    (hrows : ∀ r, denote base st r = true → RowInUse used r) (gn : Option Subject) (t : Triple) :
     (overlayDen dec base bn (step st (.remove q))).graph gn t ↔
       (overlayDen dec base bn st).graph gn t ∧ ¬ ∃ u, rowQuad? dec q = some (gn, u) ∧ u.key = t.key := by
   show (∃ r, denote base (step st (.remove q)) r = true ∧ _) ↔ (∃ r, denote base st r = true ∧ _) ∧ _
@@ -379,18 +435,34 @@ theorem overlayDen_remove (dec : Nat → Term) (base : Row → Bool) (bn : Nat �
   · rintro ⟨r, ⟨hr, hne⟩, u, hd, e⟩
     refine ⟨⟨r, hr, u, hd, e⟩, ?_⟩
     rintro ⟨v, hv, e'⟩
-    exact hne (rowQuad?_inj hinj hq (hrows r hr) hv hd (e'.trans e.symm))
+    exact hne (rowQuad?_inj D hfold hq (hrows r hr) hv hd (e'.trans e.symm))
   · rintro ⟨⟨r, hr, u, hd, e⟩, hn⟩
     refine ⟨r, ⟨hr, ?_⟩, u, hd, e⟩
     rintro rfl
     exact hn ⟨u, hd, e⟩
 
+/-- `overlayDen_remove` for the SBM11 dictionary of a generation with its
+overlay vocabulary: `DictInjective` is `OverlayDict.overlay_dictInjective`
+(step 2), from the check of the vocabulary and of the base ids. `HeldFolded`
+stays a hypothesis. -/
+theorem overlayDen_remove_sbm11 (keys : List Key) (ov : List Term) (baseUsed : Nat → Prop)
+    (hv : OverlayDict.vocabOk keys ov = true) (hb : ∀ n, baseUsed n → MemGen.idOkB keys n = true)
+    (hfold : HeldFolded (OverlayDict.ovHeld keys baseUsed ov))
+    (base : Row → Bool) (bn : Nat → Bool) (st : State) (q : Row)
+    (hq : RowInUse (OverlayDict.ovUsed baseUsed ov) q)
+    (hrows : ∀ r, denote base st r = true → RowInUse (OverlayDict.ovUsed baseUsed ov) r)
+    (gn : Option Subject) (t : Triple) :
+    (overlayDen (OverlayDict.ovDec keys ov) base bn (step st (.remove q))).graph gn t ↔
+      (overlayDen (OverlayDict.ovDec keys ov) base bn st).graph gn t ∧
+        ¬ ∃ u, rowQuad? (OverlayDict.ovDec keys ov) q = some (gn, u) ∧ u.key = t.key :=
+  overlayDen_remove (OverlayDict.overlay_dictInjective keys ov baseUsed hv hb) hfold base bn st q hq hrows gn t
+
 /-- CREATE (SPARQL 1.1 Update section 3.2.1) adds the graph name of `g` (an
-empty named graph), and no triple. -/
-theorem overlayDen_create_names (dec : Nat → Term) (base : Row → Bool) (bn : Nat → Bool) (st : State)
+empty named graph). -/
+theorem overlayDen_create_names (dec : Nat → Option Term) (base : Row → Bool) (bn : Nat → Bool) (st : State)
     (g : Nat) (n : Subject) :
     (overlayDen dec base bn (step st (.create g))).names n ↔
-      (overlayDen dec base bn st).names n ∨ (g ≠ 0 ∧ (dec g).toSubject? = some n) := by
+      (overlayDen dec base bn st).names n ∨ (g ≠ 0 ∧ subjAt dec g = some n) := by
   show ((∃ x, denoteNamed bn (step st (.create g)) x = true ∧ _) ∨
       ∃ r u, denote base (step st (.create g)) r = true ∧ _) ↔
     ((∃ x, denoteNamed bn st x = true ∧ _) ∨ ∃ r u, denote base st r = true ∧ _) ∨ _
@@ -406,7 +478,8 @@ theorem overlayDen_create_names (dec : Nat → Term) (base : Row → Bool) (bn :
     · exact Or.inr hr
     · exact Or.inl ⟨g, Or.inr ⟨hg0, rfl⟩, hs⟩
 
-theorem overlayDen_create_graph (dec : Nat → Term) (base : Row → Bool) (bn : Nat → Bool) (st : State)
+/-- CREATE adds no triple. -/
+theorem overlayDen_create_graph (dec : Nat → Option Term) (base : Row → Bool) (bn : Nat → Bool) (st : State)
     (g : Nat) (gn : Option Subject) (t : Triple) :
     (overlayDen dec base bn (step st (.create g))).graph gn t ↔ (overlayDen dec base bn st).graph gn t := by
   show (∃ r, denote base (step st (.create g)) r = true ∧ _) ↔ (∃ r, denote base st r = true ∧ _)
@@ -416,6 +489,7 @@ theorem overlayDen_create_graph (dec : Nat → Term) (base : Row → Bool) (bn :
 #print axioms overlayDen_empty
 #print axioms overlayDen_add
 #print axioms overlayDen_remove
+#print axioms overlayDen_remove_sbm11
 #print axioms overlayDen_create_names
 
 end L4Factoidal.Storage.Sbm11.Overlay
