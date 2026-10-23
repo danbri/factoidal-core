@@ -63,7 +63,8 @@ if [ "$rc" -ne 0 ]; then
   record setup pack 1 "exit $rc: $(tail -1 "$TMP/pack.log")"; summary; exit 1
 fi
 rm -f "$TMP/d.nt"
-genb="$(du -sb "$TMP/gen" | cut -f1)"
+# the bytes of the files of the generation (du -b is GNU only)
+genb="$(python3 -I -c 'import os, sys; print(sum(os.path.getsize(os.path.join(r, f)) for r, _, fs in os.walk(sys.argv[1]) for f in fs))' "$TMP/gen")"
 
 # verify_case <name-prefix> <group rows or empty>
 verify_case() {
@@ -97,7 +98,7 @@ if [ "$rc" -eq 0 ] && grep -q 'admitted failures=0' "$TMP/v64.out"; then
 else
   record verify spill-many-runs 1 "exit $rc: $(grep 'FAIL' "$TMP/v64.err" | head -2 | tr '\n' ' ')"
 fi
-left="$(ls -d "$TMP"/gen.verify-* 2>/dev/null | wc -l)"
+left="$(ls -d "$TMP"/gen.verify-* 2>/dev/null | wc -l | tr -d " ")"
 if [ "$left" = 0 ]; then record verify temp-removed 0 "no temporary directory left"
 else record verify temp-removed 1 "$left left"; fi
 summary

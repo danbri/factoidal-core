@@ -697,3 +697,45 @@ What the proofs taught:
   (`searchPure_firstBlockGo`, no monotonicity needed), the second needs the
   order of an admitted PRM1 (`firstGt_mono` from `chain_sorted`) and the
   fuel bound `n < 2^(log2 n + 1)` (`Nat.lt_log2_self`).
+
+## 14. The gate counts of `tests/sbm11/run.sh` (2026-10-23)
+
+Two numbers were reported for the gate before and after PR 27 (issue 776):
+"parts (d)+(l1) 666 pass, 0 fail" and "parts (d)+(x)+(l1) 363 pass, 0 fail".
+Both counted the same queries; they count them differently.
+
+- 666 came from a script of a session scratchpad, not from `run.sh`. It
+  counted one check for each query of `tests/sbm11/gate` (328) and
+  `tests/sbm11/gate/samegraphs` (12): 340 for (d), without the xmlliteral
+  fixture; and one check for each `ids-*` query run with `--sip always` on
+  blocks of 2 rows (314 and 12): 326 for (l1). 340 + 326 = 666.
+- 363 is the record lines of `run.sh` for (d), (x) and (l1): (d) 344 (328
+  and 12 queries, the 3 queries of `tests/sbm11/xmlliteral` and its
+  `check.sh`); (x) 8 (`memgen-check` and `packspec-check` on 4 generations
+  each); (l1) 11 (one record, `gate-always`, for the 326 runs with `--sip
+  always`; the 6 `ids-sip-*` records; `gate-coverage`; `gate-word-loop`; the
+  STRSTARTS window; the COUNT queries of `count-meta.nq`).
+
+The real invocation is `tests/sbm11/run.sh [GEN]`. It needs an activated
+olympics generation and the QLever oracle (`QLVR_WORK`); on a machine
+without them it exits 2 ("missing: /home/user/qlvr-work/sbm11/s3/wfull").
+`SBM11_OLYMPICS=0` (added 2026-10-23) leaves out the parts that read them,
+(a), (b), (c), (e), (f), (g), (i) and the olympics half of (l), printed and
+not counted. On macOS the scripts also had GNU tool assumptions (`wc -l`
+output with leading spaces compared as a string, `stat -c %s`, `du -sb`,
+`xargs -I` with long arguments, `/proc/self/status`); before their repair
+the run gave 1870 pass, 15 fail, 10 expected-fail (out of 1895), with the
+W3C round trip (p) and the W3C Update tests (s) not run at all. After the
+repair (the peak-RSS assertion of `update_where.sh` is left out where there
+is no `/proc/self/status`, printed and not counted):
+
+    SBM11_OLYMPICS=0 tests/sbm11/run.sh
+    sbm11 stages 4 and 5: 3257 pass, 0 fail, 28 expected-fail (out of 3285)
+
+Of these, 687 are record lines of `run.sh` ((d) 344, (m) 300, (h) 14, (l1)
+11, (x) 8, (j) 7, (k) 1, (n) 1, the scan differential 1) and 2,570 pass and
+28 expected-fail come from the summary lines of the scripts (o) to (y):
+syntax independence 98; W3C round trip 1,281 and 18 expected-fail; export
+54; update 218 and 1 expected-fail; W3C Update 94; aggregates on ids 21
+and 8 expected-fail; quad source 688; named graphs 95 and 1 expected-fail;
+permutation check disk 6; FILTER keys 15.
