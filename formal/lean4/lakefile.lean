@@ -211,7 +211,7 @@ extern_lib libl4exthost pkg := do
     `Harness.PosixRangeIO, `Harness.CompactedEpoch, `Harness.GenerationPointer, `Harness.ShardMerkleMaterialize, `Harness.ShardMerkleProfile, `Harness.ShardPublish,
     `Harness.IndexedBlockV3Materialize, `Harness.JsonLdScale, `Harness.LenientRun, `Harness.QlvrKernel,
     `Harness.Sbm11Gen, `Harness.RunHeap, `Harness.Sbm11Query, `Harness.Sbm11Delta, `Harness.Sbm11Update, `Harness.Sbm11PackLib, `Harness.Sbm11Compact, `Harness.Sbm11PermCheck,
-    `Harness.Sbm11Export,
+    `Harness.Sbm11Export, `Harness.Sbm11MemGenCheck,
     `Harness.PlannerCheck, `Harness.PlannerKinds, `Harness.PlannerSbm11IO,
     `Harness.ProofObligations, `Harness.WorkerPool] : Array Lean.Name).map Glob.one
 

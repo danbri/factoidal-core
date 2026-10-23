@@ -94,6 +94,7 @@ done <"$rows"
 
 eligible=0; missing=0; rpack=0; rquery=0; executed=0; matched=0; differed=0; uncompared=0
 ids_exec=0; ids_match=0; ref_exec=0; ref_match=0; sip_tests=0; agg_tests=0
+mg_q=0; mg_eq=0; mg_diff=0; mg_ref=0; mg_fail=0
 MIS="$RUN/mismatches.txt"; : >"$MIS"
 n=0
 for t in "${order[@]}"; do
@@ -146,6 +147,19 @@ for t in "${order[@]}"; do
   grep -q 'sideways' "$st/got.err" && sip_tests=$((sip_tests + 1))
   # a grouped SELECT whose aggregates ran on ids (issue 825)
   grep -q 'aggregated on ids' "$st/got.err" && agg_tests=$((agg_tests + 1))
+  if [ -n "${SBM11_MEMGEN:-}" ]; then
+    mrc=0
+    timeout 120 "$S11" memgen-check "$st" --base "$qbase" "$qfile" >"$st/mg" 2>&1 || mrc=$?
+    ml="$(grep '^memgen-check: [0-9]* queries' "$st/mg" | tail -1)"
+    case "$ml" in
+      *"1 queries, 1 equal, 0 differ"*"check = true)") mg_q=$((mg_q + 1)); mg_eq=$((mg_eq + 1)) ;;
+      *"0 queries, 0 equal, 0 differ (1 on the reference path"*"check = true)") mg_ref=$((mg_ref + 1)) ;;
+      *"1 queries, 0 equal, 1 differ"*) mg_q=$((mg_q + 1)); mg_diff=$((mg_diff + 1))
+        printf '%s (memgen-check): %s\n' "${t##*/}" "$(grep '^DIFFER' "$st/mg" | head -1)" >>"$MIS" ;;
+      *) mg_fail=$((mg_fail + 1))
+        printf '%s (memgen-check): exit %s: %s\n' "${t##*/}" "$mrc" "$(tail -1 "$st/mg")" >>"$MIS" ;;
+    esac
+  fi
   rrc=0
   timeout 120 "$BIN/l4factoidal" query "$input" --format nquads --base "file://$input" --query "$qfile" \
     >"$st/want" 2>/dev/null || rrc=$?
@@ -166,6 +180,9 @@ echo "  $executed executed, $rpack refused at convert/pack/activate, $rquery ref
 echo "  of the $executed executed: $matched matched the reference engine, $differed differed, $uncompared not comparable"
 echo "  id path: $ids_exec executed, $ids_match matched; reference fallback: $ref_exec executed, $ref_match matched"
 echo "  grouped aggregates on ids (issue 825): $agg_tests of the $ids_exec id-path tests"
+if [ -n "${SBM11_MEMGEN:-}" ]; then
+  echo "  memgen-check (issue 776): $mg_q queries, $mg_eq equal, $mg_diff differ ($mg_ref on the reference path, not compared; $mg_fail failed or check = false)"
+fi
 if [ -n "${SBM11_SIP:-}" ]; then
   echo "  --sip $SBM11_SIP: a scan with candidates ran in $sip_tests of the $ids_exec id-path tests (issue 809)"
 fi

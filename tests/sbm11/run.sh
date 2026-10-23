@@ -250,6 +250,16 @@
 #   (w) permdisk tests/sbm11/perm_check_disk.sh: the temporary disk of the exact
 #                permutation check (part (j)) is at most half the generation (issue 810), also when
 #                it writes runs; more than a thousand runs are merged.
+#   (x) memgen   `l4sbm11 memgen-check` (https://github.com/danbri/factoidal/issues/776,
+#                rows E0, L3c and L4e of
+#                docs/designissues/2026-10-12-sbm11-end-to-end-theorem.md): the
+#                generations of part (d) (gate, samegraphs, xmlliteral) and the
+#                gate fixture packed with blocks of 2 rows are read from disk into
+#                `MemGen`; `MemGen.check` must be true, and every query of the
+#                fixture's directory that runs on ids is answered by the I/O store
+#                (`Session.store`) and by `MemGen.store` (the store of
+#                `MemGenWhereTheorems.harness_where_allowed_mem`), byte for byte.
+#                Each line prints "N queries, N equal, 0 differ".
 #   (y) filter-keys  tests/sbm11/filter_keys.sh: the --explain line "FILTER conjuncts
 #                on ids" names how each conjunct runs; a STRSTARTS conjunct runs on key
 #                bytes, and the typed-date FILTER of the d14 shape is an expected failure
@@ -366,6 +376,32 @@ gate_part "$HERE/xmlliteral/data.nq" "$HERE/xmlliteral" "$TMP/gate-xmlliteral"
 xrc=0; xout="$("$HERE/xmlliteral/check.sh" 2>&1)" || xrc=$?
 if [ "$xrc" -eq 0 ]; then record gate xmlliteral-check 0 "$(printf '%s' "$xout" | tr '\n' ' ')"
 else record gate xmlliteral-check 1 "exit $xrc: $(printf '%s' "$xout" | tr '\n' ' ')"; fi
+
+echo "=== (x) the I/O store against MemGen.store (issue 776)"
+# memgen_part <name> <generation> <query dir>: the generation read into
+# MemGen, MemGen.check, and each query on ids answered by both stores.
+memgen_part() {
+  local rc=0 last
+  timeout 600 "$BIN/l4sbm11" memgen-check "$2" "$3"/*.rq >"$TMP/mg-$1.log" 2>&1 || rc=$?
+  last="$(grep '^memgen-check: [0-9]* queries' "$TMP/mg-$1.log" | tail -1)"
+  case "$last" in
+    *" differ "*) ;;
+    *) record memgen "$1" 1 "exit $rc: $(tail -1 "$TMP/mg-$1.log")"; return ;;
+  esac
+  if [ "$rc" -eq 0 ] && printf '%s' "$last" | grep -q ', 0 differ (.*check = true)$'; then
+    record memgen "$1" 0 "${last#memgen-check: }"
+  else
+    record memgen "$1" 1 "exit $rc: ${last#memgen-check: }; $(grep -m1 '^DIFFER' "$TMP/mg-$1.log")"
+  fi
+}
+memgen_part gate "$TMP/gate" "$HERE/gate"
+memgen_part samegraphs "$TMP/gate-samegraphs" "$HERE/gate/samegraphs"
+memgen_part xmlliteral "$TMP/gate-xmlliteral" "$HERE/xmlliteral"
+rc=0
+"$BIN/l4sbm11-pack" "$HERE/gate/gate.nq" "$TMP/mg-b2/gen" --workers 1 --block-rows 2 >"$TMP/mg-b2.pack.log" 2>&1 || rc=$?
+[ "$rc" -eq 0 ] && { "$BIN/l4sbm11" activate "$TMP/mg-b2" gen >"$TMP/mg-b2.act.log" 2>&1 || rc=$?; }
+if [ "$rc" -ne 0 ]; then record memgen gate-blocks-of-2 1 "pack or activate exit $rc"
+else memgen_part gate-blocks-of-2 "$TMP/mg-b2" "$HERE/gate"; fi
 
 echo "=== (e) decoder checks on every PRM1 file and frame"
 if out="$("$BIN/l4sbm11" prm-check "$GEN" 2>&1)"; then record checks prm-check 0 "$(printf '%s' "$out" | tr '\n' ' ' | head -c 150)"
