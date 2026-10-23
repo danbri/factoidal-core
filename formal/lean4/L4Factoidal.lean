@@ -658,6 +658,7 @@ import L4Factoidal.SPARQL.QueryAnalysis
 import L4Factoidal.SPARQL.PlanStreamable
 import L4Factoidal.RDF.CanonicalManifest
 import L4Factoidal.RDF.DatasetMerge
+import L4Factoidal.RDF.CertifiedDataset
 import L4Factoidal.RDF.Format
 import L4Factoidal.RDF.Source
 import L4Factoidal.RDF.SourceJsonLd
