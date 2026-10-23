@@ -53,17 +53,18 @@ can hold predicates that the scope does not use.
   fails (`capsOfIndexed_solveExact` needs no set hypothesis).
 * `capsOfCottas_exact`: the COTTAS on-disk record, from the law of its reader
   (`CottasReadOpsExact`, a named I/O assumption: the reader is file access).
-* `unionCaps_exact`: the union of records whose graphs are pairwise disjoint.
-  Without disjointness `solveNodupKeys` fails: `unionSolve` concatenates the
-  members' answers and does not remove a triple that two members hold.
+* `unionCaps_exact`: the union of lawful records reads the set union of their
+  graphs. This holds since the union became a set union on 2026-10-23
+  (`RDF/StoreCapabilities.lean`): before, `unionSolve` concatenated the
+  members' answers and `unionCountExact` summed their counts, so a triple that
+  two members hold was read twice and `solveNodupKeys` failed.
 * `overlay_exact`: a record with a resolved delta (`RDF/StoreCapabilitiesDelta`)
   denotes `overlayPred G dr`, the base graph without the tombstoned triples and
-  with the added triples. Hypothesis: the base record does not advertise an
-  exact estimate. The overlay copies the base's `estimateIsExact` flag and
-  estimates `base.estimate + added`, which overcounts under a tombstone; over
-  a record that advertises an exact estimate (the in-memory index) the
-  overlay breaks `estimateExact`. Every overlay that `capsOfBackend` builds is
-  over `capsOfCottas`, which does not advertise it.
+  with the added triples, with no hypothesis on the base. Before 2026-10-23 the
+  live overlay copied the base's `estimateIsExact` flag and estimated
+  `base.estimate + added`, which overcounts under a tombstone: over the
+  in-memory index it broke `estimateExact`. A live overlay now advertises an
+  inexact estimate.
   `overlayPred_fold` connects the overlay to the reference model of
   `RDF/StoreDeltaMerge.lean`: for a log folded with `foldEntriesForGraph`, the
   overlay of the graph `gBase` denotes the graph that the entries applied to
@@ -405,22 +406,14 @@ theorem capsOfCottas_exact {G : Triple → Prop} {ops : CottasReadOps} {scope : 
 
 /-! ## 6. The union of records
 
-`unionCaps` concatenates its members' answers. It reads the union of the
-members' graphs, and it reads each triple once when no two members hold one
-triple (`unionCaps_exact`, hypothesis `hdisj`). -/
+`unionCaps` reads the set union of its members' answers: each triple once, up
+to RDF term equality, and its count and LIMIT agree with that read
+(`unionCaps_exact`). -/
 
 /-- The union of a list of graphs. -/
 def unionPred (Gs : List (Triple → Prop)) (t : Triple) : Prop := ∃ G ∈ Gs, G t
 
 section Union
-
-private theorem foldl_add_sum {α : Type} (f : α → Nat) :
-    ∀ (ms : List α) (a : Nat), ms.foldl (fun acc m => acc + f m) a = a + (ms.map f).sum
-  | [], a => by simp
-  | m :: ms, a => by
-      simp only [List.foldl_cons, List.map_cons, List.sum_cons]
-      rw [foldl_add_sum f ms]
-      omega
 
 private theorem flatMap_congr' {α β : Type} {f g : α → List β} :
     ∀ (l : List α), (∀ x ∈ l, f x = g x) → l.flatMap f = l.flatMap g
@@ -429,41 +422,61 @@ private theorem flatMap_congr' {α β : Type} {f g : α → List β} :
       rw [List.flatMap_cons, List.flatMap_cons, h x List.mem_cons_self,
         flatMap_congr' l (fun y hy => h y (List.mem_cons_of_mem _ hy))]
 
-private theorem take_append_take (A S R : List Triple) (L : Nat) (hA : A.length < L) :
-    (A ++ (S.take (L - A.length) ++ R)).take L = (A ++ (S ++ R)).take L := by
-  rw [List.take_append, List.take_append]
-  congr 1
-  rw [List.take_append, List.take_append, List.take_take, Nat.min_self, List.length_take]
-  by_cases hS : S.length ≤ L - A.length
-  · rw [List.take_of_length_le hS]
-    simp [Nat.min_eq_right hS]
-  · have h1 : L - A.length - min (L - A.length) S.length = 0 := by omega
-    have h2 : L - A.length - S.length = 0 := by omega
-    rw [h1, h2]
+theorem graphUnion_keyNodup : ∀ (c a : Graph), a.KeyNodup → (Graph.union a c).KeyNodup
+  | [], _, h => h
+  | x :: c, a, h => graphUnion_keyNodup c (a.add x) (h.add x)
+
+theorem graphUnion_append (a l₁ l₂ : Graph) :
+    Graph.union a (l₁ ++ l₂) = Graph.union (Graph.union a l₁) l₂ := by
+  simp [Graph.union, List.foldl_append]
+
+/-- `Graph.union a l` extends `a`. -/
+theorem graphUnion_prefix : ∀ (l a : Graph), ∃ r, Graph.union a l = a ++ r
+  | [], a => ⟨[], by simp [Graph.union]⟩
+  | x :: l, a => by
+      obtain ⟨r, hr⟩ := graphUnion_prefix l (a.add x)
+      have : Graph.union a (x :: l) = Graph.union (a.add x) l := rfl
+      rw [this, hr]
+      unfold Graph.add
+      split
+      · exact ⟨r, rfl⟩
+      · exact ⟨x :: r, by simp⟩
+
+private theorem take_union_of_le {L : Nat} {a : Graph} (l : Graph) (h : L ≤ a.length) :
+    (Graph.union a l).take L = a.take L := by
+  obtain ⟨r, hr⟩ := graphUnion_prefix l a
+  rw [hr, List.take_append_of_le_length h]
 
 private theorem unionSolveLimitedAcc_take (b : PatternBound) (L : Nat) :
     ∀ (ms : List StoreCaps), (∀ m ∈ ms, ∀ n, m.solveLimited b n = capsTakeN n (m.solve b)) →
-      ∀ accRev : List Triple,
-        (unionSolveLimitedAcc ms b L accRev accRev.length).reverse.take L
-          = (accRev.reverse ++ ms.flatMap (fun m => m.solve b)).take L
-  | [], _, accRev => by simp [unionSolveLimitedAcc]
-  | m :: rest, hl, accRev => by
-      simp only [unionSolveLimitedAcc]
+      ∀ acc : Graph,
+        (unionSolveLimitedAcc ms b L acc).take L
+          = (Graph.union acc (ms.flatMap (fun m => m.solve b))).take L
+  | [], _, acc => by simp [unionSolveLimitedAcc, Graph.union]
+  | m :: rest, hl, acc => by
+      have hrest : ∀ x ∈ rest, ∀ n, x.solveLimited b n = capsTakeN n (x.solve b) :=
+        fun x hx => hl x (List.mem_cons_of_mem _ hx)
+      have ih := unionSolveLimitedAcc_take b L rest hrest
+      have hm := hl m List.mem_cons_self (L - acc.length)
+      simp only [unionSolveLimitedAcc, ← Graph.union_eq_unionFast]
+      rw [List.flatMap_cons]
       split
       · rename_i hge
-        rw [List.take_append_of_le_length (by rw [List.length_reverse]; exact hge)]
+        rw [take_union_of_le _ hge]
       · rename_i hlt
-        have hlen : accRev.length + (m.solveLimited b (L - accRev.length)).length
-            = ((m.solveLimited b (L - accRev.length)).reverse ++ accRev).length := by
-          simp [Nat.add_comm]
-        rw [hlen, unionSolveLimitedAcc_take b L rest
-          (fun x hx => hl x (List.mem_cons_of_mem _ hx)), List.reverse_append,
-          List.reverse_reverse, hl m List.mem_cons_self, capsTakeN, List.flatMap_cons,
-          List.append_assoc]
-        have := take_append_take accRev.reverse (m.solve b) (rest.flatMap (fun m => m.solve b)) L
-          (by rw [List.length_reverse]; omega)
-        rw [List.length_reverse] at this
-        exact this
+        rw [hm, capsTakeN]
+        split
+        · rename_i hc
+          rw [ih]
+          simp only [Bool.or_eq_true, decide_eq_true_eq] at hc
+          rcases hc with hshort | hfull
+          · rw [List.length_take] at hshort
+            have hS : (m.solve b).length ≤ L - acc.length := by omega
+            rw [List.take_of_length_le hS, graphUnion_append]
+          · conv => rhs; rw [← List.take_append_drop (L - acc.length) (m.solve b), List.append_assoc,
+              graphUnion_append]
+            rw [take_union_of_le _ hfull, take_union_of_le _ hfull]
+        · rw [ih, graphUnion_append]
 
 theorem unionSolveLimited_eq (ms : List StoreCaps)
     (hl : ∀ m ∈ ms, ∀ b n, m.solveLimited b n = capsTakeN n (m.solve b)) (b : PatternBound)
@@ -474,8 +487,8 @@ theorem unionSolveLimited_eq (ms : List StoreCaps)
     have : n = 0 := by simpa using h0
     subst this
     rfl
-  · have := unionSolveLimitedAcc_take b n ms (fun m hm k => hl m hm b k) []
-    simpa [capsTakeN, unionSolve] using this
+  · rw [capsTakeN, capsTakeN, unionSolveLimitedAcc_take b n ms (fun m hm k => hl m hm b k) [],
+      unionSolve, ← Graph.union_eq_unionFast]
 
 private def capsIriDedupeStep (acc : List WfIri) (x : WfIri) : List WfIri :=
   if acc.contains x then acc else acc ++ [x]
@@ -524,10 +537,6 @@ abbrev Members := List ((Triple → Prop) × StoreCaps)
 
 /-- Every member reads its graph. -/
 def MembersExact (ms : Members) : Prop := ∀ x ∈ ms, StoreCapsExact x.1 x.2
-
-/-- No two members' graphs share a triple. -/
-def MembersDisjoint (ms : Members) : Prop :=
-  ms.Pairwise (fun x y => ∀ t, x.1 t → ¬ y.1 t)
 
 private theorem union_distinct_acc :
     ∀ (ms : Members), MembersExact ms →
@@ -597,29 +606,15 @@ private theorem union_exact_aux (b : PatternBound) (t : Triple) :
         · exact Or.inl ⟨hg, hb⟩
         · exact Or.inr ⟨⟨H, hH, hht⟩, hb⟩
 
-private theorem union_nodup_aux (b : PatternBound) :
-    ∀ (ms : Members), MembersExact ms → MembersDisjoint ms →
-      (((ms.map Prod.snd).flatMap (fun m => m.solve b)).map Triple.key).Nodup
-  | [], _, _ => by simp
-  | (G, m) :: ms, hex, hdisj => by
-      have hm : StoreCapsExact G m := hex (G, m) List.mem_cons_self
-      have hrest : MembersExact ms := fun x hx => hex x (List.mem_cons_of_mem _ hx)
-      have hd := List.pairwise_cons.mp hdisj
-      rw [List.map_cons, List.flatMap_cons, List.map_append, List.nodup_append]
-      refine ⟨hm.solveNodupKeys b, union_nodup_aux b ms hrest hd.2, ?_⟩
-      intro k hk k' hk' e
-      subst e
-      obtain ⟨u, hu, rfl⟩ := List.mem_map.mp hk
-      obtain ⟨v, hv, ev⟩ := List.mem_map.mp hk'
-      obtain ⟨m', hm', hvm⟩ := List.mem_flatMap.mp hv
-      have hGu : G u := (hm.mem_solve hu).1
-      obtain ⟨⟨H, hH, hHv⟩, _⟩ := (union_exact_aux b v ms hrest).mp ⟨m', hm', KeyMem.of_mem hvm⟩
-      obtain ⟨y, hy, rfl⟩ := List.mem_map.mp hH
-      exact hd.1 y hy u hGu (hrest y hy |>.graph_key ev hHv)
+theorem keyMem_unionFast_nil (l : Graph) (t : Triple) :
+    KeyMem (Graph.unionFast [] l) t ↔ KeyMem l t := by
+  rw [keyMem_iff_mem, keyMem_iff_mem, ← Graph.union_eq_unionFast, mem_graph_union]
+  simp [Graph.mem]
 
-/-- **The union of records is lawful** when no two members' graphs share a
-triple. It reads the union of the members' graphs. -/
-theorem unionCaps_exact {ms : Members} (hex : MembersExact ms) (hdisj : MembersDisjoint ms) :
+/-- **The union of records is lawful.** It reads the set union of the
+members' graphs, each triple once, whether or not the members' graphs share
+triples. -/
+theorem unionCaps_exact {ms : Members} (hex : MembersExact ms) :
     StoreCapsExact (unionPred (ms.map Prod.fst)) (unionCaps (ms.map Prod.snd)) := by
   have hmem : ∀ m ∈ ms.map Prod.snd, ∃ G, StoreCapsExact G m := by
     intro m hm
@@ -628,23 +623,18 @@ theorem unionCaps_exact {ms : Members} (hex : MembersExact ms) (hdisj : MembersD
   refine
     { limitAgrees := fun b n => unionSolveLimited_eq _
         (fun m hm => (hmem m hm).choose_spec.limitAgrees) b n
-      countIsSolve := fun b => ?_
+      countIsSolve := fun _ => rfl
       estimateExact := fun hex' => absurd hex' (by simp [unionCaps])
       selectiveAgrees := fun f hf b need => ?_
       presenceSound := fun pred hp => ?_
       solveExact := fun b t => ?_
-      solveNodupKeys := fun b => union_nodup_aux b ms hex hdisj
+      solveNodupKeys := fun b => ?_
       distinctPredicatesComplete := fun f hf ps hps => ?_ }
-  · show unionCountExact _ b = (unionSolve _ b).length
-    rw [unionCountExact, foldl_add_sum, unionSolve, List.length_flatMap, Nat.zero_add]
-    congr 1
-    apply List.map_congr_left
-    intro m hm
-    exact (hmem m hm).choose_spec.countIsSolve b
   · simp only [unionCaps, Option.some.injEq] at hf
     subst hf
     show unionSolveSelective _ b need = unionSolve _ b
     unfold unionSolveSelective unionSolve
+    congr 1
     apply flatMap_congr'
     intro m hm
     split
@@ -658,12 +648,15 @@ theorem unionCaps_exact {ms : Members} (hex : MembersExact ms) (hdisj : MembersD
       simp only [unionPredicatePresent, List.any_eq_false] at this
       simpa using this m hm
     unfold unionSolve
-    rw [List.flatMap_eq_nil_iff]
-    intro m hm
-    exact (hmem m hm).choose_spec.presenceSound pred (hall m hm)
+    rw [List.flatMap_eq_nil_iff.mpr (fun m hm => (hmem m hm).choose_spec.presenceSound pred (hall m hm)),
+      ← Graph.union_eq_unionFast]
+    rfl
   · show KeyMem (unionSolve _ b) t ↔ _
-    rw [unionSolve, keyMem_flatMap]
+    rw [unionSolve, keyMem_unionFast_nil, keyMem_flatMap]
     exact union_exact_aux b t ms hex
+  · show ((unionSolve _ b).map Triple.key).Nodup
+    rw [unionSolve, ← Graph.union_eq_unionFast]
+    exact graphUnion_keyNodup _ _ Graph.keyNodup_nil
   · simp only [unionCaps, Option.some.injEq] at hf
     subst hf
     obtain ⟨hn, _, hall⟩ := union_distinct_acc ms hex [] ps hps
@@ -690,10 +683,6 @@ theorem overlayPred_of_isEmpty {G : Triple → Prop} {dr : DeltaResolved}
   obtain ⟨⟨hc, ha⟩, hr⟩ := h
   simp [overlayPred, hc, ha, hr, Graph.mem]
 
-private theorem graphUnion_keyNodup : ∀ (c a : Graph), a.KeyNodup → (Graph.union a c).KeyNodup
-  | [], _, h => h
-  | x :: c, a, h => graphUnion_keyNodup c (a.add x) (h.add x)
-
 private theorem filterTombstoned_keyNodup {g : Graph} (h : g.KeyNodup) (dr : DeltaResolved) :
     (filterTombstoned g dr).KeyNodup := by
   unfold filterTombstoned
@@ -704,11 +693,9 @@ private theorem filterTombstoned_keyNodup {g : Graph} (h : g.KeyNodup) (dr : Del
 private theorem graphUnion_nil (a : Graph) : Graph.union a [] = a := rfl
 
 /-- **Base plus delta is lawful.** A lawful base record of the graph `G`, with
-the resolved delta `dr`, reads `overlayPred G dr`. Hypothesis: the base does
-not advertise an exact estimate (the overlay copies the flag and its estimate
-overcounts under a tombstone). -/
+the resolved delta `dr`, reads `overlayPred G dr`. -/
 theorem overlay_exact {G : Triple → Prop} {base : StoreCaps} (dr : DeltaResolved)
-    (hb : StoreCapsExact G base) (hflag : base.flags.estimateIsExact = false) :
+    (hb : StoreCapsExact G base) :
     StoreCapsExact (overlayPred G dr) (overlay base dr) := by
   by_cases he : deltaResolvedIsEmpty dr = true
   · have hov : overlay base dr = { base with flags := { base.flags with supportsUpdate := true } } := by
@@ -728,7 +715,7 @@ theorem overlay_exact {G : Triple → Prop} {base : StoreCaps} (dr : DeltaResolv
     refine
       { limitAgrees := fun b n => by simp [overlay, hne]
         countIsSolve := fun b => by simp [overlay, hne]
-        estimateExact := fun hex => absurd hex (by simp [overlay, hne, hflag])
+        estimateExact := fun hex => absurd hex (by simp [overlay, hne])
         selectiveAgrees := fun f hf b need => by
           simp only [overlay, hne, Bool.false_eq_true, if_false, Option.some.injEq] at hf
           subst hf
@@ -787,11 +774,10 @@ theorem overlayPred_fold (graphKey : Option Storage.DeltaGraphName) (gBase : Gra
 `gBase`, with a log folded for one graph, reads the graph that the log applied
 to `gBase` gives. -/
 theorem overlay_fold_exact {gBase : Graph} {base : StoreCaps} (graphKey : Option Storage.DeltaGraphName)
-    (es : List Storage.DeltaEntry) (hb : StoreCapsExact (KeyMem gBase) base)
-    (hflag : base.flags.estimateIsExact = false) :
+    (es : List Storage.DeltaEntry) (hb : StoreCapsExact (KeyMem gBase) base) :
     StoreCapsExact (KeyMem (applyEntriesRef graphKey gBase es))
       (overlay base (foldEntriesForGraph graphKey es deltaResolvedEmpty)) :=
-  (overlay_exact _ hb hflag).of_iff (overlayPred_fold graphKey gBase es)
+  (overlay_exact _ hb).of_iff (overlayPred_fold graphKey gBase es)
 
 #print axioms StoreCapsExact.keys_perm
 #print axioms StoreCapsExact.countExact_eq

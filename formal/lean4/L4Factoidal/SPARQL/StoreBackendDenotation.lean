@@ -17,16 +17,18 @@ phase B: B1 for the builders of this layer, B2 for the dispatchers).
 * `capsOfRmlSource_lawful` and `capsOfRmlSource_nodupKeys`: the RML virtual
   source satisfies the five laws and has no repeated row, with no hypothesis
   (`rmlSolve` ends with `dedupeTriples`). `capsOfRmlSource_exact`: it reads
-  the graph of its unbounded solve, under `RmlPushdownInvisible`: a bounded
-  solve is the unbounded solve filtered by the bound. That hypothesis is OPEN.
-  It is the property that the pushdown (structural narrowing, record-level
-  subject probe) drops no matching triple; `RML/VirtualSource.lean` tests it
-  with seven `#guard`s and does not prove it.
+  `rmlGraph vs`, the default graph of the materialising evaluation
+  (`RML.evalMapping`) of the mapping over its documents, under two OPEN
+  hypotheses: `RmlPushdownInvisible` (the pushdown, structural narrowing and
+  the record-level subject probe, drops no matching triple; seven `#guard`s in
+  `RML/VirtualSource.lean`) and `RmlVirtualIsMaterialised` (the unbounded
+  virtual solve holds the materialised default graph; `#guard`s in
+  `SPARQL/StoreCapsDenotationTests.lean`). Neither is proved.
 * `capsOfBackend_exact` and `capsOfBackendList_exact`: every arm of the one
   dispatch point, from `BackendExact`, a law per arm (the list is a set; the
-  index is well formed over a set; each reader satisfies its reader law; the
-  union's members have disjoint graphs; the overlay's base reader satisfies its
-  law; the RML source satisfies `RmlPushdownInvisible`).
+  index is well formed over a set; each reader satisfies its reader law; each
+  union member is lawful; the overlay's base reader satisfies its law; the RML
+  source satisfies `RmlPushdownInvisible`).
 
 ## B2: the dispatchers, against the denotation only
 
@@ -170,24 +172,40 @@ theorem capsOfRmlSource_nodupKeys (vs : VirtualSource) (b : PatternBound) :
     (((capsOfRmlSource vs).solve b).map Triple.key).Nodup :=
   (dedupeTriples_spec _).1
 
-/-- The graph an RML source denotes: the triples of its unbounded solve. -/
-def rmlGraph (vs : VirtualSource) (t : Triple) : Prop := KeyMem (rmlSolve vs patternBoundAll) t
+/-- The default graph that the materialising evaluation of the mapping gives
+(`RML.evalMapping`, the represented state: the mapping and its documents). -/
+def rmlMaterialised (vs : VirtualSource) : Graph :=
+  (evalMapping vs.baseIri vs.mapping vs.docFor).filterMap (fun q =>
+    match q.g with
+    | none => some ({ s := q.s, p := q.p, o := q.o } : Triple)
+    | some _ => none)
 
-/-- OPEN hypothesis: the pushdown of `rmlSolve` drops no matching triple. A
+/-- The graph an RML source denotes: the default graph of its materialisation. -/
+def rmlGraph (vs : VirtualSource) (t : Triple) : Prop := KeyMem (rmlMaterialised vs) t
+
+/-- OPEN hypothesis 1: the pushdown of `rmlSolve` drops no matching triple. A
 bounded solve is the unbounded solve filtered by the bound (and made a set).
 `RML/VirtualSource.lean` checks this with seven `#guard`s
 (`pushdownIsInvisible`); it is not proved. -/
 def RmlPushdownInvisible (vs : VirtualSource) : Prop :=
   ∀ b, rmlSolve vs b = dedupeTriples (tripleMatchesBound b (rmlSolve vs patternBoundAll))
 
-/-- The RML record reads `rmlGraph vs`, under `RmlPushdownInvisible`. -/
-theorem capsOfRmlSource_exact (vs : VirtualSource) (hpush : RmlPushdownInvisible vs) :
+/-- OPEN hypothesis 2: the unbounded virtual solve holds the triples of the
+materialised default graph, and no other. `SPARQL/StoreCapsDenotationTests`
+checks it on fixtures; it is not proved. -/
+def RmlVirtualIsMaterialised (vs : VirtualSource) : Prop :=
+  ∀ t, KeyMem (rmlSolve vs patternBoundAll) t ↔ rmlGraph vs t
+
+/-- The RML record reads the materialised default graph, under the two open
+hypotheses. -/
+theorem capsOfRmlSource_exact (vs : VirtualSource) (hpush : RmlPushdownInvisible vs)
+    (hmat : RmlVirtualIsMaterialised vs) :
     StoreCapsExact (rmlGraph vs) (capsOfRmlSource vs) where
   toStoreCapsLawful := capsOfRmlSource_lawful vs
   solveExact b t := by
     show KeyMem (rmlSolve vs b) t ↔ _
-    rw [hpush b, keyMem_iff_mem, (dedupeTriples_spec _).2, ← keyMem_iff_mem]
-    exact keyMem_filter_bound _ b t
+    rw [hpush b, keyMem_iff_mem, (dedupeTriples_spec _).2, ← keyMem_iff_mem,
+      keyMem_filter_bound, hmat]
   solveNodupKeys := capsOfRmlSource_nodupKeys vs
   distinctPredicatesComplete f hf := absurd hf (by simp [capsOfRmlSource])
 
@@ -210,9 +228,9 @@ def BackendExact : GraphBackend → (Triple → Prop) → Prop
   | .cottasOnDiskDelta ops scope delta, G =>
       ∃ G₀, CottasReadOpsExact G₀ ops scope ∧ ∀ t, G t ↔ overlayPred G₀ delta t
   | .union members, G =>
-      ∃ Gs, BackendsExact members Gs ∧
-        Gs.Pairwise (fun H K => ∀ t, H t → ¬ K t) ∧ ∀ t, G t ↔ unionPred Gs t
-  | .virtualRml vs, G => RmlPushdownInvisible vs ∧ ∀ t, G t ↔ rmlGraph vs t
+      ∃ Gs, BackendsExact members Gs ∧ ∀ t, G t ↔ unionPred Gs t
+  | .virtualRml vs, G =>
+      RmlPushdownInvisible vs ∧ RmlVirtualIsMaterialised vs ∧ ∀ t, G t ↔ rmlGraph vs t
 
 /-- One graph per member, in member order. -/
 def BackendsExact : List GraphBackend → List (Triple → Prop) → Prop
@@ -239,17 +257,6 @@ private theorem membersOf_snd : ∀ (Gs : List (Triple → Prop)) (cs : List Sto
       exact membersOf_snd Gs cs (by simpa using h)
   | [], _ :: _, h => by simp at h
   | _ :: _, [], h => by simp at h
-
-private theorem pairwise_zip_fst {R : (Triple → Prop) → (Triple → Prop) → Prop} :
-    ∀ (Gs : List (Triple → Prop)) (cs : List StoreCaps), Gs.Pairwise R →
-      (Gs.zip cs).Pairwise (fun x y => R x.1 y.1)
-  | [], _, _ => List.Pairwise.nil
-  | _ :: _, [], _ => List.Pairwise.nil
-  | G :: Gs, c :: cs, h => by
-      rw [List.zip_cons_cons, List.pairwise_cons]
-      refine ⟨?_, pairwise_zip_fst Gs cs (List.pairwise_cons.mp h).2⟩
-      intro y hy
-      exact (List.pairwise_cons.mp h).1 y.1 (List.of_mem_zip hy).1
 
 mutual
 
@@ -281,20 +288,19 @@ theorem capsOfBackend_exact : ∀ (gb : GraphBackend) (G : Triple → Prop),
       simp only [BackendExact] at h
       obtain ⟨G₀, h₀, hG⟩ := h
       simp only [capsOfBackend]
-      exact (overlay_exact delta (capsOfCottas_exact h₀) rfl).of_iff (fun t => (hG t).symm)
+      exact (overlay_exact delta (capsOfCottas_exact h₀)).of_iff (fun t => (hG t).symm)
   | .union members, G, h => by
       simp only [BackendExact] at h
-      obtain ⟨Gs, hms, hdisj, hG⟩ := h
+      obtain ⟨Gs, hms, hG⟩ := h
       simp only [capsOfBackend]
       obtain ⟨hlen, hex⟩ := capsOfBackendList_exact members Gs hms
       have := unionCaps_exact (ms := Gs.zip (capsOfBackendList members)) hex
-        (pairwise_zip_fst Gs _ hdisj)
       rw [membersOf_fst Gs _ hlen, membersOf_snd Gs _ hlen] at this
       exact this.of_iff (fun t => (hG t).symm)
   | .virtualRml vs, G, h => by
       simp only [BackendExact] at h
       simp only [capsOfBackend]
-      exact (capsOfRmlSource_exact vs h.1).of_iff (fun t => (h.2 t).symm)
+      exact (capsOfRmlSource_exact vs h.1 h.2.1).of_iff (fun t => (h.2.2 t).symm)
 
 /-- The members of a union, each lawful for its graph. -/
 theorem capsOfBackendList_exact : ∀ (ms : List GraphBackend) (Gs : List (Triple → Prop)),

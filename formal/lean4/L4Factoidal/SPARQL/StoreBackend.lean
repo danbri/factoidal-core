@@ -267,9 +267,9 @@ not invent rows. -/
 #guard (backendSearchLimited bList patternBoundAll 0).length == 0
 #guard (backendSearchLimited bList patternBoundAll 5).length == 1
 
-/-! A union of two copies answers twice; the union of nothing answers
+/-! A union of two copies answers once (a set union); the union of nothing answers
 nothing. -/
-#guard (backendSearch (.union [bList, bList]) patternBoundAll).length == 2
+#guard (backendSearch (.union [bList, bList]) patternBoundAll).length == 1
 #guard (backendSearch (.union []) patternBoundAll).length == 0
 
 /-! Flag rows, one per arm. Only the on-disk COTTAS reader approximates
