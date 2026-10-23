@@ -5,13 +5,37 @@ Port of `formal/fstar/RDF.Graph.fsti` to Lean 4, plus the blank-node
 renaming operation from `RDF.Dataset.Merge` that per-document
 blank-node scoping needs.
 
-An RDF graph is a SET of triples (RDF 1.1 Concepts §3). Like the F*
-source, the representation is a `List Triple` so evaluation executes
-directly, with set semantics maintained by the operations
-(`Graph.mem` via the engine triple equality, `Graph.add`'s
-deduplication) rather than by the representation type. A
-`Finset`-based purely-specification twin is a candidate later layer;
-this file is the executable one, matching the F* module it ports.
+An RDF graph is a SET of triples (RDF 1.1 Semantics §4, which uses the
+definition of RDF 1.1 Concepts §3). Like the F* source, the representation
+is a `List Triple`, so evaluation executes directly. The type does NOT
+exclude a triple that occurs two times: `[t, t]` is a `Graph`. Set
+semantics is the invariant `Dataset.IsSet` (`RDF/DatasetSet.lean`): no two
+triples of one graph are `Triple.eqb`-equal (the same RDF term: lexical
+form, datatype and base direction exact, language tag without case), and
+no two named graphs have the same name.
+
+Where the invariant is enforced:
+
+* Parsers. `Source.parseDocument` and `parseDocumentOutcomeBy` give
+  `Dataset.toSet` of the reader output; the N-Quads and TriG readers add
+  with `addQuad`. Theorems `parseDocument_set`,
+  `parseDocumentOutcomeBy_isSet`.
+* The wasm dataset handle store. `OpenDataset` holds a `CertifiedDataset`
+  (`RDF/CertifiedDataset.lean`): a dataset with a proof of
+  `Dataset.IsSet`. Open, update, add, delete, clone and every derived
+  handle admit through it.
+
+Where it is NOT enforced: every other `Graph` or `Dataset` value. A query
+result, an inference closure, a merge, the lenient N-Quads and TriG
+readers (no set theorem) and a hand-built value can list a triple two
+times. `Graph.mem`, `Graph.add` and the model theory (`HoldsAll`) cannot
+detect it, because they are stated with membership, and membership gives
+the same answer for `[t]` and `[t, t]`. A count, `COUNT(*)` and serializer
+output do detect it. A new producer of a graph that is stored, counted or
+written must return a `CertifiedDataset` or go through `Dataset.toSet`,
+and must have a test of the observable count
+(`Harness/DatasetSetRegression.lean`). Hazard #46 in
+`skills/workflow-gotchas-debugging` has the defect this caused.
 -/
 import L4Factoidal.RDF.Core
 
@@ -19,8 +43,8 @@ namespace L4Factoidal.RDF
 
 /-! ## Graphs — RDF 1.1 Concepts §3 ("a set of RDF triples") -/
 
-/-- An RDF graph: a list of triples with set semantics maintained by
-the operations below. -/
+/-- An RDF graph: a list of triples. The type allows a repeated triple;
+the set invariant is `Dataset.IsSet` (module header). -/
 abbrev Graph := List Triple
 
 def Graph.empty : Graph := []

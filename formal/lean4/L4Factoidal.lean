@@ -436,6 +436,9 @@ import L4Factoidal.Storage.Sbm11.MemGen
 import L4Factoidal.Storage.Sbm11.MemGenDictTheorems
 import L4Factoidal.Storage.Sbm11.MemGenStoreTheorems
 import L4Factoidal.Storage.Sbm11.MemGenWhereTheorems
+import L4Factoidal.Storage.Sbm11.FileGenTheorems
+import L4Factoidal.Storage.Sbm11.PackSpec
+import L4Factoidal.Storage.Sbm11.PackSpecTheorems
 import L4Factoidal.Storage.Sbm11.ExprLocalTheorems
 import L4Factoidal.Storage.Sbm11.FilterIdTheorems
 import L4Factoidal.Storage.Sbm11.FilterTableTheorems
@@ -658,6 +661,7 @@ import L4Factoidal.SPARQL.QueryAnalysis
 import L4Factoidal.SPARQL.PlanStreamable
 import L4Factoidal.RDF.CanonicalManifest
 import L4Factoidal.RDF.DatasetMerge
+import L4Factoidal.RDF.CertifiedDataset
 import L4Factoidal.RDF.Format
 import L4Factoidal.RDF.Source
 import L4Factoidal.RDF.SourceJsonLd

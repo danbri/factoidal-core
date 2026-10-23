@@ -233,6 +233,20 @@ theorem lit_vc (ls lt : WfLiteral) (hdt : lt.val.datatype = xsdString ∨ lt.val
     have hpc := promote_cases ls hn'
     have hbool : RDF.xsdBoolean ≠ lt.val.datatype := by
       rcases hdt with h | h <;> rw [h] <;> decide +kernel
+    have hsd : ∀ (op : CompOp), ls.val.datatype = lt.val.datatype →
+        sameDatatypeLiteralEq ls.val lt.val op =
+          some (applyCompOp (strCompare ls.val.lexicalForm lt.val.lexicalForm) op) := by
+      intro op hd
+      have hl : lexicalValueDatatype ls.val.datatype = true := by
+        rw [hd]; rcases hdt with h | h <;> rw [h] <;> simp [lexicalValueDatatype]
+      simp [sameDatatypeLiteralEq, hl]
+    have hsd' : ∀ (op : CompOp), ls.val.datatype = lt.val.datatype →
+        sameDatatypeLiteralEq lt.val ls.val op =
+          some (applyCompOp (strCompare lt.val.lexicalForm ls.val.lexicalForm) op) := by
+      intro op _
+      have hl : lexicalValueDatatype lt.val.datatype = true := by
+        rcases hdt with h | h <;> rw [h] <;> simp [lexicalValueDatatype]
+      simp [sameDatatypeLiteralEq, hl]
     have hlr : (Literal.eqb lt.val ls.val) = ((lt.val.lexicalForm == ls.val.lexicalForm) &&
         (lt.val.datatype == ls.val.datatype) && langTagOptionEq lt.val.langTag ls.val.langTag &&
         (lt.val.direction == ls.val.direction)) := by
@@ -245,7 +259,8 @@ theorem lit_vc (ls lt : WfLiteral) (hdt : lt.val.datatype = xsdString ∨ lt.val
         simp only []
         rw [hlr]
         by_cases hd : ls.val.datatype = lt.val.datatype
-        · simp only [hd, beq_self_eq_true, if_true, Bool.true_and, Bool.and_true]
+        · first | rw [hsd _ hd] | rw [hsd' _ hd]
+          simp only [hd, beq_self_eq_true, if_true, Bool.true_and, Bool.and_true]
           rw [langTagOptionEq_symm]
           cases langTagOptionEq lt.val.langTag ls.val.langTag <;>
             cases hdir : (lt.val.direction == ls.val.direction) <;> simp [applyCompOp, strCompare_eq_zero, hdir]
@@ -272,7 +287,8 @@ theorem lit_vc (ls lt : WfLiteral) (hdt : lt.val.datatype = xsdString ∨ lt.val
         simp only []
         rw [hlr]
         by_cases hd : ls.val.datatype = lt.val.datatype
-        · simp only [hd, beq_self_eq_true, if_true, Bool.true_and, Bool.and_true]
+        · first | rw [hsd _ hd] | rw [hsd' _ hd]
+          simp only [hd, beq_self_eq_true, if_true, Bool.true_and, Bool.and_true]
           cases langTagOptionEq lt.val.langTag ls.val.langTag <;>
             cases hdir : (lt.val.direction == ls.val.direction) <;> simp [applyCompOp, strCompare_eq_zero, hdir]
         · have hd' : (ls.val.datatype == lt.val.datatype) = false := beq_eq_false_iff_ne.mpr hd

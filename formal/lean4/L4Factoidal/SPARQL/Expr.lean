@@ -1321,6 +1321,32 @@ def relationalCompare (v1 v2 : EvalResult) (op : Fn.Comparison.Op) : Option Bool
   let b ← v2.toTerm?
   Fn.Comparison.termCompare a b op
 
+/-- The datatypes whose lexical mapping is the identity on lexical forms
+    (`xsd:string`; `rdf:langString` and `rdf:dirLangString` with the
+    language tag and direction compared apart; RDF 1.1 Concepts 3.3 and 5.1):
+    two literals of one of them, with the same language tag and direction,
+    have the same value exactly when their lexical forms are the same. -/
+def lexicalValueDatatype (dt : WfIri) : Bool :=
+  dt == xsdString || dt == rdfLangString || dt == rdfDirLangString
+
+/-- §17.4.1.7 `=` and `!=` of two literals of one datatype with the same
+    language tag and direction. The same lexical form is the same RDF term
+    (`RDFterm-equal` is true). Different lexical forms: for a datatype of
+    `lexicalValueDatatype`, different values; else the value comparison of
+    `Fn.Comparison.literalCompare` (`xsd:boolean`, `xsd:dateTime`,
+    `xsd:date`); a datatype with no value comparison here (`rdf:XMLLiteral`,
+    an unknown datatype), or a lexical form outside the lexical space, is a
+    type error (`none`): `RDFterm-equal` "produces a type error if the
+    arguments are both literal but are not the same RDF term". Until
+    2026-10-23 every datatype compared the lexical forms, so two
+    `rdf:XMLLiteral` literals that are different terms were `false` under
+    `=` (https://github.com/danbri/factoidal/issues/963). -/
+def sameDatatypeLiteralEq (l1 l2 : Literal) (op : CompOp) : Option Bool :=
+  if l1.lexicalForm == l2.lexicalForm || lexicalValueDatatype l1.datatype then
+    some (applyCompOp (strCompare l1.lexicalForm l2.lexicalForm) op)
+  else
+    Fn.Comparison.literalCompare l1 l2 (if op == .ne then .ne else .eq)
+
 /-- §17.3/§17.4.1.7 comparison. Numeric equality and relational operations
     share the XSD/F&O value model; other equality uses the RDF fallback.
     This does not equate relational ordering with ORDER BY or sameTerm. -/
@@ -1343,7 +1369,7 @@ def valueCompare (v1 v2 : EvalResult) (op : CompOp) : Option Bool :=
         if l1.val.datatype == l2.val.datatype then
           if langTagOptionEq l1.val.langTag l2.val.langTag &&
               l1.val.direction == l2.val.direction then
-            some (applyCompOp (strCompare l1.val.lexicalForm l2.val.lexicalForm) op)
+            sameDatatypeLiteralEq l1.val l2.val op
           else
             match op with
             | .eq => some false

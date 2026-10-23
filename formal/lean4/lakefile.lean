@@ -200,6 +200,10 @@ extern_lib libl4exthost pkg := do
 
 @[default_target] lean_lib L4Factoidal
 
+-- Observable cardinality of the dataset handle store: 41 assertions over
+-- open / clone / update / add / delete (RDF 1.1 Concepts §3: a graph is a set).
+@[default_target] lean_exe «l4dataset-set-regression» where root := `Harness.DatasetSetRegression
+
 -- The W3C harness's shared modules. They live in a lib rather than
 -- hanging off an executable root because `Harness.Main` imports them
 -- and Lake only builds modules a lib claims. NOT part of the verified
@@ -211,7 +215,7 @@ extern_lib libl4exthost pkg := do
     `Harness.PosixRangeIO, `Harness.CompactedEpoch, `Harness.GenerationPointer, `Harness.ShardMerkleMaterialize, `Harness.ShardMerkleProfile, `Harness.ShardPublish,
     `Harness.IndexedBlockV3Materialize, `Harness.JsonLdScale, `Harness.LenientRun, `Harness.QlvrKernel,
     `Harness.Sbm11Gen, `Harness.RunHeap, `Harness.Sbm11Query, `Harness.Sbm11Delta, `Harness.Sbm11Update, `Harness.Sbm11PackLib, `Harness.Sbm11Compact, `Harness.Sbm11PermCheck,
-    `Harness.Sbm11Export,
+    `Harness.Sbm11Export, `Harness.Sbm11MemGenCheck, `Harness.Sbm11PackSpecCheck,
     `Harness.PlannerCheck, `Harness.PlannerKinds, `Harness.PlannerSbm11IO,
     `Harness.ProofObligations, `Harness.WorkerPool] : Array Lean.Name).map Glob.one
 

@@ -379,7 +379,8 @@ theorem valueCompare_eq_refl_unpromoted_literal (l : WfLiteral)
     (h : literalPromote l = .term (.literal l))
     (hn : Fn.Comparison.numericDatatype l.val.datatype = false) :
     valueCompare (.term (.literal l)) (.term (.literal l)) .eq = some true := by
-  simp [valueCompare, EvalResult.isNumericOperand, hn, EvalResult.promoteLiteral, h, applyCompOp]
+  simp [valueCompare, EvalResult.isNumericOperand, hn, EvalResult.promoteLiteral, h, sameDatatypeLiteralEq,
+    applyCompOp]
 
 /-- `=` holds between a Boolean value and itself. -/
 theorem valueCompare_eq_refl_bool (b : Bool) :

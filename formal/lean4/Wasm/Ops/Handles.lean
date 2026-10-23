@@ -76,6 +76,7 @@ import L4Factoidal.RDF.TermJson
 import L4Factoidal.RDF.QuadsBinTheorems
 import L4Factoidal.RDF.Isomorphism
 import L4Factoidal.Syntax.IriResolve
+import L4Factoidal.RDF.CertifiedDataset
 
 namespace L4Wasm.Ops
 
@@ -91,9 +92,14 @@ initialize handleCounter : IO.Ref Nat ← IO.mkRef 0
 /-- An open dataset and its indexed backend.  The backend (equivalence-aware
 indexes over the default and every named graph) is built once when the
 handle is opened or updated, so every `datasetQuery` on the handle runs
-the optimized physical-plan path without rebuilding indexes. -/
+the optimized physical-plan path without rebuilding indexes.
+
+The dataset is a `CertifiedDataset`: it carries the proof that it is a set of
+quads (RDF 1.1 Concepts §3, §4; `RDF/CertifiedDataset.lean`). The store cannot
+hold a dataset that lists one triple two times in one graph, or two named
+graphs of one name. -/
 structure OpenDataset where
-  ds : Dataset
+  data : CertifiedDataset
   /-- Built on the first query after an open or a change, then kept: an
   `add` of one quad does not rebuild every index. -/
   backendThunk : Thunk DatasetBackend
@@ -101,9 +107,15 @@ structure OpenDataset where
   Turtle output of the handle uses them. -/
   prefixes : List (String × String) := []
 
-private def openDataset (ds : Dataset) (prefixes : List (String × String) := []) :
+/-- The stored dataset. -/
+def OpenDataset.ds (od : OpenDataset) : Dataset := od.data.val
+
+/-- The stored dataset is a set of quads. -/
+theorem OpenDataset.isSet (od : OpenDataset) : od.ds.IsSet := od.data.property
+
+private def openDataset (data : CertifiedDataset) (prefixes : List (String × String) := []) :
     OpenDataset :=
-  { ds, backendThunk := Thunk.mk (fun _ => indexedDatasetBackend ds), prefixes }
+  { data, backendThunk := Thunk.mk (fun _ => indexedDatasetBackend data.val), prefixes }
 
 /-- The indexed backend of an open dataset. -/
 private def OpenDataset.backend (od : OpenDataset) : DatasetBackend := od.backendThunk.get
@@ -145,16 +157,21 @@ stores nothing and issues no handle. `extra` reads the syntaxes outside
 `Wasm/Ops/Parse.lean`'s table: the full dispatch passes `jsonLdReader`, the
 core dispatch a reader without JSON-LD (issue 713 stage 4). -/
 def datasetOpenBy (extra : ExtraReader) (text formatTag baseIri : String) : IO String := do
-  match parseDocumentOutcomeBy extra text formatTag baseIri with
+  match hp : parseDocumentOutcomeBy extra text formatTag baseIri with
   | .error f => pure (parseFailureEnvelope formatTag f)
   | .ok o =>
-      -- The document gets its own blank-node scope, as `parseToDatasetJsonScoped`.
-      let ds := scopeBnodes (← nextDocumentScope) o.ds
+      -- The parse is a set (`parseDocumentOutcomeBy_isSet`), so it is not
+      -- walked again. The document gets its own blank-node scope, as
+      -- `parseToDatasetJsonScoped`; the scope keeps a set a set
+      -- (`renameDatasetBnodes_isSet`).
+      let parsed : CertifiedDataset :=
+        ⟨o.ds, parseDocumentOutcomeBy_isSet extra text formatTag baseIri o hp⟩
+      let od := openDataset (parsed.renameBnodes (← nextDocumentScope)) o.prefixes
       let n ← handleCounter.modifyGet fun n => (n + 1, n + 1)
       let h := s!"h{n}"
-      handleTable.modify (·.insert h (openDataset ds o.prefixes))
+      handleTable.modify (·.insert h od)
       pure (okWith [("handle", .string h),
-                    ("count", .number (toString (datasetQuadCount ds))),
+                    ("count", .number (toString (datasetQuadCount od.ds))),
                     ("prefixes", prefixesJson o.prefixes)])
 
 /-- `datasetQuery(handle, sparql)` — the `queryDataset` envelope family
@@ -183,6 +200,19 @@ def datasetQuery12 (h sparql : String) (base : Option String := none) : IO Strin
     pure (queryParsedDatasetWith od.ds (some od.backend) sparql [] extIris services .v12 base
             (some now))
 
+/-- A SPARQL Update request applied to a set gives a set. -/
+theorem applyUpdateText_isSet {ds ds' : Dataset} (h : ds.IsSet) {text : String}
+    {base now : Option String} {version : L4Factoidal.SPARQL.SparqlVersion}
+    (hu : applyUpdateText ds text base now version = .ok ds') : ds'.IsSet := by
+  unfold applyUpdateText at hu
+  split at hu
+  · cases hu
+  · split at hu
+    · cases hu
+    · next d hd => cases hu; exact applyUpdateIn_isSet _ _ h hd
+
+#print axioms applyUpdateText_isSet
+
 /-- `datasetUpdate(handle, sparqlUpdate)` — apply the update and
 REPLACE the stored dataset (and rebuild its index); answers the new quad
 count. On a parse or evaluation error the stored dataset is unchanged. The
@@ -191,11 +221,13 @@ request (§17.4.5.1, https://github.com/danbri/factoidal/issues/743). -/
 def datasetUpdate (h updateText : String) (base : Option String := none) : IO String := do
   let now ← nowDateTime
   withHandle h fun od =>
-    match applyUpdateText od.ds updateText base (some now) with
+    match hu : applyUpdateText od.ds updateText base (some now) with
     | .error e => pure (errJson e)
     | .ok ds' => do
-        handleTable.modify (·.insert h (openDataset ds' od.prefixes))
-        pure (okWith [("count", .number (toString (datasetQuadCount ds')))])
+        -- An update of a set is a set (`applyUpdateText_isSet`): no new walk.
+        let next := openDataset ⟨ds', applyUpdateText_isSet od.isSet hu⟩ od.prefixes
+        handleTable.modify (·.insert h next)
+        pure (okWith [("count", .number (toString (datasetQuadCount next.ds)))])
 
 /-- A writer tag and the RDF version it asks for: a tag ending in `11` asks
 for RDF 1.1 (a dataset with an RDF 1.2 term is refused), one ending in `12`
@@ -322,15 +354,21 @@ def datasetClose (h : String) : IO String := do
 
 /-! ## Ops that keep the data in the store (issue 882 item 1) -/
 
-/-- Store `ds` under a new handle and answer the `datasetOpen` envelope. -/
-def storeNewHandle (ds : Dataset) (prefixes : List (String × String) := [])
+/-- Store a certified dataset under a new handle and answer the `datasetOpen`
+envelope. -/
+def storeNewCertified (data : CertifiedDataset) (prefixes : List (String × String) := [])
     (extra : List (String × Json) := []) : IO String := do
   let n ← handleCounter.modifyGet fun n => (n + 1, n + 1)
   let h := s!"h{n}"
-  handleTable.modify (·.insert h (openDataset ds prefixes))
+  handleTable.modify (·.insert h (openDataset data prefixes))
   pure (okWith ([("handle", .string h),
-                ("count", .number (toString (datasetQuadCount ds))),
+                ("count", .number (toString (datasetQuadCount data.val))),
                 ("prefixes", prefixesJson prefixes)] ++ extra))
+
+/-- Store `ds` under a new handle: its set of quads (`Dataset.certify`). -/
+def storeNewHandle (ds : Dataset) (prefixes : List (String × String) := [])
+    (extra : List (String × Json) := []) : IO String :=
+  storeNewCertified ds.certify prefixes extra
 
 /-- The stored dataset of `h`, or `none` when the handle is not open. -/
 def lookupHandleDataset (h : String) : IO (Option (Dataset × List (String × String))) := do
@@ -346,7 +384,7 @@ def withHandleDataset (h : String) (f : Dataset → List (String × String) → 
 /-- `datasetClone(handle)` — a new handle holding the same dataset and
 prefixes; an update of one handle leaves the other unchanged. -/
 def datasetClone (h : String) : IO String :=
-  withHandleDataset h fun ds prefixes => storeNewHandle ds prefixes
+  withHandle h fun od => storeNewCertified od.data od.prefixes
 
 /-- `datasetCanonicalize(handle)` — `canonicalizeOf` of the stored dataset:
 the envelope `canonicalizeToNQuads` answers on its canonical N-Quads. -/
@@ -525,7 +563,7 @@ def updateQuadsOf (nq : String) : Except String (List (Option WfIri × Triple)) 
 
 /-- Replace the stored dataset of `h` with `f` of it; answers the new count. -/
 private def changeHandle (who h nq : String)
-    (f : Dataset → List (Option WfIri × Triple) → Dataset) : IO String := do
+    (f : CertifiedDataset → List (Option WfIri × Triple) → CertifiedDataset) : IO String := do
   let tbl ← handleTable.get
   match tbl[h]? with
   | none => missingHandle h
@@ -533,20 +571,20 @@ private def changeHandle (who h nq : String)
     match updateQuadsOf nq with
     | .error e => pure (errJson s!"{who}: {e}")
     | .ok qs =>
-      let ds' := f od.ds qs
-      handleTable.modify (·.insert h (openDataset ds' od.prefixes))
-      pure (okWith [("count", .number (toString (datasetQuadCount ds')))])
+      let next := openDataset (f od.data qs) od.prefixes
+      handleTable.modify (·.insert h next)
+      pure (okWith [("count", .number (toString (datasetQuadCount next.ds)))])
 
 /-- `datasetAddQuads(handle, nquads)` — add the quads (set semantics), as
 INSERT DATA does (`Dataset.insertQuads`). Blank-node labels are kept as
 written, so a label the dataset holds names the same node. -/
 def datasetAddQuads (h nq : String) : IO String :=
-  changeHandle "datasetAddQuads" h nq Dataset.insertQuads
+  changeHandle "datasetAddQuads" h nq CertifiedDataset.insertQuads
 
 /-- `datasetDeleteQuads(handle, nquads)` — remove the quads
 (`Dataset.deleteQuads`). -/
 def datasetDeleteQuads (h nq : String) : IO String :=
-  changeHandle "datasetDeleteQuads" h nq Dataset.deleteQuads
+  changeHandle "datasetDeleteQuads" h nq CertifiedDataset.deleteQuads
 
 /-! ## Terms as JSON values: the RDF/JS host reads and writes no RDF syntax
 
@@ -679,26 +717,26 @@ def datasetQuadsBin (h optsJson : String) : IO (String × ByteArray) := do
         ByteArray.empty)
 
 private def changeHandleJson (who h text : String)
-    (f : Dataset → List (Option WfIri × Triple) → Dataset) : IO String := do
+    (f : CertifiedDataset → List (Option WfIri × Triple) → CertifiedDataset) : IO String := do
   match (← handleTable.get)[h]? with
   | none => missingHandle h
   | some od =>
     match jsonQuadsOf text >>= (updateQuadsLoop · #[]) with
     | .error e => pure (errJson s!"{who}: {e}")
     | .ok qs =>
-      let ds' := f od.ds qs
-      handleTable.modify (·.insert h (openDataset ds' od.prefixes))
-      pure (okWith [("count", .number (toString (datasetQuadCount ds')))])
+      let next := openDataset (f od.data qs) od.prefixes
+      handleTable.modify (·.insert h next)
+      pure (okWith [("count", .number (toString (datasetQuadCount next.ds)))])
 
 /-- `datasetAddQuadsJson(handle, quadsJson)` — `datasetAddQuads` with the quads
 given as `TermJson` quads. -/
 def datasetAddQuadsJson (h quadsJson : String) : IO String :=
-  changeHandleJson "datasetAddQuadsJson" h quadsJson Dataset.insertQuads
+  changeHandleJson "datasetAddQuadsJson" h quadsJson CertifiedDataset.insertQuads
 
 /-- `datasetDeleteQuadsJson(handle, quadsJson)` — `datasetDeleteQuads` with the
 quads given as `TermJson` quads. -/
 def datasetDeleteQuadsJson (h quadsJson : String) : IO String :=
-  changeHandleJson "datasetDeleteQuadsJson" h quadsJson Dataset.deleteQuads
+  changeHandleJson "datasetDeleteQuadsJson" h quadsJson CertifiedDataset.deleteQuads
 
 /-- The dataset of a list of quads, each quad once, the graphs in the order of
 their first quad. -/
