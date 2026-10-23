@@ -232,6 +232,7 @@ def evalPatternBackend (env : EvalEnv) (dsb : DatasetBackend) :
         (QueryPattern.bind expression v pattern).lowerWith env Binding.empty
           |>.evalIn ds gCurrent
   | .empty, _ => [Binding.empty]
+  | .values variables rows, _ => evalValues variables rows
   | p, gb =>
       -- Materialise and delegate. The active graph is this backend's
       -- own content, so an EXISTS inside the delegated pattern sees
@@ -1234,9 +1235,55 @@ plus the default. -/
           , searchTokSelective := fun _ _ _ => [] }
           [iG.val, iA.val]).named.length == 2
 
+theorem evalPatternBackend_values_native (env : EvalEnv) (dataset : DatasetBackend)
+    (variables : List VarName) (rows : List (List (Option Term))) (graph : GraphBackend) :
+    evalPatternBackend env dataset (.values variables rows) graph = evalValues variables rows := by
+  rfl
+
+theorem evalPatternBackend_values_reference (env : EvalEnv) (dataset : DatasetBackend)
+    (variables : List VarName) (rows : List (List (Option Term))) (graph : GraphBackend)
+    (referenceDataset : Dataset) (referenceGraph : Graph) :
+    evalPatternBackend env dataset (.values variables rows) graph =
+      ((QueryPattern.values variables rows).lowerWith env Binding.empty).evalIn
+        referenceDataset referenceGraph := by
+  rfl
+
+private def inlineValueCases :
+    List (List VarName × List (List (Option Term)) × SolutionSeq) :=
+  [([], [], []),
+   ([], [[]], [[]]),
+   (["x"], [[some (.iri iA)], [none], [some (.iri iA)]],
+     [[("x", .iri iA)], [], [("x", .iri iA)]]),
+   (["x", "y"], [[some (.iri iA), none], [none, some (.iri iB)], [none, none]],
+     [[("x", .iri iA)], [("y", .iri iB)], []]),
+   (["x", "y"], [[some (.iri iA), some (.iri iB)]],
+     [[("y", .iri iB), ("x", .iri iA)]]),
+   (["x", "x"], [[some (.iri iA), some (.iri iB)]],
+     [[("x", .iri iB), ("x", .iri iA)]]),
+   (["x", "y"], [[some (.iri iA)]], [[("x", .iri iA)]]),
+   (["x"], [[some (.iri iA), some (.iri iB)]], [[("x", .iri iA)]]),
+   ([], [[some (.iri iA)]], [[]])]
+
+#guard inlineValueCases.all fun (variables, rows, expected) =>
+  evalPatternBackend {} dsb1 (.values variables rows) dsb1.default == expected
+
+#guard inlineValueCases.all fun (variables, rows, expected) =>
+  evalPatternBackend {} { default := .list [], named := [] }
+    (.values variables rows) (.list []) == expected
+
+#guard inlineValueCases.all fun (variables, rows, expected) =>
+  let graph : GraphBackend := .hdt
+    { search := fun _ => gDefault ++ gDefault
+      estimate := fun _ => 999999
+      predicatePresent := fun _ => true }
+  evalPatternBackend {} { default := graph, named := [] }
+    (.values variables rows) graph == expected
+
 /-! ## Axiom audit -/
 
 #print axioms evalPatternBackend_bgp_native
+#print axioms evalPatternBackend_values_native
+#print axioms evalPatternBackend_values_reference
 #print axioms evalPatternBackend_leftJoin_native
 #print axioms evalPatternBackend_leftJoin_spec
 #print axioms evalBgpBackend_allVars_list

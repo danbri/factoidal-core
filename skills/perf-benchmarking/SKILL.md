@@ -154,6 +154,14 @@ query-only uptime deadline can miss a pause. A clock adjustment also rejects
 the window conservatively. The guard does not establish a quiet CPU host.
 See `docs/20261011-shardborough-hash-grouping.md` and its JSON record.
 
+Before changing a parsed access path, retain its complete runtime SSE. On
+2026-10-23, reading `ggpAddTriple` alone suggested singleton BGP joins after
+VALUES. Its `pGgpBody` caller first merges a consecutive triples block, so
+the real workload has VALUES joined to one two-triple BGP. Runtime SSE caught
+this before integration; singleton-only optimization would not address that
+workload. Also rebuild absent binaries after shared semantic changes: old
+profile hashes and dated timings are not current-worktree evidence.
+
 ### Turtle/parser throughput — `formal/fstar/bench-turtle-metrics.sh`
 
 Generates four fixtures in `/tmp/factoidal-metrics` (`prefixed-1000`,
