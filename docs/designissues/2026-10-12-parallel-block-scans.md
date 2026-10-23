@@ -844,3 +844,144 @@ On commit `a2cdf15d` (exit codes read):
 
 Census rows: "matched the reference engine" is row agreement over the same
 input, not conformance.
+
+## Stage 1f: q07 serial work after the scans (2026-10-23)
+
+Issue https://github.com/danbri/factoidal/issues/961 (item 1), key result KR
+1.2 of https://github.com/danbri/factoidal/issues/875. Owner constraint,
+2026-10-22, verbatim: "Yes lets come back to allocator later". No allocator
+option or environment variable was set or changed. Branch
+`batch3/kr12-q07`.
+
+### 1f.1 Result
+
+The 1b.6 method: `tests/sbm11/bench-threads.sh`, `ROUNDS=8 REPEAT=7
+THREADS="1 4"` (DBpedia with `VERIFY=none`), round 1 dropped, median over 7
+processes of each process's warm median; RSS is the largest VmHWM. Before:
+`origin/main` `09b25507`; after: this branch. The two binaries ran one after
+the other, 2026-10-23 05:51 to 05:52 UTC, load average 1.0 to 1.3. Raw CSV:
+`.claude-runs/q07/final-{before,after}-{oly,dbp}.csv` (not in the
+repository).
+
+| Query | 1 thread ms before / after | 4 threads ms before / after | 4/1 before | 4/1 after | RSS MB 1 / 4 threads after | RSS 4/1 after |
+| --- | ---: | ---: | ---: | ---: | ---: | ---: |
+| q07 | 6.05 / 5.01 | 6.56 / 3.78 | 1.09 | 0.75 | 26 / 39 | 1.47 |
+| q21 | 95.94 / 94.76 | 36.40 / 36.40 | 0.38 | 0.38 | 42 / 75 | 1.77 |
+| q19 | 37.28 / 34.03 | 20.13 / 22.75 | 0.54 | 0.67 | 58 / 105 | 1.79 |
+| d10 | 11.19 / 10.14 | 6.66 / 6.35 | 0.60 | 0.63 | 26 / 51 | 1.92 |
+| d17 | 0.35 / 0.31 | 0.37 / 0.33 | 1.06 | 1.07 | 22 / 22 | 1.01 |
+
+q07 does not meet 0.4. The RSS limit (at most 2 times 1 thread) holds for
+all five. The q19 4-thread difference is run-to-run variation: interleaved
+(8 rounds, 7 runs, the same two binaries, 05:52 UTC) q19 was 18.98 ms before
+and 18.76 ms after at 4 threads, 34.69 and 33.26 ms at 1 thread. The q19,
+q21, d10 and d17 code paths changed only by the constant-id memo (1f.2
+item 3). Other A/B runs of q07 (interleaved, 8 to 10 rounds): 4/1 0.68 to
+0.71 after, 0.95 to 1.06 before.
+
+### 1f.2 Method
+
+The q07 time was split by timestamps around the store calls (a temporary
+trace, not committed; medians of 41 runs in one process, microseconds):
+
+| Phase | 1 thread | 4 threads before | 4 threads after |
+| --- | ---: | ---: | ---: |
+| constants (6 dictionary look-ups) and estimates | 477 | 507 | 60 |
+| scan of pattern 1 (8,192 estimated rows) | 161 | 166 | 170 |
+| scan of pattern 0 (16,384 estimated rows) | 220 | 370 | 215 |
+| merge join (6,248 by 13,369 rows) and candidates | 450 | 467 | 451 |
+| scan with candidates, pattern 2 (66 blocks) | 1,708 | 1,190 | 806 to 853 |
+| merge join and candidates | 125 | 151 | 140 to 155 |
+| scan with candidates, pattern 3 (34 blocks) | 1,147 | 780 | 609 to 647 |
+| hash join, ORDER BY keys and sort, rendering | 1,090 | 1,146 | 1,117 to 1,135 |
+
+What landed:
+
+1. **The calling thread scans the first block range**
+   (`scanTableParM`, `scanSipTableParM`). Before, the parent started one
+   task per range and waited. A task waits for a sleeping pool worker: on
+   this VM a woken thread runs 50 to 120 microseconds later (a C
+   condition-variable test: median 79, p90 126), and `perf sched record`
+   showed only 2 pool worker threads in a 4-thread q07 process (the runtime
+   starts a worker only when a task is queued and no worker counts as idle).
+   q07 at 4 threads 4.25 to 3.68 ms.
+2. **BGP scans need `2 × minRows` estimated rows per range** (16,384 by
+   default). The scan of pattern 0 in 2 ranges took 0.37 to 0.47 ms against
+   0.24 to 0.28 ms in one.
+3. **Constant ids are kept for the session** (`Session.idMemo`, dictionary
+   hits only, at most 65,536 entries). Each look-up is a binary search over
+   GDX1 entries and GDV1 pages, about 14 positioned reads; 0.43 ms of q07
+   at every thread count.
+4. **The merge join in left row ranges** (`ParallelJoin`,
+   `IdQuery.mergeJoinParM`), for at least 32,768 input rows per range (every
+   join of 2 rows or more when `Par.minRows` is 0, the gate fixtures). Each
+   range starts at the binary-search lower bound of its first left value in
+   the right column; the ranges' index pairs are appended in order and the
+   output gathered once. q07's join (19,617 rows) is not divided: in 4 ranges
+   it took 0.47 to 0.52 ms against 0.45 ms. With `--sip off` q07 joins
+   13,369 and 269,625 rows: 4 threads 16.8 ms before, 13.5 to 15.5 ms with
+   the divided join.
+
+### 1f.3 What is proved and what is tested only
+
+- Proved (`ParallelJoinTheorems`, `#print axioms`: `propext`,
+  `Classical.choice`, `Quot.sound`; no hypothesis states a conclusion):
+  `mergeJoinRanges_rangeChunks`: the join computed in the ranges of
+  `rangeChunks` is `Qlvr.mergeJoin`, for join columns in non-decreasing
+  order (the precondition of `MergeTheorems.mergeGo_spec`). With
+  `lowerBound_spec`, `rangePairs_spec`, `chain_flatten`, `ranges_chain`.
+  `mapPar_eq`: the task map is `List.map` (`Task.spawn fn` is `⟨fn ()⟩` in
+  the logic). So `mergeJoinParM` equals `mergeJoin` by proof, not by test.
+- Tested only: the caller-runs change and the scan threshold
+  (`tests/sbm11/threads.sh`, byte-identical answers at 1, 2, 4 and 8
+  threads; the gate fixtures divide every join); the memo
+  (`tests/sbm11/run.sh`, the census).
+
+### 1f.4 Tried and not kept
+
+- **ORDER BY values read by range workers** (`Par.fold`, a view and a page
+  cache per worker): q07's ORDER BY (291 values) 0.5 ms slower at 4 threads.
+- **ORDER BY sort in aligned power-of-two blocks** sorted by tasks, then the
+  merge passes from the block width (equal to `mergeSortBy` by `#guard`s): an
+  ORDER BY of the 137,026 olympics labels took 930 ms at 4 threads against
+  648 ms. The tasks' closures make the shared values MT, so every
+  comparison takes and drops references atomically.
+- **The merge join with the columns passed as closures**: `mergeGo` was
+  specialised for the closure parameter, every row read was `lean_apply_1`
+  with a boxed `UInt64`; 2.5 ms in 4 ranges against 0.45 ms. Repaired
+  before landing (`rangePairsOf` passes lambdas over local byte arrays).
+- **All pool workers started at open** (N tasks that wait until all N run):
+  no time gained, peak RSS above 2 times the 1-thread RSS (q07 2.30, d10
+  2.33): each running worker has its own heap.
+- **More block ranges per scan with candidates** (8 instead of 4): no change
+  beyond run-to-run variation.
+- **A cached file descriptor per path** for `l4_block_pread` (a diagnostic
+  build): the constant look-ups 0.25 ms faster, the scans unchanged. Not
+  needed after the memo.
+
+### 1f.5 What remains
+
+q07 at 4 threads is about 3.7 ms; 0.4 needs about 2.0 ms. The serial part
+alone is about 2.1 ms: the two small scans (0.39 ms), the merge join
+(0.45 ms; dividing it costs more than it saves at this size), the second
+join (0.15 ms), and the tail (1.12 ms: hash join, ORDER BY values by
+`termOf` and the `sparqlOrderValue` sort, rendering of 313 rows). Each of
+these is under 0.5 ms single-threaded, below the cost of a task that waits
+for a sleeping worker. The two scans with candidates reach 2.0 and 1.8
+times their 1-thread speed with 4 ranges, not 4: the wake-up of the 3
+workers, and unequal work per range (blocks skipped by candidates).
+Reaching 0.4 needs workers that do not sleep between the phases of a query
+(a per-session worker pool) and the tail divided on such workers. That is a
+design change, tracked in https://github.com/danbri/factoidal/issues/961.
+
+### 1f.6 Gates
+
+On commit `a0c92771` (exit codes read):
+
+| Gate | Result |
+| --- | --- |
+| `tests/sbm11/run.sh` | exit 0: 3,131 pass, 0 fail, 28 expected-fail (out of 3,159) |
+| `tests/sbm11/threads.sh` | exit 0: gate 140 and 140 identical, olympics 21, 2 and 2, DBpedia 19; DBpedia against the three-engine record: equal 76, different 0 |
+| `SBM11_THREADS=4 tests/sbm11/census.sh` | exit 0: 605 executed, 605 matched the reference engine, 0 differed; 4 refused at query |
+| `tools/land-gates.sh` | exit 0: `lake build`, `lean-unbuilt-modules.py --gate`, `lean-tail-recursion-audit.py --gate`, wasm, native-smoke 377 pass, 0 fail, 4 xfail (out of 381), cli-smoke 151 pass, 0 fail, 5 xfail (out of 156), npm 588 pass, 0 fail, 2 skipped, hub 479 pass, 0 fail, engine-compare 7 pass, 0 fail, the LWS, Solid and authorization suites, host-purity-lint 40 pass, 0 fail (out of 40) |
+| `sorry`, `native_decide`, `axiom`, `maxHeartbeats` in the Lean diff | none |
