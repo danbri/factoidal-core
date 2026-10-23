@@ -45,7 +45,7 @@ def roundTasks (jobs : Nat) : IO (Nat × Nat) := do
 
 /-- The worker pool: `jobs` jobs on the workers (`runAll` with a no-op job 0
     on the caller). -/
-def roundPool (p : Pool) (jobs : Nat) : IO (Nat × Nat) := do
+def roundPool (p : Pool Unit) (jobs : Nat) : IO (Nat × Nat) := do
   let t0 ← IO.monoNanosNow
   let js : Array (IO Nat) := #[(pure t0 : IO Nat)] ++ (Array.replicate jobs (IO.monoNanosNow : IO Nat))
   let rs ← p.runAll js
@@ -73,10 +73,10 @@ def main (args : List String) : IO UInt32 := do
   let jobs := (args[2]? >>= String.toNat?).getD 3
   IO.eprintln s!"rounds {rounds}, gap {gapUs} us, jobs {jobs}"
   runMode "lean task pool (IO.asTask)" rounds gapUs (roundTasks jobs)
-  let spinning ← start jobs 1000000
+  let spinning ← start jobs 1000000 (pure ())
   runMode "worker pool, poll 1 ms" rounds gapUs (roundPool spinning jobs)
   spinning.shutdown
-  let parking ← start jobs 0
+  let parking ← start jobs 0 (pure ())
   runMode "worker pool, poll 0 (park at once)" rounds gapUs (roundPool parking jobs)
   parking.shutdown
   return 0
