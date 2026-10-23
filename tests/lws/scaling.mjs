@@ -338,6 +338,7 @@ async function storageChild (s, mode) {
 // resident set. Stage 1 read every body into memory at start, so the peak
 // grew with the storage; stage 2 reads none.
 async function storageMemChild (s, dir, phase) {
+  let settled = 0
   const f = await import(join(PKG, 'index.mjs'))
   const { listen } = await import(join(PKG, 'lws/server.mjs'))
   const engine = await f.loadEngine()
@@ -357,8 +358,18 @@ async function storageMemChild (s, dir, phase) {
       await r.arrayBuffer()
       if (r.status !== 200) throw new Error(`GET answered ${r.status}`)
     }
+    // Issue 962: the peak RSS of a process depends on when V8 and the
+    // allocator return memory. At one size it took two values 27 MiB apart
+    // (146 and 177 MiB at s = 1,000; 222 and 253 MiB at s = 4,000), more than
+    // the 16 MiB bound. The row bounds the retained memory (V8 heap in use
+    // plus external memory, which holds the wasm memory and every Buffer)
+    // after a forced collection, taken while the start's state is live (the
+    // server is open). This value repeats to the byte across runs. The peak
+    // RSS is reported beside it.
+    if (typeof globalThis.gc === 'function') { globalThis.gc(); globalThis.gc() }
+    { const mu = process.memoryUsage(); settled = mu.heapUsed + mu.external }
   } finally { await server.close() }
-  process.stdout.write(JSON.stringify({ s, phase, rss: process.resourceUsage().maxRSS * 1024 }) + '\n')
+  process.stdout.write(JSON.stringify({ s, phase, rss: process.resourceUsage().maxRSS * 1024, settled }) + '\n')
 }
 
 // The engine's own cost of one write of a storage kept in files (issue 918,
@@ -567,7 +578,8 @@ if (srows.snapshot.length === 3) {
 // in memory, so the body bytes (16 MiB more for each s) do not reach the
 // peak. What grows is the metadata: about 1 KiB of memory per resource
 // (record JSON, entry, stub, index facts), 3 MiB from s to 4s at s = 1,000.
-//   rss(4s) - rss(s) <= 16 MiB, a quarter of the 48 MiB of body bytes that
+//   retained(4s) - retained(s) <= 16 MiB (heap in use plus external memory
+//   after a forced collection; the peak RSS is reported, issue 962), a quarter of the 48 MiB of body bytes that
 //   stage 1 added (it held every body: 258 MiB at 1,000, 515 MiB at 4,000).
 {
   const mrowsS = []
@@ -575,7 +587,7 @@ if (srows.snapshot.length === 3) {
     const dir = mkdtempSync(join(tmpdir(), 'lws918-storage-mem-'))
     try {
       for (const phase of ['fill', 'open']) {
-        const out = execFileSync(process.execPath, [fileURLToPath(import.meta.url), '--storage-mem-child', String(s), '--dir', dir, '--phase', phase],
+        const out = execFileSync(process.execPath, ['--expose-gc', fileURLToPath(import.meta.url), '--storage-mem-child', String(s), '--dir', dir, '--phase', phase],
           { encoding: 'utf8', stdio: ['ignore', 'pipe', 'inherit'], timeout: 900000 })
         if (phase === 'open') mrowsS.push(JSON.parse(out.trim().split('\n').pop()))
       }
@@ -587,12 +599,12 @@ if (srows.snapshot.length === 3) {
   }
   for (const m of mrowsS) {
     console.log(`  storage files: start and one GET, ${m.s} resources of 16 KiB (${(m.s * 16 / 1024).toFixed(1)} MiB of bodies): ` +
-                `peak RSS ${(m.rss / 1048576).toFixed(1)} MiB`)
+                `peak RSS ${(m.rss / 1048576).toFixed(1)} MiB (reported), retained after a forced collection ${(m.settled / 1048576).toFixed(1)} MiB`)
   }
   if (mrowsS.length === 3) {
     const [ma, , mc] = mrowsS
-    const growth = mc.rss - ma.rss
-    check(`storage files: peak RSS of a start grows <= 16 MiB from s to 4s (bodies grow ${(3 * ma.s * 16 / 1024).toFixed(0)} MiB)`,
+    const growth = mc.settled - ma.settled
+    check(`storage files: retained memory of a start after a forced collection grows <= 16 MiB from s to 4s (bodies grow ${(3 * ma.s * 16 / 1024).toFixed(0)} MiB)`,
       growth <= 16 * 1048576, `growth ${(growth / 1048576).toFixed(1)} MiB`)
   }
 }

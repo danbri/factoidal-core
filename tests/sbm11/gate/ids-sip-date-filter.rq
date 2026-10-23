@@ -1,0 +1,7 @@
+# Issue 930, the shape of DBpedia d14: the subjects of the first pattern pass
+# into the scan of ex:when as candidates, and the FILTER compares an xsd:date
+# (s3's xsd:dateTime gives a type error and is removed). tests/sbm11/run.sh
+# part (l1c) checks that the join column was decoded by the word loop.
+PREFIX ex: <http://ex.org/>
+PREFIX xsd: <http://www.w3.org/2001/XMLSchema#>
+SELECT ?s ?d WHERE { ?s ex:ok ?o . ?s ex:when ?d FILTER(?d < "2021-01-01"^^xsd:date) }

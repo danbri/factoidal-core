@@ -1,0 +1,10 @@
+{
+  "command": "lake build L4Factoidal l4wasm",
+  "cwd": "/Users/danbri/working/sandbox/october/tpac/codex-npm-review/integrate-pr1/formal/lean4",
+  "source_commit": "aeb5c4494",
+  "exit_code": 143,
+  "status": "intentionally-interrupted-for-parent-combined-build",
+  "interpretation": "Not a full-build pass; not a proof rejection. Parent will run one final combined build after copying completed cache.",
+  "stopped_at_utc": "2026-10-22T17:28:22.027164+00:00",
+  "source_edits_during_this_run": false
+}

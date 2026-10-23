@@ -382,6 +382,21 @@ assert ($expr), r
   xverdict "$label" "$issue" "$ok" "$out"
 }
 
+# checkx <label> <issue> <op> <argsfile> <python-assert-expr>: like `check`,
+# through `xverdict`, so ISSUE set makes the case an expected failure that
+# fails the run on an XPASS. The output shown is cut to 300 bytes.
+checkx() {
+  local label="$1" issue="$2" op="$3" argsfile="$4" expr="$5"
+  local out ok=0
+  out="$("$CLI" call "$op" "$argsfile")"
+  if printf '%s' "$out" | python3 -c "
+import json, sys
+r = json.load(sys.stdin)
+assert ($expr), r
+" 2>/dev/null; then ok=1; fi
+  xverdict "$label" "$issue" "$ok" "$(printf '%s' "$out" | head -c 300)"
+}
+
 # W3C functions/now01.rq on W3C functions/data.ttl, through the pure entry.
 # The data is Turtle; the op reads N-Quads, so the parse op converts it. The
 # arguments are the data, the query, an empty base IRI and the instant `now`.
@@ -1421,8 +1436,18 @@ check "rdfsPlusClosure" rdfsPlusClosure "$TMP/rdfsplus.json" \
 # Envelopes pinned against bin/npm-entry/entry_jsoo.ml's
 # owl_is_consistent_json / owl_entails_json: three-valued, budget-out
 # reported as null with a reason, never a silent false.
+# Since commit 87fd052e (docs/20261022-owl-pr-reconciliation.md) a definite
+# verdict needs a checked certificate: consistency answers false (checked
+# refutation) or null, never true, and reads only the admitted atomic
+# fragment (no owl:someValuesFrom); the checker runs a fixed 64 rounds and
+# ignores `fuel`. The plain cases below check that no input gets a wrong
+# definite verdict. The verdicts the inputs had before are expected failures
+# of https://github.com/danbri/factoidal/issues/960 (model certificate,
+# someValuesFrom admission, fuel, checked countermodel); an XPASS fails the run.
 args "$TMP/owl-cons-yes.json" "$SUBCLASS" ""
-check "owlIsConsistent consistent -> true, no reason" owlIsConsistent "$TMP/owl-cons-yes.json" \
+check "owlIsConsistent consistent atomic input -> null, no model certified" owlIsConsistent "$TMP/owl-cons-yes.json" \
+  'r["ok"] is True and r["consistent"] is None and "no model is certified" in r["reason"]'
+checkx "owlIsConsistent consistent -> true, no reason" 960 owlIsConsistent "$TMP/owl-cons-yes.json" \
   'r["ok"] is True and r["consistent"] is True and "reason" not in r'
 
 NOTHING='<http://e/i> <http://www.w3.org/1999/02/22-rdf-syntax-ns#type> <http://www.w3.org/2002/07/owl#Nothing> .
@@ -1431,22 +1456,24 @@ args "$TMP/owl-cons-no.json" "$NOTHING" ""
 check "owlIsConsistent owl:Nothing member -> false + reason" owlIsConsistent "$TMP/owl-cons-no.json" \
   'r["ok"] is True and r["consistent"] is False and "contradiction" in r["reason"]'
 
-# A cyclic TBox (A subClassOf someValuesFrom(p, A)) keeps the expansion
-# changing, so fuel 1 runs out mid-search: the verdict is null.
+# A cyclic TBox (A subClassOf someValuesFrom(p, A)). owl:someValuesFrom is
+# outside the admitted fragment: null with unsupported-syntax, at any fuel.
 CYCLIC='<http://e/i> <http://www.w3.org/1999/02/22-rdf-syntax-ns#type> <http://e/A> .
 <http://e/A> <http://www.w3.org/2000/01/rdf-schema#subClassOf> _:r .
 _:r <http://www.w3.org/2002/07/owl#onProperty> <http://e/p> .
 _:r <http://www.w3.org/2002/07/owl#someValuesFrom> <http://e/A> .
 '
 args "$TMP/owl-cons-unk.json" "$CYCLIC" '{"fuel":"1"}'
-check "owlIsConsistent fuel 1 -> null (budget-out, fuel named)" owlIsConsistent "$TMP/owl-cons-unk.json" \
+check "owlIsConsistent someValuesFrom input, fuel 1 -> null (unsupported-syntax)" owlIsConsistent "$TMP/owl-cons-unk.json" \
+  'r["ok"] is True and r["consistent"] is None and "unsupported-syntax" in r["reason"]'
+checkx "owlIsConsistent fuel 1 -> null (budget-out, fuel named)" 960 owlIsConsistent "$TMP/owl-cons-unk.json" \
   'r["ok"] is True and r["consistent"] is None and "budget-out" in r["reason"]
    and "fuel 1 " in r["reason"]'
 
-# The same cyclic TBox at the default budget saturates under the
-# witness-depth cap: consistent.
 args "$TMP/owl-cons-cyc.json" "$CYCLIC" ""
-check "owlIsConsistent cyclic TBox, default fuel -> true" owlIsConsistent "$TMP/owl-cons-cyc.json" \
+check "owlIsConsistent cyclic TBox, default fuel -> null (unsupported-syntax)" owlIsConsistent "$TMP/owl-cons-cyc.json" \
+  'r["ok"] is True and r["consistent"] is None and "unsupported-syntax" in r["reason"]'
+checkx "owlIsConsistent cyclic TBox, default fuel -> true" 960 owlIsConsistent "$TMP/owl-cons-cyc.json" \
   'r["ok"] is True and r["consistent"] is True'
 
 # Entailment via the closure path: a type D . follows from
@@ -1457,12 +1484,15 @@ args "$TMP/owl-ent-yes.json" "$SUBCLASS" "$CONCL" ""
 check "owlEntails subclass typing -> true via closure" owlEntails "$TMP/owl-ent-yes.json" \
   'r["ok"] is True and r["entailed"] is True and r["via"] == "closure"'
 
-# Not entailed: the negated conclusion is satisfiable beside the
-# premise (a countermodel), reported via the refutation path.
+# Not entailed. The search does not certify a countermodel, so the verdict
+# is null (never true); false via refutation is the expected failure.
 UNRELATED='<http://e/a> <http://www.w3.org/1999/02/22-rdf-syntax-ns#type> <http://e/Zebra> .
 '
 args "$TMP/owl-ent-no.json" "$SUBCLASS" "$UNRELATED" ""
-check "owlEntails unrelated class -> false via refutation" owlEntails "$TMP/owl-ent-no.json" \
+check "owlEntails unrelated class -> null (no countermodel certified)" owlEntails "$TMP/owl-ent-no.json" \
+  'r["ok"] is True and r["entailed"] is None and r["via"] == "refutation"
+   and "incomplete-search" in r["reason"]'
+checkx "owlEntails unrelated class -> false via refutation" 960 owlEntails "$TMP/owl-ent-no.json" \
   'r["ok"] is True and r["entailed"] is False and r["via"] == "refutation"
    and "model" in r["reason"]'
 
@@ -3150,20 +3180,7 @@ check "unknown op -> error" definitelyNotAnOp "$TMP/empty.json" \
 
 # --- Constant fuel caps on data (https://github.com/danbri/factoidal/issues/818;
 # expected failures until 2026-10-13, plain assertions since the repair)
-# checkx <label> <issue> <op> <argsfile> <python-assert-expr>: like `check`,
-# through `xverdict`, so ISSUE set makes the case an expected failure that
-# fails the run on an XPASS. The output shown is cut to 300 bytes.
-checkx() {
-  local label="$1" issue="$2" op="$3" argsfile="$4" expr="$5"
-  local out ok=0
-  out="$("$CLI" call "$op" "$argsfile")"
-  if printf '%s' "$out" | python3 -c "
-import json, sys
-r = json.load(sys.stdin)
-assert ($expr), r
-" 2>/dev/null; then ok=1; fi
-  xverdict "$label" "$issue" "$ok" "$(printf '%s' "$out" | head -c 300)"
-}
+# checkx (defined above, after xverdict) is used by the cases below.
 # coll_args <file> <n>: INSERT DATA of one collection with the members 0 .. n-1.
 coll_args() {
   python3 - "$1" "$2" <<'PYEOF'

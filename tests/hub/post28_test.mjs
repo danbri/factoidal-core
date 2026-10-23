@@ -89,8 +89,10 @@ test('post28: mathmlDemo evaluates 2+3 to an exact rational and 1/0 to undef', a
   const demo = await post.value('mathmlDemo');
   assert.equal(demo.length, 2);
   assert.deepEqual(demo[0],
-    { contentMathml: '<apply><plus/><cn>2</cn><cn>3</cn></apply>', value: '5/1' });
-  assert.equal(demo[1].contentMathml, '<apply><divide/><cn>1</cn><cn>0</cn></apply>');
+    { contentMathml: '<math xmlns="http://www.w3.org/1998/Math/MathML">' +
+        '<apply><plus/><cn>2</cn><cn>3</cn></apply></math>', value: '5/1' });
+  assert.equal(demo[1].contentMathml, '<math xmlns="http://www.w3.org/1998/Math/MathML">' +
+    '<apply><divide/><cn>1</cn><cn>0</cn></apply></math>');
   // 1/0 has no value. MathML 3 § 4 fixes no wording for the reason, so
   // the pin is the undefined value itself (the cell's formatMathValue
   // writes `undef (<reason>)` for it), never a number.

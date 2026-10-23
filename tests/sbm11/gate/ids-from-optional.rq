@@ -1,0 +1,3 @@
+PREFIX ex: <http://ex.org/>
+# FROM in an OPTIONAL group.
+SELECT * FROM ex:g1 FROM ex:g2 WHERE { ?s ex:knows ?o OPTIONAL { ?s ex:name ?n } }

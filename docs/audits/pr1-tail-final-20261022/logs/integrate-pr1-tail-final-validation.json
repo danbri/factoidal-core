@@ -1,0 +1,31 @@
+{
+  "checked_utc": "2026-10-22T18:16:44.870729+00:00",
+  "source_commit": "37746b6733ded80931c7c96662197b5fc68df209",
+  "checks": {
+    "rif_counts_and_exit": true,
+    "xsd_counts_and_exit": true,
+    "rif_output_unchanged": true,
+    "xsd_output_unchanged": true,
+    "runner_controls_passed": true,
+    "tail_source_matches": true,
+    "xsd_repair_preserved": true
+  },
+  "counts": {
+    "rif": {
+      "pass": 42,
+      "fail": 1,
+      "unknown": 3,
+      "unread": 0,
+      "exit_code": 1
+    },
+    "xsd": {
+      "pass": 16135,
+      "fail": 0,
+      "excluded": 10222,
+      "pattern_excluded": 2925,
+      "exit_code": 0
+    },
+    "selected_cli_methods": 4
+  },
+  "interpretation": "Native results unchanged after proved tail replacements; excluded/unknown are not passes and RIF remains red."
+}

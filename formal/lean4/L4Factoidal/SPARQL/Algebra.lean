@@ -111,7 +111,7 @@ def patternBoundAll : PatternBound := {}
 
 /-- Does this triple match the bound? Each bound position compares with
 the ENGINE equality of its own kind, so a bound literal object matches
-by literal equality (language-tag case, XMLLiteral canonical form) and
+by literal equality (language-tag case folded) and
 not by exact field identity. Port of the per-position test inside
 `triple_matches_bound_acc`. -/
 def boundMatches (b : PatternBound) (t : Triple) : Bool :=
@@ -215,8 +215,8 @@ def Binding.freshnessCtx (key : VarName) (mu : Binding) : String :=
 
 /-- SPARQL 1.1 §18.3: "Two solution mappings μ1 and μ2 are compatible
 if, for every variable v in dom(μ1) and in dom(μ2), μ1(v) = μ2(v)."
-Term comparison is the engine equality `Term.eqb` (language-tag case,
-XMLLiteral c14n) — port of `sm_compatible`. -/
+Term comparison is the engine equality `Term.eqb` (RDF term equality,
+language-tag case folded) — port of `sm_compatible`. -/
 def Binding.compatible : Binding → Binding → Bool
   | [],             _   => true
   | (v, t) :: rest, mu2 =>
@@ -429,7 +429,7 @@ transfers across the equality.
 
 Keys are canonicalised with `Term.joinKey` (RDF/Core.lean) because row
 compatibility is `Term.eqb`, which is coarser than structural
-equality (language-tag case, XMLLiteral c14n);
+equality (language-tag case);
 `Term.joinKey_eq_of_eqb` is the bridge. A bucket probe still runs the
 FULL compatibility (or `tpMatch`) test on every candidate, so the key
 only ever has to be sound (eqb-compatible rows share a key), never

@@ -1,0 +1,223 @@
+⚠ [2/8] Replayed L4Factoidal.RDF.Core
+info: L4Factoidal/RDF/Core.lean:239:0: 'L4Factoidal.RDF.Term.hashDown_eq' depends on axioms: [propext, Classical.choice, Quot.sound]
+info: L4Factoidal/RDF/Core.lean:240:0: 'L4Factoidal.RDF.Term.hashFast_eq' depends on axioms: [propext, Classical.choice, Quot.sound]
+warning: L4Factoidal/RDF/Core.lean:372:10: This simp argument is unused:
+  h
+
+Hint: Omit it from the simp argument list.
+  [apply] simp [XmlCanon.xmlCanonEq]
+
+Note: This linter can be disabled with `set_option linter.unusedSimpArgs false`
+info: L4Factoidal/RDF/Core.lean:661:0: 'L4Factoidal.RDF.Term.joinKeyLoop_eq' depends on axioms: [propext, Classical.choice, Quot.sound]
+info: L4Factoidal/RDF/Core.lean:662:0: 'L4Factoidal.RDF.Term.joinKey_eq_fast' depends on axioms: [propext, Classical.choice, Quot.sound]
+⚠ [12/22] Replayed L4Factoidal.Regex.XPath
+warning: L4Factoidal/Regex/XPath.lean:628:22: This simp argument is unused:
+  hc
+
+Hint: Omit it from the simp argument list.
+  [apply] simp [replaceLoopAcc_eq cre prefixRe multiline rep inputAll fuel]
+
+Note: This linter can be disabled with `set_option linter.unusedSimpArgs false`
+warning: L4Factoidal/Regex/XPath.lean:631:18: This simp argument is unused:
+  hc
+
+Hint: Omit it from the simp argument list.
+  [apply] simp [ho, replaceLoopAcc_eq cre prefixRe multiline rep inputAll fuel]
+
+Note: This linter can be disabled with `set_option linter.unusedSimpArgs false`
+warning: L4Factoidal/Regex/XPath.lean:632:18: This simp argument is unused:
+  hc
+
+Hint: Omit it from the simp argument list.
+  [apply] simp [ho, replaceLoopAcc_eq cre prefixRe multiline rep inputAll fuel]
+
+Note: This linter can be disabled with `set_option linter.unusedSimpArgs false`
+⚠ [17/36] Replayed L4Factoidal.XML.Parser
+warning: L4Factoidal/XML/Parser.lean:1716:20: This simp argument is unused:
+  Bool.or_assoc
+
+Hint: Omit it from the simp argument list.
+  [apply] simp [Bool.or_comm, Bool.or_left_comm]
+
+Note: This linter can be disabled with `set_option linter.unusedSimpArgs false`
+warning: L4Factoidal/XML/Parser.lean:2224:5: This simp argument is unused:
+  List.append_nil
+
+Hint: Omit it from the simp argument list.
+  [apply] simp_all (config := { zetaDelta := true }) only [resumeC_exit, resumeC_err, resumeC_nil, resumeC_cons_ok,
+    ↓reduceIte, Bool.false_eq_true, decide_true, decide_false, Bool.and_true, Bool.or_false, Bool.and_false,
+    Bool.false_and, Bool.true_or, Bool.or_true, List.cons_append, List.append_assoc, List.nil_append]
+
+Note: This linter can be disabled with `set_option linter.unusedSimpArgs false`
+warning: L4Factoidal/XML/Parser.lean:2787:14: Variable name `f` is not explicitly referenced.
+
+Hint: The binding can be removed (if unused) or named `_` (if used implicitly). Alternatively, prefix the name with `_` to silence this warning:
+  [apply] _f
+
+Note: This linter can be disabled with `set_option linter.unusedVariables false`
+⚠ [27/36] Replayed L4Factoidal.XSLT.Transform
+warning: L4Factoidal/XSLT/Transform.lean:761:37: This simp argument is unused:
+  h
+
+Hint: Omit it from the simp argument list.
+  [apply] simp [insertByTR_go_eq le x ys]
+
+Note: This linter can be disabled with `set_option linter.unusedSimpArgs false`
+ℹ [43/62] Replayed L4Factoidal.RDF.ConciseBoundedDescription
+info: L4Factoidal/RDF/ConciseBoundedDescription.lean:368:0: 'L4Factoidal.RDF.cbd_subset' depends on axioms: [propext, Classical.choice, Quot.sound]
+info: L4Factoidal/RDF/ConciseBoundedDescription.lean:369:0: 'L4Factoidal.RDF.cbd_root_triples' depends on axioms: [propext, Classical.choice, Quot.sound]
+info: L4Factoidal/RDF/ConciseBoundedDescription.lean:370:0: 'L4Factoidal.RDF.cbd_nil' depends on axioms: [propext, Classical.choice, Quot.sound]
+ℹ [44/62] Replayed L4Factoidal.SPARQL.OrderedPrefix
+info: L4Factoidal/SPARQL/OrderedPrefix.lean:106:0: 'L4Factoidal.SPARQL.mergeSortPrefix_eq_take' depends on axioms: [propext, Quot.sound]
+info: L4Factoidal/SPARQL/OrderedPrefix.lean:107:0: 'L4Factoidal.SPARQL.mergePrefix_eq_TR' depends on axioms: [propext, Quot.sound]
+ℹ [45/62] Replayed L4Factoidal.SPARQL.IndexedEvalRefinement
+info: L4Factoidal/SPARQL/IndexedEvalRefinement.lean:854:0: 'L4Factoidal.SPARQL.hashMinus_eq_minus' depends on axioms: [propext, Classical.choice, Quot.sound]
+info: L4Factoidal/SPARQL/IndexedEvalRefinement.lean:856:0: 'L4Factoidal.SPARQL.hashLeftJoin_eq_leftJoin' depends on axioms: [propext, Classical.choice, Quot.sound]
+info: L4Factoidal/SPARQL/IndexedEvalRefinement.lean:857:0: 'L4Factoidal.SPARQL.hashJoin_eq_join' depends on axioms: [propext, Classical.choice, Quot.sound]
+info: L4Factoidal/SPARQL/IndexedEvalRefinement.lean:858:0: 'L4Factoidal.SPARQL.cachedTpIndex_correct' depends on axioms: [propext, Classical.choice, Quot.sound]
+info: L4Factoidal/SPARQL/IndexedEvalRefinement.lean:859:0: 'L4Factoidal.SPARQL.evalBgpStepCached_correct' depends on axioms: [propext, Classical.choice, Quot.sound]
+info: L4Factoidal/SPARQL/IndexedEvalRefinement.lean:860:0: 'L4Factoidal.SPARQL.evalBgpRowsCached_eq' depends on axioms: [propext, Classical.choice, Quot.sound]
+info: L4Factoidal/SPARQL/IndexedEvalRefinement.lean:861:0: 'L4Factoidal.SPARQL.evalBgpIdx_eq_evalBgp' depends on axioms: [propext, Classical.choice, Quot.sound]
+info: L4Factoidal/SPARQL/IndexedEvalRefinement.lean:862:0: 'L4Factoidal.SPARQL.evalIn_bgp' depends on axioms: [propext, Classical.choice, Quot.sound]
+ℹ [46/62] Replayed L4Factoidal.SPARQL.ExistsIndex
+info: L4Factoidal/SPARQL/ExistsIndex.lean:114:0: 'L4Factoidal.SPARQL.ExistsIndex.bgpNonempty_ofGraph' depends on axioms: [propext, Classical.choice, Quot.sound]
+⚠ [48/69] Replayed L4Factoidal.Storage.Bytes
+warning: L4Factoidal/Storage/Bytes.lean:168:6: try 'simp' instead of 'simpa'
+
+Note: This linter can be disabled with `set_option linter.unnecessarySimpa false`
+⚠ [50/69] Replayed L4Factoidal.Storage.DeltaLog
+warning: L4Factoidal/Storage/DeltaLog.lean:214:2: try 'simp' instead of 'simpa'
+
+Note: This linter can be disabled with `set_option linter.unnecessarySimpa false`
+warning: L4Factoidal/Storage/DeltaLog.lean:969:37: This simp argument is unused:
+  filterBatchesSinceEpoch
+
+Hint: Omit it from the simp argument list.
+  [apply] simp [splitBatchesSinceEpoch?] at h
+
+Note: This linter can be disabled with `set_option linter.unusedSimpArgs false`
+warning: L4Factoidal/Storage/DeltaLog.lean:1008:51: This simp argument is unused:
+  if_false
+
+Hint: Omit it from the simp argument list.
+  [apply] simp only [List.filter_cons, replay]
+
+Note: This linter can be disabled with `set_option linter.unusedSimpArgs false`
+info: L4Factoidal/Storage/DeltaLog.lean:1110:0: 'L4Factoidal.Storage.parseNFramedDeltaEntriesLoop_eq' depends on axioms: [propext, Classical.choice, Quot.sound]
+info: L4Factoidal/Storage/DeltaLog.lean:1111:0: 'L4Factoidal.Storage.parseNFramedDeltaEntries_eq_fast' depends on axioms: [propext, Classical.choice, Quot.sound]
+✖ [51/75] Building L4Factoidal.RDF.TermIdentity (2.4s)
+trace: .> LEAN_PATH=/Users/danbri/working/sandbox/october/tpac/codex-npm-review/integrate-pr1/formal/lean4/.lake/build/lib/lean /Users/danbri/.elan/toolchains/leanprover--lean4---v4.33.1/bin/lean /Users/danbri/working/sandbox/october/tpac/codex-npm-review/integrate-pr1/formal/lean4/L4Factoidal/RDF/TermIdentity.lean -o /Users/danbri/working/sandbox/october/tpac/codex-npm-review/integrate-pr1/formal/lean4/.lake/build/lib/lean/L4Factoidal/RDF/TermIdentity.olean -i /Users/danbri/working/sandbox/october/tpac/codex-npm-review/integrate-pr1/formal/lean4/.lake/build/lib/lean/L4Factoidal/RDF/TermIdentity.ilean -c /Users/danbri/working/sandbox/october/tpac/codex-npm-review/integrate-pr1/formal/lean4/.lake/build/ir/L4Factoidal/RDF/TermIdentity.c --setup /Users/danbri/working/sandbox/october/tpac/codex-npm-review/integrate-pr1/formal/lean4/.lake/build/ir/L4Factoidal/RDF/TermIdentity.setup.json --json
+error: L4Factoidal/RDF/TermIdentity.lean:40:12: Unknown constant `Bool.and_eq_true.mpr`
+error: Lean exited with code 1
+✔ [54/77] Built L4Factoidal.Regex.Profiles (3.3s)
+✔ [55/85] Built L4Factoidal.Fn.NumericUnary (3.1s)
+✖ [62/86] Building L4Factoidal.XSLT.TransformTests (3.5s)
+trace: .> LEAN_PATH=/Users/danbri/working/sandbox/october/tpac/codex-npm-review/integrate-pr1/formal/lean4/.lake/build/lib/lean /Users/danbri/.elan/toolchains/leanprover--lean4---v4.33.1/bin/lean /Users/danbri/working/sandbox/october/tpac/codex-npm-review/integrate-pr1/formal/lean4/L4Factoidal/XSLT/TransformTests.lean -o /Users/danbri/working/sandbox/october/tpac/codex-npm-review/integrate-pr1/formal/lean4/.lake/build/lib/lean/L4Factoidal/XSLT/TransformTests.olean -i /Users/danbri/working/sandbox/october/tpac/codex-npm-review/integrate-pr1/formal/lean4/.lake/build/lib/lean/L4Factoidal/XSLT/TransformTests.ilean -c /Users/danbri/working/sandbox/october/tpac/codex-npm-review/integrate-pr1/formal/lean4/.lake/build/ir/L4Factoidal/XSLT/TransformTests.c --setup /Users/danbri/working/sandbox/october/tpac/codex-npm-review/integrate-pr1/formal/lean4/.lake/build/ir/L4Factoidal/XSLT/TransformTests.setup.json --json
+error: L4Factoidal/XSLT/TransformTests.lean:188:0: Expression
+  run
+      "<x:stylesheet xmlns:x='http://www.w3.org/1999/XSL/Transform' xmlns:p='urn:p' version='1.0'><x:template match='/'><x:for-each select=\"document('')//p:a\"><x:copy/></x:for-each></x:template><p:a/></x:stylesheet>"
+      "<doc/>" ==
+    "<p:a xmlns:x=\"http://www.w3.org/1999/XSL/Transform\" xmlns:p=\"urn:p\"/>"
+did not evaluate to `true`
+error: L4Factoidal/XSLT/TransformTests.lean:203:0: Expression
+  run
+      "<x:stylesheet xmlns:x='http://www.w3.org/1999/XSL/Transform' xmlns:p='urn:p' version='1.0'><x:template match='/'><x:variable name='v' select=\"document('')//p:a\"/><x:for-each select='$v'><x:value-of select='namespace-uri(.)'/><x:value-of select='name(..)'/><x:copy-of select='.'/></x:for-each></x:template><p:a/></x:stylesheet>"
+      "<doc/>" ==
+    "urn:px:stylesheet<p:a xmlns:x=\"http://www.w3.org/1999/XSL/Transform\" xmlns:p=\"urn:p\"/>"
+did not evaluate to `true`
+error: Lean exited with code 1
+ℹ [64/105] Built L4Factoidal.Fn.ComparisonTheorems (4.2s)
+info: L4Factoidal/Fn/ComparisonTheorems.lean:20:0: 'L4Factoidal.Fn.Comparison.numericCompare_dec_refl' depends on axioms: [propext, Classical.choice, Quot.sound]
+info: L4Factoidal/Fn/ComparisonTheorems.lean:21:0: 'L4Factoidal.Fn.Comparison.fvalCmp_refl' depends on axioms: [propext, Classical.choice, Quot.sound]
+info: L4Factoidal/Fn/ComparisonTheorems.lean:22:0: 'L4Factoidal.Fn.Comparison.numericCompare_dbl_refl' depends on axioms: [propext, Classical.choice, Quot.sound]
+ℹ [75/105] Replayed L4Factoidal.Syntax.NTriples
+info: L4Factoidal/Syntax/NTriples.lean:466:0: 'L4Factoidal.Syntax.readObject12Down_eq' depends on axioms: [propext, Classical.choice, Quot.sound]
+info: L4Factoidal/Syntax/NTriples.lean:467:0: 'L4Factoidal.Syntax.readObject12_eq_loop' depends on axioms: [propext, Classical.choice, Quot.sound]
+info: L4Factoidal/Syntax/NTriples.lean:770:0: 'L4Factoidal.Syntax.Term.toNTriplesLoop_eq' depends on axioms: [propext, Classical.choice, Quot.sound]
+info: L4Factoidal/Syntax/NTriples.lean:771:0: 'L4Factoidal.Syntax.Term.toNTriples_eq_fast' depends on axioms: [propext, Classical.choice, Quot.sound]
+info: L4Factoidal/Syntax/NTriples.lean:883:0: 'L4Factoidal.Syntax.Graph.toNTriples_eq_lines' depends on axioms: [propext, Classical.choice, Quot.sound]
+info: L4Factoidal/Syntax/NTriples.lean:1044:0: 'L4Factoidal.Syntax.Term.toCanonicalNTriplesLoop_eq' depends on axioms: [propext, Classical.choice, Quot.sound]
+info: L4Factoidal/Syntax/NTriples.lean:1045:0: 'L4Factoidal.Syntax.Term.toCanonicalNTriples_eq_fast' depends on axioms: [propext, Classical.choice, Quot.sound]
+✔ [77/107] Built L4Factoidal.RML.Record (2.6s)
+ℹ [78/107] Replayed L4Factoidal.Syntax.Turtle
+info: L4Factoidal/Syntax/Turtle.lean:297:0: 'L4Factoidal.Syntax.TurtleState.lookupPrefixIndexed_eq' depends on axioms: [propext, Classical.choice, Quot.sound]
+info: L4Factoidal/Syntax/Turtle.lean:298:0: 'L4Factoidal.Syntax.TurtleState.lookupPrefix_eq_indexed' depends on axioms: [propext, Classical.choice, Quot.sound]
+info: L4Factoidal/Syntax/Turtle.lean:299:0: 'L4Factoidal.Syntax.TurtleState.lookupPrefix_bindPrefix' depends on axioms: [propext, Classical.choice, Quot.sound]
+info: L4Factoidal/Syntax/Turtle.lean:1317:0: 'L4Factoidal.Syntax.readTripleTermDown_eq' depends on axioms: [propext, Classical.choice, Quot.sound]
+info: L4Factoidal/Syntax/Turtle.lean:1318:0: 'L4Factoidal.Syntax.readTripleTerm_eq_loop' depends on axioms: [propext, Classical.choice, Quot.sound]
+info: L4Factoidal/Syntax/Turtle.lean:1319:0: 'L4Factoidal.Syntax.readTtObject_eq_loop' depends on axioms: [propext, Classical.choice, Quot.sound]
+✔ [79/107] Built L4Factoidal.RML.Star (3.8s)
+✔ [80/107] Built L4Factoidal.JSONSchema.Validate (6.2s)
+✔ [81/107] Built L4Factoidal.JSON.Parser (10s)
+ℹ [82/107] Built L4Factoidal.Regex.ProfileTests (3.2s)
+info: L4Factoidal/Regex/ProfileTests.lean:25:0: 'L4Factoidal.Regex.Profiles.matchWith' depends on axioms: [propext, Classical.choice, Quot.sound]
+✔ [83/107] Built L4Factoidal.RDF.Datatypes (5.9s)
+⚠ [84/107] Built L4Factoidal.RML.Mapping (16s)
+warning: L4Factoidal/RML/Mapping.lean:214:18: `String.mk` has been deprecated: Use `String.ofList` instead
+warning: L4Factoidal/RML/Mapping.lean:221:40: `String.mk` has been deprecated: Use `String.ofList` instead
+warning: L4Factoidal/RML/Mapping.lean:227:58: `String.mk` has been deprecated: Use `String.ofList` instead
+✔ [85/107] Built L4Factoidal.RML.Model (1.0s)
+✔ [86/107] Built L4Factoidal.RML.FromGraph (3.1s)
+✔ [87/107] Built L4Factoidal.RML.Open (3.4s)
+ℹ [88/107] Built L4Factoidal.XSD.ValueSpaceTheorems (28s)
+info: L4Factoidal/XSD/ValueSpaceTheorems.lean:24:0: 'L4Factoidal.XSD.decimal_value_membership' depends on axioms: [propext, Classical.choice, Quot.sound]
+info: L4Factoidal/XSD/ValueSpaceTheorems.lean:25:0: 'L4Factoidal.XSD.dayTime_value_membership' depends on axioms: [propext, Classical.choice, Quot.sound]
+info: L4Factoidal/XSD/ValueSpaceTheorems.lean:26:0: 'L4Factoidal.XSD.refused_source_membership' depends on axioms: [propext, Classical.choice, Quot.sound]
+info: L4Factoidal/XSD/ValueSpaceTheorems.lean:51:0: 'L4Factoidal.XSD.checked_integer_value' depends on axioms: [propext, Classical.choice, Quot.sound]
+info: L4Factoidal/XSD/ValueSpaceTheorems.lean:52:0: 'L4Factoidal.XSD.checked_int_value' depends on axioms: [propext, Classical.choice, Quot.sound]
+⚠ [89/107] Built L4Factoidal.RML.Functions (4.6s)
+warning: L4Factoidal/RML/Functions.lean:212:20: `String.trim` has been deprecated: Use `String.trimAscii` instead
+
+Note: The updated constant has a different type:
+  String → String.Slice
+instead of
+  String → String
+warning: L4Factoidal/RML/Functions.lean:212:20: `String.trim` has been deprecated: Use `String.trimAscii` instead
+
+Note: The updated constant has a different type:
+  String → String.Slice
+instead of
+  String → String
+✔ [90/107] Built L4Factoidal.XSD.Facets (30s)
+✔ [91/107] Built L4Factoidal.RML.Eval (16s)
+ℹ [92/107] Built L4Factoidal.OWL.RLRules (33s)
+info: L4Factoidal/OWL/RLRules.lean:593:0: 'L4Factoidal.OWL.RL.xsdIntegerDecimal_subset' depends on axioms: [propext, Classical.choice, Quot.sound]
+info: L4Factoidal/OWL/RLRules.lean:594:0: 'L4Factoidal.OWL.RL.xsdIntInteger_subset' depends on axioms: [propext, Classical.choice, Quot.sound]
+✔ [93/107] Built L4Factoidal.OWL.RLClosure (2.8s)
+⚠ [94/107] Built L4Factoidal.SPARQL.Tokenizer (69s)
+warning: L4Factoidal/SPARQL/Tokenizer.lean:940:22: Variable name `c` is not explicitly referenced.
+
+Hint: The binding can be removed (if unused) or named `_` (if used implicitly). Alternatively, prefix the name with `_` to silence this warning:
+  [apply] _c
+
+Note: This linter can be disabled with `set_option linter.unusedVariables false`
+info: L4Factoidal/SPARQL/Tokenizer.lean:1375:0: 'L4Factoidal.SPARQL.nextToken_len' depends on axioms: [propext, Classical.choice, Quot.sound]
+info: L4Factoidal/SPARQL/Tokenizer.lean:1376:0: 'L4Factoidal.SPARQL.tokenizeAt_eq_fast' depends on axioms: [propext, Classical.choice, Quot.sound]
+✔ [96/107] Built L4Factoidal.OWL.RLClosureIndexed (14s)
+ℹ [97/107] Built L4Factoidal.RDF.StoreCapabilities (3.9s)
+info: L4Factoidal/RDF/StoreCapabilities.lean:325:0: 'L4Factoidal.RDF.igEstimateFast_eq' depends on axioms: [propext, Classical.choice, Quot.sound]
+info: L4Factoidal/RDF/StoreCapabilities.lean:326:0: 'L4Factoidal.RDF.igEstimate_csimp' depends on axioms: [propext, Classical.choice, Quot.sound]
+ℹ [98/107] Built L4Factoidal.RDF.StoreCapabilitiesCottas (1.9s)
+info: L4Factoidal/RDF/StoreCapabilitiesCottas.lean:247:0: 'L4Factoidal.RDF.CottasCaps.capsOfCottas_lawful' depends on axioms: [propext, Classical.choice, Quot.sound]
+info: L4Factoidal/RDF/StoreCapabilitiesCottas.lean:248:0: 'L4Factoidal.RDF.CottasCaps.capsOfCottas_readOnly' depends on axioms: [propext, Classical.choice, Quot.sound]
+info: L4Factoidal/RDF/StoreCapabilitiesCottas.lean:249:0: 'L4Factoidal.RDF.CottasCaps.capsOfCottas_accelerated' depends on axioms: [propext, Classical.choice, Quot.sound]
+info: L4Factoidal/RDF/StoreCapabilitiesCottas.lean:250:0: 'L4Factoidal.RDF.CottasCaps.capsOfIndexed_lawful' depends on axioms: [propext, Classical.choice, Quot.sound]
+⚠ [99/107] Built L4Factoidal.RDF.StoreDeltaMerge (2.5s)
+warning: L4Factoidal/RDF/StoreDeltaMerge.lean:223:18: This simp argument is unused:
+  ha
+
+Hint: Omit it from the simp argument list.
+  [apply] simp [graphMem_of_graphMem_eqb ha h]
+
+Note: This linter can be disabled with `set_option linter.unusedSimpArgs false`
+✔ [100/107] Built L4Factoidal.RML.VirtualSource (2.7s)
+✔ [101/107] Built L4Factoidal.RDF.StoreCapabilitiesDelta (1.4s)
+ℹ [102/107] Built L4Factoidal.SPARQL.StoreBackend (1.7s)
+info: L4Factoidal/SPARQL/StoreBackend.lean:284:0: 'L4Factoidal.SPARQL.StoreBackend.backendSearch_via_caps' depends on axioms: [propext, Classical.choice, Quot.sound]
+info: L4Factoidal/SPARQL/StoreBackend.lean:285:0: 'L4Factoidal.SPARQL.StoreBackend.capsOfBackendList_map' depends on axioms: [propext, Classical.choice, Quot.sound]
+info: L4Factoidal/SPARQL/StoreBackend.lean:286:0: 'L4Factoidal.SPARQL.StoreBackend.capsOfReadOps_lawful' depends on axioms: [propext, Classical.choice, Quot.sound]
+info: L4Factoidal/SPARQL/StoreBackend.lean:287:0: 'L4Factoidal.SPARQL.StoreBackend.capsOfList_lawful' depends on axioms: [propext, Classical.choice, Quot.sound]
+Some required targets logged failures:
+- L4Factoidal.RDF.TermIdentity
+- L4Factoidal.XSLT.TransformTests
+error: build failed

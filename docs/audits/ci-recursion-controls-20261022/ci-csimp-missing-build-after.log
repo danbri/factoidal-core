@@ -1,0 +1,2 @@
+NOT RUN: missing emitted C for L4Factoidal.CsimpReachFixture, Harness.Qlvr at /Users/danbri/working/sandbox/october/tpac/codex-npm-review/integrate-pr3/formal/lean4/.lake/build/ir -- run `lake build L4Factoidal l4wasm +Harness.Qlvr` in formal/lean4, or pass --synthetic-only
+28 pass, 0 fail, 0 not run (out of 28); real-build cases NOT RUN

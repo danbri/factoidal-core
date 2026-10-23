@@ -26,14 +26,17 @@ private def look : String → Option String :=
 -- `prepareLexical` returns the lexical form AND whether the column's
 -- datatype applies to it. A cell that fails its own format keeps its
 -- text and loses the datatype claim.
-#guard prepareLexical (some (.named "string")) "  x  " == ("  x  ", true)
-#guard prepareLexical (some (.named "date")) " 2010-10-18 " == ("2010-10-18", true)
-#guard prepareLexical none "  x  " == ("  x  ", true)   -- absent datatype is string
-#guard prepareLexical
+private def preparedValue (dt : Option Datatype) (cell : String) :=
+  (prepareLexical dt cell).value
+
+#guard preparedValue (some (.named "string")) "  x  " == ("  x  ", true)
+#guard preparedValue (some (.named "date")) " 2010-10-18 " == ("2010-10-18", true)
+#guard preparedValue none "  x  " == ("  x  ", true)   -- absent datatype is string
+#guard preparedValue
          (some (.object (some "date") (some "M/d/yyyy") none none none none
                  none none none none none none none none none))
          "10/18/2010" == ("2010-10-18", true)
-#guard prepareLexical
+#guard preparedValue
          (some (.object (some "date") (some "M/d/yyyy") none none none none
                  none none none none none none none none none))
          "not a date" == ("not a date", false)

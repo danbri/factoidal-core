@@ -230,7 +230,8 @@ def lessThanOkDoc : String :=
 
 /-! ### §4.3 value range on xsd:dateTime (timezone comparability) -/
 
-#guard numericCmpLe (Literal.string "2002-10-10T12:00:00") (Literal.string "x") == none
+-- These are strings, so the SPARQL relational mapping compares codepoints.
+#guard numericCmpLe (Literal.string "2002-10-10T12:00:00") (Literal.string "x") == some true
 #guard dtCmp "2002-10-10T12:00:00-05:00" "2002-10-10T12:00:01-05:00" == some (-1)
 #guard dtCmp "2002-10-10T12:00:00-05:00" "2002-10-10T17:00:00Z" == some 0
 #guard dtCmp "2002-10-10T12:00:00-05:00" "2002-10-10T12:00:00" == none

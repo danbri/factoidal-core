@@ -1,6 +1,6 @@
 # Capability-aware, cost-based planner for data access, computation and service interaction
 
-2026-10-12. Status: direction set by the owner. KR 2.1, 2.2, 2.3 and 2.4 landed (sections 8, 9, 10, 11); batch 3 KR 4.1 and 4.2 landed (sections 12, 13).
+2026-10-12. Status: direction set by the owner. KR 2.1, 2.2, 2.3 and 2.4 landed (sections 8, 9, 10, 11); batch 3 KR 4.1, 4.2, 4.3 and 4.4 landed (sections 12, 13, 14, 15).
 
 Tracking:
 - Epic: https://github.com/danbri/factoidal/issues/800
@@ -1037,7 +1037,105 @@ Result 2026-10-22: planner: 91 pass, 0 fail, 15 expected-fail (out of
 
 ### Open
 
-- Probes of lookups (a sample input) and of other statistics (latency, a
-  `HEAD` request, a service description fetch) are not modelled.
+- Probes of lookups (a sample input) are not modelled:
+  https://github.com/danbri/factoidal/issues/938, xfail case
+  `probe-lookup-sample` (`Harness/PlannerTest.lean`, `probeXcases`).
+- Probes of other statistics (latency, a `HEAD` request, a service
+  description fetch) are not modelled:
+  https://github.com/danbri/factoidal/issues/938, xfail case
+  `probe-latency-statistic` (after the probes, the observed latency of a
+  probed source is still unknown).
 - The driver over IO calls (https://github.com/danbri/factoidal/issues/933,
   xfail `exec-driver-io`) makes no probe through IO yet.
+
+## 15. KR 4.4: WebMCP tools and LLM operations
+
+Landed 2026-10-22 for OKR batch 3, KR 4.4
+(https://github.com/danbri/factoidal/issues/875). Baseline: six source
+kinds; the LLM capability was a mock with an approximation mark
+(`mcp-approximate-marked`). Result: eight source kinds (`sbm11`, `memory`,
+`sparql`, `facadex`, `rest`, `mcp`, `webmcp`, `llm`).
+
+### WebMCP (`Planner/Kinds/WebMcp.lean`)
+
+Source: "WebMCP", Draft Community Group Report, 20 October 2026, W3C Web
+Machine Learning Community Group,
+https://webmachinelearning.github.io/webmcp/. A page registers a tool with
+`document.modelContext.registerTool(tool, options)`. The tool is a
+`ModelContextTool` dictionary: `name`, `title`, `description`,
+`inputSchema` (a JSON Schema object), `execute` (a callback that returns a
+promise of any value) and `annotations` (`ToolAnnotations`:
+`readOnlyHint`, `untrustedContentHint`, `consequentialHint`, `debugging`,
+all `false` by default). `executeTool(tool, inputObject, options)`
+resolves to the JSON serialisation of the value. The draft has no output
+schema.
+
+| Item | Rule |
+|---|---|
+| Description document | `{ "origin", "tool": <the tool without execute>, "org.factoidal/rdf": <mapping> }`. A WebIDL dictionary drops members that it does not define, so the mapping is beside the tool, not in it. |
+| Access pattern | the mapping's `subject` (a required property of `inputSchema`) is tuple position 0, an IRI by `subjectTemplate`; each property in `predicates` gives one predicate-form capability, inputs `[0]`. A second required input is refused (xfail `webmcp-two-required-inputs`, https://github.com/danbri/factoidal/issues/801). |
+| Outputs | the mapped properties of the top-level object of the parsed result string. |
+| Location | `browser:<origin>`: the call runs in the user agent of the page. |
+| Data source condition | `readOnlyHint: true` and `consequentialHint` not true. The planner calls a source any number of times in any order; another tool is refused. |
+| Cost, exactness | `cost` (default 30 per call, 1 per row); `exactness` `exact` (default) or `approximate`. |
+| Implementation | `webmcpImpl`: one `executeTool` through a function origin → name → input → `Option String`; a rejection gives no tuple. Tests: a mock; no browser, no network. |
+
+### LLM operations (`Planner/Kinds/Llm.lean`)
+
+| Item | Rule |
+|---|---|
+| Description document | `name`, `model`, optional `endpoint`, `prompt` with one slot `{subject}`, `subject`, `subjectTemplate`, `predicates`, `objectIri`, `cost` (`perCall`, `perRow`, `callQuota`, `latencyMs`), optional `confidence`. |
+| Exactness | always `approximate`. A document that states `"exactness": "exact"` is refused. |
+| Cost and latency | `CostModel` (default 1000 per call, 0 per row); the new field `CostModel.latency` (milliseconds per call). |
+| Confidence | optional; a JSON number from 0 to 1 with at most three fraction digits, kept in thousandths in the new field `Capability.confidence`. It is information for the caller; the marker of a row does not depend on it. |
+| Location | `llm:<endpoint>`, or `llm:<model>`. |
+| Implementation | `llmImpl`: one completion through a function model → prompt → `Option String`; the text is parsed as JSON; a completion that is not a JSON object gives no tuple. Tests: a mock; no network. |
+
+### Theorems (`Planner/Exactness.lean`)
+
+`Plan.execUsed` is `Plan.exec` with, for each row, the catalog indices of
+the sources whose tuples made it (a join adds both sides, a union takes its
+branch). `Plan.runUsed` starts it from the empty, unmarked row.
+
+| Theorem | Statement |
+|---|---|
+| `execUsed_rows` | `(p.execUsed cat r).map Prod.fst = p.exec cat r` |
+| `execUsed_approx` | for `(x, u) ∈ p.execUsed cat r`: every index in `u` names a catalog source, and `x.approx = (r.approx \|\| u.any (srcApprox cat))` |
+| `runUsed_exact_iff` | for `(x, u) ∈ p.runUsed cat`: `x.approx = false ↔ ∀ i ∈ u, ∃ s, cat[i]? = some s ∧ s.cap.exactness = .exact` |
+| `run_exact_only_if` | an unmarked row of `p.run cat` has a derivation `u` in `runUsed` whose sources are all exact |
+| `rewriting_used`, `rewriting_run_approx` | every row of `rw.toPlan req` uses the source of every step; so its marker is `rw.approx cat` |
+
+Hazard 29: the hypotheses are membership of a row in a run; none contains
+the conclusion. `exec_approx_of_allExact` (section 8) is the special case
+of a catalog with exact sources only. The driver's `done` output is the
+`Plan.run` of a member of `search` (`runProbed_spec`, section 14), so the
+same marker rule holds for it. `#print axioms` for each: `propext`,
+`Classical.choice`, `Quot.sound` (`Planner/Kinds/Tests.lean`).
+
+### Tests (`lake exe l4planner-test`)
+
+| Case | Checks |
+|---|---|
+| `describe-webmcp` | name `webmcp:lookup_mayor.mayor`; location `browser:https://city.example.org`; exact; input `[0]`; quota 40; no confidence |
+| `describe-webmcp-refuses-consequential` | refused; a tool with no `readOnlyHint` is refused too (`#guard` in `Kinds/Tests.lean`) |
+| `describe-llm` | name `llm:guess_population.population`; approximate; confidence 800; latency 1500; cost 2000; quota 10 |
+| `describe-llm-confidence-optional` | no `confidence`: none, still approximate |
+| `describe-llm-refuses-exact`, `describe-llm-refuses-confidence-out-of-range` | refused |
+| `llm-non-json-answer` | London's completion is not JSON: no tuple; Paris: one tuple |
+| `webmcp-tool-call`, `webmcp-input-never-bound` | the lookup, unmarked; not answerable |
+| `llm-approximate-marked` | the plan is marked |
+| `mixed-exact-approximate-marked` | `?x livesIn ?c . ?c mayor ?m . ?c population ?n` over memory, WebMCP and LLM: the first plan uses the three kinds and is marked |
+| `mixed-exact-control` | `?x livesIn ?c . ?c mayor ?m` on the same catalog: memory and WebMCP, unmarked, the reference answers |
+| `exactness-mixed-approximate`, `exactness-mixed-exact-control`, `exactness-five-kinds` | for every plan of the family: `runUsed` has the rows of `run`; each row's marker equals "some used source is approximate"; each row uses every step; the markers are all `true` (the LLM source is used by every row), all `false`, all `false` |
+
+Result 2026-10-22: planner: 106 pass, 0 fail, 18 expected-fail (out of
+124). New expected failures: `webmcp-two-required-inputs`
+(https://github.com/danbri/factoidal/issues/801), `probe-lookup-sample` and
+`probe-latency-statistic` (https://github.com/danbri/factoidal/issues/938).
+
+### Open
+
+- A WebMCP tool with no RDF mapping (a mapping from the input schema and
+  the result): xfail `tool-without-rdf-mapping`,
+  https://github.com/danbri/factoidal/issues/801.
+

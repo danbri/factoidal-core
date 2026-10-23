@@ -1,0 +1,3 @@
+PREFIX ex: <http://ex.org/>
+# Issue 776: variables bound only inside the body.
+SELECT ?s WHERE { ?s ex:age ?a FILTER EXISTS { ?s ex:knows ?z . ?z ex:knows ?w } }

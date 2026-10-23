@@ -1,0 +1,4 @@
+PREFIX ex: <http://ex.org/>
+PREFIX xsd: <http://www.w3.org/2001/XMLSchema#>
+# Issue 959: VALUES inside a UNION branch; ex:zz is no stored term.
+SELECT * WHERE { { VALUES ?s { ex:a ex:zz } ?s ex:age ?a } UNION { ?s ex:knows ?a } }

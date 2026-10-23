@@ -939,13 +939,144 @@ Worktree of `main` at 26ee727f, 2026-10-12:
 
 ### Still open
 
-- `filterBU` is now the largest part: 12.4 of 21.6 million instructions, 46
-  per B row (C about 10). Its three loads per row have the same bounds tests
-  that `mergeFlatP` proved away; the same method applies.
+- `filterBU` was the largest part: 12.4 of 21.6 million instructions, 46
+  per B row (C about 10). Section 9 repairs it (7.8 million, 29 per row).
 - The ratio in wasm32 stays above the native one (2.3 against 1.9 times C).
 - Code that a `#guard` evaluates cannot call an `@[extern c inline]`
   primitive. A primitive for a production path needs its checks as compiled
   tests, or a form the interpreter can run.
+
+## 9. The scan filter: loads proved in bounds, loads as one primitive (2026-10-22)
+
+Issue: https://github.com/danbri/factoidal/issues/797; OKR batch 3 KR 1.3
+(https://github.com/danbri/factoidal/issues/875). Target: Lean kernel at most
+2 times the C kernel in callgrind instructions (a goal; owner, 2026-10-12:
+"some lean overhead may be unavoidable").
+
+### What was found
+
+In `filterBU` (all 269,625 B rows match) the key compare was one `cmp` with a
+memory operand, but each pushed column value was loaded as eight `movzbl`,
+shifted, or-ed, and stored as separate pieces. The cause is the shape of
+`pushU64LE`: its fast path stores the value, its slow path calls
+`lean_byte_array_push` once for each byte of the same value. The value is
+therefore used both whole and in pieces on two paths, and clang did not merge
+its eight byte loads into one 8-byte load (it merged the loads of the key
+compare, which has one use). Removing the bounds tests alone made it worse:
+27.7 million instructions per run against 21.6, because the bounds tests had
+been hiding nothing and the byte loads stayed.
+
+### What changed
+
+- `Prim.Bytes.ldU64LEIn` is now an `@[extern c inline]` primitive: an 8-byte
+  `__builtin_memcpy` from the array data (a byte swap on a big-endian host).
+  The Lean reference body is `ldU64LEInRef` (the old pure body); `ldU64LEIn`
+  equals it by `rfl` (`ldU64LEIn_eq_ref`); `ldU64LE_eq_in` is unchanged in
+  statement. The differential test `Harness/PrimBytesTest.lean` compares
+  `ldU64LEIn` with `ldU64LEInRef` and with `ldU64LESpec` at every in-bounds
+  position of every case.
+- The fast path of `pushU64LE` stores with an 8-byte `__builtin_memcpy`
+  (byte stores on a big-endian host) and its slow path first copies the value
+  to an 8-byte local, then pushes the local's bytes. Same meaning
+  (`pushU64LERef`); the existing push differential cases cover both paths.
+- `Harness/QlvrKernel.lean`: `filterBP` and `filterAP` (loads `ldU64LEIn`
+  with the proofs `8 * n <= c.usize`), callers `filterBIn` and `filterAIn`
+  (one `USize` test before the loop, else the tested loop), theorems
+  `filterBP_eq`, `filterAP_eq`, `filterBIn_eq`, `filterAIn_eq` (equal to
+  `filterBU` and `filterAU`; `#print axioms`: `propext`, `Quot.sound`). New
+  kernel variant `usize-cpush-filt` (`usize-cpush-in` with both callers).
+
+### Numbers
+
+Callgrind 3.22, native, `l4qlvr-kernel` built by Lake, million instructions
+per kernel run (2 runs, inclusive). C `run`: 7.8 (section 7).
+
+| Variant | total | merge loop | `filterBU`/`filterBP` | filterA | ratio to C |
+| --- | ---: | ---: | ---: | ---: | ---: |
+| `usize-cpush-in` (before) | 21.6 | 8.2 | 12.4 | 0.4 | 2.77 |
+| `usize-cpush-filt` (after) | 16.5 | 8.1 | 7.8 | 0.4 | 2.11 |
+
+`filterBP`: 29 instructions per B row (46 before; C about 10). Wall time,
+native, 20 runs, load average 3.4 to 4.1 (not comparable with section 7):
+`usize-cpush-in` 1.6 ms, `usize-cpush-filt` 1.4 to 1.5 ms, C 0.84 to 0.91 ms
+(median).
+
+### Remaining cost after step C: 2.11 times C (step D below removes it), above the target 2
+
+Per matching row, `filterBP` runs: loop test and increment 4, key compare 2,
+and for each of the two output columns one 8-byte load, the exclusivity test
+(`rc == 1`), the capacity test (load size and capacity, subtract, compare), the
+store, and the size-field update: about 11 each. C writes one store and one
+pointer increment for each column.
+
+- The exclusivity test and the capacity test of each push are required by the
+  semantics of `ByteArray` in Lean (a value that a second reference may share
+  is copied before a write; a full buffer grows). They cannot be hoisted out
+  of the loop by a Lean proof, because exclusivity is a run-time property.
+  Cost: about 16 of the 29 instructions per row.
+- The merge loop (8.1 million) is unchanged by this change. Its remaining
+  tests are the loop tests, the push tests of its two output columns, and the
+  `runEndU` calls (107,000, 2.9 million).
+- A path under 2.0 needs one of: a push that tests exclusivity and capacity
+  once for a block of rows (a new primitive `reserve n` with a Lean
+  reference, and a proof that the loop writes at most `n` rows); or writing
+  both columns from one scan with one exclusivity test for each. Not done;
+  not opened as an issue because 2.11 is within the "some Lean overhead may be
+  unavoidable" statement; the owner may open one.
+
+### Step D: reserve once, push without tests (2026-10-22)
+
+Requested by the coordinator after the 2.11 result. New in
+`Prim/Bytes.lean`:
+
+- `reserveU64 b k` (`@[extern c inline]`; reference `reserveU64Ref`, the
+  identity): `b` made exclusive with room for `k` more 8-byte values (a copy
+  with the capacity when shared or too small).
+- `pushU64LEUnchecked b x` (`@[extern c inline]`; reference
+  `pushU64LEUncheckedRef`): append with no exclusivity test and no capacity
+  test.
+- Theorems `reserveU64_eq_ref`, `pushU64LEUnchecked_eq_ref`,
+  `foldl_unchecked_eq_checked`: reserve, then at most `k` unchecked pushes,
+  equals the same pushes with the checked `pushU64LE` (`#print axioms`:
+  `propext` only; `reserveU64_eq_ref`: none).
+- TRUSTED, not proved: the C precondition. Exclusivity and capacity are
+  run-time properties that Lean's logic does not see, so the Lean theorems
+  hold for the reference bodies and say nothing about a misuse of the C. The
+  precondition (array from `reserveU64`, at most `k` pushes since, no second
+  reference) is checked by the differential cases `runReserveCase` of
+  `Harness/PrimBytesTest.lean` (exclusive and shared inputs; capacity below,
+  at and above the need; `k` from 0 to 100): native 25,760 pass, 0 fail (out
+  of 25,760), wasm32 25,760 pass, 0 fail (out of 25,760). A shared original
+  must stay unchanged after the reserve and the pushes.
+- Use: variant `usize-cpush-res` reserves the A and B filter outputs once
+  (`n` rows; at most `n` pushes since `m <= i <= n`) and runs
+  `filterAIn`/`filterBIn` with `pushAtU`. The merge loop is not changed (its
+  output row count is not bounded by an input count that the loop knows).
+
+| Variant | total | merge loop | `filterBP` | ratio to C (7.8) |
+| --- | ---: | ---: | ---: | ---: |
+| `usize-cpush-in` | 21.6 | 8.2 | 12.4 | 2.77 |
+| `usize-cpush-filt` | 16.5 | 8.1 | 7.8 | 2.11 |
+| `usize-cpush-res` | 13.2 | 8.1 | 4.6 | 1.69 |
+
+`filterBP`: 17 instructions per B row (29 before). Target of at most 2 times
+C (15.6 million) is met.
+
+Wall time, native, 3 rounds of 30 runs, load average 3 to 4 (median ms, min
+ms): `usize-cpush-in` 1.54 to 1.61; `usize-cpush-filt` 1.42 to 1.83;
+`usize-cpush-res` 1.37 to 1.92; C 0.91 to 1.21. The three Lean variants are
+within the noise of each other: the instruction cut of 20 percent does not show
+in wall time on this loaded machine, so the time claim is not made.
+
+### Gates for this change
+
+`lake build` (whole library, 1,868 jobs, 0 errors); `tests/qlvr/run.sh`: 39
+pass, 0 fail (out of 39); `tests/qlvr/kernel.sh`: all implementations agree;
+`tests/prim/run.sh`: native 24,896 pass, 0 fail (out of 24,896), wasm32 24,896
+pass, 0 fail (out of 24,896); `tools/lean-tail-recursion-audit.py --gate`,
+`tools/lean-unbuilt-modules.py --gate`, `tools/lean-registry-audit.py --gate`,
+`tools/lean-csimp-reach.py --gate`: exit 0. No `sorry`, `axiom`,
+`native_decide`, `partial` or raised heartbeats in the diff.
 
 ## What did not work or was not done
 

@@ -1,0 +1,4 @@
+PREFIX ex: <http://ex.org/>
+# GRAPH <i> for a graph with the default graph's triples and for one of two
+# graphs with the same triples, joined with the default graph.
+SELECT * WHERE { ?s ex:p ?o . GRAPH ex:gd { ?o ex:p ?z } GRAPH ex:g2 { ?x ex:p ?s } }

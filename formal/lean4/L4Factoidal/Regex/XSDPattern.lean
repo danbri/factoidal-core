@@ -162,7 +162,10 @@ def classEscapeRanges (letter : Nat) : Option (List (Nat × Nat)) :=
   else if letter = 0x69 then some nameStartCharRanges                                -- \i
   else if letter = 0x49 then some (complementRanges nameStartCharRanges)             -- \I
   else if letter = 0x63 then some nameCharRanges                                     -- \c
-  else if letter = 0x43 then some (complementRanges nameCharRanges)                  -- \C
+  -- NameChar appends ranges to NameStartChar; complement needs sorted,
+  -- disjoint intervals. Positive-class union semantics does not need that.
+  else if letter = 0x43 then
+    some (complementRanges (Text.CaseMap.normalizeRanges nameCharRanges))             -- \C
   else none
 
 /-- Escape as an ATOM (top-level `\...`) (F* `parse_escape_atom`). -/

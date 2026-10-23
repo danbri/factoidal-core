@@ -1,0 +1,18 @@
+{
+  "command": [
+    "lake",
+    "build",
+    "L4Factoidal",
+    "l4wasm"
+  ],
+  "cwd": "/Users/danbri/working/sandbox/october/tpac/codex-npm-review/integrate-core/formal/lean4",
+  "node": "v22.22.2",
+  "source": "4bc80d56d4874163d241b9bf66e9c30a0a9e6c85",
+  "nodeBin": "/opt/homebrew/Cellar/node@22/22.22.2_2/bin",
+  "npmCache": "/private/tmp/factoidal-public-pack-cache",
+  "started": "2026-10-22T18:10:01.076Z",
+  "elapsedMs": 1587046,
+  "exit": 0,
+  "signal": null,
+  "error": null
+}

@@ -21,7 +21,10 @@ Cases, for every array size in a fixed list and a random set:
   and shared (another reference is live): the shared original must be
   unchanged after the store.
 
-`Prim.Bytes.pushU64LE` (append 8 bytes) is compared with `pushU64LERef`
+`Prim.Bytes.reserveU64` with `pushU64LEUnchecked` (reserve once, push without
+tests) is compared with `pushU64LERef` on exclusive and shared arrays.
+`Prim.Bytes.ldU64LEIn` (proof-carrying 8-byte load) is compared with
+`ldU64LEInRef` inside the array. `Prim.Bytes.pushU64LE` (append 8 bytes) is compared with `pushU64LERef`
 (eight `ByteArray.push`) on arrays of every listed size with capacity equal
 to the size, 1, 7, 8, 9 and 16 bytes above it, 0 and half the size (so the
 append must grow the array), exclusive and shared; and on chains of 120
@@ -92,6 +95,12 @@ def runCase (t : Tally) (n : Nat) (seed : UInt64) (p : USize) (x : UInt64) : IO 
   -- Load against its specification, on the input and the output.
   t := t.check (ldU64LE orig p == ldU64LESpec orig p.toNat) s!"load /= spec ({tag})"
   t := t.check (ldU64LE r1 p == ldU64LESpec r1 p.toNat) s!"load /= spec after store ({tag})"
+  -- Proof-carrying load against its reference, inside the array.
+  if h : p.toNat + 8 ≤ orig.usize.toNat then
+    t := t.check (ldU64LEIn orig p h == ldU64LEInRef orig p h) s!"ldU64LEIn /= reference ({tag})"
+    t := t.check (ldU64LEIn orig p h == ldU64LESpec orig p.toNat) s!"ldU64LEIn /= spec ({tag})"
+  if h : p.toNat + 8 ≤ r1.usize.toNat then
+    t := t.check (ldU64LEIn r1 p h == ldU64LEInRef r1 p h) s!"ldU64LEIn /= reference after store ({tag})"
   return t
 
 /-- An array of `n` pseudo-random bytes from `seed` with capacity `cap`
@@ -121,6 +130,33 @@ def runPushCase (t : Tally) (n cap : Nat) (seed : UInt64) (x : UInt64) : IO Tall
   let s1 := pushU64LE orig x
   let s2 := pushU64LERef orig x
   t := t.check (sameBytes s1 s2) s!"shared: extern /= reference ({tag})"
+  t := t.check (sameBytes orig keep) s!"shared: original changed ({tag})"
+  return t
+
+/-- Reserve-then-unchecked-push case: array of size `n` and capacity `cap`,
+    `k` values. The reserved array, filled with `k` unchecked pushes, must
+    equal `k` reference pushes, with the array exclusive and shared before the
+    reserve (a shared original must stay unchanged: the reserve copied it). -/
+def runReserveCase (t : Tally) (n cap k : Nat) (seed : UInt64) : IO Tally := do
+  let tag := s!"reserve n={n} cap={cap} k={k} seed={seed}"
+  let mut vals : List UInt64 := []
+  let mut z := seed
+  for _ in [0:k] do
+    let (v, z') := next z
+    z := z'
+    vals := vals ++ [v]
+  let want := vals.foldl pushU64LERef (← mkArrayCap n cap seed)
+  -- Exclusive.
+  let r0 := reserveU64 (← mkArrayCap n cap seed) k.toUSize
+  let mut t := t.check (sameBytes r0 (← mkArrayCap n cap seed)) s!"exclusive: reserve changed the bytes ({tag})"
+  let got := vals.foldl pushU64LEUnchecked r0
+  t := t.check (sameBytes got want) s!"exclusive: unchecked /= reference ({tag})"
+  -- Shared: the original stays live after the reserve and the pushes.
+  let orig ← mkArrayCap n cap seed
+  let keep ← mkArrayCap n cap seed
+  let r1 := reserveU64 orig k.toUSize
+  let got1 := vals.foldl pushU64LEUnchecked r1
+  t := t.check (sameBytes got1 want) s!"shared: unchecked /= reference ({tag})"
   t := t.check (sameBytes orig keep) s!"shared: original changed ({tag})"
   return t
 
@@ -177,6 +213,10 @@ def main : IO UInt32 := do
     s := (next s).2
   for cap in [0, 1, 7, 8, 9, 13, 64, 800] do
     t ← runPushChain t cap 120 (cap % 37) (s + cap.toUInt64)
+  for n in [0, 1, 7, 8, 9, 100] do
+    for cap in [0, n, n + 8, n + 16, n + 800, n / 2] do
+      for k in [0, 1, 2, 3, 17, 100] do
+        t ← runReserveCase t n cap k (s + n.toUInt64 + cap.toUInt64 + k.toUInt64)
   for m in t.firstFails do
     IO.println s!"FAIL {m}"
   IO.println s!"prim-bytes: platform numBits {System.Platform.numBits}"

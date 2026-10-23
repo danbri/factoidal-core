@@ -1,0 +1,48 @@
+PASS direct self-call                           exit 1; T_walk=length
+PASS tail self-call is a loop                   exit 0; no rows
+PASS mutual pair                        defect  exit 1; T_isEven=length, T_isOdd=length
+PASS ___redArg wrapper                          exit 1; T_count=length
+PASS csimp namesake                     defect  exit 1; A_insertBy=replaced, B_insertBy=length
+PASS namespace word in a doc comment    defect  exit 1; T_readRest=length
+PASS length alias with fuel             defect  exit 1; T_scan=length
+PASS section end                        defect  exit 1; T_b=length
+PASS unknown is gated                   defect  exit 1; Mystery_f=unknown
+PASS closure body cycle                 defect  exit 1; T_walkTree=length, T_walkTree=length
+PASS allow list line                            exit 0; T_walk=length
+PASS where helper                       defect  exit 1; T_outer_scanList=length
+FAIL chained csimp gate rejects caller          exit 0; T_spec=replaced
+Lean tail-recursion audit
+=========================
+C files scanned: 2   functions defined: 6   Lean declarations indexed: 6
+@[csimp] replacements resolved by full name: 2   not resolved: 0
+Recursive functions whose recursion is NOT a `goto _start` loop: 1
+  with a surviving self-call or self-closure: 1   only through a cycle: 0
+Mutual-recursion cycles (strongly connected components, per module): 0
+
+By class (C functions / distinct declarations)
+----------------------------------------------
+  length        0     0   gated
+  depth         0     0   gated
+  counter       0     0   gated
+  bounded       0     0
+  replaced      1     1
+  unknown       0     0   gated
+
+By area (length / depth / counter / bounded / replaced / unknown)
+----------------------------------------------------------------
+  everything else               0    0    0    0    1    0
+
+Input-proportional recursions (class length and depth), ranked by risk
+----------------------------------------------------------------------
+risk declaration                                      class    area                     lean file:line
+
+Method limits: see the docstring at the top of this file.
+wrote /var/folders/8l/h5b0tb8s6tlft0wb4fl3w1y80000gn/T/tailrec-fixture-l5vk07ys/out.json
+
+Allow list: 0 lines, 0 marked (a) PENDING, 0 marked UNTRIAGED, 0 match no gated row
+
+GATE PASS: every recursive declaration of class length/depth/counter/unknown is listed in allow.txt
+
+Running tools/lean-csimp-reach.py --gate
+
+12 pass, 1 fail (out of 13)

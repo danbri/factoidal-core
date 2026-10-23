@@ -1,0 +1,31 @@
+{
+  "recordedAt": "2026-10-22T17:10:08.234490+00:00",
+  "worktree": "/Users/danbri/working/sandbox/october/tpac/codex-npm-review/integrate-pr1",
+  "gitHead": "87af61c9b7398ed1effa65744cbd3c84afe311be",
+  "scope": "Read-only source review of dirty reconciliation; no builds or runtime probes in this final pass",
+  "files": {
+    "formal/lean4/L4Factoidal/SPARQL/Expr.lean": "2e2c3c51bf390fa62c3becedf4a081ca4c8f86a6bdc97fac154263c4a4e9b2d0",
+    "formal/lean4/L4Factoidal/SPARQL/Query.lean": "7971950cef1bb1cdb6fda1c7df04f2253dbe90ab5db7a29e3a20c6d5059ae36a",
+    "formal/lean4/L4Factoidal/SPARQL/QueryTests.lean": "8cb85af75caa5dbaa5ba54721658a49916f0720663d9678374d15d862300d655",
+    "formal/lean4/L4Factoidal/SPARQL/ArithmeticTheorems.lean": "30efc1933cd0f4c8fe7046a6e28cbf79bc39bc47fea3420dd53edc3f38134d02",
+    "formal/lean4/L4Factoidal/SPARQL/AggStream.lean": "ca102bf35ea1a56a6369ac8c7849aafbaa5fde59e8eaf46417faeae28b1d104f",
+    "formal/lean4/L4Factoidal/SPARQL/AggStreamTests.lean": "cc4d3d7bee4f14130b74a0512c25e8836ee328892cbfe4f9fd2362c819e1c8a8",
+    "formal/lean4/L4Factoidal/Fn/Numeric.lean": "1d67bb3b4ad490c9153ac73ccb863a25b38374a116c9c6df480b0cfa2e02c829",
+    "formal/lean4/L4Factoidal/Fn/Comparison.lean": "b3d7bc4c1ca203062be68b8ba3d08d181a5753a1dbcd674d6068b3c0affc3d71",
+    "formal/lean4/L4Factoidal/Fn/Cast.lean": "21d40fba86ad9d86a64474b74c13dde1a4e8c7672146dd1d75f22f579bf93d9b",
+    "formal/lean4/L4Factoidal/RIF/Builtins.lean": "d03aca6d6a1abe0779559283574cab2f2ab07f43191cc484e7a8a51f7f34e275",
+    "formal/lean4/L4Factoidal/RIF/Saturate.lean": "4f2f64526ab38e7bd1aecee41e3840a222ae67dc0e26bb511a0afecc94e94b9c",
+    "formal/lean4/L4Factoidal/RIF/Engine.lean": "bb97796e987a6d8935c54c36e298f9da3e5729d11441038d984aaa9029ca83f5",
+    "formal/lean4/L4Factoidal/CSVW/Diagnostics.lean": "331e9472357e5126c076df259d3e7f768be90e2c32335243752bfbbdc3f40ccb",
+    "formal/lean4/L4Factoidal/CSVW/Validate.lean": "c4dddfa6539ae058ff56717a02ed290fe29f95d23bb1e5d5500aec9217b7fc38",
+    "formal/lean4/L4Factoidal/XSD/Datatypes.lean": "800702a5abe66d3604590a52173bdceacbd405eb0bc2db10e10b119ca127c1dc",
+    "formal/lean4/L4Factoidal/Unified/RifEmbed.lean": "7e9462810f426a847999b4023901116b81739529cc0797239f5a48836f14f8a7",
+    "formal/lean4/Wasm/Ops/Formats.lean": "e3056c44f6bdf3c12afe7bd9d40e527138407f99bbac0bcf216ea33528c475d3",
+    "formal/lean4/Wasm/FormatsBoundaryTests.lean": "308be9191c124f04474c016b1f4ce9b23a32569364c7b2c8673c04d292ad1cbf",
+    "formal/lean4/Harness/RifRun.lean": "aa0db8573ea73a5ba8da31fb5af8cc95ae3c460a92c90719bfc9924fdcba17ba",
+    "formal/lean4/Harness/RifImport.lean": "86870783414948345902521d89c5e10420641f475b702e5cd4da6186717583b5",
+    "formal/lean4/Harness/CsvwValidateRun.lean": "4b0b6560bca205ea90d1bddfc2b91094aca3c722fa1ba371ddc2ad69ad79310d",
+    "docs/20261022-pr1-main-reconciliation.md": "8e37eb0791501c75384e78b5d57005e18afdc2902f22d86369fa6ff3bd9468d2"
+  },
+  "reportSha256": "b5437131500045f5c2a1367ef8c23e31e3a4d6ca8df8e1d36838847ab28a3128"
+}

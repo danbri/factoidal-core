@@ -1471,22 +1471,47 @@ def Ctx.ofOntology (O : DlOntology) : Ctx :=
   { T := T, R := O.rbox, L := edgeLhs T, inv := O.inv,
     B := (T.flatMap (fun ax => boolSubterms ax.1)).eraseDups }
 
-/-- The `SameIndividual` pairs applied to an ABox as renamings, first
-    pair first (`mergeInds`, the ≤-rule's renaming). -/
-def mergeAll (P : List (Ind × Ind)) (A : List Assertion) : List Assertion :=
-  P.foldl (fun acc q => mergeInds q.1 q.2 acc) A
+/-- Renaming identified names preserves every remaining equality. -/
+theorem respectsSame_subst {δ : Type} {ν : Ind → δ} {b c : Ind}
+    (equal : ν b = ν c) {P : List (Ind × Ind)} (same : RespectsSame ν P) :
+    RespectsSame ν (P.map fun q => (Ind.subst b c q.1, Ind.subst b c q.2)) := by
+  have unchanged (x : Ind) : ν (Ind.subst b c x) = ν x := by
+    by_cases hx : x = b
+    · simp [Ind.subst, hx, equal]
+    · simp [Ind.subst, hx]
+  intro pair member
+  obtain ⟨original, originalMember, rfl⟩ := List.mem_map.mp member
+  change ν (Ind.subst b c original.1) = ν (Ind.subst b c original.2)
+  rw [unchanged, unchanged]
+  exact same original originalMember
 
-theorem satAll_mergeAll {δ : Type} {I : Interp δ} {ν : Ind → δ} :
-    ∀ {P : List (Ind × Ind)} {A : List Assertion},
-      RespectsSame ν P → SatAll I ν A → SatAll I ν (mergeAll P A) := by
-  intro P
-  induction P with
-  | nil => intro A _ hA; exact hA
-  | cons q P ih =>
-      intro A hP hA
-      simp only [mergeAll, List.foldl_cons]
-      exact ih (fun q' hq' => hP q' (List.Mem.tail _ hq'))
-        (satAll_mergeInds (hP q (List.Mem.head _)) hA)
+/-- Apply equalities in order, renaming both the ABox and all remaining
+equality endpoints. Updating the pairs retains transitive chains even when
+the representative of an earlier merge is renamed by a later pair. -/
+def mergeAll (P : List (Ind × Ind)) (A : List Assertion) : List Assertion :=
+  match P with
+  | [] => A
+  | (b, c) :: rest =>
+      mergeAll (rest.map fun q => (Ind.subst b c q.1, Ind.subst b c q.2))
+        (mergeInds b c A)
+termination_by P.length
+decreasing_by simp
+
+theorem satAll_mergeAll {δ : Type} {I : Interp δ} {ν : Ind → δ}
+    {P : List (Ind × Ind)} {A : List Assertion}
+    (same : RespectsSame ν P) (model : SatAll I ν A) :
+    SatAll I ν (mergeAll P A) := by
+  cases P with
+  | nil => simpa only [mergeAll] using model
+  | cons pair rest =>
+      obtain ⟨b, c⟩ := pair
+      have equal := same (b, c) (List.Mem.head rest)
+      rw [mergeAll]
+      exact satAll_mergeAll
+        (respectsSame_subst equal (fun q member => same q (List.Mem.tail _ member)))
+        (satAll_mergeInds equal model)
+termination_by P.length
+decreasing_by simp_all
 
 /-- The saturation round bound. The rounds stop earlier at a fixpoint;
     a bound that is too small makes a certificate fail to check, never
@@ -1518,5 +1543,25 @@ theorem checkCert_not_consistent {R : RoleAxioms} {A : List Assertion} {c : Cert
   intro ⟨δ, I, ν, hR, hA⟩
   exact checkCert_sound h ⟨δ, I, ν, hR, (fun _ hax => by cases hax), (fun _ hq => by cases hq),
     (fun _ hq => by cases hq), hA⟩
+
+/- Chained same-individual equalities: both list orders and every endpoint
+orientation. The different-from control must close; equalities alone and
+an unrelated difference must not close. -/
+private def sameChainOrders : List (List (Ind × Ind)) :=
+  [[("a", "b"), ("b", "c")], [("a", "b"), ("c", "b")],
+   [("b", "a"), ("b", "c")], [("b", "a"), ("c", "b")],
+   [("b", "c"), ("a", "b")], [("c", "b"), ("a", "b")],
+   [("b", "c"), ("b", "a")], [("c", "b"), ("b", "a")]]
+
+#guard sameChainOrders.length == 8
+#guard sameChainOrders.all (fun pairs =>
+  checkCert { same := pairs, abox := [.diff "a" "c"] } .close)
+#guard sameChainOrders.all (fun pairs => !checkCert { same := pairs } .close)
+#guard sameChainOrders.all (fun pairs =>
+  !checkCert { same := pairs, abox := [.diff "a" "d"] } .close)
+
+#print axioms respectsSame_subst
+#print axioms satAll_mergeAll
+#print axioms checkCert_sound
 
 end L4Factoidal.OWL

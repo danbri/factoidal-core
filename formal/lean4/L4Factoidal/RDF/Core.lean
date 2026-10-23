@@ -273,10 +273,13 @@ The F* source distinguishes (and warns against conflating):
     `Eq`/`DecidableEq` on `Literal` — see
     `literalTermEq_iff_eq` below, the Lean counterpart of the F*
     `lemma_literal_term_eq_identity`.
-  * `literalEq` — the COARSER comparison the SPARQL engine matches
-    with: language tags case-insensitively (RDF 1.1 §3.3 permits
-    lowercasing the tag value space) and `rdf:XMLLiteral` lexical
-    forms via exclusive-c14n (RDF 1.1 §5.1).
+  * `literalEq` — the comparison the SPARQL engine matches with
+    (`Literal.eqb`): language tags case-insensitively (RDF 1.1 §3.3
+    permits lowercasing the tag value space), every other field
+    exactly. Until 2026-10-23 it also compared `rdf:XMLLiteral` lexical
+    forms by exclusive canonical XML; that is value comparison, and it
+    moved to `Literal.valueEqb`
+    (https://github.com/danbri/factoidal/issues/963).
   * `literalValueEq` — RDF 1.1 value equality; with well-formed
     representations (plain literals already carry `xsd:string`) it
     coincides with field comparison modulo tag case. -/
@@ -296,11 +299,30 @@ def Subject.eqb : Subject → Subject → Bool
   | .bnode b1, .bnode b2 => b1 == b2
   | _,         _         => false
 
-/-- Engine literal equality: lexical form + datatype exact, language
-tag case-insensitive; `rdf:XMLLiteral` lexical forms via exclusive
-canonical XML (port of `literal_eq`, including the
-WebOnt-miscellaneous-202 XMLLiteral fix). -/
+/-- Engine literal equality, the RDF term equality of RDF 1.1 Concepts
+§3.3: lexical form, datatype and base direction exact, language tag
+case-insensitive (§3.3 permits lowercasing the tag). SPARQL 1.1 §18.3
+(compatible mappings) and §18.4.1 (BGP matching) use this equality.
+
+Until 2026-10-23 this compared two `rdf:XMLLiteral` lexical forms by
+exclusive canonical XML (the F* `literal_eq` WebOnt-miscellaneous-202
+fix). That is VALUE comparison: joins and BGP matching then treated
+`"<x></x>"^^rdf:XMLLiteral` and `"<x/>"^^rdf:XMLLiteral` as one term
+(https://github.com/danbri/factoidal/issues/963). Value comparison is
+`Literal.valueEqb`; only the `=` operator and entailment call it. -/
 def Literal.eqb (l1 l2 : Literal) : Bool :=
+  l1.lexicalForm == l2.lexicalForm &&
+  l1.datatype == l2.datatype &&
+  langTagOptionEq l1.langTag l2.langTag &&
+  l1.direction == l2.direction
+
+/-- Literal VALUE equality for the datatypes this comparison knows
+without numeric conversion: `Literal.eqb`, except that two
+`rdf:XMLLiteral` literals compare by exclusive canonical XML (RDF 1.1
+Concepts §5.1: the value space of `rdf:XMLLiteral` is the canonical
+DOM). For the SPARQL `=` operator (§17.4.1.7 and the operator mapping)
+and for D-entailment; never for joins or BGP matching. -/
+def Literal.valueEqb (l1 l2 : Literal) : Bool :=
   (if l1.datatype == rdfXMLLiteral && l2.datatype == rdfXMLLiteral
    then XmlCanon.xmlCanonEq l1.lexicalForm l2.lexicalForm
    else l1.lexicalForm == l2.lexicalForm) &&
@@ -367,9 +389,16 @@ theorems with explicit proofs — no `sorry`, no `axiom`, no solver. -/
   cases t <;> simp [langTagOptionEq]
 
 @[simp] theorem Literal.eqb_refl (l : Literal) : l.eqb l = true := by
-  unfold Literal.eqb
-  by_cases h : (l.datatype == rdfXMLLiteral && l.datatype == rdfXMLLiteral) = true <;>
-    simp [h, XmlCanon.xmlCanonEq]
+  simp [Literal.eqb]
+
+/-- Term equality implies value equality. -/
+theorem Literal.valueEqb_of_eqb {l1 l2 : Literal} (h : l1.eqb l2 = true) :
+    l1.valueEqb l2 = true := by
+  simp only [Literal.eqb, Bool.and_eq_true, beq_iff_eq] at h
+  obtain ⟨⟨⟨hl, hd⟩, ht⟩, hr⟩ := h
+  unfold Literal.valueEqb
+  by_cases hx : (l1.datatype == rdfXMLLiteral && l2.datatype == rdfXMLLiteral) = true <;>
+    simp [hx, hl, hd, ht, hr, XmlCanon.xmlCanonEq]
 
 @[simp] theorem Literal.termEq_refl (l : Literal) : l.termEq l = true := by
   simp [Literal.termEq]
@@ -420,21 +449,7 @@ theorem Literal.eqb_trans {a b c : Literal}
   simp only [Literal.eqb, Bool.and_eq_true, beq_iff_eq] at h1 h2 ⊢
   obtain ⟨⟨⟨hx1, hd1⟩, hl1⟩, hr1⟩ := h1
   obtain ⟨⟨⟨hx2, hd2⟩, hl2⟩, hr2⟩ := h2
-  refine ⟨⟨⟨?_, hd1.trans hd2⟩, langTagOptionEq_trans hl1 hl2⟩, hr1.trans hr2⟩
-  by_cases hxa : a.datatype = rdfXMLLiteral
-  · have hxb : b.datatype = rdfXMLLiteral := hd1 ▸ hxa
-    have hxc : c.datatype = rdfXMLLiteral := hd2 ▸ hxb
-    rw [if_pos (by simp [hxa, hxb])] at hx1
-    rw [if_pos (by simp [hxb, hxc])] at hx2
-    rw [if_pos (by simp [hxa, hxc])]
-    simp only [XmlCanon.xmlCanonEq, beq_iff_eq] at hx1 hx2 ⊢
-    exact hx1.trans hx2
-  · have hxb : ¬ b.datatype = rdfXMLLiteral := fun hb => hxa (hd1.trans hb)
-    rw [if_neg (by simp [hxa])] at hx1
-    rw [if_neg (by simp [hxb])] at hx2
-    rw [if_neg (by simp [hxa])]
-    simp only [beq_iff_eq] at hx1 hx2 ⊢
-    exact hx1.trans hx2
+  exact ⟨⟨⟨hx1.trans hx2, hd1.trans hd2⟩, langTagOptionEq_trans hl1 hl2⟩, hr1.trans hr2⟩
 
 theorem Term.eqb_trans : ∀ {a b c : Term},
     Term.eqb a b = true → Term.eqb b c = true → Term.eqb a c = true := by
@@ -524,10 +539,7 @@ theorem Subject.eqb_symm (a b : Subject) : a.eqb b = b.eqb a := by
   cases a <;> cases b <;> simp [Subject.eqb, BEq.comm]
 
 theorem Literal.eqb_symm (a b : Literal) : a.eqb b = b.eqb a := by
-  unfold Literal.eqb
-  by_cases h1 : (a.datatype == rdfXMLLiteral) = true <;>
-  by_cases h2 : (b.datatype == rdfXMLLiteral) = true <;>
-    simp [h1, h2, XmlCanon.xmlCanonEq, BEq.comm, langTagOptionEq_symm]
+  simp [Literal.eqb, BEq.comm, langTagOptionEq_symm]
 
 theorem Term.eqb_symm : ∀ (a b : Term), a.eqb b = b.eqb a
   | .iri _, .iri _ => by simp [Term.eqb, BEq.comm]
@@ -548,11 +560,9 @@ theorem Triple.eqb_symm (a b : Triple) : a.eqb b = b.eqb a := by
 
 A hash join buckets rows by STRUCTURAL equality of a key, but the
 engine joins rows under `Term.eqb`, which is coarser than structural
-equality in exactly two places: language tags compare
-case-insensitively, and `rdf:XMLLiteral` lexical forms compare via
-exclusive canonicalisation. `joinKey` maps every term to a canonical
-representative of its `eqb`-class — tags lowercased, XMLLiteral
-lexical forms canonicalised — so that eqb-equal terms carry
+equality in one place: language tags compare case-insensitively.
+`joinKey` maps every term to a canonical representative of its
+`eqb`-class — tags lowercased — so that eqb-equal terms carry
 structurally equal keys (`Term.joinKey_eq_of_eqb`). That is the ONLY
 property the hash join needs of it: a bucket may still hold
 eqb-distinct rows (the probe re-tests compatibility in full), but no
@@ -560,9 +570,7 @@ eqb-compatible row may land in a different bucket. -/
 
 /-- The canonical-representative literal for hash-join keys. -/
 def Literal.joinKey (l : Literal) : Literal :=
-  { lexicalForm := if l.datatype == rdfXMLLiteral
-                   then String.ofList (XmlCanon.canonicalize l.lexicalForm)
-                   else l.lexicalForm
+  { lexicalForm := l.lexicalForm
   , datatype    := l.datatype
   , langTag     := l.langTag.map String.toLower
   , direction   := l.direction }
@@ -578,25 +586,7 @@ half of the canonicaliser's contract. -/
 theorem Literal.joinKey_eq_of_eqb {l1 l2 : Literal}
     (h : l1.eqb l2 = true) : l1.joinKey = l2.joinKey := by
   simp only [Literal.eqb, Bool.and_eq_true, beq_iff_eq] at h
-  obtain ⟨⟨⟨hlex, hdt⟩, htag⟩, hdir⟩ := h
-  have hlex' :
-      (if l1.datatype == rdfXMLLiteral
-       then String.ofList (XmlCanon.canonicalize l1.lexicalForm)
-       else l1.lexicalForm)
-    = (if l2.datatype == rdfXMLLiteral
-       then String.ofList (XmlCanon.canonicalize l2.lexicalForm)
-       else l2.lexicalForm) := by
-    by_cases hx : l1.datatype = rdfXMLLiteral
-    · have hx2 : l2.datatype = rdfXMLLiteral := hdt ▸ hx
-      rw [if_pos (beq_iff_eq.mpr hx), if_pos (beq_iff_eq.mpr hx2)]
-      rw [if_pos ⟨hx, hx2⟩] at hlex
-      simp only [XmlCanon.xmlCanonEq, beq_iff_eq] at hlex
-      rw [hlex]
-    · have hx2 : ¬ l2.datatype = rdfXMLLiteral := fun h2 => hx (hdt.trans h2)
-      rw [if_neg (fun hb => hx (eq_of_beq hb)),
-          if_neg (fun hb => hx2 (eq_of_beq hb))]
-      rw [if_neg (fun hc => hx hc.1)] at hlex
-      exact eq_of_beq hlex
+  obtain ⟨⟨⟨hlex', hdt⟩, htag⟩, hdir⟩ := h
   have htag' : l1.langTag.map String.toLower = l2.langTag.map String.toLower := by
     cases h1 : l1.langTag with
     | none => cases h2 : l2.langTag with

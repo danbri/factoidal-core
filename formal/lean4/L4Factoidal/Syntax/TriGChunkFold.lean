@@ -304,6 +304,72 @@ def TriGChunkFoldState.finish (step : α → Option Subject → List Triple → 
           | .error e => .error e
           | .ok (_, acc, _) => .ok acc
 
+/-! ## Starting and ending inside a document
+
+A reader of one byte range of a TriG document starts at a dot boundary at the
+top level or inside a graph block (`SplitScan.Split`), and can end inside a
+graph block (https://github.com/danbri/factoidal/issues/842). -/
+
+/-- Read `prelude` for its directives only (a step that keeps nothing, so no
+    triple and no declaration reaches the accumulator), then start the
+    scanner and the position again. With `header`, the reader starts inside
+    the graph block that the header names (`readBlockHeader`); the header has
+    no `[` and no directive (`SplitScan`), so it changes no state. -/
+def TriGChunkFoldState.resume (state : TriGChunkFoldState α) (prelude : String)
+    (header : Option String) (counter : Option Nat := none) : Except ParseError (TriGChunkFoldState α) :=
+  let keep : α → Option Subject → List Triple → α := fun a _ _ => a
+  match state.feed keep prelude with
+  | .error e => .error e
+  | .ok st =>
+    let (events, scanner) := st.scanner.closeInput.drain
+    match applyEvents keep { st with scanner } events with
+    | .error e => .error e
+    | .ok s =>
+      match s.block with
+      | some _ => .error ⟨"a directive unit left a graph block open", s.pos⟩
+      | none =>
+        let cs := s.scanner.remainder.toList
+        match consumeTop keep (cs.length + 2) s.turtle s.acc s.pos cs with
+        | .error e => .error e
+        | .ok (turtle, acc, _) =>
+          let turtle := match counter with
+            | some c => { turtle with bnodeCounter := c }
+            | none => turtle
+          match header with
+          | none => .ok { turtle, acc, pos := 0, block := none, scanner := {} }
+          | some h =>
+            let hs := h.toList
+            match readBlockHeader (hs.length + 2) turtle 0 hs with
+            | .error e => .error e
+            | .ok (g, turtle) =>
+              .ok { turtle, acc, pos := 0, block := some g, scanner := { inBlock := true } }
+
+/-- `finish` for a range that may end inside a graph block: the rest of the
+    text is read as statements of that block. Also gives the generated
+    blank-node counter at the end, which the reader of a range checks against
+    the count of `SplitScan` at the next split. -/
+def TriGChunkFoldState.finishOpenCount (step : α → Option Subject → List Triple → α)
+    (state : TriGChunkFoldState α) : Except ParseError (α × Nat) :=
+  let (events, scanner) := state.scanner.closeInput.drain
+  match applyEvents step { state with scanner } events with
+  | .error e => .error e
+  | .ok s =>
+      let cs := s.scanner.remainder.toList
+      match s.block with
+      | some g =>
+          match consumeBlock step g (cs.length + 2) s.turtle s.acc s.pos cs with
+          | .error e => .error e
+          | .ok (turtle, acc, _) => .ok (acc, turtle.bnodeCounter)
+      | none =>
+          match consumeTop step (cs.length + 2) s.turtle s.acc s.pos cs with
+          | .error e => .error e
+          | .ok (turtle, acc, _) => .ok (acc, turtle.bnodeCounter)
+
+/-- `finishOpenCount` without the counter. -/
+def TriGChunkFoldState.finishOpen (step : α → Option Subject → List Triple → α)
+    (state : TriGChunkFoldState α) : Except ParseError α :=
+  (state.finishOpenCount step).map (·.1)
+
 /-- Fold complete decoded chunks into a dataset in source order, as the
     packer does: the accumulator is the dataset's quads, newest first. -/
 def parseTriGChunksQuads (bnodePrefix : String) (chunks : List String)

@@ -1,0 +1,3 @@
+PREFIX ex: <http://ex.org/>
+# GRAPH <iri> of a FROM NAMED graph.
+SELECT * FROM NAMED ex:g2 FROM NAMED ex:g1 WHERE { GRAPH ex:g2 { ?s ?p ?o } }

@@ -1,0 +1,319 @@
+TAP version 13
+# (node:67399) [MODULE_TYPELESS_PACKAGE_JSON] Warning: Module type of file:///Users/danbri/working/sandbox/october/tpac/codex-npm-review/integrate-core/third_party/observable/dist/runtime.esm.js is not specified and it doesn't parse as CommonJS.
+# Reparsing as ES module because module syntax was detected. This incurs a performance overhead.
+# To eliminate this warning, add "type": "module" to /Users/danbri/package.json.
+# (Use `node --trace-warnings ...` to show where the warning was created)
+# Subtest: post30: post ships twenty-three live cells
+ok 1 - post30: post ships twenty-three live cells
+  ---
+  duration_ms: 223.122125
+  type: 'test'
+  ...
+# Subtest: post30: dependency inference names the cells in order
+ok 2 - post30: dependency inference names the cells in order
+  ---
+  duration_ms: 929.586416
+  type: 'test'
+  ...
+# Subtest: post30: the tableau materialises at least one membership for the someValuesFrom ontology
+ok 3 - post30: the tableau materialises at least one membership for the someValuesFrom ontology
+  ---
+  duration_ms: 9184.101375
+  type: 'test'
+  ...
+# Subtest: post30: Alice is classified as a member of ParentOfDoctor (someValuesFrom)
+ok 4 - post30: Alice is classified as a member of ParentOfDoctor (someValuesFrom)
+  ---
+  duration_ms: 2304.701792
+  type: 'test'
+  ...
+# Subtest: post30: Alice is classified as a BritishCitizen (hasValue)
+ok 5 - post30: Alice is classified as a BritishCitizen (hasValue)
+  ---
+  duration_ms: 57.664125
+  type: 'test'
+  ...
+# Subtest: post30: the DL pipeline flags the unsatisfiable restriction that RL leaves consistent
+ok 6 - post30: the DL pipeline flags the unsatisfiable restriction that RL leaves consistent
+  ---
+  duration_ms: 222.902417
+  type: 'test'
+  ...
+# Subtest: post30: owlIsConsistent refutes the disjoint-classes clash with a reason
+not ok 7 - post30: owlIsConsistent refutes the disjoint-classes clash with a reason
+  ---
+  duration_ms: 12.559292
+  type: 'test'
+  location: '/Users/danbri/working/sandbox/october/tpac/codex-npm-review/integrate-core/tests/hub/post30_test.mjs:88:1'
+  failureType: 'testCodeFailure'
+  error: |-
+    Expected values to be strictly equal:
+    
+    null !== false
+    
+  code: 'ERR_ASSERTION'
+  name: 'AssertionError'
+  expected: false
+  actual: ~
+  operator: 'strictEqual'
+  stack: |-
+    TestContext.<anonymous> (file:///Users/danbri/working/sandbox/october/tpac/codex-npm-review/integrate-core/tests/hub/post30_test.mjs:91:10)
+    async Test.run (node:internal/test_runner/test:1054:7)
+    async Test.processPendingSubtests (node:internal/test_runner/test:744:7)
+  ...
+# Subtest: post30: owlIsConsistent refutes the min/max cardinality clash
+not ok 8 - post30: owlIsConsistent refutes the min/max cardinality clash
+  ---
+  duration_ms: 18.8095
+  type: 'test'
+  location: '/Users/danbri/working/sandbox/october/tpac/codex-npm-review/integrate-core/tests/hub/post30_test.mjs:96:1'
+  failureType: 'testCodeFailure'
+  error: |-
+    Expected values to be strictly equal:
+    
+    null !== false
+    
+  code: 'ERR_ASSERTION'
+  name: 'AssertionError'
+  expected: false
+  actual: ~
+  operator: 'strictEqual'
+  stack: |-
+    TestContext.<anonymous> (file:///Users/danbri/working/sandbox/october/tpac/codex-npm-review/integrate-core/tests/hub/post30_test.mjs:99:10)
+    async Test.run (node:internal/test_runner/test:1054:7)
+    async Test.processPendingSubtests (node:internal/test_runner/test:744:7)
+  ...
+# Subtest: post30: owlIsConsistent refutes the functional-property clash
+not ok 9 - post30: owlIsConsistent refutes the functional-property clash
+  ---
+  duration_ms: 16.80775
+  type: 'test'
+  location: '/Users/danbri/working/sandbox/october/tpac/codex-npm-review/integrate-core/tests/hub/post30_test.mjs:102:1'
+  failureType: 'testCodeFailure'
+  error: |-
+    Expected values to be strictly equal:
+    
+    null !== false
+    
+  code: 'ERR_ASSERTION'
+  name: 'AssertionError'
+  expected: false
+  actual: ~
+  operator: 'strictEqual'
+  stack: |-
+    TestContext.<anonymous> (file:///Users/danbri/working/sandbox/october/tpac/codex-npm-review/integrate-core/tests/hub/post30_test.mjs:105:10)
+    async Test.run (node:internal/test_runner/test:1054:7)
+    async Test.processPendingSubtests (node:internal/test_runner/test:744:7)
+  ...
+# Subtest: post30: owlIsConsistent leaves the satisfiable control graph consistent
+not ok 10 - post30: owlIsConsistent leaves the satisfiable control graph consistent
+  ---
+  duration_ms: 12.851166
+  type: 'test'
+  location: '/Users/danbri/working/sandbox/october/tpac/codex-npm-review/integrate-core/tests/hub/post30_test.mjs:108:1'
+  failureType: 'testCodeFailure'
+  error: |-
+    Expected values to be strictly equal:
+    
+    null !== true
+    
+  code: 'ERR_ASSERTION'
+  name: 'AssertionError'
+  expected: true
+  actual: ~
+  operator: 'strictEqual'
+  stack: |-
+    TestContext.<anonymous> (file:///Users/danbri/working/sandbox/october/tpac/codex-npm-review/integrate-core/tests/hub/post30_test.mjs:111:10)
+    async Test.run (node:internal/test_runner/test:1054:7)
+    async Test.processPendingSubtests (node:internal/test_runner/test:744:7)
+  ...
+# Subtest: post30: the clash-family summary is three refuted families plus one open control
+not ok 11 - post30: the clash-family summary is three refuted families plus one open control
+  ---
+  duration_ms: 357.921083
+  type: 'test'
+  location: '/Users/danbri/working/sandbox/october/tpac/codex-npm-review/integrate-core/tests/hub/post30_test.mjs:115:1'
+  failureType: 'testCodeFailure'
+  error: |-
+    Expected values to be strictly deep-equal:
+    + actual - expected
+    
+      [
+    +   null,
+    +   null,
+    +   null,
+    +   null
+    -   false,
+    -   false,
+    -   false,
+    -   true
+      ]
+    
+  code: 'ERR_ASSERTION'
+  name: 'AssertionError'
+  expected:
+    0: false
+    1: false
+    2: false
+    3: true
+  actual:
+    0: ~
+    1: ~
+    2: ~
+    3: ~
+  operator: 'deepStrictEqual'
+  stack: |-
+    TestContext.<anonymous> (file:///Users/danbri/working/sandbox/october/tpac/codex-npm-review/integrate-core/tests/hub/post30_test.mjs:119:10)
+    async Test.run (node:internal/test_runner/test:1054:7)
+    async Test.processPendingSubtests (node:internal/test_runner/test:744:7)
+  ...
+# Subtest: post30: a fuel:0 budget-out is reported as null, never a false
+not ok 12 - post30: a fuel:0 budget-out is reported as null, never a false
+  ---
+  duration_ms: 198.242458
+  type: 'test'
+  location: '/Users/danbri/working/sandbox/october/tpac/codex-npm-review/integrate-core/tests/hub/post30_test.mjs:125:1'
+  failureType: 'testCodeFailure'
+  error: 'the reason names the exhausted cap'
+  code: 'ERR_ASSERTION'
+  name: 'AssertionError'
+  expected:
+  actual: 'unsupported-syntax: the whole default graph is outside the admitted atomic OWL fragment (indeterminate)'
+  operator: 'match'
+  stack: |-
+    TestContext.<anonymous> (file:///Users/danbri/working/sandbox/october/tpac/codex-npm-review/integrate-core/tests/hub/post30_test.mjs:130:10)
+    async Test.run (node:internal/test_runner/test:1054:7)
+    async Test.processPendingSubtests (node:internal/test_runner/test:744:7)
+  ...
+# Subtest: post30: owlEntails decides the someValuesFrom entailment in the OWL 2 RL closure (cls-svf1, cax-eqc2)
+ok 13 - post30: owlEntails decides the someValuesFrom entailment in the OWL 2 RL closure (cls-svf1, cax-eqc2)
+  ---
+  duration_ms: 65.363084
+  type: 'test'
+  ...
+# Subtest: post30: owlEntails proves the union entailment by refutation
+ok 14 - post30: owlEntails proves the union entailment by refutation
+  ---
+  duration_ms: 806.869917
+  type: 'test'
+  ...
+# (node:67400) [MODULE_TYPELESS_PACKAGE_JSON] Warning: Module type of file:///Users/danbri/working/sandbox/october/tpac/codex-npm-review/integrate-core/third_party/observable/dist/runtime.esm.js is not specified and it doesn't parse as CommonJS.
+# Reparsing as ES module because module syntax was detected. This incurs a performance overhead.
+# To eliminate this warning, add "type": "module" to /Users/danbri/package.json.
+# (Use `node --trace-warnings ...` to show where the warning was created)
+# (node:67400) [MODULE_TYPELESS_PACKAGE_JSON] Warning: Module type of file:///Users/danbri/working/sandbox/october/tpac/codex-npm-review/integrate-core/docs/web/hub/assets/l4/l4factoidal.js is not specified and it doesn't parse as CommonJS.
+# Reparsing as ES module because module syntax was detected. This incurs a performance overhead.
+# To eliminate this warning, add "type": "module" to /Users/danbri/working/sandbox/october/tpac/codex-npm-review/integrate-core/docs/package.json.
+# Subtest: post40: post has 12 live cells
+ok 15 - post40: post has 12 live cells
+  ---
+  duration_ms: 4.910917
+  type: 'test'
+  ...
+# Subtest: post40: the committed wasm artifact exists and is a real module
+ok 16 - post40: the committed wasm artifact exists and is a real module
+  ---
+  duration_ms: 5.674709
+  type: 'test'
+  ...
+# Subtest: post40 cell "orgDataset": one fn.l4Parse call opens a TriG corpus, one handle, 10 triples
+ok 17 - post40 cell "orgDataset": one fn.l4Parse call opens a TriG corpus, one handle, 10 triples
+  ---
+  duration_ms: 9770.059917
+  type: 'test'
+  ...
+# Subtest: post40 cell "byDept": the cross-graph GRAPH ?g query returns 4 rows over 3 named graphs
+ok 18 - post40 cell "byDept": the cross-graph GRAPH ?g query returns 4 rows over 3 named graphs
+  ---
+  duration_ms: 2553.296583
+  type: 'test'
+  ...
+# Subtest: post40 cell "afterInsert": fn.l4Update mutates the SAME handle -- size grows from 10 to 12
+ok 19 - post40 cell "afterInsert": fn.l4Update mutates the SAME handle -- size grows from 10 to 12
+  ---
+  duration_ms: 157.759416
+  type: 'test'
+  ...
+# Subtest: post40 cell "byDeptAfter": the same handle, re-queried, now shows 5 rows including Erin
+ok 20 - post40 cell "byDeptAfter": the same handle, re-queried, now shows 5 rows including Erin
+  ---
+  duration_ms: 18.265291
+  type: 'test'
+  ...
+# Subtest: post40 cell "closureCheck": rdfsPlusClosure over the handle's own data derives Employee
+ok 21 - post40 cell "closureCheck": rdfsPlusClosure over the handle's own data derives Employee
+  ---
+  duration_ms: 364.15825
+  type: 'test'
+  ...
+# Subtest: post40 cell "consistentBefore": owlIsConsistent reports consistent (true) before the clash
+not ok 22 - post40 cell "consistentBefore": owlIsConsistent reports consistent (true) before the clash
+  ---
+  duration_ms: 16.253042
+  type: 'test'
+  location: '/Users/danbri/working/sandbox/october/tpac/codex-npm-review/integrate-core/tests/hub/post40_test.mjs:142:1'
+  failureType: 'testCodeFailure'
+  error: |-
+    Expected values to be strictly equal:
+    
+    null !== true
+    
+  code: 'ERR_ASSERTION'
+  name: 'AssertionError'
+  expected: true
+  actual: ~
+  operator: 'strictEqual'
+  stack: |-
+    TestContext.<anonymous> (file:///Users/danbri/working/sandbox/october/tpac/codex-npm-review/integrate-core/tests/hub/post40_test.mjs:145:10)
+    async Test.run (node:internal/test_runner/test:1054:7)
+    async Test.processPendingSubtests (node:internal/test_runner/test:744:7)
+  ...
+# Subtest: post40 cell "consistentAfter": inserting the disjoint-class pair flips the verdict to false, with a reason
+not ok 23 - post40 cell "consistentAfter": inserting the disjoint-class pair flips the verdict to false, with a reason
+  ---
+  duration_ms: 32.257375
+  type: 'test'
+  location: '/Users/danbri/working/sandbox/october/tpac/codex-npm-review/integrate-core/tests/hub/post40_test.mjs:148:1'
+  failureType: 'testCodeFailure'
+  error: |-
+    Expected values to be strictly equal:
+    
+    null !== true
+    
+  code: 'ERR_ASSERTION'
+  name: 'AssertionError'
+  expected: true
+  actual: ~
+  operator: 'strictEqual'
+  stack: |-
+    TestContext.<anonymous> (file:///Users/danbri/working/sandbox/october/tpac/codex-npm-review/integrate-core/tests/hub/post40_test.mjs:150:10)
+    async Test.run (node:internal/test_runner/test:1054:7)
+    async Test.processPendingSubtests (node:internal/test_runner/test:744:7)
+  ...
+# Subtest: post40 cell "finalTurtle": the closing Turtle shows both classes on :alice
+ok 24 - post40 cell "finalTurtle": the closing Turtle shows both classes on :alice
+  ---
+  duration_ms: 580.1265
+  type: 'test'
+  ...
+# Subtest: post40: the handle identity is stable across parse, query, update and close
+ok 25 - post40: the handle identity is stable across parse, query, update and close
+  ---
+  duration_ms: 43.400875
+  type: 'test'
+  ...
+# Subtest: post40: the committed wasm serves every op the page calls
+ok 26 - post40: the committed wasm serves every op the page calls
+  ---
+  duration_ms: 0.4995
+  type: 'test'
+  ...
+1..26
+# tests 26
+# suites 0
+# pass 18
+# fail 8
+# cancelled 0
+# skipped 0
+# todo 0
+# duration_ms 23590.211

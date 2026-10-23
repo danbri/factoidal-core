@@ -1,0 +1,7 @@
+{
+  "yaml": true,
+  "blockingStepsAndShellSyntaxChecked": 11,
+  "packPythonSyntax": true,
+  "webGateDependency": true,
+  "remoteRun": false
+}

@@ -206,14 +206,14 @@ extern_lib libl4exthost pkg := do
 -- library: these do file I/O and print scores. The probes
 -- (`Harness.TurtleProbe`, `Harness.CanonProbe`) stay executable roots.
 @[default_target] lean_lib Harness where globs :=
-  #[`Harness.Common, `Harness.Fixtures, `Harness.Manifest, `Harness.Compare, `Harness.ProtocolRun, `Harness.Run, `Harness.HarnessTests,
+  (#[`Harness.Common, `Harness.RifImport, `Harness.Fixtures, `Harness.Manifest, `Harness.Compare, `Harness.ProtocolRun, `Harness.Run, `Harness.HarnessTests,
     `Harness.NativeHasher,
     `Harness.PosixRangeIO, `Harness.CompactedEpoch, `Harness.GenerationPointer, `Harness.ShardMerkleMaterialize, `Harness.ShardMerkleProfile, `Harness.ShardPublish,
     `Harness.IndexedBlockV3Materialize, `Harness.JsonLdScale, `Harness.LenientRun, `Harness.QlvrKernel,
     `Harness.Sbm11Gen, `Harness.RunHeap, `Harness.Sbm11Query, `Harness.Sbm11Delta, `Harness.Sbm11Update, `Harness.Sbm11PackLib, `Harness.Sbm11Compact, `Harness.Sbm11PermCheck,
     `Harness.Sbm11Export,
     `Harness.PlannerCheck, `Harness.PlannerKinds, `Harness.PlannerSbm11IO,
-    `Harness.ProofObligations]
+    `Harness.ProofObligations, `Harness.WorkerPool] : Array Lean.Name).map Glob.one
 
 -- The WebAssembly export surface: the JSON string-in / string-out ABI
 -- (Wasm/Abi.lean) and the `@[export]` C symbols (Wasm/Exports.lean).
@@ -240,8 +240,9 @@ extern_lib libl4exthost pkg := do
              `Wasm.Ops.Authz,
              `Wasm.Ops.Toan,
              `Wasm.Ops.Xmpp,
+             `Wasm.Ops.XmppSession,
              `Wasm.Ops.Crypto,
-             `Wasm.Ops.Formats,
+             `Wasm.Ops.Formats, `Wasm.FormatsBoundaryTests,
              `Wasm.Ops.ServiceReg, `Wasm.Ops.Reasoning, `Wasm.Ops.QueryExtras,
              `Wasm.Ops.Maths,
              `Wasm.Ops.Vc,
@@ -251,7 +252,7 @@ extern_lib libl4exthost pkg := do
              -- the op modules the split moved out of the core closure, and the
              -- build-time agreement checks of the two tables.
              `Wasm.CoreDispatch, `Wasm.CoreExports, `Wasm.CoreDispatchTests,
-             `Wasm.Ops.ParseJsonLd, `Wasm.Ops.ReasonDl, `Wasm.Ops.ShExValidate,
+             `Wasm.Ops.ParseJsonLd, `Wasm.Ops.ReasonDl, `Wasm.Ops.ReasonDlCertified, `Wasm.Ops.ShExValidate,
              `Wasm.Ops.QueryHdt]
 
 -- Runs the XML parser over real W3C XML Conformance Test Suite files:
@@ -306,12 +307,17 @@ extern_lib libl4exthost pkg := do
 -- differential test of the `@[extern c inline]` store against its Lean reference.
 -- tests/prim/run.sh runs it natively and as wasm32 under node.
 @[default_target] lean_exe «l4prim-test» where root := `Harness.PrimBytesTest
+-- The scan-versus-old-scan differential of Storage/Sbm11/ScanFoldTests (needs compiled code).
+@[default_target] lean_exe «l4scanfold-test» where root := `Harness.ScanFoldTest
 -- Capability-aware planner, KR 2.2 (https://github.com/danbri/factoidal/issues/801):
 -- the structural planner's test set, with its expected-failure bucket.
 @[default_target] lean_exe «l4planner-test» where root := `Harness.PlannerTest
 -- The q07 kernel timing loop alone (no FFI in its imports), for the native and
 -- wasm32 measurements of issue 797 (tools/lean-wasm-exe.sh builds the wasm32 one).
 @[default_target] lean_exe «l4qlvr-kernel» where root := `Harness.QlvrKernelBench
+-- Start latency of a short job on the Lean task pool and on the per-session
+-- worker pool of the SBM11 harness (issue 961, Harness/WorkerPool.lean).
+@[default_target] lean_exe «l4pool-bench» where root := `Harness.WorkerPoolBench
 -- SBM11 stage 2 (https://github.com/danbri/factoidal/issues/788): packer
 -- phases 1 and 2 (global dictionary GDV1/GDX1), its check and lookup bench.
 @[default_target] lean_exe «l4sbm11-dict-pack» where root := `Harness.Sbm11DictPack
@@ -477,6 +483,9 @@ extern_lib libl4exthost pkg := do
 -- The RDF/XML chunk fold of the source layer against the whole-document
 -- reader (https://github.com/danbri/factoidal/issues/838).
 @[default_target] lean_exe «l4rdfxml-chunk-diff» where root := `Harness.RdfXmlChunkDiff
+@[default_target] lean_exe «l4jsonld-chunk-diff» where root := `Harness.JsonLdChunkDiff
+-- A Turtle or TriG document read by several range readers against the single reader (issue 842).
+@[default_target] lean_exe «l4split-diff» where root := `Harness.SplitReadDiff
 
 -- Reader-level probe over the vendored W3C csvw corpus. Named a
 -- PROBE, not a conformance runner, because it measures whether the
@@ -630,3 +639,4 @@ extern_lib libl4exthost pkg := do
 -- outside it (XEP-0368 direct TLS); see deploy/fly/xmpp/. Every
 -- protocol decision is in L4Factoidal/XMPP/Server.lean, not here.
 @[default_target] lean_exe «l4xmpp-serve» where root := `Harness.XmppServe
+@[default_target] lean_exe «l4xml-namespaces» where root := `Harness.NamespaceRun

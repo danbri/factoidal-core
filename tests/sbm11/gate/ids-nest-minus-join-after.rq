@@ -1,0 +1,3 @@
+PREFIX ex: <http://ex.org/>
+# A triple pattern after the MINUS: Join(Minus(P, B), Q), not Minus over the whole group.
+SELECT ?s ?n WHERE { ?s ex:age ?a MINUS { ?s ex:knows ?o } ?s ex:name ?n }

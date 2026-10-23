@@ -1,0 +1,156 @@
+{
+  "id": 120024457633,
+  "run_id": 39836021682,
+  "workflow_name": "Verify Lean 4 corpus",
+  "head_branch": "claude/integrate-prs-1-3",
+  "run_url": "https://api.github.com/repos/danbri/factoidal-core/actions/runs/39836021682",
+  "run_attempt": 1,
+  "node_id": "CR_kwDOUFvsVc8AAAAb8gPhoQ",
+  "head_sha": "ebe0188a3ae8d5a1d58b80b0356c50a6dfd6cf50",
+  "url": "https://api.github.com/repos/danbri/factoidal-core/actions/jobs/120024457633",
+  "html_url": "https://github.com/danbri/factoidal-core/actions/runs/39836021682/job/120024457633",
+  "status": "completed",
+  "conclusion": "success",
+  "created_at": "2026-10-22T18:58:27Z",
+  "started_at": "2026-10-22T18:58:30Z",
+  "completed_at": "2026-10-22T19:16:19Z",
+  "name": "Lake build (full Lean corpus)",
+  "steps": [
+    {
+      "name": "Set up job",
+      "status": "completed",
+      "conclusion": "success",
+      "number": 1,
+      "started_at": "2026-10-22T18:58:31Z",
+      "completed_at": "2026-10-22T18:58:33Z"
+    },
+    {
+      "name": "Run actions/checkout@v4",
+      "status": "completed",
+      "conclusion": "success",
+      "number": 2,
+      "started_at": "2026-10-22T18:58:33Z",
+      "completed_at": "2026-10-22T18:58:37Z"
+    },
+    {
+      "name": "Run leanprover/lean-action@v1",
+      "status": "completed",
+      "conclusion": "success",
+      "number": 3,
+      "started_at": "2026-10-22T18:58:37Z",
+      "completed_at": "2026-10-22T18:58:50Z"
+    },
+    {
+      "name": "Build library, proofs, and build-time guards",
+      "status": "completed",
+      "conclusion": "success",
+      "number": 4,
+      "started_at": "2026-10-22T18:58:50Z",
+      "completed_at": "2026-10-22T19:14:03Z"
+    },
+    {
+      "name": "Escape-hatch audit (sorry / axiom / native_decide / unsafe / partial def)",
+      "status": "completed",
+      "conclusion": "success",
+      "number": 5,
+      "started_at": "2026-10-22T19:14:03Z",
+      "completed_at": "2026-10-22T19:14:10Z"
+    },
+    {
+      "name": "Compiled recursion and replacement audit controls",
+      "status": "completed",
+      "conclusion": "success",
+      "number": 6,
+      "started_at": "2026-10-22T19:14:10Z",
+      "completed_at": "2026-10-22T19:14:47Z"
+    },
+    {
+      "name": "Gate compiled recursion and compiler replacement reach",
+      "status": "completed",
+      "conclusion": "success",
+      "number": 7,
+      "started_at": "2026-10-22T19:14:47Z",
+      "completed_at": "2026-10-22T19:15:16Z"
+    },
+    {
+      "name": "OWL gate parser and resource-failure controls",
+      "status": "completed",
+      "conclusion": "success",
+      "number": 8,
+      "started_at": "2026-10-22T19:15:16Z",
+      "completed_at": "2026-10-22T19:15:17Z"
+    },
+    {
+      "name": "OWL reader contracts, model witnesses, and proof mutations",
+      "status": "completed",
+      "conclusion": "success",
+      "number": 9,
+      "started_at": "2026-10-22T19:15:17Z",
+      "completed_at": "2026-10-22T19:15:41Z"
+    },
+    {
+      "name": "Measure the restricted reader on the W3C OWL catalog",
+      "status": "completed",
+      "conclusion": "success",
+      "number": 10,
+      "started_at": "2026-10-22T19:15:41Z",
+      "completed_at": "2026-10-22T19:15:48Z"
+    },
+    {
+      "name": "OWL consistency public producer and proof bypass controls",
+      "status": "completed",
+      "conclusion": "success",
+      "number": 11,
+      "started_at": "2026-10-22T19:15:48Z",
+      "completed_at": "2026-10-22T19:15:52Z"
+    },
+    {
+      "name": "Preserve OWL assurance evidence even after failure",
+      "status": "completed",
+      "conclusion": "success",
+      "number": 12,
+      "started_at": "2026-10-22T19:15:52Z",
+      "completed_at": "2026-10-22T19:15:54Z"
+    },
+    {
+      "name": "Fetch pinned VC fixtures for the native probe",
+      "status": "completed",
+      "conclusion": "success",
+      "number": 13,
+      "started_at": "2026-10-22T19:15:54Z",
+      "completed_at": "2026-10-22T19:15:56Z"
+    },
+    {
+      "name": "HACL* extern probe (Ed25519 vectors + sha256 differential)",
+      "status": "completed",
+      "conclusion": "success",
+      "number": 14,
+      "started_at": "2026-10-22T19:15:56Z",
+      "completed_at": "2026-10-22T19:16:17Z"
+    },
+    {
+      "name": "Post Run actions/checkout@v4",
+      "status": "completed",
+      "conclusion": "success",
+      "number": 28,
+      "started_at": "2026-10-22T19:16:17Z",
+      "completed_at": "2026-10-22T19:16:17Z"
+    },
+    {
+      "name": "Complete job",
+      "status": "completed",
+      "conclusion": "success",
+      "number": 29,
+      "started_at": "2026-10-22T19:16:17Z",
+      "completed_at": "2026-10-22T19:16:17Z"
+    }
+  ],
+  "check_run_url": "https://api.github.com/repos/danbri/factoidal-core/check-runs/120024457633",
+  "labels": [
+    "ubuntu-latest"
+  ],
+  "runner_id": 1000049582,
+  "runner_name": "GitHub Actions 1000049582",
+  "runner_group_id": 0,
+  "runner_group_name": "GitHub Actions"
+}

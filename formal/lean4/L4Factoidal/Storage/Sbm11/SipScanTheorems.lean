@@ -206,7 +206,10 @@ theorem sipChunk_tuples (spec : ScanSpec) (hspec : SpecOk spec) (hk : spec.key.s
         ((needOf spec (blockPlan spec b) (constOutOf spec b (blockPlan spec b))).set! spec.key.size true)
         bytes starts p = .ok (ch, t, g) ∧
       colTuples ch = ((List.range b.rows).filter fun i => keep spec (cols.row i) && candOf spec cands (cols.row i)).map
-        fun i => proj spec (cols.row i) := by
+        (fun i => proj spec (cols.row i)) ∧
+      ∃ cs n, ch = chunkOfCols spec true sortVar (blockPlan spec b) (constOutOf spec b (blockPlan spec b)) cs n ∧
+        ∀ c, c < 4 → needCol spec (blockPlan spec b) (constOutOf spec b (blockPlan spec b)) c = true →
+          cs[c]!.size = 8 * n := by
   obtain ⟨hsz, hv64, -, -, -, -⟩ := admitted_facts prb b cols h
   generalize hbp : blockPlan spec b = bp at hskip hsl ⊢
   generalize hco : constOutOf spec b bp = co at hsl ⊢
@@ -338,7 +341,22 @@ theorem sipChunk_tuples (spec : ScanSpec) (hspec : SpecOk spec) (hk : spec.key.s
   obtain ⟨X1, h1, e1⟩ := hcol 1 (by omega)
   obtain ⟨X2, h2, e2⟩ := hcol 2 (by omega)
   obtain ⟨X3, h3, e3⟩ := hcol 3 (by omega)
-  refine ⟨chunkOfCols spec true sortVar bp co #[X0, X1, X2, X3] pos.size, hi - lo, pos.size, ?_, ?_⟩
+  refine ⟨chunkOfCols spec true sortVar bp co #[X0, X1, X2, X3] pos.size, hi - lo, pos.size, ?_, ?_,
+    #[X0, X1, X2, X3], pos.size, rfl, fun c hc hn => ?_⟩
+  rotate_left 2
+  · have hn' : spec.key.size = c ∨ need'[c]! = true := by
+      rw [hneed c hc]
+      by_cases e : spec.key.size = c
+      · exact Or.inl e
+      · right; rw [if_neg e]; exact hn
+    have hX : (#[X0, X1, X2, X3] : Array ByteArray)[c]! = words (pos.toList.map fun r => (colv cols c)[r]!).toArray := by
+      match c, hc with
+      | 0, _ => exact e0 hn'
+      | 1, _ => exact e1 hn'
+      | 2, _ => exact e2 hn'
+      | 3, _ => exact e3 hn'
+    rw [hX, words_size']
+    simp
   · unfold sipChunk
     rw [hkwEq]
     simp only [bind, Except.bind, hlhp, hfind]
@@ -477,7 +495,7 @@ theorem scanBlockSipM_step (st : Store Id) (spec : ScanSpec) (hspec : SpecOk spe
       · simp only [hmh, Bool.not_true, Bool.false_eq_true, if_false]
         obtain ⟨bytes, starts, nbytes, hrf, hsl⟩ := readFrames_slice st prb spec.perm hprb ms[k] cols h hrows
           ((needOf spec (blockPlan spec ms[k]) (constOutOf spec ms[k] (blockPlan spec ms[k]))).set! spec.key.size true)
-        obtain ⟨ch, t, g, hch, ht⟩ := sipChunk_tuples spec hspec hk cands hs sortVar prb ms[k] cols h hskip'
+        obtain ⟨ch, t, g, hch, ht, -⟩ := sipChunk_tuples spec hspec hk cands hs sortVar prb ms[k] cols h hskip'
           bytes starts hsl (Sip.lbHint cands (sipRange ms[k] spec.key spec.key.size).1)
         rw [hrf]
         simp only [pure_bind, hch, ofExceptM, collectWith, stepOf, if_true]

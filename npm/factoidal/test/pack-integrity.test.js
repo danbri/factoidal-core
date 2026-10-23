@@ -60,7 +60,11 @@ test('pack integrity: npm pack + extract + parse/query/openStore from the tarbal
     const packJson = execFileSync('npm', ['pack', '--json', '--pack-destination', tmp], {
       cwd: PKG_ROOT, encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'],
     });
-    const info = JSON.parse(packJson)[0];
+    // npm versions emit either an array or a map keyed by package name.
+    const packed = JSON.parse(packJson);
+    const info = Array.isArray(packed) ? packed[0] : (packed['@factoidal/core'] ?? packed);
+    assert.equal(info.name, '@factoidal/core');
+    assert.equal(typeof info.filename, 'string');
     const files = info.files.map((f) => f.path);
     for (const required of ['l4-assets/l4factoidal.wasm', 'l4-assets/l4factoidal.mjs',
       'l4-assets/l4factoidal.js', 'index.js', 'index.mjs', 'browser.js', 'lib/api.mjs',
@@ -79,7 +83,11 @@ test('pack integrity: npm pack + extract + parse/query/openStore from the tarbal
     });
     const r = JSON.parse(out);
     assert.equal(r.ok, true);
-    assert.ok(r.loaded.startsWith(pkgDir), `the engine came from the tarball (${r.loaded})`);
+    // macOS canonicalizes /var to /private/var. Compare the exact real file,
+    // rather than a spelling-dependent prefix that also admits sibling paths.
+    assert.equal(fs.realpathSync(r.loaded),
+      fs.realpathSync(path.join(pkgDir, 'l4-assets', 'l4factoidal.js')),
+      `the engine came from the tarball (${r.loaded})`);
   } finally {
     fs.rmSync(tmp, { recursive: true, force: true });
   }

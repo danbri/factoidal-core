@@ -1,0 +1,9 @@
+("\\d\\d47", true, false)
+("\\c{3,6}://(\\c{1,6}\\.){1,3}\\c{3}", true, false)
+("\\i\\c*", true, false)
+("\\w+", true, false)
+some true
+some false
+some true
+some true
+some true

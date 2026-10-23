@@ -1,0 +1,18 @@
+{
+  "command": [
+    "/Users/danbri/.elan/bin/lake",
+    "build",
+    "L4Factoidal.Regex.EcmaOracleTests",
+    "L4Factoidal.Regex.ProfileTests",
+    "L4Factoidal.Regex.ReplacementOracleTests",
+    "L4Factoidal.RIF.MatchingTheorems",
+    "L4Factoidal.RIF.MatchingTests",
+    "L4Factoidal.RIF.EngineTests",
+    "L4Factoidal.OWL.CertNames"
+  ],
+  "cwd": "/Users/danbri/working/sandbox/october/tpac/codex-npm-review/integrate-pr3/formal/lean4",
+  "threads": 2,
+  "exit": 1,
+  "seconds": 5.698,
+  "log": "/Users/danbri/working/sandbox/october/tpac/codex-npm-review/logs/integration-tail-focused-build.log"
+}

@@ -29,9 +29,14 @@ test('inference: OWL 2 RL inverseOf, derived triples in their own graph', async 
     'an asserted label is not repeated in the derived graph');
 });
 
-test('inference: OWL DL consistency and entailment', async () => {
-  assert.equal((await post.value('consistent')).consistent, true);
-  assert.equal((await post.value('inconsistent')).consistent, false);
+test('inference: unsupported consistency examples remain unknown; separate entailment succeeds', async () => {
+  // One ontology is satisfiable and the other inconsistent. The checked
+  // reader refuses both; these are API-contract checks, not OWL coverage.
+  for (const name of ['consistent', 'inconsistent']) {
+    const verdict = await post.value(name);
+    assert.equal(verdict.consistent, null);
+    assert.match(verdict.reason, /unsupported-syntax/);
+  }
   assert.equal((await post.value('entails')).entailed, true);
 });
 

@@ -1,0 +1,3 @@
+PREFIX ex: <http://ex.org/>
+# Issue 776: NOT EXISTS over a VALUES term with no store id (a query-local id).
+SELECT ?x ?y WHERE { VALUES ?x { ex:zzz ex:a } OPTIONAL { ?x ex:age ?y } FILTER NOT EXISTS { ?x ex:knows ?q } }

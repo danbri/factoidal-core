@@ -27,8 +27,9 @@
 #
 # For each state, every query of tests/sbm11/graphs/ through `l4sbm11 query`, compared
 # with the reference by tests/sbm11/compare_answers.py; a query named ids-* must run on
-# ids (path=ids), one named ref-* on the reference fallback (path=reference: the id
-# path refuses a GRAPH group with no triple pattern, FROM NAMED and MINUS). And
+# ids (path=ids), one named ref-* on the reference fallback (path=reference). Since
+# https://github.com/danbri/factoidal/issues/959 a GRAPH group with no triple
+# pattern, with FROM NAMED or under MINUS runs on ids (`IdGroup.evalGroupM`). And
 # `l4sbm11 graphs` of each generation; `l4sbm11 export` of each generation in TriG and
 # JSON-LD, compared with the reference with the graphs with no triple kept
 # (`l4sbm11-w3c compare --empty keep`); the N-Quads export, which writes the quads and
@@ -109,7 +110,7 @@ graphs() {
 # triple kept; N-Quads with its notice; N-Triples refused
 exports() {
   local st="$1" gen="$2" ref="$3" f rc out empties
-  W3C query-source "$ref" "$QDIR/ref-graph-minus.rq" --format trig --base - --mode rdf11 >"$TMP/$st.empties.srj" 2>/dev/null
+  W3C query-source "$ref" "$QDIR/ids-graph-minus.rq" --format trig --base - --mode rdf11 >"$TMP/$st.empties.srj" 2>/dev/null
   empties="$(python3 -I -c 'import json, sys; print(len(json.load(open(sys.argv[1]))["results"]["bindings"]))' "$TMP/$st.empties.srj" 2>/dev/null || echo unknown)"
   for f in trig jsonld; do
     rc=0
@@ -216,7 +217,7 @@ echo "=== shortfall: the in-memory query ops"
 # on the indexed backend, which leaves out a graph named by a blank node: https://github.com/danbri/factoidal/issues/876
 rows=-
 if [ -x "$BIN/l4factoidal" ]; then
-  timeout 120 "$BIN/l4factoidal" query "$FX" --format trig --query "$QDIR/ref-graph-names.rq" >"$TMP/l4f.srj" 2>"$TMP/l4f.err"
+  timeout 120 "$BIN/l4factoidal" query "$FX" --format trig --query "$QDIR/ids-graph-names.rq" >"$TMP/l4f.srj" 2>"$TMP/l4f.err"
   rows="$(python3 -I -c 'import json, sys; print(len(json.load(open(sys.argv[1]))["results"]["bindings"]))' "$TMP/l4f.srj" 2>/dev/null || echo error)"
 fi
 if [ "$rows" = 6 ]; then xfail xfail-l4factoidal-graph-names https://github.com/danbri/factoidal/issues/876 1 "l4factoidal query gives the 6 named graphs of d5.trig"
@@ -229,7 +230,7 @@ echo "=== refusal: the IBK4 and IBK5 stores"
 # with a message that names the rule. SBM11 stores such a graph.
 # A missing binary is a failure.
 ibk_rows() { # ibk_rows <collection root>: the rows of GRAPH ?g { }, "error" on a failure
-  timeout 120 "$BIN/l4block-quad-query" "$1" --json --query "$(cat "$QDIR/ref-graph-names.rq")" 2>"$1.q.err" \
+  timeout 120 "$BIN/l4block-quad-query" "$1" --json --query "$(cat "$QDIR/ids-graph-names.rq")" 2>"$1.q.err" \
     | tail -1 >"$1.srj"
   python3 -I -c 'import json, sys; print(len(json.load(open(sys.argv[1]))["results"]["bindings"]))' "$1.srj" 2>/dev/null \
     || echo error

@@ -19,12 +19,13 @@ measurements: docs/designissues/2026-10-12-lean-to-c-performance.md, section
   `ByteArray.uset`, each tested): when the eight bytes are not all inside
   `b`, the result is `b` unchanged.
 - `pushU64LE b x`: append `x` little-endian. An `@[extern c inline]`
-  primitive: when `b` is exclusive with 8 bytes of spare capacity, eight
-  byte stores (one 8-byte store after clang) and the size field plus 8;
+  primitive: when `b` is exclusive with 8 bytes of spare capacity, one 8-byte
+  `memcpy` store (byte stores on a big-endian host) and the size field plus 8;
   otherwise eight calls of the runtime's `lean_byte_array_push`. Its Lean
   body is `pushU64LERef` (eight `ByteArray.push`). Lets a loop build its
   output from `ByteArray.emptyWithCapacity` with no copy (record section 8).
-- `ldU64LEIn d p h`: `ldU64LE` with no bounds test, for a caller that proves
+- `ldU64LEIn d p h`: `ldU64LE` with no bounds test (an `@[extern c inline]`
+  8-byte `memcpy` load; Lean body `ldU64LEInRef`), for a caller that proves
   the window is inside `d` (`ldU64LE_eq_in`; `le_div8_toNat` and
   `idx8_window` give the proof for row `i < n` after one test).
 - Lemmas over the Lean definitions: size preserved, read after write, other
@@ -236,9 +237,11 @@ theorem test_of_usize_window {d : ByteArray} {p : USize} (h : p.toNat + 8 ≤ d.
     rw [USize.toNat_add, usize_eight_toNat]; exact Nat.mod_eq_of_lt (by omega)
   refine ⟨USize.le_iff_toNat_le.mpr ?_, USize.lt_iff_toNat_lt.mpr ?_⟩ <;> omega
 
-/-- The little-endian `UInt64` at byte `p` of `d`, inside `d` by `h`: eight
-    `uget`, no test. Equal to `ldU64LE d p` (`ldU64LE_eq_in`). -/
-@[inline] def ldU64LEIn (d : ByteArray) (p : USize) (h : p.toNat + 8 ≤ d.usize.toNat) : UInt64 :=
+/-- The pure reference of `ldU64LEIn`: the little-endian `UInt64` at byte `p`
+    of `d`, inside `d` by `h`: eight `uget`, no test. Executable, and NOT an
+    extern: the differential test calls it to compare with the C of
+    `ldU64LEIn`. -/
+@[inline] def ldU64LEInRef (d : ByteArray) (p : USize) (h : p.toNat + 8 ≤ d.usize.toNat) : UInt64 :=
   have t := test_of_usize_window h
   (d.uget p (by have := window_of_test t.1 t.2; omega)).toUInt64 |||
     ((d.uget (p+1) (window_lt t.1 t.2 1 (by simp))).toUInt64 <<< 8) |||
@@ -249,10 +252,27 @@ theorem test_of_usize_window {d : ByteArray} {p : USize} (h : p.toNat + 8 ≤ d.
     ((d.uget (p+6) (window_lt t.1 t.2 6 (by simp))).toUInt64 <<< 48) |||
     ((d.uget (p+7) (window_lt t.1 t.2 7 (by simp))).toUInt64 <<< 56)
 
+/-- The little-endian `UInt64` at byte `p` of `d`, inside `d` by `h`. Compiled
+    to ONE inline C expression: an 8-byte `memcpy` from the array's data
+    (one load on a little-endian host, with a byte swap on a big-endian one).
+    The hypothesis `h` is the proof that the C read is inside the array; it
+    is erased and not used by the C. Its Lean meaning is `ldU64LEInRef`; the C
+    is trusted and checked by `Harness/PrimBytesTest.lean` on each target.
+    Before 2026-10-22 this was the pure body (`ldU64LEInRef`); clang merged its
+    eight byte loads in `mergeFlatP` but not in the scan filter, where the
+    value is also pushed (record section 9). -/
+@[extern c inline "({ lean_object* _l4ld = #1; size_t _l4lp = #2; uint64_t _l4lv; __builtin_memcpy(&_l4lv, lean_sarray_cptr(_l4ld) + _l4lp, 8); (__BYTE_ORDER__ == __ORDER_LITTLE_ENDIAN__) ? _l4lv : __builtin_bswap64(_l4lv); })"]
+def ldU64LEIn (d : @& ByteArray) (p : USize) (h : p.toNat + 8 ≤ d.usize.toNat) : UInt64 :=
+  ldU64LEInRef d p h
+
+theorem ldU64LEIn_eq_ref (d : ByteArray) (p : USize) (h : p.toNat + 8 ≤ d.usize.toNat) :
+    ldU64LEIn d p h = ldU64LEInRef d p h := rfl
+
 /-- `ldU64LE` is `ldU64LEIn` where the window is inside the array. -/
 theorem ldU64LE_eq_in (d : ByteArray) (p : USize) (h : p.toNat + 8 ≤ d.usize.toNat) :
     ldU64LE d p = ldU64LEIn d p h := by
-  unfold ldU64LE ldU64LEIn
+  rw [ldU64LEIn_eq_ref]
+  unfold ldU64LE ldU64LEInRef
   rw [dif_pos (test_of_usize_window h)]
 
 /-- `n ≤ u / 8` in `USize` gives `8 * n ≤ u` in `Nat`. -/
@@ -489,10 +509,61 @@ def u64Bytes (x : UInt64) : Array UInt8 :=
     `pushU64LERef`; the C is trusted and checked by
     `Harness/PrimBytesTest.lean` on each target (see the module comment and
     the record, section 8). -/
-@[extern c inline "({ lean_object* _l4pa = #1; uint64_t _l4px = #2; if (LEAN_LIKELY(lean_is_exclusive(_l4pa) && lean_sarray_capacity(_l4pa) - lean_sarray_size(_l4pa) >= 8)) { uint8_t* _l4pq = lean_sarray_cptr(_l4pa) + lean_sarray_size(_l4pa); _l4pq[0] = (uint8_t)_l4px; _l4pq[1] = (uint8_t)(_l4px >> 8); _l4pq[2] = (uint8_t)(_l4px >> 16); _l4pq[3] = (uint8_t)(_l4px >> 24); _l4pq[4] = (uint8_t)(_l4px >> 32); _l4pq[5] = (uint8_t)(_l4px >> 40); _l4pq[6] = (uint8_t)(_l4px >> 48); _l4pq[7] = (uint8_t)(_l4px >> 56); lean_to_sarray(_l4pa)->m_size += 8; } else { _l4pa = lean_byte_array_push(_l4pa, (uint8_t)_l4px); _l4pa = lean_byte_array_push(_l4pa, (uint8_t)(_l4px >> 8)); _l4pa = lean_byte_array_push(_l4pa, (uint8_t)(_l4px >> 16)); _l4pa = lean_byte_array_push(_l4pa, (uint8_t)(_l4px >> 24)); _l4pa = lean_byte_array_push(_l4pa, (uint8_t)(_l4px >> 32)); _l4pa = lean_byte_array_push(_l4pa, (uint8_t)(_l4px >> 40)); _l4pa = lean_byte_array_push(_l4pa, (uint8_t)(_l4px >> 48)); _l4pa = lean_byte_array_push(_l4pa, (uint8_t)(_l4px >> 56)); } _l4pa; })"]
+@[extern c inline "({ lean_object* _l4pa = #1; uint64_t _l4px = #2; if (LEAN_LIKELY(lean_is_exclusive(_l4pa) && lean_sarray_capacity(_l4pa) - lean_sarray_size(_l4pa) >= 8)) { uint8_t* _l4pq = lean_sarray_cptr(_l4pa) + lean_sarray_size(_l4pa); if (__BYTE_ORDER__ == __ORDER_LITTLE_ENDIAN__) { __builtin_memcpy(_l4pq, &_l4px, 8); } else { _l4pq[0] = (uint8_t)_l4px; _l4pq[1] = (uint8_t)(_l4px >> 8); _l4pq[2] = (uint8_t)(_l4px >> 16); _l4pq[3] = (uint8_t)(_l4px >> 24); _l4pq[4] = (uint8_t)(_l4px >> 32); _l4pq[5] = (uint8_t)(_l4px >> 40); _l4pq[6] = (uint8_t)(_l4px >> 48); _l4pq[7] = (uint8_t)(_l4px >> 56); } lean_to_sarray(_l4pa)->m_size += 8; } else { uint8_t _l4pb[8]; __builtin_memcpy(_l4pb, &_l4px, 8); for (int _l4pk = 0; _l4pk < 8; _l4pk++) { _l4pa = lean_byte_array_push(_l4pa, _l4pb[__BYTE_ORDER__ == __ORDER_LITTLE_ENDIAN__ ? _l4pk : 7 - _l4pk]); } } _l4pa; })"]
 def pushU64LE (b : ByteArray) (x : UInt64) : ByteArray := pushU64LERef b x
 
 theorem pushU64LE_eq_ref (b : ByteArray) (x : UInt64) : pushU64LE b x = pushU64LERef b x := rfl
+
+/-! ### Reserve once, then push without tests (record section 9, step D)
+
+`reserveU64 b k` returns `b` made exclusive with room for `k` more 8-byte
+values (a copy with the capacity when `b` is shared or too small; `b` itself
+otherwise). The contents do not change, so its Lean meaning is the identity
+(`reserveU64Ref`). `pushU64LEUnchecked b x` appends like `pushU64LE` but the C
+has NO exclusivity test and NO capacity test. TRUSTED PRECONDITION of the C,
+not provable in Lean (exclusivity and capacity are run-time properties that
+the Lean logic does not see): `b` is the array that `reserveU64` returned, or
+the result of a `pushU64LEUnchecked` on such an array, and at most `k` pushes
+have been made since the reserve with no other reference to the array taken.
+A caller that cannot show this uses `pushU64LE`. The Lean statements
+(`pushU64LEUnchecked_eq_ref`, `foldl_unchecked_eq_checked`) say that under the
+precondition the unchecked form computes the checked form; the precondition
+itself is checked by the differential test `Harness/PrimBytesTest.lean`
+(shared, exclusive, too small and exact-capacity inputs) and by the kernel
+loops that use it. -/
+
+/-- Pure reference of `reserveU64`: the identity. Executable, NOT an extern. -/
+@[inline] def reserveU64Ref (b : ByteArray) (_k : USize) : ByteArray := b
+
+/-- Make `b` exclusive with room for `k` more 8-byte values. -/
+@[extern c inline "({ lean_object* _l4ra = #1; size_t _l4rk = #2; if (!(lean_is_exclusive(_l4ra) && lean_sarray_capacity(_l4ra) - lean_sarray_size(_l4ra) >= _l4rk * 8 && _l4rk <= ((size_t)-1) / 16)) { if (_l4rk > ((size_t)-1) / 16) lean_internal_panic_out_of_memory(); size_t _l4rs = lean_sarray_size(_l4ra); lean_object* _l4rr = lean_alloc_sarray(1, _l4rs, _l4rs + _l4rk * 8); __builtin_memcpy(lean_sarray_cptr(_l4rr), lean_sarray_cptr(_l4ra), _l4rs); lean_dec(_l4ra); _l4ra = _l4rr; } _l4ra; })"]
+def reserveU64 (b : ByteArray) (k : USize) : ByteArray := reserveU64Ref b k
+
+theorem reserveU64_eq_ref (b : ByteArray) (k : USize) : reserveU64 b k = reserveU64Ref b k := rfl
+
+/-- The pure reference of `pushU64LEUnchecked`: `pushU64LERef`. -/
+@[inline] def pushU64LEUncheckedRef (b : ByteArray) (x : UInt64) : ByteArray := pushU64LERef b x
+
+/-- Append the 8 little-endian bytes of `x`; no test (see the precondition
+    above). -/
+@[extern c inline "({ lean_object* _l4ua = #1; uint64_t _l4ux = #2; size_t _l4us = lean_sarray_size(_l4ua); uint8_t* _l4uq = lean_sarray_cptr(_l4ua) + _l4us; if (__BYTE_ORDER__ == __ORDER_LITTLE_ENDIAN__) { __builtin_memcpy(_l4uq, &_l4ux, 8); } else { _l4uq[0] = (uint8_t)_l4ux; _l4uq[1] = (uint8_t)(_l4ux >> 8); _l4uq[2] = (uint8_t)(_l4ux >> 16); _l4uq[3] = (uint8_t)(_l4ux >> 24); _l4uq[4] = (uint8_t)(_l4ux >> 32); _l4uq[5] = (uint8_t)(_l4ux >> 40); _l4uq[6] = (uint8_t)(_l4ux >> 48); _l4uq[7] = (uint8_t)(_l4ux >> 56); } lean_to_sarray(_l4ua)->m_size = _l4us + 8; _l4ua; })"]
+def pushU64LEUnchecked (b : ByteArray) (x : UInt64) : ByteArray := pushU64LEUncheckedRef b x
+
+theorem pushU64LEUnchecked_eq_ref (b : ByteArray) (x : UInt64) :
+    pushU64LEUnchecked b x = pushU64LE b x := rfl
+
+/-- Reserve once, then push each value of `xs` (at most `k` of them) without
+    tests: the same array as pushing each with the checked `pushU64LE`. -/
+theorem foldl_unchecked_eq_checked (b : ByteArray) (k : USize) (xs : List UInt64)
+    (_h : xs.length ≤ k.toNat) :
+    xs.foldl pushU64LEUnchecked (reserveU64 b k) = xs.foldl pushU64LE b := by
+  have : ∀ (c : ByteArray) (ys : List UInt64),
+      ys.foldl pushU64LEUnchecked c = ys.foldl pushU64LE c := by
+    intro c ys
+    induction ys generalizing c with
+    | nil => rfl
+    | cons y ys ih => exact ih _
+  rw [this]; rfl
 
 /-- The bytes of `pushU64LE b x`: the bytes of `b`, then those of `x`. -/
 theorem data_pushU64LE (b : ByteArray) (x : UInt64) : (pushU64LE b x).data = b.data ++ u64Bytes x := by

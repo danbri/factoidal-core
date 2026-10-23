@@ -1,0 +1,70 @@
+FFF
+======================================================================
+FAIL: test_native_decided_failure_exit (__main__.BoundaryTests.test_native_decided_failure_exit)
+----------------------------------------------------------------------
+Traceback (most recent call last):
+  File "/Users/danbri/working/sandbox/october/tpac/codex-npm-review/integrate-pr1/tools/lean-rif-boundary-test.py", line 59, in test_native_decided_failure_exit
+    output = self.run_binary("l4rif", [root, "--verbose"], root, 1)
+  File "/Users/danbri/working/sandbox/october/tpac/codex-npm-review/integrate-pr1/tools/lean-rif-boundary-test.py", line 49, in run_binary
+    self.assertEqual(result.returncode, expected_returncode, result.stdout + result.stderr)
+    ~~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+AssertionError: 0 != 1 : FAIL PositiveEntailmentTest/failure: not entailed, and must be
+
+rif-core DECIDED: 0 pass, 1 fail (out of 1 decided)
+UNDECIDED: 0 cases — a built-in outside this port's slice
+  blocked a rule, the chain reached its round bound, or an import's
+  regime or ontology is outside what this port decides
+NOT READ: 0 cases
+
+An UNDECIDED case is counted apart, never as a pass and never as a
+failure: a closure computed without a rule is not the closure, and
+reading `does not entail` off it would be a guess.
+
+
+======================================================================
+FAIL: test_native_empty_inventory_exit (__main__.BoundaryTests.test_native_empty_inventory_exit)
+----------------------------------------------------------------------
+Traceback (most recent call last):
+  File "/Users/danbri/working/sandbox/october/tpac/codex-npm-review/integrate-pr1/tools/lean-rif-boundary-test.py", line 67, in test_native_empty_inventory_exit
+    output = self.run_binary("l4rif", [root], root, 1)
+  File "/Users/danbri/working/sandbox/october/tpac/codex-npm-review/integrate-pr1/tools/lean-rif-boundary-test.py", line 49, in run_binary
+    self.assertEqual(result.returncode, expected_returncode, result.stdout + result.stderr)
+    ~~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+AssertionError: 0 != 1 : 
+rif-core DECIDED: 0 pass, 0 fail (out of 0 decided)
+UNDECIDED: 0 cases — a built-in outside this port's slice
+  blocked a rule, the chain reached its round bound, or an import's
+  regime or ontology is outside what this port decides
+NOT READ: 0 cases
+
+An UNDECIDED case is counted apart, never as a pass and never as a
+failure: a closure computed without a rule is not the closure, and
+reading `does not entail` off it would be a guess.
+
+
+======================================================================
+FAIL: test_native_stale_override_exit (__main__.BoundaryTests.test_native_stale_override_exit)
+----------------------------------------------------------------------
+Traceback (most recent call last):
+  File "/Users/danbri/working/sandbox/october/tpac/codex-npm-review/integrate-pr1/tools/lean-rif-boundary-test.py", line 85, in test_native_stale_override_exit
+    output = self.run_binary("l4rif", [corpus, "--verbose"], root, 1)
+  File "/Users/danbri/working/sandbox/october/tpac/codex-npm-review/integrate-pr1/tools/lean-rif-boundary-test.py", line 49, in run_binary
+    self.assertEqual(result.returncode, expected_returncode, result.stdout + result.stderr)
+    ~~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+AssertionError: 0 != 1 : 
+rif-core DECIDED: 1 pass, 0 fail (out of 1 decided)
+UNDECIDED: 0 cases — a built-in outside this port's slice
+  blocked a rule, the chain reached its round bound, or an import's
+  regime or ontology is outside what this port decides
+NOT READ: 0 cases
+STALE OVERRIDE stale: this test now passes on its own — remove its .override file
+
+An UNDECIDED case is counted apart, never as a pass and never as a
+failure: a closure computed without a rule is not the closure, and
+reading `does not entail` off it would be a guess.
+
+
+----------------------------------------------------------------------
+Ran 3 tests in 0.395s
+
+FAILED (failures=3)

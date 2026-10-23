@@ -151,4 +151,47 @@ private def askN (e : String) : Nat :=
 /-! An unimplemented function is `none`, never a wrong value. -/
 #guard ask "key('k', 'v')" == "<unreadable>"
 
+/-! Namespace resolution shares XML scope rules; expression names retain XPath
+1.0's no-default-namespace rule. Rebinding a child never changes its sibling. -/
+private def scopedDoc : Doc := docOf
+  "<r xmlns='urn:default' xmlns:p='urn:one'><p:x p:a='1' a='2'/><p:x xmlns:p='urn:two'/><p:x/></r>"
+private def elementAt (path : List Nat) : Item :=
+  (itemAt scopedDoc { path := path }).getD (.doc [])
+#guard expandedName scopedDoc (elementAt [0, 0]) == ("urn:one", "x")
+#guard expandedName scopedDoc (elementAt [0, 1]) == ("urn:two", "x")
+#guard expandedName scopedDoc (elementAt [0, 2]) == ("urn:one", "x")
+#guard expandedName scopedDoc (elementAt [0]) == ("urn:default", "r")
+#guard expandedName scopedDoc (.attr {path := [0, 0], slot := some (true, 0)}
+  {name := "p:a", value := "1"}) == ("urn:one", "a")
+#guard expandedName scopedDoc (.attr {path := [0, 0], slot := some (true, 1)}
+  {name := "a", value := "2"}) == ("", "a")
+#guard expandTestName [("", "urn:default"), ("p", "urn:one")] "x" == ("", "x")
+#guard expandTestName [("p", "urn:one")] "p:x" == ("urn:one", "x")
+#guard expandedName scopedDoc (.tree {path := [0]} (.pi "target" "data")) == ("", "target")
+#guard ((namespacesOf scopedDoc (elementAt [0, 1])).filterMap (fun n =>
+  match n with | .ns _ p u => some (p, u) | _ => none)).contains ("p", "urn:two")
+
 end L4Factoidal.XPath.Full
+
+-- Public XPath entry points reject namespace-invalid external raw trees.
+#guard (L4Factoidal.XPath.Full.evalText
+  { doc := [.element "doc" [] []], item := .doc [.element "doc" [] []],
+    docs := [("bad", [.element "p:doc" [] []])] } "true()").isNone
+
+-- Equal paths in different documents must keep both namespace environments;
+-- duplicate occurrences of one external node still collapse in a union.
+private def externalCount : Option String := do
+  let a := (← L4Factoidal.XML.parseXML "<doc xmlns:p='urn:a'><p:x/></doc>" |>.toOption).children
+  let b := (← L4Factoidal.XML.parseXML "<doc xmlns:p='urn:b'><p:x/></doc>" |>.toOption).children
+  let d := [L4Factoidal.XML.Node.element "root" [] []]
+  let v ← L4Factoidal.XPath.Full.evalText
+    { doc := d, item := .doc d, docs := [("a", a), ("b", b)] }
+    "count((document('a') | document('b'))/doc/* | document('a')/doc/*)"
+  some v.toStr
+#guard externalCount == some "2"
+
+-- XPath 1.0 §4.1: these nodes have no expanded-name namespace.
+#guard L4Factoidal.XPath.Full.expandedName [] (.doc []) == ("", "")
+#guard L4Factoidal.XPath.Full.expandedName [] (.tree { path := [0] } (.text "x")) == ("", "")
+#guard L4Factoidal.XPath.Full.expandedName [] (.tree { path := [0] } (.comment "x")) == ("", "")
+#guard L4Factoidal.XPath.Full.expandedName [] (.ns { path := [0] } "xml" "http://www.w3.org/XML/1998/namespace") == ("", "xml")

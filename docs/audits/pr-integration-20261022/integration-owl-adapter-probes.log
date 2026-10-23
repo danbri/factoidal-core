@@ -1,0 +1,4 @@
+"{\"ok\":true,\"entailed\":null,\"via\":\"refutation\",\"reason\":\"incomplete-search: a negated conclusion was not refuted, but the search does not certify a countermodel (indeterminate)\"}"
+"{\"ok\":true,\"entailed\":null,\"via\":\"refutation\",\"reason\":\"incomplete-search: a negated conclusion was not refuted, but the search does not certify a countermodel (indeterminate)\"}"
+"{\"ok\":true,\"entailed\":null,\"via\":\"refutation\",\"reason\":\"budget-out: a refutation goal exhausted fuel 0 before closing (indeterminate); raise it via opts.fuel\"}"
+"{\"ok\":true,\"consistent\":false,\"reason\":\"a checked certificate proves a contradiction in the admitted atomic OWL fragment\"}"

@@ -1,0 +1,19 @@
+{
+  "source_commit": "f90efa6f5",
+  "argv": [
+    "/Users/danbri/working/sandbox/october/tpac/codex-npm-review/integrate-pr1/formal/lean4/.lake/build/bin/l4xsd-datatypes",
+    "/private/tmp/xsdtests-7bc3365c652a322f3d762021b3879eb92dae7e30",
+    "--verbose"
+  ],
+  "cwd": "/Users/danbri/working/sandbox/october/tpac/codex-npm-review/integrate-pr1",
+  "binary_sha256": "d297761ccc107400c482bbc5a178836c12be945d743143c01d836b95eb58557b",
+  "fixture_gitlink": "7bc3365c652a322f3d762021b3879eb92dae7e30",
+  "exit_code": 0,
+  "elapsed_seconds": 30.432,
+  "captured_utc": "2026-10-22T17:58:50.363632+00:00",
+  "summary": [
+    "XSD datatype instance tests: 16135 pass, 0 fail (out of 16135 scored)",
+    "not scored: structures 7052, mixed 0, schema-invalid 1, version-1.0 8, unreadable 139, not-simple 8, assertion 33, unreadable-pattern 2925, nilled 3, value-constraint 53",
+    "schema tests seen (not scored in this run): 15378"
+  ]
+}

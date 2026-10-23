@@ -140,7 +140,7 @@ inductive MetaRead where
     not when it doesn't. `none` means the entry could not be attempted
     at all (a file the manifest names is missing) — reported as a
     SKIP, never silently dropped from the denominator. -/
-def runOne (dir : String) (e : VEntry) : IO (Option (Bool × List String)) := do
+def runOne (dir : String) (e : VEntry) : IO (Option (Option Bool × List String)) := do
   let suiteBase := "http://www.w3.org/2013/csvw/tests/"
   -- Read one metadata document: its raw JSON tree (for the structural
   -- checks), its decoded group + context (for the data-level checks,
@@ -183,7 +183,7 @@ def runOne (dir : String) (e : VEntry) : IO (Option (Bool × List String)) := do
     -- processing if a metadata document does not use valid JSON
     -- syntax" (test092). Reading it as a skip, as this runner did
     -- until 2026-09-07, drops the one test that states the rule.
-    return some (false, ["metadata is not valid JSON"])
+    return some (some false, ["metadata is not valid JSON"])
   if metaMissing then
     -- A named metadata file that is not on disk: the entry cannot be
     -- attempted (this suite ships every fixture it references, so
@@ -202,7 +202,7 @@ def runOne (dir : String) (e : VEntry) : IO (Option (Bool × List String)) := do
       -- the entry (test119).
       let path := dir ++ "/" ++ suiteRelative suiteBase e.action
       if !(← System.FilePath.pathExists path) then return none
-      return some (true, [])
+      return some (some true, [])
   | some (rawJson, none, _) =>
       -- The JSON parsed but the lenient decoder could not build ANY
       -- table or table group from it (`parseMetadata` returned
@@ -211,7 +211,7 @@ def runOne (dir : String) (e : VEntry) : IO (Option (Bool × List String)) := do
       -- (a root with neither `tables` nor `url`, for instance).
       let structural := validate rawJson
       let findings := (err "metadata failed to decode") :: structural
-      return some (passes findings, (findings.filter (·.severity == .error)).map (·.message))
+      return some (validationDecision? findings, (findings.filter (·.severity != .warning)).map (·.message))
   | some (rawJson, some (group, ctx), mbase) =>
       let structural := validate rawJson
       -- Resolve any `tableSchema` given as a URL, exactly as
@@ -246,7 +246,7 @@ def runOne (dir : String) (e : VEntry) : IO (Option (Bool × List String)) := do
           pairs := pairs ++ [(t, ({ header := [], rows := [] } : Table))]
       let dataFindings := checkData group pairs
       let findings := structural ++ dataFindings
-      return some (passes findings, (findings.filter (·.severity == .error)).map (·.message))
+      return some (validationDecision? findings, (findings.filter (·.severity != .warning)).map (·.message))
 
 /-- Cases whose W3C test data is defective, each with the open issue that
 records the defect. They are NOT failures of this engine: they are reported
@@ -296,7 +296,14 @@ def main (args : List String) : IO UInt32 := do
             | .positive => posScore := posScore.bump (.skip "missing fixture")
             | .warning  => warnScore := warnScore.bump (.skip "missing fixture")
             | .negative => negScore := negScore.bump (.skip "missing fixture")
-        | some (conforms, reasons) =>
+        | some (none, reasons) =>
+            let why := String.intercalate "; " reasons
+            IO.println s!"UNSUPPORTED {e.id} ({bucket}): {why}"
+            match e.kind with
+            | .positive => posScore := posScore.bump (.unsupported why)
+            | .warning => warnScore := warnScore.bump (.unsupported why)
+            | .negative => negScore := negScore.bump (.unsupported why)
+        | some (some conforms, reasons) =>
             let ok := match e.kind with
               | .negative => !conforms
               | _         => conforms

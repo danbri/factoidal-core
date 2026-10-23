@@ -1,0 +1,4 @@
+complete-no-wrong-verdict-observed
+{"executed": 246, "missing-rdfxml-serialization": 20, "selected": 266, "supported-unknown": 14, "unsupported": 232}
+Evidence: ../logs/integration-final-w3c-owl-report.json
+Unknown and unsupported are not conformance passes.

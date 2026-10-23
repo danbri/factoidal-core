@@ -205,6 +205,93 @@ theorem stream_divided_eq_single {α β : Type} (R : β → List α) (L : List �
   rw [hmap, window_cap cap _ off lim hcap, flatMap_chunks, chunksOf_flatten]
   congr 2
 
+/-- Stage 1d (`IdQuery.streamRangeBlocks` = 1): ranges of one block each. -/
+theorem stream_one_block_ranges_eq_single {α β : Type} (R : β → List α) (L : List β)
+    (off lim cap : Nat) (hcap : off + lim ≤ cap) :
+    (((chunksOf 1 L).map fun X => (X.flatMap R).take cap).foldl (winStep off lim) (0, 0, [])).2.2
+      = ((L.map R).foldl (winStep off lim) (0, 0, [])).2.2 :=
+  stream_divided_eq_single R L 1 off lim cap hcap
+
+/-- Stage 1d: the parent writes range `k` as soon as ranges `0..k` are done and
+    frees it (`Harness/Sbm11Query.parFold`). Stepping over the ranges one
+    prefix at a time, in range order, is the same fold as stepping over all of
+    them: for any split of the ranges into the written ones `A` and the later
+    ones `B`, folding `B` from the state after `A` is folding `A ++ B`. -/
+theorem stream_incremental_eq {α : Type} (off lim : Nat) (A B : List (List α)) :
+    B.foldl (winStep off lim) (A.foldl (winStep off lim) (0, 0, []))
+      = (A ++ B).foldl (winStep off lim) (0, 0, []) := by
+  rw [List.foldl_append]
+
+/-! ## Streamed path: a range cut into windows (stage 1j)
+
+`IdQuery.streamJobs` cuts a range into jobs that each render the window
+`[wFrom, wTo)` of the range's rows: the first job from 0, each next job from
+the end of the one before, the last to `cap`. `windows_concat`: the windows'
+rows, in window order, are the rows `[0, cap)` of the range, so the parent's
+fold over the jobs' pieces is its fold over the range's pieces
+(`window_fold`). Tested, not proved: that `streamPartM` keeps exactly
+`win wFrom wTo` of the range's rows, and that `streamJobs` gives windows that
+chain from 0 to `cap` (tests/sbm11/threads.sh). -/
+
+/-- Rows `[a, b)` of `Y`. -/
+def win {α : Type} (a b : Nat) (Y : List α) : List α := (Y.take b).drop a
+
+theorem win_split {α : Type} (Y : List α) {a b c : Nat} (hab : a ≤ b) (hbc : b ≤ c) :
+    win a b Y ++ win b c Y = win a c Y := by
+  unfold win
+  have h1 : Y.take b = (Y.take c).take b := by
+    rw [List.take_take]; congr 1; omega
+  rw [h1]
+  generalize Y.take c = T
+  conv => rhs; rw [← List.take_append_drop b T]
+  rw [List.drop_append]
+  congr 1
+  by_cases hb : b ≤ T.length
+  · rw [List.length_take_of_le hb, show a - b = 0 by omega, List.drop_zero]
+  · have : T.drop b = [] := List.drop_eq_nil_of_le (by omega)
+    rw [this]; simp
+
+/-- The windows from `a` to each point of `ps` in turn. -/
+def winsOf {α : Type} (Y : List α) : Nat → List Nat → List (List α)
+  | _, [] => []
+  | a, b :: ps => win a b Y :: winsOf Y b ps
+
+/-- The last point (`a` when there is none). -/
+def lastOf : Nat → List Nat → Nat
+  | a, [] => a
+  | _, b :: ps => lastOf b ps
+
+/-- The points do not decrease from `a`. -/
+def monoFrom : Nat → List Nat → Prop
+  | _, [] => True
+  | a, b :: ps => a ≤ b ∧ monoFrom b ps
+
+theorem le_lastOf : ∀ (a : Nat) (ps : List Nat), monoFrom a ps → a ≤ lastOf a ps
+  | _, [], _ => Nat.le_refl _
+  | _, b :: ps, ⟨hab, h⟩ => Nat.le_trans hab (le_lastOf b ps h)
+
+theorem win_self {α : Type} (Y : List α) (a : Nat) : win a a Y = [] := by
+  unfold win
+  exact List.drop_eq_nil_of_le (by simp only [List.length_take]; exact Nat.min_le_left _ _)
+
+/-- **Windows of a range.** The rows of consecutive windows, in order, are the
+    rows from the first point to the last. -/
+theorem windows_concat {α : Type} (Y : List α) :
+    ∀ (a : Nat) (ps : List Nat), monoFrom a ps → (winsOf Y a ps).flatten = win a (lastOf a ps) Y
+  | a, [], _ => by simp [winsOf, lastOf, win_self]
+  | a, b :: ps, ⟨hab, h⟩ => by
+    simp only [winsOf, lastOf, List.flatten_cons]
+    rw [windows_concat Y b ps h, win_split Y hab (le_lastOf b ps h)]
+
+/-- The windows of a range's rows (at most `cap` of them) from 0 to `cap` are
+    those rows. -/
+theorem windows_range {α : Type} (Z : List α) (cap : Nat) (ps : List Nat)
+    (hm : monoFrom 0 ps) (hl : lastOf 0 ps = cap) :
+    (winsOf (Z.take cap) 0 ps).flatten = Z.take cap := by
+  rw [windows_concat _ 0 ps hm, hl]
+  unfold win
+  rw [List.drop_zero, List.take_take, Nat.min_self]
+
 /-! ## Counted path: counts and group maps -/
 
 /-- **Counts.** The rows of the ranges add up to the rows of all blocks. -/
@@ -624,6 +711,10 @@ theorem topK_divided_eq_single {β : Type} (trans : ∀ a b c, le a b → le b c
 end TopK
 
 #print axioms stream_divided_eq_single
+#print axioms stream_one_block_ranges_eq_single
+#print axioms stream_incremental_eq
+#print axioms windows_concat
+#print axioms windows_range
 #print axioms count_divided_eq_single
 #print axioms groups_divided_eq_single
 #print axioms topK_divided_eq_single

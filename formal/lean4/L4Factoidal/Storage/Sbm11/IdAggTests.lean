@@ -226,6 +226,43 @@ def wherePart : String := "WHERE { ?g <http://ex/p> ?v . ?g <http://ex/q> ?x }"
 #guard agrees s!"SELECT ?b (COUNT(?v) AS ?n) (AVG(?v) AS ?m) WHERE \{ ?x <http://ex/p> ?k . ?x <http://ex/q> ?v . ?x <http://ex/r> ?b } GROUP BY ?b ORDER BY ?b" keyed
 #guard agrees s!"SELECT ?k ?b (COUNT(*) AS ?n) (MIN(?v) AS ?lo) WHERE \{ ?x <http://ex/p> ?k . ?x <http://ex/q> ?v . ?x <http://ex/r> ?b } GROUP BY ?k ?b ORDER BY ?k ?b" keyed
 
+-- https://github.com/danbri/factoidal/issues/862: an argument column of inline
+-- integers takes the integer path (`IdAgg.intRows`, `IAcc`): values of several
+-- integer datatypes, negative values, an unbound value, two groups. The answer
+-- must equal the reference; `decodedOf` shows the path ran (the summary path
+-- decodes all 10 distinct values; the integer path decodes the best ids only).
+def ints : Table := mkTable #["g", "v"] [
+  [some g1, some (int 10)], [some g1, some (typed "20" "int")],
+  [some g1, some (typed "7" "nonNegativeInteger")], [some g1, some (typed "-3" "long")],
+  [some g1, none], [some g1, some (typed "20" "short")],
+  [some g2, some (typed "-5" "negativeInteger")], [some g2, some (typed "9" "unsignedByte")],
+  [some g2, some (typed "4" "positiveInteger")], [some g2, some (typed "-128" "byte")],
+  [some g2, some (int 9)], [some g2, some (typed "0" "nonPositiveInteger")]]
+
+/-- The same column with one decimal: the integer path declines it and the
+summary path answers. -/
+def intsDec : Table := mkTable #["g", "v"] [
+  [some g1, some (int 10)], [some g1, some (typed "2.5" "decimal")], [some g2, some (int 3)]]
+
+def intWhere : String := "WHERE { ?g <http://ex/p> ?v }"
+
+def decodedOf (text : String) (t : Table) : Nat :=
+  match parseSparql text with
+  | .error _ => 0
+  | .ok q => match aggPlan? q with
+    | none => 0
+    | some p => match (IdAgg.aggregateM termOfId t p).run with
+      | .ok (some r) => r.decoded
+      | _ => 0
+
+#guard agrees s!"SELECT ?g (COUNT(?v) AS ?c) (SUM(?v) AS ?s) (MIN(?v) AS ?lo) (MAX(?v) AS ?hi) (AVG(?v) AS ?m) {intWhere} GROUP BY ?g ORDER BY ?g" ints
+#guard agrees s!"SELECT (SUM(?v) AS ?s) (MIN(?v) AS ?lo) (MAX(?v) AS ?hi) (AVG(?v) AS ?m) (COUNT(*) AS ?n) {intWhere}" ints
+#guard agrees s!"SELECT ?g (MAX(?v) AS ?hi) (MIN(?v) AS ?lo) {intWhere} GROUP BY ?g ORDER BY DESC(?hi)" ints
+#guard agrees s!"SELECT ?g (COUNT(?v) AS ?c) (SUM(?v) AS ?s) (MIN(?v) AS ?lo) (MAX(?v) AS ?hi) (AVG(?v) AS ?m) {intWhere} GROUP BY ?g ORDER BY ?g" intsDec
+#guard agrees s!"SELECT ?g (SUM(?v) AS ?s) (MAX(?v) AS ?hi) {wherePart} GROUP BY ?g ORDER BY ?g" numbers
+#guard (fun n => 1 ≤ n && n ≤ 8) (decodedOf s!"SELECT ?g (MIN(?v) AS ?lo) (MAX(?v) AS ?hi) (AVG(?v) AS ?m) {intWhere} GROUP BY ?g" ints)
+#guard decodedOf s!"SELECT ?g (MIN(?v) AS ?lo) (MAX(?v) AS ?hi) {intWhere} GROUP BY ?g" intsDec ≥ 3
+
 -- tables the plan does not admit: a literal key, an unbound key, a missing key column
 #guard declines s!"SELECT ?x (COUNT(*) AS ?n) {wherePart} GROUP BY ?x" numbers
 #guard declines s!"SELECT ?g ?x (COUNT(*) AS ?n) {wherePart} GROUP BY ?g ?x" numbers

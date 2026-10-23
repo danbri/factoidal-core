@@ -174,3 +174,22 @@ LEAN_EXPORT lean_obj_res l4_atomic_replace_file_sync(b_lean_obj_arg path,
   free(tmp);
   return lean_io_result_mk_ok(lean_box(ok));
 }
+
+/* Not for main without the owner's approval (issue 961, stage 1i of
+ * docs/designissues/2026-10-12-parallel-block-scans.md): transparent huge
+ * pages off for this process. mimalloc calls madvise(MADV_HUGEPAGE) on its
+ * memory; without huge pages each thread's heap grows in 4 KB pages, and the
+ * peak RSS of `l4sbm11 query --threads 4` is 17 to 31 MB smaller. Returns 0
+ * on success, -1 otherwise (and on a system without the call). */
+#if defined(__linux__)
+#include <sys/prctl.h>
+#endif
+LEAN_EXPORT lean_obj_res l4_thp_disable(lean_obj_arg world) {
+  (void)world;
+#if defined(__linux__) && defined(PR_SET_THP_DISABLE)
+  int r = prctl(PR_SET_THP_DISABLE, 1, 0, 0, 0);
+#else
+  int r = -1;
+#endif
+  return lean_io_result_mk_ok(lean_box_uint32((uint32_t)(int32_t)r));
+}

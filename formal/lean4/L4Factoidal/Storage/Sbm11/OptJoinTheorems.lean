@@ -30,8 +30,10 @@ of docs/designissues/2026-10-12-sbm11-end-to-end-theorem.md).
   `SPARQL.leftJoin` of the decoded `L` and `R` with condition `true`, as a
   list (same rows, same order), when `Term.eqb` of two decoded ids is id
   equality on the ids of `L` and `R` (`TermIdTheorems.toId?_eq_iff` gives
-  term identity; `Term.eqb` also identifies two `rdf:XMLLiteral` forms with
-  the same exclusive canonical form, so the hypothesis excludes such pairs).
+  term identity, and `Term.eqb` is RDF term equality up to the case of
+  language tags; until 2026-10-23 it also identified two `rdf:XMLLiteral`
+  forms with the same exclusive canonical form,
+  https://github.com/danbri/factoidal/issues/963).
 * `idLeftJoin_eq_ljSpec`: `idLeftJoin` is `ljSpec` with `cand i j` the id
   compatibility of left row `i` and right row `j`, each pair mapped to the
   merged row (or the left row).
@@ -43,12 +45,12 @@ of docs/designissues/2026-10-12-sbm11-end-to-end-theorem.md).
   join (the FILTER reads only the group's variables), which is also what the
   reference evaluator computes for `OPTIONAL { P FILTER(e) }`.
 
-Not proved (open, the same step as lemma L5a′ for the inner join): that the
-`Table` `OptJoin.leftOuterJoin` builds (`gather`, `gatherOpt` over
-`ByteArray` columns) denotes the rows `idLeftJoin` gives, and that the hash
-path (`OptJoin.hashPairs`, `Std.HashMap`) computes `innerSpec`. Both are
-tested: the `#guard`s below on sample tables, and `tests/sbm11/run.sh` part
-(d) against the reference engine.
+The `Table` step (lemma L5g″): the `Table` `OptJoin.leftOuterJoin` builds
+(`gather`, `gatherOpt` over `ByteArray` columns) denotes the rows
+`idLeftJoin` gives, and the hash path (`OptJoin.hashPairs`, `Std.HashMap`)
+computes `innerSpec`: `TableOuterTheorems.leftOuterJoin_rows` and
+`hashPairs_spec`. Also tested: the `#guard`s below on sample tables, and
+`tests/sbm11/run.sh` part (d) against the reference engine.
 
 No `sorry`, no user `axiom`, no `native_decide`, no `partial`.
 -/

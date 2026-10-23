@@ -83,6 +83,8 @@ This is a HARNESS: it does file I/O. The query engine is
 import Harness.Sbm11Gen
 import Harness.Sbm11Delta
 import L4Factoidal.Storage.Sbm11.IdQuery
+import L4Factoidal.Storage.Sbm11.IdGroup
+import L4Factoidal.Storage.Sbm11.QueryEnv
 import L4Factoidal.Storage.Sbm11.TermKeyFast
 import L4Factoidal.Storage.Sbm11.ParallelScan
 import L4Factoidal.Storage.Sbm11.Overlay
@@ -100,6 +102,7 @@ import L4Factoidal.Geo.Functions
 import Wasm.Ops.Clock
 import Std.Sync.Mutex
 import Std.Data.TreeMap
+import Harness.WorkerPool
 
 namespace Harness.Sbm11Query
 
@@ -142,6 +145,15 @@ structure LoadedPerm where
       not change while it is open); at most 256 keys, emptied when full -/
   ranges : IO.Ref (Std.HashMap (Array UInt64) (Array BlockMeta))
 
+/-- The dictionary page cache of one pool worker (stage 1h of
+    docs/designissues/2026-10-12-parallel-block-scans.md): made by the
+    worker's own thread when the pool starts (`Harness.WorkerPool.start`) and
+    given to each job of that worker, so it is never reachable from another
+    thread. The Lean runtime then updates it in place and counts references
+    to its pages without atomic operations, and the pages a worker copied
+    stay with it from one query to the next. -/
+abbrev WorkerPages := IO.Ref (Std.HashMap Nat (ByteArray × Array Nat))
+
 /-- An open generation: the manifest, the dictionary's Merkle leaves and
     header; each permutation is opened on its first use (its PRM1 read, length
     and, under `Verify.merkle`, SHA-256 checked against the manifest, decoded;
@@ -171,6 +183,16 @@ structure Session where
       `none` when the dictionary does not hold it. Empty except during a
       replay; `idOf` reads it before it reads the dictionary. -/
   baseIds : IO.Ref (Std.HashMap Term (Option UInt64))
+  /-- The dictionary ids that `idOf` has looked up in this session (a
+      normalised term to its id; terms the dictionary does not hold are not
+      kept, since the delta overlay may give them an id). The base dictionary
+      does not change while the session is open, so an entry stays right, as
+      a cached dictionary page does. At most `idMemoLimit` entries, emptied
+      when full. Olympics q07 looks up 6 constants per run; each lookup is a
+      binary search over GDX1 entries and GDV1 pages, about 14 positioned
+      reads: 0.43 ms of the 5.4 ms query on one thread, the same at 4
+      threads (KR 1.2 of https://github.com/danbri/factoidal/issues/875). -/
+  idMemo : IO.Ref (Std.HashMap Term UInt64)
   /-- Serialises the verified chunk cache (`merkle` reads) between scan
       tasks (issue 799). Shared by every task view of the session. -/
   lock : Std.Mutex Unit
@@ -189,6 +211,9 @@ structure Session where
   /-- A task view (`Session.view`): `pageKeys` goes to `taskPages` under
       `dictLock` on a miss in the view's own `pages`. -/
   inTask : Bool := false
+  /-- In a task view (made by the task, `Session.local`): the pages it has
+      taken once from `taskPages` without a copy (`Session.sharedPage`). -/
+  onceSeen : Option (IO.Ref (Std.HashSet Nat)) := none
   /-- The dictionary's term count (`g.dictHdr.termCount`), read by every
       `keySlice`. A field of its own: reading it through `g.dictHdr` took and
       released a reference to the header object, which every task view
@@ -222,6 +247,44 @@ structure Session where
   /-- the size in bytes of the log file the replay read (0: no log); a
       positioned append of `l4sbm11 update` uses it -/
   ovLogBytes : Nat := 0
+  /-- `SBM11_PAGES` (default `defaultPages`) and the per-view limit
+      `min SBM11_PAGES SBM11_TASK_PAGES` (default 256), read once at open
+      (issue 799, KR 1.2). They were read from the environment on every page
+      insert: `getenv` and its string compares were 1.3 percent of olympics
+      q19 at 4 threads. -/
+  pageLimit : Nat := 8192
+  taskPageLimit : Nat := 256
+  /-- The session's worker pool (`Harness.WorkerPool`, issue 961): started by
+      `l4sbm11 query --threads N` for N above 1 (N - 1 workers; the calling
+      thread is the N-th), stopped when the command ends. `none`: divided work
+      runs on the Lean task pool (`IO.asTask`). Each worker keeps a
+      dictionary page cache of its own for the life of the pool
+      (`WorkerPages`, stage 1h). -/
+  pool : Option (Harness.WorkerPool.Pool WorkerPages) := none
+  /-- `SBM11_PHASES` set: the id path records the time of each phase mark
+      (`IdQuery.Store.mark`) and `l4sbm11 query --repeat N` prints the median
+      time of each phase over runs 2 to N. -/
+  phases : Bool := false
+  /-- `IdQuery.Par.renderRows` (`SBM11_RENDER_ROWS`; 0: the calling thread
+      renders a finished table) -/
+  renderRows : Nat := IdQuery.renderJobRows
+  /-- `IdQuery.Par.streamPerThread` (`SBM11_STREAM_JOBS`) -/
+  streamPerThread : Nat := IdQuery.streamJobsPerThread
+
+/-- The default of `SBM11_PAGES`, the most dictionary pages a cache holds. A
+    page is about 4.5 KB (olympics q19 needs between 4,096 and 8,192 pages). At
+    2,048 pages, the former default, q19 and q21 loaded pages again on every
+    run, and q19 took 97 ms against 36 ms with no limit (issue 799, KR 1.2). -/
+def defaultPages : Nat := 8192
+
+/-- `SBM11_PAGES` (default `defaultPages`), read once per session. -/
+def pagesLimitEnv : IO Nat := do
+  return ((← IO.getEnv "SBM11_PAGES").bind String.toNat?).getD defaultPages
+
+/-- The page limit of a task view's own cache: `SBM11_TASK_PAGES` (default
+    256), never more than `SBM11_PAGES`; read once per session. -/
+def taskPagesLimitEnv : IO Nat := do
+  return min (← pagesLimitEnv) (((← IO.getEnv "SBM11_TASK_PAGES").bind String.toNat?).getD 256)
 
 /-- Open a generation for queries, reads checked as `v` says (no default:
     the caller chooses; the CLI's choice is `Sbm11Gen.cliDefaultVerify`). -/
@@ -252,8 +315,10 @@ def openSession (v : Verify) (dir0 : String) : IO Session := do
            pages := ← IO.mkRef {}, frameBytes := ← IO.mkRef 0, prmBytes := ← IO.mkRef 0,
            lookups := ← IO.mkRef 0,
            gdx := ← IO.mkRef none, ovVocab := ← IO.mkRef #[], ovIds := ← IO.mkRef {}, baseIds := ← IO.mkRef {},
+           idMemo := ← IO.mkRef {},
            baseNamedRef := ← IO.mkRef none,
-           lock := ← Std.Mutex.new (), dictLock := ← Std.Mutex.new (), taskPages := ← IO.mkRef {} }
+           lock := ← Std.Mutex.new (), dictLock := ← Std.Mutex.new (), taskPages := ← IO.mkRef {},
+           pageLimit := ← pagesLimitEnv, taskPageLimit := ← taskPagesLimitEnv }
 
 /-- A positioned read of a PRM1 file (`PrmRange`'s `read`): under `none` one
     `pread` of exactly the bytes, under `merkle` through the file's verified
@@ -335,12 +400,29 @@ def Session.gdvFetch (ss : Session) (off len : Nat) : IO ByteArray := do
     | none => throw (IO.userError s!"GDV1: chunk {c} refused")
   return out
 
+/-- The class of pages that a full cache drops: pages whose
+    number has the same remainder modulo 16 as the page being inserted. -/
+def evictClasses : Nat := 16
+
+/-- Insert page `pg` in a page map that holds at most `lim` entries. When the
+    map is full, the entries whose number is in the same class modulo
+    `evictClasses` as `pg` are dropped (about one sixteenth), and the whole map
+    if that does not make room. The earlier rule emptied the whole map when it
+    was full: a scan whose pages are a few more than the limit (olympics q19
+    and q21: between 4,096 and 8,192 pages against 2,048) then loaded every page again on
+    every run (q19: 97 ms against 36 ms with no limit; issue 799, KR 1.2). -/
+def insertPageBounded {α : Type} (m : Std.HashMap Nat α) (lim pg : Nat) (v : α) : Std.HashMap Nat α :=
+  if m.size < lim then m.insert pg v
+  else
+    let m' := m.filter fun k _ => k % evictClasses != pg % evictClasses
+    (if m'.size < lim then m' else {}).insert pg v
+
 /-- The keys of dictionary page `pg`, packed: one byte array holding the keys
     one after the other and the start of each key (and the end of the last).
     One object per page: a cache of 64 separate key arrays per page left the
     heap fragmented (q19: peak RSS 98 MB against 31 MB with a cache of 64
     pages, and slower, each new huge page being cleared on first touch). The
-    cache holds at most `SBM11_PAGES` pages (default 2,048) and is emptied
+    cache holds at most `SBM11_PAGES` pages (default 8,192) and is emptied
     when full. -/
 def Session.loadPage (ss : Session) (pg : Nat) : IO (ByteArray × Array Nat) := do
   let ks ← ok s!"GDV1 page {pg}" (← (Dict.pageM ss.gdxFetch ss.gdvFetch pg).run)
@@ -354,27 +436,29 @@ def Session.loadPage (ss : Session) (pg : Nat) : IO (ByteArray × Array Nat) := 
   return (packed, offs)
 
 /-- Put page `pg` in the page cache `c`, emptied first when it holds
-    `SBM11_PAGES` pages (default 2,048; 0: no cache). -/
-def cachePage (c : IO.Ref (Std.HashMap Nat (ByteArray × Array Nat))) (pg : Nat)
+    `SBM11_PAGES` pages (default 8,192; 0: no cache). -/
+def cachePage (lim : Nat) (c : IO.Ref (Std.HashMap Nat (ByteArray × Array Nat))) (pg : Nat)
     (ks : ByteArray × Array Nat) : IO Unit := do
-  let lim := ((← IO.getEnv "SBM11_PAGES").bind String.toNat?).getD 2048
   if lim > 0 then
-    c.modify fun m => (if m.size ≥ lim then {} else m).insert pg ks
+    c.modify fun m => insertPageBounded m lim pg ks
 
 /-- Put page `pg` in a task view's own cache (issue 799, stage 1b): emptied
-    first when it holds `SBM11_TASK_PAGES` pages (default 1,024), and never
+    first when it holds `SBM11_TASK_PAGES` pages (default 256), and never
     more than `SBM11_PAGES`. A task's cache holds copies of pages that
     `taskPages` also holds. Olympics q19 at 4 threads, 7 runs per process
     (2026-10-13): 2,048 pages per task, 74 ms and 156 MB peak RSS; 1,024, 54
     ms and 125 MB; 256, 84 ms and 106 MB (36 MB at 1 thread, 47 MB at 4
-    threads with no page cache at all). A block of 4,096 rows can need more
-    pages than a small cache holds, and its prefetched pages then empty it. -/
-def cacheTaskPage (c : IO.Ref (Std.HashMap Nat (ByteArray × Array Nat))) (pg : Nat)
+    threads with no page cache at all). Those figures were taken with
+    `SBM11_PAGES` at the former default of 2,048, where the shared level
+    thrashed; with the default of 8,192 (KR 1.2, 2026-10-22, 4 threads, load
+    average 2 to 3): 1,024 pages per task, peak RSS 147 MB (q19) and 125 MB
+    (q21); 256, 98 to 108 MB and 105 to 108 MB; 0, 97 MB and 102 MB but 3 to 9
+    times slower (every page loaded again). A block of 4,096 rows can need more
+    pages than a small cache holds, and its prefetched pages then drop others. -/
+def cacheTaskPage (lim : Nat) (c : IO.Ref (Std.HashMap Nat (ByteArray × Array Nat))) (pg : Nat)
     (ks : ByteArray × Array Nat) : IO Unit := do
-  let all := ((← IO.getEnv "SBM11_PAGES").bind String.toNat?).getD 2048
-  let lim := min all (((← IO.getEnv "SBM11_TASK_PAGES").bind String.toNat?).getD 1024)
   if lim > 0 then
-    c.modify fun m => (if m.size ≥ lim then {} else m).insert pg ks
+    c.modify fun m => insertPageBounded m lim pg ks
 
 /-- A copy of a page made by the calling thread. A page in `taskPages` is
     reachable from every task, so taking and releasing a reference to it is an
@@ -386,9 +470,13 @@ def copyPage (ks : ByteArray × Array Nat) : ByteArray × Array Nat :=
 /-- Put an entry in `taskPages` (call under `dictLock`), emptied first when
     it holds `SBM11_PAGES` entries. -/
 def Session.putTaskPage (ss : Session) (pg : Nat) (e : TaskPage) : IO Unit := do
-  let lim := ((← IO.getEnv "SBM11_PAGES").bind String.toNat?).getD 2048
+  let lim := ss.pageLimit
   if lim > 0 then
-    ss.taskPages.modify fun m => (if m.size ≥ lim then {} else m).insert pg e
+    ss.taskPages.modify fun m =>
+      if m.size < lim then m.insert pg e
+      else
+        let m' := m.filter fun k _ => k % evictClasses != pg % evictClasses
+        (if m'.size < lim then m' else {}).insert pg e
 
 /-- A task view (issue 799, stage 1b) on a miss in its own cache: the page in
     `taskPages`, else this task loads it. Under `none` the load runs outside
@@ -400,6 +488,22 @@ def Session.putTaskPage (ss : Session) (pg : Nat) (e : TaskPage) : IO Unit := do
     under the lock (the chunk caches are shared). Then a copy goes to the
     view's own cache. -/
 def Session.sharedPage (ss : Session) (pg : Nat) : IO (ByteArray × Array Nat) := do
+  -- a page that `taskPages` holds ready is read without `dictLock`: the map
+  -- is a persistent tree, and `IO.Ref.get` gives the whole map as it was at
+  -- one moment (KR 1.2 of batch 3: olympics q19 at 4 threads, 82 percent of
+  -- the context switches were waits for `dictLock` in this function)
+  if let some (.ready ks) := (← ss.taskPages.get).get? pg then
+    -- the first use of a page by this view reads the shared page and keeps
+    -- no copy; the second copies it into the view's cache. Most pages of a
+    -- scan give one key to a view, and the copy of 4.5 KB per page and view
+    -- on every query was the largest cost that 1 thread does not have
+    -- (olympics q19 at 4 threads, KR 1.2 of batch 3)
+    if let some r := ss.onceSeen then
+      if ← r.modifyGet (fun st => if st.contains pg then (false, st) else (true, st.insert pg)) then
+        return ks
+    let ks := copyPage ks
+    cacheTaskPage ss.taskPageLimit ss.pages pg ks
+    return ks
   let underLock := ss.g.verify != .none
   let step ← ss.dictLock.atomically (do
     match (← ss.taskPages.get).get? pg with
@@ -432,7 +536,7 @@ def Session.sharedPage (ss : Session) (pg : Nat) : IO (ByteArray × Array Nat) :
         p.resolve (.error (toString e))
         throw e
   let ks := copyPage ks
-  cacheTaskPage ss.pages pg ks
+  cacheTaskPage ss.taskPageLimit ss.pages pg ks
   return ks
 
 /-- A task view under `none` (issue 799, stage 1b): the dictionary pages of
@@ -449,6 +553,10 @@ def Session.prefetch (ss : Session) (t : L4Factoidal.Qlvr.Table) (n : Nat) : IO 
   let localPages ← ss.pages.get
   let mut want : Array Nat := #[]
   let mut seen : Std.HashSet Nat := {}
+  -- the page cache first: a pool worker's cache lives across queries
+  -- (`Session.withPages`), so most pages are in it, and the rows of a column
+  -- often repeat the last page (stage 1h)
+  let mut last := ss.termCount
   for c in [0:t.cols.size] do
     for i in [0:min n t.rows] do
       let x := t.at c i
@@ -457,9 +565,11 @@ def Session.prefetch (ss : Session) (t : L4Factoidal.Qlvr.Table) (n : Nat) : IO 
         let rank := (x &&& 0x0FFFFFFFFFFFFFFF).toNat
         if rank < ss.termCount then
           let pg := rank / Dict.pageTerms
-          if !seen.contains pg && !localPages.contains pg then
-            seen := seen.insert pg
-            want := want.push pg
+          if pg != last then
+            last := pg
+            if !localPages.contains pg && !seen.contains pg then
+              seen := seen.insert pg
+              want := want.push pg
   if want.isEmpty then return
   let (got, waits, mine) ← ss.dictLock.atomically (do
     let tp ← ss.taskPages.get
@@ -498,10 +608,10 @@ def Session.prefetch (ss : Session) (t : L4Factoidal.Qlvr.Table) (n : Nat) : IO 
     | none => p.resolve (.error (match failure with | some e => toString e | none => "not loaded"))
     k := k + 1
   if let some e := failure then throw e
-  for (pg, ks) in got ++ loaded do cacheTaskPage ss.pages pg (copyPage ks)
+  for (pg, ks) in got ++ loaded do cacheTaskPage ss.taskPageLimit ss.pages pg (copyPage ks)
   for (pg, p) in waits do
     match ← IO.wait p.result? with
-    | some (.ok ks) => cacheTaskPage ss.pages pg (copyPage ks)
+    | some (.ok ks) => cacheTaskPage ss.taskPageLimit ss.pages pg (copyPage ks)
     | some (.error e) => throw (IO.userError e)
     | none => throw (IO.userError s!"GDV1 page {pg}: the task that loaded it stopped")
 
@@ -513,14 +623,19 @@ def Session.pageKeys (ss : Session) (pg : Nat) : IO (ByteArray × Array Nat) := 
   | some ks => return ks
   | none =>
     if ss.inTask then return ← ss.sharedPage pg
+    -- with a worker pool (stage 1j) the calling thread renders and runs
+    -- jobs while the workers load pages: it loads through `taskPages` as
+    -- they do, so that no page is read from the file twice (the range
+    -- bytes of `tests/sbm11/threads.sh` equal those of one thread)
+    if ss.pool.isSome then return ← { ss with taskPageLimit := ss.pageLimit }.sharedPage pg
     let tp ← ss.taskPages.get
     if !tp.isEmpty then
       if let some (.ready ks) := tp.get? pg then
         let ks := copyPage ks
-        cachePage ss.pages pg ks
+        cachePage ss.pageLimit ss.pages pg ks
         return ks
     let ks ← ss.loadPage pg
-    cachePage ss.pages pg ks
+    cachePage ss.pageLimit ss.pages pg ks
     return ks
 
 def Session.keySlice (ss : Session) (x : UInt64) : IO (ByteArray × Nat × Nat) := do
@@ -566,9 +681,12 @@ def Session.overlayIdOf (ss : Session) (t : Term) : IO (Option UInt64) := do
   return ((← ss.ovIds.get).get? t).map fun n =>
     (L4Factoidal.Storage.Sbm11.Overlay.tagDelta * two60 + n).toUInt64
 
+/-- The most entries `Session.idMemo` holds. -/
+def idMemoLimit : Nat := 65536
+
 /-- The id of a term: its inline code, its dictionary id (from `baseIds` when
-    a replay has put it there, else one `Dict.lookupM`), else the id the delta
-    log gave it. -/
+    a replay has put it there, else from `idMemo`, else one `Dict.lookupM`),
+    else the id the delta log gave it. -/
 def Session.idOf (ss : Session) (t : Term) : IO (Option UInt64) := do
   ss.lookups.modify (· + 1)
   let t := normalizeTerm t
@@ -580,12 +698,16 @@ def Session.idOf (ss : Session) (t : Term) : IO (Option UInt64) := do
     | some (some x) => return some x
     | some none => ss.overlayIdOf t
     | none =>
+      if let some x := (← ss.idMemo.get).get? t then return some x
       match termKeyBytes? t with
       | none => return none
       | some k =>
         let (r, _) ← ok "lookup" (← (Dict.lookupM ss.gdxFetch ss.gdvFetch ss.g.dictHdr k).run)
         match r with
-        | some r => return some (dictIdOfRank k r)
+        | some r =>
+          let x := dictIdOfRank k r
+          ss.idMemo.modify fun m => (if m.size < idMemoLimit then m else {}).insert t x
+          return some x
         | none =>
           -- a term the delta log added (stage 5)
           ss.overlayIdOf t
@@ -641,7 +763,21 @@ def Session.view (ss : Session) : IO Session := do
     thread, `lean_copy_expand_array` and `lean_mark_mt` at the top of the
     profile). -/
 def Session.local (v : Session) : IO Session := do
-  return { v with pages := ← IO.mkRef {} }
+  return { v with pages := ← IO.mkRef {}, onceSeen := some (← IO.mkRef {}) }
+
+/-- The pages a pool worker keeps in its own cache (`WorkerPages`), never
+    more than `SBM11_PAGES`. Olympics q19 at 4 threads renders with about
+    2,100 dictionary pages per query; a worker that does every fourth block
+    range needs about a quarter of them and the pages every range shares. -/
+def workerPageLimit : Nat := 2048
+
+/-- The view with the page cache of the pool worker that runs the job (call
+    it in the job). The cache lives as long as the pool: a page that the
+    worker uses twice in one fold is copied into it (`onceSeen`, made here by
+    the worker) and kept for later queries. -/
+def Session.withPages (v : Session) (wp : WorkerPages) : IO Session := do
+  return { v with pages := wp, onceSeen := some (← IO.mkRef {}),
+                  taskPageLimit := min v.pageLimit workerPageLimit }
 
 /-- Add the counters of a finished task view to the session. -/
 def Session.absorb (ss v : Session) : IO Unit := do
@@ -654,6 +790,38 @@ def Session.absorb (ss v : Session) : IO Unit := do
 
 def liftIO {α : Type} (x : IO α) : ExceptT String IO α := ExceptT.lift x
 
+/-- The phase marks of the current run (`Session.phases`): label and
+    `IO.monoNanosNow` at the end of the phase. -/
+initialize phaseMarks : IO.Ref (Array (String × Nat)) ← IO.mkRef #[]
+
+def phaseMark (l : String) : IO Unit := do
+  let t ← IO.monoNanosNow
+  phaseMarks.modify (·.push (l, t))
+
+/-- Start `act` on another thread: a job of worker `i` of the session's worker
+    pool when it has one and `i` is below its size (a polling worker starts it
+    within microseconds), else a task of
+    the Lean pool (`IO.asTask`; a parked pool thread starts it 50 to 120
+    microseconds later on the 4-vCPU test VM). -/
+def Session.spawnAt {α : Type} (ss : Session) (i : Nat) (act : IO α) :
+    IO (Harness.WorkerPool.Handle (Except IO.Error α)) := do
+  match ss.pool with
+  | some p => if i < p.size then p.spawnOn i act else return .task (← IO.asTask act)
+  | none => return .task (← IO.asTask act)
+
+/-- `Session.spawnAt` for a job that uses the page cache of the pool worker
+    that runs it (`some`), or `none` when the job runs on the Lean task pool. -/
+def Session.spawnLocal {α : Type} (ss : Session) (i : Nat) (act : Option WorkerPages → IO α) :
+    IO (Harness.WorkerPool.Handle (Except IO.Error α)) := do
+  match ss.pool with
+  | some p => if i < p.size then p.spawnWith i (fun wp => act (some wp)) else return .task (← IO.asTask (act none))
+  | none => return .task (← IO.asTask (act none))
+
+/-- Wait for a job of `Session.spawnAt`: a pool job's result cell is polled
+    for at most the pool's poll time before the thread blocks. -/
+def Session.await {α : Type} (ss : Session) (h : Harness.WorkerPool.Handle α) : IO α :=
+  h.await (match ss.pool with | some p => p.spinNs | none => 0)
+
 def Session.store (ss : Session) : IdQuery.Store IO :=
   { blockCount := fun p => liftIO do pure (← ss.perm p).count
     blocksForRange := fun p key => liftIO (ss.rangeFor p key)
@@ -664,14 +832,45 @@ def Session.store (ss : Session) : IdQuery.Store IO :=
     termOf := fun x => liftIO (ss.termOf x)
     lowerBound := fun k => liftIO (ss.lowerBound k)
     ovl := fun p => ss.ovl.getD p {}
-    prefetch := some fun t n => liftIO (ss.prefetch t n) }
+    prefetch := some fun t n => liftIO (ss.prefetch t n)
+    mark := if ss.phases then some phaseMark else none }
 
 /-! ## Parallel block scans (stage 1, issue 799) -/
 
+/-- A new copy of a word of a PRM1 entry (a dictionary id can be a big
+    number object). -/
+@[noinline] def freshNat (n : Nat) : Nat := n.succ - 1
+
+/-- A new copy of a PRM1 entry and its two rows. -/
+def freshMeta (b : BlockMeta) : BlockMeta :=
+  { first := ⟨freshNat b.first.c0, freshNat b.first.c1, freshNat b.first.c2, freshNat b.first.g⟩,
+    last := ⟨freshNat b.last.c0, freshNat b.last.c1, freshNat b.last.c2, freshNat b.last.g⟩,
+    rows := freshNat b.rows, offset := freshNat b.offset, len0 := freshNat b.len0,
+    len1 := freshNat b.len1, len2 := freshNat b.len2, len3 := freshNat b.len3 }
+
+/-- The PRM1 entries of block range `X` copied for the task that scans it,
+    and the range's positions in the copy (stage 1h). The task makes the copy:
+    the entries of the session's array are reachable from every task, so each
+    block's `metas[i]!` and the functions that take the entry took and dropped
+    references atomically (DBpedia d10 at 4 threads: in `cutCol`,
+    `frameSpan`, `frameStarts`, `keyRange` and `blockChunk`). The scan reads
+    an entry only through its position (`IdQuery.scanBlockM`,
+    `IdQuery.scanBlockSipM`), so `metas` at `X` and the copy at
+    `0, ..., |X| - 1` give the same scan. -/
+def rangeMetas (metas : Array BlockMeta) (X : List Nat) : Array BlockMeta × List Nat :=
+  (X.foldl (fun a i => a.push (freshMeta metas[i]!)) (Array.mkEmpty X.length), List.range X.length)
+
+
+/-- The fewest estimated rows per range of a divided BGP scan on the worker
+    pool (issue 961): `minRows / 2` (4,096 by default), so that olympics
+    q07's first two scans (8,192 and 16,384 estimated rows) are divided. -/
+def poolScanRows (minRows : Nat) : Nat := minRows / 2
+
 /-- The table of `IdQuery.scanTableM`, computed with the selected blocks cut
-    into at most `threads` consecutive chunks. Each chunk is scanned by its
-    own dedicated task (`IO.asTask`) with the same loop
-    (`IdQuery.scanListM`), the chunk tables are appended in chunk order and
+    into at most `threads` consecutive chunks. The first chunk is scanned by
+    the calling thread, each other one by its own task (`IO.asTask`), with
+    the same loop (`IdQuery.scanListM`); the chunk tables are appended in
+    chunk order and
     the statistics are summed. A scan with an overlay (stage 5) stays on one
     thread. Answers: `ParallelScanTheorems.parallel_acc_eq` (the list form),
     tests/sbm11/threads.sh (the tables, native). -/
@@ -682,8 +881,15 @@ def scanTableParM (ss : Session) (spec : IdQuery.ScanSpec) (threads : Nat) (minR
   -- positions in that array
   let metas ← st.blocksForRange spec.perm spec.key
   let ox := IdQuery.ovCtx (st.ovl spec.perm) spec.key
-  -- stage 1b: at most `IdQuery.rangeCount` ranges; fewer than 2: one thread
-  let n := IdQuery.rangeCount threads minRows (IdQuery.selRows metas)
+  -- stage 1b: at most `IdQuery.rangeCount` ranges; fewer than 2: one thread.
+  -- Stage 1f: at least `2 * minRows` rows per range (16,384 by default).
+  -- Olympics q07's second scan (16,384 estimated rows, 4 blocks, 0.22 ms on
+  -- one thread) took 0.37 to 0.47 ms at 4 threads in 2 ranges and 0.24 to
+  -- 0.28 ms in one: a range waits for a sleeping worker (50 to 120
+  -- microseconds on the test machine) and the parent appends the tables.
+  -- issue 961: on the worker pool a range costs microseconds, not a wake-up
+  let n := IdQuery.rangeCount threads (if ss.pool.isSome then poolScanRows minRows else 2 * minRows)
+    (IdQuery.selRows metas)
   if threads ≤ 1 || ox.on || n < 2 then return ← IdQuery.scanTableM st spec
   let sortVar := IdQuery.sortVarOf spec
   let sel := List.range metas.size
@@ -695,11 +901,13 @@ def scanTableParM (ss : Session) (spec : IdQuery.ScanSpec) (threads : Nat) (minR
       rows := 0, sortVar }
   let f := fun (acc : L4Factoidal.Qlvr.Table) (ch : IdQuery.Chunk) =>
     (pure (acc.append ch.table, true) : ExceptT String IO (L4Factoidal.Qlvr.Table × Bool))
-  -- each task: its own view (counters, dictionary state, permutation copies)
-  let mut tasks : Array (Task (Except IO.Error (L4Factoidal.Qlvr.Table × IdQuery.ScanStats)) × Session) := #[]
-  for X in chunks do
+  -- each task: its own view (counters, dictionary state, permutation copies).
+  -- Stage 1f: the first range is scanned by the calling thread after the
+  -- tasks of the others have started (it would otherwise wait for them).
+  let mut tasks : Array (Harness.WorkerPool.Handle (Except IO.Error (L4Factoidal.Qlvr.Table × IdQuery.ScanStats)) × Session) := #[]
+  for X in chunks.drop 1 do
     let v ← ss.view
-    let t ← IO.asTask (prio := .dedicated) (do
+    let t ← ss.spawnAt tasks.size (do
       -- stage 1b: the task's own copies of the spec, the overlay context and
       -- the empty table (`IdQuery.ScanSpec.fresh`; `ScanSpec.fresh_eq` says
       -- the copy is equal to `spec`, the spec of `ParallelScanTheorems`). The
@@ -710,19 +918,26 @@ def scanTableParM (ss : Session) (spec : IdQuery.ScanSpec) (threads : Nat) (minR
       let spec := spec.fresh
       let ox := ox.fresh spec.key
       let sortVar := IdQuery.sortVarOf spec
-      let capX := 8 * X.foldl (fun a i => a + metas[i]!.rows) 0
+      let (metasX, posX) := rangeMetas metas X
+      let capX := 8 * metasX.foldl (fun a b => a + b.rows) 0
       let init : L4Factoidal.Qlvr.Table :=
         { vars := spec.outVars, cols := spec.outVars.map fun _ => ByteArray.emptyWithCapacity capX,
           rows := 0, sortVar }
-      match ← (IdQuery.scanListM v.store spec true init f metas sortVar ox X).run with
+      match ← (IdQuery.scanListM v.store spec true init f metasX sortVar ox posX).run with
       | .ok r => pure r
       | .error e => throw (IO.userError e))
     tasks := tasks.push (t, v)
   let mut out := init
   let mut stats : IdQuery.ScanStats := { blocksTotal := ← st.blockCount spec.perm }
   let mut failure : Option String := none
+  -- the first range, onto `init` (the capacity of the whole scan)
+  match ← liftIO (IdQuery.scanListM st spec true init f metas sortVar ox (chunks.headD [])).run with
+  | Except.ok (tab, s) =>
+    out := tab
+    stats := stats.add s
+  | Except.error e => failure := some e
   for (t, v) in tasks do
-    match ← IO.wait t with
+    match ← liftIO (ss.await t) with
     | .ok (tab, s) =>
       out := out.append tab
       stats := stats.add s
@@ -732,54 +947,253 @@ def scanTableParM (ss : Session) (spec : IdQuery.ScanSpec) (threads : Nat) (minR
   if let some e := failure then throw e
   return (out, stats)
 
-/-- `IdQuery.Par.fold` on this session (issue 799, stage 1b): one dedicated
-    task per chunk of blocks, each on its own view (`Session.view`), at most
-    `window` tasks at once; the results are folded with `g` in chunk order as
-    they finish, and the next task starts when one is folded, so at most
-    `window` results wait in memory. The counters of every task are added
-    (`Session.absorb`), failed or not; after a failure no task starts. -/
-def parFold (ss : Session) (window : Nat) {α β : Type}
-    (job : IdQuery.Store IO → List Nat → ExceptT String IO α) (chunks : List (List Nat)) (init : β)
-    (g : β → α → ExceptT String IO β) : ExceptT String IO β := do
-  let arr := chunks.toArray
-  let spawn (X : List Nat) : IO (Task (Except IO.Error α) × Session) := do
+/-- The scan with candidates (`IdQuery.scanSipTableM`) in block ranges, one
+    task per range after the first, which the calling thread scans (issue
+    799, KR 1.2; stage 1f): the tasks of `scanTableParM` with
+    `IdQuery.scanListSipM`, their tables appended in range order and their
+    statistics added. A scan with a delta overlay, fewer than two ranges
+    (`IdQuery.rangeCount`) or one selected block runs `scanSipTableM` on the
+    calling thread. Each task has its own copy of the candidates (a value the
+    tasks share costs atomic reference counts, section "Values that two threads
+    can reach" of `skills/lean4-performance`). -/
+def scanSipTableParM (ss : Session) (spec : IdQuery.ScanSpec) (cands : Array UInt64) (threads : Nat)
+    (minRows : Nat := 8192) : ExceptT String IO (L4Factoidal.Qlvr.Table × IdQuery.ScanStats) := do
+  let st := ss.store
+  let metas ← st.blocksForRange spec.perm spec.key
+  let ox := IdQuery.ovCtx (st.ovl spec.perm) spec.key
+  let n := IdQuery.rangeCount threads minRows (IdQuery.selRows metas)
+  if threads ≤ 1 || ox.on || n < 2 || metas.size < 2 then return ← IdQuery.scanSipTableM st spec cands
+  let sortVar := match spec.outCols[0]? with
+    | some c => if c == spec.key.size then spec.outVars[0]? else none
+    | none => none
+  let sel := List.range metas.size
+  let c := (sel.length + n - 1) / n
+  let chunks := L4Factoidal.Storage.Sbm11.ParallelScan.chunksOf c sel
+  let init : L4Factoidal.Qlvr.Table :=
+    { vars := spec.outVars, cols := spec.outVars.map fun _ => ByteArray.empty,
+      rows := 0, sortVar := IdQuery.sortVarOf spec }
+  let f := fun (acc : L4Factoidal.Qlvr.Table) (ch : IdQuery.Chunk) =>
+    (pure (acc.append ch.table, true) : ExceptT String IO (L4Factoidal.Qlvr.Table × Bool))
+  -- Stage 1f: the first range is scanned by the calling thread after the
+  -- tasks of the others have started. Olympics q07 at 4 threads (41 runs per
+  -- process, 3 processes): the two scans with candidates took 1.08 to 1.14
+  -- and 0.76 to 0.78 ms with a task per range, 0.81 to 0.85 and 0.62 ms so.
+  let mut tasks : Array (Harness.WorkerPool.Handle (Except IO.Error (L4Factoidal.Qlvr.Table × IdQuery.ScanStats)) × Session) := #[]
+  for X in chunks.drop 1 do
     let v ← ss.view
-    let t ← IO.asTask (do
-      let w ← v.local
-      match ← (job w.store X).run with
+    let t ← ss.spawnAt tasks.size (do
+      let spec := spec.fresh
+      let ox := ox.fresh spec.key
+      let cands := cands.map fun x => UInt64.ofNat x.toNat
+      let (metasX, posX) := rangeMetas metas X
+      let init : L4Factoidal.Qlvr.Table :=
+        { vars := spec.outVars, cols := spec.outVars.map fun _ => ByteArray.empty,
+          rows := 0, sortVar := IdQuery.sortVarOf spec }
+      match ← (IdQuery.scanListSipM v.store spec cands init f metasX sortVar ox posX).run with
       | .ok r => pure r
       | .error e => throw (IO.userError e))
-    pure (t, v)
-  let mut queue : Array (Task (Except IO.Error α) × Session) := #[]
-  let mut next := 0
-  for _ in [0:max window 1] do
-    if next < arr.size then
-      queue := queue.push (← liftIO (spawn arr[next]!))
-      next := next + 1
+    tasks := tasks.push (t, v)
+  let mut out := init
+  let mut stats : IdQuery.ScanStats := { blocksTotal := ← st.blockCount spec.perm }
+  let mut failure : Option String := none
+  match ← liftIO (IdQuery.scanListSipM st spec cands init f metas sortVar ox (chunks.headD [])).run with
+  | Except.ok (tab, s) =>
+    out := tab
+    stats := stats.add s
+  | Except.error e => failure := some e
+  for (t, v) in tasks do
+    match ← liftIO (ss.await t) with
+    | .ok (tab, s) =>
+      out := out.append tab
+      stats := stats.add s
+    | .error e => if failure.isNone then failure := some (toString e)
+    ss.absorb v
+  if let some e := failure then throw e
+  return (out, stats)
+
+/-- `IdQuery.Par.fold` on this session (issue 799, stage 1b; workers from
+    KR 1.2 of batch 3). At most `nWorkers` worker tasks, started once per
+    fold.
+    Each worker has its own view of the session (`Session.view`, then
+    `Session.local` in the worker: counters, permutation copies and a page
+    cache that it keeps for all its ranges) and takes the next range from a
+    shared counter, so the ranges are taken in range order. The parent folds
+    the results with `g` in range order. Range `k` starts only after range
+    `k - window` is folded (a permit per range), so at most `window` ranges
+    are running or wait in memory (`parWindowFactor`). The counters of every worker are
+    added (`Session.absorb`), failed or not; after a failure the workers
+    finish the ranges they hold and take no new work.
+
+    The first version started one task per range, each with a new view and an
+    empty page cache. With the streamed path's ranges of one block
+    (`IdQuery.streamRangeBlocks`), every block filled a new cache from
+    `taskPages` under `dictLock`: olympics q19 at 4 threads spent 1.5 times
+    the CPU time of 1 thread, most of the extra in `copyPage` (`memmove`),
+    lock waits and fresh memory. -/
+def parFold (ss : Session) (nWorkers window : Nat) (fixed : Bool := false) {α β γ : Type} [Inhabited γ]
+    (job : IdQuery.Store IO → γ → ExceptT String IO α) (chunks : List γ) (init : β)
+    (g : β → α → ExceptT String IO β) : ExceptT String IO β := do
+  let arr := chunks.toArray
+  let n := arr.size
+  if n == 0 then return init
+  let w := max window 1
+  let poolOnly := (← liftIO (IO.getEnv "SBM11_POOLONLY")).isSome
+  let trace := (← liftIO (IO.getEnv "SBM11_RANGE_TRACE")).isSome
+  let nW := match ss.pool with
+    | some p => if poolOnly && p.size > 0 then min nWorkers p.size else nWorkers
+    | none => nWorkers
+  let nwk := min (max nW 1) n
+  -- stage 1j: with a pool of fewer threads than workers, the calling thread
+  -- is the last worker (its jobs run between the folds of the results, with
+  -- the session's own store and page cache), not a task of the Lean pool
+  -- with a new page cache for each fold
+  let parentTask := (← liftIO (IO.getEnv "SBM11_PARENT_TASK")).isSome
+  let parentAt : Option Nat := match ss.pool with
+    | some p => if p.size > 0 && nwk > p.size && !parentTask then some p.size else none
+    | none => none
+  let nSpawn := match parentAt with
+    | some j => j
+    | none => nwk
+  -- a range's result goes to its slot, then its promise is resolved; the
+  -- parent takes the result out of the slot, so a folded result is freed (a
+  -- resolved promise keeps its value while the promise is reachable)
+  let slots ← liftIO (arr.mapM fun _ => (IO.mkRef none : IO (IO.Ref (Option (Except String α)))))
+  let results ← liftIO (arr.mapM fun _ => (IO.Promise.new : IO (IO.Promise Unit)))
+  let permits ← liftIO (arr.mapM fun _ => (IO.Promise.new : IO (IO.Promise Unit)))
+  let permit (k : Nat) : IO Unit := match permits[k]? with
+    | some p => p.resolve ()
+    | none => pure ()
+  let resolveAt (k : Nat) (r : Except String α) : IO Unit := do
+    if let some c := slots[k]? then c.set (some r)
+    if let some p := results[k]? then p.resolve ()
+  for k in [0:min w n] do liftIO (permit k)
+  let next ← liftIO (IO.mkRef (0 : Nat))
+  let stop ← liftIO (IO.mkRef false)
+  let fx := fixed && (← liftIO (IO.getEnv "SBM11_DYNAMIC")).isNone
+  let runJob (st : IdQuery.Store IO) (j k : Nat) : IO Unit := do
+    if ← stop.get then
+      resolveAt k (.error "a range before this one failed")
+    else
+      let t0 ← IO.monoNanosNow
+      match ← ((job st arr[k]!).run).toBaseIO with
+      | .ok r => resolveAt k r
+      | .error e => resolveAt k (.error (toString e))
+      if trace then
+        let t1 ← IO.monoNanosNow
+        IO.eprintln s!"range-trace: job {k} worker {j} start {t0} us {(t1 - t0) / 1000}"
+  let mut workers : Array (Harness.WorkerPool.Handle (Except IO.Error Unit) × Session) := #[]
+  for j in [0:nSpawn] do
+    let v ← liftIO ss.view
+    let t ← liftIO (ss.spawnLocal workers.size (fun wp => do
+      let lim := ((← IO.getEnv "SBM11_WORKER_PAGES").bind String.toNat?).getD workerPageLimit
+      let lv ← match wp with
+        | some r => do pure { (← v.withPages r) with taskPageLimit := min v.pageLimit lim }
+        | none => v.local
+      let st := lv.store
+      for i in [0:n] do
+        let k ← if fx then pure (j + i * nwk) else next.modifyGet fun k => (k, k + 1)
+        if k ≥ n then break
+        if let some p := permits[k]? then
+          let _ ← IO.wait p.result?
+        runJob st j k))
+    workers := workers.push (t, v)
+  -- the calling thread's next job (`parentAt`): in fixed order its ranges
+  -- `j, j + nwk, ...`; else the next range of the shared counter. It takes a
+  -- range only when that range's permit is given (below `k + w`, `k` the
+  -- next range to fold), so it never waits for itself.
+  let pst := ss.store
+  let mut mine : Nat := parentAt.getD 0
   let mut acc := init
   let mut failure : Option String := none
-  for _ in [0:arr.size] do
-    let some (t, v) := queue[0]? | break
-    queue := queue.extract 1 queue.size
-    let r ← liftIO (IO.wait t)
-    liftIO (ss.absorb v)
+  for k in [0:n] do
+    if let some j := parentAt then
+      let mut go := true
+      while go do
+        -- the promise, not the slot: `IO.Ref.get` on a ref that another
+        -- thread writes takes the value out and puts it back, so a write
+        -- between the two is lost (the runtime's `lean_st_ref_get`); a get
+        -- here lost a range's result about once in 4,000 folds ("its worker
+        -- stopped", then a hang at exit with the pool still running)
+        let ready ← match results[k]? with
+          | some p => liftIO (IO.hasFinished p.result?)
+          | none => pure true
+        if ready then go := false
+        else
+          let lim := min n (k + w)
+          let mk ← if fx then pure (if mine < lim then some mine else none)
+            else liftIO (next.modifyGet fun i => if i < lim then (some i, i + 1) else (none, i))
+          match mk with
+          | some i =>
+            liftIO (runJob pst j i)
+            if fx then mine := mine + nwk
+          | none => go := false
+    if let some p := results[k]? then
+      let _ ← liftIO (IO.wait p.result?)
+    let r : Option (Except String α) ← match slots[k]? with
+      | some c => liftIO (c.swap none)
+      | none => pure none
     match r with
-    | .ok a =>
+    | some (.ok a) =>
       if failure.isNone then
         match ← liftIO (g acc a).run with
         | .ok b => acc := b
         | .error e => failure := some e
+    | some (.error e) => if failure.isNone then failure := some e
+    | none => if failure.isNone then failure := some s!"block range {k}: its worker stopped"
+    if failure.isSome then liftIO (stop.set true)
+    liftIO (permit (k + w))
+  for (t, v) in workers do
+    match ← liftIO (ss.await t) with
+    | .ok () => pure ()
     | .error e => if failure.isNone then failure := some (toString e)
-    if failure.isNone && next < arr.size then
-      queue := queue.push (← liftIO (spawn arr[next]!))
-      next := next + 1
+    liftIO (ss.absorb v)
   if let some e := failure then throw e
   return acc
+
+/-- The ranges that may run or wait in memory, per worker, in `parFold`, for a
+    bounded fold (`IdQuery.Par.fold`; the streamed path). An unbounded fold
+    (small results) gives every range a permit at once, so a worker does
+    not wait for the parent between ranges. With one range per worker, a worker that finished its range waited until the
+    parent had written the range before it, the slowest of the window: olympics
+    at 4 threads (KR 1.2 of batch 3, 21 runs per process), q19 19.0 ms against
+    15.2 ms with 2 per worker, q21 37.0 ms against 28.9 ms; peak RSS 112 and 81
+    MB against 119 and 88 MB (1 thread: 69 and 53 MB). -/
+def parWindowFactor : Nat := 2
+
+/-- `xs.map f` with `f` of the first element computed by the calling thread
+    and of element `i ≥ 1` by worker `i - 1` of the pool (issue 961;
+    `IdQuery.Par.mapList`). `IO.lazyPure` puts the call of `f` inside the
+    job: `pure (f y)` would compute it on the calling thread. -/
+def poolMap {α β : Type} (p : Harness.WorkerPool.Pool WorkerPages) (f : α → β) (xs : List α) : IO (List β) := do
+  match xs with
+  | [] => return []
+  | x :: rest =>
+    let mut hs := #[]
+    for y in rest do
+      hs := hs.push (← p.spawnOn hs.size (IO.lazyPure fun _ => f y))
+    let a := f x
+    let mut out := #[a]
+    for h in hs do
+      match ← h.await p.spinNs with
+      | .ok b => out := out.push b
+      | .error e => throw e
+    return out.toList
+
+/-- The fewest input rows per range of a divided merge join on the worker
+    pool (issue 961): a job starts within microseconds, so ranges can be
+    smaller than with tasks of the Lean pool (`IdQuery.joinMinRows`). -/
+def poolJoinRows : Nat := 4096
 
 /-- The divided single-pattern paths of `IdQuery.runPlanM` with `threads`
     tasks at once (issue 799, stage 1b). -/
 def Session.par (ss : Session) (threads : Nat) (minRows : Nat := 8192) : IdQuery.Par IO :=
-  { threads, minRows, fold := fun job chunks init g => parFold ss threads job chunks init g }
+  { threads, minRows,
+    fold := fun bounded job chunks init g =>
+      parFold ss threads (if bounded then parWindowFactor * threads else chunks.length) bounded job chunks init g
+    mapList := ss.pool.map fun p => fun f xs => poolMap p f xs
+    joinRows := if ss.pool.isSome then poolJoinRows else IdQuery.joinMinRows
+    renderRows := ss.renderRows
+    streamPerThread := ss.streamPerThread }
 
 /-- `SBM11_MIN_RANGE_ROWS`: the fewest estimated rows per block range
     (`IdQuery.rangeCount`; default 8,192; 0: one range per thread, as the
@@ -793,7 +1207,8 @@ def Session.storeWith (ss : Session) (threads : Nat) (sip : Option Nat := some 1
     (aggOnIds : Bool := true) : IdQuery.Store IO :=
   let base := { ss.store with sipFactor := sip, aggOnIds := aggOnIds }
   if threads ≤ 1 then base
-  else { base with scanTable := some fun spec => scanTableParM ss spec threads minRows }
+  else { base with scanTable := some fun spec => scanTableParM ss spec threads minRows,
+                   scanSipTable := some fun spec cands => scanSipTableParM ss spec cands threads minRows }
 
 /-! ## The delta overlay (stage 5) -/
 
@@ -1002,6 +1417,14 @@ def Session.namedGraphIds (ss : Session) : IO (Array Nat) := do
     if !L4Factoidal.Storage.Sbm11.GraphList.contains base x then out := out.push x
   return L4Factoidal.Qlvr.mergeSortBy out (· ≤ ·)
 
+/-- `storeWith` with the named graphs of the overlaid generation
+    (`namedGraphIds`), which the nested evaluator reads for GRAPH
+    (https://github.com/danbri/factoidal/issues/959). -/
+def Session.storeNested (ss : Session) (threads : Nat) (sip : Option Nat := some 16) (minRows : Nat := 8192)
+    (aggOnIds : Bool := true) : IdQuery.Store IO :=
+  { ss.storeWith threads sip minRows aggOnIds with
+    namedGraphs := some (liftIO do return (← ss.namedGraphIds).map (·.toUInt64)) }
+
 /-- The session with the overlay state `st`: `ovl` cut from it per
     permutation, and the counters of `deltaText` read from it. -/
 def Session.withOverlay (ss : Session) (st : L4Factoidal.Storage.Sbm11.Overlay.State) : IO Session := do
@@ -1205,10 +1628,12 @@ def emitGraph (graph : Graph) (emit : ByteArray → IO Unit) : IO Nat := do
 /-- The query's environment for expressions (NOW read once, BASE, the
     GeoSPARQL extension functions), without a dataset: the id path's
     post-processing and residual FILTERs (issue 823) read no EXISTS. The
-    reference fallback adds its dataset (`runReference`). -/
+    reference fallback adds its dataset (`runReference`). The theorem for the
+    WHERE clause under this environment:
+    `HarnessWhereTheorems.harness_where_allowed`. -/
 def queryEnv (q : Query) : IO EvalEnv := do
   let clockEnv ← L4Wasm.Ops.emptyEnvNow
-  return { clockEnv with ext := L4Factoidal.Geo.extFns, base := q.base }
+  return IdGroup.queryEnvOf clockEnv q.base
 
 /-- Write the answer of a post-processed id plan (issue 823) as
     `runReference` writes the reference evaluator's answer of the same form. -/
@@ -1282,22 +1707,47 @@ def runOne (ss : Session) (q : Query) (emit : ByteArray → IO Unit) (forceRefer
     let (n, line) ← runReference ss q reason emit
     return { rows := n, path := line }
   | .ok plan =>
+    -- issue 961: blocked pool workers poll again from here, so the first
+    -- divided phase does not wait for a kernel wake-up. Only for a plan with
+    -- two or more triple patterns (joins, then the steps after them): DBpedia
+    -- d17, one pattern answered from the PRM1 entries in 0.3 ms, took 0.37 ms
+    -- at 4 threads against 0.29 ms with every query waking the workers.
+    if plan.pats.size ≥ 2 then
+      if let some p := ss.pool then p.wake
     let minRows ← minRangeRows
     let par := if threads ≤ 1 then none else some (ss.par threads minRows)
     let env ← queryEnv q
     match plan.post with
     | some ps =>
+      if plan.nested.isSome then
+        -- issue 959: a nested WHERE clause, the recursive evaluator on ids
+        match ← (IdGroup.runNestedM (ss.storeNested threads sip minRows aggOnIds) plan ps env).run with
+        | .ok (ans, st) =>
+          emitPost ans emit
+          return { rows := st.rows, path := "path=ids", plan := st.plan }
+        | .error e => refusedOr e
+      else
       -- issue 823: the WHERE clause on ids, the reference post-processing on
       -- the decoded solutions
       match ← (IdQuery.runPostM (ss.storeWith threads sip minRows aggOnIds) plan ps env).run with
       | .ok (ans, st) =>
         emitPost ans emit
         return { rows := st.rows, path := "path=ids", plan := st.plan }
-      | .error e => throw (IO.userError s!"id query failed: {e}")
+      | .error e => refusedOr e
     | none =>
+    -- `runPlanM` refuses (issue 954) before it emits anything
     match ← (IdQuery.runPlanM (ss.storeWith threads sip minRows) plan emit referenceRender par env).run with
     | .ok st => return { rows := st.rows, path := "path=ids", plan := st.plan }
-    | .error e => throw (IO.userError s!"id query failed: {e}")
+    | .error e => refusedOr e
+where
+  /-- An id-path error that starts with `refused: ` (issue 954: a shape the
+      id path recognises only after reading the store) runs the reference
+      evaluator; any other error fails the query. -/
+  refusedOr (e : String) : IO Outcome := do
+    if e.startsWith "refused: " then
+      let (n, line) ← runReference ss q (e.drop 9).toString emit
+      return { rows := n, path := line }
+    throw (IO.userError s!"id query failed: {e}")
 
 def verifyText : Verify → String
   | .merkle => "each read widened to its 65,536-byte chunks, each chunk checked by its Merkle proof"
@@ -1403,11 +1853,25 @@ def runQuery (dir : String) (o : Opts) : IO UInt32 := do
   let q ← parse text o.base (if o.sparql12 then .v12 else .v11)
   let (v, why) ← chooseVerify dir o.verify
   let ss ← openOverlaid v dir
+  -- issue 961: the session's worker pool, N - 1 threads that poll between the
+  -- divided phases of a query (the calling thread is the N-th). Not when N is
+  -- above the hardware threads: a polling worker then takes a core from a
+  -- thread with work (olympics q07 at 8 threads on 4 vCPUs, 7 polling
+  -- workers: the scans with candidates took 2.5 to 4.6 ms against 0.5 to
+  -- 0.9 ms at 4 threads).
+  let hw := (System.Platform.Internal.getHardwareConcurrency ()).toNat
+  let ss ← if o.threads > 1 && (hw == 0 || o.threads ≤ hw) then
+      pure { ss with pool := some (← Harness.WorkerPool.start (((← IO.getEnv "SBM11_POOL_SIZE").bind String.toNat?).getD (o.threads - 1)) ((← IO.getEnv "SBM11_SPIN_NS").bind String.toNat? |>.getD 1000000) (IO.mkRef {})) }
+    else pure ss
+  let ss := { ss with phases := (← IO.getEnv "SBM11_PHASES").isSome,
+                      renderRows := ((← IO.getEnv "SBM11_RENDER_ROWS").bind String.toNat?).getD IdQuery.renderJobRows,
+                      streamPerThread := ((← IO.getEnv "SBM11_STREAM_JOBS").bind String.toNat?).getD IdQuery.streamJobsPerThread }
   let t1 ← IO.monoNanosNow
   let openBytes ← ss.g.fileBytes.get
   let stdout ← IO.getStdout
   let runs := max o.repeatN 1
   let mut execs : Array Nat := #[]
+  let mut phaseTimes : Array (Array (String × Nat)) := #[]
   let mut last : Option Outcome := none
   for k in [0:runs] do
     let final := k + 1 == runs
@@ -1416,14 +1880,28 @@ def runQuery (dir : String) (o : Opts) : IO UInt32 := do
     ss.frameBytes.set 0
     ss.prmBytes.set 0
     ss.g.fetchedBytes.set 0
+    phaseMarks.set #[]
     let a ← IO.monoNanosNow
-    let r ← runOne ss q (if final then fun s => stdout.write s else fun _ => pure ()) o.reference o.referenceRender
-      o.threads o.sip o.aggOnIds
+    phaseMark "start"
+    -- a failed run stops the worker pool before the error leaves `main`: the
+    -- runtime waits for the pool's dedicated threads at exit, so an error
+    -- with the pool running made the process hang (stage 1j)
+    let r ← match ← (runOne ss q (if final then fun s => stdout.write s else fun _ => pure ()) o.reference
+        o.referenceRender o.threads o.sip o.aggOnIds).toBaseIO with
+      | .ok r => pure r
+      | .error e =>
+        if let some p := ss.pool then p.shutdown
+        throw e
     let b ← IO.monoNanosNow
     execs := execs.push (b - a)
+    if ss.phases then
+      let ms ← phaseMarks.get
+      phaseTimes := phaseTimes.push ((List.range (ms.size - 1)).toArray.map fun i =>
+        (ms[i + 1]!.1, ms[i + 1]!.2 - ms[i]!.2))
     last := some r
   stdout.write "\n".toUTF8
   stdout.flush
+  if let some p := ss.pool then p.shutdown
   let t2 ← IO.monoNanosNow
   let some r := last | return 1
   if o.explain then
@@ -1434,6 +1912,13 @@ def runQuery (dir : String) (o : Opts) : IO UInt32 := do
     IO.eprintln s!"plan: {ss.deltaText}"
   let fb ← ss.frameBytes.get
   let fetched ← ss.g.fetchedBytes.get
+  -- SBM11_PHASES: the median of each phase over runs 2 to N (run 1 fills the
+  -- caches); phases are matched by position, as every run of one query
+  -- passes the same marks
+  if let some w := phaseTimes[1]? then
+    for j in [0:w.size] do
+      let xs := (phaseTimes.extract 1 phaseTimes.size).filterMap fun r => (r[j]?).map (·.2)
+      IO.eprintln s!"phase: {w[j]!.1} median {msText (median xs)} ms"
   if runs > 1 then
     IO.eprintln s!"repeat: {runs} runs in one process; execution ms median {msText (median execs)} min {msText (execs.foldl min (execs.getD 0 0))} max {msText (execs.foldl max 0)}"
   IO.eprintln s!"sbm11-query: {r.path}; rows {r.rows}; verify={v.name}; {ss.deltaText}; constants looked up {← ss.lookups.get}; block bytes read {fb}; PRM1 bytes read {← ss.prmBytes.get}; range bytes fetched {fetched}; file bytes read {← ss.g.fileBytes.get}; open file bytes {openBytes}; open {msText (t1 - t0)} ms; execution {msText (t2 - t1)} ms; total {msText (t2 - t0)} ms; peak RSS (VmHWM): {← vmHWM}"

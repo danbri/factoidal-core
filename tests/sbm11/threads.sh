@@ -17,8 +17,10 @@
 #   olympics  an activated olympics generation (default
 #             /home/user/qlvr-work/sbm11/s3/wfull, or $SBM11_OLYMPICS), with
 #             tests/qlvr/queries/q*.rq
-#   olympics, default page limit: q19 and q21 (more dictionary pages than
-#             the default limit) with SBM11_PAGES unset; the SPARQL JSON and
+#   olympics, default page limit: q19 and q21 with SBM11_PAGES unset (default
+#             8192), and again with SBM11_PAGES=2048 (the former default, fewer
+#             pages than the two queries use: the eviction of a full cache
+#             runs here); the SPARQL JSON and
 #             the block bytes must be equal (the dictionary bytes are not
 #             compared, see below)
 #   dbpedia   the DBpedia slice generation of issue 798 (default
@@ -163,6 +165,9 @@ else
   compare_inputs olympics "$OLY" "$ROOT"/tests/qlvr/queries/q*.rq
   echo "=== olympics, default page limit (SPARQL JSON and block bytes)"
   SBM11_PAGES= BLOCKS_ONLY=1 compare_inputs olympics-default-pages "$OLY" \
+    "$ROOT"/tests/qlvr/queries/q19-*.rq "$ROOT"/tests/qlvr/queries/q21-*.rq
+  echo "=== olympics, page limit 2048 (a cache that fills; SPARQL JSON and block bytes)"
+  SBM11_PAGES=2048 BLOCKS_ONLY=1 compare_inputs olympics-small-pages "$OLY" \
     "$ROOT"/tests/qlvr/queries/q19-*.rq "$ROOT"/tests/qlvr/queries/q21-*.rq
 fi
 

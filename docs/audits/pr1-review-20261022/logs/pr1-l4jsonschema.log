@@ -1,0 +1,11 @@
+
+json-schema draft-07 DECIDED: 770 pass, 0 fail (out of 770 decided)
+UNDETERMINED: 0 tests used a keyword outside the ported slice
+  (out of 770 run; the suite declares 770 vendored)
+
+Every vendored test was DECIDED: no keyword, no `$ref`, and no
+bound in this suite left the validator without a verdict.
+An UNDETERMINED verdict is counted separately, never as a pass
+and never as a failure: folding it into pass would inflate the
+score with tests the validator did not decide, and into fail
+would deflate it with tests it never claimed to decide.

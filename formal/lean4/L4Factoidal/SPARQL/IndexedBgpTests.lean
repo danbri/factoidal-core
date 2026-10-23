@@ -144,10 +144,12 @@ private def canonicalJoin : Bgp :=
    { s := .var "s", p := .iri agePred, o := .var "value" }]
 
 #guard langUpper.eqb langLower
-#guard xmlShort.eqb xmlLong
+-- Two rdf:XMLLiteral spellings of one value are two RDF terms
+-- (RDF 1.1 Concepts §3.3, https://github.com/danbri/factoidal/issues/963).
+#guard !xmlShort.eqb xmlLong
 #guard nestedUpper.eqb nestedLower
 #guard evalBgpIdx canonicalJoin canonicalGraph == evalBgp canonicalJoin canonicalGraph
-#guard (evalBgpIdx canonicalJoin canonicalGraph).length == 2
+#guard (evalBgpIdx canonicalJoin canonicalGraph).length == 1
 #guard evalBgpRowsIdx canonicalGraph
   [{ s := .var "s", p := .iri rolePred, o := .var "value" }]
   [[("value", nestedUpper)], [("value", nestedLower)], []]

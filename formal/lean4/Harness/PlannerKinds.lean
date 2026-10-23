@@ -4,7 +4,8 @@ planner, OKR batch 2, KR 2.3: https://github.com/danbri/factoidal/issues/801.
 Design record `docs/designissues/2026-10-12-capability-aware-planner.md`,
 section 10. Run from `l4planner-test` (`Harness/PlannerTest.lean`).
 
-Six source kinds, each described from its description document by the
+Eight source kinds (six for KR 2.3; `webmcp` and `llm` for OKR batch 3,
+KR 4.4, https://github.com/danbri/factoidal/issues/875), each described from its description document by the
 `describe` function of `L4Factoidal/Planner/Kinds/*.lean`:
 
 | kind | description document | implementation in this test |
@@ -15,6 +16,12 @@ Six source kinds, each described from its description document by the
 | `facadex` | a SPARQL Anything IRI and the CSV header row | `graphSource` over the Façade-X triples of the CSV text |
 | `rest` | an OpenAPI-like JSON document | `restImpl` over a mock HTTP function |
 | `mcp` | MCP tool declarations | `mcpImpl` over a mock `tools/call` function |
+| `webmcp` | a WebMCP tool description (WebMCP Draft Community Group Report, 20 October 2026) | `webmcpImpl` over a mock `executeTool` function |
+| `llm` | an LLM operation description (model, prompt, mapping, cost, latency, confidence) | `llmImpl` over a mock completion function |
+
+KR 4.4 cases also check `Plan.runUsed` (`Planner/Exactness.lean`) on the
+mixed families: a row is marked exactly when a source it used is
+approximate, and the plan's rows equal `Plan.run`.
 
 No network. The cases check: the description parses; the planner
 (`search`) finds the expected plan family for at least two requirements
@@ -35,6 +42,9 @@ import L4Factoidal.Planner.Kinds.Sparql
 import L4Factoidal.Planner.Kinds.FacadeX
 import L4Factoidal.Planner.Kinds.Rest
 import L4Factoidal.Planner.Kinds.Mcp
+import L4Factoidal.Planner.Kinds.WebMcp
+import L4Factoidal.Planner.Kinds.Llm
+import L4Factoidal.Planner.Exactness
 import L4Factoidal.Syntax.NTriples
 
 namespace PlannerKinds
@@ -57,6 +67,7 @@ def pName : WfIri := exP "name"
 def pEmail : WfIri := exP "email"
 def pTemperature : WfIri := exP "temperature"
 def pPopulation : WfIri := exP "population"
+def pMayor : WfIri := exP "mayor"
 def xyzName : WfIri := mkWf (FacadeX.xyzNs ++ "name")
 def xyzTeam : WfIri := mkWf (FacadeX.xyzNs ++ "team")
 
@@ -207,6 +218,72 @@ def intLit (n : String) : Term := (JsonTerms.numberTerm? n).getD (lit n)
 mock model answers 2100000. -/
 def populationDeclared : List Tuple := [[ex "paris", intLit "2102650"], [ex "rome", intLit "2800000"]]
 
+/-! ## WebMCP and LLM (KR 4.4) -/
+
+def webOrigin : String := "https://city.example.org"
+
+/-- A WebMCP tool description: the tool (every `ModelContextTool` member
+except `execute`), its origin, and the RDF mapping beside them. -/
+def mayorTool : String := "{
+  \"origin\": \"https://city.example.org\",
+  \"tool\": { \"name\": \"lookup_mayor\", \"title\": \"Mayor\",
+    \"description\": \"The current mayor of a city\",
+    \"inputSchema\": { \"type\": \"object\",
+      \"properties\": { \"city\": { \"type\": \"string\" } }, \"required\": [\"city\"] },
+    \"annotations\": { \"readOnlyHint\": true } },
+  \"org.factoidal/rdf\": {
+    \"subject\": \"city\", \"subjectTemplate\": \"http://example.org/{city}\",
+    \"predicates\": { \"mayor\": \"http://example.org/mayor\" }, \"objectIri\": [\"mayor\"],
+    \"cost\": { \"perCall\": 30, \"perRow\": 0, \"callQuota\": 40 } } }"
+
+/-- The same tool marked consequential: refused. -/
+def consequentialTool : String :=
+  mayorTool.replace "\"readOnlyHint\": true" "\"readOnlyHint\": true, \"consequentialHint\": true"
+
+/-- A WebMCP tool with two required inputs: refused today. -/
+def twoInputWebTool : String :=
+  mayorTool.replace "\"required\": [\"city\"]" "\"required\": [\"city\", \"year\"]"
+
+def mayors : List (String × String) :=
+  [("london", "http://example.org/khan"), ("paris", "http://example.org/hidalgo"),
+   ("rome", "http://example.org/gualtieri")]
+
+/-- The mock `executeTool`: origin, tool name and input object to the
+JSON string the promise resolves to; `none` when it rejects. -/
+def mockWebMcp (origin name : String) (args : Json) : Option String :=
+  if origin != webOrigin || name != "lookup_mayor" then none else
+  match mayors.lookup ((args.getString? "city").getD "") with
+  | some m => some ("{\"mayor\": \"" ++ m ++ "\"}")
+  | none => none
+
+def llmOpText : String := "{
+  \"name\": \"guess_population\",
+  \"model\": \"example-model-1\",
+  \"endpoint\": \"https://llm.example.org/v1\",
+  \"prompt\": \"Population of {city} as JSON: {\\\"population\\\": <integer>}\",
+  \"subject\": \"city\", \"subjectTemplate\": \"http://example.org/{city}\",
+  \"predicates\": { \"population\": \"http://example.org/population\" },
+  \"cost\": { \"perCall\": 2000, \"perRow\": 0, \"callQuota\": 10, \"latencyMs\": 1500 },
+  \"confidence\": 0.8 }"
+
+def llmNoConfidenceText : String := llmOpText.replace ",\n  \"confidence\": 0.8" ""
+def llmExactText : String := llmOpText.replace "\"model\":" "\"exactness\": \"exact\", \"model\":"
+def llmBadConfidenceText : String := llmOpText.replace "0.8 }" "1.5 }"
+
+/-- The mock model's answers; London's is not JSON. -/
+def llmAnswers : List (String × String) :=
+  [("paris", "{\"population\": 2100000}"), ("rome", "{\"population\": 2800000}"),
+   ("london", "about nine million")]
+
+/-- The mock completion: model and prompt to the completion text. -/
+def mockLlm (model prompt : String) : Option String :=
+  if model != "example-model-1" then none else
+  (llmAnswers.find? (fun (c, _) => prompt.startsWith ("Population of " ++ c ++ " "))).map (·.2)
+
+/-- The declared extension of the LLM operation (the true values). -/
+def llmDeclared : List Tuple :=
+  [[ex "paris", intLit "2102650"], [ex "rome", intLit "2800000"], [ex "london", intLit "8866180"]]
+
 /-! ## Catalogs -/
 
 def ok {α : Type} (what : String) : Except String α → IO α
@@ -232,6 +309,10 @@ structure Built where
   weather : Mcp.Tool
   population : Mcp.Tool
   mcp : List Described
+  webTool : WebMcp.Tool
+  web : List Described
+  llmOp : Llm.Op
+  llm : List Described
   manifest : L4Factoidal.Storage.Sbm11.Manifest.Manifest
 
 def memDescribed : Except String (List Described) := Memory.describe memGraph
@@ -251,6 +332,12 @@ def mcpSources (b : Built) (ds : List Described) : Catalog :=
     else if d.cap.name.startsWith "mcp:estimate_population." then
       Mcp.mcpSource mockMcp [] b.population d (declared := some populationDeclared)
     else none)
+
+def webSources (b : Built) : Catalog :=
+  b.web.filterMap (WebMcp.webmcpSource mockWebMcp (mayors.map (·.1)) b.webTool)
+
+def llmSources (b : Built) : Catalog :=
+  b.llm.filterMap (fun d => Llm.llmSource mockLlm b.llmOp d llmDeclared)
 
 def Built.sbmCat (b : Built) (ds : List Described := b.sbm) : Catalog := graphCat ds b.sbmGraph
 def Built.memCat (b : Built) (ds : List Described := b.mem) : Catalog := graphCat ds memGraph
@@ -360,6 +447,16 @@ def runKCase (c : KCase) : List String :=
 
 def req (bgp : Bgp) (proj : List VarName) : Option Requirement := some { bgp := bgp, projection := proj }
 
+/-- KR 4.4: where each person lives, its mayor (WebMCP, exact) and its
+population (LLM, approximate). -/
+def reqMixedApprox : Option Requirement :=
+  req [tp (sv "x") pLivesIn (v "c"), tp (sv "c") pMayor (v "m"), tp (sv "c") pPopulation (v "n")]
+    ["x", "m", "n"]
+
+/-- KR 4.4 control: where each person lives and its mayor. -/
+def reqMixedExact : Option Requirement :=
+  req [tp (sv "x") pLivesIn (v "c"), tp (sv "c") pMayor (v "m")] ["x", "m"]
+
 def kcases (b : Built) : List KCase :=
   let sbmP := b.sbmCat (partitioned b.sbm)
   let sbmT := b.sbmCat (b.sbm.filter (·.partition.isNone))
@@ -442,8 +539,57 @@ def kcases (b : Built) : List KCase :=
     -- Mixed with the approximate tool: marked, the exact plan first when one exists
     { base := { id := "mixed-approximate-marked", cat := memP ++ pop, k := 2, answerable := true,
                 req := req [tp (sv "x") pLivesIn (v "c"), tp (sv "c") pPopulation (v "n")] ["x", "n"],
-                firstApprox := some true } }
+                firstApprox := some true } },
+    -- KR 4.4: WebMCP tool
+    { base := { id := "webmcp-tool-call", cat := webSources b, k := 1, answerable := true,
+                req := req [tp (si (ex "paris")) pMayor (v "m")] ["m"],
+                first := some ["webmcp:lookup_mayor.mayor"], firstApprox := some false } },
+    { base := { id := "webmcp-input-never-bound", cat := webSources b, k := 2, answerable := false,
+                req := req [tp (sv "c") pMayor (v "m")] ["c", "m"] } },
+    -- KR 4.4: LLM operation
+    { base := { id := "llm-approximate-marked", cat := llmSources b, k := 1, answerable := true,
+                req := req [tp (si (ex "rome")) pPopulation (v "n")] ["n"],
+                first := some ["llm:guess_population.population"], firstApprox := some true } },
+    -- KR 4.4: exact and approximate sources in one plan: the answer is marked
+    { base := { id := "mixed-exact-approximate-marked", cat := memP ++ webSources b ++ llmSources b,
+                k := 3, answerable := true, req := reqMixedApprox, firstApprox := some true },
+      kinds := some ["llm", "memory", "webmcp"] },
+    -- Control: the same catalog, a requirement the exact sources answer: unmarked, the reference answers
+    { base := { id := "mixed-exact-control", cat := memP ++ webSources b ++ llmSources b,
+                k := 2, answerable := true, req := reqMixedExact, firstApprox := some false },
+      kinds := some ["memory", "webmcp"] }
   ]
+
+/-- KR 4.4: `Plan.runUsed` on every plan of a family: the rows are the rows
+of `Plan.run`; a row is marked exactly when a source it used is
+approximate; every row uses every step; and the marker of each row is
+`want` (when given). -/
+def exactnessChecks (cat : Catalog) (r? : Option Requirement) (k : Nat) (want : Option Bool)
+    (mustUse : Option String := none) : List String :=
+  match r? with
+  | none => ["no requirement"]
+  | some r =>
+    let fam := search cat r k
+    (if fam.isEmpty then ["no plan"] else []) ++
+    fam.flatMap (fun rk =>
+      let p := rk.rewriting.toPlan r
+      let used := p.runUsed cat
+      let tag := s!"plan {srcNames cat rk.rewriting}"
+      let rows := p.run cat
+      (if rows.isEmpty then [s!"{tag}: no row"] else []) ++
+      (if used.length == rows.length then [] else [s!"{tag}: runUsed has {used.length} rows, run {rows.length}"]) ++
+      (if used.all (fun (x, u) => x.approx == u.any (srcApprox cat)) then []
+       else [s!"{tag}: a marker differs from the used sources"]) ++
+      (if used.all (fun (_, u) => u == rk.rewriting.steps.map (·.src)) then []
+       else [s!"{tag}: a row does not use every step"]) ++
+      (match want with
+       | some w => if rows.all (·.approx == w) then [] else [s!"{tag}: a row's marker is not {w}"]
+       | none => []) ++
+      (match mustUse with
+       | some kind =>
+         if used.all (fun (_, u) => u.any (fun i => (cat[i]?.map kindOf) == some kind)) then []
+         else [s!"{tag}: a row does not use a {kind} source"]
+       | none => []))
 
 /-- Description checks: each document parses and gives the expected
 capability names. -/
@@ -490,13 +636,52 @@ def describeChecks (b : Built) : List (String × List String) :=
        else [s!"{names b.mcp}"]) ++
       (if b.mcp.map (·.cap.exactness) == [.exact, .approximate] then [] else ["exactness"]) ++
       (if b.weather.cost.callQuota == some 60 then [] else ["cost"])),
+    -- KR 4.4: WebMCP
+    ("describe-webmcp",
+      (if names b.web == ["webmcp:lookup_mayor.mayor"] then [] else [s!"{names b.web}"]) ++
+      (if b.web.all (fun d => d.cap.location == "browser:" ++ webOrigin && d.cap.exactness == .exact &&
+          d.cap.inputs == [0] && d.cap.cost.callQuota == some 40 && d.cap.confidence.isNone) then []
+       else [s!"{repr (b.web.map (·.cap))}"])),
+    ("describe-webmcp-refuses-consequential",
+      (match WebMcp.describe consequentialTool with
+       | .ok _ => ["accepted a consequential tool"]
+       | .error _ => [])),
+    -- KR 4.4: LLM operation
+    ("describe-llm",
+      (if names b.llm == ["llm:guess_population.population"] then [] else [s!"{names b.llm}"]) ++
+      (if b.llm.all (fun d => d.cap.location == "llm:https://llm.example.org/v1" &&
+          d.cap.exactness == .approximate && d.cap.confidence == some 800 &&
+          d.cap.cost.latency == some 1500 && d.cap.cost.perCall == 2000 &&
+          d.cap.cost.callQuota == some 10) then []
+       else [s!"{repr (b.llm.map (·.cap))}"])),
+    ("describe-llm-confidence-optional",
+      (match Llm.describe llmNoConfidenceText with
+       | .ok ds => if ds.all (fun d => d.cap.confidence.isNone && d.cap.exactness == .approximate) then []
+                   else ["confidence or exactness"]
+       | .error e => [e])),
+    ("describe-llm-refuses-exact",
+      (match Llm.describe llmExactText with
+       | .ok _ => ["accepted an LLM operation stated exact"]
+       | .error _ => [])),
+    ("describe-llm-refuses-confidence-out-of-range",
+      (match Llm.describe llmBadConfidenceText with
+       | .ok _ => ["accepted confidence 1.5"]
+       | .error _ => [])),
+    ("llm-non-json-answer",
+      (match b.llmOp.props.head? with
+       | some pm =>
+         (if (Llm.llmImpl mockLlm b.llmOp pm [(0, ex "london")]).isEmpty then []
+          else ["a non-JSON completion gave a tuple"]) ++
+         (if (Llm.llmImpl mockLlm b.llmOp pm [(0, ex "paris")]).length == 1 then []
+          else ["a JSON completion gave no tuple"])
+       | none => ["no property"])),
     ("describe-mcp-refuses-unmapped-required-input",
       (match Mcp.describe distanceTool with
        | .ok _ => ["accepted a second required input"]
        | .error _ => []))
   ]
 
-def implementedKinds : List String := ["sbm11", "memory", "sparql", "facadex", "rest", "mcp"]
+def implementedKinds : List String := ["sbm11", "memory", "sparql", "facadex", "rest", "mcp", "webmcp", "llm"]
 
 def xcases (b : Built) : List XCase :=
   let rs := restSources b b.rest
@@ -519,6 +704,9 @@ def xcases (b : Built) : List XCase :=
     { id := "mcp-two-required-inputs", issue := issue801,
       what := "an MCP tool with two required inputs",
       test := fun _ => (Mcp.describe distanceTool).toBool },
+    { id := "webmcp-two-required-inputs", issue := issue801,
+      what := "a WebMCP tool with two required inputs",
+      test := fun _ => (WebMcp.describe twoInputWebTool).toBool },
     { id := "tool-without-rdf-mapping", issue := issue801,
       what := "an MCP or WebMCP tool declaration with no RDF mapping (mapping from the output schema)",
       test := fun _ => (Mcp.describe plainTool).toBool },
@@ -579,10 +767,14 @@ def run : IO Counts := do
     let restOps ← ok "rest describe" (Rest.readOps openApiText)
     let weather ← ok "mcp weather" (Mcp.readTool weatherTool)
     let population ← ok "mcp population" (Mcp.readTool populationTool)
+    let webTool ← ok "webmcp describe" (WebMcp.readTool mayorTool)
+    let llmOp ← ok "llm describe" (Llm.readOp llmOpText)
     let b : Built := { sbm := sbm, sbmGraph := rows, mem := mem, sparql := sparql, fx := fx,
                        fxGraph := fxGraph, rest := restOps.flatMap Rest.describeOp, restOps := restOps,
                        weather := weather, population := population,
-                       mcp := Mcp.describeTool weather ++ Mcp.describeTool population, manifest := m }
+                       mcp := Mcp.describeTool weather ++ Mcp.describeTool population,
+                       webTool := webTool, web := WebMcp.describeTool webTool,
+                       llmOp := llmOp, llm := Llm.describeOp llmOp, manifest := m }
     let mut c : Counts := {}
     -- SBM11: the generation's rows are the packed triples
     c ← c.record "sbm11-pack-read-round-trip"
@@ -609,6 +801,18 @@ def run : IO Counts := do
         | some r => IO.println s!"debug {kc.base.id}: {(search kc.base.cat r kc.base.k).map (fun x => (srcNames kc.base.cat x.rewriting, x.cost, x.approx))}"
         | none => pure ()
       c ← c.record kc.base.id (runKCase kc)
+    -- KR 4.4: the exactness of answers over `Plan.runUsed` (`Planner/Exactness.lean`)
+    let memP := b.memCat (partitioned b.mem)
+    let mixCat := memP ++ webSources b ++ llmSources b
+    c ← c.record "exactness-mixed-approximate"
+      (exactnessChecks mixCat reqMixedApprox 3 (some true) (mustUse := some "llm"))
+    c ← c.record "exactness-mixed-exact-control" (exactnessChecks mixCat reqMixedExact 2 (some false))
+    c ← c.record "exactness-five-kinds"
+      (exactnessChecks (b.sbmCat (partitioned b.sbm) ++ memP ++ sparqlSources (partitioned b.sparql) ++
+          mcpSources b (b.mcp.filter (·.cap.name.startsWith "mcp:get_weather.")) ++ restSources b b.rest)
+        (req [tp (sv "x") pKnows (v "y"), tp (sv "y") pLivesIn (v "c"),
+              tp (sv "c") pCountry (v "k"), tp (sv "c") pTemperature (v "t"),
+              tp (sv "y") pName (v "n")] ["x", "n", "k", "t"]) 5 (some false))
     for x in xcases b do
       c ← c.recordX x (x.test ())
     -- SBM11 through IO at call time (KR 4.1, issue 875): every plan of the

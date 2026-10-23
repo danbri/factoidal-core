@@ -1,0 +1,74 @@
+test_axiom_audit_rejects_unapproved_missing_and_duplicate_reports (test_owl_gate_parsers.ProofEvidenceControls.test_axiom_audit_rejects_unapproved_missing_and_duplicate_reports) ... ok
+test_ordinary_proof_failure_is_not_an_infrastructure_failure (test_owl_gate_parsers.ProofEvidenceControls.test_ordinary_proof_failure_is_not_an_infrastructure_failure) ... ok
+test_resource_and_infrastructure_failures_are_not_proof_rejections (test_owl_gate_parsers.ProofEvidenceControls.test_resource_and_infrastructure_failures_are_not_proof_rejections) ... ok
+test_dispatch_error_contract_is_checked (test_owl_gate_parsers.PublicReportControls.test_dispatch_error_contract_is_checked) ... ok
+test_duplicate_raw_or_dispatch_response_key_rejected (test_owl_gate_parsers.PublicReportControls.test_duplicate_raw_or_dispatch_response_key_rejected) ... ok
+test_missing_raw_consistent_is_not_explicit_unknown (test_owl_gate_parsers.PublicReportControls.test_missing_raw_consistent_is_not_explicit_unknown) ... ok
+test_raw_and_dispatch_boolean_types_are_strict (test_owl_gate_parsers.PublicReportControls.test_raw_and_dispatch_boolean_types_are_strict) ... ok
+test_strict_boolean_fields (test_owl_gate_parsers.PublicReportControls.test_strict_boolean_fields) ... ok
+test_duplicate_observed_field_rejected (test_owl_gate_parsers.ReaderReportControls.test_duplicate_observed_field_rejected) ... FAIL
+test_failed_observation_cannot_claim_pass (test_owl_gate_parsers.ReaderReportControls.test_failed_observation_cannot_claim_pass) ... ok
+test_honest_failure_remains_failed_for_gate (test_owl_gate_parsers.ReaderReportControls.test_honest_failure_remains_failed_for_gate) ... ok
+test_observed_fields_are_exact (test_owl_gate_parsers.ReaderReportControls.test_observed_fields_are_exact) ... ok
+test_strict_boolean_fields (test_owl_gate_parsers.ReaderReportControls.test_strict_boolean_fields) ... ok
+test_weakened_expectation_rejected (test_owl_gate_parsers.ReaderReportControls.test_weakened_expectation_rejected) ... ok
+test_conflicting_duplicate_case_fields_rejected (test_owl_gate_parsers.ReportInventoryControls.test_conflicting_duplicate_case_fields_rejected) ... 
+  test_conflicting_duplicate_case_fields_rejected (test_owl_gate_parsers.ReportInventoryControls.test_conflicting_duplicate_case_fields_rejected) (parser='acceptance_cases', field='passed') ... FAIL
+  test_conflicting_duplicate_case_fields_rejected (test_owl_gate_parsers.ReportInventoryControls.test_conflicting_duplicate_case_fields_rejected) (parser='acceptance_cases', field='expectedConsistent') ... FAIL
+test_every_case_field_is_required_including_null (test_owl_gate_parsers.ReportInventoryControls.test_every_case_field_is_required_including_null) ... 
+  test_every_case_field_is_required_including_null (test_owl_gate_parsers.ReportInventoryControls.test_every_case_field_is_required_including_null) (parser='acceptance_cases', field='expectedConsistent') ... FAIL
+test_report_marker_must_appear_once (test_owl_gate_parsers.ReportInventoryControls.test_report_marker_must_appear_once) ... ok
+test_unexpected_case_field_rejected (test_owl_gate_parsers.ReportInventoryControls.test_unexpected_case_field_rejected) ... 
+  test_unexpected_case_field_rejected (test_owl_gate_parsers.ReportInventoryControls.test_unexpected_case_field_rejected) (parser='acceptance_cases') ... FAIL
+test_valid_synthetic_inventories (test_owl_gate_parsers.ReportInventoryControls.test_valid_synthetic_inventories) ... ok
+test_zero_missing_duplicate_and_unknown_cases (test_owl_gate_parsers.ReportInventoryControls.test_zero_missing_duplicate_and_unknown_cases) ... ok
+
+======================================================================
+FAIL: test_duplicate_observed_field_rejected (test_owl_gate_parsers.ReaderReportControls.test_duplicate_observed_field_rejected)
+----------------------------------------------------------------------
+Traceback (most recent call last):
+  File "/Users/danbri/working/sandbox/october/tpac/codex-npm-review/pr-core/tests/assurance/test_owl_gate_parsers.py", line 151, in test_duplicate_observed_field_rejected
+    with self.assertRaises(ValueError):
+         ~~~~~~~~~~~~~~~~~^^^^^^^^^^^^
+AssertionError: ValueError not raised
+
+======================================================================
+FAIL: test_conflicting_duplicate_case_fields_rejected (test_owl_gate_parsers.ReportInventoryControls.test_conflicting_duplicate_case_fields_rejected) (parser='acceptance_cases', field='passed')
+----------------------------------------------------------------------
+Traceback (most recent call last):
+  File "/Users/danbri/working/sandbox/october/tpac/codex-npm-review/pr-core/tests/assurance/test_owl_gate_parsers.py", line 117, in test_conflicting_duplicate_case_fields_rejected
+    with self.assertRaises(ValueError):
+         ~~~~~~~~~~~~~~~~~^^^^^^^^^^^^
+AssertionError: ValueError not raised
+
+======================================================================
+FAIL: test_conflicting_duplicate_case_fields_rejected (test_owl_gate_parsers.ReportInventoryControls.test_conflicting_duplicate_case_fields_rejected) (parser='acceptance_cases', field='expectedConsistent')
+----------------------------------------------------------------------
+Traceback (most recent call last):
+  File "/Users/danbri/working/sandbox/october/tpac/codex-npm-review/pr-core/tests/assurance/test_owl_gate_parsers.py", line 117, in test_conflicting_duplicate_case_fields_rejected
+    with self.assertRaises(ValueError):
+         ~~~~~~~~~~~~~~~~~^^^^^^^^^^^^
+AssertionError: ValueError not raised
+
+======================================================================
+FAIL: test_every_case_field_is_required_including_null (test_owl_gate_parsers.ReportInventoryControls.test_every_case_field_is_required_including_null) (parser='acceptance_cases', field='expectedConsistent')
+----------------------------------------------------------------------
+Traceback (most recent call last):
+  File "/Users/danbri/working/sandbox/october/tpac/codex-npm-review/pr-core/tests/assurance/test_owl_gate_parsers.py", line 100, in test_every_case_field_is_required_including_null
+    with self.assertRaises(ValueError):
+         ~~~~~~~~~~~~~~~~~^^^^^^^^^^^^
+AssertionError: ValueError not raised
+
+======================================================================
+FAIL: test_unexpected_case_field_rejected (test_owl_gate_parsers.ReportInventoryControls.test_unexpected_case_field_rejected) (parser='acceptance_cases')
+----------------------------------------------------------------------
+Traceback (most recent call last):
+  File "/Users/danbri/working/sandbox/october/tpac/codex-npm-review/pr-core/tests/assurance/test_owl_gate_parsers.py", line 107, in test_unexpected_case_field_rejected
+    with self.assertRaises(ValueError):
+         ~~~~~~~~~~~~~~~~~^^^^^^^^^^^^
+AssertionError: ValueError not raised
+
+----------------------------------------------------------------------
+Ran 20 tests in 0.022s
+
+FAILED (failures=5)

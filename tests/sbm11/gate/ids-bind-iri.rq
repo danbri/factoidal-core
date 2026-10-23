@@ -1,0 +1,3 @@
+PREFIX ex: <http://ex.org/>
+# A computed IRI joined with stored triples.
+SELECT ?i ?n WHERE { BIND(IRI(CONCAT("http://ex.org/", "b")) AS ?i) ?i ex:name ?n }

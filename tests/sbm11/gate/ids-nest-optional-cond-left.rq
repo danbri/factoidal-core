@@ -1,0 +1,4 @@
+PREFIX ex: <http://ex.org/>
+PREFIX xsd: <http://www.w3.org/2001/XMLSchema#>
+# Issue 959: the LeftJoin condition compares a left variable with a right one.
+SELECT ?s ?a ?t WHERE { ?s ex:score ?a OPTIONAL { ?t ex:tag ?x FILTER(?x = ?a) } }

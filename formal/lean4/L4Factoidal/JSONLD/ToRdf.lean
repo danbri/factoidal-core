@@ -1508,6 +1508,34 @@ def datasetOfJson (rdir : RdfDirectionMode) (root : Json) : Option Dataset :=
     some (finish (expandTops rdir tops init fuel))
   | _ => none
 
+/-- `datasetOfJson` for one chunk of a document: the walk starts with the
+generated blank-node counter `ctr` and the prefix `pfx`, and gives the counter
+after the walk. `datasetOfJson` is this walk with `generatedPrefix root` and
+counter 0 (`datasetOfJson_eq_at`). The chunk reader of the source layer
+(`Syntax/JsonLdChunkFold.lean`) calls it once for each top-level node object. -/
+def datasetOfJsonAt (rdir : RdfDirectionMode) (pfx : String) (ctr : Nat) (root : Json) :
+    Option (Dataset × Nat) :=
+  let fuel := Json.size root + 1
+  let init : RdfAcc := { acc := [], named := [], ctr := ctr, labelPrefix := pfx }
+  let finish (st : RdfAcc) : Dataset × Nat :=
+    ({ default := st.acc.reverse, named := st.named.reverse }, st.ctr)
+  match root with
+  | .array tops => some (finish (expandTops rdir tops init fuel))
+  | .object fields =>
+    let tops :=
+      if onlyGraphKeysJ fields then
+        match root.field? "@graph" with
+        | some g => jldAsArray g
+        | none   => [root]
+      else [root]
+    some (finish (expandTops rdir tops init fuel))
+  | _ => none
+
+theorem datasetOfJson_eq_at (rdir : RdfDirectionMode) (root : Json) :
+    datasetOfJson rdir root = (datasetOfJsonAt rdir (generatedPrefix root) 0 root).map (·.1) := by
+  unfold datasetOfJson datasetOfJsonAt
+  cases root <;> simp
+
 /-! ## Public API -/
 
 /-- True when a top-level JSON object carries an inline `@context`. A

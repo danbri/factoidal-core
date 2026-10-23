@@ -45,6 +45,7 @@ open L4Factoidal.RDF
 open L4Factoidal.Syntax
 open L4Factoidal.Syntax.NQuadsStreaming
 open L4Factoidal.Syntax.StrictFeed
+open L4Factoidal.Syntax.StrictFeedText
 
 /-! ## The whole readers -/
 
@@ -115,39 +116,65 @@ theorem rdfxml_readAll_of_notStreamed {α : Type} (extra : Extra) (mode : Mode)
   | error e => rfl
   | ok g => rfl
 
-/-- JSON-LD: when the caller linked a parser, the reader that `init` gives reads
-`parseDocument` of the joined chunks, for every list of chunks. -/
-theorem jsonld_readAll {α : Type} (extra : Extra) (parse : DocParser)
+/-- JSON-LD, the fall-back: when the caller linked a parser and the
+generated-prefix argument is not `JsonLdChunkFold.streamPrefix` (the pre-pass
+found the document not in streaming form, or the caller ran none), the reader
+that `init` gives reads `parseDocument` of the joined chunks, for every list of
+chunks. When the argument is `streamPrefix` the reader reads one top-level node
+object at a time; the equality is measured (`l4jsonld-chunk-diff`) and not
+proved: row JS-1 of `tests/known-defects/run.sh`,
+https://github.com/danbri/factoidal/issues/946. -/
+theorem jsonld_readAll_of_notStreamed {α : Type} (extra : Extra) (parse : DocParser)
     (hx : extra.jsonld = some parse) (mode : Mode) (base : Option String)
-    (bnodePrefix : String) (acc : α) (step : Step α) (chunks : List String) :
+    (bnodePrefix : String) (hp : (bnodePrefix == JsonLdChunkFold.streamPrefix) = false)
+    (acc : α) (step : Step α) (chunks : List String) :
     ∃ r, Reader.init extra .jsonld mode base bnodePrefix acc = .ok r ∧
       r.readAll step chunks =
         (parseDocument extra .jsonld mode base (String.join chunks)).map (foldDataset step acc) := by
   refine ⟨.whole parse mode base acc [], ?_, ?_⟩
-  · simp [Reader.init, hx]
+  · simp only [Reader.init, hx, hp]
+    cases extra.jsonldStream <;> simp
+  · rw [whole_readAll]
+    simp [parseDocument, hx]
+
+/-- JSON-LD without the item reader linked: always the whole reader. -/
+theorem jsonld_readAll {α : Type} (extra : Extra) (parse : DocParser)
+    (hx : extra.jsonld = some parse) (hs : extra.jsonldStream = none) (mode : Mode)
+    (base : Option String) (bnodePrefix : String) (acc : α) (step : Step α)
+    (chunks : List String) :
+    ∃ r, Reader.init extra .jsonld mode base bnodePrefix acc = .ok r ∧
+      r.readAll step chunks =
+        (parseDocument extra .jsonld mode base (String.join chunks)).map (foldDataset step acc) := by
+  refine ⟨.whole parse mode base acc [], ?_, ?_⟩
+  · simp [Reader.init, hx, hs]
   · rw [whole_readAll]
     simp [parseDocument, hx]
 
 /-! ## N-Quads, RDF 1.1 -/
 
-theorem feed_nquads {α : Type} (step : Step α) (mode : Mode) (s : LineFeed α) (text : String) :
+theorem feed_nquads {α : Type} (step : Step α) (mode : Mode) (s : TextFeed α) (text : String) :
     (Reader.nquads mode s).feed step text =
-      (LineFeed.feed (quadReader mode) step s text.toList).map (Reader.nquads mode) := rfl
+      (LineFeed.feed (quadReader mode) step s.toLF text.toList).map
+        (fun lf => Reader.nquads mode (TextFeed.ofLF lf)) := by
+  simp only [Reader.feed, Reader.feedD, TextFeed.feed_eq, modeReader, if_true]
+  cases LineFeed.feed (quadReader mode) step s.toLF text.toList <;> rfl
 
 /-- The chunks of a document as the line walk takes them. -/
 theorem nquads_foldlM {α : Type} (step : Step α) (mode : Mode) :
-    ∀ (chunks : List String) (s : LineFeed α),
+    ∀ (chunks : List String) (s : TextFeed α),
       chunks.foldlM (fun r c => r.feed step c) (Reader.nquads mode s) =
-        ((chunks.map String.toList).foldlM (LineFeed.feed (quadReader mode) step) s).map
-          (Reader.nquads mode)
-  | [], s => rfl
+        ((chunks.map String.toList).foldlM (LineFeed.feed (quadReader mode) step) s.toLF).map
+          (fun lf => Reader.nquads mode (TextFeed.ofLF lf))
+  | [], s => by
+      simp only [List.foldlM_nil, List.map_nil, pure, Except.pure, Except.map, TextFeed.ofLF_toLF]
   | c :: rest, s => by
       rw [List.foldlM_cons, feed_nquads, List.map_cons, List.foldlM_cons]
-      cases hf : LineFeed.feed (quadReader mode) step s c.toList with
+      cases hf : LineFeed.feed (quadReader mode) step s.toLF c.toList with
       | error e => rfl
       | ok s1 =>
           show List.foldlM _ _ rest = _
-          exact nquads_foldlM step mode rest s1
+          rw [nquads_foldlM step mode rest (TextFeed.ofLF s1), TextFeed.toLF_ofLF]
+          rfl
 
 /-- The N-Quads reader is `LineFeed.run` on the character lists of the chunks. -/
 theorem nquads_readAll_eq_run {α : Type} (step : Step α) (mode : Mode) (init : α)
@@ -156,9 +183,15 @@ theorem nquads_readAll_eq_run {α : Type} (step : Step α) (mode : Mode) (init :
       LineFeed.run (quadReader mode) step init (chunks.map String.toList) := by
   simp only [Reader.readAll, LineFeed.run]
   rw [nquads_foldlM]
+  have h0 : (TextFeed.toLF ({ acc := init } : TextFeed α)) = { acc := init } := by
+    simp [TextFeed.toLF]
+  rw [h0]
   cases (chunks.map String.toList).foldlM (LineFeed.feed (quadReader mode) step) { acc := init } with
   | error e => rfl
-  | ok s => rfl
+  | ok s =>
+      simp only [Except.map, Reader.finish, Reader.finishD]
+      rw [TextFeed.finish_eq, TextFeed.toLF_ofLF]
+      simp [modeReader]
 
 /-- The characters of the chunks are the characters of their join. -/
 theorem flatten_toList_eq_join (chunks : List String) :
@@ -232,6 +265,7 @@ theorem prepass_chunks (chunks : List String) :
 #print axioms whole_readAll
 #print axioms rdfxml_readAll_of_notStreamed
 #print axioms jsonld_readAll
+#print axioms jsonld_readAll_of_notStreamed
 #print axioms nquads_foldlM
 #print axioms nquads_readAll_eq_run
 #print axioms flatten_toList_eq_join

@@ -1,0 +1,4 @@
+PREFIX ex: <http://ex.org/>
+PREFIX xsd: <http://www.w3.org/2001/XMLSchema#>
+# ORDER BY a VALUES variable; UNDEF orders first.
+SELECT ?s ?r WHERE { ?s ex:name ?n } ORDER BY ?r ?s VALUES (?s ?r) { (ex:a 3) (ex:b 1) (ex:c 2) (ex:e UNDEF) (ex:d "x") }

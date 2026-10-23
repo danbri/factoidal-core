@@ -45,6 +45,7 @@ equal to `"1.0"^^xsd:decimal`, which OWL 2 denies.
 import L4Factoidal.RDF.Core
 import L4Factoidal.NatBounds
 import L4Factoidal.XSD.Datatypes
+import L4Factoidal.XSD.Lexical
 
 namespace L4Factoidal.XSD
 
@@ -263,87 +264,14 @@ def facetsToInterval (baseDt : WfIri) (facets : List (WfIri × Term)) (acc : Int
 
 /-! ## `xsd:dateTime` as a UTC millisecond key
 
-An instant is a point on a fourth dimension, disjoint from every
-numeric one. The key is the UTC-normalised millisecond count, and a
-value WITHOUT an explicit timezone gets NO key: its instant is only
-partially ordered against timezoned bounds (XML Schema leaves the
-mixed comparison indeterminate), so it is kept in every intersection
-rather than compared.
-
-`L4Factoidal/SHACL/Validation.lean` carries the same parser for the
-SHACL ordering facets. The duplication is deliberate and matches the
-F\* tree: this module sits below SHACL in the import order, and the
-two differ in exactly the place that matters — SHACL returns the
-has-timezone flag and compares only same-flag pairs, this one drops
-an untimezoned value outright. -/
-
-/-- The proleptic Gregorian day number, on Int-valued month and day —
-one call into `XSD.Datatypes.daysFromCivil`, which is the same function
-this module used to carry a second copy of. -/
-def daysFromCivilInt (y m d : Int) : Int := daysFromCivil y m.toNat d.toNat
-
-def substrOf (s : String) (start len : Nat) : String :=
-  String.ofList ((s.toList.drop start).take len)
-
-def parseDigitsSub (s : String) (start len : Nat) : Option Int :=
-  let cs := (s.toList.drop start).take len
-  if cs.length != len || !(cs.all isAsciiDigit) then none
-  else some (cs.foldl (fun a c => a * 10 + digitVal c) 0)
-
-/-- The `(.fraction)?(Z|±HH:MM)?` tail: fraction in ms, timezone
-    offset in seconds, and whether a timezone was present. -/
-def dtParseTail (tail : String) : Option (Int × Int × Bool) :=
-  let cs := tail.toList
-  let (fracMs, tzStart) : Option Int × Nat :=
-    match cs with
-    | '.' :: rest =>
-        let digits := rest.takeWhile isAsciiDigit
-        if digits.isEmpty then (none, 0)
-        else
-          let digLen := min digits.length 3
-          match parseFacetInt (String.ofList (digits.take digLen)) with
-          | some f =>
-              let ms := if digLen == 1 then f * 100 else if digLen == 2 then f * 10 else f
-              (some ms, 1 + digits.length)
-          | none => (none, 0)
-    | _ => (some 0, 0)
-  match fracMs with
-  | none      => none
-  | some fms  =>
-    let rest := cs.drop tzStart
-    match rest with
-    | []      => some (fms, 0, false)
-    | ['Z']   => some (fms, 0, true)
-    | sign :: _ =>
-        if rest.length == 6 && (sign == '+' || sign == '-') then
-          match parseFacetInt (String.ofList ((rest.drop 1).take 2)),
-                parseFacetInt (String.ofList ((rest.drop 4).take 2)) with
-          | some th, some tm =>
-              let off := th * 3600 + tm * 60
-              some (fms, if sign == '-' then -off else off, true)
-          | _, _ => none
-        else none
-
-/-- The UTC millisecond key of a TIMEZONED `xsd:dateTime`. An
-    untimezoned value, an expanded or negative year, or a malformed
-    field answers `none` and is dropped. -/
-def dtParseUtcMs (s : String) : Option Int :=
-  let len := s.length
-  if len < 19 then none
-  else if substrOf s 0 1 == "-" then none
-  else
-    match parseDigitsSub s 0 4, parseDigitsSub s 5 2, parseDigitsSub s 8 2,
-          parseDigitsSub s 11 2, parseDigitsSub s 14 2, parseDigitsSub s 17 2 with
-    | some y, some mo, some d, some h, some mi, some se =>
-        (match dtParseTail (String.ofList (s.toList.drop 19)) with
-         | some (fms, tzoff, hasTz) =>
-             if hasTz then
-               let days := daysFromCivilInt y mo d
-               let secs := days * 86400 + h * 3600 + mi * 60 + se - tzoff
-               some (secs * 1000 + fms)
-             else none
-         | none => none)
-    | _, _, _, _, _, _ => none
+The interval solver uses integer milliseconds. Shared XSD 1.1 parsing
+handles calendar validation and offsets. Values with missing timezones or
+sub-millisecond precision have no exact key and remain unmodelled here;
+truncating them would equate distinct instants and permit false clashes. -/
+def dtParseUtcMs (s : String) : Option Int := do
+  let v ← parseDateTimeFor .xsd11 .dateTime s
+  if v.tz.isNone then none
+  else (Dec.mulInt (timeOnTimeline v) 1000).toInt?
 
 def termDateTimeKey : Term → Option Int
   | .literal l => if l.val.datatype == xsdDateTime then dtParseUtcMs l.val.lexicalForm

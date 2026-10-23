@@ -94,8 +94,9 @@ Keep these concepts distinct in types and proofs:
 - ordered result sequence equivalence.
 
 For RDF 1.2, language tags compare case-insensitively and lexical forms remain
-exact. Current `Literal.eqb` also canonicalizes XMLLiteral lexical forms, while
-current structural equality preserves tag case. Define and prove the intended
+exact. `Literal.eqb` compares XMLLiteral lexical forms exactly since
+2026-10-23 (https://github.com/danbri/factoidal/issues/963; value comparison is
+`Literal.valueEqb`), while current structural equality preserves tag case. Define and prove the intended
 RDF 1.2 identity relation before allocating stable IDs.
 
 Use one cross-position `TermId` relation and a tagged `GraphId`. Do not reserve

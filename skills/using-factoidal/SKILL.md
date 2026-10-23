@@ -392,7 +392,7 @@ await f.xmlWellformed('<a><b/></a>');                          // true
 await f.xpathEval('<r><a>1</a><a>2</a></r>', 'count(/r/a)');   // {resultType:'number', value:'2'}
 await f.xsltTransform(stylesheetXml, sourceXml);               // result document text
 await f.schematronValidate(schematronXml, instanceXml);        // {findings:[...]}
-await f.mathmlEval('<math><apply><plus/><cn>2</cn><cn>3</cn></apply></math>');
+await f.mathmlEval('<math xmlns="http://www.w3.org/1998/Math/MathML"><apply><plus/><cn>2</cn><cn>3</cn></apply></math>');
                                                                // {kind:'rat', num:5, den:1}
 await f.xformsRecalc('<data><x>5</x><y>0</y></data>',
   [{ target: 'y', calculate: '/data/x * 2' }]);                // instance + per-node validity

@@ -1,0 +1,30 @@
+{
+  "sourceBase": "ae5cef545",
+  "files": {
+    "formal/lean4/L4Factoidal/OWL/CertNames.lean": "52d852d191dc7c97851b6cd977c8634959475f1155c9caa2980fe90464108373",
+    "formal/lean4/L4Factoidal/RIF/Engine.lean": "575ac4e4f38ad76714c1f686a799961865863e9e5b8b4aed0fa738155db3b8b7",
+    "formal/lean4/L4Factoidal/RIF/Matching.lean": "3232dfc4153ec8ab138460533a8b457477e6ca0087d3d84e993e6603b7bcb41b",
+    "formal/lean4/L4Factoidal/Regex/Ecma.lean": "2e7b331bae67afc5470e7035d1d7f85138bd9ad0a69f24f58f5e0dbac58a6b5e",
+    "formal/lean4/L4Factoidal/Regex/Profiles.lean": "f67b5ba584fa5ce63aadb6ebe4b58c270c38ae2952e99d0e49f41a037c09e414",
+    "formal/lean4/L4Factoidal/Regex/XPath.lean": "eb500423fae3c5c58544780e544dd30696bf06eacc23129226cea94a9f048f25",
+    "tools/lean-tail-recursion-allow.txt": "8290f1ace4084a99f1035dda7f303d5a46ae0442754a1860627c4c7ea5ce144f"
+  },
+  "emittedC": {
+    "OWL/CertNames": "842d04c14c372e1254336179cda61fd61295e9a67cc337172833aa883a0db7d6",
+    "RIF/Engine": "c416d45beb337c588eb88a55650bdc3ef74d7f97216521b9a20e4ebe3c85db08",
+    "RIF/Matching": "50067cd831dd6e10d9c878cd43920a1b72e8869d89e87e459b6981f71853319a",
+    "Regex/Ecma": "f1b0aa7a8941c00a69624ecebe831f165c5e308851aa467793f3ae35d2f63871",
+    "Regex/Profiles": "6e7801beb8e931117b3ef3061ca7c29615b5704784223513d9759fa35fe74f6d",
+    "Regex/XPath": "c69aec0d22c9529c26d77b44bb1f41b249781d48d843355bd02f592691ac0075",
+    "SPARQL/ResultsXml": "387e9c7b7f081062700b56308ecee87d48fb0a1e6316ec29d45b7100be4f8549",
+    "XML/NamespaceView": "742fd5a464b18d742e2bcb220ff27f82fecc5831c29a38d61a15bea7121796d7",
+    "XSD/Datatypes": "11de3b6deedc309efb32026919724ecbbdd7711a99c0c29e0242df4f92cd6a94"
+  },
+  "runtimeProbe": "IntegrationTailFlatInputs.lean",
+  "runtimePasses": 9,
+  "runtimeFailures": 0,
+  "runtimeBackend": "Lean evaluator; not a Wasm artifact run",
+  "focusedBuildJobs": 56,
+  "focusedBuildExit": 0,
+  "tailAndCsimpGateExit": 0
+}

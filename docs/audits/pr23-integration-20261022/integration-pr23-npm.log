@@ -1,0 +1,3554 @@
+TAP version 13
+# Subtest: createApi(handle): parse/SELECT/ASK match index.js
+ok 1 - createApi(handle): parse/SELECT/ASK match index.js
+  ---
+  duration_ms: 458.9175
+  type: 'test'
+  ...
+# Subtest: createApi accepts a Promise of the handle
+ok 2 - createApi accepts a Promise of the handle
+  ---
+  duration_ms: 7.051625
+  type: 'test'
+  ...
+# Subtest: createApi accepts a zero-argument thunk returning a Promise of the handle
+ok 3 - createApi accepts a zero-argument thunk returning a Promise of the handle
+  ---
+  duration_ms: 4.559375
+  type: 'test'
+  ...
+# Subtest: createApi: an object without call() throws a TypeError
+ok 4 - createApi: an object without call() throws a TypeError
+  ---
+  duration_ms: 47.289667
+  type: 'test'
+  ...
+# Subtest: createApi: openStore takes a reader function only (no file system)
+ok 5 - createApi: openStore takes a reader function only (no file system)
+  ---
+  duration_ms: 1.861625
+  type: 'test'
+  ...
+# Subtest: version matches package.json on every entry point
+ok 6 - version matches package.json on every entry point
+  ---
+  duration_ms: 0.20875
+  type: 'test'
+  ...
+# Subtest: engine field is lean4-wasm on every entry point
+ok 7 - engine field is lean4-wasm on every entry point
+  ---
+  duration_ms: 2.829375
+  type: 'test'
+  ...
+# Subtest: the 0.9.x aliases ./l4 and ./l4-core are gone in 0.10.0
+ok 8 - the 0.9.x aliases ./l4 and ./l4-core are gone in 0.10.0
+  ---
+  duration_ms: 0.405583
+  type: 'test'
+  ...
+# Subtest: parse: turtle smoke
+ok 9 - parse: turtle smoke
+  ---
+  duration_ms: 408.244167
+  type: 'test'
+  ...
+# Subtest: parse: (await parse(TTL)).prefixes equals the declared map
+ok 10 - parse: (await parse(TTL)).prefixes equals the declared map
+  ---
+  duration_ms: 8.326583
+  type: 'test'
+  ...
+# Subtest: parse: ntriples smoke
+ok 11 - parse: ntriples smoke
+  ---
+  duration_ms: 5.001166
+  type: 'test'
+  ...
+# Subtest: parse: ntriples input gives an empty prefixes map
+ok 12 - parse: ntriples input gives an empty prefixes map
+  ---
+  duration_ms: 1.090125
+  type: 'test'
+  ...
+# Subtest: parse: nquads smoke (named graph preserved)
+ok 13 - parse: nquads smoke (named graph preserved)
+  ---
+  duration_ms: 1.609541
+  type: 'test'
+  ...
+# Subtest: parse: trig smoke (named graph preserved)
+ok 14 - parse: trig smoke (named graph preserved)
+  ---
+  duration_ms: 18.935
+  type: 'test'
+  ...
+# Subtest: parse: rdfxml smoke
+ok 15 - parse: rdfxml smoke
+  ---
+  duration_ms: 37.658125
+  type: 'test'
+  ...
+# Subtest: parse: baseIRI resolves relative IRIs
+ok 16 - parse: baseIRI resolves relative IRIs
+  ---
+  duration_ms: 0.826125
+  type: 'test'
+  ...
+# Subtest: parse: blank-node labels from separate parses stay distinct
+ok 17 - parse: blank-node labels from separate parses stay distinct
+  ---
+  duration_ms: 1.873917
+  type: 'test'
+  ...
+# Subtest: query: SELECT returns Bindings[] of RDF/JS terms
+ok 18 - query: SELECT returns Bindings[] of RDF/JS terms
+  ---
+  duration_ms: 80.475708
+  type: 'test'
+  ...
+# Subtest: query: typed literal binding carries its datatype
+ok 19 - query: typed literal binding carries its datatype
+  ---
+  duration_ms: 4.339917
+  type: 'test'
+  ...
+# Subtest: query: accepts a Dataset input
+ok 20 - query: accepts a Dataset input
+  ---
+  duration_ms: 2.096333
+  type: 'test'
+  ...
+# Subtest: query: ASK returns a boolean
+ok 21 - query: ASK returns a boolean
+  ---
+  duration_ms: 7.290542
+  type: 'test'
+  ...
+# Subtest: query: multiple documents load as separate graphs
+ok 22 - query: multiple documents load as separate graphs
+  ---
+  duration_ms: 3.727584
+  type: 'test'
+  ...
+# Subtest: query: entail RDFS infers subclass instances
+ok 23 - query: entail RDFS infers subclass instances
+  ---
+  duration_ms: 43.005125
+  type: 'test'
+  ...
+# Subtest: query: malformed query rejects with diagnostics
+ok 24 - query: malformed query rejects with diagnostics
+  ---
+  duration_ms: 4.7495
+  type: 'test'
+  ...
+# Subtest: serialize: engine round-trip is stable (nquads)
+ok 25 - serialize: engine round-trip is stable (nquads)
+  ---
+  duration_ms: 10.1
+  type: 'test'
+  ...
+# Subtest: serialize: ntriples output
+ok 26 - serialize: ntriples output
+  ---
+  duration_ms: 1.70925
+  type: 'test'
+  ...
+# Subtest: canonicalize: isomorphic datasets get identical canonical N-Quads
+ok 27 - canonicalize: isomorphic datasets get identical canonical N-Quads
+  ---
+  duration_ms: 3.354459
+  type: 'test'
+  ...
+# Subtest: graphs: enumerates named graphs from a parsed TriG document
+ok 28 - graphs: enumerates named graphs from a parsed TriG document
+  ---
+  duration_ms: 0.805042
+  type: 'test'
+  ...
+# Subtest: canonicalHash: isomorphic graphs get identical hash under bnode relabeling
+ok 29 - canonicalHash: isomorphic graphs get identical hash under bnode relabeling
+  ---
+  duration_ms: 4.354667
+  type: 'test'
+  ...
+# Subtest: query: CONSTRUCT returns a Dataset
+ok 30 - query: CONSTRUCT returns a Dataset
+  ---
+  duration_ms: 2.162583
+  type: 'test'
+  ...
+# Subtest: update: INSERT DATA adds quads
+ok 31 - update: INSERT DATA adds quads
+  ---
+  duration_ms: 5.928041
+  type: 'test'
+  ...
+# Subtest: parse: jsonld (expanded/inline-context form) via the npm-entry ABI
+ok 32 - parse: jsonld (expanded/inline-context form) via the npm-entry ABI
+  ---
+  duration_ms: 23.347625
+  type: 'test'
+  ...
+# Subtest: jsonldToRdf: parses JSON-LD with an explicit base option
+ok 33 - jsonldToRdf: parses JSON-LD with an explicit base option
+  ---
+  duration_ms: 1.394125
+  type: 'test'
+  ...
+# Subtest: shaclValidate: SHACL Core validation returns conforms + a report Dataset
+ok 34 - shaclValidate: SHACL Core validation returns conforms + a report Dataset
+  ---
+  duration_ms: 20.336875
+  type: 'test'
+  ...
+# Subtest: shexValidate: ShEx validation of one focus node against one shape
+ok 35 - shexValidate: ShEx validation of one focus node against one shape
+  ---
+  duration_ms: 15.014333
+  type: 'test'
+  ...
+# Subtest: owlClosure: RDFS closure materializes rdfs:subClassOf inference
+ok 36 - owlClosure: RDFS closure materializes rdfs:subClassOf inference
+  ---
+  duration_ms: 14.543542
+  type: 'test'
+  ...
+# Subtest: rmlMap: evaluates an RML mapping graph against JSON source data
+ok 37 - rmlMap: evaluates an RML mapping graph against JSON source data
+  ---
+  duration_ms: 37.948958
+  type: 'test'
+  ...
+# Subtest: csvwToRdf: converts a vendored W3C CSVW fixture (minimal mode)
+ok 38 - csvwToRdf: converts a vendored W3C CSVW fixture (minimal mode)
+  ---
+  duration_ms: 12.810416
+  type: 'test'
+  ...
+# Subtest: csvwToRdf: standard mode emits the csvw:TableGroup wrapper; no metadata infers from header
+ok 39 - csvwToRdf: standard mode emits the csvw:TableGroup wrapper; no metadata infers from header
+  ---
+  duration_ms: 1.041375
+  type: 'test'
+  ...
+# Subtest: rifEval: RIF Core saturation materializes derived triples
+ok 40 - rifEval: RIF Core saturation materializes derived triples
+  ---
+  duration_ms: 20.666667
+  type: 'test'
+  ...
+# Subtest: capabilities: shacl/shex/owlClosure/rml/jsonld/rif fields are present
+ok 41 - capabilities: shacl/shex/owlClosure/rml/jsonld/rif fields are present
+  ---
+  duration_ms: 0.308333
+  type: 'test'
+  ...
+# Subtest: xmlWellformed: accepts well-formed, rejects malformed
+ok 42 - xmlWellformed: accepts well-formed, rejects malformed
+  ---
+  duration_ms: 3.588958
+  type: 'test'
+  ...
+# Subtest: xpathEval: XPath 1.0 over an XML document
+ok 43 - xpathEval: XPath 1.0 over an XML document
+  ---
+  duration_ms: 11.533291
+  type: 'test'
+  ...
+# Subtest: didKeyResolve: Ed25519 did:key resolves to a DID Document
+ok 44 - didKeyResolve: Ed25519 did:key resolves to a DID Document
+  ---
+  duration_ms: 1.4915
+  type: 'test'
+  ...
+# Subtest: jsonldFromRdf: N-Quads serialize to expanded JSON-LD (reverse of jsonldToRdf)
+ok 45 - jsonldFromRdf: N-Quads serialize to expanded JSON-LD (reverse of jsonldToRdf)
+  ---
+  duration_ms: 5.932542
+  type: 'test'
+  ...
+# Subtest: version matches package.json
+ok 46 - version matches package.json
+  ---
+  duration_ms: 2.062834
+  type: 'test'
+  ...
+# Subtest: entail x-rdfscore: ASK sees the two-step subclass entailment (the theorem-backed regime)
+ok 47 - entail x-rdfscore: ASK sees the two-step subclass entailment (the theorem-backed regime)
+  ---
+  duration_ms: 4.250209
+  type: 'test'
+  ...
+# Subtest: entail x-rdfscore does NOT derive the symmetric edge; x-rdfsplus does (regime separation)
+ok 48 - entail x-rdfscore does NOT derive the symmetric edge; x-rdfsplus does (regime separation)
+  ---
+  duration_ms: 4.099792
+  type: 'test'
+  ...
+# Subtest: entail none: baseline returns zero worksWith rows (both regimes really added something)
+ok 49 - entail none: baseline returns zero worksWith rows (both regimes really added something)
+  ---
+  duration_ms: 0.633416
+  type: 'test'
+  ...
+# Subtest: query: each solution Map iterates in the SELECT projection order
+ok 50 - query: each solution Map iterates in the SELECT projection order
+  ---
+  duration_ms: 12.153583
+  type: 'test'
+  ...
+# Subtest: query: a FILTER in an OPTIONAL group reads the variables of the left side
+ok 51 - query: a FILTER in an OPTIONAL group reads the variables of the left side
+  ---
+  duration_ms: 8.69875
+  type: 'test'
+  ...
+#   esbuild bundle: 416ms, external=[node:module]
+# Subtest: esbuild --bundle over the CSP fixture runs under Node (platform: browser, format: esm)
+ok 52 - esbuild --bundle over the CSP fixture runs under Node (platform: browser, format: esm)
+  ---
+  duration_ms: 1252.913458
+  type: 'test'
+  ...
+# Subtest: iteration gives the quads of the engine term objects, every term kind
+ok 53 - iteration gives the quads of the engine term objects, every term kind
+  ---
+  duration_ms: 447.751542
+  type: 'test'
+  ...
+# Subtest: iteration pages through a dataset larger than one page, in N-Quads line order
+ok 54 - iteration pages through a dataset larger than one page, in N-Quads line order
+  ---
+  duration_ms: 3063.496209
+  type: 'test'
+  ...
+# Subtest: the region op refuses an unknown handle
+ok 55 - the region op refuses an unknown handle
+  ---
+  duration_ms: 1.799
+  type: 'test'
+  ...
+# Subtest: Dataset iteration within 1.2x the N-Quads writer (https://github.com/danbri/factoidal/issues/900)
+ok 56 - Dataset iteration within 1.2x the N-Quads writer (https://github.com/danbri/factoidal/issues/900)
+  ---
+  duration_ms: 5159.888333
+  type: 'test'
+  ...
+# Subtest: DatasetCore: set semantics by term equality
+ok 57 - DatasetCore: set semantics by term equality
+  ---
+  duration_ms: 15.336042
+  type: 'test'
+  ...
+# Subtest: DatasetCore: building 4n quads costs at most 9 times n quads
+ok 58 - DatasetCore: building 4n quads costs at most 9 times n quads
+  ---
+  duration_ms: 265.129125
+  type: 'test'
+  ...
+# Subtest: parse answers a Dataset held in the engine
+ok 59 - parse answers a Dataset held in the engine
+  ---
+  duration_ms: 405.937792
+  type: 'test'
+  ...
+# Subtest: format inference only when the format is omitted, and it is reported
+ok 60 - format inference only when the format is omitted, and it is reported
+  ---
+  duration_ms: 7.92275
+  type: 'test'
+  ...
+# Subtest: Dataset methods: query, update in place, closure, validate, clone
+ok 61 - Dataset methods: query, update in place, closure, validate, clone
+  ---
+  duration_ms: 98.225584
+  type: 'test'
+  ...
+# Subtest: a disposed Dataset throws a clear error; using disposes
+ok 62 - a disposed Dataset throws a clear error; using disposes
+  ---
+  duration_ms: 11.112417
+  type: 'test'
+  ...
+# Subtest: unknown option keys throw
+ok 63 - unknown option keys throw
+  ---
+  duration_ms: 2.518667
+  type: 'test'
+  ...
+# Subtest: producers answer a Dataset and consumers accept it with no text step
+ok 64 - producers answer a Dataset and consumers accept it with no text step
+  ---
+  duration_ms: 20.769667
+  type: 'test'
+  ...
+# Subtest: the functional update() answers a new Dataset and leaves its argument unchanged
+ok 65 - the functional update() answers a new Dataset and leaves its argument unchanged
+  ---
+  duration_ms: 2.101667
+  type: 'test'
+  ...
+# Subtest: query results formats
+ok 66 - query results formats
+  ---
+  duration_ms: 5.5615
+  type: 'test'
+  ...
+# Subtest: DatasetHandle, the pre-0.10.0 alias of Dataset, is removed in 0.12.0
+ok 67 - DatasetHandle, the pre-0.10.0 alias of Dataset, is removed in 0.12.0
+  ---
+  duration_ms: 1.808875
+  type: 'test'
+  ...
+# Subtest: RDF/JS DatasetCore: size, add, delete, has, match, iteration
+ok 68 - RDF/JS DatasetCore: size, add, delete, has, match, iteration
+  ---
+  duration_ms: 11.227417
+  type: 'test'
+  ...
+# Subtest: xfail: RDF/JS Stream: Dataset is a Source (match answers a Stream) (https://github.com/danbri/factoidal/issues/884)
+ok 69 - xfail: RDF/JS Stream: Dataset is a Source (match answers a Stream) (https://github.com/danbri/factoidal/issues/884)
+  ---
+  duration_ms: 4.927708
+  type: 'test'
+  ...
+# Expected values to be strictly equal:\\n+ actual - expected\\n\\n+ 'undefined'\\n- 'function'\\n
+# Subtest: xfail: RDF/JS Stream: Dataset is a Sink (import) (https://github.com/danbri/factoidal/issues/884)
+ok 70 - xfail: RDF/JS Stream: Dataset is a Sink (import) (https://github.com/danbri/factoidal/issues/884)
+  ---
+  duration_ms: 1.152583
+  type: 'test'
+  ...
+# Expected values to be strictly equal:\\n+ actual - expected\\n\\n+ 'undefined'\\n- 'function'\\n
+# Subtest: xfail: RDF/JS Stream: a parser and a serializer stream (https://github.com/danbri/factoidal/issues/884)
+ok 71 - xfail: RDF/JS Stream: a parser and a serializer stream (https://github.com/danbri/factoidal/issues/884)
+  ---
+  duration_ms: 0.402083
+  type: 'test'
+  ...
+# Expected values to be strictly equal:\\n+ actual - expected\\n\\n+ 'undefined'\\n- 'function'\\n
+# Subtest: deltaLog (full): append, read, merge, inspect, torn last record
+ok 72 - deltaLog (full): append, read, merge, inspect, torn last record
+  ---
+  duration_ms: 411.496958
+  type: 'test'
+  ...
+# Subtest: deltaLog: the default log name, and refusals
+ok 73 - deltaLog: the default log name, and refusals
+  ---
+  duration_ms: 5.232917
+  type: 'test'
+  ...
+# Subtest: deltaLog: a torn final record recovers; damaged and undecodable records reject (issue 843)
+ok 74 - deltaLog: a torn final record recovers; damaged and undecodable records reject (issue 843)
+  ---
+  duration_ms: 10.283416
+  type: 'test'
+  ...
+# Subtest: deltaLog: a host store receives the engine record and the seq it allocates
+ok 75 - deltaLog: a host store receives the engine record and the seq it allocates
+  ---
+  duration_ms: 3.191542
+  type: 'test'
+  ...
+# Subtest: DESCRIBE <iri> returns the Concise Bounded Description
+ok 76 - DESCRIBE <iri> returns the Concise Bounded Description
+  ---
+  duration_ms: 433.911583
+  type: 'test'
+  ...
+# Subtest: DESCRIBE of a resource with no statements returns the empty graph
+ok 77 - DESCRIBE of a resource with no statements returns the empty graph
+  ---
+  duration_ms: 1.531792
+  type: 'test'
+  ...
+# Subtest: the documents have examples
+ok 78 - the documents have examples
+  ---
+  duration_ms: 2.908625
+  type: 'test'
+  ...
+# Subtest: README.md:10
+ok 79 - README.md:10
+  ---
+  duration_ms: 735.282625
+  type: 'test'
+  ...
+# Subtest: README.md:84
+ok 80 - README.md:84
+  ---
+  duration_ms: 779.91975
+  type: 'test'
+  ...
+# Subtest: API.md:56
+ok 81 - API.md:56
+  ---
+  duration_ms: 903.361542
+  type: 'test'
+  ...
+# Subtest: API.md:89
+ok 82 - API.md:89
+  ---
+  duration_ms: 688.076875
+  type: 'test'
+  ...
+# Subtest: API.md:140
+ok 83 - API.md:140
+  ---
+  duration_ms: 753.304291
+  type: 'test'
+  ...
+# Subtest: API.md:205 (browser: syntax only)
+ok 84 - API.md:205 (browser: syntax only)
+  ---
+  duration_ms: 198.465625
+  type: 'test'
+  ...
+# Subtest: API.md:225
+ok 85 - API.md:225
+  ---
+  duration_ms: 201.206042
+  type: 'test'
+  ...
+# Subtest: API.md:258
+ok 86 - API.md:258
+  ---
+  duration_ms: 774.1675
+  type: 'test'
+  ...
+# Subtest: API.md:275
+ok 87 - API.md:275
+  ---
+  duration_ms: 754.832041
+  type: 'test'
+  ...
+# Subtest: API.md:300
+ok 88 - API.md:300
+  ---
+  duration_ms: 815.976666
+  type: 'test'
+  ...
+# Subtest: API.md:341
+ok 89 - API.md:341
+  ---
+  duration_ms: 779.12425
+  type: 'test'
+  ...
+# Subtest: API.md:388
+ok 90 - API.md:388
+  ---
+  duration_ms: 744.48225
+  type: 'test'
+  ...
+# Subtest: API.md:445
+ok 91 - API.md:445
+  ---
+  duration_ms: 3572.119583
+  type: 'test'
+  ...
+# Subtest: API.md:465 (browser: syntax only)
+ok 92 - API.md:465 (browser: syntax only)
+  ---
+  duration_ms: 93.675542
+  type: 'test'
+  ...
+# Subtest: API.md:500 (browser: syntax only)
+ok 93 - API.md:500 (browser: syntax only)
+  ---
+  duration_ms: 104.505167
+  type: 'test'
+  ...
+# Subtest: API.md:651
+ok 94 - API.md:651
+  ---
+  duration_ms: 3422.889875
+  type: 'test'
+  ...
+# Subtest: API.md:678
+ok 95 - API.md:678
+  ---
+  duration_ms: 3224.944584
+  type: 'test'
+  ...
+# Subtest: API.md:784
+ok 96 - API.md:784
+  ---
+  duration_ms: 2926.443833
+  type: 'test'
+  ...
+# Subtest: API.md:1010
+ok 97 - API.md:1010
+  ---
+  duration_ms: 1091.514417
+  type: 'test'
+  ...
+# Subtest: API.md:1053
+ok 98 - API.md:1053
+  ---
+  duration_ms: 859.417542
+  type: 'test'
+  ...
+# (node:65169) [MODULE_TYPELESS_PACKAGE_JSON] Warning: Module type of file:///Users/danbri/working/sandbox/october/tpac/codex-npm-review/integrate-core/npm/factoidal/browser.js is not specified and it doesn't parse as CommonJS.
+# Reparsing as ES module because module syntax was detected. This incurs a performance overhead.
+# To eliminate this warning, add "type": "module" to /Users/danbri/working/sandbox/october/tpac/codex-npm-review/integrate-core/npm/factoidal/package.json.
+# (Use `node --trace-warnings ...` to show where the warning was created)
+# Subtest: fn.d.ts declares nothing fn.js does not implement
+ok 99 - fn.d.ts declares nothing fn.js does not implement
+  ---
+  duration_ms: 50.280166
+  type: 'test'
+  ...
+# Subtest: fn.js implements nothing that fn.d.ts leaves untyped
+ok 100 - fn.js implements nothing that fn.d.ts leaves untyped
+  ---
+  duration_ms: 0.759333
+  type: 'test'
+  ...
+# Subtest: index.d.ts declares nothing index.js does not implement
+ok 101 - index.d.ts declares nothing index.js does not implement
+  ---
+  duration_ms: 4.094458
+  type: 'test'
+  ...
+# Subtest: index.js implements nothing that index.d.ts leaves untyped
+ok 102 - index.js implements nothing that index.d.ts leaves untyped
+  ---
+  duration_ms: 0.782792
+  type: 'test'
+  ...
+# Subtest: api.d.ts declares nothing api.js does not implement
+ok 103 - api.d.ts declares nothing api.js does not implement
+  ---
+  duration_ms: 2.980708
+  type: 'test'
+  ...
+# Subtest: api.js implements nothing that api.d.ts leaves untyped
+ok 104 - api.js implements nothing that api.d.ts leaves untyped
+  ---
+  duration_ms: 0.478083
+  type: 'test'
+  ...
+# Subtest: the VC crypto surface is typed on both index.d.ts and fn.d.ts
+ok 105 - the VC crypto surface is typed on both index.d.ts and fn.d.ts
+  ---
+  duration_ms: 0.616709
+  type: 'test'
+  ...
+# Subtest: browser.d.ts and browser.js declare and export the same names
+ok 106 - browser.d.ts and browser.js declare and export the same names
+  ---
+  duration_ms: 9.329833
+  type: 'test'
+  ...
+# Subtest: browser.js exports the main entry minus the Node-only names, plus setAssetsUrl/getAssetsUrl
+ok 107 - browser.js exports the main entry minus the Node-only names, plus setAssetsUrl/getAssetsUrl
+  ---
+  duration_ms: 3.874375
+  type: 'test'
+  ...
+# Subtest: no l4.d.ts or l4-core.d.ts ships (the aliases went in 0.10.0)
+ok 108 - no l4.d.ts or l4-core.d.ts ships (the aliases went in 0.10.0)
+  ---
+  duration_ms: 0.725167
+  type: 'test'
+  ...
+# Subtest: lib/version.mjs carries package.json version
+ok 109 - lib/version.mjs carries package.json version
+  ---
+  duration_ms: 1.164334
+  type: 'test'
+  ...
+# Subtest: entail none: a subclass membership is not entailed
+ok 110 - entail none: a subclass membership is not entailed
+  ---
+  duration_ms: 423.0855
+  type: 'test'
+  ...
+# Subtest: entail RDFS: a subclass membership (rdfs9) is entailed
+ok 111 - entail RDFS: a subclass membership (rdfs9) is entailed
+  ---
+  duration_ms: 9.541916
+  type: 'test'
+  ...
+# Subtest: entail OWL-RL: a subclass membership (rdfs9) is entailed
+ok 112 - entail OWL-RL: a subclass membership (rdfs9) is entailed
+  ---
+  duration_ms: 12.216167
+  type: 'test'
+  ...
+# Subtest: entail x-rdfscore: a subclass membership (rdfs9) is entailed
+ok 113 - entail x-rdfscore: a subclass membership (rdfs9) is entailed
+  ---
+  duration_ms: 3.37675
+  type: 'test'
+  ...
+# Subtest: entail x-rdfsplus: a subclass membership (rdfs9) is entailed
+ok 114 - entail x-rdfsplus: a subclass membership (rdfs9) is entailed
+  ---
+  duration_ms: 4.42975
+  type: 'test'
+  ...
+# Subtest: entail x-rdfsplus: owl:inverseOf is applied; x-rdfscore does not apply it
+ok 115 - entail x-rdfsplus: owl:inverseOf is applied; x-rdfscore does not apply it
+  ---
+  duration_ms: 20.750667
+  type: 'test'
+  ...
+# Subtest: entail RDFS: SELECT answers Bindings over the closure
+ok 116 - entail RDFS: SELECT answers Bindings over the closure
+  ---
+  duration_ms: 18.693458
+  type: 'test'
+  ...
+# Subtest: entail RDFS: CONSTRUCT answers a Dataset over the closure
+ok 117 - entail RDFS: CONSTRUCT answers a Dataset over the closure
+  ---
+  duration_ms: 106.043625
+  type: 'test'
+  ...
+# Subtest: an unknown regime is option.invalid-value
+ok 118 - an unknown regime is option.invalid-value
+  ---
+  duration_ms: 1.888917
+  type: 'test'
+  ...
+# Subtest: query() rejects x-ikl-* entail regimes, case-insensitively
+ok 119 - query() rejects x-ikl-* entail regimes, case-insensitively
+  ---
+  duration_ms: 2.286667
+  type: 'test'
+  ...
+# Subtest: fn.js entail() refuses x-ikl-* as not implemented, before it reaches the engine
+ok 120 - fn.js entail() refuses x-ikl-* as not implemented, before it reaches the engine
+  ---
+  duration_ms: 3.025167
+  type: 'test'
+  ...
+# Subtest: fn.js entail(RDFS) materialises the closure as an FnDataset
+ok 121 - fn.js entail(RDFS) materialises the closure as an FnDataset
+  ---
+  duration_ms: 10.718541
+  type: 'test'
+  ...
+# Subtest: parse.syntax: Turtle, with line, column, offset, byteOffset
+ok 122 - parse.syntax: Turtle, with line, column, offset, byteOffset
+  ---
+  duration_ms: 8.392834
+  type: 'test'
+  ...
+# Subtest: parse.syntax: position offset is UTF-16, byteOffset UTF-8
+ok 123 - parse.syntax: position offset is UTF-16, byteOffset UTF-8
+  ---
+  duration_ms: 0.564333
+  type: 'test'
+  ...
+# Subtest: parse.syntax: missing RDF object is not an invalid IRI
+ok 124 - parse.syntax: missing RDF object is not an invalid IRI
+  ---
+  duration_ms: 2.186208
+  type: 'test'
+  ...
+# Subtest: parse.syntax: RDF/XML has the RDF/XML grammar and no position
+ok 125 - parse.syntax: RDF/XML has the RDF/XML grammar and no position
+  ---
+  duration_ms: 23.147916
+  type: 'test'
+  ...
+# Subtest: parse.rdf12-required: a triple term read as RDF 1.1 Turtle
+ok 126 - parse.rdf12-required: a triple term read as RDF 1.1 Turtle
+  ---
+  duration_ms: 3.38775
+  type: 'test'
+  ...
+# Subtest: term.invalid-iri: an IRIREF with a space
+ok 127 - term.invalid-iri: an IRIREF with a space
+  ---
+  duration_ms: 1.095416
+  type: 'test'
+  ...
+# Subtest: term.invalid-iri: an RDF/JS NamedNode that is not an IRI
+ok 128 - term.invalid-iri: an RDF/JS NamedNode that is not an IRI
+  ---
+  duration_ms: 9.627584
+  type: 'test'
+  ...
+# Subtest: term.invalid-langtag: a language tag that starts with a digit
+ok 129 - term.invalid-langtag: a language tag that starts with a digit
+  ---
+  duration_ms: 3.014
+  type: 'test'
+  ...
+# Subtest: term.invalid: a literal in subject position
+ok 130 - term.invalid: a literal in subject position
+  ---
+  duration_ms: 3.0635
+  type: 'test'
+  ...
+# Subtest: query.syntax: position counts into the query text
+ok 131 - query.syntax: position counts into the query text
+  ---
+  duration_ms: 25.161166
+  type: 'test'
+  ...
+# Subtest: query.syntax: SPARQL 1.2 query names the SPARQL 1.2 grammar
+ok 132 - query.syntax: SPARQL 1.2 query names the SPARQL 1.2 grammar
+  ---
+  duration_ms: 1.388542
+  type: 'test'
+  ...
+# Subtest: query.failed: an unregistered SERVICE endpoint
+ok 133 - query.failed: an unregistered SERVICE endpoint
+  ---
+  duration_ms: 7.531792
+  type: 'test'
+  ...
+# Subtest: update.syntax: an unclosed INSERT DATA
+ok 134 - update.syntax: an unclosed INSERT DATA
+  ---
+  duration_ms: 4.749333
+  type: 'test'
+  ...
+# Subtest: update.failed: LOAD has no host to fetch from
+ok 135 - update.failed: LOAD has no host to fetch from
+  ---
+  duration_ms: 2.939833
+  type: 'test'
+  ...
+# Subtest: format.unknown: parse and serialize
+ok 136 - format.unknown: parse and serialize
+  ---
+  duration_ms: 1.589083
+  type: 'test'
+  ...
+# Subtest: serialize.unsupported-rdf12: a triple term written as RDF 1.1 N-Triples
+ok 137 - serialize.unsupported-rdf12: a triple term written as RDF 1.1 N-Triples
+  ---
+  duration_ms: 2.402333
+  type: 'test'
+  ...
+# Subtest: serialize.failed: N-Quads text the writer cannot read
+ok 138 - serialize.failed: N-Quads text the writer cannot read
+  ---
+  duration_ms: 5.712625
+  type: 'test'
+  ...
+# Subtest: canon.unsupported-rdf12: RDFC-1.0 of a triple term
+ok 139 - canon.unsupported-rdf12: RDFC-1.0 of a triple term
+  ---
+  duration_ms: 2.535625
+  type: 'test'
+  ...
+# Subtest: canon.failed: canonicalizeToNQuads of text that is not N-Quads
+ok 140 - canon.failed: canonicalizeToNQuads of text that is not N-Quads
+  ---
+  duration_ms: 0.26425
+  type: 'test'
+  ...
+# Subtest: owl.unsupported-rdf12: OWL 2 DL consistency of a triple term
+ok 141 - owl.unsupported-rdf12: OWL 2 DL consistency of a triple term
+  ---
+  duration_ms: 1.964458
+  type: 'test'
+  ...
+# Subtest: reason.failed: owlClosure of text that is not N-Quads
+ok 142 - reason.failed: owlClosure of text that is not N-Quads
+  ---
+  duration_ms: 0.547792
+  type: 'test'
+  ...
+# Subtest: regime.refused: an x-ikl-* regime
+ok 143 - regime.refused: an x-ikl-* regime
+  ---
+  duration_ms: 0.461875
+  type: 'test'
+  ...
+# Subtest: validate.failed: SHACL with data that is not N-Quads
+ok 144 - validate.failed: SHACL with data that is not N-Quads
+  ---
+  duration_ms: 1.2055
+  type: 'test'
+  ...
+# Subtest: xml.failed: an XPath expression the engine cannot read
+ok 145 - xml.failed: an XPath expression the engine cannot read
+  ---
+  duration_ms: 5.946875
+  type: 'test'
+  ...
+# Subtest: crypto.failed: an Ed25519 secret key that is not hex
+ok 146 - crypto.failed: an Ed25519 secret key that is not hex
+  ---
+  duration_ms: 0.530583
+  type: 'test'
+  ...
+# Subtest: store.failed: a store manifest that is not hex
+ok 147 - store.failed: a store manifest that is not hex
+  ---
+  duration_ms: 5.6935
+  type: 'test'
+  ...
+# Subtest: registry.failed: a SERVICE endpoint whose data is not N-Quads
+ok 148 - registry.failed: a SERVICE endpoint whose data is not N-Quads
+  ---
+  duration_ms: 1.200708
+  type: 'test'
+  ...
+# Subtest: handle.unknown: a handle the engine never issued
+ok 149 - handle.unknown: a handle the engine never issued
+  ---
+  duration_ms: 0.352041
+  type: 'test'
+  ...
+# Subtest: handle.disposed: every method of a disposed Dataset
+ok 150 - handle.disposed: every method of a disposed Dataset
+  ---
+  duration_ms: 0.674375
+  type: 'test'
+  ...
+# Subtest: option.unknown: a key parse() does not take
+ok 151 - option.unknown: a key parse() does not take
+  ---
+  duration_ms: 0.647583
+  type: 'test'
+  ...
+# Subtest: option.invalid-value: an output outside the table
+ok 152 - option.invalid-value: an output outside the table
+  ---
+  duration_ms: 2.136083
+  type: 'test'
+  ...
+# Subtest: option.conflict: SPARQL 1.2 with a results format
+ok 153 - option.conflict: SPARQL 1.2 with a results format
+  ---
+  duration_ms: 0.288667
+  type: 'test'
+  ...
+# Subtest: capacity.exceeded: a byte region above the engine limit
+ok 154 - capacity.exceeded: a byte region above the engine limit
+  ---
+  duration_ms: 16.395875
+  type: 'test'
+  ...
+# Subtest: call.arity: an op called with no arguments
+ok 155 - call.arity: an op called with no arguments
+  ---
+  duration_ms: 0.157291
+  type: 'test'
+  ...
+# Subtest: call.arguments: an arguments document that is not an array
+ok 156 - call.arguments: an arguments document that is not an array
+  ---
+  duration_ms: 0.247292
+  type: 'test'
+  ...
+# Subtest: op.unknown: an op the engine does not have
+ok 157 - op.unknown: an op the engine does not have
+  ---
+  duration_ms: 0.103833
+  type: 'test'
+  ...
+# Subtest: op.failed: a Common Logic text that does not parse
+ok 158 - op.failed: a Common Logic text that does not parse
+  ---
+  duration_ms: 1.191334
+  type: 'test'
+  ...
+# Subtest: host.io: a store root with no CURRENT pointer
+ok 159 - host.io: a store root with no CURRENT pointer
+  ---
+  duration_ms: 0.513291
+  type: 'test'
+  ...
+# Subtest: a wrong JavaScript type is a TypeError
+ok 160 - a wrong JavaScript type is a TypeError
+  ---
+  duration_ms: 0.367959
+  type: 'test'
+  ...
+# Subtest: every declared code has a test above
+ok 161 - every declared code has a test above
+  ---
+  duration_ms: 0.16825
+  type: 'test'
+  ...
+# Subtest: every op error path of the dispatch table maps to a declared code
+ok 162 - every op error path of the dispatch table maps to a declared code
+  ---
+  duration_ms: 268.959083
+  type: 'test'
+  ...
+# Subtest: README errors table is the engine list
+ok 163 - README errors table is the engine list
+  ---
+  duration_ms: 0.853583
+  type: 'test'
+  ...
+# Subtest: index.d.ts FactoidalErrorCode is the engine list
+ok 164 - index.d.ts FactoidalErrorCode is the engine list
+  ---
+  duration_ms: 5.066583
+  type: 'test'
+  ...
+# Subtest: FILTER EXISTS keeps exactly the rows whose inner pattern matches
+ok 165 - FILTER EXISTS keeps exactly the rows whose inner pattern matches
+  ---
+  duration_ms: 487.293916
+  type: 'test'
+  ...
+# Subtest: FILTER NOT EXISTS keeps exactly the complementary rows
+ok 166 - FILTER NOT EXISTS keeps exactly the complementary rows
+  ---
+  duration_ms: 1.3805
+  type: 'test'
+  ...
+# Subtest: EXISTS and NOT EXISTS partition the rows (the impossible-both-empty check)
+ok 167 - EXISTS and NOT EXISTS partition the rows (the impossible-both-empty check)
+  ---
+  duration_ms: 2.028167
+  type: 'test'
+  ...
+# Subtest: EXISTS nested under ! (exercises the recursive substitution)
+ok 168 - EXISTS nested under ! (exercises the recursive substitution)
+  ---
+  duration_ms: 14.677542
+  type: 'test'
+  ...
+# Subtest: "007"^^xsd:integer is kept as given
+ok 169 - "007"^^xsd:integer is kept as given
+  ---
+  duration_ms: 468.896959
+  type: 'test'
+  ...
+# Subtest: plain object {value, datatype}: custom datatype IRI kept
+ok 170 - plain object {value, datatype}: custom datatype IRI kept
+  ---
+  duration_ms: 2.15025
+  type: 'test'
+  ...
+# Subtest: "1e21"^^xsd:double is kept as given (no canonical form)
+ok 171 - "1e21"^^xsd:double is kept as given (no canonical form)
+  ---
+  duration_ms: 2.429375
+  type: 'test'
+  ...
+# Subtest: ill-typed "abc"^^xsd:integer is still a literal, kept as given
+ok 172 - ill-typed "abc"^^xsd:integer is still a literal, kept as given
+  ---
+  duration_ms: 1.239208
+  type: 'test'
+  ...
+# Subtest: language tag and base direction
+ok 173 - language tag and base direction
+  ---
+  duration_ms: 4.326333
+  type: 'test'
+  ...
+# Subtest: NamedNode and BlankNode answers
+ok 174 - NamedNode and BlankNode answers
+  ---
+  duration_ms: 2.181334
+  type: 'test'
+  ...
+# Subtest: triple-term answer (RDF 1.2)
+ok 175 - triple-term answer (RDF 1.2)
+  ---
+  duration_ms: 2.219209
+  type: 'test'
+  ...
+# Subtest: relative datatype IRI is the 17.6 expression error
+ok 176 - relative datatype IRI is the 17.6 expression error
+  ---
+  duration_ms: 0.782667
+  type: 'test'
+  ...
+# Subtest: invalid language tag is the 17.6 expression error
+ok 177 - invalid language tag is the 17.6 expression error
+  ---
+  duration_ms: 7.192625
+  type: 'test'
+  ...
+# Subtest: plain JavaScript numbers still go through jsLiteral
+ok 178 - plain JavaScript numbers still go through jsLiteral
+  ---
+  duration_ms: 4.739459
+  type: 'test'
+  ...
+# Subtest: a JavaScript string "_:x" answer is a string literal, never a blank node
+ok 179 - a JavaScript string "_:x" answer is a string literal, never a blank node
+  ---
+  duration_ms: 1.51375
+  type: 'test'
+  ...
+# Subtest: graphs(): an IRI and a blank node with the same text are two terms
+ok 180 - graphs(): an IRI and a blank node with the same text are two terms
+  ---
+  duration_ms: 8.423833
+  type: 'test'
+  ...
+# Subtest: match(): a string is one N-Triples term, `_:g` a blank node, `<urn:g>` an IRI
+ok 181 - match(): a string is one N-Triples term, `_:g` a blank node, `<urn:g>` an IRI
+  ---
+  duration_ms: 72.122625
+  type: 'test'
+  ...
+# Subtest: shexValidate: focus `_:b` is a blank node, `<...>` an IRI, a bare IRI is refused
+ok 182 - shexValidate: focus `_:b` is a blank node, `<...>` an IRI, a bare IRI is refused
+  ---
+  duration_ms: 56.22375
+  type: 'test'
+  ...
+# Subtest: unknown extension IRI: FILTER drops every row (§17.6 error)
+ok 183 - unknown extension IRI: FILTER drops every row (§17.6 error)
+  ---
+  duration_ms: 490.30375
+  type: 'test'
+  ...
+# Subtest: unknown extension IRI: BIND leaves the variable unbound
+ok 184 - unknown extension IRI: BIND leaves the variable unbound
+  ---
+  duration_ms: 3.268625
+  type: 'test'
+  ...
+# Subtest: sync function in FILTER: boolean return
+ok 185 - sync function in FILTER: boolean return
+  ---
+  duration_ms: 3.931584
+  type: 'test'
+  ...
+# Subtest: sync function in BIND: string return becomes an xsd:string literal
+ok 186 - sync function in BIND: string return becomes an xsd:string literal
+  ---
+  duration_ms: 11.429875
+  type: 'test'
+  ...
+# Subtest: sync function in a SELECT expression
+ok 187 - sync function in a SELECT expression
+  ---
+  duration_ms: 6.133792
+  type: 'test'
+  ...
+# Subtest: ASYNC function in FILTER resolves through the trampoline
+ok 188 - ASYNC function in FILTER resolves through the trampoline
+  ---
+  duration_ms: 56.86525
+  type: 'test'
+  ...
+# Subtest: ASYNC function in BIND: term-object return with datatype
+ok 189 - ASYNC function in BIND: term-object return with datatype
+  ---
+  duration_ms: 4.745125
+  type: 'test'
+  ...
+# Subtest: two async functions chain across rounds (nested calls converge)
+ok 190 - two async functions chain across rounds (nested calls converge)
+  ---
+  duration_ms: 3.202292
+  type: 'test'
+  ...
+# Subtest: uri return: function producing an IRI term
+ok 191 - uri return: function producing an IRI term
+  ---
+  duration_ms: 5.39425
+  type: 'test'
+  ...
+# Subtest: throwing / rejecting functions are the §17.6 error, not a crash
+ok 192 - throwing / rejecting functions are the §17.6 error, not a crash
+  ---
+  duration_ms: 3.340333
+  type: 'test'
+  ...
+# Subtest: unregister restores the unknown-IRI error
+ok 193 - unregister restores the unknown-IRI error
+  ---
+  duration_ms: 1.7465
+  type: 'test'
+  ...
+# Subtest: built-ins keep precedence: an xsd cast IRI is never offered to the registry
+ok 194 - built-ins keep precedence: an xsd cast IRI is never offered to the registry
+  ---
+  duration_ms: 0.817875
+  type: 'test'
+  ...
+# Subtest: purity: filter/mapQuads/union/difference do not alter their inputs
+ok 195 - purity: filter/mapQuads/union/difference do not alter their inputs
+  ---
+  duration_ms: 476.575542
+  type: 'test'
+  ...
+# Subtest: purity: FnDataset is frozen and its quad array cannot be mutated
+ok 196 - purity: FnDataset is frozen and its quad array cannot be mutated
+  ---
+  duration_ms: 1.592208
+  type: 'test'
+  ...
+# Subtest: purity: filter output is independent of the input array
+ok 197 - purity: filter output is independent of the input array
+  ---
+  duration_ms: 1.1825
+  type: 'test'
+  ...
+# Subtest: algebra: union with EMPTY is identity
+ok 198 - algebra: union with EMPTY is identity
+  ---
+  duration_ms: 30.4775
+  type: 'test'
+  ...
+# Subtest: algebra: union is idempotent and deduplicates
+ok 199 - algebra: union is idempotent and deduplicates
+  ---
+  duration_ms: 8.0835
+  type: 'test'
+  ...
+# Subtest: algebra: difference with EMPTY is identity, self-difference is EMPTY
+ok 200 - algebra: difference with EMPTY is identity, self-difference is EMPTY
+  ---
+  duration_ms: 4.888542
+  type: 'test'
+  ...
+# Subtest: algebra: union/difference round-trip (a = (a-b) u (a intersect b))
+ok 201 - algebra: union/difference round-trip (a = (a-b) u (a intersect b))
+  ---
+  duration_ms: 1.980584
+  type: 'test'
+  ...
+# Subtest: EMPTY is a genuinely empty, reusable constant
+ok 202 - EMPTY is a genuinely empty, reusable constant
+  ---
+  duration_ms: 0.2185
+  type: 'test'
+  ...
+# Subtest: hash: stable under blank-node relabeling; changes when content changes
+ok 203 - hash: stable under blank-node relabeling; changes when content changes
+  ---
+  duration_ms: 13.467041
+  type: 'test'
+  ...
+# Subtest: hash: memoized (repeated calls on the same FnDataset return the same value fast)
+ok 204 - hash: memoized (repeated calls on the same FnDataset return the same value fast)
+  ---
+  duration_ms: 1.575875
+  type: 'test'
+  ...
+# Subtest: equals: ground (blank-node-free) data uses cheap exact quad-set comparison
+ok 205 - equals: ground (blank-node-free) data uses cheap exact quad-set comparison
+  ---
+  duration_ms: 17.8675
+  type: 'test'
+  ...
+# Subtest: equals: blank-node datasets fall back to canonical-hash equality
+ok 206 - equals: blank-node datasets fall back to canonical-hash equality
+  ---
+  duration_ms: 1.488791
+  type: 'test'
+  ...
+# Subtest: derive: skips recompute when input hash is unchanged, recomputes when it changes
+ok 207 - derive: skips recompute when input hash is unchanged, recomputes when it changes
+  ---
+  duration_ms: 3.692583
+  type: 'test'
+  ...
+# Subtest: derive: non-dataset inputs key by value identity
+ok 208 - derive: non-dataset inputs key by value identity
+  ---
+  duration_ms: 1.110625
+  type: 'test'
+  ...
+# Subtest: builder: accumulates chunks and finish() returns a deduplicated, frozen FnDataset
+ok 209 - builder: accumulates chunks and finish() returns a deduplicated, frozen FnDataset
+  ---
+  duration_ms: 0.445333
+  type: 'test'
+  ...
+# Subtest: builder: addChunk()/finish() reject use after finish()
+ok 210 - builder: addChunk()/finish() reject use after finish()
+  ---
+  duration_ms: 0.487542
+  type: 'test'
+  ...
+# Subtest: fromChunks: consumes an async iterable of quad batches into one FnDataset
+ok 211 - fromChunks: consumes an async iterable of quad batches into one FnDataset
+  ---
+  duration_ms: 0.270917
+  type: 'test'
+  ...
+# Subtest: interop: fromDataset/toDataset round-trips quad content
+ok 212 - interop: fromDataset/toDataset round-trips quad content
+  ---
+  duration_ms: 0.983625
+  type: 'test'
+  ...
+# Subtest: interop: query() accepts an FnDataset and returns Bindings[]
+ok 213 - interop: query() accepts an FnDataset and returns Bindings[]
+  ---
+  duration_ms: 104.001167
+  type: 'test'
+  ...
+# Subtest: interop: query() CONSTRUCT returns an FnDataset
+ok 214 - interop: query() CONSTRUCT returns an FnDataset
+  ---
+  duration_ms: 5.535417
+  type: 'test'
+  ...
+# Subtest: interop: entail() materializes an RDFS closure as an FnDataset
+ok 215 - interop: entail() materializes an RDFS closure as an FnDataset
+  ---
+  duration_ms: 29.05175
+  type: 'test'
+  ...
+# Subtest: interop: entail() accepts lowercase regime aliases
+ok 216 - interop: entail() accepts lowercase regime aliases
+  ---
+  duration_ms: 122.469
+  type: 'test'
+  ...
+# Subtest: validate: SHACL Core validation returns conforms + a report FnDataset
+ok 217 - validate: SHACL Core validation returns conforms + a report FnDataset
+  ---
+  duration_ms: 28.35
+  type: 'test'
+  ...
+# Subtest: shex: ShEx validation of one focus node against one shape
+ok 218 - shex: ShEx validation of one focus node against one shape
+  ---
+  duration_ms: 27.297334
+  type: 'test'
+  ...
+# Subtest: fromMapping: evaluates an RML mapping graph against JSON source data
+ok 219 - fromMapping: evaluates an RML mapping graph against JSON source data
+  ---
+  duration_ms: 52.427875
+  type: 'test'
+  ...
+# Subtest: fromCsvw: converts a vendored W3C CSVW fixture into an FnDataset
+ok 220 - fromCsvw: converts a vendored W3C CSVW fixture into an FnDataset
+  ---
+  duration_ms: 24.275625
+  type: 'test'
+  ...
+# Subtest: rif: RIF Core saturation materializes derived triples as an FnDataset
+ok 221 - rif: RIF Core saturation materializes derived triples as an FnDataset
+  ---
+  duration_ms: 32.766625
+  type: 'test'
+  ...
+# Subtest: interop: graphs() enumerates named graphs as FnDatasets
+ok 222 - interop: graphs() enumerates named graphs as FnDatasets
+  ---
+  duration_ms: 4.321416
+  type: 'test'
+  ...
+# Subtest: canonicalize: two blank-node relabelings of the same graph canonicalize identically
+ok 223 - canonicalize: two blank-node relabelings of the same graph canonicalize identically
+  ---
+  duration_ms: 1.16575
+  type: 'test'
+  ...
+# Subtest: pipe: composes async and sync steps left-to-right
+ok 224 - pipe: composes async and sync steps left-to-right
+  ---
+  duration_ms: 0.320625
+  type: 'test'
+  ...
+# Subtest: pipe: with no functions is the identity
+ok 225 - pipe: with no functions is the identity
+  ---
+  duration_ms: 0.09475
+  type: 'test'
+  ...
+# Subtest: pipe: rejects a non-function argument
+ok 226 - pipe: rejects a non-function argument
+  ---
+  duration_ms: 0.578583
+  type: 'test'
+  ...
+# Subtest: README format table is the engine list
+ok 227 - README format table is the engine list
+  ---
+  duration_ms: 2.294417
+  type: 'test'
+  ...
+# Subtest: nquads writes RDF 1.1 and reads it back
+ok 228 - nquads writes RDF 1.1 and reads it back
+  ---
+  duration_ms: 21.465958
+  type: 'test'
+  ...
+# Subtest: nquads writes RDF 1.2 and refuses it under version 1.1
+ok 229 - nquads writes RDF 1.2 and refuses it under version 1.1
+  ---
+  duration_ms: 36.175458
+  type: 'test'
+  ...
+# Subtest: ntriples writes RDF 1.1 and reads it back
+ok 230 - ntriples writes RDF 1.1 and reads it back
+  ---
+  duration_ms: 2.845542
+  type: 'test'
+  ...
+# Subtest: ntriples writes RDF 1.2 and refuses it under version 1.1
+ok 231 - ntriples writes RDF 1.2 and refuses it under version 1.1
+  ---
+  duration_ms: 2.390667
+  type: 'test'
+  ...
+# Subtest: turtle writes RDF 1.1 and reads it back
+ok 232 - turtle writes RDF 1.1 and reads it back
+  ---
+  duration_ms: 38.5525
+  type: 'test'
+  ...
+# Subtest: turtle writes RDF 1.2 and refuses it under version 1.1
+ok 233 - turtle writes RDF 1.2 and refuses it under version 1.1
+  ---
+  duration_ms: 5.164541
+  type: 'test'
+  ...
+# Subtest: trig writes RDF 1.1 and reads it back
+ok 234 - trig writes RDF 1.1 and reads it back
+  ---
+  duration_ms: 7.156375
+  type: 'test'
+  ...
+# Subtest: trig writes RDF 1.2 and refuses it under version 1.1
+ok 235 - trig writes RDF 1.2 and refuses it under version 1.1
+  ---
+  duration_ms: 2.077458
+  type: 'test'
+  ...
+# Subtest: rdfxml writes RDF 1.1 and reads it back
+ok 236 - rdfxml writes RDF 1.1 and reads it back
+  ---
+  duration_ms: 17.736041
+  type: 'test'
+  ...
+# Subtest: xfail: rdfxml writes an RDF 1.2 triple term (https://github.com/danbri/factoidal/issues/883)
+ok 237 - xfail: rdfxml writes an RDF 1.2 triple term (https://github.com/danbri/factoidal/issues/883)
+  ---
+  duration_ms: 2.03025
+  type: 'test'
+  ...
+# datasetSerialize: RDF/XML 1.1 has no form for a triple term
+# Subtest: jsonld writes RDF 1.1 and reads it back
+ok 238 - jsonld writes RDF 1.1 and reads it back
+  ---
+  duration_ms: 11.862583
+  type: 'test'
+  ...
+# Subtest: xfail: jsonld writes an RDF 1.2 triple term (https://github.com/danbri/factoidal/issues/883)
+ok 239 - xfail: jsonld writes an RDF 1.2 triple term (https://github.com/danbri/factoidal/issues/883)
+  ---
+  duration_ms: 0.924791
+  type: 'test'
+  ...
+# jsonldFromRdf: from_rdf returned none (an rdf:JSON typed literal in the input is not valid JSON)
+# Subtest: rdfc writes RDF 1.1
+ok 240 - rdfc writes RDF 1.1
+  ---
+  duration_ms: 1.219834
+  type: 'test'
+  ...
+# Subtest: results writer sparql-results-json
+ok 241 - results writer sparql-results-json
+  ---
+  duration_ms: 7.047083
+  type: 'test'
+  ...
+# Subtest: results writer sparql-results-xml
+ok 242 - results writer sparql-results-xml
+  ---
+  duration_ms: 2.379333
+  type: 'test'
+  ...
+# Subtest: results writer sparql-results-csv
+ok 243 - results writer sparql-results-csv
+  ---
+  duration_ms: 1.590708
+  type: 'test'
+  ...
+# Subtest: results writer sparql-results-tsv
+ok 244 - results writer sparql-results-tsv
+  ---
+  duration_ms: 1.228916
+  type: 'test'
+  ...
+# Subtest: xfail: serialize writes hdt (https://github.com/danbri/factoidal/issues/883)
+ok 245 - xfail: serialize writes hdt (https://github.com/danbri/factoidal/issues/883)
+  ---
+  duration_ms: 0.944917
+  type: 'test'
+  ...
+# Dataset.serialize: unknown format 'hdt'. Known formats: nquads, ntriples, turtle, trig, rdfxml, jsonld, rdfc
+# Subtest: xfail: serialize writes n3 (https://github.com/danbri/factoidal/issues/883)
+ok 246 - xfail: serialize writes n3 (https://github.com/danbri/factoidal/issues/883)
+  ---
+  duration_ms: 0.642583
+  type: 'test'
+  ...
+# Dataset.serialize: unknown format 'n3'. Known formats: nquads, ntriples, turtle, trig, rdfxml, jsonld, rdfc
+# Subtest: xfail: serialize writes rdfa (https://github.com/danbri/factoidal/issues/883)
+ok 247 - xfail: serialize writes rdfa (https://github.com/danbri/factoidal/issues/883)
+  ---
+  duration_ms: 0.698416
+  type: 'test'
+  ...
+# Dataset.serialize: unknown format 'rdfa'. Known formats: nquads, ntriples, turtle, trig, rdfxml, jsonld, rdfc
+# Subtest: xfail: csv2json (CSVW JSON output) is an npm function (https://github.com/danbri/factoidal/issues/883)
+ok 248 - xfail: csv2json (CSVW JSON output) is an npm function (https://github.com/danbri/factoidal/issues/883)
+  ---
+  duration_ms: 2.578917
+  type: 'test'
+  ...
+# Expected values to be strictly equal:\\n+ actual - expected\\n\\n+ 'undefined'\\n- 'function'\\n
+# Subtest: /ds/query, /ds/update, /ds/get and /ds/data answer as in Fuseki
+ok 249 - /ds/query, /ds/update, /ds/get and /ds/data answer as in Fuseki
+  ---
+  duration_ms: 382.403792
+  type: 'test'
+  ...
+# Subtest: serve --file DATA /ds: the fuseki-server --file form
+ok 250 - serve --file DATA /ds: the fuseki-server --file form
+  ---
+  duration_ms: 1762.20425
+  type: 'test'
+  ...
+# Subtest: GSP GET with no graph parameter returns the whole dataset (N-Quads, TriG, default graph)
+ok 251 - GSP GET with no graph parameter returns the whole dataset (N-Quads, TriG, default graph)
+  ---
+  duration_ms: 2065.243542
+  type: 'test'
+  ...
+# Subtest: GSP PUT with no graph parameter replaces the dataset; POST adds to it
+ok 252 - GSP PUT with no graph parameter replaces the dataset; POST adds to it
+  ---
+  duration_ms: 2554.999125
+  type: 'test'
+  ...
+# Subtest: GSP on the dataset: refusals
+ok 253 - GSP on the dataset: refusals
+  ---
+  duration_ms: 2149
+  type: 'test'
+  ...
+# Subtest: CONSTRUCT, DESCRIBE and the Graph Store answer application/rdf+xml
+ok 254 - CONSTRUCT, DESCRIBE and the Graph Store answer application/rdf+xml
+  ---
+  duration_ms: 2111.845916
+  type: 'test'
+  ...
+# Subtest: RDF/XML for a graph that has no RDF/XML form: 406, or the next acceptable syntax
+ok 255 - RDF/XML for a graph that has no RDF/XML form: 406, or the next acceptable syntax
+  ---
+  duration_ms: 2251.606958
+  type: 'test'
+  ...
+# Subtest: /$/ping, /$/datasets, /$/stats and /$/server answer with the Fuseki JSON members
+ok 256 - /$/ping, /$/datasets, /$/stats and /$/server answer with the Fuseki JSON members
+  ---
+  duration_ms: 1884.299041
+  type: 'test'
+  ...
+# Subtest: /$/ administration API: the operations that change the server are refused
+ok 257 - /$/ administration API: the operations that change the server are refused
+  ---
+  duration_ms: 1953.041041
+  type: 'test'
+  ...
+# Subtest: xfail: GSP GET in JSON-LD (https://github.com/danbri/factoidal/issues/830)
+ok 258 - xfail: GSP GET in JSON-LD (https://github.com/danbri/factoidal/issues/830)
+  ---
+  duration_ms: 3.73575
+  type: 'test'
+  ...
+# expected failure: Expected values to be strictly equal:\\n\\n406 !== 200\\n
+# Subtest: serve --tdb2 DIR /ds: a TDB2 database in place, read only
+ok 259 - serve --tdb2 DIR /ds: a TDB2 database in place, read only # SKIP no Jena at /tmp/sota-dl/apache-jena-6.2.0/bin; run tools/sota-bench.py --install with SOTA_DL set
+  ---
+  duration_ms: 0.102834
+  type: 'test'
+  ...
+# Subtest: serve --tdb2 on a directory that is not a TDB2 database exits with a message
+ok 260 - serve --tdb2 on a directory that is not a TDB2 database exits with a message
+  ---
+  duration_ms: 859.015917
+  type: 'test'
+  ...
+# Subtest: text:query: bare string searches every literal
+ok 261 - text:query: bare string searches every literal
+  ---
+  duration_ms: 556.376917
+  type: 'test'
+  ...
+# Subtest: text:query: several words match only a literal holding all of them
+ok 262 - text:query: several words match only a literal holding all of them
+  ---
+  duration_ms: 2.763833
+  type: 'test'
+  ...
+# Subtest: text:query: a field restricts the predicate; tokens are not substrings
+ok 263 - text:query: a field restricts the predicate; tokens are not substrings
+  ---
+  duration_ms: 2.662333
+  type: 'test'
+  ...
+# Subtest: text:query: a limit keeps the first n matches in document order
+ok 264 - text:query: a limit keeps the first n matches in document order
+  ---
+  duration_ms: 16.656666
+  type: 'test'
+  ...
+# Subtest: text:query: joins with an ordinary triple pattern
+ok 265 - text:query: joins with an ordinary triple pattern
+  ---
+  duration_ms: 29.576375
+  type: 'test'
+  ...
+# Subtest: text:query: ASK, COUNT(*) and a solution LIMIT see the matches
+ok 266 - text:query: ASK, COUNT(*) and a solution LIMIT see the matches
+  ---
+  duration_ms: 35.055375
+  type: 'test'
+  ...
+# Subtest: text:query: an object that is not the jena-text argument is a parse error
+ok 267 - text:query: an object that is not the jena-text argument is a parse error
+  ---
+  duration_ms: 1.709375
+  type: 'test'
+  ...
+# Subtest: geof:distance: point to point, an xsd:double in the CRS units
+ok 268 - geof:distance: point to point, an xsd:double in the CRS units
+  ---
+  duration_ms: 9.818375
+  type: 'test'
+  ...
+# Subtest: geof:distance: refused for a polygon, two reference systems, and a unit other than the CRS unit
+ok 269 - geof:distance: refused for a polygon, two reference systems, and a unit other than the CRS unit
+  ---
+  duration_ms: 2.390458
+  type: 'test'
+  ...
+# Subtest: xfail: geof:distance in metres between two CRS84 points (geodesic, about 262 km) (https://github.com/danbri/factoidal/issues/772)
+ok 270 - xfail: geof:distance in metres between two CRS84 points (geodesic, about 262 km) (https://github.com/danbri/factoidal/issues/772)
+  ---
+  duration_ms: 1.512916
+  type: 'test'
+  ...
+# expected failure: no value
+# Subtest: geof:envelope: the bounding box as a geo:wktLiteral POLYGON; refused for a non-geometry
+ok 271 - geof:envelope: the bounding box as a geo:wktLiteral POLYGON; refused for a non-geometry
+  ---
+  duration_ms: 3.781541
+  type: 'test'
+  ...
+# Subtest: queryHdt: SELECT COUNT(*) over the RML-Core HDT fixture is 343
+ok 272 - queryHdt: SELECT COUNT(*) over the RML-Core HDT fixture is 343
+  ---
+  duration_ms: 834.264458
+  type: 'test'
+  ...
+# Subtest: queryHdt: ASK over the same fixture is true
+ok 273 - queryHdt: ASK over the same fixture is true
+  ---
+  duration_ms: 85.028583
+  type: 'test'
+  ...
+# Subtest: queryHdt: SELECT bindings carry real RDF/JS terms (owl:Class labels)
+ok 274 - queryHdt: SELECT bindings carry real RDF/JS terms (owl:Class labels)
+  ---
+  duration_ms: 108.620334
+  type: 'test'
+  ...
+# Subtest: queryHdt: accepts an ArrayBuffer, not just a Buffer/Uint8Array
+ok 275 - queryHdt: accepts an ArrayBuffer, not just a Buffer/Uint8Array
+  ---
+  duration_ms: 220.480917
+  type: 'test'
+  ...
+# Subtest: queryHdt: CONSTRUCT answers a Dataset
+ok 276 - queryHdt: CONSTRUCT answers a Dataset
+  ---
+  duration_ms: 199.5805
+  type: 'test'
+  ...
+# Subtest: queryHdt: fn.js re-exports the same function
+ok 277 - queryHdt: fn.js re-exports the same function
+  ---
+  duration_ms: 98.213959
+  type: 'test'
+  ...
+# Subtest: host-purity-lint: no protocol, storage-format or RDF-syntax decision in JS
+ok 278 - host-purity-lint: no protocol, storage-format or RDF-syntax decision in JS
+  ---
+  duration_ms: 897.521708
+  type: 'test'
+  ...
+# Subtest: N-Quads writer: \\b and \\f are escaped as the engine escapes them (finding 1)
+ok 279 - N-Quads writer: \\b and \\f are escaped as the engine escapes them (finding 1)
+  ---
+  duration_ms: 411.725917
+  type: 'test'
+  ...
+# Subtest: N-Quads reader: a line the grammar rejects is rejected (finding 2)
+ok 280 - N-Quads reader: a line the grammar rejects is rejected (finding 2)
+  ---
+  duration_ms: 3.942791
+  type: 'test'
+  ...
+# Subtest: isomorphism: blank nodes inside triple terms (finding 4)
+ok 281 - isomorphism: blank nodes inside triple terms (finding 4)
+  ---
+  duration_ms: 53.484209
+  type: 'test'
+  ...
+# Subtest: extension function answer 1e21 is an xsd:double in canonical form (finding 5)
+ok 282 - extension function answer 1e21 is an xsd:double in canonical form (finding 5)
+  ---
+  duration_ms: 65.661958
+  type: 'test'
+  ...
+# Subtest: extension function answers: integer, fraction, -0, boolean (finding 5)
+ok 283 - extension function answers: integer, fraction, -0, boolean (finding 5)
+  ---
+  duration_ms: 5.48675
+  type: 'test'
+  ...
+# Subtest: graph names: an IRI and a blank node with the same string are two graphs (finding 6)
+ok 284 - graph names: an IRI and a blank node with the same string are two graphs (finding 6)
+  ---
+  duration_ms: 12.279125
+  type: 'test'
+  ...
+# Subtest: graph names through the engine: datasetGraphNames distinguishes IRI and blank node
+ok 285 - graph names through the engine: datasetGraphNames distinguishes IRI and blank node
+  ---
+  duration_ms: 9.492208
+  type: 'test'
+  ...
+# Subtest: jsonSchemaValidate: {type:"integer"} accepts an integer
+ok 286 - jsonSchemaValidate: {type:"integer"} accepts an integer
+  ---
+  duration_ms: 551.42625
+  type: 'test'
+  ...
+# Subtest: jsonSchemaValidate: {type:"integer"} rejects a string
+ok 287 - jsonSchemaValidate: {type:"integer"} rejects a string
+  ---
+  duration_ms: 0.335958
+  type: 'test'
+  ...
+# Subtest: l4-core parse: ntriples/turtle/nquads/trig round-trip to N-Quads
+ok 288 - l4-core parse: ntriples/turtle/nquads/trig round-trip to N-Quads
+  ---
+  duration_ms: 476.397709
+  type: 'test'
+  ...
+# Subtest: l4-core parse: turtle relative IRI resolves against baseIRI
+ok 289 - l4-core parse: turtle relative IRI resolves against baseIRI
+  ---
+  duration_ms: 0.725667
+  type: 'test'
+  ...
+# Subtest: l4-core parse: turtle fragment IRI resolves against baseIRI
+ok 290 - l4-core parse: turtle fragment IRI resolves against baseIRI
+  ---
+  duration_ms: 0.369208
+  type: 'test'
+  ...
+# Subtest: l4-core query: SELECT returns a typed literal binding
+ok 291 - l4-core query: SELECT returns a typed literal binding
+  ---
+  duration_ms: 26.41725
+  type: 'test'
+  ...
+# Subtest: l4-core query: SELECT with a two-pattern join
+ok 292 - l4-core query: SELECT with a two-pattern join
+  ---
+  duration_ms: 1.944834
+  type: 'test'
+  ...
+# Subtest: l4-core query: ASK true and false
+ok 293 - l4-core query: ASK true and false
+  ---
+  duration_ms: 9.118333
+  type: 'test'
+  ...
+# Subtest: l4-core query: CONSTRUCT returns a Dataset
+ok 294 - l4-core query: CONSTRUCT returns a Dataset
+  ---
+  duration_ms: 13.588584
+  type: 'test'
+  ...
+# Subtest: l4-core query: accepts a Dataset instance as input
+ok 295 - l4-core query: accepts a Dataset instance as input
+  ---
+  duration_ms: 1.282
+  type: 'test'
+  ...
+# Subtest: l4-core update: INSERT DATA then query sees the triple
+ok 296 - l4-core update: INSERT DATA then query sees the triple
+  ---
+  duration_ms: 7.031458
+  type: 'test'
+  ...
+# Subtest: l4-core serialize({format:'turtle'}) round-trips the graph
+ok 297 - l4-core serialize({format:'turtle'}) round-trips the graph
+  ---
+  duration_ms: 5.627625
+  type: 'test'
+  ...
+# Subtest: l4-core serialize format:'ntriples' answers the default graph and refuses a named graph
+ok 298 - l4-core serialize format:'ntriples' answers the default graph and refuses a named graph
+  ---
+  duration_ms: 11.47475
+  type: 'test'
+  ...
+# Subtest: l4-core canonicalize: isomorphic graphs get identical canonical text
+ok 299 - l4-core canonicalize: isomorphic graphs get identical canonical text
+  ---
+  duration_ms: 6.515958
+  type: 'test'
+  ...
+# Subtest: l4-core coreRdfsClosure infers a type via subClassOf
+ok 300 - l4-core coreRdfsClosure infers a type via subClassOf
+  ---
+  duration_ms: 7.381292
+  type: 'test'
+  ...
+# Subtest: l4-core rhoDfClosure / rdfsPlusClosure return certified envelopes
+ok 301 - l4-core rhoDfClosure / rdfsPlusClosure return certified envelopes
+  ---
+  duration_ms: 3.735084
+  type: 'test'
+  ...
+# Subtest: l4-core coreRdfsCheck / rhoDfFragmentCheck report booleans
+ok 302 - l4-core coreRdfsCheck / rhoDfFragmentCheck report booleans
+  ---
+  duration_ms: 6.942542
+  type: 'test'
+  ...
+# Subtest: l4-core owlClosure mode 'OWL-RL' returns a Dataset superset
+ok 303 - l4-core owlClosure mode 'OWL-RL' returns a Dataset superset
+  ---
+  duration_ms: 24.630083
+  type: 'test'
+  ...
+# Subtest: l4-core owlIsConsistent: true / false / null (budget-out)
+not ok 304 - l4-core owlIsConsistent: true / false / null (budget-out)
+  ---
+  duration_ms: 7.122
+  type: 'test'
+  location: '/Users/danbri/working/sandbox/october/tpac/codex-npm-review/integrate-core/npm/factoidal/test/l4-core.test.js:314:1'
+  failureType: 'testCodeFailure'
+  error: |-
+    Expected values to be strictly equal:
+    
+    null !== true
+    
+  code: 'ERR_ASSERTION'
+  name: 'AssertionError'
+  expected: true
+  actual: ~
+  operator: 'strictEqual'
+  stack: |-
+    TestContext.<anonymous> (/Users/danbri/working/sandbox/october/tpac/codex-npm-review/integrate-core/npm/factoidal/test/l4-core.test.js:317:10)
+    async Test.run (node:internal/test_runner/test:1054:7)
+    async Test.processPendingSubtests (node:internal/test_runner/test:744:7)
+  ...
+# Subtest: l4-core owlEntails: closure yes / refutation no / budget-out null
+not ok 305 - l4-core owlEntails: closure yes / refutation no / budget-out null
+  ---
+  duration_ms: 76.766458
+  type: 'test'
+  location: '/Users/danbri/working/sandbox/october/tpac/codex-npm-review/integrate-core/npm/factoidal/test/l4-core.test.js:333:1'
+  failureType: 'testCodeFailure'
+  error: |-
+    Expected values to be strictly equal:
+    
+    null !== false
+    
+  code: 'ERR_ASSERTION'
+  name: 'AssertionError'
+  expected: false
+  actual: ~
+  operator: 'strictEqual'
+  stack: |-
+    TestContext.<anonymous> (/Users/danbri/working/sandbox/october/tpac/codex-npm-review/integrate-core/npm/factoidal/test/l4-core.test.js:341:10)
+    async Test.run (node:internal/test_runner/test:1054:7)
+    async Test.processPendingSubtests (node:internal/test_runner/test:744:7)
+  ...
+# Subtest: l4-core clParse: pureCL true for CL text with no `that` operator
+ok 306 - l4-core clParse: pureCL true for CL text with no `that` operator
+  ---
+  duration_ms: 7.830792
+  type: 'test'
+  ...
+# Subtest: l4-core clParse: pureCL false once the text uses IKL's `that` operator
+ok 307 - l4-core clParse: pureCL false once the text uses IKL's `that` operator
+  ---
+  duration_ms: 0.427041
+  type: 'test'
+  ...
+# Subtest: l4-core clParse: rejects a `that`-term used where a proposition is required
+ok 308 - l4-core clParse: rejects a `that`-term used where a proposition is required
+  ---
+  duration_ms: 0.783417
+  type: 'test'
+  ...
+# Subtest: l4-core clParse: rejects a non-string argument
+ok 309 - l4-core clParse: rejects a non-string argument
+  ---
+  duration_ms: 0.251292
+  type: 'test'
+  ...
+# Subtest: l4-core clSerialize: round-trips CLIF text, surfacing roundTripProved as false (not hidden or defaulted)
+ok 310 - l4-core clSerialize: round-trips CLIF text, surfacing roundTripProved as false (not hidden or defaulted)
+  ---
+  duration_ms: 0.533417
+  type: 'test'
+  ...
+# Subtest: l4-core clSerialize: rejects a non-string argument
+ok 311 - l4-core clSerialize: rejects a non-string argument
+  ---
+  duration_ms: 4.980375
+  type: 'test'
+  ...
+# Subtest: l4-core clAlphaNorm: two alpha-variant sentences normalise to the same text
+ok 312 - l4-core clAlphaNorm: two alpha-variant sentences normalise to the same text
+  ---
+  duration_ms: 6.755375
+  type: 'test'
+  ...
+# Subtest: l4-core clAlphaNorm: rejects a non-string argument
+ok 313 - l4-core clAlphaNorm: rejects a non-string argument
+  ---
+  duration_ms: 0.386875
+  type: 'test'
+  ...
+# Subtest: l4-core clNormalize: a `that`-term reduces to a head/tail pair, with preserves and noIntrusion surfaced
+ok 314 - l4-core clNormalize: a `that`-term reduces to a head/tail pair, with preserves and noIntrusion surfaced
+  ---
+  duration_ms: 8.150041
+  type: 'test'
+  ...
+# Subtest: l4-core clNormalize: rejects a non-string argument
+ok 315 - l4-core clNormalize: rejects a non-string argument
+  ---
+  duration_ms: 0.319875
+  type: 'test'
+  ...
+# Subtest: l4-core capabilities: entry, shacl, tableau true (issue 713 stage 3)
+ok 316 - l4-core capabilities: entry, shacl, tableau true (issue 713 stage 3)
+  ---
+  duration_ms: 11.64125
+  type: 'test'
+  ...
+# Subtest: l4-core parse({lenient:true}) keeps good statements and reports the bad one (https://github.com/danbri/factoidal/issues/716)
+ok 317 - l4-core parse({lenient:true}) keeps good statements and reports the bad one (https://github.com/danbri/factoidal/issues/716)
+  ---
+  duration_ms: 24.61925
+  type: 'test'
+  ...
+# Subtest: l4-core parse({lenient:true}) in N-Quads and TriG, and maxErrors
+ok 318 - l4-core parse({lenient:true}) in N-Quads and TriG, and maxErrors
+  ---
+  duration_ms: 8.739875
+  type: 'test'
+  ...
+# Subtest: l4-core shaclValidate: a shapes graph with no shapes validates every data graph
+ok 319 - l4-core shaclValidate: a shapes graph with no shapes validates every data graph
+  ---
+  duration_ms: 13.518833
+  type: 'test'
+  ...
+# Subtest: l4-core query({entail:'RDFS'}) answers over the RDFS closure
+ok 320 - l4-core query({entail:'RDFS'}) answers over the RDFS closure
+  ---
+  duration_ms: 16.226625
+  type: 'test'
+  ...
+# Subtest: l4-core missing op: an operation the wasm lacks rejects naming the op
+ok 321 - l4-core missing op: an operation the wasm lacks rejects naming the op
+  ---
+  duration_ms: 4.257125
+  type: 'test'
+  ...
+# Subtest: l4-core multi-document merge keeps blank-node labels document-scoped
+ok 322 - l4-core multi-document merge keeps blank-node labels document-scoped
+  ---
+  duration_ms: 1.116709
+  type: 'test'
+  ...
+# Subtest: l4-core dataset handle: open, query, update, serialize, close
+ok 323 - l4-core dataset handle: open, query, update, serialize, close
+  ---
+  duration_ms: 3.881792
+  type: 'test'
+  ...
+# Subtest: dataset-handle parse error carries a line/column position
+ok 324 - dataset-handle parse error carries a line/column position
+  ---
+  duration_ms: 0.594041
+  type: 'test'
+  ...
+# Subtest: dataset handle records prefixes from a Turtle open()
+ok 325 - dataset handle records prefixes from a Turtle open()
+  ---
+  duration_ms: 0.244834
+  type: 'test'
+  ...
+# Subtest: dataset handle serialize({format:"turtle", literalShorthand:false}) is supported
+ok 326 - dataset handle serialize({format:"turtle", literalShorthand:false}) is supported
+  ---
+  duration_ms: 0.642417
+  type: 'test'
+  ...
+# Subtest: dataset handle Turtle output prints small integers bare (literal shorthand) by default
+ok 327 - dataset handle Turtle output prints small integers bare (literal shorthand) by default
+  ---
+  duration_ms: 0.86025
+  type: 'test'
+  ...
+# Subtest: l4-core vcSha256Hex: FIPS 180-4 vectors and node:crypto on arbitrary text
+ok 328 - l4-core vcSha256Hex: FIPS 180-4 vectors and node:crypto on arbitrary text
+  ---
+  duration_ms: 427.11525
+  type: 'test'
+  ...
+# Subtest: l4-core Ed25519: RFC 8032 vectors, derive + sign + verify
+ok 329 - l4-core Ed25519: RFC 8032 vectors, derive + sign + verify
+  ---
+  duration_ms: 51.134291
+  type: 'test'
+  ...
+# Subtest: l4-core Ed25519: wrong key, tampered signature and tampered message verify false
+ok 330 - l4-core Ed25519: wrong key, tampered signature and tampered message verify false
+  ---
+  duration_ms: 18.053083
+  type: 'test'
+  ...
+# Subtest: l4-core Ed25519: malformed input never verifies true and never throws
+ok 331 - l4-core Ed25519: malformed input never verifies true and never throws
+  ---
+  duration_ms: 37.229292
+  type: 'test'
+  ...
+# Subtest: l4-core Ed25519 vs node:crypto: same signature, each verifies the other
+ok 332 - l4-core Ed25519 vs node:crypto: same signature, each verifies the other
+  ---
+  duration_ms: 66.80425
+  type: 'test'
+  ...
+# Subtest: l4-core eddsa-rdfc-2022: reproduces the W3C section 3.4 proofValue and verifies it
+ok 333 - l4-core eddsa-rdfc-2022: reproduces the W3C section 3.4 proofValue and verifies it
+  ---
+  duration_ms: 10.970125
+  type: 'test'
+  ...
+# Subtest: l4-core eddsa-rdfc-2022: wrong key, tampered document, config or proofValue verify false
+ok 334 - l4-core eddsa-rdfc-2022: wrong key, tampered document, config or proofValue verify false
+  ---
+  duration_ms: 15.656125
+  type: 'test'
+  ...
+# Subtest: l4-core eddsa-rdfc-2022 round trip over fresh text, create then verify
+ok 335 - l4-core eddsa-rdfc-2022 round trip over fresh text, create then verify
+  ---
+  duration_ms: 7.039583
+  type: 'test'
+  ...
+# Subtest: l4-core didKeyResolve: the tests/did vectors, as sorted N-Triples lines
+ok 336 - l4-core didKeyResolve: the tests/did vectors, as sorted N-Triples lines
+  ---
+  duration_ms: 29.076209
+  type: 'test'
+  ...
+# Subtest: l4-core didKeyResolve: anything that is not an Ed25519 did:key rejects
+ok 337 - l4-core didKeyResolve: anything that is not an Ed25519 did:key rejects
+  ---
+  duration_ms: 3.713
+  type: 'test'
+  ...
+# Subtest: l4-core vcCheckCredential over the vendored VCDM 2.0 fixtures: 117 pass, 0 fail
+ok 338 - l4-core vcCheckCredential over the vendored VCDM 2.0 fixtures: 117 pass, 0 fail
+  ---
+  duration_ms: 817.227291
+  type: 'test'
+  ...
+# Subtest: l4-core vcCheckCredential: verdicts with reasons, and an unreadable context rejects
+ok 339 - l4-core vcCheckCredential: verdicts with reasons, and an unreadable context rejects
+  ---
+  duration_ms: 0.963666
+  type: 'test'
+  ...
+# Subtest: l4-core vcCheckCredentialSubject: no @context gate
+ok 340 - l4-core vcCheckCredentialSubject: no @context gate
+  ---
+  duration_ms: 0.302333
+  type: 'test'
+  ...
+# Subtest: l4-core vcCheckNoDataLoss: undefined terms are refused, defined ones pass
+ok 341 - l4-core vcCheckNoDataLoss: undefined terms are refused, defined ones pass
+  ---
+  duration_ms: 8.766584
+  type: 'test'
+  ...
+# Subtest: l4-core vcCheckRelatedResourceDigests: match, mismatch, and the offline policy
+ok 342 - l4-core vcCheckRelatedResourceDigests: match, mismatch, and the offline policy
+  ---
+  duration_ms: 5.615041
+  type: 'test'
+  ...
+# Subtest: l4-core parse errors carry line, column, offset and format (Turtle, TriG, N-Triples, N-Quads)
+ok 343 - l4-core parse errors carry line, column, offset and format (Turtle, TriG, N-Triples, N-Quads)
+  ---
+  duration_ms: 14.685417
+  type: 'test'
+  ...
+# Subtest: l4-core parse error: a Turtle statement missing its dot is reported on the FOLLOWING line
+ok 344 - l4-core parse error: a Turtle statement missing its dot is reported on the FOLLOWING line
+  ---
+  duration_ms: 2.702833
+  type: 'test'
+  ...
+# Subtest: l4-core parse error: the column counts Unicode scalar values, the line counts newlines
+ok 345 - l4-core parse error: the column counts Unicode scalar values, the line counts newlines
+  ---
+  duration_ms: 2.569208
+  type: 'test'
+  ...
+# Subtest: l4-core parse error: an RDF/XML failure is a message only, a plain Error
+ok 346 - l4-core parse error: an RDF/XML failure is a message only, a plain Error
+  ---
+  duration_ms: 10.039583
+  type: 'test'
+  ...
+# Subtest: l4-core parse error: a relative IRI with no baseIRI names the IRI
+ok 347 - l4-core parse error: a relative IRI with no baseIRI names the IRI
+  ---
+  duration_ms: 0.907375
+  type: 'test'
+  ...
+# Subtest: l4-core parse() records the prefixes of a Turtle and a TriG document
+ok 348 - l4-core parse() records the prefixes of a Turtle and a TriG document
+  ---
+  duration_ms: 3.894167
+  type: 'test'
+  ...
+# Subtest: l4-core openDataset: prefixes at open, handle prefixes in Turtle output, options
+ok 349 - l4-core openDataset: prefixes at open, handle prefixes in Turtle output, options
+  ---
+  duration_ms: 8.619208
+  type: 'test'
+  ...
+# Subtest: l4-core serialize({format:"turtle"}): bare literals by default, quoted with literalShorthand:false
+ok 350 - l4-core serialize({format:"turtle"}): bare literals by default, quoted with literalShorthand:false
+  ---
+  duration_ms: 7.118875
+  type: 'test'
+  ...
+# Subtest: l4-core multi-document merge keeps blank-node labels document-scoped
+ok 351 - l4-core multi-document merge keeps blank-node labels document-scoped
+  ---
+  duration_ms: 42.284917
+  type: 'test'
+  ...
+# Subtest: capabilities: the stage-1, stage-2 and stage-3 families are reported true
+ok 352 - capabilities: the stage-1, stage-2 and stage-3 families are reported true
+  ---
+  duration_ms: 445.083125
+  type: 'test'
+  ...
+# Subtest: parse: jsonld (expanded/inline-context form) through the Lean ABI
+ok 353 - parse: jsonld (expanded/inline-context form) through the Lean ABI
+  ---
+  duration_ms: 88.204917
+  type: 'test'
+  ...
+# Subtest: jsonldToRdf: parses JSON-LD with an explicit base option
+ok 354 - jsonldToRdf: parses JSON-LD with an explicit base option
+  ---
+  duration_ms: 1.48725
+  type: 'test'
+  ...
+# Subtest: jsonldToRdf: a remote @context is an error (no document loader)
+ok 355 - jsonldToRdf: a remote @context is an error (no document loader)
+  ---
+  duration_ms: 1.63125
+  type: 'test'
+  ...
+# Subtest: jsonldToRdf: text that is not JSON-LD rejects
+ok 356 - jsonldToRdf: text that is not JSON-LD rejects
+  ---
+  duration_ms: 0.670916
+  type: 'test'
+  ...
+# Subtest: jsonldFromRdf: N-Quads serialize to expanded JSON-LD (reverse of jsonldToRdf)
+ok 357 - jsonldFromRdf: N-Quads serialize to expanded JSON-LD (reverse of jsonldToRdf)
+  ---
+  duration_ms: 10.321791
+  type: 'test'
+  ...
+# Subtest: jsonldFromRdf: useNativeTypes turns xsd:integer into a JSON number
+ok 358 - jsonldFromRdf: useNativeTypes turns xsd:integer into a JSON number
+  ---
+  duration_ms: 2.46775
+  type: 'test'
+  ...
+# Subtest: rmlMap: evaluates an RML mapping graph against JSON source data
+ok 359 - rmlMap: evaluates an RML mapping graph against JSON source data
+  ---
+  duration_ms: 50.064292
+  type: 'test'
+  ...
+# Subtest: rmlMap: rejects a bad sourceKind and source text that is not JSON
+ok 360 - rmlMap: rejects a bad sourceKind and source text that is not JSON
+  ---
+  duration_ms: 5.485542
+  type: 'test'
+  ...
+# Subtest: csvwToRdf: converts a vendored W3C CSVW fixture (minimal mode)
+ok 361 - csvwToRdf: converts a vendored W3C CSVW fixture (minimal mode)
+  ---
+  duration_ms: 21.899958
+  type: 'test'
+  ...
+# Subtest: csvwToRdf: standard mode emits the csvw:TableGroup wrapper; no metadata infers from header
+ok 362 - csvwToRdf: standard mode emits the csvw:TableGroup wrapper; no metadata infers from header
+  ---
+  duration_ms: 1.692542
+  type: 'test'
+  ...
+# Subtest: csvwToRdf: bad metadata and bad mode reject
+ok 363 - csvwToRdf: bad metadata and bad mode reject
+  ---
+  duration_ms: 1.8255
+  type: 'test'
+  ...
+# Subtest: rifEval: RIF Core saturation materializes derived triples
+ok 364 - rifEval: RIF Core saturation materializes derived triples
+  ---
+  duration_ms: 27.274208
+  type: 'test'
+  ...
+# Subtest: rifEval: accepts the DOCTYPE and entity form real RIF fixtures use
+ok 365 - rifEval: accepts the DOCTYPE and entity form real RIF fixtures use
+  ---
+  duration_ms: 10.443833
+  type: 'test'
+  ...
+# Subtest: rifEval: rules that do not parse reject
+ok 366 - rifEval: rules that do not parse reject
+  ---
+  duration_ms: 1.368375
+  type: 'test'
+  ...
+# Subtest: xmlWellformed: accepts well-formed, rejects malformed
+ok 367 - xmlWellformed: accepts well-formed, rejects malformed
+  ---
+  duration_ms: 7.957541
+  type: 'test'
+  ...
+# Subtest: xpathEval: XPath 1.0 over an XML document
+ok 368 - xpathEval: XPath 1.0 over an XML document
+  ---
+  duration_ms: 16.098584
+  type: 'test'
+  ...
+# Subtest: xpathEval: a bad expression and bad XML reject
+ok 369 - xpathEval: a bad expression and bad XML reject
+  ---
+  duration_ms: 1.184084
+  type: 'test'
+  ...
+# Subtest: xsltTransform: value-of into a literal result element
+ok 370 - xsltTransform: value-of into a literal result element
+  ---
+  duration_ms: 11.366917
+  type: 'test'
+  ...
+# Subtest: xsltTransform: identity-style xsl:copy-of
+ok 371 - xsltTransform: identity-style xsl:copy-of
+  ---
+  duration_ms: 1.645541
+  type: 'test'
+  ...
+# Subtest: xsltTransform: rejects malformed XML
+ok 372 - xsltTransform: rejects malformed XML
+  ---
+  duration_ms: 0.601792
+  type: 'test'
+  ...
+# Subtest: schematronValidate: failing assert produces a finding
+ok 373 - schematronValidate: failing assert produces a finding
+  ---
+  duration_ms: 6.219583
+  type: 'test'
+  ...
+# Subtest: schematronValidate: satisfied assert produces no assert-fail
+ok 374 - schematronValidate: satisfied assert produces no assert-fail
+  ---
+  duration_ms: 1.953292
+  type: 'test'
+  ...
+# Subtest: jsonSchemaValidate: {type:"integer"} accepts an integer
+ok 375 - jsonSchemaValidate: {type:"integer"} accepts an integer
+  ---
+  duration_ms: 5.9305
+  type: 'test'
+  ...
+# Subtest: jsonSchemaValidate: {type:"integer"} rejects a string
+ok 376 - jsonSchemaValidate: {type:"integer"} rejects a string
+  ---
+  duration_ms: 0.632125
+  type: 'test'
+  ...
+# Subtest: mathmlEval: 2 + 3 = 5/1 (exact rational)
+ok 377 - mathmlEval: 2 + 3 = 5/1 (exact rational)
+  ---
+  duration_ms: 7.247125
+  type: 'test'
+  ...
+# Subtest: mathmlEval: division by zero is undef, not a bogus number
+ok 378 - mathmlEval: division by zero is undef, not a bogus number
+  ---
+  duration_ms: 0.292833
+  type: 'test'
+  ...
+# Subtest: mathmlEval: ci bindings, a boolean value, and a vector value
+ok 379 - mathmlEval: ci bindings, a boolean value, and a vector value
+  ---
+  duration_ms: 0.914583
+  type: 'test'
+  ...
+# Subtest: mathmlEval: a bindings value that is not a numeral rejects
+ok 380 - mathmlEval: a bindings value that is not a numeral rejects
+  ---
+  duration_ms: 0.612666
+  type: 'test'
+  ...
+# Subtest: xformsRecalc: constant calculate writes the leaf
+ok 381 - xformsRecalc: constant calculate writes the leaf
+  ---
+  duration_ms: 1.697584
+  type: 'test'
+  ...
+# Subtest: xformsRecalc: no binds leaves the instance well-formed
+ok 382 - xformsRecalc: no binds leaves the instance well-formed
+  ---
+  duration_ms: 0.154375
+  type: 'test'
+  ...
+# Subtest: xformsRecalc: a constraint and a type MIP are reported per node
+ok 383 - xformsRecalc: a constraint and a type MIP are reported per node
+  ---
+  duration_ms: 0.648
+  type: 'test'
+  ...
+# Subtest: toanSummation: sum_{i=1}^{4} (x + i*y) = 4x + 10y
+ok 384 - toanSummation: sum_{i=1}^{4} (x + i*y) = 4x + 10y
+  ---
+  duration_ms: 4.121916
+  type: 'test'
+  ...
+# Subtest: toanProduct: product_{i=1}^{3} i = 6
+ok 385 - toanProduct: product_{i=1}^{3} i = 6
+  ---
+  duration_ms: 0.8305
+  type: 'test'
+  ...
+# Subtest: toanSimplify: 2 + 3 collapses to 5
+ok 386 - toanSimplify: 2 + 3 collapses to 5
+  ---
+  duration_ms: 0.3505
+  type: 'test'
+  ...
+# Subtest: toanDiff: d/dx (x*x) mentions x
+ok 387 - toanDiff: d/dx (x*x) mentions x
+  ---
+  duration_ms: 1.220083
+  type: 'test'
+  ...
+# Subtest: toanSubst: (x + 1)[x := 4] mentions 4
+ok 388 - toanSubst: (x + 1)[x := 4] mentions 4
+  ---
+  duration_ms: 0.353167
+  type: 'test'
+  ...
+# Subtest: queryHdt: SELECT COUNT(*) over the RML-Core HDT fixture is 343
+ok 389 - queryHdt: SELECT COUNT(*) over the RML-Core HDT fixture is 343
+  ---
+  duration_ms: 126.267167
+  type: 'test'
+  ...
+# Subtest: queryHdt: ASK over the same fixture is true
+ok 390 - queryHdt: ASK over the same fixture is true
+  ---
+  duration_ms: 168.025958
+  type: 'test'
+  ...
+# Subtest: queryHdt: SELECT bindings carry real RDF/JS terms (owl:Class labels)
+ok 391 - queryHdt: SELECT bindings carry real RDF/JS terms (owl:Class labels)
+  ---
+  duration_ms: 96.772417
+  type: 'test'
+  ...
+# Subtest: queryHdt: accepts an ArrayBuffer, not just a Buffer/Uint8Array
+ok 392 - queryHdt: accepts an ArrayBuffer, not just a Buffer/Uint8Array
+  ---
+  duration_ms: 132.302875
+  type: 'test'
+  ...
+# Subtest: queryHdt: CONSTRUCT answers a Dataset
+ok 393 - queryHdt: CONSTRUCT answers a Dataset
+  ---
+  duration_ms: 126.612833
+  type: 'test'
+  ...
+# Subtest: queryHdt: bytes that are not an HDT file reject
+ok 394 - queryHdt: bytes that are not an HDT file reject
+  ---
+  duration_ms: 0.599667
+  type: 'test'
+  ...
+# Subtest: extension functions: sync and async functions, errors, unregister, clear
+ok 395 - extension functions: sync and async functions, errors, unregister, clear
+  ---
+  duration_ms: 205.551375
+  type: 'test'
+  ...
+# Subtest: registerExtensionFunction: argument checks
+ok 396 - registerExtensionFunction: argument checks
+  ---
+  duration_ms: 0.498375
+  type: 'test'
+  ...
+# Subtest: registerServiceEndpoint: SERVICE resolves against a registered snapshot until cleared
+ok 397 - registerServiceEndpoint: SERVICE resolves against a registered snapshot until cleared
+  ---
+  duration_ms: 5.662833
+  type: 'test'
+  ...
+# Subtest: SERVICE without SILENT to an unreachable endpoint fails the query (issue 717)
+ok 398 - SERVICE without SILENT to an unreachable endpoint fails the query (issue 717)
+  ---
+  duration_ms: 1.526625
+  type: 'test'
+  ...
+# Subtest: SERVICE without SILENT inside FILTER EXISTS fails the query (issue 735)
+ok 399 - SERVICE without SILENT inside FILTER EXISTS fails the query (issue 735)
+  ---
+  duration_ms: 2.680709
+  type: 'test'
+  ...
+# Subtest: an outer SERVICE SILENT covers a failed nested SERVICE (issue 735)
+ok 400 - an outer SERVICE SILENT covers a failed nested SERVICE (issue 735)
+  ---
+  duration_ms: 0.83875
+  type: 'test'
+  ...
+# Subtest: registerServiceEndpoint: argument checks
+ok 401 - registerServiceEndpoint: argument checks
+  ---
+  duration_ms: 0.091292
+  type: 'test'
+  ...
+# Subtest: tableauMaterialise: adds the membership a hasValue restriction defines
+ok 402 - tableauMaterialise: adds the membership a hasValue restriction defines
+  ---
+  duration_ms: 4.505
+  type: 'test'
+  ...
+# Subtest: tableauMaterialise: a graph with nothing to add adds nothing
+ok 403 - tableauMaterialise: a graph with nothing to add adds nothing
+  ---
+  duration_ms: 0.34575
+  type: 'test'
+  ...
+# Subtest: tableauDlInconsistent: the tableau finds a clash the RL closure alone does not
+ok 404 - tableauDlInconsistent: the tableau finds a clash the RL closure alone does not
+  ---
+  duration_ms: 21.36225
+  type: 'test'
+  ...
+# Subtest: queryRaw: SELECT with the default options returns SPARQL results JSON
+ok 405 - queryRaw: SELECT with the default options returns SPARQL results JSON
+  ---
+  duration_ms: 6.138042
+  type: 'test'
+  ...
+# Subtest: queryRaw: dataFormat ntriples and ASK
+ok 406 - queryRaw: dataFormat ntriples and ASK
+  ---
+  duration_ms: 7.037125
+  type: 'test'
+  ...
+# Subtest: queryRaw: entail RDFS adds the subclass instance
+ok 407 - queryRaw: entail RDFS adds the subclass instance
+  ---
+  duration_ms: 77.457125
+  type: 'test'
+  ...
+# Subtest: queryRaw: output formats csv, tsv, xml and table return strings
+ok 408 - queryRaw: output formats csv, tsv, xml and table return strings
+  ---
+  duration_ms: 30.182
+  type: 'test'
+  ...
+# Subtest: queryRaw: a bad query rejects with code and position; bad options are engine refusals
+ok 409 - queryRaw: a bad query rejects with code and position; bad options are engine refusals
+  ---
+  duration_ms: 3.915166
+  type: 'test'
+  ...
+# Subtest: full entry: SELECT with 20000 solutions answers on the default stack
+ok 410 - full entry: SELECT with 20000 solutions answers on the default stack
+  ---
+  duration_ms: 2051.528291
+  type: 'test'
+  ...
+# Subtest: full entry: canonicalize of 24000 blank-node quads answers on the default stack
+ok 411 - full entry: canonicalize of 24000 blank-node quads answers on the default stack
+  ---
+  duration_ms: 1525.686208
+  type: 'test'
+  ...
+# Subtest: mathmlEval: 2 + 3 = 5/1 (exact rational)
+ok 412 - mathmlEval: 2 + 3 = 5/1 (exact rational)
+  ---
+  duration_ms: 389.318417
+  type: 'test'
+  ...
+# Subtest: mathmlEval: division by zero is undef, not a bogus number
+ok 413 - mathmlEval: division by zero is undef, not a bogus number
+  ---
+  duration_ms: 0.843
+  type: 'test'
+  ...
+# Subtest: the package ships no core wasm
+ok 414 - the package ships no core wasm
+  ---
+  duration_ms: 1.954791
+  type: 'test'
+  ...
+# Subtest: the full engine serves every op of the core dispatch table
+ok 415 - the full engine serves every op of the core dispatch table
+  ---
+  duration_ms: 388.819209
+  type: 'test'
+  ...
+# Subtest: every function the core entry served answers from the one wasm
+ok 416 - every function the core entry served answers from the one wasm
+  ---
+  duration_ms: 113.608458
+  type: 'test'
+  ...
+# Subtest: parse(text, 'ntriples') is parse(text, {format:'ntriples'})
+ok 417 - parse(text, 'ntriples') is parse(text, {format:'ntriples'})
+  ---
+  duration_ms: 379.132041
+  type: 'test'
+  ...
+# Subtest: serialize(ds, 'turtle') is Turtle, not silent N-Quads
+ok 418 - serialize(ds, 'turtle') is Turtle, not silent N-Quads
+  ---
+  duration_ms: 6.428542
+  type: 'test'
+  ...
+# Subtest: openDataset(text, 'ntriples') and handle.serialize('turtle')
+ok 419 - openDataset(text, 'ntriples') and handle.serialize('turtle')
+  ---
+  duration_ms: 1.342
+  type: 'test'
+  ...
+# Subtest: update, canonicalize and query accept the bare format string
+ok 420 - update, canonicalize and query accept the bare format string
+  ---
+  duration_ms: 45.937792
+  type: 'test'
+  ...
+# Subtest: a non-object, non-string options argument is a TypeError naming the function
+ok 421 - a non-object, non-string options argument is a TypeError naming the function
+  ---
+  duration_ms: 3.222
+  type: 'test'
+  ...
+# Subtest: OWL consistency rejects sameAs and differentFrom
+ok 422 - OWL consistency rejects sameAs and differentFrom
+  ---
+  duration_ms: 374.530291
+  type: 'test'
+  ...
+# Subtest: OWL consistency rejects reversed differentFrom
+ok 423 - OWL consistency rejects reversed differentFrom
+  ---
+  duration_ms: 1.198834
+  type: 'test'
+  ...
+# Subtest: OWL consistency rejects self differentFrom
+ok 424 - OWL consistency rejects self differentFrom
+  ---
+  duration_ms: 0.556834
+  type: 'test'
+  ...
+# Subtest: OWL consistency rejects transitive sameAs and differentFrom
+ok 425 - OWL consistency rejects transitive sameAs and differentFrom
+  ---
+  duration_ms: 0.709459
+  type: 'test'
+  ...
+# Subtest: OWL consistency does not claim a model for sameAs alone
+ok 426 - OWL consistency does not claim a model for sameAs alone
+  ---
+  duration_ms: 3.112417
+  type: 'test'
+  ...
+# Subtest: OWL consistency does not claim a model for differentFrom alone
+ok 427 - OWL consistency does not claim a model for differentFrom alone
+  ---
+  duration_ms: 0.37475
+  type: 'test'
+  ...
+# Subtest: OWL consistency does not claim a model for ordinary class membership
+ok 428 - OWL consistency does not claim a model for ordinary class membership
+  ---
+  duration_ms: 0.5315
+  type: 'test'
+  ...
+# Subtest: OWL consistency refuses negative property assertions outside its checked fragment
+ok 429 - OWL consistency refuses negative property assertions outside its checked fragment
+  ---
+  duration_ms: 2.316875
+  type: 'test'
+  ...
+# Subtest: OWL entailment still returns a closure consequence
+ok 430 - OWL entailment still returns a closure consequence
+  ---
+  duration_ms: 22.914667
+  type: 'test'
+  ...
+# Subtest: OWL entailment does not turn a quiescent search into a countermodel
+ok 431 - OWL entailment does not turn a quiescent search into a countermodel
+  ---
+  duration_ms: 32.495125
+  type: 'test'
+  ...
+# Subtest: OWL entailment does not claim a countermodel for an unproved data assertion
+ok 432 - OWL entailment does not claim a countermodel for an unproved data assertion
+  ---
+  duration_ms: 10.562917
+  type: 'test'
+  ...
+# Subtest: OWL consistency refuses an unsupported restriction before search budgeting
+ok 433 - OWL consistency refuses an unsupported restriction before search budgeting
+  ---
+  duration_ms: 3.699
+  type: 'test'
+  ...
+# Subtest: OWL consistency compatibility fuel does not disable its fixed certificate checker
+ok 434 - OWL consistency compatibility fuel does not disable its fixed certificate checker
+  ---
+  duration_ms: 9.012833
+  type: 'test'
+  ...
+# Subtest: OWL entailment budget exhaustion remains distinct from incomplete search
+ok 435 - OWL entailment budget exhaustion remains distinct from incomplete search
+  ---
+  duration_ms: 4.577375
+  type: 'test'
+  ...
+# Subtest: OWL consistency refuses disjoint-class syntax without applying RDF punning substitution
+ok 436 - OWL consistency refuses disjoint-class syntax without applying RDF punning substitution
+  ---
+  duration_ms: 1.571666
+  type: 'test'
+  ...
+# Subtest: OWL entailment does not substitute sameAs into a punned class name
+ok 437 - OWL entailment does not substitute sameAs into a punned class name
+  ---
+  duration_ms: 2.390417
+  type: 'test'
+  ...
+# Subtest: OWL punning across premise and conclusion is indeterminate
+ok 438 - OWL punning across premise and conclusion is indeterminate
+  ---
+  duration_ms: 0.425709
+  type: 'test'
+  ...
+# Subtest: pack integrity: npm pack + extract + parse/query/openStore from the tarball
+not ok 439 - pack integrity: npm pack + extract + parse/query/openStore from the tarball
+  ---
+  duration_ms: 6404.912042
+  type: 'test'
+  location: '/Users/danbri/working/sandbox/october/tpac/codex-npm-review/integrate-core/npm/factoidal/test/pack-integrity.test.js:57:1'
+  failureType: 'testCodeFailure'
+  error: 'the engine came from the tarball (/private/var/folders/8l/h5b0tb8s6tlft0wb4fl3w1y80000gn/T/factoidal-pack-vdqOaS/package/l4-assets/l4factoidal.js)'
+  code: 'ERR_ASSERTION'
+  name: 'AssertionError'
+  expected: true
+  actual: false
+  operator: '=='
+  stack: |-
+    TestContext.<anonymous> (/Users/danbri/working/sandbox/october/tpac/codex-npm-review/integrate-core/npm/factoidal/test/pack-integrity.test.js:82:12)
+    Test.runInAsyncScope (node:async_hooks:214:14)
+    Test.run (node:internal/test_runner/test:1047:25)
+    Test.start (node:internal/test_runner/test:944:17)
+    startSubtestAfterBootstrap (node:internal/test_runner/harness:296:17)
+  ...
+# Subtest: parse("this is not turtle") rejects with a positioned FactoidalError
+ok 440 - parse("this is not turtle") rejects with a positioned FactoidalError
+  ---
+  duration_ms: 423.969125
+  type: 'test'
+  ...
+# Subtest: a Turtle document missing one "." rejects with a positioned FactoidalError
+ok 441 - a Turtle document missing one "." rejects with a positioned FactoidalError
+  ---
+  duration_ms: 6.533708
+  type: 'test'
+  ...
+# Subtest: a relative IRI with no baseIRI rejects with a message mentioning IRI
+ok 442 - a relative IRI with no baseIRI rejects with a message mentioning IRI
+  ---
+  duration_ms: 0.734083
+  type: 'test'
+  ...
+# Subtest: N-Triples syntax errors reject with a positioned FactoidalError
+ok 443 - N-Triples syntax errors reject with a positioned FactoidalError
+  ---
+  duration_ms: 1.0925
+  type: 'test'
+  ...
+# Subtest: N-Quads syntax errors reject with a positioned FactoidalError
+ok 444 - N-Quads syntax errors reject with a positioned FactoidalError
+  ---
+  duration_ms: 0.802584
+  type: 'test'
+  ...
+# Subtest: TriG syntax errors reject with a positioned FactoidalError
+ok 445 - TriG syntax errors reject with a positioned FactoidalError
+  ---
+  duration_ms: 3.826916
+  type: 'test'
+  ...
+# Subtest: RDF/XML syntax errors reject (a message only, no position -- issue \#344)
+ok 446 - RDF/XML syntax errors reject (a message only, no position -- issue \#344)
+  ---
+  duration_ms: 13.695958
+  type: 'test'
+  ...
+# Subtest: {lenient:true} returns the recoverable statements and one diagnostic
+ok 447 - {lenient:true} returns the recoverable statements and one diagnostic
+  ---
+  duration_ms: 11.379542
+  type: 'test'
+  ...
+# Subtest: query('bad text', sparql) rejects the same way
+ok 448 - query('bad text', sparql) rejects the same way
+  ---
+  duration_ms: 1.716625
+  type: 'test'
+  ...
+# Subtest: offset is a UTF-16 index: a non-BMP character before the error counts 2
+ok 449 - offset is a UTF-16 index: a non-BMP character before the error counts 2
+  ---
+  duration_ms: 17.252791
+  type: 'test'
+  ...
+# Subtest: offset is a UTF-16 index on N-Triples and through query() and openDataset()
+ok 450 - offset is a UTF-16 index on N-Triples and through query() and openDataset()
+  ---
+  duration_ms: 11.300625
+  type: 'test'
+  ...
+# Subtest: each [] is its own blank node, joined to the statements inside it
+ok 451 - each [] is its own blank node, joined to the statements inside it
+  ---
+  duration_ms: 449.066209
+  type: 'test'
+  ...
+# Subtest: the Dataset is the document graph: isomorphic to the labelled form (RDFC-1.0)
+ok 452 - the Dataset is the document graph: isomorphic to the labelled form (RDFC-1.0)
+  ---
+  duration_ms: 18.926875
+  type: 'test'
+  ...
+# Subtest: blank nodes of two parse() calls never join
+ok 453 - blank nodes of two parse() calls never join
+  ---
+  duration_ms: 1.840291
+  type: 'test'
+  ...
+# Subtest: RDF/XML: the xml:lang of a property element does not reach the next one
+ok 454 - RDF/XML: the xml:lang of a property element does not reach the next one
+  ---
+  duration_ms: 406.6505
+  type: 'test'
+  ...
+# Subtest: RDF/XML: the language after a property element is the one of the node element
+ok 455 - RDF/XML: the language after a property element is the one of the node element
+  ---
+  duration_ms: 0.795459
+  type: 'test'
+  ...
+# Subtest: RDF/XML: nested node elements and xml:base close with their property element
+ok 456 - RDF/XML: nested node elements and xml:base close with their property element
+  ---
+  duration_ms: 3.234125
+  type: 'test'
+  ...
+# Subtest: JSON-LD: a written blank node label does not merge with a generated node
+ok 457 - JSON-LD: a written blank node label does not merge with a generated node
+  ---
+  duration_ms: 18.62825
+  type: 'test'
+  ...
+# Subtest: JSON-LD: a list cell does not merge with a node that wrote the label of the first cell
+ok 458 - JSON-LD: a list cell does not merge with a node that wrote the label of the first cell
+  ---
+  duration_ms: 1.161291
+  type: 'test'
+  ...
+# Subtest: aeadSeal then aeadOpen returns the plaintext
+ok 459 - aeadSeal then aeadOpen returns the plaintext
+  ---
+  duration_ms: 330.498542
+  type: 'test'
+  ...
+# Subtest: aeadOpen rejects a changed tag
+ok 460 - aeadOpen rejects a changed tag
+  ---
+  duration_ms: 2.665542
+  type: 'test'
+  ...
+# Subtest: hpkeSeal and hpkeOpen, RFC 9180 A.2.1 key pair
+ok 461 - hpkeSeal and hpkeOpen, RFC 9180 A.2.1 key pair
+  ---
+  duration_ms: 11.337
+  type: 'test'
+  ...
+# Subtest: proofInspect and proofCheck reject a document with no profile
+ok 462 - proofInspect and proofCheck reject a document with no profile
+  ---
+  duration_ms: 5.400667
+  type: 'test'
+  ...
+# Subtest: canonicalizeNQuads relabels blank nodes per RDFC-1.0
+ok 463 - canonicalizeNQuads relabels blank nodes per RDFC-1.0
+  ---
+  duration_ms: 5.097625
+  type: 'test'
+  ...
+# Subtest: normalizeNQuads writes N-Quads back
+ok 464 - normalizeNQuads writes N-Quads back
+  ---
+  duration_ms: 3.831916
+  type: 'test'
+  ...
+# Subtest: serveStore answers a SPARQL 1.1 Protocol SELECT
+ok 465 - serveStore answers a SPARQL 1.1 Protocol SELECT
+  ---
+  duration_ms: 1608.871708
+  type: 'test'
+  ...
+# Subtest: owlClosure RDFS accepts a triple term and derives nothing from inside it
+ok 466 - owlClosure RDFS accepts a triple term and derives nothing from inside it
+  ---
+  duration_ms: 404.254833
+  type: 'test'
+  ...
+# Subtest: owlClosure OWL-RL accepts a triple term and derives nothing from inside it
+ok 467 - owlClosure OWL-RL accepts a triple term and derives nothing from inside it
+  ---
+  duration_ms: 13.490958
+  type: 'test'
+  ...
+# Subtest: rhoDfClosure accepts a triple term and derives nothing from inside it
+ok 468 - rhoDfClosure accepts a triple term and derives nothing from inside it
+  ---
+  duration_ms: 10.078875
+  type: 'test'
+  ...
+# Subtest: rdfsPlusClosure accepts a triple term and derives nothing from inside it
+ok 469 - rdfsPlusClosure accepts a triple term and derives nothing from inside it
+  ---
+  duration_ms: 2.088834
+  type: 'test'
+  ...
+# Subtest: canonicalizeToNQuads refuses a triple term with the RDFC-1.0 rule named
+ok 470 - canonicalizeToNQuads refuses a triple term with the RDFC-1.0 rule named
+  ---
+  duration_ms: 4.209
+  type: 'test'
+  ...
+# Subtest: owlIsConsistent and owlEntails refuse a triple term with the rule named
+ok 471 - owlIsConsistent and owlEntails refuse a triple term with the rule named
+  ---
+  duration_ms: 6.523167
+  type: 'test'
+  ...
+# Subtest: xfail: canonicalizeToNQuads gives canonical labels to blank nodes inside a triple term (https://github.com/danbri/factoidal/issues/873)
+ok 472 - xfail: canonicalizeToNQuads gives canonical labels to blank nodes inside a triple term (https://github.com/danbri/factoidal/issues/873)
+  ---
+  duration_ms: 0.880875
+  type: 'test'
+  ...
+# expected failure: l4factoidal: canonicalizeToNQuads: the input holds an RDF 1.2 triple term or directional language-tagged string; RDFC-1.0 (W3C Recommendation 2024, sections 4.6 and 4.8) defines canonical labels for R
+# Subtest: xfail: owlIsConsistent decides a graph with a triple term (https://github.com/danbri/factoidal/issues/873)
+ok 473 - xfail: owlIsConsistent decides a graph with a triple term (https://github.com/danbri/factoidal/issues/873)
+  ---
+  duration_ms: 0.981917
+  type: 'test'
+  ...
+# expected failure: l4factoidal: owlIsConsistent: the input holds an RDF 1.2 triple term or directional language-tagged string; OWL 2 Mapping to RDF Graphs (section 3) and the OWL 2 Direct Semantics define no rule for th
+# Subtest: xfail: owlEntails decides a premise with a triple term (https://github.com/danbri/factoidal/issues/873)
+ok 474 - xfail: owlEntails decides a premise with a triple term (https://github.com/danbri/factoidal/issues/873)
+  ---
+  duration_ms: 2.771916
+  type: 'test'
+  ...
+# expected failure: l4factoidal: owlEntails: the input holds an RDF 1.2 triple term or directional language-tagged string; OWL 2 Mapping to RDF Graphs (section 3) and the OWL 2 Direct Semantics define no rule for these t
+# Subtest: owlClosure OWL-RL substitutes owl:sameAs inside a triple term (opaque-iri)
+ok 475 - owlClosure OWL-RL substitutes owl:sameAs inside a triple term (opaque-iri)
+  ---
+  duration_ms: 6.177
+  type: 'test'
+  ...
+# Subtest: owlClosure RDFS does not substitute inside a triple term
+ok 476 - owlClosure RDFS does not substitute inside a triple term
+  ---
+  duration_ms: 6.174792
+  type: 'test'
+  ...
+# Subtest: DataFactory: namedNode identity and equals
+ok 477 - DataFactory: namedNode identity and equals
+  ---
+  duration_ms: 335.007042
+  type: 'test'
+  ...
+# Subtest: DataFactory: blankNode fresh labels and equals
+ok 478 - DataFactory: blankNode fresh labels and equals
+  ---
+  duration_ms: 0.25125
+  type: 'test'
+  ...
+# Subtest: DataFactory: literal defaults, language, datatype
+ok 479 - DataFactory: literal defaults, language, datatype
+  ---
+  duration_ms: 0.159334
+  type: 'test'
+  ...
+# Subtest: DataFactory: defaultGraph and variable
+ok 480 - DataFactory: defaultGraph and variable
+  ---
+  duration_ms: 0.416834
+  type: 'test'
+  ...
+# Subtest: DataFactory: quad equals (incl. graph) and fromQuad
+ok 481 - DataFactory: quad equals (incl. graph) and fromQuad
+  ---
+  duration_ms: 1.006833
+  type: 'test'
+  ...
+# Subtest: termFromSrj covers uri/bnode/literal shapes
+ok 482 - termFromSrj covers uri/bnode/literal shapes
+  ---
+  duration_ms: 0.494583
+  type: 'test'
+  ...
+# Subtest: termToNQuads: the engine writes the canonical N-Triples token
+ok 483 - termToNQuads: the engine writes the canonical N-Triples token
+  ---
+  duration_ms: 2.664208
+  type: 'test'
+  ...
+# Subtest: N-Quads round-trip: quads -> text -> quads
+ok 484 - N-Quads round-trip: quads -> text -> quads
+  ---
+  duration_ms: 9.516458
+  type: 'test'
+  ...
+# Subtest: nquadsToQuads handles UCHAR escapes and comments
+ok 485 - nquadsToQuads handles UCHAR escapes and comments
+  ---
+  duration_ms: 11.384833
+  type: 'test'
+  ...
+# Subtest: nquadsToQuads blankNodePrefix keeps documents apart
+ok 486 - nquadsToQuads blankNodePrefix keeps documents apart
+  ---
+  duration_ms: 0.656667
+  type: 'test'
+  ...
+# Subtest: DatasetCore: DatasetCore contract (size/add/delete/has/match/iterate)
+ok 487 - DatasetCore: DatasetCore contract (size/add/delete/has/match/iterate)
+  ---
+  duration_ms: 0.483084
+  type: 'test'
+  ...
+# Subtest: DatasetCore: toNQuads / fromNQuads round-trip
+ok 488 - DatasetCore: toNQuads / fromNQuads round-trip
+  ---
+  duration_ms: 0.414375
+  type: 'test'
+  ...
+# Subtest: sampleStorePath packs a store and openStore answers its triple count
+ok 489 - sampleStorePath packs a store and openStore answers its triple count
+  ---
+  duration_ms: 2075.306583
+  type: 'test'
+  ...
+# Subtest: schematronValidate: failing assert produces a finding
+ok 490 - schematronValidate: failing assert produces a finding
+  ---
+  duration_ms: 346.899083
+  type: 'test'
+  ...
+# Subtest: schematronValidate: satisfied assert produces no assert-fail
+ok 491 - schematronValidate: satisfied assert produces no assert-fail
+  ---
+  duration_ms: 1.1005
+  type: 'test'
+  ...
+# Subtest: serialize(..., {format:'turtle'}) emits prefix-compacted Turtle
+ok 492 - serialize(..., {format:'turtle'}) emits prefix-compacted Turtle
+  ---
+  duration_ms: 398.990667
+  type: 'test'
+  ...
+# Subtest: serialize: a triple term, one level and nested, with a base direction
+ok 493 - serialize: a triple term, one level and nested, with a base direction
+  ---
+  duration_ms: 6.596584
+  type: 'test'
+  ...
+# Subtest: serialize rejects an unknown output format
+ok 494 - serialize rejects an unknown output format
+  ---
+  duration_ms: 1.406083
+  type: 'test'
+  ...
+# Subtest: serialize turtle: caller prefixes appear as given
+ok 495 - serialize turtle: caller prefixes appear as given
+  ---
+  duration_ms: 1.71275
+  type: 'test'
+  ...
+# Subtest: serialize turtle: unused caller prefixes are not emitted
+ok 496 - serialize turtle: unused caller prefixes are not emitted
+  ---
+  duration_ms: 8.152417
+  type: 'test'
+  ...
+# Subtest: serialize turtle: auto ns1: labels skip caller labels already in use
+ok 497 - serialize turtle: auto ns1: labels skip caller labels already in use
+  ---
+  duration_ms: 0.918792
+  type: 'test'
+  ...
+# Subtest: serialize turtle: literal shorthand is on by default (220.0, true print bare)
+ok 498 - serialize turtle: literal shorthand is on by default (220.0, true print bare)
+  ---
+  duration_ms: 2.671125
+  type: 'test'
+  ...
+# Subtest: serialize turtle: literalShorthand:false turns off the bare-literal printing
+ok 499 - serialize turtle: literalShorthand:false turns off the bare-literal printing
+  ---
+  duration_ms: 1.38075
+  type: 'test'
+  ...
+# Subtest: serialize turtle: parse-then-serialize keeps the source prefixes
+ok 500 - serialize turtle: parse-then-serialize keeps the source prefixes
+  ---
+  duration_ms: 28.189084
+  type: 'test'
+  ...
+# Subtest: xfail: serialize turtle: no unused @prefix xsd: when shorthand elides every typed literal (https://github.com/danbri/factoidal/issues/691)
+ok 501 - xfail: serialize turtle: no unused @prefix xsd: when shorthand elides every typed literal (https://github.com/danbri/factoidal/issues/691)
+  ---
+  duration_ms: 8.351916
+  type: 'test'
+  ...
+# expected failure: so no xsd: declaration is emitted
+# Subtest: openStore(path): an activated generation, verified and retained
+ok 502 - openStore(path): an activated generation, verified and retained
+  ---
+  duration_ms: 649.37125
+  type: 'test'
+  ...
+# Subtest: Store.query: SELECT, ASK and CONSTRUCT answer the typed shapes
+ok 503 - Store.query: SELECT, ASK and CONSTRUCT answer the typed shapes
+  ---
+  duration_ms: 258.680625
+  type: 'test'
+  ...
+# Subtest: Store.inspect: the engine decodes the manifest
+ok 504 - Store.inspect: the engine decodes the manifest
+  ---
+  duration_ms: 218.812833
+  type: 'test'
+  ...
+# Subtest: Store.close is idempotent and a closed store refuses queries
+ok 505 - Store.close is idempotent and a closed store refuses queries
+  ---
+  duration_ms: 194.36675
+  type: 'test'
+  ...
+# Subtest: listStores reports the open handles and the residency caps
+ok 506 - listStores reports the open handles and the residency caps
+  ---
+  duration_ms: 180.129875
+  type: 'test'
+  ...
+# Subtest: openStore({sparql}) reads only the plan's blocks; a query outside them is refused
+ok 507 - openStore({sparql}) reads only the plan's blocks; a query outside them is refused
+  ---
+  duration_ms: 67.510834
+  type: 'test'
+  ...
+# Subtest: queryStore: one query, open and close
+ok 508 - queryStore: one query, open and close
+  ---
+  duration_ms: 192.374875
+  type: 'test'
+  ...
+# Subtest: openStore(reader): a function from root-relative paths to bytes
+ok 509 - openStore(reader): a function from root-relative paths to bytes
+  ---
+  duration_ms: 207.153584
+  type: 'test'
+  ...
+# Subtest: openStore({generation}) opens a generation directly, not through CURRENT
+ok 510 - openStore({generation}) opens a generation directly, not through CURRENT
+  ---
+  duration_ms: 182.726042
+  type: 'test'
+  ...
+# Subtest: openStore refusals: no CURRENT, a bad generation name, a wrong source type
+ok 511 - openStore refusals: no CURRENT, a bad generation name, a wrong source type
+  ---
+  duration_ms: 3.616833
+  type: 'test'
+  ...
+# Subtest: a tampered block is refused, naming the artifact
+ok 512 - a tampered block is refused, naming the artifact
+  ---
+  duration_ms: 88.943583
+  type: 'test'
+  ...
+# Subtest: toanSummation: sum_{i=1}^{4} (x + i*y) = 4x + 10y
+ok 513 - toanSummation: sum_{i=1}^{4} (x + i*y) = 4x + 10y
+  ---
+  duration_ms: 331.649416
+  type: 'test'
+  ...
+# Subtest: toanProduct: product_{i=1}^{3} i = 6
+ok 514 - toanProduct: product_{i=1}^{3} i = 6
+  ---
+  duration_ms: 1.163833
+  type: 'test'
+  ...
+# Subtest: toanSimplify: 2 + 3 collapses to 5
+ok 515 - toanSimplify: 2 + 3 collapses to 5
+  ---
+  duration_ms: 0.656083
+  type: 'test'
+  ...
+# Subtest: toanDiff: d/dx (x*x) mentions x
+ok 516 - toanDiff: d/dx (x*x) mentions x
+  ---
+  duration_ms: 0.786334
+  type: 'test'
+  ...
+# Subtest: toanSubst: (x + 1)[x := 4] mentions 4
+ok 517 - toanSubst: (x + 1)[x := 4] mentions 4
+  ---
+  duration_ms: 0.438042
+  type: 'test'
+  ...
+# Subtest: typed VC surface (index.js vc*): round-trip + tamper
+    # Subtest: vcSha256Hex returns the hex digest string (FIPS 180-4 abc)
+    ok 1 - vcSha256Hex returns the hex digest string (FIPS 180-4 abc)
+      ---
+      duration_ms: 4.863833
+      type: 'test'
+      ...
+    # Subtest: Ed25519 derive/sign/verify round-trip (RFC 8032 vector), typed values
+    ok 2 - Ed25519 derive/sign/verify round-trip (RFC 8032 vector), typed values
+      ---
+      duration_ms: 8.440083
+      type: 'test'
+      ...
+    # Subtest: Ed25519 verify rejects tamper / wrong key (security)
+    ok 3 - Ed25519 verify rejects tamper / wrong key (security)
+      ---
+      duration_ms: 5.152417
+      type: 'test'
+      ...
+    # Subtest: eddsa-rdfc-2022 create + verify over canonical inputs, typed values
+    ok 4 - eddsa-rdfc-2022 create + verify over canonical inputs, typed values
+      ---
+      duration_ms: 13.943875
+      type: 'test'
+      ...
+    1..4
+ok 518 - typed VC surface (index.js vc*): round-trip + tamper
+  ---
+  duration_ms: 366.414625
+  type: 'test'
+  ...
+# Subtest: typed VC surface: input validation throws a TypeError before any engine call
+ok 519 - typed VC surface: input validation throws a TypeError before any engine call
+  ---
+  duration_ms: 0.770292
+  type: 'test'
+  ...
+# Subtest: version.json is the placeholder or matches the installed wasm
+ok 520 - version.json is the placeholder or matches the installed wasm
+  ---
+  duration_ms: 17.732
+  type: 'test'
+  ...
+# Subtest: factoidal version exits 0 and prints the installed wasm sha256
+ok 521 - factoidal version exits 0 and prints the installed wasm sha256
+  ---
+  duration_ms: 586.751584
+  type: 'test'
+  ...
+# Subtest: xformsRecalc: constant calculate writes the leaf
+ok 522 - xformsRecalc: constant calculate writes the leaf
+  ---
+  duration_ms: 349.23975
+  type: 'test'
+  ...
+# Subtest: xformsRecalc: no binds leaves the instance well-formed
+ok 523 - xformsRecalc: no binds leaves the instance well-formed
+  ---
+  duration_ms: 2.599333
+  type: 'test'
+  ...
+# Subtest: XMPP server is available through its documented package export
+ok 524 - XMPP server is available through its documented package export
+  ---
+  duration_ms: 7.718083
+  type: 'test'
+  ...
+# Subtest: XMPP host releases a session exactly once after a feed exception
+ok 525 - XMPP host releases a session exactly once after a feed exception
+  ---
+  duration_ms: 16.140417
+  type: 'test'
+  ...
+# Subtest: XMPP host does not infer buffered input from absence of output
+ok 526 - XMPP host does not infer buffered input from absence of output
+  ---
+  duration_ms: 0.717375
+  type: 'test'
+  ...
+# Subtest: XMPP host limits the residual input even when the engine also sends a reply
+ok 527 - XMPP host limits the residual input even when the engine also sends a reply
+  ---
+  duration_ms: 2.197416
+  type: 'test'
+  ...
+# Subtest: XMPP host refuses an engine lacking the residual-buffer contract
+ok 528 - XMPP host refuses an engine lacking the residual-buffer contract
+  ---
+  duration_ms: 1.522541
+  type: 'test'
+  ...
+# Subtest: XMPP host rejects a partial TLS configuration before opening an engine server
+ok 529 - XMPP host rejects a partial TLS configuration before opening an engine server
+  ---
+  duration_ms: 1.428125
+  type: 'test'
+  ...
+# Subtest: XMPP host releases its engine server when TLS setup fails
+ok 530 - XMPP host releases its engine server when TLS setup fails
+  ---
+  duration_ms: 26.070875
+  type: 'test'
+  ...
+# Subtest: XMPP host closes a TCP peer that has not started its TLS handshake
+ok 531 - XMPP host closes a TCP peer that has not started its TLS handshake
+  ---
+  duration_ms: 15.93175
+  type: 'test'
+  ...
+# Subtest: XMPP host releases its engine server when state-directory initialization fails
+ok 532 - XMPP host releases its engine server when state-directory initialization fails
+  ---
+  duration_ms: 9.954584
+  type: 'test'
+  ...
+# Subtest: XMPP host serializes roster snapshots and waits for persistence before closing
+ok 533 - XMPP host serializes roster snapshots and waits for persistence before closing
+  ---
+  duration_ms: 13.502209
+  type: 'test'
+  ...
+# Subtest: xmpp-serve: engine reports actual UTF-8 residual bytes despite a reply
+ok 534 - xmpp-serve: engine reports actual UTF-8 residual bytes despite a reply
+  ---
+  duration_ms: 18.912708
+  type: 'test'
+  ...
+# Subtest: xmpp-serve: a full session over a TCP socket, through wasm
+    # Subtest: RFC 6120 4.2/4.3: the stream header is answered with features offering SASL, not bind
+    ok 1 - RFC 6120 4.2/4.3: the stream header is answered with features offering SASL, not bind
+      ---
+      duration_ms: 4.348709
+      type: 'test'
+      ...
+    # Subtest: RFC 6120 4.9.3.6: a stream for another domain is host-unknown and the socket closes
+    ok 2 - RFC 6120 4.9.3.6: a stream for another domain is host-unknown and the socket closes
+      ---
+      duration_ms: 5.393917
+      type: 'test'
+      ...
+    # Subtest: RFC 6120 6.5: a wrong password is not-authorized
+    ok 3 - RFC 6120 6.5: a wrong password is not-authorized
+      ---
+      duration_ms: 11.186792
+      type: 'test'
+      ...
+    # Subtest: RFC 7677: SCRAM-SHA-256 computed independently with node:crypto authenticates
+    ok 4 - RFC 7677: SCRAM-SHA-256 computed independently with node:crypto authenticates
+      ---
+      duration_ms: 419.95225
+      type: 'test'
+      ...
+    # Subtest: RFC 6120 7: binding returns the full JID; a message reaches the other session with the server-stamped from
+    ok 5 - RFC 6120 7: binding returns the full JID; a message reaches the other session with the server-stamped from
+      ---
+      duration_ms: 117.488
+      type: 'test'
+      ...
+    # Subtest: a message to an account with no bound session is held, then delivered once it binds
+    ok 6 - a message to an account with no bound session is held, then delivered once it binds
+      ---
+      duration_ms: 108.2475
+      type: 'test'
+      ...
+    # Subtest: RFC 6121 2: a roster set is pushed back and persisted under DIR/roster as the engine encodes it
+    ok 7 - RFC 6121 2: a roster set is pushed back and persisted under DIR/roster as the engine encodes it
+      ---
+      duration_ms: 162.020833
+      type: 'test'
+      ...
+    # Subtest: a stanza written as a file under DIR/spool/<bare jid>/ is delivered to the bound session and unlinked
+    ok 8 - a stanza written as a file under DIR/spool/<bare jid>/ is delivered to the bound session and unlinked
+      ---
+      duration_ms: 169.781584
+      type: 'test'
+      ...
+    # Subtest: RFC 6120 4.4: a client that half-closes gets the stream close
+    ok 9 - RFC 6120 4.4: a client that half-closes gets the stream close
+      ---
+      duration_ms: 1.707917
+      type: 'test'
+      ...
+    # Subtest: RFC 6120 4.9: a complete but not-well-formed stanza is a stream error, not a crash
+    ok 10 - RFC 6120 4.9: a complete but not-well-formed stanza is a stream error, not a crash
+      ---
+      duration_ms: 4.014
+      type: 'test'
+      ...
+    1..10
+ok 535 - xmpp-serve: a full session over a TCP socket, through wasm
+  ---
+  duration_ms: 1089.26025
+  type: 'test'
+  ...
+# Subtest: xmpp-serve: rosters persisted by one run are loaded by the next
+ok 536 - xmpp-serve: rosters persisted by one run are loaded by the next
+  ---
+  duration_ms: 170.406209
+  type: 'test'
+  ...
+# Subtest: parseJid: bare domain
+ok 537 - parseJid: bare domain
+  ---
+  duration_ms: 341.675584
+  type: 'test'
+  ...
+# Subtest: parseJid: localpart + domain + resource
+ok 538 - parseJid: localpart + domain + resource
+  ---
+  duration_ms: 1.55425
+  type: 'test'
+  ...
+# Subtest: parseJid: a resourcepart containing "@" and "/" round-trips
+ok 539 - parseJid: a resourcepart containing "@" and "/" round-trips
+  ---
+  duration_ms: 0.292541
+  type: 'test'
+  ...
+# Subtest: parseJid: empty localpart ("@example.com") is rejected, not silently dropped
+ok 540 - parseJid: empty localpart ("@example.com") is rejected, not silently dropped
+  ---
+  duration_ms: 1.119125
+  type: 'test'
+  ...
+# Subtest: parseJid: empty domainpart ("juliet@") is rejected
+ok 541 - parseJid: empty domainpart ("juliet@") is rejected
+  ---
+  duration_ms: 0.742916
+  type: 'test'
+  ...
+# Subtest: parseJid: empty resourcepart ("juliet@example.com/") is rejected
+ok 542 - parseJid: empty resourcepart ("juliet@example.com/") is rejected
+  ---
+  duration_ms: 0.218791
+  type: 'test'
+  ...
+# Subtest: parseJid: the empty string is rejected
+ok 543 - parseJid: the empty string is rejected
+  ---
+  duration_ms: 0.289542
+  type: 'test'
+  ...
+# Subtest: renderJid: round-trips a parsed JID back to the same string
+ok 544 - renderJid: round-trips a parsed JID back to the same string
+  ---
+  duration_ms: 0.389958
+  type: 'test'
+  ...
+# Subtest: renderJid: missing required domainpart is rejected
+ok 545 - renderJid: missing required domainpart is rejected
+  ---
+  duration_ms: 0.631875
+  type: 'test'
+  ...
+# Subtest: parseStreamHeader: a real captured ejabberd stream-open tag (2026-09-07, foafmixer pilot container), leading <?xml?> declaration included
+ok 546 - parseStreamHeader: a real captured ejabberd stream-open tag (2026-09-07, foafmixer pilot container), leading <?xml?> declaration included
+  ---
+  duration_ms: 2.113708
+  type: 'test'
+  ...
+# Subtest: parseStreamHeader: a non-stream tag is rejected
+ok 547 - parseStreamHeader: a non-stream tag is rejected
+  ---
+  duration_ms: 0.364209
+  type: 'test'
+  ...
+# Subtest: parseStreamHeader: a stream header with a structurally bad "to" JID is rejected
+ok 548 - parseStreamHeader: a stream header with a structurally bad "to" JID is rejected
+  ---
+  duration_ms: 0.207542
+  type: 'test'
+  ...
+# Subtest: renderStreamHeader: round-trips through parseStreamHeader
+ok 549 - renderStreamHeader: round-trips through parseStreamHeader
+  ---
+  duration_ms: 0.547042
+  type: 'test'
+  ...
+# Subtest: featuresFor(preTls): required STARTTLS, no SASL, no bind
+ok 550 - featuresFor(preTls): required STARTTLS, no SASL, no bind
+  ---
+  duration_ms: 0.804875
+  type: 'test'
+  ...
+# Subtest: featuresFor(postTls): the given mechanisms, no STARTTLS, no bind
+ok 551 - featuresFor(postTls): the given mechanisms, no STARTTLS, no bind
+  ---
+  duration_ms: 0.608625
+  type: 'test'
+  ...
+# Subtest: featuresFor(authenticated): bind and session, nothing else
+ok 552 - featuresFor(authenticated): bind and session, nothing else
+  ---
+  duration_ms: 0.415666
+  type: 'test'
+  ...
+# Subtest: featuresFor: an unknown stage name is rejected, not silently defaulted
+ok 553 - featuresFor: an unknown stage name is rejected, not silently defaulted
+  ---
+  duration_ms: 0.2525
+  type: 'test'
+  ...
+# Subtest: parseStanza: a message stanza with a body
+ok 554 - parseStanza: a message stanza with a body
+  ---
+  duration_ms: 8.580833
+  type: 'test'
+  ...
+# Subtest: parseStanza: bare presence
+ok 555 - parseStanza: bare presence
+  ---
+  duration_ms: 0.231916
+  type: 'test'
+  ...
+# Subtest: parseStanza: an iq with a nested query element preserves its xmlns
+ok 556 - parseStanza: an iq with a nested query element preserves its xmlns
+  ---
+  duration_ms: 0.197875
+  type: 'test'
+  ...
+# Subtest: parseStanza: a stanza with a structurally bad "from" JID is rejected
+ok 557 - parseStanza: a stanza with a structurally bad "from" JID is rejected
+  ---
+  duration_ms: 0.225917
+  type: 'test'
+  ...
+# Subtest: parseStanza: a non-stanza top-level element (e.g. stream:features) is rejected
+ok 558 - parseStanza: a non-stanza top-level element (e.g. stream:features) is rejected
+  ---
+  duration_ms: 0.174166
+  type: 'test'
+  ...
+# Subtest: adversarial: a huge run of unmatched "<" fails cleanly and promptly
+ok 559 - adversarial: a huge run of unmatched "<" fails cleanly and promptly
+  ---
+  duration_ms: 55.647125
+  type: 'test'
+  ...
+# Subtest: adversarial: 10,000 chained "&amp;" entities in a stanza body parse promptly
+ok 560 - adversarial: 10,000 chained "&amp;" entities in a stanza body parse promptly
+  ---
+  duration_ms: 36.975083
+  type: 'test'
+  ...
+# Subtest: xfail: parseJid rejects a localpart with a PRECIS-disallowed codepoint (U+00A0 NO-BREAK SPACE, RFC 8265 §3.3) (https://github.com/danbri/factoidal/issues/676)
+ok 561 - xfail: parseJid rejects a localpart with a PRECIS-disallowed codepoint (U+00A0 NO-BREAK SPACE, RFC 8265 §3.3) (https://github.com/danbri/factoidal/issues/676)
+  ---
+  duration_ms: 11.864125
+  type: 'test'
+  ...
+# expected failure: a disallowed codepoint must be rejected under PRECIS UsernameCaseMapped\\n\\ntrue !== false\\n
+# Subtest: xfail: parseJid normalizes a non-NFC localpart (RFC 8265 §3.3 normalization rule) (https://github.com/danbri/factoidal/issues/676)
+ok 562 - xfail: parseJid normalizes a non-NFC localpart (RFC 8265 §3.3 normalization rule) (https://github.com/danbri/factoidal/issues/676)
+  ---
+  duration_ms: 1.430958
+  type: 'test'
+  ...
+# expected failure: NFC form expected after PRECIS enforcement\\n+ actual - expected\\n\\n+ 'juliét'\\n- 'juliét'\\n       ^\\n
+# Subtest: xsltTransform: value-of into a literal result element
+ok 563 - xsltTransform: value-of into a literal result element
+  ---
+  duration_ms: 335.062333
+  type: 'test'
+  ...
+# Subtest: xsltTransform: identity-style xsl:copy-of
+ok 564 - xsltTransform: identity-style xsl:copy-of
+  ---
+  duration_ms: 1.186958
+  type: 'test'
+  ...
+# Subtest: xsltTransform: rejects malformed XML
+ok 565 - xsltTransform: rejects malformed XML
+  ---
+  duration_ms: 1.253709
+  type: 'test'
+  ...
+1..565
+# tests 579
+# suites 0
+# pass 575
+# fail 3
+# cancelled 0
+# skipped 1
+# todo 0
+# duration_ms 70212.58275

@@ -1,0 +1,25 @@
+{
+  "total_count": 1,
+  "artifacts": [
+    {
+      "id": 12451264138,
+      "node_id": "MDg6QXJ0aWZhY3QxMjQ1MTI2NDEzOA==",
+      "name": "owl-reader-assurance",
+      "size_in_bytes": 149702,
+      "url": "https://api.github.com/repos/danbri/factoidal-core/actions/artifacts/12451264138",
+      "archive_download_url": "https://api.github.com/repos/danbri/factoidal-core/actions/artifacts/12451264138/zip",
+      "expired": false,
+      "digest": "sha256:4c2135bdf99db016fa0c9b1a7633b523ebb76ca82d52a32f47abf0967698a67a",
+      "created_at": "2026-10-22T19:15:53Z",
+      "updated_at": "2026-10-22T19:15:53Z",
+      "expires_at": "2026-11-21T19:15:52Z",
+      "workflow_run": {
+        "id": 39836021682,
+        "repository_id": 1348201557,
+        "head_repository_id": 1348201557,
+        "head_branch": "claude/integrate-prs-1-3",
+        "head_sha": "ebe0188a3ae8d5a1d58b80b0356c50a6dfd6cf50"
+      }
+    }
+  ]
+}

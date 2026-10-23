@@ -51,62 +51,14 @@ import L4Factoidal.RIF.Ps
 import L4Factoidal.Syntax.Turtle
 import L4Factoidal.RDFS.Closure
 import Harness.Fixtures
+import Harness.RifImport
+import L4Factoidal.RIF.RdfMapping
 
 open L4Factoidal.RIF
+open L4Factoidal.RIF.RdfMapping
 open L4Factoidal.RDF
 open L4Factoidal.Syntax
 open L4Factoidal.XML (parseXML)
-
-/-- An RDF term as a RIF constant. RIF-RDF Compatibility §3: an IRI is
-    a constant in `rif:iri`, a typed literal is one in its datatype,
-    and a language-tagged literal is one in `rdf:PlainLiteral` with
-    the tag in its lexical form. -/
-def gOfTerm : Term → Option GTerm
-  | .iri i     => some (gIri i.val)
-  | .literal l =>
-      (match l.val.langTag with
-       | some tag => some (.const (l.val.lexicalForm ++ "@" ++ tag) (rdfNs ++ "PlainLiteral"))
-       | none     => some (.const l.val.lexicalForm l.val.datatype.val))
-  | .bnode b   => some (.const b localSpace)
-  | _          => none
-
-def gOfSubject : Subject → GTerm
-  | .iri i   => gIri i.val
-  | .bnode b => .const b localSpace
-
-def rdfTypeStr : String := "http://www.w3.org/1999/02/22-rdf-syntax-ns#type"
-def rdfsSubClassStr : String := "http://www.w3.org/2000/01/rdf-schema#subClassOf"
-
-/-- A triple as RIF facts. `rdf:type` is MEMBERSHIP and
-    `rdfs:subClassOf` is SUBCLASS, not frames: RIF-RDF Compatibility
-    maps them onto RIF's own object model, and the corpus asks
-    `ex:a # ex:D` of an imported graph. The frame form is kept too,
-    because a rule may still read the triple as a slot. -/
-def factsOfTriple (t : Triple) : List GAtom :=
-  match gOfTerm t.o with
-  | none => []
-  | some o =>
-      let s := gOfSubject t.s
-      let base := [GAtom.frame s (gIri t.p.val) o]
-      if t.p.val == rdfTypeStr then base ++ [GAtom.member s o]
-      else if t.p.val == rdfsSubClassStr then base ++ [GAtom.sub s o]
-      else base
-
-/-- `@prefix` declarations of a Turtle document, read textually. The
-    Turtle parser resolves them away, and the conclusion needs the
-    NAMES. -/
-def turtlePrefixes (src : String) : List (String × String) :=
-  (src.splitOn "\n").filterMap (fun line =>
-    let l := line.trim
-    if l.startsWith "@prefix" then
-      match ((String.ofList (l.toList.drop 7)).trim).splitOn ":" with
-      | p :: rest =>
-          let tail := (String.intercalate ":" rest).trim
-          if tail.startsWith "<" then
-            some (p.trim, String.ofList ((tail.toList.drop 1).takeWhile (· != '>')))
-          else none
-      | _ => none
-    else none)
 
 /-- The last `/`-separated segment of an import location. The corpus
 publishes every import under a W3C URL whose last segment is the local
@@ -304,149 +256,142 @@ def main (args : List String) : IO UInt32 := do
               if csrc?.isNone && cgraph?.isNone then
                 t := { t with notRead := t.notRead + 1 }
               else
-                -- Any Turtle beside the case is an IMPORTed graph.
-                let mut imported : List Triple := []
-                let mut extraPrefixes : List (String × String) := []
-                for f in files do
-                  -- A `-conclusion.ttl` / `-nonconclusion.ttl` is the
-                  -- QUESTION, not an import. Merging it into the facts
-                  -- would make the case entail itself.
-                  if f.endsWith ".ttl" && !(isConclusionFile f) then
-                    let tsrc ← IO.FS.readFile (cdir ++ "/" ++ f)
-                    extraPrefixes := extraPrefixes ++ turtlePrefixes tsrc
-                    match parseTurtle tsrc none with
-                    | .ok g    => imported := imported ++ g
-                    | .error _ => pure ()
-                  -- An RDF/XML import with no Turtle twin. The corpus
-                  -- publishes most imports in both syntaxes and
-                  -- `Modeling_Brain_Anatomy` in RDF/XML (and OWL
-                  -- Functional Syntax) only. Reading both twins would
-                  -- merge two copies of every blank node.
-                  else if f.endsWith ".rdf" &&
-                      !(files.contains (importStem f ++ ".ttl")) then
-                    let xsrc ← IO.FS.readFile (cdir ++ "/" ++ f)
-                    match L4Factoidal.Syntax.RdfXml.parseRdfXml xsrc none with
-                    | .ok g    => imported := imported ++ g
-                    | .error _ => pure ()
                 match parseDocument psrc with
                 | .error e =>
                     t := { t with notRead := t.notRead + 1 }
                     IO.println s!"NOT READ {kind}/{name}: premise — {e.msg}"
                 | .ok doc =>
-                    let ctx : Ctx :=
-                      { base := doc.base, prefixes := doc.prefixes ++ extraPrefixes }
-                    -- The conclusion, from the RIF condition when the
-                    -- corpus published one and from the vendored RDF
-                    -- graph when it did not.
-                    let goal? : Except String Formula :=
-                      match csrc? with
-                      | some csrc =>
-                          match parseFormulaText ctx csrc with
-                          | .error e => .error e.msg
-                          | .ok f    => .ok f
-                      | none =>
-                          match cgraph? with
-                          | none => .error "no conclusion"
-                          | some gsrc =>
-                            match parseTurtle gsrc none with
-                            | .error e => .error s!"conclusion graph — {e}"
-                            | .ok cg =>
-                              match goalOfGraph cg with
-                              | none   => .error "the conclusion graph has no usable triple"
-                              | some f => .ok f
-                    match goal? with
-                    | .error e =>
-                        t := { t with notRead := t.notRead + 1 }
-                        IO.println s!"NOT READ {kind}/{name}: conclusion — {e}"
-                    | .ok goal =>
-                        -- An IMPORT names an entailment regime. An
-                        -- `Import` naming RDFS means the imported
-                        -- graph is RDFS-CLOSED before it becomes facts.
-                        -- OWL-Direct is NOT a closure of the graph: the
-                        -- graph is read as an OWL 2 DL ontology and its
-                        -- axioms become rules (RIF-RDF-OWL §9.2), which
-                        -- `L4Factoidal.RIF.OwlDirect` does. Reading the
-                        -- graph as plain RDF triples made
-                        -- `Non-Annotation_Entailment` entail a triple
-                        -- that OWL puts inside an annotation.
-                        -- OWL-RDF-Based is not implemented and stays
-                        -- UNDECIDED.
-                        let profiles := doc.imports.filterMap (·.2)
-                        -- OWL-Direct is decided by
-                        -- `RIF.OwlDirect.entailsOwlDirect` when EVERY
-                        -- import names it. Mixed with Simple, RDF or
-                        -- RDFS there is no single highest profile and
-                        -- RIF-RDF-OWL §5.2 rejects the document; mixed
-                        -- with OWL-RDF-Based the highest is a profile
-                        -- this port does not implement.
-                        let owlDirectOnly := !profiles.isEmpty &&
-                          profiles.all (· == L4Factoidal.RIF.Conformance.owlDirectProfile)
-                        let unsupportedRegime := !owlDirectOnly && profiles.any (fun p =>
-                          (p.splitOn "OWL").length > 1 || (p.splitOn "entailment/RIF").length > 1)
-                        let wantsRdfs := profiles.any (fun p =>
-                          (p.splitOn "RDFS").length > 1)
-                        let g := if wantsRdfs && !imported.isEmpty
-                                 then L4Factoidal.RDFS.closureFix imported
-                                 else imported
-                        let facts := g.flatMap factsOfTriple
-                        let want := kind == "PositiveEntailmentTest"
-                        -- Local constants are DOCUMENT-scoped, so
-                        -- the premise's `_p` and the conclusion's are
-                        -- different symbols.
-                        let rules := doc.rules.map (qualifyRule "premise")
-                        let goal := qualifyFormula "conclusion" goal
-                        -- An OWL-Direct combination that violates the
-                        -- individual/data-value VOCABULARY SEPARATION
-                        -- is INCONSISTENT and entails everything. That
-                        -- verdict is part of `entailsOwlDirect`
-                        -- (ROWL-Direct rows (ii)-(vii), RIF-RDF-OWL
-                        -- §9.2.2.2). The narrower
-                        -- `Conformance.owlDirectSeparationInconsistent`
-                        -- used to be called here for EVERY profile,
-                        -- which would have made a Simple import
-                        -- inconsistent for a fact a Simple combination
-                        -- allows.
-                        match (if unsupportedRegime
-                               then Verdict.undecided
-                                 "the case imports under an entailment regime this port does not implement"
-                               else if owlDirectOnly
-                               then L4Factoidal.RIF.OwlDirect.entailsOwlDirect rules imported goal rounds
-                               else entails rules facts goal rounds) with
-                        | .holds =>
-                            if want then
-                              t := { t with pass := t.pass + 1 }
-                              if overrides.contains name then
-                                t := { t with staleOverrides := t.staleOverrides ++ [name] }
-                            else if overrides.contains name then
-                              t := { t with overridden := t.overridden + 1 }
-                              IO.println s!"OVERRIDE {kind}/{name}: entailed, and the fixture says it must not be"
-                            else
-                              t := { t with fail := t.fail + 1 }
-                              IO.println s!"FAIL {kind}/{name}: entailed, and must not be"
-                        | .doesNotHold =>
-                            if !want then
-                              t := { t with pass := t.pass + 1 }
-                              if overrides.contains name then
-                                t := { t with staleOverrides := t.staleOverrides ++ [name] }
-                            else if overrides.contains name then
-                              t := { t with overridden := t.overridden + 1 }
-                              IO.println s!"OVERRIDE {kind}/{name}: not entailed, and the fixture says it must be"
-                            else
-                              t := { t with fail := t.fail + 1 }
-                              IO.println s!"FAIL {kind}/{name}: not entailed, and must be"
-                        | .undecided why =>
-                            t := { t with undecided := t.undecided + 1 }
-                            -- Name the built-ins the case USES. They
-                            -- are candidates, not the measured cause:
-                            -- the engine threads a Bool, so it cannot
-                            -- say which one blocked.
-                            let used := externalIrisUsed rules goal
-                            let usedStr :=
-                              if used.isEmpty then ""
-                              else if verbose then
-                                " — built-ins used: " ++ String.intercalate ", " used
-                              else s!" — {used.length} built-ins used, --verbose names them"
-                            IO.println s!"UNDECIDED {kind}/{name}: {why}{usedStr}"
+                    -- Only declared import documents supply facts; unrelated
+                    -- sibling fixtures (including conclusions) are never premises.
+                    let mut imported : Graph := []
+                    let mut extraPrefixes : List (String × String) := []
+                    let mut importErrors : List String := []
+                    for (url, _) in doc.imports do
+                      match ← Harness.RifImport.load cdir url with
+                      | .ok loaded =>
+                          imported := imported ++ loaded.graph
+                          extraPrefixes := extraPrefixes ++ loaded.prefixes
+                      | .error why => importErrors := importErrors ++ [why]
+                    if !importErrors.isEmpty then
+                      t := { t with notRead := t.notRead + 1 }
+                      IO.println s!"NOT READ {kind}/{name}: {String.intercalate "; " importErrors}"
+                    else
+                      let ctx : Ctx :=
+                        { base := doc.base, prefixes := doc.prefixes ++ extraPrefixes }
+                      -- The conclusion, from the RIF condition when the
+                      -- corpus published one and from the vendored RDF
+                      -- graph when it did not.
+                      let goal? : Except String Formula :=
+                        match csrc? with
+                        | some csrc =>
+                            match parseFormulaText ctx csrc with
+                            | .error e => .error e.msg
+                            | .ok f    => .ok f
+                        | none =>
+                            match cgraph? with
+                            | none => .error "no conclusion"
+                            | some gsrc =>
+                              match parseTurtle gsrc none with
+                              | .error e => .error s!"conclusion graph — {e}"
+                              | .ok cg =>
+                                match goalOfGraph cg with
+                                | none   => .error "the conclusion graph has no usable triple"
+                                | some f => .ok f
+                      match goal? with
+                      | .error e =>
+                          t := { t with notRead := t.notRead + 1 }
+                          IO.println s!"NOT READ {kind}/{name}: conclusion — {e}"
+                      | .ok goal =>
+                          -- An IMPORT names an entailment regime. An
+                          -- `Import` naming RDFS means the imported
+                          -- graph is RDFS-CLOSED before it becomes facts.
+                          -- OWL-Direct is NOT a closure of the graph: the
+                          -- graph is read as an OWL 2 DL ontology and its
+                          -- axioms become rules (RIF-RDF-OWL §9.2), which
+                          -- `L4Factoidal.RIF.OwlDirect` does. Reading the
+                          -- graph as plain RDF triples made
+                          -- `Non-Annotation_Entailment` entail a triple
+                          -- that OWL puts inside an annotation.
+                          -- OWL-RDF-Based is not implemented and stays
+                          -- UNDECIDED.
+                          let profiles := doc.imports.filterMap (·.2)
+                          -- OWL-Direct is decided by
+                          -- `RIF.OwlDirect.entailsOwlDirect` when EVERY
+                          -- import names it. Mixed with Simple, RDF or
+                          -- RDFS there is no single highest profile and
+                          -- RIF-RDF-OWL §5.2 rejects the document; mixed
+                          -- with OWL-RDF-Based the highest is a profile
+                          -- this port does not implement.
+                          let owlDirectOnly := !profiles.isEmpty &&
+                            profiles.all (· == L4Factoidal.RIF.Conformance.owlDirectProfile)
+                          let unsupportedRegime := !owlDirectOnly && profiles.any (fun p =>
+                            (p.splitOn "OWL").length > 1 || (p.splitOn "entailment/RIF").length > 1)
+                          let wantsRdfs := profiles.any (fun p =>
+                            (p.splitOn "RDFS").length > 1)
+                          let g := if wantsRdfs && !imported.isEmpty
+                                   then L4Factoidal.RDFS.closureFix imported
+                                   else imported
+                          let facts := g.flatMap factsOfTriple
+                          let want := kind == "PositiveEntailmentTest"
+                          -- Local constants are DOCUMENT-scoped, so
+                          -- the premise's `_p` and the conclusion's are
+                          -- different symbols.
+                          let rules := doc.rules.map (qualifyRule "premise")
+                          let goal := qualifyFormula "conclusion" goal
+                          -- An OWL-Direct combination that violates the
+                          -- individual/data-value VOCABULARY SEPARATION
+                          -- is INCONSISTENT and entails everything. That
+                          -- verdict is part of `entailsOwlDirect`
+                          -- (ROWL-Direct rows (ii)-(vii), RIF-RDF-OWL
+                          -- §9.2.2.2). The narrower
+                          -- `Conformance.owlDirectSeparationInconsistent`
+                          -- used to be called here for EVERY profile,
+                          -- which would have made a Simple import
+                          -- inconsistent for a fact a Simple combination
+                          -- allows.
+                          match (if unsupportedRegime
+                                 then Verdict.undecided
+                                   "the case imports under an entailment regime this port does not implement"
+                                 else if owlDirectOnly
+                                 then L4Factoidal.RIF.OwlDirect.entailsOwlDirect rules imported goal rounds
+                                 else if !graphMappingSupported g then Verdict.undecided
+                                   "RDF input cannot be represented in RIF (direction or triple term)"
+                                 else entails rules facts goal rounds) with
+                          | .holds =>
+                              if want then
+                                t := { t with pass := t.pass + 1 }
+                                if overrides.contains name then
+                                  t := { t with staleOverrides := t.staleOverrides ++ [name] }
+                              else if overrides.contains name then
+                                t := { t with overridden := t.overridden + 1 }
+                                IO.println s!"OVERRIDE {kind}/{name}: entailed, and the fixture says it must not be"
+                              else
+                                t := { t with fail := t.fail + 1 }
+                                IO.println s!"FAIL {kind}/{name}: entailed, and must not be"
+                          | .doesNotHold =>
+                              if !want then
+                                t := { t with pass := t.pass + 1 }
+                                if overrides.contains name then
+                                  t := { t with staleOverrides := t.staleOverrides ++ [name] }
+                              else if overrides.contains name then
+                                t := { t with overridden := t.overridden + 1 }
+                                IO.println s!"OVERRIDE {kind}/{name}: not entailed, and the fixture says it must be"
+                              else
+                                t := { t with fail := t.fail + 1 }
+                                IO.println s!"FAIL {kind}/{name}: not entailed, and must be"
+                          | .undecided why =>
+                              t := { t with undecided := t.undecided + 1 }
+                              -- Name the built-ins the case USES. They
+                              -- are candidates, not the measured cause:
+                              -- the engine threads a Bool, so it cannot
+                              -- say which one blocked.
+                              let used := externalIrisUsed rules goal
+                              let usedStr :=
+                                if used.isEmpty then ""
+                                else if verbose then
+                                  " — built-ins used: " ++ String.intercalate ", " used
+                                else s!" — {used.length} built-ins used, --verbose names them"
+                              IO.println s!"UNDECIDED {kind}/{name}: {why}{usedStr}"
   let decided := t.pass + t.fail
   IO.println ""
   IO.println s!"rif-core DECIDED: {t.pass} pass, {t.fail} fail (out of {decided} decided)"
@@ -466,4 +411,7 @@ def main (args : List String) : IO UInt32 := do
   IO.println "An UNDECIDED case is counted apart, never as a pass and never as a"
   IO.println "failure: a closure computed without a rule is not the closure, and"
   IO.println "reading `does not entail` off it would be a guess."
-  return 0
+  let inventory := t.pass + t.fail + t.undecided + t.notRead + t.skipped + t.overridden
+  if inventory == 0 then
+    IO.eprintln "rif runner: empty inventory; no cases were scored or classified"
+  return if t.fail > 0 || !t.staleOverrides.isEmpty || inventory == 0 then 1 else 0

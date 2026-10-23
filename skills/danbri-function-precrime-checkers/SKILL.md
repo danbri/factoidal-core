@@ -1083,8 +1083,8 @@ Four costs, each found after the one before it was repaired:
 2. **`Dataset.insertQuads` scanned and copied the graph per quad.**
    `RDF/GraphIndex.lean`: a `GraphIx` holds the graph as `base ++
    rev.reverse` and a `Std.HashSet` of the KEYS of its triples. `Graph.mem`
-   compares with `Triple.eqb` (tags case-insensitively, XMLLiterals by
-   canonical form), so the key is the triple with `Term.joinKey` in the object
+   compares with `Triple.eqb` (tags case-insensitively; until 2026-10-23
+   also XMLLiterals by canonical form, issue 963), so the key is the triple with `Term.joinKey` in the object
    position, and `Triple.eqb_iff_key` proves that equal keys are exactly
    `eqb`-equal triples. A graph slot makes its set on the SECOND add, so one
    insert into a large graph costs what it cost before.
@@ -1460,6 +1460,15 @@ Rules from this repair:
   two bytes of a character), an error on the next line (its offset counts the long line), an unterminated string
   inside the long line, a last line with no line break, and CR LF. The offset after a long carry is where a
   reversed carry would go wrong.
+
+## A memory cause named from the code, not measured (https://github.com/danbri/factoidal/issues/874, 2026-10-22)
+
+The issue named the `List Char` partial line as the cost of 32.5 bytes per input byte for one long line. A `String`
+carry with re-proved equality theorems made peak memory worse (34.8 to 39.2 bytes per input byte), because the
+completed line is a `List Char` for the readers (33.3 bytes per character, measured with `String.toList` alone in a
+small Lean program). Rule: before changing a representation to remove a memory cost, build the smallest program that
+holds only that representation at the size of the row and read its peak resident set. Record: parsing strategy
+section 3b.9.
 
 ## A ratio over one small sample fails under load (2026-10-21)
 

@@ -1,0 +1,49 @@
+{
+  "sourceCommit": "eef88c3ac775e8f831ffeaf880f7f1cf5dda5b42",
+  "command": [
+    "/Users/danbri/working/sandbox/october/tpac/codex-npm-review/integrate-pr3/formal/lean4/.lake/build/bin/l4xsd-datatypes",
+    "/private/tmp/xsdtests-7bc3365c652a322f3d762021b3879eb92dae7e30",
+    "--verbose"
+  ],
+  "cwd": "/Users/danbri/working/sandbox/october/tpac/codex-npm-review/integrate-pr3",
+  "fixture": {
+    "url": "https://codeload.github.com/w3c/xsdtests/tar.gz/7bc3365c652a322f3d762021b3879eb92dae7e30",
+    "commit": "7bc3365c652a322f3d762021b3879eb92dae7e30",
+    "archive_sha256": "2aeff935632a3a13967fbe3d9a99a874de4bad7d9dde2987ac7adcc517b603ab",
+    "fixture_root": "/private/tmp/xsdtests-7bc3365c652a322f3d762021b3879eb92dae7e30",
+    "license": "W3C Document Notice and License per unchanged00COPYRIGHT",
+    "license_sha256": "7eed412023877d15a3900b6802afb9e6365c0ea0a71a1456c5bf5f3a591e7fb2",
+    "note": "Exact gitlink revision from main. Unmodified fixture extraction; not a claim of full XSD structures coverage."
+  },
+  "binarySha256": "2c06cf8b92fa4c6eec70536a08f263ef7e54b30852f896febfd91b0aa428b999",
+  "runnerSourceSha256": "367a6901bff206ccfc7e428d3e1c76afd5185a1f61a976bef1aa0d59f124422e",
+  "elapsedSeconds": 33.277935166843235,
+  "exitCode": 0,
+  "timedOut": false,
+  "peakChildRssBytesDarwin": 150044672,
+  "counts": {
+    "pass": 18955,
+    "fail": 0,
+    "scored": 18955
+  },
+  "notScored": {
+    "structures": 7052,
+    "mixed": 0,
+    "schema-invalid": 1,
+    "version-1.0": 8,
+    "unreadable": 139,
+    "not-simple": 8,
+    "assertion": 33,
+    "unreadable-pattern": 105,
+    "nilled": 3,
+    "value-constraint": 53
+  },
+  "schemaTestsSeen": 15378,
+  "manifestInstanceTests": 26357,
+  "manifestTestSets": 93,
+  "unreadableTestSets": [],
+  "accountedInstances": 26357,
+  "log": "pr3-baseline-xsd-run.log",
+  "logSha256": "20406e0ee519afff8fd566e03161a24221339c6b1abcacbb9b77c795b812b0ce",
+  "note": "Runner returns zero even for scored failures. Datatypes only; no structures conformance claim. Wall time is a single baseline measurement, not a performance gate."
+}

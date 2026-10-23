@@ -1,0 +1,19 @@
+{
+  "command": [
+    "node",
+    "tools/test-owl-public-artifact.mjs",
+    "--cases",
+    "../logs/integration-ci-86ca44f4b-owl/owl-public-boundary.json",
+    "--json",
+    "../logs/integration-final-artifact-controls-report.json"
+  ],
+  "cwd": "/Users/danbri/working/sandbox/october/tpac/codex-npm-review/integrate-core",
+  "node": "v22.22.2",
+  "nodeBin": "/opt/homebrew/Cellar/node@22/22.22.2_2/bin",
+  "npmCache": "/private/tmp/factoidal-public-pack-cache",
+  "started": "2026-10-22T17:55:51.910Z",
+  "elapsedMs": 54613,
+  "exit": 0,
+  "signal": null,
+  "error": null
+}

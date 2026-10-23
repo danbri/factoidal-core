@@ -1,0 +1,7 @@
+
+shex validation: 1182 pass, 0 fail (out of 1182 decided)
+NOT READ: 0 entries (out of 1182)
+
+A NOT-READ entry is a gap in the reader, not a validation
+result: folding it into either column would report a parser
+gap as an engine verdict.

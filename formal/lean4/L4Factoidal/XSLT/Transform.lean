@@ -669,7 +669,10 @@ def copyItem (d : Doc) (it : Item) : List RNode :=
                   if a.any (fun b => b.name == nm) then none
                   else some ({ name := nm, value := u } : Attribute)
             | _ => none)
-          [.elem t (inherited ++ a) (ks.map copyNode)]
+          let attrs := inherited ++ a
+          let attrs := if prefixOf t == "" && !(attrs.any (fun a => a.name == "xmlns"))
+            then attrs ++ [{ name := "xmlns", value := "" }] else attrs
+          [.elem t attrs (ks.map copyNode)]
       | other => [copyNode other]
 
 /-! ## The runtime -/
@@ -981,6 +984,8 @@ partial def instOne (rt : Rt) (fuel : Nat) (vars : List (String × Value))
                     else some ({ name := if p == "" then "xmlns" else "xmlns:" ++ p,
                                  value := u } : Attribute)
                 | _ => none)
+              let inherited := if prefixOf t == "" && !(inherited.any (fun a => a.name == "xmlns"))
+                then inherited ++ [{ name := "xmlns", value := "" }] else inherited
               some [.elem t (inherited ++ extra) ks]
           | other => some [copyNode other]
   | .forEach sel sorts body => do
@@ -1233,7 +1238,11 @@ def isStylesheetRoot (root : Node) : Bool :=
 def transform (style : Document) (src : Document)
     (docs : List (String × Doc) := [])
     (imports : List (String × Node) := []) : Outcome :=
-  if !isStylesheetRoot style.root then
+  if !style.namespaceWellFormed || !src.namespaceWellFormed ||
+      !(docs.all (fun (_, d) => checkChildren "1.1" initialScope d)) ||
+      !(imports.all (fun (_, n) => isNamespaceWellFormed "1.1" n)) then
+    .refused "input is not namespace well formed"
+  else if !isStylesheetRoot style.root then
     .refused "the stylesheet root is not xsl:stylesheet or xsl:transform"
   else
     let st := readStylesheetWith imports 8 0 style.root

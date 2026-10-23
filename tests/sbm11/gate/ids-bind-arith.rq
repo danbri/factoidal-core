@@ -1,0 +1,3 @@
+PREFIX ex: <http://ex.org/>
+# BIND of an arithmetic expression; "abc" gives an error, so ?z is unbound in that row.
+SELECT ?s ?z WHERE { ?s ex:age ?a . BIND(?a + 1 AS ?z) }

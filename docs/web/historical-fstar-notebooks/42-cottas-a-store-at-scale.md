@@ -19,6 +19,10 @@ tests: tests/hub/post42_test.mjs
 > query the `Store` it answers. The prose about COTTAS bytes, `toCottas`
 > and `queryCottas` records the F\* store these cells used until 0.9.0
 > ([issue 726](https://github.com/danbri/factoidal/issues/726)).
+> All COTTAS work is suspended and Shardborough is the primary store
+> (owner decision of 2026-10-11, recorded in
+> [CLAUDE.md](https://github.com/danbri/factoidal-core/blob/main/CLAUDE.md#cottas-suspended-shardborough-is-primary-qlever-reader-owner-2026-10-11));
+> no cell on this page calls a COTTAS function.
 
 [Post 18](../18-the-durable-log-live/) named `toCottas`/`openCottas` as
 the browser's write half of the on-disk COTTAS store, but never called

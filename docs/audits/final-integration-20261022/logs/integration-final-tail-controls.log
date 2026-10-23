@@ -1,0 +1,54 @@
+Lean @[csimp] reach check
+=========================
+C files scanned: 2 (ignored, no Lean source: 0)   definitions: 4   Lean modules: 2
+@[csimp] theorems found: 1   distinct left sides: 1   not resolved: 0
+Calls of a replacement found in the emitted C (the positive control): 1
+Findings (a left side that compiled code still reaches): 0
+  new: 0   allowed: 0   suppressed, held by a specification nothing reaches: 0
+Allow list: 0 lines, 0 match no finding, 0 malformed
+
+
+GATE PASS: every left side that compiled code still reaches is on tools/lean-csimp-reach-allow.txt with a reason
+Lean @[csimp] reach check
+=========================
+C files scanned: 2 (ignored, no Lean source: 0)   definitions: 4   Lean modules: 2
+@[csimp] theorems found: 1   distinct left sides: 1   not resolved: 0
+Calls of a replacement found in the emitted C (the positive control): 1
+Findings (a left side that compiled code still reaches): 0
+  new: 0   allowed: 0   suppressed, held by a specification nothing reaches: 0
+Allow list: 0 lines, 0 match no finding, 0 malformed
+
+
+GATE PASS: every left side that compiled code still reaches is on tools/lean-csimp-reach-allow.txt with a reason
+Lean @[csimp] reach check
+=========================
+C files scanned: 2 (ignored, no Lean source: 0)   definitions: 6   Lean modules: 2
+@[csimp] theorems found: 2   distinct left sides: 2   not resolved: 0
+Calls of a replacement found in the emitted C (the positive control): 1
+Findings (a left side that compiled code still reaches): 1
+  new: 1   allowed: 0   suppressed, held by a specification nothing reaches: 0
+  by reason: after-theorem 1
+Allow list: 0 lines, 0 match no finding, 0 malformed
+
+NEW T.spec
+    still reached by T.stale   [L4Factoidal/Fixture.c: lp_l4factoidal_T_stale, call]
+    theorem L4Factoidal/Fixture.lean:4  spec_eq -> T.fast
+    after-theorem: declared at line 5, below the @[csimp] theorem at line 4, and still calls the left side: the call came in through an inlined or specialised definition compiled before the theorem
+    to leave it on purpose, add to tools/lean-csimp-reach-allow.txt:  T.spec T.stale   # <reason>
+
+GATE FAIL: 1 finding(s) not on the allow list, 0 theorem(s) not resolved, 0 bad allow line(s)
+Repair a finding as skills/lean4-proof-patterns/SKILL.md section 9e says, or add it to the allow list with a reason.
+PASS direct self-call                           exit 1; T_walk=length
+PASS tail self-call is a loop                   exit 0; no rows
+PASS mutual pair                        defect  exit 1; T_isEven=length, T_isOdd=length
+PASS ___redArg wrapper                          exit 1; T_count=length
+PASS csimp namesake                     defect  exit 1; A_insertBy=replaced, B_insertBy=length
+PASS namespace word in a doc comment    defect  exit 1; T_readRest=length
+PASS length alias with fuel             defect  exit 1; T_scan=length
+PASS section end                        defect  exit 1; T_b=length
+PASS unknown is gated                   defect  exit 1; Mystery_f=unknown
+PASS closure body cycle                 defect  exit 1; T_walkTree=length, T_walkTree=length
+PASS allow list line                            exit 0; T_walk=length
+PASS where helper                       defect  exit 1; T_outer_scanList=length
+PASS chained csimp gate rejects caller          exit 1; T_spec=replaced
+13 pass, 0 fail (out of 13)

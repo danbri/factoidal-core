@@ -1,0 +1,5666 @@
+{
+  "scope": "Independent XML metadata scan of NIST pattern-bearing schema groups; counts instanceTests, not an engine verdict or normative oracle",
+  "fixture_pin": "7bc3365c652a322f3d762021b3879eb92dae7e30",
+  "weighted_counts": {
+    "category-d": 2820,
+    "name-only": 405
+  },
+  "examples": {
+    "category-d": {
+      "schema": "nistData/atomic/decimal/Schema+Instance/NISTSchema-SV-IV-atomic-decimal-pattern-1.xsd",
+      "patterns": [
+        "\\d{1}"
+      ],
+      "instance_count": 5
+    },
+    "name-only": {
+      "schema": "nistData/atomic/Name/Schema+Instance/NISTSchema-SV-IV-atomic-Name-pattern-1.xsd",
+      "patterns": [
+        "\\i\\c{45}"
+      ],
+      "instance_count": 5
+    }
+  },
+  "category_groups": [
+    {
+      "schema": "nistData/atomic/decimal/Schema+Instance/NISTSchema-SV-IV-atomic-decimal-pattern-1.xsd",
+      "instances": 5,
+      "category_escapes": [
+        "d"
+      ],
+      "patterns": [
+        "\\d{1}"
+      ]
+    },
+    {
+      "schema": "nistData/atomic/decimal/Schema+Instance/NISTSchema-SV-IV-atomic-decimal-pattern-2.xsd",
+      "instances": 5,
+      "category_escapes": [
+        "d"
+      ],
+      "patterns": [
+        "\\-\\d{2}\\.\\d{3}"
+      ]
+    },
+    {
+      "schema": "nistData/atomic/decimal/Schema+Instance/NISTSchema-SV-IV-atomic-decimal-pattern-3.xsd",
+      "instances": 5,
+      "category_escapes": [
+        "d"
+      ],
+      "patterns": [
+        "\\-\\d{1}\\.\\d{8}"
+      ]
+    },
+    {
+      "schema": "nistData/atomic/decimal/Schema+Instance/NISTSchema-SV-IV-atomic-decimal-pattern-4.xsd",
+      "instances": 5,
+      "category_escapes": [
+        "d"
+      ],
+      "patterns": [
+        "\\.\\d{13}"
+      ]
+    },
+    {
+      "schema": "nistData/atomic/decimal/Schema+Instance/NISTSchema-SV-IV-atomic-decimal-pattern-5.xsd",
+      "instances": 5,
+      "category_escapes": [
+        "d"
+      ],
+      "patterns": [
+        "\\d{5}\\.\\d{13}"
+      ]
+    },
+    {
+      "schema": "nistData/atomic/integer/Schema+Instance/NISTSchema-SV-IV-atomic-integer-pattern-1.xsd",
+      "instances": 5,
+      "category_escapes": [
+        "d"
+      ],
+      "patterns": [
+        "\\-\\d{18}"
+      ]
+    },
+    {
+      "schema": "nistData/atomic/integer/Schema+Instance/NISTSchema-SV-IV-atomic-integer-pattern-2.xsd",
+      "instances": 5,
+      "category_escapes": [
+        "d"
+      ],
+      "patterns": [
+        "\\-\\d{9}"
+      ]
+    },
+    {
+      "schema": "nistData/atomic/integer/Schema+Instance/NISTSchema-SV-IV-atomic-integer-pattern-3.xsd",
+      "instances": 5,
+      "category_escapes": [
+        "d"
+      ],
+      "patterns": [
+        "\\-\\d{1}"
+      ]
+    },
+    {
+      "schema": "nistData/atomic/integer/Schema+Instance/NISTSchema-SV-IV-atomic-integer-pattern-4.xsd",
+      "instances": 5,
+      "category_escapes": [
+        "d"
+      ],
+      "patterns": [
+        "\\d{5}"
+      ]
+    },
+    {
+      "schema": "nistData/atomic/integer/Schema+Instance/NISTSchema-SV-IV-atomic-integer-pattern-5.xsd",
+      "instances": 5,
+      "category_escapes": [
+        "d"
+      ],
+      "patterns": [
+        "\\d{18}"
+      ]
+    },
+    {
+      "schema": "nistData/atomic/nonPositiveInteger/Schema+Instance/NISTSchema-SV-IV-atomic-nonPositiveInteger-pattern-1.xsd",
+      "instances": 5,
+      "category_escapes": [
+        "d"
+      ],
+      "patterns": [
+        "\\-\\d{1}"
+      ]
+    },
+    {
+      "schema": "nistData/atomic/nonPositiveInteger/Schema+Instance/NISTSchema-SV-IV-atomic-nonPositiveInteger-pattern-2.xsd",
+      "instances": 5,
+      "category_escapes": [
+        "d"
+      ],
+      "patterns": [
+        "\\-\\d{5}"
+      ]
+    },
+    {
+      "schema": "nistData/atomic/nonPositiveInteger/Schema+Instance/NISTSchema-SV-IV-atomic-nonPositiveInteger-pattern-3.xsd",
+      "instances": 5,
+      "category_escapes": [
+        "d"
+      ],
+      "patterns": [
+        "\\-\\d{9}"
+      ]
+    },
+    {
+      "schema": "nistData/atomic/nonPositiveInteger/Schema+Instance/NISTSchema-SV-IV-atomic-nonPositiveInteger-pattern-4.xsd",
+      "instances": 5,
+      "category_escapes": [
+        "d"
+      ],
+      "patterns": [
+        "\\-\\d{13}"
+      ]
+    },
+    {
+      "schema": "nistData/atomic/nonPositiveInteger/Schema+Instance/NISTSchema-SV-IV-atomic-nonPositiveInteger-pattern-5.xsd",
+      "instances": 5,
+      "category_escapes": [
+        "d"
+      ],
+      "patterns": [
+        "\\-\\d{18}"
+      ]
+    },
+    {
+      "schema": "nistData/atomic/negativeInteger/Schema+Instance/NISTSchema-SV-IV-atomic-negativeInteger-pattern-1.xsd",
+      "instances": 5,
+      "category_escapes": [
+        "d"
+      ],
+      "patterns": [
+        "\\-\\d{1}"
+      ]
+    },
+    {
+      "schema": "nistData/atomic/negativeInteger/Schema+Instance/NISTSchema-SV-IV-atomic-negativeInteger-pattern-2.xsd",
+      "instances": 5,
+      "category_escapes": [
+        "d"
+      ],
+      "patterns": [
+        "\\-\\d{5}"
+      ]
+    },
+    {
+      "schema": "nistData/atomic/negativeInteger/Schema+Instance/NISTSchema-SV-IV-atomic-negativeInteger-pattern-3.xsd",
+      "instances": 5,
+      "category_escapes": [
+        "d"
+      ],
+      "patterns": [
+        "\\-\\d{9}"
+      ]
+    },
+    {
+      "schema": "nistData/atomic/negativeInteger/Schema+Instance/NISTSchema-SV-IV-atomic-negativeInteger-pattern-4.xsd",
+      "instances": 5,
+      "category_escapes": [
+        "d"
+      ],
+      "patterns": [
+        "\\-\\d{13}"
+      ]
+    },
+    {
+      "schema": "nistData/atomic/negativeInteger/Schema+Instance/NISTSchema-SV-IV-atomic-negativeInteger-pattern-5.xsd",
+      "instances": 5,
+      "category_escapes": [
+        "d"
+      ],
+      "patterns": [
+        "\\-\\d{18}"
+      ]
+    },
+    {
+      "schema": "nistData/atomic/long/Schema+Instance/NISTSchema-SV-IV-atomic-long-pattern-1.xsd",
+      "instances": 5,
+      "category_escapes": [
+        "d"
+      ],
+      "patterns": [
+        "\\-\\d{18}"
+      ]
+    },
+    {
+      "schema": "nistData/atomic/long/Schema+Instance/NISTSchema-SV-IV-atomic-long-pattern-2.xsd",
+      "instances": 5,
+      "category_escapes": [
+        "d"
+      ],
+      "patterns": [
+        "\\-\\d{9}"
+      ]
+    },
+    {
+      "schema": "nistData/atomic/long/Schema+Instance/NISTSchema-SV-IV-atomic-long-pattern-3.xsd",
+      "instances": 5,
+      "category_escapes": [
+        "d"
+      ],
+      "patterns": [
+        "\\-\\d{1}"
+      ]
+    },
+    {
+      "schema": "nistData/atomic/long/Schema+Instance/NISTSchema-SV-IV-atomic-long-pattern-4.xsd",
+      "instances": 5,
+      "category_escapes": [
+        "d"
+      ],
+      "patterns": [
+        "\\d{5}"
+      ]
+    },
+    {
+      "schema": "nistData/atomic/long/Schema+Instance/NISTSchema-SV-IV-atomic-long-pattern-5.xsd",
+      "instances": 5,
+      "category_escapes": [
+        "d"
+      ],
+      "patterns": [
+        "\\d{18}"
+      ]
+    },
+    {
+      "schema": "nistData/atomic/int/Schema+Instance/NISTSchema-SV-IV-atomic-int-pattern-1.xsd",
+      "instances": 5,
+      "category_escapes": [
+        "d"
+      ],
+      "patterns": [
+        "\\-\\d{10}"
+      ]
+    },
+    {
+      "schema": "nistData/atomic/int/Schema+Instance/NISTSchema-SV-IV-atomic-int-pattern-2.xsd",
+      "instances": 5,
+      "category_escapes": [
+        "d"
+      ],
+      "patterns": [
+        "\\-\\d{5}"
+      ]
+    },
+    {
+      "schema": "nistData/atomic/int/Schema+Instance/NISTSchema-SV-IV-atomic-int-pattern-3.xsd",
+      "instances": 5,
+      "category_escapes": [
+        "d"
+      ],
+      "patterns": [
+        "\\-\\d{1}"
+      ]
+    },
+    {
+      "schema": "nistData/atomic/int/Schema+Instance/NISTSchema-SV-IV-atomic-int-pattern-4.xsd",
+      "instances": 5,
+      "category_escapes": [
+        "d"
+      ],
+      "patterns": [
+        "\\d{3}"
+      ]
+    },
+    {
+      "schema": "nistData/atomic/int/Schema+Instance/NISTSchema-SV-IV-atomic-int-pattern-5.xsd",
+      "instances": 5,
+      "category_escapes": [
+        "d"
+      ],
+      "patterns": [
+        "\\d{10}"
+      ]
+    },
+    {
+      "schema": "nistData/atomic/short/Schema+Instance/NISTSchema-SV-IV-atomic-short-pattern-1.xsd",
+      "instances": 5,
+      "category_escapes": [
+        "d"
+      ],
+      "patterns": [
+        "\\-\\d{5}"
+      ]
+    },
+    {
+      "schema": "nistData/atomic/short/Schema+Instance/NISTSchema-SV-IV-atomic-short-pattern-2.xsd",
+      "instances": 5,
+      "category_escapes": [
+        "d"
+      ],
+      "patterns": [
+        "\\-\\d{3}"
+      ]
+    },
+    {
+      "schema": "nistData/atomic/short/Schema+Instance/NISTSchema-SV-IV-atomic-short-pattern-3.xsd",
+      "instances": 5,
+      "category_escapes": [
+        "d"
+      ],
+      "patterns": [
+        "\\-\\d{1}"
+      ]
+    },
+    {
+      "schema": "nistData/atomic/short/Schema+Instance/NISTSchema-SV-IV-atomic-short-pattern-4.xsd",
+      "instances": 5,
+      "category_escapes": [
+        "d"
+      ],
+      "patterns": [
+        "\\d{2}"
+      ]
+    },
+    {
+      "schema": "nistData/atomic/short/Schema+Instance/NISTSchema-SV-IV-atomic-short-pattern-5.xsd",
+      "instances": 5,
+      "category_escapes": [
+        "d"
+      ],
+      "patterns": [
+        "\\d{5}"
+      ]
+    },
+    {
+      "schema": "nistData/atomic/byte/Schema+Instance/NISTSchema-SV-IV-atomic-byte-pattern-1.xsd",
+      "instances": 5,
+      "category_escapes": [
+        "d"
+      ],
+      "patterns": [
+        "\\-\\d{3}"
+      ]
+    },
+    {
+      "schema": "nistData/atomic/byte/Schema+Instance/NISTSchema-SV-IV-atomic-byte-pattern-2.xsd",
+      "instances": 5,
+      "category_escapes": [
+        "d"
+      ],
+      "patterns": [
+        "\\-\\d{2}"
+      ]
+    },
+    {
+      "schema": "nistData/atomic/byte/Schema+Instance/NISTSchema-SV-IV-atomic-byte-pattern-3.xsd",
+      "instances": 5,
+      "category_escapes": [
+        "d"
+      ],
+      "patterns": [
+        "\\-\\d{1}"
+      ]
+    },
+    {
+      "schema": "nistData/atomic/byte/Schema+Instance/NISTSchema-SV-IV-atomic-byte-pattern-4.xsd",
+      "instances": 5,
+      "category_escapes": [
+        "d"
+      ],
+      "patterns": [
+        "\\d{1}"
+      ]
+    },
+    {
+      "schema": "nistData/atomic/byte/Schema+Instance/NISTSchema-SV-IV-atomic-byte-pattern-5.xsd",
+      "instances": 5,
+      "category_escapes": [
+        "d"
+      ],
+      "patterns": [
+        "\\d{3}"
+      ]
+    },
+    {
+      "schema": "nistData/atomic/nonNegativeInteger/Schema+Instance/NISTSchema-SV-IV-atomic-nonNegativeInteger-pattern-1.xsd",
+      "instances": 5,
+      "category_escapes": [
+        "d"
+      ],
+      "patterns": [
+        "\\d{1}"
+      ]
+    },
+    {
+      "schema": "nistData/atomic/nonNegativeInteger/Schema+Instance/NISTSchema-SV-IV-atomic-nonNegativeInteger-pattern-2.xsd",
+      "instances": 5,
+      "category_escapes": [
+        "d"
+      ],
+      "patterns": [
+        "\\d{5}"
+      ]
+    },
+    {
+      "schema": "nistData/atomic/nonNegativeInteger/Schema+Instance/NISTSchema-SV-IV-atomic-nonNegativeInteger-pattern-3.xsd",
+      "instances": 5,
+      "category_escapes": [
+        "d"
+      ],
+      "patterns": [
+        "\\d{9}"
+      ]
+    },
+    {
+      "schema": "nistData/atomic/nonNegativeInteger/Schema+Instance/NISTSchema-SV-IV-atomic-nonNegativeInteger-pattern-4.xsd",
+      "instances": 5,
+      "category_escapes": [
+        "d"
+      ],
+      "patterns": [
+        "\\d{13}"
+      ]
+    },
+    {
+      "schema": "nistData/atomic/nonNegativeInteger/Schema+Instance/NISTSchema-SV-IV-atomic-nonNegativeInteger-pattern-5.xsd",
+      "instances": 5,
+      "category_escapes": [
+        "d"
+      ],
+      "patterns": [
+        "\\d{18}"
+      ]
+    },
+    {
+      "schema": "nistData/atomic/unsignedLong/Schema+Instance/NISTSchema-SV-IV-atomic-unsignedLong-pattern-1.xsd",
+      "instances": 5,
+      "category_escapes": [
+        "d"
+      ],
+      "patterns": [
+        "\\d{1}"
+      ]
+    },
+    {
+      "schema": "nistData/atomic/unsignedLong/Schema+Instance/NISTSchema-SV-IV-atomic-unsignedLong-pattern-2.xsd",
+      "instances": 5,
+      "category_escapes": [
+        "d"
+      ],
+      "patterns": [
+        "\\d{5}"
+      ]
+    },
+    {
+      "schema": "nistData/atomic/unsignedLong/Schema+Instance/NISTSchema-SV-IV-atomic-unsignedLong-pattern-3.xsd",
+      "instances": 5,
+      "category_escapes": [
+        "d"
+      ],
+      "patterns": [
+        "\\d{9}"
+      ]
+    },
+    {
+      "schema": "nistData/atomic/unsignedLong/Schema+Instance/NISTSchema-SV-IV-atomic-unsignedLong-pattern-4.xsd",
+      "instances": 5,
+      "category_escapes": [
+        "d"
+      ],
+      "patterns": [
+        "\\d{13}"
+      ]
+    },
+    {
+      "schema": "nistData/atomic/unsignedLong/Schema+Instance/NISTSchema-SV-IV-atomic-unsignedLong-pattern-5.xsd",
+      "instances": 5,
+      "category_escapes": [
+        "d"
+      ],
+      "patterns": [
+        "\\d{18}"
+      ]
+    },
+    {
+      "schema": "nistData/atomic/unsignedInt/Schema+Instance/NISTSchema-SV-IV-atomic-unsignedInt-pattern-1.xsd",
+      "instances": 5,
+      "category_escapes": [
+        "d"
+      ],
+      "patterns": [
+        "\\d{1}"
+      ]
+    },
+    {
+      "schema": "nistData/atomic/unsignedInt/Schema+Instance/NISTSchema-SV-IV-atomic-unsignedInt-pattern-2.xsd",
+      "instances": 5,
+      "category_escapes": [
+        "d"
+      ],
+      "patterns": [
+        "\\d{3}"
+      ]
+    },
+    {
+      "schema": "nistData/atomic/unsignedInt/Schema+Instance/NISTSchema-SV-IV-atomic-unsignedInt-pattern-3.xsd",
+      "instances": 5,
+      "category_escapes": [
+        "d"
+      ],
+      "patterns": [
+        "\\d{5}"
+      ]
+    },
+    {
+      "schema": "nistData/atomic/unsignedInt/Schema+Instance/NISTSchema-SV-IV-atomic-unsignedInt-pattern-4.xsd",
+      "instances": 5,
+      "category_escapes": [
+        "d"
+      ],
+      "patterns": [
+        "\\d{7}"
+      ]
+    },
+    {
+      "schema": "nistData/atomic/unsignedInt/Schema+Instance/NISTSchema-SV-IV-atomic-unsignedInt-pattern-5.xsd",
+      "instances": 5,
+      "category_escapes": [
+        "d"
+      ],
+      "patterns": [
+        "\\d{10}"
+      ]
+    },
+    {
+      "schema": "nistData/atomic/unsignedShort/Schema+Instance/NISTSchema-SV-IV-atomic-unsignedShort-pattern-1.xsd",
+      "instances": 5,
+      "category_escapes": [
+        "d"
+      ],
+      "patterns": [
+        "\\d{1}"
+      ]
+    },
+    {
+      "schema": "nistData/atomic/unsignedShort/Schema+Instance/NISTSchema-SV-IV-atomic-unsignedShort-pattern-2.xsd",
+      "instances": 5,
+      "category_escapes": [
+        "d"
+      ],
+      "patterns": [
+        "\\d{2}"
+      ]
+    },
+    {
+      "schema": "nistData/atomic/unsignedShort/Schema+Instance/NISTSchema-SV-IV-atomic-unsignedShort-pattern-3.xsd",
+      "instances": 5,
+      "category_escapes": [
+        "d"
+      ],
+      "patterns": [
+        "\\d{3}"
+      ]
+    },
+    {
+      "schema": "nistData/atomic/unsignedShort/Schema+Instance/NISTSchema-SV-IV-atomic-unsignedShort-pattern-4.xsd",
+      "instances": 5,
+      "category_escapes": [
+        "d"
+      ],
+      "patterns": [
+        "\\d{4}"
+      ]
+    },
+    {
+      "schema": "nistData/atomic/unsignedShort/Schema+Instance/NISTSchema-SV-IV-atomic-unsignedShort-pattern-5.xsd",
+      "instances": 5,
+      "category_escapes": [
+        "d"
+      ],
+      "patterns": [
+        "\\d{5}"
+      ]
+    },
+    {
+      "schema": "nistData/atomic/unsignedByte/Schema+Instance/NISTSchema-SV-IV-atomic-unsignedByte-pattern-1.xsd",
+      "instances": 5,
+      "category_escapes": [
+        "d"
+      ],
+      "patterns": [
+        "\\d{1}"
+      ]
+    },
+    {
+      "schema": "nistData/atomic/unsignedByte/Schema+Instance/NISTSchema-SV-IV-atomic-unsignedByte-pattern-2.xsd",
+      "instances": 5,
+      "category_escapes": [
+        "d"
+      ],
+      "patterns": [
+        "\\d{2}"
+      ]
+    },
+    {
+      "schema": "nistData/atomic/unsignedByte/Schema+Instance/NISTSchema-SV-IV-atomic-unsignedByte-pattern-3.xsd",
+      "instances": 5,
+      "category_escapes": [
+        "d"
+      ],
+      "patterns": [
+        "\\d{3}"
+      ]
+    },
+    {
+      "schema": "nistData/atomic/unsignedByte/Schema+Instance/NISTSchema-SV-IV-atomic-unsignedByte-pattern-4.xsd",
+      "instances": 5,
+      "category_escapes": [
+        "d"
+      ],
+      "patterns": [
+        "\\d{1}"
+      ]
+    },
+    {
+      "schema": "nistData/atomic/unsignedByte/Schema+Instance/NISTSchema-SV-IV-atomic-unsignedByte-pattern-5.xsd",
+      "instances": 5,
+      "category_escapes": [
+        "d"
+      ],
+      "patterns": [
+        "\\d{2}"
+      ]
+    },
+    {
+      "schema": "nistData/atomic/positiveInteger/Schema+Instance/NISTSchema-SV-IV-atomic-positiveInteger-pattern-1.xsd",
+      "instances": 5,
+      "category_escapes": [
+        "d"
+      ],
+      "patterns": [
+        "\\d{1}"
+      ]
+    },
+    {
+      "schema": "nistData/atomic/positiveInteger/Schema+Instance/NISTSchema-SV-IV-atomic-positiveInteger-pattern-2.xsd",
+      "instances": 5,
+      "category_escapes": [
+        "d"
+      ],
+      "patterns": [
+        "\\d{5}"
+      ]
+    },
+    {
+      "schema": "nistData/atomic/positiveInteger/Schema+Instance/NISTSchema-SV-IV-atomic-positiveInteger-pattern-3.xsd",
+      "instances": 5,
+      "category_escapes": [
+        "d"
+      ],
+      "patterns": [
+        "\\d{9}"
+      ]
+    },
+    {
+      "schema": "nistData/atomic/positiveInteger/Schema+Instance/NISTSchema-SV-IV-atomic-positiveInteger-pattern-4.xsd",
+      "instances": 5,
+      "category_escapes": [
+        "d"
+      ],
+      "patterns": [
+        "\\d{13}"
+      ]
+    },
+    {
+      "schema": "nistData/atomic/positiveInteger/Schema+Instance/NISTSchema-SV-IV-atomic-positiveInteger-pattern-5.xsd",
+      "instances": 5,
+      "category_escapes": [
+        "d"
+      ],
+      "patterns": [
+        "\\d{18}"
+      ]
+    },
+    {
+      "schema": "nistData/atomic/double/Schema+Instance/NISTSchema-SV-IV-atomic-double-pattern-1.xsd",
+      "instances": 5,
+      "category_escapes": [
+        "d"
+      ],
+      "patterns": [
+        "\\d{1}E\\-\\d{3}"
+      ]
+    },
+    {
+      "schema": "nistData/atomic/double/Schema+Instance/NISTSchema-SV-IV-atomic-double-pattern-2.xsd",
+      "instances": 5,
+      "category_escapes": [
+        "d"
+      ],
+      "patterns": [
+        "\\d{1}\\.\\d{4}E\\-\\d{2}"
+      ]
+    },
+    {
+      "schema": "nistData/atomic/double/Schema+Instance/NISTSchema-SV-IV-atomic-double-pattern-3.xsd",
+      "instances": 5,
+      "category_escapes": [
+        "d"
+      ],
+      "patterns": [
+        "\\d{1}\\.\\d{8}E\\-\\d{1}"
+      ]
+    },
+    {
+      "schema": "nistData/atomic/double/Schema+Instance/NISTSchema-SV-IV-atomic-double-pattern-4.xsd",
+      "instances": 5,
+      "category_escapes": [
+        "d"
+      ],
+      "patterns": [
+        "\\d{1}\\.\\d{12}E\\d{1}"
+      ]
+    },
+    {
+      "schema": "nistData/atomic/double/Schema+Instance/NISTSchema-SV-IV-atomic-double-pattern-5.xsd",
+      "instances": 5,
+      "category_escapes": [
+        "d"
+      ],
+      "patterns": [
+        "\\d{1}\\.\\d{16}E\\d{3}"
+      ]
+    },
+    {
+      "schema": "nistData/atomic/float/Schema+Instance/NISTSchema-SV-IV-atomic-float-pattern-1.xsd",
+      "instances": 5,
+      "category_escapes": [
+        "d"
+      ],
+      "patterns": [
+        "\\d{1}E\\-\\d{2}"
+      ]
+    },
+    {
+      "schema": "nistData/atomic/float/Schema+Instance/NISTSchema-SV-IV-atomic-float-pattern-2.xsd",
+      "instances": 5,
+      "category_escapes": [
+        "d"
+      ],
+      "patterns": [
+        "\\d{2}E\\-\\d{1}"
+      ]
+    },
+    {
+      "schema": "nistData/atomic/float/Schema+Instance/NISTSchema-SV-IV-atomic-float-pattern-3.xsd",
+      "instances": 5,
+      "category_escapes": [
+        "d"
+      ],
+      "patterns": [
+        "\\d{1}\\.\\d{2}E\\d{1}"
+      ]
+    },
+    {
+      "schema": "nistData/atomic/float/Schema+Instance/NISTSchema-SV-IV-atomic-float-pattern-4.xsd",
+      "instances": 5,
+      "category_escapes": [
+        "d"
+      ],
+      "patterns": [
+        "\\d{1}\\.\\d{3}E\\d{2}"
+      ]
+    },
+    {
+      "schema": "nistData/atomic/float/Schema+Instance/NISTSchema-SV-IV-atomic-float-pattern-5.xsd",
+      "instances": 5,
+      "category_escapes": [
+        "d"
+      ],
+      "patterns": [
+        "\\d{1}\\.\\d{7}E\\-\\d{2}"
+      ]
+    },
+    {
+      "schema": "nistData/atomic/duration/Schema+Instance/NISTSchema-SV-IV-atomic-duration-pattern-1.xsd",
+      "instances": 5,
+      "category_escapes": [
+        "d"
+      ],
+      "patterns": [
+        "P\\d\\d76Y\\d4M2\\dDT1\\dH\\d9M\\d9S"
+      ]
+    },
+    {
+      "schema": "nistData/atomic/duration/Schema+Instance/NISTSchema-SV-IV-atomic-duration-pattern-2.xsd",
+      "instances": 5,
+      "category_escapes": [
+        "d"
+      ],
+      "patterns": [
+        "P\\d\\d74Y0\\dM\\d6DT1\\dH\\d0M\\d7S"
+      ]
+    },
+    {
+      "schema": "nistData/atomic/duration/Schema+Instance/NISTSchema-SV-IV-atomic-duration-pattern-3.xsd",
+      "instances": 5,
+      "category_escapes": [
+        "d"
+      ],
+      "patterns": [
+        "P20\\d\\dY\\d3M\\d1DT\\d4H\\d7M\\d6S"
+      ]
+    },
+    {
+      "schema": "nistData/atomic/duration/Schema+Instance/NISTSchema-SV-IV-atomic-duration-pattern-4.xsd",
+      "instances": 5,
+      "category_escapes": [
+        "d"
+      ],
+      "patterns": [
+        "P19\\d\\dY\\d8M\\d3DT\\d0H1\\dM\\d2S"
+      ]
+    },
+    {
+      "schema": "nistData/atomic/duration/Schema+Instance/NISTSchema-SV-IV-atomic-duration-pattern-5.xsd",
+      "instances": 5,
+      "category_escapes": [
+        "d"
+      ],
+      "patterns": [
+        "P\\d\\d63Y\\d4M1\\dDT0\\dH\\d4M4\\dS"
+      ]
+    },
+    {
+      "schema": "nistData/atomic/dateTime/Schema+Instance/NISTSchema-SV-IV-atomic-dateTime-pattern-1.xsd",
+      "instances": 5,
+      "category_escapes": [
+        "d"
+      ],
+      "patterns": [
+        "19\\d\\d-0\\d-\\d8T\\d8:\\d5:5\\d"
+      ]
+    },
+    {
+      "schema": "nistData/atomic/dateTime/Schema+Instance/NISTSchema-SV-IV-atomic-dateTime-pattern-2.xsd",
+      "instances": 5,
+      "category_escapes": [
+        "d"
+      ],
+      "patterns": [
+        "\\d\\d55-0\\d-\\d8T\\d6:1\\d:0\\d"
+      ]
+    },
+    {
+      "schema": "nistData/atomic/dateTime/Schema+Instance/NISTSchema-SV-IV-atomic-dateTime-pattern-3.xsd",
+      "instances": 5,
+      "category_escapes": [
+        "d"
+      ],
+      "patterns": [
+        "19\\d\\d-0\\d-0\\dT\\d5:1\\d:3\\d"
+      ]
+    },
+    {
+      "schema": "nistData/atomic/dateTime/Schema+Instance/NISTSchema-SV-IV-atomic-dateTime-pattern-4.xsd",
+      "instances": 5,
+      "category_escapes": [
+        "d"
+      ],
+      "patterns": [
+        "\\d\\d89-\\d2-\\d0T1\\d:2\\d:1\\d"
+      ]
+    },
+    {
+      "schema": "nistData/atomic/dateTime/Schema+Instance/NISTSchema-SV-IV-atomic-dateTime-pattern-5.xsd",
+      "instances": 5,
+      "category_escapes": [
+        "d"
+      ],
+      "patterns": [
+        "\\d\\d77-0\\d-0\\dT1\\d:\\d5:\\d5"
+      ]
+    },
+    {
+      "schema": "nistData/atomic/time/Schema+Instance/NISTSchema-SV-IV-atomic-time-pattern-1.xsd",
+      "instances": 5,
+      "category_escapes": [
+        "d"
+      ],
+      "patterns": [
+        "\\d9:\\d2:5\\d"
+      ]
+    },
+    {
+      "schema": "nistData/atomic/time/Schema+Instance/NISTSchema-SV-IV-atomic-time-pattern-2.xsd",
+      "instances": 5,
+      "category_escapes": [
+        "d"
+      ],
+      "patterns": [
+        "\\d6:\\d9:\\d9"
+      ]
+    },
+    {
+      "schema": "nistData/atomic/time/Schema+Instance/NISTSchema-SV-IV-atomic-time-pattern-3.xsd",
+      "instances": 5,
+      "category_escapes": [
+        "d"
+      ],
+      "patterns": [
+        "1\\d:3\\d:\\d5"
+      ]
+    },
+    {
+      "schema": "nistData/atomic/time/Schema+Instance/NISTSchema-SV-IV-atomic-time-pattern-4.xsd",
+      "instances": 5,
+      "category_escapes": [
+        "d"
+      ],
+      "patterns": [
+        "\\d8:\\d4:\\d6"
+      ]
+    },
+    {
+      "schema": "nistData/atomic/time/Schema+Instance/NISTSchema-SV-IV-atomic-time-pattern-5.xsd",
+      "instances": 5,
+      "category_escapes": [
+        "d"
+      ],
+      "patterns": [
+        "\\d0:3\\d:2\\d"
+      ]
+    },
+    {
+      "schema": "nistData/atomic/date/Schema+Instance/NISTSchema-SV-IV-atomic-date-pattern-1.xsd",
+      "instances": 5,
+      "category_escapes": [
+        "d"
+      ],
+      "patterns": [
+        "\\d\\d58-0\\d-\\d8"
+      ]
+    },
+    {
+      "schema": "nistData/atomic/date/Schema+Instance/NISTSchema-SV-IV-atomic-date-pattern-2.xsd",
+      "instances": 5,
+      "category_escapes": [
+        "d"
+      ],
+      "patterns": [
+        "\\d\\d10-\\d4-1\\d"
+      ]
+    },
+    {
+      "schema": "nistData/atomic/date/Schema+Instance/NISTSchema-SV-IV-atomic-date-pattern-3.xsd",
+      "instances": 5,
+      "category_escapes": [
+        "d"
+      ],
+      "patterns": [
+        "\\d\\d90-\\d7-2\\d"
+      ]
+    },
+    {
+      "schema": "nistData/atomic/date/Schema+Instance/NISTSchema-SV-IV-atomic-date-pattern-4.xsd",
+      "instances": 5,
+      "category_escapes": [
+        "d"
+      ],
+      "patterns": [
+        "17\\d\\d-\\d0-1\\d"
+      ]
+    },
+    {
+      "schema": "nistData/atomic/date/Schema+Instance/NISTSchema-SV-IV-atomic-date-pattern-5.xsd",
+      "instances": 5,
+      "category_escapes": [
+        "d"
+      ],
+      "patterns": [
+        "\\d\\d44-\\d2-\\d5"
+      ]
+    },
+    {
+      "schema": "nistData/atomic/gYearMonth/Schema+Instance/NISTSchema-SV-IV-atomic-gYearMonth-pattern-1.xsd",
+      "instances": 5,
+      "category_escapes": [
+        "d"
+      ],
+      "patterns": [
+        "17\\d\\d-\\d1"
+      ]
+    },
+    {
+      "schema": "nistData/atomic/gYearMonth/Schema+Instance/NISTSchema-SV-IV-atomic-gYearMonth-pattern-2.xsd",
+      "instances": 5,
+      "category_escapes": [
+        "d"
+      ],
+      "patterns": [
+        "\\d\\d31-\\d3"
+      ]
+    },
+    {
+      "schema": "nistData/atomic/gYearMonth/Schema+Instance/NISTSchema-SV-IV-atomic-gYearMonth-pattern-3.xsd",
+      "instances": 5,
+      "category_escapes": [
+        "d"
+      ],
+      "patterns": [
+        "\\d\\d76-0\\d"
+      ]
+    },
+    {
+      "schema": "nistData/atomic/gYearMonth/Schema+Instance/NISTSchema-SV-IV-atomic-gYearMonth-pattern-4.xsd",
+      "instances": 5,
+      "category_escapes": [
+        "d"
+      ],
+      "patterns": [
+        "17\\d\\d-0\\d"
+      ]
+    },
+    {
+      "schema": "nistData/atomic/gYearMonth/Schema+Instance/NISTSchema-SV-IV-atomic-gYearMonth-pattern-5.xsd",
+      "instances": 5,
+      "category_escapes": [
+        "d"
+      ],
+      "patterns": [
+        "18\\d\\d-\\d2"
+      ]
+    },
+    {
+      "schema": "nistData/atomic/gYear/Schema+Instance/NISTSchema-SV-IV-atomic-gYear-pattern-1.xsd",
+      "instances": 5,
+      "category_escapes": [
+        "d"
+      ],
+      "patterns": [
+        "\\d\\d47"
+      ]
+    },
+    {
+      "schema": "nistData/atomic/gYear/Schema+Instance/NISTSchema-SV-IV-atomic-gYear-pattern-2.xsd",
+      "instances": 5,
+      "category_escapes": [
+        "d"
+      ],
+      "patterns": [
+        "\\d\\d61"
+      ]
+    },
+    {
+      "schema": "nistData/atomic/gYear/Schema+Instance/NISTSchema-SV-IV-atomic-gYear-pattern-3.xsd",
+      "instances": 5,
+      "category_escapes": [
+        "d"
+      ],
+      "patterns": [
+        "\\d\\d86"
+      ]
+    },
+    {
+      "schema": "nistData/atomic/gYear/Schema+Instance/NISTSchema-SV-IV-atomic-gYear-pattern-4.xsd",
+      "instances": 5,
+      "category_escapes": [
+        "d"
+      ],
+      "patterns": [
+        "\\d\\d14"
+      ]
+    },
+    {
+      "schema": "nistData/atomic/gYear/Schema+Instance/NISTSchema-SV-IV-atomic-gYear-pattern-5.xsd",
+      "instances": 5,
+      "category_escapes": [
+        "d"
+      ],
+      "patterns": [
+        "\\d\\d21"
+      ]
+    },
+    {
+      "schema": "nistData/atomic/gMonthDay/Schema+Instance/NISTSchema-SV-IV-atomic-gMonthDay-pattern-1.xsd",
+      "instances": 5,
+      "category_escapes": [
+        "d"
+      ],
+      "patterns": [
+        "--\\d2-1\\d"
+      ]
+    },
+    {
+      "schema": "nistData/atomic/gMonthDay/Schema+Instance/NISTSchema-SV-IV-atomic-gMonthDay-pattern-2.xsd",
+      "instances": 5,
+      "category_escapes": [
+        "d"
+      ],
+      "patterns": [
+        "--\\d1-2\\d"
+      ]
+    },
+    {
+      "schema": "nistData/atomic/gMonthDay/Schema+Instance/NISTSchema-SV-IV-atomic-gMonthDay-pattern-3.xsd",
+      "instances": 5,
+      "category_escapes": [
+        "d"
+      ],
+      "patterns": [
+        "--0\\d-\\d8"
+      ]
+    },
+    {
+      "schema": "nistData/atomic/gMonthDay/Schema+Instance/NISTSchema-SV-IV-atomic-gMonthDay-pattern-4.xsd",
+      "instances": 5,
+      "category_escapes": [
+        "d"
+      ],
+      "patterns": [
+        "--\\d3-0\\d"
+      ]
+    },
+    {
+      "schema": "nistData/atomic/gMonthDay/Schema+Instance/NISTSchema-SV-IV-atomic-gMonthDay-pattern-5.xsd",
+      "instances": 5,
+      "category_escapes": [
+        "d"
+      ],
+      "patterns": [
+        "--0\\d-1\\d"
+      ]
+    },
+    {
+      "schema": "nistData/atomic/gDay/Schema+Instance/NISTSchema-SV-IV-atomic-gDay-pattern-1.xsd",
+      "instances": 5,
+      "category_escapes": [
+        "d"
+      ],
+      "patterns": [
+        "---\\d5"
+      ]
+    },
+    {
+      "schema": "nistData/atomic/gDay/Schema+Instance/NISTSchema-SV-IV-atomic-gDay-pattern-2.xsd",
+      "instances": 5,
+      "category_escapes": [
+        "d"
+      ],
+      "patterns": [
+        "---\\d5"
+      ]
+    },
+    {
+      "schema": "nistData/atomic/gDay/Schema+Instance/NISTSchema-SV-IV-atomic-gDay-pattern-3.xsd",
+      "instances": 5,
+      "category_escapes": [
+        "d"
+      ],
+      "patterns": [
+        "---0\\d"
+      ]
+    },
+    {
+      "schema": "nistData/atomic/gDay/Schema+Instance/NISTSchema-SV-IV-atomic-gDay-pattern-4.xsd",
+      "instances": 5,
+      "category_escapes": [
+        "d"
+      ],
+      "patterns": [
+        "---\\d2"
+      ]
+    },
+    {
+      "schema": "nistData/atomic/gDay/Schema+Instance/NISTSchema-SV-IV-atomic-gDay-pattern-5.xsd",
+      "instances": 5,
+      "category_escapes": [
+        "d"
+      ],
+      "patterns": [
+        "---1\\d"
+      ]
+    },
+    {
+      "schema": "nistData/atomic/gMonth/Schema+Instance/NISTSchema-SV-IV-atomic-gMonth-pattern-1.xsd",
+      "instances": 5,
+      "category_escapes": [
+        "d"
+      ],
+      "patterns": [
+        "--1\\d"
+      ]
+    },
+    {
+      "schema": "nistData/atomic/gMonth/Schema+Instance/NISTSchema-SV-IV-atomic-gMonth-pattern-2.xsd",
+      "instances": 5,
+      "category_escapes": [
+        "d"
+      ],
+      "patterns": [
+        "--\\d2"
+      ]
+    },
+    {
+      "schema": "nistData/atomic/gMonth/Schema+Instance/NISTSchema-SV-IV-atomic-gMonth-pattern-3.xsd",
+      "instances": 5,
+      "category_escapes": [
+        "d"
+      ],
+      "patterns": [
+        "--\\d9"
+      ]
+    },
+    {
+      "schema": "nistData/atomic/gMonth/Schema+Instance/NISTSchema-SV-IV-atomic-gMonth-pattern-4.xsd",
+      "instances": 5,
+      "category_escapes": [
+        "d"
+      ],
+      "patterns": [
+        "--\\d6"
+      ]
+    },
+    {
+      "schema": "nistData/atomic/gMonth/Schema+Instance/NISTSchema-SV-IV-atomic-gMonth-pattern-5.xsd",
+      "instances": 5,
+      "category_escapes": [
+        "d"
+      ],
+      "patterns": [
+        "--0\\d"
+      ]
+    },
+    {
+      "schema": "nistData/atomic/string/Schema+Instance/NISTSchema-SV-IV-atomic-string-pattern-1.xsd",
+      "instances": 5,
+      "category_escapes": [
+        "d"
+      ],
+      "patterns": [
+        "\\d{1,5}\\s([A-Z][a-z]{1,20}\\s){4}Street\\n([A-Z][a-z]{1,20}\\s){2},\\s[A-Z]{2}\\s12848"
+      ]
+    },
+    {
+      "schema": "nistData/atomic/string/Schema+Instance/NISTSchema-SV-IV-atomic-string-pattern-2.xsd",
+      "instances": 5,
+      "category_escapes": [
+        "d"
+      ],
+      "patterns": [
+        "\\d{1,5}\\s([A-Z][a-z]{1,20}\\s){2}Street\\n([A-Z][a-z]{1,20}\\s){3},\\s[A-Z]{2}\\s15849"
+      ]
+    },
+    {
+      "schema": "nistData/atomic/string/Schema+Instance/NISTSchema-SV-IV-atomic-string-pattern-3.xsd",
+      "instances": 5,
+      "category_escapes": [
+        "d"
+      ],
+      "patterns": [
+        "\\d{1,5}\\s([A-Z][a-z]{1,20}\\s){4}Street\\n([A-Z][a-z]{1,20}\\s){1},\\s[A-Z]{2}\\s13420-1016"
+      ]
+    },
+    {
+      "schema": "nistData/atomic/string/Schema+Instance/NISTSchema-SV-IV-atomic-string-pattern-4.xsd",
+      "instances": 5,
+      "category_escapes": [
+        "d"
+      ],
+      "patterns": [
+        "\\d{1,5}\\s([A-Z][a-z]{1,20}\\s){4}Street\\n([A-Z][a-z]{1,20}\\s){2},\\s[A-Z]{2}\\s17687"
+      ]
+    },
+    {
+      "schema": "nistData/atomic/string/Schema+Instance/NISTSchema-SV-IV-atomic-string-pattern-5.xsd",
+      "instances": 5,
+      "category_escapes": [
+        "d"
+      ],
+      "patterns": [
+        "\\d{1,5}\\s([A-Z][a-z]{1,20}\\s){3}Street\\n([A-Z][a-z]{1,20}\\s){1},\\s[A-Z]{2}\\s11101"
+      ]
+    },
+    {
+      "schema": "nistData/atomic/normalizedString/Schema+Instance/NISTSchema-SV-IV-atomic-normalizedString-pattern-1.xsd",
+      "instances": 5,
+      "category_escapes": [
+        "d"
+      ],
+      "patterns": [
+        "\\d{1,5}\\s([A-Z][a-z]{1,20}\\s){4}Street\\s([A-Z][a-z]{1,20}\\s){1},\\s[A-Z]{2}\\s18037"
+      ]
+    },
+    {
+      "schema": "nistData/atomic/normalizedString/Schema+Instance/NISTSchema-SV-IV-atomic-normalizedString-pattern-2.xsd",
+      "instances": 5,
+      "category_escapes": [
+        "d"
+      ],
+      "patterns": [
+        "\\d{1,5}\\s([A-Z][a-z]{1,20}\\s){4}Street\\s([A-Z][a-z]{1,20}\\s){2},\\s[A-Z]{2}\\s11352"
+      ]
+    },
+    {
+      "schema": "nistData/atomic/normalizedString/Schema+Instance/NISTSchema-SV-IV-atomic-normalizedString-pattern-3.xsd",
+      "instances": 5,
+      "category_escapes": [
+        "d"
+      ],
+      "patterns": [
+        "\\d{1,5}\\s([A-Z][a-z]{1,20}\\s){4}Street\\s([A-Z][a-z]{1,20}\\s){3},\\s[A-Z]{2}\\s12317"
+      ]
+    },
+    {
+      "schema": "nistData/atomic/normalizedString/Schema+Instance/NISTSchema-SV-IV-atomic-normalizedString-pattern-4.xsd",
+      "instances": 5,
+      "category_escapes": [
+        "d"
+      ],
+      "patterns": [
+        "\\d{1,5}\\s([A-Z][a-z]{1,20}\\s){1}Street\\s([A-Z][a-z]{1,20}\\s){1},\\s[A-Z]{2}\\s17076"
+      ]
+    },
+    {
+      "schema": "nistData/atomic/normalizedString/Schema+Instance/NISTSchema-SV-IV-atomic-normalizedString-pattern-5.xsd",
+      "instances": 5,
+      "category_escapes": [
+        "d"
+      ],
+      "patterns": [
+        "\\d{1,5}\\s([A-Z][a-z]{1,20}\\s){1}Street\\s([A-Z][a-z]{1,20}\\s){3},\\s[A-Z]{2}\\s19099-1858"
+      ]
+    },
+    {
+      "schema": "nistData/atomic/token/Schema+Instance/NISTSchema-SV-IV-atomic-token-pattern-1.xsd",
+      "instances": 5,
+      "category_escapes": [
+        "d"
+      ],
+      "patterns": [
+        "\\d{1,5}\\s([A-Z][a-z]{1,20}\\s){4}Street\\s([A-Z][a-z]{1,20}\\s){2},\\s[A-Z]{2}\\s15464"
+      ]
+    },
+    {
+      "schema": "nistData/atomic/token/Schema+Instance/NISTSchema-SV-IV-atomic-token-pattern-2.xsd",
+      "instances": 5,
+      "category_escapes": [
+        "d"
+      ],
+      "patterns": [
+        "\\d{1,5}\\s([A-Z][a-z]{1,20}\\s){4}Street\\s([A-Z][a-z]{1,20}\\s){3},\\s[A-Z]{2}\\s19851-1515"
+      ]
+    },
+    {
+      "schema": "nistData/atomic/token/Schema+Instance/NISTSchema-SV-IV-atomic-token-pattern-3.xsd",
+      "instances": 5,
+      "category_escapes": [
+        "d"
+      ],
+      "patterns": [
+        "\\d{1,5}\\s([A-Z][a-z]{1,20}\\s){4}Street\\s([A-Z][a-z]{1,20}\\s){3},\\s[A-Z]{2}\\s13653"
+      ]
+    },
+    {
+      "schema": "nistData/atomic/token/Schema+Instance/NISTSchema-SV-IV-atomic-token-pattern-4.xsd",
+      "instances": 5,
+      "category_escapes": [
+        "d"
+      ],
+      "patterns": [
+        "\\d{1,5}\\s([A-Z][a-z]{1,20}\\s){3}Street\\s([A-Z][a-z]{1,20}\\s){2},\\s[A-Z]{2}\\s13573"
+      ]
+    },
+    {
+      "schema": "nistData/atomic/token/Schema+Instance/NISTSchema-SV-IV-atomic-token-pattern-5.xsd",
+      "instances": 5,
+      "category_escapes": [
+        "d"
+      ],
+      "patterns": [
+        "\\d{1,5}\\s([A-Z][a-z]{1,20}\\s){2}Street\\s([A-Z][a-z]{1,20}\\s){2},\\s[A-Z]{2}\\s13926-1478"
+      ]
+    },
+    {
+      "schema": "nistData/atomic/double/Schema+Instance/NISTSchema-SV-II-atomic-double-pattern-1.xsd",
+      "instances": 5,
+      "category_escapes": [
+        "d"
+      ],
+      "patterns": [
+        "\\d{1}E\\-\\d{3}"
+      ]
+    },
+    {
+      "schema": "nistData/atomic/double/Schema+Instance/NISTSchema-SV-II-atomic-double-pattern-2.xsd",
+      "instances": 5,
+      "category_escapes": [
+        "d"
+      ],
+      "patterns": [
+        "\\d{1}\\.\\d{4}E\\-\\d{2}"
+      ]
+    },
+    {
+      "schema": "nistData/atomic/double/Schema+Instance/NISTSchema-SV-II-atomic-double-pattern-3.xsd",
+      "instances": 5,
+      "category_escapes": [
+        "d"
+      ],
+      "patterns": [
+        "\\d{1}\\.\\d{8}E\\-\\d{1}"
+      ]
+    },
+    {
+      "schema": "nistData/atomic/double/Schema+Instance/NISTSchema-SV-II-atomic-double-pattern-4.xsd",
+      "instances": 5,
+      "category_escapes": [
+        "d"
+      ],
+      "patterns": [
+        "\\d{1}\\.\\d{12}E\\d{1}"
+      ]
+    },
+    {
+      "schema": "nistData/atomic/double/Schema+Instance/NISTSchema-SV-II-atomic-double-pattern-5.xsd",
+      "instances": 5,
+      "category_escapes": [
+        "d"
+      ],
+      "patterns": [
+        "\\d{1}\\.\\d{16}E\\d{3}"
+      ]
+    },
+    {
+      "schema": "nistData/atomic/float/Schema+Instance/NISTSchema-SV-II-atomic-float-pattern-1.xsd",
+      "instances": 5,
+      "category_escapes": [
+        "d"
+      ],
+      "patterns": [
+        "\\d{1}E\\-\\d{2}"
+      ]
+    },
+    {
+      "schema": "nistData/atomic/float/Schema+Instance/NISTSchema-SV-II-atomic-float-pattern-2.xsd",
+      "instances": 5,
+      "category_escapes": [
+        "d"
+      ],
+      "patterns": [
+        "\\d{2}E\\-\\d{1}"
+      ]
+    },
+    {
+      "schema": "nistData/atomic/float/Schema+Instance/NISTSchema-SV-II-atomic-float-pattern-3.xsd",
+      "instances": 5,
+      "category_escapes": [
+        "d"
+      ],
+      "patterns": [
+        "\\d{1}\\.\\d{2}E\\d{1}"
+      ]
+    },
+    {
+      "schema": "nistData/atomic/float/Schema+Instance/NISTSchema-SV-II-atomic-float-pattern-4.xsd",
+      "instances": 5,
+      "category_escapes": [
+        "d"
+      ],
+      "patterns": [
+        "\\d{1}\\.\\d{3}E\\d{2}"
+      ]
+    },
+    {
+      "schema": "nistData/atomic/float/Schema+Instance/NISTSchema-SV-II-atomic-float-pattern-5.xsd",
+      "instances": 5,
+      "category_escapes": [
+        "d"
+      ],
+      "patterns": [
+        "\\d{1}\\.\\d{7}E\\-\\d{2}"
+      ]
+    },
+    {
+      "schema": "nistData/atomic/decimal/Schema+Instance/NISTSchema-SV-II-atomic-decimal-pattern-1.xsd",
+      "instances": 5,
+      "category_escapes": [
+        "d"
+      ],
+      "patterns": [
+        "\\d{1}"
+      ]
+    },
+    {
+      "schema": "nistData/atomic/decimal/Schema+Instance/NISTSchema-SV-II-atomic-decimal-pattern-2.xsd",
+      "instances": 5,
+      "category_escapes": [
+        "d"
+      ],
+      "patterns": [
+        "\\d{1}\\.\\d{4}"
+      ]
+    },
+    {
+      "schema": "nistData/atomic/decimal/Schema+Instance/NISTSchema-SV-II-atomic-decimal-pattern-3.xsd",
+      "instances": 5,
+      "category_escapes": [
+        "d"
+      ],
+      "patterns": [
+        "\\-\\d{5}\\.\\d{4}"
+      ]
+    },
+    {
+      "schema": "nistData/atomic/decimal/Schema+Instance/NISTSchema-SV-II-atomic-decimal-pattern-4.xsd",
+      "instances": 5,
+      "category_escapes": [
+        "d"
+      ],
+      "patterns": [
+        "\\d{10}\\.\\d{3}"
+      ]
+    },
+    {
+      "schema": "nistData/atomic/decimal/Schema+Instance/NISTSchema-SV-II-atomic-decimal-pattern-5.xsd",
+      "instances": 5,
+      "category_escapes": [
+        "d"
+      ],
+      "patterns": [
+        "\\-\\d{17}\\.\\d{1}"
+      ]
+    },
+    {
+      "schema": "nistData/atomic/integer/Schema+Instance/NISTSchema-SV-II-atomic-integer-pattern-1.xsd",
+      "instances": 5,
+      "category_escapes": [
+        "d"
+      ],
+      "patterns": [
+        "\\-\\d{18}"
+      ]
+    },
+    {
+      "schema": "nistData/atomic/integer/Schema+Instance/NISTSchema-SV-II-atomic-integer-pattern-2.xsd",
+      "instances": 5,
+      "category_escapes": [
+        "d"
+      ],
+      "patterns": [
+        "\\-\\d{9}"
+      ]
+    },
+    {
+      "schema": "nistData/atomic/integer/Schema+Instance/NISTSchema-SV-II-atomic-integer-pattern-3.xsd",
+      "instances": 5,
+      "category_escapes": [
+        "d"
+      ],
+      "patterns": [
+        "\\-\\d{1}"
+      ]
+    },
+    {
+      "schema": "nistData/atomic/integer/Schema+Instance/NISTSchema-SV-II-atomic-integer-pattern-4.xsd",
+      "instances": 5,
+      "category_escapes": [
+        "d"
+      ],
+      "patterns": [
+        "\\d{5}"
+      ]
+    },
+    {
+      "schema": "nistData/atomic/integer/Schema+Instance/NISTSchema-SV-II-atomic-integer-pattern-5.xsd",
+      "instances": 5,
+      "category_escapes": [
+        "d"
+      ],
+      "patterns": [
+        "\\d{18}"
+      ]
+    },
+    {
+      "schema": "nistData/atomic/nonPositiveInteger/Schema+Instance/NISTSchema-SV-II-atomic-nonPositiveInteger-pattern-1.xsd",
+      "instances": 5,
+      "category_escapes": [
+        "d"
+      ],
+      "patterns": [
+        "\\-\\d{1}"
+      ]
+    },
+    {
+      "schema": "nistData/atomic/nonPositiveInteger/Schema+Instance/NISTSchema-SV-II-atomic-nonPositiveInteger-pattern-2.xsd",
+      "instances": 5,
+      "category_escapes": [
+        "d"
+      ],
+      "patterns": [
+        "\\-\\d{5}"
+      ]
+    },
+    {
+      "schema": "nistData/atomic/nonPositiveInteger/Schema+Instance/NISTSchema-SV-II-atomic-nonPositiveInteger-pattern-3.xsd",
+      "instances": 5,
+      "category_escapes": [
+        "d"
+      ],
+      "patterns": [
+        "\\-\\d{9}"
+      ]
+    },
+    {
+      "schema": "nistData/atomic/nonPositiveInteger/Schema+Instance/NISTSchema-SV-II-atomic-nonPositiveInteger-pattern-4.xsd",
+      "instances": 5,
+      "category_escapes": [
+        "d"
+      ],
+      "patterns": [
+        "\\-\\d{13}"
+      ]
+    },
+    {
+      "schema": "nistData/atomic/nonPositiveInteger/Schema+Instance/NISTSchema-SV-II-atomic-nonPositiveInteger-pattern-5.xsd",
+      "instances": 5,
+      "category_escapes": [
+        "d"
+      ],
+      "patterns": [
+        "\\-\\d{18}"
+      ]
+    },
+    {
+      "schema": "nistData/atomic/negativeInteger/Schema+Instance/NISTSchema-SV-II-atomic-negativeInteger-pattern-1.xsd",
+      "instances": 5,
+      "category_escapes": [
+        "d"
+      ],
+      "patterns": [
+        "\\-\\d{1}"
+      ]
+    },
+    {
+      "schema": "nistData/atomic/negativeInteger/Schema+Instance/NISTSchema-SV-II-atomic-negativeInteger-pattern-2.xsd",
+      "instances": 5,
+      "category_escapes": [
+        "d"
+      ],
+      "patterns": [
+        "\\-\\d{5}"
+      ]
+    },
+    {
+      "schema": "nistData/atomic/negativeInteger/Schema+Instance/NISTSchema-SV-II-atomic-negativeInteger-pattern-3.xsd",
+      "instances": 5,
+      "category_escapes": [
+        "d"
+      ],
+      "patterns": [
+        "\\-\\d{9}"
+      ]
+    },
+    {
+      "schema": "nistData/atomic/negativeInteger/Schema+Instance/NISTSchema-SV-II-atomic-negativeInteger-pattern-4.xsd",
+      "instances": 5,
+      "category_escapes": [
+        "d"
+      ],
+      "patterns": [
+        "\\-\\d{13}"
+      ]
+    },
+    {
+      "schema": "nistData/atomic/negativeInteger/Schema+Instance/NISTSchema-SV-II-atomic-negativeInteger-pattern-5.xsd",
+      "instances": 5,
+      "category_escapes": [
+        "d"
+      ],
+      "patterns": [
+        "\\-\\d{18}"
+      ]
+    },
+    {
+      "schema": "nistData/atomic/long/Schema+Instance/NISTSchema-SV-II-atomic-long-pattern-1.xsd",
+      "instances": 5,
+      "category_escapes": [
+        "d"
+      ],
+      "patterns": [
+        "\\-\\d{18}"
+      ]
+    },
+    {
+      "schema": "nistData/atomic/long/Schema+Instance/NISTSchema-SV-II-atomic-long-pattern-2.xsd",
+      "instances": 5,
+      "category_escapes": [
+        "d"
+      ],
+      "patterns": [
+        "\\-\\d{9}"
+      ]
+    },
+    {
+      "schema": "nistData/atomic/long/Schema+Instance/NISTSchema-SV-II-atomic-long-pattern-3.xsd",
+      "instances": 5,
+      "category_escapes": [
+        "d"
+      ],
+      "patterns": [
+        "\\-\\d{1}"
+      ]
+    },
+    {
+      "schema": "nistData/atomic/long/Schema+Instance/NISTSchema-SV-II-atomic-long-pattern-4.xsd",
+      "instances": 5,
+      "category_escapes": [
+        "d"
+      ],
+      "patterns": [
+        "\\d{5}"
+      ]
+    },
+    {
+      "schema": "nistData/atomic/long/Schema+Instance/NISTSchema-SV-II-atomic-long-pattern-5.xsd",
+      "instances": 5,
+      "category_escapes": [
+        "d"
+      ],
+      "patterns": [
+        "\\d{18}"
+      ]
+    },
+    {
+      "schema": "nistData/atomic/int/Schema+Instance/NISTSchema-SV-II-atomic-int-pattern-1.xsd",
+      "instances": 5,
+      "category_escapes": [
+        "d"
+      ],
+      "patterns": [
+        "\\-\\d{10}"
+      ]
+    },
+    {
+      "schema": "nistData/atomic/int/Schema+Instance/NISTSchema-SV-II-atomic-int-pattern-2.xsd",
+      "instances": 5,
+      "category_escapes": [
+        "d"
+      ],
+      "patterns": [
+        "\\-\\d{5}"
+      ]
+    },
+    {
+      "schema": "nistData/atomic/int/Schema+Instance/NISTSchema-SV-II-atomic-int-pattern-3.xsd",
+      "instances": 5,
+      "category_escapes": [
+        "d"
+      ],
+      "patterns": [
+        "\\-\\d{1}"
+      ]
+    },
+    {
+      "schema": "nistData/atomic/int/Schema+Instance/NISTSchema-SV-II-atomic-int-pattern-4.xsd",
+      "instances": 5,
+      "category_escapes": [
+        "d"
+      ],
+      "patterns": [
+        "\\d{3}"
+      ]
+    },
+    {
+      "schema": "nistData/atomic/int/Schema+Instance/NISTSchema-SV-II-atomic-int-pattern-5.xsd",
+      "instances": 5,
+      "category_escapes": [
+        "d"
+      ],
+      "patterns": [
+        "\\d{10}"
+      ]
+    },
+    {
+      "schema": "nistData/atomic/short/Schema+Instance/NISTSchema-SV-II-atomic-short-pattern-1.xsd",
+      "instances": 5,
+      "category_escapes": [
+        "d"
+      ],
+      "patterns": [
+        "\\-\\d{5}"
+      ]
+    },
+    {
+      "schema": "nistData/atomic/short/Schema+Instance/NISTSchema-SV-II-atomic-short-pattern-2.xsd",
+      "instances": 5,
+      "category_escapes": [
+        "d"
+      ],
+      "patterns": [
+        "\\-\\d{3}"
+      ]
+    },
+    {
+      "schema": "nistData/atomic/short/Schema+Instance/NISTSchema-SV-II-atomic-short-pattern-3.xsd",
+      "instances": 5,
+      "category_escapes": [
+        "d"
+      ],
+      "patterns": [
+        "\\-\\d{1}"
+      ]
+    },
+    {
+      "schema": "nistData/atomic/short/Schema+Instance/NISTSchema-SV-II-atomic-short-pattern-4.xsd",
+      "instances": 5,
+      "category_escapes": [
+        "d"
+      ],
+      "patterns": [
+        "\\d{2}"
+      ]
+    },
+    {
+      "schema": "nistData/atomic/short/Schema+Instance/NISTSchema-SV-II-atomic-short-pattern-5.xsd",
+      "instances": 5,
+      "category_escapes": [
+        "d"
+      ],
+      "patterns": [
+        "\\d{5}"
+      ]
+    },
+    {
+      "schema": "nistData/atomic/byte/Schema+Instance/NISTSchema-SV-II-atomic-byte-pattern-1.xsd",
+      "instances": 5,
+      "category_escapes": [
+        "d"
+      ],
+      "patterns": [
+        "\\-\\d{3}"
+      ]
+    },
+    {
+      "schema": "nistData/atomic/byte/Schema+Instance/NISTSchema-SV-II-atomic-byte-pattern-2.xsd",
+      "instances": 5,
+      "category_escapes": [
+        "d"
+      ],
+      "patterns": [
+        "\\-\\d{2}"
+      ]
+    },
+    {
+      "schema": "nistData/atomic/byte/Schema+Instance/NISTSchema-SV-II-atomic-byte-pattern-3.xsd",
+      "instances": 5,
+      "category_escapes": [
+        "d"
+      ],
+      "patterns": [
+        "\\-\\d{1}"
+      ]
+    },
+    {
+      "schema": "nistData/atomic/byte/Schema+Instance/NISTSchema-SV-II-atomic-byte-pattern-4.xsd",
+      "instances": 5,
+      "category_escapes": [
+        "d"
+      ],
+      "patterns": [
+        "\\d{1}"
+      ]
+    },
+    {
+      "schema": "nistData/atomic/byte/Schema+Instance/NISTSchema-SV-II-atomic-byte-pattern-5.xsd",
+      "instances": 5,
+      "category_escapes": [
+        "d"
+      ],
+      "patterns": [
+        "\\d{3}"
+      ]
+    },
+    {
+      "schema": "nistData/atomic/nonNegativeInteger/Schema+Instance/NISTSchema-SV-II-atomic-nonNegativeInteger-pattern-1.xsd",
+      "instances": 5,
+      "category_escapes": [
+        "d"
+      ],
+      "patterns": [
+        "\\d{1}"
+      ]
+    },
+    {
+      "schema": "nistData/atomic/nonNegativeInteger/Schema+Instance/NISTSchema-SV-II-atomic-nonNegativeInteger-pattern-2.xsd",
+      "instances": 5,
+      "category_escapes": [
+        "d"
+      ],
+      "patterns": [
+        "\\d{5}"
+      ]
+    },
+    {
+      "schema": "nistData/atomic/nonNegativeInteger/Schema+Instance/NISTSchema-SV-II-atomic-nonNegativeInteger-pattern-3.xsd",
+      "instances": 5,
+      "category_escapes": [
+        "d"
+      ],
+      "patterns": [
+        "\\d{9}"
+      ]
+    },
+    {
+      "schema": "nistData/atomic/nonNegativeInteger/Schema+Instance/NISTSchema-SV-II-atomic-nonNegativeInteger-pattern-4.xsd",
+      "instances": 5,
+      "category_escapes": [
+        "d"
+      ],
+      "patterns": [
+        "\\d{13}"
+      ]
+    },
+    {
+      "schema": "nistData/atomic/nonNegativeInteger/Schema+Instance/NISTSchema-SV-II-atomic-nonNegativeInteger-pattern-5.xsd",
+      "instances": 5,
+      "category_escapes": [
+        "d"
+      ],
+      "patterns": [
+        "\\d{18}"
+      ]
+    },
+    {
+      "schema": "nistData/atomic/unsignedLong/Schema+Instance/NISTSchema-SV-II-atomic-unsignedLong-pattern-1.xsd",
+      "instances": 5,
+      "category_escapes": [
+        "d"
+      ],
+      "patterns": [
+        "\\d{1}"
+      ]
+    },
+    {
+      "schema": "nistData/atomic/unsignedLong/Schema+Instance/NISTSchema-SV-II-atomic-unsignedLong-pattern-2.xsd",
+      "instances": 5,
+      "category_escapes": [
+        "d"
+      ],
+      "patterns": [
+        "\\d{5}"
+      ]
+    },
+    {
+      "schema": "nistData/atomic/unsignedLong/Schema+Instance/NISTSchema-SV-II-atomic-unsignedLong-pattern-3.xsd",
+      "instances": 5,
+      "category_escapes": [
+        "d"
+      ],
+      "patterns": [
+        "\\d{9}"
+      ]
+    },
+    {
+      "schema": "nistData/atomic/unsignedLong/Schema+Instance/NISTSchema-SV-II-atomic-unsignedLong-pattern-4.xsd",
+      "instances": 5,
+      "category_escapes": [
+        "d"
+      ],
+      "patterns": [
+        "\\d{13}"
+      ]
+    },
+    {
+      "schema": "nistData/atomic/unsignedLong/Schema+Instance/NISTSchema-SV-II-atomic-unsignedLong-pattern-5.xsd",
+      "instances": 5,
+      "category_escapes": [
+        "d"
+      ],
+      "patterns": [
+        "\\d{18}"
+      ]
+    },
+    {
+      "schema": "nistData/atomic/unsignedInt/Schema+Instance/NISTSchema-SV-II-atomic-unsignedInt-pattern-1.xsd",
+      "instances": 5,
+      "category_escapes": [
+        "d"
+      ],
+      "patterns": [
+        "\\d{1}"
+      ]
+    },
+    {
+      "schema": "nistData/atomic/unsignedInt/Schema+Instance/NISTSchema-SV-II-atomic-unsignedInt-pattern-2.xsd",
+      "instances": 5,
+      "category_escapes": [
+        "d"
+      ],
+      "patterns": [
+        "\\d{3}"
+      ]
+    },
+    {
+      "schema": "nistData/atomic/unsignedInt/Schema+Instance/NISTSchema-SV-II-atomic-unsignedInt-pattern-3.xsd",
+      "instances": 5,
+      "category_escapes": [
+        "d"
+      ],
+      "patterns": [
+        "\\d{5}"
+      ]
+    },
+    {
+      "schema": "nistData/atomic/unsignedInt/Schema+Instance/NISTSchema-SV-II-atomic-unsignedInt-pattern-4.xsd",
+      "instances": 5,
+      "category_escapes": [
+        "d"
+      ],
+      "patterns": [
+        "\\d{7}"
+      ]
+    },
+    {
+      "schema": "nistData/atomic/unsignedInt/Schema+Instance/NISTSchema-SV-II-atomic-unsignedInt-pattern-5.xsd",
+      "instances": 5,
+      "category_escapes": [
+        "d"
+      ],
+      "patterns": [
+        "\\d{10}"
+      ]
+    },
+    {
+      "schema": "nistData/atomic/unsignedShort/Schema+Instance/NISTSchema-SV-II-atomic-unsignedShort-pattern-1.xsd",
+      "instances": 5,
+      "category_escapes": [
+        "d"
+      ],
+      "patterns": [
+        "\\d{1}"
+      ]
+    },
+    {
+      "schema": "nistData/atomic/unsignedShort/Schema+Instance/NISTSchema-SV-II-atomic-unsignedShort-pattern-2.xsd",
+      "instances": 5,
+      "category_escapes": [
+        "d"
+      ],
+      "patterns": [
+        "\\d{2}"
+      ]
+    },
+    {
+      "schema": "nistData/atomic/unsignedShort/Schema+Instance/NISTSchema-SV-II-atomic-unsignedShort-pattern-3.xsd",
+      "instances": 5,
+      "category_escapes": [
+        "d"
+      ],
+      "patterns": [
+        "\\d{3}"
+      ]
+    },
+    {
+      "schema": "nistData/atomic/unsignedShort/Schema+Instance/NISTSchema-SV-II-atomic-unsignedShort-pattern-4.xsd",
+      "instances": 5,
+      "category_escapes": [
+        "d"
+      ],
+      "patterns": [
+        "\\d{4}"
+      ]
+    },
+    {
+      "schema": "nistData/atomic/unsignedShort/Schema+Instance/NISTSchema-SV-II-atomic-unsignedShort-pattern-5.xsd",
+      "instances": 5,
+      "category_escapes": [
+        "d"
+      ],
+      "patterns": [
+        "\\d{5}"
+      ]
+    },
+    {
+      "schema": "nistData/atomic/unsignedByte/Schema+Instance/NISTSchema-SV-II-atomic-unsignedByte-pattern-1.xsd",
+      "instances": 5,
+      "category_escapes": [
+        "d"
+      ],
+      "patterns": [
+        "\\d{1}"
+      ]
+    },
+    {
+      "schema": "nistData/atomic/unsignedByte/Schema+Instance/NISTSchema-SV-II-atomic-unsignedByte-pattern-2.xsd",
+      "instances": 5,
+      "category_escapes": [
+        "d"
+      ],
+      "patterns": [
+        "\\d{2}"
+      ]
+    },
+    {
+      "schema": "nistData/atomic/unsignedByte/Schema+Instance/NISTSchema-SV-II-atomic-unsignedByte-pattern-3.xsd",
+      "instances": 5,
+      "category_escapes": [
+        "d"
+      ],
+      "patterns": [
+        "\\d{3}"
+      ]
+    },
+    {
+      "schema": "nistData/atomic/unsignedByte/Schema+Instance/NISTSchema-SV-II-atomic-unsignedByte-pattern-4.xsd",
+      "instances": 5,
+      "category_escapes": [
+        "d"
+      ],
+      "patterns": [
+        "\\d{1}"
+      ]
+    },
+    {
+      "schema": "nistData/atomic/unsignedByte/Schema+Instance/NISTSchema-SV-II-atomic-unsignedByte-pattern-5.xsd",
+      "instances": 5,
+      "category_escapes": [
+        "d"
+      ],
+      "patterns": [
+        "\\d{2}"
+      ]
+    },
+    {
+      "schema": "nistData/atomic/positiveInteger/Schema+Instance/NISTSchema-SV-II-atomic-positiveInteger-pattern-1.xsd",
+      "instances": 5,
+      "category_escapes": [
+        "d"
+      ],
+      "patterns": [
+        "\\d{1}"
+      ]
+    },
+    {
+      "schema": "nistData/atomic/positiveInteger/Schema+Instance/NISTSchema-SV-II-atomic-positiveInteger-pattern-2.xsd",
+      "instances": 5,
+      "category_escapes": [
+        "d"
+      ],
+      "patterns": [
+        "\\d{5}"
+      ]
+    },
+    {
+      "schema": "nistData/atomic/positiveInteger/Schema+Instance/NISTSchema-SV-II-atomic-positiveInteger-pattern-3.xsd",
+      "instances": 5,
+      "category_escapes": [
+        "d"
+      ],
+      "patterns": [
+        "\\d{9}"
+      ]
+    },
+    {
+      "schema": "nistData/atomic/positiveInteger/Schema+Instance/NISTSchema-SV-II-atomic-positiveInteger-pattern-4.xsd",
+      "instances": 5,
+      "category_escapes": [
+        "d"
+      ],
+      "patterns": [
+        "\\d{13}"
+      ]
+    },
+    {
+      "schema": "nistData/atomic/positiveInteger/Schema+Instance/NISTSchema-SV-II-atomic-positiveInteger-pattern-5.xsd",
+      "instances": 5,
+      "category_escapes": [
+        "d"
+      ],
+      "patterns": [
+        "\\d{18}"
+      ]
+    },
+    {
+      "schema": "nistData/atomic/duration/Schema+Instance/NISTSchema-SV-II-atomic-duration-pattern-1.xsd",
+      "instances": 5,
+      "category_escapes": [
+        "d"
+      ],
+      "patterns": [
+        "P\\d\\d69Y\\d2M1\\dDT\\d0H\\d9M5\\dS"
+      ]
+    },
+    {
+      "schema": "nistData/atomic/duration/Schema+Instance/NISTSchema-SV-II-atomic-duration-pattern-2.xsd",
+      "instances": 5,
+      "category_escapes": [
+        "d"
+      ],
+      "patterns": [
+        "P19\\d\\dY0\\dM2\\dDT\\d1H\\d9M\\d9S"
+      ]
+    },
+    {
+      "schema": "nistData/atomic/duration/Schema+Instance/NISTSchema-SV-II-atomic-duration-pattern-3.xsd",
+      "instances": 5,
+      "category_escapes": [
+        "d"
+      ],
+      "patterns": [
+        "P\\d\\d24Y0\\dM1\\dDT1\\dH\\d0M5\\dS"
+      ]
+    },
+    {
+      "schema": "nistData/atomic/duration/Schema+Instance/NISTSchema-SV-II-atomic-duration-pattern-4.xsd",
+      "instances": 5,
+      "category_escapes": [
+        "d"
+      ],
+      "patterns": [
+        "P\\d\\d80Y\\d8M1\\dDT1\\dH3\\dM2\\dS"
+      ]
+    },
+    {
+      "schema": "nistData/atomic/duration/Schema+Instance/NISTSchema-SV-II-atomic-duration-pattern-5.xsd",
+      "instances": 5,
+      "category_escapes": [
+        "d"
+      ],
+      "patterns": [
+        "P17\\d\\dY\\d7M\\d3DT0\\dH0\\dM\\d5S"
+      ]
+    },
+    {
+      "schema": "nistData/atomic/dateTime/Schema+Instance/NISTSchema-SV-II-atomic-dateTime-pattern-1.xsd",
+      "instances": 5,
+      "category_escapes": [
+        "d"
+      ],
+      "patterns": [
+        "\\d\\d69-\\d9-\\d9T\\d8:\\d1:3\\d"
+      ]
+    },
+    {
+      "schema": "nistData/atomic/dateTime/Schema+Instance/NISTSchema-SV-II-atomic-dateTime-pattern-2.xsd",
+      "instances": 5,
+      "category_escapes": [
+        "d"
+      ],
+      "patterns": [
+        "\\d\\d94-\\d9-\\d7T1\\d:0\\d:0\\d"
+      ]
+    },
+    {
+      "schema": "nistData/atomic/dateTime/Schema+Instance/NISTSchema-SV-II-atomic-dateTime-pattern-3.xsd",
+      "instances": 5,
+      "category_escapes": [
+        "d"
+      ],
+      "patterns": [
+        "20\\d\\d-\\d8-\\d5T\\d1:\\d1:0\\d"
+      ]
+    },
+    {
+      "schema": "nistData/atomic/dateTime/Schema+Instance/NISTSchema-SV-II-atomic-dateTime-pattern-4.xsd",
+      "instances": 5,
+      "category_escapes": [
+        "d"
+      ],
+      "patterns": [
+        "\\d\\d58-\\d2-2\\dT0\\d:1\\d:3\\d"
+      ]
+    },
+    {
+      "schema": "nistData/atomic/dateTime/Schema+Instance/NISTSchema-SV-II-atomic-dateTime-pattern-5.xsd",
+      "instances": 5,
+      "category_escapes": [
+        "d"
+      ],
+      "patterns": [
+        "\\d\\d59-\\d3-\\d4T1\\d:\\d9:3\\d"
+      ]
+    },
+    {
+      "schema": "nistData/atomic/time/Schema+Instance/NISTSchema-SV-II-atomic-time-pattern-1.xsd",
+      "instances": 5,
+      "category_escapes": [
+        "d"
+      ],
+      "patterns": [
+        "1\\d:2\\d:\\d4"
+      ]
+    },
+    {
+      "schema": "nistData/atomic/time/Schema+Instance/NISTSchema-SV-II-atomic-time-pattern-2.xsd",
+      "instances": 5,
+      "category_escapes": [
+        "d"
+      ],
+      "patterns": [
+        "1\\d:0\\d:3\\d"
+      ]
+    },
+    {
+      "schema": "nistData/atomic/time/Schema+Instance/NISTSchema-SV-II-atomic-time-pattern-3.xsd",
+      "instances": 5,
+      "category_escapes": [
+        "d"
+      ],
+      "patterns": [
+        "0\\d:1\\d:\\d1"
+      ]
+    },
+    {
+      "schema": "nistData/atomic/time/Schema+Instance/NISTSchema-SV-II-atomic-time-pattern-4.xsd",
+      "instances": 5,
+      "category_escapes": [
+        "d"
+      ],
+      "patterns": [
+        "0\\d:4\\d:\\d9"
+      ]
+    },
+    {
+      "schema": "nistData/atomic/time/Schema+Instance/NISTSchema-SV-II-atomic-time-pattern-5.xsd",
+      "instances": 5,
+      "category_escapes": [
+        "d"
+      ],
+      "patterns": [
+        "\\d0:\\d6:\\d7"
+      ]
+    },
+    {
+      "schema": "nistData/atomic/date/Schema+Instance/NISTSchema-SV-II-atomic-date-pattern-1.xsd",
+      "instances": 5,
+      "category_escapes": [
+        "d"
+      ],
+      "patterns": [
+        "\\d\\d54-0\\d-\\d8"
+      ]
+    },
+    {
+      "schema": "nistData/atomic/date/Schema+Instance/NISTSchema-SV-II-atomic-date-pattern-2.xsd",
+      "instances": 5,
+      "category_escapes": [
+        "d"
+      ],
+      "patterns": [
+        "\\d\\d79-0\\d-\\d5"
+      ]
+    },
+    {
+      "schema": "nistData/atomic/date/Schema+Instance/NISTSchema-SV-II-atomic-date-pattern-3.xsd",
+      "instances": 5,
+      "category_escapes": [
+        "d"
+      ],
+      "patterns": [
+        "\\d\\d35-0\\d-\\d7"
+      ]
+    },
+    {
+      "schema": "nistData/atomic/date/Schema+Instance/NISTSchema-SV-II-atomic-date-pattern-4.xsd",
+      "instances": 5,
+      "category_escapes": [
+        "d"
+      ],
+      "patterns": [
+        "19\\d\\d-\\d0-2\\d"
+      ]
+    },
+    {
+      "schema": "nistData/atomic/date/Schema+Instance/NISTSchema-SV-II-atomic-date-pattern-5.xsd",
+      "instances": 5,
+      "category_escapes": [
+        "d"
+      ],
+      "patterns": [
+        "\\d\\d32-0\\d-\\d7"
+      ]
+    },
+    {
+      "schema": "nistData/atomic/gYearMonth/Schema+Instance/NISTSchema-SV-II-atomic-gYearMonth-pattern-1.xsd",
+      "instances": 5,
+      "category_escapes": [
+        "d"
+      ],
+      "patterns": [
+        "\\d\\d10-0\\d"
+      ]
+    },
+    {
+      "schema": "nistData/atomic/gYearMonth/Schema+Instance/NISTSchema-SV-II-atomic-gYearMonth-pattern-2.xsd",
+      "instances": 5,
+      "category_escapes": [
+        "d"
+      ],
+      "patterns": [
+        "19\\d\\d-0\\d"
+      ]
+    },
+    {
+      "schema": "nistData/atomic/gYearMonth/Schema+Instance/NISTSchema-SV-II-atomic-gYearMonth-pattern-3.xsd",
+      "instances": 5,
+      "category_escapes": [
+        "d"
+      ],
+      "patterns": [
+        "19\\d\\d-\\d6"
+      ]
+    },
+    {
+      "schema": "nistData/atomic/gYearMonth/Schema+Instance/NISTSchema-SV-II-atomic-gYearMonth-pattern-4.xsd",
+      "instances": 5,
+      "category_escapes": [
+        "d"
+      ],
+      "patterns": [
+        "\\d\\d54-0\\d"
+      ]
+    },
+    {
+      "schema": "nistData/atomic/gYearMonth/Schema+Instance/NISTSchema-SV-II-atomic-gYearMonth-pattern-5.xsd",
+      "instances": 5,
+      "category_escapes": [
+        "d"
+      ],
+      "patterns": [
+        "\\d\\d41-\\d2"
+      ]
+    },
+    {
+      "schema": "nistData/atomic/gYear/Schema+Instance/NISTSchema-SV-II-atomic-gYear-pattern-1.xsd",
+      "instances": 5,
+      "category_escapes": [
+        "d"
+      ],
+      "patterns": [
+        "\\d\\d06"
+      ]
+    },
+    {
+      "schema": "nistData/atomic/gYear/Schema+Instance/NISTSchema-SV-II-atomic-gYear-pattern-2.xsd",
+      "instances": 5,
+      "category_escapes": [
+        "d"
+      ],
+      "patterns": [
+        "19\\d\\d"
+      ]
+    },
+    {
+      "schema": "nistData/atomic/gYear/Schema+Instance/NISTSchema-SV-II-atomic-gYear-pattern-3.xsd",
+      "instances": 5,
+      "category_escapes": [
+        "d"
+      ],
+      "patterns": [
+        "17\\d\\d"
+      ]
+    },
+    {
+      "schema": "nistData/atomic/gYear/Schema+Instance/NISTSchema-SV-II-atomic-gYear-pattern-4.xsd",
+      "instances": 5,
+      "category_escapes": [
+        "d"
+      ],
+      "patterns": [
+        "\\d\\d66"
+      ]
+    },
+    {
+      "schema": "nistData/atomic/gYear/Schema+Instance/NISTSchema-SV-II-atomic-gYear-pattern-5.xsd",
+      "instances": 5,
+      "category_escapes": [
+        "d"
+      ],
+      "patterns": [
+        "\\d\\d77"
+      ]
+    },
+    {
+      "schema": "nistData/atomic/gMonthDay/Schema+Instance/NISTSchema-SV-II-atomic-gMonthDay-pattern-1.xsd",
+      "instances": 5,
+      "category_escapes": [
+        "d"
+      ],
+      "patterns": [
+        "--\\d1-1\\d"
+      ]
+    },
+    {
+      "schema": "nistData/atomic/gMonthDay/Schema+Instance/NISTSchema-SV-II-atomic-gMonthDay-pattern-2.xsd",
+      "instances": 5,
+      "category_escapes": [
+        "d"
+      ],
+      "patterns": [
+        "--\\d6-\\d8"
+      ]
+    },
+    {
+      "schema": "nistData/atomic/gMonthDay/Schema+Instance/NISTSchema-SV-II-atomic-gMonthDay-pattern-3.xsd",
+      "instances": 5,
+      "category_escapes": [
+        "d"
+      ],
+      "patterns": [
+        "--0\\d-\\d0"
+      ]
+    },
+    {
+      "schema": "nistData/atomic/gMonthDay/Schema+Instance/NISTSchema-SV-II-atomic-gMonthDay-pattern-4.xsd",
+      "instances": 5,
+      "category_escapes": [
+        "d"
+      ],
+      "patterns": [
+        "--0\\d-\\d6"
+      ]
+    },
+    {
+      "schema": "nistData/atomic/gMonthDay/Schema+Instance/NISTSchema-SV-II-atomic-gMonthDay-pattern-5.xsd",
+      "instances": 5,
+      "category_escapes": [
+        "d"
+      ],
+      "patterns": [
+        "--\\d5-\\d9"
+      ]
+    },
+    {
+      "schema": "nistData/atomic/gDay/Schema+Instance/NISTSchema-SV-II-atomic-gDay-pattern-1.xsd",
+      "instances": 5,
+      "category_escapes": [
+        "d"
+      ],
+      "patterns": [
+        "---2\\d"
+      ]
+    },
+    {
+      "schema": "nistData/atomic/gDay/Schema+Instance/NISTSchema-SV-II-atomic-gDay-pattern-2.xsd",
+      "instances": 5,
+      "category_escapes": [
+        "d"
+      ],
+      "patterns": [
+        "---\\d3"
+      ]
+    },
+    {
+      "schema": "nistData/atomic/gDay/Schema+Instance/NISTSchema-SV-II-atomic-gDay-pattern-3.xsd",
+      "instances": 5,
+      "category_escapes": [
+        "d"
+      ],
+      "patterns": [
+        "---\\d4"
+      ]
+    },
+    {
+      "schema": "nistData/atomic/gDay/Schema+Instance/NISTSchema-SV-II-atomic-gDay-pattern-4.xsd",
+      "instances": 5,
+      "category_escapes": [
+        "d"
+      ],
+      "patterns": [
+        "---0\\d"
+      ]
+    },
+    {
+      "schema": "nistData/atomic/gDay/Schema+Instance/NISTSchema-SV-II-atomic-gDay-pattern-5.xsd",
+      "instances": 5,
+      "category_escapes": [
+        "d"
+      ],
+      "patterns": [
+        "---1\\d"
+      ]
+    },
+    {
+      "schema": "nistData/atomic/gMonth/Schema+Instance/NISTSchema-SV-II-atomic-gMonth-pattern-1.xsd",
+      "instances": 5,
+      "category_escapes": [
+        "d"
+      ],
+      "patterns": [
+        "--0\\d"
+      ]
+    },
+    {
+      "schema": "nistData/atomic/gMonth/Schema+Instance/NISTSchema-SV-II-atomic-gMonth-pattern-2.xsd",
+      "instances": 5,
+      "category_escapes": [
+        "d"
+      ],
+      "patterns": [
+        "--\\d1"
+      ]
+    },
+    {
+      "schema": "nistData/atomic/gMonth/Schema+Instance/NISTSchema-SV-II-atomic-gMonth-pattern-3.xsd",
+      "instances": 5,
+      "category_escapes": [
+        "d"
+      ],
+      "patterns": [
+        "--0\\d"
+      ]
+    },
+    {
+      "schema": "nistData/atomic/gMonth/Schema+Instance/NISTSchema-SV-II-atomic-gMonth-pattern-4.xsd",
+      "instances": 5,
+      "category_escapes": [
+        "d"
+      ],
+      "patterns": [
+        "--0\\d"
+      ]
+    },
+    {
+      "schema": "nistData/atomic/gMonth/Schema+Instance/NISTSchema-SV-II-atomic-gMonth-pattern-5.xsd",
+      "instances": 5,
+      "category_escapes": [
+        "d"
+      ],
+      "patterns": [
+        "--1\\d"
+      ]
+    },
+    {
+      "schema": "nistData/list/decimal/Schema+Instance/NISTSchema-SV-IV-list-decimal-pattern-1.xsd",
+      "instances": 5,
+      "category_escapes": [
+        "d"
+      ],
+      "patterns": [
+        "\\d{1} \\-\\.\\d{3} \\-\\d{3}\\.\\d{2} \\d{6}\\.\\d{1} \\-\\d{2}\\.\\d{7} \\d{7}\\.\\d{4} \\-\\d{4}\\.\\d{9} \\-\\d{4}\\.\\d{14}"
+      ]
+    },
+    {
+      "schema": "nistData/list/decimal/Schema+Instance/NISTSchema-SV-IV-list-decimal-pattern-2.xsd",
+      "instances": 5,
+      "category_escapes": [
+        "d"
+      ],
+      "patterns": [
+        "\\d{1} \\-\\.\\d{3} \\d{4}\\.\\d{1} \\d{6}\\.\\d{1} \\d{7}\\.\\d{2} \\-\\d{5}\\.\\d{6} \\d{13} \\d{4}\\.\\d{14}"
+      ]
+    },
+    {
+      "schema": "nistData/list/decimal/Schema+Instance/NISTSchema-SV-IV-list-decimal-pattern-3.xsd",
+      "instances": 5,
+      "category_escapes": [
+        "d"
+      ],
+      "patterns": [
+        "\\-\\d{1} \\-\\d{1}\\.\\d{2} \\.\\d{5} \\d{1}\\.\\d{6} \\-\\d{8}\\.\\d{1} \\-\\d{1}\\.\\d{10} \\-\\d{11}\\.\\d{2} \\-\\d{8}\\.\\d{10}"
+      ]
+    },
+    {
+      "schema": "nistData/list/decimal/Schema+Instance/NISTSchema-SV-IV-list-decimal-pattern-4.xsd",
+      "instances": 5,
+      "category_escapes": [
+        "d"
+      ],
+      "patterns": [
+        "\\d{1} \\d{1}\\.\\d{1} \\d{1}\\.\\d{2} \\-\\d{2}\\.\\d{2} \\d{3}\\.\\d{2} \\d{5}\\.\\d{1} \\-\\d{5}\\.\\d{2} \\-\\d{8} \\-\\d{8}\\.\\d{1} \\-\\d{4}\\.\\d{14}"
+      ]
+    },
+    {
+      "schema": "nistData/list/decimal/Schema+Instance/NISTSchema-SV-IV-list-decimal-pattern-5.xsd",
+      "instances": 5,
+      "category_escapes": [
+        "d"
+      ],
+      "patterns": [
+        "\\d{1} \\-\\d{2}\\.\\d{1} \\.\\d{5} \\d{2}\\.\\d{5} \\-\\d{5}\\.\\d{4} \\-\\d{5}\\.\\d{6} \\d{5}\\.\\d{8} \\d{5}\\.\\d{10} \\-\\d{4}\\.\\d{14}"
+      ]
+    },
+    {
+      "schema": "nistData/list/integer/Schema+Instance/NISTSchema-SV-IV-list-integer-pattern-1.xsd",
+      "instances": 5,
+      "category_escapes": [
+        "d"
+      ],
+      "patterns": [
+        "\\-\\d{18} \\-\\d{13} \\-\\d{9} \\-\\d{5} \\-\\d{1} \\d{3} \\d{7} \\d{11} \\d{18}"
+      ]
+    },
+    {
+      "schema": "nistData/list/integer/Schema+Instance/NISTSchema-SV-IV-list-integer-pattern-2.xsd",
+      "instances": 5,
+      "category_escapes": [
+        "d"
+      ],
+      "patterns": [
+        "\\-\\d{18} \\-\\d{10} \\-\\d{4} \\d{1} \\d{7} \\d{18}"
+      ]
+    },
+    {
+      "schema": "nistData/list/integer/Schema+Instance/NISTSchema-SV-IV-list-integer-pattern-3.xsd",
+      "instances": 5,
+      "category_escapes": [
+        "d"
+      ],
+      "patterns": [
+        "\\-\\d{18} \\-\\d{9} \\-\\d{5} \\-\\d{1} \\d{3} \\d{7} \\d{18}"
+      ]
+    },
+    {
+      "schema": "nistData/list/integer/Schema+Instance/NISTSchema-SV-IV-list-integer-pattern-4.xsd",
+      "instances": 5,
+      "category_escapes": [
+        "d"
+      ],
+      "patterns": [
+        "\\-\\d{18} \\-\\d{11} \\-\\d{7} \\-\\d{3} \\d{1} \\d{5} \\d{9} \\d{18}"
+      ]
+    },
+    {
+      "schema": "nistData/list/integer/Schema+Instance/NISTSchema-SV-IV-list-integer-pattern-5.xsd",
+      "instances": 5,
+      "category_escapes": [
+        "d"
+      ],
+      "patterns": [
+        "\\-\\d{18} \\-\\d{9} \\-\\d{5} \\-\\d{1} \\d{3} \\d{7} \\d{18}"
+      ]
+    },
+    {
+      "schema": "nistData/list/nonPositiveInteger/Schema+Instance/NISTSchema-SV-IV-list-nonPositiveInteger-pattern-1.xsd",
+      "instances": 5,
+      "category_escapes": [
+        "d"
+      ],
+      "patterns": [
+        "\\-\\d{1} \\-\\d{3} \\-\\d{5} \\-\\d{7} \\-\\d{9} \\-\\d{11} \\-\\d{18}"
+      ]
+    },
+    {
+      "schema": "nistData/list/nonPositiveInteger/Schema+Instance/NISTSchema-SV-IV-list-nonPositiveInteger-pattern-2.xsd",
+      "instances": 5,
+      "category_escapes": [
+        "d"
+      ],
+      "patterns": [
+        "\\-\\d{1} \\-\\d{5} \\-\\d{9} \\-\\d{13} \\-\\d{18}"
+      ]
+    },
+    {
+      "schema": "nistData/list/nonPositiveInteger/Schema+Instance/NISTSchema-SV-IV-list-nonPositiveInteger-pattern-3.xsd",
+      "instances": 5,
+      "category_escapes": [
+        "d"
+      ],
+      "patterns": [
+        "\\-\\d{1} \\-\\d{5} \\-\\d{9} \\-\\d{13} \\-\\d{18}"
+      ]
+    },
+    {
+      "schema": "nistData/list/nonPositiveInteger/Schema+Instance/NISTSchema-SV-IV-list-nonPositiveInteger-pattern-4.xsd",
+      "instances": 5,
+      "category_escapes": [
+        "d"
+      ],
+      "patterns": [
+        "\\-\\d{1} \\-\\d{3} \\-\\d{5} \\-\\d{7} \\-\\d{9} \\-\\d{11} \\-\\d{13} \\-\\d{15} \\-\\d{18}"
+      ]
+    },
+    {
+      "schema": "nistData/list/nonPositiveInteger/Schema+Instance/NISTSchema-SV-IV-list-nonPositiveInteger-pattern-5.xsd",
+      "instances": 5,
+      "category_escapes": [
+        "d"
+      ],
+      "patterns": [
+        "\\-\\d{1} \\-\\d{3} \\-\\d{5} \\-\\d{7} \\-\\d{9} \\-\\d{11} \\-\\d{18}"
+      ]
+    },
+    {
+      "schema": "nistData/list/negativeInteger/Schema+Instance/NISTSchema-SV-IV-list-negativeInteger-pattern-1.xsd",
+      "instances": 5,
+      "category_escapes": [
+        "d"
+      ],
+      "patterns": [
+        "\\-\\d{1} \\-\\d{3} \\-\\d{5} \\-\\d{7} \\-\\d{9} \\-\\d{11} \\-\\d{18}"
+      ]
+    },
+    {
+      "schema": "nistData/list/negativeInteger/Schema+Instance/NISTSchema-SV-IV-list-negativeInteger-pattern-2.xsd",
+      "instances": 5,
+      "category_escapes": [
+        "d"
+      ],
+      "patterns": [
+        "\\-\\d{1} \\-\\d{2} \\-\\d{3} \\-\\d{4} \\-\\d{5} \\-\\d{6} \\-\\d{7} \\-\\d{8} \\-\\d{9} \\-\\d{18}"
+      ]
+    },
+    {
+      "schema": "nistData/list/negativeInteger/Schema+Instance/NISTSchema-SV-IV-list-negativeInteger-pattern-3.xsd",
+      "instances": 5,
+      "category_escapes": [
+        "d"
+      ],
+      "patterns": [
+        "\\-\\d{1} \\-\\d{3} \\-\\d{5} \\-\\d{7} \\-\\d{9} \\-\\d{11} \\-\\d{13} \\-\\d{18}"
+      ]
+    },
+    {
+      "schema": "nistData/list/negativeInteger/Schema+Instance/NISTSchema-SV-IV-list-negativeInteger-pattern-4.xsd",
+      "instances": 5,
+      "category_escapes": [
+        "d"
+      ],
+      "patterns": [
+        "\\-\\d{1} \\-\\d{4} \\-\\d{7} \\-\\d{10} \\-\\d{13} \\-\\d{18}"
+      ]
+    },
+    {
+      "schema": "nistData/list/negativeInteger/Schema+Instance/NISTSchema-SV-IV-list-negativeInteger-pattern-5.xsd",
+      "instances": 5,
+      "category_escapes": [
+        "d"
+      ],
+      "patterns": [
+        "\\-\\d{1} \\-\\d{3} \\-\\d{5} \\-\\d{7} \\-\\d{9} \\-\\d{11} \\-\\d{13} \\-\\d{18}"
+      ]
+    },
+    {
+      "schema": "nistData/list/long/Schema+Instance/NISTSchema-SV-IV-list-long-pattern-1.xsd",
+      "instances": 5,
+      "category_escapes": [
+        "d"
+      ],
+      "patterns": [
+        "\\-\\d{18} \\-\\d{11} \\-\\d{7} \\-\\d{3} \\d{1} \\d{5} \\d{9} \\d{18}"
+      ]
+    },
+    {
+      "schema": "nistData/list/long/Schema+Instance/NISTSchema-SV-IV-list-long-pattern-2.xsd",
+      "instances": 5,
+      "category_escapes": [
+        "d"
+      ],
+      "patterns": [
+        "\\-\\d{18} \\-\\d{13} \\-\\d{9} \\-\\d{5} \\-\\d{1} \\d{3} \\d{7} \\d{11} \\d{18}"
+      ]
+    },
+    {
+      "schema": "nistData/list/long/Schema+Instance/NISTSchema-SV-IV-list-long-pattern-3.xsd",
+      "instances": 5,
+      "category_escapes": [
+        "d"
+      ],
+      "patterns": [
+        "\\-\\d{18} \\-\\d{9} \\-\\d{1} \\d{5} \\d{18}"
+      ]
+    },
+    {
+      "schema": "nistData/list/long/Schema+Instance/NISTSchema-SV-IV-list-long-pattern-4.xsd",
+      "instances": 5,
+      "category_escapes": [
+        "d"
+      ],
+      "patterns": [
+        "\\-\\d{18} \\-\\d{13} \\-\\d{9} \\-\\d{5} \\-\\d{1} \\d{3} \\d{7} \\d{11} \\d{18}"
+      ]
+    },
+    {
+      "schema": "nistData/list/long/Schema+Instance/NISTSchema-SV-IV-list-long-pattern-5.xsd",
+      "instances": 5,
+      "category_escapes": [
+        "d"
+      ],
+      "patterns": [
+        "\\-\\d{18} \\-\\d{9} \\-\\d{5} \\-\\d{1} \\d{3} \\d{7} \\d{18}"
+      ]
+    },
+    {
+      "schema": "nistData/list/int/Schema+Instance/NISTSchema-SV-IV-list-int-pattern-1.xsd",
+      "instances": 5,
+      "category_escapes": [
+        "d"
+      ],
+      "patterns": [
+        "\\-\\d{10} \\-\\d{4} \\-\\d{2} \\d{1} \\d{3} \\d{10}"
+      ]
+    },
+    {
+      "schema": "nistData/list/int/Schema+Instance/NISTSchema-SV-IV-list-int-pattern-2.xsd",
+      "instances": 5,
+      "category_escapes": [
+        "d"
+      ],
+      "patterns": [
+        "\\-\\d{10} \\-\\d{6} \\-\\d{4} \\-\\d{2} \\d{1} \\d{3} \\d{5} \\d{10}"
+      ]
+    },
+    {
+      "schema": "nistData/list/int/Schema+Instance/NISTSchema-SV-IV-list-int-pattern-3.xsd",
+      "instances": 5,
+      "category_escapes": [
+        "d"
+      ],
+      "patterns": [
+        "\\-\\d{10} \\-\\d{5} \\-\\d{3} \\-\\d{1} \\d{2} \\d{4} \\d{10}"
+      ]
+    },
+    {
+      "schema": "nistData/list/int/Schema+Instance/NISTSchema-SV-IV-list-int-pattern-4.xsd",
+      "instances": 5,
+      "category_escapes": [
+        "d"
+      ],
+      "patterns": [
+        "\\-\\d{10} \\-\\d{7} \\-\\d{5} \\-\\d{3} \\-\\d{1} \\d{2} \\d{4} \\d{6} \\d{10}"
+      ]
+    },
+    {
+      "schema": "nistData/list/int/Schema+Instance/NISTSchema-SV-IV-list-int-pattern-5.xsd",
+      "instances": 5,
+      "category_escapes": [
+        "d"
+      ],
+      "patterns": [
+        "\\-\\d{10} \\-\\d{7} \\-\\d{5} \\-\\d{3} \\-\\d{1} \\d{2} \\d{4} \\d{6} \\d{10}"
+      ]
+    },
+    {
+      "schema": "nistData/list/short/Schema+Instance/NISTSchema-SV-IV-list-short-pattern-1.xsd",
+      "instances": 5,
+      "category_escapes": [
+        "d"
+      ],
+      "patterns": [
+        "\\-\\d{5} \\-\\d{4} \\-\\d{3} \\-\\d{2} \\-\\d{1} \\d{5}"
+      ]
+    },
+    {
+      "schema": "nistData/list/short/Schema+Instance/NISTSchema-SV-IV-list-short-pattern-2.xsd",
+      "instances": 5,
+      "category_escapes": [
+        "d"
+      ],
+      "patterns": [
+        "\\-\\d{5} \\-\\d{4} \\-\\d{3} \\-\\d{2} \\-\\d{1} \\d{1} \\d{2} \\d{3} \\d{5}"
+      ]
+    },
+    {
+      "schema": "nistData/list/short/Schema+Instance/NISTSchema-SV-IV-list-short-pattern-3.xsd",
+      "instances": 5,
+      "category_escapes": [
+        "d"
+      ],
+      "patterns": [
+        "\\-\\d{5} \\-\\d{4} \\-\\d{3} \\-\\d{2} \\-\\d{1} \\d{1} \\d{2} \\d{5}"
+      ]
+    },
+    {
+      "schema": "nistData/list/short/Schema+Instance/NISTSchema-SV-IV-list-short-pattern-4.xsd",
+      "instances": 5,
+      "category_escapes": [
+        "d"
+      ],
+      "patterns": [
+        "\\-\\d{5} \\-\\d{4} \\-\\d{3} \\-\\d{2} \\-\\d{1} \\d{1} \\d{2} \\d{3} \\d{4} \\d{5}"
+      ]
+    },
+    {
+      "schema": "nistData/list/short/Schema+Instance/NISTSchema-SV-IV-list-short-pattern-5.xsd",
+      "instances": 5,
+      "category_escapes": [
+        "d"
+      ],
+      "patterns": [
+        "\\-\\d{5} \\-\\d{4} \\-\\d{3} \\-\\d{2} \\-\\d{1} \\d{1} \\d{5}"
+      ]
+    },
+    {
+      "schema": "nistData/list/byte/Schema+Instance/NISTSchema-SV-IV-list-byte-pattern-1.xsd",
+      "instances": 5,
+      "category_escapes": [
+        "d"
+      ],
+      "patterns": [
+        "\\-\\d{3} \\-\\d{2} \\-\\d{1} \\d{1} \\d{2} \\d{3}"
+      ]
+    },
+    {
+      "schema": "nistData/list/byte/Schema+Instance/NISTSchema-SV-IV-list-byte-pattern-2.xsd",
+      "instances": 5,
+      "category_escapes": [
+        "d"
+      ],
+      "patterns": [
+        "\\-\\d{3} \\-\\d{2} \\-\\d{1} \\d{1} \\d{2} \\d{3} \\-\\d{3} \\-\\d{2}"
+      ]
+    },
+    {
+      "schema": "nistData/list/byte/Schema+Instance/NISTSchema-SV-IV-list-byte-pattern-3.xsd",
+      "instances": 5,
+      "category_escapes": [
+        "d"
+      ],
+      "patterns": [
+        "\\-\\d{3} \\-\\d{2} \\-\\d{1} \\d{1} \\d{2} \\d{3} \\-\\d{3} \\-\\d{2} \\-\\d{1}"
+      ]
+    },
+    {
+      "schema": "nistData/list/byte/Schema+Instance/NISTSchema-SV-IV-list-byte-pattern-4.xsd",
+      "instances": 5,
+      "category_escapes": [
+        "d"
+      ],
+      "patterns": [
+        "\\-\\d{3} \\-\\d{2} \\-\\d{1} \\d{1} \\d{2} \\d{3}"
+      ]
+    },
+    {
+      "schema": "nistData/list/byte/Schema+Instance/NISTSchema-SV-IV-list-byte-pattern-5.xsd",
+      "instances": 5,
+      "category_escapes": [
+        "d"
+      ],
+      "patterns": [
+        "\\-\\d{3} \\-\\d{2} \\-\\d{1} \\d{1} \\d{2} \\d{3} \\-\\d{3} \\-\\d{2} \\-\\d{1}"
+      ]
+    },
+    {
+      "schema": "nistData/list/nonNegativeInteger/Schema+Instance/NISTSchema-SV-IV-list-nonNegativeInteger-pattern-1.xsd",
+      "instances": 5,
+      "category_escapes": [
+        "d"
+      ],
+      "patterns": [
+        "\\d{1} \\d{3} \\d{5} \\d{7} \\d{9} \\d{11} \\d{13} \\d{15} \\d{18}"
+      ]
+    },
+    {
+      "schema": "nistData/list/nonNegativeInteger/Schema+Instance/NISTSchema-SV-IV-list-nonNegativeInteger-pattern-2.xsd",
+      "instances": 5,
+      "category_escapes": [
+        "d"
+      ],
+      "patterns": [
+        "\\d{1} \\d{3} \\d{5} \\d{7} \\d{9} \\d{11} \\d{13} \\d{15} \\d{18}"
+      ]
+    },
+    {
+      "schema": "nistData/list/nonNegativeInteger/Schema+Instance/NISTSchema-SV-IV-list-nonNegativeInteger-pattern-3.xsd",
+      "instances": 5,
+      "category_escapes": [
+        "d"
+      ],
+      "patterns": [
+        "\\d{1} \\d{3} \\d{5} \\d{7} \\d{9} \\d{11} \\d{18}"
+      ]
+    },
+    {
+      "schema": "nistData/list/nonNegativeInteger/Schema+Instance/NISTSchema-SV-IV-list-nonNegativeInteger-pattern-4.xsd",
+      "instances": 5,
+      "category_escapes": [
+        "d"
+      ],
+      "patterns": [
+        "\\d{1} \\d{3} \\d{5} \\d{7} \\d{9} \\d{11} \\d{18}"
+      ]
+    },
+    {
+      "schema": "nistData/list/nonNegativeInteger/Schema+Instance/NISTSchema-SV-IV-list-nonNegativeInteger-pattern-5.xsd",
+      "instances": 5,
+      "category_escapes": [
+        "d"
+      ],
+      "patterns": [
+        "\\d{1} \\d{3} \\d{5} \\d{7} \\d{9} \\d{11} \\d{13} \\d{15} \\d{18}"
+      ]
+    },
+    {
+      "schema": "nistData/list/unsignedLong/Schema+Instance/NISTSchema-SV-IV-list-unsignedLong-pattern-1.xsd",
+      "instances": 5,
+      "category_escapes": [
+        "d"
+      ],
+      "patterns": [
+        "\\d{1} \\d{3} \\d{5} \\d{7} \\d{9} \\d{11} \\d{13} \\d{15} \\d{18}"
+      ]
+    },
+    {
+      "schema": "nistData/list/unsignedLong/Schema+Instance/NISTSchema-SV-IV-list-unsignedLong-pattern-2.xsd",
+      "instances": 5,
+      "category_escapes": [
+        "d"
+      ],
+      "patterns": [
+        "\\d{1} \\d{3} \\d{5} \\d{7} \\d{9} \\d{11} \\d{13} \\d{15} \\d{18}"
+      ]
+    },
+    {
+      "schema": "nistData/list/unsignedLong/Schema+Instance/NISTSchema-SV-IV-list-unsignedLong-pattern-3.xsd",
+      "instances": 5,
+      "category_escapes": [
+        "d"
+      ],
+      "patterns": [
+        "\\d{1} \\d{3} \\d{5} \\d{7} \\d{9} \\d{11} \\d{13} \\d{15} \\d{18}"
+      ]
+    },
+    {
+      "schema": "nistData/list/unsignedLong/Schema+Instance/NISTSchema-SV-IV-list-unsignedLong-pattern-4.xsd",
+      "instances": 5,
+      "category_escapes": [
+        "d"
+      ],
+      "patterns": [
+        "\\d{1} \\d{4} \\d{7} \\d{10} \\d{13} \\d{18}"
+      ]
+    },
+    {
+      "schema": "nistData/list/unsignedLong/Schema+Instance/NISTSchema-SV-IV-list-unsignedLong-pattern-5.xsd",
+      "instances": 5,
+      "category_escapes": [
+        "d"
+      ],
+      "patterns": [
+        "\\d{1} \\d{4} \\d{7} \\d{10} \\d{13} \\d{18}"
+      ]
+    },
+    {
+      "schema": "nistData/list/unsignedInt/Schema+Instance/NISTSchema-SV-IV-list-unsignedInt-pattern-1.xsd",
+      "instances": 5,
+      "category_escapes": [
+        "d"
+      ],
+      "patterns": [
+        "\\d{1} \\d{2} \\d{3} \\d{4} \\d{5} \\d{10}"
+      ]
+    },
+    {
+      "schema": "nistData/list/unsignedInt/Schema+Instance/NISTSchema-SV-IV-list-unsignedInt-pattern-2.xsd",
+      "instances": 5,
+      "category_escapes": [
+        "d"
+      ],
+      "patterns": [
+        "\\d{1} \\d{2} \\d{3} \\d{4} \\d{5} \\d{6} \\d{7} \\d{8} \\d{9} \\d{10}"
+      ]
+    },
+    {
+      "schema": "nistData/list/unsignedInt/Schema+Instance/NISTSchema-SV-IV-list-unsignedInt-pattern-3.xsd",
+      "instances": 5,
+      "category_escapes": [
+        "d"
+      ],
+      "patterns": [
+        "\\d{1} \\d{2} \\d{3} \\d{4} \\d{5} \\d{6} \\d{10}"
+      ]
+    },
+    {
+      "schema": "nistData/list/unsignedInt/Schema+Instance/NISTSchema-SV-IV-list-unsignedInt-pattern-4.xsd",
+      "instances": 5,
+      "category_escapes": [
+        "d"
+      ],
+      "patterns": [
+        "\\d{1} \\d{2} \\d{3} \\d{4} \\d{5} \\d{6} \\d{7} \\d{10}"
+      ]
+    },
+    {
+      "schema": "nistData/list/unsignedInt/Schema+Instance/NISTSchema-SV-IV-list-unsignedInt-pattern-5.xsd",
+      "instances": 5,
+      "category_escapes": [
+        "d"
+      ],
+      "patterns": [
+        "\\d{1} \\d{2} \\d{3} \\d{4} \\d{5} \\d{6} \\d{10}"
+      ]
+    },
+    {
+      "schema": "nistData/list/unsignedShort/Schema+Instance/NISTSchema-SV-IV-list-unsignedShort-pattern-1.xsd",
+      "instances": 5,
+      "category_escapes": [
+        "d"
+      ],
+      "patterns": [
+        "\\d{1} \\d{2} \\d{3} \\d{4} \\d{5}"
+      ]
+    },
+    {
+      "schema": "nistData/list/unsignedShort/Schema+Instance/NISTSchema-SV-IV-list-unsignedShort-pattern-2.xsd",
+      "instances": 5,
+      "category_escapes": [
+        "d"
+      ],
+      "patterns": [
+        "\\d{1} \\d{2} \\d{3} \\d{4} \\d{5} \\d{1} \\d{2} \\d{3}"
+      ]
+    },
+    {
+      "schema": "nistData/list/unsignedShort/Schema+Instance/NISTSchema-SV-IV-list-unsignedShort-pattern-3.xsd",
+      "instances": 5,
+      "category_escapes": [
+        "d"
+      ],
+      "patterns": [
+        "\\d{1} \\d{2} \\d{3} \\d{4} \\d{5} \\d{1}"
+      ]
+    },
+    {
+      "schema": "nistData/list/unsignedShort/Schema+Instance/NISTSchema-SV-IV-list-unsignedShort-pattern-4.xsd",
+      "instances": 5,
+      "category_escapes": [
+        "d"
+      ],
+      "patterns": [
+        "\\d{1} \\d{2} \\d{3} \\d{4} \\d{5} \\d{1}"
+      ]
+    },
+    {
+      "schema": "nistData/list/unsignedShort/Schema+Instance/NISTSchema-SV-IV-list-unsignedShort-pattern-5.xsd",
+      "instances": 5,
+      "category_escapes": [
+        "d"
+      ],
+      "patterns": [
+        "\\d{1} \\d{2} \\d{3} \\d{4} \\d{5} \\d{1} \\d{2}"
+      ]
+    },
+    {
+      "schema": "nistData/list/unsignedByte/Schema+Instance/NISTSchema-SV-IV-list-unsignedByte-pattern-1.xsd",
+      "instances": 5,
+      "category_escapes": [
+        "d"
+      ],
+      "patterns": [
+        "\\d{1} \\d{2} \\d{3} \\d{1} \\d{2} \\d{3} \\d{1}"
+      ]
+    },
+    {
+      "schema": "nistData/list/unsignedByte/Schema+Instance/NISTSchema-SV-IV-list-unsignedByte-pattern-2.xsd",
+      "instances": 5,
+      "category_escapes": [
+        "d"
+      ],
+      "patterns": [
+        "\\d{1} \\d{2} \\d{3} \\d{1} \\d{2}"
+      ]
+    },
+    {
+      "schema": "nistData/list/unsignedByte/Schema+Instance/NISTSchema-SV-IV-list-unsignedByte-pattern-3.xsd",
+      "instances": 5,
+      "category_escapes": [
+        "d"
+      ],
+      "patterns": [
+        "\\d{1} \\d{2} \\d{3} \\d{1} \\d{2}"
+      ]
+    },
+    {
+      "schema": "nistData/list/unsignedByte/Schema+Instance/NISTSchema-SV-IV-list-unsignedByte-pattern-4.xsd",
+      "instances": 5,
+      "category_escapes": [
+        "d"
+      ],
+      "patterns": [
+        "\\d{1} \\d{2} \\d{3} \\d{1} \\d{2} \\d{3} \\d{1} \\d{2} \\d{3}"
+      ]
+    },
+    {
+      "schema": "nistData/list/unsignedByte/Schema+Instance/NISTSchema-SV-IV-list-unsignedByte-pattern-5.xsd",
+      "instances": 5,
+      "category_escapes": [
+        "d"
+      ],
+      "patterns": [
+        "\\d{1} \\d{2} \\d{3} \\d{1} \\d{2} \\d{3} \\d{1}"
+      ]
+    },
+    {
+      "schema": "nistData/list/positiveInteger/Schema+Instance/NISTSchema-SV-IV-list-positiveInteger-pattern-1.xsd",
+      "instances": 5,
+      "category_escapes": [
+        "d"
+      ],
+      "patterns": [
+        "\\d{1} \\d{3} \\d{5} \\d{7} \\d{9} \\d{11} \\d{18}"
+      ]
+    },
+    {
+      "schema": "nistData/list/positiveInteger/Schema+Instance/NISTSchema-SV-IV-list-positiveInteger-pattern-2.xsd",
+      "instances": 5,
+      "category_escapes": [
+        "d"
+      ],
+      "patterns": [
+        "\\d{1} \\d{3} \\d{5} \\d{7} \\d{9} \\d{11} \\d{18}"
+      ]
+    },
+    {
+      "schema": "nistData/list/positiveInteger/Schema+Instance/NISTSchema-SV-IV-list-positiveInteger-pattern-3.xsd",
+      "instances": 5,
+      "category_escapes": [
+        "d"
+      ],
+      "patterns": [
+        "\\d{1} \\d{2} \\d{3} \\d{4} \\d{5} \\d{6} \\d{7} \\d{8} \\d{9} \\d{18}"
+      ]
+    },
+    {
+      "schema": "nistData/list/positiveInteger/Schema+Instance/NISTSchema-SV-IV-list-positiveInteger-pattern-4.xsd",
+      "instances": 5,
+      "category_escapes": [
+        "d"
+      ],
+      "patterns": [
+        "\\d{1} \\d{3} \\d{5} \\d{7} \\d{9} \\d{11} \\d{18}"
+      ]
+    },
+    {
+      "schema": "nistData/list/positiveInteger/Schema+Instance/NISTSchema-SV-IV-list-positiveInteger-pattern-5.xsd",
+      "instances": 5,
+      "category_escapes": [
+        "d"
+      ],
+      "patterns": [
+        "\\d{1} \\d{4} \\d{7} \\d{10} \\d{13} \\d{18}"
+      ]
+    },
+    {
+      "schema": "nistData/list/double/Schema+Instance/NISTSchema-SV-IV-list-double-pattern-1.xsd",
+      "instances": 5,
+      "category_escapes": [
+        "d"
+      ],
+      "patterns": [
+        "\\d{1}E\\-\\d{3} \\.\\d{4}E\\-\\d{2} \\d{1}\\.\\d{6}E\\-\\d{1} \\d{1}\\.\\d{9}E\\d{1} \\d{13}E\\d{2} \\d{1}\\.\\d{16}E\\d{3}"
+      ]
+    },
+    {
+      "schema": "nistData/list/double/Schema+Instance/NISTSchema-SV-IV-list-double-pattern-2.xsd",
+      "instances": 5,
+      "category_escapes": [
+        "d"
+      ],
+      "patterns": [
+        "\\d{1}E\\-\\d{3} \\d{1}\\.\\d{2}E\\-\\d{2} \\d{1}\\.\\d{4}E\\-\\d{1} \\.\\d{7}E\\d{1} \\d{1}\\.\\d{8}E\\d{2} \\d{1}\\.\\d{10}E\\d{3} \\d{1}\\.\\d{12}E\\-\\d{3} \\d{1}\\.\\d{14}E\\-\\d{2} \\d{1}\\.\\d{16}E\\-\\d{1}"
+      ]
+    },
+    {
+      "schema": "nistData/list/double/Schema+Instance/NISTSchema-SV-IV-list-double-pattern-3.xsd",
+      "instances": 5,
+      "category_escapes": [
+        "d"
+      ],
+      "patterns": [
+        "\\d{1}E\\-\\d{3} \\d{1}\\.\\d{3}E\\-\\d{2} \\d{1}\\.\\d{6}E\\-\\d{1} \\d{1}\\.\\d{9}E\\d{1} \\d{1}\\.\\d{12}E\\d{2} \\d{1}\\.\\d{16}E\\d{3}"
+      ]
+    },
+    {
+      "schema": "nistData/list/double/Schema+Instance/NISTSchema-SV-IV-list-double-pattern-4.xsd",
+      "instances": 5,
+      "category_escapes": [
+        "d"
+      ],
+      "patterns": [
+        "\\d{1}E\\-\\d{3} \\d{1}\\.\\d{2}E\\-\\d{2} \\d{1}\\.\\d{4}E\\-\\d{1} \\d{1}\\.\\d{6}E\\d{1} \\d{1}\\.\\d{8}E\\d{2} \\d{1}\\.\\d{10}E\\d{3} \\d{1}\\.\\d{16}E\\-\\d{3}"
+      ]
+    },
+    {
+      "schema": "nistData/list/double/Schema+Instance/NISTSchema-SV-IV-list-double-pattern-5.xsd",
+      "instances": 5,
+      "category_escapes": [
+        "d"
+      ],
+      "patterns": [
+        "\\d{1}E\\-\\d{3} \\d{1}\\.\\d{2}E\\-\\d{2} \\d{1}\\.\\d{4}E\\-\\d{1} \\d{1}\\.\\d{6}E\\d{1} \\d{1}\\.\\d{8}E\\d{2} \\d{1}\\.\\d{10}E\\d{3} \\d{1}\\.\\d{12}E\\-\\d{3} \\d{1}\\.\\d{16}E\\-\\d{2}"
+      ]
+    },
+    {
+      "schema": "nistData/list/float/Schema+Instance/NISTSchema-SV-IV-list-float-pattern-1.xsd",
+      "instances": 5,
+      "category_escapes": [
+        "d"
+      ],
+      "patterns": [
+        "\\d{1}E\\-\\d{2} \\.\\d{2}E\\-\\d{1} \\d{1}\\.\\d{2}E\\d{1} \\d{1}\\.\\d{3}E\\d{2} \\d{1}\\.\\d{7}E\\-\\d{2}"
+      ]
+    },
+    {
+      "schema": "nistData/list/float/Schema+Instance/NISTSchema-SV-IV-list-float-pattern-2.xsd",
+      "instances": 5,
+      "category_escapes": [
+        "d"
+      ],
+      "patterns": [
+        "\\d{1}E\\-\\d{2} \\d{2}E\\-\\d{1} \\d{1}\\.\\d{2}E\\d{1} \\d{1}\\.\\d{3}E\\d{2} \\d{1}\\.\\d{4}E\\-\\d{2} \\d{1}\\.\\d{5}E\\-\\d{1} \\d{1}\\.\\d{6}E\\d{1} \\d{1}\\.\\d{7}E\\d{2} \\d{1}E\\-\\d{2} \\d{1}\\.\\d{1}E\\-\\d{1}"
+      ]
+    },
+    {
+      "schema": "nistData/list/float/Schema+Instance/NISTSchema-SV-IV-list-float-pattern-3.xsd",
+      "instances": 5,
+      "category_escapes": [
+        "d"
+      ],
+      "patterns": [
+        "\\d{1}E\\-\\d{2} \\.\\d{2}E\\-\\d{1} \\d{1}\\.\\d{2}E\\d{1} \\d{1}\\.\\d{3}E\\d{2} \\d{1}\\.\\d{4}E\\-\\d{2} \\d{1}\\.\\d{7}E\\-\\d{1}"
+      ]
+    },
+    {
+      "schema": "nistData/list/float/Schema+Instance/NISTSchema-SV-IV-list-float-pattern-4.xsd",
+      "instances": 5,
+      "category_escapes": [
+        "d"
+      ],
+      "patterns": [
+        "\\d{1}E\\-\\d{2} \\.\\d{2}E\\-\\d{1} \\d{1}\\.\\d{2}E\\d{1} \\d{1}\\.\\d{3}E\\d{2} \\d{1}\\.\\d{4}E\\-\\d{2} \\d{1}\\.\\d{5}E\\-\\d{1} \\d{1}\\.\\d{7}E\\d{1}"
+      ]
+    },
+    {
+      "schema": "nistData/list/float/Schema+Instance/NISTSchema-SV-IV-list-float-pattern-5.xsd",
+      "instances": 5,
+      "category_escapes": [
+        "d"
+      ],
+      "patterns": [
+        "\\d{1}E\\-\\d{2} \\.\\d{2}E\\-\\d{1} \\d{3}E\\d{1} \\d{1}\\.\\d{3}E\\d{2} \\d{1}\\.\\d{4}E\\-\\d{2} \\d{1}\\.\\d{5}E\\-\\d{1} \\d{1}\\.\\d{6}E\\d{1} \\d{1}\\.\\d{7}E\\d{2}"
+      ]
+    },
+    {
+      "schema": "nistData/list/duration/Schema+Instance/NISTSchema-SV-IV-list-duration-pattern-1.xsd",
+      "instances": 5,
+      "category_escapes": [
+        "d"
+      ],
+      "patterns": [
+        "P\\d\\d75Y\\d3M\\d9DT0\\dH\\d2M3\\dS P19\\d\\dY0\\dM1\\dDT0\\dH1\\dM\\d1S P19\\d\\dY\\d3M2\\dDT\\d4H\\d7M\\d7S P\\d\\d86Y\\d9M\\d5DT\\d6H4\\dM\\d9S P19\\d\\dY\\d2M\\d2DT\\d9H3\\dM0\\dS P\\d\\d90Y0\\dM2\\dDT\\d7H2\\dM0\\dS P\\d\\d94Y\\d0M1\\dDT0\\dH1\\dM4\\dS P\\d\\d71Y0\\dM\\d1DT\\d3H\\d7M4\\dS"
+      ]
+    },
+    {
+      "schema": "nistData/list/duration/Schema+Instance/NISTSchema-SV-IV-list-duration-pattern-2.xsd",
+      "instances": 5,
+      "category_escapes": [
+        "d"
+      ],
+      "patterns": [
+        "P19\\d\\dY\\d7M\\d5DT1\\dH\\d1M\\d8S P20\\d\\dY0\\dM0\\dDT\\d9H\\d9M\\d7S P19\\d\\dY0\\dM0\\dDT\\d0H5\\dM0\\dS P18\\d\\dY\\d1M\\d8DT\\d9H1\\dM\\d5S P19\\d\\dY0\\dM2\\dDT\\d6H2\\dM\\d5S P\\d\\d75Y1\\dM0\\dDT1\\dH\\d8M\\d5S P17\\d\\dY\\d5M0\\dDT\\d4H2\\dM\\d5S P19\\d\\dY1\\dM1\\dDT\\d8H\\d4M3\\dS P\\d\\d93Y0\\dM1\\dDT1\\dH\\d9M\\d1S P18\\d\\dY0\\dM0\\dDT\\d4H\\d3M\\d1S"
+      ]
+    },
+    {
+      "schema": "nistData/list/duration/Schema+Instance/NISTSchema-SV-IV-list-duration-pattern-3.xsd",
+      "instances": 5,
+      "category_escapes": [
+        "d"
+      ],
+      "patterns": [
+        "P18\\d\\dY1\\dM\\d0DT0\\dH\\d1M3\\dS P\\d\\d87Y0\\dM0\\dDT\\d3H4\\dM\\d7S P\\d\\d19Y0\\dM\\d6DT\\d6H3\\dM1\\dS P19\\d\\dY\\d5M0\\dDT\\d0H\\d5M\\d5S P19\\d\\dY1\\dM\\d3DT\\d4H5\\dM3\\dS P\\d\\d22Y0\\dM\\d9DT1\\dH2\\dM\\d1S P\\d\\d66Y\\d2M\\d1DT1\\dH3\\dM2\\dS P\\d\\d20Y\\d6M0\\dDT\\d5H1\\dM\\d7S P17\\d\\dY\\d1M\\d4DT1\\dH\\d3M\\d4S P19\\d\\dY0\\dM1\\dDT0\\dH4\\dM4\\dS"
+      ]
+    },
+    {
+      "schema": "nistData/list/duration/Schema+Instance/NISTSchema-SV-IV-list-duration-pattern-4.xsd",
+      "instances": 5,
+      "category_escapes": [
+        "d"
+      ],
+      "patterns": [
+        "P\\d\\d34Y0\\dM\\d7DT1\\dH3\\dM\\d3S P18\\d\\dY0\\dM1\\dDT\\d2H1\\dM0\\dS P18\\d\\dY1\\dM\\d3DT\\d6H\\d7M4\\dS P17\\d\\dY1\\dM\\d0DT\\d8H\\d5M\\d0S P\\d\\d55Y0\\dM\\d5DT1\\dH\\d4M1\\dS P\\d\\d22Y\\d3M1\\dDT1\\dH1\\dM\\d3S P\\d\\d14Y1\\dM\\d9DT\\d8H5\\dM1\\dS P\\d\\d44Y0\\dM\\d3DT0\\dH\\d1M\\d1S"
+      ]
+    },
+    {
+      "schema": "nistData/list/duration/Schema+Instance/NISTSchema-SV-IV-list-duration-pattern-5.xsd",
+      "instances": 5,
+      "category_escapes": [
+        "d"
+      ],
+      "patterns": [
+        "P17\\d\\dY\\d4M\\d9DT\\d4H\\d0M\\d8S P\\d\\d77Y\\d0M\\d1DT\\d8H2\\dM\\d4S P17\\d\\dY0\\dM1\\dDT\\d1H5\\dM\\d6S P\\d\\d90Y0\\dM\\d6DT\\d1H5\\dM5\\dS P19\\d\\dY\\d8M2\\dDT\\d4H\\d6M1\\dS P20\\d\\dY0\\dM0\\dDT1\\dH\\d5M\\d3S"
+      ]
+    },
+    {
+      "schema": "nistData/list/dateTime/Schema+Instance/NISTSchema-SV-IV-list-dateTime-pattern-1.xsd",
+      "instances": 5,
+      "category_escapes": [
+        "d"
+      ],
+      "patterns": [
+        "\\d\\d38-\\d2-\\d5T\\d7:\\d4:3\\d \\d\\d33-\\d5-1\\dT\\d6:5\\d:1\\d 18\\d\\d-\\d6-1\\dT\\d1:\\d2:0\\d 18\\d\\d-\\d5-1\\dT\\d4:0\\d:5\\d \\d\\d31-\\d1-0\\dT\\d6:5\\d:\\d9 \\d\\d49-0\\d-1\\dT0\\d:\\d9:4\\d \\d\\d67-0\\d-0\\dT0\\d:\\d5:\\d9"
+      ]
+    },
+    {
+      "schema": "nistData/list/dateTime/Schema+Instance/NISTSchema-SV-IV-list-dateTime-pattern-2.xsd",
+      "instances": 5,
+      "category_escapes": [
+        "d"
+      ],
+      "patterns": [
+        "\\d\\d67-0\\d-0\\dT1\\d:2\\d:0\\d 18\\d\\d-\\d6-\\d8T0\\d:\\d9:2\\d 19\\d\\d-\\d2-\\d6T0\\d:0\\d:\\d8 \\d\\d09-1\\d-\\d2T1\\d:\\d7:3\\d 19\\d\\d-\\d6-1\\dT\\d7:5\\d:\\d1 \\d\\d43-0\\d-\\d6T1\\d:2\\d:\\d8 18\\d\\d-0\\d-\\d7T\\d2:4\\d:\\d3"
+      ]
+    },
+    {
+      "schema": "nistData/list/dateTime/Schema+Instance/NISTSchema-SV-IV-list-dateTime-pattern-3.xsd",
+      "instances": 5,
+      "category_escapes": [
+        "d"
+      ],
+      "patterns": [
+        "17\\d\\d-\\d0-\\d1T\\d4:1\\d:1\\d 19\\d\\d-0\\d-0\\dT1\\d:2\\d:4\\d \\d\\d91-0\\d-0\\dT1\\d:3\\d:3\\d \\d\\d31-0\\d-\\d7T\\d2:\\d4:\\d5 20\\d\\d-\\d4-0\\dT0\\d:\\d3:1\\d \\d\\d29-\\d7-2\\dT1\\d:4\\d:\\d6 \\d\\d24-\\d7-\\d5T0\\d:4\\d:\\d1 \\d\\d38-\\d6-\\d5T\\d7:4\\d:\\d2 19\\d\\d-0\\d-\\d2T0\\d:\\d9:1\\d"
+      ]
+    },
+    {
+      "schema": "nistData/list/dateTime/Schema+Instance/NISTSchema-SV-IV-list-dateTime-pattern-4.xsd",
+      "instances": 5,
+      "category_escapes": [
+        "d"
+      ],
+      "patterns": [
+        "18\\d\\d-\\d7-\\d4T\\d5:4\\d:4\\d 20\\d\\d-\\d1-\\d0T1\\d:\\d2:3\\d 19\\d\\d-\\d0-\\d2T\\d2:1\\d:\\d8 \\d\\d48-\\d5-\\d0T\\d9:\\d4:3\\d 17\\d\\d-\\d5-0\\dT0\\d:\\d5:3\\d \\d\\d68-1\\d-1\\dT\\d2:1\\d:4\\d"
+      ]
+    },
+    {
+      "schema": "nistData/list/dateTime/Schema+Instance/NISTSchema-SV-IV-list-dateTime-pattern-5.xsd",
+      "instances": 5,
+      "category_escapes": [
+        "d"
+      ],
+      "patterns": [
+        "\\d\\d84-0\\d-2\\dT0\\d:\\d1:\\d1 \\d\\d85-0\\d-0\\dT1\\d:\\d4:2\\d 20\\d\\d-\\d1-2\\dT\\d5:0\\d:\\d2 \\d\\d12-0\\d-\\d7T\\d0:3\\d:\\d2 \\d\\d82-0\\d-\\d9T1\\d:0\\d:\\d8"
+      ]
+    },
+    {
+      "schema": "nistData/list/time/Schema+Instance/NISTSchema-SV-IV-list-time-pattern-1.xsd",
+      "instances": 5,
+      "category_escapes": [
+        "d"
+      ],
+      "patterns": [
+        "1\\d:\\d3:\\d2 \\d2:0\\d:4\\d \\d5:\\d1:\\d8 \\d7:0\\d:0\\d 0\\d:1\\d:5\\d \\d4:0\\d:\\d6"
+      ]
+    },
+    {
+      "schema": "nistData/list/time/Schema+Instance/NISTSchema-SV-IV-list-time-pattern-2.xsd",
+      "instances": 5,
+      "category_escapes": [
+        "d"
+      ],
+      "patterns": [
+        "0\\d:3\\d:\\d1 1\\d:1\\d:1\\d \\d5:\\d6:5\\d 0\\d:\\d2:0\\d \\d7:4\\d:0\\d 1\\d:2\\d:5\\d 0\\d:\\d4:5\\d \\d6:\\d4:1\\d"
+      ]
+    },
+    {
+      "schema": "nistData/list/time/Schema+Instance/NISTSchema-SV-IV-list-time-pattern-3.xsd",
+      "instances": 5,
+      "category_escapes": [
+        "d"
+      ],
+      "patterns": [
+        "\\d4:4\\d:\\d8 \\d4:2\\d:2\\d 0\\d:4\\d:3\\d \\d3:\\d4:1\\d 1\\d:\\d8:5\\d \\d2:\\d3:4\\d \\d3:0\\d:\\d6 \\d6:4\\d:\\d6 \\d8:\\d2:2\\d"
+      ]
+    },
+    {
+      "schema": "nistData/list/time/Schema+Instance/NISTSchema-SV-IV-list-time-pattern-4.xsd",
+      "instances": 5,
+      "category_escapes": [
+        "d"
+      ],
+      "patterns": [
+        "\\d8:0\\d:0\\d 0\\d:2\\d:2\\d \\d0:\\d8:2\\d 0\\d:0\\d:\\d6 \\d1:\\d0:\\d5"
+      ]
+    },
+    {
+      "schema": "nistData/list/time/Schema+Instance/NISTSchema-SV-IV-list-time-pattern-5.xsd",
+      "instances": 5,
+      "category_escapes": [
+        "d"
+      ],
+      "patterns": [
+        "\\d2:\\d8:3\\d 1\\d:\\d7:\\d5 1\\d:\\d4:0\\d \\d3:\\d9:4\\d \\d4:4\\d:3\\d"
+      ]
+    },
+    {
+      "schema": "nistData/list/date/Schema+Instance/NISTSchema-SV-IV-list-date-pattern-1.xsd",
+      "instances": 5,
+      "category_escapes": [
+        "d"
+      ],
+      "patterns": [
+        "19\\d\\d-\\d9-\\d4 \\d\\d40-\\d7-1\\d 18\\d\\d-0\\d-1\\d \\d\\d05-\\d4-\\d5 \\d\\d91-0\\d-2\\d \\d\\d84-\\d7-\\d6 \\d\\d01-\\d0-\\d2 19\\d\\d-\\d2-\\d7 \\d\\d87-0\\d-1\\d"
+      ]
+    },
+    {
+      "schema": "nistData/list/date/Schema+Instance/NISTSchema-SV-IV-list-date-pattern-2.xsd",
+      "instances": 5,
+      "category_escapes": [
+        "d"
+      ],
+      "patterns": [
+        "\\d\\d56-\\d1-0\\d \\d\\d57-0\\d-2\\d \\d\\d49-1\\d-\\d4 18\\d\\d-\\d3-2\\d 19\\d\\d-\\d7-\\d7 19\\d\\d-1\\d-0\\d"
+      ]
+    },
+    {
+      "schema": "nistData/list/date/Schema+Instance/NISTSchema-SV-IV-list-date-pattern-3.xsd",
+      "instances": 5,
+      "category_escapes": [
+        "d"
+      ],
+      "patterns": [
+        "\\d\\d47-0\\d-\\d2 18\\d\\d-0\\d-\\d5 20\\d\\d-1\\d-2\\d \\d\\d79-0\\d-1\\d \\d\\d70-\\d0-0\\d 18\\d\\d-\\d6-0\\d \\d\\d22-0\\d-\\d1"
+      ]
+    },
+    {
+      "schema": "nistData/list/date/Schema+Instance/NISTSchema-SV-IV-list-date-pattern-4.xsd",
+      "instances": 5,
+      "category_escapes": [
+        "d"
+      ],
+      "patterns": [
+        "20\\d\\d-\\d0-1\\d \\d\\d75-\\d5-2\\d \\d\\d34-0\\d-2\\d 19\\d\\d-0\\d-\\d4 \\d\\d09-0\\d-\\d6 19\\d\\d-\\d3-\\d2"
+      ]
+    },
+    {
+      "schema": "nistData/list/date/Schema+Instance/NISTSchema-SV-IV-list-date-pattern-5.xsd",
+      "instances": 5,
+      "category_escapes": [
+        "d"
+      ],
+      "patterns": [
+        "\\d\\d74-\\d7-\\d5 17\\d\\d-0\\d-2\\d 19\\d\\d-\\d1-\\d8 \\d\\d25-\\d2-1\\d 19\\d\\d-\\d8-\\d5"
+      ]
+    },
+    {
+      "schema": "nistData/list/gYearMonth/Schema+Instance/NISTSchema-SV-IV-list-gYearMonth-pattern-1.xsd",
+      "instances": 5,
+      "category_escapes": [
+        "d"
+      ],
+      "patterns": [
+        "18\\d\\d-0\\d \\d\\d92-\\d2 \\d\\d99-0\\d \\d\\d49-\\d4 19\\d\\d-\\d1 \\d\\d74-0\\d 18\\d\\d-\\d5 19\\d\\d-1\\d \\d\\d68-0\\d"
+      ]
+    },
+    {
+      "schema": "nistData/list/gYearMonth/Schema+Instance/NISTSchema-SV-IV-list-gYearMonth-pattern-2.xsd",
+      "instances": 5,
+      "category_escapes": [
+        "d"
+      ],
+      "patterns": [
+        "17\\d\\d-\\d8 19\\d\\d-1\\d 20\\d\\d-0\\d 17\\d\\d-0\\d \\d\\d42-\\d7 \\d\\d81-1\\d 18\\d\\d-\\d6"
+      ]
+    },
+    {
+      "schema": "nistData/list/gYearMonth/Schema+Instance/NISTSchema-SV-IV-list-gYearMonth-pattern-3.xsd",
+      "instances": 5,
+      "category_escapes": [
+        "d"
+      ],
+      "patterns": [
+        "\\d\\d74-0\\d 18\\d\\d-\\d8 \\d\\d80-1\\d 20\\d\\d-\\d2 \\d\\d08-0\\d 19\\d\\d-0\\d \\d\\d12-\\d1 \\d\\d25-\\d6 \\d\\d19-0\\d"
+      ]
+    },
+    {
+      "schema": "nistData/list/gYearMonth/Schema+Instance/NISTSchema-SV-IV-list-gYearMonth-pattern-4.xsd",
+      "instances": 5,
+      "category_escapes": [
+        "d"
+      ],
+      "patterns": [
+        "\\d\\d93-\\d3 19\\d\\d-0\\d \\d\\d33-\\d3 18\\d\\d-\\d1 \\d\\d34-0\\d"
+      ]
+    },
+    {
+      "schema": "nistData/list/gYearMonth/Schema+Instance/NISTSchema-SV-IV-list-gYearMonth-pattern-5.xsd",
+      "instances": 5,
+      "category_escapes": [
+        "d"
+      ],
+      "patterns": [
+        "19\\d\\d-1\\d \\d\\d06-\\d9 17\\d\\d-0\\d \\d\\d20-\\d1 \\d\\d77-0\\d \\d\\d19-\\d3 17\\d\\d-1\\d"
+      ]
+    },
+    {
+      "schema": "nistData/list/gYear/Schema+Instance/NISTSchema-SV-IV-list-gYear-pattern-1.xsd",
+      "instances": 5,
+      "category_escapes": [
+        "d"
+      ],
+      "patterns": [
+        "\\d\\d81 \\d\\d41 18\\d\\d \\d\\d64 19\\d\\d \\d\\d72 \\d\\d38 \\d\\d27"
+      ]
+    },
+    {
+      "schema": "nistData/list/gYear/Schema+Instance/NISTSchema-SV-IV-list-gYear-pattern-2.xsd",
+      "instances": 5,
+      "category_escapes": [
+        "d"
+      ],
+      "patterns": [
+        "17\\d\\d 19\\d\\d \\d\\d67 \\d\\d26 \\d\\d58 \\d\\d06 \\d\\d09"
+      ]
+    },
+    {
+      "schema": "nistData/list/gYear/Schema+Instance/NISTSchema-SV-IV-list-gYear-pattern-3.xsd",
+      "instances": 5,
+      "category_escapes": [
+        "d"
+      ],
+      "patterns": [
+        "\\d\\d93 \\d\\d27 18\\d\\d \\d\\d15 19\\d\\d \\d\\d57 18\\d\\d 19\\d\\d \\d\\d57"
+      ]
+    },
+    {
+      "schema": "nistData/list/gYear/Schema+Instance/NISTSchema-SV-IV-list-gYear-pattern-4.xsd",
+      "instances": 5,
+      "category_escapes": [
+        "d"
+      ],
+      "patterns": [
+        "19\\d\\d \\d\\d48 \\d\\d53 18\\d\\d \\d\\d43 19\\d\\d \\d\\d10 \\d\\d46"
+      ]
+    },
+    {
+      "schema": "nistData/list/gYear/Schema+Instance/NISTSchema-SV-IV-list-gYear-pattern-5.xsd",
+      "instances": 5,
+      "category_escapes": [
+        "d"
+      ],
+      "patterns": [
+        "18\\d\\d \\d\\d52 \\d\\d14 20\\d\\d \\d\\d14 \\d\\d43 \\d\\d70 19\\d\\d \\d\\d36"
+      ]
+    },
+    {
+      "schema": "nistData/list/gMonthDay/Schema+Instance/NISTSchema-SV-IV-list-gMonthDay-pattern-1.xsd",
+      "instances": 5,
+      "category_escapes": [
+        "d"
+      ],
+      "patterns": [
+        "--\\d1-\\d8 --0\\d-\\d9 --\\d2-\\d7 --0\\d-\\d6 --\\d0-\\d0 --0\\d-1\\d --0\\d-\\d3 --\\d2-\\d2 --1\\d-\\d6"
+      ]
+    },
+    {
+      "schema": "nistData/list/gMonthDay/Schema+Instance/NISTSchema-SV-IV-list-gMonthDay-pattern-2.xsd",
+      "instances": 5,
+      "category_escapes": [
+        "d"
+      ],
+      "patterns": [
+        "--\\d5-\\d2 --\\d4-\\d4 --0\\d-\\d3 --\\d7-\\d6 --\\d5-0\\d --0\\d-0\\d --0\\d-1\\d --\\d8-\\d6 --0\\d-\\d9"
+      ]
+    },
+    {
+      "schema": "nistData/list/gMonthDay/Schema+Instance/NISTSchema-SV-IV-list-gMonthDay-pattern-3.xsd",
+      "instances": 5,
+      "category_escapes": [
+        "d"
+      ],
+      "patterns": [
+        "--\\d5-1\\d --\\d3-2\\d --\\d4-2\\d --0\\d-\\d2 --\\d1-\\d3 --\\d7-0\\d --1\\d-\\d9 --\\d3-0\\d"
+      ]
+    },
+    {
+      "schema": "nistData/list/gMonthDay/Schema+Instance/NISTSchema-SV-IV-list-gMonthDay-pattern-4.xsd",
+      "instances": 5,
+      "category_escapes": [
+        "d"
+      ],
+      "patterns": [
+        "--\\d7-\\d5 --0\\d-\\d2 --0\\d-2\\d --0\\d-\\d3 --\\d1-\\d0 --0\\d-\\d6 --\\d6-0\\d --1\\d-1\\d --\\d1-2\\d"
+      ]
+    },
+    {
+      "schema": "nistData/list/gMonthDay/Schema+Instance/NISTSchema-SV-IV-list-gMonthDay-pattern-5.xsd",
+      "instances": 5,
+      "category_escapes": [
+        "d"
+      ],
+      "patterns": [
+        "--0\\d-1\\d --\\d3-1\\d --0\\d-\\d3 --\\d5-\\d7 --\\d2-2\\d --0\\d-0\\d --0\\d-1\\d --\\d1-\\d9 --0\\d-2\\d"
+      ]
+    },
+    {
+      "schema": "nistData/list/gDay/Schema+Instance/NISTSchema-SV-IV-list-gDay-pattern-1.xsd",
+      "instances": 5,
+      "category_escapes": [
+        "d"
+      ],
+      "patterns": [
+        "---\\d7 ---2\\d ---\\d9 ---\\d8 ---\\d8 ---\\d8 ---\\d2 ---0\\d"
+      ]
+    },
+    {
+      "schema": "nistData/list/gDay/Schema+Instance/NISTSchema-SV-IV-list-gDay-pattern-2.xsd",
+      "instances": 5,
+      "category_escapes": [
+        "d"
+      ],
+      "patterns": [
+        "---1\\d ---\\d4 ---1\\d ---\\d2 ---\\d8 ---\\d9 ---1\\d ---\\d1 ---\\d4"
+      ]
+    },
+    {
+      "schema": "nistData/list/gDay/Schema+Instance/NISTSchema-SV-IV-list-gDay-pattern-3.xsd",
+      "instances": 5,
+      "category_escapes": [
+        "d"
+      ],
+      "patterns": [
+        "---\\d5 ---0\\d ---\\d1 ---0\\d ---2\\d ---1\\d ---\\d1"
+      ]
+    },
+    {
+      "schema": "nistData/list/gDay/Schema+Instance/NISTSchema-SV-IV-list-gDay-pattern-4.xsd",
+      "instances": 5,
+      "category_escapes": [
+        "d"
+      ],
+      "patterns": [
+        "---1\\d ---2\\d ---\\d7 ---2\\d ---\\d6"
+      ]
+    },
+    {
+      "schema": "nistData/list/gDay/Schema+Instance/NISTSchema-SV-IV-list-gDay-pattern-5.xsd",
+      "instances": 5,
+      "category_escapes": [
+        "d"
+      ],
+      "patterns": [
+        "---\\d5 ---1\\d ---1\\d ---0\\d ---1\\d ---\\d9 ---\\d3 ---1\\d ---\\d1 ---1\\d"
+      ]
+    },
+    {
+      "schema": "nistData/list/gMonth/Schema+Instance/NISTSchema-SV-IV-list-gMonth-pattern-1.xsd",
+      "instances": 5,
+      "category_escapes": [
+        "d"
+      ],
+      "patterns": [
+        "--\\d9 --\\d4 --\\d0 --0\\d --\\d3 --\\d8 --0\\d --\\d1"
+      ]
+    },
+    {
+      "schema": "nistData/list/gMonth/Schema+Instance/NISTSchema-SV-IV-list-gMonth-pattern-2.xsd",
+      "instances": 5,
+      "category_escapes": [
+        "d"
+      ],
+      "patterns": [
+        "--1\\d --1\\d --1\\d --1\\d --0\\d --\\d3"
+      ]
+    },
+    {
+      "schema": "nistData/list/gMonth/Schema+Instance/NISTSchema-SV-IV-list-gMonth-pattern-3.xsd",
+      "instances": 5,
+      "category_escapes": [
+        "d"
+      ],
+      "patterns": [
+        "--1\\d --0\\d --1\\d --0\\d --0\\d --0\\d --\\d8"
+      ]
+    },
+    {
+      "schema": "nistData/list/gMonth/Schema+Instance/NISTSchema-SV-IV-list-gMonth-pattern-4.xsd",
+      "instances": 5,
+      "category_escapes": [
+        "d"
+      ],
+      "patterns": [
+        "--\\d1 --\\d0 --\\d1 --0\\d --\\d9 --\\d2 --\\d1 --\\d3 --1\\d"
+      ]
+    },
+    {
+      "schema": "nistData/list/gMonth/Schema+Instance/NISTSchema-SV-IV-list-gMonth-pattern-5.xsd",
+      "instances": 5,
+      "category_escapes": [
+        "d"
+      ],
+      "patterns": [
+        "--1\\d --0\\d --1\\d --\\d8 --\\d8 --\\d7 --0\\d --\\d8"
+      ]
+    },
+    {
+      "schema": "nistData/list/string/Schema+Instance/NISTSchema-SV-IV-list-string-pattern-1.xsd",
+      "instances": 5,
+      "category_escapes": [
+        "d"
+      ],
+      "patterns": [
+        "\\d{1,5}_([A-Z][a-z]{1,20}_){4}Street_([A-Z][a-z]{1,20}_){3},_[A-Z]{2}_19751 \\d{1,5}_([A-Z][a-z]{1,20}_){3}Street_([A-Z][a-z]{1,20}_){1},_[A-Z]{2}_11837-1623 \\d{1,5}_([A-Z][a-z]{1,20}_){2}Street_([A-Z][a-z]{1,20}_){2},_[A-Z]{2}_14030 \\d{1,5}_([A-Z][a-z]{1,20}_){2}Street_([A-Z][a-z]{1,20}_){2},_[A-Z]{2}_13653-1327 \\d{1,5}_([A-Z][a-z]{1,20}_){3}Street_([A-Z][a-z]{1,20}_){2},_[A-Z]{2}_18424-1338 \\d{1,5}_([A-Z][a-z]{1,20}_){4}Street_([A-Z][a-z]{1,20}_){3},_[A-Z]{2}_19584-1412 \\d{1,5}_([A-Z][a-z]{1,20}_){3}Street_([A-Z][a-z]{1,20}_){3},_[A-Z]{2}_11267 \\d{1,5}_([A-Z][a-z]{1,20}_){4}Street_([A-Z][a-z]{1,20}_){3},_[A-Z]{2}_16578 \\d{1,5}_([A-Z][a-z]{1,20}_){2}Street_([A-Z][a-z]{1,20}_){2},_[A-Z]{2}_14818-1281"
+      ]
+    },
+    {
+      "schema": "nistData/list/string/Schema+Instance/NISTSchema-SV-IV-list-string-pattern-2.xsd",
+      "instances": 5,
+      "category_escapes": [
+        "d"
+      ],
+      "patterns": [
+        "\\d{1,5}_([A-Z][a-z]{1,20}_){1}Street_([A-Z][a-z]{1,20}_){2},_[A-Z]{2}_11551-1386 \\d{1,5}_([A-Z][a-z]{1,20}_){3}Street_([A-Z][a-z]{1,20}_){2},_[A-Z]{2}_15792-1475 \\d{1,5}_([A-Z][a-z]{1,20}_){3}Street_([A-Z][a-z]{1,20}_){2},_[A-Z]{2}_16933 \\d{1,5}_([A-Z][a-z]{1,20}_){5}Street_([A-Z][a-z]{1,20}_){2},_[A-Z]{2}_10446 \\d{1,5}_([A-Z][a-z]{1,20}_){4}Street_([A-Z][a-z]{1,20}_){3},_[A-Z]{2}_13824 \\d{1,5}_([A-Z][a-z]{1,20}_){1}Street_([A-Z][a-z]{1,20}_){1},_[A-Z]{2}_10173-1992 \\d{1,5}_([A-Z][a-z]{1,20}_){4}Street_([A-Z][a-z]{1,20}_){3},_[A-Z]{2}_10148-1029"
+      ]
+    },
+    {
+      "schema": "nistData/list/string/Schema+Instance/NISTSchema-SV-IV-list-string-pattern-3.xsd",
+      "instances": 5,
+      "category_escapes": [
+        "d"
+      ],
+      "patterns": [
+        "\\d{1,5}_([A-Z][a-z]{1,20}_){2}Street_([A-Z][a-z]{1,20}_){2},_[A-Z]{2}_11654-1789 \\d{1,5}_([A-Z][a-z]{1,20}_){3}Street_([A-Z][a-z]{1,20}_){1},_[A-Z]{2}_19111-1980 \\d{1,5}_([A-Z][a-z]{1,20}_){4}Street_([A-Z][a-z]{1,20}_){2},_[A-Z]{2}_15774-1852 \\d{1,5}_([A-Z][a-z]{1,20}_){1}Street_([A-Z][a-z]{1,20}_){2},_[A-Z]{2}_18248-1891 \\d{1,5}_([A-Z][a-z]{1,20}_){5}Street_([A-Z][a-z]{1,20}_){3},_[A-Z]{2}_15314"
+      ]
+    },
+    {
+      "schema": "nistData/list/string/Schema+Instance/NISTSchema-SV-IV-list-string-pattern-4.xsd",
+      "instances": 5,
+      "category_escapes": [
+        "d"
+      ],
+      "patterns": [
+        "\\d{1,5}_([A-Z][a-z]{1,20}_){2}Street_([A-Z][a-z]{1,20}_){3},_[A-Z]{2}_15352 \\d{1,5}_([A-Z][a-z]{1,20}_){5}Street_([A-Z][a-z]{1,20}_){3},_[A-Z]{2}_18423-1985 \\d{1,5}_([A-Z][a-z]{1,20}_){3}Street_([A-Z][a-z]{1,20}_){2},_[A-Z]{2}_15520-1083 \\d{1,5}_([A-Z][a-z]{1,20}_){1}Street_([A-Z][a-z]{1,20}_){2},_[A-Z]{2}_18786-1596 \\d{1,5}_([A-Z][a-z]{1,20}_){3}Street_([A-Z][a-z]{1,20}_){3},_[A-Z]{2}_12834-1343"
+      ]
+    },
+    {
+      "schema": "nistData/list/string/Schema+Instance/NISTSchema-SV-IV-list-string-pattern-5.xsd",
+      "instances": 5,
+      "category_escapes": [
+        "d"
+      ],
+      "patterns": [
+        "\\d{1,5}_([A-Z][a-z]{1,20}_){1}Street_([A-Z][a-z]{1,20}_){1},_[A-Z]{2}_17435-1843 \\d{1,5}_([A-Z][a-z]{1,20}_){2}Street_([A-Z][a-z]{1,20}_){3},_[A-Z]{2}_16376 \\d{1,5}_([A-Z][a-z]{1,20}_){1}Street_([A-Z][a-z]{1,20}_){1},_[A-Z]{2}_11348 \\d{1,5}_([A-Z][a-z]{1,20}_){4}Street_([A-Z][a-z]{1,20}_){2},_[A-Z]{2}_14973 \\d{1,5}_([A-Z][a-z]{1,20}_){1}Street_([A-Z][a-z]{1,20}_){2},_[A-Z]{2}_16518-1410 \\d{1,5}_([A-Z][a-z]{1,20}_){3}Street_([A-Z][a-z]{1,20}_){3},_[A-Z]{2}_10254-1649 \\d{1,5}_([A-Z][a-z]{1,20}_){2}Street_([A-Z][a-z]{1,20}_){1},_[A-Z]{2}_17642 \\d{1,5}_([A-Z][a-z]{1,20}_){5}Street_([A-Z][a-z]{1,20}_){2},_[A-Z]{2}_18742 \\d{1,5}_([A-Z][a-z]{1,20}_){2}Street_([A-Z][a-z]{1,20}_){3},_[A-Z]{2}_17310-1594"
+      ]
+    },
+    {
+      "schema": "nistData/list/normalizedString/Schema+Instance/NISTSchema-SV-IV-list-normalizedString-pattern-1.xsd",
+      "instances": 5,
+      "category_escapes": [
+        "d"
+      ],
+      "patterns": [
+        "\\d{1,5}_([A-Z][a-z]{1,20}_){3}Street_([A-Z][a-z]{1,20}_){2},_[A-Z]{2}_13058 \\d{1,5}_([A-Z][a-z]{1,20}_){5}Street_([A-Z][a-z]{1,20}_){2},_[A-Z]{2}_14172 \\d{1,5}_([A-Z][a-z]{1,20}_){4}Street_([A-Z][a-z]{1,20}_){3},_[A-Z]{2}_13454 \\d{1,5}_([A-Z][a-z]{1,20}_){5}Street_([A-Z][a-z]{1,20}_){3},_[A-Z]{2}_10133-1061 \\d{1,5}_([A-Z][a-z]{1,20}_){5}Street_([A-Z][a-z]{1,20}_){2},_[A-Z]{2}_10981 \\d{1,5}_([A-Z][a-z]{1,20}_){3}Street_([A-Z][a-z]{1,20}_){2},_[A-Z]{2}_16632 \\d{1,5}_([A-Z][a-z]{1,20}_){5}Street_([A-Z][a-z]{1,20}_){2},_[A-Z]{2}_19839"
+      ]
+    },
+    {
+      "schema": "nistData/list/normalizedString/Schema+Instance/NISTSchema-SV-IV-list-normalizedString-pattern-2.xsd",
+      "instances": 5,
+      "category_escapes": [
+        "d"
+      ],
+      "patterns": [
+        "\\d{1,5}_([A-Z][a-z]{1,20}_){2}Street_([A-Z][a-z]{1,20}_){1},_[A-Z]{2}_15950 \\d{1,5}_([A-Z][a-z]{1,20}_){1}Street_([A-Z][a-z]{1,20}_){2},_[A-Z]{2}_15905 \\d{1,5}_([A-Z][a-z]{1,20}_){2}Street_([A-Z][a-z]{1,20}_){1},_[A-Z]{2}_15311 \\d{1,5}_([A-Z][a-z]{1,20}_){5}Street_([A-Z][a-z]{1,20}_){1},_[A-Z]{2}_12031 \\d{1,5}_([A-Z][a-z]{1,20}_){5}Street_([A-Z][a-z]{1,20}_){1},_[A-Z]{2}_10376"
+      ]
+    },
+    {
+      "schema": "nistData/list/normalizedString/Schema+Instance/NISTSchema-SV-IV-list-normalizedString-pattern-3.xsd",
+      "instances": 5,
+      "category_escapes": [
+        "d"
+      ],
+      "patterns": [
+        "\\d{1,5}_([A-Z][a-z]{1,20}_){1}Street_([A-Z][a-z]{1,20}_){3},_[A-Z]{2}_12432 \\d{1,5}_([A-Z][a-z]{1,20}_){4}Street_([A-Z][a-z]{1,20}_){1},_[A-Z]{2}_10161 \\d{1,5}_([A-Z][a-z]{1,20}_){2}Street_([A-Z][a-z]{1,20}_){2},_[A-Z]{2}_11432-1137 \\d{1,5}_([A-Z][a-z]{1,20}_){2}Street_([A-Z][a-z]{1,20}_){2},_[A-Z]{2}_14004 \\d{1,5}_([A-Z][a-z]{1,20}_){4}Street_([A-Z][a-z]{1,20}_){2},_[A-Z]{2}_19543-1772 \\d{1,5}_([A-Z][a-z]{1,20}_){4}Street_([A-Z][a-z]{1,20}_){3},_[A-Z]{2}_16553-1944"
+      ]
+    },
+    {
+      "schema": "nistData/list/normalizedString/Schema+Instance/NISTSchema-SV-IV-list-normalizedString-pattern-4.xsd",
+      "instances": 5,
+      "category_escapes": [
+        "d"
+      ],
+      "patterns": [
+        "\\d{1,5}_([A-Z][a-z]{1,20}_){1}Street_([A-Z][a-z]{1,20}_){2},_[A-Z]{2}_17466-1733 \\d{1,5}_([A-Z][a-z]{1,20}_){5}Street_([A-Z][a-z]{1,20}_){2},_[A-Z]{2}_16877 \\d{1,5}_([A-Z][a-z]{1,20}_){3}Street_([A-Z][a-z]{1,20}_){1},_[A-Z]{2}_16698-1324 \\d{1,5}_([A-Z][a-z]{1,20}_){3}Street_([A-Z][a-z]{1,20}_){3},_[A-Z]{2}_18587 \\d{1,5}_([A-Z][a-z]{1,20}_){3}Street_([A-Z][a-z]{1,20}_){1},_[A-Z]{2}_10792 \\d{1,5}_([A-Z][a-z]{1,20}_){5}Street_([A-Z][a-z]{1,20}_){2},_[A-Z]{2}_11619-1091"
+      ]
+    },
+    {
+      "schema": "nistData/list/normalizedString/Schema+Instance/NISTSchema-SV-IV-list-normalizedString-pattern-5.xsd",
+      "instances": 5,
+      "category_escapes": [
+        "d"
+      ],
+      "patterns": [
+        "\\d{1,5}_([A-Z][a-z]{1,20}_){5}Street_([A-Z][a-z]{1,20}_){2},_[A-Z]{2}_14600 \\d{1,5}_([A-Z][a-z]{1,20}_){2}Street_([A-Z][a-z]{1,20}_){3},_[A-Z]{2}_15165-1290 \\d{1,5}_([A-Z][a-z]{1,20}_){1}Street_([A-Z][a-z]{1,20}_){3},_[A-Z]{2}_17813-1396 \\d{1,5}_([A-Z][a-z]{1,20}_){4}Street_([A-Z][a-z]{1,20}_){3},_[A-Z]{2}_18970 \\d{1,5}_([A-Z][a-z]{1,20}_){3}Street_([A-Z][a-z]{1,20}_){1},_[A-Z]{2}_13025 \\d{1,5}_([A-Z][a-z]{1,20}_){2}Street_([A-Z][a-z]{1,20}_){3},_[A-Z]{2}_15706-1707 \\d{1,5}_([A-Z][a-z]{1,20}_){4}Street_([A-Z][a-z]{1,20}_){1},_[A-Z]{2}_16336"
+      ]
+    },
+    {
+      "schema": "nistData/list/token/Schema+Instance/NISTSchema-SV-IV-list-token-pattern-1.xsd",
+      "instances": 5,
+      "category_escapes": [
+        "d"
+      ],
+      "patterns": [
+        "\\d{1,5}_([A-Z][a-z]{1,20}_){3}Street_([A-Z][a-z]{1,20}_){3},_[A-Z]{2}_15685 \\d{1,5}_([A-Z][a-z]{1,20}_){2}Street_([A-Z][a-z]{1,20}_){1},_[A-Z]{2}_13673 \\d{1,5}_([A-Z][a-z]{1,20}_){5}Street_([A-Z][a-z]{1,20}_){1},_[A-Z]{2}_10126 \\d{1,5}_([A-Z][a-z]{1,20}_){2}Street_([A-Z][a-z]{1,20}_){2},_[A-Z]{2}_12533 \\d{1,5}_([A-Z][a-z]{1,20}_){4}Street_([A-Z][a-z]{1,20}_){1},_[A-Z]{2}_13175"
+      ]
+    },
+    {
+      "schema": "nistData/list/token/Schema+Instance/NISTSchema-SV-IV-list-token-pattern-2.xsd",
+      "instances": 5,
+      "category_escapes": [
+        "d"
+      ],
+      "patterns": [
+        "\\d{1,5}_([A-Z][a-z]{1,20}_){3}Street_([A-Z][a-z]{1,20}_){2},_[A-Z]{2}_13797-1926 \\d{1,5}_([A-Z][a-z]{1,20}_){5}Street_([A-Z][a-z]{1,20}_){3},_[A-Z]{2}_13549-1185 \\d{1,5}_([A-Z][a-z]{1,20}_){4}Street_([A-Z][a-z]{1,20}_){2},_[A-Z]{2}_11867 \\d{1,5}_([A-Z][a-z]{1,20}_){4}Street_([A-Z][a-z]{1,20}_){1},_[A-Z]{2}_13558-1548 \\d{1,5}_([A-Z][a-z]{1,20}_){2}Street_([A-Z][a-z]{1,20}_){1},_[A-Z]{2}_10722-1701 \\d{1,5}_([A-Z][a-z]{1,20}_){3}Street_([A-Z][a-z]{1,20}_){3},_[A-Z]{2}_14892 \\d{1,5}_([A-Z][a-z]{1,20}_){1}Street_([A-Z][a-z]{1,20}_){2},_[A-Z]{2}_15901-1354 \\d{1,5}_([A-Z][a-z]{1,20}_){5}Street_([A-Z][a-z]{1,20}_){2},_[A-Z]{2}_12361 \\d{1,5}_([A-Z][a-z]{1,20}_){3}Street_([A-Z][a-z]{1,20}_){1},_[A-Z]{2}_13151-1383"
+      ]
+    },
+    {
+      "schema": "nistData/list/token/Schema+Instance/NISTSchema-SV-IV-list-token-pattern-3.xsd",
+      "instances": 5,
+      "category_escapes": [
+        "d"
+      ],
+      "patterns": [
+        "\\d{1,5}_([A-Z][a-z]{1,20}_){2}Street_([A-Z][a-z]{1,20}_){3},_[A-Z]{2}_11426-1564 \\d{1,5}_([A-Z][a-z]{1,20}_){4}Street_([A-Z][a-z]{1,20}_){2},_[A-Z]{2}_12210 \\d{1,5}_([A-Z][a-z]{1,20}_){4}Street_([A-Z][a-z]{1,20}_){3},_[A-Z]{2}_10273 \\d{1,5}_([A-Z][a-z]{1,20}_){5}Street_([A-Z][a-z]{1,20}_){2},_[A-Z]{2}_15228-1341 \\d{1,5}_([A-Z][a-z]{1,20}_){5}Street_([A-Z][a-z]{1,20}_){3},_[A-Z]{2}_19382 \\d{1,5}_([A-Z][a-z]{1,20}_){2}Street_([A-Z][a-z]{1,20}_){3},_[A-Z]{2}_15012-1071 \\d{1,5}_([A-Z][a-z]{1,20}_){1}Street_([A-Z][a-z]{1,20}_){2},_[A-Z]{2}_16723"
+      ]
+    },
+    {
+      "schema": "nistData/list/token/Schema+Instance/NISTSchema-SV-IV-list-token-pattern-4.xsd",
+      "instances": 5,
+      "category_escapes": [
+        "d"
+      ],
+      "patterns": [
+        "\\d{1,5}_([A-Z][a-z]{1,20}_){3}Street_([A-Z][a-z]{1,20}_){2},_[A-Z]{2}_17930-1652 \\d{1,5}_([A-Z][a-z]{1,20}_){3}Street_([A-Z][a-z]{1,20}_){2},_[A-Z]{2}_19453 \\d{1,5}_([A-Z][a-z]{1,20}_){3}Street_([A-Z][a-z]{1,20}_){2},_[A-Z]{2}_18434-1961 \\d{1,5}_([A-Z][a-z]{1,20}_){4}Street_([A-Z][a-z]{1,20}_){2},_[A-Z]{2}_14405 \\d{1,5}_([A-Z][a-z]{1,20}_){2}Street_([A-Z][a-z]{1,20}_){1},_[A-Z]{2}_15365 \\d{1,5}_([A-Z][a-z]{1,20}_){3}Street_([A-Z][a-z]{1,20}_){2},_[A-Z]{2}_16114 \\d{1,5}_([A-Z][a-z]{1,20}_){2}Street_([A-Z][a-z]{1,20}_){2},_[A-Z]{2}_14742 \\d{1,5}_([A-Z][a-z]{1,20}_){5}Street_([A-Z][a-z]{1,20}_){2},_[A-Z]{2}_12190-1064 \\d{1,5}_([A-Z][a-z]{1,20}_){3}Street_([A-Z][a-z]{1,20}_){2},_[A-Z]{2}_13082-1344"
+      ]
+    },
+    {
+      "schema": "nistData/list/token/Schema+Instance/NISTSchema-SV-IV-list-token-pattern-5.xsd",
+      "instances": 5,
+      "category_escapes": [
+        "d"
+      ],
+      "patterns": [
+        "\\d{1,5}_([A-Z][a-z]{1,20}_){1}Street_([A-Z][a-z]{1,20}_){2},_[A-Z]{2}_17988 \\d{1,5}_([A-Z][a-z]{1,20}_){2}Street_([A-Z][a-z]{1,20}_){2},_[A-Z]{2}_14056-1024 \\d{1,5}_([A-Z][a-z]{1,20}_){2}Street_([A-Z][a-z]{1,20}_){2},_[A-Z]{2}_10607 \\d{1,5}_([A-Z][a-z]{1,20}_){2}Street_([A-Z][a-z]{1,20}_){2},_[A-Z]{2}_17619-1280 \\d{1,5}_([A-Z][a-z]{1,20}_){4}Street_([A-Z][a-z]{1,20}_){2},_[A-Z]{2}_13978 \\d{1,5}_([A-Z][a-z]{1,20}_){4}Street_([A-Z][a-z]{1,20}_){3},_[A-Z]{2}_18746 \\d{1,5}_([A-Z][a-z]{1,20}_){4}Street_([A-Z][a-z]{1,20}_){3},_[A-Z]{2}_17171-1364 \\d{1,5}_([A-Z][a-z]{1,20}_){3}Street_([A-Z][a-z]{1,20}_){1},_[A-Z]{2}_16881"
+      ]
+    },
+    {
+      "schema": "nistData/list/decimal/Schema+Instance/NISTSchema-SV-II-list-decimal-pattern-1.xsd",
+      "instances": 5,
+      "category_escapes": [
+        "d"
+      ],
+      "patterns": [
+        "\\-\\d{1} \\-\\.\\d{3} \\-\\.\\d{5} \\-\\d{4}\\.\\d{3} \\-\\d{3}\\.\\d{6} \\d{2}\\.\\d{9} \\d{3}\\.\\d{10} \\d{7}\\.\\d{8} \\d{7}\\.\\d{11}"
+      ]
+    },
+    {
+      "schema": "nistData/list/decimal/Schema+Instance/NISTSchema-SV-II-list-decimal-pattern-2.xsd",
+      "instances": 5,
+      "category_escapes": [
+        "d"
+      ],
+      "patterns": [
+        "\\-\\d{1} \\-\\d{4}\\.\\d{1} \\-\\d{7}\\.\\d{2} \\d{5}\\.\\d{8} \\d{2}\\.\\d{16}"
+      ]
+    },
+    {
+      "schema": "nistData/list/decimal/Schema+Instance/NISTSchema-SV-II-list-decimal-pattern-3.xsd",
+      "instances": 5,
+      "category_escapes": [
+        "d"
+      ],
+      "patterns": [
+        "\\d{1} \\-\\d{3} \\d{2}\\.\\d{3} \\d{3}\\.\\d{4} \\d{4}\\.\\d{5} \\-\\d{1}\\.\\d{10} \\d{5}\\.\\d{13}"
+      ]
+    },
+    {
+      "schema": "nistData/list/decimal/Schema+Instance/NISTSchema-SV-II-list-decimal-pattern-4.xsd",
+      "instances": 5,
+      "category_escapes": [
+        "d"
+      ],
+      "patterns": [
+        "\\d{1} \\.\\d{3} \\d{2}\\.\\d{3} \\-\\d{4}\\.\\d{3} \\-\\d{5}\\.\\d{4} \\d{7}\\.\\d{4} \\d{8}\\.\\d{5} \\-\\d{17}\\.\\d{1}"
+      ]
+    },
+    {
+      "schema": "nistData/list/decimal/Schema+Instance/NISTSchema-SV-II-list-decimal-pattern-5.xsd",
+      "instances": 5,
+      "category_escapes": [
+        "d"
+      ],
+      "patterns": [
+        "\\d{1} \\d{2}\\.\\d{1} \\d{2}\\.\\d{3} \\d{4}\\.\\d{3} \\-\\d{3}\\.\\d{6} \\-\\d{6}\\.\\d{5} \\-\\d{1}\\.\\d{17}"
+      ]
+    },
+    {
+      "schema": "nistData/list/integer/Schema+Instance/NISTSchema-SV-II-list-integer-pattern-1.xsd",
+      "instances": 5,
+      "category_escapes": [
+        "d"
+      ],
+      "patterns": [
+        "\\-\\d{18} \\-\\d{10} \\-\\d{4} \\d{1} \\d{7} \\d{18}"
+      ]
+    },
+    {
+      "schema": "nistData/list/integer/Schema+Instance/NISTSchema-SV-II-list-integer-pattern-2.xsd",
+      "instances": 5,
+      "category_escapes": [
+        "d"
+      ],
+      "patterns": [
+        "\\-\\d{18} \\-\\d{9} \\-\\d{5} \\-\\d{1} \\d{3} \\d{7} \\d{18}"
+      ]
+    },
+    {
+      "schema": "nistData/list/integer/Schema+Instance/NISTSchema-SV-II-list-integer-pattern-3.xsd",
+      "instances": 5,
+      "category_escapes": [
+        "d"
+      ],
+      "patterns": [
+        "\\-\\d{18} \\-\\d{11} \\-\\d{7} \\-\\d{3} \\d{1} \\d{5} \\d{9} \\d{18}"
+      ]
+    },
+    {
+      "schema": "nistData/list/integer/Schema+Instance/NISTSchema-SV-II-list-integer-pattern-4.xsd",
+      "instances": 5,
+      "category_escapes": [
+        "d"
+      ],
+      "patterns": [
+        "\\-\\d{18} \\-\\d{13} \\-\\d{9} \\-\\d{5} \\-\\d{1} \\d{3} \\d{7} \\d{11} \\d{18}"
+      ]
+    },
+    {
+      "schema": "nistData/list/integer/Schema+Instance/NISTSchema-SV-II-list-integer-pattern-5.xsd",
+      "instances": 5,
+      "category_escapes": [
+        "d"
+      ],
+      "patterns": [
+        "\\-\\d{18} \\-\\d{9} \\-\\d{5} \\-\\d{1} \\d{3} \\d{7} \\d{18}"
+      ]
+    },
+    {
+      "schema": "nistData/list/nonPositiveInteger/Schema+Instance/NISTSchema-SV-II-list-nonPositiveInteger-pattern-1.xsd",
+      "instances": 5,
+      "category_escapes": [
+        "d"
+      ],
+      "patterns": [
+        "\\-\\d{1} \\-\\d{3} \\-\\d{5} \\-\\d{7} \\-\\d{9} \\-\\d{11} \\-\\d{13} \\-\\d{18}"
+      ]
+    },
+    {
+      "schema": "nistData/list/nonPositiveInteger/Schema+Instance/NISTSchema-SV-II-list-nonPositiveInteger-pattern-2.xsd",
+      "instances": 5,
+      "category_escapes": [
+        "d"
+      ],
+      "patterns": [
+        "\\-\\d{1} \\-\\d{3} \\-\\d{5} \\-\\d{7} \\-\\d{9} \\-\\d{11} \\-\\d{13} \\-\\d{15} \\-\\d{18}"
+      ]
+    },
+    {
+      "schema": "nistData/list/nonPositiveInteger/Schema+Instance/NISTSchema-SV-II-list-nonPositiveInteger-pattern-3.xsd",
+      "instances": 5,
+      "category_escapes": [
+        "d"
+      ],
+      "patterns": [
+        "\\-\\d{1} \\-\\d{3} \\-\\d{5} \\-\\d{7} \\-\\d{9} \\-\\d{11} \\-\\d{13} \\-\\d{18}"
+      ]
+    },
+    {
+      "schema": "nistData/list/nonPositiveInteger/Schema+Instance/NISTSchema-SV-II-list-nonPositiveInteger-pattern-4.xsd",
+      "instances": 5,
+      "category_escapes": [
+        "d"
+      ],
+      "patterns": [
+        "\\-\\d{1} \\-\\d{4} \\-\\d{7} \\-\\d{10} \\-\\d{13} \\-\\d{18}"
+      ]
+    },
+    {
+      "schema": "nistData/list/nonPositiveInteger/Schema+Instance/NISTSchema-SV-II-list-nonPositiveInteger-pattern-5.xsd",
+      "instances": 5,
+      "category_escapes": [
+        "d"
+      ],
+      "patterns": [
+        "\\-\\d{1} \\-\\d{3} \\-\\d{5} \\-\\d{7} \\-\\d{9} \\-\\d{11} \\-\\d{13} \\-\\d{18}"
+      ]
+    },
+    {
+      "schema": "nistData/list/negativeInteger/Schema+Instance/NISTSchema-SV-II-list-negativeInteger-pattern-1.xsd",
+      "instances": 5,
+      "category_escapes": [
+        "d"
+      ],
+      "patterns": [
+        "\\-\\d{1} \\-\\d{3} \\-\\d{5} \\-\\d{7} \\-\\d{9} \\-\\d{11} \\-\\d{13} \\-\\d{15} \\-\\d{18}"
+      ]
+    },
+    {
+      "schema": "nistData/list/negativeInteger/Schema+Instance/NISTSchema-SV-II-list-negativeInteger-pattern-2.xsd",
+      "instances": 5,
+      "category_escapes": [
+        "d"
+      ],
+      "patterns": [
+        "\\-\\d{1} \\-\\d{3} \\-\\d{5} \\-\\d{7} \\-\\d{9} \\-\\d{11} \\-\\d{18}"
+      ]
+    },
+    {
+      "schema": "nistData/list/negativeInteger/Schema+Instance/NISTSchema-SV-II-list-negativeInteger-pattern-3.xsd",
+      "instances": 5,
+      "category_escapes": [
+        "d"
+      ],
+      "patterns": [
+        "\\-\\d{1} \\-\\d{5} \\-\\d{9} \\-\\d{13} \\-\\d{18}"
+      ]
+    },
+    {
+      "schema": "nistData/list/negativeInteger/Schema+Instance/NISTSchema-SV-II-list-negativeInteger-pattern-4.xsd",
+      "instances": 5,
+      "category_escapes": [
+        "d"
+      ],
+      "patterns": [
+        "\\-\\d{1} \\-\\d{3} \\-\\d{5} \\-\\d{7} \\-\\d{9} \\-\\d{11} \\-\\d{18}"
+      ]
+    },
+    {
+      "schema": "nistData/list/negativeInteger/Schema+Instance/NISTSchema-SV-II-list-negativeInteger-pattern-5.xsd",
+      "instances": 5,
+      "category_escapes": [
+        "d"
+      ],
+      "patterns": [
+        "\\-\\d{1} \\-\\d{3} \\-\\d{5} \\-\\d{7} \\-\\d{9} \\-\\d{11} \\-\\d{13} \\-\\d{15} \\-\\d{18}"
+      ]
+    },
+    {
+      "schema": "nistData/list/long/Schema+Instance/NISTSchema-SV-II-list-long-pattern-1.xsd",
+      "instances": 5,
+      "category_escapes": [
+        "d"
+      ],
+      "patterns": [
+        "\\-\\d{18} \\-\\d{13} \\-\\d{9} \\-\\d{5} \\-\\d{1} \\d{3} \\d{7} \\d{11} \\d{18}"
+      ]
+    },
+    {
+      "schema": "nistData/list/long/Schema+Instance/NISTSchema-SV-II-list-long-pattern-2.xsd",
+      "instances": 5,
+      "category_escapes": [
+        "d"
+      ],
+      "patterns": [
+        "\\-\\d{18} \\-\\d{9} \\-\\d{5} \\-\\d{1} \\d{3} \\d{7} \\d{18}"
+      ]
+    },
+    {
+      "schema": "nistData/list/long/Schema+Instance/NISTSchema-SV-II-list-long-pattern-3.xsd",
+      "instances": 5,
+      "category_escapes": [
+        "d"
+      ],
+      "patterns": [
+        "\\-\\d{18} \\-\\d{13} \\-\\d{9} \\-\\d{5} \\-\\d{1} \\d{3} \\d{7} \\d{11} \\d{18}"
+      ]
+    },
+    {
+      "schema": "nistData/list/long/Schema+Instance/NISTSchema-SV-II-list-long-pattern-4.xsd",
+      "instances": 5,
+      "category_escapes": [
+        "d"
+      ],
+      "patterns": [
+        "\\-\\d{18} \\-\\d{13} \\-\\d{9} \\-\\d{5} \\-\\d{1} \\d{3} \\d{7} \\d{11} \\d{18}"
+      ]
+    },
+    {
+      "schema": "nistData/list/long/Schema+Instance/NISTSchema-SV-II-list-long-pattern-5.xsd",
+      "instances": 5,
+      "category_escapes": [
+        "d"
+      ],
+      "patterns": [
+        "\\-\\d{18} \\-\\d{8} \\-\\d{6} \\-\\d{4} \\-\\d{2} \\d{1} \\d{3} \\d{5} \\d{7} \\d{18}"
+      ]
+    },
+    {
+      "schema": "nistData/list/int/Schema+Instance/NISTSchema-SV-II-list-int-pattern-1.xsd",
+      "instances": 5,
+      "category_escapes": [
+        "d"
+      ],
+      "patterns": [
+        "\\-\\d{10} \\-\\d{4} \\-\\d{2} \\d{1} \\d{3} \\d{10}"
+      ]
+    },
+    {
+      "schema": "nistData/list/int/Schema+Instance/NISTSchema-SV-II-list-int-pattern-2.xsd",
+      "instances": 5,
+      "category_escapes": [
+        "d"
+      ],
+      "patterns": [
+        "\\-\\d{10} \\-\\d{6} \\-\\d{4} \\-\\d{2} \\d{1} \\d{3} \\d{5} \\d{10}"
+      ]
+    },
+    {
+      "schema": "nistData/list/int/Schema+Instance/NISTSchema-SV-II-list-int-pattern-3.xsd",
+      "instances": 5,
+      "category_escapes": [
+        "d"
+      ],
+      "patterns": [
+        "\\-\\d{10} \\-\\d{7} \\-\\d{5} \\-\\d{3} \\-\\d{1} \\d{2} \\d{4} \\d{6} \\d{10}"
+      ]
+    },
+    {
+      "schema": "nistData/list/int/Schema+Instance/NISTSchema-SV-II-list-int-pattern-4.xsd",
+      "instances": 5,
+      "category_escapes": [
+        "d"
+      ],
+      "patterns": [
+        "\\-\\d{10} \\-\\d{5} \\-\\d{3} \\-\\d{1} \\d{2} \\d{4} \\d{10}"
+      ]
+    },
+    {
+      "schema": "nistData/list/int/Schema+Instance/NISTSchema-SV-II-list-int-pattern-5.xsd",
+      "instances": 5,
+      "category_escapes": [
+        "d"
+      ],
+      "patterns": [
+        "\\-\\d{10} \\-\\d{7} \\-\\d{5} \\-\\d{3} \\-\\d{1} \\d{2} \\d{4} \\d{6} \\d{10}"
+      ]
+    },
+    {
+      "schema": "nistData/list/short/Schema+Instance/NISTSchema-SV-II-list-short-pattern-1.xsd",
+      "instances": 5,
+      "category_escapes": [
+        "d"
+      ],
+      "patterns": [
+        "\\-\\d{5} \\-\\d{4} \\-\\d{3} \\-\\d{2} \\-\\d{1} \\d{1} \\d{2} \\d{3} \\d{5}"
+      ]
+    },
+    {
+      "schema": "nistData/list/short/Schema+Instance/NISTSchema-SV-II-list-short-pattern-2.xsd",
+      "instances": 5,
+      "category_escapes": [
+        "d"
+      ],
+      "patterns": [
+        "\\-\\d{5} \\-\\d{4} \\-\\d{3} \\-\\d{2} \\-\\d{1} \\d{1} \\d{5}"
+      ]
+    },
+    {
+      "schema": "nistData/list/short/Schema+Instance/NISTSchema-SV-II-list-short-pattern-3.xsd",
+      "instances": 5,
+      "category_escapes": [
+        "d"
+      ],
+      "patterns": [
+        "\\-\\d{5} \\-\\d{4} \\-\\d{3} \\-\\d{2} \\-\\d{1} \\d{1} \\d{2} \\d{3} \\d{5}"
+      ]
+    },
+    {
+      "schema": "nistData/list/short/Schema+Instance/NISTSchema-SV-II-list-short-pattern-4.xsd",
+      "instances": 5,
+      "category_escapes": [
+        "d"
+      ],
+      "patterns": [
+        "\\-\\d{5} \\-\\d{4} \\-\\d{3} \\-\\d{2} \\-\\d{1} \\d{1} \\d{5}"
+      ]
+    },
+    {
+      "schema": "nistData/list/short/Schema+Instance/NISTSchema-SV-II-list-short-pattern-5.xsd",
+      "instances": 5,
+      "category_escapes": [
+        "d"
+      ],
+      "patterns": [
+        "\\-\\d{5} \\-\\d{4} \\-\\d{3} \\-\\d{2} \\-\\d{1} \\d{1} \\d{5}"
+      ]
+    },
+    {
+      "schema": "nistData/list/byte/Schema+Instance/NISTSchema-SV-II-list-byte-pattern-1.xsd",
+      "instances": 5,
+      "category_escapes": [
+        "d"
+      ],
+      "patterns": [
+        "\\-\\d{3} \\-\\d{2} \\-\\d{1} \\d{1} \\d{2} \\d{3} \\-\\d{3}"
+      ]
+    },
+    {
+      "schema": "nistData/list/byte/Schema+Instance/NISTSchema-SV-II-list-byte-pattern-2.xsd",
+      "instances": 5,
+      "category_escapes": [
+        "d"
+      ],
+      "patterns": [
+        "\\-\\d{3} \\-\\d{2} \\-\\d{1} \\d{1} \\d{2} \\d{3} \\-\\d{3}"
+      ]
+    },
+    {
+      "schema": "nistData/list/byte/Schema+Instance/NISTSchema-SV-II-list-byte-pattern-3.xsd",
+      "instances": 5,
+      "category_escapes": [
+        "d"
+      ],
+      "patterns": [
+        "\\-\\d{3} \\-\\d{2} \\-\\d{1} \\d{1} \\d{2} \\d{3} \\-\\d{3}"
+      ]
+    },
+    {
+      "schema": "nistData/list/byte/Schema+Instance/NISTSchema-SV-II-list-byte-pattern-4.xsd",
+      "instances": 5,
+      "category_escapes": [
+        "d"
+      ],
+      "patterns": [
+        "\\-\\d{3} \\-\\d{2} \\-\\d{1} \\d{1} \\d{2} \\d{3}"
+      ]
+    },
+    {
+      "schema": "nistData/list/byte/Schema+Instance/NISTSchema-SV-II-list-byte-pattern-5.xsd",
+      "instances": 5,
+      "category_escapes": [
+        "d"
+      ],
+      "patterns": [
+        "\\-\\d{3} \\-\\d{2} \\-\\d{1} \\d{1} \\d{2} \\d{3} \\-\\d{3} \\-\\d{2} \\-\\d{1}"
+      ]
+    },
+    {
+      "schema": "nistData/list/nonNegativeInteger/Schema+Instance/NISTSchema-SV-II-list-nonNegativeInteger-pattern-1.xsd",
+      "instances": 5,
+      "category_escapes": [
+        "d"
+      ],
+      "patterns": [
+        "\\d{1} \\d{4} \\d{7} \\d{10} \\d{13} \\d{18}"
+      ]
+    },
+    {
+      "schema": "nistData/list/nonNegativeInteger/Schema+Instance/NISTSchema-SV-II-list-nonNegativeInteger-pattern-2.xsd",
+      "instances": 5,
+      "category_escapes": [
+        "d"
+      ],
+      "patterns": [
+        "\\d{1} \\d{3} \\d{5} \\d{7} \\d{9} \\d{11} \\d{18}"
+      ]
+    },
+    {
+      "schema": "nistData/list/nonNegativeInteger/Schema+Instance/NISTSchema-SV-II-list-nonNegativeInteger-pattern-3.xsd",
+      "instances": 5,
+      "category_escapes": [
+        "d"
+      ],
+      "patterns": [
+        "\\d{1} \\d{4} \\d{7} \\d{10} \\d{13} \\d{18}"
+      ]
+    },
+    {
+      "schema": "nistData/list/nonNegativeInteger/Schema+Instance/NISTSchema-SV-II-list-nonNegativeInteger-pattern-4.xsd",
+      "instances": 5,
+      "category_escapes": [
+        "d"
+      ],
+      "patterns": [
+        "\\d{1} \\d{3} \\d{5} \\d{7} \\d{9} \\d{11} \\d{13} \\d{18}"
+      ]
+    },
+    {
+      "schema": "nistData/list/nonNegativeInteger/Schema+Instance/NISTSchema-SV-II-list-nonNegativeInteger-pattern-5.xsd",
+      "instances": 5,
+      "category_escapes": [
+        "d"
+      ],
+      "patterns": [
+        "\\d{1} \\d{4} \\d{7} \\d{10} \\d{13} \\d{18}"
+      ]
+    },
+    {
+      "schema": "nistData/list/unsignedLong/Schema+Instance/NISTSchema-SV-II-list-unsignedLong-pattern-1.xsd",
+      "instances": 5,
+      "category_escapes": [
+        "d"
+      ],
+      "patterns": [
+        "\\d{1} \\d{3} \\d{5} \\d{7} \\d{9} \\d{11} \\d{18}"
+      ]
+    },
+    {
+      "schema": "nistData/list/unsignedLong/Schema+Instance/NISTSchema-SV-II-list-unsignedLong-pattern-2.xsd",
+      "instances": 5,
+      "category_escapes": [
+        "d"
+      ],
+      "patterns": [
+        "\\d{1} \\d{2} \\d{3} \\d{4} \\d{5} \\d{6} \\d{7} \\d{8} \\d{9} \\d{18}"
+      ]
+    },
+    {
+      "schema": "nistData/list/unsignedLong/Schema+Instance/NISTSchema-SV-II-list-unsignedLong-pattern-3.xsd",
+      "instances": 5,
+      "category_escapes": [
+        "d"
+      ],
+      "patterns": [
+        "\\d{1} \\d{3} \\d{5} \\d{7} \\d{9} \\d{11} \\d{18}"
+      ]
+    },
+    {
+      "schema": "nistData/list/unsignedLong/Schema+Instance/NISTSchema-SV-II-list-unsignedLong-pattern-4.xsd",
+      "instances": 5,
+      "category_escapes": [
+        "d"
+      ],
+      "patterns": [
+        "\\d{1} \\d{3} \\d{5} \\d{7} \\d{9} \\d{11} \\d{13} \\d{15} \\d{18}"
+      ]
+    },
+    {
+      "schema": "nistData/list/unsignedLong/Schema+Instance/NISTSchema-SV-II-list-unsignedLong-pattern-5.xsd",
+      "instances": 5,
+      "category_escapes": [
+        "d"
+      ],
+      "patterns": [
+        "\\d{1} \\d{2} \\d{3} \\d{4} \\d{5} \\d{6} \\d{7} \\d{8} \\d{9} \\d{18}"
+      ]
+    },
+    {
+      "schema": "nistData/list/unsignedInt/Schema+Instance/NISTSchema-SV-II-list-unsignedInt-pattern-1.xsd",
+      "instances": 5,
+      "category_escapes": [
+        "d"
+      ],
+      "patterns": [
+        "\\d{1} \\d{2} \\d{3} \\d{4} \\d{5} \\d{6} \\d{10}"
+      ]
+    },
+    {
+      "schema": "nistData/list/unsignedInt/Schema+Instance/NISTSchema-SV-II-list-unsignedInt-pattern-2.xsd",
+      "instances": 5,
+      "category_escapes": [
+        "d"
+      ],
+      "patterns": [
+        "\\d{1} \\d{2} \\d{3} \\d{4} \\d{5} \\d{6} \\d{7} \\d{8} \\d{10}"
+      ]
+    },
+    {
+      "schema": "nistData/list/unsignedInt/Schema+Instance/NISTSchema-SV-II-list-unsignedInt-pattern-3.xsd",
+      "instances": 5,
+      "category_escapes": [
+        "d"
+      ],
+      "patterns": [
+        "\\d{1} \\d{2} \\d{3} \\d{4} \\d{5} \\d{6} \\d{10}"
+      ]
+    },
+    {
+      "schema": "nistData/list/unsignedInt/Schema+Instance/NISTSchema-SV-II-list-unsignedInt-pattern-4.xsd",
+      "instances": 5,
+      "category_escapes": [
+        "d"
+      ],
+      "patterns": [
+        "\\d{1} \\d{2} \\d{3} \\d{4} \\d{5} \\d{6} \\d{10}"
+      ]
+    },
+    {
+      "schema": "nistData/list/unsignedInt/Schema+Instance/NISTSchema-SV-II-list-unsignedInt-pattern-5.xsd",
+      "instances": 5,
+      "category_escapes": [
+        "d"
+      ],
+      "patterns": [
+        "\\d{1} \\d{3} \\d{5} \\d{7} \\d{10}"
+      ]
+    },
+    {
+      "schema": "nistData/list/unsignedShort/Schema+Instance/NISTSchema-SV-II-list-unsignedShort-pattern-1.xsd",
+      "instances": 5,
+      "category_escapes": [
+        "d"
+      ],
+      "patterns": [
+        "\\d{1} \\d{2} \\d{3} \\d{4} \\d{5}"
+      ]
+    },
+    {
+      "schema": "nistData/list/unsignedShort/Schema+Instance/NISTSchema-SV-II-list-unsignedShort-pattern-2.xsd",
+      "instances": 5,
+      "category_escapes": [
+        "d"
+      ],
+      "patterns": [
+        "\\d{1} \\d{2} \\d{3} \\d{4} \\d{5} \\d{1} \\d{2} \\d{3} \\d{4}"
+      ]
+    },
+    {
+      "schema": "nistData/list/unsignedShort/Schema+Instance/NISTSchema-SV-II-list-unsignedShort-pattern-3.xsd",
+      "instances": 5,
+      "category_escapes": [
+        "d"
+      ],
+      "patterns": [
+        "\\d{1} \\d{2} \\d{3} \\d{4} \\d{5} \\d{1}"
+      ]
+    },
+    {
+      "schema": "nistData/list/unsignedShort/Schema+Instance/NISTSchema-SV-II-list-unsignedShort-pattern-4.xsd",
+      "instances": 5,
+      "category_escapes": [
+        "d"
+      ],
+      "patterns": [
+        "\\d{1} \\d{2} \\d{3} \\d{4} \\d{5} \\d{1}"
+      ]
+    },
+    {
+      "schema": "nistData/list/unsignedShort/Schema+Instance/NISTSchema-SV-II-list-unsignedShort-pattern-5.xsd",
+      "instances": 5,
+      "category_escapes": [
+        "d"
+      ],
+      "patterns": [
+        "\\d{1} \\d{2} \\d{3} \\d{4} \\d{5}"
+      ]
+    },
+    {
+      "schema": "nistData/list/unsignedByte/Schema+Instance/NISTSchema-SV-II-list-unsignedByte-pattern-1.xsd",
+      "instances": 5,
+      "category_escapes": [
+        "d"
+      ],
+      "patterns": [
+        "\\d{1} \\d{2} \\d{3} \\d{1} \\d{2}"
+      ]
+    },
+    {
+      "schema": "nistData/list/unsignedByte/Schema+Instance/NISTSchema-SV-II-list-unsignedByte-pattern-2.xsd",
+      "instances": 5,
+      "category_escapes": [
+        "d"
+      ],
+      "patterns": [
+        "\\d{1} \\d{2} \\d{3} \\d{1} \\d{2} \\d{3} \\d{1} \\d{2}"
+      ]
+    },
+    {
+      "schema": "nistData/list/unsignedByte/Schema+Instance/NISTSchema-SV-II-list-unsignedByte-pattern-3.xsd",
+      "instances": 5,
+      "category_escapes": [
+        "d"
+      ],
+      "patterns": [
+        "\\d{1} \\d{2} \\d{3} \\d{1} \\d{2} \\d{3}"
+      ]
+    },
+    {
+      "schema": "nistData/list/unsignedByte/Schema+Instance/NISTSchema-SV-II-list-unsignedByte-pattern-4.xsd",
+      "instances": 5,
+      "category_escapes": [
+        "d"
+      ],
+      "patterns": [
+        "\\d{1} \\d{2} \\d{3} \\d{1} \\d{2} \\d{3} \\d{1} \\d{2}"
+      ]
+    },
+    {
+      "schema": "nistData/list/unsignedByte/Schema+Instance/NISTSchema-SV-II-list-unsignedByte-pattern-5.xsd",
+      "instances": 5,
+      "category_escapes": [
+        "d"
+      ],
+      "patterns": [
+        "\\d{1} \\d{2} \\d{3} \\d{1} \\d{2} \\d{3} \\d{1} \\d{2}"
+      ]
+    },
+    {
+      "schema": "nistData/list/positiveInteger/Schema+Instance/NISTSchema-SV-II-list-positiveInteger-pattern-1.xsd",
+      "instances": 5,
+      "category_escapes": [
+        "d"
+      ],
+      "patterns": [
+        "\\d{1} \\d{2} \\d{3} \\d{4} \\d{5} \\d{6} \\d{7} \\d{8} \\d{9} \\d{18}"
+      ]
+    },
+    {
+      "schema": "nistData/list/positiveInteger/Schema+Instance/NISTSchema-SV-II-list-positiveInteger-pattern-2.xsd",
+      "instances": 5,
+      "category_escapes": [
+        "d"
+      ],
+      "patterns": [
+        "\\d{1} \\d{3} \\d{5} \\d{7} \\d{9} \\d{11} \\d{13} \\d{18}"
+      ]
+    },
+    {
+      "schema": "nistData/list/positiveInteger/Schema+Instance/NISTSchema-SV-II-list-positiveInteger-pattern-3.xsd",
+      "instances": 5,
+      "category_escapes": [
+        "d"
+      ],
+      "patterns": [
+        "\\d{1} \\d{3} \\d{5} \\d{7} \\d{9} \\d{11} \\d{18}"
+      ]
+    },
+    {
+      "schema": "nistData/list/positiveInteger/Schema+Instance/NISTSchema-SV-II-list-positiveInteger-pattern-4.xsd",
+      "instances": 5,
+      "category_escapes": [
+        "d"
+      ],
+      "patterns": [
+        "\\d{1} \\d{3} \\d{5} \\d{7} \\d{9} \\d{11} \\d{18}"
+      ]
+    },
+    {
+      "schema": "nistData/list/positiveInteger/Schema+Instance/NISTSchema-SV-II-list-positiveInteger-pattern-5.xsd",
+      "instances": 5,
+      "category_escapes": [
+        "d"
+      ],
+      "patterns": [
+        "\\d{1} \\d{3} \\d{5} \\d{7} \\d{9} \\d{11} \\d{13} \\d{15} \\d{18}"
+      ]
+    },
+    {
+      "schema": "nistData/list/double/Schema+Instance/NISTSchema-SV-II-list-double-pattern-1.xsd",
+      "instances": 5,
+      "category_escapes": [
+        "d"
+      ],
+      "patterns": [
+        "\\d{1}E\\-\\d{3} \\d{3}E\\-\\d{2} \\d{5}E\\-\\d{1} \\d{1}\\.\\d{6}E\\d{1} \\d{1}\\.\\d{8}E\\d{2} \\d{1}\\.\\d{10}E\\d{3} \\d{1}\\.\\d{16}E\\-\\d{3}"
+      ]
+    },
+    {
+      "schema": "nistData/list/double/Schema+Instance/NISTSchema-SV-II-list-double-pattern-2.xsd",
+      "instances": 5,
+      "category_escapes": [
+        "d"
+      ],
+      "patterns": [
+        "\\d{1}E\\-\\d{3} \\d{1}\\.\\d{2}E\\-\\d{2} \\d{1}\\.\\d{4}E\\-\\d{1} \\d{1}\\.\\d{6}E\\d{1} \\d{1}\\.\\d{8}E\\d{2} \\d{1}\\.\\d{10}E\\d{3} \\d{1}\\.\\d{12}E\\-\\d{3} \\d{1}\\.\\d{14}E\\-\\d{2} \\d{1}\\.\\d{16}E\\-\\d{1}"
+      ]
+    },
+    {
+      "schema": "nistData/list/double/Schema+Instance/NISTSchema-SV-II-list-double-pattern-3.xsd",
+      "instances": 5,
+      "category_escapes": [
+        "d"
+      ],
+      "patterns": [
+        "\\d{1}E\\-\\d{3} \\d{4}E\\-\\d{2} \\d{1}\\.\\d{6}E\\-\\d{1} \\d{1}\\.\\d{9}E\\d{1} \\d{1}\\.\\d{12}E\\d{2} \\d{17}E\\d{3}"
+      ]
+    },
+    {
+      "schema": "nistData/list/double/Schema+Instance/NISTSchema-SV-II-list-double-pattern-4.xsd",
+      "instances": 5,
+      "category_escapes": [
+        "d"
+      ],
+      "patterns": [
+        "\\d{1}E\\-\\d{3} \\d{1}\\.\\d{2}E\\-\\d{2} \\d{1}\\.\\d{4}E\\-\\d{1} \\d{1}\\.\\d{6}E\\d{1} \\d{1}\\.\\d{8}E\\d{2} \\d{1}\\.\\d{10}E\\d{3} \\d{1}\\.\\d{16}E\\-\\d{3}"
+      ]
+    },
+    {
+      "schema": "nistData/list/double/Schema+Instance/NISTSchema-SV-II-list-double-pattern-5.xsd",
+      "instances": 5,
+      "category_escapes": [
+        "d"
+      ],
+      "patterns": [
+        "\\d{1}E\\-\\d{3} \\d{1}\\.\\d{2}E\\-\\d{2} \\d{1}\\.\\d{4}E\\-\\d{1} \\d{1}\\.\\d{6}E\\d{1} \\d{1}\\.\\d{8}E\\d{2} \\d{1}\\.\\d{10}E\\d{3} \\.\\d{13}E\\-\\d{3} \\d{1}\\.\\d{16}E\\-\\d{2}"
+      ]
+    },
+    {
+      "schema": "nistData/list/float/Schema+Instance/NISTSchema-SV-II-list-float-pattern-1.xsd",
+      "instances": 5,
+      "category_escapes": [
+        "d"
+      ],
+      "patterns": [
+        "\\d{1}E\\-\\d{2} \\d{1}\\.\\d{1}E\\-\\d{1} \\d{3}E\\d{1} \\d{1}\\.\\d{3}E\\d{2} \\d{1}\\.\\d{4}E\\-\\d{2} \\d{1}\\.\\d{5}E\\-\\d{1} \\d{1}\\.\\d{6}E\\d{1} \\d{1}\\.\\d{7}E\\d{2} \\d{1}E\\-\\d{2}"
+      ]
+    },
+    {
+      "schema": "nistData/list/float/Schema+Instance/NISTSchema-SV-II-list-float-pattern-2.xsd",
+      "instances": 5,
+      "category_escapes": [
+        "d"
+      ],
+      "patterns": [
+        "\\d{1}E\\-\\d{2} \\d{2}E\\-\\d{1} \\d{3}E\\d{1} \\d{1}\\.\\d{3}E\\d{2} \\d{1}\\.\\d{4}E\\-\\d{2} \\d{1}\\.\\d{5}E\\-\\d{1} \\d{1}\\.\\d{7}E\\d{1}"
+      ]
+    },
+    {
+      "schema": "nistData/list/float/Schema+Instance/NISTSchema-SV-II-list-float-pattern-3.xsd",
+      "instances": 5,
+      "category_escapes": [
+        "d"
+      ],
+      "patterns": [
+        "\\d{1}E\\-\\d{2} \\d{1}\\.\\d{1}E\\-\\d{1} \\d{1}\\.\\d{2}E\\d{1} \\d{1}\\.\\d{3}E\\d{2} \\d{1}\\.\\d{4}E\\-\\d{2} \\d{1}\\.\\d{5}E\\-\\d{1} \\d{1}\\.\\d{6}E\\d{1} \\d{1}\\.\\d{7}E\\d{2} \\d{1}E\\-\\d{2}"
+      ]
+    },
+    {
+      "schema": "nistData/list/float/Schema+Instance/NISTSchema-SV-II-list-float-pattern-4.xsd",
+      "instances": 5,
+      "category_escapes": [
+        "d"
+      ],
+      "patterns": [
+        "\\d{1}E\\-\\d{2} \\d{2}E\\-\\d{1} \\d{1}\\.\\d{2}E\\d{1} \\d{4}E\\d{2} \\d{1}\\.\\d{4}E\\-\\d{2} \\d{1}\\.\\d{5}E\\-\\d{1} \\d{1}\\.\\d{6}E\\d{1} \\d{1}\\.\\d{7}E\\d{2}"
+      ]
+    },
+    {
+      "schema": "nistData/list/float/Schema+Instance/NISTSchema-SV-II-list-float-pattern-5.xsd",
+      "instances": 5,
+      "category_escapes": [
+        "d"
+      ],
+      "patterns": [
+        "\\d{1}E\\-\\d{2} \\d{1}\\.\\d{1}E\\-\\d{1} \\d{1}\\.\\d{2}E\\d{1} \\d{4}E\\d{2} \\d{1}\\.\\d{4}E\\-\\d{2} \\d{1}\\.\\d{5}E\\-\\d{1} \\d{1}\\.\\d{7}E\\d{1}"
+      ]
+    },
+    {
+      "schema": "nistData/list/duration/Schema+Instance/NISTSchema-SV-II-list-duration-pattern-1.xsd",
+      "instances": 5,
+      "category_escapes": [
+        "d"
+      ],
+      "patterns": [
+        "P\\d\\d49Y\\d0M\\d3DT\\d1H1\\dM\\d0S P\\d\\d88Y\\d9M\\d4DT1\\dH\\d1M\\d5S P\\d\\d31Y0\\dM\\d4DT\\d3H\\d4M\\d1S P19\\d\\dY0\\dM1\\dDT1\\dH\\d8M\\d7S P\\d\\d22Y\\d6M1\\dDT\\d9H3\\dM3\\dS P\\d\\d26Y0\\dM\\d3DT\\d5H\\d6M4\\dS P20\\d\\dY1\\dM1\\dDT1\\dH\\d0M5\\dS P\\d\\d05Y\\d2M\\d6DT1\\dH3\\dM3\\dS P19\\d\\dY\\d9M0\\dDT\\d8H4\\dM\\d7S"
+      ]
+    },
+    {
+      "schema": "nistData/list/duration/Schema+Instance/NISTSchema-SV-II-list-duration-pattern-2.xsd",
+      "instances": 5,
+      "category_escapes": [
+        "d"
+      ],
+      "patterns": [
+        "P\\d\\d52Y\\d2M\\d7DT\\d2H5\\dM5\\dS P19\\d\\dY\\d9M0\\dDT1\\dH\\d3M0\\dS P\\d\\d47Y1\\dM1\\dDT\\d6H3\\dM\\d7S P17\\d\\dY\\d2M1\\dDT1\\dH\\d4M2\\dS P\\d\\d37Y0\\dM\\d8DT1\\dH3\\dM5\\dS P19\\d\\dY\\d2M\\d3DT\\d0H\\d7M\\d0S P\\d\\d68Y\\d0M\\d6DT\\d3H1\\dM0\\dS"
+      ]
+    },
+    {
+      "schema": "nistData/list/duration/Schema+Instance/NISTSchema-SV-II-list-duration-pattern-3.xsd",
+      "instances": 5,
+      "category_escapes": [
+        "d"
+      ],
+      "patterns": [
+        "P20\\d\\dY0\\dM0\\dDT\\d3H5\\dM5\\dS P\\d\\d42Y0\\dM2\\dDT\\d9H\\d7M\\d1S P\\d\\d24Y0\\dM\\d2DT1\\dH2\\dM4\\dS P\\d\\d26Y0\\dM\\d0DT1\\dH\\d6M\\d7S P19\\d\\dY\\d2M2\\dDT0\\dH4\\dM0\\dS P\\d\\d96Y\\d0M0\\dDT0\\dH4\\dM\\d4S P\\d\\d38Y\\d7M0\\dDT0\\dH\\d3M\\d1S P\\d\\d28Y\\d7M2\\dDT1\\dH3\\dM4\\dS"
+      ]
+    },
+    {
+      "schema": "nistData/list/duration/Schema+Instance/NISTSchema-SV-II-list-duration-pattern-4.xsd",
+      "instances": 5,
+      "category_escapes": [
+        "d"
+      ],
+      "patterns": [
+        "P\\d\\d84Y\\d5M2\\dDT\\d4H\\d5M3\\dS P19\\d\\dY\\d4M1\\dDT\\d9H\\d3M4\\dS P19\\d\\dY0\\dM\\d1DT\\d2H1\\dM3\\dS P\\d\\d09Y0\\dM\\d2DT\\d2H\\d5M\\d6S P\\d\\d89Y\\d1M\\d1DT\\d8H\\d7M4\\dS P19\\d\\dY0\\dM2\\dDT1\\dH4\\dM\\d4S P\\d\\d22Y1\\dM\\d7DT\\d2H\\d3M\\d7S P\\d\\d47Y\\d9M\\d6DT\\d1H\\d1M5\\dS P17\\d\\dY0\\dM\\d0DT0\\dH1\\dM\\d3S"
+      ]
+    },
+    {
+      "schema": "nistData/list/duration/Schema+Instance/NISTSchema-SV-II-list-duration-pattern-5.xsd",
+      "instances": 5,
+      "category_escapes": [
+        "d"
+      ],
+      "patterns": [
+        "P\\d\\d03Y0\\dM\\d9DT\\d6H\\d9M\\d3S P\\d\\d33Y\\d3M\\d9DT\\d2H\\d8M\\d8S P19\\d\\dY0\\dM\\d8DT1\\dH\\d1M4\\dS P\\d\\d66Y1\\dM1\\dDT\\d8H2\\dM4\\dS P\\d\\d20Y0\\dM\\d8DT\\d4H4\\dM0\\dS P\\d\\d44Y1\\dM\\d2DT0\\dH1\\dM\\d6S"
+      ]
+    },
+    {
+      "schema": "nistData/list/dateTime/Schema+Instance/NISTSchema-SV-II-list-dateTime-pattern-1.xsd",
+      "instances": 5,
+      "category_escapes": [
+        "d"
+      ],
+      "patterns": [
+        "19\\d\\d-\\d0-1\\dT\\d9:2\\d:4\\d 20\\d\\d-\\d0-\\d5T\\d8:1\\d:\\d7 18\\d\\d-1\\d-0\\dT\\d4:\\d3:4\\d \\d\\d62-0\\d-\\d3T\\d1:1\\d:\\d7 \\d\\d36-0\\d-\\d9T\\d2:\\d3:1\\d 17\\d\\d-\\d9-0\\dT0\\d:0\\d:\\d0"
+      ]
+    },
+    {
+      "schema": "nistData/list/dateTime/Schema+Instance/NISTSchema-SV-II-list-dateTime-pattern-2.xsd",
+      "instances": 5,
+      "category_escapes": [
+        "d"
+      ],
+      "patterns": [
+        "\\d\\d52-\\d1-0\\dT\\d5:\\d4:\\d3 \\d\\d95-\\d3-1\\dT\\d3:1\\d:\\d3 17\\d\\d-\\d2-\\d9T1\\d:\\d9:5\\d 17\\d\\d-1\\d-\\d1T1\\d:\\d2:\\d4 17\\d\\d-\\d1-2\\dT\\d1:\\d4:2\\d 18\\d\\d-0\\d-\\d4T\\d4:3\\d:0\\d \\d\\d16-\\d1-2\\dT1\\d:\\d5:\\d7"
+      ]
+    },
+    {
+      "schema": "nistData/list/dateTime/Schema+Instance/NISTSchema-SV-II-list-dateTime-pattern-3.xsd",
+      "instances": 5,
+      "category_escapes": [
+        "d"
+      ],
+      "patterns": [
+        "20\\d\\d-\\d0-2\\dT\\d9:5\\d:\\d9 \\d\\d34-\\d4-2\\dT0\\d:2\\d:1\\d 18\\d\\d-\\d0-\\d1T1\\d:0\\d:\\d3 \\d\\d10-0\\d-2\\dT1\\d:1\\d:4\\d 18\\d\\d-\\d3-0\\dT1\\d:\\d8:\\d2 17\\d\\d-\\d4-1\\dT1\\d:3\\d:0\\d"
+      ]
+    },
+    {
+      "schema": "nistData/list/dateTime/Schema+Instance/NISTSchema-SV-II-list-dateTime-pattern-4.xsd",
+      "instances": 5,
+      "category_escapes": [
+        "d"
+      ],
+      "patterns": [
+        "19\\d\\d-1\\d-1\\dT1\\d:\\d8:4\\d 17\\d\\d-\\d0-0\\dT\\d7:\\d7:2\\d 17\\d\\d-\\d6-\\d2T1\\d:\\d2:\\d1 \\d\\d90-\\d5-\\d8T1\\d:\\d0:\\d3 18\\d\\d-\\d0-2\\dT0\\d:3\\d:2\\d \\d\\d66-0\\d-\\d0T\\d1:2\\d:4\\d"
+      ]
+    },
+    {
+      "schema": "nistData/list/dateTime/Schema+Instance/NISTSchema-SV-II-list-dateTime-pattern-5.xsd",
+      "instances": 5,
+      "category_escapes": [
+        "d"
+      ],
+      "patterns": [
+        "19\\d\\d-\\d4-2\\dT\\d7:\\d0:\\d8 \\d\\d28-\\d5-1\\dT1\\d:2\\d:\\d1 \\d\\d84-\\d6-2\\dT\\d1:\\d8:\\d3 17\\d\\d-\\d1-2\\dT\\d7:\\d2:\\d1 \\d\\d12-0\\d-\\d9T\\d5:0\\d:4\\d \\d\\d51-\\d7-\\d6T\\d9:1\\d:\\d5 \\d\\d23-\\d2-0\\dT\\d9:1\\d:\\d4 18\\d\\d-0\\d-\\d4T\\d5:\\d8:3\\d \\d\\d37-\\d5-2\\dT\\d5:5\\d:\\d2"
+      ]
+    },
+    {
+      "schema": "nistData/list/time/Schema+Instance/NISTSchema-SV-II-list-time-pattern-1.xsd",
+      "instances": 5,
+      "category_escapes": [
+        "d"
+      ],
+      "patterns": [
+        "\\d1:\\d5:2\\d \\d5:\\d7:\\d6 \\d4:\\d4:\\d1 \\d1:\\d7:\\d3 0\\d:0\\d:1\\d 0\\d:\\d7:\\d6"
+      ]
+    },
+    {
+      "schema": "nistData/list/time/Schema+Instance/NISTSchema-SV-II-list-time-pattern-2.xsd",
+      "instances": 5,
+      "category_escapes": [
+        "d"
+      ],
+      "patterns": [
+        "0\\d:\\d9:\\d7 1\\d:\\d6:0\\d 0\\d:\\d4:0\\d 0\\d:4\\d:2\\d 0\\d:\\d2:\\d1 \\d0:\\d8:1\\d \\d5:0\\d:5\\d"
+      ]
+    },
+    {
+      "schema": "nistData/list/time/Schema+Instance/NISTSchema-SV-II-list-time-pattern-3.xsd",
+      "instances": 5,
+      "category_escapes": [
+        "d"
+      ],
+      "patterns": [
+        "0\\d:3\\d:\\d1 \\d0:4\\d:4\\d \\d5:3\\d:\\d0 \\d6:\\d2:\\d7 \\d7:\\d8:\\d2 1\\d:5\\d:0\\d 1\\d:\\d8:5\\d \\d6:2\\d:\\d1"
+      ]
+    },
+    {
+      "schema": "nistData/list/time/Schema+Instance/NISTSchema-SV-II-list-time-pattern-4.xsd",
+      "instances": 5,
+      "category_escapes": [
+        "d"
+      ],
+      "patterns": [
+        "0\\d:\\d1:\\d9 \\d2:\\d0:3\\d 0\\d:\\d8:0\\d \\d0:4\\d:4\\d \\d7:\\d6:\\d3 0\\d:\\d1:2\\d"
+      ]
+    },
+    {
+      "schema": "nistData/list/time/Schema+Instance/NISTSchema-SV-II-list-time-pattern-5.xsd",
+      "instances": 5,
+      "category_escapes": [
+        "d"
+      ],
+      "patterns": [
+        "1\\d:\\d5:\\d5 \\d1:5\\d:5\\d \\d3:4\\d:2\\d \\d2:\\d3:\\d4 1\\d:\\d0:3\\d 0\\d:5\\d:1\\d 1\\d:4\\d:\\d9"
+      ]
+    },
+    {
+      "schema": "nistData/list/date/Schema+Instance/NISTSchema-SV-II-list-date-pattern-1.xsd",
+      "instances": 5,
+      "category_escapes": [
+        "d"
+      ],
+      "patterns": [
+        "\\d\\d54-0\\d-\\d8 \\d\\d85-0\\d-\\d5 17\\d\\d-\\d3-\\d7 \\d\\d70-0\\d-2\\d 19\\d\\d-0\\d-1\\d"
+      ]
+    },
+    {
+      "schema": "nistData/list/date/Schema+Instance/NISTSchema-SV-II-list-date-pattern-2.xsd",
+      "instances": 5,
+      "category_escapes": [
+        "d"
+      ],
+      "patterns": [
+        "20\\d\\d-\\d2-1\\d \\d\\d48-0\\d-\\d2 \\d\\d87-\\d0-\\d8 19\\d\\d-\\d7-\\d4 \\d\\d92-0\\d-2\\d \\d\\d28-\\d5-2\\d 17\\d\\d-\\d1-1\\d \\d\\d87-\\d2-1\\d"
+      ]
+    },
+    {
+      "schema": "nistData/list/date/Schema+Instance/NISTSchema-SV-II-list-date-pattern-3.xsd",
+      "instances": 5,
+      "category_escapes": [
+        "d"
+      ],
+      "patterns": [
+        "19\\d\\d-0\\d-\\d3 \\d\\d71-\\d6-0\\d 20\\d\\d-\\d1-1\\d 19\\d\\d-\\d0-2\\d \\d\\d20-\\d3-1\\d 18\\d\\d-\\d1-0\\d 18\\d\\d-0\\d-2\\d \\d\\d20-\\d7-\\d2"
+      ]
+    },
+    {
+      "schema": "nistData/list/date/Schema+Instance/NISTSchema-SV-II-list-date-pattern-4.xsd",
+      "instances": 5,
+      "category_escapes": [
+        "d"
+      ],
+      "patterns": [
+        "20\\d\\d-1\\d-0\\d \\d\\d36-\\d8-1\\d \\d\\d39-\\d9-\\d7 \\d\\d01-\\d4-\\d1 18\\d\\d-\\d1-\\d9 18\\d\\d-0\\d-0\\d"
+      ]
+    },
+    {
+      "schema": "nistData/list/date/Schema+Instance/NISTSchema-SV-II-list-date-pattern-5.xsd",
+      "instances": 5,
+      "category_escapes": [
+        "d"
+      ],
+      "patterns": [
+        "17\\d\\d-0\\d-2\\d \\d\\d10-\\d7-1\\d 17\\d\\d-0\\d-2\\d 20\\d\\d-\\d2-0\\d \\d\\d60-0\\d-\\d6 18\\d\\d-\\d9-0\\d 19\\d\\d-\\d9-1\\d \\d\\d52-\\d5-1\\d"
+      ]
+    },
+    {
+      "schema": "nistData/list/gYearMonth/Schema+Instance/NISTSchema-SV-II-list-gYearMonth-pattern-1.xsd",
+      "instances": 5,
+      "category_escapes": [
+        "d"
+      ],
+      "patterns": [
+        "17\\d\\d-\\d6 19\\d\\d-\\d4 20\\d\\d-\\d1 \\d\\d52-\\d0 17\\d\\d-\\d0 19\\d\\d-1\\d \\d\\d81-0\\d"
+      ]
+    },
+    {
+      "schema": "nistData/list/gYearMonth/Schema+Instance/NISTSchema-SV-II-list-gYearMonth-pattern-2.xsd",
+      "instances": 5,
+      "category_escapes": [
+        "d"
+      ],
+      "patterns": [
+        "18\\d\\d-\\d0 20\\d\\d-0\\d 19\\d\\d-0\\d 18\\d\\d-\\d6 17\\d\\d-0\\d \\d\\d66-0\\d 20\\d\\d-\\d2"
+      ]
+    },
+    {
+      "schema": "nistData/list/gYearMonth/Schema+Instance/NISTSchema-SV-II-list-gYearMonth-pattern-3.xsd",
+      "instances": 5,
+      "category_escapes": [
+        "d"
+      ],
+      "patterns": [
+        "\\d\\d78-0\\d 20\\d\\d-\\d3 \\d\\d56-0\\d 19\\d\\d-0\\d 19\\d\\d-0\\d \\d\\d36-1\\d \\d\\d17-\\d0 20\\d\\d-0\\d"
+      ]
+    },
+    {
+      "schema": "nistData/list/gYearMonth/Schema+Instance/NISTSchema-SV-II-list-gYearMonth-pattern-4.xsd",
+      "instances": 5,
+      "category_escapes": [
+        "d"
+      ],
+      "patterns": [
+        "\\d\\d42-\\d7 19\\d\\d-\\d3 18\\d\\d-0\\d \\d\\d02-0\\d \\d\\d02-\\d2 19\\d\\d-\\d2"
+      ]
+    },
+    {
+      "schema": "nistData/list/gYearMonth/Schema+Instance/NISTSchema-SV-II-list-gYearMonth-pattern-5.xsd",
+      "instances": 5,
+      "category_escapes": [
+        "d"
+      ],
+      "patterns": [
+        "18\\d\\d-\\d9 17\\d\\d-\\d2 18\\d\\d-\\d3 18\\d\\d-1\\d \\d\\d99-0\\d 18\\d\\d-\\d8 \\d\\d10-0\\d"
+      ]
+    },
+    {
+      "schema": "nistData/list/gYear/Schema+Instance/NISTSchema-SV-II-list-gYear-pattern-1.xsd",
+      "instances": 5,
+      "category_escapes": [
+        "d"
+      ],
+      "patterns": [
+        "\\d\\d73 \\d\\d08 18\\d\\d \\d\\d59 \\d\\d85 \\d\\d38"
+      ]
+    },
+    {
+      "schema": "nistData/list/gYear/Schema+Instance/NISTSchema-SV-II-list-gYear-pattern-2.xsd",
+      "instances": 5,
+      "category_escapes": [
+        "d"
+      ],
+      "patterns": [
+        "19\\d\\d 18\\d\\d \\d\\d67 \\d\\d78 \\d\\d96 \\d\\d21"
+      ]
+    },
+    {
+      "schema": "nistData/list/gYear/Schema+Instance/NISTSchema-SV-II-list-gYear-pattern-3.xsd",
+      "instances": 5,
+      "category_escapes": [
+        "d"
+      ],
+      "patterns": [
+        "\\d\\d26 \\d\\d57 17\\d\\d 20\\d\\d 18\\d\\d \\d\\d36 19\\d\\d 19\\d\\d \\d\\d31 17\\d\\d"
+      ]
+    },
+    {
+      "schema": "nistData/list/gYear/Schema+Instance/NISTSchema-SV-II-list-gYear-pattern-4.xsd",
+      "instances": 5,
+      "category_escapes": [
+        "d"
+      ],
+      "patterns": [
+        "\\d\\d92 \\d\\d96 \\d\\d29 \\d\\d13 18\\d\\d 19\\d\\d \\d\\d05 \\d\\d44 19\\d\\d"
+      ]
+    },
+    {
+      "schema": "nistData/list/gYear/Schema+Instance/NISTSchema-SV-II-list-gYear-pattern-5.xsd",
+      "instances": 5,
+      "category_escapes": [
+        "d"
+      ],
+      "patterns": [
+        "18\\d\\d 19\\d\\d 18\\d\\d \\d\\d18 \\d\\d12"
+      ]
+    },
+    {
+      "schema": "nistData/list/gMonthDay/Schema+Instance/NISTSchema-SV-II-list-gMonthDay-pattern-1.xsd",
+      "instances": 5,
+      "category_escapes": [
+        "d"
+      ],
+      "patterns": [
+        "--1\\d-0\\d --\\d9-1\\d --\\d3-1\\d --0\\d-1\\d --1\\d-0\\d --0\\d-1\\d"
+      ]
+    },
+    {
+      "schema": "nistData/list/gMonthDay/Schema+Instance/NISTSchema-SV-II-list-gMonthDay-pattern-2.xsd",
+      "instances": 5,
+      "category_escapes": [
+        "d"
+      ],
+      "patterns": [
+        "--0\\d-\\d6 --\\d3-\\d2 --\\d9-\\d7 --\\d2-\\d7 --0\\d-\\d1 --0\\d-1\\d --0\\d-\\d5 --0\\d-0\\d --\\d9-\\d9"
+      ]
+    },
+    {
+      "schema": "nistData/list/gMonthDay/Schema+Instance/NISTSchema-SV-II-list-gMonthDay-pattern-3.xsd",
+      "instances": 5,
+      "category_escapes": [
+        "d"
+      ],
+      "patterns": [
+        "--\\d2-0\\d --0\\d-1\\d --1\\d-0\\d --\\d4-\\d4 --\\d7-\\d9 --0\\d-\\d9 --0\\d-\\d3 --0\\d-\\d4 --\\d3-2\\d --0\\d-2\\d"
+      ]
+    },
+    {
+      "schema": "nistData/list/gMonthDay/Schema+Instance/NISTSchema-SV-II-list-gMonthDay-pattern-4.xsd",
+      "instances": 5,
+      "category_escapes": [
+        "d"
+      ],
+      "patterns": [
+        "--0\\d-\\d0 --\\d5-\\d2 --0\\d-0\\d --\\d7-\\d2 --\\d7-\\d3 --\\d1-1\\d"
+      ]
+    },
+    {
+      "schema": "nistData/list/gMonthDay/Schema+Instance/NISTSchema-SV-II-list-gMonthDay-pattern-5.xsd",
+      "instances": 5,
+      "category_escapes": [
+        "d"
+      ],
+      "patterns": [
+        "--0\\d-\\d3 --0\\d-2\\d --\\d3-0\\d --\\d6-1\\d --\\d3-2\\d --1\\d-0\\d --0\\d-1\\d"
+      ]
+    },
+    {
+      "schema": "nistData/list/gDay/Schema+Instance/NISTSchema-SV-II-list-gDay-pattern-1.xsd",
+      "instances": 5,
+      "category_escapes": [
+        "d"
+      ],
+      "patterns": [
+        "---1\\d ---0\\d ---\\d4 ---\\d8 ---\\d4 ---0\\d"
+      ]
+    },
+    {
+      "schema": "nistData/list/gDay/Schema+Instance/NISTSchema-SV-II-list-gDay-pattern-2.xsd",
+      "instances": 5,
+      "category_escapes": [
+        "d"
+      ],
+      "patterns": [
+        "---\\d0 ---1\\d ---1\\d ---1\\d ---\\d4 ---\\d3 ---\\d8 ---\\d7 ---2\\d ---\\d9"
+      ]
+    },
+    {
+      "schema": "nistData/list/gDay/Schema+Instance/NISTSchema-SV-II-list-gDay-pattern-3.xsd",
+      "instances": 5,
+      "category_escapes": [
+        "d"
+      ],
+      "patterns": [
+        "---\\d6 ---\\d4 ---1\\d ---1\\d ---\\d4 ---\\d1 ---\\d9"
+      ]
+    },
+    {
+      "schema": "nistData/list/gDay/Schema+Instance/NISTSchema-SV-II-list-gDay-pattern-4.xsd",
+      "instances": 5,
+      "category_escapes": [
+        "d"
+      ],
+      "patterns": [
+        "---2\\d ---1\\d ---0\\d ---\\d6 ---\\d5 ---\\d1"
+      ]
+    },
+    {
+      "schema": "nistData/list/gDay/Schema+Instance/NISTSchema-SV-II-list-gDay-pattern-5.xsd",
+      "instances": 5,
+      "category_escapes": [
+        "d"
+      ],
+      "patterns": [
+        "---\\d2 ---\\d1 ---0\\d ---\\d3 ---2\\d"
+      ]
+    },
+    {
+      "schema": "nistData/list/gMonth/Schema+Instance/NISTSchema-SV-II-list-gMonth-pattern-1.xsd",
+      "instances": 5,
+      "category_escapes": [
+        "d"
+      ],
+      "patterns": [
+        "--\\d0 --1\\d --0\\d --0\\d --1\\d --\\d7 --1\\d"
+      ]
+    },
+    {
+      "schema": "nistData/list/gMonth/Schema+Instance/NISTSchema-SV-II-list-gMonth-pattern-2.xsd",
+      "instances": 5,
+      "category_escapes": [
+        "d"
+      ],
+      "patterns": [
+        "--\\d1 --\\d8 --\\d8 --\\d2 --0\\d --0\\d --\\d4 --0\\d"
+      ]
+    },
+    {
+      "schema": "nistData/list/gMonth/Schema+Instance/NISTSchema-SV-II-list-gMonth-pattern-3.xsd",
+      "instances": 5,
+      "category_escapes": [
+        "d"
+      ],
+      "patterns": [
+        "--0\\d --0\\d --\\d8 --\\d6 --0\\d --1\\d --\\d7 --0\\d --\\d6 --\\d0"
+      ]
+    },
+    {
+      "schema": "nistData/list/gMonth/Schema+Instance/NISTSchema-SV-II-list-gMonth-pattern-4.xsd",
+      "instances": 5,
+      "category_escapes": [
+        "d"
+      ],
+      "patterns": [
+        "--0\\d --0\\d --0\\d --0\\d --\\d1 --0\\d --0\\d"
+      ]
+    },
+    {
+      "schema": "nistData/list/gMonth/Schema+Instance/NISTSchema-SV-II-list-gMonth-pattern-5.xsd",
+      "instances": 5,
+      "category_escapes": [
+        "d"
+      ],
+      "patterns": [
+        "--\\d9 --0\\d --\\d7 --0\\d --\\d6 --\\d8 --0\\d --\\d2"
+      ]
+    },
+    {
+      "schema": "nistData/union/duration-decimal/Schema+Instance/NISTSchema-SV-IV-union-duration-decimal-pattern-1.xsd",
+      "instances": 5,
+      "category_escapes": [
+        "d"
+      ],
+      "patterns": [
+        "\\-\\.\\d{5}"
+      ]
+    },
+    {
+      "schema": "nistData/union/duration-decimal/Schema+Instance/NISTSchema-SV-IV-union-duration-decimal-pattern-2.xsd",
+      "instances": 5,
+      "category_escapes": [
+        "d"
+      ],
+      "patterns": [
+        "\\d{9}"
+      ]
+    },
+    {
+      "schema": "nistData/union/duration-decimal/Schema+Instance/NISTSchema-SV-IV-union-duration-decimal-pattern-3.xsd",
+      "instances": 5,
+      "category_escapes": [
+        "d"
+      ],
+      "patterns": [
+        "\\-\\d{10}\\.\\d{3}"
+      ]
+    },
+    {
+      "schema": "nistData/union/duration-decimal/Schema+Instance/NISTSchema-SV-IV-union-duration-decimal-pattern-4.xsd",
+      "instances": 5,
+      "category_escapes": [
+        "d"
+      ],
+      "patterns": [
+        "P\\d\\d47Y\\d3M1\\dDT\\d9H2\\dM2\\dS"
+      ]
+    },
+    {
+      "schema": "nistData/union/duration-decimal/Schema+Instance/NISTSchema-SV-IV-union-duration-decimal-pattern-5.xsd",
+      "instances": 5,
+      "category_escapes": [
+        "d"
+      ],
+      "patterns": [
+        "\\-\\d{1}"
+      ]
+    },
+    {
+      "schema": "nistData/union/anyURI-float/Schema+Instance/NISTSchema-SV-IV-union-anyURI-float-pattern-1.xsd",
+      "instances": 5,
+      "category_escapes": [
+        "d"
+      ],
+      "patterns": [
+        "\\d{1}\\.\\d{3}E\\d{2}"
+      ]
+    },
+    {
+      "schema": "nistData/union/anyURI-float/Schema+Instance/NISTSchema-SV-IV-union-anyURI-float-pattern-5.xsd",
+      "instances": 5,
+      "category_escapes": [
+        "d"
+      ],
+      "patterns": [
+        "\\d{1}E\\-\\d{2}"
+      ]
+    },
+    {
+      "schema": "nistData/union/gMonthDay-gYearMonth/Schema+Instance/NISTSchema-SV-IV-union-gMonthDay-gYearMonth-pattern-1.xsd",
+      "instances": 5,
+      "category_escapes": [
+        "d"
+      ],
+      "patterns": [
+        "--\\d7-2\\d"
+      ]
+    },
+    {
+      "schema": "nistData/union/gMonthDay-gYearMonth/Schema+Instance/NISTSchema-SV-IV-union-gMonthDay-gYearMonth-pattern-2.xsd",
+      "instances": 5,
+      "category_escapes": [
+        "d"
+      ],
+      "patterns": [
+        "\\d\\d65-\\d1"
+      ]
+    },
+    {
+      "schema": "nistData/union/gMonthDay-gYearMonth/Schema+Instance/NISTSchema-SV-IV-union-gMonthDay-gYearMonth-pattern-3.xsd",
+      "instances": 5,
+      "category_escapes": [
+        "d"
+      ],
+      "patterns": [
+        "--\\d2-2\\d"
+      ]
+    },
+    {
+      "schema": "nistData/union/gMonthDay-gYearMonth/Schema+Instance/NISTSchema-SV-IV-union-gMonthDay-gYearMonth-pattern-4.xsd",
+      "instances": 5,
+      "category_escapes": [
+        "d"
+      ],
+      "patterns": [
+        "18\\d\\d-\\d0"
+      ]
+    },
+    {
+      "schema": "nistData/union/gMonthDay-gYearMonth/Schema+Instance/NISTSchema-SV-IV-union-gMonthDay-gYearMonth-pattern-5.xsd",
+      "instances": 5,
+      "category_escapes": [
+        "d"
+      ],
+      "patterns": [
+        "19\\d\\d-\\d9"
+      ]
+    },
+    {
+      "schema": "nistData/union/short-gYear/Schema+Instance/NISTSchema-SV-IV-union-short-gYear-pattern-1.xsd",
+      "instances": 5,
+      "category_escapes": [
+        "d"
+      ],
+      "patterns": [
+        "\\d\\d70"
+      ]
+    },
+    {
+      "schema": "nistData/union/short-gYear/Schema+Instance/NISTSchema-SV-IV-union-short-gYear-pattern-2.xsd",
+      "instances": 5,
+      "category_escapes": [
+        "d"
+      ],
+      "patterns": [
+        "\\-\\d{3}"
+      ]
+    },
+    {
+      "schema": "nistData/union/short-gYear/Schema+Instance/NISTSchema-SV-IV-union-short-gYear-pattern-3.xsd",
+      "instances": 5,
+      "category_escapes": [
+        "d"
+      ],
+      "patterns": [
+        "\\d\\d50"
+      ]
+    },
+    {
+      "schema": "nistData/union/short-gYear/Schema+Instance/NISTSchema-SV-IV-union-short-gYear-pattern-4.xsd",
+      "instances": 5,
+      "category_escapes": [
+        "d"
+      ],
+      "patterns": [
+        "\\d{2}"
+      ]
+    },
+    {
+      "schema": "nistData/union/short-gYear/Schema+Instance/NISTSchema-SV-IV-union-short-gYear-pattern-5.xsd",
+      "instances": 5,
+      "category_escapes": [
+        "d"
+      ],
+      "patterns": [
+        "\\d{5}"
+      ]
+    },
+    {
+      "schema": "nistData/union/duration-decimal/Schema+Instance/NISTSchema-SV-II-union-duration-decimal-pattern-1.xsd",
+      "instances": 5,
+      "category_escapes": [
+        "d"
+      ],
+      "patterns": [
+        "\\d{6}\\.\\d{3}"
+      ]
+    },
+    {
+      "schema": "nistData/union/duration-decimal/Schema+Instance/NISTSchema-SV-II-union-duration-decimal-pattern-2.xsd",
+      "instances": 5,
+      "category_escapes": [
+        "d"
+      ],
+      "patterns": [
+        "P17\\d\\dY0\\dM\\d6DT\\d4H\\d2M\\d8S"
+      ]
+    },
+    {
+      "schema": "nistData/union/duration-decimal/Schema+Instance/NISTSchema-SV-II-union-duration-decimal-pattern-3.xsd",
+      "instances": 5,
+      "category_escapes": [
+        "d"
+      ],
+      "patterns": [
+        "P19\\d\\dY0\\dM\\d2DT\\d1H1\\dM\\d4S"
+      ]
+    },
+    {
+      "schema": "nistData/union/duration-decimal/Schema+Instance/NISTSchema-SV-II-union-duration-decimal-pattern-4.xsd",
+      "instances": 5,
+      "category_escapes": [
+        "d"
+      ],
+      "patterns": [
+        "\\-\\d{4}\\.\\d{1}"
+      ]
+    },
+    {
+      "schema": "nistData/union/duration-decimal/Schema+Instance/NISTSchema-SV-II-union-duration-decimal-pattern-5.xsd",
+      "instances": 5,
+      "category_escapes": [
+        "d"
+      ],
+      "patterns": [
+        "\\d{1}"
+      ]
+    },
+    {
+      "schema": "nistData/union/anyURI-float/Schema+Instance/NISTSchema-SV-II-union-anyURI-float-pattern-1.xsd",
+      "instances": 5,
+      "category_escapes": [
+        "d"
+      ],
+      "patterns": [
+        "\\d{1}E\\-\\d{2}"
+      ]
+    },
+    {
+      "schema": "nistData/union/anyURI-float/Schema+Instance/NISTSchema-SV-II-union-anyURI-float-pattern-5.xsd",
+      "instances": 5,
+      "category_escapes": [
+        "d"
+      ],
+      "patterns": [
+        "\\d{2}E\\-\\d{1}"
+      ]
+    },
+    {
+      "schema": "nistData/union/gMonthDay-gYearMonth/Schema+Instance/NISTSchema-SV-II-union-gMonthDay-gYearMonth-pattern-1.xsd",
+      "instances": 5,
+      "category_escapes": [
+        "d"
+      ],
+      "patterns": [
+        "--0\\d-\\d4"
+      ]
+    },
+    {
+      "schema": "nistData/union/gMonthDay-gYearMonth/Schema+Instance/NISTSchema-SV-II-union-gMonthDay-gYearMonth-pattern-2.xsd",
+      "instances": 5,
+      "category_escapes": [
+        "d"
+      ],
+      "patterns": [
+        "--0\\d-2\\d"
+      ]
+    },
+    {
+      "schema": "nistData/union/gMonthDay-gYearMonth/Schema+Instance/NISTSchema-SV-II-union-gMonthDay-gYearMonth-pattern-3.xsd",
+      "instances": 5,
+      "category_escapes": [
+        "d"
+      ],
+      "patterns": [
+        "\\d\\d11-0\\d"
+      ]
+    },
+    {
+      "schema": "nistData/union/gMonthDay-gYearMonth/Schema+Instance/NISTSchema-SV-II-union-gMonthDay-gYearMonth-pattern-4.xsd",
+      "instances": 5,
+      "category_escapes": [
+        "d"
+      ],
+      "patterns": [
+        "--\\d1-0\\d"
+      ]
+    },
+    {
+      "schema": "nistData/union/gMonthDay-gYearMonth/Schema+Instance/NISTSchema-SV-II-union-gMonthDay-gYearMonth-pattern-5.xsd",
+      "instances": 5,
+      "category_escapes": [
+        "d"
+      ],
+      "patterns": [
+        "--0\\d-\\d7"
+      ]
+    },
+    {
+      "schema": "nistData/union/short-gYear/Schema+Instance/NISTSchema-SV-II-union-short-gYear-pattern-1.xsd",
+      "instances": 5,
+      "category_escapes": [
+        "d"
+      ],
+      "patterns": [
+        "\\d\\d90"
+      ]
+    },
+    {
+      "schema": "nistData/union/short-gYear/Schema+Instance/NISTSchema-SV-II-union-short-gYear-pattern-2.xsd",
+      "instances": 5,
+      "category_escapes": [
+        "d"
+      ],
+      "patterns": [
+        "17\\d\\d"
+      ]
+    },
+    {
+      "schema": "nistData/union/short-gYear/Schema+Instance/NISTSchema-SV-II-union-short-gYear-pattern-3.xsd",
+      "instances": 5,
+      "category_escapes": [
+        "d"
+      ],
+      "patterns": [
+        "\\-\\d{3}"
+      ]
+    },
+    {
+      "schema": "nistData/union/short-gYear/Schema+Instance/NISTSchema-SV-II-union-short-gYear-pattern-4.xsd",
+      "instances": 5,
+      "category_escapes": [
+        "d"
+      ],
+      "patterns": [
+        "19\\d\\d"
+      ]
+    },
+    {
+      "schema": "nistData/union/short-gYear/Schema+Instance/NISTSchema-SV-II-union-short-gYear-pattern-5.xsd",
+      "instances": 5,
+      "category_escapes": [
+        "d"
+      ],
+      "patterns": [
+        "\\d{2}"
+      ]
+    }
+  ]
+}

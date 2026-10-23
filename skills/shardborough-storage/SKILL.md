@@ -244,8 +244,9 @@ the source
 (`docs/designissues/2026-09-05-pack-publication-every-batch.md`). TriG joined
 them on 2026-10-14 (https://github.com/danbri/factoidal/issues/769), and RDF/XML
 on 2026-10-22 (one child of `rdf:RDF` at a time,
-https://github.com/danbri/factoidal/issues/838). JSON-LD reads the whole document
-(https://github.com/danbri/factoidal/issues/839). Measured on skosdex N-Quads
+https://github.com/danbri/factoidal/issues/838), and JSON-LD on 2026-10-22 (one top-level
+node object at a time, when `Prepass` finds the document in streaming form,
+https://github.com/danbri/factoidal/issues/839). Measured on skosdex N-Quads
 prefixes, 2026-09-05: peak footprint 222,955,392 bytes for 52,428,626 of
 source, 328,272,128 for 104,857,577, 331,581,824 for 209,715,187 and
 472,746,624 for 1,543,478,120 — a 2.12x rise over a 29.4x source, against
@@ -293,9 +294,9 @@ What does NOT work yet:
   the 472,746,624-byte peak. A manifest written incrementally is the next
   step. (The BLOCKS themselves are no longer held: the IBK4 path publishes
   them during the ingest pass, and the streamed grammars — N-Quads, Turtle,
-  N-Triples, TriG, RDF/XML — no longer buffer the source either. Only
-  JSON-LD does, and RDF/XML under the fall-back rule of
-  `Syntax/RdfXmlChunkFold.lean`.)
+  N-Triples, TriG, RDF/XML, JSON-LD — no longer buffer the source either,
+  except under the fall-back rules of `Syntax/RdfXmlChunkFold.lean` and
+  `Syntax/JsonLdChunkFold.lean`.)
 - **No compaction and no delta log.** There is no compacted SBM7 layout label.
 
 ### Querying an IBK4 generation
@@ -875,8 +876,9 @@ group `graphs`, `tests/delta-log/run.sh` (DLOG versions), `OverlayTheorems`
 Queries over named graphs with no triple (2026-10-15,
 https://github.com/danbri/factoidal/issues/855). The id path reads triples only,
 and refuses every shape that can see a graph with no triple: a GRAPH group with no
-triple pattern or with only a FILTER, FROM and FROM NAMED, MINUS, OPTIONAL inside
-GRAPH. The reference fallback (`selectedDataset`, also for the WHERE clause of
+triple pattern or with only a FILTER, MINUS, OPTIONAL inside GRAPH. (FROM and FROM
+NAMED run on ids since 2026-10-23, issue 953: the id path then reads triple
+patterns only, and a graph with no triple gives no row to a triple pattern.) The reference fallback (`selectedDataset`, also for the WHERE clause of
 `l4sbm11 update`) puts every named graph of the overlaid generation that the
 planner guard keeps into its dataset (`Session.namedGraphIds`), a graph with no
 selected quad with no triple, so `GRAPH ?g { }` and FROM NAMED see it. The
@@ -910,11 +912,166 @@ row only (https://github.com/danbri/factoidal/issues/815). The Lean parser
 now makes the group's FILTERs the LeftJoin condition, evaluated on the merged
 row (SPARQL 1.1 section 18.2.2.5; `optionalGroup`, theorems in
 `SPARQL/OptionalFilterScope.lean`); the F* engine still has the defect
-(known-defects case `SPARQL-OPT-FILTER-SCOPE`). The id path still refuses a
-group FILTER over a left-side variable (`IdQuery.flattenOptional` reads the
-condition and throws), so such a query takes the reference fallback
-(`ref-optional-filter-outer.rq`), which now answers section 18.2.2.5. Admitting
-it on ids is open.
+(known-defects case `SPARQL-OPT-FILTER-SCOPE`). The flat planner still refuses
+a group FILTER over a left-side variable (`IdQuery.flattenOptional` reads the
+condition and throws); since issue 959 such a query runs on the nested
+evaluator, which evaluates the condition on the merged rows
+(`IdGroup.leftJoinCondM`, gate `ids-nest-optional-filter-outer.rq`).
+
+Inline VALUES on ids (2026-10-22, https://github.com/danbri/factoidal/issues/950;
+record: section 17 of the stage 4 record). A VALUES block in the WHERE clause,
+and a trailing VALUES block of a query that does not group (the parser joins
+it with the WHERE pattern, `attachValues`), runs on `path=ids` when it is
+outside GRAPH, the WHERE clause has no OPTIONAL, its variables are distinct,
+and no FILTER reads one of its variables (`IdQuery.flattenWhere`; a trailing
+VALUES block after GROUP BY goes to the reference post-processing on decoded
+rows, `selectPost`). `IdQuery.resolveValuesM` makes each block an id table
+(UNDEF is id 0, `OptJoin.unbound`); a term that has no id in the generation
+gets a query-local id, tag 15 (`IdQuery.tagLocal`), one per distinct
+`normalizeTerm`, which joins with no stored id and which `Store.withLocal`
+decodes when the term reaches the answer. `IdJoin.joinIds` joins each block
+with the table of the triple patterns (compatible: equal ids, or one side
+id 0). `evalBgpM` drops the columns that `need` does not name, so
+`runPlanM` adds the VALUES variables to `need`; without them the join has no
+shared column and computes a cross product. Theorems:
+`Storage/Sbm11/IdJoinTheorems.lean` (`join_decode`, `values_decode`, lemma
+L5l; the `Table` step L5l″ is open and tested by `#guard`s). Gates: the 15
+`ids-values-*` and 3 `ref-values-*` gate queries.
+
+UNION on ids (2026-10-22, issue 950; record: section 18 of the stage 4
+record). A chain `{ P1 } UNION ... UNION { Pk }` outside GRAPH runs on
+`path=ids` when the WHERE clause has no OPTIONAL, each branch is a group of
+the id fragment with a triple pattern and no VALUES or UNION inside, and no
+FILTER outside the branches reads a branch variable (`IdQuery.flattenUnions`;
+`whereVars` walks the UNION, `scopeVars` does not count its variables, so
+`splitFilter` refuses such a FILTER). Each branch is evaluated with every
+column kept, the tables are concatenated (`IdJoin.unionIds`, id 0 where a
+branch lacks a variable), and the result is joined with the other rows
+(`IdJoin.joinIds`). `l4sbm11 update` redirects the branch patterns under
+`WITH` too (`redirectPlan`). Theorems: `union_decode`, `unionChain_decode`
+(lemma L5m). Gates: 10 `ids-union-*` and 4 `ref-union-*` queries.
+
+FROM and FROM NAMED on ids (2026-10-23, https://github.com/danbri/factoidal/issues/953;
+record: section 19 of the stage 4 record). `IdQuery.datasetSpec` reads the
+dataset clauses (a FROM IRI given twice is one graph; a FROM NAMED IRI given
+twice is refused, because the reference then iterates that graph twice), and
+`IdQuery.resolvePatIn` resolves each pattern under it, as `applyDataset`
+builds the dataset from the store's named graphs. A default-graph pattern
+reads: no graph when no FROM IRI names a graph of the store (`missing`); one
+graph as `GRAPH <iri>`; several graphs as the RDF merge (`Pat.merge`:
+`scanPatM` scans each graph with every variable of the pattern, concatenates,
+removes duplicate rows, then projects; one row per triple of the merge, set
+merge as `Graph.union`). `GRAPH <iri>` reads the graph only when a FROM NAMED
+IRI names it; `GRAPH ?g` keeps the rows of the FROM NAMED graphs
+(`Pat.gnames`). The streamed single-pattern paths take only plain patterns
+(`Pat.plain`). Blank nodes are not renamed apart: one label is one blank node
+across the store's graphs, as in the reference. Theorems (`IdDatasetTheorems`,
+lemma L5n): `lookup_decode`, `from_default_decode`, `from_named_decode`,
+`mergedRows_eq`. Gates: 23 `ids-from-*` and 1 `ref-from-*` queries.
+
+BIND on ids (2026-10-23, https://github.com/danbri/factoidal/issues/953;
+record: section 20 of the stage 4 record). A chain `Extend(... Extend(P, v1,
+e1) ..., vk, ek)` outside GRAPH runs on `path=ids` when the WHERE clause has
+no OPTIONAL, `P` is a group of the id fragment with no VALUES, UNION or BIND
+inside (it may have no triple pattern), and each expression is EXISTS-free
+with no aggregate and no `UUID()`, `STRUUID()` or `BNODE()` (their value
+depends on the row index, which the id path does not keep in the reference's
+order) (`IdQuery.flattenBinds`). The block is evaluated by itself
+(`evalBindsM`): `P` on ids, then per row `IdQuery.refBinder` (the binder the
+reference lowers a top-level BIND to) on the decoded terms of the variables
+the expression reads, once per distinct tuple of their ids; a value gets the
+store's id or a query-local id (tag 15, `termIdM`), an error leaves the
+variable unbound (`extendM`). The block's rows are joined with the other rows
+after the VALUES and UNION blocks. A FILTER of the top group that reads a
+variable of a BIND block runs after every join (`Plan.lateFilters`); a FILTER
+in an inner group that reads one is refused (bind10 shape). `l4sbm11 update`
+redirects the block patterns under `WITH`. Theorems (`IdBindTheorems`, lemma
+L5o): `lower_bind`, `refBinder_active`, `extend_decode`, `bind_decode`. Gates:
+18 `ids-bind-*` and 6 `ref-bind-*` queries; `gate/ref-bind.rq` is now
+`ids-bind-str.rq` and `gate12/ref-tt-bind.rq` is now `ids-tt-bind.rq`.
+
+Property paths on ids (2026-10-23, https://github.com/danbri/factoidal/issues/954;
+record: section 21 of the stage 4 record). A pattern `s path o` outside GRAPH
+runs on `path=ids` when the WHERE clause has no OPTIONAL and no FROM
+(`IdQuery.flattenWhere` collects `PathBlock`s). `IdQuery.evalIM` computes the reference's
+`SPARQL.evalPath` on ids under a restriction (a constant endpoint, else the ids
+the rows joined so far hold for an endpoint variable, `pathCands`): a step is a
+PSO or POS scan with the restriction as candidates; a sequence restricts its
+second part to the objects of its first; `^p` drops a pair whose new subject
+is a literal, as the reference does (`isNotLiteral`). The pair rows are joined
+after the BIND blocks; a FILTER of the top group over an endpoint variable runs
+after every join. Theorems (`IdPathTheorems`, lemma L5p): `evalPath_decode`,
+`pathRows_decode`, `pathPattern_decode`. Gates: `ids-path-*` and `ref-path-*`
+queries.
+
+Closures on ids (2026-10-23, issue 954; record: section 22 of the stage 4
+record). `p*`, `p+`, `p?` run on ids too (`IdQuery.closureM`): the step pairs
+reachable from the restriction are collected in rounds of scans with
+candidates, then a worklist per start node (`IdPath.reachPlus`). The
+worklist bound (pairs plus two) is proved sufficient for its list model
+(`reachModel_some`); the rounds bound is a bound on the number of distinct ids,
+and each round adds one; either loop fails the query, never truncates, if its
+bound runs out. `p*` and `p?` add `(n, n)` for each node of the active graph, so
+`?s p* ?o` with both ends variables scans the whole graph for its nodes, as
+the reference semantics require. Until
+https://github.com/danbri/factoidal/issues/955 (2026-10-23) the reference's
+`pathFixpoint step step` for `p+` stopped on a length test that is not a
+fixpoint test when the step relation had a pair twice (`(p1/p2)+`, `(p|q)+`
+can have one), and the id path refused those queries. The reference now seeds
+the iteration with `dedupPath step`; `plus_mem` holds with no hypothesis and
+nothing is refused. Rule from that repair: when the id path would have to
+copy a defect of the reference to stay equal to it, write the failing
+reference test (`SPARQL/QueryTests.lean`, `dupStepPairs`), fix the reference,
+and then drop the refusal; a refusal that preserves a reference defect cost
+one census test and a hypothesis on two theorems for a day.
+A refusal after reading must come before the first
+`emit` (`resolveExtrasM` runs first in `runPlanM`). Theorems
+(`IdPathClosureTheorems`, lemma L5q): `fixpoint_mem`, `star_mem`, `plus_mem`,
+`reachModel_some`, `reachModel_mem`, `starFrom_mem`, `plusFrom_mem`.
+
+FILTER EXISTS / NOT EXISTS on ids (2026-10-23,
+https://github.com/danbri/factoidal/issues/956; record: section 23 of the
+stage 4 record). A conjunct `EXISTS { B }` or `NOT EXISTS { B }` of a FILTER
+of the top group, `B` a basic graph pattern, runs on ids (`Plan.semis`,
+`IdQuery.semiJoinM`): `B` is evaluated by itself and the rows are kept when
+some row of `B` is compatible (or none is) after every join. Trap: the
+reference SUBSTITUTES the row into `B` (section 18.6), and substitution leaves
+a variable bound to a literal in a subject position, or to a triple term, as a
+variable of `B`; then the substituted pattern is not `B` restricted to the
+row (`?s :name ?n FILTER EXISTS { ?n :knows ?y }` keeps every row with a
+`:knows` triple anywhere). The id path checks each row and refuses with an
+error that starts with `refused:` (gate `ref-exists-literal-subject.rq`);
+`runPlanM` emits the JSON head only after that check. Theorems
+(`IdExistsTheorems`, lemma L5r): `exists_bgp_iff`, `semi_decode`,
+`exists_decode`, `exists_filter_decode`. MINUS (same issue): `P MINUS { B }`
+over the whole top group, `B` a basic graph pattern, runs on ids with
+`SemiKind.minus` (a row dropped when a row of `B` is compatible AND shares a
+bound variable; no substitution, so no row check); `{ P MINUS { B } Q }` is
+`Join(Minus(P, B), Q)` and stays on the fallback. Theorems
+(`IdMinusTheorems`, lemma L5s): `minus_decode`, `minus_bgp_decode`. The W3C
+MINUS tests all have a right side with OPTIONAL or FILTER NOT EXISTS and stay
+on the fallback.
+
+Nested groups (2026-10-23, https://github.com/danbri/factoidal/issues/959;
+record: section 25 of the stage 4 record). A WHERE clause that
+`flattenOptional` refuses gets `Plan.nested := some p` unless
+`IdQuery.nestedRefusal?` names a construct with no id form (LATERAL, SERVICE,
+a GRAPH name that is not an IRI or a variable, EXISTS of a pattern that is not
+a basic graph pattern or EXISTS inside an expression, a BIND that reads the
+row index). `IdGroup.evalGroupM` then recurses on the pattern the parser
+builds, one arm per constructor, on id tables: `joinIds`, `leftJoinCondM`
+(the condition on the merged rows, so it may read left variables),
+`unionIds`, `semiMatches` for MINUS, `extendM`, `filterM` (compiled, residual,
+EXISTS of a BGP in the active graph), GRAPH with an IRI or a variable (per
+named graph of `Store.namedGraphs`, `Session.storeNested`; a lone BGP under
+`GRAPH ?g` is one scan), `subSelectM` (a projection of variables on ids,
+else `selectPost` on the decoded rows and the values encoded with
+`termIdM`). The flat planner keeps every query it accepted. Census after:
+597 of 605 on ids; the 8 left are EXISTS of a non-BGP pattern or inside an
+expression, a BIND of EXISTS or of UUID()/STRUUID()/BNODE(), SERVICE.
+Theorem (`IdGroupTheorems`, lemma L5t): `evalGroupIds_decode`, by structural
+recursion on the pattern, for every pattern but LATERAL and SERVICE at any
+depth; the leaf scans are its hypothesis.
 
 Sideways information passing (2026-10-13,
 https://github.com/danbri/factoidal/issues/809; record: section 11 of the
@@ -1052,14 +1209,22 @@ Activation's exact permutation check and the scan theorem (2026-10-12,
 https://github.com/danbri/factoidal/issues/776; record: sections 9 and 10 of
 [`docs/designissues/2026-10-12-sbm11-end-to-end-theorem.md`](../../docs/designissues/2026-10-12-sbm11-end-to-end-theorem.md)).
 `l4sbm11 verify` and `activate` now also check exactly that POS, SPO and OSP
-hold the quads of PSO (`Harness/Sbm11PermCheck.lean`): the rows are re-keyed
-to PSO rows, written to bucket files by groups of PSO blocks
-(`SBM11_VERIFY_GROUP_ROWS`, default 262,144) in `GEN.verify-PID` next to
-the generation, and each bucket is sorted and compared with its group;
-stderr prints `exact permutation check: buckets=... failures=...`. The check
-is proved to give equal quad multisets (`PermSet.perms_same`, lemma L3b).
-Cost on olympics: activation 6.4 to 7.4 s before, 13.8 to 15.4 s after;
-peak RSS 88 to 111 MB; 171 MB of bucket files written and read.
+hold the quads of PSO (`Harness/Sbm11PermCheck.lean`). Since 2026-10-22
+(https://github.com/danbri/factoidal/issues/810) the rows are re-keyed to PSO
+rows and cut into segments: one per predicate for POS (POS and PSO both
+start with the predicate), the whole permutation for SPO and OSP. Each
+segment is sorted and compared row by row with the next PSO rows; a segment
+above `SBM11_VERIFY_GROUP_ROWS` rows (default 131,072) is written as sorted
+runs (compressed with the column encoder of the packer) in `GEN.verify-PID`
+and merged. Sorting and comparing run in background tasks
+(`SBM11_VERIFY_SPILLS`, default 6 runs sorted at once), in segment order.
+stderr prints `exact permutation check: segments=... runs=... failures=...
+temp-written-bytes=... temp-peak-bytes=...`. The check is proved to give
+equal quad multisets (`PermSet.perms_same`, lemma L3b). Measured: olympics
+temporary peak 4.2 MB for a 34.8 MB generation (the bucket method of
+2026-10-12 wrote 171 MB); DBpedia 173 MB for 568 MB. Gate:
+`tests/sbm11/perm_check_disk.sh` (peak at most half the generation), run
+as part (w) of `tests/sbm11/run.sh`.
 `SBM11_VERIFY_DIGEST=0` turns the digest comparison off (test support).
 The scan (`IdQuery.scanFoldM`) is a `forIn` over `blocksFor` with the body
 `scanBlockM` and pure per-block functions; `ScanFoldTheorems.scanFoldM_tuples`
@@ -1132,10 +1297,10 @@ section 3f.
 | --- | --- | --- | --- |
 | N-Triples | `.nt` `.ntriples` | line stream; strict: a graph name is an error | K byte ranges cut at line starts, K workers |
 | N-Quads | `.nq` `.nquads` | line stream | K byte ranges, K workers |
-| Turtle | `.ttl` `.turtle` | chunk fold, after a pre-pass over the source | one worker |
-| TriG | `.trig` | chunk fold, after a pre-pass over the source | one worker |
+| Turtle | `.ttl` `.turtle` | chunk fold | K byte ranges cut at dot boundaries found by one read of the bytes (`SplitScan`), K workers |
+| TriG | `.trig` | chunk fold | K byte ranges cut at dot boundaries, at the top level or inside a graph block, K workers |
 | RDF/XML | `.rdf` `.xml` `.owl` `.rdfxml` | chunk fold: one child of `rdf:RDF` at a time (`RdfXmlChunkFold`); the whole document under the fall-back rule below | one worker |
-| JSON-LD | `.jsonld` `.json-ld` | whole document | one worker |
+| JSON-LD | `.jsonld` `.json-ld` | chunk fold: one top-level node object at a time (`JsonLdChunkFold`), for an array or `{"@context":C,"@graph":[...]}`; the whole document otherwise | one worker |
 
 `l4sbm11-pack` and `l4sbm11 canon` read RDF 1.2 syntax, which includes RDF 1.1
 syntax for these grammars. The format comes from `--format` or from the
@@ -1162,6 +1327,20 @@ the triples are measured equal: `tools/rdfxml-chunk-differential.sh` (308 files,
 2432 agree, 0 differ (out of 2432) on 2026-10-22). Row
 `sbm11-pack-rdfxml-memory`: 0.51 bytes of peak RSS per source byte at 25,000 to
 100,000 statements (12.7 before, measured with the binary of the parent commit).
+
+**Turtle and TriG in K workers (2026-10-22,
+https://github.com/danbri/factoidal/issues/842).** `Syntax/TurtleSplitScan.lean`
+reads the bytes once and gives dot boundaries near `size * k / K` and the units
+that can hold a directive; the reader of each range after the first reads those
+units with a step that keeps nothing (`Source.Reader.resume`), enters the TriG
+graph block of its start, and starts its blank-node counter at the count the
+scan made before the split (`[` and collection items), so the generation is the
+same bytes for every K. A range that ends with another counter than the scan
+counted makes the pack read the source again as one range
+(`Sbm11Pack.withSplitRetry`). A source with `<<`, `~` or `{|` is one range. The
+pack prints `split-scan-ms=`. Phase 1 at 880,000 quads: Turtle 11.3 to 13.2 s with 1
+worker, 2.7 to 2.9 s with 4; TriG 11.8 to 12.8 s and 2.9 to 3.6 s. Record:
+section 3m of `docs/designissues/2026-09-03-rdf-parsing-strategy.md`.
 
 **Blank nodes.** A blank node label is local to one document (RDF 1.1 Concepts,
 section 3.4). The reader keeps the blank nodes of one document apart: a label
@@ -1191,7 +1370,8 @@ peak RSS goes to standard error.
 | N-Triples, N-Quads | one line for each quad | one quad |
 | Turtle | one statement for each subject; SPO order gives the triples of a subject in one run | the triples of one subject |
 | TriG | the Turtle statements inside a block `GRAPH <name> { ... }` (`{ ... }` for the default graph). The writer closes the block and opens a new block each time the graph of the next quad is not the open graph | the triples of one subject and the name of the open graph |
-| RDF/XML, JSON-LD | the library writers (`graphToRdfXml`, `fromRdf`) take a whole graph or dataset, so the writer keeps the quads and writes at the end | the dataset: https://github.com/danbri/factoidal/issues/846 and https://github.com/danbri/factoidal/issues/847 |
+| RDF/XML | one `rdf:Description` for each subject, written when the next subject starts. The start tag declares the namespaces of all the predicates, so the export first reads the predicate ids of the quads it keeps (id columns only) and gives their table to the writer. The text is the text of `graphToRdfXml` (`Sink.runList_rdfxml_eq`) | the triples of one subject (https://github.com/danbri/factoidal/issues/846) |
+| JSON-LD | a flattened document in expanded form: for each subject, one node object for the default graph and one graph object `{"@id": g, "@graph": [node]}` for each named graph, in RFC 8785 form; `{"@id": g, "@graph": []}` for a named graph with no triple. No `@list` and no sort by `@id` (both need the whole dataset); a reader's node map merges the objects of one `@id` | the quads of one subject (https://github.com/danbri/factoidal/issues/847) |
 
 The SPO order visits the subjects in dictionary order. A graph whose subjects
 interleave with those of other graphs gets several TriG blocks. A TriG reader
@@ -1344,7 +1524,7 @@ expected failure.
 | RDF/XML chunk fold, children phase: equality with the whole-document reader is measured (`tools/rdfxml-chunk-differential.sh`), not proved | https://github.com/danbri/factoidal/issues/936 | `tests/known-defects/run.sh` row RX-1 |
 | JSON-LD is read whole | https://github.com/danbri/factoidal/issues/839 | row `sbm11-pack-jsonld-memory` |
 | The Lean JSON-LD writer (`fromRdf` node list) takes time quadratic in the number of triples | https://github.com/danbri/factoidal/issues/712 | row `jsonld-write` |
-| Turtle and TriG phase 1 runs in one worker | https://github.com/danbri/factoidal/issues/842 | rows `sbm11-pack-ttl-workers`, `sbm11-pack-trig-workers` |
+| Turtle and TriG read by K workers: equality with the single reader (after a renaming of the generated blank-node labels) is measured (`tools/split-read-differential.sh`), not proved | https://github.com/danbri/factoidal/issues/944 | `tests/known-defects/run.sh` row SR-1 |
 | The JSON-LD reader of the source layer takes no document loader and no processing option (18 toRdf tests) | https://github.com/danbri/factoidal/issues/848 | `w3c_roundtrip_xfail.tsv`, 18 rows |
 | No theorem relates the stream writers (`Sink.Writer`) to the batch writers | https://github.com/danbri/factoidal/issues/852 | `tests/known-defects/run.sh`, rows `SK-1`, `SK-2` |
 | The RDF/XML export holds the whole graph | https://github.com/danbri/factoidal/issues/846 | row `sbm11-export-rdfxml-memory` |

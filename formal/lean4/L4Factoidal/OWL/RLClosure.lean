@@ -58,8 +58,8 @@ Two further gaps worth naming rather than leaving to inference:
 
 1. **Deduplication is EXACT, not `Triple.eqb`.** `RDFS/Closure.lean`
    folds `Graph.add`, whose membership test is the engine's coarse
-   `Triple.eqb` (case-folded language tags, `rdf:XMLLiteral`
-   canonical-XML equality). This file folds `addOne`, which tests
+   `Triple.eqb` (case-folded language tags; until 2026-10-23 also
+   `rdf:XMLLiteral` canonical-XML equality, issue 963). This file folds `addOne`, which tests
    propositional equality. Two consequences, both wanted: an RDF graph
    is a SET OF TRIPLES under term identity (RDF 1.1 Concepts §3), which
    is what exact dedup implements; and every theorem in

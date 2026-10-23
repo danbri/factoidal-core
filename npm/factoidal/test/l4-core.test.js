@@ -303,19 +303,21 @@ const OWL_NS = 'http://www.w3.org/2002/07/owl#';
 const SUBCLASS_NT =
   `<${X}a> <${RDF_TYPE}> <${X}C> .\n` +
   `<${X}C> <${RDFS_SUBCLASS}> <${X}D> .\n`;
-// A ⊑ ∃p.A keeps the tableau expansion changing, so a fuel-1 budget
-// runs out mid-search — the fixture for the null verdict.
+// A ⊑ ∃p.A is outside the checked consistency reader's supported syntax.
+// The separate legacy entailment search can still exhaust its fuel here.
 const CYCLIC_NT =
   `<${X}i> <${RDF_TYPE}> <${X}A> .\n` +
   `<${X}A> <${RDFS_SUBCLASS}> _:r .\n` +
   `_:r <${OWL_NS}onProperty> <${X}p> .\n` +
   `_:r <${OWL_NS}someValuesFrom> <${X}A> .\n`;
 
-test('l4-core owlIsConsistent: true / false / null (budget-out)', async (t) => {
+test('l4-core owlIsConsistent: checked contradiction or explicit unknown', async (t) => {
   if (await skipUnlessOps(t, 'owlIsConsistent')) return;
   const yes = await l4core.owlIsConsistent(SUBCLASS_NT, { format: 'ntriples' });
-  assert.equal(yes.consistent, true);
-  assert.equal(yes.reason, undefined);
+  // This ontology is satisfiable, but the implementation supplies no checked
+  // model certificate. This tests honest refusal, not satisfiability coverage.
+  assert.equal(yes.consistent, null);
+  assert.match(yes.reason, /incomplete-search/);
   const no = await l4core.owlIsConsistent(
     `<${X}i> <${RDF_TYPE}> <${OWL_NS}Nothing> .`, { format: 'ntriples' });
   assert.equal(no.consistent, false);
@@ -323,14 +325,14 @@ test('l4-core owlIsConsistent: true / false / null (budget-out)', async (t) => {
   const unk = await l4core.owlIsConsistent(CYCLIC_NT,
     { format: 'ntriples', fuel: 1 });
   assert.equal(unk.consistent, null);
-  assert.match(unk.reason, /budget-out.*fuel 1 /);
-  // The same graph at the default budget saturates under the
-  // witness-depth cap: null was the budget speaking, not the graph.
+  assert.match(unk.reason, /unsupported-syntax/);
+  // More search fuel cannot make unsupported syntax supported.
   const settled = await l4core.owlIsConsistent(CYCLIC_NT, { format: 'ntriples' });
-  assert.equal(settled.consistent, true);
+  assert.equal(settled.consistent, null);
+  assert.match(settled.reason, /unsupported-syntax/);
 });
 
-test('l4-core owlEntails: closure yes / refutation no / budget-out null', async (t) => {
+test('l4-core owlEntails: closure yes / incomplete refutation / budget-out', async (t) => {
   if (await skipUnlessOps(t, 'owlEntails')) return;
   const yes = await l4core.owlEntails(
     SUBCLASS_NT, `<${X}a> <${RDF_TYPE}> <${X}D> .`, { format: 'ntriples' });
@@ -338,9 +340,10 @@ test('l4-core owlEntails: closure yes / refutation no / budget-out null', async 
   assert.equal(yes.via, 'closure');
   const no = await l4core.owlEntails(
     SUBCLASS_NT, `<${X}a> <${RDF_TYPE}> <${X}Zebra> .`, { format: 'ntriples' });
-  assert.equal(no.entailed, false);
+  // Non-entailment needs a checked countermodel; a quiescent search is not one.
+  assert.equal(no.entailed, null);
   assert.equal(no.via, 'refutation');
-  assert.match(no.reason, /model/);
+  assert.match(no.reason, /incomplete-search/);
   const unk = await l4core.owlEntails(
     CYCLIC_NT, `<${X}a> <${RDF_TYPE}> <${X}Zebra> .`,
     { format: 'ntriples', fuel: 1 });

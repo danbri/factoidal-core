@@ -1,0 +1,5 @@
+Command: /Users/danbri/.elan/bin/lake build Wasm.Ops.XmppSession Wasm.Dispatch Wasm.CoreDispatch
+Working directory: integrate-pr3/formal/lean4
+Exit code: 0
+Build completed successfully (408 jobs).
+This is a summary of tool output; replay warnings were not retained in this file.

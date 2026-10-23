@@ -18,6 +18,7 @@ system with the Web at its heart needs its Web surface specified,
 not bolted on.
 -/
 
+import L4Factoidal.Encoding.Hex
 namespace L4Factoidal.HTTP
 
 /-- `Repr` of a byte region as its list of bytes, so the request and response
@@ -67,11 +68,7 @@ private def splitOnChar (c : Char) (s : String) : List String :=
                  else go (x :: cur) acc r
   go [] [] s.toList
 
-private def hexVal (c : Char) : Option Nat :=
-  if '0' ≤ c && c ≤ '9' then some (c.toNat - '0'.toNat)
-  else if 'a' ≤ c && c ≤ 'f' then some (c.toNat - 'a'.toNat + 10)
-  else if 'A' ≤ c && c ≤ 'F' then some (c.toNat - 'A'.toNat + 10)
-  else none
+private def hexVal (c : Char) : Option Nat := Encoding.Hex.digitValue c
 
 /-- Percent-decoding for `application/x-www-form-urlencoded`, where
     `+` also means space.

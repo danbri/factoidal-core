@@ -1,0 +1,212 @@
+TAP version 13
+# (node:67660) [MODULE_TYPELESS_PACKAGE_JSON] Warning: Module type of file:///Users/danbri/working/sandbox/october/tpac/codex-npm-review/integrate-core/third_party/observable/dist/runtime.esm.js is not specified and it doesn't parse as CommonJS.
+# Reparsing as ES module because module syntax was detected. This incurs a performance overhead.
+# To eliminate this warning, add "type": "module" to /Users/danbri/package.json.
+# (Use `node --trace-warnings ...` to show where the warning was created)
+# Subtest: inference: RDFS closure over the pipeline output
+ok 1 - inference: RDFS closure over the pipeline output
+  ---
+  duration_ms: 17222.828834
+  type: 'test'
+  ...
+# Subtest: inference: OWL 2 RL inverseOf, derived triples in their own graph
+ok 2 - inference: OWL 2 RL inverseOf, derived triples in their own graph
+  ---
+  duration_ms: 1125.183666
+  type: 'test'
+  ...
+# Subtest: inference: unsupported consistency examples remain unknown; separate entailment succeeds
+ok 3 - inference: unsupported consistency examples remain unknown; separate entailment succeeds
+  ---
+  duration_ms: 341.715667
+  type: 'test'
+  ...
+# Subtest: inference: the closures accept an RDF 1.2 triple term
+ok 4 - inference: the closures accept an RDF 1.2 triple term
+  ---
+  duration_ms: 272.382459
+  type: 'test'
+  ...
+# Subtest: xfail: inference: owlIsConsistent on a dataset with an RDF 1.2 triple term (https://github.com/danbri/factoidal/issues/873)
+ok 5 - xfail: inference: owlIsConsistent on a dataset with an RDF 1.2 triple term (https://github.com/danbri/factoidal/issues/873)
+  ---
+  duration_ms: 191.909416
+  type: 'test'
+  ...
+# expected failure: owlIsConsistent: the input holds an RDF 1.2 triple term or directional language-tagged string; OWL 2 Mapping to RDF Graphs (section 3) and the OWL 2 Direct Semantics define no rule for these terms (ht
+# (node:67661) [MODULE_TYPELESS_PACKAGE_JSON] Warning: Module type of file:///Users/danbri/working/sandbox/october/tpac/codex-npm-review/integrate-core/third_party/observable/dist/runtime.esm.js is not specified and it doesn't parse as CommonJS.
+# Reparsing as ES module because module syntax was detected. This incurs a performance overhead.
+# To eliminate this warning, add "type": "module" to /Users/danbri/package.json.
+# (Use `node --trace-warnings ...` to show where the warning was created)
+# Subtest: post30: post ships twenty-three live cells
+ok 6 - post30: post ships twenty-three live cells
+  ---
+  duration_ms: 21.322
+  type: 'test'
+  ...
+# Subtest: post30: dependency inference names the cells in order
+ok 7 - post30: dependency inference names the cells in order
+  ---
+  duration_ms: 136.817542
+  type: 'test'
+  ...
+# Subtest: post30: the tableau materialises at least one membership for the someValuesFrom ontology
+ok 8 - post30: the tableau materialises at least one membership for the someValuesFrom ontology
+  ---
+  duration_ms: 9913.850708
+  type: 'test'
+  ...
+# Subtest: post30: Alice is classified as a member of ParentOfDoctor (someValuesFrom)
+ok 9 - post30: Alice is classified as a member of ParentOfDoctor (someValuesFrom)
+  ---
+  duration_ms: 2995.218
+  type: 'test'
+  ...
+# Subtest: post30: Alice is classified as a BritishCitizen (hasValue)
+ok 10 - post30: Alice is classified as a BritishCitizen (hasValue)
+  ---
+  duration_ms: 237.036958
+  type: 'test'
+  ...
+# Subtest: post30: the DL pipeline flags the unsatisfiable restriction that RL leaves consistent
+ok 11 - post30: the DL pipeline flags the unsatisfiable restriction that RL leaves consistent
+  ---
+  duration_ms: 681.062625
+  type: 'test'
+  ...
+# Subtest: post30: checked consistency refuses the disjoint-classes syntax
+ok 12 - post30: checked consistency refuses the disjoint-classes syntax
+  ---
+  duration_ms: 62.61575
+  type: 'test'
+  ...
+# Subtest: post30: checked consistency refuses the min/max cardinality syntax
+ok 13 - post30: checked consistency refuses the min/max cardinality syntax
+  ---
+  duration_ms: 334.236833
+  type: 'test'
+  ...
+# Subtest: post30: checked consistency refuses the functional-property syntax
+ok 14 - post30: checked consistency refuses the functional-property syntax
+  ---
+  duration_ms: 30.92775
+  type: 'test'
+  ...
+# Subtest: post30: checked consistency refuses the satisfiable control syntax
+ok 15 - post30: checked consistency refuses the satisfiable control syntax
+  ---
+  duration_ms: 16.48525
+  type: 'test'
+  ...
+# Subtest: post30: the archived clash-family summary exposes four unsupported cases
+ok 16 - post30: the archived clash-family summary exposes four unsupported cases
+  ---
+  duration_ms: 31.194666
+  type: 'test'
+  ...
+# Subtest: post30: unsupported consistency syntax is rejected before fuel matters
+ok 17 - post30: unsupported consistency syntax is rejected before fuel matters
+  ---
+  duration_ms: 7.203334
+  type: 'test'
+  ...
+# Subtest: post30: owlEntails decides the someValuesFrom entailment in the OWL 2 RL closure (cls-svf1, cax-eqc2)
+ok 18 - post30: owlEntails decides the someValuesFrom entailment in the OWL 2 RL closure (cls-svf1, cax-eqc2)
+  ---
+  duration_ms: 643.209375
+  type: 'test'
+  ...
+# Subtest: post30: owlEntails proves the union entailment by refutation
+ok 19 - post30: owlEntails proves the union entailment by refutation
+  ---
+  duration_ms: 633.202209
+  type: 'test'
+  ...
+# (node:67662) [MODULE_TYPELESS_PACKAGE_JSON] Warning: Module type of file:///Users/danbri/working/sandbox/october/tpac/codex-npm-review/integrate-core/third_party/observable/dist/runtime.esm.js is not specified and it doesn't parse as CommonJS.
+# Reparsing as ES module because module syntax was detected. This incurs a performance overhead.
+# To eliminate this warning, add "type": "module" to /Users/danbri/package.json.
+# (Use `node --trace-warnings ...` to show where the warning was created)
+# (node:67662) [MODULE_TYPELESS_PACKAGE_JSON] Warning: Module type of file:///Users/danbri/working/sandbox/october/tpac/codex-npm-review/integrate-core/docs/web/hub/assets/l4/l4factoidal.js is not specified and it doesn't parse as CommonJS.
+# Reparsing as ES module because module syntax was detected. This incurs a performance overhead.
+# To eliminate this warning, add "type": "module" to /Users/danbri/working/sandbox/october/tpac/codex-npm-review/integrate-core/docs/package.json.
+# Subtest: post40: post has 12 live cells
+ok 20 - post40: post has 12 live cells
+  ---
+  duration_ms: 10.705417
+  type: 'test'
+  ...
+# Subtest: post40: the committed wasm artifact exists and is a real module
+ok 21 - post40: the committed wasm artifact exists and is a real module
+  ---
+  duration_ms: 2.154
+  type: 'test'
+  ...
+# Subtest: post40 cell "orgDataset": one fn.l4Parse call opens a TriG corpus, one handle, 10 triples
+ok 22 - post40 cell "orgDataset": one fn.l4Parse call opens a TriG corpus, one handle, 10 triples
+  ---
+  duration_ms: 7463.157041
+  type: 'test'
+  ...
+# Subtest: post40 cell "byDept": the cross-graph GRAPH ?g query returns 4 rows over 3 named graphs
+ok 23 - post40 cell "byDept": the cross-graph GRAPH ?g query returns 4 rows over 3 named graphs
+  ---
+  duration_ms: 4140.7365
+  type: 'test'
+  ...
+# Subtest: post40 cell "afterInsert": fn.l4Update mutates the SAME handle -- size grows from 10 to 12
+ok 24 - post40 cell "afterInsert": fn.l4Update mutates the SAME handle -- size grows from 10 to 12
+  ---
+  duration_ms: 10.567666
+  type: 'test'
+  ...
+# Subtest: post40 cell "byDeptAfter": the same handle, re-queried, now shows 5 rows including Erin
+ok 25 - post40 cell "byDeptAfter": the same handle, re-queried, now shows 5 rows including Erin
+  ---
+  duration_ms: 50.95475
+  type: 'test'
+  ...
+# Subtest: post40 cell "closureCheck": rdfsPlusClosure over the handle's own data derives Employee
+ok 26 - post40 cell "closureCheck": rdfsPlusClosure over the handle's own data derives Employee
+  ---
+  duration_ms: 474.807584
+  type: 'test'
+  ...
+# Subtest: post40 cell "consistentBefore": checked consistency returns unknown before the clash
+ok 27 - post40 cell "consistentBefore": checked consistency returns unknown before the clash
+  ---
+  duration_ms: 17.636417
+  type: 'test'
+  ...
+# Subtest: post40 cell "consistentAfter": disjoint-class syntax remains unsupported after insertion
+ok 28 - post40 cell "consistentAfter": disjoint-class syntax remains unsupported after insertion
+  ---
+  duration_ms: 337.172208
+  type: 'test'
+  ...
+# Subtest: post40 cell "finalTurtle": the closing Turtle shows both classes on :alice
+ok 29 - post40 cell "finalTurtle": the closing Turtle shows both classes on :alice
+  ---
+  duration_ms: 486.130375
+  type: 'test'
+  ...
+# Subtest: post40: the handle identity is stable across parse, query, update and close
+ok 30 - post40: the handle identity is stable across parse, query, update and close
+  ---
+  duration_ms: 28.249041
+  type: 'test'
+  ...
+# Subtest: post40: the committed wasm serves every op the page calls
+ok 31 - post40: the committed wasm serves every op the page calls
+  ---
+  duration_ms: 4.718875
+  type: 'test'
+  ...
+1..31
+# tests 31
+# suites 0
+# pass 31
+# fail 0
+# cancelled 0
+# skipped 0
+# todo 0
+# duration_ms 26342.156416

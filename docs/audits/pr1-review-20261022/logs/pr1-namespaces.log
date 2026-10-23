@@ -1,0 +1,6 @@
+OPTIONAL rmt-ns10-004: no required verdict
+OPTIONAL rmt-ns10-005: no required verdict
+OPTIONAL rmt-ns10-006: no required verdict
+EXCLUDED rmt-ns11-001: non-UTF8
+EXCLUDED rmt-ns11-002: non-UTF8
+Namespaces: 54 pass, 0 fail / 54 scored; 3 optional, 2 non-UTF8, 0 errors

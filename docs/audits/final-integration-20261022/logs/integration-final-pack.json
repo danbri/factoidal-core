@@ -1,0 +1,19 @@
+{
+  "command": [
+    "npm",
+    "pack",
+    "--json",
+    "--pack-destination",
+    "/Users/danbri/working/sandbox/october/tpac/codex-npm-review/artifacts/integration-final"
+  ],
+  "cwd": "/Users/danbri/working/sandbox/october/tpac/codex-npm-review/integrate-core/npm/factoidal",
+  "node": "v22.22.2",
+  "source": "ebe0188a3ae8d5a1d58b80b0356c50a6dfd6cf50",
+  "nodeBin": "/opt/homebrew/Cellar/node@22/22.22.2_2/bin",
+  "npmCache": "/private/tmp/factoidal-public-pack-cache",
+  "started": "2026-10-22T19:02:53.574Z",
+  "elapsedMs": 7261,
+  "exit": 0,
+  "signal": null,
+  "error": null
+}

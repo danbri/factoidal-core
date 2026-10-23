@@ -2,6 +2,24 @@
 
 Date: 2026-10-18. Issue: https://github.com/danbri/factoidal/issues/873.
 
+## Rule per operation (status 2026-10-23)
+
+| Operation | Input with a triple term | Rule | Tests |
+|---|---|---|---|
+| `owlClosure` mode `RDFS` | accepted | RDF 1.2 Semantics §9: opaque object term; RDFS axiomatic triples include `rdf:reifies rdfs:range rdfs:Proposition` | `RDFS/TripleTermClosureTests.lean`, `Wasm/Ops/Reason.lean`, npm `rdf12-terms.test.js`, `cli-smoke.sh` (W3C `reifies-range`, `triple-term-not-asserted`, `triple-terms-no-spurious`) |
+| `owlClosure` mode `OWL-RL` | accepted | OWL 2 Profiles §4.3 rule table plus the `[ext]` row eq-rep-tt (RDF 1.2 Semantics: IRIs inside a triple term are transparent) | same, plus W3C `opaque-iri` |
+| `rhoDfClosure` | accepted | ρdf rows (Muñoz, Pérez, Gutierrez, "Simple and efficient minimal RDFS", 2009; a subset of the RDFS patterns of RDF 1.2 Semantics §9) over asserted triples; opaque object term; no axiomatic triples; no `owl:sameAs` semantics | same (negative W3C cases) |
+| `rdfsPlusClosure` | accepted | RDFS-Plus rows (Allemang and Hendler; `RDFS/RDFSPlus.lean`) over asserted triples, plus eq-rep-tt (since 2026-10-23; W3C `opaque-iri` has regime "RDFS-Plus") | same, plus W3C `opaque-iri` |
+| CLI `closure` (`--regime rdfs`, `owl-rl`, `rho-df`, `rdfs-plus`) | accepted with `--format nquads12` / `turtle12` | as the op of that regime | `cli-smoke.sh` |
+| `canonicalizeToNQuads` | refused, rule named | RDFC-1.0 (2024) §4.6, §4.8 define no label for a blank node inside a triple term | expected failure, https://github.com/danbri/factoidal/issues/957 |
+| CLI `canonicalize` | refused, rule named | as above | expected failure, https://github.com/danbri/factoidal/issues/957 |
+| `owlIsConsistent`, `owlEntails` (CLI `owl-consistent`, `owl-entails`) | refused, rule named | OWL 2 Mapping to RDF Graphs §3 has no rule for a triple term | expected failures, https://github.com/danbri/factoidal/issues/958 |
+
+Issue https://github.com/danbri/factoidal/issues/873 tracked the first
+step (every operation either accepts under a stated rule or refuses with the
+rule named). The two refusals are tracked by issues 957 and 958 from
+2026-10-23.
+
 ## The defect
 
 The Lean wasm and command-line ops `canonicalizeToNQuads`, `owlClosure`,
@@ -52,7 +70,8 @@ the same dataset for an RDF 1.1 document, and `Term.toNTriples` writes an
 RDF 1.1 term with the same text in both modes (it differs only by refusing a
 triple term or a directional literal under `.rdf11`).
 
-Entailments that the closure ops do not compute:
+Entailments that the closure ops do not compute (a stated rule of the
+closure ops, the same as for RDF 1.1 rdfD1):
 
 - rdfs14 and rdfs14a (RDF 1.2 Semantics §9.2.1) replace a triple term with a
   new blank node typed `rdfs:Proposition`. The closures mint no blank nodes
@@ -91,9 +110,38 @@ Rule implemented: the `[ext]` row eq-rep-tt.
   substituted inner triple is not asserted and that a blank node inside a
   triple term is not replaced.
 - The RDFS closures (`RDFS.closureFix`, `fullClosure`) have no
-  `owl:sameAs` semantics and do not substitute. `rdfsPlusClosureFix` does
-  not run this row either; `RDF.regimeEntails .rdfsPlus` decides the case on
-  the graph-entailment path.
+  `owl:sameAs` semantics and do not substitute.
+- 2026-10-23: `RDFS.rdfsPlusClosureFix` runs the row too
+  (`rdfsPlusConclusions`, last row `eqRepTtFor`). Until then the
+  `rdfsPlusClosure` op substituted `owl:sameAs` in subject, predicate and
+  object position of asserted triples (eq-rep-s, -p, -o) but not inside a
+  triple term, so it did not give the W3C `opaque-iri` entailment, whose
+  manifest regime is "RDFS-Plus". Only `RDF.regimeEntails .rdfsPlus` gave it.
+  Soundness of the row is the same lemma (`eqRepTtFor_sound`). The Datalog
+  program `rdfsPlusProgram` (`Unified/DatalogClosures.lean`) has no such
+  rule, because a `DTerm` has no function symbol for a triple term; its
+  agreement theorems are on demo graphs with no triple term, where the row
+  emits nothing.
+
+## The W3C RDF 1.2 rdf-semantics tests
+
+`l4rdf-semantics` runs the 29 entries of
+`third_party/testing/w3c/rdf/rdf12/rdf-semantics/manifest.ttl` through
+`RDF.regimeEntails`: 29 pass, 0 fail (out of 29), 2026-10-23.
+
+The closure verbs are also run on the same W3C files (`Wasm/cli-smoke.sh`,
+section "The W3C RDF 1.2 rdf-semantics test files"):
+
+| W3C test | Regime | Closure verb checked | Kind |
+|---|---|---|---|
+| `opaque-iri` | RDFS-Plus | `rdfs-plus`, `owl-rl` | positive |
+| `reifies-range` | RDFS | `rdfs` | positive |
+| `triple-term-not-asserted` | simple | all four | negative |
+| `triple-terms-no-spurious` | simple | all four | negative |
+
+`triple-terms-propositions` (rdfs14) needs a new blank node, which no closure
+makes; only `l4rdf-semantics` decides it. The other entries are simple or
+RDF entailment over literals and JSON values, not closure cases.
 
 ## RDFC-1.0: refused, with the missing rule named
 
@@ -107,10 +155,13 @@ node inside a triple term. The W3C test suite
 (`third_party/testing/rdf-canon/tests/manifest.ttl`, 86 tests under
 `rdfc10/`) has no test with a triple term.
 
-Neither the specification nor the test suite defines the rule. The op
+Neither the specification nor the test suite defines the rule. The
+editor's draft (https://w3c.github.io/rdf-canon/spec/, read 2026-10-23) still
+has no such rule. The op
 refuses a dataset with a triple term (or a directional language-tagged
 string, also an RDF 1.2 term) with a message that names RDFC-1.0 §4.6 and
-§4.8 and the issue (`Wasm/Ops/Canon.lean`, `canonRdf12Refusal`;
+§4.8 and the issue https://github.com/danbri/factoidal/issues/957
+(`Wasm/Ops/Canon.lean`, `canonRdf12Refusal`;
 `L4Factoidal/RDF/Rdf11Terms.lean`, `Dataset.isRdf11`). The text is read in
 RDF 1.2 mode so that the refusal replaces the parse error. Expected
 failures: `npm/factoidal/test/rdf12-terms.test.js` and `Wasm/cli-smoke.sh`
@@ -127,7 +178,8 @@ graph is read as an ontology by OWL 2 Mapping to RDF Graphs §3 (Mapping from
 RDF Graphs to the Structural Specification), which is stated on RDF 1.1
 graphs and has no rule for a triple term; the Direct Semantics has no
 interpretation of one. The ops refuse such input with a message that names
-the mapping and the issue (`Wasm/Ops/ReasonDl.lean`, `owlDlRdf12Refusal`).
+the mapping and the issue https://github.com/danbri/factoidal/issues/958
+(`Wasm/Ops/ReasonDl.lean`, `owlDlRdf12Refusal`).
 Expected failures: `npm/factoidal/test/rdf12-terms.test.js`,
 `Wasm/cli-smoke.sh`.
 

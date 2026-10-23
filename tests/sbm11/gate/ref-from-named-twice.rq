@@ -1,0 +1,3 @@
+PREFIX ex: <http://ex.org/>
+# FROM NAMED with one IRI twice: the reference iterates the graph twice.
+SELECT * FROM NAMED ex:g1 FROM NAMED ex:g1 WHERE { GRAPH ?g { ?s ?p ?o } }

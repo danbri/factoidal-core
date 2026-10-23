@@ -139,17 +139,18 @@ test('post40 cell "closureCheck": rdfsPlusClosure over the handle\'s own data de
   assert.equal(r.rounds, 1);
 });
 
-test('post40 cell "consistentBefore": owlIsConsistent reports consistent (true) before the clash', async () => {
+test('post40 cell "consistentBefore": checked consistency returns unknown before the clash', async () => {
   const r = await post().value('consistentBefore');
   assert.equal(r.entailedEmployee, true);
-  assert.equal(r.consistent, true);
+  assert.equal(r.consistent, null);
 });
 
-test('post40 cell "consistentAfter": inserting the disjoint-class pair flips the verdict to false, with a reason', async () => {
+test('post40 cell "consistentAfter": disjoint-class syntax remains unsupported after insertion', async () => {
   const r = await post().value('consistentAfter');
-  assert.equal(r.wasConsistent, true);
-  assert.equal(r.consistent, false);
-  assert.match(r.reason, /clash-detecting tableau/);
+  // The new ontology is inconsistent; explicit unknown remains a coverage gap.
+  assert.equal(r.wasConsistent, null);
+  assert.equal(r.consistent, null);
+  assert.match(r.reason, /unsupported-syntax/);
 });
 
 test('post40 cell "finalTurtle": the closing Turtle shows both classes on :alice', async () => {

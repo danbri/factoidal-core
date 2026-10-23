@@ -24,6 +24,21 @@ open Harness
 
 namespace Harness.Tests
 
+/-! Same-datatype numeric result matching uses IEEE values, not unrounded
+decimal spellings. Adjacent values and different datatypes must stay distinct. -/
+private def numLit (s : String) (dt : L4Factoidal.RDF.WfIri) :=
+  L4Factoidal.SPARQL.mkTypedLiteral s dt
+#guard numericLiteralEqual (numLit "0.2" L4Factoidal.RDF.xsdDouble)
+  (numLit "2.00000000000000011102230246251565404236316680908203125E-1" L4Factoidal.RDF.xsdDouble)
+#guard !numericLiteralEqual (numLit "0.2" L4Factoidal.RDF.xsdDouble)
+  (numLit "0.20000000000000004" L4Factoidal.RDF.xsdDouble)
+#guard !numericLiteralEqual (numLit "1" L4Factoidal.SPARQL.xsdFloat)
+  (numLit "1" L4Factoidal.RDF.xsdDouble)
+#guard !numericLiteralEqual (numLit "1.0000001192092896" L4Factoidal.SPARQL.xsdFloat)
+  (numLit "1" L4Factoidal.SPARQL.xsdFloat)
+#guard !numericLiteralEqual (numLit "bad" L4Factoidal.RDF.xsdDouble)
+  (numLit "different" L4Factoidal.RDF.xsdDouble)
+
 /-! ## Path arithmetic (ports of the F* runner's helpers) -/
 
 #guard localName "http://www.w3.org/ns/rdftest#TestTurtleEval" == "TestTurtleEval"

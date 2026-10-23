@@ -1,0 +1,2 @@
+PREFIX ex: <http://ex.org/>
+SELECT ?s ?o WHERE { VALUES ?s { ex:a ex:zz ex:G1 } ?s ex:knows* ?o }

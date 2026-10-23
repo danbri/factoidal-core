@@ -1,0 +1,69 @@
+{
+  "schema_version": 1,
+  "captured_utc": "2026-10-22T18:16:44.886928+00:00",
+  "source_commit": "37746b6733ded80931c7c96662197b5fc68df209",
+  "tail_refinement": "84cb4ddc70745a69d64e73a06f82df6069eb566b",
+  "status": "finite-native-replay; unknown-and-excluded-not-passes; no-claim-all-findings-repaired; external-dependencies-not-included",
+  "files": [
+    {
+      "path": "README.md",
+      "size": 2602,
+      "sha256": "3ead1d95f930c660f15cca54d2afde68cd2ece6545c0ced98db0fb77b76ddf39"
+    },
+    {
+      "path": "logs/integrate-pr1-tail-final-build.json",
+      "size": 552,
+      "sha256": "b3afb00b1c1fa20bc15328f4beec5381452b0c16b29bc3d8f50663dfa02293f5"
+    },
+    {
+      "path": "logs/integrate-pr1-tail-final-cwd-error.log",
+      "size": 332,
+      "sha256": "c20a23b55c458c7ea18f4bd9eb469a0b3890506270d809b8a31f43ef162056a8"
+    },
+    {
+      "path": "logs/integrate-pr1-tail-final-native-build.log",
+      "size": 7195,
+      "sha256": "d9b6dd9b01304c15efa80f1647d3f7ba67ae07a26c19d3ef86283746cf433e17"
+    },
+    {
+      "path": "logs/integrate-pr1-tail-final-rif.json",
+      "size": 900,
+      "sha256": "2f51f401c10a349b936178a0fc691cf900a2d364cb3057c6c4eec097687204ae"
+    },
+    {
+      "path": "logs/integrate-pr1-tail-final-rif.log",
+      "size": 8532,
+      "sha256": "3201a656c890b0aada4d45e18642bc548e04b3c618e27bf26069cd3617586f89"
+    },
+    {
+      "path": "logs/integrate-pr1-tail-final-runner-controls.json",
+      "size": 663,
+      "sha256": "34ddab43f51f5574bb2fd4ab84e00a8605b80db24de532bdbf0649d4d9db38e3"
+    },
+    {
+      "path": "logs/integrate-pr1-tail-final-runner-controls.log",
+      "size": 102,
+      "sha256": "b1f8923436fd9d0789b8eba484ef4f10cb56f9fb51ccc7722953251319672a07"
+    },
+    {
+      "path": "logs/integrate-pr1-tail-final-source.json",
+      "size": 2135,
+      "sha256": "e7de3ecdca203a4bdbe246c36e549cdfd6f38e218aa39f520d849ef8c012a38c"
+    },
+    {
+      "path": "logs/integrate-pr1-tail-final-validation.json",
+      "size": 807,
+      "sha256": "425ed1b83dae22c0aab599c5e2931e373902b79e8479e6fb1c3c2d82b3538e17"
+    },
+    {
+      "path": "logs/integrate-pr1-tail-final-xsd.json",
+      "size": 1123,
+      "sha256": "3a5d2bbe2e3f9d62504bf3a6cc833c894a0069d1de8f39a1654552e486b2a7f8"
+    },
+    {
+      "path": "logs/integrate-pr1-tail-final-xsd.log",
+      "size": 19881,
+      "sha256": "e6d1ed8375b142e485dd0851a38f03549345ed8589b82954cdc4fc39007891ff"
+    }
+  ]
+}
