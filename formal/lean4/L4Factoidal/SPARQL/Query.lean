@@ -234,6 +234,63 @@ def sparqlOrder (a b : EvalResult) : Int :=
       | _ => v
     sparqlOrderValues (view a) (view b)
 
+/-- `sparqlOrder` with the numeric readings of its operands already made:
+`ia`/`ib` stand for `isNumericOperand` and `na`/`nb` for `numericValue?`. The
+MIN and MAX accumulators of the SBM11 id path read each distinct term id once
+and keep the reading of the best value, so a step compares two readings
+(https://github.com/danbri/factoidal/issues/862). `sparqlOrder_eq_read`: with
+the operands' own readings this is `sparqlOrder`. -/
+def sparqlOrderRead (a b : EvalResult) (ia ib : Bool) (na nb : Option XSD.Val) : Int :=
+  let numericOrder : Option Int := if ia && ib then do
+    let x ← na
+    let y ← nb
+    let nan : XSD.Val → Bool := fun
+      | .flt f | .dbl f => f.cls == .nan
+      | _ => false
+    if nan x || nan y then pure (if nan x == nan y then 0 else if nan x then 1 else -1)
+    else
+      let less ← Fn.Comparison.numericCompare x y .lt
+      let greater ← Fn.Comparison.numericCompare x y .gt
+      pure (if less then -1 else if greater then 1 else 0)
+    else none
+  match numericOrder with
+  | some order => order
+  | none =>
+    let view : EvalResult → EvalResult := fun v => match v with
+      | .term (.literal l) => match integerDerivedValue? l with
+        | some i => .num i
+        | none => v.promoteLiteral
+      | _ => v
+    sparqlOrderValues (view a) (view b)
+
+/-- The fast form with the operands' own readings is the reference order. -/
+theorem sparqlOrder_eq_read (a b : EvalResult) :
+    sparqlOrder a b =
+      sparqlOrderRead a b a.isNumericOperand b.isNumericOperand a.numericValue? b.numericValue? := by
+  unfold sparqlOrder sparqlOrderRead
+  rfl
+
+/-- `sparqlOrderRead` when both readings are `xsd:decimal` values (every
+integer type reads as one): one `Dec.cmp`, no `Option` chain and no second
+comparison. `sparqlOrderReadFast_eq`: it is `sparqlOrderRead`. -/
+def sparqlOrderReadFast (a b : EvalResult) (ia ib : Bool) (na nb : Option XSD.Val) : Int :=
+  match ia, ib, na, nb with
+  | true, true, some (.dec x), some (.dec y) =>
+    match XSD.Dec.cmp x y with
+    | .lt => -1
+    | .gt => 1
+    | .eq => 0
+  | _, _, _, _ => sparqlOrderRead a b ia ib na nb
+
+theorem sparqlOrderReadFast_eq (a b : EvalResult) (ia ib : Bool) (na nb : Option XSD.Val) :
+    sparqlOrderReadFast a b ia ib na nb = sparqlOrderRead a b ia ib na nb := by
+  unfold sparqlOrderReadFast
+  split
+  · rename_i x y
+    cases h : XSD.Dec.cmp x y <;>
+      simp [sparqlOrderRead, Fn.Comparison.numericCompare, h, Fn.Comparison.Op.apply]
+  · rfl
+
 /-- SPARQL §18.5 grouping compares RDF term keys. Failed/unbound keys
     form one group; numeric value equality does not erase lexical spelling. -/
 def groupTermEqual (a b : Option Term) : Bool :=

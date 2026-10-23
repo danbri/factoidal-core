@@ -1521,3 +1521,112 @@ executed, 605 matched the reference engine (438 on the id path);
 `tools/lean-unbuilt-modules.py --gate` (937 of 937 modules reached),
 `tools/lean-tail-recursion-audit.py --gate`, `tools/lean-csimp-reach.py
 --gate`; `tools/lean-hygiene-audit.py` clean.
+
+### 11.20 d19 on the shared arithmetic: readings made once per distinct id (2026-10-23)
+
+https://github.com/danbri/factoidal/issues/862 (OKR batch 3 KR 1.1,
+https://github.com/danbri/factoidal/issues/875). Commit f1f78d98 replaced the
+Scaled accumulators of 11.18 with the shared arithmetic (`evalArithmetic`) and
+the value-space order (`sparqlOrder`); d19 warm went from about 300 ms to about
+1,450 ms. Coordinator decision (issue 875): keep the shared arithmetic and the
+value-space comparison, and add speed inside them with refinement theorems.
+
+Profile of `main` at `0dd31a27` (`perf record --call-graph dwarf,16384`,
+inclusive samples): the accumulator steps (`IdAgg.stepRows`) 79 percent, of
+which MAX (`sparqlOrder`) 48 and AVG (`evalArithmetic`) 26. Inside them
+`XSD.builtinOfIri?` was 42 percent (a character walk over the namespace,
+`String.Slice.Pos.nextn` 21 percent, and a search of 50 local names,
+`List.find?` 13 percent), integer parsing 14 percent. The cause is that every
+row read its value again: SUM and AVG call `numericValue?` and
+`isIntegerOperand`, MAX calls `isNumericOperand` and `numericValue?` on the new
+value and on the best value, and each of these looks up the datatype IRI and
+parses the lexical form. All 326,365 values are `xsd:nonNegativeInteger`;
+47,473 are distinct. Arithmetic itself was not the cost.
+
+Changes:
+
+1. `SPARQL/AggStream.lean`: `Summary` holds the value and its three readings
+   (`nv` = `numericValue?`, `isInt` = `isIntegerOperand`, `isNum` =
+   `isNumericOperand`), made once per distinct id by `Summary.of`. MIN and MAX
+   keep the `Summary` of the best value. Fast forms with theorems:
+   `evalArithmeticRead` (`SPARQL/Expr.lean`) with `evalArithmetic_eq_read`;
+   `sparqlOrderRead` (`SPARQL/Query.lean`) with `sparqlOrder_eq_read`;
+   `sparqlOrderReadFast` (one `Dec.cmp` when both readings are decimals) with
+   `sparqlOrderReadFast_eq`; `AggAcc.stepNum` adds an integer value to an
+   integer sum with no reading of the sum (`stepNum_read`, `stepNum_of`);
+   `AggAcc.stepBest_of`. `num_stream`, `best_stream_from`, `best_stream` and
+   `evalAggregate_stream` keep their conclusions (equality with
+   `evalAggregate`); the best state is now `Summary.of` of the reference value.
+2. `Summary.ofFast` with `@[csimp] Summary.of_eq_ofFast`: one datatype lookup
+   for the three readings of a literal.
+3. `XSD/Datatypes.lean`: `Dec.cmpFast` with `@[csimp] Dec.cmp_eq_cmpFast`
+   (equal scales compare mantissas; the `10 ^ 0` factors went to GMP and were
+   15 percent after change 1). It applies to every caller of `Dec.cmp`.
+4. `Storage/Sbm11/IdAgg.lean`: `sumCached` looks up each distinct datatype IRI
+   once (a `Cache` of `builtinOfIri?`), with `sumCached_fst` (on a valid cache
+   the summary is `Summary.of (varView tm)`) and `sumCached_valid`.
+
+All new theorems: `#print axioms` propext, Classical.choice, Quot.sound; no
+`sorry`, no new `axiom`, no `native_decide`. No premise of a theorem states its
+conclusion. Tests: `AggStreamTests` compares the stream with `aggVals` (the
+reference `sumNumeric`, `avgNumeric`, `findMin`, `findMax` and COUNT) for
+COUNT, SUM, AVG, MIN and MAX on 10 value lists and their reverses (integer,
+`nonNegativeInteger`, decimal, double, float, NaN and -INF, a non-numeric
+literal, an IRI, `.error` for an unbound value, the empty list), and with
+`evalAggregate` on a group with an unbound row.
+
+Tried and removed: pre-sized index arrays in `Qlvr.mergeJoin` (no gain beyond
+the noise of about 20 ms).
+
+Measurement: `l4sbm11 query /home/user/bench-data/sbm11/dbpedia --file
+tools/bench/three-engines/queries/dbpedia/d19-group-aggregates.rq --verify none
+--repeat 7`, execution median in one process, 5 interleaved rounds; "before" is
+`l4sbm11` of `origin/main` at `0dd31a27`. Load average 0.9 to 2.3. All 10
+answers byte-identical (md5 `20a94fcb1a530503a1eadef01ab10e98`, 10 rows; also
+identical to `--no-agg-ids`, `tests/sbm11/agg_ids.sh`).
+
+| | before | after | QLever 1 CPU (11.10) |
+| --- | ---: | ---: | ---: |
+| warm median, rounds 1 to 5 (ms) | 1,534 / 1,507 / 1,508 / 1,460 / 1,470 | 308 / 267 / 271 / 289 / 292 | |
+| warm median of rounds (ms) | 1,507 | 289 | 103 |
+| peak RSS, rounds (VmHWM, kB) | 60,740 to 64,272 | 60,512 to 61,400 | |
+
+The run-to-run spread of one build is large on this machine: the same binary
+gave medians of 250 to 270 ms in one hour and 295 to 330 ms in another
+(the `main` binary moved from 1,360 to 1,520 ms in the same hours). Three runs
+of `tests/sbm11/agg_ids.sh` gave 325, 284 and 273 ms: 2 of 3 at most 300 ms.
+So `xfail-d19-warm-300ms` stays an expected failure, and the issue stays open.
+The ratio to QLever 1 CPU goes from 14.6 to 2.8.
+
+Where the time goes now (`perf record --call-graph dwarf,16384`, 3 runs,
+inclusive samples): the aggregation 54 percent, the WHERE clause (scan and
+merge join) 41 percent. Remaining costs, by name:
+
+- per-row hash probe of the summary table (`stepRows` self time, 11 percent):
+  `Std.HashMap` with boxed keys, three dependent loads per row;
+- page zeroing of fresh memory (`clear_page_erms`, 16 percent, kernel): the
+  merge-join index arrays growing by `push` (`Qlvr.pairsRow`, 6 percent of all
+  samples) and `Qlvr.Table.append` of scan chunks (4 percent);
+- the frame decoder of the scan (`FrameWords.deltaRangeGoF`, 10 percent self);
+- per distinct id: decoding the term (`Session.termOf`, 7 percent), the
+  integer lexical form parsed again from the decoded inline integer
+  (`lexicalMapFuel`, `parseIntegerLex`, 5 percent), and freeing the 47,473
+  cached summaries at the end of the pass (`lean_dec_ref_cold` at one site in
+  `aggregateM`, 7 percent);
+- the accumulator steps themselves (`stepBest`, `stepNum`, about 8 percent).
+
+The inline integer id already holds the value; reading it without parsing
+`toString v` needs a theorem that `parseIntegerLex (toString v) = some v`
+(not in the tree). That and a flat summary table are the next candidates.
+
+Gates: `lake build` (1981 jobs, exit 0); `tools/lean-unbuilt-modules.py`,
+`lean-tail-recursion-audit.py`, `lean-csimp-reach.py` and
+`lean-registry-audit.py` with `--gate` exit 0; `lean-hygiene-audit.py` clean;
+`SBM11_THREADS=4 tests/sbm11/census.sh` exit 0, 605 executed, 605 matched the
+reference engine (438 on the id path). `tests/sbm11/run.sh` with
+`FACTOIDAL_TESTING_ROOT=third_party/testing`: 3,130 pass, 1 fail, 28
+expected-fail (out of 3,159), exit 1. The 1 fail is the XPASS of
+`xfail-d19-warm-300ms` (275 ms in that run). Every other case passes. The
+case is at the limit (267 to 325 ms over 9 runs of the final build, 7 of them at
+most 300 ms), so it gives a failure in either form, as an expected failure
+or as an assertion; the decision is on the issue.

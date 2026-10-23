@@ -1157,6 +1157,40 @@ def evalArithmetic (op : ArithOp) (a b : EvalResult) : EvalResult :=
       | none => .error
   | _, _ => .error
 
+/-- `evalArithmetic` with the numeric readings of its operands already made:
+`na`/`nb` stand for `numericValue?` and `ia`/`ib` for `isIntegerOperand` of the
+two operands. A caller that meets the same operand many times (the SUM and AVG
+accumulators of the SBM11 id path, one reading per distinct term id) reads it
+once; `evalArithmetic_eq_read` says the result is `evalArithmetic`'s whenever
+the readings are those of the operands
+(https://github.com/danbri/factoidal/issues/862). -/
+def evalArithmeticRead (op : ArithOp) (na nb : Option XSD.Val) (ia ib : Bool) : EvalResult :=
+  match na, nb with
+  | some (.dec x), some (.dec y) =>
+      if ia && ib then evalArithInt op x.mantissa y.mantissa
+      else
+        match Fn.Arithmetic.decimal 10 op.numericOp x y with
+        | some result =>
+            let scale := match op with
+              | .mul => x.scale + y.scale
+              | .div => 10
+              | _ => max x.scale y.scale
+            formatNumericResult
+              ⟨result.mantissa * pow10 (scale - result.scale), scale⟩ .dec
+        | none => .error
+  | some x, some y =>
+      match Fn.Arithmetic.floating op.numericOp x y with
+      | some result => numericResult false result
+      | none => .error
+  | _, _ => .error
+
+/-- The fast form with the operands' own readings is the shared arithmetic. -/
+theorem evalArithmetic_eq_read (op : ArithOp) (a b : EvalResult) :
+    evalArithmetic op a b =
+      evalArithmeticRead op a.numericValue? b.numericValue? a.isIntegerOperand b.isIntegerOperand := by
+  unfold evalArithmetic evalArithmeticRead
+  rfl
+
 def numericValueCompare (a b : EvalResult) (op : Fn.Comparison.Op) : Option Bool := do
   let x ← a.numericValue?
   let y ← b.numericValue?

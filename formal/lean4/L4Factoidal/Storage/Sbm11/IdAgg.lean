@@ -224,6 +224,36 @@ theorem sums_fill_valid (termOf : UInt64 → Term) (ks : List Id64) :
         ({} : Cache Id64 Summary)) :=
   Cache.fill_valid _ ks _ (Cache.valid_empty _)
 
+/-- The summary of a decoded argument term. A literal's datatype IRI is looked
+up once per distinct IRI (`dts`, a `Cache` of `XSD.builtinOfIri?`): on DBpedia
+d19 every one of the 47,473 distinct values had the same datatype, and the
+lookup (a character walk over the namespace and a search of 50 names) was 7
+percent of the warm time (https://github.com/danbri/factoidal/issues/862). -/
+def sumCached (dts : Cache String (Option XSD.Builtin)) (tm : Term) :
+    Summary × Cache String (Option XSD.Builtin) :=
+  match tm with
+  | .literal l =>
+    let (bo, dts') := dts.getPure XSD.builtinOfIri? l.val.datatype.val
+    (Summary.ofLit l bo, dts')
+  | _ => (Summary.of (varView tm), dts)
+
+/-- On a valid datatype cache, the cached summary is `Summary.of` of the value. -/
+theorem sumCached_fst (dts : Cache String (Option XSD.Builtin)) (hv : Cache.Valid XSD.builtinOfIri? dts)
+    (tm : Term) : (sumCached dts tm).1 = Summary.of (varView tm) := by
+  cases tm with
+  | literal l =>
+    simp only [sumCached]
+    rw [Cache.getPure_fst _ dts hv]
+    exact Summary.ofLit_eq l
+  | _ => rfl
+
+/-- The datatype cache stays valid. -/
+theorem sumCached_valid (dts : Cache String (Option XSD.Builtin)) (hv : Cache.Valid XSD.builtinOfIri? dts)
+    (tm : Term) : Cache.Valid XSD.builtinOfIri? (sumCached dts tm).2 := by
+  cases tm with
+  | literal l => exact Cache.getPure_valid _ dts hv _
+  | _ => exact hv
+
 /-! ## Group keys and columns -/
 
 /-- The tag of a term id. -/
@@ -435,6 +465,7 @@ def aggregateM {m : Type → Type} [Monad m] (termOf : UInt64 → ExceptT String
     let ad : ByteArray := if byCol.size == 1 then t.cols[byCol[0]!.1]! else ByteArray.empty
     let mut terms : Cache Id64 Term := {}
     let mut sums : Cache Id64 Summary := {}
+    let mut dts : Cache String (Option XSD.Builtin) := {}
     let mut start := 0
     for _ in [0:t.rows + 1] do
       let o := stepRows t n (specs.map (·.1)) argCols simple byCol ad grp.gids p.implicit sums.map (t.rows - start + 1) start accs
@@ -445,7 +476,9 @@ def aggregateM {m : Type → Type} [Monad m] (termOf : UInt64 → ExceptT String
       | some x =>
         -- an argument id is decoded here once and kept as its summary only
         let tm ← termOf x
-        sums := { sums with map := sums.map.insert (Id64.ofU x) (Summary.of (varView tm)) }
+        let (sm, dts') := sumCached dts tm
+        dts := dts'
+        sums := { sums with map := sums.map.insert (Id64.ofU x) sm }
     let mut reps : Array Binding := Array.mkEmpty first.size
     let mut vals : Array (Array EvalResult) := Array.mkEmpty first.size
     let mut repValues := 0
@@ -476,5 +509,7 @@ def aggregateM {m : Type → Type} [Monad m] (termOf : UInt64 → ExceptT String
 #print axioms Cache.hit_eq
 #print axioms Cache.fill_valid
 #print axioms sums_fill_valid
+#print axioms sumCached_fst
+#print axioms sumCached_valid
 
 end L4Factoidal.Storage.Sbm11.IdAgg
