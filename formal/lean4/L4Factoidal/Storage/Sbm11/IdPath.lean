@@ -90,14 +90,6 @@ def dedupPairs (r : Pairs) : Pairs := Id.run do
       out := out.push x
   return out
 
-/-- Whether a pair occurs twice. -/
-def hasDup (r : Pairs) : Bool := Id.run do
-  let mut seen : Std.HashSet (UInt64 × UInt64) := {}
-  for x in r do
-    if seen.contains x then return true
-    seen := seen.insert x
-  return false
-
 /-- The adjacency map of a relation: per subject its objects, in order. -/
 def adjOf (r : Pairs) : Std.HashMap UInt64 (Array UInt64) := Id.run do
   let mut idx : Std.HashMap UInt64 (Array UInt64) := {}
@@ -135,8 +127,6 @@ def reachPlus (adj : Std.HashMap UInt64 (Array UInt64)) (a : UInt64) (fuel : Nat
 #guard compose #[(1, 2), (1, 3), (4, 2)] #[(2, 5), (2, 6), (3, 7)] ==
   #[(1, 5), (1, 6), (1, 7), (4, 5), (4, 6)]
 #guard dedupPairs #[(1, 2), (1, 2), (2, 1)] == #[(1, 2), (2, 1)]
-#guard hasDup #[(1, 2), (2, 1)] == false
-#guard hasDup #[(1, 2), (2, 1), (1, 2)] == true
 #guard sortedDistinct #[5, 3, 5, 1, 3] == #[1, 3, 5]
 #guard reachPlus (adjOf #[(1, 2), (2, 3), (3, 1), (3, 4)]) 1 6 == some #[2, 3, 1, 4]
 #guard reachPlus (adjOf #[(1, 2), (2, 3)]) 3 4 == some #[]

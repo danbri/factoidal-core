@@ -107,7 +107,7 @@ def idEvalPath (pid : WfIri → Option UInt64) (notLit : UInt64 → Bool) :
   | .oneOrMore p, G =>
     let nodes := idGraphNodes G
     let step := idEvalPath pid notLit p G
-    idFixpoint step step nodes.length
+    idFixpoint step (idDedup step) nodes.length
   | .negatedSet ps, G =>
     let exD := negatedDirectIris ps
     let exI := negatedInverseIris ps
@@ -388,7 +388,7 @@ theorem eval_ok' (pid : WfIri → Option UInt64) (notLit : UInt64 → Bool) (G :
     exact ⟨hn n hm, hn n hm⟩
   | .oneOrMore p => by
     have hs := eval_ok' pid notLit G hG p
-    exact fixpoint_ok ok _ hs _ _ hs
+    exact fixpoint_ok ok _ hs _ _ (pairsOk_sub ok (fun x hx => idDedup_mem hx) hs)
   | .negatedSet ps => by
     apply pairsOk_append ok
     · split
@@ -485,8 +485,11 @@ theorem evalPath_decode (hdec : ∀ x y, ok x → ok y → (dec x).eqb (dec y) =
     simp [List.map_map, Function.comp_def, decPair]
   | .oneOrMore p => by
     have hs := eval_ok dec ok pid notLit G g hG p
+    have hseed : PairsOk ok (idDedup (idEvalPath pid notLit p G)) :=
+      pairsOk_sub ok (fun x hx => idDedup_mem hx) hs
     simp only [idEvalPath, evalPath]
-    rw [fixpoint_decode dec ok hdec _ hs _ _ hs, evalPath_decode hdec pid notLit hlit G g hG p,
+    rw [fixpoint_decode dec ok hdec _ hs _ _ hseed, dedup_decode dec ok hdec _ hs,
+      evalPath_decode hdec pid notLit hlit G g hG p,
       ← nodes_decode dec ok hdec pid G g hG, List.length_map]
   | .negatedSet ps => by
     simp only [idEvalPath, evalPath, List.map_append]

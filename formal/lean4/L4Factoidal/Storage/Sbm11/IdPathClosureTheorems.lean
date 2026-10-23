@@ -28,13 +28,14 @@ iteration computes, on ids (where `==` is equality).
 * `star_mem`: a pair `(a, c)` is in `idEvalPath (p*) G` if and only if `a` is
   a node of the graph and `Reach (idEvalPath p G) a c`; no pair twice
   (`star_nodup`).
-* `plus_mem`: when the step relation `idEvalPath p G` has no pair twice, `(a,
-  c)` is in `idEvalPath (p+) G` if and only if some step `(a, b)` has `Reach
-  E b c`; no pair twice (`plus_nodup`). When the step relation has a pair
-  twice, the reference's length test can stop before the fixpoint (it compares
-  the deduplicated next round with the step list itself); the id path then
-  refuses the query (`IdQuery.resolvePathsM`, an error that starts with
-  `refused:`; the reference evaluator answers).
+* `plus_mem`: `(a, c)` is in `idEvalPath (p+) G` if and only if some step
+  `(a, b)` has `Reach E b c`; no pair twice (`plus_nodup`). No hypothesis on
+  the step relation: since https://github.com/danbri/factoidal/issues/955 the
+  reference seeds the iteration with the step relation deduplicated
+  (`dedupPath step`), so the length test is a fixpoint test also when `eval(p)`
+  holds a pair twice. Before that fix the reference compared the deduplicated
+  next round with the step list itself, stopped before the fixpoint (W3C pp12
+  has such a step relation), and the id path refused those queries.
 
 ## The worklist of the id path
 
@@ -423,18 +424,22 @@ theorem star_nodup (pid : WfIri → Option UInt64) (notLit : UInt64 → Bool) (G
 /-- `p+` over ids, when the step relation has no pair twice: `(a, c)` exactly
     when a step `(a, b)` of `p` has `c` reached from `b`. -/
 theorem plus_mem (pid : WfIri → Option UInt64) (notLit : UInt64 → Bool) (G : List IdTriple)
-    (p : PropertyPath) (hd : (idEvalPath pid notLit p G).Nodup) (x : UInt64 × UInt64) :
+    (p : PropertyPath) (x : UInt64 × UInt64) :
     x ∈ idEvalPath pid notLit (.oneOrMore p) G ↔
       ∃ b, (x.1, b) ∈ idEvalPath pid notLit p G ∧ Reach (idEvalPath pid notLit p G) b x.2 := by
   let E := idEvalPath pid notLit p G
   have hE : ObjsIn E (idGraphNodes G) := fun pr h => (eval_nodes pid notLit G p pr h).2
-  show x ∈ idFixpoint E E (idGraphNodes G).length ↔ _
-  exact fixpoint_mem E E (idGraphNodes G) hE hd hE _ (Nat.le_refl _) x
+  have hS : ObjsIn (idDedup E) (idGraphNodes G) := fun pr h => hE pr (mem_idDedup.mp h)
+  show x ∈ idFixpoint E (idDedup E) (idGraphNodes G).length ↔ _
+  rw [fixpoint_mem E (idDedup E) (idGraphNodes G) hE (nodup_idDedup _) hS _ (Nat.le_refl _) x]
+  constructor
+  · rintro ⟨b, hb, r⟩; exact ⟨b, mem_idDedup.mp hb, r⟩
+  · rintro ⟨b, hb, r⟩; exact ⟨b, mem_idDedup.mpr hb, r⟩
 
 theorem plus_nodup (pid : WfIri → Option UInt64) (notLit : UInt64 → Bool) (G : List IdTriple)
-    (p : PropertyPath) (hd : (idEvalPath pid notLit p G).Nodup) :
+    (p : PropertyPath) :
     (idEvalPath pid notLit (.oneOrMore p) G).Nodup :=
-  fixpoint_nodup _ _ _ hd
+  fixpoint_nodup _ _ _ (nodup_idDedup _)
 
 /-! ## The worklist, as a list model of `IdPath.reachPlus` -/
 
@@ -718,10 +723,9 @@ theorem starFrom_mem (pid : WfIri → Option UInt64) (notLit : UInt64 → Bool) 
           simp [hc]
 
 /-- The pairs the id path emits for `p+` from `a` are the pairs of the
-    reference's closure (`idEvalPath (p+)`, when the step relation has no
-    pair twice) whose subject is `a`, each once. -/
+    reference's closure (`idEvalPath (p+)`) whose subject is `a`, each once. -/
 theorem plusFrom_mem (pid : WfIri → Option UInt64) (notLit : UInt64 → Bool) (G : List IdTriple)
-    (p : PropertyPath) (hd : (idEvalPath pid notLit p G).Nodup) (a : UInt64) (fuel : Nat)
+    (p : PropertyPath) (a : UInt64) (fuel : Nat)
     (hf : (idEvalPath pid notLit p G).length + 2 ≤ fuel) :
     ∃ l, plusFrom (idEvalPath pid notLit p G) a fuel = some l ∧ l.Nodup ∧
       ∀ x, x ∈ l ↔ x ∈ idEvalPath pid notLit (.oneOrMore p) G ∧ x.1 = a := by
@@ -729,7 +733,7 @@ theorem plusFrom_mem (pid : WfIri → Option UInt64) (notLit : UInt64 → Bool) 
   obtain ⟨hrn, hrm⟩ := reachModel_mem _ a fuel r hr
   refine ⟨_, by unfold plusFrom; rw [hr]; rfl, nodup_map_pair a r hrn, ?_⟩
   intro x
-  rw [plus_mem pid notLit G p hd]
+  rw [plus_mem pid notLit G p]
   constructor
   · intro hx
     rcases List.mem_map.mp hx with ⟨c, hc, rfl⟩

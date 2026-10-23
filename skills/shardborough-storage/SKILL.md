@@ -1013,12 +1013,18 @@ worklist bound (pairs plus two) is proved sufficient for its list model
 and each round adds one; either loop fails the query, never truncates, if its
 bound runs out. `p*` and `p?` add `(n, n)` for each node of the active graph, so
 `?s p* ?o` with both ends variables scans the whole graph for its nodes, as
-the reference semantics require. Trap: the reference's `pathFixpoint step
-step` for `p+` stops on a length test that is not a fixpoint test when the
-step relation has a pair twice (`(p1/p2)+`, `(p|q)+` can have one); the id
-path computes that relation first and refuses with an error that starts with
-`refused:`, and the harnesses (`runOne`, `Run.evalWhere`) then run the
-reference evaluator. A refusal after reading must come before the first
+the reference semantics require. Until
+https://github.com/danbri/factoidal/issues/955 (2026-10-23) the reference's
+`pathFixpoint step step` for `p+` stopped on a length test that is not a
+fixpoint test when the step relation had a pair twice (`(p1/p2)+`, `(p|q)+`
+can have one), and the id path refused those queries. The reference now seeds
+the iteration with `dedupPath step`; `plus_mem` holds with no hypothesis and
+nothing is refused. Rule from that repair: when the id path would have to
+copy a defect of the reference to stay equal to it, write the failing
+reference test (`SPARQL/QueryTests.lean`, `dupStepPairs`), fix the reference,
+and then drop the refusal; a refusal that preserves a reference defect cost
+one census test and a hypothesis on two theorems for a day.
+A refusal after reading must come before the first
 `emit` (`resolveExtrasM` runs first in `runPlanM`). Theorems
 (`IdPathClosureTheorems`, lemma L5q): `fixpoint_mem`, `star_mem`, `plus_mem`,
 `reachModel_some`, `reachModel_mem`, `starFrom_mem`, `plusFrom_mem`.

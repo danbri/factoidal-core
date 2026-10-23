@@ -83,10 +83,8 @@ restriction (a
 constant endpoint, or the ids the rows joined so far hold for an endpoint
 variable, `pathCands`), with PSO and POS scans that take the restriction as
 candidates; a closure collects the step relation reachable from the
-restriction in rounds and runs a worklist per start node (`closureM`); a `+`
-whose step relation holds a pair twice is refused after that relation is read
-(`resolvePathsM`, an error starting with `refused:`, the caller runs the
-reference evaluator). `pathTableM` makes the rows as `pathResultToSolutions`
+restriction in rounds and runs a worklist per start node (`closureM`).
+`pathTableM` makes the rows as `pathResultToSolutions`
 does; they are joined after the BIND blocks, and a FILTER of the top group
 over an endpoint variable after every join. Theorems: `IdPathTheorems`,
 `IdPathClosureTheorems`.
@@ -3389,27 +3387,6 @@ inductive IPath where
   | nps (direct inverse : Array UInt64) (hasDirect hasInverse : Bool)
   deriving Inhabited, Repr
 
-/-- Whether the relation of a path has each pair at most once on a graph
-    with no triple twice: a one-step path, its inverse, and the closures
-    (deduplicated). A sequence, an alternative and a negated property set can
-    give a pair twice. -/
-def IPath.setValued : IPath → Bool
-  | .link _ => true
-  | .inv q => q.setValued
-  | .star _ | .plus _ | .opt _ => true
-  | .seq _ _ | .alt _ _ | .nps _ _ _ _ => false
-
-/-- The `+` subpaths whose step relation may hold a pair twice. For those the
-    reference's `pathFixpoint step step` stops early on a length test that is
-    not a fixpoint test (it compares the deduplicated next round with the
-    step list itself), so the id path computes the step relation and refuses
-    the query when a pair occurs twice (`resolvePathsM`). -/
-def IPath.plusMaybeDup : IPath → Array IPath
-  | .link _ | .nps _ _ _ _ => #[]
-  | .inv q | .star q | .opt q => q.plusMaybeDup
-  | .plus q => (if q.setValued then #[] else #[q]) ++ q.plusMaybeDup
-  | .seq a b | .alt a b => a.plusMaybeDup ++ b.plusMaybeDup
-
 /-- Whether a path admits the zero-length match (`p*`, `p?`): the reference
     then adds the reflexive pair of each constant endpoint
     (`addConstantReflexivity`). -/
@@ -3730,10 +3707,11 @@ def pathTableM {m : Type → Type} [Monad m] (st : Store m) (rp : RPath) (t : Ta
 
 /-- `l4sbm11 update` (WITH) and the query paths: resolve the property path
     patterns of a plan (the endpoint constants to ids, `termIdM`, extending
-    the query-local vocabulary; the IRIs of the path; the graph). Then, per
-    `+` whose step relation may hold a pair twice (`IPath.plusMaybeDup`), the
-    step relation over the graph: a pair twice refuses the query (an error
-    starting with `refused:`; the caller runs the reference evaluator). -/
+    the query-local vocabulary; the IRIs of the path; the graph). Until
+    https://github.com/danbri/factoidal/issues/955 a `+` whose step relation
+    held a pair twice was refused here; the reference now seeds its fixpoint
+    with the deduplicated step relation, and `plus_mem` holds without a
+    hypothesis on the step relation. -/
 def resolvePathsM {m : Type → Type} [Monad m] (st : Store m) (plan : Plan)
     (vocab0 : Array Term) (localIdx0 : Std.HashMap Term Nat) :
     ExceptT String m (Array RPath × Array Term × Std.HashMap Term Nat × Array String) := do
@@ -3757,11 +3735,7 @@ def resolvePathsM {m : Type → Type} [Monad m] (st : Store m) (plan : Plan)
       | .term t => st.idOf t
       | .var _ => throw "a property path pattern over a graph variable"
     let ip ← resolvePathM st b.path
-    for q in ip.plusMaybeDup do
-      let (e, _) ← evalIM st g true q none
-      if IdPath.hasDup e then
-        throw s!"refused: path {k}: a `+` whose step relation holds a pair twice ({e.size} pairs); the reference's fixpoint test then differs from a set fixpoint"
-    lines := lines.push s!"path {k}: resolved, {ip.plusMaybeDup.size} `+` step relations checked for a pair twice"
+    lines := lines.push s!"path {k}: resolved"
     out := out.push { s := slots[0]!, o := slots[1]!, ipath := ip, zeroLen := isZeroLen b.path, g }
   return (out, vocab, localIdx, lines)
 
