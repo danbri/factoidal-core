@@ -68,6 +68,7 @@ No `sorry`, no user `axiom`, no `native_decide`, no `partial`.
 import L4Factoidal.Storage.DeltaLog
 import L4Factoidal.Crypto.SHA2
 import L4Factoidal.NatBounds
+import L4Factoidal.Storage.TermFold
 
 namespace L4Factoidal.Storage.TermWireV2
 
@@ -469,5 +470,22 @@ def lookupOf (h : ByteArray → ByteArray) (t : Term) :
           some l.val.lexicalForm.toUTF8
         else none
     | _ => none
+
+/-! ## The fold (https://github.com/danbri/factoidal/issues/977)
+
+An inline term folds by `TermFold.foldTerm` (`Sbm11.normalizeTerm`). An
+out-of-line literal has no lexical form here, so its language tag is lowered
+with `String.toLower`, the function `Sbm11.normalizeLit` applies to a tag. -/
+
+/-- The fold of a wire term: every language tag in lower case. -/
+def foldWire : WireTerm → WireTerm
+  | .inline t => .inline (TermFold.foldTerm t)
+  | .blob b => .blob { b with langTag := b.langTag.map String.toLower }
+
+/-- `w` is its own fold. -/
+def wireFolded (w : WireTerm) : Bool := foldWire w == w
+
+/-- Every entry of a dictionary array is folded. -/
+def wireDictFolded (dict : Array WireTerm) : Bool := dict.all wireFolded
 
 end L4Factoidal.Storage.TermWireV2

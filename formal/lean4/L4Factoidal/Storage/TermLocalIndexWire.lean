@@ -135,7 +135,7 @@ def supported (index : Index) : Bool :=
     index.entries.toList.all (fun entry =>
       entry.localId < index.entries.size && entry.key == serializeTerm entry.term &&
         entry.key.length < two32 && termSupported entry.term &&
-        termFitsU32b entry.term) &&
+        termFitsU32b entry.term && TermFold.termFolded entry.term) &&
     localIdsPermutation index.entries.toList index.entries.size
 
 def encode? (index : Index) : Option ByteArray := do
@@ -206,8 +206,14 @@ def refsStrictlyIncreasing : List PageRef → Bool
   | [] | [_] => true
   | left :: right :: rest => lessKey left.firstKey right.firstKey && refsStrictlyIncreasing (right :: rest)
 
+/-- Every entry holds a folded term (language tags in lower case, issue 977).
+    A TLI1 file written before the fold is refused, not read with keys that a
+    folded lookup could not find; it is rebuilt from its IBK3 block. -/
+def foldedEntries (entries : List Entry) : Bool :=
+  entries.all fun entry => TermFold.termFolded entry.term
+
 def canonicalEntries (entries : List Entry) (termCount : Nat) : Bool :=
-  strictlyIncreasing entries && localIdsPermutation entries termCount
+  strictlyIncreasing entries && localIdsPermutation entries termCount && foldedEntries entries
 
 /-- Strictly decode just the fixed-length TLI1 header. -/
 def decodePrefix? (bytes : ByteArray) : Option Prefix := do
@@ -260,7 +266,7 @@ def decodePage? (header : Prefix) (ordinal : Nat) (ref : PageRef) (bytes : ByteA
   | [] => none
   | first :: _ =>
       if !trailing.isEmpty || first.key != ref.firstKey ||
-          !strictlyIncreasing entries ||
+          !strictlyIncreasing entries || !foldedEntries entries ||
           !entries.all (fun entry => entry.localId < header.termCount) then none else
         some entries.toArray
 

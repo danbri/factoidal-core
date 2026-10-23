@@ -31,6 +31,9 @@ No `sorry`, no `axiom`, no `native_decide`, no `partial`.
 -/
 import L4Factoidal.Dataflow.Instances
 import L4Factoidal.Storage.BlockDenotation
+import L4Factoidal.Storage.StoreDictTheorems
+import L4Factoidal.HDT.DictionaryTheorems
+import L4Factoidal.Cottas.DictTheorems
 
 namespace L4Factoidal.Dataflow
 
@@ -170,15 +173,22 @@ def registry : List Entry := [
   { area := "Block stores (BlockMvp, IndexedBlock, IBK4, IBK5)", dir := "Storage"
     wireIn := "Dataset", wireOut := "bytes", status := .missing
     theorems := [``L4Factoidal.Storage.IndexedBlock.Block.den_eq_ofRows,
-      ``L4Factoidal.Storage.IndexedBlockWireV4.den_decode_encode?]
-    note := "one id per structural term (issue 977)" },
+      ``L4Factoidal.Storage.IndexedBlockWireV4.den_decode_encode?,
+      ``L4Factoidal.Storage.IndexedBlock.fromParts?_foldedDictInjective,
+      ``L4Factoidal.Storage.StoreDictTheorems.v4_fromParts?_foldedDictInjective,
+      ``L4Factoidal.Storage.StoreDictTheorems.v5_fromParts?_foldedDictInjective]
+    note := "one id per RDF term: tags folded at pack and at read (issue 977)" },
   { area := "Store interface StoreCaps (planner)", dir := "SPARQL"
     wireIn := "PatternBound", wireOut := "List Triple", status := .missing
     note := "no denotation (phase B1)" },
   { area := "COTTAS store", dir := "Cottas"
-    wireIn := "Dataset", wireOut := "bytes", status := .missing },
+    wireIn := "Dataset", wireOut := "bytes", status := .missing
+    theorems := [``L4Factoidal.Cottas.cotd_dictInjective]
+    note := ".dict term layer: one id per RDF term when termRoundTripsAll holds (issue 977)" },
   { area := "HDT store", dir := "HDT"
-    wireIn := "Dataset", wireOut := "bytes", status := .missing },
+    wireIn := "Dataset", wireOut := "bytes", status := .missing
+    theorems := [``L4Factoidal.HDT.hdt_dictInjective]
+    note := "tags folded at read; one id per RDF term when roundTripsAll holds (issue 977)" },
   { area := "Planner SELECT over the kept entries", dir := "Storage"
     stage := ``plannerSelectStage, wireIn := "Dataset", wireOut := "SolutionSeq"
     contract := ``PlannerSelectContract, status := .proved

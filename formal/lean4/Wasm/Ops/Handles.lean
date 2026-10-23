@@ -666,8 +666,10 @@ private def natMember (opts : Option Json) (k : String) : Option Nat :=
 members `offset` (default 0), `limit` (default all) and `compact`: with
 `"compact":true` the answer is `"terms":[…]` (each distinct term once) and
 `"ixs":[[i,…],…]` (each quad as indices into `terms`, subject, predicate,
-object, graph), certified by `TermJson.compactCertified`. The order is the line
-order of `datasetSerialize` N-Quads (`TermJson.toCanonicalNQuads_eq_quadList`). -/
+object, graph), certified by `TermJson.compactCertified`. The table has one
+entry per RDF term and writes language tags in lower case (RDF 1.1 Concepts
+section 3.3; https://github.com/danbri/factoidal/issues/977). The order is the
+line order of `datasetSerialize` N-Quads (`TermJson.toCanonicalNQuads_eq_quadList`). -/
 def datasetQuadsJson (h optsJson : String) : IO String :=
   withHandleDataset h fun ds _ =>
     let opts := if optsJson == "" then none else parseJson? optsJson
@@ -679,7 +681,8 @@ def datasetQuadsJson (h optsJson : String) : IO String :=
     let head := [("total", Json.number (toString qs.length)), ("offset", .number (toString off))]
     match (if compact then TermJson.compactCertified page else none) with
     | some (tbl, ixs) =>
-        -- `TermJson.compactCertified_sound`: the indices read back as `page`;
+        -- `TermJson.compactCertified_sound`: the indices read back as `page`
+        -- with its language tags in lower case;
         -- each term is the text of `encodeTerm` (`TermJson.termText_eq`)
         let termsText := tbl.foldl (fun (acc : String) t =>
           (if acc.isEmpty then acc else acc ++ ",") ++ TermJson.termText t) ""
@@ -695,8 +698,9 @@ region (`l4_call_blob_io`), in the layout of `QuadsBin.binSpec`: the distinct
 terms in the term codec of DLOG version 2 and each quad as four u32 indices.
 The envelope is `{"ok":true,"total":N,"offset":O,"count":C}`. `optsJson`
 members `offset` (default 0) and `limit` (default all), as `datasetQuadsJson`.
-`QuadsBin.decodeBin_quadsBin`: the region reads back as exactly the page,
-in the line order of `datasetSerialize` N-Quads. A page the region cannot hold
+`QuadsBin.decodeBin_quadsBin`: the region reads back as exactly the page with
+its language tags in lower case (one table entry per RDF term, issue 977), in
+the line order of `datasetSerialize` N-Quads. A page the region cannot hold
 (a string of 2^32 bytes or more) is refused; `datasetQuadsJson` serves it.
 https://github.com/danbri/factoidal/issues/900 -/
 def datasetQuadsBin (h optsJson : String) : IO (String × ByteArray) := do
