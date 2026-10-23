@@ -487,9 +487,11 @@ private def queryCountOf (text : String) : Option String :=
             (fun r => r.getArray? "bindings"))).bind fun rows =>
               rows.head?.bind (fun row => bindingValue? row "c")
 
--- `parse` counts the set: 2, where the envelope of the parser's list said 3.
+-- `parse` counts the set: 2. The envelope counts the set as well: the source
+-- layer gives a set of quads (`Source.parseDocument`, `Dataset.toSet`). Before
+-- 2026-10-23 the envelope counted the parser's list, 3.
 #guard parseCountOutput sampleRepeat "turtle" "" matches .ok "2"
-#guard parseCountViaEnvelope sampleRepeat "turtle" "" matches .ok "3"
+#guard parseCountViaEnvelope sampleRepeat "turtle" "" matches .ok "2"
 -- And `query` COUNT(*) on the same text says 2 as well.
 #guard queryCountOf sampleRepeat == some "2"
 #guard queryCountOf sampleTtl == some "4"

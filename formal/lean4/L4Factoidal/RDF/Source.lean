@@ -19,7 +19,12 @@ at the edge chooses a format by name (`RdfFormat`, `formatOfLabel`,
 ## Two meanings of "read a document"
 
 * The batch meaning, `parseDocument`: the whole text is parsed and the answer
-  is a `Dataset`. The wasm parse op (`Wasm/Ops/Parse.lean`) uses it.
+  is a `Dataset`, a SET of quads (RDF 1.1 Concepts section 3: "An RDF graph is
+  a set of RDF triples"). A triple that the document states two times in one
+  graph is one quad (`Dataset.toSet`, `RDF/DatasetSet.lean`; proved by
+  `parseDocument_set`). `parseDocumentRaw` is the same parse with the list
+  that the parser of the format gives, repeated triples included. The wasm
+  parse op (`Wasm/Ops/Parse.lean`) uses `parseDocument`.
 * The chunk meaning, `Reader`: the text arrives in chunks and every quad goes
   to a consumer `Step α` as soon as its statement is complete, in the order
   the document states the quads. The shard packers use it, so the packer holds
@@ -68,7 +73,7 @@ cannot equal a generated one (https://github.com/danbri/factoidal/issues/840).
 
 ## What is proved and what is measured
 
-`SourceTheorems.lean`. The whole reader (JSON-LD) gives `parseDocument` of
+`SourceTheorems.lean`. The whole reader (JSON-LD) gives `parseDocumentRaw` of
 the joined chunks for every split. The RDF/XML reader gives it when the fold
 falls back (`rdfxml_readAll_of_notStreamed`); when it reads item by item the
 equality is measured, not proved (row RX-1 of `tests/known-defects/run.sh`,
@@ -109,6 +114,7 @@ import L4Factoidal.Syntax.RdfXml
 import L4Factoidal.Syntax.RdfXmlChunkFold
 import L4Factoidal.Syntax.JsonLdChunkFold
 import L4Factoidal.Syntax.TurtleSplitScan
+import L4Factoidal.RDF.DatasetSet
 
 namespace L4Factoidal.RDF.Source
 
@@ -191,10 +197,13 @@ def rdfXmlParser : DocParser := fun _ base text =>
 
 /-! ## The batch meaning -/
 
-/-- Parse a whole document into a dataset. For N-Triples, Turtle and RDF/XML
-    the triples are the default graph. The parser per format is the one the
-    wasm parse op has always called, so that op is unchanged. -/
-def parseDocument (extra : Extra) (fmt : RdfFormat) (mode : Mode) (base : Option String)
+/-- Parse a whole document into a dataset as the parser of the format lists
+    it. For N-Triples, Turtle and RDF/XML the triples are the default graph.
+    The N-Triples, Turtle, RDF/XML and JSON-LD parsers keep a triple that the
+    document states two times as two list entries; `parseDocument` below gives
+    the set. The chunk readers of this module give the quads of this form, in
+    document order (`SourceTheorems.lean`). -/
+def parseDocumentRaw (extra : Extra) (fmt : RdfFormat) (mode : Mode) (base : Option String)
     (text : String) : Except ParseError Dataset :=
   match fmt with
   | .nt => (parseNTriples text mode).map fun g => { default := g, named := [] }
@@ -207,6 +216,62 @@ def parseDocument (extra : Extra) (fmt : RdfFormat) (mode : Mode) (base : Option
       | some parse => parse mode base text
       | none => .error ⟨"JSON-LD is not available in this build", 0⟩
 
+/-- The formats whose parser adds each quad with `addQuad` and so gives a set
+    (`parseNQuadsFast_isSet`, `parseTriG_isSet`). -/
+def givesSet : RdfFormat → Bool
+  | .nquads | .trig => true
+  | .nt | .turtle | .rdfxml | .jsonld => false
+
+/-- Parse a whole document into a dataset: a SET of quads (RDF 1.1 Concepts
+    section 3, "An RDF graph is a set of RDF triples", and section 4). A
+    triple that the document states two times in one graph is one quad; the
+    first occurrence fixes the order (`Dataset.toSet`). The N-Quads and TriG
+    parsers give a set already, so their result is not walked again.
+    `parseDocument_set` proves the result is a set with the quads of
+    `parseDocumentRaw`. -/
+def parseDocument (extra : Extra) (fmt : RdfFormat) (mode : Mode) (base : Option String)
+    (text : String) : Except ParseError Dataset :=
+  if givesSet fmt then parseDocumentRaw extra fmt mode base text
+  else (parseDocumentRaw extra fmt mode base text).map Dataset.toSet
+
+/-- A dataset `ds` is the set of quads of `raw`: a set, with the same quads
+    under the engine triple equality, the same graph names, and no list entry
+    that `raw` does not have in the graph of the same name. -/
+structure SetOf (ds raw : Dataset) : Prop where
+  isSet : ds.IsSet
+  memQuad : ∀ u g, ds.memQuad u g ↔ raw.memQuad u g
+  names : ∀ m, m ∈ ds.names ↔ m ∈ raw.names
+  listQuad : ∀ u g, ds.listQuad u g → raw.listQuad u g
+
+theorem setOf_self {ds : Dataset} (h : ds.IsSet) : SetOf ds ds :=
+  ⟨h, fun _ _ => Iff.rfl, fun _ => Iff.rfl, fun _ _ => id⟩
+
+theorem setOf_toSet (raw : Dataset) : SetOf raw.toSet raw :=
+  ⟨raw.toSet_isSet, raw.memQuad_toSet, raw.names_toSet, raw.listQuad_toSet⟩
+
+/-- What `parseDocument` gives is the set of quads of what the parser of the
+    format gives. -/
+theorem parseDocument_set (extra : Extra) (fmt : RdfFormat) (mode : Mode) (base : Option String)
+    (text : String) (ds : Dataset) (h : parseDocument extra fmt mode base text = .ok ds) :
+    ∃ raw, parseDocumentRaw extra fmt mode base text = .ok raw ∧ SetOf ds raw := by
+  unfold parseDocument at h
+  cases fmt with
+  | nquads =>
+    refine ⟨ds, h, setOf_self ?_⟩
+    exact parseNQuadsFast_isSet text mode ds h
+  | trig =>
+    refine ⟨ds, h, setOf_self ?_⟩
+    exact parseTriG_isSet text base mode ds h
+  | nt | turtle | rdfxml | jsonld =>
+    simp only [givesSet, Bool.false_eq_true, if_false] at h
+    cases hr : parseDocumentRaw extra _ mode base text with
+    | error e => rw [hr] at h; cases h
+    | ok raw =>
+      rw [hr] at h
+      simp only [Except.map, Except.ok.injEq] at h
+      subst h
+      exact ⟨raw, rfl, setOf_toSet raw⟩
+
 /-- `parseDocument`, with the prefixes the document declared (Turtle and TriG:
     the most recent binding first, as the parsers hold them; `[]` for the other
     formats). -/
@@ -216,10 +281,40 @@ def parseDocumentWithPrefixes (extra : Extra) (fmt : RdfFormat) (mode : Mode)
   match fmt with
   | .turtle =>
       (parseTurtleWithPrefixes text base mode).map fun (g, ps) =>
-        (({ default := g, named := [] } : Dataset), ps)
+        ((({ default := g, named := [] } : Dataset).toSet), ps)
   | .trig => parseTriGWithPrefixes text base mode
   | .nt | .nquads | .rdfxml | .jsonld =>
       (parseDocument extra fmt mode base text).map fun ds => (ds, [])
+
+/-- The dataset `parseDocumentWithPrefixes` gives is a set. For Turtle it is
+    the set of quads of the graph `parseTurtleWithPrefixes` gives; for the
+    other formats it is `parseDocument`'s. -/
+theorem parseDocumentWithPrefixes_isSet (extra : Extra) (fmt : RdfFormat) (mode : Mode)
+    (base : Option String) (text : String) (r : Dataset × List (String × String))
+    (h : parseDocumentWithPrefixes extra fmt mode base text = .ok r) : r.1.IsSet := by
+  unfold parseDocumentWithPrefixes at h
+  cases fmt with
+  | turtle =>
+    cases hr : parseTurtleWithPrefixes text base mode with
+    | error e => rw [hr] at h; cases h
+    | ok v =>
+      rw [hr] at h
+      simp only [Except.map, Except.ok.injEq] at h
+      subst h
+      exact Dataset.toSet_isSet _
+  | trig => exact parseTriGWithPrefixes_isSet text base mode r h
+  | nt | nquads | rdfxml | jsonld =>
+    cases hr : parseDocument extra _ mode base text with
+    | error e => rw [hr] at h; cases h
+    | ok ds =>
+      rw [hr] at h
+      simp only [Except.map, Except.ok.injEq] at h
+      subst h
+      obtain ⟨_, _, hs⟩ := parseDocument_set extra _ mode base text ds hr
+      exact hs.isSet
+
+#print axioms parseDocument_set
+#print axioms parseDocumentWithPrefixes_isSet
 
 /-- Fold a dataset through a consumer: the default graph, then each named
     graph in order. -/
@@ -593,15 +688,15 @@ private def readCut (fmt : RdfFormat) (mode : Mode) (doc : String) (cut : Nat) :
       | .ok quads => some quads.reverse
       | .error _ => none
 
-/-- The reader at every cut position gives the quads of `parseDocument`, in the
+/-- The reader at every cut position gives the quads of `parseDocumentRaw`, in the
     same order. Documents are written so that the dataset order and the
     document order are the same (no graph recurs, no triple repeats). -/
 private def cutsAgree (fmt : RdfFormat) (mode : Mode) (doc : String) : Bool :=
-  let want := (parseDocument {} fmt mode none doc).toOption.map quadsOf
+  let want := (parseDocumentRaw {} fmt mode none doc).toOption.map quadsOf
   want.isSome && (List.range (doc.length + 1)).all fun cut => readCut fmt mode doc cut == want
 
 private def refused (fmt : RdfFormat) (mode : Mode) (doc : String) : Bool :=
-  (parseDocument {} fmt mode none doc).toOption.isNone &&
+  (parseDocumentRaw {} fmt mode none doc).toOption.isNone &&
     (List.range (doc.length + 1)).all fun cut => (readCut fmt mode doc cut).isNone
 
 private def ntDoc : String :=
