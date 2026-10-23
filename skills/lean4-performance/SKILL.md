@@ -750,9 +750,17 @@ section "Stage 1b", subsection "What failed on the way"):
 - **The compiler removes a copy that rebuilds a structure from its own
   fields.** `⟨x.a, x.b⟩` compiles to `x` (check with
   `set_option trace.compiler.ir.result true`). Arrays copied with `map` and a
-  non-identity function, words through `toNat` and back, and strings through
-  `++ ""` are new objects; a pair rebuilt from a shared pair is a new object
-  (the reset/reuse path allocates when the pair is shared).
+  non-identity function and words through `toNat` and back are new objects;
+  a pair rebuilt from a shared pair is a new object (the reset/reuse path
+  allocates when the pair is shared). **`s ++ ""` and `"" ++ s` are NOT new
+  strings**: the compiler emits `s` itself for both (`lean -c`, Lean 4.33.1).
+  Use `IdQuery.freshStr` (`String.ofList s.toList`, `@[noinline]`). Cost,
+  found 2026-10-23 (KR 1.2 of batch 3): this skill said the opposite from
+  2026-10-13, so `ScanSpec.fresh`, `FKind.fresh` and `countPartM` kept the
+  shared variable-name strings for ten days; on DBpedia d10 at 4 threads the
+  reference counts of the group variable names were 5 percent of the profile
+  (0.5 percent at 1 thread). Check a copy in the generated C
+  (`.lake/build/ir/...c`) before you write that it is one.
 - **Memory a task allocates and the parent frees is not reused at once.**
   mimalloc gives each thread its own heap; a block freed by another thread
   returns to its heap later, and fresh memory in this machine's heaps comes
@@ -760,6 +768,20 @@ section "Stage 1b", subsection "What failed on the way"):
   a third of q19's profile at 4 threads with whole-block render buffers).
   Rule: what a task hands to the parent is small pieces (512 rows, about 64
   KB), not one buffer per block.
+
+- **A task per small range starts every per-task cache empty.** The divided
+  streamed path ran one task per block, each with a new page cache filled
+  from the shared level under a lock; olympics q19 at 4 threads used 1.5
+  times the CPU time of 1 thread, most of it `copyPage` and lock waits.
+  Repair (2026-10-23, `Harness/Sbm11Query.parFold`): at most N worker tasks
+  per fold that take ranges from a shared counter and keep their caches; a
+  ready page of the shared tree map is read without the lock; a page is
+  copied into a worker's cache on its second use only. A worker cache that
+  lives longer than one fold must be reachable from two threads, so it is MT:
+  tried with a `Std.TreeMap` per worker slot, q19 at 4 threads went from 18
+  to 22 ms (tree look-ups on every id). Find what threads wait for with
+  `perf sched record` and `perf record -e sched:sched_switch --call-graph
+  dwarf`, not only with CPU samples.
 
 Measure every one of these with `perf record` at 1 and N threads and the
 CPU time (`perf stat -e task-clock`): CPU time that grows with the thread
