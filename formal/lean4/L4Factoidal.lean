@@ -47,6 +47,7 @@ import L4Factoidal.SPARQL.IndexedEvalRefinement
 import L4Factoidal.SPARQL.SharedSubjectTriple
 import L4Factoidal.SPARQL.SharedSubjectTripleRefinement
 import L4Factoidal.SPARQL.StoreBackend
+import L4Factoidal.SPARQL.StoreCapsDenotationTests
 import L4Factoidal.SPARQL.StorePlan
 import L4Factoidal.SPARQL.StoreFastPath
 import L4Factoidal.SPARQL.StoreDataset
