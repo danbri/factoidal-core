@@ -987,7 +987,7 @@ theorem loop_final (st : Store Id) (pats : Array Pat) (gid : UInt64) (T : List I
       (do
         let s ← forIn (List.range' 0 pats.size) s0 (fun _ s => bgpStepM st pats (fun _ => true) ests s)
         pure (s.tab, s.lines, s.total)) = (pure (tab, lines, stats) : ExceptT String Id _) ∧
-      (∀ r ∈ tab.idRows, Nd r) ∧ IdEquiv tab.idRows (IdLeaf.idBgpFrom T (pats.toList.map ipatOf) []) := by
+      tab.WF ∧ (∀ r ∈ tab.idRows, Nd r) ∧ IdEquiv tab.idRows (IdLeaf.idBgpFrom T (pats.toList.map ipatOf) []) := by
   obtain ⟨b, hfor, hb⟩ := forIn_exc (LoopInv pats T) (LoopDone pats T)
     (fun _ s => bgpStepM st pats (fun _ => true) ests s) pats.size 0 s0 h0
     (fun a b _ _ hP => bgpStep_spec st pats gid T hst hok ests a b hP)
@@ -998,7 +998,7 @@ theorem loop_final (st : Store Id) (pats : Array Pat) (gid : UInt64) (T : List I
     · obtain ⟨_, _, _, hc, _⟩ := hP; omega
     · exact hQ
   obtain ⟨vis, hvis, hg, he⟩ := hdone
-  refine ⟨nd_idRows b.tab hg.wf.nodup, ?_⟩
+  refine ⟨hg.wf, nd_idRows b.tab hg.wf.nodup, ?_⟩
   have hnd : ∀ r ∈ ([[]] : List IdRow), Nd r := by
     intro r hr
     simp only [List.mem_singleton] at hr
@@ -1084,10 +1084,50 @@ theorem forIn_arr_exc {α β : Type} (xs : Array α) (b : β) (f : α → β →
   rw [← Array.forIn_toList]
   exact forIn_exc_list f hf xs.toList b
 
+/-- The variables of the patterns, each once (the fold `evalBgpM` gives the
+    columns of an empty answer). -/
+theorem varsFold_nodup (pats : Array Pat) :
+    (pats.foldl (fun a t => t.vars.foldl (fun a v => if a.contains v then a else a.push v) a)
+      (#[] : Array String)).toList.Nodup := by
+  have inner : ∀ (vs : List String) (a : Array String), a.toList.Nodup →
+      (vs.foldl (fun a v => if a.contains v then a else a.push v) a).toList.Nodup := by
+    intro vs
+    induction vs with
+    | nil => intro a h; exact h
+    | cons v rest ih =>
+      intro a h
+      rw [List.foldl_cons]
+      apply ih
+      split
+      · exact h
+      · next hc =>
+        rw [Array.toList_push, List.nodup_append]
+        refine ⟨h, by simp, ?_⟩
+        intro x hx y hy e
+        rw [List.mem_singleton] at hy
+        subst hy; subst e
+        exact hc (Array.contains_iff_mem.mpr (Array.mem_toList_iff.mp hx))
+  rw [← Array.foldl_toList]
+  generalize pats.toList = ps
+  have : ∀ (a : Array String), a.toList.Nodup → (ps.foldl (fun a t =>
+      t.vars.foldl (fun a v => if a.contains v then a else a.push v) a) a).toList.Nodup := by
+    induction ps with
+    | nil => intro a h; exact h
+    | cons t rest ih =>
+      intro a h
+      rw [List.foldl_cons]
+      apply ih
+      rw [← Array.foldl_toList]
+      exact inner _ a h
+  exact this #[] List.nodup_nil
+
+theorem empty_wf (vars : Array String) (h : vars.toList.Nodup) : (Table.empty vars).WF :=
+  ⟨by simp [Table.empty], fun c hc => by simp [Table.empty], h⟩
+
 theorem evalBgpM_model (st : Store Id) (pats : Array Pat) (hne : 0 < pats.size) (gid : UInt64)
     (T : List IdPath.IdTriple) (hst : BgpStore st gid T) (hpats : ∀ i, i < pats.size → PatG gid pats[i]!) :
     ∃ tab lines stats, evalBgpM st pats (fun _ => true) = pure (tab, lines, stats) ∧
-      (∀ r ∈ tab.idRows, Nd r) ∧ IdEquiv tab.idRows (IdLeaf.idBgpFrom T (pats.toList.map ipatOf) []) := by
+      tab.WF ∧ (∀ r ∈ tab.idRows, Nd r) ∧ IdEquiv tab.idRows (IdLeaf.idBgpFrom T (pats.toList.map ipatOf) []) := by
   unfold evalBgpM
   simp only [Bool.true_or]
   have hne' : pats.isEmpty = false := by
@@ -1096,7 +1136,8 @@ theorem evalBgpM_model (st : Store Id) (pats : Array Pat) (hne : 0 < pats.size) 
     · have := Array.isEmpty_iff.mp h; subst this; simp at hne
   by_cases hm : (pats.any fun x => x.hasMissing) = true
   · simp only [hne', hm, Bool.false_eq_true, if_false, if_true]
-    refine ⟨_, _, _, rfl, fun r hr => by simp [Table.idRows, Table.empty] at hr, ?_⟩
+    refine ⟨_, _, _, rfl, empty_wf _ (by rw [Array.toList_filter]; exact (varsFold_nodup pats).filter _),
+      fun r hr => by simp [Table.idRows, Table.empty] at hr, ?_⟩
     have hrows : (Table.empty ((pats.foldl (fun a t => t.vars.foldl
         (fun a v => if a.contains v then a else a.push v) a) #[]).filter fun _ => true)).idRows = [] := by
       simp [Table.idRows, Table.empty]

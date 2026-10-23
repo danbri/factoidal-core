@@ -55,9 +55,10 @@ side is a path, `IdQuery.pathCands`) is the step `join_path_exec`, and
 graph pattern on the right of a join takes no candidates from the left side
 in `evalGroupM` (`bgpM` scans alone; its own scans with candidates between
 its triple patterns are L4l). The operators above the leaves are the list evaluator
-`evalGroupIds`; the `Table` operators of `IdGroup.evalGroupM` against it are
-proved for Join and Union (L5l″, L5m) and open for LeftJoin with a
-condition, FILTER, MINUS and Extend (L5t). A blank node of a triple pattern
+`evalGroupIds` here; `GroupTableTheorems.query_where_allowed_exec` (L4p)
+composes the `Table` operators of `IdGroup.evalGroupM` instead, for Join,
+Union, MINUS and GRAPH with an IRI; LeftJoin with a condition, FILTER, GRAPH
+with a variable, Extend, VALUES and sub-SELECT stay open (L5t). A blank node of a triple pattern
 or of a path endpoint is excluded (`ExecTp`, `SubjOkP`, `ObjOkP`): the id
 path reads it as a variable (`IdQuery.argOfSubject`), the model as a
 constant (`IdLeaf.islotS`, `IdLeaf.endS`); so is a path endpoint constant
@@ -249,6 +250,8 @@ theorem patSpecsOf_run (tps : List TriplePattern) (h : ∀ tp ∈ tps, ExecTp tp
 
 theorem unitTable_idRows : unitTable.idRows = [[]] := rfl
 
+theorem unitTable_wf : unitTable.WF := ⟨rfl, fun c hc => by simp [unitTable] at hc, List.nodup_nil⟩
+
 /-- **The rows of `IdGroup.bgpM`.** The basic graph pattern step of the
     nested evaluator, over an in-memory store whose dictionary lookup is
     `cid` and a query with no dataset clause, returns a table whose rows
@@ -258,11 +261,11 @@ theorem unitTable_idRows : unitTable.idRows = [[]] := rfl
 theorem bgpM_rows (cx : NCx Id) (cid : Term → Option UInt64) (hid : ∀ t, cx.st.idOf t = pure (cid t))
     (hds : cx.ds = none) (g : GCtx) (T : List IdPath.IdTriple) (hst : BgpStore cx.st (gctxId g) T)
     (tps : List TriplePattern) (htp : ∀ tp ∈ tps, ExecTp tp) (nst : NSt) :
-    ∃ tab nst', (bgpM cx g tps).run nst = pure (tab, nst') ∧ (∀ r ∈ tab.idRows, Nd r) ∧
+    ∃ tab nst', (bgpM cx g tps).run nst = pure (tab, nst') ∧ tab.WF ∧ (∀ r ∈ tab.idRows, Nd r) ∧
       IdEquiv tab.idRows (IdLeaf.idBgpFrom T (tps.map (ipat cid)) []) := by
   cases htps : tps with
   | nil =>
-    refine ⟨unitTable, nst, rfl, ?_, ?_⟩
+    refine ⟨unitTable, nst, rfl, unitTable_wf, ?_, ?_⟩
     · intro r hr; rw [unitTable_idRows, List.mem_singleton] at hr; subst hr; exact List.nodup_nil
     · rw [unitTable_idRows]; exact IdEquiv.refl _
   | cons tp0 rest =>
@@ -291,11 +294,11 @@ theorem bgpM_rows (cx : NCx Id) (cid : Term → Option UInt64) (hid : ∀ t, cx.
       simp only [Array.toList_map, List.mem_map] at hm
       obtain ⟨_, ⟨tp, _, rfl⟩, rfl⟩ := hm
       exact patG_spec cid g tp
-    obtain ⟨tab, lines, stats, he, hnd, heq⟩ := evalBgpM_model cx.st pats hsz (gctxId g) T hst hpg
+    obtain ⟨tab, lines, stats, he, hwf, hnd, heq⟩ := evalBgpM_model cx.st pats hsz (gctxId g) T hst hpg
     rw [StateT.run_bind, StateT.run_lift, he, pure_bind, pure_bind]
     refine ⟨tab, ?_⟩
     apply Exists.intro
-    refine ⟨?_, hnd, ?_⟩
+    refine ⟨?_, hwf, hnd, ?_⟩
     · simp only [addStats, note, StateT.run_bind, StateT.run_modify, pure_bind, StateT.run_pure]
       rfl
     · have hm : pats.toList.map ipatOf = tps.map (ipat cid) := by
@@ -488,14 +491,14 @@ theorem pathM_rows (cx : NCx Id) (cid : Term → Option UInt64) (hid : ∀ t, cx
     (hlit : ∀ x ∈ IdPath.idGraphNodes T, IdPathEval.litTag x = some (!isNotLiteral (dec x)))
     (s : PatternSubject) (path : PropertyPath) (o : PatternTerm) (hs : SubjOkP cid s) (ho : ObjOkP cid o)
     (nst : NSt) :
-    ∃ tab nst', (IdGroup.pathM cx g s path o unitTable).run nst = pure (tab, nst') ∧ (∀ r ∈ tab.idRows, Nd r) ∧
-      IdEquiv tab.idRows (pathRows cid dec idv T s path o) := by
+    ∃ tab nst', (IdGroup.pathM cx g s path o unitTable).run nst = pure (tab, nst') ∧ tab.WF ∧
+      (∀ r ∈ tab.idRows, Nd r) ∧ IdEquiv tab.idRows (pathRows cid dec idv T s path o) := by
   have hst' := bgpStore_withLocal cx.st nst.vocab _ T hst
   refine pathM_run cx cid hid hds g idv hidv hcid0 s path o hs ho nst unitTable _ ?_
   intro rp hg hip hz hsm hom hc0 hae hbe
-  obtain ⟨tab, how, ps, hpt, _, hnd, heq⟩ := IdPathTable.pathTableM_rows (cx.st.withLocal nst.vocab) (gctxId g) T
+  obtain ⟨tab, how, ps, hpt, hwf, hnd, heq⟩ := IdPathTable.pathTableM_rows (cx.st.withLocal nst.vocab) (gctxId g) T
     hst' cid (fun x => isNotLiteral (dec x)) hlit rp path hg hip hz hsm hom hc0
-  refine ⟨tab, how, ps, hpt, hnd, ?_⟩
+  refine ⟨tab, how, ps, hpt, hwf, hnd, ?_⟩
   unfold pathRows
   rw [← hae, ← hbe]
   exact heq
@@ -641,7 +644,7 @@ theorem exec_bgp_equiv (hpm : ∀ k, k < 4 → PermMem cx.st k (prb k) (ms k)) (
       ∀ r ∈ (execLeaves cx nst gof).bgp a b, Nd r := by
   have hst : BgpStore cx.st (gctxId (gof a)) (listingsOf gof prb ms spo a) :=
     ⟨fun k hk => ⟨prb k, ms k, hpm k hk, hg.2 ⟨k, hk⟩⟩, hscan⟩
-  obtain ⟨tab, nst', hrun, hnd, heq⟩ := bgpM_rows cx cid hid hds (gof a) _ hst b htp nst
+  obtain ⟨tab, nst', hrun, _, hnd, heq⟩ := bgpM_rows cx cid hid hds (gof a) _ hst b htp nst
   have hrows : (execLeaves cx nst gof).bgp a b = tab.idRows := by
     show (match ((bgpM cx (gof a) b).run nst).run with | .ok p => p.1.idRows | .error _ => []) = _
     rw [hrun]
@@ -676,7 +679,7 @@ theorem exec_path_equiv (hpm : ∀ k, k < 4 → PermMem cx.st k (prb k) (ms k)) 
     obtain ⟨t, ht, e | e⟩ := hx
     · rw [← e]; exact htag _ (graphDec_sok dec sok _ a hg.1 t ht).1
     · rw [← e]; exact htag _ (graphDec_sok dec sok _ a hg.1 t ht).2
-  obtain ⟨tab, nst', hrun, hnd, heq⟩ := pathM_rows cx cid hid hds (gof a) _ hst dec idv hidv hcid0 hlit
+  obtain ⟨tab, nst', hrun, _, hnd, heq⟩ := pathM_rows cx cid hid hds (gof a) _ hst dec idv hidv hcid0 hlit
     s path o hs ho nst
   have hrows : (execLeaves cx nst gof).path a s path o = tab.idRows := by
     show (match ((IdGroup.pathM cx (gof a) s path o unitTable).run nst).run with
@@ -816,14 +819,14 @@ theorem where_allowed_exec_join (env : EvalEnv) (ds : Dataset)
     (htl : tl.WF) (hA : IdGroup.Allowed env ds l a (tl.idRows.map (decRow dec)))
     (hok : ∀ r ∈ tl.idRows, RowIds ok r) :
     ∃ t nst3, (IdGroup.evalGroupM cx (.join l (.propertyPath s path o)) (gof a)).run nst1 = pure (t, nst3) ∧
-      IdGroup.Allowed env ds (.join l (.propertyPath s path o)) a (t.idRows.map (decRow dec)) ∧
+      t.WF ∧ IdGroup.Allowed env ds (.join l (.propertyPath s path o)) a (t.idRows.map (decRow dec)) ∧
       ∀ r ∈ t.idRows, RowIds ok r := by
   obtain ⟨hgl, hs, ho⟩ := hleaf
   obtain ⟨tp, nst3, hrun, hjwf, hjeq⟩ := join_path_exec cx nst2 gof prb ms cid dec idv sok hpm hscan hds hid
     hidv hcid0 htag a s path o hgl.1 hs ho tl htl nst2
   obtain ⟨hlr1, hlr2⟩ := leafRel_exec cx nst2 gof prb ms cid dec idv sok ok env ds hpm hscan hds hid hdec hsok hcid
     hidv hcid0 htag (.propertyPath s path o) a ⟨hgl, hs, ho⟩
-  refine ⟨IdJoin.joinIds tl tp, nst3, ?_, ?_, ?_⟩
+  refine ⟨IdJoin.joinIds tl tp, nst3, ?_, hjwf, ?_, ?_⟩
   · rw [IdGroup.evalGroupM, StateT.run_bind, hl, pure_bind, StateT.run_bind, hrun, pure_bind]
     rfl
   · have hj : IdGroup.Allowed env ds (.join l (.propertyPath s path o)) a
@@ -858,9 +861,11 @@ theorem where_allowed_exec_join_ids (env : EvalEnv) (ds : Dataset)
       ∀ r ∈ t.idRows, RowIds ok r := by
   obtain ⟨hA, hR⟩ := where_allowed_exec cx nst gof prb ms cid dec idv sok ok env ds hpm hscan hds hid hdec hsok hcid
     hidv hcid0 htag l a hp h
-  exact where_allowed_exec_join cx gof prb ms cid dec idv sok ok env ds hpm hscan hds hid hdec hsok hcid hidv
-    hcid0 htag l s path o a hleaf nst1 nst2 tl hl htl (.equiv hA (IdLeaf.solEquiv_decode dec heqL.symm))
+  obtain ⟨t, nst3, hrun, _, hA', hR'⟩ := where_allowed_exec_join cx gof prb ms cid dec idv sok ok env ds hpm hscan
+    hds hid hdec hsok hcid hidv hcid0 htag l s path o a hleaf nst1 nst2 tl hl htl
+    (.equiv hA (IdLeaf.solEquiv_decode dec heqL.symm))
     (rowIds_of_equiv ok (BgpTableTheorems.nd_idRows _ htl.nodup) heqL hR)
+  exact ⟨t, nst3, hrun, hA', hR'⟩
 
 end
 

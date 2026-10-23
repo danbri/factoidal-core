@@ -421,6 +421,7 @@ import L4Factoidal.Storage.Sbm11.ScanTableTheorems
 import L4Factoidal.Storage.Sbm11.SipTableTheorems
 import L4Factoidal.Storage.Sbm11.BgpTableTheorems
 import L4Factoidal.Storage.Sbm11.ExecLeafTheorems
+import L4Factoidal.Storage.Sbm11.GroupTableTheorems
 import L4Factoidal.Storage.Sbm11.IdAgg
 import L4Factoidal.Storage.Sbm11.IdAggTests
 import L4Factoidal.Storage.Sbm11.IdPostTheorems
