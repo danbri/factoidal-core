@@ -2675,10 +2675,12 @@ def compileFilter {m : Type → Type} [Monad m] (st : Store m) (e : Expr) : Exce
   | .sameTerm (.var v) c | .sameTerm c (.var v) =>
     match sameTermConst? c with
     | some t =>
-      -- `sameTerm` does not fold language-tag case: a constant that the
-      -- packer's normalisation would change is no stored term
-      let n := L4Factoidal.Storage.Sbm11.normalizeTerm t
-      if n == t then pure (.idEq v (← st.idOf t)) else pure (.idEq v none)
+      -- `sameTerm` compares language tags without case (`Literal.sameTerm`,
+      -- RDF 1.1 Concepts 3.3), as the packer folds them: the stored term of
+      -- the constant is `normalizeTerm` of it. Until 2026-10-23 a constant
+      -- whose tag is not in lower case kept no row
+      -- (tests/sbm11/gate/ids-sameterm-langcase.rq).
+      pure (.idEq v (← st.idOf (L4Factoidal.Storage.Sbm11.normalizeTerm t)))
     | none => general
   | .strStarts (.var v) c | .strEnds (.var v) c | .contains (.var v) c =>
     match simpleNeedle? c with
@@ -2752,10 +2754,11 @@ def strTestKey (key : ByteArray) (k : Nat) (needle : ByteArray) : Option Bool :=
 /-- Memo of the reference evaluation per FILTER conjunct. -/
 abbrev Memo := Std.HashMap (List UInt64) Bool
 
-/-- Keep the rows of `t` that pass every conjunct. -/
-def applyFilters {m : Type → Type} [Monad m] (st : Store m) (fs : Array FKind) (memos : Array Memo)
-    (t : Table) : ExceptT String m (Table × Array Memo) := do
-  if fs.isEmpty || t.rows == 0 then return (t, memos)
+/-- Which rows of `t` pass every conjunct, as a mask of `t.rows` entries
+    (`FilterIdTheorems.filterKeep_spec`); the memos of the conjuncts that
+    read decoded terms carried over. -/
+def filterKeep {m : Type → Type} [Monad m] (st : Store m) (fs : Array FKind) (memos : Array Memo)
+    (t : Table) : ExceptT String m (Array Bool × Array Memo) := do
   let mut memos := memos
   let mut keep : Array Bool := Array.replicate t.rows true
   for fi in [0:fs.size] do
@@ -2857,6 +2860,13 @@ def applyFilters {m : Type → Type} [Monad m] (st : Store m) (fs : Array FKind)
             pure r
         if !r then keep := keep.set! i false
       memos := memos.set! fi (if memo.size > 65536 then {} else memo)
+  return (keep, memos)
+
+/-- Keep the rows of `t` that pass every conjunct. -/
+def applyFilters {m : Type → Type} [Monad m] (st : Store m) (fs : Array FKind) (memos : Array Memo)
+    (t : Table) : ExceptT String m (Table × Array Memo) := do
+  if fs.isEmpty || t.rows == 0 then return (t, memos)
+  let (keep, memos) ← filterKeep st fs memos t
   return (t.select fun i => keep[i]!, memos)
 
 /-! ## FILTER windows on the scan column (https://github.com/danbri/factoidal/issues/929)

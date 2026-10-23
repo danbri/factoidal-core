@@ -1,0 +1,3 @@
+# The same FILTER on the top-level planner (one basic graph pattern).
+PREFIX ex: <http://ex.org/>
+SELECT ?s WHERE { ?s ex:name ?n FILTER(sameTerm("Bob"@EN-gb, ?n)) }
