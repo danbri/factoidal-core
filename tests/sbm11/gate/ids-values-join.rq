@@ -1,0 +1,4 @@
+PREFIX ex: <http://ex.org/>
+PREFIX xsd: <http://www.w3.org/2001/XMLSchema#>
+# VALUES inside the group, joined on ?s: ex:zz has no id (no row), ex:a twice (two rows each).
+SELECT ?s ?n WHERE { VALUES ?s { ex:a ex:c ex:zz ex:a } ?s ex:name ?n }

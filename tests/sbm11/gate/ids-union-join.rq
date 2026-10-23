@@ -1,0 +1,4 @@
+PREFIX ex: <http://ex.org/>
+PREFIX xsd: <http://www.w3.org/2001/XMLSchema#>
+# A UNION joined with a triple pattern on ?x (issue 950).
+SELECT ?x ?n ?v WHERE { ?x ex:name ?n { ?x ex:age ?v } UNION { ?x ex:flag ?v } }

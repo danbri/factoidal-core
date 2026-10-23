@@ -1,0 +1,4 @@
+PREFIX ex: <http://ex.org/>
+PREFIX xsd: <http://www.w3.org/2001/XMLSchema#>
+# A VALUES variable no triple pattern binds: terms with no id in the generation reach the answer.
+SELECT * WHERE { ?s ex:age ?a } VALUES (?s ?z) { (ex:a "not in the data") (ex:c ex:nowhere) (ex:f UNDEF) (ex:zz 1) }

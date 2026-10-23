@@ -1,0 +1,4 @@
+PREFIX ex: <http://ex.org/>
+PREFIX xsd: <http://www.w3.org/2001/XMLSchema#>
+# CONSTRUCT with a trailing VALUES block and a variable no pattern binds.
+CONSTRUCT { ?s ex:rank ?r } WHERE { ?s ex:knows ?o } VALUES (?s ?r) { (ex:a 1) (ex:b 2) (ex:zz 3) }

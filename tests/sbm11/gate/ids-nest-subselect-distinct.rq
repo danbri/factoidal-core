@@ -1,0 +1,4 @@
+PREFIX ex: <http://ex.org/>
+PREFIX xsd: <http://www.w3.org/2001/XMLSchema#>
+# Issue 959: a DISTINCT projection in a sub-SELECT stays on ids.
+SELECT ?s ?a WHERE { { SELECT DISTINCT ?s WHERE { ?s ex:knows ?o } } OPTIONAL { ?s ex:age ?a } }

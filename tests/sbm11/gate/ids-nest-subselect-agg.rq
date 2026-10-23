@@ -1,0 +1,4 @@
+PREFIX ex: <http://ex.org/>
+PREFIX xsd: <http://www.w3.org/2001/XMLSchema#>
+# Issue 959: a grouped sub-SELECT with COUNT; the counts are new terms (query-local ids).
+SELECT ?g ?n ?s WHERE { { SELECT ?g (COUNT(?s) AS ?n) WHERE { ?s ex:grp ?g } GROUP BY ?g } ?s ex:grp ?g }

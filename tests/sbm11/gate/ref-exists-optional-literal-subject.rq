@@ -1,0 +1,3 @@
+PREFIX ex: <http://ex.org/>
+# Issue 776: an OPTIONAL condition whose EXISTS body has ?n in a subject position, ?n bound to a literal: the id path refuses (substitution leaves ?n a variable).
+SELECT ?s ?n WHERE { ?s ex:age ?a OPTIONAL { ?s ex:name ?n FILTER EXISTS { ?n ex:p ?q } } }

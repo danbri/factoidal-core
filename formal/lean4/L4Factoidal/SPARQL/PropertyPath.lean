@@ -190,11 +190,17 @@ def evalPath : PropertyPath → Graph → PathResult
       let nodes := graphNodes g
       let step  := evalPath p g
       pathFixpoint step (dedupPath (nodes.map (fun n => (n, n)) ++ step)) nodes.length
-  -- §9.1 OneOrMorePath: transitive closure (no reflexive seed).
+  -- §9.1 OneOrMorePath: transitive closure (no reflexive seed). The seed is
+  -- the step relation without repeated pairs: `pathFixpoint` stops when a
+  -- round does not make the list longer, and that is a fixpoint test only
+  -- when the list it starts from has each pair once. With the step list
+  -- itself as the seed, a pair that `eval(p)` holds twice let the first round
+  -- add a new pair and drop the repeat at the same length, and the closure
+  -- stopped short (https://github.com/danbri/factoidal/issues/955).
   | .oneOrMore p, g =>
       let nodes := graphNodes g
       let step  := evalPath p g
-      pathFixpoint step step nodes.length
+      pathFixpoint step (dedupPath step) nodes.length
   -- §9.1 NegatedPropertySet. A set containing only inverse members
   -- contributes no forward pairs, and vice versa — the F* source's
   -- `has_direct` / `has_inverse` gates, kept verbatim.

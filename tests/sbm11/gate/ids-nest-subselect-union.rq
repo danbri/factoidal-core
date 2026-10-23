@@ -1,0 +1,4 @@
+PREFIX ex: <http://ex.org/>
+PREFIX xsd: <http://www.w3.org/2001/XMLSchema#>
+# Issue 959: a sub-SELECT in a UNION branch, the other branch on the same variable.
+SELECT ?x WHERE { { SELECT ?x WHERE { ?x ex:age ?a FILTER(?a = 72) } } UNION { ?x ex:flag ?f } }

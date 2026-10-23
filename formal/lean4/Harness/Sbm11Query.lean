@@ -83,6 +83,8 @@ This is a HARNESS: it does file I/O. The query engine is
 import Harness.Sbm11Gen
 import Harness.Sbm11Delta
 import L4Factoidal.Storage.Sbm11.IdQuery
+import L4Factoidal.Storage.Sbm11.IdGroup
+import L4Factoidal.Storage.Sbm11.QueryEnv
 import L4Factoidal.Storage.Sbm11.TermKeyFast
 import L4Factoidal.Storage.Sbm11.ParallelScan
 import L4Factoidal.Storage.Sbm11.Overlay
@@ -1415,6 +1417,14 @@ def Session.namedGraphIds (ss : Session) : IO (Array Nat) := do
     if !L4Factoidal.Storage.Sbm11.GraphList.contains base x then out := out.push x
   return L4Factoidal.Qlvr.mergeSortBy out (· ≤ ·)
 
+/-- `storeWith` with the named graphs of the overlaid generation
+    (`namedGraphIds`), which the nested evaluator reads for GRAPH
+    (https://github.com/danbri/factoidal/issues/959). -/
+def Session.storeNested (ss : Session) (threads : Nat) (sip : Option Nat := some 16) (minRows : Nat := 8192)
+    (aggOnIds : Bool := true) : IdQuery.Store IO :=
+  { ss.storeWith threads sip minRows aggOnIds with
+    namedGraphs := some (liftIO do return (← ss.namedGraphIds).map (·.toUInt64)) }
+
 /-- The session with the overlay state `st`: `ovl` cut from it per
     permutation, and the counters of `deltaText` read from it. -/
 def Session.withOverlay (ss : Session) (st : L4Factoidal.Storage.Sbm11.Overlay.State) : IO Session := do
@@ -1618,10 +1628,12 @@ def emitGraph (graph : Graph) (emit : ByteArray → IO Unit) : IO Nat := do
 /-- The query's environment for expressions (NOW read once, BASE, the
     GeoSPARQL extension functions), without a dataset: the id path's
     post-processing and residual FILTERs (issue 823) read no EXISTS. The
-    reference fallback adds its dataset (`runReference`). -/
+    reference fallback adds its dataset (`runReference`). The theorem for the
+    WHERE clause under this environment:
+    `HarnessWhereTheorems.harness_where_allowed`. -/
 def queryEnv (q : Query) : IO EvalEnv := do
   let clockEnv ← L4Wasm.Ops.emptyEnvNow
-  return { clockEnv with ext := L4Factoidal.Geo.extFns, base := q.base }
+  return IdGroup.queryEnvOf clockEnv q.base
 
 /-- Write the answer of a post-processed id plan (issue 823) as
     `runReference` writes the reference evaluator's answer of the same form. -/
@@ -1707,17 +1719,35 @@ def runOne (ss : Session) (q : Query) (emit : ByteArray → IO Unit) (forceRefer
     let env ← queryEnv q
     match plan.post with
     | some ps =>
+      if plan.nested.isSome then
+        -- issue 959: a nested WHERE clause, the recursive evaluator on ids
+        match ← (IdGroup.runNestedM (ss.storeNested threads sip minRows aggOnIds) plan ps env).run with
+        | .ok (ans, st) =>
+          emitPost ans emit
+          return { rows := st.rows, path := "path=ids", plan := st.plan }
+        | .error e => refusedOr e
+      else
       -- issue 823: the WHERE clause on ids, the reference post-processing on
       -- the decoded solutions
       match ← (IdQuery.runPostM (ss.storeWith threads sip minRows aggOnIds) plan ps env).run with
       | .ok (ans, st) =>
         emitPost ans emit
         return { rows := st.rows, path := "path=ids", plan := st.plan }
-      | .error e => throw (IO.userError s!"id query failed: {e}")
+      | .error e => refusedOr e
     | none =>
+    -- `runPlanM` refuses (issue 954) before it emits anything
     match ← (IdQuery.runPlanM (ss.storeWith threads sip minRows) plan emit referenceRender par env).run with
     | .ok st => return { rows := st.rows, path := "path=ids", plan := st.plan }
-    | .error e => throw (IO.userError s!"id query failed: {e}")
+    | .error e => refusedOr e
+where
+  /-- An id-path error that starts with `refused: ` (issue 954: a shape the
+      id path recognises only after reading the store) runs the reference
+      evaluator; any other error fails the query. -/
+  refusedOr (e : String) : IO Outcome := do
+    if e.startsWith "refused: " then
+      let (n, line) ← runReference ss q (e.drop 9).toString emit
+      return { rows := n, path := line }
+    throw (IO.userError s!"id query failed: {e}")
 
 def verifyText : Verify → String
   | .merkle => "each read widened to its 65,536-byte chunks, each chunk checked by its Merkle proof"

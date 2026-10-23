@@ -1,0 +1,4 @@
+PREFIX ex: <http://ex.org/>
+PREFIX xsd: <http://www.w3.org/2001/XMLSchema#>
+# Issue 959: ORDER BY and LIMIT over a nested OPTIONAL.
+SELECT ?s ?o ?m WHERE { ?s ex:name ?n OPTIONAL { ?s ex:knows ?o OPTIONAL { ?o ex:name ?m } } } ORDER BY DESC(?s) ?o LIMIT 4

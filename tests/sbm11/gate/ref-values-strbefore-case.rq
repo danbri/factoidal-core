@@ -1,0 +1,5 @@
+# The argument-compatibility rule of STRBEFORE compares the tags as written:
+# "abc"@EN and "b"@en are not compatible in the reference (an error, ?c
+# unbound); until 2026-10-23 the id path folded the VALUES tag and answered
+# "a"@en (issue 776).
+SELECT ?c WHERE { VALUES ?x { "abc"@EN } BIND(STRBEFORE(?x, "b"@en) AS ?c) }

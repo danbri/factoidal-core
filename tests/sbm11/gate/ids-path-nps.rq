@@ -1,0 +1,2 @@
+PREFIX ex: <http://ex.org/>
+SELECT ?s ?o WHERE { ?s !(ex:age|ex:name|ex:score|ex:grp|ex:tag|ex:ok|ex:when|ex:label) ?o }

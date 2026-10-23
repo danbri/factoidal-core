@@ -277,7 +277,13 @@ def redirectPlan (w : WfIri) (plan : IdQuery.Plan) : IdQuery.Plan :=
     | .dflt => { p with g := .term (.iri w) }
     | _ => p
   { plan with pats := plan.pats.map redir,
-              optionals := plan.optionals.map fun g => { g with pats := g.pats.map redir } }
+              optionals := plan.optionals.map fun g => { g with pats := g.pats.map redir },
+              unions := plan.unions.map fun bs => bs.map fun b => { b with pats := b.pats.map redir },
+              binds := plan.binds.map fun b => { b with pats := b.pats.map redir },
+              paths := plan.paths.map fun b => match b.g with
+                | .dflt => { b with g := .term (.iri w) }
+                | _ => b,
+              semis := plan.semis.map fun b => { b with pats := b.pats.map redir } }
 
 /-- The solutions of a WHERE clause on the state the operation reads, and the
     path that evaluated it. -/
@@ -294,10 +300,42 @@ def Run.evalWhere (r : Run) (u : Update) (opIx : Nat) (withIri : Option WfIri)
       r.notes.modify (·.push s!"op {opIx}: where path=reference reason=\"{why}\"")
       return none
     | .ok plan =>
+      if plan.nested.isSome then
+        -- issue 959: a nested WHERE clause; under WITH the reference evaluator
+        if withIri.isSome then
+          r.notes.modify (·.push s!"op {opIx}: where path=reference reason=\"a nested WHERE clause under WITH\"")
+          return none
+        match ← (IdGroup.nestedTableM (ss.storeNested 1 (some 16) 8192) plan env).run with
+        | .error e =>
+          if e.startsWith "refused: " then
+            r.notes.modify (·.push s!"op {opIx}: where path=reference reason=\"{e.drop 9}\"")
+            return none
+          throw (IO.userError s!"id query failed: {e}")
+        | .ok (t, st, _, _) =>
+          match ← (IdQuery.decodeRowsM st t).run with
+          | .error e => throw (IO.userError s!"id query failed: {e}")
+          | .ok rows =>
+            r.notes.modify (·.push s!"op {opIx}: where path=ids solutions={rows.length}")
+            return some rows
       let plan := match withIri with | some w => redirectPlan w plan | none => plan
-      let st := ss.storeWith 1 (some 16) 8192
-      match ← (IdQuery.whereTableM st plan env none).run with
-      | .error e => throw (IO.userError s!"id query failed: {e}")
+      let st0 := ss.storeWith 1 (some 16) 8192
+      -- the VALUES blocks as id tables, the rows of the BIND blocks, and the
+      -- store that decodes their query-local ids (issues 950 and 953)
+      match ← (IdQuery.resolveExtrasM st0 plan env).run with
+      | .error e =>
+        -- issue 954: a query the id path refuses only after reading the store
+        if e.startsWith "refused: " then
+          r.notes.modify (·.push s!"op {opIx}: where path=reference reason=\"{e.drop 9}\"")
+          return none
+        throw (IO.userError s!"id query failed: {e}")
+      | .ok (vtabs, btabs, st, _, _, rpaths) =>
+      match ← (IdQuery.whereTableM st plan env none vtabs btabs rpaths).run with
+      | .error e =>
+        -- issue 956: an EXISTS or NOT EXISTS the id path refuses after the joins
+        if e.startsWith "refused: " then
+          r.notes.modify (·.push s!"op {opIx}: where path=reference reason=\"{e.drop 9}\"")
+          return none
+        throw (IO.userError s!"id query failed: {e}")
       | .ok (t, _, _) =>
         match ← (IdQuery.decodeRowsM st t).run with
         | .error e => throw (IO.userError s!"id query failed: {e}")

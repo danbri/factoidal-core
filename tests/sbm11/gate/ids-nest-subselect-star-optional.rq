@@ -1,0 +1,3 @@
+PREFIX ex: <http://ex.org/>
+# Issue 776: SELECT * over OPTIONAL, ordered by the optional variable (no LIMIT: ties in ORDER BY leave the order open).
+SELECT * WHERE { { SELECT * WHERE { ?s ex:age ?a OPTIONAL { ?s ex:name ?n } } ORDER BY ?n } }

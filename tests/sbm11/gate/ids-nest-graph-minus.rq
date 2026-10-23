@@ -1,0 +1,4 @@
+PREFIX ex: <http://ex.org/>
+PREFIX xsd: <http://www.w3.org/2001/XMLSchema#>
+# Issue 959: MINUS inside GRAPH ?g, both sides in the named graph.
+SELECT ?g ?s WHERE { GRAPH ?g { ?s ?p ?o MINUS { ?s ex:age ?a } } }

@@ -1,4 +1,0 @@
-PREFIX ex: <http://ex.org/>
-PREFIX xsd: <http://www.w3.org/2001/XMLSchema#>
-# Refused: ?o is shared by two OPTIONAL groups and not bound by the base (not well designed).
-SELECT ?s ?o ?m WHERE { ?s ex:name ?n OPTIONAL { ?s ex:knows ?o } OPTIONAL { ?o ex:name ?m } }

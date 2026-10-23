@@ -876,8 +876,9 @@ group `graphs`, `tests/delta-log/run.sh` (DLOG versions), `OverlayTheorems`
 Queries over named graphs with no triple (2026-10-15,
 https://github.com/danbri/factoidal/issues/855). The id path reads triples only,
 and refuses every shape that can see a graph with no triple: a GRAPH group with no
-triple pattern or with only a FILTER, FROM and FROM NAMED, MINUS, OPTIONAL inside
-GRAPH. The reference fallback (`selectedDataset`, also for the WHERE clause of
+triple pattern or with only a FILTER, MINUS, OPTIONAL inside GRAPH. (FROM and FROM
+NAMED run on ids since 2026-10-23, issue 953: the id path then reads triple
+patterns only, and a graph with no triple gives no row to a triple pattern.) The reference fallback (`selectedDataset`, also for the WHERE clause of
 `l4sbm11 update`) puts every named graph of the overlaid generation that the
 planner guard keeps into its dataset (`Session.namedGraphIds`), a graph with no
 selected quad with no triple, so `GRAPH ?g { }` and FROM NAMED see it. The
@@ -911,11 +912,166 @@ row only (https://github.com/danbri/factoidal/issues/815). The Lean parser
 now makes the group's FILTERs the LeftJoin condition, evaluated on the merged
 row (SPARQL 1.1 section 18.2.2.5; `optionalGroup`, theorems in
 `SPARQL/OptionalFilterScope.lean`); the F* engine still has the defect
-(known-defects case `SPARQL-OPT-FILTER-SCOPE`). The id path still refuses a
-group FILTER over a left-side variable (`IdQuery.flattenOptional` reads the
-condition and throws), so such a query takes the reference fallback
-(`ref-optional-filter-outer.rq`), which now answers section 18.2.2.5. Admitting
-it on ids is open.
+(known-defects case `SPARQL-OPT-FILTER-SCOPE`). The flat planner still refuses
+a group FILTER over a left-side variable (`IdQuery.flattenOptional` reads the
+condition and throws); since issue 959 such a query runs on the nested
+evaluator, which evaluates the condition on the merged rows
+(`IdGroup.leftJoinCondM`, gate `ids-nest-optional-filter-outer.rq`).
+
+Inline VALUES on ids (2026-10-22, https://github.com/danbri/factoidal/issues/950;
+record: section 17 of the stage 4 record). A VALUES block in the WHERE clause,
+and a trailing VALUES block of a query that does not group (the parser joins
+it with the WHERE pattern, `attachValues`), runs on `path=ids` when it is
+outside GRAPH, the WHERE clause has no OPTIONAL, its variables are distinct,
+and no FILTER reads one of its variables (`IdQuery.flattenWhere`; a trailing
+VALUES block after GROUP BY goes to the reference post-processing on decoded
+rows, `selectPost`). `IdQuery.resolveValuesM` makes each block an id table
+(UNDEF is id 0, `OptJoin.unbound`); a term that has no id in the generation
+gets a query-local id, tag 15 (`IdQuery.tagLocal`), one per distinct
+`normalizeTerm`, which joins with no stored id and which `Store.withLocal`
+decodes when the term reaches the answer. `IdJoin.joinIds` joins each block
+with the table of the triple patterns (compatible: equal ids, or one side
+id 0). `evalBgpM` drops the columns that `need` does not name, so
+`runPlanM` adds the VALUES variables to `need`; without them the join has no
+shared column and computes a cross product. Theorems:
+`Storage/Sbm11/IdJoinTheorems.lean` (`join_decode`, `values_decode`, lemma
+L5l; the `Table` step L5l″ is open and tested by `#guard`s). Gates: the 15
+`ids-values-*` and 3 `ref-values-*` gate queries.
+
+UNION on ids (2026-10-22, issue 950; record: section 18 of the stage 4
+record). A chain `{ P1 } UNION ... UNION { Pk }` outside GRAPH runs on
+`path=ids` when the WHERE clause has no OPTIONAL, each branch is a group of
+the id fragment with a triple pattern and no VALUES or UNION inside, and no
+FILTER outside the branches reads a branch variable (`IdQuery.flattenUnions`;
+`whereVars` walks the UNION, `scopeVars` does not count its variables, so
+`splitFilter` refuses such a FILTER). Each branch is evaluated with every
+column kept, the tables are concatenated (`IdJoin.unionIds`, id 0 where a
+branch lacks a variable), and the result is joined with the other rows
+(`IdJoin.joinIds`). `l4sbm11 update` redirects the branch patterns under
+`WITH` too (`redirectPlan`). Theorems: `union_decode`, `unionChain_decode`
+(lemma L5m). Gates: 10 `ids-union-*` and 4 `ref-union-*` queries.
+
+FROM and FROM NAMED on ids (2026-10-23, https://github.com/danbri/factoidal/issues/953;
+record: section 19 of the stage 4 record). `IdQuery.datasetSpec` reads the
+dataset clauses (a FROM IRI given twice is one graph; a FROM NAMED IRI given
+twice is refused, because the reference then iterates that graph twice), and
+`IdQuery.resolvePatIn` resolves each pattern under it, as `applyDataset`
+builds the dataset from the store's named graphs. A default-graph pattern
+reads: no graph when no FROM IRI names a graph of the store (`missing`); one
+graph as `GRAPH <iri>`; several graphs as the RDF merge (`Pat.merge`:
+`scanPatM` scans each graph with every variable of the pattern, concatenates,
+removes duplicate rows, then projects; one row per triple of the merge, set
+merge as `Graph.union`). `GRAPH <iri>` reads the graph only when a FROM NAMED
+IRI names it; `GRAPH ?g` keeps the rows of the FROM NAMED graphs
+(`Pat.gnames`). The streamed single-pattern paths take only plain patterns
+(`Pat.plain`). Blank nodes are not renamed apart: one label is one blank node
+across the store's graphs, as in the reference. Theorems (`IdDatasetTheorems`,
+lemma L5n): `lookup_decode`, `from_default_decode`, `from_named_decode`,
+`mergedRows_eq`. Gates: 23 `ids-from-*` and 1 `ref-from-*` queries.
+
+BIND on ids (2026-10-23, https://github.com/danbri/factoidal/issues/953;
+record: section 20 of the stage 4 record). A chain `Extend(... Extend(P, v1,
+e1) ..., vk, ek)` outside GRAPH runs on `path=ids` when the WHERE clause has
+no OPTIONAL, `P` is a group of the id fragment with no VALUES, UNION or BIND
+inside (it may have no triple pattern), and each expression is EXISTS-free
+with no aggregate and no `UUID()`, `STRUUID()` or `BNODE()` (their value
+depends on the row index, which the id path does not keep in the reference's
+order) (`IdQuery.flattenBinds`). The block is evaluated by itself
+(`evalBindsM`): `P` on ids, then per row `IdQuery.refBinder` (the binder the
+reference lowers a top-level BIND to) on the decoded terms of the variables
+the expression reads, once per distinct tuple of their ids; a value gets the
+store's id or a query-local id (tag 15, `termIdM`), an error leaves the
+variable unbound (`extendM`). The block's rows are joined with the other rows
+after the VALUES and UNION blocks. A FILTER of the top group that reads a
+variable of a BIND block runs after every join (`Plan.lateFilters`); a FILTER
+in an inner group that reads one is refused (bind10 shape). `l4sbm11 update`
+redirects the block patterns under `WITH`. Theorems (`IdBindTheorems`, lemma
+L5o): `lower_bind`, `refBinder_active`, `extend_decode`, `bind_decode`. Gates:
+18 `ids-bind-*` and 6 `ref-bind-*` queries; `gate/ref-bind.rq` is now
+`ids-bind-str.rq` and `gate12/ref-tt-bind.rq` is now `ids-tt-bind.rq`.
+
+Property paths on ids (2026-10-23, https://github.com/danbri/factoidal/issues/954;
+record: section 21 of the stage 4 record). A pattern `s path o` outside GRAPH
+runs on `path=ids` when the WHERE clause has no OPTIONAL and no FROM
+(`IdQuery.flattenWhere` collects `PathBlock`s). `IdQuery.evalIM` computes the reference's
+`SPARQL.evalPath` on ids under a restriction (a constant endpoint, else the ids
+the rows joined so far hold for an endpoint variable, `pathCands`): a step is a
+PSO or POS scan with the restriction as candidates; a sequence restricts its
+second part to the objects of its first; `^p` drops a pair whose new subject
+is a literal, as the reference does (`isNotLiteral`). The pair rows are joined
+after the BIND blocks; a FILTER of the top group over an endpoint variable runs
+after every join. Theorems (`IdPathTheorems`, lemma L5p): `evalPath_decode`,
+`pathRows_decode`, `pathPattern_decode`. Gates: `ids-path-*` and `ref-path-*`
+queries.
+
+Closures on ids (2026-10-23, issue 954; record: section 22 of the stage 4
+record). `p*`, `p+`, `p?` run on ids too (`IdQuery.closureM`): the step pairs
+reachable from the restriction are collected in rounds of scans with
+candidates, then a worklist per start node (`IdPath.reachPlus`). The
+worklist bound (pairs plus two) is proved sufficient for its list model
+(`reachModel_some`); the rounds bound is a bound on the number of distinct ids,
+and each round adds one; either loop fails the query, never truncates, if its
+bound runs out. `p*` and `p?` add `(n, n)` for each node of the active graph, so
+`?s p* ?o` with both ends variables scans the whole graph for its nodes, as
+the reference semantics require. Until
+https://github.com/danbri/factoidal/issues/955 (2026-10-23) the reference's
+`pathFixpoint step step` for `p+` stopped on a length test that is not a
+fixpoint test when the step relation had a pair twice (`(p1/p2)+`, `(p|q)+`
+can have one), and the id path refused those queries. The reference now seeds
+the iteration with `dedupPath step`; `plus_mem` holds with no hypothesis and
+nothing is refused. Rule from that repair: when the id path would have to
+copy a defect of the reference to stay equal to it, write the failing
+reference test (`SPARQL/QueryTests.lean`, `dupStepPairs`), fix the reference,
+and then drop the refusal; a refusal that preserves a reference defect cost
+one census test and a hypothesis on two theorems for a day.
+A refusal after reading must come before the first
+`emit` (`resolveExtrasM` runs first in `runPlanM`). Theorems
+(`IdPathClosureTheorems`, lemma L5q): `fixpoint_mem`, `star_mem`, `plus_mem`,
+`reachModel_some`, `reachModel_mem`, `starFrom_mem`, `plusFrom_mem`.
+
+FILTER EXISTS / NOT EXISTS on ids (2026-10-23,
+https://github.com/danbri/factoidal/issues/956; record: section 23 of the
+stage 4 record). A conjunct `EXISTS { B }` or `NOT EXISTS { B }` of a FILTER
+of the top group, `B` a basic graph pattern, runs on ids (`Plan.semis`,
+`IdQuery.semiJoinM`): `B` is evaluated by itself and the rows are kept when
+some row of `B` is compatible (or none is) after every join. Trap: the
+reference SUBSTITUTES the row into `B` (section 18.6), and substitution leaves
+a variable bound to a literal in a subject position, or to a triple term, as a
+variable of `B`; then the substituted pattern is not `B` restricted to the
+row (`?s :name ?n FILTER EXISTS { ?n :knows ?y }` keeps every row with a
+`:knows` triple anywhere). The id path checks each row and refuses with an
+error that starts with `refused:` (gate `ref-exists-literal-subject.rq`);
+`runPlanM` emits the JSON head only after that check. Theorems
+(`IdExistsTheorems`, lemma L5r): `exists_bgp_iff`, `semi_decode`,
+`exists_decode`, `exists_filter_decode`. MINUS (same issue): `P MINUS { B }`
+over the whole top group, `B` a basic graph pattern, runs on ids with
+`SemiKind.minus` (a row dropped when a row of `B` is compatible AND shares a
+bound variable; no substitution, so no row check); `{ P MINUS { B } Q }` is
+`Join(Minus(P, B), Q)` and stays on the fallback. Theorems
+(`IdMinusTheorems`, lemma L5s): `minus_decode`, `minus_bgp_decode`. The W3C
+MINUS tests all have a right side with OPTIONAL or FILTER NOT EXISTS and stay
+on the fallback.
+
+Nested groups (2026-10-23, https://github.com/danbri/factoidal/issues/959;
+record: section 25 of the stage 4 record). A WHERE clause that
+`flattenOptional` refuses gets `Plan.nested := some p` unless
+`IdQuery.nestedRefusal?` names a construct with no id form (LATERAL, SERVICE,
+a GRAPH name that is not an IRI or a variable, EXISTS of a pattern that is not
+a basic graph pattern or EXISTS inside an expression, a BIND that reads the
+row index). `IdGroup.evalGroupM` then recurses on the pattern the parser
+builds, one arm per constructor, on id tables: `joinIds`, `leftJoinCondM`
+(the condition on the merged rows, so it may read left variables),
+`unionIds`, `semiMatches` for MINUS, `extendM`, `filterM` (compiled, residual,
+EXISTS of a BGP in the active graph), GRAPH with an IRI or a variable (per
+named graph of `Store.namedGraphs`, `Session.storeNested`; a lone BGP under
+`GRAPH ?g` is one scan), `subSelectM` (a projection of variables on ids,
+else `selectPost` on the decoded rows and the values encoded with
+`termIdM`). The flat planner keeps every query it accepted. Census after:
+597 of 605 on ids; the 8 left are EXISTS of a non-BGP pattern or inside an
+expression, a BIND of EXISTS or of UUID()/STRUUID()/BNODE(), SERVICE.
+Theorem (`IdGroupTheorems`, lemma L5t): `evalGroupIds_decode`, by structural
+recursion on the pattern, for every pattern but LATERAL and SERVICE at any
+depth; the leaf scans are its hypothesis.
 
 Sideways information passing (2026-10-13,
 https://github.com/danbri/factoidal/issues/809; record: section 11 of the

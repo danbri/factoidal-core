@@ -1,0 +1,3 @@
+PREFIX ex: <http://ex.org/>
+# UUID() depends on the row index: the reference fallback.
+SELECT ?s ?u WHERE { ?s ex:age ?a . BIND(UUID() AS ?u) }

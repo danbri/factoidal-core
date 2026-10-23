@@ -1,0 +1,10 @@
+# Two VALUES blocks with rdf:XMLLiterals that no stored term matches and
+# whose lexical forms differ but are the same canonical XML: the reference
+# joins them (Term.eqb, RDF 1.1 Concepts 5.1), one row. Until 2026-10-23 the
+# id path gave each its own query-local id and answered no row; it now refuses
+# an rdf:XMLLiteral with no stored id (IdQuery.localXmlMsg) and the reference
+# evaluator answers.
+SELECT ?x WHERE {
+  { VALUES ?x { "<a></a>"^^<http://www.w3.org/1999/02/22-rdf-syntax-ns#XMLLiteral> } }
+  { VALUES ?x { "<a/>"^^<http://www.w3.org/1999/02/22-rdf-syntax-ns#XMLLiteral> } }
+}
