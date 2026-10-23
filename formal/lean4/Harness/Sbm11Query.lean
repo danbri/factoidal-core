@@ -968,11 +968,26 @@ def scanSipTableParM (ss : Session) (spec : IdQuery.ScanSpec) (cands : Array UIn
   let sortVar := match spec.outCols[0]? with
     | some c => if c == spec.key.size then spec.outVars[0]? else none
     | none => none
-  let c := (metas.size + n - 1) / n
-  -- the ranges as bounds (`ParallelScan.rangeBounds_map`): a task makes the
-  -- list of its positions (`boundsList`), so no list the parent frees was
-  -- reachable from a task (stage 1k)
-  let chunks := L4Factoidal.Storage.Sbm11.ParallelScan.rangeBounds c metas.size
+  -- stage 1m: the ranges cut at about equal estimated work, not at equal
+  -- block counts. A block that the PRM1 entry or the candidates rule out
+  -- (`selects`, `sipRange`, `Sip.mayHold`) costs about 1 microsecond, a block
+  -- that is read 30 to 50; with equal block counts the largest of olympics
+  -- q07's four ranges held 1.12 to 1.20 times the mean of the join-key values
+  -- tested. The weight of a block is its rows when it is read, else 0
+  -- (`ParallelScan.weightCuts`). The ranges are bounds of consecutive
+  -- positions; any cut points give ranges whose concatenation is the
+  -- selected blocks (`ParallelScan.cutBounds_flatten`,
+  -- `ParallelSipTheorems.parallel_sip_acc_eq_cut`). A task makes the list of
+  -- its positions (`boundsList`), so no list the parent frees was reachable
+  -- from a task (stage 1k).
+  let jc := spec.key.size
+  let ws := metas.map fun b =>
+    if !IdQuery.selects b spec.key then 0
+    else
+      let (vlo, vhi) := IdQuery.sipRange b spec.key jc
+      if Sip.mayHold cands vlo vhi (Sip.lbHint cands vlo) then b.rows else 0
+  let chunks := L4Factoidal.Storage.Sbm11.ParallelScan.cutBounds metas.size
+    (L4Factoidal.Storage.Sbm11.ParallelScan.weightCuts ws n)
   let init : L4Factoidal.Qlvr.Table :=
     { vars := spec.outVars, cols := spec.outVars.map fun _ => ByteArray.empty,
       rows := 0, sortVar := IdQuery.sortVarOf spec }
