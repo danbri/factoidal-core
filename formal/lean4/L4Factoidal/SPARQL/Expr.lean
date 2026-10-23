@@ -136,6 +136,10 @@ def xsdFloat : WfIri := ⟨"http://www.w3.org/2001/XMLSchema#float", rfl⟩
 /-- `xsd:dateTime` — the operand type of the §17.4.5 accessors. -/
 def xsdDateTime : WfIri := ⟨"http://www.w3.org/2001/XMLSchema#dateTime", rfl⟩
 
+/-- `xsd:date` — compared by value under `=` (the `XsdDateOperations`
+extension of the W3C SPARQL tests). -/
+def xsdDate : WfIri := ⟨"http://www.w3.org/2001/XMLSchema#date", rfl⟩
+
 /-- `xsd:dayTimeDuration` — the result type of §17.4.5.7 TIMEZONE. -/
 def xsdDayTimeDuration : WfIri :=
   ⟨"http://www.w3.org/2001/XMLSchema#dayTimeDuration", rfl⟩
@@ -1347,6 +1351,96 @@ def sameDatatypeLiteralEq (l1 l2 : Literal) (op : CompOp) : Option Bool :=
   else
     Fn.Comparison.literalCompare l1 l2 (if op == .ne then .ne else .eq)
 
+/-- The lexical form of `l` is in the lexical space of its datatype:
+    `Fn.Comparison.literalCompare` reads a value from it (used here for
+    `xsd:dateTime` and `xsd:date`). -/
+def literalHasComparableValue (l : Literal) : Bool :=
+  (Fn.Comparison.literalCompare l l .eq).isSome
+
+/-- `xsd:dateTime` and `xsd:date`, in either order. -/
+def dateTimeDatePair (a b : WfIri) : Bool :=
+  (a == xsdDateTime && b == xsdDate) || (a == xsdDate && b == xsdDateTime)
+
+/-- §17.4.1.7 RDFterm-equal of two literals that are different RDF terms,
+    where no row of the section 17.3 operator table applies. The base rule is
+    a type error. The note to section 17.4.1.7 says that RDFterm-equal on
+    typed literals "tests for equivalent values" and gives the type error for
+    "unsupported datatypes"; section 17.3.1 lets an extension replace a type
+    error, and only a type error, with a value. This function gives `false`
+    only in the two cases that W3C tests with the manifest requirement
+    `mf:KnownTypesDefault2Neq` ("Values in disjoint value spaces are not
+    equal") expect:
+      * one literal is an `rdf:langString` and the other is not
+        (open-world/open-eq-08, -10, -11, -12; these tests expect `false`
+        also when the other literal is ill-formed or of an unknown
+        datatype);
+      * an `xsd:dateTime` and an `xsd:date` literal, both in the lexical
+        space (open-world/date-2).
+    Every other pair stays a type error (`none`): ill-formed literals,
+    unknown datatypes, `rdf:XMLLiteral`
+    (https://github.com/danbri/factoidal/issues/963), and pairs such as
+    `xsd:integer` and `xsd:boolean` that no W3C test asks about. -/
+def distinctLiteralsEq (l1 l2 : Literal) : Option Bool :=
+  if (l1.datatype == rdfLangString) != (l2.datatype == rdfLangString) then some false
+  else if dateTimeDatePair l1.datatype l2.datatype &&
+      literalHasComparableValue l1 && literalHasComparableValue l2 then some false
+  else none
+
+/-- §17.4.1.7 RDFterm-equal where the section 17.3 operator table and the
+    same-kind arms of `valueCompare` give no answer. Two terms of different
+    kinds (IRI, blank node, literal, triple term) are not the same RDF term
+    and are not both literals: RDFterm-equal "returns FALSE otherwise". Two
+    literals that are different RDF terms: `distinctLiteralsEq`. Two
+    literals that are the same RDF term: `none`; the callers have already
+    answered that case where the terms come from the data, and a computed
+    value that is not in the lexical space stays an error. -/
+def rdfTermEqualFallback : Term → Term → Option Bool
+  | .literal x, .literal y =>
+      if x.val.sameTerm y.val then none else distinctLiteralsEq x.val y.val
+  | .literal _, _ => some false
+  | _, .literal _ => some false
+  | .iri _, .bnode _ => some false
+  | .bnode _, .iri _ => some false
+  | .iri _, .tripleTerm _ _ _ => some false
+  | .tripleTerm _ _ _, .iri _ => some false
+  | .bnode _, .tripleTerm _ _ _ => some false
+  | .tripleTerm _ _ _, .bnode _ => some false
+  | _, _ => none
+
+/-- `=` (`.eq`) or `!=` (any other `op`) by `rdfTermEqualFallback` on the
+    RDF terms of two values. An error operand is an error. -/
+def termEqualFallback (v1 v2 : EvalResult) (op : CompOp) : Option Bool := do
+  let a ← v1.toTerm?
+  let b ← v2.toTerm?
+  let r ← rdfTermEqualFallback a b
+  some (if op == .eq then r else !r)
+
+theorem distinctLiteralsEq_ne_true (a b : Literal) : distinctLiteralsEq a b ≠ some true := by
+  unfold distinctLiteralsEq
+  split
+  · simp
+  · split <;> simp
+
+theorem rdfTermEqualFallback_ne_true (a b : Term) : rdfTermEqualFallback a b ≠ some true := by
+  cases a <;> cases b <;> simp only [rdfTermEqualFallback] <;> (try split) <;>
+    simp [distinctLiteralsEq_ne_true]
+
+/-- The fallback never makes `=` true: read as a FILTER condition
+    (`getD false`), it is `false`. -/
+theorem termEqualFallback_eq_getD (v1 v2 : EvalResult) :
+    (termEqualFallback v1 v2 .eq).getD false = false := by
+  unfold termEqualFallback
+  cases v1.toTerm? with
+  | none => rfl
+  | some a =>
+    cases v2.toTerm? with
+    | none => rfl
+    | some b =>
+      have hn := rdfTermEqualFallback_ne_true a b
+      cases h : rdfTermEqualFallback a b with
+      | none => simp [h]
+      | some r => cases r <;> simp_all
+
 /-- §17.3/§17.4.1.7 comparison. Numeric equality and relational operations
     share the XSD/F&O value model; other equality uses the RDF fallback.
     This does not equate relational ordering with ORDER BY or sameTerm. -/
@@ -1358,7 +1452,9 @@ def valueCompare (v1 v2 : EvalResult) (op : CompOp) : Option Bool :=
   | .ge => relationalCompare v1 v2 .ge
   | .eq | .ne =>
     if v1.isNumericOperand || v2.isNumericOperand then
-      numericEquality v1 v2 (op == .ne)
+      match numericEquality v1 v2 (op == .ne) with
+      | some r => some r
+      | none => termEqualFallback v1 v2 op
     else
     match v1.promoteLiteral, v2.promoteLiteral with
     | .bool a, .bool b =>
@@ -1375,7 +1471,7 @@ def valueCompare (v1 v2 : EvalResult) (op : CompOp) : Option Bool :=
             | .eq => some false
             | .ne => some true
             | _ => none
-        else none
+        else termEqualFallback v1 v2 op
     | .term (.bnode a), .term (.bnode b) =>
         match op with
         | .eq => some (a == b)
@@ -1386,7 +1482,7 @@ def valueCompare (v1 v2 : EvalResult) (op : CompOp) : Option Bool :=
         | .eq => some (tripleTermValueEq (.tripleTerm s1 p1 o1) (.tripleTerm s2 p2 o2))
         | .ne => some (!tripleTermValueEq (.tripleTerm s1 p1 o1) (.tripleTerm s2 p2 o2))
         | _ => none
-    | _, _ => none
+    | _, _ => termEqualFallback v1 v2 op
 
 /-! ## §17.4.2 node tests and accessors -/
 

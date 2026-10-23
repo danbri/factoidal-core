@@ -372,6 +372,75 @@ def litUnknown (s : String) : WfLiteral := mkTypedLiteral s (iriE "http://exampl
 #guard valueCompare (.term (.literal (mkTypedLiteral "2006-08-23T09:00:00+01:00" xsdDateTime)))
   (.term (.literal (mkTypedLiteral "2006-08-23T08:00:00Z" xsdDateTime))) .eq == some true
 
+/-! ### §17.4.1.7 RDFterm-equal: terms of different kinds, and known datatypes
+
+SPARQL 1.1 section 17.4.1.7: RDFterm-equal "returns TRUE if term1 and term2
+are the same RDF term ...; produces a type error if the arguments are both
+literal but are not the same RDF term; returns FALSE otherwise". Two terms
+of different kinds (IRI, blank node, literal, triple term) are not the same
+term and are not both literals, so `=` is `false` and `!=` is `true`.
+
+Two literals that are different terms: the note to section 17.4.1.7 says
+that RDFterm-equal on typed literals "tests for equivalent values", and that
+the type error is for unsupported datatypes. Section 17.3.1 lets an extended
+implementation replace a type error (and only a type error) with a value.
+The W3C tests open-world/open-eq-08, -10, -11, -12 and date-2 (manifest
+requirement `mf:KnownTypesDefault2Neq`, "Values in disjoint value spaces are
+not equal") expect `false` in two cases only: an `rdf:langString` literal
+against a literal of any other datatype, and an `xsd:dateTime` against an
+`xsd:date` literal, both well-formed. These are the only cases implemented.
+Ill-formed literals, unknown datatypes and other pairs stay type errors. -/
+
+def iriX : Term := .iri (iriE "http://example/xyz")
+def bnX : Term := .bnode "xyz"
+def litBadInt : WfLiteral := litInt "xyz"
+def litDate (s : String) : WfLiteral := mkTypedLiteral s xsdDate
+
+-- (a) different kinds: IRI, blank node, literal, triple term
+#guard valueCompare (.term iriX) (.term (.literal (litStr "xyz"))) .eq == some false
+#guard valueCompare (.term iriX) (.term (.literal (litStr "xyz"))) .ne == some true
+#guard valueCompare (.term (.literal (litStr "xyz"))) (.term iriX) .ne == some true
+#guard valueCompare (.term bnX) (.term (.literal (litLang "xyz" "en"))) .ne == some true
+#guard valueCompare (.term bnX) (.term iriX) .eq == some false
+#guard valueCompare (.term iriX) (.term bnX) .ne == some true
+#guard valueCompare (.term iriX) (.term (.literal (litUnknown "xyz"))) .ne == some true
+#guard valueCompare (.term iriX) (.term (.literal litBadInt)) .ne == some true
+#guard valueCompare (.term (.literal litBadInt)) (.term bnX) .ne == some true
+#guard valueCompare (.term iriX) (.num 1) .eq == some false
+#guard valueCompare (.bool true) (.term bnX) .ne == some true
+#guard valueCompare (.term ttInt) (.term iriX) .eq == some false
+-- (b) `rdf:langString` against a literal of another datatype
+#guard valueCompare (.term (.literal (litStr "xyz"))) (.term (.literal (litLang "xyz" "en"))) .ne == some true
+#guard valueCompare (.term (.literal (litLang "xyz" "en"))) (.term (.literal (litStr "xyz"))) .eq == some false
+#guard valueCompare (.term (.literal (litLang "xyz" "en"))) (.term (.literal (litUnknown "xyz"))) .ne == some true
+#guard valueCompare (.term (.literal (litLang "xyz" "en"))) (.term (.literal litBadInt)) .ne == some true
+#guard valueCompare (.term (.literal litBadInt)) (.term (.literal (litLang "abc" "EN"))) .ne == some true
+-- (b) `xsd:dateTime` against `xsd:date` (date-2)
+#guard valueCompare (.term (.literal (mkTypedLiteral "2006-08-23T09:00:00+01:00" xsdDateTime)))
+  (.term (.literal (litDate "2006-08-23"))) .ne == some true
+#guard valueCompare (.term (.literal (litDate "2006-08-23")))
+  (.term (.literal (mkTypedLiteral "2006-08-23T09:00:00+01:00" xsdDateTime))) .eq == some false
+-- Other pairs of known datatypes: no W3C test expects `false`, so the base
+-- rule (a type error) stays
+#guard valueCompare (.term (.literal (litStr "1"))) (.term (.literal (litInt "1"))) .eq == none
+#guard valueCompare (.bool true) (.term (.literal (litStr "true"))) .ne == none
+#guard valueCompare (.num 1) (.bool true) .eq == none
+-- A computed value outside the lexical space stays an error
+#guard valueCompare (.dbl "+INF") (.dbl "+INF") .eq == none
+-- An ill-formed `xsd:date` against an `xsd:dateTime` stays an error
+#guard valueCompare (.term (.literal (litDate "2006-13-45")))
+  (.term (.literal (mkTypedLiteral "2006-08-23T09:00:00Z" xsdDateTime))) .ne == none
+-- Type errors that stay: ill-formed literals, unknown datatypes, rdf:XMLLiteral
+#guard valueCompare (.term (.literal (litStr "xyz"))) (.term (.literal litBadInt)) .ne == none
+#guard valueCompare (.term (.literal (litStr "xyz"))) (.term (.literal (litUnknown "xyz"))) .ne == none
+#guard valueCompare (.term (.literal (litUnknown "xyz"))) (.term (.literal litBadInt)) .ne == none
+#guard valueCompare (.term (.literal litBadInt)) (.term (.literal (litInt "abc"))) .ne == none
+#guard valueCompare (.term (.literal (litStr "a"))) (.term (.literal (litXml "<x/>"))) .ne == none
+-- date-2: a date with a time zone against one without is not `!=`-true
+#guard valueCompare (.term (.literal (litDate "2006-08-23Z"))) (.term (.literal (litDate "2006-08-23"))) .ne != some true
+-- `<` keeps the type error for terms of different kinds
+#guard valueCompare (.term iriX) (.term (.literal (litStr "xyz"))) .lt == none
+
 /-! ### §17.4.3.14 REGEX / §17.4.3.15 REPLACE over the pure engine -/
 
 -- Unanchored search: "a." matches inside "abc".
