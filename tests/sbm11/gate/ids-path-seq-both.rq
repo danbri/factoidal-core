@@ -1,0 +1,2 @@
+PREFIX ex: <http://ex.org/>
+ASK { ex:a ex:knows/ex:knows ex:c }

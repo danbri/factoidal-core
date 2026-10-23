@@ -74,6 +74,17 @@ rows after the VALUES and UNION blocks. A FILTER of the top group that reads a
 variable of a BIND block is applied after every join (`Plan.lateFilters`); one
 in an inner group is refused. Theorems: `IdBindTheorems`.
 
+Property paths (https://github.com/danbri/factoidal/issues/954, SPARQL 1.1
+sections 9 and 18.4): a pattern `s path o` in the join tree of the WHERE
+clause outside GRAPH, with no OPTIONAL in the WHERE clause and no FROM, the
+path built from IRIs, `^p`, `p1/p2`, `p1|p2` and `!(...)` (`flattenWhere`).
+`evalIM` computes the reference's `evalPath` on ids under a restriction (a
+constant endpoint, or the ids the rows joined so far hold for an endpoint
+variable, `pathCands`), with PSO and POS scans that take the restriction as
+candidates; `pathTableM` makes the rows as `pathResultToSolutions` does; they
+are joined after the BIND blocks, and a FILTER of the top group over an
+endpoint variable after every join. Theorems: `IdPathTheorems`.
+
 Issue 823 (https://github.com/danbri/factoidal/issues/823): a FILTER conjunct
 outside `backendLocal` (REGEX, LANGMATCHES, casts, IRI(), hashes, ...), or one
 that reads a variable no pattern of the WHERE clause binds, is a residual
@@ -152,6 +163,7 @@ import L4Factoidal.Storage.Sbm11.Overlay
 import L4Factoidal.Storage.Sbm11.OptJoin
 import L4Factoidal.Storage.Sbm11.IdJoin
 import L4Factoidal.Storage.Sbm11.IdAgg
+import L4Factoidal.Storage.Sbm11.IdPath
 import L4Factoidal.Storage.Sbm11.Sip
 import L4Factoidal.Storage.Sbm11.ParallelScan
 import L4Factoidal.SPARQL.Query
@@ -245,6 +257,18 @@ structure BindBlock where
   exts : Array (Expr × String)
   deriving Inhabited
 
+/-- A property path pattern of the WHERE clause (SPARQL 1.1 sections 9 and
+    18.4, https://github.com/danbri/factoidal/issues/954): its endpoints, the
+    path, and the graph it reads (the default graph; `l4sbm11 update`
+    redirects it under WITH). -/
+structure PathBlock where
+  s : Arg
+  path : L4Factoidal.SPARQL.PropertyPath
+  o : Arg
+  g : GArg := .dflt
+
+instance : Inhabited PathBlock := ⟨{ s := .var "", path := .negatedSet [], o := .var "" }⟩
+
 /-- The dataset of a query with FROM / FROM NAMED (SPARQL 1.1 section 13.2,
     https://github.com/danbri/factoidal/issues/953): the IRIs of the FROM
     clauses, each once, in order, and the IRIs of the FROM NAMED clauses
@@ -314,6 +338,10 @@ structure Plan where
       (issue 953): `Filter(f, ...)` over the whole WHERE clause, applied after
       every join (`FKind.residual`) -/
   lateFilters : Array Expr := #[]
+  /-- the property path patterns of the WHERE clause (issue 954), each
+      evaluated on ids (`pathTableM`) and joined with the rows of `pats` after
+      the BIND blocks; never with `optionals` -/
+  paths : Array PathBlock := #[]
   proj : Array ProjItem
   /-- the result variables (`Query.projectedVars`) -/
   outVars : Array String
@@ -391,6 +419,25 @@ def UnionBranch.vars (b : UnionBranch) : Array String :=
 def BindBlock.vars (b : BindBlock) : Array String :=
   let pv := b.pats.foldl (fun a t => t.vars.foldl (fun a v => if a.contains v then a else a.push v) a) #[]
   b.exts.foldl (fun a (_, v) => if a.contains v then a else a.push v) pv
+
+/-- Whether a path holds `*`, `+` or `?`. -/
+def _root_.L4Factoidal.SPARQL.PropertyPath.hasClosure : L4Factoidal.SPARQL.PropertyPath → Bool
+  | .iri _ | .negatedSet _ => false
+  | .inverse q => q.hasClosure
+  | .sequence a b | .alternative a b => a.hasClosure || b.hasClosure
+  | .zeroOrMore _ | .oneOrMore _ | .zeroOrOne _ => true
+
+/-- The variables of a property path pattern: its endpoints. -/
+def PathBlock.vars (b : PathBlock) : Array String := Id.run do
+  let mut out : Array String := #[]
+  for a in [b.s, b.o] do
+    match a with
+    | .var v => if !out.contains v then out := out.push v
+    | .term _ => pure ()
+  return out
+
+def pathVars (ps : Array PathBlock) : Array String :=
+  ps.foldl (fun a b => b.vars.foldl (fun a v => if a.contains v then a else a.push v) a) #[]
 
 /-- The variables of a plan's BIND blocks. -/
 def bindVars (bs : Array BindBlock) : Array String :=
@@ -514,7 +561,9 @@ def subtreeVars (p : QueryPattern) : Option (Array String) := Id.run do
       -- the triple patterns, so a FILTER beside it does not see its
       -- variables before that join (`flattenWhere` sends such a FILTER of
       -- the top group to `Plan.lateFilters`)
-      | .empty | .values _ _ | .union _ _ | .bind _ _ _ => pure ()
+      -- a property path (issue 954) is evaluated by itself and joined after
+      -- the triple patterns, as a BIND block
+      | .empty | .values _ _ | .union _ _ | .bind _ _ _ | .propertyPath _ _ _ => pure ()
       | _ => return none
   if !stack.isEmpty then return none
   return some out
@@ -579,6 +628,11 @@ def whereVars (p : QueryPattern) : Array String := Id.run do
       | .bind _ v q =>
         if !out.contains v then out := out.push v
         stack := stack.push q
+      | .propertyPath s _ o =>
+        for a in [argOfSubject s, argOfTerm o] do
+          match a with
+          | .ok (.var v) => if !out.contains v then out := out.push v
+          | _ => pure ()
       | _ => pure ()
   return out
 
@@ -601,6 +655,27 @@ def bindScopeVars (p : QueryPattern) : Array String := Id.run do
         for w in (scopeVars q).getD #[] do
           if !out.contains w then out := out.push w
         stack := stack.push q
+      | _ => pure ()
+  return out
+
+/-- The endpoint variables of the property path patterns of a subtree (issue
+    954), through joins and FILTERs. -/
+def pathScopeVars (p : QueryPattern) : Array String := Id.run do
+  let mut stack : Array QueryPattern := #[p]
+  let mut out : Array String := #[]
+  for _ in [0:maxNodes] do
+    match stack.back? with
+    | none => break
+    | some x =>
+      stack := stack.pop
+      match x with
+      | .join l r => stack := (stack.push r).push l
+      | .filter _ q => stack := stack.push q
+      | .propertyPath s _ o =>
+        for a in [argOfSubject s, argOfTerm o] do
+          match a with
+          | .ok (.var v) => if !out.contains v then out := out.push v
+          | _ => pure ()
       | _ => pure ()
   return out
 
@@ -687,8 +762,10 @@ def splitFilter (c : Expr) (inScope allVars : Array String) :
     variables, so a FILTER that reads one is refused (`splitFilter`). -/
 def flattenWhere (p : QueryPattern) (allVars : Array String) :
     Except String (Array PatSpec × Array Expr × Array Expr × Array ValuesBlock ×
-      Array (Array QueryPattern) × Array (Array (Expr × String) × QueryPattern) × Array Expr) := do
+      Array (Array QueryPattern) × Array (Array (Expr × String) × QueryPattern) × Array Expr ×
+      Array PathBlock) := do
   let mut stack : Array WalkItem := #[⟨p, .dflt⟩]
+  let mut paths : Array PathBlock := #[]
   -- the root and the FILTERs around it: the top group (issue 953)
   let mut atTop := true
   let mut binds : Array (Array (Expr × String) × QueryPattern) := #[]
@@ -714,7 +791,7 @@ def flattenWhere (p : QueryPattern) (allVars : Array String) :
         let some inScope := scopeVars q | throw "a FILTER over a group outside the fragment"
         -- a conjunct of the top group that reads a variable of a BIND block
         -- is applied after every join (issue 953)
-        let bscope := if top then bindScopeVars q else #[]
+        let bscope := if top then bindScopeVars q ++ pathScopeVars q else #[]
         for cj in conjuncts c do
           let vs := (residualVars cj).getD #[]
           if !bscope.isEmpty && vs.any bscope.contains then
@@ -761,10 +838,16 @@ def flattenWhere (p : QueryPattern) (allVars : Array String) :
         | .dflt => pure ()
         | _ => throw "a BIND inside a GRAPH"
         binds := binds.push (bindChain (.bind e v q))
+      | .propertyPath s path o =>
+        match g with
+        | .dflt => pure ()
+        | _ => throw "a property path inside a GRAPH"
+        if path.hasClosure then throw "a property path with *, + or ?"
+        paths := paths.push { s := ← argOfSubject s, path, o := ← argOfObject o }
       | .empty => pure ()
-      | _ => throw "a WHERE clause outside the fragment (OPTIONAL not at the top level, MINUS, sub-SELECT, SERVICE or a property path)"
+      | _ => throw "a WHERE clause outside the fragment (OPTIONAL not at the top level, MINUS, sub-SELECT or SERVICE)"
   if !stack.isEmpty then throw s!"a WHERE clause with more than {maxNodes} nodes"
-  return (pats, filters, residuals, values, unions, binds, late)
+  return (pats, filters, residuals, values, unions, binds, late, paths)
 where
   /-- The branches of a chain `Union(... Union(P1, P2) ..., Pk)`, in order.
       A branch that is a group holding a UNION is a branch (refused by
@@ -808,7 +891,8 @@ def flattenUnions (raw : Array (Array QueryPattern)) (allVars : Array String) :
   for leaves in raw do
     let mut bs : Array UnionBranch := #[]
     for q in leaves do
-      let (pats, filters, residuals, values, unions, binds, _) ← flattenWhere q allVars
+      let (pats, filters, residuals, values, unions, binds, _, paths) ← flattenWhere q allVars
+      if !paths.isEmpty then throw "a property path inside a UNION branch"
       if !binds.isEmpty then throw "a BIND inside a UNION branch"
       if !unions.isEmpty then throw "a UNION inside a UNION branch"
       if !values.isEmpty then throw "a VALUES block inside a UNION branch"
@@ -828,7 +912,8 @@ def flattenBinds (raw : Array (Array (Expr × String) × QueryPattern)) (allVars
     Except String (Array BindBlock) := do
   let mut out : Array BindBlock := #[]
   for (exts, q) in raw do
-    let (pats, filters, residuals, values, unions, binds, _) ← flattenWhere q allVars
+    let (pats, filters, residuals, values, unions, binds, _, paths) ← flattenWhere q allVars
+    if !paths.isEmpty then throw "a BIND over a group with a property path"
     if !binds.isEmpty then throw "a BIND over a group that holds a BIND block"
     if !values.isEmpty then throw "a BIND over a group with a VALUES block"
     if !unions.isEmpty then throw "a BIND over a group with a UNION"
@@ -895,14 +980,16 @@ def hasGraph (q : QueryPattern) : Bool := Id.run do
     group shares with anything outside it is bound in every left row). -/
 def flattenOptional (p : QueryPattern) :
     Except String (Array PatSpec × Array Expr × Array Expr × Array Expr × Array OptGroup ×
-      Array ValuesBlock × Array (Array UnionBranch) × Array BindBlock × Array Expr) := do
+      Array ValuesBlock × Array (Array UnionBranch) × Array BindBlock × Array Expr ×
+      Array PathBlock) := do
   let allVars := whereVars p
   let (tops, base, raw) := optionalSpine p
   if raw.isEmpty then
-    let (pats, filters, residuals, values, unions, binds, late) ← flattenWhere p allVars
+    let (pats, filters, residuals, values, unions, binds, late, paths) ← flattenWhere p allVars
     return (pats, filters, residuals, #[], #[], values, ← flattenUnions unions allVars,
-      ← flattenBinds binds allVars, late)
-  let (pats, filters, residuals, values, unions, binds, _) ← flattenWhere base allVars
+      ← flattenBinds binds allVars, late, paths)
+  let (pats, filters, residuals, values, unions, binds, _, paths) ← flattenWhere base allVars
+  if !paths.isEmpty then throw "a property path beside an OPTIONAL"
   if !binds.isEmpty then throw "a BIND beside an OPTIONAL"
   if !values.isEmpty then throw "a VALUES block beside an OPTIONAL"
   if !unions.isEmpty then throw "a UNION beside an OPTIONAL"
@@ -927,7 +1014,8 @@ def flattenOptional (p : QueryPattern) :
   let mut groups : Array OptGroup := #[]
   for (r, c) in raw do
     if hasGraph r then throw "a GRAPH inside an OPTIONAL group"
-    let (gp, gf, gr, gv, gu, gb, _) ← flattenWhere r allVars
+    let (gp, gf, gr, gv, gu, gb, _, gpaths) ← flattenWhere r allVars
+    if !gpaths.isEmpty then throw "a property path inside an OPTIONAL group"
     if !gb.isEmpty then throw "a BIND inside an OPTIONAL group"
     if !gv.isEmpty then throw "a VALUES block inside an OPTIONAL group"
     if !gu.isEmpty then throw "a UNION inside an OPTIONAL group"
@@ -954,7 +1042,7 @@ def flattenOptional (p : QueryPattern) :
         for j in [0:groups.size] do
           if j != k && groups[j]!.vars.contains v then
             throw s!"?{v} occurs in two OPTIONAL groups and not in the triple patterns before them"
-  return (pats, filters ++ topFilters, residuals ++ topResiduals, postFilters, groups, #[], #[], #[], #[])
+  return (pats, filters ++ topFilters, residuals ++ topResiduals, postFilters, groups, #[], #[], #[], #[], #[])
 
 /-- The number of first WHERE solutions the answer of a post-processed query
     reads (`PostSpec.firstRows`), or `none` for all of them.
@@ -1074,17 +1162,20 @@ def translate (q : L4Factoidal.SPARQL.Query) : Except String Plan := do
   let dataset ← datasetSpec q.dataset
   if q.pattern.mentionsFulltext then
     throw "text:query (full-text search): the reference evaluator answers it"
-  let (pats, filters, residuals, postFilters, optionals, values, unions, binds, lateFilters) ←
+  let (pats, filters, residuals, postFilters, optionals, values, unions, binds, lateFilters, paths) ←
     flattenOptional q.pattern.rewriteBnodes
+  if dataset.isSome && !paths.isEmpty then
+    throw "a property path with FROM or FROM NAMED"
   let allPats : Array PatSpec := pats ++ optionals.foldl (fun (a : Array PatSpec) (g : OptGroup) => a ++ g.pats) #[]
   -- the VALUES variables count as variables the WHERE clause binds (in some
   -- rows; an UNDEF cell is `OptJoin.unbound` in its column, as after an
   -- OPTIONAL)
   let patVars := (allPats.foldl
     (fun a (t : PatSpec) => t.vars.foldl (fun a v => if a.contains v then a else a.push v) a) #[]) ++
-    ((valuesVars values ++ unionVars unions ++ bindVars binds).filter fun v => !(allPats.any fun t => t.vars.contains v))
+    ((valuesVars values ++ unionVars unions ++ bindVars binds ++ pathVars paths).filter
+      fun v => !(allPats.any fun t => t.vars.contains v))
   let base : Plan := {
-    pats, filters, residuals, postFilters, optionals, values, unions, dataset, binds, lateFilters,
+    pats, filters, residuals, postFilters, optionals, values, unions, dataset, binds, lateFilters, paths,
     proj := #[], outVars := #[],
     groupVars := #[], agg := false, order := #[], distinct := false, offset := 0,
     limit := none }
@@ -3269,20 +3360,306 @@ def evalBindsM {m : Type → Type} [Monad m] (st : Store m) (plan : Plan) (env :
     out := out.push t
   return (out, vocab, localIdx, lines, total)
 
-/-- The VALUES blocks of a plan as id tables and the rows of its BIND blocks
-    (`evalBindsM`), and the store that decodes the query-local ids of both. -/
+/-! ## Property paths on ids (https://github.com/danbri/factoidal/issues/954)
+
+SPARQL 1.1 sections 9 and 18.4 as the reference evaluator computes them
+(`SPARQL.evalPath`, `addConstantReflexivity`, `pathResultToSolutions`). A path
+is resolved once (`resolvePathM`: each IRI to its id, `IPath`) and evaluated
+to a relation of id pairs (`evalIM`) with a restriction: `fwd = true` and
+`some R`, the pairs whose subject is in `R`; `fwd = false` and `some R`, the
+pairs whose object is in `R`; `none`, every pair. The restriction comes from a
+constant endpoint or from the values the rows already joined hold for an
+endpoint variable (`pathTableM`); a pair outside it joins no row, so the join
+is the same. A one-step path is a scan of PSO (subject restriction) or POS
+(object restriction) with the restriction as candidates (`scanSipTableM`);
+no term is decoded, except for `^p` the objects whose id tag does not say
+whether they are literals. -/
+
+/-- A property path with its IRIs resolved to ids (`none`: the IRI has no id,
+    so no triple has it). A negated property set keeps the ids of its direct
+    and inverse members and whether each list was empty as the reference
+    reads it (`negatedDirectIris`, `negatedInverseIris`: before the id
+    lookup). -/
+inductive IPath where
+  | link (p : Option UInt64)
+  | inv (q : IPath)
+  | seq (a b : IPath)
+  | alt (a b : IPath)
+  | star (q : IPath)
+  | plus (q : IPath)
+  | opt (q : IPath)
+  | nps (direct inverse : Array UInt64) (hasDirect hasInverse : Bool)
+  deriving Inhabited, Repr
+
+/-- Whether a path admits the zero-length match (`p*`, `p?`): the reference
+    then adds the reflexive pair of each constant endpoint
+    (`addConstantReflexivity`). -/
+def isZeroLen : L4Factoidal.SPARQL.PropertyPath → Bool
+  | .zeroOrMore _ | .zeroOrOne _ => true
+  | _ => false
+
+/-- Resolve the IRIs of a path to ids. -/
+def resolvePathM {m : Type → Type} [Monad m] (st : Store m) :
+    L4Factoidal.SPARQL.PropertyPath → ExceptT String m IPath
+  | .iri i => do return .link (← st.idOf (.iri i))
+  | .inverse q => do return .inv (← resolvePathM st q)
+  | .sequence a b => do return .seq (← resolvePathM st a) (← resolvePathM st b)
+  | .alternative a b => do return .alt (← resolvePathM st a) (← resolvePathM st b)
+  | .zeroOrMore q => do return .star (← resolvePathM st q)
+  | .oneOrMore q => do return .plus (← resolvePathM st q)
+  | .zeroOrOne q => do return .opt (← resolvePathM st q)
+  | .negatedSet ps => do
+    let d := L4Factoidal.SPARQL.negatedDirectIris ps
+    let i := L4Factoidal.SPARQL.negatedInverseIris ps
+    let ds ← idsOfM st (d.toArray.map Term.iri)
+    let is ← idsOfM st (i.toArray.map Term.iri)
+    return .nps ds is (!d.isEmpty) (!i.isEmpty)
+
+/-- A resolved property path pattern: the endpoints as slots (a constant is
+    the store's id or a query-local id, `termIdM`), the path, and the graph
+    (`none`: a graph the store does not have, an empty graph). -/
+structure RPath where
+  s : Slot
+  o : Slot
+  ipath : IPath
+  zeroLen : Bool
+  g : Option UInt64
+  deriving Inhabited
+
+/-- Whether an id is a literal (`isNotLiteral` false): by the id tag for the
+    dictionary and inline tags, else by the decoded term. -/
+def isLitIdM {m : Type → Type} [Monad m] (st : Store m) (x : UInt64) : ExceptT String m Bool := do
+  let t := tagOf x
+  if t == 3 || t == 4 || t == 5 then return true
+  if t == 1 || t == 2 || t == 9 then return false
+  return !(L4Factoidal.SPARQL.isNotLiteral (← st.termOf x))
+
+/-- The pairs of the columns `a` and `b` of a table, in row order. -/
+def pairsOf (t : Table) (a b : String) : IdPath.Pairs := Id.run do
+  match t.idx a, t.idx b with
+  | some ca, some cb =>
+    let mut out : IdPath.Pairs := Array.mkEmpty t.rows
+    for i in [0:t.rows] do
+      out := out.push (t.at ca i, t.at cb i)
+    return out
+  | _, _ => return #[]
+
+/-- The scan of one pattern of graph `g` with the variables `?s`, `?o` (and
+    `?p` when `pid` is `none`) on permutation `perm`, with candidates on the
+    permutation's first unbound column when `R` is given. -/
+def pathScanM {m : Type → Type} [Monad m] (st : Store m) (g : UInt64) (pid : Option UInt64)
+    (perm : Nat) (R : Option (Array UInt64)) : ExceptT String m (Table × ScanStats) := do
+  let t : Pat := { s := .var "s", p := (match pid with | some x => .const x | none => .var "p"),
+                   o := .var "o", g := .const g, named := false }
+  let spec := mkSpec t perm (fun _ => true)
+  match R with
+  | some cs =>
+    if cs.isEmpty then return (Table.empty spec.outVars, {})
+    let (tb, s) ← scanSipTableM st spec cs
+    return (tb, s.withSip)
+  | none =>
+    let (tb, s) ← scanTableOf st spec
+    return (tb, s.full)
+
+/-- `evalPath` on ids under a restriction (section above): `fwd`, `R`
+    restrict the subjects (`fwd`) or the objects to `R` (sorted, distinct);
+    `R = none` gives every pair. The pair order may differ from the
+    reference's; the multiset of pairs restricted is the same. -/
+def evalIM {m : Type → Type} [Monad m] (st : Store m) (g : Option UInt64) :
+    Bool → IPath → Option (Array UInt64) → ExceptT String m (IdPath.Pairs × ScanStats)
+  | _, .link none, _ => return (#[], {})
+  | fwd, .link (some pid), R => do
+    match g with
+    | none => return (#[], {})
+    | some g =>
+      -- PSO for a subject restriction (and for none), POS for an object one
+      let perm := if R.isNone || fwd then 0 else 1
+      let (t, s) ← pathScanM st g (some pid) perm R
+      return (pairsOf t "s" "o", s)
+  | fwd, .inv q, R => do
+    -- `^q`: (b, a) per pair (a, b) of `q` whose `b` is not a literal; the
+    -- subject of `^q` is the object of `q`
+    let (r, s) ← evalIM st g (R.isSome && !fwd) q R
+    let mut out : IdPath.Pairs := Array.mkEmpty r.size
+    let mut memo : Std.HashMap UInt64 Bool := {}
+    for (a, b) in r do
+      let lit ← match memo.get? b with
+        | some l => pure l
+        | none => do
+          let l ← isLitIdM st b
+          memo := memo.insert b l
+          pure l
+      if !lit then out := out.push (b, a)
+    return (out, s)
+  | fwd, .seq a b, R => do
+    if R.isNone || fwd then
+      let (r1, s1) ← evalIM st g true a R
+      let (r2, s2) ← evalIM st g true b (some (IdPath.seconds r1))
+      return (IdPath.compose r1 r2, s1.add s2)
+    else
+      let (r2, s2) ← evalIM st g false b R
+      let (r1, s1) ← evalIM st g false a (some (IdPath.firsts r2))
+      return (IdPath.compose r1 r2, s1.add s2)
+  | fwd, .alt a b, R => do
+    let (r1, s1) ← evalIM st g fwd a R
+    let (r2, s2) ← evalIM st g fwd b R
+    return (r1 ++ r2, s1.add s2)
+  -- `*`, `+`, `?`: refused by `flattenWhere` (`PropertyPath.hasClosure`)
+  | _, .opt _, _ | _, .star _, _ | _, .plus _, _ =>
+    throw "a property path with *, + or ? (refused by translate)"
+  | fwd, .nps ds is hd hi, R => do
+    match g with
+    | none => return (#[], {})
+    | some g =>
+      -- direct members: (s, o) per triple whose predicate is not excluded;
+      -- inverse members: (o, s) per triple whose predicate is not excluded
+      -- (`negatedSet`: a set of inverse members only gives no direct pair,
+      -- and the other way round)
+      let byS := R.isNone || fwd
+      let mut out : IdPath.Pairs := #[]
+      let mut total : ScanStats := {}
+      if !(hi && !hd) then
+        let (t, s) ← pathScanM st g none (if byS then 2 else 3) R
+        total := total.add s
+        match t.idx "s", t.idx "p", t.idx "o" with
+        | some cs, some cp, some co =>
+          for i in [0:t.rows] do
+            if !ds.contains (t.at cp i) then out := out.push (t.at cs i, t.at co i)
+        | _, _, _ => pure ()
+      if !(hd && !hi) then
+        -- the subject of an inverse pair is the triple's object
+        let (t, s) ← pathScanM st g none (if byS then 3 else 2) R
+        total := total.add s
+        match t.idx "s", t.idx "p", t.idx "o" with
+        | some cs, some cp, some co =>
+          for i in [0:t.rows] do
+            if !is.contains (t.at cp i) then out := out.push (t.at co i, t.at cs i)
+        | _, _, _ => pure ()
+      return (out, total)
+/-- The candidates for an endpoint variable from the rows joined so far: the
+    distinct ids of its column, sorted; `none` when the table does not have
+    the variable or a row leaves it unbound (that row joins any value). -/
+def pathCands (t : Table) (v : String) : Option (Array UInt64) := Id.run do
+  match t.idx v with
+  | none => return none
+  | some c =>
+    let mut xs : Array UInt64 := Array.mkEmpty t.rows
+    for i in [0:t.rows] do
+      let x := t.at c i
+      if x == OptJoin.unbound then return none
+      xs := xs.push x
+    return some (IdPath.sortedDistinct xs)
+
+/-- The rows of one property path pattern (SPARQL 1.1 section 18.4), to be
+    joined with `t`: the pairs of the path under the restriction of a
+    constant endpoint (subject first) or of the values of `t` for an endpoint
+    variable (`pathCands`); for `p*` and `p?` the reflexive pair of each
+    constant endpoint that the pairs lack, appended once per constant, as
+    `addConstantReflexivity` appends them; then one row per pair that the
+    endpoints accept, as `pathResultToSolutions` (a variable in both
+    positions needs the two ids equal). -/
+def pathTableM {m : Type → Type} [Monad m] (st : Store m) (rp : RPath) (t : Table) :
+    ExceptT String m (Table × String × ScanStats) := do
+  let (fwd, R, how) : Bool × Option (Array UInt64) × String :=
+    match rp.s, rp.o with
+    | .const x, _ => (true, some #[x], "subject constant")
+    | _, .const y => (false, some #[y], "object constant")
+    | .var v, ov =>
+      match pathCands t v with
+      | some c => (true, some c, s!"{c.size} candidates for ?{v}")
+      | none =>
+        match ov with
+        | .var w =>
+          match pathCands t w with
+          | some c => (false, some c, s!"{c.size} candidates for ?{w}")
+          | none => (true, none, "no restriction")
+        | _ => (true, none, "no restriction")
+    | _, _ => (true, none, "no restriction")
+  let (pairs0, s) ← evalIM st rp.g fwd rp.ipath R
+  let consts : List UInt64 :=
+    (match rp.s with | .const x => [x] | _ => []) ++ (match rp.o with | .const y => [y] | _ => [])
+  let pairs := if rp.zeroLen then
+      let missing := consts.filter fun c => !pairs0.any (· == (c, c))
+      pairs0 ++ missing.toArray.map fun c => (c, c)
+    else pairs0
+  let vars : Array String := Id.run do
+    let mut vs : Array String := #[]
+    for sl in [rp.s, rp.o] do
+      match sl with
+      | .var v => if !vs.contains v then vs := vs.push v
+      | _ => pure ()
+    return vs
+  let mut cols : Array ByteArray := vars.map fun _ => ByteArray.emptyWithCapacity (8 * pairs.size)
+  let mut rows := 0
+  for (x, y) in pairs do
+    let okS := match rp.s with
+      | .const c => x == c
+      | .var _ => true
+      | .missing => false
+    let okO := match rp.o, rp.s with
+      | .const c, _ => y == c
+      | .var w, .var v => w != v || y == x
+      | .var _, _ => true
+      | .missing, _ => false
+    if okS && okO then
+      rows := rows + 1
+      let mut k := 0
+      if let .var _ := rp.s then
+        cols := cols.modify k (L4Factoidal.Qlvr.Side.put64 · x)
+        k := k + 1
+      match rp.o, rp.s with
+      | .var w, .var v => if w != v then cols := cols.modify k (L4Factoidal.Qlvr.Side.put64 · y)
+      | .var _, _ => cols := cols.modify k (L4Factoidal.Qlvr.Side.put64 · y)
+      | _, _ => pure ()
+  return ({ vars, cols, rows }, s!"{how}: {pairs.size} pairs, {rows} rows", s)
+
+/-- Resolve the property path patterns of a plan: the endpoint constants to
+    ids (`termIdM`, extending the query-local vocabulary), the IRIs of the
+    path, the graph. -/
+def resolvePathsM {m : Type → Type} [Monad m] (st : Store m) (plan : Plan)
+    (vocab0 : Array Term) (localIdx0 : Std.HashMap Term Nat) :
+    ExceptT String m (Array RPath × Array Term × Std.HashMap Term Nat × Array String) := do
+  let mut vocab := vocab0
+  let mut localIdx := localIdx0
+  let mut out : Array RPath := #[]
+  let mut lines : Array String := #[]
+  for k in [0:plan.paths.size] do
+    let b := plan.paths[k]!
+    let mut slots : Array Slot := #[]
+    for a in [b.s, b.o] do
+      match a with
+      | .var v => slots := slots.push (.var v)
+      | .term t =>
+        let (y, voc, ix) ← termIdM st vocab localIdx t
+        vocab := voc
+        localIdx := ix
+        slots := slots.push (.const y)
+    let g ← match b.g with
+      | .dflt => pure (some 0)
+      | .term t => st.idOf t
+      | .var _ => throw "a property path pattern over a graph variable"
+    let ip ← resolvePathM st b.path
+    lines := lines.push s!"path {k}: resolved"
+    out := out.push { s := slots[0]!, o := slots[1]!, ipath := ip, zeroLen := isZeroLen b.path, g }
+  return (out, vocab, localIdx, lines)
+
+/-- The VALUES blocks of a plan as id tables, the rows of its BIND blocks
+    (`evalBindsM`), its property path patterns resolved (`resolvePathsM`),
+    and the store that decodes the query-local ids of all three. -/
 def resolveExtrasM {m : Type → Type} [Monad m] (st : Store m) (plan : Plan) (env : EvalEnv) :
-    ExceptT String m (Array Table × Array Table × Store m × Array String × ScanStats) := do
+    ExceptT String m (Array Table × Array Table × Store m × Array String × ScanStats × Array RPath) := do
   let (vtabs, vocab, localIdx) ← resolveValuesVocabM st plan.values #[] {}
-  if plan.binds.isEmpty then return (vtabs, #[], st.withLocal vocab, #[], {})
-  let (btabs, vocab, _, lines, s) ← evalBindsM st plan env vocab localIdx
-  return (vtabs, btabs, st.withLocal vocab, lines, s)
+  let (btabs, vocab, localIdx, lines, s) ← if plan.binds.isEmpty then pure (#[], vocab, localIdx, #[], {})
+    else evalBindsM st plan env vocab localIdx
+  let (rpaths, vocab, _, plines) ← resolvePathsM st plan vocab localIdx
+  return (vtabs, btabs, st.withLocal vocab, lines ++ plines, s, rpaths)
 
 /-- After the triple patterns and their FILTERs: the VALUES blocks
     (`joinValues`), then the rows of each UNION block (`evalUnionsM`), each
     joined in order (`IdJoin.joinIds`). -/
 def joinExtrasM {m : Type → Type} [Monad m] (st : Store m) (plan : Plan) (env : EvalEnv) (t : Table)
-    (vtabs : Array Table) (btabs : Array Table := #[]) : ExceptT String m (Table × Array String × ScanStats) := do
+    (vtabs : Array Table) (btabs : Array Table := #[]) (rpaths : Array RPath := #[]) :
+    ExceptT String m (Table × Array String × ScanStats) := do
   let (t, lines) := joinValues t vtabs
   let mut t := t
   let mut lines := lines
@@ -3301,12 +3678,22 @@ def joinExtrasM {m : Type → Type} [Monad m] (st : Store m) (plan : Plan) (env 
     let before := t.rows
     t := IdJoin.joinIds t btabs[k]!
     lines := lines.push s!"bind {k}: join with {before} rows: {t.rows} rows"
+  -- the property path patterns (issue 954), each restricted by the rows
+  -- joined so far
+  if rpaths.size != plan.paths.size then
+    throw "the property paths of the plan are not resolved (`resolveExtrasM`)"
+  for k in [0:rpaths.size] do
+    let before := t.rows
+    let (pt, how, ps) ← pathTableM st rpaths[k]! t
+    s := s.add ps
+    t := IdJoin.joinIds t pt
+    lines := lines.push s!"path {k}: {how}; join with {before} rows: {t.rows} rows"
   if !plan.lateFilters.isEmpty then
     let lfs := plan.lateFilters.map (residualKind env)
     let before := t.rows
     let (t', _) ← applyFilters st lfs (lfs.map fun _ => {}) t
     t := t'
-    lines := lines.push s!"{lfs.size} FILTER conjuncts over BIND variables, after the joins: {before} rows to {t.rows}"
+    lines := lines.push s!"{lfs.size} FILTER conjuncts over BIND or path variables, after the joins: {before} rows to {t.rows}"
   return (t, lines, s)
 
 /-- The base of a plan with OPTIONAL groups (issue 775): its BGP and FILTERs,
@@ -3648,7 +4035,7 @@ def runPlanM {m : Type → Type} [Monad m] (st : Store m) (plan : Plan) (emit : 
     ExceptT String m RunStats := do
   -- the VALUES blocks as id tables and the rows of the BIND blocks; the
   -- store then decodes their local ids
-  let (vtabs, btabs, st, xlines, xs) ← resolveExtrasM st plan env
+  let (vtabs, btabs, st, xlines, xs, rpaths) ← resolveExtrasM st plan env
   let pats ← plan.pats.mapM (resolvePatIn st plan.dataset)
   let fs := (← plan.filters.mapM (compileFilter st)) ++ plan.residuals.map (residualKind env)
   let memos0 : Array Memo := fs.map fun _ => {}
@@ -3661,12 +4048,13 @@ def runPlanM {m : Type → Type} [Monad m] (st : Store m) (plan : Plan) (emit : 
       | .count _ (some x) => a.push x
       | .count _ none => a) #[]
     ++ filterVars ++ plan.order.map (·.1) ++ plan.groupVars ++ valuesVars plan.values
-    ++ unionVars plan.unions ++ bindVars plan.binds
+    ++ unionVars plan.unions ++ bindVars plan.binds ++ pathVars plan.paths
   let need (x : String) : Bool := used.contains x
   let mut stats : RunStats := {}
   (emit (jsonHead plan.outVars).toUTF8 : m Unit)
   let single := pats.size == 1 && !pats[0]!.hasMissing && pats[0]!.plain && plan.optionals.isEmpty &&
-    plan.values.isEmpty && plan.unions.isEmpty && plan.binds.isEmpty && plan.lateFilters.isEmpty
+    plan.values.isEmpty && plan.unions.isEmpty && plan.binds.isEmpty && plan.lateFilters.isEmpty &&
+    plan.paths.isEmpty
   if single && !plan.agg && plan.order.isEmpty && !plan.distinct then
     -- one pattern, no modifier that needs every row: block by block
     let t := pats[0]!
@@ -3763,7 +4151,7 @@ def runPlanM {m : Type → Type} [Monad m] (st : Store m) (plan : Plan) (emit : 
           if plan.optionals.isEmpty then do
             let (t0, lines, s) ← evalBgpM st pats need
             let (t1, _) ← applyFilters st fs memos0 t0
-            let (t2, vlines, us) ← joinExtrasM st plan env t1 vtabs btabs
+            let (t2, vlines, us) ← joinExtrasM st plan env t1 vtabs btabs rpaths
             pure (t2, xlines ++ lines ++ vlines, (s.add us).add xs)
           else evalOptionalsM st plan pats fs need env
       stats := { stats with plan := lines, scan := s }
@@ -3860,7 +4248,8 @@ def decodeRowsM {m : Type → Type} [Monad m] (st : Store m) (t : Table) :
     only the first `n` rows; a single pattern then streams and its scan stops
     after them. -/
 def whereTableM {m : Type → Type} [Monad m] (st : Store m) (plan : Plan) (env : EvalEnv)
-    (firstRows : Option Nat) (vtabs : Array Table := #[]) (btabs : Array Table := #[]) :
+    (firstRows : Option Nat) (vtabs : Array Table := #[]) (btabs : Array Table := #[])
+    (rpaths : Array RPath := #[]) :
     ExceptT String m (Table × Array String × ScanStats) := do
   if vtabs.size != plan.values.size then
     throw "the VALUES blocks of the plan are not resolved (`resolveValuesM`)"
@@ -3871,7 +4260,7 @@ def whereTableM {m : Type → Type} [Monad m] (st : Store m) (plan : Plan) (env 
   if plan.pats.isEmpty then
     let t0 : Table := { vars := #[], cols := #[], rows := 1 }
     let (t1, _) ← applyFilters st fs memos0 t0
-    let (t2, vlines, us) ← joinExtrasM st plan env t1 vtabs btabs
+    let (t2, vlines, us) ← joinExtrasM st plan env t1 vtabs btabs rpaths
     let t := match firstRows with
       | some n => t2.slice 0 n
       | none => t2
@@ -3880,7 +4269,8 @@ def whereTableM {m : Type → Type} [Monad m] (st : Store m) (plan : Plan) (env 
   let need : String → Bool := fun _ => true
   if let some n := firstRows then
     if pats.size == 1 && !pats[0]!.hasMissing && pats[0]!.plain && plan.optionals.isEmpty &&
-        plan.values.isEmpty && plan.unions.isEmpty && plan.binds.isEmpty && plan.lateFilters.isEmpty then
+        plan.values.isEmpty && plan.unions.isEmpty && plan.binds.isEmpty && plan.lateFilters.isEmpty &&
+        plan.paths.isEmpty then
       let t := pats[0]!
       let spec := mkSpec t (permFor t none) need
       let init : Table := Table.empty spec.outVars
@@ -3893,7 +4283,7 @@ def whereTableM {m : Type → Type} [Monad m] (st : Store m) (plan : Plan) (env 
   let (t0, lines, s) ← if plan.optionals.isEmpty then do
       let (t0, lines, s) ← evalBgpM st pats need
       let (t1, _) ← applyFilters st fs memos0 t0
-      let (t2, vlines, us) ← joinExtrasM st plan env t1 vtabs btabs
+      let (t2, vlines, us) ← joinExtrasM st plan env t1 vtabs btabs rpaths
       pure (t2, lines ++ vlines, s.add us)
     else evalOptionalsM st plan pats fs need env
   let t := match firstRows with
@@ -3918,8 +4308,8 @@ def runPostM {m : Type → Type} [Monad m] (st : Store m) (plan : Plan) (ps : Po
     ExceptT String m (PostAnswer × RunStats) := do
   -- the VALUES blocks as id tables and the rows of the BIND blocks; the
   -- store then decodes their local ids
-  let (vtabs, btabs, st, xlines, xs) ← resolveExtrasM st plan env
-  let (t, lines, s) ← whereTableM st plan env ps.firstRows vtabs btabs
+  let (vtabs, btabs, st, xlines, xs, rpaths) ← resolveExtrasM st plan env
+  let (t, lines, s) ← whereTableM st plan env ps.firstRows vtabs btabs rpaths
   let lines := xlines ++ lines
   let s := s.add xs
   let q := ps.query

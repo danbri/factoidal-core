@@ -990,6 +990,21 @@ L5o): `lower_bind`, `refBinder_active`, `extend_decode`, `bind_decode`. Gates:
 18 `ids-bind-*` and 6 `ref-bind-*` queries; `gate/ref-bind.rq` is now
 `ids-bind-str.rq` and `gate12/ref-tt-bind.rq` is now `ids-tt-bind.rq`.
 
+Property paths on ids (2026-10-23, https://github.com/danbri/factoidal/issues/954;
+record: section 21 of the stage 4 record). A pattern `s path o` outside GRAPH
+runs on `path=ids` when the WHERE clause has no OPTIONAL and no FROM, and the
+path is built from IRIs, `^p`, `p1/p2`, `p1|p2`, `!(...)` (`IdQuery.flattenWhere`
+collects `PathBlock`s). `IdQuery.evalIM` computes the reference's
+`SPARQL.evalPath` on ids under a restriction (a constant endpoint, else the ids
+the rows joined so far hold for an endpoint variable, `pathCands`): a step is a
+PSO or POS scan with the restriction as candidates; a sequence restricts its
+second part to the objects of its first; `^p` drops a pair whose new subject
+is a literal, as the reference does (`isNotLiteral`). The pair rows are joined
+after the BIND blocks; a FILTER of the top group over an endpoint variable runs
+after every join. Theorems (`IdPathTheorems`, lemma L5p): `evalPath_decode`,
+`pathRows_decode`, `pathPattern_decode`. Gates: `ids-path-*` and `ref-path-*`
+queries.
+
 Sideways information passing (2026-10-13,
 https://github.com/danbri/factoidal/issues/809; record: section 11 of the
 stage 4 record). The right scan of a join (merge or hash), and the first scan

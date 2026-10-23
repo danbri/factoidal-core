@@ -1,0 +1,2 @@
+PREFIX ex: <http://ex.org/>
+CONSTRUCT { ?s ex:kk ?o } WHERE { ?s ex:knows/ex:knows ?o }
