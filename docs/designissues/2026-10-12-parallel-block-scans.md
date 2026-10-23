@@ -2121,6 +2121,17 @@ On commit `39543aa6` (exit codes read):
 | `tools/land-gates.sh` | exit 0 (LAND GATES PASSED): native-smoke 377 pass, 0 fail, 4 xfail (out of 381), cli-smoke 151 pass, 0 fail, 5 xfail (out of 156), LWS scaling 21 pass, 0 fail (out of 21), host-purity-lint 40 pass, 0 fail (out of 40) |
 | `sorry`, `native_decide`, `axiom`, `maxHeartbeats` in the Lean diff | none (`decide +kernel` for two datatype IRI tests) |
 
+After `origin/main` moved (`f0a7e5c3`), the merge (no conflict): `lake
+build` exit 0; `tests/sbm11/run.sh` exit 0 (3,379 pass, 0 fail, 28
+expected-fail, out of 3,407; part (z) 16 pass, 0 fail, out of 16);
+`threads.sh` exit 0; census at 4 threads exit 0 (605 matched);
+unbuilt-modules exit 0 (1,005 modules reached); csimp-reach exit 0;
+tail-recursion exit 1 and `tools/land-gates.sh` exit 1 on that step only
+(native-smoke 377 pass, 0 fail, 4 xfail, out of 381; cli-smoke 151 pass, 0
+fail, 5 xfail, out of 156): three declarations that `f0a7e5c3` added
+(`Column.ndigits`, `PackStream.Cut.run`, `PackStream.Pages.run`), not in this
+stage's files; issue https://github.com/danbri/factoidal/issues/978.
+
 ### 1l.6 What remains
 
 - q07 (0.53): at 4 threads about 2.3 ms; the target needs about 1.75 ms.
