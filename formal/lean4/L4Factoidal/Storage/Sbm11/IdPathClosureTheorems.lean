@@ -60,12 +60,9 @@ rounds run out with work left.
   rounds of `closureM` collect the pairs of the step relation whose subject is
   reached from the start nodes.
 
-Not proved here (open, the step of lemma L5g″ of
-docs/designissues/2026-10-12-sbm11-end-to-end-theorem.md): that
-`IdPath.reachPlus` over the hash map of `adjOf` answers `reachModel` (the
-`#guard`s below compare them), and that the rounds of `closureM` (scans with
-candidates) collect those pairs. Tested by the gate queries
-`tests/sbm11/gate/ids-path-*.rq` and the census.
+`IdPathPureTheorems.reachPlus_eq` proves that `IdPath.reachPlus` over the
+hash map of `adjOf` answers `reachModel`, list for list (the `#guard`s below
+compare them on examples).
 
 No `sorry`, no user `axiom`, no `native_decide`, no `partial`.
 -/
