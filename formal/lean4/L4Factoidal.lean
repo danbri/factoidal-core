@@ -773,6 +773,7 @@ import L4Factoidal.Storage.IndexedBlockWireV4Theorems
 import L4Factoidal.Storage.IndexedBlockWireV5
 import L4Factoidal.Storage.IndexedBlockWireV5Tests
 import L4Factoidal.Storage.IndexedBlockWireV5Theorems
+import L4Factoidal.Storage.BlockDenotation
 import L4Factoidal.Storage.BlockV5Plan
 import L4Factoidal.Storage.BlockV5PlanTests
 import L4Factoidal.Storage.PredicateBlocks
