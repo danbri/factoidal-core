@@ -268,11 +268,11 @@ def monoFrom : Nat → List Nat → Prop
 
 theorem le_lastOf : ∀ (a : Nat) (ps : List Nat), monoFrom a ps → a ≤ lastOf a ps
   | _, [], _ => Nat.le_refl _
-  | a, b :: ps, ⟨hab, h⟩ => Nat.le_trans hab (le_lastOf b ps h)
+  | _, b :: ps, ⟨hab, h⟩ => Nat.le_trans hab (le_lastOf b ps h)
 
 theorem win_self {α : Type} (Y : List α) (a : Nat) : win a a Y = [] := by
   unfold win
-  exact List.drop_eq_nil_of_le (by simp)
+  exact List.drop_eq_nil_of_le (by simp only [List.length_take]; exact Nat.min_le_left _ _)
 
 /-- **Windows of a range.** The rows of consecutive windows, in order, are the
     rows from the first point to the last. -/
@@ -290,7 +290,7 @@ theorem windows_range {α : Type} (Z : List α) (cap : Nat) (ps : List Nat)
     (winsOf (Z.take cap) 0 ps).flatten = Z.take cap := by
   rw [windows_concat _ 0 ps hm, hl]
   unfold win
-  simp
+  rw [List.drop_zero, List.take_take, Nat.min_self]
 
 /-! ## Counted path: counts and group maps -/
 
@@ -713,6 +713,8 @@ end TopK
 #print axioms stream_divided_eq_single
 #print axioms stream_one_block_ranges_eq_single
 #print axioms stream_incremental_eq
+#print axioms windows_concat
+#print axioms windows_range
 #print axioms count_divided_eq_single
 #print axioms groups_divided_eq_single
 #print axioms topK_divided_eq_single
