@@ -23,6 +23,8 @@ import L4Factoidal.RDF.StreamSet
 import L4Factoidal.RDF.StreamSetTests
 import L4Factoidal.RDF.NormalizeSet
 import L4Factoidal.RDF.NormalizeSetTests
+import L4Factoidal.RDF.DatasetDenotation
+import L4Factoidal.RDF.DatasetDenotationTests
 import L4Factoidal.RDF.ConciseBoundedDescription
 import L4Factoidal.RDF.ConciseBoundedDescriptionTheorems
 import L4Factoidal.RDF.StoreLoader
@@ -443,6 +445,10 @@ import L4Factoidal.Storage.Sbm11.MemGenWhereTheorems
 import L4Factoidal.Storage.Sbm11.FileGenTheorems
 import L4Factoidal.Storage.Sbm11.PackSpec
 import L4Factoidal.Storage.Sbm11.PackSpecTheorems
+import L4Factoidal.RDF.DictInjective
+import L4Factoidal.Storage.Sbm11.OverlayDict
+import L4Factoidal.Storage.Sbm11.DictInjectiveTheorems
+import L4Factoidal.Storage.Sbm11.DictInjectiveTests
 import L4Factoidal.Storage.Sbm11.PackSpecSomeTheorems
 import L4Factoidal.Storage.Sbm11.ColumnFastTheorems
 import L4Factoidal.Storage.Sbm11.PackStream
@@ -473,6 +479,7 @@ import L4Factoidal.Storage.Sbm11.DictRangeTheorems
 import L4Factoidal.Storage.Sbm11.DictFingerTheorems
 import L4Factoidal.Storage.Sbm11.Overlay
 import L4Factoidal.Storage.Sbm11.OverlayTheorems
+import L4Factoidal.Storage.Sbm11.DenotationTheorems
 import L4Factoidal.Storage.Sbm11.OverlayLimit
 import L4Factoidal.Storage.Sbm11.UpdateOverlayTheorems
 import L4Factoidal.Storage.Sbm11.ScanFoldTests
@@ -734,6 +741,7 @@ import L4Factoidal.Cottas.LazyTermCache
 import L4Factoidal.Cottas.OffsetIndex
 import L4Factoidal.Cottas.SubjectOffsetIndex
 import L4Factoidal.Storage.IndexedBlock
+import L4Factoidal.Storage.IndexedBlockDictTheorems
 import L4Factoidal.Storage.IndexedBlockTests
 import L4Factoidal.Storage.SubjectRowIndex
 import L4Factoidal.Storage.SubjectRowIndexTests
@@ -768,6 +776,7 @@ import L4Factoidal.Storage.IndexedBlockWireV4Theorems
 import L4Factoidal.Storage.IndexedBlockWireV5
 import L4Factoidal.Storage.IndexedBlockWireV5Tests
 import L4Factoidal.Storage.IndexedBlockWireV5Theorems
+import L4Factoidal.Storage.BlockDenotation
 import L4Factoidal.Storage.BlockV5Plan
 import L4Factoidal.Storage.BlockV5PlanTests
 import L4Factoidal.Storage.PredicateBlocks

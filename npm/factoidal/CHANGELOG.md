@@ -2,6 +2,18 @@
 
 ## 0.13.0 (unreleased)
 
+**`proofCheck` no longer joins blank nodes across artifacts**
+(https://github.com/danbri/factoidal/issues/976). Up to 0.12.0 a bundle
+could take `:A rdfs:subClassOf _:x` from one graph artifact and
+`_:x rdfs:subClassOf :C` from another with the same RDFC-1.0 digest, and
+conclude `:A rdfs:subClassOf :C` with `valid: true`. Blank nodes are now
+scoped to the artifact or assumption they come from (RDF 1.1 Semantics
+section 5.2), so that bundle is refused. A chain inside one artifact, and
+a chain across artifacts through triples with no blank node, are still
+accepted. The report has a new member `rejection`: `null` for a valid
+bundle, else the first failed check in words. The bundle format and the
+profile `fpp0/1` are unchanged.
+
 **XMPP server from wasm.** `factoidal xmpp-serve DIR` and
 `@factoidal/core/xmpp/server` run the Lean XMPP server
 (`L4Factoidal.XMPP.Server` — RFC 6120 negotiation, SASL PLAIN and

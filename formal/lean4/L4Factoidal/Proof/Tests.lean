@@ -366,32 +366,206 @@ kernel says so rather than trusting the reference. -/
                  conclusion := .rdfDerivable mixGd mixAd dataTriple }]
     conclusion := .rdfDerivable mixGd mixAd dataTriple }).valid = false
 
+/-! ## Issue 976 — blank nodes are scoped to their artifact
+
+https://github.com/danbri/factoidal/issues/976. Reported against npm
+0.12.0 and reproduced on main at f0a7e5c3 (before this section
+landed, `crossBundle` below was accepted: `valid = true`,
+`foundationalOnly = true`, an empty frontier, 3 steps).
+
+`bnG1` and `bnG2` differ only by swapping the labels `_:x` and `_:y`,
+so they have the same RDFC-1.0 digest. Neither entails
+`:A rdfs:subClassOf :C`, and neither does their RDF 1.1 Semantics
+section 5.2 merge. A bundle that takes `:A rdfs:subClassOf _:x` from
+`G1` and `_:x rdfs:subClassOf :C` from `G2` and joins the raw label
+`_:x` by rdfs11 must be REFUSED.
+
+Two controls must stay ACCEPTED: the same chain inside ONE artifact,
+and a chain across two artifacts through triples with no blank node. -/
+
+private def bnA : WfIri := ⟨"http://example.org/A", by rfl⟩
+private def bnB : WfIri := ⟨"http://example.org/B", by rfl⟩
+private def bnC : WfIri := ⟨"http://example.org/C", by rfl⟩
+private def bnQ : WfIri := ⟨"http://example.org/q", by rfl⟩
+
+private def scAx : Triple := ⟨.iri bnA, rdfsSubClassOf, .bnode "x"⟩
+private def scAy : Triple := ⟨.iri bnA, rdfsSubClassOf, .bnode "y"⟩
+private def scxC : Triple := ⟨.bnode "x", rdfsSubClassOf, .iri bnC⟩
+private def scyC : Triple := ⟨.bnode "y", rdfsSubClassOf, .iri bnC⟩
+private def scAC : Triple := ⟨.iri bnA, rdfsSubClassOf, .iri bnC⟩
+
+private def bnG1 : Graph := [scAx, scyC]
+private def bnG2 : Graph := [scAy, scxC]
+private def bnEmpty : Graph := []
+
+/- The premise of the attack: one digest, two labellings. -/
+#guard graphDigest bnG1 = graphDigest bnG2
+#guard bnG1 ≠ bnG2
+
+private def bnStep (id : String) (r : RuleId) (ga : String) (prem : List String)
+    (gd : String) (t : Triple) : BundleStep :=
+  { id := id, justification := .rule r ga "AX", premises := prem
+    conclusion := .rdfDerivable gd (graphDigest bnEmpty) t
+    level := .foundational, profile := fpp0Profile, citation := none }
+
+private def bnArt (id : String) (g : Graph) : Artifact :=
+  { id := id, kind := .graph, digest := graphDigest g, body := some g }
+
+/-- The two-artifact bundle of issue 976. -/
+private def crossBundle : Bundle :=
+  let d := graphDigest bnG1
+  { artifacts := #[bnArt "G1" bnG1, bnArt "G2" bnG2, bnArt "AX" bnEmpty]
+    assumptions := #[]
+    steps := #[bnStep "p1" .base "G1" [] d scAx,
+               bnStep "p2" .base "G2" [] d scxC,
+               bnStep "s" .rdfs11 "G1" ["p1", "p2"] d scAC]
+    conclusion := .rdfDerivable d (graphDigest bnEmpty) scAC }
+
+/- REFUSED, with the blank-node scope named as the reason. -/
+#guard (checkBundle crossBundle).valid = false
+#guard (checkBundle crossBundle).foundationalOnly = false
+#guard ((checkBundle crossBundle).rejection.getD "").startsWith
+  "step 's': the step joins blank nodes from different scopes"
+/- The same refusal when the join step names the other artifact. -/
+#guard (checkBundle (withStep crossBundle 2
+  (fun st => { st with justification := .rule .rdfs11 "G2" "AX" }))).valid = false
+/- The two leaf steps alone are fine: each is a triple of its own
+artifact. Only the join is refused. -/
+#guard (checkBundle { crossBundle with
+  steps := crossBundle.steps.extract 0 2
+  conclusion := .rdfDerivable (graphDigest bnG1) (graphDigest bnEmpty) scxC }).valid = true
+
+/- CONTROL 1 — the same chain inside ONE artifact, `_:x` in both
+triples: accepted, all foundational, empty frontier. -/
+private def bnG0 : Graph := [scAx, scxC]
+
+private def oneArtifactBundle : Bundle :=
+  let d := graphDigest bnG0
+  { artifacts := #[bnArt "G0" bnG0, bnArt "AX" bnEmpty]
+    assumptions := #[]
+    steps := #[bnStep "p1" .base "G0" [] d scAx,
+               bnStep "p2" .base "G0" [] d scxC,
+               bnStep "s" .rdfs11 "G0" ["p1", "p2"] d scAC]
+    conclusion := .rdfDerivable d (graphDigest bnEmpty) scAC }
+
+#guard (checkBundle oneArtifactBundle).valid = true
+#guard (checkBundle oneArtifactBundle).foundationalOnly = true
+#guard (checkBundle oneArtifactBundle).assumptions.size = 0
+#guard (checkBundle oneArtifactBundle).counts.foundational = 3
+#guard (checkBundle oneArtifactBundle).rejection = none
+
+/- CONTROL 2 — a chain across TWO artifacts through IRI-only triples.
+`bnH1` and `bnH2` share a digest (they differ by swapping two blank
+nodes in a third triple); `:A ⊑ :B` comes from `H1`, `:B ⊑ :C` from
+`H2`. A triple with no blank node is the same in every scope, so the
+join is sound and is accepted. -/
+private def scAB : Triple := ⟨.iri bnA, rdfsSubClassOf, .iri bnB⟩
+private def scBC : Triple := ⟨.iri bnB, rdfsSubClassOf, .iri bnC⟩
+private def scxy : Triple := ⟨.bnode "x", rdfsSubClassOf, .bnode "y"⟩
+private def scyx : Triple := ⟨.bnode "y", rdfsSubClassOf, .bnode "x"⟩
+private def bnH1 : Graph := [scAB, scBC, scxy]
+private def bnH2 : Graph := [scAB, scBC, scyx]
+
+#guard graphDigest bnH1 = graphDigest bnH2
+
+private def iriCrossBundle : Bundle :=
+  let d := graphDigest bnH1
+  { artifacts := #[bnArt "H1" bnH1, bnArt "H2" bnH2, bnArt "AX" bnEmpty]
+    assumptions := #[]
+    steps := #[bnStep "p1" .base "H1" [] d scAB,
+               bnStep "p2" .base "H2" [] d scBC,
+               bnStep "s" .rdfs11 "H1" ["p1", "p2"] d scAC]
+    conclusion := .rdfDerivable d (graphDigest bnEmpty) scAC }
+
+#guard (checkBundle iriCrossBundle).valid = true
+#guard (checkBundle iriCrossBundle).foundationalOnly = true
+#guard (checkBundle iriCrossBundle).counts.foundational = 3
+
+/- **NEGATIVE 21 — the collapse.** rdfs5 over `_:x ⊑p :q` from `K1`
+and `:q ⊑p _:x` from `K2` would conclude the REFLEXIVE
+`_:x ⊑p _:x`. Neither artifact, nor their merge, entails a node
+that is a sub-property of itself. Refused. -/
+private def spxq : Triple := ⟨.bnode "x", rdfsSubPropertyOf, .iri bnQ⟩
+private def spyq : Triple := ⟨.bnode "y", rdfsSubPropertyOf, .iri bnQ⟩
+private def spqx : Triple := ⟨.iri bnQ, rdfsSubPropertyOf, .bnode "x"⟩
+private def spqy : Triple := ⟨.iri bnQ, rdfsSubPropertyOf, .bnode "y"⟩
+private def spxx : Triple := ⟨.bnode "x", rdfsSubPropertyOf, .bnode "x"⟩
+private def bnK1 : Graph := [spxq, spqy]
+private def bnK2 : Graph := [spyq, spqx]
+
+#guard graphDigest bnK1 = graphDigest bnK2
+
+private def collapseBundle : Bundle :=
+  let d := graphDigest bnK1
+  { artifacts := #[bnArt "K1" bnK1, bnArt "K2" bnK2, bnArt "AX" bnEmpty]
+    assumptions := #[]
+    steps := #[bnStep "p1" .base "K1" [] d spxq,
+               bnStep "p2" .base "K2" [] d spqx,
+               bnStep "s" .rdfs5 "K1" ["p1", "p2"] d spxx]
+    conclusion := .rdfDerivable d (graphDigest bnEmpty) spxx }
+
+#guard (checkBundle collapseBundle).valid = false
+/- CONTROL for 21: inside ONE artifact the same two premises are
+`_:x ⊑p :q` and `:q ⊑p _:y`, and rdfs5 gives `_:x ⊑p _:y`. -/
+private def spxy : Triple := ⟨.bnode "x", rdfsSubPropertyOf, .bnode "y"⟩
+#guard (checkBundle { collapseBundle with
+  steps := #[bnStep "p1" .base "K1" [] (graphDigest bnK1) spxq,
+             bnStep "p2" .base "K1" [] (graphDigest bnK1) spqy,
+             bnStep "s" .rdfs5 "K1" ["p1", "p2"] (graphDigest bnK1) spxy]
+  conclusion := .rdfDerivable (graphDigest bnK1) (graphDigest bnEmpty) spxy }).valid = true
+
+/- **NEGATIVE 22 — an assumption's blank node is its own.** A replay
+assumption about `_:x` cannot join the `_:x` of an artifact body. -/
+#guard (checkBundle { oneArtifactBundle with
+  assumptions := #[{ id := "a1", level := .replay
+                     subject := .rdfDerivable (graphDigest bnG0) (graphDigest bnEmpty) scxC }]
+  steps := #[bnStep "p1" .base "G0" [] (graphDigest bnG0) scAx,
+             bnStep "s" .rdfs11 "G0" ["p1", "a1"] (graphDigest bnG0) scAC] }).valid = false
+
+/- The rejection text is present for every refusal pinned in this
+file's mutation section, and absent for the accepted bundles. -/
+#guard (checkBundle rdfsBundle).rejection = none
+#guard (checkBundle mixedBundle).rejection = none
+#guard (checkBundle { rdfsBundle with conclusion := .clif "(P jim)" }).rejection
+  = some "no step and no assumption states the bundle's conclusion"
+
 /-! ## `Derives` is inhabited at a non-trivial claim
 
-`Derives.toDerivesFull` carries two collision hypotheses that Lean
-cannot discharge, so it has no machine-checked instance
-(`skills/measuring-inference` section 4 on
-`closure_chain_wf`). What CAN be checked is that `Derives` is not an
-empty relation dressed up: the term below derives an rdfs4a
-conclusion from an EMPTY assumption list, through the leaf
-constructor and the row constructor, with no `sorry` in it. -/
+What CAN be checked is that `Derives` is not an empty relation
+dressed up: the term below derives an rdfs4a conclusion from an EMPTY
+assumption list, through the leaf constructor and the row
+constructor, with no `sorry` in it. The leaf is read in the scope of
+artifact `G`; `dataGraph` is ground, so the scoped triple is the
+triple itself. -/
 
-example : Derives [] (Claim.rdfDerivable (graphDigest dataGraph) mixAd mixConcl) :=
+private def dataArt : Artifact :=
+  { id := "G", kind := .graph, digest := graphDigest dataGraph, body := some dataGraph }
+
+example : Derives [dataArt] [] (Claim.rdfDerivable (graphDigest dataGraph) mixAd mixConcl) :=
   Derives.rdfsRow
     (prem := [dataTriple])
     (fun u hu => by
       rw [List.mem_singleton.1 hu]
-      exact Derives.rdfsBase rfl (List.mem_singleton_self _))
+      have h := Derives.rdfsBase (A := [dataArt]) (Γ := []) (ad := mixAd)
+        (List.mem_singleton_self _) rfl rfl (List.mem_singleton_self dataTriple)
+      rw [Triple.scoped_of_isGround _ (by decide)] at h
+      exact h)
     (DerivesFull.rdfs4a (DerivesFull.base (List.mem_singleton_self _)))
 
 /-! ## Axiom audit — expect propext / Classical.choice / Quot.sound only -/
 
 #print axioms L4Factoidal.FPP0.checkBundle_sound
+#print axioms L4Factoidal.FPP0.checkBundle_merge_frontier
+#print axioms L4Factoidal.FPP0.checkBundle_merge
+#print axioms L4Factoidal.FPP0.checkBundle_merge_ground
+#print axioms L4Factoidal.FPP0.checkBundle_rejection_none_iff
 #print axioms L4Factoidal.FPP0.stepValid_sound
 #print axioms L4Factoidal.FPP0.checkSteps_sound
 #print axioms L4Factoidal.FPP0.inferenceRowOk_sound
-#print axioms L4Factoidal.FPP0.Derives.toDerivesFull
+#print axioms L4Factoidal.FPP0.Derives.toMerge
 #print axioms L4Factoidal.FPP0.Derives.weaken
 #print axioms L4Factoidal.FPP0.derivesFull_axMono
+#print axioms L4Factoidal.FPP0.scopeLabel_inj
+#print axioms L4Factoidal.RDF.Triple.scoped_of_isGround
 
 end L4Factoidal.FPP0
