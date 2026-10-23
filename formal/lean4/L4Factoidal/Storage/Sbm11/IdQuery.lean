@@ -4130,24 +4130,65 @@ def substOkIdM {m : Type → Type} [Monad m] (st : Store m) (x : UInt64) (subjec
   | .literal _ => return !subject
   | .tripleTerm _ _ _ => return false
 
-/-- `FILTER EXISTS { B }` and `FILTER NOT EXISTS { B }` of the top group on
-    ids (https://github.com/danbri/factoidal/issues/956, SPARQL 1.1 section
-    18.6): `B` evaluated by itself over the plan's dataset (every column
-    kept), then the rows of `t` kept when some row of `B` is compatible
-    (`semi`) or none is (`anti`), in order (`semiMatches`). The reference
-    substitutes the row into `B`; the two agree when each variable of `B`
-    that the row binds is replaced at every position where it occurs
-    (`IdExistsTheorems.exists_decode`). A row that binds a variable of a
-    subject position of `B` to a literal, or a variable of `B` to a triple
-    term, or a variable of a predicate position to `text:query`, refuses the
-    query (an error starting with `refused:`; the caller runs the reference
-    evaluator). `P MINUS { B }` (`minus`, SPARQL 1.1 section 18.5) does not
-    substitute: a row is dropped when some row of `B` is compatible with it
-    and shares a bound variable with it (`IdMinusTheorems.minus_decode`), and
-    no row is checked. -/
-def semiJoinByM {m : Type → Type} [Monad m] (st : Store m) (resolve : PatSpec → ExceptT String m Pat)
-    (t : Table) (b : SemiBlock) :
-    ExceptT String m (Table × String × ScanStats) := do
+/-- The refusal of EXISTS and NOT EXISTS when a row binds the variable `?v` of
+    the pattern to a term that substitution does not put into a position
+    where `?v` occurs (`subject`: a subject position; SPARQL 1.1 section 18.6
+    `substitute`, `IdExistsTheorems.SubstOk`). -/
+def substRefusalMsg (v : String) (subject : Bool) : String :=
+  s!"refused: ?{v} is bound to a term that substitution does not put into {if subject then "a subject position" else "a position"} of an EXISTS or NOT EXISTS pattern"
+
+/-- The refusal of EXISTS and NOT EXISTS when a row binds the variable `?v` of
+    a predicate position of the pattern to `text:query`: the substituted
+    pattern is a full-text pattern (`lowerBgp`). -/
+def fulltextRefusalMsg (v : String) : String :=
+  s!"refused: ?{v} is bound to text:query in a predicate position of an EXISTS or NOT EXISTS pattern"
+
+/-- `substOkIdM` through a memo keyed by the id and the position kind. -/
+def substOkMemoM {m : Type → Type} [Monad m] (st : Store m) (memo : Std.HashMap (UInt64 × Bool) Bool)
+    (x : UInt64) (subject : Bool) : ExceptT String m (Bool × Std.HashMap (UInt64 × Bool) Bool) := do
+  match memo[(x, subject)]? with
+  | some r => return (r, memo)
+  | none =>
+    let r ← substOkIdM st x subject
+    return (r, memo.insert (x, subject) r)
+
+/-- The substitution check of one cell of EXISTS or NOT EXISTS: the id `x`
+    the row binds to the variable `?v` of the pattern (`subject`: `?v` is in
+    a subject position; `pred`: in a predicate position) is put into every
+    position of `?v` by substitution (`substOkIdM`, else `substRefusalMsg`),
+    and is not `text:query` in a predicate position (`ftId` is its id;
+    else `fulltextRefusalMsg`). -/
+def substCellM {m : Type → Type} [Monad m] (st : Store m) (ftId : Option UInt64) (v : String)
+    (subject pred : Bool) (memo : Std.HashMap (UInt64 × Bool) Bool) (x : UInt64) :
+    ExceptT String m (Std.HashMap (UInt64 × Bool) Bool) := do
+  let (ok, memo) ← substOkMemoM st memo x subject
+  unless ok do throw (substRefusalMsg v subject)
+  if pred && x != OptJoin.unbound then
+    if ftId == some x then throw (fulltextRefusalMsg v)
+    if tagOf x == tagLocal then
+      if (← st.termOf x) == .iri L4Factoidal.SPARQL.fulltextQueryPred then
+        throw (fulltextRefusalMsg v)
+  return memo
+
+/-- The test of `FILTER EXISTS { B }`, `FILTER NOT EXISTS { B }` or
+    `MINUS { B }` (`b.kind`) on the rows of `t`
+    (https://github.com/danbri/factoidal/issues/956, SPARQL 1.1 sections 18.6
+    and 18.5): `B` evaluated by itself (`resolve` gives its patterns, every
+    column kept), then per row of `t` whether some row of `B` is compatible
+    with it (`semiMatches`; for MINUS, compatible and sharing a bound
+    variable). The reference substitutes the row into `B`; the two agree when
+    each variable of `B` that the row binds is replaced at every position
+    where it occurs (`IdExistsTheorems.exists_decode`). A row `i` with
+    `live i` that binds a variable of a subject position of `B` to a literal,
+    or a variable of `B` to a triple term (`substRefusalMsg`), or a variable
+    of a predicate position to `text:query` (`fulltextRefusalMsg`), refuses
+    the query (the caller runs the reference evaluator); the other rows are
+    not checked (an earlier conjunct of the FILTER removed them). MINUS does
+    not substitute: no row is checked. Returns the tests, one per row of
+    `t`, the number of rows of `B` and the scan statistics. -/
+def semiHitsM {m : Type → Type} [Monad m] (st : Store m) (resolve : PatSpec → ExceptT String m Pat)
+    (t : Table) (b : SemiBlock) (live : Nat → Bool) :
+    ExceptT String m (Array Bool × Nat × ScanStats) := do
   let bvars := b.vars
   let subjVars : Array String := b.pats.filterMap fun p => p.s.var?
   let predVars : Array String := b.pats.filterMap fun p => p.p.var?
@@ -4160,28 +4201,24 @@ def semiJoinByM {m : Type → Type} [Monad m] (st : Store m) (resolve : PatSpec 
     let subject := subjVars.contains v
     let pred := predVars.contains v
     for i in [0:t.rows] do
-      let x := t.at c i
-      let ok ← match memo[(x, subject)]? with
-        | some r => pure r
-        | none => do
-          let r ← substOkIdM st x subject
-          memo := memo.insert (x, subject) r
-          pure r
-      unless ok do
-        throw s!"refused: ?{v} is bound to a term that substitution does not put into {if subject then "a subject position" else "a position"} of an EXISTS or NOT EXISTS pattern"
-      if pred && x != OptJoin.unbound then
-        if ftId == some x then
-          throw s!"refused: ?{v} is bound to text:query in a predicate position of an EXISTS or NOT EXISTS pattern"
-        if tagOf x == tagLocal then
-          if (← st.termOf x) == .iri L4Factoidal.SPARQL.fulltextQueryPred then
-            throw s!"refused: ?{v} is bound to text:query in a predicate position of an EXISTS or NOT EXISTS pattern"
+      if live i then memo ← substCellM st ftId v subject pred memo (t.at c i)
   let (body, bs) ← if b.pats.isEmpty then
       pure (({ vars := #[], cols := #[], rows := 1 } : Table), ({} : ScanStats))
     else do
       let bp ← b.pats.mapM resolve
       let (bt, _, s) ← evalBgpM st bp (fun _ => true)
       pure (bt, s)
-  let hits := semiMatches t body (b.kind == .minus)
+  return (semiMatches t body (b.kind == .minus), body.rows, bs)
+
+/-- `FILTER EXISTS { B }` and `FILTER NOT EXISTS { B }` of the top group on
+    ids (https://github.com/danbri/factoidal/issues/956, SPARQL 1.1 section
+    18.6), and `P MINUS { B }` (`minus`, SPARQL 1.1 section 18.5): the rows of
+    `t` whose test of `semiHitsM` (every row checked) is `true` (`semi`) or
+    `false` (`anti`, `minus`), in order. -/
+def semiJoinByM {m : Type → Type} [Monad m] (st : Store m) (resolve : PatSpec → ExceptT String m Pat)
+    (t : Table) (b : SemiBlock) :
+    ExceptT String m (Table × String × ScanStats) := do
+  let (hits, brows, bs) ← semiHitsM st resolve t b fun _ => true
   let want := b.kind == .semi
   let mut idx : Array Nat := #[]
   for i in [0:t.rows] do
@@ -4190,7 +4227,7 @@ def semiJoinByM {m : Type → Type} [Monad m] (st : Store m) (resolve : PatSpec 
     | .semi => "EXISTS"
     | .anti => "NOT EXISTS"
     | .minus => "MINUS"
-  return (t.reorder idx, s!"{kindText}: body {body.rows} rows; {t.rows} rows to {idx.size}", bs)
+  return (t.reorder idx, s!"{kindText}: body {brows} rows; {t.rows} rows to {idx.size}", bs)
 
 /-- `semiJoinByM` with the patterns of `B` over the plan's dataset. -/
 def semiJoinM {m : Type → Type} [Monad m] (st : Store m) (plan : Plan) (t : Table) (b : SemiBlock) :

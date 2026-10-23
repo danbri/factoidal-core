@@ -422,6 +422,8 @@ import L4Factoidal.Storage.Sbm11.SipTableTheorems
 import L4Factoidal.Storage.Sbm11.BgpTableTheorems
 import L4Factoidal.Storage.Sbm11.ExecLeafTheorems
 import L4Factoidal.Storage.Sbm11.LeftJoinTableTheorems
+import L4Factoidal.Storage.Sbm11.SemiTableTheorems
+import L4Factoidal.Storage.Sbm11.ExistsTableTheorems
 import L4Factoidal.Storage.Sbm11.GroupTableTheorems
 import L4Factoidal.Storage.Sbm11.ExprLocalTheorems
 import L4Factoidal.Storage.Sbm11.FilterIdTheorems

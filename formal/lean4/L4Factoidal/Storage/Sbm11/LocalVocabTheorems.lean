@@ -32,8 +32,9 @@ the invariant of that vocabulary and the decoder of a state:
   sub-SELECT value, as `termIdM`, or the refusal `langCaseMsg` for a value
   that is not its own `normalizeTerm`; an id it gives decodes to the value
   itself.
-* `Ends`: a run of the nested evaluator ends with such a refusal or with a
-  result, and `ends_bind` composes it.
+* `Ends`: a run of the nested evaluator ends with such a refusal (or the
+  refusal of EXISTS over a row substitution does not put into the pattern)
+  or with a result, and `ends_bind` composes it.
 
 No `sorry`, no user `axiom`, no `native_decide`, no `partial`.
 -/
@@ -365,9 +366,14 @@ theorem termOf_withLocal (st : Store Id) (cid : Term → Option UInt64) (dec : U
 
 /-! ## `termIdM` -/
 
-/-- The refusals of the query-local vocabulary, and of a value whose language
-    tag is not in lower case (`IdQuery.valueIdM`). -/
-def LocalRefusal (e : String) : Prop := e = localFullMsg ∨ e = localXmlMsg ∨ e = langCaseMsg
+/-- The refusals of the query-local vocabulary, of a value whose language
+    tag is not in lower case (`IdQuery.valueIdM`), and of EXISTS or NOT EXISTS
+    over a row that substitution does not put into the pattern
+    (`IdQuery.semiHitsM`: `substRefusalMsg`, `fulltextRefusalMsg`; added
+    2026-10-23 with `ExistsTableTheorems`). On each the harness runs the
+    reference evaluator. -/
+def LocalRefusal (e : String) : Prop := e = localFullMsg ∨ e = localXmlMsg ∨ e = langCaseMsg ∨
+  (∃ v subject, e = substRefusalMsg v subject) ∨ ∃ v, e = fulltextRefusalMsg v
 
 /-- A term with no id whose folded form has an id would contradict `CidOk`. -/
 theorem cid_normalize_none (cid : Term → Option UInt64) (dec : UInt64 → Term) (ok : UInt64 → Prop)
@@ -507,7 +513,7 @@ theorem valueIdM_spec (st : Store Id) (cid : Term → Option UInt64) (hid : ∀ 
     · exact Or.inl h
     · exact Or.inr ⟨y, voc', ix', h1, h2, h3, h4, h5, by rw [h6, hn]⟩
   · rw [if_neg hn]
-    exact Or.inl ⟨_, rfl, Or.inr (Or.inr rfl)⟩
+    exact Or.inl ⟨_, rfl, Or.inr (Or.inr (Or.inl rfl))⟩
 
 /-! ## Runs that end with a refusal or a result -/
 

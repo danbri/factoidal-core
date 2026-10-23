@@ -18,7 +18,7 @@ translation, `QueryPattern`), each arm the id form of the reference arm
 | property path         | `IdQuery.pathTableM`, candidates from a left side    |
 | Join(P1, P2)          | `IdJoin.joinIds`                                     |
 | LeftJoin(P1, P2, e)   | `leftJoinCondM`: the pairs of `joinPairs`, `e` on the merged rows, the left rows with no pair that passes |
-| Filter(e, P)          | `filterM`: the compiled and residual conjuncts (`applyFilters`), then EXISTS and NOT EXISTS of a basic graph pattern (`semiJoinByM`) |
+| Filter(e, P)          | `filterM`: the mask of `filterMaskM`, the compiled and residual conjuncts (`filterKeep`), then EXISTS and NOT EXISTS of a basic graph pattern (`semiHitsM`) |
 | Union(P1, P2)         | `IdJoin.unionIds`                                    |
 | Minus(P1, P2)         | `IdQuery.semiMatches` with `needShared`              |
 | Graph(<iri>, P)       | `P` with that named graph active, or no row          |
@@ -41,13 +41,13 @@ depth. `GroupTableTheorems.query_where_allowed_exec` proves that this
 evaluator refuses a term the query-local vocabulary cannot hold, or returns
 a table that decodes, with the decoder of its final state
 (`LocalVocabTheorems`), to such an answer for Join, LeftJoin, FILTER (a
-condition with no EXISTS, `FilterTableTheorems`), Union, MINUS, GRAPH with an
-IRI, GRAPH ?g (over a basic graph pattern: one scan per triple pattern with
-the graph as a column, `GraphBgpTableTheorems`; over `{}`), BIND, VALUES, a
-sub-SELECT (`SubSelectTableTheorems`; not `SELECT *` unless it is a
-projection of variables) and the leaves; EXISTS in a condition and `SELECT *`
-sub-SELECTs are tested by `tests/sbm11/gate/ids-nest-*.rq` and the W3C
-census.
+condition of EXISTS-free conjuncts and EXISTS or NOT EXISTS of a basic graph
+pattern or `{}`, `FilterTableTheorems`, `ExistsTableTheorems`), Union, MINUS,
+GRAPH with an IRI, GRAPH ?g (over a basic graph pattern: one scan per triple
+pattern with the graph as a column, `GraphBgpTableTheorems`; over `{}`), BIND,
+VALUES, a sub-SELECT (`SubSelectTableTheorems`; not `SELECT *` unless it is a
+projection of variables) and the leaves; `SELECT *` sub-SELECTs are tested by
+`tests/sbm11/gate/ids-nest-*.rq` and the W3C census.
 
 Refused, with a message the harness reports (`refused: ...` at run time, a
 `translate` error before): LATERAL, SERVICE, a GRAPH name that
@@ -191,7 +191,7 @@ def colBound (t : Table) (v : String) : Bool :=
     return true
 
 /-- The conjuncts of a FILTER condition `c` over `t`, classified: the
-    EXISTS-free ones as `applyFilters` runs them (compiled on ids,
+    EXISTS-free ones as `filterKeep` runs them (compiled on ids,
     `compileFilter`, when every variable they read is bound in every row and
     they are `backendLocal`; else the reference on the decoded terms,
     `residualKind`), `EXISTS { B }` and `NOT EXISTS { B }` as semi-joins, and
@@ -219,27 +219,32 @@ def filterKindsM (cx : NCx m) (t : Table) (c : Expr) : NM m (Array FKind × Arra
       else fs := fs.push (residualKind cx.env cj)
   return (fs, semis, none_)
 
-/-- Filter(e, Ω) on an id table: the EXISTS-free conjuncts first
-    (`filterKindsM`, `applyFilters`), then `EXISTS { B }` and
-    `NOT EXISTS { B }` with `B` in the active graph (`semiJoinByM`).
-    `ebvOrFalse` of a conjunction is the conjunction of its conjuncts'
-    (`ebvOrFalse_evalIn_and`). -/
-def filterM (cx : NCx m) (g : GCtx) (t : Table) (c : Expr) : NM m Table := do
+/-- The FILTER condition `c` on the rows of `t`, as a mask (one entry per
+    row): the EXISTS-free conjuncts (`filterKindsM`, `filterKeep`), then for
+    each `EXISTS { B }` and `NOT EXISTS { B }` with `B` in the active graph
+    the test of `semiHitsM` on the rows that passed so far (they alone are
+    checked for substitution). `ebvOrFalse` of a conjunction is the
+    conjunction of its conjuncts' (`ebvOrFalse_evalIn_and`). -/
+def filterMaskM (cx : NCx m) (g : GCtx) (t : Table) (c : Expr) : NM m (Array Bool) := do
   let (fs, semis, none_) ← filterKindsM cx t c
-  if none_ then return t.select fun _ => false
+  if none_ then return Array.replicate t.rows false
   let lst ← localStore cx
-  let (t1, _) ← liftE (applyFilters lst fs (fs.map fun _ => {}) t)
-  let mut t2 := t1
+  let (keep0, _) ← liftE (filterKeep lst fs (fs.map fun _ => {}) t)
+  let mut keep := keep0
   for b in semis do
-    let (t', _, s) ← liftE (semiJoinByM lst (resolveIn cx g) t2 b)
+    let (hits, _, s) ← liftE (semiHitsM lst (resolveIn cx g) t b fun i => keep[i]!)
     addStats s
-    t2 := t'
-  note s!"FILTER: {fs.size} conjuncts on ids or decoded terms, {semis.size} EXISTS: {t.rows} rows to {t2.rows}"
-  return t2
+    let want := b.kind == .semi
+    keep := keep.mapIdx fun i k => k && hits[i]! == want
+  return keep
 
-/-- The name of the column of pair indices `leftJoinCondM` adds (no SPARQL
-    variable has it). -/
-def pairCol : String := "#pair"
+/-- Filter(e, Ω) on an id table: the rows whose entry of `filterMaskM` is
+    `true`, in order. -/
+def filterM (cx : NCx m) (g : GCtx) (t : Table) (c : Expr) : NM m Table := do
+  let keep ← filterMaskM cx g t c
+  let t2 := t.select fun i => keep[i]!
+  note s!"FILTER: {t.rows} rows to {t2.rows}"
+  return t2
 
 /-- The rows of `LeftJoin` as indices: per left row `i < nl` in order, its
     pairs `k` (`li[k] = i`; `li` is non-decreasing) that passed the
@@ -277,9 +282,8 @@ def ljColumns (merged l : Table) (src : Array (Option Nat × Nat)) : Array ByteA
 /-- `LeftJoin(Ω1, Ω2, e)` on id tables (SPARQL 1.1 section 18.5): the pairs
     of compatible rows (`IdJoin.joinPairs`; an `unbound` id is compatible
     with any), merged (`IdJoin.pairsTable`); `e` on the merged rows
-    (`filterKeep` of the conjuncts as a mask, or `filterM` on the merged
-    rows tagged with their pair index when `e` has an EXISTS conjunct; so `e`
-    reads the left and the right variables); then per left row in order its
+    (`filterMaskM`, one entry per pair; so `e` reads the left and the right
+    variables); then per left row in order its
     merged rows that passed, or the left row itself when none did
     (`IdGroupTheorems.idLeftJoinC`). -/
 def leftJoinCondM (cx : NCx m) (g : GCtx) (l r : Table) (c : Expr) : NM m Table := do
@@ -290,29 +294,10 @@ def leftJoinCondM (cx : NCx m) (g : GCtx) (l r : Table) (c : Expr) : NM m Table 
     | .boolLit true => true
     | _ => false
   let alive : Array Bool ← if trivial then pure (Array.replicate li.size true) else do
-    let (fs, semis, none_) ← filterKindsM cx merged c
-    if semis.isEmpty && !none_ then
-      -- no EXISTS: the conjuncts on the merged rows, as a mask
-      -- (`filterKeep`, one entry per pair)
-      let lst ← localStore cx
-      let (keep, _) ← liftE (filterKeep lst fs (fs.map fun _ => {}) merged)
-      note s!"OPTIONAL FILTER: {fs.size} conjuncts on ids or decoded terms over {li.size} pairs"
-      pure keep
-    else
-      -- EXISTS in the condition: the FILTER on the merged rows tagged with
-      -- their pair index
-      let mut idxCol := ByteArray.emptyWithCapacity (8 * li.size)
-      for k in [0:li.size] do
-        idxCol := L4Factoidal.Qlvr.Side.put64 idxCol k.toUInt64
-      let tagged : Table := { merged with vars := merged.vars.push pairCol, cols := merged.cols.push idxCol }
-      let kept ← filterM cx g tagged c
-      let mut a := Array.replicate li.size false
-      match kept.idx pairCol with
-      | some pc =>
-        for i in [0:kept.rows] do
-          a := a.set! (kept.at pc i).toNat true
-      | none => pure ()
-      pure a
+    -- the condition on the merged rows, as a mask (one entry per pair)
+    let keep ← filterMaskM cx g merged c
+    note s!"OPTIONAL FILTER: condition over {li.size} pairs"
+    pure keep
   let src := ljSource l.rows li alive
   let cols := ljColumns merged l src
   note s!"OPTIONAL: {l.rows} left rows, {r.rows} right rows, {li.size} compatible pairs; {src.size} rows"

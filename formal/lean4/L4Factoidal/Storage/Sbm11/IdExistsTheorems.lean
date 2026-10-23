@@ -46,12 +46,11 @@ error that starts with `refused:`).
   `filterLowered_evalIn`, top-level μ empty, a dataset in the environment, no
   `text:query` pattern after substitution).
 
-Not proved here (open, as for the other operators of the id path, lemma
-L5a′ of docs/designissues/2026-10-12-sbm11-end-to-end-theorem.md): that the
-`Table` `IdQuery.semiJoinTable` builds (per-mask hash sets of the shared
-columns) denotes `idSemi` of the denotations of its inputs, and that the rows
-of the body's scans decode to `evalBgp B g`. Tested by the `#guard`s below and
-by `tests/sbm11/run.sh` part (d), the `ids-exists-*` queries.
+The table part (the `Table` that `IdQuery.semiHitsM` builds is `idSemi` of
+the rows of its inputs, the rows of the body's scans decode to `evalBgp B g`,
+and the run-time check gives `SubstOk`) is proved in `ExistsTableTheorems`
+(`semiHitsM_spec`, 2026-10-23). Tested also by the `#guard`s below and by
+`tests/sbm11/run.sh` part (d), the `ids-exists-*` queries.
 
 No `sorry`, no user `axiom`, no `native_decide`, no `partial`.
 -/

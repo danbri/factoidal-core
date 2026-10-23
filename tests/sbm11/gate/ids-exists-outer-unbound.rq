@@ -1,0 +1,3 @@
+PREFIX ex: <http://ex.org/>
+# Issue 776: an outer variable unbound in some rows (OPTIONAL) stays a variable of the body; the semi-join reads unbound as compatible.
+SELECT ?s ?o WHERE { ?s ex:age ?a OPTIONAL { ?s ex:knows ?o } FILTER EXISTS { ?o ex:knows ?z } }

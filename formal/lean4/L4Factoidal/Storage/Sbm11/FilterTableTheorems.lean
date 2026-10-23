@@ -13,12 +13,10 @@ lemma L4q of docs/designissues/2026-10-12-sbm11-end-to-end-theorem.md).
 * `keep_all`: the tests of those kinds are covered by `filterKeep_spec`, and
   their conjunction in a row is the reference FILTER of the condition on the
   decoded row (`IdGroup.filterFn`, via `kind_sem` and `conjuncts_spec`).
-* `filterM_run`: `IdGroup.filterM` returns a well-formed table whose rows
-  are the rows of its input that pass the reference FILTER, in order.
-* `leftJoinCond_run`: for a condition other than `true`,
-  `IdGroup.leftJoinCondM` evaluates the condition on the merged rows of the
-  compatible pairs as a mask (`filterKeep`); entry `k` is the reference
-  FILTER on merged row `k`.
+* `applyFilters_ok`: `IdQuery.applyFilters` keeps the rows whose tests all
+  pass. The runs of `IdGroup.filterM` and `IdGroup.leftJoinCondM` (both
+  through `IdGroup.filterMaskM`, EXISTS included) are in
+  `ExistsTableTheorems`.
 * `ljSource_spec'`, `leftJoinCond_rows`: with any mask, `ljSource` lists per
   left row its pairs that passed, else the left row alone; so the table's
   rows are, row for row, the same solution mappings as
@@ -32,9 +30,8 @@ evaluator is the query's (`henv`).
 
 ## Not proved here
 
-A condition with an EXISTS or NOT EXISTS conjunct (`semiJoinByM`, and the
-tagged-table path of `leftJoinCondM`), and the string tests on dictionary
-keys (`FilterIdTheorems.StrForm`).
+The string tests on dictionary keys (`FilterIdTheorems.StrForm`). EXISTS and
+NOT EXISTS conjuncts: `ExistsTableTheorems`.
 
 No `sorry`, no user `axiom`, no `native_decide`, no `partial`.
 -/
@@ -350,129 +347,7 @@ theorem applyFilters_ok (st : Store Id) (dec : UInt64 → Term) (t : Table) (ht 
     simp only [Function.comp_def]
     rw [hkeep i hi, hP i hi]
 
-/-- **FILTER as `filterM` runs it.** For an EXISTS-free condition whose
-    conjuncts are `CjOk`, over a store whose dictionary lookup is `cid` and
-    whose `termOf` decodes the ids in `ok` (none with the local tag),
-    `filterM` returns, from any state, a well-formed table whose rows are the
-    rows of `t` that pass the reference FILTER (`IdGroup.filterFn`), in
-    order. -/
-theorem filterM_run (cx : NCx Id) (cid : Term → Option UInt64) (dec : UInt64 → Term) (ok : UInt64 → Prop)
-    (nst : NSt) (hid : ∀ t, cx.st.idOf t = pure (cid t))
-    (hcid : ∀ c, ((cid c).isSome = true ∨ nst.vocab.isEmpty = true) → CidOk dec ok c (cid c))
-    (hcidN : ∀ t x, cid t = some x → dec x = normalizeTerm t)
-    (hdec : ∀ x y, ok x → ok y → (dec x).eqb (dec y) = (x == y))
-    (hterm : ∀ x, ok x → (cx.st.withLocal nst.vocab).termOf x = pure (dec x))
-    (env : EvalEnv) (henv : cx.env = env) (g : GCtx) (t : Table) (ht : t.WF)
-    (hrows : ∀ r ∈ t.idRows, RowIds ok r) (c : Expr) (hc : FilterOk c) (a : Graph) :
-    ∃ t' nst', (filterM cx g t c).run nst = pure (t', nst') ∧ t'.WF ∧
-      t'.idRows = t.idRows.filter (fun r => IdGroup.filterFn env c a (decRow dec r)) ∧
-      nst'.vocab = nst.vocab ∧ nst'.localIdx = nst.localIdx := by
-  obtain ⟨fs, hk, hfs, hve⟩ := filterKindsM_spec cx cid hid t c hc nst
-  rw [henv] at hfs
-  have hrows' := rows_of t ok hrows
-  obtain ⟨hkw, hkeep⟩ := keep_all dec ok cid _ hcid hcidN hdec t ht hrows' env c hc fs hfs hve a
-  unfold filterM
-  rw [StateT.run_bind, hk, pure_bind]
-  simp only [Bool.false_eq_true, if_false]
-  rw [StateT.run_bind]
-  have hls : (IdGroup.localStore cx).run nst = pure (cx.st.withLocal nst.vocab, nst) := rfl
-  rw [hls, pure_bind, StateT.run_bind]
-  have hterm' : ∀ i, i < t.rows → ∀ p ∈ t.idRow i, (cx.st.withLocal nst.vocab).termOf p.2 = pure (dec p.2) :=
-    fun i hi p hp => hterm p.2 (hrows' i hi p hp)
-  obtain ⟨t1, ms', ha, hwf, hrw⟩ := applyFilters_ok (cx.st.withLocal nst.vocab) dec t ht hterm' fs hkw
-    (fun r => IdGroup.filterFn env c a (decRow dec r)) (fun i hi => hkeep i hi)
-  have hl : (liftE (applyFilters (cx.st.withLocal nst.vocab) fs (fs.map fun _ => {}) t) : NM Id _).run nst =
-      pure ((t1, ms'), nst) := by
-    unfold liftE; rw [StateT.run_lift, ha]; rfl
-  rw [hl, pure_bind]
-  exact ⟨t1, _, rfl, hwf, hrw, rfl, rfl⟩
-
 end filter
-
-/-! ## OPTIONAL with a condition as `leftJoinCondM` runs it -/
-
-section lj
-open L4Factoidal.Storage.Sbm11.IdLeaf (CidOk)
-open L4Factoidal.Storage.Sbm11.LeftJoinTableTheorems (ljTable)
-
-/-- **The run of `leftJoinCondM` with a condition other than `true`.** For
-    an EXISTS-free condition whose conjuncts are `CjOk`, `leftJoinCondM`
-    evaluates the condition on the merged rows of the compatible pairs as a
-    mask (`filterKeep`): entry `k` is the reference FILTER of the condition on
-    merged row `k`. -/
-theorem leftJoinCond_run (cx : NCx Id) (cid : Term → Option UInt64) (dec : UInt64 → Term) (ok : UInt64 → Prop)
-    (nst : NSt) (hid : ∀ t, cx.st.idOf t = pure (cid t))
-    (hcid : ∀ c, ((cid c).isSome = true ∨ nst.vocab.isEmpty = true) → CidOk dec ok c (cid c))
-    (hcidN : ∀ t x, cid t = some x → dec x = normalizeTerm t)
-    (hdec : ∀ x y, ok x → ok y → (dec x).eqb (dec y) = (x == y))
-    (hterm : ∀ x, ok x → (cx.st.withLocal nst.vocab).termOf x = pure (dec x))
-    (env : EvalEnv) (henv : cx.env = env) (g : GCtx) (l r : Table)
-    (hm : (IdJoin.joinIds l r).WF) (hrows : ∀ q ∈ (IdJoin.joinIds l r).idRows, RowIds ok q)
-    (c : Expr) (hc : FilterOk c) (htriv : c ≠ .boolLit true) (a : Graph) :
-    ∃ keep nst', (leftJoinCondM cx g l r c).run nst =
-      pure (ljTable (IdJoin.joinIds l r) l (IdGroup.ljSource l.rows
-        (IdJoin.joinPairs l r (L4Factoidal.Qlvr.sharedCols l r)).1 keep), nst') ∧
-      nst'.vocab = nst.vocab ∧ nst'.localIdx = nst.localIdx ∧
-      keep.size = (IdJoin.joinIds l r).rows ∧
-      ∀ k, k < (IdJoin.joinIds l r).rows →
-        keep[k]! = IdGroup.filterFn env c a (decRow dec ((IdJoin.joinIds l r).idRow k)) := by
-  have hmj : IdJoin.joinIds l r = IdJoin.pairsTable l r (L4Factoidal.Qlvr.sharedCols l r)
-      (IdJoin.joinPairs l r (L4Factoidal.Qlvr.sharedCols l r)).1
-      (IdJoin.joinPairs l r (L4Factoidal.Qlvr.sharedCols l r)).2 := rfl
-  generalize hM : IdJoin.joinIds l r = M at hm hrows ⊢
-  obtain ⟨fs, hk, hfs, hve⟩ := filterKindsM_spec cx cid hid M c hc nst
-  rw [henv] at hfs
-  have hrows' := rows_of M ok hrows
-  obtain ⟨hkw, hkeep⟩ := keep_all dec ok cid _ hcid hcidN hdec M hm hrows' env c hc fs hfs hve a
-  have hterm' : ∀ i, i < M.rows → ∀ p ∈ M.idRow i, (cx.st.withLocal nst.vocab).termOf p.2 = pure (dec p.2) :=
-    fun i hi p hp => hterm p.2 (hrows' i hi p hp)
-  obtain ⟨keep, ms', hfk, hsz, hkk⟩ := filterKeep_spec (cx.st.withLocal nst.vocab) dec M hm hterm' fs hkw _
-    (memoOk_empty dec fs)
-  have hrun : ∃ nst', (leftJoinCondM cx g l r c).run nst =
-      pure (ljTable M l (IdGroup.ljSource l.rows
-        (IdJoin.joinPairs l r (L4Factoidal.Qlvr.sharedCols l r)).1 keep), nst') ∧
-      nst'.vocab = nst.vocab ∧ nst'.localIdx = nst.localIdx := by
-    unfold leftJoinCondM
-    simp only []
-    rw [hmj] at hM
-    rcases hjp : IdJoin.joinPairs l r (L4Factoidal.Qlvr.sharedCols l r) with ⟨li, ri⟩
-    rw [hjp] at hM
-    simp only [] at hM ⊢
-    rw [hM]
-    revert htriv hc hk hfs hkeep
-    cases c
-    case boolLit b =>
-      cases b
-      · intro hc _ hk hfs hkeep
-        simp only [Bool.false_eq_true, if_false]
-        rw [StateT.run_bind, hk, pure_bind]
-        simp only [Array.isEmpty_empty, Bool.not_false, Bool.and_self, if_true]
-        rw [StateT.run_bind]
-        have hls : (IdGroup.localStore cx).run nst = pure (cx.st.withLocal nst.vocab, nst) := rfl
-        rw [hls, pure_bind, StateT.run_bind]
-        have hl : (liftE (filterKeep (cx.st.withLocal nst.vocab) fs (fs.map fun _ => {}) M) : NM Id _).run nst =
-            pure ((keep, ms'), nst) := by
-          unfold liftE; rw [StateT.run_lift, hfk]; rfl
-        rw [hl, pure_bind]
-        exact ⟨_, rfl, rfl, rfl⟩
-      · intro _ h _ _ _; exact absurd rfl h
-    all_goals intro hc _ hk hfs hkeep
-    all_goals simp only [Bool.false_eq_true, if_false]
-    all_goals
-      rw [StateT.run_bind, hk, pure_bind]
-      simp only [Array.isEmpty_empty, Bool.not_false, Bool.and_self, if_true]
-      rw [StateT.run_bind]
-      have hls : (IdGroup.localStore cx).run nst = pure (cx.st.withLocal nst.vocab, nst) := rfl
-      rw [hls, pure_bind, StateT.run_bind]
-      have hl : (liftE (filterKeep (cx.st.withLocal nst.vocab) fs (fs.map fun _ => {}) M) : NM Id _).run nst =
-          pure ((keep, ms'), nst) := by
-        unfold liftE; rw [StateT.run_lift, hfk]; rfl
-      rw [hl, pure_bind]
-      exact ⟨_, rfl, rfl, rfl⟩
-  obtain ⟨nst', hr, hv1, hv2⟩ := hrun
-  exact ⟨keep, nst', hr, hv1, hv2, hsz, fun k hk' => by rw [hkk k hk', hkeep k hk']⟩
-
-end lj
 
 /-! ## `ljSource` with a mask -/
 
@@ -769,7 +644,5 @@ end L4Factoidal.Storage.Sbm11.FilterTableTheorems
 
 #print axioms L4Factoidal.Storage.Sbm11.FilterTableTheorems.select_spec
 #print axioms L4Factoidal.Storage.Sbm11.FilterTableTheorems.filterKindsM_spec
-#print axioms L4Factoidal.Storage.Sbm11.FilterTableTheorems.filterM_run
-#print axioms L4Factoidal.Storage.Sbm11.FilterTableTheorems.leftJoinCond_run
 #print axioms L4Factoidal.Storage.Sbm11.FilterTableTheorems.ljSource_spec'
 #print axioms L4Factoidal.Storage.Sbm11.FilterTableTheorems.leftJoinCond_rows
