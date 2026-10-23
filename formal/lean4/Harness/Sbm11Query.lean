@@ -263,6 +263,9 @@ structure Session where
       (`IdQuery.Store.mark`) and `l4sbm11 query --repeat N` prints the median
       time of each phase over runs 2 to N. -/
   phases : Bool := false
+  /-- `IdQuery.Par.renderRows` (`SBM11_RENDER_ROWS`; 0: the calling thread
+      renders a finished table) -/
+  renderRows : Nat := IdQuery.renderJobRows
 
 /-- The default of `SBM11_PAGES`, the most dictionary pages a cache holds. A
     page is about 4.5 KB (olympics q19 needs between 4,096 and 8,192 pages). At
@@ -1018,8 +1021,8 @@ def scanSipTableParM (ss : Session) (spec : IdQuery.ScanSpec) (cands : Array UIn
     `taskPages` under `dictLock`: olympics q19 at 4 threads spent 1.5 times
     the CPU time of 1 thread, most of the extra in `copyPage` (`memmove`),
     lock waits and fresh memory. -/
-def parFold (ss : Session) (nWorkers window : Nat) (fixed : Bool := false) {α β : Type}
-    (job : IdQuery.Store IO → List Nat → ExceptT String IO α) (chunks : List (List Nat)) (init : β)
+def parFold (ss : Session) (nWorkers window : Nat) (fixed : Bool := false) {α β γ : Type} [Inhabited γ]
+    (job : IdQuery.Store IO → γ → ExceptT String IO α) (chunks : List γ) (init : β)
     (g : β → α → ExceptT String IO β) : ExceptT String IO β := do
   let arr := chunks.toArray
   let n := arr.size
@@ -1134,7 +1137,8 @@ def Session.par (ss : Session) (threads : Nat) (minRows : Nat := 8192) : IdQuery
     fold := fun bounded job chunks init g =>
       parFold ss threads (if bounded then parWindowFactor * threads else chunks.length) bounded job chunks init g
     mapList := ss.pool.map fun p => fun f xs => poolMap p f xs
-    joinRows := if ss.pool.isSome then poolJoinRows else IdQuery.joinMinRows }
+    joinRows := if ss.pool.isSome then poolJoinRows else IdQuery.joinMinRows
+    renderRows := ss.renderRows }
 
 /-- `SBM11_MIN_RANGE_ROWS`: the fewest estimated rows per block range
     (`IdQuery.rangeCount`; default 8,192; 0: one range per thread, as the
@@ -1774,9 +1778,10 @@ def runQuery (dir : String) (o : Opts) : IO UInt32 := do
   -- 0.9 ms at 4 threads).
   let hw := (System.Platform.Internal.getHardwareConcurrency ()).toNat
   let ss ← if o.threads > 1 && (hw == 0 || o.threads ≤ hw) then
-      pure { ss with pool := some (← Harness.WorkerPool.start (o.threads - 1) ((← IO.getEnv "SBM11_SPIN_NS").bind String.toNat? |>.getD 1000000) (IO.mkRef {})) }
+      pure { ss with pool := some (← Harness.WorkerPool.start (((← IO.getEnv "SBM11_POOL_SIZE").bind String.toNat?).getD (o.threads - 1)) ((← IO.getEnv "SBM11_SPIN_NS").bind String.toNat? |>.getD 1000000) (IO.mkRef {})) }
     else pure ss
-  let ss := { ss with phases := (← IO.getEnv "SBM11_PHASES").isSome }
+  let ss := { ss with phases := (← IO.getEnv "SBM11_PHASES").isSome,
+                      renderRows := ((← IO.getEnv "SBM11_RENDER_ROWS").bind String.toNat?).getD IdQuery.renderJobRows }
   let t1 ← IO.monoNanosNow
   let openBytes ← ss.g.fileBytes.get
   let stdout ← IO.getStdout

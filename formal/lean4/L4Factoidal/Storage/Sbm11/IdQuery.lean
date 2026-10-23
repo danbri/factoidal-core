@@ -949,11 +949,17 @@ def Store.markM {m : Type → Type} [Monad m] (st : Store m) (l : String) : Exce
   | some f => ExceptT.lift (f l)
   | none => pure ()
 
+/-- The fewest rows per job of the divided rendering of a finished table
+    (`renderJobs`, stage 1j). -/
+def renderJobRows : Nat := 128
+
 /-- The runner of the divided paths. `fold job chunks init g` runs `job` on
     every chunk of block numbers, each with its own view of the store, and
     folds `g` over the results in chunk order. Its meaning is
     `chunks.foldlM (fun b X => do g b (← job st X)) init`; the native driver
-    (`Harness/Sbm11Query.lean`, `parFold`) runs the jobs as tasks. -/
+    (`Harness/Sbm11Query.lean`, `parFold`) runs the jobs as tasks. A chunk is
+    a list of block numbers (the scans), a `StreamJob` (the streamed path) or
+    a range of rows (`renderParM`). -/
 structure Par (m : Type → Type) where
   threads : Nat
   /-- the fewest estimated rows per range (`rangeCount`); 0: no minimum -/
@@ -962,7 +968,7 @@ structure Par (m : Type → Type) where
       (the streamed path, whose results are rendered rows); `false`: the
       results are small (group maps, the first `k` rows of a range) and a
       worker never waits for the parent before it takes the next range. -/
-  fold : {α β : Type} → (bounded : Bool) → (Store m → List Nat → ExceptT String m α) → List (List Nat) →
+  fold : {α β γ : Type} → [Inhabited γ] → (bounded : Bool) → (Store m → γ → ExceptT String m α) → List γ →
     β → (β → α → ExceptT String m β) → ExceptT String m β
   /-- issue 961: a map of a pure function whose elements the native driver
       computes on the session's worker pool. Its meaning is
@@ -980,6 +986,9 @@ structure Par (m : Type → Type) where
       runs per process, median of 5 processes: 1 range per thread 7.65 ms, 2
       ranges 6.18 ms, 4 ranges 6.15 ms, 8 ranges 6.51 ms, 32 ranges 7.27 ms. -/
   countPerThread : Nat := 2
+  /-- the fewest rows per range of the divided rendering of a finished table
+      (`renderJobs`; stage 1j); 0: the calling thread renders -/
+  renderRows : Nat := renderJobRows
 
 def ScanSpec.colPos (perm c : Nat) : Nat := if c < 3 then permOrder[perm]![c]! else 3
 
@@ -2777,6 +2786,17 @@ def appendIdJsonM {m : Type → Type} [Monad m] (st : Store m) (reference : Bool
     match keyShape buf a e with
     | some (cls, z) => return keyJsonInto buf a e cls z out
     | none => pure ()
+  -- an inline integer or boolean (stage 1j, issue 961): its literal from the
+  -- id alone (`ofInlineCode?`, the term `termOf` gives for it), printed by
+  -- the key printer's literal form; no `Json` value and no `String` of it.
+  -- DBpedia d10 renders a count per group: 1.1 ms for 665 rows went mostly
+  -- to `jsonOfTerm` and `Json.toString`. `tests/sbm11/run.sh` compares this
+  -- output with `--reference-render` byte for byte.
+  if !reference && (tag == tagInt || tag == tagBool) then
+    match ofInlineCode? x.toNat with
+    | some (.literal wl) =>
+      return L4Factoidal.Qlvr.Query.litBytes wl.val.lexicalForm wl.val.datatype.val out
+    | _ => pure ()
   let t ← st.termOf x
   return out ++ (L4Factoidal.SPARQL.jsonOfTerm t).toString.toUTF8
 
@@ -3101,15 +3121,38 @@ def streamRangeBlocks : Nat := 1
     the profile of q19 at 4 threads). 512 rows of q21 are about 64 KB. -/
 def pieceRows : Nat := 512
 
+/-- The fewest jobs per thread of the divided streamed path (`streamJobs`).
+    Olympics at 4 threads, `--repeat 21` (stage 1j): see the record. -/
+def streamJobsPerThread : Nat := 4
+
+/-- One job of the divided streamed path (stage 1j, issue 961): the blocks of
+    a range, and the window `[wFrom, wTo)` of the range's rows (after the
+    FILTERs, at most `cap` of them) that the job renders. `stats`: the job
+    gives the range's scan statistics (one job per range does, so a range cut
+    into windows is counted once). -/
+structure StreamJob where
+  blocks : List Nat
+  wFrom : Nat := 0
+  wTo : Nat
+  stats : Bool := true
+  deriving Inhabited
+
 /-- One block range of the divided streamed path: per scan chunk, the rows
     that pass the FILTERs, rendered (`renderRowsEndsM`) in pieces of at most
     `pieceRows` rows, at most `cap` rows over the range; the scan stops when
     it has `cap` rows. Each piece is its own buffer (a buffer carried through
     the loop would be shared with the loop state and copied on its first
-    append in every block). -/
+    append in every block).
+
+    Only the range's rows `[wFrom, wTo)` are rendered (stage 1j): a range
+    cut into windows (`streamJobs`) is scanned by each of its jobs, and the
+    jobs' rows in window order are the range's rows
+    (`ParallelMergeTheorems.windows_concat`). `wFrom = 0`, `wTo = cap`: the
+    whole range. -/
 def streamPartM {m : Type → Type} [Monad m] (st : Store m) (spec : ScanSpec) (fs : Array FKind)
     (reference : Bool) (vars : Array String) (cap : Nat) (metas : Array BlockMeta) (ox : OvCtx)
-    (X : List Nat) : ExceptT String m (Array (ByteArray × Array Nat) × ScanStats) := do
+    (X : List Nat) (wFrom : Nat := 0) (wTo : Nat := cap) :
+    ExceptT String m (Array (ByteArray × Array Nat) × ScanStats) := do
   let spec := spec.fresh
   let fs := fs.map FKind.fresh
   let ox := ox.fresh spec.key
@@ -3124,18 +3167,43 @@ def streamPartM {m : Type → Type} [Monad m] (st : Store m) (spec : ScanSpec) (
         let (tab, memos) ← applyFilters st fs memos ch.table
         let take := min (cap - n) tab.rows
         if take == 0 then return ((memos, pieces, n, rowBytes), n < cap)
-        if let some f := st.prefetch then f tab take
+        -- rows `[lo, hi)` of this chunk are in the window
+        let lo := min take (wFrom - n)
+        let hi := min take (wTo - n)
+        if hi ≤ lo then return ((memos, pieces, n + take, rowBytes), n + take < cap)
+        let tab := if lo == 0 then tab else tab.slice lo hi
+        let cnt := hi - lo
+        if let some f := st.prefetch then f tab cnt
         let mut pieces := pieces
         let mut rowBytes := rowBytes
-        for k in [0:(take + pieceRows - 1) / pieceRows] do
-          let lo := k * pieceRows
-          let hi := min take (lo + pieceRows)
-          let piece ← renderRowsEndsM st reference tab vars lo hi rowBytes
-          if hi > lo then rowBytes := (piece.1.size / (hi - lo)) * 9 / 8 + 16
+        for k in [0:(cnt + pieceRows - 1) / pieceRows] do
+          let a := k * pieceRows
+          let b := min cnt (a + pieceRows)
+          let piece ← renderRowsEndsM st reference tab vars a b rowBytes
+          if b > a then rowBytes := (piece.1.size / (b - a)) * 9 / 8 + 16
           pieces := pieces.push piece
         pure ((memos, pieces, n + take, rowBytes), n + take < cap))
       metas (sortVarOf spec) ox X
   return (pieces, s)
+
+/-- The jobs of the divided streamed path for its block ranges (stage 1j,
+    issue 961). With fewer than `streamJobsPerThread × threads` ranges, each
+    range is cut into windows of about equal estimated rows (the PRM1 rows of
+    its blocks), so that the workers get about equal work: olympics q19 at 4
+    threads had 10 ranges of one block each, so one worker rendered 3 of them
+    while another rendered 2. The last window of a range ends at `cap`, so
+    the windows cover the range's rows whatever the estimate. -/
+def streamJobs (threads cap : Nat) (metas : Array BlockMeta) (chunks : List (List Nat)) : List StreamJob :=
+  let want := streamJobsPerThread * threads
+  let parts := if chunks.length == 0 || chunks.length ≥ want then 1
+    else (want + chunks.length - 1) / chunks.length
+  chunks.flatMap fun X =>
+    if parts ≤ 1 then [{ blocks := X, wTo := cap }]
+    else
+      let est := X.foldl (fun a i => a + (metas[i]?.map (·.rows)).getD 0) 0
+      (List.range parts).map fun j =>
+        { blocks := X, wFrom := if j == 0 then 0 else min cap (est * j / parts),
+          wTo := if j + 1 == parts then cap else min cap (est * (j + 1) / parts), stats := j == 0 }
 
 /-- The parent's step over one rendered piece, as the single-thread streamed
     path steps over one scan chunk: skip what is left of OFFSET, emit up to
@@ -3186,6 +3254,21 @@ def topPartM {m : Type → Type} [Monad m] (st : Store m) (plan : Plan) (spec : 
   let perm ← orderPermM st plan t (some k)
   return (t.reorder perm, s)
 
+/-- The row ranges in which the workers of `par` render the `rows` rows of a
+    finished table (after ORDER BY, DISTINCT, OFFSET, LIMIT, or the groups of
+    an aggregate): at most two per thread, at least `renderJobRows` rows
+    each (`Par.renderRows`), consecutive, covering `[0, rows)`. Fewer than two ranges: the
+    calling thread renders. DBpedia d10 renders 665 groups and olympics q07
+    313 rows on the calling thread after the divided scans (1.1 ms and
+    0.26 ms at 4 threads, stage 1i). -/
+def renderJobs {m : Type → Type} (par : Option (Par m)) (rows : Nat) : List (Nat × Nat) :=
+  match par with
+  | none => []
+  | some p =>
+    let n := if p.renderRows == 0 then 0 else min (2 * p.threads) (rows / p.renderRows)
+    if p.threads ≤ 1 || n < 2 then []
+    else (List.range n).map fun j => (rows * j / n, rows * (j + 1) / n)
+
 /-- Run a plan. `emit` receives the SPARQL JSON text in pieces. `par`: divide
     the single-pattern paths into block ranges (stage 1b); `none` is the
     single-thread path. -/
@@ -3224,13 +3307,17 @@ def runPlanM {m : Type → Type} [Monad m] (st : Store m) (plan : Plan) (emit : 
       match par, (← divideFor? st par spec streamRangeBlocks).filter (fun d => plan.offset + lim > d.2.2.2) with
       | some p, some (metas, ox, chunks, est) =>
         let total ← st.blockCount spec.perm
+        let cap := plan.offset + lim
+        let jobs := streamJobs p.threads cap metas chunks
         let ((_, emitted), s) ← p.fold true
-            (fun v X => streamPartM v spec fs reference plan.outVars (plan.offset + lim) metas ox X) chunks
+            (fun v (J : StreamJob) => do
+              let (pieces, s') ← streamPartM v spec fs reference plan.outVars cap metas ox J.blocks J.wFrom J.wTo
+              pure (pieces, if J.stats then s' else {})) jobs
             (((0 : Nat), (0 : Nat)), ({ blocksTotal := total } : ScanStats))
             fun (acc, s) (pieces, s') => do
               let acc ← pieces.foldlM (emitPieceM emit plan.offset lim) acc
               pure (acc, s.add s')
-        stats := { plan := #[s!"pattern 0 streamed in {chunks.length} block ranges ({p.threads} tasks at once at most; OFFSET + LIMIT above the estimate {est}): {permNames[spec.perm]!} key {spec.key.size}; blocks {s.blocksRead} read of {s.blocksSelected} selected of {s.blocksTotal}, frames {s.framesRead}, {s.bytesRead} bytes; rows {s.rowsOut}{windowNote window}"],
+        stats := { plan := #[s!"pattern 0 streamed in {chunks.length} block ranges ({jobs.length} jobs; {p.threads} tasks at once at most; OFFSET + LIMIT above the estimate {est}): {permNames[spec.perm]!} key {spec.key.size}; blocks {s.blocksRead} read of {s.blocksSelected} selected of {s.blocksTotal}, frames {s.framesRead}, {s.bytesRead} bytes; rows {s.rowsOut}{windowNote window}"],
                    rows := emitted, scan := s.full }
       | _, _ =>
         let ((_, emitted, _), s) ← scanFoldM st spec true ((0 : Nat), (0 : Nat), memos0)
@@ -3315,12 +3402,23 @@ def runPlanM {m : Type → Type} [Monad m] (st : Store m) (plan : Plan) (emit : 
     st.markM "bgp+filters"
     let out ← finishM st plan table
     st.markM "finish"
-    let pieces := (out.rows + 4095) / 4096
-    for k in [0:pieces] do
-      let lo := 4096 * k
-      let hi := min out.rows (lo + 4096)
-      let bytes ← renderRowsM st reference out plan.outVars lo hi (lo == 0)
-      (emit bytes : m Unit)
+    match par, renderJobs par out.rows with
+    | some p, jobs@(_ :: _ :: _) =>
+      -- stage 1j: the rows divided into ranges that the workers render
+      -- (`renderRowsEndsM`); the parent writes them in range order, the
+      -- comma before the first row left out (`emitPieceM` with no OFFSET and
+      -- no LIMIT), the text `renderRowsM` writes for all the rows
+      let _ ← p.fold false (fun v (r : Nat × Nat) => do
+          let piece ← renderRowsEndsM v reference out plan.outVars r.1 r.2
+          pure #[piece]) jobs
+        ((0 : Nat), (0 : Nat)) fun acc pieces => pieces.foldlM (emitPieceM emit 0 out.rows) acc
+    | _, _ =>
+      let pieces := (out.rows + 4095) / 4096
+      for k in [0:pieces] do
+        let lo := 4096 * k
+        let hi := min out.rows (lo + 4096)
+        let bytes ← renderRowsM st reference out plan.outVars lo hi (lo == 0)
+        (emit bytes : m Unit)
     stats := { stats with rows := out.rows }
     st.markM "render"
   (emit jsonTail.toUTF8 : m Unit)
