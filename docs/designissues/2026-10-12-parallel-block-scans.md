@@ -2025,3 +2025,112 @@ On commit `91f3fa3c` (the Lean code of this stage; exit codes read):
   VM (1i.2); d10 single processes at 1 thread: 7.7 to 13.9 ms.
 
 Issue https://github.com/danbri/factoidal/issues/961 stays open.
+
+## Stage 1l: ORDER BY on dictionary keys (2026-10-23)
+
+Issue https://github.com/danbri/factoidal/issues/961, key result KR 1.2 of
+https://github.com/danbri/factoidal/issues/875. No allocator setting changed;
+the block-bytes rule of `tests/sbm11/threads.sh` and `SBM11_STREAM_JOBS` are
+not changed.
+
+### 1l.1 Result
+
+KR 1.2 is met for d10, q19 and q21; it is not met for q07 (0.53). Final
+interleaved run, binary of `main` `e4edbc2e` against this stage (`39543aa6`),
+16 rounds (15 kept), `--repeat 21`, 2026-10-23 21:45 to 21:48 UTC, after all
+gates had ended (raw CSV `.claude-runs/kr12l/final.csv`, not in the
+repository):
+
+| Query | `main` 1 / 4 threads ms | 4/1 | this stage 1 / 4 threads ms | 4/1 | peak RSS 4/1 (largest), main / this stage | target met |
+| --- | ---: | ---: | ---: | ---: | ---: | --- |
+| q07 | 4.68 / 2.74 | 0.58 | 4.34 / 2.31 | 0.53 | 1.14 / 1.13 | no |
+| q19 | 33.05 / 11.35 | 0.34 | 34.38 / 11.68 | 0.34 | 1.81 / 1.81 | yes |
+| q21 | 89.64 / 32.33 | 0.36 | 93.36 / 28.48 | 0.31 | 1.67 / 1.68 | yes |
+| d10 | 9.30 / 3.30 | 0.36 | 8.98 / 3.15 | 0.35 | 1.16 / 1.16 | yes |
+
+The change runs only for ORDER BY; q19, q21 and d10 have none, so their
+differences are the variation between processes of this VM (1i.2; q21 at 1
+thread 89.6 against 93.4 ms runs the same code). q07 is faster at 1 thread
+too (4.68 to 4.34 ms), so the ratio moves less than the 4-thread time.
+
+### 1l.2 Measurements before the change
+
+`SBM11_PHASES=1`, 61 runs, binary of `main`: q07 `finish` (ORDER BY keys)
+0.459 ms at 1 thread and 0.515 ms at 4 threads (291 distinct labels: decode
+to `Term`, `OrderRead.of`, comparison sort). Other phases at 4 threads:
+constants 0.07, first scan 0.15, scan0 0.15, join0 0.19, scan2 0.68, scan3
+0.57, joins 0.10, render 0.28 ms.
+
+### 1l.3 What changed
+
+`IdQuery.orderKeysByKeysM?`: when every id of an ORDER BY column is unbound,
+a blank node or an IRI (tags 1 and 2), or a dictionary literal (tag 3) whose
+key is in group 3 (`rdf:langString`, exactly one `0x00` in the key body, so
+no `0x00` in the lexical form) or group 4 (`xsd:string`) of
+`OrderKey.keyGroup?`, the sort key of a row is 0 (unbound), the id (groups 1
+to 3) or the id plus `2^60` (group 4). The key bytes are read in place
+(`Store.keySlice`, `OrderKey.keyGroupSlice?`, a loop); no term is decoded
+and the sort is on `UInt64`. Any other id gives `none` and the former path.
+q07 `finish`: 0.46 to 0.18 ms at 1 thread, 0.52 to 0.21 ms at 4 threads.
+
+Proved (`Storage/Sbm11/OrderKeyTheorems.lean`, axioms `propext`,
+`Classical.choice`, `Quot.sound`):
+
+- `char_cmp` (from 16 lemmas `cmpIJ`, one per pair of UTF-8 lengths):
+  unsigned byte order of `String.utf8EncodeChar a ++ s` and
+  `String.utf8EncodeChar b ++ t` is the code point order of `a` and `b`, and
+  for `a = b` the order of `s` and `t`.
+- `bytes_str`: `bytesCmp (bytesOfString a) (bytesOfString b) = strCompare a b`.
+- `bytes_sep`: with no `0x00` in `a` and `b`, the byte order of `a 0x00 X`
+  and `b 0x00 Y` is `strCompare a b`, then the order of `X` and `Y`.
+- `orderValue_keyOrder`: for terms `t₁`, `t₂` with `termKey? tᵢ = some kᵢ`
+  and `keyGroup? kᵢ = some gᵢ`, `sparqlOrderValue (orderValue t₁)
+  (orderValue t₂)` is `-1` if `g₁ < g₂`, `1` if `g₂ < g₁`, else
+  `bytesCmp k₁ k₂`. No premise states an order. `orderValue_error_term`,
+  `orderValue_term_error`: an unbound variable comes first.
+- `keyGroupSlice?_eq`: the in-place check is `keyGroup?` of the key bytes.
+
+Not proved here: that the ids of one tag are in key byte order. That is the
+dictionary invariant (`DictTheorems.decodeDict_sorted`, ranks of the sorted
+dictionary) that the IRI and blank-node path `orderKeysByIds?` already uses.
+Tested: `tests/sbm11/run.sh` part (z), `tests/sbm11/orderkeys/`: 8 queries at
+1 and 4 threads compared with `l4factoidal` row by row in order
+(`compare_answers.py ordered`): unbound values after OPTIONAL (ASC and DESC),
+a blank node, IRIs, `xsd:string` and `rdf:langString` literals with 1- to
+4-byte UTF-8 characters, empty lexical forms, tags that differ only after a
+prefix, LIMIT, a lexical form with U+0000 and typed literals (the last two
+take the former path). 16 pass, 0 fail (out of 16).
+
+### 1l.4 Tried and not kept
+
+- The finished table rendered on the pool for q07 (313 rows):
+  `SBM11_RENDER_ROWS` 0, 40, 80 and 160 at 4 threads gave render 0.26, 0.26,
+  0.37 and 0.26 ms. Measurement does not support a lower threshold.
+
+### 1l.5 Gates
+
+On commit `39543aa6` (exit codes read):
+
+| Gate | Result |
+| --- | --- |
+| `lake build` | exit 0 |
+| `tests/sbm11/run.sh` | exit 0: 3,379 pass, 0 fail, 28 expected-fail (out of 3,407); part (z) 16 pass, 0 fail (out of 16) |
+| `tests/sbm11/threads.sh` | exit 0: olympics and DBpedia answers identical at 1, 2, 4, 8 threads; DBpedia against the three-engine record: equal 76, different 0 |
+| `SBM11_THREADS=4 tests/sbm11/census.sh` | exit 0: 605 matched the reference engine |
+| `lean-unbuilt-modules.py --gate`, `lean-tail-recursion-audit.py --gate`, `lean-csimp-reach.py --gate` | exit 0 (998 modules reached), exit 0, exit 0 |
+| `tools/land-gates.sh` | exit 0 (LAND GATES PASSED): native-smoke 377 pass, 0 fail, 4 xfail (out of 381), cli-smoke 151 pass, 0 fail, 5 xfail (out of 156), LWS scaling 21 pass, 0 fail (out of 21), host-purity-lint 40 pass, 0 fail (out of 40) |
+| `sorry`, `native_decide`, `axiom`, `maxHeartbeats` in the Lean diff | none (`decide +kernel` for two datatype IRI tests) |
+
+### 1l.6 What remains
+
+- q07 (0.53): at 4 threads about 2.3 ms; the target needs about 1.75 ms.
+  Phases at 4 threads: constants 0.04, first scan 0.13, scan0 0.13, join0
+  0.21, scan2 0.69, scan3 0.52, joins 0.10, ORDER BY keys 0.21, render 0.27
+  ms. The two scans with candidates reach 2.5 and 2.4 times their 1-thread
+  speed; the serial work (first scans, join0, ORDER BY keys, render) is about
+  0.9 ms. ORDER BY keys still read 313 dictionary keys (page access); render
+  on the pool is slower for 313 rows (1l.4).
+- The 1-thread time of one process still varies by up to 1.5 times on this
+  VM (1i.2).
+
+Issue https://github.com/danbri/factoidal/issues/961 stays open.
