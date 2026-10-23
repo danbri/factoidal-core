@@ -1,0 +1,3 @@
+PREFIX ex: <http://ex.org/>
+# Issue 776: an OPTIONAL condition with EXISTS, NOT EXISTS and an EXISTS-free conjunct, one mask over the pairs.
+SELECT ?s ?o WHERE { ?s ex:age ?a OPTIONAL { ?s ex:knows ?o FILTER (EXISTS { ?o ex:name ?nn } && NOT EXISTS { ?o ex:flag ?ff } && ?o != ex:zz) } }

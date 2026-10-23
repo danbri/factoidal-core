@@ -1,0 +1,4 @@
+PREFIX ex: <http://ex.org/>
+PREFIX xsd: <http://www.w3.org/2001/XMLSchema#>
+# Issue 959: an OPTIONAL inside GRAPH ?g reads the same named graph.
+SELECT ?g ?s ?o ?n WHERE { GRAPH ?g { ?s ex:knows ?o OPTIONAL { ?s ex:name ?n } } }

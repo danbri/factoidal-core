@@ -1,4 +1,0 @@
-PREFIX ex: <http://ex.org/>
-PREFIX xsd: <http://www.w3.org/2001/XMLSchema#>
-# VALUES beside an OPTIONAL: the reference fallback.
-SELECT ?s ?a ?z WHERE { ?s ex:name ?n OPTIONAL { ?s ex:age ?a } VALUES ?z { 1 } }

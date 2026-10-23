@@ -1,0 +1,4 @@
+PREFIX ex: <http://ex.org/>
+# GRAPH ?g over a basic graph pattern: g1 and g2 have the same triples, gd
+# has the triples of the default graph; each gives its own rows.
+SELECT * WHERE { GRAPH ?g { ?s ?p ?o } }

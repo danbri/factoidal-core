@@ -1,0 +1,4 @@
+PREFIX ex: <http://ex.org/>
+PREFIX xsd: <http://www.w3.org/2001/XMLSchema#>
+# Issue 959: BIND reads a variable an OPTIONAL with a FILTER may leave unbound.
+SELECT ?s ?z WHERE { ?s ex:age ?a OPTIONAL { ?s ex:name ?n FILTER(LANG(?n) = "en") } BIND(COALESCE(?n, "none") AS ?z) }

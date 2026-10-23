@@ -1,4 +1,0 @@
-PREFIX ex: <http://ex.org/>
-PREFIX xsd: <http://www.w3.org/2001/XMLSchema#>
-# A language tag in VALUES matches the stored term whatever its case (RDF 1.1 Concepts 3.3).
-SELECT ?s ?n WHERE { ?s ex:name ?n } VALUES ?n { "Alice"@EN "carol" "nobody"@EN }

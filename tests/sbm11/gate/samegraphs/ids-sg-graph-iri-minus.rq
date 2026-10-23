@@ -1,0 +1,2 @@
+PREFIX ex: <http://ex.org/>
+SELECT * WHERE { GRAPH ex:gd { ?s ex:p ?o } MINUS { GRAPH ex:g1 { ?x ex:p ?s } } }

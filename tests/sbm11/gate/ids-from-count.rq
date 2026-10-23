@@ -1,0 +1,3 @@
+PREFIX ex: <http://ex.org/>
+# COUNT over the merged default graph.
+SELECT (COUNT(*) AS ?n) FROM ex:g1 FROM ex:g2 WHERE { ?s ?p ?o }

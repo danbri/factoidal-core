@@ -1,0 +1,4 @@
+PREFIX ex: <http://ex.org/>
+PREFIX xsd: <http://www.w3.org/2001/XMLSchema#>
+# Issue 959: SELECT * in a sub-SELECT with a nested OPTIONAL.
+SELECT ?s ?n ?a WHERE { { SELECT * WHERE { ?s ex:name ?n OPTIONAL { ?s ex:age ?a } } } }

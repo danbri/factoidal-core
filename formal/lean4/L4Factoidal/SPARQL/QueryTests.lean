@@ -1124,6 +1124,22 @@ def pathPairs (path : PropertyPath) : List (String × String) :=
 -- `:knows+` is the transitive closure: alice reaches carol.
 #guard ((pathPairs (.oneOrMore (.iri pKnows))).contains ("alice", "carol")) == true
 #guard (pathPairs (.oneOrMore (.iri pKnows))).length == 3
+-- https://github.com/danbri/factoidal/issues/955: a step relation with a pair
+-- twice. `(:knows|:val)+` over alice knows bob, bob knows carol, alice val bob
+-- has the step list [(alice, bob), (bob, carol), (alice, bob)]. The first
+-- round adds (alice, carol) and the deduplication removes one (alice, bob),
+-- so a length test against the step list stops before the §18.4 fixpoint.
+def gDupStep : Graph :=
+  [ tr iAlice pKnows (.iri iBob),
+    tr iBob   pKnows (.iri iCarol),
+    tr iAlice pVal   (.iri iBob) ]
+def dupStepPairs : List (String × String) :=
+  (rows { default := gDupStep, named := [] }
+      (qPath (.oneOrMore (.alternative (.iri pKnows) (.iri pVal))))).map (fun mu =>
+    (shortName ((col "s" [mu]).headD ""), shortName ((col "o" [mu]).headD "")))
+#guard dupStepPairs.contains ("alice", "carol") == true
+-- §18.4 ALP: the closure is a set, each pair once.
+#guard dupStepPairs.length == 3
 -- `:knows*` adds the reflexive pairs over the graph's nodes.
 #guard ((pathPairs (.zeroOrMore (.iri pKnows))).contains ("alice", "alice")) == true
 #guard ((pathPairs (.zeroOrMore (.iri pKnows))).contains ("alice", "carol")) == true

@@ -1,0 +1,2 @@
+PREFIX ex: <http://ex.org/>
+SELECT ?s WHERE { ?s ex:knows/ex:knows ex:c }

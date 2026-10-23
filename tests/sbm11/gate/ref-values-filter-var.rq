@@ -1,4 +1,0 @@
-PREFIX ex: <http://ex.org/>
-PREFIX xsd: <http://www.w3.org/2001/XMLSchema#>
-# A FILTER that reads a VALUES variable: the reference fallback.
-SELECT ?s ?z WHERE { ?s ex:age ?a VALUES ?z { 1 2 } FILTER(?z > 1) }

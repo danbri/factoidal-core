@@ -28,6 +28,11 @@ generation (`TermIdTheorems.toId?_eq_iff`) and on the query-local terms
    row in right-row order: the order of `IdJoinTheorems.idJoin`.
 3. The output columns from the pairs.
 
+FROM (`distinctRows`, `keepVars`; issue 953): the rows of a triple pattern
+over the RDF merge of several graphs are the rows of its scans of each graph,
+concatenated, with duplicate triples removed, then projected
+(`IdDatasetTheorems.mergedRows_eq`).
+
 UNION (`unionIds`): the rows of the branch tables in order, `unbound` in a
 column a branch does not have (SPARQL 1.1 section 18.5 Union, multiset
 union).
@@ -42,6 +47,7 @@ docs/designissues/2026-10-12-sbm11-end-to-end-theorem.md).
 `for` loops only.
 -/
 import L4Factoidal.Storage.Sbm11.OptJoin
+import Std.Data.HashSet
 
 namespace L4Factoidal.Storage.Sbm11.IdJoin
 
@@ -101,15 +107,14 @@ def joinPairs (l r : Table) (shared : Array (Nat × Nat)) : Array Nat × Array N
           ri := ri.push j
   return (li, ri)
 
-/-- SPARQL 1.1 section 18.5 Join of two id tables, `unbound` an unbound
+/-- The rows of the pairs `(li[k], ri[k])` of rows of `l` and `r` merged
+    (SPARQL 1.1 section 18.5, `merge`), `unbound` an unbound
     variable: the left variables, then the right variables the left does not
     have. A shared column takes the left id, or the right id where the left
     is `unbound`. The left row order is kept; the left sort variable is kept
     when the right table does not have it. -/
-def joinIds (l r : Table) : Table := Id.run do
-  let shared := sharedCols l r
+def pairsTable (l r : Table) (shared : Array (Nat × Nat)) (li ri : Array Nat) : Table := Id.run do
   let (vars, extra) := joinVars l r
-  let (li, ri) := joinPairs l r shared
   let mut cols : Array ByteArray := Array.mkEmpty vars.size
   for c in [0:l.vars.size] do
     match shared.find? (·.1 == c) with
@@ -126,6 +131,13 @@ def joinIds (l r : Table) : Table := Id.run do
     | some v => if r.vars.contains v then none else some v
     | none => none
   return { vars, cols, rows := li.size, sortVar }
+
+/-- SPARQL 1.1 section 18.5 Join of two id tables (`pairsTable` of the pairs
+    of compatible rows, `joinPairs`). -/
+def joinIds (l r : Table) : Table :=
+  let shared := sharedCols l r
+  let (li, ri) := joinPairs l r shared
+  pairsTable l r shared li ri
 
 /-- SPARQL 1.1 section 18.5 Union of id tables, in order (multiset union:
     the rows of the first table, then those of the next): the variables of
@@ -149,5 +161,31 @@ def unionIds (ts : Array Table) : Table := Id.run do
         cols := cols.set! c b
     rows := rows + t.rows
   return { vars, cols, rows }
+
+/-- The rows of `t` with duplicates removed, the first occurrence of each
+    row kept, in order (https://github.com/danbri/factoidal/issues/953: the
+    rows of a triple pattern over the RDF merge of the FROM graphs, SPARQL 1.1
+    section 13.2.2, when the columns are every variable of the pattern). With
+    no column every row is equal: one row when `t` has a row. -/
+def distinctRows (t : Table) : Table := Id.run do
+  let mut seen : Std.HashSet (List UInt64) := {}
+  let mut idx : Array Nat := #[]
+  for i in [0:t.rows] do
+    let k := (List.range t.vars.size).map fun c => t.at c i
+    if !seen.contains k then
+      seen := seen.insert k
+      idx := idx.push i
+  return t.reorder idx
+
+/-- The columns of the variables `keep` holds, in order; the rows unchanged.
+    No sort variable. -/
+def keepVars (t : Table) (keep : String → Bool) : Table := Id.run do
+  let mut vars : Array String := #[]
+  let mut cols : Array ByteArray := #[]
+  for c in [0:t.vars.size] do
+    if keep t.vars[c]! then
+      vars := vars.push t.vars[c]!
+      cols := cols.push t.cols[c]!
+  return { vars, cols, rows := t.rows }
 
 end L4Factoidal.Storage.Sbm11.IdJoin

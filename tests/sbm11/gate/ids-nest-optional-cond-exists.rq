@@ -1,0 +1,4 @@
+PREFIX ex: <http://ex.org/>
+PREFIX xsd: <http://www.w3.org/2001/XMLSchema#>
+# Issue 959: the LeftJoin condition holds EXISTS.
+SELECT ?s ?n WHERE { ?s ex:age ?a OPTIONAL { ?s ex:name ?n FILTER EXISTS { ?s ex:knows ?x } } }

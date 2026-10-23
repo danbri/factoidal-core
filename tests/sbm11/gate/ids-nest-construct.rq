@@ -1,0 +1,4 @@
+PREFIX ex: <http://ex.org/>
+PREFIX xsd: <http://www.w3.org/2001/XMLSchema#>
+# Issue 959: CONSTRUCT over a nested OPTIONAL.
+CONSTRUCT { ?s ex:friendName ?m } WHERE { ?s ex:age ?a OPTIONAL { ?s ex:knows ?o OPTIONAL { ?o ex:name ?m } } }

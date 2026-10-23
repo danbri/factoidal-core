@@ -1,0 +1,2 @@
+PREFIX ex: <http://ex.org/>
+SELECT * WHERE { GRAPH ex:g2 { ?x ex:q ?v FILTER EXISTS { ?x ex:p ex:a } } }

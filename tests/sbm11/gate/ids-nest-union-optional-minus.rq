@@ -1,0 +1,4 @@
+PREFIX ex: <http://ex.org/>
+PREFIX xsd: <http://www.w3.org/2001/XMLSchema#>
+# Issue 959: MINUS over a UNION whose branch holds an OPTIONAL.
+SELECT * WHERE { { ?s ex:age ?a } UNION { ?s ex:flag ?f OPTIONAL { ?s ex:name ?n } } MINUS { ?s ex:knows ex:c } }

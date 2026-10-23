@@ -1,0 +1,5 @@
+# GRAPH ?g over a basic graph pattern of two triple patterns joined inside
+# one named graph, nested under a UNION (IdGroup.bgpGraphVarM, one scan per
+# triple pattern with the graph as a column; GraphBgpTableTheorems, L4u).
+PREFIX ex: <http://ex.org/>
+SELECT ?g ?s ?n WHERE { { GRAPH ?g { ?s ex:knows ?o . ?s ex:name ?n } } UNION { BIND(ex:none AS ?g) } }

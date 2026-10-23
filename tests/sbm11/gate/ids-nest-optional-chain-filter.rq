@@ -1,0 +1,4 @@
+PREFIX ex: <http://ex.org/>
+PREFIX xsd: <http://www.w3.org/2001/XMLSchema#>
+# Issue 959: a FILTER over a group with a nested OPTIONAL reads a variable of the inner group.
+SELECT ?s ?o ?m WHERE { ?s ex:name ?n OPTIONAL { ?s ex:knows ?o OPTIONAL { ?o ex:name ?m } } FILTER(!BOUND(?m) || STRLEN(STR(?m)) > 3) }

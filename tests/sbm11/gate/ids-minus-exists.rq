@@ -1,0 +1,3 @@
+PREFIX ex: <http://ex.org/>
+# MINUS beside FILTER EXISTS.
+SELECT ?s WHERE { ?s ex:age ?a FILTER EXISTS { ?s ex:name ?n } MINUS { ?s ex:flag ?f } }

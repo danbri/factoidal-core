@@ -1,0 +1,4 @@
+PREFIX ex: <http://ex.org/>
+PREFIX xsd: <http://www.w3.org/2001/XMLSchema#>
+# Nested group on ids (issue 959): inside the GRAPH group ?g is unbound; the GRAPH binds it outside.
+SELECT ?s WHERE { GRAPH ?g { ?s ex:knows ?o FILTER(!BOUND(?g)) } }

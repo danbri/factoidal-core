@@ -17,10 +17,10 @@ arrays of row indices with `mergeGo` and builds its output table from them
   output from zip to `mergeSpec` of its join columns and its test of the
   other shared columns.
 
-Not proved here: that a row pair of the id tables is a compatible pair of
-solutions exactly when the shared columns are equal (needs the denotation of
-a `Table` as solutions), and so that the join output equals the reference
-join.
+The solution part (lemma L5a′) is `Storage/Sbm11/TableOuterTheorems.lean`,
+`mergeJoin_rows`: over the denotation of a `Table` as rows of ids, a row
+pair is a compatible pair of solutions exactly when the shared columns are
+equal, and the join output is the reference join of the rows.
 
 No `sorry`, no user `axiom`, no `native_decide`, no `partial`.
 -/

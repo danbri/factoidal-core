@@ -1,4 +1,0 @@
-PREFIX ex: <http://ex.org/>
-PREFIX xsd: <http://www.w3.org/2001/XMLSchema#>
-# UNION inside OPTIONAL: the reference fallback.
-SELECT ?x ?a WHERE { ?x ex:name ?n OPTIONAL { { ?x ex:age ?a } UNION { ?x ex:flag ?a } } }

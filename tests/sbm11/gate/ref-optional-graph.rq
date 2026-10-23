@@ -1,4 +1,0 @@
-PREFIX ex: <http://ex.org/>
-PREFIX xsd: <http://www.w3.org/2001/XMLSchema#>
-# Refused: a GRAPH inside the OPTIONAL group.
-SELECT ?s ?o WHERE { ?s ex:name ?n OPTIONAL { GRAPH ex:g1 { ?s ex:knows ?o } } }

@@ -1,0 +1,4 @@
+PREFIX ex: <http://ex.org/>
+PREFIX xsd: <http://www.w3.org/2001/XMLSchema#>
+# Issue 959: a SELECT expression in a sub-SELECT, joined on its value.
+SELECT ?s ?t WHERE { { SELECT ?s (STR(?n) AS ?t) WHERE { ?s ex:name ?n } } FILTER(STRLEN(?t) > 3) }
