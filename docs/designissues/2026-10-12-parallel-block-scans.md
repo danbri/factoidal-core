@@ -2037,7 +2037,7 @@ not changed.
 
 KR 1.2 is met for d10, q19 and q21; it is not met for q07 (0.53). Final
 interleaved run, binary of `main` `e4edbc2e` against this stage (`39543aa6`),
-16 rounds (15 kept), `--repeat 21`, 2026-10-23 21:45 to 21:48 UTC, after all
+16 rounds (15 kept), `--repeat 21`, 2026-10-23 21:44 to 21:47 UTC, after all
 gates had ended (raw CSV `.claude-runs/kr12l/final.csv`, not in the
 repository):
 
