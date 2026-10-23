@@ -64,12 +64,13 @@ triples.
 
 ## Open (design record, section 3)
 
-That the `Table` programs of the id path denote this model: that
-`IdQuery.evalBgpM` (monadic, over `ScanSpec`s, `scanFoldM` chunks,
-`Qlvr.hashJoin` and `mergeJoin`, candidate scans) gives a table whose rows
-(`Table.idRows`) are `IdEquiv` to `bgpJoin`, and that `IdQuery.pathTableM`
-gives `pathRows`; that the listings are the decoded PRB1 files of an
-admitted generation (E0, L3c).
+The `Table` programs of the id path against this model: `IdQuery.evalBgpM`
+without candidate scans is proved in `BgpTableTheorems.evalBgpM_model`
+(its rows are `IdEquiv` to sequential evaluation, hence to `bgpJoin`), and
+the WHERE clause with those leaves executed in
+`ExecLeafTheorems.where_allowed_exec`. Open: the scans with candidates in
+`Table` form, `IdQuery.pathTableM` against `pathRows`, and that the
+listings are the decoded PRB1 files of an admitted generation (E0, L3c).
 
 No `sorry`, no user `axiom`, no `native_decide`, no `partial`.
 -/
