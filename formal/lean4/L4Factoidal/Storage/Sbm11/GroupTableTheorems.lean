@@ -27,7 +27,11 @@ induction on the pattern:
   `GraphVarTableTheorems`) and
   over a nonempty basic graph pattern (`graphBgp_ends`, one scan per triple
   pattern with the graph as a column, `GraphBgpTableTheorems`), VALUES and
-  BIND (`LocalTableTheorems`), at any depth (`ExecHyps`),
+  BIND (`LocalTableTheorems`), and a sub-SELECT (`SubSelectTableTheorems`:
+  a projection of variables on ids, or `SELECT` with a list of items whose
+  variables are distinct and no EXISTS outside its WHERE clause, with any
+  GROUP BY, HAVING, aggregate, expression, ORDER BY, OFFSET, LIMIT,
+  DISTINCT or REDUCED), at any depth (`ExecHyps`),
   `evalGroupM` run from any state that keeps the invariant of the
   query-local vocabulary (`LocalVocab.Inv`) refuses with a refusal of that
   vocabulary (`LocalVocab.LocalRefusal`), or returns a well-formed table
@@ -61,9 +65,11 @@ memoised conjuncts and for the merged rows of a pair.
 FILTER and LeftJoin conditions with an EXISTS or NOT EXISTS conjunct (the
 semi-joins `semiJoinByM`), with a UUID, STRUUID or BNODE call, or with a
 STRSTARTS, STRENDS or CONTAINS test on dictionary keys
-(`FilterIdTheorems.StrForm`) and a sub-SELECT (`subSelectM`: it needs the projection,
-DISTINCT and the variables of the reference `selectPost`, no lemma of which
-exists yet): `ExecHyps` is `False` for them. VALUES with a variable twice
+(`FilterIdTheorems.StrForm`); a `SELECT *` sub-SELECT that is not a
+projection of variables (its table has the variables `Query.projectedVars`
+gives, the variables in scope of the WHERE clause; that every row of
+`selectPost` binds only those is not proved), and a sub-SELECT with a
+variable projected twice: `ExecHyps` is `False` for them. VALUES with a variable twice
 and BIND with an expression that reads a freshness key (UUID, STRUUID,
 BNODE): `ExecHyps` is `False`. A VALUES term or a BIND value with a
 language tag not in lower case is refused at run time (`IdQuery.valueIdM`;
@@ -77,6 +83,7 @@ No `sorry`, no user `axiom`, no `native_decide`, no `partial`.
 import L4Factoidal.Storage.Sbm11.FilterTableTheorems
 import L4Factoidal.Storage.Sbm11.GraphVarTableTheorems
 import L4Factoidal.Storage.Sbm11.GraphBgpTableTheorems
+import L4Factoidal.Storage.Sbm11.SubSelectTableTheorems
 
 namespace L4Factoidal.Storage.Sbm11.GroupTableTheorems
 
@@ -487,8 +494,13 @@ def NamedRows (cx : NCx Id) (prb : Nat → ByteArray) (ms : Nat → List Block.B
     those). A VALUES term or a BIND value with a language tag not in lower
     case (`STRLANG("a", "EN")`) is refused at run time (`IdQuery.valueIdM`:
     the id path folds tags, RDF 1.1 Concepts 3.3, and `Allowed` compares
-    terms exactly), and the harness runs the reference evaluator. `False` for
-    the constructors not proved here (sub-SELECT, LATERAL, SERVICE). At
+    terms exactly), and the harness runs the reference evaluator. At a
+    sub-SELECT: the conditions of its WHERE clause, and a projection of
+    variables (`IdGroup.plainProjection?`), or `SELECT items` with the
+    variables of `items` distinct and no EXISTS outside the WHERE clause
+    (`Query.expressionsOutsidePatternExistsFree`, which `nestedRefusal?`
+    checks). `False` for the constructors not proved here (LATERAL,
+    SERVICE). At
     GRAPH with a variable over a nonempty basic graph pattern
     (`IdGroup.bgpGraphVarM`, one scan per triple pattern with the graph as a
     column): triple patterns whose positions are variables, IRIs or
@@ -528,6 +540,10 @@ def ExecHyps (LP : QueryPattern → Graph → Prop) (NG : Prop) (cx : NCx Id) (c
   | .values vars _, _ => vars.Nodup
   | .bind e _ q, a => e.existsFree = true ∧ (∃ vs, residualVars e = some vs) ∧
       (∀ w ∈ e.refVars, ¬ ExprLocalTheorems.IsFx w) ∧ ExecHyps LP NG cx cid ds gof q a
+  | .subSelect (.mk form dcs inner gb hv md pv bs), a => ExecHyps LP NG cx cid ds gof inner a ∧
+      ((IdGroup.plainProjection? (.mk form dcs inner gb hv md pv bs)).isSome ∨
+        ∃ items, form = .select (.vars items) ∧ (selectItemVars items).Nodup ∧
+          (Query.mk form dcs inner gb hv md pv bs).expressionsOutsidePatternExistsFree = true)
   | _, _ => False
 
 /-- What the nested evaluator gives for `p` from the state `nst1`: a
@@ -957,7 +973,8 @@ theorem graphBgp_ends (env : EvalEnv) (ds : Dataset)
     pattern built from basic graph patterns, property paths, `{}`, Join,
     LeftJoin with the condition `true` or an EXISTS-free condition, FILTER
     with an EXISTS-free condition, Union, MINUS, GRAPH with an IRI or a
-    variable, VALUES and BIND, at any depth (`ExecHyps`), `IdGroup.evalGroupM` run from any state that keeps the
+    variable, VALUES, BIND and sub-SELECT, at any depth (`ExecHyps`),
+    `IdGroup.evalGroupM` run from any state that keeps the
     invariant of the query-local vocabulary (`LocalVocab.Inv`) refuses with
     a refusal of that vocabulary (`LocalVocab.LocalRefusal`), or returns a
     well-formed table whose rows decode, with the decoder of the final state,
@@ -966,7 +983,7 @@ theorem graphBgp_ends (env : EvalEnv) (ds : Dataset)
     vocabulary (`WhereOk`). Each operator is the executed `Table` operator
     (`IdJoin.joinIds`, `IdGroup.pathM` with candidates from the left rows,
     `IdGroup.leftJoinCondM`, `IdGroup.filterM`, `IdJoin.unionIds`,
-    `Table.select` of `IdQuery.semiMatches`). Hypotheses:
+    `Table.select` of `IdQuery.semiMatches`, `IdGroup.subSelectM`). Hypotheses:
     those of `ExecLeafTheorems.where_allowed_exec` for the store (`PermMem`
     of each permutation, single-thread scans, no dataset clause, a
     dictionary lookup `cid` that never fails, `hdec`, `hsok`, `hidv`,
@@ -1282,7 +1299,28 @@ theorem query_where_allowed_exec (env : EvalEnv) (ds : Dataset)
         ⟨hwf, .equiv (.values vars rows a) (IdGroup.PermPw.of_pw hpw), hok, hi, hp⟩
   | .service _ _ _, _, h, _, _ => h.elim
   | .serviceVar _ _ _, _, h, _, _ => h.elim
-  | .subSelect _, _, h, _, _ => h.elim
+  | .subSelect (.mk form dcs inner gb hv md pv bs), a, h, nst1, hi1 => by
+    obtain ⟨hq, hs⟩ := h
+    rw [evalGroupM]
+    refine ends_bind (query_where_allowed_exec env ds hpm hscan hds hid hdec hsok hcid hidv hcid0 htag hcidN henv
+      htermOf hloc hcidok inner a hq nst1 hi1) fun tq nst2 ⟨hwq, hAq, hoq, hi2, hp12⟩ => ?_
+    cases hpp : IdGroup.plainProjection? (.mk form dcs inner gb hv md pv bs) with
+    | some pr =>
+      -- a projection of variables: on ids
+      obtain ⟨vs, d⟩ := pr
+      refine ends_mono (SubSelect.subSelectM_plain cid dec ok cx a _ vs d hpp tq hwq nst2 hi2 hoq
+        (hdecV cid dec ok hdec hcid hloc hi2)) fun T s ⟨hwf, heq, hok, hi, hp⟩ => ⟨hwf, ?_, hok, hi, hp12.trans hp⟩
+      rw [henv] at heq
+      exact .equiv (.subSelect hAq) heq
+    | none =>
+      -- any other sub-SELECT: the reference post-processing on the decoded rows
+      rcases hs with hs | ⟨items, rfl, hnd, hef⟩
+      · rw [hpp] at hs; cases hs
+      refine ends_mono (SubSelect.subSelectM_post cid dec ok cx hid hcid hcidok hcidN hloc hcid0 htermOf _ hpp hnd
+        (fun A mu hmu p hp => SubSelect.selectPost_dom cx.env Graph.empty items dcs inner gb hv md pv bs A mu hmu p hp)
+        tq nst2 hi2 hoq) fun T s ⟨hwf, hpw, hok, hi, hp⟩ => ⟨hwf, ?_, hok, hi, hp12.trans hp⟩
+      rw [henv, ← SubSelect.selectPost_active env a Graph.empty _ hef] at hpw
+      exact .equiv (.subSelect hAq) (IdGroup.PermPw.of_pw hpw)
 
 /-- `query_where_allowed_exec` from the state a query starts in (`{}`, the
     state `IdGroup.nestedTableM` runs from): no local id yet. -/
