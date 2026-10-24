@@ -33,13 +33,13 @@ private def owlConsistencyReason (fuel : Nat) (verdict : CertifiedDecision.WireV
   match verdict.consistent with
   | some false =>
       "a checked certificate proves a contradiction in the admitted OWL fragment "
-      ++ "(atomic classes and owl:someValuesFrom)"
+      ++ "(atomic classes, owl:someValuesFrom, owl:TransitiveProperty, annotations)"
   | some true => "a checked finite model proves consistency in the admitted OWL fragment"
   | none =>
       match verdict.reason with
       | some .unsupported =>
           "unsupported-syntax: the whole default graph is outside the admitted OWL fragment "
-          ++ "(atomic classes and owl:someValuesFrom) (indeterminate)"
+          ++ "(atomic classes, owl:someValuesFrom, owl:TransitiveProperty, annotations) (indeterminate)"
       | some .budgetExhausted =>
           s!"budget-out: the model search and the certificate checker used fuel {fuel} "
           ++ "rounds without a verdict (indeterminate); raise it via opts.fuel"

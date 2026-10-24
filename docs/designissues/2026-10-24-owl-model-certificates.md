@@ -102,17 +102,103 @@ File: `formal/lean4/L4Factoidal/OWL/AtomicDirect.lean`.
 
 - Fragment: atomic classes, Thing/Nothing, `SubClassOf`, `ClassAssertion`,
   `SameIndividual`, `DifferentIndividuals`, `ObjectSomeValuesFrom` on the
-  right of `SubClassOf` and in `ClassAssertion`. Everything else is
-  `unsupported-syntax`.
+  right of `SubClassOf` and in `ClassAssertion`, `TransitiveObjectProperty`
+  (since 2026-10-24, item 5 below), declarations and annotations. Everything
+  else is `unsupported-syntax`.
 - `owlEntails` `true` answers still come from the RL closure and the legacy
   refuter, with no source-to-verdict proof. A countermodel is tried first,
   so a `true` answer never contradicts a checked countermodel.
-- The reader looks up a restriction node's triples by a scan of the graph
-  (`findProperty`, `findFiller`), and `isAnnotation` scans the graph: time
-  grows with (triples × restriction uses) and (triples × annotation
-  triples).
-- `tests/stack/lean_scaling.py` row `owl-consistent-cl` (issue 960 item 5)
-  still answers `null`: the sorted prefixes of the Cell Ontology hold
-  annotation properties with no declaration in the prefix and
-  `rdfs:subClassOf` triples whose restriction node is not in the prefix. The
-  strict reader refuses both. The row stays an expected failure.
+- The reader looks up a restriction node's triples through a proof-carrying
+  blank-node index, and annotation properties through a proof-carrying hash
+  index (`annotationIndex`, `knownAnnotation`). Until 2026-10-24
+  `isAnnotation` scanned the graph for each annotation triple: time grew with
+  (triples × annotation triples).
+
+## Item 5: the Cell Ontology scaling row (2026-10-24)
+
+`tests/stack/lean_scaling.py` row `owl-consistent-cl` answered `null` on the
+sorted prefixes of the Cell Ontology basic edition. Two questions, decided from
+the specifications.
+
+### (a) Annotation properties with no declaration in the prefix
+
+OWL 2 Mapping to RDF Graphs section 3.1.1 to 3.1.3: the reverse mapping types
+each IRI from the declaration triples (`*:x rdf:type owl:AnnotationProperty`,
+Table 7) and the built-in vocabulary, before it reads any axiom or annotation.
+An IRI used only as the predicate of a triple, with no declaration and not
+built-in, has no type, so the triple matches no pattern of Tables 10 to 17 and
+the graph is not an OWL 2 DL ontology. The reader is right to refuse it.
+
+The full file declares every annotation property it uses (123 `rdf:type
+owl:AnnotationProperty` triples; 0 predicates used without a declaration,
+measured with a Python count over the 78,835 distinct triples). The line cut
+of the sorted file put a declaration after the cut when its subject sorts
+after its users (for example `oboInOwl:hasDbXref` after the `obo:CL_…`
+subjects). So the defect was in the fixture, not in the reader.
+
+### (b) Restriction nodes outside the prefix
+
+A `rdfs:subClassOf` triple whose `owl:Restriction` node is after the cut is
+half of the axiom `SubClassOf(C ObjectSomeValuesFrom(p D))` (Table 13 needs
+the node's `owl:onProperty` and `owl:someValuesFrom` triples). A graph with
+half an axiom is not the ontology. Rule now in `cl_units` and `cl_prefix`:
+cut the sorted triples on subject blocks; a unit is the triples of one IRI
+subject, the full subtree of each blank node that its triples have as
+object, and the `owl:Axiom` nodes whose annotated triple is in the unit; the
+prefix takes units until it has n lines, then adds the `rdf:type` lines of
+every IRI it uses as predicate, as `owl:onProperty` value or as
+`rdfs:subPropertyOf` value.
+
+### Constructors the whole-axiom prefixes need
+
+With whole axioms, the reader still refused the prefixes and the full file.
+A count of the refused triples of the full file (47,078 of 78,835) gave five
+constructors. Each is now admitted:
+
+| Constructor | Source | Logical effect | Admission rule |
+| --- | --- | --- | --- |
+| `rdfs:seeAlso`, `owl:deprecated` (and the other built-in annotation properties) | Structural Specification §5.5 (nine built-ins) | none | `builtinAnnotation` lists all nine |
+| Annotated axioms: `_:x rdf:type owl:Axiom`, `owl:annotatedSource`, `owl:annotatedProperty`, `owl:annotatedTarget`, annotations on `_:x` (45,941 triples with a blank subject, 7,910 `owl:Axiom` nodes) | Mapping §3.2.5, Table 17 | none (Direct Semantics §1); the axiom is its own triple | each `owl:Axiom` node has one source, property and target, and the annotated triple is in the graph (`annotationsWellFormed`) |
+| `rdfs:subPropertyOf` between annotation properties (16) | Mapping Table 16, `SubAnnotationPropertyOf` | none | both sides are known annotation properties |
+| `owl:versionIRI` (1) | Mapping Table 4, ontology header | none | its subject is typed `owl:Ontology` |
+| `owl:TransitiveProperty` (`BFO_0000050` part of, `RO_0002202` develops from) | Mapping Table 16, Direct Semantics Table 6 | `TransitiveObjectProperty(p)` | the property is not also an annotation property |
+
+`TransitiveObjectProperty`: the axiom compiles into the role box
+(`rbox.trans`) that `DirectCert.checkCertFuel` already uses, so refutations
+stay sound with no change. In the model, a transitive role is the total
+relation (`FinModel.full`): every pair of elements. A total relation is
+transitive, so the checker tests only that the role is in `full` (`transOk`,
+theorem `transOk_sound`). In this fragment (no ∀, no number restriction, no
+∃ on a left-hand side, no role disjointness) more pairs falsify no axiom, so
+the model is still a model when every filler has a witness. For a total role,
+`rhsHoldsB` reads an edge first, then any element of the filler;
+`rhsHoldsB_iff` is still an equivalence, so countermodels stay sound.
+`clauseFails` claims no countermodel from a transitivity axiom.
+
+The first form closed the role's edges after the ∃-expansion and checked the
+closure. On the generated chain of `owl-consistent-svf` with a transitive
+`p` (n witnesses, each needing the next) the closure has n² pairs and its
+check n³ steps: 134.7 s at n = 500, measured 2026-10-24 before landing. Row
+`owl-consistent-svf-transitive` now measures that input: 0.11 s, 0.26 s and
+0.59 s at 2,000, 4,000 and 8,000 units.
+
+A blank node that is a restriction node has no other triple, and an
+`owl:annotatedSource`/`Property`/`Target` triple belongs to an `owl:Axiom`
+node; both are fidelity checks, not soundness premises.
+
+### Result
+
+- Full file: `owl-consistent` answers `true` in 1.30 s CPU, 460 MB peak RSS.
+- Row `owl-consistent-cl`: 0.148 s, 0.300 s, 0.642 s CPU at about 10,000,
+  20,000 and 40,000 lines (ratios 2.0 and 2.1 per doubling, bound 3.0; 4.3 for
+  4x, bound 9.0). Not an expected failure now.
+- Row `owlrl-closure-cl` keeps the line cut (`cl_line_prefix`): the OWL 2 RL
+  closure is defined on every RDF graph. On the whole-axiom prefixes its
+  inferred triples grow 2.4 to 2.5 times per doubling (longer
+  `rdfs:subClassOf` chains) and its time ratios were 2.6 to 3.2.
+- W3C OWL 2 `tools/check-atomic-direct-corpus.py` (Approved, DIRECT, DL
+  consistency units): before 20 correct definitive, 0 wrong, 226
+  unsupported; after 22 correct definitive, 0 wrong, 224 unsupported (246
+  executed, 20 without RDF/XML, out of 266).
+- `tools/check-owl-reader-contracts.py`: 70 cases (was 54; the six built-in
+  cases flipped from unsupported to supported), 8 mutations rejected.

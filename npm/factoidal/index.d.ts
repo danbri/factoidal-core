@@ -683,7 +683,8 @@ export function tableauDlInconsistent(
  * Checked consistency for the original default graph in a restricted
  * OWL fragment (named subclass/class assertions, Thing/Nothing,
  * owl:someValuesFrom restrictions as a superclass or a class assertion,
- * sameAs/differentFrom and limited declarations/annotations).
+ * owl:TransitiveProperty, sameAs/differentFrom, declarations, annotations
+ * and annotated axioms).
  * true requires a checked finite model and has no `reason`; false requires
  * an accepted refutation certificate; null means unsupported-syntax,
  * budget-out or incomplete-search. Named graphs do not contribute axioms.

@@ -26,6 +26,11 @@ witness name per step) for a clash of a generated element.
 `fuel` bounds both the search (rounds of ∃-expansion) and the certificate
 checker (saturation rounds at each certificate node).
 
+`TransitiveObjectProperty(p)`: the model interprets p as the total relation
+(`FinModel.full`), which is transitive; the checker tests that p is total
+(`transOk`). With no ∀, no number restriction, no ∃ on a left-hand side and no
+role disjointness, more pairs falsify no axiom of the fragment.
+
 An entailment answer `false` needs a countermodel: a checked model of the
 premise that is not a model of the conclusion (`checkCountermodel_sound`).
 -/
@@ -61,6 +66,13 @@ structure FinModel where
   topSub : List Rhs
   /-- For a restriction node: its properties and filler classes. -/
   restr : Std.HashMap BNodeId (List String × List AtomicClass)
+  /-- Roles interpreted as the total relation (every pair of elements): the
+  transitive roles. A total relation is transitive, and in the fragment (no
+  ∀, no number restriction, no ∃ on a left-hand side, no role disjointness)
+  more pairs falsify no axiom. The checker then needs no transitive closure
+  of the edges, which has n² pairs and costs n³ to check on a chain of n
+  witnesses (measured: 134.7 s at n = 500, 2026-10-24). -/
+  full : List String := []
 
 namespace FinModel
 
@@ -70,6 +82,12 @@ theorem norm_norm (M : FinModel) (x : Nat) : M.norm (M.norm x) = M.norm x := by
   unfold norm
   by_cases h : x < M.labels.size <;> simp [h]
 
+theorem norm_mem (M : FinModel) (x : Nat) : M.norm x ∈ 0 :: List.range M.labels.size := by
+  unfold norm
+  split
+  · exact List.mem_cons_of_mem _ (List.mem_range.mpr ‹_›)
+  · exact List.mem_cons_self
+
 def labelAt (M : FinModel) (i : Nat) : List String := M.labels.getD i []
 
 def edgesAt (M : FinModel) (i : Nat) : List (String × Nat) := M.edges.getD i []
@@ -77,7 +95,7 @@ def edgesAt (M : FinModel) (i : Nat) : List (String × Nat) := M.edges.getD i []
 /-- The interpretation: `·^C` and `·^OP` of Direct Semantics § 2.2. -/
 def interp (M : FinModel) : Interp Nat where
   concept name x := name ∈ M.labelAt (M.norm x)
-  role r x y := (r, y) ∈ M.edgesAt (M.norm x)
+  role r x y := r ∈ M.full ∨ (r, y) ∈ M.edgesAt (M.norm x)
 
 /-- The individual assignment `·^I`; a name with no element is element 0. -/
 def assign (M : FinModel) (name : Ind) : Nat := M.names.getD name 0
@@ -101,22 +119,32 @@ theorem classHoldsB_iff (M : FinModel) (x : Nat) (c : AtomicClass) :
     classHoldsB M x c = true ↔ classHolds M.interp c x := by
   cases c <;> simp [classHoldsB, classHolds, FinModel.interp]
 
+theorem classHoldsB_norm (M : FinModel) (x : Nat) (c : AtomicClass) :
+    classHoldsB M (M.norm x) c = classHoldsB M x c := by
+  cases c <;> simp [classHoldsB, FinModel.norm_norm]
+
+/-- An edge first; for a total role, any element of the filler. -/
 def rhsHoldsB (M : FinModel) (x : Nat) : Rhs → Bool
   | .cls c => classHoldsB M x c
-  | .ex r c => (M.edgesAt (M.norm x)).any (fun e => e.1 == r && classHoldsB M e.2 c)
+  | .ex r c => (M.edgesAt (M.norm x)).any (fun e => e.1 == r && classHoldsB M e.2 c) ||
+      (M.full.contains r && (0 :: List.range M.labels.size).any (fun j => classHoldsB M j c))
 
 theorem rhsHoldsB_iff (M : FinModel) (x : Nat) (rhs : Rhs) :
     rhsHoldsB M x rhs = true ↔ rhsHolds M.interp x rhs := by
   cases rhs with
   | cls c => exact classHoldsB_iff M x c
   | ex r c =>
-      simp only [rhsHoldsB, rhsHolds, List.any_eq_true, Bool.and_eq_true, beq_iff_eq,
-        classHoldsB_iff]
+      simp only [rhsHoldsB, rhsHolds, Bool.or_eq_true, List.any_eq_true, Bool.and_eq_true,
+        beq_iff_eq, List.contains_iff_mem]
       constructor
-      · rintro ⟨⟨r', y⟩, member, rfl, holds⟩
-        exact ⟨y, member, holds⟩
-      · rintro ⟨y, member, holds⟩
-        exact ⟨(r, y), member, rfl, holds⟩
+      · rintro (⟨⟨r', y⟩, member, rfl, holds⟩ | ⟨total, j, _, holds⟩)
+        · exact ⟨y, Or.inr member, (classHoldsB_iff M y c).mp holds⟩
+        · exact ⟨j, Or.inl total, (classHoldsB_iff M j c).mp holds⟩
+      · rintro ⟨y, total | member, holds⟩
+        · refine Or.inr ⟨total, M.norm y, M.norm_mem y, ?_⟩
+          rw [classHoldsB_norm]
+          exact (classHoldsB_iff M y c).mpr holds
+        · exact Or.inl ⟨(r, y), member, rfl, (classHoldsB_iff M y c).mpr holds⟩
 
 theorem rhsHolds_norm (M : FinModel) (x : Nat) (rhs : Rhs) :
     rhsHolds M.interp (M.norm x) rhs ↔ rhsHolds M.interp x rhs := by
@@ -125,6 +153,14 @@ theorem rhsHolds_norm (M : FinModel) (x : Nat) (rhs : Rhs) :
   | ex r c => simp [rhsHolds, FinModel.interp, FinModel.norm_norm]
 
 /-! ## The model checker -/
+
+/-- `TransitiveObjectProperty(r)` holds: `r` is a total role (Direct
+Semantics Table 6; a total relation is transitive). -/
+def transOk (M : FinModel) (r : String) : Bool := M.full.contains r
+
+theorem transOk_sound {M : FinModel} {r : String} (h : transOk M r = true) (x y z : Nat)
+    (_first : M.interp.role r x y) (_second : M.interp.role r y z) : M.interp.role r x z :=
+  Or.inl (List.contains_iff_mem.mp h)
 
 /-- Element `i` satisfies every axiom whose left-hand side it is in. -/
 def elementOk (M : FinModel) (i : Nat) : Bool :=
@@ -175,6 +211,7 @@ def clauseOk (M : FinModel) : Axiom → Bool
   | .assertSome individual role filler => rhsHoldsB M (M.assign individual) (.ex role filler)
   | .same left right => M.assign left == M.assign right
   | .different left right => M.assign left != M.assign right
+  | .transitive role => transOk M role
 
 theorem clauseOk_sound {M : FinModel} (ok : elementsOk M = true) (clause : Axiom)
     (h : clauseOk M clause = true) : axiomHolds M.interp M.assign clause := by
@@ -188,6 +225,7 @@ theorem clauseOk_sound {M : FinModel} (ok : elementsOk M = true) (clause : Axiom
       exact (rhsHoldsB_iff M (M.assign individual) (.ex role filler)).mp h
   | same left right => simpa [clauseOk, axiomHolds] using h
   | different left right => simpa [clauseOk, axiomHolds] using h
+  | transitive role => exact transOk_sound h
 
 /-- Every class a name can map to (`MapsClass`). -/
 def classesOf (name : WfIri) : List AtomicClass :=
@@ -228,33 +266,40 @@ def candidates (M : FinModel) : Triple → List Axiom
           (M.restrOf node).2.map (.assertSome subject.val role)) else [])
   | _ => []
 
+/-- The role axioms a triple can map to. -/
+def roleCandidates : Triple → List Axiom
+  | ⟨.iri subject, predicate, .iri value⟩ =>
+      if predicate.val == rdfType.val && value.val == owlTransitiveProperty.val then
+        [.transitive subject.val] else []
+  | _ => []
+
 /-- Completeness of the candidates: every axiom of the source contract is
 `noEffect` or a candidate, given a correct restriction index. -/
 theorem candidates_complete {graph : Graph} {M : FinModel}
     (index : ∀ t ∈ graph, restrIndexOk M t = true)
     {triple : Triple} {clause : Axiom} (mapped : MapsTo graph triple clause) :
-    clause = .noEffect ∨ clause ∈ candidates M triple := by
+    clause = .noEffect ∨ clause ∈ candidates M triple ∨ clause ∈ roleCandidates triple := by
   cases mapped with
   | subClass left right leftClass rightClass mappedLeft mappedRight =>
-      refine Or.inr ?_
+      refine Or.inr (Or.inl ?_)
       simp only [candidates, List.mem_append, List.mem_flatMap, List.mem_map]
       refine Or.inl (Or.inl (Or.inr ?_))
       simp only [show (subClassOf.val == subClassOf.val) = true from by simp, if_true,
         List.mem_flatMap, List.mem_map]
       exact ⟨leftClass, mem_classesOf mappedLeft, rightClass, mem_classesOf mappedRight, rfl⟩
   | classAssertion individual name className ordinary mappedClass =>
-      refine Or.inr ?_
+      refine Or.inr (Or.inl ?_)
       simp only [candidates, List.mem_append]
       refine Or.inl (Or.inl (Or.inl ?_))
       simp only [show (rdfType.val == rdfType.val) = true from by simp, if_true, List.mem_map]
       exact ⟨className, mem_classesOf mappedClass, rfl⟩
   | same left right _ _ =>
-      refine Or.inr ?_
+      refine Or.inr (Or.inl ?_)
       simp only [candidates, List.mem_append]
       refine Or.inl (Or.inr ?_)
       simp [sameAs]
   | different left right _ _ =>
-      refine Or.inr ?_
+      refine Or.inr (Or.inl ?_)
       simp only [candidates, List.mem_append]
       refine Or.inr ?_
       simp [differentFrom]
@@ -273,7 +318,7 @@ theorem candidates_complete {graph : Graph} {M : FinModel}
         simp only [show (someValuesFrom.val == someValuesFrom.val) = true from by simp, if_true,
           List.all_eq_true, List.contains_iff_mem] at h
         exact h fillerClass (mem_classesOf mappedFiller)
-      refine Or.inr ?_
+      refine Or.inr (Or.inl ?_)
       simp only [candidates, List.mem_append]
       refine Or.inl ?_
       simp only [show (subClassOf.val == subClassOf.val) = true from by simp, if_true,
@@ -295,16 +340,19 @@ theorem candidates_complete {graph : Graph} {M : FinModel}
         simp only [show (someValuesFrom.val == someValuesFrom.val) = true from by simp, if_true,
           List.all_eq_true, List.contains_iff_mem] at h
         exact h fillerClass (mem_classesOf mappedFiller)
-      refine Or.inr ?_
+      refine Or.inr (Or.inl ?_)
       simp only [candidates, List.mem_append]
       refine Or.inr ?_
       simp only [show (rdfType.val == rdfType.val) = true from by simp, if_true,
         List.mem_flatMap, List.mem_map]
       exact ⟨property.val, propertyMember, fillerClass, fillerMember, rfl⟩
+  | transitive name _ =>
+      exact Or.inr (Or.inr (by simp [roleCandidates]))
   | _ => exact Or.inl rfl
 
 def tripleOk (M : FinModel) (triple : Triple) : Bool :=
-  restrIndexOk M triple && (candidates M triple).all (clauseOk M)
+  restrIndexOk M triple && (candidates M triple).all (clauseOk M) &&
+    (roleCandidates triple).all (clauseOk M)
 
 /-- THE MODEL CHECKER: total; one pass over the elements and one over the
 triples of the original graph. -/
@@ -319,9 +367,10 @@ theorem checkModel_sound {graph : Graph} {M : FinModel} (h : checkModel graph M 
   simp only [checkModel, tripleOk, Bool.and_eq_true, List.all_eq_true] at h
   obtain ⟨ok, triples⟩ := h
   intro triple member clause mapped
-  rcases candidates_complete (fun t m => (triples t m).1) mapped with equal | candidate
+  rcases candidates_complete (fun t m => (triples t m).1.1) mapped with equal | candidate | role
   · subst equal; trivial
-  · exact clauseOk_sound ok clause ((triples triple member).2 clause candidate)
+  · exact clauseOk_sound ok clause ((triples triple member).1.2 clause candidate)
+  · exact clauseOk_sound ok clause ((triples triple member).2 clause role)
 
 theorem checkModel_satisfiable {graph : Graph} {M : FinModel} (h : checkModel graph M = true) :
     Satisfiable graph :=
@@ -348,6 +397,9 @@ def clauseFails (M : FinModel) : Axiom → Bool
   | .assertSome individual role filler => !rhsHoldsB M (M.assign individual) (.ex role filler)
   | .same left right => M.assign left != M.assign right
   | .different left right => M.assign left == M.assign right
+  -- No countermodel is claimed from a transitivity axiom (sound: `false`
+  -- claims nothing).
+  | .transitive _ => false
 
 theorem clauseFails_sound {M : FinModel} {clause : Axiom} (h : clauseFails M clause = true) :
     ¬ axiomHolds M.interp M.assign clause := by
@@ -385,12 +437,14 @@ theorem clauseFails_sound {M : FinModel} {clause : Axiom} (h : clauseFails M cla
       intro holds
       simp [clauseFails, axiomHolds] at h holds
       exact holds h
+  | transitive _ => simp [clauseFails] at h
 
 /-- Some triple of the graph maps (by the reader's proof-bearing decoding)
 to an axiom that is false in the finite interpretation. -/
 def refutesGraph (graph : Graph) (M : FinModel) : Bool :=
   let index := nodeIndex graph
-  graph.any (fun triple => match readTriple graph index triple with
+  let annotations := annotationIndex graph
+  graph.any (fun triple => match readTriple graph index annotations triple with
     | some clause => clauseFails M clause.val
     | none => false)
 
@@ -398,7 +452,7 @@ theorem refutesGraph_sound {graph : Graph} {M : FinModel} (h : refutesGraph grap
     ¬ SourceModel M.interp M.assign graph := by
   intro model
   obtain ⟨triple, member, fails⟩ := List.any_eq_true.mp h
-  cases decoded : readTriple graph (nodeIndex graph) triple with
+  cases decoded : readTriple graph (nodeIndex graph) (annotationIndex graph) triple with
   | none => simp [decoded] at fails
   | some clause =>
       simp only [decoded] at fails
@@ -710,7 +764,8 @@ def search (graph : Graph) (ontology : DlOntology) (fuel : Nat) : SearchResult :
     names := names
     sub := sub
     topSub := topSub
-    restr := restrIndex graph }
+    restr := restrIndex graph
+    full := ontology.rbox.trans.eraseDups }
 
 /-! ## The decision -/
 
