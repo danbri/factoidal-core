@@ -20,6 +20,7 @@ Targeted imports only — never the L4Factoidal umbrella (see
 `Wasm/Abi.lean`'s import note).
 -/
 import Wasm.Ops.Support
+import L4Factoidal.Dataflow.Reader
 import Wasm.Ops.ReasonDlCertified
 import L4Factoidal.Syntax.NQuadsFast
 import L4Factoidal.OWL.RLClosure
@@ -101,7 +102,7 @@ theorem owlIsConsistentParsed_certified (ds : Dataset) (optsJson : String) :
 
 /-- `owlIsConsistent(nquads, optsJson)`. -/
 def owlIsConsistent (nq optsJson : String) : String :=
-  match parseNQuadsFast nq .rdf12 with
+  match L4Factoidal.Dataflow.readNQuadsText .rdf12 nq with
   | .error e => errJson (fmtParseError e)
   | .ok ds => owlIsConsistentParsed ds optsJson
 
@@ -113,7 +114,8 @@ theorem owlIsConsistent_certified (nq optsJson : String) (ds : Dataset)
     ∃ response : Json,
       owlIsConsistent nq optsJson = response.toString ∧
       L4Factoidal.OWL.AtomicDirect.Meaning ds.default (response.getBool? "consistent") := by
-  simpa only [owlIsConsistent, parsed] using owlIsConsistentParsed_certified ds optsJson
+  simpa only [owlIsConsistent, L4Factoidal.Dataflow.readNQuadsText_eq, parsed] using
+    owlIsConsistentParsed_certified ds optsJson
 
 #print axioms owlIsConsistentParsed_certified
 #print axioms owlIsConsistent_certified
@@ -163,10 +165,10 @@ def owlEntailsParsed (dsP dsC : Dataset) (optsJson : String) : String :=
 
 /-- `owlEntails(premiseNquads, conclusionNquads, optsJson)`. -/
 def owlEntails (premiseNq conclusionNq optsJson : String) : String :=
-  match parseNQuadsFast premiseNq .rdf12 with
+  match L4Factoidal.Dataflow.readNQuadsText .rdf12 premiseNq with
   | .error e => errJson (fmtParseError e)
   | .ok dsP =>
-    match parseNQuadsFast conclusionNq .rdf12 with
+    match L4Factoidal.Dataflow.readNQuadsText .rdf12 conclusionNq with
     | .error e => errJson (fmtParseError e)
     | .ok dsC => owlEntailsParsed dsP dsC optsJson
 
@@ -182,6 +184,7 @@ theorem owlIsConsistentOf_eq (ds : Dataset) (optsJson : String) :
     owlIsConsistentOf ds optsJson = owlIsConsistent (Dataset.toCanonicalNQuads ds) optsJson := by
   unfold owlIsConsistentOf owlIsConsistent
   rw [withOpsDataset_eq]
+  rw [L4Factoidal.Dataflow.readNQuadsText_eq]
   cases parseNQuadsFast (Dataset.toCanonicalNQuads ds) .rdf12 <;> rfl
 
 def owlEntailsOf (dsP dsC : Dataset) (optsJson : String) : String :=
@@ -192,10 +195,11 @@ theorem owlEntailsOf_eq (dsP dsC : Dataset) (optsJson : String) :
       owlEntails (Dataset.toCanonicalNQuads dsP) (Dataset.toCanonicalNQuads dsC) optsJson := by
   unfold owlEntailsOf owlEntails
   rw [withOpsDataset_eq]
+  rw [L4Factoidal.Dataflow.readNQuadsText_eq]
   cases parseNQuadsFast (Dataset.toCanonicalNQuads dsP) .rdf12 with
   | error e => rfl
   | ok p =>
-      simp only [withOpsDataset_eq]
+      simp only [withOpsDataset_eq, L4Factoidal.Dataflow.readNQuadsText_eq]
       cases parseNQuadsFast (Dataset.toCanonicalNQuads dsC) .rdf12 <;> rfl
 
 /-! ### RDF 1.2 input (https://github.com/danbri/factoidal/issues/873) -/

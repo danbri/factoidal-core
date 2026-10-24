@@ -1660,6 +1660,32 @@ checkseq "dataset handles are independent + per-family errors" "$TMP/handles-two
    and rs[6]["ok"] is False and rs[6]["code"] == "handle.disposed"
    and rs[7]["ok"] is True and rs[7]["boolean"] is True'
 
+# A language subtag of 9 or more characters: RDF 1.1 LANGTAG [144s] accepts
+# it, RDF 1.2 does not. A handle read as RDF 1.1 is written in RDF 1.1 mode
+# (OpenDataset.writeMode), so the tag is kept; a handle read as RDF 1.2 refuses
+# it (npm test serialize-turtle.test.js, issue 986 / PR 51 regression).
+python3 - "$TMP/handles-longtag.json" <<'EOF'
+import json, sys
+NT = '<http://ex/s> <http://ex/p> "v"@abcdefghijk .\n'
+seq = [
+  ["datasetOpen",      [NT, "ntriples", ""]],
+  ["datasetSerialize", ["h1", "turtle"]],
+  ["datasetSerialize", ["h1", "nquads"]],
+  ["datasetSerialize", ["h1", "ntriples"]],
+  ["datasetSerializeWith", ["h1", "turtle", ""]],
+  ["datasetOpen",      [NT, "ntriples12", ""]],
+  ["datasetSerialize", ["h2", "turtle"]],
+]
+json.dump(seq, open(sys.argv[1], "w"))
+EOF
+checkseq "RDF 1.1 handle keeps a 9+ character language subtag; RDF 1.2 refuses it" "$TMP/handles-longtag.json" \
+  'rs[0]["ok"] is True
+   and rs[1]["ok"] is True and "@abcdefghijk" in rs[1]["turtle"]
+   and rs[2]["ok"] is True and "@abcdefghijk" in rs[2]["nquads"]
+   and rs[3]["ok"] is True and "@abcdefghijk" in rs[3]["text"]
+   and rs[4]["ok"] is True and "@abcdefghijk" in rs[4]["turtle"]
+   and (rs[5]["ok"] is False or (rs[6]["ok"] is False and "abcdefghijk" in rs[6]["error"]))'
+
 # One-shot error paths reachable without process state.
 args "$TMP/h-open-bad.json" 'this is not turtle @@@' "turtle" ""
 check "datasetOpen bad turtle -> error, no handle" datasetOpen "$TMP/h-open-bad.json" \

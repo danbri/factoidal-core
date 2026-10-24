@@ -24,12 +24,9 @@ namespace L4Wasm.Ops
 open L4Factoidal.RDF
 open L4Factoidal.JSON
 
-/-- JSON-LD 1.1 for the tags of `jsonLdFormatTags`; `none` for every other
-tag. -/
-def jsonLdReader : ExtraReader := fun tag text base =>
-  if jsonLdFormatTags.contains tag then
-    some ((L4Factoidal.RDF.Source.jsonLdParser .rdf11 base text).mapError (·.msg))
-  else none
+/-- The full dispatch: JSON-LD 1.1 for the tags of `jsonLdFormatTags`, read by
+the JSON-LD `RdfReader` of `Dataflow.readers Source.withJsonLd`. -/
+def jsonLdReader : ExtraReader := { extra := L4Factoidal.RDF.Source.withJsonLd }
 
 /-- `parseTextToDatasetBy` with JSON-LD. -/
 def parseTextToDataset (text formatTag baseIRI : String) : Except String Dataset :=
@@ -75,7 +72,7 @@ private def jlDoc : String :=
 #guard (parseToDatasetJson jlDoc "jsonld" "").startsWith "{\"ok\":true,\"count\":1"
 #guard (parseToDatasetJson jlDoc "application/ld+json" "").startsWith "{\"ok\":true,\"count\":1"
 #guard (parseToDatasetJson "{" "jsonld" "").startsWith "{\"ok\":false"
-#guard (jsonLdReader "turtle" jlDoc none).isNone
+#guard (parseToDatasetJson "<http://e/a> <http://e/p> <http://e/b> ." "turtle" "").startsWith "{\"ok\":true,\"count\":1"
 -- Without the reader, JSON-LD is an unknown tag.
 #guard (parseToDatasetJsonBy noExtraReader jlDoc "jsonld" "").startsWith
          "{\"ok\":false,\"error\":\"unknown format tag"

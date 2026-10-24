@@ -71,6 +71,7 @@ between the two calls, so no other request can see a half-committed view.
 No `partial`, no `sorry`, no `native_decide`.
 -/
 import Std.Data.HashMap
+import L4Factoidal.Dataflow.Reader
 import Wasm.Ops.StoreHandles
 import Wasm.Ops.Clock
 import Wasm.Ops.ExtFns
@@ -266,7 +267,7 @@ def tdb2DatasetOf (files : List (String × ByteArray)) : Except String Dataset :
   | none => pure ()
   let db ← L4Factoidal.Tdb2.databaseOfFiles files
   let text ← L4Factoidal.Tdb2.databaseNQuads db
-  match L4Factoidal.Syntax.parseNQuadsFast text with
+  match L4Factoidal.Dataflow.readNQuadsText .rdf11 text with
   | .error e => throw s!"the decoded quads do not parse: {e.msg}"
   | .ok ds => pure ds
 

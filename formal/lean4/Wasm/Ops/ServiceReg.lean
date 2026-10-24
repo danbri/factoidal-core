@@ -23,6 +23,7 @@ read a snapshot once per query, as `Wasm/Ops/ExtFns.lean` does for
 extension functions.
 -/
 import Wasm.Ops.Support
+import L4Factoidal.Dataflow.Reader
 import L4Factoidal.Syntax.NQuadsFast
 import L4Factoidal.SPARQL.Expr
 
@@ -43,7 +44,7 @@ def registerServiceEndpoint (iri nq : String) : IO String := do
   if iri.isEmpty then
     pure (errJson "registerServiceEndpoint: the IRI must not be empty")
   else
-    match parseNQuadsFast nq .rdf12 with
+    match L4Factoidal.Dataflow.readNQuadsText .rdf12 nq with
     | .error e => pure (errJson s!"registerServiceEndpoint: {fmtParseError e}")
     | .ok ds =>
         serviceRegistry.modify fun entries =>

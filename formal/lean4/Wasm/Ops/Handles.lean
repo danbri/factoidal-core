@@ -61,6 +61,7 @@ through `L4Wasm.callIO` (Wasm/Dispatch.lean) — the pure `L4Wasm.call`
 cannot reach the store and answers "unknown op" for them.
 -/
 import Std.Data.HashMap
+import L4Factoidal.Dataflow.Reader
 import Wasm.Ops.Parse
 import Wasm.Ops.Query
 import Wasm.Ops.Clock
@@ -106,6 +107,10 @@ structure OpenDataset where
   /-- The prefixes the document declared, each label once, in declaration order.
   Turtle output of the handle uses them. -/
   prefixes : List (String × String) := []
+  /-- The RDF version mode of the reader that read the document (`datasetOpen`:
+  the mode of the format tag, `resolveModeAndTag`); `.rdf12` for a handle made
+  in any other way. The writers of the handle use it (`OpenDataset.writeMode`). -/
+  readMode : L4Factoidal.Syntax.Mode := .rdf12
 
 /-- The stored dataset. -/
 def OpenDataset.ds (od : OpenDataset) : Dataset := od.data.val
@@ -113,9 +118,16 @@ def OpenDataset.ds (od : OpenDataset) : Dataset := od.data.val
 /-- The stored dataset is a set of quads. -/
 theorem OpenDataset.isSet (od : OpenDataset) : od.ds.IsSet := od.data.property
 
-private def openDataset (data : CertifiedDataset) (prefixes : List (String × String) := []) :
-    OpenDataset :=
-  { data, backendThunk := Thunk.mk (fun _ => indexedDatasetBackend data.val), prefixes }
+private def openDataset (data : CertifiedDataset) (prefixes : List (String × String) := [])
+    (readMode : L4Factoidal.Syntax.Mode := .rdf12) : OpenDataset :=
+  { data, backendThunk := Thunk.mk (fun _ => indexedDatasetBackend data.val), prefixes, readMode }
+
+/-- The mode the writers of the handle use: the mode of its reader when that is
+RDF 1.1 and the dataset still has no RDF 1.2 term, else RDF 1.2. A document
+read as RDF 1.1 is written as RDF 1.1, so a language tag that RDF 1.1 accepts
+(a subtag of 9 or more characters, LANGTAG [144s]) is written, not refused. -/
+def OpenDataset.writeMode (od : OpenDataset) : L4Factoidal.Syntax.Mode :=
+  if od.readMode == .rdf11 && od.ds.isRdf11 then .rdf11 else .rdf12
 
 /-- The indexed backend of an open dataset. -/
 private def OpenDataset.backend (od : OpenDataset) : DatasetBackend := od.backendThunk.get
@@ -166,7 +178,7 @@ def datasetOpenBy (extra : ExtraReader) (text formatTag baseIri : String) : IO S
       -- (`renameDatasetBnodes_isSet`).
       let parsed : CertifiedDataset :=
         ⟨o.ds, parseDocumentOutcomeBy_isSet extra text formatTag baseIri o hp⟩
-      let od := openDataset (parsed.renameBnodes (← nextDocumentScope)) o.prefixes
+      let od := openDataset (parsed.renameBnodes (← nextDocumentScope)) o.prefixes o.mode
       let n ← handleCounter.modifyGet fun n => (n + 1, n + 1)
       let h := s!"h{n}"
       handleTable.modify (·.insert h od)
@@ -247,8 +259,9 @@ def rdf11WriterRefusal (fmt : String) : String :=
 [144s] (subtags of 1 to 8 characters, RDF 1.2) is an error that names the tag,
 and a blank-node label outside BLANK_NODE_LABEL [141s] gets a fresh valid label
 (`Dataset.relabelForWrite`, as the `Sink` writers do). -/
-def handleWriteInput (ds : Dataset) : Except String Dataset :=
-  match L4Factoidal.RDF.Sink.checkLangTags .rdf12 ds with
+def handleWriteInput (ds : Dataset) (mode : L4Factoidal.Syntax.Mode := .rdf12) :
+    Except String Dataset :=
+  match L4Factoidal.RDF.Sink.checkLangTags mode ds with
   | .error e => .error e
   | .ok () => .ok ds.relabelForWrite
 
@@ -258,22 +271,23 @@ graph name), Turtle, TriG and RDF/XML through the `Sink` writers (Turtle and
 RDF/XML write the named graphs as one graph, `Sink.flatten`), and `rdfc`, the
 RDFC-1.0 canonical N-Quads (`canonicalizeOf`). JSON-LD is the full engine's
 `datasetToJsonLd`. `none` for any other tag. -/
-def handleWriterText (formatTag : String) (ds : Dataset) : Option (Except String String) :=
+def handleWriterText (formatTag : String) (ds : Dataset) (mode : L4Factoidal.Syntax.Mode := .rdf12) :
+    Option (Except String String) :=
   let (tag, v11) := writerTagVersion formatTag
   let checked (name : String) (k : Unit → Except String String) : Option (Except String String) :=
     if v11 && !ds.isRdf11 then some (.error (rdf11WriterRefusal name)) else some (k ())
   match tag with
   | "nquads" | "nq" | "n-quads" =>
-      checked "N-Quads" fun _ => (handleWriteInput ds).map Dataset.toCanonicalNQuads
+      checked "N-Quads" fun _ => (handleWriteInput ds mode).map Dataset.toCanonicalNQuads
   | "ntriples" | "nt" | "n-triples" =>
       if !ds.named.isEmpty then
         some (.error "the dataset has a named graph and N-Triples holds one graph; use nquads or trig")
-      else checked "N-Triples" fun _ => L4Factoidal.RDF.Sink.serializeDataset {} .nt .rdf12 ds
+      else checked "N-Triples" fun _ => L4Factoidal.RDF.Sink.serializeDataset {} .nt mode ds
   | "turtle" | "ttl" =>
-      checked "Turtle" fun _ => L4Factoidal.RDF.Sink.serializeDataset {} .turtle .rdf12 ds
-  | "trig" => checked "TriG" fun _ => L4Factoidal.RDF.Sink.serializeDataset {} .trig .rdf12 ds
+      checked "Turtle" fun _ => L4Factoidal.RDF.Sink.serializeDataset {} .turtle mode ds
+  | "trig" => checked "TriG" fun _ => L4Factoidal.RDF.Sink.serializeDataset {} .trig mode ds
   | "rdfxml" | "rdf-xml" | "rdf" =>
-      checked "RDF/XML" fun _ => L4Factoidal.RDF.Sink.serializeDataset {} .rdfxml .rdf12 ds
+      checked "RDF/XML" fun _ => L4Factoidal.RDF.Sink.serializeDataset {} .rdfxml mode ds
   | "rdfc" | "canonical" =>
       match parseJson? (canonicalizeOf ds) with
       | some j =>
@@ -320,16 +334,16 @@ def datasetSerialize (h formatTag : String) : IO String :=
     let ds := od.ds
     match formatTag.toLower with
     | "" | "nquads" | "nq" | "n-quads" =>
-        match handleWriteInput ds with
+        match handleWriteInput ds od.writeMode with
         | .error e => pure (errJson s!"datasetSerialize: {e}")
         | .ok ds => pure (okWith [("nquads", .string (Dataset.toCanonicalNQuads ds))])
     | "turtle" | "ttl" =>
-        match handleWriteInput ds with
+        match handleWriteInput ds od.writeMode with
         | .error e => pure (errJson s!"datasetSerialize: {e}")
         | .ok ds => pure (okWith [("turtle", .string
           (turtleOfGraphOpts { prefixes := handlePrefixTable od } (flattenedGraph ds)))])
     | _ =>
-        match handleWriterText formatTag ds with
+        match handleWriterText formatTag ds od.writeMode with
         | some (.ok text) => pure (okWith [("text", .string text)])
         | some (.error e) => pure (errJson s!"datasetSerialize: {e}")
         | none => pure (errJson
@@ -343,18 +357,18 @@ def datasetSerializeWith (h formatTag optionsJson : String) : IO String :=
     let ds := od.ds
     match formatTag.toLower with
     | "" | "nquads" | "nq" | "n-quads" =>
-        match handleWriteInput ds with
+        match handleWriteInput ds od.writeMode with
         | .error e => pure (errJson s!"datasetSerializeWith: {e}")
         | .ok ds => pure (okWith [("nquads", .string (Dataset.toCanonicalNQuads ds))])
     | "turtle" | "ttl" =>
         match turtleOptionsOfJson (handlePrefixTable od) optionsJson with
         | .error msg => pure (errJson msg)
         | .ok opts =>
-            match handleWriteInput ds with
+            match handleWriteInput ds od.writeMode with
             | .error e => pure (errJson s!"datasetSerializeWith: {e}")
             | .ok ds => pure (okWith [("turtle", .string (turtleOfGraphOpts opts (flattenedGraph ds)))])
     | _ =>
-        match handleWriterText formatTag ds with
+        match handleWriterText formatTag ds od.writeMode with
         | some (.ok text) => pure (okWith [("text", .string text)])
         | some (.error e) => pure (errJson s!"datasetSerializeWith: {e}")
         | none => pure (errJson
@@ -479,7 +493,7 @@ RDF 1.2 mode: the token is placed at position `pos` (0 subject, 1 predicate,
 def termOfToken (pos : Nat) (tok : String) : Option (Option Subject × Option WfIri × Option Term × Option Subject) :=
   let fill := ["<urn:x:s>", "<urn:x:p>", "<urn:x:o>"]
   let parts := (fill.set pos tok) ++ (if pos == 3 then [tok] else [])
-  match parseNQuadsFast (String.intercalate " " parts ++ " .\n") .rdf12 with
+  match L4Factoidal.Dataflow.readNQuadsText .rdf12 (String.intercalate " " parts ++ " .\n") with
   | .error _ => none
   | .ok ds =>
     match ds.default, ds.named with
@@ -572,7 +586,7 @@ def datasetMatchCount (h patternJson : String) : IO String := do
 /-- The quads of an N-Quads text as SPARQL Update quads. A graph named by a
 blank node has no Update quad form and is refused. -/
 def updateQuadsOf (nq : String) : Except String (List (Option WfIri × Triple)) := do
-  let ds ← (parseNQuadsFast nq .rdf12).mapError fmtParseError
+  let ds ← (L4Factoidal.Dataflow.readNQuadsText .rdf12 nq).mapError fmtParseError
   let named ← ds.named.mapM fun ng =>
     match ng.name with
     | .iri i => .ok (ng.graph.map fun t => ((some i : Option WfIri), t))
@@ -589,7 +603,7 @@ private def changeHandle (who h nq : String)
     match updateQuadsOf nq with
     | .error e => pure (errJson s!"{who}: {e}")
     | .ok qs =>
-      let next := openDataset (f od.data qs) od.prefixes
+      let next := openDataset (f od.data qs) od.prefixes od.readMode
       handleTable.modify (·.insert h next)
       pure (okWith [("count", .number (toString (datasetQuadCount next.ds)))])
 
@@ -747,7 +761,7 @@ private def changeHandleJson (who h text : String)
     match jsonQuadsOf text >>= (updateQuadsLoop · #[]) with
     | .error e => pure (errJson s!"{who}: {e}")
     | .ok qs =>
-      let next := openDataset (f od.data qs) od.prefixes
+      let next := openDataset (f od.data qs) od.prefixes od.readMode
       handleTable.modify (·.insert h next)
       pure (okWith [("count", .number (toString (datasetQuadCount next.ds)))])
 
@@ -1174,5 +1188,20 @@ private def badTagDs : Dataset :=
 #guard ["nquads", "ntriples", "turtle", "trig"].all fun f => match handleWriterText f badTagDs with
   | some (.error e) => (e.splitOn "\"en us\"").length > 1 | _ => false
 #guard match handleWriteInput badTagDs with | .error _ => true | .ok _ => false
+
+-- A subtag of 9 or more characters: RDF 1.1 LANGTAG [144s] accepts it, RDF 1.2
+-- does not. A document read as RDF 1.1 is written in RDF 1.1 mode
+-- (`OpenDataset.writeMode`), so its writers keep the tag; in RDF 1.2 mode they
+-- refuse it with an error that names it.
+private def longTagDs : Dataset :=
+  { default := [{ s := .iri ⟨"http://ex/s", by decide⟩, p := ⟨"http://ex/p", by decide⟩,
+                  o := .literal (Literal.langString "v" "abcdefghijk") }], named := [] }
+#guard match handleWriteInput longTagDs .rdf11 with | .ok _ => true | .error _ => false
+#guard match handleWriteInput longTagDs .rdf12 with
+  | .error e => (e.splitOn "\"abcdefghijk\"").length > 1 | .ok _ => false
+#guard ["nquads", "ntriples", "turtle", "trig"].all fun f =>
+  match handleWriterText f longTagDs .rdf11 with | some (.ok t) => (t.splitOn "abcdefghijk").length > 1 | _ => false
+#guard ["nquads", "ntriples", "turtle", "trig"].all fun f =>
+  match handleWriterText f longTagDs .rdf12 with | some (.error _) => true | _ => false
 
 end L4Wasm.Ops

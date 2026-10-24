@@ -63,10 +63,9 @@ def abiVersion : String := "1"
 /-- The reader of the core engine for the syntaxes outside
 `Wasm/Ops/Parse.lean`'s table: the JSON-LD tags are refused by name, every
 other tag stays unknown. -/
-def coreExtraReader : ExtraReader := fun tag _ _ =>
-  if jsonLdFormatTags.contains tag then
-    some (.error s!"format '{tag}' (JSON-LD 1.1) is not in the core engine (l4factoidal-core.wasm); the full engine (l4factoidal.wasm) reads it")
-  else none
+def coreExtraReader : ExtraReader :=
+  { refuse := some fun tag =>
+      s!"format '{tag}' (JSON-LD 1.1) is not in the core engine (l4factoidal-core.wasm); the full engine (l4factoidal.wasm) reads it" }
 
 /-- The stateless op names of the core engine, served by `call` and `callIO`. -/
 def coreOpNames : List String :=

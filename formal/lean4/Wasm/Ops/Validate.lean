@@ -28,6 +28,7 @@ Targeted imports only — never the L4Factoidal umbrella (see
 `Wasm/Abi.lean`'s import note).
 -/
 import Wasm.Ops.Support
+import L4Factoidal.Dataflow.Reader
 import L4Factoidal.Syntax.NQuadsFast
 import L4Factoidal.Syntax.NTriples
 import L4Factoidal.SHACL.Report
@@ -62,10 +63,10 @@ def shaclValidateParsed (dataDs shapesDs : Dataset) : String :=
 
 /-- `shaclValidate(dataNquads, shapesNquads)`. -/
 def shaclValidate (dataNq shapesNq : String) : String :=
-  match parseNQuadsFast dataNq .rdf12 with
+  match L4Factoidal.Dataflow.readNQuadsText .rdf12 dataNq with
   | .error e => errJson s!"shaclValidate(data): {fmtParseError e}"
   | .ok dataDs =>
-  match parseNQuadsFast shapesNq .rdf12 with
+  match L4Factoidal.Dataflow.readNQuadsText .rdf12 shapesNq with
   | .error e => errJson s!"shaclValidate(shapes): {fmtParseError e}"
   | .ok shapesDs =>
     shaclValidateParsed dataDs shapesDs

@@ -15,7 +15,8 @@ subset of propext, Classical.choice, Quot.sound.
 
 Status:
 
-* `proved`: `stage` is a `Stage` value whose `sound` field is a proof;
+* `proved`: `stage` is a `Stage` value, or an `RdfReader` value (the reader
+  interface type, `Dataflow/Reader.lean`), whose `sound` field is a proof;
   `contract` names its contract; `theorems` names the component theorems it
   uses.
 * `assumed`: `stage` is an `IOStage`; `ioAssumptions` names the assumption.
@@ -182,6 +183,42 @@ def registry : List Entry := [
     theorems := [``L4Factoidal.RDF.Dataset.den_toSet, ``L4Factoidal.RDF.Dataset.den_iso_scopeDocument,
       ``L4Factoidal.RDF.Dataset.den_renameBnodes]
     note := "default graph only; no W3C suite; used by RML targets" },
+  { area := "RdfReader: N-Triples (wasm dispatch)", dir := "Syntax"
+    stage := ``ntriplesDocumentReader, wireIn := "ReaderInput", wireOut := "Dataset × PrefixList"
+    contract := ``ReaderContract, status := .proved
+    theorems := [``documentReader, ``parseDocumentWithPrefixes_map_fst, ``readerContract_of_set,
+      ``parseDocument_error_iff, ``RdfReader.isSet, ``L4Factoidal.RDF.Source.parseDocument_set]
+    note := "RdfReader interface type: the contract (set, document scope n, den, Iso, labels-only change) and error iff parser error are fields; the table readers serves the wasm document ops" },
+  { area := "RdfReader: N-Quads (wasm dispatch, dataset handles)", dir := "Syntax"
+    stage := ``nquadsDocumentReader, wireIn := "ReaderInput", wireOut := "Dataset × PrefixList"
+    contract := ``ReaderContract, status := .proved
+    theorems := [``documentReader, ``parseDocumentWithPrefixes_map_fst, ``readerContract_of_set,
+      ``parseDocument_error_iff, ``RdfReader.isSet, ``L4Factoidal.RDF.Source.parseDocument_set, ``readNQuadsText_eq]
+    note := "RdfReader interface type: the contract (set, document scope n, den, Iso, labels-only change) and error iff parser error are fields; the table readers serves the wasm document ops; also reads the N-Quads text of a dataset handle (readNQuadsText)" },
+  { area := "RdfReader: Turtle (wasm dispatch)", dir := "Syntax"
+    stage := ``turtleDocumentReader, wireIn := "ReaderInput", wireOut := "Dataset × PrefixList"
+    contract := ``ReaderContract, status := .proved
+    theorems := [``documentReader, ``parseDocumentWithPrefixes_map_fst, ``readerContract_of_set,
+      ``parseDocument_error_iff, ``RdfReader.isSet, ``L4Factoidal.RDF.Source.parseDocument_set, ``L4Factoidal.Syntax.parseTurtleTextWithPrefixes_map_fst]
+    note := "RdfReader interface type: the contract (set, document scope n, den, Iso, labels-only change) and error iff parser error are fields; the table readers serves the wasm document ops; the prefixes are extra output, pinned by #guards (TurtleChunkFoldTests.lean)" },
+  { area := "RdfReader: TriG (wasm dispatch)", dir := "Syntax"
+    stage := ``trigDocumentReader, wireIn := "ReaderInput", wireOut := "Dataset × PrefixList"
+    contract := ``ReaderContract, status := .proved
+    theorems := [``documentReader, ``parseDocumentWithPrefixes_map_fst, ``readerContract_of_set,
+      ``parseDocument_error_iff, ``RdfReader.isSet, ``L4Factoidal.RDF.Source.parseDocument_set, ``L4Factoidal.Syntax.parseTriGWithPrefixes_map_fst]
+    note := "RdfReader interface type: the contract (set, document scope n, den, Iso, labels-only change) and error iff parser error are fields; the table readers serves the wasm document ops" },
+  { area := "RdfReader: RDF/XML (wasm dispatch)", dir := "Syntax"
+    stage := ``rdfxmlDocumentReader, wireIn := "ReaderInput", wireOut := "Dataset × PrefixList"
+    contract := ``ReaderContract, status := .proved
+    theorems := [``documentReader, ``parseDocumentWithPrefixes_map_fst, ``readerContract_of_set,
+      ``parseDocument_error_iff, ``RdfReader.isSet, ``L4Factoidal.RDF.Source.parseDocument_set]
+    note := "RdfReader interface type: the contract (set, document scope n, den, Iso, labels-only change) and error iff parser error are fields; the table readers serves the wasm document ops" },
+  { area := "RdfReader: JSON-LD to RDF (full wasm dispatch)", dir := "Syntax"
+    stage := ``jsonldDocumentReader, wireIn := "ReaderInput", wireOut := "Dataset × PrefixList"
+    contract := ``ReaderContract, status := .proved
+    theorems := [``documentReader, ``parseDocumentWithPrefixes_map_fst, ``readerContract_of_set,
+      ``parseDocument_error_iff, ``RdfReader.isSet, ``L4Factoidal.RDF.Source.parseDocument_set]
+    note := "RdfReader interface type: the contract (set, document scope n, den, Iso, labels-only change) and error iff parser error are fields; the table readers serves the wasm document ops; Source.withJsonLd; the core dispatch refuses JSON-LD by name" },
   { area := "Reader grammar: N-Triples", dir := "Syntax"
     wireIn := "String", wireOut := "Dataset", status := .tested
     tests := ["W3C RDF 1.1 rdf-n-triples (l4w3c)", "W3C RDF 1.2 rdf-n-triples (l4w3c)"]

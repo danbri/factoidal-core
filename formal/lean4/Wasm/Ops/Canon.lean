@@ -16,6 +16,7 @@ Targeted imports only — never the L4Factoidal umbrella (see
 `Wasm/Abi.lean`'s import note).
 -/
 import Wasm.Ops.Support
+import L4Factoidal.Dataflow.Reader
 import L4Factoidal.Syntax.NQuads
 import L4Factoidal.RDF.Canonical
 import L4Factoidal.Syntax.NQuadsFast
@@ -58,7 +59,7 @@ def canonicalizeChecked (ds : Dataset) : String :=
 /-- `canonicalizeToNQuads(nquads)`. The text is read in RDF 1.2 mode so that
 an RDF 1.2 term gives the refusal above, not a parse error. -/
 def canonicalizeToNQuads (nq : String) : String :=
-  match parseNQuadsFast nq .rdf12 with
+  match L4Factoidal.Dataflow.readNQuadsText .rdf12 nq with
   | .error e => errJson (fmtParseError e)
   | .ok ds => canonicalizeChecked ds
 
@@ -72,6 +73,7 @@ theorem canonicalizeOf_eq (ds : Dataset) :
     canonicalizeOf ds = canonicalizeToNQuads (Dataset.toCanonicalNQuads ds) := by
   unfold canonicalizeOf canonicalizeToNQuads
   rw [withOpsDataset_eq]
+  rw [L4Factoidal.Dataflow.readNQuadsText_eq]
   cases parseNQuadsFast (Dataset.toCanonicalNQuads ds) .rdf12 <;> rfl
 
 /-! ### RDF 1.2 input (https://github.com/danbri/factoidal/issues/873)
