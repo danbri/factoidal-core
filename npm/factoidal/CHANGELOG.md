@@ -34,6 +34,9 @@ SPARQL and RDF semantics fixes:
   drops it: https://github.com/danbri/factoidal/issues/984.
 - Opening a dataset renames blank nodes inside triple terms as well as at
   the top level.
+- `factoidal sample-store` under Deno printed its path three times: the
+  pack and the activate each re-executed the whole command. It now
+  re-executes once, before any work.
 
 **`proofCheck` no longer joins blank nodes across artifacts**
 (https://github.com/danbri/factoidal/issues/976). Up to 0.12.0 a bundle
