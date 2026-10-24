@@ -38,6 +38,9 @@ test `decode` re-runs on what it read back.
    reconstruction step, which refuses a dictionary with repeated terms, a row
    whose subject, predicate, object or graph ID does not resolve, and a blob
    in a subject, predicate or graph position.
+5. `TermWireV2.wireDictFolded` — every dictionary entry is folded (language
+   tags in lower case, https://github.com/danbri/factoidal/issues/977);
+   `fromParts?` folds what it reads, and `fromQuads` interns folded terms.
 
 ## What the manifest and the zone maps read
 
@@ -134,7 +137,10 @@ private structure BuildState where
   rows : Array IdQuad := #[]
   byPredicate : Std.HashMap TermId (List IdQuad) := ∅
 
-private def intern (state : BuildState) (term : WireTerm) : BuildState × TermId :=
+/-- Intern the fold of a wire term (`TermWireV2.foldWire`, language tags in
+    lower case; issue 977), so two terms that `Term.eqb` makes one get one id. -/
+private def intern (state : BuildState) (term0 : WireTerm) : BuildState × TermId :=
+  let term := foldWire term0
   match state.idByTerm[term]? with
   | some id => (state, id)
   | none =>
@@ -180,8 +186,13 @@ def rowWellFormed (dict : Array WireTerm) (row : IdQuad) : Bool :=
              | none => false)
   | _, _, _ => false
 
-/-- Reconstruct a quad block from a decoded dictionary and decoded ID rows. -/
-def fromParts? (dict : Array WireTerm) (rows : Array IdQuad) : Option QuadBlock := do
+/-- Reconstruct a quad block from a decoded dictionary and decoded ID rows.
+    The dictionary is folded first (`TermWireV2.foldWire`), as in
+    `IndexedBlock.fromParts?`: a file written before the fold reads back with
+    lower-case language tags, and one whose fold makes two entries one is
+    refused. -/
+def fromParts? (dict0 : Array WireTerm) (rows : Array IdQuad) : Option QuadBlock := do
+  let dict := dict0.map foldWire
   let ids ← buildIdMap dict.toList 0 ∅
   if rows.toList.all (rowWellFormed dict) then
     some { dict := dict, idByTerm := ids, rows := rows,
@@ -205,6 +216,10 @@ def decodeQuad? (dict : Array WireTerm) (row : IdQuad) : Option QuadRow := do
   match p with
   | .inline (.iri predicate) => some (graph, { s := subject, p := predicate, o := o })
   | _ => none
+
+/-- The id of a wire term in a block: the id of its fold. -/
+def QuadBlock.termId? (block : QuadBlock) (w : WireTerm) : Option TermId :=
+  block.idByTerm[foldWire w]?
 
 /-- The wire-level dataset content the rows denote, in physical row order. -/
 def QuadBlock.denotes (block : QuadBlock) : List QuadRow :=
@@ -337,7 +352,8 @@ def fieldsSupported (block : QuadBlock) : Bool :=
 def supported (block : QuadBlock) : Bool :=
   fieldsSupported block && onePredicate block &&
     PagedTermDictionaryV2.supported block.dict &&
-    (fromParts? block.dict block.rows).isSome
+    (fromParts? block.dict block.rows).isSome &&
+    wireDictFolded block.dict
 
 /-- The unchecked byte assembly, for negative tests that must produce a
     well-framed artifact the encoder itself refuses. -/

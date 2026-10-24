@@ -40,6 +40,7 @@ would refuse.
 No `sorry`, no user `axiom`, no `native_decide`, no `partial`.
 -/
 import L4Factoidal.Storage.IndexedBlockWireV3
+import L4Factoidal.Storage.TermFoldTheorems
 import L4Factoidal.Storage.PagedTermDictionaryTheorems
 
 namespace L4Factoidal.Storage.IndexedBlockWireV3
@@ -321,12 +322,12 @@ theorem predicateLocal_rows (block : Block) :
     admission itself and this needs no separate `Nodup` or well-formedness
     condition. -/
 theorem fromParts?_ok (dict : Array Term) (rows : Array IdTriple)
-    (hsome : (fromParts? dict rows).isSome = true) :
+    (hsome : (fromParts? dict rows).isSome = true) (hf : TermFold.dictFolded dict = true) :
     ∃ decoded, fromParts? dict rows = some decoded ∧
       decoded.dict = dict ∧ decoded.rows = rows := by
   obtain ⟨decoded, hdec⟩ := Option.isSome_iff_exists.mp hsome
   refine ⟨decoded, hdec, ?_⟩
-  rw [fromParts?] at hdec
+  rw [fromParts?, TermFold.map_foldTerm_of_folded dict hf] at hdec
   cases hids : buildIdMap dict.toList 0 ∅ with
   | none => rw [hids] at hdec; exact absurd hdec (by simp)
   | some ids =>
@@ -447,8 +448,9 @@ theorem decodeSpec_encode? (block : Block)
           simp only [IndexedBlockWireV1.fitsU32, decide_eq_true_eq] at hn
           exact hu32 ▸ hn
         have hsup : supported block = true := by simpa using hsupp
-        rw [supported, Bool.and_eq_true, Bool.and_eq_true, Bool.and_eq_true] at hsup
-        obtain ⟨⟨⟨hv1, honep⟩, hptd⟩, hpartsSome⟩ := hsup
+        rw [supported, Bool.and_eq_true, Bool.and_eq_true, Bool.and_eq_true,
+          Bool.and_eq_true] at hsup
+        obtain ⟨⟨⟨⟨hv1, honep⟩, hptd⟩, hpartsSome⟩, hfolded⟩ := hsup
         -- IBK1 admission: 32-bit row count and 32-bit term IDs
         simp only [IndexedBlockWireV1.supported, Bool.and_eq_true,
           List.all_eq_true] at hv1
@@ -579,7 +581,7 @@ theorem decodeSpec_encode? (block : Block)
         have hptddec : PagedTermDictionary.decode? dictionary = some block.dict :=
           PagedTermDictionary.decode?_encode? block.dict dictionary hdict
         obtain ⟨decoded, hparts, hddict, hdrows⟩ :=
-          fromParts?_ok block.dict block.rows hpartsSome
+          fromParts?_ok block.dict block.rows hpartsSome hfolded
         refine ⟨decoded, ?_, hddict, hdrows⟩
         -- assemble
         rw [decodeSpec, listOfByteArray_byteArrayOfList]

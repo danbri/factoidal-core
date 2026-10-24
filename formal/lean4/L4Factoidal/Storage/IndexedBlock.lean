@@ -3,8 +3,15 @@ L4Factoidal.Storage.IndexedBlock — dictionary-backed RDF block execution.
 
 This is the first physical successor to `BlockMvp`: triples are held as term-ID
 rows and a predicate partition gives a bounded SPARQL triple pattern a smaller
-candidate sequence. The dictionary interns structurally distinct source
-terms; RDF matching semantics are applied after decoding.
+candidate sequence. The dictionary interns folded terms
+(`TermFold.foldTerm`: every language tag in lower case, RDF 1.1 Concepts
+section 3.3), so it gives one id per RDF term under `Term.eqb`
+(https://github.com/danbri/factoidal/issues/977): `fromGraph` folds a term
+before it gives it an id, `fromParts?` folds the dictionary it reads (a file
+written before the fold reads back folded, or is refused where the fold makes
+two entries one), and `Block.termId?` folds the wanted term.
+`IndexedBlockDictTheorems.fromParts?_foldedDictInjective` is the contract.
+RDF matching semantics are applied after decoding.
 
 This module is the in-memory representation and its backend-facing scan
 shape. Its byte formats are `IndexedBlockWireV1` (IBK1), `IndexedBlockWireV2`
@@ -14,12 +21,14 @@ is proved in `IndexedBlockWireV3Theorems`.
 import Std.Data.HashMap
 import L4Factoidal.Storage.BlockMvp
 import L4Factoidal.SPARQL.StoreBackend
+import L4Factoidal.Storage.TermFold
 
 namespace L4Factoidal.Storage.IndexedBlock
 
 open L4Factoidal.RDF
 open L4Factoidal.SPARQL
 open L4Factoidal.SPARQL.StoreBackend
+open L4Factoidal.Storage.TermFold (foldTerm)
 
 abbrev TermId := Nat
 
@@ -56,10 +65,12 @@ def addPartition (partitions : Std.HashMap TermId (List IdTriple))
     (row : IdTriple) : Std.HashMap TermId (List IdTriple) :=
   partitions.insert row.p (row :: partitions.getD row.p [])
 
-/-- Add a structurally distinct RDF term to the build dictionary in amortised
-    constant time. This preserves original terms exactly; matching semantics
-    are still applied by `boundMatches` after decoding. -/
-private def intern (state : BuildState) (term : Term) : BuildState × TermId :=
+/-- Add an RDF term to the build dictionary in amortised constant time. The
+    term is folded first (`foldTerm`), so two terms that `Term.eqb` makes one
+    get one id; matching semantics are still applied by `boundMatches` after
+    decoding. -/
+private def intern (state : BuildState) (term0 : Term) : BuildState × TermId :=
+  let term := foldTerm term0
   match state.idByTerm[term]? with
   | some id => (state, id)
   | none =>
@@ -93,15 +104,22 @@ def rowWellFormed (dict : Array Term) (row : IdTriple) : Bool :=
   | some s, some (.iri _), some _ => s.toSubject?.isSome
   | _, _, _ => false
 
-/-- Reconstruct a block from decoded dictionary and ID rows. The constructor
-    refuses duplicate dictionary keys and references that cannot decode to RDF
-    triple positions. -/
-def fromParts? (dict : Array Term) (rows : Array IdTriple) : Option Block := do
+/-- Reconstruct a block from decoded dictionary and ID rows. The dictionary is
+    folded first (`foldTerm`; the identity on a dictionary that `fromGraph`
+    built), so a file written before the fold reads back with lower-case
+    language tags. The constructor refuses duplicate dictionary keys (also
+    two entries that the fold makes one) and references that cannot decode to
+    RDF triple positions. -/
+def fromParts? (dict0 : Array Term) (rows : Array IdTriple) : Option Block := do
+  let dict := dict0.map foldTerm
   let ids ← buildIdMap dict.toList 0 ∅
   if rows.toList.all (rowWellFormed dict) then
     some { dict := dict, idByTerm := ids, rows := rows,
            byPredicate := rows.foldl addPartition ∅ }
   else none
+
+/-- The id of an RDF term in a block: the id of its fold. -/
+def Block.termId? (block : Block) (t : Term) : Option TermId := block.idByTerm[foldTerm t]?
 
 /-- Decode one ID triple. Invalid references are rejected rather than mapped to
     a fabricated term. -/

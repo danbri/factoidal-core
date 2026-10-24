@@ -61,6 +61,7 @@ the gap.
 import L4Factoidal.Cottas.OnDiskIndex
 import L4Factoidal.Cottas.OffsetsWriter
 import L4Factoidal.NatBounds
+import L4Factoidal.RDF.TermJson
 
 namespace L4Factoidal.Cottas
 
@@ -133,6 +134,50 @@ def insertToken (x : String) : List String → List String
 def sortTokens : List String → List String
   | []      => []
   | x :: xs => insertToken x (sortTokens xs)
+
+/-! ## RDF terms: one token per RDF term (https://github.com/danbri/factoidal/issues/977)
+
+A token is a string, so `serializeDict` gives `"x"@en` and `"x"@EN` two ids
+when it is given both spellings. The term layer below writes the token of
+the fold of each term (`Storage.TermFold.foldTerm`, language tags in lower
+case, RDF 1.1 Concepts section 3.3) in RDF 1.2 N-Triples term syntax, so the
+two literals are one token; `sortTokens` removes the repeat. A reader folds
+the term of a token it decodes and the term it looks up.
+
+No COTD file was written before this layer (the module header: no live
+callers), so there is no earlier file whose meaning could change. A file from
+another writer with an upper-case tag in a token decodes with the tag in
+lower case and fails `termRoundTripsAll` (the lookup of the folded term does
+not find the stored token); `DictTheorems.cotd_dictInjective` applies only
+when that test holds. -/
+
+/-- The token of an RDF term: the RDF 1.2 N-Triples form of its fold. -/
+def termToken? (t : RDF.Term) : Option String :=
+  (Syntax.Term.toNTriples .rdf12 (Storage.TermFold.foldTerm t)).toOption
+
+/-- The term of a token, folded. -/
+def tokenTerm? (tok : String) : Option RDF.Term :=
+  (RDF.TermJson.readTermString tok).map Storage.TermFold.foldTerm
+
+/-- The `.dict` file of a list of RDF terms: one token per RDF term, sorted. -/
+def serializeTermDict (terms : List RDF.Term) : Option ByteArray := do
+  let toks ← terms.mapM termToken?
+  serializeDict (sortTokens toks)
+
+/-- The id of an RDF term in a `.dict` file. -/
+def dictEncodeTerm (bs : ByteArray) (h : DictHeader) (t : RDF.Term) : Option Nat :=
+  (termToken? t).bind (dictEncodeToken bs h)
+
+/-- The RDF term of an id in a `.dict` file, folded. -/
+def dictDecodeTerm (bs : ByteArray) (h : DictHeader) (id : Nat) : Option RDF.Term :=
+  (dictDecodeToken bs h id).bind tokenTerm?
+
+/-- Every id decodes to a term whose id is that id: one id per RDF term. -/
+def termRoundTripsAll (bs : ByteArray) (h : DictHeader) : Bool :=
+  (List.range h.numTokens).all fun i =>
+    match dictDecodeTerm bs h i with
+    | some t => dictEncodeTerm bs h t == some i
+    | none => false
 
 /-! ## Build-time checks
 
@@ -217,5 +262,29 @@ private def eBytes : ByteArray := (serializeDict etoks).getD ByteArray.empty
 /-! ### A truncated file is refused, not read short -/
 
 #guard (parseDict (dwBytes.extract 0 (dwBytes.size - 3))).isNone
+
+/-! ### RDF terms: one token per RDF term -/
+
+private def litEN : RDF.Term := .literal (RDF.Literal.langString "x" "EN")
+private def liten : RDF.Term := .literal (RDF.Literal.langString "x" "en")
+private def exA : RDF.Term := .iri ⟨"http://example.org/a", by decide⟩
+
+-- tokens are strings: the two spellings are two tokens, two ids
+#guard (sortTokens ["\"x\"@EN", "\"x\"@en"]).length == 2
+-- the term layer writes one token per RDF term, with the tag in lower case
+private def tBytes : ByteArray := (serializeTermDict [litEN, exA, liten]).getD ByteArray.empty
+private def tHeader : DictHeader := (readDictHeader tBytes).getD default
+#guard tHeader.numTokens == 2
+#guard parseDict tBytes == some ["\"x\"@en", "<http://example.org/a>"]
+#guard dictEncodeTerm tBytes tHeader litEN == dictEncodeTerm tBytes tHeader liten
+#guard (dictEncodeTerm tBytes tHeader litEN).isSome
+#guard (List.range 2).all fun i => (dictDecodeTerm tBytes tHeader i).isSome
+#guard dictDecodeTerm tBytes tHeader 0 == some liten
+#guard termRoundTripsAll tBytes tHeader
+-- a file from another writer with both spellings: two ids, one term, refused by the test
+private def fBytes : ByteArray := (serializeDict ["\"x\"@EN", "\"x\"@en"]).getD ByteArray.empty
+private def fHeader : DictHeader := (readDictHeader fBytes).getD default
+#guard dictDecodeTerm fBytes fHeader 0 == dictDecodeTerm fBytes fHeader 1
+#guard !termRoundTripsAll fBytes fHeader
 
 end L4Factoidal.Cottas

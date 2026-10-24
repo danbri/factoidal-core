@@ -113,7 +113,10 @@ private structure BuildState where
   rows : Array IdQuad := #[]
   byPredicate : Std.HashMap TermId (List IdQuad) := ∅
 
-private def intern (state : BuildState) (term : Term) : BuildState × TermId :=
+/-- Intern the fold of a term (`TermFold.foldTerm`, language tags in lower
+    case; issue 977), so two terms that `Term.eqb` makes one get one id. -/
+private def intern (state : BuildState) (term0 : Term) : BuildState × TermId :=
+  let term := TermFold.foldTerm term0
   match state.idByTerm[term]? with
   | some id => (state, id)
   | none =>
@@ -160,8 +163,12 @@ def rowWellFormed (dict : Array Term) (row : IdQuad) : Bool :=
 
 /-- Reconstruct a quad block from a decoded dictionary and decoded ID rows.
     `buildIdMap` is IBK3's: it refuses a dictionary with repeated terms, whose
-    ID map would not be injective. -/
-def fromParts? (dict : Array Term) (rows : Array IdQuad) : Option QuadBlock := do
+    ID map would not be injective. The dictionary is folded first
+    (`TermFold.foldTerm`), as in `IndexedBlock.fromParts?`: a file written
+    before the fold reads back with lower-case language tags, and one whose
+    fold makes two entries one is refused. -/
+def fromParts? (dict0 : Array Term) (rows : Array IdQuad) : Option QuadBlock := do
+  let dict := dict0.map TermFold.foldTerm
   let ids ← buildIdMap dict.toList 0 ∅
   if rows.toList.all (rowWellFormed dict) then
     some { dict := dict, idByTerm := ids, rows := rows,
@@ -185,6 +192,10 @@ def decodeQuad? (dict : Array Term) (row : IdQuad) : Option QuadRow := do
   match p with
   | .iri predicate => some (graph, { s := subject, p := predicate, o := o })
   | _ => none
+
+/-- The id of an RDF term in a block: the id of its fold. -/
+def QuadBlock.termId? (block : QuadBlock) (t : Term) : Option TermId :=
+  block.idByTerm[TermFold.foldTerm t]?
 
 /-- The RDF dataset content the rows denote, in physical row order: the quads
     `(g, s, p, o)` with `g = none` for the default graph. -/
@@ -297,11 +308,14 @@ def fieldsSupported (block : QuadBlock) : Bool :=
        including the u32 length-prefix condition of the total term encoder.
     4. `(fromParts? block.dict block.rows).isSome` — the decoder's own
        reconstruction step, which refuses a dictionary with repeated terms and
-       rows whose subject, predicate, object or graph ID does not resolve. -/
+       rows whose subject, predicate, object or graph ID does not resolve.
+    5. `TermFold.dictFolded block.dict` — every dictionary term is folded
+       (issue 977); `fromParts?` folds what it reads. -/
 def supported (block : QuadBlock) : Bool :=
   fieldsSupported block && onePredicate block &&
     PagedTermDictionary.supported block.dict &&
-    (fromParts? block.dict block.rows).isSome
+    (fromParts? block.dict block.rows).isSome &&
+    TermFold.dictFolded block.dict
 
 /-- The unchecked byte assembly, for negative tests that must produce a
     well-framed artifact the encoder itself refuses. Production writers call

@@ -33,16 +33,16 @@ parameter (decode after denote; for SBM11 `OverlayDict.ovDec keys ov`):
   `DictInjectiveTheorems.overlay_dictInjective`) and `Overlay.HeldFolded`
   (the terms of the dictionary have lower-case language tags). Without these,
   another row with other ids could decode to an RDF-term-equal quad and stay.
-  `HeldFolded` is open here: SBM11 folds every term before it gives an id
-  (`normalizeTerm`), and the proof that the held terms are their own join keys
-  is not in this module.
+  `HeldFolded` holds for every dictionary of folded terms:
+  `Storage.TermFold.heldFolded_of_folded` (the join key of a term is its fold,
+  `TermFold.joinKey_eq_foldTerm`).
 
 Normalisation. The target compares language tags without case. SBM11 gives one
 id per RDF term (`MemGen.cid_eq_iff_eqb`), so it maps into the target with the
-fold it already does. IBK, PTD and the other stores of
-https://github.com/danbri/factoidal/issues/977 give one id per structural term:
-their decoded triples map into the target (membership is by key), but a theorem
-that compares their ids needs a fold before the ids are assigned.
+fold it already does. Since https://github.com/danbri/factoidal/issues/977 the
+IBK, IBK4, IBK5, PTD, TLI1, TermJson, QuadsBin, HDT and COTTAS dictionaries
+fold with the same function (`Storage/TermFold.lean`) and give one id per RDF
+term too (`Storage/StoreDictTheorems.lean` and the modules it names).
 
 No `sorry`, no `axiom`, no `native_decide`, no `partial`.
 -/
@@ -296,9 +296,9 @@ def RowInUse (used : Nat → Prop) (r : Row) : Prop :=
 
 /-- The terms of the store have their language tags in lower case: each is its
 own join key. SBM11 folds a term before it gives an id (`Session.idOf`,
-`normalizeTerm`; `OverlayDict.vocabAdd`). A store that gives one id per
-structural term (https://github.com/danbri/factoidal/issues/977) does not
-satisfy it. -/
+`normalizeTerm`; `OverlayDict.vocabAdd`); so do the stores of
+https://github.com/danbri/factoidal/issues/977. `Storage.TermFold.heldFolded_of_folded`
+gives it for any dictionary whose terms are folded. -/
 def HeldFolded (dom : Term → Prop) : Prop := ∀ t, dom t → t.joinKey = t
 
 theorem rowQuad?_eq_some (dec : Nat → Option Term) (r : Row) (gn : Option Subject) (u : Triple) :

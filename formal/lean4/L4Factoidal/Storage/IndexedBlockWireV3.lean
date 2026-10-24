@@ -114,11 +114,17 @@ def onePredicate (block : Block) : Bool :=
     whose IDs do not resolve to an RDF subject, predicate IRI and object.
     Running the same test here makes the encoder refuse precisely the blocks the
     decoder would refuse, so `IndexedBlockWireV3Theorems.decode_encode?` needs
-    no hypothesis beyond `encode? block = some bytes`. -/
+    no hypothesis beyond `encode? block = some bytes`.
+
+    The last conjunct: every dictionary term is folded (`TermFold.dictFolded`,
+    language tags in lower case, issue 977). `fromParts?` folds what it reads,
+    so the encoder writes only dictionaries that the fold leaves unchanged;
+    `fromGraph` builds only those. -/
 def supported (block : Block) : Bool :=
   IndexedBlockWireV1.supported block && onePredicate block &&
     PagedTermDictionary.supported block.dict &&
-    (IndexedBlock.fromParts? block.dict block.rows).isSome
+    (IndexedBlock.fromParts? block.dict block.rows).isSome &&
+    TermFold.dictFolded block.dict
 
 def encodeList (block : Block) : List UInt8 :=
   let rows := positionedRows block |>.flatMap encodeRow
@@ -329,7 +335,9 @@ private def termFromDecodedPages? (ptdHeader : PagedTermDictionary.Prefix)
     (pages : List (Nat × Array Term)) (termId : TermId) : Option Term := do
   let page ← PagedTermDictionary.pageIndex? ptdHeader termId
   let terms ← (pages.find? fun decoded => decoded.1 == page).map Prod.snd
-  terms[termId % ptdHeader.pageTerms]?
+  -- the read-time fold of `IndexedBlock.fromParts?`, for a page of a file
+  -- written before the fold (issue 977)
+  terms[termId % ptdHeader.pageTerms]?.map TermFold.foldTerm
 
 private def tripleFromDecodedPages? (ptdHeader : PagedTermDictionary.Prefix)
     (pages : List (Nat × Array Term))

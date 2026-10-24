@@ -180,8 +180,12 @@ private def lowerBoundGo (entries : Array Entry) (key : List UInt8) (low high : 
 /-- Total canonical lookup. A byte-equal candidate is still checked as an RDF
     term; this remains correct if a future codec or host has a representation
     defect, and records the non-negotiable identity boundary for hash indexes.
-    `none` means the term is absent, not that an untrusted local ID is zero. -/
-def lookup? (entries : Array Entry) (wanted : Term) : Option Nat :=
+    `none` means the term is absent, not that an untrusted local ID is zero.
+    The wanted term is folded first (`TermFold.foldTerm`; the entries hold
+    folded terms, which `TLI1` admission checks), so `"x"@en` and `"x"@EN`
+    find one id (https://github.com/danbri/factoidal/issues/977). -/
+def lookup? (entries : Array Entry) (wanted0 : Term) : Option Nat :=
+  let wanted := TermFold.foldTerm wanted0
   let key := serializeTerm wanted
   let index := lowerBoundGo entries key 0 entries.size (entries.size + 1)
   match entries[index]? with

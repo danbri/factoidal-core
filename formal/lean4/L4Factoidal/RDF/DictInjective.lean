@@ -26,11 +26,14 @@ The fields:
 * `encDec` (item (c), second half): every id in use decodes to a term of the
   store, and `enc (dec i) = i`.
 
-Term equality here is `Eq` on `Term` (structural; RDF 1.1 Concepts section 3,
-strict term equality). A store that folds language tags to lower case
+The record is stated for any entry type `α`; for RDF terms `α` is `Term`, and
+an IBK5 dictionary holds `TermWireV2.WireTerm`. Term equality here is `Eq` on
+`α` (structural; RDF 1.1 Concepts section 3, strict term equality). A store that folds language tags to lower case
 (RDF 1.1 Concepts section 3.3) states its `dom` over the folded terms, and
-proves separately that its lookup folds the tag first; see
-`Storage/Sbm11/DictInjectiveTheorems.lean`.
+proves separately that its lookup folds the tag first and that one id means
+`Term.eqb`; see `Storage/Sbm11/DictInjectiveTheorems.lean` and, for the
+other stores (https://github.com/danbri/factoidal/issues/977),
+`Storage/TermFoldTheorems.lean` and `Storage/StoreDictTheorems.lean`.
 
 `DictInjective.ofRoundTrip` builds the record from `covers`, `decEnc` and
 `encDec`: (a) and (b) follow from the round trips because `enc` and `dec` are
@@ -44,8 +47,8 @@ namespace L4Factoidal.RDF
 
 /-- The term dictionary of an id-based store is injective on the ids in use,
     and encoding and decoding are inverse there. -/
-structure DictInjective (enc : Term → Option Nat) (dec : Nat → Option Term)
-    (dom : Term → Prop) (used : Nat → Prop) : Prop where
+structure DictInjective {α : Type} (enc : α → Option Nat) (dec : Nat → Option α)
+    (dom : α → Prop) (used : Nat → Prop) : Prop where
   /-- Every term of the store has an id in use. -/
   covers : ∀ t, dom t → ∃ n, used n ∧ enc t = some n
   /-- (a) Two terms of the store with one id are one term. -/
@@ -59,7 +62,7 @@ structure DictInjective (enc : Term → Option Nat) (dec : Nat → Option Term)
 
 namespace DictInjective
 
-variable {enc : Term → Option Nat} {dec : Nat → Option Term} {dom : Term → Prop} {used : Nat → Prop}
+variable {α : Type} {enc : α → Option Nat} {dec : Nat → Option α} {dom : α → Prop} {used : Nat → Prop}
 
 /-- The record from the two round trips and `covers`. -/
 theorem ofRoundTrip
@@ -87,7 +90,7 @@ theorem ofRoundTrip
 
 /-- Two terms of the store have the same id exactly when they are the same
     term. -/
-theorem enc_eq_iff (D : DictInjective enc dec dom used) {t u : Term} {n m : Nat}
+theorem enc_eq_iff (D : DictInjective enc dec dom used) {t u : α} {n m : Nat}
     (ht : dom t) (hu : dom u) (h1 : enc t = some n) (h2 : enc u = some m) : n = m ↔ t = u := by
   constructor
   · intro e
@@ -99,7 +102,7 @@ theorem enc_eq_iff (D : DictInjective enc dec dom used) {t u : Term} {n m : Nat}
     exact Option.some.inj h2
 
 /-- Two ids in use name the same term exactly when they are the same id. -/
-theorem dec_eq_iff (D : DictInjective enc dec dom used) {n m : Nat} {t u : Term}
+theorem dec_eq_iff (D : DictInjective enc dec dom used) {n m : Nat} {t u : α}
     (hn : used n) (hm : used m) (h1 : dec n = some t) (h2 : dec m = some u) : t = u ↔ n = m := by
   constructor
   · intro e
@@ -109,6 +112,39 @@ theorem dec_eq_iff (D : DictInjective enc dec dom used) {n m : Nat} {t u : Term}
     subst e
     rw [h1] at h2
     exact Option.some.inj h2
+
+/-- The record for a dictionary whose terms are the terms of its ids in use,
+    from one fact checked over the ids: every id in use decodes to a term that
+    encodes back to it. (For a dictionary read from a file written by another
+    tool, such as HDT, this is a test over the whole file.) -/
+theorem ofDecodeCert (hc : ∀ n, used n → ∃ t, dec n = some t ∧ enc t = some n) :
+    DictInjective enc dec (fun t => ∃ n, used n ∧ dec n = some t) used := by
+  refine ofRoundTrip (fun t ⟨n, hn, hd⟩ => ?_) (fun t m ⟨n, hn, hd⟩ he => ?_) (fun n hn => ?_)
+  · obtain ⟨u, hu, he⟩ := hc n hn
+    rw [hd] at hu
+    cases Option.some.inj hu
+    exact ⟨n, hn, he⟩
+  · obtain ⟨u, hu, he'⟩ := hc n hn
+    rw [hd] at hu
+    cases Option.some.inj hu
+    rw [he'] at he
+    cases Option.some.inj he
+    exact hd
+  · obtain ⟨t, hd, he⟩ := hc n hn
+    exact ⟨t, ⟨n, hn, hd⟩, hd, he⟩
+
+/-- A lookup that agrees with the lookup of a `DictInjective` dictionary on
+    the terms of the store gives a `DictInjective` dictionary: the record
+    reads `enc` only at those terms. -/
+theorem congr_on {enc' : α → Option Nat} (D : DictInjective enc dec dom used)
+    (h : ∀ t, dom t → enc' t = enc t) : DictInjective enc' dec dom used where
+  covers t ht := by rw [h t ht]; exact D.covers t ht
+  encInj t u n ht hu h1 h2 := D.encInj t u n ht hu (by rw [← h t ht]; exact h1) (by rw [← h u hu]; exact h2)
+  decInj := D.decInj
+  decEnc t n ht he := D.decEnc t n ht (by rw [← h t ht]; exact he)
+  encDec n hn := by
+    obtain ⟨t, ht, hd, he⟩ := D.encDec n hn
+    exact ⟨t, ht, hd, by rw [h t ht]; exact he⟩
 
 end DictInjective
 
@@ -130,14 +166,15 @@ theorem idxOf_getElem_of_nodup {α : Type} [BEq α] [LawfulBEq α] :
     rw [idxOf_getElem_of_nodup l i hi' hnd'.2]
 
 /-- The id of a term in a list dictionary: its position. -/
-def listEnc (l : List Term) (t : Term) : Option Nat := if t ∈ l then some (l.idxOf t) else none
+def listEnc {α : Type} [DecidableEq α] (l : List α) (t : α) : Option Nat :=
+  if t ∈ l then some (l.idxOf t) else none
 
 /-- The term of an id in a list dictionary: the entry at that position. -/
-def listDec (l : List Term) (n : Nat) : Option Term := l[n]?
+def listDec {α : Type} (l : List α) (n : Nat) : Option α := l[n]?
 
 /-- A list dictionary without duplicates is `DictInjective` on its entries
     and its positions. -/
-theorem listDict_dictInjective (l : List Term) (h : l.Nodup) :
+theorem listDict_dictInjective {α : Type} [DecidableEq α] (l : List α) (h : l.Nodup) :
     DictInjective (listEnc l) (listDec l) (· ∈ l) (· < l.length) := by
   have hde : ∀ t n, t ∈ l → listEnc l t = some n → listDec l n = some t := by
     intro t n hm he
