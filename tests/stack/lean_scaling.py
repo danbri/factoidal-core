@@ -595,7 +595,6 @@ XFAIL: dict[str, str] = {
     "iso-noniso-search": "https://github.com/danbri/factoidal/issues/877",
     "sbm11-replay-insert-time": "https://github.com/danbri/factoidal/issues/879",
     "owl-consistent-cl": "https://github.com/danbri/factoidal/issues/960",
-    "ntriples-lenient-long-line-memory": "https://github.com/danbri/factoidal/issues/949",
 }
 # A run longer than this is not repeated: the minimum of several runs only
 # removes timer and load noise, which is small against a run this long.
@@ -1064,7 +1063,8 @@ PARSE_MEMORY_ROWS = {
     "ntriples12-long-line-memory": (2000000, lambda n: long_line_nt(n), ["--format", "nt12"], 8.0),
     # RDF 1.2 N-Quads (issue 949): 40.9 before, 3.9 after (2026-10-24).
     "nquads12-long-line-memory": (2000000, lambda n: long_line_nq(n), ["--format", "nq12"], 8.0),
-    # https://github.com/danbri/factoidal/issues/949: the native reader declines this form.
+    # The lenient walk (issue 949): 33.7 before the partial line was kept as text and read at
+    # a cursor (`LenientStreamT`), 4.2 after (2026-10-24).
     "ntriples-lenient-long-line-memory": (2000000, lambda n: long_line_nt(n), ["--format", "ntriples", "--lenient"], 8.0),
 }
 

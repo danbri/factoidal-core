@@ -302,6 +302,15 @@ quads to stdout (with `--out nquads`) before reading the next chunk. -/
 
 def lenientChunkBytes : USize := 65536
 
+/-- The chunk size of the streamed lenient parse: 65,536 bytes, or the environment
+variable `L4_LENIENT_CHUNK_BYTES` when it is a positive number.
+`tools/strict-parse-differential.sh` sets it to 1 and to 7 so that every line of the W3C
+files falls across a chunk boundary (https://github.com/danbri/factoidal/issues/949). -/
+def lenientChunkBytesIO : IO USize := do
+  match (← IO.getEnv "L4_LENIENT_CHUNK_BYTES").bind String.toNat? with
+  | some n => pure (if n > 0 then n.toUSize else lenientChunkBytes)
+  | none => pure lenientChunkBytes
+
 /-- Read `h` chunk by chunk, at most `fuel` chunks, stopping early when
 `stop` holds. The `Bool` is `true` when the end of the file was reached (or
 `stop` held). Structural recursion on `fuel`. -/
@@ -335,7 +344,8 @@ streaming execution (TriG) — the caller then reads the file whole. -/
 def streamLenientFile (path : String) (mode : Mode) (tag base : String) (emit : Bool)
     (opts : LenientOptions) : IO (Option (Except String (Nat × Nat))) := do
   let size := (← System.FilePath.metadata path).byteSize.toNat
-  let fuel := size / lenientChunkBytes.toNat + 2
+  let chunk ← lenientChunkBytesIO
+  let fuel := size / chunk.toNat + 2
   let baseOpt : Option String := if base == "" then none else some base
   let feed? : Option (IO (Except String LenientFeed)) :=
     match Ops.formatOfTag tag with
@@ -346,7 +356,7 @@ def streamLenientFile (path : String) (mode : Mode) (tag base : String) (emit : 
     | some .turtle =>
         some (do
           let pre ← IO.FS.withFile path .read fun h =>
-            forChunks h (fun (_ : LenientPrepass) => false)
+            forChunksOf chunk h (fun (_ : LenientPrepass) => false)
               (fun (p : LenientPrepass) b => pure (p.feed b)) fuel ({} : LenientPrepass)
           match pre with
           | .error e => pure (.error e)
@@ -362,7 +372,7 @@ def streamLenientFile (path : String) (mode : Mode) (tag base : String) (emit : 
     | .error e => pure (some (.error e))
     | .ok feed0 =>
       let walked ← IO.FS.withFile path .read fun h =>
-        forChunks h (fun (fd : LenientFeed × Nat) => fd.1.stopped)
+        forChunksOf chunk h (fun (fd : LenientFeed × Nat) => fd.1.stopped)
           (fun (fd : LenientFeed × Nat) bytes => do
             match fd.1.feed bytes with
             | .error e => pure (.error e)

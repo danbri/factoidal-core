@@ -6,8 +6,8 @@ lenient walks, for `l4factoidal parse --lenient FILE`
 A host reads a file in byte chunks and calls `LenientFeed.feed` per chunk.
 The feed decodes UTF-8 with `Utf8Stream` (a code point split across two
 reads is carried, at most three bytes), hands the decoded text to the
-streaming lenient walk of the syntax (`LenientStream` for N-Triples and
-N-Quads, `TurtleChunkLenientState` for Turtle), and returns the diagnostics
+streaming lenient walk of the syntax (`LenientStreamT` for N-Triples and
+N-Quads, which keeps the partial line as text, `TurtleChunkLenientState` for Turtle), and returns the diagnostics
 and the output lines that chunk produced. Nothing is kept from one chunk to
 the next except the walk's own state (the line or candidate not yet complete,
 the Turtle prefixes and base, the line state, the error count) and a count of
@@ -25,11 +25,13 @@ No `sorry`, no user `axiom`, no `native_decide`, no `partial`.
 -/
 import L4Factoidal.Syntax.Utf8Stream
 import L4Factoidal.Syntax.NQuadsLenient
+import L4Factoidal.Syntax.LenientFeedText
 import L4Factoidal.Syntax.TurtleLenient
 
 namespace L4Factoidal.Syntax
 
 open L4Factoidal.RDF
+open L4Factoidal.Syntax.LenientFeedText
 
 /-! ## The consumer the CLI uses -/
 
@@ -56,7 +58,9 @@ def FeedSink.addTriples (k : FeedSink) (ts : List Triple) : FeedSink :=
 
 /-- The streaming walk of one syntax. -/
 inductive LenientFeedWalk where
-  | lines (reader : LineReader) (st : LenientStream FeedSink (List Diagnostic))
+  /-- N-Triples (`quads = false`) or N-Quads: the partial line is text
+  (`LenientStreamT`, https://github.com/danbri/factoidal/issues/949). -/
+  | lines (quads : Bool) (mode : Mode) (st : LenientStreamT FeedSink (List Diagnostic))
   | turtle (st : TurtleChunkLenientState FeedSink (List Diagnostic))
 
 structure LenientFeed where
@@ -73,8 +77,7 @@ structure FeedOut where
 /-- An N-Triples (`ntriples := true`) or N-Quads feed. -/
 def LenientFeed.initLines (mode : Mode) (ntriples : Bool) (emit : Bool) (opts : LenientOptions) :
     LenientFeed :=
-  { walk := .lines (if ntriples then tripleReader mode else quadReader mode)
-              (LenientStream.init { emit } []),
+  { walk := .lines (!ntriples) mode (LenientStreamT.init { emit } []),
     opts }
 
 /-- A Turtle feed, given the document's generated blank-node prefix. -/
@@ -82,8 +85,8 @@ def LenientFeed.initTurtle (bnodePrefix : String) (base : Option String) (mode :
     (emit : Bool) (opts : LenientOptions) : LenientFeed :=
   { walk := .turtle (TurtleChunkLenientState.init bnodePrefix { emit } [] base mode), opts }
 
-private def drainLines (st : LenientStream FeedSink (List Diagnostic)) :
-    FeedOut × LenientStream FeedSink (List Diagnostic) :=
+private def drainLines (st : LenientStreamT FeedSink (List Diagnostic)) :
+    FeedOut × LenientStreamT FeedSink (List Diagnostic) :=
   ({ diags := st.run.diags.reverse, lines := st.run.acc.linesRev.reverse },
    { st with run := { st.run with diags := [], acc := { st.run.acc with linesRev := [] } } })
 
@@ -98,9 +101,9 @@ def LenientFeed.feed (f : LenientFeed) (bytes : ByteArray) : Except String (Leni
   | .error e => .error e
   | .ok (text, utf8) =>
       match f.walk with
-      | .lines reader st =>
-          let (out, st') := drainLines (st.feed reader FeedSink.addQuad pushDiag f.opts text.toList)
-          .ok ({ f with utf8, walk := .lines reader st' }, out)
+      | .lines quads mode st =>
+          let (out, st') := drainLines (st.feed quads mode FeedSink.addQuad pushDiag f.opts text)
+          .ok ({ f with utf8, walk := .lines quads mode st' }, out)
       | .turtle st =>
           let (out, st') := drainTurtle (st.feed FeedSink.addTriples pushDiag f.opts text)
           .ok ({ f with utf8, walk := .turtle st' }, out)
@@ -112,8 +115,8 @@ def LenientFeed.finish (f : LenientFeed) : Except String (FeedOut × Nat × Bool
   | .error e => .error e
   | .ok () =>
       match f.walk with
-      | .lines reader st =>
-          let run := st.finish reader FeedSink.addQuad pushDiag f.opts
+      | .lines quads mode st =>
+          let run := st.finish quads mode FeedSink.addQuad pushDiag f.opts
           .ok ({ diags := run.diags.reverse, lines := run.acc.linesRev.reverse },
                run.acc.count, run.stopped)
       | .turtle st =>
@@ -124,7 +127,7 @@ def LenientFeed.finish (f : LenientFeed) : Except String (FeedOut × Nat × Bool
 /-- `true` once `maxErrors` has stopped the walk: the host may stop reading. -/
 def LenientFeed.stopped (f : LenientFeed) : Bool :=
   match f.walk with
-  | .lines _ st => st.run.stopped
+  | .lines _ _ st => st.run.stopped
   | .turtle st => st.run.stopped
 
 /-! ## The Turtle pre-pass -/
