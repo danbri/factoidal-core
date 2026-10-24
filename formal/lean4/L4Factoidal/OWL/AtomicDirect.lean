@@ -4,7 +4,11 @@ Restricted RDF-to-Direct mapping with a proved source-model bridge.
 Scope: named atomic classes, Thing/Nothing, SubClassOf, class assertions,
 SameIndividual/DifferentIndividuals, ObjectSomeValuesFrom(p C) with p an object
 property IRI and C an atomic class, used as the super-class of SubClassOf or as
-the class of a ClassAssertion, and the declarations/annotations below.
+the class of a ClassAssertion, TransitiveObjectProperty(p), and the
+declarations/annotations below: the nine built-in annotation properties
+(Structural Specification section 5.5), declared annotation properties on IRIs
+and blank nodes, SubAnnotationPropertyOf, annotated axioms (Mapping section
+3.2.5, Table 17) and `owl:versionIRI` in the ontology header.
 OWL 2 Mapping to RDF Graphs (2012), Tables 7, 13 and 16 and section 3.2.2 supply the syntax;
 Direct Semantics (2012), Tables 4, 5 and 10 supply the logical conditions.
 Annotations have no logical effect (Direct Semantics section 1).
@@ -46,6 +50,13 @@ def owlRestriction : WfIri := ⟨"http://www.w3.org/2002/07/owl#Restriction", rf
 def owlObjectProperty : WfIri := ⟨"http://www.w3.org/2002/07/owl#ObjectProperty", rfl⟩
 def onProperty : WfIri := ⟨"http://www.w3.org/2002/07/owl#onProperty", rfl⟩
 def someValuesFrom : WfIri := ⟨"http://www.w3.org/2002/07/owl#someValuesFrom", rfl⟩
+def owlTransitiveProperty : WfIri := ⟨"http://www.w3.org/2002/07/owl#TransitiveProperty", rfl⟩
+def owlAxiom : WfIri := ⟨"http://www.w3.org/2002/07/owl#Axiom", rfl⟩
+def annotatedSource : WfIri := ⟨"http://www.w3.org/2002/07/owl#annotatedSource", rfl⟩
+def annotatedProperty : WfIri := ⟨"http://www.w3.org/2002/07/owl#annotatedProperty", rfl⟩
+def annotatedTarget : WfIri := ⟨"http://www.w3.org/2002/07/owl#annotatedTarget", rfl⟩
+def owlVersionIRI : WfIri := ⟨"http://www.w3.org/2002/07/owl#versionIRI", rfl⟩
+def subPropertyOf : WfIri := ⟨"http://www.w3.org/2000/01/rdf-schema#subPropertyOf", rfl⟩
 
 def reserved (name : WfIri) : Bool :=
   name.val.startsWith "http://www.w3.org/2002/07/owl#" ||
@@ -53,10 +64,20 @@ def reserved (name : WfIri) : Bool :=
   name.val.startsWith "http://www.w3.org/2000/01/rdf-schema#" ||
   name.val.startsWith "http://www.w3.org/2001/XMLSchema#"
 
-def builtinAnnotation (name : WfIri) : Bool :=
-  name.val == "http://www.w3.org/2000/01/rdf-schema#label" ||
-  name.val == "http://www.w3.org/2000/01/rdf-schema#comment" ||
-  name.val == "http://www.w3.org/2002/07/owl#versionInfo"
+/-- The built-in annotation properties of the OWL 2 Structural Specification
+section 5.5 (all nine). -/
+def builtinAnnotationName (name : String) : Bool :=
+  name == "http://www.w3.org/2000/01/rdf-schema#label" ||
+  name == "http://www.w3.org/2000/01/rdf-schema#comment" ||
+  name == "http://www.w3.org/2000/01/rdf-schema#seeAlso" ||
+  name == "http://www.w3.org/2000/01/rdf-schema#isDefinedBy" ||
+  name == "http://www.w3.org/2002/07/owl#deprecated" ||
+  name == "http://www.w3.org/2002/07/owl#versionInfo" ||
+  name == "http://www.w3.org/2002/07/owl#priorVersion" ||
+  name == "http://www.w3.org/2002/07/owl#backwardCompatibleWith" ||
+  name == "http://www.w3.org/2002/07/owl#incompatibleWith"
+
+def builtinAnnotation (name : WfIri) : Bool := builtinAnnotationName name.val
 
 def validAnnotationName (name : WfIri) : Bool := builtinAnnotation name || !reserved name
 
@@ -65,18 +86,33 @@ def AnnotationProperty (graph : Graph) (name : WfIri) : Prop :=
   builtinAnnotation name = true ∨ ∃ triple ∈ graph,
     triple = ⟨.iri name, rdfType, .iri owlAnnotationProperty⟩ ∧ validAnnotationName name = true
 
-/-- Initial total lookup: declaration order independent, quadratic worst case over a graph. -/
-def isAnnotation (graph : Graph) (name : WfIri) : Bool :=
-  builtinAnnotation name || graph.any (fun triple =>
-    triple == ⟨.iri name, rdfType, .iri owlAnnotationProperty⟩ && validAnnotationName name)
+/-- The declared annotation properties of a graph, each with the proof of its
+declaration. One pass; a lookup is one hash probe (until 2026-10-24 each
+lookup scanned the graph, so reading was quadratic in the annotation triples;
+issue 960 item 5). -/
+abbrev AnnotationIndex (graph : Graph) := Std.HashMap String {name : WfIri // AnnotationProperty graph name}
 
-theorem isAnnotation_sound {graph : Graph} {name : WfIri}
-    (known : isAnnotation graph name = true) : AnnotationProperty graph name := by
-  rcases Bool.or_eq_true_iff.mp known with builtin | declared
-  · exact Or.inl builtin
-  · obtain ⟨triple, member, recognized⟩ := List.any_eq_true.mp declared
-    rcases Bool.and_eq_true_iff.mp recognized with ⟨same, valid⟩
-    exact Or.inr ⟨triple, member, eq_of_beq same, valid⟩
+def annotationIndex (graph : Graph) : AnnotationIndex graph :=
+  graph.attach.foldl (fun index entry => match entry with
+    | ⟨⟨.iri name, predicate, .iri value⟩, member⟩ =>
+      if declared : predicate = rdfType ∧ value = owlAnnotationProperty ∧
+          validAnnotationName name = true then
+        index.insert name.val ⟨name, Or.inr ⟨_, member, by
+          obtain ⟨rfl, rfl, _⟩ := declared; rfl, declared.2.2⟩⟩
+      else index
+    | _ => index) {}
+
+/-- Declaration order independent lookup; every answer carries its proof. -/
+def knownAnnotation (graph : Graph) (index : AnnotationIndex graph) (name : WfIri) :
+    Option (PLift (AnnotationProperty graph name)) :=
+  if builtin : builtinAnnotation name = true then some ⟨Or.inl builtin⟩
+  -- A reserved name other than a built-in is never a declared annotation
+  -- property (`validAnnotationName`); answering before the hash probe also
+  -- keeps the lookup reducible by `decide` for such names.
+  else if reserved name then none
+  else match index.get? name.val with
+    | some ⟨found, known⟩ => if same : found = name then some ⟨same ▸ known⟩ else none
+    | none => none
 
 def annotationValue (value : Term) : Bool :=
   match value with
@@ -106,6 +142,8 @@ inductive Axiom where
   | subClassSome (left : AtomicClass) (role : String) (filler : AtomicClass)
   /-- `ClassAssertion(ObjectSomeValuesFrom(role filler) individual)`. -/
   | assertSome (individual : String) (role : String) (filler : AtomicClass)
+  /-- `TransitiveObjectProperty(role)`. -/
+  | transitive (role : String)
   deriving Repr, DecidableEq
 
 /-- Logical interpretation of structural axioms, independently of their compilation. -/
@@ -128,6 +166,8 @@ def axiomHolds {δ : Type} (interpretation : Interp δ) (assignment : Ind → δ
   | .assertSome individual role filler =>
       ∃ successor, interpretation.role role (assignment individual) successor ∧
         classHolds interpretation filler successor
+  | .transitive role => ∀ x y z,
+      interpretation.role role x y → interpretation.role role y z → interpretation.role role x z
 
 /-- Scoped RDF mapping rules. None of these rules mentions the reader or compiler. -/
 inductive MapsTo (graph : Graph) : Triple → Axiom → Prop where
@@ -186,6 +226,32 @@ inductive MapsTo (graph : Graph) : Triple → Axiom → Prop where
       (mappedFiller : MapsClass filler fillerClass) :
       MapsTo graph ⟨.iri individual, rdfType, .bnode node⟩
         (.assertSome individual.val property.val fillerClass)
+  /-- `TransitiveObjectProperty(p)` (Mapping Table 16; Direct Semantics
+  Table 6). As for `owl:onProperty`, the property needs no
+  `owl:ObjectProperty` declaration: the reader admits no data property. -/
+  | transitive (name : WfIri) (ordinary : reserved name = false) :
+      MapsTo graph ⟨.iri name, rdfType, .iri owlTransitiveProperty⟩ (.transitive name.val)
+  /-- `SubAnnotationPropertyOf(p q)` (Mapping Table 16): no logical effect. -/
+  | subAnnotation (left right : WfIri) (knownLeft : AnnotationProperty graph left)
+      (knownRight : AnnotationProperty graph right) :
+      MapsTo graph ⟨.iri left, subPropertyOf, .iri right⟩ .noEffect
+  /-- The version IRI of the ontology header (Mapping Table 4). -/
+  | versionIRI (subject : Subject) (version : WfIri) :
+      MapsTo graph ⟨subject, owlVersionIRI, .iri version⟩ .noEffect
+  /-- The triples of an annotated axiom's `owl:Axiom` node (Mapping section
+  3.2.5, Table 17): the axiom itself is its own triple; annotations have no
+  logical effect (Direct Semantics section 1). -/
+  | axiomNode (node : BNodeId) :
+      MapsTo graph ⟨.bnode node, rdfType, .iri owlAxiom⟩ .noEffect
+  | axiomPart (node : BNodeId) (predicate : WfIri) (value : Term)
+      (part : predicate = annotatedSource ∨ predicate = annotatedProperty ∨
+        predicate = annotatedTarget) :
+      MapsTo graph ⟨.bnode node, predicate, value⟩ .noEffect
+  /-- An annotation of a blank node: of an `owl:Axiom` node (Table 17), or an
+  annotation assertion about an anonymous individual (Table 16). -/
+  | blankAnnotation (node : BNodeId) (property : WfIri) (value : Term)
+      (known : AnnotationProperty graph property) (allowed : annotationValue value = true) :
+      MapsTo graph ⟨.bnode node, property, value⟩ .noEffect
 
 /-- Every structurally mapped axiom in the original graph holds in this interpretation. -/
 def SourceModel {δ : Type} (interpretation : Interp δ) (assignment : Ind → δ)
@@ -247,11 +313,15 @@ def findFiller (graph : Graph) (index : NodeIndex graph) (node : BNodeId) :
     | _ => none
 
 /-- Proof-bearing syntax decoding; no logical role is inferred without a source mapping rule. -/
-def readTriple (graph : Graph) (index : NodeIndex graph) :
+def readTriple (graph : Graph) (index : NodeIndex graph) (annotations : AnnotationIndex graph) :
     (triple : Triple) → Option {clause // MapsTo graph triple clause}
   | ⟨subject, predicate, value⟩ =>
     if header : predicate = rdfType ∧ value = .iri owlOntology then
       some ⟨.noEffect, by rcases header with ⟨rfl, rfl⟩; exact .ontologyHeader subject⟩
+    else if version : predicate = owlVersionIRI then
+      match value with
+      | .iri target => some ⟨.noEffect, by subst predicate; exact .versionIRI subject target⟩
+      | _ => none
     else match subject with
     | .bnode node =>
       if restrictionTyped : predicate = rdfType ∧ value = .iri owlRestriction then
@@ -269,7 +339,17 @@ def readTriple (graph : Graph) (index : NodeIndex graph) :
           let ⟨fillerClass, mapped⟩ ← readClass filler
           pure ⟨.noEffect, by subst predicate; exact .restrictionFiller node filler fillerClass mapped⟩
         | _ => none
-      else none
+      else if axiomTyped : predicate = rdfType ∧ value = .iri owlAxiom then
+        some ⟨.noEffect, by rcases axiomTyped with ⟨rfl, rfl⟩; exact .axiomNode node⟩
+      else if part : predicate = annotatedSource ∨ predicate = annotatedProperty ∨
+          predicate = annotatedTarget then
+        some ⟨.noEffect, .axiomPart node predicate value part⟩
+      else match knownAnnotation graph annotations predicate with
+        | some ⟨known⟩ =>
+          if allowed : annotationValue value = true then
+            some ⟨.noEffect, .blankAnnotation node predicate value known allowed⟩
+          else none
+        | none => none
     | .iri name =>
       if typed : predicate = rdfType then
         if classDecl : value = .iri owlClass then do
@@ -286,6 +366,10 @@ def readTriple (graph : Graph) (index : NodeIndex graph) :
         else if propertyDecl : value = .iri owlObjectProperty then
           if ordinary : reserved name = false then
             some ⟨.noEffect, by subst predicate; subst value; exact .objectPropertyDeclaration name ordinary⟩
+          else none
+        else if transitiveDecl : value = .iri owlTransitiveProperty then
+          if ordinary : reserved name = false then
+            some ⟨.transitive name.val, by subst predicate; subst value; exact .transitive name ordinary⟩
           else none
         else match value with
         | .iri classIri =>
@@ -337,38 +421,45 @@ def readTriple (graph : Graph) (index : NodeIndex graph) :
             else none
           else none
         | _ => none
+      else if subProperty : predicate = subPropertyOf then
+        match value with
+        | .iri target =>
+          match knownAnnotation graph annotations name, knownAnnotation graph annotations target with
+          | some ⟨knownLeft⟩, some ⟨knownRight⟩ =>
+            some ⟨.noEffect, by subst predicate; exact .subAnnotation name target knownLeft knownRight⟩
+          | _, _ => none
+        | _ => none
       else if domainStatement : predicate = domain then
         match value with
         | .iri target =>
-          if known : isAnnotation graph name = true then
-            some ⟨.noEffect, by
-              subst predicate
-              exact .annotationDomain name target (isAnnotation_sound known)⟩
-          else none
+          match knownAnnotation graph annotations name with
+          | some ⟨known⟩ =>
+            some ⟨.noEffect, by subst predicate; exact .annotationDomain name target known⟩
+          | none => none
         | _ => none
       else if rangeStatement : predicate = range then
         match value with
         | .iri target =>
-          if known : isAnnotation graph name = true then
-            some ⟨.noEffect, by
-              subst predicate
-              exact .annotationRange name target (isAnnotation_sound known)⟩
-          else none
+          match knownAnnotation graph annotations name with
+          | some ⟨known⟩ =>
+            some ⟨.noEffect, by subst predicate; exact .annotationRange name target known⟩
+          | none => none
         | _ => none
-      else if known : isAnnotation graph predicate = true then
-        if allowed : annotationValue value = true then
-          some ⟨.noEffect, .annotation name predicate value
-            (isAnnotation_sound known) allowed⟩
-        else none
-      else none
+      else match knownAnnotation graph annotations predicate with
+        | some ⟨known⟩ =>
+          if allowed : annotationValue value = true then
+            some ⟨.noEffect, .annotation name predicate value known allowed⟩
+          else none
+        | none => none
 
 abbrev MappedAxiom (graph : Graph) := {clause : Axiom // ∃ triple ∈ graph, MapsTo graph triple clause}
 
 /-- List.mapM is total and tail based; one unsupported triple rejects the entire graph. -/
 def readAxioms (graph : Graph) : Option (List (MappedAxiom graph)) :=
   let index := nodeIndex graph
+  let annotations := annotationIndex graph
   graph.attach.mapM (fun ⟨triple, member⟩ => do
-    let ⟨clause, mapped⟩ ← readTriple graph index triple
+    let ⟨clause, mapped⟩ ← readTriple graph index annotations triple
     pure ⟨clause, triple, member, mapped⟩)
 
 def compileClass : AtomicClass → Concept
@@ -393,6 +484,8 @@ def addAxiom (ontology : DlOntology) : Axiom → DlOntology
       { ontology with tbox := (compileClass left, .ex role (compileClass filler)) :: ontology.tbox }
   | .assertSome individual role filler =>
       { ontology with abox := .inst individual (.ex role (compileClass filler)) :: ontology.abox }
+  | .transitive role =>
+      { ontology with rbox := { ontology.rbox with trans := role :: ontology.rbox.trans } }
 
 theorem addAxiom_preserves_model {δ : Type} {interpretation : Interp δ} {assignment : Ind → δ}
     {ontology : DlOntology} (model : DirectModel interpretation assignment ontology)
@@ -445,6 +538,12 @@ theorem addAxiom_preserves_model {δ : Type} {interpretation : Interp δ} {assig
         obtain ⟨successor, edge, inFiller⟩ := holds
         exact ⟨successor, edge, (compileClass_correct interpretation filler successor).mpr inFiller⟩
       · exact assertions assertion tail
+  | transitive role =>
+      refine ⟨⟨roleBox.1, ?_⟩, classBox, inverse, same, assertions⟩
+      intro r member x y z first second
+      rcases List.mem_cons.mp member with head | tail
+      · subst r; exact holds x y z first second
+      · exact roleBox.2 r tail x y z first second
 
 /-- Universally true domain witness; its spelling requires no freshness assumption. -/
 def initialOntology : DlOntology := { abox := [.inst "" .top] }
@@ -505,7 +604,8 @@ def restrictionsWellFormed (graph : Graph) : Bool :=
         (counts.insert node (properties, fillers), objectProperties, annotations)
       else state
     | ⟨.iri name, predicate, value⟩ =>
-      if predicate.val == rdfType.val && value == .iri owlObjectProperty then
+      if predicate.val == rdfType.val &&
+          (value == .iri owlObjectProperty || value == .iri owlTransitiveProperty) then
         (counts, objectProperties.insert name.val, annotations)
       else if predicate.val == rdfType.val && value == .iri owlAnnotationProperty then
         (counts, objectProperties, annotations.insert name.val)
@@ -515,14 +615,75 @@ def restrictionsWellFormed (graph : Graph) : Bool :=
       ({} : Std.HashSet String))
   counts.toList.all (fun entry => entry.2 == (1, 1)) &&
   objectProperties.toList.all (fun name =>
-    !annotations.contains name &&
-    !(name == "http://www.w3.org/2000/01/rdf-schema#label" ||
-      name == "http://www.w3.org/2000/01/rdf-schema#comment" ||
-      name == "http://www.w3.org/2002/07/owl#versionInfo"))
+    !annotations.contains name && !builtinAnnotationName name)
+
+/-- Admission checks for the annotation syntax, not needed for soundness
+(the triples involved map to `noEffect`), only for fidelity to the Mapping
+(issue 960 item 5):
+- an `owl:Axiom` node (section 3.2.5, Table 17) has exactly one
+  `owl:annotatedSource`, `owl:annotatedProperty` and `owl:annotatedTarget`
+  triple, its `rdf:type owl:Axiom` triple, and the annotated triple
+  (source, property, target) is in the graph: a reified axiom without its
+  axiom is not an OWL 2 ontology (a prefix that cut an axiom in half);
+- a node with an `owl:annotatedSource`, `owl:annotatedProperty` or
+  `owl:annotatedTarget` triple is an `owl:Axiom` node (checked above);
+- a restriction node (with an `owl:onProperty`, `owl:someValuesFrom` or
+  `rdf:type owl:Restriction` triple) has no other triple;
+- the subject of an `owl:versionIRI` triple is typed `owl:Ontology`
+  (Table 4).
+One pass with hash maps, then one pass over the axiom nodes. -/
+def annotationsWellFormed (graph : Graph) : Bool :=
+  let isRestrictionTriple := fun (predicate : WfIri) (value : Term) =>
+    predicate.val == onProperty.val || predicate.val == someValuesFrom.val ||
+      (predicate.val == rdfType.val && value == .iri owlRestriction)
+  -- Per blank node: typed owl:Axiom, its source, property and target values,
+  -- whether it has restriction triples and whether it has other triples.
+  let step := fun (state : Std.HashMap BNodeId (Bool × List Term × List Term × List Term × Bool × Bool) ×
+      Std.HashSet Triple × Std.HashSet Subject × List Subject) (triple : Triple) =>
+    let (nodes, triples, ontologies, versioned) := state
+    let triples := triples.insert triple
+    let ontologies :=
+      if triple.p.val == rdfType.val && triple.o == .iri owlOntology then ontologies.insert triple.s
+      else ontologies
+    let versioned := if triple.p.val == owlVersionIRI.val then triple.s :: versioned else versioned
+    match triple.s with
+    | .bnode node =>
+      let (typed, sources, properties, targets, restriction, other) :=
+        nodes.getD node (false, [], [], [], false, false)
+      let entry :=
+        if triple.p.val == rdfType.val && triple.o == .iri owlAxiom then
+          (true, sources, properties, targets, restriction, other)
+        else if triple.p.val == annotatedSource.val then
+          (typed, triple.o :: sources, properties, targets, restriction, other)
+        else if triple.p.val == annotatedProperty.val then
+          (typed, sources, triple.o :: properties, targets, restriction, other)
+        else if triple.p.val == annotatedTarget.val then
+          (typed, sources, properties, triple.o :: targets, restriction, other)
+        else if isRestrictionTriple triple.p triple.o then
+          (typed, sources, properties, targets, true, other)
+        else (typed, sources, properties, targets, restriction, true)
+      (nodes.insert node entry, triples, ontologies, versioned)
+    | .iri _ => (nodes, triples, ontologies, versioned)
+  let (nodes, triples, ontologies, versioned) :=
+    graph.foldl step (({} : Std.HashMap BNodeId (Bool × List Term × List Term × List Term × Bool × Bool)),
+      ({} : Std.HashSet Triple), ({} : Std.HashSet Subject), ([] : List Subject))
+  let axiomOk := fun (entry : BNodeId × (Bool × List Term × List Term × List Term × Bool × Bool)) =>
+    let (typed, sources, properties, targets, restriction, other) := entry.2
+    let axiomNode := typed || !sources.isEmpty || !properties.isEmpty || !targets.isEmpty
+    let restrictionOk := !restriction || (!axiomNode && !other)
+    let reifiedOk := !axiomNode || match sources, properties, targets with
+      | [source], [.iri property], [target] =>
+        typed && match source with
+          | .iri name => triples.contains ⟨.iri name, property, target⟩
+          | .bnode name => triples.contains ⟨.bnode name, property, target⟩
+          | _ => false
+      | _, _, _ => false
+    restrictionOk && reifiedOk
+  nodes.toList.all axiomOk && versioned.all ontologies.contains
 
 def readOntology (graph : Graph) : Option DlOntology := do
   let clauses ← readAxioms graph
-  if restrictionsWellFormed graph then
+  if restrictionsWellFormed graph && annotationsWellFormed graph then
     pure (compileAxioms (clauses.map Subtype.val))
   else none
 
@@ -556,14 +717,14 @@ theorem accepted_covers_triples {graph : Graph} (admitted : Accepted graph) :
   | some clauses =>
       let visit : {triple : Triple // triple ∈ graph} → Option (MappedAxiom graph) :=
         fun ⟨triple, member⟩ => do
-          let ⟨clause, mapped⟩ ← readTriple graph (nodeIndex graph) triple
+          let ⟨clause, mapped⟩ ← readTriple graph (nodeIndex graph) (annotationIndex graph) triple
           pure ⟨clause, triple, member, mapped⟩
       have traversal : graph.attach.mapM visit = some clauses := by
         simpa only [readAxioms] using parsed
       intro triple member
       obtain ⟨_, returned⟩ := eachReturned visit graph.attach clauses traversal
         ⟨triple, member⟩ (List.mem_attach graph ⟨triple, member⟩)
-      cases decoded : readTriple graph (nodeIndex graph) triple with
+      cases decoded : readTriple graph (nodeIndex graph) (annotationIndex graph) triple with
       | none => simp [visit, decoded] at returned
       | some mapped => exact ⟨mapped.val, mapped.property⟩
 
@@ -655,7 +816,7 @@ theorem unsupported_is_unknown {graph : Graph} (unsupported : readOntology graph
     rw [unsupported] at reading
     cases reading
 
-#print axioms isAnnotation_sound
+#print axioms knownAnnotation
 #print axioms readOntology_preserves_models
 #print axioms readOntology_hasModel
 #print axioms decide_sound

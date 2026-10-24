@@ -142,8 +142,11 @@ theorem unsupported_source_model : SourceModel emptyInterpretation unitAssignmen
 theorem unsupported_satisfiable_in_limited_semantics : Satisfiable unsupportedGraph :=
   ⟨Unit, emptyInterpretation, unitAssignment, unsupported_source_model⟩
 
+/-- `decide +kernel`: since 2026-10-24 the reader looks up annotation
+properties in a hash map and tests `reserved` (String.startsWith), which the
+elaborator's `decide` does not reduce; the kernel does. -/
 theorem unsupported_read_none : readOntology unsupportedGraph = none := by
-  decide
+  decide +kernel
 
 theorem unsupported_not_admitted : ¬ Accepted unsupportedGraph := by
   intro ⟨ontology, reading⟩

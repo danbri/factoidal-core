@@ -151,8 +151,9 @@ Official test suites, pass / fail / total, 2026-10-09 [B] unless marked.
 
 The OWL DL rows below are historical measurements of the legacy harness;
 they do not measure the current `owlIsConsistent` API. That API checks only
-an admitted fragment of the default graph (atomic classes and
-`owl:someValuesFrom`). It returns `true` for a checked finite model, `false`
+an admitted fragment of the default graph (atomic classes,
+`owl:someValuesFrom`, `owl:TransitiveProperty`, and annotations, axiom
+annotations included). It returns `true` for a checked finite model, `false`
 for a checked contradiction and `null` for unsupported input, exhausted
 `fuel` or an incomplete check. Other restrictions, negative property
 assertions, imports and equivalentClass are unsupported. `owlEntails`

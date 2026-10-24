@@ -329,20 +329,24 @@ repaired (docs/designissues/2026-10-10-lean-vs-fstar-performance.md):
                    `TermWireV2.parseInline` took `List.length` of the rest of the
                    page for each term: 1,000 to 4,000 terms, 5 decodes, went from
                    0.20 s to 5.30 s (ratio 26); after, 0.015 s to 0.049 s
-  owl-consistent-cl  `owl-consistent` (OWL 2 RL closure, then the tableau
-                   refuter) on the first 10,000, 20,000 and 40,000 lines of the
+  owl-consistent-cl  `owl-consistent` (the reader of the admitted OWL
+                   fragment, the model search and the model checker) on
+                   prefixes of about 10,000, 20,000 and 40,000 lines of the
                    Cell Ontology as sorted N-Triples (the reproduction of
-                   https://github.com/danbri/factoidal/issues/760). Measured at
-                   x, 2x and 4x in CPU time: each doubling at most DOUBLING
-                   (3.0) times the time before it, and 4x at most BOUND. Before
-                   the repair: 19.3 s, 105 s and not finished at 600 s (the
-                   class-size counting rung built its linear system by scanning
-                   the graph once per IRI); after: 1.05 s, 2.74 s, 7.48 s,
-                   measured 2026-10-12, most of it the OWL 2 RL closure.
-                   Since 2026-10-22 the strict reader refuses these prefixes
-                   (annotation properties with no declaration in the prefix,
-                   restriction nodes outside it): `unknown`, an expected
-                   failure of https://github.com/danbri/factoidal/issues/960
+                   https://github.com/danbri/factoidal/issues/760); each prefix
+                   holds whole axioms and the declarations they use
+                   (`cl_prefix`). Measured at x, 2x and 4x in CPU time: each
+                   doubling at most DOUBLING (3.0) times the time before it,
+                   and 4x at most BOUND. Before the repair of issue 760: 19.3 s,
+                   105 s and not finished at 600 s (the class-size counting rung
+                   built its linear system by scanning the graph once per IRI);
+                   after: 1.05 s, 2.74 s, 7.48 s, measured 2026-10-12. From
+                   2026-10-22 to 2026-10-24 the strict reader refused the
+                   prefixes (`unknown`, issue 960 item 5): a line cut split
+                   axioms, and the reader did not admit axiom annotations,
+                   owl:TransitiveProperty, rdfs:seeAlso, owl:deprecated,
+                   owl:versionIRI and sub-annotation properties. Since
+                   2026-10-24: 0.145 s, 0.293 s, 0.641 s, answer `true`
   owl-consistent-svf  `owl-consistent` on n units of a generated ontology in
                    the admitted fragment: an individual of A_k, A_k
                    subClassOf B_k, A_k subClassOf ObjectSomeValuesFrom(p,
@@ -350,6 +354,12 @@ repaired (docs/designissues/2026-10-10-lean-vs-fstar-performance.md):
                    units, measured at x, 2x and 4x like owl-consistent-cl. The
                    answer is `true` from a checked finite model (issue 960):
                    the reader, the model search and the model checker
+  owl-consistent-svf-transitive  the same units with `p rdf:type
+                   owl:TransitiveProperty`. The model interprets p as the total
+                   relation (`FinModel.full`). The first form closed the
+                   p-edges of the model and checked the closure: 134.7 s at
+                   n = 500 (n² edges, n³ checks), 2026-10-24; after: 0.11 s,
+                   0.26 s, 0.59 s at 2,000, 4,000 and 8,000 units
   owl-species      the OWL 2 species check (`l4owl-species`,
                    `OWL.SyntaxDL.speciesViolations`) of a generated OWL 2 DL
                    document of n units: a class with a restriction on a blank
@@ -605,7 +615,6 @@ XFAIL: dict[str, str] = {
     "query-memory-fstar": "https://github.com/danbri/factoidal/issues/729",
     "iso-noniso-search": "https://github.com/danbri/factoidal/issues/877",
     "sbm11-replay-insert-time": "https://github.com/danbri/factoidal/issues/879",
-    "owl-consistent-cl": "https://github.com/danbri/factoidal/issues/960",
     # `--out nquads` keeps every distinct triple written since PR 29 (issue 968, owner
     # 2026-10-23: keep for now). Measured on main 9c123945 before issue 949: 6.2 and 20.3.
     "parse-nt-memory": "https://github.com/danbri/factoidal/issues/968",
@@ -2032,6 +2041,36 @@ def cl_units(lines: list[str]) -> tuple[list[list[str]], dict[str, list[str]]]:
     return units, declarations
 
 
+def cl_sorted() -> Path:
+    """The Cell Ontology basic edition as N-Triples: parsed by the Lean
+    RDF/XML reader, one line per distinct triple, sorted by code point (the
+    reproduction of issue 760, `sort -u` in the C locale)."""
+    FIX.mkdir(parents=True, exist_ok=True)
+    full = FIX / "cl-basic.sorted.nt"
+    if not full.exists():
+        r = subprocess.run([str(BIN), "parse", str(CL_SOURCE), "--format", "rdfxml",
+                            "--out", "nquads"], stdout=subprocess.PIPE, timeout=CAP, check=True)
+        lines = sorted({ln for ln in r.stdout.decode("utf-8").split("\n") if ln.strip()})
+        full.write_text("\n".join(lines) + "\n", encoding="utf-8")
+    return full
+
+
+def cl_line_prefix(n: int) -> Path:
+    """The first n lines of `cl_sorted`. The OWL 2 RL closure (OWL 2 Profiles
+    section 4.3) is defined on every RDF graph, so `owlrl-closure-cl` keeps
+    this cut, the input of its measurements since issue 756. On the
+    whole-axiom prefixes of `cl_prefix` the inferred triples grow 2.4 to 2.5
+    times per doubling (longer rdfs:subClassOf chains) and the time ratios
+    were 2.6 to 3.2, measured 2026-10-24."""
+    full = cl_sorted()
+    p = FIX / f"cl-basic.{n}.nt"
+    if not p.exists():
+        with full.open(encoding="utf-8") as f:
+            head = [next(f) for _ in range(n)]
+        p.write_text("".join(head), encoding="utf-8")
+    return p
+
+
 def cl_prefix(n: int) -> Path:
     """A prefix of about n lines of the Cell Ontology basic edition as
     N-Triples (parsed by the Lean RDF/XML reader, one line per distinct
@@ -2046,13 +2085,7 @@ def cl_prefix(n: int) -> Path:
     prefix takes the units of `cl_units` in order until it has n lines, then
     adds the `rdf:type` lines of every IRI that a kept line uses as predicate,
     as `owl:onProperty` value or as `rdfs:subPropertyOf` value."""
-    FIX.mkdir(parents=True, exist_ok=True)
-    full = FIX / "cl-basic.sorted.nt"
-    if not full.exists():
-        r = subprocess.run([str(BIN), "parse", str(CL_SOURCE), "--format", "rdfxml",
-                            "--out", "nquads"], stdout=subprocess.PIPE, timeout=CAP, check=True)
-        lines = sorted({ln for ln in r.stdout.decode("utf-8").split("\n") if ln.strip()})
-        full.write_text("\n".join(lines) + "\n", encoding="utf-8")
+    full = cl_sorted()
     p = FIX / f"cl-basic.whole-axioms.{n}.nt"
     if not p.exists():
         lines = [ln for ln in full.read_text(encoding="utf-8").split("\n") if ln.strip()]
@@ -2076,21 +2109,22 @@ def cl_prefix(n: int) -> Path:
     return p
 
 
-def owl_svf_chain(n: int) -> Path:
+def owl_svf_chain(n: int, transitive: bool = False) -> Path:
     """n units in the admitted OWL fragment (issue 960): an individual of A_k,
-    A_k subClassOf B_k, and A_k subClassOf ObjectSomeValuesFrom(p, A_{k+1 mod n})."""
+    A_k subClassOf B_k, and A_k subClassOf ObjectSomeValuesFrom(p, A_{k+1 mod n}).
+    With `transitive`, also `p rdf:type owl:TransitiveProperty`."""
     rdf_type = "<http://www.w3.org/1999/02/22-rdf-syntax-ns#type>"
     sub = "<http://www.w3.org/2000/01/rdf-schema#subClassOf>"
     owl = "http://www.w3.org/2002/07/owl#"
 
     def text() -> str:
-        out = []
+        out = [f"<{EX}p> {rdf_type} <{owl}TransitiveProperty> .\n"] if transitive else []
         for k in range(n):
             a, b, nxt = f"<{EX}A{k}>", f"<{EX}B{k}>", f"<{EX}A{(k + 1) % n}>"
             out.append(f"<{EX}i{k}> {rdf_type} {a} .\n{a} {sub} {b} .\n{a} {sub} _:r{k} .\n"
                        f"_:r{k} <{owl}onProperty> <{EX}p> .\n_:r{k} <{owl}someValuesFrom> {nxt} .\n")
         return "".join(out)
-    return fixture(f"owl-svf-chain-{n}.nq", text)
+    return fixture(f"owl-svf-chain{'-transitive' if transitive else ''}-{n}.nq", text)
 
 
 def delta_log_merge_args(n: int) -> Path:
@@ -2272,6 +2306,9 @@ SERIES_ROWS = {
     "owl-consistent-svf": (
         2000, owl_svf_chain,
         lambda p: [str(BIN), "owl-consistent", str(p), "--format", "nquads"], "true", None),
+    "owl-consistent-svf-transitive": (
+        2000, lambda n: owl_svf_chain(n, transitive=True),
+        lambda p: [str(BIN), "owl-consistent", str(p), "--format", "nquads"], "true", None),
     "sparql-tokenize": (
         2000,
         lambda n: fixture(f"sparql-values-ask-{n}.rq", lambda: sparql_values_ask(n)),
@@ -2350,7 +2387,7 @@ SERIES_ROWS = {
     # 2026-10-13, https://github.com/danbri/factoidal/issues/756 item 2).
     # No first-line check: the output is the closure, one triple per line.
     "owlrl-closure-cl": (
-        10000, cl_prefix,
+        10000, cl_line_prefix,
         lambda p: [str(BIN), "closure", str(p), "--format", "nquads", "--regime", "owl-rl"],
         None, CL_SOURCE),
 }

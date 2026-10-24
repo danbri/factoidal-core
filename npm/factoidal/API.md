@@ -1128,10 +1128,15 @@ Supported logical forms are named atomic subclass/class assertions,
 Thing/Nothing, named-individual sameAs/differentFrom, and
 `owl:someValuesFrom` restrictions on an object property with a named class
 (or Thing/Nothing) filler, used as the superclass of `rdfs:subClassOf` or as
-the class of `rdf:type`. The reader also admits `owl:ObjectProperty`
-declarations and the declarations, ontology headers and limited annotations
-described in `docs/20261021-owl-reader-preservation.md`. Other restrictions,
-object/data property axioms, imports and equivalentClass are unsupported.
+the class of `rdf:type`, and `owl:TransitiveProperty`. The reader also admits
+`owl:ObjectProperty` declarations, the nine built-in annotation properties,
+declared annotation properties (on IRIs and blank nodes),
+`rdfs:subPropertyOf` between annotation properties, annotated axioms
+(`owl:Axiom` nodes whose annotated triple is in the graph), and ontology
+headers with `owl:versionIRI`
+(`docs/designissues/2026-10-24-owl-model-certificates.md`). Other
+restrictions, other object/data property axioms, imports and equivalentClass
+are unsupported.
 `fuel` (default 20000) bounds the model search (rounds of existential
 expansion) and the certificate checker (saturation rounds). Record:
 `docs/designissues/2026-10-24-owl-model-certificates.md`.

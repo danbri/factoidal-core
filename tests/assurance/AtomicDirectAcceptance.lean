@@ -32,6 +32,18 @@ def restriction (node property filler : String) :=
   s!"_:{node} <{owl "someValuesFrom"}> <{filler}> .\n"
 def cyclic := edge "urn:i" (rdf "type") "urn:A" ++
   s!"<urn:A> <{rdfs "subClassOf"}> _:r .\n" ++ restriction "r" "urn:p" "urn:A"
+/-- An owl:Axiom node for the triple `source property target` (Mapping section 3.2.5). -/
+def axiomNode (node source property target : String) :=
+  s!"_:{node} <{rdf "type"}> <{owl "Axiom"}> .\n" ++
+  s!"_:{node} <{owl "annotatedSource"}> <{source}> .\n" ++
+  s!"_:{node} <{owl "annotatedProperty"}> <{property}> .\n" ++
+  s!"_:{node} <{owl "annotatedTarget"}> {target} .\n"
+/-- i : A, A ⊑ ∃p.B, B ⊑ ∃p.C, p transitive: the model needs the edge from
+the element of i to the witness of C (the search closes the edges). -/
+def transitiveChain := edge "urn:p" (rdf "type") (owl "TransitiveProperty") ++
+  edge "urn:i" (rdf "type") "urn:A" ++
+  s!"<urn:A> <{rdfs "subClassOf"}> _:r .\n" ++ restriction "r" "urn:p" "urn:B" ++
+  s!"<urn:B> <{rdfs "subClassOf"}> _:s .\n" ++ restriction "s" "urn:p" "urn:C"
 
 structure Case where
   id : String
@@ -82,12 +94,12 @@ def cases : List Case := [
   ⟨"sameas-does-not-merge-classes", classDecl ++ emptyClass ++
     edge "urn:D" (rdf "type") (owl "Class") ++ edge "urn:C" (owl "sameAs") "urn:D" ++
     edge "urn:a" (rdf "type") "urn:D", true, some true⟩,
-  ⟨"unsupported-builtin-seeAlso", edge "urn:a" (rdfs "seeAlso") "urn:b", false, none⟩,
-  ⟨"unsupported-builtin-isDefinedBy", edge "urn:a" (rdfs "isDefinedBy") "urn:b", false, none⟩,
-  ⟨"unsupported-builtin-deprecated", literal "urn:a" (owl "deprecated") "true", false, none⟩,
-  ⟨"unsupported-builtin-priorVersion", edge "urn:a" (owl "priorVersion") "urn:b", false, none⟩,
-  ⟨"unsupported-builtin-backwardCompatibleWith", edge "urn:a" (owl "backwardCompatibleWith") "urn:b", false, none⟩,
-  ⟨"unsupported-builtin-incompatibleWith", edge "urn:a" (owl "incompatibleWith") "urn:b", false, none⟩,
+  ⟨"builtin-seeAlso", edge "urn:a" (rdfs "seeAlso") "urn:b", true, some true⟩,
+  ⟨"builtin-isDefinedBy", edge "urn:a" (rdfs "isDefinedBy") "urn:b", true, some true⟩,
+  ⟨"builtin-deprecated", literal "urn:a" (owl "deprecated") "true", true, some true⟩,
+  ⟨"builtin-priorVersion", edge "urn:a" (owl "priorVersion") "urn:b", true, some true⟩,
+  ⟨"builtin-backwardCompatibleWith", edge "urn:a" (owl "backwardCompatibleWith") "urn:b", true, some true⟩,
+  ⟨"builtin-incompatibleWith", edge "urn:a" (owl "incompatibleWith") "urn:b", true, some true⟩,
   ⟨"unsupported-reserved-individual-declaration", edge (owl "Thing") (rdf "type") (owl "NamedIndividual"), false, none⟩,
   ⟨"unsupported-reserved-individual-assertion", edge (owl "Nothing") (rdf "type") (owl "Thing"), false, none⟩,
   ⟨"unsupported-reserved-individual-same", edge "urn:a" (owl "sameAs") (owl "Thing"), false, none⟩,
@@ -116,7 +128,39 @@ def cases : List Case := [
   ⟨"unsupported-restriction-no-filler", s!"<urn:A> <{rdfs "subClassOf"}> _:r .\n" ++
     s!"_:r <{owl "onProperty"}> <urn:p> .\n", false, none⟩,
   ⟨"unsupported-annotation-property-restriction", annotationDecl ++ s!"<urn:A> <{rdfs "subClassOf"}> _:r .\n" ++
-    restriction "r" "urn:p" "urn:A", false, none⟩
+    restriction "r" "urn:p" "urn:A", false, none⟩,
+  -- Issue 960 item 5: the constructors the Cell Ontology uses.
+  ⟨"transitive-property", edge "urn:p" (rdf "type") (owl "TransitiveProperty"), true, some true⟩,
+  ⟨"transitive-chain-model", transitiveChain, true, some true⟩,
+  ⟨"transitive-chain-witness-clash", transitiveChain ++ edge "urn:C" (rdfs "subClassOf") (owl "Nothing"),
+    true, some false⟩,
+  ⟨"unsupported-transitive-annotation-property", annotationDecl ++
+    edge "urn:p" (rdf "type") (owl "TransitiveProperty"), false, none⟩,
+  ⟨"axiom-annotation", annotationDecl ++ classDecl ++ emptyClass ++
+    axiomNode "x" "urn:C" (rdfs "subClassOf") s!"<{owl "Nothing"}>" ++
+    s!"_:x <urn:p> \"source\" .\n", true, some true⟩,
+  ⟨"axiom-annotation-of-restriction-axiom", cyclic ++ edge "urn:note" (rdf "type") (owl "AnnotationProperty") ++
+    axiomNode "x" "urn:A" (rdfs "subClassOf") "_:r" ++ s!"_:x <urn:note> \"source\" .\n", true, some true⟩,
+  ⟨"unsupported-axiom-annotation-without-axiom", annotationDecl ++ classDecl ++
+    axiomNode "x" "urn:C" (rdfs "subClassOf") s!"<{owl "Nothing"}>", false, none⟩,
+  ⟨"unsupported-axiom-node-two-sources", annotationDecl ++ classDecl ++ emptyClass ++
+    axiomNode "x" "urn:C" (rdfs "subClassOf") s!"<{owl "Nothing"}>" ++
+    s!"_:x <{owl "annotatedSource"}> <urn:D> .\n", false, none⟩,
+  ⟨"unsupported-annotated-source-untyped", classDecl ++ emptyClass ++
+    s!"_:x <{owl "annotatedSource"}> <urn:C> .\n", false, none⟩,
+  ⟨"unsupported-annotated-restriction-node", cyclic ++ edge "urn:note" (rdf "type") (owl "AnnotationProperty") ++
+    s!"_:r <urn:note> \"note\" .\n", false, none⟩,
+  ⟨"anonymous-individual-annotation", annotationDecl ++ s!"_:a <urn:p> \"note\" .\n", true, some true⟩,
+  ⟨"unsupported-undeclared-blank-annotation", s!"_:a <urn:p> \"note\" .\n", false, none⟩,
+  ⟨"version-iri", edge "urn:ontology" (rdf "type") (owl "Ontology") ++
+    edge "urn:ontology" (owl "versionIRI") "urn:ontology/1", true, some true⟩,
+  ⟨"unsupported-version-iri-without-header", edge "urn:ontology" (owl "versionIRI") "urn:ontology/1",
+    false, none⟩,
+  ⟨"sub-annotation-property", annotationDecl ++ edge "urn:q" (rdf "type") (owl "AnnotationProperty") ++
+    edge "urn:p" (rdfs "subPropertyOf") "urn:q", true, some true⟩,
+  ⟨"unsupported-sub-object-property", edge "urn:p" (rdf "type") (owl "ObjectProperty") ++
+    edge "urn:q" (rdf "type") (owl "ObjectProperty") ++ edge "urn:p" (rdfs "subPropertyOf") "urn:q",
+    false, none⟩
 ]
 
 def observed (test : Case) : Except ParseError (Bool × Option Bool) :=
@@ -139,7 +183,7 @@ def reportCase (test : Case) : Lean.Json :=
           ("supported", Lean.toJson supported), ("consistent", Lean.toJson consistent)])]
 
 #eval IO.println ("ATOMIC_DIRECT_ACCEPTANCE=" ++ (Lean.toJson (cases.map reportCase)).compress)
-#guard cases.length == 54
+#guard cases.length == 70
 #guard cases.all passed
 #guard !(observed ⟨"named-graph-scope-control",
   "<urn:a> <urn:p> <urn:b> <urn:graph> .\n", false, none⟩).isOk
@@ -148,7 +192,7 @@ def reportCase (test : Case) : Lean.Json :=
 #print axioms AtomicDirect.accepted_covers_triples
 #print axioms AtomicDirect.readOntology_hasModel
 #print axioms AtomicDirect.decide_sound
-#print axioms AtomicDirect.isAnnotation_sound
+#print axioms AtomicDirect.knownAnnotation
 #print axioms AtomicDirect.addAxiom_preserves_model
 #print axioms AtomicDirect.erase_sound
 #print axioms AtomicDirect.definitive_admitted
