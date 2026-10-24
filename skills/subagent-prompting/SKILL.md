@@ -182,6 +182,35 @@ treat editing build-ocaml.sh / build-ocaml-serializer.sh exactly like
 running fstar.exe - only while `.build-running` is ABSENT. Writing
 the new `.fst` itself is always safe.
 
+### Parallel Lean agents on one laptop share one build lock
+
+`lake` has no option to limit its jobs: each `lake build` starts about one
+`lean` process per core. On 2026-10-24 four worktree agents each ran
+`lake build` on the owner's 8-core, 16 GB laptop: 19 `lean` processes,
+load average 88, about 90 MB of RAM free, and the owner asked whether the
+machine was broken. Every brief that can run `lake build` on a shared
+machine must include this lock and must name build targets:
+
+```bash
+L=<scratchpad>/lake.lock; until mkdir "$L" 2>/dev/null; do sleep 20; done
+nice -n 20 timeout 3600 lake build <targets> > <log> 2>&1; RC=$?; rmdir "$L"
+```
+
+A full `lake build` with no targets runs in CI on the PR, not in the agent.
+Clone the Lean cache into a new worktree with `cp -c -R` (APFS clone, no
+copy) and check `df -h /` first: each worktree's `.lake` grows to about
+2 GB when it builds.
+
+### Agents do not dispatch factoidal-builds runs
+
+The `build-factoidal` concurrency group of danbri/factoidal-builds keeps
+ONE pending run; a new dispatch (or the hourly schedule, or a push to the
+workflow) cancels the pending one. On 2026-10-24 an agent's dispatch
+cancelled the coordinator's pending build of PR 57 without notice. Briefs
+say: report the head SHA; the coordinator dispatches builds one at a time.
+Give `core_ref` as a SHA read from `git rev-parse`, never typed from
+memory (the same night a dispatch went out with an invented SHA tail).
+
 ### Comment-trap warning in every .fst / .ml brief
 
 Any brief that asks the agent to WRITE F\* or OCaml must include this
