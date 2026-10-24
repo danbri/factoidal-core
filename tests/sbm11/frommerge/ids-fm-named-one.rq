@@ -1,0 +1,5 @@
+PREFIX ex: <http://ex.org/>
+# One FROM graph is the graph of the store, so its blank nodes are those of
+# the FROM NAMED graph g2 of the same store (section 13.1 leaves the relation
+# of default and named graphs open): one row.
+SELECT ?x FROM ex:g1 FROM NAMED ex:g2 WHERE { ?x ex:p ex:o GRAPH ex:g2 { ?x ex:q ex:o } }

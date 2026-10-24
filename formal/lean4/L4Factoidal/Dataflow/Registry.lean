@@ -34,6 +34,7 @@ import L4Factoidal.Dataflow.PhaseD
 import L4Factoidal.Dataflow.PhaseE
 import L4Factoidal.Unified.OwlRlAdequacy
 import L4Factoidal.Storage.BlockDenotation
+import L4Factoidal.SPARQL.FromMergeStage
 import L4Factoidal.Storage.StoreDictTheorems
 import L4Factoidal.HDT.DictionaryTheorems
 import L4Factoidal.Cottas.DictTheorems
@@ -238,6 +239,13 @@ def registry : List Entry := [
   { area := "SPARQL query evaluation (reference evaluator)", dir := "SPARQL"
     wireIn := "Query × Dataset", wireOut := "QueryResult", status := .tested
     tests := ["W3C SPARQL 1.1 manifest-all (l4w3c)", "W3C SPARQL 1.2 (l4w3c)"] },
+  { area := "SPARQL FROM default graph (RDF merge of the FROM graphs)", dir := "SPARQL"
+    stage := ``L4Factoidal.SPARQL.FromMerge.fromMergeStage, wireIn := "List Graph", wireOut := "Graph"
+    contract := ``L4Factoidal.SPARQL.FromMerge.FromMergeContract, status := .proved
+    theorems := [``L4Factoidal.SPARQL.FromMerge.fromMerge_isMergeOf,
+      ``L4Factoidal.SPARQL.FromMerge.applyDataset_default_isMergeOf,
+      ``L4Factoidal.SPARQL.FromMerge.isMergeOf_pair]
+    note := "SPARQL 1.1 section 13.2.1; two or more graphs relabelled by docLabel; one graph kept as it is (issue 979)" },
   { area := "SPARQL Update request on the dataset denotation", dir := "SPARQL"
     stage := ``updateStage, wireIn := "Dataset × Update", wireOut := "Dataset"
     contract := ``UpdateContract, status := .proved

@@ -56,8 +56,13 @@ read as `GRAPH <iri>`; for several, the pattern's scans of each graph are
 concatenated and duplicate triples removed (`scanPatM`; set merge, section
 13.2.2, as `Graph.union` merges); none gives an empty graph. GRAPH reads only
 the FROM NAMED graphs (`Pat.gnames`). A FROM NAMED IRI twice is refused.
-Blank nodes are not renamed apart: the store, like the reference evaluator,
-has one blank node per label across its graphs. Theorems:
+Blank nodes: the store has one blank node per label across its graphs, and
+the reference evaluator relabels two or more FROM graphs apart (section
+13.2.1, RDF merge; `SPARQL.fromMerge`,
+https://github.com/danbri/factoidal/issues/979). So a merged scan whose rows
+hold a blank node (or a triple term) is refused and the query goes to the
+reference evaluator (`tableHoldsBnode`). One FROM graph is read as it is, as
+the reference evaluator reads it. Theorems:
 `IdDatasetTheorems`.
 
 BIND (https://github.com/danbri/factoidal/issues/953, SPARQL 1.1 section
@@ -2514,6 +2519,15 @@ def scanForJoinM {m : Type → Type} [Monad m] (st : Store m) (spec : ScanSpec) 
 
 /-! ## The BGP -/
 
+/-- Does a cell of the table hold a blank node, or a triple term (which may
+    hold one)? The tag of a store id (`TermId`) says it. -/
+def tableHoldsBnode (t : Table) : Bool := Id.run do
+  for c in [0:t.cols.size] do
+    for i in [0:t.rows] do
+      let tag := (t.at c i).toNat / two60
+      if tag == tagBnode || tag == tagTriple then return true
+  return false
+
 /-- The table of one pattern of a BGP: the scan `spec` (`mkSpec t perm
     keep`), with the left values as candidates when `left` is given
     (`scanForJoinM`). Under FROM / FROM NAMED (issue 953, SPARQL 1.1 section
@@ -2556,6 +2570,15 @@ def scanPatM {m : Type → Type} [Monad m] (st : Store m) (t : Pat) (spec : Scan
           | some a => a.append tb
           | none => { tb with sortVar := none })
       let all := acc.getD (Table.empty #[])
+      -- SPARQL 1.1 section 13.2.1: the default graph is the RDF merge of the
+      -- FROM graphs, and the reference evaluator relabels two or more FROM
+      -- graphs apart (`SPARQL.fromMerge`,
+      -- https://github.com/danbri/factoidal/issues/979). The rows here are the
+      -- union over the store's ids, in which a blank node that two graphs share
+      -- is one node. A merged row with no blank node is the same row in the
+      -- merge; a row with one goes to the reference evaluator.
+      if tableHoldsBnode all then
+        throw "refused: a blank node in the RDF merge of two or more FROM graphs (the reference evaluator relabels the graphs apart, SPARQL 1.1 section 13.2.1)"
       let d := IdJoin.distinctRows all
       return (IdJoin.keepVars d keep, total, s!"; FROM: the RDF merge of {t.merge.size} graphs, {all.rows} rows, {d.rows} distinct triples")
 

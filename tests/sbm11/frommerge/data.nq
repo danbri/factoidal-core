@@ -1,0 +1,6 @@
+_:b0 <http://ex.org/p> <http://ex.org/o> <http://ex.org/g1> .
+_:b0 <http://ex.org/q> <http://ex.org/o> <http://ex.org/g2> .
+_:b1 <http://ex.org/p> <http://ex.org/o> <http://ex.org/g3> .
+_:b1 <http://ex.org/q> <http://ex.org/o> <http://ex.org/g3> .
+<http://ex.org/s> <http://ex.org/r> "one" <http://ex.org/g1> .
+<http://ex.org/s> <http://ex.org/r> "four" <http://ex.org/g4> .
