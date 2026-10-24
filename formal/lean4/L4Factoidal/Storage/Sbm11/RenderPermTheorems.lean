@@ -24,6 +24,11 @@ does not depend on what was written before it. The statement is over
 range jobs, and none of them states the conclusion. The `IO` instance (pool
 jobs on worker views) is checked by `tests/sbm11/threads.sh` (gate sections
 with `SBM11_SORTED_RENDER_ROWS=1`) and part (z) of `tests/sbm11/run.sh`.
+
+`unpackWords_packWords`: the candidates a job of the divided scan with
+candidates unpacks from the calling thread's buffer of words are the calling
+thread's candidates (the scan of `ParallelSipTheorems.parallel_sip_acc_eq_cut`
+then runs with them).
 -/
 import L4Factoidal.Storage.Sbm11.TableTheorems
 
@@ -748,5 +753,60 @@ theorem rowRanges_cover (rows n : Nat) (hn : 0 < n) :
     refine ⟨Nat.div_le_div_right (Nat.mul_le_mul_left _ (by omega)), ?_⟩
     calc rows * (j + 1) / n ≤ rows * n / n := Nat.div_le_div_right (Nat.mul_le_mul_left _ (by omega))
       _ = rows := Nat.mul_div_cancel _ hn
+
+/-! ## The candidates of a divided scan passed to a job as words
+
+`Harness.Sbm11Query.scanSipTableParM` gives each job the candidates as one
+buffer of 8-byte words (`IdQuery.packWords`), and the job makes its own array
+from it (`IdQuery.unpackWords`); the array is the calling thread's. -/
+
+open L4Factoidal.Storage.Sbm11.TableTheorems (ColHolds)
+
+theorem packWords_holds (xs : Array UInt64) : ColHolds (packWords xs) xs.toList := by
+  unfold packWords
+  rw [← Array.foldl_toList]
+  have : ∀ (l : List UInt64) (b : ByteArray) (ys : List UInt64), ColHolds b ys →
+      ColHolds (l.foldl (fun b x => L4Factoidal.Qlvr.Side.put64 b x) b) (ys ++ l) := by
+    intro l
+    induction l with
+    | nil => intro b ys h; simpa using h
+    | cons x l ih =>
+      intro b ys h
+      simp only [List.foldl_cons]
+      have := ih _ _ (h.put64 x)
+      simpa using this
+  simpa using this xs.toList _ [] (ColHolds.nil _ rfl)
+
+theorem unpackWords_toList (b : ByteArray) (n : Nat) :
+    (unpackWords b n).toList = (List.range n).map fun k => word64 b (8 * k) := by
+  unfold unpackWords
+  simp only [Id.run, Std.Legacy.Range.forIn_eq_forIn_range', Std.Legacy.Range.size, Nat.sub_zero,
+    Nat.add_sub_cancel, Nat.div_one, bind_pure]
+  have : ∀ (s m : Nat) (acc : Array UInt64),
+      (forIn (m := Id) (List.range' s m) acc fun k r => pure (ForInStep.yield (r.push (word64 b (8 * k))))).toList =
+        acc.toList ++ (List.range' s m).map fun k => word64 b (8 * k) := by
+    intro s m
+    induction m generalizing s with
+    | zero => intro acc; simp; rfl
+    | succ m ih =>
+      intro acc
+      rw [List.range'_succ, List.forIn_cons]
+      show (forIn (m := Id) (List.range' (s + 1) m) (acc.push (word64 b (8 * s))) _).toList = _
+      rw [ih]
+      simp
+  rw [this, List.range_eq_range']
+  simp [Array.mkEmpty]
+
+/-- The words a job unpacks are the words the calling thread packed. -/
+theorem unpackWords_packWords (xs : Array UInt64) : unpackWords (packWords xs) xs.size = xs := by
+  apply Array.ext'
+  rw [unpackWords_toList]
+  have h := packWords_holds xs
+  apply List.ext_getElem
+  · simp
+  · intro k h1 h2
+    simp only [List.getElem_map, List.getElem_range]
+    exact h.2 k (by simpa using h2)
+
 
 end L4Factoidal.Storage.Sbm11.RenderPermTheorems

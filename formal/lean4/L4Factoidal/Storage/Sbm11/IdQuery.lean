@@ -1646,6 +1646,13 @@ structure Par (m : Type → Type) where
   /-- the fewest rows per range of the rendering beside the sort
       (`sortedRenderJobs`); 0: never -/
   sortedRows : Nat := 64
+  /-- Stage 1o: told, before the first scan of a BGP, the scan the join loop
+      will most likely make next (`nextScanHint?`), so that the native driver
+      can start it on idle pool workers while the calling thread makes the
+      first scan; the driver keeps the result and gives it to the store's
+      `scanTable` for that scan. A hint changes no table: in `Id` it is
+      `pure ()` (`BgpTableTheorems.hintScanM_id`). -/
+  scanHint : Option (ScanSpec → m Unit) := none
 
 def ScanSpec.colPos (perm c : Nat) : Nat := if c < 3 then permOrder[perm]![c]! else 3
 
@@ -2712,6 +2719,37 @@ def bgpStepM {m : Type → Type} [Monad m] (st : Store m) (pats : Array Pat) (ke
                   lines := s.lines.push s!"pattern {next}: {permNames[perm]!} key {spec.key.size} estimate {ests[next]!}; blocks {sc.blocksRead} read of {sc.blocksSelected} selected of {sc.blocksTotal}, frames {sc.framesRead}, {sc.bytesRead} bytes; rows {rt.rows}{sipNote}; {how}: {joined.rows} rows",
                   total := s.total.add sc, tab := joined }
 
+/-- The scan the join loop of `evalBgpM` makes after the first scan of the
+    plain pattern `first` (`spec0`), as `bgpStepM` chooses it from the
+    estimates (`pickNext`, `mergeVarOf`, `stepPerm`), when that pattern is plain
+    and the scan takes no candidates with the first scan's estimate as its
+    left rows (`sipRule`); else none. The join loop decides with the first
+    scan's rows, so the hint can name a scan that is not made: it is only a
+    hint (`Par.scanHint`). -/
+def nextScanHint? (sipFactor : Option Nat) (pats : Array Pat) (keep : String → Bool) (ests : Array Nat)
+    (first : Nat) (spec0 : ScanSpec) : Option ScanSpec :=
+  let rem := (List.range pats.size).toArray.filter (· != first)
+  if rem.isEmpty || !pats[first]!.plain then none
+  else
+    let tab : Table := { Table.empty spec0.outVars with sortVar := sortVarOf spec0 }
+    let next := pickNext ests pats rem tab
+    let t := pats[next]!
+    if !t.plain then none
+    else
+      let spec := mkSpec t (stepPerm t pats (mergeVarOf tab t)) keep
+      match sortVarOf spec with
+      | some v => if tab.vars.contains v && sipRule sipFactor ests[first]! ests[next]! then none else some spec
+      | none => some spec
+
+/-- Give the hint `s` to `par` (`Par.scanHint`). -/
+def hintScanM {m : Type → Type} [Monad m] (par : Option (Par m)) (s : Option ScanSpec) : ExceptT String m Unit :=
+  match par, s with
+  | some p, some sp =>
+    match p.scanHint with
+    | some h => ExceptT.lift (h sp)
+    | none => pure ()
+  | _, _ => pure ()
+
 /-- Evaluate a BGP over ids (the join rules of `Qlvr.evalBgpM`, with the four
     SBM11 permutations). `need v`: the query reads `v` after the BGP. `pref`:
     a variable to sort the first scan on when that pattern has it (the join
@@ -2737,6 +2775,9 @@ def evalBgpM {m : Type → Type} [Monad m] (st : Store m) (pats : Array Pat) (ne
     | some q => some q
     | none => bestSortPos t0 pats
   let spec0 := mkSpec t0 (permFor t0 sortPos0) keep
+  -- stage 1o: the next scan may start now on idle workers (a hint; no
+  -- hint for an OPTIONAL group's scans, whose first scan takes candidates)
+  hintScanM par (if left0.isSome then none else nextScanHint? st.sipFactor pats keep ests first spec0)
   -- an OPTIONAL group's first scan takes the left table's join values as
   -- candidates (issue 809)
   let (tab0, st0, sip0) ← scanPatM st t0 spec0 keep left0 ests[first]!
@@ -4980,6 +5021,24 @@ def renderPartM {m : Type → Type} [Monad m] (st : Store m) (reference : Bool) 
     (vars : Array String) (r : Nat × Nat) : ExceptT String m (Array ByteArray) :=
   let part := t.slice r.1 r.2
   renderRowsListM st reference part vars 0 part.rows
+
+/-- The words of `xs`, 8 bytes each, in one buffer (stage 1o): the
+    candidates of a divided scan with candidates go to each job this way.
+    An `Array UInt64` holds one object per word; a job that copied the
+    calling thread's array read 312 objects scattered in the calling thread's
+    cache (olympics q07, 40 to 60 microseconds per job), and the buffer is
+    39 cache lines. `RenderPermTheorems.unpackWords_packWords`: the job's
+    words are `xs`. -/
+def packWords (xs : Array UInt64) : ByteArray :=
+  xs.foldl (fun b x => L4Factoidal.Qlvr.Side.put64 b x) (ByteArray.emptyWithCapacity (8 * xs.size))
+
+/-- The first `n` words of `b` (8 bytes each), as a new array made by the
+    calling thread. -/
+def unpackWords (b : ByteArray) (n : Nat) : Array UInt64 := Id.run do
+  let mut out : Array UInt64 := Array.mkEmpty n
+  for k in [0:n] do
+    out := out.push (L4Factoidal.Codec.Zstd.word64 b (8 * k))
+  return out
 
 /-- A new string object equal to `s` (`freshStr_eq`), made by the calling
     thread. `s ++ ""` is not one: the compiler emits `s` itself for it (and for

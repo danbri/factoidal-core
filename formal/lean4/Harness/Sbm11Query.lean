@@ -883,6 +883,62 @@ def rangeMetas (metas : Array BlockMeta) (X : List Nat) : Array BlockMeta × Lis
     q07's first two scans (8,192 and 16,384 estimated rows) are divided. -/
 def poolScanRows (minRows : Nat) : Nat := minRows / 2
 
+/-- The job of one block range of a divided scan (`scanTableParM`,
+    `startScanTablePar`): its own copies of the spec, the overlay context, the
+    PRM1 entries of the range and the empty table, then the loop of
+    `IdQuery.scanListM`. A function of its own, called by the job: when the
+    job was a `do` block written in the caller's loop, the compiler moved its
+    pure steps (`ScanSpec.fresh`, `OvCtx.fresh`, `rangeMetas`, and in
+    `sipRangeJob` the copy of the candidates) out of the job into the calling
+    thread (stage 1o, read from the generated C). The calling thread then
+    made every task's copies before it scanned its own range (olympics q07 at
+    4 threads: each task started 9 to 18 microseconds after the one before),
+    and the copies, reached by the job, were shared objects whose reference
+    counts are atomic, which is what the copies are there to avoid. -/
+@[noinline] def scanRangeJob (v : Session) (spec : IdQuery.ScanSpec) (ox : IdQuery.OvCtx)
+    (metas : Array BlockMeta) (X : Nat × Nat) : IO (L4Factoidal.Qlvr.Table × IdQuery.ScanStats) := do
+  -- stage 1b: the task's own copies of the spec, the overlay context and
+  -- the empty table (`IdQuery.ScanSpec.fresh`; `ScanSpec.fresh_eq` says
+  -- the copy is equal to `spec`, the spec of `ParallelScanTheorems`). The
+  -- parent's spec is reachable from every task, and reading it in every
+  -- block cost atomic reference counts on shared cache lines; the
+  -- parent's empty table had the capacity of the whole scan, and each
+  -- task's first append copied it at that capacity.
+  let spec := spec.fresh
+  let ox := ox.fresh spec.key
+  let sortVar := IdQuery.sortVarOf spec
+  let (metasX, posX) := rangeMetas metas (L4Factoidal.Storage.Sbm11.ParallelScan.boundsList X)
+  let capX := 8 * metasX.foldl (fun a b => a + b.rows) 0
+  let init : L4Factoidal.Qlvr.Table :=
+    { vars := spec.outVars, cols := spec.outVars.map fun _ => ByteArray.emptyWithCapacity capX,
+      rows := 0, sortVar }
+  let f := fun (acc : L4Factoidal.Qlvr.Table) (ch : IdQuery.Chunk) =>
+    (pure (acc.append ch.table, true) : ExceptT String IO (L4Factoidal.Qlvr.Table × Bool))
+  match ← (IdQuery.scanListM v.store spec true init f metasX sortVar ox posX).run with
+  | .ok r => pure r
+  | .error e => throw (IO.userError e)
+
+/-- The job of one block range of the scan with candidates
+    (`scanSipTableParM`): `scanRangeJob` with the task's own copy of the
+    candidates and the loop of `IdQuery.scanListSipM`. -/
+@[noinline] def sipRangeJob (v : Session) (spec : IdQuery.ScanSpec) (ox : IdQuery.OvCtx) (candBytes : ByteArray)
+    (nCands : Nat) (metas : Array BlockMeta) (X : Nat × Nat) : IO (L4Factoidal.Qlvr.Table × IdQuery.ScanStats) := do
+  let spec := spec.fresh
+  let ox := ox.fresh spec.key
+  let cands := IdQuery.unpackWords candBytes nCands
+  let (metasX, posX) := rangeMetas metas (L4Factoidal.Storage.Sbm11.ParallelScan.boundsList X)
+  let sortVar := match spec.outCols[0]? with
+    | some c => if c == spec.key.size then spec.outVars[0]? else none
+    | none => none
+  let init : L4Factoidal.Qlvr.Table :=
+    { vars := spec.outVars, cols := spec.outVars.map fun _ => ByteArray.empty,
+      rows := 0, sortVar := IdQuery.sortVarOf spec }
+  let f := fun (acc : L4Factoidal.Qlvr.Table) (ch : IdQuery.Chunk) =>
+    (pure (acc.append ch.table, true) : ExceptT String IO (L4Factoidal.Qlvr.Table × Bool))
+  match ← (IdQuery.scanListSipM v.store spec cands init f metasX sortVar ox posX).run with
+  | .ok r => pure r
+  | .error e => throw (IO.userError e)
+
 /-- The table of `IdQuery.scanTableM`, computed with the selected blocks cut
     into at most `threads` consecutive chunks. The first chunk is scanned by
     the calling thread, each other one by its own task (`IO.asTask`), with
@@ -926,25 +982,7 @@ def scanTableParM (ss : Session) (spec : IdQuery.ScanSpec) (threads : Nat) (minR
   let mut tasks : Array (Harness.WorkerPool.Handle (Except IO.Error (L4Factoidal.Qlvr.Table × IdQuery.ScanStats)) × Session) := #[]
   for X in chunks.drop 1 do
     let v ← ss.view
-    let t ← ss.spawnAt tasks.size (do
-      -- stage 1b: the task's own copies of the spec, the overlay context and
-      -- the empty table (`IdQuery.ScanSpec.fresh`; `ScanSpec.fresh_eq` says
-      -- the copy is equal to `spec`, the spec of `ParallelScanTheorems`). The
-      -- parent's spec is reachable from every task, and reading it in every
-      -- block cost atomic reference counts on shared cache lines; the
-      -- parent's empty table had the capacity of the whole scan, and each
-      -- task's first append copied it at that capacity.
-      let spec := spec.fresh
-      let ox := ox.fresh spec.key
-      let sortVar := IdQuery.sortVarOf spec
-      let (metasX, posX) := rangeMetas metas (L4Factoidal.Storage.Sbm11.ParallelScan.boundsList X)
-      let capX := 8 * metasX.foldl (fun a b => a + b.rows) 0
-      let init : L4Factoidal.Qlvr.Table :=
-        { vars := spec.outVars, cols := spec.outVars.map fun _ => ByteArray.emptyWithCapacity capX,
-          rows := 0, sortVar }
-      match ← (IdQuery.scanListM v.store spec true init f metasX sortVar ox posX).run with
-      | .ok r => pure r
-      | .error e => throw (IO.userError e))
+    let t ← ss.spawnAt tasks.size (scanRangeJob v spec ox metas X)
     tasks := tasks.push (t, v)
   let mut out := init
   let mut stats : IdQuery.ScanStats := { blocksTotal := ← st.blockCount spec.perm }
@@ -965,6 +1003,99 @@ def scanTableParM (ss : Session) (spec : IdQuery.ScanSpec) (threads : Nat) (minR
     ss.absorb v
   if let some e := failure then throw e
   return (out, stats)
+
+/-! ## The next scan started early (stage 1o) -/
+
+/-- Two scan specs that ask for the same table. -/
+def specSame (a b : IdQuery.ScanSpec) : Bool :=
+  a.perm == b.perm && a.key == b.key && a.checks == b.checks && a.named == b.named &&
+    a.outVars == b.outVars && a.outCols == b.outCols && a.eqs == b.eqs
+
+/-- The scan started early by `IdQuery.Par.scanHint` (stage 1o): its spec and
+    the action that waits for its table. One query at a time per process; the
+    store's `scanTable` takes it (`Session.storeWith`). -/
+initialize prescanSlot : IO.Ref (Option (IdQuery.ScanSpec ×
+    ExceptT String IO (L4Factoidal.Qlvr.Table × IdQuery.ScanStats))) ← IO.mkRef none
+
+/-- Start the table of `IdQuery.scanTableM` for `spec` on the pool workers
+    `ws` (none of it on the calling thread): the selected blocks in at most
+    `ws.length` consecutive ranges (`ParallelScan.rangeBounds`), range `k` a
+    job of worker `ws[k]` with the loop of `scanTableParM`. The action
+    returned waits for the ranges in order, appends their tables and adds
+    their statistics and counters: the table and statistics of
+    `scanTableParM` (`ParallelScanTheorems.parallel_acc_eq`: any cut of the
+    selected blocks into consecutive ranges gives the single scan's table).
+
+    `none`, and nothing started, unless the generation is read with
+    `verify none`, the scan has no delta overlay, and the PRM1 entries of its
+    key are in the permutation's range cache: a started scan that the query
+    does not use (the hint named another scan) then reads no PRM1 entry and
+    fills no shared cache, so the counters of the query equal those of one
+    thread (tests/sbm11/threads.sh compares them). -/
+def startScanTablePar (ss : Session) (spec : IdQuery.ScanSpec) (ws : List Nat) (minRows : Nat) :
+    ExceptT String IO (Option (ExceptT String IO (L4Factoidal.Qlvr.Table × IdQuery.ScanStats))) := do
+  if ss.g.verify != .none || ws.isEmpty then return none
+  let lp ← liftIO (ss.perm spec.perm)
+  let some metas := MemoCache.find? (← liftIO lp.ranges.get) spec.key | return none
+  let st := ss.store
+  let ox := IdQuery.ovCtx (st.ovl spec.perm) spec.key
+  if ox.on || metas.isEmpty then return none
+  let n := max 1 (min ws.length (IdQuery.rangeCount ws.length (poolScanRows minRows) (IdQuery.selRows metas)))
+  let c := (metas.size + n - 1) / n
+  let chunks := L4Factoidal.Storage.Sbm11.ParallelScan.rangeBounds c metas.size
+  let wsA := ws.toArray
+  let mut tasks : Array (Harness.WorkerPool.Handle (Except IO.Error (L4Factoidal.Qlvr.Table × IdQuery.ScanStats)) × Session) := #[]
+  for X in chunks do
+    let v ← liftIO ss.view
+    let t ← liftIO (ss.spawnAt (wsA[tasks.size]?.getD 0) (scanRangeJob v spec ox metas X))
+    tasks := tasks.push (t, v)
+  let handles := tasks
+  let total := lp.count
+  let cap := 8 * IdQuery.selRows metas
+  return some (do
+    let mut out : L4Factoidal.Qlvr.Table :=
+      { vars := spec.outVars, cols := spec.outVars.map fun _ => ByteArray.emptyWithCapacity cap,
+        rows := 0, sortVar := IdQuery.sortVarOf spec }
+    let mut stats : IdQuery.ScanStats := { blocksTotal := total }
+    let mut failure : Option String := none
+    for (t, v) in handles do
+      match ← liftIO (ss.await t) with
+      | .ok (tab, s) =>
+        out := out.append tab
+        stats := stats.add s
+      | .error e => if failure.isNone then failure := some (toString e)
+      liftIO (ss.absorb v)
+    if let some e := failure then throw e
+    return (out, stats))
+
+/-- `IdQuery.Par.scanHint` on the session's worker pool: the hinted scan
+    started on the last pool workers (the first scan's ranges take the first
+    ones, `scanTableParM`), at most `size - 1` of them, at least one. A scan
+    started for an earlier hint and not taken is dropped (its jobs end on
+    their own; their counters are not added). -/
+def scanHintPar (ss : Session) (minRows : Nat) (spec : IdQuery.ScanSpec) : IO Unit := do
+  let _ ← prescanSlot.swap none
+  let some p := ss.pool | return
+  let k := max 1 (p.size - 1)
+  let ws := (List.range k).map fun i => p.size - 1 - i
+  match ← (startScanTablePar ss spec ws minRows).run with
+  | .ok (some w) => prescanSlot.set (some (spec, w))
+  | _ => pure ()
+
+/-- The store's `scanTable` with the scan started early: the started scan's
+    table when it is for `spec`, else `scanTableParM` (a started scan for
+    another spec stays for a later scan, and is dropped at the next hint or
+    query). -/
+def scanTableOrStarted (ss : Session) (spec : IdQuery.ScanSpec) (threads minRows : Nat) :
+    ExceptT String IO (L4Factoidal.Qlvr.Table × IdQuery.ScanStats) := do
+  -- the slot is read and written by the calling thread only
+  match ← liftIO prescanSlot.get with
+  | some (sp, w) =>
+    if specSame sp spec then
+      liftIO (prescanSlot.set none)
+      w
+    else scanTableParM ss spec threads minRows
+  | none => scanTableParM ss spec threads minRows
 
 /-- The scan with candidates (`IdQuery.scanSipTableM`) in block ranges, one
     task per range after the first, which the calling thread scans (issue
@@ -1014,20 +1145,11 @@ def scanSipTableParM (ss : Session) (spec : IdQuery.ScanSpec) (cands : Array UIn
   -- tasks of the others have started. Olympics q07 at 4 threads (41 runs per
   -- process, 3 processes): the two scans with candidates took 1.08 to 1.14
   -- and 0.76 to 0.78 ms with a task per range, 0.81 to 0.85 and 0.62 ms so.
+  let candBytes := IdQuery.packWords cands
   let mut tasks : Array (Harness.WorkerPool.Handle (Except IO.Error (L4Factoidal.Qlvr.Table × IdQuery.ScanStats)) × Session) := #[]
   for X in chunks.drop 1 do
     let v ← ss.view
-    let t ← ss.spawnAt tasks.size (do
-      let spec := spec.fresh
-      let ox := ox.fresh spec.key
-      let cands := cands.map fun x => UInt64.ofNat x.toNat
-      let (metasX, posX) := rangeMetas metas (L4Factoidal.Storage.Sbm11.ParallelScan.boundsList X)
-      let init : L4Factoidal.Qlvr.Table :=
-        { vars := spec.outVars, cols := spec.outVars.map fun _ => ByteArray.empty,
-          rows := 0, sortVar := IdQuery.sortVarOf spec }
-      match ← (IdQuery.scanListSipM v.store spec cands init f metasX sortVar ox posX).run with
-      | .ok r => pure r
-      | .error e => throw (IO.userError e))
+    let t ← ss.spawnAt tasks.size (sipRangeJob v spec ox candBytes cands.size metas X)
     tasks := tasks.push (t, v)
   let mut out := init
   let mut stats : IdQuery.ScanStats := { blocksTotal := ← st.blockCount spec.perm }
@@ -1284,7 +1406,8 @@ def Session.par (ss : Session) (threads : Nat) (minRows : Nat := 8192) : IdQuery
     renderRows := ss.renderRows
     streamPerThread := ss.streamPerThread
     renderStart := ss.pool.map fun _ => renderStartPar ss
-    sortedRows := ss.sortedRows }
+    sortedRows := ss.sortedRows
+    scanHint := ss.pool.map fun _ => scanHintPar ss minRows }
 
 /-- `SBM11_MIN_RANGE_ROWS`: the fewest estimated rows per block range
     (`IdQuery.rangeCount`; default 8,192; 0: one range per thread, as the
@@ -1298,7 +1421,7 @@ def Session.storeWith (ss : Session) (threads : Nat) (sip : Option Nat := some 1
     (aggOnIds : Bool := true) : IdQuery.Store IO :=
   let base := { ss.store with sipFactor := sip, aggOnIds := aggOnIds }
   if threads ≤ 1 then base
-  else { base with scanTable := some fun spec => scanTableParM ss spec threads minRows,
+  else { base with scanTable := some fun spec => scanTableOrStarted ss spec threads minRows,
                    scanSipTable := some fun spec cands => scanSipTableParM ss spec cands threads minRows }
 
 /-! ## The delta overlay (stage 5) -/
@@ -1806,6 +1929,8 @@ def runOne (ss : Session) (q : Query) (emit : ByteArray → IO Unit) (forceRefer
     if plan.pats.size ≥ 2 then
       if let some p := ss.pool then p.wake
     let minRows ← minRangeRows
+    -- stage 1o: a scan started early for the query before and not taken
+    let _ ← prescanSlot.swap none
     let par := if threads ≤ 1 then none else some (ss.par threads minRows)
     let env ← queryEnv q
     match plan.post with
