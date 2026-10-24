@@ -1,6 +1,13 @@
 # Registry stages that are `proved`, pinned by tools/assumption-gate.py --pin.
 # tools/assumption-gate.py fails when a pinned stage is no longer proved
 # unless foundation/assumptions.txt has a 'demoted:<stage>' line with a reason.
+LawfulDataset.indexed
+LawfulDataset.ofDefault
+LawfulStore.ofCaps
+LawfulStore.ofIndexed
+LawfulStore.ofList
+LawfulStore.overlay
+LawfulStore.union
 SPARQL.FromMerge.fromMergeStage
 Storage.BackendRefinement.backendBgpStage
 Storage.BackendRefinement.fallbackWhereStage
@@ -11,6 +18,7 @@ decodeStage
 documentToRdfsBgp
 documentToSolutions
 documentToWhere
+foundationalChecker
 ibk3BuildWriteReadStage
 ibk3RoundTripStage
 ibk4BuildWriteReadStage
@@ -19,28 +27,36 @@ ibk5BuildWriteReadStage
 ibk5RoundTripStage
 jsonldDocumentReader
 jsonldReader
+lawfulBgpStage
+lawfulWhereStage
 nquads11StreamStage
 nquadsDocumentReader
+nquadsDocumentWriter
 nquadsReader
 nquadsWriter
 ntriplesDocumentReader
+ntriplesDocumentWriter
 ntriplesReader
 ntriplesWriter
 owlRlClosureStage
+owlRlReasoner
 parseStage
 plannerSelectStage
 proofCheckRdfsStage
 proofCheckStage
 rdfJsonReader
 rdfcStage
+rdfsChecker
 rdfsClosureStage
 rdfsExplainCheckStage
 rdfsExplainStage
+rdfsReasoner
 rdfsSelectStage
 rdfxmlDocumentReader
 rdfxmlReader
 relabelStage
 rhoDfClosureStage
+rhoDfReasoner
 rifClosureStage
 sbm11DecodeStage
 sbm11OverlayStage
@@ -51,6 +67,8 @@ scopeStage
 scopedParseStage
 selectStage
 shaclStage
+shaclValidator
+shippedEvaluator
 simpleEntailsSelectStage
 storeSearchStage
 streamSetStage

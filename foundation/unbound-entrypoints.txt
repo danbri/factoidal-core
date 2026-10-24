@@ -5,7 +5,7 @@
 # entry that no longer exists or is now mapped, or when the count differs
 # from max-entries. The list may only shrink: when you map an entry, remove
 # its line and lower max-entries in the same commit.
-# max-entries: 490
+# max-entries: 483
 cli:activate  # npm/factoidal/bin/factoidal.mjs
 cli:authz-keys  # npm/factoidal/bin/factoidal.mjs
 cli:authz-serve  # npm/factoidal/bin/factoidal.mjs

@@ -12,7 +12,7 @@
 # differs from the tree, or when the line count differs from max-entries.
 # Adding a line needs a reason in the same change; removing one lowers max-entries.
 # Reasons are Claude-inferred (2026-10-24), not owner decisions.
-# max-entries: 23
+# max-entries: 28
 io:Ed25519Correct  # the native Ed25519 verify agrees with the Ed25519 specification (RFC 8032); crypto primitive realised outside Lean
 io:ReadsWritten  # reading back an SBM11 file returns what the writer wrote; file IO is not modelled in Lean
 io:SelectedAgrees  # a planner-selected SBM11 read returns the same triples as an unselected read; the on-disk selection index is outside Lean
@@ -36,3 +36,8 @@ field:L4Factoidal.Dataflow.Evaluator.LawfulEvaluator.assumed_contractOn  # the i
 field:L4Factoidal.Dataflow.Reasoner.SoundReasoner.assumed_completeness  # completeness of the closure against the regime is not proved for all graphs (3 instances: rho-df holds under closed-and-fragment scope, rhoDfReasoner_complete; RDFS fails finding C-1; OWL RL needs closureFix_saturated, issue 756)
 field:L4Factoidal.Dataflow.Validator.LawfulValidator.assumed_spec_iff  # the step from the two SHACL-SPARQL passes to the quantifiers of Spec.GraphConformsWithSparql is not proved (SHACL/SparqlTheorems.lean)
 field:L4Factoidal.Dataflow.Writer.RdfWriter.assumed_roundTrip  # a writer names the round-trip claim it does not prove; one field, five writers use it (Turtle, TriG, RDF/XML, JSON-LD, canonical N-Quads)
+io:TurtleWriterRoundTrip  # Turtle writer: the text read back by the matching reader is isomorphic to the projection; tested on seeded datasets (WriterTests.lean), not proved
+io:TrigWriterRoundTrip  # TriG writer: the text read back by the matching reader is isomorphic to the projection; tested on seeded datasets (WriterTests.lean), not proved
+io:RdfXmlWriterRoundTrip  # RDF/XML writer: the text read back by the matching reader is isomorphic to the projection; tested on seeded datasets (WriterTests.lean), not proved
+io:JsonLdWriterRoundTrip  # JSON-LD writer: the text read back by the matching reader is isomorphic to the projection; tested on seeded datasets (WriterTests.lean), not proved
+io:CanonicalNQuadsWriterRoundTrip  # canonical N-Quads writer of the dataset handles: the text read back by the matching reader is isomorphic to the projection; tested on seeded datasets (WriterTests.lean), not proved
