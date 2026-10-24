@@ -820,7 +820,7 @@ def outDocument (fmt : RdfFormat) (ds : Dataset) : Except String String :=
   | .nquads => .ok (Dataset.toCanonicalNQuads ds)
   | .turtle => Ops.serializeTurtleTextOf ds
   | _ =>
-      (Sink.serializeDataset Sink.withJsonLd fmt .rdf12 ds).mapError fun e =>
+      ((L4Factoidal.Dataflow.writers Sink.withJsonLd L4Factoidal.RDF.Source.withJsonLd fmt).run .rdf12 {} ds).mapError fun e =>
         s!"l4factoidal parse: cannot write {formatName fmt}: {e}"
 
 /-- Print `ds` in syntax `fmt`: the document and a line break to standard output,
@@ -1009,7 +1009,7 @@ def queryCmd (args : List String) : IO UInt32 := do
         let answer :=
           if s.hasBool "--sparql12" then
             withOpsSetDataset .rdf12 ds hds (fun d =>
-              queryParsedDatasetWith d (some (L4Factoidal.SPARQL.StoreDataset.indexedDatasetBackend d)) sparql
+              queryParsedDatasetWith d (some (L4Factoidal.Dataflow.LawfulDataset.ofDataset d)) sparql
                 (version := .v12) (base := queryBase) (now := some now))
           else Ops.queryDatasetOfSet ds hds sparql queryBase (some now)
         match ← parseEnvelope answer with

@@ -291,7 +291,7 @@ structure OpenStore where
   /-- How many out-of-line literals this handle resolved at `storeOpen`. -/
   retainedBlobs : Nat := 0
   ds : Dataset
-  backend : Option DatasetBackend
+  backend : Option L4Factoidal.Dataflow.LawfulDataset
 
 /-- Handle ids already issued; `storeOpen` numbers them "s1", "s2", … in open
 order and never reuses one. -/
@@ -324,11 +324,12 @@ def datasetOfRetained (quads : Bool) (arts : List RetainedArtifact) : Dataset :=
   if quads then datasetOfQuads (arts.flatMap quadRowsOf)
   else { default := arts.flatMap ibk3RowsOf, named := [] }
 
-/-- The indexed backend for such a dataset, or `none` where the reference
-evaluator is required (an IBK4 dataset with a blank-node graph name). -/
-def backendOfRetained (quads : Bool) (ds : Dataset) : Option DatasetBackend :=
-  if quads then (if namesAreIris ds then some (indexedDatasetBackend ds) else none)
-  else some (indexedDatasetBackend ds)
+/-- The indexed backend for such a dataset, as a `LawfulDataset` (its law rests
+on `datasetIsSet`), or `none` where the reference evaluator is required (an
+IBK4 dataset with a blank-node graph name). -/
+def backendOfRetained (quads : Bool) (ds : Dataset) : Option L4Factoidal.Dataflow.LawfulDataset :=
+  if quads then (if namesAreIris ds then some (L4Factoidal.Dataflow.LawfulDataset.ofDataset ds) else none)
+  else some (L4Factoidal.Dataflow.LawfulDataset.ofDataset ds)
 
 /-! ## storeOpen -/
 

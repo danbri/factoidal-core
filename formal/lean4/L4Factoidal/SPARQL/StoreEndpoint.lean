@@ -58,6 +58,7 @@ import L4Factoidal.SPARQL.ResultsJson
 import L4Factoidal.SPARQL.ResultsXml
 import L4Factoidal.SPARQL.ResultsCsvTsv
 import L4Factoidal.SPARQL.StoreDataset
+import L4Factoidal.Dataflow.Store
 import L4Factoidal.Storage.QuadDataset
 import L4Factoidal.Storage.DeltaLog
 import L4Factoidal.Storage.DeltaLogBytesTheorems
@@ -71,8 +72,8 @@ open L4Factoidal.RDF
 open L4Factoidal.SPARQL
 open L4Factoidal.SPARQL.Protocol
 open L4Factoidal.SPARQL.ProtocolService (Payload datasetClauses withProtocolDataset withUsing)
-open L4Factoidal.SPARQL.StoreDataset (DatasetBackend indexedDatasetBackend
-  runSelectQueryBackendDataset runAskQueryBackendDataset)
+open L4Factoidal.SPARQL.StoreDataset (DatasetBackend indexedDatasetBackend)
+open L4Factoidal.Dataflow (LawfulDataset)
 open L4Factoidal.Storage (DeltaEntry DeltaBatch DeltaGraphName)
 
 /-! ## Configuration and the served view -/
@@ -109,13 +110,16 @@ structure Config where
 /-- The dataset a generation and its replayed delta log denote, and the
 indexed backend over it. `backend` is `none` when a graph name is a blank
 node, which the backend seam cannot represent; queries then take the
-reference evaluator, as `storeHandleQuery` does. -/
+reference evaluator, as `storeHandleQuery` does. The backend is a
+`LawfulDataset` (`Dataflow/Store.lean`, https://github.com/danbri/factoidal/issues/975
+item 2): the record `indexedDatasetBackend ds` with its law, which rests on the
+named assumption `datasetIsSet`. -/
 structure View where
   ds : Dataset
-  backend : Option DatasetBackend
+  backend : Option LawfulDataset
 
 def View.of (ds : Dataset) : View :=
-  { ds, backend := if Storage.QuadDataset.namesAreIris ds then some (indexedDatasetBackend ds) else none }
+  { ds, backend := if Storage.QuadDataset.namesAreIris ds then some (LawfulDataset.ofDataset ds) else none }
 
 /-- What one request does: the response, whether only its header section
 is sent (HEAD), and the change to persist. `commit = some (entries, new)`
@@ -318,11 +322,11 @@ def evalPayload (env : EvalEnv) (view : View) (q : Query) : Payload :=
   let backend := if q.dataset.isEmpty then view.backend else none
   match q.form with
   | .ask =>
-    match backend.bind (runAskQueryBackendDataset env q) with
+    match backend.bind (·.runAsk env q) with
     | some b => .boolean b
     | none => .boolean (evalAsk env ds q)
   | .select sel =>
-    match backend.bind (runSelectQueryBackendDataset env q) with
+    match backend.bind (·.runSelect env q) with
     | some rows =>
       let vars := match sel with
         | .vars items => selectItemVars items

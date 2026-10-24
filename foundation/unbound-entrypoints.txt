@@ -5,7 +5,7 @@
 # entry that no longer exists or is now mapped, or when the count differs
 # from max-entries. The list may only shrink: when you map an entry, remove
 # its line and lower max-entries in the same commit.
-# max-entries: 492
+# max-entries: 483
 cli:activate  # npm/factoidal/bin/factoidal.mjs
 cli:authz-keys  # npm/factoidal/bin/factoidal.mjs
 cli:authz-serve  # npm/factoidal/bin/factoidal.mjs
@@ -76,7 +76,6 @@ npm:.#rmlMap  # ./browser.js
 npm:.#sampleStoreFacts  # ./index.mjs
 npm:.#sampleStorePath  # ./index.mjs
 npm:.#schematronValidate  # ./browser.js
-npm:.#serialize  # ./browser.js
 npm:.#serveStore  # ./index.mjs
 npm:.#setAssetsUrl  # ./browser.js
 npm:.#shexValidate  # ./browser.js
@@ -166,7 +165,6 @@ npm:./browser#rhoDfFragmentCheck  # ./browser.js
 npm:./browser#rifEval  # ./browser.js
 npm:./browser#rmlMap  # ./browser.js
 npm:./browser#schematronValidate  # ./browser.js
-npm:./browser#serialize  # ./browser.js
 npm:./browser#setAssetsUrl  # ./browser.js
 npm:./browser#shexValidate  # ./browser.js
 npm:./browser#tableauDlInconsistent  # ./browser.js
@@ -200,7 +198,6 @@ npm:./fn#canonicalize  # ./fn.js
 npm:./fn#capabilities  # ./fn.js
 npm:./fn#cell  # ./fn.js
 npm:./fn#coreRdfsCheck  # ./fn.js
-npm:./fn#coreRdfsClosure  # ./fn.js
 npm:./fn#derive  # ./fn.js
 npm:./fn#difference  # ./fn.js
 npm:./fn#entail  # ./fn.js
@@ -221,7 +218,6 @@ npm:./fn#pipe  # ./fn.js
 npm:./fn#query  # ./fn.js
 npm:./fn#queryHdt  # ./fn.js
 npm:./fn#rdfsPlusClosure  # ./fn.js
-npm:./fn#rhoDfClosure  # ./fn.js
 npm:./fn#rhoDfFragmentCheck  # ./fn.js
 npm:./fn#rif  # ./fn.js
 npm:./fn#schematronValidate  # ./fn.js
@@ -235,7 +231,6 @@ npm:./fn#toanSimplify  # ./fn.js
 npm:./fn#toanSubst  # ./fn.js
 npm:./fn#toanSummation  # ./fn.js
 npm:./fn#union  # ./fn.js
-npm:./fn#validate  # ./fn.js
 npm:./fn#vcEd25519SecretToPublic  # ./fn.js
 npm:./fn#vcEd25519Sign  # ./fn.js
 npm:./fn#vcEd25519Verify  # ./fn.js
@@ -375,14 +370,10 @@ wasm:datasetFromRml  # lean4/Wasm/CoreDispatch.lean
 wasm:datasetGraphAsDefault  # lean4/Wasm/CoreDispatch.lean
 wasm:datasetGraphNames  # lean4/Wasm/CoreDispatch.lean
 wasm:datasetIsomorphic  # lean4/Wasm/CoreDispatch.lean
-wasm:datasetMatch  # lean4/Wasm/CoreDispatch.lean
-wasm:datasetMatchCount  # lean4/Wasm/CoreDispatch.lean
 wasm:datasetQuadsBin  # lean4/Wasm/CoreDispatch.lean
 wasm:datasetQuadsJson  # lean4/Wasm/CoreDispatch.lean
 wasm:datasetQueryRaw  # lean4/Wasm/CoreDispatch.lean
 wasm:datasetRifEval  # lean4/Wasm/CoreDispatch.lean
-wasm:datasetSerialize  # lean4/Wasm/CoreDispatch.lean
-wasm:datasetSerializeWith  # lean4/Wasm/CoreDispatch.lean
 wasm:datasetShexValidate  # lean4/Wasm/CoreDispatch.lean
 wasm:datasetToJsonLd  # lean4/Wasm/CoreDispatch.lean
 wasm:deltaLogDecode  # lean4/Wasm/CoreDispatch.lean

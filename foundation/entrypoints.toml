@@ -38,31 +38,31 @@ note = "canonicalizeOf on the stored dataset, then the canonicalizeToNQuads path
 
 [[entry]]
 id = "wasm:owlClosure"
-stages = ["rdfsClosureStage", "owlRlClosureStage"]
+stages = ["rdfsReasoner", "owlRlReasoner"]
 covers = "part"
-note = "Wasm/Ops/Reason.lean owlClosureParsed: mode RDFS runs RDFS.fullClosure (rdfsClosureStage), mode OWL-RL runs OWL.RL.closureFix (owlRlClosureStage). Default graph only."
+note = "Wasm/Ops/Reason.lean owlClosureParsed: mode RDFS runs RDFS.fullClosure (rdfsReasoner), mode OWL-RL runs OWL.RL.closureFix (owlRlReasoner). Default graph only."
 
 [[entry]]
 id = "wasm:rhoDfClosure"
-stages = ["rhoDfClosureStage"]
+stages = ["rhoDfReasoner"]
 covers = "part"
-note = "RDFS.closureFix of the default graph; rhoDfClosureStage runs RDFS.closure with a caller fuel. The round count is extra output."
+note = "RDFS.closureFix of the default graph; rhoDfReasoner runs RDFS.closureFix. The round count is extra output."
 
 [[entry]]
 id = "wasm:datasetClosure"
-stages = ["rdfsClosureStage", "owlRlClosureStage", "rhoDfClosureStage"]
+stages = ["rdfsReasoner", "owlRlReasoner", "rhoDfReasoner"]
 covers = "part"
 note = "closureStreamOf for regimes rdfs, owl-rl, rho-df; the rdfs-plus regime has no stage."
 
 [[entry]]
 id = "wasm:shaclValidate"
-stages = ["shaclStage"]
+stages = ["shaclValidator"]
 covers = "part"
-note = "Wasm/Ops/Validate.lean shaclValidateParsed: decodeShapesGraph and validateFull with the default config (shaclStage's run); N-Quads input parse and report serialisation are outside the stage."
+note = "Wasm/Ops/Validate.lean shaclValidateParsed: decodeShapesGraph and validateFull with the default config (shaclValidator's run); N-Quads input parse and report serialisation are outside the stage."
 
 [[entry]]
 id = "wasm:datasetShaclValidate"
-stages = ["shaclStage"]
+stages = ["shaclValidator"]
 covers = "part"
 note = "shaclValidateParsed on two stored datasets."
 
@@ -86,39 +86,51 @@ note = "applyUpdateText on the stored dataset."
 
 [[entry]]
 id = "wasm:queryDataset"
-stages = ["shippedEvaluator"]
+stages = ["nquadsDocumentReader", "LawfulDataset.ofCertified", "lawfulWhereStage", "shippedEvaluator"]
 covers = "part"
-note = "Wasm/Ops/Query.lean queryParsedDatasetWith: parseSparql, the SERVICE failure check, then ev.run of a LawfulEvaluator (default shippedEvaluator) over indexedDatasetBackend of the dataset read by the N-Quads RdfReader. Not covered: the query grammar, the SERVICE failure check, the result envelope (SRJ, N-Triples)."
+note = "Wasm/Ops/Query.lean queryDataset: readNQuadsCertified (the N-Quads RdfReader with its set proof), then queryParsedCertified: the backend evaluator runs only over the LawfulDataset of LawfulDataset.ofCertified (LawfulDataset.runSelect / runAsk), else evalSelect / evalAsk. Not covered: the SELECT layer of the backend runner, the arms outside NativeFrag, CONSTRUCT / DESCRIBE serialisation, the results envelope. The evaluation is ev.run of a LawfulEvaluator (default shippedEvaluator, Dataflow/Evaluator.lean) over the backend of the LawfulDataset."
 
 [[entry]]
 id = "wasm:datasetQuery"
-stages = ["shippedEvaluator"]
+stages = ["LawfulDataset.ofCertified", "lawfulWhereStage", "shippedEvaluator"]
 covers = "part"
-note = "Wasm/Ops/Handles.lean: queryParsedDatasetWith (ev.run of shippedEvaluator) over a stored dataset and its cached indexedDatasetBackend."
+note = "Wasm/Ops/Handles.lean datasetQuery: queryParsedDatasetWith over the handle's CertifiedDataset and its cached LawfulDataset (ofCertified). Not covered: as wasm:queryDataset. The evaluation is ev.run of a LawfulEvaluator (default shippedEvaluator, Dataflow/Evaluator.lean) over the backend of the LawfulDataset."
 
 [[entry]]
 id = "wasm:queryDataset12"
-stages = ["shippedEvaluator"]
+stages = ["nquadsDocumentReader", "LawfulDataset.ofCertified", "lawfulWhereStage", "shippedEvaluator"]
 covers = "part"
-note = "Wasm/Ops/Query.lean queryDataset12IO: queryDataset with the SPARQL 1.2 grammar; the same queryParsedDatasetWith (ev.run of shippedEvaluator)."
+note = "Wasm/Ops/Query.lean queryDataset12IO: readNQuadsCertified, then queryParsedCertified with the SPARQL 1.2 grammar. Not covered: as wasm:queryDataset; the SPARQL 1.2 grammar has no stage. The evaluation is ev.run of a LawfulEvaluator (default shippedEvaluator, Dataflow/Evaluator.lean) over the backend of the LawfulDataset."
 
 [[entry]]
 id = "wasm:datasetQuery12"
-stages = ["shippedEvaluator"]
+stages = ["LawfulDataset.ofCertified", "lawfulWhereStage", "shippedEvaluator"]
 covers = "part"
-note = "Wasm/Ops/Handles.lean: datasetQuery with the SPARQL 1.2 grammar; the same queryParsedDatasetWith (ev.run of shippedEvaluator)."
+note = "Wasm/Ops/Handles.lean datasetQuery12: datasetQuery with the SPARQL 1.2 grammar. Not covered: as wasm:queryDataset12. The evaluation is ev.run of a LawfulEvaluator (default shippedEvaluator, Dataflow/Evaluator.lean) over the backend of the LawfulDataset."
+
+[[entry]]
+id = "wasm:datasetMatch"
+stages = ["LawfulDataset.ofCertified", "LawfulStore.ofIndexed"]
+covers = "part"
+note = "Wasm/Ops/Handles.lean matchDataset: the default graph is searched through LawfulStore.search of the handle's LawfulDataset (the index arm of indexedDatasetBackend), the named graphs through the backends of the same record. Not covered: the quad-pattern JSON reader (quadPatternOf) and the new handle."
+
+[[entry]]
+id = "wasm:datasetMatchCount"
+stages = ["LawfulDataset.ofCertified", "LawfulStore.ofIndexed"]
+covers = "part"
+note = "matchDataset as wasm:datasetMatch, then the quad count. Not covered: quadPatternOf."
 
 [[entry]]
 id = "wasm:storeQuery"
-stages = ["shippedEvaluator"]
+stages = ["LawfulDataset.ofDataset", "lawfulWhereStage", "shippedEvaluator"]
 covers = "part"
-note = "Wasm/Ops/Store.lean: reads the planned IBK3/IBK4/IBK5 blobs (no stage), then queryParsedDatasetWith (ev.run of shippedEvaluator) with indexedDatasetBackend, or no backend when a graph name is not an IRI. Not covered: the store read and that its dataset is a set."
+note = "Wasm/Ops/Store.lean storeQuery: the blocks the plan selects are decoded to a dataset, and queryParsedDatasetWith runs the backend evaluator over LawfulDataset.ofDataset (named assumption datasetIsSet) when every graph name is an IRI, else the reference evaluator. Not covered: the manifest plan, the block reads and decode (IBK3, IBK4, IBK5). The evaluation is ev.run of a LawfulEvaluator (default shippedEvaluator, Dataflow/Evaluator.lean) over the backend of the LawfulDataset."
 
 [[entry]]
 id = "wasm:storeHandleQuery"
-stages = ["shippedEvaluator"]
+stages = ["LawfulDataset.ofDataset", "lawfulWhereStage", "shippedEvaluator"]
 covers = "part"
-note = "Wasm/Ops/StoreHandles.lean: the retained store dataset and its backend (store.backend, backendOfRetained; BackendReads not proved for them, the LawfulStore join), then queryParsedDatasetWith (ev.run of shippedEvaluator). Not covered: the store read, the literal and geo index plans."
+note = "Wasm/Ops/StoreHandles.lean storeHandleQuery: queryParsedDatasetWith over the handle's dataset and backendOfRetained (LawfulDataset.ofDataset). Not covered: the literal and geo index plans, the retained-artifact selection. The evaluation is ev.run of a LawfulEvaluator (default shippedEvaluator, Dataflow/Evaluator.lean) over the backend of the LawfulDataset."
 
 [[entry]]
 id = "wasm:vcEddsaCreateFromCanonical"
@@ -152,31 +164,31 @@ note = "lib/pure.mjs calls the wasm op canonicalizeToNQuads."
 
 [[entry]]
 id = "npm:.#shaclValidate"
-stages = ["shaclStage"]
+stages = ["shaclValidator"]
 covers = "part"
 note = "lib/api.mjs calls the wasm op datasetShaclValidate."
 
 [[entry]]
 id = "npm:.#closure"
-stages = ["rdfsClosureStage", "owlRlClosureStage", "rhoDfClosureStage"]
+stages = ["rdfsReasoner", "owlRlReasoner", "rhoDfReasoner"]
 covers = "part"
 note = "lib/api.mjs calls the wasm op datasetClosure; regimes none, x-rdfsplus have no stage."
 
 [[entry]]
 id = "npm:.#owlClosure"
-stages = ["rdfsClosureStage", "owlRlClosureStage"]
+stages = ["rdfsReasoner", "owlRlReasoner"]
 covers = "part"
 note = "lib/api.mjs owlClosure calls closure (datasetClosure) with mode RDFS or OWL-RL."
 
 [[entry]]
 id = "npm:.#coreRdfsClosure"
-stages = ["rhoDfClosureStage"]
+stages = ["rhoDfReasoner"]
 covers = "part"
 note = "closure(data, 'rho-df'): datasetClosure regime rho-df."
 
 [[entry]]
 id = "npm:.#rhoDfClosure"
-stages = ["rhoDfClosureStage"]
+stages = ["rhoDfReasoner"]
 covers = "part"
 note = "alias of coreRdfsClosure."
 
@@ -224,31 +236,31 @@ note = "lib/pure.mjs calls the wasm op canonicalizeToNQuads."
 
 [[entry]]
 id = "npm:./browser#shaclValidate"
-stages = ["shaclStage"]
+stages = ["shaclValidator"]
 covers = "part"
 note = "lib/api.mjs calls the wasm op datasetShaclValidate."
 
 [[entry]]
 id = "npm:./browser#closure"
-stages = ["rdfsClosureStage", "owlRlClosureStage", "rhoDfClosureStage"]
+stages = ["rdfsReasoner", "owlRlReasoner", "rhoDfReasoner"]
 covers = "part"
 note = "lib/api.mjs calls the wasm op datasetClosure; regimes none, x-rdfsplus have no stage."
 
 [[entry]]
 id = "npm:./browser#owlClosure"
-stages = ["rdfsClosureStage", "owlRlClosureStage"]
+stages = ["rdfsReasoner", "owlRlReasoner"]
 covers = "part"
 note = "lib/api.mjs owlClosure calls closure (datasetClosure) with mode RDFS or OWL-RL."
 
 [[entry]]
 id = "npm:./browser#coreRdfsClosure"
-stages = ["rhoDfClosureStage"]
+stages = ["rhoDfReasoner"]
 covers = "part"
 note = "closure(data, 'rho-df'): datasetClosure regime rho-df."
 
 [[entry]]
 id = "npm:./browser#rhoDfClosure"
-stages = ["rhoDfClosureStage"]
+stages = ["rhoDfReasoner"]
 covers = "part"
 note = "alias of coreRdfsClosure."
 
@@ -383,3 +395,45 @@ id = "npm:./browser#openDataset"
 stages = ["ntriplesDocumentReader", "nquadsDocumentReader", "turtleDocumentReader", "trigDocumentReader", "rdfxmlDocumentReader", "jsonldDocumentReader"]
 covers = "part"
 note = "npm/factoidal/lib/api.mjs openDataset (browser.js): text goes to datasetOf, the wasm op datasetOpen (RdfReader table). Not covered: a Dataset argument (clone) and an array (union of the members)."
+
+[[entry]]
+id = "wasm:datasetSerialize"
+stages = ["ntriplesDocumentWriter", "nquadsDocumentWriter", "canonicalNQuadsDocumentWriter", "turtleDocumentWriter", "trigDocumentWriter", "rdfxmlDocumentWriter"]
+covers = "part"
+note = "Wasm/Ops/Handles.lean: the N-Quads, N-Triples, Turtle, TriG and RDF/XML tags write through the RdfWriter table (handleWriter, handleCanonicalNQuadsWriter, Dataflow/Writer.lean). Not covered: the rdfc tag (canonicalizeOf, rdfcStage), the RDF 1.1 refusal check (checked), the N-Triples refusal of a named graph, and the JSON envelope."
+
+[[entry]]
+id = "wasm:datasetSerializeWith"
+stages = ["ntriplesDocumentWriter", "nquadsDocumentWriter", "canonicalNQuadsDocumentWriter", "turtleDocumentWriter", "trigDocumentWriter", "rdfxmlDocumentWriter"]
+covers = "part"
+note = "Wasm/Ops/Handles.lean: as datasetSerialize; the Turtle options reach the RdfWriter run as TurtleRenderOptions. Not covered: the options JSON parse (turtleOptionsOfJson) and the envelope."
+
+[[entry]]
+id = "npm:.#serialize"
+stages = ["ntriplesDocumentWriter", "nquadsDocumentWriter", "canonicalNQuadsDocumentWriter", "turtleDocumentWriter", "trigDocumentWriter", "rdfxmlDocumentWriter"]
+covers = "part"
+note = "npm/factoidal/lib/dataset.mjs _write: every format except jsonld calls datasetSerialize or datasetSerializeWith (RdfWriter table). Not covered: format jsonld (datasetToJsonLd, jsonldFromRdf with options, not the JSON-LD RdfWriter), rdfc (canonicalizeOf), the option checks, and the JS cache of the N-Quads text."
+
+[[entry]]
+id = "npm:./browser#serialize"
+stages = ["ntriplesDocumentWriter", "nquadsDocumentWriter", "canonicalNQuadsDocumentWriter", "turtleDocumentWriter", "trigDocumentWriter", "rdfxmlDocumentWriter"]
+covers = "part"
+note = "npm/factoidal/lib/dataset.mjs _write: every format except jsonld calls datasetSerialize or datasetSerializeWith (RdfWriter table). Not covered: format jsonld (datasetToJsonLd, jsonldFromRdf with options, not the JSON-LD RdfWriter), rdfc (canonicalizeOf), the option checks, and the JS cache of the N-Quads text."
+
+[[entry]]
+id = "npm:./fn#validate"
+stages = ["shaclValidator"]
+covers = "part"
+note = "npm/factoidal/fn.js validate calls engineApi.shaclValidate (lib/api.mjs), the wasm op datasetShaclValidate (LawfulValidator shaclValidator). Not covered: the FnDataset wrappers and the report as a dataset."
+
+[[entry]]
+id = "npm:./fn#coreRdfsClosure"
+stages = ["rhoDfReasoner"]
+covers = "part"
+note = "npm/factoidal/fn.js coreRdfsClosure calls engineApi.coreRdfsClosure, closure(data, 'rho-df'), the wasm op datasetClosure (SoundReasoner rhoDfReasoner). Not covered: the FnDataset wrapper."
+
+[[entry]]
+id = "npm:./fn#rhoDfClosure"
+stages = ["rhoDfReasoner"]
+covers = "part"
+note = "alias of fn coreRdfsClosure."

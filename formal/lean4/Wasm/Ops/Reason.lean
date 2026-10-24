@@ -29,6 +29,7 @@ Targeted imports only — never the L4Factoidal umbrella (see
 -/
 import Wasm.Ops.Support
 import L4Factoidal.Dataflow.Reader
+import L4Factoidal.Dataflow.Reasoner
 import L4Factoidal.Syntax.NQuads
 import L4Factoidal.RDF.Datatypes
 import L4Factoidal.RDFS.Closure
@@ -55,13 +56,6 @@ open L4Factoidal.RDF
 open L4Factoidal.Syntax
 open L4Factoidal.JSON
 
-/-- The `rdf:_n` slice of a graph — `rdf:_1` plus those the graph
-mentions (the same computation as `Harness/Run.lean`'s `cmpSlice`). -/
-private def cmpSlice (g : Graph) : List WfIri :=
-  (L4Factoidal.RDFS.containerMembershipIn g).foldl
-    (fun acc i => if acc.contains i then acc else acc ++ [i])
-    [L4Factoidal.RDFS.rdf1]
-
 /-- N-Triples lines for a default-graph closure result, or the error
 envelope when a term cannot be serialised. -/
 private def ntriplesEnvelope (key : String) (g : Graph)
@@ -80,7 +74,7 @@ RDF triple written two times (measured 2026-10-24 on the `owlClosure` op with
 is the identity (`Graph.toSet_of_keyNodup`).
 https://github.com/danbri/factoidal/issues/973 -/
 def owlRlClosureSet (g : Graph) : Graph :=
-  Graph.toSet (L4Factoidal.OWL.RL.closureFix g)
+  L4Factoidal.Dataflow.owlRlReasoner.run g
 
 theorem owlRlClosureSet_keyNodup (g : Graph) : (owlRlClosureSet g).KeyNodup :=
   Graph.toSet_keyNodup _
@@ -96,7 +90,7 @@ def owlClosureParsed (ds : Dataset) (mode : String) : String :=
     match mode with
     | "RDFS" | "rdfs" =>
         ntriplesEnvelope "nquads"
-          (L4Factoidal.RDFS.fullClosure (withMinimalD []) (cmpSlice g) g)
+          ((L4Factoidal.Dataflow.rdfsReasoner (withMinimalD [])).run g)
     | "OWL-RL" | "owl-rl" | "owl_rl" =>
         ntriplesEnvelope "nquads" (owlRlClosureSet g)
     | _ =>
@@ -129,7 +123,7 @@ theorem rhoDfRounds_eq (cap : Nat) (g : Graph) :
 /-- The `rhoDfClosure` envelope over an ALREADY-PARSED dataset. -/
 def rhoDfClosureParsed (ds : Dataset) : String :=
     let g := ds.default
-    let closed := L4Factoidal.RDFS.closureFix g
+    let closed := L4Factoidal.Dataflow.rhoDfReasoner.run g
     let rounds :=
       roundsToFixpoint L4Factoidal.RDFS.stepFast
         (L4Factoidal.RDFS.closureFuelBound g) g
@@ -225,9 +219,9 @@ def closureEnvelopeOf (ds : Dataset) (regime : String) : String :=
 graph of `d`: the graph the envelope's `ntriplesEnvelope` call receives. -/
 def closureGraphOfRegime (regime : String) (d : Dataset) : Graph :=
   match regime with
-  | "rdfs" => L4Factoidal.RDFS.fullClosure (withMinimalD []) (cmpSlice d.default) d.default
+  | "rdfs" => (L4Factoidal.Dataflow.rdfsReasoner (withMinimalD [])).run d.default
   | "owl-rl" => owlRlClosureSet d.default
-  | "rho-df" => L4Factoidal.RDFS.closureFix d.default
+  | "rho-df" => L4Factoidal.Dataflow.rhoDfReasoner.run d.default
   | _ => L4Factoidal.RDFS.rdfsPlusClosureFix d.default
 
 /-- The member of the envelope that holds the text, and the members after it. -/
@@ -301,9 +295,11 @@ theorem closureGraphOfRegime_keyNodup (regime : String) {d : Dataset}
     (h : d.default.KeyNodup) : (closureGraphOfRegime regime d).KeyNodup := by
   unfold closureGraphOfRegime
   split
-  · exact L4Factoidal.RDFS.fullClosure_keyNodup _ _ h
+  · simp only [L4Factoidal.Dataflow.rdfsReasoner]
+    exact L4Factoidal.RDFS.fullClosure_keyNodup _ _ h
   · exact owlRlClosureSet_keyNodup _
-  · exact L4Factoidal.RDFS.closureFix_keyNodup h
+  · simp only [L4Factoidal.Dataflow.rhoDfReasoner]
+    exact L4Factoidal.RDFS.closureFix_keyNodup h
   · exact L4Factoidal.RDFS.rdfsPlusClosureFix_keyNodup h
 
 /-- The dataset the ops close over is a set. -/

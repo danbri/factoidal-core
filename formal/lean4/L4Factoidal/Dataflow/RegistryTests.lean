@@ -51,12 +51,15 @@ def negativeRegistry : List Entry := [
   -- proved, but the stage is not a stage of either kind
   { area := "negative 9: proved, stage is a theorem", dir := "Dataflow"
     stage := ``documentToWhere_sound, wireIn := "Document", wireOut := "WhereOut"
-    contract := ``documentToWhere_sound, status := .proved, theorems := [``documentToWhere_sound] }
+    contract := ``documentToWhere_sound, status := .proved, theorems := [``documentToWhere_sound] },
+  -- assumed, an interface value, with no named assumption
+  { area := "negative 10: assumed, interface value, no assumption", dir := "Dataflow"
+    stage := ``LawfulStore.hdt, wireIn := "PatternBound", wireOut := "List Triple", status := .assumed }
 ]
 
 /-- The kind of the `stage` of each negative entry, as the report computes it. -/
 def negativeKinds : List StageKind :=
-  [.stage, .ioStage, .stage, .ioStage, .stage, .none, .none, .none, .other]
+  [.stage, .ioStage, .stage, .ioStage, .stage, .none, .none, .none, .other, .iface]
 
 #guard negativeRegistry.length == negativeKinds.length
 -- every negative entry is rejected by the status rule
@@ -70,7 +73,11 @@ def positiveEntries : List (Entry × StageKind) := [
      status := .assumed, ioAssumptions := [``ReadsWritten] }, .ioStage),
   ({ area := "ok tested", dir := "Syntax", wireIn := "", wireOut := "", status := .tested
      tests := ["W3C"] }, .none),
-  ({ area := "ok missing", dir := "OWL", wireIn := "", wireOut := "", status := .missing }, .none)
+  ({ area := "ok missing", dir := "OWL", wireIn := "", wireOut := "", status := .missing }, .none),
+  ({ area := "ok proved interface", dir := "Dataflow", stage := ``LawfulStore.ofList, wireIn := "", wireOut := ""
+     contract := ``L4Factoidal.RDF.StoreCapsExact, status := .proved, theorems := [``LawfulStore.exact] }, .iface),
+  ({ area := "ok assumed interface", dir := "Dataflow", stage := ``LawfulStore.hdt, wireIn := "", wireOut := ""
+     status := .assumed, ioAssumptions := [``L4Factoidal.SPARQL.StoreBackend.BackendReadOpsExact] }, .iface)
 ]
 
 -- the rule accepts entries that agree with their fields
