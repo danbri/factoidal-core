@@ -24,18 +24,29 @@ Where the invariant is enforced:
   (`RDF/CertifiedDataset.lean`): a dataset with a proof of
   `Dataset.IsSet`. Open, update, add, delete, clone and every derived
   handle admit through it.
+* The graph and dataset operations (https://github.com/danbri/factoidal/issues/973).
+  `RDF/GraphSet.lean` has the one lemma, `Graph.KeyNodup.graphAddAll` (the
+  left fold of `Graph.add` keeps a set a set), and `Graph.toSet`.
+  `RDF/GraphOpsSet.lean` instantiates it: CONSTRUCT, the FROM merge,
+  DESCRIBE and CBD, the ρdf, RDFS, RDF and RDFS-Plus closures. The OWL 2 RL
+  closure adds by structural equality, so the ops that write it end with
+  `Graph.toSet` (`Wasm/Ops/Reason.lean` `owlRlClosureSet`). SPARQL Update:
+  `applyUpdateIn_isSet`. The stored-generation decode:
+  `Storage/QuadDatasetSet.lean` `datasetOfQuads_isSet`. The canonical
+  N-Quads lines: `RDF/CanonicalSet.lean` `canonicalLines_nodup`.
 
-Where it is NOT enforced: every other `Graph` or `Dataset` value. A query
-result, an inference closure, a merge, the lenient N-Quads and TriG
-readers (no set theorem) and a hand-built value can list a triple two
-times. `Graph.mem`, `Graph.add` and the model theory (`HoldsAll`) cannot
-detect it, because they are stated with membership, and membership gives
-the same answer for `[t]` and `[t, t]`. A count, `COUNT(*)` and serializer
-output do detect it. A new producer of a graph that is stored, counted or
-written must return a `CertifiedDataset` or go through `Dataset.toSet`,
+Where it is NOT enforced: a value that no public operation gives to a
+serialiser, a count or a store (a hand-built value, an intermediate list of
+rule conclusions, the lenient N-Quads and TriG readers before the source
+layer's `Dataset.toSet`). `Graph.mem`, `Graph.add` and the model theory
+(`HoldsAll`) cannot detect a repeat, because they are stated with
+membership, and membership gives the same answer for `[t]` and `[t, t]`. A
+count, `COUNT(*)` and serializer output do detect it. A new producer of a
+graph that is stored, counted or written must return a `CertifiedDataset`,
+go through `Dataset.toSet` or `Graph.toSet`, or have a `KeyNodup` theorem,
 and must have a test of the observable count
-(`Harness/DatasetSetRegression.lean`). Hazard #46 in
-`skills/workflow-gotchas-debugging` has the defect this caused.
+(`Harness/DatasetSetRegression.lean`, the `#guard`s next to the op).
+Hazard #46 in `skills/workflow-gotchas-debugging` has the defect this caused.
 -/
 import L4Factoidal.RDF.Core
 

@@ -3,7 +3,9 @@
 
 This gate checks a restricted source implementation. It does not certify
 owlEntails, complete OWL coverage, or an npm artifact. Unknown is not a
-successful semantic decision. Every report path must be new.
+successful semantic decision. `true` needs a checked model and `false` a
+checked refutation (https://github.com/danbri/factoidal/issues/960). Every
+report path must be new.
 """
 import argparse
 from datetime import datetime, timezone
@@ -20,6 +22,7 @@ ROOT = Path(__file__).resolve().parents[1]
 LEAN = ROOT / "formal/lean4"
 PUBLIC = LEAN / "Wasm/Ops/ReasonDl.lean"
 JSON_SOURCE = LEAN / "Wasm/Ops/ReasonDlCertified.lean"
+MODEL_SOURCE = LEAN / "L4Factoidal/OWL/AtomicModel.lean"
 FIXTURE = ROOT / "tests/assurance/OwlPublicBoundary.lean"
 IDS = {
     "empty", "annotation-domain", "annotation-plus-real-clash", "same-different",
@@ -28,8 +31,13 @@ IDS = {
     "named-contradiction-is-outside-default", "default-clash-with-named-data",
     "default-annotation-with-named-clash", "named-declaration-does-not-classify-default",
     "zero-search-fuel", "malformed-options", "rdf12-refusal", "named-rdf12-preflight", "parse-error",
+    "cyclic-some-values-from", "cyclic-some-values-from-fuel-one", "some-values-from-witness-clash",
 }
-FALSE_IDS = {"annotation-plus-real-clash", "same-different", "same-chain", "top-below-bottom",
+TRUE_IDS = {"empty", "annotation-domain", "generated-looking-source-name", "class-individual-punning",
+            "named-contradiction-is-outside-default", "default-annotation-with-named-clash",
+            "cyclic-some-values-from"}
+BUDGET_IDS = {"cyclic-some-values-from-fuel-one"}
+FALSE_IDS = {"some-values-from-witness-clash", "annotation-plus-real-clash", "same-different", "same-chain", "top-below-bottom",
              "default-clash-with-named-data", "zero-search-fuel", "malformed-options"}
 ERROR_IDS = {"rdf12-refusal", "named-rdf12-preflight", "parse-error"}
 UNSUPPORTED_IDS = {"unsupported-equivalence-contradiction", "unsupported-import",
@@ -37,23 +45,31 @@ UNSUPPORTED_IDS = {"unsupported-equivalence-contradiction", "unsupported-import"
 OWL_RDF12_SPEC = ("https://www.w3.org/TR/owl2-mapping-to-rdf/"
                   "#Mapping_from_RDF_Graphs_to_the_Structural_Specification")
 AUDITS = ["L4Wasm.Ops." + name for name in [
-    "owlConsistencyJsonWithCert_sound", "owlConsistencyJson_sound",
-    "owlConsistencyJsonWithCert_ne_true", "owlIsConsistentParsed_certified", "owlIsConsistent_certified",
-    "owlConsistencyJsonWithCert_success_schema", "owlConsistencyJsonWithCert_refusal_schema",
+    "owlConsistencyJson_sound", "owlIsConsistentParsed_certified", "owlIsConsistent_certified",
     "owlConsistencyJson_success_schema", "owlConsistencyJson_refusal_schema",
-    "owlConsistencyJsonWithCert_unique_fields", "owlConsistencyJson_unique_fields"]]
+    "owlConsistencyJson_unique_fields", "owlEntailsJson_false_sound"]] + [
+    "L4Factoidal.OWL.AtomicModel." + name for name in [
+        "checkModel_sound", "checkCountermodel_sound", "decideFuel_sound", "entailsFuel_sound"]]
 MUTATIONS = [
     ("invert-json-boolean", JSON_SOURCE, "| some answer => .bool answer",
      "| some answer => .bool (!answer)",
-     "theorem owlConsistencyJsonWithCert_sound", "theorem owlConsistencyJson_sound"),
+     "theorem owlConsistencyJson_sound", "theorem owlConsistencyJson_success_schema"),
     ("reason-over-named-graphs-instead", JSON_SOURCE,
-     "let verdict := AtomicDirect.decide ds.default certificate",
-     "let verdict := AtomicDirect.decide (ds.named.flatMap (fun graph => graph.graph)) certificate",
-     "theorem owlConsistencyJsonWithCert_sound", "theorem owlConsistencyJson_sound"),
+     "let verdict := AtomicModel.decideFuel ds.default fuel",
+     "let verdict := AtomicModel.decideFuel (ds.named.flatMap (fun graph => graph.graph)) fuel",
+     "theorem owlConsistencyJson_sound", "theorem owlConsistencyJson_success_schema"),
     ("public-producer-bypasses-certified-json", PUBLIC,
-     "  (owlConsistencyJson ds).toString",
-     '  okWith [("consistent", .bool false)]',
+     "  (owlConsistencyJson ds (owlRefuteFuelOfOpts optsJson)).toString",
+     '  okWith [("consistent", .bool true)]',
      "theorem owlIsConsistentParsed_certified", "def owlIsConsistent (nq"),
+    ("model-checker-skips-element-check", MODEL_SOURCE,
+     "  elementsOk M && graph.all (tripleOk M)",
+     "  graph.all (tripleOk M)",
+     "theorem checkModel_sound", "theorem checkModel_satisfiable"),
+    ("entailment-false-without-countermodel", PUBLIC,
+     "    | none => owlEntailsLegacyJson dsP dsC fuel",
+     '    | none => .object [("ok", .bool true), ("entailed", .bool false)]',
+     "theorem owlEntailsJson_false_sound", "#print axioms owlEntailsLegacyJson_ne_false"),
 ]
 
 
@@ -91,9 +107,10 @@ def read_cases(output):
             raise ValueError("invalid replay input/options")
         name = case["id"]
         expected_ok = name not in ERROR_IDS
-        expected_verdict = False if name in FALSE_IDS else None
+        expected_verdict = (False if name in FALSE_IDS else True if name in TRUE_IDS else None)
         expected_reason = ("unsupported-syntax" if name in UNSUPPORTED_IDS else
-                           "incomplete-search" if name not in FALSE_IDS | ERROR_IDS else "")
+                           "budget-out" if name in BUDGET_IDS else
+                           "incomplete-search" if name not in FALSE_IDS | TRUE_IDS | ERROR_IDS else "")
         if (type(case.get("expectedOk")) is not bool or case["expectedOk"] != expected_ok
                 or case.get("expectedConsistent") is not expected_verdict
                 or case.get("expectedReasonPrefix") != expected_reason):
@@ -106,12 +123,13 @@ def read_cases(output):
         if not isinstance(response, dict):
             raise ValueError("public response is not an object: " + name)
         actual_ok = response.get("ok")
+        positive = actual_ok is True and response.get("consistent") is True
         shape = (type(actual_ok) is bool and
-                 (set(response) == {"ok", "consistent", "reason"} if actual_ok else
-                  set(response) == {"ok", "error"}))
+                 (set(response) == ({"ok", "consistent"} if positive else {"ok", "consistent", "reason"})
+                  if actual_ok else set(response) == {"ok", "error"}))
         if actual_ok:
             shape = (shape and (response["consistent"] is None or type(response["consistent"]) is bool)
-                     and isinstance(response["reason"], str))
+                     and (positive or isinstance(response["reason"], str)))
         else:
             shape = shape and isinstance(response.get("error"), str) and bool(response["error"])
         dispatched = json.loads(case["dispatchResponse"], object_pairs_hook=unique_object)
@@ -121,10 +139,10 @@ def read_cases(output):
         # parser has its own structured parse error contract, tested on artifacts.
         if expected_ok:
             dispatch_agrees = (isinstance(dispatched, dict) and
-                               set(dispatched) == {"ok", "consistent", "reason"} and
+                               set(dispatched) == set(response) and
                                dispatched.get("ok") is actual_ok and
                                dispatched.get("consistent") is response.get("consistent") and
-                               isinstance(dispatched.get("reason"), str) and
+                               (positive or isinstance(dispatched.get("reason"), str)) and
                                dispatched == response)
         else:
             expected_dispatch = {"ok": False, "error": response.get("error"),
@@ -163,7 +181,7 @@ def main():
         sources = [PUBLIC, JSON_SOURCE, FIXTURE, Path(__file__), LEAN / "Wasm/Dispatch.lean",
                    LEAN / "Wasm/Ops/ErrorModel.lean",
                    LEAN / "L4Factoidal/OWL/DirectCert.lean",
-                   LEAN / "L4Factoidal/OWL/AtomicDirect.lean"]
+                   LEAN / "L4Factoidal/OWL/AtomicDirect.lean", MODEL_SOURCE]
         report["source_hashes"] = {str(p.relative_to(ROOT)): hashlib.sha256(p.read_bytes()).hexdigest()
                                    for p in sources}
         report["hash_scope"] = "selected sources; not full transitive build closure"

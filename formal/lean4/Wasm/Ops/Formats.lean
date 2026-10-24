@@ -47,6 +47,7 @@ import L4Factoidal.JSONSchema.Validate
 import L4Factoidal.MathML.FromXml
 import L4Factoidal.XForms.Bind
 import L4Factoidal.RIF.Saturate
+import L4Factoidal.RDF.DatasetSet
 
 namespace L4Wasm.Ops
 
@@ -63,9 +64,23 @@ private def readHandle (who nq : String) : Except String Dataset :=
   | .error e => .error s!"{who}: {fmtParseError e}"
   | .ok ds   => .ok ds
 
-/-- `{"ok":true,"nquads":"…"}` for a dataset. -/
-private def nquadsEnvelope (ds : Dataset) : String :=
-  okWith [("nquads", .string (Dataset.toCanonicalNQuads ds))]
+/-- `{"ok":true,"nquads":"…"}` for the set of quads of a dataset
+(`Dataset.toSet`). RDF 1.1 Concepts §3 and §4: each graph of a dataset is a
+set of triples. The JSON-LD reader and the RML runner can give one triple two
+times (2026-10-24: `jsonldToRdf` wrote `{"@value":"x"}` given two times as two
+lines); `Dataset.toSet` keeps the first.
+https://github.com/danbri/factoidal/issues/973 -/
+def setNQuadsEnvelope (ds : Dataset) : String :=
+  okWith [("nquads", .string (Dataset.toCanonicalNQuads ds.toSet))]
+
+/-- The text in the envelope is the canonical N-Quads of a set of quads that
+holds every quad of `ds` and nothing else. -/
+theorem setNQuadsEnvelope_isSet (ds : Dataset) :
+    ∃ d : Dataset, d.IsSet ∧ (∀ u g, d.memQuad u g ↔ ds.memQuad u g) ∧
+      setNQuadsEnvelope ds = okWith [("nquads", .string (Dataset.toCanonicalNQuads d))] :=
+  ⟨ds.toSet, ds.toSet_isSet, ds.memQuad_toSet, rfl⟩
+
+private abbrev nquadsEnvelope := setNQuadsEnvelope
 
 /-- The member `key` of a JSON options document, or `none` when the
 document is empty, unreadable, or lacks it. -/
@@ -482,7 +497,7 @@ def csvwToRdf (csv metadataJson optsJson : String) : String :=
   | .ok converted =>
     let diagnostics := Json.array (converted.issues.map csvwIssueJson)
     match converted.value? with
-    | some ds => okWith [("nquads", .string (Dataset.toCanonicalNQuads ds)),
+    | some ds => okWith [("nquads", .string (Dataset.toCanonicalNQuads ds.toSet)),
         ("diagnostics", diagnostics)]
     | none => (Json.object [("ok", .bool false),
         ("error", .string (csvwUnsupported converted.issues)),
@@ -562,5 +577,18 @@ private def mathmlOneOverZero : String :=
 #guard (xformsRecalc "<data><x>5</x><y>0</y></data>" "[{\"target\":\"y\",\"calculate\":\"7\"}]").startsWith
          "{\"ok\":true,\"instance\":\"<data><x>5</x><y>7</y></data>\""
 #guard (xformsRecalc "<data/>" "[{\"calculate\":\"7\"}]").startsWith "{\"ok\":false"
+
+
+-- A graph is a set (https://github.com/danbri/factoidal/issues/973): a JSON-LD
+-- value given two times, or under two language-tag spellings, is one triple.
+private def nqLines (env : String) : Nat := (env.splitOn "<http://e/p>").length - 1
+#guard nqLines (jsonldToRdf
+  "{\"@id\":\"http://e/s\",\"http://e/p\":[{\"@value\":\"x\"},{\"@value\":\"x\"}]}" "") == 1
+#guard nqLines (jsonldToRdf
+  "{\"@id\":\"http://e/s\",\"http://e/p\":[{\"@value\":\"x\",\"@language\":\"en\"},{\"@value\":\"x\",\"@language\":\"EN\"}]}" "") == 1
+-- Teeth: the reader's own dataset lists the repeated value two times.
+#guard (match jsonldDataset
+  "{\"@id\":\"http://e/s\",\"http://e/p\":[{\"@value\":\"x\"},{\"@value\":\"x\"}]}" "" with
+  | .ok ds => ds.default.length | .error _ => 0) == 2
 
 end L4Wasm.Ops

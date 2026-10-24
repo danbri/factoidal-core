@@ -681,15 +681,16 @@ export function tableauDlInconsistent(
 
 /**
  * Checked consistency for the original default graph in a restricted
- * atomic OWL fragment (named subclass/class assertions, Thing/Nothing,
+ * OWL fragment (named subclass/class assertions, Thing/Nothing,
+ * owl:someValuesFrom restrictions as a superclass or a class assertion,
  * sameAs/differentFrom and limited declarations/annotations).
- * false requires an accepted certificate; null means unsupported-syntax
- * or incomplete-search. No model producer exists, so true is not returned.
- * Named graphs do not contribute axioms. RDF 1.2 terms are refused.
- * This narrows earlier unchecked coverage: restrictions, object/data
- * property axioms, imports and equivalentClass are unsupported.
- * fuel is retained for compatibility but does not change this fixed
- * 64-round certificate check. This is not complete OWL DL support.
+ * true requires a checked finite model and has no `reason`; false requires
+ * an accepted refutation certificate; null means unsupported-syntax,
+ * budget-out or incomplete-search. Named graphs do not contribute axioms.
+ * RDF 1.2 terms are refused. Other restrictions, object/data property
+ * axioms, imports and equivalentClass are unsupported. `fuel` bounds the
+ * model search and the certificate checker (default 20000 rounds).
+ * This is not complete OWL DL support.
  */
 export function owlIsConsistent(
   data: DataInput,
@@ -703,7 +704,9 @@ export function owlIsConsistent(
  * implementation returns `true` for those positive results and `null`
  * when it cannot establish entailment. `reason` distinguishes budget-out,
  * incomplete-search, unsupported-conclusion and unsupported-punning.
- * No checked countermodel constructor exists, so it never returns `false`.
+ * `false` (via `refutation`, reason `countermodel: ...`) requires a checked
+ * finite model of the premise in which the conclusion fails; both graphs
+ * must be in the fragment that `owlIsConsistent` reads.
  * The punning refusal is limited; full OWL DL recognition and universal
  * Direct Semantics soundness are not established by this API.
  */

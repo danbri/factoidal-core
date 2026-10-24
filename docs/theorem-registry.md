@@ -2909,6 +2909,24 @@ tracking [#658](https://github.com/danbri/factoidal/issues/658) and
 | `sbm11_record_denotes` — the SBM11 generation and the lawful dataset record denote one dataset | `Storage/Sbm11/StoreCapsConnection.lean` | `PackSpec.packSpec` | ✅ PROVED | `D.IsSet`, `distinctNames`, `D.den = inputDen` |
 | Union read a shared triple twice; overlay over an exact-estimate base broke `estimateExact` | `RDF/StoreCapabilities.lean`, `RDF/StoreCapabilitiesDelta.lean` | — | ✅ REPAIRED (2026-10-23), `#guard`s pin it | — |
 
+## Graph operations keep a set a set (Lean 4, 2026-10-24, issue 973)
+
+[Issue 973](https://github.com/danbri/factoidal/issues/973). RDF 1.1 Concepts §3: an RDF graph is a set of triples; §4: each graph of a dataset is a set and graph names are unique. `Graph` is `List Triple`; the condition is `Graph.KeyNodup` / `Dataset.IsSet` (`RDF/DatasetSet.lean`). One lemma, `Graph.KeyNodup.graphAddAll` (the left fold of `Graph.add` keeps a set a set), is instantiated per producer. Each fixed producer has a `#guard` or npm count that failed before the fix.
+
+| Theorem | Module | Native anchor | Status | Fragment / hypotheses |
+|---|---|---|---|---|
+| `Graph.KeyNodup.graphAddAll`, `Graph.toSet_keyNodup`, `Graph.mem_toSet`, `Graph.toSet_of_keyNodup`, `Graph.toSet_eq_fast` (csimp to the `FastGraph` fold) | `RDF/GraphSet.lean` | `RDF.graphAddAll`, `Graph.toSet` | ✅ PROVED | input `KeyNodup` (fold); none (`toSet`) |
+| `evalConstruct_keyNodup`, `fromMerge_keyNodup` | `RDF/GraphOpsSet.lean` | `SPARQL.evalConstruct`, `SPARQL.fromMerge` | ✅ PROVED | none |
+| `evalDescribe_keyNodup`, `Graph.cbd_keyNodup`, `applyDataset_keyNodup` | `RDF/GraphOpsSet.lean` | `SPARQL.evalDescribe`, `Graph.cbd` | ✅ PROVED | default graph `KeyNodup` |
+| `RDFS.closureFix_keyNodup`, `fullClosure_keyNodup`, `rdfClosure_keyNodup`, `rdfsPlusClosureFix_keyNodup` | `RDF/GraphOpsSet.lean` | `RDFS.closureFix`, `fullClosure`, `rdfClosure`, `rdfsPlusClosureFix` | ✅ PROVED | input `KeyNodup` |
+| `closureGraphOfRegime_keyNodup`, `closureStreamOf_keyNodup`, `owlRlClosureSet_keyNodup`, `owlRlClosureSet_mem` | `Wasm/Ops/Reason.lean` | `owlClosure`, `rhoDfClosure`, `rdfsPlusClosure`, `l4factoidal closure` | ✅ REPAIRED + PROVED (OWL 2 RL `addOne` compares structurally: `"x"@en`/`"x"@EN` gave two lines) | none (`closureStreamOf`) |
+| `setNQuadsEnvelope_isSet` | `Wasm/Ops/Formats.lean` | `jsonldToRdf`, `rmlMap`, `csvwToRdf` | ✅ REPAIRED + PROVED (a JSON-LD value given two times gave two lines) | none |
+| `datasetOfQuads_isSet` | `Storage/QuadDatasetSet.lean` | `Storage.QuadDataset.datasetOfQuads` (IBK4/IBK5 readers, WASM store ops, SBM11 reference path) | ✅ PROVED | none |
+| `constructGraphOf_keyNodup` | `Storage/Sbm11/IdPostTheorems.lean` | `Sbm11.IdQuery.constructGraphOf` | ✅ PROVED | none |
+| `canonicalLines_strict`, `canonicalLines_nodup`, `canonicalize_nquads` | `RDF/CanonicalSet.lean` | `Canonical.canonicalize` | ✅ PROVED | none |
+| `applyUpdateIn_isSet`, `applyUpdateText_isSet` (earlier), with `parseNQuadsFast_isSet` and `datasetForOps_isSet` | `RDF/CertifiedDataset.lean`, `Wasm/Ops/Handles.lean`, `Wasm/Ops/Reason.lean` | `updateDataset`, `datasetUpdate`, `l4factoidal update` | ✅ PROVED | input `IsSet` (parse gives it) |
+| `queryRaw` with `entail: OWL-RL` and `tableauMaterialise` | `Wasm/Ops/QueryExtras.lean`, `Wasm/Ops/Reasoning.lean` | `queryRaw`, `tableauMaterialise` | ✅ REPAIRED (end with `Graph.toSet`; `#guard` COUNT(*) = 1) | — |
+
 ## GeoSPARQL bounding-box index (Lean 4, 2026-09-07)
 
 The GBI1 index is a CANDIDATE FILTER: a box can exclude a row, never

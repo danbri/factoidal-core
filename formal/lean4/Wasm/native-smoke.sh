@@ -1436,18 +1436,14 @@ check "rdfsPlusClosure" rdfsPlusClosure "$TMP/rdfsplus.json" \
 # Envelopes pinned against bin/npm-entry/entry_jsoo.ml's
 # owl_is_consistent_json / owl_entails_json: three-valued, budget-out
 # reported as null with a reason, never a silent false.
-# Since commit 87fd052e (docs/20261022-owl-pr-reconciliation.md) a definite
-# verdict needs a checked certificate: consistency answers false (checked
-# refutation) or null, never true, and reads only the admitted atomic
-# fragment (no owl:someValuesFrom); the checker runs a fixed 64 rounds and
-# ignores `fuel`. The plain cases below check that no input gets a wrong
-# definite verdict. The verdicts the inputs had before are expected failures
-# of https://github.com/danbri/factoidal/issues/960 (model certificate,
-# someValuesFrom admission, fuel, checked countermodel); an XPASS fails the run.
+# A definite verdict needs a checked certificate
+# (https://github.com/danbri/factoidal/issues/960): consistency answers true
+# only with a checked finite model (AtomicModel.checkModel_sound), false only
+# with a checked refutation; owlEntails answers false only with a checked
+# countermodel. The reader admits atomic classes and owl:someValuesFrom.
+# `fuel` bounds the model search and the certificate checker.
 args "$TMP/owl-cons-yes.json" "$SUBCLASS" ""
-check "owlIsConsistent consistent atomic input -> null, no model certified" owlIsConsistent "$TMP/owl-cons-yes.json" \
-  'r["ok"] is True and r["consistent"] is None and "no model is certified" in r["reason"]'
-checkx "owlIsConsistent consistent -> true, no reason" 960 owlIsConsistent "$TMP/owl-cons-yes.json" \
+check "owlIsConsistent consistent -> true, no reason" owlIsConsistent "$TMP/owl-cons-yes.json" \
   'r["ok"] is True and r["consistent"] is True and "reason" not in r'
 
 NOTHING='<http://e/i> <http://www.w3.org/1999/02/22-rdf-syntax-ns#type> <http://www.w3.org/2002/07/owl#Nothing> .
@@ -1456,25 +1452,32 @@ args "$TMP/owl-cons-no.json" "$NOTHING" ""
 check "owlIsConsistent owl:Nothing member -> false + reason" owlIsConsistent "$TMP/owl-cons-no.json" \
   'r["ok"] is True and r["consistent"] is False and "contradiction" in r["reason"]'
 
-# A cyclic TBox (A subClassOf someValuesFrom(p, A)). owl:someValuesFrom is
-# outside the admitted fragment: null with unsupported-syntax, at any fuel.
+# A cyclic TBox (A subClassOf someValuesFrom(p, A)). The search needs two
+# rounds (the individual, then the witness of A); fuel 1 is a budget-out.
 CYCLIC='<http://e/i> <http://www.w3.org/1999/02/22-rdf-syntax-ns#type> <http://e/A> .
 <http://e/A> <http://www.w3.org/2000/01/rdf-schema#subClassOf> _:r .
 _:r <http://www.w3.org/2002/07/owl#onProperty> <http://e/p> .
 _:r <http://www.w3.org/2002/07/owl#someValuesFrom> <http://e/A> .
 '
 args "$TMP/owl-cons-unk.json" "$CYCLIC" '{"fuel":"1"}'
-check "owlIsConsistent someValuesFrom input, fuel 1 -> null (unsupported-syntax)" owlIsConsistent "$TMP/owl-cons-unk.json" \
-  'r["ok"] is True and r["consistent"] is None and "unsupported-syntax" in r["reason"]'
-checkx "owlIsConsistent fuel 1 -> null (budget-out, fuel named)" 960 owlIsConsistent "$TMP/owl-cons-unk.json" \
+check "owlIsConsistent fuel 1 -> null (budget-out, fuel named)" owlIsConsistent "$TMP/owl-cons-unk.json" \
   'r["ok"] is True and r["consistent"] is None and "budget-out" in r["reason"]
    and "fuel 1 " in r["reason"]'
 
 args "$TMP/owl-cons-cyc.json" "$CYCLIC" ""
-check "owlIsConsistent cyclic TBox, default fuel -> null (unsupported-syntax)" owlIsConsistent "$TMP/owl-cons-cyc.json" \
-  'r["ok"] is True and r["consistent"] is None and "unsupported-syntax" in r["reason"]'
-checkx "owlIsConsistent cyclic TBox, default fuel -> true" 960 owlIsConsistent "$TMP/owl-cons-cyc.json" \
+check "owlIsConsistent cyclic TBox, default fuel -> true" owlIsConsistent "$TMP/owl-cons-cyc.json" \
   'r["ok"] is True and r["consistent"] is True'
+
+# The same TBox with a filler whose superclass is owl:Nothing: the witness of
+# the restriction clashes, and a two-step .exWit certificate refutes it.
+EXCLASH="$CYCLIC"'<http://e/A> <http://www.w3.org/2000/01/rdf-schema#subClassOf> _:s .
+_:s <http://www.w3.org/2002/07/owl#onProperty> <http://e/q> .
+_:s <http://www.w3.org/2002/07/owl#someValuesFrom> <http://e/B> .
+<http://e/B> <http://www.w3.org/2000/01/rdf-schema#subClassOf> <http://www.w3.org/2002/07/owl#Nothing> .
+'
+args "$TMP/owl-cons-exclash.json" "$EXCLASH" ""
+check "owlIsConsistent someValuesFrom witness clash -> false" owlIsConsistent "$TMP/owl-cons-exclash.json" \
+  'r["ok"] is True and r["consistent"] is False and "contradiction" in r["reason"]'
 
 # Entailment via the closure path: a type D . follows from
 # a type C, C subClassOf D by cax-sco.
@@ -1484,15 +1487,11 @@ args "$TMP/owl-ent-yes.json" "$SUBCLASS" "$CONCL" ""
 check "owlEntails subclass typing -> true via closure" owlEntails "$TMP/owl-ent-yes.json" \
   'r["ok"] is True and r["entailed"] is True and r["via"] == "closure"'
 
-# Not entailed. The search does not certify a countermodel, so the verdict
-# is null (never true); false via refutation is the expected failure.
+# Not entailed: a checked countermodel of the premise.
 UNRELATED='<http://e/a> <http://www.w3.org/1999/02/22-rdf-syntax-ns#type> <http://e/Zebra> .
 '
 args "$TMP/owl-ent-no.json" "$SUBCLASS" "$UNRELATED" ""
-check "owlEntails unrelated class -> null (no countermodel certified)" owlEntails "$TMP/owl-ent-no.json" \
-  'r["ok"] is True and r["entailed"] is None and r["via"] == "refutation"
-   and "incomplete-search" in r["reason"]'
-checkx "owlEntails unrelated class -> false via refutation" 960 owlEntails "$TMP/owl-ent-no.json" \
+check "owlEntails unrelated class -> false via refutation" owlEntails "$TMP/owl-ent-no.json" \
   'r["ok"] is True and r["entailed"] is False and r["via"] == "refutation"
    and "model" in r["reason"]'
 

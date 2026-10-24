@@ -1518,22 +1518,37 @@ decreasing_by simp_all
     the reverse. -/
 def certFuel : Nat := 64
 
-/-- THE CHECKER: total, structural recursion on the certificate. -/
+/-- THE CHECKER with a caller-chosen saturation bound: total, structural
+    recursion on the certificate. `fuel` is the number of saturation rounds
+    at each certificate node (https://github.com/danbri/factoidal/issues/960
+    item 3). A smaller bound can only make a certificate fail to check. -/
+def checkCertFuel (O : DlOntology) (fuel : Nat) (c : Cert) : Bool :=
+  checkF (Ctx.ofOntology O) fuel (mergeAll O.same (O.abox.map normAssertion)) c
+
+/-- THE CHECKER at the default bound `certFuel`. -/
 def checkCert (O : DlOntology) (c : Cert) : Bool :=
-  checkF (Ctx.ofOntology O) certFuel (mergeAll O.same (O.abox.map normAssertion)) c
+  checkCertFuel O certFuel c
+
+/-- SOUNDNESS at every bound: an accepted certificate leaves the ontology
+    with no model under the OWL 2 Direct Semantics (Tables 4, 5, 6 and 10,
+    in the fragment of `Concept`). -/
+theorem checkCertFuel_sound {O : DlOntology} {fuel : Nat} {c : Cert}
+    (h : checkCertFuel O fuel c = true) :
+    ¬ ∃ (δ : Type) (I : Interp δ) (ν : Ind → δ), DirectModel I ν O := by
+  intro ⟨δ, I, ν, hR, hT, hInv, hSame, hA⟩
+  have hC : CtxValid I (Ctx.ofOntology O) := ⟨respects_normTBox hT, hR, hInv⟩
+  refine checkF_sound hC fuel c _ ν h (satAll_mergeAll hSame ?_)
+  intro φ hφ
+  have ⟨ψ, hψ, he⟩ := List.mem_map.mp hφ
+  subst he
+  exact satisfies_normAssertion ψ (hA ψ hψ)
 
 /-- SOUNDNESS: an accepted certificate leaves the ontology with no
     model under the OWL 2 Direct Semantics (Tables 4, 5, 6 and 10, in
     the fragment of `Concept`). -/
 theorem checkCert_sound {O : DlOntology} {c : Cert} (h : checkCert O c = true) :
-    ¬ ∃ (δ : Type) (I : Interp δ) (ν : Ind → δ), DirectModel I ν O := by
-  intro ⟨δ, I, ν, hR, hT, hInv, hSame, hA⟩
-  have hC : CtxValid I (Ctx.ofOntology O) := ⟨respects_normTBox hT, hR, hInv⟩
-  refine checkF_sound hC certFuel c _ ν h (satAll_mergeAll hSame ?_)
-  intro φ hφ
-  have ⟨ψ, hψ, he⟩ := List.mem_map.mp hφ
-  subst he
-  exact satisfies_normAssertion ψ (hA ψ hψ)
+    ¬ ∃ (δ : Type) (I : Interp δ) (ν : Ind → δ), DirectModel I ν O :=
+  checkCertFuel_sound h
 
 /-- The same statement in the shape of `Tableau.Consistent`: an
     ontology with an empty TBox and an accepted certificate is not
@@ -1562,6 +1577,7 @@ private def sameChainOrders : List (List (Ind × Ind)) :=
 
 #print axioms respectsSame_subst
 #print axioms satAll_mergeAll
+#print axioms checkCertFuel_sound
 #print axioms checkCert_sound
 
 end L4Factoidal.OWL

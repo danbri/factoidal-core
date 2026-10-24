@@ -317,8 +317,9 @@ OWL_PROBE_ERR=""
 # inconsistent, every OWL case below is an ERROR, not an XPASS.
 # Lean must answer false (inconsistent) or unknown, never true. Since
 # factoidal-core 87fd052e (2026-10-22) `owl-consistent` gives a verdict only
-# with a checked certificate and answers unknown outside the admitted atomic
-# fragment, which does not admit data cardinality restrictions
+# with a checked certificate and answers unknown outside the admitted
+# fragment (atomic classes and owl:someValuesFrom), which does not admit data
+# cardinality restrictions
 # (https://github.com/danbri/factoidal/issues/960). Until 2026-10-22 the
 # control required Lean false, and the web gates of factoidal-builds failed
 # from core 0a7fab49 (2026-10-22 22:25 UTC) to this change.
@@ -341,9 +342,10 @@ owl_case () {
   fv=$(fstar_owl_verdict "$file")
   lv=$(lean_owl_verdict "$file")
   # Lean true confirms the fixture. Lean unknown is no verdict: the public
-  # operation answers true only with a model certificate, which does not
-  # exist yet (issue 960 item 1); the fixture stays as confirmed by the Lean
-  # tableau before 87fd052e. Lean false contradicts the fixture: ERROR.
+  # operation answers true only with a checked model, and its reader admits
+  # atomic classes and owl:someValuesFrom only, not the data cardinality
+  # restrictions of these fixtures (issue 960); the fixture stays as confirmed
+  # by the Lean tableau before 87fd052e. Lean false contradicts the fixture: ERROR.
   local oracle
   case "$lv" in
     true)    oracle="Lean reports consistent (correct)" ;;

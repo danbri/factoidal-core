@@ -34,6 +34,7 @@ and `translate` admits no EXISTS outside the WHERE clause).
 -/
 import L4Factoidal.Storage.Sbm11.IdQuery
 import L4Factoidal.SPARQL.StoreDataset
+import L4Factoidal.RDF.GraphSet
 
 namespace L4Factoidal.Storage.Sbm11.IdPostTheorems
 
@@ -360,6 +361,17 @@ theorem selectPost_take (env : EvalEnv) (active : Graph) (q : Query) (sel : Sele
 #print axioms substituteExistentialsList_existsFree
 #print axioms residualHolds_eq
 #print axioms evalConstruct_eq
+
+/-- The SBM11 id path's CONSTRUCT graph is a set, for every template and
+solution sequence (https://github.com/danbri/factoidal/issues/973): an
+instance of `Graph.KeyNodup.graphAddAll`. -/
+theorem constructGraphOf_keyNodup (template : List TriplePattern) (solutions : SolutionSeq) :
+    (constructGraphOf template solutions).KeyNodup := by
+  unfold constructGraphOf
+  rw [foldl_add_eq_graphAddAll]
+  exact Graph.KeyNodup.graphAddAll _ Graph.keyNodup_nil
+
+#print axioms constructGraphOf_keyNodup
 #print axioms formHasSolution_take_one
 #print axioms firstRowsOf_ask
 #print axioms formSolutions_take

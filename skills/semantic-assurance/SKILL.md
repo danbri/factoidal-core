@@ -143,6 +143,16 @@ decoding, a compilation/model theorem, admission evidence, then the actual
 checker and wire producer. Its admitted syntax is narrower than full OWL;
 header/declaration validation is not the complete W3C reverse mapping.
 
+A definite OWL answer needs a checked certificate of its own kind: `true`
+needs a finite model accepted by `AtomicModel.checkModel` (theorem
+`checkModel_sound`, conclusion `SourceModel` of the original graph);
+`false` needs a refutation accepted by `checkCertFuel`; an entailment
+`false` needs a countermodel accepted by `checkCountermodel`. The search
+that builds them is untrusted; never add a premise about it to a soundness
+theorem. Record:
+[OWL model certificates](../../docs/designissues/2026-10-24-owl-model-certificates.md)
+(https://github.com/danbri/factoidal/issues/960).
+
 Run `python3 tools/check-owl-reader-contracts.py --json /new/contracts.json`
 for adversarial cases, independent original-graph model witnesses, axiom
 audits and real-definition proof mutations. Keep the unsupported

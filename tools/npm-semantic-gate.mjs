@@ -199,11 +199,11 @@ function catalog() {
       assert.ok(o.answer.consistent === true || o.answer.consistent === null, 'must not invent an inconsistency');
     });
   }
-  add('R10.quiescence-is-not-verified-model', 'owl-assurance-policy', { consistent: null }, async (f, o) => {
+  add('R10.checked-model', 'owl-assurance-policy', { consistent: true }, async (f, o) => {
     o.answer = await f.owlIsConsistent(`<urn:a> <${RDF}type> <urn:C> .`, { format: 'ntriples' });
-    // Current implementation has no checked model certificate. A future
-    // certificate-producing path must revise this policy test with evidence.
-    assert.equal(o.answer.consistent, null);
+    // A checked finite model (AtomicModel.checkModel_sound,
+    // https://github.com/danbri/factoidal/issues/960).
+    assert.equal(o.answer.consistent, true);
   });
   add('R10.truncated-search', 'owl-verdict-soundness', { consistent: null }, async (f, o) => {
     const premise = `<urn:i> <${RDF}type> <urn:A> . <urn:A> <${RDFS}subClassOf> _:r . ` +
@@ -384,7 +384,7 @@ async function gate(options) {
       unimplementedObligations: UNCOVERED,
       notes: ['Self-contained product regressions only; no external corpus or network.',
         'R04 variable SERVICE is a product interoperability obligation, not a normative W3C claim.',
-        'R10 quiescent search expects null until a model certificate is checked; future certificate support must revise this test with evidence.',
+        'R10 consistency answers true only with a checked finite model (issue 960).',
         'Runner timeouts bound execution; they do not implement or certify R07 engine resource budgets.'] },
     artifacts: {}, engineMetadata: null, fatalErrors: [], rows: [],
   };

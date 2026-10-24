@@ -37,6 +37,7 @@ import L4Factoidal.Syntax.NQuadsFast
 import L4Factoidal.Syntax.NTriples
 import L4Factoidal.OWL.RLClosure
 import L4Factoidal.OWL.Materialise
+import L4Factoidal.RDF.GraphSet
 
 namespace L4Wasm.Ops
 
@@ -50,8 +51,11 @@ def tableauMaterialise (nq : String) : String :=
   | .error e => errJson (fmtParseError e)
   | .ok ds =>
     let g := ds.default
-    let (m, budgetHit) :=
+    let (m0, budgetHit) :=
       L4Factoidal.OWL.Mat.materialiseWithBudget g L4Factoidal.OWL.Mat.defaultBudget
+    -- The materialiser adds with `OWL.RL.addAll` (structural equality); the
+    -- written graph is a set (https://github.com/danbri/factoidal/issues/973).
+    let m := Graph.toSet m0
     match Graph.toNTriples m with
     | .error e => errJson s!"tableauMaterialise: serialisation: {e}"
     | .ok lines =>
