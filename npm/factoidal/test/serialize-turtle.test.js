@@ -44,10 +44,25 @@ test('serialize: a triple term, one level and nested, with a base direction', as
   assert.match(withPrefixes, /ex:a ex:p <<\( ex:b ex:q "x"@en--ltr \)>> \./);
   // N-Quads is the canonical form: the text it was given.
   assert.equal(await factoidal.serialize(nt, { format: 'nquads', inputFormat: 'nt12' }), nt);
-  // Text of RDF 1.1 syntax is still read.
-  const ttl11 = await factoidal.serialize('<http://ex/s> <http://ex/p> "v"@abcdefghijk .\n',
+  // Text of RDF 1.1 syntax is still read. The tag is well-formed (BCP 47
+  // section 2.1: language "de", region "CH", variant "1901"), as RDF 1.1
+  // Concepts section 3.3 requires (https://github.com/danbri/factoidal/issues/1004).
+  const ttl11 = await factoidal.serialize('<http://ex/s> <http://ex/p> "v"@de-CH-1901 .\n',
     { format: 'turtle', inputFormat: 'ntriples' });
-  assert.match(ttl11, /"v"@abcdefghijk/);
+  assert.match(ttl11, /"v"@de-CH-1901/i);
+});
+
+// A language tag that is not well-formed (BCP 47 section 2.1: a primary
+// language subtag has 2 to 8 letters, so "abcdefghijk", 11 letters, is not a
+// language subtag). The N-Triples reader reads it (LANGTAG [144s] has no length
+// limit); the writer refuses it and names the tag
+// (https://github.com/danbri/factoidal/issues/1004).
+test('serialize: the writer refuses a language tag that is not well-formed', async () => {
+  assert.ok(await entryAvailable());
+  await assert.rejects(
+    () => factoidal.serialize('<http://ex/s> <http://ex/p> "v"@abcdefghijk .\n',
+      { format: 'turtle', inputFormat: 'ntriples' }),
+    /the language tag "abcdefghijk" is not a LANGTAG/);
 });
 
 test('serialize rejects an unknown output format', async () => {

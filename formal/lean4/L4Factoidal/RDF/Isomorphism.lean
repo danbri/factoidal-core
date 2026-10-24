@@ -104,6 +104,44 @@ def Term.bnodes : Term → List BNodeId
   | .literal _        => []
   | .tripleTerm s _ o => s.bnodes ++ o.bnodes
 
+/-! ### The labels of a term nested deep
+
+`Term.bnodes` above is the SPECIFICATION. It takes one native frame for each
+level of triple-term nesting, and the writers of the N-Triples family reach it
+for every triple (`Dataset.relabelForWrite` reads `Dataset.bnodes`): a triple
+term nested 300,000 deep overflowed the stack
+(https://github.com/danbri/factoidal/issues/1003). `Term.bnodesLoop` keeps the
+labels of the subjects of the open triple terms in a list, newest first, and
+reverses it at the innermost term. `Term.bnodes_eq_fast` proves it equal and
+`@[csimp]` makes every caller compiled after it run the loop. -/
+
+/-- The labels of a term, after the labels of `acc` (newest first). -/
+def Term.bnodesLoop : List BNodeId → Term → List BNodeId
+  | acc, .tripleTerm s _ o => Term.bnodesLoop (s.bnodes.reverse ++ acc) o
+  | acc, .iri _ => acc.reverse
+  | acc, .bnode b => acc.reverse ++ [b]
+  | acc, .literal _ => acc.reverse
+
+theorem Term.bnodesLoop_eq : ∀ (t : Term) (acc : List BNodeId),
+    Term.bnodesLoop acc t = acc.reverse ++ t.bnodes
+  | .tripleTerm s p o, acc => by
+      rw [Term.bnodesLoop, Term.bnodesLoop_eq o, Term.bnodes]
+      simp [List.reverse_append, List.append_assoc]
+  | .iri i, acc => by rw [Term.bnodesLoop, Term.bnodes, List.append_nil]
+  | .bnode b, acc => by rw [Term.bnodesLoop, Term.bnodes]
+  | .literal l, acc => by rw [Term.bnodesLoop, Term.bnodes, List.append_nil]
+
+/-- `Term.bnodes` as the loop. -/
+def Term.bnodesFast (t : Term) : List BNodeId := Term.bnodesLoop [] t
+
+/-- Any label list compiled after this line is computed by the loop. -/
+@[csimp] theorem Term.bnodes_eq_fast : @Term.bnodes = @Term.bnodesFast := by
+  funext t
+  rw [Term.bnodesFast, Term.bnodesLoop_eq, List.reverse_nil, List.nil_append]
+
+#print axioms Term.bnodesLoop_eq
+#print axioms Term.bnodes_eq_fast
+
 /-- Blank-node labels occurring in a triple. -/
 def Triple.bnodes (t : Triple) : List BNodeId := t.s.bnodes ++ t.o.bnodes
 
