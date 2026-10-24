@@ -15,8 +15,10 @@ subset of propext, Classical.choice, Quot.sound.
 
 Status:
 
-* `proved`: `stage` is a `Stage` value, or an `RdfReader` value (the reader
-  interface type, `Dataflow/Reader.lean`), whose `sound` field is a proof;
+* `proved`: `stage` is a `Stage` value, an `RdfReader` value (the reader
+  interface type, `Dataflow/Reader.lean`) or a `LawfulEvaluator` value (the
+  query evaluator interface type, `Dataflow/Evaluator.lean`), whose `sound`
+  field is a proof;
   `contract` names its contract; `theorems` names the component theorems it
   uses.
 * `assumed`: `stage` is an `IOStage`; `ioAssumptions` names the assumption.
@@ -40,6 +42,7 @@ import L4Factoidal.Storage.BlockDenotation
 import L4Factoidal.SPARQL.FromMergeStage
 import L4Factoidal.Storage.SelectedDataset
 import L4Factoidal.Storage.BackendRefinement
+import L4Factoidal.Dataflow.Evaluator
 import L4Factoidal.Storage.StoreDictTheorems
 import L4Factoidal.HDT.DictionaryTheorems
 import L4Factoidal.Cottas.DictTheorems
@@ -488,6 +491,15 @@ def registry : List Entry := [
     wireIn := "Query × Dataset", wireOut := "SolutionSeq", status := .missing
     theorems := [``L4Factoidal.Storage.BackendRefinement.indexedWhere_allowed]
     note := "WHERE part proved for NativeFrag (row above); missing: the SELECT layer of runSelectQueryBackendDataset (streaming COUNT and GROUP BY, ORDER BY, projection, DISTINCT, slices), the arms outside NativeFrag (BIND, LATERAL, paths, sub-SELECT, non-local conditions), and that two Allowed answers of one pattern are one multiset; so id path and fallback are both allowed, not proved equal (finding 6)" },
+  { area := "SPARQL query evaluator of the wasm query ops (LawfulEvaluator: backend path, else reference)"
+    dir := "Dataflow"
+    stage := ``shippedEvaluator, wireIn := "EvalInput (env, Dataset, backend, Query)", wireOut := "Answer"
+    contract := ``EvalContract, status := .proved
+    theorems := [``shippedRun_sound, ``shippedRun_of_noBackend, ``shippedRun_of_from,
+      ``shippedRun_of_construct, ``shippedRun_of_describe, ``evalSelectBackendDataset_plain,
+      ``evalAskBackendReference_some, ``backendReads_indexed, ``LawfulEvaluator.contract,
+      ``L4Factoidal.Storage.BackendRefinement.evalPatternBackend_allowed]
+    note := "answer = reference evaluator (SPARQL.Query), or the modifier layer (selectPost, formHasSolution) over a WHERE answer Allowed admits; premises EvalInput.Wf (env.dataset = ds, ds.IsSet, BackendReads); named assumption field assumed_contractOn = shippedAssumed: backend path with a pattern outside NativeFrag (BackendOutsideFragmentAgrees) or a SELECT fast path (SelectFastPathAgrees); not claimed: two Allowed answers are one multiset, den invariance" },
   { area := "SPARQL query evaluation (reference evaluator)", dir := "SPARQL"
     wireIn := "Query × Dataset", wireOut := "QueryResult", status := .tested
     tests := ["W3C SPARQL 1.1 manifest-all (l4w3c)", "W3C SPARQL 1.2 (l4w3c)"] },

@@ -86,15 +86,39 @@ note = "applyUpdateText on the stored dataset."
 
 [[entry]]
 id = "wasm:queryDataset"
-stages = ["SPARQL query evaluation (reference evaluator)"]
+stages = ["shippedEvaluator"]
 covers = "part"
-note = "parseSparql, then evalSelect / evalAsk; eligible queries run on indexedDatasetBackend (Storage.BackendRefinement proves evalPatternBackend's WHERE answer; this mapping does not claim that link)."
+note = "Wasm/Ops/Query.lean queryParsedDatasetWith: parseSparql, the SERVICE failure check, then ev.run of a LawfulEvaluator (default shippedEvaluator) over indexedDatasetBackend of the dataset read by the N-Quads RdfReader. Not covered: the query grammar, the SERVICE failure check, the result envelope (SRJ, N-Triples)."
 
 [[entry]]
 id = "wasm:datasetQuery"
-stages = ["SPARQL query evaluation (reference evaluator)"]
+stages = ["shippedEvaluator"]
 covers = "part"
-note = "queryDataset over a stored dataset."
+note = "Wasm/Ops/Handles.lean: queryParsedDatasetWith (ev.run of shippedEvaluator) over a stored dataset and its cached indexedDatasetBackend."
+
+[[entry]]
+id = "wasm:queryDataset12"
+stages = ["shippedEvaluator"]
+covers = "part"
+note = "Wasm/Ops/Query.lean queryDataset12IO: queryDataset with the SPARQL 1.2 grammar; the same queryParsedDatasetWith (ev.run of shippedEvaluator)."
+
+[[entry]]
+id = "wasm:datasetQuery12"
+stages = ["shippedEvaluator"]
+covers = "part"
+note = "Wasm/Ops/Handles.lean: datasetQuery with the SPARQL 1.2 grammar; the same queryParsedDatasetWith (ev.run of shippedEvaluator)."
+
+[[entry]]
+id = "wasm:storeQuery"
+stages = ["shippedEvaluator"]
+covers = "part"
+note = "Wasm/Ops/Store.lean: reads the planned IBK3/IBK4/IBK5 blobs (no stage), then queryParsedDatasetWith (ev.run of shippedEvaluator) with indexedDatasetBackend, or no backend when a graph name is not an IRI. Not covered: the store read and that its dataset is a set."
+
+[[entry]]
+id = "wasm:storeHandleQuery"
+stages = ["shippedEvaluator"]
+covers = "part"
+note = "Wasm/Ops/StoreHandles.lean: the retained store dataset and its backend (store.backend, backendOfRetained; BackendReads not proved for them, the LawfulStore join), then queryParsedDatasetWith (ev.run of shippedEvaluator). Not covered: the store read, the literal and geo index plans."
 
 [[entry]]
 id = "wasm:vcEddsaCreateFromCanonical"
@@ -164,7 +188,7 @@ note = "lib/pure.mjs calls the wasm op proofCheck."
 
 [[entry]]
 id = "npm:.#query"
-stages = ["SPARQL query evaluation (reference evaluator)"]
+stages = ["shippedEvaluator"]
 covers = "part"
 note = "lib/api.mjs calls the wasm op datasetQuery (or datasetQuery12 for SPARQL 1.2)."
 
@@ -236,7 +260,7 @@ note = "lib/pure.mjs calls the wasm op proofCheck."
 
 [[entry]]
 id = "npm:./browser#query"
-stages = ["SPARQL query evaluation (reference evaluator)"]
+stages = ["shippedEvaluator"]
 covers = "part"
 note = "lib/api.mjs calls the wasm op datasetQuery (or datasetQuery12 for SPARQL 1.2)."
 

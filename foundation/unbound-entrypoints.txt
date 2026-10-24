@@ -5,7 +5,7 @@
 # entry that no longer exists or is now mapped, or when the count differs
 # from max-entries. The list may only shrink: when you map an entry, remove
 # its line and lower max-entries in the same commit.
-# max-entries: 496
+# max-entries: 492
 cli:activate  # npm/factoidal/bin/factoidal.mjs
 cli:authz-keys  # npm/factoidal/bin/factoidal.mjs
 cli:authz-serve  # npm/factoidal/bin/factoidal.mjs
@@ -379,7 +379,6 @@ wasm:datasetMatch  # lean4/Wasm/CoreDispatch.lean
 wasm:datasetMatchCount  # lean4/Wasm/CoreDispatch.lean
 wasm:datasetQuadsBin  # lean4/Wasm/CoreDispatch.lean
 wasm:datasetQuadsJson  # lean4/Wasm/CoreDispatch.lean
-wasm:datasetQuery12  # lean4/Wasm/CoreDispatch.lean
 wasm:datasetQueryRaw  # lean4/Wasm/CoreDispatch.lean
 wasm:datasetRifEval  # lean4/Wasm/CoreDispatch.lean
 wasm:datasetSerialize  # lean4/Wasm/CoreDispatch.lean
@@ -427,7 +426,6 @@ wasm:packFinish  # lean4/Wasm/CoreDispatch.lean
 wasm:packNext  # lean4/Wasm/CoreDispatch.lean
 wasm:proofInspect  # lean4/Wasm/CoreDispatch.lean
 wasm:quadsToNQuads  # lean4/Wasm/CoreDispatch.lean
-wasm:queryDataset12  # lean4/Wasm/CoreDispatch.lean
 wasm:queryForm  # lean4/Wasm/CoreDispatch.lean
 wasm:queryHdt  # lean4/Wasm/CoreDispatch.lean
 wasm:queryIBK3BlockSetPreview  # lean4/Wasm/CoreDispatch.lean
@@ -456,10 +454,8 @@ wasm:solidSnapshot  # lean4/Wasm/CoreDispatch.lean
 wasm:solidStep  # lean4/Wasm/CoreDispatch.lean
 wasm:storeHandleClose  # lean4/Wasm/CoreDispatch.lean
 wasm:storeHandleList  # lean4/Wasm/CoreDispatch.lean
-wasm:storeHandleQuery  # lean4/Wasm/CoreDispatch.lean
 wasm:storeManifestInspect  # lean4/Wasm/CoreDispatch.lean
 wasm:storeOpen  # lean4/Wasm/CoreDispatch.lean
-wasm:storeQuery  # lean4/Wasm/CoreDispatch.lean
 wasm:storeQueryPlan  # lean4/Wasm/CoreDispatch.lean
 wasm:storeServeClose  # lean4/Wasm/CoreDispatch.lean
 wasm:storeServeCommit  # lean4/Wasm/CoreDispatch.lean
