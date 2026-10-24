@@ -345,6 +345,72 @@ theorem renderRowsListM_eq (st : Store Id) (reference : Bool) (t : L4Factoidal.Q
     apply Array.ext'
     simp [Array.mkEmpty]
 
+/-- The column loop that `renderRowsM` and `renderRowsEndsM` write out (one
+    binding per column of `cols`, by index) is the fold of `colIntoM` over
+    `cols`. -/
+theorem forIn_cols (st : Store Id) (reference : Bool) (t : L4Factoidal.Qlvr.Table) (names : Array ByteArray)
+    (i : Nat) (cols : Array (Nat × Nat)) :
+    ∀ n s (out : ByteArray), s + n = cols.size →
+    (forIn (m := ExceptT String Id) (List.range' s n) out (fun j o =>
+        (colIntoM st reference t names i o cols[j]! >>= fun o' => pure (ForInStep.yield o')))).run =
+      ((cols.toList.drop s).foldlM (colIntoM st reference t names i) out).run := by
+  intro n
+  induction n with
+  | zero =>
+    intro s out hs
+    have : cols.toList.drop s = [] := List.drop_eq_nil_of_le (by simp; omega)
+    rw [this]; rfl
+  | succ n ih =>
+    intro s out hs
+    have hs' : s < cols.toList.length := by simp; omega
+    rw [List.range'_succ, List.forIn_cons, List.drop_eq_getElem_cons hs', List.foldlM_cons]
+    have hg : cols[s]! = cols.toList[s] := by
+      rw [getElem!_pos cols s (by simpa using hs'), Array.getElem_toList]
+    rw [hg]
+    simp only [ExceptT.run_bind]
+    cases (colIntoM st reference t names i out cols.toList[s]).run with
+    | error e => rfl
+    | ok o => exact ih (s + 1) o (by omega)
+
+/-- One row as `renderRowsM` writes it out (`{`, the column loop, `}`) is
+    `rowIntoM`. -/
+theorem rowLoop_eq (st : Store Id) (reference : Bool) (t : L4Factoidal.Qlvr.Table) (names : Array ByteArray)
+    (cols : Array (Nat × Nat)) (i : Nat) (out : ByteArray) :
+    ((forIn (m := ExceptT String Id) (List.range' 0 cols.size) (out.push 123) fun (j : Nat) (s : ByteArray) =>
+        if (t.at cols[j]!.snd i != L4Factoidal.Storage.Sbm11.OptJoin.unbound) = true then
+          if (s.get! (s.size - 1) != 123) = true then do
+            let o ← appendIdJsonM st reference (t.at cols[j]!.snd i) (s.push 44 ++ names[cols[j]!.fst]!)
+            pure (ForInStep.yield o)
+          else do
+            let o ← appendIdJsonM st reference (t.at cols[j]!.snd i) (s ++ names[cols[j]!.fst]!)
+            pure (ForInStep.yield o)
+        else pure (ForInStep.yield s)) >>= fun s => pure (ForInStep.yield (s.push 125))) =
+      (rowIntoM st reference t names cols i out >>= fun o => pure (ForInStep.yield o)) := by
+  have hbody : (fun (j : Nat) (s : ByteArray) =>
+        if (t.at cols[j]!.snd i != L4Factoidal.Storage.Sbm11.OptJoin.unbound) = true then
+          if (s.get! (s.size - 1) != 123) = true then
+            (appendIdJsonM st reference (t.at cols[j]!.snd i) (s.push 44 ++ names[cols[j]!.fst]!) >>= fun o =>
+              pure (ForInStep.yield o) : ExceptT String Id (ForInStep ByteArray))
+          else
+            appendIdJsonM st reference (t.at cols[j]!.snd i) (s ++ names[cols[j]!.fst]!) >>= fun o =>
+              pure (ForInStep.yield o)
+        else pure (ForInStep.yield s)) =
+      fun (j : Nat) (o : ByteArray) => colIntoM st reference t names i o cols[j]! >>= fun o' => pure (ForInStep.yield o') := by
+    funext j s
+    unfold colIntoM
+    simp only []
+    split
+    · split <;> rfl
+    · rfl
+  rw [hbody]
+  apply ExceptT.ext
+  rw [ExceptT.run_bind, forIn_cols st reference t names i cols cols.size 0 _ (by omega)]
+  unfold rowIntoM
+  simp only [ExceptT.run_bind, ← Array.foldlM_toList, List.drop_zero]
+  cases (List.foldlM (colIntoM st reference t names i) (out.push 123) cols.toList).run with
+  | error e => rfl
+  | ok o => rfl
+
 theorem renderRowsM_eq (st : Store Id) (reference : Bool) (t : L4Factoidal.Qlvr.Table) (vars : Array String)
     (lo hi : Nat) (first : Bool) :
     (renderRowsM st reference t vars lo hi first).run =
@@ -353,22 +419,43 @@ theorem renderRowsM_eq (st : Store Id) (reference : Bool) (t : L4Factoidal.Qlvr.
           else rowE st reference t vars i)).map catB := by
   unfold renderRowsM
   simp only [Std.Legacy.Range.forIn_eq_forIn_range', Std.Legacy.Range.size, Nat.add_sub_cancel, Nat.div_one,
-    bind_pure]
+    bind_pure, Nat.sub_zero]
   let h : Nat → ByteArray → ExceptT String Id ByteArray := fun i s =>
     rowIntoM st reference t (nameBytes vars) (renderCols t vars) i
       (if (!(first && i == lo)) = true then s.push 44 else s)
-  have hb : (fun i (s : ByteArray) =>
-      if (!(first && i == lo)) = true then
-        (do let out ← rowIntoM st reference t (nameBytes vars) (renderCols t vars) i (s.push 44)
-            pure (ForInStep.yield out) : ExceptT String Id (ForInStep ByteArray))
-      else do
-        let out ← rowIntoM st reference t (nameBytes vars) (renderCols t vars) i s
-        pure (ForInStep.yield out)) =
-      (fun i s => (h i s >>= fun o => pure (ForInStep.yield o) : ExceptT String Id (ForInStep ByteArray))) := by
-    funext i s
+  have hb : ∀ i (s : ByteArray), (if (!(first && i == lo)) = true then
+        (((forIn (m := ExceptT String Id) (List.range' 0 (renderCols t vars).size) ((s.push 44).push 123) fun (j : Nat) (s : ByteArray) =>
+          if (t.at (renderCols t vars)[j]!.snd i != L4Factoidal.Storage.Sbm11.OptJoin.unbound) = true then
+            if (s.get! (s.size - 1) != 123) = true then do
+              let o ← appendIdJsonM st reference (t.at (renderCols t vars)[j]!.snd i)
+                (s.push 44 ++ (nameBytes vars)[(renderCols t vars)[j]!.fst]!)
+              pure (ForInStep.yield o)
+            else do
+              let o ← appendIdJsonM st reference (t.at (renderCols t vars)[j]!.snd i)
+                (s ++ (nameBytes vars)[(renderCols t vars)[j]!.fst]!)
+              pure (ForInStep.yield o)
+          else pure (ForInStep.yield s)) >>= fun s => pure (ForInStep.yield (s.push 125))) :
+            ExceptT String Id (ForInStep ByteArray))
+      else
+        ((forIn (m := ExceptT String Id) (List.range' 0 (renderCols t vars).size) (s.push 123) fun (j : Nat) (s : ByteArray) =>
+          if (t.at (renderCols t vars)[j]!.snd i != L4Factoidal.Storage.Sbm11.OptJoin.unbound) = true then
+            if (s.get! (s.size - 1) != 123) = true then do
+              let o ← appendIdJsonM st reference (t.at (renderCols t vars)[j]!.snd i)
+                (s.push 44 ++ (nameBytes vars)[(renderCols t vars)[j]!.fst]!)
+              pure (ForInStep.yield o)
+            else do
+              let o ← appendIdJsonM st reference (t.at (renderCols t vars)[j]!.snd i)
+                (s ++ (nameBytes vars)[(renderCols t vars)[j]!.fst]!)
+              pure (ForInStep.yield o)
+          else pure (ForInStep.yield s)) >>= fun s => pure (ForInStep.yield (s.push 125)))) =
+      (h i s >>= fun o => pure (ForInStep.yield o) : ExceptT String Id (ForInStep ByteArray)) := by
+    intro i s
     simp only [h]
-    split <;> rfl
-  rw [hb, forIn_ao]
+    split
+    · exact rowLoop_eq st reference t (nameBytes vars) (renderCols t vars) i (s.push 44)
+    · exact rowLoop_eq st reference t (nameBytes vars) (renderCols t vars) i s
+  simp only [hb]
+  rw [forIn_ao]
   · have he : ∀ i, (h i ByteArray.empty).run = if (!(first && i == lo)) = true then
         (rowE st reference t vars i).map (byteE 44 ++ ·) else rowE st reference t vars i := by
       intro i

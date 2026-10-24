@@ -3881,7 +3881,15 @@ def renderRowsM {m : Type → Type} [Monad m] (st : Store m) (reference : Bool) 
   let mut out := ByteArray.emptyWithCapacity (64 * (hi - lo))
   for i in [lo:hi] do
     if !(first && i == lo) then out := out.push 44
-    out ← rowIntoM st reference t names cols i out
+    out := out.push 123
+    for j in [0:cols.size] do
+      let (k, c) := cols[j]!
+      let x := t.at c i
+      if x != OptJoin.unbound then
+        if out.get! (out.size - 1) != 123 then out := out.push 44
+        out := out ++ names[k]!
+        out ← appendIdJsonM st reference x out
+    out := out.push 125
   return out
 
 /-! ## Running a plan -/
@@ -5022,7 +5030,16 @@ def renderRowsEndsM {m : Type → Type} [Monad m] (st : Store m) (reference : Bo
   let mut out := ByteArray.emptyWithCapacity (rowBytes * (hi - lo))
   let mut ends : Array Nat := Array.mkEmpty (hi - lo)
   for i in [lo:hi] do
-    out ← rowIntoM st reference t names cols i (out.push 44)
+    out := out.push 44
+    out := out.push 123
+    for j in [0:cols.size] do
+      let (k, c) := cols[j]!
+      let x := t.at c i
+      if x != OptJoin.unbound then
+        if out.get! (out.size - 1) != 123 then out := out.push 44
+        out := out ++ names[k]!
+        out ← appendIdJsonM st reference x out
+    out := out.push 125
     ends := ends.push out.size
   return (out, ends)
 
