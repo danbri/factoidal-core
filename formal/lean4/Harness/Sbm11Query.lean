@@ -1225,19 +1225,23 @@ def poolMap {α β : Type} (p : Harness.WorkerPool.Pool WorkerPages) (f : α →
 
 /-- `IdQuery.Par.renderStart` on the session's worker pool (stage 1o of
     docs/designissues/2026-10-12-parallel-block-scans.md, issue 961): range
-    `j` of the rows is rendered by pool worker `j` (`renderRowsEndsM` on a
+    `j` of the rows is rendered by pool worker `j` (`IdQuery.renderPartM` on a
     view with the worker's own page cache, pages copied on first use), so a
     worker renders the same rows, with the same pages, in every run of a
     query. Each job gets its rows as a table that the calling thread copied
     for it (`Table.slice`) and its own copy of the variable names: the
     calling thread's table and names stay single-threaded objects, and no
-    column's reference count is shared by two threads. The action returned
-    waits for the pieces in range order and adds the counters of every view. -/
-def renderStartPar (ss : Session) (t : L4Factoidal.Qlvr.Table) (vars : Array String) (reference : Bool)
-    (rs : List (Nat × Nat)) : ExceptT String IO (ExceptT String IO (List (ByteArray × Array Nat))) := do
-  let mut hs : Array (Harness.WorkerPool.Handle (Except IO.Error (ByteArray × Array Nat)) × Session) := #[]
-  for (lo, hi) in rs do
-    let part := t.slice lo hi
+    column's reference count is shared by two threads. A job's store decodes
+    the query-local ids of `vocab` (`IdQuery.Store.withLocal`; a VALUES term
+    with no id in the generation). The action returned waits for the rows in
+    range order and adds the counters of every view. -/
+def renderStartPar (ss : Session) (vocab : Array Term) (t : L4Factoidal.Qlvr.Table) (vars : Array String) (reference : Bool)
+    (rs : List (Nat × Nat)) : ExceptT String IO (ExceptT String IO (List (Array ByteArray))) := do
+  let mut hs : Array (Harness.WorkerPool.Handle (Except IO.Error (Array ByteArray)) × Session) := #[]
+  for r in rs do
+    -- the job's rows: `renderPartM` slices `t`; the slice is made here, by
+    -- the calling thread, so that the job does not reach `t`
+    let part := t.slice r.1 r.2
     let v ← liftIO ss.view
     let h ← liftIO (ss.spawnLocal hs.size (fun wp => do
       let lv ← match wp with
@@ -1246,13 +1250,15 @@ def renderStartPar (ss : Session) (t : L4Factoidal.Qlvr.Table) (vars : Array Str
           pure { w with copyFirst := true }
         | none => v.local
       let names := vars.map IdQuery.freshStr
-      match ← (IdQuery.renderRowsEndsM lv.store reference part names 0 part.rows).run with
+      -- `IdQuery.renderPartM (lv.store.withLocal vocab) reference t names r`, with the slice
+      -- made by the calling thread
+      match ← (IdQuery.renderRowsListM (lv.store.withLocal vocab) reference part names 0 part.rows).run with
       | .ok r => pure r
       | .error e => throw (IO.userError e)))
     hs := hs.push (h, v)
   let handles := hs
   return (do
-    let mut out : Array (ByteArray × Array Nat) := Array.mkEmpty handles.size
+    let mut out : Array (Array ByteArray) := Array.mkEmpty handles.size
     let mut failure : Option String := none
     for (h, v) in handles do
       match ← liftIO (ss.await h) with

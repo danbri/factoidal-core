@@ -511,6 +511,7 @@ import L4Factoidal.Storage.Sbm11.OrderKey
 import L4Factoidal.Storage.Sbm11.OrderKeyTheorems
 import L4Factoidal.Storage.Sbm11.ParallelScanTheorems
 import L4Factoidal.Storage.Sbm11.ParallelSipTheorems
+import L4Factoidal.Storage.Sbm11.RenderPermTheorems
 import L4Factoidal.Storage.Sbm11.ParallelMergeTheorems
 import L4Factoidal.Storage.Sbm11.ParallelJoinTheorems
 import L4Factoidal.Storage.Sbm11.WorkerPoolTheorems
