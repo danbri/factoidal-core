@@ -227,6 +227,17 @@ def BinState.quad (st : BinState) (q : Quad) : Option BinState :=
       some { st with quads := putU32 (putU32 (putU32 (putU32 st.quads (UInt32.ofNat si))
         (UInt32.ofNat pi)) (UInt32.ofNat oi)) (UInt32.ofNat (gi + 1)) }
 
+/-- The empty state for `n` quads, with the maps, the table and the byte
+buffers allocated for `n` quads, so that none of them grows during the loop
+(https://github.com/danbri/factoidal/issues/900). -/
+def BinState.init (n : Nat) : BinState :=
+  { iris := Std.HashMap.emptyWithCapacity n,
+    bnodes := Std.HashMap.emptyWithCapacity (n / 4),
+    others := Std.HashMap.emptyWithCapacity n,
+    tbl := Array.emptyWithCapacity n,
+    terms := ByteArray.emptyWithCapacity (32 * n),
+    quads := ByteArray.emptyWithCapacity (16 * n) }
+
 def binLoop (st : BinState) : List Quad → Option BinState
   | [] => some st
   | q :: qs =>
@@ -239,8 +250,7 @@ does not fit its u32 field). -/
 def quadsBin (qs : List Quad) : Option ByteArray :=
   let n := qs.length
   if n < two32 then
-    match binLoop { terms := ByteArray.emptyWithCapacity (32 * n),
-                    quads := ByteArray.emptyWithCapacity (16 * n) } qs with
+    match binLoop (BinState.init n) qs with
     | none => none
     | some st =>
       some ((putU32 (putU32 (putU32 (ByteArray.emptyWithCapacity (12 + st.terms.size + st.quads.size))

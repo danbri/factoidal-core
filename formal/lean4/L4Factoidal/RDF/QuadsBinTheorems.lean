@@ -763,16 +763,15 @@ theorem quadsBin_binSpec {qs : List TermJson.Quad} {r : ByteArray} (h : quadsBin
   dsimp only at h
   by_cases hn : qs.length < two32
   · rw [if_pos hn] at h
-    have init : Inv { terms := ByteArray.emptyWithCapacity (32 * qs.length),
-                      quads := ByteArray.emptyWithCapacity (16 * qs.length) } := by
+    have init : Inv (BinState.init qs.length) := by
       refine ⟨?_, ?_, ?_, ?_, ?_⟩
-      · intro s k hk; simp at hk
-      · intro s k hk; simp at hk
-      · intro t k hk; simp at hk
-      · simp
-      · simp only [Array.toList_empty, serTerms, emptyWithCapacity_data]
-    cases hl : binLoop { terms := ByteArray.emptyWithCapacity (32 * qs.length),
-                         quads := ByteArray.emptyWithCapacity (16 * qs.length) } qs with
+      · intro s k hk; simp [BinState.init] at hk
+      · intro s k hk; simp [BinState.init] at hk
+      · intro t k hk; simp [BinState.init] at hk
+      · simp [BinState.init]
+      · show serTerms (Array.emptyWithCapacity qs.length).toList = some (ByteArray.emptyWithCapacity (32 * qs.length)).data.toList
+        rw [emptyWithCapacity_data]; rfl
+    cases hl : binLoop (BinState.init qs.length) qs with
     | none => rw [hl] at h; exact absurd h (by simp)
     | some st =>
       rw [hl] at h
@@ -780,14 +779,14 @@ theorem quadsBin_binSpec {qs : List TermJson.Quad} {r : ByteArray} (h : quadsBin
       subst h
       obtain ⟨i, -, ixs, b, hb, hd, hx, hlen⟩ := binLoop_inv qs _ st init hl
       have u := binLoop_uniq qs _ st init
-        ⟨fun k hk => by simp at hk, fun k t hk => by simp at hk⟩ hl
+        ⟨fun k hk => by simp [BinState.init] at hk, fun k t hk => by simp [BinState.init] at hk⟩ hl
       refine ⟨st.tbl, ixs, ?_, ?_, u.nodup, fun t ht => ?_⟩
       · unfold binSpec
         rw [if_pos ⟨i.size, by rw [hlen]; exact hn⟩, i.terms, hb]
         dsimp only
         rw [ByteArray.data_append, Array.toList_append, ByteArray.data_append, Array.toList_append,
           putU32_data, putU32_data, putU32_data, hd, hlen]
-        simp only [emptyWithCapacity_data] at hd ⊢
+        simp only [BinState.init, emptyWithCapacity_data] at hd ⊢
         simp [hd, writeU32LE_magic, List.append_assoc]
       · rw [decodeCompactArr, decodeCompactLoop_eq, hx]
         simp
