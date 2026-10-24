@@ -2294,6 +2294,14 @@ On commit `6d7ca45c` (exit codes read):
 | `tools/land-gates.sh` | exit 0 (LAND GATES PASSED): native-smoke 377 pass, 0 fail, 4 xfail (out of 381), cli-smoke 151 pass, 0 fail, 5 xfail (out of 156), LWS scaling 21 pass, 0 fail (out of 21), host-purity-lint 40 pass, 0 fail (out of 40) |
 | `sorry`, `native_decide`, `axiom`, `maxHeartbeats` in the Lean diff | none |
 
+After `origin/main` moved (`eea5bb40`), the merge (`055c0c2e`, no conflict):
+`lake build` exit 0; `tests/sbm11/run.sh` exit 0 (3,379 pass, 0 fail, 28
+expected-fail, out of 3,407); `threads.sh` exit 0 (all answers identical,
+DBpedia equal 76, different 0); census at 4 threads exit 0 (605 matched);
+unbuilt-modules exit 0 (1,043 modules reached); tail-recursion exit 0;
+csimp-reach exit 0; `tools/land-gates.sh` exit 0 (native-smoke 377 pass, 0
+fail, 4 xfail, out of 381; cli-smoke 151 pass, 0 fail, 5 xfail, out of 156).
+
 The hang: `ids-path-star-nested` is a property path (`ex:a (ex:knows*)* ?o`)
 with no scan with candidates, so it does not run the code of this stage. It
 did not occur again in 1,350 runs (both binaries, 4 and 8 threads, with a
