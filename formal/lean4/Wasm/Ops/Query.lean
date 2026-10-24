@@ -183,8 +183,7 @@ theorem queryParsedDatasetWith_congr (ds : Dataset) {L L' : L4Factoidal.Dataflow
     (base now : Option String) :
     queryParsedDatasetWith ds (some L) sparql extra extIris services version base now =
       queryParsedDatasetWith ds (some L') sparql extra extIris services version base now := by
-  simp only [queryParsedDatasetWith, L4Factoidal.Dataflow.LawfulDataset.runSelect,
-    L4Factoidal.Dataflow.LawfulDataset.runAsk, Option.bind_some, h]
+  simp only [queryParsedDatasetWith, Option.map_some, h]
 
 /-- `queryParsedDataset` over a dataset that carries its set proof
 (`CertifiedDataset`): the record of `LawfulDataset.ofCertified`, whose law

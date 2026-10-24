@@ -117,15 +117,12 @@ example (inp : EvalInput) (t : List TriplePattern) (h : inp.query.form = .constr
   | none => false
 
 /-- The inputs the wasm query ops build are well formed, given a set dataset
-with IRI graph names (and, until https://github.com/danbri/factoidal/issues/1001
-lands, no upper-case language tag). -/
+with IRI graph names. -/
 example (env : EvalEnv) (d : Dataset) (q : Query) (hset : d.IsSet)
     (hiri : Storage.QuadDataset.namesAreIris d = true)
-    (hdf : Storage.Sbm11.AllowedPerm.GraphFixed d.default)
-    (hnf : ∀ ng ∈ d.named, Storage.Sbm11.AllowedPerm.GraphFixed ng.graph)
     (he : env.dataset = some d) :
     EvalInput.Wf { env, ds := d, backend := some (indexedDatasetBackend d), query := q } :=
-  EvalInput.wf_indexed env d q hset hiri hdf hnf he
+  EvalInput.wf_indexed env d q hset hiri he
 
 /-- A well-formed input not in the assumed class satisfies the contract. -/
 example (inp : EvalInput) (hw : inp.Wf) (ha : ¬ shippedEvaluator.assumed_contractOn inp) :

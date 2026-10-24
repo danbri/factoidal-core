@@ -568,7 +568,7 @@ def registry : List Entry := [
     contract := ``LawfulWhereContract, status := .proved
     theorems := [``LawfulDataset.where_allowed, ``LawfulDataset.graphRel_rows, ``LawfulDataset.namedRel_rows,
       ``L4Factoidal.Storage.BackendRefinement.evalPatternBackend_allowed]
-    note := "NativeFrag; premises: named assumptions, IRI names of the named backends, every row object its own join key (data condition, not a store law); over the dataset the record enumerates" },
+    note := "NativeFrag; premises: named assumptions, IRI names of the named backends (data condition, not a store law); over the dataset the record enumerates; the row-object premise was removed with PR 57 (issue 1001)" },
   { area := "COTTAS store", dir := "Cottas"
     wireIn := "Dataset", wireOut := "bytes", status := .missing
     theorems := [``L4Factoidal.Cottas.cotd_dictInjective]
