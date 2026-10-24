@@ -203,7 +203,11 @@ Tracking: <https://github.com/danbri/factoidal/issues/664>.
   the compiled evaluator via `Lean.ofReduceBool`). Partial functions
   (`partial def`) also count as debt. New semantic, SPARQL, storage, and block-
   engine definitions must be total. Existing partial declarations outside
-  those areas are measured above and tracked separately.
+  those areas are measured above and tracked separately. An `IO` loop that
+  ends on an outside event (stop flag, another thread's value, a socket) is
+  written with `repeat`/`while` in `do` notation, not as a `partial def`
+  (owner, 2026-10-23; CLAUDE.md "Loops yes, new partial def no";
+  `Harness/WorkerPool.lean` `workerLoop` and `Cell.take` are the examples).
 - Audit: `#print axioms <theorem>`. Acceptable base is exactly
   `propext`, `Classical.choice`, `Quot.sound` (Lean's standard
   foundations). `Tests.lean` keeps audit lines on the headline

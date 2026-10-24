@@ -99,11 +99,13 @@ def Cell.take? {α : Type} (c : Cell α) (spinNs : Nat) : IO (Option α) := do
   let _ ← IO.wait p.result?
   c.val.swap none
 
-/-- Take the value, blocking as often as needed. -/
-partial def Cell.take {α : Type} (c : Cell α) (spinNs : Nat) : IO α := do
-  match ← c.take? spinNs with
-  | some a => return a
-  | none => c.take spinNs
+/-- Take the value, blocking as often as needed. A loop, not a recursion: it
+    ends when a writer puts a value, an outside event with no termination
+    measure, and it keeps one frame however often `notify` wakes it empty. -/
+def Cell.take {α : Type} (c : Cell α) (spinNs : Nat) : IO α := do
+  repeat
+    if let some a ← c.take? spinNs then return a
+  throw (IO.userError "WorkerPool.Cell.take: loop ended without a value")
 
 /-! ## The pool -/
 
@@ -123,11 +125,12 @@ structure Pool (σ : Type) where
 /-- The loop of one worker thread: run the jobs of the mailbox in the order
     they were posted; an error that escapes a job is dropped, so the worker
     stays up (`spawnOn` gives each job a cell for its own result). -/
-partial def workerLoop {σ : Type} (w : Worker σ) (st : σ) (spinNs : Nat) : IO Unit := do
-  if ← w.stop.get then return
-  if let some js ← w.mail.take? spinNs then
-    js.reverse.forM fun j => do let _ ← (j st).toBaseIO
-  workerLoop w st spinNs
+-- A loop that ends when the stop flag is set (an outside event), in one frame.
+def workerLoop {σ : Type} (w : Worker σ) (st : σ) (spinNs : Nat) : IO Unit := do
+  repeat
+    if ← w.stop.get then return
+    if let some js ← w.mail.take? spinNs then
+      js.reverse.forM fun j => do let _ ← (j st).toBaseIO
 
 /-- Start `n` worker threads that poll for `spinNs` nanoseconds before they
     block. Each thread first runs `mk` and keeps its value for its jobs. -/

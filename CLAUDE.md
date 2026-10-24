@@ -821,6 +821,27 @@ https://github.com/danbri/factoidal/issues/914 (moving resources).
    notifications sent as XMPP messages. Issues are linked from
    https://github.com/danbri/factoidal/issues/901.
 
+### Loops yes, new partial def no (owner, 2026-10-23)
+
+> "Re partial def, I don't want more non-proofy code but loops aren't
+> inherently evil. Sometimes we have chosen a looping construct to avoid eg a
+> fueled deep recursion blowing up memory use unpredictably, rather than a
+> fixed usage making streaming processors more feasible."
+
+- No new `partial def` (`tools/lean-hygiene-audit.py`; the baseline does not
+  go up).
+- An `IO` loop that ends on an outside event (a worker's stop flag, a value
+  from another thread, a socket) is a `repeat`/`while` loop in `do` notation,
+  with a comment that names the event. `repeat` runs on Lean core's own loop,
+  so it proves nothing about termination; it keeps the code out of new opaque
+  declarations and in one frame.
+- Work over input-proportional data is a loop or a tail call with fixed
+  memory, total, with theorems where a property is claimed.
+- Cost of not having this rule: on 2026-10-23 two such loops in
+  `Harness/WorkerPool.lean` were written as `partial def`, the count went to
+  165 against the baseline 163, and "Verify Lean 4 corpus" on main was red for
+  about a day (https://github.com/danbri/factoidal/issues/965).
+
 ## Reading owner steers: prioritization is not prohibition
 
 The owner usually steers this project from a phone, between other

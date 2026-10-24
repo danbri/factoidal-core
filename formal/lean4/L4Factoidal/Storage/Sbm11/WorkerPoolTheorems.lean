@@ -29,7 +29,7 @@ namespace L4Factoidal.Storage.Sbm11.IdQuery
 open L4Factoidal.Qlvr (Table mergeJoin mergeSortBy)
 open L4Factoidal.SPARQL (EvalResult)
 open L4Factoidal.Storage.Sbm11.ParallelJoin (mapPar mapPar_eq mergeJoinRanges rangeChunks
-  rangePairsOf concatPairs mergeJoinRanges_rangeChunks)
+  rangePairsOf concatPairs mergeJoinRanges_rangeChunks rangeChunksShare mergeJoinRanges_rangeChunksShare)
 
 /-! ## The divided merge join -/
 
@@ -42,11 +42,11 @@ theorem mergeJoinParM_eq {m : Type → Type} [Monad m] [LawfulMonad m] (par : Op
     (hB : ∀ x y, x ≤ y → y < r.rows →
       (r.at ((r.idx v).getD 0) x).toNat ≤ (r.at ((r.idx v).getD 0) y).toNat) :
     mergeJoinParM par l r v = pure (mergeJoin l r v) := by
-  have hR : ∀ k, L4Factoidal.Qlvr.joinOutput l r (L4Factoidal.Qlvr.joinVars l r).1
+  have hR : ∀ k f, L4Factoidal.Qlvr.joinOutput l r (L4Factoidal.Qlvr.joinVars l r).1
       (L4Factoidal.Qlvr.joinVars l r).2
-      (concatPairs ((rangeChunks l.rows k).map (rangePairsOf l r v))).1
-      (concatPairs ((rangeChunks l.rows k).map (rangePairsOf l r v))).2 (some v) =
-      mergeJoin l r v := fun k => mergeJoinRanges_rangeChunks l r v k hA hB
+      (concatPairs ((rangeChunksShare l.rows k f).map (rangePairsOf l r v))).1
+      (concatPairs ((rangeChunksShare l.rows k f).map (rangePairsOf l r v))).2 (some v) =
+      mergeJoin l r v := fun k f => mergeJoinRanges_rangeChunksShare l r v k f hA hB
   cases par with
   | none => rfl
   | some p =>
@@ -58,10 +58,10 @@ theorem mergeJoinParM_eq {m : Type → Type} [Monad m] [LawfulMonad m] (par : Op
       | (cases hmp : p.mapList with
           | none =>
             simp only [mapPar_eq, pure_bind]
-            exact congrArg pure (hR _)
+            exact congrArg pure (hR _ _)
           | some mp =>
             simp only [hmap p rfl mp hmp, ExceptT.lift_pure, pure_bind]
-            exact congrArg pure (hR _))
+            exact congrArg pure (hR _ _))
 
 /-! ## The ORDER BY ranks -/
 

@@ -66,6 +66,26 @@ def rangesAcc (n step : Nat) : Nat → Nat → List (Nat × Nat) → List (Nat �
 def ranges (n k : Nat) : List (Nat × Nat) :=
   rangesAcc n (max 1 ((n + k - 1) / max k 1)) k 0 []
 
+/-- The length of the first range of `rangesShare n k f`: `f / 10` of an
+    equal share of `n` in `k` ranges, at most `n`. -/
+def shareLen (n k f : Nat) : Nat := min n (n * f / (10 * max k 1))
+
+/-- Consecutive ranges that cover `[0, n)` in order (stage 1p of
+    docs/designissues/2026-10-12-parallel-block-scans.md, issue 961): the
+    first (the calling thread's range of a divided merge join) of `f / 10`
+    of an equal share of `k` ranges (`shareLen`), the others nearly equal.
+    `f = 10`, `k < 2`, or a first range that is empty or everything:
+    `ranges n k`. At most `k` ranges. -/
+def rangesShare (n k f : Nat) : List (Nat × Nat) :=
+  if f == 10 || k < 2 || shareLen n k f == 0 || shareLen n k f == n then ranges n k
+  else rangesAcc n (max 1 ((n - shareLen n k f + (k - 1) - 1) / (k - 1))) (k - 2) (shareLen n k f)
+    [(0, shareLen n k f)]
+
+def rangeChunksShare (n k f : Nat) : List (List Nat) := (rangesShare n k f).map fun (lo, hi) => [lo, hi]
+
+#guard rangesShare 100 4 10 == ranges 100 4
+#guard rangesShare 100 4 16 == [(0, 40), (40, 60), (60, 80), (80, 100)]
+
 /-- The other shared columns of the join of `l` and `r` on `v` (the columns
     `Qlvr.mergeJoin` compares after the join column). -/
 def otherCols (l r : Table) (v : String) : Array (Nat × Nat) :=

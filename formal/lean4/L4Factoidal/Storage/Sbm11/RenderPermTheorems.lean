@@ -851,8 +851,14 @@ from it (`IdQuery.unpackWords`); the array is the calling thread's. -/
 
 open L4Factoidal.Storage.Sbm11.TableTheorems (ColHolds)
 
+/-- `packWords` appends with `FrameWords.put64F` (one inline C store); its
+    Lean meaning is the eight pushes of `Side.put64`. -/
+theorem packWords_eq_put64 (xs : Array UInt64) :
+    packWords xs = xs.foldl (fun b x => L4Factoidal.Qlvr.Side.put64 b x) (ByteArray.emptyWithCapacity (8 * xs.size)) :=
+  rfl
+
 theorem packWords_holds (xs : Array UInt64) : ColHolds (packWords xs) xs.toList := by
-  unfold packWords
+  rw [packWords_eq_put64]
   rw [← Array.foldl_toList]
   have : ∀ (l : List UInt64) (b : ByteArray) (ys : List UInt64), ColHolds b ys →
       ColHolds (l.foldl (fun b x => L4Factoidal.Qlvr.Side.put64 b x) b) (ys ++ l) := by

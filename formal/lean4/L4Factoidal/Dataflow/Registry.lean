@@ -33,6 +33,7 @@ import L4Factoidal.Dataflow.Instances
 import L4Factoidal.Dataflow.PhaseD
 import L4Factoidal.Dataflow.PhaseE
 import L4Factoidal.Dataflow.PhaseC
+import L4Factoidal.Dataflow.PhaseStorage
 import L4Factoidal.Unified.OwlRlAdequacy
 import L4Factoidal.Storage.BlockDenotation
 import L4Factoidal.SPARQL.FromMergeStage
@@ -327,30 +328,78 @@ def registry : List Entry := [
     wireIn := "files", wireOut := "id table", status := .tested
     tests := ["SBM11 gate (tests/sbm11/run.sh)"] },
   { area := "SBM11 delta overlay (INSERT, DELETE, CREATE)", dir := "Storage"
-    wireIn := "update log", wireOut := "Dataset", status := .missing
+    stage := ``sbm11OverlayStage, wireIn := "State × Op (one log entry)", wireOut := "State"
+    contract := ``OverlayStepContract, status := .proved
     theorems := [``L4Factoidal.Storage.Sbm11.Overlay.overlayDen_add,
       ``L4Factoidal.Storage.Sbm11.Overlay.overlayDen_remove,
-      ``L4Factoidal.Storage.Sbm11.OverlayDict.overlay_dictInjective]
-    note := "denotation theorems exist; no stage; HeldFolded open" },
-  { area := "Block stores (BlockMvp, IndexedBlock, IBK4, IBK5)", dir := "Storage"
-    wireIn := "Dataset", wireOut := "bytes", status := .missing
-    theorems := [``L4Factoidal.Storage.IndexedBlock.Block.den_eq_ofRows,
-      ``L4Factoidal.Storage.IndexedBlockWireV4.den_decode_encode?,
-      ``L4Factoidal.Storage.IndexedBlock.fromParts?_foldedDictInjective,
-      ``L4Factoidal.Storage.StoreDictTheorems.v4_fromParts?_foldedDictInjective,
-      ``L4Factoidal.Storage.StoreDictTheorems.v5_fromParts?_foldedDictInjective]
-    note := "one id per RDF term: tags folded at pack and at read (issue 977)" },
+      ``L4Factoidal.Storage.Sbm11.Overlay.overlayDen_remove_sbm11_vocab,
+      ``L4Factoidal.Storage.Sbm11.Overlay.heldFolded_sbm11,
+      ``L4Factoidal.Storage.Sbm11.Overlay.overlayDen_create_names,
+      ``L4Factoidal.Storage.Sbm11.Overlay.overlayDen_create_graph,
+      ``L4Factoidal.Storage.Sbm11.OverlayDict.overlay_dictInjective,
+      ``sbm11OverlayStage_add, ``sbm11OverlayStage_remove]
+    note := "HeldFolded proved (heldFolded_sbm11); open: that Session.idOrNew computes vocabAddAll, CLEAR and DROP (no denotation theorem), replay of a log" },
+  { area := "Block store IBK3 (one graph): write, then read", dir := "Storage"
+    stage := ``ibk3RoundTripStage, wireIn := "IndexedBlock.Block", wireOut := "IndexedBlock.Block (through bytes)"
+    contract := ``BlockDenEq, status := .proved
+    theorems := [``L4Factoidal.Storage.IndexedBlockWireV3.den_decode_encode?,
+      ``L4Factoidal.Storage.IndexedBlock.Block.den_eq_ofRows,
+      ``L4Factoidal.Storage.IndexedBlock.fromParts?_foldedDictInjective, ``ibk3RoundTrip_den]
+    note := "den of the block read back = den of the block written; one id per RDF term (issue 977)" },
+  { area := "Block store IBK4 (quads): write, then read", dir := "Storage"
+    stage := ``ibk4RoundTripStage, wireIn := "QuadBlock (IBK4)", wireOut := "QuadBlock (through bytes)"
+    contract := ``Ibk4DenEq, status := .proved
+    theorems := [``L4Factoidal.Storage.IndexedBlockWireV4.den_decode_encode?,
+      ``L4Factoidal.Storage.StoreDictTheorems.v4_fromParts?_foldedDictInjective, ``ibk4RoundTrip_den]
+    note := "den preserved; a quad block cannot hold an empty named graph (den_names_nonempty, issue 880)" },
+  { area := "Block store IBK5 (quads, out-of-line literals): write, then read", dir := "Storage"
+    stage := ``ibk5RoundTripStage, wireIn := "QuadBlock (IBK5)", wireOut := "QuadBlock (through bytes)"
+    contract := ``Ibk5DenEq, status := .proved
+    theorems := [``L4Factoidal.Storage.IndexedBlockWireV5.den?_decode_encode?,
+      ``L4Factoidal.Storage.IndexedBlockWireV5.den?_decode_encode?_toWire,
+      ``L4Factoidal.Storage.StoreDictTheorems.v5_fromParts?_foldedDictInjective, ``ibk5RoundTrip_den]
+    note := "den? equal for every hash function and blob lookup" },
+  { area := "Block store IBK3: build from a graph (fromGraph), write, then read", dir := "Storage"
+    stage := ``ibk3BuildWriteReadStage, wireIn := "Graph", wireOut := "IndexedBlock.Block (through bytes)"
+    contract := ``Ibk3BuildDen, status := .proved
+    theorems := [``L4Factoidal.Storage.IndexedBlock.fromGraph_denotes,
+      ``L4Factoidal.Storage.IndexedBlock.fromGraph_den,
+      ``L4Factoidal.Storage.IndexedBlockWireV3.den_decode_encode?_fromGraph, ``ibk3BuildWriteRead_den]
+    note := "den of the block read back = graphDen of the input graph; no Dataset.IsSet hypothesis; the rows decode to the input with terms folded (issue 977); BlockMvp is built by its record constructor (den = graphDen of its rows by definition) and has no wire format" },
+  { area := "Block store IBK4: build from quads (fromQuads), write, then read", dir := "Storage"
+    stage := ``ibk4BuildWriteReadStage, wireIn := "List (Option Subject × Triple)", wireOut := "QuadBlock (IBK4, through bytes)"
+    contract := ``Ibk4BuildDen, status := .proved
+    theorems := [``L4Factoidal.Storage.IndexedBlockWireV4.fromQuads_denotes,
+      ``L4Factoidal.Storage.IndexedBlockWireV4.fromQuads_den,
+      ``L4Factoidal.Storage.IndexedBlockWireV4.fromQuads_listQuads_den,
+      ``L4Factoidal.Storage.IndexedBlockWireV4.den_decode_encode?_fromQuads,
+      ``ibk4BuildWriteRead_den, ``ibk4BuildWriteRead_dataset]
+    note := "den read back = DatasetDen.ofQuads of the input; for a Dataset, ds.den when no named graph is empty (issue 880)" },
+  { area := "Block store IBK5: build from RDF quads (toWire), write, then read", dir := "Storage"
+    stage := ``ibk5BuildWriteReadStage, wireIn := "List (Option Subject × Triple)", wireOut := "QuadBlock (IBK5, through bytes)"
+    contract := ``Ibk5BuildDen, status := .proved
+    theorems := [``L4Factoidal.Storage.IndexedBlockWireV5.fromQuads_denotes,
+      ``L4Factoidal.Storage.TermWireV2.resolve_foldWire,
+      ``L4Factoidal.Storage.IndexedBlockWireV5.den?_fromRdfQuads,
+      ``L4Factoidal.Storage.IndexedBlockWireV5.den?_decode_encode?_fromRdfQuads, ``ibk5BuildWriteRead_den]
+    note := "den? read back = some (ofQuads input) when the blob lookup resolves each object (premise of the contract; TermWireV2.resolve_toWire gives it for the packer's own lookup)" },
   { area := "Store interface StoreCaps (planner)", dir := "SPARQL"
-    wireIn := "PatternBound", wireOut := "List Triple", status := .missing
-    note := "no denotation (phase B1)" },
+    stage := ``storeSearchStage, wireIn := "PatternBound", wireOut := "List Triple"
+    contract := ``SearchContract, status := .proved
+    theorems := [``L4Factoidal.SPARQL.StoreBackend.capsOfBackend_exact,
+      ``L4Factoidal.SPARQL.StoreBackend.backendSearch_exact,
+      ``L4Factoidal.SPARQL.StoreBackend.backendSearch_nodupKeys,
+      ``L4Factoidal.RDF.capsOfIndexed_default_denotes, ``L4Factoidal.RDF.unionCaps_exact,
+      ``L4Factoidal.RDF.overlay_exact, ``backendExact_indexed_default, ``indexedDefaultSearch_sound]
+    note := "StoreCapsExact (RDF/StoreCapsDenotation.lean); premise BackendExact: list and index from Dataset.IsSet; HDT and COTTAS readers rest on BackendReadOpsExact, CottasReadOpsExact (not proved); RML on RmlPushdownInvisible (open)" },
   { area := "COTTAS store", dir := "Cottas"
     wireIn := "Dataset", wireOut := "bytes", status := .missing
     theorems := [``L4Factoidal.Cottas.cotd_dictInjective]
-    note := ".dict term layer: one id per RDF term when termRoundTripsAll holds (issue 977)" },
+    note := "only the .dict term layer is proved (one id per RDF term when termRoundTripsAll holds, issue 977); missing: a theorem that the triples the reader returns from the bytes of serializeCottas denote the dataset written; the StoreCaps reader law CottasReadOpsExact is an assumption" },
   { area := "HDT store", dir := "HDT"
     wireIn := "Dataset", wireOut := "bytes", status := .missing
     theorems := [``L4Factoidal.HDT.hdt_dictInjective]
-    note := "tags folded at read; one id per RDF term when roundTripsAll holds (issue 977)" },
+    note := "only the dictionary layer is proved (one id per RDF term when roundTripsAll holds, issue 977); missing: a theorem that the triples read from an HDT file denote a dataset, and a writer; the reader law BackendReadOpsExact is an assumption" },
   { area := "Planner SELECT over the kept entries", dir := "Storage"
     stage := ``plannerSelectStage, wireIn := "Dataset", wireOut := "SolutionSeq"
     contract := ``PlannerSelectContract, status := .proved
