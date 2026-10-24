@@ -2145,3 +2145,167 @@ stage's files; issue https://github.com/danbri/factoidal/issues/978.
   VM (1i.2).
 
 Issue https://github.com/danbri/factoidal/issues/961 stays open.
+
+## Stage 1m: q07, where the 4-thread time goes after stage 1l (2026-10-24)
+
+Issue https://github.com/danbri/factoidal/issues/961, key result KR 1.2 of
+https://github.com/danbri/factoidal/issues/875. No allocator setting changed;
+the block-bytes rule of `tests/sbm11/threads.sh` and `SBM11_STREAM_JOBS` are
+not changed. Branch `batch3/kr12-q07c`.
+
+### 1m.1 Result
+
+KR 1.2 is met for d10, q19 and q21; it is not met for q07 (0.53). One change
+landed: the block ranges of a scan with candidates are cut at equal estimated
+work (1m.3). Its effect on q07 at 4 threads is 2.33 to 2.24 ms, which is
+inside the variation between processes. Final interleaved run, binary of
+`main` `7909fa00` against this stage (`6d7ca45c`), 16 rounds (15 kept),
+`--repeat 21`, 2026-10-24 00:45 to 00:49 UTC, after all gates had ended (raw
+CSV `.claude-runs/kr12m/final.csv`, not in the repository):
+
+| Query | `main` 1 / 4 threads ms | 4/1 | this stage 1 / 4 threads ms | 4/1 | peak RSS 4/1 (largest), main / this stage | target met |
+| --- | ---: | ---: | ---: | ---: | ---: | --- |
+| q07 | 4.42 / 2.33 | 0.53 | 4.24 / 2.24 | 0.53 | 1.14 / 1.14 | no |
+| q19 | 32.21 / 10.42 | 0.32 | 32.95 / 10.43 | 0.32 | 1.83 / 1.83 | yes |
+| q21 | 87.80 / 25.88 | 0.29 | 87.50 / 26.70 | 0.31 | 1.70 / 1.69 | yes |
+| d10 | 8.79 / 3.08 | 0.35 | 8.61 / 2.95 | 0.34 | 1.15 / 1.15 | yes |
+
+The change runs only in scans with candidates; q19, q21 and d10 have none at
+the scale measured, so their differences are the variation between
+processes (q21 at 4 threads: 25.0 to 34.9 ms for single processes of either
+binary).
+
+### 1m.2 Measurements
+
+`SBM11_PHASES=1`, 101 runs per process, 5 to 10 processes per cell, binary of
+`main`, q07 at 1 and at 4 threads (ms, median over processes):
+
+| Phase | 1 thread | 4 threads |
+| --- | ---: | ---: |
+| constants | 0.03 | 0.04 |
+| first scan (2 blocks, 8,192 rows) | 0.16 | 0.12 |
+| scan0 (4 blocks) | 0.20 | 0.12 |
+| join0 (merge join, 6,248 and 13,369 rows) | 0.38 | 0.18 |
+| scan2 (with candidates: 312, 66 blocks, 50 read) | 1.65 | 0.62 to 0.72 |
+| scan3 (with candidates: 290, 34 blocks, 33 read) | 1.18 | 0.51 to 0.57 |
+| joins 2 and 3 | 0.07 | 0.07 |
+| ORDER BY keys | 0.17 | 0.19 |
+| render | 0.23 | 0.25 |
+| total | 4.14 | 2.24 |
+
+The target 0.40 needs about 1.66 ms at 4 threads. If the two scans with
+candidates took a quarter of their 1-thread time (0.71 ms together), q07 at 4
+threads would be about 1.81 ms: the serial phases alone (about 1.0 ms at 4
+threads) keep the ratio above 0.4.
+
+Why the scans with candidates do not reach 4 times (temporary marks, not
+committed; `SBM11_SIP_TRACE` in the branch history only):
+
+- Per-range setup and the end of the phase are small: from the entry of
+  `scanSipTableParM` to the last task started 11 to 15 microseconds, from the
+  last range to the end 11 to 20 microseconds.
+- A block costs more at 4 threads: timed one by one (each block a job of a
+  shared counter, 61 runs), a block that is read takes 30 to 54 microseconds,
+  and the blocks of one scan sum to 1.87 ms at 4 threads against 1.65 ms for
+  the whole scan at 1 thread (scan2). Over both scans the time per block is
+  about 25 percent higher at 4 threads, on the calling thread and on the pool
+  workers alike. Four separate 1-thread processes run at the same time take
+  1.60 to 1.83 ms each for scan2 (alone: 1.66 to 1.79 ms), so the cost is in
+  the process, not in the machine. Its cause is not found (as in stage 1h).
+  CPU per warm run (`perf record -F 4999`, 500 runs): the two candidate loops
+  `Sip.deltaGatherGoY` and `Sip.deltaFindGoY` 2.51 ms at 1 thread and 2.68 ms
+  at 4 threads; `lean_dec_ref_cold` 0.03 and 0.22 ms; `ScanSpec.fresh` with
+  the copy of the candidates (an `Array UInt64` of boxed words) 0.11 ms at 4
+  threads.
+- The ranges were unequal: with equal block counts the largest of the four
+  ranges held 1.12 to 1.20 times the mean of the join-key values tested,
+  because a block that the candidates rule out costs 1 microsecond. 1m.3
+  removes this.
+- The time of one range varies by up to 3 times between runs for the same
+  blocks (scan0: 52 to 149 microseconds for one block), and the phase waits
+  for the slowest of four.
+
+### 1m.3 What changed
+
+`scanSipTableParM` cuts the selected blocks at the points where the rows of
+the blocks that will be read reach `j / n` of their total
+(`ParallelScan.weightCuts`; a block weighs its rows when `selects`, `sipRange`
+and `Sip.mayHold` let it through, else 0), as bounds of consecutive positions
+(`ParallelScan.cutBounds`). Phases at 4 threads, 10 processes per variant
+interleaved: scan2 0.722 to 0.695 ms, scan3 0.568 to 0.548 ms.
+
+Proved (`ParallelScan.lean`, `ParallelSipTheorems.lean`; axioms `propext`,
+`Classical.choice`, `Quot.sound`):
+
+- `cutBounds_flatten`: for any list of cut points, the ranges concatenate to
+  `List.range n`.
+- `parallel_sip_acc_eq_parts`: the parallel scan with candidates over any
+  partition of the block list (ranges whose concatenation is the list) equals
+  the single scan; `parallel_sip_acc_eq_cut` for the ranges of `cutBounds`.
+  The hypotheses are those of `parallel_sip_acc_eq`; none states the
+  conclusion.
+
+### 1m.4 Tried and not kept
+
+Each measured with the variants interleaved, phases at 4 threads unless
+stated:
+
+- Each block of a scan with candidates as a job of a shared counter
+  (`IO.Ref.modifyGet`), the parent placing the block tables in order: ranges
+  equal, but each thread spent 50 to 100 microseconds more outside the block
+  scans; scan2 0.623 to 0.685 ms. Granules of 2 and 3 weighted ranges per
+  thread: no change larger than the variation.
+- The ranges through `parFold` (dynamic, 1 to 4 ranges per thread): scan2
+  0.63 to 0.73 to 0.83 ms.
+- The calling thread's range with its own view and copies, as the tasks do:
+  scan2 0.655 to 0.718 ms.
+- A pause instruction after each empty poll of a pool cell (1, 4 or 16
+  times): no change. Shorter polls (`SBM11_SPIN_NS` 20,000 and 200,000):
+  slower (total 2.34 to 3.35 and 2.59 ms).
+- The rendering built on the pool from key slices that the calling thread
+  read first: reading the 626 keys took 0.12 ms and building the text on 4
+  threads 0.16 ms, against 0.27 ms for the rendering on one thread; the next
+  run's first phases were also slower (constants 0.04 to 0.08 ms: the shared
+  pages are then multi-threaded objects).
+
+### 1m.5 For the owner: one open file per permutation
+
+`l4_block_pread` opens, stats and closes the file for every read. An
+experiment that kept one open file per thread (`L4_FDCACHE`, not committed):
+phases at 1 thread scan2 1.79 to 1.56 ms, total 4.44 to 3.90 ms (5
+processes); at 4 threads total 2.34 to 2.17 ms (10 processes). In the final
+interleaved run the difference was smaller: q07 4.24 / 2.24 against
+4.26 / 2.17 ms, q19 32.95 / 10.43 against 31.88 / 10.30 ms. The change is
+faster at both thread counts, and it makes the 4/1 ratio of KR 1.2 worse when
+the 1-thread time gains more. A version to land keeps the descriptor in the
+session's permutation handle and closes it with the session.
+
+### 1m.6 Gates
+
+On commit `6d7ca45c` (exit codes read):
+
+| Gate | Result |
+| --- | --- |
+| `lake build` | exit 0 |
+| `tests/sbm11/run.sh` | exit 0: 3,379 pass, 0 fail, 28 expected-fail (out of 3,407) |
+| `tests/sbm11/threads.sh` | first run exit 1: `gate ids-path-star-nested` at 4 threads exit 124 (the 600-second limit); second run exit 0: gate and gate2 347 identical, olympics 21, 2 and 2, DBpedia 19; DBpedia against the three-engine record: equal 76, different 0 |
+| `SBM11_THREADS=4 tests/sbm11/census.sh` | exit 0: 605 matched the reference engine |
+| `lean-unbuilt-modules.py --gate`, `lean-tail-recursion-audit.py --gate`, `lean-csimp-reach.py --gate` | exit 0 (1,027 modules reached), exit 0, exit 0 |
+| `tools/land-gates.sh` | exit 0 (LAND GATES PASSED): native-smoke 377 pass, 0 fail, 4 xfail (out of 381), cli-smoke 151 pass, 0 fail, 5 xfail (out of 156), LWS scaling 21 pass, 0 fail (out of 21), host-purity-lint 40 pass, 0 fail (out of 40) |
+| `sorry`, `native_decide`, `axiom`, `maxHeartbeats` in the Lean diff | none |
+
+The hang: `ids-path-star-nested` is a property path (`ex:a (ex:knows*)* ?o`)
+with no scan with candidates, so it does not run the code of this stage. It
+did not occur again in 1,350 runs (both binaries, 4 and 8 threads, with a
+second query running beside it). It is recorded in
+https://github.com/danbri/factoidal/issues/961.
+
+### 1m.7 What remains
+
+- q07 (0.53): about 1.0 ms of serial work at 4 threads (first scans and join
+  0.42, ORDER BY keys and rendering 0.44, joins and constants 0.11), and the
+  scans with candidates at about 25 percent more time per block than at 1
+  thread, cause not found (1m.2).
+- The rare hang of 1m.6.
+
+Issue https://github.com/danbri/factoidal/issues/961 stays open.
