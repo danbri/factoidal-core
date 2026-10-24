@@ -19,7 +19,11 @@ Status:
   interface type, `Dataflow/Reader.lean`), whose `sound` field is a proof;
   `contract` names its contract; `theorems` names the component theorems it
   uses.
-* `assumed`: `stage` is an `IOStage`; `ioAssumptions` names the assumption.
+* `assumed`: `stage` is an `IOStage`, or a data-access interface value
+  (`LawfulStore`, `LawfulDataset`, `Dataflow/Store.lean`) whose law rests on a
+  named assumption; `ioAssumptions` names the assumption.
+* A `LawfulStore` or `LawfulDataset` value with no named assumption is
+  `proved` like a `Stage`: its law is a field.
 * `tested`: no Lean contract; `tests` names the test suite that checks the
   behaviour against the W3C test files (scores in `skills/test-suites`).
 * `missing`: no Lean stage contract and no suite named here. `theorems` may
@@ -35,6 +39,7 @@ import L4Factoidal.Dataflow.PhaseD
 import L4Factoidal.Dataflow.PhaseE
 import L4Factoidal.Dataflow.PhaseC
 import L4Factoidal.Dataflow.PhaseStorage
+import L4Factoidal.Dataflow.StoreTheorems
 import L4Factoidal.Unified.OwlRlAdequacy
 import L4Factoidal.Storage.BlockDenotation
 import L4Factoidal.SPARQL.FromMergeStage
@@ -74,7 +79,7 @@ structure Entry where
 /-- What the `stage` field names, as the report reads it from the environment:
 a `Stage` value, an `IOStage` value, nothing, or another declaration. -/
 inductive StageKind where
-  | stage | ioStage | none | other
+  | stage | ioStage | iface | none | other
   deriving Repr, DecidableEq, Inhabited
 
 /-- `Name.anonymous`: the field names nothing. -/
@@ -91,11 +96,11 @@ def Entry.statusError (e : Entry) (k : StageKind) : Option String :=
   | .proved =>
     if isNone e.stage || isNone e.contract || e.theorems.isEmpty then
       some "proved needs a stage, a contract and theorems"
-    else if k != .stage then some s!"proved: {e.stage} is not a Stage"
+    else if k != .stage && k != .iface then some s!"proved: {e.stage} is not a Stage"
     else Option.none
   | .assumed =>
     if e.ioAssumptions.isEmpty then some "assumed needs a named IO assumption"
-    else if k != .ioStage then some s!"assumed: {e.stage} is not an IOStage"
+    else if k != .ioStage && k != .iface then some s!"assumed: {e.stage} is not an IOStage"
     else Option.none
   | .tested =>
     if e.tests.isEmpty || !isNone e.stage || !isNone e.contract then
@@ -431,6 +436,87 @@ def registry : List Entry := [
       ``L4Factoidal.RDF.capsOfIndexed_default_denotes, ``L4Factoidal.RDF.unionCaps_exact,
       ``L4Factoidal.RDF.overlay_exact, ``backendExact_indexed_default, ``indexedDefaultSearch_sound]
     note := "StoreCapsExact (RDF/StoreCapsDenotation.lean); premise BackendExact: list and index from Dataset.IsSet; HDT and COTTAS readers rest on BackendReadOpsExact, CottasReadOpsExact (not proved); RML on RmlPushdownInvisible (open)" },
+  { area := "LawfulStore: list (data-access interface)", dir := "Dataflow"
+    stage := ``LawfulStore.ofList, wireIn := "PatternBound", wireOut := "List Triple"
+    contract := ``L4Factoidal.RDF.StoreCapsExact, status := .proved
+    theorems := [``LawfulStore.exact, ``LawfulStore.search_exact, ``LawfulStore.search_nodupKeys, ``L4Factoidal.SPARQL.StoreBackend.capsOfList_exact]
+    note := "LawfulStore interface type (Dataflow/Store.lean): backend, graph, named assumptions, law BackendExact as fields; premise g.KeyNodup" },
+  { area := "LawfulStore: in-memory index", dir := "Dataflow"
+    stage := ``LawfulStore.ofIndexed, wireIn := "PatternBound", wireOut := "List Triple"
+    contract := ``L4Factoidal.RDF.StoreCapsExact, status := .proved
+    theorems := [``LawfulStore.exact, ``LawfulStore.search_exact, ``LawfulStore.search_nodupKeys, ``L4Factoidal.RDF.capsOfIndexed_exact]
+    note := "premise g.KeyNodup; the index is Index.ofGraph g" },
+  { area := "LawfulStore: any StoreCaps record with its law", dir := "Dataflow"
+    stage := ``LawfulStore.ofCaps, wireIn := "PatternBound", wireOut := "List Triple"
+    contract := ``L4Factoidal.RDF.StoreCapsExact, status := .proved
+    theorems := [``LawfulStore.exact, ``LawfulStore.search_exact, ``LawfulStore.search_nodupKeys]
+    note := "the GraphBackend arm .caps c; its law is StoreCapsExact G c" },
+  { area := "LawfulStore: base plus resolved delta (overlay)", dir := "Dataflow"
+    stage := ``LawfulStore.overlay, wireIn := "PatternBound", wireOut := "List Triple"
+    contract := ``L4Factoidal.RDF.StoreCapsExact, status := .proved
+    theorems := [``LawfulStore.exact, ``LawfulStore.search_exact, ``LawfulStore.search_nodupKeys, ``L4Factoidal.RDF.overlay_exact, ``LawfulStore.overlay_caps]
+    note := "reads overlayPred of the base graph; keeps the base store's named assumptions" },
+  { area := "LawfulStore: union of stores (set union)", dir := "Dataflow"
+    stage := ``LawfulStore.union, wireIn := "PatternBound", wireOut := "List Triple"
+    contract := ``L4Factoidal.RDF.StoreCapsExact, status := .proved
+    theorems := [``LawfulStore.exact, ``LawfulStore.search_exact, ``LawfulStore.search_nodupKeys, ``L4Factoidal.RDF.unionCaps_exact, ``LawfulStore.backendsExact_map, ``LawfulStore.union_caps]
+    note := "reads unionPred of the members' graphs; the assumptions are those of the members" },
+  { area := "LawfulStore: HDT reader", dir := "Dataflow"
+    stage := ``LawfulStore.hdt, wireIn := "PatternBound", wireOut := "List Triple", status := .assumed
+    ioAssumptions := [``L4Factoidal.SPARQL.StoreBackend.BackendReadOpsExact]
+    note := "named assumption backendReadOpsExact (file access); the law follows from it (capsOfReadOps_exact)" },
+  { area := "LawfulStore: in-memory COTTAS reader", dir := "Dataflow"
+    stage := ``LawfulStore.cottasInMemory, wireIn := "PatternBound", wireOut := "List Triple", status := .assumed
+    ioAssumptions := [``L4Factoidal.SPARQL.StoreBackend.BackendReadOpsExact]
+    note := "named assumption backendReadOpsExact" },
+  { area := "LawfulStore: COTTAS on disk", dir := "Dataflow"
+    stage := ``LawfulStore.cottasOnDisk, wireIn := "PatternBound", wireOut := "List Triple", status := .assumed
+    ioAssumptions := [``L4Factoidal.RDF.CottasReadOpsExact]
+    note := "named assumption cottasReadOpsExact (file access); capsOfCottas_exact" },
+  { area := "LawfulStore: COTTAS on disk plus delta", dir := "Dataflow"
+    stage := ``LawfulStore.cottasOnDiskDelta, wireIn := "PatternBound", wireOut := "List Triple", status := .assumed
+    ioAssumptions := [``L4Factoidal.RDF.CottasReadOpsExact]
+    note := "named assumption cottasReadOpsExact; overlay_exact" },
+  { area := "LawfulStore: virtual RML source", dir := "Dataflow"
+    stage := ``LawfulStore.virtualRml, wireIn := "PatternBound", wireOut := "List Triple", status := .assumed
+    ioAssumptions := [``L4Factoidal.SPARQL.StoreBackend.RmlPushdownInvisible, ``L4Factoidal.SPARQL.StoreBackend.RmlVirtualIsMaterialised]
+    note := "two open named assumptions (#guards only); capsOfRmlSource_exact" },
+  { area := "LawfulStore: list or index without a set proof", dir := "Dataflow"
+    stage := ``LawfulStore.ofGraph, wireIn := "PatternBound", wireOut := "List Triple", status := .assumed
+    ioAssumptions := [``L4Factoidal.RDF.Graph.KeyNodup]
+    note := "named assumption datasetIsSet (g.KeyNodup) at a call site that carries no proof (harness block diff tools); ofIndexedGraph is the same for the index" },
+  { area := "LawfulDataset: in-memory dataset record, proved", dir := "Dataflow"
+    stage := ``LawfulDataset.indexed, wireIn := "Dataset", wireOut := "DatasetBackend"
+    contract := ``L4Factoidal.Storage.PlannerSoundness.DatasetBackendExact, status := .proved
+    theorems := [``L4Factoidal.Storage.PlannerSoundness.indexedDatasetBackend_exact]
+    note := "premises Dataset.IsSet and distinctNames; SBM11 meets it at the denotation (sbm11_record_denotes)" },
+  { area := "LawfulDataset: dataset handle (CertifiedDataset)", dir := "Dataflow"
+    stage := ``LawfulDataset.ofCertified, wireIn := "CertifiedDataset", wireOut := "DatasetBackend", status := .assumed
+    ioAssumptions := [``L4Factoidal.Storage.PlannerSoundness.distinctNames]
+    theorems := [``LawfulDataset.ofCertified_proved, ``LawfulDataset.distinctNames_of_iris, ``LawfulDataset.ofCertified_backend]
+    note := "no assumption when every graph name is an IRI (ofCertified_proved); else graphNameKeysDistinct. Used by the dataset handles and the queryDataset ops (readNQuadsCertified)" },
+  { area := "LawfulDataset: dataset without a set proof", dir := "Dataflow"
+    stage := ``LawfulDataset.ofDataset, wireIn := "Dataset", wireOut := "DatasetBackend", status := .assumed
+    ioAssumptions := [``L4Factoidal.RDF.Dataset.IsSet, ``L4Factoidal.Storage.PlannerSoundness.distinctNames]
+    theorems := [``LawfulDataset.ofDataset_backend]
+    note := "named assumption datasetIsSet, and graphNameKeysDistinct when a graph name is a blank node; used by storeQuery, storeHandleQuery, the served view (StoreEndpoint.View.of), the CLI and the harness query tools" },
+  { area := "LawfulDataset: one store as the default graph", dir := "Dataflow"
+    stage := ``LawfulDataset.ofDefault, wireIn := "LawfulStore", wireOut := "DatasetBackend"
+    contract := ``L4Factoidal.Storage.PlannerSoundness.DatasetBackendExact, status := .proved
+    theorems := [``backendExact_congr, ``LawfulDataset.ofDefault_backend]
+    note := "keeps the store's named assumptions; the harness block and shard query tools read HDT-arm stores through it" },
+  { area := "Backend BGP evaluator over a LawfulStore", dir := "Dataflow"
+    stage := ``lawfulBgpStage, wireIn := "LawfulStore", wireOut := "SolutionSeq"
+    contract := ``LawfulBgpContract, status := .proved
+    theorems := [``LawfulStore.evalBgp_kequiv, ``LawfulStore.evalBgp_kequiv_of_list, ``LawfulStore.evalBgp_kequiv_of_graph,
+      ``L4Factoidal.Storage.BackendRefinement.evalBgpBackend_kequiv]
+    note := "only premise: the store's named assumptions; reference evalBgp over the rows of the unbounded search, up to order and RDF term equality" },
+  { area := "Backend WHERE evaluator over a LawfulDataset vs Allowed", dir := "Dataflow"
+    stage := ``lawfulWhereStage, wireIn := "LawfulDataset", wireOut := "SolutionSeq"
+    contract := ``LawfulWhereContract, status := .proved
+    theorems := [``LawfulDataset.where_allowed, ``LawfulDataset.graphRel_rows, ``LawfulDataset.namedRel_rows,
+      ``L4Factoidal.Storage.BackendRefinement.evalPatternBackend_allowed]
+    note := "NativeFrag; premises: named assumptions, IRI names of the named backends, every row object its own join key (data condition, not a store law); over the dataset the record enumerates" },
   { area := "COTTAS store", dir := "Cottas"
     wireIn := "Dataset", wireOut := "bytes", status := .missing
     theorems := [``L4Factoidal.Cottas.cotd_dictInjective]

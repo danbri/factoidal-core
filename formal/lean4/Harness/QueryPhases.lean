@@ -64,6 +64,7 @@ import L4Factoidal.RDF.DatasetNormalize
 import L4Factoidal.SPARQL.StoreDataset
 import L4Factoidal.Syntax.TurtleChunkFold
 import Wasm.Ops.Reason
+import L4Factoidal.Dataflow.Store
 
 namespace Harness.QueryPhases
 
@@ -101,7 +102,7 @@ open L4Factoidal.SPARQL in
 (the same environment, the backend runner first, the reference evaluator when
 it answers `none` or the query has a dataset clause); the number of
 solutions. `0` for another query form or a parse error. -/
-def selectSolutionCount (ds : Dataset) (dsb : DatasetBackend) (sparql : String)
+def selectSolutionCount (ds : Dataset) (dsb : L4Factoidal.Dataflow.LawfulDataset) (sparql : String)
     (now : Option String) : Nat :=
   match parseSparql sparql none .v11 with
   | .error _ => 0
@@ -110,7 +111,7 @@ def selectSolutionCount (ds : Dataset) (dsb : DatasetBackend) (sparql : String)
                            dataset := some ds, services := [], now := now }
     match q.form with
     | .select _ =>
-        match (if q.dataset.isEmpty then runSelectQueryBackendDataset env q dsb else none) with
+        match (if q.dataset.isEmpty then dsb.runSelect env q else none) with
         | some rows => rows.length
         | none => (evalSelect env ds q).2.length
     | _ => 0
@@ -371,7 +372,7 @@ def queryMain (file : String) (rest : List String) : IO UInt32 := do
         report "normalize" (L4Wasm.Ops.datasetQuadCount nds)
         if stop == "normalize" then return 0
         -- `--no-index` (diagnostic): the reference evaluator, no backend.
-        let dsb := indexedDatasetBackend nds
+        let dsb := L4Factoidal.Dataflow.LawfulDataset.ofDataset nds
         -- NOW() (SPARQL 1.1 §17.4.5.1): the clock is read once per execution,
         -- as `l4factoidal query` does (https://github.com/danbri/factoidal/issues/748).
         let now ← L4Wasm.Ops.nowDateTime
@@ -379,7 +380,7 @@ def queryMain (file : String) (rest : List String) : IO UInt32 := do
           let out := L4Wasm.Ops.queryParsedDatasetWith nds none sparql (now := some now)
           report "eval-no-index" out.utf8ByteSize
           return 0
-        report "index" (match dsb.default with
+        report "index" (match dsb.backend.default with
           | .indexed ix => ix.all.size
           | _ => 0)
         if stop == "index" then return 0

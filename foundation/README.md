@@ -136,3 +136,21 @@ registry stages with status `proved` (`--pin` rewrites it). A pinned stage
 that is no longer proved fails the gate unless `assumptions.txt` has
 `demoted:<stage>  # reason`. A newly proved stage is only reported as
 "not pinned"; run `--pin` to add it.
+
+`name:<Ctor>  uses=N` lines: the data-access interface (`LawfulStore`,
+`LawfulDataset`, `Dataflow/Store.lean`) has the field
+`assumed_contracts : List Assumption`; each `Assumption` has a name from
+`inductive AssumptionName`. The file has one `name:` line per constructor,
+with `uses=N` (the places in `formal/lean4` that build an assumption of that
+name). The gate fails when a count in the tree differs from its line. It also
+fails when a file under `formal/lean4/Wasm` or `formal/lean4/Harness` calls the
+backend evaluator over a bare `DatasetBackend` (`runSelectQueryBackendDataset`,
+`runAskQueryBackendDataset`, `evalPatternBackend`, `evalBgpBackend`,
+`indexedDatasetBackend`): consumers go through `LawfulDataset.runSelect` /
+`runAsk` or `LawfulStore`. A new use of an assumption therefore changes
+`assumptions.txt` in the same PR, with a reason.
+
+```
+python3 -I tools/assumption-gate.py --list               # the gate on this tree
+python3 -I tests/foundation/test_assumption_gate.py      # the gate's own tests
+```

@@ -103,7 +103,7 @@ structure OpenDataset where
   data : CertifiedDataset
   /-- Built on the first query after an open or a change, then kept: an
   `add` of one quad does not rebuild every index. -/
-  backendThunk : Thunk DatasetBackend
+  backendThunk : Thunk L4Factoidal.Dataflow.LawfulDataset
   /-- The prefixes the document declared, each label once, in declaration order.
   Turtle output of the handle uses them. -/
   prefixes : List (String × String) := []
@@ -120,7 +120,7 @@ theorem OpenDataset.isSet (od : OpenDataset) : od.ds.IsSet := od.data.property
 
 private def openDataset (data : CertifiedDataset) (prefixes : List (String × String) := [])
     (readMode : L4Factoidal.Syntax.Mode := .rdf12) : OpenDataset :=
-  { data, backendThunk := Thunk.mk (fun _ => indexedDatasetBackend data.val), prefixes, readMode }
+  { data, backendThunk := Thunk.mk (fun _ => L4Factoidal.Dataflow.LawfulDataset.ofCertified data), prefixes, readMode }
 
 /-- The mode the writers of the handle use: the mode of its reader when that is
 RDF 1.1 and the dataset still has no RDF 1.2 term, else RDF 1.2. A document
@@ -130,7 +130,8 @@ def OpenDataset.writeMode (od : OpenDataset) : L4Factoidal.Syntax.Mode :=
   if od.readMode == .rdf11 && od.ds.isRdf11 then .rdf11 else .rdf12
 
 /-- The indexed backend of an open dataset. -/
-private def OpenDataset.backend (od : OpenDataset) : DatasetBackend := od.backendThunk.get
+private def OpenDataset.backend (od : OpenDataset) : L4Factoidal.Dataflow.LawfulDataset :=
+  od.backendThunk.get
 
 /-- The open datasets, keyed by handle string. -/
 initialize handleTable : IO.Ref (Std.HashMap String OpenDataset) ← IO.mkRef ∅
@@ -485,7 +486,8 @@ A quad pattern is a JSON array of four strings, subject, predicate, object,
 graph. `""` leaves the position unbound; otherwise the string is the
 N-Triples (N-Quads) form of the term, and for the graph `"DEFAULT"` names the
 default graph. Matching uses the stored dataset's indexes
-(`backendSearch` over `indexedDatasetBackend`). -/
+(`LawfulStore.search` of the handle's `LawfulDataset`, the record
+`indexedDatasetBackend`). -/
 
 /-- The term an N-Triples token denotes, read through the N-Quads reader in
 RDF 1.2 mode: the token is placed at position `pos` (0 subject, 1 predicate,
@@ -548,9 +550,10 @@ def quadPatternOf (json : String) : Option QuadPattern := do
 
 /-- The quads of `od` that match `pat`, as a dataset, through the indexes. -/
 def matchDataset (od : OpenDataset) (pat : QuadPattern) : Dataset :=
-  let be : DatasetBackend := od.backendThunk.get
+  let L := od.backendThunk.get
+  let be : DatasetBackend := L.backend
   let wantDefault := match pat.graph with | none | some none => true | _ => false
-  let dflt := if wantDefault then L4Factoidal.SPARQL.StoreBackend.backendSearch be.default pat.bound else []
+  let dflt := if wantDefault then L.default.search pat.bound else []
   let named := (od.ds.named.zip be.named).filterMap fun (ng, nb) =>
     let take := match pat.graph with
       | none => true

@@ -3,6 +3,7 @@ import L4Factoidal.Storage.IndexedBlockWireV1
 import L4Factoidal.SPARQL.Parser
 import L4Factoidal.SPARQL.StoreDataset
 import Wasm.Ops.Clock
+import L4Factoidal.Dataflow.Store
 
 namespace Harness.IndexedBlockFileQuery
 
@@ -24,13 +25,13 @@ private def run (path queryText : String) (trustedDigest : Option Digest256 := n
         IO.eprintln "l4block-id-file-query rejected: digest mismatch, malformed, unsupported, or checksum-failing IBK1 file"
         return 1
     | some block =>
-        let dataset : DatasetBackend := { default := .hdt (readOps block), named := [] }
+        let dataset := L4Factoidal.Dataflow.LawfulDataset.ofDefault (L4Factoidal.Dataflow.LawfulStore.hdt (readOps block))
         match parseSparql queryText with
         | .error e =>
             IO.eprintln s!"l4block-id-file-query query parse error at {e.pos}: {e.msg}"
             return 1
         | .ok q =>
-            match runSelectQueryBackendDataset clockEnv q dataset with
+            match dataset.runSelect clockEnv q with
             | none =>
                 IO.eprintln "l4block-id-file-query failed: query was not evaluated as SELECT"
                 return 1

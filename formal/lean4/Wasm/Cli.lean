@@ -1009,7 +1009,7 @@ def queryCmd (args : List String) : IO UInt32 := do
         let answer :=
           if s.hasBool "--sparql12" then
             withOpsSetDataset .rdf12 ds hds (fun d =>
-              queryParsedDatasetWith d (some (L4Factoidal.SPARQL.StoreDataset.indexedDatasetBackend d)) sparql
+              queryParsedDatasetWith d (some (L4Factoidal.Dataflow.LawfulDataset.ofDataset d)) sparql
                 (version := .v12) (base := queryBase) (now := some now))
           else Ops.queryDatasetOfSet ds hds sparql queryBase (some now)
         match ← parseEnvelope answer with

@@ -105,6 +105,7 @@ import Wasm.Ops.Clock
 import Std.Sync.Mutex
 import Std.Data.TreeMap
 import Harness.WorkerPool
+import L4Factoidal.Dataflow.Store
 
 namespace Harness.Sbm11Query
 
@@ -1891,7 +1892,7 @@ def runReference (ss : Session) (q : Query) (reason : String) (emit : ByteArray 
     return (rows.length, line)
   | .ask =>
     let answer? :=
-      if indexed then StoreDataset.runAskQueryBackendDataset env stripped (StoreDataset.indexedDatasetBackend applied)
+      if indexed then (L4Factoidal.Dataflow.LawfulDataset.ofDataset applied).runAsk env stripped
       else some (evalAsk env applied stripped)
     let answer := match answer? with
       | some answer => answer
