@@ -2800,7 +2800,7 @@ def evalBgpM {m : Type → Type} [Monad m] (st : Store m) (pats : Array Pat) (ne
   let spec0 := mkSpec t0 (permFor t0 sortPos0) keep
   -- stage 1o: the next scan may start now on idle workers (a hint; no
   -- hint for an OPTIONAL group's scans, whose first scan takes candidates)
-  hintScanM par (if left0.isSome then none else nextScanHint? st.sipFactor pats keep ests first spec0)
+  hintScanM par (if par.isNone || left0.isSome then none else nextScanHint? st.sipFactor pats keep ests first spec0)
   -- an OPTIONAL group's first scan takes the left table's join values as
   -- candidates (issue 809)
   let (tab0, st0, sip0) ← scanPatM st t0 spec0 keep left0 ests[first]!
