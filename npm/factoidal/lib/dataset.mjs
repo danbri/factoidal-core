@@ -152,6 +152,7 @@ class Dataset {
     this._prefixes = Object.freeze({ ...(prefixes || {}) });
     const x = extra || {};
     this._diagnostics = Object.freeze((x.diagnostics || []).slice());
+    this._warnings = Object.freeze((x.warnings || []).slice());
     this._format = x.format;
     this._formatInferred = !!x.formatInferred;
     this._info = Object.freeze({ ...(x.info || {}) });
@@ -169,6 +170,13 @@ class Dataset {
   get prefixes() { return this._prefixes; }
   /** Diagnostics of a lenient parse ({lenient:true}); else empty. */
   get diagnostics() { return this._diagnostics; }
+  /**
+   * Warnings of the parse: one per language tag that is not well-formed
+   * under BCP 47 (class 'ill-formed-language-tag'). The triple is kept and
+   * the writers write the tag unchanged. Empty for a Dataset not read from
+   * text.
+   */
+  get warnings() { return this._warnings; }
   /** The syntax the data was read from, when it was read from text. */
   get format() { return this._format; }
   /** True when `format` was inferred because the caller gave none. */
