@@ -1,10 +1,11 @@
 /-
 Finite adversarial QA for the restricted, proved RDF-to-Direct reader.
 These expected outcomes are fixed independently of the reader. A null
-verdict is unknown, never a proof of consistency. The preservation theorem
+verdict is unknown, never a proof of consistency; `true` comes only from a
+checked model (https://github.com/danbri/factoidal/issues/960). The preservation theorem
 is audited separately below; these guards do not replace it.
 -/
-import L4Factoidal.OWL.AtomicDirect
+import L4Factoidal.OWL.AtomicModel
 import L4Factoidal.OWL.CertNames
 import L4Factoidal.Syntax.NQuadsFast
 import Lean
@@ -26,6 +27,11 @@ def emptyClass := edge "urn:C" (rdfs "subClassOf") (owl "Nothing")
 def member := edge "urn:a" (rdf "type") "urn:C"
 def same := edge "urn:a" (owl "sameAs") "urn:b"
 def different := edge "urn:a" (owl "differentFrom") "urn:b"
+def restriction (node property filler : String) :=
+  s!"_:{node} <{owl "onProperty"}> <{property}> .\n" ++
+  s!"_:{node} <{owl "someValuesFrom"}> <{filler}> .\n"
+def cyclic := edge "urn:i" (rdf "type") "urn:A" ++
+  s!"<urn:A> <{rdfs "subClassOf"}> _:r .\n" ++ restriction "r" "urn:p" "urn:A"
 
 structure Case where
   id : String
@@ -34,36 +40,36 @@ structure Case where
   consistent : Option Bool
 
 def cases : List Case := [
-  ⟨"empty", "", true, none⟩,
-  ⟨"annotation-domain", annotationDecl ++ annotationDomain ++ annotationValue, true, none⟩,
-  ⟨"annotation-declaration-last", annotationValue ++ annotationDomain ++ annotationDecl, true, none⟩,
+  ⟨"empty", "", true, some true⟩,
+  ⟨"annotation-domain", annotationDecl ++ annotationDomain ++ annotationValue, true, some true⟩,
+  ⟨"annotation-declaration-last", annotationValue ++ annotationDomain ++ annotationDecl, true, some true⟩,
   ⟨"annotation-range", annotationDecl ++ edge "urn:p" (rdfs "range") (owl "Nothing") ++
-    edge "urn:a" "urn:p" "urn:b", true, none⟩,
-  ⟨"annotation-blank-value", annotationDecl ++ s!"<urn:a> <urn:p> _:value .\n", true, none⟩,
-  ⟨"builtin-comment", literal "urn:a" (rdfs "comment") "note", true, none⟩,
-  ⟨"builtin-label", literal "urn:a" (rdfs "label") "name", true, none⟩,
-  ⟨"builtin-version-info", literal "urn:a" (owl "versionInfo") "one", true, none⟩,
-  ⟨"empty-named-class", classDecl ++ emptyClass, true, none⟩,
+    edge "urn:a" "urn:p" "urn:b", true, some true⟩,
+  ⟨"annotation-blank-value", annotationDecl ++ s!"<urn:a> <urn:p> _:value .\n", true, some true⟩,
+  ⟨"builtin-comment", literal "urn:a" (rdfs "comment") "note", true, some true⟩,
+  ⟨"builtin-label", literal "urn:a" (rdfs "label") "name", true, some true⟩,
+  ⟨"builtin-version-info", literal "urn:a" (owl "versionInfo") "one", true, some true⟩,
+  ⟨"empty-named-class", classDecl ++ emptyClass, true, some true⟩,
   ⟨"generated-prefix-user-class",
     edge "urn:factoidal:owl-cert:one-of:urn:a" (rdf "type") (owl "Class") ++
-    edge "urn:factoidal:owl-cert:one-of:urn:a" (rdfs "subClassOf") (owl "Nothing"), true, none⟩,
+    edge "urn:factoidal:owl-cert:one-of:urn:a" (rdfs "subClassOf") (owl "Nothing"), true, some true⟩,
   ⟨"data-prefix-user-class",
-    edge "urn:factoidal:owl-cert:data-min:1:urn:p" (rdfs "subClassOf") (owl "Nothing"), true, none⟩,
+    edge "urn:factoidal:owl-cert:data-min:1:urn:p" (rdfs "subClassOf") (owl "Nothing"), true, some true⟩,
   ⟨"empty-class-with-member", classDecl ++ emptyClass ++ member, true, some false⟩,
   ⟨"bottom-membership", edge "urn:a" (rdf "type") (owl "Nothing"), true, some false⟩,
   ⟨"top-subclass-bottom", edge (owl "Thing") (rdfs "subClassOf") (owl "Nothing"), true, some false⟩,
   ⟨"same-and-different", same ++ different, true, some false⟩,
-  ⟨"same-only", same, true, none⟩,
-  ⟨"different-only", different, true, none⟩,
+  ⟨"same-only", same, true, some true⟩,
+  ⟨"different-only", different, true, some true⟩,
   ⟨"self-different", edge "urn:a" (owl "differentFrom") "urn:a", true, some false⟩,
   ⟨"class-individual-punning", classDecl ++ emptyClass ++
-    edge "urn:C" (rdf "type") (owl "Thing"), true, none⟩,
+    edge "urn:C" (rdf "type") (owl "Thing"), true, some true⟩,
   ⟨"annotation-and-real-contradiction", annotationDecl ++ annotationDomain ++
     annotationValue ++ same ++ different, true, some false⟩,
   ⟨"duplicate-statements", same ++ same ++ different ++ different, true, some false⟩,
-  ⟨"ontology-header", edge "urn:ontology" (rdf "type") (owl "Ontology"), true, none⟩,
-  ⟨"blank-ontology-header", s!"_:ontology <{rdf "type"}> <{owl "Ontology"}> .\n", true, none⟩,
-  ⟨"named-individual-declaration", edge "urn:a" (rdf "type") (owl "NamedIndividual"), true, none⟩,
+  ⟨"ontology-header", edge "urn:ontology" (rdf "type") (owl "Ontology"), true, some true⟩,
+  ⟨"blank-ontology-header", s!"_:ontology <{rdf "type"}> <{owl "Ontology"}> .\n", true, some true⟩,
+  ⟨"named-individual-declaration", edge "urn:a" (rdf "type") (owl "NamedIndividual"), true, some true⟩,
   ⟨"unsupported-object-property", edge "urn:p" (rdf "type") (owl "ObjectProperty") ++
     edge "urn:p" (rdfs "domain") (owl "Nothing") ++ edge "urn:a" "urn:p" "urn:b", false, none⟩,
   ⟨"unsupported-undeclared-predicate", edge "urn:a" "urn:p" "urn:b", false, none⟩,
@@ -75,7 +81,7 @@ def cases : List Case := [
     edge "urn:p" (rdf "type") (owl "ObjectProperty") ++ annotationValue, false, none⟩,
   ⟨"sameas-does-not-merge-classes", classDecl ++ emptyClass ++
     edge "urn:D" (rdf "type") (owl "Class") ++ edge "urn:C" (owl "sameAs") "urn:D" ++
-    edge "urn:a" (rdf "type") "urn:D", true, none⟩,
+    edge "urn:a" (rdf "type") "urn:D", true, some true⟩,
   ⟨"unsupported-builtin-seeAlso", edge "urn:a" (rdfs "seeAlso") "urn:b", false, none⟩,
   ⟨"unsupported-builtin-isDefinedBy", edge "urn:a" (rdfs "isDefinedBy") "urn:b", false, none⟩,
   ⟨"unsupported-builtin-deprecated", literal "urn:a" (owl "deprecated") "true", false, none⟩,
@@ -93,14 +99,31 @@ def cases : List Case := [
   ⟨"unsupported-triple-term-annotation", annotationDecl ++
     "<urn:a> <urn:p> <<( <urn:s> <urn:q> <urn:o> )>> .\n", false, none⟩,
   ⟨"multiple-headers-fragment-admission", edge "urn:first" (rdf "type") (owl "Ontology") ++
-    edge "urn:second" (rdf "type") (owl "Ontology"), true, none⟩
+    edge "urn:second" (rdf "type") (owl "Ontology"), true, some true⟩,
+  ⟨"object-property-declaration", edge "urn:p" (rdf "type") (owl "ObjectProperty"), true, some true⟩,
+  ⟨"some-values-from-cyclic", cyclic, true, some true⟩,
+  ⟨"some-values-from-assertion", s!"<urn:a> <{rdf "type"}> _:r .\n" ++
+    restriction "r" "urn:p" "urn:C" ++ edge "urn:p" (rdf "type") (owl "ObjectProperty"), true, some true⟩,
+  ⟨"some-values-from-typed-restriction", cyclic ++ s!"_:r <{rdf "type"}> <{owl "Restriction"}> .\n",
+    true, some true⟩,
+  ⟨"some-values-from-witness-clash", cyclic ++ s!"<urn:A> <{rdfs "subClassOf"}> _:s .\n" ++
+    restriction "s" "urn:q" "urn:B" ++ edge "urn:B" (rdfs "subClassOf") "urn:E" ++
+    edge "urn:E" (rdfs "subClassOf") (owl "Nothing"), true, some false⟩,
+  ⟨"some-values-from-nothing-filler", edge "urn:i" (rdf "type") "urn:A" ++
+    s!"<urn:A> <{rdfs "subClassOf"}> _:r .\n" ++ restriction "r" "urn:p" (owl "Nothing"), true, some false⟩,
+  ⟨"unsupported-restriction-two-properties", cyclic ++
+    s!"_:r <{owl "onProperty"}> <urn:q> .\n", false, none⟩,
+  ⟨"unsupported-restriction-no-filler", s!"<urn:A> <{rdfs "subClassOf"}> _:r .\n" ++
+    s!"_:r <{owl "onProperty"}> <urn:p> .\n", false, none⟩,
+  ⟨"unsupported-annotation-property-restriction", annotationDecl ++ s!"<urn:A> <{rdfs "subClassOf"}> _:r .\n" ++
+    restriction "r" "urn:p" "urn:A", false, none⟩
 ]
 
 def observed (test : Case) : Except ParseError (Bool × Option Bool) :=
   (parseNQuadsFast test.input .rdf12).bind (fun ds =>
     if ds.named.isEmpty then
       .ok ((AtomicDirect.readOntology ds.default).isSome,
-           (AtomicDirect.decide ds.default .close).consistent)
+           (AtomicModel.decideFuel ds.default AtomicModel.defaultFuel).consistent)
     else .error { msg := "this graph-only fixture must not contain named graphs", pos := 0 })
 
 def passed (test : Case) : Bool :=
@@ -116,7 +139,7 @@ def reportCase (test : Case) : Lean.Json :=
           ("supported", Lean.toJson supported), ("consistent", Lean.toJson consistent)])]
 
 #eval IO.println ("ATOMIC_DIRECT_ACCEPTANCE=" ++ (Lean.toJson (cases.map reportCase)).compress)
-#guard cases.length == 45
+#guard cases.length == 54
 #guard cases.all passed
 #guard !(observed ⟨"named-graph-scope-control",
   "<urn:a> <urn:p> <urn:b> <urn:graph> .\n", false, none⟩).isOk
@@ -130,6 +153,8 @@ def reportCase (test : Case) : Lean.Json :=
 #print axioms AtomicDirect.erase_sound
 #print axioms AtomicDirect.definitive_admitted
 #print axioms AtomicDirect.unsupported_is_unknown
+#print axioms AtomicModel.checkModel_sound
+#print axioms AtomicModel.decideFuel_sound
 #print axioms CertNames.decode_encode
 #print axioms CertNames.encode_injective
 #print axioms CertNames.source_ne_nominal

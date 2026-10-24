@@ -303,8 +303,8 @@ const OWL_NS = 'http://www.w3.org/2002/07/owl#';
 const SUBCLASS_NT =
   `<${X}a> <${RDF_TYPE}> <${X}C> .\n` +
   `<${X}C> <${RDFS_SUBCLASS}> <${X}D> .\n`;
-// A ⊑ ∃p.A is outside the checked consistency reader's supported syntax.
-// The separate legacy entailment search can still exhaust its fuel here.
+// A ⊑ ∃p.A: the model search needs two rounds (the individual, then the
+// witness of A), so fuel 1 is a budget-out.
 const CYCLIC_NT =
   `<${X}i> <${RDF_TYPE}> <${X}A> .\n` +
   `<${X}A> <${RDFS_SUBCLASS}> _:r .\n` +
@@ -314,10 +314,8 @@ const CYCLIC_NT =
 test('l4-core owlIsConsistent: checked contradiction or explicit unknown', async (t) => {
   if (await skipUnlessOps(t, 'owlIsConsistent')) return;
   const yes = await l4core.owlIsConsistent(SUBCLASS_NT, { format: 'ntriples' });
-  // This ontology is satisfiable, but the implementation supplies no checked
-  // model certificate. This tests honest refusal, not satisfiability coverage.
-  assert.equal(yes.consistent, null);
-  assert.match(yes.reason, /incomplete-search/);
+  // A checked finite model (https://github.com/danbri/factoidal/issues/960).
+  assert.equal(yes.consistent, true);
   const no = await l4core.owlIsConsistent(
     `<${X}i> <${RDF_TYPE}> <${OWL_NS}Nothing> .`, { format: 'ntriples' });
   assert.equal(no.consistent, false);
@@ -325,11 +323,9 @@ test('l4-core owlIsConsistent: checked contradiction or explicit unknown', async
   const unk = await l4core.owlIsConsistent(CYCLIC_NT,
     { format: 'ntriples', fuel: 1 });
   assert.equal(unk.consistent, null);
-  assert.match(unk.reason, /unsupported-syntax/);
-  // More search fuel cannot make unsupported syntax supported.
+  assert.match(unk.reason, /budget-out/);
   const settled = await l4core.owlIsConsistent(CYCLIC_NT, { format: 'ntriples' });
-  assert.equal(settled.consistent, null);
-  assert.match(settled.reason, /unsupported-syntax/);
+  assert.equal(settled.consistent, true);
 });
 
 test('l4-core owlEntails: closure yes / incomplete refutation / budget-out', async (t) => {
@@ -340,10 +336,10 @@ test('l4-core owlEntails: closure yes / incomplete refutation / budget-out', asy
   assert.equal(yes.via, 'closure');
   const no = await l4core.owlEntails(
     SUBCLASS_NT, `<${X}a> <${RDF_TYPE}> <${X}Zebra> .`, { format: 'ntriples' });
-  // Non-entailment needs a checked countermodel; a quiescent search is not one.
-  assert.equal(no.entailed, null);
+  // Non-entailment needs a checked countermodel.
+  assert.equal(no.entailed, false);
   assert.equal(no.via, 'refutation');
-  assert.match(no.reason, /incomplete-search/);
+  assert.match(no.reason, /countermodel/);
   const unk = await l4core.owlEntails(
     CYCLIC_NT, `<${X}a> <${RDF_TYPE}> <${X}Zebra> .`,
     { format: 'ntriples', fuel: 1 });

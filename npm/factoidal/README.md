@@ -150,13 +150,14 @@ $ npx factoidal solid-serve DIR                    # Solid Protocol
 Official test suites, pass / fail / total, 2026-10-09 [B] unless marked.
 
 The OWL DL rows below are historical measurements of the legacy harness;
-they do not measure the current `owlIsConsistent` API. That API now checks
-only an admitted atomic fragment of the default graph. It returns `false`
-for a checked contradiction and `null` for unsupported input or an incomplete
-check; it never returns `true`. Restrictions, negative property assertions,
-imports and equivalentClass are unsupported, and `fuel` does not change its
-fixed 64-round checker bound. `owlEntails` still uses a separate legacy path
-whose positive verdicts do not have this source-to-verdict proof. See the
+they do not measure the current `owlIsConsistent` API. That API checks only
+an admitted fragment of the default graph (atomic classes and
+`owl:someValuesFrom`). It returns `true` for a checked finite model, `false`
+for a checked contradiction and `null` for unsupported input, exhausted
+`fuel` or an incomplete check. Other restrictions, negative property
+assertions, imports and equivalentClass are unsupported. `owlEntails`
+answers `false` only with a checked countermodel; its positive verdicts use a
+separate legacy path that does not have this source-to-verdict proof. See the
 [OWL API contract](https://github.com/danbri/factoidal-core/blob/main/npm/factoidal/API.md)
 and the [assurance record](https://github.com/danbri/factoidal-core/blob/main/docs/20261022-owl-pr-reconciliation.md).
 

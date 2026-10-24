@@ -1,5 +1,7 @@
 /- Actual public consistency producer, including text and dataset adapters.
-Unknown is an API observation, not a successful consistency decision. -/
+Unknown is an API observation, not a successful consistency decision. `true`
+needs a checked model and `false` a checked refutation
+(https://github.com/danbri/factoidal/issues/960). -/
 import Wasm.Ops.ReasonDl
 import Wasm.Dispatch
 import Lean
@@ -30,9 +32,15 @@ structure Case where
   consistent : Option Bool := none
   reasonPrefix : String := "incomplete-search"
 
+def restriction (node property filler : String) :=
+  s!"_:{node} <{owl "onProperty"}> <{property}> .\n" ++
+  s!"_:{node} <{owl "someValuesFrom"}> <{filler}> .\n"
+def cyclic := edge "urn:i" (rdf "type") "urn:A" ++
+  s!"<urn:A> <{rdfs "subClassOf"}> _:r .\n" ++ restriction "r" "urn:p" "urn:A"
+
 def cases : List Case := [
-  { id := "empty", input := "" },
-  { id := "annotation-domain", input := annotation },
+  { id := "empty", input := "", consistent := some true, reasonPrefix := "" },
+  { id := "annotation-domain", input := annotation, consistent := some true, reasonPrefix := "" },
   { id := "annotation-plus-real-clash", input := annotation ++ contradiction,
     consistent := some false, reasonPrefix := "" },
   { id := "same-different", input := contradiction, consistent := some false, reasonPrefix := "" },
@@ -42,10 +50,11 @@ def cases : List Case := [
     consistent := some false, reasonPrefix := "" },
   { id := "generated-looking-source-name", input :=
       edge "urn:factoidal:owl-cert:one-of:urn:a" (rdf "type") (owl "Class") ++
-      edge "urn:factoidal:owl-cert:one-of:urn:a" (rdfs "subClassOf") (owl "Nothing") },
+      edge "urn:factoidal:owl-cert:one-of:urn:a" (rdfs "subClassOf") (owl "Nothing"),
+    consistent := some true, reasonPrefix := "" },
   { id := "class-individual-punning", input := edge "urn:C" (rdf "type") (owl "Class") ++
       edge "urn:C" (rdfs "subClassOf") (owl "Nothing") ++
-      edge "urn:C" (rdf "type") (owl "Thing") },
+      edge "urn:C" (rdf "type") (owl "Thing"), consistent := some true, reasonPrefix := "" },
   { id := "unsupported-equivalence-contradiction", input :=
       edge "urn:C" (owl "equivalentClass") (owl "Thing") ++
       edge "urn:C" (owl "equivalentClass") (owl "Nothing"), reasonPrefix := "unsupported-syntax" },
@@ -55,11 +64,13 @@ def cases : List Case := [
     reasonPrefix := "unsupported-syntax" },
   { id := "named-contradiction-is-outside-default", input :=
       s!"<urn:a> <{owl "sameAs"}> <urn:b> <urn:g> .\n" ++
-      s!"<urn:a> <{owl "differentFrom"}> <urn:b> <urn:g> .\n" },
+      s!"<urn:a> <{owl "differentFrom"}> <urn:b> <urn:g> .\n", consistent := some true,
+    reasonPrefix := "" },
   { id := "default-clash-with-named-data", input := contradiction ++
       "<urn:s> <urn:p> <urn:o> <urn:g> .\n", consistent := some false, reasonPrefix := "" },
   { id := "default-annotation-with-named-clash", input := annotation ++
-      s!"<urn:a> <{owl "differentFrom"}> <urn:a> <urn:g> .\n" },
+      s!"<urn:a> <{owl "differentFrom"}> <urn:a> <urn:g> .\n", consistent := some true,
+    reasonPrefix := "" },
   { id := "named-declaration-does-not-classify-default", input :=
       s!"<urn:p> <{rdf "type"}> <{owl "AnnotationProperty"}> <urn:g> .\n" ++
       "<urn:a> <urn:p> \"note\" .\n", reasonPrefix := "unsupported-syntax" },
@@ -71,7 +82,14 @@ def cases : List Case := [
     ok := false, reasonPrefix := "" },
   { id := "named-rdf12-preflight", input := contradiction ++
       "<urn:s> <urn:p> \"note\"@en--ltr <urn:g> .\n", ok := false, reasonPrefix := "" },
-  { id := "parse-error", input := "<urn:s> <urn:p> .\n", ok := false, reasonPrefix := "" }
+  { id := "parse-error", input := "<urn:s> <urn:p> .\n", ok := false, reasonPrefix := "" },
+  { id := "cyclic-some-values-from", input := cyclic, consistent := some true, reasonPrefix := "" },
+  { id := "cyclic-some-values-from-fuel-one", input := cyclic, opts := "{\"fuel\":\"1\"}",
+    reasonPrefix := "budget-out" },
+  { id := "some-values-from-witness-clash", input := cyclic ++
+      s!"<urn:A> <{rdfs "subClassOf"}> _:s .\n" ++ restriction "s" "urn:q" "urn:B" ++
+      edge "urn:B" (rdfs "subClassOf") (owl "Nothing"), consistent := some false,
+    reasonPrefix := "" }
 ]
 
 def dispatchResponse (test : Case) : String :=
@@ -104,7 +122,8 @@ def observed (test : Case) : Option (Bool × Option Bool × Bool × Bool) := do
     | .ok ds => owlIsConsistentOf ds test.opts == owlIsConsistent test.input test.opts
   let agreesWithDispatch := dispatchMatches test response dispatched
   let shape := if ok then
-      field == some .null || field == some (.bool false) || field == some (.bool true)
+      field == some .null || field == some (.bool false) ||
+        (field == some (.bool true) && (response.field? "reason").isNone)
     else (response.getString? "error").isSome && field.isNone
   let reason := test.reasonPrefix == "" ||
     ((response.getString? "reason").getD "").startsWith test.reasonPrefix
@@ -125,18 +144,18 @@ def report (test : Case) : Lean.Json := Lean.Json.mkObj [
   ("adapterAgrees", Lean.toJson ((observed test).map (fun (_, _, _, same) => same)))]
 
 #eval IO.println ("OWL_PUBLIC_BOUNDARY=" ++ (Lean.toJson (cases.map report)).compress)
-#guard cases.length == 20
+#guard cases.length == 23
 #guard cases.all passed
 
-#print axioms L4Wasm.Ops.owlConsistencyJsonWithCert_sound
 #print axioms L4Wasm.Ops.owlConsistencyJson_sound
-#print axioms L4Wasm.Ops.owlConsistencyJsonWithCert_ne_true
-#print axioms L4Wasm.Ops.owlConsistencyJsonWithCert_success_schema
-#print axioms L4Wasm.Ops.owlConsistencyJsonWithCert_refusal_schema
 #print axioms L4Wasm.Ops.owlConsistencyJson_success_schema
 #print axioms L4Wasm.Ops.owlConsistencyJson_refusal_schema
-#print axioms L4Wasm.Ops.owlConsistencyJsonWithCert_unique_fields
 #print axioms L4Wasm.Ops.owlConsistencyJson_unique_fields
+#print axioms L4Wasm.Ops.owlEntailsJson_false_sound
+#print axioms L4Factoidal.OWL.AtomicModel.checkModel_sound
+#print axioms L4Factoidal.OWL.AtomicModel.checkCountermodel_sound
+#print axioms L4Factoidal.OWL.AtomicModel.decideFuel_sound
+#print axioms L4Factoidal.OWL.AtomicModel.entailsFuel_sound
 #print axioms L4Wasm.Ops.owlIsConsistentParsed_certified
 #print axioms L4Wasm.Ops.owlIsConsistent_certified
 

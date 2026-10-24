@@ -222,6 +222,7 @@ import L4Factoidal.OWL.TableauTests
 import L4Factoidal.OWL.DirectCert
 import L4Factoidal.OWL.CertifiedDecision
 import L4Factoidal.OWL.AtomicDirect
+import L4Factoidal.OWL.AtomicModel
 import L4Factoidal.OWL.DirectCertTests
 import L4Factoidal.SPARQL.Results
 import L4Factoidal.SPARQL.ResultsXml

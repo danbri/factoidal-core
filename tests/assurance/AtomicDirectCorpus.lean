@@ -4,7 +4,7 @@ RDF/XML ontologies extracted from the W3C OWL catalog. This is IO plumbing,
 not a semantic implementation. The Python driver retains test provenance,
 accounts for every selected case, and distinguishes unknown from a verdict.
 -/
-import L4Factoidal.OWL.AtomicDirect
+import L4Factoidal.OWL.AtomicModel
 import L4Factoidal.Syntax.RdfXml
 import Lean
 
@@ -21,7 +21,7 @@ def runCorpusRow (row : Lean.Json) : Except String Lean.Json := do
         ("status", Lean.toJson "parse-error"),
         ("error", Lean.toJson error.msg)])
   | .ok graph =>
-      let verdict := AtomicDirect.decide graph .close
+      let verdict := AtomicModel.decideFuel graph AtomicModel.defaultFuel
       return Lean.Json.mkObj (common ++ [
         ("status", Lean.toJson (if (AtomicDirect.readOntology graph).isSome
           then "supported" else "unsupported")),

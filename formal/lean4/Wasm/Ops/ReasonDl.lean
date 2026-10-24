@@ -1,6 +1,8 @@
 /-
-Wasm.Ops.ReasonDl — checked atomic OWL consistency and legacy OWL entailment.
-Consistency reads the original default graph; entailment still uses RL closure.
+Wasm.Ops.ReasonDl — checked OWL consistency and OWL entailment.
+Consistency reads the original default graph and answers only with a checked
+model or a checked refutation. Entailment answers `false` only with a checked
+countermodel; its `true` answers still use the RL closure and the refuter.
 
 Envelopes match `bin/npm-entry/entry_jsoo.ml`:
 
@@ -41,15 +43,18 @@ open L4Factoidal.JSON
 
 /-! ## Separate consistency and entailment assurance
 
-Consistency uses the restricted AtomicDirect reader and actual certificate
-checker through ReasonDlCertified. Unsupported syntax returns unknown with
-no unchecked fallback. This is an explicit capability reduction in the local
-repair; general OWL reasoning and positive model construction are unfinished.
+Consistency uses the restricted AtomicDirect reader, the model checker
+(`AtomicModel.checkModel_sound`) and the certificate checker
+(`DirectCert.checkCertFuel_sound`) through ReasonDlCertified. Unsupported
+syntax returns unknown with no unchecked fallback.
 
-Entailment below still uses the legacy RL/refuter route. Its punning refusal
-is limited and is not a Direct Semantics soundness proof. Consistency's new
-proof must not be presented as certifying that separate operation.
-Record: `docs/20261021-owl-public-boundary.md`. -/
+Entailment answers `false` only through `AtomicModel.entailsFuel`: a checked
+model of the premise in which the conclusion fails
+(`AtomicModel.checkCountermodel_sound`, `owlEntailsJson_false_sound`). Its
+`true` answers use the legacy RL/refuter route; their punning refusal is
+limited and is not a Direct Semantics soundness proof.
+Records: `docs/20261021-owl-public-boundary.md`,
+https://github.com/danbri/factoidal/issues/960. -/
 
 /-- The refutation budget: `optsJson` is `""` or `{"fuel":"<nat>"}`
 (fuel a decimal STRING — a large budget can exceed JS's safe-integer
@@ -85,11 +90,11 @@ def owlDlPunningReason : String :=
   ++ "the RDF-based closure does not preserve OWL Direct Semantics punning "
   ++ "(indeterminate)"
 
-/-- Checked consistency over the original default graph. Unsupported syntax
-and rejected certificates return null. The compatibility options argument
-is retained; fuel does not change the fixed certificate-checker bound. -/
-def owlIsConsistentParsed (ds : Dataset) (_optsJson : String) : String :=
-  (owlConsistencyJson ds).toString
+/-- Checked consistency over the original default graph. Unsupported syntax,
+rejected certificates and exhausted fuel return null. `opts.fuel` bounds the
+model search and the certificate checker. -/
+def owlIsConsistentParsed (ds : Dataset) (optsJson : String) : String :=
+  (owlConsistencyJson ds (owlRefuteFuelOfOpts optsJson)).toString
 
 /-- The actual string producer serializes a JSON object whose definitive
 field satisfies the original-default-graph contract. JSON serialization and
@@ -98,7 +103,8 @@ theorem owlIsConsistentParsed_certified (ds : Dataset) (optsJson : String) :
     ∃ response : Json,
       owlIsConsistentParsed ds optsJson = response.toString ∧
       L4Factoidal.OWL.AtomicDirect.Meaning ds.default (response.getBool? "consistent") := by
-  exact ⟨owlConsistencyJson ds, rfl, owlConsistencyJson_sound ds⟩
+  exact ⟨owlConsistencyJson ds (owlRefuteFuelOfOpts optsJson), rfl,
+    owlConsistencyJson_sound ds (owlRefuteFuelOfOpts optsJson)⟩
 
 /-- `owlIsConsistent(nquads, optsJson)`. -/
 def owlIsConsistent (nq optsJson : String) : String :=
@@ -120,48 +126,100 @@ theorem owlIsConsistent_certified (nq optsJson : String) (ds : Dataset)
 #print axioms owlIsConsistentParsed_certified
 #print axioms owlIsConsistent_certified
 
-/-- `owlEntails(premiseNquads, conclusionNquads, optsJson)`. The two
-positive paths: `via:"closure"` when every conclusion
-triple is exactly (engine triple equality) in the OWL-RL closure of
-the premise; `via:"refutation"` when the negated conclusion
-(`negationGoals`) is refuted on every goal. Without a checked countermodel,
-absence from the closure and quiescent search both answer `null`. -/
-def owlEntailsParsed (dsP dsC : Dataset) (optsJson : String) : String :=
-  if !(dsP.isRdf11 && dsC.isRdf11) then errJson (owlDlRdf12Refusal "owlEntails") else
-  if L4Factoidal.OWL.DirectProfile.hasUnsupportedPunning (dsP.default ++ dsC.default) then
-    okWith [("entailed", .null), ("via", .string "closure"),
+/-- The legacy entailment route: `via:"closure"` when every conclusion
+triple is exactly (engine triple equality) in the OWL-RL closure of the
+premise; `via:"refutation"` when the negated conclusion (`negationGoals`) is
+refuted on every goal. It answers `true` or null, never `false`. -/
+def owlEntailsLegacyJson (dsP dsC : Dataset) (fuel : Nat) : Json :=
+  let gc := dsC.default
+  let closure := L4Factoidal.OWL.RL.closureFix dsP.default
+  if gc.all (fun t => Graph.mem t closure) then
+    .object [("ok", .bool true), ("entailed", .bool true), ("via", .string "closure")]
+  else
+    match L4Factoidal.OWL.Refute.negationGoals gc with
+    | none =>
+        .object [("ok", .bool true), ("entailed", .null), ("via", .string "closure"),
+                ("reason", .string
+                  ("unsupported-conclusion: not in the OWL-RL closure, "
+                   ++ "and the conclusion form cannot be soundly negated "
+                   ++ "for refutation (indeterminate)"))]
+    | some goals =>
+      let results := goals.map (fun neg =>
+        L4Factoidal.OWL.Refute.tableauConsistent (closure ++ neg) fuel)
+      if results.all (· == some false) then
+        .object [("ok", .bool true), ("entailed", .bool true), ("via", .string "refutation")]
+      else if results.any (· == some true) then
+        .object [("ok", .bool true), ("entailed", .null), ("via", .string "refutation"),
+                ("reason", .string
+                  ("incomplete-search: a negated conclusion was not "
+                   ++ "refuted, but the search does not certify a "
+                   ++ "countermodel (indeterminate)"))]
+      else
+        .object [("ok", .bool true), ("entailed", .null), ("via", .string "refutation"),
+                ("reason", .string
+                  (s!"budget-out: a refutation goal exhausted fuel {fuel} "
+                   ++ "before closing (indeterminate); raise it via "
+                   ++ "opts.fuel"))]
+
+theorem owlEntailsLegacyJson_ne_false (dsP dsC : Dataset) (fuel : Nat) :
+    (owlEntailsLegacyJson dsP dsC fuel).getBool? "entailed" ≠ some false := by
+  unfold owlEntailsLegacyJson
+  dsimp only
+  split
+  · simp [Json.getBool?, Json.field?, Json.asBool?]
+  · split
+    · simp [Json.getBool?, Json.field?, Json.asBool?]
+    · split
+      · simp [Json.getBool?, Json.field?, Json.asBool?]
+      · split <;> simp [Json.getBool?, Json.field?, Json.asBool?]
+
+/-- `owlEntails(premiseNquads, conclusionNquads, optsJson)` as a JSON value.
+`false` comes only from a checked countermodel (`AtomicModel.entailsFuel`),
+tried first; `true` comes from the legacy route. -/
+def owlEntailsJson (dsP dsC : Dataset) (optsJson : String) : Json :=
+  if !(dsP.isRdf11 && dsC.isRdf11) then
+    .object [("ok", .bool false), ("error", .string (owlDlRdf12Refusal "owlEntails"))]
+  else if L4Factoidal.OWL.DirectProfile.hasUnsupportedPunning (dsP.default ++ dsC.default) then
+    .object [("ok", .bool true), ("entailed", .null), ("via", .string "closure"),
             ("reason", .string owlDlPunningReason)]
   else
-      let gc := dsC.default
-      let closure := L4Factoidal.OWL.RL.closureFix dsP.default
-      let fuel := owlRefuteFuelOfOpts optsJson
-      if gc.all (fun t => Graph.mem t closure) then
-        okWith [("entailed", .bool true), ("via", .string "closure")]
-      else
-        match L4Factoidal.OWL.Refute.negationGoals gc with
-        | none =>
-            okWith [("entailed", .null), ("via", .string "closure"),
-                    ("reason", .string
-                      ("unsupported-conclusion: not in the OWL-RL closure, "
-                       ++ "and the conclusion form cannot be soundly negated "
-                       ++ "for refutation (indeterminate)"))]
-        | some goals =>
-          let results := goals.map (fun neg =>
-            L4Factoidal.OWL.Refute.tableauConsistent (closure ++ neg) fuel)
-          if results.all (· == some false) then
-            okWith [("entailed", .bool true), ("via", .string "refutation")]
-          else if results.any (· == some true) then
-            okWith [("entailed", .null), ("via", .string "refutation"),
-                    ("reason", .string
-                      ("incomplete-search: a negated conclusion was not "
-                       ++ "refuted, but the search does not certify a "
-                       ++ "countermodel (indeterminate)"))]
-          else
-            okWith [("entailed", .null), ("via", .string "refutation"),
-                    ("reason", .string
-                      (s!"budget-out: a refutation goal exhausted fuel {fuel} "
-                       ++ "before closing (indeterminate); raise it via "
-                       ++ "opts.fuel"))]
+    let fuel := owlRefuteFuelOfOpts optsJson
+    match L4Factoidal.OWL.AtomicModel.entailsFuel dsP.default dsC.default fuel with
+    | some answer =>
+        .object [("ok", .bool true), ("entailed", .bool answer), ("via", .string "refutation"),
+                ("reason", .string
+                  ("countermodel: a checked finite model of the premise is not a model "
+                   ++ "of the conclusion (OWL 2 Direct Semantics, admitted fragment)"))]
+    | none => owlEntailsLegacyJson dsP dsC fuel
+
+/-- An `entailed: false` answer means: both default graphs are admitted and
+the premise does not entail the conclusion. -/
+theorem owlEntailsJson_false_sound (dsP dsC : Dataset) (optsJson : String)
+    (reported : (owlEntailsJson dsP dsC optsJson).getBool? "entailed" = some false) :
+    L4Factoidal.OWL.AtomicDirect.Accepted dsP.default ∧
+      L4Factoidal.OWL.AtomicDirect.Accepted dsC.default ∧
+      ¬ L4Factoidal.OWL.AtomicModel.Entails dsP.default dsC.default := by
+  unfold owlEntailsJson at reported
+  split at reported
+  · simp [Json.getBool?, Json.field?] at reported
+  · split at reported
+    · simp [Json.getBool?, Json.field?, Json.asBool?] at reported
+    · dsimp only at reported
+      split at reported
+      · rename_i answer result
+        have sound := L4Factoidal.OWL.AtomicModel.entailsFuel_sound dsP.default dsC.default
+          (owlRefuteFuelOfOpts optsJson)
+        rw [result] at sound
+        simp [Json.getBool?, Json.field?, Json.asBool?] at reported
+        subst reported
+        exact sound
+      · exact absurd reported (owlEntailsLegacyJson_ne_false dsP dsC _)
+
+#print axioms owlEntailsLegacyJson_ne_false
+#print axioms owlEntailsJson_false_sound
+
+def owlEntailsParsed (dsP dsC : Dataset) (optsJson : String) : String :=
+  (owlEntailsJson dsP dsC optsJson).toString
 
 /-- `owlEntails(premiseNquads, conclusionNquads, optsJson)`. -/
 def owlEntails (premiseNq conclusionNq optsJson : String) : String :=
@@ -206,8 +264,8 @@ theorem owlEntailsOf_eq (dsP dsC : Dataset) (optsJson : String) :
 
 #guard owlIsConsistent "<http://example.com/a> <http://example.com/says> <<( <http://example.com/s> <http://www.w3.org/1999/02/22-rdf-syntax-ns#type> <http://example.com/C> )>> .\n<http://example.com/C> <http://www.w3.org/2000/01/rdf-schema#subClassOf> <http://example.com/D> .\n<http://example.com/x> <http://www.w3.org/1999/02/22-rdf-syntax-ns#type> <http://example.com/C> .\n" "" == errJson (owlDlRdf12Refusal "owlIsConsistent")
 #guard owlEntails "<http://example.com/a> <http://example.com/says> <<( _:b1 <http://example.com/p> <http://example.com/o> )>> .\n" "<http://example.com/a> <http://example.com/says> <<( _:b1 <http://example.com/p> <http://example.com/o> )>> .\n" "" == errJson (owlDlRdf12Refusal "owlEntails")
-#guard (owlIsConsistent "<http://example.com/x> <http://www.w3.org/1999/02/22-rdf-syntax-ns#type> <http://example.com/C> .\n" "").startsWith
-  "{\"ok\":true,\"consistent\":null"
+#guard owlIsConsistent "<http://example.com/x> <http://www.w3.org/1999/02/22-rdf-syntax-ns#type> <http://example.com/C> .\n" "" ==
+  "{\"ok\":true,\"consistent\":true}"
 
 /-! ### Public verdict regressions (npm 0.11.0 audit R10)
 These are executable examples, not universal Direct Semantics proofs. -/
@@ -226,10 +284,8 @@ private def differentNq (a b : String) : String :=
   "{\"ok\":true,\"consistent\":false"
 #guard (owlIsConsistent (sameNq "a" "b" ++ sameNq "b" "c" ++ differentNq "a" "c") "").startsWith
   "{\"ok\":true,\"consistent\":false"
-#guard (owlIsConsistent (sameNq "a" "b") "").startsWith
-  "{\"ok\":true,\"consistent\":null"
-#guard (owlIsConsistent (differentNq "a" "b") "").startsWith
-  "{\"ok\":true,\"consistent\":null"
+#guard owlIsConsistent (sameNq "a" "b") "" == "{\"ok\":true,\"consistent\":true}"
+#guard owlIsConsistent (differentNq "a" "b") "" == "{\"ok\":true,\"consistent\":true}"
 
 private def punningNq : String :=
   "<urn:C> <http://www.w3.org/1999/02/22-rdf-syntax-ns#type> <http://www.w3.org/2002/07/owl#Class> .\n" ++
