@@ -167,6 +167,18 @@ private def withDir : Dataset :=
 #guard !writerDomain .jsonld withDir
 #guard writerRoundTripB .jsonld .rdf12 withDir == some false
 
+-- N-Triples: a blank-node label or a language tag outside its N-Triples
+-- production is outside `writerDomain .nt`; the writer writes it as it is and
+-- the parser refuses the text, so the round trip fails. `writerRoundTrip_nt`
+-- proves the property on the domain.
+private def badLabel : Dataset :=
+  { default := [{ s := .bnode "", p := mkIri "p", o := .iri (mkIri "s2") }], named := [] }
+private def badTag : Dataset :=
+  { default := [{ s := .iri (mkIri "s1"), p := mkIri "p", o := .literal (Literal.langString "x" "en US") }],
+    named := [] }
+#guard !writerDomain .nt badLabel && writerRoundTripB .nt .rdf11 badLabel == some false
+#guard !writerDomain .nt badTag && writerRoundTripB .nt .rdf11 badTag == some false
+
 /-! ## 2. Projections -/
 
 private def oneEmpty : Dataset :=

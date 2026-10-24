@@ -88,6 +88,7 @@ import L4Factoidal.RDF.StreamSet
 import L4Factoidal.RDF.SinkJsonLd
 import L4Factoidal.Syntax.RdfJson
 import L4Factoidal.Syntax.NTriplesRoundTrip
+import L4Factoidal.Syntax.NTriplesDocRoundTrip
 import L4Factoidal.Syntax.SyntaxTheorems
 
 namespace L4Factoidal.Dataflow
@@ -437,30 +438,20 @@ def Term.hasDirectionB : Term → Bool
   | .literal l => l.val.direction.isSome
   | _ => false
 
-/-- The IRIs of a term, nested ones included. -/
-def Subject.irisOf : Subject → List String
-  | .iri i => [i.val]
-  | .bnode _ => []
-
-def Term.irisOf : Term → List String
-  | .iri i => [i.val]
-  | .bnode _ => []
-  | .literal l => [l.val.datatype.val]
-  | .tripleTerm s p o => Subject.irisOf s ++ [p.val] ++ Term.irisOf o
-
-def Triple.irisOf (t : Triple) : List String :=
-  Subject.irisOf t.s ++ [t.p.val] ++ Term.irisOf t.o
-
 /-- The datasets the writer of `fmt` accepts and is meant to keep. RDF/XML and
 JSON-LD: no triple term. JSON-LD: no directional language string (the writer
 accepts one and drops the direction, https://github.com/danbri/factoidal/issues/984).
-N-Triples: every IRI `iriPrintSafe`. -/
+N-Triples: every IRI, blank-node label and language tag in the lexical space of
+its N-Triples production (`NTriplesRoundTrip.Triple.ntSafe`: IRIREF [8],
+BLANK_NODE_LABEL [141s], LANGTAG [144s]). The writer writes these strings as
+they are, so a string outside the production gives a document that the parser
+refuses (`PhaseCTests.lean`, the two counter-examples). -/
 def writerDomain (fmt : RdfFormat) (ds : Dataset) : Bool :=
   let ts := Sink.flatten ds
   match fmt with
   | .rdfxml => ts.all fun t => !Term.hasTripleTermB t.o
   | .jsonld => ts.all fun t => !Term.hasTripleTermB t.o && !Term.hasDirectionB t.o
-  | .nt => ts.all fun t => (Triple.irisOf t).all NTriplesRoundTrip.iriPrintSafe
+  | .nt => ts.all NTriplesRoundTrip.Triple.ntSafe
   | .nquads | .turtle | .trig => true
 
 /-- **The round-trip property of the writer of `fmt`** (stated, not proved): a
@@ -471,6 +462,27 @@ def WriterRoundTrip (fmt : RdfFormat) (v : Syntax.Mode) : Prop :=
     Sink.serializeDataset Sink.withJsonLd fmt v ds = .ok text →
     ∃ back, parseDocument Source.withJsonLd fmt v none text = .ok back ∧
       DatasetDen.Iso back.den (writerProjection fmt ds).den
+
+/-! ### N-Triples: proved -/
+
+/-- **The round trip of the N-Triples writer**, RDF 1.1 and RDF 1.2 modes. On
+the domain, the text the writer gives parses back to the set of the triples of
+all the graphs, as the default graph: the projection's denotation, with the
+identity blank-node bijection. From `parseNTriples_toNTriples` (the parser gives
+the written list of triples, in order) and `Dataset.den_toSet`. The hypothesis
+`ds.IsSet` is not used: the writer of a list with a repeat round trips too. -/
+theorem writerRoundTrip_nt (v : Syntax.Mode) : WriterRoundTrip .nt v := by
+  intro ds _ hdom text hser
+  have hg : parseNTriples text v = .ok (Sink.flatten ds) :=
+    NTriplesRoundTrip.parseNTriples_toNTriples v (Sink.flatten ds) hdom text hser
+  refine ⟨({ default := Sink.flatten ds, named := [] } : Dataset).toSet, ?_, ?_⟩
+  · simp [parseDocument, parseDocumentRaw, givesSet, hg, Except.map]
+  · rw [Dataset.den_toSet]
+    exact DatasetDen.Iso.refl _
+
+theorem writerRoundTrip_nt_rdf11 : WriterRoundTrip .nt .rdf11 := writerRoundTrip_nt .rdf11
+
+theorem writerRoundTrip_nt_rdf12 : WriterRoundTrip .nt .rdf12 := writerRoundTrip_nt .rdf12
 
 /-- The executable check of `WriterRoundTrip` on one dataset, for the tests:
 `Dataset.isomorphic?` (the blank-node bijection search of `RDF/Isomorphism.lean`)
@@ -515,5 +527,6 @@ def rdfJsonRoundTripB (g : Graph) : Option Bool :=
 #print axioms nquads11Stream_reader
 #print axioms writerProjection_triples_den
 #print axioms writerProjection_nquads_den
+#print axioms writerRoundTrip_nt
 
 end L4Factoidal.Dataflow
