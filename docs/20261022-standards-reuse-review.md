@@ -127,3 +127,19 @@ directly; `unittest discover` skips these hyphenated filenames.
 Local logs: `/tmp/factoidal-standards-pr-build.log`,
 `/tmp/factoidal-standards-pr-wide.log`, `/tmp/factoidal-standards-pr-rif.log`;
 inventory: `/tmp/factoidal-standards-pr-audit.json`.
+
+## Rescue branches (assessed 2026-10-24)
+
+- `claude/standards-reuse-20261022` (`ed19f090`): landed in reconciled form
+  by `f1f78d98`. Nothing more to take.
+- `claude/hash-grouping-wip-20261022` (`521ab1c1`): not landed. Main has its
+  own proved hash grouping in the reference evaluator (`bbc31432`,
+  `groupSolutionsFast` with `groupSolutionsFast_eq` in
+  `SPARQL/GroupFastTheorems.lean`, used by `groupWhere`). The branch's
+  `HashGrouping.selectPostFast` does the same work a second way, and groups by
+  RDF term identity (`StableGrouping.ExactEncoder`) where main groups by
+  `keysEqual`. Its 5.81 s to 148 ms figure was measured on 2026-10-11 against
+  the list grouping that `bbc31432` replaced. The branch stays as the record.
+- `claude/values-seeded-join-wip-20261023` (`9024e86b`): the VALUES leaf
+  landed; the rest is https://github.com/danbri/factoidal/issues/985.
+
