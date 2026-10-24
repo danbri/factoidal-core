@@ -2415,8 +2415,8 @@ Why the gain of stage 1m.5 does not appear:
   figures (4.44 to 3.90 ms) came from 5 processes of the phase method; its
   own final interleaved run gave 4.24 against 4.26 ms.
 - One descriptor shared by 4 threads was slower at 4 threads in every query
-  except d10 (q21 25.84 to 28.28 ms; per round, the new binary was slower in
-  12 of 16 rounds). A likely cause, not measured: in a process with more than
+  except d10 (q21 25.84 to 28.28 ms, slower in 12 of 16 rounds;
+  q07 2.38 to 2.64 ms). A likely cause, not measured: in a process with more than
   one thread, each `pread` takes and drops a reference on the shared `struct
   file` (`fdget`), and 4 threads then write one cache line. With one
   descriptor per thread (a thread-local table of 16 entries in C, keyed by
