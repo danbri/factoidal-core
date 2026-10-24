@@ -154,9 +154,14 @@ theorem datasetRestricted_restrictDataset (keep : Triple → Bool)
     (hdist : distinctNames d.named) (hne : ∀ ng ∈ d.named, ng.graph ≠ []) :
     DatasetRestricted keep readable d (restrictDataset keep d) :=
   { dflt := rfl
-  , named := fun i _ => lookupGraph_restrictNamed keep i.val d.named hdist
-  , namedList := fun _ => rfl
-  , noEmpty := hne }
+  , named := fun i _ => by
+      rcases lookupGraph_restrictNamed keep i.val d.named hdist with h | ⟨h1, h2⟩
+      · exact Or.inl h
+      · refine Or.inr ⟨h1, fun g hg => ⟨h2 g hg, ?_⟩⟩
+        obtain ⟨ng, hng, hngg⟩ := lookupGraph_mem d.named i.val g hg
+        rw [← hngg]
+        exact hne ng hng
+  , namedList := fun _ => namedRestricted_restrictNamed keep d.named hne }
 
 /-! ## 2. The composition -/
 

@@ -37,6 +37,7 @@ import L4Factoidal.Dataflow.PhaseStorage
 import L4Factoidal.Unified.OwlRlAdequacy
 import L4Factoidal.Storage.BlockDenotation
 import L4Factoidal.SPARQL.FromMergeStage
+import L4Factoidal.Storage.SelectedDataset
 import L4Factoidal.Storage.StoreDictTheorems
 import L4Factoidal.HDT.DictionaryTheorems
 import L4Factoidal.Cottas.DictTheorems
@@ -406,7 +407,7 @@ def registry : List Entry := [
   { area := "SBM11 reference-fallback read (selectedDataset)", dir := "Storage"
     stage := ``sbm11SelectedRead, wireIn := "MemGen × FileGen", wireOut := "Dataset", status := .assumed
     ioAssumptions := [``SelectedAgrees]
-    note := "IO over Session, no Lean model; keeps named graphs the selection empties" },
+    note := "IO over Session; pure model Storage.SelectedDataset.selectedModel (den_selectedModel), keeps named graphs the selection empties; that the IO read returns the model is not proved" },
   { area := "SBM11 generation to planner SELECT (reference fallback)", dir := "Dataflow"
     stage := ``sbm11PlannerSelect, wireIn := "MemGen × FileGen", wireOut := "SolutionSeq"
     contract := ``sbm11PlannerSelect_sound, status := .proved
@@ -414,9 +415,20 @@ def registry : List Entry := [
       ``L4Factoidal.Storage.PlannerSoundness.plannerSoundnessSelect]
     ioAssumptions := [``SelectedAgrees]
     note := "answer = planner answer over G.denote; needs non-empty named graphs" },
-  { area := "Reference fallback answer vs id path answer and parsed dataset", dir := "SPARQL"
-    wireIn := "Query × MemGen", wireOut := "SolutionSeq", status := .missing
-    note := "no theorem relates runSelectQueryBackendDataset over G.denote to WhereOk or to the dataset parsed; pure model of selectedDataset missing (finding 6)" },
+  { area := "Reference fallback SELECT over the model of selectedDataset", dir := "Storage"
+    stage := ``L4Factoidal.Storage.SelectedDataset.fallbackSelectStage, wireIn := "Dataset", wireOut := "SolutionSeq"
+    contract := ``L4Factoidal.Storage.SelectedDataset.FallbackSelectContract, status := .proved
+    theorems := [``L4Factoidal.Storage.SelectedDataset.referenceSelect_selected,
+      ``L4Factoidal.Storage.SelectedDataset.referenceSelect_selectedModel,
+      ``L4Factoidal.Storage.SelectedDataset.referenceSelect_selectedModel_graphs,
+      ``L4Factoidal.Storage.SelectedDataset.den_selectedModel,
+      ``L4Factoidal.Storage.SelectedDataset.applyDataset_mapRestrict,
+      ``L4Factoidal.Storage.SelectedDataset.evalPatternBackend_active,
+      ``L4Factoidal.SPARQL.DatasetRestriction.runSelectQueryBackendDataset_restrict]
+    note := "answer over queryDataset of selectedModel = answer over queryDataset of the store (FROM merge, FROM NAMED, predicate and graph-name selection, empty named graphs); premises: SELECT form, IRI graph names; one env on both sides (the harness env.dataset differs, read only by EXISTS, which the collectors refuse; not proved); IO read = model not proved (finding 6)" },
+  { area := "Reference fallback answer vs SPARQL 1.1 semantics and the id path", dir := "SPARQL"
+    wireIn := "Query × Dataset", wireOut := "SolutionSeq", status := .missing
+    note := "no refinement theorem from runSelectQueryBackendDataset (evalPatternBackend, evalBgpBackend) to Allowed or WhereOk; so no theorem that the id path and the fallback give the same solution multiset, for any fragment (finding 6)" },
   { area := "SPARQL query evaluation (reference evaluator)", dir := "SPARQL"
     wireIn := "Query × Dataset", wireOut := "QueryResult", status := .tested
     tests := ["W3C SPARQL 1.1 manifest-all (l4w3c)", "W3C SPARQL 1.2 (l4w3c)"] },
