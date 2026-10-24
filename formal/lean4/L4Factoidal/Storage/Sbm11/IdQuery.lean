@@ -1622,6 +1622,12 @@ structure Par (m : Type → Type) where
   /-- the fewest input rows (left plus right) per range of a divided merge
       join (`joinMinRows` by default; `mergeJoinParM`) -/
   joinRows : Nat := 32768
+  /-- the share of the calling thread's range of a divided merge join, in
+      tenths of an equal share (`ParallelJoin.rangesShare`; 10: equal
+      ranges). Stage 1p: the calling thread made the join's input tables, so
+      their bytes are in its cache, and a worker's range of olympics q07's
+      first join took about twice as long as the calling thread's. -/
+  joinShare : Nat := 10
   /-- block ranges per thread of the divided counted path (`divide?`;
       issue 961, stage 1i of docs/designissues/2026-10-12-parallel-block-scans.md).
       The workers take the ranges from a shared counter, so a worker that ends
@@ -2651,8 +2657,8 @@ def mergeJoinParM {m : Type → Type} [Monad m] (par : Option (Par m)) (l r : Ta
     let k := min p.threads ((l.rows + r.rows) / (if p.minRows == 0 then 1 else max p.joinRows 1))
     if k < 2 || l.rows < k then return mergeJoin l r v
     let parts ← match p.mapList with
-      | some mp => ExceptT.lift (mp (ParallelJoin.rangePairsOf l r v) (ParallelJoin.rangeChunks l.rows k))
-      | none => pure (ParallelJoin.mapPar (ParallelJoin.rangePairsOf l r v) (ParallelJoin.rangeChunks l.rows k))
+      | some mp => ExceptT.lift (mp (ParallelJoin.rangePairsOf l r v) (ParallelJoin.rangeChunksShare l.rows k p.joinShare))
+      | none => pure (ParallelJoin.mapPar (ParallelJoin.rangePairsOf l r v) (ParallelJoin.rangeChunksShare l.rows k p.joinShare))
     let pairs := ParallelJoin.concatPairs parts
     return L4Factoidal.Qlvr.joinOutput l r (joinVars l r).1 (joinVars l r).2 pairs.1 pairs.2 (some v)
 
@@ -5068,9 +5074,12 @@ def renderPartM {m : Type → Type} [Monad m] (st : Store m) (reference : Bool) 
     calling thread's array read 312 objects scattered in the calling thread's
     cache (olympics q07, 40 to 60 microseconds per job), and the buffer is
     39 cache lines. `RenderPermTheorems.unpackWords_packWords`: the job's
-    words are `xs`. -/
+    words are `xs`. Stage 1p: the words are appended with
+    `FrameWords.put64F` (one inline C store, `Prim.Bytes.pushU64LE`), not
+    with `Side.put64` (eight `lean_byte_array_push` calls); the Lean meaning
+    is the same (`RenderPermTheorems.packWords_eq_put64`, `rfl`). -/
 def packWords (xs : Array UInt64) : ByteArray :=
-  xs.foldl (fun b x => L4Factoidal.Qlvr.Side.put64 b x) (ByteArray.emptyWithCapacity (8 * xs.size))
+  xs.foldl (fun b x => L4Factoidal.Storage.Sbm11.FrameWords.put64F b x) (ByteArray.emptyWithCapacity (8 * xs.size))
 
 /-- The first `n` words of `b` (8 bytes each), as a new array made by the
     calling thread. -/

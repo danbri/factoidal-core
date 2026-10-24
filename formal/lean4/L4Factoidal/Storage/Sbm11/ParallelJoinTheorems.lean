@@ -285,4 +285,26 @@ theorem mergeJoinRanges_rangeChunks (l r : Table) (v : String) (k : Nat)
 
 #print axioms mergeJoinRanges_rangeChunks
 
+theorem rangesShare_chain (n k f : Nat) : Chain 0 (rangesShare n k f) n := by
+  unfold rangesShare
+  split
+  · exact ranges_chain n k
+  · have ha : shareLen n k f ≤ n := Nat.min_le_left _ _
+    obtain ⟨R, h1, h2⟩ := rangesAcc_chain n (max 1 ((n - shareLen n k f + (k - 1) - 1) / (k - 1))) (k - 2)
+      (shareLen n k f) [(0, shareLen n k f)] ha
+    rw [h1]
+    exact ⟨rfl, Nat.zero_le _, h2⟩
+
+/-- The divided merge join with the calling thread's range of `f / 10` of an
+    equal share (`IdQuery.mergeJoinParM`, stage 1p) is `mergeJoin`. -/
+theorem mergeJoinRanges_rangeChunksShare (l r : Table) (v : String) (k f : Nat)
+    (hA : ∀ x y, x ≤ y → y < l.rows →
+      (l.at ((l.idx v).getD 0) x).toNat ≤ (l.at ((l.idx v).getD 0) y).toNat)
+    (hB : ∀ x y, x ≤ y → y < r.rows →
+      (r.at ((r.idx v).getD 0) x).toNat ≤ (r.at ((r.idx v).getD 0) y).toNat) :
+    mergeJoinRanges l r v (rangeChunksShare l.rows k f) = mergeJoin l r v :=
+  mergeJoinRanges_eq l r v (rangesShare l.rows k f) hA hB (rangesShare_chain l.rows k f)
+
+#print axioms mergeJoinRanges_rangeChunksShare
+
 end L4Factoidal.Storage.Sbm11.ParallelJoin

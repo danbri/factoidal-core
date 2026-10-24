@@ -9,6 +9,13 @@ https://github.com/danbri/factoidal/issues/778).
 three tail calls with a fuel `Nat` first: the passes (at most 64), the runs
 of one pass and the elements of one merge, so the depth of the call stack
 does not depend on the input size.
+
+The four functions of the sort are `@[specialize]` (stage 1p of
+docs/designissues/2026-10-12-parallel-block-scans.md, issue 961): the
+compiler makes a copy for each comparison given at a call site, so that a
+comparison is not a closure call with boxed arguments per element pair.
+Before, `IdQuery.sipDistinct` sorted the 313 join-key words of olympics q07's
+third scan with `UInt64.decLe` as a closure, about 50 microseconds.
 -/
 
 namespace L4Factoidal.Qlvr
@@ -28,7 +35,7 @@ def cmpBytes (a b : ByteArray) : Ordering :=
   cmpBytesLoop a b (min a.size b.size + 1) 0
 
 /-- Merge `src[i..mid)` and `src[j..hi)` onto `out`; `k` is the fuel. -/
-def mergeRunGo {α : Type} [Inhabited α] (src : Array α) (le : α → α → Bool) (mid hi : Nat) :
+@[specialize] def mergeRunGo {α : Type} [Inhabited α] (src : Array α) (le : α → α → Bool) (mid hi : Nat) :
     Nat → Array α → Nat → Nat → Array α
   | 0, out, _, _ => out
   | k+1, out, i, j =>
@@ -37,7 +44,7 @@ def mergeRunGo {α : Type} [Inhabited α] (src : Array α) (le : α → α → B
     else out
 
 /-- One pass: merge every pair of adjacent runs of `width`, from `lo`. -/
-def mergePassGo {α : Type} [Inhabited α] (src : Array α) (le : α → α → Bool) (width n : Nat) :
+@[specialize] def mergePassGo {α : Type} [Inhabited α] (src : Array α) (le : α → α → Bool) (width n : Nat) :
     Nat → Array α → Nat → Array α
   | 0, out, _ => out
   | k+1, out, lo =>
@@ -47,7 +54,7 @@ def mergePassGo {α : Type} [Inhabited α] (src : Array α) (le : α → α → 
       let hi := min (lo + 2 * width) n
       mergePassGo src le width n k (mergeRunGo src le mid hi (hi - lo) out lo mid) hi
 
-def mergeSortGo {α : Type} [Inhabited α] (le : α → α → Bool) (n : Nat) :
+@[specialize] def mergeSortGo {α : Type} [Inhabited α] (le : α → α → Bool) (n : Nat) :
     Nat → Array α → Nat → Array α
   | 0, src, _ => src
   | k+1, src, width =>
@@ -61,7 +68,7 @@ def mergeSortGo {α : Type} [Inhabited α] (le : α → α → Bool) (n : Nat) :
     closures, one native frame per element: it overflowed the 512 KB
     canary stack sorting 20,000 keys (`l4sbm11-dict-pack`,
     https://github.com/danbri/factoidal/issues/788). -/
-def mergeSortBy {α : Type} [Inhabited α] (a : Array α) (le : α → α → Bool) : Array α :=
+@[specialize] def mergeSortBy {α : Type} [Inhabited α] (a : Array α) (le : α → α → Bool) : Array α :=
   mergeSortGo le a.size 64 a 1
 
 #guard cmpBytes "abc".toUTF8 "abd".toUTF8 == .lt
