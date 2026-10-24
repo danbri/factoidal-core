@@ -104,6 +104,12 @@ structure LangScanState where
   carry : ByteArray := ByteArray.empty
   /-- The tags found, in document order. -/
   found : Array FoundTag := #[]
+  /-- Record every tag; otherwise only the tags `RDF.isWellFormedLangTag`
+  refuses (a streamed read then keeps memory for its warnings only). -/
+  keepAll : Bool := false
+  /-- The last tag found well-formed: a document repeats few tags, so the
+  check runs once for each run of the same tag. -/
+  lastWellFormed : String := ""
   deriving Inhabited
 
 namespace LangScanState
@@ -119,6 +125,9 @@ character; LINE FEED starts a line. -/
 def closeTag (st : LangScanState) : LangScanState :=
   let st' := { st with mode := .normal, tagChars := "" }
   if st.tagChars.isEmpty then st'
+  else if !st.keepAll && st.tagChars == st.lastWellFormed then st'
+  else if !st.keepAll && isWellFormedLangTag ((st.tagChars.splitOn "--").headD st.tagChars) then
+    { st' with lastWellFormed := st.tagChars }
   else
     let f : FoundTag :=
       { raw := st.tagChars, offset := st.tagOffset, line := st.tagLine, column := st.tagColumn }
@@ -150,6 +159,33 @@ def langAdvanceN (bs : ByteArray) : Nat → Nat → LangScanState → LangScanSt
   | 0, _, st => st
   | n + 1, i, st => langAdvanceN bs n (i + 1) (st.advance (bs.get! i))
 
+/-- A byte that the mode `m` must look at; every other byte only moves the
+position. -/
+@[inline] def langSpecial (m : LangScanMode) (b : UInt8) : Bool :=
+  match m with
+  | .normal => b == bLt || b == bHash || b == bDq || b == bSq || b == bBs
+  | .iri => b == bGt
+  | .comment => b == 10 || b == 13
+  | .short q => b == q || b == bBs
+  | .long q => b == q || b == bBs
+  | .afterString => true
+  | .inTag => true
+
+/-- Move over the bytes from `i` up to the next byte that `m` must look at (or
+the end), counting offset, line and column. A tail-recursive loop with the
+position in its arguments. -/
+def langSkipPlain (bs : ByteArray) (m : LangScanMode) :
+    Nat → Nat → Nat → Nat → Nat → Nat × Nat × Nat × Nat
+  | 0, i, off, line, col => (i, off, line, col)
+  | fuel + 1, i, off, line, col =>
+    if h : i < bs.size then
+      let b := bs[i]
+      if langSpecial m b then (i, off, line, col)
+      else if b &&& 0xC0 == 0x80 then langSkipPlain bs m fuel (i + 1) off line col
+      else if b == 10 then langSkipPlain bs m fuel (i + 1) (off + 1) (line + 1) 1
+      else langSkipPlain bs m fuel (i + 1) (off + 1) line (col + 1)
+    else (i, off, line, col)
+
 /-- The walk over `bs` from index `i`. `final`: no chunk follows, so a step
 may look past the end (it sees no byte there); otherwise the walk stops when
 fewer than 4 bytes are left and keeps them in `carry`. `fuel` bounds the
@@ -160,6 +196,9 @@ def langScanLoop (bs : ByteArray) (final : Bool) : Nat → Nat → LangScanState
   | 0, _, st => st
   | fuel + 1, i, st =>
     if i ≥ bs.size then st
+    else if !langSpecial st.mode (bs.get! i) then
+      let (j, off, line, col) := langSkipPlain bs st.mode (bs.size - i) i st.offset st.line st.column
+      langScanLoop bs final fuel j { st with offset := off, line := line, column := col }
     else if !final && bs.size - i < 4 then { st with carry := bs.extract i bs.size }
     else
       let b := bs.get! i
@@ -226,7 +265,7 @@ end LangScanState
 /-- Every `@tag` after a string literal in `text`, a document of the N-Triples
 family, with its position. -/
 def scanLangTags (text : String) : Array FoundTag :=
-  (({} : LangScanState).feed text.toUTF8 true).found
+  (({ keepAll := true } : LangScanState).feed text.toUTF8 true).found
 
 /-- The language tag of a found `@tag`: the characters before `--` (RDF 1.2
 LANG_DIR writes the base direction after `--`). -/
@@ -295,7 +334,8 @@ def langTagWarnings (scan : Bool) (text : String) (ds : Dataset) : List Diagnost
   match illFormedTagsOf ds with
   | [] => []
   | bad =>
-      let found := if scan then (scanLangTags text).toList else []
+      -- Only the ill-formed tags are recorded (no `keepAll`).
+      let found := if scan then (({} : LangScanState).feed text.toUTF8 true).found.toList else []
       let hits := found.filter fun f => bad.contains f.tag.toLower
       let seen := hits.map (·.tag.toLower)
       hits.map FoundTag.warning ++
@@ -328,10 +368,14 @@ private def chunked (text : String) (n : Nat) : List String :=
     | fuel + 1 =>
         if i + n ≥ bs.size then st.feed (bs.extract i bs.size) true
         else go fuel (i + n) (st.feed (bs.extract i (i + n)) false)
-  ((go (bs.size + 1) 0 {}).found.toList.map fun f => s!"{f.raw}@{f.offset}")
+  ((go (bs.size + 1) 0 { keepAll := true }).found.toList.map fun f => s!"{f.raw}@{f.offset}")
 private def chunkDoc : String :=
   "@prefix p: <http://e/> .\np:a p:b \"\"\"x\"\"\"\"@en-GB, \"y\" @ab--ltr, 'é'@xyz-a .\n"
 #guard [1, 2, 3, 4, 5, 7, 64].all fun n => chunked chunkDoc n == chunked chunkDoc 1000
+
+-- Without `keepAll` the walk keeps only the ill-formed tags.
+#guard ((({} : LangScanState).feed "<a> <b> \"x\"@en, \"y\"@abcdefghijk .".toUTF8 true).found.toList.map
+  FoundTag.tag) == ["abcdefghijk"]
 
 -- The BCP 47 cases of the decision record (BCP 47 section 2.1).
 #guard isWellFormedLangTag "en"
