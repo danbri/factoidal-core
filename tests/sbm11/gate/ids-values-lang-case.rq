@@ -1,0 +1,5 @@
+# LANG of a VALUES term whose tag is written in capitals. Since issue 1001
+# (2026-10-24) the query parser writes the tag in lower case, so LANG reads
+# "en" on both paths and the query runs on ids. Until then the reference read
+# "EN" and the query was refused on ids (IdQuery.valueIdM, issue 776).
+SELECT (LANG(?x) AS ?l) WHERE { VALUES ?x { "a"@EN } }
