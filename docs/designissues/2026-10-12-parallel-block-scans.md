@@ -2198,8 +2198,8 @@ candidates took a quarter of their 1-thread time (0.71 ms together), q07 at 4
 threads would be about 1.81 ms: the serial phases alone (about 1.0 ms at 4
 threads) keep the ratio above 0.4.
 
-Why the scans with candidates do not reach 4 times (temporary marks, not
-committed; `SBM11_SIP_TRACE` in the branch history only):
+Why the scans with candidates do not reach 4 times (temporary time marks in
+`scanSipTableParM`, not committed):
 
 - Per-range setup and the end of the phase are small: from the entry of
   `scanSipTableParM` to the last task started 11 to 15 microseconds, from the
