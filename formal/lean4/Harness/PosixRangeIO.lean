@@ -65,11 +65,49 @@ def rangeArgs? (range : ByteRange) : Option (UInt64 × UInt64) :=
 #guard (rangeArgs? { offset := 2 ^ 63 - 1, length := 1 }).map
   (fun args => (args.1.toNat, args.2.toNat)) == some (2 ^ 63 - 1, 1)
 
-def readRange? (path : String) (range : ByteRange) : IO (Option ByteArray) := do
+/-- An open file for positioned reads (`l4_block_file_open`): the
+    descriptor and the length are read once, and the descriptor is closed when
+    the object is freed. Reads give the bytes `preadRaw` gives for the same
+    file, as long as the file does not change after the open (the files of
+    an SBM11 generation do not). Issue 961, stage 1n of
+    docs/designissues/2026-10-12-parallel-block-scans.md: q07 read a block
+    with `open`, `fstat`, `pread` and `close`. -/
+opaque BlockFilePointed : NonemptyType
+def BlockFile : Type := BlockFilePointed.type
+instance : Nonempty BlockFile := BlockFilePointed.property
+
+/-- Open `path` for reading. A file that does not open gives an object whose
+    reads are empty, as `preadRaw` of that path is. -/
+@[extern "l4_block_file_open"]
+opaque BlockFile.open (path : @& String) : IO BlockFile
+
+/-- `preadRaw` through an open file: the bytes, or an empty array when the
+    range is past the file's length at the open or the read fails. -/
+@[extern "l4_block_file_pread"]
+opaque BlockFile.pread (f : @& BlockFile) (offset length : UInt64) : IO ByteArray
+
+/-- Where a positioned read goes: the path, and the file opened once for
+    it when the caller keeps one (`BlockFile`). -/
+structure ReadSrc where
+  path : String
+  file : Option BlockFile := none
+
+instance : Coe String ReadSrc := ⟨fun path => { path }⟩
+
+def ReadSrc.ofPath (path : String) : IO ReadSrc :=
+  return { path, file := some (← BlockFile.open path) }
+
+/-- `preadRaw` of the source: through its open file when it has one. -/
+def ReadSrc.pread (src : ReadSrc) (offset length : UInt64) : IO ByteArray :=
+  match src.file with
+  | some f => f.pread offset length
+  | none => preadRaw src.path offset length
+
+def readRange? (path : ReadSrc) (range : ByteRange) : IO (Option ByteArray) := do
   match rangeArgs? range with
   | none => pure none
   | some (offset, length) =>
-      let bytes ← preadRaw path offset length
+      let bytes ← path.pread offset length
       if bytes.size == range.length then pure (some bytes) else pure none
 
 /-- Decode untrusted raw 32-byte leaf hashes from a packer's `.merkle`
@@ -137,7 +175,7 @@ def newVerifiedChunkCache (ref : Ref) : IO (IO.Ref VerifiedChunkCache) :=
 
 /-- Read the chunk `index` and admit it under `proof?`, a proof for that index,
     or refuse it. -/
-private def readVerifiedChunkProof? (path : String) (ref : Ref) (proof? : Option (List Step))
+private def readVerifiedChunkProof? (path : ReadSrc) (ref : Ref) (proof? : Option (List Step))
     (index : Nat) : IO (Option ByteArray) := do
   match offset? ref index, expectedBytes? ref index, proof? with
   | some offset, some length, some proof =>
@@ -176,14 +214,14 @@ theorem treeOf?_eq_none (ref : Ref) (leaves : List Digest) (h : leaves.length �
     a file cost the square of its chunk count.  The chunk is still checked against
     the root of the manifest (`verifyChunkWith`), so a wrong table can only refuse a
     chunk. -/
-def readVerifiedChunkTree? (path : String) (ref : Ref) (tree : Tree)
+def readVerifiedChunkTree? (path : ReadSrc) (ref : Ref) (tree : Tree)
     (index : Nat) : IO (Option ByteArray) :=
   readVerifiedChunkProof? path ref (tree.proof? index) index
 
 /-- The proof that admits a chunk is the proof `proofWith?` computes from the
     leaves, for every file, list of leaves and index: the right side is the reader
     that called `proofWith?` for each chunk. -/
-theorem readVerifiedChunkTree?_eq (path : String) (ref : Ref) (leaves : List Digest)
+theorem readVerifiedChunkTree?_eq (path : ReadSrc) (ref : Ref) (leaves : List Digest)
     (index : Nat) :
     readVerifiedChunkTree? path ref (treeOfLeaves leaves) index =
       readVerifiedChunkProof? path ref (proofWith? nativeHasher leaves index) index := by
@@ -207,7 +245,7 @@ private def cachedTree? (ref : Ref) (leaves : List Digest)
     fetched/requested bytes; callers that form a larger logical range account
     for that range separately.  This primitive is useful for streaming
     validators which must not first concatenate every touched chunk. -/
-def readVerifiedChunkCached? (path : String) (ref : Ref) (leaves : List Digest)
+def readVerifiedChunkCached? (path : ReadSrc) (ref : Ref) (leaves : List Digest)
     (cache : IO.Ref VerifiedChunkCache) (index : Nat) :
     IO (Option (ByteArray × VerifiedReadFootprint)) := do
   match (← cache.get).chunks[index]? with
@@ -229,7 +267,7 @@ def readVerifiedChunkCached? (path : String) (ref : Ref) (leaves : List Digest)
     when one is refused.  A loop: `acc` holds the chunks read, newest first.  The
     list of chunks of a range is as long as the range is in chunks, so a call for
     each chunk would take one stack frame for each. -/
-private def readVerifiedChunksTree (path : String) (ref : Ref) (tree : Tree) :
+private def readVerifiedChunksTree (path : ReadSrc) (ref : Ref) (tree : Tree) :
     List Nat → List ByteArray → IO (Option (List ByteArray))
   | [], acc => pure (some acc.reverse)
   | index :: rest, acc => do
@@ -246,7 +284,7 @@ private def concatChunks (chunks : List ByteArray) : ByteArray :=
 /-- Compatibility helper for one fixed SBM1 chunk. The generic verified-range
     reader below now handles cross-chunk requests; this narrower form remains
     useful to callers that intentionally require a single inclusion proof. -/
-def readVerifiedSingleChunkRange? (path : String) (ref : Ref) (leaves : List Digest)
+def readVerifiedSingleChunkRange? (path : ReadSrc) (ref : Ref) (leaves : List Digest)
     (range : ByteRange) : IO (Option ByteArray) := do
   if leaves.length != ref.chunkCount then return none
   match singleChunkIndex? ref range with
@@ -269,7 +307,7 @@ def readVerifiedSingleChunkRange? (path : String) (ref : Ref) (leaves : List Dig
     that reads several ranges of one file builds it once and gives it to each
     call (`Harness.ShardMerkleScan`).  The leaf count of the table is checked
     against `ref` (one read). -/
-def readVerifiedRangeTree? (path : String) (ref : Ref) (tree : Tree)
+def readVerifiedRangeTree? (path : ReadSrc) (ref : Ref) (tree : Tree)
     (range : ByteRange) : IO (Option ByteArray) := do
   if tree.leafCount != ref.chunkCount then return none
   match chunkIndices? ref range with
@@ -293,12 +331,12 @@ def readVerifiedRangeTree? (path : String) (ref : Ref) (tree : Tree)
     call: `n - 1` node hashes for a file of `n` chunks, once, where the reader
     before https://github.com/danbri/factoidal/issues/859 computed `n - 1` for each
     chunk of the range. -/
-def readVerifiedRange? (path : String) (ref : Ref) (leaves : List Digest)
+def readVerifiedRange? (path : ReadSrc) (ref : Ref) (leaves : List Digest)
     (range : ByteRange) : IO (Option ByteArray) := do
   if leaves.length != ref.chunkCount then return none
   readVerifiedRangeTree? path ref (treeOfLeaves leaves) range
 
-private def readCachedChunks (path : String) (ref : Ref) (leaves : List Digest)
+private def readCachedChunks (path : ReadSrc) (ref : Ref) (leaves : List Digest)
     (cache : IO.Ref VerifiedChunkCache) : List Nat → IO (Option (List ByteArray × Nat × Nat))
   | [] => pure (some ([], 0, 0))
   | index :: rest => do
@@ -313,7 +351,7 @@ private def readCachedChunks (path : String) (ref : Ref) (leaves : List Digest)
 /-- Cached variant of `readVerifiedRange?`. Cache misses still perform the
     full positioned read and proof check; the returned footprint counts only
     those newly obtained chunks, not chunks already admitted by this cache. -/
-def readVerifiedRangeCached? (path : String) (ref : Ref) (leaves : List Digest)
+def readVerifiedRangeCached? (path : ReadSrc) (ref : Ref) (leaves : List Digest)
     (cache : IO.Ref VerifiedChunkCache) (range : ByteRange) :
     IO (Option (ByteArray × VerifiedReadFootprint)) := do
   -- The leaves are not counted here: `readVerifiedChunkCached?` counts them once,

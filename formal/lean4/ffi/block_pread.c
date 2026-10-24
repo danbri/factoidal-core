@@ -42,6 +42,83 @@ LEAN_EXPORT lean_obj_res l4_block_pread(b_lean_obj_arg path, uint64_t offset,
   return lean_io_result_mk_ok(out);
 }
 
+/* An open file for positioned reads (issue 961, stage 1n of
+ * docs/designissues/2026-10-12-parallel-block-scans.md). `l4_block_pread`
+ * opens, stats and closes the file on every read; a session that reads many
+ * blocks of one file keeps one of these per file instead. The descriptor and
+ * the file length are read once, at open; the files of an SBM11 generation do
+ * not change after activation. `pread` does not move a shared file offset, so
+ * several threads may read through one object. The descriptor is closed when
+ * Lean frees the object (the finalizer). A file that does not open gives an
+ * object with fd -1, whose reads give an empty array, as a failed
+ * `l4_block_pread` does. */
+#include <pthread.h>
+typedef struct {
+  int fd;
+  uint64_t size;
+} l4_block_file;
+
+static void l4_block_file_finalize(void *p) {
+  l4_block_file *f = (l4_block_file *)p;
+  if (f->fd >= 0) close(f->fd);
+  free(f);
+}
+
+static void l4_block_file_foreach(void *p, b_lean_obj_arg fn) {
+  (void)p;
+  (void)fn;
+}
+
+static lean_external_class *l4_block_file_class = NULL;
+static pthread_once_t l4_block_file_once = PTHREAD_ONCE_INIT;
+static void l4_block_file_register(void) {
+  l4_block_file_class =
+      lean_register_external_class(l4_block_file_finalize, l4_block_file_foreach);
+}
+
+LEAN_EXPORT lean_obj_res l4_block_file_open(b_lean_obj_arg path,
+                                            lean_obj_arg world) {
+  (void)world;
+  pthread_once(&l4_block_file_once, l4_block_file_register);
+  l4_block_file *f = (l4_block_file *)malloc(sizeof(l4_block_file));
+  if (!f) return lean_io_result_mk_error(lean_mk_io_user_error(
+      lean_mk_string("l4_block_file_open: out of memory")));
+  f->fd = open(lean_string_cstr(path), O_RDONLY | O_CLOEXEC);
+  f->size = 0;
+  struct stat st;
+  if (f->fd >= 0 && (fstat(f->fd, &st) != 0 || st.st_size < 0)) {
+    close(f->fd);
+    f->fd = -1;
+  }
+  if (f->fd >= 0) f->size = (uint64_t)st.st_size;
+  return lean_io_result_mk_ok(lean_alloc_external(l4_block_file_class, f));
+}
+
+/* Bytes [offset, offset + length) of an open file, or an empty array when
+ * the file did not open, the range is past its length at open, or a read
+ * fails or is short (the contract of `l4_block_pread`). */
+LEAN_EXPORT lean_obj_res l4_block_file_pread(b_lean_obj_arg file,
+                                             uint64_t offset, uint64_t length,
+                                             lean_obj_arg world) {
+  (void)world;
+  l4_block_file *f = (l4_block_file *)lean_get_external_data(file);
+  if (f->fd < 0 || length > SIZE_MAX || offset > INT64_MAX ||
+      length > (uint64_t)INT64_MAX - offset + 1 || offset > f->size ||
+      length > f->size - offset)
+    return lean_io_result_mk_ok(l4_empty_bytes());
+  lean_obj_res out = lean_alloc_sarray(1, (size_t)length, (size_t)length);
+  size_t done = 0;
+  while (done < (size_t)length) {
+    ssize_t n = pread(f->fd, lean_sarray_cptr(out) + done,
+                      (size_t)length - done, (off_t)offset + (off_t)done);
+    if (n > 0) { done += (size_t)n; continue; }
+    if (n < 0 && errno == EINTR) continue;
+    lean_dec(out);
+    return lean_io_result_mk_ok(l4_empty_bytes());
+  }
+  return lean_io_result_mk_ok(out);
+}
+
 /* Compare-and-append is the multi-writer form used by the DLOG host. The
  * caller parsed a particular complete byte sequence and supplies its length;
  * under an exclusive advisory lock we append only if the file still has that

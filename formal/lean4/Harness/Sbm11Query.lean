@@ -138,6 +138,10 @@ structure LoadedPerm where
   cache : IO.Ref Harness.PosixRangeIO.VerifiedChunkCache
   prmPath : String
   prmRef : Ref
+  /-- PRB1 and PRM1 opened once for positioned reads (stage 1n of the
+      parallel-scans record): closed when the session is freed. -/
+  prbFile : Option Harness.PosixRangeIO.BlockFile := none
+  prmFile : Option Harness.PosixRangeIO.BlockFile := none
   prmLeaves : List L4Factoidal.Storage.BlockMerkle.Digest
   prmCache : IO.Ref Harness.PosixRangeIO.VerifiedChunkCache
   /-- the block count of the PRM1 header -/
@@ -306,10 +310,13 @@ def openSession (v : Verify) (dir0 : String) : IO Session := do
   let fetchedBytes ← IO.mkRef 0
   let gdvCache ← newChunkCache v gdvA.merkle
   let gdxCache ← newChunkCache v gdxA.merkle
+  -- stage 1n: GDV1 and GDX1 opened once, not at every read
+  let gdvFile := some (← Harness.PosixRangeIO.BlockFile.open gdvPath)
+  let gdxFile := some (← Harness.PosixRangeIO.BlockFile.open gdxPath)
   let g0 : Gen := { dir, manifest := m, verify := v, gdvPath, gdxPath, gdvRef := gdvA.merkle, gdxRef := gdxA.merkle,
-                    gdvLeaves, gdxLeaves, gdvCache, gdxCache, dictHdr := default, perms := #[],
+                    gdvLeaves, gdxLeaves, gdvCache, gdxCache, gdvFile, gdxFile, dictHdr := default, perms := #[],
                     readBytes, fetchedBytes, fileBytes }
-  let hdrBytes ← verifiedRead g0 gdxPath gdxA.merkle gdxLeaves gdxCache 0 Dict.gdxHeaderBytes
+  let hdrBytes ← verifiedRead g0 g0.gdxSrc gdxA.merkle gdxLeaves gdxCache 0 Dict.gdxHeaderBytes
   let dictHdr ← ok "GDX1" (Dict.parseGdxHeader hdrBytes)
   return { g := { g0 with dictHdr }, termCount := dictHdr.termCount,
            perms := ← IO.mkRef #[none, none, none, none],
@@ -324,7 +331,7 @@ def openSession (v : Verify) (dir0 : String) : IO Session := do
 /-- A positioned read of a PRM1 file (`PrmRange`'s `read`): under `none` one
     `pread` of exactly the bytes, under `merkle` through the file's verified
     chunk cache (one read at a time: the cache is shared, issue 799). -/
-def Session.prmReadAt (ss : Session) (path : String) (ref : Ref)
+def Session.prmReadAt (ss : Session) (path : Harness.PosixRangeIO.ReadSrc) (ref : Ref)
     (leaves : List L4Factoidal.Storage.BlockMerkle.Digest)
     (cache : IO.Ref Harness.PosixRangeIO.VerifiedChunkCache) (off len : Nat) : ExceptT String IO ByteArray :=
   ExceptT.lift do
@@ -347,13 +354,16 @@ def Session.perm (ss : Session) (p : Nat) : IO LoadedPerm := do
     -- `merkle`, so that each positioned read is checked by its chunks
     let prmLeaves ← loadLeaves ss.g.verify ss.g.fileBytes prmPath prmA.merkle
     let prmCache ← newChunkCache ss.g.verify prmA.merkle
-    let count ← match ← (PrmRange.openM (ss.prmReadAt prmPath prmA.merkle prmLeaves prmCache) prmA.bytes p).run with
+    -- stage 1n: PRB1 and PRM1 opened once, not at every read
+    let prmFile := some (← Harness.PosixRangeIO.BlockFile.open prmPath)
+    let prbFile := some (← Harness.PosixRangeIO.BlockFile.open prbPath)
+    let count ← match ← (PrmRange.openM (ss.prmReadAt { path := prmPath, file := prmFile } prmA.merkle prmLeaves prmCache) prmA.bytes p).run with
       | .ok n => pure n
       | .error e => throw (IO.userError s!"{prmPath}: {e}")
     let leaves ← loadLeaves ss.g.verify ss.g.fileBytes prbPath prbA.merkle
     let cache ← newChunkCache ss.g.verify prbA.merkle
     let lp : LoadedPerm := { prbPath, prbRef := prbA.merkle, leaves, cache, prmPath, prmRef := prmA.merkle,
-                             prmLeaves, prmCache, count, ranges := ← IO.mkRef {} }
+                             prmLeaves, prmCache, prbFile, prmFile, count, ranges := ← IO.mkRef {} }
     ss.perms.modify (·.set! p (some lp))
     return lp
   | none => throw (IO.userError s!"no permutation {p}")
@@ -374,7 +384,7 @@ def Session.gdxBytes (ss : Session) : IO ByteArray := do
 
 def Session.gdxFetch (ss : Session) (off len : Nat) : IO ByteArray := do
   if ss.g.verify == .none then
-    return (← verifiedRead ss.g ss.g.gdxPath ss.g.gdxRef ss.g.gdxLeaves ss.g.gdxCache off len)
+    return (← verifiedRead ss.g ss.g.gdxSrc ss.g.gdxRef ss.g.gdxLeaves ss.g.gdxCache off len)
   let b ← ss.gdxBytes
   if off + len > b.size then throw (IO.userError s!"GDX1: read past the end")
   return b.extract off (off + len)
@@ -386,13 +396,13 @@ def Session.gdxFetch (ss : Session) (off len : Nat) : IO ByteArray := do
 def Session.gdvFetch (ss : Session) (off len : Nat) : IO ByteArray := do
   if len == 0 then return ByteArray.empty
   if ss.g.verify == .none then
-    return (← verifiedRead ss.g ss.g.gdvPath ss.g.gdvRef ss.g.gdvLeaves ss.g.gdvCache off len)
+    return (← verifiedRead ss.g ss.g.gdvSrc ss.g.gdvRef ss.g.gdvLeaves ss.g.gdvCache off len)
   let cb := ss.g.gdvRef.chunkBytes
   let first := off / cb
   let last := (off + len - 1) / cb
   let mut out := ByteArray.emptyWithCapacity len
   for c in [first:last + 1] do
-    match ← Harness.PosixRangeIO.readVerifiedChunkCached? ss.g.gdvPath ss.g.gdvRef ss.g.gdvLeaves ss.g.gdvCache c with
+    match ← Harness.PosixRangeIO.readVerifiedChunkCached? ss.g.gdvSrc ss.g.gdvRef ss.g.gdvLeaves ss.g.gdvCache c with
     | some (chunk, fp) =>
       ss.g.fetchedBytes.modify (· + fp.fetchedBytes)
       ss.g.fileBytes.modify (· + fp.fetchedBytes)
@@ -725,7 +735,7 @@ def Session.lowerBound (ss : Session) (k : ByteArray) : IO Nat := do
 def Session.rangeFor (ss : Session) (p : Nat) (key : Array UInt64) : IO (Array BlockMeta) := do
   let lp ← ss.perm p
   if let some r := MemoCache.find? (← lp.ranges.get) key then return r
-  let read := ss.prmReadAt lp.prmPath lp.prmRef lp.prmLeaves lp.prmCache
+  let read := ss.prmReadAt { path := lp.prmPath, file := lp.prmFile } lp.prmRef lp.prmLeaves lp.prmCache
   let r ← match ← (PrmRange.rangeM (PrmRange.bytesReader read lp.count) key).run with
     | .ok r => pure r
     | .error e => throw (IO.userError s!"{lp.prmPath}: {e}")
@@ -738,8 +748,8 @@ def Session.prb (ss : Session) (p off len : Nat) : IO ByteArray := do
   match ss.g.verify with
   | .merkle =>
     -- the chunk cache is one shared table: one read at a time (issue 799)
-    ss.lock.atomically (verifiedRead ss.g lp.prbPath lp.prbRef lp.leaves lp.cache off len)
-  | .none => verifiedRead ss.g lp.prbPath lp.prbRef lp.leaves lp.cache off len
+    ss.lock.atomically (verifiedRead ss.g { path := lp.prbPath, file := lp.prbFile } lp.prbRef lp.leaves lp.cache off len)
+  | .none => verifiedRead ss.g { path := lp.prbPath, file := lp.prbFile } lp.prbRef lp.leaves lp.cache off len
 
 /-- A view of the session for one scan task (issue 799): its own byte and
     lookup counters, and a copy of the permutations opened so far (the parent

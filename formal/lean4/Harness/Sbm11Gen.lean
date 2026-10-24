@@ -218,6 +218,10 @@ structure Gen where
   gdxLeaves : List L4Factoidal.Storage.BlockMerkle.Digest
   gdvCache : IO.Ref Harness.PosixRangeIO.VerifiedChunkCache
   gdxCache : IO.Ref Harness.PosixRangeIO.VerifiedChunkCache
+  /-- GDV1 and GDX1 opened once for positioned reads (the query session,
+      stage 1n of the parallel-scans record); `none`: a read opens the path. -/
+  gdvFile : Option Harness.PosixRangeIO.BlockFile := none
+  gdxFile : Option Harness.PosixRangeIO.BlockFile := none
   dictHdr : Dict.GdxHeader
   perms : Array PermSrc
   /-- Bytes the callers asked for, and the bytes fetched for them: under
@@ -229,6 +233,9 @@ structure Gen where
       the `.merkle` sidecars, whole-file reads (PRM1, GDX1) and the fetched
       ranges. -/
   fileBytes : IO.Ref Nat
+
+def Gen.gdvSrc (g : Gen) : Harness.PosixRangeIO.ReadSrc := { path := g.gdvPath, file := g.gdvFile }
+def Gen.gdxSrc (g : Gen) : Harness.PosixRangeIO.ReadSrc := { path := g.gdxPath, file := g.gdxFile }
 
 def manifestName : String := "manifest.sbm11"
 
@@ -260,20 +267,22 @@ def newChunkCache (v : Verify) (ref : Ref) : IO (IO.Ref Harness.PosixRangeIO.Ver
 /-- Bytes `[off, off + len)` of a file of the generation. `merkle`: through
     the verified chunk cache (`readVerifiedRangeCached?`); `none`: one `pread`
     of exactly those bytes, inside the manifest's length of the file. -/
-def verifiedRead (g : Gen) (path : String) (ref : Ref) (leaves : List L4Factoidal.Storage.BlockMerkle.Digest)
+def verifiedRead (g : Gen) (src : Harness.PosixRangeIO.ReadSrc) (ref : Ref) (leaves : List L4Factoidal.Storage.BlockMerkle.Digest)
     (cache : IO.Ref Harness.PosixRangeIO.VerifiedChunkCache) (off len : Nat) : IO ByteArray := do
   if len == 0 then return ByteArray.empty
+  let path := src.path
   match g.verify with
   | .none =>
     if off + len > ref.totalBytes then
       throw (IO.userError s!"{path}: read of {len} bytes at {off} past the manifest's length {ref.totalBytes}")
-    let b ← pread path off len
+    let b ← src.pread off.toUInt64 len.toUInt64
+    if b.size != len then throw (IO.userError s!"{path}: short read of {len} bytes at {off}")
     g.readBytes.modify (· + len)
     g.fetchedBytes.modify (· + len)
     g.fileBytes.modify (· + len)
     pure b
   | .merkle =>
-    match ← Harness.PosixRangeIO.readVerifiedRangeCached? path ref leaves cache { offset := off, length := len } with
+    match ← Harness.PosixRangeIO.readVerifiedRangeCached? src ref leaves cache { offset := off, length := len } with
     | some (b, fp) =>
       g.readBytes.modify (· + len)
       g.fetchedBytes.modify (· + fp.fetchedBytes)
