@@ -113,3 +113,26 @@ no longer exists or is now mapped, or when the count differs from
 
 The bound status of an entry is the weakest status of its stages
 (`tested` < `assumed` < `proved`).
+
+## The assumption gate
+
+`tools/assumption-gate.py` (issue 975, item 4) counts named assumptions and
+pins proved stages. No Lean build is needed; it reads
+`docs/dataflow-inventory.md` (generated from the Lean registry, drift-checked
+before the gate runs) and the `.lean` sources.
+
+- `io:<Name>`: each name in the "IO assumptions" column of the inventory.
+- `field:<Module>.<Struct>.<name>`: each structure or class field whose name
+  starts with `assumed_`. **Naming rule for interface types** (`LawfulStore`,
+  `LawfulEvaluator`, `RdfWriter`, `SoundReasoner`, `LawfulValidator`,
+  `SoundChecker`): a contract field that is not proved is named
+  `assumed_<what>`. This is the one regex-based input (the registry does not
+  export interface-type fields); it strips comments and takes the nearest
+  preceding `structure` or `class` as the owner.
+
+Each counted assumption needs a line `id  # reason` in `assumptions.txt`;
+`# max-entries: N` must equal the line count. `proved-stages.txt` pins the
+registry stages with status `proved` (`--pin` rewrites it). A pinned stage
+that is no longer proved fails the gate unless `assumptions.txt` has
+`demoted:<stage>  # reason`. A newly proved stage is only reported as
+"not pinned"; run `--pin` to add it.

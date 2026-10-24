@@ -1,0 +1,14 @@
+# Named assumptions, 2026-10-24 (https://github.com/danbri/factoidal/issues/975, item 4).
+# One line per assumption: ID  # reason. tools/assumption-gate.py counts
+#   io:<Name>                     IO assumptions in docs/dataflow-inventory.md
+#   field:<Module>.<Struct>.<f>   structure fields named assumed_* in L4Factoidal
+# and fails when the tree has an assumption that is not listed here, when a line
+# names an assumption that is gone, when a line has no reason, or when the line
+# count differs from max-entries. A line 'demoted:<stage>  # reason' records a
+# registry stage that was proved (foundation/proved-stages.txt) and is not now.
+# Adding a line needs a reason in the same change; removing one lowers max-entries.
+# max-entries: 4
+io:Ed25519Correct  # the native Ed25519 verify agrees with the Ed25519 specification (RFC 8032); crypto primitive realised outside Lean
+io:ReadsWritten  # reading back an SBM11 file returns what the writer wrote; file IO is not modelled in Lean
+io:SelectedAgrees  # a planner-selected SBM11 read returns the same triples as an unselected read; the on-disk selection index is outside Lean
+io:Sha256Agrees  # the native SHA-256 agrees with the Lean SHA-256 definition (FIPS 180-4); crypto primitive realised outside Lean

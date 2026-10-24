@@ -9,6 +9,7 @@
 #    when docs/dataflow-inventory.md differs from it.
 # 3. The FOUNDATION gate (tools/foundation-gate.py, foundation/README.md).
 # 4. The entry-point gate (tools/entrypoint-gate.py, foundation/README.md).
+# 5. The assumption gate (tools/assumption-gate.py, foundation/assumptions.txt).
 set -euo pipefail
 here="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 lean="$here/formal/lean4"
@@ -48,3 +49,11 @@ python3 -I "$here/tools/foundation-gate.py" --root "$here"
 #    checked current in step 2).
 python3 -I "$here/tests/foundation/test_entrypoint_gate.py"
 python3 -I "$here/tools/entrypoint-gate.py" --root "$here"
+
+# 5. The assumption gate (issue 975, item 4): its fixture tests (including the
+#    negative ones: an added assumption, a lost proof, an empty walk must fail),
+#    then the gate on this tree (foundation/assumptions.txt,
+#    foundation/proved-stages.txt, docs/dataflow-inventory.md as checked
+#    current in step 2).
+python3 -I "$here/tests/foundation/test_assumption_gate.py"
+python3 -I "$here/tools/assumption-gate.py" --root "$here"
