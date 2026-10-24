@@ -154,13 +154,16 @@ structure EvalInput.Wf (inp : EvalInput) : Prop where
 /-- The indexed backend of a set dataset with IRI graph names reads it. -/
 theorem backendReads_indexed (d : Dataset) (hset : d.IsSet)
     (hiri : Storage.QuadDataset.namesAreIris d = true)
-    (hdf : Storage.Sbm11.AllowedPerm.GraphFixed d.default)
-    (hnf : ∀ ng ∈ d.named, Storage.Sbm11.AllowedPerm.GraphFixed ng.graph) :
+    (_hdf : Storage.Sbm11.AllowedPerm.GraphFixed d.default)
+    (_hnf : ∀ ng ∈ d.named, Storage.Sbm11.AllowedPerm.GraphFixed ng.graph) :
     BackendReads (indexedDatasetBackend d) d := by
+  -- `graphRel_indexed` and `namedRel_indexed` no longer take the `GraphFixed`
+  -- premises (commit 8461c6f1, issue 1001); the two parameters stay so the
+  -- callers are unchanged.
   have hi := Storage.BackendRefinement.iris_of_namesAreIris hiri
-  refine ⟨Storage.BackendRefinement.graphRel_indexed hset.default hdf, ?_, ?_⟩
+  refine ⟨Storage.BackendRefinement.graphRel_indexed hset.default, ?_, ?_⟩
   · rw [DatasetRestriction.indexedDatasetBackend_named]
-    exact Storage.BackendRefinement.namedRel_indexed d.named hset.graphs hnf hi
+    exact Storage.BackendRefinement.namedRel_indexed d.named hset.graphs hi
   · rw [DatasetRestriction.indexedDatasetBackend_named, List.map_map]
     exact Storage.BackendRefinement.ngKey_nodup d.named hset.names hi
 

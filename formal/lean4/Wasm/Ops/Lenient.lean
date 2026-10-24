@@ -66,15 +66,6 @@ def parseDocumentOptionsOfJson (optionsJson : String) : ParseDocumentOptions :=
             | _ => none }
     | _ => {}
 
-/-- One diagnostic as the envelope carries it. -/
-def diagnosticJson (d : Diagnostic) : Json :=
-  .object
-    [ ("message", .string d.message)
-    , ("offset", .number (toString d.offset))
-    , ("line", .number (toString d.line))
-    , ("column", .number (toString d.column))
-    , ("class", .string d.cls.tag) ]
-
 /-- The lenient parse of `text` under `formatTag`: the outcome and the
 diagnostics. The dataset is a set of quads: the Turtle and N-Triples readers
 list a repeated triple two times, so their graph goes through `Dataset.toSet`
@@ -114,10 +105,11 @@ def parseDocumentWithBy (extra : ExtraReader) (scope : Option String)
         let ds := match scope with
           | some pre => scopeBnodes pre out.ds
           | none => out.ds
-        okWith [("count", .number (toString (datasetQuadCount ds))),
+        okWith ([("count", .number (toString (datasetQuadCount ds))),
                 ("nquads", .string (Dataset.toCanonicalNQuads ds)),
                 ("prefixes", prefixesJson out.prefixes),
-                ("diagnostics", .array (diags.map diagnosticJson))]
+                ("diagnostics", .array (diags.map diagnosticJson))] ++
+                warningsMembers (readerWarnings text formatTag out.ds))
 
 /-- `parseDocument` through the pure `call`: labels as written. -/
 def parseDocumentBy (extra : ExtraReader) (text formatTag baseIRI optionsJson : String) :

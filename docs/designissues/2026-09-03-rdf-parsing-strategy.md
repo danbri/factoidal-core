@@ -1573,7 +1573,7 @@ unchanged." Record: CLAUDE.md, "Ill-formed BCP 47 language tags (owner,
   finds each occurrence in the text with `scanLangTags`: a walk over the UTF-8
   bytes that knows IRIs, comments, the four string forms, escapes and the
   white space RDF 1.2 allows before `@`. It is a loop (one tail call per byte)
-  and takes the bytes in chunks (`ScanState.feed`), so the streamed strict and
+  and takes the bytes in chunks (`LangScanState.feed`), so the streamed strict and
   lenient command-line reads run it on the chunks they read and keep no text.
   A tag the walk does not find (RDF/XML `xml:lang`, JSON-LD `@language`) gets
   one warning at the first place its text occurs.

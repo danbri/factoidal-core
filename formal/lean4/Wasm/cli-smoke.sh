@@ -140,6 +140,36 @@ assert_text "parse --out turtle" 0 out "@prefix" \
   "$CLI" parse "$TMP/data.ttl" --format turtle --out turtle
 assert_text "parse bad turtle -> error" 1 err "offset" \
   bash -c "printf 'not turtle @@@' | '$CLI' parse --format turtle"
+# A language tag that is not well-formed under BCP 47 (owner decision of
+# 2026-10-24, CLAUDE.md "Ill-formed BCP 47 language tags"): the reader keeps the
+# triple and warns on standard error with the tag and its line and column; the
+# writers write the tag. Streamed file read, whole-text read, --out and --lenient.
+printf '<http://e/s> <http://e/p> "v"@abcdefghijk .\n' > "$TMP/longtag.nt"
+assert_text "parse ill-formed language tag, streamed file: warning" 0 err \
+  'warning: 1:31: ill-formed-language-tag: the language tag "abcdefghijk"' \
+  "$CLI" parse "$TMP/longtag.nt" --format ntriples
+assert_text "parse ill-formed language tag, streamed file: the triple is kept" 0 out "1" \
+  "$CLI" parse "$TMP/longtag.nt" --format ntriples
+assert_text "parse ill-formed language tag, standard input: warning" 0 err \
+  'warning: 1:31: ill-formed-language-tag' \
+  bash -c "'$CLI' parse --format ntriples < '$TMP/longtag.nt'"
+assert_text "parse ill-formed language tag --out turtle: the tag is written" 0 out '"v"@abcdefghijk' \
+  "$CLI" parse "$TMP/longtag.nt" --format ntriples --out turtle
+assert_text "parse ill-formed language tag --out ntriples: the tag is written" 0 out '"v"@abcdefghijk' \
+  "$CLI" parse "$TMP/longtag.nt" --format ntriples --out ntriples
+assert_text "parse --lenient ill-formed language tag: JSON warning line" 0 err '"class":"ill-formed-language-tag"' \
+  "$CLI" parse "$TMP/longtag.nt" --format ntriples --lenient
+printf '<http://e/s> <http://e/p> "v"@en-a .\n' > "$TMP/badtag12.nt"
+assert_text "parse RDF 1.2 ill-formed language tag (singleton with no extension): warning" 0 err \
+  'the language tag "en-a"' \
+  "$CLI" parse "$TMP/badtag12.nt" --format nt12
+assert_text "parse RDF 1.2 subtag of 11 characters: syntax error (W3C ntriples-langdir-bad-4)" 1 err \
+  'invalid language tag' \
+  "$CLI" parse "$TMP/longtag.nt" --format nt12
+printf '<http://e/s> <http://e/p> "v"@de-CH-1901 .\n' > "$TMP/goodtag.nt"
+run_cmd "$CLI" parse "$TMP/goodtag.nt" --format ntriples
+verdict "parse well-formed language tag: no warning" "" \
+  "$([ "$RC" = 0 ] && [ -z "$ERR" ] && echo 1 || echo 0)" "exit=$RC" "stderr=$ERR"
 assert_text "parse unknown --out -> usage error" 2 err "unknown --out" \
   "$CLI" parse "$TMP/data.ttl" --out bogus
 assert_text "parse missing --format value -> usage error" 2 err "missing value" \
