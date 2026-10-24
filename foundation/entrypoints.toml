@@ -20,9 +20,9 @@ version = 0
 
 [[entry]]
 id = "wasm:parseToDatasetJson"
-stages = ["scopedParseStage"]
+stages = ["ntriplesDocumentReader", "nquadsDocumentReader", "turtleDocumentReader", "trigDocumentReader", "rdfxmlDocumentReader", "jsonldDocumentReader"]
 covers = "part"
-note = "Wasm/Ops/Parse.lean parseTextToDatasetBy calls RDF.Source.parseDocument (parseStage's run); the IO entry scopes the blank nodes (nextDocumentScope). The output text is Dataset.toCanonicalNQuads, which has no writer stage."
+note = "Wasm/Ops/Parse.lean: the pure entry parseTextToDatasetBy and the IO entry parseDocumentOutcomeBy read the document only through readerOf (the RdfReader table Dataflow.readers). Not covered: the blank-node scope of the IO entry (nextDocumentScope, a fresh-label supply), the declaration-order prefixes, and the output text Dataset.toCanonicalNQuads (no writer stage)."
 
 [[entry]]
 id = "wasm:canonicalizeToNQuads"
@@ -311,3 +311,51 @@ reason = "the error class of the package"
 [[nonstage]]
 id = "npm:./browser#FactoidalError"
 reason = "the error class of the package"
+
+[[entry]]
+id = "wasm:datasetOpen"
+stages = ["ntriplesDocumentReader", "nquadsDocumentReader", "turtleDocumentReader", "trigDocumentReader", "rdfxmlDocumentReader", "jsonldDocumentReader"]
+covers = "part"
+note = "Wasm/Ops/Handles.lean datasetOpenBy: parseDocumentOutcomeBy, which reads through readerOf (the RdfReader table). Not covered: the document scope (nextDocumentScope), the handle table and its index."
+
+[[entry]]
+id = "wasm:parseQuadsJson"
+stages = ["ntriplesDocumentReader", "nquadsDocumentReader", "turtleDocumentReader", "trigDocumentReader", "rdfxmlDocumentReader", "jsonldDocumentReader"]
+covers = "part"
+note = "Wasm/Ops/Handles.lean parseQuadsJsonBy: parseDocumentOutcomeBy (RdfReader table); the TermJson output has no writer stage."
+
+[[entry]]
+id = "wasm:parseDocument"
+stages = ["ntriplesDocumentReader", "nquadsDocumentReader", "turtleDocumentReader", "trigDocumentReader", "rdfxmlDocumentReader", "jsonldDocumentReader"]
+covers = "part"
+note = "Wasm/Ops/Lenient.lean parseDocumentWithBy: without lenient, parseToDatasetJsonWithBy (RdfReader table). Not covered: the lenient readers of Turtle, TriG, N-Triples and N-Quads (Syntax/*Lenient.lean), which are not RdfReaders (a lenient result with diagnostics is outside ReaderContract)."
+
+[[entry]]
+id = "npm:.#parse"
+stages = ["ntriplesDocumentReader", "nquadsDocumentReader", "turtleDocumentReader", "trigDocumentReader", "rdfxmlDocumentReader", "jsonldDocumentReader"]
+covers = "part"
+note = "npm/factoidal/lib/api.mjs parse (browser.js and index.mjs): strict = openText, the wasm op datasetOpen (RdfReader table). Not covered: {lenient:true} (wasm op parseDocument, lenient readers), the format inference of formatTagOf, the JS Dataset wrapper."
+
+[[entry]]
+id = "npm:./browser#parse"
+stages = ["ntriplesDocumentReader", "nquadsDocumentReader", "turtleDocumentReader", "trigDocumentReader", "rdfxmlDocumentReader", "jsonldDocumentReader"]
+covers = "part"
+note = "npm/factoidal/lib/api.mjs parse (browser.js): strict = openText, the wasm op datasetOpen (RdfReader table). Not covered: {lenient:true} (wasm op parseDocument, lenient readers), the format inference of formatTagOf, the JS Dataset wrapper."
+
+[[entry]]
+id = "npm:./fn#parse"
+stages = ["ntriplesDocumentReader", "nquadsDocumentReader", "turtleDocumentReader", "trigDocumentReader", "rdfxmlDocumentReader", "jsonldDocumentReader"]
+covers = "part"
+note = "npm/factoidal/fn.js parse calls index.js parse (lib/api.mjs): strict = openText, the wasm op datasetOpen (RdfReader table). Not covered: {lenient:true} (wasm op parseDocument, lenient readers), the format inference of formatTagOf, the JS Dataset wrapper."
+
+[[entry]]
+id = "npm:.#openDataset"
+stages = ["ntriplesDocumentReader", "nquadsDocumentReader", "turtleDocumentReader", "trigDocumentReader", "rdfxmlDocumentReader", "jsonldDocumentReader"]
+covers = "part"
+note = "npm/factoidal/lib/api.mjs openDataset (browser.js and index.mjs): text goes to datasetOf, the wasm op datasetOpen (RdfReader table). Not covered: a Dataset argument (clone) and an array (union of the members)."
+
+[[entry]]
+id = "npm:./browser#openDataset"
+stages = ["ntriplesDocumentReader", "nquadsDocumentReader", "turtleDocumentReader", "trigDocumentReader", "rdfxmlDocumentReader", "jsonldDocumentReader"]
+covers = "part"
+note = "npm/factoidal/lib/api.mjs openDataset (browser.js): text goes to datasetOf, the wasm op datasetOpen (RdfReader table). Not covered: a Dataset argument (clone) and an array (union of the members)."

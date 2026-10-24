@@ -46,6 +46,7 @@ label never name the same blank node.
 Targeted imports only (`Wasm/Abi.lean`'s import note).
 -/
 import Wasm.Ops.Support
+import L4Factoidal.Dataflow.Reader
 import L4Factoidal.Storage.BrowserLog
 import L4Factoidal.SPARQL.UpdateDelta
 import L4Factoidal.SPARQL.UpdateParser
@@ -175,7 +176,7 @@ def deltaLogDecode (logHex : String) : String :=
 /-- `deltaLogMerge(baseNQuads, logHex)`: the base dataset with the batches of
 the log applied in order (merge on read), as N-Quads. -/
 def deltaLogMerge (baseNQuads logHex : String) : String :=
-  match parseNQuadsFast baseNQuads .rdf12 with
+  match L4Factoidal.Dataflow.readNQuadsText .rdf12 baseNQuads with
   | .error e => errJson s!"deltaLogMerge: base N-Quads: {fmtParseError e}"
   | .ok base =>
     match logBytesOfHex logHex with

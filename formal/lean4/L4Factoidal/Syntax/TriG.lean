@@ -478,6 +478,16 @@ def parseTriGWithPrefixes (text : String) (base : Option String := none)
   | .error e     => .error e
   | .ok (ds, st) => .ok (ds.toDataset, st.prefixes)
 
+/-- `parseTriGWithPrefixes` gives the dataset of `parseTriG`; the prefixes are
+extra output. -/
+theorem parseTriGWithPrefixes_map_fst (text : String) (base : Option String) (mode : Mode) :
+    (parseTriGWithPrefixes text base mode).map Prod.fst = parseTriG text base mode := by
+  unfold parseTriGWithPrefixes parseTriG
+  simp only
+  cases parseTriGStatements (text.toList.length + 2) (TurtleState.init text base mode) 0 text.toList {} with
+  | error e => rfl
+  | ok v => obtain ⟨_, _⟩ := v; rfl
+
 
 /-! ## The repaired reader agrees with the superseded one
 

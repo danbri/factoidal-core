@@ -25,6 +25,7 @@ Targeted imports only — never the L4Factoidal umbrella (see
 `Wasm/Abi.lean`'s import note).
 -/
 import Wasm.Ops.Support
+import L4Factoidal.Dataflow.Reader
 import L4Factoidal.Syntax.NQuadsFast
 import L4Factoidal.ShEx.FromJson
 import L4Factoidal.ShEx.Compact
@@ -81,7 +82,7 @@ def shexValidateParsed (ds : Dataset) (schemaText focus shape : String) : String
 
 /-- `shexValidate(dataNquads, schemaText, focus, shape)`. -/
 def shexValidate (dataNq schemaText focus shape : String) : String :=
-  match parseNQuadsFast dataNq .rdf12 with
+  match L4Factoidal.Dataflow.readNQuadsText .rdf12 dataNq with
   | .error e => errJson s!"shexValidate(data): {fmtParseError e}"
   | .ok ds => shexValidateParsed ds schemaText focus shape
 

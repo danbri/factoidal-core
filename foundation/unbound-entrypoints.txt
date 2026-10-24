@@ -5,7 +5,7 @@
 # entry that no longer exists or is now mapped, or when the count differs
 # from max-entries. The list may only shrink: when you map an entry, remove
 # its line and lower max-entries in the same commit.
-# max-entries: 504
+# max-entries: 496
 cli:activate  # npm/factoidal/bin/factoidal.mjs
 cli:authz-keys  # npm/factoidal/bin/factoidal.mjs
 cli:authz-serve  # npm/factoidal/bin/factoidal.mjs
@@ -59,11 +59,9 @@ npm:.#listStores  # ./browser.js
 npm:.#loadEngine  # ./browser.js
 npm:.#mathmlEval  # ./browser.js
 npm:.#normalizeNQuads  # ./browser.js
-npm:.#openDataset  # ./browser.js
 npm:.#openStore  # ./browser.js
 npm:.#owlEntails  # ./browser.js
 npm:.#owlIsConsistent  # ./browser.js
-npm:.#parse  # ./browser.js
 npm:.#proofInspect  # ./browser.js
 npm:.#queryHdt  # ./browser.js
 npm:.#queryRaw  # ./browser.js
@@ -153,11 +151,9 @@ npm:./browser#listStores  # ./browser.js
 npm:./browser#loadEngine  # ./browser.js
 npm:./browser#mathmlEval  # ./browser.js
 npm:./browser#normalizeNQuads  # ./browser.js
-npm:./browser#openDataset  # ./browser.js
 npm:./browser#openStore  # ./browser.js
 npm:./browser#owlEntails  # ./browser.js
 npm:./browser#owlIsConsistent  # ./browser.js
-npm:./browser#parse  # ./browser.js
 npm:./browser#proofInspect  # ./browser.js
 npm:./browser#queryHdt  # ./browser.js
 npm:./browser#queryRaw  # ./browser.js
@@ -221,7 +217,6 @@ npm:./fn#mapQuads  # ./fn.js
 npm:./fn#mathmlEval  # ./fn.js
 npm:./fn#owlEntails  # ./fn.js
 npm:./fn#owlIsConsistent  # ./fn.js
-npm:./fn#parse  # ./fn.js
 npm:./fn#pipe  # ./fn.js
 npm:./fn#query  # ./fn.js
 npm:./fn#queryHdt  # ./fn.js
@@ -382,7 +377,6 @@ wasm:datasetGraphNames  # lean4/Wasm/CoreDispatch.lean
 wasm:datasetIsomorphic  # lean4/Wasm/CoreDispatch.lean
 wasm:datasetMatch  # lean4/Wasm/CoreDispatch.lean
 wasm:datasetMatchCount  # lean4/Wasm/CoreDispatch.lean
-wasm:datasetOpen  # lean4/Wasm/CoreDispatch.lean
 wasm:datasetQuadsBin  # lean4/Wasm/CoreDispatch.lean
 wasm:datasetQuadsJson  # lean4/Wasm/CoreDispatch.lean
 wasm:datasetQuery12  # lean4/Wasm/CoreDispatch.lean
@@ -431,8 +425,6 @@ wasm:packEndPass  # lean4/Wasm/CoreDispatch.lean
 wasm:packFeed  # lean4/Wasm/CoreDispatch.lean
 wasm:packFinish  # lean4/Wasm/CoreDispatch.lean
 wasm:packNext  # lean4/Wasm/CoreDispatch.lean
-wasm:parseDocument  # lean4/Wasm/Ops/Lenient.lean
-wasm:parseQuadsJson  # lean4/Wasm/CoreDispatch.lean
 wasm:proofInspect  # lean4/Wasm/CoreDispatch.lean
 wasm:quadsToNQuads  # lean4/Wasm/CoreDispatch.lean
 wasm:queryDataset12  # lean4/Wasm/CoreDispatch.lean

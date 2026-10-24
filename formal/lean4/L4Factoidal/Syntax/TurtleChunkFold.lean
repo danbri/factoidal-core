@@ -224,6 +224,98 @@ def parseTurtleText (text : String) (base : Option String := none) (mode : Mode 
     | .ok g => .ok g
     | .error _ => parseTurtle text base mode
 
+/-! ## The prefixes of the document
+
+`parseTurtleTextWithPrefixes` is `parseTurtleText` that also gives the prefix
+map in force at the end of the document, most recent binding first (as
+`parseTurtleWithPrefixes`). It takes the same branches as `parseTurtleText`,
+so its graph and its errors are exactly those of `parseTurtleText`
+(`parseTurtleTextWithPrefixes_map_fst`). The wasm `datasetOpen` and
+`parseToDatasetJson` ops read Turtle through it
+(`Source.parseDocumentWithPrefixes`), so they and `Source.parseDocument` read
+the same dataset (https://github.com/danbri/factoidal/issues/975, item 2). -/
+
+/-- `finish`, and the Turtle state at the end. -/
+def TurtleChunkFoldState.finishWithState (step : α → List RDF.Triple → α)
+    (state : TurtleChunkFoldState α) : Except ParseError (α × TurtleState) :=
+  match consumeText step (state.scanner.remainder.toList.length + 2)
+      state.turtle state.acc state.pos state.scanner.remainder.toList with
+  | .error error => .error error
+  | .ok (turtle, acc, _) => .ok (acc, turtle)
+
+theorem TurtleChunkFoldState.finishWithState_map_fst (step : α → List RDF.Triple → α)
+    (state : TurtleChunkFoldState α) :
+    (state.finishWithState step).map Prod.fst = state.finish step := by
+  unfold finishWithState finish
+  split <;> rfl
+
+/-- `parseTurtleWalk`, with the prefixes of the Turtle state at the end. -/
+def parseTurtleWalkWithPrefixes (text : String) (base : Option String := none)
+    (mode : Mode := .rdf11) : Except ParseError (Graph × List (String × String)) :=
+  let init : TurtleChunkFoldState (List RDF.Triple) :=
+    TurtleChunkFoldState.init (freshBnodePrefixText text) prependReverse [] base mode
+  let walked := text.foldl (fun (r : Except ParseError (TurtleChunkFoldState (List RDF.Triple))) c =>
+    match r with
+    | .error e => .error e
+    | .ok state => state.feedChar prependReverse c) (.ok init)
+  match walked with
+  | .error e => .error e
+  | .ok state =>
+    match state.finishWithState prependReverse with
+    | .ok (accRev, st) => .ok (accRev.reverse, st.prefixes)
+    | .error e => .error e
+
+theorem parseTurtleWalkWithPrefixes_map_fst (text : String) (base : Option String) (mode : Mode) :
+    (parseTurtleWalkWithPrefixes text base mode).map Prod.fst = parseTurtleWalk text base mode := by
+  unfold parseTurtleWalkWithPrefixes parseTurtleWalk
+  simp only
+  split
+  · rfl
+  · next state _ =>
+    have h := TurtleChunkFoldState.finishWithState_map_fst prependReverse state
+    revert h
+    cases state.finishWithState prependReverse with
+    | error e => intro h; rw [← h]; rfl
+    | ok v => intro h; rw [← h]; rfl
+
+/-- `parseTurtleWithPrefixes` gives the graph of `parseTurtle`. -/
+theorem parseTurtleWithPrefixes_map_fst (text : String) (base : Option String) (mode : Mode) :
+    (parseTurtleWithPrefixes text base mode).map Prod.fst = parseTurtle text base mode := by
+  unfold parseTurtleWithPrefixes parseTurtle
+  simp only
+  cases parseStatements (text.toList.length + 2) (TurtleState.initChars text.toList base mode) 0
+      text.toList [] with
+  | error e => rfl
+  | ok v => obtain ⟨_, _⟩ := v; rfl
+
+/-- `parseTurtleText`, with the prefixes the document declared. -/
+def parseTurtleTextWithPrefixes (text : String) (base : Option String := none)
+    (mode : Mode := .rdf11) : Except ParseError (Graph × List (String × String)) :=
+  if hasDoubleLt text then parseTurtleWithPrefixes text base mode
+  else
+    match parseTurtleWalkWithPrefixes text base mode with
+    | .ok r => .ok r
+    | .error _ => parseTurtleWithPrefixes text base mode
+
+/-- **`parseTurtleTextWithPrefixes` gives the graph and the errors of
+`parseTurtleText`**; the prefixes are extra output. -/
+theorem parseTurtleTextWithPrefixes_map_fst (text : String) (base : Option String) (mode : Mode) :
+    (parseTurtleTextWithPrefixes text base mode).map Prod.fst = parseTurtleText text base mode := by
+  unfold parseTurtleTextWithPrefixes parseTurtleText
+  split
+  · exact parseTurtleWithPrefixes_map_fst text base mode
+  · have hw := parseTurtleWalkWithPrefixes_map_fst text base mode
+    revert hw
+    cases parseTurtleWalkWithPrefixes text base mode with
+    | error e =>
+      intro hw
+      rw [← hw]
+      exact parseTurtleWithPrefixes_map_fst text base mode
+    | ok r =>
+      intro hw
+      rw [← hw]
+      rfl
+
 /-- Every error `parseTurtleText` reports is the one `parseTurtle` reports. -/
 theorem parseTurtleText_error {text : String} {base : Option String} {mode : Mode}
     {e : ParseError} (h : parseTurtleText text base mode = .error e) :

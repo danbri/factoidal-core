@@ -25,6 +25,7 @@ Targeted imports only — never the L4Factoidal umbrella (see
 `Wasm/Abi.lean`'s import note).
 -/
 import Wasm.Ops.Support
+import L4Factoidal.Dataflow.Reader
 import L4Factoidal.Syntax.NQuads
 import L4Factoidal.SPARQL.Parser
 import L4Factoidal.SPARQL.Query
@@ -188,7 +189,7 @@ base IRI and `now` the value of `NOW()` (`queryParsedDatasetWith`); this pure
 form reads no clock, so with `now = none` a `NOW()` call is an error. -/
 def queryDataset (nq sparql : String) (base : Option String := none)
     (now : Option String := none) : String :=
-  match parseNQuadsFast nq .rdf12 with
+  match L4Factoidal.Dataflow.readNQuadsText .rdf12 nq with
   | .error e => errJson (fmtParseError e)
   | .ok ds   => queryParsedDataset ds sparql base now
 
@@ -202,7 +203,7 @@ def queryDatasetIO (nq sparql : String) (base : Option String := none) : IO Stri
   let extIris ← extSnapshot
   let services ← serviceSnapshot
   let now ← nowDateTime
-  match parseNQuadsFast nq .rdf12 with
+  match L4Factoidal.Dataflow.readNQuadsText .rdf12 nq with
   | .error e => pure (errJson (fmtParseError e))
   | .ok ds   =>
       pure (queryParsedDatasetWith ds (some (indexedDatasetBackend ds)) sparql []
@@ -219,7 +220,7 @@ def queryDataset12IO (nq sparql : String) (base : Option String := none) : IO St
   let extIris ← extSnapshot
   let services ← serviceSnapshot
   let now ← nowDateTime
-  match parseNQuadsFast nq .rdf12 with
+  match L4Factoidal.Dataflow.readNQuadsText .rdf12 nq with
   | .error e => pure (errJson (fmtParseError e))
   | .ok ds   =>
       pure (queryParsedDatasetWith ds (some (indexedDatasetBackend ds)) sparql []
@@ -259,7 +260,7 @@ its own canonical N-Quads output. `now` is the value of `NOW()`
 (`applyUpdateText`); this pure form reads no clock. -/
 def updateDataset (nq updateText : String) (base : Option String := none)
     (now : Option String := none) (version : SparqlVersion := .v11) : String :=
-  match parseNQuadsFast nq .rdf12 with
+  match L4Factoidal.Dataflow.readNQuadsText .rdf12 nq with
   | .error e => errJson (fmtParseError e)
   | .ok ds => updateParsedDataset ds updateText base now version
 
@@ -286,6 +287,7 @@ theorem queryDatasetOf_eq (ds : Dataset) (sparql : String) (base : Option String
       queryDataset (Dataset.toCanonicalNQuads ds) sparql base now := by
   unfold queryDatasetOf queryDataset
   rw [withOpsDataset_eq]
+  rw [L4Factoidal.Dataflow.readNQuadsText_eq]
   cases parseNQuadsFast (Dataset.toCanonicalNQuads ds) .rdf12 <;> rfl
 
 /-- `queryDatasetOf` for a dataset that is a set of quads, as the parsers give it. -/
@@ -309,6 +311,7 @@ theorem updateDatasetOf_eq (ds : Dataset) (updateText : String) (base : Option S
       updateDataset (Dataset.toCanonicalNQuads ds) updateText base now version := by
   unfold updateDatasetOf updateDataset
   rw [withOpsDataset_eq]
+  rw [L4Factoidal.Dataflow.readNQuadsText_eq]
   cases parseNQuadsFast (Dataset.toCanonicalNQuads ds) .rdf12 <;> rfl
 
 /-! ### The query text's base IRI (https://github.com/danbri/factoidal/issues/741)

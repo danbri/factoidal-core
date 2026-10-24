@@ -45,19 +45,22 @@ for the formats the Lean engine parses; a `*12` tag routes to the RDF
 1.2 (`Mode.rdf12`) entry points, mirroring `entry_jsoo.ml`'s
 consumer-side dispatch.
 
-One table of formats. The document readers below name a format by its tag and
-read it through `L4Factoidal/RDF/Source.lean` (`Source.parseDocument`,
-`Source.parseDocumentWithPrefixes`), the same layer the shard packers read
-through (https://github.com/danbri/factoidal/issues/837). The tag is turned into
-an `RdfFormat` by `RDF.formatOfLabel`; the empty tag is Turtle.
+One table of readers (https://github.com/danbri/factoidal/issues/975, item 2).
+The document readers below name a format by its tag (`RDF.formatOfLabel`; the
+empty tag is Turtle) and read the document through `readerOf`, the
+`RdfReader` of the table `Dataflow.readers` (`L4Factoidal/Dataflow/Reader.lean`).
+An `RdfReader` holds its contract as fields: its dataset is the set of the
+parse, its scoped dataset satisfies `ReaderContract`, and it fails exactly when
+the parser fails. The N-Quads text of a dataset handle is read the same way
+(`Dataflow.readNQuadsText`, `readNQuadsText12Or11`).
 
-JSON-LD is not in this module's table. The functions that read a document take
-an `ExtraReader` for the syntaxes outside the table (`parseTextToDatasetBy`
-and the other `…By` forms): the full dispatch passes `jsonLdReader`
-(`Wasm/Ops/ParseJsonLd.lean`, JSON-LD 1.1 through `JSONLD.parseJsonLd` with no
-document loader), and the core dispatch (`Wasm/CoreDispatch.lean`) passes a
-reader that refuses JSON-LD by name. That parameter is what lets the core wasm
-link without the JSON-LD library
+JSON-LD: the functions that read a document take an `ExtraReader`
+(`parseTextToDatasetBy` and the other `…By` forms), which carries the
+source-layer readers the build links in. The full dispatch passes
+`jsonLdReader` (`Wasm/Ops/ParseJsonLd.lean`, `Source.withJsonLd`: JSON-LD 1.1
+through `JSONLD.parseJsonLd` with no document loader), and the core dispatch
+(`Wasm/CoreDispatch.lean`) passes a reader that refuses JSON-LD by name. That
+parameter is what lets the core wasm link without the JSON-LD library
 (https://github.com/danbri/factoidal/issues/713 stage 4). The names without
 `By` (`parseTextToDataset`, `parseToDatasetJson`, …) are the JSON-LD-reading
 forms and live in `Wasm/Ops/ParseJsonLd.lean`.
@@ -76,6 +79,7 @@ import L4Factoidal.Syntax.RdfXml
 import L4Factoidal.Syntax.TurtleSerialize
 import L4Factoidal.Syntax.NQuadsFast
 import L4Factoidal.RDF.Source
+import L4Factoidal.Dataflow.Reader
 import Std.Data.HashSet
 import L4Factoidal.RDF.DatasetMerge
 import L4Factoidal.RDF.DocumentScope
@@ -104,13 +108,25 @@ def resolveModeAndTag (formatTag : String) : Mode × String :=
   | "trig12"               => (Mode.rdf12, "trig")
   | _                      => (Mode.rdf11, lo)
 
-/-- A reader for an RDF syntax outside this module's table. Given the
-lower-cased format tag, the text and the base IRI, it answers `none` when the
-tag is not its syntax. See the module header for the two readers. -/
-abbrev ExtraReader := String → String → Option String → Option (Except String Dataset)
+/-- The source-layer readers of a dispatch. `extra` is what the build links
+in: `Source.withJsonLd` in the full dispatch (`Wasm/Ops/ParseJsonLd.lean`),
+`{}` in the core dispatch, so that the core wasm links without the JSON-LD
+library (https://github.com/danbri/factoidal/issues/713 stage 4). `refuse`
+gives the error text for a JSON-LD tag when `extra` has no JSON-LD parser;
+`none` treats the tag as unknown. Every syntax, JSON-LD included, is read by
+the reader of the table `Dataflow.readers extra` (`readerOf`). -/
+structure ExtraReader where
+  extra : L4Factoidal.RDF.Source.Extra := {}
+  refuse : Option (String → String) := none
 
-/-- The reader with no extra syntax: every tag outside the table is unknown. -/
-def noExtraReader : ExtraReader := fun _ _ _ => none
+/-- The reader with no extra syntax: a JSON-LD tag is unknown. -/
+def noExtraReader : ExtraReader := {}
+
+/-- **The reader of syntax `fmt` in this dispatch**: the `RdfReader` of the
+table `Dataflow.readers`. The document-reading functions below read through it
+and through no other parser. -/
+def readerOf (extra : ExtraReader) (fmt : RdfFormat) : L4Factoidal.Dataflow.RdfReader :=
+  L4Factoidal.Dataflow.readers extra.extra fmt
 
 /-- The format tags of JSON-LD 1.1 (`RDF.Format.fst`'s `format_of_string`). -/
 def jsonLdFormatTags : List String := [ "jsonld", "json-ld", "application/ld+json" ]
@@ -130,14 +146,16 @@ def parseTextToDatasetBy (extra : ExtraReader) (text formatTag baseIRI : String)
     Except String Dataset :=
   let base : Option String := if baseIRI == "" then none else some baseIRI
   let (mode, tag) := resolveModeAndTag formatTag
-  let viaExtra : Except String Dataset :=
-    match extra tag text base with
-    | some r => r.map Dataset.toSet
-    | none => .error s!"unknown format tag '{formatTag}'"
+  let unknown : Except String Dataset := .error s!"unknown format tag '{formatTag}'"
   match formatOfTag tag with
-  | none | some .jsonld => viaExtra
+  | none => unknown
   | some fmt =>
-      (L4Factoidal.RDF.Source.parseDocument {} fmt mode base text).mapError fmtParseError
+      if fmt == .jsonld then
+        match extra.extra.jsonld, extra.refuse with
+        | some _, _ => ((readerOf extra fmt).dataset { text, mode, base }).mapError (·.msg)
+        | none, some refuse => .error (refuse tag)
+        | none, none => unknown
+      else ((readerOf extra fmt).dataset { text, mode, base }).mapError fmtParseError
 
 /-- `parseToDatasetJson(text, formatTag, baseIRI)`, the pure entry's envelope
 (no prefixes, labels as written). -/
@@ -148,12 +166,25 @@ def parseToDatasetJsonBy (extra : ExtraReader) (text formatTag baseIRI : String)
       okWith [("count", .number (toString (datasetQuadCount ds))),
               ("nquads", .string (Dataset.toCanonicalNQuads ds))]
 
+/-- The N-Quads text of a dataset handle, read as RDF 1.2 N-Quads and, when the
+RDF 1.2 reader refuses it, as RDF 1.1 N-Quads, both by the N-Quads reader of
+the table (`Dataflow.readNQuadsText`). It is `parseNQuadsFast12Or11`. -/
+def readNQuadsText12Or11 (nq : String) : Except ParseError Dataset :=
+  match L4Factoidal.Dataflow.readNQuadsText .rdf12 nq with
+  | .ok ds => .ok ds
+  | .error _ => L4Factoidal.Dataflow.readNQuadsText .rdf11 nq
+
+theorem readNQuadsText12Or11_eq (nq : String) :
+    readNQuadsText12Or11 nq = parseNQuadsFast12Or11 nq := by
+  cases h : parseNQuadsFast nq .rdf12 <;>
+    simp [readNQuadsText12Or11, parseNQuadsFast12Or11, L4Factoidal.Dataflow.readNQuadsText_eq, h]
+
 /-- `serializeNQuads(nquads)` — reparse and re-serialise in canonical
 N-Quads form. The text is read as RDF 1.2 N-Quads, and as RDF 1.1 N-Quads when
 the RDF 1.2 reader refuses it (`parseNQuadsFast12Or11`,
 https://github.com/danbri/factoidal/issues/870). -/
 def serializeNQuads (nq : String) : String :=
-  match parseNQuadsFast12Or11 nq with
+  match readNQuadsText12Or11 nq with
   | .error e => errJson (fmtParseError e)
   | .ok ds   => okWith [("nquads", .string (Dataset.toCanonicalNQuads ds))]
 
@@ -163,7 +194,7 @@ fidelity-preserving path is serializeNQuads / canonicalizeToNQuads),
 mirroring `entry_jsoo.ml`'s `serialize_turtle`. The text is read as in
 `serializeNQuads`, so a triple term is written as `<<( ... )>>`. -/
 def serializeTurtle (nq : String) : String :=
-  match parseNQuadsFast12Or11 nq with
+  match readNQuadsText12Or11 nq with
   | .error e => errJson (fmtParseError e)
   | .ok ds =>
       let g := ds.default ++ ds.named.flatMap (·.graph)
@@ -187,6 +218,7 @@ theorem serializeTurtleTextOf_eq (ds : Dataset) :
       | .ok t => okWith [("turtle", .string t)] := by
   unfold serializeTurtle serializeTurtleTextOf
   rw [datasetForOps12Or11_eq]
+  rw [readNQuadsText12Or11_eq]
   cases parseNQuadsFast12Or11 (Dataset.toCanonicalNQuads ds) <;> rfl
 
 /-! ## Positions, prefixes and blank-node scope (issue 685) -/
@@ -202,6 +234,8 @@ declaration order, with its latest binding. -/
 structure ParseOutcome where
   ds       : Dataset
   prefixes : List (String × String)
+  /-- The RDF version mode the reader read the document in. -/
+  mode     : Mode := .rdf12
 
 /-- 1-based line and 1-based column, counted in Unicode scalar values, of the
 character at codepoint `offset` in `text`. An offset past the end gives the
@@ -299,82 +333,77 @@ def parseDocumentOutcomeBy (extra : ExtraReader) (text formatTag baseIRI : Strin
   let base : Option String := if baseIRI == "" then none else some baseIRI
   let (mode, tag) := resolveModeAndTag formatTag
   let noPosition (m : String) : ParseFailure := { message := m }
+  let unknown : ParseFailure := noPosition s!"unknown format tag '{formatTag}'"
   match formatOfTag tag with
+  | none => .error unknown
   | some fmt =>
       if fmt == .jsonld then
-        match extra tag text base with
-        | some (.ok ds) => .ok { ds := ds.toSet, prefixes := [] }
-        | some (.error m) => .error (noPosition m)
-        | none => .error (noPosition s!"unknown format tag '{formatTag}'")
+        match extra.extra.jsonld, extra.refuse with
+        | some _, _ =>
+            match (readerOf extra fmt).run { text, mode, base } with
+            | .error e => .error (noPosition e.msg)
+            | .ok (ds, _) => .ok { ds := ds, prefixes := [], mode }
+        | none, some refuse => .error (noPosition (refuse tag))
+        | none, none => .error unknown
       else
-        match L4Factoidal.RDF.Source.parseDocumentWithPrefixes {} fmt mode base text with
+        match (readerOf extra fmt).run { text, mode, base } with
         | .error e => .error (if fmt == .rdfxml then noPosition e.msg else failureAt text e)
-        | .ok (ds, ps) => .ok { ds := ds, prefixes := declarationOrderPrefixes ps }
-  | none =>
-      match extra tag text base with
-      | some (.ok ds) => .ok { ds := ds.toSet, prefixes := [] }
-      | some (.error m) => .error (noPosition m)
-      | none => .error (noPosition s!"unknown format tag '{formatTag}'")
+        | .ok (ds, ps) => .ok { ds := ds, prefixes := declarationOrderPrefixes ps, mode }
+
+theorem readerDataset_mapError_isSet (r : L4Factoidal.Dataflow.RdfReader)
+    (inp : L4Factoidal.Dataflow.ReaderInput) (f : ParseError → String) (ds : Dataset)
+    (h : (r.dataset inp).mapError f = .ok ds) : ds.IsSet := by
+  unfold L4Factoidal.Dataflow.RdfReader.dataset at h
+  cases hr : r.run inp with
+  | error e => rw [hr] at h; cases h
+  | ok out =>
+    rw [hr] at h
+    simp only [Except.map, Except.mapError, Except.ok.injEq] at h
+    subst h
+    exact r.isSet hr
 
 /-- The dataset of `parseTextToDatasetBy` is a set of quads (RDF 1.1 Concepts
-section 3: "An RDF graph is a set of RDF triples"). -/
+section 3: "An RDF graph is a set of RDF triples"): it is the dataset of an
+`RdfReader` (`RdfReader.isSet`). -/
 theorem parseTextToDatasetBy_isSet (extra : ExtraReader) (text formatTag baseIRI : String)
     (ds : Dataset) (h : parseTextToDatasetBy extra text formatTag baseIRI = .ok ds) :
     ds.IsSet := by
   unfold parseTextToDatasetBy at h
   simp only at h
   split at h
+  · cases h
   · split at h
-    · next r _ =>
-      cases r with
-      | error e => cases h
-      | ok d => simp only [Except.map, Except.ok.injEq] at h; subst h; exact Dataset.toSet_isSet d
-    · cases h
-  · split at h
-    · next r _ =>
-      cases r with
-      | error e => cases h
-      | ok d => simp only [Except.map, Except.ok.injEq] at h; subst h; exact Dataset.toSet_isSet d
-    · cases h
-  · have key : ∀ f m b,
-        (L4Factoidal.RDF.Source.parseDocument {} f m b text).mapError fmtParseError = .ok ds →
-        ds.IsSet := by
-      intro f m b hf
-      cases hr : L4Factoidal.RDF.Source.parseDocument {} f m b text with
-      | error e => rw [hr] at hf; cases hf
-      | ok d =>
-        rw [hr] at hf
-        simp only [Except.mapError, Except.ok.injEq] at hf
-        subst hf
-        obtain ⟨_, _, hs⟩ := L4Factoidal.RDF.Source.parseDocument_set {} f m b text d hr
-        exact hs.isSet
-    exact key _ _ _ h
+    · split at h
+      · exact readerDataset_mapError_isSet _ _ _ ds h
+      · cases h
+      · cases h
+    · exact readerDataset_mapError_isSet _ _ _ ds h
 
 /-- The dataset of `parseDocumentOutcomeBy`, which `datasetOpen` stores, is a
-set of quads. -/
+set of quads: it is the dataset of an `RdfReader`. -/
 theorem parseDocumentOutcomeBy_isSet (extra : ExtraReader) (text formatTag baseIRI : String)
     (o : ParseOutcome) (h : parseDocumentOutcomeBy extra text formatTag baseIRI = .ok o) :
     o.ds.IsSet := by
   unfold parseDocumentOutcomeBy at h
   simp only at h
   split at h
-  · next fmt _ =>
-    split at h
+  · cases h
+  · split at h
     · split at h
-      · next d _ => simp only [Except.ok.injEq] at h; subst h; exact Dataset.toSet_isSet d
+      · split at h
+        · cases h
+        · next out hr =>
+          simp only [Except.ok.injEq] at h
+          subst h
+          exact (readerOf extra _).isSet hr
       · cases h
       · cases h
-    · cases hr : L4Factoidal.RDF.Source.parseDocumentWithPrefixes {} fmt _ _ text with
-      | error e => rw [hr] at h; cases h
-      | ok r =>
-        rw [hr] at h
+    · split at h
+      · cases h
+      · next out hr =>
         simp only [Except.ok.injEq] at h
         subst h
-        exact L4Factoidal.RDF.Source.parseDocumentWithPrefixes_isSet {} fmt _ _ text r hr
-  · split at h
-    · next d _ => simp only [Except.ok.injEq] at h; subst h; exact Dataset.toSet_isSet d
-    · cases h
-    · cases h
+        exact (readerOf extra _).isSet hr
 
 #print axioms parseTextToDatasetBy_isSet
 #print axioms parseDocumentOutcomeBy_isSet
@@ -474,7 +503,7 @@ def flattenedGraph (ds : Dataset) : Graph :=
 /-- `serializeTurtleWith(nquads, optionsJson)`. The text is read as in
 `serializeNQuads`. -/
 def serializeTurtleWith (nq optionsJson : String) : String :=
-  match parseNQuadsFast12Or11 nq with
+  match readNQuadsText12Or11 nq with
   | .error e => errJson (fmtParseError e)
   | .ok ds =>
       match turtleOptionsOfJson [] optionsJson with
