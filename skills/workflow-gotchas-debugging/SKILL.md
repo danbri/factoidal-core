@@ -2211,3 +2211,21 @@ from the brief to the fix. Fixed by PR 26 (2026-10-23: every parser returns
    `FastGraph` made `datasetOfQuads_isSet` a short proof.
 6. Still not enforced: values that no operation stores, counts or writes. See
    the module header of `L4Factoidal/RDF/Graph.lean`.
+7. A producer of stored rows is a producer of a graph. The audit of
+   https://github.com/danbri/factoidal/issues/973 listed the producers of a
+   `Graph` or `Dataset` value; the IBK3 packer (`Storage/PackStream.lean`,
+   `publishBatch`) gives block rows, not a `Graph`, so that method could not
+   see it (anti-pattern 28). On 2026-10-24 `factoidal pack` with the default
+   layout still stored a repeated triple: `COUNT(*)` 2 for one triple, and
+   `"a"@en` / `"a"@EN` as two rows, in npm 0.13.0 and in the web build of
+   `6ef4013a`, while the 0.13.0 CHANGELOG said "the stores now keep one copy"
+   (https://github.com/danbri/factoidal/issues/1006). IBK4 and IBK5 answered
+   correctly only because their read path ends in `datasetOfQuads` (rule 5).
+   The registry stage `ibk3BuildWriteReadStage` is "proved" with a contract that
+   compares membership only. Rules: an audit for set producers walks every
+   path from input bytes to a count, a store row or written text (parse, pack,
+   store read, query, write), and checks the count at the end of the path;
+   a store build contract states the set condition, not only membership; a
+   CHANGELOG sentence about "the stores" names each layout it was measured on.
+   Test: `npm/factoidal/test/pack-is-a-set-1006.test.mjs` (IBK3 cases are
+   expected failures of issue 1006).
