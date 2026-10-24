@@ -2318,7 +2318,7 @@ https://github.com/danbri/factoidal/issues/961.
 
 Issue https://github.com/danbri/factoidal/issues/961 stays open.
 
-## Stage 1n: the worker pool hang, and one open file per generation file (2026-10-24)
+## Stage 1n: the worker pool hang, and open files per generation file (2026-10-24)
 
 Issue https://github.com/danbri/factoidal/issues/981 (the hang) and
 https://github.com/danbri/factoidal/issues/961 (KR 1.2 of
@@ -2376,3 +2376,52 @@ Repair (commit `ec07138e`):
   with a 120-second limit, then 500 query processes with a 10-second limit;
   a hung process gets its gdb stacks), run at the end of
   `tests/sbm11/threads.sh`.
+
+### 1n.2 One open file per generation file: tried, not kept
+
+Coordinator decision for this stage: the change of stage 1m.5 (one open file
+in place of `open`, `fstat` and `close` per read) lands if it is faster at
+both 1 and 4 threads, even if the 4/1 ratio gets worse. It was not faster at
+4 threads, so it did not land. Code: branch `fix/issue-961-fd` (`d084e5d3`
+one shared descriptor, `6b56213d` one descriptor per thread).
+
+What was built (`d084e5d3`): `l4_block_file_open` and `l4_block_file_pread`
+(an external object that holds the descriptor and the length read at open;
+its finalizer closes the descriptor), `Harness.PosixRangeIO.ReadSrc` (a path
+and an optional open file), and the query session's PRB1, PRM1, GDV1 and
+GDX1 opened once. Answers of q07, q19 and q21 at 1 and 4 threads were
+byte-identical; q07 at 1 thread made 19 `openat` calls in place of 1,338.
+
+Interleaved, binary of `main` (`ec07138e`) against each variant, 16 rounds
+(15 kept), `--repeat 21`, the 1b.6 method (raw CSV
+`.claude-runs/p2/final.csv` and `tl.final.csv`, not in the repository):
+
+| Query | `main` 1 / 4 threads ms | one shared descriptor 1 / 4 threads ms | `main` (second run) 1 / 4 | one descriptor per thread 1 / 4 |
+| --- | ---: | ---: | ---: | ---: |
+| q07 | 4.33 / 2.38 | 4.30 / 2.64 | 4.31 / 2.34 | 4.27 / 2.43 |
+| q19 | 32.54 / 10.20 | 32.58 / 10.42 | 33.01 / 10.58 | 32.60 / 10.54 |
+| q21 | 89.44 / 25.84 | 89.03 / 28.28 | 90.03 / 26.29 | 87.70 / 26.44 |
+| d10 | 8.61 / 3.20 | 8.49 / 3.19 | 8.52 / 3.27 | 8.45 / 3.25 |
+
+Peak RSS 4/1 did not change (q07 1.14, q19 1.82, q21 1.68, d10 1.22).
+
+Why the gain of stage 1m.5 does not appear:
+
+- A warm run reads few blocks. `strace -c` of q07 at 1 thread: 1,327
+  `pread64` for `--repeat 1`, 3,107 for `--repeat 21`, so about 89 reads per
+  warm run after the first; the block and page caches hold the rest. At
+  about 1 microsecond per `openat`, the open per read costs about 0.1 ms of
+  4.3 ms, which is inside the variation between processes. The stage 1m.5
+  figures (4.44 to 3.90 ms) came from 5 processes of the phase method; its
+  own final interleaved run gave 4.24 against 4.26 ms.
+- One descriptor shared by 4 threads was slower at 4 threads in every query
+  except d10 (q21 25.84 to 28.28 ms; per round, the new binary was slower in
+  12 of 16 rounds). A likely cause, not measured: in a process with more than
+  one thread, each `pread` takes and drops a reference on the shared `struct
+  file` (`fdget`), and 4 threads then write one cache line. With one
+  descriptor per thread (a thread-local table of 16 entries in C, keyed by
+  the object's number) the loss goes, and no gain is left.
+
+What would change this: a cold query (the first run of a process reads all
+1,327 ranges), or a store whose blocks do not fit the caches. Neither is a
+KR 1.2 measurement.
