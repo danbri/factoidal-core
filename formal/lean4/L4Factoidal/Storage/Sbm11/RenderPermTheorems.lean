@@ -253,9 +253,11 @@ theorem rowIntoM_eq (st : Store Id) (reference : Bool) (t : L4Factoidal.Qlvr.Tab
     rw [push_eq, push_eq, ByteArray.append_assoc]
 
 /-- The concatenation of a list of buffers. -/
-def catB : List ByteArray → ByteArray
-  | [] => ByteArray.empty
-  | b :: bs => b ++ catB bs
+def catB (bs : List ByteArray) : ByteArray := bs.foldr (· ++ ·) ByteArray.empty
+
+@[simp] theorem catB_nil : catB [] = ByteArray.empty := rfl
+
+@[simp] theorem catB_cons (b : ByteArray) (bs : List ByteArray) : catB (b :: bs) = b ++ catB bs := rfl
 
 theorem id_bind' {α β : Type} (a : Id α) (f : α → Id β) : (a >>= f : Id β) = f a := rfl
 
@@ -310,7 +312,7 @@ theorem forIn_ao (l : List Nat) (h : Nat → ByteArray → ExceptT String Id Byt
       | error e => rfl
       | ok xs =>
         show Except.ok _ = Except.ok _
-        simp [catB, ByteArray.append_assoc]
+        simp [ByteArray.append_assoc]
 
 open L4Factoidal.Storage.Sbm11.IdQuery
 
@@ -470,13 +472,13 @@ theorem forIn_cat (f : Nat → ByteArray) (body : Nat → ByteArray → ByteArra
       out ++ catB ((List.range' s n).map f) := by
   intro s n
   induction n generalizing s with
-  | zero => intro out _; simp [catB, ByteArray.append_empty]; rfl
+  | zero => intro out _; simp [ByteArray.append_empty]; rfl
   | succ n ih =>
     intro out hs
     rw [List.range'_succ, List.forIn_cons]
     show forIn (m := Id) (List.range' (s + 1) n) (body s out) _ = _
     rw [ih (s + 1) (body s out) (by omega), hb s out hs]
-    simp [catB, ByteArray.append_assoc]
+    simp [ByteArray.append_assoc]
 
 /-- The rows in the order `perm`: the first without its first byte (its
     comma), then the others. -/
@@ -705,7 +707,7 @@ theorem sortedRender_eq (st : Store Id) (reference : Bool) (t : Table) (ht : t.W
   congr 1
   rw [assembleRows_eq pieces perm hne]
   obtain ⟨n, hn⟩ : ∃ n, perm.size = n + 1 := ⟨perm.size - 1, by omega⟩
-  simp only [Nat.sub_zero, hn, List.range'_succ, List.map_cons, catB, Nat.add_sub_cancel]
+  simp only [Nat.sub_zero, hn, List.range'_succ, List.map_cons, catB_cons, Nat.add_sub_cancel]
   simp only [show ((0 : Nat) == 0) = true from rfl, if_true]
   have h0 := (hE _ (hpk 0 (by omega))).2
   simp only [all] at h0
