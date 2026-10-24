@@ -57,22 +57,23 @@ theorem string_toLower_toLower (s : String) : s.toLower.toLower = s.toLower := b
 
 /-! ## `Term.eqb` against a term in lower case -/
 
-theorem wf_lower (l : Literal) (a b : String) (h : l.langTag = some a) (hw : literalWf l = true) :
+theorem wf_lower (l : Literal) (a b : String) (h : l.langTag = some a) (hw : literalWf l = true)
+    (hb : langTagCanonical b = true) :
     literalWf { l with langTag := some b } = true := by
   obtain ⟨lex, dt, tag, dir⟩ := l
   simp only at h
   subst h
-  cases dir <;> exact hw
+  cases dir <;> simp_all [literalWf]
 
 theorem normalizeLit_tag (l : WfLiteral) (a : String) (h : l.val.langTag = some a) :
-    normalizeLit l = .literal ⟨{ l.val with langTag := some a.toLower }, wf_lower l.val a _ h l.property⟩ := by
+    normalizeLit l = .literal ⟨{ l.val with langTag := some a.toLower }, wf_lower l.val a _ h l.property (langTagCanonical_toLower a)⟩ := by
   unfold normalizeLit
   split
   · rename_i hn; rw [h] at hn; cases hn
   · rename_i tag hn
     rw [h] at hn
     cases hn
-    rw [dif_pos (wf_lower l.val a _ h l.property)]
+    rw [dif_pos (wf_lower l.val a _ h l.property (langTagCanonical_toLower a))]
 
 /-- A literal in lower case keeps its language tag. -/
 theorem tag_lower (l : WfLiteral) (b : String) (h : l.val.langTag = some b)

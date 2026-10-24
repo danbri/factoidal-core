@@ -71,6 +71,11 @@ def PairFixed (pr : Term × Term) : Prop := pr.1.joinKey = pr.1 ∧ pr.2.joinKey
     blank nodes, which always are). -/
 def GraphFixed (g : Graph) : Prop := ∀ t ∈ g, t.o.joinKey = t.o
 
+/-- Every graph is `GraphFixed`: no well-formed literal has an upper-case
+    language tag (`RDF.literalWf`, `Term.joinKey_eq_self`;
+    https://github.com/danbri/factoidal/issues/1001). -/
+theorem graphFixed (g : Graph) : GraphFixed g := fun t _ => Term.joinKey_eq_self t.o
+
 theorem subject_fixed (s : Subject) : s.toTerm.joinKey = s.toTerm := by
   cases s <;> rfl
 

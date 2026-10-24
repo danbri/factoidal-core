@@ -231,8 +231,7 @@ def mkLangLiteral (lex tag : String) : WfLiteral := Literal.langString lex tag
 /-- A directional language-tagged literal (RDF 1.2 Concepts §3.3) —
 SPARQL 1.2 STRLANGDIR. -/
 def mkDirLangLiteral (lex tag : String) (d : TextDirection) : WfLiteral :=
-  ⟨{ lexicalForm := lex, datatype := rdfDirLangString,
-     langTag := some tag, direction := some d }, rfl⟩
+  Literal.dirLangString lex tag d
 
 /-! ## Operators — SPARQL 1.1 §17.4.1.7 (comparison) / §17.4.1 (arithmetic) -/
 

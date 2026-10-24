@@ -3,6 +3,7 @@
 ## 0.14.0 (unreleased)
 
 - The N-Triples, N-Quads, Turtle and TriG writers give a fresh valid label to a blank-node label outside BLANK_NODE_LABEL (the same label for each occurrence, never a label of another blank node), and refuse a language tag outside LANGTAG with an error that names the tag (https://github.com/danbri/factoidal/issues/986).
+- A language tag is kept in lower case (RDF 1.2 Concepts §3.4: `"x"@en` and `"x"@EN` are one RDF term). Every reader, `STRLANG`, `STRLANGDIR` and the term constructors write the tag in lower case, so `LANG()` returns it in lower case, and a SPARQL answer no longer depends on the order of the triple patterns when the data spells one tag in two ways (https://github.com/danbri/factoidal/issues/1001).
 
 ## 0.13.0
 

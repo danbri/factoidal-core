@@ -70,7 +70,9 @@ theorem joinKey_eq_foldTerm : ∀ t : Term, t.joinKey = foldTerm t
         split
         · rfl
         · rename_i h
-          exact absurd (by cases dir <;> simpa [literalWf] using hwf) h
+          exact absurd (by
+            cases dir <;> simp [literalWf] at hwf <;>
+              simp [literalWf, hwf.1, langTagCanonical_toLower]) h
   | .tripleTerm s p o => by
       show Term.tripleTerm s p o.joinKey = Term.tripleTerm s p (normalizeTerm o)
       rw [joinKey_eq_foldTerm o]

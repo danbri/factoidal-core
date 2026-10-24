@@ -24,15 +24,16 @@ mapping, because the engine grows it.
   mapping, inherited from layer 1's `compatible_of_Compatible`: the
   engine tests every pair in the list while `sval` sees only the
   first, so a duplicate-key list makes the two disagree.
-* SOUNDNESS (`join_spec_sound`) needs `BindingLitExact` as well,
-  because the engine's compatibility test is strictly coarser than
-  §18.3's — `Literal.eqb` folds language-tag case. Layer 1's
-  `compatible_not_Compatible_of_coarse` is the witness that the
-  hypothesis cannot be dropped.
+* SOUNDNESS (`join_spec_sound`) needs no hypothesis. Until 2026-10-24
+  it carried one, because a term model that held `"x"@en` and
+  `"x"@EN` as two values made the engine's compatibility test coarser
+  than §18.3's. Those spellings are one RDF term (RDF 1.2 Concepts
+  §3.4) and `RDF.literalWf` now requires the lower-case one, so layer
+  1's `Compatible_of_compatible` holds unconditionally
+  (https://github.com/danbri/factoidal/issues/1001).
 
-Neither hypothesis is decoration, and neither is a weakening of the
-specification: they name the fragment on which the shipping engine
-DECIDES the specification's relation.
+The completeness hypothesis is not decoration: it names the fragment
+on which the shipping engine DECIDES the specification's relation.
 
 No `sorry`, no user `axiom`, no `native_decide`.
 -/
@@ -112,24 +113,21 @@ theorem join_spec_complete {o1 o2 : SolutionSeq} {mu : SMap}
   refine ⟨Binding.merge mu1 mu2, join_mem_of h1 h2 hc, ?_⟩
   exact merge_unique hmerge (merge_isMerge mu2 mu1)
 
-/-- **Soundness**, on the fragment where the engine's compatibility
-test IS §18.3's relation. Without `BindingLitExact` the engine can join
-a pair the specification does not — layer 1's
-`compatible_not_Compatible_of_coarse` exhibits one. -/
+/-- **Soundness**: every row of the engine's join is a §18.3 join
+answer. The engine's compatibility test accepts only compatible pairs
+(`Compatible_of_compatible`). -/
 theorem join_spec_sound {o1 o2 : SolutionSeq} {mu : Binding}
-    (hex : ∀ m1 ∈ o1, ∀ m2 ∈ o2, Binding.compatible m1 m2 = true → Compatible m1 m2)
     (h : mu ∈ join o1 o2) : InJoin o1 o2 mu := by
   obtain ⟨mu1, h1, mu2, h2, hc, rfl⟩ := mem_join h
-  exact ⟨mu1, mu2, h1, h2, hex mu1 h1 mu2 h2 hc, merge_isMerge mu2 mu1⟩
+  exact ⟨mu1, mu2, h1, h2, Compatible_of_compatible hc, merge_isMerge mu2 mu1⟩
 
-/-- Both directions where both hypotheses hold. -/
+/-- Both directions where the completeness hypothesis holds. -/
 theorem join_spec_iff {o1 o2 : SolutionSeq} {mu : SMap}
-    (hwf : ∀ m ∈ o1, noRepeats (sdom m) = true)
-    (hex : ∀ m1 ∈ o1, ∀ m2 ∈ o2, Binding.compatible m1 m2 = true → Compatible m1 m2) :
+    (hwf : ∀ m ∈ o1, noRepeats (sdom m) = true) :
     Occurs mu (join o1 o2) ↔ InJoin o1 o2 mu := by
   constructor
   · rintro ⟨m, hm, he⟩
-    obtain ⟨mu1, mu2, h1, h2, hcp, hmg⟩ := join_spec_sound hex hm
+    obtain ⟨mu1, mu2, h1, h2, hcp, hmg⟩ := join_spec_sound hm
     exact ⟨mu1, mu2, h1, h2, hcp, fun v => (he v).trans (hmg v)⟩
   · exact join_spec_complete hwf
 
@@ -143,9 +141,8 @@ statement is about `Occurs` and not about list equality. -/
 theorem join_comm_engine {o1 o2 : SolutionSeq} {mu : SMap}
     (hwf1 : ∀ m ∈ o1, noRepeats (sdom m) = true)
     (hwf2 : ∀ m ∈ o2, noRepeats (sdom m) = true)
-    (hex : ∀ m1 ∈ o1, ∀ m2 ∈ o2, Binding.compatible m1 m2 = true → Compatible m1 m2)
     (h : Occurs mu (join o1 o2)) : Occurs mu (join o2 o1) := by
-  have hin : InJoin o1 o2 mu := (join_spec_iff hwf1 hex).mp h
+  have hin : InJoin o1 o2 mu := (join_spec_iff hwf1).mp h
   exact join_spec_complete hwf2 (AlgebraSpec.join_comm hin)
 
 /-! ## Build-time checks -/

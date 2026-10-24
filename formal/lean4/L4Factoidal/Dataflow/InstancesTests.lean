@@ -82,8 +82,9 @@ private def parsed? (d : Document) : Option Dataset := okVal? (toDataset.run d)
 private def foldedB (ds : Dataset) : Bool :=
   ds.listQuads.all fun q => normTriple q.2 == q.2 && q.2.key == q.2
 
--- finding 3: `"x"@EN` is not in SBM11 form; `"x"@en` is
-#guard (parsed? (doc "application/n-quads" "<http://ex.org/a> <http://ex.org/p> \"x\"@EN .\n")).map foldedB == some false
+-- finding 3: since issue 1001 the reader writes `"x"@EN` as `"x"@en`, so every parsed
+-- document is in SBM11 form
+#guard (parsed? (doc "application/n-quads" "<http://ex.org/a> <http://ex.org/p> \"x\"@EN .\n")).map foldedB == some true
 #guard (parsed? (doc "application/n-quads" nq)).map foldedB == some true
 
 /-! ### Finding 4: document bytes to a solution sequence -/

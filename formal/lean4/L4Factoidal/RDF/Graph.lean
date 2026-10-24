@@ -164,6 +164,22 @@ def Dataset.prefixBnodes (pre : String) (ds : Dataset) : Dataset :=
 
 /-! ## Set-semantics theorems -/
 
+/-- Engine membership is list membership: `Triple.eqb` is structural
+equality, since every term is canonical (`Triple.eqb_iff_eq`;
+https://github.com/danbri/factoidal/issues/1001). -/
+theorem Graph.mem_iff (t : Triple) : ∀ g : Graph, Graph.mem t g = true ↔ t ∈ g
+  | [] => by simp [Graph.mem]
+  | hd :: tl => by
+      simp only [Graph.mem, Bool.or_eq_true, List.mem_cons, Graph.mem_iff t tl,
+        Triple.eqb_iff_eq]
+      constructor
+      · rintro (h | h)
+        · exact Or.inl h.symm
+        · exact Or.inr h
+      · rintro (h | h)
+        · exact Or.inl h.symm
+        · exact Or.inr h
+
 /-- Membership distributes over append. -/
 theorem Graph.mem_append (g1 g2 : Graph) (u : Triple) :
     Graph.mem u (g1 ++ g2) = (Graph.mem u g1 || Graph.mem u g2) := by

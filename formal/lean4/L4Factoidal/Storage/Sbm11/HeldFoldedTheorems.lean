@@ -55,7 +55,7 @@ theorem normalizeTerm_eq_joinKey : ∀ t : Term, normalizeTerm t = t.joinKey
       | some tg =>
         let v0 : Literal := { lexicalForm := lex, datatype := dt, langTag := some tg, direction := dr }
         have hv : literalWf { v0 with langTag := some tg.toLower } = true :=
-          (literalWf_joinKey v0).trans hwf
+          literalWf_joinKey v0 hwf
         simp only [normalizeTerm, normalizeLit]
         rw [dif_pos hv]
         rfl

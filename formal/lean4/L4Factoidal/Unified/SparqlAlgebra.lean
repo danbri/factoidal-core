@@ -36,10 +36,10 @@ from the model theory:
   The registry boundary row stands.
 * **No completeness back to the engine's `join` LIST.**
   `unified_join_engine_answers` goes from `μ ∈ SPARQL.join …` to an
-  answer, and it carries `join_spec_sound`'s hypothesis, because the
-  engine's `Binding.compatible` is strictly coarser than §18.3's
-  `Compatible` (`compatible_not_Compatible_of_coarse` is the witness
-  that the hypothesis cannot be dropped). The other direction —
+  answer, with no hypothesis since 2026-10-24: every term is canonical,
+  so the engine's `Binding.compatible` accepts only pairs §18.3's
+  `Compatible` accepts (`Compatible_of_compatible`,
+  https://github.com/danbri/factoidal/issues/1001). The other direction —
   every unified answer of the join is a row the engine returns — is
   NOT proved; see the module's closing note.
 
@@ -191,19 +191,14 @@ theorem unified_join_answers {b1 b2 : Bgp} {g : RDF.Graph} {mu : Binding}
   exact (answers_bgp_append_iff _ _ _ b1 b2 mu).mpr
     ⟨bgp_matches_answers hm1, bgp_matches_answers hm2⟩
 
-/-- **A row of the RUNNING engine's `join` is a unified answer** — with
-the hypothesis `SPARQL/JoinRefinement.lean`'s `join_spec_sound`
-carries, and for its reason: `Binding.compatible` accepts pairs
-§18.3's `Compatible` rejects, because `Literal.eqb` folds language-tag
-case (`compatible_not_Compatible_of_coarse` exhibits such a pair, so
-the hypothesis is not decoration). -/
+/-- **A row of the RUNNING engine's `join` is a unified answer.**
+`SPARQL/JoinRefinement.lean`'s `join_spec_sound` needs no hypothesis
+since 2026-10-24 (https://github.com/danbri/factoidal/issues/1001). -/
 theorem unified_join_engine_answers {b1 b2 : Bgp} {g : RDF.Graph} {mu : Binding}
-    (hex : ∀ m1 ∈ evalBgp b1 g, ∀ m2 ∈ evalBgp b2 g,
-      Binding.compatible m1 m2 = true → Compatible m1 m2)
     (h : mu ∈ SPARQL.join (evalBgp b1 g) (evalBgp b2 g)) :
     Answers condTrue termEqSchema [rdfToTheorySk g]
       (sparqlBgpToQuery (b1 ++ b2)) mu :=
-  unified_join_answers (SPARQL.AlgebraRefinement.join_spec_sound hex h)
+  unified_join_answers (SPARQL.AlgebraRefinement.join_spec_sound h)
 
 /-! ## What the join statements do NOT reach
 

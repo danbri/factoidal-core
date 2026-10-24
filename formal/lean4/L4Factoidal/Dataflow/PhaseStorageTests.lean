@@ -69,9 +69,10 @@ private def look0 : ByteArray → Option ByteArray := fun _ => none
 #guard ((okOr ((ibk5BuildWriteReadStage h0 look0).run q4)).bind
     (IndexedBlockWireV5.resolveBlock h0 look0)) ==
   some [(none, ⟨sA, pP, liten⟩), (some gG, ⟨sB, pP, liten⟩)]
--- the builder folds: the wire-level rows are not the unfolded `toWire` form,
--- so the hypothesis `hdenotes` of `den?_decode_encode?_toWire` fails here
-#guard (IndexedBlockWireV5.fromRdfQuads h0 q4).denotes != q4.map (IndexedBlockWireV5.toWireQuad h0)
+-- the builder folds; since issue 1001 every term is already folded, so the
+-- wire-level rows are the `toWire` form and the hypothesis `hdenotes` of
+-- `den?_decode_encode?_toWire` holds here
+#guard (IndexedBlockWireV5.fromRdfQuads h0 q4).denotes == q4.map (IndexedBlockWireV5.toWireQuad h0)
 
 /-! ## StoreCaps search of the index -/
 

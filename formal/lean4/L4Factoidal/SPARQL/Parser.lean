@@ -194,8 +194,7 @@ def mkLangLit (lex tag : String) : WfLiteral := Literal.langString lex tag
 
 /-- `make_dir_lang_literal` — RDF 1.2 Concepts §3.3. -/
 def mkDirLangLit (lex tag : String) (d : TextDirection) : WfLiteral :=
-  ⟨{ lexicalForm := lex, datatype := rdfDirLangString,
-     langTag := some tag, direction := some d }, rfl⟩
+  Literal.dirLangString lex tag d
 
 /-- `rdf_type_iri_str` — [82] VerbSimple's `a`. -/
 def rdfTypeIri : WfIri := ⟨"http://www.w3.org/1999/02/22-rdf-syntax-ns#type", rfl⟩
