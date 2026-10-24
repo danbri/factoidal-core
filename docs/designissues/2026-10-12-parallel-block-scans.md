@@ -2609,3 +2609,216 @@ with the inline loops); the inline loops are kept, and `forIn_cols` and
   candidates (the weight of a block did not predict its time).
 
 Issue https://github.com/danbri/factoidal/issues/961 stays open.
+
+## Stage 1p: q07, the time per block at 4 threads (2026-10-24)
+
+Issue https://github.com/danbri/factoidal/issues/961, key result KR 1.2 of
+https://github.com/danbri/factoidal/issues/875. No allocator setting changed;
+the block-bytes rule of `tests/sbm11/threads.sh` and `SBM11_STREAM_JOBS` are
+not changed. Branch `batch3/kr12-q07e`.
+
+### 1p.1 Result
+
+KR 1.2 is not met for q07: 0.50 on this stage and 0.50 on `main` in the
+final run. The stage found the cause of the "25 percent more thread time per
+block at 4 threads" of stage 1o.5 (1p.2: there is no slowdown of the decode;
+the figure was the variation between processes) and landed one measured
+change, a larger range for the calling thread in a divided merge join
+(1p.4). That change saves about 0.03 ms of the 4-thread time (in-process
+A/B), which the interleaved runs cannot resolve: in this session the 4-thread
+time of one process of q07 varied from 1.8 to 2.6 ms, and 1-thread runs from
+4.1 to 7.3 ms.
+
+Final interleaved run: binary of `main` `51dc6db6` (its Lean code is that of
+`6f5b9640`) against this stage (`59e211aa`), 32 rounds (31 kept),
+`--repeat 21`, the 1b.6 method, 2026-10-24 09:21 to 09:27 UTC, after all
+gates had ended (raw CSV `.claude-runs/q07e/final4.csv`, not in the
+repository):
+
+| Query | `main` 1 / 4 threads ms | 4/1 | this stage 1 / 4 threads ms | 4/1 | peak RSS 4/1 (largest), main / this stage | rounds this stage faster, 1 / 4 threads | target met |
+| --- | ---: | ---: | ---: | ---: | ---: | ---: | --- |
+| q07 | 4.52 / 2.24 | 0.50 | 4.47 / 2.24 | 0.50 | 1.21 / 1.22 | 17 / 20 of 31 | no |
+| q19 | 35.27 / 12.67 | 0.36 | 35.85 / 13.48 | 0.38 | 1.80 / 1.80 | 16 / 14 of 31 | yes |
+| q21 | 95.69 / 34.99 | 0.37 | 96.23 / 34.66 | 0.36 | 1.68 / 1.67 | 16 / 15 of 31 | yes |
+| d10 | 8.74 / 3.47 | 0.40 | 8.86 / 3.48 | 0.39 | 1.22 / 1.21 | 11 / 13 of 31 | yes |
+
+No change of this stage runs on the paths of q19, q21 and d10 (they make no
+divided merge join), so their differences are variation between processes
+and binaries. Three earlier interleaved runs of the same hour, with the
+merge sort change of 1p.5 still in, gave for q07 4/1 0.47, 0.46 and 0.51
+against 0.53, 0.52 and 0.53 for `main`, and in the third run `main` missed
+the target for d10 and q21 too (0.41 and 0.41): in this period the machine
+was slower than in stage 1o (q21 at 1 thread 94 to 97 ms against 91.2).
+
+### 1p.2 The time per block at 4 threads: measured cause
+
+Stage 1o.5 reported that a block of a scan with candidates takes about 25
+percent more thread time at 4 threads than at 1 thread, cause not found. The
+measurements of this stage (diagnostic code, not committed; olympics q07,
+binary of `main` `9fb75e4d` or of this stage):
+
+| Test | 1 thread | 4 threads |
+| --- | ---: | ---: |
+| Decode of the blocks of a range on bytes read once by the thread (`sipChunk`, 200 passes), thread time summed over the ranges, median of 20 runs in 10 processes per mode: scan2 / scan3 | 1,541.5 / 1,055.5 microseconds | 1,541.5 / 1,056 microseconds |
+| The same with a read (`open`, `fstat`, `pread`, `close`) before each block: scan2 / scan3 | 1,746.5 / 1,154.5 | 1,801.5 / 1,261 |
+| A range scanned twice in the same job, first and second pass (scan2, 4 ranges, 2 runs) | - | 390 / 395, 442 / 475, 435 / 481, 495 / 524 microseconds |
+| Sum of the four range times of the real scan (scan2) against the 1-thread scan less its candidate step | 1.75 to 1.80 ms | 1.757 and 1.793 ms |
+| TLB shootdowns per process of 201 runs; hypervisor steal per 401 runs; CPU migrations per 401 runs | 10 to 11; 3 to 5 jiffies; 0 | 28 to 34; 3 to 4 jiffies; 5 |
+| 1-thread q07 pinned to each CPU in turn (`taskset`), 3 rounds | no CPU slower in every round (4.33 to 5.19 ms, the order changes) | - |
+
+Findings:
+
+- The decode loops (`Sip.deltaFindGoY`, `Sip.deltaGatherGoY`) do not slow
+  down at 4 threads when each thread decodes bytes it holds: the summed
+  thread time is the 1-thread time. So the cause is not the clock, memory
+  bandwidth, shared caches, atomic reference counts in the loops or false
+  sharing.
+- A read per block costs about 4 microseconds at 1 thread (3 percent of
+  scan2) and more at 4 threads (scan3: +9 percent). In the profile of 4
+  threads the extra kernel time is in `do_dentry_open`, `init_file`,
+  `_raw_spin_lock` and `lockref_get_not_dead`: the `open` and `close` of each
+  read on one dentry from 4 threads (about 0.05 ms of CPU per run). Stage 1n
+  measured one descriptor per thread: no gain at 4 threads in the query time.
+- In the real scan the four range times add up to the 1-thread scan time.
+  The "25 percent more per block" of stage 1o came from comparing processes:
+  whole processes of q07 at 4 threads are 20 to 35 percent slower in every
+  phase, the serial ones too (constants 0.035 against 0.045 ms, join2 0.027
+  against 0.043 ms), and over time the machine changes speed (1-thread
+  medians 4.3 to 4.9 ms in one hour). `perf` of separate 1- and 4-thread
+  processes (loops +11 percent at 4 threads) has the same defect.
+- What does cost more at 4 threads is data that another core made. The
+  merge join of the first two scans (6,248 and 13,369 rows) in 4 equal
+  ranges: the calling thread's range took 0.065 ms and the calling thread then
+  waited 0.085 to 0.150 ms for the worker ranges (in-process measurement, 6
+  processes). The calling thread made both tables (it appended the range
+  tables of the scans), so their bytes are in its cache; a worker reads them
+  at about half the speed per row.
+
+What the scans with candidates lose at 4 threads, then, is (sub-phase marks,
+median of 5 processes of 101 runs, a fast process): the candidate step on
+the calling thread (0.04 ms before scan2, 0.08 ms before scan3; the same at
+1 thread), the block weights and cut points (about 0.015 ms), the job starts
+(0.006 ms), the slowest range against the mean of the four (about 0.05 ms in
+scan2; the calling thread's range, which also holds the first block of the
+key range, 40 to 80 microseconds as it decodes the key column), and the wait
+and append of the range tables (0.012 to 0.017 ms).
+
+### 1p.3 Measurement method: variants in one process
+
+The differences sought here (0.01 to 0.05 ms) are smaller than the variation
+between processes at 4 threads (whole processes 20 to 35 percent apart).
+Interleaved processes misled twice in this stage: a binary that differed from
+`main` only in `packWords` measured scan2 0.771 ms against 0.626 ms (8
+processes each), and it was 4 percent slower at 1 thread in every phase,
+which the change cannot cause. Method used for the decisions of 1p.4 and
+1p.5: one binary in which a setting is read per run, the runs of one process
+alternate between the variants, and the median of each variant is compared
+inside each process, over 6 to 8 processes. It cannot measure an effect that
+stays in a process once it happened (an object marked multi-threaded stays
+so), and it is no substitute for the final interleaved run of the 1b.6 method.
+
+### 1p.4 What changed
+
+1. **The calling thread takes a larger range of a divided merge join.**
+   `IdQuery.mergeJoinParM` cuts the left rows with `ParallelJoin.rangesShare`:
+   the first range (the calling thread's) is `joinShare / 10` of an equal
+   share, the others equal (`Par.joinShare`, `SBM11_JOIN_SHARE`, default 14).
+   In-process A/B, 6 processes of 401 runs, the calling thread's range plus
+   its wait for the workers (ms): share 10: 0.152 to 0.173; 12: 0.127 to
+   0.154; 13: 0.124 to 0.151; 14: 0.124 to 0.143; 15: 0.124 to 0.144.
+   Proved: `ParallelJoinTheorems.rangesShare_chain` (the ranges cover the
+   left rows in order) and `mergeJoinRanges_rangeChunksShare`;
+   `WorkerPoolTheorems.mergeJoinParM_eq` holds with the new ranges.
+2. **`packWords` writes each word with one store** (`FrameWords.put64F`;
+   `RenderPermTheorems.packWords_eq_put64`, `rfl`).
+3. `l4sbm11 query` with `SBM11_PHASES` adds an `end` mark after the last
+   phase (0.002 to 0.003 ms in every process measured).
+
+### 1p.5 Tried and not kept
+
+- **A smaller range for the calling thread in the scans with candidates**
+  (`callerCuts`, 9/10 and 8/10 of an equal share, cut at the nearest prefix
+  sum): in-process A/B of 10, 9 and 8 over 6 processes, no variant faster in
+  every process (query medians within 0.08 ms of each other, in no order).
+- **The merge sort specialised** (`@[specialize]` on `Qlvr.mergeSortBy` and
+  its loops): `IdQuery.sipDistinct` sorts the join-key words of a scan with
+  candidates through a closure call with boxed arguments per comparison
+  (`UInt64.decLe` as a closure, read from the generated C). With the change
+  the candidate step before scan3 took 0.081 ms against 0.089 ms before (one
+  sample of 5 processes each, not an A/B) and scan3 at 1 thread 1.232
+  against 1.250 ms (8 processes each). In the interleaved runs of the four
+  queries q07 at 1 thread was 4.91 against 4.67 ms for `main` (69 rounds,
+  slower in 42), which the phase method (4.31 against 4.36 ms) did not show.
+  Its gain is not measured, so it was removed before the landing (commit
+  `31452828`).
+- **Block weights from the value range** (stage 1o.7 asked for a cost
+  model): with bytes held, a block costs about 11 microseconds plus about 6
+  nanoseconds per row up to the last row found, and the row is estimated
+  from the block's join-column range `[vlo, vhi]` and the largest candidate
+  in it. The estimate correlates 0.94 and 0.96 with the block times (the
+  blocks have 4,096 rows but one; a first model from the count of
+  candidates in the range: -0.09 and 0.55), and on held bytes it gives the cut points
+  of the measured times. In the query, in-process A/B over 8 processes, it
+  was slower in 6 (by 23 to 57 microseconds) and faster in 2 (12 and 16).
+  The block times in the query include the read and other cores' data, which
+  the model does not see.
+- **The ORDER BY keys read by the rendering workers** (estimated -0.07 ms in
+  1o.7): not built. In-process A/B of the rendering beside the sort against
+  the rendering after it: the calling thread's keys and sort take 0.207 to
+  0.221 ms both ways, so the workers do not slow it. The workers' rendering
+  takes 0.38 ms of CPU for 313 rows in 3 ranges (0.28 ms at 1 thread), about
+  0.13 ms each, and ends before the sort does. Keys made by the workers help
+  only if they reach the calling thread before the rendering ends (a second
+  result per job); then the gain is the calling thread's key time, 0.11 to
+  0.12 ms, less the wait for the first keys. Not done in this stage.
+- **The merge join on the pool from fewer rows** (step 3 of the brief): the
+  joins after the scans with candidates are 312 by 312 rows (0.027 to 0.031
+  ms, merge join) and a hash join of 313 rows (0.045 to 0.05 ms). At half
+  the speed per row on a worker (1p.2), four ranges save at most about 0.01
+  ms of the merge join, less three job starts (about 0.006 ms). Not tried.
+
+### 1p.6 Gates
+
+On commit `59e211aa` (the merge of `origin/main` `6f5b9640` and the stage;
+exit codes read). The same gates passed on `441e4357`, the stage with the
+merge sort change, merged with `origin/main` `51dc6db6`.
+
+| Gate | Result |
+| --- | --- |
+| `lake build` | exit 0 |
+| `tests/sbm11/run.sh` | exit 0: 3,394 pass, 0 fail, 28 expected-fail (out of 3,422), part (z) included |
+| `tests/sbm11/threads.sh` | exit 0: gate2 347 identical, olympics 21, 2 and 2, DBpedia 19 identical at 1, 2, 4 and 8 threads; DBpedia against the three-engine record equal 76, different 0; pool-stress 20,000 start-stop cycles ended, 500 processes, hangs 0, failures 0 |
+| `SBM11_THREADS=4 tests/sbm11/census.sh` | exit 0: 605 matched the reference engine |
+| `lean-unbuilt-modules.py --gate`, `lean-tail-recursion-audit.py --gate`, `lean-csimp-reach.py --gate` | exit 0 (1,052 modules reached), exit 0, exit 0 |
+| `tools/land-gates.sh` | exit 0 (LAND GATES PASSED): native-smoke 377 pass, 0 fail, 4 xfail (out of 381); cli-smoke 151 pass, 0 fail, 5 xfail (out of 156) |
+| `sorry`, `native_decide`, `axiom`, `maxHeartbeats` in the Lean diff | none |
+
+### 1p.7 What remains
+
+- q07 at 0.50 in this period (0.47 in stage 1o). At 4 threads, in a fast
+  process (sub-phase marks, ms): constants 0.04; hint and estimates 0.03;
+  first scan 0.10 on the calling thread and 0.01 wait; scan0 wait and append
+  0.045; merge join 0.12 to 0.14 and its output 0.017; the candidate step
+  before scan2 0.04 and before scan3 0.08 (the same at 1 thread: the copy
+  of the join column, the sort and the check that every value is a
+  candidate, `sipCands`); block weights and cut points about 0.015 per scan;
+  slowest range against the mean of four about 0.05 per scan; wait and append
+  of the range tables 0.012 to 0.017 per scan; joins 2 and 3 0.03 and 0.05;
+  ORDER BY keys and sort on the calling thread 0.21 (0.18 at 1 thread);
+  rendering wait and assembly 0.035. The target needs about 1.8 ms.
+- The per-block cost at 4 threads is not a cause any more: decode costs the
+  same thread time; what costs more is the read path per block (`open` and
+  `close` from 4 threads) and data that another core made (a worker reads
+  the calling thread's tables at about half speed).
+- Candidates for a later stage, each with its measured size: the ORDER BY
+  keys sent back by the rendering workers before they render (at most the
+  calling thread's 0.11 to 0.12 ms of keys, less the wait); the candidate
+  step `sipCands` (0.04 and 0.08 ms on the calling thread at every thread
+  count: the binary search of `allMemGo` for each row, 0.06 ms of CPU per
+  run at 1 thread); a range of a scan with candidates read from bytes that
+  the calling thread does not touch first.
+- The measurement method: at 4 threads the variation between processes
+  (20 to 35 percent) is larger than every remaining step. 1p.3 describes
+  the in-process A/B that this stage used.
+
+Issue https://github.com/danbri/factoidal/issues/961 stays open.
