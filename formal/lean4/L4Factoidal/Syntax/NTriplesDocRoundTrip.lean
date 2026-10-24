@@ -23,7 +23,7 @@ This module adds the other terms and the composition over lines:
 
 The writer writes an IRI, a blank-node label and a language tag as they are.
 `WfIri`, `BNodeId` and `WfLiteral` admit strings that the N-Triples grammar
-does not, so the round trip holds on a domain only (`Triple.ntSafe`):
+does not, so the round trip holds on a domain only (`Triple.ntLex`):
 
 * IRIREF, RDF 1.1 N-Triples production [8]: `iriPrintSafe` (from
   `NTriplesRoundTrip`);
@@ -35,9 +35,18 @@ does not, so the round trip holds on a domain only (`Triple.ntSafe`):
 
 The `#guard`s at the end show one counter-example outside each restriction.
 
+The writer domain of `RDF/Sink.lean` is wider (`Triple.ntSafe`, no condition on
+blank-node labels, https://github.com/danbri/factoidal/issues/986): those
+writers relabel first (`Dataset.relabelForWrite`), and
+`Triple.ntLex_renameBnodes` takes a relabelled triple of the writer domain into
+`Triple.ntLex`. A language tag outside LANGTAG is refused by `Term.toNTriples`
+with an error (`langTagWritable`).
+
 No `sorry`, no `axiom`, no `native_decide`, no `partial`.
 -/
 import L4Factoidal.Syntax.NTriplesRoundTrip
+import L4Factoidal.Syntax.BlankNodeLabel
+import L4Factoidal.RDF.BnodeTransport
 
 namespace L4Factoidal.Syntax.NTriplesRoundTrip
 
@@ -65,22 +74,130 @@ def langTagCharsSafe : List Char → Bool
 def langTagSafe (tag : String) : Bool := langTagCharsSafe tag.toList
 
 /-- A subject that the N-Triples grammar can state. -/
-def Subject.ntSafe : Subject → Bool
+def Subject.ntLex : Subject → Bool
   | .iri i => iriPrintSafe i.val
   | .bnode b => bnodeLabelSafe b
 
 /-- A term that the N-Triples grammar can state: every IRI (the datatype IRI of
 a literal too), every blank-node label and every language tag, nested ones
 included. -/
-def Term.ntSafe : Term → Bool
+def Term.ntLex : Term → Bool
   | .iri i => iriPrintSafe i.val
   | .bnode b => bnodeLabelSafe b
   | .literal l => iriPrintSafe l.val.datatype.val && l.val.langTag.all langTagSafe
-  | .tripleTerm s p o => Subject.ntSafe s && iriPrintSafe p.val && Term.ntSafe o
+  | .tripleTerm s p o => Subject.ntLex s && iriPrintSafe p.val && Term.ntLex o
 
 /-- A triple that the N-Triples grammar can state. -/
+def Triple.ntLex (t : Triple) : Bool :=
+  Subject.ntLex t.s && iriPrintSafe t.p.val && Term.ntLex t.o
+
+/-! ## The writer domain: no condition on blank-node labels
+
+The writers of `RDF/Sink.lean` write the dataset `Dataset.relabelForWrite`
+(`RDF/WriterLabels.lean`), whose blank-node labels are all BLANK_NODE_LABELs.
+So the domain of the writers (`Dataflow.writerDomain`) needs no condition on
+the labels: `Triple.ntSafe` is `Triple.ntLex` without it. A triple in
+`Triple.ntSafe` whose labels are all in BLANK_NODE_LABEL is in `Triple.ntLex`
+(`Triple.ntLex_of_ntSafe`); relabelling keeps `Triple.ntSafe`
+(`Triple.ntSafe_renameBnodes`). -/
+
+/-- A subject in the writer domain: an IRI in IRIREF, or any blank node. -/
+def Subject.ntSafe : Subject → Bool
+  | .iri i => iriPrintSafe i.val
+  | .bnode _ => true
+
+/-- A term in the writer domain: every IRI (the datatype IRI of a literal too)
+and every language tag in its production, nested ones included; any blank
+node. -/
+def Term.ntSafe : Term → Bool
+  | .iri i => iriPrintSafe i.val
+  | .bnode _ => true
+  | .literal l => iriPrintSafe l.val.datatype.val && l.val.langTag.all langTagSafe
+  | .tripleTerm s p o => Subject.ntSafe s && iriPrintSafe p.val && Term.ntSafe o
+
+/-- A triple in the writer domain of N-Triples. -/
 def Triple.ntSafe (t : Triple) : Bool :=
   Subject.ntSafe t.s && iriPrintSafe t.p.val && Term.ntSafe t.o
+
+/-- The two checks of BLANK_NODE_LABEL agree. -/
+theorem bnodeLabelSafe_eq_isBlankNodeLabel (b : String) : bnodeLabelSafe b = isBlankNodeLabel b := by
+  unfold bnodeLabelSafe isBlankNodeLabel
+  cases b.toList with
+  | nil => rfl
+  | cons c0 rest =>
+    simp only [bnodeLabelCharsSafe]
+    cases rest with
+    | nil =>
+      by_cases hc : c0 = '.'
+      · subst hc; rfl
+      · have h1 : (some c0 != some '.') = true := by simpa using hc
+        have h2 : ((none : Option Char) != some '.') = true := rfl
+        show (isBnodeStartChar c0 && [].all isBnodeChar && (some c0 != some '.')) =
+          (isBnodeStartChar c0 && [].all isBnodeChar && ((none : Option Char) != some '.'))
+        rw [h1, h2]
+    | cons c1 r =>
+      simp [List.getLast?_cons_cons]
+
+theorem Subject.ntLex_of_ntSafe {s : Subject} (h : Subject.ntSafe s = true)
+    (hb : ∀ b ∈ s.bnodes, isBlankNodeLabel b = true) : Subject.ntLex s = true := by
+  cases s with
+  | iri i => exact h
+  | bnode b =>
+    show bnodeLabelSafe b = true
+    rw [bnodeLabelSafe_eq_isBlankNodeLabel]
+    exact hb b (by simp [Subject.bnodes])
+
+theorem Term.ntLex_of_ntSafe : ∀ {t : Term}, Term.ntSafe t = true →
+    (∀ b ∈ t.bnodes, isBlankNodeLabel b = true) → Term.ntLex t = true
+  | .iri _, h, _ => h
+  | .bnode b, _, hb => by
+    show bnodeLabelSafe b = true
+    rw [bnodeLabelSafe_eq_isBlankNodeLabel]
+    exact hb b (by simp [Term.bnodes])
+  | .literal _, h, _ => h
+  | .tripleTerm s p o, h, hb => by
+    simp only [Term.ntSafe, Bool.and_eq_true] at h
+    simp only [Term.ntLex, Bool.and_eq_true]
+    refine ⟨⟨Subject.ntLex_of_ntSafe h.1.1 fun b hm => hb b ?_, h.1.2⟩,
+      Term.ntLex_of_ntSafe h.2 fun b hm => hb b ?_⟩
+    · simp [Term.bnodes, hm]
+    · simp [Term.bnodes, hm]
+
+/-- **A triple of the writer domain whose labels are BLANK_NODE_LABELs is in
+the domain of the round trip.** -/
+theorem Triple.ntLex_of_ntSafe {t : Triple} (h : Triple.ntSafe t = true)
+    (hb : ∀ b ∈ t.bnodes, isBlankNodeLabel b = true) : Triple.ntLex t = true := by
+  simp only [Triple.ntSafe, Bool.and_eq_true] at h
+  simp only [Triple.ntLex, Bool.and_eq_true]
+  exact ⟨⟨Subject.ntLex_of_ntSafe h.1.1 fun b hm => hb b (by simp [Triple.bnodes, hm]), h.1.2⟩,
+    Term.ntLex_of_ntSafe h.2 fun b hm => hb b (by simp [Triple.bnodes, hm])⟩
+
+theorem Subject.ntSafe_renameBnodes (f : BNodeId → BNodeId) (s : Subject) :
+    Subject.ntSafe (s.renameBnodes f) = Subject.ntSafe s := by
+  cases s <;> rfl
+
+theorem Term.ntSafe_renameBnodes (f : BNodeId → BNodeId) : ∀ t : Term, Term.ntSafe (t.renameBnodes f) = Term.ntSafe t
+  | .iri _ => rfl
+  | .bnode _ => rfl
+  | .literal _ => rfl
+  | .tripleTerm s p o => by
+    simp only [Term.renameBnodes, Term.ntSafe, Subject.ntSafe_renameBnodes, Term.ntSafe_renameBnodes f o]
+
+/-- **Relabelling keeps the writer domain.** -/
+theorem Triple.ntSafe_renameBnodes (f : BNodeId → BNodeId) (t : Triple) :
+    Triple.ntSafe (t.renameBnodes f) = Triple.ntSafe t := by
+  simp only [Triple.renameBnodes, Triple.ntSafe, Subject.ntSafe_renameBnodes, Term.ntSafe_renameBnodes]
+
+/-- A relabelled triple of the writer domain, with a map whose labels are
+BLANK_NODE_LABELs, is in the domain of the round trip. -/
+theorem Triple.ntLex_renameBnodes {f : BNodeId → BNodeId} (hf : ∀ b, isBlankNodeLabel (f b) = true)
+    {t : Triple} (h : Triple.ntSafe t = true) : Triple.ntLex (t.renameBnodes f) = true := by
+  apply Triple.ntLex_of_ntSafe
+  · rw [Triple.ntSafe_renameBnodes]; exact h
+  · intro b hb
+    rw [Triple.bnodes_renameBnodes, List.mem_map] at hb
+    obtain ⟨a, -, rfl⟩ := hb
+    exact hf a
 
 /-! ## Small facts about the scanners -/
 
@@ -239,7 +356,7 @@ theorem readLangTag_safe (pos : Nat) (tag : String) (tail : List Char)
 
 /-- **A subject in the domain reads back**, followed by a space. -/
 theorem readSubject_safe (pos : Nat) (s : Subject) (tail : List Char)
-    (h : Subject.ntSafe s = true) :
+    (h : Subject.ntLex s = true) :
     ∃ p, readSubject pos ((Subject.toNTriples s).toList ++ ' ' :: tail) = .ok (s, p, ' ' :: tail) := by
   cases s with
   | iri i =>
@@ -268,7 +385,7 @@ theorem subject_toNTriples_head (s : Subject) (tail : List Char) :
 space: an IRI, a blank node, or a literal with its lexical form, its datatype
 IRI and its language tag. -/
 theorem readObject11_safe (pos : Nat) (t : Term) (str : String) (tail : List Char)
-    (hs : Term.ntSafe t = true) (h : Term.toNTriples .rdf11 t = .ok str) :
+    (hs : Term.ntLex t = true) (h : Term.toNTriples .rdf11 t = .ok str) :
     ∃ p, readObject11 pos (str.toList ++ ' ' :: tail) = .ok (t, p, ' ' :: tail) := by
   cases t with
   | iri i =>
@@ -291,7 +408,7 @@ theorem readObject11_safe (pos : Nat) (t : Term) (str : String) (tail : List Cha
     simp [Term.toNTriples] at h
   | literal wl =>
     obtain ⟨⟨lex, dt, tag, dir⟩, hwf⟩ := wl
-    simp only [Term.ntSafe, Bool.and_eq_true] at hs
+    simp only [Term.ntLex, Bool.and_eq_true] at hs
     obtain ⟨hdt, htag⟩ := hs
     cases tag with
     | none =>
@@ -324,11 +441,11 @@ theorem readObject11_safe (pos : Nat) (t : Term) (str : String) (tail : List Cha
           exact ⟨_, rfl⟩
     | some tg =>
       cases dir with
-      | some d => simp [Term.toNTriples] at h
+      | some d => simp only [Term.toNTriples] at h; replace h := ite_error_eq_ok h; simp at h
       | none =>
         have hdt' : dt = rdfLangString := Subtype.ext (by simpa [literalWf] using hwf)
         subst hdt'
-        simp only [Term.toNTriples, Except.ok.injEq] at h
+        simp only [Term.toNTriples] at h; replace h := ite_error_eq_ok h; simp only [Except.ok.injEq] at h
         subst h
         simp only [Option.all_some] at htag
         obtain ⟨p1, hp1⟩ := readStringLiteralQuoted_escape (pos) lex ('@' :: (tg.toList ++ ' ' :: tail))
@@ -366,9 +483,9 @@ theorem term_toNTriples11_head (t : Term) (str : String) (tail : List Char)
         exact ⟨'"', _, by simp; rfl, by decide⟩
     | some tg =>
       cases dir with
-      | some d => simp [Term.toNTriples] at h
+      | some d => simp only [Term.toNTriples] at h; replace h := ite_error_eq_ok h; simp at h
       | none =>
-        simp only [Term.toNTriples, Except.ok.injEq] at h; subst h
+        simp only [Term.toNTriples] at h; replace h := ite_error_eq_ok h; simp only [Except.ok.injEq] at h; subst h
         exact ⟨'"', _, by simp; rfl, by decide⟩
 
 /-! ## One line -/
@@ -376,10 +493,10 @@ theorem term_toNTriples11_head (t : Term) (str : String) (tail : List Char)
 /-- **One line in the domain reads back** (RDF 1.1 reader): the triple, and
 the line break after its `.`. -/
 theorem readTriple11_line (pos : Nat) (t : Triple) (line : String) (tail : List Char)
-    (hs : Triple.ntSafe t = true) (h : Triple.toNTriples .rdf11 t = .ok line) :
+    (hs : Triple.ntLex t = true) (h : Triple.toNTriples .rdf11 t = .ok line) :
     ∃ p, readTriple11 pos (line.toList ++ tail) = .ok (t, p, '\n' :: tail) := by
   obtain ⟨s, pr, o⟩ := t
-  simp only [Triple.ntSafe, Bool.and_eq_true] at hs
+  simp only [Triple.ntLex, Bool.and_eq_true] at hs
   obtain ⟨⟨hss, hps⟩, hos⟩ := hs
   unfold Triple.toNTriples at h
   cases ho : Term.toNTriples .rdf11 o with
@@ -546,11 +663,11 @@ theorem readLangDir12_dir (pos : Nat) (tag : String) (d : TextDirection) (tail :
 ` .`, ` )`, ` <` or ` _`: what follows an object in a line, in a triple term
 and before an N-Quads graph label. -/
 theorem readLiteral12_safe (pos : Nat) (wl : WfLiteral) (str : String) (c : Char) (tail : List Char)
-    (hs : Term.ntSafe (.literal wl) = true) (h : Term.toNTriples .rdf12 (.literal wl) = .ok str)
+    (hs : Term.ntLex (.literal wl) = true) (h : Term.toNTriples .rdf12 (.literal wl) = .ok str)
     (hc : c = '.' ∨ c = ')' ∨ c = '<' ∨ c = '_') :
     ∃ p, readLiteral .rdf12 pos (str.toList ++ ' ' :: c :: tail) = .ok (wl, p, ' ' :: c :: tail) := by
   obtain ⟨⟨lex, dt, tag, dir⟩, hwf⟩ := wl
-  simp only [Term.ntSafe, Bool.and_eq_true] at hs
+  simp only [Term.ntLex, Bool.and_eq_true] at hs
   obtain ⟨hdt, htag⟩ := hs
   cases tag with
   | none =>
@@ -593,7 +710,7 @@ theorem readLiteral12_safe (pos : Nat) (wl : WfLiteral) (str : String) (c : Char
     | none =>
       have hdt' : dt = rdfLangString := Subtype.ext (by simpa [literalWf] using hwf)
       subst hdt'
-      simp only [Term.toNTriples, Except.ok.injEq] at h
+      simp only [Term.toNTriples] at h; replace h := ite_error_eq_ok h; simp only [Except.ok.injEq] at h
       subst h
       obtain ⟨p1, hp1⟩ := readStringLiteralQuoted_escape pos lex ('@' :: (tg.toList ++ ' ' :: c :: tail))
       obtain ⟨p2, hp2⟩ := readLangDir12_plain p1 tg (c :: tail) htag
@@ -610,7 +727,7 @@ theorem readLiteral12_safe (pos : Nat) (wl : WfLiteral) (str : String) (c : Char
       subst hdt'
       cases d with
       | ltr =>
-        simp only [Term.toNTriples, Except.ok.injEq, if_neg (by decide : ¬ (Mode.rdf12 = Mode.rdf11))] at h
+        simp only [Term.toNTriples] at h; replace h := ite_error_eq_ok h; simp only [Except.ok.injEq, if_neg (by decide : ¬ (Mode.rdf12 = Mode.rdf11))] at h
         subst h
         obtain ⟨p1, hp1⟩ := readStringLiteralQuoted_escape pos lex
           ('@' :: (tg.toList ++ ('-' :: '-' :: ['l', 't', 'r']) ++ ' ' :: c :: tail))
@@ -626,7 +743,7 @@ theorem readLiteral12_safe (pos : Nat) (wl : WfLiteral) (str : String) (c : Char
         simp only [Option.map_some]
         exact ⟨_, rfl⟩
       | rtl =>
-        simp only [Term.toNTriples, Except.ok.injEq, if_neg (by decide : ¬ (Mode.rdf12 = Mode.rdf11))] at h
+        simp only [Term.toNTriples] at h; replace h := ite_error_eq_ok h; simp only [Except.ok.injEq, if_neg (by decide : ¬ (Mode.rdf12 = Mode.rdf11))] at h
         subst h
         obtain ⟨p1, hp1⟩ := readStringLiteralQuoted_escape pos lex
           ('@' :: (tg.toList ++ ('-' :: '-' :: ['r', 't', 'l']) ++ ' ' :: c :: tail))
@@ -676,10 +793,10 @@ theorem term_toNTriples_head (mode : Mode) (t : Term) (str : String) (tail : Lis
     | some tg =>
       cases dir with
       | none =>
-        simp only [Term.toNTriples, Except.ok.injEq] at h; subst h
+        simp only [Term.toNTriples] at h; replace h := ite_error_eq_ok h; simp only [Except.ok.injEq] at h; subst h
         exact ⟨'"', _, by simp; rfl, by decide⟩
       | some d =>
-        simp only [Term.toNTriples] at h
+        simp only [Term.toNTriples] at h; replace h := ite_error_eq_ok h
         split at h
         · cases h
         · simp only [Except.ok.injEq] at h; subst h
@@ -721,7 +838,7 @@ theorem nl_not_mem_escape (s : String) : '\n' ∉ (escapeLiteral s).toList := by
   unfold escChar
   split <;> simp_all [eq_comm]
 
-theorem nl_not_mem_subject (s : Subject) (h : Subject.ntSafe s = true) :
+theorem nl_not_mem_subject (s : Subject) (h : Subject.ntLex s = true) :
     '\n' ∉ (Subject.toNTriples s).toList := by
   cases s with
   | iri i =>
@@ -732,7 +849,7 @@ theorem nl_not_mem_subject (s : Subject) (h : Subject.ntSafe s = true) :
     simp [Subject.toNTriples]; exact this
 
 theorem nl_not_mem_term (mode : Mode) : ∀ (t : Term) (str : String),
-    Term.ntSafe t = true → Term.toNTriples mode t = .ok str → '\n' ∉ str.toList
+    Term.ntLex t = true → Term.toNTriples mode t = .ok str → '\n' ∉ str.toList
   | .iri i, str, hs, h => by
     simp only [Term.toNTriples, Except.ok.injEq] at h; subst h
     have := nl_not_mem_iri (s := i.val) hs
@@ -742,7 +859,7 @@ theorem nl_not_mem_term (mode : Mode) : ∀ (t : Term) (str : String),
     have := nl_not_mem_bnode (b := b) hs
     simp; exact this
   | .tripleTerm s p o, str, hs, h => by
-    simp only [Term.ntSafe, Bool.and_eq_true] at hs
+    simp only [Term.ntLex, Bool.and_eq_true] at hs
     obtain ⟨⟨hss, hps⟩, hos⟩ := hs
     unfold Term.toNTriples at h
     split at h
@@ -759,7 +876,7 @@ theorem nl_not_mem_term (mode : Mode) : ∀ (t : Term) (str : String),
         exact ⟨⟨⟨⟨⟨⟨by decide, h1⟩, by decide⟩, h2⟩, by decide⟩, h3⟩, by decide⟩
   | .literal wl, str, hs, h => by
     obtain ⟨⟨lex, dt, tag, dir⟩, hwf⟩ := wl
-    simp only [Term.ntSafe, Bool.and_eq_true] at hs
+    simp only [Term.ntLex, Bool.and_eq_true] at hs
     obtain ⟨hdt, htag⟩ := hs
     have he := nl_not_mem_escape lex
     have hd := nl_not_mem_iri (s := dt.val) hdt
@@ -777,11 +894,11 @@ theorem nl_not_mem_term (mode : Mode) : ∀ (t : Term) (str : String),
       have hl := nl_not_mem_lang htag
       cases dir with
       | none =>
-        simp only [Term.toNTriples, Except.ok.injEq] at h; subst h
+        simp only [Term.toNTriples] at h; replace h := ite_error_eq_ok h; simp only [Except.ok.injEq] at h; subst h
         simp only [String.toList_append, List.mem_append, not_or]
         exact ⟨⟨⟨by decide, he⟩, by decide⟩, hl⟩
       | some d =>
-        simp only [Term.toNTriples] at h
+        simp only [Term.toNTriples] at h; replace h := ite_error_eq_ok h
         split at h
         · cases h
         · simp only [Except.ok.injEq] at h; subst h
@@ -843,10 +960,10 @@ theorem literal_text_head (mode : Mode) (wl : WfLiteral) (str : String) (tail : 
   | some tg =>
     cases dir with
     | none =>
-      simp only [Term.toNTriples, Except.ok.injEq] at h; subst h
+      simp only [Term.toNTriples] at h; replace h := ite_error_eq_ok h; simp only [Except.ok.injEq] at h; subst h
       exact ⟨_, by simp; rfl⟩
     | some d =>
-      simp only [Term.toNTriples] at h
+      simp only [Term.toNTriples] at h; replace h := ite_error_eq_ok h
       split at h
       · cases h
       · simp only [Except.ok.injEq] at h; subst h
@@ -855,7 +972,7 @@ theorem literal_text_head (mode : Mode) (wl : WfLiteral) (str : String) (tail : 
 /-- **An object in the domain reads back** (RDF 1.2 reader), triple terms
 nested to any depth, with fuel more than the length of its text. -/
 theorem readObject12_safe : ∀ (t : Term) (fuel pos : Nat) (str : String) (c : Char) (tail : List Char),
-    Term.ntSafe t = true → Term.toNTriples .rdf12 t = .ok str → str.toList.length < fuel →
+    Term.ntLex t = true → Term.toNTriples .rdf12 t = .ok str → str.toList.length < fuel →
     (c = '.' ∨ c = ')' ∨ c = '<' ∨ c = '_') →
     ∃ p, readObject12 fuel pos (str.toList ++ ' ' :: c :: tail) = .ok (t, p, ' ' :: c :: tail)
   | .iri i, fuel, pos, str, c, tail, hs, h, hf, _ => by
@@ -882,7 +999,7 @@ theorem readObject12_safe : ∀ (t : Term) (fuel pos : Nat) (str : String) (c : 
     exact ⟨p, rfl⟩
   | .tripleTerm s pr o, fuel, pos, str, c, tail, hs, h, hf, hc => by
     obtain ⟨f, rfl⟩ : ∃ f, fuel = f + 1 := ⟨fuel - 1, by omega⟩
-    simp only [Term.ntSafe, Bool.and_eq_true] at hs
+    simp only [Term.ntLex, Bool.and_eq_true] at hs
     obtain ⟨⟨hss, hps⟩, hos⟩ := hs
     unfold Term.toNTriples at h
     rw [if_neg (by decide)] at h
@@ -932,10 +1049,10 @@ theorem readObject12_safe : ∀ (t : Term) (fuel pos : Nat) (str : String) (c : 
 `lineFuel` counts the characters before the line break, and the text of the
 object has none (`nl_not_mem_term`), so the fuel is more than its length. -/
 theorem readTriple12_line (pos : Nat) (t : Triple) (line : String) (tail : List Char)
-    (hs : Triple.ntSafe t = true) (h : Triple.toNTriples .rdf12 t = .ok line) :
+    (hs : Triple.ntLex t = true) (h : Triple.toNTriples .rdf12 t = .ok line) :
     ∃ p, readTriple12 pos (line.toList ++ tail) = .ok (t, p, '\n' :: tail) := by
   obtain ⟨s, pr, o⟩ := t
-  simp only [Triple.ntSafe, Bool.and_eq_true] at hs
+  simp only [Triple.ntLex, Bool.and_eq_true] at hs
   obtain ⟨⟨hss, hps⟩, hos⟩ := hs
   unfold Triple.toNTriples at h
   cases ho : Term.toNTriples .rdf12 o with
@@ -1013,7 +1130,7 @@ def readTripleOf : Mode → Nat → List Char → Except ParseError (Triple × N
 
 /-- One line in the domain reads back, in either mode. -/
 theorem readTripleOf_line (mode : Mode) (pos : Nat) (t : Triple) (line : String) (tail : List Char)
-    (hs : Triple.ntSafe t = true) (h : Triple.toNTriples mode t = .ok line) :
+    (hs : Triple.ntLex t = true) (h : Triple.toNTriples mode t = .ok line) :
     ∃ p, readTripleOf mode pos (line.toList ++ tail) = .ok (t, p, '\n' :: tail) := by
   cases mode
   · exact readTriple11_line pos t line tail hs h
@@ -1021,7 +1138,7 @@ theorem readTripleOf_line (mode : Mode) (pos : Nat) (t : Triple) (line : String)
 
 /-- The lines of a graph whose triples all serialise, read in order. -/
 theorem parseLinesAcc_lines (mode : Mode) : ∀ (g : Graph) (fuel pos : Nat) (acc : List Triple),
-    g.all Triple.ntSafe = true →
+    g.all Triple.ntLex = true →
     g.findSome? (Triple.nTriplesError? mode) = none →
     (String.join (g.map (Triple.toNTriplesLine mode))).toList.length < fuel →
     parseLinesAcc mode fuel pos (String.join (g.map (Triple.toNTriplesLine mode))).toList acc
@@ -1074,9 +1191,9 @@ theorem parseLinesAcc_lines (mode : Mode) : ∀ (g : Graph) (fuel pos : Nat) (ac
             simp
 
 /-- **The N-Triples document round trip**, in both modes. A graph whose
-triples are in the domain (`Triple.ntSafe`), written by `Graph.toNTriples`,
+triples are in the domain (`Triple.ntLex`), written by `Graph.toNTriples`,
 is read back by `parseNTriples` as the same list of triples, in order. -/
-theorem parseNTriples_toNTriples (mode : Mode) (g : Graph) (hs : g.all Triple.ntSafe = true)
+theorem parseNTriples_toNTriples (mode : Mode) (g : Graph) (hs : g.all Triple.ntLex = true)
     (text : String) (h : Graph.toNTriples g mode = .ok text) : parseNTriples text mode = .ok g := by
   rw [Graph.toNTriples_eq_lines] at h
   unfold Graph.firstNTriplesError at h
@@ -1091,16 +1208,21 @@ theorem parseNTriples_toNTriples (mode : Mode) (g : Graph) (hs : g.all Triple.nt
     simp
 
 /-- RDF 1.1 mode. -/
-theorem parseNTriples_toNTriples11 (g : Graph) (hs : g.all Triple.ntSafe = true) (text : String)
+theorem parseNTriples_toNTriples11 (g : Graph) (hs : g.all Triple.ntLex = true) (text : String)
     (h : Graph.toNTriples g .rdf11 = .ok text) : parseNTriples text .rdf11 = .ok g :=
   parseNTriples_toNTriples .rdf11 g hs text h
 
 /-! ## Outside the domain: the counter-examples
 
-Each restriction of `Triple.ntSafe` is needed: without it, the statement of
-`parseNTriples_toNTriples` is false. Each guard below writes a triple that
-breaks one restriction and shows that the parser refuses the text, or (the
-long subtag) that the RDF 1.1 reader takes it and the RDF 1.2 reader does not. -/
+Each restriction of `Triple.ntLex` is needed: without it, the statement of
+`parseNTriples_toNTriples` is false. `Graph.toNTriples` writes a blank-node
+label as it is, so a label outside BLANK_NODE_LABEL gives a text that the
+parser refuses; the writers of `RDF/Sink.lean` relabel first
+(`Dataset.relabelForWrite`), so their domain has no such condition
+(`Triple.ntSafe`). A language tag outside LANGTAG [144s] (RDF 1.2: also a
+subtag of more than 8 characters) is refused by the writer with an error
+(`langTagWritable`, https://github.com/danbri/factoidal/issues/986): `none`
+below. -/
 
 private def cxP : WfIri := ⟨"http://example.org/p", by decide⟩
 private def cxO : WfIri := ⟨"http://example.org/o", by decide⟩
@@ -1120,17 +1242,17 @@ private def cxRoundTrip (mode : Mode) (t : Triple) : Option Bool :=
 #guard cxRoundTrip .rdf11 { s := .bnode "a.", p := cxP, o := .iri cxO } == some false
 -- LANGTAG: the empty tag, a space in the tag.
 #guard langTagSafe "" == false
-#guard cxRoundTrip .rdf11 { s := .iri cxO, p := cxP, o := .literal (Literal.langString "x" "") } == some false
+#guard cxRoundTrip .rdf11 { s := .iri cxO, p := cxP, o := .literal (Literal.langString "x" "") } == none
 #guard langTagSafe "en US" == false
 #guard cxRoundTrip .rdf11 { s := .iri cxO, p := cxP, o := .literal (Literal.langString "x" "en US") }
-  == some false
--- A subtag of nine characters: the RDF 1.1 reader keeps it, the RDF 1.2 reader
--- refuses it (BCP 47 section 2.1, `validLangSubtags`), so the domain leaves it out.
+  == none
+-- A subtag of nine characters: the RDF 1.1 writer and reader keep it, the RDF 1.2
+-- writer refuses it (BCP 47 section 2.1, `validLangSubtags`); the domain leaves it out.
 #guard langTagSafe "abcdefghi" == false
 #guard cxRoundTrip .rdf11 { s := .iri cxO, p := cxP, o := .literal (Literal.langString "x" "abcdefghi") }
   == some true
 #guard cxRoundTrip .rdf12 { s := .iri cxO, p := cxP, o := .literal (Literal.langString "x" "abcdefghi") }
-  == some false
+  == none
 -- In the domain: every kind of term, both modes.
 #guard cxRoundTrip .rdf11 { s := .bnode "b.1", p := cxP, o := .literal (Literal.langString "q\"\n" "en-GB") }
   == some true
@@ -1141,6 +1263,10 @@ private def cxNested : Triple :=
 
 /-! ## Axiom audit -/
 
+#print axioms bnodeLabelSafe_eq_isBlankNodeLabel
+#print axioms Triple.ntLex_of_ntSafe
+#print axioms Triple.ntSafe_renameBnodes
+#print axioms Triple.ntLex_renameBnodes
 #print axioms readBlankNodeLabel_safe
 #print axioms readStringLiteralBody_escape
 #print axioms readLangTag_safe

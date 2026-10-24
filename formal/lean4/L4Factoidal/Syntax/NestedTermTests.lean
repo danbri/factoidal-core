@@ -546,15 +546,17 @@ def documentTable : List (String × List String) := [
     "error(expected ')>>',94)",
     "error(invalid character in IRIREF,27)",
     "error(expected ')>>',94)"]),
+  -- The RDF 1.1 readers take `en--ltr` as one language tag; it is not a LANGTAG,
+  -- so the writer refuses it (https://github.com/danbri/factoidal/issues/986).
   ("<http://a/s> <http://a/p> \"d\"@en--ltr .\n", ["ok(1;\"<http://a/s> <http://a/p> \\\"d\\\"@en--ltr .\\n\")",
-    "ok(1;\"<http://a/s> <http://a/p> \\\"d\\\"@en--ltr .\\n\")",
+    "ok(1;writer-error the language tag \"en--ltr\" is not a LANGTAG (RDF 1.1 N-Triples [144s]; RDF 1.2: subtags of 1 to 8 characters), so no writer can state it)",
     "ok(\"<http://a/s> <http://a/p> \\\"d\\\"@en--ltr .\\n\")",
-    "ok(\"<http://a/s> <http://a/p> \\\"d\\\"@en--ltr .\\n\")",
+    "ok(writer-error the language tag \"en--ltr\" is not a LANGTAG (RDF 1.1 N-Triples [144s]; RDF 1.2: subtags of 1 to 8 characters), so no writer can state it)",
     "ok(\"<http://a/s> <http://a/p> \\\"d\\\"@en--ltr .\\n\")"]),
   ("<http://a/s> <http://a/p> \"d\"@EN--ltr <http://a/s> .\n", ["error(expected '.' terminator,38)",
     "error(expected '.' terminator,38)",
     "ok(\"<http://a/s> <http://a/p> \\\"d\\\"@EN--ltr <http://a/s> .\\n\")",
-    "ok(\"<http://a/s> <http://a/p> \\\"d\\\"@EN--ltr <http://a/s> .\\n\")",
+    "ok(writer-error the language tag \"EN--ltr\" is not a LANGTAG (RDF 1.1 N-Triples [144s]; RDF 1.2: subtags of 1 to 8 characters), so no writer can state it)",
     "ok(\"<http://a/s> <http://a/p> \\\"d\\\"@EN--ltr <http://a/s> .\\n\")"])
 ]
 

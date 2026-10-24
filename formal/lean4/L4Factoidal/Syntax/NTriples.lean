@@ -647,6 +647,31 @@ other. -/
 def tripleTermOpen (s : Subject) (p : WfIri) : String :=
   "<<( " ++ Subject.toNTriples s ++ " <" ++ p.val ++ "> "
 
+/-- LANGTAG, RDF 1.1 N-Triples production [144s], the characters after `@`:
+`[a-zA-Z]+ ('-' [a-zA-Z0-9]+)*`. Each of `subtags` is one subtag: the first
+letters only, the others letters and digits, none empty. -/
+def langSubtagsGrammar : List String → Bool
+  | [] => false
+  | first :: rest =>
+      !first.isEmpty && first.all isLangStart &&
+        rest.all fun st => !st.isEmpty && st.all fun c => isLangChar c && c != '-'
+
+/-- A language tag that the writer of `mode` can write and its reader reads
+back: LANGTAG [144s], and in RDF 1.2 mode also every subtag 1 to 8 characters
+(BCP 47 section 2.1, the check of the RDF 1.2 reader, `validLangSubtags`).
+A tag outside it has no valid rewrite: the writer refuses it with
+`langTagError` (https://github.com/danbri/factoidal/issues/986). -/
+def langTagWritable (mode : Mode) (tag : String) : Bool :=
+  langSubtagsGrammar (tag.splitOn "-") &&
+    match mode with
+    | .rdf11 => true
+    | .rdf12 => validLangSubtags tag.toList 0
+
+/-- The error of a writer for a language tag outside `langTagWritable`; it
+names the tag. -/
+def langTagError (tag : String) : String :=
+  "the language tag \"" ++ tag ++ "\" is not a LANGTAG (RDF 1.1 N-Triples [144s]; RDF 1.2: subtags of 1 to 8 characters), so no writer can state it"
+
 /-- Serialise a `Term` in N-Triples object position, mode-parametrised:
 under `.rdf11` a term that needs RDF 1.2 lexical syntax (a triple term or
 a directional literal) is a serialisation ERROR (port of the F* source's
@@ -661,6 +686,7 @@ def Term.toNTriples (mode : Mode) : Term → Except String String
       let esc := escapeLiteral l.lexicalForm
       match l.langTag with
       | some tag =>
+          if !langTagWritable mode tag then .error (langTagError tag) else
           match l.direction with
           | some _ =>
               if mode = .rdf11 then
@@ -683,6 +709,14 @@ def Term.toNTriples (mode : Mode) : Term → Except String String
         | .ok oStr =>
             .ok ("<<( " ++ Subject.toNTriples s ++ " <" ++ p.val ++ "> " ++ oStr ++ " )>>")
 
+/-- A success of the writer of a language-tagged literal is a success past the
+check of its tag (`langTagWritable`). -/
+theorem ite_error_eq_ok {c : Prop} [Decidable c] {e : String} {r : Except String String} {s : String}
+    (h : (if c then Except.error e else r) = .ok s) : r = .ok s := by
+  by_cases hc : c
+  · rw [if_pos hc] at h; cases h
+  · rwa [if_neg hc] at h
+
 /-! ### The text of a triple term nested deep
 
 `Term.toNTriples` above is the SPECIFICATION. It takes one native frame for each level
@@ -695,8 +729,9 @@ proves it equal, and `@[csimp]` makes every caller compiled after it run the loo
 `Triple.toNTriples`, `Graph.toNTriples`, `Dataset.toNQuads`, the stream writers and the
 answer of a CONSTRUCT query. The loop is the one of `Term.toCanonicalNTriplesLoop` below,
 and uses the same helpers (`tripleTermOpen`, `appendClosers`, `closersStr`, defined above).
-The specification fails in two cases only: in `.rdf11` a triple term, and a directional
-literal. The loop fails in the same two. -/
+The specification fails in three cases only: in `.rdf11` a triple term and a directional
+literal, and in both modes a language tag outside `langTagWritable`. The loop fails in the
+same three. -/
 
 /-- The text of a term that is not a triple term, written by the specification, and then the
 closers of the `k` open triple terms. -/

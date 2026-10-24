@@ -217,8 +217,10 @@ end L4Factoidal.Syntax.SyntaxTheorems
 
 PROVED since 2026-10-24 as `NTriplesRoundTrip.parseNTriples_toNTriples`
 (`Syntax/NTriplesDocRoundTrip.lean`), both modes. `hClean` below became
-`Triple.ntSafe`: IRIs (gap 1), and also blank-node labels and language tags,
-which the writer writes as they are. Gap 2 (the escaper inverse) is
+`Triple.ntLex`: IRIs (gap 1), and also blank-node labels and language tags.
+Since https://github.com/danbri/factoidal/issues/986 the `Sink` writers
+relabel blank nodes and refuse an invalid language tag, so their domain is
+the wider `Triple.ntSafe`. Gap 2 (the escaper inverse) is
 `readStringLiteralBody_escape`. The sketch below is the record of the earlier
 attempt.
 

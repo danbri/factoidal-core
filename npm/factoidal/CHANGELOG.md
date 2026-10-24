@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.14.0 (unreleased)
+
+- The N-Triples, N-Quads, Turtle and TriG writers give a fresh valid label to a blank-node label outside BLANK_NODE_LABEL (the same label for each occurrence, never a label of another blank node), and refuse a language tag outside LANGTAG with an error that names the tag (https://github.com/danbri/factoidal/issues/986).
+
 ## 0.13.0
 
 **A parsed document is a set of quads** (RDF 1.1 Concepts §3 and §4;
