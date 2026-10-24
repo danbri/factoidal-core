@@ -32,6 +32,7 @@ Targeted imports only — never the L4Factoidal umbrella (see
 `Wasm/Abi.lean`'s import note).
 -/
 import Wasm.Ops.Support
+import L4Factoidal.Dataflow.Reader
 import L4Factoidal.Syntax.NQuadsFast
 import L4Factoidal.Syntax.NTriples
 import L4Factoidal.OWL.RLClosure
@@ -45,7 +46,7 @@ open L4Factoidal.JSON
 
 /-- `tableauMaterialise(nquads)`. -/
 def tableauMaterialise (nq : String) : String :=
-  match parseNQuadsFast nq .rdf12 with
+  match L4Factoidal.Dataflow.readNQuadsText .rdf12 nq with
   | .error e => errJson (fmtParseError e)
   | .ok ds =>
     let g := ds.default
@@ -60,7 +61,7 @@ def tableauMaterialise (nq : String) : String :=
 
 /-- `tableauDlInconsistent(nquads)`. -/
 def tableauDlInconsistent (nq : String) : String :=
-  match parseNQuadsFast nq .rdf12 with
+  match L4Factoidal.Dataflow.readNQuadsText .rdf12 nq with
   | .error e => errJson (fmtParseError e)
   | .ok ds =>
     let gRl := L4Factoidal.OWL.RL.closureFix ds.default

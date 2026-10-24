@@ -113,6 +113,7 @@ import L4Factoidal.Storage.PlannerSoundness
 import L4Factoidal.Proof.Checker
 import L4Factoidal.RDF.EntailmentRegimeSoundness
 import L4Factoidal.RDF.DocumentScope
+import L4Factoidal.Dataflow.Reader
 
 namespace L4Factoidal.Dataflow
 
@@ -164,9 +165,7 @@ def decodeStage : Stage String Document (RdfFormat × String) where
 
 /-! ## Parse: text to a dataset -/
 
-/-- `SetOf` keeps the denotation. -/
-theorem SetOf.den_eq {ds raw : Dataset} (h : SetOf ds raw) : ds.den = raw.den :=
-  DatasetDen.ext (fun gn t => h.memQuad t gn) (fun n => h.names n)
+-- `SetOf.den_eq` (`SetOf` keeps the denotation) is in `Dataflow/Reader.lean`.
 
 /-- The parser's output is a set, it is the set of quads of the raw parse of
 the format, and it has the raw parse's denotation. -/

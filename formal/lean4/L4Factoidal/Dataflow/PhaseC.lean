@@ -95,6 +95,7 @@ the stream writers too.
 No `sorry`, no `axiom`, no `native_decide`, no `partial`.
 -/
 import L4Factoidal.Dataflow.Instances
+import L4Factoidal.Dataflow.Reader
 import L4Factoidal.RDF.SourceJsonLd
 import L4Factoidal.RDF.SourceTheorems
 import L4Factoidal.RDF.StreamSet
@@ -112,19 +113,9 @@ open L4Factoidal.RDF
 open L4Factoidal.RDF.Source
 open L4Factoidal.Syntax
 
-/-! ## Blank-node labels only -/
+/-! ## Blank-node labels only
 
-/-- The dataset with every blank-node label replaced by the empty label: what
-is left when the labels are ignored. -/
-def eraseLabels (ds : Dataset) : Dataset := ds.renameBnodes (fun _ => "")
-
-/-- **The document scope changes blank-node labels only.** IRIs, literals and
-triple terms (nested ones too) are kept. -/
-theorem eraseLabels_scopeDocument (n : Nat) (ds : Dataset) :
-    eraseLabels (ds.scopeDocument n) = eraseLabels ds := by
-  unfold eraseLabels Dataset.scopeDocument
-  rw [Dataset.renameBnodes_comp]
-  rfl
+`eraseLabels` and `eraseLabels_scopeDocument` are in `Dataflow/Reader.lean`. -/
 
 /-- A triple term stays a triple term under a relabelling: its predicate is
 kept, and its subject and object are relabelled. -/
@@ -134,13 +125,9 @@ theorem renameBnodes_tripleTerm (f : BNodeId → BNodeId) (s : Subject) (p : WfI
 
 /-! ## The batch reader of one syntax -/
 
-/-- The contract of the reader of syntax `fmt` with the document scope `n`. -/
-def ReaderContract (extra : Extra) (fmt : RdfFormat) (mode : Syntax.Mode) (base : Option String)
-    (n : Nat) (text : String) (out : Dataset) : Prop :=
-  ∃ raw ds, parseDocumentRaw extra fmt mode base text = .ok raw ∧ SetOf ds raw ∧
-    ds.den = raw.den ∧ out = ds.scopeDocument n ∧ out.IsSet ∧ out.InScope n ∧
-    out.den = raw.den.rename (docLabel n) ∧ DatasetDen.Iso raw.den out.den ∧
-    eraseLabels out = eraseLabels ds
+-- `ReaderContract` (the contract of the reader of syntax `fmt` with the
+-- document scope `n`) and `parseDocument_error_iff` are in `Dataflow/Reader.lean`,
+-- with the reader interface type `RdfReader`.
 
 /-- Parse the whole text of syntax `fmt`, then scope its blank nodes by `n`. -/
 def readerStage (extra : Extra) (fmt : RdfFormat) (mode : Syntax.Mode) (base : Option String)
@@ -157,27 +144,8 @@ def readerStage (extra : Extra) (fmt : RdfFormat) (mode : Syntax.Mode) (base : O
       injection h with h
       subst h
       obtain ⟨raw, hr, hs⟩ := parseDocument_set extra fmt mode base text ds hp
-      have hden := SetOf.den_eq hs
-      refine ⟨raw, ds, hr, hs, hden, rfl, Dataset.scopeDocument_isSet n hs.isSet,
-        ds.scopeDocument_inScope n, ?_, ?_, eraseLabels_scopeDocument n ds⟩
-      · rw [← hden]
-        exact Dataset.den_renameBnodes (docLabel n) ds
-      · rw [← hden]
-        exact ds.den_iso_scopeDocument n
+      exact readerContract_of_set hr hs n
     · cases h
-
-/-- `parseDocument` fails exactly when the parser of the syntax fails, with the
-same error. -/
-theorem parseDocument_error_iff (extra : Extra) (fmt : RdfFormat) (mode : Syntax.Mode)
-    (base : Option String) (text : String) (e : ParseError) :
-    parseDocument extra fmt mode base text = .error e ↔
-      parseDocumentRaw extra fmt mode base text = .error e := by
-  unfold parseDocument
-  split
-  · exact Iff.rfl
-  · cases parseDocumentRaw extra fmt mode base text with
-    | error e' => simp [Except.map]
-    | ok raw => simp [Except.map]
 
 /-- **An error of the reader is an error of the parser**, with its message. -/
 theorem readerStage_error {extra : Extra} {fmt : RdfFormat} {mode : Syntax.Mode}
@@ -245,6 +213,10 @@ def rdfxmlReader (mode : Syntax.Mode) (base : Option String) (n : Nat) : Stage S
 the JSON-LD library linked in. -/
 def jsonldReader (mode : Syntax.Mode) (base : Option String) (n : Nat) : Stage String String Dataset :=
   readerStage Source.withJsonLd .jsonld mode base n
+
+/-- The JSON-LD `RdfReader` of the table, with the JSON-LD library linked in
+(`Source.withJsonLd`): the reader of the full wasm dispatch. -/
+def jsonldDocumentReader : RdfReader := readers Source.withJsonLd .jsonld
 
 /-! ### RDF/JSON -/
 
@@ -644,8 +616,8 @@ def rdfJsonRoundTripB (g : Graph) : Option Bool :=
     | .ok back => some (Dataset.isomorphic? ({ default := back, named := [] } : Dataset).toSet
         ({ default := g, named := [] } : Dataset).toSet)
 
-#print axioms eraseLabels_scopeDocument
 #print axioms readerStage
+#print axioms jsonldDocumentReader
 #print axioms readerStage_error
 #print axioms readerStage_error_of_raw
 #print axioms readerStage_ok_of_raw

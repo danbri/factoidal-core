@@ -28,6 +28,7 @@ Targeted imports only — never the L4Factoidal umbrella (see
 `Wasm/Abi.lean`'s import note).
 -/
 import Wasm.Ops.Support
+import L4Factoidal.Dataflow.Reader
 import L4Factoidal.Syntax.NQuads
 import L4Factoidal.RDF.Datatypes
 import L4Factoidal.RDFS.Closure
@@ -82,7 +83,7 @@ def owlClosureParsed (ds : Dataset) (mode : String) : String :=
 
 /-- `owlClosure(nquads, mode)`. -/
 def owlClosure (nq mode : String) : String :=
-  match parseNQuadsFast nq .rdf12 with
+  match L4Factoidal.Dataflow.readNQuadsText .rdf12 nq with
   | .error e => errJson (fmtParseError e)
   | .ok ds => owlClosureParsed ds mode
 
@@ -115,13 +116,13 @@ def rhoDfClosureParsed (ds : Dataset) : String :=
 
 /-- `rhoDfClosure(nquads)`. -/
 def rhoDfClosure (nq : String) : String :=
-  match parseNQuadsFast nq .rdf12 with
+  match L4Factoidal.Dataflow.readNQuadsText .rdf12 nq with
   | .error e => errJson (fmtParseError e)
   | .ok ds => rhoDfClosureParsed ds
 
 /-- `rhoDfFragmentCheck(nquads)`. -/
 def rhoDfFragmentCheck (nq : String) : String :=
-  match parseNQuadsFast nq .rdf12 with
+  match L4Factoidal.Dataflow.readNQuadsText .rdf12 nq with
   | .error e => errJson (fmtParseError e)
   | .ok ds =>
       okWith [("fragment", .bool (L4Factoidal.RDFS.isRhoDfFrag ds.default))]
@@ -137,7 +138,7 @@ def rdfsPlusClosureParsed (ds : Dataset) : String :=
 
 /-- `rdfsPlusClosure(nquads)`. -/
 def rdfsPlusClosure (nq : String) : String :=
-  match parseNQuadsFast nq .rdf12 with
+  match L4Factoidal.Dataflow.readNQuadsText .rdf12 nq with
   | .error e => errJson (fmtParseError e)
   | .ok ds => rdfsPlusClosureParsed ds
 
@@ -153,6 +154,7 @@ theorem owlClosureOf_eq (ds : Dataset) (mode : String) :
     owlClosureOf ds mode = owlClosure (Dataset.toCanonicalNQuads ds) mode := by
   unfold owlClosureOf owlClosure
   rw [withOpsDataset_eq]
+  rw [L4Factoidal.Dataflow.readNQuadsText_eq]
   cases parseNQuadsFast (Dataset.toCanonicalNQuads ds) .rdf12 <;> rfl
 
 def rhoDfClosureOf (ds : Dataset) : String :=
@@ -162,6 +164,7 @@ theorem rhoDfClosureOf_eq (ds : Dataset) :
     rhoDfClosureOf ds = rhoDfClosure (Dataset.toCanonicalNQuads ds) := by
   unfold rhoDfClosureOf rhoDfClosure
   rw [withOpsDataset_eq]
+  rw [L4Factoidal.Dataflow.readNQuadsText_eq]
   cases parseNQuadsFast (Dataset.toCanonicalNQuads ds) .rdf12 <;> rfl
 
 def rdfsPlusClosureOf (ds : Dataset) : String :=
@@ -171,6 +174,7 @@ theorem rdfsPlusClosureOf_eq (ds : Dataset) :
     rdfsPlusClosureOf ds = rdfsPlusClosure (Dataset.toCanonicalNQuads ds) := by
   unfold rdfsPlusClosureOf rdfsPlusClosure
   rw [withOpsDataset_eq]
+  rw [L4Factoidal.Dataflow.readNQuadsText_eq]
   cases parseNQuadsFast (Dataset.toCanonicalNQuads ds) .rdf12 <;> rfl
 
 /-! ### The command line's `closure` verb, one line at a time

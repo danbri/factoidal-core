@@ -12,7 +12,7 @@ sources define it on this run. It stops with an error (exit 1) when:
 * a named declaration depends on an axiom other than propext,
   Classical.choice, Quot.sound (`sorryAx` included);
 * a status disagrees with its fields (`Entry.statusError` in
-  `Dataflow/Registry.lean`): `proved` needs a `Stage` value, a contract and
+  `Dataflow/Registry.lean`): `proved` needs a `Stage` (or `RdfReader`) value, a contract and
   theorems; `assumed` needs an `IOStage` value and an IO assumption; `tested`
   needs a suite, no stage and no contract; `missing` has no stage, no
   contract, no suite and no IO assumption.
@@ -49,7 +49,10 @@ def clean (s : String) : String := (s.replace "\t" " ").replace "\n" " "
 def stageKind (env : Environment) (n : Name) : StageKind :=
   if n.isAnonymous then .none
   else match resultHead env n with
-    | some h => if h == ``Stage then .stage else if h == ``IOStage then .ioStage else .other
+    | some h =>
+      -- an `RdfReader` holds its contract as a field, as a `Stage` does
+      if h == ``Stage || h == ``RdfReader then .stage
+      else if h == ``IOStage then .ioStage else .other
     | Option.none => .other
 
 #eval show CommandElabM Unit from do

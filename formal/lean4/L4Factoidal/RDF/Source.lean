@@ -274,20 +274,25 @@ theorem parseDocument_set (extra : Extra) (fmt : RdfFormat) (mode : Mode) (base 
 
 /-- `parseDocument`, with the prefixes the document declared (Turtle and TriG:
     the most recent binding first, as the parsers hold them; `[]` for the other
-    formats). -/
+    formats). Its dataset is the dataset of `parseDocument`
+    (`Dataflow.parseDocumentWithPrefixes_map_fst`): Turtle is read by
+    `parseTurtleTextWithPrefixes`, which takes the branches of
+    `parseTurtleText`. Until 2026-10-24 it read Turtle by
+    `parseTurtleWithPrefixes` (the character-list parser), so the two agreed
+    only where the walk agrees with `parseTurtle`, which is not proved. -/
 def parseDocumentWithPrefixes (extra : Extra) (fmt : RdfFormat) (mode : Mode)
     (base : Option String) (text : String) :
     Except ParseError (Dataset × List (String × String)) :=
   match fmt with
   | .turtle =>
-      (parseTurtleWithPrefixes text base mode).map fun (g, ps) =>
+      (parseTurtleTextWithPrefixes text base mode).map fun (g, ps) =>
         ((({ default := g, named := [] } : Dataset).toSet), ps)
   | .trig => parseTriGWithPrefixes text base mode
   | .nt | .nquads | .rdfxml | .jsonld =>
       (parseDocument extra fmt mode base text).map fun ds => (ds, [])
 
 /-- The dataset `parseDocumentWithPrefixes` gives is a set. For Turtle it is
-    the set of quads of the graph `parseTurtleWithPrefixes` gives; for the
+    the set of quads of the graph `parseTurtleTextWithPrefixes` gives; for the
     other formats it is `parseDocument`'s. -/
 theorem parseDocumentWithPrefixes_isSet (extra : Extra) (fmt : RdfFormat) (mode : Mode)
     (base : Option String) (text : String) (r : Dataset × List (String × String))
@@ -295,7 +300,7 @@ theorem parseDocumentWithPrefixes_isSet (extra : Extra) (fmt : RdfFormat) (mode 
   unfold parseDocumentWithPrefixes at h
   cases fmt with
   | turtle =>
-    cases hr : parseTurtleWithPrefixes text base mode with
+    cases hr : parseTurtleTextWithPrefixes text base mode with
     | error e => rw [hr] at h; cases h
     | ok v =>
       rw [hr] at h

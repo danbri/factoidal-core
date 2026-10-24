@@ -29,6 +29,7 @@ Targeted imports only — never the L4Factoidal umbrella (see
 `Wasm/Abi.lean`'s import note).
 -/
 import Wasm.Ops.Support
+import L4Factoidal.Dataflow.Reader
 import L4Factoidal.Syntax.NQuadsFast
 import L4Factoidal.Syntax.NQuads
 import L4Factoidal.Syntax.NTriples
@@ -58,7 +59,7 @@ open L4Factoidal.JSON
 /-- Parse a dataset handle (N-Quads text). RDF 1.2 read mode, as in
 `queryDataset`: the engine's own ops write RDF 1.2 canonical N-Quads. -/
 private def readHandle (who nq : String) : Except String Dataset :=
-  match parseNQuadsFast nq .rdf12 with
+  match L4Factoidal.Dataflow.readNQuadsText .rdf12 nq with
   | .error e => .error s!"{who}: {fmtParseError e}"
   | .ok ds   => .ok ds
 

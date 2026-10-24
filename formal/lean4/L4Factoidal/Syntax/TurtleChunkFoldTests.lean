@@ -224,4 +224,34 @@ private def tripleTerm : String :=
 #guard freshBnodePrefixText "_:a__b" == "anon___"
 #guard freshBnodePrefixText "" == "anon_"
 
+-- `parseTurtleTextWithPrefixes` (the reader of the wasm `datasetOpen` op since
+-- 2026-10-24) gives the graph AND the prefixes of `parseTurtleWithPrefixes`
+-- (the character-list parser the op used before), errors included. The graph
+-- part is `parseTurtleTextWithPrefixes_map_fst`; the prefixes from the walk's
+-- Turtle state are pinned here, not proved.
+def samePrefixParse (source : String) (mode : Mode := .rdf11) (base : Option String := none) : Bool :=
+  match parseTurtleTextWithPrefixes source base mode, parseTurtleWithPrefixes source base mode with
+  | .ok (g1, p1), .ok (g2, p2) => decide (g1 = g2) && p1 == p2
+  | .error e1, .error e2 => decide (e1 = e2)
+  | _, _ => false
+
+private def prefixSources : List String := [
+  "",
+  "@prefix ex: <http://example.org/> .\nex:s ex:p ex:o .\n",
+  "PREFIX ex: <http://example.org/>\nPREFIX : <http://d/>\n:s ex:p :o .\n",
+  "@prefix a: <http://a/> .\n@prefix a: <http://b/> .\na:s a:p a:o .\n",
+  "@base <http://b/> .\n@prefix : <x#> .\n:s :p :o .\nBASE <http://c/>\nPREFIX q: <y#>\nq:s :p q:o .",
+  "@prefix ex: <http://example.org/> .\nex:s ex:p [ ex:q ex:r ] , ( 1 2 ) .\n",
+  "@prefix ex: <http://example.org/> .\nex:s ex:p",
+  "@prefix ex: <http://example.org/> .\nex:s ex:p ex:o ; .\nex:t ex:p ex:o .",
+  "@prefix ex: <http://example.org/> .\nex:s ex:p \"a . b\" .\n@prefix ex2: <http://e2/> .\nex2:s ex:p ex2:o"
+]
+#guard prefixSources.all (fun d => samePrefixParse d)
+#guard prefixSources.all (fun d => samePrefixParse d .rdf12)
+#guard samePrefixParse tripleTerm .rdf12
+#guard samePrefixParse splitDirective
+#guard samePrefixParse baseLike
+#guard acceptedSources.all (fun d => samePrefixParse d)
+#guard refusedSources.all (fun d => samePrefixParse d)
+
 end L4Factoidal.Syntax
