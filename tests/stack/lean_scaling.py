@@ -595,6 +595,10 @@ XFAIL: dict[str, str] = {
     "iso-noniso-search": "https://github.com/danbri/factoidal/issues/877",
     "sbm11-replay-insert-time": "https://github.com/danbri/factoidal/issues/879",
     "owl-consistent-cl": "https://github.com/danbri/factoidal/issues/960",
+    # `--out nquads` keeps every distinct triple written since PR 29 (issue 968, owner
+    # 2026-10-23: keep for now). Measured on main 9c123945 before issue 949: 6.2 and 20.3.
+    "parse-nt-memory": "https://github.com/danbri/factoidal/issues/968",
+    "parse-ttl-memory": "https://github.com/danbri/factoidal/issues/968",
 }
 # A run longer than this is not repeated: the minimum of several runs only
 # removes timer and load noise, which is small against a run this long.
