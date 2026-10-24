@@ -97,6 +97,7 @@ import L4Factoidal.Storage.Sbm11.FrameWords
 import L4Factoidal.Storage.Sbm11.MemoCache
 import L4Factoidal.Storage.ShardManifest
 import L4Factoidal.Storage.QuadDataset
+import L4Factoidal.Storage.SelectedDataset
 import L4Factoidal.SPARQL.StoreDataset
 import L4Factoidal.SPARQL.ResultsJsonFast
 import L4Factoidal.Geo.Functions
@@ -1752,7 +1753,10 @@ def subjectOf (t : Term) : IO Subject :=
     `GRAPH ?g { }` gives one solution for each, and FROM NAMED selects one with no
     triple (2026-10-15, https://github.com/danbri/factoidal/issues/855). A graph
     that the predicate selection empties contributes no solution to a pattern of
-    the planner fragment with or without it (`evalPatternBackend_restrict`). -/
+    the planner fragment with or without it (`evalPatternBackend_restrict`).
+    The pure model of this read is `Storage.SelectedDataset.selectedModel`, up to
+    the order of the triples and of the named graphs; that this IO read returns
+    it is not proved. -/
 def selectedDataset (ss : Session) (q : Query) (extraGraphs : List WfIri := []) : IO (Dataset × String) := do
   let preds := L4Factoidal.Storage.ShardManifest.queryQuadConstantPredicates? q
   let graphs := L4Factoidal.Storage.ShardManifest.queryGraphNames? q
@@ -1878,14 +1882,11 @@ def runReference (ss : Session) (q : Query) (reason : String) (emit : ByteArray 
   | none =>
   match q.form with
   | .select _ =>
-    let rows? :=
-      if indexed then StoreDataset.runSelectQueryBackendDataset env stripped (StoreDataset.indexedDatasetBackend applied)
-      else some (evalSelect env applied stripped).2
-    -- The backend runner answers `none` for a query it hands to the reference
-    -- evaluator (`text:query`, StoreDataset.runSelectQueryBackendDataset).
-    let rows := match rows? with
-      | some rows => rows
-      | none => (evalSelect env applied stripped).2
+    -- `SelectedDataset.referenceSelect`: the backend evaluator when every
+    -- graph name is an IRI, else (and for a query the backend runner hands on,
+    -- `text:query`) the reference evaluator. Its theorem over the model of
+    -- `selectedDataset`: `SelectedDataset.referenceSelect_selectedModel`.
+    let rows := L4Factoidal.Storage.SelectedDataset.referenceSelect env q applied
     emit (QueryResult.bindings q.projectedVars rows).toSrjFast.toUTF8
     return (rows.length, line)
   | .ask =>

@@ -826,6 +826,8 @@ import L4Factoidal.Syntax.TriGChunkFoldTheorems
 import L4Factoidal.Storage.ShardManifest
 import L4Factoidal.Storage.ShardManifestTheorems
 import L4Factoidal.Storage.PlannerSoundness
+import L4Factoidal.Storage.SelectedDataset
+import L4Factoidal.Storage.SelectedDatasetTests
 import L4Factoidal.Storage.Sbm11.StoreCapsConnection
 import L4Factoidal.Storage.PackStream
 import L4Factoidal.Storage.GenerationVerify
