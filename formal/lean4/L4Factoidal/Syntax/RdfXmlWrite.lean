@@ -23,7 +23,8 @@ last segment starts with a digit, or the IRI has no `/` or `#`) has no
 RDF/XML form, and the serialiser says so instead of inventing a
 namespace (RDF/XML 1.1 section 7.2.2; the note on serialising URIs as
 property elements). A triple term object has no RDF/XML 1.1 form and is
-refused. Characters XML 1.0 cannot carry are refused.
+refused. A directional language string (RDF 1.2) is written with `its:dir`
+and `rdf:version="1.2"` on its property element (RDF 1.2 XML Syntax). Characters XML 1.0 cannot carry are refused.
 
 ## Cost
 
@@ -115,7 +116,14 @@ private def renderObject (name : String) (o : Term) : Except String String :=
       if !xmlSafe l.lexicalForm then .error "a literal holds a character XML 1.0 cannot carry"
       else
         match l.langTag with
-        | some tag => .ok s!"    <{name} xml:lang=\"{escAttr tag}\">{esc l.lexicalForm}</{name}>\n"
+        | some tag =>
+            match l.direction with
+            | none => .ok s!"    <{name} xml:lang=\"{escAttr tag}\">{esc l.lexicalForm}</{name}>\n"
+            | some d =>
+                -- RDF 1.2 XML Syntax: `its:dir` gives the base direction when
+                -- `rdf:version="1.2"` is in scope (W3C test rdf12-xml-dir-05).
+                let dir := match d with | .ltr => "ltr" | .rtl => "rtl"
+                .ok s!"    <{name} xml:lang=\"{escAttr tag}\" rdf:version=\"1.2\" xmlns:its=\"http://www.w3.org/2005/11/its\" its:version=\"2.0\" its:dir=\"{dir}\">{esc l.lexicalForm}</{name}>\n"
         | none =>
             if l.datatype.val == xsdString then
               .ok s!"    <{name}>{esc l.lexicalForm}</{name}>\n"
@@ -585,6 +593,19 @@ private def sample : Graph :=
 private def ctrlGraph : Graph :=
   [{ s := .iri (iri! "http://ex/s"), p := iri! "http://ex/p/q", o := .literal (Literal.string (String.singleton (Char.ofNat 1))) }]
 #guard (graphToRdfXml ctrlGraph).toOption.isNone
+-- RDF 1.2: a directional language string keeps its base direction
+-- (`its:dir` with `rdf:version="1.2"` on the property element, the form of the
+-- W3C test rdf12-xml-dir-05). Before 2026-10-24 the writer wrote `xml:lang` only
+-- and the direction was lost (https://github.com/danbri/factoidal/issues/975, phase C).
+private def dirGraph : Graph :=
+  [ { s := .iri (iri! "http://ex/s"), p := iri! "http://ex/p/q", o := .literal (Literal.dirLangString "y" "ar" .rtl) }
+  , { s := .iri (iri! "http://ex/s"), p := iri! "http://ex/p/r", o := .literal (Literal.dirLangString "x" "en" .ltr) }
+  , { s := .iri (iri! "http://ex/s"), p := iri! "http://ex/p/t", o := .literal (Literal.langString "z" "fr") } ]
+#guard match graphToRdfXml dirGraph with
+       | .ok t => (match RdfXml.parseRdfXml t with
+                   | .ok g => g.isomorphic? dirGraph
+                   | .error _ => false)
+       | .error _ => false
 #guard (graphToRdfXml []).toOption.isSome
 
 -- Grouping: a subject whose triples are not adjacent gets one group, in the
