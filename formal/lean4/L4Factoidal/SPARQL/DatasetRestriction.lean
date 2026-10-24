@@ -520,6 +520,67 @@ def restrictNamed (keep : Triple → Bool) : List NamedGraph → List NamedGraph
       if (ng.graph.filter keep).isEmpty then restrictNamed keep rest
       else { ng with graph := ng.graph.filter keep } :: restrictNamed keep rest
 
+/-- The named-graph list of a restriction, entry by entry: each named graph is
+kept with its `keep`-filter (an empty result included), or dropped, and dropped
+only when it is not empty and `keep` empties it. `restrictNamed` over a list
+with no empty graph is one instance (`namedRestricted_restrictNamed`); keeping
+every graph (`namedRestricted_map`) is another, and that is what the reference
+fallback of `l4sbm11 query` reads: a named graph whose triples the predicate
+selection drops is in its dataset with no triple
+(https://github.com/danbri/factoidal/issues/975, finding 6). -/
+inductive NamedRestricted (keep : Triple → Bool) : List NamedGraph → List NamedGraph → Prop
+  | nil : NamedRestricted keep [] []
+  | keep {ng : NamedGraph} {rest rest' : List NamedGraph} :
+      NamedRestricted keep rest rest' →
+      NamedRestricted keep (ng :: rest) ({ ng with graph := ng.graph.filter keep } :: rest')
+  | drop {ng : NamedGraph} {rest rest' : List NamedGraph} :
+      ng.graph ≠ [] → ng.graph.filter keep = [] → NamedRestricted keep rest rest' →
+      NamedRestricted keep (ng :: rest) rest'
+
+/-- Every named graph kept with its filter. -/
+theorem namedRestricted_map (keep : Triple → Bool) :
+    ∀ l : List NamedGraph,
+      NamedRestricted keep l (l.map fun ng => { ng with graph := ng.graph.filter keep })
+  | [] => .nil
+  | _ :: rest => .keep (namedRestricted_map keep rest)
+
+/-- `restrictNamed` over a list with no empty graph. -/
+theorem namedRestricted_restrictNamed (keep : Triple → Bool) :
+    ∀ l : List NamedGraph, (∀ ng ∈ l, ng.graph ≠ []) →
+      NamedRestricted keep l (restrictNamed keep l)
+  | [], _ => .nil
+  | ng :: rest, hne => by
+      have ih := namedRestricted_restrictNamed keep rest
+        (fun x hx => hne x (List.mem_cons_of_mem _ hx))
+      simp only [restrictNamed]
+      by_cases hz : (ng.graph.filter keep).isEmpty = true
+      · rw [if_pos hz]
+        exact .drop (hne ng List.mem_cons_self) (List.isEmpty_iff.mp hz) ih
+      · rw [if_neg hz]
+        exact .keep ih
+
+/-- A restriction that keeps every triple keeps every graph as it is. -/
+theorem NamedRestricted.eq_of_all {keep : Triple → Bool} (h : ∀ t, keep t = true) :
+    ∀ {l l' : List NamedGraph}, NamedRestricted keep l l' → l' = l
+  | _, _, .nil => rfl
+  | ng :: _, _, .keep r => by
+      rw [NamedRestricted.eq_of_all h r]
+      have hg : ng.graph.filter keep = ng.graph := by
+        clear r
+        induction ng.graph with
+        | nil => rfl
+        | cons t rest ih => simp [List.filter_cons, h t, ih]
+      rw [hg]
+  | ng :: _, _, .drop hne hz _ => by
+      exfalso
+      apply hne
+      have hg : ng.graph.filter keep = ng.graph := by
+        clear hz hne
+        induction ng.graph with
+        | nil => rfl
+        | cons t rest ih => simp [List.filter_cons, h t, ih]
+      rw [← hg, hz]
+
 /-- What the planner leaves behind. The default graph is filtered by `keep`.
 A named graph the pattern can read is either filtered by `keep` as well, or
 gone — and gone only when `keep` empties it. A graph the pattern CANNOT read
@@ -528,18 +589,21 @@ entries outright.
 
 `namedList` is the stronger statement `GRAPH ?v` needs, and is required only
 when no graph-name selection was made (`readable = none`), which is exactly
-when a `GRAPH ?v` may occur. `noEmpty` says the dataset carries no empty named
-graph, which `datasetOfQuads` guarantees: a graph exists because a row put it
-there. -/
+when a `GRAPH ?v` may occur. A named graph is dropped only when it is not empty
+(`named`, `NamedRestricted.drop`): `GRAPH <g> { }` and `GRAPH ?g { }` give a
+solution for an empty named graph, so dropping one changes the answer. Until
+2026-10-24 this was a field `noEmpty` on the whole dataset, which excluded the
+datasets with an empty named graph (SPARQL 1.1 section 13 allows them) and the
+reference fallback of `l4sbm11 query`, which keeps a named graph that its
+predicate selection empties. -/
 structure DatasetRestricted (keep : Triple → Bool) (readable : Option (List WfIri))
     (d dr : Dataset) : Prop where
   dflt : dr.default = d.default.filter keep
   named : ∀ i : WfIri, readableName readable i →
     lookupGraph dr.named i.val = (lookupGraph d.named i.val).map (fun g => g.filter keep)
     ∨ (lookupGraph dr.named i.val = none ∧
-       ∀ g, lookupGraph d.named i.val = some g → g.filter keep = [])
-  namedList : readable = none → dr.named = restrictNamed keep d.named
-  noEmpty : ∀ ng ∈ d.named, ng.graph ≠ []
+       ∀ g, lookupGraph d.named i.val = some g → g.filter keep = [] ∧ g ≠ [])
+  namedList : readable = none → NamedRestricted keep d.named dr.named
 
 theorem filter_all {keep : Triple → Bool} (h : ∀ t, keep t = true) :
     ∀ l : List Triple, l.filter keep = l
@@ -643,23 +707,18 @@ theorem graphVar_flatMap_restrict {keep : Triple → Bool}
           = G ⟨ngKey ng, indexedGraphBackend ng.graph⟩)
     (hdropG : ∀ ng : NamedGraph, ng.graph ≠ [] → ng.graph.filter keep = [] →
         G ⟨ngKey ng, indexedGraphBackend ng.graph⟩ = []) :
-    ∀ l : List NamedGraph, (∀ ng ∈ l, ng.graph ≠ []) →
-      ((restrictNamed keep l).map
+    ∀ {l l' : List NamedGraph}, NamedRestricted keep l l' →
+      (l'.map
         (fun ng => (⟨ngKey ng, indexedGraphBackend ng.graph⟩ : NamedGraphBackend))).flatMap F
       = (l.map
-          (fun ng => (⟨ngKey ng, indexedGraphBackend ng.graph⟩ : NamedGraphBackend))).flatMap G := by
-  intro l
-  induction l with
-  | nil => intro _; rfl
-  | cons ng rest ih =>
-      intro hne
-      rw [restrictNamed_cons]
-      by_cases hz : (ng.graph.filter keep).isEmpty = true
-      · rw [if_pos hz, List.map_cons, List.flatMap_cons,
-            hdropG ng (hne ng List.mem_cons_self) (List.isEmpty_iff.mp hz), List.nil_append,
-            ih (fun x hx => hne x (List.mem_cons_of_mem _ hx))]
-      · rw [if_neg hz, List.map_cons, List.map_cons, List.flatMap_cons, List.flatMap_cons,
-            ngKey_graph, hkeepG ng, ih (fun x hx => hne x (List.mem_cons_of_mem _ hx))]
+          (fun ng => (⟨ngKey ng, indexedGraphBackend ng.graph⟩ : NamedGraphBackend))).flatMap G
+  | _, _, .nil => rfl
+  | ng :: _, _, .keep r => by
+      rw [List.map_cons, List.map_cons, List.flatMap_cons, List.flatMap_cons,
+        ngKey_graph, hkeepG ng, graphVar_flatMap_restrict F G hkeepG hdropG r]
+  | ng :: _, _, .drop hne hz r => by
+      rw [List.map_cons, List.flatMap_cons, hdropG ng hne hz, List.nil_append,
+        graphVar_flatMap_restrict F G hkeepG hdropG r]
 
 /-! ## 11. The pattern induction
 
@@ -749,7 +808,7 @@ theorem evalPatternBackend_restrict (env : EvalEnv) {keep : Triple → Bool}
         | none => simp only [Option.map_none]
         | some g' =>
             simp only [Option.map_none, Option.map_some]
-            have hz : g'.filter keep = [] := h2 g' hl
+            have hz : g'.filter keep = [] := (h2 g' hl).1
             have hres := evalPatternBackend_restrict env hd p g' hf.2 hk hn' hv
             rw [hz] at hres
             rw [← hres]
@@ -759,8 +818,7 @@ theorem evalPatternBackend_restrict (env : EvalEnv) {keep : Triple → Bool}
             · exfalso
               have hgg : g'.filter keep = g' := filter_all htrue g'
               have hg'nil : g' = [] := by rw [← hgg, hz]
-              obtain ⟨ng, hng, hngg⟩ := lookupGraph_mem d.named i.val g' hl
-              exact hd.noEmpty ng hng (by rw [hngg, hg'nil])
+              exact (h2 g' hl).2 hg'nil
   | .graph (.var v) p, g, hf, hk, hn, hv => by
       simp only [plannerFragment, Bool.and_eq_true] at hf
       simp only [PatternKept] at hk
@@ -800,8 +858,8 @@ theorem evalPatternBackend_restrict (env : EvalEnv) {keep : Triple → Bool}
         · rw [← hres, hn0]
           cases wfIriOf? (ngKey ng) <;> rfl
         · exact absurd (by rw [← filter_all htrue ng.graph, hz]) hgne
-      simp only [evalPatternBackend, indexedDatasetBackend_named, hd.namedList hnone]
-      refine graphVar_flatMap_restrict _ _ ?_ ?_ d.named hd.noEmpty
+      simp only [evalPatternBackend, indexedDatasetBackend_named]
+      refine graphVar_flatMap_restrict _ _ ?_ ?_ (hd.namedList hnone)
       · intro ng
         simp only []
         exact hkeepG ng
@@ -883,8 +941,7 @@ theorem DatasetRestricted.trivial_eq {keep : Triple → Bool}
     rw [hd.dflt]
     exact filter_all h d.default
   have hnam : dr.named = d.named := by
-    rw [hd.namedList hnone]
-    exact restrictNamed_trivial h d.named hd.noEmpty
+    exact (hd.namedList hnone).eq_of_all h
   cases dr; cases d
   simp_all
 
@@ -1021,7 +1078,7 @@ theorem lookupNamedBackend_restrict_cases {keep : Triple → Bool}
   · rw [h1]
     cases hl : lookupGraph d.named gname.val with
     | none => exact Or.inr (Or.inl ⟨rfl, rfl⟩)
-    | some g' => exact Or.inr (Or.inr ⟨g', h2 g' hl, rfl, rfl⟩)
+    | some g' => exact Or.inr (Or.inr ⟨g', (h2 g' hl).1, rfl, rfl⟩)
 
 theorem backendCountExact_indexed_nil (b : PatternBound) :
     backendCountExact (indexedGraphBackend []) b = 0 := by
@@ -1065,43 +1122,44 @@ restriction empties returns no candidate, so it neither adds a row nor moves
 the early stop. -/
 theorem limitGraphVarAcc_restrict {keep : Triple → Bool} {tp : TriplePattern}
     (htp : TpKept keep tp) (v : VarName) (limit : Nat) :
-    ∀ (l : List NamedGraph) (acc : SolutionSeq),
+    ∀ {l l' : List NamedGraph}, NamedRestricted keep l l' → ∀ (acc : SolutionSeq),
       limitGraphVarAcc v tp limit
-          ((restrictNamed keep l).map
+          (l'.map
             (fun ng => (⟨ngKey ng, indexedGraphBackend ng.graph⟩ : NamedGraphBackend))) acc
         = limitGraphVarAcc v tp limit
             (l.map (fun ng => (⟨ngKey ng, indexedGraphBackend ng.graph⟩ : NamedGraphBackend)))
-            acc := by
-  intro l
-  induction l with
-  | nil => intro acc; rfl
-  | cons ng rest ih =>
-      intro acc
-      rw [restrictNamed_cons, List.map_cons]
+            acc
+  | _, _, .nil, _ => rfl
+  | ng :: rest, _, .keep r, acc => by
+      have ih := limitGraphVarAcc_restrict htp v limit r
+      rw [List.map_cons, List.map_cons]
       by_cases hlim : limit ≤ acc.length
       · rw [limitGraphVarAcc_done v tp limit _ acc hlim,
             limitGraphVarAcc_done v tp limit _ acc hlim]
-      · by_cases hz : (ng.graph.filter keep).isEmpty = true
-        · have hz' : ng.graph.filter keep = [] := List.isEmpty_iff.mp hz
-          have hsearch : backendSearchLimited (indexedGraphBackend ng.graph)
-              (patternBoundFor tp Binding.empty) (limit - acc.length) = [] := by
-            rw [← backendSearchLimited_indexed_filter (htp Binding.empty) ng.graph
-                  (limit - acc.length), hz', backendSearchLimited_indexed_nil]
-          rw [if_pos hz, limitGraphVarAcc, if_neg hlim]
-          cases wfIriOf? (ngKey ng) with
-          | none => exact ih acc
-          | some i =>
-              simp only [hsearch, List.filterMap_nil, capsTakeN, List.take_nil,
-                List.reverseAux]
-              exact ih acc
-        · have hkey : ngKey { ng with graph := ng.graph.filter keep } = ngKey ng := rfl
-          rw [if_neg hz, List.map_cons, limitGraphVarAcc, limitGraphVarAcc,
-            if_neg hlim, if_neg hlim, hkey,
-            backendSearchLimited_indexed_filter (htp Binding.empty) ng.graph
-              (limit - acc.length)]
-          cases wfIriOf? (ngKey ng) with
-          | none => exact ih acc
-          | some i => exact ih _
+      · have hkey : ngKey { ng with graph := ng.graph.filter keep } = ngKey ng := rfl
+        rw [limitGraphVarAcc, limitGraphVarAcc, if_neg hlim, if_neg hlim, hkey,
+          backendSearchLimited_indexed_filter (htp Binding.empty) ng.graph
+            (limit - acc.length)]
+        cases wfIriOf? (ngKey ng) with
+        | none => exact ih acc
+        | some i => exact ih _
+  | ng :: rest, _, .drop _ hz' r, acc => by
+      have ih := limitGraphVarAcc_restrict htp v limit r
+      rw [List.map_cons]
+      by_cases hlim : limit ≤ acc.length
+      · rw [limitGraphVarAcc_done v tp limit _ acc hlim,
+            limitGraphVarAcc_done v tp limit _ acc hlim]
+      · have hsearch : backendSearchLimited (indexedGraphBackend ng.graph)
+            (patternBoundFor tp Binding.empty) (limit - acc.length) = [] := by
+          rw [← backendSearchLimited_indexed_filter (htp Binding.empty) ng.graph
+                (limit - acc.length), hz', backendSearchLimited_indexed_nil]
+        rw [limitGraphVarAcc, if_neg hlim]
+        cases wfIriOf? (ngKey ng) with
+        | none => exact ih acc
+        | some i =>
+            simp only [hsearch, List.filterMap_nil, capsTakeN, List.take_nil,
+              List.reverseAux]
+            exact ih acc
 
 /-! ## 15. SELECT and ASK -/
 
@@ -1205,8 +1263,8 @@ theorem evalSelectBackendOnGraph_restrict (env : EvalEnv) {keep : Triple → Boo
                     refine hv ?_
                     rw [hp]
                     simp [graphVarIn]
-                  simp only [indexedDatasetBackend_named, hd.namedList hnone,
-                    limitGraphVarAcc_restrict htp w k d.named []]
+                  simp only [indexedDatasetBackend_named,
+                    limitGraphVarAcc_restrict htp w k (hd.namedList hnone) []]
 
 theorem evalSelectBackendDataset_restrict (env : EvalEnv) {keep : Triple → Bool}
     {readable : Option (List WfIri)} {d dr : Dataset} (hd : DatasetRestricted keep readable d dr)

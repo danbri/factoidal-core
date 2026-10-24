@@ -91,11 +91,14 @@ ends at `SolutionSeq`. `sbm11PlannerSelect` is the reference fallback of
    from the generation (`selectedDataset`) and runs it. `sbm11PlannerSelect`
    composes the read (IO, named assumption `SelectedAgrees`) with
    `plannerSelectStage`; `sbm11PlannerSelect_sound` gives the planner answer
-   over `G.denote`. Missing: a pure model of `selectedDataset` over `FileGen`
-   with a proof of `SelectedAgrees`; the planner theorem needs non-empty
-   named graphs, and the read keeps a named graph that the predicate
-   selection empties; and no theorem relates the planner answer over
-   `G.denote` to the id path's answer or to the answer over the parsed
+   over `G.denote`. `Storage/SelectedDataset.lean` gives the pure model
+   `selectedModel` of the read (it keeps a named graph that the predicate
+   selection empties; `DatasetRestricted` no longer needs non-empty named
+   graphs) and `referenceSelect_selected`: the harness's SELECT answer over
+   the model is its answer over the whole store, with `FROM` and graph-name
+   selection. Missing: that the IO read returns the model; and no theorem
+   relates the backend evaluator's answer to `Allowed` or to the id path's
+   answer, or the answer over `G.denote` to the answer over the parsed
    dataset (`G.den = ds.den` is equality of denotations, not of lists).
 
 No `sorry`, no `axiom`, no `native_decide`, no `partial`.
