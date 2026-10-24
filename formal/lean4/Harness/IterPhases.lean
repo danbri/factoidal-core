@@ -48,6 +48,13 @@ def timed (reps : Nat) (f : Unit → IO Nat) : IO (Nat × Nat) := do
 def report (n : Nat) (name : String) (r : Nat × Nat) : IO Unit :=
   IO.println s!"n={n} phase={name} ms={r.1 / 1000}.{(r.1 % 1000) / 100} value={r.2}"
 
+/-- `l4iter-phases N REPEATS bin` times only the op `datasetQuadsBin`, for a
+profiler run. -/
+def onlyBin (n reps : Nat) (h : String) : IO UInt32 := do
+  report n "op datasetQuadsBin" (← timed reps fun _ => do
+    pure (← datasetQuadsBin h "").2.size)
+  pure 0
+
 def main (args : List String) : IO UInt32 := do
   let n := (args.head?.bind String.toNat?).getD 60000
   let reps := ((args.drop 1).head?.bind String.toNat?).getD 5
@@ -56,6 +63,7 @@ def main (args : List String) : IO UInt32 := do
   let some j := L4Factoidal.JSON.parseJson? opened | IO.eprintln opened; pure 1
   let some (.string h) := j.field? "handle" | IO.eprintln opened; pure 1
   let some (ds, _) ← lookupHandleDataset h | pure 1
+  if (args.drop 2).head? == some "bin" then return (← onlyBin n reps h)
   let qs := TermJson.Dataset.quadList ds
   report n "quadList" (← timed reps fun _ => pure (TermJson.Dataset.quadList ds).length)
   report n "compactFast" (← timed reps fun _ => pure (TermJson.compactFast qs).1.size)

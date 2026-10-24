@@ -5,6 +5,7 @@
   docs/designissues/2026-10-12-parallel-block-scans.md).
 
   Usage: l4pool-bench [rounds] [gapUs] [jobs]
+         l4pool-bench stress [cycles] [maxGapUs] [workers]
   Each round: the caller works (polls the clock) for `gapUs` microseconds, the
   time a query spends between two divided phases, then starts `jobs` jobs
   that each record the time they begin, and waits for all of them. Printed
@@ -67,7 +68,37 @@ def runMode (name : String) (rounds gapUs : Nat) (step : IO (Nat × Nat)) : IO U
     dones := dones.push d
   report name starts dones
 
+/-- Start and stop the pool `cycles` times, as one `l4sbm11 query` process
+    does (issue https://github.com/danbri/factoidal/issues/981): start
+    `workers` threads, wake them, work for 0 to `maxGapUs` microseconds, in
+    every second cycle run one job on each worker, then shut the pool down.
+    The time between the start and the stop moves over the window in which a
+    new worker thread first reads its stop flag. A lost write of the flag
+    leaves a worker that never ends, and `shutdown` then waits for good: run
+    this under `timeout`. Prints the cycles done. -/
+def stress (cycles maxGapUs workers : Nat) : IO UInt32 := do
+  let t0 ← IO.monoNanosNow
+  for c in [0:cycles] do
+    let spin := if c % 4 < 2 then 1000000 else 0
+    let p ← start workers spin (pure ())
+    p.wake
+    let gap ← IO.rand 0 maxGapUs
+    busyUntil ((← IO.monoNanosNow) + gap * 1000)
+    if c % 2 == 1 then
+      let rs ← p.runAll ((Array.range (workers + 1)).map fun i => (pure i : IO Nat))
+      if rs.size != workers + 1 then
+        IO.eprintln s!"stress: cycle {c}: {rs.size} results"
+        return 1
+    p.shutdown
+    if (c + 1) % 10000 == 0 then
+      IO.eprintln s!"stress: {c + 1} cycles, {((← IO.monoNanosNow) - t0) / 1000000} ms"
+  IO.eprintln s!"stress: {cycles} cycles done, workers {workers}, gap 0 to {maxGapUs} us"
+  return 0
+
 def main (args : List String) : IO UInt32 := do
+  if args.head? == some "stress" then
+    return ← stress ((args[1]? >>= String.toNat?).getD 10000) ((args[2]? >>= String.toNat?).getD 200)
+      ((args[3]? >>= String.toNat?).getD 3)
   let rounds := (args[0]? >>= String.toNat?).getD 2000
   let gapUs := (args[1]? >>= String.toNat?).getD 200
   let jobs := (args[2]? >>= String.toNat?).getD 3

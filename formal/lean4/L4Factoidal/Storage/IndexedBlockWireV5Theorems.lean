@@ -78,12 +78,12 @@ theorem predicateLocal_rows (block : QuadBlock) :
     conjunct of `supported`, so the encoder runs the decoder's reconstruction
     admission — including the graph-ID resolution check — itself. -/
 theorem fromParts?_ok (dict : Array WireTerm) (rows : Array IdQuad)
-    (hsome : (fromParts? dict rows).isSome = true) :
+    (hsome : (fromParts? dict rows).isSome = true) (hf : wireDictFolded dict = true) :
     ∃ decoded, fromParts? dict rows = some decoded ∧
       decoded.dict = dict ∧ decoded.rows = rows := by
   obtain ⟨decoded, hdec⟩ := Option.isSome_iff_exists.mp hsome
   refine ⟨decoded, hdec, ?_⟩
-  rw [fromParts?] at hdec
+  rw [fromParts?, TermFold.map_foldWire_of_folded dict hf] at hdec
   cases hids : buildIdMap dict.toList 0 ∅ with
   | none => rw [hids] at hdec; exact absurd hdec (by simp)
   | some ids =>
@@ -188,8 +188,9 @@ theorem decodeSpec_encode? (block : QuadBlock)
           simp only [IndexedBlockWireV1.fitsU32, decide_eq_true_eq] at hn
           exact hu32 ▸ hn
         have hsup : supported block = true := by simpa using hsupp
-        rw [supported, Bool.and_eq_true, Bool.and_eq_true, Bool.and_eq_true] at hsup
-        obtain ⟨⟨⟨hfields, honep⟩, -⟩, hpartsSome⟩ := hsup
+        rw [supported, Bool.and_eq_true, Bool.and_eq_true, Bool.and_eq_true,
+          Bool.and_eq_true] at hsup
+        obtain ⟨⟨⟨⟨hfields, honep⟩, -⟩, hpartsSome⟩, hfolded⟩ := hsup
         rw [fieldsSupported, Bool.and_eq_true, Bool.and_eq_true, Bool.and_eq_true,
           Bool.and_eq_true, List.all_eq_true, List.all_eq_true, List.all_eq_true] at hfields
         obtain ⟨⟨⟨⟨-, -⟩, hrowcount⟩, hrowfields⟩, hgraphfields⟩ := hfields
@@ -354,7 +355,7 @@ theorem decodeSpec_encode? (block : QuadBlock)
         have hptddec : PagedTermDictionaryV2.decode? dictionary = some block.dict :=
           PagedTermDictionaryV2.decode?_encode? block.dict dictionary hdict
         obtain ⟨decoded, hparts, hddict, hdrows⟩ :=
-          fromParts?_ok block.dict block.rows hpartsSome
+          fromParts?_ok block.dict block.rows hpartsSome hfolded
         refine ⟨decoded, ?_, hddict, hdrows⟩
         -- assemble
         rw [decodeSpec, listOfByteArray_byteArrayOfList]

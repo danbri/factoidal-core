@@ -29,7 +29,9 @@ is needed (the JSON form `TermJson.compactCertified` checks at run time):
   bytes of `binSpec` for a table and index lists that read back as the quads
   (`TermJson.decodeCompactArr`);
 * `decodeBin_quadsBin`: together, the region of `quadsBin qs` reads back as
-  exactly `qs`.
+  exactly the folded quads `qs.map Storage.TermFold.foldQuad` (language tags in
+  lower case; one table entry per RDF term,
+  https://github.com/danbri/factoidal/issues/977).
 -/
 import L4Factoidal.RDF.TermJson
 import L4Factoidal.Storage.TermCodecTheorems
@@ -154,6 +156,10 @@ term bytes and the quad bytes. -/
 structure BinState where
   iris : Std.HashMap String Nat := {}
   bnodes : Std.HashMap String Nat := {}
+  /-- The index of each literal and triple term seen (folded). Until
+      2026-10-23 these got a new table entry at every occurrence
+      (https://github.com/danbri/factoidal/issues/977). -/
+  others : Std.HashMap Term Nat := {}
   tbl : Array Term := #[]
   terms : ByteArray := ByteArray.empty
   quads : ByteArray := ByteArray.empty
@@ -167,6 +173,16 @@ fit their length fields. -/
     | none => none
     | some b => some (st.tbl.size, { st with tbl := st.tbl.push t, terms := b })
   else none
+
+/-- The index of a literal or a triple term: its entry when it was seen,
+else a new entry. -/
+@[inline] def BinState.indexOther (st : BinState) (t : Term) : Option (Nat × BinState) :=
+  match st.others[t]? with
+  | some k => some (k, st)
+  | none =>
+    match st.add t with
+    | none => none
+    | some (k, st') => some (k, { st' with others := st'.others.insert t k })
 
 @[inline] def BinState.index (st : BinState) (t : Term) : Option (Nat × BinState) :=
   match t with
@@ -184,10 +200,12 @@ fit their length fields. -/
         match st.add t with
         | none => none
         | some (k, st') => some (k, { st' with bnodes := st'.bnodes.insert b k })
-  | _ => st.add t
+  | _ => st.indexOther t
 
 /-- One quad: its terms in the order of `TermJson.quadTerms`, then its four
-u32 fields. -/
+u32 fields. The object is folded first (`Storage.TermFold.foldTerm`, language
+tags in lower case; issue 977); a subject, a predicate and a graph name hold
+no literal. -/
 def BinState.quad (st : BinState) (q : Quad) : Option BinState :=
   match st.index (subjectToTerm q.2.s) with
   | none => none
@@ -195,7 +213,7 @@ def BinState.quad (st : BinState) (q : Quad) : Option BinState :=
   match st.index (.iri q.2.p) with
   | none => none
   | some (pi, st) =>
-  match st.index q.2.o with
+  match st.index (Storage.TermFold.foldTerm q.2.o) with
   | none => none
   | some (oi, st) =>
   match q.1 with
@@ -209,6 +227,17 @@ def BinState.quad (st : BinState) (q : Quad) : Option BinState :=
       some { st with quads := putU32 (putU32 (putU32 (putU32 st.quads (UInt32.ofNat si))
         (UInt32.ofNat pi)) (UInt32.ofNat oi)) (UInt32.ofNat (gi + 1)) }
 
+/-- The empty state for `n` quads, with the maps, the table and the byte
+buffers allocated for `n` quads, so that none of them grows during the loop
+(https://github.com/danbri/factoidal/issues/900). -/
+def BinState.init (n : Nat) : BinState :=
+  { iris := Std.HashMap.emptyWithCapacity n,
+    bnodes := Std.HashMap.emptyWithCapacity (n / 4),
+    others := Std.HashMap.emptyWithCapacity n,
+    tbl := Array.emptyWithCapacity n,
+    terms := ByteArray.emptyWithCapacity (32 * n),
+    quads := ByteArray.emptyWithCapacity (16 * n) }
+
 def binLoop (st : BinState) : List Quad → Option BinState
   | [] => some st
   | q :: qs =>
@@ -216,13 +245,51 @@ def binLoop (st : BinState) : List Quad → Option BinState
       | none => none
       | some st => binLoop st qs
 
+/-! ## A page of the quads of a dataset, with no whole quad list
+
+`Dataset.quadList` builds every quad; an op that serves a page of it
+(`offset`, `limit`) builds the page only (`quadPage_eq`, `quadCount_eq` in
+`QuadsBinTheorems`; https://github.com/danbri/factoidal/issues/900). -/
+
+/-- The graphs of a dataset in the order of `Dataset.quadList`: the default
+graph, then each named graph. -/
+def segs (ds : Dataset) : List (Option Subject × List Triple) :=
+  (none, ds.default) :: ds.named.map (fun ng => (some ng.name, ng.graph))
+
+/-- Push the first `n` triples of `ts`, in graph `g`, onto `acc`. -/
+def pushTake (g : Option Subject) : List Triple → Nat → Array Quad → Array Quad
+  | [], _, acc => acc
+  | _ :: _, 0, acc => acc
+  | t :: ts, n + 1, acc => pushTake g ts n (acc.push (g, t))
+
+/-- The quads after the first `off`, at most `lim` of them, one loop step per
+graph. -/
+def pageAcc : List (Option Subject × List Triple) → Nat → Nat → Array Quad → Array Quad
+  | [], _, _, acc => acc
+  | s :: rest, off, lim, acc =>
+    if lim = 0 then acc
+    else
+      let k := s.2.length
+      if k ≤ off then pageAcc rest (off - k) lim acc
+      else pageAcc rest 0 (lim - min lim (k - off)) (pushTake s.1 (s.2.drop off) lim acc)
+
+/-- `((Dataset.quadList ds).drop off).take lim` (`quadPage_eq`). -/
+def quadPage (ds : Dataset) (off lim : Nat) : List Quad :=
+  (pageAcc (segs ds) off lim #[]).toList
+
+def quadCountGo : List (Option Subject × List Triple) → Nat → Nat
+  | [], a => a
+  | s :: rest, a => quadCountGo rest (a + s.2.length)
+
+/-- `(Dataset.quadList ds).length` (`quadCount_eq`). -/
+def quadCount (ds : Dataset) : Nat := quadCountGo (segs ds) 0
+
 /-- The region of the quads `qs` (`none` only when a count or a string length
 does not fit its u32 field). -/
 def quadsBin (qs : List Quad) : Option ByteArray :=
   let n := qs.length
   if n < two32 then
-    match binLoop { terms := ByteArray.emptyWithCapacity (32 * n),
-                    quads := ByteArray.emptyWithCapacity (16 * n) } qs with
+    match binLoop (BinState.init n) qs with
     | none => none
     | some st =>
       some ((putU32 (putU32 (putU32 (ByteArray.emptyWithCapacity (12 + st.terms.size + st.quads.size))

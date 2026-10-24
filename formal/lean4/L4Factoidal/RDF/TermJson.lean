@@ -46,6 +46,7 @@ import L4Factoidal.RDF.IriSyntax
 import L4Factoidal.RDF.LangTag
 import L4Factoidal.JSON.Parser
 import Std.Data.HashMap
+import L4Factoidal.Storage.TermFold
 
 namespace L4Factoidal.RDF.TermJson
 
@@ -440,8 +441,13 @@ theorem quadPage_append (ds : Dataset) (offset limit : Nat) :
 
 For a large dataset the host builds each distinct term once: the answer is
 the distinct terms (in first-occurrence order) and each quad as the indices
-of its terms in that table. `decodeCompact_compactSpec` proves that the
-indices read back as exactly the quads. -/
+of its terms in that table. The table holds one entry per RDF term
+(https://github.com/danbri/factoidal/issues/977): each quad is folded first
+(`Storage.TermFold.foldQuad`: language tags in lower case, RDF 1.1 Concepts
+section 3.3), so `"x"@en` and `"x"@EN` are one entry and the table writes
+`"x"@en`. `decodeCompact_compactSpec` proves that the indices read back as
+exactly the folded quads; `decodeCompact_table` is the same for any quad
+list. -/
 
 def subjectToTerm : Subject → Term
   | .iri i => .iri i
@@ -471,10 +477,15 @@ def addTerm (acc : List Term) (t : Term) : List Term := if acc.contains t then a
 def termTable (qs : List Quad) : List Term :=
   (qs.flatMap quadTerms).foldl addTerm []
 
-/-- The compact form (specification): the table and the index list of each quad. -/
-def compactSpec (qs : List Quad) : List Term × List (List Nat) :=
+/-- The table and the index lists of a quad list, with no fold. -/
+def compactOf (qs : List Quad) : List Term × List (List Nat) :=
   let tbl := termTable qs
   (tbl, qs.map fun q => (quadTerms q).map tbl.idxOf)
+
+/-- The compact form (specification): the table and the index list of each
+    folded quad. -/
+def compactSpec (qs : List Quad) : List Term × List (List Nat) :=
+  compactOf (qs.map Storage.TermFold.foldQuad)
 
 /-- Read the compact form back. -/
 def decodeCompact (tbl : List Term) (ixs : List (List Nat)) : Option (List Quad) :=
@@ -528,10 +539,10 @@ theorem mapM_some_self {α : Type} (f : α → Option α) (l : List α) (h : ∀
         ih (fun y hy => h y (List.mem_cons_of_mem _ hy))]
       rfl
 
-/-- **The compact form reads back as exactly the quads, in order.** -/
-theorem decodeCompact_compactSpec (qs : List Quad) :
-    decodeCompact (compactSpec qs).1 (compactSpec qs).2 = some qs := by
-  unfold decodeCompact compactSpec
+/-- The table and index lists of a quad list read back as the quads. -/
+theorem decodeCompact_table (qs : List Quad) :
+    decodeCompact (compactOf qs).1 (compactOf qs).2 = some qs := by
+  unfold decodeCompact compactOf
   simp only
   rw [List.mapM_map]
   have key : ∀ q ∈ qs, (do
@@ -547,6 +558,11 @@ theorem decodeCompact_compactSpec (qs : List Quad) :
   exact mapM_some_self _ _ key
 
 
+/-- **The compact form reads back as exactly the folded quads, in order.** -/
+theorem decodeCompact_compactSpec (qs : List Quad) :
+    decodeCompact (compactSpec qs).1 (compactSpec qs).2 = some (qs.map Storage.TermFold.foldQuad) :=
+  decodeCompact_table _
+
 /-! ### The executable compact form, certified
 
 `compactFast` builds the table with a hash map. `compactCertified` keeps its
@@ -555,13 +571,18 @@ answer only when the indices read back as exactly the quads
 quads (`compactCertified_sound`), with no theorem about the hash map needed. -/
 
 /-- The builder's state: an index for each IRI and each blank-node label seen,
-and the table. Literals and triple terms get a new table entry each time (most
-literals of a dataset are distinct, and hashing them cost more than it saved). -/
+an index for each folded literal and triple term seen, and the table. Until
+2026-10-23 a literal or a triple term got a new table entry each time it
+occurred (hashing them cost more than it saved), so a literal that occurred
+twice had two entries (https://github.com/danbri/factoidal/issues/977). -/
 structure CompactState where
   iris : Std.HashMap String Nat := {}
   bnodes : Std.HashMap String Nat := {}
+  others : Std.HashMap Term Nat := {}
   tbl : Array Term := #[]
 
+/-- The index of a term; the caller passes a folded term (`compactLoop`
+folds each quad). -/
 def CompactState.index (st : CompactState) (t : Term) : Nat × CompactState :=
   match t with
   | .iri i =>
@@ -572,7 +593,10 @@ def CompactState.index (st : CompactState) (t : Term) : Nat × CompactState :=
       match st.bnodes[b]? with
       | some k => (k, st)
       | none => (st.tbl.size, { st with bnodes := st.bnodes.insert b st.tbl.size, tbl := st.tbl.push t })
-  | _ => (st.tbl.size, { st with tbl := st.tbl.push t })
+  | _ =>
+      match st.others[t]? with
+      | some k => (k, st)
+      | none => (st.tbl.size, { st with others := st.others.insert t st.tbl.size, tbl := st.tbl.push t })
 
 /-- The indices of the terms `ts`, appended to `ix` (a loop). -/
 def indexTerms (st : CompactState) : List Term → Array Nat → Array Nat × CompactState
@@ -581,11 +605,11 @@ def indexTerms (st : CompactState) : List Term → Array Nat → Array Nat × Co
       let r := st.index t
       indexTerms r.2 ts (ix.push r.1)
 
-/-- The index lists of the quads, appended to `acc` (a loop). -/
+/-- The index lists of the folded quads, appended to `acc` (a loop). -/
 def compactLoop (st : CompactState) : List Quad → Array (List Nat) → CompactState × Array (List Nat)
   | [], acc => (st, acc)
   | q :: qs, acc =>
-      let r := indexTerms st (quadTerms q) #[]
+      let r := indexTerms st (quadTerms (Storage.TermFold.foldQuad q)) #[]
       compactLoop r.2 qs (acc.push r.1.toList)
 
 def compactFast (qs : List Quad) : Array Term × List (List Nat) :=
@@ -667,11 +691,12 @@ theorem checkCompact_sound (tbl : Array Term) :
 
 def compactCertified (qs : List Quad) : Option (Array Term × List (List Nat)) :=
   let c := compactFast qs
-  if checkCompact c.1 qs c.2 then some c else none
+  if checkCompact c.1 (qs.map Storage.TermFold.foldQuad) c.2 then some c else none
 
-/-- **What `compactCertified` answers reads back as exactly the quads.** -/
+/-- **What `compactCertified` answers reads back as exactly the folded quads.** -/
 theorem compactCertified_sound {qs : List Quad} {c : Array Term × List (List Nat)}
-    (h : compactCertified qs = some c) : decodeCompactArr c.1 c.2 = some qs := by
+    (h : compactCertified qs = some c) :
+    decodeCompactArr c.1 c.2 = some (qs.map Storage.TermFold.foldQuad) := by
   unfold compactCertified at h
   simp only at h
   split at h

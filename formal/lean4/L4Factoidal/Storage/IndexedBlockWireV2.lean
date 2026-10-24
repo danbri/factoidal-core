@@ -261,7 +261,9 @@ private def decodeDictionaryAndDirectory? (header : Prefix) (dictionaryBytes dir
     else do
       let (directory, directoryRest) ← decodeDirectoryCursor header.segmentCount (Cursor.init directoryBytes)
       if directoryRest.remaining != 0 || !distinctPredicates directory || !directoryContiguous directory 0 then none
-      else some (terms.toArray, directory)
+      -- the read-time fold of `IndexedBlock.fromParts?` (issue 977), so the
+      -- range scan reads the terms the full decoder reads
+      else some ((terms.map TermFold.foldTerm).toArray, directory)
 
 private def decodeSegmentRowsCursor (predicate : TermId) : Nat → Cursor → Option (List PositionedIdTriple)
   | 0, _ => some []

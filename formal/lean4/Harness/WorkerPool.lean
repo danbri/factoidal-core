@@ -21,9 +21,25 @@
 
   Lost wake-up: a reader that blocks stores its promise in `waiter` and then
   reads the value once more; a writer writes the value and then takes the
-  promise out of `waiter`. `IO.Ref.set`, `swap` and `modify` on a ref that
-  two threads reach are atomic exchanges in the runtime, so either the reader
+  promise out of `waiter`. `IO.Ref.set` and `swap` on a ref that two threads
+  reach are each one atomic exchange in the runtime, so either the reader
   sees the value or the writer finds the promise and resolves it.
+
+  Two families of ref operations (Lean 4.33.1 runtime, `lean_st_ref_*`, read
+  from the disassembly; issue https://github.com/danbri/factoidal/issues/981):
+  `set` and `swap` are one exchange each. `get`, `take`, and `modify` and
+  `modifyGet` (a `take`, then a `set`) first exchange the value for null,
+  spin while they find null, and put a value back with a second exchange. A
+  `set` or `swap` by another thread between the two exchanges is lost: `get`
+  puts the old value back and frees the new one, `modify` overwrites it, and
+  a `swap` that finds null returns its own argument. So every ref of this
+  file that two threads reach uses one family only: the cells `set` and
+  `swap`, the stop flag `get` and `modify`. Before issue 981 the stop flag
+  was read with `get` and written with `set`: a worker that read the flag
+  at the moment `shutdown` wrote it kept `false`, blocked on its mailbox, and
+  `shutdown` waited for its thread for good (`ids-path-star-nested` at 4
+  threads in `tests/sbm11/threads.sh`, stage 1m; `l4pool-bench stress`
+  hangs within 20,000 start-stop cycles).
 
   Each worker thread makes a value of its own when it starts (`start`'s
   `mk`, run on the worker thread) and passes it to every job it runs: an
@@ -142,7 +158,9 @@ def Pool.wake {σ : Type} (p : Pool σ) : IO Unit :=
 /-- Stop the workers and wait for their threads to end. -/
 def Pool.shutdown {σ : Type} (p : Pool σ) : IO Unit := do
   for w in p.workers do
-    w.stop.set true
+    -- `modify`, not `set`: the worker reads the flag with `get` (one family,
+    -- see the module comment; a `set` here was lost, issue 981)
+    w.stop.modify fun _ => true
     -- a value, not only `notify`: a worker that is between its last poll and
     -- its wait has not published its promise yet, and would block for good
     let old ← w.mail.val.swap none

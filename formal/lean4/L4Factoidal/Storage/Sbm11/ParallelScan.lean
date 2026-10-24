@@ -167,4 +167,84 @@ theorem rangeBoundsGo_map (c n : Nat) : ∀ f s acc,
 theorem rangeBounds_map (c n : Nat) : (rangeBounds c n).map boundsList = rangeChunks c n := by
   simp [rangeBounds, rangeChunks, rangeBoundsGo_map]
 
+/-! ## Ranges cut at given points (issue 961, stage 1m)
+
+`cutBounds n cs`: consecutive ranges of `0, ..., n - 1` that end at the cut
+points `cs` (each clamped to the previous end and to `n`; an empty range is
+left out), then a last range to `n`. Any list of cut points gives ranges that
+concatenate to `List.range n` (`cutBounds_flatten`), so the cut points can be
+chosen by a heuristic (the estimated work of each block) and the theorems over
+partitions of the block list still apply. -/
+
+/-- The ranges from `lo` on, onto the reversed accumulator `acc`. A tail call
+    per cut point. -/
+def cutBoundsGo (n : Nat) : List Nat → Nat → List (Nat × Nat) → List (Nat × Nat)
+  | [], lo, acc => if lo < n then ((lo, n) :: acc).reverse else acc.reverse
+  | c :: cs, lo, acc =>
+    let hi := max lo (min n c)
+    if hi == lo then cutBoundsGo n cs lo acc else cutBoundsGo n cs hi ((lo, hi) :: acc)
+
+/-- The ranges of `0, ..., n - 1` cut at `cs`. -/
+def cutBounds (n : Nat) (cs : List Nat) : List (Nat × Nat) := cutBoundsGo n cs 0 []
+
+theorem range'_append_le {a b c : Nat} (hab : a ≤ b) (hbc : b ≤ c) :
+    List.range' a (b - a) ++ List.range' b (c - b) = List.range' a (c - a) := by
+  have h := List.range'_append (s := a) (m := b - a) (n := c - b) (step := 1)
+  have e1 : a + 1 * (b - a) = b := by omega
+  have e2 : b - a + (c - b) = c - a := by omega
+  rw [e1, e2] at h
+  exact h
+
+theorem cutBoundsGo_flatten (n : Nat) : ∀ (cs : List Nat) (lo : Nat) (acc : List (Nat × Nat)),
+    lo ≤ n →
+    ((cutBoundsGo n cs lo acc).map boundsList).flatten
+      = (acc.reverse.map boundsList).flatten ++ List.range' lo (n - lo) := by
+  intro cs
+  induction cs with
+  | nil =>
+    intro lo acc hlo
+    unfold cutBoundsGo
+    split
+    · simp [boundsList]
+    · have : n - lo = 0 := by omega
+      simp [this]
+  | cons c cs ih =>
+    intro lo acc hlo
+    unfold cutBoundsGo
+    simp only
+    split
+    · exact ih lo acc hlo
+    · rename_i hne
+      have hhi : max lo (min n c) ≤ n := by omega
+      have hlh : lo ≤ max lo (min n c) := by omega
+      rw [ih _ _ hhi]
+      simp only [List.reverse_cons, List.map_append, List.map_cons, List.map_nil, List.flatten_append,
+        List.flatten_cons, List.flatten_nil, List.append_nil, List.append_assoc]
+      congr 1
+      simp only [boundsList]
+      exact range'_append_le hlh hhi
+
+/-- **The cut ranges cover the positions in order.** -/
+theorem cutBounds_flatten (n : Nat) (cs : List Nat) :
+    ((cutBounds n cs).map boundsList).flatten = List.range n := by
+  unfold cutBounds
+  rw [cutBoundsGo_flatten n cs 0 [] (Nat.zero_le n)]
+  simp [List.range_eq_range']
+
+/-- Cut points for `k` ranges of about equal weight: after position `i`
+    when the weights of positions `0, ..., i` reach `j / k` of the total, for
+    `j = 1, ..., k - 1` (at most one cut per position). A loop. Any result is
+    correct for `cutBounds` (`cutBounds_flatten`). -/
+def weightCutsGo (ws : Array Nat) (k tot : Nat) : Nat → Nat → Nat → Nat → List Nat → List Nat
+  | 0, _, _, _, out => out.reverse
+  | f + 1, i, acc, j, out =>
+    if h : i < ws.size then
+      let acc' := acc + ws[i]
+      if j < k && j * tot ≤ acc' * k then weightCutsGo ws k tot f (i + 1) acc' (j + 1) ((i + 1) :: out)
+      else weightCutsGo ws k tot f (i + 1) acc' j out
+    else out.reverse
+
+def weightCuts (ws : Array Nat) (k : Nat) : List Nat :=
+  weightCutsGo ws k (ws.foldl (· + ·) 0) ws.size 0 0 1 []
+
 end L4Factoidal.Storage.Sbm11.ParallelScan

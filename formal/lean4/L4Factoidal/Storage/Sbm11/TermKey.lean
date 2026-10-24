@@ -369,6 +369,26 @@ def normalizeLit (l : WfLiteral) : Term :=
     let v : Literal := { l.val with langTag := some tag.toLower }
     if h : literalWf v then .literal ⟨v, h⟩ else .literal l
 
+/-- `normalizeLit` with a fast path: a language tag that is already in lower
+    case (the common case) gives the literal back without a new `Literal` and
+    without the `literalWf` test (`normalizeLit_eq_fast`;
+    https://github.com/danbri/factoidal/issues/900). -/
+def normalizeLitFast (l : WfLiteral) : Term :=
+  match l.val.langTag with
+  | none => .literal l
+  | some tag => if tag.toLower == tag then .literal l else normalizeLit l
+
+theorem normalizeLit_eq_fast (l : WfLiteral) : normalizeLit l = normalizeLitFast l := by
+  obtain ⟨⟨lex, dt, lt, dir⟩, hl⟩ := l
+  cases lt with
+  | none => rfl
+  | some tag =>
+    simp only [normalizeLitFast]
+    by_cases h : tag.toLower = tag
+    · simp only [h, beq_self_eq_true, if_true, normalizeLit]
+      rw [dif_pos (by simpa [h] using hl)]
+    · simp [h]
+
 /-- Fold every language tag of a term to lower case, inside triple terms
     too (the object position is the only one that can hold a literal). This
     is the specification; the compiled code runs `normalizeImpl`
@@ -382,7 +402,7 @@ def normalizeTerm : Term → Term
     enclosing triple terms, innermost first. -/
 def normalizeGo (levels : List (Subject × WfIri)) : Term → Term
   | .tripleTerm s p o => normalizeGo ((s, p) :: levels) o
-  | .literal l => wrapLevels levels (normalizeLit l)
+  | .literal l => wrapLevels levels (normalizeLitFast l)
   | t => wrapLevels levels t
 
 def normalizeImpl (t : Term) : Term := normalizeGo [] t
@@ -396,7 +416,7 @@ theorem normalizeGo_eq (t : Term) :
   induction t with
   | iri i => intro levels; rfl
   | bnode b => intro levels; rfl
-  | literal l => intro levels; rfl
+  | literal l => intro levels; simp only [normalizeGo, normalizeTerm, normalizeLit_eq_fast]
   | tripleTerm s p o ih =>
     intro levels
     simp only [normalizeGo, normalizeTerm]

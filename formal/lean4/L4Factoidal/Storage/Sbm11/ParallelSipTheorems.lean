@@ -84,4 +84,75 @@ theorem parallel_sip_acc_eq (st : Store Id) (spec : ScanSpec) (hspec : SpecOk sp
 
 #print axioms parallel_sip_acc_eq
 
+/-- **Parallel scan with candidates over any partition (stage 1m).** The
+    statement of `parallel_sip_acc_eq` for ranges `xss` of any shape whose
+    concatenation is the selected-block list `L`: the ranges that
+    `ParallelScan.cutBounds` cuts by estimated work (`cutBounds_flatten`). -/
+theorem parallel_sip_acc_eq_parts (st : Store Id) (spec : ScanSpec) (hspec : SpecOk spec)
+    (hk : spec.key.size < 4) (cands : Array UInt64) (hs : Sip.Sorted cands)
+    (prb : ByteArray) (ms : List BlockMeta)
+    (hprb : ∀ off len, st.prb spec.perm off len = pure (prb.extract off (off + len)))
+    (hfits : ∀ b ∈ ms, b.rows ≤ two64)
+    (hblocks : ∀ b ∈ ms, ∃ cols, decodeBlockAt prb b b.offset = .ok cols)
+    (sortVar : Option String) (ox : OvCtx) (hon : ox.on = false)
+    (L : List Nat) (hL : ∀ k ∈ L, k < ms.length) (xss : List (List Nat)) (hx : xss.flatten = L) :
+    (xss.mapM (scanAccSipOf st spec cands ms sortVar ox)).map List.flatten
+      = scanAccSipOf st spec cands ms sortVar ox L := by
+  have hsub : ∀ X ∈ xss, ∀ k ∈ X, k < ms.length := by
+    intro X hX k hk
+    apply hL k
+    rw [← hx]
+    exact List.mem_flatten.mpr ⟨X, hX, hk⟩
+  have hchunk : ∀ X ∈ xss,
+      scanAccSipOf st spec cands ms sortVar ox X
+        = .ok (X.flatMap (fun k => blockOutSip spec cands prb ms[k]!)) := by
+    intro X hX
+    obtain ⟨s', h1, h2, _⟩ := forIn_blocks_sip st spec hspec hk cands hs prb ms hprb hfits hblocks
+      sortVar ox hon X (hsub X hX) chunkInit
+    have h2' : s'.acc = X.flatMap (fun k => blockOutSip spec cands prb ms[k]!) := by
+      rw [h2]; rfl
+    unfold scanAccSipOf
+    rw [h1]
+    show Except.ok s'.acc = _
+    rw [h2']
+  obtain ⟨s', h1, h2, _⟩ := forIn_blocks_sip st spec hspec hk cands hs prb ms hprb hfits hblocks
+    sortVar ox hon L hL chunkInit
+  have h2' : s'.acc = L.flatMap (fun k => blockOutSip spec cands prb ms[k]!) := by
+    rw [h2]; rfl
+  have hwhole : scanAccSipOf st spec cands ms sortVar ox L
+      = .ok (L.flatMap (fun k => blockOutSip spec cands prb ms[k]!)) := by
+    unfold scanAccSipOf
+    rw [h1]
+    show Except.ok s'.acc = _
+    rw [h2']
+  rw [hwhole, mapM_except_ok _ (fun X => X.flatMap (fun k => blockOutSip spec cands prb ms[k]!)) _ hchunk]
+  show Except.ok (xss.map (fun X => X.flatMap (fun k => blockOutSip spec cands prb ms[k]!))).flatten
+    = Except.ok (L.flatMap (fun k => blockOutSip spec cands prb ms[k]!))
+  congr 1
+  calc (xss.map (fun X => X.flatMap (fun k => blockOutSip spec cands prb ms[k]!))).flatten
+      = xss.flatMap (fun X => X.flatMap (fun k => blockOutSip spec cands prb ms[k]!)) := rfl
+    _ = xss.flatten.flatMap (fun k => blockOutSip spec cands prb ms[k]!) :=
+        flatMap_flatMap_flatten _ _
+    _ = L.flatMap (fun k => blockOutSip spec cands prb ms[k]!) := by rw [hx]
+
+/-- The ranges of `ParallelScan.cutBounds` (as position lists) for the
+    selected blocks `0, ..., ms.length - 1`: the scan with candidates of the
+    ranges, concatenated, is the single scan, for any cut points `cs`. -/
+theorem parallel_sip_acc_eq_cut (st : Store Id) (spec : ScanSpec) (hspec : SpecOk spec)
+    (hk : spec.key.size < 4) (cands : Array UInt64) (hs : Sip.Sorted cands)
+    (prb : ByteArray) (ms : List BlockMeta)
+    (hprb : ∀ off len, st.prb spec.perm off len = pure (prb.extract off (off + len)))
+    (hfits : ∀ b ∈ ms, b.rows ≤ two64)
+    (hblocks : ∀ b ∈ ms, ∃ cols, decodeBlockAt prb b b.offset = .ok cols)
+    (sortVar : Option String) (ox : OvCtx) (hon : ox.on = false) (cs : List Nat) :
+    (((ParallelScan.cutBounds ms.length cs).map ParallelScan.boundsList).mapM
+        (scanAccSipOf st spec cands ms sortVar ox)).map List.flatten
+      = scanAccSipOf st spec cands ms sortVar ox (List.range ms.length) :=
+  parallel_sip_acc_eq_parts st spec hspec hk cands hs prb ms hprb hfits hblocks sortVar ox hon
+    (List.range ms.length) (fun k hk => List.mem_range.mp hk) _
+    (ParallelScan.cutBounds_flatten ms.length cs)
+
+#print axioms parallel_sip_acc_eq_parts
+#print axioms parallel_sip_acc_eq_cut
+
 end L4Factoidal.Storage.Sbm11.ParallelSipTheorems

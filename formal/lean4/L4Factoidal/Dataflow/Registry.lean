@@ -31,9 +31,13 @@ No `sorry`, no `axiom`, no `native_decide`, no `partial`.
 -/
 import L4Factoidal.Dataflow.Instances
 import L4Factoidal.Dataflow.PhaseD
+import L4Factoidal.Dataflow.PhaseE
 import L4Factoidal.Unified.OwlRlAdequacy
 import L4Factoidal.Storage.BlockDenotation
 import L4Factoidal.SPARQL.FromMergeStage
+import L4Factoidal.Storage.StoreDictTheorems
+import L4Factoidal.HDT.DictionaryTheorems
+import L4Factoidal.Cottas.DictTheorems
 
 namespace L4Factoidal.Dataflow
 
@@ -197,15 +201,22 @@ def registry : List Entry := [
   { area := "Block stores (BlockMvp, IndexedBlock, IBK4, IBK5)", dir := "Storage"
     wireIn := "Dataset", wireOut := "bytes", status := .missing
     theorems := [``L4Factoidal.Storage.IndexedBlock.Block.den_eq_ofRows,
-      ``L4Factoidal.Storage.IndexedBlockWireV4.den_decode_encode?]
-    note := "one id per structural term (issue 977)" },
+      ``L4Factoidal.Storage.IndexedBlockWireV4.den_decode_encode?,
+      ``L4Factoidal.Storage.IndexedBlock.fromParts?_foldedDictInjective,
+      ``L4Factoidal.Storage.StoreDictTheorems.v4_fromParts?_foldedDictInjective,
+      ``L4Factoidal.Storage.StoreDictTheorems.v5_fromParts?_foldedDictInjective]
+    note := "one id per RDF term: tags folded at pack and at read (issue 977)" },
   { area := "Store interface StoreCaps (planner)", dir := "SPARQL"
     wireIn := "PatternBound", wireOut := "List Triple", status := .missing
     note := "no denotation (phase B1)" },
   { area := "COTTAS store", dir := "Cottas"
-    wireIn := "Dataset", wireOut := "bytes", status := .missing },
+    wireIn := "Dataset", wireOut := "bytes", status := .missing
+    theorems := [``L4Factoidal.Cottas.cotd_dictInjective]
+    note := ".dict term layer: one id per RDF term when termRoundTripsAll holds (issue 977)" },
   { area := "HDT store", dir := "HDT"
-    wireIn := "Dataset", wireOut := "bytes", status := .missing },
+    wireIn := "Dataset", wireOut := "bytes", status := .missing
+    theorems := [``L4Factoidal.HDT.hdt_dictInjective]
+    note := "tags folded at read; one id per RDF term when roundTripsAll holds (issue 977)" },
   { area := "Planner SELECT over the kept entries", dir := "Storage"
     stage := ``plannerSelectStage, wireIn := "Dataset", wireOut := "SolutionSeq"
     contract := ``PlannerSelectContract, status := .proved
@@ -332,11 +343,30 @@ def registry : List Entry := [
     wireIn := "Graph × schema", wireOut := "report", status := .missing },
   { area := "CSVW (tabular data to RDF)", dir := "CSVW"
     wireIn := "CSV × metadata", wireOut := "Dataset", status := .missing },
-  { area := "RDFC-1.0 canonicalization", dir := "RDF"
-    wireIn := "Dataset", wireOut := "String", status := .missing },
-  { area := "VC Data Integrity (sign, verify)", dir := "VC"
-    wireIn := "Dataset × key", wireOut := "Bool", status := .missing
-    note := "crypto assumptions not yet named (phase E)" },
+  { area := "RDFC-1.0 canonicalization (canonical N-Quads and SHA-256 hex)", dir := "RDF"
+    stage := ``rdfcStage, wireIn := "Dataset", wireOut := "String × String"
+    contract := ``RdfcContract, status := .proved
+    theorems := [``L4Factoidal.RDF.Canonical.canonicalLines_sorted, ``canonicalNQuads_join,
+      ``L4Factoidal.RDF.Canonical.mkLabel_inj]
+    note := "lines in code point order; fails on the section 4.4 work budget; relabelling invariance is the next entry" },
+  { area := "RDFC-1.0 relabelling invariance (isomorphic input, same canonical form)", dir := "RDF"
+    wireIn := "Dataset", wireOut := "String", status := .tested
+    theorems := [``L4Factoidal.RDF.Canonical.hashFirstDegreeQuads_rename]
+    tests := ["W3C RDFC-1.0 suite (l4rdfc-probe)", "Dataflow/PhaseETests.lean relabelling #guard"]
+    note := "stated only (Canonical.RelabellingInvariance); the first-degree hash is proved invariant" },
+  { area := "VC Data Integrity sign (eddsa-rdfc-2022 proofValue)", dir := "VC"
+    stage := ``vcSignStage, wireIn := "SignIn (key, document, proof config)", wireOut := "String"
+    contract := ``SignContract, status := .proved
+    theorems := [``L4Factoidal.VC.DataIntegrity.createProofValue_of_canonical_eq]
+    note := "the proofValue depends on the canonical forms only; the signing primitive is a parameter" },
+  { area := "VC Data Integrity verify (eddsa-rdfc-2022)", dir := "VC"
+    stage := ``vcVerifyStage, wireIn := "VerifyIn (key, document, proof config, proofValue)", wireOut := "Bool"
+    contract := ``VerifyContract, status := .proved
+    theorems := [``L4Factoidal.VC.DataIntegrity.verifyProofValue_of_canonical_eq,
+      ``L4Factoidal.VC.DataIntegrity.verifyFromCanonical_not_multibase, ``vcSignVerify_roundTrip,
+      ``L4Factoidal.VC.DataIntegrity.verifyFromCanonical_createFromCanonical]
+    tests := ["VC/Tests.lean vc-di-eddsa vectors", "l4vc-probe (RFC 8032 and vc-di-eddsa)"]
+    note := "sign then verify round trip under Ed25519Correct (vcSignVerify_roundTrip); unforgeability is not stated" },
   { area := "XML parser", dir := "XML"
     wireIn := "String", wireOut := "XML document", status := .missing },
   { area := "XPath evaluation", dir := "XPath"
@@ -345,13 +375,42 @@ def registry : List Entry := [
     wireIn := "XML document × stylesheet", wireOut := "XML document", status := .missing },
   { area := "Schematron validation", dir := "Schematron"
     wireIn := "XML document × schema", wireOut := "report", status := .missing },
-  { area := "Hash and signature primitives (HACL* call-outs)", dir := "Crypto"
-    wireIn := "bytes", wireOut := "bytes", status := .missing
-    note := "native and pure Lean compared by tests, not proved (https://github.com/danbri/factoidal/issues/777)" },
+  { area := "Ed25519 verify primitive (HACL* call-out)", dir := "Crypto"
+    stage := ``ed25519VerifyIO, wireIn := "pk × message × signature", wireOut := "Bool"
+    status := .assumed, ioAssumptions := [``Ed25519Correct]
+    tests := ["l4vc-probe ed25519-rfc8032"]
+    note := "RFC 8032 correctness; HACL* proves it for its F* source, this tree does not" },
+  { area := "SHA-256 native primitive (HACL* call-out)", dir := "Crypto"
+    stage := ``sha256NativeIO, wireIn := "bytes", wireOut := "bytes"
+    status := .assumed, ioAssumptions := [``Sha256Agrees]
+    note := "equal to the pure Lean Crypto.sha256 (FIPS 180-4 vectors at build time); compared by tests, not proved (https://github.com/danbri/factoidal/issues/777)" },
+  { area := "Digest collision resistance (body-less artifact references)", dir := "Crypto"
+    wireIn := "digest", wireOut := "Graph", status := .missing
+    note := "no theorem uses it; a reader who resolves a source reference by its digest relies on it" },
   { area := "Proof checker (FPP0 bundles)", dir := "Proof"
     stage := ``proofCheckStage, wireIn := "Bundle", wireOut := "Claim"
     contract := ``CheckContract, status := .proved
-    theorems := [``L4Factoidal.FPP0.checkBundle_merge] }
+    theorems := [``L4Factoidal.FPP0.checkBundle_merge]
+    note := "the axiom set is the bundle's own artifact, not the RDFS profile's (next entry)" },
+  { area := "Proof checker with the RDFS profile axiom set (RDFS entailment)", dir := "Proof"
+    stage := ``proofCheckRdfsStage, wireIn := "Bundle", wireOut := "Claim"
+    contract := ``RdfsCheckContract, status := .proved
+    theorems := [``L4Factoidal.FPP0.checkBundle_rdfsEntails, ``L4Factoidal.FPP0.mem_mergeOf_profile,
+      ``L4Factoidal.FPP0.axiomaticTriples_scoped]
+    note := "profileAxiomsOk compares graph values, so no hash assumption" },
+  { area := "RDFS explanation (selection and target to an FPP0 bundle)", dir := "RDFS"
+    stage := ``rdfsExplainStage, wireIn := "Dataset × Triple", wireOut := "Bundle"
+    contract := ``ExplainContract, status := .proved
+    theorems := [``L4Factoidal.RDFS.fullClosureWithProof_graph, ``explainBundle_G,
+      ``explainBundle_sources, ``mergeOf_explain, ``select_eq_flatMap]
+    tests := ["Dataflow/PhaseETests.lean (empty input, coherence demonstration, blank nodes)"]
+    note := "the run calls the kernel; that every emitted bundle is accepted is tested only" },
+  { area := "RDFS explanation, then the proof checker", dir := "Proof"
+    stage := ``rdfsExplainCheckStage, wireIn := "Dataset × Triple", wireOut := "Claim"
+    contract := ``ExplainCheckContract, status := .proved
+    theorems := [``rdfsExplainCheck_sound, ``L4Factoidal.FPP0.checkBundle_merge,
+      ``L4Factoidal.FPP0.checkBundle_rdfsEntails, ``rdfsEntails_of_closure]
+    note := "one graph artifact G (the union of the selection; one blank-node scope) and body-less source references; no wasm op (https://github.com/danbri/factoidal/issues/615)" }
 ]
 
 end L4Factoidal.Dataflow
