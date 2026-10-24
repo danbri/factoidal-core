@@ -150,6 +150,13 @@ gh workflow run build.yml --repo danbri/factoidal-builds -f core_ref=<40-hex PR 
 gh run watch <run id> --repo danbri/factoidal-builds --exit-status
 ```
 
+Take `<40-hex PR head>` from `gh pr view N --json headRefOid` or
+`git rev-parse`; never type it. The queue keeps one pending run (see
+`skills/subagent-prompting`, "Agents do not dispatch factoidal-builds
+runs"), so dispatch one build at a time and check with `gh run list` that
+the run you are waiting for was not cancelled. Since factoidal-builds PR 3
+(2026-10-24) `web-gates` waits only for the Linux F* job.
+
 `web-gates` runs the npm package suite on the wasm built from that commit.
 The local alternative is `bash formal/lean4/Wasm/build-wasm.sh` and then
 `cd npm/factoidal && npm test`.
