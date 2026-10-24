@@ -124,3 +124,39 @@ test('the union of two graphs that share a triple is one triple (isomorphism wit
   assert.equal(lines(u.toNQuads()).length, 3);
   a.dispose(); b.dispose(); u.dispose();
 });
+
+// https://github.com/danbri/factoidal/issues/973: the graph operations. The
+// OWL 2 RL closure added a conclusion unless a STRUCTURALLY equal triple was
+// there, so with "x"@en and "x"@EN (one RDF term) in the input it held
+// <a> <q> "x"@en and <a> <q> "x"@EN. The JSON-LD text op wrote a value given
+// two times as two lines. Each case counts what the engine answers.
+const TAGCASE = '<urn:a> <urn:p> "x"@en .\n<urn:a> <urn:q> "x"@EN .\n' +
+  '<urn:p> <http://www.w3.org/2000/01/rdf-schema#subPropertyOf> <urn:q> .\n';
+const countAQ = (text) => text.split('<urn:a> <urn:q> ').length - 1;
+
+for (const regime of ['rdfs', 'rho-df', 'rdfs-plus', 'owl-rl']) {
+  test(`closure ${regime}: one triple under two language-tag spellings is one triple`, async () => {
+    const ds = await f.parse(TAGCASE, { format: 'ntriples' });
+    const c = await f.closure(ds, regime);
+    assert.equal(countAQ(c.toNQuads()), 1);
+    ds.dispose();
+    c.dispose();
+  });
+}
+
+for (const entail of ['OWL-RL', 'RDFS', 'x-rdfscore', 'x-rdfsplus']) {
+  test(`queryRaw entail ${entail}: COUNT(*) counts one triple once`, async () => {
+    const out = await f.queryRaw(TAGCASE, 'SELECT (COUNT(*) AS ?n) WHERE { <urn:a> <urn:q> ?o }',
+      { dataFormat: 'ntriples', output: 'csv', entail });
+    assert.equal(String(out.text ?? out).trim().split(/\r?\n/).pop(), '1');
+  });
+}
+
+test('engine ops owlClosure and jsonldToRdf write each triple once', async () => {
+  const e = await f.loadEngine();
+  const call = (op, args) => { const r = e.call(op, args); return typeof r === 'string' ? JSON.parse(r) : r; };
+  assert.equal(countAQ(call('owlClosure', [TAGCASE, 'OWL-RL']).nquads), 1);
+  const jl = '{"@id":"http://e/s","http://e/p":[{"@value":"x"},{"@value":"x"},' +
+    '{"@value":"x","@language":"en"},{"@value":"x","@language":"EN"}]}';
+  assert.equal(lines(call('jsonldToRdf', [jl, '']).nquads).length, 2);
+});

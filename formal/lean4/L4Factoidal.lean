@@ -224,6 +224,7 @@ import L4Factoidal.OWL.TableauTests
 import L4Factoidal.OWL.DirectCert
 import L4Factoidal.OWL.CertifiedDecision
 import L4Factoidal.OWL.AtomicDirect
+import L4Factoidal.OWL.AtomicModel
 import L4Factoidal.OWL.DirectCertTests
 import L4Factoidal.SPARQL.Results
 import L4Factoidal.SPARQL.ResultsXml
@@ -712,6 +713,10 @@ import L4Factoidal.SPARQL.PlanStreamable
 import L4Factoidal.RDF.CanonicalManifest
 import L4Factoidal.RDF.DatasetMerge
 import L4Factoidal.RDF.CertifiedDataset
+import L4Factoidal.RDF.GraphSet
+import L4Factoidal.RDF.GraphOpsSet
+import L4Factoidal.Storage.QuadDatasetSet
+import L4Factoidal.RDF.CanonicalSet
 import L4Factoidal.RDF.DocumentScopeTests
 import L4Factoidal.RDF.Format
 import L4Factoidal.RDF.MediaType

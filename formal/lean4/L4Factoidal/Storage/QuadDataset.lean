@@ -15,6 +15,7 @@ the same generations and must answer the same dataset: the native
 No `partial`, no `sorry`, no `native_decide`.
 -/
 import L4Factoidal.Storage.IndexedBlockWireV4
+import L4Factoidal.RDF.FastGraph
 import Std.Data.HashMap
 
 namespace L4Factoidal.Storage.QuadDataset
@@ -34,39 +35,28 @@ is where the set is made. Measured on a 209,715,187-byte skosdex N-Quads
 prefix, 2026-09-05: 603 distinct quads repeat, for 1,067 repeated rows.
 
 The membership test is bucketed by `(subject, predicate, object joinKey)` and
-compared with `Triple.eqb`, which is `Syntax.FastGraph.add`'s shape and is
-what makes it linear rather than quadratic. It is restated here rather than
-imported: `Storage` does not depend on `Syntax`. -/
+compared with `Triple.eqb`: the accumulator is `RDF.FastGraph`
+(`RDF/FastGraph.lean`), whose `FastGraph.add` refines `Graph.add`
+(`FastGraph.add_toGraph`). Until 2026-10-24 this module restated the same
+code as a private `BucketedGraph`, so no theorem could reach it;
+`Storage/QuadDatasetSet.lean` now proves that `datasetOfQuads` gives a set
+(https://github.com/danbri/factoidal/issues/973). -/
 
-private abbrev TripleKey := Subject × WfIri × Term
-
-private def tripleKey (t : Triple) : TripleKey := (t.s, t.p, t.o.joinKey)
-
-/-- One graph under construction: reverse insertion order plus the buckets
-    that make the membership test constant-time in expectation. -/
-private structure BucketedGraph where
-  rev : List Triple := []
-  buckets : Std.HashMap TripleKey (List Triple) := ∅
-
-private def BucketedGraph.add (g : BucketedGraph) (t : Triple) : BucketedGraph :=
-  let key := tripleKey t
-  let bucket := g.buckets.getD key []
-  if bucket.any (fun u => u.eqb t) then g
-  else { rev := t :: g.rev, buckets := g.buckets.insert key (t :: bucket) }
-
-private structure GraphBuckets where
-  defaultGraph : BucketedGraph := {}
-  named : Std.HashMap GraphRef BucketedGraph := ∅
+/-- The graphs under construction: the default graph, the named graphs by
+    name, and the names in reverse first-occurrence order. -/
+structure GraphBuckets where
+  defaultGraph : FastGraph := {}
+  named : Std.HashMap GraphRef FastGraph := ∅
   orderRev : List GraphRef := []
 
 /-- The named case uses `Std.HashMap.modify`, NOT a lookup followed by an
     insert: a lookup hands out a second reference to the graph while the map
-    still holds the first, so the insert inside `BucketedGraph.add` cannot
+    still holds the first, so the insert inside `FastGraph.add` cannot
     update in place and copies that graph's whole bucket map. That is the
     measured reason named graphs did not scale in the N-Quads accumulator
     (<https://github.com/danbri/factoidal/issues/650>); the same shape applies
     here. -/
-private def addQuad (buckets : GraphBuckets)
+def addQuadRow (buckets : GraphBuckets)
     (quad : L4Factoidal.Storage.IndexedBlockWireV4.QuadRow) : GraphBuckets :=
   match quad.1 with
   | none => { buckets with defaultGraph := buckets.defaultGraph.add quad.2 }
@@ -75,16 +65,16 @@ private def addQuad (buckets : GraphBuckets)
         { buckets with named := buckets.named.modify name (fun g => g.add quad.2) }
       else
         { buckets with
-          named := buckets.named.insert name (BucketedGraph.add {} quad.2),
+          named := buckets.named.insert name (FastGraph.add quad.2 {}),
           orderRev := name :: buckets.orderRev }
 
 /-- The dataset a quad sequence denotes: each graph is the SET of its
     triples, in first-occurrence row order. -/
 def datasetOfQuads (quads : List L4Factoidal.Storage.IndexedBlockWireV4.QuadRow) : Dataset :=
-  let buckets := quads.foldl addQuad {}
-  { default := buckets.defaultGraph.rev.reverse
+  let buckets := quads.foldl addQuadRow {}
+  { default := buckets.defaultGraph.toGraph
   , named := buckets.orderRev.reverse.map fun name =>
-      { name, graph := (buckets.named.getD name {}).rev.reverse } }
+      { name, graph := (buckets.named.getD name {}).toGraph } }
 
 /-- Every graph name of the dataset is a well-formed IRI.
 

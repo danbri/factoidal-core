@@ -47,6 +47,7 @@ import L4Factoidal.OWL.RLClosure
 import L4Factoidal.OWL.RLClosureIndexed
 import L4Factoidal.Syntax.NQuadsFast
 import Wasm.Ops.FromDataset
+import L4Factoidal.RDF.GraphOpsSet
 
 namespace L4Wasm.Ops
 
@@ -69,6 +70,26 @@ private def ntriplesEnvelope (key : String) (g : Graph)
   | .error e  => errJson s!"closure serialisation: {e}"
   | .ok lines => okWith (((key, Json.string lines)) :: extra)
 
+/-- The OWL 2 RL closure of `g` as a set of triples (RDF 1.1 Concepts §3).
+`OWL.RL.closureFix` adds a conclusion unless the graph holds a STRUCTURALLY
+equal triple (`OWL.RL.addOne`), so when the input holds `"x"@en` and `"x"@EN`
+in two triples the closure can hold `<a> <q> "x"@en` and `<a> <q> "x"@EN`, one
+RDF triple written two times (measured 2026-10-24 on the `owlClosure` op with
+`<a> <p> "x"@en . <a> <q> "x"@EN . <p> rdfs:subPropertyOf <q> .`).
+`Graph.toSet` keeps the first of them; on a closure that is already a set it
+is the identity (`Graph.toSet_of_keyNodup`).
+https://github.com/danbri/factoidal/issues/973 -/
+def owlRlClosureSet (g : Graph) : Graph :=
+  Graph.toSet (L4Factoidal.OWL.RL.closureFix g)
+
+theorem owlRlClosureSet_keyNodup (g : Graph) : (owlRlClosureSet g).KeyNodup :=
+  Graph.toSet_keyNodup _
+
+/-- The set keeps every triple of the closure, by engine membership. -/
+theorem owlRlClosureSet_mem (u : Triple) (g : Graph) :
+    (owlRlClosureSet g).mem u = true ↔ (L4Factoidal.OWL.RL.closureFix g).mem u = true :=
+  Graph.mem_toSet u _
+
 /-- The `owlClosure` envelope over an ALREADY-PARSED dataset. -/
 def owlClosureParsed (ds : Dataset) (mode : String) : String :=
     let g := ds.default
@@ -77,7 +98,7 @@ def owlClosureParsed (ds : Dataset) (mode : String) : String :=
         ntriplesEnvelope "nquads"
           (L4Factoidal.RDFS.fullClosure (withMinimalD []) (cmpSlice g) g)
     | "OWL-RL" | "owl-rl" | "owl_rl" =>
-        ntriplesEnvelope "nquads" (L4Factoidal.OWL.RL.closureFix g)
+        ntriplesEnvelope "nquads" (owlRlClosureSet g)
     | _ =>
         errJson s!"owlClosure: unknown mode '{mode}' (expected 'RDFS' or 'OWL-RL')"
 
@@ -205,7 +226,7 @@ graph of `d`: the graph the envelope's `ntriplesEnvelope` call receives. -/
 def closureGraphOfRegime (regime : String) (d : Dataset) : Graph :=
   match regime with
   | "rdfs" => L4Factoidal.RDFS.fullClosure (withMinimalD []) (cmpSlice d.default) d.default
-  | "owl-rl" => L4Factoidal.OWL.RL.closureFix d.default
+  | "owl-rl" => owlRlClosureSet d.default
   | "rho-df" => L4Factoidal.RDFS.closureFix d.default
   | _ => L4Factoidal.RDFS.rdfsPlusClosureFix d.default
 
@@ -266,6 +287,65 @@ theorem closureEnvelopeOf_stream (ds : Dataset) (regime : String) :
         cases Graph.firstNTriplesError _ .rdf12 <;> rfl
 
 #print axioms closureEnvelopeOf_stream
+
+/-! ### The closure graphs are sets (https://github.com/danbri/factoidal/issues/973)
+
+RDF 1.1 Concepts §3: the closure an op writes is a graph, so each triple is
+written once. The RDFS, ρdf and RDFS-Plus closures of a set are sets
+(`RDF/GraphOpsSet.lean`); the OWL 2 RL closure ends with `Graph.toSet`
+(`owlRlClosureSet`). The dataset the ops close over is the parse of N-Quads
+text (`datasetForOps_eq`), a set by `parseNQuadsFast_isSet`. -/
+
+/-- Each regime's closure of a dataset whose default graph is a set is a set. -/
+theorem closureGraphOfRegime_keyNodup (regime : String) {d : Dataset}
+    (h : d.default.KeyNodup) : (closureGraphOfRegime regime d).KeyNodup := by
+  unfold closureGraphOfRegime
+  split
+  · exact L4Factoidal.RDFS.fullClosure_keyNodup _ _ h
+  · exact owlRlClosureSet_keyNodup _
+  · exact L4Factoidal.RDFS.closureFix_keyNodup h
+  · exact L4Factoidal.RDFS.rdfsPlusClosureFix_keyNodup h
+
+/-- The dataset the ops close over is a set. -/
+theorem datasetForOps_isSet {mode : Mode} {ds d : Dataset}
+    (h : datasetForOps mode ds = .ok d) : d.IsSet := by
+  rw [datasetForOps_eq] at h
+  exact parseNQuadsFast_isSet _ _ _ h
+
+/-- What `l4factoidal closure` writes is a set, for every input dataset and
+regime: no hypothesis. -/
+theorem closureStreamOf_keyNodup (ds : Dataset) (regime : String) {g : Graph}
+    (h : closureStreamOf ds regime = .ok g) : g.KeyNodup := by
+  unfold closureStreamOf at h
+  split at h
+  · cases h
+  · next d hd =>
+    simp only at h
+    split at h
+    · cases h
+    · cases h
+      exact closureGraphOfRegime_keyNodup regime (datasetForOps_isSet hd).default
+
+#print axioms closureGraphOfRegime_keyNodup
+#print axioms closureStreamOf_keyNodup
+
+-- Observable cardinality. `"x"@en` and `"x"@EN` are one RDF term (RDF 1.1
+-- Concepts §3.3); the OWL 2 RL closure derives `<a> <q> "x"@en` from the
+-- `rdfs:subPropertyOf` row while the input holds `<a> <q> "x"@EN`. Before
+-- `owlRlClosureSet` the `owlClosure` envelope held both lines (2026-10-24).
+private def tagCase973 : String :=
+  "<urn:a> <urn:p> \"x\"@en .\n<urn:a> <urn:q> \"x\"@EN .\n" ++
+  "<urn:p> <http://www.w3.org/2000/01/rdf-schema#subPropertyOf> <urn:q> .\n"
+private def countAQ (r : String) : Nat := (r.splitOn "<urn:a> <urn:q> ").length - 1
+#guard countAQ (owlClosure tagCase973 "OWL-RL") == 1
+#guard countAQ (owlClosure tagCase973 "RDFS") == 1
+#guard countAQ (rhoDfClosure tagCase973) == 1
+#guard countAQ (rdfsPlusClosure tagCase973) == 1
+-- Teeth: the scanning closure without the set step holds the triple two times.
+#guard (L4Factoidal.OWL.RL.closureFix
+  ((L4Factoidal.Dataflow.readNQuadsText .rdf12 tagCase973).toOption.map (·.default)
+    |>.getD [])).countP (fun t => t.s == .iri ⟨"urn:a", by decide⟩ &&
+      t.p.val == "urn:q") == 2
 
 /-! ### RDF 1.2 input (https://github.com/danbri/factoidal/issues/873)
 

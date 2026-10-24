@@ -338,7 +338,18 @@ repaired (docs/designissues/2026-10-10-lean-vs-fstar-performance.md):
                    the repair: 19.3 s, 105 s and not finished at 600 s (the
                    class-size counting rung built its linear system by scanning
                    the graph once per IRI); after: 1.05 s, 2.74 s, 7.48 s,
-                   measured 2026-10-12, most of it the OWL 2 RL closure
+                   measured 2026-10-12, most of it the OWL 2 RL closure.
+                   Since 2026-10-22 the strict reader refuses these prefixes
+                   (annotation properties with no declaration in the prefix,
+                   restriction nodes outside it): `unknown`, an expected
+                   failure of https://github.com/danbri/factoidal/issues/960
+  owl-consistent-svf  `owl-consistent` on n units of a generated ontology in
+                   the admitted fragment: an individual of A_k, A_k
+                   subClassOf B_k, A_k subClassOf ObjectSomeValuesFrom(p,
+                   A_{k+1 mod n}) (5 triples a unit), 2,000, 4,000 and 8,000
+                   units, measured at x, 2x and 4x like owl-consistent-cl. The
+                   answer is `true` from a checked finite model (issue 960):
+                   the reader, the model search and the model checker
   owl-species      the OWL 2 species check (`l4owl-species`,
                    `OWL.SyntaxDL.speciesViolations`) of a generated OWL 2 DL
                    document of n units: a class with a restriction on a blank
@@ -1962,10 +1973,79 @@ DOUBLING = 3.0
 CL_SOURCE = ROOT / "third_party/ontologies/cl-basic/cl-basic.owl"
 
 
+def cl_units(lines: list[str]) -> tuple[list[list[str]], dict[str, list[str]]]:
+    """The sorted N-Triples lines of an ontology, cut into whole axioms.
+
+    A unit is the triples of one IRI subject, with the full subtree of each
+    blank node that one of its triples has as object (a restriction node),
+    and the owl:Axiom nodes (OWL 2 Mapping to RDF Graphs, section 3.2.5) whose
+    owl:annotatedSource, owl:annotatedProperty and owl:annotatedTarget name
+    one of its triples. A blank node used by no unit is a unit of its own.
+    Units are in the order of their first line. The second result maps each
+    IRI to its `rdf:type` lines: the declarations (section 3.1.1)."""
+    import re
+    rdf_type = "<http://www.w3.org/1999/02/22-rdf-syntax-ns#type>"
+    owl = "http://www.w3.org/2002/07/owl#"
+    parse = re.compile(r"^(\S+) (\S+) (.*) \.$")
+    triples = [parse.match(ln).groups() for ln in lines]
+    by_subject: dict[str, list[int]] = {}
+    for i, (s, _, _) in enumerate(triples):
+        by_subject.setdefault(s, []).append(i)
+    index_of = {t: i for i, t in enumerate(triples)}
+    # The owl:Axiom node of each annotated triple.
+    annotations: dict[int, list[str]] = {}
+    for s, rows in by_subject.items():
+        if not s.startswith("_:"):
+            continue
+        parts = {p: o for (_, p, o) in (triples[i] for i in rows)}
+        key = (parts.get(f"<{owl}annotatedSource>"), parts.get(f"<{owl}annotatedProperty>"),
+               parts.get(f"<{owl}annotatedTarget>"))
+        if None not in key and key in index_of:
+            annotations.setdefault(index_of[key], []).append(s)
+    owner: set[str] = set()
+
+    def subtree(s: str, out: list[int]) -> None:
+        stack = [s]
+        while stack:
+            node = stack.pop()
+            if node in owner:
+                continue
+            owner.add(node)
+            for i in by_subject.get(node, []):
+                out.append(i)
+                o = triples[i][2]
+                if o.startswith("_:") and o not in owner:
+                    stack.append(o)
+                stack.extend(a for a in annotations.get(i, []) if a not in owner)
+
+    units: list[list[str]] = []
+    for s in sorted(by_subject, key=lambda s: (s.startswith("_:"), s)):
+        if s in owner:
+            continue
+        rows: list[int] = []
+        subtree(s, rows)
+        units.append([lines[i] for i in sorted(rows)])
+    declarations: dict[str, list[str]] = {}
+    for i, (s, p, _) in enumerate(triples):
+        if p == rdf_type and not s.startswith("_:"):
+            declarations.setdefault(s, []).append(lines[i])
+    return units, declarations
+
+
 def cl_prefix(n: int) -> Path:
-    """The first n lines of the Cell Ontology basic edition as N-Triples:
-    parsed by the Lean RDF/XML reader, one line per distinct triple, sorted
-    by code point (the reproduction of issue 760, `sort -u` in the C locale)."""
+    """A prefix of about n lines of the Cell Ontology basic edition as
+    N-Triples (parsed by the Lean RDF/XML reader, one line per distinct
+    triple, sorted by code point: the reproduction of issue 760).
+
+    Rule (issue 960 item 5): a prefix holds whole axioms and the declarations
+    they use, so that it is itself an OWL 2 ontology. A cut after n sorted
+    lines split axioms: a `rdfs:subClassOf` triple whose restriction node is
+    after the cut, an owl:Axiom node without its annotated triple, and
+    annotation triples whose `owl:AnnotationProperty` declaration is after the
+    cut (the full file declares every annotation property it uses). So the
+    prefix takes the units of `cl_units` in order until it has n lines, then
+    adds the `rdf:type` lines of every IRI that a kept line uses as predicate,
+    as `owl:onProperty` value or as `rdfs:subPropertyOf` value."""
     FIX.mkdir(parents=True, exist_ok=True)
     full = FIX / "cl-basic.sorted.nt"
     if not full.exists():
@@ -1973,12 +2053,44 @@ def cl_prefix(n: int) -> Path:
                             "--out", "nquads"], stdout=subprocess.PIPE, timeout=CAP, check=True)
         lines = sorted({ln for ln in r.stdout.decode("utf-8").split("\n") if ln.strip()})
         full.write_text("\n".join(lines) + "\n", encoding="utf-8")
-    p = FIX / f"cl-basic.{n}.nt"
+    p = FIX / f"cl-basic.whole-axioms.{n}.nt"
     if not p.exists():
-        with full.open(encoding="utf-8") as f:
-            head = [next(f) for _ in range(n)]
-        p.write_text("".join(head), encoding="utf-8")
+        lines = [ln for ln in full.read_text(encoding="utf-8").split("\n") if ln.strip()]
+        units, declarations = cl_units(lines)
+        kept: list[str] = []
+        for unit in units:
+            if len(kept) >= n:
+                break
+            kept.extend(unit)
+        owl = "http://www.w3.org/2002/07/owl#"
+        used = set()
+        for ln in kept:
+            s, pred, o = ln.split(" ", 2)
+            used.add(pred)
+            if pred in (f"<{owl}onProperty>", "<http://www.w3.org/2000/01/rdf-schema#subPropertyOf>"):
+                used.add(o[:-2].strip())
+        have = set(kept)
+        for name in sorted(used):
+            kept.extend(d for d in declarations.get(name, []) if d not in have)
+        p.write_text("\n".join(sorted(set(kept))) + "\n", encoding="utf-8")
     return p
+
+
+def owl_svf_chain(n: int) -> Path:
+    """n units in the admitted OWL fragment (issue 960): an individual of A_k,
+    A_k subClassOf B_k, and A_k subClassOf ObjectSomeValuesFrom(p, A_{k+1 mod n})."""
+    rdf_type = "<http://www.w3.org/1999/02/22-rdf-syntax-ns#type>"
+    sub = "<http://www.w3.org/2000/01/rdf-schema#subClassOf>"
+    owl = "http://www.w3.org/2002/07/owl#"
+
+    def text() -> str:
+        out = []
+        for k in range(n):
+            a, b, nxt = f"<{EX}A{k}>", f"<{EX}B{k}>", f"<{EX}A{(k + 1) % n}>"
+            out.append(f"<{EX}i{k}> {rdf_type} {a} .\n{a} {sub} {b} .\n{a} {sub} _:r{k} .\n"
+                       f"_:r{k} <{owl}onProperty> <{EX}p> .\n_:r{k} <{owl}someValuesFrom> {nxt} .\n")
+        return "".join(out)
+    return fixture(f"owl-svf-chain-{n}.nq", text)
 
 
 def delta_log_merge_args(n: int) -> Path:
@@ -2157,6 +2269,9 @@ SERIES_ROWS = {
         10000, cl_prefix,
         lambda p: [str(BIN), "owl-consistent", str(p), "--format", "nquads"], "true",
         CL_SOURCE),
+    "owl-consistent-svf": (
+        2000, owl_svf_chain,
+        lambda p: [str(BIN), "owl-consistent", str(p), "--format", "nquads"], "true", None),
     "sparql-tokenize": (
         2000,
         lambda n: fixture(f"sparql-values-ask-{n}.rq", lambda: sparql_values_ask(n)),

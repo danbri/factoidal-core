@@ -27,11 +27,11 @@ for (const [name, input] of [
   ['differentFrom alone', different('a', 'b')],
   ['ordinary class membership', `<urn:a> <${RDF}type> <urn:C> .`],
 ]) {
-  test(`OWL consistency does not claim a model for ${name}`, async () => {
+  // A checked finite model (https://github.com/danbri/factoidal/issues/960).
+  test(`OWL consistency answers true with a checked model for ${name}`, async () => {
     const answer = await owlIsConsistent(input, options);
-    assert.equal(answer.consistent, null);
-    assert.match(answer.reason, /incomplete-search/);
-    assert.doesNotMatch(answer.reason, /budget-out/);
+    assert.equal(answer.consistent, true);
+    assert.equal(answer.reason, undefined);
   });
 }
 
@@ -57,13 +57,19 @@ test('OWL entailment still returns a closure consequence', async () => {
   assert.equal(answer.via, 'closure');
 });
 
-test('OWL entailment does not turn a quiescent search into a countermodel', async () => {
+test('OWL entailment answers false only with a checked countermodel', async () => {
   const answer = await owlEntails(
     `<urn:a> <${RDF}type> <urn:C> .`,
     `<urn:a> <${RDF}type> <urn:D> .`, options);
-  assert.equal(answer.entailed, null);
+  assert.equal(answer.entailed, false);
   assert.equal(answer.via, 'refutation');
-  assert.match(answer.reason, /incomplete-search/);
+  assert.match(answer.reason, /^countermodel:/);
+});
+
+test('OWL entailment answers false for an empty premise with a checked countermodel', async () => {
+  const answer = await owlEntails('', `<urn:a> <${RDF}type> <urn:C> .`, { ...options, fuel: 0 });
+  assert.equal(answer.entailed, false);
+  assert.match(answer.reason, /^countermodel:/);
 });
 
 test('OWL entailment does not claim a countermodel for an unproved data assertion', async () => {
@@ -73,18 +79,21 @@ test('OWL entailment does not claim a countermodel for an unproved data assertio
   assert.match(answer.reason, /^incomplete-search:/);
 });
 
-test('OWL consistency refuses an unsupported restriction before search budgeting', async () => {
-  const premise = `<urn:i> <${RDF}type> <urn:A> .\n` +
-    `<urn:A> <${RDFS}subClassOf> _:r .\n` +
-    `_:r <${OWL}onProperty> <urn:p> .\n` +
-    `_:r <${OWL}someValuesFrom> <urn:A> .\n`;
-  const answer = await owlIsConsistent(premise, { ...options, fuel: 1 });
-  assert.equal(answer.consistent, null);
-  assert.match(answer.reason, /^unsupported-syntax:/);
-  assert.doesNotMatch(answer.reason, /budget-out/);
+const cyclic = `<urn:i> <${RDF}type> <urn:A> .\n` +
+  `<urn:A> <${RDFS}subClassOf> _:r .\n` +
+  `_:r <${OWL}onProperty> <urn:p> .\n` +
+  `_:r <${OWL}someValuesFrom> <urn:A> .\n`;
+
+test('OWL consistency reads someValuesFrom: fuel 1 is a budget-out, the default fuel a checked model', async () => {
+  const short = await owlIsConsistent(cyclic, { ...options, fuel: 1 });
+  assert.equal(short.consistent, null);
+  assert.match(short.reason, /^budget-out:.*fuel 1 /);
+  const answer = await owlIsConsistent(cyclic, options);
+  assert.equal(answer.consistent, true);
+  assert.equal(answer.reason, undefined);
 });
 
-test('OWL consistency compatibility fuel does not disable its fixed certificate checker', async () => {
+test('OWL consistency refutes a direct contradiction at every fuel', async () => {
   const input = same('a', 'b') + different('a', 'b');
   for (const fuel of [0, 1, 20000]) {
     const answer = await owlIsConsistent(input, { ...options, fuel });
@@ -94,7 +103,7 @@ test('OWL consistency compatibility fuel does not disable its fixed certificate 
 });
 
 test('OWL entailment budget exhaustion remains distinct from incomplete search', async () => {
-  const answer = await owlEntails('', `<urn:a> <${RDF}type> <urn:C> .`,
+  const answer = await owlEntails(cyclic, `<urn:a> <${RDF}type> <urn:C> .`,
     { ...options, fuel: 0 });
   assert.equal(answer.entailed, null);
   assert.equal(answer.via, 'refutation');

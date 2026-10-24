@@ -42,6 +42,10 @@ CASE_IDS = {
     "unsupported-reserved-individual-same", "unsupported-reserved-individual-different",
     "unsupported-triple-among-annotations", "unsupported-directional-annotation",
     "unsupported-triple-term-annotation", "multiple-headers-fragment-admission",
+    "object-property-declaration", "some-values-from-cyclic", "some-values-from-assertion",
+    "some-values-from-typed-restriction", "some-values-from-witness-clash",
+    "some-values-from-nothing-filler", "unsupported-restriction-two-properties",
+    "unsupported-restriction-no-filler", "unsupported-annotation-property-restriction",
 }
 UNSUPPORTED_IDS = {
     "unsupported-object-property", "unsupported-undeclared-predicate", "unsupported-import",
@@ -52,10 +56,13 @@ UNSUPPORTED_IDS = {
     "unsupported-reserved-individual-assertion", "unsupported-reserved-individual-same",
     "unsupported-reserved-individual-different", "unsupported-triple-among-annotations",
     "unsupported-directional-annotation", "unsupported-triple-term-annotation",
+    "unsupported-restriction-two-properties", "unsupported-restriction-no-filler",
+    "unsupported-annotation-property-restriction",
 }
 INCONSISTENT_IDS = {
     "empty-class-with-member", "bottom-membership", "top-subclass-bottom", "same-and-different",
     "self-different", "annotation-and-real-contradiction", "duplicate-statements",
+    "some-values-from-witness-clash", "some-values-from-nothing-filler",
 }
 AUDITS = ["AtomicDirect.readOntology_preserves_models", "AtomicDirect.readOntology_hasModel",
           "AtomicDirect.accepted_covers_triples",
@@ -86,10 +93,14 @@ MUTATIONS = [
      "theorem addAxiom_preserves_model", "def initialOntology"),
     ("silently-drop-all-input-triples", ATOMIC,
      "  graph.attach.mapM (fun ⟨triple, member⟩ => do\n"
-     "    let ⟨clause, mapped⟩ ← readTriple graph triple\n"
+     "    let ⟨clause, mapped⟩ ← readTriple graph index triple\n"
      "    pure ⟨clause, triple, member, mapped⟩)",
      "  some []",
      "theorem accepted_covers_triples", "theorem readOntology_preserves_models"),
+    ("existential-compiles-to-top", ATOMIC,
+     "tbox := (compileClass left, .ex role (compileClass filler)) :: ontology.tbox",
+     "tbox := (compileClass left, .top) :: ontology.tbox",
+     "theorem addAxiom_preserves_model", "def initialOntology"),
     ("bypass-actual-certificate-check", ATOMIC,
      "if accepted : checkCert ontology certificate = true then", "if accepted : True then",
      "def checkedRefutation", "def erase"),
@@ -161,8 +172,11 @@ def acceptance_cases(output):
         expected = (case["expectedSupported"], case["expectedConsistent"])
         if type(expected[0]) is not bool or (expected[1] is not None and type(expected[1]) is not bool):
             raise ValueError("invalid expected acceptance values")
+        # A supported input answers false when it is inconsistent and true
+        # otherwise (a checked model, https://github.com/danbri/factoidal/issues/960).
         required = (case["id"] not in UNSUPPORTED_IDS,
-                    False if case["id"] in INCONSISTENT_IDS else None)
+                    False if case["id"] in INCONSISTENT_IDS else
+                    None if case["id"] in UNSUPPORTED_IDS else True)
         if expected != required:
             raise ValueError("acceptance expectation weakened or changed: " + case["id"])
         observed = case.get("observed")

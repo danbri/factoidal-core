@@ -1114,26 +1114,32 @@ const { conforms, report } = await validate(ds, await parse(shapesTtl)); // SHAC
 | `loadEngine` | `() => engine` | the low-level handle, `call(op, args)`, for ops this layer does not wrap |
 | `Dataset`, `Store`, `FactoidalError`, `dataFactory`, `version`, `engine` | | `engine` is `'lean4-wasm'` |
 
-`owlIsConsistent` checks the original default graph in a restricted atomic
-OWL fragment. It reports `false` only after a certificate checks against
-that graph's translated ontology. It returns `null` for unsupported syntax
-(`unsupported-syntax`) or when the bounded checker finds no contradiction
-(`incomplete-search`). It does not construct a model and never returns
-`true`. Named graphs do not supply axioms or declarations to the default
-graph. The existing whole-dataset RDF 1.2 term refusal still applies.
+`owlIsConsistent` checks the original default graph in a restricted OWL
+fragment. It reports `true` only when a finite model checks against that
+graph (the result then has no `reason`), and `false` only after a refutation
+certificate checks against the graph's translated ontology. It returns `null`
+for unsupported syntax (`unsupported-syntax`), for a search or check that
+ran out of `fuel` (`budget-out`, the reason names the fuel), or when no
+certificate checks (`incomplete-search`). Named graphs do not supply axioms
+or declarations to the default graph. The existing whole-dataset RDF 1.2
+term refusal still applies.
 
 Supported logical forms are named atomic subclass/class assertions,
-Thing/Nothing and named-individual sameAs/differentFrom. The reader also
-admits the declarations, ontology headers and limited annotations described
-in `docs/20261021-owl-reader-preservation.md`. Restrictions, object/data
-property axioms, imports and equivalentClass are unsupported. This is a
-material reduction in definitive answers from the earlier unchecked search.
-The compatibility `fuel` option does not change the current consistency
-checker: it uses a fixed 64-round saturation bound and no tableau search.
-A failed check is not a consistency decision.
+Thing/Nothing, named-individual sameAs/differentFrom, and
+`owl:someValuesFrom` restrictions on an object property with a named class
+(or Thing/Nothing) filler, used as the superclass of `rdfs:subClassOf` or as
+the class of `rdf:type`. The reader also admits `owl:ObjectProperty`
+declarations and the declarations, ontology headers and limited annotations
+described in `docs/20261021-owl-reader-preservation.md`. Other restrictions,
+object/data property axioms, imports and equivalentClass are unsupported.
+`fuel` (default 20000) bounds the model search (rounds of existential
+expansion) and the certificate checker (saturation rounds). Record:
+`docs/designissues/2026-10-24-owl-model-certificates.md`.
 
-`owlEntails` remains on the separate legacy closure/refutation path. Its
-positive results do not gain the consistency path's proof guarantee.
+`owlEntails` answers `false` (via `refutation`, reason `countermodel: ...`)
+only when a checked finite model of the premise is not a model of the
+conclusion. Its positive results remain on the separate legacy
+closure/refutation path and do not gain this proof guarantee.
 It reports `true` for closure/refutation results and `null` for unsupported
 conclusions, incomplete search, budget exhaustion or detected punning.
 Its limited punning check is not a general Direct Semantics proof; reader,

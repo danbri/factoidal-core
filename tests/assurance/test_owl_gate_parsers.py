@@ -30,7 +30,8 @@ def reader_cases():
     cases = []
     for name in sorted(READER.CASE_IDS):
         supported = name not in READER.UNSUPPORTED_IDS
-        consistent = False if name in READER.INCONSISTENT_IDS else None
+        consistent = (False if name in READER.INCONSISTENT_IDS else
+                      None if name in READER.UNSUPPORTED_IDS else True)
         cases.append({"id": name, "expectedSupported": supported,
                       "expectedConsistent": consistent, "passed": True,
                       "observed": {"supported": supported, "consistent": consistent}})
@@ -41,11 +42,18 @@ def public_cases():
     cases = []
     for name in sorted(PUBLIC.IDS):
         ok = name not in PUBLIC.ERROR_IDS
-        consistent = False if name in PUBLIC.FALSE_IDS else None
+        consistent = (False if name in PUBLIC.FALSE_IDS else
+                      True if name in PUBLIC.TRUE_IDS else None)
         reason = ("unsupported-syntax" if name in PUBLIC.UNSUPPORTED_IDS else
-                  "incomplete-search" if name not in PUBLIC.FALSE_IDS | PUBLIC.ERROR_IDS else "")
-        raw = ({"ok": True, "consistent": consistent, "reason": reason} if ok else
-               {"ok": False, "error": "synthetic refusal for " + name})
+                  "budget-out" if name in PUBLIC.BUDGET_IDS else
+                  "incomplete-search" if name not in
+                  PUBLIC.FALSE_IDS | PUBLIC.TRUE_IDS | PUBLIC.ERROR_IDS else "")
+        if not ok:
+            raw = {"ok": False, "error": "synthetic refusal for " + name}
+        elif consistent is True:
+            raw = {"ok": True, "consistent": True}
+        else:
+            raw = {"ok": True, "consistent": consistent, "reason": reason}
         dispatched = dict(raw)
         if not ok:
             dispatched["code"] = "reason.failed" if name == "parse-error" else "owl.unsupported-rdf12"
@@ -68,8 +76,8 @@ class ReportInventoryControls(unittest.TestCase):
                 (PUBLIC.read_cases, "OWL_PUBLIC_BOUNDARY=", public_cases())]
 
     def test_valid_synthetic_inventories(self):
-        self.assertEqual(len(READER.CASE_IDS), 45)
-        self.assertEqual(len(PUBLIC.IDS), 20)
+        self.assertEqual(len(READER.CASE_IDS), 54)
+        self.assertEqual(len(PUBLIC.IDS), 23)
         for parse, prefix, cases in self.parsers():
             with self.subTest(parser=parse.__name__):
                 self.assertEqual(parse(prefix + json.dumps(cases)), cases)

@@ -2195,6 +2195,19 @@ from the brief to the fix. Fixed by PR 26 (2026-10-23: every parser returns
    theorem does not replace it.
 3. A brief or a review that asks to "preserve duplicates" in a set-valued object
    contradicts the specification. Cite RDF 1.1 Concepts §3 and refuse it.
-4. Not enforced today: raw `Graph`/`Dataset` values outside the parsers and the
-   handle store (query results, closures, merges, the lenient N-Quads and TriG
-   readers). See the module header of `L4Factoidal/RDF/Graph.lean`.
+4. Since 2026-10-24 (https://github.com/danbri/factoidal/issues/973) the graph
+   operations have a theorem each (`RDF/GraphOpsSet.lean`, table in
+   `docs/theorem-registry.md`). Two more defects of the same kind were found
+   by that audit: the OWL 2 RL closure added a conclusion unless a
+   STRUCTURALLY equal triple was present (`OWL.RL.addOne`), so `"x"@en` and
+   `"x"@EN` were two lines of the `owlClosure` output and `queryRaw` with
+   `entail: OWL-RL` counted 2; and `jsonldToRdf` wrote a value given two times
+   as two lines. The add step of a set must use the RDF term equality
+   (`Graph.add`, `Triple.eqb`), not `==` on the Lean structure, or the
+   producer must end with `Graph.toSet`.
+5. A private copy of a proved accumulator is out of reach of every theorem
+   about the original. `Storage/QuadDataset.lean` held a private
+   `BucketedGraph`, the same code as `RDF.FastGraph`; replacing it with
+   `FastGraph` made `datasetOfQuads_isSet` a short proof.
+6. Still not enforced: values that no operation stores, counts or writes. See
+   the module header of `L4Factoidal/RDF/Graph.lean`.

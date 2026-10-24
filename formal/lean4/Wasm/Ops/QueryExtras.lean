@@ -58,6 +58,7 @@ import L4Factoidal.OWL.RLClosure
 import L4Factoidal.OWL.RLClosureIndexed
 import L4Factoidal.RDFS.Closure
 import L4Factoidal.RDFS.RDFSPlus
+import L4Factoidal.RDF.GraphSet
 
 namespace L4Wasm.Ops
 
@@ -86,7 +87,10 @@ private def closeDefaultGraph (entail : String) (ds : Dataset) : Except String D
       .ok { ds with default :=
         L4Factoidal.RDFS.fullClosure (withMinimalD []) (containerSlice g) g }
   | "OWL-RL" | "owl-rl" | "owl_rl" =>
-      .ok { ds with default := L4Factoidal.OWL.RL.closureFix ds.default }
+      -- `Graph.toSet`: the OWL 2 RL closure adds by structural equality, so a
+      -- triple can be in it under two language-tag spellings; the queried
+      -- graph is a set (https://github.com/danbri/factoidal/issues/973).
+      .ok { ds with default := Graph.toSet (L4Factoidal.OWL.RL.closureFix ds.default) }
   -- The core-RDFS (rho-df) closure of `rhoDfClosure` and the RDFS-Plus
   -- closure of `rdfsPlusClosure` (`Wasm/Ops/Reason.lean`): the
   -- `x-rdfscore` and `x-rdfsplus` regimes of the npm `query()` option
@@ -246,6 +250,19 @@ private def rawEntail (regime q : String) : String :=
 #guard ((rawEntail "x-rdfsplus" askInv).splitOn "boolean\\\":true").length > 1
 #guard ((rawEntail "x-rdfscore" askInv).splitOn "boolean\\\":false").length > 1
 #guard (rawEntail "x-unknown" askD).startsWith "{\"ok\":false"
+
+-- The OWL-RL default graph is a set (https://github.com/danbri/factoidal/issues/973):
+-- `"x"@en` and `"x"@EN` are one RDF term, so `<a> <q> ?o` has one solution,
+-- not one per language-tag spelling. The data is N-Triples text, read with its
+-- tag spelling kept.
+private def tagCaseData : String :=
+  "<urn:a> <urn:p> \"x\"@en .\n<urn:a> <urn:q> \"x\"@EN .\n" ++
+  "<urn:p> <http://www.w3.org/2000/01/rdf-schema#subPropertyOf> <urn:q> .\n"
+private def tagCaseCount (regime : String) : String :=
+  queryRawBy noExtraReader tagCaseData "SELECT (COUNT(*) AS ?n) WHERE { <urn:a> <urn:q> ?o }"
+    ("{\"dataFormat\":\"ntriples\",\"output\":\"csv\",\"entail\":\"" ++ regime ++ "\"}")
+#guard ["OWL-RL", "RDFS", "x-rdfscore", "x-rdfsplus", "none"].all fun r =>
+  tagCaseCount r == "{\"ok\":true,\"text\":\"n\\r\\n1\\r\\n\"}"
 
 -- NOW() (https://github.com/danbri/factoidal/issues/743): the pure form given a
 -- `now` answers it; given none, NOW() is an error and the variable is unbound.
