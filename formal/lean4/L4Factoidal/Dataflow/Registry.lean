@@ -32,8 +32,10 @@ No `sorry`, no `axiom`, no `native_decide`, no `partial`.
 import L4Factoidal.Dataflow.Instances
 import L4Factoidal.Dataflow.PhaseD
 import L4Factoidal.Dataflow.PhaseE
+import L4Factoidal.Dataflow.PhaseC
 import L4Factoidal.Unified.OwlRlAdequacy
 import L4Factoidal.Storage.BlockDenotation
+import L4Factoidal.SPARQL.FromMergeStage
 import L4Factoidal.Storage.StoreDictTheorems
 import L4Factoidal.HDT.DictionaryTheorems
 import L4Factoidal.Cottas.DictTheorems
@@ -141,12 +143,143 @@ def registry : List Entry := [
     wireIn := "files", wireOut := "Dataset", status := .tested
     tests := ["W3C SPARQL 1.1 manifest-all (l4w3c)", "Harness/HarnessTests.lean fixture-scope #guards"]
     note := "each file scoped by its index (addDataFile, addGraphFile)" },
-  { area := "RDF readers: grammar conformance", dir := "Syntax"
+  { area := "Reader: N-Triples (batch)", dir := "Syntax"
+    stage := ``ntriplesReader, wireIn := "String", wireOut := "Dataset"
+    contract := ``ReaderContract, status := .proved
+    theorems := [``readerStage_error, ``readerStage_error_of_raw, ``readerStage_ok_of_raw, ``readerStage_eq_scoped, ``eraseLabels_scopeDocument, ``L4Factoidal.RDF.Source.parseDocument_set]
+    note := "set, document scope n, den = raw den, Iso, labels-only change; error iff parser error; RDF 1.2 mode reads triple terms" },
+  { area := "Reader: N-Quads (batch)", dir := "Syntax"
+    stage := ``nquadsReader, wireIn := "String", wireOut := "Dataset"
+    contract := ``ReaderContract, status := .proved
+    theorems := [``readerStage_error, ``readerStage_error_of_raw, ``readerStage_ok_of_raw, ``readerStage_eq_scoped, ``eraseLabels_scopeDocument, ``L4Factoidal.RDF.Source.parseDocument_set]
+    note := "set, document scope n, den = raw den, Iso, labels-only change; error iff parser error" },
+  { area := "Reader: Turtle (batch)", dir := "Syntax"
+    stage := ``turtleReader, wireIn := "String", wireOut := "Dataset"
+    contract := ``ReaderContract, status := .proved
+    theorems := [``readerStage_error, ``readerStage_error_of_raw, ``readerStage_ok_of_raw, ``readerStage_eq_scoped, ``eraseLabels_scopeDocument, ``L4Factoidal.RDF.Source.parseDocument_set]
+    note := "set, document scope n, den = raw den, Iso, labels-only change; error iff parser error" },
+  { area := "Reader: TriG (batch)", dir := "Syntax"
+    stage := ``trigReader, wireIn := "String", wireOut := "Dataset"
+    contract := ``ReaderContract, status := .proved
+    theorems := [``readerStage_error, ``readerStage_error_of_raw, ``readerStage_ok_of_raw, ``readerStage_eq_scoped, ``eraseLabels_scopeDocument, ``L4Factoidal.RDF.Source.parseDocument_set]
+    note := "set, document scope n, den = raw den, Iso, labels-only change; error iff parser error; empty named graphs kept" },
+  { area := "Reader: RDF/XML (batch)", dir := "Syntax"
+    stage := ``rdfxmlReader, wireIn := "String", wireOut := "Dataset"
+    contract := ``ReaderContract, status := .proved
+    theorems := [``readerStage_error, ``readerStage_error_of_raw, ``readerStage_ok_of_raw, ``readerStage_eq_scoped, ``eraseLabels_scopeDocument, ``L4Factoidal.RDF.Source.parseDocument_set]
+    note := "set, document scope n, den = raw den, Iso, labels-only change; error iff parser error" },
+  { area := "Reader: JSON-LD to RDF (batch)", dir := "Syntax"
+    stage := ``jsonldReader, wireIn := "String", wireOut := "Dataset"
+    contract := ``ReaderContract, status := .proved
+    theorems := [``readerStage_error, ``readerStage_error_of_raw, ``readerStage_ok_of_raw, ``readerStage_eq_scoped, ``eraseLabels_scopeDocument, ``L4Factoidal.RDF.Source.parseDocument_set]
+    note := "set, document scope n, den = raw den, Iso, labels-only change; error iff parser error; Source.withJsonLd" },
+  { area := "Reader: RDF/JSON (W3C Note, triples only)", dir := "Syntax"
+    stage := ``rdfJsonReader, wireIn := "String", wireOut := "Dataset"
+    contract := ``RdfJsonContract, status := .proved
+    theorems := [``L4Factoidal.RDF.Dataset.den_toSet, ``L4Factoidal.RDF.Dataset.den_iso_scopeDocument,
+      ``L4Factoidal.RDF.Dataset.den_renameBnodes]
+    note := "default graph only; no W3C suite; used by RML targets" },
+  { area := "Reader grammar: N-Triples", dir := "Syntax"
     wireIn := "String", wireOut := "Dataset", status := .tested
-    tests := ["W3C RDF 1.1 syntax suites (l4w3c)", "W3C RDF 1.2 syntax suites (l4w3c)"] },
-  { area := "RDF writers (N-Triples, Turtle, N-Quads, TriG, RDF/XML, JSON-LD)", dir := "Syntax"
-    wireIn := "Dataset", wireOut := "String", status := .missing
-    note := "round trip against Dataset.den not stated (phase C)" },
+    tests := ["W3C RDF 1.1 rdf-n-triples (l4w3c)", "W3C RDF 1.2 rdf-n-triples (l4w3c)"]
+    note := "grammar conformance is not proved" },
+  { area := "Reader grammar: N-Quads", dir := "Syntax"
+    wireIn := "String", wireOut := "Dataset", status := .tested
+    tests := ["W3C RDF 1.1 rdf-n-quads (l4w3c)", "W3C RDF 1.2 rdf-n-quads (l4w3c)"]
+    note := "grammar conformance is not proved" },
+  { area := "Reader grammar: Turtle", dir := "Syntax"
+    wireIn := "String", wireOut := "Dataset", status := .tested
+    tests := ["W3C RDF 1.1 rdf-turtle (l4w3c)", "W3C RDF 1.2 rdf-turtle (l4w3c)"]
+    note := "grammar conformance is not proved" },
+  { area := "Reader grammar: TriG", dir := "Syntax"
+    wireIn := "String", wireOut := "Dataset", status := .tested
+    tests := ["W3C RDF 1.1 rdf-trig (l4w3c)", "W3C RDF 1.2 rdf-trig (l4w3c)"]
+    note := "grammar conformance is not proved" },
+  { area := "Reader grammar: RDF/XML", dir := "Syntax"
+    wireIn := "String", wireOut := "Dataset", status := .tested
+    tests := ["W3C RDF 1.1 rdf-xml (l4w3c)", "W3C RDF 1.2 rdf-xml (l4w3c)"]
+    note := "grammar conformance is not proved" },
+  { area := "Reader grammar: JSON-LD to RDF", dir := "JSONLD"
+    wireIn := "String", wireOut := "Dataset", status := .tested
+    tests := ["W3C JSON-LD 1.1 toRdf (l4jsonld-probe)"]
+    note := "grammar and algorithm conformance are not proved" },
+  { area := "Reader grammar: RDF/JSON", dir := "Syntax"
+    wireIn := "String", wireOut := "Dataset", status := .tested
+    tests := ["Syntax/RdfJson.lean #guards", "Dataflow/PhaseCTests.lean"]
+    note := "no W3C suite exists" },
+  { area := "Streamed N-Triples and Turtle output as a set (dedup consumer)", dir := "RDF"
+    stage := ``streamSetStage, wireIn := "triples per chunk", wireOut := "Graph"
+    contract := ``StreamSetContract, status := .proved
+    theorems := [``L4Factoidal.RDF.runChunks_eq_toSet, ``L4Factoidal.RDF.runChunks_keyNodup,
+      ``L4Factoidal.RDF.runChunks_written]
+    note := "the consumer half; the reader half (chunks = batch parse) is the next entry" },
+  { area := "Streamed N-Triples and Turtle reader: chunk cut equals batch parse", dir := "Syntax"
+    wireIn := "chunks", wireOut := "triples", status := .tested
+    theorems := [``L4Factoidal.RDF.Source.turtleStep_collect]
+    tests := ["RDF/Source.lean #guards (every cut position)", "tests/known-defects/run.sh rows SF-1, SF-2, SF-4"]
+    note := "not proved: https://github.com/danbri/factoidal/issues/826" },
+  { area := "Streamed N-Quads reader, RDF 1.1 (chunks to the batch dataset)", dir := "RDF"
+    stage := ``nquads11StreamStage, wireIn := "chunks", wireOut := "Dataset"
+    contract := ``NQuadsStreamContract, status := .proved
+    theorems := [``L4Factoidal.RDF.Source.nquads11_readAll_eq_parseNQuadsFast, ``nquads11Stream_reader]
+    note := "streamed then scoped = nquadsReader on the joined text" },
+  { area := "Streamed N-Quads reader, RDF 1.2", dir := "Syntax"
+    wireIn := "chunks", wireOut := "Dataset", status := .tested
+    tests := ["tests/known-defects/run.sh row SF-3"]
+    note := "not proved: https://github.com/danbri/factoidal/issues/826" },
+  { area := "Streamed TriG reader (chunk fold)", dir := "Syntax"
+    wireIn := "chunks", wireOut := "quads", status := .tested
+    tests := ["tests/trig-pack/order_xfail.sh", "tests/trig-pack/compare_w3c.sh"]
+    note := "chunk fold vs parseTriG not proved; source order differs for a default block after a named block: https://github.com/danbri/factoidal/issues/836" },
+  { area := "Streamed RDF/XML reader (item by item)", dir := "Syntax"
+    wireIn := "chunks", wireOut := "quads", status := .tested
+    theorems := [``L4Factoidal.RDF.Source.rdfxml_readAll_of_notStreamed]
+    tests := ["tests/known-defects/run.sh row RX-1", "l4rdfxml-chunk-diff"]
+    note := "fall-back mode proved (rdfxml_readAll_of_notStreamed); item mode measured: https://github.com/danbri/factoidal/issues/936" },
+  { area := "Streamed JSON-LD reader (top-level node objects)", dir := "JSONLD"
+    wireIn := "chunks", wireOut := "quads", status := .tested
+    theorems := [``L4Factoidal.RDF.Source.jsonld_readAll_of_notStreamed, ``L4Factoidal.RDF.Source.jsonld_readAll]
+    tests := ["tests/known-defects/run.sh row JS-1", "l4jsonld-chunk-diff"]
+    note := "whole-reader mode proved (jsonld_readAll_of_notStreamed); item mode measured: https://github.com/danbri/factoidal/issues/946" },
+  { area := "Writer: N-Triples (round trip on the projection)", dir := "Syntax"
+    wireIn := "Dataset", wireOut := "String", status := .tested
+    theorems := [``writerProjection_triples_den, ``L4Factoidal.Syntax.NTriplesRoundTrip.readTriple11_closed_roundTrip, ``L4Factoidal.Syntax.NTriplesRoundTrip.term_toNTriples_injective, ``L4Factoidal.Syntax.SyntaxTheorems.graph_roundtrip_nil]
+    tests := ["Dataflow/PhaseCTests.lean round trip #guards (30 seeded datasets, RDF 1.1 and 1.2)"]
+    note := "projection: union of all graphs, no graph name (writerProjection_triples_den); domain: iriPrintSafe IRIs; WriterRoundTrip stated, not proved" },
+  { area := "Writer: N-Quads (round trip on the projection)", dir := "Syntax"
+    wireIn := "Dataset", wireOut := "String", status := .tested
+    theorems := [``writerProjection_nquads_den]
+    tests := ["Dataflow/PhaseCTests.lean round trip #guards (30 seeded datasets, RDF 1.1 and 1.2)"]
+    note := "projection: empty named graphs dropped (writerProjection_nquads_den); WriterRoundTrip stated, not proved" },
+  { area := "Writer: Turtle (round trip on the projection)", dir := "Syntax"
+    wireIn := "Dataset", wireOut := "String", status := .tested
+    theorems := [``writerProjection_triples_den]
+    tests := ["Dataflow/PhaseCTests.lean round trip #guards (30 seeded datasets, RDF 1.1 and 1.2)"]
+    note := "projection: union of all graphs (writerProjection_triples_den); WriterRoundTrip stated, not proved" },
+  { area := "Writer: TriG (round trip, whole dataset)", dir := "Syntax"
+    wireIn := "Dataset", wireOut := "String", status := .tested
+    theorems := [``writerProjection_dataset]
+    tests := ["Dataflow/PhaseCTests.lean round trip #guards (30 seeded datasets, RDF 1.1 and 1.2)"]
+    note := "no projection: empty named graphs and blank-node graph names kept (writerProjection_dataset); WriterRoundTrip stated, not proved" },
+  { area := "Writer: RDF/XML (round trip on the projection)", dir := "Syntax"
+    wireIn := "Dataset", wireOut := "String", status := .tested
+    theorems := [``writerProjection_triples_den]
+    tests := ["Dataflow/PhaseCTests.lean round trip #guards (30 seeded datasets, RDF 1.1 and 1.2)", "Syntax/RdfXmlWrite.lean #guards"]
+    note := "projection: union of all graphs; domain: no triple term (refused with an error); finding fixed in phase C: base direction was dropped" },
+  { area := "Writer: JSON-LD fromRdf (round trip, whole dataset)", dir := "JSONLD"
+    wireIn := "Dataset", wireOut := "String", status := .tested
+    theorems := [``writerProjection_dataset]
+    tests := ["Dataflow/PhaseCTests.lean round trip #guards (30 seeded datasets, RDF 1.1 and 1.2)", "W3C JSON-LD 1.1 fromRdf (l4jsonld-api)"]
+    note := "domain: no triple term (refused), no directional language string (finding: direction dropped with no error, https://github.com/danbri/factoidal/issues/984)" },
+  { area := "Writer: RDF/JSON (round trip, triples only)", dir := "Syntax"
+    wireIn := "Graph", wireOut := "String", status := .tested
+    tests := ["Dataflow/PhaseCTests.lean round trip #guards (30 seeded datasets, RDF 1.1 and 1.2)", "Syntax/RdfJson.lean #guards"]
+    note := "the union of the graphs; no graph name; triple terms refused" },
+  { area := "Stream writers (Sink.Writer, all syntaxes)", dir := "RDF"
+    wireIn := "quads", wireOut := "String", status := .tested
+    theorems := [``L4Factoidal.RDF.Sink.runList_rdfxml_eq, ``L4Factoidal.RDF.Sink.runList_jsonld_eq]
+    tests := ["Dataflow/PhaseCTests.lean round trip #guards (30 seeded datasets, RDF 1.1 and 1.2) via streamDataset", "tests/sbm11/export_roundtrip.sh"]
+    note := "RDF/XML stream = whole writer for contiguous subjects (runList_rdfxml_eq); JSON-LD elements in order (runList_jsonld_eq); the rest tested" },
   { area := "JSON-LD expansion, compaction, framing", dir := "JSONLD"
     wireIn := "JSON", wireOut := "JSON / Dataset", status := .missing },
   { area := "SBM11 pack (dataset to generation and files)", dir := "Storage"
@@ -238,6 +371,13 @@ def registry : List Entry := [
   { area := "SPARQL query evaluation (reference evaluator)", dir := "SPARQL"
     wireIn := "Query × Dataset", wireOut := "QueryResult", status := .tested
     tests := ["W3C SPARQL 1.1 manifest-all (l4w3c)", "W3C SPARQL 1.2 (l4w3c)"] },
+  { area := "SPARQL FROM default graph (RDF merge of the FROM graphs)", dir := "SPARQL"
+    stage := ``L4Factoidal.SPARQL.FromMerge.fromMergeStage, wireIn := "List Graph", wireOut := "Graph"
+    contract := ``L4Factoidal.SPARQL.FromMerge.FromMergeContract, status := .proved
+    theorems := [``L4Factoidal.SPARQL.FromMerge.fromMerge_isMergeOf,
+      ``L4Factoidal.SPARQL.FromMerge.applyDataset_default_isMergeOf,
+      ``L4Factoidal.SPARQL.FromMerge.isMergeOf_pair]
+    note := "SPARQL 1.1 section 13.2.1; two or more graphs relabelled by docLabel; one graph kept as it is (issue 979)" },
   { area := "SPARQL Update request on the dataset denotation", dir := "SPARQL"
     stage := ``updateStage, wireIn := "Dataset × Update", wireOut := "Dataset"
     contract := ``UpdateContract, status := .proved

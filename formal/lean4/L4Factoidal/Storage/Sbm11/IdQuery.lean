@@ -56,8 +56,13 @@ read as `GRAPH <iri>`; for several, the pattern's scans of each graph are
 concatenated and duplicate triples removed (`scanPatM`; set merge, section
 13.2.2, as `Graph.union` merges); none gives an empty graph. GRAPH reads only
 the FROM NAMED graphs (`Pat.gnames`). A FROM NAMED IRI twice is refused.
-Blank nodes are not renamed apart: the store, like the reference evaluator,
-has one blank node per label across its graphs. Theorems:
+Blank nodes: the store has one blank node per label across its graphs, and
+the reference evaluator relabels two or more FROM graphs apart (section
+13.2.1, RDF merge; `SPARQL.fromMerge`,
+https://github.com/danbri/factoidal/issues/979). So a merged scan whose rows
+hold a blank node (or a triple term) is refused and the query goes to the
+reference evaluator (`tableHoldsBnode`). One FROM graph is read as it is, as
+the reference evaluator reads it. Theorems:
 `IdDatasetTheorems`.
 
 BIND (https://github.com/danbri/factoidal/issues/953, SPARQL 1.1 section
@@ -1631,6 +1636,28 @@ structure Par (m : Type → Type) where
   /-- `streamJobs`: the fewest jobs per thread of the divided streamed path;
       0 or 1: one job per block range -/
   streamPerThread : Nat := streamJobsPerThread
+  /-- Stage 1o of docs/designissues/2026-10-12-parallel-block-scans.md (issue
+      961): start the rendering of the rows of a table in row ranges on other
+      threads and give the action that waits for the rendered rows, one array
+      per range in range order (`renderPartM` of the range). The calling
+      thread computes the ORDER BY permutation while the rows are rendered.
+      A job decodes a query-local id with the query's local vocabulary (the
+      first argument; `Store.withLocal`). Its meaning is
+      `fun vocab t vars ref rs => pure (rs.mapM (renderPartM (st.withLocal vocab) ref t vars))`
+      (`RenderPermTheorems.sortedRender_eq`); `none`: the calling thread
+      renders after the sort. -/
+  renderStart : Option (Array Term → Table → Array String → Bool → List (Nat × Nat) →
+      ExceptT String m (ExceptT String m (List (Array ByteArray)))) := none
+  /-- the fewest rows per range of the rendering beside the sort
+      (`sortedRenderJobs`); 0: never -/
+  sortedRows : Nat := 64
+  /-- Stage 1o: told, before the first scan of a BGP, the scan the join loop
+      will most likely make next (`nextScanHint?`), so that the native driver
+      can start it on idle pool workers while the calling thread makes the
+      first scan; the driver keeps the result and gives it to the store's
+      `scanTable` for that scan. A hint changes no table: in `Id` it is
+      `pure ()` (`BgpTableTheorems.hintScanM_id`). -/
+  scanHint : Option (ScanSpec → m Unit) := none
 
 def ScanSpec.colPos (perm c : Nat) : Nat := if c < 3 then permOrder[perm]![c]! else 3
 
@@ -2514,6 +2541,15 @@ def scanForJoinM {m : Type → Type} [Monad m] (st : Store m) (spec : ScanSpec) 
 
 /-! ## The BGP -/
 
+/-- Does a cell of the table hold a blank node, or a triple term (which may
+    hold one)? The tag of a store id (`TermId`) says it. -/
+def tableHoldsBnode (t : Table) : Bool := Id.run do
+  for c in [0:t.cols.size] do
+    for i in [0:t.rows] do
+      let tag := (t.at c i).toNat / two60
+      if tag == tagBnode || tag == tagTriple then return true
+  return false
+
 /-- The table of one pattern of a BGP: the scan `spec` (`mkSpec t perm
     keep`), with the left values as candidates when `left` is given
     (`scanForJoinM`). Under FROM / FROM NAMED (issue 953, SPARQL 1.1 section
@@ -2556,6 +2592,15 @@ def scanPatM {m : Type → Type} [Monad m] (st : Store m) (t : Pat) (spec : Scan
           | some a => a.append tb
           | none => { tb with sortVar := none })
       let all := acc.getD (Table.empty #[])
+      -- SPARQL 1.1 section 13.2.1: the default graph is the RDF merge of the
+      -- FROM graphs, and the reference evaluator relabels two or more FROM
+      -- graphs apart (`SPARQL.fromMerge`,
+      -- https://github.com/danbri/factoidal/issues/979). The rows here are the
+      -- union over the store's ids, in which a blank node that two graphs share
+      -- is one node. A merged row with no blank node is the same row in the
+      -- merge; a row with one goes to the reference evaluator.
+      if tableHoldsBnode all then
+        throw "refused: a blank node in the RDF merge of two or more FROM graphs (the reference evaluator relabels the graphs apart, SPARQL 1.1 section 13.2.1)"
       let d := IdJoin.distinctRows all
       return (IdJoin.keepVars d keep, total, s!"; FROM: the RDF merge of {t.merge.size} graphs, {all.rows} rows, {d.rows} distinct triples")
 
@@ -2697,6 +2742,37 @@ def bgpStepM {m : Type → Type} [Monad m] (st : Store m) (pats : Array Pat) (ke
                   lines := s.lines.push s!"pattern {next}: {permNames[perm]!} key {spec.key.size} estimate {ests[next]!}; blocks {sc.blocksRead} read of {sc.blocksSelected} selected of {sc.blocksTotal}, frames {sc.framesRead}, {sc.bytesRead} bytes; rows {rt.rows}{sipNote}; {how}: {joined.rows} rows",
                   total := s.total.add sc, tab := joined }
 
+/-- The scan the join loop of `evalBgpM` makes after the first scan of the
+    plain pattern `first` (`spec0`), as `bgpStepM` chooses it from the
+    estimates (`pickNext`, `mergeVarOf`, `stepPerm`), when that pattern is plain
+    and the scan takes no candidates with the first scan's estimate as its
+    left rows (`sipRule`); else none. The join loop decides with the first
+    scan's rows, so the hint can name a scan that is not made: it is only a
+    hint (`Par.scanHint`). -/
+def nextScanHint? (sipFactor : Option Nat) (pats : Array Pat) (keep : String → Bool) (ests : Array Nat)
+    (first : Nat) (spec0 : ScanSpec) : Option ScanSpec :=
+  let rem := (List.range pats.size).toArray.filter (· != first)
+  if rem.isEmpty || !pats[first]!.plain then none
+  else
+    let tab : Table := { Table.empty spec0.outVars with sortVar := sortVarOf spec0 }
+    let next := pickNext ests pats rem tab
+    let t := pats[next]!
+    if !t.plain then none
+    else
+      let spec := mkSpec t (stepPerm t pats (mergeVarOf tab t)) keep
+      match sortVarOf spec with
+      | some v => if tab.vars.contains v && sipRule sipFactor ests[first]! ests[next]! then none else some spec
+      | none => some spec
+
+/-- Give the hint `s` to `par` (`Par.scanHint`). -/
+def hintScanM {m : Type → Type} [Monad m] (par : Option (Par m)) (s : Option ScanSpec) : ExceptT String m Unit :=
+  match par, s with
+  | some p, some sp =>
+    match p.scanHint with
+    | some h => ExceptT.lift (h sp)
+    | none => pure ()
+  | _, _ => pure ()
+
 /-- Evaluate a BGP over ids (the join rules of `Qlvr.evalBgpM`, with the four
     SBM11 permutations). `need v`: the query reads `v` after the BGP. `pref`:
     a variable to sort the first scan on when that pattern has it (the join
@@ -2722,6 +2798,9 @@ def evalBgpM {m : Type → Type} [Monad m] (st : Store m) (pats : Array Pat) (ne
     | some q => some q
     | none => bestSortPos t0 pats
   let spec0 := mkSpec t0 (permFor t0 sortPos0) keep
+  -- stage 1o: the next scan may start now on idle workers (a hint; no
+  -- hint for an OPTIONAL group's scans, whose first scan takes candidates)
+  hintScanM par (if par.isNone || left0.isSome then none else nextScanHint? st.sipFactor pats keep ests first spec0)
   -- an OPTIONAL group's first scan takes the left table's join values as
   -- candidates (issue 809)
   let (tab0, st0, sip0) ← scanPatM st t0 spec0 keep left0 ests[first]!
@@ -3766,6 +3845,30 @@ def appendIdJsonM {m : Type → Type} [Monad m] (st : Store m) (reference : Bool
   let t ← st.termOf x
   return out ++ (L4Factoidal.SPARQL.jsonOfTerm t).toString.toUTF8
 
+/-- The columns of `t` that the variables `vars` name: `(k, c)` for variable
+    `k` and its column `c`. -/
+def renderCols (t : Table) (vars : Array String) : Array (Nat × Nat) :=
+  (List.range vars.size).toArray.filterMap fun k => (t.idx vars[k]!).map fun c => (k, c)
+
+/-- The binding of column `kc = (k, c)` of row `i` appended to `out` (a
+    binding object being written): nothing when the id is
+    `OptJoin.unbound`, else a comma unless the object is still empty (its
+    last byte is `{`), the name `names[k]` and the id's JSON. -/
+@[inline] def colIntoM {m : Type → Type} [Monad m] (st : Store m) (reference : Bool) (t : Table)
+    (names : Array ByteArray) (i : Nat) (out : ByteArray) (kc : Nat × Nat) : ExceptT String m ByteArray :=
+  let x := t.at kc.2 i
+  if x != OptJoin.unbound then
+    let out := if out.get! (out.size - 1) != 123 then out.push 44 else out
+    appendIdJsonM st reference x (out ++ names[kc.1]!)
+  else pure out
+
+/-- The binding object of row `i` of `t` appended to `out`. -/
+@[inline] def rowIntoM {m : Type → Type} [Monad m] (st : Store m) (reference : Bool) (t : Table)
+    (names : Array ByteArray) (cols : Array (Nat × Nat)) (i : Nat) (out : ByteArray) :
+    ExceptT String m ByteArray := do
+  let out ← cols.foldlM (colIntoM st reference t names i) (out.push 123)
+  return out.push 125
+
 /-- Rows `[lo, hi)` of `t` as comma-separated binding objects (`first`: no
     comma before the first). Variables without a column, and a column's
     `OptJoin.unbound` ids (after an OPTIONAL), are unbound and left out
@@ -3774,8 +3877,7 @@ def appendIdJsonM {m : Type → Type} [Monad m] (st : Store m) (reference : Bool
 def renderRowsM {m : Type → Type} [Monad m] (st : Store m) (reference : Bool) (t : Table)
     (vars : Array String) (lo hi : Nat) (first : Bool) : ExceptT String m ByteArray := do
   let names := nameBytes vars
-  let cols : Array (Nat × Nat) := (List.range vars.size).toArray.filterMap fun k =>
-    (t.idx vars[k]!).map fun c => (k, c)
+  let cols := renderCols t vars
   let mut out := ByteArray.emptyWithCapacity (64 * (hi - lo))
   for i in [lo:hi] do
     if !(first && i == lo) then out := out.push 44
@@ -4546,6 +4648,17 @@ def resolveExtrasM {m : Type → Type} [Monad m] (st : Store m) (plan : Plan) (e
   let (rpaths, vocab, _, plines) ← resolvePathsM st plan vocab localIdx
   return (vtabs, btabs, st.withLocal vocab, lines ++ plines, s, rpaths)
 
+/-- `resolveExtrasM` and the query-local vocabulary of the store it gives
+    (`Store.withLocal`): a job that renders rows on another thread decodes a
+    query-local id with it (stage 1o). -/
+def resolveExtrasVocabM {m : Type → Type} [Monad m] (st : Store m) (plan : Plan) (env : EvalEnv) :
+    ExceptT String m (Array Table × Array Table × Store m × Array String × ScanStats × Array RPath × Array Term) := do
+  let (vtabs, vocab, localIdx) ← resolveValuesVocabM st plan.values #[] {}
+  let (btabs, vocab, localIdx, lines, s) ← if plan.binds.isEmpty then pure (#[], vocab, localIdx, #[], {})
+    else evalBindsM st plan env vocab localIdx
+  let (rpaths, vocab, _, plines) ← resolvePathsM st plan vocab localIdx
+  return (vtabs, btabs, st.withLocal vocab, lines ++ plines, s, rpaths, vocab)
+
 /-- Per row of `l`, whether some row of `r` is compatible with it: in every
     column the two tables share, the ids are equal or one is
     `OptJoin.unbound` (https://github.com/danbri/factoidal/issues/956; the
@@ -4913,8 +5026,7 @@ def divideFor? {m : Type → Type} [Monad m] (st : Store m) (par : Option (Par m
 def renderRowsEndsM {m : Type → Type} [Monad m] (st : Store m) (reference : Bool) (t : Table)
     (vars : Array String) (lo hi : Nat) (rowBytes : Nat := 64) : ExceptT String m (ByteArray × Array Nat) := do
   let names := nameBytes vars
-  let cols : Array (Nat × Nat) := (List.range vars.size).toArray.filterMap fun k =>
-    (t.idx vars[k]!).map fun c => (k, c)
+  let cols := renderCols t vars
   let mut out := ByteArray.emptyWithCapacity (rowBytes * (hi - lo))
   let mut ends : Array Nat := Array.mkEmpty (hi - lo)
   for i in [lo:hi] do
@@ -4930,6 +5042,43 @@ def renderRowsEndsM {m : Type → Type} [Monad m] (st : Store m) (reference : Bo
     out := out.push 125
     ends := ends.push out.size
   return (out, ends)
+
+/-- Rows `[lo, hi)` of `t`, each as its own buffer: a comma and its binding
+    object (the text `renderRowsM` writes for a row after the first). -/
+def renderRowsListM {m : Type → Type} [Monad m] (st : Store m) (reference : Bool) (t : Table)
+    (vars : Array String) (lo hi : Nat) : ExceptT String m (Array ByteArray) := do
+  let names := nameBytes vars
+  let cols := renderCols t vars
+  let mut rows : Array ByteArray := Array.mkEmpty (hi - lo)
+  for i in [lo:hi] do
+    rows := rows.push (← rowIntoM st reference t names cols i ((ByteArray.emptyWithCapacity 192).push 44))
+  return rows
+
+/-- The rows of range `r` of `t` (`renderRowsListM` of the rows of
+    `t.slice r.1 r.2`): one job of the rendering beside the ORDER BY sort
+    (stage 1o, `Par.renderStart`). -/
+def renderPartM {m : Type → Type} [Monad m] (st : Store m) (reference : Bool) (t : Table)
+    (vars : Array String) (r : Nat × Nat) : ExceptT String m (Array ByteArray) :=
+  let part := t.slice r.1 r.2
+  renderRowsListM st reference part vars 0 part.rows
+
+/-- The words of `xs`, 8 bytes each, in one buffer (stage 1o): the
+    candidates of a divided scan with candidates go to each job this way.
+    An `Array UInt64` holds one object per word; a job that copied the
+    calling thread's array read 312 objects scattered in the calling thread's
+    cache (olympics q07, 40 to 60 microseconds per job), and the buffer is
+    39 cache lines. `RenderPermTheorems.unpackWords_packWords`: the job's
+    words are `xs`. -/
+def packWords (xs : Array UInt64) : ByteArray :=
+  xs.foldl (fun b x => L4Factoidal.Qlvr.Side.put64 b x) (ByteArray.emptyWithCapacity (8 * xs.size))
+
+/-- The first `n` words of `b` (8 bytes each), as a new array made by the
+    calling thread. -/
+def unpackWords (b : ByteArray) (n : Nat) : Array UInt64 := Id.run do
+  let mut out : Array UInt64 := Array.mkEmpty n
+  for k in [0:n] do
+    out := out.push (L4Factoidal.Codec.Zstd.word64 b (8 * k))
+  return out
 
 /-- A new string object equal to `s` (`freshStr_eq`), made by the calling
     thread. `s ++ ""` is not one: the compiler emits `s` itself for it (and for
@@ -5160,6 +5309,11 @@ def topPartM {m : Type → Type} [Monad m] (st : Store m) (plan : Plan) (spec : 
   let perm ← orderPermM st plan t (some k)
   return (t.reorder perm, s)
 
+/-- `n` consecutive ranges of about equal size that cover `[0, rows)`
+    (`RenderPermTheorems.rowRanges_cover`). -/
+def rowRanges (rows n : Nat) : List (Nat × Nat) :=
+  (List.range n).map fun j => (rows * j / n, rows * (j + 1) / n)
+
 /-- The row ranges in which the workers of `par` render the `rows` rows of a
     finished table (after ORDER BY, DISTINCT, OFFSET, LIMIT, or the groups of
     an aggregate): at most two per thread, at least `renderJobRows` rows
@@ -5175,6 +5329,37 @@ def renderJobs {m : Type → Type} (par : Option (Par m)) (rows : Nat) : List (N
     if p.threads ≤ 1 || n < 2 then []
     else (List.range n).map fun j => (rows * j / n, rows * (j + 1) / n)
 
+/-- The row ranges in which other threads render the rows of a table while
+    the calling thread computes its ORDER BY permutation (stage 1o): when
+    `par` can start a rendering (`Par.renderStart`), the plan orders the rows
+    and keeps them all (ORDER BY, no DISTINCT, no OFFSET, no LIMIT), and the
+    table has at least `Par.sortedRows` rows (64 by default); at most
+    `threads - 1` ranges (the calling thread sorts), at least that many rows each,
+    consecutive, covering `[0, rows)`. Else none. -/
+def sortedRenderJobs {m : Type → Type} (par : Option (Par m)) (plan : Plan) (rows : Nat) :
+    List (Nat × Nat) :=
+  match par with
+  | none => []
+  | some p =>
+    if p.renderStart.isNone || p.threads ≤ 1 || p.sortedRows == 0 || plan.order.isEmpty || plan.distinct ||
+        plan.limit.isSome || plan.offset != 0 || rows < p.sortedRows || rows == 0 then []
+    else
+      rowRanges rows (max 1 (min (p.threads - 1) (rows / p.sortedRows)))
+
+/-- The rendered rows of consecutive ranges that cover the rows of a table
+    (`renderPartM`, in range order; each row's text starts with its comma),
+    written in the order `perm` with no comma before the first: the text
+    `renderRowsM` writes for all rows of `t.reorder perm`
+    (`RenderPermTheorems.sortedRender_eq`). -/
+def assembleRows (pieces : List (Array ByteArray)) (perm : Array Nat) : ByteArray := Id.run do
+  let all := pieces.foldl (· ++ ·) #[]
+  let total := all.foldl (fun a b => a + b.size) 0
+  let mut out := ByteArray.emptyWithCapacity total
+  for k in [0:perm.size] do
+    let b := all[perm[k]!]!
+    out := if k == 0 then b.copySlice 1 out out.size (b.size - 1) false else out ++ b
+  return out
+
 /-- Run a plan. `emit` receives the SPARQL JSON text in pieces. `par`: divide
     the single-pattern paths into block ranges (stage 1b); `none` is the
     single-thread path. -/
@@ -5183,7 +5368,7 @@ def runPlanM {m : Type → Type} [Monad m] (st : Store m) (plan : Plan) (emit : 
     ExceptT String m RunStats := do
   -- the VALUES blocks as id tables and the rows of the BIND blocks; the
   -- store then decodes their local ids
-  let (vtabs, btabs, st, xlines, xs, rpaths) ← resolveExtrasM st plan env
+  let (vtabs, btabs, st, xlines, xs, rpaths, vocab) ← resolveExtrasVocabM st plan env
   let pats ← plan.pats.mapM (resolvePatIn st plan.dataset)
   let fs := (← plan.filters.mapM (compileFilter st)) ++ plan.residuals.map (residualKind env)
   let memos0 : Array Memo := fs.map fun _ => {}
@@ -5324,26 +5509,42 @@ def runPlanM {m : Type → Type} [Monad m] (st : Store m) (plan : Plan) (emit : 
       else table := t1
     st.markM "bgp+filters"
     (emit (jsonHead plan.outVars).toUTF8 : m Unit)
-    let out ← finishM st plan table
-    st.markM "finish"
-    match par, renderJobs par out.rows with
-    | some p, jobs@(_ :: _ :: _) =>
-      -- stage 1j: the rows divided into ranges that the workers render
-      -- (`renderRowsEndsM`); the parent writes them in range order, the
-      -- comma before the first row left out (`emitPieceM` with no OFFSET and
-      -- no LIMIT), the text `renderRowsM` writes for all the rows
-      let _ ← p.fold false (fun v (r : Nat × Nat) => do
-          let piece ← renderRowsEndsM v reference out plan.outVars r.1 r.2
-          pure #[piece]) jobs
-        ((0 : Nat), (0 : Nat)) fun acc pieces => pieces.foldlM (emitPieceM emit 0 out.rows) acc
+    match par, sortedRenderJobs par plan table.rows with
+    | some p, jobs@(_ :: _) =>
+      match p.renderStart with
+      | some start =>
+        -- stage 1o: the rows rendered on other threads while this thread
+        -- computes the order (`finishM` with ORDER BY only is
+        -- `table.reorder perm`), then written in that order
+        let wait ← start vocab table plan.outVars reference jobs
+        let perm ← orderPermM st plan table none
+        st.markM "finish"
+        let pieces ← wait
+        if perm.size > 0 then (emit (assembleRows pieces perm) : m Unit)
+        stats := { stats with rows := perm.size }
+      | none => throw "internal: a rendering beside the sort without Par.renderStart"
     | _, _ =>
-      let pieces := (out.rows + 4095) / 4096
-      for k in [0:pieces] do
-        let lo := 4096 * k
-        let hi := min out.rows (lo + 4096)
-        let bytes ← renderRowsM st reference out plan.outVars lo hi (lo == 0)
-        (emit bytes : m Unit)
-    stats := { stats with rows := out.rows }
+      let out ← finishM st plan table
+      st.markM "finish"
+      match par, renderJobs par out.rows with
+      | some p, jobs@(_ :: _ :: _) =>
+        -- stage 1j: the rows divided into ranges that the workers render
+        -- (`renderRowsEndsM`); the parent writes them in range order, the
+        -- comma before the first row left out (`emitPieceM` with no OFFSET and
+        -- no LIMIT), the text `renderRowsM` writes for all the rows
+        -- a job's store decodes the query-local ids (`Store.withLocal`)
+        let _ ← p.fold false (fun v (r : Nat × Nat) => do
+            let piece ← renderRowsEndsM (v.withLocal vocab) reference out plan.outVars r.1 r.2
+            pure #[piece]) jobs
+          ((0 : Nat), (0 : Nat)) fun acc pieces => pieces.foldlM (emitPieceM emit 0 out.rows) acc
+      | _, _ =>
+        let pieces := (out.rows + 4095) / 4096
+        for k in [0:pieces] do
+          let lo := 4096 * k
+          let hi := min out.rows (lo + 4096)
+          let bytes ← renderRowsM st reference out plan.outVars lo hi (lo == 0)
+          (emit bytes : m Unit)
+      stats := { stats with rows := out.rows }
     st.markM "render"
   (emit jsonTail.toUTF8 : m Unit)
   let t := stats.scan

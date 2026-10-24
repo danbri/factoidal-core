@@ -36,6 +36,8 @@ import L4Factoidal.Dataflow.PhaseD
 import L4Factoidal.Dataflow.PhaseDTests
 import L4Factoidal.Dataflow.PhaseE
 import L4Factoidal.Dataflow.PhaseETests
+import L4Factoidal.Dataflow.PhaseC
+import L4Factoidal.Dataflow.PhaseCTests
 import L4Factoidal.Dataflow.Registry
 import L4Factoidal.Dataflow.RegistryTests
 import L4Factoidal.RDF.ConciseBoundedDescription
@@ -107,6 +109,8 @@ import L4Factoidal.SPARQL.ExprRefinement
 import L4Factoidal.SPARQL.Query
 import L4Factoidal.SPARQL.Exists
 import L4Factoidal.SPARQL.QueryTheorems
+import L4Factoidal.SPARQL.FromMerge
+import L4Factoidal.SPARQL.FromMergeStage
 import L4Factoidal.SPARQL.GroupFastTheorems
 import L4Factoidal.SPARQL.QueryTests
 import L4Factoidal.SPARQL.OptionalFilterScope
@@ -515,6 +519,7 @@ import L4Factoidal.Storage.Sbm11.OrderKey
 import L4Factoidal.Storage.Sbm11.OrderKeyTheorems
 import L4Factoidal.Storage.Sbm11.ParallelScanTheorems
 import L4Factoidal.Storage.Sbm11.ParallelSipTheorems
+import L4Factoidal.Storage.Sbm11.RenderPermTheorems
 import L4Factoidal.Storage.Sbm11.ParallelMergeTheorems
 import L4Factoidal.Storage.Sbm11.ParallelJoinTheorems
 import L4Factoidal.Storage.Sbm11.WorkerPoolTheorems

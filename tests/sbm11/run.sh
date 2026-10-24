@@ -51,9 +51,14 @@
 #                graph by its name, not by its triples). Then the same for
 #                tests/sbm11/xmlliteral/data.nq (two rdf:XMLLiteral literals
 #                with one canonical XML: two RDF terms, issue 963) and its
-#                check.sh, which also fixes the row counts.
+#                check.sh, which also fixes the row counts. Then the same for
+#                tests/sbm11/frommerge/data.nq (FROM with two graphs that
+#                share a blank node label is an RDF merge, issue 979) and its
+#                check.sh, which fixes the paths and the answers.
 #   (z) orderkey tests/sbm11/orderkeys/data.nq packed and activated; each
 #                tests/sbm11/orderkeys/*.rq answered on ids at 1 and 4 threads
+#                (and at 4 threads with every ORDER BY result rendered by pool
+#                workers beside the sort, stage 1o)
 #                and by `l4factoidal query`, equal row by row IN ORDER
 #                (compare_answers.py ordered): ORDER BY on dictionary keys for
 #                unbound values, blank nodes, IRIs, rdf:langString and
@@ -398,6 +403,13 @@ gate_part "$HERE/xmlliteral/data.nq" "$HERE/xmlliteral" "$TMP/gate-xmlliteral"
 xrc=0; xout="$("$HERE/xmlliteral/check.sh" 2>&1)" || xrc=$?
 if [ "$xrc" -eq 0 ]; then record gate xmlliteral-check 0 "$(printf '%s' "$xout" | tr '\n' ' ')"
 else record gate xmlliteral-check 1 "exit $xrc: $(printf '%s' "$xout" | tr '\n' ' ')"; fi
+# FROM with two or more graphs is an RDF merge (SPARQL 1.1 section 13.2.1,
+# https://github.com/danbri/factoidal/issues/979): both paths, with the paths
+# and the answers of tests/sbm11/frommerge/check.sh.
+gate_part "$HERE/frommerge/data.nq" "$HERE/frommerge" "$TMP/gate-frommerge"
+frc=0; fout="$("$HERE/frommerge/check.sh" 2>&1)" || frc=$?
+if [ "$frc" -eq 0 ]; then record gate frommerge-check 0 "$(printf '%s' "$fout" | tr '\n' ' ')"
+else record gate frommerge-check 1 "exit $frc: $(printf '%s' "$fout" | tr '\n' ' ')"; fi
 
 echo "=== (z) ORDER BY on dictionary keys, in order, against l4factoidal (issue 961)"
 # tests/sbm11/orderkeys/data.nq: unbound values, a blank node, IRIs,
@@ -414,9 +426,12 @@ if [ "$okrc" -ne 0 ]; then record orderkey pack-activate 1 "exit $okrc"
 else
   for rq in "$HERE"/orderkeys/*.rq; do
     n="$(basename "$rq" .rq)"
-    for th in 1 4; do
+    for th in 1 4 4s; do
       rc=0
-      timeout 120 "$BIN/l4sbm11" query "$OK" --file "$rq" --threads "$th" >"$TMP/ok-$n.got" 2>"$TMP/ok-$n.err" || rc=$?
+      # 4s: 4 threads with every ORDER BY result rendered on pool workers
+      # beside the sort (stage 1o; by default only results of 64 rows or more)
+      sr=64; [ "$th" = 4s ] && sr=1
+      SBM11_SORTED_RENDER_ROWS=$sr timeout 120 "$BIN/l4sbm11" query "$OK" --file "$rq" --threads "${th%s}" >"$TMP/ok-$n.got" 2>"$TMP/ok-$n.err" || rc=$?
       if [ "$rc" -ne 0 ]; then record orderkey "$n/$th" 1 "exit $rc: $(tail -1 "$TMP/ok-$n.err")"; continue; fi
       rrc=0
       timeout 120 "$BIN/l4factoidal" query "$HERE/orderkeys/data.nq" --format nquads --query "$rq" \

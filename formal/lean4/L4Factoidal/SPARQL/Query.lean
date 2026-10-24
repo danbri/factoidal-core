@@ -87,6 +87,9 @@ import L4Factoidal.SPARQL.OrderedPrefix
 -- `ExistsIndex`: the indexed §18.6 EXISTS test for a BGP body that the
 -- `.filter` lowering uses (https://github.com/danbri/factoidal/issues/881).
 import L4Factoidal.SPARQL.ExistsIndex
+-- `DocumentScope`: `docLabel`, the labels that rename the FROM graphs apart
+-- (https://github.com/danbri/factoidal/issues/979).
+import L4Factoidal.RDF.DocumentScope
 
 namespace L4Factoidal.SPARQL
 
@@ -2804,20 +2807,72 @@ def EvalEnv.activeGraph (env : EvalEnv) : Graph :=
   | some ds => ds.default
   | none    => Graph.empty
 
-/-! ## §13.2 FROM / FROM NAMED -/
+/-! ## §13.2 FROM / FROM NAMED
+
+SPARQL 1.1 Query section 13.2: "The dataset resulting from a number of FROM
+and FROM NAMED clauses is: a default graph consisting of the RDF merge of the
+graphs referred to in the FROM clauses, and a set of (IRI, graph) pairs, one
+from each FROM NAMED clause." Section 13.2.1: "If a query provides more than
+one FROM clause, providing more than one IRI to indicate the default graph,
+then the default graph is the RDF merge of the graphs obtained from
+representations of the resources identified by the given IRIs."
+
+RDF 1.1 Semantics section 5.2: the merge of a set of graphs that share blank
+nodes is "the union of a set of graphs that is obtained by replacing the graphs
+in the set by equivalent graphs that share no blank nodes". So with two or more
+FROM graphs, graph number `k` (in clause order, each IRI once) is relabelled by
+`docLabel k` before the union (`fromMerge`). Two FROM graphs that both hold
+`_:b0` then hold two blank nodes. Until 2026-10-24 the graphs were combined by
+`Graph.union` with no relabelling, which is the union and not the merge
+(https://github.com/danbri/factoidal/issues/979).
+
+* One FROM graph: the merge of one graph is the graph (an isomorphic copy; the
+  identity is chosen). Its blank nodes stay the blank nodes of the store.
+* The same IRI in two FROM clauses names one graph: the merge is of the set of
+  graphs referred to (`fromIris`).
+* FROM NAMED graphs keep their own graphs and labels (section 13.2.2: "Each IRI
+  is used to provide one named graph in the RDF Dataset"). Section 13.1: "The
+  definition of RDF Dataset does not restrict the relationships of named and
+  default graphs." So the relation between the blank nodes of the merged
+  default graph and those of a FROM NAMED graph of the same store is not fixed
+  by the specification. With one FROM graph they are shared; with two or more
+  they are not (the relabelled default graph). The W3C tests dataset-09b,
+  dataset-10b and graph-10b give the FROM and the FROM NAMED graph from two
+  different documents (`data-g3-dup.ttl`, `data-g3.ttl`), whose blank nodes
+  are different because RDF 1.1 Concepts section 3.4 scopes blank node
+  identifiers to the document; the W3C harness scopes each fixture file
+  (`Harness/Run.lean`, `addDataFile`, `addGraphFile`).
+
+The theorem: `SPARQL.FromMerge.applyDataset_default_isMergeOf`
+(`SPARQL/FromMerge.lean`). -/
+
+/-- The IRIs of the FROM clauses, in clause order, each IRI once. -/
+def fromIris (dcs : List DatasetClause) : List WfIri :=
+  (dcs.foldl (fun acc dc =>
+    match dc with
+    | .default i => if acc.any (·.val == i.val) then acc else i :: acc
+    | .named _   => acc) []).reverse
+
+/-- Graph number `n`, `n + 1`, ... of a list, each relabelled by its
+`docLabel`. -/
+def scopeFromGraphs : Nat → List Graph → List Graph
+  | _, []      => []
+  | n, g :: gs => g.renameBnodes (docLabel n) :: scopeFromGraphs (n + 1) gs
+
+/-- The RDF merge of the FROM graphs (section 13.2.1): the union of the
+graphs, each relabelled by its position when there are two or more. -/
+def fromMerge (gs : List Graph) : Graph :=
+  (if gs.length ≤ 1 then gs else scopeFromGraphs 0 gs).foldl Graph.union Graph.empty
 
 /-- Apply the query's dataset clauses. With no clause the dataset is
-untouched; otherwise `FROM` graphs merge into a new default graph and
-`FROM NAMED` graphs become the named ones (port of
+untouched; otherwise the default graph is the RDF merge of the `FROM` graphs
+(`fromMerge`) and the `FROM NAMED` graphs become the named ones (port of
 `apply_query_dataset`). -/
 def applyDataset (dcs : List DatasetClause) (ds : Dataset) (active : Graph) :
     Dataset × Graph :=
   if dcs.isEmpty then (ds, active)
   else
-    let defaults := dcs.filterMap (fun dc =>
-      match dc with
-      | .default i => ds.lookupNamedIri i.val
-      | .named _   => none)
+    let defaults := (fromIris dcs).filterMap (fun i => ds.lookupNamedIri i.val)
     let named := dcs.filterMap (fun dc =>
       match dc with
       -- §13.2: a `FROM NAMED` clause carries an IRI, so the graph it
@@ -2825,7 +2880,7 @@ def applyDataset (dcs : List DatasetClause) (ds : Dataset) (active : Graph) :
       | .named i => (ds.lookupNamedIri i.val).map (fun g =>
           ({ name := .iri i, graph := g } : NamedGraph))
       | .default _ => none)
-    let newDefault := defaults.foldl Graph.union Graph.empty
+    let newDefault := fromMerge defaults
     ({ default := newDefault, named := named }, newDefault)
 
 
