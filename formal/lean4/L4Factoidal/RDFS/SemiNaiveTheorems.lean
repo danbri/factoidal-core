@@ -153,7 +153,7 @@ theorem rdfs3For_additive : RowAdditive rdfs3For := by
 theorem rdfs9For_additive : RowAdditive rdfs9For := by
   intro G d t
   obtain ⟨ds, dp, dob⟩ := d
-  cases dob <;> simp [rdfs9For, objectsOf, and_assoc]
+  cases dob <;> simp [rdfs9For, Term.toSubject?, objectsOf, and_assoc]
   all_goals first
     | rfl
     | exact ⟨fun ⟨hA, a, ha, h⟩ => ⟨a, ha, hA, h⟩, fun ⟨a, ha, hA, h⟩ => ⟨hA, a, ha, h⟩⟩

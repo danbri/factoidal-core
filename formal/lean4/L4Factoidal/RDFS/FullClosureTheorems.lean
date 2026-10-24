@@ -73,7 +73,7 @@ theorem Derives.toFull {ax g : Graph} {t : Triple} (h : Derives g t) :
   | rdfs3 _ _ hs ih1 ih2 => exact DerivesFull.rdfs3 ih1 ih2 hs
   | rdfs5 _ hs _ ih1 ih2 => exact DerivesFull.rdfs5 ih1 hs ih2
   | rdfs7 _ _ ih1 ih2 => exact DerivesFull.rdfs7 ih1 ih2
-  | rdfs9 _ _ ih1 ih2 => exact DerivesFull.rdfs9 ih1 ih2
+  | rdfs9 _ hs _ ih1 ih2 => exact DerivesFull.rdfs9 ih1 hs ih2
   | rdfs11 _ hs _ ih1 ih2 => exact DerivesFull.rdfs11 ih1 hs ih2
 
 /-! ## Section 2 — structural properties -/
@@ -93,7 +93,7 @@ theorem DerivesFull.mono {ax g g' : Graph} (hsub : ∀ u, u ∈ g → u ∈ g')
   | rdfs6 _ ih => exact DerivesFull.rdfs6 ih
   | rdfs7 _ _ ih1 ih2 => exact DerivesFull.rdfs7 ih1 ih2
   | rdfs8 _ ih => exact DerivesFull.rdfs8 ih
-  | rdfs9 _ _ ih1 ih2 => exact DerivesFull.rdfs9 ih1 ih2
+  | rdfs9 _ hs _ ih1 ih2 => exact DerivesFull.rdfs9 ih1 hs ih2
   | rdfs10 _ ih => exact DerivesFull.rdfs10 ih
   | rdfs11 _ hs _ ih1 ih2 => exact DerivesFull.rdfs11 ih1 hs ih2
   | rdfs12 _ ih => exact DerivesFull.rdfs12 ih
@@ -114,7 +114,7 @@ theorem DerivesFull.cut {ax g g' : Graph} (hall : ∀ u, u ∈ g' → DerivesFul
   | rdfs6 _ ih => exact DerivesFull.rdfs6 ih
   | rdfs7 _ _ ih1 ih2 => exact DerivesFull.rdfs7 ih1 ih2
   | rdfs8 _ ih => exact DerivesFull.rdfs8 ih
-  | rdfs9 _ _ ih1 ih2 => exact DerivesFull.rdfs9 ih1 ih2
+  | rdfs9 _ hs _ ih1 ih2 => exact DerivesFull.rdfs9 ih1 hs ih2
   | rdfs10 _ ih => exact DerivesFull.rdfs10 ih
   | rdfs11 _ hs _ ih1 ih2 => exact DerivesFull.rdfs11 ih1 hs ih2
   | rdfs12 _ ih => exact DerivesFull.rdfs12 ih
@@ -566,7 +566,7 @@ theorem fullComplete_of_saturated {ax c : Graph} (hsat : fullStep c = c)
           rdfs8For ⟨x, rdfType, Term.iri rdfsClass⟩ := by
         simp [rdfs8For, typedAs]
       exact fire (mem_fullStepConclusions_rdfs8 hu1 hconcl)
-  | @rdfs9 s a b _ _ ih1 ih2 =>
+  | @rdfs9 s x a b _ hsub _ ih1 ih2 =>
       obtain ⟨u1, hu1, he1⟩ := exists_of_graphMem ih1
       obtain ⟨u2, hu2, he2⟩ := exists_of_graphMem ih2
       obtain ⟨a1, b1, c1⟩ := u1
@@ -574,11 +574,12 @@ theorem fullComplete_of_saturated {ax c : Graph} (hsat : fullStep c = c)
       obtain ⟨hs1, hp1, ho1⟩ := Triple.eqb_parts he1
       obtain ⟨hs2, hp2, ho2⟩ := Triple.eqb_parts he2
       simp only at hs1 hp1 ho1 hs2 hp2 ho2
-      have hc1 : c1 = Term.iri a := Term.eqb_iri ho1
-      subst hp1; subst hc1; subst hs2; subst hp2
+      subst hp1; subst hs2; subst hp2
+      have hc1 : c1 = x := Term.eqb_eq_of_toSubject ho1 hsub
+      subst hc1
       have hconcl : (⟨a1, rdfType, c2⟩ : Triple) ∈
-          rdfs9For c ⟨a1, rdfType, Term.iri a⟩ := by
-        simp only [rdfs9For, beq_self_eq_true, if_true, List.mem_map]
+          rdfs9For c ⟨a1, rdfType, c1⟩ := by
+        simp only [rdfs9For, beq_self_eq_true, if_true, hsub, List.mem_map]
         exact ⟨c2, mem_objectsOf_of_mem hu2, rfl⟩
       exact graphMem_of_graphMem_eqb
         (fireCore (mem_stepConclusions_rdfs9 hu1 hconcl))

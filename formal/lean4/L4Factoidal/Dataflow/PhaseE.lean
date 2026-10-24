@@ -54,10 +54,6 @@ its digest.
   the W3C RDFC-1.0 suite tests it.
 * The RDFS witness of the empty-input example uses rdfs2 over two axioms, not
   rdfD2 (`PhaseETests.lean` pins both chains).
-* `DerivesFull.rdfs9` takes the class as an IRI: with a blank-node class
-  (`ex:alice rdf:type _:c . _:c rdfs:subClassOf ex:Person .`) the closure does
-  not hold `ex:alice rdf:type ex:Person`. RDF 1.1 Semantics 9.2 has no such
-  restriction (a completeness gap; soundness is not affected).
 * No theorem uses collision resistance of a hash. A reader who resolves a
   body-less source reference by its digest relies on it; that is not stated.
 
