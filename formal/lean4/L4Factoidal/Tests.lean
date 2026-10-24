@@ -131,12 +131,14 @@ def qClaim : Bgp :=
 
 /-! ### Literal-equality edge cases the F* source pins -/
 
--- Language tags compare case-insensitively under engine equality...
+-- Language tags compare case-insensitively (RDF 1.2 Concepts §3.4), and
+-- the two spellings are one term with one representation: the constructor
+-- writes the tag in lower case, so strict term equality agrees (issue 1001).
 def lEN   : Literal := (Literal.langString "chat" "EN").val
 def lEnLc : Literal := (Literal.langString "chat" "en").val
 #guard lEN.eqb lEnLc == true
--- ...but strict TERM equality (RDF 1.1 Concepts §3.3) distinguishes them.
-#guard lEN.termEq lEnLc == false
+#guard lEN.termEq lEnLc == true
+#guard lEN.langTag == some "en"
 
 -- rdf:XMLLiteral: attribute order is c14n-insignificant, so these are
 -- the SAME value (`valueEqb`, WebOnt-miscellaneous-202) but two different

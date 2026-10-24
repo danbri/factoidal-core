@@ -118,7 +118,7 @@ theorem decodeAtom?_literalKey? (l : WfLiteral) (k : Key) (h : literalKey? l.val
       by_cases ht : tagAdmitted t = true
       · simp only [ht, if_true, Option.some.injEq] at h
         subst h
-        have hdt : dt = rdfLangString := Subtype.ext (by simpa [literalWf] using hw)
+        have hdt : dt = rdfLangString := Subtype.ext (by simp [literalWf] at hw; exact hw.1)
         subst hdt
         simp [decodeAtom?, classLang, classBnode, classIri, classString, decodeLang?,
           splitLast_append _ _ (tagAdmitted_noZero ht), stringOfBytes?_bytesOfString, ht, hself]
@@ -128,7 +128,7 @@ theorem decodeAtom?_literalKey? (l : WfLiteral) (k : Key) (h : literalKey? l.val
       by_cases ht : tagAdmitted t = true
       · simp only [ht, if_true, Option.some.injEq] at h
         subst h
-        have hdt : dt = rdfDirLangString := Subtype.ext (by simpa [literalWf] using hw)
+        have hdt : dt = rdfDirLangString := Subtype.ext (by simp [literalWf] at hw; exact hw.1)
         subst hdt
         have h1 : splitLast (bytesOfString lex ++ 0 :: (bytesOfString t ++ [0, dirByte d])) =
             some (bytesOfString lex ++ 0 :: bytesOfString t, [dirByte d]) := by

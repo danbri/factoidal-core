@@ -487,7 +487,7 @@ def registry : List Entry := [
       ``L4Factoidal.Storage.BackendRefinement.tpMatch_boundMatches,
       ``L4Factoidal.Storage.BackendRefinement.evalBgpBackend_kequiv_of_den,
       ``L4Factoidal.Storage.BackendRefinement.evalBgpBackend_solEquiv]
-    note := "every BGP, triple terms included; premises BackendExact gb G, a list g with G = KeyMem g and g.KeyNodup; the same multiset of solution mappings up to order and RDF term equality (Term.joinKey); structural (SolEquiv) when every object is its own join key; no-duplicate-row claim not made (finding 6)" },
+    note := "every BGP, triple terms included; premises BackendExact gb G, a list g with G = KeyMem g and g.KeyNodup; the same multiset of solution mappings up to order and RDF term equality (Term.joinKey); structural (SolEquiv) with no further premise, since every term is its own join key (literalWf requires lower-case language tags, issue 1001); no-duplicate-row claim not made (finding 6)" },
   { area := "Reference fallback WHERE answer (evalPatternBackend, indexedDatasetBackend) vs Allowed", dir := "Storage"
     stage := ``L4Factoidal.Storage.BackendRefinement.fallbackWhereStage, wireIn := "Dataset", wireOut := "SolutionSeq"
     contract := ``L4Factoidal.Storage.BackendRefinement.FallbackWhereContract, status := .proved
@@ -495,7 +495,7 @@ def registry : List Entry := [
       ``L4Factoidal.Storage.BackendRefinement.evalPatternBackend_allowed,
       ``L4Factoidal.Storage.BackendRefinement.evalBgpBackend_allowed,
       ``L4Factoidal.Storage.BackendRefinement.filterFn_local]
-    note := "NativeFrag: BGP without text:query, FILTER and OPTIONAL with a backendLocal condition, JOIN, UNION, MINUS, GRAPH with an IRI or a variable, VALUES, empty; premises Dataset.IsSet, IRI graph names, GraphFixed (no upper-case language tag; without it the backend and the reference keep different representatives, #guards in the module) (finding 6)" },
+    note := "NativeFrag: BGP without text:query, FILTER and OPTIONAL with a backendLocal condition, JOIN, UNION, MINUS, GRAPH with an IRI or a variable, VALUES, empty; premises Dataset.IsSet, IRI graph names; the GraphFixed premise was removed 2026-10-24 because literalWf requires lower-case language tags, so every graph satisfies it (issue 1001, #guards in the module) (finding 6)" },
   { area := "Reference fallback SELECT answer vs SPARQL 1.1 semantics and the id path", dir := "SPARQL"
     wireIn := "Query × Dataset", wireOut := "SolutionSeq", status := .missing
     theorems := [``L4Factoidal.Storage.BackendRefinement.indexedWhere_allowed]

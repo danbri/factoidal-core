@@ -457,7 +457,8 @@ def resolve (h : ByteArray → ByteArray) (lookup : ByteArray → Option ByteArr
       let lex ← String.fromUTF8? bytes
       let l : Literal := { lexicalForm := lex, datatype := b.datatype,
                            langTag := b.langTag, direction := b.direction }
-      if hw : literalWf l then some (.literal ⟨l, hw⟩) else none
+      -- the tag is written in lower case first (`Literal.toWf?`, issue 1001)
+      (Literal.toWf? l).map Term.literal
 
 /-- The lookup a packer's own term supplies: the literal's lexical form,
 returned when the digest asked for is the digest of that lexical form. -/

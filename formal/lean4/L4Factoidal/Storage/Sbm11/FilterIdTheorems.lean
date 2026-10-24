@@ -109,7 +109,7 @@ theorem eqConst_of (c : Expr) (t : Term) (h : eqByTermConst? c = some t) : EqCon
         unfold literalWf at hw
         cases ht : l.val.langTag with
         | none => exact absurd ht h1
-        | some _ => rw [ht, hc.1] at hw; exact Subtype.ext (by simpa using hw)
+        | some _ => rw [ht, hc.1] at hw; exact Subtype.ext (by simp at hw; exact hw.1)
       · left; exact h1
     · cases h
 

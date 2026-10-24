@@ -47,8 +47,8 @@ private def gen : MemGen :=
 -- one id for `"x"@EN` and `"x"@en`, and it decodes to the folded term
 #guard (gen.cid litEN).isSome && gen.cid litEN == gen.cid liten
 #guard (gen.cid litEN).map gen.dec == some liten
--- the dictionary holds the folded term only
-#guard toCode? gen.keys litEN == none
+-- the dictionary holds the folded term; since issue 1001 `litEN` is that term
+#guard litEN == liten
 #guard (toCode? gen.keys liten).isSome
 -- every rank of the dictionary is an id whose term has that id
 #guard (List.range gen.keys.length).all fun r =>

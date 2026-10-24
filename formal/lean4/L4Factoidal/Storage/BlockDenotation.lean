@@ -313,36 +313,17 @@ theorem TermWireV2.resolve_foldWire (h : ByteArray → ByteArray) (lookup : Byte
   cases w with
   | inline t => rfl
   | blob b =>
+    -- every term is folded (issue 1001), and `resolve` lowers the tag itself
+    have hid : ∀ o : Option Term, o.map foldTerm = o := fun o => by
+      cases o with
+      | none => rfl
+      | some t => simp [← joinKey_eq_foldTerm, Term.joinKey_eq_self]
+    rw [hid]
     obtain ⟨dt, tag, dir, len, sha⟩ := b
-    simp only [TermWireV2.foldWire, TermWireV2.resolve]
-    have hwf : ∀ lex, literalWf (⟨lex, dt, tag.map String.toLower, dir⟩ : Literal) =
-        literalWf (⟨lex, dt, tag, dir⟩ : Literal) := by
-      intro lex; cases tag <;> cases dir <;> rfl
-    cases hl : lookup sha with
-    | none => rfl
-    | some bytes =>
-      by_cases hs : bytes.size = len
-      · by_cases hh : h bytes = sha
-        · cases hu : String.fromUTF8? bytes with
-          | none => simp [hs, hh, hu]
-          | some lex =>
-            simp only [hs, hh, hu, bne_self_eq_false, Bool.false_eq_true, if_false, ne_eq,
-              not_true_eq_false, Option.bind_some, Option.bind_eq_bind]
-            by_cases hw : literalWf (⟨lex, dt, tag, dir⟩ : Literal) = true
-            · rw [dif_pos ((hwf lex).trans hw), dif_pos hw]
-              cases tag with
-              | none => rfl
-              | some tg =>
-                show some _ = some (Sbm11.normalizeLit _)
-                unfold Sbm11.normalizeLit
-                simp only
-                rw [dif_pos (show literalWf (⟨lex, dt, some tg.toLower, dir⟩ : Literal) = true from
-                  (hwf lex).trans hw)]
-                rfl
-            · rw [dif_neg (by rw [hwf]; exact hw), dif_neg hw]
-              rfl
-        · simp [hs, hh]
-      · simp [hs]
+    have hk : ∀ lex, Literal.toWf? (⟨lex, dt, tag.map String.toLower, dir⟩ : Literal) =
+        Literal.toWf? (⟨lex, dt, tag, dir⟩ : Literal) :=
+      fun lex => Literal.toWf?_joinKey ⟨lex, dt, tag, dir⟩
+    simp only [TermWireV2.foldWire, TermWireV2.resolve, hk]
 
 private theorem mapM_fold_toWireQuad (h : ByteArray → ByteArray)
     (lookup : ByteArray → Option ByteArray) :

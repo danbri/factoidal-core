@@ -203,7 +203,7 @@ def decodeLiteral (j : Json) : Option WfLiteral := do
       | none => some rdfDirLangString
       | some d => iriOf? d
   let l : Literal := { lexicalForm := lex, datatype := dt, langTag := lang, direction := dir }
-  if h : literalWf l then some ⟨l, h⟩ else none
+  Literal.toWf? l
 
 def decodeTermFuel : Nat → Json → Option Term
   | 0, _ => none
@@ -264,16 +264,17 @@ theorem decodeSubject_subjectJson (s : Subject) : decodeSubject (subjectJson s) 
 
 theorem decodeLiteral_literalJson (l : WfLiteral) : decodeLiteral (literalJson l.val) = some l := by
   obtain ⟨⟨lex, dt, lang, dir⟩, h⟩ := l
+  have hw := Literal.toWf?_of_wf h
   cases lang <;> cases dir
   · simp [decodeLiteral, literalJson, Json.getString?, Json.field?, Json.asString?,
-      iriOf?_val, dirOf?_dirString, h]
+      iriOf?_val, dirOf?_dirString, hw]
   · simp [literalWf] at h
-  · have hd : dt = rdfLangString := Subtype.ext (by simpa [literalWf] using h)
+  · have hd : dt = rdfLangString := Subtype.ext (by simp [literalWf] at h; exact h.1)
     subst hd
     simp [decodeLiteral, literalJson, Json.getString?, Json.field?, Json.asString?,
-      dirOf?_dirString, h]
+      dirOf?_dirString, hw]
   · simp [decodeLiteral, literalJson, Json.getString?, Json.field?, Json.asString?,
-      dirOf?_dirString, iriOf?_val, h]
+      dirOf?_dirString, iriOf?_val, hw]
 
 theorem jsonDepth_encodeTerm (t : Term) : Term.nest t < jsonDepth (encodeTerm t) := by
   induction t with

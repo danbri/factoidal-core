@@ -123,7 +123,7 @@ def mkResultLiteral (lexical : String) (dt : String) (lang : Option String) :
   if h : isIri dt then
     let l : Literal :=
       { lexicalForm := lexical, datatype := ⟨dt, h⟩, langTag := lang, direction := none }
-    if hwf : literalWf l then some (Term.literal ⟨l, hwf⟩) else none
+    (Literal.toWf? l).map Term.literal
   else none
 
 /-- Build an `rdf:dirLangString` (RDF 1.2 directional language-tagged
@@ -138,7 +138,7 @@ def mkResultDirLiteral (lexical lang : String) (dir : TextDirection) : Option Te
   let l : Literal :=
     { lexicalForm := lexical, datatype := rdfDirLangString,
       langTag := some lang, direction := some dir }
-  if h : literalWf l then some (Term.literal ⟨l, h⟩) else none
+  (Literal.toWf? l).map Term.literal
 
 /-- Parse an `its:dir` / RDF 1.2 base-direction wire value: `"ltr"` or
 `"rtl"` only (strict, lowercase — an unrecognised value is "no

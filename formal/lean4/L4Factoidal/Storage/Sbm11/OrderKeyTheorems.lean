@@ -406,7 +406,7 @@ theorem classify (t : Term) (k : Key) (g : Nat) (h : termKey? t = some k) (hg : 
       · rename_i ht
         simp only [Option.some.injEq] at h
         subst h
-        have hdt : lv.datatype = rdfLangString := Subtype.ext (by simpa [literalWf, hl, hd] using hw)
+        have hdt : lv.datatype = rdfLangString := Subtype.ext (by simp [literalWf, hl, hd] at hw; exact hw.1)
         have htz : noZero (bytesOfString tag) = true := by
           simp only [tagAdmitted, Bool.and_eq_true] at ht; exact ht.1
         simp only [keyGroup?, classLang, classBnode, classIri] at hg

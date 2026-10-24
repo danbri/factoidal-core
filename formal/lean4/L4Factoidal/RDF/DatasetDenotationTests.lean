@@ -75,7 +75,9 @@ example : withTT.den.mem (some h, tTT) := by decide
 
 /-! ## Language tags (RDF 1.1 Concepts section 3.3) -/
 
-example : tEN ≠ ten := by decide
+-- One RDF term, one representation (RDF 1.2 Concepts §3.4; issue 1001): the
+-- constructor writes the tag in lower case.
+example : tEN = ten := by decide +kernel
 -- `String.toLower` does not reduce in the elaborator's `decide`; the kernel
 -- evaluates it (`decide +kernel`, no `Lean.ofReduceBool`, see the axiom line).
 private theorem tEN_eqb_ten : tEN.eqb ten = true := by decide +kernel
@@ -90,7 +92,7 @@ example : ({ default := [tEN], named := [] } : Dataset).den =
 
 /-! ## Negative cases -/
 
-example : ¬ withoutRepeat.den.graph none tEN := by decide
+example : ¬ withoutRepeat.den.graph none tEN := by decide +kernel
 example : ¬ withoutRepeat.den.graph (some g) t1 := by decide
 
 end L4Factoidal.RDF.DatasetDenotationTests

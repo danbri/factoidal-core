@@ -80,25 +80,15 @@ theorem localId_inj {k k' : Nat} (hk : k < two60) (hk' : k' < two60) (h : localI
 
 /-! ## Terms that are their own normal form -/
 
-theorem normalizeLit_self (l : WfLiteral) (h : normalizeLit l = .literal l) :
+theorem normalizeLit_self (l : WfLiteral) (_h : normalizeLit l = .literal l) :
     ∀ tag, l.val.langTag = some tag → tag.toLower = tag := by
   intro tag ht
-  unfold normalizeLit at h
-  rw [ht] at h
-  simp only at h
-  split at h
-  · simp only [Term.literal.injEq] at h
-    have := congrArg (fun x : WfLiteral => x.val.langTag) h
-    simp only at this
-    simpa [ht] using this
-  · next hn =>
-    exfalso; apply hn
-    have := l.property
-    unfold literalWf at this ⊢
-    rw [ht] at this
-    dsimp only
-    revert this
-    cases l.val.direction <;> simp
+  have hw := l.property
+  apply toLower_of_langTagCanonical
+  unfold literalWf at hw
+  rw [ht] at hw
+  revert hw
+  cases l.val.direction <;> simp_all
 
 /-- Two terms that are their own `normalizeTerm` are `Term.eqb` only when
     they are equal: `Term.eqb` compares language tags without case (both

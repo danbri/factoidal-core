@@ -4,6 +4,7 @@
 
 - `factoidal pack` writes a set of rows in every layout (https://github.com/danbri/factoidal/issues/1006). Correction to 0.13.0: its entry says that the stores keep one copy of a repeated triple, but in 0.13.0 that was true for the IBK4 and IBK5 layouts only, and only on read. The default layout (IBK3) kept a repeated triple, and kept `"a"@en` and `"a"@EN` as two rows, so `COUNT(*)` counted both; the IBK4 and IBK5 packers also wrote the repeated rows. Now each packer keeps the distinct triples it has written and writes a triple only once (per graph on the quad layouts). A source with no repeated triple gives the same generation as before. The packer's memory now grows with the number of distinct triples of the source. Proved: `Dataflow.packedRows_keyNodup`; tests: `test/pack-is-a-set-1006.test.mjs`.
 - The N-Triples, N-Quads, Turtle and TriG writers give a fresh valid label to a blank-node label outside BLANK_NODE_LABEL (the same label for each occurrence, never a label of another blank node), and refuse a language tag outside LANGTAG with an error that names the tag (https://github.com/danbri/factoidal/issues/986).
+- A language tag is kept in lower case (RDF 1.2 Concepts §3.4: `"x"@en` and `"x"@EN` are one RDF term). Every reader, `STRLANG`, `STRLANGDIR` and the term constructors write the tag in lower case, so `LANG()` returns it in lower case, and a SPARQL answer no longer depends on the order of the triple patterns when the data spells one tag in two ways (https://github.com/danbri/factoidal/issues/1001).
 
 ## 0.13.0
 

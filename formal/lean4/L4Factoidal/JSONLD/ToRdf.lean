@@ -799,7 +799,7 @@ def makeLiteral (lexical dt : String) (lang : Option String) : Option Term :=
     | some dtWf =>
       let lit : Literal := { lexicalForm := lexical, datatype := dtWf,
                              langTag := lang, direction := none }
-      if h : literalWf lit = true then some (.literal ⟨lit, h⟩) else none
+      (Literal.toWf? lit).map Term.literal
   else none
 
 /-- A bare JSON scalar in value position, wrapped as §5.2 Value

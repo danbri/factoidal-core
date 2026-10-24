@@ -213,7 +213,8 @@ private def namesTag (tag : String) : Except String String → Bool
   | .error e => (e.splitOn ("\"" ++ tag ++ "\"")).length > 1
   | .ok _ => false
 #guard !writerDomain .nt badTag
-#guard ["en US", "", "en-", "en--x", "-en", "e\nn", "1a"].all fun tag =>
+-- (the tag is written in lower case by the constructor, issue 1001, so the list is lower case)
+#guard ["en us", "", "en-", "en--x", "-en", "e\nn", "1a"].all fun tag =>
   [RdfFormat.nt, .nquads, .turtle, .trig].all fun f => [Mode.rdf11, .rdf12].all fun v =>
     namesTag tag (Sink.serializeDataset Sink.withJsonLd f v (tagged tag)) &&
       namesTag tag (Sink.streamDataset Sink.withJsonLd f { version := v, graphs := .union } (tagged tag))

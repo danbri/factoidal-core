@@ -461,8 +461,10 @@ private def nestGo : Nat → Term → Term
 #guard rt (.literal (Literal.dirLangString "x" "ar" .rtl))
 #guard rt (typedT "072" "http://www.w3.org/2001/XMLSchema#integer")
 #guard rt (typedT "7.0E1" "http://www.w3.org/2001/XMLSchema#double")
--- an upper-case tag is not admitted until normalised
-#guard termKey? (.literal (Literal.langString "x" "en-US")) == none
+-- an upper-case tag cannot be written: the constructor lower-cases it (issue 1001)
+#guard termKey? (.literal (Literal.langString "x" "en-US")) ==
+  termKey? (.literal (Literal.langString "x" "en-us"))
+#guard (termKey? (.literal (Literal.langString "x" "en-US"))).isSome
 #guard rt (normalizeTerm (.literal (Literal.langString "x" "en-US")))
 #guard normalizeTerm (.literal (Literal.langString "x" "en-US")) ==
   normalizeTerm (.literal (Literal.langString "x" "en-us"))
@@ -478,7 +480,7 @@ private def nestGo : Nat → Term → Term
 #guard rt (nestGo 2000 (iriT "http://ex/o"))
 -- an upper-case tag inside a triple term: not admitted until normalised, and
 -- the fold reaches the innermost object
-#guard termKey? (nestGo 2 (.literal (Literal.langString "x" "EN"))) == none
+#guard (termKey? (nestGo 2 (.literal (Literal.langString "x" "EN")))).isSome
 #guard rt (normalizeTerm (nestGo 2 (.literal (Literal.langString "x" "EN"))))
 #guard normalizeTerm (nestGo 2 (.literal (Literal.langString "x" "EN"))) ==
   nestGo 2 (.literal (Literal.langString "x" "en"))

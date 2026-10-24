@@ -110,13 +110,13 @@ def objectTable : List (String × List String) := [
     "ok(\"x\"|10| .)",
     "ok(\"x\"|10| .)"]),
   ("\"x\"@EN .", ["error(triple-term nesting too deep,7)",
-    "ok(\"x\"@EN|13| .)",
-    "ok(\"x\"@EN|13| .)",
-    "ok(\"x\"@EN|13| .)",
-    "ok(\"x\"@EN|13| .)",
-    "ok(\"x\"@EN|13| .)",
-    "ok(\"x\"@EN|13| .)",
-    "ok(\"x\"@EN|13| .)"]),
+    "ok(\"x\"@en|13| .)",
+    "ok(\"x\"@en|13| .)",
+    "ok(\"x\"@en|13| .)",
+    "ok(\"x\"@en|13| .)",
+    "ok(\"x\"@en|13| .)",
+    "ok(\"x\"@en|13| .)",
+    "ok(\"x\"@en|13| .)"]),
   ("\"x\"@en--ltr .", ["error(triple-term nesting too deep,7)",
     "ok(\"x\"@en--ltr|18| .)",
     "ok(\"x\"@en--ltr|18| .)",
@@ -406,11 +406,11 @@ def documentTable : List (String × List String) := [
     "ok(\"<http://a/s> <http://a/p> <<( <http://a/s> <http://a/p> \\\"x\\\" )>> .\\n\")",
     "error(invalid character in IRIREF,27)",
     "ok(\"<http://a/s> <http://a/p> <<( <http://a/s> <http://a/p> \\\"x\\\" )>> .\\n\")"]),
-  ("<http://a/s> <http://a/p> <<( <http://a/s> <http://a/p> <<( <http://a/s> <http://a/p> <<( <http://a/s> <http://a/p> \"x\"@EN--rtl )>> )>> )>> .\n", ["ok(1;\"<http://a/s> <http://a/p> <<( <http://a/s> <http://a/p> <<( <http://a/s> <http://a/p> <<( <http://a/s> <http://a/p> \\\"x\\\"@EN--rtl )>> )>> )>> .\\n\")",
+  ("<http://a/s> <http://a/p> <<( <http://a/s> <http://a/p> <<( <http://a/s> <http://a/p> <<( <http://a/s> <http://a/p> \"x\"@EN--rtl )>> )>> )>> .\n", ["ok(1;\"<http://a/s> <http://a/p> <<( <http://a/s> <http://a/p> <<( <http://a/s> <http://a/p> <<( <http://a/s> <http://a/p> \\\"x\\\"@en--rtl )>> )>> )>> .\\n\")",
     "error(invalid character in IRIREF,27)",
-    "ok(\"<http://a/s> <http://a/p> <<( <http://a/s> <http://a/p> <<( <http://a/s> <http://a/p> <<( <http://a/s> <http://a/p> \\\"x\\\"@EN--rtl )>> )>> )>> .\\n\")",
+    "ok(\"<http://a/s> <http://a/p> <<( <http://a/s> <http://a/p> <<( <http://a/s> <http://a/p> <<( <http://a/s> <http://a/p> \\\"x\\\"@en--rtl )>> )>> )>> .\\n\")",
     "error(invalid character in IRIREF,27)",
-    "ok(\"<http://a/s> <http://a/p> <<( <http://a/s> <http://a/p> <<( <http://a/s> <http://a/p> <<( <http://a/s> <http://a/p> \\\"x\\\"@EN--rtl )>> )>> )>> .\\n\")"]),
+    "ok(\"<http://a/s> <http://a/p> <<( <http://a/s> <http://a/p> <<( <http://a/s> <http://a/p> <<( <http://a/s> <http://a/p> \\\"x\\\"@en--rtl )>> )>> )>> .\\n\")"]),
   ("<http://a/s> <http://a/p> <<( _:b <http://a/p> <<( <http://a/s> <http://a/p> \"q\\\"r\\n\"^^<http://a/dt> )>> )>> .\n_:c <http://a/p> <<( <http://a/s> <http://a/p> _:d )>> .\n", ["ok(2;\"<http://a/s> <http://a/p> <<( _:b <http://a/p> <<( <http://a/s> <http://a/p> \\\"q\\\\\\\"r\\\\n\\\"^^<http://a/dt> )>> )>> .\\n_:c <http://a/p> <<( <http://a/s> <http://a/p> _:d )>> .\\n\")",
     "error(invalid character in IRIREF,27)",
     "ok(\"<http://a/s> <http://a/p> <<( _:b <http://a/p> <<( <http://a/s> <http://a/p> \\\"q\\\\\\\"r\\\\n\\\"^^<http://a/dt> )>> )>> .\\n_:c <http://a/p> <<( <http://a/s> <http://a/p> _:d )>> .\\n\")",
@@ -555,9 +555,9 @@ def documentTable : List (String × List String) := [
     "ok(\"<http://a/s> <http://a/p> \\\"d\\\"@en--ltr .\\n\")"]),
   ("<http://a/s> <http://a/p> \"d\"@EN--ltr <http://a/s> .\n", ["error(expected '.' terminator,38)",
     "error(expected '.' terminator,38)",
-    "ok(\"<http://a/s> <http://a/p> \\\"d\\\"@EN--ltr <http://a/s> .\\n\")",
-    "ok(writer-error the language tag \"EN--ltr\" is not a LANGTAG (RDF 1.1 N-Triples [144s]; RDF 1.2: subtags of 1 to 8 characters), so no writer can state it)",
-    "ok(\"<http://a/s> <http://a/p> \\\"d\\\"@EN--ltr <http://a/s> .\\n\")"])
+    "ok(\"<http://a/s> <http://a/p> \\\"d\\\"@en--ltr <http://a/s> .\\n\")",
+    "ok(writer-error the language tag \"en--ltr\" is not a LANGTAG (RDF 1.1 N-Triples [144s]; RDF 1.2: subtags of 1 to 8 characters), so no writer can state it)",
+    "ok(\"<http://a/s> <http://a/p> \\\"d\\\"@en--ltr <http://a/s> .\\n\")"])
 ]
 
 #guard documentTable.all fun (d, want) =>
@@ -585,9 +585,9 @@ def termTable : List (String × List String) := [
     "16166736122313722437",
     "ok(\"\\\"x\\\\ty\\\\\\\\z\\\\\\\"\\\\n\\\"\")",
     "16166736122313722437"]),
-  ("\"x\"@EN .", ["ok(\"\\\"x\\\"@EN\")",
-    "ok(\"\\\"x\\\"@EN\")",
-    "12654457648059830671",
+  ("\"x\"@EN .", ["ok(\"\\\"x\\\"@en\")",
+    "ok(\"\\\"x\\\"@en\")",
+    "11046329921231523505",
     "ok(\"\\\"x\\\"@en\")",
     "11046329921231523505"]),
   ("\"x\"@en--ltr .", ["ok(\"\\\"x\\\"@en--ltr\")",
@@ -620,9 +620,9 @@ def termTable : List (String × List String) := [
     "12131285083262620389",
     "ok(\"<<( <http://a/s> <http://a/p> <http://a/o> )>>\")",
     "12131285083262620389"]),
-  ("<<( _:b <http://a/p> \"x\"@EN )>> .", ["ok(\"<<( _:b <http://a/p> \\\"x\\\"@EN )>>\")",
+  ("<<( _:b <http://a/p> \"x\"@EN )>> .", ["ok(\"<<( _:b <http://a/p> \\\"x\\\"@en )>>\")",
     "error(RDF 1.2 triple term requires mode .rdf12)",
-    "13288748515673953220",
+    "16294478112122863863",
     "ok(\"<<( _:b <http://a/p> \\\"x\\\"@en )>>\")",
     "16294478112122863863"]),
   ("<<( <http://a/s> <http://a/p> \"x\"@en--ltr )>> .", ["ok(\"<<( <http://a/s> <http://a/p> \\\"x\\\"@en--ltr )>>\")",
@@ -630,9 +630,9 @@ def termTable : List (String × List String) := [
     "16271508862075559149",
     "ok(\"<<( <http://a/s> <http://a/p> \\\"x\\\"@en--ltr )>>\")",
     "16271508862075559149"]),
-  ("<<( <http://a/s> <http://a/p> <<( <http://a/s> <http://a/p> \"x\"@EN--rtl )>> )>> .", ["ok(\"<<( <http://a/s> <http://a/p> <<( <http://a/s> <http://a/p> \\\"x\\\"@EN--rtl )>> )>>\")",
+  ("<<( <http://a/s> <http://a/p> <<( <http://a/s> <http://a/p> \"x\"@EN--rtl )>> )>> .", ["ok(\"<<( <http://a/s> <http://a/p> <<( <http://a/s> <http://a/p> \\\"x\\\"@en--rtl )>> )>>\")",
     "error(RDF 1.2 triple term requires mode .rdf12)",
-    "15483159445457347648",
+    "18269412113221777653",
     "ok(\"<<( <http://a/s> <http://a/p> <<( <http://a/s> <http://a/p> \\\"x\\\"@en--rtl )>> )>>\")",
     "18269412113221777653"]),
   ("<<( <http://a/s> <http://a/p> <<( <http://a/s> <http://a/p> <<( _:b <http://a/p> \"<a  b='1'/>\"^^<http://www.w3.org/1999/02/22-rdf-syntax-ns#XMLLiteral> )>> )>> )>> .", ["ok(\"<<( <http://a/s> <http://a/p> <<( <http://a/s> <http://a/p> <<( _:b <http://a/p> \\\"<a  b='1'/>\\\"^^<http://www.w3.org/1999/02/22-rdf-syntax-ns#XMLLiteral> )>> )>> )>>\")",
@@ -711,12 +711,12 @@ def deepLineGraph (n : Nat) : String :=
 #guard hash (deepTerm 3000) == @Hashable.hash Term instHashableTerm (deepTerm 3000)
 #guard hash (deepTagged 3000) == @Hashable.hash Term instHashableTerm (deepTagged 3000)
 
--- The join key of a term whose literal has a language tag in capitals: the tag is lowered at the
--- bottom, and the levels above it are kept. 3,000 levels.
+-- The join key of a term whose literal was written with a language tag in capitals: the
+-- constructor already lowered the tag (issue 1001), so the key is the term. 3,000 levels.
 #guard (deepTagged 3000).joinKey == deepLowered 3000
 #guard (deepTagged 0).joinKey == deepLowered 0
 #guard (deepTerm 3000).joinKey == deepTerm 3000
-#guard ((deepTagged 3000).joinKey != deepTagged 3000)
+#guard ((deepTagged 3000).joinKey == deepTagged 3000)
 
 -- The language tags of a term, inside the triple terms too: the tag is lowered at the bottom and
 -- the levels above it are kept. The terms of the table are parsed from their text, and the

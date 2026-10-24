@@ -1182,11 +1182,11 @@ private def badLabelDs : Dataset :=
   { default := [{ s := .bnode "a b", p := ⟨"http://e/p", by decide⟩, o := .bnode "b1" }], named := [] }
 private def badTagDs : Dataset :=
   { default := [{ s := .iri ⟨"http://e/a", by decide⟩, p := ⟨"http://e/p", by decide⟩,
-                  o := .literal (Literal.langString "x" "en US") }], named := [] }
+                  o := .literal (Literal.langString "x" "en us") }], named := [] }
 #guard match handleWriterText "nquads" badLabelDs with
   | some (.ok t) => t == "_:rrrr0 <http://e/p> _:b1 .\n" | _ => false
 #guard ["nquads", "ntriples", "turtle", "trig"].all fun f => match handleWriterText f badTagDs with
-  | some (.error e) => (e.splitOn "\"en US\"").length > 1 | _ => false
+  | some (.error e) => (e.splitOn "\"en us\"").length > 1 | _ => false
 #guard match handleWriteInput badTagDs with | .error _ => true | .ok _ => false
 
 -- A subtag of 9 or more characters: RDF 1.1 LANGTAG [144s] accepts it, RDF 1.2
