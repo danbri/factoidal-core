@@ -6,6 +6,8 @@ stages of `Dataflow/PhaseStorage.lean`
 * The block round-trip stages run on small blocks and return the rows written
   (the folded spellings; `Storage/DictFoldTests.lean` states the fold).
 * A block that the wire format does not support stops the stage with an error.
+* The build stages (build from RDF data, write, read) return the folded
+  input.
 * The search stage of the index returns the matching triples of the default
   graph.
 
@@ -53,6 +55,23 @@ private def badBlock4 : IndexedBlockWireV4.QuadBlock :=
     rows := #[{ g := none, s := 0, p := 1, o := 2 }, { g := none, s := 0, p := 1, o := 3 }],
     byPredicate := ∅ }
 #guard (okOr (ibk4RoundTripStage.run badBlock4)).isNone
+
+/-! ## Build from RDF data, write, read -/
+
+#guard (okOr (ibk3BuildWriteReadStage.run g3)).map (·.denotes) ==
+  some [⟨sA, pP, liten⟩, ⟨sB, pP, liten⟩]
+#guard (okOr (ibk4BuildWriteReadStage.run q4)).map (·.denotes) ==
+  some [(none, ⟨sA, pP, liten⟩), (some gG, ⟨sB, pP, liten⟩)]
+
+-- IBK5 with short literals (inline): no blob, so any hash and lookup
+private def h0 : ByteArray → ByteArray := fun _ => ByteArray.empty
+private def look0 : ByteArray → Option ByteArray := fun _ => none
+#guard ((okOr ((ibk5BuildWriteReadStage h0 look0).run q4)).bind
+    (IndexedBlockWireV5.resolveBlock h0 look0)) ==
+  some [(none, ⟨sA, pP, liten⟩), (some gG, ⟨sB, pP, liten⟩)]
+-- the builder folds: the wire-level rows are not the unfolded `toWire` form,
+-- so the hypothesis `hdenotes` of `den?_decode_encode?_toWire` fails here
+#guard (IndexedBlockWireV5.fromRdfQuads h0 q4).denotes != q4.map (IndexedBlockWireV5.toWireQuad h0)
 
 /-! ## StoreCaps search of the index -/
 

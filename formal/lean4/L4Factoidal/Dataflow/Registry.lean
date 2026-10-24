@@ -357,9 +357,30 @@ def registry : List Entry := [
       ``L4Factoidal.Storage.IndexedBlockWireV5.den?_decode_encode?_toWire,
       ``L4Factoidal.Storage.StoreDictTheorems.v5_fromParts?_foldedDictInjective, ``ibk5RoundTrip_den]
     note := "den? equal for every hash function and blob lookup" },
-  { area := "Block stores: build from RDF data (BlockMvp, fromGraph, fromQuads, IBK5 toWire)", dir := "Storage"
-    wireIn := "Graph or quads", wireOut := "block", status := .missing
-    note := "no theorem that fromGraph or fromQuads denotes its input (their intern steps are private); #guards only (Storage/DictFoldTests.lean); BlockMvp has no wire format" },
+  { area := "Block store IBK3: build from a graph (fromGraph), write, then read", dir := "Storage"
+    stage := ``ibk3BuildWriteReadStage, wireIn := "Graph", wireOut := "IndexedBlock.Block (through bytes)"
+    contract := ``Ibk3BuildDen, status := .proved
+    theorems := [``L4Factoidal.Storage.IndexedBlock.fromGraph_denotes,
+      ``L4Factoidal.Storage.IndexedBlock.fromGraph_den,
+      ``L4Factoidal.Storage.IndexedBlockWireV3.den_decode_encode?_fromGraph, ``ibk3BuildWriteRead_den]
+    note := "den of the block read back = graphDen of the input graph; no Dataset.IsSet hypothesis; the rows decode to the input with terms folded (issue 977); BlockMvp is built by its record constructor (den = graphDen of its rows by definition) and has no wire format" },
+  { area := "Block store IBK4: build from quads (fromQuads), write, then read", dir := "Storage"
+    stage := ``ibk4BuildWriteReadStage, wireIn := "List (Option Subject × Triple)", wireOut := "QuadBlock (IBK4, through bytes)"
+    contract := ``Ibk4BuildDen, status := .proved
+    theorems := [``L4Factoidal.Storage.IndexedBlockWireV4.fromQuads_denotes,
+      ``L4Factoidal.Storage.IndexedBlockWireV4.fromQuads_den,
+      ``L4Factoidal.Storage.IndexedBlockWireV4.fromQuads_listQuads_den,
+      ``L4Factoidal.Storage.IndexedBlockWireV4.den_decode_encode?_fromQuads,
+      ``ibk4BuildWriteRead_den, ``ibk4BuildWriteRead_dataset]
+    note := "den read back = DatasetDen.ofQuads of the input; for a Dataset, ds.den when no named graph is empty (issue 880)" },
+  { area := "Block store IBK5: build from RDF quads (toWire), write, then read", dir := "Storage"
+    stage := ``ibk5BuildWriteReadStage, wireIn := "List (Option Subject × Triple)", wireOut := "QuadBlock (IBK5, through bytes)"
+    contract := ``Ibk5BuildDen, status := .proved
+    theorems := [``L4Factoidal.Storage.IndexedBlockWireV5.fromQuads_denotes,
+      ``L4Factoidal.Storage.TermWireV2.resolve_foldWire,
+      ``L4Factoidal.Storage.IndexedBlockWireV5.den?_fromRdfQuads,
+      ``L4Factoidal.Storage.IndexedBlockWireV5.den?_decode_encode?_fromRdfQuads, ``ibk5BuildWriteRead_den]
+    note := "den? read back = some (ofQuads input) when the blob lookup resolves each object (premise of the contract; TermWireV2.resolve_toWire gives it for the packer's own lookup)" },
   { area := "Store interface StoreCaps (planner)", dir := "SPARQL"
     stage := ``storeSearchStage, wireIn := "PatternBound", wireOut := "List Triple"
     contract := ``SearchContract, status := .proved

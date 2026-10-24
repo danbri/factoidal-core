@@ -13,6 +13,9 @@ This module adds stages and theorems only; no store code changes.
 | `ibk3RoundTripStage` | `IndexedBlock.Block` → `IndexedBlock.Block` | `BlockDenEq`: the block read back denotes the dataset of the block written | `IndexedBlockWireV3.den_decode_encode?` |
 | `ibk4RoundTripStage` | `QuadBlock` (IBK4) → `QuadBlock` | `Ibk4DenEq` | `IndexedBlockWireV4.den_decode_encode?` |
 | `ibk5RoundTripStage h lookup` | `QuadBlock` (IBK5) → `QuadBlock` | `Ibk5DenEq`: equal `den?` for the hash `h` and the blob lookup `lookup` | `IndexedBlockWireV5.den?_decode_encode?` |
+| `ibk3BuildWriteReadStage` | `Graph` → `IndexedBlock.Block` | `Ibk3BuildDen`: build (`fromGraph`), write, read; the block denotes the graph | `IndexedBlock.fromGraph_den`, `IndexedBlockWireV3.den_decode_encode?` |
+| `ibk4BuildWriteReadStage` | quads → `QuadBlock` (IBK4) | `Ibk4BuildDen`: build (`fromQuads`), write, read; the block denotes `DatasetDen.ofQuads qs []` | `IndexedBlockWireV4.fromQuads_den`, `IndexedBlockWireV4.den_decode_encode?` |
+| `ibk5BuildWriteReadStage h lookup` | RDF quads → `QuadBlock` (IBK5) | `Ibk5BuildDen`: build (`fromRdfQuads`, `toWire`), write, read; when the lookup resolves each object, `den? = some (DatasetDen.ofQuads qs [])` | `IndexedBlockWireV5.den?_fromRdfQuads`, `IndexedBlockWireV5.den?_decode_encode?` |
 | `storeSearchStage gb d gn hx` | `PatternBound` → `List Triple` | `SearchContract d gn`: the rows are the triples of graph `gn` of `d` that match the bound, up to RDF term equality, each once | `capsOfBackend_exact`, `backendSearch_exact`, `backendSearch_nodupKeys` |
 | `indexedDefaultSearchStage ds hset` | `PatternBound` → `List Triple` | `SearchContract ds.den none` | `capsOfIndexed_default_denotes` |
 
@@ -37,10 +40,21 @@ its contract follows from `Stage.comp_ok_contract`.
 
 ## Block stores: what remains open
 
-* The builders from RDF data (`IndexedBlock.fromGraph`,
-  `IndexedBlockWireV4.fromQuads`, the IBK5 `toWire`) have no theorem that the
-  block denotes the input. Their intern steps are `private` in
-  `IndexedBlock.lean` and `IndexedBlockWireV4.lean`.
+* The builders from RDF data have denotation theorems
+  (`IndexedBlock.fromGraph_den`, `IndexedBlockWireV4.fromQuads_den`,
+  `IndexedBlockWireV5.den?_fromRdfQuads`; `Storage/BlockDenotation.lean`). The
+  builders fold every term (language tags in lower case), so the rows decode
+  to the folded input (`fromGraph_denotes`, `fromQuads_denotes`); the fold
+  keeps `Triple.key`, so the denotation is that of the input. They need no
+  `Dataset.IsSet` hypothesis.
+* `encode?` can refuse a built block (for example a block over the size
+  limits). The build stages then stop with an error; no theorem says when
+  `encode?` of a built block succeeds.
+* The IBK5 build stage takes the blob obligation (the lookup resolves the wire
+  form of each object) as a premise of its contract; for the packer's own
+  lookup `TermWireV2.resolve_toWire` discharges it.
+* `BlockMvp.Block` is built by its record constructor: its `den` is
+  `graphDen` of its rows by definition.
 * An IBK4 block holds the graph names of its rows only: it cannot hold an empty
   named graph (`IndexedBlockWireV4.QuadBlock.den_names_nonempty`).
 * `BlockMvp.Block` has no wire format.
@@ -310,6 +324,101 @@ theorem ibk5RoundTrip_den (h : ByteArray → ByteArray) (lookup : ByteArray → 
   subst this
   exact e
 
+/-! ## Block stores: build from RDF data, write, then read -/
+
+/-- IBK3: the block built from the graph `g`, written and read back, denotes
+`g`. -/
+def Ibk3BuildDen (g : Graph) (d : IndexedBlock.Block) : Prop := d.den = graphDen g
+
+/-- IBK3: build a block from a graph. -/
+def ibk3BuildStage : Stage String Graph IndexedBlock.Block :=
+  Stage.ofFun IndexedBlock.fromGraph Ibk3BuildDen IndexedBlock.fromGraph_den
+
+/-- IBK3: build, write, then read. -/
+def ibk3BuildWriteReadStage : Stage String Graph IndexedBlock.Block where
+  run := (ibk3BuildStage.comp ibk3RoundTripStage).run
+  contract := Ibk3BuildDen
+  sound := by
+    intro g d h
+    obtain ⟨b, hb, bytes, ⟨d', hd', e⟩, hd⟩ := Stage.comp_ok_contract ibk3BuildStage ibk3RoundTripStage h
+    have : d' = d := Option.some.inj (hd'.symm.trans hd)
+    subst this
+    exact e.trans hb
+
+/-- **IBK3 build, write, read**: the block read back denotes the graph. -/
+theorem ibk3BuildWriteRead_den {g : Graph} {d : IndexedBlock.Block}
+    (h : ibk3BuildWriteReadStage.run g = .ok d) : d.den = graphDen g :=
+  ibk3BuildWriteReadStage.sound g d h
+
+/-- IBK4: the block built from the quads `qs`, written and read back, denotes
+`qs`. -/
+def Ibk4BuildDen (qs : List (Option Subject × Triple)) (d : IndexedBlockWireV4.QuadBlock) : Prop :=
+  d.den = DatasetDen.ofQuads qs []
+
+/-- IBK4: build a block from quads. -/
+def ibk4BuildStage : Stage String (List (Option Subject × Triple)) IndexedBlockWireV4.QuadBlock :=
+  Stage.ofFun IndexedBlockWireV4.fromQuads Ibk4BuildDen IndexedBlockWireV4.fromQuads_den
+
+/-- IBK4: build, write, then read. -/
+def ibk4BuildWriteReadStage : Stage String (List (Option Subject × Triple)) IndexedBlockWireV4.QuadBlock where
+  run := (ibk4BuildStage.comp ibk4RoundTripStage).run
+  contract := Ibk4BuildDen
+  sound := by
+    intro qs d h
+    obtain ⟨b, hb, bytes, ⟨d', hd', e⟩, hd⟩ := Stage.comp_ok_contract ibk4BuildStage ibk4RoundTripStage h
+    have : d' = d := Option.some.inj (hd'.symm.trans hd)
+    subst this
+    exact e.trans hb
+
+/-- **IBK4 build, write, read**: the block read back denotes the quads. -/
+theorem ibk4BuildWriteRead_den {qs : List (Option Subject × Triple)} {d : IndexedBlockWireV4.QuadBlock}
+    (h : ibk4BuildWriteReadStage.run qs = .ok d) : d.den = DatasetDen.ofQuads qs [] :=
+  ibk4BuildWriteReadStage.sound qs d h
+
+/-- **A dataset through IBK4**: a dataset with no empty named graph, built
+from its quads, written and read back, denotes the dataset. -/
+theorem ibk4BuildWriteRead_dataset {ds : Dataset} {d : IndexedBlockWireV4.QuadBlock}
+    (hne : ∀ ng ∈ ds.named, ng.graph ≠ [])
+    (h : ibk4BuildWriteReadStage.run ds.listQuads = .ok d) : d.den = ds.den :=
+  (ibk4BuildWriteRead_den h).trans
+    ((IndexedBlockWireV4.fromQuads_den _).symm.trans (IndexedBlockWireV4.fromQuads_listQuads_den ds hne))
+
+/-- IBK5: when the lookup resolves the wire form of each object, the block
+built from the RDF quads `qs`, written and read back, denotes `qs`. -/
+def Ibk5BuildDen (h : ByteArray → ByteArray) (lookup : ByteArray → Option ByteArray)
+    (qs : List (Option Subject × Triple)) (d : IndexedBlockWireV5.QuadBlock) : Prop :=
+  (∀ q ∈ qs, TermWireV2.resolve h lookup (TermWireV2.toWire h q.2.o) = some q.2.o) →
+    d.den? h lookup = some (DatasetDen.ofQuads qs [])
+
+/-- IBK5: build a block from RDF quads (`toWire` chooses inline or blob). -/
+def ibk5BuildStage (h : ByteArray → ByteArray) (lookup : ByteArray → Option ByteArray) :
+    Stage String (List (Option Subject × Triple)) IndexedBlockWireV5.QuadBlock :=
+  Stage.ofFun (IndexedBlockWireV5.fromRdfQuads h) (Ibk5BuildDen h lookup)
+    (fun qs hl => IndexedBlockWireV5.den?_fromRdfQuads h lookup qs hl)
+
+/-- IBK5: build, write, then read. -/
+def ibk5BuildWriteReadStage (h : ByteArray → ByteArray) (lookup : ByteArray → Option ByteArray) :
+    Stage String (List (Option Subject × Triple)) IndexedBlockWireV5.QuadBlock where
+  run := ((ibk5BuildStage h lookup).comp (ibk5RoundTripStage h lookup)).run
+  contract := Ibk5BuildDen h lookup
+  sound := by
+    intro qs d hr
+    obtain ⟨b, hb, bytes, ⟨d', hd', e⟩, hd⟩ :=
+      Stage.comp_ok_contract (ibk5BuildStage h lookup) (ibk5RoundTripStage h lookup) hr
+    have : d' = d := Option.some.inj (hd'.symm.trans hd)
+    subst this
+    intro hl
+    exact e.trans (hb hl)
+
+/-- **IBK5 build, write, read**: for a lookup that resolves each object, the
+block read back denotes the quads. -/
+theorem ibk5BuildWriteRead_den (h : ByteArray → ByteArray) (lookup : ByteArray → Option ByteArray)
+    {qs : List (Option Subject × Triple)} {d : IndexedBlockWireV5.QuadBlock}
+    (hr : (ibk5BuildWriteReadStage h lookup).run qs = .ok d)
+    (hl : ∀ q ∈ qs, TermWireV2.resolve h lookup (TermWireV2.toWire h q.2.o) = some q.2.o) :
+    d.den? h lookup = some (DatasetDen.ofQuads qs []) :=
+  (ibk5BuildWriteReadStage h lookup).sound qs d hr hl
+
 end Blocks
 
 /-! ## StoreCaps: a search against the denotation -/
@@ -360,6 +469,13 @@ end Caps
 #print axioms ibk3RoundTrip_den
 #print axioms ibk4RoundTrip_den
 #print axioms ibk5RoundTrip_den
+#print axioms ibk3BuildWriteReadStage
+#print axioms ibk3BuildWriteRead_den
+#print axioms ibk4BuildWriteReadStage
+#print axioms ibk4BuildWriteRead_den
+#print axioms ibk4BuildWriteRead_dataset
+#print axioms ibk5BuildWriteReadStage
+#print axioms ibk5BuildWriteRead_den
 #print axioms storeSearchStage
 #print axioms backendExact_indexed_default
 #print axioms indexedDefaultSearch_sound
