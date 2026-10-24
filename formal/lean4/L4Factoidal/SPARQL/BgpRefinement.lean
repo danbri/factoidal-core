@@ -62,11 +62,13 @@ pattern's own literal is kept and only compared to the graph's:
         match t with
         | .literal l' => if l.val.eqb l'.val then some mu else none
 
-Two language-tagged literals differing only in the CASE of the tag are
-`Term.eqb`-equal and structurally distinct, so a pattern spelling the
-tag `en` against a graph spelling it `EN` matches, and the instantiated
-triple is not a member of the graph list. The `#guard` block below pins
-that concrete case, in both directions.
+Until 2026-10-24 two language-tagged literals differing only in the
+CASE of the tag were `Term.eqb`-equal and structurally distinct, so the
+stronger form was false. `RDF.literalWf` now requires the lower-case tag
+(RDF 1.2 Concepts §3.4; https://github.com/danbri/factoidal/issues/1001),
+`Term.eqb` is structural equality, and the stronger form holds:
+`evalBgp_instantiates_into_graph_mem`. The `#guard` block below pins the
+concrete case.
 
 The F\* module handles this by scoping to a fragment — `bgp_frag`
 demands exact literal constants, so the two literals coincide. This port
@@ -583,6 +585,12 @@ theorem evalBgp_instantiates_into_graph (b : Bgp) (g : Graph) {mu : Binding}
     (h : mu ∈ evalBgp b g) : ∀ t ∈ instBgp b mu, Graph.mem t g = true :=
   instBgp_into_graph b h
 
+/-- The same with list membership: since every term is canonical,
+`Graph.mem` is `∈` (`Graph.mem_iff`; https://github.com/danbri/factoidal/issues/1001). -/
+theorem evalBgp_instantiates_into_graph_mem (b : Bgp) (g : Graph) {mu : Binding}
+    (h : mu ∈ evalBgp b g) : ∀ t ∈ instBgp b mu, t ∈ g :=
+  fun t ht => (Graph.mem_iff t g).mp (instBgp_into_graph b h t ht)
+
 /-! ## Pinned behaviour -/
 
 section Pins
@@ -610,13 +618,13 @@ something only when the pattern is non-empty. -/
 /-! Non-vacuity: neither instantiation is empty. -/
 #guard (evalBgp qSP gTwo).all (fun mu => (instBgp qSP mu).length == 1)
 
-/-! ### Why the conclusion is `Graph.mem` and not `t ∈ g`
+/-! ### The case that once separated `Graph.mem` from `t ∈ g`
 
-The graph holds a language-tagged literal spelled `EN`; the pattern
-writes the same tag `en`. `langTagEq` is case-insensitive, so the match
-succeeds — and `instBgp` returns the PATTERN's literal, which is not the
-graph's own term. Engine membership is true and strict list membership
-is false. -/
+The data spells the tag `EN`, the pattern `en`. Until 2026-10-24 the two
+were two values, and the instantiated triple was a `Graph.mem` member and
+not a list member. They are one RDF term (RDF 1.2 Concepts §3.4) and the
+constructor writes `en` for both, so the instantiated triple is the
+graph's own (https://github.com/danbri/factoidal/issues/1001). -/
 
 private def gLang : Graph :=
   [{ s := .iri aIri, p := pIri, o := .literal (Literal.langString "x" "EN") }]
@@ -636,10 +644,10 @@ private def qLang : Bgp :=
        | mu :: _ => (instBgp qLang mu).all (fun t => Graph.mem t gLang)
        | []      => false
 
-/-! The same triple is NOT in the graph by structural equality. This pin
-stops a later reader from strengthening the theorem to `t ∈ g`. -/
+/-! The same triple IS in the graph by structural equality
+(`evalBgp_instantiates_into_graph_mem`). -/
 #guard match evalBgp qLang gLang with
-       | mu :: _ => (instBgp qLang mu).all (fun t => !(gLang.contains t))
+       | mu :: _ => (instBgp qLang mu).all (fun t => gLang.contains t)
        | []      => false
 
 /-! A pattern position that does not bind drops out rather than producing

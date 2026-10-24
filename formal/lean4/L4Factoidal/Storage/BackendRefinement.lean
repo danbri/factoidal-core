@@ -24,11 +24,12 @@ against `Allowed`, the answers SPARQL 1.1 allows
   class of RDF-term-equal solution mappings has the same number of rows on
   both sides, and `SolKEquiv.length_eq` gives the same total. That the
   answer has no duplicate row is not claimed.
-* `evalBgpBackend_solEquiv`, `evalBgpBackend_allowed`: when every object of
-  the graph and of the backend's rows is its own join key (`GraphFixed`,
-  `BackendFixed`: no upper-case letter in a language tag), the relation is
-  the structural one (`SolEquiv`), and the backend's answer to a basic graph
-  pattern with no `text:query` pattern is an answer `Allowed` admits.
+* `evalBgpBackend_solEquiv`, `evalBgpBackend_allowed`: every object of the
+  graph and of the backend's rows is its own join key (`graphFixed`,
+  `backendFixed`: no well-formed literal has an upper-case letter in a
+  language tag), so the relation is the structural one (`SolEquiv`), and the
+  backend's answer to a basic graph pattern with no `text:query` pattern is
+  an answer `Allowed` admits.
 * `evalPatternBackend_allowed`: for every pattern of `NativeFrag` (BGP with no
   `text:query` pattern, FILTER and OPTIONAL with a `backendLocal`
   condition, JOIN, UNION, MINUS, GRAPH with an IRI or a variable, VALUES,
@@ -42,7 +43,7 @@ against `Allowed`, the answers SPARQL 1.1 allows
   reads only the lookups of the row).
 * `indexedWhere_allowed`: the same for the dataset record of the reference
   fallback, `indexedDatasetBackend d`, with premises on `d` only:
-  `Dataset.IsSet`, IRI graph names, and `GraphFixed` for each graph.
+  `Dataset.IsSet` and IRI graph names.
 
 ## What is not proved
 
@@ -58,20 +59,23 @@ against `Allowed`, the answers SPARQL 1.1 allows
   fallback are both proved to give an allowed answer, and are not proved to
   give the same one.
 
-## Why RDF term equality and not structural equality
+## Why RDF term equality, and why it is now structural equality
 
 `tryBindTerm` keeps the FIRST term bound to a variable and compares later
-ones with `Term.eqb`, which folds the case of language tags. For the graph
+ones with `Term.eqb`, which folds the case of language tags. Until
+2026-10-24 a graph could hold `"x"@en` and `"x"@EN`: for
 `a :p "x"@en . b :p "y" . a :q "x"@EN` and the pattern `?s :p ?o . ?s :q ?o`
-the reference binds `?o` to `"x"@en` and the backend (which reads `:q`
-first, estimate 1 against 2) binds it to `"x"@EN`. `LANG(?o) = "en"` then
-keeps one row on the reference and none on the backend. The reference has
-the same dependence on the order in which the patterns are written (the
-`#guard`s at the end), so this is a property of the matching rule on data
-whose tags are not lower-cased, and not of the backend. RDF 1.1 Concepts
-section 3.3: "The value space of language tags is always in lower case."
-The command line lower-cases tags on load (`RDF/NormalizeSet.lean`), which
-gives `GraphFixed`.
+the reference bound `?o` to `"x"@en` and the backend (which reads `:q`
+first) to `"x"@EN`, and `LANG(?o) = "en"` kept one row on one side and none
+on the other. The reference had the same dependence on the order in which
+the patterns are written. RDF 1.2 Concepts §3.4 makes the two spellings one
+RDF term and permits the lower-case one; `RDF.literalWf` now requires it
+(https://github.com/danbri/factoidal/issues/1001). So every term is its own
+join key (`Term.joinKey_eq_self`), `Term.eqb` is structural equality
+(`Term.eqb_iff_eq`), and the premises `GraphFixed` and `BackendFixed` hold
+for every graph and every backend (`graphFixed`, `backendFixed`). The
+theorems keep `SolKEquiv` where it is the natural statement; it now implies
+`SolEquiv` with no premise. The `#guard`s at the end are the issue's case.
 
 No `sorry`, no user `axiom`, no `native_decide`, no `partial`.
 -/
@@ -94,7 +98,7 @@ open L4Factoidal.SPARQL.StorePlan
 open L4Factoidal.Storage.Sbm11.IdGroup (Pw PermPw BindEq SolEquiv Allowed refSol filterFn)
 open L4Factoidal.SPARQL.StoreDataset
 open L4Factoidal.SPARQL.DatasetRestriction (ngKey indexedDatasetBackend_named)
-open L4Factoidal.Storage.Sbm11.AllowedPerm (GraphFixed)
+open L4Factoidal.Storage.Sbm11.AllowedPerm (GraphFixed graphFixed)
 open L4Factoidal.Storage.Sbm11.IdLeaf (flatMap_comm_perm)
 
 /-! ## 1. Solution mappings up to RDF term equality -/
@@ -1018,6 +1022,11 @@ def BackendFixed (gb : GraphBackend) : Prop :=
 theorem bindFixed_empty : BindFixed Binding.empty := fun _ _ h => by
   simp [Binding.empty, Binding.lookup] at h
 
+/-- Every backend is `BackendFixed`: every term is its own join key
+    (`Term.joinKey_eq_self`). -/
+theorem backendFixed (gb : GraphBackend) : BackendFixed gb :=
+  fun _ u _ => Term.joinKey_eq_self u.o
+
 theorem bindFixed_bind {mu : Binding} {x : Term} (v : VarName) (hm : BindFixed mu)
     (hx : x.joinKey = x) : BindFixed (mu.bind v x) := by
   intro w e h
@@ -1129,27 +1138,29 @@ theorem solEquiv_of_fixed {A B : SolutionSeq} (h : SolKEquiv A B)
   exact ⟨C, p, pw_imp_mem w (fun a ha b hb hab =>
     bindEq_of_fixed hab (hA a (p.mem_iff.mpr ha)) (hB b hb))⟩
 
-/-- **The backend BGP evaluator, structurally.** With every object of the
-    graph and of the backend's rows its own join key, the backend's
-    solutions of `b` are the reference's as a multiset of solution mappings
-    (`SolEquiv`: a permutation, then the same lookup of every variable). -/
+/-- **The backend BGP evaluator, structurally.** The backend's solutions of
+    `b` are the reference's as a multiset of solution mappings (`SolEquiv`:
+    a permutation, then the same lookup of every variable). Every object of
+    the graph and of the backend's rows is its own join key (`graphFixed`,
+    `backendFixed`), so the premises `GraphFixed g` and `BackendFixed gb`
+    that this theorem had until 2026-10-24 are gone
+    (https://github.com/danbri/factoidal/issues/1001). -/
 theorem evalBgpBackend_solEquiv {gb : GraphBackend} {G : Triple → Prop} {g : Graph}
-    (hx : BackendExact gb G) (hg : g.KeyNodup) (hG : ∀ t, G t ↔ KeyMem g t)
-    (hgf : GraphFixed g) (hbf : BackendFixed gb) (b : Bgp) :
+    (hx : BackendExact gb G) (hg : g.KeyNodup) (hG : ∀ t, G t ↔ KeyMem g t) (b : Bgp) :
     SolEquiv (evalBgpBackend b gb) (evalBgp b g) :=
   solEquiv_of_fixed (evalBgpBackend_kequiv hx hg hG b)
-    (fun mu hm => evalBgpFromMuFuel_fixed hbf _ b bindFixed_empty mu hm)
-    (fun mu hm => evalBgpFrom_fixed hgf b bindFixed_empty mu hm)
+    (fun mu hm => evalBgpFromMuFuel_fixed (backendFixed gb) _ b bindFixed_empty mu hm)
+    (fun mu hm => evalBgpFrom_fixed (graphFixed g) b bindFixed_empty mu hm)
 
 /-- The backend's answer to a basic graph pattern with no `text:query`
     pattern is an answer `Allowed` admits. -/
 theorem evalBgpBackend_allowed (env : EvalEnv) (ds : Dataset) {gb : GraphBackend} {a : Graph}
-    (hx : BackendExact gb (KeyMem a)) (ha : a.KeyNodup) (haf : GraphFixed a) (hbf : BackendFixed gb)
+    (hx : BackendExact gb (KeyMem a)) (ha : a.KeyNodup)
     (b : Bgp) (hf : bgpHasFulltext b = false) :
     Allowed env ds (.bgp b) a (evalBgpBackend b gb) := by
   have h0 := Allowed.bgp (env := env) (ds := ds) b a
   rw [Storage.Sbm11.IdLeaf.refSol_bgp env ds b a hf] at h0
-  exact .equiv h0 (SolEquiv.symm (evalBgpBackend_solEquiv hx ha (fun _ => Iff.rfl) haf hbf b))
+  exact .equiv h0 (SolEquiv.symm (evalBgpBackend_solEquiv hx ha (fun _ => Iff.rfl) b))
 
 /-! ## 10. FILTER, OPTIONAL, JOIN, UNION, MINUS, GRAPH, VALUES and the empty
 pattern on the backend path -/
@@ -1326,13 +1337,10 @@ theorem filterFn_local (env : EvalEnv) {c : Expr} (hc : c.backendLocal = true) (
     (Storage.Sbm11.ExprLocalTheorems.lookup_merge_empty row) c]
 
 /-- A graph backend and the list it reads: the law of the backend for the
-    list's triples, each triple once up to RDF term equality, and every
-    object of the list and of the backend's rows its own join key. -/
+    list's triples, and each triple once up to RDF term equality. -/
 structure GraphRel (gb : GraphBackend) (a : Graph) : Prop where
   exact : BackendExact gb (KeyMem a)
   keyNodup : a.KeyNodup
-  fixed : GraphFixed a
-  backendFixed : BackendFixed gb
 
 /-- The named backends of a dataset record and the named graphs of a dataset,
     pair for pair: an IRI name, the backend's name its string, and the
@@ -1458,7 +1466,7 @@ theorem evalPatternBackend_allowed (env : EvalEnv) (dsb : DatasetBackend) (ds : 
       Allowed env ds p a (evalPatternBackend env dsb p gb)
   | .bgp b, hp, gb, a, hr => by
     rw [evalPatternBackend_bgp_native]
-    exact evalBgpBackend_allowed env ds hr.exact hr.keyNodup hr.fixed hr.backendFixed b hp
+    exact evalBgpBackend_allowed env ds hr.exact hr.keyNodup b hp
   | .filter c q, hp, gb, a, hr => by
     have e : evalPatternBackend env dsb (.filter c q) gb =
         (evalPatternBackend env dsb q gb).filter (fun row => ebvOrFalse (Expr.evalIn env row c)) := by
@@ -1544,23 +1552,20 @@ theorem mem_backendSearch_indexed {g : Graph} {b : PatternBound} {u : Triple}
       OWL.RL.withPred, OWL.RL.withSubj, OWL.RL.withObj, List.mem_filter] <;>
     intro h <;> first | exact h | exact h.1
 
-theorem graphRel_indexed {g : Graph} (hg : g.KeyNodup) (hf : GraphFixed g) :
+theorem graphRel_indexed {g : Graph} (hg : g.KeyNodup) :
     GraphRel (indexedGraphBackend g) g where
   exact := ⟨g, OWL.RL.Index.Wf.ofGraph g, hg, fun _ => Iff.rfl⟩
   keyNodup := hg
-  fixed := hf
-  backendFixed := fun _ u hu => hf u (mem_backendSearch_indexed hu)
 
 theorem namedRel_indexed : ∀ (l : List NamedGraph), (∀ ng ∈ l, ng.graph.KeyNodup) →
-    (∀ ng ∈ l, GraphFixed ng.graph) → (∀ ng ∈ l, ∃ j, ng.name = .iri j) →
+    (∀ ng ∈ l, ∃ j, ng.name = .iri j) →
     NamedRel (l.map (fun ng => (⟨ngKey ng, indexedGraphBackend ng.graph⟩ : NamedGraphBackend))) l
-  | [], _, _, _ => .nil
-  | ng :: rest, hs, hf, hi => by
+  | [], _, _ => .nil
+  | ng :: rest, hs, hi => by
     obtain ⟨j, hj⟩ := hi ng List.mem_cons_self
-    refine .cons j hj (by simp [ngKey, hj]) (graphRel_indexed (hs ng List.mem_cons_self)
-      (hf ng List.mem_cons_self)) ?_
+    refine .cons j hj (by simp [ngKey, hj]) (graphRel_indexed (hs ng List.mem_cons_self)) ?_
     exact namedRel_indexed rest (fun x hx => hs x (List.mem_cons_of_mem _ hx))
-      (fun x hx => hf x (List.mem_cons_of_mem _ hx)) (fun x hx => hi x (List.mem_cons_of_mem _ hx))
+      (fun x hx => hi x (List.mem_cons_of_mem _ hx))
 
 theorem ngKey_nodup : ∀ (l : List NamedGraph), (l.map (·.name)).Nodup →
     (∀ ng ∈ l, ∃ j, ng.name = .iri j) → (l.map ngKey).Nodup
@@ -1587,22 +1592,28 @@ theorem iris_of_namesAreIris {d : Dataset} (h : Storage.QuadDataset.namesAreIris
 
 /-- **The reference fallback's WHERE answer is an answer SPARQL 1.1
     allows.** Over the in-memory dataset record of a dataset that is a set
-    with IRI graph names and every object its own join key (no upper-case
-    letter in a language tag), `evalPatternBackend` answers every pattern of
-    `NativeFrag` with an answer `Allowed` admits, in the default graph. -/
+    with IRI graph names, `evalPatternBackend` answers every pattern of
+    `NativeFrag` with an answer `Allowed` admits, in the default graph. Since
+    2026-10-24 there is no premise on the language tags: every dataset is
+    `GraphFixed` (`graphFixed`, https://github.com/danbri/factoidal/issues/1001). -/
 theorem indexedWhere_allowed (env : EvalEnv) (d : Dataset) (hset : d.IsSet)
-    (hiri : Storage.QuadDataset.namesAreIris d = true) (hdf : GraphFixed d.default)
-    (hnf : ∀ ng ∈ d.named, GraphFixed ng.graph) (p : QueryPattern) (hp : NativeFrag p) :
+    (hiri : Storage.QuadDataset.namesAreIris d = true) (p : QueryPattern) (hp : NativeFrag p) :
     Allowed env d p d.default
       (evalPatternBackend env (indexedDatasetBackend d) p (indexedDatasetBackend d).default) := by
   have hi := iris_of_namesAreIris hiri
   have hn : NamedRel (indexedDatasetBackend d).named d.named := by
     rw [indexedDatasetBackend_named]
-    exact namedRel_indexed d.named hset.graphs hnf hi
+    exact namedRel_indexed d.named hset.graphs hi
   have hnd : ((indexedDatasetBackend d).named.map (·.name)).Nodup := by
     rw [indexedDatasetBackend_named, List.map_map]
     exact ngKey_nodup d.named hset.names hi
-  exact evalPatternBackend_allowed env _ d hn hnd p hp _ _ (graphRel_indexed hset.default hdf)
+  exact evalPatternBackend_allowed env _ d hn hnd p hp _ _ (graphRel_indexed hset.default)
+
+/-- Every dataset, parsed by any reader or built by any constructor,
+    satisfies the premises on language tags that `indexedWhere_allowed`
+    carried until 2026-10-24 (https://github.com/danbri/factoidal/issues/1001). -/
+theorem datasetFixed (D : Dataset) : GraphFixed D.default ∧ ∀ ng ∈ D.named, GraphFixed ng.graph :=
+  ⟨graphFixed _, fun ng _ => graphFixed ng.graph⟩
 
 /-! ## 12. The stages -/
 
@@ -1620,12 +1631,10 @@ def backendBgpStage (b : Bgp) (g : Graph) :
     (fun _ _ hx hg hG => evalBgpBackend_kequiv hx hg hG b)
 
 /-- The contract of the reference fallback's WHERE answer: for a pattern of
-    `NativeFrag` over a dataset that is a set with IRI graph names and every
-    object its own join key, an answer `Allowed` admits in the default
-    graph. -/
+    `NativeFrag` over a dataset that is a set with IRI graph names, an answer
+    `Allowed` admits in the default graph. -/
 def FallbackWhereContract (env : EvalEnv) (p : QueryPattern) (D : Dataset) (r : SolutionSeq) : Prop :=
-  NativeFrag p → D.IsSet → Storage.QuadDataset.namesAreIris D = true → GraphFixed D.default →
-    (∀ ng ∈ D.named, GraphFixed ng.graph) → Allowed env D p D.default r
+  NativeFrag p → D.IsSet → Storage.QuadDataset.namesAreIris D = true → Allowed env D p D.default r
 
 /-- A dataset → the WHERE answer of `evalPatternBackend` over its in-memory
     dataset record (`indexedDatasetBackend`, the record of the reference
@@ -1635,15 +1644,15 @@ def fallbackWhereStage (env : EvalEnv) (p : QueryPattern) :
   L4Factoidal.Dataflow.Stage.ofFun
     (fun D => evalPatternBackend env (indexedDatasetBackend D) p (indexedDatasetBackend D).default)
     (FallbackWhereContract env p)
-    (fun D hp hset hiri hdf hnf => indexedWhere_allowed env D hset hiri hdf hnf p hp)
+    (fun D hp hset hiri => indexedWhere_allowed env D hset hiri p hp)
 
-/-! ## 13. Build-time checks: the representative of an RDF-term-equal class
+/-! ## 13. Build-time checks: one representative of an RDF term
 
-The module header's example. The backend reads `:q` first (estimate 1
-against 2) and keeps `"x"@EN`; the reference reads `:p` first and keeps
-`"x"@en`. The two rows have one join key. `FILTER(LANG(?o) = "en")`
-tells them apart, so the structural statement needs `GraphFixed`, which
-this graph does not satisfy. -/
+The module header's example (https://github.com/danbri/factoidal/issues/1001).
+`Literal.langString "x" "EN"` is `"x"@en`: the two spellings are one RDF term
+with one representation, so the backend, the reference, and both orders of
+the patterns bind `?o` to the same term, and `FILTER(LANG(?o) = "en")` keeps
+the row on every path. -/
 
 private def gxA : WfIri := ⟨"http://example.org/a", by decide⟩
 private def gxB : WfIri := ⟨"http://example.org/b", by decide⟩
@@ -1652,6 +1661,8 @@ private def gxQ : WfIri := ⟨"http://example.org/q", by decide⟩
 
 private def gxEn : Term := .literal (Literal.langString "x" "en")
 private def gxEN : Term := .literal (Literal.langString "x" "EN")
+
+#guard gxEn == gxEN
 
 private def gxGraph : Graph :=
   [ { s := .iri gxA, p := gxP, o := gxEn },
@@ -1668,30 +1679,16 @@ private def gxLangEn : Expr :=
 private def gxDsb : DatasetBackend := { default := .list gxGraph, named := [] }
 
 #guard (evalBgp gxBgp gxGraph).map (fun mu => mu.lookup "o") == [some gxEn]
-#guard (evalBgpBackend gxBgp (.list gxGraph)).map (fun mu => mu.lookup "o") == [some gxEN]
-#guard (evalBgp gxBgp gxGraph).map (fun mu => (mu.lookup "o").map Term.joinKey) ==
-  (evalBgpBackend gxBgp (.list gxGraph)).map (fun mu => (mu.lookup "o").map Term.joinKey)
+#guard (evalBgpBackend gxBgp (.list gxGraph)).map (fun mu => mu.lookup "o") == [some gxEn]
+#guard (evalBgp gxBgp.reverse gxGraph).map (fun mu => mu.lookup "o") == [some gxEn]
+#guard (evalBgpBackend gxBgp.reverse (.list gxGraph)).map (fun mu => mu.lookup "o") == [some gxEn]
 #guard gxLangEn.backendLocal
 #guard (refSol emptyEnv { default := gxGraph, named := [] } (.filter gxLangEn (.bgp gxBgp)) gxGraph).length == 1
-#guard (evalPatternBackend emptyEnv gxDsb (.filter gxLangEn (.bgp gxBgp)) (.list gxGraph)).length == 0
-
-/-! The reference evaluator has the same dependence on the order of the
-patterns: with the two patterns written the other way round it keeps
-`"x"@EN`, and the FILTER keeps no row. So the order dependence is in the
-matching rule (`tryBindTerm` keeps the first-bound term and compares with the
-case-folding `Term.eqb`), not in the backend. -/
-
-#guard (evalBgp gxBgp.reverse gxGraph).map (fun mu => mu.lookup "o") == [some gxEN]
 #guard (refSol emptyEnv { default := gxGraph, named := [] }
-  (.filter gxLangEn (.bgp gxBgp.reverse)) gxGraph).length == 0
-
-/-! With the tags lower-cased (`GraphFixed`), the two agree. -/
-
-private def gxFixed : Graph := gxGraph.map (fun t => { t with o := t.o.joinKey })
-
-#guard (refSol emptyEnv { default := gxFixed, named := [] } (.filter gxLangEn (.bgp gxBgp)) gxFixed).length == 1
-#guard (evalPatternBackend emptyEnv { default := .list gxFixed, named := [] }
-  (.filter gxLangEn (.bgp gxBgp)) (.list gxFixed)).length == 1
+  (.filter gxLangEn (.bgp gxBgp.reverse)) gxGraph).length == 1
+#guard (evalPatternBackend emptyEnv gxDsb (.filter gxLangEn (.bgp gxBgp)) (.list gxGraph)).length == 1
+#guard (evalPatternBackend emptyEnv gxDsb (.filter gxLangEn (.bgp gxBgp.reverse))
+  (.list gxGraph)).length == 1
 
 /-! ## Axiom audit -/
 
@@ -1703,6 +1700,8 @@ private def gxFixed : Graph := gxGraph.map (fun t => { t with o := t.o.joinKey }
 #print axioms evalBgpBackend_allowed
 #print axioms evalPatternBackend_allowed
 #print axioms indexedWhere_allowed
+#print axioms datasetFixed
+#print axioms backendFixed
 #print axioms backendBgpStage
 #print axioms fallbackWhereStage
 

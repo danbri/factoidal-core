@@ -125,17 +125,41 @@ instance : Hashable Literal :=
 instance : Repr Literal :=
   ⟨fun l n => reprPrec (l.lexicalForm, l.datatype.val, l.langTag) n⟩
 
+/-- The canonical spelling of a language tag: no upper-case letter.
+
+RDF 1.2 Concepts §3.4: language tags are compared case-insensitively,
+so `"x"@en` and `"x"@EN` are ONE RDF term, and "lexical representations
+of language tags MAY be converted to lower case. The value space of
+language tags is always in lower case." This port takes that option for
+every term it holds: `literalWf` below accepts a tag only in its
+canonical form, so one RDF term has one representation and term
+equality is structural (`Term.eqb_iff_eq`).
+
+Why this is a rule of the term model and not of each reader
+(https://github.com/danbri/factoidal/issues/1001): with two spellings
+of one term in a graph, the SPARQL matcher kept the spelling of the
+pattern it matched first, so `FILTER(LANG(?o) = "en")` kept a row for
+one pattern order and no row for the other.
+
+BCP 47 tags are ASCII (RFC 5646 §2.1), so the case mapping is the ASCII
+one, `Char.toLower` (`langTagCanonical_iff`). The definition reads the
+characters, so the kernel decides it on a string literal by `rfl`. -/
+def langTagCanonical (t : String) : Bool :=
+  t.toList.all (fun c => !c.isUpper)
+
 /-- The three-way well-formedness rule (RDF 1.2 extension of RDF 1.1's
 "language tag iff `rdf:langString`"):
   * no tag, no direction  ↔ datatype is neither langString nor dirLangString
   * tag, no direction     ↔ datatype is `rdf:langString`
   * tag and direction     ↔ datatype is `rdf:dirLangString`
-  * direction without tag — always ill-formed. -/
+  * direction without tag — always ill-formed.
+A tag must also be in its canonical (lower-case) spelling,
+`langTagCanonical`. -/
 def literalWf (l : Literal) : Bool :=
   match l.langTag, l.direction with
   | none,   none   => l.datatype != rdfLangString && l.datatype != rdfDirLangString
-  | some _, none   => l.datatype == rdfLangString
-  | some _, some _ => l.datatype == rdfDirLangString
+  | some t, none   => l.datatype == rdfLangString && langTagCanonical t
+  | some t, some _ => l.datatype == rdfDirLangString && langTagCanonical t
   | none,   some _ => false
 
 /-- A well-formed literal — what `Term.literal` actually carries. -/
@@ -253,17 +277,97 @@ def Literal.string (lex : String) : WfLiteral :=
   ⟨{ lexicalForm := lex, datatype := xsdString,
      langTag := none, direction := none }, rfl⟩
 
-/-- Convenience constructor: a language-tagged literal. -/
+/-! ### Lower case and the canonical tag -/
+
+theorem toLower_char_idem (c : Char) : c.toLower.toLower = c.toLower := by
+  unfold Char.toLower
+  split <;> rename_i h
+  · rw [dif_neg]
+    intro h2
+    simp only [ge_iff_le, UInt32.le_iff_toNat_le] at h h2
+    simp only [UInt32.toNat_add] at h2
+    have : ('A'.val).toNat = 65 := rfl
+    have : ('Z'.val).toNat = 90 := rfl
+    have : ('a'.val - 'A'.val).toNat = 32 := rfl
+    omega
+  · rfl
+
+theorem toLower_string_idem (s : String) : s.toLower.toLower = s.toLower := by
+  rw [← String.toList_inj]
+  simp only [String.toLower, String.toList_map, List.map_map]
+  congr 1
+  funext c
+  exact toLower_char_idem c
+
+/-- A character is its own lower case exactly when it is not upper case. -/
+theorem char_toLower_eq_self_iff (c : Char) : c.toLower = c ↔ c.isUpper = false := by
+  have hdef : c.isUpper = decide (c.val ≥ 'A'.val ∧ c.val ≤ 'Z'.val) := rfl
+  unfold Char.toLower
+  by_cases h : c.val ≥ 'A'.val ∧ c.val ≤ 'Z'.val
+  · rw [dif_pos h, hdef, decide_eq_true h]
+    simp only [Bool.true_eq_false, iff_false]
+    intro he
+    have hv := congrArg (fun x : Char => x.val.toNat) he
+    simp only [UInt32.toNat_add] at hv
+    simp only [ge_iff_le, UInt32.le_iff_toNat_le] at h
+    have : ('A'.val).toNat = 65 := rfl
+    have : ('Z'.val).toNat = 90 := rfl
+    have : ('a'.val - 'A'.val).toNat = 32 := rfl
+    omega
+  · rw [dif_neg h, hdef, decide_eq_false h]; simp
+
+/-- `langTagCanonical` is "the tag is its own lower case". -/
+theorem langTagCanonical_iff (t : String) : langTagCanonical t = true ↔ t.toLower = t := by
+  rw [← String.toList_inj]
+  simp only [langTagCanonical, String.toLower, String.toList_map, List.all_eq_true,
+    Bool.not_eq_true']
+  constructor
+  · intro h
+    conv => rhs; rw [← List.map_id t.toList]
+    apply List.map_congr_left
+    intro c hc
+    exact (char_toLower_eq_self_iff c).mpr (h c hc)
+  · intro h c hc
+    apply (char_toLower_eq_self_iff c).mp
+    have hm : c.toLower ∈ t.toList.map Char.toLower := List.mem_map_of_mem hc
+    rw [h] at hm
+    -- every element of `t.toList` is the lower case of an element
+    have key : ∀ (l : List Char), l.map Char.toLower = l → ∀ x ∈ l, x.toLower = x := by
+      intro l
+      induction l with
+      | nil => intro _ x hx; simp at hx
+      | cons a as ih =>
+          intro hl x hx
+          simp only [List.map_cons, List.cons.injEq] at hl
+          rcases List.mem_cons.mp hx with rfl | hx
+          · exact hl.1
+          · exact ih hl.2 x hx
+    exact key t.toList h c hc
+
+/-- The lower case of a tag is canonical. -/
+theorem langTagCanonical_toLower (t : String) : langTagCanonical t.toLower = true :=
+  (langTagCanonical_iff _).mpr (toLower_string_idem t)
+
+/-- A canonical tag is its own lower case. -/
+theorem toLower_of_langTagCanonical {t : String} (h : langTagCanonical t = true) :
+    t.toLower = t :=
+  (langTagCanonical_iff t).mp h
+
+/-- Convenience constructor: a language-tagged literal. The tag is
+written in its canonical (lower-case) form (RDF 1.2 Concepts §3.4). -/
 def Literal.langString (lex tag : String) : WfLiteral :=
   ⟨{ lexicalForm := lex, datatype := rdfLangString,
-     langTag := some tag, direction := none }, rfl⟩
+     langTag := some tag.toLower, direction := none },
+   by simp [literalWf, langTagCanonical_toLower]⟩
 
 /-- Convenience constructor: RDF 1.2's directional language-tagged
 literal (a language tag AND a base direction, so the datatype is
-`rdf:dirLangString` — the third clause of `literalWf`). -/
+`rdf:dirLangString` — the third clause of `literalWf`). The tag is
+written in its canonical (lower-case) form. -/
 def Literal.dirLangString (lex tag : String) (d : TextDirection) : WfLiteral :=
   ⟨{ lexicalForm := lex, datatype := rdfDirLangString,
-     langTag := some tag, direction := some d }, rfl⟩
+     langTag := some tag.toLower, direction := some d },
+   by simp [literalWf, langTagCanonical_toLower]⟩
 
 /-! ## Equality — the three literal-equality relations
 
@@ -575,11 +679,60 @@ def Literal.joinKey (l : Literal) : Literal :=
   , langTag     := l.langTag.map String.toLower
   , direction   := l.direction }
 
-/-- Canonicalising for the join key does not change well-formedness:
-the datatype, the tag's presence, and the direction are untouched. -/
-theorem literalWf_joinKey (l : Literal) : literalWf l.joinKey = literalWf l := by
-  unfold literalWf Literal.joinKey
-  cases l.langTag <;> cases l.direction <;> rfl
+/-- A well-formed literal is its own join key: its tag is already in
+lower case (`literalWf` requires `langTagCanonical`). -/
+theorem Literal.joinKey_eq_self_of_wf {l : Literal} (h : literalWf l = true) :
+    l.joinKey = l := by
+  obtain ⟨lex, dt, tag, dir⟩ := l
+  cases tag with
+  | none => rfl
+  | some t =>
+      have ht : langTagCanonical t = true := by
+        cases dir <;> simp_all [literalWf]
+      simp [Literal.joinKey, toLower_of_langTagCanonical ht]
+
+/-- Canonicalising for the join key keeps a well-formed literal
+well-formed (it is the identity on it). -/
+theorem literalWf_joinKey (l : Literal) (h : literalWf l = true) : literalWf l.joinKey = true := by
+  rw [Literal.joinKey_eq_self_of_wf h]; exact h
+
+/-- Lower-casing the tag of ANY literal (reader input, not yet checked)
+makes the tag canonical and keeps the rest of the rule: the result is
+well-formed exactly when the input is well-formed apart from the case
+of its tag. -/
+def literalWfModCase (l : Literal) : Bool :=
+  match l.langTag, l.direction with
+  | none,   none   => l.datatype != rdfLangString && l.datatype != rdfDirLangString
+  | some _, none   => l.datatype == rdfLangString
+  | some _, some _ => l.datatype == rdfDirLangString
+  | none,   some _ => false
+
+theorem literalWf_joinKey_eq (l : Literal) : literalWf l.joinKey = literalWfModCase l := by
+  obtain ⟨lex, dt, tag, dir⟩ := l
+  cases tag <;> cases dir <;>
+    simp [literalWf, literalWfModCase, Literal.joinKey, langTagCanonical_toLower]
+
+/-- The smart constructor every reader uses for a literal it has read:
+the language tag is written in its canonical (lower-case) form first
+(RDF 1.2 Concepts §3.4), then `literalWf` decides. -/
+def Literal.toWf? (l : Literal) : Option WfLiteral :=
+  if h : literalWf l.joinKey then some ⟨l.joinKey, h⟩ else none
+
+theorem Literal.joinKey_joinKey (l : Literal) : l.joinKey.joinKey = l.joinKey := by
+  obtain ⟨lex, dt, tag, dir⟩ := l
+  cases tag <;> simp [Literal.joinKey, toLower_string_idem]
+
+/-- Lower-casing first changes nothing: `toWf?` lower-cases anyway. -/
+theorem Literal.toWf?_joinKey (l : Literal) : Literal.toWf? l.joinKey = Literal.toWf? l := by
+  unfold Literal.toWf?
+  rw [Literal.joinKey_joinKey]
+
+theorem Literal.toWf?_of_wf {l : Literal} (h : literalWf l = true) :
+    Literal.toWf? l = some ⟨l, h⟩ := by
+  have he := Literal.joinKey_eq_self_of_wf h
+  unfold Literal.toWf?
+  rw [dif_pos (by rw [he]; exact h)]
+  simp [he]
 
 /-- eqb-equal literals have identical join keys — the bucket-soundness
 half of the canonicaliser's contract. -/
@@ -606,49 +759,44 @@ theorem Literal.joinKey_eq_of_eqb {l1 l2 : Literal}
 def Term.joinKey : Term → Term
   | .iri i     => .iri i
   | .bnode b   => .bnode b
-  | .literal l => .literal ⟨l.val.joinKey, by
-      rw [literalWf_joinKey]; exact l.property⟩
+  | .literal l => .literal ⟨l.val.joinKey, literalWf_joinKey l.val l.property⟩
   | .tripleTerm s p o => .tripleTerm s p o.joinKey
 
-/-! ### The join key of a term nested deep
+/-! ### The join key of a well-formed term is the term
 
-`Term.joinKey` above is the SPECIFICATION. It takes one native frame for each level of
-triple-term nesting: a dataset keys each triple by the join key of its object
-(https://github.com/danbri/factoidal/issues/867). `Term.joinKeyLoop` keeps the subject and
-the predicate of each open triple term in a list and wraps the join key of the innermost term
-in them, innermost first. `Term.joinKey_eq_fast` proves it equal and `@[csimp]` makes every
-caller compiled after it run the loop. -/
+`Term.joinKey` above is the SPECIFICATION of the key. Since `literalWf`
+requires the canonical tag, every `Term` is its own join key
+(`Term.joinKey_eq_self`), and `@[csimp]` makes every caller compiled
+after this point use the term itself: no copy, and no native frame for
+each level of triple-term nesting
+(https://github.com/danbri/factoidal/issues/867). Until 2026-10-24 the
+compiled key was a loop that lower-cased each tag (`Term.joinKeyLoop`). -/
 
 /-- A term inside the triple terms of a list, the innermost first. -/
 def wrapTripleTerms : List (Subject × WfIri) → Term → Term
   | [], t => t
   | (s, p) :: frames, t => wrapTripleTerms frames (.tripleTerm s p t)
 
-/-- The join key of a term, with the open triple terms in a list. A term that is not a
-triple term is keyed by the specification, which does not recurse on it. -/
-def Term.joinKeyLoop : List (Subject × WfIri) → Term → Term
-  | frames, .tripleTerm s p o => Term.joinKeyLoop ((s, p) :: frames) o
-  | frames, .iri i => wrapTripleTerms frames (Term.joinKey (.iri i))
-  | frames, .bnode b => wrapTripleTerms frames (Term.joinKey (.bnode b))
-  | frames, .literal l => wrapTripleTerms frames (Term.joinKey (.literal l))
+/-- Every term is its own join key: no well-formed literal has an
+upper-case language tag. -/
+theorem Term.joinKey_eq_self : ∀ t : Term, t.joinKey = t
+  | .iri _ => rfl
+  | .bnode _ => rfl
+  | .literal l => by
+      simp only [Term.joinKey, Term.literal.injEq]
+      exact Subtype.ext (Literal.joinKey_eq_self_of_wf l.property)
+  | .tripleTerm s p o => by
+      simp only [Term.joinKey, Term.joinKey_eq_self o]
 
-theorem Term.joinKeyLoop_eq : ∀ (t : Term) (frames : List (Subject × WfIri)),
-    Term.joinKeyLoop frames t = wrapTripleTerms frames (Term.joinKey t)
-  | .tripleTerm s p o, frames => by
-      rw [Term.joinKeyLoop, Term.joinKeyLoop_eq o, Term.joinKey, wrapTripleTerms]
-  | .iri i, frames => by rw [Term.joinKeyLoop]
-  | .bnode b, frames => by rw [Term.joinKeyLoop]
-  | .literal l, frames => by rw [Term.joinKeyLoop]
+/-- `Term.joinKey` as it runs: the term. -/
+def Term.joinKeyFast (t : Term) : Term := t
 
-/-- `Term.joinKey` as the loop. -/
-def Term.joinKeyFast (t : Term) : Term := Term.joinKeyLoop [] t
-
-/-- Any join key compiled after this line is computed by the loop. -/
+/-- Any join key compiled after this line is the term itself. -/
 @[csimp] theorem Term.joinKey_eq_fast : @Term.joinKey = @Term.joinKeyFast := by
   funext t
-  rw [Term.joinKeyFast, Term.joinKeyLoop_eq, wrapTripleTerms]
+  rw [Term.joinKeyFast, Term.joinKey_eq_self]
 
-#print axioms Term.joinKeyLoop_eq
+#print axioms Term.joinKey_eq_self
 #print axioms Term.joinKey_eq_fast
 
 /-- eqb-equal terms have identical join keys: the theorem the hash
@@ -674,5 +822,51 @@ theorem Term.joinKey_eq_of_eqb : ∀ {a b : Term},
         simp only [Term.joinKey, Term.tripleTerm.injEq]
         exact ⟨Subject.eqb_eq hs, hp, ih ho⟩
       all_goals simp at h
+
+/-! ## One representation for each RDF term
+
+RDF 1.2 Concepts §3.4 makes `"x"@en` and `"x"@EN` one RDF term and
+permits the lower-case spelling; `literalWf` requires it. So every
+`Term` value is the canonical representation of its RDF term, and the
+engine equality `Term.eqb` (which compares tags case-insensitively) is
+structural equality (`Term.eqb_iff_eq`). A SPARQL solution therefore
+binds a variable to one representation whatever the order of the
+patterns that bind it (SPARQL 1.1 §18.1.7;
+https://github.com/danbri/factoidal/issues/1001). -/
+
+/-- A term is canonical when every language tag in it, inside triple
+terms too, is in lower case: it is its own join key. -/
+def Term.Canonical (t : Term) : Prop := t.joinKey = t
+
+/-- Every term is canonical: the type `WfLiteral` cannot hold an
+upper-case tag, so every reader and every constructor makes canonical
+terms. -/
+theorem Term.canonical (t : Term) : t.Canonical := Term.joinKey_eq_self t
+
+/-- On canonical terms (all terms), the engine equality is structural
+equality. -/
+theorem Term.eqb_iff_eq (a b : Term) : a.eqb b = true ↔ a = b := by
+  constructor
+  · intro h
+    have hk := Term.joinKey_eq_of_eqb h
+    rwa [Term.joinKey_eq_self, Term.joinKey_eq_self] at hk
+  · intro h; subst h; exact Term.eqb_refl a
+
+theorem Term.eq_of_eqb {a b : Term} (h : a.eqb b = true) : a = b :=
+  (Term.eqb_iff_eq a b).mp h
+
+/-- The same for triples. -/
+theorem Triple.eqb_iff_eq (a b : Triple) : a.eqb b = true ↔ a = b := by
+  constructor
+  · intro h
+    obtain ⟨hs, hp, ho⟩ := Triple.eqb_parts h
+    have hoe := Term.eq_of_eqb ho
+    cases a; cases b
+    simp_all
+  · intro h; subst h; exact Triple.eqb_refl a
+
+#print axioms Term.canonical
+#print axioms Term.eqb_iff_eq
+#print axioms Triple.eqb_iff_eq
 
 end L4Factoidal.RDF

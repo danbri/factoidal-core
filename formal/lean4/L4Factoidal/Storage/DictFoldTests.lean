@@ -48,7 +48,9 @@ private def ibk : IndexedBlock.Block := IndexedBlock.fromGraph g2
 -- one id: a, b, p, "x"@en, the triple term
 #guard ibk.dict.size == 5
 #guard ibk.rows.toList.map (·.o) == [2, 2, 4, 4]
-#guard ibk.dict.contains liten && !ibk.dict.contains litEN
+-- `Literal.langString` writes the tag in lower case (issue 1001): one term
+#guard litEN == liten
+#guard ibk.dict.contains liten
 #guard ibk.denotes == g2folded
 -- IBK3 round trip (the v1 term codec of PTD1 has no triple terms)
 private def g3 : Graph := [⟨sA, pP, litEN⟩, ⟨sB, pP, liten⟩, ⟨sB, pP, litEn⟩]
@@ -56,14 +58,14 @@ private def g3 : Graph := [⟨sA, pP, litEN⟩, ⟨sB, pP, liten⟩, ⟨sB, pP, 
 #guard ((IndexedBlockWireV3.encode? (IndexedBlock.fromGraph g3)).bind IndexedBlockWireV3.decode).map
   (·.denotes) == some [⟨sA, pP, liten⟩, ⟨sB, pP, liten⟩, ⟨sB, pP, liten⟩]
 
--- a file written before the fold (`encodeList`, the unchecked assembler,
--- writes the dictionary as given): it reads back with the tag folded; a file
--- with both spellings is refused
+-- since issue 1001 no term has an upper-case tag (`Literal.langString`
+-- lowers it), so `litEN` is `liten` and the guards below that once built a
+-- file from before the fold now build a folded one
 private def oldBlock (dict : Array Term) (rows : Array IndexedBlock.IdTriple) : IndexedBlock.Block :=
   { dict := dict, idByTerm := ∅, rows := rows, byPredicate := ∅ }
 private def oldBytes (b : IndexedBlock.Block) : ByteArray :=
   IndexedBlockWireV3.byteArrayOfList (IndexedBlockWireV3.encodeList b)
-#guard (IndexedBlockWireV3.encode? (oldBlock #[.iri (exI "http://ex.org/a"), .iri pP, litEN] #[⟨0, 1, 2⟩])).isNone
+#guard (IndexedBlockWireV3.encode? (oldBlock #[.iri (exI "http://ex.org/a"), .iri pP, litEN] #[⟨0, 1, 2⟩])).isSome
 #guard (IndexedBlockWireV3.decode (oldBytes (oldBlock #[.iri (exI "http://ex.org/a"), .iri pP, litEN]
   #[⟨0, 1, 2⟩]))).map (·.denotes) == some [⟨sA, pP, liten⟩]
 #guard (IndexedBlockWireV3.decode (oldBytes (oldBlock #[.iri (exI "http://ex.org/a"), .iri pP, litEN, liten]
@@ -98,7 +100,7 @@ private def ibk5 : IndexedBlockWireV5.QuadBlock := IndexedBlockWireV5.fromRdfQua
 
 #guard ibk5.dict.size == 5
 #guard ibk5.rows.toList.map (·.o) == [2, 2, 4]
-#guard ibk5.dict.contains (.inline liten) && !ibk5.dict.contains (.inline litEN)
+#guard ibk5.dict.contains (.inline liten)
 #guard ((IndexedBlockWireV5.encode? ibk5).bind IndexedBlockWireV5.decode).map (·.dict) == some ibk5.dict
 
 /-! ## PTD1 and PTD2 on their own -/
@@ -128,9 +130,9 @@ private def tli : TermLocalIndexWire.Index :=
 #guard TermLocalIndex.lookup? tli.entries liten == some 1
 #guard TermLocalIndex.lookup? tli.entries (.bnode "b") == some 2
 #guard ((TermLocalIndexWire.encode? tli).bind TermLocalIndexWire.decode?) == some tli
--- the encoder refuses entries whose terms are not folded
+-- every term is folded (issue 1001), so the encoder accepts the entries
 #guard (TermLocalIndexWire.encode?
-  { tli with entries := TermLocalIndex.entriesOf #[.iri pP, litEN] }).isNone
+  { tli with entries := TermLocalIndex.entriesOf #[.iri pP, litEN] }).isSome
 
 /-! ## TermJson (compact form) and QuadsBin -/
 

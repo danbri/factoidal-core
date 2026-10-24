@@ -231,7 +231,7 @@ def parseIndividual (ps : PS) (i : Nat) : Option (Individual × Nat) :=
 
 def mkLiteral (lex : String) (dt : WfIri) (tag : Option String) : Option WfLiteral :=
   let l : Literal := { lexicalForm := lex, datatype := dt, langTag := tag, direction := none }
-  if h : literalWf l then some ⟨l, h⟩ else none
+  Literal.toWf? l
 
 /-- `Literal := typedLiteral | stringLiteralNoLanguage |
 stringLiteralWithLanguage`. -/

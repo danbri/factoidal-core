@@ -1,0 +1,6 @@
+# A BIND value with a language tag written in capitals. Since issue 1001
+# (2026-10-24) STRLANG writes the tag in lower case (RDF 1.2 Concepts 3.4:
+# one RDF term, the lower-case spelling permitted), so LANG reads "en" on
+# both paths and the query runs on ids. Until then the reference read "EN"
+# and the query was pinned to the reference fallback (issue 776).
+SELECT ?l WHERE { BIND(STRLANG("a", "EN") AS ?x) BIND(LANG(?x) AS ?l) }
