@@ -28,7 +28,8 @@ phase B: B1 for the builders of this layer, B2 for the dispatchers).
   dispatch point, from `BackendExact`, a law per arm (the list is a set; the
   index is well formed over a set; each reader satisfies its reader law; each
   union member is lawful; the overlay's base reader satisfies its law; the RML
-  source satisfies `RmlPushdownInvisible`).
+  source satisfies `RmlPushdownInvisible`; the record arm `.caps c` is
+  `StoreCapsExact` of the record).
 
 ## B2: the dispatchers, against the denotation only
 
@@ -231,6 +232,7 @@ def BackendExact : GraphBackend → (Triple → Prop) → Prop
       ∃ Gs, BackendsExact members Gs ∧ ∀ t, G t ↔ unionPred Gs t
   | .virtualRml vs, G =>
       RmlPushdownInvisible vs ∧ RmlVirtualIsMaterialised vs ∧ ∀ t, G t ↔ rmlGraph vs t
+  | .caps c, G => StoreCapsExact G c
 
 /-- One graph per member, in member order. -/
 def BackendsExact : List GraphBackend → List (Triple → Prop) → Prop
@@ -301,6 +303,10 @@ theorem capsOfBackend_exact : ∀ (gb : GraphBackend) (G : Triple → Prop),
       simp only [BackendExact] at h
       simp only [capsOfBackend]
       exact (capsOfRmlSource_exact vs h.1 h.2.1).of_iff (fun t => (h.2.2 t).symm)
+  | .caps c, G, h => by
+      simp only [BackendExact] at h
+      simp only [capsOfBackend]
+      exact h
 
 /-- The members of a union, each lawful for its graph. -/
 theorem capsOfBackendList_exact : ∀ (ms : List GraphBackend) (Gs : List (Triple → Prop)),

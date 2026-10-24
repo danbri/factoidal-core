@@ -4,6 +4,7 @@ import L4Factoidal.Syntax.Turtle
 import L4Factoidal.SPARQL.Parser
 import L4Factoidal.SPARQL.StoreDataset
 import Wasm.Ops.Clock
+import L4Factoidal.Dataflow.Store
 
 namespace Harness.PredicateBlocksQuery
 
@@ -23,8 +24,8 @@ private def run (input queryText : String) : IO UInt32 := do
         IO.eprintln s!"l4block-predicate-query query parse error at {e.pos}: {e.msg}"; return 1
     | .ok graph, .ok query =>
         let store := fromGraph graph
-        let dataset : DatasetBackend := { default := .hdt (readOps store), named := [] }
-        match runSelectQueryBackendDataset clockEnv query dataset with
+        let dataset := L4Factoidal.Dataflow.LawfulDataset.ofDefault (L4Factoidal.Dataflow.LawfulStore.hdt (readOps store))
+        match dataset.runSelect clockEnv query with
         | none => IO.eprintln "l4block-predicate-query failed: query was not SELECT"; return 1
         | some rows =>
             IO.println s!"l4block-predicate-query input={input} triples={graph.length} predicate-blocks={store.blocks.length}"

@@ -862,7 +862,7 @@ def outDocument (fmt : RdfFormat) (ds : Dataset) : Except String String :=
       -- RDF 1.2 term): the writer writes the tag the reader kept (owner decision
       -- of 2026-10-24, CLAUDE.md "Ill-formed BCP 47 language tags").
       let v : Mode := if (Sink.Graph.badLangTag? .rdf12 (Sink.flatten ds)).isSome then .rdf11 else .rdf12
-      (Sink.serializeDataset Sink.withJsonLd fmt v ds).mapError fun e =>
+      ((L4Factoidal.Dataflow.writers Sink.withJsonLd L4Factoidal.RDF.Source.withJsonLd fmt).run v {} ds).mapError fun e =>
         s!"l4factoidal parse: cannot write {formatName fmt}: {e}"
 
 /-- Print `ds` in syntax `fmt`: the document and a line break to standard output,
@@ -1051,7 +1051,7 @@ def queryCmd (args : List String) : IO UInt32 := do
         let answer :=
           if s.hasBool "--sparql12" then
             withOpsSetDataset .rdf12 ds hds (fun d =>
-              queryParsedDatasetWith d (some (L4Factoidal.SPARQL.StoreDataset.indexedDatasetBackend d)) sparql
+              queryParsedDatasetWith d (some (L4Factoidal.Dataflow.LawfulDataset.ofDataset d)) sparql
                 (version := .v12) (base := queryBase) (now := some now))
           else Ops.queryDatasetOfSet ds hds sparql queryBase (some now)
         match ← parseEnvelope answer with

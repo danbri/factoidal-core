@@ -62,6 +62,7 @@ cannot reach the store and answers "unknown op" for them.
 -/
 import Std.Data.HashMap
 import L4Factoidal.Dataflow.Reader
+import L4Factoidal.Dataflow.Writer
 import Wasm.Ops.Parse
 import Wasm.Ops.Query
 import Wasm.Ops.Clock
@@ -103,7 +104,7 @@ structure OpenDataset where
   data : CertifiedDataset
   /-- Built on the first query after an open or a change, then kept: an
   `add` of one quad does not rebuild every index. -/
-  backendThunk : Thunk DatasetBackend
+  backendThunk : Thunk L4Factoidal.Dataflow.LawfulDataset
   /-- The prefixes the document declared, each label once, in declaration order.
   Turtle output of the handle uses them. -/
   prefixes : List (String × String) := []
@@ -120,7 +121,7 @@ theorem OpenDataset.isSet (od : OpenDataset) : od.ds.IsSet := od.data.property
 
 private def openDataset (data : CertifiedDataset) (prefixes : List (String × String) := [])
     (readMode : L4Factoidal.Syntax.Mode := .rdf12) : OpenDataset :=
-  { data, backendThunk := Thunk.mk (fun _ => indexedDatasetBackend data.val), prefixes, readMode }
+  { data, backendThunk := Thunk.mk (fun _ => L4Factoidal.Dataflow.LawfulDataset.ofCertified data), prefixes, readMode }
 
 /-- The mode the writers of the handle use: the mode of its reader when that is
 RDF 1.1 and the dataset still has no RDF 1.2 term, else RDF 1.2. A document
@@ -130,7 +131,8 @@ def OpenDataset.writeMode (od : OpenDataset) : L4Factoidal.Syntax.Mode :=
   if od.readMode == .rdf11 && od.ds.isRdf11 then .rdf11 else .rdf12
 
 /-- The indexed backend of an open dataset. -/
-private def OpenDataset.backend (od : OpenDataset) : DatasetBackend := od.backendThunk.get
+private def OpenDataset.backend (od : OpenDataset) : L4Factoidal.Dataflow.LawfulDataset :=
+  od.backendThunk.get
 
 /-- The open datasets, keyed by handle string. -/
 initialize handleTable : IO.Ref (Std.HashMap String OpenDataset) ← IO.mkRef ∅
@@ -262,9 +264,18 @@ and a blank-node label outside BLANK_NODE_LABEL [141s] gets a fresh valid label
 (`Dataset.relabelForWrite`, as the `Sink` writers do). -/
 def handleWriteInput (ds : Dataset) (mode : L4Factoidal.Syntax.Mode := .rdf12) :
     Except String Dataset :=
-  match L4Factoidal.RDF.Sink.checkLangTags mode ds with
-  | .error e => .error e
-  | .ok () => .ok ds.relabelForWrite
+  L4Factoidal.Dataflow.writeInput mode ds
+
+/-- The writer of syntax `fmt` of the dataset handles: the table
+`Dataflow.writers` (`L4Factoidal/Dataflow/Writer.lean`) without the JSON-LD
+library, which the core module does not carry. Each of its writers has its
+round-trip contract as fields. -/
+def handleWriter (fmt : RdfFormat) : L4Factoidal.Dataflow.RdfWriter :=
+  L4Factoidal.Dataflow.writers {} {} fmt
+
+/-- The canonical N-Quads writer of the dataset handles (`Dataflow.canonicalNQuadsRdfWriter`). -/
+def handleCanonicalNQuadsWriter : L4Factoidal.Dataflow.RdfWriter :=
+  L4Factoidal.Dataflow.canonicalNQuadsRdfWriter {} {}
 
 /-- The text of `ds` in the syntax `formatTag` names (`writerTagVersion`):
 N-Quads, N-Triples (refused when `ds` has a named graph, as N-Triples has no
@@ -279,16 +290,16 @@ def handleWriterText (formatTag : String) (ds : Dataset) (mode : L4Factoidal.Syn
     if v11 && !ds.isRdf11 then some (.error (rdf11WriterRefusal name)) else some (k ())
   match tag with
   | "nquads" | "nq" | "n-quads" =>
-      checked "N-Quads" fun _ => (handleWriteInput ds mode).map Dataset.toCanonicalNQuads
+      checked "N-Quads" fun _ => handleCanonicalNQuadsWriter.run mode {} ds
   | "ntriples" | "nt" | "n-triples" =>
       if !ds.named.isEmpty then
         some (.error "the dataset has a named graph and N-Triples holds one graph; use nquads or trig")
-      else checked "N-Triples" fun _ => L4Factoidal.RDF.Sink.serializeDataset {} .nt mode ds
+      else checked "N-Triples" fun _ => (handleWriter .nt).run mode {} ds
   | "turtle" | "ttl" =>
-      checked "Turtle" fun _ => L4Factoidal.RDF.Sink.serializeDataset {} .turtle mode ds
-  | "trig" => checked "TriG" fun _ => L4Factoidal.RDF.Sink.serializeDataset {} .trig mode ds
+      checked "Turtle" fun _ => (handleWriter .turtle).run mode {} ds
+  | "trig" => checked "TriG" fun _ => (handleWriter .trig).run mode {} ds
   | "rdfxml" | "rdf-xml" | "rdf" =>
-      checked "RDF/XML" fun _ => L4Factoidal.RDF.Sink.serializeDataset {} .rdfxml mode ds
+      checked "RDF/XML" fun _ => (handleWriter .rdfxml).run mode {} ds
   | "rdfc" | "canonical" =>
       match parseJson? (canonicalizeOf ds) with
       | some j =>
@@ -335,14 +346,13 @@ def datasetSerialize (h formatTag : String) : IO String :=
     let ds := od.ds
     match formatTag.toLower with
     | "" | "nquads" | "nq" | "n-quads" =>
-        match handleWriteInput ds od.writeMode with
+        match handleCanonicalNQuadsWriter.run od.writeMode {} ds with
         | .error e => pure (errJson s!"datasetSerialize: {e}")
-        | .ok ds => pure (okWith [("nquads", .string (Dataset.toCanonicalNQuads ds))])
+        | .ok text => pure (okWith [("nquads", .string text)])
     | "turtle" | "ttl" =>
-        match handleWriteInput ds od.writeMode with
+        match (handleWriter .turtle).run od.writeMode { prefixes := handlePrefixTable od } ds with
         | .error e => pure (errJson s!"datasetSerialize: {e}")
-        | .ok ds => pure (okWith [("turtle", .string
-          (turtleOfGraphOpts { prefixes := handlePrefixTable od } (flattenedGraph ds)))])
+        | .ok text => pure (okWith [("turtle", .string text)])
     | _ =>
         match handleWriterText formatTag ds od.writeMode with
         | some (.ok text) => pure (okWith [("text", .string text)])
@@ -358,16 +368,16 @@ def datasetSerializeWith (h formatTag optionsJson : String) : IO String :=
     let ds := od.ds
     match formatTag.toLower with
     | "" | "nquads" | "nq" | "n-quads" =>
-        match handleWriteInput ds od.writeMode with
+        match handleCanonicalNQuadsWriter.run od.writeMode {} ds with
         | .error e => pure (errJson s!"datasetSerializeWith: {e}")
-        | .ok ds => pure (okWith [("nquads", .string (Dataset.toCanonicalNQuads ds))])
+        | .ok text => pure (okWith [("nquads", .string text)])
     | "turtle" | "ttl" =>
         match turtleOptionsOfJson (handlePrefixTable od) optionsJson with
         | .error msg => pure (errJson msg)
         | .ok opts =>
-            match handleWriteInput ds od.writeMode with
+            match (handleWriter .turtle).run od.writeMode opts ds with
             | .error e => pure (errJson s!"datasetSerializeWith: {e}")
-            | .ok ds => pure (okWith [("turtle", .string (turtleOfGraphOpts opts (flattenedGraph ds)))])
+            | .ok text => pure (okWith [("turtle", .string text)])
     | _ =>
         match handleWriterText formatTag ds od.writeMode with
         | some (.ok text) => pure (okWith [("text", .string text)])
@@ -486,7 +496,8 @@ A quad pattern is a JSON array of four strings, subject, predicate, object,
 graph. `""` leaves the position unbound; otherwise the string is the
 N-Triples (N-Quads) form of the term, and for the graph `"DEFAULT"` names the
 default graph. Matching uses the stored dataset's indexes
-(`backendSearch` over `indexedDatasetBackend`). -/
+(`LawfulStore.search` of the handle's `LawfulDataset`, the record
+`indexedDatasetBackend`). -/
 
 /-- The term an N-Triples token denotes, read through the N-Quads reader in
 RDF 1.2 mode: the token is placed at position `pos` (0 subject, 1 predicate,
@@ -549,9 +560,10 @@ def quadPatternOf (json : String) : Option QuadPattern := do
 
 /-- The quads of `od` that match `pat`, as a dataset, through the indexes. -/
 def matchDataset (od : OpenDataset) (pat : QuadPattern) : Dataset :=
-  let be : DatasetBackend := od.backendThunk.get
+  let L := od.backendThunk.get
+  let be : DatasetBackend := L.backend
   let wantDefault := match pat.graph with | none | some none => true | _ => false
-  let dflt := if wantDefault then L4Factoidal.SPARQL.StoreBackend.backendSearch be.default pat.bound else []
+  let dflt := if wantDefault then L.default.search pat.bound else []
   let named := (od.ds.named.zip be.named).filterMap fun (ng, nb) =>
     let take := match pat.graph with
       | none => true

@@ -34,6 +34,7 @@ import L4Factoidal.Storage.IndexedBlockWireV5
 import L4Factoidal.Storage.QuadDataset
 import L4Factoidal.Storage.ShardManifest
 import Wasm.Ops.Clock
+import L4Factoidal.Dataflow.Store
 
 namespace Harness.QuadQuery
 
@@ -220,7 +221,7 @@ private def finish (query : Query) (entries : List Entry) (codec : String) (ds :
   | .select _ =>
       let rows? :=
         if indexed then
-          match runSelectQueryBackendDataset env stripped (indexedDatasetBackend applied) with
+          match (L4Factoidal.Dataflow.LawfulDataset.ofDataset applied).runSelect env stripped with
           | some rows => some rows
           -- `text:query`: the backend declines and the reference evaluator
           -- answers (`SPARQL/StoreDataset.lean`, `runSelectQueryBackendDataset`).
@@ -240,7 +241,7 @@ private def finish (query : Query) (entries : List Entry) (codec : String) (ds :
   | .ask =>
       let answer? :=
         if indexed then
-          match runAskQueryBackendDataset env stripped (indexedDatasetBackend applied) with
+          match (L4Factoidal.Dataflow.LawfulDataset.ofDataset applied).runAsk env stripped with
           | some answer => some answer
           | none =>
               if stripped.pattern.mentionsFulltext then some (evalAsk env applied stripped)

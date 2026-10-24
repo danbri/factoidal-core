@@ -51,6 +51,7 @@ import L4Factoidal.SPARQL.ResultsJson
 import L4Factoidal.SPARQL.ResultsCsvTsv
 import L4Factoidal.SPARQL.ResultsXml
 import L4Factoidal.Syntax.NTriples
+import L4Factoidal.Dataflow.Reasoner
 import L4Factoidal.RDFS.FullClosure
 import L4Factoidal.OWL.RLClosure
 -- The `@[csimp]` theorem that makes `OWL.RL.closureFix` compile to the
@@ -73,30 +74,24 @@ private inductive RawAnswer where
   | result (r : QueryResult)
   | graph  (g : Graph)
 
-/-- The `rdf:_n` slice of a graph, as `Wasm/Ops/Reason.lean` computes it. -/
-private def containerSlice (g : Graph) : List WfIri :=
-  (L4Factoidal.RDFS.containerMembershipIn g).foldl
-    (fun acc i => if acc.contains i then acc else acc ++ [i])
-    [L4Factoidal.RDFS.rdf1]
-
 private def closeDefaultGraph (entail : String) (ds : Dataset) : Except String Dataset :=
   match entail with
   | "none" | "" => .ok ds
   | "RDFS" | "rdfs" =>
       let g := ds.default
       .ok { ds with default :=
-        L4Factoidal.RDFS.fullClosure (withMinimalD []) (containerSlice g) g }
+        (L4Factoidal.Dataflow.rdfsReasoner (withMinimalD [])).run g }
   | "OWL-RL" | "owl-rl" | "owl_rl" =>
       -- `Graph.toSet`: the OWL 2 RL closure adds by structural equality, so a
       -- triple can be in it under two language-tag spellings; the queried
       -- graph is a set (https://github.com/danbri/factoidal/issues/973).
-      .ok { ds with default := Graph.toSet (L4Factoidal.OWL.RL.closureFix ds.default) }
+      .ok { ds with default := L4Factoidal.Dataflow.owlRlReasoner.run ds.default }
   -- The core-RDFS (rho-df) closure of `rhoDfClosure` and the RDFS-Plus
   -- closure of `rdfsPlusClosure` (`Wasm/Ops/Reason.lean`): the
   -- `x-rdfscore` and `x-rdfsplus` regimes of the npm `query()` option
   -- `entail`, which the F* command-line driver also accepted.
   | "x-rdfscore" =>
-      .ok { ds with default := L4Factoidal.RDFS.closureFix ds.default }
+      .ok { ds with default := L4Factoidal.Dataflow.rhoDfReasoner.run ds.default }
   | "x-rdfsplus" =>
       .ok { ds with default := L4Factoidal.RDFS.rdfsPlusClosureFix ds.default }
   | other => .error
