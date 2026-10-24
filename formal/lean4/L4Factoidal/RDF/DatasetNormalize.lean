@@ -138,18 +138,9 @@ def normalizeDataset (ds : Dataset) : Dataset :=
 
 /-! ## The check -/
 
-/-- `iriPrintSafe` without building the character list: `String.all` walks
-the UTF-8 bytes. The check runs over every IRI of the dataset, and through
-`String.toList` it cost as much as parsing the Turtle input (callgrind,
-`query` COUNT(*), 1,250 paragraphs of `gene.ttl`: `iriPrintSafe` 36.2 percent
-of the instructions, the Turtle parse 37.3). -/
-def iriPrintSafeFast (s : String) : Bool := s.all IriSafeChar
-
-/-- The compiler calls `iriPrintSafeFast` wherever the source says
-`iriPrintSafe`. -/
-@[csimp] theorem iriPrintSafe_eq_iriPrintSafeFast : @iriPrintSafe = @iriPrintSafeFast := by
-  funext s
-  simp [iriPrintSafe, iriPrintSafeFast, String.all_bool_eq]
+/- `iriPrintSafe` runs as `NTriplesRoundTrip.iriPrintSafeFast` (`String.all`,
+no character list); the `csimp` lemma is next to the definition, in
+`Syntax/NTriplesRoundTrip.lean`. -/
 
 /-- BLANK_NODE_LABEL: a start character, then label characters, not ending
 on `.`. -/
