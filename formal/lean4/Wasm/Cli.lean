@@ -900,14 +900,14 @@ private def outTripleTerm : Option Dataset :=
   | .error _ => false
 
 -- The two syntaxes that have always been written are the canonical N-Quads and
--- `Ops.serializeTurtleTextOf`; they are not the serialiser layer's text for a
--- language tag in capitals.
+-- `Ops.serializeTurtleTextOf`. A tag read in capitals is held in lower case
+-- (issue 1001), so every writer writes it in lower case.
 #guard outDefaultOnly.any fun ds =>
   (outDocument .nquads ds).toOption == some (Dataset.toCanonicalNQuads ds) &&
   (outDocument .turtle ds).toOption == (Ops.serializeTurtleTextOf ds).toOption
 #guard (outDataset "<http://e/a> <http://e/p> \"x\"@DE-ch .\n" "ntriples").any fun ds =>
   match outDocument .nquads ds, outDocument .nt ds with
-  | .ok a, .ok b => (a.splitOn "@de-ch").length == 2 && (b.splitOn "@DE-ch").length == 2
+  | .ok a, .ok b => (a.splitOn "@de-ch").length == 2 && (b.splitOn "@de-ch").length == 2
   | _, _ => false
 
 -- The notice: a syntax with no graph name and a named graph.

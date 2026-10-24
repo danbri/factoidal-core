@@ -69,12 +69,13 @@ open L4Factoidal.Syntax.NQuadsStreaming
 def Literal.lowerTag (l : Literal) : Literal :=
   { l with langTag := l.langTag.map String.toLower }
 
-theorem literalWf_lowerTag (l : Literal) : literalWf l.lowerTag = literalWf l := by
-  unfold literalWf Literal.lowerTag
-  cases l.langTag <;> cases l.direction <;> rfl
+/-- `Literal.lowerTag` is the join key, and keeps a well-formed literal
+well-formed (it is the identity on it, `Literal.joinKey_eq_self_of_wf`). -/
+theorem literalWf_lowerTag (l : Literal) (h : literalWf l = true) : literalWf l.lowerTag = true :=
+  literalWf_joinKey l h
 
 def WfLiteral.lowerTag (l : WfLiteral) : WfLiteral :=
-  ⟨l.val.lowerTag, by rw [literalWf_lowerTag]; exact l.property⟩
+  ⟨l.val.lowerTag, literalWf_lowerTag l.val l.property⟩
 
 /-- Lower-case every language tag of a term, inside triple terms too. -/
 def Term.lowerTags : Term → Term
@@ -449,8 +450,8 @@ theorem objFollow_facts {c : Char} (h : objFollow c = true) :
   rcases h with ((h | h) | h) | h <;> subst h <;> decide
 
 theorem mkLiteral_ok (pos : Nat) (l : Literal) (h : literalWf l = true) :
-    mkLiteral pos l = .ok ⟨l, h⟩ := by
-  simp [mkLiteral, h]
+    mkLiteral pos l = .ok ⟨l, h⟩ :=
+  mkLiteral_of_wf pos l h
 
 theorem readLiteral_safe (mode : Mode) (pos : Nat) (wl : WfLiteral) (c : Char) (rest : List Char)
     (hc : objFollow c = true) (h : literalSafe mode wl.val = true) :
@@ -511,9 +512,10 @@ theorem readLiteral_safe (mode : Mode) (pos : Nat) (wl : WfLiteral) (c : Char) (
       obtain ⟨htag, hmode⟩ := hrest
       cases dir with
       | none =>
-          have hdt : dt = rdfLangString := Subtype.ext (by simpa [literalWf] using hwf)
+          have hdt : dt = rdfLangString := Subtype.ext (by simp [literalWf] at hwf; exact hwf.1)
           subst hdt
-          have hwf' : literalWf ⟨lex, rdfLangString, some t.toLower, none⟩ = true := rfl
+          have hwf' : literalWf ⟨lex, rdfLangString, some t.toLower, none⟩ = true := by
+            simp [literalWf, langTagCanonical_toLower]
           simp only [litSuffix, List.append_nil, List.cons_append] at hp1 ⊢
           cases mode with
           | rdf11 =>
@@ -529,14 +531,15 @@ theorem readLiteral_safe (mode : Mode) (pos : Nat) (wl : WfLiteral) (c : Char) (
                 Option.map_none, mkLiteral_ok _ _ hwf']
               rfl
       | some d =>
-          have hdt : dt = rdfDirLangString := Subtype.ext (by simpa [literalWf] using hwf)
+          have hdt : dt = rdfDirLangString := Subtype.ext (by simp [literalWf] at hwf; exact hwf.1)
           subst hdt
           have hm : mode = .rdf12 := by
             rcases hmode with h | h
             · exact h
             · simp at h
           subst hm
-          have hwf' : literalWf ⟨lex, rdfDirLangString, some t.toLower, some d⟩ = true := rfl
+          have hwf' : literalWf ⟨lex, rdfDirLangString, some t.toLower, some d⟩ = true := by
+            simp [literalWf, langTagCanonical_toLower]
           simp only [litSuffix, List.cons_append, List.append_assoc] at hp1 ⊢
           obtain ⟨p2, hp2⟩ := readLangDir12_safe_dir p1 t d (c :: rest) htag
           simp only [List.cons_append] at hp2

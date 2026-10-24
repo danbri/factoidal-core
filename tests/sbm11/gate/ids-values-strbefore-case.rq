@@ -1,0 +1,6 @@
+# STRBEFORE's argument-compatibility rule on tags written in different case.
+# Since issue 1001 (2026-10-24) "abc"@EN is held as "abc"@en (one RDF term,
+# RDF 1.2 Concepts 3.4), so the two arguments are compatible and both paths
+# answer "a"@en; the query runs on ids. Until then the reference compared the
+# spellings (an error, ?c unbound) and the query took the reference (issue 776).
+SELECT ?c WHERE { VALUES ?x { "abc"@EN } BIND(STRBEFORE(?x, "b"@en) AS ?c) }

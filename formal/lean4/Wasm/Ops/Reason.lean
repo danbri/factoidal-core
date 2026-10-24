@@ -341,11 +341,24 @@ private def countAQ (r : String) : Nat := (r.splitOn "<urn:a> <urn:q> ").length 
 #guard countAQ (owlClosure tagCase973 "RDFS") == 1
 #guard countAQ (rhoDfClosure tagCase973) == 1
 #guard countAQ (rdfsPlusClosure tagCase973) == 1
--- Teeth: the scanning closure without the set step holds the triple two times.
+-- The reader lower-cases language tags (https://github.com/danbri/factoidal/issues/1001),
+-- so the two input lines are one term and the scanning closure holds the triple once.
 #guard (L4Factoidal.OWL.RL.closureFix
   ((L4Factoidal.Dataflow.readNQuadsText .rdf12 tagCase973).toOption.map (·.default)
     |>.getD [])).countP (fun t => t.s == .iri ⟨"urn:a", by decide⟩ &&
-      t.p.val == "urn:q") == 2
+      t.p.val == "urn:q") == 1
+-- Two sub-properties of `urn:q` derive the same triple; the scanning closure and
+-- the envelope each hold it once. After issue 1001 no reader input gives the
+-- duplicate that the set step removed, so this file has no case where the two differ.
+private def twoRoutes973 : String :=
+  "<urn:a> <urn:p> \"x\" .\n<urn:a> <urn:r> \"x\" .\n" ++
+  "<urn:p> <http://www.w3.org/2000/01/rdf-schema#subPropertyOf> <urn:q> .\n" ++
+  "<urn:r> <http://www.w3.org/2000/01/rdf-schema#subPropertyOf> <urn:q> .\n"
+#guard countAQ (owlClosure twoRoutes973 "OWL-RL") == 1
+#guard (L4Factoidal.OWL.RL.closureFix
+  ((L4Factoidal.Dataflow.readNQuadsText .rdf12 twoRoutes973).toOption.map (·.default)
+    |>.getD [])).countP (fun t => t.s == .iri ⟨"urn:a", by decide⟩ &&
+      t.p.val == "urn:q") == 1
 
 /-! ### RDF 1.2 input (https://github.com/danbri/factoidal/issues/873)
 

@@ -381,7 +381,9 @@ def Plan.words (p : Plan) : Array String :=
 def mkWfLit (lex dt : String) (lang : Option String) : Except String WfLiteral :=
   if hdt : isIri dt = true then
     let l : Literal := { lexicalForm := lex, datatype := ⟨dt, hdt⟩, langTag := lang, direction := none }
-    if h : literalWf l = true then .ok ⟨l, h⟩ else .error s!"literal {lex} {dt} is not well formed"
+    match Literal.toWf? l with
+    | some w => .ok w
+    | none => .error s!"literal {lex} {dt} is not well formed"
   else .error s!"datatype {dt} is not an IRI"
 
 def utf8 (b : ByteArray) (what : String) : Except String String :=

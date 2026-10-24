@@ -289,11 +289,11 @@ theorem integerDerivedBuiltinOfIri?_of_langTag (l : WfLiteral)
       cases hd : l.direction with
       | none =>
           have : l.datatype.val = rdfLangString.val := by
-            simpa [literalWf, ht, hd] using wf
+            simp [literalWf, ht, hd] at wf; exact wf.1
           rw [this]; rfl
       | some _ =>
           have : l.datatype.val = rdfDirLangString.val := by
-            simpa [literalWf, ht, hd] using wf
+            simp [literalWf, ht, hd] at wf; exact wf.1
           rw [this]; rfl
 
 /-- A literal of datatype `rdf:langString` or `rdf:dirLangString` has no
@@ -317,11 +317,11 @@ theorem langDatatype_of_langTag (l : WfLiteral) (h : l.val.langTag ≠ none) :
       cases hd : l.direction with
       | none =>
           have : l.datatype.val = rdfLangString.val := by
-            simpa [literalWf, ht, hd] using wf
+            simp [literalWf, ht, hd] at wf; exact wf.1
           exact Or.inl (Subtype.ext this)
       | some _ =>
           have : l.datatype.val = rdfDirLangString.val := by
-            simpa [literalWf, ht, hd] using wf
+            simp [literalWf, ht, hd] at wf; exact wf.1
           exact Or.inr (Subtype.ext this)
 
 /-- An `xsd:string` literal has no value for the operators. -/

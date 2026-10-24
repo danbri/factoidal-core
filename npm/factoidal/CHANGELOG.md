@@ -4,6 +4,7 @@
 
 - Correction to 0.13.0. The 0.13.0 entry says that the stores keep one copy of a repeated triple. That is true for the IBK4 and IBK5 layouts only. `factoidal pack` with the default layout (IBK3) keeps a repeated triple, and keeps `"a"@en` and `"a"@EN` as two rows, so `COUNT(*)` counts both (https://github.com/danbri/factoidal/issues/1006). Until the fix, pack with `--layout ibk5`. The cases are expected failures in `test/pack-is-a-set-1006.test.mjs`.
 - The N-Triples, N-Quads, Turtle and TriG writers give a fresh valid label to a blank-node label outside BLANK_NODE_LABEL (the same label for each occurrence, never a label of another blank node), and refuse a language tag outside LANGTAG with an error that names the tag (https://github.com/danbri/factoidal/issues/986).
+- A language tag is kept in lower case (RDF 1.2 Concepts §3.4: `"x"@en` and `"x"@EN` are one RDF term). Every reader, `STRLANG`, `STRLANGDIR` and the term constructors write the tag in lower case, so `LANG()` returns it in lower case, and a SPARQL answer no longer depends on the order of the triple patterns when the data spells one tag in two ways (https://github.com/danbri/factoidal/issues/1001).
 
 ## 0.13.0
 

@@ -229,8 +229,8 @@ theorem skipWs_space (pos : Nat) {c : Char} {rest : List Char}
   simp [skipWs, List.span, List.span.loop, isNtWs, h.1, h.2]
 
 theorem mkLiteral_wf (pos : Nat) (l : Literal) (h : literalWf l = true) :
-    mkLiteral pos l = .ok ⟨l, h⟩ := by
-  simp only [mkLiteral, dif_pos h]
+    mkLiteral pos l = .ok ⟨l, h⟩ :=
+  mkLiteral_of_wf pos l h
 
 theorem string_ofList_cons (c : Char) (cs : List Char) :
     String.ofList (c :: cs) = c.toString ++ String.ofList cs := by
@@ -443,7 +443,7 @@ theorem readObject11_safe (pos : Nat) (t : Term) (str : String) (tail : List Cha
       cases dir with
       | some d => simp only [Term.toNTriples] at h; replace h := ite_error_eq_ok h; simp at h
       | none =>
-        have hdt' : dt = rdfLangString := Subtype.ext (by simpa [literalWf] using hwf)
+        have hdt' : dt = rdfLangString := Subtype.ext (by simp [literalWf] at hwf; exact hwf.1)
         subst hdt'
         simp only [Term.toNTriples] at h; replace h := ite_error_eq_ok h; simp only [Except.ok.injEq] at h
         subst h
@@ -708,7 +708,7 @@ theorem readLiteral12_safe (pos : Nat) (wl : WfLiteral) (str : String) (c : Char
     simp only [Option.all_some] at htag
     cases dir with
     | none =>
-      have hdt' : dt = rdfLangString := Subtype.ext (by simpa [literalWf] using hwf)
+      have hdt' : dt = rdfLangString := Subtype.ext (by simp [literalWf] at hwf; exact hwf.1)
       subst hdt'
       simp only [Term.toNTriples] at h; replace h := ite_error_eq_ok h; simp only [Except.ok.injEq] at h
       subst h
@@ -723,7 +723,7 @@ theorem readLiteral12_safe (pos : Nat) (wl : WfLiteral) (str : String) (c : Char
       simp only [Option.map_none, mkLiteral_wf _ _ hwf]
       exact ⟨_, rfl⟩
     | some d =>
-      have hdt' : dt = rdfDirLangString := Subtype.ext (by simpa [literalWf] using hwf)
+      have hdt' : dt = rdfDirLangString := Subtype.ext (by simp [literalWf] at hwf; exact hwf.1)
       subst hdt'
       cases d with
       | ltr =>
@@ -740,7 +740,7 @@ theorem readLiteral12_safe (pos : Nat) (wl : WfLiteral) (str : String) (c : Char
         unfold readLiteral
         rw [hp1]
         simp only [skipWs_stop _ (by decide : isNtWs '@' = false), hp2]
-        simp only [Option.map_some]
+        simp only [Option.map_some, Bool.false_eq_true, ↓reduceIte, mkLiteral_wf _ _ hwf]
         exact ⟨_, rfl⟩
       | rtl =>
         simp only [Term.toNTriples] at h; replace h := ite_error_eq_ok h; simp only [Except.ok.injEq, if_neg (by decide : ¬ (Mode.rdf12 = Mode.rdf11))] at h
@@ -756,7 +756,7 @@ theorem readLiteral12_safe (pos : Nat) (wl : WfLiteral) (str : String) (c : Char
         unfold readLiteral
         rw [hp1]
         simp only [skipWs_stop _ (by decide : isNtWs '@' = false), hp2]
-        simp only [Option.map_some]
+        simp only [Option.map_some, Bool.false_eq_true, ↓reduceIte, mkLiteral_wf _ _ hwf]
         exact ⟨_, rfl⟩
 
 /-- The text of a term starts with `<`, `_` or `"`: never white space, `@`

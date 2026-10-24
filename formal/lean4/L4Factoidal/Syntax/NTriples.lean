@@ -89,10 +89,19 @@ def mkIri (pos : Nat) (s : String) : Except ParseError WfIri :=
 
 /-- Wrap a `Literal` record as a `WfLiteral`, or report the failure at
 `pos`. Port of every `parse_literal*` branch's `if literal_wf lit then
-... else ParseFail "invalid literal" pos`. -/
+... else ParseFail "invalid literal" pos`. The language tag is written in
+its canonical (lower-case) form first (`Literal.toWf?`; RDF 1.2 Concepts
+§3.4, https://github.com/danbri/factoidal/issues/1001). Every literal of
+the N-Triples, N-Quads, Turtle and TriG readers is made here. -/
 def mkLiteral (pos : Nat) (l : Literal) : Except ParseError WfLiteral :=
-  if h : literalWf l then .ok ⟨l, h⟩
-  else .error ⟨"ill-formed literal (language tag / direction / datatype combination)", pos⟩
+  match Literal.toWf? l with
+  | some w => .ok w
+  | none => .error ⟨"ill-formed literal (language tag / direction / datatype combination)", pos⟩
+
+/-- A literal that is already well-formed is kept as it is. -/
+theorem mkLiteral_of_wf (pos : Nat) (l : Literal) (h : literalWf l = true) :
+    mkLiteral pos l = .ok ⟨l, h⟩ := by
+  simp [mkLiteral, Literal.toWf?_of_wf h]
 
 /-! ## Literal — [6] literal
 
