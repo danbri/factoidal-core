@@ -24,7 +24,9 @@ decoded by `decT`), with any default graph. The id path reads:
 * `from_default_decode`: the default graph that `applyDataset` builds from
   FROM clauses is the decoded `idDefault`, when `Triple.eqb` of two decoded
   id triples is equality of the id triples on the triples of the store (the
-  hypothesis of `IdJoinTheorems.join_decode`, for triples).
+  hypothesis of `IdJoinTheorems.join_decode`, for triples), and when the FROM
+  clauses name at most one graph or their graphs hold no blank node (issue
+  979: two or more FROM graphs are relabelled apart by `SPARQL.fromMerge`).
 * `from_named_decode`: the named graphs that `applyDataset` keeps are the
   store's graphs that the FROM NAMED IRIs name, decoded, in clause order.
 * `mergedRows_eq`: the rows of a triple pattern over the merge are what
@@ -72,12 +74,12 @@ abbrev IdTriple := UInt64 × UInt64 × UInt64
 def idGraphOf (named : List (WfIri × List IdTriple)) (i : WfIri) : Option (List IdTriple) :=
   (named.find? (·.1 == i)).map (·.2)
 
-/-- The graphs that the FROM clauses name, in clause order. -/
+/-- The graphs that the FROM clauses name, in clause order, each IRI once
+    (`SPARQL.fromIris`; the id path's `IdQuery.datasetSpec` keeps each FROM
+    IRI once). -/
 def idDefaults (dcs : List DatasetClause) (named : List (WfIri × List IdTriple)) :
     List (List IdTriple) :=
-  dcs.filterMap fun
-    | .default i => idGraphOf named i
-    | .named _ => none
+  (L4Factoidal.SPARQL.fromIris dcs).filterMap (idGraphOf named)
 
 /-- The default graph of the id path under FROM: the merge of the FROM
     graphs. -/
@@ -197,42 +199,78 @@ theorem foldl_union_decode (decT : IdTriple → Triple) (ok : IdTriple → Prop)
 theorem mem_idDefaults (dcs : List DatasetClause) (named : List (WfIri × List IdTriple))
     (G : List IdTriple) (h : G ∈ idDefaults dcs named) : ∃ p ∈ named, p.2 = G := by
   unfold idDefaults at h
-  rcases List.mem_filterMap.mp h with ⟨dc, _, hdc⟩
-  cases dc with
-  | named _ => simp at hdc
-  | default i =>
-    simp only [idGraphOf] at hdc
-    cases hf : named.find? (fun p => p.1 == i) with
-    | none => rw [hf] at hdc; simp at hdc
-    | some p =>
-      rw [hf] at hdc
-      simp at hdc
-      exact ⟨p, List.mem_of_find?_eq_some hf, hdc⟩
+  rcases List.mem_filterMap.mp h with ⟨i, _, hdc⟩
+  simp only [idGraphOf] at hdc
+  cases hf : named.find? (fun p => p.1 == i) with
+  | none => rw [hf] at hdc; simp at hdc
+  | some p =>
+    rw [hf] at hdc
+    simp at hdc
+    exact ⟨p, List.mem_of_find?_eq_some hf, hdc⟩
+
+/-- A relabelling leaves a graph with no blank node unchanged. -/
+theorem renameBnodes_ground (f : BNodeId → BNodeId) (G : Graph)
+    (h : ∀ t ∈ G, t.bnodes = []) : Graph.renameBnodes f G = G := by
+  unfold Graph.renameBnodes
+  conv => rhs; rw [← List.map_id G]
+  apply List.map_congr_left
+  intro t ht
+  rw [Triple.renameBnodes_congr (g := fun b => b) (fun b hb => by rw [h t ht] at hb; cases hb),
+    Triple.renameBnodes_idf]
+  rfl
+
+theorem scopeFromGraphs_ground : ∀ (n : Nat) (Gs : List Graph), (∀ G ∈ Gs, ∀ t ∈ G, t.bnodes = []) →
+    L4Factoidal.SPARQL.scopeFromGraphs n Gs = Gs
+  | _, [], _ => rfl
+  | n, G :: Gs, h => by
+    simp only [L4Factoidal.SPARQL.scopeFromGraphs]
+    rw [renameBnodes_ground _ G (h G (List.mem_cons_self ..)),
+      scopeFromGraphs_ground (n + 1) Gs (fun G' hG' => h G' (List.mem_cons_of_mem _ hG'))]
 
 /-- The default graph that `applyDataset` builds from the FROM clauses
-    (SPARQL 1.1 section 13.2.2: the RDF merge of the graphs they name) is
-    the decoded merge of the store's graphs that they name, when `Triple.eqb`
-    of decoded triples is equality of the id triples of the store. -/
+    (SPARQL 1.1 section 13.2.1: the RDF merge of the graphs they name,
+    `SPARQL.fromMerge`) is the decoded union of the store's graphs that they
+    name, when `Triple.eqb` of decoded triples is equality of the id triples of
+    the store, and when the FROM clauses name at most one graph or the graphs
+    they name hold no blank node. With two or more graphs and a blank node the
+    reference evaluator relabels the graphs apart
+    (https://github.com/danbri/factoidal/issues/979) and the id path refuses a
+    merged row that holds a blank node (`IdQuery.scanPatM`). -/
 theorem from_default_decode (decT : IdTriple → Triple) (ok : IdTriple → Prop)
     (hdec : ∀ x y, ok x → ok y → (decT x).eqb (decT y) = (x == y))
     (dflt active : Graph) (dcs : List DatasetClause) (named : List (WfIri × List IdTriple))
-    (hne : dcs ≠ []) (hok : ∀ p ∈ named, ∀ x ∈ p.2, ok x) :
+    (hne : dcs ≠ []) (hok : ∀ p ∈ named, ∀ x ∈ p.2, ok x)
+    (hground : (idDefaults dcs named).length ≤ 1 ∨
+      ∀ G ∈ idDefaults dcs named, ∀ x ∈ G, (decT x).bnodes = []) :
     (applyDataset dcs (refDataset decT dflt named) active).1.default =
       (idDefault dcs named).map decT := by
   have he : dcs.isEmpty = false := by
     cases dcs with
     | nil => exact absurd rfl hne
     | cons _ _ => rfl
-  simp only [applyDataset, he, Bool.false_eq_true, if_false]
-  rw [idDefault, foldl_union_decode decT ok hdec (idDefaults dcs named) [] (by simp)]
-  · congr 1
+  have hlook : (L4Factoidal.SPARQL.fromIris dcs).filterMap
+      (fun i => (refDataset decT dflt named).lookupNamedIri i.val) =
+      (idDefaults dcs named).map (·.map decT) := by
     unfold idDefaults
     rw [List.map_filterMap]
     apply L4Factoidal.Storage.Sbm11.OptJoin.filterMap_congr'
-    intro dc _
-    cases dc with
-    | default i => simp only [lookup_decode]
-    | named _ => rfl
+    intro i _
+    simp only [lookup_decode]
+  simp only [applyDataset, he, Bool.false_eq_true, if_false]
+  rw [hlook, idDefault, foldl_union_decode decT ok hdec (idDefaults dcs named) [] (by simp)]
+  · unfold L4Factoidal.SPARQL.fromMerge
+    rw [List.length_map]
+    split
+    · rfl
+    · rename_i hlen
+      rcases hground with h | h
+      · exact absurd h hlen
+      · rw [scopeFromGraphs_ground]
+        · rfl
+        · intro G hG t ht
+          obtain ⟨G0, hG0, rfl⟩ := List.mem_map.mp hG
+          obtain ⟨x, hx, rfl⟩ := List.mem_map.mp ht
+          exact h G0 hG0 x hx
   · intro G hG x hx
     rcases mem_idDefaults dcs named G hG with ⟨p, hp, rfl⟩
     exact hok p hp x hx

@@ -1,0 +1,4 @@
+PREFIX ex: <http://ex.org/>
+# SPARQL 1.1 section 13.2.1: the default graph is the RDF merge of g1 and g2.
+# The _:b0 of g1 and the _:b0 of g2 are two blank nodes of the merge: no row.
+SELECT ?x FROM ex:g1 FROM ex:g2 WHERE { ?x ex:p ex:o . ?x ex:q ex:o }

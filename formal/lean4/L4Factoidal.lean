@@ -103,6 +103,8 @@ import L4Factoidal.SPARQL.ExprRefinement
 import L4Factoidal.SPARQL.Query
 import L4Factoidal.SPARQL.Exists
 import L4Factoidal.SPARQL.QueryTheorems
+import L4Factoidal.SPARQL.FromMerge
+import L4Factoidal.SPARQL.FromMergeStage
 import L4Factoidal.SPARQL.GroupFastTheorems
 import L4Factoidal.SPARQL.QueryTests
 import L4Factoidal.SPARQL.OptionalFilterScope

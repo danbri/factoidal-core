@@ -51,7 +51,10 @@
 #                graph by its name, not by its triples). Then the same for
 #                tests/sbm11/xmlliteral/data.nq (two rdf:XMLLiteral literals
 #                with one canonical XML: two RDF terms, issue 963) and its
-#                check.sh, which also fixes the row counts.
+#                check.sh, which also fixes the row counts. Then the same for
+#                tests/sbm11/frommerge/data.nq (FROM with two graphs that
+#                share a blank node label is an RDF merge, issue 979) and its
+#                check.sh, which fixes the paths and the answers.
 #   (z) orderkey tests/sbm11/orderkeys/data.nq packed and activated; each
 #                tests/sbm11/orderkeys/*.rq answered on ids at 1 and 4 threads
 #                and by `l4factoidal query`, equal row by row IN ORDER
@@ -398,6 +401,13 @@ gate_part "$HERE/xmlliteral/data.nq" "$HERE/xmlliteral" "$TMP/gate-xmlliteral"
 xrc=0; xout="$("$HERE/xmlliteral/check.sh" 2>&1)" || xrc=$?
 if [ "$xrc" -eq 0 ]; then record gate xmlliteral-check 0 "$(printf '%s' "$xout" | tr '\n' ' ')"
 else record gate xmlliteral-check 1 "exit $xrc: $(printf '%s' "$xout" | tr '\n' ' ')"; fi
+# FROM with two or more graphs is an RDF merge (SPARQL 1.1 section 13.2.1,
+# https://github.com/danbri/factoidal/issues/979): both paths, with the paths
+# and the answers of tests/sbm11/frommerge/check.sh.
+gate_part "$HERE/frommerge/data.nq" "$HERE/frommerge" "$TMP/gate-frommerge"
+frc=0; fout="$("$HERE/frommerge/check.sh" 2>&1)" || frc=$?
+if [ "$frc" -eq 0 ]; then record gate frommerge-check 0 "$(printf '%s' "$fout" | tr '\n' ' ')"
+else record gate frommerge-check 1 "exit $frc: $(printf '%s' "$fout" | tr '\n' ' ')"; fi
 
 echo "=== (z) ORDER BY on dictionary keys, in order, against l4factoidal (issue 961)"
 # tests/sbm11/orderkeys/data.nq: unbound values, a blank node, IRIs,
