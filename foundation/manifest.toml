@@ -1,0 +1,810 @@
+# The Factoidal FOUNDATION manifest — VERSION 0, TO BE REFINED BY EXPERTS.
+#
+# https://github.com/danbri/factoidal/issues/975, "Architecture acceptance",
+# item 1. This file names the Lean modules (formal/lean4/L4Factoidal/) that
+# ARE the specification layer. Every other L4Factoidal module is an
+# implementation (stores, indexes, planners, codecs, fast paths, wasm ops,
+# harnesses) or a proof about one. `tools/foundation-gate.py` checks that no
+# module listed here imports an implementation module, and that no level-k
+# module imports a module of a higher level. Today's exceptions are in
+# `foundation/allow-imports.txt`, one reason each; that list may only shrink.
+#
+# Owner steer, 2026-10-24, verbatim:
+#
+#   "For the FOUNDATION we'll need to iterate as I work out collaborations
+#   around W3C so for now just go with your instincts and knowledge of the
+#   lean codebase" ... "Let's call a FOUNDATION LEVEL 0 te RDF/S model with
+#   named graphs and URIs/IRIs / LEVEL 1 OWL SPARQL ... more / LEVEL 2 XML and
+#   non-XML syntaxes, JSON, ... / LEVEL 3 CSVW RML JSON-LD ... Something like
+#   that, the details matter less than that we can do it, and that the human
+#   experts can refine it later."
+#
+# He also listed: RDF, RDFS, SPARQL and its extensibility (text, geo, wasm
+# functions), OWL (DL, RL, ...), RIF (maybe inessential), URIs/IRIs/URLs,
+# enough XML for the semweb specs' uses of XML, and the XPath functions and
+# operators.
+#
+# The module choice and the citations below are a Claude-inferred version 0
+# made by reading the Lean sources on 2026-10-24. They are not owner
+# decisions. Section numbers cite the W3C Recommendation (or the IETF / OGC
+# document) the module transcribes.
+
+[manifest]
+version = 0
+status = "version 0, to be refined by experts"
+source_root = "formal/lean4"
+issue = "https://github.com/danbri/factoidal/issues/975"
+
+[levels]
+0 = "RDF and RDFS model: terms, IRIs, literals and the XSD datatypes RDF uses, graphs, datasets with named graphs, RDF Semantics and entailment"
+1 = "SPARQL 1.1 (algebra, semantics, update, entailment regimes, extension functions), XPath functions and operators, OWL 2, RIF, SHACL, ShEx, RDFC-1.0, the evidence and contract types"
+2 = "Concrete syntaxes: XML and XPath 1.0, JSON, the RDF syntaxes, the SPARQL grammar and result formats, the OWL / RIF / ShEx syntaxes"
+3 = "Mapping languages built on levels 0 to 2: CSVW, RML, JSON-LD"
+
+# ---------------------------------------------------------------- level 0
+
+[[module]]
+name = "L4Factoidal.RDF.Core"
+level = 0
+spec = "RDF 1.1 Concepts §3.1-3.5 (triples, IRIs, literals, blank nodes); RDF 1.2 Concepts §3 (triple terms, directional language strings)"
+
+[[module]]
+name = "L4Factoidal.RDF.XmlCanon"
+level = 0
+spec = "RDF 1.1 Concepts §5.1 (rdf:XMLLiteral value space)"
+
+[[module]]
+name = "L4Factoidal.RDF.LangTag"
+level = 0
+spec = "RDF 1.1 Concepts §3.3 (language tags); BCP 47 §2.1 (well-formedness)"
+
+[[module]]
+name = "L4Factoidal.RDF.IriSyntax"
+level = 0
+spec = "RDF 1.1 Concepts §3.2 (IRIs); RFC 3987 §2.2 (absolute IRI syntax)"
+
+[[module]]
+name = "L4Factoidal.Syntax.IriResolve"
+level = 0
+spec = "RFC 3986 §5.2 (reference resolution); RFC 3987 §6.5"
+
+[[module]]
+name = "L4Factoidal.Encoding.Hex"
+level = 0
+spec = "RFC 3986 §2.1 (HEXDIG, percent-encoding); RFC 8259 §7"
+
+[[module]]
+name = "L4Factoidal.RDF.TermIdentity"
+level = 0
+spec = "RDF 1.1 Concepts §3.3 (literal term equality); RDF 1.2 Concepts §3.6 (triple term equality)"
+
+[[module]]
+name = "L4Factoidal.RDF.Rdf11Terms"
+level = 0
+spec = "RDF 1.2 Concepts §1.6 (terms outside RDF 1.1)"
+
+[[module]]
+name = "L4Factoidal.RDF.Graph"
+level = 0
+spec = "RDF 1.1 Concepts §3 (RDF graph), §4 (RDF dataset, named graphs)"
+
+[[module]]
+name = "L4Factoidal.RDF.DatasetSet"
+level = 0
+spec = "RDF 1.1 Concepts §3 and §4 (a graph is a SET of triples; a dataset a set of quads)"
+
+[[module]]
+name = "L4Factoidal.RDF.DatasetDenotation"
+level = 0
+spec = "RDF 1.1 Concepts §4 (the dataset as a default graph plus named graphs, by membership)"
+
+[[module]]
+name = "L4Factoidal.RDF.DatasetGraphs"
+level = 0
+spec = "RDF 1.1 Concepts §4 (default graph and named graphs of a dataset)"
+
+[[module]]
+name = "L4Factoidal.RDF.DatasetMerge"
+level = 0
+spec = "RDF 1.1 Semantics §5.2 (merge); RDF 1.1 Concepts §3.5 (blank node scope)"
+
+[[module]]
+name = "L4Factoidal.RDF.BnodeTransport"
+level = 0
+spec = "RDF 1.1 Concepts §3.5 (blank node identifiers are local)"
+
+[[module]]
+name = "L4Factoidal.RDF.DocumentScope"
+level = 0
+spec = "RDF 1.1 Concepts §3.5 (blank nodes scoped per document)"
+
+[[module]]
+name = "L4Factoidal.RDF.Isomorphism"
+level = 0
+spec = "RDF 1.1 Concepts §3.6 (graph isomorphism); RDF 1.1 Concepts §4 (dataset isomorphism)"
+
+[[module]]
+name = "L4Factoidal.XSD.Datatypes"
+level = 0
+spec = "XML Schema 1.1 Part 2 §3 (built-in datatypes); RDF 1.1 Concepts §5.1 (the XSD datatypes usable in RDF)"
+
+[[module]]
+name = "L4Factoidal.XSD.Lexical"
+level = 0
+spec = "XML Schema 1.1 Part 2 §3.3 (lexical spaces of the built-in datatypes)"
+
+[[module]]
+name = "L4Factoidal.XSD.ValueSpace"
+level = 0
+spec = "XML Schema 1.1 Part 2 §2.2 and §3.3 (value spaces, lexical mappings)"
+
+[[module]]
+name = "L4Factoidal.XSD.IEEE754"
+level = 0
+spec = "XML Schema 1.1 Part 2 §3.3.4-3.3.5 (xsd:float, xsd:double); IEEE 754-2008"
+
+[[module]]
+name = "L4Factoidal.RDF.Datatypes"
+level = 0
+spec = "RDF 1.1 Semantics §7 (datatype map D, D-interpretations); RDF 1.1 Concepts §5"
+
+[[module]]
+name = "L4Factoidal.RDFS.Vocabulary"
+level = 0
+spec = "RDF Schema 1.1 §2-§5 (the rdf: and rdfs: vocabulary)"
+
+[[module]]
+name = "L4Factoidal.RDF.VocabularyAxioms"
+level = 0
+spec = "RDF 1.1 Semantics §8.1 and §9.1 (RDF and RDFS axiomatic triples)"
+
+[[module]]
+name = "L4Factoidal.RDF.Semantics"
+level = 0
+spec = "RDF 1.1 Semantics §4-§5 (simple interpretations, satisfaction, entailment)"
+
+[[module]]
+name = "L4Factoidal.RDF.EntailmentSimpleSpec"
+level = 0
+spec = "RDF 1.1 Semantics §5.2 and §6 (simple entailment, interpolation lemma)"
+
+[[module]]
+name = "L4Factoidal.RDF.Entailment"
+level = 0
+spec = "RDF 1.1 Semantics §5 (simple entailment) and §8-§9 (RDF and RDFS entailment)"
+
+[[module]]
+name = "L4Factoidal.RDF.EntailmentRdfSpec"
+level = 0
+spec = "RDF 1.1 Semantics §8 (RDF entailment, entailment rules rdfD1, rdfD2)"
+
+[[module]]
+name = "L4Factoidal.RDF.EntailmentRdfsSpec"
+level = 0
+spec = "RDF 1.1 Semantics §9 (RDFS entailment, rules rdfs1-rdfs13)"
+
+[[module]]
+name = "L4Factoidal.RDF.EntailmentRdfsModelTheory"
+level = 0
+spec = "RDF 1.1 Semantics §9.1 (RDFS interpretations)"
+
+[[module]]
+name = "L4Factoidal.RDFS.RdfsCore"
+level = 0
+spec = "RDF 1.1 Semantics §9.2.1 (the RDFS entailment patterns, rdfs-core fragment)"
+
+[[module]]
+name = "L4Factoidal.RDFS.FullClosure"
+level = 0
+spec = "RDF 1.1 Semantics §8.1.1 and §9.2.1 (the full RDF and RDFS entailment rule set)"
+
+# ---------------------------------------------------------------- level 1
+
+[[module]]
+name = "L4Factoidal.SPARQL.PropertyPath"
+level = 1
+spec = "SPARQL 1.1 Query §9 and §18.4 (property paths)"
+
+[[module]]
+name = "L4Factoidal.SPARQL.Algebra"
+level = 1
+spec = "SPARQL 1.1 Query §18.2 and §18.5 (algebra and evaluation)"
+
+[[module]]
+name = "L4Factoidal.SPARQL.AlgebraSpec"
+level = 1
+spec = "SPARQL 1.1 Query §18.5 (declarative definition of the algebra operators)"
+
+[[module]]
+name = "L4Factoidal.SPARQL.Expr"
+level = 1
+spec = "SPARQL 1.1 Query §17 (expressions, operator mapping, function definitions, §17.6 extensibility)"
+
+[[module]]
+name = "L4Factoidal.SPARQL.Query"
+level = 1
+spec = "SPARQL 1.1 Query §18.2.4-§18.2.5 and §18.5 (solution modifiers, query forms)"
+
+[[module]]
+name = "L4Factoidal.SPARQL.Exists"
+level = 1
+spec = "SPARQL 1.1 Query §18.6 (EXISTS evaluation)"
+
+[[module]]
+name = "L4Factoidal.SPARQL.Results"
+level = 1
+spec = "SPARQL 1.1 Query §18.1.6-§18.1.7 (solution mappings and sequences)"
+
+[[module]]
+name = "L4Factoidal.SPARQL.DatasetRestriction"
+level = 1
+spec = "SPARQL 1.1 Query §13 (RDF dataset of a query, FROM and FROM NAMED)"
+
+[[module]]
+name = "L4Factoidal.SPARQL.Update"
+level = 1
+spec = "SPARQL 1.1 Update §3 (graph update and graph management operations)"
+
+[[module]]
+name = "L4Factoidal.SPARQL.UpdateDenotation"
+level = 1
+spec = "SPARQL 1.1 Update §4.2 (formal model of the update operations over a dataset)"
+
+[[module]]
+name = "L4Factoidal.Storage.Sbm11.IdAllowedTheorems"
+level = 1
+spec = "SPARQL 1.1 Query §18.5 (Allowed: the answers SPARQL allows, up to multiset equality); spec relation that lives in the storage tree"
+
+[[module]]
+name = "L4Factoidal.SPARQL.EntailmentRegimeRdfs"
+level = 1
+spec = "SPARQL 1.1 Entailment Regimes §4 (RDFS entailment regime)"
+
+[[module]]
+name = "L4Factoidal.RDF.EntailmentRegimeSoundness"
+level = 1
+spec = "SPARQL 1.1 Entailment Regimes §3 and §4 (RDF and RDFS regimes, soundness conditions)"
+
+[[module]]
+name = "L4Factoidal.SPARQL.FullText"
+level = 1
+spec = "SPARQL 1.1 Query §17.6 extension function text:query (no W3C document; Apache Jena text query vocabulary)"
+
+[[module]]
+name = "L4Factoidal.SPARQL.Protocol"
+level = 1
+spec = "SPARQL 1.1 Protocol §2 (query and update operations, the pure request model)"
+
+[[module]]
+name = "L4Factoidal.SPARQL.ServiceDescription"
+level = 1
+spec = "SPARQL 1.1 Service Description §3"
+
+[[module]]
+name = "L4Factoidal.Geo.Types"
+level = 1
+spec = "OGC GeoSPARQL 1.1 §7 (geometry model); OGC Simple Features 1.2.1 §6"
+
+[[module]]
+name = "L4Factoidal.Geo.Wkt"
+level = 1
+spec = "OGC GeoSPARQL 1.1 §8.5.1 (geo:wktLiteral lexical space); OGC Simple Features §7"
+
+[[module]]
+name = "L4Factoidal.Geo.Topology"
+level = 1
+spec = "OGC Simple Features 1.2.1 §6.1.15 (DE-9IM spatial relations)"
+
+[[module]]
+name = "L4Factoidal.Geo.Functions"
+level = 1
+spec = "OGC GeoSPARQL 1.1 §9 and §10 (topological and non-topological query functions)"
+
+[[module]]
+name = "L4Factoidal.Fn.Arithmetic"
+level = 1
+spec = "XPath and XQuery Functions and Operators 3.1 §4.2 (arithmetic operators on numerics)"
+
+[[module]]
+name = "L4Factoidal.Fn.NumericUnary"
+level = 1
+spec = "XPath and XQuery Functions and Operators 3.1 §4.2.7-§4.2.8 (unary plus and minus)"
+
+[[module]]
+name = "L4Factoidal.Fn.Numeric"
+level = 1
+spec = "XPath and XQuery Functions and Operators 3.1 §4.4 (numeric functions); SPARQL 1.1 Query §17.4.4"
+
+[[module]]
+name = "L4Factoidal.Fn.Rounding"
+level = 1
+spec = "XPath and XQuery Functions and Operators 3.1 §4.4.4-§4.4.5 (fn:round, fn:round-half-to-even)"
+
+[[module]]
+name = "L4Factoidal.Fn.Comparison"
+level = 1
+spec = "XPath and XQuery Functions and Operators 3.1 §4.3, §5.3 (value comparisons)"
+
+[[module]]
+name = "L4Factoidal.Fn.Boolean"
+level = 1
+spec = "XPath and XQuery Functions and Operators 3.1 §7 (functions on boolean values)"
+
+[[module]]
+name = "L4Factoidal.Fn.String"
+level = 1
+spec = "XPath and XQuery Functions and Operators 3.1 §5 (functions on strings); SPARQL 1.1 Query §17.4.3"
+
+[[module]]
+name = "L4Factoidal.Fn.DateTime"
+level = 1
+spec = "XPath and XQuery Functions and Operators 3.1 §9 (dates and times)"
+
+[[module]]
+name = "L4Factoidal.Fn.Duration"
+level = 1
+spec = "XPath and XQuery Functions and Operators 3.1 §8 (durations)"
+
+[[module]]
+name = "L4Factoidal.Fn.Cast"
+level = 1
+spec = "XPath and XQuery Functions and Operators 3.1 §19 (casting); SPARQL 1.1 Query §17.5"
+
+[[module]]
+name = "L4Factoidal.Fn.Casting"
+level = 1
+spec = "XPath and XQuery Functions and Operators 3.1 §19.2 (casting from xs:string)"
+
+[[module]]
+name = "L4Factoidal.Fn.List"
+level = 1
+spec = "RIF Datatypes and Built-Ins 1.0 §4.11 (list functions)"
+
+[[module]]
+name = "L4Factoidal.Regex.XPath"
+level = 1
+spec = "XPath and XQuery Functions and Operators 3.1 §5.6 (fn:matches, fn:replace)"
+
+[[module]]
+name = "L4Factoidal.Regex.Profiles"
+level = 1
+spec = "XML Schema 1.1 Part 2 Appendix G (regular expressions); F&O 3.1 §5.6.1"
+
+[[module]]
+name = "L4Factoidal.Text.CaseMap"
+level = 1
+spec = "Unicode 15 §3.13 (default case conversion), for fn:upper-case and fn:lower-case"
+
+[[module]]
+name = "L4Factoidal.Text.CaseMapData"
+level = 1
+spec = "Unicode Character Database UnicodeData.txt (simple case mappings)"
+
+[[module]]
+name = "L4Factoidal.Crypto.SHA2"
+level = 1
+spec = "FIPS 180-4 §6.2-§6.5 (SHA-256/384/512); SPARQL 1.1 Query §17.4.6; RDFC-1.0 §4"
+
+[[module]]
+name = "L4Factoidal.Crypto.SHA1"
+level = 1
+spec = "FIPS 180-4 §6.1 (SHA-1); SPARQL 1.1 Query §17.4.6.2"
+
+[[module]]
+name = "L4Factoidal.Crypto.MD5"
+level = 1
+spec = "RFC 1321 (MD5); SPARQL 1.1 Query §17.4.6.1"
+
+[[module]]
+name = "L4Factoidal.XSD.Facets"
+level = 1
+spec = "OWL 2 Structural Specification §4 (datatype maps); XML Schema 1.1 Part 2 §4.3 (constraining facets)"
+
+[[module]]
+name = "L4Factoidal.XSD.SimpleType"
+level = 1
+spec = "XML Schema 1.1 Part 2 §4.1-§4.3 (simple type definitions and derivation)"
+
+[[module]]
+name = "L4Factoidal.RDF.Canonical"
+level = 1
+spec = "RDF Dataset Canonicalization (RDFC-1.0) §4"
+
+[[module]]
+name = "L4Factoidal.OWL.Vocabulary"
+level = 1
+spec = "OWL 2 Mapping to RDF Graphs §2 (the owl: vocabulary)"
+
+[[module]]
+name = "L4Factoidal.OWL.Structure"
+level = 1
+spec = "OWL 2 Structural Specification §5-§9 (entities, class expressions, axioms)"
+
+[[module]]
+name = "L4Factoidal.OWL.StructureRdf"
+level = 1
+spec = "OWL 2 Mapping to RDF Graphs §2 and §3 (structural specification to and from RDF)"
+
+[[module]]
+name = "L4Factoidal.OWL.SyntaxDL"
+level = 1
+spec = "OWL 2 Structural Specification §11 (global restrictions on axioms in OWL 2 DL)"
+
+[[module]]
+name = "L4Factoidal.OWL.Semantics"
+level = 1
+spec = "OWL 2 RDF-Based Semantics §4-§5 (interpretations and semantic conditions)"
+
+[[module]]
+name = "L4Factoidal.OWL.Tableau"
+level = 1
+spec = "OWL 2 Direct Semantics §2.2-§2.3 (interpretations, models)"
+
+[[module]]
+name = "L4Factoidal.OWL.RLRules"
+level = 1
+spec = "OWL 2 Profiles §4.3 (OWL 2 RL/RDF rules, tables 4-9)"
+
+[[module]]
+name = "L4Factoidal.OWL.RLSemantics"
+level = 1
+spec = "OWL 2 Profiles §4.3, Theorem PR1 (truth of the OWL 2 RL/RDF rules)"
+
+[[module]]
+name = "L4Factoidal.OWL.RdfBased.Spec"
+level = 1
+spec = "OWL 2 RDF-Based Semantics §5 (semantic conditions)"
+
+[[module]]
+name = "L4Factoidal.OWL.RdfBased.Rules"
+level = 1
+spec = "OWL 2 RDF-Based Semantics §5 and OWL 2 Profiles §4.3 (rules as consequences of the semantic conditions)"
+
+[[module]]
+name = "L4Factoidal.RIF.Syntax"
+level = 1
+spec = "RIF Core Dialect §2 (abstract syntax)"
+
+[[module]]
+name = "L4Factoidal.RIF.Builtins"
+level = 1
+spec = "RIF Datatypes and Built-Ins 1.0 §4 (built-in predicates and functions)"
+
+[[module]]
+name = "L4Factoidal.RIF.Matching"
+level = 1
+spec = "RIF Basic Logic Dialect §3.2 (semantic structures, term matching)"
+
+[[module]]
+name = "L4Factoidal.RIF.RdfMapping"
+level = 1
+spec = "RIF RDF and OWL Compatibility §5 (embedding RDF graphs in RIF)"
+
+[[module]]
+name = "L4Factoidal.RIF.OwlDirect"
+level = 1
+spec = "RIF RDF and OWL Compatibility §6 (RIF-OWL Direct compatibility)"
+
+[[module]]
+name = "L4Factoidal.SHACL.Vocabulary"
+level = 1
+spec = "SHACL §1.4 and Appendix (the sh: vocabulary)"
+
+[[module]]
+name = "L4Factoidal.SHACL.Shapes"
+level = 1
+spec = "SHACL §2 (shapes, targets, focus nodes)"
+
+[[module]]
+name = "L4Factoidal.SHACL.Validation"
+level = 1
+spec = "SHACL §3.4 and §4 (validation, core constraint components)"
+
+[[module]]
+name = "L4Factoidal.SHACL.Report"
+level = 1
+spec = "SHACL §3.6 (validation report)"
+
+[[module]]
+name = "L4Factoidal.SHACL.Sparql"
+level = 1
+spec = "SHACL §5 and §6 (SPARQL-based constraints and constraint components)"
+
+[[module]]
+name = "L4Factoidal.SHACL.NodeExpr"
+level = 1
+spec = "SHACL Advanced Features §6 (node expressions)"
+
+[[module]]
+name = "L4Factoidal.SHACL.Rules"
+level = 1
+spec = "SHACL Advanced Features §8 (SHACL rules)"
+
+[[module]]
+name = "L4Factoidal.ShEx.Schema"
+level = 1
+spec = "ShEx 2.1 §5.1-§5.2 (the abstract syntax of a schema)"
+
+[[module]]
+name = "L4Factoidal.ShEx.Structure"
+level = 1
+spec = "ShEx 2.1 §5.7 (schema requirements)"
+
+[[module]]
+name = "L4Factoidal.ShEx.Validation"
+level = 1
+spec = "ShEx 2.1 §5.4 (node constraints)"
+
+[[module]]
+name = "L4Factoidal.ShEx.Shapes"
+level = 1
+spec = "ShEx 2.1 §5.5 (shapes and triple expressions)"
+
+[[module]]
+name = "L4Factoidal.ShEx.Satisfies"
+level = 1
+spec = "ShEx 2.1 §5.3 (satisfies(n, se, G, m))"
+
+[[module]]
+name = "L4Factoidal.Proof.Syntax"
+level = 1
+spec = "FPP0, the Factoidal Proof Profile, version 0 (claims and evidence; no W3C document; https://github.com/danbri/factoidal/issues/615)"
+
+[[module]]
+name = "L4Factoidal.Dataflow.Stage"
+level = 1
+spec = "Stage and contract types (no W3C document; https://github.com/danbri/factoidal/issues/975)"
+
+# ---------------------------------------------------------------- level 2
+
+[[module]]
+name = "L4Factoidal.XML.Document"
+level = 2
+spec = "XML Information Set (Second Edition) §2 (information items)"
+
+[[module]]
+name = "L4Factoidal.XML.Encoding"
+level = 2
+spec = "XML 1.0 (Fifth Edition) §4.3.3 and Appendix F (character encoding of entities)"
+
+[[module]]
+name = "L4Factoidal.XML.Wellformedness"
+level = 2
+spec = "XML 1.0 (Fifth Edition) §2 (well-formed documents); Namespaces in XML 1.0 §3 (NCName)"
+
+[[module]]
+name = "L4Factoidal.XML.Parser"
+level = 2
+spec = "XML 1.0 (Fifth Edition) §2-§4 (the grammar of a document)"
+
+[[module]]
+name = "L4Factoidal.XML.Namespaces"
+level = 2
+spec = "Namespaces in XML 1.0 (Third Edition) §3-§7"
+
+[[module]]
+name = "L4Factoidal.XML.NamespaceView"
+level = 2
+spec = "Namespaces in XML 1.0 (Third Edition) §3 and §6 (expanded names, scoping)"
+
+[[module]]
+name = "L4Factoidal.XML.XmlAttributes"
+level = 2
+spec = "XML 1.0 (Fifth Edition) §2.10 and §2.12 (xml:space, xml:lang); XML Base §3"
+
+[[module]]
+name = "L4Factoidal.XML.Validity"
+level = 2
+spec = "XML 1.0 (Fifth Edition) §3 (validity constraints)"
+
+[[module]]
+name = "L4Factoidal.XML.Canonical"
+level = 2
+spec = "Canonical XML Version 1.0 §2"
+
+[[module]]
+name = "L4Factoidal.XPath.Number"
+level = 2
+spec = "XPath 1.0 §4.4 (number functions, IEEE 754 numbers)"
+
+[[module]]
+name = "L4Factoidal.XPath.Expr"
+level = 2
+spec = "XPath 1.0 §2-§3 (location paths and expressions)"
+
+[[module]]
+name = "L4Factoidal.XPath.Data"
+level = 2
+spec = "XPath 1.0 §5 (data model)"
+
+[[module]]
+name = "L4Factoidal.XPath.Eval"
+level = 2
+spec = "XPath 1.0 §2-§4 (expression evaluation and the core function library)"
+
+[[module]]
+name = "L4Factoidal.JSON.Value"
+level = 2
+spec = "RFC 8259 §3 (JSON values)"
+
+[[module]]
+name = "L4Factoidal.JSON.Parser"
+level = 2
+spec = "RFC 8259 §2-§8 (the JSON grammar)"
+
+[[module]]
+name = "L4Factoidal.JSON.Serialize"
+level = 2
+spec = "RFC 8259 §7 (string escaping) and §2-§6"
+
+[[module]]
+name = "L4Factoidal.RDF.Format"
+level = 2
+spec = "RDF 1.1 Concepts §1.3 (concrete syntaxes): which name denotes which syntax"
+
+[[module]]
+name = "L4Factoidal.RDF.MediaType"
+level = 2
+spec = "IANA media type registrations in the RDF 1.1 syntax Recommendations (text/turtle, application/n-triples, ...)"
+
+[[module]]
+name = "L4Factoidal.Syntax.NTriples"
+level = 2
+spec = "RDF 1.1 N-Triples §2-§7 (grammar); RDF 1.2 N-Triples"
+
+[[module]]
+name = "L4Factoidal.Syntax.NQuads"
+level = 2
+spec = "RDF 1.1 N-Quads §2-§6 (grammar); RDF 1.2 N-Quads"
+
+[[module]]
+name = "L4Factoidal.Syntax.Turtle"
+level = 2
+spec = "RDF 1.1 Turtle §2-§7 (grammar and parsing); RDF 1.2 Turtle"
+
+[[module]]
+name = "L4Factoidal.Syntax.TriG"
+level = 2
+spec = "RDF 1.1 TriG §2-§5 (grammar and parsing); RDF 1.2 TriG"
+
+[[module]]
+name = "L4Factoidal.Syntax.RdfXml"
+level = 2
+spec = "RDF 1.1 XML Syntax §2 and §7 (grammar)"
+
+[[module]]
+name = "L4Factoidal.Syntax.RdfJson"
+level = 2
+spec = "RDF 1.1 JSON Alternate Serialization (RDF/JSON) §2 (W3C Working Group Note)"
+
+[[module]]
+name = "L4Factoidal.SPARQL.Parser"
+level = 2
+spec = "SPARQL 1.1 Query §19 (grammar); SPARQL 1.2 Query §19"
+
+[[module]]
+name = "L4Factoidal.SPARQL.UpdateParser"
+level = 2
+spec = "SPARQL 1.1 Update §3 and SPARQL 1.1 Query §19 (update grammar)"
+
+[[module]]
+name = "L4Factoidal.SPARQL.ResultsJson"
+level = 2
+spec = "SPARQL 1.1 Query Results JSON Format §3"
+
+[[module]]
+name = "L4Factoidal.SPARQL.ResultsXml"
+level = 2
+spec = "SPARQL Query Results XML Format (Second Edition) §2"
+
+[[module]]
+name = "L4Factoidal.SPARQL.ResultsCsvTsv"
+level = 2
+spec = "SPARQL 1.1 Query Results CSV and TSV Formats §2-§3"
+
+[[module]]
+name = "L4Factoidal.OWL.FunctionalSyntax"
+level = 2
+spec = "OWL 2 Structural Specification and Functional-Style Syntax §2-§11 (functional-style grammar)"
+
+[[module]]
+name = "L4Factoidal.OWL.OwlXml"
+level = 2
+spec = "OWL 2 XML Serialization §3"
+
+[[module]]
+name = "L4Factoidal.RIF.Ps"
+level = 2
+spec = "RIF Core Dialect §2 and RIF BLD §2 (presentation syntax)"
+
+[[module]]
+name = "L4Factoidal.RIF.Xml"
+level = 2
+spec = "RIF Core Dialect §3 (XML serialization)"
+
+[[module]]
+name = "L4Factoidal.ShEx.Compact"
+level = 2
+spec = "ShEx 2.1 §6 (ShExC, the compact syntax)"
+
+[[module]]
+name = "L4Factoidal.ShEx.FromJson"
+level = 2
+spec = "ShEx 2.1 §5 and the ShExJ JSON-LD context (ShExJ syntax)"
+
+# ---------------------------------------------------------------- level 3
+
+[[module]]
+name = "L4Factoidal.CSVW.Dialect"
+level = 3
+spec = "Metadata Vocabulary for Tabular Data §5.9 (dialect descriptions); Model for Tabular Data §8"
+
+[[module]]
+name = "L4Factoidal.CSVW.Formats"
+level = 3
+spec = "Metadata Vocabulary for Tabular Data §5.11.2 (formats for annotations: numbers, dates, booleans)"
+
+[[module]]
+name = "L4Factoidal.CSVW.UriTemplate"
+level = 3
+spec = "Metadata Vocabulary for Tabular Data §5.1.3 (URI template properties); RFC 6570"
+
+[[module]]
+name = "L4Factoidal.CSVW.Metadata"
+level = 3
+spec = "Metadata Vocabulary for Tabular Data §5 (metadata model) and §6 (normalization)"
+
+[[module]]
+name = "L4Factoidal.CSVW.Validate"
+level = 3
+spec = "Model for Tabular Data §6.4-§6.6 (validation of cells, rows and tables)"
+
+[[module]]
+name = "L4Factoidal.CSVW.Conversion"
+level = 3
+spec = "Generating RDF from Tabular Data on the Web (csv2rdf) §4-§5"
+
+[[module]]
+name = "L4Factoidal.RML.Mapping"
+level = 3
+spec = "RML Core (W3C KG-Construct CG) §6-§9 (term maps and term generation)"
+
+[[module]]
+name = "L4Factoidal.RML.Model"
+level = 3
+spec = "RML Core (W3C KG-Construct CG) §4-§5 (the mapping document)"
+
+[[module]]
+name = "L4Factoidal.JSONLD.Context"
+level = 3
+spec = "JSON-LD 1.1 Processing Algorithms and API §4.1-§4.3 (context processing)"
+
+[[module]]
+name = "L4Factoidal.JSONLD.Expand"
+level = 3
+spec = "JSON-LD 1.1 Processing Algorithms and API §5 (expansion)"
+
+[[module]]
+name = "L4Factoidal.JSONLD.Compact"
+level = 3
+spec = "JSON-LD 1.1 Processing Algorithms and API §6 (compaction)"
+
+[[module]]
+name = "L4Factoidal.JSONLD.Flatten"
+level = 3
+spec = "JSON-LD 1.1 Processing Algorithms and API §7 (flattening, node map generation)"
+
+[[module]]
+name = "L4Factoidal.JSONLD.ToRdf"
+level = 3
+spec = "JSON-LD 1.1 Processing Algorithms and API §8.1-§8.4 (deserialize JSON-LD to RDF)"
+
+[[module]]
+name = "L4Factoidal.JSONLD.FromRdf"
+level = 3
+spec = "JSON-LD 1.1 Processing Algorithms and API §8.5-§8.6 (serialize RDF as JSON-LD)"
+
+[[module]]
+name = "L4Factoidal.JSONLD.Frame"
+level = 3
+spec = "JSON-LD 1.1 Framing §4 (the framing algorithm)"
