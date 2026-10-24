@@ -137,6 +137,31 @@ The user merges. **Don't** run `gh pr merge` yourself unless the user
 explicitly says so. PRs in this repo are reviewed and merged
 manually.
 
+### Before merging a PR that changes shipped code: build its head in CI
+
+A Lean build and the dataflow drift test do not test the package. When a
+PR changes Lean source that ships (anything under `formal/lean4/` that the
+wasm or the native binaries compile, not only tests and proofs) or anything
+under `npm/`, run the factoidal-builds build on the PR's head commit and
+merge only when its `web-gates` job passes:
+
+```bash
+gh workflow run build.yml --repo danbri/factoidal-builds -f core_ref=<40-hex PR head>
+gh run watch <run id> --repo danbri/factoidal-builds --exit-status
+```
+
+`web-gates` runs the npm package suite on the wasm built from that commit.
+The local alternative is `bash formal/lean4/Wasm/build-wasm.sh` and then
+`cd npm/factoidal && npm test`.
+
+Cost of skipping it, 2026-10-24: PRs 44 to 52 of factoidal-core were merged
+after `lake build` and `tests/dataflow/run.sh` only. PR 51 (writers refuse an
+invalid language tag) made the RDF 1.2 writer refuse a tag that the RDF 1.1
+reader accepts, and `npm/factoidal/test/serialize-turtle.test.js` (issue 870)
+failed on main: 614 pass, 1 fail (out of 616). The first CI build of main
+after the merges found it, and that build published no web release set, so
+no release could be made from main until the fix.
+
 ### Force-push policy
 
 Force-push to a PR's head branch is acceptable when:

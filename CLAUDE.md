@@ -550,6 +550,12 @@ Lean functionality and gates land. Port functionality, not files.
   worker keeps a 2,048-page dictionary page cache. Reason: d10 peak RSS 4/1
   2.10 to 1.19 with no time change (stage 1i of
   `docs/designissues/2026-10-12-parallel-block-scans.md`).
+- KR 1.2 closed, owner, 2026-10-24, answer "Close: 3 of 4 met" (to: how to
+  finish KR 1.2). d10 0.39, q19 0.38 and q21 0.36 meet the 0.4 ratio; q07 is
+  0.50 and not met. Stage 1p measured that block decode scales with threads;
+  the rest of the q07 gap is variation between processes on the 4-vCPU VM
+  (single q07 runs 1.8 to 2.6 ms at 4 threads), larger than any remaining
+  fix. https://github.com/danbri/factoidal/issues/961 stays open for q07.
 
 ### Issue 566 — the hex layer. RULED, do not ask again.
 
