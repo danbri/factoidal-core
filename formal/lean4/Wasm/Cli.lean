@@ -820,7 +820,7 @@ def outDocument (fmt : RdfFormat) (ds : Dataset) : Except String String :=
   | .nquads => .ok (Dataset.toCanonicalNQuads ds)
   | .turtle => Ops.serializeTurtleTextOf ds
   | _ =>
-      (Sink.serializeDataset Sink.withJsonLd fmt .rdf12 ds).mapError fun e =>
+      ((L4Factoidal.Dataflow.writers Sink.withJsonLd L4Factoidal.RDF.Source.withJsonLd fmt).run .rdf12 {} ds).mapError fun e =>
         s!"l4factoidal parse: cannot write {formatName fmt}: {e}"
 
 /-- Print `ds` in syntax `fmt`: the document and a line break to standard output,

@@ -52,6 +52,7 @@ def stageKind (env : Environment) (n : Name) : StageKind :=
     | some h =>
       -- an `RdfReader` holds its contract as a field, as a `Stage` does
       if h == ``Stage || h == ``RdfReader then .stage
+      else if h == ``RdfWriter then .writer
       else if h == ``IOStage then .ioStage else .other
     | Option.none => .other
 

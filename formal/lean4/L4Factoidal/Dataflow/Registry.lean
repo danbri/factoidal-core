@@ -16,10 +16,12 @@ subset of propext, Classical.choice, Quot.sound.
 Status:
 
 * `proved`: `stage` is a `Stage` value, or an `RdfReader` value (the reader
-  interface type, `Dataflow/Reader.lean`), whose `sound` field is a proof;
+  interface type, `Dataflow/Reader.lean`), whose `sound` field is a proof, or an
+  `RdfWriter` (`Dataflow/Writer.lean`) whose `assumed_roundTrip` is `none`;
   `contract` names its contract; `theorems` names the component theorems it
   uses.
-* `assumed`: `stage` is an `IOStage`; `ioAssumptions` names the assumption.
+* `assumed`: `stage` is an `IOStage`, or an `RdfWriter` whose `assumed_roundTrip`
+  is `some name`; `ioAssumptions` names the assumption.
 * `tested`: no Lean contract; `tests` names the test suite that checks the
   behaviour against the W3C test files (scores in `skills/test-suites`).
 * `missing`: no Lean stage contract and no suite named here. `theorems` may
@@ -74,7 +76,7 @@ structure Entry where
 /-- What the `stage` field names, as the report reads it from the environment:
 a `Stage` value, an `IOStage` value, nothing, or another declaration. -/
 inductive StageKind where
-  | stage | ioStage | none | other
+  | stage | writer | ioStage | none | other
   deriving Repr, DecidableEq, Inhabited
 
 /-- `Name.anonymous`: the field names nothing. -/
@@ -91,11 +93,11 @@ def Entry.statusError (e : Entry) (k : StageKind) : Option String :=
   | .proved =>
     if isNone e.stage || isNone e.contract || e.theorems.isEmpty then
       some "proved needs a stage, a contract and theorems"
-    else if k != .stage then some s!"proved: {e.stage} is not a Stage"
+    else if k != .stage && k != .writer then some s!"proved: {e.stage} is not a Stage or an RdfWriter"
     else Option.none
   | .assumed =>
     if e.ioAssumptions.isEmpty then some "assumed needs a named IO assumption"
-    else if k != .ioStage then some s!"assumed: {e.stage} is not an IOStage"
+    else if k != .ioStage && k != .writer then some s!"assumed: {e.stage} is not an IOStage or an RdfWriter"
     else Option.none
   | .tested =>
     if e.tests.isEmpty || !isNone e.stage || !isNone e.contract then
@@ -313,6 +315,46 @@ def registry : List Entry := [
     theorems := [``writerProjection_dataset]
     tests := ["Dataflow/PhaseCTests.lean round trip #guards (30 seeded datasets, RDF 1.1 and 1.2)", "W3C JSON-LD 1.1 fromRdf (l4jsonld-api)"]
     note := "domain: no triple term (refused), no directional language string (finding: direction dropped with no error, https://github.com/danbri/factoidal/issues/984)" },
+  { area := "RdfWriter: N-Triples (wasm dispatch)", dir := "Syntax"
+    stage := ``ntriplesDocumentWriter, wireIn := "Mode × TurtleRenderOptions × Dataset", wireOut := "String"
+    contract := ``RoundTripOn, status := .proved
+    theorems := [``writerContractW_nt, ``serializeWith_default, ``writers_run_default, ``writerProjection_triples_den, ``RdfWriter.claim_of_proved, ``RdfWriter.roundTrip_of_claim]
+    note := "RdfWriter interface type: the round trip with the matching RdfReader (domain, projection, Iso) is a field, proved for RDF 1.1 and 1.2; the table writers serves the wasm dataset-handle writers" },
+  { area := "RdfWriter: N-Quads (batch)", dir := "Syntax"
+    stage := ``nquadsDocumentWriter, wireIn := "Mode × TurtleRenderOptions × Dataset", wireOut := "String"
+    contract := ``RoundTripOn, status := .proved
+    theorems := [``writerContractW_nquads, ``serializeWith_default, ``writers_run_default, ``writerProjection_nquads_den, ``RdfWriter.claim_of_proved, ``RdfWriter.roundTrip_of_claim]
+    note := "RdfWriter interface type: round trip proved, RDF 1.1 and 1.2; empty named graphs are not written (projection)" },
+  { area := "RdfWriter: Turtle (wasm dispatch)", dir := "Syntax"
+    stage := ``turtleDocumentWriter, wireIn := "Mode × TurtleRenderOptions × Dataset", wireOut := "String"
+    contract := ``RoundTripOn, status := .assumed
+    theorems := [``serializeWith_default, ``writers_run_default, ``RdfWriter.roundTrip_of_claim, ``writerProjection_triples_den]
+    ioAssumptions := [``TurtleWriterRoundTrip]
+    note := "round trip with the Turtle reader is the named assumption TurtleWriterRoundTrip, for any Turtle options; tested on seeded datasets" },
+  { area := "RdfWriter: TriG (wasm dispatch)", dir := "Syntax"
+    stage := ``trigDocumentWriter, wireIn := "Mode × TurtleRenderOptions × Dataset", wireOut := "String"
+    contract := ``RoundTripOn, status := .assumed
+    theorems := [``serializeWith_default, ``writers_run_default, ``RdfWriter.roundTrip_of_claim, ``writerProjection_dataset]
+    ioAssumptions := [``TrigWriterRoundTrip]
+    note := "round trip with the TriG reader is the named assumption TrigWriterRoundTrip; tested on seeded datasets" },
+  { area := "RdfWriter: RDF/XML (wasm dispatch)", dir := "Syntax"
+    stage := ``rdfxmlDocumentWriter, wireIn := "Mode × TurtleRenderOptions × Dataset", wireOut := "String"
+    contract := ``RoundTripOn, status := .assumed
+    theorems := [``serializeWith_default, ``writers_run_default, ``RdfWriter.roundTrip_of_claim, ``writerProjection_triples_den]
+    ioAssumptions := [``RdfXmlWriterRoundTrip]
+    note := "round trip with the RDF/XML reader is the named assumption RdfXmlWriterRoundTrip; domain: no triple term" },
+  { area := "RdfWriter: JSON-LD (full engine)", dir := "Syntax"
+    stage := ``jsonldDocumentWriter, wireIn := "Mode × TurtleRenderOptions × Dataset", wireOut := "String"
+    contract := ``RoundTripOn, status := .assumed
+    theorems := [``serializeWith_default, ``writers_run_default, ``RdfWriter.roundTrip_of_claim, ``writerProjection_dataset]
+    ioAssumptions := [``JsonLdWriterRoundTrip]
+    note := "round trip with the JSON-LD reader is the named assumption JsonLdWriterRoundTrip; domain: no triple term, no directional language string (https://github.com/danbri/factoidal/issues/984)" },
+  { area := "RdfWriter: canonical N-Quads (dataset handles)", dir := "Syntax"
+    stage := ``canonicalNQuadsDocumentWriter, wireIn := "Mode × TurtleRenderOptions × Dataset", wireOut := "String"
+    contract := ``RoundTripOn, status := .assumed
+    theorems := [``serializeWith_default, ``writers_run_default, ``RdfWriter.roundTrip_of_claim, ``writerProjection_nquads_den, ``L4Factoidal.RDF.parseNQuadsFast_toCanonicalNQuads]
+    ioAssumptions := [``CanonicalNQuadsWriterRoundTrip]
+    note := "round trip is the named assumption CanonicalNQuadsWriterRoundTrip; the parse of the text is normalizeDataset (parseNQuadsFast_toCanonicalNQuads) but its denotation is not yet related to the projection" },
   { area := "Writer: RDF/JSON (round trip, triples only)", dir := "Syntax"
     wireIn := "Graph", wireOut := "String", status := .tested
     tests := ["Dataflow/PhaseCTests.lean round trip #guards (30 seeded datasets, RDF 1.1 and 1.2)", "Syntax/RdfJson.lean #guards"]

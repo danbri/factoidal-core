@@ -5,7 +5,7 @@
 # entry that no longer exists or is now mapped, or when the count differs
 # from max-entries. The list may only shrink: when you map an entry, remove
 # its line and lower max-entries in the same commit.
-# max-entries: 496
+# max-entries: 492
 cli:activate  # npm/factoidal/bin/factoidal.mjs
 cli:authz-keys  # npm/factoidal/bin/factoidal.mjs
 cli:authz-serve  # npm/factoidal/bin/factoidal.mjs
@@ -76,7 +76,6 @@ npm:.#rmlMap  # ./browser.js
 npm:.#sampleStoreFacts  # ./index.mjs
 npm:.#sampleStorePath  # ./index.mjs
 npm:.#schematronValidate  # ./browser.js
-npm:.#serialize  # ./browser.js
 npm:.#serveStore  # ./index.mjs
 npm:.#setAssetsUrl  # ./browser.js
 npm:.#shexValidate  # ./browser.js
@@ -166,7 +165,6 @@ npm:./browser#rhoDfFragmentCheck  # ./browser.js
 npm:./browser#rifEval  # ./browser.js
 npm:./browser#rmlMap  # ./browser.js
 npm:./browser#schematronValidate  # ./browser.js
-npm:./browser#serialize  # ./browser.js
 npm:./browser#setAssetsUrl  # ./browser.js
 npm:./browser#shexValidate  # ./browser.js
 npm:./browser#tableauDlInconsistent  # ./browser.js
@@ -382,8 +380,6 @@ wasm:datasetQuadsJson  # lean4/Wasm/CoreDispatch.lean
 wasm:datasetQuery12  # lean4/Wasm/CoreDispatch.lean
 wasm:datasetQueryRaw  # lean4/Wasm/CoreDispatch.lean
 wasm:datasetRifEval  # lean4/Wasm/CoreDispatch.lean
-wasm:datasetSerialize  # lean4/Wasm/CoreDispatch.lean
-wasm:datasetSerializeWith  # lean4/Wasm/CoreDispatch.lean
 wasm:datasetShexValidate  # lean4/Wasm/CoreDispatch.lean
 wasm:datasetToJsonLd  # lean4/Wasm/CoreDispatch.lean
 wasm:deltaLogDecode  # lean4/Wasm/CoreDispatch.lean

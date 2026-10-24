@@ -62,6 +62,7 @@ cannot reach the store and answers "unknown op" for them.
 -/
 import Std.Data.HashMap
 import L4Factoidal.Dataflow.Reader
+import L4Factoidal.Dataflow.Writer
 import Wasm.Ops.Parse
 import Wasm.Ops.Query
 import Wasm.Ops.Clock
@@ -261,9 +262,18 @@ and a blank-node label outside BLANK_NODE_LABEL [141s] gets a fresh valid label
 (`Dataset.relabelForWrite`, as the `Sink` writers do). -/
 def handleWriteInput (ds : Dataset) (mode : L4Factoidal.Syntax.Mode := .rdf12) :
     Except String Dataset :=
-  match L4Factoidal.RDF.Sink.checkLangTags mode ds with
-  | .error e => .error e
-  | .ok () => .ok ds.relabelForWrite
+  L4Factoidal.Dataflow.writeInput mode ds
+
+/-- The writer of syntax `fmt` of the dataset handles: the table
+`Dataflow.writers` (`L4Factoidal/Dataflow/Writer.lean`) without the JSON-LD
+library, which the core module does not carry. Each of its writers has its
+round-trip contract as fields. -/
+def handleWriter (fmt : RdfFormat) : L4Factoidal.Dataflow.RdfWriter :=
+  L4Factoidal.Dataflow.writers {} {} fmt
+
+/-- The canonical N-Quads writer of the dataset handles (`Dataflow.canonicalNQuadsRdfWriter`). -/
+def handleCanonicalNQuadsWriter : L4Factoidal.Dataflow.RdfWriter :=
+  L4Factoidal.Dataflow.canonicalNQuadsRdfWriter {} {}
 
 /-- The text of `ds` in the syntax `formatTag` names (`writerTagVersion`):
 N-Quads, N-Triples (refused when `ds` has a named graph, as N-Triples has no
@@ -278,16 +288,16 @@ def handleWriterText (formatTag : String) (ds : Dataset) (mode : L4Factoidal.Syn
     if v11 && !ds.isRdf11 then some (.error (rdf11WriterRefusal name)) else some (k ())
   match tag with
   | "nquads" | "nq" | "n-quads" =>
-      checked "N-Quads" fun _ => (handleWriteInput ds mode).map Dataset.toCanonicalNQuads
+      checked "N-Quads" fun _ => handleCanonicalNQuadsWriter.run mode {} ds
   | "ntriples" | "nt" | "n-triples" =>
       if !ds.named.isEmpty then
         some (.error "the dataset has a named graph and N-Triples holds one graph; use nquads or trig")
-      else checked "N-Triples" fun _ => L4Factoidal.RDF.Sink.serializeDataset {} .nt mode ds
+      else checked "N-Triples" fun _ => (handleWriter .nt).run mode {} ds
   | "turtle" | "ttl" =>
-      checked "Turtle" fun _ => L4Factoidal.RDF.Sink.serializeDataset {} .turtle mode ds
-  | "trig" => checked "TriG" fun _ => L4Factoidal.RDF.Sink.serializeDataset {} .trig mode ds
+      checked "Turtle" fun _ => (handleWriter .turtle).run mode {} ds
+  | "trig" => checked "TriG" fun _ => (handleWriter .trig).run mode {} ds
   | "rdfxml" | "rdf-xml" | "rdf" =>
-      checked "RDF/XML" fun _ => L4Factoidal.RDF.Sink.serializeDataset {} .rdfxml mode ds
+      checked "RDF/XML" fun _ => (handleWriter .rdfxml).run mode {} ds
   | "rdfc" | "canonical" =>
       match parseJson? (canonicalizeOf ds) with
       | some j =>
@@ -334,14 +344,13 @@ def datasetSerialize (h formatTag : String) : IO String :=
     let ds := od.ds
     match formatTag.toLower with
     | "" | "nquads" | "nq" | "n-quads" =>
-        match handleWriteInput ds od.writeMode with
+        match handleCanonicalNQuadsWriter.run od.writeMode {} ds with
         | .error e => pure (errJson s!"datasetSerialize: {e}")
-        | .ok ds => pure (okWith [("nquads", .string (Dataset.toCanonicalNQuads ds))])
+        | .ok text => pure (okWith [("nquads", .string text)])
     | "turtle" | "ttl" =>
-        match handleWriteInput ds od.writeMode with
+        match (handleWriter .turtle).run od.writeMode { prefixes := handlePrefixTable od } ds with
         | .error e => pure (errJson s!"datasetSerialize: {e}")
-        | .ok ds => pure (okWith [("turtle", .string
-          (turtleOfGraphOpts { prefixes := handlePrefixTable od } (flattenedGraph ds)))])
+        | .ok text => pure (okWith [("turtle", .string text)])
     | _ =>
         match handleWriterText formatTag ds od.writeMode with
         | some (.ok text) => pure (okWith [("text", .string text)])
@@ -357,16 +366,16 @@ def datasetSerializeWith (h formatTag optionsJson : String) : IO String :=
     let ds := od.ds
     match formatTag.toLower with
     | "" | "nquads" | "nq" | "n-quads" =>
-        match handleWriteInput ds od.writeMode with
+        match handleCanonicalNQuadsWriter.run od.writeMode {} ds with
         | .error e => pure (errJson s!"datasetSerializeWith: {e}")
-        | .ok ds => pure (okWith [("nquads", .string (Dataset.toCanonicalNQuads ds))])
+        | .ok text => pure (okWith [("nquads", .string text)])
     | "turtle" | "ttl" =>
         match turtleOptionsOfJson (handlePrefixTable od) optionsJson with
         | .error msg => pure (errJson msg)
         | .ok opts =>
-            match handleWriteInput ds od.writeMode with
+            match (handleWriter .turtle).run od.writeMode opts ds with
             | .error e => pure (errJson s!"datasetSerializeWith: {e}")
-            | .ok ds => pure (okWith [("turtle", .string (turtleOfGraphOpts opts (flattenedGraph ds)))])
+            | .ok text => pure (okWith [("turtle", .string text)])
     | _ =>
         match handleWriterText formatTag ds od.writeMode with
         | some (.ok text) => pure (okWith [("text", .string text)])

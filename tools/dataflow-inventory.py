@@ -123,8 +123,8 @@ def render(rows, dirs):
                "generation. Issue: https://github.com/danbri/factoidal/issues/975 "
                "(phase A3).")
     out.append("")
-    out.append("Status: `proved` = a `Stage` or an `RdfReader` (the reader interface type) whose soundness is a Lean proof; "
-               "`assumed` = an IO stage whose contract is a named assumption; "
+    out.append("Status: `proved` = a `Stage`, an `RdfReader` (the reader interface type) or an `RdfWriter` with nothing assumed, whose soundness is a Lean proof; "
+               "`assumed` = an IO stage, or an `RdfWriter`, whose contract is a named assumption; "
                "`tested` = no Lean contract, a named suite checks it; "
                "`missing` = no Lean contract and no suite named here. Every named "
                "declaration exists and depends only on propext, Classical.choice "
