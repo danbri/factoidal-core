@@ -1,15 +1,14 @@
 // A store packed from an RDF document holds a set of triples (RDF 1.1 Concepts
 // section 3), and two literals that differ only in the case of the language
 // tag are one RDF term (RDF 1.2 Concepts section 3.4).
-// https://github.com/danbri/factoidal/issues/1006: `factoidal pack` with the
-// default layout (IBK3) keeps a repeated triple, so the store answers
-// COUNT(*) 2 for one triple. IBK4 and IBK5 answer correctly.
+// https://github.com/danbri/factoidal/issues/1006: up to npm 0.13.0
+// `factoidal pack` with the default layout (IBK3) kept a repeated triple, so
+// the store answered COUNT(*) 2 for one triple.
 //
 // The cases run the shipped command end to end: pack, activate, query. They
-// read only the count that the engine answers; no RDF logic is here. The IBK3
-// cases are expected failures (CLAUDE.md, "A stated shortfall is a failing
-// test plus an open issue"): a case that passes makes the run fail, so the
-// flip to an assertion and the issue closure are not forgotten.
+// read only the count that the engine answers; no RDF logic is here. Since the
+// fix (Storage/PackSet.lean: every packer layout writes a set of rows; the
+// Lean checks are Storage/PackSetTests.lean) every layout is an assertion.
 
 import test from 'node:test';
 import assert from 'node:assert/strict';
@@ -47,21 +46,10 @@ function packedCount (name, text, layout) {
   }
 }
 
-function xfail (name, fn) {
-  test(`xfail: ${name} (${ISSUE})`, async (t) => {
-    let failed = false;
-    try { await fn(t); } catch (error) { failed = true; t.diagnostic(`expected failure: ${String(error.message).slice(0, 160)}`); }
-    assert.ok(failed, `unexpected pass: ${name} now works; flip this xfail to an assertion and close ${ISSUE}`);
-  });
-}
-
 for (const [name, [text, distinct]] of Object.entries(INPUTS)) {
-  for (const layout of ['ibk4', 'ibk5']) {
-    test(`pack --layout ${layout} ${name}: COUNT(*) is ${distinct}`, () => {
+  for (const layout of [null, 'ibk3', 'ibk4', 'ibk5']) {
+    test(`pack ${layout ? '--layout ' + layout : '(default layout, IBK3)'} ${name}: COUNT(*) is ${distinct} (${ISSUE})`, () => {
       assert.equal(packedCount(name, text, layout), distinct);
     });
   }
-  xfail(`pack (default layout, IBK3) ${name}: COUNT(*) is ${distinct}`, () => {
-    assert.equal(packedCount(name, text, null), distinct);
-  });
 }

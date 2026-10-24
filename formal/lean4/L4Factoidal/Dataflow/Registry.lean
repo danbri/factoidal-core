@@ -37,6 +37,7 @@ import L4Factoidal.Dataflow.PhaseD
 import L4Factoidal.Dataflow.PhaseE
 import L4Factoidal.Dataflow.PhaseC
 import L4Factoidal.Dataflow.PhaseStorage
+import L4Factoidal.Dataflow.PackSetStage
 import L4Factoidal.Unified.OwlRlAdequacy
 import L4Factoidal.Storage.BlockDenotation
 import L4Factoidal.SPARQL.FromMergeStage
@@ -425,6 +426,14 @@ def registry : List Entry := [
       ``L4Factoidal.Storage.IndexedBlockWireV5.den?_fromRdfQuads,
       ``L4Factoidal.Storage.IndexedBlockWireV5.den?_decode_encode?_fromRdfQuads, ``ibk5BuildWriteRead_den]
     note := "den? read back = some (ofQuads input) when the blob lookup resolves each object (premise of the contract; TermWireV2.resolve_toWire gives it for the packer's own lookup)" },
+  { area := "Streaming packer (pack ops, factoidal pack): the rows written are a set", dir := "Storage"
+    stage := ``packSetStage, wireIn := "triples per publication batch", wireOut := "Graph (rows written)"
+    contract := ``PackSetContract, status := .proved
+    theorems := [``packedRows_eq, ``packedRows_keyNodup,
+      ``L4Factoidal.Storage.PackSet.dedupBatch_written, ``L4Factoidal.Storage.PackSet.dedupBatch_toGraph,
+      ``L4Factoidal.Storage.PackSet.addFreshQuad_fresh]
+    tests := ["npm/factoidal/test/pack-is-a-set-1006.test.mjs (pack, activate, COUNT(*) for IBK3, IBK4, IBK5)"]
+    note := "https://github.com/danbri/factoidal/issues/1006; PackStream.ingestFeed and ingestFinish (IBK2/IBK3) call PackSet.dedupBatch with one seen graph, and addQuadPub (IBK4/IBK5) calls PackSet.addFreshQuad; that the ingest loop is this fold is by construction, not a theorem; block encoding is the block-builder entries" },
   { area := "Store interface StoreCaps (planner)", dir := "SPARQL"
     stage := ``storeSearchStage, wireIn := "PatternBound", wireOut := "List Triple"
     contract := ``SearchContract, status := .proved

@@ -43,6 +43,9 @@ import L4Factoidal.Dataflow.PhaseStorageTests
 import L4Factoidal.Dataflow.Evaluator
 import L4Factoidal.Dataflow.EvaluatorTests
 import L4Factoidal.Dataflow.Registry
+import L4Factoidal.Dataflow.PackSetStage
+import L4Factoidal.Storage.PackSet
+import L4Factoidal.Storage.PackSetTests
 import L4Factoidal.Dataflow.RegistryTests
 import L4Factoidal.RDF.ConciseBoundedDescription
 import L4Factoidal.RDF.ConciseBoundedDescriptionTheorems

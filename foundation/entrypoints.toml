@@ -383,3 +383,21 @@ id = "npm:./browser#openDataset"
 stages = ["ntriplesDocumentReader", "nquadsDocumentReader", "turtleDocumentReader", "trigDocumentReader", "rdfxmlDocumentReader", "jsonldDocumentReader"]
 covers = "part"
 note = "npm/factoidal/lib/api.mjs openDataset (browser.js): text goes to datasetOf, the wasm op datasetOpen (RdfReader table). Not covered: a Dataset argument (clone) and an array (union of the members)."
+
+[[entry]]
+id = "wasm:packFeed"
+stages = ["packSetStage"]
+covers = "part"
+note = "Wasm/Ops/Pack.lean packFeed: in the ingest pass calls PackStream.ingestFeed (IBK2/IBK3: PackSet.dedupBatch per publication batch) or quadIngestFeed (IBK4/IBK5: addQuadPub through PackSet.addFreshQuad). Covered: the rows written are a set (issue 1006). Not covered: the prepass digest, the grammar of the source, the block encoding (block-builder entries), the artifact queue."
+
+[[entry]]
+id = "wasm:packEndPass"
+stages = ["packSetStage"]
+covers = "part"
+note = "Wasm/Ops/Pack.lean packEndPass: at the end of the ingest pass calls PackStream.ingestFinish (last batch through PackSet.dedupBatch) or quadIngestFinish. Not covered: the source digest check, the block encoding, the manifest."
+
+[[entry]]
+id = "cli:pack"
+stages = ["packSetStage"]
+covers = "part"
+note = "npm/factoidal/bin/factoidal.mjs pack: bin/pack.mjs packFile drives packBegin, packFeed, packEndPass, packNext, packFinish, packClose. Covered: the rows written are a set (packSetStage, through packFeed and packEndPass). Not covered: reading the input file, writing the artifacts, the manifest, activation."
