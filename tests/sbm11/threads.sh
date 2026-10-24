@@ -34,6 +34,10 @@
 #             recorded answer of `l4factoidal query` over the source triples
 #             the query reads (NAME.l4factoidal.json)
 #
+# Rendering beside the ORDER BY sort (stage 1o): the gate sections set
+# SBM11_SORTED_RENDER_ROWS=1, so that every ORDER BY result without DISTINCT,
+# OFFSET or LIMIT is rendered by pool workers while the calling thread sorts.
+#
 # Block ranges: the gate sections set SBM11_MIN_RANGE_ROWS=0, so that a scan
 # of a few rows is divided into one range per thread (the default divides a
 # scan only into ranges of at least 8,192 estimated rows,
@@ -118,6 +122,10 @@ compare_inputs() {
 
 MINR_SAVED="${SBM11_MIN_RANGE_ROWS-unset}"
 export SBM11_MIN_RANGE_ROWS=0
+# stage 1o: an ORDER BY result of 1 row or more is rendered on pool workers
+# while the calling thread sorts (default: 64 rows or more)
+SORTR_SAVED="${SBM11_SORTED_RENDER_ROWS-unset}"
+export SBM11_SORTED_RENDER_ROWS=1
 echo "=== gate fixture"
 G="$TMP/gate"
 rc=0
@@ -161,6 +169,7 @@ else
 fi
 
 if [ "$MINR_SAVED" = unset ]; then unset SBM11_MIN_RANGE_ROWS; else export SBM11_MIN_RANGE_ROWS="$MINR_SAVED"; fi
+if [ "$SORTR_SAVED" = unset ]; then unset SBM11_SORTED_RENDER_ROWS; else export SBM11_SORTED_RENDER_ROWS="$SORTR_SAVED"; fi
 echo "=== olympics"
 if [ ! -d "$OLY" ]; then
   echo "olympics: no generation at $OLY (set SBM11_OLYMPICS); not compared"

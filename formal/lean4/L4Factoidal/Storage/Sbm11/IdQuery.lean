@@ -1631,6 +1631,20 @@ structure Par (m : Type → Type) where
   /-- `streamJobs`: the fewest jobs per thread of the divided streamed path;
       0 or 1: one job per block range -/
   streamPerThread : Nat := streamJobsPerThread
+  /-- Stage 1o of docs/designissues/2026-10-12-parallel-block-scans.md (issue
+      961): start the rendering of the rows of a table in row ranges on other
+      threads and give the action that waits for the pieces, one per range in
+      range order (`renderRowsEndsM` of the range). The calling thread
+      computes the ORDER BY permutation while the pieces are rendered
+      (`renderSortedM`). Its meaning is
+      `fun t vars ref rs => pure (rs.mapM fun r => renderRowsEndsM st ref t vars r.1 r.2)`
+      (`RenderPermTheorems`); `none`: the calling thread renders after the
+      sort. -/
+  renderStart : Option (Table → Array String → Bool → List (Nat × Nat) →
+      ExceptT String m (ExceptT String m (List (ByteArray × Array Nat)))) := none
+  /-- the fewest rows per range of the rendering beside the sort
+      (`sortedRenderJobs`); 0: never -/
+  sortedRows : Nat := 64
 
 def ScanSpec.colPos (perm c : Nat) : Nat := if c < 3 then permOrder[perm]![c]! else 3
 
@@ -5175,6 +5189,47 @@ def renderJobs {m : Type → Type} (par : Option (Par m)) (rows : Nat) : List (N
     if p.threads ≤ 1 || n < 2 then []
     else (List.range n).map fun j => (rows * j / n, rows * (j + 1) / n)
 
+/-- The row ranges in which other threads render the rows of a table while
+    the calling thread computes its ORDER BY permutation (stage 1o): when
+    `par` can start a rendering (`Par.renderStart`), the plan orders the rows
+    and keeps them all (ORDER BY, no DISTINCT, no OFFSET, no LIMIT), and the
+    table has at least `Par.sortedRows` rows (64 by default); at most
+    `threads - 1` ranges (the calling thread sorts), at least that many rows each,
+    consecutive, covering `[0, rows)`. Else none. -/
+def sortedRenderJobs {m : Type → Type} (par : Option (Par m)) (plan : Plan) (rows : Nat) :
+    List (Nat × Nat) :=
+  match par with
+  | none => []
+  | some p =>
+    if p.renderStart.isNone || p.threads ≤ 1 || p.sortedRows == 0 || plan.order.isEmpty || plan.distinct ||
+        plan.limit.isSome || plan.offset != 0 || rows < p.sortedRows || rows == 0 then []
+    else
+      let n := max 1 (min (p.threads - 1) (rows / p.sortedRows))
+      (List.range n).map fun j => (rows * j / n, rows * (j + 1) / n)
+
+/-- The rows of rendered pieces (`renderRowsEndsM` of consecutive ranges that
+    cover the rows of a table, in range order) in the order `perm`, as
+    `renderRowsM` writes them for all rows of the reordered table: each row's
+    text, and no comma before the first. A row's text in a piece starts with
+    its comma. -/
+def assembleRows (pieces : List (ByteArray × Array Nat)) (perm : Array Nat) : ByteArray := Id.run do
+  -- the pieces in one buffer, and the end of every row in it
+  let total := pieces.foldl (fun a p => a + p.1.size) 0
+  let mut buf := ByteArray.emptyWithCapacity total
+  let mut ends : Array Nat := Array.mkEmpty perm.size
+  for (b, es) in pieces do
+    let base := buf.size
+    buf := buf ++ b
+    for e in es do ends := ends.push (base + e)
+  let mut out := ByteArray.emptyWithCapacity total
+  for k in [0:perm.size] do
+    let r := perm[k]!
+    let a := if r == 0 then 0 else ends[r - 1]!
+    let a := if k == 0 then a + 1 else a
+    let e := ends[r]!
+    out := buf.copySlice a out out.size (e - a) false
+  return out
+
 /-- Run a plan. `emit` receives the SPARQL JSON text in pieces. `par`: divide
     the single-pattern paths into block ranges (stage 1b); `none` is the
     single-thread path. -/
@@ -5324,26 +5379,41 @@ def runPlanM {m : Type → Type} [Monad m] (st : Store m) (plan : Plan) (emit : 
       else table := t1
     st.markM "bgp+filters"
     (emit (jsonHead plan.outVars).toUTF8 : m Unit)
-    let out ← finishM st plan table
-    st.markM "finish"
-    match par, renderJobs par out.rows with
-    | some p, jobs@(_ :: _ :: _) =>
-      -- stage 1j: the rows divided into ranges that the workers render
-      -- (`renderRowsEndsM`); the parent writes them in range order, the
-      -- comma before the first row left out (`emitPieceM` with no OFFSET and
-      -- no LIMIT), the text `renderRowsM` writes for all the rows
-      let _ ← p.fold false (fun v (r : Nat × Nat) => do
-          let piece ← renderRowsEndsM v reference out plan.outVars r.1 r.2
-          pure #[piece]) jobs
-        ((0 : Nat), (0 : Nat)) fun acc pieces => pieces.foldlM (emitPieceM emit 0 out.rows) acc
+    match par, sortedRenderJobs par plan table.rows with
+    | some p, jobs@(_ :: _) =>
+      match p.renderStart with
+      | some start =>
+        -- stage 1o: the rows rendered on other threads while this thread
+        -- computes the order (`finishM` with ORDER BY only is
+        -- `table.reorder perm`), then written in that order
+        let wait ← start table plan.outVars reference jobs
+        let perm ← orderPermM st plan table none
+        st.markM "finish"
+        let pieces ← wait
+        if perm.size > 0 then (emit (assembleRows pieces perm) : m Unit)
+        stats := { stats with rows := perm.size }
+      | none => throw "internal: a rendering beside the sort without Par.renderStart"
     | _, _ =>
-      let pieces := (out.rows + 4095) / 4096
-      for k in [0:pieces] do
-        let lo := 4096 * k
-        let hi := min out.rows (lo + 4096)
-        let bytes ← renderRowsM st reference out plan.outVars lo hi (lo == 0)
-        (emit bytes : m Unit)
-    stats := { stats with rows := out.rows }
+      let out ← finishM st plan table
+      st.markM "finish"
+      match par, renderJobs par out.rows with
+      | some p, jobs@(_ :: _ :: _) =>
+        -- stage 1j: the rows divided into ranges that the workers render
+        -- (`renderRowsEndsM`); the parent writes them in range order, the
+        -- comma before the first row left out (`emitPieceM` with no OFFSET and
+        -- no LIMIT), the text `renderRowsM` writes for all the rows
+        let _ ← p.fold false (fun v (r : Nat × Nat) => do
+            let piece ← renderRowsEndsM v reference out plan.outVars r.1 r.2
+            pure #[piece]) jobs
+          ((0 : Nat), (0 : Nat)) fun acc pieces => pieces.foldlM (emitPieceM emit 0 out.rows) acc
+      | _, _ =>
+        let pieces := (out.rows + 4095) / 4096
+        for k in [0:pieces] do
+          let lo := 4096 * k
+          let hi := min out.rows (lo + 4096)
+          let bytes ← renderRowsM st reference out plan.outVars lo hi (lo == 0)
+          (emit bytes : m Unit)
+      stats := { stats with rows := out.rows }
     st.markM "render"
   (emit jsonTail.toUTF8 : m Unit)
   let t := stats.scan

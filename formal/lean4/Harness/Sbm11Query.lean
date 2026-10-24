@@ -271,6 +271,21 @@ structure Session where
   renderRows : Nat := IdQuery.renderJobRows
   /-- `IdQuery.Par.streamPerThread` (`SBM11_STREAM_JOBS`) -/
   streamPerThread : Nat := IdQuery.streamJobsPerThread
+  /-- `IdQuery.Par.sortedRows` (`SBM11_SORTED_RENDER_ROWS`; 0: the calling
+      thread renders after the sort; the gate fixtures of
+      tests/sbm11/threads.sh and part (z) of tests/sbm11/run.sh set 1, so
+      that results of a few rows take the path) -/
+  sortedRows : Nat := 64
+  /-- A view of a pool worker that renders rows beside the ORDER BY sort
+      (stage 1o, `renderStartPar`): a page from `taskPages` is copied into the
+      worker's own cache on its first use (`sharedPage`), not on its second.
+      The rendering of one query reads most pages once, so with the rule of
+      the scans every query read them again from `taskPages` (a ref that every
+      thread reads, and pages whose reference counts are atomic): olympics
+      q07's 313 rows took 2 to 4 times as long per row on a worker as on the
+      calling thread. The worker's cache lives as long as the pool, so the
+      copy is made once. -/
+  copyFirst : Bool := false
 
 /-- The default of `SBM11_PAGES`, the most dictionary pages a cache holds. A
     page is about 4.5 KB (olympics q19 needs between 4,096 and 8,192 pages). At
@@ -500,7 +515,7 @@ def Session.sharedPage (ss : Session) (pg : Nat) : IO (ByteArray × Array Nat) :
     -- scan give one key to a view, and the copy of 4.5 KB per page and view
     -- on every query was the largest cost that 1 thread does not have
     -- (olympics q19 at 4 threads, KR 1.2 of batch 3)
-    if let some r := ss.onceSeen then
+    if let some r := (if ss.copyFirst then none else ss.onceSeen) then
       if ← r.modifyGet (fun st => if st.contains pg then (false, st) else (true, st.insert pg)) then
         return ks
     let ks := copyPage ks
@@ -1208,6 +1223,45 @@ def poolMap {α β : Type} (p : Harness.WorkerPool.Pool WorkerPages) (f : α →
       | .error e => throw e
     return out.toList
 
+/-- `IdQuery.Par.renderStart` on the session's worker pool (stage 1o of
+    docs/designissues/2026-10-12-parallel-block-scans.md, issue 961): range
+    `j` of the rows is rendered by pool worker `j` (`renderRowsEndsM` on a
+    view with the worker's own page cache, pages copied on first use), so a
+    worker renders the same rows, with the same pages, in every run of a
+    query. Each job gets its rows as a table that the calling thread copied
+    for it (`Table.slice`) and its own copy of the variable names: the
+    calling thread's table and names stay single-threaded objects, and no
+    column's reference count is shared by two threads. The action returned
+    waits for the pieces in range order and adds the counters of every view. -/
+def renderStartPar (ss : Session) (t : L4Factoidal.Qlvr.Table) (vars : Array String) (reference : Bool)
+    (rs : List (Nat × Nat)) : ExceptT String IO (ExceptT String IO (List (ByteArray × Array Nat))) := do
+  let mut hs : Array (Harness.WorkerPool.Handle (Except IO.Error (ByteArray × Array Nat)) × Session) := #[]
+  for (lo, hi) in rs do
+    let part := t.slice lo hi
+    let v ← liftIO ss.view
+    let h ← liftIO (ss.spawnLocal hs.size (fun wp => do
+      let lv ← match wp with
+        | some r => do
+          let w ← v.withPages r
+          pure { w with copyFirst := true }
+        | none => v.local
+      let names := vars.map IdQuery.freshStr
+      match ← (IdQuery.renderRowsEndsM lv.store reference part names 0 part.rows).run with
+      | .ok r => pure r
+      | .error e => throw (IO.userError e)))
+    hs := hs.push (h, v)
+  let handles := hs
+  return (do
+    let mut out : Array (ByteArray × Array Nat) := Array.mkEmpty handles.size
+    let mut failure : Option String := none
+    for (h, v) in handles do
+      match ← liftIO (ss.await h) with
+      | .ok r => out := out.push r
+      | .error e => if failure.isNone then failure := some (toString e)
+      liftIO (ss.absorb v)
+    if let some e := failure then throw e
+    return out.toList)
+
 /-- The fewest input rows per range of a divided merge join on the worker
     pool (issue 961): a job starts within microseconds, so ranges can be
     smaller than with tasks of the Lean pool (`IdQuery.joinMinRows`). -/
@@ -1222,7 +1276,9 @@ def Session.par (ss : Session) (threads : Nat) (minRows : Nat := 8192) : IdQuery
     mapList := ss.pool.map fun p => fun f xs => poolMap p f xs
     joinRows := if ss.pool.isSome then poolJoinRows else IdQuery.joinMinRows
     renderRows := ss.renderRows
-    streamPerThread := ss.streamPerThread }
+    streamPerThread := ss.streamPerThread
+    renderStart := ss.pool.map fun _ => renderStartPar ss
+    sortedRows := ss.sortedRows }
 
 /-- `SBM11_MIN_RANGE_ROWS`: the fewest estimated rows per block range
     (`IdQuery.rangeCount`; default 8,192; 0: one range per thread, as the
@@ -1894,7 +1950,8 @@ def runQuery (dir : String) (o : Opts) : IO UInt32 := do
     else pure ss
   let ss := { ss with phases := (← IO.getEnv "SBM11_PHASES").isSome,
                       renderRows := ((← IO.getEnv "SBM11_RENDER_ROWS").bind String.toNat?).getD IdQuery.renderJobRows,
-                      streamPerThread := ((← IO.getEnv "SBM11_STREAM_JOBS").bind String.toNat?).getD IdQuery.streamJobsPerThread }
+                      streamPerThread := ((← IO.getEnv "SBM11_STREAM_JOBS").bind String.toNat?).getD IdQuery.streamJobsPerThread,
+                      sortedRows := ((← IO.getEnv "SBM11_SORTED_RENDER_ROWS").bind String.toNat?).getD 64 }
   let t1 ← IO.monoNanosNow
   let openBytes ← ss.g.fileBytes.get
   let stdout ← IO.getStdout
