@@ -851,6 +851,42 @@ section "Stage 1b", subsection "What failed on the way"):
   query was not faster (median 3.29 ms against 2.99 ms). What did pay on
   the pool: the merge join of 6,248 by 13,369 rows in 4 ranges (pure, over
   two byte arrays), 0.42 to 0.19 ms.
+- **A job written as a `do` block in the caller does its pure steps on the
+  caller.** The compiler moves a pure `let` of a closure body out of the
+  closure when it does not depend on the closure's argument, and an `IO`
+  `do` block given to `spawnAt` is such a closure. The divided SBM11 scans
+  wrote `let spec := spec.fresh`, `let cands := cands.map ...` and
+  `rangeMetas ...` at the top of the job "so that the task makes its own
+  copies"; the generated C (`.lake/build/ir/Harness/Sbm11Query.c`) called
+  `ScanSpec_fresh`, the copy of the candidates and `rangeMetas` in the
+  caller's loop, before `lean_alloc_closure` of the job. So the calling
+  thread made every task's copies before it scanned its own range (each
+  task started 9 to 18 microseconds after the one before), and the copies,
+  reached by the job, were shared objects (2026-10-24, stage 1o of
+  [`docs/designissues/2026-10-12-parallel-block-scans.md`](../../docs/designissues/2026-10-12-parallel-block-scans.md),
+  https://github.com/danbri/factoidal/issues/961). Rule: put the body of a
+  job in a `@[noinline]` function of its own (`scanRangeJob`,
+  `sipRangeJob`) and pass that function's application to the spawn, or wrap
+  the step in `IO.lazyPure fun _ => ...` (`poolMap`); then check the
+  generated C for where the copy is called.
+- **`Array.ofFn` is slow in compiled code.** `Array.ofFn (n := 312) fun k =>
+  word64 b (8 * k)` took 50 to 220 microseconds; the same with
+  `Array.mkEmpty n` and a `for` loop of `push`, 4 to 6 microseconds
+  (`IdQuery.unpackWords`, stage 1o). Use the loop.
+- **Give a job a buffer of words, not the caller's `Array UInt64`.** An
+  `Array UInt64` holds one object per word, in the heap and cache of the
+  thread that made it; `ByteArray` words are contiguous (312 words: 39 cache
+  lines). The divided scan with candidates passes `IdQuery.packWords cands`
+  and the job unpacks its own array (`unpackWords_packWords`).
+- **A worker cache that lives across queries copies on first use.** A pool
+  worker's page cache (`WorkerPages`) is kept from one query to the next, but
+  the scans' rule copies a shared page only on its second use in one job;
+  rendering reads most pages once, so every query read them again from the
+  shared `taskPages` (olympics q07: 2 to 4 times the time per row of the
+  calling thread). The rendering beside the ORDER BY sort copies on first use
+  (`Session.copyFirst`), and range `j` always goes to worker `j`, so the
+  pages are in that worker's cache from the second run on.
+
 - **Make a comparison's per-value work once per value.** `sparqlOrder`
   reads `isNumericOperand`, `numericValue?`, `integerDerivedValue?` and
   `promoteLiteral` of both operands on every comparison; an ORDER BY of `n`

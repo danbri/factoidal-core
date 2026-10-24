@@ -847,6 +847,15 @@ def ParOk (par : Option (Par Id)) : Prop :=
 
 theorem parOk_none : ParOk none := fun _ h => by cases h
 
+/-- The next-scan hint of `evalBgpM` (stage 1o) does nothing in `Id`: a
+    value of `Id Unit` is `()`. -/
+theorem hintScanM_id (par : Option (Par Id)) (s : Option ScanSpec) :
+    hintScanM par s = (pure () : ExceptT String Id Unit) := by
+  unfold hintScanM
+  split
+  · split <;> rfl
+  · rfl
+
 /-- The join of the loop as executed (`joinStepM`, the merge join divided
     into ranges when `par` is set) is `joinStep`, for tables of the
     invariant (`Good`: the merge join columns are in non-decreasing order)
@@ -1331,6 +1340,7 @@ theorem evalBgpM_modelS_par (st : Store Id) (pats : Array Pat) (hne : 0 < pats.s
       | none => bestSortPos pats[first]! pats) = p0 at hp0 ⊢
     have hok0 := hok first hfl
     obtain ⟨tb0, stats0, hsc0, g0, he0⟩ := scan_goodS st P S pats[first]! p0 hp0 hok0.p hok0.gs hok0.miss hst
+    rw [hintScanM_id, pure_bind]
     rw [scanPatM_plain st _ hok0.plain]
     simp only []
     unfold scanTableOf
