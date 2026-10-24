@@ -1339,6 +1339,11 @@ async function commandPack (positional, options) {
 
 async function commandSampleStore (positional, options) {
   if (positional.length > 1) throw new UsageError('sample-store takes at most one DIR')
+  // Re-execute here, once, before any work. The pack and the activate
+  // below would each re-execute the whole command line under Deno, and
+  // each child printed the path again (three lines, 2026-10-24).
+  const reexec = await denoReexec({ worker: options['no-worker'] !== true })
+  if (reexec !== null) return reexec
   const { mkdtempSync, writeFileSync, existsSync } = await import('node:fs')
   const { tmpdir } = await import('node:os')
   const root = positional.length === 1

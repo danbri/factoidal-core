@@ -13,12 +13,13 @@
 # WebAssembly.instantiateStreaming was called once, that the wasm was
 # served as application/wasm, and that no pageerror or console error fired.
 #
-# A second page does the same for the core entry (core-browser.js, the
-# `browser` condition of '@factoidal/core/core', issue 713 stage 4): parse,
-# SELECT, canonicalize and SHACL answer; xpathEval and openStore reject with
-# an error naming '@factoidal/core'; capabilities().profile is 'core'; the
-# only wasm fetched is l4factoidal-core.wasm. Each page runs in its own
-# browser context (no shared HTTP cache).
+# The store is the test fixture npm/factoidal/test/fixtures/sample-store
+# (the package stopped carrying a sample store in 0.10.0).
+#
+# Until 2026-10-24 a second page tested the core entry core-browser.js. The
+# package has carried one wasm and no core entry since commit 6ed227fe
+# (owner, 2026-10-20: "For now, we have a single fat core"), so that page
+# exited 2 on a missing file and the gate was not run.
 #
 # Usage:
 #   tests/web-demos/npm_browser_smoke.sh
@@ -38,8 +39,7 @@ PKG_DIR="$REPO_ROOT/npm/factoidal"
 
 for f in "$PKG_DIR/browser.js" "$PKG_DIR/l4-assets/l4factoidal.js" \
          "$PKG_DIR/l4-assets/l4factoidal.mjs" "$PKG_DIR/l4-assets/l4factoidal.wasm" \
-         "$PKG_DIR/core-browser.js" "$PKG_DIR/l4-assets/l4factoidal-core.js" \
-         "$PKG_DIR/l4-assets/l4factoidal-core.mjs" "$PKG_DIR/l4-assets/l4factoidal-core.wasm"; do
+         "$PKG_DIR/test/fixtures/sample-store/CURRENT"; do
   [ -f "$f" ] || { echo "Missing $f" >&2; exit 2; }
 done
 
@@ -70,7 +70,7 @@ try {
   const rows = await query(ds, 'SELECT ?o WHERE { ?s <http://example.org/p> ?o } ORDER BY ?o');
   const c14n = await canonicalize(ds);
   const xp = await xpathEval('<r><a>1</a><a>2</a><a>3</a></r>', 'count(//a)');
-  const store = await openStore((p) => fetch('/pkg/sample-store/' + p).then((r) => {
+  const store = await openStore((p) => fetch('/pkg/test/fixtures/sample-store/' + p).then((r) => {
     if (!r.ok) throw new Error(p + ': ' + r.status);
     return r.arrayBuffer();
   }));
@@ -83,44 +83,6 @@ try {
     c14nBlank: /_:c14n0/.test(c14n),
     xpath: xp,
     storeCount: Number(n[0].get('n').value),
-    engine, version,
-  };
-  document.title = 'done';
-} catch (e) {
-  window.__result = { error: String((e && e.stack) || e) };
-  document.title = 'error';
-}
-</script>
-</body>
-</html>
-HTML_EOF
-
-cat >"$WORKDIR/core.html" <<'HTML_EOF'
-<!doctype html>
-<html>
-<head><meta charset="utf-8"><title>loading</title></head>
-<body>
-<script type="module">
-import { parse, query, canonicalize, shaclValidate, xpathEval, openStore, capabilities,
-  engine, version } from '/pkg/core-browser.js';
-const refusal = (p) => p.then(() => 'no rejection', (e) => String(e && e.message));
-try {
-  const ds = await parse('@prefix ex: <http://example.org/> . ex:a ex:p "x" , "y" . ex:b ex:q [ ex:r 1 ] .');
-  const rows = await query(ds, 'SELECT ?o WHERE { ?s <http://example.org/p> ?o } ORDER BY ?o');
-  const c14n = await canonicalize(ds);
-  const shapes = '@prefix sh: <http://www.w3.org/ns/shacl#> . @prefix ex: <http://example.org/> . ' +
-    'ex:S a sh:NodeShape ; sh:targetNode ex:a ; sh:property [ sh:path ex:p ; sh:maxCount 1 ] .';
-  const v = await shaclValidate(ds, shapes);
-  const caps = await capabilities();
-  window.__result = {
-    size: ds.size,
-    rows: rows.map((r) => r.get('o').value),
-    c14nLines: c14n.trim().split('\n').length,
-    c14nBlank: /_:c14n0/.test(c14n),
-    conforms: v.conforms,
-    profile: caps.profile,
-    xpathRefusal: await refusal(xpathEval('<r/>', 'count(//a)')),
-    storeRefusal: await refusal(openStore((p) => fetch('/pkg/sample-store/' + p).then((r) => r.arrayBuffer()))),
     engine, version,
   };
   document.title = 'done';
@@ -242,25 +204,6 @@ const common = (html, run, wasmName) => {
   notes.push(`full entry: ${run.ms} ms to settle`);
 }
 
-// The core entry, core-browser.js.
-{
-  const run = await runPage('core.html');
-  const check = common('core.html', run, 'l4factoidal-core.wasm');
-  const result = run.result;
-  if (!result || result.error) {
-    failures.push(`core.html: page error: ${result && result.error}`);
-  } else {
-    check(result.size === 4, `parse: size ${result.size}, expected 4`);
-    check(JSON.stringify(result.rows) === '["x","y"]', `SELECT: ${JSON.stringify(result.rows)}`);
-    check(result.c14nLines === 4 && result.c14nBlank, `canonicalize: ${result.c14nLines} lines, blank ${result.c14nBlank}`);
-    check(result.conforms === false, `shaclValidate: conforms ${result.conforms}, expected false`);
-    check(result.profile === 'core', `capabilities().profile: ${result.profile}`);
-    check(/'@factoidal\/core'/.test(result.xpathRefusal), `xpathEval refusal: ${result.xpathRefusal}`);
-    check(/'@factoidal\/core'/.test(result.storeRefusal), `openStore refusal: ${result.storeRefusal}`);
-    check(result.engine === 'lean4-wasm-core', `engine: ${result.engine}`);
-  }
-  notes.push(`core entry: ${run.ms} ms to settle`);
-}
 await browser.close().catch(() => {});
 server.close();
 
@@ -268,10 +211,9 @@ if (failures.length > 0) {
   console.log(`FAIL npm_browser_smoke: ${failures.join('; ')}`);
   process.exit(1);
 }
-console.log(`PASS npm_browser_smoke: full entry: parse, SELECT, canonicalize, xpathEval, openStore ` +
-  `over fetch; core entry: parse, SELECT, canonicalize, shaclValidate, xpathEval and openStore ` +
-  `refused naming '@factoidal/core', profile 'core'; per entry instantiateStreaming called once ` +
-  `and its own wasm served as application/wasm; ${notes.join(', ')}`);
+console.log(`PASS npm_browser_smoke: parse, SELECT, canonicalize, xpathEval, openStore ` +
+  `over fetch; instantiateStreaming called once and the wasm served as application/wasm; ` +
+  `${notes.join(', ')}`);
 process.exit(0);
 DRIVER_EOF
 

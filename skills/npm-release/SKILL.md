@@ -264,7 +264,7 @@ bundles or the Lean wasm need those files installed first
 | tarball | `cd npm/factoidal && npm pack --dry-run` | 0.10.0: 174 files, 3,787,140 bytes packed, 19.2 MB unpacked (the full wasm grew to 11.2 MB; the core wasm is 6.1 MB). 0.9.0: 161 files, 2,410,574 bytes packed, 12,042,704 unpacked; no F\* bundle, no `hacl-wasm/` (0.8.0: 193 files) |
 | wasm copies | the tail of `build-wasm.sh` | "all committed wasm copies agree" |
 | Lean native | `bash formal/lean4/Wasm/native-smoke.sh` | 297 pass, 0 fail (out of 297); needs `lake` on PATH (`export PATH=$HOME/.elan/bin:$PATH`) |
-| browser | `tests/web-demos/npm_browser_smoke.sh` | PASS: `browser.js` in headless Chromium runs a parse, a SELECT, `canonicalize`, `xpathEval` and `openStore` over `fetch`; a second page runs `core-browser.js` (parse, SELECT, `canonicalize`, `shaclValidate`; `xpathEval` and `openStore` refused naming `@factoidal/core`); per page one `instantiateStreaming` call and only that entry's wasm served, as `application/wasm` |
+| browser | `tests/web-demos/npm_browser_smoke.sh` | PASS: `browser.js` in headless Chromium runs a parse, a SELECT, `canonicalize`, `xpathEval` and `openStore` (over `fetch`, from `test/fixtures/sample-store`, COUNT 4434); one `instantiateStreaming` call; the wasm served as `application/wasm`. 0.13.0, 2026-10-24: PASS |
 | speed (not a release gate yet) | `cd npm/factoidal && npm run test:speed` after `tools/fetch-builds.sh --set web` | the Lean engine within 2 times the faster F\* bundle per row of `tests/perf/l4_vs_fstar_wasm_bench.mjs`, or an expected failure naming its issue; exit 2 without the F\* bundles. Numbers: design record § 10 |
 | bundler and CSP page | `tests/web-demos/bundler_csp_smoke.sh` | PASS, exit 0 (esbuild bundle of the package under `script-src 'self' 'wasm-unsafe-eval'`) |
 | engine comparison (private build, not a release gate) | `tests/engine-compare/run.sh docs/fstar-extracted/factoidal-npm-entry.js` after `tools/fetch-builds.sh --set web` | 7 pass, 0 fail (out of 7) against the F\* bundle of build-dba1bdb1d320-web; exit 2 when the bundle is absent |
@@ -273,6 +273,29 @@ bundles or the Lean wasm need those files installed first
 The package suite runs again inside `npm publish` through
 `prepublishOnly`, so a failure there aborts the publish after the
 workflow has already spent its F\* re-extraction time.
+
+**Exit 2 is not a pass, and it is not "no browser here".** The browser,
+bundler and hub-browser gates exit 2 when a file or Playwright is missing,
+and the CI `web-gates` job of `danbri/factoidal-builds` does not run them
+(it runs the package suite and the engine comparisons only). Found
+2026-10-24 at the 0.13.0 gates: `npm_browser_smoke.sh` still required
+`core-browser.js` and `sample-store/`, which the package dropped in
+0.10.0 and at commit 6ed227fe, so it had exited 2 on every run since and
+no release had run it. Before quoting a browser gate, read its exit code.
+On macOS, Playwright is not installed globally: install the version whose
+Chromium revision is in `~/Library/Caches/ms-playwright` (revision 1234 is
+`playwright@1.62.0`) into a scratch directory with
+`PLAYWRIGHT_SKIP_BROWSER_DOWNLOAD=1`, and pass it as `PLAYWRIGHT_PKG=DIR/node_modules/playwright`.
+The bundler gate also needs `npm ci` in `npm/factoidal` (esbuild). In a
+worktree, `tests/store-host/*.mjs` need `L4_BIN_DIR` to name binaries built
+from the same commit; without it they use the main checkout's, which can be
+another branch (2026-10-24: 4 store and 5 command failures, all from that).
+
+`test/set-semantics-972.test.mjs` runs the three 0.12.0 defects of
+https://github.com/danbri/factoidal/issues/972 (repeated triple; DISTINCT
+over `"01"` and `"1"`; STR of `"01"^^xsd:integer`) in the package suite,
+so `prepublishOnly` refuses a release that brings one back. It fails
+3 of 3 against `@factoidal/core@0.12.0`.
 
 Install the tarball somewhere else and run the command before
 publishing. A `files` entry that names a directory which does not exist

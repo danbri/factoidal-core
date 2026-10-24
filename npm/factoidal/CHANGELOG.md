@@ -1,6 +1,42 @@
 # Changelog
 
-## 0.13.0 (unreleased)
+## 0.13.0
+
+**A parsed document is a set of quads** (RDF 1.1 Concepts §3 and §4;
+https://github.com/danbri/factoidal/issues/972). Up to 0.12.0 a document
+that stated the same triple twice gave a graph with two copies: `size`
+counted 2 and `SELECT (COUNT(*) AS ?n)` answered 2. Every parser, the
+streamed parse, the command's `query` and the stores now keep one copy.
+Language tags compare case-insensitively (RDF 1.2 Concepts §3.4), so
+`"a"@en` and `"a"@EN` are one term in a graph and in a store dictionary
+(https://github.com/danbri/factoidal/issues/977).
+
+SPARQL and RDF semantics fixes:
+
+- `=` and `!=` follow RDFterm-equal (SPARQL 1.1 §17.4.1.7). Terms of
+  different kinds (IRI, blank node, literal, triple term) give `=` false.
+  Two literals that are different terms give a type error, except where
+  the §17.3.1 extension of the W3C tests gives false: `rdf:langString`
+  against another datatype, and `xsd:dateTime` against `xsd:date`. The
+  SPARQL 1.0 open-world tests: 18 pass, 0 fail (out of 18); were 13 pass,
+  5 fail.
+- `rdf:XMLLiteral` values compare by RDF term equality; SPARQL `=` on two
+  different XMLLiteral terms is a type error
+  (https://github.com/danbri/factoidal/issues/963). The RDF/XML parser's
+  exclusive XML canonicalization is repaired.
+- A query with `FROM` clauses queries the RDF merge of those graphs
+  (SPARQL 1.1 §13.2.1): blank nodes from different `FROM` graphs are no
+  longer joined (https://github.com/danbri/factoidal/issues/979).
+- RDFS closure rule rdfs9 accepts a blank node as the sub-class
+  (RDF 1.1 Semantics §9.2; https://github.com/danbri/factoidal/issues/982).
+- The RDF/XML writer keeps the base direction of a directional language
+  string (`its:dir` with `rdf:version="1.2"`). The JSON-LD writer still
+  drops it: https://github.com/danbri/factoidal/issues/984.
+- Opening a dataset renames blank nodes inside triple terms as well as at
+  the top level.
+- `factoidal sample-store` under Deno printed its path three times: the
+  pack and the activate each re-executed the whole command. It now
+  re-executes once, before any work.
 
 **`proofCheck` no longer joins blank nodes across artifacts**
 (https://github.com/danbri/factoidal/issues/976). Up to 0.12.0 a bundle
