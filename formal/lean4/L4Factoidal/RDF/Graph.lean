@@ -90,6 +90,46 @@ def Term.renameBnodes (f : BNodeId → BNodeId) : Term → Term
   | .literal l        => .literal l
   | .tripleTerm s p o => .tripleTerm (s.renameBnodes f) p (o.renameBnodes f)
 
+/-! ### The rename of a term nested deep
+
+`Term.renameBnodes` above is the SPECIFICATION. It takes one native frame for
+each level of triple-term nesting, and the writers of the N-Triples family
+reach it for every triple (`Dataset.relabelForWrite`): a triple term nested
+300,000 deep overflowed the stack
+(https://github.com/danbri/factoidal/issues/1003). `Term.renameBnodesLoop`
+keeps the renamed subject and the predicate of each open triple term in a list
+and wraps the rename of the innermost term in them, innermost first, as
+`Term.joinKeyLoop` (`RDF/Core.lean`). `Term.renameBnodes_eq_fast` proves it
+equal and `@[csimp]` makes every caller compiled after it run the loop. -/
+
+/-- The rename of a term, with the open triple terms (already renamed) in a
+list. A term that is not a triple term is renamed in place, as the
+specification does. -/
+def Term.renameBnodesLoop (f : BNodeId → BNodeId) : List (Subject × WfIri) → Term → Term
+  | frames, .tripleTerm s p o => Term.renameBnodesLoop f ((s.renameBnodes f, p) :: frames) o
+  | frames, .iri i => wrapTripleTerms frames (.iri i)
+  | frames, .bnode b => wrapTripleTerms frames (.bnode (f b))
+  | frames, .literal l => wrapTripleTerms frames (.literal l)
+
+theorem Term.renameBnodesLoop_eq (f : BNodeId → BNodeId) : ∀ (t : Term) (frames : List (Subject × WfIri)),
+    Term.renameBnodesLoop f frames t = wrapTripleTerms frames (Term.renameBnodes f t)
+  | .tripleTerm s p o, frames => by
+      rw [Term.renameBnodesLoop, Term.renameBnodesLoop_eq f o, Term.renameBnodes, wrapTripleTerms]
+  | .iri i, frames => by rw [Term.renameBnodesLoop, Term.renameBnodes]
+  | .bnode b, frames => by rw [Term.renameBnodesLoop, Term.renameBnodes]
+  | .literal l, frames => by rw [Term.renameBnodesLoop, Term.renameBnodes]
+
+/-- `Term.renameBnodes` as the loop. -/
+def Term.renameBnodesFast (f : BNodeId → BNodeId) (t : Term) : Term := Term.renameBnodesLoop f [] t
+
+/-- Any rename compiled after this line is computed by the loop. -/
+@[csimp] theorem Term.renameBnodes_eq_fast : @Term.renameBnodes = @Term.renameBnodesFast := by
+  funext f t
+  rw [Term.renameBnodesFast, Term.renameBnodesLoop_eq, wrapTripleTerms]
+
+#print axioms Term.renameBnodesLoop_eq
+#print axioms Term.renameBnodes_eq_fast
+
 def Triple.renameBnodes (f : BNodeId → BNodeId) (t : Triple) : Triple :=
   { s := t.s.renameBnodes f, p := t.p, o := t.o.renameBnodes f }
 
