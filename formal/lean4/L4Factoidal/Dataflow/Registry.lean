@@ -38,6 +38,7 @@ import L4Factoidal.Unified.OwlRlAdequacy
 import L4Factoidal.Storage.BlockDenotation
 import L4Factoidal.SPARQL.FromMergeStage
 import L4Factoidal.Storage.SelectedDataset
+import L4Factoidal.Storage.BackendRefinement
 import L4Factoidal.Storage.StoreDictTheorems
 import L4Factoidal.HDT.DictionaryTheorems
 import L4Factoidal.Cottas.DictTheorems
@@ -428,9 +429,28 @@ def registry : List Entry := [
       ``L4Factoidal.Storage.SelectedDataset.evalPatternBackend_active,
       ``L4Factoidal.SPARQL.DatasetRestriction.runSelectQueryBackendDataset_restrict]
     note := "answer over queryDataset of selectedModel = answer over queryDataset of the store (FROM merge, FROM NAMED, predicate and graph-name selection, empty named graphs); premises: SELECT form, IRI graph names; one env on both sides (the harness env.dataset differs, read only by EXISTS, which the collectors refuse; not proved); IO read = model not proved (finding 6)" },
-  { area := "Reference fallback answer vs SPARQL 1.1 semantics and the id path", dir := "SPARQL"
+  { area := "Backend BGP evaluator vs SPARQL 1.1 section 18.3 (reference evalBgp)", dir := "Storage"
+    stage := ``L4Factoidal.Storage.BackendRefinement.backendBgpStage, wireIn := "GraphBackend", wireOut := "SolutionSeq"
+    contract := ``L4Factoidal.Storage.BackendRefinement.BackendBgpContract, status := .proved
+    theorems := [``L4Factoidal.Storage.BackendRefinement.evalBgpBackend_kequiv,
+      ``L4Factoidal.Storage.BackendRefinement.evalBgpFrom_perm,
+      ``L4Factoidal.Storage.BackendRefinement.evalSingleTpBackend_kequiv,
+      ``L4Factoidal.Storage.BackendRefinement.tpMatch_boundMatches,
+      ``L4Factoidal.Storage.BackendRefinement.evalBgpBackend_kequiv_of_den,
+      ``L4Factoidal.Storage.BackendRefinement.evalBgpBackend_solEquiv]
+    note := "every BGP, triple terms included; premises BackendExact gb G, a list g with G = KeyMem g and g.KeyNodup; the same multiset of solution mappings up to order and RDF term equality (Term.joinKey); structural (SolEquiv) when every object is its own join key; no-duplicate-row claim not made (finding 6)" },
+  { area := "Reference fallback WHERE answer (evalPatternBackend, indexedDatasetBackend) vs Allowed", dir := "Storage"
+    stage := ``L4Factoidal.Storage.BackendRefinement.fallbackWhereStage, wireIn := "Dataset", wireOut := "SolutionSeq"
+    contract := ``L4Factoidal.Storage.BackendRefinement.FallbackWhereContract, status := .proved
+    theorems := [``L4Factoidal.Storage.BackendRefinement.indexedWhere_allowed,
+      ``L4Factoidal.Storage.BackendRefinement.evalPatternBackend_allowed,
+      ``L4Factoidal.Storage.BackendRefinement.evalBgpBackend_allowed,
+      ``L4Factoidal.Storage.BackendRefinement.filterFn_local]
+    note := "NativeFrag: BGP without text:query, FILTER and OPTIONAL with a backendLocal condition, JOIN, UNION, MINUS, GRAPH with an IRI or a variable, VALUES, empty; premises Dataset.IsSet, IRI graph names, GraphFixed (no upper-case language tag; without it the backend and the reference keep different representatives, #guards in the module) (finding 6)" },
+  { area := "Reference fallback SELECT answer vs SPARQL 1.1 semantics and the id path", dir := "SPARQL"
     wireIn := "Query × Dataset", wireOut := "SolutionSeq", status := .missing
-    note := "no refinement theorem from runSelectQueryBackendDataset (evalPatternBackend, evalBgpBackend) to Allowed or WhereOk; so no theorem that the id path and the fallback give the same solution multiset, for any fragment (finding 6)" },
+    theorems := [``L4Factoidal.Storage.BackendRefinement.indexedWhere_allowed]
+    note := "WHERE part proved for NativeFrag (row above); missing: the SELECT layer of runSelectQueryBackendDataset (streaming COUNT and GROUP BY, ORDER BY, projection, DISTINCT, slices), the arms outside NativeFrag (BIND, LATERAL, paths, sub-SELECT, non-local conditions), and that two Allowed answers of one pattern are one multiset; so id path and fallback are both allowed, not proved equal (finding 6)" },
   { area := "SPARQL query evaluation (reference evaluator)", dir := "SPARQL"
     wireIn := "Query × Dataset", wireOut := "QueryResult", status := .tested
     tests := ["W3C SPARQL 1.1 manifest-all (l4w3c)", "W3C SPARQL 1.2 (l4w3c)"] },
