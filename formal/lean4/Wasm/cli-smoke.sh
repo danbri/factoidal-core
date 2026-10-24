@@ -211,14 +211,15 @@ else
           "write exit=$D2_RC stderr=$D2_ERR read exit=$NQRC" ;;
     esac
   done
-  # `nquads` is the canonical form (RDF 1.2 N-Quads: language tags in lower case);
-  # `ntriples` is the serialiser layer's text, which keeps the tag as it was read.
+  # One RDF term, one spelling (RDF 1.2 Concepts 3.4; issue 1001): a reader
+  # stores a language tag in lower case, so every writer prints it so. Until
+  # 2026-10-24 `ntriples` kept the tag as read (@de-DE) and this case pinned it.
   run_cmd "$CLI" parse "$SYNTAX/d1.nt" --format ntriples --out nquads
   NQ_OUT="$OUT"
   run_cmd "$CLI" parse "$SYNTAX/d1.nt" --format ntriples --out ntriples
-  verdict "parse --out nquads lower-cases a language tag, --out ntriples keeps it (D1 @de-DE)" "" \
+  verdict "parse --out nquads and --out ntriples write a language tag in lower case (D1 @de-DE)" "" \
     "$( grep -qF '"Hallo"@de-de .' <<< "$NQ_OUT" && ! grep -qF '@de-DE' <<< "$NQ_OUT" \
-        && grep -qF '"Hallo"@de-DE .' <<< "$OUT" && echo 1 || echo 0 )" \
+        && grep -qF '"Hallo"@de-de .' <<< "$OUT" && ! grep -qF '@de-DE' <<< "$OUT" && echo 1 || echo 0 )" \
     "ntriples exit=$RC"
   # RDF 1.2: N-Triples 1.2 holds a triple term; RDF/XML and JSON-LD have no form
   # for it, refuse by name, and print nothing.
