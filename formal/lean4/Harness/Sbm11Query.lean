@@ -367,7 +367,9 @@ def Session.gdxBytes (ss : Session) : IO ByteArray := do
     ss.g.fileBytes.modify (· + b.size)
     if b.size != a.bytes || Harness.nativeSha256 b != a.sha256 then
       throw (IO.userError s!"{ss.g.gdxPath}: length or SHA-256 differs from the manifest")
-    ss.gdx.set (some b)
+    -- `modify`, not `set`: another thread may read `gdx` with `get` (issue
+    -- 981, `Harness.WorkerPool` module comment)
+    ss.gdx.modify fun _ => some b
     return b
 
 def Session.gdxFetch (ss : Session) (off len : Nat) : IO ByteArray := do
@@ -1104,17 +1106,22 @@ def parFold (ss : Session) (nWorkers window : Nat) (fixed : Bool := false) {α �
   for j in [0:nSpawn] do
     let v ← liftIO ss.view
     let t ← liftIO (ss.spawnLocal workers.size (fun wp => do
-      let lim := ((← IO.getEnv "SBM11_WORKER_PAGES").bind String.toNat?).getD workerPageLimit
-      let lv ← match wp with
-        | some r => do pure { (← v.withPages r) with taskPageLimit := min v.pageLimit lim }
-        | none => v.local
-      let st := lv.store
+      -- issue 981: an error of the worker's setup still resolves every range
+      -- the worker takes (with the error), so the calling thread, which waits
+      -- for each range in order, never waits for a range that no one runs
+      let lvE ← (do
+        let lim := ((← IO.getEnv "SBM11_WORKER_PAGES").bind String.toNat?).getD workerPageLimit
+        match wp with
+        | some r => pure { (← v.withPages r) with taskPageLimit := min v.pageLimit lim }
+        | none => v.local : IO Session).toBaseIO
       for i in [0:n] do
         let k ← if fx then pure (j + i * nwk) else next.modifyGet fun k => (k, k + 1)
         if k ≥ n then break
         if let some p := permits[k]? then
           let _ ← IO.wait p.result?
-        runJob st j k))
+        match lvE with
+        | .ok lv => runJob lv.store j k
+        | .error e => resolveAt k (.error s!"block range {k}: its worker did not start: {e}")))
     workers := workers.push (t, v)
   -- the calling thread's next job (`parentAt`): in fixed order its ranges
   -- `j, j + nwk, ...`; else the next range of the shared counter. It takes a
@@ -1159,7 +1166,10 @@ def parFold (ss : Session) (nWorkers window : Nat) (fixed : Bool := false) {α �
         | .error e => failure := some e
     | some (.error e) => if failure.isNone then failure := some e
     | none => if failure.isNone then failure := some s!"block range {k}: its worker stopped"
-    if failure.isSome then liftIO (stop.set true)
+    -- `modify`, not `set`: the workers read `stop` with `get`, and a `set`
+    -- between the two exchanges of a `get` is lost (issue 981,
+    -- `Harness.WorkerPool` module comment)
+    if failure.isSome then liftIO (stop.modify fun _ => true)
     liftIO (permit (k + w))
   for (t, v) in workers do
     match ← liftIO (ss.await t) with

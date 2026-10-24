@@ -47,6 +47,10 @@
 # in which the scan tasks touch them; that case is the olympics default-limit
 # section above.
 #
+# Last, tests/sbm11/pool-stress.sh (POOL_STRESS_RUNS, default 500 query
+# processes, each with a 10-second limit) looks for a hang of the worker pool
+# (issue https://github.com/danbri/factoidal/issues/981).
+#
 # The W3C census at several thread counts is tests/sbm11/census.sh with
 # SBM11_THREADS set; this script does not run it.
 #
@@ -206,6 +210,11 @@ PY
   [ "$rec_diff" -eq 0 ] && [ "$rec_missing" -eq 0 ] || fail=1
   EXTRA=()
 fi
+
+echo "=== worker pool stress (tests/sbm11/pool-stress.sh, issue 981)"
+rc=0
+RUNS="${POOL_STRESS_RUNS:-500}" "$HERE/pool-stress.sh" || rc=$?
+[ "$rc" -eq 0 ] || fail=1
 
 if [ "$fail" = 0 ]; then echo "threads.sh: all answers identical"; else echo "threads.sh: FAILED"; fi
 exit "$fail"

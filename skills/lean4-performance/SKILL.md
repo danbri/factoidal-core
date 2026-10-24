@@ -900,6 +900,28 @@ section "Stage 1b", subsection "What failed on the way"):
   exit because the error skipped the pool's shutdown. Found by the 1b.6
   measurement method, which logs a process that fails: run it before a
   landing, and read its log.
+- **`modify` and `modifyGet` lose a concurrent `set` or `swap` too; use one
+  family of ref operations per shared ref.** The rule above said "use
+  `swap`, `modify` or `modifyGet`"; that was wrong. In the runtime (Lean
+  4.33.1, disassembly of `lean_st_ref_get`, `_take`, `_set`, `_swap`) there
+  are two families. `set` and `swap` are one atomic exchange each. `get`,
+  `take`, and `modify`/`modifyGet` (`take`, then `set`) exchange the value
+  for null, spin while they find null, and put a value back with a second
+  exchange: they exclude each other, but a `set` or `swap` by another thread
+  between their two exchanges is lost (`get` restores the old value and
+  frees the new one, `modify` overwrites it, a `swap` that finds null
+  returns its own argument). Rule: a ref that two threads reach uses only
+  `set`/`swap`, or only `get`/`modify`/`modifyGet`/`take`. A flag that one
+  thread reads with `get` is written with `modify fun _ => v`. Paid for
+  2026-10-24 (https://github.com/danbri/factoidal/issues/981): the worker
+  pool's stop flag was read with `get` and written with `set`; a worker that
+  read it while `shutdown` wrote it kept `false` and blocked on its mailbox,
+  and `shutdown` waited for its thread for good. Seen once as a 600-second
+  hang of `ids-path-star-nested` at 4 threads in `tests/sbm11/threads.sh`
+  (not reproduced in 1,350 query processes); `l4pool-bench stress` (start,
+  wake, stop the pool in a loop) hangs within 20,000 cycles before the
+  repair. `tests/sbm11/pool-stress.sh` runs 500 short query processes with a
+  time limit and gdb stacks of a hung process.
 
 - **What the calling thread gives to a job, the calling thread frees with
   atomic operations.** A list, map or array that a job closure captures, or
