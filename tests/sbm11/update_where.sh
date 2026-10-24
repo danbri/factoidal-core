@@ -44,7 +44,7 @@
 #                of the base and of earlier batches are skipped (exact labels asserted),
 #                the labels of one request differ, replay and compaction give the same
 #                labels, a dump packed again and updated again gives new labels, and no
-#                reader of the source layer produces a label with the prefix `sbm11u`.
+#                reader of the source layer produces a label with the prefix `sbm11u`; a request label equal to a base label is a new node (issue 979).
 #   sparql12     SPARQL 1.2 on tests/sbm11/gate12/gate12.nq: a blank node inside a nested
 #                triple term in INSERT DATA and in an INSERT template, a triple-term
 #                pattern with a variable in DELETE WHERE, the triple functions.
@@ -243,6 +243,21 @@ got="$(bnodes "$L")"
 if [ "$URC" -eq 0 ] && [ "$got" = "sbm11u3 sbm11u4 sbm11u5 sbm11u6 sbm11u7 sbm11u8" ]; then
   record labels one-label-per-solution 0 "INSERT DATA took sbm11u6, the template one label for each of its 2 solutions (sbm11u7, sbm11u8)"
 else record labels one-label-per-solution 1 "exit $URC, labels: $got (want sbm11u3 to sbm11u8)"; fi
+# SPARQL 1.1 Update section 3.1.1: a blank node of INSERT DATA is a new node,
+# also when the store holds a node of the same label
+# (https://github.com/danbri/factoidal/issues/979, item 2). A base with _:b0
+# and a request with _:b0: two blank nodes after the update.
+SL="$TMP/labels/same"
+printf '_:b0 <http://ex.org/p> "base" .\n' >"$TMP/labels/same.nq"
+new_store "$SL" "$TMP/labels/same.nq"
+printf 'INSERT DATA { _:b0 <http://ex.org/q> "new" }\n' >"$TMP/labels/same.ru"
+store_update "$SL" "$TMP/labels/same.ru"
+same="$("$BIN/l4sbm11" query "$SL" 'SELECT (COUNT(DISTINCT ?s) AS ?n) WHERE { ?s ?p ?o FILTER(isBlank(?s)) }' 2>/dev/null | head -1 \
+  | python3 -I -c 'import json,sys; print(json.load(sys.stdin)["results"]["bindings"][0]["n"]["value"])')"
+joined="$("$BIN/l4sbm11" query "$SL" 'ASK { ?s <http://ex.org/p> "base" ; <http://ex.org/q> "new" }' 2>/dev/null | head -1)"
+if [ "$URC" -eq 0 ] && [ "$same" = 2 ] && [ "$joined" = '{"head":{},"boolean":false}' ]; then
+  record labels same-label-as-base 0 "base _:b0 and INSERT DATA _:b0: 2 blank nodes, not joined"
+else record labels same-label-as-base 1 "exit $URC, blank nodes $same (want 2), join $joined (want false)"; fi
 # replay and compaction give the same blank nodes
 "$BIN/l4sbm11" query "$L" 'SELECT DISTINCT ?b WHERE { { ?b ?p ?o } UNION { ?s ?p ?b } FILTER(isBlank(?b)) }' 2>/dev/null | head -1 \
   | python3 -I -c 'import json,sys; d=json.load(sys.stdin); print("\n".join(sorted(b["b"]["value"] for b in d["results"]["bindings"])))' >"$TMP/labels/overlay.txt"
