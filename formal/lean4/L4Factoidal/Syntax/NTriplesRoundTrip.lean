@@ -8,10 +8,10 @@ Port of `formal/fstar/RDF.NTriples.RoundTrip.fst` (1504 lines).
 
 PARTIAL PORT. The F\* source proves serialiser injectivity on an
 IRI/blank-node fragment and then reaches an IRI round trip through a
-character-list detour. This module carries the injectivity half and the
-fragment; it does NOT carry a round-trip theorem. The blocker is
-measured and named in its own section below, and it is not the F\*
-blocker.
+character-list detour. This module carries the injectivity half, the
+fragment and the closed-triple round trip. The document round trip, every
+kind of term in both modes, is `parseNTriples_toNTriples` in
+`Syntax/NTriplesDocRoundTrip.lean` (2026-10-24).
 
 ## Why the F\* module stops where it does
 
@@ -95,6 +95,21 @@ def IriSafeChar (c : Char) : Bool :=
 /-- An IRI whose every character the IRIREF grammar admits raw. The
 `WfIri` refinement does NOT imply this — see the module header. -/
 def iriPrintSafe (i : String) : Bool := i.toList.all IriSafeChar
+
+/-- `iriPrintSafe` without building the character list: `String.all` walks
+the UTF-8 bytes. The check runs over every IRI of the dataset, and through
+`String.toList` it cost as much as parsing the Turtle input (callgrind,
+`query` COUNT(*), 1,250 paragraphs of `gene.ttl`: `iriPrintSafe` 36.2 percent
+of the instructions, the Turtle parse 37.3). Moved here from
+`RDF/DatasetNormalize.lean` on 2026-10-24, so that every module that calls
+`iriPrintSafe` runs it (`tools/lean-csimp-reach.py`, finding `not-imported`). -/
+def iriPrintSafeFast (s : String) : Bool := s.all IriSafeChar
+
+/-- The compiler calls `iriPrintSafeFast` wherever the source says
+`iriPrintSafe`. -/
+@[csimp] theorem iriPrintSafe_eq_iriPrintSafeFast : @iriPrintSafe = @iriPrintSafeFast := by
+  funext s
+  simp [iriPrintSafe, iriPrintSafeFast, String.all_bool_eq]
 
 /-! ## Serialiser injectivity (what the F\* module proves) -/
 

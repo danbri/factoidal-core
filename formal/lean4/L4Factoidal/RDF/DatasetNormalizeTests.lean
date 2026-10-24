@@ -188,7 +188,7 @@ private def dsLongTag : Dataset :=
 
 /-! ### `iriPrintSafe` through `String.all`
 
-`DatasetNormalize.lean` registers `iriPrintSafe = iriPrintSafeFast` as
+`Syntax/NTriplesRoundTrip.lean` registers `iriPrintSafe = iriPrintSafeFast` as
 `csimp`; the list form below is not rewritten, so these guards compare two
 programs. -/
 

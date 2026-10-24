@@ -134,10 +134,11 @@ RDF 1.2 mode. `body` is optional; every other member is required.
 `citation` is optional except at `verifiedReplay`.
 
 ⚠️ The whole-bundle round trip `decodeBundle (encodeBundle b) = .ok b`
-is PINNED BY `#guard` on the fixtures below, NOT proved. The obstacle
-is named: the general N-Triples round trip
-(`Syntax.SyntaxTheorems.graph_roundtrip`) is STATED AND NOT PROVED in
-this tree, so a bundle-level theorem would rest on it. What IS proved
+is PINNED BY `#guard` on the fixtures below, NOT proved. The N-Triples
+round trip it would rest on is proved since 2026-10-24
+(`Syntax.NTriplesRoundTrip.parseNTriples_toNTriples`, on the domain
+`Triple.ntSafe`); a bundle-level theorem also needs the JSON layer of
+`encodeBundle`/`decodeBundle` and is not written. What IS proved
 here is the enum layer — the three decoders where a lenient reading
 would silently weaken a bundle.
 
@@ -747,10 +748,9 @@ private def pfJson (b : Bundle) : String :=
   | .error _ => "ENCODE-FAILED"
 
 /-- **The round trip**, as a Bool a `#guard` can pin: encode, decode,
-and recover the very same bundle. NOT a theorem — the general
-N-Triples round trip (`Syntax.SyntaxTheorems.graph_roundtrip`) is
-stated and not proved in this tree, so a bundle-level theorem would
-rest on an open lemma. The enum layer IS proved, above. -/
+and recover the very same bundle. NOT a theorem: the N-Triples round
+trip is proved (`Syntax.NTriplesRoundTrip.parseNTriples_toNTriples`),
+the JSON layer of the bundle is not. The enum layer IS proved, above. -/
 private def roundTrips (b : Bundle) : Bool :=
   match decodeBundle (pfJson b) with
   | .error _ => false
