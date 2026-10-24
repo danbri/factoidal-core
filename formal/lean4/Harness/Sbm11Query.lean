@@ -286,6 +286,10 @@ structure Session where
       calling thread. The worker's cache lives as long as the pool, so the
       copy is made once. -/
   copyFirst : Bool := false
+  /-- `IdQuery.Par.joinShare`: the share of the calling thread's range of a
+      divided merge join, in tenths of an equal share (`SBM11_JOIN_SHARE`,
+      default 14; stage 1p of docs/designissues/2026-10-12-parallel-block-scans.md) -/
+  joinShare : Nat := 14
 
 /-- The default of `SBM11_PAGES`, the most dictionary pages a cache holds. A
     page is about 4.5 KB (olympics q19 needs between 4,096 and 8,192 pages). At
@@ -1403,6 +1407,7 @@ def Session.par (ss : Session) (threads : Nat) (minRows : Nat := 8192) : IdQuery
       parFold ss threads (if bounded then parWindowFactor * threads else chunks.length) bounded job chunks init g
     mapList := ss.pool.map fun p => fun f xs => poolMap p f xs
     joinRows := if ss.pool.isSome then poolJoinRows else IdQuery.joinMinRows
+    joinShare := ss.joinShare
     renderRows := ss.renderRows
     streamPerThread := ss.streamPerThread
     renderStart := ss.pool.map fun _ => renderStartPar ss
@@ -2082,7 +2087,8 @@ def runQuery (dir : String) (o : Opts) : IO UInt32 := do
   let ss := { ss with phases := (← IO.getEnv "SBM11_PHASES").isSome,
                       renderRows := ((← IO.getEnv "SBM11_RENDER_ROWS").bind String.toNat?).getD IdQuery.renderJobRows,
                       streamPerThread := ((← IO.getEnv "SBM11_STREAM_JOBS").bind String.toNat?).getD IdQuery.streamJobsPerThread,
-                      sortedRows := ((← IO.getEnv "SBM11_SORTED_RENDER_ROWS").bind String.toNat?).getD 64 }
+                      sortedRows := ((← IO.getEnv "SBM11_SORTED_RENDER_ROWS").bind String.toNat?).getD 64,
+                      joinShare := ((← IO.getEnv "SBM11_JOIN_SHARE").bind String.toNat?).getD 14 }
   let t1 ← IO.monoNanosNow
   let openBytes ← ss.g.fileBytes.get
   let stdout ← IO.getStdout
@@ -2110,6 +2116,9 @@ def runQuery (dir : String) (o : Opts) : IO UInt32 := do
         if let some p := ss.pool then p.shutdown
         throw e
     let b ← IO.monoNanosNow
+    -- stage 1p: the time after the last phase mark of the query (the plan
+    -- text, the JSON tail, the end of the divided work)
+    if ss.phases then phaseMark "end"
     execs := execs.push (b - a)
     if ss.phases then
       let ms ← phaseMarks.get

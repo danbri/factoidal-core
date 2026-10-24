@@ -986,9 +986,44 @@ section "Stage 1b", subsection "What failed on the way"):
   (`IdQuery.countId_eq`). Check with
   `grep lean_cstr_to_nat .lake/build/ir/<Module>.c`.
 
+- **A worker reads data that the calling thread made at about half speed.**
+  The merge join of olympics q07's first two scans in 4 equal ranges: the
+  calling thread's range took 0.065 ms, and it then waited 0.085 to 0.15 ms
+  for the worker ranges, because the calling thread had appended both input
+  tables and their bytes were in its cache (2026-10-24, stage 1p of
+  [`docs/designissues/2026-10-12-parallel-block-scans.md`](../../docs/designissues/2026-10-12-parallel-block-scans.md)).
+  Rule: when the input of a divided step was made by the calling thread,
+  give the calling thread the larger range (`ParallelJoin.rangesShare`,
+  `Par.joinShare`, 1.4 times an equal share), and measure the ranges, not
+  only the phase.
+- **Compare variants at N threads inside one process.** At 4 threads whole
+  processes of q07 are 20 to 35 percent apart in every phase, the serial ones
+  too, and the machine changes speed from hour to hour. Paid for 2026-10-24
+  (stage 1p): (1) stage 1o reported "25 percent more thread time per block at
+  4 threads, cause not found"; the four range times of one query add up to
+  the 1-thread scan time, and decode on bytes the thread holds costs the same
+  summed thread time at 4 threads as at 1 (1,541.5 against 1,541.5
+  microseconds); the 25 percent was the difference between processes. (2) A
+  binary that differed from `main` only in `packWords` measured 0.77 against
+  0.63 ms in its scan phase over 8 interleaved processes, and 4 percent slower
+  at 1 thread in every phase, which the change cannot cause. Method: read the
+  setting per run, alternate the variants between the runs of one process,
+  compare the medians of the variants inside each process, over 6 or more
+  processes. It cannot see an effect that stays in the process once it
+  happened (an object marked multi-threaded), and the final decision still
+  takes the interleaved 1b.6 run.
+- **A phase mark between pure steps does not time them.** The compiler moves
+  a pure `let` to where its value is first used, so a mark placed after it in
+  an `IO` block can run first. Stage 1p: the block weights and cut points of
+  `scanSipTableParM` were computed after the next mark, not before it, and
+  `packWords` looked free. Read the order in the generated C
+  (`.lake/build/ir/...c`) before you give a phase its cost, or put the step
+  in a `@[noinline]` function whose result the mark needs.
+
 Measure every one of these with `perf record` at 1 and N threads and the
 CPU time (`perf stat -e task-clock`): CPU time that grows with the thread
-count at a fixed amount of work is the sign.
+count at a fixed amount of work is the sign. Take the two profiles in one
+process, or several of each, for the reason above.
 
 A fourth case, 2026-10-14, tried and not kept: `Session.withOverlay` of the
 SBM11 replay cut the four permutations of the overlay state in four tasks
