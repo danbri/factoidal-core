@@ -47,6 +47,7 @@ import L4Factoidal.Dataflow.PhaseC
 import L4Factoidal.Dataflow.Reasoner
 import L4Factoidal.Dataflow.Validator
 import L4Factoidal.Dataflow.Checker
+import L4Factoidal.Dataflow.ExplainGraph
 import L4Factoidal.Dataflow.PhaseStorage
 import L4Factoidal.Dataflow.StoreTheorems
 import L4Factoidal.Unified.OwlRlAdequacy
@@ -842,7 +843,21 @@ def registry : List Entry := [
     contract := ``ExplainCheckContract, status := .proved
     theorems := [``rdfsExplainCheck_sound, ``L4Factoidal.FPP0.checkBundle_merge,
       ``L4Factoidal.FPP0.checkBundle_rdfsEntails, ``rdfsEntails_of_closure]
-    note := "one graph artifact G (the union of the selection; one blank-node scope) and body-less source references; no wasm op (https://github.com/danbri/factoidal/issues/615)" }
+    note := "one graph artifact G (the union of the selection; one blank-node scope) and body-less source references; no wasm op (https://github.com/danbri/factoidal/issues/615)" },
+  { area := "SoundChecker: graph bundle, RDFS profile (a description with shared blank nodes)", dir := "Proof"
+    stage := ``rdfsGraphChecker, wireIn := "GraphBundle", wireOut := "GraphClaim"
+    contract := ``CheckProfile.Holds, status := .proved
+    theorems := [``checkGraphRun_sound, ``rdfsEntails_of_derivable_instance,
+      ``rdfsGraphChecker_accept, ``L4Factoidal.RDFS.checkDerivation_sound]
+    tests := ["Dataflow/ExplainGraphTests.lean (tampered bundles)"]
+    note := "SoundChecker interface type: accept implies the sources RDFS-entail the description (RDF 1.1 Semantics 5.3 interpolation lemma over the RDFS derivations, 9.2); the axiom set is computed by the checker; no named assumption (https://github.com/danbri/factoidal/issues/1002)" },
+  { area := "RDFS explanation of a description (sources and a graph to a verdict and a graph bundle)", dir := "RDFS"
+    stage := ``rdfsExplainGraphStage, wireIn := "Dataset × Graph", wireOut := "ExplainGraphResult"
+    contract := ``ExplainGraphContract, status := .proved
+    theorems := [``explainGraphOf_spec, ``checkGraphRun_sound, ``findInstance_none,
+      ``unmatchedIn_no_instance, ``L4Factoidal.RDFS.fullClosureWithProof_graph]
+    tests := ["Dataflow/ExplainGraphTests.lean (entailed description with a shared blank node, noMatch, noJointMapping)"]
+    note := "entailed: the graph checker accepts the returned bundle and RdfsEntails holds (proved); not entailed: no instance of the description in the closure (proved), not RDFS-entailed only under closure completeness (named in the result's assumptions); that every emitted bundle is accepted is tested only; wasm explainGraph (https://github.com/danbri/factoidal/issues/1002)" }
 ]
 
 end L4Factoidal.Dataflow

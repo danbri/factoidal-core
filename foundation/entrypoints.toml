@@ -73,6 +73,12 @@ covers = "part"
 note = "Wasm/Ops/Proof.lean: checkBundle (the function proofCheckStage runs). The op reports the verdict and the assumption frontier; the stage accepts foundational-only bundles."
 
 [[entry]]
+id = "wasm:explainGraph"
+stages = ["rdfsExplainGraphStage"]
+covers = "part"
+note = "Wasm/Ops/Explain.lean explainGraphParsed runs rdfsExplainGraphStage (withMinimalD []) with the default graph and every named graph of the sources selected. Not covered: the N-Quads read of both texts (readNQuadsText, the reader table), the document scopes 0 and 1 (Dataset.scopeDocument), the refusal of a description with a named graph, and the JSON encoding of the result (https://github.com/danbri/factoidal/issues/1002)."
+
+[[entry]]
 id = "wasm:updateDataset"
 stages = ["updateStage"]
 covers = "part"

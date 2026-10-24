@@ -15,7 +15,7 @@ Each component kind has one interface type. Its contract against the foundation 
 | Query evaluator | `LawfulEvaluator` (`Dataflow/Evaluator.lean`) | `shippedEvaluator` (all wasm query ops) | `sound` (`EvalContract` outside the assumed inputs) | `assumed_contractOn` (backend path outside `NativeFrag`; SELECT fast paths) |
 | Reasoner | `SoundReasoner` (`Dataflow/Reasoner.lean`) | `rhoDfReasoner`, `rdfsReasoner D`, `owlRlReasoner` | `sound` (output entailed in the regime) | `assumed_completeness` (3 instances) |
 | Validator | `LawfulValidator` (`Dataflow/Validator.lean`) | `shaclValidator` | `sound` (conforming report implies SHACL Core conformance) | `assumed_spec_iff` (1 instance) |
-| Proof checker | `SoundChecker` (`Dataflow/Checker.lean`) | `foundationalChecker`, `rdfsChecker` | `sound` (accept implies the claim) | none |
+| Proof checker | `SoundChecker β γ` (`Dataflow/Checker.lean`) | `foundationalChecker`, `rdfsChecker`, `rdfsGraphChecker` (a description, issue 1002) | `sound` (accept implies the claim) | none |
 
 ## 2. The end-to-end theorem
 
