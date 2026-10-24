@@ -242,6 +242,16 @@ def writerTagVersion (formatTag : String) : String × Bool :=
 def rdf11WriterRefusal (fmt : String) : String :=
   s!"the dataset holds an RDF 1.2 triple term or directional language-tagged string and {fmt} in RDF 1.1 has no form for it; write it in the RDF 1.2 form"
 
+/-- The dataset that the handle's N-Quads and Turtle writers write
+(https://github.com/danbri/factoidal/issues/986): a language tag outside LANGTAG
+[144s] (subtags of 1 to 8 characters, RDF 1.2) is an error that names the tag,
+and a blank-node label outside BLANK_NODE_LABEL [141s] gets a fresh valid label
+(`Dataset.relabelForWrite`, as the `Sink` writers do). -/
+def handleWriteInput (ds : Dataset) : Except String Dataset :=
+  match L4Factoidal.RDF.Sink.checkLangTags .rdf12 ds with
+  | .error e => .error e
+  | .ok () => .ok ds.relabelForWrite
+
 /-- The text of `ds` in the syntax `formatTag` names (`writerTagVersion`):
 N-Quads, N-Triples (refused when `ds` has a named graph, as N-Triples has no
 graph name), Turtle, TriG and RDF/XML through the `Sink` writers (Turtle and
@@ -254,7 +264,7 @@ def handleWriterText (formatTag : String) (ds : Dataset) : Option (Except String
     if v11 && !ds.isRdf11 then some (.error (rdf11WriterRefusal name)) else some (k ())
   match tag with
   | "nquads" | "nq" | "n-quads" =>
-      checked "N-Quads" fun _ => .ok (Dataset.toCanonicalNQuads ds)
+      checked "N-Quads" fun _ => (handleWriteInput ds).map Dataset.toCanonicalNQuads
   | "ntriples" | "nt" | "n-triples" =>
       if !ds.named.isEmpty then
         some (.error "the dataset has a named graph and N-Triples holds one graph; use nquads or trig")
@@ -310,9 +320,13 @@ def datasetSerialize (h formatTag : String) : IO String :=
     let ds := od.ds
     match formatTag.toLower with
     | "" | "nquads" | "nq" | "n-quads" =>
-        pure (okWith [("nquads", .string (Dataset.toCanonicalNQuads ds))])
+        match handleWriteInput ds with
+        | .error e => pure (errJson s!"datasetSerialize: {e}")
+        | .ok ds => pure (okWith [("nquads", .string (Dataset.toCanonicalNQuads ds))])
     | "turtle" | "ttl" =>
-        pure (okWith [("turtle", .string
+        match handleWriteInput ds with
+        | .error e => pure (errJson s!"datasetSerialize: {e}")
+        | .ok ds => pure (okWith [("turtle", .string
           (turtleOfGraphOpts { prefixes := handlePrefixTable od } (flattenedGraph ds)))])
     | _ =>
         match handleWriterText formatTag ds with
@@ -329,12 +343,16 @@ def datasetSerializeWith (h formatTag optionsJson : String) : IO String :=
     let ds := od.ds
     match formatTag.toLower with
     | "" | "nquads" | "nq" | "n-quads" =>
-        pure (okWith [("nquads", .string (Dataset.toCanonicalNQuads ds))])
+        match handleWriteInput ds with
+        | .error e => pure (errJson s!"datasetSerializeWith: {e}")
+        | .ok ds => pure (okWith [("nquads", .string (Dataset.toCanonicalNQuads ds))])
     | "turtle" | "ttl" =>
         match turtleOptionsOfJson (handlePrefixTable od) optionsJson with
         | .error msg => pure (errJson msg)
         | .ok opts =>
-            pure (okWith [("turtle", .string (turtleOfGraphOpts opts (flattenedGraph ds)))])
+            match handleWriteInput ds with
+            | .error e => pure (errJson s!"datasetSerializeWith: {e}")
+            | .ok ds => pure (okWith [("turtle", .string (turtleOfGraphOpts opts (flattenedGraph ds)))])
     | _ =>
         match handleWriterText formatTag ds with
         | some (.ok text) => pure (okWith [("text", .string text)])
@@ -1144,5 +1162,17 @@ private def tt12 : Dataset :=
 #guard match handleWriterText "ntriples12" tt12 with | some (.ok _) => true | _ => false
 #guard match handleWriterText "rdfxml" tt12 with | some (.error _) => true | _ => false
 #guard (handleWriterText "hdt" tt12).isNone
+-- https://github.com/danbri/factoidal/issues/986: a blank-node label outside
+-- BLANK_NODE_LABEL is relabelled, a language tag outside LANGTAG is an error that names it.
+private def badLabelDs : Dataset :=
+  { default := [{ s := .bnode "a b", p := ⟨"http://e/p", by decide⟩, o := .bnode "b1" }], named := [] }
+private def badTagDs : Dataset :=
+  { default := [{ s := .iri ⟨"http://e/a", by decide⟩, p := ⟨"http://e/p", by decide⟩,
+                  o := .literal (Literal.langString "x" "en US") }], named := [] }
+#guard match handleWriterText "nquads" badLabelDs with
+  | some (.ok t) => t == "_:rrrr0 <http://e/p> _:b1 .\n" | _ => false
+#guard ["nquads", "ntriples", "turtle", "trig"].all fun f => match handleWriterText f badTagDs with
+  | some (.error e) => (e.splitOn "\"en US\"").length > 1 | _ => false
+#guard match handleWriteInput badTagDs with | .error _ => true | .ok _ => false
 
 end L4Wasm.Ops

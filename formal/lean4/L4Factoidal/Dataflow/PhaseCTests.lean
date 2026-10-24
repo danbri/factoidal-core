@@ -167,17 +167,63 @@ private def withDir : Dataset :=
 #guard !writerDomain .jsonld withDir
 #guard writerRoundTripB .jsonld .rdf12 withDir == some false
 
--- N-Triples: a blank-node label or a language tag outside its N-Triples
--- production is outside `writerDomain .nt`; the writer writes it as it is and
--- the parser refuses the text, so the round trip fails. `writerRoundTrip_nt`
--- proves the property on the domain.
+-- Blank-node labels outside BLANK_NODE_LABEL [141s] (https://github.com/danbri/factoidal/issues/986).
+-- A blank-node label is local to its document (RDF 1.1 Concepts section 3.4), so the
+-- N-Triples, N-Quads, Turtle and TriG writers write a fresh valid label for each label
+-- outside the production: the same label for each occurrence, and a label that no other
+-- blank node of the document has. A valid label is written as it is. The case is in the
+-- writer domain, and the text parses back to an isomorphic dataset.
 private def badLabel : Dataset :=
   { default := [{ s := .bnode "", p := mkIri "p", o := .iri (mkIri "s2") }], named := [] }
-private def badTag : Dataset :=
-  { default := [{ s := .iri (mkIri "s1"), p := mkIri "p", o := .literal (Literal.langString "x" "en US") }],
+private def badLabels : Dataset :=
+  { default := [{ s := .bnode "", p := mkIri "p", o := .bnode "a b" },
+                { s := .bnode "a b", p := mkIri "p", o := .bnode "a." },
+                { s := .bnode "b1", p := mkIri "q", o := .iri (mkIri "s2") },
+                { s := .bnode "rrrr0", p := mkIri "q", o := .bnode "a:b" }],
+    named := [{ name := .bnode "g 1", graph := [{ s := .bnode "a b", p := mkIri "p", o := .bnode "b1" }] },
+              { name := .bnode "g1", graph := [{ s := .bnode "a.", p := mkIri "p", o := .bnode "g 1" }] }] }
+private def badNested : Dataset :=
+  { default := [{ s := .bnode "x y", p := mkIri "p",
+                  o := .tripleTerm (.bnode "x y") (mkIri "q") (.tripleTerm (.bnode "") (mkIri "q") (.bnode "x y")) }],
     named := [] }
-#guard !writerDomain .nt badLabel && writerRoundTripB .nt .rdf11 badLabel == some false
-#guard !writerDomain .nt badTag && writerRoundTripB .nt .rdf11 badTag == some false
+#guard writerDomain .nt badLabel && writerRoundTripB .nt .rdf11 badLabel == some true
+#guard writerDomain .nt badLabels && writerDomain .nquads badLabels
+#guard [RdfFormat.nt, .nquads, .turtle, .trig].all fun f => [Mode.rdf11, .rdf12].all fun v =>
+  writerRoundTripB f v badLabels == some true && streamRoundTripB f v badLabels == some true
+#guard [RdfFormat.nt, .nquads, .turtle, .trig].all fun f =>
+  writerRoundTripB f .rdf12 badNested == some true && streamRoundTripB f .rdf12 badNested == some true
+-- The text: the valid labels `b1` and `rrrr0` are kept; `a b` becomes a label longer than
+-- every label of the document, the same at each of its occurrences.
+#guard (Sink.serializeDataset Sink.withJsonLd .nt .rdf11
+    { default := [{ s := .bnode "a b", p := mkIri "p", o := .bnode "b1" },
+                  { s := .bnode "b1", p := mkIri "p", o := .bnode "a b" }], named := [] }).toOption ==
+  some ("_:rrrr0 <" ++ (mkIri "p").val ++ "> _:b1 .\n_:b1 <" ++ (mkIri "p").val ++ "> _:rrrr0 .\n")
+#guard (Sink.serializeDataset Sink.withJsonLd .nquads .rdf11
+    { default := [], named := [{ name := .bnode "g 1", graph := [{ s := .bnode "b1", p := mkIri "p", o := .iri (mkIri "s2") }] }] }).toOption ==
+  some ("_:b1 <" ++ (mkIri "p").val ++ "> <" ++ (mkIri "s2").val ++ "> _:rrrr0 .\n")
+
+-- Language tags outside LANGTAG [144s] (RDF 1.2 mode: also a subtag of 1 to 8 characters,
+-- BCP 47 section 2.1). A tag has no valid rewrite, so every writer of the N-Triples family
+-- refuses the dataset with an error that names the tag. The case stays outside the domain.
+private def tagged (tag : String) : Dataset :=
+  { default := [{ s := .iri (mkIri "s1"), p := mkIri "p", o := .literal (Literal.langString "x" tag) }],
+    named := [] }
+private def badTag : Dataset := tagged "en US"
+private def namesTag (tag : String) : Except String String → Bool
+  | .error e => (e.splitOn ("\"" ++ tag ++ "\"")).length > 1
+  | .ok _ => false
+#guard !writerDomain .nt badTag
+#guard ["en US", "", "en-", "en--x", "-en", "e\nn", "1a"].all fun tag =>
+  [RdfFormat.nt, .nquads, .turtle, .trig].all fun f => [Mode.rdf11, .rdf12].all fun v =>
+    namesTag tag (Sink.serializeDataset Sink.withJsonLd f v (tagged tag)) &&
+      namesTag tag (Sink.streamDataset Sink.withJsonLd f { version := v, graphs := .union } (tagged tag))
+-- A subtag of nine characters: RDF 1.1 mode writes it (the RDF 1.1 reader keeps it); RDF 1.2
+-- mode refuses it.
+#guard [RdfFormat.nt, .nquads, .turtle, .trig].all fun f =>
+  writerRoundTripB f .rdf11 (tagged "abcdefghi") == some true &&
+    namesTag "abcdefghi" (Sink.serializeDataset Sink.withJsonLd f .rdf12 (tagged "abcdefghi"))
+#guard [RdfFormat.nt, .nquads, .turtle, .trig].all fun f => [Mode.rdf11, .rdf12].all fun v =>
+  writerRoundTripB f v (tagged "en-GB-oxendict") == some true
 
 /-! ## 2. Projections -/
 

@@ -12,9 +12,12 @@ named graph as a line with the graph label (`namedLine`). The lines are
 under RDF term equality, and the names of the graphs that have a quad
 (`foldl_addQuad_memQuad`, `foldl_addQuad_names`).
 
-The domain is `Quad.ntSafe` on each written quad: the triple as for
+The domain is `Quad.ntLex` on each written quad: the triple as for
 N-Triples, and the graph label, RDF 1.1 N-Quads production [6] graphLabel
-(IRIREF or BLANK_NODE_LABEL), in the lexical space of its production.
+(IRIREF or BLANK_NODE_LABEL), in the lexical space of its production. The
+writer domain of `RDF/Sink.lean`, `Quad.ntSafe`, has no condition on
+blank-node labels; `Quad.ntLex_renameBnodes` takes it to `Quad.ntLex` after
+the relabelling of `Dataset.relabelForWrite`.
 
 No `sorry`, no `axiom`, no `native_decide`, no `partial`.
 -/
@@ -42,8 +45,41 @@ def quadsOf (ds : Dataset) : List (Triple × Option Subject) :=
 
 /-- A quad that the N-Quads grammar can state: the triple, and the graph
 label (IRIREF or BLANK_NODE_LABEL, RDF 1.1 N-Quads [6]). -/
+def Quad.ntLex (q : Triple × Option Subject) : Bool :=
+  Triple.ntLex q.1 && q.2.all Subject.ntLex
+
+/-- A quad in the writer domain of N-Quads: `Quad.ntLex` with no condition on
+blank-node labels (the writers of `RDF/Sink.lean` relabel first,
+`Dataset.relabelForWrite`). -/
 def Quad.ntSafe (q : Triple × Option Subject) : Bool :=
   Triple.ntSafe q.1 && q.2.all Subject.ntSafe
+
+/-- The quads of the relabelled dataset are the relabelled quads. -/
+theorem quadsOf_renameBnodes (f : BNodeId → BNodeId) (ds : Dataset) :
+    quadsOf (ds.renameBnodes f) =
+      (quadsOf ds).map (fun q => (q.1.renameBnodes f, q.2.map (Subject.renameBnodes f))) := by
+  simp [quadsOf, Dataset.renameBnodes, Graph.renameBnodes, List.map_append, List.flatMap_map,
+    List.map_flatMap, Function.comp_def]
+
+/-- **A relabelled quad of the writer domain**, with a map whose labels are
+BLANK_NODE_LABELs, is in the domain of the round trip. -/
+theorem Quad.ntLex_renameBnodes {f : BNodeId → BNodeId} (hf : ∀ b, isBlankNodeLabel (f b) = true)
+    {q : Triple × Option Subject} (h : Quad.ntSafe q = true) :
+    Quad.ntLex (q.1.renameBnodes f, q.2.map (Subject.renameBnodes f)) = true := by
+  obtain ⟨t, g⟩ := q
+  simp only [Quad.ntSafe, Bool.and_eq_true] at h
+  simp only [Quad.ntLex, Bool.and_eq_true]
+  refine ⟨Triple.ntLex_renameBnodes hf h.1, ?_⟩
+  cases g with
+  | none => rfl
+  | some g =>
+    simp only [Option.map_some, Option.all_some] at h ⊢
+    apply Subject.ntLex_of_ntSafe
+    · rw [Subject.ntSafe_renameBnodes]; exact h.2
+    · intro b hb
+      rw [Subject.bnodes_renameBnodes, List.mem_map] at hb
+      obtain ⟨a, -, rfl⟩ := hb
+      exact hf a
 
 /-- The line of one quad. -/
 def quadLine (mode : Mode) : Triple × Option Subject → Except String String
@@ -164,7 +200,7 @@ theorem toNQuads_lines (mode : Mode) (ds : Dataset) (text : String)
 
 /-- **A graph label in the domain reads back**, followed by a space. -/
 theorem readGraphLabel_safe (pos : Nat) (g : Subject) (tail : List Char)
-    (h : Subject.ntSafe g = true) :
+    (h : Subject.ntLex g = true) :
     ∃ p, readGraphLabel pos ((Subject.toNTriples g).toList ++ ' ' :: tail) = .ok (g, p, ' ' :: tail) := by
   cases g with
   | iri i =>
@@ -187,10 +223,10 @@ theorem readGraphLabel_safe (pos : Nat) (g : Subject) (tail : List Char)
 /-- **One N-Quads line in the domain reads back** (RDF 1.1 reader): the triple,
 the graph label, and the line break after the `.`. -/
 theorem readNQuad11_line (pos : Nat) (q : Triple × Option Subject) (line : String) (tail : List Char)
-    (hs : Quad.ntSafe q = true) (h : quadLine .rdf11 q = .ok line) :
+    (hs : Quad.ntLex q = true) (h : quadLine .rdf11 q = .ok line) :
     ∃ p, readNQuad11 pos (line.toList ++ tail) = .ok (q.1, q.2, p, '\n' :: tail) := by
   obtain ⟨⟨s, pr, o⟩, g⟩ := q
-  simp only [Quad.ntSafe, Triple.ntSafe, Bool.and_eq_true] at hs
+  simp only [Quad.ntLex, Triple.ntLex, Bool.and_eq_true] at hs
   obtain ⟨⟨⟨hss, hps⟩, hos⟩, hgs⟩ := hs
   cases ho : Term.toNTriples .rdf11 o with
   | error e => cases g <;> simp [quadLine, Triple.toNTriples, namedLine, ho] at h
@@ -271,10 +307,10 @@ theorem readNQuad11_line (pos : Nat) (q : Triple × Option Subject) (line : Stri
 /-- **One N-Quads line in the domain reads back** (RDF 1.2 reader): the triple,
 the graph label, and the line break after the `.`. -/
 theorem readNQuad12_line (pos : Nat) (q : Triple × Option Subject) (line : String) (tail : List Char)
-    (hs : Quad.ntSafe q = true) (h : quadLine .rdf12 q = .ok line) :
+    (hs : Quad.ntLex q = true) (h : quadLine .rdf12 q = .ok line) :
     ∃ p, readNQuad12 pos (line.toList ++ tail) = .ok (q.1, q.2, p, '\n' :: tail) := by
   obtain ⟨⟨s, pr, o⟩, g⟩ := q
-  simp only [Quad.ntSafe, Triple.ntSafe, Bool.and_eq_true] at hs
+  simp only [Quad.ntLex, Triple.ntLex, Bool.and_eq_true] at hs
   obtain ⟨⟨⟨hss, hps⟩, hos⟩, hgs⟩ := hs
   cases ho : Term.toNTriples .rdf12 o with
   | error e => cases g <;> simp [quadLine, Triple.toNTriples, namedLine, ho] at h
@@ -363,7 +399,7 @@ def readNQuadOf : Mode → Nat → List Char → Except ParseError (Triple × Op
   | .rdf12 => readNQuad12
 
 theorem readNQuadOf_line (mode : Mode) (pos : Nat) (q : Triple × Option Subject) (line : String)
-    (tail : List Char) (hs : Quad.ntSafe q = true) (h : quadLine mode q = .ok line) :
+    (tail : List Char) (hs : Quad.ntLex q = true) (h : quadLine mode q = .ok line) :
     ∃ p, readNQuadOf mode pos (line.toList ++ tail) = .ok (q.1, q.2, p, '\n' :: tail) := by
   cases mode
   · exact readNQuad11_line pos q line tail hs h
@@ -404,7 +440,7 @@ def addAll (acc : Dataset) (qs : List (Triple × Option Subject)) : Dataset :=
 /-- The lines of the quads, read in order. -/
 theorem parseQuadLinesAcc_lines (mode : Mode) :
     ∀ (qs : List (Triple × Option Subject)) (ls : List String) (fuel pos : Nat) (acc : Dataset),
-      qs.all Quad.ntSafe = true → Lines (quadLine mode) qs ls →
+      qs.all Quad.ntLex = true → Lines (quadLine mode) qs ls →
       (String.join ls).toList.length < fuel →
       parseQuadLinesAcc mode fuel pos (String.join ls).toList acc = .ok (addAll acc qs)
   | [], [], fuel, pos, acc, _, _, hf => by
@@ -448,7 +484,7 @@ theorem parseQuadLinesAcc_lines (mode : Mode) :
 
 /-- **The N-Quads document round trip**, in both modes: the parser gives the
 dataset that `addQuad` builds from the written quads, in order. -/
-theorem parseNQuads_toNQuads (mode : Mode) (ds : Dataset) (hs : (quadsOf ds).all Quad.ntSafe = true)
+theorem parseNQuads_toNQuads (mode : Mode) (ds : Dataset) (hs : (quadsOf ds).all Quad.ntLex = true)
     (text : String) (h : Dataset.toNQuads ds mode = .ok text) :
     parseNQuads text mode = .ok (addAll Dataset.empty (quadsOf ds)) := by
   obtain ⟨ls, hls, rfl⟩ := toNQuads_lines mode ds text h
@@ -557,8 +593,10 @@ theorem addAll_quadsOf_names (ds : Dataset) (m : Subject) :
 
 /-! ## Outside the domain: a graph label
 
-A blank-node graph label outside BLANK_NODE_LABEL [141s]: the writer writes
-it as it is and the parser refuses the line. -/
+A blank-node graph label outside BLANK_NODE_LABEL [141s]: `Dataset.toNQuads`
+writes it as it is and the parser refuses the line. The quad is in the writer
+domain `Quad.ntSafe`: the writers of `RDF/Sink.lean` relabel it first
+(https://github.com/danbri/factoidal/issues/986). -/
 
 private def cxP : WfIri := ⟨"http://example.org/p", by decide⟩
 private def cxO : WfIri := ⟨"http://example.org/o", by decide⟩
@@ -571,12 +609,15 @@ private def cxParses (mode : Mode) (ds : Dataset) : Option Bool :=
   | .error _ => none
   | .ok text => some (parseNQuads text mode).toOption.isSome
 
-#guard (quadsOf (cxDataset (.bnode "g 1"))).all Quad.ntSafe == false
+#guard (quadsOf (cxDataset (.bnode "g 1"))).all Quad.ntLex == false
+#guard (quadsOf (cxDataset (.bnode "g 1"))).all Quad.ntSafe
 #guard cxParses .rdf11 (cxDataset (.bnode "g 1")) == some false
-#guard (quadsOf (cxDataset (.bnode "g1"))).all Quad.ntSafe
+#guard (quadsOf (cxDataset (.bnode "g1"))).all Quad.ntLex
 #guard cxParses .rdf11 (cxDataset (.bnode "g1")) == some true
 #guard cxParses .rdf12 (cxDataset (.bnode "g1")) == some true
 
+#print axioms quadsOf_renameBnodes
+#print axioms Quad.ntLex_renameBnodes
 #print axioms readGraphLabel_safe
 #print axioms readNQuad11_line
 #print axioms readNQuad12_line

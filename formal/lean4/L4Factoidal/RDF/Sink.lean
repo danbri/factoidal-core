@@ -121,6 +121,7 @@ import L4Factoidal.Syntax.NQuads
 import L4Factoidal.Syntax.TurtleSerialize
 import L4Factoidal.Syntax.RdfXmlWrite
 import L4Factoidal.RDF.Runs
+import L4Factoidal.RDF.WriterLabels
 import Std.Data.HashMap
 
 namespace L4Factoidal.RDF.Sink
@@ -196,15 +197,57 @@ def datasetToTrig (v : RdfVersion) (ds : Dataset) : Except String String := do
     out := out ++ Subject.toNTriples ng.name ++ " {\n" ++ (← Graph.toNTriples ng.graph v) ++ "}\n"
   return out
 
+/-! ### Blank-node labels and language tags (https://github.com/danbri/factoidal/issues/986)
+
+The N-Triples, N-Quads, Turtle and TriG writers write the dataset
+`Dataset.relabelForWrite` (`RDF/WriterLabels.lean`): a blank-node label outside
+BLANK_NODE_LABEL [141s] gets a fresh valid label, the same for each of its
+occurrences, that no other blank node of the document has. A language tag
+outside LANGTAG [144s] (`langTagWritable`; RDF 1.2: subtags of 1 to 8
+characters) has no valid rewrite: the writer refuses the dataset with
+`langTagError`, which names the tag. `Term.toNTriples` refuses it for the
+N-Triples and N-Quads lines; the Turtle and TriG text writers check the dataset
+first (`checkLangTags`). -/
+
+/-- The first language tag of the term (in a triple term too) that the writer
+of `v` cannot write. -/
+def Term.badLangTag? (v : RdfVersion) : Term → Option String
+  | .literal wl =>
+      match wl.val.langTag with
+      | some tag => if langTagWritable v tag then none else some tag
+      | none => none
+  | .tripleTerm _ _ o => Term.badLangTag? v o
+  | _ => none
+
+/-- The first language tag of the graph that the writer of `v` cannot write. -/
+def Graph.badLangTag? (v : RdfVersion) (g : Graph) : Option String :=
+  g.findSome? fun t => Term.badLangTag? v t.o
+
+/-- The error for the first language tag of the dataset that the writer of `v`
+cannot write. -/
+def checkLangTags (v : RdfVersion) (ds : Dataset) : Except String Unit :=
+  match Graph.badLangTag? v (flatten ds) with
+  | some tag => .error (langTagError tag)
+  | none => .ok ()
+
+/-- The dataset that the writer of `fmt` writes: relabelled for the syntaxes
+of the N-Triples family. -/
+def writerInput (fmt : RdfFormat) (ds : Dataset) : Dataset :=
+  match fmt with
+  | .nt | .nquads | .turtle | .trig => ds.relabelForWrite
+  | _ => ds
+
 /-- The text of a whole dataset in syntax `fmt`. The syntaxes with no graph name
     write the triples of all the graphs together (`flatten`). -/
 def serializeDataset (extra : Extra) (fmt : RdfFormat) (v : RdfVersion) (ds : Dataset) :
     Except String String :=
   match fmt with
-  | .nquads => Dataset.toNQuads ds v
-  | .nt => Graph.toNTriples (flatten ds) v
-  | .turtle => .ok (turtleOfGraphAuto (flatten ds))
-  | .trig => datasetToTrig v ds
+  | .nquads => Dataset.toNQuads ds.relabelForWrite v
+  | .nt => Graph.toNTriples (flatten ds.relabelForWrite) v
+  | .turtle => do
+      checkLangTags v ds
+      pure (turtleOfGraphAuto (flatten ds.relabelForWrite))
+  | .trig => datasetToTrig v ds.relabelForWrite
   | .rdfxml => RdfXmlWrite.graphToRdfXml (flatten ds)
   | .jsonld =>
       match extra.jsonld with
@@ -598,8 +641,10 @@ def streamQuads (extra : Extra) (fmt : RdfFormat) (opts : Options)
 /-- The text of a whole dataset by the stream writer: its quads (the default
     graph, then each named graph in list order), then each named graph with no
     triple, stated by `Writer.declare`. -/
-def streamDataset (extra : Extra) (fmt : RdfFormat) (opts : Options) (ds : Dataset) :
+def streamDataset (extra : Extra) (fmt : RdfFormat) (opts : Options) (ds0 : Dataset) :
     Except String String := do
+  if fmt == .turtle || fmt == .trig then checkLangTags opts.version ds0
+  let ds := writerInput fmt ds0
   let quads : List (Triple × Option Subject) :=
     ds.default.map (fun t => (t, none)) ++ ds.named.flatMap (fun ng => ng.graph.map (fun t => (t, some ng.name)))
   let (w0, header) ← Writer.init extra fmt (withTable fmt opts quads)
