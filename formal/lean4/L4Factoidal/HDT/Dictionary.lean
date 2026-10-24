@@ -52,6 +52,7 @@ RDF terms:
 -/
 import L4Factoidal.HDT.Container
 import L4Factoidal.Syntax.NTriples
+import L4Factoidal.Storage.TermFold
 
 namespace L4Factoidal.HDT
 
@@ -381,6 +382,66 @@ inductive Role where
   | subject | predicate | object
   deriving Repr, DecidableEq, Inhabited
 
+/-! ## One id per RDF term (https://github.com/danbri/factoidal/issues/977)
+
+An HDT file is written by another tool, which keeps language tags as the
+source data spells them, so `"x"@en` and `"x"@EN` can be two dictionary
+strings. RDF 1.2 Concepts section 3.4 compares tags with ASCII
+case-insensitive matching. The reader therefore folds every term it decodes
+(`Storage.TermFold.foldTerm`, tags in lower case; RDF 1.1 Concepts section
+3.3), and a lookup folds the wanted term and finds a stored string whose fold
+it is, whatever the case of its tag (`pfcLocateFold`). A file that holds two
+spellings of one term keeps two ids for it; `roundTripsAll` is the test that
+a role has one id per term, and `DictionaryTheorems.hdt_dictInjective` gives
+`RDF.DictInjective` from it. -/
+
+/-- The dictionary-string prefix `"lex"@` of a language-tagged literal: its
+    string with the tag removed. Every case variant of the tag has this
+    prefix, and the variants are adjacent in the sorted section. -/
+def langPrefix? (t : Term) : Option String :=
+  match t with
+  | .literal l =>
+      match l.val.langTag with
+      | some tag => (stringOfTerm t).map fun s => String.ofList (s.toList.take (s.length - tag.length))
+      | none => none
+  | _ => none
+
+/-- From `id` on, the first id whose string starts with `pre` and reads as a
+    term whose fold is `w`; the walk stops at the first string after the
+    strings that start with `pre`. -/
+def pfcScanFold (a : Bytes) (sec : PfcSection) (pre : String) (w : Term) : Nat → Nat → Option Nat
+  | 0, _ => none
+  | fuel + 1, id =>
+    match pfcExtract a sec id with
+    | none => none
+    | some str =>
+      if str < pre then pfcScanFold a sec pre w fuel (id + 1)
+      else if str.startsWith pre then
+        if (termOfString str).map Storage.TermFold.foldTerm == some w then some id
+        else pfcScanFold a sec pre w fuel (id + 1)
+      else none
+
+/-- The id of a stored string whose term folds to `w`, among the strings with
+    the prefix `pre`: the scan starts at the block that `pfcFindBlock` gives
+    for `pre`. -/
+def pfcLocateFold (a : Bytes) (sec : PfcSection) (pre : String) (w : Term) : Option Nat :=
+  let numblocks := pfcNumBlocks sec
+  if numblocks == 0 then none
+  else
+    match pfcFindBlock a sec pre 0 (numblocks - 1) with
+    | none => none
+    | some blockIdx => pfcScanFold a sec pre w sec.numstrings (blockIdx * sec.blocksize + 1)
+
+/-- The id of a term in one section: the folded string exactly, else, for a
+    language-tagged literal, a stored string whose tag differs only in case. -/
+def pfcLocateTerm (a : Bytes) (sec : PfcSection) (w : Term) (dstr : String) : Option Nat :=
+  match pfcLocate a sec dstr with
+  | some id => some id
+  | none =>
+      match langPrefix? w with
+      | some pre => pfcLocateFold a sec pre w
+      | none => none
+
 def idToTerm (a : Bytes) (inv : Inventory) (role : Role) (id : Nat) : Option Term :=
   let nshared := inv.dictShared.numstrings
   let extracted := match role with
@@ -391,21 +452,23 @@ def idToTerm (a : Bytes) (inv : Inventory) (role : Role) (id : Nat) : Option Ter
     | .object =>
         if id ≤ nshared then pfcExtract a inv.dictShared id
         else pfcExtract a inv.dictObjects (id - nshared)
-  extracted.bind termOfString
+  -- the read-time fold (issue 977)
+  (extracted.bind termOfString).map Storage.TermFold.foldTerm
 
-def termToId (a : Bytes) (inv : Inventory) (role : Role) (term : Term) : Option Nat := do
+def termToId (a : Bytes) (inv : Inventory) (role : Role) (term0 : Term) : Option Nat := do
+  let term := Storage.TermFold.foldTerm term0
   let dstr ← stringOfTerm term
   let nshared := inv.dictShared.numstrings
   match role with
   | .predicate => pfcLocate a inv.dictPredicates dstr
   | .subject =>
-      match pfcLocate a inv.dictShared dstr with
+      match pfcLocateTerm a inv.dictShared term dstr with
       | some id => some id
-      | none    => (pfcLocate a inv.dictSubjects dstr).map (nshared + ·)
+      | none    => (pfcLocateTerm a inv.dictSubjects term dstr).map (nshared + ·)
   | .object =>
-      match pfcLocate a inv.dictShared dstr with
+      match pfcLocateTerm a inv.dictShared term dstr with
       | some id => some id
-      | none    => (pfcLocate a inv.dictObjects dstr).map (nshared + ·)
+      | none    => (pfcLocateTerm a inv.dictObjects term dstr).map (nshared + ·)
 
 /-- Highest valid ID in a role's space — the loop bound for a
     full-space round-trip check. -/
@@ -415,6 +478,15 @@ def roleMaxId (inv : Inventory) (role : Role) : Nat :=
   | .predicate => inv.dictPredicates.numstrings
   | .subject   => nshared + inv.dictSubjects.numstrings
   | .object    => nshared + inv.dictObjects.numstrings
+
+/-- Every id of a role decodes to a term whose id is that id: the role has one
+    id per RDF term (two spellings of one term would give the second id the
+    first one's id). A `Bool` test over the whole role. -/
+def roundTripsAll (a : Bytes) (inv : Inventory) (role : Role) : Bool :=
+  (List.range (roleMaxId inv role)).all fun i =>
+    match idToTerm a inv role (i + 1) with
+    | some t => termToId a inv role t == some (i + 1)
+    | none => false
 
 /-! ## Build-time checks
 

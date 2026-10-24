@@ -29,7 +29,9 @@ is needed (the JSON form `TermJson.compactCertified` checks at run time):
   bytes of `binSpec` for a table and index lists that read back as the quads
   (`TermJson.decodeCompactArr`);
 * `decodeBin_quadsBin`: together, the region of `quadsBin qs` reads back as
-  exactly `qs`.
+  exactly the folded quads `qs.map Storage.TermFold.foldQuad` (language tags in
+  lower case; one table entry per RDF term,
+  https://github.com/danbri/factoidal/issues/977).
 -/
 import L4Factoidal.RDF.TermJson
 import L4Factoidal.Storage.TermCodecTheorems
@@ -154,6 +156,10 @@ term bytes and the quad bytes. -/
 structure BinState where
   iris : Std.HashMap String Nat := {}
   bnodes : Std.HashMap String Nat := {}
+  /-- The index of each literal and triple term seen (folded). Until
+      2026-10-23 these got a new table entry at every occurrence
+      (https://github.com/danbri/factoidal/issues/977). -/
+  others : Std.HashMap Term Nat := {}
   tbl : Array Term := #[]
   terms : ByteArray := ByteArray.empty
   quads : ByteArray := ByteArray.empty
@@ -167,6 +173,16 @@ fit their length fields. -/
     | none => none
     | some b => some (st.tbl.size, { st with tbl := st.tbl.push t, terms := b })
   else none
+
+/-- The index of a literal or a triple term: its entry when it was seen,
+else a new entry. -/
+@[inline] def BinState.indexOther (st : BinState) (t : Term) : Option (Nat × BinState) :=
+  match st.others[t]? with
+  | some k => some (k, st)
+  | none =>
+    match st.add t with
+    | none => none
+    | some (k, st') => some (k, { st' with others := st'.others.insert t k })
 
 @[inline] def BinState.index (st : BinState) (t : Term) : Option (Nat × BinState) :=
   match t with
@@ -184,10 +200,12 @@ fit their length fields. -/
         match st.add t with
         | none => none
         | some (k, st') => some (k, { st' with bnodes := st'.bnodes.insert b k })
-  | _ => st.add t
+  | _ => st.indexOther t
 
 /-- One quad: its terms in the order of `TermJson.quadTerms`, then its four
-u32 fields. -/
+u32 fields. The object is folded first (`Storage.TermFold.foldTerm`, language
+tags in lower case; issue 977); a subject, a predicate and a graph name hold
+no literal. -/
 def BinState.quad (st : BinState) (q : Quad) : Option BinState :=
   match st.index (subjectToTerm q.2.s) with
   | none => none
@@ -195,7 +213,7 @@ def BinState.quad (st : BinState) (q : Quad) : Option BinState :=
   match st.index (.iri q.2.p) with
   | none => none
   | some (pi, st) =>
-  match st.index q.2.o with
+  match st.index (Storage.TermFold.foldTerm q.2.o) with
   | none => none
   | some (oi, st) =>
   match q.1 with

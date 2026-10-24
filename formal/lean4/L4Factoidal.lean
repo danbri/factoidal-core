@@ -25,10 +25,15 @@ import L4Factoidal.RDF.NormalizeSet
 import L4Factoidal.RDF.NormalizeSetTests
 import L4Factoidal.RDF.DatasetDenotation
 import L4Factoidal.RDF.DatasetDenotationTests
+import L4Factoidal.RDF.BnodeTransport
+import L4Factoidal.RDF.DocumentScope
+import L4Factoidal.RDF.BnodeTransportTests
 import L4Factoidal.Dataflow.Stage
 import L4Factoidal.Dataflow.StageTests
 import L4Factoidal.Dataflow.Instances
 import L4Factoidal.Dataflow.InstancesTests
+import L4Factoidal.Dataflow.PhaseD
+import L4Factoidal.Dataflow.PhaseDTests
 import L4Factoidal.Dataflow.Registry
 import L4Factoidal.Dataflow.RegistryTests
 import L4Factoidal.RDF.ConciseBoundedDescription
@@ -276,6 +281,8 @@ import L4Factoidal.SPARQL.UpdateStore
 import L4Factoidal.SPARQL.UpdateStoreTheorems
 import L4Factoidal.SPARQL.UpdateTests
 import L4Factoidal.SPARQL.UpdateTheorems
+import L4Factoidal.SPARQL.UpdateDenotation
+import L4Factoidal.SPARQL.UpdateDenotationTests
 import L4Factoidal.Regex.Syntax
 import L4Factoidal.Regex.Derivative
 import L4Factoidal.Regex.Exec
@@ -692,6 +699,7 @@ import L4Factoidal.SPARQL.PlanStreamable
 import L4Factoidal.RDF.CanonicalManifest
 import L4Factoidal.RDF.DatasetMerge
 import L4Factoidal.RDF.CertifiedDataset
+import L4Factoidal.RDF.DocumentScopeTests
 import L4Factoidal.RDF.Format
 import L4Factoidal.RDF.MediaType
 import L4Factoidal.RDF.MediaTypeTests
@@ -754,6 +762,14 @@ import L4Factoidal.Cottas.OffsetIndex
 import L4Factoidal.Cottas.SubjectOffsetIndex
 import L4Factoidal.Storage.IndexedBlock
 import L4Factoidal.Storage.IndexedBlockDictTheorems
+import L4Factoidal.Storage.TermFold
+import L4Factoidal.Storage.TermFoldTheorems
+import L4Factoidal.Storage.DictFoldTests
+import L4Factoidal.Storage.StoreDictTheorems
+import L4Factoidal.RDF.TermJsonDictTheorems
+import L4Factoidal.HDT.DictionaryTheorems
+import L4Factoidal.HDT.DictionaryFoldTests
+import L4Factoidal.Cottas.DictTheorems
 import L4Factoidal.Storage.IndexedBlockTests
 import L4Factoidal.Storage.SubjectRowIndex
 import L4Factoidal.Storage.SubjectRowIndexTests

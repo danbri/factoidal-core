@@ -27,7 +27,9 @@ special case.
 
 Blank nodes are terms with labels here. Their scope (one origin, for example
 one document) and equality up to a consistent relabelling are part of the
-contract of a stage, not of this type (phases B3 and C of issue 975).
+contract of a stage, not of this type (phases B3 and C of issue 975):
+`DatasetDen.Iso` in `RDF/BnodeTransport.lean`, the document scope and
+`DatasetDen.IsMerge` in `RDF/DocumentScope.lean`.
 
 Two conditions hold of every `DatasetDen`:
 
@@ -52,11 +54,12 @@ case. `Literal.joinKey` lowers the tag with `String.toLower`, which maps ASCII
 letters only, as section 3.4 asks.
 
 `DecidableEq Triple` is structural: it tells `"chat"@EN` from `"chat"@en`, so
-it is not the target equality. A component that gives one id per structural
-term (https://github.com/danbri/factoidal/issues/977) still maps into the
-target, because the decoded triples are compared by key; but a theorem that
-compares ids (the removal of one row, a join on ids) then needs a fold of the
-language tags before the ids are assigned. Literal VALUE equality
+it is not the target equality. Every store dictionary folds the language tags
+before it assigns ids (`Storage/TermFold.lean`, the SBM11 `normalizeTerm`;
+https://github.com/danbri/factoidal/issues/977), so a theorem that compares ids
+(the removal of one row, a join on ids) can use `Eq` on the folded terms:
+`TermFoldTheorems.normalizeTerm_eq_iff_eqb` relates it to `Term.eqb`, and
+`TermFoldTheorems.joinKey_eq_foldTerm` to the key of this target. Literal VALUE equality
 (`Literal.valueEqb`, for example two `rdf:XMLLiteral` lexical forms with one
 canonical form) is not used: those are two terms.
 

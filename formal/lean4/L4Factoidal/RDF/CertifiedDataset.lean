@@ -30,6 +30,7 @@ No `sorry`, no `axiom`, no `native_decide`, no `partial`.
 -/
 import L4Factoidal.RDF.DatasetSet
 import L4Factoidal.RDF.DatasetMerge
+import L4Factoidal.RDF.BnodeTransport
 import L4Factoidal.SPARQL.Update
 
 namespace L4Factoidal.RDF
@@ -56,58 +57,10 @@ theorem renameBnodeLabel_injective (pre : String) :
   simp only [String.toList_append] at h'
   exact String.toList_inj.mp (List.append_cancel_left h')
 
-theorem renameSubject_injective (pre : String) : Function.Injective (renameSubject pre) := by
-  intro a b h
-  cases a <;> cases b <;> simp only [renameSubject, reduceCtorEq, Subject.bnode.injEq,
-    Subject.iri.injEq] at h ⊢
-  · exact h
-  · exact renameBnodeLabel_injective pre h
-
-theorem renameTerm_injective (pre : String) : Function.Injective (renameTerm pre) := by
-  intro a b h
-  cases a <;> cases b <;> simp only [renameTerm, reduceCtorEq] at h ⊢ <;>
-    first
-    | exact h
-    | exact congrArg Term.bnode (renameBnodeLabel_injective pre (Term.bnode.inj h))
-
-theorem renameTriple_injective (pre : String) : Function.Injective (renameTriple pre) := by
-  intro a b h
-  obtain ⟨s1, p1, o1⟩ := a
-  obtain ⟨s2, p2, o2⟩ := b
-  simp only [renameTriple, Triple.mk.injEq] at h
-  obtain ⟨hs, hp, ho⟩ := h
-  rw [renameSubject_injective pre hs, hp, renameTerm_injective pre ho]
-
-/-- The scope prefix commutes with the key: it changes blank-node labels, and
-the key changes only literals. -/
-theorem key_renameTriple (pre : String) (t : Triple) :
-    (renameTriple pre t).key = renameTriple pre t.key := by
-  obtain ⟨s, p, o⟩ := t
-  cases o <;> simp [renameTriple, Triple.key, renameTerm, Term.joinKey]
-
-theorem Graph.KeyNodup.rename {g : Graph} (pre : String) (h : g.KeyNodup) :
-    (renameGraphBnodes pre g).KeyNodup := by
-  unfold Graph.KeyNodup renameGraphBnodes
-  rw [List.map_map]
-  have hk : (Triple.key ∘ renameTriple pre) = (renameTriple pre ∘ Triple.key) :=
-    funext (key_renameTriple pre)
-  rw [hk, ← List.map_map]
-  exact List.pairwise_map.mpr (h.imp fun hne he => hne (renameTriple_injective pre he))
-
 theorem renameDatasetBnodes_isSet (pre : String) {ds : Dataset} (h : ds.IsSet) :
-    (renameDatasetBnodes pre ds).IsSet where
-  default := h.default.rename pre
-  names := by
-    have hn : (renameDatasetBnodes pre ds).names = ds.names.map (renameSubject pre) := by
-      simp [Dataset.names, renameDatasetBnodes, renameNamedGraph, renameGraphName,
-        List.map_map, Function.comp_def]
-    rw [hn]
-    exact List.pairwise_map.mpr (h.names.imp fun hne he => hne (renameSubject_injective pre he))
-  graphs := by
-    intro ng hng
-    simp only [renameDatasetBnodes, List.mem_map] at hng
-    obtain ⟨ng0, h0, rfl⟩ := hng
-    exact (h.graphs ng0 h0).rename pre
+    (renameDatasetBnodes pre ds).IsSet := by
+  rw [renameDatasetBnodes_eq]
+  exact Dataset.renameBnodes_isSet h fun _ _ _ _ e => renameBnodeLabel_injective pre e
 
 /-! ## SPARQL quad insertion and deletion keep a set a set -/
 

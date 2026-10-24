@@ -16,6 +16,7 @@ same meaning as `IndexedBlock.Block.dict`.
 import L4Factoidal.Storage.BlockWireV0
 import L4Factoidal.Storage.PagedTermDictionaryCore
 import L4Factoidal.Storage.TermCodecTheorems
+import L4Factoidal.Storage.TermFold
 
 namespace L4Factoidal.Storage.PagedTermDictionary
 
@@ -90,7 +91,14 @@ abbrev decodePages? := PTD.decodePages? v1Format
 abbrev decodePage? := PTD.decodePage? v1Format
 abbrev decodePageArray? := PTD.decodePageArray? v1Format
 abbrev decodeTermFromPage? := PTD.decodeTermFromPage? v1Format
-abbrev findTermId? := @PTD.findTermId? Term _
+/-- The id of an RDF term: the first position whose term has the same fold
+    (`TermFold.foldTerm`, language tags in lower case) as `wanted`, so
+    `"x"@en` and `"x"@EN` find one id (https://github.com/danbri/factoidal/issues/977).
+    `TermFoldTheorems.findFold_dictInjective` is the contract, for an array
+    in which no two entries have one fold (an IBK3 or IBK4 dictionary). -/
+def findTermId? (terms : Array Term) (wanted : Term) : Option Nat :=
+  let w := TermFold.foldTerm wanted
+  terms.findIdx? fun term => TermFold.foldTerm term == w
 
 /-- PTD1 admission. `termSupported` is the direct-term subset the inherited
     term codec decodes; `termFitsU32b` is the u32 length-prefix test for the
@@ -183,6 +191,8 @@ private def twoPageBytes : ByteArray := (encode? twoPageSample).getD ByteArray.e
 #guard decode? sampleBytes == some sample
 #guard findTermId? sample (.iri ex2) == some 1
 #guard (findTermId? sample (.bnode "missing")).isNone
+#guard findTermId? #[.iri ex, .literal (Literal.langString "x" "EN")]
+  (.literal (Literal.langString "x" "en")) == some 1
 #guard (decodePrefix (sampleBytes.extract 0 prefixBytes)).map (fun p => p.termCount) == some 2
 #guard (decodePrefix (sampleBytes.extract 0 prefixBytes)).bind (fun p =>
   decodeDirectory? p (sampleBytes.extract prefixBytes (prefixBytes + p.pageCount * 8)) |>.bind fun d =>

@@ -78,6 +78,7 @@ import L4Factoidal.Syntax.NQuadsFast
 import L4Factoidal.RDF.Source
 import Std.Data.HashSet
 import L4Factoidal.RDF.DatasetMerge
+import L4Factoidal.RDF.DocumentScope
 import Wasm.Ops.FromDataset
 
 namespace L4Wasm.Ops
@@ -425,10 +426,11 @@ def parseToDatasetJsonWithBy (extra : ExtraReader) (scope : Option String)
 /-- Parses so far in this process. The scope of the next one is `d<N>_`. -/
 initialize documentScopeCounter : IO.Ref Nat ← IO.mkRef 0
 
-/-- The next document scope prefix, `d0_`, `d1_`, … Never reused. -/
+/-- The next document scope prefix, `d0_`, `d1_`, … (`RDF.docScope`; two
+scope numbers give disjoint labels, `RDF.docLabel_inj`). Never reused. -/
 def nextDocumentScope : IO String := do
   let n ← documentScopeCounter.modifyGet fun n => (n, n + 1)
-  pure s!"d{n}_"
+  pure (L4Factoidal.RDF.docScope n)
 
 /-- `parseToDatasetJson` with a fresh blank-node scope per call. `callIO`
 serves this entry under the op name `parseToDatasetJson`. -/

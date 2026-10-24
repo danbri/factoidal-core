@@ -103,6 +103,10 @@ abbrev decodePageArray? := PTD.decodePageArray? v2Format
 abbrev decodeTermFromPage? := PTD.decodeTermFromPage? v2Format
 abbrev decodeSpec? := PTD.decodeSpec? v2Format
 abbrev decode? := PTD.decode? v2Format
-abbrev findTermId? := @PTD.findTermId? WireTerm _
+/-- The id of a wire term: the first position whose entry has the same fold
+    (`TermWireV2.foldWire`) as `wanted` (issue 977). -/
+def findTermId? (terms : Array WireTerm) (wanted : WireTerm) : Option Nat :=
+  let w := foldWire wanted
+  terms.findIdx? fun term => foldWire term == w
 
 end L4Factoidal.Storage.PagedTermDictionaryV2

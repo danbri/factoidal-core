@@ -36,19 +36,25 @@ namespace L4Factoidal.RDF
 
 def renameBnodeLabel (pre : String) (b : BNodeId) : BNodeId := pre ++ b
 
-def renameSubject (pre : String) : Subject → Subject
-  | .bnode b => .bnode (renameBnodeLabel pre b)
-  | s        => s
+/-! Every renaming below is `Term.renameBnodes` with `renameBnodeLabel pre`,
+so it reaches the blank nodes inside RDF 1.2 triple terms. Until 2026-10-23
+`renameTerm` renamed only a top-level blank node: in `_:b <p> <<( _:b <q> "x" )>>`
+the outer `_:b` got the scope and the inner one did not, so one blank node
+became two inside a document, and the inner labels of two documents were
+shared (https://github.com/danbri/factoidal/issues/975, phase C;
+`DocumentScopeTests.lean`). -/
 
-def renameTerm (pre : String) : Term → Term
-  | .bnode b => .bnode (renameBnodeLabel pre b)
-  | t        => t
+def renameSubject (pre : String) : Subject → Subject :=
+  Subject.renameBnodes (renameBnodeLabel pre)
+
+def renameTerm (pre : String) : Term → Term :=
+  Term.renameBnodes (renameBnodeLabel pre)
 
 def renameTriple (pre : String) (t : Triple) : Triple :=
-  { s := renameSubject pre t.s, p := t.p, o := renameTerm pre t.o }
+  t.renameBnodes (renameBnodeLabel pre)
 
 def renameGraphBnodes (pre : String) (g : Graph) : Graph :=
-  g.map (renameTriple pre)
+  g.renameBnodes (renameBnodeLabel pre)
 
 /-- A blank-node graph name is document-scoped exactly like a
     triple-level blank node, so it takes the same prefix: a blank node
@@ -64,6 +70,10 @@ def renameNamedGraph (pre : String) (ng : NamedGraph) : NamedGraph :=
 def renameDatasetBnodes (pre : String) (ds : Dataset) : Dataset :=
   { default := renameGraphBnodes pre ds.default,
     named := ds.named.map (renameNamedGraph pre) }
+
+/-- The document scope is `Dataset.renameBnodes` with the prefix map. -/
+theorem renameDatasetBnodes_eq (pre : String) (ds : Dataset) :
+    renameDatasetBnodes pre ds = ds.renameBnodes (renameBnodeLabel pre) := rfl
 
 /-! ## Build-time checks -/
 

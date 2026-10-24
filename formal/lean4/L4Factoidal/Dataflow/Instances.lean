@@ -12,7 +12,10 @@ existing theorem; the only new lemmas are hand-over facts about the wire types
 | stage | in → out | contract | from |
 |---|---|---|---|
 | `decodeStage` | `Document` → `RdfFormat × String` | `DecodeContract`: the media type (or, when it is absent, the registered extension of the source) gives the format, the text is the UTF-8 decoding of the bytes | `RDF.formatOfDocument`, `String.fromUTF8?` (core) |
-| `parseStage` | `RdfFormat × String` → `Dataset` | `ParseContract`: a set, with the denotation of the raw parse | `Source.parseDocument_set`, `Dataset.memQuad_toSet` |
+| `parseStage` | `RdfFormat × String` → `Dataset` | `ParseContract`: a set, with the denotation of the raw parse (labels as written) | `Source.parseDocument_set`, `Dataset.memQuad_toSet` |
+| `scopeStage` | `Dataset` → `Dataset` | `ScopeContract`: blank nodes relabelled by the document scope `n`, fresh for the document, isomorphic denotation | `Dataset.den_iso_scopeDocument`, `docLabel_inj` |
+| `scopedParseStage` | `RdfFormat × String` → `Dataset` | `ScopedParseContract`: `parseStage` then `scopeStage`; two documents with different scopes combine to a merge (`scopedParse_combine_isMerge`) | `scopeDocument_combine_isMerge` |
+| `relabelStage` | `Dataset` → `Dataset` | `RelabelContract`: an injective relabelling at a store boundary, isomorphic denotation | `Dataset.den_iso_renameBnodes`, `Dataset.renameBnodes_isSet` |
 | `sbm11PackStage` | `Dataset` → `MemGen × FileGen` | `PackContract`: the generation denotes the dataset, the files hold the bytes the encoders write, and the generation answers as the dataset | `den_packSpec`, `packSpec_written`, `packSpec_check`, `AllowedPerm.allowed_perm` |
 | `sbm11Disk` (IO) | `FileGen` → `FileGen` | `ReadsWritten`: the bytes read are the bytes written | named assumption |
 | `sbm11WhereStage` | `MemGen × FileGen` → harness output | `WhereContract`: the WHERE answer is an answer SPARQL 1.1 allows over the generation | `harness_where_allowed_file` |
@@ -24,7 +27,8 @@ existing theorem; the only new lemmas are hand-over facts about the wire types
 
 ## The end-to-end composition
 
-`documentToWhere` is `decodeStage`, then `parseStage`, then `sbm11PackStage`,
+`documentToWhere` is `decodeStage`, then `scopedParseStage` (scope number
+`n`), then `sbm11PackStage`,
 then `sbm11Disk` on the files, then `sbm11WhereStage`.
 `documentToWhere_sound` states what a successful run gives.
 `documentToSolutions` adds `sbm11DecodeStage`; `documentToSolutions_sound`
@@ -51,9 +55,18 @@ ends at `SolutionSeq`. `sbm11PlannerSelect` is the reference fallback of
    paths take format labels (`formatOfLabel`) and do not read a media type,
    so no runtime path changed. `SPARQL/GraphStoreService.lean`,
    `SPARQL/Protocol.lean` and the Solid modules keep their own lists.
-2. Blank-node scope. `Document.source` is not an input of any parser
-   contract. Blank nodes are labels; two documents that use `_:b` give the
-   same term. Phase C of issue 975.
+2. Blank-node scope (closed). `scopedParseStage` scopes the blank nodes of a
+   document by a scope number from a fresh-label supply (`ScopedParseContract`:
+   fresh for the document, denotation isomorphic to the raw parse's), and two
+   documents with different scope numbers combine to an RDF 1.1 Semantics
+   section 5.2 merge (`scopedParse_combine_isMerge`). `documentToWhere_sound`
+   and `documentToSolutions_sound` state the transport (`DatasetDen.Iso`) from
+   the raw parse to the generation. The shipped paths: the Wasm operations
+   `datasetOpen` and `parseToDatasetJson` scope with `d<n>_` (now also inside
+   triple terms); the W3C harness scopes each fixture file; `l4sbm11 pack`
+   reads one document and keeps its labels (the identity relabelling). The
+   freshness of the supply (`nextDocumentScope`, an `IO.Ref` counter) is IO
+   and is not modelled.
 3. Language-tag case, parse → SBM11. The packer folds language tags, so the
    generation denotes the parsed dataset with no hypothesis (`den_packSpec`).
    But the transfer of SPARQL answers from the generation to the parsed
@@ -68,9 +81,11 @@ ends at `SolutionSeq`. `sbm11PlannerSelect` is the reference fallback of
    `documentToSolutions_sound` proves that the decoded rows are
    `t.idRows.map (decRow (decV G.dec s.vocab))`, the sequence that `WhereOk`
    allows (`termOf_withLocal`, `store_written`, `mem_htermOf`, `mem_hloc`).
-5. Reasoners take one graph. `rdfsClosureStage` maps `Graph` to `Graph`;
-   there is no stage from `Dataset` (RDF 1.1 Semantics defines entailment on
-   graphs; a dataset regime is a choice, not stated here).
+5. Reasoners take one graph (closed in phase D). `rdfsClosureStage` maps
+   `Graph` to `Graph`; RDF 1.1 Semantics defines entailment on graphs.
+   `Dataflow/PhaseD.lean` gives each reasoner a dataset form: the graph
+   selection (`GraphSelection`, `selectStage`, `mem_select`) is an explicit
+   stage parameter.
 6. Planner stage input (partly closed). The planner SELECT stage is on the
    shipped path: the reference fallback of `l4sbm11 query` reads a dataset
    from the generation (`selectedDataset`) and runs it. `sbm11PlannerSelect`
@@ -94,6 +109,7 @@ import L4Factoidal.Storage.Sbm11.FileGenTheorems
 import L4Factoidal.Storage.PlannerSoundness
 import L4Factoidal.Proof.Checker
 import L4Factoidal.RDF.EntailmentRegimeSoundness
+import L4Factoidal.RDF.DocumentScope
 
 namespace L4Factoidal.Dataflow
 
@@ -197,6 +213,81 @@ theorem decodeParse_mediaType (extra : Extra) (mode : Syntax.Mode) (base : Optio
   cases parseDocument extra f mode base text with
   | error e => intro h; cases h
   | ok ds' => intro h; injection h with h; rw [h]
+
+/-! ## Document scope: blank nodes fresh for the document
+
+RDF 1.1 Concepts section 3.4: blank node identifiers "are always locally
+scoped to the file or RDF store". The parser gives the labels as written. The
+scope stage gives the document a scope number `n` from a fresh-label supply
+(`Wasm/Ops/Parse.lean` `nextDocumentScope`: an `IO.Ref` counter, never
+reused; the W3C harness: the index of the fixture file) and relabels every
+blank node `b` to `docLabel n b` (`d<n>_b`), in subjects, objects, graph names
+and RDF 1.2 triple terms. `Document.source` is not used as the scope: a source
+string can be any text, and one source can be read twice. -/
+
+/-- The scope contract: the output is the input relabelled by `docLabel n`;
+every blank node of the output has the scope `n`; the denotations are
+isomorphic (`DatasetDen.Iso`, identity transport); a set stays a set. -/
+def ScopeContract (n : Nat) (ds out : Dataset) : Prop :=
+  out = ds.scopeDocument n ∧ out.InScope n ∧ DatasetDen.Iso ds.den out.den ∧
+    (ds.IsSet → out.IsSet)
+
+def scopeStage (n : Nat) : Stage String Dataset Dataset :=
+  Stage.ofFun (Dataset.scopeDocument n) (ScopeContract n)
+    (fun ds => ⟨rfl, ds.scopeDocument_inScope n, ds.den_iso_scopeDocument n,
+      fun h => Dataset.scopeDocument_isSet n h⟩)
+
+/-- A store boundary that renumbers blank nodes by an injective map `f`
+states the transport: the output is the relabelled input, its denotation is
+isomorphic to the input's, and a set stays a set. -/
+def RelabelContract (f : BNodeId → BNodeId) (ds out : Dataset) : Prop :=
+  out = ds.renameBnodes f ∧ DatasetDen.Iso ds.den out.den ∧ (ds.IsSet → out.IsSet)
+
+def relabelStage (f : BNodeId → BNodeId) (hf : Function.Injective f) :
+    Stage String Dataset Dataset :=
+  Stage.ofFun (Dataset.renameBnodes f) (RelabelContract f)
+    (fun ds => ⟨rfl, Dataset.den_iso_renameBnodes (Dataset.injectiveOnBnodes_of_injective hf ds),
+      fun h => Dataset.renameBnodes_isSet h fun _ _ _ _ e => hf e⟩)
+
+/-- The contract of the parser with the document scope: the raw parse, its
+set, and the output that is the set relabelled by the scope `n`; every blank
+node of the output is fresh for the document (scope `n`), and the output's
+denotation is isomorphic to the raw parse's. -/
+def ScopedParseContract (extra : Extra) (mode : Syntax.Mode) (base : Option String) (n : Nat)
+    (inp : RdfFormat × String) (out : Dataset) : Prop :=
+  ∃ raw ds, parseDocumentRaw extra inp.1 mode base inp.2 = .ok raw ∧ SetOf ds raw ∧
+    out = ds.scopeDocument n ∧ out.IsSet ∧ out.InScope n ∧ DatasetDen.Iso raw.den out.den
+
+theorem scopedParseContract_of {extra : Extra} {mode : Syntax.Mode} {base : Option String} {n : Nat}
+    {inp : RdfFormat × String} {out : Dataset}
+    (h : RelComp (ParseContract extra mode base) (ScopeContract n) inp out) :
+    ScopedParseContract extra mode base n inp out := by
+  obtain ⟨ds, ⟨raw, hr, hs, hset, hden⟩, ⟨hout, hin, hiso, hss⟩⟩ := h
+  refine ⟨raw, ds, hr, hs, hout, hss hset, hin, ?_⟩
+  rw [← hden]
+  exact hiso
+
+/-- Parse, then scope the blank nodes by `n`. -/
+def scopedParseStage (extra : Extra) (mode : Syntax.Mode) (base : Option String) (n : Nat) :
+    Stage String (RdfFormat × String) Dataset :=
+  ((parseStage extra mode base).comp (scopeStage n)).weaken (ScopedParseContract extra mode base n)
+    (fun _ _ h => scopedParseContract_of h)
+
+/-- **Two documents parsed separately and combined give the merge.** With two
+different scope numbers, `Dataset.combine` of the outputs denotes an RDF 1.1
+Semantics section 5.2 merge of the two raw parses, not their union. -/
+theorem scopedParse_combine_isMerge {extra : Extra} {mode : Syntax.Mode} {base : Option String}
+    {n m : Nat} (hnm : n ≠ m) {i1 i2 : RdfFormat × String} {a c : Dataset}
+    (h1 : (scopedParseStage extra mode base n).run i1 = .ok a)
+    (h2 : (scopedParseStage extra mode base m).run i2 = .ok c) :
+    ∃ raw1 raw2, parseDocumentRaw extra i1.1 mode base i1.2 = .ok raw1 ∧
+      parseDocumentRaw extra i2.1 mode base i2.2 = .ok raw2 ∧
+      DatasetDen.IsMerge raw1.den raw2.den (a.combine c).den := by
+  obtain ⟨raw1, ds1, hr1, hs1, rfl, -, -, -⟩ := (scopedParseStage extra mode base n).sound i1 a h1
+  obtain ⟨raw2, ds2, hr2, hs2, rfl, -, -, -⟩ := (scopedParseStage extra mode base m).sound i2 c h2
+  refine ⟨raw1, raw2, hr1, hr2, ?_⟩
+  rw [← SetOf.den_eq hs1, ← SetOf.den_eq hs2]
+  exact scopeDocument_combine_isMerge hnm ds1 ds2
 
 /-! ## SBM11: pack, write, read back, WHERE -/
 
@@ -333,18 +424,22 @@ def sbm11WhereStage (clock : EvalEnv) (base : Option String) (plan : Plan) (p : 
 
 /-! ## The end-to-end composition: document bytes to a WHERE answer -/
 
-/-- Document bytes → decode → parse → SBM11 pack → disk (IO) → WHERE. -/
-def documentToWhere (extra : Extra) (mode : Syntax.Mode) (docBase : Option String) (B : Nat)
+/-- Document bytes → decode → parse with the document scope `n` → SBM11 pack →
+disk (IO) → WHERE. -/
+def documentToWhere (extra : Extra) (mode : Syntax.Mode) (docBase : Option String) (n : Nat) (B : Nat)
     (readBack : FileGen → Except String FileGen) (hrw : sbm11Disk.Realised readBack)
     (clock : EvalEnv) (base : Option String) (plan : Plan) (p : QueryPattern)
     (hnest : plan.nested = some p) (hdsq : plan.dataset = none) : Stage String Document WhereOut :=
-  ((((decodeStage.comp (parseStage extra mode docBase)).comp (sbm11PackStage B)).comp
+  ((((decodeStage.comp (scopedParseStage extra mode docBase n)).comp (sbm11PackStage B)).comp
     (Stage.second (sbm11Disk.toStage readBack hrw))).comp
     (sbm11WhereStage clock base plan p hnest hdsq))
 
 /-- **End to end.** A successful run of `documentToWhere` on a document `d`
-gives: the format and the UTF-8 text of `d`; a parsed dataset `ds` that is a
-set with the denotation of the raw parse; a generation `G` that denotes `ds`;
+gives: the format and the UTF-8 text of `d`; a parsed dataset `ds` that is the
+set of the raw parse with its blank nodes scoped by `n` (fresh for the
+document), with a denotation isomorphic to the raw parse's (identity
+transport, `DatasetDen.Iso`); a generation `G` that denotes `ds` (SBM11 keeps
+the labels, so this step is an equality) and so is isomorphic to the raw parse;
 files `F'` read back that are the files `F` written (named assumption
 `ReadsWritten`); and, under the harness's hypothesis on the query `QHyps`, an
 answer that SPARQL 1.1 allows over `G` and, when `ds` is in SBM11 form
@@ -352,16 +447,20 @@ answer that SPARQL 1.1 allows over `G` and, when `ds` is in SBM11 form
 
 Premises: `hrw` (the named IO assumption `ReadsWritten`), `hnest` and `hdsq`
 (the plan), and inside the conclusion `QHyps`, `Sbm11Folded`, `PermOk`. -/
-theorem documentToWhere_sound (extra : Extra) (mode : Syntax.Mode) (docBase : Option String) (B : Nat)
+theorem documentToWhere_sound (extra : Extra) (mode : Syntax.Mode) (docBase : Option String) (n : Nat)
+    (B : Nat)
     (readBack : FileGen → Except String FileGen) (hrw : sbm11Disk.Realised readBack)
     (clock : EvalEnv) (base : Option String) (plan : Plan) (p : QueryPattern)
     (hnest : plan.nested = some p) (hdsq : plan.dataset = none)
     (d : Document) (r : WhereOut)
-    (h : (documentToWhere extra mode docBase B readBack hrw clock base plan p hnest hdsq).run d = .ok r) :
+    (h : (documentToWhere extra mode docBase n B readBack hrw clock base plan p hnest hdsq).run d = .ok r) :
     ∃ (fmt : RdfFormat) (text : String) (ds raw : Dataset) (G : MemGen) (F F' : FileGen),
       formatOfDocument d.mediaType d.source = some fmt ∧ text.toUTF8 = d.bytes ∧
-      parseDocumentRaw extra fmt mode docBase text = .ok raw ∧ SetOf ds raw ∧ ds.den = raw.den ∧
-      G.den = ds.den ∧ ReadsWritten F F' ∧ Written G F ∧ (∀ q, 4 ≤ q → G.ms q = []) ∧
+      parseDocumentRaw extra fmt mode docBase text = .ok raw ∧
+      (∃ ds0, SetOf ds0 raw ∧ ds = ds0.scopeDocument n) ∧ ds.InScope n ∧
+      DatasetDen.Iso raw.den ds.den ∧
+      G.den = ds.den ∧ DatasetDen.Iso raw.den G.den ∧
+      ReadsWritten F F' ∧ Written G F ∧ (∀ q, 4 ≤ q → G.ms q = []) ∧
       (QHyps G.cid p →
         ∃ t, ∃ s : NSt, ∃ lines stats, r = (t, F'.store.withLocal s.vocab, lines, stats) ∧
           WhereOk { queryEnvOf clock base with dataset := some G.denote } G.denote G.cid G.dec G.ok p
@@ -372,13 +471,13 @@ theorem documentToWhere_sound (extra : Extra) (mode : Syntax.Mode) (docBase : Op
   obtain ⟨⟨G, F'⟩, ⟨⟨G1, F⟩, ⟨ds, ⟨⟨fmt, text⟩, hdec, hpar⟩, hpack⟩, hG1, hdisk⟩, hwhere⟩ :=
     Stage.comp_ok_contract _ _ h
   obtain ⟨hlab, hutf⟩ := hdec
-  obtain ⟨raw, hraw, hset, hisSet, hden⟩ := hpar
+  obtain ⟨raw, ds0, hraw, hset, hds, hisSet, hin, hiso⟩ := hpar
   have hG : G = G1 := hG1
   subst hG
   have hF : F' = F := hdisk
   subst hF
-  refine ⟨fmt, text, ds, raw, G, F', F', hlab, hutf, hraw, hset, hden, hpack.den, rfl, hpack.written,
-    hpack.noHigh, ?_⟩
+  refine ⟨fmt, text, ds, raw, G, F', F', hlab, hutf, hraw, ⟨ds0, hset, hds⟩, hin, hiso, hpack.den,
+    hpack.den ▸ hiso, rfl, hpack.written, hpack.noHigh, ?_⟩
   intro hq
   obtain ⟨t, s, lines, stats, hr, hok⟩ := hwhere hpack.written hpack.noHigh hpack.check hq
   exact ⟨t, s, lines, stats, hr, hok, fun hfold hp =>
@@ -409,13 +508,13 @@ def sbm11DecodeStage : Stage String WhereOut SolutionSeq where
     injection h' with h'
     exact h'.symm
 
-/-- Document bytes → decode → parse → SBM11 pack → disk (IO) → WHERE →
-decoded solutions. -/
-def documentToSolutions (extra : Extra) (mode : Syntax.Mode) (docBase : Option String) (B : Nat)
+/-- Document bytes → decode → parse with the document scope `n` → SBM11 pack →
+disk (IO) → WHERE → decoded solutions. -/
+def documentToSolutions (extra : Extra) (mode : Syntax.Mode) (docBase : Option String) (n : Nat) (B : Nat)
     (readBack : FileGen → Except String FileGen) (hrw : sbm11Disk.Realised readBack)
     (clock : EvalEnv) (base : Option String) (plan : Plan) (p : QueryPattern)
     (hnest : plan.nested = some p) (hdsq : plan.dataset = none) : Stage String Document SolutionSeq :=
-  (documentToWhere extra mode docBase B readBack hrw clock base plan p hnest hdsq).comp sbm11DecodeStage
+  (documentToWhere extra mode docBase n B readBack hrw clock base plan p hnest hdsq).comp sbm11DecodeStage
 
 open L4Factoidal.Storage.Sbm11.OptJoin (decRow) in
 /-- **End to end, to a solution sequence.** A successful run of
@@ -429,16 +528,17 @@ that SPARQL 1.1 allows over the generation and, under `Sbm11Folded` and
 Premises: `hrw` (`ReadsWritten`), `hnest`, `hdsq`; inside the conclusion
 `QHyps`, `Sbm11Folded`, `PermOk`. -/
 theorem documentToSolutions_sound (extra : Extra) (mode : Syntax.Mode) (docBase : Option String)
-    (B : Nat) (readBack : FileGen → Except String FileGen) (hrw : sbm11Disk.Realised readBack)
+    (n : Nat) (B : Nat) (readBack : FileGen → Except String FileGen) (hrw : sbm11Disk.Realised readBack)
     (clock : EvalEnv) (base : Option String) (plan : Plan) (p : QueryPattern)
     (hnest : plan.nested = some p) (hdsq : plan.dataset = none)
     (d : Document) (sols : SolutionSeq)
-    (h : (documentToSolutions extra mode docBase B readBack hrw clock base plan p hnest hdsq).run d =
+    (h : (documentToSolutions extra mode docBase n B readBack hrw clock base plan p hnest hdsq).run d =
       .ok sols) :
     ∃ (fmt : RdfFormat) (text : String) (ds raw : Dataset) (G : MemGen),
       formatOfDocument d.mediaType d.source = some fmt ∧ text.toUTF8 = d.bytes ∧
-      parseDocumentRaw extra fmt mode docBase text = .ok raw ∧ SetOf ds raw ∧ ds.den = raw.den ∧
-      G.den = ds.den ∧
+      parseDocumentRaw extra fmt mode docBase text = .ok raw ∧
+      (∃ ds0, SetOf ds0 raw ∧ ds = ds0.scopeDocument n) ∧ ds.InScope n ∧
+      DatasetDen.Iso raw.den ds.den ∧ G.den = ds.den ∧ DatasetDen.Iso raw.den G.den ∧
       (QHyps G.cid p →
         ∃ (t : Qlvr.Table) (s : NSt), sols = t.idRows.map (decRow (decV G.dec s.vocab)) ∧
           Allowed { queryEnvOf clock base with dataset := some G.denote } G.denote p
@@ -446,9 +546,9 @@ theorem documentToSolutions_sound (extra : Extra) (mode : Syntax.Mode) (docBase 
           (Sbm11Folded ds → PermOk p →
             Allowed { queryEnvOf clock base with dataset := some ds } ds p ds.default sols)) := by
   obtain ⟨r, hw, hdec⟩ := Stage.comp_ok _ _ h
-  obtain ⟨fmt, text, ds, raw, G, F, F', hlab, hutf, hraw, hset, hden, hGden, hrb, hwr, h4, hq⟩ :=
-    documentToWhere_sound extra mode docBase B readBack hrw clock base plan p hnest hdsq d r hw
-  refine ⟨fmt, text, ds, raw, G, hlab, hutf, hraw, hset, hden, hGden, fun hQ => ?_⟩
+  obtain ⟨fmt, text, ds, raw, G, F, F', hlab, hutf, hraw, hset, hin, hiso, hGden, hGiso, hrb, hwr, h4,
+    hq⟩ := documentToWhere_sound extra mode docBase n B readBack hrw clock base plan p hnest hdsq d r hw
+  refine ⟨fmt, text, ds, raw, G, hlab, hutf, hraw, hset, hin, hiso, hGden, hGiso, fun hQ => ?_⟩
   obtain ⟨t, s, lines, stats, hr, hok, hds⟩ := hq hQ
   have hF : F' = F := hrb
   subst hF
@@ -629,6 +729,10 @@ def rdfsClosureStage (D cmps : List WfIri) (hcmps : ∀ c ∈ cmps, IsRdfMemberI
 #print axioms parseStage
 #print axioms sbm11PackStage
 #print axioms sbm11WhereStage
+#print axioms scopeStage
+#print axioms relabelStage
+#print axioms scopedParseStage
+#print axioms scopedParse_combine_isMerge
 #print axioms documentToWhere_sound
 #print axioms decodeParse_mediaType
 #print axioms sbm11DecodeStage

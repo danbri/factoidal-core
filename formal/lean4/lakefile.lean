@@ -388,6 +388,12 @@ extern_lib libl4exthost pkg := do
   srcDir := "."
   root := `Harness.IterPhases
 
+-- Pack and load time of the store dictionaries of issue 977 (language-tag
+-- fold, literal de-duplication) on one N-Quads file (Bench/DictFoldBench.lean).
+lean_exe «l4dict-fold-bench» where
+  srcDir := "."
+  root := `Bench.DictFoldBench
+
 @[default_target] lean_exe «l4query-phases» where
   srcDir := "."
   root := `Harness.QueryPhases

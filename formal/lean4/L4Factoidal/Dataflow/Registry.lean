@@ -30,7 +30,12 @@ report lists the directories that no entry names.
 No `sorry`, no `axiom`, no `native_decide`, no `partial`.
 -/
 import L4Factoidal.Dataflow.Instances
+import L4Factoidal.Dataflow.PhaseD
+import L4Factoidal.Unified.OwlRlAdequacy
 import L4Factoidal.Storage.BlockDenotation
+import L4Factoidal.Storage.StoreDictTheorems
+import L4Factoidal.HDT.DictionaryTheorems
+import L4Factoidal.Cottas.DictTheorems
 
 namespace L4Factoidal.Dataflow
 
@@ -110,7 +115,31 @@ def registry : List Entry := [
     contract := ``ParseContract, status := .proved
     theorems := [``L4Factoidal.RDF.Source.parseDocument_set, ``L4Factoidal.RDF.Dataset.memQuad_toSet,
       ``L4Factoidal.RDF.Dataset.toSet_isSet, ``SetOf.den_eq]
-    note := "blank nodes not scoped by Document.source (finding 2)" },
+    note := "labels as written; the document scope is scopedParseStage" },
+  { area := "Document blank-node scope (fresh labels per document)", dir := "RDF"
+    stage := ``scopeStage, wireIn := "Dataset", wireOut := "Dataset"
+    contract := ``ScopeContract, status := .proved
+    theorems := [``L4Factoidal.RDF.Dataset.den_iso_scopeDocument,
+      ``L4Factoidal.RDF.Dataset.scopeDocument_inScope, ``L4Factoidal.RDF.Dataset.scopeDocument_isSet,
+      ``L4Factoidal.RDF.docLabel_inj]
+    note := "scope number from a fresh-label supply (Wasm counter, harness file index); the supply is IO, not modelled" },
+  { area := "RDF readers with the document scope; two documents combine to a merge", dir := "RDF"
+    stage := ``scopedParseStage, wireIn := "RdfFormat × String", wireOut := "Dataset"
+    contract := ``ScopedParseContract, status := .proved
+    theorems := [``scopedParseContract_of, ``scopedParse_combine_isMerge,
+      ``L4Factoidal.RDF.scopeDocument_combine_isMerge, ``L4Factoidal.RDF.Dataset.den_combine]
+    note := "RDF 1.1 Semantics 5.2 merge (DatasetDen.IsMerge), not the union" },
+  { area := "Blank-node relabelling at a store boundary (identity transport)", dir := "RDF"
+    stage := ``relabelStage, wireIn := "Dataset", wireOut := "Dataset"
+    contract := ``RelabelContract, status := .proved
+    theorems := [``L4Factoidal.RDF.Dataset.den_iso_renameBnodes,
+      ``L4Factoidal.RDF.Dataset.den_renameBnodes, ``L4Factoidal.RDF.Dataset.renameBnodes_isSet,
+      ``L4Factoidal.RDF.Dataset.renameBnodes_invertible, ``L4Factoidal.RDF.DatasetDen.iso_equivalence]
+    note := "DatasetDen.Iso: one relabelling over graphs, graph names and triple terms" },
+  { area := "W3C harness fixture loading (data and graph files as separate documents)", dir := "RDF"
+    wireIn := "files", wireOut := "Dataset", status := .tested
+    tests := ["W3C SPARQL 1.1 manifest-all (l4w3c)", "Harness/HarnessTests.lean fixture-scope #guards"]
+    note := "each file scoped by its index (addDataFile, addGraphFile)" },
   { area := "RDF readers: grammar conformance", dir := "Syntax"
     wireIn := "String", wireOut := "Dataset", status := .tested
     tests := ["W3C RDF 1.1 syntax suites (l4w3c)", "W3C RDF 1.2 syntax suites (l4w3c)"] },
@@ -148,7 +177,7 @@ def registry : List Entry := [
     contract := ``documentToWhere_sound, status := .proved
     theorems := [``documentToWhere_sound, ``Stage.comp_ok_contract]
     ioAssumptions := [``ReadsWritten]
-    note := "premises: ReadsWritten, plan hypotheses, QHyps, Sbm11Folded, PermOk" },
+    note := "document scope n; raw parse to generation is DatasetDen.Iso; premises: ReadsWritten, plan hypotheses, QHyps, Sbm11Folded, PermOk" },
   { area := "End to end: document bytes to SolutionSeq (SBM11 id path)", dir := "Dataflow"
     stage := ``documentToSolutions, wireIn := "Document", wireOut := "SolutionSeq"
     contract := ``documentToSolutions_sound, status := .proved
@@ -170,15 +199,22 @@ def registry : List Entry := [
   { area := "Block stores (BlockMvp, IndexedBlock, IBK4, IBK5)", dir := "Storage"
     wireIn := "Dataset", wireOut := "bytes", status := .missing
     theorems := [``L4Factoidal.Storage.IndexedBlock.Block.den_eq_ofRows,
-      ``L4Factoidal.Storage.IndexedBlockWireV4.den_decode_encode?]
-    note := "one id per structural term (issue 977)" },
+      ``L4Factoidal.Storage.IndexedBlockWireV4.den_decode_encode?,
+      ``L4Factoidal.Storage.IndexedBlock.fromParts?_foldedDictInjective,
+      ``L4Factoidal.Storage.StoreDictTheorems.v4_fromParts?_foldedDictInjective,
+      ``L4Factoidal.Storage.StoreDictTheorems.v5_fromParts?_foldedDictInjective]
+    note := "one id per RDF term: tags folded at pack and at read (issue 977)" },
   { area := "Store interface StoreCaps (planner)", dir := "SPARQL"
     wireIn := "PatternBound", wireOut := "List Triple", status := .missing
     note := "no denotation (phase B1)" },
   { area := "COTTAS store", dir := "Cottas"
-    wireIn := "Dataset", wireOut := "bytes", status := .missing },
+    wireIn := "Dataset", wireOut := "bytes", status := .missing
+    theorems := [``L4Factoidal.Cottas.cotd_dictInjective]
+    note := ".dict term layer: one id per RDF term when termRoundTripsAll holds (issue 977)" },
   { area := "HDT store", dir := "HDT"
-    wireIn := "Dataset", wireOut := "bytes", status := .missing },
+    wireIn := "Dataset", wireOut := "bytes", status := .missing
+    theorems := [``L4Factoidal.HDT.hdt_dictInjective]
+    note := "tags folded at read; one id per RDF term when roundTripsAll holds (issue 977)" },
   { area := "Planner SELECT over the kept entries", dir := "Storage"
     stage := ``plannerSelectStage, wireIn := "Dataset", wireOut := "SolutionSeq"
     contract := ``PlannerSelectContract, status := .proved
@@ -201,27 +237,99 @@ def registry : List Entry := [
   { area := "SPARQL query evaluation (reference evaluator)", dir := "SPARQL"
     wireIn := "Query × Dataset", wireOut := "QueryResult", status := .tested
     tests := ["W3C SPARQL 1.1 manifest-all (l4w3c)", "W3C SPARQL 1.2 (l4w3c)"] },
-  { area := "SPARQL update", dir := "SPARQL"
-    wireIn := "Update × Dataset", wireOut := "Dataset", status := .tested
-    tests := ["W3C SPARQL 1.1 manifest-all, update entries (l4w3c)"] },
+  { area := "SPARQL Update request on the dataset denotation", dir := "SPARQL"
+    stage := ``updateStage, wireIn := "Dataset × Update", wireOut := "Dataset"
+    contract := ``UpdateContract, status := .proved
+    theorems := [``L4Factoidal.SPARQL.applyUpdateIn_den, ``L4Factoidal.SPARQL.applyOp_den,
+      ``L4Factoidal.RDF.applyUpdateIn_isSet, ``L4Factoidal.RDF.Dataset.den_insertQuads,
+      ``L4Factoidal.RDF.Dataset.den_deleteQuads, ``L4Factoidal.RDF.Dataset.den_setGraph,
+      ``L4Factoidal.RDF.Dataset.den_dropGraph, ``L4Factoidal.RDF.Dataset.den_ensureGraph,
+      ``L4Factoidal.RDF.Dataset.den_clearAllNamed]
+    note := "OpDen per operation: CLEAR keeps graph names, DROP removes them, CREATE adds a name with no triple; delete before insert; the result is a new value; needs IsSet" },
+  { area := "SPARQL Update WHERE evaluation and template instantiation", dir := "SPARQL"
+    wireIn := "Dataset × QueryPattern", wireOut := "List Quad", status := .tested
+    tests := ["W3C SPARQL 1.1 manifest-all, update entries (l4w3c)"]
+    note := "OpDen takes the quad lists of evalWhere and instQuads as inputs" },
   { area := "SPARQL protocol and graph store", dir := "SPARQL"
     wireIn := "HTTP request", wireOut := "HTTP response", status := .missing },
   { area := "SPARQL results formats (XML, JSON, CSV, TSV)", dir := "SPARQL"
     wireIn := "QueryResult", wireOut := "String", status := .missing },
+  { area := "Graph selection (dataset to the union of selected graphs)", dir := "Dataflow"
+    stage := ``selectStage, wireIn := "Dataset", wireOut := "Graph"
+    contract := ``SelectContract, status := .proved
+    theorems := [``mem_select]
+    note := "default graph and named graphs as a stage parameter; union, one blank-node scope (RDF 1.1 Concepts section 4)" },
   { area := "RDFS closure (soundness)", dir := "RDFS"
     stage := ``rdfsClosureStage, wireIn := "Graph", wireOut := "Graph"
     contract := ``L4Factoidal.RDF.RdfsEntails, status := .proved
-    theorems := [``L4Factoidal.RDF.fullClosure_entails]
-    note := "one graph, not a dataset (finding 5)" },
+    theorems := [``L4Factoidal.RDF.fullClosure_entails] },
+  { area := "RDFS closure over a graph selection (soundness)", dir := "Dataflow"
+    stage := ``rdfsSelectStage, wireIn := "Dataset", wireOut := "Graph"
+    contract := ``rdfsSelect_sound, status := .proved
+    theorems := [``rdfsSelect_sound, ``L4Factoidal.RDF.fullClosure_entails, ``mem_select]
+    note := "finding 5 closed: the reasoner reads the selected graphs of a dataset" },
   { area := "RDFS entailment completeness, negative tests", dir := "RDFS"
-    wireIn := "Graph", wireOut := "Bool", status := .missing },
-  { area := "OWL 2 RL reasoner", dir := "OWL"
-    wireIn := "Graph", wireOut := "Graph", status := .missing },
-  { area := "RIF reasoner", dir := "RIF"
-    wireIn := "Graph × rules", wireOut := "Graph", status := .missing },
-  { area := "SHACL validation", dir := "SHACL"
+    wireIn := "Graph", wireOut := "Bool", status := .missing
+    theorems := [``L4Factoidal.RDF.rdfsEntails_subclassSelfLoop_iri]
+    note := "false without the axiomatic triples (finding C-1); negative rdf-mt tests are evidence without proof" },
+  { area := "ρdf closure (soundness; completeness when closed and in the fragment)", dir := "RDFS"
+    stage := ``rhoDfClosureStage, wireIn := "Graph", wireOut := "Graph"
+    contract := ``RhoDfContract, status := .proved
+    theorems := [``L4Factoidal.RDF.closure_rhoDfEntails, ``L4Factoidal.RDF.closure_rhoDf_iff]
+    note := "dataset form: rhoDfSelectStage" },
+  { area := "Simple entailment over a graph selection (sound and complete)", dir := "RDF"
+    stage := ``simpleEntailsSelectStage, wireIn := "Dataset × Graph", wireOut := "Bool"
+    contract := ``SimpleContract, status := .proved
+    theorems := [``L4Factoidal.RDF.SimpleRefinement.simpleEntails_iff_spec,
+      ``L4Factoidal.RDF.simpleEntails_iff_mt]
+    note := "model-theoretic form for graphs without triple terms" },
+  { area := "OWL 2 RL closure (soundness)", dir := "OWL"
+    stage := ``owlRlClosureStage, wireIn := "Graph", wireOut := "Graph"
+    contract := ``RlContract, status := .proved
+    theorems := [``L4Factoidal.OWL.RL.closure_sound, ``L4Factoidal.OWL.RL.rl_derives_holds]
+    note := "dataset form: owlRlSelectStage" },
+  { area := "OWL 2 RL completeness", dir := "OWL"
+    wireIn := "Graph", wireOut := "Graph", status := .missing
+    theorems := [``L4Factoidal.Unified.owlRl_complete_ground]
+    note := "ground completeness needs a Derives-closed closure: open obligation closureFix_saturated (https://github.com/danbri/factoidal/issues/756)" },
+  { area := "RIF closure (extensivity)", dir := "RIF"
+    stage := ``rifClosureStage, wireIn := "Facts × rules", wireOut := "Facts"
+    contract := ``RifContract, status := .proved
+    theorems := [``L4Factoidal.RIF.closure_extensive]
+    note := "dataset form: rifSelectStage" },
+  { area := "RIF soundness and the RDF to RIF mapping", dir := "RIF"
+    wireIn := "Graph × rules", wireOut := "Facts", status := .missing
+    theorems := [``L4Factoidal.RIF.step_licensed]
+    note := "per-round licensing is provenance, not truth; no RIF-BLD model theory; factsOfTriple has no contract" },
+  { area := "SHACL validation (a conforming report implies Core conformance)", dir := "SHACL"
+    stage := ``shaclStage, wireIn := "Graph × Graph", wireOut := "ValidationReport"
+    contract := ``ShaclContract, status := .proved
+    theorems := [``L4Factoidal.SHACL.validateWithSparql_sound_core,
+      ``L4Factoidal.SHACL.validate_conforms_iff]
+    note := "the l4shacl path: decodeShapesGraph, then validateFull; dataset form: shaclSelectStage" },
+  { area := "SHACL validation, W3C suite", dir := "SHACL"
     wireIn := "Graph × shapes", wireOut := "ValidationReport", status := .tested
-    tests := ["W3C SHACL Core (l4shacl)"] },
+    tests := ["W3C SHACL Core (l4shacl)"]
+    note := "the report's results list and the shapes-graph decoding (decodeShapesGraph) have no proved contract" },
+  { area := "SPARQL basic graph pattern (soundness)", dir := "SPARQL"
+    stage := ``bgpSelectStage, wireIn := "Graph", wireOut := "SolutionSeq"
+    contract := ``BgpContract, status := .proved
+    theorems := [``L4Factoidal.SPARQL.evalBgp_instantiates_into_graph] },
+  { area := "SPARQL ASK of a basic graph pattern (true implies a match)", dir := "SPARQL"
+    stage := ``bgpAskStage, wireIn := "Graph", wireOut := "Bool"
+    contract := ``AskContract, status := .proved
+    theorems := [``L4Factoidal.SPARQL.evalBgp_instantiates_into_graph]
+    note := "false is not proved to mean no match" },
+  { area := "SPARQL basic graph pattern completeness", dir := "SPARQL"
+    wireIn := "Graph", wireOut := "SolutionSeq", status := .missing
+    theorems := [``L4Factoidal.SPARQL.rdfsRegime_bgp_complete_conditional]
+    note := "the named gap EvalBgpCompleteAt is a hypothesis, not proved" },
+  { area := "End to end: document to RDFS closure of a selection to BGP answer", dir := "Dataflow"
+    stage := ``documentToRdfsBgp, wireIn := "Document", wireOut := "SolutionSeq"
+    contract := ``documentToRdfsBgp_sound, status := .proved
+    theorems := [``documentToRdfsBgp_sound, ``rdfsEntails_of_mem, ``mem_select,
+      ``L4Factoidal.RDF.fullClosure_entails, ``L4Factoidal.SPARQL.evalBgp_instantiates_into_graph]
+    note := "premise hcmps; exactness for the entailment clause; tested only: parser grammar, query text to Bgp, algebra beyond a BGP" },
   { area := "ShEx validation", dir := "ShEx"
     wireIn := "Graph × schema", wireOut := "report", status := .missing },
   { area := "CSVW (tabular data to RDF)", dir := "CSVW"
