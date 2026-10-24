@@ -951,6 +951,87 @@ theorem quadsBin_dictInjective {qs : List TermJson.Quad} {r : ByteArray} (h : qu
   obtain ⟨tbl, ixs, hb, hd, hnd, hf⟩ := quadsBin_binSpec h
   exact ⟨tbl, ixs, decodeBin_binSpec hb, hd, TermFold.foldedListDict_dictInjective _ hnd hf⟩
 
+/-! ## A page of the quads of a dataset -/
+
+/-- The quads of one graph segment. -/
+def segQuads (s : Option Subject × List Triple) : List TermJson.Quad := s.2.map (fun t => (s.1, t))
+
+theorem quadList_segs (ds : Dataset) : TermJson.Dataset.quadList ds = (segs ds).flatMap segQuads := by
+  simp [TermJson.Dataset.quadList, segs, segQuads, List.flatMap_map]
+
+/-- The list form of `pageAcc` (specification only, so not compiled). -/
+noncomputable def pageGo : List (Option Subject × List Triple) → Nat → Nat → List TermJson.Quad
+  | [], _, _ => []
+  | s :: rest, off, lim =>
+    if lim = 0 then []
+    else
+      let k := s.2.length
+      if k ≤ off then pageGo rest (off - k) lim
+      else
+        let here := ((s.2.drop off).take lim).map (fun t => (s.1, t))
+        here ++ pageGo rest 0 (lim - here.length)
+
+theorem pageGo_eq : ∀ (ss : List (Option Subject × List Triple)) (off lim : Nat),
+    pageGo ss off lim = ((ss.flatMap segQuads).drop off).take lim
+  | [], off, lim => by simp [pageGo]
+  | s :: rest, off, lim => by
+    unfold pageGo
+    by_cases h0 : lim = 0
+    · simp [h0]
+    · rw [if_neg h0]
+      simp only [List.flatMap_cons]
+      have hl : (segQuads s).length = s.2.length := by simp [segQuads]
+      by_cases hk : s.2.length ≤ off
+      · rw [if_pos hk, pageGo_eq rest]
+        conv => rhs; rw [List.drop_append, hl, List.drop_eq_nil_of_le (by rw [hl]; exact hk),
+          List.nil_append]
+      · rw [if_neg hk]
+        rw [pageGo_eq rest]
+        conv => rhs; rw [List.drop_append, hl, show off - s.2.length = 0 by omega, List.drop_zero,
+          List.take_append]
+        have hseg : (List.take lim (List.drop off s.2)).map (fun t => (s.1, t)) =
+            List.take lim (List.drop off (segQuads s)) := by
+          simp [segQuads, List.map_drop, List.map_take]
+        rw [hseg]
+        congr 2
+        simp only [List.length_take, List.length_drop, hl]
+        omega
+
+theorem pushTake_toList (g : Option Subject) : ∀ (ts : List Triple) (n : Nat) (acc : Array TermJson.Quad),
+    (pushTake g ts n acc).toList = acc.toList ++ (ts.take n).map (fun t => (g, t))
+  | [], _, acc => by simp [pushTake]
+  | _ :: _, 0, acc => by simp [pushTake]
+  | t :: ts, n + 1, acc => by
+    simp [pushTake, pushTake_toList g ts n]
+
+theorem pageAcc_toList : ∀ (ss : List (Option Subject × List Triple)) (off lim : Nat)
+    (acc : Array TermJson.Quad),
+    (pageAcc ss off lim acc).toList = acc.toList ++ pageGo ss off lim
+  | [], _, _, acc => by simp [pageAcc, pageGo]
+  | s :: rest, off, lim, acc => by
+    unfold pageAcc pageGo
+    by_cases h0 : lim = 0
+    · simp [h0]
+    · rw [if_neg h0, if_neg h0]
+      by_cases hk : s.2.length ≤ off
+      · rw [if_pos hk, if_pos hk, pageAcc_toList rest]
+      · rw [if_neg hk, if_neg hk, pageAcc_toList rest, pushTake_toList]
+        simp only [List.length_map, List.length_take, List.length_drop, List.append_assoc]
+
+/-- **The page op reads the same quads as the whole quad list.** -/
+theorem quadPage_eq (ds : Dataset) (off lim : Nat) :
+    quadPage ds off lim = ((TermJson.Dataset.quadList ds).drop off).take lim := by
+  rw [quadPage, pageAcc_toList, pageGo_eq, quadList_segs]; simp
+
+theorem quadCountGo_eq : ∀ (ss : List (Option Subject × List Triple)) (a : Nat),
+    quadCountGo ss a = a + (ss.flatMap segQuads).length
+  | [], a => by simp [quadCountGo]
+  | s :: rest, a => by
+    simp [quadCountGo, quadCountGo_eq rest, segQuads]; omega
+
+theorem quadCount_eq (ds : Dataset) : quadCount ds = (TermJson.Dataset.quadList ds).length := by
+  rw [quadCount, quadCountGo_eq, quadList_segs]; simp
+
 /-! ## Build-time checks -/
 
 private def exQuads : List TermJson.Quad :=

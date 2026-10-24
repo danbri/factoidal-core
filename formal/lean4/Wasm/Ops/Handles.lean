@@ -708,11 +708,12 @@ def datasetQuadsBin (h optsJson : String) : IO (String × ByteArray) := do
   | none => do pure (← missingHandle h, ByteArray.empty)
   | some (ds, _) =>
     let opts := if optsJson == "" then none else parseJson? optsJson
-    let qs := TermJson.Dataset.quadList ds
-    let n := qs.length
+    -- `QuadsBin.quadPage_eq`, `QuadsBin.quadCount_eq`: the page and the count
+    -- of `Dataset.quadList`, with no whole quad list built.
+    let n := QuadsBin.quadCount ds
     let off := (natMember opts "offset").getD 0
     let lim := (natMember opts "limit").getD n
-    let page := (qs.drop off).take lim
+    let page := QuadsBin.quadPage ds off lim
     match QuadsBin.quadsBin page with
     | some b =>
         pure ("{\"ok\":true,\"total\":" ++ toString n ++ ",\"offset\":" ++ toString off ++

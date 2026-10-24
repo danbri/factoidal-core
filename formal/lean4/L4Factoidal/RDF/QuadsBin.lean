@@ -245,6 +245,45 @@ def binLoop (st : BinState) : List Quad → Option BinState
       | none => none
       | some st => binLoop st qs
 
+/-! ## A page of the quads of a dataset, with no whole quad list
+
+`Dataset.quadList` builds every quad; an op that serves a page of it
+(`offset`, `limit`) builds the page only (`quadPage_eq`, `quadCount_eq` in
+`QuadsBinTheorems`; https://github.com/danbri/factoidal/issues/900). -/
+
+/-- The graphs of a dataset in the order of `Dataset.quadList`: the default
+graph, then each named graph. -/
+def segs (ds : Dataset) : List (Option Subject × List Triple) :=
+  (none, ds.default) :: ds.named.map (fun ng => (some ng.name, ng.graph))
+
+/-- Push the first `n` triples of `ts`, in graph `g`, onto `acc`. -/
+def pushTake (g : Option Subject) : List Triple → Nat → Array Quad → Array Quad
+  | [], _, acc => acc
+  | _ :: _, 0, acc => acc
+  | t :: ts, n + 1, acc => pushTake g ts n (acc.push (g, t))
+
+/-- The quads after the first `off`, at most `lim` of them, one loop step per
+graph. -/
+def pageAcc : List (Option Subject × List Triple) → Nat → Nat → Array Quad → Array Quad
+  | [], _, _, acc => acc
+  | s :: rest, off, lim, acc =>
+    if lim = 0 then acc
+    else
+      let k := s.2.length
+      if k ≤ off then pageAcc rest (off - k) lim acc
+      else pageAcc rest 0 (lim - min lim (k - off)) (pushTake s.1 (s.2.drop off) lim acc)
+
+/-- `((Dataset.quadList ds).drop off).take lim` (`quadPage_eq`). -/
+def quadPage (ds : Dataset) (off lim : Nat) : List Quad :=
+  (pageAcc (segs ds) off lim #[]).toList
+
+def quadCountGo : List (Option Subject × List Triple) → Nat → Nat
+  | [], a => a
+  | s :: rest, a => quadCountGo rest (a + s.2.length)
+
+/-- `(Dataset.quadList ds).length` (`quadCount_eq`). -/
+def quadCount (ds : Dataset) : Nat := quadCountGo (segs ds) 0
+
 /-- The region of the quads `qs` (`none` only when a count or a string length
 does not fit its u32 field). -/
 def quadsBin (qs : List Quad) : Option ByteArray :=
