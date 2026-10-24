@@ -1553,6 +1553,45 @@ lenient TriG walk, which runs that reader, is linear too: 25,000, 50,000,
 1,681,242 to 13,822,892 bytes) took 0.72, 1.32, 2.77 and 5.43 s of CPU and
 141, 265, 513 and 987 MB peak.
 
+## 3a-bis. Language tags that are not well-formed: keep the triple and warn (2026-10-24)
+
+Owner, 2026-10-24, verbatim answer "B." to the question on
+https://github.com/danbri/factoidal/issues/1004 and
+https://github.com/danbri/factoidal/issues/1005, where option (b) was: "Jena
+style: the readers keep the triple and warn, and the writers write the tag
+unchanged." Record: CLAUDE.md, "Ill-formed BCP 47 language tags (owner,
+2026-10-24)".
+
+- RDF 1.2 Concepts §3.4: a language tag MUST be well-formed per BCP 47
+  §2.2.9. RDF 1.2 N-Triples §6.4 leaves error detection, reporting and
+  recovery to implementors.
+- The predicate is `RDF.isWellFormedLangTag` (`RDF/LangTag.lean`, the ABNF of
+  BCP 47 §2.1 and the grandfathered tags of §2.2.8). No reader or writer has
+  another one.
+- The reader does not change. After a successful read, `langTagWarnings`
+  (`Syntax/LangTagWarnings.lean`) takes the ill-formed tags of the dataset and
+  finds each occurrence in the text with `scanLangTags`: a walk over the UTF-8
+  bytes that knows IRIs, comments, the four string forms, escapes and the
+  white space RDF 1.2 allows before `@`. It is a loop (one tail call per byte)
+  and takes the bytes in chunks (`ScanState.feed`), so the streamed strict and
+  lenient command-line reads run it on the chunks they read and keep no text.
+  A tag the walk does not find (RDF/XML `xml:lang`, JSON-LD `@language`) gets
+  one warning at the first place its text occurs.
+- Surfaces: the `warnings` member of the `datasetOpen`, `parseToDatasetJson`
+  and `parseDocument` envelopes (present only when there is a warning);
+  `Dataset.warnings` in npm (offsets in UTF-16 units); standard error in the
+  CLI (`l4factoidal: warning: LINE:COLUMN: ill-formed-language-tag: ...`;
+  JSON lines in `parse --lenient`). A warning does not change an exit status.
+- Writers: `langTagWritable` refuses only a tag the reader of the target mode
+  does not read. In RDF 1.1 mode that is a tag outside LANGTAG [144s]; in
+  RDF 1.2 mode also a subtag of more than 8 characters, because the W3C
+  negative syntax test `ntriples-langdir-bad-4` (`"Hello"@cantbethislong`)
+  requires the RDF 1.2 readers to refuse it. A dataset read as RDF 1.1 is
+  written in RDF 1.1 mode by the npm `serialize` (`OpenDataset.writeMode`), and
+  the `serializeTurtle`/`serializeNQuads` ops read their input as RDF 1.2 and
+  then as RDF 1.1, so `"v"@abcdefghijk` read from RDF 1.1 text is written on
+  every surface.
+
 ## 3b. The strict command line reads a file in chunks (2026-10-13)
 
 Issue: https://github.com/danbri/factoidal/issues/813 (key result of
