@@ -1944,16 +1944,17 @@ as a `String` at a `String.Pos` cursor.
   that the list reader of the same name applied to `rest p` gives the same value and `rest` of the new cursor
   (`skipWsS_eq`, `iriBodyS_sound`, `litBodyS_sound`, `bnodeS_sound`, `literalS_sound`, `nquad11S_sound`,
   `triple11S_sound`, `stmtS_sound`, ...).
-- A native reader declines (returns `none`) on an escape `\u` or `\U`, a blank node label that ends in a dot, and
-  any error. `foldLinesS` then runs `StrictFeed.foldLines` on `rest p` from the start of that round, so the answer is
-  the list reader's by definition and only the memory saving is lost, for the rest of that buffer.
+- A native reader declines (returns `none`) on any error and on an escape inside an IRIREF. `foldLinesS` then runs
+  `StrictFeed.foldLines` on `rest p` from the start of that round, so the answer is the list reader's by definition
+  and only the memory saving is lost, for the rest of that buffer. Until 2026-10-24 it also declined on a literal
+  escape `\u` or `\U`, on a blank node label that ends in a dot, and on every RDF 1.2 and lenient line (below).
 - `foldLinesS_eq`: the walk over a string is `foldLines` over its characters. `TextFeed.feed_eq`,
   `TextFeed.finish_eq`: a chunk and the end of input equal `LineFeed.feed` and `LineFeed.finish` on the characters,
   through `toLF` and `ofLF`. `LineFeed.feed_eq_feedSpec`, `LineFeed.run_quad11_eq_batch` and
   `LenientStream.feed_eq_feedSpec` are unchanged; `SourceTheorems` (`feed_nquads`, `nquads_foldlM`,
   `nquads_readAll_eq_run`) is re-proved through the bridge.
 - A chunk that follows no partial line is walked as the list walk walks it; a chunk that follows a partial line is
-  walked as text. RDF 1.2 and the lenient walk are unchanged (list).
+  walked as text.
 
 Measured on 2026-10-22 (peak resident set per input byte between 2 MB and 8 MB, `tests/stack/lean_scaling.py`):
 `ntriples-long-line-memory` 32.5 before, 3.7 after; `nquads-long-line-memory` 32.4 before, 3.8 after (bound 8; the
@@ -1963,11 +1964,43 @@ N-Triples 0.135, 0.247, 0.519 s before and 0.052, 0.089, 0.181 s after; N-Quads 
 count: 2.7 s before, 2.0 s after. `#guard`s in `StrictFeedText.lean` compare the text walk with the list walk on
 documents cut in pieces of 1 to 4096 characters, accepted and refused, in both modes.
 
-Open, tracked by https://github.com/danbri/factoidal/issues/949 with five expected-failure rows in
-`tests/stack/lean_scaling.py` (bound 8, peak resident set per input byte, 2026-10-22): literal ending in a `\u` escape
-37.9 (`ntriples-long-line-uescape-memory`); blank node label ending in a dot 46.3
-(`ntriples-long-line-bnode-dot-memory`); RDF 1.2 N-Triples 40.9 (`ntriples12-long-line-memory`); RDF 1.2 N-Quads 40.9
-(`nquads12-long-line-memory`); lenient walk 33.7 (`ntriples-lenient-long-line-memory`).
+Second step, 2026-10-24 (https://github.com/danbri/factoidal/issues/949, `Syntax/StrictFeedText.lean`,
+`Syntax/LenientFeedText.lean`). The five forms that still made a `List Char` of the whole line are read at the cursor:
+
+- Literal escapes: `escS` decodes ECHAR and UCHAR (`\uXXXX`, `\UXXXXXXXX`, through `hex4`, `hex8` and
+  `codepointToChar`, as `strLitNextStep`); `escS_sound` gives `strLitNextStep` on `rest p`. `litBodyS` takes a plain
+  character inline and calls `escS` only at a backslash, so the loop of a plain literal is unchanged.
+- Blank node label that ends in a dot: `bnodeRunS` takes a dot only when a label character follows it, so the final
+  dot stays in the input, and builds the label as a `String`. `bnodeRunS_eq` states it against `List.span` with
+  `trimDot` and `endsDot`, the `getLast?`/`dropLast` rule of `readBlankNodeLabel`.
+- RDF 1.2: `langDir12S` (with `langDirCore`, the part of `readLangDir12` after the run of tag characters),
+  `datatypeWs12S`, `literal12S` (white space before `@` and `^^`; `readLiteral12_eq` restates `readLiteral .rdf12`
+  with one match), and `object12DownS`, which keeps the open triple terms in a list as `readObject12Down` does: one
+  tail call per nesting level and `closeS` for the `)>>` of each, so a deep triple term takes no native stack.
+  `lineFuelS` is `lineFuel` at the cursor. `nquad12S_sound`, `triple12S_sound`; `stmtS`, `foldLinesS`,
+  `TextFeed.feed` and `TextFeed.finish` take the mode, and `TextFeed.feed_eq` and `TextFeed.finish_eq` hold in both.
+- Lenient walk: `LenientStreamT` keeps the partial line as text and walks a buffer that completes it with
+  `foldLinesLenientS`, the five branches of `foldLinesLenient` at the cursor, with `advanceS` for the line state.
+  `foldLinesLenientS_eq`, `LenientStreamT.feed_eq` and `LenientStreamT.finish_eq` equal the list walk and
+  `LenientStream.feed` and `.finish`. `LenientFeed` (the CLI's `parse --lenient`) uses it for N-Triples and N-Quads.
+  `L4_LENIENT_CHUNK_BYTES` sets its chunk size, as `L4_STRICT_CHUNK_BYTES` does for the strict walk.
+
+Peak resident set per input byte, one line, 2 MB and 8 MB (`tests/stack/lean_scaling.py`, bound 8):
+
+| Row | Before (2026-10-22) | After (2026-10-24) |
+| --- | ---: | ---: |
+| `ntriples-long-line-uescape-memory` | 37.9 | 3.3 |
+| `ntriples-long-line-bnode-dot-memory` | 46.3 | 3.8 |
+| `ntriples12-long-line-memory` | 40.9 | 3.3 |
+| `nquads12-long-line-memory` | 40.9 | 3.9 |
+| `ntriples-lenient-long-line-memory` | 33.7 | 4.2 |
+
+The five rows left the XFAIL table. Conformance: the `#guard`s compare the text walks with the list walks on documents
+cut in pieces of 1 to 4096 characters (escapes, final dots, nested triple terms, directional tags, white space before
+`@` and `^^`, refused lines, `maxErrors`), and `tools/strict-parse-differential.sh` compares the command line with the
+binary of `main` on the W3C RDF 1.1 and RDF 1.2 files and on generated long lines, at chunk sizes 65,536, 7 and 1, in
+the strict and the lenient walk: 24,057 agree, 0 differ (out of 24,057 cases; old exit 0 in 17,553, non-zero in 6,504),
+2026-10-24.
 
 ## 3c. RDF/XML: where the time and the memory went, and the repair (2026-10-13)
 
