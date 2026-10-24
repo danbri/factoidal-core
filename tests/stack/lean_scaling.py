@@ -595,11 +595,10 @@ XFAIL: dict[str, str] = {
     "iso-noniso-search": "https://github.com/danbri/factoidal/issues/877",
     "sbm11-replay-insert-time": "https://github.com/danbri/factoidal/issues/879",
     "owl-consistent-cl": "https://github.com/danbri/factoidal/issues/960",
-    "ntriples-long-line-uescape-memory": "https://github.com/danbri/factoidal/issues/949",
-    "ntriples-long-line-bnode-dot-memory": "https://github.com/danbri/factoidal/issues/949",
-    "ntriples12-long-line-memory": "https://github.com/danbri/factoidal/issues/949",
-    "nquads12-long-line-memory": "https://github.com/danbri/factoidal/issues/949",
-    "ntriples-lenient-long-line-memory": "https://github.com/danbri/factoidal/issues/949",
+    # `--out nquads` keeps every distinct triple written since PR 29 (issue 968, owner
+    # 2026-10-23: keep for now). Measured on main 9c123945 before issue 949: 6.2 and 20.3.
+    "parse-nt-memory": "https://github.com/danbri/factoidal/issues/968",
+    "parse-ttl-memory": "https://github.com/danbri/factoidal/issues/968",
 }
 # A run longer than this is not repeated: the minimum of several runs only
 # removes timer and load noise, which is small against a run this long.
@@ -1057,15 +1056,19 @@ PARSE_MEMORY_ROWS = {
     # `StrictFeedText` reads it as a `String` at a cursor: 3.7 (8 MB: 58 MB). Bound 8.
     "ntriples-long-line-memory": (2000000, lambda n: long_line_nt(n), ["--format", "ntriples"], 8.0),
     "nquads-long-line-memory": (2000000, lambda n: long_line_nq(n), ["--format", "nquads"], 8.0),
-    # https://github.com/danbri/factoidal/issues/949: the native reader declines this form.
+    # A literal that ends in a \u escape (issue 949): 37.9 before the cursor reader decoded
+    # escapes, 3.3 after (2026-10-24).
     "ntriples-long-line-uescape-memory": (2000000, lambda n: long_line_nt_u(n), ["--format", "ntriples"], 8.0),
-    # https://github.com/danbri/factoidal/issues/949: the native reader declines this form.
+    # A blank node label that ends in a dot (issue 949): 46.3 before the cursor reader gave
+    # the dot back, 3.8 after (2026-10-24).
     "ntriples-long-line-bnode-dot-memory": (2000000, lambda n: long_line_nt_b(n), ["--format", "ntriples"], 8.0),
-    # https://github.com/danbri/factoidal/issues/949: the native reader declines this form.
+    # RDF 1.2 (issue 949): 40.9 before the cursor reader read the RDF 1.2 line grammar, 3.3
+    # after (2026-10-24).
     "ntriples12-long-line-memory": (2000000, lambda n: long_line_nt(n), ["--format", "nt12"], 8.0),
-    # https://github.com/danbri/factoidal/issues/949: the native reader declines this form.
+    # RDF 1.2 N-Quads (issue 949): 40.9 before, 3.9 after (2026-10-24).
     "nquads12-long-line-memory": (2000000, lambda n: long_line_nq(n), ["--format", "nq12"], 8.0),
-    # https://github.com/danbri/factoidal/issues/949: the native reader declines this form.
+    # The lenient walk (issue 949): 33.7 before the partial line was kept as text and read at
+    # a cursor (`LenientStreamT`), 4.2 after (2026-10-24).
     "ntriples-lenient-long-line-memory": (2000000, lambda n: long_line_nt(n), ["--format", "ntriples", "--lenient"], 8.0),
 }
 
