@@ -115,3 +115,48 @@ assertion (it was the expected failure of issue 900).
 * The DLOG version 2 codec writes the datatype IRI of every language-tagged
   literal (`rdf:langString`), 64 bytes each. A codec change needs a new wire
   version (skills/shardborough-storage), so it was not changed here.
+
+## 6. Second repair, 2026-10-24
+
+Problem: `tools/land-gates.sh` failed on `main` at the timing test in about
+6 of 9 runs (latest: iteration 165 ms against a bound of 128 ms).
+
+Measurement (60,000 quads, the test's dataset):
+
+* wasm, from Node: a call of `datasetQuadsBin` for ONE quad took 6.5 ms. Each
+  call built `Dataset.quadList` (every quad) and then `drop` and `take`. An
+  iteration makes two calls (a first page of 4,096 and the rest), so it built
+  the list twice.
+* native, `callgrind` on `l4iter-phases 20000 3 bin`: in `BinState.quad`,
+  the literal map (`others`: get and insert, with rehashes while the map
+  grew) and `Sbm11.normalizeImpl` (a new `Literal` and a `literalWf` test for
+  every language-tagged literal, also when the tag was already lower case)
+  were the largest costs. Literal handling was about half of the op.
+
+Repairs (no change to the region bytes):
+
+1. `BinState.init n` allocates the three maps, the table and the two byte
+   buffers for `n` quads. `quadsBin_binSpec` is re-proved over it.
+2. `Sbm11.normalizeLitFast` gives a literal whose tag is already lower case
+   back unchanged (`normalizeLit_eq_fast`; `normalizeTerm_eq_impl` still
+   holds).
+3. `QuadsBin.quadPage ds off lim` builds only the page, one tail-recursive
+   loop per graph, and `quadCount` counts with no list (`quadPage_eq`,
+   `quadCount_eq`: equal to the `drop`/`take` of `quadList` and its length).
+
+Result, wasm in Node, medians of 11 runs:
+
+| | before | after |
+|---|---|---|
+| op `datasetQuadsBin`, all quads | 100 ms | 74 ms |
+| op, one quad | 6.5 ms | 0.5 ms |
+| Dataset iteration | 140–153 ms | 116–123 ms |
+| N-Quads writer op plus line split | 122–129 ms | 128–130 ms |
+| ratio | 1.10–1.25 | 0.90–0.95 |
+
+`node --test test/dataset-iterate-speed.test.mjs`: 10 passes in 10 runs.
+
+Not done: writing the four u32 fields with two `Prim.Bytes.pushU64LE`. The
+equality with sixteen `ByteArray.push` is easy to prove, but the extern has
+no interpreter symbol, so the `#guard` checks of `quadsBin` stop running at
+build time; they would have to move into a compiled test first.
