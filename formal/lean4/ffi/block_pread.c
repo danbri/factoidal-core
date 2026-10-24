@@ -56,7 +56,24 @@ LEAN_EXPORT lean_obj_res l4_block_pread(b_lean_obj_arg path, uint64_t offset,
 typedef struct {
   int fd;
   uint64_t size;
+  uint64_t id;
+  char *path;
 } l4_block_file;
+static uint64_t l4_block_file_next_id = 1;
+#define L4_TL_FILES 16
+typedef struct { uint64_t id; int fd; } l4_tl_entry;
+static __thread l4_tl_entry l4_tl_files[L4_TL_FILES];
+static __thread unsigned l4_tl_next;
+static int l4_tl_fd(l4_block_file *f) {
+  for (int i = 0; i < L4_TL_FILES; i++)
+    if (l4_tl_files[i].id == f->id) return l4_tl_files[i].fd;
+  int fd = open(f->path, O_RDONLY | O_CLOEXEC);
+  if (fd < 0) return f->fd;
+  unsigned k = l4_tl_next++ % L4_TL_FILES;
+  if (l4_tl_files[k].id != 0) close(l4_tl_files[k].fd);
+  l4_tl_files[k].id = f->id; l4_tl_files[k].fd = fd;
+  return fd;
+}
 
 static void l4_block_file_finalize(void *p) {
   l4_block_file *f = (l4_block_file *)p;
@@ -84,6 +101,8 @@ LEAN_EXPORT lean_obj_res l4_block_file_open(b_lean_obj_arg path,
   if (!f) return lean_io_result_mk_error(lean_mk_io_user_error(
       lean_mk_string("l4_block_file_open: out of memory")));
   f->fd = open(lean_string_cstr(path), O_RDONLY | O_CLOEXEC);
+  f->id = __atomic_fetch_add(&l4_block_file_next_id, 1, __ATOMIC_RELAXED);
+  f->path = strdup(lean_string_cstr(path));
   f->size = 0;
   struct stat st;
   if (f->fd >= 0 && (fstat(f->fd, &st) != 0 || st.st_size < 0)) {
@@ -109,7 +128,7 @@ LEAN_EXPORT lean_obj_res l4_block_file_pread(b_lean_obj_arg file,
   lean_obj_res out = lean_alloc_sarray(1, (size_t)length, (size_t)length);
   size_t done = 0;
   while (done < (size_t)length) {
-    ssize_t n = pread(f->fd, lean_sarray_cptr(out) + done,
+    ssize_t n = pread(l4_tl_fd(f), lean_sarray_cptr(out) + done,
                       (size_t)length - done, (off_t)offset + (off_t)done);
     if (n > 0) { done += (size_t)n; continue; }
     if (n < 0 && errno == EINTR) continue;
