@@ -710,6 +710,8 @@ import L4Factoidal.SPARQL.PlanStreamable
 import L4Factoidal.RDF.CanonicalManifest
 import L4Factoidal.RDF.DatasetMerge
 import L4Factoidal.RDF.CertifiedDataset
+import L4Factoidal.RDF.GraphSet
+import L4Factoidal.RDF.GraphOpsSet
 import L4Factoidal.RDF.DocumentScopeTests
 import L4Factoidal.RDF.Format
 import L4Factoidal.RDF.MediaType
