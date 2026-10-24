@@ -50,8 +50,10 @@ def stageKind (env : Environment) (n : Name) : StageKind :=
   if n.isAnonymous then .none
   else match resultHead env n with
     | some h =>
-      -- an `RdfReader` holds its contract as a field, as a `Stage` does
-      if h == ``Stage || h == ``RdfReader then .stage
+      -- an interface type (`RdfReader`, `SoundReasoner`, `LawfulValidator`,
+      -- `SoundChecker`) holds its contract as a field, as a `Stage` does
+      if h == ``Stage || h == ``RdfReader || h == ``SoundReasoner ||
+          h == ``LawfulValidator || h == ``SoundChecker then .stage
       else if h == ``IOStage then .ioStage else .other
     | Option.none => .other
 

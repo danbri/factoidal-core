@@ -29,6 +29,7 @@ Targeted imports only — never the L4Factoidal umbrella (see
 -/
 import Wasm.Ops.Support
 import L4Factoidal.Dataflow.Reader
+import L4Factoidal.Dataflow.Validator
 import L4Factoidal.Syntax.NQuadsFast
 import L4Factoidal.Syntax.NTriples
 import L4Factoidal.SHACL.Report
@@ -46,12 +47,11 @@ The dataset-handle op `datasetShaclValidate` (`Wasm/Ops/Handles.lean`) calls
 it with the stored datasets, so the text op and the handle op share one body. -/
 def shaclValidateParsed (dataDs shapesDs : Dataset) : String :=
     let shapesG := shapesDs.default
-    let sg := L4Factoidal.SHACL.decodeShapesGraph shapesG
-    if !sg.unsupported.isEmpty then
+    match L4Factoidal.Dataflow.shaclValidator.run (dataDs.default, shapesG) with
+    | .error unsupported =>
       errJson ("shaclValidate: the shapes graph uses a feature this validator does not read: "
-               ++ String.intercalate ", " sg.unsupported)
-    else
-    let report := L4Factoidal.SHACL.validateFull dataDs.default shapesG sg {}
+               ++ unsupported)
+    | .ok report =>
     match report.failure with
     | some why => errJson s!"shaclValidate: validation failure (SHACL 5.3.2): {why}"
     | none =>

@@ -5,7 +5,7 @@
 # entry that no longer exists or is now mapped, or when the count differs
 # from max-entries. The list may only shrink: when you map an entry, remove
 # its line and lower max-entries in the same commit.
-# max-entries: 496
+# max-entries: 493
 cli:activate  # npm/factoidal/bin/factoidal.mjs
 cli:authz-keys  # npm/factoidal/bin/factoidal.mjs
 cli:authz-serve  # npm/factoidal/bin/factoidal.mjs
@@ -200,7 +200,6 @@ npm:./fn#canonicalize  # ./fn.js
 npm:./fn#capabilities  # ./fn.js
 npm:./fn#cell  # ./fn.js
 npm:./fn#coreRdfsCheck  # ./fn.js
-npm:./fn#coreRdfsClosure  # ./fn.js
 npm:./fn#derive  # ./fn.js
 npm:./fn#difference  # ./fn.js
 npm:./fn#entail  # ./fn.js
@@ -221,7 +220,6 @@ npm:./fn#pipe  # ./fn.js
 npm:./fn#query  # ./fn.js
 npm:./fn#queryHdt  # ./fn.js
 npm:./fn#rdfsPlusClosure  # ./fn.js
-npm:./fn#rhoDfClosure  # ./fn.js
 npm:./fn#rhoDfFragmentCheck  # ./fn.js
 npm:./fn#rif  # ./fn.js
 npm:./fn#schematronValidate  # ./fn.js
@@ -235,7 +233,6 @@ npm:./fn#toanSimplify  # ./fn.js
 npm:./fn#toanSubst  # ./fn.js
 npm:./fn#toanSummation  # ./fn.js
 npm:./fn#union  # ./fn.js
-npm:./fn#validate  # ./fn.js
 npm:./fn#vcEd25519SecretToPublic  # ./fn.js
 npm:./fn#vcEd25519Sign  # ./fn.js
 npm:./fn#vcEd25519Verify  # ./fn.js
