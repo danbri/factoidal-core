@@ -213,7 +213,14 @@ classical case split anywhere here, only `rfl`/`decide`/`cases`). No
 end L4Factoidal.Syntax.SyntaxTheorems
 
 /-
-## (c) continued — the general round-trip theorem, STATED, NOT proved
+## (c) continued — the general round-trip theorem
+
+PROVED since 2026-10-24 as `NTriplesRoundTrip.parseNTriples_toNTriples`
+(`Syntax/NTriplesDocRoundTrip.lean`), both modes. `hClean` below became
+`Triple.ntSafe`: IRIs (gap 1), and also blank-node labels and language tags,
+which the writer writes as they are. Gap 2 (the escaper inverse) is
+`readStringLiteralBody_escape`. The sketch below is the record of the earlier
+attempt.
 
 theorem graph_roundtrip (mode : L4Factoidal.Syntax.Mode) (g : L4Factoidal.RDF.Graph)
     (hClean : ∀ t ∈ g, IriRefClean t)  -- see gap #1 below

@@ -246,7 +246,9 @@ against the kernel's own `checkBundle` answer, plus ten rejections.
 The whole-bundle round trip is pinned, not proved — the general
 N-Triples round trip it would rest on
 (`Syntax.SyntaxTheorems.graph_roundtrip`) is stated and unproved in
-this tree. ⚠️ The committed wasm artifact does not serve the two ops
+this tree. (2026-10-24: the N-Triples round trip is proved,
+`Syntax.NTriplesRoundTrip.parseNTriples_toNTriples`; the bundle round trip
+is still pinned, its JSON layer is not proved.) ⚠️ The committed wasm artifact does not serve the two ops
 until `Wasm/build-wasm.sh` runs again; the npm wrapper is a separate
 landing.
 

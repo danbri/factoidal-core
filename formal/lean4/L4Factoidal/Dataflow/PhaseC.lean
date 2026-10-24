@@ -69,15 +69,22 @@ state:
 keep: RDF/XML and JSON-LD have no triple term (the writers refuse one with an
 error); JSON-LD has no directional language string (finding: the writer
 accepts one and drops its base direction,
-https://github.com/danbri/factoidal/issues/984); with N-Triples every IRI must be `iriPrintSafe` (an IRI that the
-IRIREF grammar rejects cannot round trip, `Syntax/NTriplesRoundTrip.lean`).
+https://github.com/danbri/factoidal/issues/984); with N-Triples and N-Quads
+every IRI, blank-node label, language tag and graph label must be in the
+lexical space of its grammar production (IRIREF, BLANK_NODE_LABEL, LANGTAG,
+graphLabel). The writers write these strings as they are, so a string outside
+its production gives a document that the parser refuses: the first statement
+of the domain, IRIs only, was false, and the guards of
+`Syntax/NTriplesDocRoundTrip.lean`, `Syntax/NQuadsDocRoundTrip.lean` and
+`PhaseCTests.lean` show the counter-examples.
 
-`WriterRoundTrip extra fmt v` is the round-trip property: on the domain, a
+`WriterRoundTrip fmt v` is the round-trip property: on the domain, a
 successful write parses back to a dataset whose denotation is isomorphic to
-the projection's. It is stated, not proved, for every writer. The proved parts
-are the N-Triples component theorems (`readTriple11_closed_roundTrip`,
-`term_toNTriples_injective`, `graph_roundtrip_nil`). `PhaseCTests.lean` tests
-the property on seeded datasets for every writer, by the stream writers too.
+the projection's. Proved for N-Triples and N-Quads, RDF 1.1 and RDF 1.2 modes
+(`writerRoundTrip_nt`, `writerRoundTrip_nquads`; the isomorphism is the
+identity). Stated, not proved, for Turtle, TriG, RDF/XML and JSON-LD.
+`PhaseCTests.lean` tests the property on seeded datasets for every writer, by
+the stream writers too.
 
 No `sorry`, no `axiom`, no `native_decide`, no `partial`.
 -/
@@ -88,6 +95,9 @@ import L4Factoidal.RDF.StreamSet
 import L4Factoidal.RDF.SinkJsonLd
 import L4Factoidal.Syntax.RdfJson
 import L4Factoidal.Syntax.NTriplesRoundTrip
+import L4Factoidal.Syntax.NTriplesDocRoundTrip
+import L4Factoidal.Syntax.NQuadsDocRoundTrip
+import L4Factoidal.Syntax.NQuadsFastTheorems
 import L4Factoidal.Syntax.SyntaxTheorems
 
 namespace L4Factoidal.Dataflow
@@ -437,33 +447,27 @@ def Term.hasDirectionB : Term → Bool
   | .literal l => l.val.direction.isSome
   | _ => false
 
-/-- The IRIs of a term, nested ones included. -/
-def Subject.irisOf : Subject → List String
-  | .iri i => [i.val]
-  | .bnode _ => []
-
-def Term.irisOf : Term → List String
-  | .iri i => [i.val]
-  | .bnode _ => []
-  | .literal l => [l.val.datatype.val]
-  | .tripleTerm s p o => Subject.irisOf s ++ [p.val] ++ Term.irisOf o
-
-def Triple.irisOf (t : Triple) : List String :=
-  Subject.irisOf t.s ++ [t.p.val] ++ Term.irisOf t.o
-
 /-- The datasets the writer of `fmt` accepts and is meant to keep. RDF/XML and
 JSON-LD: no triple term. JSON-LD: no directional language string (the writer
 accepts one and drops the direction, https://github.com/danbri/factoidal/issues/984).
-N-Triples: every IRI `iriPrintSafe`. -/
+N-Triples: every IRI, blank-node label and language tag in the lexical space of
+its N-Triples production (`NTriplesRoundTrip.Triple.ntSafe`: IRIREF [8],
+BLANK_NODE_LABEL [141s], LANGTAG [144s]). The writer writes these strings as
+they are, so a string outside the production gives a document that the parser
+refuses (`PhaseCTests.lean`, the two counter-examples). N-Quads: the same for
+each written quad, and the graph label (RDF 1.1 N-Quads [6] graphLabel:
+IRIREF or BLANK_NODE_LABEL) (`NQuadsRoundTrip.Quad.ntSafe`). -/
 def writerDomain (fmt : RdfFormat) (ds : Dataset) : Bool :=
   let ts := Sink.flatten ds
   match fmt with
   | .rdfxml => ts.all fun t => !Term.hasTripleTermB t.o
   | .jsonld => ts.all fun t => !Term.hasTripleTermB t.o && !Term.hasDirectionB t.o
-  | .nt => ts.all fun t => (Triple.irisOf t).all NTriplesRoundTrip.iriPrintSafe
-  | .nquads | .turtle | .trig => true
+  | .nt => ts.all NTriplesRoundTrip.Triple.ntSafe
+  | .nquads => (NQuadsRoundTrip.quadsOf ds).all NQuadsRoundTrip.Quad.ntSafe
+  | .turtle | .trig => true
 
-/-- **The round-trip property of the writer of `fmt`** (stated, not proved): a
+/-- **The round-trip property of the writer of `fmt`** (proved for N-Triples and
+N-Quads, `writerRoundTrip_nt` and `writerRoundTrip_nquads`): a
 set in the domain that the writer writes parses back to a dataset whose
 denotation is isomorphic to the projection's. -/
 def WriterRoundTrip (fmt : RdfFormat) (v : Syntax.Mode) : Prop :=
@@ -471,6 +475,77 @@ def WriterRoundTrip (fmt : RdfFormat) (v : Syntax.Mode) : Prop :=
     Sink.serializeDataset Sink.withJsonLd fmt v ds = .ok text →
     ∃ back, parseDocument Source.withJsonLd fmt v none text = .ok back ∧
       DatasetDen.Iso back.den (writerProjection fmt ds).den
+
+/-! ### The writer stages of N-Triples and N-Quads: proved -/
+
+/-- The contract of the writer of `fmt` on a dataset and its text: on the
+domain, the text parses back to a dataset whose denotation is isomorphic to the
+projection's. -/
+def WriterContract (fmt : RdfFormat) (v : Syntax.Mode) (ds : Dataset) (text : String) : Prop :=
+  writerDomain fmt ds = true → ∃ back, parseDocument Source.withJsonLd fmt v none text = .ok back ∧
+    DatasetDen.Iso back.den (writerProjection fmt ds).den
+
+/-- **The N-Triples writer keeps its contract**, RDF 1.1 and RDF 1.2 modes.
+The parser gives back the written list of triples, in order
+(`parseNTriples_toNTriples`), so the parsed dataset is the set of the
+projection's quads (`Dataset.den_toSet`), and the isomorphism is the
+identity. -/
+theorem writerContract_nt (v : Syntax.Mode) (ds : Dataset) (text : String)
+    (hser : Sink.serializeDataset Sink.withJsonLd .nt v ds = .ok text) : WriterContract .nt v ds text := by
+  intro hdom
+  have hg : parseNTriples text v = .ok (Sink.flatten ds) :=
+    NTriplesRoundTrip.parseNTriples_toNTriples v (Sink.flatten ds) hdom text hser
+  refine ⟨({ default := Sink.flatten ds, named := [] } : Dataset).toSet, ?_, ?_⟩
+  · simp [parseDocument, parseDocumentRaw, givesSet, hg, Except.map]
+  · rw [Dataset.den_toSet]
+    exact DatasetDen.Iso.refl _
+
+/-- **The N-Quads writer keeps its contract**, RDF 1.1 and RDF 1.2 modes. The
+parser adds the written quads in order (`parseNQuads_toNQuads`); the dataset
+it gives has the quads of the dataset, up to RDF term equality
+(`addAll_quadsOf_memQuad`), and the names of the graphs that have a triple
+(`addAll_quadsOf_names`): the projection's denotation
+(`writerProjection_nquads_den`). The isomorphism is the identity. -/
+theorem writerContract_nquads (v : Syntax.Mode) (ds : Dataset) (text : String)
+    (hser : Sink.serializeDataset Sink.withJsonLd .nquads v ds = .ok text) :
+    WriterContract .nquads v ds text := by
+  intro hdom
+  have hp : parseNQuads text v = .ok (NQuadsRoundTrip.addAll Dataset.empty (NQuadsRoundTrip.quadsOf ds)) :=
+    NQuadsRoundTrip.parseNQuads_toNQuads v ds hdom text hser
+  refine ⟨NQuadsRoundTrip.addAll Dataset.empty (NQuadsRoundTrip.quadsOf ds), ?_, ?_⟩
+  · show parseNQuadsFast text v = _
+    rw [parseNQuadsFast_eq_parseNQuads, hp]
+  · have hden : (NQuadsRoundTrip.addAll Dataset.empty (NQuadsRoundTrip.quadsOf ds)).den =
+        (writerProjection .nquads ds).den := by
+      rw [writerProjection_nquads_den]
+      apply DatasetDen.ext
+      · intro gn t
+        exact NQuadsRoundTrip.addAll_quadsOf_memQuad ds t gn
+      · intro m
+        exact NQuadsRoundTrip.addAll_quadsOf_names ds m
+    rw [hden]
+    exact DatasetDen.Iso.refl _
+
+/-- The N-Triples writer as a stage. -/
+def ntriplesWriter (v : Syntax.Mode) : Stage String Dataset String where
+  run := Sink.serializeDataset Sink.withJsonLd .nt v
+  contract := WriterContract .nt v
+  sound := writerContract_nt v
+
+/-- The N-Quads writer as a stage. -/
+def nquadsWriter (v : Syntax.Mode) : Stage String Dataset String where
+  run := Sink.serializeDataset Sink.withJsonLd .nquads v
+  contract := WriterContract .nquads v
+  sound := writerContract_nquads v
+
+/-- `WriterRoundTrip .nt v`, both modes. The hypothesis `ds.IsSet` is not
+used: a list with a repeat round trips too. -/
+theorem writerRoundTrip_nt (v : Syntax.Mode) : WriterRoundTrip .nt v :=
+  fun ds _ hdom text hser => writerContract_nt v ds text hser hdom
+
+/-- `WriterRoundTrip .nquads v`, both modes. -/
+theorem writerRoundTrip_nquads (v : Syntax.Mode) : WriterRoundTrip .nquads v :=
+  fun ds _ hdom text hser => writerContract_nquads v ds text hser hdom
 
 /-- The executable check of `WriterRoundTrip` on one dataset, for the tests:
 `Dataset.isomorphic?` (the blank-node bijection search of `RDF/Isomorphism.lean`)
@@ -515,5 +590,11 @@ def rdfJsonRoundTripB (g : Graph) : Option Bool :=
 #print axioms nquads11Stream_reader
 #print axioms writerProjection_triples_den
 #print axioms writerProjection_nquads_den
+#print axioms writerContract_nt
+#print axioms writerContract_nquads
+#print axioms ntriplesWriter
+#print axioms nquadsWriter
+#print axioms writerRoundTrip_nt
+#print axioms writerRoundTrip_nquads
 
 end L4Factoidal.Dataflow

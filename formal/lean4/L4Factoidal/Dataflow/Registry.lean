@@ -244,15 +244,17 @@ def registry : List Entry := [
     tests := ["tests/known-defects/run.sh row JS-1", "l4jsonld-chunk-diff"]
     note := "whole-reader mode proved (jsonld_readAll_of_notStreamed); item mode measured: https://github.com/danbri/factoidal/issues/946" },
   { area := "Writer: N-Triples (round trip on the projection)", dir := "Syntax"
-    wireIn := "Dataset", wireOut := "String", status := .tested
-    theorems := [``writerProjection_triples_den, ``L4Factoidal.Syntax.NTriplesRoundTrip.readTriple11_closed_roundTrip, ``L4Factoidal.Syntax.NTriplesRoundTrip.term_toNTriples_injective, ``L4Factoidal.Syntax.SyntaxTheorems.graph_roundtrip_nil]
-    tests := ["Dataflow/PhaseCTests.lean round trip #guards (30 seeded datasets, RDF 1.1 and 1.2)"]
-    note := "projection: union of all graphs, no graph name (writerProjection_triples_den); domain: iriPrintSafe IRIs; WriterRoundTrip stated, not proved" },
+    stage := ``ntriplesWriter, wireIn := "Dataset", wireOut := "String"
+    contract := ``WriterContract, status := .proved
+    theorems := [``writerContract_nt, ``writerRoundTrip_nt, ``writerProjection_triples_den, ``L4Factoidal.Syntax.NTriplesRoundTrip.parseNTriples_toNTriples, ``L4Factoidal.Syntax.NTriplesRoundTrip.readTriple11_line, ``L4Factoidal.Syntax.NTriplesRoundTrip.readTriple12_line, ``L4Factoidal.Syntax.NTriplesRoundTrip.readStringLiteralBody_escape, ``L4Factoidal.Syntax.NTriplesRoundTrip.readObject12_safe]
+    tests := ["Dataflow/PhaseCTests.lean round trip #guards (30 seeded datasets, RDF 1.1 and 1.2)", "Syntax/NTriplesDocRoundTrip.lean counter-example #guards"]
+    note := "RDF 1.1 and 1.2 modes; projection: union of all graphs, no graph name (writerProjection_triples_den); domain: IRIREF, BLANK_NODE_LABEL and LANGTAG lexical spaces (Triple.ntSafe; the IRI-only domain was false)" },
   { area := "Writer: N-Quads (round trip on the projection)", dir := "Syntax"
-    wireIn := "Dataset", wireOut := "String", status := .tested
-    theorems := [``writerProjection_nquads_den]
-    tests := ["Dataflow/PhaseCTests.lean round trip #guards (30 seeded datasets, RDF 1.1 and 1.2)"]
-    note := "projection: empty named graphs dropped (writerProjection_nquads_den); WriterRoundTrip stated, not proved" },
+    stage := ``nquadsWriter, wireIn := "Dataset", wireOut := "String"
+    contract := ``WriterContract, status := .proved
+    theorems := [``writerContract_nquads, ``writerRoundTrip_nquads, ``writerProjection_nquads_den, ``L4Factoidal.Syntax.NQuadsRoundTrip.parseNQuads_toNQuads, ``L4Factoidal.Syntax.NQuadsRoundTrip.toNQuads_lines, ``L4Factoidal.Syntax.NQuadsRoundTrip.addAll_quadsOf_memQuad, ``L4Factoidal.Syntax.NQuadsRoundTrip.addAll_quadsOf_names, ``L4Factoidal.Syntax.parseNQuadsFast_eq_parseNQuads]
+    tests := ["Dataflow/PhaseCTests.lean round trip #guards (30 seeded datasets, RDF 1.1 and 1.2)", "Syntax/NQuadsDocRoundTrip.lean counter-example #guards"]
+    note := "RDF 1.1 and 1.2 modes; projection: empty named graphs dropped (writerProjection_nquads_den); domain: Quad.ntSafe (the N-Triples domain and graphLabel); the empty domain restriction was false" },
   { area := "Writer: Turtle (round trip on the projection)", dir := "Syntax"
     wireIn := "Dataset", wireOut := "String", status := .tested
     theorems := [``writerProjection_triples_den]
