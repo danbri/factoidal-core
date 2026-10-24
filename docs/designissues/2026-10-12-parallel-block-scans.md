@@ -2317,3 +2317,62 @@ https://github.com/danbri/factoidal/issues/961.
 - The rare hang of 1m.6.
 
 Issue https://github.com/danbri/factoidal/issues/961 stays open.
+
+## Stage 1n: the worker pool hang, and one open file per generation file (2026-10-24)
+
+Issue https://github.com/danbri/factoidal/issues/981 (the hang) and
+https://github.com/danbri/factoidal/issues/961 (KR 1.2 of
+https://github.com/danbri/factoidal/issues/875). No allocator setting changed.
+Branch `fix/issue-981`.
+
+### 1n.1 The hang of stage 1m: cause and repair
+
+Cause: a lost write of the worker pool's stop flag. Each worker read the flag
+with `IO.Ref.get`, and `Pool.shutdown` wrote it with `IO.Ref.set`. In the
+Lean 4.33.1 runtime (disassembly of `lean_st_ref_get`, `_take`, `_set`,
+`_swap`), `get` exchanges the value for null, spins while it finds null, and
+puts the value back with a second exchange; a `set` between the two is lost
+(`get` frees the new value and keeps the old). A worker that read the flag
+while `shutdown` wrote it kept `false`, took the empty mailbox that
+`shutdown` posted, blocked on its promise, and `shutdown` waited for its
+thread for good. Every `l4sbm11 query` with a pool runs `shutdown` once, so
+the query does not matter: `ids-path-star-nested` uses no divided scan.
+
+Evidence:
+
+| Test | Before the repair | After |
+| --- | --- | --- |
+| `l4pool-bench stress 50000 200 3` (start 3 workers, wake, 0 to 200 us of work, every second cycle one job per worker, stop), 300-second limit | 3 of 5 processes hung (one after more than 10,000 cycles) | 10 of 10 ended (500,000 cycles) |
+| gdb of a hung `l4pool-bench`: main thread in `Pool.shutdown` (`IO.wait` of a worker task), one worker in `Cell.take?` (`IO.wait` of its promise) inside `workerLoop` | seen | - |
+| `tests/sbm11/pool-stress.sh`, 20,000 processes of `ids-path-star-nested` at 4 threads; 20,000 of 67 queries (`ids-path-*`, `threads/*`) at 2, 4 and 8 threads; 20,000 at 4 and 2 threads beside 4 CPU-bound processes; 10-second limit each | 0 hangs, 0 failures (60,000 processes) | 0 hangs, 0 failures: 20,000 processes at 4 and 2 threads beside 4 CPU-bound processes, and the 500 of `threads.sh` |
+
+The query processes did not reproduce the hang: the window is two
+exchanges wide, and in a query process `shutdown` meets a worker at its
+flag read only when the worker has just started or just finished a job.
+`l4pool-bench stress` puts that moment in every cycle.
+
+Repair (commit `ec07138e`):
+
+- `Pool.shutdown` writes the flag with `modify fun _ => true`. `get`,
+  `take`, `modify` and `modifyGet` all spin while the ref holds null, so
+  they exclude each other; `set` and `swap` do not. Rule: a ref that two
+  threads reach uses only `set`/`swap` or only `get`/`modify`/`modifyGet`
+  (skill `lean4-performance`, which said "use `swap`, `modify` or
+  `modifyGet`" since stage 1j; that was wrong when the other thread uses
+  `set` or `swap`).
+- The same mix in `parFold` (workers `get`, the calling thread `set` of the
+  stop flag after a failure: a lost write there only lets workers run more
+  ranges) and in `Session.gdxBytes` (a lost write only reads GDX1 again):
+  both now write with `modify`.
+- The review of `Harness/WorkerPool.lean` found no other mix: the cells use
+  `set` and `swap` only, and the wake-up order (reader: publish the promise,
+  read the value again; writer: write the value, take the promise) is
+  correct when both are single exchanges. `parFold`'s result slots are
+  written before their promise is resolved and taken after it is waited
+  for. One more defect on an error path: a `parFold` worker whose setup
+  failed took no range, and in fixed order the calling thread waited for
+  its ranges for good; it now resolves each range it takes with the error.
+- Test: `tests/sbm11/pool-stress.sh` (20,000 `l4pool-bench stress` cycles
+  with a 120-second limit, then 500 query processes with a 10-second limit;
+  a hung process gets its gdb stacks), run at the end of
+  `tests/sbm11/threads.sh`.
