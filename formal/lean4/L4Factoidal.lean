@@ -36,6 +36,8 @@ import L4Factoidal.Dataflow.PhaseD
 import L4Factoidal.Dataflow.PhaseDTests
 import L4Factoidal.Dataflow.PhaseE
 import L4Factoidal.Dataflow.PhaseETests
+import L4Factoidal.Dataflow.PhaseC
+import L4Factoidal.Dataflow.PhaseCTests
 import L4Factoidal.Dataflow.Registry
 import L4Factoidal.Dataflow.RegistryTests
 import L4Factoidal.RDF.ConciseBoundedDescription
