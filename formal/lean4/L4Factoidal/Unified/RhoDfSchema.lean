@@ -518,7 +518,9 @@ theorem rhoDf_derives_holds {i : Interp} (hc : RhoDfConditions i)
       exact hspt _ _ _ ih1 ih2
   | rdfs7 _ _ ih1 ih2 =>
       exact hsp _ _ _ _ ih1 ih2
-  | rdfs9 _ _ ih1 ih2 =>
+  | rdfs9 _ hsub _ ih1 ih2 =>
+      simp only [TripleHolds] at ih1 ih2 ⊢
+      rw [← denot_toSubject? i a hsub] at ih1
       exact hsc _ _ _ ih2 ih1
   | rdfs11 _ hsub _ ih1 ih2 =>
       simp only [TripleHolds] at ih1 ih2 ⊢
@@ -549,29 +551,12 @@ theorem toSubject?_subjTerm (s : Subject) :
     (subjTerm s).toSubject? = some s := by
   cases s <;> rfl
 
-/-- The rdfs9 conclusions the executable step does NOT emit: the
-specification row `Rdfs9Derives` fires for a BLANK-NODE class term
-(`sub.s` is any subject), while `RDFS.rdfs9For` reads the class off a
-`rdf:type` object and requires an IRI. The closedness check must
-cover both, because `RhoDfClosed` is stated over the specification
-relations. -/
-def rdfs9BnodeConclusions (c : Graph) : List Triple :=
-  c.flatMap (fun typ =>
-    if typ.p == RDFS.rdfType then
-      match typ.o with
-      | .bnode b =>
-          (RDFS.objectsOf c (.bnode b) RDFS.rdfsSubClassOf).map
-            (fun o => ⟨typ.s, RDFS.rdfType, o⟩)
-      | _ => []
-    else [])
-
 /-- Executable ρdf-closedness check: every one-round conclusion is
 already a member (STRICT list membership — the specification-level
 `RhoDfClosed` is stated over `∈`, not the engine's coarser
 `Triple.eqb`, so the check must be too). -/
 def rhoDfClosedCheck (c : Graph) : Bool :=
-  (RDFS.stepConclusions c ++ rdfs9BnodeConclusions c).all
-    (fun t => decide (t ∈ c))
+  (RDFS.stepConclusions c).all (fun t => decide (t ∈ c))
 
 /-- Bridge, rdfs2: the specification row's conclusion is a one-round
 conclusion of the executable step. -/
@@ -615,31 +600,18 @@ private theorem spec7_step {c : Graph} {t : Triple}
   exact List.mem_map.mpr ⟨u, RDFS.mem_triplesWithPredicate_of hu hup, rfl⟩
 
 private theorem spec9_step {c : Graph} {t : Triple}
-    (h : Rdfs9Derives c t) :
-    t ∈ RDFS.stepConclusions c ++ rdfs9BnodeConclusions c := by
+    (h : Rdfs9Derives c t) : t ∈ RDFS.stepConclusions c := by
   obtain ⟨sub, hsub, typ, htyp, xs, hsp, hss, htp, hto, rfl⟩ := h
   have hsubm : (⟨xs, RDFS.rdfsSubClassOf, sub.o⟩ : Triple) ∈ c := by
     have he : sub = ⟨xs, RDFS.rdfsSubClassOf, sub.o⟩ := by
       cases sub; simp_all
     rw [← he]; exact hsub
-  cases hxs : xs with
-  | iri xi =>
-      refine List.mem_append_left _ (RDFS.mem_stepConclusions_rdfs9 htyp ?_)
-      rw [hxs] at hto
-      have hto' : typ.o = Term.iri xi := hto
-      unfold RDFS.rdfs9For
-      simp only [hto', htp, beq_self_eq_true, reduceIte]
-      refine List.mem_map.mpr ⟨sub.o, ?_, rfl⟩
-      exact RDFS.mem_objectsOf_of_mem (hxs ▸ hsubm)
-  | bnode xb =>
-      refine List.mem_append_right _ ?_
-      rw [hxs] at hto
-      have hto' : typ.o = Term.bnode xb := hto
-      unfold rdfs9BnodeConclusions
-      refine List.mem_flatMap.mpr ⟨typ, htyp, ?_⟩
-      simp only [htp, beq_self_eq_true, reduceIte, hto']
-      refine List.mem_map.mpr ⟨sub.o, ?_, rfl⟩
-      exact RDFS.mem_objectsOf_of_mem (hxs ▸ hsubm)
+  refine RDFS.mem_stepConclusions_rdfs9 htyp ?_
+  have ho : typ.o.toSubject? = some xs := by
+    rw [hto, toSubject?_subjTerm]
+  unfold RDFS.rdfs9For
+  simp only [ho, htp, beq_self_eq_true, reduceIte]
+  exact List.mem_map.mpr ⟨sub.o, RDFS.mem_objectsOf_of_mem hsubm, rfl⟩
 
 private theorem spec11_step {c : Graph} {t : Triple}
     (h : Rdfs11Derives c t) : t ∈ RDFS.stepConclusions c := by
@@ -659,16 +631,14 @@ private theorem spec11_step {c : Graph} {t : Triple}
 closedness. -/
 theorem rhoDfClosed_of_check {c : Graph}
     (h : rhoDfClosedCheck c = true) : RhoDfClosed c := by
-  have hmem : ∀ t ∈ RDFS.stepConclusions c ++ rdfs9BnodeConclusions c, t ∈ c := by
+  have hstep : ∀ t ∈ RDFS.stepConclusions c, t ∈ c := by
     intro t ht
     exact of_decide_eq_true (List.all_eq_true.mp h t ht)
-  have hstep : ∀ t ∈ RDFS.stepConclusions c, t ∈ c :=
-    fun t ht => hmem t (List.mem_append_left _ ht)
   exact ⟨fun t hd => hstep t (spec2_step hd),
          fun t hd => hstep t (spec3_step hd),
          fun t hd => hstep t (spec5_step hd),
          fun t hd => hstep t (spec7_step hd),
-         fun t hd => hmem t (spec9_step hd),
+         fun t hd => hstep t (spec9_step hd),
          fun t hd => hstep t (spec11_step hd)⟩
 
 /-- The executable fragment check (`RDFS/Closure.lean`) is sufficient

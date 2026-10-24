@@ -114,15 +114,19 @@ def rdfs3For (g : Graph) (decl : Triple) : List Triple :=
   | _ => []
 
 /-- **rdfs9** (`rdfs_rule_subClassOf`): from a data triple
-`s rdf:type A`, re-type `s` under every super-class of `A` in `g`. -/
+`s rdf:type A`, re-type `s` under every super-class of `A` in `g`.
+RDF 1.1 Semantics §9.2: "xxx rdfs:subClassOf yyy . zzz rdf:type xxx . |
+zzz rdf:type yyy ." `A` is an IRI or a blank node (issue 982); a literal
+object has no `rdfs:subClassOf` triple, since a literal cannot be a
+subject. -/
 def rdfs9For (g : Graph) (t : Triple) : List Triple :=
-  match t.o with
-  | .iri a =>
+  match t.o.toSubject? with
+  | some a =>
       if t.p == rdfType then
-        (objectsOf g (Subject.iri a) rdfsSubClassOf).map
+        (objectsOf g a rdfsSubClassOf).map
           (fun b => ⟨t.s, rdfType, b⟩)
       else []
-  | _ => []
+  | none => []
 
 /-- **rdfs11** (`rdfs_rule_subClassOf_trans`): from `A rdfs:subClassOf
 B`, compose with every `B rdfs:subClassOf C` of `g`. -/
@@ -326,13 +330,13 @@ def rdfs3ForIx (ix : StepIndex) (decl : Triple) : List Triple :=
 
 /-- `rdfs9For`, reading the (subject, `rdfs:subClassOf`) bucket. -/
 def rdfs9ForIx (ix : StepIndex) (t : Triple) : List Triple :=
-  match t.o with
-  | .iri a =>
+  match t.o.toSubject? with
+  | some a =>
       if t.p == rdfType then
-        (ix.objs.getD (Subject.iri a, rdfsSubClassOf) []).map
+        (ix.objs.getD (a, rdfsSubClassOf) []).map
           (fun b => ⟨t.s, rdfType, b⟩)
       else []
-  | _ => []
+  | none => []
 
 /-- `rdfs11For`, reading the (subject, `rdfs:subClassOf`) bucket. -/
 def rdfs11ForIx (ix : StepIndex) (t : Triple) : List Triple :=

@@ -18,8 +18,8 @@ during `lake build` (https://github.com/danbri/factoidal/issues/975, phase E).
    empty graph is not cited; with the observation graph only, explain fails.
 4. Blank nodes: a class `_:c` shared by two named graphs of one dataset (one
    scope, RDF 1.1 Concepts section 4) gives `ex:Employee rdfs:subClassOf
-   ex:Person` by rdfs11; rdfs9 with a blank-node class derives nothing
-   (finding); a mutation that reads the schema triple from a second artifact with
+   ex:Person` by rdfs11; rdfs9 with a blank-node class gives
+   `ex:alice rdf:type ex:Person` (issue 982); a mutation that reads the schema triple from a second artifact with
    the same body is refused as a blank-node scope conflict. A target with a
    blank node keeps its raw label in the conclusion.
 5. RDFC-1.0 stage: the same graph with two blank-node labellings gives the
@@ -218,15 +218,14 @@ private def bnodeDs : Dataset :=
                { name := gSchema, graph := [{ s := .bnode "c", p := rdfsSubClassOf, o := .iri exPerson }] } ] }
 private def personTriple : Triple := { s := .iri exEmployee, p := rdfsSubClassOf, o := .iri exPerson }
 
-/- FINDING: `DerivesFull.rdfs9` takes the class `xxx` as an IRI, so
-`ex:alice rdf:type _:c . _:c rdfs:subClassOf ex:Person .` does not give
-`ex:alice rdf:type ex:Person`. RDF 1.1 Semantics 9.2 rdfs9 has no such
-restriction. This test therefore joins on `_:c` with rdfs11. -/
+/- RDF 1.1 Semantics 9.2 rdfs9: "xxx rdfs:subClassOf yyy . zzz rdf:type xxx . |
+zzz rdf:type yyy ." with a blank-node class `xxx`. Until 2026-10-24 the
+closure did not derive this triple (https://github.com/danbri/factoidal/issues/982). -/
 private def rdfs9BnodeDs : Dataset :=
   { default := []
     named := [ { name := gObs, graph := [{ s := .iri exAlice, p := rdfType, o := .bnode "c" }] },
                { name := gSchema, graph := [{ s := .bnode "c", p := rdfsSubClassOf, o := .iri exPerson }] } ] }
-#guard !(fullClosure [] [] (rdfs9BnodeDs.select { named := [gObs, gSchema] })).contains
+#guard (fullClosure [] [] (rdfs9BnodeDs.select { named := [gObs, gSchema] })).contains
   { s := .iri exAlice, p := rdfType, o := .iri exPerson }
 private def schemaBnodeTriple : Triple := { s := .bnode "c", p := rdfsSubClassOf, o := .iri exPerson }
 private def twoGraphs : GraphSelection := { named := [gObs, gSchema] }

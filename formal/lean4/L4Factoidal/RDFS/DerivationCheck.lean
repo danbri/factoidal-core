@@ -742,24 +742,22 @@ theorem rdfs3Ann_stepOk {ax g gg : Graph} {ss : List Step}
 theorem rdfs9Ann_stepOk {ax g gg : Graph} {ss : List Step}
     (hss : ss.map (·.conclusion) = gg) {x : Nat × Triple} (hx : x ∈ indexed gg)
     {a : Step} (ha : a ∈ rdfs9Ann (indexed gg) x) : stepOk ax g ss a = true := by
-  cases ho : x.2.o with
-  | bnode _ => simp [rdfs9Ann, ho] at ha
-  | literal _ => simp [rdfs9Ann, ho] at ha
-  | tripleTerm _ _ _ => simp [rdfs9Ann, ho] at ha
-  | iri c =>
+  cases hsub : x.2.o.toSubject? with
+  | none => simp [rdfs9Ann, hsub] at ha
+  | some c =>
     by_cases hp : x.2.p = rdfType
-    · simp only [rdfs9Ann, ho, hp, beq_self_eq_true, if_true] at ha
+    · simp only [rdfs9Ann, hsub, hp, beq_self_eq_true, if_true] at ha
       refine annJoin_stepOk (F := rdfs9For) hss
         (fun st h => by simp only [rowCheck, h]) hx ?_ ha
       intro u t hsel hmk
       simp only [Option.some.injEq] at hmk
       subst hmk
-      simp only [rdfs9For, ho, hp, beq_self_eq_true, if_true,
+      simp only [rdfs9For, hsub, hp, beq_self_eq_true, if_true,
         objectsOf, List.mem_map, List.mem_filter]
       exact ⟨u.o, ⟨u, ⟨by simp, by simpa using hsel⟩, rfl⟩, rfl⟩
     · have hp' : (x.2.p == rdfType) = false := by
         simp only [beq_eq_false_iff_ne, ne_eq]; exact hp
-      simp [rdfs9Ann, ho, hp'] at ha
+      simp [rdfs9Ann, hsub, hp'] at ha
 
 theorem rdfs11Ann_stepOk {ax g gg : Graph} {ss : List Step}
     (hss : ss.map (·.conclusion) = gg) {x : Nat × Triple} (hx : x ∈ indexed gg)

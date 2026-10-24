@@ -475,7 +475,7 @@ theorem derivesFull_axMono {ax ax' g : Graph} (hsub : ∀ u ∈ ax, u ∈ ax')
   | rdfs6 _ ih => exact DerivesFull.rdfs6 ih
   | rdfs7 _ _ ih1 ih2 => exact DerivesFull.rdfs7 ih1 ih2
   | rdfs8 _ ih => exact DerivesFull.rdfs8 ih
-  | rdfs9 _ _ ih1 ih2 => exact DerivesFull.rdfs9 ih1 ih2
+  | rdfs9 _ hs _ ih1 ih2 => exact DerivesFull.rdfs9 ih1 hs ih2
   | rdfs10 _ ih => exact DerivesFull.rdfs10 ih
   | rdfs11 _ hs _ ih1 ih2 => exact DerivesFull.rdfs11 ih1 hs ih2
   | rdfs12 _ ih => exact DerivesFull.rdfs12 ih

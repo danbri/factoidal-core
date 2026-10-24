@@ -47,9 +47,11 @@ specification relations `Rdfs*Derives` (`RDF/EntailmentRdfsSpec.lean`)
 — the Datalog rules mirror THOSE, not the engine's step functions.
 That choice is what makes the decode direction land on `RhoDfClosed`
 (which is stated over the diagonal relations, blank-node classes
-included) rather than on the engine step (which skips blank-node
-classes; that gap is exactly why `rhoDfClosedCheck` carries
-`rdfs9BnodeConclusions`).
+included). Until 2026-10-24 the engine step skipped blank-node
+classes and `rhoDfClosedCheck` carried a separate
+`rdfs9BnodeConclusions` list for them; the engine step now reads the
+class as an IRI or a blank node
+(https://github.com/danbri/factoidal/issues/982) and the list is gone.
 
 ## Encoding
 
@@ -378,11 +380,14 @@ theorem derives_to_datalog {g : Graph} {t : Triple}
           cases hbm)
       simpa [ruleRdfs7, tAtom, DAtom.subst, DTerm.subst, tripleFact,
              encSubj] using hrule
-  | @rdfs9 s a b hdata hdecl ih1 ih2 =>
+  | @rdfs9 s x a b hdata hsub hdecl ih1 ih2 =>
+      have hbs : encObj x = encSubj a := by
+        rw [← RDF.subjTerm_of_toSubject? hsub]
+        exact encObj_subjTerm a
       have hrule := DatalogProgram.Derives.rule (p := rhoDfProgram)
         (facts := graphFacts g)
         (show ruleRdfs9 ∈ rhoDfProgram.rules by simp [rhoDfProgram])
-        (fun n => if n = "a" then encIri a else if n = "b" then encObj b
+        (fun n => if n = "a" then encSubj a else if n = "b" then encObj b
                   else encSubj s)
         (by
           intro bAtom hbm
@@ -391,7 +396,7 @@ theorem derives_to_datalog {g : Graph} {t : Triple}
                    encSubj] using ih2
           rcases List.mem_cons.mp hbm with rfl | hbm
           · simpa [tAtom, DAtom.subst, DTerm.subst, tripleFact,
-                   cRdfType, encSubj, encObj] using ih1
+                   cRdfType, encSubj, hbs] using ih1
           cases hbm)
       simpa [ruleRdfs9, tAtom, DAtom.subst, DTerm.subst, tripleFact,
              cRdfType] using hrule
