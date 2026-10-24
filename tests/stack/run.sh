@@ -369,9 +369,13 @@ xfail_issue() { # xfail_issue <case>; prints the issue URL or nothing
     # routes, and `xml-markup-chain` in wcanary, until 2026-10-12, when
     # nested entity expansion became a worklist.)
     # regex-replace-groups (5,000 repetitions) overflows at 512 KB, natively
-    # and in Node, and runs on the default Node stack (measured 2026-10-13).
+    # and in Node, and ran on the default Node stack (measured 2026-10-13).
+    # On 2026-10-24 it overflows on the default Node stack too (wasm route,
+    # "Maximum call stack size exceeded", 3 of 3 runs; reported in
+    # https://github.com/danbri/factoidal/issues/1003 on main 9c123945), so
+    # the wasm route is listed as well. The native route (1 GB) runs it.
     regex-replace-groups)
-      case "${2:-}" in canary|wcanary) echo "https://github.com/danbri/factoidal/issues/816" ;; esac ;;
+      case "${2:-}" in canary|wcanary|wasm) echo "https://github.com/danbri/factoidal/issues/816" ;; esac ;;
     rdfc-bnode-chain) echo "https://github.com/danbri/factoidal/issues/817" ;;
     # (`ntriples-read-triple-term`, `nquads-read-triple-term`, `trig-read-triple-term`,
     # `construct-triple-term`, `ntriples-write-triple-term`, `ntriples-read-cli-triple-term` and
