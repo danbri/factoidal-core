@@ -338,7 +338,18 @@ repaired (docs/designissues/2026-10-10-lean-vs-fstar-performance.md):
                    the repair: 19.3 s, 105 s and not finished at 600 s (the
                    class-size counting rung built its linear system by scanning
                    the graph once per IRI); after: 1.05 s, 2.74 s, 7.48 s,
-                   measured 2026-10-12, most of it the OWL 2 RL closure
+                   measured 2026-10-12, most of it the OWL 2 RL closure.
+                   Since 2026-10-22 the strict reader refuses these prefixes
+                   (annotation properties with no declaration in the prefix,
+                   restriction nodes outside it): `unknown`, an expected
+                   failure of https://github.com/danbri/factoidal/issues/960
+  owl-consistent-svf  `owl-consistent` on n units of a generated ontology in
+                   the admitted fragment: an individual of A_k, A_k
+                   subClassOf B_k, A_k subClassOf ObjectSomeValuesFrom(p,
+                   A_{k+1 mod n}) (5 triples a unit), 2,000, 4,000 and 8,000
+                   units, measured at x, 2x and 4x like owl-consistent-cl. The
+                   answer is `true` from a checked finite model (issue 960):
+                   the reader, the model search and the model checker
   owl-species      the OWL 2 species check (`l4owl-species`,
                    `OWL.SyntaxDL.speciesViolations`) of a generated OWL 2 DL
                    document of n units: a class with a restriction on a blank
@@ -1981,6 +1992,23 @@ def cl_prefix(n: int) -> Path:
     return p
 
 
+def owl_svf_chain(n: int) -> Path:
+    """n units in the admitted OWL fragment (issue 960): an individual of A_k,
+    A_k subClassOf B_k, and A_k subClassOf ObjectSomeValuesFrom(p, A_{k+1 mod n})."""
+    rdf_type = "<http://www.w3.org/1999/02/22-rdf-syntax-ns#type>"
+    sub = "<http://www.w3.org/2000/01/rdf-schema#subClassOf>"
+    owl = "http://www.w3.org/2002/07/owl#"
+
+    def text() -> str:
+        out = []
+        for k in range(n):
+            a, b, nxt = f"<{EX}A{k}>", f"<{EX}B{k}>", f"<{EX}A{(k + 1) % n}>"
+            out.append(f"<{EX}i{k}> {rdf_type} {a} .\n{a} {sub} {b} .\n{a} {sub} _:r{k} .\n"
+                       f"_:r{k} <{owl}onProperty> <{EX}p> .\n_:r{k} <{owl}someValuesFrom> {nxt} .\n")
+        return "".join(out)
+    return fixture(f"owl-svf-chain-{n}.nq", text)
+
+
 def delta_log_merge_args(n: int) -> Path:
     """The arguments of `deltaLogMerge` (an empty base and a log of n
     records, each an INSERT DATA of one distinct triple), as a JSON file. The
@@ -2157,6 +2185,9 @@ SERIES_ROWS = {
         10000, cl_prefix,
         lambda p: [str(BIN), "owl-consistent", str(p), "--format", "nquads"], "true",
         CL_SOURCE),
+    "owl-consistent-svf": (
+        2000, owl_svf_chain,
+        lambda p: [str(BIN), "owl-consistent", str(p), "--format", "nquads"], "true", None),
     "sparql-tokenize": (
         2000,
         lambda n: fixture(f"sparql-values-ask-{n}.rq", lambda: sparql_values_ask(n)),
