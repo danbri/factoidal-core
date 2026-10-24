@@ -34,6 +34,8 @@ import L4Factoidal.Dataflow.Instances
 import L4Factoidal.Dataflow.InstancesTests
 import L4Factoidal.Dataflow.PhaseD
 import L4Factoidal.Dataflow.PhaseDTests
+import L4Factoidal.Dataflow.PhaseE
+import L4Factoidal.Dataflow.PhaseETests
 import L4Factoidal.Dataflow.Registry
 import L4Factoidal.Dataflow.RegistryTests
 import L4Factoidal.RDF.ConciseBoundedDescription
@@ -86,6 +88,7 @@ import L4Factoidal.RDFS.DerivationCheckTests
 import L4Factoidal.Proof.Syntax
 import L4Factoidal.Proof.Checker
 import L4Factoidal.Proof.Tests
+import L4Factoidal.Proof.RdfsProfile
 import L4Factoidal.RDFS.SchemaSplit
 import L4Factoidal.RDF.Datatypes
 import L4Factoidal.RDF.Entailment
@@ -103,6 +106,8 @@ import L4Factoidal.SPARQL.ExprRefinement
 import L4Factoidal.SPARQL.Query
 import L4Factoidal.SPARQL.Exists
 import L4Factoidal.SPARQL.QueryTheorems
+import L4Factoidal.SPARQL.FromMerge
+import L4Factoidal.SPARQL.FromMergeStage
 import L4Factoidal.SPARQL.GroupFastTheorems
 import L4Factoidal.SPARQL.QueryTests
 import L4Factoidal.SPARQL.OptionalFilterScope
