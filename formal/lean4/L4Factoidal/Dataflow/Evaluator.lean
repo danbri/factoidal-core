@@ -93,9 +93,9 @@ search laws give `GraphRel` for each graph backend. An end-to-end theorem
 (bytes → `RdfReader` → `LawfulStore` → `LawfulEvaluator` → answer, item 5)
 then needs only the named assumptions of the three types.
 
-`GraphFixed` (no upper-case letter in a language tag) is a premise of
-`GraphRel` until https://github.com/danbri/factoidal/issues/1001 (PR 57)
-lands, which makes it true of every graph.
+`GraphFixed` (no upper-case letter in a language tag) was a premise of
+`GraphRel` until https://github.com/danbri/factoidal/issues/1001 (PR 57),
+which makes it true of every graph; the theorems below no longer take it.
 
 No `sorry`, no `axiom`, no `native_decide`, no `partial`.
 -/
@@ -153,22 +153,18 @@ structure EvalInput.Wf (inp : EvalInput) : Prop where
 
 /-- The indexed backend of a set dataset with IRI graph names reads it. -/
 theorem backendReads_indexed (d : Dataset) (hset : d.IsSet)
-    (hiri : Storage.QuadDataset.namesAreIris d = true)
-    (hdf : Storage.Sbm11.AllowedPerm.GraphFixed d.default)
-    (hnf : ∀ ng ∈ d.named, Storage.Sbm11.AllowedPerm.GraphFixed ng.graph) :
+    (hiri : Storage.QuadDataset.namesAreIris d = true) :
     BackendReads (indexedDatasetBackend d) d := by
   have hi := Storage.BackendRefinement.iris_of_namesAreIris hiri
-  refine ⟨Storage.BackendRefinement.graphRel_indexed hset.default hdf, ?_, ?_⟩
+  refine ⟨Storage.BackendRefinement.graphRel_indexed hset.default, ?_, ?_⟩
   · rw [DatasetRestriction.indexedDatasetBackend_named]
-    exact Storage.BackendRefinement.namedRel_indexed d.named hset.graphs hnf hi
+    exact Storage.BackendRefinement.namedRel_indexed d.named hset.graphs hi
   · rw [DatasetRestriction.indexedDatasetBackend_named, List.map_map]
     exact Storage.BackendRefinement.ngKey_nodup d.named hset.names hi
 
 /-- The input the wasm query ops build is well formed. -/
 theorem EvalInput.wf_indexed (env : EvalEnv) (d : Dataset) (q : Query) (hset : d.IsSet)
     (hiri : Storage.QuadDataset.namesAreIris d = true)
-    (hdf : Storage.Sbm11.AllowedPerm.GraphFixed d.default)
-    (hnf : ∀ ng ∈ d.named, Storage.Sbm11.AllowedPerm.GraphFixed ng.graph)
     (he : env.dataset = some d) :
     EvalInput.Wf { env, ds := d, backend := some (indexedDatasetBackend d), query := q } where
   envDataset := he
@@ -176,7 +172,7 @@ theorem EvalInput.wf_indexed (env : EvalEnv) (d : Dataset) (q : Query) (hset : d
   backendReads := by
     intro dsb h
     cases h
-    exact backendReads_indexed d hset hiri hdf hnf
+    exact backendReads_indexed d hset hiri
 
 /-- With no backend, any environment that reads the dataset gives a
 well-formed input. -/
