@@ -15,9 +15,13 @@ subset of propext, Classical.choice, Quot.sound.
 
 Status:
 
-* `proved`: `stage` is a `Stage` value, or an `RdfReader` value (the reader
-  interface type, `Dataflow/Reader.lean`), whose `sound` field is a proof, or an
-  `RdfWriter` (`Dataflow/Writer.lean`) whose `assumed_roundTrip` is `none`;
+* `proved`: `stage` is a `Stage` value, or a value of an interface type with
+  its contract as a field: `RdfReader` (`Dataflow/Reader.lean`), `SoundReasoner`
+  (`Reasoner.lean`), `LawfulValidator` (`Validator.lean`), `SoundChecker`
+  (`Checker.lean`), whose `sound` field is a proof, or an `RdfWriter`
+  (`Dataflow/Writer.lean`) whose `assumed_roundTrip` is `none`. Unproved
+  contract fields of these types are named assumptions, fields with the prefix
+  `assumed_`;
   `contract` names its contract; `theorems` names the component theorems it
   uses.
 * `assumed`: `stage` is an `IOStage`, an `RdfWriter` whose `assumed_roundTrip`
@@ -40,6 +44,9 @@ import L4Factoidal.Dataflow.Instances
 import L4Factoidal.Dataflow.PhaseD
 import L4Factoidal.Dataflow.PhaseE
 import L4Factoidal.Dataflow.PhaseC
+import L4Factoidal.Dataflow.Reasoner
+import L4Factoidal.Dataflow.Validator
+import L4Factoidal.Dataflow.Checker
 import L4Factoidal.Dataflow.PhaseStorage
 import L4Factoidal.Dataflow.StoreTheorems
 import L4Factoidal.Unified.OwlRlAdequacy
@@ -780,6 +787,39 @@ def registry : List Entry := [
     theorems := [``L4Factoidal.FPP0.checkBundle_rdfsEntails, ``L4Factoidal.FPP0.mem_mergeOf_profile,
       ``L4Factoidal.FPP0.axiomaticTriples_scoped]
     note := "profileAxiomsOk compares graph values, so no hash assumption" },
+  { area := "SoundReasoner: rho-df (RDFS.closureFix; wasm rhoDfClosure, datasetClosure)", dir := "RDFS"
+    stage := ``rhoDfReasoner, wireIn := "Graph", wireOut := "Graph"
+    contract := ``Regime.Entails, status := .proved
+    theorems := [``L4Factoidal.RDF.closure_rhoDfEntails, ``rhoDfReasoner_complete,
+      ``L4Factoidal.RDF.closure_rhoDf_iff]
+    note := "SoundReasoner interface type: soundness against RhoDfEntails is a field; conditional completeness is the theorem rhoDfReasoner_complete; the unconditional statement is the named assumption assumed_completeness" },
+  { area := "SoundReasoner: RDFS (RDFS.fullClosure with the rdf:_n slice; wasm owlClosure RDFS, datasetClosure)", dir := "RDFS"
+    stage := ``rdfsReasoner, wireIn := "Graph", wireOut := "Graph"
+    contract := ``Regime.Entails, status := .proved
+    theorems := [``L4Factoidal.RDF.fullClosure_entails, ``cmpSlice_member]
+    note := "SoundReasoner interface type: soundness against RdfsEntails is a field; the rdf:_n slice is proved to be rdf:_n IRIs; completeness is the named assumption assumed_completeness (open, finding C-1)" },
+  { area := "SoundReasoner: OWL 2 RL (set of OWL.RL.closureFix; wasm owlClosure OWL-RL, datasetClosure)", dir := "OWL"
+    stage := ``owlRlReasoner, wireIn := "Graph", wireOut := "Graph"
+    contract := ``Regime.Entails, status := .proved
+    theorems := [``L4Factoidal.OWL.RL.closure_sound, ``L4Factoidal.OWL.RL.rl_derives_holds,
+      ``L4Factoidal.RDF.Graph.toSet_sublist]
+    note := "SoundReasoner interface type: soundness against OwlRlEntails (Derives, and truth in every interpretation meeting the row conditions) is a field; completeness is the named assumption assumed_completeness (closureFix_saturated, https://github.com/danbri/factoidal/issues/756)" },
+  { area := "LawfulValidator: SHACL (decodeShapesGraph, validateFull; wasm shaclValidate, datasetShaclValidate)", dir := "SHACL"
+    stage := ``shaclValidator, wireIn := "Graph × Graph", wireOut := "ValidationReport"
+    contract := ``CoreConformance, status := .proved
+    theorems := [``L4Factoidal.SHACL.validateWithSparql_sound_core,
+      ``shaclValidator_conforms_iff_passes, ``L4Factoidal.SHACL.validateWithSparql_conforms_iff]
+    note := "LawfulValidator interface type: a conforming report implies SHACL Core conformance is a field; the report is exact against Core plus the two SHACL-SPARQL passes (theorem); exactness against Spec.GraphConformsWithSparql is the named assumption assumed_spec_iff" },
+  { area := "SoundChecker: FPP0 kernel, foundational profile", dir := "Proof"
+    stage := ``foundationalChecker, wireIn := "Bundle", wireOut := "Claim"
+    contract := ``CheckProfile.Holds, status := .proved
+    theorems := [``L4Factoidal.FPP0.checkBundle_merge]
+    note := "SoundChecker interface type: accept implies the claim is derivable from the merge is a field; no named assumption" },
+  { area := "SoundChecker: FPP0 kernel, RDFS profile", dir := "Proof"
+    stage := ``rdfsChecker, wireIn := "Bundle", wireOut := "Claim"
+    contract := ``CheckProfile.Holds, status := .proved
+    theorems := [``L4Factoidal.FPP0.checkBundle_rdfsEntails, ``rdfsChecker_accept]
+    note := "SoundChecker interface type: accept implies RDFS entailment from the merge is a field; no named assumption" },
   { area := "RDFS explanation (selection and target to an FPP0 bundle)", dir := "RDFS"
     stage := ``rdfsExplainStage, wireIn := "Dataset × Triple", wireOut := "Bundle"
     contract := ``ExplainContract, status := .proved
