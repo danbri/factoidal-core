@@ -2425,3 +2425,187 @@ Why the gain of stage 1m.5 does not appear:
 What would change this: a cold query (the first run of a process reads all
 1,327 ranges), or a store whose blocks do not fit the caches. Neither is a
 KR 1.2 measurement.
+
+## Stage 1o: the serial steps of q07 (2026-10-24)
+
+Issue https://github.com/danbri/factoidal/issues/961, key result KR 1.2 of
+https://github.com/danbri/factoidal/issues/875. No allocator setting changed;
+the block-bytes rule of `tests/sbm11/threads.sh` and `SBM11_STREAM_JOBS` are
+not changed. Branch `batch3/kr12-q07d`.
+
+### 1o.1 Result
+
+KR 1.2 is met for d10, q19 and q21; it is not met for q07 (0.47 against
+0.40). q07 at 4 threads went from 2.83 to 2.18 ms in the final run (2.33 to
+2.67 ms on `main` and 1.96 to 2.21 ms on this stage over four interleaved
+runs of the session). Final interleaved run: binary of `main` `c7700ee2`
+against this stage (`b7d45ff4`), 24 rounds (23 kept), `--repeat 21`, the
+1b.6 method, 2026-10-24 06:37 to 06:41 UTC, after all gates had ended (raw
+CSV `.claude-runs/q07d/final4.csv`, not in the repository):
+
+| Query | `main` 1 / 4 threads ms | 4/1 | this stage 1 / 4 threads ms | 4/1 | peak RSS 4/1 (largest), main / this stage | target met |
+| --- | ---: | ---: | ---: | ---: | ---: | --- |
+| q07 | 4.40 / 2.83 | 0.64 | 4.62 / 2.18 | 0.47 | 1.14 / 1.22 | no |
+| q19 | 34.55 / 12.01 | 0.35 | 34.65 / 11.76 | 0.34 | 1.81 / 1.81 | yes |
+| q21 | 91.24 / 31.39 | 0.34 | 92.41 / 32.88 | 0.36 | 1.68 / 1.66 | yes |
+| d10 | 8.68 / 3.25 | 0.38 | 8.83 / 3.33 | 0.38 | 1.20 / 1.21 | yes |
+
+The 1-thread time of q07 in this run (4.62 against 4.40 ms) is the variation
+between processes: three other interleaved runs gave 4.39 / 4.44, 4.34 /
+4.45 and 4.39 / 4.46 ms, and the phase method (8 processes of 101 runs,
+interleaved) gives 4.47 ms for `main` and 4.40 ms for this stage. No change
+of this stage runs on the 1-thread path of q07 (the hint is not computed
+without a pool, and the rendering loops are the ones of `main`).
+
+### 1o.2 What changed
+
+1. **The rows are rendered beside the ORDER BY sort.** With a worker pool, an
+   ORDER BY result without DISTINCT, OFFSET or LIMIT of at least 64 rows
+   (`Par.sortedRows`, `SBM11_SORTED_RENDER_ROWS`) is rendered in row ranges
+   by pool workers (`Par.renderStart`, `renderPartM`: range `j` on worker
+   `j`, one buffer per row) while the calling thread computes the order
+   (`orderPermM`); the rows are then written in that order
+   (`assembleRows`). A worker copies a shared dictionary page into its own
+   cache on first use (`Session.copyFirst`): with the scans' rule (copy on
+   second use in one job) every query read the pages again from the shared
+   `taskPages`, and a worker took 2 to 4 times as long per row as the
+   calling thread. A job decodes query-local ids with the query's vocabulary
+   (`Store.withLocal`); the first version did not, and the gate query
+   `ids-values-orderby` failed at 2 threads ("not a dictionary id",
+   `tests/sbm11/threads.sh`). The stage 1j divided rendering had the same
+   defect, never reached by a test; it now takes the vocabulary too.
+   Phases at 4 threads: ORDER BY and render 0.47 to 0.21 ms (the render
+   phase is the wait for the workers and the assembly, 0.03 ms).
+2. **The next scan starts early.** Before its first scan, `evalBgpM` gives
+   `Par.scanHint` the scan the join loop will most likely make next
+   (`nextScanHint?`: the choice of `bgpStepM` from the estimates, no hint when
+   the scan would take candidates with the first scan's estimate as its left
+   rows). The native driver starts it on the last pool workers
+   (`startScanTablePar`), and the store's `scanTable` takes its table when
+   the spec is the same (`scanTableOrStarted`). It starts only under
+   `verify none`, with no delta overlay and the PRM1 range of the key in the
+   permutation's cache, so a scan that is not taken reads no PRM1 entry,
+   fills no shared cache and adds no counter. q07 at 4 threads: first scan
+   and scan0 0.24 to 0.18 ms.
+3. **The range jobs are functions.** The jobs of `scanTableParM` and
+   `scanSipTableParM` were `do` blocks in the caller's loop whose first lines
+   made the job's own copies (`ScanSpec.fresh`, `OvCtx.fresh`, the copy of
+   the candidates, `rangeMetas`). The generated C called those copies in the
+   caller's loop, before the closure of the job was made: the compiler moves
+   a pure `let` out of a closure body. So the calling thread made every
+   task's copies before it scanned its own range (tasks started 9 to 18
+   microseconds apart), and the copies were shared objects with atomic
+   reference counts. The jobs are now `@[noinline]` functions
+   (`scanRangeJob`, `sipRangeJob`).
+4. **The candidates go to a job as words.** `scanSipTableParM` packs the
+   candidates into one buffer (`packWords`, 312 words: 39 cache lines) and
+   each job unpacks its own array (`unpackWords`). The first `unpackWords`
+   used `Array.ofFn` and took 50 to 220 microseconds for 312 words; the
+   `push` loop takes 4 to 6.
+
+Proved (axioms `propext`, `Classical.choice`, `Quot.sound`; no `sorry`):
+
+- `RenderPermTheorems.sortedRender_eq`: for ranges that cover the rows of a
+  well-formed table in order and an index array `perm` of its rows, when
+  every range job succeeds, `assembleRows` of the jobs' rows equals
+  `renderRowsM` of `t.reorder perm` (the serial path's bytes). The proof goes
+  through `appendIdJsonM_eq` and `rowIntoM_eq` (each byte writer appends to
+  its buffer). `rowRanges_cover`: the ranges of `sortedRenderJobs` cover the
+  rows in order.
+- `RenderPermTheorems.unpackWords_packWords`: a job's candidates are the
+  caller's.
+- `BgpTableTheorems.hintScanM_id`: the hint is `pure ()` in `Id`;
+  `evalBgpM_modelS_par` holds with the hint in `evalBgpM`.
+- The table of a scan started early is the table of `scanTableParM` for
+  other range bounds (`ParallelScanTheorems.parallel_acc_eq`).
+
+### 1o.3 Measurements
+
+`SBM11_PHASES=1`, 101 runs per process, median over 10 processes per cell
+interleaved (8 at 1 thread), binaries of 1o.1 (ms):
+
+| Phase | 1 thread, main | 1 thread, this stage | 4 threads, main | 4 threads, this stage |
+| --- | ---: | ---: | ---: | ---: |
+| constants | 0.04 | 0.04 | 0.04 | 0.04 |
+| first scan | 0.19 | 0.17 | 0.14 | 0.15 (posts the early scan) |
+| scan0 | 0.22 | 0.22 | 0.14 | 0.04 (the early scan's wait) |
+| join0 | 0.41 | 0.40 | 0.19 | 0.19 |
+| scan2 (with candidates) | 1.74 | 1.78 | 0.74 | 0.71 |
+| join2 | 0.03 | 0.03 | 0.04 | 0.03 |
+| scan3 (with candidates) | 1.25 | 1.25 | 0.59 | 0.56 |
+| join3 | 0.05 | 0.05 | 0.07 | 0.05 |
+| ORDER BY | 0.18 | 0.18 | 0.21 | 0.22 (keys 0.12, sort 0.09; rows rendered meanwhile) |
+| render | 0.25 | 0.24 | 0.27 | 0.03 (wait and assembly) |
+| total | 4.47 | 4.40 | 2.51 | 2.08 |
+
+### 1o.4 Tried and not kept
+
+- The stage 1j divided rendering for q07 (`SBM11_RENDER_ROWS` 80 and 40):
+  render 0.37 and 0.27 ms against 0.26 ms on the calling thread.
+- Three weighted block ranges per thread, assigned round robin, for the
+  scans with candidates (the range of blocks 31 to 48 of scan2 took 670 to
+  690 microseconds in every run against 400 to 550 for the others): the phase
+  medians did not change (scan2 0.718 to 0.695, scan3 0.553 to 0.573 ms).
+- Diagnosis only, not a setting: `MIMALLOC_PURGE_DELAY=-1` in the
+  environment changed no phase.
+
+### 1o.5 The time per block at 4 threads
+
+The scans with candidates still take about 23 percent more thread time at 4
+threads than the whole scan at 1 thread (scan2: ranges of 458, 688, 526 and
+406 microseconds against 1.65 ms). Checked:
+
+- Not shared cores: a C loop pinned to CPU 0 ran 41 ms alone and 41 to 42 ms
+  with a loop on each other CPU (no SMT siblings in this VM).
+- Clock: 4 such loops at once, 41 to 44 ms each (at most 5 percent).
+- CPU per run (`perf record -F 4999 --call-graph dwarf`, 201 runs): the loops
+  `Sip.deltaGatherGoY` and `Sip.deltaFindGoY` 2.62 ms at 1 thread and 2.89
+  ms at 4 threads; the rest of `scanBlockSipM` 0.55 and 0.81 ms.
+- `open`, `fstat`, `pread` of 10,000 bytes and `close` (as `l4_block_pread`
+  does): 3.2 microseconds per read in 1 thread, 4.2 in each of 4 threads;
+  with an open descriptor 1.4 in both. About 22 reads per thread per scan, so
+  about 20 microseconds per range.
+- The copies made by the caller (item 3 of 1o.2): fixed; scan2 and scan3 at
+  4 threads 0.72 and 0.57 ms to 0.64 and 0.50 ms with item 4.
+
+The cause of the remaining 10 percent in the loops is not found.
+
+### 1o.6 Gates
+
+On commit `b7d45ff4` (the merge of `origin/main` `c7700ee2` and the stage;
+exit codes read):
+
+| Gate | Result |
+| --- | --- |
+| `lake build` | exit 0 |
+| `tests/sbm11/run.sh` | exit 0: 3,394 pass, 0 fail, 28 expected-fail (out of 3,422) |
+| `tests/sbm11/threads.sh` | exit 0: gate and gate2 347 identical at 1, 2, 4 and 8 threads (gate sections with `SBM11_SORTED_RENDER_ROWS=1`), olympics 21, 2 and 2, DBpedia 19; DBpedia against the three-engine record equal 76, different 0; pool-stress 500 processes, hangs 0, failures 0 |
+| `SBM11_THREADS=4 tests/sbm11/census.sh` | exit 0: 605 matched the reference engine |
+| `lean-unbuilt-modules.py --gate`, `lean-tail-recursion-audit.py --gate`, `lean-csimp-reach.py --gate` | exit 0 (1,049 modules reached), exit 0, exit 0 |
+| `tools/land-gates.sh` | exit 0 (LAND GATES PASSED): native-smoke 377 pass, 0 fail, 4 xfail (out of 381); cli-smoke 151 pass, 0 fail, 5 xfail (out of 156) |
+| `sorry`, `native_decide`, `axiom`, `maxHeartbeats` in the Lean diff | none |
+
+The first gate run on the merge failed the tail-recursion gate: two
+declarations merged from `main` (`SPARQL.scopeFromGraphs`,
+`PhaseETests.chainOf.go`) had no entry, and `RenderPermTheorems.catB` was a
+recursive definition. `catB` is now a `foldr`; the two entries are in
+`tools/lean-tail-recursion-allow.txt` with their reasons.
+
+A version that wrote `renderRowsM` through `rowIntoM` made olympics q21 at 1
+thread about 3 percent slower (medians of 6 processes: 97.7 against 92.7 ms
+with the inline loops); the inline loops are kept, and `forIn_cols` and
+`rowLoop_eq` prove them equal to the `rowIntoM` form.
+
+### 1o.7 What remains
+
+- q07 at 0.47: the remaining time at 4 threads is in the scans with
+  candidates (0.71 + 0.56 ms against 1.78 + 1.25 at 1 thread: about 25
+  percent more thread time per block, 1o.5), the ORDER BY keys and sort on
+  the calling thread (0.22 ms), the merge join (0.19 ms) and the first scan
+  (0.15 ms). The target needs about 1.76 ms.
+- Not tried: the ORDER BY keys of each row range read by the rendering
+  workers (the keys of `orderKeysByKeysM?` are row-local; about 0.07 ms by
+  estimate), and a cost model for the weighted cuts of a scan with
+  candidates (the weight of a block did not predict its time).
+
+Issue https://github.com/danbri/factoidal/issues/961 stays open.
