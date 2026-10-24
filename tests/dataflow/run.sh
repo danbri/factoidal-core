@@ -8,6 +8,7 @@
 # 2. Drift test: regenerate the inventory from the Lean registry and fail
 #    when docs/dataflow-inventory.md differs from it.
 # 3. The FOUNDATION gate (tools/foundation-gate.py, foundation/README.md).
+# 4. The entry-point gate (tools/entrypoint-gate.py, foundation/README.md).
 set -euo pipefail
 here="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 lean="$here/formal/lean4"
@@ -40,3 +41,10 @@ python3 "$here/tools/dataflow-inventory.py" --check
 #    on this tree (foundation/manifest.toml, foundation/allow-imports.txt).
 python3 -I "$here/tests/foundation/test_foundation_gate.py"
 python3 -I "$here/tools/foundation-gate.py" --root "$here"
+
+# 4. The entry-point gate (issue 975, item 3): its fixture tests, then the
+#    gate on this tree (foundation/entrypoints.toml,
+#    foundation/unbound-entrypoints.txt, docs/dataflow-inventory.md as
+#    checked current in step 2).
+python3 -I "$here/tests/foundation/test_entrypoint_gate.py"
+python3 -I "$here/tools/entrypoint-gate.py" --root "$here"

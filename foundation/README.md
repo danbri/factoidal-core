@@ -79,3 +79,37 @@ edge is necessary, the PR must say why, and the reviewer sees the change to
 
 Removing a module from the manifest is a refinement of version 0; state the
 reason in the PR.
+
+## Entry points (issue 975, item 3)
+
+`tools/entrypoint-gate.py` enumerates, from the tree on every run, every
+shipped entry point:
+
+- `npm:<subpath>#<name>`: each named export of each `exports` subpath of
+  `npm/factoidal/package.json` (ES module `export` forms and CommonJS
+  `module.exports`); `npm:<subpath>` for a subpath that is not a script.
+- `wasm:<op>`: each op name of the Lean dispatch (the `...OpNames` lists of
+  `formal/lean4/Wasm/*.lean` and `Wasm/Ops/*.lean`, and the `| "op" =>`
+  arms of `Wasm/Dispatch.lean` and `Wasm/CoreDispatch.lean`).
+- `cli:<command>`: each key of `COMMANDS` in `npm/factoidal/bin/factoidal.mjs`.
+
+Each entry point must be one of:
+
+1. an `[[entry]]` of `entrypoints.toml`: `stages` names registry stages
+   (from `docs/dataflow-inventory.md`, the `stage` cell, or the `area` cell
+   when the registry entry has no declaration), none with status `missing`;
+   `covers` is `whole` or `part` (the entry also runs steps no stage
+   covers; the `note` names them and the file where the op body is);
+2. a `[[nonstage]]` of `entrypoints.toml` with a reason (reflection ops,
+   version strings, metadata files);
+3. a literal constant or an `Error` subclass (the gate finds these);
+4. a line of `unbound-entrypoints.txt`.
+
+`unbound-entrypoints.txt` is a ratchet like `allow-imports.txt`: the gate
+fails when a new entry point is not mapped, when a line names an entry that
+no longer exists or is now mapped, or when the count differs from
+`max-entries`. When you bind an entry point, move it from the unbound list to
+`entrypoints.toml` and lower `max-entries` in the same commit.
+
+The bound status of an entry is the weakest status of its stages
+(`tested` < `assumed` < `proved`).
