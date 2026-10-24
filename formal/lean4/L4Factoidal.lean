@@ -49,6 +49,8 @@ import L4Factoidal.Dataflow.JudgeStages
 import L4Factoidal.Dataflow.Validator
 import L4Factoidal.Dataflow.Checker
 import L4Factoidal.Dataflow.JudgesTests
+import L4Factoidal.Dataflow.Evaluator
+import L4Factoidal.Dataflow.EvaluatorTests
 import L4Factoidal.Dataflow.Registry
 import L4Factoidal.Dataflow.RegistryTests
 import L4Factoidal.RDF.ConciseBoundedDescription

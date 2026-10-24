@@ -12,7 +12,7 @@ sources define it on this run. It stops with an error (exit 1) when:
 * a named declaration depends on an axiom other than propext,
   Classical.choice, Quot.sound (`sorryAx` included);
 * a status disagrees with its fields (`Entry.statusError` in
-  `Dataflow/Registry.lean`): `proved` needs a `Stage` (or `RdfReader`) value, a contract and
+  `Dataflow/Registry.lean`): `proved` needs a `Stage` (or `RdfReader`, or `LawfulEvaluator`) value, a contract and
   theorems; `assumed` needs an `IOStage` value and an IO assumption; `tested`
   needs a suite, no stage and no contract; `missing` has no stage, no
   contract, no suite and no IO assumption.
@@ -51,10 +51,11 @@ def stageKind (env : Environment) (n : Name) : StageKind :=
   else match resultHead env n with
     | some h =>
       -- an interface type (`RdfReader`, `SoundReasoner`, `LawfulValidator`,
-      -- `SoundChecker`) holds its contract as a field, as a `Stage` does;
+      -- `SoundChecker`, `LawfulEvaluator`) holds its contract as a field, as a `Stage` does;
       -- so do the data-access interface types (Dataflow/Store.lean)
       if h == ``Stage || h == ``RdfReader || h == ``SoundReasoner ||
-          h == ``LawfulValidator || h == ``SoundChecker then .stage
+          h == ``LawfulValidator || h == ``SoundChecker ||
+          h == ``LawfulEvaluator then .stage
       else if h == ``LawfulStore || h == ``LawfulDataset then .iface
       else if h == ``RdfWriter then .writer
       else if h == ``IOStage then .ioStage else .other

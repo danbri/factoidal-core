@@ -12,7 +12,7 @@
 # differs from the tree, or when the line count differs from max-entries.
 # Adding a line needs a reason in the same change; removing one lowers max-entries.
 # Reasons are Claude-inferred (2026-10-24), not owner decisions.
-# max-entries: 19
+# max-entries: 23
 io:Ed25519Correct  # the native Ed25519 verify agrees with the Ed25519 specification (RFC 8032); crypto primitive realised outside Lean
 io:ReadsWritten  # reading back an SBM11 file returns what the writer wrote; file IO is not modelled in Lean
 io:SelectedAgrees  # a planner-selected SBM11 read returns the same triples as an unselected read; the on-disk selection index is outside Lean
@@ -32,3 +32,7 @@ io:SPARQL.StoreBackend.BackendReadOpsExact  # registry form of name:backendReadO
 io:SPARQL.StoreBackend.RmlPushdownInvisible  # registry form of name:rmlPushdownInvisible (LawfulStore.virtualRml): checked by #guards only
 io:SPARQL.StoreBackend.RmlVirtualIsMaterialised  # registry form of name:rmlVirtualIsMaterialised (LawfulStore.virtualRml): checked by #guards only
 io:Storage.PlannerSoundness.distinctNames  # registry form of name:graphNameKeysDistinct (LawfulDataset.ofCertified, ofDataset): an IRI name and a blank-node label can spell one key string
+field:L4Factoidal.Dataflow.Evaluator.LawfulEvaluator.assumed_contractOn  # the inputs on which the evaluator contract is assumed; for shippedEvaluator, the backend path outside NativeFrag (BackendOutsideFragmentAgrees) and the SELECT fast paths (SelectFastPathAgrees): no refinement proof yet
+field:L4Factoidal.Dataflow.Reasoner.SoundReasoner.assumed_completeness  # completeness of the closure against the regime is not proved for all graphs (3 instances: rho-df holds under closed-and-fragment scope, rhoDfReasoner_complete; RDFS fails finding C-1; OWL RL needs closureFix_saturated, issue 756)
+field:L4Factoidal.Dataflow.Validator.LawfulValidator.assumed_spec_iff  # the step from the two SHACL-SPARQL passes to the quantifiers of Spec.GraphConformsWithSparql is not proved (SHACL/SparqlTheorems.lean)
+field:L4Factoidal.Dataflow.Writer.RdfWriter.assumed_roundTrip  # a writer names the round-trip claim it does not prove; one field, five writers use it (Turtle, TriG, RDF/XML, JSON-LD, canonical N-Quads)

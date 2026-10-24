@@ -67,7 +67,7 @@ The rule: each kind of component has ONE interface type whose contract against t
 | Reader (bytes/text → dataset) | `RdfReader` (`Dataflow/Reader.lean`) | ✅ [PR 56](https://github.com/danbri/factoidal-core/pull/56): fields `set`, `sound` (reader contract, every document scope), `fails` (fails exactly when the parser fails); every wasm op that parses RDF takes its reader from one table |
 | Data access (`StoreCaps`) | `LawfulStore` | 🟡 in progress: exact search and exact predicates as fields; HDT and COTTAS reader laws as named assumptions; planner and evaluator accept only this type |
 | Writer | — | ❌ (round trips proved for N-Triples and N-Quads, [PR 49](https://github.com/danbri/factoidal-core/pull/49), [PR 51](https://github.com/danbri/factoidal-core/pull/51), as separate theorems) |
-| Query evaluator | — | ❌ (BGP against SPARQL 1.1 §18.3 and the operator fragment against `Allowed` proved, [PR 52](https://github.com/danbri/factoidal-core/pull/52), as separate theorems) |
+| Query evaluator | `LawfulEvaluator` (`Dataflow/Evaluator.lean`) | 🟡 fields `run`, `assumed_contractOn` (named assumption: the backend path outside `NativeFrag`, and the SELECT fast paths), `sound` (every other input: the reference answer, or the modifier layer over an `Allowed` WHERE answer); `queryParsedDatasetWith`, the evaluation of every wasm query op, takes one |
 | Reasoner | — | ❌ |
 | Validator | — | ❌ |
 | Proof checker | — | ❌ (`checkBundle_rdfsEntails` proved, as a separate theorem) |

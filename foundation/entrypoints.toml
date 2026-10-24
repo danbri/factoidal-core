@@ -86,27 +86,27 @@ note = "applyUpdateText on the stored dataset."
 
 [[entry]]
 id = "wasm:queryDataset"
-stages = ["nquadsDocumentReader", "LawfulDataset.ofCertified", "lawfulWhereStage", "SPARQL query evaluation (reference evaluator)"]
+stages = ["nquadsDocumentReader", "LawfulDataset.ofCertified", "lawfulWhereStage", "shippedEvaluator"]
 covers = "part"
-note = "Wasm/Ops/Query.lean queryDataset: readNQuadsCertified (the N-Quads RdfReader with its set proof), then queryParsedCertified: the backend evaluator runs only over the LawfulDataset of LawfulDataset.ofCertified (LawfulDataset.runSelect / runAsk), else evalSelect / evalAsk. Not covered: the SELECT layer of the backend runner, the arms outside NativeFrag, CONSTRUCT / DESCRIBE serialisation, the results envelope."
+note = "Wasm/Ops/Query.lean queryDataset: readNQuadsCertified (the N-Quads RdfReader with its set proof), then queryParsedCertified: the backend evaluator runs only over the LawfulDataset of LawfulDataset.ofCertified (LawfulDataset.runSelect / runAsk), else evalSelect / evalAsk. Not covered: the SELECT layer of the backend runner, the arms outside NativeFrag, CONSTRUCT / DESCRIBE serialisation, the results envelope. The evaluation is ev.run of a LawfulEvaluator (default shippedEvaluator, Dataflow/Evaluator.lean) over the backend of the LawfulDataset."
 
 [[entry]]
 id = "wasm:datasetQuery"
-stages = ["LawfulDataset.ofCertified", "lawfulWhereStage", "SPARQL query evaluation (reference evaluator)"]
+stages = ["LawfulDataset.ofCertified", "lawfulWhereStage", "shippedEvaluator"]
 covers = "part"
-note = "Wasm/Ops/Handles.lean datasetQuery: queryParsedDatasetWith over the handle's CertifiedDataset and its cached LawfulDataset (ofCertified). Not covered: as wasm:queryDataset."
+note = "Wasm/Ops/Handles.lean datasetQuery: queryParsedDatasetWith over the handle's CertifiedDataset and its cached LawfulDataset (ofCertified). Not covered: as wasm:queryDataset. The evaluation is ev.run of a LawfulEvaluator (default shippedEvaluator, Dataflow/Evaluator.lean) over the backend of the LawfulDataset."
 
 [[entry]]
 id = "wasm:queryDataset12"
-stages = ["nquadsDocumentReader", "LawfulDataset.ofCertified", "lawfulWhereStage", "SPARQL query evaluation (reference evaluator)"]
+stages = ["nquadsDocumentReader", "LawfulDataset.ofCertified", "lawfulWhereStage", "shippedEvaluator"]
 covers = "part"
-note = "Wasm/Ops/Query.lean queryDataset12IO: readNQuadsCertified, then queryParsedCertified with the SPARQL 1.2 grammar. Not covered: as wasm:queryDataset; the SPARQL 1.2 grammar has no stage."
+note = "Wasm/Ops/Query.lean queryDataset12IO: readNQuadsCertified, then queryParsedCertified with the SPARQL 1.2 grammar. Not covered: as wasm:queryDataset; the SPARQL 1.2 grammar has no stage. The evaluation is ev.run of a LawfulEvaluator (default shippedEvaluator, Dataflow/Evaluator.lean) over the backend of the LawfulDataset."
 
 [[entry]]
 id = "wasm:datasetQuery12"
-stages = ["LawfulDataset.ofCertified", "lawfulWhereStage", "SPARQL query evaluation (reference evaluator)"]
+stages = ["LawfulDataset.ofCertified", "lawfulWhereStage", "shippedEvaluator"]
 covers = "part"
-note = "Wasm/Ops/Handles.lean datasetQuery12: datasetQuery with the SPARQL 1.2 grammar. Not covered: as wasm:queryDataset12."
+note = "Wasm/Ops/Handles.lean datasetQuery12: datasetQuery with the SPARQL 1.2 grammar. Not covered: as wasm:queryDataset12. The evaluation is ev.run of a LawfulEvaluator (default shippedEvaluator, Dataflow/Evaluator.lean) over the backend of the LawfulDataset."
 
 [[entry]]
 id = "wasm:datasetMatch"
@@ -122,15 +122,15 @@ note = "matchDataset as wasm:datasetMatch, then the quad count. Not covered: qua
 
 [[entry]]
 id = "wasm:storeQuery"
-stages = ["LawfulDataset.ofDataset", "lawfulWhereStage", "SPARQL query evaluation (reference evaluator)"]
+stages = ["LawfulDataset.ofDataset", "lawfulWhereStage", "shippedEvaluator"]
 covers = "part"
-note = "Wasm/Ops/Store.lean storeQuery: the blocks the plan selects are decoded to a dataset, and queryParsedDatasetWith runs the backend evaluator over LawfulDataset.ofDataset (named assumption datasetIsSet) when every graph name is an IRI, else the reference evaluator. Not covered: the manifest plan, the block reads and decode (IBK3, IBK4, IBK5)."
+note = "Wasm/Ops/Store.lean storeQuery: the blocks the plan selects are decoded to a dataset, and queryParsedDatasetWith runs the backend evaluator over LawfulDataset.ofDataset (named assumption datasetIsSet) when every graph name is an IRI, else the reference evaluator. Not covered: the manifest plan, the block reads and decode (IBK3, IBK4, IBK5). The evaluation is ev.run of a LawfulEvaluator (default shippedEvaluator, Dataflow/Evaluator.lean) over the backend of the LawfulDataset."
 
 [[entry]]
 id = "wasm:storeHandleQuery"
-stages = ["LawfulDataset.ofDataset", "lawfulWhereStage", "SPARQL query evaluation (reference evaluator)"]
+stages = ["LawfulDataset.ofDataset", "lawfulWhereStage", "shippedEvaluator"]
 covers = "part"
-note = "Wasm/Ops/StoreHandles.lean storeHandleQuery: queryParsedDatasetWith over the handle's dataset and backendOfRetained (LawfulDataset.ofDataset). Not covered: the literal and geo index plans, the retained-artifact selection."
+note = "Wasm/Ops/StoreHandles.lean storeHandleQuery: queryParsedDatasetWith over the handle's dataset and backendOfRetained (LawfulDataset.ofDataset). Not covered: the literal and geo index plans, the retained-artifact selection. The evaluation is ev.run of a LawfulEvaluator (default shippedEvaluator, Dataflow/Evaluator.lean) over the backend of the LawfulDataset."
 
 [[entry]]
 id = "wasm:vcEddsaCreateFromCanonical"
@@ -200,7 +200,7 @@ note = "lib/pure.mjs calls the wasm op proofCheck."
 
 [[entry]]
 id = "npm:.#query"
-stages = ["SPARQL query evaluation (reference evaluator)"]
+stages = ["shippedEvaluator"]
 covers = "part"
 note = "lib/api.mjs calls the wasm op datasetQuery (or datasetQuery12 for SPARQL 1.2)."
 
@@ -272,7 +272,7 @@ note = "lib/pure.mjs calls the wasm op proofCheck."
 
 [[entry]]
 id = "npm:./browser#query"
-stages = ["SPARQL query evaluation (reference evaluator)"]
+stages = ["shippedEvaluator"]
 covers = "part"
 note = "lib/api.mjs calls the wasm op datasetQuery (or datasetQuery12 for SPARQL 1.2)."
 

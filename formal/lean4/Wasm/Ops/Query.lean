@@ -27,6 +27,7 @@ Targeted imports only — never the L4Factoidal umbrella (see
 import Wasm.Ops.Support
 import L4Factoidal.Dataflow.Reader
 import L4Factoidal.Dataflow.Store
+import L4Factoidal.Dataflow.Evaluator
 import L4Factoidal.Syntax.NQuads
 import L4Factoidal.SPARQL.Parser
 import L4Factoidal.SPARQL.Query
@@ -85,14 +86,21 @@ the same for every `NOW()` call of this execution. An IO entry reads the clock
 once (`Wasm/Ops/Clock.lean`) and passes it here; this function reads no clock.
 `none` leaves `NOW()` an error, which is the evaluator's definition for an
 environment with no clock
-(https://github.com/danbri/factoidal/issues/743). -/
+(https://github.com/danbri/factoidal/issues/743).
+
+`ev` is the evaluator, a `LawfulEvaluator` (`Dataflow/Evaluator.lean`): the
+type holds the evaluator's contract against the foundation's SPARQL 1.1
+evaluation, so no evaluator enters here without it. The default,
+`shippedEvaluator`, is the backend-or-reference evaluation described above. -/
 def queryParsedDatasetWith (ds : Dataset) (dsb : Option L4Factoidal.Dataflow.LawfulDataset)
     (sparql : String) (extra : List (String × Json) := [])
     (extIris : List String := [])
     (services : List (String × Graph) := [])
     (version : SparqlVersion := .v11)
     (base : Option String := none)
-    (now : Option String := none) : String :=
+    (now : Option String := none)
+    (ev : L4Factoidal.Dataflow.LawfulEvaluator := L4Factoidal.Dataflow.shippedEvaluator) :
+    String :=
   match parseSparql sparql base version with
   | .error e => errJson s!"SPARQL parse error: {fmtParseError e}"
   | .ok q =>
@@ -131,46 +139,31 @@ def queryParsedDatasetWith (ds : Dataset) (dsb : Option L4Factoidal.Dataflow.Law
     match q.serviceFailure env ds with
     | some f => errJson f.message
     | none =>
-    let backendEligible := q.dataset.isEmpty
-    match q.form with
-    | .ask =>
-        let b := match (if backendEligible then dsb.bind (·.runAsk env q) else none) with
-          | some answer => answer
-          | none => evalAsk env ds q
-        okWith (extra ++ [("kind", .string "ask"), ("boolean", .bool b)])
-    | .select sel =>
-        let (vars, rows) :=
-          match (if backendEligible then dsb.bind (·.runSelect env q) else none) with
-          | some rows =>
-              let vars := match sel with
-                | .vars items => selectItemVars items
-                | .all        => collectVarsInOrder rows
-              (vars, rows)
-          | none => evalSelect env ds q
+    -- The evaluation is the `run` of a `LawfulEvaluator`
+    -- (`Dataflow/Evaluator.lean`, issue 975 item 2): an evaluator cannot be
+    -- used here without its contract against the foundation.
+    match ev.run { env, ds, backend := dsb.map (·.backend), query := q } with
+    | .ask b => okWith (extra ++ [("kind", .string "ask"), ("boolean", .bool b)])
+    | .select vars rows =>
         let srj := QueryResult.toSrj (.bindings vars rows)
         -- srj is a JSON object document; splice it in verbatim.
         "{\"ok\":true," ++ jsonMembers (extra ++ [("kind", .string "select")]) ++
           ",\"srj\":" ++ srj ++ "}"
-    | .construct _ =>
-        let g := evalConstruct env ds q
+    | .graph g =>
+        -- CONSTRUCT (§16.2) and DESCRIBE (§16.4) answer one RDF graph.
         -- RDF 1.2 N-Triples: a graph with no triple term and no directional
         -- literal prints the same text in both modes (`Graph.toNTriples`); in
         -- RDF 1.1 mode an answer with a triple term was an error, and the
         -- dataset is read in RDF 1.2 mode (an SBM11 generation holds triple
-        -- terms since https://github.com/danbri/factoidal/issues/792 item 1)
+        -- terms since https://github.com/danbri/factoidal/issues/792 item 1).
+        -- The kind is `describe` for DESCRIBE, so a client can tell the two
+        -- forms apart; the member that carries the graph is `nquads` in both.
+        let kind := match q.form with
+          | .describe _ => "describe"
+          | _ => "construct"
         match Graph.toNTriples g .rdf12 with
-        | .error e  => errJson s!"construct serialisation: {e}"
-        | .ok lines => okWith (extra ++ [("kind", .string "construct"),
-                                         ("nquads", .string lines)])
-    | .describe _ =>
-        -- §16.4: the answer is one RDF graph, the Concise Bounded
-        -- Description of the resources named (`evalDescribe`). It is read
-        -- from the dataset itself, never from a backend: the description
-        -- takes statements no pattern selects.
-        let g := evalDescribe env ds q
-        match Graph.toNTriples g .rdf12 with
-        | .error e  => errJson s!"describe serialisation: {e}"
-        | .ok lines => okWith (extra ++ [("kind", .string "describe"),
+        | .error e  => errJson s!"{kind} serialisation: {e}"
+        | .ok lines => okWith (extra ++ [("kind", .string kind),
                                          ("nquads", .string lines)])
 
 /-- The `queryDataset` envelope family over an ALREADY-PARSED dataset —
