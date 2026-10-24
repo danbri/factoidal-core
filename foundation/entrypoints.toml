@@ -187,6 +187,12 @@ covers = "part"
 note = "lib/api.mjs owlClosure calls closure (datasetClosure) with mode RDFS or OWL-RL."
 
 [[entry]]
+id = "npm:.#explain"
+stages = ["rdfsExplainGraphStage"]
+covers = "part"
+note = "lib/api.mjs explain calls the wasm op explainGraph (issue 1002)."
+
+[[entry]]
 id = "npm:.#coreRdfsClosure"
 stages = ["rhoDfReasoner"]
 covers = "part"
@@ -257,6 +263,12 @@ id = "npm:./browser#owlClosure"
 stages = ["rdfsReasoner", "owlRlReasoner"]
 covers = "part"
 note = "lib/api.mjs owlClosure calls closure (datasetClosure) with mode RDFS or OWL-RL."
+
+[[entry]]
+id = "npm:./browser#explain"
+stages = ["rdfsExplainGraphStage"]
+covers = "part"
+note = "lib/api.mjs explain calls the wasm op explainGraph (issue 1002)."
 
 [[entry]]
 id = "npm:./browser#coreRdfsClosure"

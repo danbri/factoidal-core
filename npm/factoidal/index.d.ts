@@ -627,6 +627,46 @@ export function coreRdfsCheck(
   options?: { format?: DataFormat; baseIRI?: string }
 ): Promise<{ ok: boolean; fragment: boolean }>;
 
+/** The evidence bundle and verdict of explain(). */
+export interface ExplainResult {
+  profile: 'rdfs';
+  /** true: the checker accepted `bundle`; the sources RDFS-entail the description. */
+  entailed: boolean;
+  bundle: null | {
+    sources: string;
+    description: string;
+    mapping: Array<{ bnode: string; term: string }>;
+    steps: Array<{ rule: string; conclusion: string; premises: number[] }>;
+    support: number[];
+  };
+  /** Named assumptions that `entailed: false` relies on. */
+  assumptions: string[];
+  rejection:
+    | null
+    | { kind: 'noMatch'; index: number; triple: string }
+    | { kind: 'noJointMapping' }
+    | { kind: 'checkerRefused'; reason: string };
+  entailedMeans: string;
+}
+
+/**
+ * Is `description` (blank nodes shared across its triples) RDFS-entailed by
+ * `sources`? Full engine only; the description is default-graph only. Text
+ * inputs are Turtle unless `format` says otherwise.
+ * https://github.com/danbri/factoidal/issues/1002
+ */
+export function explain(
+  sources: DataInput,
+  description: DataInput,
+  options?: {
+    profile?: 'rdfs';
+    format?: DataFormat;
+    baseIRI?: string;
+    sourcesFormat?: DataFormat;
+    descriptionFormat?: DataFormat;
+  }
+): Promise<ExplainResult>;
+
 /** Literature-name alias for coreRdfsClosure (ρdf). */
 export function rhoDfClosure(
   data: DataInput,
@@ -1306,6 +1346,7 @@ export function capabilities(): Promise<{
   shacl: boolean;
   shex: boolean;
   owlClosure: boolean;
+  explain: boolean;
   tableau: boolean;
   rml: boolean;
   csvw: boolean;

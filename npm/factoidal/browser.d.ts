@@ -50,6 +50,7 @@ export {
   owlClosure,
   coreRdfsClosure,
   coreRdfsCheck,
+  explain,
   rdfsPlusClosure,
   rhoDfClosure,
   rhoDfFragmentCheck,
