@@ -7,6 +7,7 @@
 #    print an error line for every entry.
 # 2. Drift test: regenerate the inventory from the Lean registry and fail
 #    when docs/dataflow-inventory.md differs from it.
+# 3. The FOUNDATION gate (tools/foundation-gate.py, foundation/README.md).
 set -euo pipefail
 here="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 lean="$here/formal/lean4"
@@ -34,3 +35,8 @@ done
 echo "dataflow negative test: the report stopped on all 9 negative entries"
 
 python3 "$here/tools/dataflow-inventory.py" --check
+
+# 3. The FOUNDATION gate (issue 975, item 1): its fixture tests, then the gate
+#    on this tree (foundation/manifest.toml, foundation/allow-imports.txt).
+python3 -I "$here/tests/foundation/test_foundation_gate.py"
+python3 -I "$here/tools/foundation-gate.py" --root "$here"
