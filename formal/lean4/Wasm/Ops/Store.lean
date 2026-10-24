@@ -700,7 +700,7 @@ def storeQuery (manifestHex sparql artifactsJson : String) (blob : ByteArray)
         let blobs ← admitBlobs "storeQuery" plan.blobs sources blob
         let quads ← readIbk5 sources blob blobs plan.entries []
         let ds := datasetOfQuads quads
-        let backend := if namesAreIris ds then some (indexedDatasetBackend ds) else none
+        let backend := if namesAreIris ds then some (L4Factoidal.Dataflow.LawfulDataset.ofDataset ds) else none
         pure (queryParsedDatasetWith ds backend sparql extra extIris [] .v11 none now)
     | .ibk4 =>
         let quads ← readIbk4 sources blob plan.entries []
@@ -708,13 +708,13 @@ def storeQuery (manifestHex sparql artifactsJson : String) (blob : ByteArray)
         -- A blank-node graph name cannot survive `materialiseDatasetBackend`,
         -- so such a dataset takes the reference evaluator, exactly as
         -- `Harness/QuadQuery.lean` does natively.
-        let backend := if namesAreIris ds then some (indexedDatasetBackend ds) else none
+        let backend := if namesAreIris ds then some (L4Factoidal.Dataflow.LawfulDataset.ofDataset ds) else none
         pure (queryParsedDatasetWith ds backend sparql extra extIris [] .v11 none now)
     | .ibk3 =>
         let triples ← readIbk3 sources blob plan.entries []
         let ds : Dataset := { default := triples, named := [] }
-        pure (queryParsedDatasetWith ds (some (indexedDatasetBackend ds)) sparql extra extIris
-                [] .v11 none now)
+        pure (queryParsedDatasetWith ds (some (L4Factoidal.Dataflow.LawfulDataset.ofDataset ds)) sparql
+                extra extIris [] .v11 none now)
   match outcome with
   | .error e => errJson e
   | .ok envelope => envelope

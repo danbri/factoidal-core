@@ -26,6 +26,7 @@ Targeted imports only — never the L4Factoidal umbrella (see
 -/
 import Wasm.Ops.Support
 import L4Factoidal.Dataflow.Reader
+import L4Factoidal.Dataflow.Store
 import L4Factoidal.Syntax.NQuads
 import L4Factoidal.SPARQL.Parser
 import L4Factoidal.SPARQL.Query
@@ -59,8 +60,10 @@ CONSTRUCT and DESCRIBE stay on the reference evaluator.  The backend is built on
 dataset handle (`Wasm/Ops/Handles.lean`); the stateless op builds it per
 call.
 
-`dsb` is `none` when the caller requires the reference evaluator for every
-form.  One caller does: `SPARQL/StoreDataset.lean`'s
+`dsb` is a `LawfulDataset` (`Dataflow/Store.lean`): the dataset record with
+its law as a field (https://github.com/danbri/factoidal/issues/975, item 2), so
+the backend evaluator never runs over a record without one. `dsb` is `none`
+when the caller requires the reference evaluator for every form.  One caller does: `SPARQL/StoreDataset.lean`'s
 `materialiseDatasetBackend` keeps only graphs whose name is a well-formed IRI,
 so a dataset carrying a BLANK-NODE graph name would silently lose that graph
 in every delegating arm.  An SBM7 generation may carry one
@@ -83,7 +86,7 @@ once (`Wasm/Ops/Clock.lean`) and passes it here; this function reads no clock.
 `none` leaves `NOW()` an error, which is the evaluator's definition for an
 environment with no clock
 (https://github.com/danbri/factoidal/issues/743). -/
-def queryParsedDatasetWith (ds : Dataset) (dsb : Option DatasetBackend)
+def queryParsedDatasetWith (ds : Dataset) (dsb : Option L4Factoidal.Dataflow.LawfulDataset)
     (sparql : String) (extra : List (String × Json) := [])
     (extIris : List String := [])
     (services : List (String × Graph) := [])
@@ -131,13 +134,13 @@ def queryParsedDatasetWith (ds : Dataset) (dsb : Option DatasetBackend)
     let backendEligible := q.dataset.isEmpty
     match q.form with
     | .ask =>
-        let b := match (if backendEligible then dsb.bind (runAskQueryBackendDataset env q) else none) with
+        let b := match (if backendEligible then dsb.bind (·.runAsk env q) else none) with
           | some answer => answer
           | none => evalAsk env ds q
         okWith (extra ++ [("kind", .string "ask"), ("boolean", .bool b)])
     | .select sel =>
         let (vars, rows) :=
-          match (if backendEligible then dsb.bind (runSelectQueryBackendDataset env q) else none) with
+          match (if backendEligible then dsb.bind (·.runSelect env q) else none) with
           | some rows =>
               let vars := match sel with
                 | .vars items => selectItemVars items
@@ -177,8 +180,36 @@ stateless form indexes the dataset for this one call. `base` is the query
 text's base IRI and `now` the value of `NOW()` (`queryParsedDatasetWith`). -/
 def queryParsedDataset (ds : Dataset) (sparql : String)
     (base : Option String := none) (now : Option String := none) : String :=
-  queryParsedDatasetWith ds (some (indexedDatasetBackend ds)) sparql
+  queryParsedDatasetWith ds (some (L4Factoidal.Dataflow.LawfulDataset.ofDataset ds)) sparql
     (base := base) (now := now)
+
+/-- The answer depends on the dataset record only through its backend. -/
+theorem queryParsedDatasetWith_congr (ds : Dataset) {L L' : L4Factoidal.Dataflow.LawfulDataset}
+    (h : L.backend = L'.backend) (sparql : String) (extra : List (String × Json))
+    (extIris : List String) (services : List (String × Graph)) (version : SparqlVersion)
+    (base now : Option String) :
+    queryParsedDatasetWith ds (some L) sparql extra extIris services version base now =
+      queryParsedDatasetWith ds (some L') sparql extra extIris services version base now := by
+  simp only [queryParsedDatasetWith, L4Factoidal.Dataflow.LawfulDataset.runSelect,
+    L4Factoidal.Dataflow.LawfulDataset.runAsk, Option.bind_some, h]
+
+/-- `queryParsedDataset` over a dataset that carries its set proof
+(`CertifiedDataset`): the record of `LawfulDataset.ofCertified`, whose law
+needs no `datasetIsSet` assumption. The same answer as `queryParsedDataset`. -/
+def queryParsedCertified (c : CertifiedDataset) (sparql : String)
+    (extra : List (String × Json) := []) (extIris : List String := [])
+    (services : List (String × Graph) := []) (version : SparqlVersion := .v11)
+    (base : Option String := none) (now : Option String := none) : String :=
+  queryParsedDatasetWith c.val (some (L4Factoidal.Dataflow.LawfulDataset.ofCertified c)) sparql
+    extra extIris services version base now
+
+theorem queryParsedCertified_eq (c : CertifiedDataset) (sparql : String)
+    (base now : Option String) :
+    queryParsedCertified c sparql [] [] [] .v11 base now = queryParsedDataset c.val sparql base now :=
+  queryParsedDatasetWith_congr c.val
+    ((L4Factoidal.Dataflow.LawfulDataset.ofCertified_backend c).trans
+      (L4Factoidal.Dataflow.LawfulDataset.ofDataset_backend c.val).symm)
+    sparql [] [] [] .v11 base now
 
 /-- `queryDataset(nquads, sparql)`. The N-Quads argument is read in
 RDF 1.2 mode: the engine's own ops emit RDF 1.2 canonical N-Quads,
@@ -189,9 +220,32 @@ base IRI and `now` the value of `NOW()` (`queryParsedDatasetWith`); this pure
 form reads no clock, so with `now = none` a `NOW()` call is an error. -/
 def queryDataset (nq sparql : String) (base : Option String := none)
     (now : Option String := none) : String :=
-  match L4Factoidal.Dataflow.readNQuadsText .rdf12 nq with
+  match L4Factoidal.Dataflow.readNQuadsCertified .rdf12 nq with
   | .error e => errJson (fmtParseError e)
-  | .ok ds   => queryParsedDataset ds sparql base now
+  | .ok c    => queryParsedCertified c sparql [] [] [] .v11 base now
+
+/-- A match on the certified read is the match on the read, for a branch that
+uses only the dataset. -/
+theorem match_readNQuadsCertified (mode : Mode) (text : String) (f : Dataset → String) :
+    (match L4Factoidal.Dataflow.readNQuadsCertified mode text with
+     | .error e => errJson (fmtParseError e)
+     | .ok c => f c.val) =
+    (match L4Factoidal.Dataflow.readNQuadsText mode text with
+     | .error e => errJson (fmtParseError e)
+     | .ok ds => f ds) := by
+  have hv := L4Factoidal.Dataflow.readNQuadsCertified_val mode text
+  cases h : L4Factoidal.Dataflow.readNQuadsCertified mode text <;> rw [h] at hv <;>
+    simp only [Except.map] at hv <;> rw [← hv]
+
+/-- `queryDataset` is `queryParsedDataset` of the read. -/
+theorem queryDataset_eq (nq sparql : String) (base now : Option String) :
+    queryDataset nq sparql base now =
+      (match L4Factoidal.Dataflow.readNQuadsText .rdf12 nq with
+       | .error e => errJson (fmtParseError e)
+       | .ok ds => queryParsedDataset ds sparql base now) := by
+  unfold queryDataset
+  simp only [queryParsedCertified_eq]
+  exact match_readNQuadsCertified .rdf12 nq (fun ds => queryParsedDataset ds sparql base now)
 
 /-- `queryDataset` through the IO dispatch entry: the same envelope,
 with the caller's §17.6 extension registrations in scope. The snapshot
@@ -203,11 +257,10 @@ def queryDatasetIO (nq sparql : String) (base : Option String := none) : IO Stri
   let extIris ← extSnapshot
   let services ← serviceSnapshot
   let now ← nowDateTime
-  match L4Factoidal.Dataflow.readNQuadsText .rdf12 nq with
+  match L4Factoidal.Dataflow.readNQuadsCertified .rdf12 nq with
   | .error e => pure (errJson (fmtParseError e))
-  | .ok ds   =>
-      pure (queryParsedDatasetWith ds (some (indexedDatasetBackend ds)) sparql []
-              extIris services .v11 base (some now))
+  | .ok c    =>
+      pure (queryParsedCertified c sparql [] extIris services .v11 base (some now))
 
 /-- `queryDataset12(nquads, sparql)`: the `queryDataset` envelope family, with
 the query read by the SPARQL 1.2 grammar (`SparqlVersion.v12`: triple-term
@@ -220,11 +273,10 @@ def queryDataset12IO (nq sparql : String) (base : Option String := none) : IO St
   let extIris ← extSnapshot
   let services ← serviceSnapshot
   let now ← nowDateTime
-  match L4Factoidal.Dataflow.readNQuadsText .rdf12 nq with
+  match L4Factoidal.Dataflow.readNQuadsCertified .rdf12 nq with
   | .error e => pure (errJson (fmtParseError e))
-  | .ok ds   =>
-      pure (queryParsedDatasetWith ds (some (indexedDatasetBackend ds)) sparql []
-              extIris services .v12 base (some now))
+  | .ok c    =>
+      pure (queryParsedCertified c sparql [] extIris services .v12 base (some now))
 
 /-- Parse and apply a SPARQL Update to an ALREADY-PARSED dataset —
 shared by the stateless op below and the handle op `datasetUpdate`
@@ -285,8 +337,8 @@ theorem queryDatasetOf_eq (ds : Dataset) (sparql : String) (base : Option String
     (now : Option String) :
     queryDatasetOf ds sparql base now =
       queryDataset (Dataset.toCanonicalNQuads ds) sparql base now := by
-  unfold queryDatasetOf queryDataset
-  rw [withOpsDataset_eq]
+  unfold queryDatasetOf
+  rw [queryDataset_eq, withOpsDataset_eq]
   rw [L4Factoidal.Dataflow.readNQuadsText_eq]
   cases parseNQuadsFast (Dataset.toCanonicalNQuads ds) .rdf12 <;> rfl
 
@@ -370,7 +422,7 @@ private def nowInsert : String :=
 -- Positive: the backend path and the reference path give the same value.
 #guard hasText (queryParsedDatasetWith Dataset.empty none nowSelect [] [] [] .v11 none (some nowFixed))
   "\"value\":\"2026-10-10T12:34:56.789Z\""
-#guard hasText (queryParsedDatasetWith Dataset.empty (some (indexedDatasetBackend Dataset.empty))
+#guard hasText (queryParsedDatasetWith Dataset.empty (some (L4Factoidal.Dataflow.LawfulDataset.ofDataset Dataset.empty))
   nowSelect [] [] [] .v11 none (some nowFixed)) "\"value\":\"2026-10-10T12:34:56.789Z\""
 -- Positive: the SPARQL 1.2 grammar and the dataset-taking form pass it on.
 #guard hasText (queryParsedDatasetWith Dataset.empty none nowSelect [] [] [] .v12 none (some nowFixed))
@@ -431,7 +483,7 @@ private def tt12Run (useBackend : Bool) (version : SparqlVersion) (q : String) :
   | .error e => errJson (fmtParseError e)
   | .ok ds =>
       queryParsedDatasetWith ds
-        (if useBackend then some (indexedDatasetBackend ds) else none)
+        (if useBackend then some (L4Factoidal.Dataflow.LawfulDataset.ofDataset ds) else none)
         q [] [] [] version
 
 private def tt12HasSub (s sub : String) : Bool := (s.splitOn sub).length > 1
@@ -530,10 +582,10 @@ private def ftQ (body : String) : String := queryDataset ftData (ftPre ++ body)
   "\"ok\":false"
 -- The backend runner declines exactly the queries that hold a text:query pattern.
 #guard (match parseSparql (ftPre ++ "SELECT ?s WHERE { ?s text:query \"panel\" }") with
-  | .ok q => (runSelectQueryBackendDataset {} q (indexedDatasetBackend Dataset.empty)).isNone
+  | .ok q => ((L4Factoidal.Dataflow.LawfulDataset.ofDataset Dataset.empty).runSelect {} q).isNone
   | .error _ => false)
 #guard (match parseSparql (ftPre ++ "SELECT ?s WHERE { ?s rdfs:label ?o }") with
-  | .ok q => (runSelectQueryBackendDataset {} q (indexedDatasetBackend Dataset.empty)).isSome
+  | .ok q => ((L4Factoidal.Dataflow.LawfulDataset.ofDataset Dataset.empty).runSelect {} q).isSome
   | .error _ => false)
 
 private def geoData : String :=

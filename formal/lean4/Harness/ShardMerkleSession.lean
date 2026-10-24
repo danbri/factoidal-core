@@ -92,9 +92,9 @@ private def execute (directory : System.FilePath) (manifest : Manifest)
               IO.eprintln s!"l4block-shard-merkle-session query={queryNumber} rejected: unavailable, changed, or malformed proof-carrying child artifact"
               pure false
           | some loaded =>
-              let dataset : DatasetBackend := { default := .hdt (readOpsOf loaded.triples), named := [] }
+              let dataset := L4Factoidal.Dataflow.LawfulDataset.ofDefault (L4Factoidal.Dataflow.LawfulStore.hdt (readOpsOf loaded.triples))
               let evalStart ← IO.monoMsNow
-              match runSelectQueryBackendDataset clockEnv query dataset with
+              match dataset.runSelect clockEnv query with
               | none =>
                   IO.eprintln s!"l4block-shard-merkle-session query={queryNumber} failed: query was not evaluated as SELECT"
                   pure false

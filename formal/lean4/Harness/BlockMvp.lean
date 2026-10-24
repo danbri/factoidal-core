@@ -43,11 +43,11 @@ private def blockReadOps : BackendReadOps :=
   , predicatePresent := fun pred => !(scanBoundDecoded { p := some pred } blockBytes).isEmpty }
 
 /-- `BackendReadOps` is the existing backend extension seam. Its `search`
-    field is the proved physical block candidate scan. -/
-private def blockBackend : GraphBackend := .hdt blockReadOps
-
-private def blockDataset : DatasetBackend :=
-  { default := blockBackend, named := [] }
+    field is the proved physical block candidate scan. The dataset below
+    reads it as an HDT-arm `LawfulStore`, whose law rests on the named
+    assumption `backendReadOpsExact`. -/
+private def blockDataset : L4Factoidal.Dataflow.LawfulDataset :=
+  L4Factoidal.Dataflow.LawfulDataset.ofDefault (L4Factoidal.Dataflow.LawfulStore.hdt blockReadOps)
 
 private def defaultQuery : String :=
   "SELECT ?person ?label WHERE { ?person <http://example.org/name> ?label } ORDER BY ?person"
@@ -57,7 +57,7 @@ private def renderRows (rows : SolutionSeq) : String :=
 
 private def runSelect (expectedRows : Option Nat) (q : Query) : IO UInt32 := do
   let clockEnv ← L4Wasm.Ops.emptyEnvNow
-  match runSelectQueryBackendDataset clockEnv q blockDataset with
+  match blockDataset.runSelect clockEnv q with
   | none =>
       IO.eprintln "l4block-mvp failed: query is not a SELECT query"
       return 1

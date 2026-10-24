@@ -9,6 +9,8 @@
 #    when docs/dataflow-inventory.md differs from it.
 # 3. The FOUNDATION gate (tools/foundation-gate.py, foundation/README.md).
 # 4. The entry-point gate (tools/entrypoint-gate.py, foundation/README.md).
+# 5. The named-assumption ratchet (tools/assumption-gate.py,
+#    foundation/assumptions.txt).
 set -euo pipefail
 here="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 lean="$here/formal/lean4"
@@ -26,14 +28,14 @@ if printf "%s\n" "$out" | grep -q "BEGIN-INVENTORY"; then
   echo "dataflow negative test: the report printed an inventory for negativeRegistry" >&2
   exit 1
 fi
-for i in 1 2 3 4 5 6 7 8 9; do
+for i in 1 2 3 4 5 6 7 8 9 10; do
   if ! printf "%s\n" "$out" | grep -q "^negative $i:"; then
     printf "%s\n" "$out"
     echo "dataflow negative test: no error line for negative entry $i" >&2
     exit 1
   fi
 done
-echo "dataflow negative test: the report stopped on all 9 negative entries"
+echo "dataflow negative test: the report stopped on all 10 negative entries"
 
 python3 "$here/tools/dataflow-inventory.py" --check
 
@@ -48,3 +50,9 @@ python3 -I "$here/tools/foundation-gate.py" --root "$here"
 #    checked current in step 2).
 python3 -I "$here/tests/foundation/test_entrypoint_gate.py"
 python3 -I "$here/tools/entrypoint-gate.py" --root "$here"
+
+# 5. The named-assumption ratchet (issue 975, item 4): its fixture tests, then
+#    the gate on this tree (foundation/assumptions.txt; no bare backend
+#    evaluator call under formal/lean4/Wasm or formal/lean4/Harness).
+python3 -I "$here/tests/foundation/test_assumption_gate.py"
+python3 -I "$here/tools/assumption-gate.py" --root "$here"

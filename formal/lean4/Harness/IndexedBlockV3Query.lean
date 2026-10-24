@@ -50,9 +50,9 @@ private def readOpsOf (triples : List Triple) : BackendReadOps :=
     whenever a structural key is not complete for SPARQL term equality. Delta
     overlays retain the established read-ops route until their own indexed
     materialisation contract is explicit. -/
-private def backendFor (triples : List Triple) (delta : DeltaResolved) : GraphBackend :=
-  if deltaResolvedIsEmpty delta then indexedGraphBackend triples
-  else .hdt (readOpsOfDelta triples delta)
+private def backendFor (triples : List Triple) (delta : DeltaResolved) : L4Factoidal.Dataflow.LawfulStore :=
+  if deltaResolvedIsEmpty delta then L4Factoidal.Dataflow.LawfulStore.ofIndexedGraph triples
+  else L4Factoidal.Dataflow.LawfulStore.hdt (readOpsOfDelta triples delta)
 
 /-- A physically safe bounded-prefix shape. Subject/object must be distinct
     variables: constants or repeated variables could make early rows fail the
@@ -106,21 +106,21 @@ private def finish (query : Query) (entries : List Entry) (predicates : List WfI
     (mode : String := "ibk3-paged-merkle") : QueryIO UInt32 := do
   let clockEnv := { (← L4Wasm.Ops.emptyEnvNow) with base := query.base }
   let backend := backendFor triples delta
-  let dataset : DatasetBackend := { default := backend, named := [] }
+  let dataset := L4Factoidal.Dataflow.LawfulDataset.ofDefault backend
   -- §18.6: EXISTS / NOT EXISTS evaluate against the query's dataset, which
   -- the backend runners read from `env.dataset`; the reference evaluator
   -- sets it itself.  The dataset is the same base-plus-delta graph the
   -- backend answers from (the CONSTRUCT arm below already reads it this
   -- way), so an EXISTS sub-pattern sees exactly the materialised fragment.
   let env : EvalEnv := { clockEnv with
-    dataset := some { default := backendSearch backend patternBoundAll, named := [] } }
+    dataset := some { default := backend.search patternBoundAll, named := [] } }
   let deltaMode := if deltaResolvedIsEmpty delta then "base" else "base-plus-delta"
   match query.form with
   | .select _ =>
       -- Backend runners require an already-selected dataset. Dataset clauses
       -- therefore use the reference evaluator's local graph-selection policy.
-      let result := if query.dataset.isEmpty then runSelectQueryBackendDataset env query dataset
-        else some (evalSelect env (materialiseDatasetBackend dataset) query).2
+      let result := if query.dataset.isEmpty then dataset.runSelect env query
+        else some (evalSelect env (materialiseDatasetBackend dataset.backend) query).2
       match result with
       | none => IO.eprintln "l4block-id-v3-query failed: query was not evaluated as SELECT"; return 1
       | some rows =>
@@ -129,8 +129,8 @@ private def finish (query : Query) (entries : List Entry) (predicates : List WfI
           printRows query rows
           return 0
   | .ask =>
-      let result := if query.dataset.isEmpty then runAskQueryBackendDataset clockEnv query dataset
-        else some (evalAsk env (materialiseDatasetBackend dataset) query)
+      let result := if query.dataset.isEmpty then dataset.runAsk clockEnv query
+        else some (evalAsk env (materialiseDatasetBackend dataset.backend) query)
       match result with
       | none => IO.eprintln "l4block-id-v3-query failed: query was not evaluated as ASK"; return 1
       | some answer =>
@@ -140,7 +140,7 @@ private def finish (query : Query) (entries : List Entry) (predicates : List WfI
           return 0
   | .construct _ =>
       let graph : Graph := evalConstruct clockEnv
-        { default := backendSearch (backendFor triples delta) patternBoundAll, named := [] } query
+        { default := (backendFor triples delta).search patternBoundAll, named := [] } query
       IO.println s!"l4block-id-v3-query shards={entries.length} open-mode={mode}({predicates.length}) delta={deltaMode} logical-read-bytes={counters.requestedBytes} fetched-bytes={counters.fetchedBytes}"
       IO.println s!"l4block-id-v3-query sse={query.toSse}"
       IO.println s!"l4block-id-v3-query triples={graph.length} preview={toString (repr (graph.take 10))}"
@@ -152,7 +152,7 @@ private def finish (query : Query) (entries : List Entry) (predicates : List WfI
       -- the whole generation here (mode `ibk3-paged-merkle-full-manifest`),
       -- and the delta is applied by `backendFor` as for CONSTRUCT.
       let graph : Graph := evalDescribe clockEnv
-        { default := backendSearch (backendFor triples delta) patternBoundAll, named := [] } query
+        { default := (backendFor triples delta).search patternBoundAll, named := [] } query
       IO.println s!"l4block-id-v3-query shards={entries.length} open-mode={mode}({predicates.length}) delta={deltaMode} logical-read-bytes={counters.requestedBytes} fetched-bytes={counters.fetchedBytes}"
       IO.println s!"l4block-id-v3-query sse={query.toSse}"
       IO.println s!"l4block-id-v3-query triples={graph.length} preview={toString (repr (graph.take 10))}"
@@ -251,8 +251,8 @@ private def finishCount (query : Query) (entries : List Entry)
 private def finishAsk (query : Query) (entries : List Entry) (predicates : List WfIri)
     (triples : List Triple) (counters : Counters) (delta : DeltaResolved) : QueryIO UInt32 := do
   let clockEnv := { (← L4Wasm.Ops.emptyEnvNow) with base := query.base }
-  let dataset : DatasetBackend := { default := backendFor triples delta, named := [] }
-  match runAskQueryBackendDataset clockEnv query dataset with
+  let dataset := L4Factoidal.Dataflow.LawfulDataset.ofDefault (backendFor triples delta)
+  match dataset.runAsk clockEnv query with
   | none => IO.eprintln "l4block-id-v3-query failed: query was not evaluated as ASK"; return 1
   | some answer =>
       let deltaMode := if deltaResolvedIsEmpty delta then "base" else "base-plus-delta"

@@ -51,7 +51,9 @@ def stageKind (env : Environment) (n : Name) : StageKind :=
   else match resultHead env n with
     | some h =>
       -- an `RdfReader` holds its contract as a field, as a `Stage` does
+      -- so do the data-access interface types (Dataflow/Store.lean)
       if h == ``Stage || h == ``RdfReader then .stage
+      else if h == ``LawfulStore || h == ``LawfulDataset then .iface
       else if h == ``IOStage then .ioStage else .other
     | Option.none => .other
 

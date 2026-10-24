@@ -1,0 +1,19 @@
+# Named assumptions of the interface values, 2026-10-24.
+#
+# https://github.com/danbri/factoidal/issues/975, "Architecture acceptance",
+# item 4. One line per constructor of `inductive AssumptionName`
+# (formal/lean4/L4Factoidal/Dataflow/Store.lean): the name, the number of
+# places in formal/lean4 that build an assumption of that name, and the reason
+# it is not proved. tools/assumption-gate.py counts the uses on every run and
+# fails when a count differs from its line (a new use needs this file changed
+# in the same PR, so the reviewer sees it), when a constructor has no line,
+# or when the number of lines differs from max-entries. RdfReader
+# (Dataflow/Reader.lean) has no assumption field: every reader law is proved.
+# Reasons are Claude-inferred (2026-10-24), not owner decisions.
+# max-entries: 6
+backendReadOpsExact  uses=2  # LawfulStore.hdt, LawfulStore.cottasInMemory: the reader is file access (HDT file, in-memory COTTAS pages); no theorem relates the bytes to the triples it returns
+cottasReadOpsExact  uses=2  # LawfulStore.cottasOnDisk, LawfulStore.cottasOnDiskDelta: the COTTAS reader reads memory-mapped pages; issue 975 table row "COTTAS store" is missing
+rmlPushdownInvisible  uses=1  # LawfulStore.virtualRml: the RML pushdown, structural narrowing and subject probe are checked by #guards (RML/VirtualSource.lean), not proved
+rmlVirtualIsMaterialised  uses=1  # LawfulStore.virtualRml: the unbounded virtual solve against RML.evalMapping is checked by #guards, not proved
+datasetIsSet  uses=4  # LawfulDataset.ofDataset (2 arms), LawfulStore.ofGraph, LawfulStore.ofIndexedGraph: call sites that hold a Dataset or Graph without its set proof (storeQuery, storeHandleQuery, the served view, the CLI, harness tools); the readers prove it, the block decoders do not
+graphNameKeysDistinct  uses=2  # LawfulDataset.ofCertified, LawfulDataset.ofDataset: only when a graph name is a blank node; an IRI name and a blank-node label can spell one key string (subjectKey), so the record could have two backends of one name

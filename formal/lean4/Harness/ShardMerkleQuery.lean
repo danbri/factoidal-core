@@ -97,9 +97,9 @@ private def explainAnalyze (asJson : Bool) (directory : System.FilePath) (queryT
                 return 1
             | some nodes =>
                 let triples := nodes.flatMap fun node => node.materialized.triples
-                let dataset : DatasetBackend := { default := .hdt (readOpsOf triples), named := [] }
+                let dataset := L4Factoidal.Dataflow.LawfulDataset.ofDefault (L4Factoidal.Dataflow.LawfulStore.hdt (readOpsOf triples))
                 let t0 ← IO.monoMsNow
-                match runSelectQueryBackendDataset clockEnv query dataset with
+                match dataset.runSelect clockEnv query with
                 | none => IO.eprintln "l4block-shard-merkle-query failed: query was not evaluated as SELECT"; return 1
                 | some rows =>
                     let t1 ← IO.monoMsNow
@@ -151,8 +151,8 @@ private def run (directory : System.FilePath) (queryText : String) : IO UInt32 :
                     IO.eprintln "l4block-shard-merkle-query rejected: unavailable, changed, or malformed proof-carrying child artifact"
                     return 1
                 | some materialized =>
-                    let dataset : DatasetBackend := { default := .hdt (readOpsOfDelta materialized.triples delta), named := [] }
-                    match runSelectQueryBackendDataset clockEnv query dataset with
+                    let dataset := L4Factoidal.Dataflow.LawfulDataset.ofDefault (L4Factoidal.Dataflow.LawfulStore.hdt (readOpsOfDelta materialized.triples delta))
+                    match dataset.runSelect clockEnv query with
                     | none => IO.eprintln "l4block-shard-merkle-query failed: query was not evaluated as SELECT"; return 1
                     | some rows =>
                         let deltaMode := if deltaResolvedIsEmpty delta then "base" else "base-plus-delta"
@@ -166,8 +166,8 @@ private def run (directory : System.FilePath) (queryText : String) : IO UInt32 :
                     IO.eprintln "l4block-shard-merkle-query rejected: unavailable, changed, or malformed proof-carrying child artifact"
                     return 1
                 | some (triples, logicalBytes) =>
-                    let dataset : DatasetBackend := { default := .hdt (readOpsOfDelta triples delta), named := [] }
-                    match runSelectQueryBackendDataset clockEnv query dataset with
+                    let dataset := L4Factoidal.Dataflow.LawfulDataset.ofDefault (L4Factoidal.Dataflow.LawfulStore.hdt (readOpsOfDelta triples delta))
+                    match dataset.runSelect clockEnv query with
                     | none => IO.eprintln "l4block-shard-merkle-query failed: query was not evaluated as SELECT"; return 1
                     | some rows =>
                         let deltaMode := if deltaResolvedIsEmpty delta then "base" else "base-plus-delta"

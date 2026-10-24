@@ -19,13 +19,13 @@ private def run (path queryText : String) : IO UInt32 := do
         IO.eprintln "l4block-id-v2-file-query rejected: malformed, unsupported, or checksum-failing IBK2 file"
         return 1
     | some opened =>
-        let dataset : DatasetBackend := { default := .hdt (readOpsRange opened), named := [] }
+        let dataset := L4Factoidal.Dataflow.LawfulDataset.ofDefault (L4Factoidal.Dataflow.LawfulStore.hdt (readOpsRange opened))
         match parseSparql queryText with
         | .error e =>
             IO.eprintln s!"l4block-id-v2-file-query query parse error at {e.pos}: {e.msg}"
             return 1
         | .ok q =>
-            match runSelectQueryBackendDataset clockEnv q dataset with
+            match dataset.runSelect clockEnv q with
             | none =>
                 IO.eprintln "l4block-id-v2-file-query failed: query was not evaluated as SELECT"
                 return 1

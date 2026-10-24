@@ -113,3 +113,29 @@ no longer exists or is now mapped, or when the count differs from
 
 The bound status of an entry is the weakest status of its stages
 (`tested` < `assumed` < `proved`).
+
+## Named assumptions (issue 975, items 2 and 4)
+
+The interface types carry their contract as fields. `RdfReader`
+(`formal/lean4/L4Factoidal/Dataflow/Reader.lean`) has no assumption field.
+`LawfulStore` and `LawfulDataset` (`Dataflow/Store.lean`), the data-access
+interface, have the field `assumptions : List Assumption`: the assumptions
+the law rests on, each with a name from `inductive AssumptionName`. The query
+ops, the dataset handles, the served view, the CLI and the harness query tools
+reach the backend evaluator only through these types.
+
+```
+python3 -I tools/assumption-gate.py                      # the gate on this tree
+python3 -I tests/foundation/test_assumption_gate.py      # the gate's own tests
+```
+
+Both run in `tests/dataflow/run.sh`. `assumptions.txt` has one line per
+constructor of `AssumptionName`: the name, `uses=N` (the places in
+`formal/lean4` that build an assumption of that name) and the reason it is not
+proved. The gate fails when a count in the tree differs from its line, when a
+constructor has no line, when the number of lines differs from
+`# max-entries: N`, or when a file under `formal/lean4/Wasm` or
+`formal/lean4/Harness` calls the backend evaluator over a bare
+`DatasetBackend` (`runSelectQueryBackendDataset`, `runAskQueryBackendDataset`,
+`evalPatternBackend`, `evalBgpBackend`, `indexedDatasetBackend`). A new use of
+an assumption therefore changes `assumptions.txt` in the same PR, with a reason.

@@ -30,13 +30,13 @@ private def run (path queryText : String) : IO UInt32 := do
         return 1
     | some directBlock =>
         let block := fromGraph directBlock.rows
-        let dataset : DatasetBackend := { default := .hdt (readOps block), named := [] }
+        let dataset := L4Factoidal.Dataflow.LawfulDataset.ofDefault (L4Factoidal.Dataflow.LawfulStore.hdt (readOps block))
         match parseSparql queryText with
         | .error e =>
             IO.eprintln s!"l4block-file-query query parse error at {e.pos}: {e.msg}"
             return 1
         | .ok q =>
-            match runSelectQueryBackendDataset clockEnv q dataset with
+            match dataset.runSelect clockEnv q with
             | none =>
                 IO.eprintln "l4block-file-query failed: query was not evaluated as SELECT"
                 return 1

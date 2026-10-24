@@ -81,8 +81,8 @@ private def execute (directory : System.FilePath) (manifest : Manifest)
           pure false
       | some loaded =>
           let store : OpenStore := { manifest, blocks := loaded.blocks }
-          let dataset : DatasetBackend := { default := .hdt (readOps store), named := [] }
-          match runSelectQueryBackendDataset clockEnv query dataset with
+          let dataset := L4Factoidal.Dataflow.LawfulDataset.ofDefault (L4Factoidal.Dataflow.LawfulStore.hdt (readOps store))
+          match dataset.runSelect clockEnv query with
           | none =>
               IO.eprintln s!"l4block-shard-session query={queryNumber} failed: query was not evaluated as SELECT"
               pure false
