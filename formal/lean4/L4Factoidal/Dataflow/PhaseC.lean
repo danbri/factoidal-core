@@ -96,6 +96,7 @@ No `sorry`, no `axiom`, no `native_decide`, no `partial`.
 -/
 import L4Factoidal.Dataflow.Instances
 import L4Factoidal.Dataflow.Reader
+import L4Factoidal.Dataflow.Writer
 import L4Factoidal.RDF.SourceJsonLd
 import L4Factoidal.RDF.SourceTheorems
 import L4Factoidal.RDF.StreamSet
@@ -298,149 +299,7 @@ theorem nquads11Stream_reader {chunks : List String} {out : Dataset}
   have hp : parseDocument {} .nquads .rdf11 none (String.join chunks) = .ok out := hc
   simp only [nquadsReader, readerStage, hp]
 
-/-! ## Writers: the representable domain and the projection -/
-
-/-- The part of a dataset the syntax `fmt` can state. -/
-def writerProjection : RdfFormat → Dataset → Dataset
-  | .nt | .turtle | .rdfxml => fun ds => { default := Sink.flatten ds, named := [] }
-  | .nquads => fun ds => { ds with named := ds.named.filter (fun ng => !ng.graph.isEmpty) }
-  | .trig | .jsonld => fun ds => ds
-
-/-- The union of all the graphs as the default graph; no graph name. -/
-def unionAllDen (d : DatasetDen) : DatasetDen where
-  graph gn t := gn = none ∧ ∃ g0, d.graph g0 t
-  names _ := False
-  graph_key := by
-    rintro gn t u h ⟨hg, g0, hm⟩
-    exact ⟨hg, g0, d.graph_key g0 t u h hm⟩
-  named_mem := by
-    rintro n t ⟨hg, -⟩
-    cases hg
-
-/-- The graph names that have a triple; the graphs are kept. -/
-def dropEmptyDen (d : DatasetDen) : DatasetDen where
-  graph := d.graph
-  names n := ∃ t, d.graph (some n) t
-  graph_key := d.graph_key
-  named_mem := fun _ t h => ⟨t, h⟩
-
-theorem mem_flatten_iff (ds : Dataset) (t : Triple) :
-    (Sink.flatten ds).mem t = true ↔ ∃ g0, ds.memQuad t g0 := by
-  rw [Graph.mem_iff_key]
-  constructor
-  · rintro ⟨u, hu, hk⟩
-    rw [Sink.flatten, List.mem_append] at hu
-    rcases hu with hu | hu
-    · exact ⟨none, (Graph.mem_iff_key t _).mpr ⟨u, hu, hk⟩⟩
-    · obtain ⟨ng, hng, hu⟩ := List.mem_flatMap.mp hu
-      exact ⟨some ng.name, ng, hng, rfl, (Graph.mem_iff_key t _).mpr ⟨u, hu, hk⟩⟩
-  · rintro ⟨g0, hm⟩
-    cases g0 with
-    | none =>
-      obtain ⟨u, hu, hk⟩ := (Graph.mem_iff_key t _).mp hm
-      exact ⟨u, by rw [Sink.flatten, List.mem_append]; exact Or.inl hu, hk⟩
-    | some n =>
-      obtain ⟨ng, hng, -, hm⟩ := hm
-      obtain ⟨u, hu, hk⟩ := (Graph.mem_iff_key t _).mp hm
-      exact ⟨u, by
-        rw [Sink.flatten, List.mem_append]
-        exact Or.inr (List.mem_flatMap.mpr ⟨ng, hng, hu⟩), hk⟩
-
-/-- **The projection of a triples-only syntax** (N-Triples, Turtle, RDF/XML)
-denotes the union of all the graphs as the default graph, with no graph name. -/
-theorem writerProjection_triples_den (fmt : RdfFormat)
-    (hf : fmt = .nt ∨ fmt = .turtle ∨ fmt = .rdfxml) (ds : Dataset) :
-    (writerProjection fmt ds).den = unionAllDen ds.den := by
-  have e : writerProjection fmt ds = { default := Sink.flatten ds, named := [] } := by
-    rcases hf with rfl | rfl | rfl <;> rfl
-  rw [e]
-  apply DatasetDen.ext
-  · intro gn t
-    cases gn with
-    | none =>
-      show (Sink.flatten ds).mem t = true ↔ (none = none ∧ ∃ g0, ds.memQuad t g0)
-      rw [mem_flatten_iff]
-      exact ⟨fun h => ⟨rfl, h⟩, fun h => h.2⟩
-    | some n =>
-      show (∃ ng ∈ ([] : List NamedGraph), _) ↔ _
-      constructor
-      · rintro ⟨_, h, -⟩
-        cases h
-      · rintro ⟨h, -⟩
-        cases h
-  · intro m
-    show m ∈ ([] : List NamedGraph).map (·.name) ↔ False
-    simp
-
-/-- **The projection of N-Quads** keeps every graph and drops the names of the
-empty named graphs. -/
-theorem writerProjection_nquads_den (ds : Dataset) :
-    (writerProjection .nquads ds).den = dropEmptyDen ds.den := by
-  apply DatasetDen.ext
-  · intro gn t
-    cases gn with
-    | none => exact Iff.rfl
-    | some n =>
-      show (∃ ng ∈ ds.named.filter (fun ng => !ng.graph.isEmpty), ng.name = n ∧ ng.graph.mem t = true) ↔
-        (∃ ng ∈ ds.named, ng.name = n ∧ ng.graph.mem t = true)
-      constructor
-      · rintro ⟨ng, hng, hn, hm⟩
-        exact ⟨ng, (List.mem_filter.mp hng).1, hn, hm⟩
-      · rintro ⟨ng, hng, hn, hm⟩
-        refine ⟨ng, List.mem_filter.mpr ⟨hng, ?_⟩, hn, hm⟩
-        cases hg : ng.graph with
-        | nil => rw [hg] at hm; cases hm
-        | cons _ _ => rfl
-  · intro m
-    show m ∈ (ds.named.filter (fun ng => !ng.graph.isEmpty)).map (·.name) ↔
-      ∃ t, ∃ ng ∈ ds.named, ng.name = m ∧ ng.graph.mem t = true
-    constructor
-    · intro h
-      obtain ⟨ng, hng, hn⟩ := List.mem_map.mp h
-      obtain ⟨hng, hne⟩ := List.mem_filter.mp hng
-      cases hg : ng.graph with
-      | nil => rw [hg] at hne; cases hne
-      | cons t _ =>
-        refine ⟨t, ng, hng, hn, ?_⟩
-        rw [hg, Graph.mem_iff_key]
-        exact ⟨t, List.mem_cons_self, rfl⟩
-    · rintro ⟨t, ng, hng, hn, hm⟩
-      refine List.mem_map.mpr ⟨ng, List.mem_filter.mpr ⟨hng, ?_⟩, hn⟩
-      cases hg : ng.graph with
-      | nil => rw [hg] at hm; cases hm
-      | cons _ _ => rfl
-
-/-- **TriG and JSON-LD** state every dataset: no projection. -/
-theorem writerProjection_dataset (fmt : RdfFormat) (hf : fmt = .trig ∨ fmt = .jsonld) (ds : Dataset) :
-    writerProjection fmt ds = ds := by
-  rcases hf with rfl | rfl <;> rfl
-
-/-- A term with a triple term in it. -/
-def Term.hasTripleTermB : Term → Bool
-  | .tripleTerm _ _ _ => true
-  | _ => false
-
-/-- A literal with a base direction (RDF 1.2 directional language string). -/
-def Term.hasDirectionB : Term → Bool
-  | .literal l => l.val.direction.isSome
-  | _ => false
-
-/-- The datasets the writer of `fmt` accepts and is meant to keep. RDF/XML and
-JSON-LD: no triple term. JSON-LD: no directional language string (the writer
-accepts one and drops the direction, https://github.com/danbri/factoidal/issues/984).
-N-Triples: every IRI and language tag in the lexical space of its N-Triples
-production (`NTriplesRoundTrip.Triple.ntSafe`: IRIREF [8], LANGTAG [144s]); any
-blank-node label, as the writer relabels (`Dataset.relabelForWrite`,
-https://github.com/danbri/factoidal/issues/986). N-Quads: the same for each
-written quad and its graph label (`NQuadsRoundTrip.Quad.ntSafe`). -/
-def writerDomain (fmt : RdfFormat) (ds : Dataset) : Bool :=
-  let ts := Sink.flatten ds
-  match fmt with
-  | .rdfxml => ts.all fun t => !Term.hasTripleTermB t.o
-  | .jsonld => ts.all fun t => !Term.hasTripleTermB t.o && !Term.hasDirectionB t.o
-  | .nt => ts.all NTriplesRoundTrip.Triple.ntSafe
-  | .nquads => (NQuadsRoundTrip.quadsOf ds).all NQuadsRoundTrip.Quad.ntSafe
-  | .turtle | .trig => true
+/-! ## Writers: the domain, the projection and the contracts are in `Dataflow/Writer.lean` -/
 
 /-- **The round-trip property of the writer of `fmt`** (proved for N-Triples and
 N-Quads, `writerRoundTrip_nt` and `writerRoundTrip_nquads`): a
@@ -458,111 +317,22 @@ def WriterRoundTrip (fmt : RdfFormat) (v : Syntax.Mode) : Prop :=
 domain, the text parses back to a dataset whose denotation is isomorphic to the
 projection's. -/
 def WriterContract (fmt : RdfFormat) (v : Syntax.Mode) (ds : Dataset) (text : String) : Prop :=
-  writerDomain fmt ds = true → ∃ back, parseDocument Source.withJsonLd fmt v none text = .ok back ∧
-    DatasetDen.Iso back.den (writerProjection fmt ds).den
+  WriterContractW Source.withJsonLd fmt v ds text
 
-/-! ### Relabelling before the write -/
-
-theorem flatten_renameBnodes (f : BNodeId → BNodeId) (ds : Dataset) :
-    Sink.flatten (ds.renameBnodes f) = (Sink.flatten ds).map (Triple.renameBnodes f) := by
-  simp [Sink.flatten, Dataset.renameBnodes, Graph.renameBnodes, List.map_append, List.map_flatMap,
-    List.flatMap_map]
-
-/-- A map injective on the blank nodes of `ds` is injective on the blank nodes
-of a dataset whose blank nodes occur in `ds`. -/
-theorem injectiveOnBnodes_mono {f : BNodeId → BNodeId} {ds ds2 : Dataset}
-    (hsub : ∀ b, ds2.BnodeOccurs b → ds.BnodeOccurs b) (h : ds.InjectiveOnBnodes f) :
-    ds2.InjectiveOnBnodes f := by
-  rw [Dataset.injectiveOnBnodes_iff] at h ⊢
-  exact fun a c ha hc he => h a c (hsub a ha) (hsub c hc) he
-
-theorem bnodeOccurs_of_flatten {ds : Dataset} {b : BNodeId}
-    (h : ({ default := Sink.flatten ds, named := [] } : Dataset).BnodeOccurs b) : ds.BnodeOccurs b := by
-  rcases h with ⟨t, ht, hb⟩ | ⟨ng, hng, -⟩
-  · rw [Sink.flatten, List.mem_append] at ht
-    rcases ht with ht | ht
-    · exact Or.inl ⟨t, ht, hb⟩
-    · obtain ⟨ng, hng, ht⟩ := List.mem_flatMap.mp ht
-      exact Or.inr ⟨ng, hng, Or.inr ⟨t, ht, hb⟩⟩
-  · cases hng
-
-theorem bnodeOccurs_of_nquadsProjection {ds : Dataset} {b : BNodeId}
-    (h : (writerProjection .nquads ds).BnodeOccurs b) : ds.BnodeOccurs b := by
-  rcases h with h | ⟨ng, hng, hb⟩
-  · exact Or.inl h
-  · exact Or.inr ⟨ng, (List.mem_filter.mp hng).1, hb⟩
-
-/-- The N-Quads projection of the relabelled dataset is the relabelled
-projection. -/
-theorem writerProjection_nquads_renameBnodes (f : BNodeId → BNodeId) (ds : Dataset) :
-    writerProjection .nquads (ds.renameBnodes f) = (writerProjection .nquads ds).renameBnodes f := by
-  simp [writerProjection, Dataset.renameBnodes, Graph.renameBnodes, List.filter_map,
-    Function.comp_def, List.isEmpty_map]
-
-/-- **The N-Triples writer keeps its contract**, RDF 1.1 and RDF 1.2 modes.
-The writer writes `ds.relabelForWrite` (`RDF/WriterLabels.lean`), whose
-blank-node labels are BLANK_NODE_LABELs, so its triples are in
-`Triple.ntLex` (`Triple.ntLex_renameBnodes`). The parser gives back the
-written list of triples, in order (`parseNTriples_toNTriples`), so the parsed
-dataset is the set of the relabelled projection's quads
-(`Dataset.den_toSet`). The relabelling is injective on the blank nodes of the
-dataset (`writeLabelMap_injOn`), so the isomorphism is the relabelling
-(`Dataset.den_iso_renameBnodes`). -/
+/-- **The N-Triples writer keeps its contract** (`writerContractW_nt`), RDF 1.1 and
+RDF 1.2 modes, with the JSON-LD library linked in. -/
 theorem writerContract_nt (v : Syntax.Mode) (ds : Dataset) (text : String)
-    (hser : Sink.serializeDataset Sink.withJsonLd .nt v ds = .ok text) : WriterContract .nt v ds text := by
-  intro hdom
-  have hall : (Sink.flatten ds.relabelForWrite).all NTriplesRoundTrip.Triple.ntLex = true := by
-    rw [relabelForWrite_eq, flatten_renameBnodes, List.all_map]
-    apply List.all_eq_true.mpr
-    intro t ht
-    exact NTriplesRoundTrip.Triple.ntLex_renameBnodes (writeLabelMap_valid ds) (List.all_eq_true.mp hdom t ht)
-  have hg : parseNTriples text v = .ok (Sink.flatten ds.relabelForWrite) :=
-    NTriplesRoundTrip.parseNTriples_toNTriples v (Sink.flatten ds.relabelForWrite) hall text hser
-  refine ⟨({ default := Sink.flatten ds.relabelForWrite, named := [] } : Dataset).toSet, ?_, ?_⟩
-  · simp [parseDocument, parseDocumentRaw, givesSet, hg, Except.map]
-  · rw [Dataset.den_toSet]
-    have e : ({ default := Sink.flatten ds.relabelForWrite, named := [] } : Dataset) =
-        (writerProjection .nt ds).renameBnodes ds.writeLabelMap := by
-      rw [relabelForWrite_eq, flatten_renameBnodes]
-      rfl
-    rw [e]
-    exact (Dataset.den_iso_renameBnodes (injectiveOnBnodes_mono (fun _ hb => bnodeOccurs_of_flatten hb)
-      (writeLabelMap_injOn ds))).symm
+    (hser : Sink.serializeDataset Sink.withJsonLd .nt v ds = .ok text) : WriterContract .nt v ds text :=
+  writerContractW_nt Sink.withJsonLd Source.withJsonLd v ds text hser
 
-/-- **The N-Quads writer keeps its contract**, RDF 1.1 and RDF 1.2 modes. The
-writer writes `ds.relabelForWrite`, whose quads are in `Quad.ntLex`
-(`Quad.ntLex_renameBnodes`). The parser adds the written quads in order
-(`parseNQuads_toNQuads`); the dataset it gives has the quads of the relabelled
-dataset, up to RDF term equality (`addAll_quadsOf_memQuad`), and the names of
-the graphs that have a triple (`addAll_quadsOf_names`): the denotation of the
-relabelled projection (`writerProjection_nquads_den`,
-`writerProjection_nquads_renameBnodes`). The isomorphism is the relabelling. -/
+/-- **The N-Quads writer keeps its contract** (`writerContractW_nquads`). -/
 theorem writerContract_nquads (v : Syntax.Mode) (ds : Dataset) (text : String)
     (hser : Sink.serializeDataset Sink.withJsonLd .nquads v ds = .ok text) :
-    WriterContract .nquads v ds text := by
-  intro hdom
-  have hall : (NQuadsRoundTrip.quadsOf ds.relabelForWrite).all NQuadsRoundTrip.Quad.ntLex = true := by
-    rw [relabelForWrite_eq, NQuadsRoundTrip.quadsOf_renameBnodes, List.all_map]
-    apply List.all_eq_true.mpr
-    intro q hq
-    exact NQuadsRoundTrip.Quad.ntLex_renameBnodes (writeLabelMap_valid ds) (List.all_eq_true.mp hdom q hq)
-  have hp : parseNQuads text v =
-      .ok (NQuadsRoundTrip.addAll Dataset.empty (NQuadsRoundTrip.quadsOf ds.relabelForWrite)) :=
-    NQuadsRoundTrip.parseNQuads_toNQuads v ds.relabelForWrite hall text hser
-  refine ⟨NQuadsRoundTrip.addAll Dataset.empty (NQuadsRoundTrip.quadsOf ds.relabelForWrite), ?_, ?_⟩
-  · show parseNQuadsFast text v = _
-    rw [parseNQuadsFast_eq_parseNQuads, hp]
-  · have hden : (NQuadsRoundTrip.addAll Dataset.empty (NQuadsRoundTrip.quadsOf ds.relabelForWrite)).den =
-        (writerProjection .nquads ds.relabelForWrite).den := by
-      rw [writerProjection_nquads_den]
-      apply DatasetDen.ext
-      · intro gn t
-        exact NQuadsRoundTrip.addAll_quadsOf_memQuad ds.relabelForWrite t gn
-      · intro m
-        exact NQuadsRoundTrip.addAll_quadsOf_names ds.relabelForWrite m
-    rw [hden, relabelForWrite_eq, writerProjection_nquads_renameBnodes]
-    exact (Dataset.den_iso_renameBnodes (injectiveOnBnodes_mono (fun _ hb => bnodeOccurs_of_nquadsProjection hb)
-      (writeLabelMap_injOn ds))).symm
+    WriterContract .nquads v ds text :=
+  writerContractW_nquads Sink.withJsonLd Source.withJsonLd v ds text hser
+
+/-- The JSON-LD `RdfWriter` of the table, with the JSON-LD library linked in. -/
+def jsonldDocumentWriter : RdfWriter := writers Sink.withJsonLd Source.withJsonLd .jsonld
 
 /-- The N-Triples writer as a stage. -/
 def ntriplesWriter (v : Syntax.Mode) : Stage String Dataset String where

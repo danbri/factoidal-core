@@ -37,6 +37,8 @@ import L4Factoidal.Dataflow.PhaseDTests
 import L4Factoidal.Dataflow.PhaseE
 import L4Factoidal.Dataflow.PhaseETests
 import L4Factoidal.Dataflow.PhaseC
+import L4Factoidal.Dataflow.Writer
+import L4Factoidal.Dataflow.WriterTests
 import L4Factoidal.Dataflow.PhaseCTests
 import L4Factoidal.Dataflow.PhaseStorage
 import L4Factoidal.Dataflow.PhaseStorageTests

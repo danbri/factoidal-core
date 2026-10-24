@@ -54,6 +54,7 @@ def stageKind (env : Environment) (n : Name) : StageKind :=
       -- so do the data-access interface types (Dataflow/Store.lean)
       if h == ``Stage || h == ``RdfReader then .stage
       else if h == ``LawfulStore || h == ``LawfulDataset then .iface
+      else if h == ``RdfWriter then .writer
       else if h == ``IOStage then .ioStage else .other
     | Option.none => .other
 

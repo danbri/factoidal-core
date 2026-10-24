@@ -395,3 +395,27 @@ id = "npm:./browser#openDataset"
 stages = ["ntriplesDocumentReader", "nquadsDocumentReader", "turtleDocumentReader", "trigDocumentReader", "rdfxmlDocumentReader", "jsonldDocumentReader"]
 covers = "part"
 note = "npm/factoidal/lib/api.mjs openDataset (browser.js): text goes to datasetOf, the wasm op datasetOpen (RdfReader table). Not covered: a Dataset argument (clone) and an array (union of the members)."
+
+[[entry]]
+id = "wasm:datasetSerialize"
+stages = ["ntriplesDocumentWriter", "nquadsDocumentWriter", "canonicalNQuadsDocumentWriter", "turtleDocumentWriter", "trigDocumentWriter", "rdfxmlDocumentWriter"]
+covers = "part"
+note = "Wasm/Ops/Handles.lean: the N-Quads, N-Triples, Turtle, TriG and RDF/XML tags write through the RdfWriter table (handleWriter, handleCanonicalNQuadsWriter, Dataflow/Writer.lean). Not covered: the rdfc tag (canonicalizeOf, rdfcStage), the RDF 1.1 refusal check (checked), the N-Triples refusal of a named graph, and the JSON envelope."
+
+[[entry]]
+id = "wasm:datasetSerializeWith"
+stages = ["ntriplesDocumentWriter", "nquadsDocumentWriter", "canonicalNQuadsDocumentWriter", "turtleDocumentWriter", "trigDocumentWriter", "rdfxmlDocumentWriter"]
+covers = "part"
+note = "Wasm/Ops/Handles.lean: as datasetSerialize; the Turtle options reach the RdfWriter run as TurtleRenderOptions. Not covered: the options JSON parse (turtleOptionsOfJson) and the envelope."
+
+[[entry]]
+id = "npm:.#serialize"
+stages = ["ntriplesDocumentWriter", "nquadsDocumentWriter", "canonicalNQuadsDocumentWriter", "turtleDocumentWriter", "trigDocumentWriter", "rdfxmlDocumentWriter"]
+covers = "part"
+note = "npm/factoidal/lib/dataset.mjs _write: every format except jsonld calls datasetSerialize or datasetSerializeWith (RdfWriter table). Not covered: format jsonld (datasetToJsonLd, jsonldFromRdf with options, not the JSON-LD RdfWriter), rdfc (canonicalizeOf), the option checks, and the JS cache of the N-Quads text."
+
+[[entry]]
+id = "npm:./browser#serialize"
+stages = ["ntriplesDocumentWriter", "nquadsDocumentWriter", "canonicalNQuadsDocumentWriter", "turtleDocumentWriter", "trigDocumentWriter", "rdfxmlDocumentWriter"]
+covers = "part"
+note = "npm/factoidal/lib/dataset.mjs _write: every format except jsonld calls datasetSerialize or datasetSerializeWith (RdfWriter table). Not covered: format jsonld (datasetToJsonLd, jsonldFromRdf with options, not the JSON-LD RdfWriter), rdfc (canonicalizeOf), the option checks, and the JS cache of the N-Quads text."
