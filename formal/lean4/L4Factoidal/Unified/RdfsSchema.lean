@@ -689,7 +689,10 @@ theorem derivesFull_holds {Dset : DatatypeSet} {i : Interp}
       exact hsprefl _ ih
   | rdfs7 _ _ ih1 ih2 => exact hsp _ _ _ _ ih1 ih2
   | rdfs8 _ ih => exact hcsr _ ih
-  | rdfs9 _ _ ih1 ih2 => exact hsc _ _ _ ih2 ih1
+  | rdfs9 _ hsub _ ih1 ih2 =>
+      simp only [TripleHolds] at ih1 ih2 ⊢
+      rw [← denot_toSubject? i a hsub] at ih1
+      exact hsc _ _ _ ih2 ih1
   | rdfs10 _ ih =>
       simp only [TripleHolds] at ih ⊢
       rw [denot_subject_toTerm]

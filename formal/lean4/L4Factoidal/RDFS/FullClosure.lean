@@ -286,10 +286,13 @@ inductive DerivesFull (ax : Graph) (g : Graph) : Triple → Prop where
   | rdfs8 {x : Subject}
       (h : DerivesFull ax g ⟨x, rdfType, Term.iri rdfsClass⟩) :
       DerivesFull ax g ⟨x, rdfsSubClassOf, Term.iri rdfsResource⟩
-  /-- **rdfs9** — as in `RdfsCore.Derives.rdfs9`. -/
-  | rdfs9 {s : Subject} {a : WfIri} {b : Term}
-      (hdata : DerivesFull ax g ⟨s, rdfType, Term.iri a⟩)
-      (hdecl : DerivesFull ax g ⟨Subject.iri a, rdfsSubClassOf, b⟩) :
+  /-- **rdfs9** — as in `RdfsCore.Derives.rdfs9`: the sub-class is an IRI
+  or a blank node (§9.2: `xxx rdfs:subClassOf yyy . zzz rdf:type xxx .`
+  gives `zzz rdf:type yyy .`). -/
+  | rdfs9 {s : Subject} {x : Term} {a : Subject} {b : Term}
+      (hdata : DerivesFull ax g ⟨s, rdfType, x⟩)
+      (hsub  : x.toSubject? = some a)
+      (hdecl : DerivesFull ax g ⟨a, rdfsSubClassOf, b⟩) :
       DerivesFull ax g ⟨s, rdfType, b⟩
   /-- **rdfs10** — §9.2: `xxx rdf:type rdfs:Class .` ⊢
   `xxx rdfs:subClassOf xxx .` -/

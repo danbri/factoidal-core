@@ -36,6 +36,8 @@ import L4Factoidal.Dataflow.PhaseD
 import L4Factoidal.Dataflow.PhaseDTests
 import L4Factoidal.Dataflow.PhaseE
 import L4Factoidal.Dataflow.PhaseETests
+import L4Factoidal.Dataflow.PhaseC
+import L4Factoidal.Dataflow.PhaseCTests
 import L4Factoidal.Dataflow.Registry
 import L4Factoidal.Dataflow.RegistryTests
 import L4Factoidal.RDF.ConciseBoundedDescription
@@ -85,6 +87,7 @@ import L4Factoidal.RDFS.Derivation
 import L4Factoidal.RDFS.DerivationTests
 import L4Factoidal.RDFS.DerivationCheck
 import L4Factoidal.RDFS.DerivationCheckTests
+import L4Factoidal.RDFS.BnodePositionTests
 import L4Factoidal.Proof.Syntax
 import L4Factoidal.Proof.Checker
 import L4Factoidal.Proof.Tests
