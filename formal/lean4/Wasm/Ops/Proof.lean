@@ -137,7 +137,7 @@ RDF 1.2 mode. `body` is optional; every other member is required.
 is PINNED BY `#guard` on the fixtures below, NOT proved. The N-Triples
 round trip it would rest on is proved since 2026-10-24
 (`Syntax.NTriplesRoundTrip.parseNTriples_toNTriples`, on the domain
-`Triple.ntSafe`); a bundle-level theorem also needs the JSON layer of
+`Triple.ntLex`); a bundle-level theorem also needs the JSON layer of
 `encodeBundle`/`decodeBundle` and is not written. What IS proved
 here is the enum layer — the three decoders where a lenient reading
 would silently weaken a bundle.

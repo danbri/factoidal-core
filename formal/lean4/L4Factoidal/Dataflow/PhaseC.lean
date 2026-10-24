@@ -70,19 +70,25 @@ keep: RDF/XML and JSON-LD have no triple term (the writers refuse one with an
 error); JSON-LD has no directional language string (finding: the writer
 accepts one and drops its base direction,
 https://github.com/danbri/factoidal/issues/984); with N-Triples and N-Quads
-every IRI, blank-node label, language tag and graph label must be in the
-lexical space of its grammar production (IRIREF, BLANK_NODE_LABEL, LANGTAG,
-graphLabel). The writers write these strings as they are, so a string outside
-its production gives a document that the parser refuses: the first statement
-of the domain, IRIs only, was false, and the guards of
-`Syntax/NTriplesDocRoundTrip.lean`, `Syntax/NQuadsDocRoundTrip.lean` and
-`PhaseCTests.lean` show the counter-examples.
+every IRI and language tag must be in the lexical space of its grammar
+production (IRIREF, LANGTAG). Blank-node labels need no condition
+(https://github.com/danbri/factoidal/issues/986): the writers of the N-Triples
+family write `Dataset.relabelForWrite` (`RDF/WriterLabels.lean`), which keeps
+each BLANK_NODE_LABEL and gives every other label a fresh BLANK_NODE_LABEL,
+the same for each occurrence, that no other blank node of the document has (a
+blank-node label is local to its document, RDF 1.1 Concepts section 3.4). A
+language tag outside LANGTAG (RDF 1.2: subtags of 1 to 8 characters) has no
+valid rewrite, and the writers refuse it with an error that names the tag
+(`langTagWritable`, `langTagError`). An IRI outside IRIREF is written as it is
+(outside the domain; `iriPrintSafe`).
 
 `WriterRoundTrip fmt v` is the round-trip property: on the domain, a
 successful write parses back to a dataset whose denotation is isomorphic to
 the projection's. Proved for N-Triples and N-Quads, RDF 1.1 and RDF 1.2 modes
 (`writerRoundTrip_nt`, `writerRoundTrip_nquads`; the isomorphism is the
-identity). Stated, not proved, for Turtle, TriG, RDF/XML and JSON-LD.
+relabelling `Dataset.writeLabelMap`, injective on the blank nodes of the
+dataset, `writeLabelMap_injOn`; the identity when every label is a
+BLANK_NODE_LABEL). Stated, not proved, for Turtle, TriG, RDF/XML and JSON-LD.
 `PhaseCTests.lean` tests the property on seeded datasets for every writer, by
 the stream writers too.
 
@@ -450,13 +456,11 @@ def Term.hasDirectionB : Term → Bool
 /-- The datasets the writer of `fmt` accepts and is meant to keep. RDF/XML and
 JSON-LD: no triple term. JSON-LD: no directional language string (the writer
 accepts one and drops the direction, https://github.com/danbri/factoidal/issues/984).
-N-Triples: every IRI, blank-node label and language tag in the lexical space of
-its N-Triples production (`NTriplesRoundTrip.Triple.ntSafe`: IRIREF [8],
-BLANK_NODE_LABEL [141s], LANGTAG [144s]). The writer writes these strings as
-they are, so a string outside the production gives a document that the parser
-refuses (`PhaseCTests.lean`, the two counter-examples). N-Quads: the same for
-each written quad, and the graph label (RDF 1.1 N-Quads [6] graphLabel:
-IRIREF or BLANK_NODE_LABEL) (`NQuadsRoundTrip.Quad.ntSafe`). -/
+N-Triples: every IRI and language tag in the lexical space of its N-Triples
+production (`NTriplesRoundTrip.Triple.ntSafe`: IRIREF [8], LANGTAG [144s]); any
+blank-node label, as the writer relabels (`Dataset.relabelForWrite`,
+https://github.com/danbri/factoidal/issues/986). N-Quads: the same for each
+written quad and its graph label (`NQuadsRoundTrip.Quad.ntSafe`). -/
 def writerDomain (fmt : RdfFormat) (ds : Dataset) : Bool :=
   let ts := Sink.flatten ds
   match fmt with
@@ -485,46 +489,108 @@ def WriterContract (fmt : RdfFormat) (v : Syntax.Mode) (ds : Dataset) (text : St
   writerDomain fmt ds = true → ∃ back, parseDocument Source.withJsonLd fmt v none text = .ok back ∧
     DatasetDen.Iso back.den (writerProjection fmt ds).den
 
+/-! ### Relabelling before the write -/
+
+theorem flatten_renameBnodes (f : BNodeId → BNodeId) (ds : Dataset) :
+    Sink.flatten (ds.renameBnodes f) = (Sink.flatten ds).map (Triple.renameBnodes f) := by
+  simp [Sink.flatten, Dataset.renameBnodes, Graph.renameBnodes, List.map_append, List.map_flatMap,
+    List.flatMap_map]
+
+/-- A map injective on the blank nodes of `ds` is injective on the blank nodes
+of a dataset whose blank nodes occur in `ds`. -/
+theorem injectiveOnBnodes_mono {f : BNodeId → BNodeId} {ds ds2 : Dataset}
+    (hsub : ∀ b, ds2.BnodeOccurs b → ds.BnodeOccurs b) (h : ds.InjectiveOnBnodes f) :
+    ds2.InjectiveOnBnodes f := by
+  rw [Dataset.injectiveOnBnodes_iff] at h ⊢
+  exact fun a c ha hc he => h a c (hsub a ha) (hsub c hc) he
+
+theorem bnodeOccurs_of_flatten {ds : Dataset} {b : BNodeId}
+    (h : ({ default := Sink.flatten ds, named := [] } : Dataset).BnodeOccurs b) : ds.BnodeOccurs b := by
+  rcases h with ⟨t, ht, hb⟩ | ⟨ng, hng, -⟩
+  · rw [Sink.flatten, List.mem_append] at ht
+    rcases ht with ht | ht
+    · exact Or.inl ⟨t, ht, hb⟩
+    · obtain ⟨ng, hng, ht⟩ := List.mem_flatMap.mp ht
+      exact Or.inr ⟨ng, hng, Or.inr ⟨t, ht, hb⟩⟩
+  · cases hng
+
+theorem bnodeOccurs_of_nquadsProjection {ds : Dataset} {b : BNodeId}
+    (h : (writerProjection .nquads ds).BnodeOccurs b) : ds.BnodeOccurs b := by
+  rcases h with h | ⟨ng, hng, hb⟩
+  · exact Or.inl h
+  · exact Or.inr ⟨ng, (List.mem_filter.mp hng).1, hb⟩
+
+/-- The N-Quads projection of the relabelled dataset is the relabelled
+projection. -/
+theorem writerProjection_nquads_renameBnodes (f : BNodeId → BNodeId) (ds : Dataset) :
+    writerProjection .nquads (ds.renameBnodes f) = (writerProjection .nquads ds).renameBnodes f := by
+  simp [writerProjection, Dataset.renameBnodes, Graph.renameBnodes, List.filter_map,
+    Function.comp_def, List.isEmpty_map]
+
 /-- **The N-Triples writer keeps its contract**, RDF 1.1 and RDF 1.2 modes.
-The parser gives back the written list of triples, in order
-(`parseNTriples_toNTriples`), so the parsed dataset is the set of the
-projection's quads (`Dataset.den_toSet`), and the isomorphism is the
-identity. -/
+The writer writes `ds.relabelForWrite` (`RDF/WriterLabels.lean`), whose
+blank-node labels are BLANK_NODE_LABELs, so its triples are in
+`Triple.ntLex` (`Triple.ntLex_renameBnodes`). The parser gives back the
+written list of triples, in order (`parseNTriples_toNTriples`), so the parsed
+dataset is the set of the relabelled projection's quads
+(`Dataset.den_toSet`). The relabelling is injective on the blank nodes of the
+dataset (`writeLabelMap_injOn`), so the isomorphism is the relabelling
+(`Dataset.den_iso_renameBnodes`). -/
 theorem writerContract_nt (v : Syntax.Mode) (ds : Dataset) (text : String)
     (hser : Sink.serializeDataset Sink.withJsonLd .nt v ds = .ok text) : WriterContract .nt v ds text := by
   intro hdom
-  have hg : parseNTriples text v = .ok (Sink.flatten ds) :=
-    NTriplesRoundTrip.parseNTriples_toNTriples v (Sink.flatten ds) hdom text hser
-  refine ⟨({ default := Sink.flatten ds, named := [] } : Dataset).toSet, ?_, ?_⟩
+  have hall : (Sink.flatten ds.relabelForWrite).all NTriplesRoundTrip.Triple.ntLex = true := by
+    rw [relabelForWrite_eq, flatten_renameBnodes, List.all_map]
+    apply List.all_eq_true.mpr
+    intro t ht
+    exact NTriplesRoundTrip.Triple.ntLex_renameBnodes (writeLabelMap_valid ds) (List.all_eq_true.mp hdom t ht)
+  have hg : parseNTriples text v = .ok (Sink.flatten ds.relabelForWrite) :=
+    NTriplesRoundTrip.parseNTriples_toNTriples v (Sink.flatten ds.relabelForWrite) hall text hser
+  refine ⟨({ default := Sink.flatten ds.relabelForWrite, named := [] } : Dataset).toSet, ?_, ?_⟩
   · simp [parseDocument, parseDocumentRaw, givesSet, hg, Except.map]
   · rw [Dataset.den_toSet]
-    exact DatasetDen.Iso.refl _
+    have e : ({ default := Sink.flatten ds.relabelForWrite, named := [] } : Dataset) =
+        (writerProjection .nt ds).renameBnodes ds.writeLabelMap := by
+      rw [relabelForWrite_eq, flatten_renameBnodes]
+      rfl
+    rw [e]
+    exact (Dataset.den_iso_renameBnodes (injectiveOnBnodes_mono (fun _ hb => bnodeOccurs_of_flatten hb)
+      (writeLabelMap_injOn ds))).symm
 
 /-- **The N-Quads writer keeps its contract**, RDF 1.1 and RDF 1.2 modes. The
-parser adds the written quads in order (`parseNQuads_toNQuads`); the dataset
-it gives has the quads of the dataset, up to RDF term equality
-(`addAll_quadsOf_memQuad`), and the names of the graphs that have a triple
-(`addAll_quadsOf_names`): the projection's denotation
-(`writerProjection_nquads_den`). The isomorphism is the identity. -/
+writer writes `ds.relabelForWrite`, whose quads are in `Quad.ntLex`
+(`Quad.ntLex_renameBnodes`). The parser adds the written quads in order
+(`parseNQuads_toNQuads`); the dataset it gives has the quads of the relabelled
+dataset, up to RDF term equality (`addAll_quadsOf_memQuad`), and the names of
+the graphs that have a triple (`addAll_quadsOf_names`): the denotation of the
+relabelled projection (`writerProjection_nquads_den`,
+`writerProjection_nquads_renameBnodes`). The isomorphism is the relabelling. -/
 theorem writerContract_nquads (v : Syntax.Mode) (ds : Dataset) (text : String)
     (hser : Sink.serializeDataset Sink.withJsonLd .nquads v ds = .ok text) :
     WriterContract .nquads v ds text := by
   intro hdom
-  have hp : parseNQuads text v = .ok (NQuadsRoundTrip.addAll Dataset.empty (NQuadsRoundTrip.quadsOf ds)) :=
-    NQuadsRoundTrip.parseNQuads_toNQuads v ds hdom text hser
-  refine ⟨NQuadsRoundTrip.addAll Dataset.empty (NQuadsRoundTrip.quadsOf ds), ?_, ?_⟩
+  have hall : (NQuadsRoundTrip.quadsOf ds.relabelForWrite).all NQuadsRoundTrip.Quad.ntLex = true := by
+    rw [relabelForWrite_eq, NQuadsRoundTrip.quadsOf_renameBnodes, List.all_map]
+    apply List.all_eq_true.mpr
+    intro q hq
+    exact NQuadsRoundTrip.Quad.ntLex_renameBnodes (writeLabelMap_valid ds) (List.all_eq_true.mp hdom q hq)
+  have hp : parseNQuads text v =
+      .ok (NQuadsRoundTrip.addAll Dataset.empty (NQuadsRoundTrip.quadsOf ds.relabelForWrite)) :=
+    NQuadsRoundTrip.parseNQuads_toNQuads v ds.relabelForWrite hall text hser
+  refine ⟨NQuadsRoundTrip.addAll Dataset.empty (NQuadsRoundTrip.quadsOf ds.relabelForWrite), ?_, ?_⟩
   · show parseNQuadsFast text v = _
     rw [parseNQuadsFast_eq_parseNQuads, hp]
-  · have hden : (NQuadsRoundTrip.addAll Dataset.empty (NQuadsRoundTrip.quadsOf ds)).den =
-        (writerProjection .nquads ds).den := by
+  · have hden : (NQuadsRoundTrip.addAll Dataset.empty (NQuadsRoundTrip.quadsOf ds.relabelForWrite)).den =
+        (writerProjection .nquads ds.relabelForWrite).den := by
       rw [writerProjection_nquads_den]
       apply DatasetDen.ext
       · intro gn t
-        exact NQuadsRoundTrip.addAll_quadsOf_memQuad ds t gn
+        exact NQuadsRoundTrip.addAll_quadsOf_memQuad ds.relabelForWrite t gn
       · intro m
-        exact NQuadsRoundTrip.addAll_quadsOf_names ds m
-    rw [hden]
-    exact DatasetDen.Iso.refl _
+        exact NQuadsRoundTrip.addAll_quadsOf_names ds.relabelForWrite m
+    rw [hden, relabelForWrite_eq, writerProjection_nquads_renameBnodes]
+    exact (Dataset.den_iso_renameBnodes (injectiveOnBnodes_mono (fun _ hb => bnodeOccurs_of_nquadsProjection hb)
+      (writeLabelMap_injOn ds))).symm
 
 /-- The N-Triples writer as a stage. -/
 def ntriplesWriter (v : Syntax.Mode) : Stage String Dataset String where
@@ -590,6 +656,8 @@ def rdfJsonRoundTripB (g : Graph) : Option Bool :=
 #print axioms nquads11Stream_reader
 #print axioms writerProjection_triples_den
 #print axioms writerProjection_nquads_den
+#print axioms flatten_renameBnodes
+#print axioms writerProjection_nquads_renameBnodes
 #print axioms writerContract_nt
 #print axioms writerContract_nquads
 #print axioms ntriplesWriter
