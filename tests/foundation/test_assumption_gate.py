@@ -25,23 +25,23 @@ inductive AssumptionName where
 
 structure LawfulStore where
   backend : Nat
-  assumptions : List Assumption := []
+  assumed_contracts : List Assumption := []
   law : True
 
 structure LawfulDataset where
   backend : Nat
-  assumptions : List Assumption := []
+  assumed_contracts : List Assumption := []
   law : True
 
 def a : LawfulStore where
   backend := 0
-  assumptions := [⟨.readerExact, True⟩]
+  assumed_contracts := [⟨.readerExact, True⟩]
   law := trivial
 
 -- ⟨.isSet, True⟩ in a comment is not a use
 def b : LawfulStore where
   backend := 0
-  assumptions := [⟨.isSet, True⟩, ⟨AssumptionName.isSet, True⟩]
+  assumed_contracts := [⟨.isSet, True⟩, ⟨AssumptionName.isSet, True⟩]
   law := trivial
 """
 

@@ -8,7 +8,7 @@ item 2).
 separate premise `BackendExact gb G` with a list `g` that denotes `G`. Here
 the premise is the interface value:
 
-* `LawfulStore.evalBgp_kequiv`: the only premise is `Assumed s.assumptions`
+* `LawfulStore.evalBgp_kequiv`: the only premise is `Assumed s.assumed_contracts`
   (for a proved store, `Assumed.nil`). The backend's solutions of a basic
   graph pattern equal the reference's (`evalBgp`, SPARQL 1.1 section 18.3)
   over the rows of the unbounded search, as a multiset up to order and RDF
@@ -47,14 +47,14 @@ namespace LawfulStore
 /-- **The backend BGP evaluator over a lawful store is the reference
 evaluator over the store's rows.** The only premise is the store's named
 assumptions. -/
-theorem evalBgp_kequiv (s : LawfulStore) (h : Assumed s.assumptions) (b : Bgp) :
+theorem evalBgp_kequiv (s : LawfulStore) (h : Assumed s.assumed_contracts) (b : Bgp) :
     SolKEquiv (evalBgpBackend b s.backend) (evalBgp b (s.search patternBoundAll)) :=
   evalBgpBackend_kequiv (s.law h) (s.search_nodupKeys h patternBoundAll)
     (fun t => ((s.exact h).solve_all t).symm) b
 
 /-- The same against any list that denotes the store's graph with each triple
 once. -/
-theorem evalBgp_kequiv_of_list (s : LawfulStore) (h : Assumed s.assumptions) {g : Graph}
+theorem evalBgp_kequiv_of_list (s : LawfulStore) (h : Assumed s.assumed_contracts) {g : Graph}
     (hg : g.KeyNodup) (hG : ∀ t, s.graph t ↔ KeyMem g t) (b : Bgp) :
     SolKEquiv (evalBgpBackend b s.backend) (evalBgp b g) :=
   evalBgpBackend_kequiv (s.law h) hg hG b
@@ -66,15 +66,15 @@ theorem evalBgp_kequiv_proved (s : LawfulStore) (hp : s.Proved) (b : Bgp) :
 
 /-- Two lawful stores of one graph give one answer, up to order and RDF term
 equality. -/
-theorem evalBgp_kequiv_of_graph (s s' : LawfulStore) (h : Assumed s.assumptions)
-    (h' : Assumed s'.assumptions) (e : ∀ t, s.graph t ↔ s'.graph t) (b : Bgp) :
+theorem evalBgp_kequiv_of_graph (s s' : LawfulStore) (h : Assumed s.assumed_contracts)
+    (h' : Assumed s'.assumed_contracts) (e : ∀ t, s.graph t ↔ s'.graph t) (b : Bgp) :
     SolKEquiv (evalBgpBackend b s.backend) (evalBgpBackend b s'.backend) :=
   (s.evalBgp_kequiv h b).trans
     (s'.evalBgp_kequiv_of_list h' (s.search_nodupKeys h patternBoundAll)
       (fun t => (e t).symm.trans ((s.exact h).solve_all t).symm) b).symm
 
 /-- The law of a store's arm for the list of its rows. -/
-theorem backendExact_rows (s : LawfulStore) (h : Assumed s.assumptions) :
+theorem backendExact_rows (s : LawfulStore) (h : Assumed s.assumed_contracts) :
     BackendExact s.backend (KeyMem (s.search patternBoundAll)) :=
   backendExact_congr (s.law h) (fun t => ((s.exact h).solve_all t).symm)
 
@@ -124,7 +124,7 @@ theorem namedRel_rows {D : DatasetDen} : ∀ (L : List NamedGraphBackend),
 /-- **The WHERE answer of the backend evaluator over a lawful dataset is an
 answer SPARQL 1.1 allows**, for every pattern of `NativeFrag`, over the
 dataset the record enumerates. -/
-theorem where_allowed (L : LawfulDataset) (h : Assumed L.assumptions) (hiri : L.NamesWf)
+theorem where_allowed (L : LawfulDataset) (h : Assumed L.assumed_contracts) (hiri : L.NamesWf)
     (hfix : L.Fixed) (env : EvalEnv) (p : QueryPattern) (hp : NativeFrag p) :
     Allowed env L.reference p L.reference.default
       (evalPatternBackend env L.backend p L.backend.default) := by
@@ -146,7 +146,7 @@ end LawfulDataset
 assumptions, the reference's answer over the store's rows, up to order and
 RDF term equality. -/
 def LawfulBgpContract (b : Bgp) (s : LawfulStore) (r : SolutionSeq) : Prop :=
-  Assumed s.assumptions → SolKEquiv r (evalBgp b (s.search patternBoundAll))
+  Assumed s.assumed_contracts → SolKEquiv r (evalBgp b (s.search patternBoundAll))
 
 /-- A lawful store → the backend's solutions of the basic graph pattern `b`. -/
 def lawfulBgpStage (b : Bgp) : Stage String LawfulStore SolutionSeq :=
@@ -156,7 +156,7 @@ def lawfulBgpStage (b : Bgp) : Stage String LawfulStore SolutionSeq :=
 /-- The contract of the WHERE answer over a lawful dataset. -/
 def LawfulWhereContract (env : EvalEnv) (p : QueryPattern) (L : LawfulDataset) (r : SolutionSeq) :
     Prop :=
-  NativeFrag p → Assumed L.assumptions → L.NamesWf → L.Fixed →
+  NativeFrag p → Assumed L.assumed_contracts → L.NamesWf → L.Fixed →
     Allowed env L.reference p L.reference.default r
 
 /-- A lawful dataset → the WHERE answer of the backend evaluator. -/

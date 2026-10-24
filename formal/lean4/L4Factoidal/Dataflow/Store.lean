@@ -12,7 +12,7 @@ item 2, the second component kind).
   `capsOfBackend backend` (`LawfulStore.caps`);
 * `graph`: the denotation, one graph predicate `Triple → Prop`
   (`RDF/StoreCapsDenotation.lean`: a `StoreCaps` record reads one graph);
-* `assumptions`: the named assumptions the law rests on (`Assumption`), `[]`
+* `assumed_contracts`: the named assumptions the law rests on (`Assumption`), `[]`
   when the law is proved;
 * `law`: under the assumptions, `BackendExact backend graph`, the law of the
   arm. From it, `LawfulStore.exact` gives `StoreCapsExact graph caps`: the
@@ -26,7 +26,7 @@ item 2, the second component kind).
 denotation, every graph name has a backend, no two backends share a name).
 
 A value of either type cannot exist without its law. When the law rests on an
-assumption, the assumption is a member of `assumptions` with a name from
+assumption, the assumption is a member of `assumed_contracts` with a name from
 `AssumptionName`; it is visible in the value and counted by the ratchet
 (`foundation/assumptions.txt`, `tools/assumption-gate.py`).
 
@@ -170,9 +170,9 @@ structure LawfulStore where
   /-- The graph the store reads. -/
   graph : Triple → Prop
   /-- The named assumptions the law rests on; `[]` when it is proved. -/
-  assumptions : List Assumption := []
+  assumed_contracts : List Assumption := []
   /-- The law of the arm, under the assumptions. -/
-  law : Assumed assumptions → BackendExact backend graph
+  law : Assumed assumed_contracts → BackendExact backend graph
 
 namespace LawfulStore
 
@@ -183,23 +183,23 @@ def caps (s : LawfulStore) : StoreCaps := capsOfBackend s.backend
 def search (s : LawfulStore) (b : PatternBound) : List Triple := backendSearch s.backend b
 
 /-- The law has no assumption. -/
-def Proved (s : LawfulStore) : Prop := s.assumptions = []
+def Proved (s : LawfulStore) : Prop := s.assumed_contracts = []
 
-theorem assumed_of_proved {s : LawfulStore} (h : s.Proved) : Assumed s.assumptions := by
+theorem assumed_of_proved {s : LawfulStore} (h : s.Proved) : Assumed s.assumed_contracts := by
   rw [h]; exact Assumed.nil
 
 /-- **The capability record reads the graph exactly** (`StoreCapsExact`). -/
-theorem exact (s : LawfulStore) (h : Assumed s.assumptions) : StoreCapsExact s.graph s.caps :=
+theorem exact (s : LawfulStore) (h : Assumed s.assumed_contracts) : StoreCapsExact s.graph s.caps :=
   capsOfBackend_exact s.backend s.graph (s.law h)
 
 /-- A search returns the matching triples of the graph, up to RDF term
 equality. -/
-theorem search_exact (s : LawfulStore) (h : Assumed s.assumptions) (b : PatternBound) (t : Triple) :
+theorem search_exact (s : LawfulStore) (h : Assumed s.assumed_contracts) (b : PatternBound) (t : Triple) :
     KeyMem (s.search b) t ↔ s.graph t ∧ boundMatches b t = true :=
   backendSearch_exact (s.law h) b t
 
 /-- No two rows of a search are RDF-term-equal. -/
-theorem search_nodupKeys (s : LawfulStore) (h : Assumed s.assumptions) (b : PatternBound) :
+theorem search_nodupKeys (s : LawfulStore) (h : Assumed s.assumed_contracts) (b : PatternBound) :
     ((s.search b).map Triple.key).Nodup :=
   backendSearch_nodupKeys (s.law h) b
 
@@ -229,11 +229,11 @@ graph without the tombstoned triples and with the added ones
 def overlay (s : LawfulStore) (dr : DeltaResolved) : LawfulStore where
   backend := .caps (RDF.overlay s.caps dr)
   graph := overlayPred s.graph dr
-  assumptions := s.assumptions
+  assumed_contracts := s.assumed_contracts
   law := fun h => overlay_exact dr (s.exact h)
 
 /-- The members of a union, one graph each, in member order. -/
-theorem backendsExact_map : ∀ (ss : List LawfulStore), Assumed (ss.flatMap (·.assumptions)) →
+theorem backendsExact_map : ∀ (ss : List LawfulStore), Assumed (ss.flatMap (·.assumed_contracts)) →
     BackendsExact (ss.map (·.backend)) (ss.map (·.graph))
   | [], _ => by simp [BackendsExact]
   | s :: ss, h => by
@@ -246,7 +246,7 @@ theorem backendsExact_map : ∀ (ss : List LawfulStore), Assumed (ss.flatMap (·
 def union (ss : List LawfulStore) : LawfulStore where
   backend := .union (ss.map (·.backend))
   graph := unionPred (ss.map (·.graph))
-  assumptions := ss.flatMap (·.assumptions)
+  assumed_contracts := ss.flatMap (·.assumed_contracts)
   law := fun h => ⟨ss.map (·.graph), backendsExact_map ss h, fun _ => Iff.rfl⟩
 
 /-! ### Instances that rest on a named assumption -/
@@ -258,14 +258,14 @@ def readOpsGraph (ops : BackendReadOps) (t : Triple) : Prop := KeyMem (ops.searc
 def hdt (ops : BackendReadOps) : LawfulStore where
   backend := .hdt ops
   graph := readOpsGraph ops
-  assumptions := [⟨.backendReadOpsExact, BackendReadOpsExact (readOpsGraph ops) ops⟩]
+  assumed_contracts := [⟨.backendReadOpsExact, BackendReadOpsExact (readOpsGraph ops) ops⟩]
   law := fun h => h _ List.mem_cons_self
 
 /-- The in-memory COTTAS path through its reader. -/
 def cottasInMemory (ops : BackendReadOps) : LawfulStore where
   backend := .cottasInMemory ops
   graph := readOpsGraph ops
-  assumptions := [⟨.backendReadOpsExact, BackendReadOpsExact (readOpsGraph ops) ops⟩]
+  assumed_contracts := [⟨.backendReadOpsExact, BackendReadOpsExact (readOpsGraph ops) ops⟩]
   law := fun h => h _ List.mem_cons_self
 
 /-- The graph the COTTAS reader enumerates in a scope. -/
@@ -276,7 +276,7 @@ def cottasGraph (ops : CottasReadOps) (scope : CottasScope) (t : Triple) : Prop 
 def cottasOnDisk (ops : CottasReadOps) (scope : CottasScope) : LawfulStore where
   backend := .cottasOnDisk ops scope
   graph := cottasGraph ops scope
-  assumptions := [⟨.cottasReadOpsExact, CottasReadOpsExact (cottasGraph ops scope) ops scope⟩]
+  assumed_contracts := [⟨.cottasReadOpsExact, CottasReadOpsExact (cottasGraph ops scope) ops scope⟩]
   law := fun h => h _ List.mem_cons_self
 
 /-- A COTTAS file on disk with a resolved delta. -/
@@ -284,14 +284,14 @@ def cottasOnDiskDelta (ops : CottasReadOps) (scope : CottasScope) (dr : DeltaRes
     LawfulStore where
   backend := .cottasOnDiskDelta ops scope dr
   graph := overlayPred (cottasGraph ops scope) dr
-  assumptions := [⟨.cottasReadOpsExact, CottasReadOpsExact (cottasGraph ops scope) ops scope⟩]
+  assumed_contracts := [⟨.cottasReadOpsExact, CottasReadOpsExact (cottasGraph ops scope) ops scope⟩]
   law := fun h => ⟨cottasGraph ops scope, h _ List.mem_cons_self, fun _ => Iff.rfl⟩
 
 /-- A virtual RML source: two open assumptions. -/
 def virtualRml (vs : RML.VirtualSource) : LawfulStore where
   backend := .virtualRml vs
   graph := rmlGraph vs
-  assumptions := [⟨.rmlPushdownInvisible, RmlPushdownInvisible vs⟩,
+  assumed_contracts := [⟨.rmlPushdownInvisible, RmlPushdownInvisible vs⟩,
     ⟨.rmlVirtualIsMaterialised, RmlVirtualIsMaterialised vs⟩]
   law := fun h => ⟨h _ List.mem_cons_self, h _ (List.mem_cons_of_mem _ List.mem_cons_self),
     fun _ => Iff.rfl⟩
@@ -301,14 +301,14 @@ rests on `datasetIsSet` (here, no two RDF-term-equal entries). -/
 def ofGraph (g : Graph) : LawfulStore where
   backend := .list g
   graph := KeyMem g
-  assumptions := [⟨.datasetIsSet, g.KeyNodup⟩]
+  assumed_contracts := [⟨.datasetIsSet, g.KeyNodup⟩]
   law := fun h => ⟨h _ List.mem_cons_self, fun _ => Iff.rfl⟩
 
 /-- The in-memory index of a list at a call site that carries no set proof. -/
 def ofIndexedGraph (g : Graph) : LawfulStore where
   backend := indexedGraphBackend g
   graph := KeyMem g
-  assumptions := [⟨.datasetIsSet, g.KeyNodup⟩]
+  assumed_contracts := [⟨.datasetIsSet, g.KeyNodup⟩]
   law := fun h => ⟨g, OWL.RL.Index.Wf.ofGraph g, h _ List.mem_cons_self, fun _ => Iff.rfl⟩
 
 theorem ofList_proved (g : Graph) (h : g.KeyNodup) : (ofList g h).Proved := rfl
@@ -338,20 +338,20 @@ structure LawfulDataset where
   /-- The dataset the record reads. -/
   den : DatasetDen
   /-- The named assumptions the law rests on; `[]` when it is proved. -/
-  assumptions : List Assumption := []
+  assumed_contracts : List Assumption := []
   /-- The law, under the assumptions. -/
-  law : Assumed assumptions → DatasetBackendExact den backend
+  law : Assumed assumed_contracts → DatasetBackendExact den backend
 
 namespace LawfulDataset
 
 /-- The law has no assumption. -/
-def Proved (L : LawfulDataset) : Prop := L.assumptions = []
+def Proved (L : LawfulDataset) : Prop := L.assumed_contracts = []
 
 /-- The default graph as a `LawfulStore`. -/
 def default (L : LawfulDataset) : LawfulStore where
   backend := L.backend.default
   graph := L.den.graph none
-  assumptions := L.assumptions
+  assumed_contracts := L.assumed_contracts
   law := fun h => (L.law h).default
 
 /-- **SELECT through the backend evaluator.** `none` when the evaluator does
@@ -403,7 +403,7 @@ def ofCertified (c : CertifiedDataset) : LawfulDataset :=
   else
     { backend := indexedDatasetBackend c.val
       den := c.val.den
-      assumptions := [⟨.graphNameKeysDistinct, distinctNames c.val.named⟩]
+      assumed_contracts := [⟨.graphNameKeysDistinct, distinctNames c.val.named⟩]
       law := fun h => indexedDatasetBackend_exact c.property (h _ List.mem_cons_self) }
 
 /-- The dataset record of a dataset at a call site that carries no set proof:
@@ -413,14 +413,14 @@ def ofDataset (d : Dataset) : LawfulDataset :=
   if hi : Storage.QuadDataset.namesAreIris d = true then
     { backend := indexedDatasetBackend d
       den := d.den
-      assumptions := [⟨.datasetIsSet, d.IsSet⟩]
+      assumed_contracts := [⟨.datasetIsSet, d.IsSet⟩]
       law := fun h => indexedDatasetBackend_exact (h _ List.mem_cons_self)
         (distinctNames_of_iris d.named (h _ List.mem_cons_self).names (by
           simpa [Storage.QuadDataset.namesAreIris] using hi)) }
   else
     { backend := indexedDatasetBackend d
       den := d.den
-      assumptions := [⟨.datasetIsSet, d.IsSet⟩, ⟨.graphNameKeysDistinct, distinctNames d.named⟩]
+      assumed_contracts := [⟨.datasetIsSet, d.IsSet⟩, ⟨.graphNameKeysDistinct, distinctNames d.named⟩]
       law := fun h => indexedDatasetBackend_exact (h _ List.mem_cons_self)
         (h _ (List.mem_cons_of_mem _ List.mem_cons_self)) }
 
@@ -451,7 +451,7 @@ def defaultDen (G : Triple → Prop) : DatasetDen where
 def ofDefault (s : LawfulStore) : LawfulDataset where
   backend := { default := s.backend, named := [] }
   den := defaultDen s.graph
-  assumptions := s.assumptions
+  assumed_contracts := s.assumed_contracts
   law := fun h =>
     { default := backendExact_congr (s.law h) (fun t =>
         ⟨fun ht => ⟨rfl, t, ht, rfl⟩,
@@ -479,16 +479,16 @@ private def names (as : List Assumption) : List AssumptionName := as.map (·.nam
 private def gNil : Graph := []
 private def opsNil : BackendReadOps := { search := fun _ => [], estimate := fun _ => 0, predicatePresent := fun _ => false }
 
-#guard names (ofList gNil Graph.keyNodup_nil).assumptions = []
-#guard names (ofIndexed gNil Graph.keyNodup_nil).assumptions = []
-#guard names (hdt opsNil).assumptions = [.backendReadOpsExact]
-#guard names (cottasInMemory opsNil).assumptions = [.backendReadOpsExact]
-#guard names (union [hdt opsNil, ofList gNil Graph.keyNodup_nil]).assumptions = [.backendReadOpsExact]
-#guard names (LawfulDataset.ofDataset Dataset.empty).assumptions = [.datasetIsSet]
-#guard names (LawfulDataset.ofDataset { default := [], named := [{ name := .bnode "g", graph := [] }] }).assumptions
+#guard names (ofList gNil Graph.keyNodup_nil).assumed_contracts = []
+#guard names (ofIndexed gNil Graph.keyNodup_nil).assumed_contracts = []
+#guard names (hdt opsNil).assumed_contracts = [.backendReadOpsExact]
+#guard names (cottasInMemory opsNil).assumed_contracts = [.backendReadOpsExact]
+#guard names (union [hdt opsNil, ofList gNil Graph.keyNodup_nil]).assumed_contracts = [.backendReadOpsExact]
+#guard names (LawfulDataset.ofDataset Dataset.empty).assumed_contracts = [.datasetIsSet]
+#guard names (LawfulDataset.ofDataset { default := [], named := [{ name := .bnode "g", graph := [] }] }).assumed_contracts
   = [.datasetIsSet, .graphNameKeysDistinct]
-#guard names (LawfulDataset.ofCertified ⟨Dataset.empty, Dataset.isSet_empty⟩).assumptions = []
-#guard names (LawfulDataset.ofDefault (hdt opsNil)).assumptions = [.backendReadOpsExact]
+#guard names (LawfulDataset.ofCertified ⟨Dataset.empty, Dataset.isSet_empty⟩).assumed_contracts = []
+#guard names (LawfulDataset.ofDefault (hdt opsNil)).assumed_contracts = [.backendReadOpsExact]
 #guard AssumptionName.all.length = 6
 
 end Guards

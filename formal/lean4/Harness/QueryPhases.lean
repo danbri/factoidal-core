@@ -64,6 +64,7 @@ import L4Factoidal.RDF.DatasetNormalize
 import L4Factoidal.SPARQL.StoreDataset
 import L4Factoidal.Syntax.TurtleChunkFold
 import Wasm.Ops.Reason
+import L4Factoidal.Dataflow.Store
 
 namespace Harness.QueryPhases
 

@@ -7,7 +7,7 @@ assumptions their laws rest on as named fields:
   RdfReader     formal/lean4/L4Factoidal/Dataflow/Reader.lean; no assumption
                 field (every reader law is proved);
   LawfulStore,  formal/lean4/L4Factoidal/Dataflow/Store.lean; the field
-  LawfulDataset `assumptions : List Assumption`, each with a name from
+  LawfulDataset `assumed_contracts : List Assumption`, each with a name from
                 `inductive AssumptionName`.
 
 The gate reads, on every run:
@@ -18,7 +18,8 @@ The gate reads, on every run:
      `⟨AssumptionName.name,` or `name := .name` in an `Assumption` literal.
      Comment lines are skipped;
   3. the interface structures: which of RdfReader, LawfulStore, LawfulDataset
-     declare an `assumptions` field.
+     declare an `assumed_contracts` field (the `assumed_<what>` naming rule
+     for unproved contract fields).
 
 foundation/assumptions.txt lists one line per constructor:
 
@@ -181,14 +182,14 @@ def main():
     ifaces = {}
     reader_path = os.path.join(root, READER)
     reader_text = strip_lean_comments(open(reader_path, encoding="utf-8").read()) if os.path.exists(reader_path) else ""
-    ifaces["RdfReader"] = structure_has_field(reader_text, "RdfReader", "assumptions")
-    ifaces["LawfulStore"] = structure_has_field(store_text, "LawfulStore", "assumptions")
-    ifaces["LawfulDataset"] = structure_has_field(store_text, "LawfulDataset", "assumptions")
+    ifaces["RdfReader"] = structure_has_field(reader_text, "RdfReader", "assumed_contracts")
+    ifaces["LawfulStore"] = structure_has_field(store_text, "LawfulStore", "assumed_contracts")
+    ifaces["LawfulDataset"] = structure_has_field(store_text, "LawfulDataset", "assumed_contracts")
     for k, v in ifaces.items():
         if v is None:
             errs.append("interface structure %s not found" % k)
     if ifaces.get("LawfulStore") is False or ifaces.get("LawfulDataset") is False:
-        errs.append("LawfulStore and LawfulDataset must declare the field `assumptions`")
+        errs.append("LawfulStore and LawfulDataset must declare the field `assumed_contracts`")
     for b in bare_eval_calls(root):
         errs.append("%s: backend evaluator over a bare DatasetBackend; use LawfulDataset.runSelect / runAsk or LawfulStore" % b)
     total = sum(uses.values())

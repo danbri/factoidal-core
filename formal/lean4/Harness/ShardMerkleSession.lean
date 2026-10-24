@@ -7,6 +7,7 @@ import L4Factoidal.Storage.ShardManifest
 import L4Factoidal.SPARQL.Parser
 import L4Factoidal.SPARQL.StoreDataset
 import Wasm.Ops.Clock
+import L4Factoidal.Dataflow.Store
 
 namespace Harness.ShardMerkleSession
 

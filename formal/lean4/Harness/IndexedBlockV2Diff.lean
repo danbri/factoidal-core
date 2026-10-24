@@ -4,6 +4,7 @@ import L4Factoidal.Syntax.Turtle
 import L4Factoidal.SPARQL.Parser
 import L4Factoidal.SPARQL.StoreDataset
 import Wasm.Ops.Clock
+import L4Factoidal.Dataflow.Store
 
 namespace Harness.IndexedBlockV2Diff
 

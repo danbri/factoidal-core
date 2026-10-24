@@ -11,6 +11,7 @@ import L4Factoidal.SPARQL.StoreFastPath
 import L4Factoidal.SPARQL.ResultsJsonFast
 import L4Factoidal.Storage.ShardManifest
 import Wasm.Ops.Clock
+import L4Factoidal.Dataflow.Store
 
 namespace Harness.IndexedBlockV3Query
 

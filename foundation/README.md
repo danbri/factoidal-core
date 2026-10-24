@@ -119,10 +119,11 @@ The bound status of an entry is the weakest status of its stages
 The interface types carry their contract as fields. `RdfReader`
 (`formal/lean4/L4Factoidal/Dataflow/Reader.lean`) has no assumption field.
 `LawfulStore` and `LawfulDataset` (`Dataflow/Store.lean`), the data-access
-interface, have the field `assumptions : List Assumption`: the assumptions
-the law rests on, each with a name from `inductive AssumptionName`. The query
+interface, have the field `assumed_contracts : List Assumption`: the
+assumptions the law rests on, each with a name from `inductive AssumptionName`. The query
 ops, the dataset handles, the served view, the CLI and the harness query tools
-reach the backend evaluator only through these types.
+reach the backend evaluator only through these types. The field name follows
+the naming rule for unproved contract fields: `assumed_<what>`.
 
 ```
 python3 -I tools/assumption-gate.py                      # the gate on this tree
