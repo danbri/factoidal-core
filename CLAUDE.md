@@ -150,6 +150,17 @@ Rule: before every push, `git fetch origin main` and check that
 `origin/main` is an ancestor of what you push
 (`git merge-base --is-ancestor origin/main HEAD`); push to `main` only.
 
+## The public site (owner, 2026-10-25)
+
+Owner, 2026-10-25, verbatim, on the publishing proposal of
+https://github.com/danbri/factoidal-core/pull/98: "site serves from /factoidal/
+repo". The URL stays https://danbri.github.io/factoidal/. Its Pages workflow
+(`danbri/factoidal/.github/workflows/deploy-pages.yml`) builds `docs/` of this
+repository, branch `main`, daily and on a `repository_dispatch` that
+`.github/workflows/dispatch-pages.yml` here sends when the site sources change
+(it needs the secret `FACTOIDAL_PAGES_DISPATCH_TOKEN`). Edit the site here,
+never in `danbri/factoidal/docs/`.
+
 ## Shardborough is a persistent store for very large data (owner, 2026-10-11)
 
 Owner, 2026-10-11, verbatim: "As for “all in memory” that undermines whole
