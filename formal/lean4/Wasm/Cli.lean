@@ -1050,10 +1050,10 @@ def queryCmd (args : List String) : IO UInt32 := do
         -- https://github.com/danbri/factoidal/issues/792 item 1)
         let answer :=
           if s.hasBool "--sparql12" then
-            withOpsSetDataset .rdf12 ds hds (fun d =>
+            withOpsSetDatasetKeepEmpty .rdf12 ds hds (fun d =>
               queryParsedDatasetWith d (some (L4Factoidal.Dataflow.LawfulDataset.ofDataset d)) sparql
                 (version := .v12) (base := queryBase) (now := some now))
-          else Ops.queryDatasetOfSet ds hds sparql queryBase (some now)
+          else Ops.queryDatasetOfSetKeepEmpty ds hds sparql queryBase (some now)
         match ← parseEnvelope answer with
         | none => pure 1
         | some j => printQueryResult j (s.hasBool "--table")

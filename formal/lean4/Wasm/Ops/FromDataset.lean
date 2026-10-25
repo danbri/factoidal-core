@@ -60,4 +60,37 @@ theorem withOpsSetDataset_eq (mode : Mode) (ds : Dataset) (h : ds.IsSet) (k : Da
   unfold withOpsSetDataset withOpsDataset
   rw [datasetForOpsSet_eq]
 
+/-! ### Named graphs with no triple (https://github.com/danbri/factoidal/issues/876)
+
+RDF 1.1 Concepts section 4: a named graph can be empty, and TriG states one (`GRAPH <g> { }`).
+N-Quads cannot, so the text round trip drops it. `keepEmptyNamed ds d` adds to `d` each named
+graph of `ds` that has no triple and whose name `d` does not carry (once per name), after the
+graphs of `d`. When `ds` has no such graph the result is `d` (`keepEmptyNamed_of_noEmpty`). -/
+
+/-- Add the empty named graphs of `ds` that `d` lacks. -/
+def keepEmptyNamed (ds d : Dataset) : Dataset :=
+  { d with named := ds.named.foldl (fun acc ng =>
+      if ng.graph.isEmpty && !(acc.any (fun x => x.name == ng.name)) then acc ++ [ng] else acc) d.named }
+
+private theorem foldl_keepEmpty_id (l acc : List NamedGraph) (h : ∀ ng ∈ l, ng.graph.isEmpty = false) :
+    l.foldl (fun acc ng =>
+      if ng.graph.isEmpty && !(acc.any (fun x => x.name == ng.name)) then acc ++ [ng] else acc) acc = acc := by
+  induction l generalizing acc with
+  | nil => rfl
+  | cons ng rest ih =>
+    simp only [List.foldl_cons]
+    have h1 : ng.graph.isEmpty = false := h ng (List.mem_cons_self ..)
+    rw [h1]
+    simp only [Bool.false_and]
+    exact ih acc (fun x hx => h x (List.mem_cons_of_mem _ hx))
+
+theorem keepEmptyNamed_of_noEmpty (ds d : Dataset) (h : ∀ ng ∈ ds.named, ng.graph.isEmpty = false) :
+    keepEmptyNamed ds d = d := by
+  unfold keepEmptyNamed
+  rw [foldl_keepEmpty_id _ _ h]
+
+/-- `withOpsSetDataset` that keeps the named graphs with no triple. -/
+def withOpsSetDatasetKeepEmpty (mode : Mode) (ds : Dataset) (h : ds.IsSet) (k : Dataset → String) : String :=
+  withOpsSetDataset mode ds h (fun d => k (keepEmptyNamed ds d))
+
 end L4Wasm.Ops
