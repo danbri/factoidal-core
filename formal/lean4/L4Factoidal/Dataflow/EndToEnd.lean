@@ -43,9 +43,11 @@ q`, and
   `evalSelect`, `evalAsk`, `evalConstruct`, `evalDescribe`), OR, for SELECT and
   ASK on the backend path, the foundation's solution-modifier layer over a
   WHERE answer that SPARQL 1.1 allows (`Allowed`, section 18.5, up to multiset
-  equality). The second disjunct is NOT claimed equal to the first: the tree
-  has no theorem that two `Allowed` answers of one pattern are one multiset
-  (`Dataflow/Evaluator.lean`, "Not claimed").
+  equality) and that is the reference WHERE answer up to the order of the
+  solutions (`WhereAgrees`, https://github.com/danbri/factoidal/issues/1014);
+  when the solution modifiers do not read the order (`OrderFree`), the answer
+  is the reference answer up to the order of the rows (`AnswerAgrees`: the same
+  SELECT header and multiset of rows, the same ASK boolean).
 
 Premises, and only these:
 
@@ -65,8 +67,9 @@ the inputs outside `ev.assumed_contractOn`; that premise names the domain of
 the assumption, it does not restate the conclusion.
 
 Anti-pattern 29 check: the conclusion is `pipeline … = .ok (ev.run x) ∧
-(reader facts) ∧ (store facts) ∧ EvalContract x (ev.run x)`. No premise
-contains `pipeline`, `ReaderContract`, `SetOf`, `den` or `LawfulDataset`.
+(reader facts) ∧ (store facts) ∧ EvalContract x (ev.run x) ∧ (OrderFree q →
+AnswerAgrees (ev.run x) (referenceAnswer x))`. No premise contains `pipeline`,
+`ReaderContract`, `SetOf`, `den`, `LawfulDataset` or `AnswerAgrees`.
 `hev` contains `EvalContract`, but only on the inputs in
 `ev.assumed_contractOn`; that restriction is the named assumption of item 2,
 which item 5 admits as a premise. On the other inputs the conclusion comes

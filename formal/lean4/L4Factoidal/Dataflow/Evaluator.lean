@@ -30,11 +30,29 @@ FOUNDATION (`foundation/manifest.toml`, level 1):
 * `out = referenceAnswer inp`: the answer of the foundation's SPARQL 1.1
   evaluation (`SPARQL.Query`: `evalSelect`, `evalAsk`, `evalConstruct`,
   `evalDescribe`, sections 16 and 18);
-* or, for SELECT and ASK: there is a WHERE answer `A` that SPARQL 1.1 allows
-  (`Storage.Sbm11.IdGroup.Allowed`, section 18.5 up to multiset equality; in
-  the manifest) for the WHERE pattern in the default graph, and `out` is the
+* or, for SELECT and ASK with no FROM clause: there is a WHERE answer `A` that
+  SPARQL 1.1 allows (`Storage.Sbm11.IdGroup.Allowed`, section 18.5 up to
+  multiset equality; in the manifest) for the WHERE pattern in the default
+  graph, `A` is the reference WHERE answer up to the order of the solutions
+  (`WhereAgrees`: `Storage.BackendAgreement.SolSEquiv`, the same multiset of
+  solution mappings with the same pairs in each), and `out` is the
   foundation's solution-modifier layer over `A` (`modifierLayer`: `selectPost`
-  for SELECT, `formHasSolution` for ASK; sections 18.2.4 and 18.2.5).
+  for SELECT, `formHasSolution` for ASK; sections 18.2.4 and 18.2.5), with the
+  reference SELECT header `Query.projectedVars`.
+
+`Allowed` alone does not fix the multiset (`BackendAgreement.allowed_not_unique`:
+its rule `equiv` admits a row with a hidden pair, and `Binding.compatible`
+reads it), so `WhereAgrees` is stated next to it
+(https://github.com/danbri/factoidal/issues/1014).
+
+Consequences (proved): `EvalContract.header` (every admitted SELECT answer has
+the reference header); `EvalContract.agrees` (when the solution modifiers do
+not read the order, `OrderFree`: ASK with no GROUP BY and no HAVING; SELECT
+with no GROUP BY, aggregate, SELECT expression, DISTINCT, REDUCED, OFFSET or
+LIMIT, ORDER BY and a trailing VALUES clause allowed, the answer is the
+reference answer up to the order of the rows, `AnswerAgrees`);
+`WhereAgrees.of_den` (the reference WHERE answer of a `NativeFrag` pattern
+depends on `ds.den` only).
 
 ## The interface type
 
@@ -78,13 +96,21 @@ backend path the answer is the reference answer (`shippedRun_of_noBackend`,
 `shippedRun_of_from`, `shippedRun_of_construct`, `shippedRun_of_describe`);
 on it, for SELECT (plain arm) and ASK over a `NativeFrag` pattern, the answer
 is the modifier layer over the backend's WHERE answer, which
-`evalPatternBackend_allowed` (PR 52) proves `Allowed`.
+`evalPatternBackend_allowed` (PR 52) proves `Allowed` and
+`BackendAgreement.evalPatternBackend_ref` proves `SolSEquiv` to the reference
+WHERE answer (`backendWhere_ref`). The backend path's SELECT header is
+`Query.projectedVars`, the reference header (until issue 1014 it was
+`collectVarsInOrder` of the rows, `[]` on an empty result for SELECT *).
 
-Not claimed: that two answers `Allowed` admits for one pattern are one
-multiset, so the second disjunct is not proved to give the reference answer;
-that the answer depends on `ds.den` only (two set datasets with one
-denotation, listed in another order); that the SELECT * header of the backend
-path (`collectVarsInOrder`) equals the reference header (`projectedVars`).
+Not claimed: that the answer equals the reference answer up to row order when
+the solution modifiers read the order (OFFSET, LIMIT, DISTINCT, REDUCED,
+GROUP_CONCAT, SAMPLE, a SELECT expression with BNODE(), UUID() or STRUUID()):
+SPARQL 1.1 admits more than one answer there (section 15.1), and
+`EvalContract` gives the modifier layer over a WHERE answer that is the
+reference WHERE answer up to order; that the whole answer, past the WHERE
+answer, depends on `ds.den` only; any of this for the assumed inputs
+(outside `NativeFrag`, the SELECT fast paths), where the contract is the named
+assumption.
 
 ## Joining with a store
 
