@@ -3243,7 +3243,7 @@ check "ops reflection (incl. handle ops via callIO)" ops "$TMP/empty.json" \
             "tdb2ServeKeys","tdb2ServeOpen"]) <= set(r["ops"])
    and r["blobIoOps"] == ["blobEcho","packFeed","packNext",
                           "storeServeRequest","storeServeCommit","datasetQuadsBin",
-                          "lwsStep","solidStep","lwsLoad","lwsPersist","lwsRead"]'
+                          "sbm11Query","lwsStep","solidStep","lwsLoad","lwsPersist","lwsRead"]'
 
 check "unknown op -> error" definitelyNotAnOp "$TMP/empty.json" \
   'r["ok"] is False and "unknown op" in r["error"]'
