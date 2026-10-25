@@ -21,7 +21,7 @@ in your browser.
 <ul class="post-series">
   <li><a href="./rdf-syntaxes/">RDF syntaxes</a> — Turtle, N-Triples, N-Quads, TriG, RDF/XML, JSON-LD; RDF 1.2 triple terms, reifiers, annotations and base direction; error positions</li>
   <li><a href="./sparql/">SPARQL</a> — query and update, property paths, aggregates, GeoSPARQL functions, <code>text:query</code>, extension functions in JavaScript and WebAssembly, SERVICE, SPARQL 1.2 triple patterns</li>
-  <li><a href="./importers/">Data importers and pipelines</a> — CSVW, RML, JSON-LD and a GRDDL-style XSLT step, each step in its own named graph, one query across them</li>
+  <li><a href="./importers/">Data importers and integration</a> — CSVW, RML, JSON-LD and a GRDDL-style XSLT step, four independent sources merged into one dataset, each in its own named graph, one query across them</li>
   <li><a href="./inference/">Inference</a> — RDFS and OWL 2 RL closure over pipeline output, derived triples in their own graph, OWL 2 DL consistency and entailment</li>
   <li><a href="./canary-wharf-pipeline/">A Canary Wharf pipeline</a> — Turtle and CSVW sources through checked nodes, merged into named graphs, one query across them, N-Quads for an SBM11 store, and the pipeline's record queried as RDF</li>
   <li><a href="./checked-pipelines/">Checked pipelines</a> — readers, reasoners, the SPARQL evaluator and writers as nodes; per-step status and contract, entailment explanations, and the list of what is proved and what is assumed</li>
