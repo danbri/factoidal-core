@@ -348,6 +348,22 @@ theorem queryDatasetOfSet_eq (ds : Dataset) (h : ds.IsSet) (sparql : String)
   unfold queryDatasetOfSet queryDatasetOf
   rw [withOpsSetDataset_eq]
 
+/-- `queryDatasetOfSet` that keeps the named graphs with no triple, which the canonical
+N-Quads text cannot state (https://github.com/danbri/factoidal/issues/876). On a dataset
+without one it answers what `queryDatasetOfSet` answers. -/
+def queryDatasetOfSetKeepEmpty (ds : Dataset) (h : ds.IsSet) (sparql : String)
+    (base : Option String := none) (now : Option String := none) : String :=
+  withOpsSetDatasetKeepEmpty .rdf12 ds h (fun d => queryParsedDataset d sparql base now)
+
+theorem queryDatasetOfSetKeepEmpty_eq (ds : Dataset) (h : ds.IsSet)
+    (hne : ∀ ng ∈ ds.named, ng.graph.isEmpty = false) (sparql : String)
+    (base now : Option String) :
+    queryDatasetOfSetKeepEmpty ds h sparql base now = queryDatasetOfSet ds h sparql base now := by
+  unfold queryDatasetOfSetKeepEmpty queryDatasetOfSet withOpsSetDatasetKeepEmpty withOpsSetDataset
+  cases datasetForOpsSet .rdf12 ds h with
+  | error e => rfl
+  | ok d => simp only [keepEmptyNamed_of_noEmpty ds d hne]
+
 def updateDatasetOf (ds : Dataset) (updateText : String) (base : Option String := none)
     (now : Option String := none) (version : SparqlVersion := .v11) : String :=
   withOpsDataset .rdf12 ds (fun d => updateParsedDataset d updateText base now version)
