@@ -1,0 +1,54 @@
+[
+ [
+  "count",
+  "SELECT (COUNT(*) AS ?n) WHERE { ?s ?p ?o }"
+ ],
+ [
+  "all-ordered",
+  "SELECT ?s ?p ?o WHERE { ?s ?p ?o } ORDER BY ?s ?p ?o"
+ ],
+ [
+  "names",
+  "PREFIX foaf: <http://xmlns.com/foaf/0.1/> SELECT ?x ?n WHERE { ?x foaf:name ?n } ORDER BY ?n"
+ ],
+ [
+  "join",
+  "PREFIX foaf: <http://xmlns.com/foaf/0.1/> SELECT ?a ?n WHERE { ?a foaf:knows ?b . ?b foaf:name ?n } ORDER BY ?n"
+ ],
+ [
+  "graph",
+  "SELECT ?g ?s ?o WHERE { GRAPH ?g { ?s ?p ?o } } ORDER BY ?o"
+ ],
+ [
+  "filter-age",
+  "PREFIX foaf: <http://xmlns.com/foaf/0.1/> SELECT ?x WHERE { ?x foaf:age ?a FILTER(?a > 40) }"
+ ],
+ [
+  "lang",
+  "PREFIX foaf: <http://xmlns.com/foaf/0.1/> SELECT ?n (LANG(?n) AS ?l) WHERE { ?x foaf:name ?n FILTER(LANGMATCHES(LANG(?n), \"en\")) } ORDER BY ?n"
+ ],
+ [
+  "optional",
+  "PREFIX foaf: <http://xmlns.com/foaf/0.1/> SELECT ?x ?a WHERE { ?x foaf:name ?n OPTIONAL { ?x foaf:age ?a } } ORDER BY ?a"
+ ],
+ [
+  "not-exists",
+  "PREFIX foaf: <http://xmlns.com/foaf/0.1/> SELECT ?x WHERE { ?x foaf:name ?n FILTER NOT EXISTS { ?x foaf:age ?a } }"
+ ],
+ [
+  "group",
+  "PREFIX foaf: <http://xmlns.com/foaf/0.1/> SELECT ?p (COUNT(*) AS ?c) WHERE { ?s ?p ?o } GROUP BY ?p ORDER BY ?p"
+ ],
+ [
+  "ask",
+  "ASK { <http://example.org/alice> <http://xmlns.com/foaf/0.1/name> \"Alice\" }"
+ ],
+ [
+  "construct",
+  "PREFIX foaf: <http://xmlns.com/foaf/0.1/> CONSTRUCT { ?b foaf:knownBy ?a } WHERE { ?a foaf:knows ?b }"
+ ],
+ [
+  "describe-reference",
+  "DESCRIBE <http://example.org/bob>"
+ ]
+]

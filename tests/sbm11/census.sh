@@ -37,7 +37,11 @@
 # tests in which a scan with candidates ran; unset, no `--sip` is passed (a
 # build before issue 809 has no such option). `--explain` is always passed: the
 # summary counts the tests whose grouped aggregates ran on ids (issue 825). SBM11_THREADS: the
-# `--threads` count (1).
+# `--threads` count (1). SBM11_HOST: when set, each executed test is also
+# answered by the wasm ops sbm11Open / sbm11Query / sbm11Close through
+# `l4factoidal sbm11-query` (host positioned reads, ffi/l4_hostread.c; issue
+# https://github.com/danbri/factoidal/issues/1009 KR1), and its answer bytes and
+# path must equal those of `l4sbm11 query` (run with --threads 1).
 set -uo pipefail
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 ROOT="$(cd "$HERE/../.." && pwd)"
@@ -99,6 +103,7 @@ eligible=0; missing=0; rpack=0; rquery=0; executed=0; matched=0; differed=0; unc
 ids_exec=0; ids_match=0; ref_exec=0; ref_match=0; sip_tests=0; agg_tests=0
 mg_q=0; mg_eq=0; mg_diff=0; mg_ref=0; mg_fail=0
 ps_n=0; ps_same=0; ps_diff=0
+host_same=0; host_diff=0
 MIS="$RUN/mismatches.txt"; : >"$MIS"
 n=0
 for t in "${order[@]}"; do
@@ -148,6 +153,16 @@ for t in "${order[@]}"; do
   # of shapes the id path does not run (issue 775)
   reason=""; [ $path = reference ] && reason="$(grep -o 'reason="[^"]*"' "$st/got.err" | head -1 | sed 's/^reason="//; s/"$//')"
   if [ $path = ids ]; then ids_exec=$((ids_exec + 1)); else ref_exec=$((ref_exec + 1)); fi
+  if [ -n "${SBM11_HOST:-}" ]; then
+    hrc=0
+    timeout 120 "$BIN/l4factoidal" sbm11-query "$st" --query "$qfile" --base "$qbase" >"$st/host" 2>"$st/host.err" || hrc=$?
+    hpath=ids; grep -q 'path=reference' "$st/host.err" && hpath=reference
+    if [ "$hrc" -eq 0 ] && [ "$hpath" = "$path" ] && cmp -s "$st/got" "$st/host"; then host_same=$((host_same + 1))
+    else host_diff=$((host_diff + 1))
+      printf '%s (host session): exit %s, path %s against %s, %s\n' "${t##*/}" "$hrc" "$hpath" "$path" \
+        "$(if cmp -s "$st/got" "$st/host"; then echo 'same bytes'; else echo 'bytes differ'; fi); $(tail -1 "$st/host.err" | head -c 200)" >>"$MIS"
+    fi
+  fi
   grep -q 'sideways' "$st/got.err" && sip_tests=$((sip_tests + 1))
   # a grouped SELECT whose aggregates ran on ids (issue 825)
   grep -q 'aggregated on ids' "$st/got.err" && agg_tests=$((agg_tests + 1))
@@ -197,6 +212,9 @@ if [ -n "${SBM11_MEMGEN:-}" ]; then
 fi
 if [ -n "${SBM11_PACKSPEC:-}" ]; then
   echo "  packspec-check (issue 776, row L3c): $ps_n generations, $ps_same byte-identical to packSpec with check = true, $ps_diff differ"
+fi
+if [ -n "${SBM11_HOST:-}" ]; then
+  echo "  host session (wasm ops over host reads, issue 1009 KR1): $host_same of the $executed executed tests gave the bytes and path of l4sbm11 query, $host_diff differ"
 fi
 if [ -n "${SBM11_SIP:-}" ]; then
   echo "  --sip $SBM11_SIP: a scan with candidates ran in $sip_tests of the $ids_exec id-path tests (issue 809)"

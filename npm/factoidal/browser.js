@@ -26,6 +26,7 @@ import { buildApi } from './lib/api.mjs';
 import { entryFromEngine } from './lib/lean-entry.mjs';
 import { browserEngine } from './lib/browser-engine.mjs';
 import { indexedDbDeltaLogStore } from './lib/delta-log-hosts.mjs';
+import { sbm11Api, registerSbm11Source } from './lib/sbm11.mjs';
 
 const l4Engine = browserEngine('l4factoidal', new URL('./l4-assets/', import.meta.url).href);
 
@@ -58,6 +59,13 @@ const api = buildApi({
   // The deltaLog* functions keep their records in IndexedDB (hub post 18).
   deltaLogStore: indexedDbDeltaLogStore(),
 });
+
+// SBM11, the Shardborough store, through host positioned reads
+// (lib/sbm11.mjs; https://github.com/danbri/factoidal/issues/1009). In a
+// browser every source needs a registered synchronous reader, for example
+// over OPFS FileSystemSyncAccessHandle in a dedicated worker.
+export const openSbm11 = sbm11Api(loadEngine).openSbm11;
+export { registerSbm11Source };
 
 // RDF and SPARQL
 export const parse = api.parse;

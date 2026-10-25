@@ -1062,6 +1062,45 @@ export class Store {
  */
 export function openStore(source: string | StoreReader, options?: OpenStoreOptions): Promise<Store>;
 
+/** A synchronous reader of the files of one SBM11 generation directory (or
+ * collection root): the engine names every file and checks every answer. */
+export interface Sbm11Reader {
+  readAt(file: string, offset: number, length: number): Uint8Array | null;
+  size(file: string): number | null;
+}
+
+/** The answer of one SBM11 query. */
+export interface Sbm11Answer {
+  /** `path=ids` or `path=reference reason="..." ...` */
+  path: string;
+  rows: number;
+  /** `srj` (SELECT, ASK) or `ntriples` (CONSTRUCT, DESCRIBE) */
+  format: 'srj' | 'ntriples';
+  /** the bytes `l4sbm11 query` writes, as text */
+  result: string;
+  bytesRead: number;
+  reads: number;
+  /** the parsed SPARQL JSON for SELECT and ASK */
+  readonly json: any;
+}
+
+/** An open SBM11 generation. */
+export interface Sbm11Store {
+  handle: string;
+  /** the generation CURRENT names, or "" when the source is a generation */
+  generation: string;
+  terms: number;
+  query(sparql: string, options?: { base?: string; sparql12?: boolean; reference?: boolean }): Sbm11Answer;
+  close(): void;
+}
+
+/** Open an SBM11 generation (https://github.com/danbri/factoidal/issues/1009).
+ * Node: `source` is a directory unless a reader is given or registered. */
+export function openSbm11(source: string, options?: { reader?: Sbm11Reader }): Promise<Sbm11Store>;
+
+/** Serve `source` with `reader`; `null` removes it. */
+export function registerSbm11Source(source: string, reader: Sbm11Reader | null): void;
+
 /** One query against a store: open with the query's plan, query, close. */
 export function queryStore(
   source: string | StoreReader,
