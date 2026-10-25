@@ -1134,6 +1134,59 @@ only; a named graph rejects with a `FactoidalError`. `profile` is `'rdfs'`
 Blank-node labels in the output carry a scope prefix (`d0_` for the sources,
 `d1_` for the description). Design: [issue 1002](https://github.com/danbri/factoidal/issues/1002).
 
+## Stages as nodes: `stages`, `node`, `pipe`, `run`
+
+```js
+import { stages, node, pipe, run } from "@factoidal/core";
+
+const sources = `@prefix ex: <http://example.org/> .
+@prefix rdfs: <http://www.w3.org/2000/01/rdf-schema#> .
+ex:alice ex:worksFor ex:acme .
+ex:worksFor rdfs:domain ex:Employee .
+ex:Employee rdfs:subClassOf ex:Person .`;
+const description = `@prefix ex: <http://example.org/> .
+_:x a ex:Person . _:x ex:worksFor ex:acme .`;
+
+const list = await stages();
+console.log(list.length, list.filter((s) => s.status === "proved").length);
+
+const p = pipe(
+  await node("turtleDocumentReader"),
+  await node("rdfsReasoner"),
+  await node("rdfsExplainGraphStage", { description }),
+);
+const r = await run(p, sources);
+for (const e of r.evidence) console.log(e.stage, e.status, e.contract);
+console.log(r.evidence[2].artefact.entailed); // true
+console.log(r.assumptions); // the union of the nodes' named assumptions
+```
+
+`stages()` answers the stage registry of the Lean library
+(`L4Factoidal.Dataflow.registry`, op `stageList`, full engine), one element
+per entry: `name` (the declaration, or the area when there is none),
+`declaration`, `kind` (the interface type: `Stage`, `RdfReader`,
+`SoundReasoner`, ...), `wireIn`, `wireOut`, `status` (`proved`, `tested`,
+`assumed`, `missing`), `contract` (the contract declaration), `theorems`,
+`assumptions` (the named assumptions), `tests`, `runnable` (false for
+`missing`) and `bound` (this package has a function that runs it). The
+same list is [docs/dataflow-inventory.md](../../docs/dataflow-inventory.md).
+
+`node(name, params)` makes a node for one stage. The bound stages are the
+six document readers (`turtleDocumentReader`, ...; text in, Dataset out),
+`rdfsReasoner`, `owlRlReasoner`, `rhoDfReasoner` (closure of the default
+graph), `shaclValidator` (`{shapes}`), `shippedEvaluator` (`{query}`; a
+CONSTRUCT or DESCRIBE answer replaces the graph), the N-Triples, N-Quads,
+Turtle, TriG and RDF/XML writers, `rdfcStage`, and `rdfsExplainGraphStage`
+(`{description}`). `pipe(...nodes)` composes nodes and pipelines left to
+right. `run(pipeline, input)` takes a wire value `{graph, evidence}` or the
+graph itself, and answers `{graph, evidence, assumptions}`: `evidence` gets
+one record `{stage, status, contract, assumptions, artefact}` per node
+(`artefact`: the explain result, the SHACL report, the written text, ...),
+and `assumptions` is the union of the named assumptions of every node the
+value passed. A run with a node whose stage is `missing` (no contract, no
+suite) or not bound rejects with a `FactoidalError` before any node runs.
+Design: [issue 1002](https://github.com/danbri/factoidal/issues/1002).
+
 ## API
 
 | Function | Signature (informal) | Notes |
@@ -1157,6 +1210,7 @@ Blank-node labels in the output carry a scope prefix (`d0_` for the sources,
 | `shexValidate` | `(data, schemaText, focus, shape?) => boolean` | ShExJ when the text starts with `{`, else ShExC; no `shape` = the schema's START; `focus`/`shape` are RDF/JS terms or N-Triples term strings (`'<http://…>'`, `'_:b'`) |
 | `owlClosure` | `(data, 'RDFS' \| 'OWL-RL') => Dataset` | input + derived triples, default graph |
 | `explain` | `(sources, description, {profile?, format?}) => {entailed, bundle, assumptions, rejection, entailedMeans}` | RDFS entailment of a graph with shared blank nodes, with evidence; see "Explaining an entailment" |
+| `stages`, `node`, `pipe`, `run` | `() => StageInfo[]`; `(name, params?) => Node`; `(...nodes) => Pipeline`; `(pipeline, input) => {graph, evidence, assumptions}` | registered Lean stages as nodes, evidence on the wires; see "Stages as nodes" |
 | `coreRdfsClosure`/`rhoDfClosure`, `rdfsPlusClosure` | `(data) => Dataset` | ρdf closure, RDFS-Plus closure |
 | `coreRdfsCheck`/`rhoDfFragmentCheck` | `(data) => {ok, fragment}` | ρdf fragment check |
 | `tableauMaterialise` | `(data) => {dataset, addedCount, budgetHit}` | class-expression memberships; `budgetHit` true when the work budget ran out |

@@ -56,6 +56,7 @@ import Wasm.Ops.StoreServe
 import Wasm.Ops.CL
 import Wasm.Ops.Proof
 import Wasm.Ops.Explain
+import Wasm.Ops.StageList
 import Wasm.Ops.Handles
 import Wasm.Ops.DatasetFull
 import Wasm.Ops.Pack
@@ -120,6 +121,7 @@ def opNames : List String :=
   , "proofCheck"
   , "proofInspect"
   , "explainGraph"
+  , "stageList"
   , "toanSummation"
   , "toanProduct"
   , "toanSimplify"
@@ -470,6 +472,9 @@ def callUncoded (op : String) (argsJson : String) : String :=
     | "proofCheck"           => arity1 op proofCheck args
     | "proofInspect"         => arity1 op proofInspect args
     | "explainGraph"         => arity2 op explainGraph args
+    | "stageList"            => (match args with
+                                  | [] => stageList
+                                  | _ => errJson s!"{op} expects 0 arguments, got {args.length}")
     | "toanSummation"        => arity4 op toanSummation args
     | "toanProduct"          => arity4 op toanProduct args
     | "toanSimplify"         => arity1 op toanSimplify args

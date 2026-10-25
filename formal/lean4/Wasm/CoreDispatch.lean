@@ -134,7 +134,7 @@ def fullOnlyOpNames : List String :=
   , "storeManifestInspect", "storeQueryPlan", "storeQuery", "activateVerify"
   , "owlIsConsistent", "owlEntails"
   , "clParse", "clSerialize", "clAlphaNorm", "clNormalize", "clFiniteSat"
-  , "proofCheck", "proofInspect", "explainGraph"
+  , "proofCheck", "proofInspect", "explainGraph", "stageList"
   , "toanSummation", "toanProduct", "toanSimplify", "toanDiff", "toanSubst"
   , "xmppJidParse", "xmppJidRender", "xmppStreamHeaderParse"
   , "xmppStreamHeaderRender", "xmppFeaturesFor", "xmppStanzaParse"

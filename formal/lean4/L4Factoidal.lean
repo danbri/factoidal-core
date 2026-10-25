@@ -51,6 +51,7 @@ import L4Factoidal.Dataflow.Checker
 import L4Factoidal.Dataflow.GraphClaim
 import L4Factoidal.Dataflow.ExplainGraph
 import L4Factoidal.Dataflow.ExplainGraphTests
+import L4Factoidal.Dataflow.StageKinds
 import L4Factoidal.Dataflow.JudgesTests
 import L4Factoidal.Dataflow.Evaluator
 import L4Factoidal.Dataflow.EvaluatorTests

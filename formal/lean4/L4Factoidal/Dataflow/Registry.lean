@@ -125,6 +125,11 @@ def Entry.statusError (e : Entry) (k : StageKind) : Option String :=
       some "missing has no stage, no contract, no suite and no IO assumption"
     else Option.none
 
+/-- A stage may run as a node (the npm node API, `Wasm/Ops/StageList.lean`)
+unless its status is `missing`: a stage with no contract and no suite does not
+run (https://github.com/danbri/factoidal/issues/975, item 3). -/
+def Entry.runnable (e : Entry) : Bool := e.status != .missing
+
 /-- The registry. Order: boundary, syntax, stores, query, reasoning,
 validation, evidence. -/
 def registry : List Entry := [
