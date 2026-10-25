@@ -1520,3 +1520,6 @@ L4Factoidal_Storage_Sbm11_PackStream_Cut_run  # (s) the output of the block writ
 L4Factoidal_SPARQL_scopeFromGraphs  # (b) one frame per FROM clause of a query (the FROM merge of issue 979, merged from main 2026-10-24 without an entry)
 L4Factoidal_Dataflow_PhaseETests_chainOf_go  # (s) test module only (Dataflow/PhaseETests, issue 975 phase E, merged from main 2026-10-24 without an entry); the depth is the premise chain of a test bundle, bounded by its fuel
 L4Factoidal_Dataflow_PhaseCTests_genDataset  # (s) (c) test module only (Dataflow/PhaseCTests, issue 975 phase C); the loop runs at most three times (named graphs of a seeded dataset)
+L4Factoidal_SPARQL_QueryPattern_expandIriAlternatives  # (b) one frame per nesting level of the WHERE pattern's BGP-level operators, as QueryPattern.lowerWith (issue 1008)
+L4Factoidal_SPARQL_iriAlternativeUnion  # (b) one frame per `|` of one property path in the query text (issue 1008)
+L4Factoidal_SPARQL_isUnionOfBgps  # (s) (b) test helper of PathAlternativeTheorems' #guards only; depth of a UNION tree built in the test (issue 1008)

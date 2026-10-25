@@ -147,6 +147,15 @@ shard packer, the proofs between them, the costs paid and open):
   which are still smoke-script-only. When you add an op, pin the
   NEGATIVE cases: an op answering `true` unconditionally passes every
   affirmative guard.
+- **Plan-equality gate** (`Wasm/StorePlanGateTests.lean`, npm
+  `test/store-plan-equivalence-1008.test.mjs`): a table of query pairs the
+  algebra proves equal, each with its theorem; `storeQueryPlan` must name the
+  same blocks and `storeQuery` the same multiset of rows for both texts. Paid
+  for by https://github.com/danbri/factoidal/issues/1008 (2026-10-25): the
+  path `?s p|q ?o` planned every block of a store (1,046 of 1,046, 10.9 MB,
+  8.4 s in londat) while the equal UNION planned 55. Fix a planner defect of
+  this class with an algebra rewrite plus its theorem, applied once in
+  `parseSparql`, and add a row to the table; do not special-case one store.
 - New `#guard`s go in `Tests.lean`; new theorems in `Invariants.lean`
   (or a sibling), each with a doc comment citing the spec section.
 
