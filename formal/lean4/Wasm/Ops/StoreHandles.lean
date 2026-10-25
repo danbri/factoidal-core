@@ -276,8 +276,11 @@ structure RetainedArtifact where
 /-- An open store: the manifest it was opened against, every artifact it
 retains in manifest order, and the dataset and index over the whole retained
 set. `backend` is `none` for an IBK4 dataset carrying a blank-node graph
-name, which `materialiseDatasetBackend` cannot represent — the same rule
-`storeQuery` applies. -/
+name — the same rule `storeQuery` applies. Since 2026-10-25 `materialiseDatasetBackend` keeps a blank-node graph name
+(the record names a graph by its `Subject`,
+https://github.com/danbri/factoidal/issues/975), so the backend reads such a
+dataset; the test is kept here so that this change does not move those
+queries to the backend path, whose SELECT rows may come in another order. -/
 structure OpenStore where
   ordinal : Nat
   identity : String

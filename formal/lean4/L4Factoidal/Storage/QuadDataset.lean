@@ -78,11 +78,12 @@ def datasetOfQuads (quads : List L4Factoidal.Storage.IndexedBlockWireV4.QuadRow)
 
 /-- Every graph name of the dataset is a well-formed IRI.
 
-    `SPARQL/StoreDataset.lean`'s `materialiseDatasetBackend` keeps only graphs
-    whose name is an IRI, so a dataset carrying a blank-node graph name must
-    reach the reference evaluator directly. SBM7 admits a blank-node graph
-    name (`ShardManifest.GraphName.bnode`), so every IBK4 reader needs this
-    test. -/
+    The IBK4 readers send a dataset that fails it to the reference evaluator.
+    Until 2026-10-25 that was required: `materialiseDatasetBackend` kept only
+    IRI graph names. Since then the dataset record names a graph by its
+    `Subject` and keeps a blank-node graph name
+    (https://github.com/danbri/factoidal/issues/975); the end-to-end pipeline
+    (`Dataflow/EndToEnd.lean`) no longer uses this test. -/
 def namesAreIris (ds : Dataset) : Bool :=
   ds.named.all fun ng => match ng.name with | .iri _ => true | _ => false
 

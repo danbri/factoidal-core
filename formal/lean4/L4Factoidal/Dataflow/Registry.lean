@@ -556,17 +556,17 @@ def registry : List Entry := [
     stage := ``LawfulDataset.indexed, wireIn := "Dataset", wireOut := "DatasetBackend"
     contract := ``L4Factoidal.Storage.PlannerSoundness.DatasetBackendExact, status := .proved
     theorems := [``L4Factoidal.Storage.PlannerSoundness.indexedDatasetBackend_exact]
-    note := "premises Dataset.IsSet and distinctNames; SBM11 meets it at the denotation (sbm11_record_denotes)" },
+    note := "premise Dataset.IsSet (the distinctNames premise was removed 2026-10-25: backend names are Subjects, issue 975); SBM11 meets it at the denotation (sbm11_record_denotes)" },
   { area := "LawfulDataset: dataset handle (CertifiedDataset)", dir := "Dataflow"
-    stage := ``LawfulDataset.ofCertified, wireIn := "CertifiedDataset", wireOut := "DatasetBackend", status := .assumed
-    ioAssumptions := [``L4Factoidal.Storage.PlannerSoundness.distinctNames]
-    theorems := [``LawfulDataset.ofCertified_proved, ``LawfulDataset.distinctNames_of_iris, ``LawfulDataset.ofCertified_backend]
-    note := "no assumption when every graph name is an IRI (ofCertified_proved); else graphNameKeysDistinct. Used by the dataset handles and the queryDataset ops (readNQuadsCertified)" },
+    stage := ``LawfulDataset.ofCertified, wireIn := "CertifiedDataset", wireOut := "DatasetBackend"
+    contract := ``L4Factoidal.Storage.PlannerSoundness.DatasetBackendExact, status := .proved
+    theorems := [``LawfulDataset.ofCertified_proved, ``L4Factoidal.Storage.PlannerSoundness.indexedDatasetBackend_exact, ``LawfulDataset.ofCertified_backend]
+    note := "no assumption for any graph name, IRI or blank node (ofCertified_proved; graphNameKeysDistinct removed 2026-10-25, issue 975). Used by the dataset handles, the queryDataset ops (readNQuadsCertified) and the end-to-end pipeline (loadStore)" },
   { area := "LawfulDataset: dataset without a set proof", dir := "Dataflow"
     stage := ``LawfulDataset.ofDataset, wireIn := "Dataset", wireOut := "DatasetBackend", status := .assumed
-    ioAssumptions := [``L4Factoidal.RDF.Dataset.IsSet, ``L4Factoidal.Storage.PlannerSoundness.distinctNames]
+    ioAssumptions := [``L4Factoidal.RDF.Dataset.IsSet]
     theorems := [``LawfulDataset.ofDataset_backend]
-    note := "named assumption datasetIsSet, and graphNameKeysDistinct when a graph name is a blank node; used by storeQuery, storeHandleQuery, the served view (StoreEndpoint.View.of), the CLI and the harness query tools" },
+    note := "named assumption datasetIsSet (graphNameKeysDistinct removed 2026-10-25, issue 975); used by storeQuery, storeHandleQuery, the served view (StoreEndpoint.View.of), the CLI and the harness query tools" },
   { area := "LawfulDataset: one store as the default graph", dir := "Dataflow"
     stage := ``LawfulDataset.ofDefault, wireIn := "LawfulStore", wireOut := "DatasetBackend"
     contract := ``L4Factoidal.Storage.PlannerSoundness.DatasetBackendExact, status := .proved
@@ -583,7 +583,7 @@ def registry : List Entry := [
     contract := ``LawfulWhereContract, status := .proved
     theorems := [``LawfulDataset.where_allowed, ``LawfulDataset.graphRel_rows, ``LawfulDataset.namedRel_rows,
       ``L4Factoidal.Storage.BackendRefinement.evalPatternBackend_allowed]
-    note := "NativeFrag; premises: named assumptions, IRI names of the named backends (data condition, not a store law); over the dataset the record enumerates; the row-object premise was removed with PR 57 (issue 1001)" },
+    note := "NativeFrag; premise: named assumptions; over the dataset the record enumerates; the IRI-name premise was removed 2026-10-25 (backend names are Subjects, issue 975); the row-object premise was removed with PR 57 (issue 1001)" },
   { area := "COTTAS store", dir := "Cottas"
     wireIn := "Dataset", wireOut := "bytes", status := .missing
     theorems := [``L4Factoidal.Cottas.cotd_dictInjective]
@@ -636,7 +636,7 @@ def registry : List Entry := [
       ``L4Factoidal.Storage.BackendRefinement.evalPatternBackend_allowed,
       ``L4Factoidal.Storage.BackendRefinement.evalBgpBackend_allowed,
       ``L4Factoidal.Storage.BackendRefinement.filterFn_local]
-    note := "NativeFrag: BGP without text:query, FILTER and OPTIONAL with a backendLocal condition, JOIN, UNION, MINUS, GRAPH with an IRI or a variable, VALUES, empty; premises Dataset.IsSet, IRI graph names; the GraphFixed premise was removed 2026-10-24 because literalWf requires lower-case language tags, so every graph satisfies it (issue 1001, #guards in the module) (finding 6)" },
+    note := "NativeFrag: BGP without text:query, FILTER and OPTIONAL with a backendLocal condition, JOIN, UNION, MINUS, GRAPH with an IRI or a variable, VALUES, empty; premise Dataset.IsSet (the IRI-graph-name premise was removed 2026-10-25, issue 975); the GraphFixed premise was removed 2026-10-24 because literalWf requires lower-case language tags, so every graph satisfies it (issue 1001, #guards in the module) (finding 6)" },
   { area := "Reference fallback SELECT answer vs SPARQL 1.1 semantics and the id path", dir := "SPARQL"
     wireIn := "Query × Dataset", wireOut := "SolutionSeq", status := .missing
     theorems := [``L4Factoidal.Storage.BackendRefinement.indexedWhere_allowed]

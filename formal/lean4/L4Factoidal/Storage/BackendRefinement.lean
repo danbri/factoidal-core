@@ -97,7 +97,7 @@ open L4Factoidal.SPARQL.StoreBackend
 open L4Factoidal.SPARQL.StorePlan
 open L4Factoidal.Storage.Sbm11.IdGroup (Pw PermPw BindEq SolEquiv Allowed refSol filterFn)
 open L4Factoidal.SPARQL.StoreDataset
-open L4Factoidal.SPARQL.DatasetRestriction (ngKey indexedDatasetBackend_named)
+open L4Factoidal.SPARQL.DatasetRestriction (indexedDatasetBackend_named)
 open L4Factoidal.Storage.Sbm11.AllowedPerm (GraphFixed graphFixed)
 open L4Factoidal.Storage.Sbm11.IdLeaf (flatMap_comm_perm)
 
@@ -1343,13 +1343,16 @@ structure GraphRel (gb : GraphBackend) (a : Graph) : Prop where
   keyNodup : a.KeyNodup
 
 /-- The named backends of a dataset record and the named graphs of a dataset,
-    pair for pair: an IRI name, the backend's name its string, and the
-    backend reads the graph. -/
+    pair for pair: the backend's name is the graph's name (an IRI or a blank
+    node), and the backend reads the graph. Until 2026-10-25 the backend's
+    name was a string and the relation asked for an IRI graph name, so a
+    dataset with a blank-node graph name had no record that read it
+    (https://github.com/danbri/factoidal/issues/975). -/
 inductive NamedRel : List NamedGraphBackend → List NamedGraph → Prop
   | nil : NamedRel [] []
   | cons {ngb : NamedGraphBackend} {ng : NamedGraph} {rest : List NamedGraphBackend}
-      {rest' : List NamedGraph} (j : WfIri) :
-      ng.name = .iri j → ngb.name = j.val → GraphRel ngb.backend ng.graph →
+      {rest' : List NamedGraph} :
+      ngb.name = ng.name → GraphRel ngb.backend ng.graph →
       NamedRel rest rest' → NamedRel (ngb :: rest) (ng :: rest')
 
 theorem wfIriOf_val (j : WfIri) : wfIriOf? j.val = some j := by
@@ -1361,79 +1364,80 @@ theorem lookupNamedIri_wf (ds : Dataset) (i : WfIri) :
   rw [dif_pos i.property]
   cases ds.named.find? (fun ng => ng.name == .iri i) <;> rfl
 
+/-- A graph name is the IRI `i.val` exactly when it is `.iri i`. -/
+theorem iriNamed_iff (s : Subject) (i : WfIri) : iriNamed s i.val = (s == .iri i) := by
+  cases s with
+  | bnode _ => rfl
+  | iri j =>
+    simp only [iriNamed]
+    by_cases h : j = i
+    · subst h; simp
+    · have h1 : (j.val == i.val) = false := by
+        simp only [beq_eq_false_iff_ne, ne_eq]
+        exact fun e => h (Subtype.ext e)
+      have h2 : (Subject.iri j == Subject.iri i) = false := by
+        simp only [beq_eq_false_iff_ne, ne_eq, Subject.iri.injEq]
+        exact h
+      rw [h1, h2]
+
 theorem lookup_rel (i : WfIri) : ∀ {L : List NamedGraphBackend} {L' : List NamedGraph}, NamedRel L L' →
     (lookupNamedBackend i.val L = none ∧ (L'.find? (fun ng => ng.name == .iri i)).map (·.graph) = none) ∨
     ∃ gb g, lookupNamedBackend i.val L = some gb ∧
       (L'.find? (fun ng => ng.name == .iri i)).map (·.graph) = some g ∧ GraphRel gb g
   | _, _, .nil => .inl ⟨rfl, rfl⟩
-  | ngb :: rest, ng :: rest', .cons j hn hb hr t => by
-    simp only [lookupNamedBackend, List.find?_cons, hn, hb]
-    by_cases hji : j = i
-    · subst hji
-      exact .inr ⟨ngb.backend, ng.graph, by simp, by simp, hr⟩
-    · have h1 : (j.val == i.val) = false := by
-        simp only [beq_eq_false_iff_ne, ne_eq]
-        exact fun e => hji (Subtype.ext e)
-      have h2 : (Subject.iri j == Subject.iri i) = false := by
-        simp only [beq_eq_false_iff_ne, ne_eq, Subject.iri.injEq]
-        exact hji
-      simp only [h1, h2]
+  | ngb :: rest, ng :: rest', .cons hn hr t => by
+    simp only [lookupNamedBackend, List.find?_cons, hn, iriNamed_iff]
+    cases h : (ng.name == Subject.iri i)
+    · simp only [Bool.false_eq_true, if_false]
       exact lookup_rel i t
+    · exact .inr ⟨ngb.backend, ng.graph, by simp, by simp, hr⟩
 
-theorem lookupNamedBackend_of_mem : ∀ {L : List NamedGraphBackend}, (L.map (·.name)).Nodup →
-    ∀ {ngb : NamedGraphBackend}, ngb ∈ L → lookupNamedBackend ngb.name L = some ngb.backend
+/-- The backend of the named graph `n` in a dataset record: the first backend
+whose name is `n`, an IRI or a blank node. -/
+def lookupNamedSubject (n : Subject) : List NamedGraphBackend → Option GraphBackend
+  | [] => none
+  | ngb :: rest => if ngb.name = n then some ngb.backend else lookupNamedSubject n rest
+
+theorem lookupNamedSubject_of_mem : ∀ {L : List NamedGraphBackend}, (L.map (·.name)).Nodup →
+    ∀ {ngb : NamedGraphBackend}, ngb ∈ L → lookupNamedSubject ngb.name L = some ngb.backend
   | [], _, _, h => absurd h List.not_mem_nil
   | x :: L, hnd, ngb, h => by
     rw [List.map_cons, List.nodup_cons] at hnd
-    simp only [lookupNamedBackend]
+    simp only [lookupNamedSubject]
     rcases List.mem_cons.mp h with rfl | hm
     · simp
     · have hne : x.name ≠ ngb.name := fun e => hnd.1 (e ▸ List.mem_map_of_mem hm)
-      rw [if_neg (by simpa using hne)]
-      exact lookupNamedBackend_of_mem hnd.2 hm
+      rw [if_neg hne]
+      exact lookupNamedSubject_of_mem hnd.2 hm
 
 theorem namedRel_mem : ∀ {L : List NamedGraphBackend} {L' : List NamedGraph}, NamedRel L L' →
-    ∀ {ng : NamedGraph}, ng ∈ L' → ∃ ngb ∈ L, ∃ j : WfIri, ng.name = .iri j ∧ ngb.name = j.val ∧
-      GraphRel ngb.backend ng.graph
+    ∀ {ng : NamedGraph}, ng ∈ L' → ∃ ngb ∈ L, ngb.name = ng.name ∧ GraphRel ngb.backend ng.graph
   | _, _, .nil, _, h => absurd h List.not_mem_nil
-  | ngb :: _, _ :: _, .cons j hn hb hr t, ng, h => by
+  | ngb :: _, _ :: _, .cons hn hr t, ng, h => by
     rcases List.mem_cons.mp h with rfl | hm
-    · exact ⟨ngb, List.mem_cons_self, j, hn, hb, hr⟩
-    · obtain ⟨x, hx, j', e1, e2, e3⟩ := namedRel_mem t hm
-      exact ⟨x, List.mem_cons_of_mem _ hx, j', e1, e2, e3⟩
+    · exact ⟨ngb, List.mem_cons_self, hn, hr⟩
+    · obtain ⟨x, hx, e1, e2⟩ := namedRel_mem t hm
+      exact ⟨x, List.mem_cons_of_mem _ hx, e1, e2⟩
 
 /-- The backend of a named graph in a dataset record, by the graph's name. -/
 def backendFor (L : List NamedGraphBackend) (n : Subject) : GraphBackend :=
-  (match n with
-   | .iri j => lookupNamedBackend j.val L
-   | .bnode _ => none).getD (.list [])
+  (lookupNamedSubject n L).getD (.list [])
 
 theorem graphVar_eq (env : EvalEnv) (dsb : DatasetBackend) (q : QueryPattern) (v : VarName) :
     ∀ {L : List NamedGraphBackend} {L' : List NamedGraph}, NamedRel L L' →
-      (∀ ngb ∈ L, lookupNamedBackend ngb.name dsb.named = some ngb.backend) →
-      L.flatMap (fun ngb =>
-        match wfIriOf? ngb.name with
-        | none => []
-        | some i => (evalPatternBackend env dsb q ngb.backend).filterMap
-            (fun mu => mu.bindIfCompatible v (.iri i)))
+      (∀ ngb ∈ L, lookupNamedSubject ngb.name dsb.named = some ngb.backend) →
+      L.flatMap (fun ngb => (evalPatternBackend env dsb q ngb.backend).filterMap
+            (fun mu => mu.bindIfCompatible v ngb.name.toTerm))
       = L'.flatMap (fun ng => (evalPatternBackend env dsb q (backendFor dsb.named ng.name)).filterMap
           (Binding.bindIfCompatible v ng.name.toTerm))
   | _, _, .nil, _ => rfl
-  | ngb :: rest, ng :: rest', .cons j hn hb _ t, hlk => by
+  | ngb :: rest, ng :: rest', .cons hn _ t, hlk => by
     simp only [List.flatMap_cons]
     have hbk : backendFor dsb.named ng.name = ngb.backend := by
-      simp only [backendFor, hn]
-      rw [← hb, hlk ngb List.mem_cons_self]
+      simp only [backendFor]
+      rw [← hn, hlk ngb List.mem_cons_self]
       rfl
-    have head : (match wfIriOf? ngb.name with
-        | none => []
-        | some i => (evalPatternBackend env dsb q ngb.backend).filterMap
-            (fun mu => mu.bindIfCompatible v (.iri i))) =
-        (evalPatternBackend env dsb q (backendFor dsb.named ng.name)).filterMap
-          (Binding.bindIfCompatible v ng.name.toTerm) := by
-      rw [hb, wfIriOf_val, hbk, hn]
-      rfl
-    rw [head, graphVar_eq env dsb q v t (fun x hx => hlk x (List.mem_cons_of_mem _ hx))]
+    rw [hbk, hn, graphVar_eq env dsb q v t (fun x hx => hlk x (List.mem_cons_of_mem _ hx))]
 
 /-- The patterns the theorem covers: those whose every operator is a
     backend-native arm of `evalPatternBackend` (BGP with no `text:query`
@@ -1509,18 +1513,15 @@ theorem evalPatternBackend_allowed (env : EvalEnv) (dsb : DatasetBackend) (ds : 
         (evalPatternBackend_allowed env dsb ds hn hnd q hp gb' g hr')
   | .graph (.var v) q, hp, gb, a, hr => by
     have e : evalPatternBackend env dsb (.graph (.var v) q) gb =
-        dsb.named.flatMap (fun ngb =>
-          match wfIriOf? ngb.name with
-          | none => []
-          | some i => (evalPatternBackend env dsb q ngb.backend).filterMap
-              (fun mu => mu.bindIfCompatible v (.iri i))) := rfl
-    rw [e, graphVar_eq env dsb q v hn (fun x hx => lookupNamedBackend_of_mem hnd hx)]
+        dsb.named.flatMap (fun ngb => (evalPatternBackend env dsb q ngb.backend).filterMap
+          (fun mu => mu.bindIfCompatible v ngb.name.toTerm)) := rfl
+    rw [e, graphVar_eq env dsb q v hn (fun x hx => lookupNamedSubject_of_mem hnd hx)]
     refine .graphVar (fun ng => evalPatternBackend env dsb q (backendFor dsb.named ng.name)) ?_
     intro ng hng
-    obtain ⟨ngb, hngb, j, e1, e2, hr'⟩ := namedRel_mem hn hng
+    obtain ⟨ngb, hngb, e1, hr'⟩ := namedRel_mem hn hng
     have hbk : backendFor dsb.named ng.name = ngb.backend := by
-      simp only [backendFor, e1]
-      rw [← e2, lookupNamedBackend_of_mem hnd hngb]
+      simp only [backendFor]
+      rw [← e1, lookupNamedSubject_of_mem hnd hngb]
       rfl
     rw [hbk]
     exact evalPatternBackend_allowed env dsb ds hn hnd q hp ngb.backend ng.graph hr'
@@ -1558,28 +1559,11 @@ theorem graphRel_indexed {g : Graph} (hg : g.KeyNodup) :
   keyNodup := hg
 
 theorem namedRel_indexed : ∀ (l : List NamedGraph), (∀ ng ∈ l, ng.graph.KeyNodup) →
-    (∀ ng ∈ l, ∃ j, ng.name = .iri j) →
-    NamedRel (l.map (fun ng => (⟨ngKey ng, indexedGraphBackend ng.graph⟩ : NamedGraphBackend))) l
-  | [], _, _ => .nil
-  | ng :: rest, hs, hi => by
-    obtain ⟨j, hj⟩ := hi ng List.mem_cons_self
-    refine .cons j hj (by simp [ngKey, hj]) (graphRel_indexed (hs ng List.mem_cons_self)) ?_
-    exact namedRel_indexed rest (fun x hx => hs x (List.mem_cons_of_mem _ hx))
-      (fun x hx => hi x (List.mem_cons_of_mem _ hx))
-
-theorem ngKey_nodup : ∀ (l : List NamedGraph), (l.map (·.name)).Nodup →
-    (∀ ng ∈ l, ∃ j, ng.name = .iri j) → (l.map ngKey).Nodup
-  | [], _, _ => List.nodup_nil
-  | ng :: rest, hn, hi => by
-    rw [List.map_cons, List.nodup_cons] at hn ⊢
-    refine ⟨fun hm => ?_, ngKey_nodup rest hn.2 (fun x hx => hi x (List.mem_cons_of_mem _ hx))⟩
-    obtain ⟨x, hx, e⟩ := List.mem_map.mp hm
-    obtain ⟨j, hj⟩ := hi ng List.mem_cons_self
-    obtain ⟨k, hk⟩ := hi x (List.mem_cons_of_mem _ hx)
-    simp only [ngKey, hj, hk] at e
-    have : k = j := Subtype.ext e
-    subst this
-    exact hn.1 (List.mem_map.mpr ⟨x, hx, by rw [hk, hj]⟩)
+    NamedRel (l.map (fun ng => (⟨ng.name, indexedGraphBackend ng.graph⟩ : NamedGraphBackend))) l
+  | [], _ => .nil
+  | ng :: rest, hs =>
+    .cons rfl (graphRel_indexed (hs ng List.mem_cons_self))
+      (namedRel_indexed rest (fun x hx => hs x (List.mem_cons_of_mem _ hx)))
 
 theorem iris_of_namesAreIris {d : Dataset} (h : Storage.QuadDataset.namesAreIris d = true) :
     ∀ ng ∈ d.named, ∃ j, ng.name = .iri j := by
@@ -1591,22 +1575,23 @@ theorem iris_of_namesAreIris {d : Dataset} (h : Storage.QuadDataset.namesAreIris
   | bnode _ => intro h; cases h
 
 /-- **The reference fallback's WHERE answer is an answer SPARQL 1.1
-    allows.** Over the in-memory dataset record of a dataset that is a set
-    with IRI graph names, `evalPatternBackend` answers every pattern of
-    `NativeFrag` with an answer `Allowed` admits, in the default graph. Since
-    2026-10-24 there is no premise on the language tags: every dataset is
-    `GraphFixed` (`graphFixed`, https://github.com/danbri/factoidal/issues/1001). -/
+    allows.** Over the in-memory dataset record of a dataset that is a set,
+    `evalPatternBackend` answers every pattern of `NativeFrag` with an answer
+    `Allowed` admits, in the default graph. Since 2026-10-24 there is no
+    premise on the language tags: every dataset is `GraphFixed` (`graphFixed`,
+    https://github.com/danbri/factoidal/issues/1001). Since 2026-10-25 there is
+    no premise that the graph names are IRIs: the record names a blank-node
+    graph by the blank node (https://github.com/danbri/factoidal/issues/975). -/
 theorem indexedWhere_allowed (env : EvalEnv) (d : Dataset) (hset : d.IsSet)
-    (hiri : Storage.QuadDataset.namesAreIris d = true) (p : QueryPattern) (hp : NativeFrag p) :
+    (p : QueryPattern) (hp : NativeFrag p) :
     Allowed env d p d.default
       (evalPatternBackend env (indexedDatasetBackend d) p (indexedDatasetBackend d).default) := by
-  have hi := iris_of_namesAreIris hiri
   have hn : NamedRel (indexedDatasetBackend d).named d.named := by
     rw [indexedDatasetBackend_named]
-    exact namedRel_indexed d.named hset.graphs hi
+    exact namedRel_indexed d.named hset.graphs
   have hnd : ((indexedDatasetBackend d).named.map (·.name)).Nodup := by
     rw [indexedDatasetBackend_named, List.map_map]
-    exact ngKey_nodup d.named hset.names hi
+    exact hset.names
   exact evalPatternBackend_allowed env _ d hn hnd p hp _ _ (graphRel_indexed hset.default)
 
 /-- Every dataset, parsed by any reader or built by any constructor,
@@ -1631,10 +1616,10 @@ def backendBgpStage (b : Bgp) (g : Graph) :
     (fun _ _ hx hg hG => evalBgpBackend_kequiv hx hg hG b)
 
 /-- The contract of the reference fallback's WHERE answer: for a pattern of
-    `NativeFrag` over a dataset that is a set with IRI graph names, an answer
-    `Allowed` admits in the default graph. -/
+    `NativeFrag` over a dataset that is a set, an answer `Allowed` admits in
+    the default graph. -/
 def FallbackWhereContract (env : EvalEnv) (p : QueryPattern) (D : Dataset) (r : SolutionSeq) : Prop :=
-  NativeFrag p → D.IsSet → Storage.QuadDataset.namesAreIris D = true → Allowed env D p D.default r
+  NativeFrag p → D.IsSet → Allowed env D p D.default r
 
 /-- A dataset → the WHERE answer of `evalPatternBackend` over its in-memory
     dataset record (`indexedDatasetBackend`, the record of the reference
@@ -1644,7 +1629,7 @@ def fallbackWhereStage (env : EvalEnv) (p : QueryPattern) :
   L4Factoidal.Dataflow.Stage.ofFun
     (fun D => evalPatternBackend env (indexedDatasetBackend D) p (indexedDatasetBackend D).default)
     (FallbackWhereContract env p)
-    (fun D hp hset hiri => indexedWhere_allowed env D hset hiri p hp)
+    (fun D hp hset => indexedWhere_allowed env D hset p hp)
 
 /-! ## 13. Build-time checks: one representative of an RDF term
 

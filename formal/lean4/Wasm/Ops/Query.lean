@@ -64,12 +64,15 @@ call.
 `dsb` is a `LawfulDataset` (`Dataflow/Store.lean`): the dataset record with
 its law as a field (https://github.com/danbri/factoidal/issues/975, item 2), so
 the backend evaluator never runs over a record without one. `dsb` is `none`
-when the caller requires the reference evaluator for every form.  One caller does: `SPARQL/StoreDataset.lean`'s
-`materialiseDatasetBackend` keeps only graphs whose name is a well-formed IRI,
-so a dataset carrying a BLANK-NODE graph name would silently lose that graph
-in every delegating arm.  An SBM7 generation may carry one
-(`ShardManifest.GraphName.bnode`), so `Wasm/Ops/Store.lean` passes `none` for
-such a dataset — the same rule `Harness/QuadQuery.lean` applies natively.
+when the caller requires the reference evaluator for every form.  One caller does:
+`Wasm/Ops/Store.lean` passes `none` for a dataset with a BLANK-NODE graph name
+(an SBM7 generation may carry one, `ShardManifest.GraphName.bnode`), the same
+rule `Harness/QuadQuery.lean` applies natively. Until 2026-10-25 this was
+required: `materialiseDatasetBackend` kept only IRI graph names. It now keeps
+a blank-node graph name (the record names a graph by its `Subject`,
+https://github.com/danbri/factoidal/issues/975); the rule is kept so that
+change does not move those queries to the backend path, whose SELECT rows may
+come in another order.
 
 `extra` members are placed immediately after `"ok":true` in every arm, so an
 op can add its own fields (shard count, open mode) to the shared envelope

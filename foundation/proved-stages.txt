@@ -2,6 +2,7 @@
 # tools/assumption-gate.py fails when a pinned stage is no longer proved
 # unless foundation/assumptions.txt has a 'demoted:<stage>' line with a reason.
 LawfulDataset.indexed
+LawfulDataset.ofCertified
 LawfulDataset.ofDefault
 LawfulStore.ofCaps
 LawfulStore.ofIndexed

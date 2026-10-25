@@ -705,9 +705,10 @@ def storeQuery (manifestHex sparql artifactsJson : String) (blob : ByteArray)
     | .ibk4 =>
         let quads ← readIbk4 sources blob plan.entries []
         let ds := datasetOfQuads quads
-        -- A blank-node graph name cannot survive `materialiseDatasetBackend`,
-        -- so such a dataset takes the reference evaluator, exactly as
-        -- `Harness/QuadQuery.lean` does natively.
+        -- A dataset with a blank-node graph name takes the reference
+        -- evaluator, exactly as `Harness/QuadQuery.lean` does natively. Since
+        -- 2026-10-25 the backend reads such a dataset too (issue 975); the
+        -- rule is kept so that change does not reorder those SELECT rows.
         let backend := if namesAreIris ds then some (L4Factoidal.Dataflow.LawfulDataset.ofDataset ds) else none
         pure (queryParsedDatasetWith ds backend sparql extra extIris [] .v11 none now)
     | .ibk3 =>

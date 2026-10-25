@@ -90,11 +90,14 @@ open L4Factoidal.SPARQL.StoreFastPath
 
 /-! ## 0. Two small conversions
 
-`NamedGraphBackend.name` is a raw `Iri`, matching the F* `ngb_name`,
-while `NamedGraph.name` is a `Subject` and a bound graph variable takes
-a `WfIri`. `wfIriOf?` is the well-formedness test the F* source spells
-`is_iri`, and `integerTerm` is the `xsd:integer` literal both GROUP BY
-paths bind their counts to. -/
+`NamedGraphBackend.name` is a `Subject`, the type of `NamedGraph.name`
+(until 2026-10-25 it was a raw `Iri`, matching the F* `ngb_name`, and a
+blank-node graph name was spelled as its label: the record could not tell
+it from an IRI and `GRAPH ?g` dropped it,
+https://github.com/danbri/factoidal/issues/975). `wfIriOf?` is the
+well-formedness test the F* source spells `is_iri`; the COTTAS record
+builders apply it to the graph names they read. `integerTerm` is the
+`xsd:integer` literal both GROUP BY paths bind their counts to. -/
 
 def wfIriOf? (s : Iri) : Option WfIri :=
   if h : isIri s then some ⟨s, h⟩ else none
@@ -111,23 +114,29 @@ structure DatasetBackend where
   default : GraphBackend
   named : List NamedGraphBackend
 
+/-- The graph name `s` is the IRI `n`. A blank-node graph name is no IRI. -/
+def iriNamed : Subject → Iri → Bool
+  | .iri j, n => j.val == n
+  | .bnode _, _ => false
+
 def lookupNamedBackend (name : Iri) : List NamedGraphBackend → Option GraphBackend
   | [] => none
-  | ng :: rest => if ng.name == name then some ng.backend else lookupNamedBackend name rest
+  | ng :: rest => if iriNamed ng.name name then some ng.backend else lookupNamedBackend name rest
 
-/-- The capability-shaped view: `capsOfBackend` once per graph. -/
+/-- The capability-shaped view: `capsOfBackend` once per graph. `DatasetCaps`
+keys its named graphs by IRI, so a blank-node graph name has no entry. -/
 def datasetCapsOfBackend (dsb : DatasetBackend) : DatasetCaps :=
   { default := capsOfBackend dsb.default
-  , named := dsb.named.map (fun ngb => (ngb.name, capsOfBackend ngb.backend)) }
+  , named := dsb.named.filterMap (fun ngb => match ngb.name with
+      | .iri j => some (j.val, capsOfBackend ngb.backend)
+      | .bnode _ => none) }
 
 /-- Read every backend with an unbound search. This is what the
 delegating arms of the evaluator consume. -/
 def materialiseDatasetBackend (dsb : DatasetBackend) : Dataset :=
   { default := backendSearch dsb.default patternBoundAll
-  , named := dsb.named.filterMap (fun ngb =>
-      -- a graph name that is not a well-formed IRI cannot name a graph
-      (wfIriOf? ngb.name).map (fun i =>
-        { name := .iri i, graph := backendSearch ngb.backend patternBoundAll })) }
+  , named := dsb.named.map (fun ngb =>
+      { name := ngb.name, graph := backendSearch ngb.backend patternBoundAll }) }
 
 /-- Wrap a graph as an indexed backend; the index is built once here. -/
 def indexedGraphBackend (g : Graph) : GraphBackend := .indexed (OWL.RL.Index.ofGraph g)
@@ -135,10 +144,7 @@ def indexedGraphBackend (g : Graph) : GraphBackend := .indexed (OWL.RL.Index.ofG
 def indexedDatasetBackend (ds : Dataset) : DatasetBackend :=
   { default := indexedGraphBackend ds.default
   , named := ds.named.map (fun ng =>
-      { name := match ng.name with
-                | .iri i => i.val
-                | .bnode b => b
-      , backend := indexedGraphBackend ng.graph }) }
+      { name := ng.name, backend := indexedGraphBackend ng.graph }) }
 
 /-! ## 2. The backend-routed pattern evaluator
 
@@ -197,11 +203,10 @@ def evalPatternBackend (env : EvalEnv) (dsb : DatasetBackend) :
       | some g => evalPatternBackend env dsb p g
       | none => []
   -- GRAPH with a VARIABLE evaluates the inner pattern against every
-  -- named backend and binds the variable to that graph's name, which is
-  -- §18.6's `ds.named.flatMap … bindIfCompatible` over the SAME list:
-  -- `materialiseDatasetBackend` builds `ds.named` from `dsb.named` in
-  -- order and drops exactly the names that are not well-formed IRIs, so
-  -- the same `wfIriOf?` test is applied here.
+  -- named backend and binds the variable to that graph's name, an IRI or
+  -- a blank node, which is §18.6's `ds.named.flatMap … bindIfCompatible`
+  -- over the SAME list: `materialiseDatasetBackend` builds `ds.named` from
+  -- `dsb.named` in order, one graph per backend.
   --
   -- Without this arm the shape fell to the materialise-and-delegate
   -- case below, which rebuilds the WHOLE dataset as lists for every
@@ -211,11 +216,8 @@ def evalPatternBackend (env : EvalEnv) (dsb : DatasetBackend) :
   -- (https://github.com/danbri/factoidal/issues/653).
   | .graph (.var v) p, _ =>
       dsb.named.flatMap (fun ngb =>
-        match wfIriOf? ngb.name with
-        | none => []
-        | some i =>
-            (evalPatternBackend env dsb p ngb.backend).filterMap (fun mu =>
-              mu.bindIfCompatible v (.iri i)))
+        (evalPatternBackend env dsb p ngb.backend).filterMap (fun mu =>
+          mu.bindIfCompatible v ngb.name.toTerm))
   -- BIND with a `backendLocal` expression stays on the backend path, for
   -- the same reason the `.filter` arm does: the binder reads only the row
   -- and `EvalEnv`, so existential substitution is a no-op and the active
@@ -263,12 +265,9 @@ def countGroupByGraphAcc (graphVar countAlias : VarName) :
       let cnt := backendCountExact ngb.backend patternBoundAll
       if cnt == 0 then countGroupByGraphAcc graphVar countAlias acc rest
       else
-        match wfIriOf? ngb.name with
-        | none => countGroupByGraphAcc graphVar countAlias acc rest
-        | some i =>
-            let mu0 := Binding.bind countAlias (integerTerm cnt) Binding.empty
-            let mu := Binding.bind graphVar (.iri i) mu0
-            countGroupByGraphAcc graphVar countAlias (mu :: acc) rest
+        let mu0 := Binding.bind countAlias (integerTerm cnt) Binding.empty
+        let mu := Binding.bind graphVar ngb.name.toTerm mu0
+        countGroupByGraphAcc graphVar countAlias (mu :: acc) rest
 
 def countGroupByGraphSolutions (graphVar countAlias : VarName)
     (named : List NamedGraphBackend) : SolutionSeq :=
@@ -304,20 +303,17 @@ def limitGraphVarAcc (v : VarName) (tp : TriplePattern) (limit : Nat) :
   | ngb :: rest, acc =>
       if limit <= acc.length then acc.reverse
       else
-        match wfIriOf? ngb.name with
-        | none => limitGraphVarAcc v tp limit rest acc
-        | some i =>
-            -- `capsTakeN` again, for the same reason `evalLimitSingleTp`
-            -- truncates after the match: `solveLimited` is a backend
-            -- capability, so nothing here proves it honoured the limit.
-            let rows :=
-              capsTakeN (limit - acc.length)
-                ((backendSearchLimited ngb.backend (patternBoundFor tp Binding.empty)
-                    (limit - acc.length)).filterMap (fun t =>
-                  match tpMatch tp t Binding.empty with
-                  | none => none
-                  | some mu => mu.bindIfCompatible v (.iri i)))
-            limitGraphVarAcc v tp limit rest (rows.reverseAux acc)
+        -- `capsTakeN` again, for the same reason `evalLimitSingleTp`
+        -- truncates after the match: `solveLimited` is a backend
+        -- capability, so nothing here proves it honoured the limit.
+        let rows :=
+          capsTakeN (limit - acc.length)
+            ((backendSearchLimited ngb.backend (patternBoundFor tp Binding.empty)
+                (limit - acc.length)).filterMap (fun t =>
+              match tpMatch tp t Binding.empty with
+              | none => none
+              | some mu => mu.bindIfCompatible v ngb.name.toTerm))
+        limitGraphVarAcc v tp limit rest (rows.reverseAux acc)
 
 /-- The three scopes of the LIMIT push-down. `.active` is the existing
 one-graph path; `.named` routes to that graph's own backend and answers
@@ -350,12 +346,10 @@ theorem limitGraphVarAcc_bounded (v : VarName) (tp : TriplePattern) (limit : Nat
       split
       · simpa using hacc
       · rename_i hlt
-        split
-        · exact ih acc hacc
-        · refine ih _ ?_
-          simp only [List.reverseAux_eq, List.length_append, List.length_reverse,
-                     capsTakeN, List.length_take]
-          omega
+        refine ih _ ?_
+        simp only [List.reverseAux_eq, List.length_append, List.length_reverse,
+                   capsTakeN, List.length_take]
+        omega
 
 /-- Shape detection plus capability availability. The fast path runs
 only when the target backend actually offers cheap predicate
@@ -402,8 +396,8 @@ a read. -/
 def cottasOnDiskDatasetBackend (ops : RDF.CottasCaps.CottasReadOps)
     (namedGraphs : List Iri) : DatasetBackend :=
   { default := .cottasOnDisk ops .defaultGraph
-  , named := namedGraphs.map (fun gname =>
-      { name := gname, backend := .cottasOnDisk ops (.named gname) }) }
+  , named := namedGraphs.filterMap (fun gname => (wfIriOf? gname).map (fun i =>
+      { name := .iri i, backend := .cottasOnDisk ops (.named gname) })) }
 
 /-- The same shape with a resolved delta threaded through `overlay`'s
 single dispatch arm. A graph the delta creates that the base store has
@@ -413,9 +407,9 @@ def cottasWithDeltaDatasetBackend (ops : RDF.CottasCaps.CottasReadOps)
     (namedGraphs : List Iri) (deltaFor : Option Iri → DeltaResolved) :
     DatasetBackend :=
   { default := .cottasOnDiskDelta ops .defaultGraph (deltaFor none)
-  , named := namedGraphs.map (fun gname =>
-      { name := gname
-      , backend := .cottasOnDiskDelta ops (.named gname) (deltaFor (some gname)) }) }
+  , named := namedGraphs.filterMap (fun gname => (wfIriOf? gname).map (fun i =>
+      { name := .iri i
+      , backend := .cottasOnDiskDelta ops (.named gname) (deltaFor (some gname)) })) }
 
 /-! ## 5. Full-text search over a backend
 
@@ -753,21 +747,20 @@ theorem evalBgpBackend_allVars_list (g : Graph) (sv pv ov : VarName) :
 
 /-! ## 9. What the GROUP BY paths guarantee -/
 
-/-- One row per nonempty named graph with an admitted IRI name. Empty graphs
-    and invalid names contribute no group, just as the materialised GRAPH
-    pattern contributes no solution from either. -/
+/-- One row per nonempty named graph. Empty graphs contribute no group, just
+    as the materialised GRAPH pattern contributes no solution from one. -/
 theorem countGroupByGraph_length (graphVar countAlias : VarName) :
     ∀ (named : List NamedGraphBackend) (acc : SolutionSeq),
       (countGroupByGraphAcc graphVar countAlias acc named).length
         = acc.length + (named.filter (fun ngb =>
-            backendCountExact ngb.backend patternBoundAll != 0 &&
-              (wfIriOf? ngb.name).isSome)).length
+            backendCountExact ngb.backend patternBoundAll != 0)).length
   | [], acc => by simp [countGroupByGraphAcc]
   | ngb :: rest, acc => by
       simp only [countGroupByGraphAcc, List.filter_cons]
       split
       · simp_all [countGroupByGraph_length graphVar countAlias rest]
-      · split <;> simp_all [countGroupByGraph_length graphVar countAlias rest] <;> omega
+      · simp_all [countGroupByGraph_length graphVar countAlias rest]
+        omega
 
 /-- A predicate with no rows contributes no group. -/
 theorem predicateGroupBy_skips_empty (predVar countAlias : VarName)
@@ -815,7 +808,7 @@ private def gNamed : Graph :=
 
 private def dsb1 : DatasetBackend :=
   { default := .list gDefault
-  , named := [{ name := iG.val, backend := .list gNamed }] }
+  , named := [{ name := .iri iG, backend := .list gNamed }] }
 
 private def repeatedVariableCountQuery : Query :=
   mkQuery (.select (.vars [.expr (.aggregate .count false (.var "*")) "n"]))
@@ -838,8 +831,8 @@ private def groupedGraphCountQuery : Query :=
 
 private def dsbWithEmptyNamed : DatasetBackend :=
   { default := .list []
-  , named := [{ name := iA.val, backend := .list [] },
-              { name := iG.val, backend := .list gNamed }] }
+  , named := [{ name := .iri iA, backend := .list [] },
+              { name := .iri iG, backend := .list gNamed }] }
 
 private def limitBlankNodeQuery : Query :=
   mkQuery (.select .all)
@@ -865,6 +858,35 @@ private def tpAll : TriplePattern :=
 /-! Named lookup finds the graph it names and nothing else. -/
 #guard (lookupNamedBackend iG.val dsb1.named).isSome == true
 #guard (lookupNamedBackend iA.val dsb1.named).isSome == false
+
+/-! A blank-node graph name (https://github.com/danbri/factoidal/issues/975):
+the record of `indexedDatasetBackend` keeps it as a blank node, `GRAPH ?g`
+binds `?g` to it, and the backend answers what the reference evaluator answers
+over the dataset. The label `g` is also an IRI-free string that a lookup by
+IRI must not find. -/
+
+private def dsBnodeNamed : Dataset :=
+  { default := gDefault
+  , named := [{ name := .bnode "g", graph := gNamed }, { name := .iri iG, graph := gDefault }] }
+
+private def graphVarQuery : Query :=
+  mkQuery (.select .all)
+    (.graph (.var "g") (.bgp [{ s := .var "s", p := .iri iP, o := .var "o" }]))
+
+private def graphCountQuery : Query :=
+  mkQuery (.select (.vars [.var "g", .expr (.aggregate .count false (.var "*")) "n"]))
+    (.graph (.var "g") (.bgp [{ s := .var "s", p := .var "p", o := .var "o" }]))
+    (groupBy := some [.var "g"])
+
+#guard (materialiseDatasetBackend (indexedDatasetBackend dsBnodeNamed)).named.map (·.name) ==
+  dsBnodeNamed.named.map (·.name)
+#guard runSelectQueryBackendDataset {} graphVarQuery (indexedDatasetBackend dsBnodeNamed) ==
+  some (evalSelect {} dsBnodeNamed graphVarQuery).2
+#guard (runSelectQueryBackendDataset {} graphVarQuery (indexedDatasetBackend dsBnodeNamed)).map
+  (·.length) == some 3
+#guard runSelectQueryBackendDataset {} graphCountQuery (indexedDatasetBackend dsBnodeNamed) ==
+  some (evalSelect {} dsBnodeNamed graphCountQuery).2
+#guard (lookupNamedBackend "g" (indexedDatasetBackend dsBnodeNamed).named).isNone
 
 /-! Materialising reads every backend: one default triple, two named. -/
 #guard (materialiseDatasetBackend dsb1).default.length == 1

@@ -19,7 +19,8 @@ when there is one, reads the dataset (`BackendReads`: the default backend
 reads the default graph, the named backends read the named graphs pair for
 pair, with distinct names; `Storage.BackendRefinement.GraphRel` and
 `NamedRel`). `EvalInput.wf_indexed`: the indexed backend the wasm query ops
-build satisfies it for a set dataset with IRI graph names.
+build satisfies it for every set dataset; a blank-node graph name is a
+backend name too (https://github.com/danbri/factoidal/issues/975).
 
 ## The contract
 
@@ -151,20 +152,17 @@ structure EvalInput.Wf (inp : EvalInput) : Prop where
   /-- A backend, when given, reads the dataset. -/
   backendReads : ∀ dsb, inp.backend = some dsb → BackendReads dsb inp.ds
 
-/-- The indexed backend of a set dataset with IRI graph names reads it. -/
-theorem backendReads_indexed (d : Dataset) (hset : d.IsSet)
-    (hiri : Storage.QuadDataset.namesAreIris d = true) :
+/-- The indexed backend of a set dataset reads it. -/
+theorem backendReads_indexed (d : Dataset) (hset : d.IsSet) :
     BackendReads (indexedDatasetBackend d) d := by
-  have hi := Storage.BackendRefinement.iris_of_namesAreIris hiri
   refine ⟨Storage.BackendRefinement.graphRel_indexed hset.default, ?_, ?_⟩
   · rw [DatasetRestriction.indexedDatasetBackend_named]
-    exact Storage.BackendRefinement.namedRel_indexed d.named hset.graphs hi
+    exact Storage.BackendRefinement.namedRel_indexed d.named hset.graphs
   · rw [DatasetRestriction.indexedDatasetBackend_named, List.map_map]
-    exact Storage.BackendRefinement.ngKey_nodup d.named hset.names hi
+    exact hset.names
 
 /-- The input the wasm query ops build is well formed. -/
 theorem EvalInput.wf_indexed (env : EvalEnv) (d : Dataset) (q : Query) (hset : d.IsSet)
-    (hiri : Storage.QuadDataset.namesAreIris d = true)
     (he : env.dataset = some d) :
     EvalInput.Wf { env, ds := d, backend := some (indexedDatasetBackend d), query := q } where
   envDataset := he
@@ -172,7 +170,7 @@ theorem EvalInput.wf_indexed (env : EvalEnv) (d : Dataset) (q : Query) (hset : d
   backendReads := by
     intro dsb h
     cases h
-    exact backendReads_indexed d hset hiri
+    exact backendReads_indexed d hset
 
 /-- With no backend, any environment that reads the dataset gives a
 well-formed input. -/

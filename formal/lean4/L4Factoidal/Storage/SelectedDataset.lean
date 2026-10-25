@@ -183,8 +183,8 @@ theorem lookupGraph_map (keep : Triple → Bool) (n : Iri) :
         = (lookupGraph l n).map (fun g => g.filter keep)
   | [] => rfl
   | ng :: rest => by
-      simp only [List.map_cons, lookupGraph, ngKey_graph]
-      by_cases h : (ngKey ng == n) = true
+      simp only [List.map_cons, lookupGraph]
+      by_cases h : iriNamed ng.name n = true
       · simp [h]
       · simp only [h, if_false, Bool.false_eq_true]
         exact lookupGraph_map keep n rest
@@ -781,18 +781,18 @@ theorem selectKept (q : Query) : PatternKept (selectKeep q) q.pattern.rewriteBno
       exact patternKept_of_queryPredicates q P hp
 
 theorem lookupGraph_filter {P : NamedGraph → Bool} (n : Iri) :
-    ∀ l : List NamedGraph, (∀ ng ∈ l, ngKey ng = n → P ng = true) →
+    ∀ l : List NamedGraph, (∀ ng ∈ l, iriNamed ng.name n = true → P ng = true) →
       lookupGraph (l.filter P) n = lookupGraph l n
   | [], _ => rfl
   | ng :: rest, h => by
       have ih := lookupGraph_filter n rest (fun x hx => h x (List.mem_cons_of_mem _ hx))
       by_cases hp : P ng = true
       · rw [List.filter_cons, if_pos hp]
-        by_cases hk : ngKey ng = n
+        by_cases hk : iriNamed ng.name n = true
         · rw [lookupGraph_cons_pos hk, lookupGraph_cons_pos hk]
         · rw [lookupGraph_cons_neg hk, lookupGraph_cons_neg hk, ih]
       · rw [List.filter_cons, if_neg hp]
-        have hk : ¬ ngKey ng = n := fun hk => hp (h ng List.mem_cons_self hk)
+        have hk : ¬ iriNamed ng.name n = true := fun hk => hp (h ng List.mem_cons_self hk)
         rw [lookupGraph_cons_neg hk, ih]
 
 /-- The IRIs among the collector's graph names. -/
@@ -873,7 +873,7 @@ theorem referenceSelect_selectedModel_graphs (env : EvalEnv) (q : Query) (D : Da
           | defaultGraph => cases hgv
           | bnode _ => cases hgv
         have hwv : w.val = i.val := by
-          simp only [ngKey, hw] at hk
+          simp only [iriNamed, hw, beq_iff_eq] at hk
           exact hk
         rw [hw]
         exact hgk i hiv w hwv

@@ -173,11 +173,12 @@ whole dataset. Two things it cannot carry, so they are handled here:
 * `FROM` / `FROM NAMED`. `runSelectQueryBackendDataset` does not apply
   `query.dataset`; §13.2's `applyDataset` is applied to the materialised
   dataset first, and the query is then evaluated with no dataset clause.
-* A blank-node graph NAME. `materialiseDatasetBackend` keeps only graphs whose
-  name is a well-formed IRI, so a generation with a blank-node-named graph
-  would lose it in every delegating arm. SBM7 admits such a name
-  (`GraphName.bnode`), so such a generation takes the reference evaluator
-  directly over the materialised dataset instead. -/
+* A blank-node graph NAME. SBM7 admits such a name (`GraphName.bnode`); such
+  a generation takes the reference evaluator directly over the materialised
+  dataset. Until 2026-10-25 this was required: `materialiseDatasetBackend`
+  kept only IRI graph names. It now keeps a blank-node graph name (the record
+  names a graph by its `Subject`, https://github.com/danbri/factoidal/issues/975);
+  the rule is kept so that change does not reorder those SELECT rows. -/
 
 private def stripDatasetClauses (query : Query) : Query :=
   .mk query.form [] query.pattern query.groupBy query.having query.modifier
