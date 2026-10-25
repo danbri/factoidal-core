@@ -29,6 +29,7 @@ import { openGeneration, readRegion, manifestKeys, hexOfBytes } from './store.mj
 import { fullEngineMessage } from './lean-entry.mjs';
 import { memoryDeltaLogStore } from './delta-log-hosts.mjs';
 import { FactoidalError, errorFromEnvelope, envelopeResult } from './errors.mjs';
+import { buildNodes } from './nodes.mjs';
 
 // The format names, regimes and query outputs are the engine's tables (op
 // engineTables, formal/lean4/Wasm/Ops/Handles.lean), read once per engine:
@@ -2115,7 +2116,7 @@ function buildApi(driver) {
    * @returns {Promise<{entry: boolean, construct: boolean,
    *   update: boolean, canonicalize: boolean, graphs: boolean,
    *   canonicalHash: boolean, shacl: boolean, shex: boolean,
-   *   owlClosure: boolean, explain: boolean, rml: boolean, csvw: boolean, jsonld: boolean,
+   *   owlClosure: boolean, explain: boolean, stages: boolean, rml: boolean, csvw: boolean, jsonld: boolean,
    *   rif: boolean}>}
    */
   let capsCache = null;
@@ -2137,6 +2138,7 @@ function buildApi(driver) {
       shex: has('shexValidate'),
       owlClosure: has('owlClosure'),
       explain: has('explainGraph'),
+      stages: has('stageList'),
       entailment: has('queryRaw'),
       tableau: has('tableauMaterialise') && has('tableauDlInconsistent'),
       rml: has('rmlMap'),
@@ -2170,6 +2172,12 @@ function buildApi(driver) {
     };
   }
 
+  // The node-composition API (lib/nodes.mjs, issue 1002 step 2).
+  const nodeApi = buildNodes({
+    entry, entryResult, requireEntryFn, Dataset,
+    parse, closure, shaclValidate, query, serialize, canonicalize, explain,
+  });
+
   return {
     parse,
     query,
@@ -2193,6 +2201,10 @@ function buildApi(driver) {
     coreRdfsClosure,
     coreRdfsCheck,
     explain,
+    stages: nodeApi.stages,
+    node: nodeApi.node,
+    pipe: nodeApi.pipe,
+    run: nodeApi.run,
     rdfsPlusClosure,
     rhoDfClosure,
     rhoDfFragmentCheck,
