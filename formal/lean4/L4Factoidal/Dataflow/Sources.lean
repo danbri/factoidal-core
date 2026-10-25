@@ -210,7 +210,7 @@ theorem Sourced.ofStore_spec (st : LawfulStore) :
 /-! ## (e) A union of records (shards) -/
 
 /-- The named backend of the name `n`, the first one. -/
-abbrev lookupNamedBackend (l : List NamedGraphBackend) (n : Subject) : Option NamedGraphBackend :=
+abbrev firstNamedBackend (l : List NamedGraphBackend) (n : Subject) : Option NamedGraphBackend :=
   l.find? (fun b => b.name == n)
 
 /-- A named backend of the first record merged with the second record's
@@ -222,7 +222,7 @@ def mergeArm (b : GraphBackend) : Option NamedGraphBackend → GraphBackend
 /-- The named backends of a union: the first record's names, each merged with
 the second's backend of that name, then the second record's other names. -/
 def unionNamed (l1 l2 : List NamedGraphBackend) : List NamedGraphBackend :=
-  l1.map (fun b => ⟨b.name, mergeArm b.backend (lookupNamedBackend l2 b.name)⟩) ++
+  l1.map (fun b => ⟨b.name, mergeArm b.backend (firstNamedBackend l2 b.name)⟩) ++
     l2.filter (fun b => !(l1.any (fun x => x.name == b.name)))
 
 /-- The backend of a union of two dataset records. -/
@@ -235,7 +235,7 @@ theorem backendExact_union2 {x y : GraphBackend} {Gx Gy : Triple → Prop}
   ⟨[Gx, Gy], ⟨hx, hy, trivial⟩, fun t => by simp [unionPred]⟩
 
 theorem unionNamed_left_names (l1 l2 : List NamedGraphBackend) :
-    (l1.map (fun b => (⟨b.name, mergeArm b.backend (lookupNamedBackend l2 b.name)⟩ :
+    (l1.map (fun b => (⟨b.name, mergeArm b.backend (firstNamedBackend l2 b.name)⟩ :
       NamedGraphBackend))).map (·.name) = l1.map (·.name) := by
   rw [List.map_map]
   rfl
@@ -252,8 +252,8 @@ theorem unionBackend_exact {DA DB : DatasetDen} {a b : DatasetBackend}
       obtain ⟨m, hm, e, hbx⟩ := hA.named b0 hb0
       subst e
       refine ⟨b0.name, Or.inl hm, rfl, ?_⟩
-      show BackendExact (mergeArm b0.backend (lookupNamedBackend b.named b0.name)) _
-      cases hl : lookupNamedBackend b.named b0.name with
+      show BackendExact (mergeArm b0.backend (firstNamedBackend b.named b0.name)) _
+      cases hl : firstNamedBackend b.named b0.name with
       | some b2 =>
         have hm2 : b2 ∈ b.named := List.mem_of_find?_eq_some hl
         have hp := _root_.List.find?_some hl
