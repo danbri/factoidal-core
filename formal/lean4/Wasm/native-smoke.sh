@@ -3243,7 +3243,40 @@ check "ops reflection (incl. handle ops via callIO)" ops "$TMP/empty.json" \
             "tdb2ServeKeys","tdb2ServeOpen"]) <= set(r["ops"])
    and r["blobIoOps"] == ["blobEcho","packFeed","packNext",
                           "storeServeRequest","storeServeCommit","datasetQuadsBin",
-                          "lwsStep","solidStep","lwsLoad","lwsPersist","lwsRead"]'
+                          "sbm11Query","lwsStep","solidStep","lwsLoad","lwsPersist","lwsRead"]'
+
+# SBM11 over host positioned reads (https://github.com/danbri/factoidal/issues/1009).
+# Natively the host is a pread of source/file (ffi/l4_hostread.c). A bad
+# source answers an error envelope with a code, never a trap; the wasm trap of
+# 0.14.0 was an extern signature mismatch, which build-wasm.sh now refuses.
+SBM11_ROOT="$LEAN_DIR/../../npm/factoidal/test/fixtures/sbm11-tiny/root"
+args "$TMP/sbm11-empty.json" ""
+check "sbm11Open of an empty source -> coded error" sbm11Open "$TMP/sbm11-empty.json" \
+  'r["ok"] is False and isinstance(r.get("code"), str) and "manifest.sbm11" in r["error"]'
+args "$TMP/sbm11-none.json" "$TMP/no-such-directory"
+check "sbm11Open of a missing directory -> coded error" sbm11Open "$TMP/sbm11-none.json" \
+  'r["ok"] is False and isinstance(r.get("code"), str)'
+args "$TMP/sbm11-noargs.json"
+check "sbm11Open with no argument -> call.arity" sbm11Open "$TMP/sbm11-noargs.json" \
+  'r["ok"] is False and r.get("code") == "call.arity"'
+python3 - "$SBM11_ROOT" "$TMP/sbm11-seq.json" <<'EOF'
+import json, sys
+root, out = sys.argv[1], sys.argv[2]
+json.dump([["sbm11Open", [root]],
+           ["sbm11Query", ["sbm11-1", "SELECT (COUNT(*) AS ?n) WHERE { ?s ?p ?o }"]],
+           ["sbm11Query", ["sbm11-1", "SELEC"]],
+           ["sbm11Close", ["sbm11-1"]],
+           ["sbm11Close", ["sbm11-1"]]], open(out, "w"))
+EOF
+SBM11_COUNT_FILE="$SBM11_ROOT/../expected/count.out"
+export SBM11_COUNT_FILE
+checkseq "sbm11 open (collection root), query, close: the bytes of l4sbm11 query" \
+  "$TMP/sbm11-seq.json" \
+  'rs[0]["ok"] is True and rs[0]["handle"] == "sbm11-1" and rs[0]["generation"] == "gen"
+   and int(rs[0]["terms"]) > 0
+   and rs[1]["ok"] is True and rs[1]["result"] == open(__import__("os").environ["SBM11_COUNT_FILE"]).read()
+   and rs[2]["ok"] is False and isinstance(rs[2].get("code"), str)
+   and rs[3]["ok"] is True and rs[4]["ok"] is False'
 
 check "unknown op -> error" definitelyNotAnOp "$TMP/empty.json" \
   'r["ok"] is False and "unknown op" in r["error"]'

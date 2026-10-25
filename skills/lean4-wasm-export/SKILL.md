@@ -856,6 +856,24 @@ against the old core library.
    undefined-symbol list growing; treat that as a design question per
    "the purity evidence" above.
 
+   **Any OTHER signature mismatch is a trap, and the build now fails on
+   it** (`link_module` in `Wasm/build-wasm.sh`). wasm-ld replaces a call
+   whose signature differs from the definition with an `unreachable` stub
+   and prints only a warning. 2026-10-25,
+   https://github.com/danbri/factoidal/issues/1009: `ffi/l4_hostread.c`
+   defined `l4_host_read_at` and `l4_host_size` with a trailing
+   `lean_obj_arg world`, but the Lean 4.33 code generator ERASES the IO
+   world token for `@[extern]` IO functions too (the generated
+   `.lake/build/ir/Wasm/HostRead.c` declares `l4_host_size(lean_object*,
+   lean_object*)`). Native arm64 and x86-64 ignore an extra argument, so
+   native `l4sbm11` and native-smoke passed; in wasm `sbm11Open` trapped on
+   its first host call, the 0.14.0 release shipped without SBM11 in npm
+   (https://github.com/danbri/factoidal-core/pull/92), and the two
+   warnings had been in the lean-wasm job log all along, read as this
+   item's "noise". Rule: an IO extern's C definition takes the explicit
+   arguments only, no world; check the generated declaration in
+   `.lake/build/ir/<Module>.c` before writing the C.
+
 12. **`pretty()` in a hub cell returns a DOM element in the browser and a
    plain object in the node harness.** Never read `.rows` off a
    `pretty()` result in a later cell — keep raw values in their own named

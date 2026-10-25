@@ -21,6 +21,8 @@ import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { buildApi } from './lib/api.mjs';
 import { entryFromEngine } from './lib/lean-entry.mjs';
+import { sbm11Api, registerSbm11Source, setDefaultSbm11Reader } from './lib/sbm11.mjs';
+import { nodeDefaultReaderFactory } from './lib/sbm11-node.mjs';
 
 /**
  * The loaded Lean engine handle: `call(op, args)`, `callBlob`,
@@ -66,8 +68,12 @@ export const clearExtensionFunctions = api.clearExtensionFunctions;
 export const registerServiceEndpoint = api.registerServiceEndpoint;
 export const clearServiceEndpoints = api.clearServiceEndpoints;
 
-// SBM11 (openSbm11, registerSbm11Source) is not exported in 0.14.0: the op
-// sbm11Open traps in the wasm build (https://github.com/danbri/factoidal/issues/1009).
+// SBM11, the Shardborough store, through host positioned reads
+// (lib/sbm11.mjs; https://github.com/danbri/factoidal/issues/1009). In Node a
+// source with no registered reader is a directory.
+setDefaultSbm11Reader(nodeDefaultReaderFactory());
+export const openSbm11 = sbm11Api(loadEngine).openSbm11;
+export { registerSbm11Source };
 
 // The persisted store
 export const openStore = api.openStore;

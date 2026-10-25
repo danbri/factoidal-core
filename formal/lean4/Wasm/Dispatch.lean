@@ -175,7 +175,7 @@ because both are served by the one entry which carries a region in either
 direction. -/
 def blobIoOpNames : List String :=
   [ "blobEcho", "packFeed", "packNext", "storeServeRequest", "storeServeCommit",
-    "datasetQuadsBin" ] ++
+    "datasetQuadsBin", "sbm11Query" ] ++
   Ops.lwsBlobIoOpNames
 
 /-- Largest out region `blobEcho` builds: 67,108,864 bytes. A count above
@@ -431,7 +431,7 @@ private def opsReflection : String := opsReflectionFor (opNames ++ formatOpNames
 /-- The `ops` reflection of `callIO`: every op of the full table. -/
 def opsReflectionIO : String :=
   opsReflectionFor
-    (opNames ++ handleOpNames ++ storeHandleOpNames ++ storeServeOpNames ++ packOpNames
+    (opNames ++ handleOpNames ++ storeHandleOpNames ++ Ops.sbm11OpNames ++ storeServeOpNames ++ packOpNames
        ++ extOpNames ++ lwsSolidOpNames ++ Ops.authzOpNames ++ xmppSessionOpNamesList
        ++ formatOpNames ++ serviceOpNames
        ++ query12OpNames)
@@ -602,8 +602,15 @@ def callIOUncoded (op : String) (argsJson : String) : IO String :=
       pure (errJson s!"{op} carries a byte region; call it through l4_call_blob_io")
   | "storeOpen"        => withArgs (arityIO2 op (fun a b => Ops.storeOpen a b ByteArray.empty))
   | "storeHandleQuery" => withArgs (arityIO2 op Ops.storeHandleQuery)
-  -- SBM11 ops (sbm11Open, sbm11Query, sbm11Close) are not dispatched in 0.14.0:
-  -- sbm11Open traps in the wasm build (https://github.com/danbri/factoidal/issues/1009).
+  -- SPARQL over an SBM11 generation through host positioned reads
+  -- (`Wasm/Ops/Sbm11.lean`, https://github.com/danbri/factoidal/issues/1009).
+  | "sbm11Open"        => withArgs (arityIO1 op Ops.sbm11Open)
+  | "sbm11Query"       => withArgs (fun args =>
+      match args with
+      | [a, b]    => Ops.sbm11Query a b ""
+      | [a, b, c] => Ops.sbm11Query a b c
+      | args => pure (errJson s!"sbm11Query expects 2 or 3 arguments, got {args.length}"))
+  | "sbm11Close"       => withArgs (arityIO1 op Ops.sbm11Close)
   -- The dataset-handle ops of the full engine (`Wasm/Ops/DatasetFull.lean`).
   | "datasetFromCsvw"  => withArgs (arityIO3 op Ops.datasetFromCsvw)
   | "datasetFromRml"   => withArgs (arityIO3 op Ops.datasetFromRml)
@@ -792,6 +799,13 @@ def callBlobIOUncoded (op : String) (argsJson : String) (blob : ByteArray) :
       | .ok [a]   => Ops.storeServeRequest a blob
       | .ok args  => pure (errJson s!"storeServeRequest expects 1 argument, got {args.length}",
                            ByteArray.empty)
+  | "sbm11Query" =>
+      match decodeArgs argsJson with
+      | .error e      => pure (errJson e, ByteArray.empty)
+      | .ok [a, b]    => Ops.sbm11QueryBlob a b ""
+      | .ok [a, b, c] => Ops.sbm11QueryBlob a b c
+      | .ok args      => pure (errJson s!"sbm11Query expects 2 or 3 arguments, got {args.length}",
+                               ByteArray.empty)
   | "storeServeCommit" =>
       match decodeArgs argsJson with
       | .error e        => pure (errJson e, ByteArray.empty)

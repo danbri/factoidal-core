@@ -10,6 +10,14 @@
  *
  * `source` is a string the caller chose when it opened the store.
  *
+ * No world argument: the Lean 4.33 code generator erases the IO world
+ * token, so the generated call is l4_host_read_at(source, file, off, len)
+ * and l4_host_size(source, file).  A C definition with one more parameter
+ * links natively and runs, but wasm-ld replaces a call whose signature
+ * differs from the definition with an `unreachable` stub: sbm11Open
+ * trapped on its first host call (https://github.com/danbri/factoidal/issues/1009).
+ * build-wasm.sh now fails the link on such a mismatch.
+ *
  * Under Emscripten the bodies are EM_JS thunks onto
  * globalThis.__factoidalReadAt(source, file, off, len) -> Uint8Array and
  * globalThis.__factoidalFileSize(source, file) -> number | null, which the
@@ -62,8 +70,7 @@ EM_JS(double, l4_host_size_js, (const char *src, const char *file), {
 });
 
 LEAN_EXPORT lean_obj_res l4_host_read_at(b_lean_obj_arg source, b_lean_obj_arg file,
-                                         uint64_t off, uint64_t len, lean_obj_arg world) {
-  (void)world;
+                                         uint64_t off, uint64_t len) {
   if (len > (uint64_t)SIZE_MAX) return l4_hr_error("host read: length too large");
   lean_obj_res out = lean_alloc_sarray(1, (size_t)len, (size_t)len);
   if (len > 0 &&
@@ -75,8 +82,7 @@ LEAN_EXPORT lean_obj_res l4_host_read_at(b_lean_obj_arg source, b_lean_obj_arg f
   return lean_io_result_mk_ok(out);
 }
 
-LEAN_EXPORT lean_obj_res l4_host_size(b_lean_obj_arg source, b_lean_obj_arg file, lean_obj_arg world) {
-  (void)world;
+LEAN_EXPORT lean_obj_res l4_host_size(b_lean_obj_arg source, b_lean_obj_arg file) {
   double n = l4_host_size_js(lean_string_cstr(source), lean_string_cstr(file));
   uint64_t r = n < 0 ? UINT64_MAX : (uint64_t)n;
   return lean_io_result_mk_ok(lean_box_uint64(r));
@@ -97,8 +103,7 @@ static char *l4_hr_path(b_lean_obj_arg source, b_lean_obj_arg file) {
 }
 
 LEAN_EXPORT lean_obj_res l4_host_read_at(b_lean_obj_arg source, b_lean_obj_arg file,
-                                         uint64_t off, uint64_t len, lean_obj_arg world) {
-  (void)world;
+                                         uint64_t off, uint64_t len) {
   if (len > (uint64_t)SIZE_MAX || off > (uint64_t)INT64_MAX) return l4_hr_error("host read: offset or length too large");
   char *path = l4_hr_path(source, file);
   if (!path) return l4_hr_error("host read: out of memory");
@@ -119,8 +124,7 @@ LEAN_EXPORT lean_obj_res l4_host_read_at(b_lean_obj_arg source, b_lean_obj_arg f
   return lean_io_result_mk_ok(out);
 }
 
-LEAN_EXPORT lean_obj_res l4_host_size(b_lean_obj_arg source, b_lean_obj_arg file, lean_obj_arg world) {
-  (void)world;
+LEAN_EXPORT lean_obj_res l4_host_size(b_lean_obj_arg source, b_lean_obj_arg file) {
   char *path = l4_hr_path(source, file);
   uint64_t r = UINT64_MAX;
   struct stat st;
